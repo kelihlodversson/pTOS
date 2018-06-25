@@ -72,6 +72,19 @@ static LONG             addr_out[AO_SIZE];
 
 static __inline__ WORD gem(const GEMBLK *gb)
 {
+#if __arm__
+    register WORD retval __asm__("r0");
+    register WORD opcode __asm__("r0") = 200; /* AES */
+    register const GEMBLK *gbreg __asm__("r1") = gb;
+
+    __asm__ volatile
+    (
+        "svc 2"
+        : "=r"(retval)
+        : "r"(opcode), "r"(gbreg)
+        : "r2", "r3", "r7", "r12", "lr",  "memory", "cc"
+    );
+#else
     register WORD retval __asm__("d0");
     register WORD opcode __asm__("d0") = 200; /* AES */
     register const GEMBLK *gbreg __asm__("d1") = gb;
@@ -84,6 +97,7 @@ static __inline__ WORD gem(const GEMBLK *gb)
     : "d2", "a0", "a1", "a2", "memory", "cc"
     );
 
+#endif
     return retval;
 }
 

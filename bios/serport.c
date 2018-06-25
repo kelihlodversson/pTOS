@@ -125,6 +125,8 @@ LONG bconstat1(void)
     /* Input from the serial port will be read on interrupt,
      * so we can't directly read the data. */
     return 0;
+#elif CONF_WITH_RASPI_UART0
+    return raspi_uart0_can_read() ? -1 : 0;
 #elif CONF_WITH_COLDFIRE_RS232
     return coldfire_rs232_can_read() ? -1 : 0;
 #elif CONF_WITH_MFP_RS232
@@ -147,6 +149,8 @@ LONG bconin1(void)
 
 #if CONF_WITH_COLDFIRE_RS232
     return coldfire_rs232_read_byte();
+#elif CONF_WITH_RASPI_UART0
+    return raspi_uart0_read_byte();
 #elif CONF_WITH_MFP_RS232
     /* Return character...
      * FIXME: We ought to use Iorec() for this... */
@@ -161,6 +165,8 @@ LONG bcostat1(void)
 {
 #if CONF_WITH_COLDFIRE_RS232
     return coldfire_rs232_can_write() ? -1 : 0;
+#elif CONF_WITH_RASPI_UART0
+    return raspi_uart0_can_write() ? -1 : 0;
 #elif CONF_WITH_MFP_RS232
     if (MFP_BASE->tsr & 0x80)
         return -1;
@@ -179,6 +185,9 @@ LONG bconout1(WORD dev, WORD b)
 
 #if CONF_WITH_COLDFIRE_RS232
     coldfire_rs232_write_byte(b);
+    return 1;
+#elif CONF_WITH_RASPI_UART0
+    raspi_uart0_write_byte(b);
     return 1;
 #elif CONF_WITH_MFP_RS232
     /* Output to RS232 interface */
@@ -717,6 +726,10 @@ void init_serport(void)
 
 #ifdef MACHINE_AMIGA
     amiga_rs232_init();
+#endif
+
+#ifdef CONF_WITH_RASPI_UART0
+    raspi_uart0_init();
 #endif
 
 #if !CONF_SERIAL_IKBD

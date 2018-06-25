@@ -67,7 +67,6 @@
 #include "biosdefs.h"
 #include "kprint.h"
 
-extern LONG size_theglo(void); /* called only from gemstart.S */
 extern LONG init_p0_stkptr(void); /* called only from gemstart.S */
 extern void run_accs_and_desktop(void); /* called only from gemstart.S */
 extern void gem_main(void); /* called only from gemstart.S */
@@ -120,20 +119,8 @@ GLOBAL SPB      wind_spb;
 GLOBAL WORD     curpid;
 
 GLOBAL THEGLO   D;
-
 /* Prototypes: */
 extern void accdesk_start(void) NORETURN;   /* see gemstart.S */
-
-
-/*
- *  return size of global area
- *  called from gemstart.S
- */
-LONG size_theglo(void)
-{
-    return sizeof(THEGLO);
-}
-
 
 /*
  *  called from startup code to initialise the process 0 supervisor stack ptr:

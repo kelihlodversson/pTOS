@@ -20,6 +20,7 @@
 #include "tosvars.h"
 #include "vectors.h"
 #include "coldfire.h"
+#include "raspi_int.h"
 
 #if CONF_WITH_MFP || CONF_WITH_TT_MFP
 
@@ -197,6 +198,8 @@ void init_system_timer(void)
 
 #if CONF_COLDFIRE_TIMER_C
     coldfire_init_system_timer();
+#elif CONF_RASPI_TIMER_C
+    raspi_init_system_timer();
 #elif CONF_WITH_MFP
     /* Timer C: ctrl = divide 64, data = 192 */
     xbtimer(2, 0x50, 192, (LONG)int_timerc);

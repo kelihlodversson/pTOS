@@ -18,6 +18,7 @@
 #include "../bios/lineavars.h"
 
 #define EMPTY   0xffff
+#define NOT_FOUND -1
 #define DOWN_FLAG 0x8000
 #define QSIZE 200
 #define QMAX QSIZE-1
@@ -39,7 +40,7 @@ static UWORD search_color;       /* the color of the border      */
 
 
 /* some kind of stack for the segments to fill */
-static WORD queue[QSIZE];       /* storage for the seed points  */
+static UWORD queue[QSIZE];      /* storage for the seed points  */
 static WORD qbottom;            /* the bottom of the queue (zero)   */
 static WORD qtop;               /* points to seed +3            */
 static WORD qptr;               /* points to the active point   */
@@ -968,7 +969,7 @@ get_seed(const VwkAttrib * attr, const VwkClip * clip,
 {
     if (end_pts(clip, xin, ABS(yin), xleftout, xrightout, seed_type)) {
         /* false if of search_color */
-        for (qtmp = qbottom, qhole = EMPTY; qtmp < qtop; qtmp += 3) {
+        for (qtmp = qbottom, qhole = NOT_FOUND; qtmp < qtop; qtmp += 3) {
             /* see, if we ran into another seed */
             if ( ((queue[qtmp] ^ DOWN_FLAG) == yin) && (queue[qtmp] != EMPTY) &&
                 (queue[qtmp + 1] == *xleftout) )
@@ -990,11 +991,11 @@ get_seed(const VwkAttrib * attr, const VwkClip * clip,
                     crunch_queue();
                 return 0;
             }
-            if ((queue[qtmp] == EMPTY) && (qhole == EMPTY))
+            if ((queue[qtmp] == EMPTY) && (qhole == NOT_FOUND))
                 qhole = qtmp;
         }
 
-        if (qhole == EMPTY) {
+        if (qhole == NOT_FOUND) {
             if ((qtop += 3) > QMAX) {
                 qtmp = qbottom;
                 qtop -= 3;

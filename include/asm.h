@@ -51,8 +51,14 @@ extern long trap1_pexec(short mode, const char * path,
   const void * tail, const char * env);
 
 /* Wrapper around the STOP instruction. This preserves SR. */
+#ifdef __arm__
+static inline void stop_until_interrupt(void)
+{
+    __asm__ volatile ("wfi");
+}
+#else
 extern void stop_until_interrupt(void);
-
+#endif
 /*
  * Push/Pop registers from stack, with ColdFire support.
  * This is intended to be used inside inline assembly.
@@ -69,7 +75,7 @@ extern void stop_until_interrupt(void);
     "movem.l (sp)," regs "\n\t"         \
     "lea     " #size "(sp),sp\n\t"
 
-#else
+#elif !defined(__arm__)
 
 #define PUSH_SP(regs,size)              \
     "movem.l " regs ",-(sp)\n\t"
@@ -98,13 +104,21 @@ extern void stop_until_interrupt(void);
     : "cc"       /* clobbered */          \
     );                                    \
   })
-#else
+#elif defined(__m68k__)
 #define swpw(a)                           \
   __asm__ volatile                        \
   ("ror   #8,%0"                          \
   : "=d"(a)          /* outputs */        \
   : "0"(a)           /* inputs  */        \
   : "cc"             /* clobbered */      \
+  )
+#elif defined(__arm__)
+#define swpw(a)                           \
+  __asm__ volatile                        \
+  ("rev16 %0, %0"                          \
+  : "=r"(a)          /* outputs */        \
+  : "0"(a)           /* inputs  */        \
+  :                  /* clobbered */      \
   )
 #endif
 
@@ -140,7 +154,7 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
     : "cc", "memory" /* clobbered */      \
     );                                    \
   })
-#else
+#elif defined(__m68k__)
 #define swpl(a)                           \
   __asm__ volatile                        \
   ("ror   #8,%0\n\t"                      \
@@ -150,6 +164,15 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
   : "0"(a)           /* inputs  */        \
   : "cc"             /* clobbered */      \
   )
+#elif defined(__arm__)
+#define swpl(a)                           \
+  __asm__ volatile                        \
+  ("rev %0, %0"                            \
+  : "=r"(a)          /* outputs */        \
+  : "0"(a)           /* inputs  */        \
+  :                  /* clobbered */      \
+  )
+
 #endif
 
 
@@ -175,7 +198,7 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
     : "cc", "memory" /* clobbered */      \
     );                                    \
   })
-#else
+#elif defined(__m68k__)
 #define swpw2(a)                          \
   __asm__ volatile                        \
   ("ror   #8,%0\n\t"                      \
@@ -186,6 +209,8 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
   : "0"(a)           /* inputs  */        \
   : "cc"             /* clobbered */      \
   )
+#elif defined(__arm__)
+#define swpw2(a) swpw(a)
 #endif
 
 
@@ -193,9 +218,9 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
  * rolw1(WORD x);
  *  rotates x leftwards by 1 bit
  */
-#ifdef __mcoldfire__
+#if defined(__mcoldfire__) || defined(__arm__)
 #define rolw1(x)    x=(x>>15)|(x<<1)
-#else
+#elif defined(__m68k__)
 #define rolw1(x)                    \
     __asm__ volatile                \
     ("rol.w #1,%1"                  \
@@ -210,7 +235,7 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
  * rorw1(WORD x);
  *  rotates x rightwards by 1 bit
  */
-#ifdef __mcoldfire__
+#if defined(__mcoldfire__) || defined(__arm__)
 #define rorw1(x)    x=(x>>1)|(x<<15)
 #else
 #define rorw1(x)                    \
@@ -236,6 +261,8 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
  * WORD set_sr(WORD new);
  *   sets sr to the new value, and return the old sr value
  */
+
+#if defined(__mcoldfire__) || defined(__m68k__)
 
 #define set_sr(a)                         \
 __extension__                             \
@@ -267,8 +294,60 @@ __extension__                             \
   );                                      \
   _r;                                     \
 })
+#elif defined(__arm__)
+#define set_sr(a) @USE_set_cpsr_on_ARM
+#define get_sr(a) @USE_get_cpsr_on_ARM
 
+#define cpsr_ie() __asm__ volatile ("cpsie i")
+#define cpsr_id() __asm__ volatile ("cpsid i")
 
+#define set_cpsr(a)                       \
+__extension__                             \
+({int _r, _a = (a);                       \
+  __asm__ volatile                        \
+  ("mrs %0, cpsr\n\t"                     \
+   "msr cpsr_cfxs, %1"                    \
+  : "=r"(_r)        /* outputs */         \
+  : "r"(_a)          /* inputs  */        \
+  : "cc", "memory"   /* clobbered */      \
+  );                                      \
+  _r;                                     \
+})
+
+#define get_cpsr()                        \
+ __extension__                            \
+({int _r;                                 \
+  __asm__ volatile                        \
+  ("mrs %0, cpsr\n\t"                     \
+  : "=r"(_r)        /* outputs */         \
+  :                  /* inputs  */        \
+  : "cc", "memory"   /* clobbered */      \
+  );                                      \
+  _r;                                     \
+})
+
+#ifdef TARGET_RPI1
+#define flush_prefetch_buffer()	    __asm__ volatile ("mcr p15, 0, %0, c7, c5,  4" : : "r" (0) : "memory")
+
+#define data_sync_barrier()         __asm__ volatile ("mcr p15, 0, %0, c7, c10, 4" : : "r" (0) : "memory")
+#define data_mem_barrier()          __asm__ volatile ("mcr p15, 0, %0, c7, c10, 5" : : "r" (0) : "memory")
+
+#define peripheral_begin()          data_sync_barrier()	// ignored here
+#define peripheral_end()            data_mem_barrier()
+#else
+#define flush_prefetch_buffer()     __asm__ volatile ("isb" ::: "memory")
+
+#define data_sync_barrier()         __asm__ volatile ("dsb" ::: "memory")
+#define data_mem_barrier()          __asm__ volatile ("dmb" ::: "memory")
+
+#define peripheral_begin()  ((void) 0)	// ignored here
+#define peripheral_end()    ((void) 0)
+#endif
+
+#define instruction_sync_barrier()  flush_prefetch_buffer()
+#define instruction_mem_barrier()   flush_prefetch_buffer()
+
+#endif
 
 /*
  * void regsafe_call(void *addr)
@@ -284,13 +363,18 @@ __extension__                                      \
   __asm__ volatile ("movem.l (sp),d0-d7/a0-a6\n\t" \
                     "lea     60(sp),sp");          \
 })
-#else
+#elif defined(__m68k__)
 #define regsafe_call(addr)                         \
 __extension__                                      \
 ({__asm__ volatile ("movem.l d0-d7/a0-a6,-(sp)");  \
   ((void (*)(void))addr)();                        \
   __asm__ volatile ("movem.l (sp)+,d0-d7/a0-a6");  \
 })
+#elif defined(__arm__)
+// not used on arm curently, but we assume anything called follows the eabi, so
+// no registers need to be saved apart from what the compiler already does
+#define regsafe_call(addr)                         \
+  ((void (*)(void))addr)();
 #endif
 
 
@@ -299,6 +383,13 @@ __extension__                                      \
  * Loops for the specified count; for a 1 millisecond delay on the
  * current system, use the value in the global 'loopcount_1_msec'.
  */
+#ifdef __arm__
+    #define delay_loop(count) __extension__ \
+    ({                                      \
+        ULONG _count = (count);             \
+        while(_count) {_count--;}           \
+    })
+#else
 #define delay_loop(count)                   \
   __extension__                             \
   ({ULONG _count = (count);                 \
@@ -311,5 +402,6 @@ __extension__                                      \
     : "cc", "memory"    /* clobbered */     \
     );                                      \
   })
+#endif
 
 #endif /* ASM_H */

@@ -117,6 +117,17 @@ static const SPECNAME specname_table[] =
  */
 typedef struct
 {
+#ifdef __arm__
+    union {
+        long  (*p0)(void);
+        long  (*p1)(long);
+        long  (*p2)(long, long);
+        long  (*p3)(long, long, long);
+        long  (*p4)(long, long, long, long);
+    } fncall;
+    UBYTE stdio_typ;    /* Standard I/O channel (highest bit must be set, too) */
+    UBYTE nparms;       /* Number of parameters */
+#else
     union {
         long  (*v)(void);
         long  (*w)(short);
@@ -128,6 +139,7 @@ typedef struct
     } fncall;
     UBYTE stdio_typ;    /* Standard I/O channel (highest bit must be set, too) */
     UBYTE wparms;       /* Size of parameters in WORDs */
+#endif
 } FND;
 
 
@@ -137,12 +149,18 @@ typedef struct
  * Each entry is for an FND structure. NI is used
  * as the address for functions not implemented.
  */
+
 static const FND funcs[] =
 {
 #define F(x) { (PFLONG)(x) }
 #define NI F(ni)
+#ifdef __arm__
+#   define W_N(w, n) (n)
+#else
+#   define W_N(w, n) (w)
+#endif
 
-     { F(x0term), 0, 0 },       /* 0x00 */
+     { F(x0term), 0, W_N(0,0) },       /* 0x00 */
 
     /*
      * console functions
@@ -151,17 +169,17 @@ static const FND funcs[] =
      * 0x80 is std in, 0x81 is stdout, 0x82 is stdaux, 0x83 stdprn
      */
 
-    { F(xconin),   0x80, 0 },   /* 0x01 */
-    { F(xconout),  0x81, 1 },   /* 0x02 */
-    { F(xauxin),   0x82, 0 },   /* 0x03 */
-    { F(xauxout),  0x82, 1 },   /* 0x04 */
-    { F(xprtout),  0x83, 1 },   /* 0x05 */
-    { F(xrawio),   0,    1 },   /* 0x06 */
-    { F(xrawcin),  0x80, 0 },   /* 0x07 */
-    { F(xnecin),   0x80, 0 },   /* 0x08 */
-    { F(xconws),   0x81, 2 },   /* 0x09 */
-    { F(xconrs),   0x80, 2 },   /* 0x0A */
-    { F(xconstat), 0x80, 0 },   /* 0x0B */
+    { F(xconin),   0x80, W_N(0,0) },   /* 0x01 */
+    { F(xconout),  0x81, W_N(1,1) },   /* 0x02 */
+    { F(xauxin),   0x82, W_N(0,0) },   /* 0x03 */
+    { F(xauxout),  0x82, W_N(1,1) },   /* 0x04 */
+    { F(xprtout),  0x83, W_N(1,1) },   /* 0x05 */
+    { F(xrawio),   0,    W_N(1,1) },   /* 0x06 */
+    { F(xrawcin),  0x80, W_N(0,0) },   /* 0x07 */
+    { F(xnecin),   0x80, W_N(0,0) },   /* 0x08 */
+    { F(xconws),   0x81, W_N(2,1) },   /* 0x09 */
+    { F(xconrs),   0x80, W_N(2,1) },   /* 0x0A */
+    { F(xconstat), 0x80, W_N(0,0) },   /* 0x0B */
 
     /*
      * disk functions
@@ -174,7 +192,7 @@ static const FND funcs[] =
     { NI, 0, 0 },
     { NI, 0, 0 },
 
-    { F(xsetdrv),  0, 1 },      /* 0x0E */
+    { F(xsetdrv),  0, W_N(1,1) },      /* 0x0E */
 
     { NI, 0, 0 },
 
@@ -184,23 +202,23 @@ static const FND funcs[] =
      * Here the 0x80 flag indicates std file used, as above
      */
 
-    { F(xconostat), 0x81, 0 },  /* 0x10 */
-    { F(xprtostat), 0x83, 0 },  /* 0x11 */
-    { F(xauxistat), 0x82, 0 },  /* 0x12 */
-    { F(xauxostat), 0x82, 0 },  /* 0x13 */
+    { F(xconostat), 0x81, W_N(0,0) },  /* 0x10 */
+    { F(xprtostat), 0x83, W_N(0,0) },  /* 0x11 */
+    { F(xauxistat), 0x82, W_N(0,0) },  /* 0x12 */
+    { F(xauxostat), 0x82, W_N(0,0) },  /* 0x13 */
 
 #if CONF_WITH_ALT_RAM
-    { F(xmaddalt),  0, 4 },     /* 0x14 */
+    { F(xmaddalt),  0, W_N(4,2) },     /* 0x14 */
 #else
     { NI, 0, 0 },               /* 0x14 */
 #endif
-    { F(srealloc),  0, 2 },     /* 0x15 */
+    { F(srealloc),  0, W_N(2,1) },     /* 0x15 */
     { NI, 0, 0 },
     { NI, 0, 0 },
     { NI, 0, 0 },
 
-    { F(xgetdrv),  0, 0 },      /* 0x19 */
-    { F(xsetdta),  0, 2 },      /* 0x1A */
+    { F(xgetdrv),  0, W_N(0,0) },      /* 0x19 */
+    { F(xsetdta),  0, W_N(2,1) },      /* 0x1A */
 
     { NI, 0, 0 },
     { NI, 0, 0 },
@@ -221,52 +239,52 @@ static const FND funcs[] =
     { NI, 0, 0 },
     { NI, 0, 0 },
 
-    { F(xgetdate), 0, 0 },      /* 0x2A */
-    { F(xsetdate), 0, 1 },      /* 0x2B */
-    { F(xgettime), 0, 0 },      /* 0x2C */
-    { F(xsettime), 0, 1 },      /* 0x2D */
+    { F(xgetdate), 0, W_N(0,0) },      /* 0x2A */
+    { F(xsetdate), 0, W_N(1,1) },      /* 0x2B */
+    { F(xgettime), 0, W_N(0,0) },      /* 0x2C */
+    { F(xsettime), 0, W_N(1,1) },      /* 0x2D */
 
     { NI, 0, 0 },
 
-    { F(xgetdta),  0, 0 },      /* 0x2F */
-    { F(xgetver),  0, 0 },      /* 0x30 */
-    { F(xtermres), 0, 3 },      /* 0x31 */
+    { F(xgetdta),  0, W_N(0,0) },      /* 0x2F */
+    { F(xgetver),  0, W_N(0,0) },      /* 0x30 */
+    { F(xtermres), 0, W_N(3,2) },      /* 0x31 */
 
     { NI, 0, 0 },
     { NI, 0, 0 },
     { NI, 0, 0 },
     { NI, 0, 0 },
 
-    { F(xgetfree), 0, 3 },      /* 0x36 */
+    { F(xgetfree), 0, W_N(3,2) },      /* 0x36 */
 
     { NI, 0, 0 },
     { NI, 0, 0 },
 
-    { F(xmkdir),   0, 2 },      /* 0x39 */
-    { F(xrmdir),   0, 2 },      /* 0x3A */
-    { F(xchdir),   0, 2 },      /* 0x3B */
-    { F(xcreat),   0, 3 },      /* 0x3C */
-    { F(xopen),    0, 3 },      /* 0x3D */
-    { F(xclose),   0, 1 },      /* 0x3E - will handle its own redirection */
-    { F(xread),    0x82, 5 },   /* 0x3F */
-    { F(xwrite),   0x82, 5 },   /* 0x40 */
-    { F(xunlink),  0, 2 },      /* 0x41 */
-    { F(xlseek),   0x81, 4 },   /* 0x42 */
-    { F(xchmod),   0, 4 },      /* 0x43 */
-    { F(xmxalloc), 0, 3 },      /* 0x44 */
-    { F(xdup),     0, 1 },      /* 0x45 */
-    { F(xforce),   0, 2 },      /* 0x46 */
-    { F(xgetdir),  0, 3 },      /* 0x47 */
-    { F(xmalloc),  0, 2 },      /* 0x48 */
-    { F(xmfree),   0, 2 },      /* 0x49 */
-    { F(xsetblk),  0, 5 },      /* 0x4A */
-    { F(xexec),    0, 7 },      /* 0x4B */
-    { F(xterm),    0, 1 },      /* 0x4C */
+    { F(xmkdir),   0, W_N(2,1) },      /* 0x39 */
+    { F(xrmdir),   0, W_N(2,1) },      /* 0x3A */
+    { F(xchdir),   0, W_N(2,1) },      /* 0x3B */
+    { F(xcreat),   0, W_N(3,2) },      /* 0x3C */
+    { F(xopen),    0, W_N(3,2) },      /* 0x3D */
+    { F(xclose),   0, W_N(1,1) },      /* 0x3E - will handle its own redirection */
+    { F(xread),    0x82, W_N(5,3) },   /* 0x3F */
+    { F(xwrite),   0x82, W_N(5,3) },   /* 0x40 */
+    { F(xunlink),  0, W_N(2,1) },      /* 0x41 */
+    { F(xlseek),   0x81, W_N(4,3) },   /* 0x42 */
+    { F(xchmod),   0, W_N(4,3) },      /* 0x43 */
+    { F(xmxalloc), 0, W_N(3,2) },      /* 0x44 */
+    { F(xdup),     0, W_N(1,1) },      /* 0x45 */
+    { F(xforce),   0, W_N(2,2) },      /* 0x46 */
+    { F(xgetdir),  0, W_N(3,2) },      /* 0x47 */
+    { F(xmalloc),  0, W_N(2,1) },      /* 0x48 */
+    { F(xmfree),   0, W_N(2,1) },      /* 0x49 */
+    { F(xsetblk),  0, W_N(5,3) },      /* 0x4A */
+    { F(xexec),    0, W_N(7,4) },      /* 0x4B */
+    { F(xterm),    0, W_N(1,1) },      /* 0x4C */
 
     { NI, 0, 0 },
 
-    { F(xsfirst),  0, 3 },      /* 0x4E */
-    { F(xsnext),   0, 0 },      /* 0x4F */
+    { F(xsfirst),  0, W_N(3,2) },      /* 0x4E */
+    { F(xsnext),   0, W_N(0,0) },      /* 0x4F */
 
     { NI, 0, 0 },               /* 0x50 */
     { NI, 0, 0 },
@@ -275,10 +293,11 @@ static const FND funcs[] =
     { NI, 0, 0 },
     { NI, 0, 0 },
 
-    { F(xrename),  0, 5 },      /* 0x56 */
-    { F(xgsdtof),  0, 4 }       /* 0x57 */
+    { F(xrename),  0, W_N(5,3) },      /* 0x56 */
+    { F(xgsdtof),  0, W_N(4,3) }       /* 0x57 */
 #undef F
 #undef NI
+#undef W_N
 };
 #define MAX_FNCALL (ARRAY_SIZE(funcs) - 1)
 
@@ -396,7 +415,11 @@ static void offree(DMD *d)
 /*
  *  osif -
  */
+#ifdef __arm__
+long osif(LONG *pw)
+#else
 long osif(short *pw)
+#endif
 {
     char **pb, *pb2, *p, ctmp;
     BPB *b;
@@ -635,6 +658,32 @@ restrt:
 
     if (!rc)
     {
+#ifdef __arm__
+        switch(f->nparms)
+        {
+        case 0:
+            rc = (*f->fncall.p0)();
+            break;
+
+        case 1:
+            rc = (*f->fncall.p1)(pw[1]);
+            break;
+
+        case 2:
+            rc = (*f->fncall.p2)(pw[1],pw[2]);
+            break;
+
+        case 3:
+            rc = (*f->fncall.p3)(pw[1],pw[2],pw[3]);
+            break;
+
+        case 4:
+            rc = (*f->fncall.p4)(pw[1],pw[2],pw[3],pw[4]);
+            break;
+        default:
+            rc = EINTRN;    /* Internal error */
+        }
+#else
         switch(f->wparms)
         {
         case 0:
@@ -668,6 +717,7 @@ restrt:
         default:
             rc = EINTRN;    /* Internal error */
         }
+#endif
     }
 
     KDEBUG(("BDOS returns: 0x%08lx\n",rc));

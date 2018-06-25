@@ -570,11 +570,14 @@ void dopanic(const char *fmt, ...)
     }
 
     /* allow interrupts so we get keypresses */
+#ifndef __arm__
 #if CONF_WITH_ATARI_VIDEO
     set_sr(0x2300);
 #else
     set_sr(0x2000);
 #endif
+#endif
+
     while(bconstat2())      /* eat any pending ones */
         bconin2();
     cprintf(_("\n*** Press any key to continue ***"));

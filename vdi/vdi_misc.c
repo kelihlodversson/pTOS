@@ -110,17 +110,19 @@ static void tick_int(int u)
  */
 void vdi_vex_timv(Vwk * vwk)
 {
-    WORD old_sr;
+    //WORD old_sr;
     LONG * pointer;
 
     pointer = (LONG*) &CONTRL[9];
 
-    old_sr = set_sr(0x2700);
+    disable_interrupts();
+//    old_sr = set_sr(0x2700);
 
     *pointer = (LONG) tim_addr;
     tim_addr = (void (*)(int)) *--pointer;
 
-    set_sr(old_sr);
+    enable_interrupts();
+//    set_sr(old_sr);
 
     INTOUT[0] = (WORD)Tickcal();        /* ms between timer C calls */
     CONTRL[4] = 1;
@@ -147,17 +149,19 @@ static void do_nothing_int(int u)
 
 void timer_init(void)
 {
-    WORD old_sr;
+//    WORD old_sr;
 
     in_proc = 0;                        /* no vblanks in process */
 
     /* Now initialize the lower level things */
     tim_addr = do_nothing_int;          /* tick points to rts */
 
-    old_sr = set_sr(0x2700);            /* disable interrupts */
+    disable_interrupts();
+//    old_sr = set_sr(0x2700);            /* disable interrupts */
     tim_chain = (void(*)(int))          /* save old vector */
     Setexc(0x100, (long)tick_int);      /* set etv_timer to tick_int */
-    set_sr(old_sr);                     /* enable interrupts */
+    //set_sr(old_sr);                     /* enable interrupts */
+    enable_interrupts();
 
 }
 
@@ -171,11 +175,13 @@ void timer_init(void)
 
 void timer_exit(void)
 {
-    WORD old_sr;
+//    WORD old_sr;
 
-    old_sr = set_sr(0x2700);            /* disable interrupts */
+    disable_interrupts();
+//    old_sr = set_sr(0x2700);            /* disable interrupts */
     Setexc(0x100, (long)tim_chain);     /* set etv_timer to tick_int */
-    set_sr(old_sr);                     /* enable interrupts */
+    enable_interrupts();
+//    set_sr(old_sr);                     /* enable interrupts */
 }
 
 

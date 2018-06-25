@@ -114,6 +114,12 @@ NODEP := %.c %.h %.pot
 # compilation flags
 #
 
+ifdef RPI
+# Raspberry PI is always ELF
+ELF = 1
+TOOLCHAIN_PREFIX = arm-none-eabi-
+TOOLCHAIN_CFLAGS = -fleading-underscore -fno-reorder-functions -DELF_TOOLCHAIN
+else # Not Raspberry PI
 # Override with 1 to use the ELF toolchain instead of the MiNT one
 ELF = 0
 
@@ -125,6 +131,7 @@ else
 # MiNT toolchain
 TOOLCHAIN_PREFIX = m68k-atari-mint-
 TOOLCHAIN_CFLAGS =
+endif
 endif
 
 # indent flags
@@ -139,8 +146,27 @@ PCREL_LDFLAGS = -Wl,--oformat=binary,-Ttext=0,--entry=0
 # C compiler
 CC = $(TOOLCHAIN_PREFIX)gcc
 CPP = $(CC) -E
+
+ifndef RPI
 CPUFLAGS = -m68000
 MULTILIBFLAGS = $(CPUFLAGS) -mshort
+else
+
+ifeq (1,$(RPI))
+CPUFLAGS = -march=armv6k -mtune=arm1176jzf-s -marm -mfpu=vfp -mfloat-abi=hard
+IMG_RPI = kernel.img
+else ifeq (2,$(RPI))
+CPUFLAGS = -march=armv7-a -marm -mfpu=neon-vfpv4 -mfloat-abi=hard
+IMG_RPI = kernel7.img
+else ifeq (3,$(RPI))
+CPUFLAGS = -march=armv8-a -mtune=cortex-a53 -marm -mfpu=neon-fp-armv8 -mfloat-abi=hard
+IMG_RPI = kernel8-32.img
+else
+$(error Unknown Raspberry PI version $(RPI). Use only 1,2 or 3)
+endif
+
+MULTILIBFLAGS = $(CPUFLAGS) -fsigned-char -g
+endif
 INC = -Iinclude
 OTHERFLAGS = -fomit-frame-pointer -fno-common
 
@@ -181,12 +207,28 @@ NATIVECC = gcc -ansi -pedantic $(WARNFLAGS) -W $(BUILD_TOOLS_OPTFLAGS)
 #
 
 # The source below must be the first to be linked
-bios_src = startup.S
+bios_src =
+ifdef RPI
+bios_src += startup_rpi.S
+else
+bios_src += startup.S
+endif
+
 
 # These sources will be placed in ST-RAM by the linked script
 bios_src += lowstram.c
 
 # Other BIOS sources can be put in any order
+ifdef RPI
+bios_src +=  memory_rpi.S processor_rpi.S vectors_rpi.S aciaemu_rpi.c bios.c xbios.c acsi.c \
+             biosmem.c blkdev.c chardev.c clock.c conout.c cookie.c country.c \
+             disk.c dma.c dmasound.c floppy.c font.c ide.c ikbd.c initinfo.c \
+             kprint.c lineainit.c lineavars.S machine.c \
+             mfp.c midi.c mouse.c nvram.c panicasm_rpi.S \
+             parport.c screen.c serport.c sound.c videl.c vt52.c xhdi.c \
+             delay.c sd.c memory2.c bootparams.c raspi_uart.c raspi_int.c \
+			 raspi_mbox.c raspi_screen.c
+else
 bios_src +=  memory.S processor.S vectors.S aciavecs.S bios.c xbios.c acsi.c \
              biosmem.c blkdev.c chardev.c clock.c conout.c cookie.c country.c \
              disk.c dma.c dmasound.c floppy.c font.c ide.c ikbd.c initinfo.c \
@@ -196,7 +238,7 @@ bios_src +=  memory.S processor.S vectors.S aciavecs.S bios.c xbios.c acsi.c \
              pmmu030.c 68040_pmmu.S \
              amiga.c amiga2.S aros.c aros2.S \
              delay.c delayasm.S sd.c memory2.c bootparams.c scsi.c nova.c
-
+endif
 ifeq (1,$(COLDFIRE))
   bios_src += coldfire.c coldfire2.S spi.c
 endif
@@ -207,43 +249,75 @@ endif
 
 bdos_src = bdosmain.c console.c fsbuf.c fsdir.c fsdrive.c fsfat.c fsglob.c \
            fshand.c fsio.c fsmain.c fsopnclo.c iumem.c kpgmld.c osmem.c \
-           proc.c rwa.S time.c umem.c
+           proc.c time.c umem.c
+ifdef RPI
+bdos_src += rwa_rpi.S
+else
+bdos_src += rwa.S
+endif
 
 #
 # source code in util/
 #
-
+ifdef RPI
+util_src = doprintf.c intmath.c langs.c memmove_c.c nls.c string.c miscasm_rpi.S \
+           setjmp_rpi.S
+else
 util_src = doprintf.c intmath.c langs.c memmove.S memset.S miscasm.S \
            nls.c nlsasm.S setjmp.S string.c stringasm.S
-
+endif
 # The functions in the following modules are used by the AES and EmuDesk
 ifeq ($(WITH_AES),1)
-util_src += gemdos.c optimize.c optimopt.S rectfunc.c
+util_src += gemdos.c optimize.c rectfunc.c
+ifndef RPI
+util_src += optimopt.S
+endif
 endif
 
 #
 # source code in vdi/
 #
+vdi_src =
 
-vdi_src = vdi_asm.S vdi_bezier.c vdi_col.c vdi_control.c vdi_esc.c \
-          vdi_fill.c vdi_gdp.c vdi_input.c vdi_line.c vdi_main.c \
-          vdi_marker.c vdi_misc.c vdi_mouse.c vdi_raster.c vdi_text.c \
-          vdi_textblit.c
+ifdef RPI
+vdi_src += vdi_rpi.c vdi_textblit_rpi.c
+else
+vdi_src += vdi_asm.S vdi_textblit.c
+endif
+
+vdi_src += vdi_bezier.c vdi_col.c vdi_control.c vdi_esc.c \
+           vdi_fill.c vdi_gdp.c vdi_input.c vdi_line.c vdi_main.c \
+           vdi_marker.c vdi_misc.c vdi_mouse.c vdi_raster.c vdi_text.c
+
+
+
 
 ifeq (1,$(COLDFIRE))
 vdi_src += vdi_tblit_cf.S
 else
+ifdef RPI
+#vdi_src += vdi_blit_rpi.c
+else
 vdi_src += vdi_blit.S vdi_tblit.S
 endif
+endif
 
-# The source below must be the last VDI one
+# The source below must be the last VDI one (doesn't contain any asm instructions, so safe for both arm and 68k)
 vdi_src += endvdi.S
 
 #
 # source code in aes/
 #
 
-aes_src = gemasm.S gemstart.S gemdosif.S gemaplib.c gemasync.c gemctrl.c \
+aes_src =
+
+ifdef RPI
+aes_src += gemasm_rpi.S gemstart_rpi.S gemdosif_rpi.S gemdosifc_rpi.c
+else
+aes_src += gemasm.S gemstart.S gemdosif.S
+endif
+
+aes_src += gemaplib.c gemasync.c gemctrl.c \
           gemdisp.c gemevlib.c gemflag.c gemfmalt.c gemfmlib.c \
           gemfslib.c gemgraf.c gemgrlib.c gemgsxif.c geminit.c geminput.c \
           gemmnlib.c gemobed.c gemobjop.c gemoblib.c gempd.c gemqueue.c \
@@ -254,7 +328,15 @@ aes_src = gemasm.S gemstart.S gemdosif.S gemaplib.c gemasync.c gemctrl.c \
 # source code in desk/
 #
 
-desk_src = deskstart.S deskmain.c gembind.c deskact.c deskapp.c deskdir.c \
+desk_src =
+
+ifdef RPI
+desk_src += deskstart_rpi.S
+else
+desk_src += deskstart.S
+endif
+
+desk_src += deskmain.c gembind.c deskact.c deskapp.c deskdir.c \
            deskfpd.c deskfun.c deskglob.c deskinf.c deskins.c deskobj.c \
            deskpro.c deskrez.c deskrsrc.c desksupp.c deskwin.c \
            desk_rsc.c icons.c
@@ -392,7 +474,7 @@ help:
 	@echo "bugready set up files in preparation for 'bug update'"
 	@echo "gitready same as $(MAKE) expand crlf"
 	@echo "depend  creates dependancy file (makefile.dep)"
-	@echo "dsm     dsm.txt, an edited disassembly of emutos.img"
+	@echo "dsm     dsm.txt, an edited disassembly of MG"
 	@echo "*.dsm   disassembly of any .c or almost any .img file"
 	@echo "release build the release archives into $(RELEASE_DIR)"
 
@@ -416,10 +498,15 @@ obj/emutospp.ld: emutos.ld include/config.h tosvars.ld
 # one generic target to deal with all edited disassembly.
 #
 
-TOCLEAN += *.img *.map
+TOCLEAN += *.img *.map *.elf
+ifdef RPI
+	EMUTOS_IMG = emutos.elf
+else
+	EMUTOS_IMG = emutos.img
+endif
 
-emutos.img: $(OBJECTS) obj/emutospp.ld Makefile
-	$(LD) $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(LIBS) $(LDFLAGS) -Wl,-Map=emutos.map -o emutos.img
+$(EMUTOS_IMG): $(OBJECTS) obj/emutospp.ld Makefile
+	$(LD) $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(LIBS) $(LDFLAGS) -Wl,-Map=emutos.map -o $(EMUTOS_IMG)
 	@if [ $$(($$(awk '/^\.data /{print $$3}' emutos.map))) -gt 0 ]; then \
 	  echo "### Warning: The DATA segment is not empty."; \
 	  echo "### Please examine emutos.map and use \"const\" where appropriate."; \
@@ -437,7 +524,7 @@ emutos.img: $(OBJECTS) obj/emutospp.ld Makefile
 ROM_128 = etos128k.img
 
 $(ROM_128): ROMSIZE = 128
-$(ROM_128): emutos.img mkrom
+$(ROM_128): $(EMUTOS_IMG) mkrom
 	./mkrom pad $(ROMSIZE)k $< $(ROM_128)
 
 #
@@ -458,7 +545,7 @@ NODEP += 192
 	echo "# RAM used: $$(($$MEMBOT)) bytes ($$(($$MEMBOT - $(MEMBOT_TOS102))) bytes more than TOS 1.02)"
 
 $(ROM_192): ROMSIZE = 192
-$(ROM_192): emutos.img mkrom
+$(ROM_192): $(EMUTOS_IMG) mkrom
 	./mkrom pad $(ROMSIZE)k $< $(ROM_192)
 
 #
@@ -478,7 +565,7 @@ NODEP += 256
 	echo "# RAM used: $$(($$MEMBOT)) bytes ($$(($$MEMBOT - $(MEMBOT_TOS162))) bytes more than TOS 1.62)"
 
 $(ROM_256): ROMSIZE = 256
-$(ROM_256): emutos.img mkrom
+$(ROM_256): $(EMUTOS_IMG) mkrom
 	./mkrom pad $(ROMSIZE)k $< $(ROM_256)
 
 #
@@ -495,7 +582,7 @@ SYMFILE = $(addsuffix .sym,$(basename $(ROM_512)))
 	echo "# RAM used: $$(($$MEMBOT)) bytes ($$(($$MEMBOT - $(MEMBOT_TOS404))) bytes more than TOS 4.04)"
 
 $(ROM_512): ROMSIZE = 512
-$(ROM_512): emutos.img mkrom
+$(ROM_512): $(EMUTOS_IMG) mkrom
 	./mkrom pad $(ROMSIZE)k $< $(ROM_512)
 
 .PHONY: falcon
@@ -532,7 +619,7 @@ cart: WITH_AES = 0
 cart:
 	@echo "# Building Diagnostic Cartridge EmuTOS into $(ROM_CARTRIDGE)"
 	$(MAKE) OPTFLAGS=$(OPTFLAGS) DEF='$(DEF)' UNIQUE=$(COUNTRY) WITH_AES=$(WITH_AES) ROM_128=$(ROM_CARTRIDGE) $(ROM_CARTRIDGE)
-	./mkrom stc emutos.img emutos.stc
+	./mkrom stc $(EMUTOS_IMG) emutos.stc
 	@MEMBOT=$(call SHELL_SYMADDR,__end_os_stram,emutos.map);\
 	echo "# RAM used: $$(($$MEMBOT)) bytes ($$(($$MEMBOT - $(MEMBOT_TOS102))) bytes more than TOS 1.02)"
 
@@ -562,7 +649,7 @@ amiga:
 	@MEMBOT=$(call SHELL_SYMADDR,__end_os_stram,emutos.map);\
 	echo "# RAM used: $$(($$MEMBOT)) bytes ($$(($$MEMBOT - $(MEMBOT_TOS162))) bytes more than TOS 1.62)"
 
-$(ROM_AMIGA): emutos.img mkrom
+$(ROM_AMIGA): $(EMUTOS_IMG) mkrom
 	./mkrom amiga $< $(ROM_AMIGA)
 
 # Special Amiga ROM optimized for Vampire V2
@@ -592,6 +679,50 @@ amigakd: amiga
 	./mkrom amiga-kickdisk $(ROM_AMIGA) $(AMIGA_KICKDISK)
 
 #
+# Raspberry PI kernel images
+#
+
+RPI_DEFS =
+
+.PHONY: rpi1
+NODEP += rpi1
+rpi1: UNIQUE = $(COUNTRY)
+rpi1: IMG_RPI = kernel.img
+rpi1: OPTFLAGS = -O2
+rpi1: override DEF += -DTARGET_RPI1 $(RPI_DEFS)
+rpi1:
+	@echo "# Building Raspberry Pi 1 (and zero) EmuTOS into $(IMG_RPI)"
+	$(MAKE) RPI=1 WITH_CLI=0  DEF='$(DEF)' OPTFLAGS=$(OPTFLAGS) UNIQUE=$(UNIQUE) IMG_RPI=$(IMG_RPI) $(IMG_RPI)
+	@MEMBOT=$(call SHELL_SYMADDR,__end_os_stram,emutos.map);\
+	echo "# RAM used: $$(($$MEMBOT)) bytes ($$(($$MEMBOT - $(MEMBOT_TOS162))) bytes more than TOS 1.62)"
+
+.PHONY: rpi2
+NODEP += rpi2
+rpi2: UNIQUE = $(COUNTRY)
+rpi2: IMG_RPI = kernel7.img
+rpi2: override DEF += -DTARGET_RPI2 $(RPI_DEFS)
+rpi2: OPTFLAGS =
+rpi2:
+	@echo "# Building Raspberry Pi 2 EmuTOS into $(IMG_RPI)"
+	$(MAKE) RPI=2 WITH_CLI=0 DEF='$(DEF)' OPTFLAGS=$(OPTFLAGS) UNIQUE=$(UNIQUE) IMG_RPI=$(IMG_RPI) $(IMG_RPI)
+	@MEMBOT=$(call SHELL_SYMADDR,__end_os_stram,emutos.map);\
+	echo "# RAM used: $$(($$MEMBOT)) bytes ($$(($$MEMBOT - $(MEMBOT_TOS162))) bytes more than TOS 1.62)"
+
+.PHONY: rpi3
+NODEP += rpi3
+rpi3: UNIQUE = $(COUNTRY)
+rpi3: IMG_RPI = kernel8-32.img
+rpi3: override DEF += -DTARGET_RPI3 $(RPI_DEFS)
+rpi3:
+	@echo "# Building Raspberry Pi 3 EmuTOS into $(IMG_RPI)"
+	$(MAKE) RPI=3 WITH_CLI=0 DEF='$(DEF)' OPTFLAGS=$(OPTFLAGS) UNIQUE=$(UNIQUE) IMG_RPI=$(IMG_RPI) $(IMG_RPI)
+	@MEMBOT=$(call SHELL_SYMADDR,__end_os_stram,emutos.map);\
+	echo "# RAM used: $$(($$MEMBOT)) bytes ($$(($$MEMBOT - $(MEMBOT_TOS162))) bytes more than TOS 1.62)"
+
+$(IMG_RPI): $(EMUTOS_IMG)
+	$(OBJCOPY) $< -O binary $(IMG_RPI)
+
+#
 # ColdFire images
 #
 
@@ -599,7 +730,7 @@ TOCLEAN += *.s19
 SRECFILE = emutos.s19
 LMA = $(error LMA must be set)
 
-$(SRECFILE): emutos.img
+$(SRECFILE): $(EMUTOS_IMG)
 	$(OBJCOPY) -I binary -O srec --change-addresses $(LMA) $< $(SRECFILE)
 
 CPUFLAGS_FIREBEE = -mcpu=5474
@@ -661,10 +792,10 @@ m548x-bas:
 
 #
 # Special variants of EmuTOS running in RAM instead of ROM.
-# In this case, emutos.img needs to be loaded into RAM by some loader.
+# In this case, $(EMUTOS_IMG) needs to be loaded into RAM by some loader.
 #
 
-obj/ramtos.h: emutos.img
+obj/ramtos.h: $(EMUTOS_IMG)
 	@echo '# Generating $@'
 	@printf \
 '/* Generated from emutos.map */\n'\
@@ -686,7 +817,7 @@ prg: $(EMUTOS_PRG)
 
 obj/boot.o: obj/ramtos.h
 # incbin dependencies are not automatically detected
-obj/ramtos.o: emutos.img
+obj/ramtos.o: $(EMUTOS_IMG)
 
 $(EMUTOS_PRG): override DEF += -DTARGET_PRG
 $(EMUTOS_PRG): OPTFLAGS = $(SMALL_OPTFLAGS)
@@ -710,8 +841,8 @@ flop:
 
 $(EMUTOS_ST): override DEF += -DTARGET_FLOPPY
 $(EMUTOS_ST): OPTFLAGS = $(SMALL_OPTFLAGS)
-$(EMUTOS_ST): mkflop bootsect.img emutos.img
-	./mkflop bootsect.img emutos.img $@
+$(EMUTOS_ST): mkflop bootsect.img $(EMUTOS_IMG)
+	./mkflop bootsect.img $(EMUTOS_IMG) $@
 
 bootsect.img : obj/bootsect.o obj/bootram.o
 	$(LD) $+ $(PCREL_LDFLAGS) -o $@
@@ -754,8 +885,8 @@ amigaflopwinuae: override DEF += -DSTATIC_ALT_RAM_ADDRESS=0x40000000 $(AMIGA_DEF
 amigaflopwinuae: CPUFLAGS = -m68040
 amigaflopwinuae: amigaflop
 
-$(EMUTOS_ADF): amigaboot.img emutos.img mkrom
-	./mkrom amiga-floppy amigaboot.img emutos.img $@
+$(EMUTOS_ADF): amigaboot.img $(EMUTOS_IMG) mkrom
+	./mkrom amiga-floppy amigaboot.img $(EMUTOS_IMG) $@
 
 amigaboot.img: obj/amigaboot.o obj/bootram.o
 	$(LD) $+ $(PCREL_LDFLAGS) -o $@
@@ -922,7 +1053,7 @@ TOCLEAN += */*.tr.c
 
 ifneq (,$(UNIQUE))
 ifneq (us,$(ETOSLANG))
-emutos.img: $(TRANS_SRC)
+$(EMUTOS_IMG): $(TRANS_SRC)
 
 %.tr.c : %.c po/$(ETOSLANG).po bug po/LINGUAS obj/country
 	./bug translate $(ETOSLANG) $<
@@ -1034,6 +1165,11 @@ obj/%.o : %.S
 %.dsm : %.c
 	$(CC) $(CFILE_FLAGS) -S $< -o $@
 
+GEN_SRC += aes/asm_struct_gen.h
+
+aes/asm_struct_gen.h: aes/gen_asm_defines.c
+	$(CC) $(CFILE_FLAGS) -S $< -o - | grep '^#define' > $@
+
 #
 # version string
 #
@@ -1087,7 +1223,7 @@ show: dsm.txt
 
 TOCLEAN += *.sym
 
-%.sym: emutos.img tools/map2sym.sh
+%.sym: $(EMUTOS_IMG) tools/map2sym.sh
 	$(SHELL) tools/map2sym.sh emutos.map >$@
 
 #

@@ -28,7 +28,7 @@
 /*
  * Determine if this EmuTOS is built for ROM or RAM.
  */
-#if defined(TARGET_PRG) || defined(TARGET_FLOPPY) || defined(TARGET_AMIGA_FLOPPY)
+#if defined(TARGET_PRG) || defined(TARGET_FLOPPY) || defined(TARGET_AMIGA_FLOPPY) || defined(TARGET_RPI1) || defined(TARGET_RPI2) || defined(TARGET_RPI3)
 #  define EMUTOS_LIVES_IN_RAM 1
 # else
 #  define EMUTOS_LIVES_IN_RAM 0
@@ -418,6 +418,42 @@
 # endif
 #endif
 
+#if defined(TARGET_RPI1) ||defined(TARGET_RPI2) ||defined(TARGET_RPI3)
+# define MACHINE_RPI
+#endif
+
+#ifdef MACHINE_RPI
+# ifndef CONF_ATARI_HARDWARE
+#  define CONF_ATARI_HARDWARE 0
+# endif
+# ifndef CONF_WITH_IDE
+#  define CONF_WITH_IDE 0
+# endif
+# ifndef CONF_WITH_UAE
+#  define CONF_WITH_UAE 0
+# endif
+# ifndef CONF_WITH_AROS
+#  define CONF_WITH_AROS 0
+# endif
+# ifndef CONF_WITH_LINEA
+#  define CONF_WITH_LINEA 0
+# endif
+# ifndef CONF_WITH_BOOT_SECTOR
+#  define CONF_WITH_BOOT_SECTOR 0
+# endif
+# ifndef CONF_WITH_XHDI
+#  define CONF_WITH_XHDI 0
+# endif
+# ifndef CONF_WITH_RASPI_UART0
+#  define CONF_WITH_RASPI_UART0 1
+# endif
+# ifndef CONF_RASPI_TIMER_C
+#  define CONF_RASPI_TIMER_C 1
+# endif
+# ifndef ALWAYS_SHOW_INITINFO
+#  define ALWAYS_SHOW_INITINFO 1
+# endif
+#endif
 /*
  * By default, EmuTOS is built for Atari ST/TT/Falcon compatible hardware.
  */
@@ -604,7 +640,7 @@
  * Set CONF_WITH_ADVANCED_CPU to 1 to enable support for 68010-68060
  */
 #ifndef CONF_WITH_ADVANCED_CPU
-# ifdef __mcoldfire__
+# if defined(__mcoldfire__) || defined(__arm__)
 #  define CONF_WITH_ADVANCED_CPU 0
 # else
 #  define CONF_WITH_ADVANCED_CPU 1
@@ -615,7 +651,7 @@
  * Set CONF_WITH_APOLLO_68080 to 1 to enable support for Apollo 68080 CPU
  */
 #ifndef CONF_WITH_APOLLO_68080
-# ifdef __mcoldfire__
+# if defined(__mcoldfire__) || defined(__arm__)
 #  define CONF_WITH_APOLLO_68080 0
 # else
 #  define CONF_WITH_APOLLO_68080 1
@@ -738,6 +774,14 @@
 #endif
 
 /*
+ * Set CONF_RASPI_TIMER_C to 1 to simulate the Timer C using the
+ * ARM timers.
+ */
+#ifndef CONF_RASPI_TIMER_C
+# define CONF_RASPI_TIMER_C 0
+#endif
+
+/*
  * Set CONF_WITH_COLDFIRE_RS232 to 1 to use the internal ColdFire serial port
  */
 #ifndef CONF_WITH_COLDFIRE_RS232
@@ -746,6 +790,10 @@
 # else
 #  define CONF_WITH_COLDFIRE_RS232 0
 # endif
+#endif
+
+#ifndef CONF_WITH_RASPI_UART0
+# define CONF_WITH_RASPI_UART0 0
 #endif
 
 /*
@@ -1006,6 +1054,11 @@
 # else
 #  define CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF 0
 # endif
+#endif
+
+
+#ifndef CONF_WITH_BOOT_SECTOR
+# define CONF_WITH_BOOT_SECTOR 1
 #endif
 
 /*
@@ -1309,7 +1362,7 @@
  * features provided by the standard "native features" interface.
  */
 #ifndef DETECT_NATIVE_FEATURES
-# ifdef __mcoldfire__
+# if defined(__mcoldfire__) || defined(__arm__)
 #  define DETECT_NATIVE_FEATURES 0 /* Conflict with ColdFire instructions. */
 # else
 #  define DETECT_NATIVE_FEATURES 1
@@ -1410,6 +1463,21 @@
  */
 #ifndef CONF_WITH_BUS_ERROR
 # define CONF_WITH_BUS_ERROR 1
+#endif
+
+/*
+ * Whether the obsolete line-a emulator should be installed or not
+ * (Should be enabled for backwards compatibility on 68k-class hardware.)
+ */
+#ifndef CONF_WITH_LINEA
+# define CONF_WITH_LINEA 1
+#endif
+
+/*
+ * Multicore support for RPI2 and RPI3
+ */
+#ifndef CONF_WITH_MULTI_CORE
+# define CONF_WITH_MULTI_CORE 0
 #endif
 
 /*

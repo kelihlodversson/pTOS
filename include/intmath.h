@@ -46,6 +46,9 @@ WORD max(WORD a, WORD b)
  */
 static __inline__ WORD mul_div(WORD m1, WORD m2, WORD d1)
 {
+#ifdef __arm__
+    return (WORD)(( (long)m1 * (long)m2 ) / d1);
+#else
     __asm__ (
       "muls %1,%0\n\t"
       "divs %2,%0"
@@ -54,4 +57,5 @@ static __inline__ WORD mul_div(WORD m1, WORD m2, WORD d1)
     );
 
     return m1;
+#endif
 }

@@ -65,7 +65,9 @@
 #ifdef MACHINE_FIREBEE
 #include "coldfire.h"
 #endif
-
+#ifdef MACHINE_RPI
+#include "raspi_int.h"
+#endif
 
 
 /*==== Defines ============================================================*/
@@ -161,13 +163,14 @@ static void vecs_init(void)
     VEC_AES = gemtrap;
     VEC_BIOS = biostrap;
     VEC_XBIOS = xbiostrap;
+#if CONF_WITH_LINEA
     VEC_LINEA = int_linea;
-
+#endif
     /* Emulate some instructions unsupported by the processor. */
 #ifdef __mcoldfire__
     /* On ColdFire, all the unsupported assembler instructions
      * will be emulated by a specific emulation layer loaded later. */
-#else
+#elif defined(__m68k__)
     if (longframe) {
         /* On 68010+, "move from sr" called from user mode causes a
          * privilege violation. This instruction must be emulated for
@@ -180,7 +183,7 @@ static void vecs_init(void)
         VEC_ILLEGAL = int_illegal;
     }
 #endif
-#if CONF_WITH_ADVANCED_CPU
+#if CONF_WITH_ADVANCED_CPU && defined(__m68k__)
     /* On the 68060, instructions that were implemented in earlier
      * processors but not in the 68060 cause this trap to be taken,
      * for the purposes of emulation. The only instruction currently
@@ -245,6 +248,10 @@ static void bios_init(void)
     if (mcpu == 40)
         setup_68040_pmmu();
 #endif /* CONF_WITH_68040_PMMU */
+
+#ifdef MACHINE_RPI
+    raspi_interrupt_init();
+#endif
 
     /* Initialize the BIOS memory management */
     KDEBUG(("bmem_init()\n"));
@@ -343,13 +350,16 @@ static void bios_init(void)
      * We need a timer for DMA timeouts in floppy and harddisk initialisation.
      * The VBL processing will be enabled later with the vblsem semaphore.
      */
+#ifdef __arm__
+    cpsr_ie();
+#else
 #if CONF_WITH_ATARI_VIDEO
     /* Keep the HBL disabled */
     set_sr(0x2300);
 #else
     set_sr(0x2000);
 #endif
-
+#endif
     KDEBUG(("calibrate_delay()\n"));
     calibrate_delay();  /* determine values for delay() function */
                         /*  - requires interrupts to be enabled  */
@@ -366,7 +376,7 @@ static void bios_init(void)
     clock_init();       /* init clock */
     KDEBUG(("after clock_init()\n"));
 
-#if CONF_WITH_NOVA 
+#if CONF_WITH_NOVA
     /* Detect and initialize a Nova card, skip if Ctrl is pressed */
     if (has_nova && !(kbshift(-1) & MODE_CTRL)) {
         KDEBUG(("init_nova()\n"));
@@ -670,8 +680,10 @@ void biosmain(void)
 
     KDEBUG(("bootflags = 0x%02x\n", bootflags));
 
+#if CONF_WITH_BOOT_SECTOR
     /* boot eventually from a block device (floppy or harddisk) */
     blkdev_boot();
+#endif
 
     defdrv = bootdev;
     trap1( 0x0e , defdrv );    /* Set boot drive: Dsetdrv(defdrv) */

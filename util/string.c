@@ -16,10 +16,13 @@
  */
 
 #include "config.h"
+#include "portab.h"
 #include <stdarg.h>
 #include "doprintf.h"
 #include "string.h"
+#include "optimopt.h"
 #include "kprint.h"
+#include "portab.h"
 
 
 /* The following functions are either used as inlines in string.h
@@ -207,3 +210,71 @@ int sprintf(char *str, const char *fmt, ...)
 
     return n;
 }
+
+#ifdef __arm__
+
+/*
+ * WORD strlencpy(char *dest, const char *src)
+ * as strcpy but returns the length ot the string instead.
+ */
+short strlencpy(char *dest, const char *src)
+{
+    short len = 0;
+    while(src[len])
+    {
+        *(dest++)=src[len++];
+    }
+    return len;
+}
+
+/*
+ * char *strchr(const char *s, int c)
+ *
+ * returns a pointer to the first occurrence of char c in string s, or NULL.
+ */
+char *strchr(const char *s, int c)
+{
+    while(*s)
+    {
+        if (*s == c)
+            return (char*)s;
+        s++;
+    }
+    return NULL;
+}
+
+/*
+ * char *scasb(char *str, char c)
+ * returns the pointer to the first occurrence of char c in string str,
+ * or the pointer to the ending '\0' of this string.
+ * (see also strchr, which returns NULL instead when the char is not found)
+ *
+ */
+ char *scasb(char *s, char c)
+ {
+     while(*s && *s !=c)
+     {
+         s++;
+     }
+     return s;
+ }
+
+/*
+ *  WORD expand_string(WORD *dest,const UBYTE *src)
+ *
+ *  expand an unsigned byte string to an array of words, returning the
+ *  length of the source string.
+ */
+WORD expand_string(WORD *dest, BYTE *in_src)
+{
+    const BYTE* src = in_src;
+    short c;
+    do {
+        c = (*src++) & 0xFF;
+        *dest++ = c;
+    } while(c);
+
+    return src-in_src-1;
+}
+
+#endif

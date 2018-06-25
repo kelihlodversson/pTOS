@@ -15,6 +15,21 @@
 
 #undef Super
 /* Standard Super() binding */
+#ifdef __arm__
+static __inline__ long Super(void* ptr)
+{
+    register long _r0 __asm__("r0") = (long)ptr;
+    register long _op __asm__("r7") = 0x20;
+    __asm__ volatile
+    (
+        "svc 1"
+        : "=r"(_r0)
+        : "r"(_op), "r"(_r0)
+        : "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
+    );
+    return _r0;
+}
+#else
 #define Super(ptr)                          \
 __extension__                               \
 ({                                          \
@@ -34,6 +49,7 @@ __extension__                               \
     );                                      \
     retvalue;                               \
 })
+#endif
 
 #undef SuperToUser      /* prevent "redefined" warning message */
 /*
@@ -47,6 +63,10 @@ __extension__                               \
  *
  * Binding originally by Vincent Rivière, from MiNTlib's osbind.h
  */
+#ifdef __arm__
+/* Let's start by assuming we don't have this bug on PI */
+#define SuperToUser(ptr) Super(ptr)
+#else
 #define SuperToUser(ptr)                    \
 (void)__extension__                         \
 ({                                          \
@@ -65,5 +85,5 @@ __extension__                               \
     : __CLOBBER_RETURN("d0") "d1", "d2", "a0", "a1", "a2"   \
     );                                      \
 })
-
+#endif
 #endif  /* _SUPER_H */

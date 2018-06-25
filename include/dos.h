@@ -47,4 +47,8 @@
 /* in bdos/bdosmain.c */
 extern void osinit_before_xmaddalt(void);
 extern void osinit_after_xmaddalt(void);
+#ifdef __arm__
+extern long osif(LONG *pw);
+#else
 extern long osif(short *pw);
+#endif

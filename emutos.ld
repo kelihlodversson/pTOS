@@ -14,12 +14,16 @@
  * to allow #include, #define, #if, etc. */
 #include "include/config.h"
 
-/* Create a plain binary file, without any header */
+#if !defined(MACHINE_RPI)
+/* Create a plain binary file, without any header (not possible on ARM) */
 OUTPUT_FORMAT(binary)
+#endif
 
 /* The ROM address depends on the target */
 #if defined (MACHINE_AMIGA)
 # define ROM_ORIGIN 0x00fc0000
+#elif defined (MACHINE_RPI)
+# define ROM_ORIGIN 0x00008000
 #elif defined (TARGET_CART)
 # define ROM_ORIGIN 0x00fa0000
 #elif defined (TARGET_192)
@@ -81,6 +85,7 @@ SECTIONS
     } >altram
 #endif
 
+#if !defined (MACHINE_RPI)
     /* This section is the internal BIOS stack.
      * It will *not* be cleared on startup or reset.
      */
@@ -90,7 +95,7 @@ SECTIONS
         . += 2K;
         _stktop = .;
     } >REGION_READ_WRITE
-
+#endif
     /* This section is located as low as possible in ST-RAM,
      * but after evental BIOS stack.
      * Variables requiring very low addresses, while being accessible
@@ -109,7 +114,11 @@ SECTIONS
     /* The TEXT segment contains EmuTOS executable code and read-only data.
      * It is always read-only, so it can safely live in ROM.
      */
-    .text :
+#if defined (MACHINE_RPI)
+     .text ROM_ORIGIN :
+#else
+     .text :
+#endif
     {
         CREATE_OBJECT_SYMBOLS
         __text = .;
@@ -141,6 +150,18 @@ SECTIONS
         __ebss = .;
     } >REGION_READ_WRITE
 
+#if defined (MACHINE_RPI)
+    /* On the RPI we put the BIOS stack /after/ the rom data.
+     * We have more RAM, so make it a little bigger than in the ST case
+     */
+    .stack :
+    {
+        _stkbot = .;
+        . += 32K;
+        _stktop = .;
+    } >REGION_READ_WRITE
+#endif
+
     /* This section is always the last one stored in ST-RAM.
      * It is usually empty, just used to calculate the last address
      * of ST-RAM statically used by EmuTOS.
@@ -164,7 +185,9 @@ SECTIONS
     /DISCARD/ :
     {
         *(.comment)
+#if 0
         *(.debug*)
+#endif
     }
 }
 
@@ -182,4 +205,10 @@ ELF_LIB_REF(__divsi3)
 ELF_LIB_REF(__modsi3)
 ELF_LIB_REF(__udivsi3)
 ELF_LIB_REF(__umodsi3)
+ELF_LIB_REF(__aeabi_idiv)
+ELF_LIB_REF(__aeabi_idivmod)
+ELF_LIB_REF(__aeabi_udiv)
+ELF_LIB_REF(__aeabi_uidiv)
+ELF_LIB_REF(__aeabi_udivmod)
+ELF_LIB_REF(__aeabi_uidivmod)
 #endif

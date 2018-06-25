@@ -133,6 +133,20 @@ extern void (*etv_term)(void);
 
 extern void (*mousexvec)(WORD scancode);    /* Additional mouse buttons */
 
+#ifdef __arm__
+struct kbdvecs
+{
+   void (*midivec)( UBYTE data );  /* MIDI Input */
+   void (*vkbderr)( UBYTE data );  /* IKBD Error */
+   void (*vmiderr)( UBYTE data );  /* MIDI Error */
+   void (*statvec)(char *buf);     /* IKBD Status */
+   void (*mousevec)(char *buf);    /* IKBD Mouse */
+   void (*clockvec)(char *buf);    /* IKBD Clock */
+   void (*joyvec)(char *buf);      /* IKBD Joystick */
+   void (*midisys)( void );        /* Main MIDI Vector */
+   void (*ikbdsys)( void );        /* Main IKBD Vector */
+};
+#else
 struct kbdvecs
 {
     PFVOID midivec;     /* MIDI Input */
@@ -145,6 +159,8 @@ struct kbdvecs
     PFVOID midisys;     /* Main MIDI Vector */
     PFVOID ikbdsys;     /* Main IKBD Vector */
 };
+#endif
+
 extern struct kbdvecs kbdvecs;
 
 #if CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF

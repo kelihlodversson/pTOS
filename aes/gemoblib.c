@@ -152,6 +152,10 @@ void ob_format(WORD just, BYTE *raw_str, BYTE *tmpl_str, BYTE *fmt_str)
 
 static __inline__ WORD call_usercode(USERBLK *ub, PARMBLK *pb)
 {
+#ifdef __arm__
+    WORD (*ub_code)(PARMBLK *parmblock) = ub->ub_code;
+    return ub_code(pb);
+#else
     register WORD (*ub_code)(PARMBLK *parmblock) __asm__("a0") = ub->ub_code;
     register WORD retvalue __asm__("d0");
 
@@ -165,6 +169,7 @@ static __inline__ WORD call_usercode(USERBLK *ub, PARMBLK *pb)
     : "d1", "d2", "a1", "a2", "memory", "cc"
     );
     return retvalue;
+#endif
 }
 
 

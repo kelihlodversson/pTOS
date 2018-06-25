@@ -19,6 +19,10 @@
 /* general-purpose configuration file */
 #include "config.h"
 
+#ifdef __arm__
+
+#else
+
 /* generate constants for opcodes that are 68010 and above */
 #define MOVEW_CCR_D0        .dc.w 0x42c0            /* 68010-68060 */
 
@@ -62,6 +66,12 @@
 
 #define ADDIWL_0_A0         .dc.l 0x06d00000        /* 68080 */
 
+/* Pseudo-ops not yet understood by gas */
+#define jhs jcc
+#define jlo jcs
+
+#endif
+
 /* Read-only data section */
 #ifdef ELF_TOOLCHAIN
 /* ELF objects have real support for .rodata */
@@ -70,7 +80,3 @@
 /* a.out objects have no .rodata section, default to .text */
 #define SECTION_RODATA .text
 #endif
-
-/* Pseudo-ops not yet understood by gas */
-#define jhs jcc
-#define jlo jcs

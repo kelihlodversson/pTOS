@@ -141,7 +141,9 @@ LONG bconstat2(void)
 
 LONG bconin2(void)
 {
+#ifndef __arm__
     WORD old_sr;
+#endif
     ULONG value;
 
     while (!bconstat2()) {
@@ -150,17 +152,21 @@ LONG bconin2(void)
 #endif
     }
     /* disable interrupts */
+#ifdef __arm__
+ // TODO arm: disable interrupts?
+#else
     old_sr = set_sr(0x2700);
-
+#endif
     ikbdiorec.head += 4;
     if (ikbdiorec.head >= ikbdiorec.size) {
         ikbdiorec.head = 0;
     }
     value = *(ULONG_ALIAS *) (ikbdiorec.buf + ikbdiorec.head);
 
+#ifndef __arm__
     /* restore interrupts */
     set_sr(old_sr);
-
+#endif
     if (!(conterm & 8))         /* shift status not wanted? */
         value &= 0x00ffffffL;   /* true, so clean it out */
 

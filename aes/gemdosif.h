@@ -45,5 +45,6 @@ extern void retake(void);
 
 extern void drawrat(WORD newx, WORD newy);
 
+//extern void aestrap();
 
 #endif

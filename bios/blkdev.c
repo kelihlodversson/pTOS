@@ -99,7 +99,9 @@ void blkdev_init(void)
     KDEBUG(("dskbufp = %p\n",dskbufp));
 
     /* setup booting related vectors */
+#if CONF_WITH_BOOT_SECTOR
     hdv_boot    = blkdev_hdv_boot;
+#endif
     hdv_init    = 0;    /* blkdev_hdv_init; */
 
     /* setup general block device vectors */
@@ -204,6 +206,7 @@ static void bus_init(void)
 #endif
 }
 
+#if CONF_WITH_BOOT_SECTOR
 /*
  * blkdev_boot - boot from device in 'bootdev'
  */
@@ -279,7 +282,6 @@ static LONG bootcheck(void)
 
     return 0;       /* bootable */
 }
-
 /*
  * read boot sector from 'bootdev' into 'dskbufp'
  *
@@ -292,6 +294,7 @@ static WORD hd_boot_read(void)
 
     return (WORD)disk_rw(b->unit,RW_READ,b->start,1,dskbufp);
 }
+#endif
 
 /*
  * return next available device number in bitmap

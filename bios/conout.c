@@ -22,7 +22,7 @@
 #include "sound.h"              /* for bell() */
 #include "string.h"
 #include "conout.h"
-
+#include "raspi_screen.h"
 
 
 #define  plane_offset   2       /* interleaved planes */
@@ -162,6 +162,9 @@ ascii_out (int ch)
 void
 blank_out (int topx, int topy, int botx, int boty)
 {
+#ifdef MACHINE_RPI
+    raspi_blank_out(topx, topy, botx, boty);
+#else
     UWORD color = v_col_bg;             /* bg color value */
     int pair, pairs, row, rows, offs;
     UBYTE * addr = cell_addr(topx, topy);   /* running pointer to screen */
@@ -227,6 +230,7 @@ blank_out (int topx, int topy, int botx, int boty)
             addr += offs;       /* skip non-region area with stride advance */
         }
     }
+#endif
 }
 
 
@@ -253,6 +257,9 @@ blank_out (int topx, int topy, int botx, int boty)
 static UBYTE *
 cell_addr(int x, int y)
 {
+#ifdef MACHINE_RPI
+    return raspi_cell_addr(x,y);
+#else
     LONG disx, disy;
 
     /* check bounds against screen limits */
@@ -276,6 +283,7 @@ cell_addr(int x, int y)
      * + X displacement + offset from screen-begin (fix)
      */
     return v_bas_ad + disy + disx + v_cur_of;
+#endif
 }
 
 
@@ -300,6 +308,9 @@ cell_addr(int x, int y)
 static void
 cell_xfer(UBYTE * src, UBYTE * dst)
 {
+#ifdef MACHINE_RPI
+    raspi_cell_xfer(src, dst);
+#else
     UBYTE * src_sav, * dst_sav;
     UWORD fg;
     UWORD bg;
@@ -368,6 +379,7 @@ cell_xfer(UBYTE * src, UBYTE * dst)
         fg >>= 1;                       /* next foreground color bit */
         dst_sav += plane_offset;        /* top of block in next plane */
     }
+#endif
 }
 
 
@@ -460,6 +472,9 @@ move_cursor(int x, int y)
 static void
 neg_cell(UBYTE * cell)
 {
+#ifdef MACHINE_RPI
+    raspi_neg_cell(cell);
+#else
     int plane, len;
     int cell_len = v_cel_ht;
 
@@ -476,6 +491,7 @@ neg_cell(UBYTE * cell)
         cell += plane_offset;           /* a1 -> top of block in next plane */
     }
     v_stat_0 &= ~M_CRIT;                /* end of critical section. */
+#endif
 }
 
 
@@ -529,6 +545,9 @@ static BOOL next_cell(void)
 
     v_cur_cx += 1;                      /* next cell to right */
 
+#ifdef MACHINE_RPI
+    v_cur_ad = raspi_cell_addr(v_cur_cx, v_cur_cy);
+#else
     /* if X is even, move to next word in the plane */
     if ( IS_ODD(v_cur_cx) ) {
         /* x is odd */
@@ -538,7 +557,7 @@ static BOOL next_cell(void)
 
     /* new cell (1st plane), added offset to next word in plane */
     v_cur_ad += (v_planes << 1) - 1;
-
+#endif
     return 0;                           /* indicate no wrap needed */
 }
 

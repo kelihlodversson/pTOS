@@ -37,15 +37,24 @@ struct Mcdb_ {
 };
 
 /* mouse related linea variables in bios/lineavars.S */
+#ifdef __arm__
+extern void     (*user_but)(WORD status);      /* user button vector */
+#else
 extern void     (*user_but)(void);      /* user button vector */
+#endif
 extern void     (*user_cur)(void);      /* user cursor vector */
 extern void     (*user_mot)(void);      /* user motion vector */
 extern Mcdb     mouse_cdb;              /* storage for mouse sprite */
 
 /* call the vectors from C */
+#ifdef __arm__
+#define call_user_but user_but
+#define call_user_wheel user_wheel
+
+#else
 extern void call_user_but(WORD status);
 extern void call_user_wheel(WORD wheel_number, WORD wheel_amount);
-
+#endif
 /* prototypes */
 static void cur_display(Mcdb *sprite, MCS *savebuf, WORD x, WORD y);
 static void cur_replace(MCS *savebuf);
@@ -54,11 +63,15 @@ static void vb_draw(void);             /* user button vector */
 /* prototypes for functions in vdi_asm.S */
 extern void mouse_int(void);    /* mouse interrupt routine */
 extern void wheel_int(void);    /* wheel interrupt routine */
-extern void mov_cur(void);      /* user button vector */
+extern void mov_cur(int new_x, int new_y);      /* user button vector */
 
 
 /* FIXME: should go to linea variables */
+#ifdef __arm__
+void     (*user_wheel)(WORD wheel_number, WORD wheel_amount);   /* user provided mouse wheel vector */
+#else
 void     (*user_wheel)(void);   /* user provided mouse wheel vector */
+#endif
 PFVOID old_statvec;             /* original IKBD status packet routine */
 
 
@@ -703,16 +716,17 @@ void vdimouse_exit(void)
 
 static void vb_draw(void)
 {
-    WORD old_sr = set_sr(0x2700);       /* disable interrupts */
+    disable_interrupts();
+//    WORD old_sr = set_sr(0x2700);       /* disable interrupts */
     if (draw_flag) {
         draw_flag = FALSE;
-        set_sr(old_sr);
+        enable_interrupts();
         if (!mouse_flag) {
             cur_replace(mcs_ptr);       /* remove the old cursor from the screen */
             cur_display(&mouse_cdb, mcs_ptr, newx, newy);  /* display the cursor */
         }
     } else
-        set_sr(old_sr);
+        enable_interrupts();
 
 }
 

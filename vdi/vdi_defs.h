@@ -168,6 +168,14 @@ struct Vwk_ {
     WORD bez_qual;              /* actual quality for bezier curves */
 };
 
+typedef struct
+{
+   WORD  *contrl;    /* Pointer to contrl array */
+   WORD  *intin;     /* Pointer to intin array  */
+   WORD  *ptsin;     /* Pointer to ptsin array  */
+   WORD  *intout;    /* Pointer to intout array */
+   WORD  *ptsout;    /* Pointer to ptsout array */
+} VDIPB;
 
 typedef struct Rect_ Rect;
 struct Rect_
@@ -248,7 +256,7 @@ BOOL clip_line(Vwk * vwk, Line * line);
 void arb_corner(Rect * rect);
 void arb_line(Line * line);
 
-
+int GSX_ENTRY(int op, VDIPB* paramblock);
 /* C Support routines */
 Vwk * get_vwk_by_handle(WORD);
 UWORD * get_start_addr(const WORD x, const WORD y);

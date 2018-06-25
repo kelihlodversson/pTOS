@@ -51,7 +51,11 @@ extern void int_illegal(void);
 extern void int_priv(void);
 extern void int_unimpint(void);
 
+#ifdef __arm__
+#define trap_save_area 0 // not used on arm
+#else
 extern WORD trap_save_area[];
+#endif
 
 /* 680x0 exception vectors */
 #define VEC_ILLEGAL (*(volatile PFVOID*)0x10) /* illegal instruction vector */
@@ -90,10 +94,31 @@ extern void (*vector_5ms)(void);              /* 200 Hz system timer */
 #endif
 
 /* protect d2/a2 when calling external user-supplied code */
-
+#ifdef __m68k__
 LONG protect_v(LONG (*func)(void));
 LONG protect_w(LONG (*func)(WORD), WORD);
 LONG protect_ww(LONG (*func)(void), WORD, WORD);
 LONG protect_wlwwwl(LONG (*func)(void), WORD, LONG, WORD, WORD, WORD, LONG);
+#elif defined (__arm__)
+
+/* We assume ARM developers follow the eabi so the folllowing are simple pass-throughs */
+
+static inline LONG protect_v(LONG (*func)(void))
+{
+    return func();
+}
+static inline LONG protect_w(LONG (*func)(WORD), WORD a)
+{
+    return func(a);
+}
+static inline LONG protect_ww(LONG (*func)(void), WORD a, WORD b)
+{
+    return ((LONG (*)(WORD, WORD))func)(a, b);
+}
+static inline LONG protect_wlwwwl(LONG (*func)(void), WORD a, LONG b, WORD c, WORD d, WORD e, LONG f)
+{
+    return ((LONG (*)(WORD, LONG, WORD, WORD, WORD, LONG))func)(a,b,c,d,e,f);
+}
+#endif
 
 #endif /* VECTORS_H */

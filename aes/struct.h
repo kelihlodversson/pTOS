@@ -61,7 +61,7 @@ struct cdastr               /* console data area */
 struct uda                  /* user stack data area */
 {
         WORD    u_insuper;              /*   0  in supervisor flag       */
-        ULONG   u_regs[15];             /*   2  d0-d7, a0-a6             */
+        ULONG   u_regs[15];             /*   2  d0-d7, a0-a6 - ARM: r0-r11, +padding */
         ULONG   *u_spsuper;             /*  3E  supervisor stack         */
         ULONG   *u_spuser;              /*  42  user stack               */
         ULONG   *u_oldspsuper;          /*  46  old ssp, used in trapaes [gemdosif.S] */

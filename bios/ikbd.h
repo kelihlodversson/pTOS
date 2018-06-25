@@ -119,6 +119,9 @@ extern void ikbd_writew(WORD w);
 extern void push_ascii_ikbdiorec(UBYTE ascii);
 #endif
 
+#ifdef __arm__
+#define call_mousevec kbdvecs.mousevec
+#else /*__arm__*/
 /* the following is in aciavecs.S */
 extern void call_mousevec(UBYTE *packet);
 #ifdef MACHINE_AMIGA
@@ -127,5 +130,6 @@ extern void call_joyvec(UBYTE *packet);
 #if CONF_WITH_FLEXCAN || CONF_SERIAL_IKBD
 void call_ikbdraw(UBYTE b);
 #endif
+#endif /*__arm__*/
 
 #endif /* IKBD_H */

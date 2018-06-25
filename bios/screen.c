@@ -35,6 +35,9 @@
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
 #endif
+#ifdef MACHINE_RPI
+#include "raspi_screen.h"
+#endif
 
 static ULONG initial_vram_size(void);
 static void setphys(const UBYTE *addr);
@@ -366,6 +369,9 @@ WORD check_moderez(WORD moderez)
 #ifdef MACHINE_AMIGA
     return amiga_check_moderez(moderez);
 #endif
+#ifdef MACHINE_RPI
+    return raspi_check_moderez(moderez);
+#endif
 
 #if CONF_WITH_VIDEL
     if (has_videl)
@@ -408,6 +414,8 @@ UWORD mask;
 #endif
 
     fixup_ste_palette(rez);
+#elif defined(MACHINE_RPI)
+    initialise_raspi_palette(mode);
 #endif /* CONF_WITH_ATARI_VIDEO */
 }
 
@@ -557,7 +565,8 @@ static void screen_init_mode(void)
     initialise_palette_registers(rez,0);
 #endif
     sshiftmod = rez;
-
+#elif defined(MACHINE_RPI)
+    initialise_palette_registers(0,0);
 #endif /* CONF_WITH_ATARI_VIDEO */
     MAYBE_UNUSED(get_default_palmode);
 }
@@ -565,13 +574,18 @@ static void screen_init_mode(void)
 /* Initialize the video address (mode is already set) */
 static void screen_init_address(void)
 {
+#ifdef MACHINE_RPI
+    raspi_screen_init();
+    v_bas_ad = raspi_physbase();
+    setphys(v_bas_ad);
+#else
     ULONG vram_size;
     UBYTE *screen_start;
 
 #if CONF_VRAM_ADDRESS
     UNUSED(vram_size);
     screen_start = (UBYTE *)CONF_VRAM_ADDRESS;
-#else
+#elif !defined(MACHINE_RPI)
     vram_size = initial_vram_size();
     /* videoram is placed just below the phystop */
     screen_start = balloc_stram(vram_size, TRUE);
@@ -585,6 +599,7 @@ static void screen_init_address(void)
 #endif
     /* correct physical address */
     setphys(screen_start);
+#endif
 }
 
 /* Initialize the video mode and screen address */
@@ -616,7 +631,7 @@ int rez_changeable(void)
     if (rez_was_hacked)
         return FALSE;
 
-#ifdef MACHINE_AMIGA
+#if defined(MACHINE_AMIGA) || defined(MACHINE_RPI)
     return TRUE;
 #endif
 
@@ -715,6 +730,8 @@ void screen_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez)
 
 #ifdef MACHINE_AMIGA
     amiga_get_current_mode_info(planes, hz_rez, vt_rez);
+#elif defined(MACHINE_RPI)
+    raspi_get_current_mode_info(planes, hz_rez, vt_rez);
 #else
     atari_get_current_mode_info(planes, hz_rez, vt_rez);
 #endif
@@ -737,7 +754,7 @@ static __inline__ void get_std_pixel_size(WORD *width,WORD *height)
  */
 void get_pixel_size(WORD *width,WORD *height)
 {
-#ifdef MACHINE_AMIGA
+#if defined(MACHINE_AMIGA) || defined(MACHINE_RPI)
     get_std_pixel_size(width,height);
 #else
     if (HAS_VIDEL || HAS_TT_SHIFTER)
@@ -881,6 +898,8 @@ const UBYTE *physbase(void)
 {
 #ifdef MACHINE_AMIGA
     return amiga_physbase();
+#elif defined(MACHINE_RPI)
+    return raspi_physbase();
 #elif CONF_WITH_ATARI_VIDEO
     return atari_physbase();
 #else
@@ -897,6 +916,8 @@ static void setphys(const UBYTE *addr)
 
 #ifdef MACHINE_AMIGA
     amiga_setphys(addr);
+#elif defined(MACHINE_RPI)
+    raspi_setphys(addr);
 #elif CONF_WITH_ATARI_VIDEO
     atari_setphys(addr);
 #endif
@@ -946,6 +967,8 @@ void setscreen(UBYTE *logLoc, const UBYTE *physLoc, WORD rez, WORD videlmode)
 
 #ifdef MACHINE_AMIGA
         amiga_setrez(rez, videlmode);
+#elif defined(MACHINE_RPI)
+        raspi_setrez(rez, videlmode);
 #elif CONF_WITH_ATARI_VIDEO
         atari_setrez(rez, videlmode);
 #endif
@@ -990,6 +1013,8 @@ WORD setcolor(WORD colorNum, WORD color)
 {
 #ifdef MACHINE_AMIGA
     return amiga_setcolor(colorNum, color);
+#elif defined(MACHINE_RPI)
+    return raspi_setcolor(colorNum, color);
 #elif CONF_WITH_ATARI_VIDEO
     return atari_setcolor(colorNum, color);
 #else

@@ -241,7 +241,7 @@ WORD dos_label(BYTE drive, BYTE *plabel)
     BYTE    path[8];
 
     gemdos(X_SETDTA,&dta);
-    strcpy(path, " :\\*.*");
+    strcpy((char*)path, " :\\*.*");
     path[0] = (drive + 'A') - 1;
     if (!gemdos(X_SFIRST,path,0x08))
     {

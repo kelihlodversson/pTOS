@@ -738,6 +738,10 @@ static void xbios_25(void)
 
 static LONG supexec(PFLONG codeptr)
 {
+#ifdef __arm__
+    // On arm we assume the function follows the eabi and dont save any additional registers
+    return codeptr();
+#else
     register LONG retval __asm__("d0");
 
     __asm__ volatile
@@ -752,6 +756,7 @@ static LONG supexec(PFLONG codeptr)
     );
 
     return retval;
+#endif
 }
 
 #if DBG_XBIOS

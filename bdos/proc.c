@@ -517,6 +517,14 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
  *
  */
 
+#ifdef __arm__
+struct gouser_stack {
+    LONG regs[8];    /* argument registers from previous call (r7, r0-r6) */
+    LONG other_sp;   /* the other stack pointer */
+    LONG retaddr;
+    LONG spsr;       /* note the basepage is passed in r0 and not on the stack */
+};
+#else
 struct gouser_stack {
   LONG other_sp;   /* a4, the other stack pointer */
   WORD sr;         /* d0, the status register */
@@ -524,6 +532,7 @@ struct gouser_stack {
   LONG fill[11];   /* 10 registers d1-d7/a0-a2 and one dummy so that ... */
   PD * basepage;   /* ... upon startup the basepage is in 4(sp) */
 };
+#endif
 
 static void proc_go(PD *p)
 {
@@ -535,6 +544,15 @@ static void proc_go(PD *p)
     /* create a stack at the end of the TPA */
     sp = (struct gouser_stack *) (p->p_hitpa - sizeof(struct gouser_stack));
 
+#ifdef __arm__
+    p->p_dreg[0] = p;      /* base page is passed in r0 */
+    sp->spsr = ((get_cpsr() & ~0x1f) | 0x10); /* the process will start in user mode, same interrupts */
+    sp->retaddr = (long)p->p_tbase; /* return address is text start */
+    /* the other stack is the supervisor stack */
+    sp->other_sp = (long) &supstk[SUPSIZ];
+    /* store this new stack in the saved sp field of the PD */
+    p->p_areg[4] = (long) sp;
+#else
     sp->basepage = p;      /* the stack contains the basepage */
 
     sp->retaddr = (long)p->p_tbase; /* return address a3 is text start */
@@ -561,6 +579,7 @@ static void proc_go(PD *p)
     p->p_areg[6-3] = (long) sp;    /* a6 to hold a copy of the stack */
     p->p_areg[5-3] = (long)p->p_dbase;  /* a5 to point to the DATA segt */
     p->p_areg[4-3] = (long)p->p_bbase;  /* a4 to point to the BSS segt */
+#endif
 #endif
 
     /* the new process is the one to run */
