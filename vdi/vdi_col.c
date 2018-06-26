@@ -18,7 +18,7 @@
 #include "../bios/lineavars.h"
 #include "../bios/screen.h"
 
-#define EXTENDED_PALETTE (CONF_WITH_VIDEL || CONF_WITH_TT_SHIFTER)
+#define EXTENDED_PALETTE (CONF_WITH_VIDEL || CONF_WITH_TT_SHIFTER || defined(MACHINE_RPI))
 
 #if EXTENDED_PALETTE
 #define MAXCOLOURS  256
