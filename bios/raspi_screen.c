@@ -272,9 +272,6 @@ void raspi_cell_xfer(UBYTE * src, UBYTE * dst)
     fnt_wr = v_fnt_wr;
     line_wr = v_lin_wr;
 
-    // Font is defined as 16bit words and therefore characters are pairwise swapped:
-    src = (UBYTE *)((ULONG)src ^ 1);
-
     /* check for reversed foreground and background colors */
     if ( v_stat_0 & M_REVID ) {
         fg = v_col_bg;

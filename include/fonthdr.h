@@ -53,7 +53,7 @@ struct font_head {
 
     const UBYTE *hor_table;     /* horizontal offsets */
     const UWORD *off_table;     /* character offsets  */
-    const UWORD *dat_table;     /* character definitions (raster data) */
+    const UBYTE *dat_table;     /* character definitions (raster data) */
     UWORD form_width;           /* width of raster in bytes */
     UWORD form_height;          /* height of raster in lines */
 

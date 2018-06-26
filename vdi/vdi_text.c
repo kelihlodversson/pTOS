@@ -175,7 +175,7 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     LOFF = d1;
     ROFF = d2;
 
-    FBASE = fnt_ptr->dat_table;
+    FBASE = (const UWORD *)fnt_ptr->dat_table;
     FWIDTH = fnt_ptr->form_width;
 
     switch(vwk->h_align) {

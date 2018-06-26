@@ -98,6 +98,6 @@ void font_set_default(WORD cellheight)
     v_fnt_wr = font->form_width;
     v_fnt_st = font->first_ade;
     v_fnt_nd = font->last_ade;
-    v_fnt_ad = font->dat_table;
+    v_fnt_ad = (const UWORD *)font->dat_table;
     v_off_ad = font->off_table;
 }
