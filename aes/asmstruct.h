@@ -24,7 +24,7 @@
 
 #ifdef __arm__
 /* AES PD struct */
-#define PD_UDA          #AESPD_p_link        /* pointer to UDA */
+#define PD_UDA          #AESPD_p_uda         /* pointer to UDA */
 #define PD_LDADDR       #AESPD_p_ldaddr      /* pointer to basepage */
 
 /* UDA struct */
