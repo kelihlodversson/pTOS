@@ -453,6 +453,9 @@
 # ifndef ALWAYS_SHOW_INITINFO
 #  define ALWAYS_SHOW_INITINFO 1
 # endif
+# ifndef CONF_CHUNKY_PIXELS
+#  define CONF_CHUNKY_PIXELS 1
+# endif
 #endif
 /*
  * By default, EmuTOS is built for Atari ST/TT/Falcon compatible hardware.
@@ -1313,6 +1316,15 @@
 #  define CONF_SERIAL_CONSOLE_ANSI 0
 # endif
 #endif
+
+/*
+ * Set CONF_CHUNKY_PIXELS to 1 to treat the framebuffer as a packed array of pixel values
+ * instead of interleaved bitplanes.
+ */
+#ifndef CONF_CHUNKY_PIXELS
+# define CONF_CHUNKY_PIXELS 0
+#endif
+
 
 /*
  * Set CONF_SERIAL_IKBD to 1 to allow IKBD keyboard/mouse/joysticks to be

@@ -366,6 +366,38 @@ static BOOL blit_rect_common(const VwkAttrib *attr, const Rect *rect, BLITPARM *
  */
 void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
 {
+#if CONF_CHUNKY_PIXELS
+    const UWORD patmsk = attr->patmsk;
+    UBYTE *addr = (UBYTE *)get_start_addr(rect->x1,rect->y1);
+    // Hack: currently only 8bpp is supported
+    int x, y, i;
+
+
+    for(y = rect->y1; y <= rect->y2; y++, addr+=v_lin_wr)
+    {
+        int patind = patmsk & y;   /* starting pattern */
+        UWORD color = attr->color;
+
+        UWORD pattern = attr->patptr[patind];
+        for(x = rect->x1, i=0; x <= rect->x2; x++, i++)
+        {
+            switch(attr->wrt_mode)
+            {
+            case 3:                 /* erase (reverse transparent) mode */
+                addr[x] |= pattern & ((1<<15)>>(i & 15)) ? 0 : color & 0xff;
+            break;
+            case 2:                 /* xor mode */
+                addr[x] ^= pattern & ((1<<15)>>(i & 15)) ? color & 0xff : 0;
+            break;
+            case 1:                 /* transparent mode */
+                addr[x] |= pattern & ((1<<15)>>(i & 15)) ? color & 0xff : 0;
+            break;
+            default: /* replace mode */
+                addr[x] = pattern & ((1<<15)>>(i & 15)) ? color & 0xff : 0;
+            }
+        }
+    }
+#else
     UWORD leftmask, rightmask, *addr;
     const UWORD patmsk = attr->patmsk;
     const int yinc = (v_lin_wr>>1) - v_planes;
@@ -539,6 +571,7 @@ void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
         }
         break;
     }
+#endif
 }
 
 

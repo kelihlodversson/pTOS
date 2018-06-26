@@ -192,8 +192,12 @@ UWORD * get_start_addr(const WORD x, const WORD y)
 
     /* init address counter */
     addr = v_bas_ad;                    /* start of screen */
-    addr += (x&0xfff0)>>shift_offset[v_planes]; /* add x coordinate part of addr */
-    addr += (LONG)y * v_lin_wr;         /* add y coordinate part of addr */
 
+#if CONF_CHUNKY_PIXELS
+    addr += x * v_planes / 8;
+#else
+    addr += (x&0xfff0)>>shift_offset[v_planes]; /* add x coordinate part of addr */
+#endif
+    addr += (LONG)y * v_lin_wr;         /* add y coordinate part of addr */
     return (UWORD*)addr;
 }
