@@ -43,9 +43,25 @@
  */
 
 _processor_init:
+    // Initialize the VFP
+    mrc p15, 0, ip, c1, c0, 2
+    orr ip, ip, #0xF00000  // enable cp10 (single precision) and cp11 (double precision)
+    mcr p15, 0, ip, c1, c0, 2
+
+    // insert an instruction mem barrier
+#ifdef TARGET_RPI1
+    mov ip, #0
+    mcr p15, 0, ip, c7, c5,  4
+#else
+    isb
+#endif
+
+    mov ip, #1 << 30    // VFP_FPEXC_EN
+    fmxr fpexc, ip
+    mov ip, #1 << 25    // VFP_FPSCR_DN	 default NaN mode
+    fmxr fpscr, ip
 
     // TODO: we should set up caching and MMU tables here
-
     bx lr
 
 /*
