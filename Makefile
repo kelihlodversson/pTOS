@@ -501,6 +501,7 @@ obj/emutospp.ld: emutos.ld include/config.h tosvars.ld
 TOCLEAN += *.img *.map *.elf
 ifdef RPI
 	EMUTOS_IMG = emutos.elf
+	LDFLAGS += -Wl,-build-id=none
 else
 	EMUTOS_IMG = emutos.img
 endif
