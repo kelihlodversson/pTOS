@@ -369,10 +369,10 @@ void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
 #if CONF_CHUNKY_PIXELS
     const UWORD patmsk = attr->patmsk;
     UBYTE *addr = (UBYTE *)get_start_addr(rect->x1,rect->y1);
-    // Hack: currently only 8bpp is supported
     int x, y, i;
 
 
+    // currently only 8bpp is supported
     for(y = rect->y1; y <= rect->y2; y++, addr+=v_lin_wr)
     {
         int patind = patmsk & y;   /* starting pattern */
@@ -1400,14 +1400,18 @@ void arrow(Vwk * vwk, Point * point, int count)
  */
 void abline (const Line * line, WORD wrt_mode, UWORD color)
 {
+#if CONF_CHUNKY_PIXELS
+    UBYTE *adr;
+#else
     UWORD *adr;
+    const WORD xinc = v_planes; /* positive increase for each x step, planes WORDS */
+    int plane;
+    UWORD msk;
+#endif
     UWORD x1,y1,x2,y2;          /* the coordinates */
     WORD dx;                    /* width of rectangle around line */
     WORD dy;                    /* height of rectangle around line */
     WORD yinc;                  /* in/decrease for each y step */
-    const WORD xinc = v_planes; /* positive increase for each x step, planes WORDS */
-    UWORD msk;
-    int plane;
     UWORD linemask = LN_MASK;   /* linestyle bits */
 
     /* Make x axis always goind up */
@@ -1448,6 +1452,82 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
     dx = x2 - x1;
     dy = y2 - y1;
 
+
+#if CONF_CHUNKY_PIXELS
+    /* calculate increase values for x and y to add to actual address */
+    if (dy < 0) {
+        dy = -dy;                       /* make dy absolute */
+        yinc = (LONG) -1 * v_lin_wr;    /* sub one line of bytes */
+    } else {
+        yinc = (LONG) v_lin_wr;         /* add one line of bytes */
+    }
+    adr = (UBYTE*)get_start_addr(x1, y1);       /* init address counter */
+
+    if (dx >= dy) {
+        WORD  eps = -dx;        /* epsilon */
+        WORD  e1 = 2*dy;        /* epsilon 1 */
+        WORD  e2 = 2*dx;        /* epsilon 2 */
+        WORD  loopcnt;
+
+        for (loopcnt=dx;loopcnt >= 0;loopcnt--) {
+            rolw1(linemask);        /* get next bit of line style */
+            if (linemask&0x0001) {
+                switch (wrt_mode) {
+                case 3:              /* reverse transparent  */
+                    *adr |= (~color & 0xff);
+                    break;
+                case 2:              /* xor */
+                    *adr ^= (color & 0xff);
+                    break;
+                case 1:              /* or */
+                    *adr |= (color & 0xff);
+                    break;
+                case 0:              /* rep */
+                    *adr = (color & 0xff);
+                    break;
+                }
+            }
+            adr++;
+            eps += e1;
+            if (eps >= 0 ) {
+                eps -= e2;
+                adr += yinc;       /* increment y */
+            }
+        }
+    }
+    else
+    {
+        WORD  eps = -dy;        /* epsilon */
+        WORD  e1 = 2*dx;        /* epsilon 1 */
+        WORD  e2 = 2*dy;        /* epsilon 2 */
+        WORD  loopcnt;
+        for (loopcnt=dy;loopcnt >= 0;loopcnt--) {
+            rolw1(linemask);        /* get next bit of line style */
+            if (linemask&0x0001) {
+                switch (wrt_mode) {
+                case 3:              /* reverse transparent  */
+                    *adr |= (~color & 0xff);
+                    break;
+                case 2:              /* xor */
+                    *adr ^= (color & 0xff);
+                    break;
+                case 1:              /* or */
+                    *adr |= (color & 0xff);
+                    break;
+                case 0:              /* rep */
+                    *adr = (color & 0xff);
+                    break;
+                }
+            }
+            adr += yinc;
+            eps += e1;
+            if (eps >= 0 ) {
+                eps -= e2;
+                adr++;
+            }
+        }
+    }
+#else
     /* calculate increase values for x and y to add to actual address */
     if (dy < 0) {
         dy = -dy;                       /* make dy absolute */
@@ -1455,7 +1535,6 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
     } else {
         yinc = (LONG) v_lin_wr / 2;     /* add one line of words */
     }
-
     adr = get_start_addr(x1, y1);       /* init address counter */
     msk = 0x8000 >> (x1&0xf);           /* initial bit position in WORD */
 
@@ -1708,6 +1787,8 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
         adr++;
         color >>= 1;    /* shift color index: next plane */
     }
+#endif
+
     LN_MASK = linemask;
 }
 
