@@ -26,5 +26,6 @@ void raspi_neg_cell(UBYTE * cell);
 
 void initialise_raspi_palette(WORD mode);
 
+extern const ULONG raspi_dflt_palette[256];
 #   endif // MACHINE_RPI
 #endif // RASPI_SCREEN_H

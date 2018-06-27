@@ -23,8 +23,9 @@
 #include "../bios/tosvars.h"
 #include "../bios/lineavars.h"
 #include "kprint.h"
-
-
+#ifdef MACHINE_RPI
+#   include "raspi_mouse.h"
+#else
 /* Mouse / sprite structure */
 typedef struct Mcdb_ Mcdb;
 struct Mcdb_ {
@@ -35,6 +36,7 @@ struct Mcdb_ {
         WORD    fg_col;
         UWORD   maskdata[32];   /* mask & data are interleaved */
 };
+#endif
 
 /* mouse related linea variables in bios/lineavars.S */
 #ifdef __arm__
@@ -836,6 +838,9 @@ static void cur_display_clip(WORD op,Mcdb *sprite,MCS *mcs,UWORD *mask_start,UWO
 
 static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
 {
+#ifdef MACHINE_RPI
+    raspi_hw_cur_display(sprite, x, y);
+#else
     int row_count, plane, inc, op, dst_inc;
     UWORD * addr, * mask_start;
     UWORD shft, cdb_fg, cdb_bg;
@@ -969,6 +974,7 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
 
         cdb_mask <<= 1;
     } /* loop through planes */
+#endif
 }
 
 
@@ -985,6 +991,7 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
  */
 static void cur_replace (MCS *mcs)
 {
+#ifndef MACHINE_RPI
     WORD plane, row;
     UWORD *addr, *src, *dst;
     const WORD inc = v_planes;      /* # words to next word in same plane */
@@ -1027,6 +1034,7 @@ static void cur_replace (MCS *mcs)
             dst += dst_inc;         /* next row of screen */
         }
     }
+#endif
 }
 
 

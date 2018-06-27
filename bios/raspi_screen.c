@@ -44,7 +44,7 @@
 #define PRGB_LTYELLOW  0x0000aaaa
 #define PRGB_WHITE     0x00ffffff
 
-static const ULONG raspi_dflt_palette[] = {
+const ULONG raspi_dflt_palette[] = {
     PRGB_WHITE, PRGB_RED, PRGB_GREEN, PRGB_YELLOW,
     PRGB_BLUE, PRGB_MAGENTA, PRGB_CYAN, PRGB_LTGRAY,
     PRGB_GRAY, PRGB_LTRED, PRGB_LTGREEN, PRGB_LTYELLOW,

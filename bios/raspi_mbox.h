@@ -67,6 +67,23 @@ typedef struct
     prop_tag_t tag;
     union
     {
+        ULONG enable;
+    #define CURSOR_ENABLE_INVISIBLE      0
+    #define CURSOR_ENABLE_VISIBLE        1
+        ULONG response;
+    };
+    ULONG   pos_x;
+    ULONG   pos_y;
+    ULONG   flags;
+    #define CURSOR_FLAGS_DISP_COORDS    0
+    #define CURSOR_FLAGS_FB_COORDS      1
+} prop_tag_cursor_state_t;
+
+typedef struct
+{
+    prop_tag_t tag;
+    union
+    {
         ULONG    offset;        // first palette index to set (0-255)
         ULONG    result;
         #define SET_PALETTE_VALID    0

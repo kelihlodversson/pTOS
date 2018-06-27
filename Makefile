@@ -280,7 +280,7 @@ endif
 vdi_src =
 
 ifdef RPI
-vdi_src += vdi_rpi.c
+vdi_src += vdi_rpi.c raspi_mouse.c
 else
 vdi_src += vdi_asm.S
 endif
