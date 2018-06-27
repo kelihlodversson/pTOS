@@ -28,12 +28,16 @@ There are a few directions that could make this project more useful:
   * Currently boots on some versions of Qemu.
   * Fails to boot on Raspberry PI 3.
   * Manages to set the default palette on Raspberry PI Zero but hangs with a white screen somewhere after that.
+
 ### Add support for chunky graphics in VDI (and/or replace it with parts of fVDI.)
   * Some initial hacks for 8bb framebuffer already in progress.
+
 ### Add SD card support.
   * The coldfire driver can possibly be adapted to support the EMMC controller.
-###. Add a simple USB stack to emulate an IKBD keyboard. (Failing that, use the UART pins to connect an ATARI ST keyboard to the machine with some 5 to 3.3V level shifting.)
+
+### Add a simple USB stack to emulate an IKBD keyboard. (Failing that, use the UART pins to connect an ATARI ST keyboard to the machine with some 5 to 3.3V level shifting.)
   * The USB stack in Mint seems to have support to be compiled for TOS only, and looks promising.
+
 ### Create a mint/TOS/arm binutils and gcc toolchain port.
   * Otherwise having an OS without apps is no fun in the long run.
 
