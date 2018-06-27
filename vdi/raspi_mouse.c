@@ -70,8 +70,8 @@ static void raspi_hw_cur_set_sprite(Mcdb *sprite)
     ULONG fg = raspi_dflt_palette[sprite->fg_col] | 0xff000000;
     ULONG bg = raspi_dflt_palette[sprite->bg_col] | 0xff000000;
     ULONG clear = 0x00000000;
-    UWORD* mask = sprite->maskdata+1;
-    UWORD* data = sprite->maskdata;
+    UWORD* mask = sprite->maskdata;
+    UWORD* data = sprite->maskdata+1;
     for(y=0; y<16; y++, mask += 2, data += 2)
     {
         UWORD pixel_mask = 0x8000;
