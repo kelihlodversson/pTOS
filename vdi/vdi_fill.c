@@ -690,6 +690,7 @@ clipbox(const VwkClip * clip, Rect * rect)
 /*
  * get_color - Get color value of requested pixel.
  */
+#if !CONF_CHUNKY_PIXELS
 static UWORD
 get_color (UWORD mask, UWORD * addr)
 {
@@ -709,6 +710,7 @@ get_color (UWORD mask, UWORD * addr)
 
     return color;       /* this is the color we are searching for */
 }
+#endif
 
 /*
  * pixelread - gets a pixel's color index value
@@ -723,6 +725,9 @@ get_color (UWORD mask, UWORD * addr)
 static UWORD
 pixelread(const WORD x, const WORD y)
 {
+#if CONF_CHUNKY_PIXELS
+    return *((UBYTE*)get_start_addr(x, y)) ;
+#else
     UWORD *addr;
     UWORD mask;
 
@@ -732,15 +737,23 @@ pixelread(const WORD x, const WORD y)
     mask = 0x8000 >> (x&0xf);           /* initial bit position in WORD */
 
     return get_color(mask, addr);       /* return the composed color value */
+#endif
 }
 
 static UWORD
 search_to_right (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_col, UWORD * addr)
 {
+#if CONF_CHUNKY_PIXELS
+    UBYTE* adr = (UBYTE*)addr;
+#endif
+
     /* is x coord < x resolution ? */
     while( x++ < clip->xmx_clip ) {
         UWORD color;
 
+#if CONF_CHUNKY_PIXELS
+        color = *(adr++);
+#else
         /* need to jump over interleaved bit_plane? */
         mask = mask >> 1 | mask << 15;  /* roll right */
         if ( mask & 0x8000 )
@@ -748,22 +761,28 @@ search_to_right (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_co
 
         /* search, while pixel color != search color */
         color = get_color(mask, addr);
+#endif
         if ( search_col != color ) {
             break;
         }
 
     }
-
     return x - 1;       /* output x coord -1 to endxright. */
 }
 
 static UWORD
 search_to_left (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_col, UWORD * addr)
 {
+#if CONF_CHUNKY_PIXELS
+    UBYTE* adr = (UBYTE*)addr;
+#endif
     /* Now, search to the left. */
     while (x-- > clip->xmn_clip) {
         UWORD color;
 
+#if CONF_CHUNKY_PIXELS
+        color = *(adr--);
+#else
         /* need to jump over interleaved bit_plane? */
         mask = mask >> 15 | mask << 1;  /* roll left */
         if ( mask & 0x0001 )
@@ -771,6 +790,7 @@ search_to_left (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_col
 
         /* search, while pixel color != search color */
         color = get_color(mask, addr);
+#endif
         if ( search_col != color )
             break;
 
@@ -810,11 +830,15 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
 
     /* convert x,y to start address and bit mask */
     addr = get_start_addr(x, y);
-    addr += v_planes;                   /* start at highest-order bit_plane */
     mask = 0x8000 >> (x & 0x000f);   /* fetch the pixel mask. */
+#if CONF_CHUNKY_PIXELS
+    color = *((UBYTE*)addr);
+#else
+    addr += v_planes;                   /* start at highest-order bit_plane */
 
     /* get search color and the left and right end */
     color = get_color (mask, addr);
+#endif
     *xrightout = search_to_right (clip, x, mask, color, addr);
     *xleftout = search_to_left (clip, x, mask, color, addr);
 
@@ -1070,9 +1094,10 @@ put_pix(void)
 {
     UWORD *addr;
     UWORD color;
+#if !CONF_CHUNKY_PIXELS
     UWORD mask;
     int plane;
-
+#endif
     const WORD x = PTSIN[0];
     const WORD y = PTSIN[1];
 
@@ -1085,6 +1110,10 @@ put_pix(void)
         return;
     }
     color = INTIN[0];           /* device dependent encoded color bits */
+
+#if CONF_CHUNKY_PIXELS
+    *((UBYTE*)addr) = color & 0xff;
+#else
     mask = 0x8000 >> (x&0xf);   /* initial bit position in WORD */
 
     for (plane = v_planes-1; plane >= 0; plane-- ) {
@@ -1094,4 +1123,5 @@ put_pix(void)
         else
             *addr++ &= ~mask;
     }
+#endif
 }
