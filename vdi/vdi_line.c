@@ -368,7 +368,7 @@ void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
 {
 #if CONF_CHUNKY_PIXELS
     const UWORD patmsk = attr->patmsk;
-    UBYTE *addr = (UBYTE *)get_start_addr(rect->x1,rect->y1);
+    UBYTE *addr = (UBYTE *)get_start_addr(0,rect->y1);
     int x, y, i;
 
 
