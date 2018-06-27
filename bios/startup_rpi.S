@@ -146,11 +146,13 @@ _main:
 
 	safe_svcmode_maskall r0
 
+#ifndef TARGET_RPI1
     mrc p15,0,r0,c0,c0,5    // Read MPIDR into r0
     ands r0,#3              // Mask out core id
     bne  _start_secondary   // Make sure only core 0 continues from here
 
 _core0:
+#endif
 	ldr	r0, =arm_vectors
 	mcr	p15, 0, r0, c12, c0, 0		/* set VBAR to our table at the start of the os */
 
