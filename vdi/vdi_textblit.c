@@ -21,6 +21,11 @@
 #include "../bios/lineavars.h"
 #include "kprint.h"
 
+#ifdef MACHINE_RPI
+// TODO: everything
+const WORD scrtsiz = 99;
+WORD deftxbuf[1000];
+#endif /* MACHINE_RPI */
 
 /*
  * the following structure mimics the format of the stack frame
@@ -98,6 +103,7 @@ typedef struct {
 
 /* here we should have the preprocessor verify the length of LOCALVARS */
 
+#ifndef MACHINE_RPI
 /*
  * assembler functions in vdi_tblit.S
  */
@@ -105,6 +111,7 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst);
 void outline(LOCALVARS *vars, UBYTE *buf, WORD form_width);
 void rotate(LOCALVARS *vars);
 void scale(LOCALVARS *vars);
+#endif /* ! MACHINE_RPI */
 
 
 /*
@@ -317,7 +324,9 @@ static void pre_blit(LOCALVARS *vars)
     tmp_style = vars->STYLE;        /* save temporarily */
     vars->STYLE &= (F_SKEW|F_THICKEN);  /* only thicken, skew */
 
+#ifndef MACHINE_RPI
     normal_blit(vars+1, src, dst);  /* call assembler helper function */
+#endif /* MACHINE_RPI */
 
     vars->STYLE = tmp_style;        /* restore */
     vars->WRT_MODE = WRT_MODE;
@@ -333,7 +342,9 @@ static void pre_blit(LOCALVARS *vars)
              */
             src = vars->sform;
             vars->sform += vars->s_next;
+#ifndef MACHINE_RPI
             outline(vars+1, src, vars->s_next);
+#endif /* MACHINE_RPI */
         }
     }
 
@@ -378,7 +389,9 @@ static void screen_blit(LOCALVARS *vars)
     vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)v_lin_wr; /* add y coordinate part of addr */
     vars->d_next = -v_lin_wr;
 
+#ifndef MACHINE_RPI
     normal_blit(vars+1, vars->sform, vars->dform);  /* call assembler helper function */
+#endif /* MACHINE_RPI */
 }
 
 
@@ -512,12 +525,16 @@ void text_blt(void)
 
     if (vars.CHUP)
     {
+#ifndef MACHINE_RPI
         rotate(&vars+1);    /* call assembler helper function */
+#endif /* MACHINE_RPI */
     }
 
     if (SCALE)
     {
+#ifndef MACHINE_RPI
         scale(&vars+1);     /* call assembler helper function */
+#endif /* MACHINE_RPI */
     }
 
     if (vars.STYLE & F_THICKEN)
