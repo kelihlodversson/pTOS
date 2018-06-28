@@ -2036,7 +2036,7 @@ int i, ntree;
 #ifndef DESK_RSC
 int first_time = 1;
 DEF_ENTRY *d;
-char temp[MAX_STRLEN];
+char temp[MAX_STRLEN+30];
 #endif
 
     if (!generate_trees)
@@ -2090,7 +2090,7 @@ int length[MAX_SUBSTR];
 char *s;
 OFFSET *strptr;
 DEF_ENTRY *d;
-char temp[MAX_STRLEN];
+char temp[MAX_STRLEN+30];
 char *base = (char *)rschdr;
 
     if (!generate_freestrings)
