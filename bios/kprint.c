@@ -150,7 +150,7 @@ static int vkprintf(const char *fmt, va_list ap)
         char *stacksave = NULL;
 
         if (boot_status&DOS_AVAILABLE)  /* if Super() is available, */
-            if (!Super(1L))             /* check for user state.    */
+            if (!Super((void *)1L))     /* check for user state.    */
                 stacksave = (char *)Super(0L);  /* if so, switch to super   */
         rc = doprintf(cprintf_outc, fmt, ap);
         if (stacksave)                  /* if we switched, */
@@ -165,7 +165,7 @@ static int vkprintf(const char *fmt, va_list ap)
         char *stacksave = NULL;
 
         if (boot_status&DOS_AVAILABLE)  /* if Super() is available, */
-            if (!Super(1L))             /* check for user state.    */
+            if (!Super((void *)1L))     /* check for user state.    */
                 stacksave = (char *)Super(0L);  /* if so, switch to super   */
         rc = doprintf(kprintf_outc_rs232, fmt, ap);
         if (stacksave)                  /* if we switched, */
@@ -180,7 +180,7 @@ static int vkprintf(const char *fmt, va_list ap)
         char *stacksave = NULL;
 
         if (boot_status&DOS_AVAILABLE)  /* if Super() is available, */
-            if (!Super(1L))             /* check for user state.    */
+            if (!Super((void *)1L))     /* check for user state.    */
                 stacksave = (char *)Super(0L);  /* if so, switch to super   */
         rc = doprintf(kprintf_outc_sccB, fmt, ap);
         if (stacksave)                  /* if we switched, */
@@ -200,7 +200,7 @@ static int vkprintf(const char *fmt, va_list ap)
         char *stacksave = NULL;
 
         if (boot_status&DOS_AVAILABLE)  /* if Super() is available, */
-            if (!Super(1L))             /* check for user state.    */
+            if (!Super((void *)1L))     /* check for user state.    */
                 stacksave = (char *)Super(0L);  /* if so, switch to super   */
         rc = doprintf(kprintf_outc_midi, fmt, ap);
         if (stacksave)                  /* if we switched, */
@@ -566,7 +566,7 @@ void dopanic(const char *fmt, ...)
         kcprintf("text=%08lx data=%08lx bss=%08lx\n",
                  (ULONG)run->p_tbase, (ULONG)run->p_dbase, (ULONG)run->p_bbase);
         if (pc && ((BYTE *)pc >= run->p_tbase) && ((BYTE *)pc < (run->p_tbase + run->p_tlen)))
-            kcprintf("Crash at text+%08lx\n", (BYTE *)pc - run->p_tbase);
+            kcprintf("Crash at text+%08lx\n", (long)((BYTE *)pc - run->p_tbase));
     }
 
     /* allow interrupts so we get keypresses */

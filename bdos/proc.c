@@ -545,7 +545,7 @@ static void proc_go(PD *p)
     sp = (struct gouser_stack *) (p->p_hitpa - sizeof(struct gouser_stack));
 
 #ifdef __arm__
-    p->p_dreg[0] = p;      /* base page is passed in r0 */
+    p->p_dreg[0] = (LONG)p;  /* base page is passed in r0 */
     sp->spsr = ((get_cpsr() & ~0x1f) | 0x10); /* the process will start in user mode, same interrupts */
     sp->retaddr = (long)p->p_tbase; /* return address is text start */
     /* the other stack is the supervisor stack */
