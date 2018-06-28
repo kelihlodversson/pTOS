@@ -54,13 +54,15 @@ static PUN_INFO pun_info;
 /*
  * Function prototypes
  */
+#if CONF_WITH_BOOT_SECTOR
 static LONG blkdev_hdv_boot(void);
+static LONG bootcheck(void);
+static WORD hd_boot_read(void);
+#endif
 static void blkdev_hdv_init(void);
 static LONG blkdev_mediach(WORD dev);
 static LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LONG lrecnr);
-static LONG bootcheck(void);
 static void bus_init(void);
-static WORD hd_boot_read(void);
 
 /* get intel words */
 static UWORD getiword(UBYTE *addr)
