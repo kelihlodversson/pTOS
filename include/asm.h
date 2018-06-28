@@ -264,6 +264,9 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
 
 #if defined(__mcoldfire__) || defined(__m68k__)
 
+extern void disable_interrupts(void);
+extern void enable_interrupts(void);
+
 #define set_sr(a)                         \
 __extension__                             \
 ({short _r, _a = (a);                     \
@@ -326,13 +329,16 @@ __extension__                             \
   _r;                                     \
 })
 
+extern ULONG disable_interrupts(void);
+extern void enable_interrupts(void);
+
 #ifdef TARGET_RPI1
 #define flush_prefetch_buffer()	    __asm__ volatile ("mcr p15, 0, %0, c7, c5,  4" : : "r" (0) : "memory")
 
 #define data_sync_barrier()         __asm__ volatile ("mcr p15, 0, %0, c7, c10, 4" : : "r" (0) : "memory")
 #define data_mem_barrier()          __asm__ volatile ("mcr p15, 0, %0, c7, c10, 5" : : "r" (0) : "memory")
 
-#define peripheral_begin()          data_sync_barrier()	// ignored here
+#define peripheral_begin()          data_sync_barrier()	/* ignored here */
 #define peripheral_end()            data_mem_barrier()
 #else
 #define flush_prefetch_buffer()     __asm__ volatile ("isb" ::: "memory")
@@ -340,7 +346,7 @@ __extension__                             \
 #define data_sync_barrier()         __asm__ volatile ("dsb" ::: "memory")
 #define data_mem_barrier()          __asm__ volatile ("dmb" ::: "memory")
 
-#define peripheral_begin()  ((void) 0)	// ignored here
+#define peripheral_begin()  ((void) 0)	/* ignored here */
 #define peripheral_end()    ((void) 0)
 #endif
 
@@ -371,8 +377,8 @@ __extension__                                      \
   __asm__ volatile ("movem.l (sp)+,d0-d7/a0-a6");  \
 })
 #elif defined(__arm__)
-// not used on arm curently, but we assume anything called follows the eabi, so
-// no registers need to be saved apart from what the compiler already does
+/* not used on arm curently, but we assume anything called follows the eabi, so */
+/* no registers need to be saved apart from what the compiler already does */
 #define regsafe_call(addr)                         \
   ((void (*)(void))addr)();
 #endif

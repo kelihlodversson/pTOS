@@ -120,7 +120,6 @@ static ULONG raspi_screen_size;
 
 void raspi_screen_init(void)
 {
-    int x,y;
     struct
     {
         prop_tag_2u32_t    set_physical_dim;
@@ -248,7 +247,7 @@ void raspi_setphys(const UBYTE *addr)
 
 }
 
-const UBYTE *raspi_physbase(void)
+UBYTE *raspi_physbase(void)
 {
     return raspi_screenbase;
 }
@@ -309,10 +308,9 @@ UBYTE * raspi_cell_addr(int x, int y)
 void raspi_blank_out (int topx, int topy, int botx, int boty)
 {
     UWORD color = v_col_bg;             /* bg color value */
-    int width, row, rows;
+    int width, row;
     UBYTE * addr = raspi_cell_addr(topx, topy);   /* running pointer to screen */
     width = botx - topx;
-    rows = (boty - topy) * v_cel_ht;
     topy *= v_cel_ht;
     boty *= v_cel_ht;
     for (row = topy; row < boty; row++)

@@ -22,5 +22,5 @@
 #endif
 
 
-#endif // MACHINE_RPI
-#endif // RASPI_IO_H
+#endif /* MACHINE_RPI */
+#endif /* RASPI_IO_H */

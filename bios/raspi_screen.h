@@ -14,7 +14,7 @@ void raspi_screen_init(void);
 WORD raspi_check_moderez(WORD moderez);
 void raspi_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez);
 void raspi_setphys(const UBYTE *addr);
-const UBYTE *raspi_physbase(void);
+UBYTE *raspi_physbase(void);
 WORD raspi_setcolor(WORD colorNum, WORD color);
 void raspi_setrez(WORD rez, WORD videlmode);
 WORD raspi_vgetmode(void);
@@ -32,5 +32,5 @@ void raspi_screen_err(ULONG num, ULONG addr, ULONG pc);
 #endif
 
 extern const ULONG raspi_dflt_palette[256];
-#   endif // MACHINE_RPI
-#endif // RASPI_SCREEN_H
+#   endif /* MACHINE_RPI */
+#endif /* RASPI_SCREEN_H */

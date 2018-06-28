@@ -286,9 +286,14 @@ void timer_init(void);
 void vdimouse_init(void);
 void esc_init(Vwk *);
 
+extern void (*user_wheel)(WORD wheel_number, WORD wheel_amount);   /* user provided mouse wheel vector */
+
 void vdimouse_exit(void);
 void timer_exit(void);
 void esc_exit(Vwk *);
+void mouse_int(UBYTE *buf);   /* mouse interrupt vector */
+void wheel_int(UBYTE *buf);   /* wheel interrupt routine */
+void mov_cur(WORD new_x, WORD new_y);      /* user button vector */
 
 /* all VDI functions */
 

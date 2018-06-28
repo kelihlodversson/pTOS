@@ -132,11 +132,8 @@ intin_ok:
 
         /* Global variables declared here */
 
-        .globl  _mov_cur        // set's new x/y coordinates
         .globl  _mouse_int      // mouse interrupt routine
         .globl  _wheel_int      // wheel interrupt routine
-        .globl  _call_user_but  // call the _user_but vector from C
-        .globl  _call_user_wheel// call the _user_wheel vector from C
 
         /* External variables used here */
 
@@ -487,18 +484,6 @@ wheel_ikbd_packet:
 
 
 
-/*
- * mov_cur - moves the mouse cursor to its new location
- *           unless the cursor is currently hidden.
- *
- * Inputs:
- *    d0 = new x-coordinate for mouse cursor
- *    d1 = new y-coordinate for mouse cursor
- *
- * Outputs:        None
- *
- * Registers Modified:     None
- */
 
 _mov_cur:
         tst.w   _HIDE_CNT       // is the cursor hidden?
@@ -538,24 +523,3 @@ _mov_cur:
 #endif
 mov_cur1:
         rts
-
-
-
-/*
- * Call the _user_but vector from C.
- */
-_call_user_but:
-        move.w  4(sp),d0
-        move.l  _user_but,a0
-        jmp     (a0)
-
-
-
-/*
- * Call the _user_wheel vector from C.
- */
-_call_user_wheel:
-        move.w  4(sp),d0
-        move.w  6(sp),d1
-        move.l  _user_wheel,a0
-        jmp     (a0)

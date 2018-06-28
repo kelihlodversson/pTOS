@@ -883,9 +883,9 @@ static volatile WORD iclk_ready;
 
 /* called by the ACIA interrupt */
 /* EmuTOS's ikbdsys also puts the buffer on the stack */
-void clockvec(BYTE *buf)
+void clockvec(UBYTE *buf)
 {
-    BYTE *b = 1 + ((BYTE *)&iclkbuf);
+    UBYTE *b = 1 + ((UBYTE *)&iclkbuf);
 
     memmove(b, buf, 6);
     iclk_ready = 1;

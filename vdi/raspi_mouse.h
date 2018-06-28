@@ -23,5 +23,5 @@ struct Mcdb_ {
 };
 void raspi_hw_cur_display(Mcdb *sprite, WORD x, WORD y);
 
-#   endif // MACHINE_RPI
-#endif // RASPI_MOUSE_H
+#   endif /* MACHINE_RPI */
+#endif /* RASPI_MOUSE_H */

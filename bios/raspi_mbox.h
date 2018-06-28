@@ -11,28 +11,28 @@
 #   define RASPI_MBOX_H
 #   ifdef MACHINE_RPI
 
-#define MAILBOX_CHANNEL_PM        0   // power management
-#define MAILBOX_CHANNEL_FB      1   // frame buffer
-#define MAILBOX_PROP_OUT        8   // property tags (ARM to VC)
+#define MAILBOX_CHANNEL_PM      0   /* power management */
+#define MAILBOX_CHANNEL_FB      1   /* frame buffer */
+#define MAILBOX_PROP_OUT        8   /* property tags (ARM to VC) */
 
 ULONG raspi_mbox_read(UBYTE channel);
 void raspi_mbox_write(UBYTE channel, ULONG data);
 
 typedef struct {
-    ULONG size;     // The size of the buffer in bytes (including the header values, the end tag and padding)
-    ULONG status;   // buffer request/response code
+    ULONG size;     /* The size of the buffer in bytes (including the header values, the end tag and padding) */
+    ULONG status;   /* buffer request/response code */
     #define CODE_REQUEST            0x00000000
     #define CODE_RESPONSE_SUCCESS    0x80000000
     #define CODE_RESPONSE_FAILURE    0x80000001
-    UBYTE tags[0];   // tag array. Finish with ULONG 0x0 end tag
+    UBYTE tags[0];   /* tag array. Finish with ULONG 0x0 end tag */
 }   prop_buffer_t;
 
 typedef struct {
-    ULONG tag_id;           // tag identifier
-    ULONG value_buf_size;   // value buffer size in bytes
-    ULONG value_length;     // Request code (bit 31 unset) / Response code (bit 31 clear)
+    ULONG tag_id;           /* tag identifier */
+    ULONG value_buf_size;   /* value buffer size in bytes */
+    ULONG value_length;     /* Request code (bit 31 unset) / Response code (bit 31 clear) */
     #define VALUE_LENGTH_RESPONSE    (1 << 31)
-    //UBYTE value[0]; // Value, (needs to be padded to align tag with 32 bits)
+    /*UBYTE value[0]; */    /* Value, (needs to be padded to align tag with 32 bits) */
 }   prop_tag_t;
 
 typedef struct {
@@ -51,13 +51,13 @@ typedef struct
     prop_tag_t tag;
     union
     {
-        ULONG   width;            // should be >= 16
+        ULONG   width;            /* should be >= 16 */
         ULONG   nResponse;
-        #define CURSOR_RESPONSE_VALID    0    // response
+        #define CURSOR_RESPONSE_VALID    0    /* response */
     };
-    ULONG   height;        // should be >= 16
+    ULONG   height;        /* should be >= 16 */
     ULONG   pad;
-    ULONG   pixels;        // physical address, format 32bpp ARGB
+    ULONG   pixels;        /* physical address, format 32bpp ARGB */
     ULONG   hotspot_x;
     ULONG   hotspot_y;
 } prop_tag_cursor_info_t;
@@ -84,12 +84,12 @@ typedef struct
     prop_tag_t tag;
     union
     {
-        ULONG    offset;        // first palette index to set (0-255)
+        ULONG    offset;        /* first palette index to set (0-255) */
         ULONG    result;
         #define SET_PALETTE_VALID    0
     };
-    ULONG    length;        // number of palette entries to set (1-256)
-    ULONG    palette[256];  // RGBA values, offset to offset+length-1
+    ULONG    length;        /* number of palette entries to set (1-256) */
+    ULONG    palette[256];  /* RGBA values, offset to offset+length-1 */
 } prop_tag_palette_t;
 
 #define PROPTAG_END                     0x00000000
@@ -131,5 +131,5 @@ typedef struct
 BOOL raspi_prop_get_tag(ULONG tag_id, void *tag, ULONG tag_size, ULONG request_param_size);
 BOOL raspi_prop_get_tags(void *tags, ULONG tags_size);
 
-#   endif // MACHINE_RPI
-#endif // RASPI_MBOX_H
+#   endif /* MACHINE_RPI */
+#endif /* RASPI_MBOX_H */

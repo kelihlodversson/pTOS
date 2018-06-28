@@ -16,7 +16,7 @@
 #ifndef XBIOSBIND_H
 #define XBIOSBIND_H
 
-#define Initmous(a,b,c) xbios_v_wll(0,a,b,c)
+#define Initmous(a,b,c) xbios_v_wll(0,a,(long)(b),(long)(c))
 #define Ssbrk(a) xbios_l_w(1,a)
 #define Physbase() xbios_l_v(2)
 #define Logbase() xbios_l_v(3)

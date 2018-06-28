@@ -28,6 +28,7 @@
 #include "gemdosif.h"
 #include "gemasm.h"
 #include "gemflag.h"
+#include "asm.h"
 
 
 
