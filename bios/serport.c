@@ -27,6 +27,9 @@
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
 #endif
+#if CONF_WITH_RASPI_UART0
+#include "raspi_uart.h"
+#endif
 
 /*
  * defines
