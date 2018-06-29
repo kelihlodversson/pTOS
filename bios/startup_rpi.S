@@ -12,7 +12,7 @@
 #include "asmdefs.h"
 #include "header.h"
 
-
+#define CORE0_MBOX3_SET             0x4000008C
 // ==== Definitions ==========================================================
 
         .globl  _os_entry
@@ -23,8 +23,7 @@
         .extern resvalid
         .extern resvector
         .extern _stktop
-
-        // Memory
+#        // Memory
         .extern meminit       // initialize the memory and its controller
 
         // BIOS C part
@@ -147,15 +146,38 @@ _main:
 	safe_svcmode_maskall r0
 
 #ifndef TARGET_RPI1
+    /* Since TOS does not support SMP, a quick hack to tell remaining cores to
+    start execution in _start_secondary */
+
+    // On real hardware, only core 0 starts executing at 0x8000, but
+    // Qemu seems to send all cores to this address.
     mrc p15,0,r0,c0,c0,5    // Read MPIDR into r0
     ands r0,#3              // Mask out core id
     bne  _start_secondary   // Make sure only core 0 continues from here
 
 _core0:
-#endif
-	ldr	r0, =arm_vectors
-	mcr	p15, 0, r0, c12, c0, 0		/* set VBAR to our table at the start of the os */
+    // On real hardware, the other cores are looping somewhere in low
+    // memory waiting for someone to give them an address through a
+    // mailbox mechanism. We'll send them to our own loop in case we
+    // overwrite the memory they're currently at.
 
+    ldr r1, =_start_secondary
+
+    // Get mailbox for core 1
+    ldr r0, = CORE0_MBOX3_SET + 0x10
+    str r1, [r0]
+
+    // Get mailbox for core 2
+    ldr r0, = CORE0_MBOX3_SET + 0x20
+    str r1, [r0]
+
+    // Get mailbox for core 3
+    ldr r0, = CORE0_MBOX3_SET + 0x30
+    str r1, [r0]
+#endif
+
+    /* Note that we set all the stack pointers to point to the same place,
+      as we actually only use the user and supervisor stack pointer. */
 	cps	#0x11				/* set fiq mode */
 	ldr	sp, =_stktop
 	cps	#0x12				/* set irq mode */
@@ -167,25 +189,50 @@ _core0:
 	cps	#0x13				/* set supervior mode */
 	ldr	sp, =_stktop
 
+    /* Turn on unaligned memory access */
+    mrc     p15, #0, r4, c1, c0, #0
+    orr     r4, #0x400000   /* 1<22 */
+    mcr     p15, #0, r4, c1, c0, #0
 
-/*
- * Check, if we should jump to a reset vector after warmboot
- */
+    /* Enable MMU */
+    ldr     r1, =ttbr0              // addr(TTBR0)
 
-resetvec:
-    ldr r1, =0x31415926
-    ldr r2, =resvalid
-    ldr r2, [r2]
-    cmp r1, r2                  // Jump to resetvector?
-    mov r0, #0
-    bne noreset                 // No --> noreset
-    ldr ip, =resvector
-    ldr ip, [ip]
-    cmp ip, r0                  // Address null? Yes --> noreset
-    beq noreset
-    blx ip                      // jump to resvec
-noreset:
+    ldr     r2, =0x0000040E
+    mov     r3, #0                  // from 0x00000000
+    mov     r4, #0x200              //   to 0x1FFFFFFF
+    bl      set_pgtbl_entry
 
+    ldr     r2, =0x00002416
+    mov     r3, #0x200              // from 0x20000000 (incl. peripherals)
+    mov     r4, #0x1000             //   to 0xFFFFFFFF
+    bl      set_pgtbl_entry
+
+    ldr     r2, =0x0000040E
+    mov     r3, #0x480              // framebuffer at 0x48000000
+    mov     r4, #0x490              // make 16 Mbyte cacheable
+    bl      set_pgtbl_entry
+
+    mov     r3, #3
+    mcr     p15, #0, r3, c3, c0, #0 // set domain 0 to master
+
+    mcr     p15, #0, r1, c2, c0, #0 // set TTBR0 (addr of ttbr0)  (ptblwlk inner non cacheable,
+                                    // outer non-cacheable, not shareable memory)
+    #if 0
+    /* Start L1 Cache */
+    mov     r3, #0
+    mcr     p15, #0, r3, c7, c7, #0 /* Invalidate data cache and flush prefetch buffer */
+    mcr     p15, #0, r3, c8, c7, #0 /* Invalidate TLB */
+    mrc     p15, #0, r2, c1, c0, #0 /* Read Control Register Configuration Data */
+    orr     r2, #0x00800000
+    orr     r2, #0x00001000         /* Instruction */
+    orr     r2, #0x00000800         /* Branch Prediction */
+    orr     r2, #0x00000004         /* Data */
+    orr     r2, #0x00000001
+    mcr     p15, #0, r2, c1, c0, #0 /* Write Control Register Configuration Data */
+    #endif
+
+	ldr	r0, =arm_vectors
+	mcr	p15, 0, r0, c12, c0, 0		/* set VBAR to our table at the start of the os */
 
 /*
  * memory configuration
@@ -194,12 +241,22 @@ noreset:
     bl     meminit         // do/test memory config and clear it (needs sp)
 
 
+
 /*
  * From now, the stack is allowed, and C code can be used.
  * The BIOS startup goes on in bios.c
  */
 
     b     _biosmain
+
+set_pgtbl_entry:
+    lsl     r0, r3, #20             // = r3 * 0x100000 (1M)
+    orr     r0, r2
+    str     r0, [r1, r3, lsl #2]
+    add     r3, #1
+    cmp     r3, r4
+    bne     set_pgtbl_entry
+    mov     pc, lr
 
 #ifndef TARGET_RPI1
 
@@ -238,6 +295,8 @@ _start_secondary:
 #endif
 
 #endif
+
+//.extern _raspi_screen_err
 
     .globl _arm_dispatch_undef
 _arm_dispatch_undef:
@@ -282,12 +341,18 @@ _arm_dispatch_prefetch_abort:
     ldmfd  sp, {r0-r14}^   /* restore user registers */
     rfefd  sp!             /* load pc and CPSR from stack */
 
-
     .globl _arm_dispatch_data_abort
 _arm_dispatch_data_abort:
 	sub	lr, lr, #8         /* lr: correct PC of aborted program */
+//    mov r2, lr
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervior stack */
     cps    #0x13           /* switch to supervior mode */
+
+//    mrc p15, 0, r0, c5, c0,  0  // FSR in r0
+//    mrc p15, 0, r1, c6, c0,  0  // FAR in r1
+//    bl     _raspi_screen_err
+//1:  wfi
+//    b 1b
     sub    sp, #4*15
 	stmia  sp, {r0-r14}^   /* store user registers r0-r14 (unbanked) */
 
@@ -320,3 +385,9 @@ _arm_dispatch_fiq:
     cps    #0x13           /* switch to supervior mode */
     // TODO: fixme
     rfefd  sp!             /* load pc and CPSR from stack */
+
+.section .data
+
+    .align 14
+ttbr0:
+    .space  4 << 12                        // 4 bytes * 4096 entries

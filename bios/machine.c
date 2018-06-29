@@ -573,7 +573,6 @@ void fill_cookie_jar(void)
     /* this is detected by detect_cpu(), called from processor_init() */
     cookie_add(COOKIE_CPU, mcpu);
 #endif
-
     /* _VDO
      * This cookie represents the revision of the video shifter present.
      * Currently valid values are:

@@ -33,8 +33,15 @@
 /*
  *  local constants
  */
+#ifdef __arm__
+#define BLOCK_PAD_BYTES 4
+#else
+#define BLOCK_PAD_BYTES 2
+#endif
+#define BLOCK_PAD (BLOCK_PAD_BYTES/sizeof(WORD))
+
 #define NUM_OSM_BLOCKS  118         /* more than TOS, probably larger than necessary */
-#define LEN_OSM_BLOCK   (2+64)      /* in bytes */
+#define LEN_OSM_BLOCK   (BLOCK_PAD_BYTES+64)      /* in bytes */
 /* size of os memory pool, in words: */
 #define LENOSM          (LEN_OSM_BLOCK*NUM_OSM_BLOCKS/sizeof(WORD))
 
@@ -43,10 +50,15 @@
  *  local typedefs
  */
 #define MDS_PER_BLOCK   3
+#ifdef __arm__
+typedef LONG md_index_t;
+#else
+typedef WORD md_index_t;
+#endif
 
 typedef struct {
     MD md;
-    WORD index;         /* if used, 0-2, else -1 */
+    md_index_t index;         /* if used, 0-2, else -1 */
 } MDEXT;
 
 typedef struct _mdb MDBLOCK;
@@ -101,6 +113,11 @@ static LONG dbggtblk;
 static WORD *getosm(WORD n)
 {
     WORD *m;
+#ifdef __arm__
+    // force 32 bit alingment on arm
+    if(n & 1)
+        n++;
+#endif
 
     if (n > osmlen)
     {
@@ -171,7 +188,7 @@ MD *xmgetmd(void)
 {
     MDBLOCK *mdb = mdbroot;
     MD *md;
-    WORD i, avail;
+    md_index_t i, avail;
 
     if (!mdb)
     {
@@ -231,9 +248,9 @@ void xmfremd(MD *md)
 {
     MDBLOCK *mdb;
     MDEXT *entry;
-    WORD i, avail;
+    md_index_t i, avail;
 
-    i = *(WORD *)(md+1);            /* word following MD */
+    i = ((MDEXT *)md)->index;            /* word following MD */
     if ((i < 0) || (i >= MDS_PER_BLOCK))
     {
         KDEBUG(("xmfremd(): MD at %p not freed, invalid index %d\n",md,i));
@@ -319,9 +336,10 @@ void *xmgetblk(WORD memtype)
         }
 
         /* nothing on free list, try pool */
-        if ( (m = getosm(w+1)) )    /* include size of control word */
+        if ( (m = getosm(w+BLOCK_PAD)) )    /* include size of control word */
         {
-            *m++ = i;               /* put size in control word */
+            *m = i;               /* put size in control word */
+            m += BLOCK_PAD;
             break;
         }
 
@@ -362,7 +380,7 @@ void xmfreblk(void *m)
 {
     WORD i;
 
-    i = *(((WORD *)m) - 1);
+    i = *(((WORD *)m) - BLOCK_PAD);
 
     if (i != 4)
     {

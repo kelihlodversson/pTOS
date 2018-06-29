@@ -67,6 +67,7 @@ static ULONG detect_ttram_size(void)
 /* Detect TT-RAM and set ramtop/ramvalid */
 void ttram_detect(void)
 {
+#ifndef MACHINE_RPI
 #if CONF_WITH_TTRAM
     if (ramvalid == RAMVALID_MAGIC)
     {
@@ -107,6 +108,7 @@ void ttram_detect(void)
 #endif
 
     KDEBUG(("ttram_detect(): ramtop=%p\n", ramtop));
+#endif
 }
 
 #if CONF_WITH_ALT_RAM

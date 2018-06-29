@@ -456,6 +456,9 @@
 # ifndef CONF_CHUNKY_PIXELS
 #  define CONF_CHUNKY_PIXELS 1
 # endif
+# ifndef CONF_WITH_ARM_PMMU
+#  define CONF_WITH_ARM_PMMU 1
+# endif
 #endif
 /*
  * By default, EmuTOS is built for Atari ST/TT/Falcon compatible hardware.
@@ -1261,6 +1264,10 @@
 #endif
 #if CONF_WITH_68030_PMMU
 # define PMMUTREE_ADDRESS_68030 0x700
+#endif
+
+#ifndef CONF_WITH_ARM_PMMU
+# define CONF_WITH_ARM_PMMU 0
 #endif
 
 /*

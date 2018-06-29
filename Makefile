@@ -702,8 +702,8 @@ rpi1:
 NODEP += rpi2
 rpi2: UNIQUE = $(COUNTRY)
 rpi2: IMG_RPI = kernel7.img
+rpi2: OPTFLAGS = -O2
 rpi2: override DEF += -DTARGET_RPI2 $(RPI_DEFS)
-rpi2: OPTFLAGS =
 rpi2:
 	@echo "# Building Raspberry Pi 2 EmuTOS into $(IMG_RPI)"
 	$(MAKE) RPI=2 WITH_CLI=0 DEF='$(DEF)' OPTFLAGS=$(OPTFLAGS) UNIQUE=$(UNIQUE) IMG_RPI=$(IMG_RPI) $(IMG_RPI)
@@ -714,6 +714,7 @@ rpi2:
 NODEP += rpi3
 rpi3: UNIQUE = $(COUNTRY)
 rpi3: IMG_RPI = kernel8-32.img
+rpi2: OPTFLAGS = -O2
 rpi3: override DEF += -DTARGET_RPI3 $(RPI_DEFS)
 rpi3:
 	@echo "# Building Raspberry Pi 3 EmuTOS into $(IMG_RPI)"

@@ -270,6 +270,11 @@ _BYTES_LIN:     .ds.w   1       // -2   byte per screen line
 
 // ==== Global GSX Variables =================================================
 
+#ifdef MACHINE_RPI
+
+
+.balign 4
+#endif
 line_a_vars:                            // This is the base line-a pointer
 
 _v_planes:      .ds.w   1               // +0   number of video planes.

@@ -193,7 +193,7 @@ _invalidate_data_cache:
         .balign 4
 
 _mcpu:          .ds.l   1
-_mcpu_subtype:  .ds.w   1
+_mcpu_subtype:  .ds.l   1
 _fputype:       .ds.l   1
 temp:           .ds.l   1
 

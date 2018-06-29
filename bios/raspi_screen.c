@@ -162,6 +162,64 @@ void initialise_raspi_palette(WORD mode)
     raspi_prop_get_tag(PROPTAG_SET_PALETTE, &palette, sizeof(prop_tag_palette_t), sizeof(ULONG)*258);
 }
 
+#if 0
+// Rough debug routines for swapping the background color at various checkpoints
+// plus a more advanced one useful for early exceptions.
+
+void raspi_screen_debug()
+{
+    static int counter = 0;
+    prop_tag_palette_t palette;
+    palette.offset = 0;
+    palette.length = 1;
+    palette.palette[0] = raspi_dflt_palette[(counter++ % 16) + 2];
+    raspi_prop_get_tag(PROPTAG_SET_PALETTE, &palette, sizeof(prop_tag_palette_t), sizeof(ULONG)*3);
+}
+
+void raspi_screen_err(ULONG num, ULONG addr, ULONG pc)
+{
+    prop_tag_palette_t palette;
+    palette.offset = 0;
+    palette.length = 1;
+    palette.palette[0] = raspi_dflt_palette[2];
+    raspi_prop_get_tag(PROPTAG_SET_PALETTE, &palette, sizeof(prop_tag_palette_t), sizeof(ULONG)*3);
+    int x,y;
+    UBYTE c1,c2,c3;
+    for(x = 0; x < 640; x ++)
+    {
+        if (x % 20 == 19)
+        {
+            num <<= 1;
+            addr <<= 1;
+            pc <<= 1;
+            c1 = c2 = c3 = 15;
+        }
+        else if (x % 80 == 78)
+        {
+            c1 = c2 = c3 = 15;
+        }
+        else
+        {
+            c1 = (num & 0x80000000) ? 1 : 254;
+            c2 = (addr & 0x80000000) ? 2 : 254;
+            c3 = (pc & 0x80000000) ? 4 : 254;
+        }
+        for(y = 100; y < 150; y++)
+        {
+            raspi_screenbase[y*raspi_screen_width_in_bytes + x] = c1;
+        }
+        for(y = 150; y < 200; y++)
+        {
+            raspi_screenbase[y*raspi_screen_width_in_bytes + x] = c2;
+        }
+        for(y = 200; y < 250; y++)
+        {
+            raspi_screenbase[y*raspi_screen_width_in_bytes + x] = c3;
+        }
+    }
+}
+#endif
+
 WORD raspi_check_moderez(WORD moderez)
 {
     WORD current_mode, return_mode;

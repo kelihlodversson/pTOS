@@ -29,7 +29,76 @@ _proc_stk       = 0x3cc;        /* 16 words from exception stack */
 
 /* ==== Start of System variables =========================================== */
 sysvars_start   = 0x400;
+#ifdef MACHINE_RPI
+_etv_timer      = 0x400;        /* GEM event timer vector */
+_etv_critic     = 0x404;        /* GEM critical error handler */
+_etv_term       = 0x408;        /* GEM program termination vector */
+_etv_xtra       = 0x40c;        /* GEM additional vectors (unused) */
 
+_phystop        = 0x424;        /* physical top of RAM */
+_membot         = 0x428;        /* start of TPA (user memory) */
+_memtop         = 0x42c;        /* end of TPA (user memory) */
+_flock          = 0x430;        /* if != 0, VBL floppy routine is disabled */
+_seekrate       = 0x434;        /* floppy seek rate */
+_timer_ms       = 0x438;        /* time between timer calls in ms */
+_fverify        = 0x43c;        /* if != 0, verify floppy writes */
+_bootdev        = 0x440;        /* default boot drive */
+_palmode        = 0x444;        /* 0 = NTSC, else PAL */
+_defshiftmod    = 0x448;        /* default video resolution */
+_sshiftmod      = 0x44c;        /* copy of contents of 0xffff8260 */
+
+_v_bas_ad       = 0x450;        /* screen base address */
+_vblsem         = 0x454;        /* if > 0, the VBL routine is executed */
+_nvbls          = 0x458;        /* number of VBL routines */
+_vblqueue       = 0x45c;        /* pointer to list of VBL routines */
+_colorptr       = 0x460;        /* pointer to color palette to be loaded */
+
+_vbclock        = 0x464;        /* number of VBL routines executed */
+_frclock        = 0x468;        /* number of VBL routines processed */
+_hdv_init       = 0x46c;        /* vector for hard disk initialization */
+_swv_vec        = 0x470;        /* vector for resolution change */
+_hdv_bpb        = 0x474;        /* vector for getbpb for harddisk */
+_hdv_rw         = 0x478;        /* vector for read/write for harddisk */
+_hdv_boot       = 0x47c;        /* vector for hard disk boot */
+_hdv_mediach    = 0x480;        /* vector for hard disk media change */
+_cmdload        = 0x484;        /* if not 0, load command.prg after boot */
+_conterm        = 0x488;        /* attribute vector for console output */
+criticret       = 0x48c;        /* return address for critical error hndlr */
+_themd          = 0x490;        /* first memory descriptor block */
+____md          = 0x4a0;        /* space for additional memory descriptors */
+_savptr         = 0x4a4;        /* pointer to BIOS save register block */
+_nflops         = 0x4a8;        /* number of connected floppy drives */
+con_state       = 0x4ac;        /* vector for screen output */
+_save_row       = 0x4b0;        /* temporary storage for cursor line pos. */
+sav_context     = 0x4b4;        /* ptr to save area for exception processing */
+_bufl           = 0x4b8;        /* pointers to buffer ctrl blocks for GEMDOS */
+_hz_200         = 0x4bc;        /* counter for 200 Hz system clock */
+the_env         = 0x4c0;        /* pointer to default environment string */
+_drvbits        = 0x4c4;        /* bit allocation for physical drives */
+_dskbufp        = 0x4c8;        /* pointer to disk buffer */
+_autopath       = 0x4d0;        /* pointer to auto-execute path */
+_vbl_list       = 0x4d4;        /* pointers to 8 VBl routines */
+_dumpflg        = 0x4f4;        /* flag for screen dump (unsused) */
+_prtabt         = 0x4f8;        /* printer abort flag */
+_sysbase        = 0x4fc;        /* pointer to start of OS */
+_shell_p        = 0x500;        /* pointer to shell */
+_end_os         = 0x504;        /* pointer to end of OS */
+_exec_os        = 0x508;        /* pointer to entry point of OS */
+_dump_vec       = 0x50c;        /* pointer to screen dump routine */
+_prt_stat       = 0x510;        /* pointer to prv_lsto */
+_prt_vec        = 0x514;        /* pointer to prv_lst */
+_aux_stat       = 0x518;        /* pointer to prv_auxo */
+_aux_vec        = 0x51c;        /* pointer to prv_aux */
+_pun_ptr        = 0x520;        /* if AHDI, pointer to pun_info */
+_bconstat_vec   = 0x524;        /* 8 pointers to input-status routines */
+_bconin_vec     = 0x544;        /* 8 pointers to input routines */
+_bcostat_vec    = 0x564;        /* 8 pointers to output-status routines */
+_bconout_vec    = 0x584;        /* 8 pointers to output routines */
+_p_cookies      = 0x5c4;        /* pointer to cookie jar */
+_bell_hook      = 0x5c8;        /* pointer to routine for system bell */
+_kcl_hook       = 0x5cc;        /* pointer to routine for system keyclick */
+
+#else
 _etv_timer      = 0x400;        /* GEM event timer vector */
 _etv_critic     = 0x404;        /* GEM critical error handler */
 _etv_term       = 0x408;        /* GEM program termination vector */
@@ -108,7 +177,6 @@ _ramtop         = 0x5a4;        /* top of TT-RAM, or NULL if no TT-RAM is presen
 _ramvalid       = 0x5a8;        /* if equal to RAMVALID_MAGIC, then ramtop is valid */
 _bell_hook      = 0x5ac;        /* pointer to routine for system bell */
 _kcl_hook       = 0x5b0;        /* pointer to routine for system keyclick */
-
 /*
  * We can add any undocumented variables here, they will have fixed addresses
  * and will be accessible in supervisor mode only.
@@ -124,6 +192,7 @@ _warm_magic     = 0x6fc;        /* set to WARM_MAGIC if next boot must not */
 _pmmutree       = PMMUTREE_ADDRESS_68030;   /* for pmmu tree on 68030 */
 #endif
 
+#endif
 /*
  * The sysvars region ends at 0x800.
  */
