@@ -469,7 +469,7 @@ void text_blt(void)
 
     vars.buffa = SCRPT2;
     dely = vars.DELY;
-    delx = vars.DELX;
+    vars.tmp_delx = delx = vars.DELX;
 
     if (SCALE)
     {
