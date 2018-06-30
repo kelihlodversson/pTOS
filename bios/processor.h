@@ -88,6 +88,8 @@
 #define PROCESSOR_H
 
 extern void processor_init(void);
+extern void detect_cpu(void);
+extern void detect_fpu(void);
 /* invalidate_instruction_cache() is declared in include/biosext.h */
 extern void instruction_cache_kludge(void *start,long size);
 extern void flush_data_cache(void *start, long size);
@@ -98,6 +100,11 @@ extern WORD longframe;
 
 #if CONF_WITH_APOLLO_68080
 extern BOOL is_apollo_68080;
+#endif
+
+#if defined(__arm__) || defined(__aarch64__)
+extern const char *mcpu_name;
+#include "processor_arm.h"
 #endif
 
 #endif /* PROCESSOR_H */

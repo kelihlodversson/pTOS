@@ -28,11 +28,6 @@
         .globl  _instruction_cache_kludge
         .globl  _flush_data_cache
         .globl  _invalidate_data_cache
-        .globl  _mcpu
-        .globl  _fputype
-
-        .extern _longframe              // If not 0, use long stack frames
-        .extern _setup_68030_pmmu
 
 
 
@@ -43,6 +38,9 @@
  */
 
 _processor_init:
+	push {lr}
+    bl _detect_cpu
+
     // Initialize the VFP
     mrc p15, 0, ip, c1, c0, 2
     orr ip, ip, #0xF00000  // enable cp10 (single precision) and cp11 (double precision)
@@ -62,7 +60,7 @@ _processor_init:
     fmxr fpscr, ip
 
     // TODO: we should set up caching and MMU tables here
-    bx lr
+	pop {pc}
 
 /*
  * void instruction_cache_kludge(void *start, long length)
@@ -185,17 +183,6 @@ _invalidate_data_cache:
 
 
         SECTION_RODATA
-
-
-// ==== Variables ============================================================
-
-        .bss
-        .balign 4
-
-_mcpu:          .ds.l   1
-_mcpu_subtype:  .ds.l   1
-_fputype:       .ds.l   1
-temp:           .ds.l   1
 
 
 // ===========================================================================

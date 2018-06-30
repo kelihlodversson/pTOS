@@ -313,8 +313,8 @@ WORD initinfo(ULONG *pshiftbits)
     pair_start(_("CPU type"));
 #ifdef __mcoldfire__
     cprintf("ColdFire V4e");
-#elif defined(__arm__)
-    cprintf("ARM (TODO: CPU detection on ARM)");
+#elif defined(__arm__) || defined(__aarch64__)
+    cprintf("%s", mcpu_name);
 #else
 # if CONF_WITH_APOLLO_68080
     if (is_apollo_68080)
