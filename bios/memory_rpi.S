@@ -32,12 +32,6 @@
         // ST-RAM settings
         .extern _phystop
 
-        // Overall memory map
-        .extern sysvars_start // start of system variables
-        .extern sysvars_end   // end of system variables
-        .extern __bss         // start of BSS segment
-        .extern __ebss        // end of BSS segment
-
 // ===========================================================================
 // ==== meminit - Reuse or detect RAM settings, then initialize RAM areas ====
 // ===========================================================================
@@ -57,8 +51,8 @@ meminit:
 // Outputs:
 //   r5.l: detected end of the ST-RAM, to put into _phystop.
 memconf:
-        // TODO: Hard coded RAM size for now assuming 256Mb with 64Mb for GPU
-        ldr r5, =(0x100000 * (256-64))
+        ldr     sp, =_stktop
+        bl _raspi_vcmem_init
 
 
 // ===========================================================================
@@ -74,26 +68,4 @@ memconf:
  * r5.l = new phystop
  */
 stram_detected:
-        // The previous temporary stack pointer may have moved
-        // during early detections, so we reinitialize it now.
-        // After that, normal stack usage is allowed.
-        ldr     sp, =_stktop
-
-        /* Clear the sysvars */
-        ldr     r0, =sysvars_start
-        ldr     r1, =sysvars_end
-        bl      _bzero
-
-        /* Store the ST-RAM parameters in the ST-RAM itself */
-        ldr     r0, =_phystop
-        str     r5, [r0]
-
-        // Clear the BSS segment.
-        // Our stack is explicitly set outside the BSS, so this is safe:
-        // bzero() will be able to return.
-        ldr     r0, =__bss
-        ldr     r1, =__ebss
-        sub     r1, r1, r0
-        bl      _bzero
-
         bx      r11 // return from meminit

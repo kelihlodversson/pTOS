@@ -78,7 +78,7 @@ SECTIONS
         /* System variables are located at fixed addresses */
 #include "tosvars.ld"
         . = 0x800; /* Extend sysvars area upto end of supervisor-only RAM */
-        sysvars_end = .;
+        _sysvars_end = .;
     } >stram
 
 #if CONF_WITH_STATIC_ALT_RAM

@@ -18,6 +18,7 @@ UBYTE *raspi_physbase(void);
 WORD raspi_setcolor(WORD colorNum, WORD color);
 void raspi_setrez(WORD rez, WORD videlmode);
 WORD raspi_vgetmode(void);
+void raspi_vcmem_init(void);
 
 UBYTE * raspi_cell_addr(int x, int y);
 void raspi_blank_out (int topx, int topy, int botx, int boty);
@@ -27,7 +28,7 @@ void raspi_neg_cell(UBYTE * cell);
 void initialise_raspi_palette(WORD mode);
 
 #if 0
-void raspi_screen_debug();
+void raspi_screen_debug(void);
 void raspi_screen_err(ULONG num, ULONG addr, ULONG pc);
 #endif
 

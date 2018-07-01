@@ -46,8 +46,8 @@
         .extern _ramvalid
 
         // Overall memory map
-        .extern sysvars_start // start of system variables
-        .extern sysvars_end   // end of system variables
+        .extern _sysvars_start // start of system variables
+        .extern _sysvars_end   // end of system variables
         .extern __bss         // start of BSS segment
         .extern __ebss        // end of BSS segment
 
@@ -583,8 +583,8 @@ stram_detected:
 // ===========================================================================
 
         /* Clear the sysvars */
-        move.l  #sysvars_start, a0
-        move.l  #sysvars_end, a1
+        move.l  #_sysvars_start, a0
+        move.l  #_sysvars_end, a1
         jbsr    call_bzero_a0_a1
 
         /* Store the ST-RAM parameters in the ST-RAM itself */
