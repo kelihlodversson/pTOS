@@ -738,24 +738,22 @@ static void xbios_25(void)
 
 static LONG supexec(PFLONG codeptr)
 {
-#ifdef __arm__
-    // On arm we assume the function follows the eabi and dont save any additional registers
-    return codeptr();
-#else
+#if defined(__m68k__)
     register LONG retval __asm__("d0");
+    register PFLONG func __asm__("a0") = codeptr;
 
     __asm__ volatile
     (
-        "move.l  %1,a0\n\t"
-        PUSH_SP("d2-d7/a2-a6", 44)
         "jsr     (a0)\n\t"
-        POP_SP("d2-d7/a2-a6", 44)
     : "=r"(retval)
-    : "g"(codeptr)
-    : "d1", "a0", "a1", "memory", "cc"
+    : "r"(func)
+    : "d1", "d2", "d3", "d4", "d5", "d6", "d7", "a1", "a2", "a3", "a4", "a5", "a6", "memory", "cc"
     );
 
     return retval;
+#else
+    /* On arm we assume the function follows the eabi and dont save any additional registers */
+    return codeptr();
 #endif
 }
 
