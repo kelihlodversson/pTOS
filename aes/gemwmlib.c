@@ -551,7 +551,7 @@ void w_bldactive(WORD w_handle)
     if (havevbar && havehbar)
     {
         w_adjust(W_DATA, W_SIZER, t.g_x, t.g_y, gl_wbox, gl_hbox);
-        W_ACTIVE[W_SIZER].ob_spec =
+        W_ACTIVE[W_SIZER].ob_spec.index =
                     (istop && (kind & SIZER)) ? 0x06011100L: 0x00011100L;
     }
 }
@@ -978,7 +978,7 @@ void wm_start(void)
     for (i = 0; i < NUM_ELEM; i++)
     {
         W_ACTIVE[i].ob_type = gl_watype[i];
-        W_ACTIVE[i].ob_spec = gl_waspec[i];
+        W_ACTIVE[i].ob_spec.index = gl_waspec[i];
     }
     W_ACTIVE[ROOT].ob_state = SHADOWED;
 
@@ -1002,8 +1002,8 @@ void wm_start(void)
     gl_aname = gl_asamp;
     gl_ainfo = gl_asamp;
     gl_aname.te_just = TE_CNTR;
-    W_ACTIVE[W_NAME].ob_spec = (LONG)&gl_aname;
-    W_ACTIVE[W_INFO].ob_spec = (LONG)&gl_ainfo;
+    W_ACTIVE[W_NAME].ob_spec.tedinfo = &gl_aname;
+    W_ACTIVE[W_INFO].ob_spec.tedinfo = &gl_ainfo;
 }
 
 

@@ -1142,10 +1142,10 @@ static void set_background(void)
     }
 
     for (i = DROOT+1, tree = G.g_screen+i; i < WOBS_START; i++, tree++)
-        tree->ob_spec = G.g_patcol[n].window | BORDER_TEXT_COLOURS;
-    G.g_screen[DROOT].ob_spec = G.g_patcol[n].desktop | BORDER_TEXT_COLOURS;
+        tree->ob_spec.index = G.g_patcol[n].window | BORDER_TEXT_COLOURS;
+    G.g_screen[DROOT].ob_spec.index = G.g_patcol[n].desktop | BORDER_TEXT_COLOURS;
 #else
-    G.g_screen[DROOT].ob_spec = AP_PRIVATE;
+    G.g_screen[DROOT].ob_spec.index = AP_PRIVATE;
 #endif
 }
 
@@ -1200,7 +1200,7 @@ void app_blddesk(void)
             si = &G.g_screeninfo[obid];
             si->icon.index = icon;
             pic = &si->icon.block;
-            pob->ob_spec = (LONG)pic;
+            pob->ob_spec.iconblk = pic;
             memcpy(pic, &G.g_iblist[icon], sizeof(ICONBLK));
             pic->ib_xicon = ((G.g_wicon - pic->ib_wicon) / 2);
             pic->ib_ptext = pa->a_pappl;

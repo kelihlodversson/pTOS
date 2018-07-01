@@ -80,7 +80,7 @@ static char *fm_strbrk(OBJECT *start,WORD maxnum,WORD maxlen,char *alert,
         alert++;
 
     for (i = 0, obj = start; i < maxnum; i++, obj++, alert++) {
-        p = (char *)obj->ob_spec;
+        p = obj->ob_spec.free_string;
         for (j = 0; j < maxlen; j++) {
             if (endsubstring(*alert))
                 break;
@@ -88,7 +88,7 @@ static char *fm_strbrk(OBJECT *start,WORD maxnum,WORD maxlen,char *alert,
         }
         *p = '\0';
 
-        len = p - (char *)obj->ob_spec;
+        len = p - obj->ob_spec.free_string;
         if (len > *plen)            /* track max substring length */
             *plen = len;
 
@@ -308,7 +308,7 @@ WORD fm_alert(WORD defbut, BYTE *palstr)
             image = STOPBB;
             break;
         }
-        obj->ob_spec = (LONG) &rs_bitblk[image];
+        obj->ob_spec.bitblk = CONST_CAST(BITBLK *, &rs_bitblk[image]);
     }
 
     /* convert to pixels    */

@@ -241,7 +241,7 @@ static void fix_objects(void)
         rs_obfix(obj, 0);
         obtype = obj->ob_type & 0x00ff;
         if ((obtype != G_BOX) && (obtype != G_IBOX) && (obtype != G_BOXCHAR))
-            fix_long(&obj->ob_spec);
+            fix_long(&obj->ob_spec.index);
     }
 }
 

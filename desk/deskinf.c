@@ -400,7 +400,7 @@ void inf_numset(OBJECT *tree, WORD obj, ULONG value)
     TEDINFO *ted;
     OBJECT  *objptr = tree + obj;
 
-    ted = (TEDINFO *)objptr->ob_spec;
+    ted = objptr->ob_spec.tedinfo;
     len = ted->te_txtlen - 1;
 
     sprintf(ted->te_ptext,"%*.*lu",len,len,value);
@@ -480,7 +480,7 @@ WORD inf_file_folder(BYTE *ppath, FNODE *pf)
 
     title = (pf->f_attr & F_SUBDIR) ? STFOINFO : STFIINFO;
     obj = tree + FFTITLE;
-    obj->ob_spec = (LONG) ini_str(title);
+    obj->ob_spec.free_string = ini_str(title);
     centre_title(tree);
 
     strcpy(srcpth, ppath);
@@ -837,9 +837,9 @@ BOOL inf_backgrounds(void)
         obj->ob_flags |= HIDETREE;
 
     /* set the initially-displayed background pattern */
-    curdesk = G.g_screen[DROOT].ob_spec;
-    curwin = G.g_screen[DROOT+1].ob_spec;
-    tree[BGSAMPLE].ob_spec = ((tree[BGDESK].ob_state & SELECTED) ? curdesk : curwin)
+    curdesk = G.g_screen[DROOT].ob_spec.index;
+    curwin = G.g_screen[DROOT+1].ob_spec.index;
+    tree[BGSAMPLE].ob_spec.index = ((tree[BGDESK].ob_state & SELECTED) ? curdesk : curwin)
                             | SAMPLE_BORDER_FLAGS;
 
     /* handle the dialog */
@@ -857,24 +857,24 @@ BOOL inf_backgrounds(void)
         }
 
         if (ret == BGDESK)
-            tree[BGSAMPLE].ob_spec = curdesk;
+            tree[BGSAMPLE].ob_spec.index = curdesk;
         else if (ret == BGWIN)
-            tree[BGSAMPLE].ob_spec = curwin;
+            tree[BGSAMPLE].ob_spec.index = curwin;
         else if ((ret >= BGPAT0) && (ret <= BGPAT7))
         {
-            tree[BGSAMPLE].ob_spec &= ~FILLPAT_MASK;
-            tree[BGSAMPLE].ob_spec |= tree[ret].ob_spec & FILLPAT_MASK;
+            tree[BGSAMPLE].ob_spec.index &= ~FILLPAT_MASK;
+            tree[BGSAMPLE].ob_spec.index |= tree[ret].ob_spec.index & FILLPAT_MASK;
         }
         else if ((ret >= BGCOL0) && (ret <= BGCOL15))
         {
-            tree[BGSAMPLE].ob_spec &= ~FILLCOL_MASK;
-            tree[BGSAMPLE].ob_spec |= tree[ret].ob_spec & FILLCOL_MASK;
+            tree[BGSAMPLE].ob_spec.index &= ~FILLCOL_MASK;
+            tree[BGSAMPLE].ob_spec.index |= tree[ret].ob_spec.index & FILLCOL_MASK;
         }
 
         if (tree[BGDESK].ob_state & SELECTED)
-            curdesk = tree[BGSAMPLE].ob_spec;
+            curdesk = tree[BGSAMPLE].ob_spec.index;
         else
-            curwin = tree[BGSAMPLE].ob_spec;
+            curwin = tree[BGSAMPLE].ob_spec.index;
     }
 
     end_dialog(tree);
@@ -883,19 +883,19 @@ BOOL inf_backgrounds(void)
     if (ret == BGOK)
     {
         /* check for desktop background change */
-        if (G.g_screen[DROOT].ob_spec != curdesk)
+        if (G.g_screen[DROOT].ob_spec.index != curdesk)
         {
             G.g_patcol[index].desktop = curdesk & 0xff;
-            G.g_screen[DROOT].ob_spec = curdesk;
+            G.g_screen[DROOT].ob_spec.index = curdesk;
             do_wredraw(0, G.g_xdesk, G.g_ydesk, G.g_wdesk, G.g_hdesk);
         }
 
         /* check for window background change */
-        if (G.g_screen[DROOT+1].ob_spec != curwin)
+        if (G.g_screen[DROOT+1].ob_spec.index != curwin)
         {
             G.g_patcol[index].window = curwin & 0xff;
             for (i = DROOT+1, tree = G.g_screen+i; i < WOBS_START; i++, tree++)
-                tree->ob_spec = curwin;
+                tree->ob_spec.index = curwin;
             return TRUE;
         }
     }

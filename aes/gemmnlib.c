@@ -132,7 +132,7 @@ static void menu_fixup(void)
     /* fix up desk root */
     pob->ob_type = G_BOX;
     pob->ob_state = pob->ob_flags = 0x0;
-    pob->ob_spec = 0x00FF1100L;
+    pob->ob_spec.index = 0x00FF1100L;
     ob_actxywh(tree, gl_dabox, (GRECT *)&pob->ob_x);
 
     cnt = (D.g_accreg) ? (2 + D.g_accreg) : 1;
@@ -165,7 +165,7 @@ static void menu_fixup(void)
                 pob->ob_spec = obj->ob_spec;    /* this fixup is not tested ... */
             }
             else
-                pob->ob_spec = (LONG)D.g_acctitle[st++];
+                pob->ob_spec.free_string = D.g_acctitle[st++];
         }
         else
             pob->ob_spec = obj->ob_spec;

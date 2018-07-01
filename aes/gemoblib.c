@@ -177,11 +177,11 @@ static __inline__ WORD call_usercode(USERBLK *ub, PARMBLK *pb)
  *  Routine to load up and call a user-defined object draw or change
  *  routine.
  */
-static WORD ob_user(OBJECT *tree, WORD obj, GRECT *pt, LONG spec,
+static WORD ob_user(OBJECT *tree, WORD obj, GRECT *pt, OBSPEC spec,
                     WORD curr_state, WORD new_state)
 {
     PARMBLK pb;
-    USERBLK *ub = (USERBLK *)spec;
+    USERBLK *ub = spec.userblk;
 
     pb.pb_tree = tree;
     pb.pb_obj = obj;
@@ -202,7 +202,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
 {
     WORD bcol, tcol, ipat, icol, tmode, th;
     WORD state, obtype, len, flags;
-    LONG spec;
+    OBSPEC spec;
     WORD tmpx, tmpy, tmpth;
     BYTE ch;
     GRECT t, c;
@@ -212,7 +212,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
 
     ch = ob_sst(tree, obj, &spec, &state, &obtype, &flags, &t, &th);
 
-    if ((flags & HIDETREE) || (spec == -1L))
+    if ((flags & HIDETREE) || (spec.index == -1L))
         return;
 
     t.g_x = sx;
@@ -253,7 +253,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
         case G_FBOXTEXT:
         case G_TEXT:
         case G_FTEXT:
-            memcpy(&edblk, (TEDINFO *)spec, sizeof(TEDINFO));
+            memcpy(&edblk, spec.tedinfo, sizeof(TEDINFO));
             gr_crack(edblk.te_color, &bcol,&tcol, &ipat, &icol, &tmode);
             break;
         }
@@ -267,7 +267,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
         case G_BOX:
         case G_BOXCHAR:
         case G_IBOX:
-            gr_crack((UWORD)spec, &bcol, &tcol, &ipat, &icol, &tmode);
+            gr_crack(spec.index, &bcol, &tcol, &ipat, &icol, &tmode);
             /* drop thru */
         case G_BUTTON:
             if (obtype == G_BUTTON)
@@ -325,13 +325,13 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
             gr_inside(&t, -tmpth);
             break;
         case G_IMAGE:
-            bi = *((BITBLK *)spec);
+            bi = *(spec.bitblk);
             gsx_blt((void *)bi.bi_pdata, bi.bi_x, bi.bi_y, bi.bi_wb,
                     NULL, t.g_x, t.g_y, gl_width/8, bi.bi_wb * 8,
                     bi.bi_hl, MD_TRANS, bi.bi_color, WHITE);
             break;
         case G_ICON:
-            ib = *((ICONBLK *)spec);
+            ib = *(spec.iconblk);
             ib.ib_xicon += t.g_x;
             ib.ib_yicon += t.g_y;
             ib.ib_xtext += t.g_x;
@@ -354,7 +354,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
         (obtype == G_TITLE) ||
         (obtype == G_BUTTON))
     {
-        len = expand_string(intin, (BYTE *)spec);
+        len = expand_string(intin, spec.free_string);
         if (len)
         {
             gsx_attr(TRUE, MD_TRANS, BLACK);
@@ -688,12 +688,12 @@ void ob_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
     WORD flags, obtype, th;
     GRECT t;
     UWORD curr_state;
-    LONG spec;
+    OBSPEC spec;
     OBJECT *objptr;
 
     ob_sst(tree, obj, &spec, (WORD*)&curr_state, &obtype, &flags, &t, &th);
 
-    if ((curr_state == new_state) || (spec == -1L))
+    if ((curr_state == new_state) || (spec.index == -1L))
         return;
 
     objptr = tree + obj;

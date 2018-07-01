@@ -91,7 +91,7 @@ static void centre_title(OBJECT *tree,WORD objnum)
     OBJECT *root = tree;
     OBJECT *str = root+objnum;
 
-    str->ob_x = (root->ob_width - strlen((BYTE *)str->ob_spec)*gl_wchar) / 2;
+    str->ob_x = (root->ob_width - strlen(str->ob_spec.free_string)*gl_wchar) / 2;
 }
 
 
@@ -409,7 +409,7 @@ static WORD fs_newdir(BYTE *fpath, BYTE *pspec, OBJECT *tree, WORD *pcount)
     fs_format(tree, 0, *pcount);
 
     obj = tree + FTITLE;        /* update FTITLE with ptr to mask */
-    tedinfo = (TEDINFO *)obj->ob_spec;
+    tedinfo = obj->ob_spec.tedinfo;
     tedinfo->te_ptext = pspec;
 
     ptmp = gl_fsobj;            /* redraw file selector objects */
@@ -481,7 +481,7 @@ static WORD path_changed(char *path)
     TEDINFO *ted;
 
     obj = rs_trees[FSELECTR] + FSDIRECT;
-    ted = (TEDINFO *)obj->ob_spec;
+    ted = obj->ob_spec.tedinfo;
 
     if (strncmp(path,ted->te_ptext,ted->te_txtlen-1))
         return 1;
@@ -565,24 +565,24 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
     /* init strings in form */
     tree = rs_trees[FSELECTR];
     obj = tree + FTITLE;
-    tedinfo = (TEDINFO *)obj->ob_spec;
+    tedinfo = obj->ob_spec.tedinfo;
     ad_ftitle = tedinfo->te_ptext;
     set_mask(mask, locstr);             /* save caller's mask */
     strcpy(ad_ftitle, mask);            /*  & copy to title line */
 
     obj = tree + FSDIRECT;
-    tedinfo = (TEDINFO *)obj->ob_spec;
+    tedinfo = obj->ob_spec.tedinfo;
     ad_fpath = tedinfo->te_ptext;
     inf_sset(tree, FSDIRECT, locstr);
 
     obj = tree + FSSELECT;
-    tedinfo = (TEDINFO *)obj->ob_spec;
+    tedinfo = obj->ob_spec.tedinfo;
     ad_fname = tedinfo->te_ptext;
     fmt_str(pisel, selname);            /* selname[] is without dot */
     inf_sset(tree, FSSELECT, selname);
 
     obj = tree + FSTITLE;
-    obj->ob_spec = pilabel ? (LONG)pilabel : (LONG)rs_str(ITEMSLCT);
+    obj->ob_spec.free_string = pilabel ? pilabel : rs_str(ITEMSLCT);
     centre_title(tree,FSTITLE);
 
     /* set drive buttons */

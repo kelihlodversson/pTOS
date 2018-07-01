@@ -2186,9 +2186,9 @@ PRIVATE int write_c_epilogue(FILE *fp)
     fprintf(fp,"     */\n");
     fprintf(fp,"    tree = %srs_trees[DIALERT];\n",prefix);
     fprintf(fp,"    for (i = 0, p = tree+MSGOFF; i < MAX_LINENUM; i++, p++)\n");
-    fprintf(fp,"        p->ob_spec = (LONG)&msg_str[i];\n");
+    fprintf(fp,"        p->ob_spec.free_string = msg_str[i];\n");
     fprintf(fp,"    for (i = 0, p = tree+BUTOFF; i < MAX_BUTNUM; i++, p++)\n");
-    fprintf(fp,"        p->ob_spec = (LONG)&msg_but[i];\n");
+    fprintf(fp,"        p->ob_spec.free_string = msg_but[i];\n");
     fprintf(fp,"}\n");
 #endif
 
@@ -2510,16 +2510,14 @@ char *p;
 char temp[MAX_STRLEN];
 char *base = (char *)rschdr;
 
-    fprintf(fp,"     (LONG) ");
+    fprintf(fp,"     ");
 
     type = get_ushort(&obj->ob_type) & 0xff;
     switch(type) {
     case G_BOX:
     case G_IBOX:
-        fprintf(fp,"%ldL,\n",get_offset(&obj->ob_spec));
-        break;
     case G_BOXCHAR:
-        fprintf(fp,"0x%08lxL,\n",get_offset(&obj->ob_spec));
+        fprintf(fp,"{ 0x%08lxL },\n",get_offset(&obj->ob_spec));
         break;
     case G_STRING:
     case G_BUTTON:
@@ -2527,7 +2525,7 @@ char *base = (char *)rschdr;
         p = base + get_offset(&obj->ob_spec);
         if (isshared(p)) {
             fixshared(temp,p);
-            fprintf(fp,"rs_str_%s,\n",temp);
+            fprintf(fp,"{ (LONG)rs_str_%s },\n",temp);
             break;
         }
         xlate = copycheck(temp,p,MAX_STRLEN-1);
@@ -2536,18 +2534,18 @@ char *base = (char *)rschdr;
         if (all_dashes(temp))   /* truncate separator lines to save ROM space */
             temp[1] = '\0';
         if (xlate == 0)
-            fprintf(fp,"\"%s\",\n",temp);
-        else fprintf(fp,"%s\"%s\"),\n",NLS,temp);
+            fprintf(fp,"{ (LONG)\"%s\" },\n",temp);
+        else fprintf(fp,"{ (LONG)%s\"%s\") },\n",NLS,temp);
         break;
     case G_TEXT:
     case G_BOXTEXT:
     case G_FTEXT:
     case G_FBOXTEXT:
-        fprintf(fp,"&%srs_tedinfo[%ld],\n",prefix,
+        fprintf(fp,"{ (LONG)&%srs_tedinfo[%ld] },\n",prefix,
             (get_offset(&obj->ob_spec)-rsh.tedinfo)/sizeof(TEDINFO));
         break;
     case G_IMAGE:
-        fprintf(fp,"&%srs_bitblk[%ld],\n",prefix,
+        fprintf(fp,"{ (LONG)&%srs_bitblk[%ld] },\n",prefix,
             (get_offset(&obj->ob_spec)-rsh.bitblk)/sizeof(BITBLK));
         break;
     case G_PROGDEF:
@@ -2555,15 +2553,15 @@ char *base = (char *)rschdr;
                 get_offset(&obj->ob_spec));
         break;
     case G_ICON:
-        fprintf(fp,"&%srs_iconblk[%ld],\n",prefix,
+        fprintf(fp,"{ (LONG)&%srs_iconblk[%ld] },\n",prefix,
             (get_offset(&obj->ob_spec)-rsh.iconblk)/sizeof(ICONBLK));
         break;
     case G_CICON:
-        fprintf(fp,"%ldL, /* generate number for unsupported CICONBLK ob_type */\n",
+        fprintf(fp,"{ %ldL }, /* generate number for unsupported CICONBLK ob_type */\n",
                 get_offset(&obj->ob_spec));
         break;
     default:
-        fprintf(fp,"%ldL, /* generate number for unknown ob_type 0x%02x */\n",
+        fprintf(fp,"{ (LONG)%ldL }, /* generate number for unknown ob_type 0x%02x */\n",
                 get_offset(&obj->ob_spec),type);
         break;
     }

@@ -129,21 +129,6 @@
 
 typedef struct
 {
-        WORD    ob_next;        /* -> object's next sibling     */
-        WORD    ob_head;        /* -> head of object's children */
-        WORD    ob_tail;        /* -> tail of object's children */
-        UWORD   ob_type;        /* type of object- BOX, CHAR,...*/
-        UWORD   ob_flags;       /* flags                        */
-        UWORD   ob_state;       /* state- SELECTED, OPEN, ...   */
-        LONG    ob_spec;        /* "out"- -> anything else      */
-        WORD    ob_x;           /* upper left corner of object  */
-        WORD    ob_y;           /* upper left corner of object  */
-        WORD    ob_width;       /* width of obj                 */
-        WORD    ob_height;      /* height of obj                */
-} OBJECT;
-
-typedef struct
-{
         WORD    g_x;
         WORD    g_y;
         WORD    g_w;
@@ -207,6 +192,8 @@ typedef struct
         LONG    ub_parm;
 } USERBLK;
 
+typedef struct _object OBJECT;
+
 typedef struct _PARMBLK
 {
         OBJECT  *pb_tree;
@@ -217,6 +204,57 @@ typedef struct _PARMBLK
         WORD    pb_xc, pb_yc, pb_wc, pb_hc;
         LONG    pb_parm;
 } PARMBLK;
+
+typedef struct
+{
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        unsigned interiorcol :  4;
+        unsigned fillpattern :  3;
+        unsigned textmode    :  1;
+        unsigned textcol     :  4;
+        unsigned framecol    :  4;
+        signed   framesize   :  8;
+        unsigned character   :  8;
+#else
+        unsigned character   :  8;
+        signed   framesize   :  8;
+        unsigned framecol    :  4;
+        unsigned textcol     :  4;
+        unsigned textmode    :  1;
+        unsigned fillpattern :  3;
+        unsigned interiorcol :  4;
+#endif
+} bfobspec;
+typedef bfobspec BFOBSPEC;
+
+typedef union obspecptr
+{
+        LONG        index;
+        union obspecptr *indirect;
+        bfobspec    obspec;
+        TEDINFO     *tedinfo;
+        ICONBLK     *iconblk;
+        BITBLK      *bitblk;
+        USERBLK     *userblk;
+        char        *free_string;
+        const char  *const_free_string;
+} OBSPEC;
+
+
+struct _object
+{
+        WORD    ob_next;        /* -> object's next sibling     */
+        WORD    ob_head;        /* -> head of object's children */
+        WORD    ob_tail;        /* -> tail of object's children */
+        UWORD   ob_type;        /* type of object- BOX, CHAR,...*/
+        UWORD   ob_flags;       /* flags                        */
+        UWORD   ob_state;       /* state- SELECTED, OPEN, ...   */
+        OBSPEC  ob_spec;        /* "out"- -> anything else      */
+        WORD    ob_x;           /* upper left corner of object  */
+        WORD    ob_y;           /* upper left corner of object  */
+        WORD    ob_width;       /* width of obj                 */
+        WORD    ob_height;      /* height of obj                */
+};
 
 #define EDSTART     0
 #define EDINIT      1
