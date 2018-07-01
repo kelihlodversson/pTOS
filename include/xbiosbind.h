@@ -591,6 +591,7 @@ static __inline__ long xbios_l_lll(int op, long a, long b, long c)
     );
     return _r0;
 #else
+    register long retval __asm__("d0");
 
     __asm__ volatile (
         "move.l  %4,-(sp)\n\t"

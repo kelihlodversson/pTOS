@@ -731,7 +731,7 @@ void init_serport(void)
     amiga_rs232_init();
 #endif
 
-#ifdef CONF_WITH_RASPI_UART0
+#if CONF_WITH_RASPI_UART0
     raspi_uart0_init();
 #endif
 

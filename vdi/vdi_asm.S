@@ -132,6 +132,7 @@ intin_ok:
 
         /* Global variables declared here */
 
+        .globl  _mov_cur        // set's new x/y coordinates
         .globl  _mouse_int      // mouse interrupt routine
         .globl  _wheel_int      // wheel interrupt routine
 
@@ -484,6 +485,18 @@ wheel_ikbd_packet:
 
 
 
+/*
+ * mov_cur - moves the mouse cursor to its new location
+ *           unless the cursor is currently hidden.
+ *
+ * Inputs:
+ *    d0 = new x-coordinate for mouse cursor
+ *    d1 = new y-coordinate for mouse cursor
+ *
+ * Outputs:        None
+ *
+ * Registers Modified:     None
+ */
 
 _mov_cur:
         tst.w   _HIDE_CNT       // is the cursor hidden?
