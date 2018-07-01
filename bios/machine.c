@@ -726,6 +726,14 @@ const char * machine_name(void)
     return "FireBee";
 #elif defined(MACHINE_AMIGA)
     return "Amiga";
+#elif defined(MACHINE_RPI)
+# if defined(TARGET_RPI1)
+    return "BCM2835";
+# elif defined(TARGET_RPI2)
+    return "BCM2836";
+# else
+    return "BCM2837";
+# endif
 #elif defined(MACHINE_M548X)
     return m548x_machine_name();
 #else
