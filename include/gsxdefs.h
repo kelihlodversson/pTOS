@@ -18,6 +18,8 @@
 #ifndef GSXDEFS_H
 #define GSXDEFS_H
 
+#include "vdipb.h"
+
 typedef struct wsstr
 {
         WORD            ws_xres;
@@ -114,7 +116,7 @@ extern FDB      gl_src;
 extern FDB      gl_dst;
 
 extern WS       gl_ws;
-extern WORD     contrl[12];
+extern VDICONTROL contrl;
 extern WORD     intin[128];
 extern WORD     ptsin[20];
 

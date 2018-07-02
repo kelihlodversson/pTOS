@@ -309,8 +309,8 @@ void vdi_v_locator(Vwk * vwk)
         }
         INTOUT[0] = TERM_CH & 0x00ff;
 
-        CONTRL[4] = 1;
-        CONTRL[2] = 1;
+        CONTRL->nintout = 1;
+        CONTRL->nptsout = 1;
 
         PTSOUT[0] = point->x;
         PTSOUT[1] = point->y;
@@ -318,11 +318,11 @@ void vdi_v_locator(Vwk * vwk)
     } else {                /* handle sample mode (vsm_locator()) */
         i = gloc_key();
         if (i & 1) {
-            CONTRL[4] = 1;
+            CONTRL->nintout = 1;
             INTOUT[0] = TERM_CH & 0x00ff;
         }
         if (i & 2) {
-            CONTRL[2] = 1;
+            CONTRL->nptsout = 1;
             PTSOUT[0] = point->x;
             PTSOUT[1] = point->y;
         }
@@ -361,8 +361,8 @@ void vdi_vq_mouse(Vwk * vwk)
 {
     INTOUT[0] = MOUSE_BT;
 
-    CONTRL[4] = 1;
-    CONTRL[2] = 1;
+    CONTRL->nintout = 1;
+    CONTRL->nptsout = 1;
 
     PTSOUT[0] = GCURX;
     PTSOUT[1] = GCURY;
@@ -493,11 +493,8 @@ void mov_cur(WORD new_x, WORD new_y)      /* user button vector */
  */
 void vdi_vex_butv(Vwk * vwk)
 {
-    void (**pointer)(WORD status);
-
-    pointer = (void (**)(WORD))&CONTRL[9];
-    *pointer = user_but;
-    user_but = *--pointer;
+    CONTRL->ptr2 = user_but;
+    user_but = CONTRL->ptr1;
 }
 
 
@@ -517,11 +514,8 @@ void vdi_vex_butv(Vwk * vwk)
  */
 void vdi_vex_motv(Vwk * vwk)
 {
-    LONG * pointer;
-
-    pointer = (LONG*) &CONTRL[9];
-    *pointer = (LONG) user_mot;
-    user_mot = (void (*)(void)) *--pointer;
+    CONTRL->ptr2 = user_mot;
+    user_mot = CONTRL->ptr1;
 }
 
 
@@ -543,11 +537,8 @@ void vdi_vex_motv(Vwk * vwk)
  */
 void vdi_vex_curv(Vwk * vwk)
 {
-    void (**pointer)(WORD, WORD);
-
-    pointer = (void (**)(WORD, WORD)) &CONTRL[9];
-    *pointer = user_cur;
-    user_cur = *--pointer;
+    CONTRL->ptr2 = user_cur;
+    user_cur = CONTRL->ptr1;
 }
 
 
@@ -570,11 +561,8 @@ void vdi_vex_curv(Vwk * vwk)
  */
 void vdi_vex_wheelv(Vwk * vwk)
 {
-    void (**pointer)(WORD, WORD);
-
-    pointer = (void (**)(WORD, WORD)) &CONTRL[9];
-    *pointer = user_cur;
-    user_cur = *--pointer;
+    CONTRL->ptr2 = user_wheel;
+    user_wheel = CONTRL->ptr1;
 }
 #endif
 

@@ -15,6 +15,7 @@
 
 #include "portab.h"
 #include "fonthdr.h"
+#include "vdipb.h"
 
 #define HAVE_BEZIER 0           /* switch on bezier capability */
 
@@ -168,15 +169,6 @@ struct Vwk_ {
     WORD bez_qual;              /* actual quality for bezier curves */
 };
 
-typedef struct
-{
-   WORD  *contrl;    /* Pointer to contrl array */
-   WORD  *intin;     /* Pointer to intin array  */
-   WORD  *ptsin;     /* Pointer to ptsin array  */
-   WORD  *intout;    /* Pointer to intout array */
-   WORD  *ptsout;    /* Pointer to ptsout array */
-} VDIPB;
-
 typedef struct Rect_ Rect;
 struct Rect_
 {
@@ -215,7 +207,8 @@ extern WORD DEV_TAB[];          /* initial intout array for open workstation */
 extern WORD SIZ_TAB[];          /* initial ptsout array for open workstation */
 extern WORD INQ_TAB[];          /* extended inquire values */
 
-extern WORD *CONTRL, *INTIN, *PTSIN, *INTOUT, *PTSOUT;
+extern VDICONTROL *CONTRL;
+extern WORD *INTIN, *PTSIN, *INTOUT, *PTSOUT;
 
 extern WORD LN_MASK, LSTLIN;
 extern WORD TERM_CH;

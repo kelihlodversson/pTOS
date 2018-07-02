@@ -118,14 +118,14 @@ void screen(void)
     Vwk *vwk = NULL;
 
     /* get workstation handle */
-    handle = CONTRL[6];
+    handle = CONTRL->handle;
 
     /* no ints out & no pts out */
-    CONTRL[2] = 0;
-    CONTRL[4] = 0;
+    CONTRL->nptsout = 0;
+    CONTRL->nintout = 0;
 
     flip_y = 0;
-    opcode = CONTRL[0];
+    opcode = CONTRL->code;
 
     /* is it open work or vwork? */
     if (opcode != 1 && opcode != 100) {

@@ -157,7 +157,7 @@ static void clc_arc(Vwk * vwk, int steps)
     point = (Point*)PTSIN;
 
     /* If pie wedge draw to center and then close. */
-    if ((CONTRL[5] == 3) || (CONTRL[5] == 7)) {
+    if ((CONTRL->subcode == 3) || (CONTRL->subcode == 7)) {
         /* pie wedge */
         Point * endpoint;
 
@@ -169,7 +169,7 @@ static void clc_arc(Vwk * vwk, int steps)
     steps++;                 /* since loop in Clc_arc starts at 0 */
 
     /* If arc or circle, do nothing because loop should close circle. */
-    if ((CONTRL[5] == 2) || (CONTRL[5] == 6)) { /* v_arc() or v_ellarc() */
+    if ((CONTRL->subcode == 2) || (CONTRL->subcode == 6)) { /* v_arc() or v_ellarc() */
         /* open arc */
         if (vwk->line_width == 1) {
             set_LN_MASK(vwk);
@@ -195,7 +195,7 @@ void vdi_v_gdp(Vwk * vwk)
     WORD i, ltmp_end, rtmp_end;
     WORD *xy;
 
-    i = CONTRL[5];
+    i = CONTRL->subcode;
     xy = PTSIN;
 
     switch (i) {
@@ -347,7 +347,7 @@ static void gdp_rbox(Vwk * vwk)
     *(pointer + 40) = *pointer;
     *(pointer + 41) = *(pointer + 1);
 
-    if (CONTRL[5] == 8) {       /* v_rbox() */
+    if (CONTRL->subcode == 8) {       /* v_rbox() */
         set_LN_MASK(vwk);
 
         if (vwk->line_width == 1) {

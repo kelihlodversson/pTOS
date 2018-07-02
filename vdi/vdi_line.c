@@ -95,7 +95,7 @@ void vdi_vsl_type(Vwk * vwk)
 {
     WORD li;
 
-    CONTRL[4] = 1;
+    CONTRL->nintout = 1;
 
     li = (*INTIN - 1);
     if ((li >= MX_LN_STYLE) || (li < 0))
@@ -124,7 +124,7 @@ void vdi_vsl_width(Vwk * vwk)
         w--;
 
     /* Set the line width internals and return parameters */
-    CONTRL[2] = 1;
+    CONTRL->nptsout = 1;
     pts_out = PTSOUT;
     *pts_out++ = vwk->line_width = w;
     *pts_out = 0;
@@ -139,7 +139,7 @@ void vdi_vsl_ends(Vwk * vwk)
     WORD lb, le;
     WORD *pointer;
 
-    *(CONTRL + 4) = 2;
+    CONTRL->nintout = 2;
 
     pointer = INTIN;
     lb = *pointer++;
@@ -163,7 +163,7 @@ void vdi_vsl_color(Vwk * vwk)
 {
     WORD lc;
 
-    *(CONTRL + 4) = 1;
+    CONTRL->nintout = 1;
     lc = *(INTIN);
     if ((lc >= DEV_TAB[13]) || (lc < 0))
         lc = 1;
@@ -184,8 +184,8 @@ void vdi_vql_attributes(Vwk * vwk)
     PTSOUT[0] = vwk->line_width;
     PTSOUT[1] = 0;
 
-    CONTRL[2] = 1;
-    CONTRL[4] = 3;
+    CONTRL->nptsout = 1;
+    CONTRL->nintout = 3;
 }
 
 
@@ -714,7 +714,7 @@ void linea_polygon(void)
 {
     VwkClip clipper;
     Point *points = (Point*) PTSIN;
-    int count = CONTRL[1];
+    int count = CONTRL->nptsin;
     VwkAttrib attr;
 
     lineA2Attrib(&attr);
@@ -763,13 +763,13 @@ void linea_fill(void)
 void vdi_v_pline(Vwk * vwk)
 {
     Point * point = (Point*)PTSIN;
-    int count = CONTRL[1];
+    int count = CONTRL->nptsin;
 
     set_LN_MASK(vwk);
 
 #if HAVE_BEZIER
     /* check, if we want to draw a bezier curve */
-    if (CONTRL[5] == 13 && vwk->bez_qual )        /* FIXME: bez_qual ok?? */
+    if (CONTRL->subcode == 13 && vwk->bez_qual )        /* FIXME: bez_qual ok?? */
         v_bez(vwk, point, count);
     else
 #endif

@@ -146,10 +146,10 @@ void ap_tplay(const EVNTREC *pbuff,WORD length,WORD scale)
                  */
                 i_ptr(justretf);
                 gsx_ncode(CUR_VECX, 0, 0);
-                m_lptr2(&drwaddr);  /* old address will be used by drawrat() */
+                m_lptr2(drwaddr);  /* old address will be used by drawrat() */
                 i_ptr(justretf);
                 gsx_ncode(MOT_VECX, 0, 0);
-                m_lptr2(&mot_vecx_save);
+                m_lptr2(mot_vecx_save);
             }
             f.f_code = mchange;
             break;

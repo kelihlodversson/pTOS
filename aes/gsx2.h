@@ -14,26 +14,16 @@
 #define GSX2_H
 
 #include "portab.h"
-
-/* VDI parameter block */
-typedef struct
-{
-    WORD *contrl;
-    WORD *intin;
-    WORD *ptsin;
-    WORD *intout;
-    WORD *ptsout;
-} VDIPB;
-
+#include "vdipb.h"
 extern VDIPB vdipb;
 
 #define i_intin(p)  (vdipb.intin = (p))
 #define i_ptsin(p)  (vdipb.ptsin = (p))
 #define i_intout(p) (vdipb.intout = (p))
 #define i_ptsout(p) (vdipb.ptsout = (p))
-#define i_ptr(p)    (*(LONG_ALIAS*)(contrl+7) = (LONG)(p))
-#define i_ptr2(p)   (*(LONG_ALIAS*)(contrl+9) = (LONG)(p))
-#define m_lptr2(p)  (*(LONG_ALIAS*)(p) = *(LONG_ALIAS*)(contrl+9))
+#define i_ptr(p)    (contrl.ptr1 = (p))
+#define i_ptr2(p)   (contrl.ptr2 = (p))
+#define m_lptr2(p)  ((p) = contrl.ptr2)
 
 void gsx2(void);
 

@@ -111,21 +111,18 @@ static void tick_int(int u)
 void vdi_vex_timv(Vwk * vwk)
 {
     //WORD old_sr;
-    LONG * pointer;
-
-    pointer = (LONG*) &CONTRL[9];
 
     disable_interrupts();
 //    old_sr = set_sr(0x2700);
 
-    *pointer = (LONG) tim_addr;
-    tim_addr = (void (*)(int)) *--pointer;
+    CONTRL->ptr2 = tim_addr;
+    tim_addr = CONTRL->ptr1;
 
     enable_interrupts();
 //    set_sr(old_sr);
 
     INTOUT[0] = (WORD)Tickcal();        /* ms between timer C calls */
-    CONTRL[4] = 1;
+    CONTRL->nintout = 1;
 }
 
 

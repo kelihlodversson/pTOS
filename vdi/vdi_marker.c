@@ -46,7 +46,7 @@ void vdi_vsm_height(Vwk * vwk)
     vwk->mark_height = h;
     h = (h + DEF_MKHT / 2) / DEF_MKHT;
     vwk->mark_scale = h;
-    CONTRL[2] = 1;
+    CONTRL->nptsout = 1;
     pts_out = PTSOUT;
     *pts_out++ = h * DEF_MKWD;
     *pts_out = h * DEF_MKHT;
@@ -65,7 +65,7 @@ void vdi_vsm_type(Vwk * vwk)
     i = INTIN[0] - 1;
     i = ((i >= MAX_MARK_INDEX) || (i < 0)) ? 2 : i;
     INTOUT[0] = (vwk->mark_index = i) + 1;
-    CONTRL[4] = 1;
+    CONTRL->nintout = 1;
 }
 
 
@@ -81,7 +81,7 @@ void vdi_vsm_color(Vwk * vwk)
     i = ((i >= DEV_TAB[13]) || (i < 0)) ? 1 : i;
     INTOUT[0] = i;
     vwk->mark_color = MAP_COL[i];
-    CONTRL[4] = 1;
+    CONTRL->nintout = 1;
 }
 
 
@@ -122,7 +122,7 @@ void vdi_v_pmarker(Vwk * vwk)
     scale = vwk->mark_scale;
 
     /* Copy the PTSIN pointer since we will be doing polylines */
-    num_vert = CONTRL[1];
+    num_vert = CONTRL->nptsin;
     src_ptr = old_ptsin = PTSIN;
     PTSIN = sav_points;
 
@@ -139,7 +139,7 @@ void vdi_v_pmarker(Vwk * vwk)
 
         /* Loop over the number of polylines which define the marker. */
         for (j = 0; j < num_lines; j++) {
-            num_points = CONTRL[1] = *m_ptr++;  /* How many points?  Get
+            num_points = CONTRL->nptsin = *m_ptr++;  /* How many points?  Get
                                                    them.  */
             pts_in = sav_points;
             for (h = 0; h < num_points; h++) {
@@ -181,7 +181,7 @@ void vdi_vqm_attributes(Vwk * vwk)
     PTSOUT[0] = 0;
     PTSOUT[1] = vwk->mark_height;
 
-    CONTRL[4] = 3;
-    CONTRL[2] = 1;
+    CONTRL->nintout = 3;
+    CONTRL->nptsout = 1;
     flip_y = 1;
 }

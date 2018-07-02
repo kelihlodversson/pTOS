@@ -40,7 +40,7 @@ static void escfn0(Vwk * vwk)
  */
 static void escfn1(Vwk * vwk)
 {
-    CONTRL[4] = 2;
+    CONTRL->nintout = 2;
     INTOUT[0] = v_cel_my + 1;
     INTOUT[1] = v_cel_mx + 1;
 }
@@ -168,7 +168,7 @@ static void escfn12(Vwk * vwk)
     int cnt;
     WORD *chr;
 
-    cnt = CONTRL[3];            /* get the character count */
+    cnt = CONTRL->nintin;            /* get the character count */
     chr = INTIN;                /* address of the character array */
 
     while (cnt--) {
@@ -200,7 +200,7 @@ static void escfn14(Vwk * vwk)
  */
 static void escfn15(Vwk * vwk)
 {
-    CONTRL[4] = 2;              /* 2 integers are returned */
+    CONTRL->nintout = 2;              /* 2 integers are returned */
     INTOUT[0] = v_cur_cy + 1;   /* row (starting at 1) */
     INTOUT[1] = v_cur_cx + 1;   /* column (starting at 1) */
 }
@@ -217,7 +217,7 @@ static void escfn15(Vwk * vwk)
  */
 static void escfn16(Vwk * vwk)
 {
-    CONTRL[4] = 1;              /* 1 integer is returned */
+    CONTRL->nintout = 1;              /* 1 integer is returned */
     INTOUT[0] = 1;              /* there is a mouse */
 }
 
@@ -302,7 +302,7 @@ static void (* const esctbl[])(Vwk *) =
  */
 void vdi_v_escape(Vwk * vwk)
 {
-    UWORD escfun = CONTRL[5];
+    UWORD escfun = CONTRL->subcode;
 
     KDEBUG(("VDI esc, subfunction %u called\n",escfun));
 

@@ -19,7 +19,7 @@ VDIPB vdipb;
 
 void gsx2(void)
 {
-    vdipb.contrl = contrl;
+    vdipb.contrl = &contrl;
 
 #ifdef __arm__
     register long _r1 __asm__("r1")=(long)(&vdipb);

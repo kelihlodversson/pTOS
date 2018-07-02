@@ -73,7 +73,7 @@ GLOBAL FDB      gl_src;
 GLOBAL FDB      gl_dst;
 
 GLOBAL WS       gl_ws;
-GLOBAL WORD     contrl[12];
+GLOBAL VDICONTROL contrl;
 GLOBAL WORD     intin[128];
 GLOBAL WORD     ptsin[20];
 
@@ -213,22 +213,22 @@ void gsx_attr(UWORD text, UWORD mode, UWORD color)
     WORD    tmp;
 
     tmp = intin[0];
-    contrl[1] = 0;
-    contrl[3] = 1;
-    contrl[6] = gl_handle;
+    contrl.nptsin = 0;
+    contrl.nintin = 1;
+    contrl.handle = gl_handle;
     if (mode != gl_mode)
     {
-        contrl[0] = SET_WRITING_MODE;
+        contrl.code = SET_WRITING_MODE;
         intin[0] = gl_mode = mode;
         gsx2();
     }
 
-    contrl[0] = FALSE;
+    contrl.code = 0;
     if (text)
     {
         if (color != gl_tcolor)
         {
-            contrl[0] = S_TEXT_COLOR;
+            contrl.code = S_TEXT_COLOR;
             gl_tcolor = color;
         }
     }
@@ -236,12 +236,12 @@ void gsx_attr(UWORD text, UWORD mode, UWORD color)
     {
         if (color != gl_lcolor)
         {
-            contrl[0] = S_LINE_COLOR;
+            contrl.code = S_LINE_COLOR;
             gl_lcolor = color;
         }
     }
 
-    if (contrl[0])
+    if (contrl.code)
     {
         intin[0] = color;
         gsx2();
@@ -555,12 +555,12 @@ void gsx_tblt(WORD tb_f, WORD x, WORD y, WORD tb_nc)
         y += gl_hsptschar;
     }
 
-    contrl[0] = 8;          /* TEXT */
-    contrl[1] = 1;
-    contrl[6] = gl_handle;
+    contrl.code = 8;          /* TEXT */
+    contrl.nptsin = 1;
+    contrl.handle = gl_handle;
     ptsin[0] = x;
     ptsin[1] = y;
-    contrl[3] = tb_nc;
+    contrl.nintin = tb_nc;
     gsx2();
 }
 

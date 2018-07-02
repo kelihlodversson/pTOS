@@ -152,7 +152,7 @@ void vdi_vsf_udpat(Vwk * vwk)
 {
     WORD *sp, *dp, i, count;
 
-    count = CONTRL[3];
+    count = CONTRL->nintin;
 
     if (count == 16)
         vwk->multifill = 0;        /* Single Plane Pattern */
@@ -176,7 +176,7 @@ void vdi_vsf_interior(Vwk * vwk)
 {
     WORD fs;
 
-    CONTRL[4] = 1;
+    CONTRL->nintout = 1;
     fs = *INTIN;
     if ((fs > MX_FIL_STYLE) || (fs < 0))
         fs = 0;
@@ -191,7 +191,7 @@ void vdi_vsf_style(Vwk * vwk)
 {
     WORD fi;
 
-    CONTRL[4] = 1;
+    CONTRL->nintout = 1;
     fi = *INTIN;
 
     if (vwk->fill_style == 2) {
@@ -212,7 +212,7 @@ void vdi_vsf_color(Vwk * vwk)
 {
     WORD fc;
 
-    *(CONTRL + 4) = 1;
+    CONTRL->nintout = 1;
     fc = *INTIN;
     if ((fc >= DEV_TAB[13]) || (fc < 0))
         fc = 1;
@@ -237,7 +237,7 @@ void vdi_vsf_perimeter(Vwk * vwk)
         *(int_out) = 1;
         vwk->fill_per = TRUE;
     }
-    CONTRL[4] = 1;
+    CONTRL->nintout = 1;
 }
 
 
@@ -283,7 +283,7 @@ void vdi_vqf_attributes(Vwk * vwk)
     *pointer++ = vwk->wrt_mode + 1;
     *pointer = vwk->fill_per;
 
-    CONTRL[4] = 5;
+    CONTRL->nintout = 5;
 }
 
 
@@ -613,12 +613,12 @@ polygon(Vwk * vwk, Point * ptsin, int count)
 void vdi_v_fillarea(Vwk * vwk)
 {
     Point * point = (Point*)PTSIN;
-    int count = CONTRL[1];
+    int count = CONTRL->nptsin;
 
 #if 0
 #if HAVE_BEZIER
     /* check, if we want to draw a filled bezier curve */
-    if (CONTRL[5] == 13 && vwk->bez_qual )
+    if (CONTRL->subcode == 13 && vwk->bez_qual )
         v_bez_fill(vwk, point, count);
     else
 #endif
@@ -1060,7 +1060,7 @@ void vdi_v_get_pixel(Vwk * vwk)
     *int_out++ = pel;
 
     *int_out = REV_MAP_COL[pel];
-    CONTRL[4] = 2;
+    CONTRL->nintout = 2;
 }
 
 

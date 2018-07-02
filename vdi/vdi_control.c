@@ -199,7 +199,7 @@ void vdi_vswr_mode(Vwk * vwk)
 {
     WORD wm;
 
-    CONTRL[4] = 1;
+    CONTRL->nintout = 1;
     wm = INTIN[0] - 1;
     if ((wm > MAX_MODE) | (wm < 0))
         wm = 0;
@@ -213,6 +213,7 @@ static void init_wk(Vwk * vwk)
 {
     WORD l;
     WORD *pointer;
+    VDICONTROL *pb;
     const WORD *src_ptr;
 
     pointer = INTIN;
@@ -288,9 +289,9 @@ static void init_wk(Vwk * vwk)
     vwk->multifill = 0;
     vwk->ud_ls = LINE_STYLE[0];
 
-    pointer = CONTRL;
-    *(pointer + 2) = 6;
-    *(pointer + 4) = 45;
+    pb = CONTRL;
+    pb->nptsout = 6;
+    pb->nintout = 45;
 
     pointer = INTOUT;
     src_ptr = DEV_TAB;
@@ -328,7 +329,7 @@ void vdi_v_opnvwk(Vwk * vwk)
      */
     vwk = (Vwk *)trap1(X_MXALLOC, (LONG)(sizeof(Vwk)), (WORD)(X_MXGLOBAL));
     if (vwk == NULL) {
-        CONTRL[6] = 0;  /* No memory available, exit */
+        CONTRL->handle = 0;  /* No memory available, exit */
         return;
     }
 
@@ -347,7 +348,7 @@ void vdi_v_opnvwk(Vwk * vwk)
     work_ptr->next_work = vwk;
     vwk->next_work = temp;
 
-    vwk->handle = CONTRL[6] = handle;
+    vwk->handle = CONTRL->handle = handle;
     init_wk(vwk);
     CUR_WORK = vwk;
 }
@@ -407,7 +408,7 @@ void vdi_v_opnwk(Vwk * vwk)
         DEV_TAB[13] = 256;
 
     vwk = &virt_work;
-    CONTRL[6] = vwk->handle = 1;
+    CONTRL->handle = vwk->handle = 1;
     vwk->next_work = NULL;
 
     line_cw = -1;               /* invalidate current line width */
@@ -472,8 +473,8 @@ void vdi_vq_extnd(Vwk * vwk)
     WORD i;
     WORD *dst, *src;
 
-    CONTRL[2] = 6;
-    CONTRL[4] = 45;
+    CONTRL->nptsout = 6;
+    CONTRL->nintout = 45;
 
     flip_y = 1;
     dst = PTSOUT;

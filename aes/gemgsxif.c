@@ -153,10 +153,10 @@ void gsx_mret(LONG *pmaddr, LONG *pmlen)
 
 void gsx_ncode(WORD code, WORD n, WORD m)
 {
-    contrl[0] = code;
-    contrl[1] = n;
-    contrl[3] = m;
-    contrl[6] = gl_handle;
+    contrl.code = code;
+    contrl.nptsin = n;
+    contrl.nintin = m;
+    contrl.handle = gl_handle;
     gsx2();
 }
 
@@ -214,16 +214,16 @@ static void gsx_setmb(PFVOID boff, PFVOID moff, PFVOID *pdrwaddr)
 {
     i_ptr( boff );
     gsx_ncode(BUT_VECX, 0, 0);
-    m_lptr2( &old_bcode );
+    m_lptr2( old_bcode );
 
     i_ptr( moff );
     gsx_ncode(MOT_VECX, 0, 0);
-    m_lptr2( &old_mcode );
+    m_lptr2( old_mcode );
 
 /* not used in Atari GEM:
     i_ptr( justretf );
     gsx_ncode(CUR_VECX, 0, 0);
-    m_lptr2( pdrwaddr );
+    m_lptr2( *pdrwaddr );
 */
 }
 
@@ -283,13 +283,13 @@ void gsx_graphic(WORD tographic)
         gl_graphic = tographic;
         if (gl_graphic)
         {
-            contrl[5] = 2;
+            contrl.subcode = 2;
             gsx_ncode(ESCAPE_FUNCTION, 0, 0);
             gsx_setmb(far_bcha, far_mcha, &drwaddr);
         }
         else
         {
-            contrl[5] = 3;
+            contrl.subcode = 3;
             gsx_ncode(ESCAPE_FUNCTION, 0, 0);
             gsx_resetmb();
         }
@@ -357,11 +357,11 @@ void bb_restore(GRECT *pr)
 
 
 
-WORD gsx_tick(void *tcode, void *ptsave)
+WORD gsx_tick(void *tcode, void **ptsave)
 {
     i_ptr( tcode );
     gsx_ncode(TIM_VECX, 0, 0);
-    m_lptr2( ptsave );
+    m_lptr2( *ptsave );
     return(intout[0]);
 }
 
@@ -423,7 +423,7 @@ WORD gsx_char(void)
     intin[0] = -1;
     intin[1] = FALSE;        /* no echo */
     gsx_ncode(STRING_INPUT, FALSE, 2);
-    if (contrl[4])
+    if (contrl.nintout)
         return(intout[0]);
     else
         return(0);
@@ -470,7 +470,7 @@ static void g_v_opnwk(WORD *pwork_in, WORD *phandle, WS *pwork_out )
     i_intout( (WORD *)pwork_out ); /* set intout to point to callers data */
     gsx_ncode(OPEN_WORKSTATION, 0, 11);
 
-    *phandle = contrl[6];
+    *phandle = contrl.handle;
     i_intin( intin );
     i_intout( intout );
     i_ptsin( ptsin );
@@ -581,6 +581,6 @@ void vex_wheelv(PFVOID new, PFVOID *old)
 {
     i_ptr(new);
     gsx_ncode(WHEEL_VECX, 0, 0);
-    m_lptr2(old);
+    m_lptr2(*old);
 }
 #endif

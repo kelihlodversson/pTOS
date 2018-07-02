@@ -230,7 +230,7 @@ void
 v_bez(Vwk * vwk, Point * ptsget, int nr_ptsin)
 {
     int i;
-    /* WORD  const nr_ptsin = CONTRL[1]; */
+    /* WORD  const nr_ptsin = CONTRL->nptsin; */
     UBYTE * bezarr = (UBYTE*)INTIN;
     WORD bez_qual;
     WORD xmin, xmax, ymin, ymax;
@@ -310,8 +310,8 @@ v_bez(Vwk * vwk, Point * ptsget, int nr_ptsin)
 
     INTOUT[0] = total_vertices; /* total nr points */
     INTOUT[1] = total_jumps;    /* total moves */
-    CONTRL[4] = 2;
-    CONTRL[2] = 2;
+    CONTRL->nintout = 2;
+    CONTRL->nptsout = 2;
     PTSOUT[0] = xmin;
     PTSOUT[1] = ymin;
     PTSOUT[2] = xmax;
@@ -332,7 +332,7 @@ void
 v_bez_fill(Vwk * vwk, Point * ptsget, int nr_ptsin)
 {
     int i;
-    /* WORD  const nr_ptsin = CONTRL[1]; */
+    /* WORD  const nr_ptsin = CONTRL->nptsin; */
     UBYTE * bezarr = (UBYTE*)INTIN;
     WORD bez_qual;
     WORD xmin, xmax, ymin, ymax;
@@ -422,8 +422,8 @@ v_bez_fill(Vwk * vwk, Point * ptsget, int nr_ptsin)
 
     INTOUT[0] = total_vertices; /* total nr points */
     INTOUT[1] = total_jumps;    /* total moves */
-    CONTRL[4] = 2;
-    CONTRL[2] = 2;
+    CONTRL->nintout = 2;
+    CONTRL->nptsout = 2;
     PTSOUT[0] = xmin;
     PTSOUT[1] = ymin;
     PTSOUT[2] = xmax;
@@ -437,7 +437,7 @@ v_bez_fill(Vwk * vwk, Point * ptsget, int nr_ptsin)
 void
 v_bez_fill(Vwk * vwk, Point * ptsget, int nr_ptsin)
 {
-    /* WORD  const nr_ptsin = CONTRL[1]; */
+    /* WORD  const nr_ptsin = CONTRL->nptsin; */
     const UBYTE *const bezarr = (UBYTE*)INTIN;  /* index with xor 1 to byte swap !! */
     WORD bez_qual;
     WORD xmin, xmax, ymin, ymax;
@@ -560,8 +560,8 @@ v_bez_fill(Vwk * vwk, Point * ptsget, int nr_ptsin)
 
     INTOUT[0] = total_vertices; /* total nr points */
     INTOUT[1] = total_jumps;    /* total moves */
-    CONTRL[4] = 2;
-    CONTRL[2] = 2;
+    CONTRL->nintout = 2;
+    CONTRL->nptsout = 2;
     PTSOUT[0] = xmin;
     PTSOUT[1] = ymin;
     PTSOUT[2] = xmax;
@@ -586,7 +586,7 @@ void
 v_bez_control(Vwk * vwk)
 {
     INTOUT[0] = vwk->bez_qual;
-    CONTRL[4] = 1;
+    CONTRL->nintout = 1;
 }
 
 
@@ -616,7 +616,7 @@ v_bez_qual(Vwk * vwk)
 
     vwk->bez_qual = q;
     INTOUT[0] = pcarr[q - MIN_QUAL];
-    CONTRL[4] = 1;
+    CONTRL->nintout = 1;
 }
 
 #endif

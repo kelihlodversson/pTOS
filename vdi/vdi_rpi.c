@@ -43,35 +43,35 @@ int GSX_ENTRY(int op, VDIPB* paramblock)
     local_pb.ptsout = paramblock->ptsout;
     local_pb.ptsin = lcl_ptsin;
 
-    WORD save_ptsin_count = paramblock->contrl[1];
-    WORD save_intin_count = paramblock->contrl[3];
+    WORD save_ptsin_count = paramblock->contrl->nptsin;
+    WORD save_intin_count = paramblock->contrl->nintin;
 
-    if (paramblock->contrl[1] <= 0)
+    if (paramblock->contrl->nptsin <= 0)
     {
-        paramblock->contrl[1] = 0;
+        paramblock->contrl->nptsin = 0;
     }
     else
     {
-        if(paramblock->contrl[1] > ptsin_max)
+        if(paramblock->contrl->nptsin > ptsin_max)
         {
-            paramblock->contrl[1] = ptsin_max;
+            paramblock->contrl->nptsin = ptsin_max;
         }
-        for (i = 0; i < paramblock->contrl[1]*2; i++)
+        for (i = 0; i < paramblock->contrl->nptsin*2; i++)
         {
             lcl_ptsin[i] = paramblock->ptsin[i];
         }
     }
-    if (paramblock->contrl[3] <= 0)
+    if (paramblock->contrl->nintin <= 0)
     {
-        paramblock->contrl[3] = 0;
+        paramblock->contrl->nintin = 0;
     }
 
     /* Call screen which contains all the C routines for the SCREEN DRIVER. */
     screen();
 
     // Restore ptsin and intin counts to the unsanitized sizes
-    paramblock->contrl[1] = save_ptsin_count;
-    paramblock->contrl[3] = save_intin_count;
+    paramblock->contrl->nptsin = save_ptsin_count;
+    paramblock->contrl->nintin = save_intin_count;
 
     return flip_y;
 }
