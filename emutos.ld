@@ -23,11 +23,7 @@ OUTPUT_FORMAT(binary)
 #if defined (MACHINE_AMIGA)
 # define ROM_ORIGIN 0x00fc0000
 #elif defined (MACHINE_RPI)
-# ifdef TARGET_RPI3
-#   define ROM_ORIGIN 0x00080000
-# else
-#   define ROM_ORIGIN 0x00008000
-# endif
+# define ROM_ORIGIN 0x00008000
 #elif defined (TARGET_CART)
 # define ROM_ORIGIN 0x00fa0000
 #elif defined (TARGET_192)
