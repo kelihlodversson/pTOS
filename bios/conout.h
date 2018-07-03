@@ -29,23 +29,6 @@
 #define  M_SVPOS        0x0020  /* position saved flag. 0:false,    1:true */
 #define  M_CRIT         0x0040  /* reverse video        0:on        1:off */
 
-/* Color related linea variables */
-
-extern WORD v_col_bg;           /* current background color */
-extern WORD v_col_fg;           /* current foreground color */
-
-/* Cursor related linea variables */
-
-extern UBYTE *v_cur_ad;         /* current cursor address */
-extern WORD v_cur_of;           /* cursor offset */
-extern BYTE v_cur_tim;          /* cursor blink timer */
-
-extern BYTE v_period;
-extern WORD disab_cnt;          /* disable depth count. (>0 means disabled) */
-extern BYTE v_stat_0;           /* video cell system status */
-extern WORD sav_cur_x;          /* saved cursor cell x */
-extern WORD sav_cur_y;          /* saved cursor cell y */
-
 /* Prototypes */
 
 void ascii_out(int);

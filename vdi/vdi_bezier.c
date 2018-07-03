@@ -172,8 +172,8 @@ static void
 draw_segs(Vwk * vwk, WORD nr_vertices, Point * point, WORD mode)
 {
     if ( nr_vertices >= 2 ) {
-        if (nr_vertices > INQ_TAB[14])
-            nr_vertices = INQ_TAB[14];
+        if (nr_vertices > linea_vars.INQ_TAB[14])
+            nr_vertices = linea_vars.INQ_TAB[14];
 
         /* output to driver, converting ndc if necessary */
         if (mode == FILL) {
@@ -184,7 +184,7 @@ draw_segs(Vwk * vwk, WORD nr_vertices, Point * point, WORD mode)
             short i;
             Line line;
 
-            LSTLIN = FALSE;
+            linea_vars.LSTLIN = FALSE;
             for(i = nr_vertices - 1; i > 0; i--) {
                 line.x1 = point->x;
                 line.y1 = point->y;
@@ -469,7 +469,7 @@ v_bez_fill(Vwk * vwk, Point * ptsget, int nr_ptsin)
 
             /* keep this curve within nr vertices for the driver's ptsget[]
              ** with one spare for the end point */
-            if ( output_vertices+vertices_per_bez+1 > INQ_TAB[14] ) {
+            if ( output_vertices+vertices_per_bez+1 > linea_vars.INQ_TAB[14] ) {
                 if ( bez_qual > MIN_QUAL ) {
                     /* reduce bezier quality & start this polygon again */
                     bez_qual--;
@@ -510,7 +510,7 @@ v_bez_fill(Vwk * vwk, Point * ptsget, int nr_ptsin)
 
             do {
                 int t;
-                if ( output_vertices < INQ_TAB[14] ) {  /* need room for at least one more */
+                if ( output_vertices < linea_vars.INQ_TAB[14] ) {  /* need room for at least one more */
                     t = ptsget->x;
                     if ( t < xmin )
                         xmin = t;

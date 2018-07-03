@@ -293,25 +293,25 @@ WORD raspi_vgetmode(void)
 
 UBYTE * raspi_cell_addr(int x, int y)
 {
-    UWORD cell_wr = v_cel_wr;
+    ULONG cell_wr = linea_vars.v_cel_wr;
      /* check bounds against screen limits */
-    if ( x >= v_cel_mx )
-        x = v_cel_mx;           /* clipped x */
+    if ( x >= linea_vars.v_cel_mx )
+        x = linea_vars.v_cel_mx;           /* clipped x */
 
-    if ( y >= v_cel_my )
-        y = v_cel_my;           /* clipped y */
+    if ( y >= linea_vars.v_cel_my )
+        y = linea_vars.v_cel_my;           /* clipped y */
 
-    return raspi_screenbase + x*8 + ((LONG)cell_wr * y);
+    return raspi_screenbase + x*8 + (cell_wr * y);
 }
 
 void raspi_blank_out (int topx, int topy, int botx, int boty)
 {
-    UWORD color = v_col_bg;             /* bg color value */
+    UWORD color = linea_vars.v_col_bg;             /* bg color value */
     int width, row;
     UBYTE * addr = raspi_cell_addr(topx, topy);   /* running pointer to screen */
     width = botx - topx;
-    topy *= v_cel_ht;
-    boty *= v_cel_ht;
+    topy *= linea_vars.v_cel_ht;
+    boty *= linea_vars.v_cel_ht;
     for (row = topy; row < boty; row++)
     {
         memset(addr+(row * raspi_screen_width_in_bytes), color, width);
@@ -324,20 +324,20 @@ void raspi_cell_xfer(UBYTE * src, UBYTE * dst)
     UWORD bg;
     int fnt_wr, line_wr, y;
 
-    fnt_wr = v_fnt_wr;
-    line_wr = v_lin_wr;
+    fnt_wr = linea_vars.v_fnt_wr;
+    line_wr = linea_vars.v_lin_wr;
 
     /* check for reversed foreground and background colors */
-    if ( v_stat_0 & M_REVID ) {
-        fg = v_col_bg;
-        bg = v_col_fg;
+    if ( linea_vars.v_stat_0 & M_REVID ) {
+        fg = linea_vars.v_col_bg;
+        bg = linea_vars.v_col_fg;
     }
     else {
-        fg = v_col_fg;
-        bg = v_col_bg;
+        fg = linea_vars.v_col_fg;
+        bg = linea_vars.v_col_bg;
     }
 
-    for(y = 0; y < v_cel_ht; y++)
+    for(y = 0; y < linea_vars.v_cel_ht; y++)
     {
         UBYTE cel = *src;//[fnt_wr*y];
         int pixel;
@@ -352,11 +352,11 @@ void raspi_cell_xfer(UBYTE * src, UBYTE * dst)
 void raspi_neg_cell(UBYTE * cell)
 {
     int len;
-    v_stat_0 |= M_CRIT;                 /* start of critical section. */
-    for(len = 0; len < v_cel_ht; len++)
+    linea_vars.v_stat_0 |= M_CRIT;                 /* start of critical section. */
+    for(len = 0; len < linea_vars.v_cel_ht; len++)
     {
         *cell = ~*cell;
-        cell += v_lin_wr;
+        cell += linea_vars.v_lin_wr;
     }
-    v_stat_0 &= ~M_CRIT;                /* end of critical section. */
+    linea_vars.v_stat_0 &= ~M_CRIT;                /* end of critical section. */
 }

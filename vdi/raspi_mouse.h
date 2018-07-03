@@ -11,16 +11,6 @@
 #   define RASPI_MOUSE_H
 #   ifdef MACHINE_RPI
 
-/* Mouse / sprite structure */
-typedef struct Mcdb_ Mcdb;
-struct Mcdb_ {
-        WORD    xhot;
-        WORD    yhot;
-        WORD    planes;
-        WORD    bg_col;
-        WORD    fg_col;
-        UWORD   maskdata[32];   /* mask & data are interleaved */
-};
 void raspi_hw_cur_display(Mcdb *sprite, WORD x, WORD y);
 
 #   endif /* MACHINE_RPI */

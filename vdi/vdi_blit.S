@@ -12,13 +12,13 @@
 
 #include "asmdefs.h"
 #include "vdi_asm.h"
+#include "lineaasm_m68k.h"
 
 
 
         .globl  _fast_bit_blt
 
         .extern _blit_info
-        .extern _PTSIN
 
 // The following defines are offsets inside fringe code fragments
 // As a result this file cannot be converted to ColdFire using PortAsm.
@@ -921,7 +921,7 @@ _fast_bit_blt:
 
         move.l  S_FORM(a6),a0           // a0 -> start of source form (0,0)
         move.l  D_FORM(a6),a1           // a1 -> start of dest.  form (0,0)
-        move.l  _PTSIN,a2               // a2 -> PTSIN array
+        move.l  LA(local_pb+8),a2       // a2 -> PTSIN array
 
         jbsr    bit_blt
 

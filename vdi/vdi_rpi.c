@@ -15,7 +15,9 @@
 #include "portab.h"
 #include "intmath.h"
 #include "vdi_defs.h"
+#include "../bios/lineavars.h"
 #include "string.h"
+
 extern void screen(void);
 
 
@@ -27,7 +29,6 @@ extern void screen(void);
 
 
 // We copy the param block from the user into a global linea variable
-extern VDIPB local_pb;
 static WORD lcl_ptsin[ptsin_size];
 
 /* Standard callig conventions on ARM pass params in registers, so we don't
@@ -37,11 +38,11 @@ int GSX_ENTRY(int op, VDIPB* paramblock)
 {
     int i;
     /* Make a local copy of the array pointers in the user's parameter block. */
-    local_pb.contrl = paramblock->contrl;
-    local_pb.intin = paramblock->intin;
-    local_pb.intout = paramblock->intout;
-    local_pb.ptsout = paramblock->ptsout;
-    local_pb.ptsin = lcl_ptsin;
+    linea_vars.local_pb.contrl = paramblock->contrl;
+    linea_vars.local_pb.intin = paramblock->intin;
+    linea_vars.local_pb.intout = paramblock->intout;
+    linea_vars.local_pb.ptsout = paramblock->ptsout;
+    linea_vars.local_pb.ptsin = lcl_ptsin;
 
     WORD save_ptsin_count = paramblock->contrl->nptsin;
     WORD save_intin_count = paramblock->contrl->nintin;

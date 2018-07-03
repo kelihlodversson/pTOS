@@ -50,18 +50,18 @@
 #define CIRCLED 2
 
 /* aliases for different table positions */
-#define xres            DEV_TAB[0]
-#define yres            DEV_TAB[1]
-#define xsize           DEV_TAB[3]
-#define ysize           DEV_TAB[4]
+#define xres            linea_vars.DEV_TAB[0]
+#define yres            linea_vars.DEV_TAB[1]
+#define xsize           linea_vars.DEV_TAB[3]
+#define ysize           linea_vars.DEV_TAB[4]
 
-#define DEF_LWID        SIZ_TAB[4]
-#define DEF_CHHT        SIZ_TAB[1]
-#define DEF_CHWT        SIZ_TAB[0]
-#define DEF_MKWD        SIZ_TAB[8]
-#define DEF_MKHT        SIZ_TAB[9]
-#define MAX_MKWD        SIZ_TAB[10]
-#define MAX_MKHT        SIZ_TAB[11]
+#define DEF_LWID        linea_vars.SIZ_TAB[4]
+#define DEF_CHHT        linea_vars.SIZ_TAB[1]
+#define DEF_CHWT        linea_vars.SIZ_TAB[0]
+#define DEF_MKWD        linea_vars.SIZ_TAB[8]
+#define DEF_MKHT        linea_vars.SIZ_TAB[9]
+#define MAX_MKWD        linea_vars.SIZ_TAB[10]
+#define MAX_MKHT        linea_vars.SIZ_TAB[11]
 
 /* Defines for CONTRL[] */
 #define ROUTINE 0
@@ -193,9 +193,6 @@ struct Point_
 
 /* External definitions for internal use */
 extern WORD flip_y;             /* True if magnitudes being returned */
-extern WORD line_cw;            /* Linewidth for current circle */
-extern WORD num_qc_lines;
-extern WORD val_mode, chc_mode, loc_mode, str_mode;
 
 /* These are still needed for text blitting */
 extern const UWORD LINE_STYLE[];
@@ -203,35 +200,6 @@ extern const UWORD ROM_UD_PATRN[];
 extern const UWORD SOLID;
 extern const UWORD HOLLOW;
 
-extern WORD DEV_TAB[];          /* initial intout array for open workstation */
-extern WORD SIZ_TAB[];          /* initial ptsout array for open workstation */
-extern WORD INQ_TAB[];          /* extended inquire values */
-
-extern VDICONTROL *CONTRL;
-extern WORD *INTIN, *PTSIN, *INTOUT, *PTSOUT;
-
-extern WORD LN_MASK, LSTLIN;
-extern WORD TERM_CH;
-
-/* Line-A Bit-Blt / Copy raster form variables */
-extern WORD COPYTRAN;
-extern WORD MFILL;
-
-/* referenced by Line-A flood fill */
-extern Vwk *CUR_WORK;           /* pointer to currently-open virtual workstation */
-
-/* Mouse specific externals */
-extern WORD GCURX;              /* mouse X position */
-extern WORD GCURY;              /* mouse Y position */
-extern WORD HIDE_CNT;           /* Number of levels the mouse is hidden */
-extern WORD MOUSE_BT;           /* mouse button state */
-
-/* Mouse related variables */
-extern WORD     newx;           /* new mouse x&y position */
-extern WORD     newy;           /* new mouse x&y position */
-extern BYTE     draw_flag;      /* non-zero means draw mouse form on vblank */
-extern BYTE     mouse_flag;     /* non-zero, if mouse ints disabled */
-extern BYTE     cur_ms_stat;    /* current mouse status */
 
 
 /* shared VDI functions & VDI line-A wrapper functions */
@@ -287,6 +255,7 @@ void esc_exit(Vwk *);
 void mouse_int(UBYTE *buf);   /* mouse interrupt vector */
 void wheel_int(UBYTE *buf);   /* wheel interrupt routine */
 void mov_cur(WORD new_x, WORD new_y);      /* user button vector */
+WORD gchr_key(void);
 
 /* all VDI functions */
 

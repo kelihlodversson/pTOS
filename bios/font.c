@@ -59,7 +59,7 @@ void font_init(void)
     sysfonts[2] = &fon8x16;
     sysfonts[3] = NULL;
 
-    font_count = 3;               /* total number of fonts in fontring */
+    linea_vars.font_count = 3;               /* total number of fonts in fontring */
 }
 
 /*
@@ -84,20 +84,20 @@ void font_set_default(WORD cellheight)
         font = &fon8x16;
         break;
     default:
-        if (V_REZ_VT < 400)
+        if (linea_vars.V_REZ_VT < 400)
             font = &fon8x8;
         else
             font = &fon8x16;
     }
 
-    v_cel_ht = font->form_height;
-    v_cel_wr = v_lin_wr * font->form_height;
-    v_cel_mx = (V_REZ_HZ / font->max_cell_width) - 1;
-    v_cel_my = (V_REZ_VT / font->form_height) - 1;
+    linea_vars.v_cel_ht = font->form_height;
+    linea_vars.v_cel_wr = linea_vars.v_lin_wr * font->form_height;
+    linea_vars.v_cel_mx = (linea_vars.V_REZ_HZ / font->max_cell_width) - 1;
+    linea_vars.v_cel_my = (linea_vars.V_REZ_VT / font->form_height) - 1;
 
-    v_fnt_wr = font->form_width;
-    v_fnt_st = font->first_ade;
-    v_fnt_nd = font->last_ade;
-    v_fnt_ad = (const UWORD *)font->dat_table;
-    v_off_ad = font->off_table;
+    linea_vars.v_fnt_wr = font->form_width;
+    linea_vars.v_fnt_st = font->first_ade;
+    linea_vars.v_fnt_nd = font->last_ade;
+    linea_vars.v_fnt_ad = (const UWORD *)font->dat_table;
+    linea_vars.v_off_ad = font->off_table;
 }

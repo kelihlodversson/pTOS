@@ -744,8 +744,8 @@ void screen_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez)
 /* returns 'standard' pixel sizes */
 static __inline__ void get_std_pixel_size(WORD *width,WORD *height)
 {
-    *width = (V_REZ_HZ < 640) ? 556 : 278;  /* magic numbers as used */
-    *height = (V_REZ_VT < 400) ? 556 : 278; /*  by TOS 3 & TOS 4     */
+    *width = (linea_vars.V_REZ_HZ < 640) ? 556 : 278;  /* magic numbers as used */
+    *height = (linea_vars.V_REZ_VT < 400) ? 556 : 278; /*  by TOS 3 & TOS 4     */
 }
 
 /*
@@ -766,9 +766,9 @@ void get_pixel_size(WORD *width,WORD *height)
     else
     {
         /* ST TOS has its own set of magic numbers */
-        if (V_REZ_VT == 400)        /* ST high */
+        if (linea_vars.V_REZ_VT == 400)        /* ST high */
             *width = 372;
-        else if (V_REZ_HZ == 640)   /* ST medium */
+        else if (linea_vars.V_REZ_HZ == 640)   /* ST medium */
             *width = 169;
         else *width = 338;          /* ST low */
         *height = 372;

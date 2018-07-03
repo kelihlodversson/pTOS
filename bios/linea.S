@@ -16,10 +16,10 @@
 #define DBG_LINEA 0
 
 #include "asmdefs.h"
+#include "../vdi/lineaasm_m68k.h"
 
 // ==== References ===========================================================
 
-        .extern line_a_vars
         .extern _sysfonts
         .extern _kprintf
 
@@ -142,7 +142,7 @@ linea_msg:
         .text
 
 _linea_0:
-        lea     line_a_vars,a0  // get base address for line a variables
+        lea     LA(v_planes),a0  // get base address for line a variables
         move.l  a0,d0
 
         lea     _sysfonts,a1   // get pointer to the three system font headers

@@ -116,8 +116,8 @@ void vdi_vsl_width(Vwk * vwk)
     w = PTSIN[0];
     if (w < 1)
         w = 1;
-    else if (w > SIZ_TAB[6])
-        w = SIZ_TAB[6];
+    else if (w > linea_vars.SIZ_TAB[6])
+        w = linea_vars.SIZ_TAB[6];
 
     /* If the line width is even, make it odd by decreasing it by one */
     if ((w & 0x0001) == 0)
@@ -165,7 +165,7 @@ void vdi_vsl_color(Vwk * vwk)
 
     CONTRL->nintout = 1;
     lc = *(INTIN);
-    if ((lc >= DEV_TAB[13]) || (lc < 0))
+    if ((lc >= linea_vars.DEV_TAB[13]) || (lc < 0))
         lc = 1;
     *(INTOUT) = lc;
     vwk->line_color = MAP_COL[lc];
@@ -207,13 +207,13 @@ static BOOL blit_hline(const VwkAttrib *attr, const Rect *rect, BLITPARM *b)
      * is overkill, but note that the current cache control routines
      * ignore the length specification & act on the whole cache anyway.
      */
-    flush_data_cache(b->addr, v_lin_wr);
+    flush_data_cache(b->addr, linea_vars.v_lin_wr);
 
     BLITTER->src_x_incr = 0;
     BLITTER->endmask_1 = b->leftmask;
     BLITTER->endmask_2 = 0xffff;
     BLITTER->endmask_3 = b->rightmask;
-    BLITTER->dst_x_incr = v_planes * sizeof(WORD);
+    BLITTER->dst_x_incr = linea_vars.v_planes * sizeof(WORD);
     BLITTER->x_count = b->width;
     BLITTER->hop = HOP_HALFTONE_ONLY;
     BLITTER->status = 0;            /* LINENO = 0 */
@@ -221,7 +221,7 @@ static BOOL blit_hline(const VwkAttrib *attr, const Rect *rect, BLITPARM *b)
 
     patindex = rect->y1 & attr->patmsk;
 
-    for (plane = 0; plane < v_planes; plane++, color >>= 1)
+    for (plane = 0; plane < linea_vars.v_planes; plane++, color >>= 1)
     {
         BLITTER->halftone[0] = patptr[patindex];
         if (attr->multifill)
@@ -250,7 +250,7 @@ static BOOL blit_hline(const VwkAttrib *attr, const Rect *rect, BLITPARM *b)
      * we've modified a screen line behind the cpu's back, so we must
      * invalidate any cached screen data.
      */
-    invalidate_data_cache(b->addr,v_lin_wr);
+    invalidate_data_cache(b->addr,linea_vars.v_lin_wr);
 
     return TRUE;
 }
@@ -282,14 +282,14 @@ static BOOL blit_rect_common(const VwkAttrib *attr, const Rect *rect, BLITPARM *
     /*
      * flush the data cache to ensure that the screen memory is current
      */
-    flush_data_cache(b->addr, v_lin_wr*ycount);
+    flush_data_cache(b->addr, linea_vars.v_lin_wr*ycount);
 
     BLITTER->src_x_incr = 0;
     BLITTER->endmask_1 = b->leftmask;
     BLITTER->endmask_2 = 0xffff;
     BLITTER->endmask_3 = b->rightmask;
-    BLITTER->dst_x_incr = v_planes * sizeof(WORD);
-    BLITTER->dst_y_incr = v_lin_wr - (v_planes*sizeof(WORD)*(b->width-1));
+    BLITTER->dst_x_incr = linea_vars.v_planes * sizeof(WORD);
+    BLITTER->dst_y_incr = linea_vars.v_lin_wr - (linea_vars.v_planes*sizeof(WORD)*(b->width-1));
     BLITTER->x_count = b->width;
     status = BUSY | (rect->y1 & LINENO);    /* NOHOG mode */
     BLITTER->skew = 0;
@@ -300,7 +300,7 @@ static BOOL blit_rect_common(const VwkAttrib *attr, const Rect *rect, BLITPARM *
             BLITTER->halftone[i] = patptr[i & patmsk];
     }
 
-    for (plane = 0; plane < v_planes; plane++, color >>= 1)
+    for (plane = 0; plane < linea_vars.v_planes; plane++, color >>= 1)
     {
         if (attr->multifill)    /* need to init halftone each time */
         {
@@ -333,7 +333,7 @@ static BOOL blit_rect_common(const VwkAttrib *attr, const Rect *rect, BLITPARM *
     /*
      * invalidate any cached screen data
      */
-    invalidate_data_cache(b->addr, v_lin_wr*ycount);
+    invalidate_data_cache(b->addr, linea_vars.v_lin_wr*ycount);
 
     return TRUE;
 }
@@ -373,7 +373,7 @@ void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
 
 
     // currently only 8bpp is supported
-    for(y = rect->y1; y <= rect->y2; y++, addr+=v_lin_wr)
+    for(y = rect->y1; y <= rect->y2; y++, addr+=linea_vars.v_lin_wr)
     {
         int patind = patmsk & y;   /* starting pattern */
         UWORD color = attr->color;
@@ -400,7 +400,7 @@ void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
 #else
     UWORD leftmask, rightmask, *addr;
     const UWORD patmsk = attr->patmsk;
-    const int yinc = (v_lin_wr>>1) - v_planes;
+    const int yinc = (linea_vars.v_lin_wr>>1) - linea_vars.v_planes;
     int width, centre, y;
 #if CONF_WITH_BLITTER
     BLITPARM b;
@@ -448,27 +448,27 @@ void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
             int plane;
             UWORD color;
 
-            for (plane = 0, color = attr->color; plane < v_planes; plane++, color>>=1, addr++) {
+            for (plane = 0, color = attr->color; plane < linea_vars.v_planes; plane++, color>>=1, addr++) {
                 UWORD *work = addr;
                 UWORD pattern = ~attr->patptr[patind];
                 int n;
 
                 if (color & 0x0001) {
                     *work |= pattern & leftmask;    /* left section */
-                    work += v_planes;
+                    work += linea_vars.v_planes;
                     for (n = 0; n < centre; n++) {  /* centre section */
                         *work |= pattern;
-                        work += v_planes;
+                        work += linea_vars.v_planes;
                     }
                     if (rightmask) {                /* right section */
                         *work |= pattern & rightmask;
                     }
                 } else {
                     *work &= ~(pattern & leftmask); /* left section */
-                    work += v_planes;
+                    work += linea_vars.v_planes;
                     for (n = 0; n < centre; n++) {  /* centre section */
                         *work &= ~pattern;
-                        work += v_planes;
+                        work += linea_vars.v_planes;
                     }
                     if (rightmask) {                /* right section */
                         *work &= ~(pattern & rightmask);
@@ -485,16 +485,16 @@ void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
             int plane;
             UWORD color;
 
-            for (plane = 0, color = attr->color; plane < v_planes; plane++, color>>=1, addr++) {
+            for (plane = 0, color = attr->color; plane < linea_vars.v_planes; plane++, color>>=1, addr++) {
                 UWORD *work = addr;
                 UWORD pattern = attr->patptr[patind];
                 int n;
 
                 *work ^= pattern & leftmask;        /* left section */
-                work += v_planes;
+                work += linea_vars.v_planes;
                 for (n = 0; n < centre; n++) {      /* centre section */
                     *work ^= pattern;
-                    work += v_planes;
+                    work += linea_vars.v_planes;
                 }
                 if (rightmask) {                    /* right section */
                     *work ^= pattern & rightmask;
@@ -510,27 +510,27 @@ void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
             int plane;
             UWORD color;
 
-            for (plane = 0, color = attr->color; plane < v_planes; plane++, color>>=1, addr++) {
+            for (plane = 0, color = attr->color; plane < linea_vars.v_planes; plane++, color>>=1, addr++) {
                 UWORD *work = addr;
                 UWORD pattern = attr->patptr[patind];
                 int n;
 
                 if (color & 0x0001) {
                     *work |= pattern & leftmask;    /* left section */
-                    work += v_planes;
+                    work += linea_vars.v_planes;
                     for (n = 0; n < centre; n++) {  /* centre section */
                         *work |= pattern;
-                        work += v_planes;
+                        work += linea_vars.v_planes;
                     }
                     if (rightmask) {                /* right section */
                         *work |= pattern & rightmask;
                     }
                 } else {
                     *work &= ~(pattern & leftmask); /* left section */
-                    work += v_planes;
+                    work += linea_vars.v_planes;
                     for (n = 0; n < centre; n++) {  /* centre section */
                         *work &= ~pattern;
-                        work += v_planes;
+                        work += linea_vars.v_planes;
                     }
                     if (rightmask) {                /* right section */
                         *work &= ~(pattern & rightmask);
@@ -547,7 +547,7 @@ void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
             int plane;
             UWORD color;
 
-            for (plane = 0, color = attr->color; plane < v_planes; plane++, color>>=1, addr++) {
+            for (plane = 0, color = attr->color; plane < linea_vars.v_planes; plane++, color>>=1, addr++) {
                 UWORD data, *work = addr;
                 UWORD pattern = (color & 0x0001) ? attr->patptr[patind] : 0x0000;
                 int n;
@@ -555,10 +555,10 @@ void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
                 data = *work & ~leftmask;           /* left section */
                 data |= pattern & leftmask;
                 *work = data;
-                work += v_planes;
+                work += linea_vars.v_planes;
                 for (n = 0; n < centre; n++) {      /* centre section */
                     *work = pattern;
-                    work += v_planes;
+                    work += linea_vars.v_planes;
                 }
                 if (rightmask) {                    /* right section */
                     data = *work & ~rightmask;
@@ -628,16 +628,16 @@ static UWORD linea_color(void)
      * especially addq.w instead of ori.w
      */
 
-    if (COLBIT0 != 0)
+    if (linea_vars.COLBIT0 != 0)
         color += 1;
 
-    if (COLBIT1 != 0)
+    if (linea_vars.COLBIT1 != 0)
         color += 2;
 
-    if (COLBIT2 != 0)
+    if (linea_vars.COLBIT2 != 0)
         color += 4;
 
-    if (COLBIT3 != 0)
+    if (linea_vars.COLBIT3 != 0)
         color += 8;
 
     return color;
@@ -649,16 +649,16 @@ static UWORD linea_color(void)
  */
 static void lineA2Attrib(VwkAttrib *attr)
 {
-    attr->clip = CLIP;      /* only used by polygon drawing */
-    if (PATPTR) {
-        attr->patmsk = PATMSK;
-        attr->patptr = PATPTR;
+    attr->clip = linea_vars.CLIP;      /* only used by polygon drawing */
+    if (linea_vars.PATPTR) {
+        attr->patmsk = linea_vars.PATMSK;
+        attr->patptr = linea_vars.PATPTR;
     } else {
         /* pattern is always needed for draw_rect_common, default to solid */
         attr->patmsk = 0;
         attr->patptr = &SOLID;
     }
-    attr->wrt_mode = WRT_MODE;
+    attr->wrt_mode = linea_vars.WRT_MODE;
     attr->color = linea_color();
 }
 
@@ -671,19 +671,19 @@ void linea_rect(void)
     VwkAttrib attr;
     Rect line;
 
-    if (CLIP) {
-        if (X1 < XMINCL) X1 = XMINCL;
-        if (X2 > XMAXCL) X2 = XMAXCL;
-        if (Y1 < YMINCL) Y1 = YMINCL;
-        if (Y2 > YMAXCL) Y2 = YMAXCL;
+    if (linea_vars.CLIP) {
+        if (linea_vars.X1 < linea_vars.XMINCL) linea_vars.X1 = linea_vars.XMINCL;
+        if (linea_vars.X2 > linea_vars.XMAXCL) linea_vars.X2 = linea_vars.XMAXCL;
+        if (linea_vars.Y1 < linea_vars.YMINCL) linea_vars.Y1 = linea_vars.YMINCL;
+        if (linea_vars.Y2 > linea_vars.YMAXCL) linea_vars.Y2 = linea_vars.YMAXCL;
     }
-    line.x1 = X1;
-    line.x2 = X2;
-    line.y1 = Y1;
-    line.y2 = Y2;
+    line.x1 = linea_vars.X1;
+    line.x2 = linea_vars.X2;
+    line.y1 = linea_vars.Y1;
+    line.y2 = linea_vars.Y2;
 
     lineA2Attrib(&attr);
-    attr.multifill = MFILL;         /* linea5 supports MFILL */
+    attr.multifill = linea_vars.MFILL;         /* linea5 supports MFILL */
     draw_rect_common(&attr, &line);
 }
 
@@ -696,13 +696,13 @@ void linea_hline(void)
     VwkAttrib attr;
     Rect line;
 
-    line.x1 = X1;
-    line.x2 = X2;
-    line.y1 = Y1;
-    line.y2 = Y1;
+    line.x1 = linea_vars.X1;
+    line.x2 = linea_vars.X2;
+    line.y1 = linea_vars.Y1;
+    line.y2 = linea_vars.Y1;
 
     lineA2Attrib(&attr);
-    attr.multifill = MFILL;         /* linea4 supports MFILL */
+    attr.multifill = linea_vars.MFILL;         /* linea4 supports MFILL */
     draw_rect_common(&attr, &line);
 }
 
@@ -719,16 +719,16 @@ void linea_polygon(void)
 
     lineA2Attrib(&attr);
     attr.multifill = 0;         /* linea6 does not support MFILL */
-    if (CLIP) {
+    if (linea_vars.CLIP) {
         /* clc_flit does only X-clipping */
-        clipper.xmn_clip = XMINCL;
-        clipper.xmx_clip = XMAXCL;
+        clipper.xmn_clip = linea_vars.XMINCL;
+        clipper.xmx_clip = linea_vars.XMAXCL;
     } else {
         clipper.xmn_clip = 0;
         clipper.xmx_clip = xres;
     }
     /* compared to real line-A, clc_flit explicitly skips outline */
-    clc_flit(&attr, &clipper, points, Y1, count);
+    clc_flit(&attr, &clipper, points, linea_vars.Y1, count);
 }
 
 
@@ -741,12 +741,12 @@ void linea_fill(void)
     VwkAttrib attr;
     lineA2Attrib(&attr);
     attr.multifill = 0;         /* lineaf does not support MFILL */
-    attr.color = CUR_WORK->fill_color;
-    if (CLIP) {
-        clipper.xmn_clip = XMINCL;
-        clipper.xmx_clip = XMAXCL;
-        clipper.ymn_clip = YMINCL;
-        clipper.ymx_clip = YMAXCL;
+    attr.color = linea_vars.CUR_WORK->fill_color;
+    if (linea_vars.CLIP) {
+        clipper.xmn_clip = linea_vars.XMINCL;
+        clipper.xmx_clip = linea_vars.XMAXCL;
+        clipper.ymn_clip = linea_vars.YMINCL;
+        clipper.ymx_clip = linea_vars.YMAXCL;
     } else {
         clipper.xmn_clip = 0;
         clipper.xmx_clip = xres;
@@ -966,7 +966,7 @@ static void perp_off(WORD * px, WORD * py)
             break;
 
         /* Step to the next pixel. */
-        if (v == num_qc_lines - 1) {
+        if (v == linea_vars.num_qc_lines - 1) {
             if (u == 1)
                 break;
             else
@@ -1001,9 +1001,9 @@ static void cir_dda(WORD line_width)
     WORD *xptr, *yptr, x, y, d;
 
     /* Calculate the number of vertical pixels required. */
-    num_qc_lines = (line_width * xsize / ysize) / 2 + 1;
-    if (num_qc_lines > MAX_QC_LINES)
-        num_qc_lines = MAX_QC_LINES;    /* circles will be flattened */
+    linea_vars.num_qc_lines = (line_width * xsize / ysize) / 2 + 1;
+    if (linea_vars.num_qc_lines > MAX_QC_LINES)
+        linea_vars.num_qc_lines = MAX_QC_LINES;    /* circles will be flattened */
 
     /* Initialize the circle DDA.  "y" is set to the radius. */
     x = 0;
@@ -1033,7 +1033,7 @@ static void cir_dda(WORD line_width)
         x = 0;
 
         yptr = q_circle;
-        for (i = 0; i < num_qc_lines; i++) {
+        for (i = 0; i < linea_vars.num_qc_lines; i++) {
             y = ((2 * i + 1) * ysize / xsize) / 2;
             d = 0;
 
@@ -1056,7 +1056,7 @@ static void cir_dda(WORD line_width)
      *  q_circle[i] = q_circle[i/2]                         (for even i)
      *  q_circle[i] = (q_circle[i/2] + q_circle[i/2+1])/2   (for odd i)
      */
-    for (i = num_qc_lines-1, n = 0; i > 0; i--) {
+    for (i = linea_vars.num_qc_lines-1, n = 0; i > 0; i--) {
         m = q_circle[i/2];
         q_circle[i] = (m + n) / 2;
         n = m;
@@ -1078,7 +1078,7 @@ static void do_circ(Vwk * vwk, WORD cx, WORD cy)
     WORD *pointer;
 
     /* Do the upper and lower semi-circles. */
-    for (k = 0, pointer = q_circle; k < num_qc_lines; k++, pointer++) {
+    for (k = 0, pointer = q_circle; k < linea_vars.num_qc_lines; k++, pointer++) {
         /* Upper semi-circle, plus the horizontal line through the center of the circle. */
         line.x1 = cx - *pointer;
         line.x2 = cx + *pointer;
@@ -1107,7 +1107,7 @@ static void do_circ(Vwk * vwk, WORD cx, WORD cy)
 static void s_fa_attr(Vwk * vwk)
 {
     /* Set up the fill area attribute environment. */
-    LN_MASK = LINE_STYLE[0];
+    linea_vars.LN_MASK = LINE_STYLE[0];
     s_fil_col = vwk->fill_color;
     s_fill_per = vwk->fill_per;
     s_begsty = vwk->line_beg;
@@ -1150,9 +1150,9 @@ void wideline(Vwk * vwk, Point * point, int count)
         return;
 
     /* See if we need to rebuild q_circle[] */
-    if (vwk->line_width != line_cw) {
-        line_cw = vwk->line_width;
-        cir_dda(line_cw);
+    if (vwk->line_width != linea_vars.line_cw) {
+        linea_vars.line_cw = vwk->line_width;
+        cir_dda(linea_vars.line_cw);
     }
 
     /* If the ends are arrowed, output them. */
@@ -1201,7 +1201,7 @@ void wideline(Vwk * vwk, Point * point, int count)
         else if (vy == 0) {
             /* line is vertical - do it the simple way */
             vx = 0;
-            vy = num_qc_lines - 1;
+            vy = linea_vars.num_qc_lines - 1;
         }
         else {
             /* Find the offsets in x and y for a point perpendicular */
@@ -1404,7 +1404,7 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
     UBYTE *adr;
 #else
     UWORD *adr;
-    const WORD xinc = v_planes; /* positive increase for each x step, planes WORDS */
+    const WORD xinc = linea_vars.v_planes; /* positive increase for each x step, planes WORDS */
     int plane;
     UWORD msk;
 #endif
@@ -1412,7 +1412,7 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
     WORD dx;                    /* width of rectangle around line */
     WORD dy;                    /* height of rectangle around line */
     WORD yinc;                  /* in/decrease for each y step */
-    UWORD linemask = LN_MASK;   /* linestyle bits */
+    UWORD linemask = linea_vars.LN_MASK;   /* linestyle bits */
 
     /* Make x axis always goind up */
     if (line->x2 < line->x1) {
@@ -1457,9 +1457,9 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
     /* calculate increase values for x and y to add to actual address */
     if (dy < 0) {
         dy = -dy;                       /* make dy absolute */
-        yinc = (LONG) -1 * v_lin_wr;    /* sub one line of bytes */
+        yinc = (LONG) -1 * linea_vars.v_lin_wr;    /* sub one line of bytes */
     } else {
-        yinc = (LONG) v_lin_wr;         /* add one line of bytes */
+        yinc = (LONG) linea_vars.v_lin_wr;         /* add one line of bytes */
     }
     adr = (UBYTE*)get_start_addr(x1, y1);       /* init address counter */
 
@@ -1531,14 +1531,14 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
     /* calculate increase values for x and y to add to actual address */
     if (dy < 0) {
         dy = -dy;                       /* make dy absolute */
-        yinc = (LONG) -1 * v_lin_wr / 2; /* sub one line of words */
+        yinc = (LONG) -1 * linea_vars.v_lin_wr / 2; /* sub one line of words */
     } else {
-        yinc = (LONG) v_lin_wr / 2;     /* add one line of words */
+        yinc = (LONG) linea_vars.v_lin_wr / 2;     /* add one line of words */
     }
     adr = get_start_addr(x1, y1);       /* init address counter */
     msk = 0x8000 >> (x1&0xf);           /* initial bit position in WORD */
 
-    for (plane = v_planes-1; plane >= 0; plane-- ) {
+    for (plane = linea_vars.v_planes-1; plane >= 0; plane-- ) {
         UWORD *addr;
         WORD  eps;              /* epsilon */
         WORD  e1;               /* epsilon 1 */
@@ -1549,7 +1549,7 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
         /* load values fresh for this bitplane */
         addr = adr;             /* initial start address for changes */
         bit = msk;              /* initial bit position in WORD */
-        linemask = LN_MASK;
+        linemask = linea_vars.LN_MASK;
 
         if (dx >= dy) {
             e1 = 2*dy;
@@ -1789,7 +1789,7 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
     }
 #endif
 
-    LN_MASK = linemask;
+    linea_vars.LN_MASK = linemask;
 }
 
 
@@ -1800,13 +1800,13 @@ void linea_line(void)
 {
     Line line;
 
-    line.x1 = X1;
-    line.y1 = Y1;
-    line.x2 = X2;
-    line.y2 = Y2;
+    line.x1 = linea_vars.X1;
+    line.y1 = linea_vars.Y1;
+    line.x2 = linea_vars.X2;
+    line.y2 = linea_vars.Y2;
 
     /* Line-A LN_MASK is already set by caller */
-    abline(&line, WRT_MODE, linea_color());
+    abline(&line, linea_vars.WRT_MODE, linea_color());
 }
 
 
@@ -1818,5 +1818,5 @@ void set_LN_MASK(Vwk *vwk)
     WORD l;
 
     l = vwk->line_index;
-    LN_MASK = (l < 6) ? LINE_STYLE[l] : vwk->ud_ls;
+    linea_vars.LN_MASK = (l < 6) ? LINE_STYLE[l] : vwk->ud_ls;
 }

@@ -223,7 +223,7 @@ ifdef RPI
 bios_src +=  raspi_memory.c processor_arm.S vectorsasm_arm.S vectors_arm.c aciaemu_rpi.c bios.c xbios.c acsi.c \
              biosmem.c blkdev.c chardev.c clock.c conout.c cookie.c country.c \
              disk.c dma.c dmasound.c floppy.c font.c ide.c ikbd.c initinfo.c \
-             kprint.c lineainit.c lineavars.S machine.c \
+             kprint.c lineainit.c machine.c \
              mfp.c midi.c mouse.c nvram.c panicasm_arm.S \
              parport.c screen.c serport.c sound.c videl.c vt52.c xhdi.c \
              delay.c sd.c memory2.c bootparams.c raspi_uart.c raspi_int.c \
@@ -237,7 +237,7 @@ else
 bios_src +=  memory.S processor.S vectors.S aciavecs.S bios.c xbios.c acsi.c \
              biosmem.c blkdev.c chardev.c clock.c conout.c cookie.c country.c \
              disk.c dma.c dmasound.c floppy.c font.c ide.c ikbd.c initinfo.c \
-             kprint.c kprintasm.S linea.S lineainit.c lineavars.S machine.c \
+             kprint.c kprintasm.S linea.S lineainit.c machine.c \
              mfp.c midi.c mouse.c natfeat.S natfeats.c nvram.c panicasm.S \
              parport.c screen.c serport.c sound.c videl.c vt52.c xhdi.c \
              pmmu030.c 68040_pmmu.S \
@@ -1177,6 +1177,15 @@ GEN_SRC += aes/asm_struct_gen.h
 
 aes/asm_struct_gen.h: aes/gen_asm_defines.c
 	$(CC) $(CFILE_FLAGS) -S $< -o - | grep '^#define' > $@
+
+#
+# we don't generate this automatically,
+# because it might be processed by the wrong compiler
+# when choosing a non-m68k target
+#
+vdi/lineaasm_m68k.h: vdi/gen_asm_defines.c bios/lineavars.h
+	@echo "warning: $@ is out of date" >&2
+	@echo "run \"$(CC) $(CFILE_FLAGS) -S $< -o - | grep '^#define' > $@\" to regenerate it" >&2
 
 #
 # version string

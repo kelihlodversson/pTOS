@@ -327,7 +327,7 @@ static void set_tt_color(WORD colnum, WORD *rgb)
     tt_shifter = EgetShift();
     rez = (tt_shifter>>8) & 0x07;
     bank = tt_shifter & 0x000f;
-    mask = DEV_TAB[13] - 1;
+    mask = linea_vars.DEV_TAB[13] - 1;
 
     switch(rez) {
     case ST_LOW:
@@ -385,7 +385,7 @@ static void get_tt_hyper_mono(WORD colnum,WORD *retval)
 {
     WORD *save, i, vditemp;
 
-    save = (colnum < 16) ? REQ_COL[colnum] : req_col2[colnum-16];
+    save = (colnum < 16) ? linea_vars.REQ_COL[colnum] : req_col2[colnum-16];
 
     for (i = 0; i < 3; i++, save++, retval++)
     {
@@ -425,7 +425,7 @@ static void query_tt_color(WORD colnum,WORD *retval)
     tt_shifter = EgetShift();
     rez = (tt_shifter>>8) & 0x07;
     bank = tt_shifter & 0x000f;
-    mask = DEV_TAB[13] - 1;
+    mask = linea_vars.DEV_TAB[13] - 1;
 
     switch(rez) {
     case ST_LOW:
@@ -563,7 +563,7 @@ static void set_color(WORD colnum, WORD *rgb)
     }
 #endif
 
-    if (v_planes == 1)  /* special handling for monochrome screens */
+    if (linea_vars.v_planes == 1)  /* special handling for monochrome screens */
     {
         hwreg = adjust_mono_values(hwreg,rgb);  /* may update rgb[] */
         if (hwreg < 0)                          /* 'do nothing' */
@@ -603,7 +603,7 @@ void vdi_vs_color(Vwk *vwk)
     colnum = INTIN[0];
 
     /* Check for valid color index */
-    if (colnum < 0 || colnum >= DEV_TAB[13])
+    if (colnum < 0 || colnum >= linea_vars.DEV_TAB[13])
     {
         /* It was out of range */
         return;
@@ -621,7 +621,7 @@ void vdi_vs_color(Vwk *vwk)
     for (i = 0, intin = INTIN+1, rgbptr = rgb; i < 3; i++, intin++, rgbptr++)
     {
         if (colnum < 16)
-            REQ_COL[colnum][i] = *intin;
+            linea_vars.REQ_COL[colnum][i] = *intin;
 #if EXTENDED_PALETTE
         else
             req_col2[colnum-16][i] = *intin;
@@ -644,12 +644,12 @@ void init_colors(void)
     int i;
 
     /* set up palette */
-    memcpy(REQ_COL, st_palette, sizeof(st_palette));    /* use ST as default */
+    memcpy(linea_vars.REQ_COL, st_palette, sizeof(st_palette));    /* use ST as default */
 
 #if CONF_WITH_VIDEL
     if (has_videl)
     {
-        memcpy(REQ_COL, videl_palette1, sizeof(videl_palette1));
+        memcpy(linea_vars.REQ_COL, videl_palette1, sizeof(videl_palette1));
         memcpy(req_col2, videl_palette2, sizeof(videl_palette2));
     }
     else
@@ -657,7 +657,7 @@ void init_colors(void)
 #if CONF_WITH_TT_SHIFTER
     if (has_tt_shifter)
     {
-        memcpy(REQ_COL, tt_palette1, sizeof(tt_palette1));
+        memcpy(linea_vars.REQ_COL, tt_palette1, sizeof(tt_palette1));
         memcpy(req_col2, tt_palette2, sizeof(tt_palette2));
     }
     else
@@ -668,7 +668,7 @@ void init_colors(void)
 
     /* set up vdi pen -> hardware colour register mapping */
     memcpy(MAP_COL, MAP_COL_ROM, sizeof(MAP_COL_ROM));
-    MAP_COL[1] = DEV_TAB[13] - 1;   /* pen 1 varies according to # colours available */
+    MAP_COL[1] = linea_vars.DEV_TAB[13] - 1;   /* pen 1 varies according to # colours available */
 
 #if EXTENDED_PALETTE
     for (i = 16; i < MAXCOLOURS-1; i++)
@@ -677,14 +677,14 @@ void init_colors(void)
 #endif
 
     /* set up reverse mapping (hardware colour register -> vdi pen) */
-    for (i = 0; i < DEV_TAB[13]; i++)
+    for (i = 0; i < linea_vars.DEV_TAB[13]; i++)
         REV_MAP_COL[MAP_COL[i]] = i;
 
     /* now initialise the hardware */
-    for (i = 0; i < DEV_TAB[13]; i++)
+    for (i = 0; i < linea_vars.DEV_TAB[13]; i++)
     {
         if (i < 16)
-            set_color(i, REQ_COL[i]);
+            set_color(i, linea_vars.REQ_COL[i]);
 #if EXTENDED_PALETTE
         else
             set_color(i, req_col2[i-16]);
@@ -746,7 +746,7 @@ void vdi_vq_color(Vwk *vwk)
     CONTRL->nintout = 4;
 
     /* Check for valid color index */
-    if (colnum < 0 || colnum >= DEV_TAB[13])
+    if (colnum < 0 || colnum >= linea_vars.DEV_TAB[13])
     {
         /* It was out of range */
         INTOUT[0] = -1;
@@ -763,9 +763,9 @@ void vdi_vq_color(Vwk *vwk)
     {
         if (colnum < 16)
         {
-            INTOUT[1] = REQ_COL[colnum][0];
-            INTOUT[2] = REQ_COL[colnum][1];
-            INTOUT[3] = REQ_COL[colnum][2];
+            INTOUT[1] = linea_vars.REQ_COL[colnum][0];
+            INTOUT[2] = linea_vars.REQ_COL[colnum][1];
+            INTOUT[3] = linea_vars.REQ_COL[colnum][2];
         }
 #if EXTENDED_PALETTE
         else

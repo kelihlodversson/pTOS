@@ -15,6 +15,7 @@
 #include "portab.h"
 #include "intmath.h"
 #include "vdi_defs.h"
+#include "../bios/lineavars.h"
 
 
 
@@ -202,7 +203,7 @@ void vdi_v_gdp(Vwk * vwk)
     case 1:         /* GDP BAR - converted to alpha 2 RJG 12-1-84 */
         vdi_vr_recfl(vwk);
         if (vwk->fill_per == TRUE) {
-            LN_MASK = 0xffff;
+            linea_vars.LN_MASK = 0xffff;
 
             xy = PTSIN;
             xy[5] = xy[7] = xy[3];

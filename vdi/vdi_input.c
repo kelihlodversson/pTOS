@@ -16,10 +16,10 @@
 #include "biosbind.h"
 #include "xbiosbind.h"
 #include "vdi_defs.h"
+#include "../bios/lineavars.h"
 
 
 static WORD gchc_key(void);
-static WORD gchr_key(void);
 static WORD gshift_s(void);
 
 
@@ -35,7 +35,7 @@ void vdi_v_choice(Vwk * vwk)
 {
     gchc_key();
     CONTRL->nintout = 1;
-    INTOUT[0] = TERM_CH & 0x00ff;
+    INTOUT[0] = linea_vars.TERM_CH & 0x00ff;
 
 }
 
@@ -90,20 +90,20 @@ void vdi_v_string(Vwk * vwk)
         j = -j;
         mask = 0xffff;
     }
-    if (!str_mode) {            /* Request mode */
-        TERM_CH = 0;
-        for (i = 0; (i < j) && ((TERM_CH & 0x00ff) != 0x000d); i++) {
+    if (!linea_vars.str_mode) {            /* Request mode */
+        linea_vars.TERM_CH = 0;
+        for (i = 0; (i < j) && ((linea_vars.TERM_CH & 0x00ff) != 0x000d); i++) {
             while (gchr_key() == 0);
-            INTOUT[i] = TERM_CH = TERM_CH & mask;
+            INTOUT[i] = linea_vars.TERM_CH = linea_vars.TERM_CH & mask;
         }
-        if ((TERM_CH & 0x00ff) == 0x000d)
+        if ((linea_vars.TERM_CH & 0x00ff) == 0x000d)
             --i;
         CONTRL->nintout = i;
     } else {                    /* Sample mode */
 
         i = 0;
         while ((gchr_key() != 0) && (i < j))
-            INTOUT[i++] = TERM_CH & mask;
+            INTOUT[i++] = linea_vars.TERM_CH & mask;
         CONTRL->nintout = i;
     }
 }
@@ -130,19 +130,19 @@ void vdi_vsin_mode(Vwk * vwk)
 
     switch (INTIN[0]) {
     case 1:                     /* locator */
-        loc_mode = i;
+        linea_vars.loc_mode = i;
         break;
 
     case 2:                     /* valuator */
-        val_mode = i;
+        linea_vars.val_mode = i;
         break;
 
     case 3:                     /* choice */
-        chc_mode = i;
+        linea_vars.chc_mode = i;
         break;
 
     case 4:                     /* string */
-        str_mode = i;
+        linea_vars.str_mode = i;
         break;
     }
 }
@@ -166,19 +166,19 @@ void vdi_vqin_mode(Vwk * vwk)
     int_out = INTOUT;
     switch (INTIN[0]) {
     case 1:                     /* locator */
-        *int_out = loc_mode;
+        *int_out = linea_vars.loc_mode;
         break;
 
     case 2:                     /* valuator */
-        *int_out = val_mode;
+        *int_out = linea_vars.val_mode;
         break;
 
     case 3:                     /* choice */
-        *int_out = chc_mode;
+        *int_out = linea_vars.chc_mode;
         break;
 
     case 4:                     /* string */
-        *int_out = str_mode;
+        *int_out = linea_vars.str_mode;
         break;
     }
 }
@@ -208,8 +208,8 @@ static WORD gshift_s(void)
 
 static WORD gchc_key(void)
 {
-    TERM_CH = 1;                /* 16 bit char info */
-    return TERM_CH;
+    linea_vars.TERM_CH = 1;                /* 16 bit char info */
+    return linea_vars.TERM_CH;
 }
 
 
@@ -223,13 +223,13 @@ static WORD gchc_key(void)
  * TERM_CH         16 bit char info
  */
 
-static WORD gchr_key(void)
+WORD gchr_key(void)
 {
     ULONG ch;
 
     if (Bconstat(2)) {                  /* see if a character present at con */
         ch = Bconin(2);
-        TERM_CH = (WORD)
+        linea_vars.TERM_CH = (WORD)
             (ch >> 8)|                  /* scancode down to bit 8-15 */
             (ch & 0xff);                /* asciicode to bit 0-7 */
         return 1;

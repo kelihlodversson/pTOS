@@ -58,14 +58,14 @@ char_addr(WORD ch)
     UWORD offs;
 
     /* test against limits */
-    if ( ch >= v_fnt_st ) {
-        if ( ch <= v_fnt_nd ) {
+    if ( ch >= linea_vars.v_fnt_st ) {
+        if ( ch <= linea_vars.v_fnt_nd ) {
             /* getch offset from offset table */
-            offs = v_off_ad[ch];
+            offs = linea_vars.v_off_ad[ch];
             offs >>= 3;                 /* convert from pixels to bytes. */
 
             /* return valid address */
-            return (UBYTE*)v_fnt_ad + offs;
+            return CONST_CAST(UBYTE*, linea_vars.v_fnt_ad) + offs;
         }
     }
 
@@ -87,18 +87,19 @@ void
 ascii_out (int ch)
 {
     UBYTE * src, * dst;
+    ULONG cell_wr = linea_vars.v_cel_wr;
     BOOL visible;                       /* was the cursor visible? */
 
     src = char_addr(ch);                /* a0 -> get character source */
     if (src == NULL)
         return;                         /* no valid character */
 
-    dst = v_cur_ad;                     /* a1 -> get destination */
+    dst = linea_vars.v_cur_ad;          /* a1 -> get destination */
 
-    visible = v_stat_0 & M_CVIS;        /* test visibility bit */
+    visible = linea_vars.v_stat_0 & M_CVIS;        /* test visibility bit */
     if ( visible ) {
-        neg_cell(v_cur_ad);             /* delete cursor. */
-        v_stat_0 &= ~M_CVIS;                    /* start of critical section */
+        neg_cell(linea_vars.v_cur_ad);  /* delete cursor. */
+        linea_vars.v_stat_0 &= ~M_CVIS;                    /* start of critical section */
     }
 
     /* put the cell out (this covers the cursor) */
@@ -108,32 +109,32 @@ ascii_out (int ch)
     if (next_cell()) {
         UBYTE * cell;
 
-        int y = v_cur_cy;
+        int y = linea_vars.v_cur_cy;
 
         /* perform cell carriage return. */
-        cell = v_bas_ad + (ULONG)v_cel_wr * y;
-        v_cur_cx = 0;                   /* set X to first cell in line */
+        cell = v_bas_ad + cell_wr * y;
+        linea_vars.v_cur_cx = 0;        /* set X to first cell in line */
 
         /* perform cell line feed. */
-        if ( y < v_cel_my ) {
-            cell += v_cel_wr;           /* move down one cell */
-            v_cur_cy = y + 1;           /* update cursor's y coordinate */
+        if ( y < linea_vars.v_cel_my ) {
+            cell += cell_wr;            /* move down one cell */
+            linea_vars.v_cur_cy = y + 1;/* update cursor's y coordinate */
         }
         else {
             scroll_up(0);               /* scroll from top of screen */
         }
-        v_cur_ad = cell;                /* update cursor address */
+        linea_vars.v_cur_ad = cell;     /* update cursor address */
     }
 
     /* if visible */
     if ( visible ) {
-        neg_cell(v_cur_ad);             /* display cursor. */
-        v_stat_0 |= M_CSTATE;           /* set state flag (cursor on). */
-        v_stat_0 |= M_CVIS;             /* end of critical section. */
+        neg_cell(linea_vars.v_cur_ad);  /* display cursor. */
+        linea_vars.v_stat_0 |= M_CSTATE;           /* set state flag (cursor on). */
+        linea_vars.v_stat_0 |= M_CVIS;             /* end of critical section. */
 
         /* do not flash the cursor when it moves */
-        if (v_stat_0 & M_CFLASH) {
-            v_cur_tim = v_period;       /* reset the timer. */
+        if (linea_vars.v_stat_0 & M_CFLASH) {
+            linea_vars.v_cur_tim = linea_vars.v_period;       /* reset the timer. */
         }
     }
 }
@@ -165,7 +166,7 @@ blank_out (int topx, int topy, int botx, int boty)
 #ifdef MACHINE_RPI
     raspi_blank_out(topx, topy, botx, boty);
 #else
-    UWORD color = v_col_bg;             /* bg color value */
+    UWORD color = linea_vars.v_col_bg;             /* bg color value */
     int pair, pairs, row, rows, offs;
     UBYTE * addr = cell_addr(topx, topy);   /* running pointer to screen */
 
@@ -173,18 +174,18 @@ blank_out (int topx, int topy, int botx, int boty)
     pairs = (botx - topx) / 2 + 1;      /* pairs of characters */
 
     /* calculate the BYTE offset from the end of one row to next start */
-    offs = v_lin_wr - pairs * 2 * v_planes;
+    offs = linea_vars.v_lin_wr - pairs * 2 * linea_vars.v_planes;
 
     /* # of lines in region - 1 */
-    rows = (boty - topy + 1) * v_cel_ht;
+    rows = (boty - topy + 1) * linea_vars.v_cel_ht;
 
-    if (v_planes > 1) {
+    if (linea_vars.v_planes > 1) {
         /* Color modes are optimized for handling 2 planes at once */
         ULONG pair_planes[4];        /* bits on screen for 8 planes max */
         UWORD i;
 
         /* Precalculate the pairs of plane data */
-        for (i = 0; i < v_planes / 2; i++) {
+        for (i = 0; i < linea_vars.v_planes / 2; i++) {
             /* set the high WORD of our LONG for the current plane */
             if ( color & 0x1 )
                 pair_planes[i] = 0xffff0000;
@@ -202,7 +203,7 @@ blank_out (int topx, int topy, int botx, int boty)
         for (row = rows; row--;) {
             /* loop through all cell pairs */
             for (pair = pairs; pair--;) {
-                for (i = 0; i < v_planes / 2; i++) {
+                for (i = 0; i < linea_vars.v_planes / 2; i++) {
                     *(ULONG*)addr = pair_planes[i];
                     addr += sizeof(ULONG);
                 }
@@ -260,29 +261,30 @@ cell_addr(int x, int y)
 #ifdef MACHINE_RPI
     return raspi_cell_addr(x,y);
 #else
+    ULONG cell_wr = linea_vars.v_cel_wr;
     LONG disx, disy;
 
     /* check bounds against screen limits */
-    if ( x >= v_cel_mx )
-        x = v_cel_mx;           /* clipped x */
+    if ( x >= linea_vars.v_cel_mx )
+        x = linea_vars.v_cel_mx;           /* clipped x */
 
-    if ( y >= v_cel_my )
-        y = v_cel_my;           /* clipped y */
+    if ( y >= linea_vars.v_cel_my )
+        y = linea_vars.v_cel_my;           /* clipped y */
 
-    /* X displacement = even(X) * v_planes + Xmod2 */
-    disx = (LONG)v_planes * (x & ~1);
+    /* X displacement = even(X) * linea_vars.v_planes + Xmod2 */
+    disx = (LONG)linea_vars.v_planes * (x & ~1);
     if ( IS_ODD(x) ) {          /* Xmod2 = 0 ? */
         disx++;                 /* Xmod2 = 1 */
     }
 
     /* Y displacement = Y // cell conversion factor */
-    disy = (LONG)v_cel_wr * y;
+    disy = cell_wr * y;
 
     /*
      * cell address = screen base address + Y displacement
      * + X displacement + offset from screen-begin (fix)
      */
-    return v_bas_ad + disy + disx + v_cur_of;
+    return v_bas_ad + disy + disx + linea_vars.v_cur_of;
 #endif
 }
 
@@ -317,23 +319,23 @@ cell_xfer(UBYTE * src, UBYTE * dst)
     int fnt_wr, line_wr;
     int plane;
 
-    fnt_wr = v_fnt_wr;
-    line_wr = v_lin_wr;
+    fnt_wr = linea_vars.v_fnt_wr;
+    line_wr = linea_vars.v_lin_wr;
 
     /* check for reversed foreground and background colors */
-    if ( v_stat_0 & M_REVID ) {
-        fg = v_col_bg;
-        bg = v_col_fg;
+    if ( linea_vars.v_stat_0 & M_REVID ) {
+        fg = linea_vars.v_col_bg;
+        bg = linea_vars.v_col_fg;
     }
     else {
-        fg = v_col_fg;
-        bg = v_col_bg;
+        fg = linea_vars.v_col_fg;
+        bg = linea_vars.v_col_bg;
     }
 
     src_sav = src;
     dst_sav = dst;
 
-    for (plane = v_planes; plane--; ) {
+    for (plane = linea_vars.v_planes; plane--; ) {
         int i;
 
         src = src_sav;                  /* reload src */
@@ -342,14 +344,14 @@ cell_xfer(UBYTE * src, UBYTE * dst)
         if ( bg & 0x0001 ) {
             if (fg & 0x0001) {
                 /* back:1  fore:1  =>  all ones */
-                for (i = v_cel_ht; i--; ) {
+                for (i = linea_vars.v_cel_ht; i--; ) {
                     *dst = 0xff;                /* inject a block */
                     dst += line_wr;
                 }
             }
             else {
                 /* back:1  fore:0  =>  invert block */
-                for (i = v_cel_ht; i--; ) {
+                for (i = linea_vars.v_cel_ht; i--; ) {
                     /* inject the inverted source block */
                     *dst = ~*src;
                     dst += line_wr;
@@ -360,7 +362,7 @@ cell_xfer(UBYTE * src, UBYTE * dst)
         else {
             if ( fg & 0x0001 ) {
                 /* back:0  fore:1  =>  direct substitution */
-                for (i = v_cel_ht; i--; ) {
+                for (i = linea_vars.v_cel_ht; i--; ) {
                     *dst = *src;
                     dst += line_wr;
                     src += fnt_wr;
@@ -368,7 +370,7 @@ cell_xfer(UBYTE * src, UBYTE * dst)
             }
             else {
                 /* back:0  fore:0  =>  all zeros */
-                for (i = v_cel_ht; i--; ) {
+                for (i = linea_vars.v_cel_ht; i--; ) {
                     *dst = 0x00;                /* inject a block */
                     dst += line_wr;
                 }
@@ -403,53 +405,53 @@ move_cursor(int x, int y)
     /* clamp x,y to valid ranges */
     if (x < 0)
         x = 0;
-    else if (x > v_cel_mx)
-        x = v_cel_mx;
+    else if (x > linea_vars.v_cel_mx)
+        x = linea_vars.v_cel_mx;
 
     if (y < 0)
         y = 0;
-    else if (y > v_cel_my)
-        y = v_cel_my;
+    else if (y > linea_vars.v_cel_my)
+        y = linea_vars.v_cel_my;
 
-    v_cur_cx = x;
-    v_cur_cy = y;
+    linea_vars.v_cur_cx = x;
+    linea_vars.v_cur_cy = y;
 
     /* is cursor visible? */
-    if ( !(v_stat_0 & M_CVIS) ) {
+    if ( !(linea_vars.v_stat_0 & M_CVIS) ) {
         /* not visible */
-        v_cur_ad = cell_addr(x, y);             /* just set new coordinates */
+        linea_vars.v_cur_ad = cell_addr(x, y);             /* just set new coordinates */
         return;                                 /* and quit */
     }
 
     /* is cursor flashing? */
-    if ( v_stat_0 & M_CFLASH ) {
-        v_stat_0 &= ~M_CVIS;                    /* yes, make invisible...semaphore. */
+    if ( linea_vars.v_stat_0 & M_CFLASH ) {
+        linea_vars.v_stat_0 &= ~M_CVIS;                    /* yes, make invisible...semaphore. */
 
         /* is cursor presently displayed ? */
-        if ( !(v_stat_0 & M_CSTATE )) {
+        if ( !(linea_vars.v_stat_0 & M_CSTATE )) {
             /* not displayed */
-            v_cur_ad = cell_addr(x, y);         /* just set new coordinates */
+            linea_vars.v_cur_ad = cell_addr(x, y);         /* just set new coordinates */
 
             /* show the cursor when it moves */
-            neg_cell(v_cur_ad);                 /* complement cursor. */
-            v_stat_0 |= M_CSTATE;
-            v_cur_tim = v_period;               /* reset the timer. */
+            neg_cell(linea_vars.v_cur_ad);                 /* complement cursor. */
+            linea_vars.v_stat_0 |= M_CSTATE;
+            linea_vars.v_cur_tim = linea_vars.v_period;    /* reset the timer. */
 
-            v_stat_0 |= M_CVIS;                 /* end of critical section. */
+            linea_vars.v_stat_0 |= M_CVIS;                 /* end of critical section. */
             return;
         }
     }
 
     /* move the cursor after all special checks failed */
-    neg_cell(v_cur_ad);                         /* erase present cursor */
+    neg_cell(linea_vars.v_cur_ad);              /* erase present cursor */
 
-    v_cur_ad = cell_addr(x, y);                 /* fetch x and y coords. */
-    neg_cell(v_cur_ad);                         /* complement cursor. */
+    linea_vars.v_cur_ad = cell_addr(x, y);      /* fetch x and y coords. */
+    neg_cell(linea_vars.v_cur_ad);              /* complement cursor. */
 
     /* do not flash the cursor when it moves */
-    v_cur_tim = v_period;                       /* reset the timer. */
+    linea_vars.v_cur_tim = linea_vars.v_period;                       /* reset the timer. */
 
-    v_stat_0 |= M_CVIS;                         /* end of critical section. */
+    linea_vars.v_stat_0 |= M_CVIS;                         /* end of critical section. */
 }
 
 
@@ -476,21 +478,21 @@ neg_cell(UBYTE * cell)
     raspi_neg_cell(cell);
 #else
     int plane, len;
-    int cell_len = v_cel_ht;
+    int cell_len = linea_vars.v_cel_ht;
 
-    v_stat_0 |= M_CRIT;                 /* start of critical section. */
+    linea_vars.v_stat_0 |= M_CRIT;                 /* start of critical section. */
 
-    for (plane = v_planes; plane--; ) {
+    for (plane = linea_vars.v_planes; plane--; ) {
         UBYTE * addr = cell;            /* top of current dest plane */
 
         /* reset cell length counter */
         for (len = cell_len; len--; ) {
             *addr = ~*addr;
-            addr += v_lin_wr;
+            addr += linea_vars.v_lin_wr;
         }
         cell += plane_offset;           /* a1 -> top of block in next plane */
     }
-    v_stat_0 &= ~M_CRIT;                /* end of critical section. */
+    linea_vars.v_stat_0 &= ~M_CRIT;                /* end of critical section. */
 #endif
 }
 
@@ -531,8 +533,8 @@ invert_cell(int x, int y)
 static BOOL next_cell(void)
 {
     /* check bounds against screen limits */
-    if ( v_cur_cx == v_cel_mx ) {               /* increment cell ptr */
-        if ( !( v_stat_0 & M_CEOL ) ) {
+    if ( linea_vars.v_cur_cx == linea_vars.v_cel_mx ) {               /* increment cell ptr */
+        if ( !( linea_vars.v_stat_0 & M_CEOL ) ) {
             /* overwrite in effect */
             return 0;                   /* no wrap condition exists */
                                         /* don't change cell parameters */
@@ -543,20 +545,20 @@ static BOOL next_cell(void)
         return 1;                       /* indicate that CR LF is required */
     }
 
-    v_cur_cx += 1;                      /* next cell to right */
+    linea_vars.v_cur_cx += 1;           /* next cell to right */
 
 #ifdef MACHINE_RPI
-    v_cur_ad = raspi_cell_addr(v_cur_cx, v_cur_cy);
+    linea_vars.v_cur_ad = raspi_cell_addr(linea_vars.v_cur_cx, linea_vars.v_cur_cy);
 #else
     /* if X is even, move to next word in the plane */
-    if ( IS_ODD(v_cur_cx) ) {
+    if ( IS_ODD(linea_vars.v_cur_cx) ) {
         /* x is odd */
-        v_cur_ad += 1;                  /* a1 -> new cell */
+        linea_vars.v_cur_ad += 1;       /* a1 -> new cell */
         return 0;                       /* indicate no wrap needed */
     }
 
     /* new cell (1st plane), added offset to next word in plane */
-    v_cur_ad += (v_planes << 1) - 1;
+    linea_vars.v_cur_ad += (linea_vars.v_planes << 1) - 1;
 #endif
     return 0;                           /* indicate no wrap needed */
 }
@@ -584,22 +586,23 @@ void
 scroll_up(int top_line)
 {
     ULONG count;
+    ULONG cell_wr = linea_vars.v_cel_wr;
     UBYTE * src, * dst;
 
     /* screen base addr + cell y nbr * cell wrap */
-    dst = v_bas_ad + (ULONG)top_line * v_cel_wr;
+    dst = v_bas_ad + top_line * cell_wr;
 
     /* form source address from cell wrap + base address */
-    src = dst + v_cel_wr;
+    src = dst + cell_wr;
 
     /* form # of bytes to move */
-    count = (ULONG)v_cel_wr * (v_cel_my - top_line);
+    count = cell_wr * (linea_vars.v_cel_my - top_line);
 
     /* move BYTEs of memory*/
     memmove(dst, src, count);
 
     /* exit thru blank out, bottom line cell address y to top/left cell */
-    blank_out(0, v_cel_my , v_cel_mx, v_cel_my );
+    blank_out(0, linea_vars.v_cel_my , linea_vars.v_cel_mx, linea_vars.v_cel_my );
 }
 
 
@@ -612,20 +615,21 @@ void
 scroll_down(int start_line)
 {
     ULONG count;
+    ULONG cell_wr = linea_vars.v_cel_wr;
     UBYTE * src, * dst;
 
     /* screen base addr + offset of start line */
-    src = v_bas_ad + (ULONG)start_line * v_cel_wr;
+    src = v_bas_ad + start_line * cell_wr;
 
     /* form destination from source + cell wrap */
-    dst = src + v_cel_wr;
+    dst = src + cell_wr;
 
     /* form # of bytes to move */
-    count = (ULONG)v_cel_wr * (v_cel_my - start_line);
+    count = cell_wr * (linea_vars.v_cel_my - start_line);
 
     /* move BYTEs of memory*/
     memmove(dst, src, count);
 
     /* exit thru blank out */
-    blank_out(0, start_line , v_cel_mx, start_line );
+    blank_out(0, start_line , linea_vars.v_cel_mx, start_line );
 }

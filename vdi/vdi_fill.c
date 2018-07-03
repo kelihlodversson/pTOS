@@ -156,7 +156,7 @@ void vdi_vsf_udpat(Vwk * vwk)
 
     if (count == 16)
         vwk->multifill = 0;        /* Single Plane Pattern */
-    else if (count == (INQ_TAB[4] * 16))
+    else if (count == (linea_vars.INQ_TAB[4] * 16))
         vwk->multifill = 1;        /* Valid Multi-plane pattern */
     else
         return;             /* Invalid pattern, return */
@@ -214,7 +214,7 @@ void vdi_vsf_color(Vwk * vwk)
 
     CONTRL->nintout = 1;
     fc = *INTIN;
-    if ((fc >= DEV_TAB[13]) || (fc < 0))
+    if ((fc >= linea_vars.DEV_TAB[13]) || (fc < 0))
         fc = 1;
 
     *INTOUT = fc;
@@ -550,7 +550,7 @@ polygon(Vwk * vwk, Point * ptsin, int count)
     const VwkClip *clipper;
     VwkAttrib attr;
 
-    LSTLIN = FALSE;
+    linea_vars.LSTLIN = FALSE;
 
     /* find out the total min and max y values */
     point = ptsin;
@@ -600,7 +600,7 @@ polygon(Vwk * vwk, Point * ptsin, int count)
         clc_flit(&attr, clipper, ptsin, y, count);
     }
     if (vwk->fill_per == TRUE) {
-        LN_MASK = 0xffff;
+        linea_vars.LN_MASK = 0xffff;
         polyline(vwk, ptsin, count+1, vwk->fill_color);
     }
 }
@@ -695,7 +695,7 @@ static UWORD
 get_color (UWORD mask, UWORD * addr)
 {
     UWORD color = 0;                    /* clear the pixel value accumulator. */
-    WORD plane = v_planes;
+    WORD plane = linea_vars.v_planes;
 
     while(1) {
         /* test the bit. */
@@ -733,7 +733,7 @@ pixelread(const WORD x, const WORD y)
 
     /* convert x,y to start address and bit mask */
     addr = get_start_addr(x, y);
-    addr += v_planes;                   /* start at highest-order bit_plane */
+    addr += linea_vars.v_planes;                   /* start at highest-order bit_plane */
     mask = 0x8000 >> (x&0xf);           /* initial bit position in WORD */
 
     return get_color(mask, addr);       /* return the composed color value */
@@ -757,7 +757,7 @@ search_to_right (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_co
         /* need to jump over interleaved bit_plane? */
         mask = mask >> 1 | mask << 15;  /* roll right */
         if ( mask & 0x8000 )
-            addr += v_planes;
+            addr += linea_vars.v_planes;
 
         /* search, while pixel color != search color */
         color = get_color(mask, addr);
@@ -786,7 +786,7 @@ search_to_left (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_col
         /* need to jump over interleaved bit_plane? */
         mask = mask >> 15 | mask << 1;  /* roll left */
         if ( mask & 0x0001 )
-            addr -= v_planes;
+            addr -= linea_vars.v_planes;
 
         /* search, while pixel color != search color */
         color = get_color(mask, addr);
@@ -834,7 +834,7 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
 #if CONF_CHUNKY_PIXELS
     color = *((UBYTE*)addr);
 #else
-    addr += v_planes;                   /* start at highest-order bit_plane */
+    addr += linea_vars.v_planes;                   /* start at highest-order bit_plane */
 
     /* get search color and the left and right end */
     color = get_color (mask, addr);
@@ -887,7 +887,7 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
         const WORD plane_mask[] = { 1, 3, 7, 15 };
 
         /* Range check the color and convert the index to a pixel value */
-        if (search_color >= DEV_TAB[13])
+        if (search_color >= linea_vars.DEV_TAB[13])
             return;
 
         /*
@@ -897,12 +897,12 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
          * move than one resolution.
          */
         search_color =
-            (MAP_COL[search_color] & plane_mask[INQ_TAB[4] - 1]);
+            (MAP_COL[search_color] & plane_mask[linea_vars.INQ_TAB[4] - 1]);
         seed_type = 0;
     }
 
     /* Initialize the line drawing parameters */
-    LSTLIN = FALSE;
+    linea_vars.LSTLIN = FALSE;
 
     notdone = end_pts(clip, xleft, oldy, &oldxleft, &oldxright, seed_type);
 
@@ -1106,7 +1106,7 @@ put_pix(void)
     /* co-ordinates can wrap, but cannot write outside screen,
      * alternatively this could check against v_bas_ad+vram_size()
      */
-    if (addr < (UWORD*)v_bas_ad || addr >= get_start_addr(V_REZ_HZ, V_REZ_VT)) {
+    if (addr < (UWORD*)v_bas_ad || addr >= get_start_addr(linea_vars.V_REZ_HZ, linea_vars.V_REZ_VT)) {
         return;
     }
     color = INTIN[0];           /* device dependent encoded color bits */
@@ -1116,7 +1116,7 @@ put_pix(void)
 #else
     mask = 0x8000 >> (x&0xf);   /* initial bit position in WORD */
 
-    for (plane = v_planes-1; plane >= 0; plane-- ) {
+    for (plane = linea_vars.v_planes-1; plane >= 0; plane-- ) {
         color = color >> 1| color << 15;        /* rotate color bits */
         if (color&0x8000)
             *addr++ |= mask;

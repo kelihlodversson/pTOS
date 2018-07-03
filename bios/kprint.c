@@ -552,9 +552,9 @@ void dopanic(const char *fmt, ...)
     proc_enum = (proc_enum << 24) | ((LONG)pc & 0xffffffL);
 
     /* improve display in ST Low */
-    start = (v_cel_mx == 39) ? "" : " ";
-    wrap = v_stat_0 & M_CEOL;       /* remember line wrap status */
-    v_stat_0 &= ~M_CEOL;            /*  & disable it             */
+    start = (linea_vars.v_cel_mx == 39) ? "" : " ";
+    wrap = linea_vars.v_stat_0 & M_CEOL;       /* remember line wrap status */
+    linea_vars.v_stat_0 &= ~M_CEOL;            /*  & disable it             */
 
 #ifdef __arm__
     kcprintf("\nR0-3:  %s%08lx %08lx %08lx %08lx\n",
@@ -604,7 +604,7 @@ void dopanic(const char *fmt, ...)
 #endif
 
     if (wrap)
-        v_stat_0 |= M_CEOL;         /* restore line wrap status */
+        linea_vars.v_stat_0 |= M_CEOL;         /* restore line wrap status */
 
     if (run)
     {

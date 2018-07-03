@@ -14,6 +14,7 @@
 #include "config.h"
 #include "portab.h"
 #include "vdi_defs.h"
+#include "../bios/lineavars.h"
 
 
 
@@ -78,7 +79,7 @@ void vdi_vsm_color(Vwk * vwk)
     WORD i;
 
     i = INTIN[0];
-    i = ((i >= DEV_TAB[13]) || (i < 0)) ? 1 : i;
+    i = ((i >= linea_vars.DEV_TAB[13]) || (i < 0)) ? 1 : i;
     INTOUT[0] = i;
     vwk->mark_color = MAP_COL[i];
     CONTRL->nintout = 1;

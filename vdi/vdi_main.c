@@ -12,6 +12,7 @@
 #include "config.h"
 #include "portab.h"
 #include "vdi_defs.h"
+#include "../bios/lineavars.h"
 #include "kprint.h"
 
 /* forward prototypes */

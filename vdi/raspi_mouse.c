@@ -29,7 +29,7 @@
 #include "raspi_mouse.h"
 
 
-ULONG last_sprite_checksum;
+static ULONG last_sprite_checksum;
 static ULONG pointer_image[16][16];
 
 static ULONG raspi_cur_calc_checksum(Mcdb *sprite);
@@ -57,7 +57,7 @@ static ULONG raspi_cur_calc_checksum(Mcdb *sprite)
     int i;
     ULONG res = (ULONG)sprite;
     UWORD *sprite_words = (UWORD*)sprite;
-    for(i=0; i<(sizeof(Mcdb)/2); i++)
+    for(i=0; i<(sizeof(*sprite)/2); i++)
     {
         res ^= ((ULONG)sprite_words[i]) << (i % 24);
     }

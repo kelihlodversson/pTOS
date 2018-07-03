@@ -21,13 +21,6 @@
 
 
 
-/* timer related vectors (linea variables in bios/lineavars.S) */
-
-extern void     (*tim_addr)(int);       /* timer interrupt vector */
-extern void     (*tim_chain)(int);      /* timer interrupt vector save */
-
-
-
 static BOOL in_proc;                   /* flag, if we are still running */
 
 
@@ -91,12 +84,12 @@ static void tick_int(int u)
     if (!in_proc) {
         in_proc = 1;                    /* set flag, that we are running */
                                         /* MAD: evtl. registers to stack */
-        (*tim_addr)(u);                 /* call the timer vector */
+        (*linea_vars.tim_addr)(u);                 /* call the timer vector */
                                         /* and back from stack */
     }
     in_proc = 0;                        /* allow yet another trip through */
                                         /* MAD: evtl. registers to stack */
-    (*tim_chain)(u);                    /* call the old timer vector too */
+    (*linea_vars.tim_chain)(u);         /* call the old timer vector too */
                                         /* and back from stack */
 }
 
@@ -115,8 +108,8 @@ void vdi_vex_timv(Vwk * vwk)
     disable_interrupts();
 //    old_sr = set_sr(0x2700);
 
-    CONTRL->ptr2 = tim_addr;
-    tim_addr = CONTRL->ptr1;
+    CONTRL->ptr2 = linea_vars.tim_addr;
+    linea_vars.tim_addr = CONTRL->ptr1;
 
     enable_interrupts();
 //    set_sr(old_sr);
@@ -151,11 +144,11 @@ void timer_init(void)
     in_proc = 0;                        /* no vblanks in process */
 
     /* Now initialize the lower level things */
-    tim_addr = do_nothing_int;          /* tick points to rts */
+    linea_vars.tim_addr = do_nothing_int;          /* tick points to rts */
 
     disable_interrupts();
 //    old_sr = set_sr(0x2700);            /* disable interrupts */
-    tim_chain = (void(*)(int))          /* save old vector */
+    linea_vars.tim_chain = (void(*)(int))          /* save old vector */
     Setexc(0x100, (long)tick_int);      /* set etv_timer to tick_int */
     //set_sr(old_sr);                     /* enable interrupts */
     enable_interrupts();
@@ -176,7 +169,7 @@ void timer_exit(void)
 
     disable_interrupts();
 //    old_sr = set_sr(0x2700);            /* disable interrupts */
-    Setexc(0x100, (long)tim_chain);     /* set etv_timer to tick_int */
+    Setexc(0x100, (long)linea_vars.tim_chain);     /* set etv_timer to tick_int */
     enable_interrupts();
 //    set_sr(old_sr);                     /* enable interrupts */
 }
@@ -191,11 +184,11 @@ UWORD * get_start_addr(const WORD x, const WORD y)
     addr = v_bas_ad;                    /* start of screen */
 
 #if CONF_CHUNKY_PIXELS
-    addr += (x * v_planes) >> 3;
-    addr += (LONG)y * v_lin_wr;         /* add y coordinate part of addr */
+    addr += (x * linea_vars.v_planes) >> 3;
+    addr += (LONG)y * linea_vars.v_lin_wr;         /* add y coordinate part of addr */
 #else
-    addr += (x&0xfff0)>>shift_offset[v_planes]; /* add x coordinate part of addr */
-    addr += (LONG)y * v_lin_wr;         /* add y coordinate part of addr */
+    addr += (x&0xfff0)>>shift_offset[linea_vars.v_planes]; /* add x coordinate part of addr */
+    addr += (LONG)y * linea_vars.v_lin_wr;         /* add y coordinate part of addr */
 #endif
     return (UWORD*)addr;
 }

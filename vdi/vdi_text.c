@@ -19,10 +19,6 @@
 #include "../bios/lineavars.h"
 
 
-extern const Fonthead *def_font;    /* Default font of open workstation */
-extern const Fonthead *font_ring[]; /* Ring of available fonts */
-
-extern WORD font_count;         /* Number of fonts in driver */
 extern WORD deftxbuf[];         /* Default text scratch buffer */
 extern const WORD scrtsiz;      /* Default offset to large text buffer */
 
@@ -140,43 +136,43 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
         return;
 
     /* some data copying for the assembler part */
-    DDAINC = vwk->dda_inc;
-    SCALDIR = vwk->t_sclsts;
-    SCALE = vwk->scaled;
-    MONO = F_MONOSPACE & vwk->cur_font->flags;
-    WRT_MODE = vwk->wrt_mode;
+    linea_vars.DDAINC = vwk->dda_inc;
+    linea_vars.SCALDIR = vwk->t_sclsts;
+    linea_vars.SCALE = vwk->scaled;
+    linea_vars.MONO = F_MONOSPACE & vwk->cur_font->flags;
+    linea_vars.WRT_MODE = vwk->wrt_mode;
 
-    CLIP = vwk->clip;
-    XMINCL = vwk->xmn_clip;
-    YMINCL = vwk->ymn_clip;
-    XMAXCL = vwk->xmx_clip;
-    YMAXCL = vwk->ymx_clip;
-    STYLE = vwk->style;
-    CHUP = vwk->chup;
-    SCRPT2 = vwk->scrpt2;
-    SCRTCHP = vwk->scrtchp;
+    linea_vars.CLIP = vwk->clip;
+    linea_vars.XMINCL = vwk->xmn_clip;
+    linea_vars.YMINCL = vwk->ymn_clip;
+    linea_vars.XMAXCL = vwk->xmx_clip;
+    linea_vars.YMAXCL = vwk->ymx_clip;
+    linea_vars.STYLE = vwk->style;
+    linea_vars.CHUP = vwk->chup;
+    linea_vars.SCRPT2 = vwk->scrpt2;
+    linea_vars.SCRTCHP = vwk->scrtchp;
 
     fnt_ptr = vwk->cur_font;     /* Get current font pointer in register */
 
     if (vwk->style & F_THICKEN)
-        WEIGHT = fnt_ptr->thicken;
+        linea_vars.WEIGHT = fnt_ptr->thicken;
 
     if (vwk->style & F_LIGHT)
-        LITEMASK = fnt_ptr->lighten;
+        linea_vars.LITEMASK = fnt_ptr->lighten;
 
     if (vwk->style & F_SKEW) {
         d1 = fnt_ptr->left_offset;  /* used in vertical alignment calcs */
         d2 = fnt_ptr->right_offset;
-        SKEWMASK = fnt_ptr->skew;
+        linea_vars.SKEWMASK = fnt_ptr->skew;
     } else {
         d1 = 0;
         d2 = 0;
     }
-    LOFF = d1;
-    ROFF = d2;
+    linea_vars.LOFF = d1;
+    linea_vars.ROFF = d2;
 
-    FBASE = (const UWORD *)fnt_ptr->dat_table;
-    FWIDTH = fnt_ptr->form_width;
+    linea_vars.FBASE = (const UWORD *)fnt_ptr->dat_table;
+    linea_vars.FWIDTH = fnt_ptr->form_width;
 
     switch(vwk->h_align) {
     default:                /* normally case 0: left justified */
@@ -223,42 +219,42 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     point = (Point*)PTSIN;
     switch(vwk->chup) {
     default:                /* normally case 0: no rotation */
-        DESTX = point->x - delh;
-        DESTY = point->y - delv;
-        startx = DESTX;
-        starty = DESTY + fnt_ptr->top + fnt_ptr->ul_size + 1;
+        linea_vars.DESTX = point->x - delh;
+        linea_vars.DESTY = point->y - delv;
+        startx = linea_vars.DESTX;
+        starty = linea_vars.DESTY + fnt_ptr->top + fnt_ptr->ul_size + 1;
         xfact = 0;
         yfact = 1;
         break;
     case 900:
-        DESTX = point->x - delv;
-        DESTY = point->y + delh + 1;
-        startx = DESTX + fnt_ptr->top + fnt_ptr->ul_size + 1;
-        starty = DESTY;
+        linea_vars.DESTX = point->x - delv;
+        linea_vars.DESTY = point->y + delh + 1;
+        startx = linea_vars.DESTX + fnt_ptr->top + fnt_ptr->ul_size + 1;
+        starty = linea_vars.DESTY;
         xfact = 1;
         yfact = 0;
         break;
     case 1800:
-        DESTX = point->x + delh + 1;
-        DESTY = point->y - ((fnt_ptr->top + fnt_ptr->bottom) - delv);
-        startx = DESTX;
-        starty = (DESTY + fnt_ptr->bottom) - (fnt_ptr->ul_size + 1);
+        linea_vars.DESTX = point->x + delh + 1;
+        linea_vars.DESTY = point->y - ((fnt_ptr->top + fnt_ptr->bottom) - delv);
+        startx = linea_vars.DESTX;
+        starty = (linea_vars.DESTY + fnt_ptr->bottom) - (fnt_ptr->ul_size + 1);
         xfact = 0;
         yfact = -1;
         break;
     case 2700:
-        DESTX = point->x - ((fnt_ptr->top + fnt_ptr->bottom) - delv);
-        DESTY = point->y - delh;
-        startx = (DESTX + fnt_ptr->bottom) - (fnt_ptr->ul_size + 1);
-        starty = DESTY;
+        linea_vars.DESTX = point->x - ((fnt_ptr->top + fnt_ptr->bottom) - delv);
+        linea_vars.DESTY = point->y - delh;
+        startx = (linea_vars.DESTX + fnt_ptr->bottom) - (fnt_ptr->ul_size + 1);
+        starty = linea_vars.DESTY;
         xfact = -1;
         yfact = 0;
         break;
     }
 
-    TEXTFG = vwk->text_color;
-    DELY = fnt_ptr->form_height;
-    XDDA = 32767;       /* init the horizontal dda */
+    linea_vars.TEXTFG = vwk->text_color;
+    linea_vars.DELY = fnt_ptr->form_height;
+    linea_vars.XDDA = 32767;       /* init the horizontal dda */
 
     for (j = 0; j < count; j++) {
 
@@ -269,35 +265,35 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
             temp = '?';
         temp -= fnt_ptr->first_ade;
 
-        SOURCEX = fnt_ptr->off_table[temp];
-        DELX = fnt_ptr->off_table[temp + 1] - SOURCEX;
+        linea_vars.SOURCEX = fnt_ptr->off_table[temp];
+        linea_vars.DELX = fnt_ptr->off_table[temp + 1] - linea_vars.SOURCEX;
 
-        SOURCEY = 0;
-        DELY = fnt_ptr->form_height;
+        linea_vars.SOURCEY = 0;
+        linea_vars.DELY = fnt_ptr->form_height;
 
         text_blt();
 
         if (justified) {
-            DESTX += justified->charx;
-            DESTY += justified->chary;
+            linea_vars.DESTX += justified->charx;
+            linea_vars.DESTY += justified->chary;
             if (justified->rmchar) {
-                DESTX += justified->rmcharx;
-                DESTY += justified->rmchary;
+                linea_vars.DESTX += justified->rmcharx;
+                linea_vars.DESTY += justified->rmchary;
                 justified->rmchar--;
             }
             if (str[j] == ' ') {
-                DESTX += justified->wordx;
-                DESTY += justified->wordy;
+                linea_vars.DESTX += justified->wordx;
+                linea_vars.DESTY += justified->wordy;
                 if (justified->rmword) {
-                    DESTX += justified->rmwordx;
-                    DESTY += justified->rmwordy;
+                    linea_vars.DESTX += justified->rmwordx;
+                    linea_vars.DESTY += justified->rmwordy;
                     justified->rmword--;
                 }
             }
         }
         /* end if justified */
         if (fnt_ptr->flags & F_HORZ_OFF)
-            DESTX += fnt_ptr->hor_table[temp];
+            linea_vars.DESTX += fnt_ptr->hor_table[temp];
 
     }                   /* for j */
 
@@ -307,16 +303,16 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
         line->y1 = starty;
 
         if (vwk->chup % 1800 == 0) {
-            line->x2 = DESTX;
+            line->x2 = linea_vars.DESTX;
             line->y2 = line->y1;
         } else {
             line->x2 = line->x1;
-            line->y2 = DESTY;
+            line->y2 = linea_vars.DESTY;
         }
         if (vwk->style & F_LIGHT)
-            LN_MASK = vwk->cur_font->lighten;
+            linea_vars.LN_MASK = vwk->cur_font->lighten;
         else
-            LN_MASK = 0xffff;
+            linea_vars.LN_MASK = 0xffff;
 
         count = vwk->cur_font->ul_size;
         for (i = 0; i < count; i++) {
@@ -341,10 +337,10 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
             line->y1 += yfact;
             line->y2 += yfact;
 
-            if (LN_MASK & 1)
-                LN_MASK = (LN_MASK >> 1) | 0x8000;
+            if (linea_vars.LN_MASK & 1)
+                linea_vars.LN_MASK = (linea_vars.LN_MASK >> 1) | 0x8000;
             else
-                LN_MASK = LN_MASK >> 1;
+                linea_vars.LN_MASK = linea_vars.LN_MASK >> 1;
         }
     }
 }
@@ -356,11 +352,11 @@ void vdi_v_gtext(Vwk * vwk)
 
 void text_init2(Vwk * vwk)
 {
-    vwk->cur_font = def_font;
+    vwk->cur_font = linea_vars.def_font;
     vwk->loaded_fonts = NULL;
     vwk->scrpt2 = scrtsiz;
     vwk->scrtchp = deftxbuf;
-    vwk->num_fonts = font_count;
+    vwk->num_fonts = linea_vars.font_count;
 
     vwk->style = 0;        /* reset special effects */
     vwk->scaled = FALSE;
@@ -369,8 +365,8 @@ void text_init2(Vwk * vwk)
     vwk->chup = 0;
     vwk->pts_mode = FALSE;
 
-    font_ring[2] = vwk->loaded_fonts;
-    DEV_TAB[10] = vwk->num_fonts;
+    linea_vars.font_ring[2] = vwk->loaded_fonts;
+    linea_vars.DEV_TAB[10] = vwk->num_fonts;
 }
 
 void text_init(void)
@@ -379,32 +375,32 @@ void text_init(void)
     WORD id_save, cell_height;
     const Fonthead *fnt_ptr, **chain_ptr;
 
-    SIZ_TAB[0] = 32767;         /* minimal char width */
-    SIZ_TAB[1] = 32767;         /* minimal char height */
-    SIZ_TAB[2] = 0;             /* maximal char width */
-    SIZ_TAB[3] = 0;             /* maximal char height */
+    linea_vars.SIZ_TAB[0] = 32767;         /* minimal char width */
+    linea_vars.SIZ_TAB[1] = 32767;         /* minimal char height */
+    linea_vars.SIZ_TAB[2] = 0;             /* maximal char width */
+    linea_vars.SIZ_TAB[3] = 0;             /* maximal char height */
 
     /* Initialize the font ring. */
-    font_ring[0] = &fon6x6;
-    font_ring[1] = &fon8x8;
-    font_ring[2] = NULL;
-    font_ring[3] = NULL;
+    linea_vars.font_ring[0] = &fon6x6;
+    linea_vars.font_ring[1] = &fon8x8;
+    linea_vars.font_ring[2] = NULL;
+    linea_vars.font_ring[3] = NULL;
 
     id_save = fon6x6.font_id;
 
-    def_font = NULL;
-    cell_height = (V_REZ_VT >= 400) ? 16 : 8;   /* to select among default fonts */
+    linea_vars.def_font = NULL;
+    cell_height = (linea_vars.V_REZ_VT >= 400) ? 16 : 8;   /* to select among default fonts */
 
-    chain_ptr = font_ring;
+    chain_ptr = linea_vars.font_ring;
     i = 0;
     j = 0;
     while ((fnt_ptr = *chain_ptr++)) {
         do {
             if (fnt_ptr->flags & F_DEFAULT) {   /* If default, save font pointer */
-                if (!def_font)                  /* ... for sure if we don't have one yet */
-                    def_font = fnt_ptr;
-                else if (def_font->form_height != cell_height)
-                    def_font = fnt_ptr;         /* ... also if previously-saved has wrong height */
+                if (!linea_vars.def_font)                  /* ... for sure if we don't have one yet */
+                    linea_vars.def_font = fnt_ptr;
+                else if (linea_vars.def_font->form_height != cell_height)
+                    linea_vars.def_font = fnt_ptr;         /* ... also if previously-saved has wrong height */
             }
 
             if (fnt_ptr->font_id != id_save) {  /* If new font count */
@@ -413,24 +409,24 @@ void text_init(void)
             }
 
             if (fnt_ptr->font_id == 1) {        /* Update SIZ_TAB if system font */
-                if (SIZ_TAB[0] > fnt_ptr->max_char_width)
-                    SIZ_TAB[0] = fnt_ptr->max_char_width;
+                if (linea_vars.SIZ_TAB[0] > fnt_ptr->max_char_width)
+                    linea_vars.SIZ_TAB[0] = fnt_ptr->max_char_width;
 
-                if (SIZ_TAB[1] > fnt_ptr->top)
-                    SIZ_TAB[1] = fnt_ptr->top;
+                if (linea_vars.SIZ_TAB[1] > fnt_ptr->top)
+                    linea_vars.SIZ_TAB[1] = fnt_ptr->top;
 
-                if (SIZ_TAB[2] < fnt_ptr->max_char_width)
-                    SIZ_TAB[2] = fnt_ptr->max_char_width;
+                if (linea_vars.SIZ_TAB[2] < fnt_ptr->max_char_width)
+                    linea_vars.SIZ_TAB[2] = fnt_ptr->max_char_width;
 
-                if (SIZ_TAB[3] < fnt_ptr->top)
-                    SIZ_TAB[3] = fnt_ptr->top;
+                if (linea_vars.SIZ_TAB[3] < fnt_ptr->top)
+                    linea_vars.SIZ_TAB[3] = fnt_ptr->top;
                 i++;            /* Increment count of heights */
             }
             /* end if system font */
         } while ((fnt_ptr = fnt_ptr->next_font));
     }
-    DEV_TAB[5] = i;                     /* number of sizes */
-    font_count = DEV_TAB[10] = ++j;     /* number of faces */
+    linea_vars.DEV_TAB[5] = i;                     /* number of sizes */
+    linea_vars.font_count = linea_vars.DEV_TAB[10] = ++j;     /* number of faces */
 }
 
 /*
@@ -463,7 +459,7 @@ void vdi_vst_height(Vwk * vwk)
     vwk->pts_mode = FALSE;
 
     /* Find the smallest font in the requested face */
-    chain_ptr = font_ring;
+    chain_ptr = linea_vars.font_ring;
 
     found = 0;
     while (!found && (test_font = *chain_ptr++)) {
@@ -601,7 +597,7 @@ void vdi_vst_point(Vwk * vwk)
     vwk->pts_mode = TRUE;
 
     /* Find the smallest font in the requested face */
-    chain_ptr = font_ring;
+    chain_ptr = linea_vars.font_ring;
     found = 0;
     while (!found && (test_font = *chain_ptr++)) {
         do {
@@ -651,7 +647,7 @@ void vdi_vst_point(Vwk * vwk)
 
 void vdi_vst_effects(Vwk * vwk)
 {
-    INTOUT[0] = vwk->style = INTIN[0] & INQ_TAB[2];
+    INTOUT[0] = vwk->style = INTIN[0] & linea_vars.INQ_TAB[2];
     CONTRL->nintout = 1;
 }
 
@@ -723,7 +719,7 @@ void vdi_vst_font(Vwk * vwk)
     dummy[1] = test_font->top;
     face = INTIN[0];
 
-    chain_ptr = font_ring;
+    chain_ptr = linea_vars.font_ring;
 
     found = 0;
     while (!found && (test_font = *chain_ptr++)) {
@@ -766,7 +762,7 @@ void vdi_vst_color(Vwk * vwk)
     WORD r;
 
     r = INTIN[0];
-    if ((r >= DEV_TAB[13]) || (r < 0))
+    if ((r >= linea_vars.DEV_TAB[13]) || (r < 0))
         r = 1;
     CONTRL->nintout = 1;
     INTOUT[0] = r;
@@ -892,7 +888,7 @@ void vdi_vqt_name(Vwk * vwk)
     const Fonthead **chain_ptr;
 
     element = INTIN[0];
-    chain_ptr = font_ring;
+    chain_ptr = linea_vars.font_ring;
     i = 0;
 
     found = 0;

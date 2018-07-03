@@ -223,7 +223,7 @@ static void init_wk(Vwk * vwk)
     vwk->line_index = ((l > MX_LN_STYLE) || (l < 0)) ? 0 : l - 1;
 
     l = *pointer++;             /* INTIN[2] */
-    if ((l >= DEV_TAB[13]) || (l < 0))
+    if ((l >= linea_vars.DEV_TAB[13]) || (l < 0))
         l = 1;
     vwk->line_color = MAP_COL[l];
 
@@ -231,7 +231,7 @@ static void init_wk(Vwk * vwk)
     vwk->mark_index = ((l >= MAX_MARK_INDEX) || (l < 0)) ? 2 : l;
 
     l = *pointer++;             /* INTIN[4] */
-    if ((l >= DEV_TAB[13]) || (l < 0))
+    if ((l >= linea_vars.DEV_TAB[13]) || (l < 0))
         l = 1;
     vwk->mark_color = MAP_COL[l];
 
@@ -239,7 +239,7 @@ static void init_wk(Vwk * vwk)
     pointer++;                  /* INTIN[5] */
 
     l = *pointer++;             /* INTIN[6] */
-    if ((l >= DEV_TAB[13]) || (l < 0))
+    if ((l >= linea_vars.DEV_TAB[13]) || (l < 0))
         l = 1;
     vwk->text_color = MAP_COL[l];
 
@@ -257,7 +257,7 @@ static void init_wk(Vwk * vwk)
     vwk->fill_index = l;
 
     l = *pointer++;             /* INTIN[9] */
-    if ((l >= DEV_TAB[13]) || (l < 0))
+    if ((l >= linea_vars.DEV_TAB[13]) || (l < 0))
         l = 1;
     vwk->fill_color = MAP_COL[l];
 
@@ -274,8 +274,8 @@ static void init_wk(Vwk * vwk)
 
     vwk->xmn_clip = 0;
     vwk->ymn_clip = 0;
-    vwk->xmx_clip = DEV_TAB[0];
-    vwk->ymx_clip = DEV_TAB[1];
+    vwk->xmx_clip = linea_vars.DEV_TAB[0];
+    vwk->ymx_clip = linea_vars.DEV_TAB[1];
     vwk->clip = FALSE;
 
     text_init2(vwk);
@@ -294,12 +294,12 @@ static void init_wk(Vwk * vwk)
     pb->nintout = 45;
 
     pointer = INTOUT;
-    src_ptr = DEV_TAB;
+    src_ptr = linea_vars.DEV_TAB;
     for (l = 0; l < 45; l++)
         *pointer++ = *src_ptr++;
 
     pointer = PTSOUT;
-    src_ptr = SIZ_TAB;
+    src_ptr = linea_vars.SIZ_TAB;
     for (l = 0; l < 12; l++)
         *pointer++ = *src_ptr++;
 
@@ -350,7 +350,7 @@ void vdi_v_opnvwk(Vwk * vwk)
 
     vwk->handle = CONTRL->handle = handle;
     init_wk(vwk);
-    CUR_WORK = vwk;
+    linea_vars.CUR_WORK = vwk;
 }
 
 void vdi_v_clsvwk(Vwk * vwk)
@@ -367,7 +367,7 @@ void vdi_v_clsvwk(Vwk * vwk)
          work_ptr = work_ptr->next_work);
 
     work_ptr->next_work = vwk->next_work;
-    CUR_WORK = work_ptr;
+    linea_vars.CUR_WORK = work_ptr;
     trap1(X_MFREE, vwk);
 }
 
@@ -380,38 +380,38 @@ void vdi_v_opnwk(Vwk * vwk)
 
     /* We need to copy some initial table data from the ROM */
     for (i = 0; i < 12; i++) {
-        SIZ_TAB[i] = SIZ_TAB_rom[i];
+        linea_vars.SIZ_TAB[i] = SIZ_TAB_rom[i];
     }
 
     for (i = 0; i < 45; i++) {
-        DEV_TAB[i] = DEV_TAB_rom[i];
-        INQ_TAB[i] = INQ_TAB_rom[i];
+        linea_vars.DEV_TAB[i] = DEV_TAB_rom[i];
+        linea_vars.INQ_TAB[i] = INQ_TAB_rom[i];
     }
 
     /* Copy data from linea variables */
-    DEV_TAB[0] = V_REZ_HZ-1;
-    DEV_TAB[1] = V_REZ_VT-1;
-    INQ_TAB[4] = v_planes;
+    linea_vars.DEV_TAB[0] = linea_vars.V_REZ_HZ-1;
+    linea_vars.DEV_TAB[1] = linea_vars.V_REZ_VT-1;
+    linea_vars.INQ_TAB[4] = linea_vars.v_planes;
 
     /* get pixel sizes for use by routines in vdi_gdp.c & vdi_line.c */
     get_pixel_size(&xsize,&ysize);
 
     /* Indicate whether LUT is supported */
-    if ((INQ_TAB[4] == 16) || (get_monitor_type() == MON_MONO))
-        INQ_TAB[5] = 0;
-    else INQ_TAB[5] = 1;
+    if ((linea_vars.INQ_TAB[4] == 16) || (get_monitor_type() == MON_MONO))
+        linea_vars.INQ_TAB[5] = 0;
+    else linea_vars.INQ_TAB[5] = 1;
 
     /* Calculate colors allowed at one time */
-    if (INQ_TAB[4] < 8)
-        DEV_TAB[13] = 2<<(v_planes-1);
+    if (linea_vars.INQ_TAB[4] < 8)
+        linea_vars.DEV_TAB[13] = 2<<(linea_vars.v_planes-1);
     else
-        DEV_TAB[13] = 256;
+        linea_vars.DEV_TAB[13] = 256;
 
     vwk = &virt_work;
     CONTRL->handle = vwk->handle = 1;
     vwk->next_work = NULL;
 
-    line_cw = -1;               /* invalidate current line width */
+    linea_vars.line_cw = -1;    /* invalidate current line width */
 
     init_colors();              /* Initialize palette etc. */
 
@@ -457,7 +457,7 @@ void vdi_v_clrwk(Vwk * vwk)
     ULONG size;
 
     /* Calculate screen size */
-    size = (ULONG)v_lin_wr * V_REZ_VT;
+    size = (ULONG)linea_vars.v_lin_wr * linea_vars.V_REZ_VT;
 
     /* clear the screen */
     memset(v_bas_ad, 0, size);
@@ -479,11 +479,11 @@ void vdi_vq_extnd(Vwk * vwk)
     flip_y = 1;
     dst = PTSOUT;
     if (*(INTIN) == 0) {
-        src = SIZ_TAB;
+        src = linea_vars.SIZ_TAB;
         for (i = 0; i < 12; i++)
             *dst++ = *src++;
 
-        src = DEV_TAB;
+        src = linea_vars.DEV_TAB;
     }
     else {
         /* copy the clipping ranges to PTSOUT */
@@ -495,8 +495,8 @@ void vdi_vq_extnd(Vwk * vwk)
         for (i = 4; i < 12; i++)
             *dst++ = 0;
 
-        src = INQ_TAB;
-        INQ_TAB[19] = vwk->clip;      /* now update INQTAB */
+        src = linea_vars.INQ_TAB;
+        linea_vars.INQ_TAB[19] = vwk->clip;      /* now update INQTAB */
     }
 
     /* copy DEV_TAB or INQ_TAB to INTOUT */

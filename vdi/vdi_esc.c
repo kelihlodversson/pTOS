@@ -41,8 +41,8 @@ static void escfn0(Vwk * vwk)
 static void escfn1(Vwk * vwk)
 {
     CONTRL->nintout = 2;
-    INTOUT[0] = v_cel_my + 1;
-    INTOUT[1] = v_cel_mx + 1;
+    INTOUT[0] = linea_vars.v_cel_my + 1;
+    INTOUT[1] = linea_vars.v_cel_mx + 1;
 }
 
 
@@ -201,8 +201,8 @@ static void escfn14(Vwk * vwk)
 static void escfn15(Vwk * vwk)
 {
     CONTRL->nintout = 2;              /* 2 integers are returned */
-    INTOUT[0] = v_cur_cy + 1;   /* row (starting at 1) */
-    INTOUT[1] = v_cur_cx + 1;   /* column (starting at 1) */
+    INTOUT[0] = linea_vars.v_cur_cy + 1;   /* row (starting at 1) */
+    INTOUT[1] = linea_vars.v_cur_cx + 1;   /* column (starting at 1) */
 }
 
 

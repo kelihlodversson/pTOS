@@ -13,6 +13,8 @@
 
 #include "asmdefs.h"
 #include "vdi_asm.h"
+#include "lineaasm_m68k.h"
+
 
 
 
@@ -20,12 +22,6 @@
  * _GSX_ENTRY - front end of the GIOS for the screen driver
  */
 
-        .extern _local_pb
-        .extern _CONTRL
-        .extern _INTIN
-        .extern _PTSIN
-        .extern _INTOUT
-        .extern _PTSOUT
         .extern _flip_y
         .extern _screen
 
@@ -54,7 +50,7 @@ _GSX_ENTRY:
 /* Make a local copy of the array pointers in the user's parameter block. */
 
         movea.l d1,a2           // get address of user's parameter block
-        lea     _local_pb, a1    // get address of local storage area
+        lea     LA(local_pb),a1 // get address of local storage area
         movea.l (a2)+,a0        // copy address of user's CONTRL aray
         move.l  a0,(a1)+        // save address of user's CONTRL array
         move.l  (a2)+,(a1)+     // save address of user's INTIN  array
@@ -107,7 +103,7 @@ intin_ok:
         jsr     _screen
 
 /* Restore user's CONTRL[1] and CONTRL[3] array elements from the stack. */
-        movea.l _CONTRL,a0      // get address of user's CONTRL array
+        movea.l LA(local_pb+0),a0      // get address of user's CONTRL array
         move.w  (sp)+,W_3(a0)   // original # of INTIN entries to CONTRL[3]
         move.w  (sp)+,W_1(a0)   // original # of PTSIN entries to CONTRL[1]
 
@@ -138,30 +134,12 @@ intin_ok:
 
         /* External variables used here */
 
-        .extern _GCURX          // graphics cursor x-coordinate
-        .extern _GCURY          // graphics cursor y-coordinate
-        .extern _HIDE_CNT       // graphics cursor hide count
-        .extern _MOUSE_BT       // mouse button state
-
-        .extern _cur_ms_stat    // current mouse status
-        .extern _draw_flag      // Non-zero means draw mouse form on vblank
-        .extern _mouse_flag     // Non-zero if mouse ints disabled
-        .extern _newx           // New mouse x position
-        .extern _newy           // New mouse y position
-
-        .extern _user_but       // user button vector
-        .extern _user_mot       // user motion vector
-        .extern _user_cur       // user cursor vector
         .extern _user_wheel     // user wheel vector
-
-        .extern _DEV_TAB        // address of device table
 
         .extern _old_statvec    // previous IKBD status packet vector
 
 
         .text
-
-
 
 /*
  * scrn_clip - This routine clips the x and y-coordinates of the cursor
@@ -183,7 +161,7 @@ intin_ok:
  *      placed off the left side of the screen so set its value to 0.
  */
 scrn_clip:
-        lea.l   _DEV_TAB,a0     // get address of device table
+        lea.l   LA(DEV_TAB),a0  // get address of device table
         tst.w   d0              // is new x-coordinate < 0?
         jge     cl_xmax         // nope - check if greater than maximum value
         clr.w   d0              // yes - set it to 0
@@ -230,7 +208,7 @@ cl_done:
  */
 
 _mouse_int:
-        tst.b   _mouse_flag     // If we are in a show/hide operation
+        tst.b   LA(mouse_flag)  // If we are in a show/hide operation
         jne     ms_exit         // just exit.
 
 #ifdef __mcoldfire__
@@ -262,7 +240,7 @@ _mouse_int:
         bset    #1, d0          // set bit 0 for left button
 
 no_left:
-        move.b  _cur_ms_stat,d1 // get previous mouse state
+        move.b  LA(cur_ms_stat),d1 // get previous mouse state
 
 #ifdef __mcoldfire__
         and.l   #3,d1           // mask out state codes bits 6,7
@@ -272,7 +250,7 @@ no_left:
         cmp.b   d1,d0           // has button state changed
         jeq     xy_update       // no go test x,y change
 
-        lea     _MOUSE_BT,a1
+        lea     LA(MOUSE_BT),a1
         move.w  (a1),d2
 #ifdef __mcoldfire__
         andi.l  #0xfffffffc,d2
@@ -284,7 +262,7 @@ no_left:
         move.w  d0,(a1)
 
         move.w  d1,-(sp)        // save previous mouse state
-        move.l  _user_but,a1    // get user routine address
+        move.l  LA(user_but),a1 // get user routine address
         jsr     (a1)
 
         move.w  (sp)+, d1       // get back previous mouse button state
@@ -301,7 +279,7 @@ no_left:
         or.b    d1, d0          // combine deltas and states
 #endif
 
-        move.b  d0,_cur_ms_stat // store change in button stat
+        move.b  d0,LA(cur_ms_stat) // store change in button stat
 
 xy_update:
 #ifdef __mcoldfire__
@@ -316,22 +294,22 @@ xy_update:
 #endif
 
 #ifdef __mcoldfire__
-        lea     _cur_ms_stat, a1
+        lea     LA(cur_ms_stat), a1
         bclr.b  #5, (a1)         // no motion clear motion status
 #else
-        bclr.b  #5, _cur_ms_stat // no motion clear motion status
+        bclr.b  #5, LA(cur_ms_stat) // no motion clear motion status
 #endif
         jra     ms_done         // no change done bye-bye
 
 new_coord:
 #ifdef __mcoldfire__
-        lea     _cur_ms_stat, a1
+        lea     LA(cur_ms_stat), a1
         bset.b  #5, (a1)         // motion set motion status
 #else
-        bset.b  #5, _cur_ms_stat // motion set motion status
+        bset.b  #5, LA(cur_ms_stat) // motion set motion status
 #endif
 
-        move.w  _GCURX, d0      // set d0 to _GCURX
+        move.w  LA(GCURX), d0       // set d0 to _GCURX
 #ifdef __mcoldfire__
         ext.l   d0
 #endif
@@ -345,7 +323,7 @@ new_coord:
         add.w   d1, d0          // d0 contains new x coordinate
 #endif
 
-        move.w  _GCURY,d1       // init d1 to _GCURY
+        move.w  LA(GCURY),d1    // init d1 to _GCURY
 #ifdef __mcoldfire__
         ext.l   d1
 #endif
@@ -360,15 +338,15 @@ new_coord:
 
         jbsr    scrn_clip
 
-        move.l  _user_mot,a1    // get user routine address
+        move.l  LA(user_mot),a1 // get user routine address
         jsr     (a1)            // call user to modify x,y
 
         jbsr    scrn_clip
 
-        move.w  d0,_GCURX       // save new X location
-        move.w  d1,_GCURY       // save new y location
+        move.w  d0,LA(GCURX)    // save new X location
+        move.w  d1,LA(GCURY)    // save new y location
 
-        move.l  _user_cur,a1    // get user routine address
+        move.l  LA(user_cur),a1 // get user routine address
         jsr     (a1)            // call user to draw cursor
 
                                 // d0 contains new x position
@@ -499,7 +477,7 @@ wheel_ikbd_packet:
  */
 
 _mov_cur:
-        tst.w   _HIDE_CNT       // is the cursor hidden?
+        tst.w   LA(HIDE_CNT)    // is the cursor hidden?
         jne     mov_cur1        // yes - don't draw it now
 
 /*
@@ -521,17 +499,17 @@ _mov_cur:
         ori.w   #0x0700,sr      // mask off all interrupts
 #endif
 
-        move.w  d0,_newx        // save new cursor x-coordinate
-        move.w  d1,_newy        // save new cursor y-coordinate
+        move.w  d0,LA(newx)     // save new cursor x-coordinate
+        move.w  d1,LA(newy)     // save new cursor y-coordinate
 
 #ifdef __mcoldfire__
         moveq   #0,d3
-        bset.b  d3,_draw_flag   // set the 'draw cursor' flag
+        bset.b  d3,LA(draw_flag)// set the 'draw cursor' flag
         move.w  d2,sr           // restore the value of the status register
         move.l  (sp)+,d2
         move.l  (sp)+,d3
 #else
-        bset.b  #0,_draw_flag   // set the 'draw cursor' flag
+        bset.b  #0,LA(draw_flag)// set the 'draw cursor' flag
         move.w  (sp)+,sr        // restore the value of the status register
 #endif
 mov_cur1:

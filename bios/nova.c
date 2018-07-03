@@ -380,13 +380,13 @@ static void init_system_vars(void)
 
     /* Line A vars */
     /* Number of bitplanes */
-    v_planes = 1;
+    linea_vars.v_planes = 1;
     /* Bytes per scan-line */
-    BYTES_LIN = v_lin_wr = 80;
+    linea_vars.BYTES_LIN = linea_vars.v_lin_wr = 80;
     /* Vertical resolution */
-    V_REZ_VT = 400;
+    linea_vars.V_REZ_VT = 400;
     /* Horizontal resolution */
-    V_REZ_HZ = 640;
+    linea_vars.V_REZ_HZ = 640;
 }
 
 /* Initialize Nova card */

@@ -506,7 +506,7 @@ static void bios_init(void)
 
 #if CONF_WITH_CARTRIDGE
     {
-        WORD save_hz = V_REZ_HZ, save_vt = V_REZ_VT, save_pl = v_planes;
+        WORD save_hz = linea_vars.V_REZ_HZ, save_vt = linea_vars.V_REZ_VT, save_pl = linea_vars.v_planes;
 
         /* Run all boot applications from the application cartridge.
          * Beware: Hatari features a special cartridge which is used
@@ -517,7 +517,7 @@ static void bios_init(void)
         run_cartridge_applications(3); /* Type "Execute prior to bootdisk" */
         KDEBUG(("after run_cartridge_applications()\n"));
 
-        if ((V_REZ_HZ != save_hz) || (V_REZ_VT != save_vt) || (v_planes != save_pl))
+        if ((linea_vars.V_REZ_HZ != save_hz) || (linea_vars.V_REZ_VT != save_vt) || (linea_vars.v_planes != save_pl))
         {
             set_rez_hacked();
             font_set_default(-1);   /* set default font */

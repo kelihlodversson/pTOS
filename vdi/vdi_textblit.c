@@ -125,15 +125,15 @@ static WORD check_clip(LOCALVARS *vars, WORD delx, WORD dely)
 {
     WORD rc;
 
-    vars->CLIP = CLIP;
+    vars->CLIP = linea_vars.CLIP;
 
     if (!vars->CLIP)
         return 0;
 
-    vars->XMN_CLIP = XMINCL;
-    vars->YMN_CLIP = YMINCL;
-    vars->XMX_CLIP = XMAXCL;
-    vars->YMX_CLIP = YMAXCL;
+    vars->XMN_CLIP = linea_vars.XMINCL;
+    vars->YMN_CLIP = linea_vars.YMINCL;
+    vars->XMX_CLIP = linea_vars.XMAXCL;
+    vars->YMX_CLIP = linea_vars.YMAXCL;
 
     rc = 0;
 
@@ -187,8 +187,8 @@ static WORD do_clip(LOCALVARS *vars)
     {
         vars->XMN_CLIP = 0;     /* set screen coordinates */
         vars->YMN_CLIP = 0;
-        vars->XMX_CLIP = DEV_TAB[0];
-        vars->YMX_CLIP = DEV_TAB[1];
+        vars->XMX_CLIP = linea_vars.DEV_TAB[0];
+        vars->YMX_CLIP = linea_vars.DEV_TAB[1];
     }
 
     /*
@@ -199,7 +199,7 @@ static WORD do_clip(LOCALVARS *vars)
         n = vars->DESTX + vars->DELX - vars->XMN_CLIP;
         if (n <= 0)
             return -1;
-        SOURCEX += vars->DELX - n;
+        linea_vars.SOURCEX += vars->DELX - n;
         vars->DELX = n;
         vars->DESTX = vars->XMN_CLIP;
     }
@@ -221,7 +221,7 @@ static WORD do_clip(LOCALVARS *vars)
         n = vars->DESTY + vars->DELY - vars->YMN_CLIP;
         if (n <= 0)
             return -1;
-        SOURCEY += vars->DELY - n;
+        linea_vars.SOURCEY += vars->DELY - n;
         vars->DELY = n;
         vars->DESTY = vars->YMN_CLIP;
     }
@@ -256,16 +256,16 @@ static void pre_blit(LOCALVARS *vars)
 
     vars->height = vars->DELY;
 
-    vars->tsdad = SOURCEX & 0x000f;     /* source dot address */
+    vars->tsdad = linea_vars.SOURCEX & 0x000f;     /* source dot address */
 #ifndef MACHINE_RPI
-    offset = (SOURCEY+vars->DELY-1) * (LONG)vars->s_next + ((SOURCEX >> 3) & ~1);
+    offset = (linea_vars.SOURCEY+vars->DELY-1) * (LONG)vars->s_next + ((linea_vars.SOURCEX >> 3) & ~1);
     src = (UBYTE *)vars->sform + offset;/* bottom of font char source */
 #endif
     vars->s_next = -vars->s_next;       /* we draw from the bottom up */
 
-    weight = WEIGHT;
-    skew = LOFF + ROFF;
-    if (SCALE)
+    weight = linea_vars.WEIGHT;
+    skew = linea_vars.LOFF + linea_vars.ROFF;
+    if (linea_vars.SCALE)
     {
         weight = max(weight/2, 1);  /* only thicken by half (but not 0) */
         skew >>= 1;                 /* halve the skew */
@@ -285,7 +285,7 @@ static void pre_blit(LOCALVARS *vars)
     dest_height = vars->DELY;
     if (vars->STYLE & F_OUTLINE)
     {
-        if (!SCALE)         /* if we're scaling, we do this after scaling */
+        if (!linea_vars.SCALE)         /* if we're scaling, we do this after scaling */
         {
             dest_width += 3;        /* add 1 left & 2 right pixels */
             vars->tddad += 1;       /* and make leftmost column blank */
@@ -299,7 +299,7 @@ static void pre_blit(LOCALVARS *vars)
     dest_width = ((dest_width >> 4) << 1) + 2;    /* in bytes */
     vars->d_next = -dest_width;
     size = dest_width * (dest_height - 1);
-    dst = (UBYTE *)SCRTCHP + vars->buffa;
+    dst = (UBYTE *)linea_vars.SCRTCHP + vars->buffa;
     vars->sform = dst;
     if (vars->STYLE & (F_OUTLINE|F_SKEW))
     {
@@ -309,7 +309,7 @@ static void pre_blit(LOCALVARS *vars)
             *p++ = 0;               /* clear buffer */
         if (vars->STYLE & F_OUTLINE)
         {
-            if (!SCALE)
+            if (!linea_vars.SCALE)
             {
                 vars->width -= 3;
                 vars->DELX -= 1;
@@ -334,12 +334,12 @@ static void pre_blit(LOCALVARS *vars)
 #endif /* MACHINE_RPI */
 
     vars->STYLE = tmp_style;        /* restore */
-    vars->WRT_MODE = WRT_MODE;
+    vars->WRT_MODE = linea_vars.WRT_MODE;
     vars->s_next = -vars->d_next;   /* reset the source to the buffer */
 
     if (vars->STYLE & F_OUTLINE)
     {
-        if (!SCALE)
+        if (!linea_vars.SCALE)
         {
             /*
              * we may be able to speed up the following by calculating
@@ -355,8 +355,8 @@ static void pre_blit(LOCALVARS *vars)
         }
     }
 
-    SOURCEX = 0;
-    SOURCEY = 0;
+    linea_vars.SOURCEX = 0;
+    linea_vars.SOURCEY = 0;
     vars->STYLE &= ~(F_SKEW|F_THICKEN); /* cancel effects */
 }
 
@@ -368,9 +368,9 @@ static void screen_blit(LOCALVARS *vars)
 {
     LONG offset;
 
-    vars->forecol = TEXTFG;
+    vars->forecol = linea_vars.TEXTFG;
     vars->ambient = 0;          /* logically TEXTBG, but that isn't set up by the VDI */
-    vars->nbrplane = v_planes;
+    vars->nbrplane = linea_vars.v_planes;
     vars->nextwrd = vars->nbrplane * sizeof(WORD);
     vars->height = vars->DELY;
     vars->width = vars->DELX;
@@ -378,8 +378,8 @@ static void screen_blit(LOCALVARS *vars)
     /*
      * calculate the starting address for the character to be copied
      */
-    vars->tsdad = SOURCEX & 0x000f; /* source dot address */
-    offset = (SOURCEY+vars->DELY-1) * (LONG)vars->s_next + ((SOURCEX >> 3) & ~1);
+    vars->tsdad = linea_vars.SOURCEX & 0x000f; /* source dot address */
+    offset = (linea_vars.SOURCEY+vars->DELY-1) * (LONG)vars->s_next + ((linea_vars.SOURCEX >> 3) & ~1);
     vars->sform += offset;
     vars->s_next = -vars->s_next;   /* we draw from the bottom up */
 
@@ -392,9 +392,9 @@ static void screen_blit(LOCALVARS *vars)
      */
     vars->tddad = vars->DESTX & 0x000f;
     vars->dform = v_bas_ad;
-    vars->dform += (vars->DESTX&0xfff0)>>shift_offset[v_planes];        /* add x coordinate part of addr */
-    vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)v_lin_wr; /* add y coordinate part of addr */
-    vars->d_next = -v_lin_wr;
+    vars->dform += (vars->DESTX&0xfff0)>>shift_offset[linea_vars.v_planes];        /* add x coordinate part of addr */
+    vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)linea_vars.v_lin_wr; /* add y coordinate part of addr */
+    vars->d_next = -linea_vars.v_lin_wr;
 
 #ifndef MACHINE_RPI
     normal_blit(vars+1, vars->sform, vars->dform);  /* call assembler helper function */
@@ -428,15 +428,15 @@ static UWORD char_resize(UWORD init, UWORD size)
 {
     UWORD accu, retval, i;
 
-    if (DDAINC == 0xffff) {     /* double size */
+    if (linea_vars.DDAINC == 0xffff) {     /* double size */
         return (size<<1);
     }
     accu = init;
-    retval = SCALDIR ? size : 0;
+    retval = linea_vars.SCALDIR ? size : 0;
 
     for (i = 0; i < size; i++) {
-        accu += DDAINC;
-        if (accu < DDAINC)
+        accu += linea_vars.DDAINC;
+        if (accu < linea_vars.DDAINC)
             retval++;
     }
 
@@ -459,22 +459,22 @@ void text_blt(void)
     /*
      * make local copies, just as the original code does
      */
-    vars.STYLE = STYLE;
-    vars.WRT_MODE = WRT_MODE;
-    vars.DELX = DELX;
-    vars.DESTX = DESTX;
-    vars.DELY = DELY;
-    vars.DESTY = DESTY;
-    vars.CHUP = CHUP;
+    vars.STYLE = linea_vars.STYLE;
+    vars.WRT_MODE = linea_vars.WRT_MODE;
+    vars.DELX = linea_vars.DELX;
+    vars.DESTX = linea_vars.DESTX;
+    vars.DELY = linea_vars.DELY;
+    vars.DESTY = linea_vars.DESTY;
+    vars.CHUP = linea_vars.CHUP;
 
-    vars.buffa = SCRPT2;
+    vars.buffa = linea_vars.SCRPT2;
     dely = vars.DELY;
     vars.tmp_delx = delx = vars.DELX;
 
-    if (SCALE)
+    if (linea_vars.SCALE)
     {
         vars.tmp_dely = dely = char_resize(0x7fff, vars.DELY);
-        vars.tmp_delx = delx = char_resize(XDDA, vars.DELX);
+        vars.tmp_delx = delx = char_resize(linea_vars.XDDA, vars.DELX);
         if (!vars.CHUP)
             vars.buffa = 0;         /* use small buffer if no rotation */
     }
@@ -482,16 +482,16 @@ void text_blt(void)
     vars.smear = 0;
     if (vars.STYLE & F_THICKEN)
     {
-        weight = WEIGHT;
+        weight = linea_vars.WEIGHT;
         if (weight == 0)        /* cancel thicken if no weight */
             vars.STYLE &= ~F_THICKEN;
-        if (!MONO)
+        if (!linea_vars.MONO)
             delx += weight;
     }
 
     if (vars.STYLE & F_SKEW)
     {
-        delx += LOFF + ROFF;
+        delx += linea_vars.LOFF + linea_vars.ROFF;
     }
 
     if (vars.CHUP)
@@ -517,8 +517,8 @@ void text_blt(void)
         goto upda_dst;
 
     vars.dest_wrd = 0;
-    vars.s_next = FWIDTH;
-    vars.sform = (void *)FBASE;
+    vars.s_next = linea_vars.FWIDTH;
+    vars.sform = (void *)linea_vars.FBASE;
 
     if (vars.STYLE & (F_SKEW|F_THICKEN|F_OUTLINE))
     {
@@ -537,7 +537,7 @@ void text_blt(void)
 #endif /* MACHINE_RPI */
     }
 
-    if (SCALE)
+    if (linea_vars.SCALE)
     {
 #ifndef MACHINE_RPI
         scale(&vars+1);     /* call assembler helper function */
@@ -546,8 +546,8 @@ void text_blt(void)
 
     if (vars.STYLE & F_THICKEN)
     {
-        vars.smear = WEIGHT;
-        if (!MONO)
+        vars.smear = linea_vars.WEIGHT;
+        if (!linea_vars.MONO)
             vars.DELX += vars.smear;
     }
 
@@ -557,29 +557,29 @@ void text_blt(void)
     }
 
 upda_dst:
-    delx = DELX;
-    if (SCALE)
+    delx = linea_vars.DELX;
+    if (linea_vars.SCALE)
     {
         delx = vars.swap_tmps ? vars.tmp_dely : vars.tmp_delx;
     }
 
-    if ((STYLE & F_THICKEN) && !MONO)
+    if ((linea_vars.STYLE & F_THICKEN) && !linea_vars.MONO)
     {
-        delx += WEIGHT;
+        delx += linea_vars.WEIGHT;
     }
 
     switch(vars.CHUP) {
     default:        /* normally 0, the default */
-        DESTX += delx;      /* move right by DELX */
+        linea_vars.DESTX += delx;      /* move right by DELX */
         break;
     case 900:
-        DESTY -= delx;      /* move up by DELX */
+        linea_vars.DESTY -= delx;      /* move up by DELX */
         break;
     case 1800:
-        DESTX -= delx;      /* move left by DELX */
+        linea_vars.DESTX -= delx;      /* move left by DELX */
         break;
     case 2700:
-        DESTY += delx;      /* move down by DELX */
+        linea_vars.DESTY += delx;      /* move down by DELX */
         break;
     }
 }

@@ -871,8 +871,8 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
     else {
         /* source form is screen */
         info->s_form = (UWORD*) v_bas_ad;
-        info->s_nxwd = v_planes * 2;
-        info->s_nxln = v_lin_wr;
+        info->s_nxwd = linea_vars.v_planes * 2;
+        info->s_nxln = linea_vars.v_lin_wr;
     }
 
     /* setup plane info for destination MFDB */
@@ -886,9 +886,9 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
     else {
         /* destination form is screen */
         info->d_form = (UWORD*) v_bas_ad;
-        info->plane_ct = v_planes;
-        info->d_nxwd = v_planes * 2;
-        info->d_nxln = v_lin_wr;
+        info->plane_ct = linea_vars.v_planes;
+        info->d_nxwd = linea_vars.v_planes * 2;
+        info->d_nxln = linea_vars.v_lin_wr;
 
         /* check if clipping is enabled, when destination is screen */
         if (raster->clip)
@@ -963,13 +963,13 @@ cpy_raster(struct raster_t *raster, struct blit_frame *info)
 
         /* d6 <- background color */
         fg_col = INTIN[1];
-        if ((fg_col >= DEV_TAB[13]) || (fg_col < 0))
+        if ((fg_col >= linea_vars.DEV_TAB[13]) || (fg_col < 0))
             fg_col = 1;
         fg_col = MAP_COL[fg_col];
 
         /* d7 <- foreground color */
         bg_col = INTIN[2];
-        if ((bg_col >= DEV_TAB[13]) || (bg_col < 0))
+        if ((bg_col >= linea_vars.DEV_TAB[13]) || (bg_col < 0))
             bg_col = 1;
         bg_col = MAP_COL[bg_col];
 
@@ -1083,8 +1083,8 @@ void linea_raster(void)
 
     raster.clipper = NULL;
     raster.clip = 0;
-    raster.multifill = MFILL;
-    raster.transparent = COPYTRAN;
+    raster.multifill = linea_vars.MFILL;
+    raster.transparent = linea_vars.COPYTRAN;
 
     cpy_raster(&raster, &vdi_info);
 }

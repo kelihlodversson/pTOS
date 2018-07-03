@@ -24,27 +24,11 @@
 #include "../bios/lineavars.h"
 #include "kprint.h"
 #include "asm.h"
+#include "mform.h"
 
 #ifdef MACHINE_RPI
 #   include "raspi_mouse.h"
-#else
-/* Mouse / sprite structure */
-typedef struct Mcdb_ Mcdb;
-struct Mcdb_ {
-        WORD    xhot;
-        WORD    yhot;
-        WORD    planes;
-        WORD    bg_col;
-        WORD    fg_col;
-        UWORD   maskdata[32];   /* mask & data are interleaved */
-};
 #endif
-
-/* mouse related linea variables in bios/lineavars.S */
-extern void     (*user_but)(WORD status);      /* user button vector */
-extern void     (*user_cur)(WORD x, WORD y);      /* user cursor vector */
-extern void     (*user_mot)(void);      /* user motion vector */
-extern Mcdb     mouse_cdb;              /* storage for mouse sprite */
 
 /* prototypes */
 static void cur_display(Mcdb *sprite, MCS *savebuf, WORD x, WORD y);
@@ -138,16 +122,16 @@ static void do_nothing_ii(WORD a, WORD b)
 
 static void dis_cur(void)
 {
-    mouse_flag += 1;            /* disable mouse redrawing */
-    HIDE_CNT -= 1;              /* decrement hide operations counter */
-    if (HIDE_CNT == 0) {
-        cur_display(&mouse_cdb, mcs_ptr, GCURX, GCURY);  /* display the cursor */
-        draw_flag = 0;          /* disable vbl drawing routine */
+    linea_vars.mouse_flag += 1;            /* disable mouse redrawing */
+    linea_vars.HIDE_CNT -= 1;   /* decrement hide operations counter */
+    if (linea_vars.HIDE_CNT == 0) {
+        cur_display(&linea_vars.mouse_cdb, mcs_ptr, linea_vars.GCURX, linea_vars.GCURY);  /* display the cursor */
+        linea_vars.draw_flag = 0;          /* disable vbl drawing routine */
     }
-    else if (HIDE_CNT < 0) {
-        HIDE_CNT = 0;           /* hide counter should not become negative */
+    else if (linea_vars.HIDE_CNT < 0) {
+        linea_vars.HIDE_CNT = 0;           /* hide counter should not become negative */
     }
-    mouse_flag -= 1;            /* re-enable mouse drawing */
+    linea_vars.mouse_flag -= 1;            /* re-enable mouse drawing */
 }
 
 
@@ -167,20 +151,20 @@ static void dis_cur(void)
 
 static void hide_cur(void)
 {
-    mouse_flag += 1;            /* disable mouse redrawing */
+    linea_vars.mouse_flag += 1;            /* disable mouse redrawing */
 
     /*
      * Increment the counter for the number of hide operations performed.
      * If this is the first one then remove the cursor from the screen.
      * If not then do nothing, because the cursor wasn't on the screen.
      */
-    HIDE_CNT += 1;              /* increment it */
-    if (HIDE_CNT == 1) {        /* if cursor was not hidden... */
+    linea_vars.HIDE_CNT += 1;   /* increment it */
+    if (linea_vars.HIDE_CNT == 1) {        /* if cursor was not hidden... */
         cur_replace(mcs_ptr);   /* remove the cursor from screen */
-        draw_flag = 0;          /* disable vbl drawing routine */
+        linea_vars.draw_flag = 0;          /* disable vbl drawing routine */
     }
 
-    mouse_flag -= 1;            /* re-enable mouse drawing */
+    linea_vars.mouse_flag -= 1;            /* re-enable mouse drawing */
 }
 
 
@@ -211,35 +195,30 @@ static void hide_cur(void)
 static WORD gloc_key(void)
 {
     WORD retval = 0;
-    ULONG ch;
 
     /*
      * check for mouse button or keyboard key
      */
-    if (cur_ms_stat & 0xc0) {           /* some button status bits set? */
-        if (cur_ms_stat & 0x40)         /* if bit 6 set,                     */
-            TERM_CH = 0x20;             /* send terminator code for left key */
+    if (linea_vars.cur_ms_stat & 0xc0) {           /* some button status bits set? */
+        if (linea_vars.cur_ms_stat & 0x40)         /* if bit 6 set,                     */
+            linea_vars.TERM_CH = 0x20;             /* send terminator code for left key */
         else
-            TERM_CH = 0x21;             /* send terminator code for right key */
-        cur_ms_stat &= 0x23;            /* clear mouse button status (bit 6/7) */
+            linea_vars.TERM_CH = 0x21;             /* send terminator code for right key */
+        linea_vars.cur_ms_stat &= 0x23;            /* clear mouse button status (bit 6/7) */
         retval = 1;                     /* set button pressed flag */
-    } else if (Bconstat(2)) {           /* see if a character present at con */
-        ch = Bconin(2);
-        TERM_CH = (WORD)
-                  (ch >> 8)|            /* scancode down to bit 8-15 */
-                  (ch & 0xff);          /* asciicode to bit 0-7 */
+    } else if (gchr_key()) {            /* see if a character present at con */
         retval = 1;                     /* set button pressed flag */
     }
 
     /*
      * check for mouse movement
      */
-    if (cur_ms_stat & 0x20) {           /* if bit #5 set ... */
+    if (linea_vars.cur_ms_stat & 0x20) {           /* if bit #5 set ... */
         Point * point = (Point*)PTSIN;
 
-        cur_ms_stat &= ~0x20;   /* clear bit 5 */
-        point->x = GCURX;       /* set X = GCURX */
-        point->y = GCURY;       /* set Y = GCURY */
+        linea_vars.cur_ms_stat &= ~0x20;   /* clear bit 5 */
+        point->x = linea_vars.GCURX;       /* set X = GCURX */
+        point->y = linea_vars.GCURY;       /* set Y = GCURY */
         retval += 2;
     }
 
@@ -299,15 +278,15 @@ void vdi_v_locator(Vwk * vwk)
     Point * point = (Point*)PTSIN;
 
     /* Set the initial locator position. */
-    GCURX = point->x;
-    GCURY = point->y;
+    linea_vars.GCURX = point->x;
+    linea_vars.GCURY = point->y;
 
-    if (loc_mode == 0) {    /* handle request mode (vrq_locator()) */
+    if (linea_vars.loc_mode == 0) {    /* handle request mode (vrq_locator()) */
         dis_cur();
         /* loop till button or keyboard event */
         while (!(gloc_key() & 1)) {
         }
-        INTOUT[0] = TERM_CH & 0x00ff;
+        INTOUT[0] = linea_vars.TERM_CH & 0x00ff;
 
         CONTRL->nintout = 1;
         CONTRL->nptsout = 1;
@@ -319,7 +298,7 @@ void vdi_v_locator(Vwk * vwk)
         i = gloc_key();
         if (i & 1) {
             CONTRL->nintout = 1;
-            INTOUT[0] = TERM_CH & 0x00ff;
+            INTOUT[0] = linea_vars.TERM_CH & 0x00ff;
         }
         if (i & 2) {
             CONTRL->nptsout = 1;
@@ -336,8 +315,8 @@ void vdi_v_locator(Vwk * vwk)
  */
 void vdi_v_show_c(Vwk * vwk)
 {
-    if (!INTIN[0] && HIDE_CNT)
-        HIDE_CNT = 1;           /* reset cursor to on */
+    if (!INTIN[0] && linea_vars.HIDE_CNT)
+        linea_vars.HIDE_CNT = 1;           /* reset cursor to on */
 
     dis_cur();
 }
@@ -359,13 +338,13 @@ void vdi_v_hide_c(Vwk * vwk)
  */
 void vdi_vq_mouse(Vwk * vwk)
 {
-    INTOUT[0] = MOUSE_BT;
+    INTOUT[0] = linea_vars.MOUSE_BT;
 
     CONTRL->nintout = 1;
     CONTRL->nptsout = 1;
 
-    PTSOUT[0] = GCURX;
-    PTSOUT[1] = GCURY;
+    PTSOUT[0] = linea_vars.GCURX;
+    PTSOUT[1] = linea_vars.GCURY;
 }
 
 
@@ -391,7 +370,7 @@ void vdi_v_valuator(Vwk * vwk)
 static void call_user_but(WORD status)
 {
 	register WORD val asm("d0") = status;
-	register void (*func)(WORD) asm("a0") = user_but; /* prototype not quite right: status passed in d0 */
+	register void (*func)(WORD) asm("a0") = linea_vars.user_but; /* prototype not quite right: status passed in d0 */
 	
 	__asm__ __volatile__(
 		" jsr (%[a0])"
@@ -424,7 +403,7 @@ static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
 static void call_user_but(WORD status)
 {
 	register WORD val asm("r0") = status;
-	register void (*func)(WORD) asm("r1") = user_but; /* prototype not quite right: status passed in d0 */
+	register void (*func)(WORD) asm("r1") = linea_vars.user_but; /* prototype not quite right: status passed in d0 */
 	
 	__asm__ __volatile__(
 		" blx %[func]"
@@ -463,12 +442,12 @@ void mov_cur(WORD new_x, WORD new_y)      /* user button vector */
 {
 	ULONG cpsr;
 	
-	if (HIDE_CNT == 0)
+	if (linea_vars.HIDE_CNT == 0)
 		return;
 	cpsr = disable_interrupts();
-	newx = new_x;
-	newy = new_y;
-	draw_flag = TRUE;
+	linea_vars.newx = new_x;
+	linea_vars.newy = new_y;
+	linea_vars.draw_flag = TRUE;
 	set_cpsr(cpsr);
 }
 
@@ -493,8 +472,8 @@ void mov_cur(WORD new_x, WORD new_y)      /* user button vector */
  */
 void vdi_vex_butv(Vwk * vwk)
 {
-    CONTRL->ptr2 = user_but;
-    user_but = CONTRL->ptr1;
+    CONTRL->ptr2 = linea_vars.user_but;
+    linea_vars.user_but = CONTRL->ptr1;
 }
 
 
@@ -514,8 +493,8 @@ void vdi_vex_butv(Vwk * vwk)
  */
 void vdi_vex_motv(Vwk * vwk)
 {
-    CONTRL->ptr2 = user_mot;
-    user_mot = CONTRL->ptr1;
+    CONTRL->ptr2 = linea_vars.user_mot;
+    linea_vars.user_mot = CONTRL->ptr1;
 }
 
 
@@ -537,8 +516,8 @@ void vdi_vex_motv(Vwk * vwk)
  */
 void vdi_vex_curv(Vwk * vwk)
 {
-    CONTRL->ptr2 = user_cur;
-    user_cur = CONTRL->ptr1;
+    CONTRL->ptr2 = linea_vars.user_cur;
+    linea_vars.user_cur = CONTRL->ptr1;
 }
 
 
@@ -579,7 +558,7 @@ static void set_mouse_form(const MFORM *src, Mcdb *dst)
     const UWORD * mask;
     const UWORD * data;
 
-    mouse_flag += 1;            /* disable updates while redefining cursor */
+    linea_vars.mouse_flag += 1;            /* disable updates while redefining cursor */
 
     /* save x-offset of mouse hot spot */
     dst->xhot = src->mf_xhot & 0x000f;
@@ -589,14 +568,14 @@ static void set_mouse_form(const MFORM *src, Mcdb *dst)
 
     /* is background color index too high? */
     col = src->mf_bg;
-    if (col >= DEV_TAB[13]) {
+    if (col >= linea_vars.DEV_TAB[13]) {
         col = 1;               /* yes - default to 1 */
     }
     dst->bg_col = MAP_COL[col];
 
     /* is foreground color index too high? */
     col = src->mf_fg;
-    if (col >= DEV_TAB[13]) {
+    if (col >= linea_vars.DEV_TAB[13]) {
         col = 1;               /* yes - default to 1 */
     }
     dst->fg_col = MAP_COL[col];
@@ -618,7 +597,7 @@ static void set_mouse_form(const MFORM *src, Mcdb *dst)
         *gmdt++ = *data++;              /* get next word of data */
     }
 
-    mouse_flag -= 1;                    /* re-enable mouse drawing */
+    linea_vars.mouse_flag -= 1;                    /* re-enable mouse drawing */
 }
 
 
@@ -642,7 +621,7 @@ static void set_mouse_form(const MFORM *src, Mcdb *dst)
  */
 void vdi_vsc_form(Vwk * vwk)
 {
-    set_mouse_form((const MFORM *)INTIN, &mouse_cdb);
+    set_mouse_form((const MFORM *)INTIN, &linea_vars.mouse_cdb);
 }
 
 
@@ -652,23 +631,23 @@ void vdi_vsc_form(Vwk * vwk)
 
 static void vdi_mousex_handler (WORD scancode)
 {
-    WORD old_buttons = MOUSE_BT;
+    WORD old_buttons = linea_vars.MOUSE_BT;
 
     if (scancode == 0x37)      /* Mouse button 3 press */
-        MOUSE_BT |= 0x04;
+        linea_vars.MOUSE_BT |= 0x04;
     else if (scancode == 0xb7) /* Mouse button 3 release */
-        MOUSE_BT &= ~0x04;
+        linea_vars.MOUSE_BT &= ~0x04;
     else if (scancode == 0x5e) /* Mouse button 4 press */
-        MOUSE_BT |= 0x08;
+        linea_vars.MOUSE_BT |= 0x08;
     else if (scancode == 0xde) /* Mouse button 4 release */
-        MOUSE_BT &= ~0x08;
+        linea_vars.MOUSE_BT &= ~0x08;
     else if (scancode == 0x5f) /* Mouse button 5 press */
-        MOUSE_BT |= 0x10;
+        linea_vars.MOUSE_BT |= 0x10;
     else if (scancode == 0xdf) /* Mouse button 5 release */
-        MOUSE_BT &= ~0x10;
+        linea_vars.MOUSE_BT &= ~0x10;
 
-    if (MOUSE_BT != old_buttons)
-        call_user_but(MOUSE_BT);
+    if (linea_vars.MOUSE_BT != old_buttons)
+        call_user_but(linea_vars.MOUSE_BT);
 
     if (scancode == 0x59)      /* Wheel up */
         call_user_wheel(0, -1);
@@ -700,30 +679,30 @@ void vdimouse_init(void)
     } mouse_params = {0, 0, 1, 1};
 
     /* Input must be initialized here and not in init_wk */
-    loc_mode = 0;               /* default is request mode  */
-    val_mode = 0;               /* default is request mode  */
-    chc_mode = 0;               /* default is request mode  */
-    str_mode = 0;               /* default is request mode  */
+    linea_vars.loc_mode = 0;               /* default is request mode  */
+    linea_vars.val_mode = 0;               /* default is request mode  */
+    linea_vars.chc_mode = 0;               /* default is request mode  */
+    linea_vars.str_mode = 0;               /* default is request mode  */
 
     /* mouse settings */
-    HIDE_CNT = 1;               /* mouse is initially hidden */
-    GCURX = DEV_TAB[0] / 2;     /* initialize the mouse to center */
-    GCURY = DEV_TAB[1] / 2;
+    linea_vars.HIDE_CNT = 1;               /* mouse is initially hidden */
+    linea_vars.GCURX = linea_vars.DEV_TAB[0] / 2;     /* initialize the mouse to center */
+    linea_vars.GCURY = linea_vars.DEV_TAB[1] / 2;
 
-    user_but = do_nothing_i;
-    user_mot = do_nothing_v;
-    user_cur = mov_cur;         /* initialize user_cur vector */
+    linea_vars.user_but = do_nothing_i;
+    linea_vars.user_mot = do_nothing_v;
+    linea_vars.user_cur = mov_cur;         /* initialize user_cur vector */
     user_wheel = do_nothing_ii;
 
     /* Move in the default mouse form (presently the arrow) */
-    set_mouse_form(default_mform(), &mouse_cdb);
+    set_mouse_form(default_mform(), &linea_vars.mouse_cdb);
 
-    MOUSE_BT = 0;               /* clear the mouse button state */
-    cur_ms_stat = 0;            /* clear the mouse status */
-    mouse_flag = 0;             /* clear the mouse flag */
-    draw_flag = 0;              /* clear the hide operations counter */
-    newx = 0;                   /* set cursor x-coordinate to 0 */
-    newy = 0;                   /* set cursor y-coordinate to 0 */
+    linea_vars.MOUSE_BT = 0;    /* clear the mouse button state */
+    linea_vars.cur_ms_stat = 0; /* clear the mouse status */
+    linea_vars.mouse_flag = 0;             /* clear the mouse flag */
+    linea_vars.draw_flag = 0;   /* clear the hide operations counter */
+    linea_vars.newx = 0;        /* set cursor x-coordinate to 0 */
+    linea_vars.newy = 0;        /* set cursor y-coordinate to 0 */
 
     /* vblqueue points to start of vbl_list[] */
     *vblqueue = (LONG)vb_draw;   /* set GEM VBL-routine to vbl_list[0] */
@@ -748,9 +727,9 @@ void vdimouse_exit(void)
     LONG * pointer;             /* help for storing LONGs in INTIN */
     struct kbdvecs *kbd_vectors;
 
-    user_but = do_nothing_i;
-    user_mot = do_nothing_v;
-    user_cur = do_nothing_ii;
+    linea_vars.user_but = do_nothing_i;
+    linea_vars.user_mot = do_nothing_v;
+    linea_vars.user_cur = do_nothing_ii;
     user_wheel = do_nothing_ii;
 
     pointer = vblqueue;         /* vblqueue points to start of vbl_list[] */
@@ -790,12 +769,12 @@ static void vb_draw(void)
 {
     disable_interrupts();
 //    WORD old_sr = set_sr(0x2700);       /* disable interrupts */
-    if (draw_flag) {
-        draw_flag = FALSE;
+    if (linea_vars.draw_flag) {
+        linea_vars.draw_flag = FALSE;
         enable_interrupts();
-        if (!mouse_flag) {
+        if (!linea_vars.mouse_flag) {
             cur_replace(mcs_ptr);       /* remove the old cursor from the screen */
-            cur_display(&mouse_cdb, mcs_ptr, newx, newy);  /* display the cursor */
+            cur_display(&linea_vars.mouse_cdb, mcs_ptr, linea_vars.newx, linea_vars.newy);  /* display the cursor */
         }
     } else
         enable_interrupts();
@@ -817,7 +796,7 @@ static void cur_display_clip(WORD op,Mcdb *sprite,MCS *mcs,UWORD *mask_start,UWO
     UWORD cdb_mask;             /* for checking cdb_bg/cdb_fg */
     UWORD *addr, *save;
 
-    dst_inc = v_lin_wr >> 1;    /* calculate number of words in a scan line */
+    dst_inc = linea_vars.v_lin_wr >> 1;    /* calculate number of words in a scan line */
 
     addr = mcs->addr;           /* starting screen address */
     save = (UWORD *)mcs->area;  /* we save words, not longwords */
@@ -826,7 +805,7 @@ static void cur_display_clip(WORD op,Mcdb *sprite,MCS *mcs,UWORD *mask_start,UWO
     cdb_fg = sprite->fg_col;    /* get mouse foreground color bits */
 
     /* plane controller, draw cursor in each graphic plane */
-    for (plane = v_planes - 1, cdb_mask = 0x0001; plane >= 0; plane--) {
+    for (plane = linea_vars.v_planes - 1, cdb_mask = 0x0001; plane >= 0; plane--) {
         WORD row;
         UWORD *src, *dst;
 
@@ -932,7 +911,7 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
         x += 16;                /* get address of right word */
         op = 1;                 /* remember we're clipping left */
     }
-    else if (x >= (DEV_TAB[0]-15)) {    /* clip right */
+    else if (x >= (linea_vars.DEV_TAB[0]-15)) {    /* clip right */
         op = 2;                 /* remember we're clipping right */
     }
     else {                  /* no clipping */
@@ -949,8 +928,8 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
         mask_start -= y << 1;   /* point to first visible row of MASK/FORM */
         y = 0;                  /* and reset starting row */
     }
-    else if (y > (DEV_TAB[1]-15)) { /* clip bottom */
-        row_count = DEV_TAB[1] - y + 1;
+    else if (y > (linea_vars.DEV_TAB[1]-15)) { /* clip bottom */
+        row_count = linea_vars.DEV_TAB[1] - y + 1;
     }
     else {
         row_count = 16;
@@ -982,8 +961,8 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
     /*
      * The rest of this function handles the no-L/R clipping case
      */
-    inc = v_planes;             /* # distance to next word in same plane */
-    dst_inc = v_lin_wr >> 1;    /* calculate number of words in a scan line */
+    inc = linea_vars.v_planes;             /* # distance to next word in same plane */
+    dst_inc = linea_vars.v_lin_wr >> 1;    /* calculate number of words in a scan line */
 
     save = mcs->area;           /* for long stores */
 
@@ -991,7 +970,7 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
     cdb_fg = sprite->fg_col;    /* get mouse foreground color bits */
 
     /* plane controller, draw cursor in each graphic plane */
-    for (plane = v_planes - 1, cdb_mask = 0x0001; plane >= 0; plane--) {
+    for (plane = linea_vars.v_planes - 1, cdb_mask = 0x0001; plane >= 0; plane--) {
         int row;
         UWORD * src, * dst;
 
@@ -1067,8 +1046,8 @@ static void cur_replace (MCS *mcs)
 #ifndef MACHINE_RPI
     WORD plane, row;
     UWORD *addr, *src, *dst;
-    const WORD inc = v_planes;      /* # words to next word in same plane */
-    const WORD dst_inc = v_lin_wr >> 1; /* # words in a scan line */
+    const WORD inc = linea_vars.v_planes;      /* # words to next word in same plane */
+    const WORD dst_inc = linea_vars.v_lin_wr >> 1; /* # words in a scan line */
 
     if (!(mcs->stat & MCS_VALID))   /* does save area contain valid data ? */
         return;
@@ -1082,7 +1061,7 @@ static void cur_replace (MCS *mcs)
      */
     if (mcs->stat & MCS_LONGS) {
         /* plane controller, draw cursor in each graphic plane */
-        for (plane = v_planes - 1; plane >= 0; plane--) {
+        for (plane = linea_vars.v_planes - 1; plane >= 0; plane--) {
             dst = addr++;           /* current destination address */
             /* loop through rows */
             for (row = mcs->len - 1; row >= 0; row--) {
@@ -1099,7 +1078,7 @@ static void cur_replace (MCS *mcs)
      */
 
     /* plane controller, draw cursor in each graphic plane */
-    for (plane = v_planes - 1; plane >= 0; plane--) {
+    for (plane = linea_vars.v_planes - 1; plane >= 0; plane--) {
         dst = addr++;               /* current destination address */
         /* loop through rows */
         for (row = mcs->len - 1; row >= 0; row--) {

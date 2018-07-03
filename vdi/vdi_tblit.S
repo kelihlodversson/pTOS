@@ -13,6 +13,7 @@
 
 #include "asmdefs.h"
 #include "vdi_asm.h"
+#include "lineaasm_m68k.h"
 
 
 
@@ -125,13 +126,7 @@
 //  Global variables referenced.                       //
 /////////////////////////////////////////////////////////
 
-        .extern _SOURCEX,_SOURCEY
-        .extern _LITEMASK,_SKEWMASK
-        .extern _SCALDIR
-        .extern _XDDA
-        .extern _DDAINC
-        .extern _SCRPT2
-        .extern _SCRTCHP
+        .extern _linea_vars
 
 
 /////////////////////////////////////////////////////////
@@ -664,7 +659,7 @@ plane_loop:
 //
 //  Light special effect..
 //
-        move.w  _LITEMASK,lite_msk(a6)   // reload the mask for this char
+        move.w  LA(LITEMASK),lite_msk(a6)   // reload the mask for this char
         move.l  a5,litejmp(a6)          // endpoint of light routine
         lea.l   liteop,a5               // insert this in the loop
 
@@ -697,7 +692,7 @@ no_thick:
 //
 //  Skew special effect..
 //
-        move.w  _SKEWMASK,skew_msk(a6)  // reload mask for this char
+        move.w  LA(SKEWMASK),skew_msk(a6)  // reload mask for this char
         move.l  a5,skewjmp(a6)
         lea.l   skewop,a5
 
@@ -1588,7 +1583,7 @@ wnxt_wrd:
 //      rotation in 90 degree increments        //
 /////////////////////////
 rotation:
-        move.w  _SOURCEX,d1
+        move.w  LA(SOURCEX),d1
         move.w  d1,d2
         andi.w  #0x0F,d2
         move.w  d2,tsdad(a6)            //save source dot address
@@ -1599,7 +1594,7 @@ rotation:
         adda.w  d1,a0                   //a0 -> source
 
         move.w  DELX(a6),width(a6)
-        move.w  _SOURCEY,d0             //ax=d0
+        move.w  LA(SOURCEY),d0             //ax=d0
         move.w  DELY(a6),d1             //bx=d1
         move.w  d1,height(a6)
         move.w  s_next(a6),d2           //cx=d2
@@ -1619,7 +1614,7 @@ top_src:
         add.w   d0,d0
         addq.w  #2,d0                   //form width is height / 8 + 1
         move.w  d0,d_next(a6)
-        movea.l _SCRTCHP,a1
+        movea.l LA(SCRTCHP),a1
         adda.w  buffb(a6),a1
 
         tst.w   chup_flag(a6)           //determine if 90 or 270 rotation
@@ -1694,12 +1689,12 @@ rot_nneg:
         move.w  d0,s_next(a6)
         move.w  buffb(a6),d0
 repexit:
-        clr.w   _SOURCEX
+        clr.w   LA(SOURCEX)
 repexit3:
-        movea.l _SCRTCHP,a2
+        movea.l LA(SCRTCHP),a2
         adda.w  d0,a2
         move.l  a2,sform(a6)
-        clr.w   _SOURCEY
+        clr.w   LA(SOURCEY)
         rts
 
 upsd_dwn:
@@ -1716,7 +1711,7 @@ upsd_dwn:
         subq.w  #1,d2                   //for dbra, my sweetie
         mulu    d1,d0                   //d0 pts to bottom of new form
         add.w   buffb(a6),d0
-        movea.l _SCRTCHP,a1
+        movea.l LA(SCRTCHP),a1
         adda.w  d0,a1                   //a1 -> last word in form
         jra     strtflip
 upsd_lp:
@@ -1739,15 +1734,15 @@ strtflip:
         dbra    d1,upsd_lp
 
         move.w  d_next(a6),s_next(a6)
-        movea.l _SCRTCHP,a1
+        movea.l LA(SCRTCHP),a1
         adda.w  buffb(a6),a1
         move.l  a1,sform(a6)
-        move.w  _SOURCEX,d0
+        move.w  LA(SOURCEX),d0
         add.w   DELX(a6),d0
         neg.w   d0
         andi.w  #0xF,d0                 //location of last bit in original
-        move.w  d0,_SOURCEX
-        clr.w   _SOURCEY
+        move.w  d0,LA(SOURCEX)
+        clr.w   LA(SOURCEY)
         rts
 
 /////////////////////////
@@ -1756,14 +1751,14 @@ strtflip:
 //                                              //
 /////////////////////////
 replicat:
-        move.w  _SOURCEX,d0
+        move.w  LA(SOURCEX),d0
         move.w  d0,d4                   //d4=si
         andi.w  #0x0F,d0
         move.w  d0,tsdad(a6)            //save source dot address
         lsr.w   #4,d4                   //make byte address
         add.w   d4,d4
 
-        move.w  _SOURCEY,d0
+        move.w  LA(SOURCEY),d0
         mulu    s_next(a6),d0           //get mem addr of start corner
         movea.l sform(a6),a0
         adda.w  d4,a0
@@ -1779,8 +1774,8 @@ replicat:
 
         move.w  d2,height(a6)           //# of rows to duplicate
         move.w  d1,width(a6)
-        move.l  _SCRTCHP,a1
-        adda.w  _SCRPT2,a1              //dest ptr
+        move.l  LA(SCRTCHP),a1
+        adda.w  LA(SCRPT2),a1           //dest ptr
 
         btst    #OUTLINE,STYLE+1(a6)    //outline after double?
         jeq     noline                  //br if not
@@ -1825,13 +1820,13 @@ noline1:
 //      move.l  a1,a3                   //not used with arbitrarily scaled text
 //
 //--6 mar --V
-        move.w  _SCALDIR,d7
+        move.w  LA(SCALDIR),d7
         roxr.l  #1,d7
         moveq.l #0,d7
         roxr.l  #1,d7
 
         move.w  s_next(a6),d7
-        move.w  _DDAINC,d2
+        move.w  LA(DDAINC),d2
         move.w  height(a6),d5
         subq.w  #1,d5
         move.w  #32767,d6
@@ -1856,8 +1851,8 @@ y_no_rep:
 y_rep_don:
         move.w  DELX(a6),d2
         subq.w  #1,d2                   //adjust for dbra
-        move.w  _XDDA,d1
-        move.w  _DDAINC,d0
+        move.w  LA(XDDA),d1
+        move.w  LA(DDAINC),d0
         moveq.l #0,d3
 repwidcl:
         add.w   d0,d1
@@ -1869,7 +1864,7 @@ nrepdoub:
         addq.w  #1,d3
 nrpndoub:
         dbra    d2,repwidcl
-        move.w  d1,_XDDA
+        move.w  d1,LA(XDDA)
         move.w  d3,DELX(a6)
         move.w  tmp_dely(a6),DELY(a6)
 //--6 mar --^
@@ -1886,17 +1881,17 @@ nrpndoub:
 repexit1:
         btst    #OUTLINE,STYLE+1(a6)
         jeq     repexit2
-        move.l  _SCRTCHP,a0
-        adda.w  _SCRPT2,a0
+        move.l  LA(SCRTCHP),a0
+        adda.w  LA(SCRPT2),a0
         move.w  d1,d7
         lea     2(a0,d7.w),a1
         jbsr    outlin1
-        move.w  _SCRPT2,d0
+        move.w  LA(SCRPT2),d0
         add.w   d_next(a6),d0
-        move.w  #15,_SOURCEX
+        move.w  #15,LA(SOURCEX)
         jra     repexit3
 repexit2:
-        move.w  _SCRPT2,d0
+        move.w  LA(SCRPT2),d0
         jra     repexit
 //
 /////////////////////////////
@@ -1938,7 +1933,7 @@ yloop:
         move.w  width(a6),d5
         subq.w  #1,d5                           //adjust for dbra
 
-        move.w  _XDDA,d7
+        move.w  LA(XDDA),d7
         jra     nextsrc
 innerlp:
         ror.w   #1,d3
