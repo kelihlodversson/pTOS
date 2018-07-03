@@ -18,14 +18,14 @@
 #ifdef __arm__
 static __inline__ long Super(void* ptr)
 {
-    register long _r0 __asm__("r0") = (long)ptr;
-    register long _op __asm__("r7") = 0x20;
+    register long _r0 __asm__("r0") = 0x20;
+    register long _r1 __asm__("r1") = (long)ptr;
     __asm__ volatile
     (
         "svc 1"
         : "=r"(_r0)
-        : "r"(_op), "r"(_r0)
-        : "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
+        : "r"(_r0), "r"(_r1)
+        : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
 }

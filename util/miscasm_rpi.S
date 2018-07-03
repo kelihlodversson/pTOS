@@ -17,27 +17,24 @@
 
 /*
  * trap1 - trap 1 (GEMDOS) entry point. Reentrant as opposed to the m68k version
+ * Can only handle max 3 arguments (4 incl the GEMDOS opcode.)
  */
         .text
 _trap1:
-        push {r7, lr}
-        // The system call op code is in r0, so we shift down the arguments by
-        // one and move r0 to r7 - the system call number register
-        mov r7, r0
-        mov r0, r1
-        mov r1, r2
-        mov r2, r3
+        push {lr}
+        // Arguments are already in the correct registers
         svc 1
-        pop {r7, pc}
+        pop {pc}
 
 /*
- *  GEMDOS Pexec() call. This version is reentrant as well
+ *  GEMDOS Pexec() call. This version is reentrant as well, but can handle that extra argument required.
  *  long trap1_pexec(short mode, const char * path, const void * tail, const char * env);
  */
         .text
 _trap1_pexec:
-        // we assume r0-r3 already contain the correct arguments
-        push {r7 ,lr}
-        mov r7, #0x4b // Pexec op code in r7
+        // we need to shift r0-r3 up by one to make room for the Pexec op code in r0
+        push {r0-r4 ,lr}
+        pop {r1-r4}
+        mov r0, #0x4b // Pexec op code in r0
         svc 1
-        pop {r7, pc}
+        pop {r4, pc}

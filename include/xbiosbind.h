@@ -73,12 +73,12 @@
 static __inline__ void xbios_v_v(int op)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
+    register long _r0 __asm__("r0")=(long)(op);
     __asm__ volatile (
         "svc 14"
         :
-        : "r"(_r7)
-        : "r0", "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
+        : "r"(_r0)
+        : "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
     );
 #else
     __asm__ volatile (
@@ -95,13 +95,13 @@ static __inline__ void xbios_v_v(int op)
 static __inline__ void xbios_v_w(int op, short a)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0")=(long)(a);
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
     __asm__ volatile (
         "svc 14"
         :
-        : "r"(_r7), "r"(_r0)
-        : "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
+        : "r"(_r0), "r"(_r1)
+        : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
 #else
     __asm__ volatile (
@@ -119,14 +119,14 @@ static __inline__ void xbios_v_w(int op, short a)
 static __inline__ void xbios_v_wl(int op, short a, long b)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0")=(long)(a);
-    register long _r1 __asm__("r1")=(long)(b);
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
+    register long _r2 __asm__("r2")=(long)(b);
     __asm__ volatile (
         "svc 14"
         :
-        : "r"(_r7), "r"(_r0), "r"(_r1)
-        : "r2", "r3", "r12", "lr",  "memory", "cc"
+        : "r"(_r0), "r"(_r1), "r"(_r2)
+        : "r3", "r12", "lr",  "memory", "cc"
     );
 #else
     __asm__ volatile (
@@ -145,15 +145,15 @@ static __inline__ void xbios_v_wl(int op, short a, long b)
 static __inline__ void xbios_v_wll(int op, short a, long b, long c)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0")=(long)(a);
-    register long _r1 __asm__("r1")=(long)(b);
-    register long _r2 __asm__("r2")=(long)(c);
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
+    register long _r2 __asm__("r2")=(long)(b);
+    register long _r3 __asm__("r3")=(long)(c);
     __asm__ volatile (
         "svc 14"
         :
-        : "r"(_r7), "r"(_r0), "r"(_r1), "r"(_r2)
-        : "r3", "r12", "lr",  "memory", "cc"
+        : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3)
+        : "r12", "lr",  "memory", "cc"
     );
 #else
     __asm__ volatile (
@@ -174,15 +174,15 @@ static __inline__ void
 xbios_v_wwl(int op, short a, short b, long c)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0")=(long)(a);
-    register long _r1 __asm__("r1")=(long)(b);
-    register long _r2 __asm__("r2")=(long)(c);
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
+    register long _r2 __asm__("r2")=(long)(b);
+    register long _r3 __asm__("r3")=(long)(c);
     __asm__ volatile (
         "svc 14"
         :
-        : "r"(_r7), "r"(_r0), "r"(_r1), "r"(_r2)
-        : "r3", "r12", "lr",  "memory", "cc"
+        : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3)
+        : "r12", "lr",  "memory", "cc"
     );
 #else
     __asm__ volatile (
@@ -203,15 +203,15 @@ static __inline__ void
 xbios_v_wwwl(int op, short a, short b, short c, long d)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0")=(long)(a);
-    register long _r1 __asm__("r1")=(long)(b);
-    register long _r2 __asm__("r2")=(long)(c);
-    register long _r3 __asm__("r3")=(long)(d);
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
+    register long _r2 __asm__("r2")=(long)(b);
+    register long _r3 __asm__("r3")=(long)(c);
+    register long _r4 __asm__("r4")=(long)(d);
     __asm__ volatile (
         "svc 14"
         :
-        : "r"(_r7), "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3)
+        : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3), "r"(_r4)
         : "r12", "lr",  "memory", "cc"
     );
 #else
@@ -234,17 +234,17 @@ static __inline__ void
 xbios_v_wwwwww(int op, short a, short b, short c, short d, short e, short f)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0")=(long)(a);
-    register long _r1 __asm__("r1")=(long)(b);
-    register long _r2 __asm__("r2")=(long)(c);
-    register long _r3 __asm__("r3")=(long)(d);
-    register long _r4 __asm__("r4")=(long)(e);
-    register long _r5 __asm__("r5")=(long)(f);
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
+    register long _r2 __asm__("r2")=(long)(b);
+    register long _r3 __asm__("r3")=(long)(c);
+    register long _r4 __asm__("r4")=(long)(d);
+    register long _r5 __asm__("r5")=(long)(e);
+    register long _r6 __asm__("r6")=(long)(f);
     __asm__ volatile (
         "svc 14"
         :
-        : "r"(_r7), "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3), "r"(_r4), "r"(_r5)
+        : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3), "r"(_r4), "r"(_r5), "r"(_r6)
         : "r12", "lr",  "memory", "cc"
     );
 #else
@@ -268,13 +268,13 @@ xbios_v_wwwwww(int op, short a, short b, short c, short d, short e, short f)
 static __inline__ void xbios_v_l(int op, long a)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0")=(long)(a);
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
     __asm__ volatile (
         "svc 14"
         :
-        : "r"(_r7), "r"(_r0)
-        : "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
+        : "r"(_r0), "r"(_r1)
+        : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
 #else
     __asm__ volatile (
@@ -292,15 +292,15 @@ static __inline__ void xbios_v_l(int op, long a)
 static __inline__ void xbios_v_llw(int op, long a, long b, short c)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0")=(long)(a);
-    register long _r1 __asm__("r1")=(long)(b);
-    register long _r2 __asm__("r2")=(long)(c);
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
+    register long _r2 __asm__("r2")=(long)(b);
+    register long _r3 __asm__("r3")=(long)(c);
     __asm__ volatile (
         "svc 14"
         :
-        : "r"(_r7), "r"(_r0), "r"(_r1), "r"(_r2)
-        : "r3", "r12", "lr",  "memory", "cc"
+        : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3)
+        : "r12", "lr",  "memory", "cc"
     );
 #else
     __asm__ volatile (
@@ -321,15 +321,15 @@ static __inline__ void
 xbios_v_llww(int op, long a, long b, short c, short d)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0")=(long)(a);
-    register long _r1 __asm__("r1")=(long)(b);
-    register long _r2 __asm__("r2")=(long)(c);
-    register long _r3 __asm__("r3")=(long)(d);
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
+    register long _r2 __asm__("r2")=(long)(b);
+    register long _r3 __asm__("r3")=(long)(c);
+    register long _r4 __asm__("r4")=(long)(d);
     __asm__ volatile (
         "svc 14"
         :
-        : "r"(_r7), "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3)
+        : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3), "r"(_r4)
         : "r12", "lr",  "memory", "cc"
     );
 #else
@@ -351,12 +351,11 @@ xbios_v_llww(int op, long a, long b, short c, short d)
 static __inline__ short xbios_w_v(int op)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0");
+    register long _r0 __asm__("r0")=(long)(op);
     __asm__ volatile (
         "svc 14"
         : "=r"(_r0)
-        : "r"(_r7)
+        : "r"(_r0)
         : "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
@@ -378,13 +377,13 @@ static __inline__ short xbios_w_v(int op)
 static __inline__ short xbios_w_w(int op, short a)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0")=(long)(a);
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
     __asm__ volatile (
         "svc 14"
         : "=r"(_r0)
-        : "r"(_r7), "r"(_r0)
-        : "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
+        : "r"(_r0), "r"(_r1)
+        : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
 #else
@@ -406,14 +405,14 @@ static __inline__ short xbios_w_w(int op, short a)
 static __inline__ short xbios_w_ww(int op, short a, short b)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0")=(long)(a);
-    register long _r1 __asm__("r1")=(long)(b);
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
+    register long _r2 __asm__("r2")=(long)(b);
     __asm__ volatile (
         "svc 14"
         : "=r"(_r0)
-        : "r"(_r7), "r"(_r0), "r"(_r1)
-        : "r2", "r3", "r12", "lr",  "memory", "cc"
+        : "r"(_r0), "r"(_r1), "r"(_r2)
+        : "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
 #else
@@ -437,18 +436,18 @@ static __inline__ short xbios_w_llwwwww(int op,
     long a, long b, short c, short d, short e, short f, short g)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0")=(long)(a);
-    register long _r1 __asm__("r1")=(long)(b);
-    register long _r2 __asm__("r2")=(long)(c);
-    register long _r3 __asm__("r3")=(long)(d);
-    register long _r4 __asm__("r4")=(long)(e);
-    register long _r5 __asm__("r5")=(long)(f);
-    register long _r6 __asm__("r6")=(long)(g);
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
+    register long _r2 __asm__("r2")=(long)(b);
+    register long _r3 __asm__("r3")=(long)(c);
+    register long _r4 __asm__("r4")=(long)(d);
+    register long _r5 __asm__("r5")=(long)(e);
+    register long _r6 __asm__("r6")=(long)(f);
+    register long _r7 __asm__("r7")=(long)(g);
     __asm__ volatile (
         "svc 14"
         : "=r"(_r0)
-        : "r"(_r7), "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3), "r"(_r4), "r"(_r5), "r"(_r6)
+        : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3), "r"(_r4), "r"(_r5), "r"(_r6), "r"(_r7)
         : "r12", "lr",  "memory", "cc"
     );
     return _r0;
@@ -479,20 +478,20 @@ static __inline__ short xbios_w_llwwwwwlw(int op,
     long a, long b, short c, short d, short e, short f, short g, long h, short i)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0")=(long)(a);
-    register long _r1 __asm__("r1")=(long)(b);
-    register long _r2 __asm__("r2")=(long)(c);
-    register long _r3 __asm__("r3")=(long)(d);
-    register long _r4 __asm__("r4")=(long)(e);
-    register long _r5 __asm__("r5")=(long)(f);
-    register long _r6 __asm__("r6")=(long)(g);
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
+    register long _r2 __asm__("r2")=(long)(b);
+    register long _r3 __asm__("r3")=(long)(c);
+    register long _r4 __asm__("r4")=(long)(d);
+    register long _r5 __asm__("r5")=(long)(e);
+    register long _r6 __asm__("r6")=(long)(f);
+    register long _r7 __asm__("r7")=(long)(g);
     register long _r8 __asm__("r8")=(long)(h);
     register long _r9 __asm__("r9")=(long)(i);
     __asm__ volatile (
         "svc 14"
         : "=r"(_r0)
-        : "r"(_r7), "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3), "r"(_r4), "r"(_r5), "r"(_r6), "r"(_r8), "r"(_r9)
+        : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3), "r"(_r4), "r"(_r5), "r"(_r6), "r"(_r7), "r"(_r8), "r"(_r9)
         : "r12", "lr",  "memory", "cc"
     );
     return _r0;
@@ -524,12 +523,11 @@ static __inline__ short xbios_w_llwwwwwlw(int op,
 static __inline__ long xbios_l_v(int op)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0");
+    register long _r0 __asm__("r0")=(long)(op);
     __asm__ volatile (
         "svc 14"
         : "=r"(_r0)
-        : "r"(_r7)
+        : "r"(_r0)
         : "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
@@ -551,13 +549,13 @@ static __inline__ long xbios_l_v(int op)
 static __inline__ long xbios_l_w(int op, short a)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0")=(long)(a);
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
     __asm__ volatile (
         "svc 14"
         : "=r"(_r0)
-        : "r"(_r7), "r"(_r0)
-        : "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
+        : "r"(_r0), "r"(_r1)
+        : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
 #else
@@ -579,15 +577,15 @@ static __inline__ long xbios_l_w(int op, short a)
 static __inline__ long xbios_l_lll(int op, long a, long b, long c)
 {
 #ifdef __arm__
-    register long _r7 __asm__("r7")=(long)(op);
-    register long _r0 __asm__("r0")=(long)(a);
-    register long _r1 __asm__("r1")=(long)(b);
-    register long _r2 __asm__("r2")=(long)(c);
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
+    register long _r2 __asm__("r2")=(long)(b);
+    register long _r3 __asm__("r3")=(long)(c);
     __asm__ volatile (
         "svc 14"
         : "=r"(_r0)
-        : "r"(_r7), "r"(_r0), "r"(_r1), "r"(_r2)
-        : "r3", "r12", "lr",  "memory", "cc"
+        : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3)
+        : "r12", "lr",  "memory", "cc"
     );
     return _r0;
 #else

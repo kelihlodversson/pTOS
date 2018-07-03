@@ -59,20 +59,20 @@ _ui_start:
         str     r2, [ip]
 
         // mshrink to the needed size for TEXT+DATA+BSS plus 256 bytes.
-        ldr     r2, [r11, #PD_p_tlen]
-        ldr     r1, [r11, #PD_p_dlen]
-        add     r2, r2, r1
-        ldr     r1, [r11, #PD_p_blen]
-        add     r2, r2, r1
-        add     r2, r2, #SIZEOF_PD  // Size of base page
-        mov     r1, r11
-        mov     r0, #0
-        mov     r7, #0x4a           // MSrink(0, basepage, size)
+        ldr     r3, [r11, #PD_p_tlen]
+        ldr     r2, [r11, #PD_p_dlen]
+        add     r3, r3, r2
+        ldr     r2, [r11, #PD_p_blen]
+        add     r3, r3, r2
+        add     r3, r3, #SIZEOF_PD  // Size of base page
+        mov     r2, r11
+        mov     r1, #0
+        mov     r0, #0x4a           // MSrink(0, basepage, size)
         svc     1
 
         // old_gem_ssp = super(0)
-        mov     r0, #0
-        mov     r7, #0x20           // Super(0)
+        mov     r1, #0
+        mov     r0, #0x20           // Super(0)
         svc     1                   // Switch to supervisor mode
         ldr     ip, =old_gem_ssp
         str     r0, [ip]
@@ -126,13 +126,13 @@ aes_restart:
         bne     aes_restart
 
         // Super() to go back to user mode
-        ldr     r0, =old_gem_ssp
-        ldr     r0, [r0]
-        mov     r7, #0x20
+        ldr     r1, =old_gem_ssp
+        ldr     r1, [r1]
+        mov     r0, #0x20
         svc     1                   // Super(old_gem_ssp)
 
         // Pterm0()
-        mov     r7, #0
+        mov     r0, #0
         svc     1
 
 
@@ -146,42 +146,38 @@ _accdesk_start:
         ldr     sp, [sp, UDA_SPSUPER]   // use AES process 0 stack
 
 
-        ldr     r2, [r11, #PD_p_tlen]       // calc memory required
-        ldr     r1, [r11, #PD_p_dlen]
-        add     r2, r2, r1
-        ldr     r1, [r11, #PD_p_blen]
-        add     r2, r2, r1
-        add     r2, r2, #0x100
-        mov     r1, r11
-        mov     r0, #0
-        mov     r7, #0x4a           // MSrink(0, basepage, size)
+        ldr     r3, [r11, #PD_p_tlen]       // calc memory required
+        ldr     r2, [r11, #PD_p_dlen]
+        add     r3, r3, r2
+        ldr     r2, [r11, #PD_p_blen]
+        add     r3, r3, r2
+        add     r3, r3, #SIZEOF_PD  // Size of base page
+        mov     r2, r11
+        mov     r1, #0
+        mov     r0, #0x4a           // MSrink(0, basepage, size)
         svc     1
 
         // Switch to supervisor mode
-        mov     r0, #0
-        mov     r7, #0x20           // Super(0)
+        mov     r1, #0
+        mov     r0, #0x20           // Super(0)
         svc     1
 
         bl      _run_accs_and_desktop
 
         // Pterm0()
-        mov     r7, #0
-        svc    1
+        mov     r0, #0
+        svc     1
 
 
 //////////////////////////////////////////////////////////////////////////////
 // Execute a GEMDOS call (see gemdos.c). // TODO: inline this
 //////////////////////////////////////////////////////////////////////////////
 _gemdos:
-        push    {r1-r3,r7,lr}
-        mov     r7, r0
-        mov     r0, r1
-        mov     r1, r2
-        mov     r2, r3
-        ldr     r3, [sp, #+5*4]
+        push    {r4, lr}
+        ldr     r4, [sp, #+2*4]
 
         svc     1
-        pop     {r1-r3,r7,pc}
+        pop     {r4, pc}
 
 
 //////////////////////////////////////////////////////////////////////////////
@@ -223,32 +219,35 @@ _dos_exec:
         // the stack switch, you must add the equivalent room here.
 
 
-        push   {r0-r3, r4-r5, r7, lr}
+        // note, r5 and r6 are pushed to reserve space for
+        // UDA_SPSUPER and the result from Pexec on the stack.
+        // Only r4, r7 and the return adress is actually preserved.
+        push   {r0-r4, r5-r6, r7, lr}
         bl     _disable_interrupts
 
         ldr     r7, =_rlr
         ldr     r7, [r7]
         ldr     r7, [r7, PD_UDA]
         ldr     ip, [r7, UDA_SPSUPER]
-        str     ip, [sp, #+4*4]         // Save rlr->p_uda->u_spsuper where we saved r4 earlier
+        str     ip, [sp, #+4*5]         // Save rlr->p_uda->u_spsuper where we saved r5 earlier
 
         sub     ip, sp, #0x50           // Adjust the stack (see above)
         str     ip, [r7, UDA_SPSUPER]
 
         bl      _enable_interrupts
 
-        // refetch parameter registers
-        pop     {r0-r3}
-        mov     r7,  #0x4B
+        // refetch parameter registers (shifted up by one)
+        pop     {r1-r4}
+        mov     r0,  #0x4B
         svc     1                      // ... and execute the Pexec call!
-
-        str     r0, [sp, #+4*2]        // save the result from being stomped on
+        ldr     r4, [sp], #4
+        str     r0, [sp,  #4]          // save the result from being stomped on
         bl      _disable_interrupts
 
         ldr     r7, =_rlr
         ldr     r7, [r7]
         ldr     r7, [r7, PD_UDA]
-        ldr     ip, [sp, #+4]!         // read back the old value for UDA_SPSUPER now at the top of the stack
+        ldr     ip, [sp], #4           // read back the old value for UDA_SPSUPER now at the top of the stack
         str     ip, [r7, UDA_SPSUPER]  // Restore rlr->p_uda->u_spsuper
 
         bl      _enable_interrupts

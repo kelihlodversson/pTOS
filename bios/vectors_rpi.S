@@ -176,15 +176,20 @@ _default_etv_critic:
 // ==== Trap 13 - BIOS entry point ==========================================
 
 _biostrap:
-        // funcion number is in r7 and arguments in r0-rN
+        // funcion number is in r0 and arguments in r1-rN
         // For normal eabi C functions, only ther first 4 args are in registers,
-        // so we push r45-r6,r8-11 to the stack.
+        // so we push r4-r11 to the stack.
 
         // save caller return address and SPSR on stack
         srsfd sp!, #0x13
 
-        push    {r7}
-        push    {r4-r6,r8-r11}
+        push {r4}
+        push {r5-r11}
+        mov r11, r0
+        mov r0, r1
+        mov r1, r2
+        mov r2, r3
+        mov r3, r4
 
         ldr     r5, =_bios_ent
         ldrh    r5, [r5]        // r5 is now number of entries in the table
@@ -194,15 +199,20 @@ _biostrap:
 // ==== Trap 14 - XBIOS entry point =========================================
 
 _xbiostrap:
-        // funcion number is in r7 and arguments in r0-rN
+        // funcion number is in r0 and arguments in r1-rN
         // For normal eabi C functions, only ther first 4 args are in registers,
-        // so we push r4-r6,r8-11 to the stack.
+        // so we push the remaining ones to the stack
 
         // save caller return address and SPSR on stack
         srsfd sp!, #0x13
 
-        push    {r7}
-        push    {r4-r6,r8-r11}
+        push {r4}
+        push {r5-r11}
+        mov r11, r0
+        mov r0, r1
+        mov r1, r2
+        mov r2, r3
+        mov r3, r4
 
         ldr     r5, =_xbios_ent
         ldrh    r5, [r5]         // r5 is now number of entries in the table
@@ -215,16 +225,16 @@ _xbiostrap:
         // Another difference is that arguments are in registers, so we don't
         // need to fiddle with the stack pointer for that.
 
-        cmp     r7,r5           // Higher than highest number?
+        cmp     r11,r5           // Higher than highest number?
         movhi   r0,#0           // Return 0 when out of range
         bhi     2f
 
-        ldr     ip, [r4, +r7, LSL #2]   // get the procedure's address
+        ldr     ip, [r4, +r11, LSL #2]   // get the procedure's address
         blx     ip            //
 
 2:
-        pop   {r4-r6,r8-r11}       // restore stacked argument registers
-        pop   {r7}                 // restore r7
+        pop   {r5-r11}       // restore stacked argument registers
+        pop   {r4}           // restore r4
         // return to caller with saved state on stack
         rfefd   sp!
 
@@ -232,11 +242,11 @@ _xbiostrap:
 /*
  * (X)BIOS unimplemented function handler.
  * These functions are called indirectly, ONLY from biosxbios.
- * The requested BIOS/XBIOS function number is in r7 upon entry, so we move that to r0.
+ * The requested BIOS/XBIOS function number is in r11 upon entry, so we move that to r0.
  */
 
 _xbios_unimpl:
-        mov     r0, r7
+        mov     r0, r11
         b       _xbios_do_unimpl // Chain into C funcion
 
 /*

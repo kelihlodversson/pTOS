@@ -24,29 +24,28 @@
         .text
 
 _deskstart:
-        // our basepage address is in r0. Copy it to r11 so it won't get clobbered by other calls below
-        mov     r11, r0
+        // our basepage address is in r0.
 
         // set our temporary user stack
         ldr     sp, =deskustack
 
         // mshrink to the needed size for TEXT+DATA+BSS plus 256 bytes.
-        ldr     r2, [r11, #PD_p_tlen]
-        ldr     r1, [r11, #PD_p_dlen]
-        add     r2, r2, r1
-        ldr     r1, [r11, #PD_p_blen]
-        add     r2, r2, r1
-        add     r2, r2, #SIZEOF_PD
-        mov     r1, r11
-        mov     r0, #0
-        mov     r7, #0x4a           // MSrink(0, basepage, newsize)
+        ldr     r3, [r0, #PD_p_tlen]
+        ldr     r2, [r0, #PD_p_dlen]
+        add     r3, r3, r2
+        ldr     r2, [r0, #PD_p_blen]
+        add     r3, r3, r2
+        add     r3, r3, #SIZEOF_PD
+        mov     r2, r0
+        mov     r1, #0
+        mov     r0, #0x4a           // MSrink(0, basepage, newsize)
         svc     1
 
 
         bl      _deskmain               // Run the desktop
 
-        mov     r7, #0                  // Pterm
-        svc     #1
+        mov     r0, #0                  // Pterm
+        svc     1
 
 .bss
 

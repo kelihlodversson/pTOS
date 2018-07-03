@@ -58,7 +58,7 @@ _old_trap2:
 
 _enter:
 
-        teq     r7, #0x20       // toggle/inquire state?
+        teq     r0, #0x20       // toggle/inquire state?
         beq     x20
 
 1:      // Not Super()
@@ -88,8 +88,7 @@ _enter:
         srsfd   sp!, #0x13       // save LR and SPSR
 
 3:
-        stmfd   sp!, {r0-r6, r8} // Arguments (and other stack pointer) to current stack
-        stmfd   sp!, {r7}        // make r7 the lowest address
+        stmfd   sp!, {r0-r8}     // Arguments (and other stack pointer) to current stack
         mov     r0, sp           // Argument 0 points to the stacked arguments
         str     sp, [ip, #4*5]   // save updated stack pointer to basepage struct
         cps     #0x13            // if we were using the user stack pointer, return to svc mode
@@ -108,8 +107,7 @@ _gouser:
         add     ip, ip, #P_REGSAVE
         str     r0, [ip]        // save result register
 ggusr:  ldr     r8, [ip, #4*5]  // saved stack pointer (maybe usp, maybe ssp)
-        ldmfd   r8!, {r7}
-        ldmfd   r8!, {r0-r6, r9} // argument registers, other stack pointer in r9
+        ldmfd   r8!, {r0-r7, r9} // argument registers, other stack pointer in r9
 
         ldr     r10, [r8, #4]    // peek at stacked SPSR register
         and     r10, r10, #0x1f
@@ -163,17 +161,17 @@ x20:
         bne     x20_sup
 x20_usr:                        // user mode x20
 
-        teq     r0, #1          // check for +1L entry
+        teq     r1, #1          // check for +1L entry
         moveq   r0, #0          // If so return 0
         moveqs  pc, lr
 
-        teq     r0, #0          // arg1 == 0?
+        teq     r1, #0          // arg1 == 0?
         bne     1f
 
 #if 1
         // Reuse user sp as the new ssp
         cps     #0x1f
-        mov     r0, sp
+        mov     r1, sp
         cps     #0x13
 #else
         mrs     ip, spsr        // modify spsr so we are in SYSTEM mode when we return
@@ -182,16 +180,14 @@ x20_usr:                        // user mode x20
         mvn     r0, #0xff       // return 0xffffff00 as a dummy save SSP (we will ignore it when returning from SYSTEM mode)
         movs    pc, lr          // return to caller in SYSTEM mode
 #endif
-
 1:
         mrs     ip, spsr        // modify spsr so we are in SVC mode when we return
         orr     ip, ip, #0x3
         msr     spsr_c, ip
 
         // swap new and old ssp
-        mov     ip, r0
         mov     r0, sp
-        mov     sp, ip
+        mov     sp, r1
         movs    pc, lr          // This will return to the caller and restore cpsr from our modified spsr
 
 
@@ -199,7 +195,7 @@ x20_usr:                        // user mode x20
 // Used when the caller passed 0 as the new stack pointer, indicating he wanted to use the user stack while in supervior mode.
 // (Since the arm has the special SYSTEM mode that shares the stack pointer with user mode, returning from it is trivial.)
 x20_system:
-        teq     r0, #1          // check for +1L entry
+        teq     r1, #1          // check for +1L entry
         mvneq   r0, #0          // return -1 if inquiry
         moveqs  pc, lr
 
@@ -210,15 +206,15 @@ x20_system:
 // supervisor mode gemdos(20) entry point
 // Used when the caller provided an explicit SSP to be used.
 x20_sup:
-        teq     r0, #1          // check for +1L entry
+        teq     r1, #1          // check for +1L entry
         mvneq   r0, #0          // return -1 if inquiry
         moveqs  pc, lr
 
-        teq     r0, #0
+        teq     r1, #0
         beq     2f              // go handle 0L entry
 
-        //      r0 is the new SSP
-        mov     sp, r0          // update SSP
+        //      r1 is the new SSP
+        mov     sp, r1          // update SSP
 1:
         mrs     ip, spsr        // modify spsr so we are in USER mode when we return
         bic     ip, ip, #0xF
@@ -227,9 +223,9 @@ x20_sup:
 
 2:
         // This is potentially bad: caller wants to exit super mode without passing a backed up SSP??!
-        mov     r0, sp
-        add     r0, #6          // TODO: does this even make sense?!
+        mov     r1, sp
+        add     r1, #8          // TODO: does this even make sense?!
         cps     #0x1f           // update USP
-        mov     sp, r0
+        mov     sp, r1
         cps     #0x13
         b       1b
