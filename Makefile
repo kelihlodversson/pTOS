@@ -220,7 +220,7 @@ bios_src += lowstram.c
 
 # Other BIOS sources can be put in any order
 ifdef RPI
-bios_src +=  memory_rpi.S processor_rpi.S vectors_rpi.S aciaemu_rpi.c bios.c xbios.c acsi.c \
+bios_src +=  memory_rpi.S processor_rpi.S vectors_rpi.S vectors_arm.c aciaemu_rpi.c bios.c xbios.c acsi.c \
              biosmem.c blkdev.c chardev.c clock.c conout.c cookie.c country.c \
              disk.c dma.c dmasound.c floppy.c font.c ide.c ikbd.c initinfo.c \
              kprint.c lineainit.c lineavars.S machine.c \

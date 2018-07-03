@@ -280,12 +280,17 @@ void doassert(const char *file, long line, const char *func, const char *text)
 static const char *const exc_messages[] = {
     "", /* Reset: Initial SSP */
     "", /* Reset: Initial PC */
+#ifdef __arm__
+    "Prefetch Abort",
+    "Data Abort",
+#else
 #ifdef __mcoldfire__
     "Access Error",
 #else
     "Bus Error",
 #endif
     "Address Error",
+#endif
     "Illegal Instruction",
     "Zero Divide",
     "CHK Instruction",
@@ -328,7 +333,32 @@ void dopanic(const char *fmt, ...)
 
         kcprintf("pc=%08lx\n",
                  (ULONG)s->pc);
-#ifdef __mcoldfire__
+#ifdef __arm__
+    } else {
+        struct {
+            ULONG fsr;
+            ULONG far;
+            ULONG* pc;
+            ULONG spsr;
+        } *s = (void*)proc_stk;
+
+        pc = s->pc;
+        sr = s->spsr;
+
+        if (proc_enum >= 2 && proc_enum < ARRAY_SIZE(exc_messages)) {
+            kcprintf("Panic: %s\n",
+                     exc_messages[proc_enum]);
+        } else {
+            kcprintf("Panic: Exception number %d\n",
+                     (int) proc_enum);
+        }
+
+        kcprintf("fsr=%08lx far=%08lx\n",
+                 s->fsr, s->far);
+        kcprintf("spsr=%08lx pc=%08lx\n",
+                 s->spsr, (ULONG)s->pc);
+    }
+#elif defined(__mcoldfire__)
     } else {
         /* On ColdFire, the exception frame is the same for all exceptions. */
         struct {
@@ -500,7 +530,7 @@ void dopanic(const char *fmt, ...)
                  s->sr, (ULONG)s->pc);
     }
 #endif
-#if DISPLAY_INSTRUCTION_AT_PC
+#if !defined(__arm__) && DISPLAY_INSTRUCTION_AT_PC
     /*
      * we optionally display the instruction pointed to by the PC.
      * this is optional because:
@@ -522,6 +552,18 @@ void dopanic(const char *fmt, ...)
     wrap = v_stat_0 & M_CEOL;       /* remember line wrap status */
     v_stat_0 &= ~M_CEOL;            /*  & disable it             */
 
+#ifdef __arm__
+    kcprintf("\nR0-3:  %s%08lx %08lx %08lx %08lx\n",
+             start, proc_dregs[0], proc_dregs[1], proc_dregs[2], proc_dregs[3]);
+    kcprintf("R4-7:  %s%08lx %08lx %08lx %08lx\n",
+             start, proc_dregs[4], proc_dregs[5], proc_dregs[6], proc_dregs[7]);
+    kcprintf("R8-11: %s%08lx %08lx %08lx %08lx\n",
+             start, proc_aregs[0], proc_aregs[1], proc_aregs[2], proc_aregs[3]);
+    kcprintf("R11-14:%s%08lx %08lx %08lx\n",
+             start, proc_aregs[4], proc_aregs[5], proc_aregs[6]);
+    kcprintf(" USP:  %s%08lx\n\n",
+             start,proc_usp);
+#else
     kcprintf("\nD0-3:%s%08lx %08lx %08lx %08lx\n",
              start, proc_dregs[0], proc_dregs[1], proc_dregs[2], proc_dregs[3]);
     kcprintf("D4-7:%s%08lx %08lx %08lx %08lx\n",
@@ -554,6 +596,7 @@ void dopanic(const char *fmt, ...)
         kcprintf("       %04x %04x %04x %04x\n\n",
                  user_stk[12], user_stk[13], user_stk[14], user_stk[15]);
     }
+#endif
 #endif
 
     if (wrap)

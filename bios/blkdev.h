@@ -115,8 +115,12 @@ WORD get_shift(ULONG blocksize);
 int add_partition(UWORD unit, LONG *devices_available, char id[], ULONG start, ULONG size);
 
 /* critical error handling */
+#ifdef __arm__
+extern LONG (*etv_critic)(WORD error, WORD device);
+#define call_etv_critic  etv_critic
+#else
 LONG call_etv_critic(WORD error,WORD device);   /* in vectors.S */
-
+#endif
 
 /*
  * Modes of block devices

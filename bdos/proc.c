@@ -551,7 +551,7 @@ static void proc_go(PD *p)
     /* the other stack is the supervisor stack */
     sp->other_sp = (long) &supstk[SUPSIZ];
     /* store this new stack in the saved sp field of the PD */
-    p->p_areg[4] = (long) sp;
+    p->p_areg[7-3] = (long) sp;
 #else
     sp->basepage = p;      /* the stack contains the basepage */
 

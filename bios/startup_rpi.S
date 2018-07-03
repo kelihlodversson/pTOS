@@ -189,12 +189,12 @@ _core0:
 	cps	#0x13				/* set supervior mode */
 	ldr	sp, =_stktop
 
-    /* Turn on unaligned memory access */
-    mrc     p15, #0, r4, c1, c0, #0
-    orr     r4, #0x400000   /* 1<22 */
-    mcr     p15, #0, r4, c1, c0, #0
-
+    #if 0
     /* Enable MMU */
+    mrc     p15, 0, r1, c1, c0,  1      // Read AUX Control register
+    orr     r1, #1 << 6     // restrict cache size to 16K on RPI1, SMP_Cace on RPI2+
+    mcr     p15, 0, r1, c1, c0,  1
+
     ldr     r1, =ttbr0              // addr(TTBR0)
 
     ldr     r2, =0x0000040E
@@ -217,17 +217,19 @@ _core0:
 
     mcr     p15, #0, r1, c2, c0, #0 // set TTBR0 (addr of ttbr0)  (ptblwlk inner non cacheable,
                                     // outer non-cacheable, not shareable memory)
-    #if 0
     /* Start L1 Cache */
     mov     r3, #0
     mcr     p15, #0, r3, c7, c7, #0 /* Invalidate data cache and flush prefetch buffer */
     mcr     p15, #0, r3, c8, c7, #0 /* Invalidate TLB */
     mrc     p15, #0, r2, c1, c0, #0 /* Read Control Register Configuration Data */
-    orr     r2, #0x00800000
-    orr     r2, #0x00001000         /* Instruction */
-    orr     r2, #0x00000800         /* Branch Prediction */
-    orr     r2, #0x00000004         /* Data */
-    orr     r2, #0x00000001
+#ifdef TARGET_RPI1
+    orr     r2, #1 << 23         /* EXTENDED_PAGE_TABLE */
+#endif
+    orr     r2, #1 << 12         /* L1_INSTRUCTION_CACHE */
+    orr     r2, #1 << 11         /* BRANCH_PREDICTION */
+    orr     r2, #1 << 2          /* L1_CACHE */
+    bic     r2, #1 << 1          /* Allow unaligned access */
+    orr     r2, #1 << 0          /* MMU enable */
     mcr     p15, #0, r2, c1, c0, #0 /* Write Control Register Configuration Data */
     #endif
 
@@ -262,57 +264,38 @@ set_pgtbl_entry:
 
 	.globl	_start_secondary
 _start_secondary:
-#if CONF_WITH_MULTI_CORE
-	safe_svcmode_maskall r0
-
-	mrc	p15, 0, r0, c0, c0, 5		/* read MPIDR */
-	and	r0, r0, #CORES-1		/* get CPU ID */
-
-	mov	r1, #EXCEPTION_STACK_SIZE	/* calculate exception stack offset for core */
-	mul	r1, r0, r1
-	cps	#0x11				/* set fiq mode */
-	ldr	r2, =MEM_FIQ_STACK
-	add	sp, r1, r2
-	cps	#0x12				/* set irq mode */
-	ldr	r2, =MEM_IRQ_STACK
-	add	sp, r1, r2
-	cps	#0x17				/* set abort mode */
-	ldr	r2, =MEM_ABORT_STACK
-	add	sp, r1, r2
-	cps	#0x1B				/* set "undefined" mode */
-	add	sp, r1, r2
-
-	mov	r1, #KERNEL_STACK_SIZE		/* calculate kernel stack offset for core */
-	mul	r1, r0, r1
-	cps	#0x1F				/* set system mode */
-	ldr	r2, =MEM_KERNEL_STACK
-	add	sp, r1, r2
-	b	sysinit_secondary
-#else
 	dsb
+    cpsid ifa
 1:	wfi
 	b	1b
-#endif
 
 #endif
-
-//.extern _raspi_screen_err
 
     .globl _arm_dispatch_undef
 _arm_dispatch_undef:
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervior stack */
     cps    #0x13           /* switch to supervior mode */
-    ldr    r0, [lr, #-4]   // load offending instruction from code
-    push   {r1-r2}
-    ldr    r1, =#0xfff000f0
-    ldr    r2, =#0xe7f000f0
-    and    r1, r1, r0
-    cmp    r1, r2
-    pop    {r1-r2}
-    moveq  ip, #0x28       // VEC_LINEA - we use e7f...f. as the lineA emulation
-    movne  ip, #0x10       // VEC_ILLEGAL - other illegal instructions will simulate an illegal instruction vector
-    ldr    ip, [ip]        // load handler address the illegal instruction will be passed in as the first argument
-    blx ip                 // jump to it.
+
+    sub    sp, #4*15
+	stmia  sp, {r0-r14}^   /* store user registers r0-r14 (unbanked) */
+
+    // get the offending instruction
+    ldr    r3, [sp, #+4*15]
+    sub    r3, r3, #4
+    ldr    r2, [r3]
+
+    ldr    r0, =#0xfff000f0
+    ldr    r1, =#0xe7f000f0
+    and    r0, r0, r2
+    cmp    r0, r1
+    moveq  r0, #0x28       // VEC_LINEA - we use e7f...f. as the lineA emulation
+    movne  r0, #0x10       // VEC_ILLEGAL - other illegal instructions will simulate an illegal instruction vector
+    mov    r1, sp          // Stack pointer points to the exception frame
+    ldr    ip, [r0]        // load handler address the illegal instruction will be passed in as the first argument
+    blx ip                 // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 instruction, u32 pc)
+
+    add    sp, #4*15
+    ldmfd  sp, {r0-r14}^   /* restore user registers */
     rfefd  sp!             /* load pc and CPSR from stack */
 
     .globl _arm_dispatch_svc
@@ -321,21 +304,25 @@ _arm_dispatch_svc:
     and ip, ip, #0xF       // mask out low nybble of instruction (we emulate trap #0 - #15)
     lsl ip, ip, #0x2       // multiply index by 4
     ldr ip, [ip, #+0x80]   // load handler address at 80 + ip
-    bx ip                  // jump to it. It will use the registers as arguments. (Note: we do not save them here)
+    bx  ip                 // jump to it. It will use the registers as arguments.
 
     .globl _arm_dispatch_prefetch_abort
 _arm_dispatch_prefetch_abort:
-	sub	   lr, lr, #4      /* lr: correct PC of aborted program */
+
+    sub	   lr, lr, #4      /* lr: correct PC of aborted program */
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervior stack */
     cps    #0x13           /* switch to supervior mode */
+
     sub    sp, #4*15
 	stmia  sp, {r0-r14}^   /* store user registers r0-r14 (unbanked) */
+    mrc p15, 0, r2, c5, c0,  1  // FSR in r2
+    mrc p15, 0, r3, c6, c0,  2  // FAR in r3
 
-    mov r0, #1      // Indicates prefetch abort
+
+    mov r0, #0x08   // VEC_BUS_ERROR
     mov r1, sp      // Stack pointer points to the exception frame
-    mov ip, #0x08   // VEC_BUS_ERROR
-    ldr ip, [ip]    // load handler address
-    blx ip          // jump to it. The signature is void (*)(int type, exception_frame_t* frame)
+    ldr ip, [r0]    // load handler address
+    blx ip          // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 fsr, u32 far)
 
     add    sp, #4*15
     ldmfd  sp, {r0-r14}^   /* restore user registers */
@@ -344,23 +331,19 @@ _arm_dispatch_prefetch_abort:
     .globl _arm_dispatch_data_abort
 _arm_dispatch_data_abort:
 	sub	lr, lr, #8         /* lr: correct PC of aborted program */
-//    mov r2, lr
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervior stack */
     cps    #0x13           /* switch to supervior mode */
 
-//    mrc p15, 0, r0, c5, c0,  0  // FSR in r0
-//    mrc p15, 0, r1, c6, c0,  0  // FAR in r1
-//    bl     _raspi_screen_err
-//1:  wfi
-//    b 1b
     sub    sp, #4*15
 	stmia  sp, {r0-r14}^   /* store user registers r0-r14 (unbanked) */
+    mrc p15, 0, r2, c6, c0,  0  // FAR in r2
+    mrc p15, 0, r3, c5, c0,  0  // FSR in r3
 
-    mov r0, #2      // Indicates data abort
+
+    mov r0, #0x0c   // VEC_ADDRESS_ERROR
     mov r1, sp      // Stack pointer points to the exception frame
-    mov ip, #0x08   // VEC_BUS_ERROR
-    ldr ip, [ip]    // load handler address
-    blx ip          // jump to it. The signature is void (*)(int type, exception_frame_t* frame)
+    ldr ip, [r0]    // load handler address
+    blx ip          // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 fsr, u32 far)
 
     add    sp, #4*15
     ldmfd  sp, {r0-r14}^   /* restore user registers */

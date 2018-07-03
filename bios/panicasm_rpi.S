@@ -40,9 +40,11 @@ _panic:
         ldr     ip, =_proc_dregs
         stmia   ip!, {r0-r11} // save registers up to r11
         pop     {r11} // read pushed ip into r11
-        stmia   ip,  {r11,r13,r14} // save old value of ip (now in r11) plus sp and ir
+        stmia   ip!,  {r11,r13,r14} // save old value of ip (now in r11) plus sp and ir
         ldr     ip, =_proc_usp
-        stmia   ip, {sp}^   // dump user stack pointer as well
+        cps     #0x1f
+        str     sp, [ip]   // dump user stack pointer as well
+        cps     #0x13
 
         // tell dopanic() that there are arguments following
         ldr     ip, =_proc_enum
@@ -76,8 +78,8 @@ haltloop:
  * we do a warm reset
  */
 _kill_program:
-        mov     r0,#-1              // error code for program killed by OS
-        mov     r7,#0x4C            // Pterm
+        mov     r1,#-1              // error code for program killed by OS
+        mov     r0,#0x4C            // Pterm
         svc     1
         // drop thru into warm reset
 

@@ -16,10 +16,6 @@
 
 // ==== Definitions ==========================================================
 
-        .globl  _init_arm_vec
-        .globl  _init_exc_vec
-        .globl  _init_user_vec
-
         .globl  _gemtrap        // call VDI/AES
         .globl  _biostrap       // call BIOS from C
         .globl  _xbiostrap      // call XBIOS from C
@@ -37,7 +33,6 @@
         .globl  _keyclick
         .globl  _trap_save_area
 
-        .globl  _call_etv_critic
         .globl  _default_etv_critic
 
 // ==== References ===========================================================
@@ -71,77 +66,6 @@
         .extern _proc_stk
 
         .text
-
-
-
-/* basically initialize the 62 exception vectors. */
-.balign 4
-_init_exc_vec:
-        mov     r2, #0
-        ldr     r1, =_proc_lives
-        str     r2, [r1]
-        ldr     r1,	=any_vec // Default panic handler for unhandled exceptions
-        mov     r2, #8
-        mov     r0, #62
-set_vec:
-        str     r1, [r2], #+4
-        subs    r0, #1
-        bne     set_vec
-        bx      lr
-
-/* initialize the 192 user vectors. */
-
-_init_user_vec:
-        ldr     r1,	=user_vec // Default panic handler for unhandled user vectors
-        mov     r2, #256
-        mov     r0, #192
-set_uvec:
-        str     r1, [r2], #+4
-        subs    r0, #1
-        bne     set_uvec
-        bx      lr
-
-user_vec:
-
-
-// A side effect of that we are using a dispatch routine to calculate the correct
-// vector number, the ip register should contain the (simulated) vector address.
-
-// we copy debug data in the structure at address 0x380, then go in dopanic()
-any_vec:
-        cpsid   if      // Disable interrupts
-        push    {ip}    // Save ip register for later
-        // dump the registers, including user space stack pointer
-        // use the ip register as scratch register
-        ldr     ip,	=_proc_dregs
-        stmia   ip!, {r0-r11}
-        pop     {r0}        // Get the original ip back (although already overritten by the dispatch routine)
-        pop     {r1}        // The original lr is the last register pushed to the stack by the exception dispatcher
-        stmia   ip!, {r0, r1, sp}
-        stmia   ip, {lr}^   // Dump the user space lr register to the last entry in the register list
-        ldr     r1,	=_proc_usp
-        stmia   r1, {sp}^
-
-        // compute and dump the exception number TODO: figure out if this is the best way to do it
-        lsr     r0, #2
-        ldr     r1,	=_proc_enum
-        // dump 8 32 bit words from the stack
-        ldmfd   sp, {r1-r8}
-        ldr     r0,	=_proc_stk
-        stmia   r0, {r1-r8}
-        // magic value
-        ldr     r0,	=_proc_lives
-        ldr     r1, proc_magic
-        str     r1, [r0]
-
-        // restore a sane stack
-        // this stack must be large enough for dopanic();
-        ldr     sp,	=panic_stack
-        b       _dopanic
-proc_magic:
-    .word 0x12345678
-
-
 /*
  * _gemtrap - VDI trap dispatcher
  *
@@ -241,17 +165,6 @@ vbl_end:
 
 // ==== Critical error handler functions =====================================
 
-/*
- * (1) Call the critical error handler from C
- *     As opposed to 68k, since eabi already passess arguments in r0-r4, there
- *     isn't much to do. We use the ip register to load the handler address,
- *     as we are allowed to muck around with that during procedure calls.
- */
-_call_etv_critic:
-        ldr     ip, =_etv_critic
-        ldr     ip, [ip]            // read contents of the field
-        // r0 and r1 already contain the correct values
-        bx      ip                  // Direct branch, will cause the handler to return direct to the caller
 /*
  * (2) The default character-mode critical error handler
  *     Just returns the error code from the arguments
