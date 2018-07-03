@@ -66,7 +66,7 @@ typedef struct {
 } KEYTAB;
 
 #define abs(x) ( (x) < 0 ? -(x) : (x) )
-#define menu_text(tree,inum,ptext) (((tree)+(inum))->ob_spec = (LONG)(ptext))
+#define menu_text(tree,inum,ptext) (((tree)+(inum))->ob_spec.free_string = (ptext))
 
 
 #define ESC     0x1b
@@ -279,7 +279,7 @@ static void men_update(void)
     {
         if (obj->ob_type == G_STRING)
         {
-            if (*(BYTE *)obj->ob_spec == '-')   /* must be a separator */
+            if (*obj->ob_spec.free_string == '-')   /* must be a separator */
                 obj->ob_state |= DISABLED;
             else
                 obj->ob_state &= ~DISABLED;
@@ -855,7 +855,7 @@ static WORD scan_menu(BYTE type, BYTE shortcut, WORD *itemptr)
                 continue;
             if ((obj->ob_type & 0x00ff) != G_STRING)    /* all items are strings */
                 continue;
-            text = (BYTE *)obj->ob_spec;
+            text = obj->ob_spec.free_string;
             p = strchr(text,type);                      /* look for marker */
             if (!p)
                 continue;
@@ -1219,19 +1219,19 @@ void xlate_obj_array(OBJECT *obj_array, int nobj)
          */
         case G_TEXT:
         case G_BOXTEXT:
-            str = & ((TEDINFO *)obj->ob_spec)->te_ptext;
-            *str = (BYTE *)gettext(*str);
+            str = & (obj->ob_spec.tedinfo)->te_ptext;
+            *str = CONST_CAST(BYTE *, gettext(*str));
             break;
 #endif
         case G_FTEXT:
         case G_FBOXTEXT:
-            str = & ((TEDINFO *)obj->ob_spec)->te_ptmplt;
-            *str = (BYTE *)gettext(*str);
+            str = & (obj->ob_spec.tedinfo)->te_ptmplt;
+            *str = CONST_CAST(BYTE *, gettext(*str));
             break;
         case G_STRING:
         case G_BUTTON:
         case G_TITLE:
-            obj->ob_spec = (LONG) gettext( (char *) obj->ob_spec);
+            obj->ob_spec.const_free_string = gettext(obj->ob_spec.free_string);
             break;
         default:
             break;
@@ -1310,7 +1310,7 @@ static void adjust_menu(OBJECT *obj_array)
      */
     for (i = mbar->ob_head, title = OBJ(i), x = 0; i <= mbar->ob_tail; i++, title++, x += n)
     {
-        n = strlen((char *)title->ob_spec);
+        n = strlen(title->ob_spec.free_string);
         title->ob_x = x;
         title->ob_width = n;
     }
@@ -1392,7 +1392,7 @@ static void adjust_menu(OBJECT *obj_array)
         /* find widest object under this menu heading */
         for (k = dropbox->ob_head, item = OBJ(k); k <= dropbox->ob_tail; k++, item++)
         {
-            int l = strlen((char *)item->ob_spec);
+            int l = strlen(item->ob_spec.free_string);
             if (m < l)
                 m = l;
         }
@@ -1401,8 +1401,8 @@ static void adjust_menu(OBJECT *obj_array)
         /* set up separator lines */
         for (k = dropbox->ob_head, item = OBJ(k), m++; k <= dropbox->ob_tail; k++, item++)
         {
-            if (*(BYTE *)(item->ob_spec) == '-')
-                item->ob_spec = (LONG)(separator+MAXLEN_SEPARATOR-m);
+            if (*item->ob_spec.free_string == '-')
+                item->ob_spec.free_string = separator+MAXLEN_SEPARATOR-m;
         }
 
         /* make sure the menu is not too far on the right of the screen */
@@ -1459,9 +1459,9 @@ static void align_objects(OBJECT *obj_array, int nobj)
         case G_BOXTEXT:
         case G_FBOXTEXT:
             if (obj->ob_type == G_STRING)
-                p = (char *)obj->ob_spec;
+                p = obj->ob_spec.free_string;
             else
-                p = ((TEDINFO *)obj->ob_spec)->te_ptmplt;
+                p = obj->ob_spec.tedinfo->te_ptmplt;
             len = strlen(p) * gl_wchar;
             if (obj->ob_flags & CENTRE_ALIGNED)
             {
@@ -1500,7 +1500,7 @@ void centre_title(OBJECT *root)
 
     if ((title->ob_type == G_STRING) && (title->ob_y == gl_hchar))
     {
-        len = strlen((char *)title->ob_spec) * gl_wchar;
+        len = strlen(title->ob_spec.free_string) * gl_wchar;
         if (len > root->ob_width)
             len = root->ob_width;
         title->ob_x = (root->ob_width - len) / 2;
@@ -1522,7 +1522,7 @@ static void desk_xlate_fix(void)
     xlate_obj_array(desk_rs_obj, RS_NOBS);
 
     /* insert the version number */
-    objversion->ob_spec = (LONG) version;
+    objversion->ob_spec.free_string = CONST_CAST(char *, version);
 
     /* slightly adjust the about box for a timestamp build */
     if (version[1] != '.')
@@ -1534,7 +1534,7 @@ static void desk_xlate_fix(void)
     }
 
     /* insert the version number */
-    objyear->ob_spec = (LONG) COPYRIGHT_YEAR;
+    objyear->ob_spec.free_string = CONST_CAST(char *, COPYRIGHT_YEAR);
 
     /* adjust the size and coordinates of menu items */
     adjust_menu(desk_rs_trees[ADMENU]);

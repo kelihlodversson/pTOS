@@ -52,7 +52,7 @@ extern void int_priv(void);
 extern void int_unimpint(void);
 
 #ifdef __arm__
-#define trap_save_area 0 // not used on arm
+#define trap_save_area 0 /* not used on arm */
 #else
 extern WORD trap_save_area[];
 #endif

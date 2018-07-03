@@ -120,7 +120,6 @@ static ULONG raspi_screen_size;
 
 void raspi_screen_init(void)
 {
-    int x,y;
     struct
     {
         prop_tag_2u32_t    set_physical_dim;
@@ -147,8 +146,43 @@ void raspi_screen_init(void)
     raspi_screenbase = (UBYTE*) (init_tags.allocate_buffer.value1 & 0x3fffffff);
     raspi_screen_size = init_tags.allocate_buffer.value2;
     raspi_screen_width_in_bytes = init_tags.get_pitch.value;
-
 }
+
+
+extern char sysvars_start[];
+extern char sysvars_end[];
+
+void raspi_vcmem_init(void)
+{
+    struct
+    {
+        prop_tag_2u32_t    get_arm_memory;
+        prop_tag_2u32_t    get_vc_memory;
+    } init_tags;
+    
+    init_tags.get_arm_memory.tag.tag_id = PROPTAG_GET_ARM_MEMORY;
+    init_tags.get_arm_memory.tag.value_buf_size = 8;
+    init_tags.get_arm_memory.tag.value_length = 8;
+    init_tags.get_vc_memory.tag.tag_id = PROPTAG_GET_VC_MEMORY;
+    init_tags.get_vc_memory.tag.value_buf_size = 8;
+    init_tags.get_vc_memory.tag.value_length = 8;
+
+    raspi_prop_get_tags(&init_tags, sizeof(init_tags));
+
+	/* Clear the sysvars */
+	bzero(sysvars_start, sysvars_end - sysvars_start);
+	
+	/* Store the ST-RAM parameters in the ST-RAM itself */
+	phystop = (UBYTE *)(init_tags.get_arm_memory.value1 + init_tags.get_arm_memory.value2);
+
+   /*
+    * Clear the BSS segment.
+    * Our stack is explicitly set outside the BSS, so this is safe:
+    * bzero() will be able to return.
+    */
+    bzero(_bss, _ebss - _bss);
+}
+
 
 /*
  * Initialise Raspberry PI palette
@@ -166,7 +200,7 @@ void initialise_raspi_palette(WORD mode)
 // Rough debug routines for swapping the background color at various checkpoints
 // plus a more advanced one useful for early exceptions.
 
-void raspi_screen_debug()
+void raspi_screen_debug(void)
 {
     static int counter = 0;
     prop_tag_palette_t palette;
@@ -248,7 +282,7 @@ void raspi_setphys(const UBYTE *addr)
 
 }
 
-const UBYTE *raspi_physbase(void)
+UBYTE *raspi_physbase(void)
 {
     return raspi_screenbase;
 }
@@ -309,10 +343,9 @@ UBYTE * raspi_cell_addr(int x, int y)
 void raspi_blank_out (int topx, int topy, int botx, int boty)
 {
     UWORD color = v_col_bg;             /* bg color value */
-    int width, row, rows;
+    int width, row;
     UBYTE * addr = raspi_cell_addr(topx, topy);   /* running pointer to screen */
     width = botx - topx;
-    rows = (boty - topy) * v_cel_ht;
     topy *= v_cel_ht;
     boty *= v_cel_ht;
     for (row = topy; row < boty; row++)

@@ -39,7 +39,9 @@
 #include "raspi_screen.h"
 #endif
 
+#if !defined(MACHINE_RPI)
 static ULONG initial_vram_size(void);
+#endif
 static void setphys(const UBYTE *addr);
 
 #if CONF_WITH_ATARI_VIDEO
@@ -662,6 +664,7 @@ WORD get_monitor_type(void)
 #endif
 }
 
+#if !defined(MACHINE_RPI)
 /* calculate initial VRAM size based on video hardware */
 static ULONG initial_vram_size(void)
 {
@@ -679,6 +682,7 @@ static ULONG initial_vram_size(void)
     }
 #endif
 }
+#endif
 
 /* Settings for the different video modes */
 struct video_mode {

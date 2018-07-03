@@ -19,14 +19,15 @@
 #include "gemdosif.h"
 #include "gemfmlib.h"
 #include "biosbind.h"
+#include "asm.h"
 
 int criterr_handler(WORD error, WORD drive);
 typedef int (*criterr_handler_t)(WORD, WORD);
 
 
 static ULONG save_cpsr;
-static criterr_handler_t save_etv_critic; // save area for character-mode critical error vector
-WORD enable_ceh;   // flag to enable gui critical error handler
+static criterr_handler_t save_etv_critic; /* save area for character-mode critical error vector */
+WORD enable_ceh;   /* flag to enable gui critical error handler */
 
 /*
  * This table converts an error number to an (internal-only) alert
@@ -37,9 +38,9 @@ WORD enable_ceh;   // flag to enable gui critical error handler
  * gemfmlib.c.
  */
 const WORD err_tbl[17] = {
-        4,1,1,2,1,1,2,2,     // errors -1 to -8
-        4,2,2,2,0,3,4,2,     // errors -9 to -16
-        5                   // error -17 (EOTHER, currently not implemented)
+        4,1,1,2,1,1,2,2,     /* errors -1 to -8 */
+        4,2,2,2,0,3,4,2,     /* errors -9 to -16 */
+        5                   /* error -17 (EOTHER, currently not implemented) */
 };
 
 static inline ULONG read_cpsr(void)
@@ -62,10 +63,11 @@ static inline void write_cpsr(ULONG cpsr)
 }
 
 /* disable interrupts */
-void disable_interrupts(void)
+ULONG disable_interrupts(void)
 {
     save_cpsr = read_cpsr();
     asm volatile ("cpsid if");
+    return save_cpsr;
 }
 
 /* restore interrupt mask as it was before disable_interrupts() */
@@ -81,8 +83,6 @@ void enable_interrupts(void)
  * after a character mode application (which may have stepped on the
  * AES trap and/or the critical error vector)
  */
-
-extern void aestrap(void);
 
 void retake(void)
 {
@@ -108,9 +108,9 @@ void giveerr(void)
  */
 void takeerr(void)
 {
-    enable_ceh = 0;    // initialise flag for criterr_handler
-    save_etv_critic = (criterr_handler_t)Setexc(0x0101, -1); // save current error vector
-    Setexc(0x0101, (long)criterr_handler); // set new vector
+    enable_ceh = 0;    /* initialise flag for criterr_handler */
+    save_etv_critic = (criterr_handler_t)Setexc(0x0101, -1); /* save current error vector */
+    Setexc(0x0101, (long)criterr_handler); /* set new vector */
 }
 
 /*
@@ -143,9 +143,9 @@ int criterr_handler(WORD error, WORD drive)
     }
     int retval;
 
-    save_super = rlr->p_uda->u_spsuper; // Super stack
+    save_super = rlr->p_uda->u_spsuper; /* Super stack */
 
-    // TODO: run main part of error handler on a private stack
+    /* TODO: run main part of error handler on a private stack */
     WORD error_index = ~error;
     if (error_index > 16 || error_index < 0)
         error_index = 0;
@@ -264,7 +264,7 @@ _drawrat:
         move.w  4(sp),d0
         move.w  6(sp),d1
         move.l  _drwaddr,-(sp)
-        rts                     // Jump to vector stored in _drwaddr
+        rts                     /* Jump to vector stored in _drwaddr */
 
 
 _justretf:
@@ -290,7 +290,7 @@ L2234:
         addq.l  #2,sp
         movea.l tstksave,sp
         move.l  _tiksav,-(sp)
-        rts                     // Jump to vector stored in _tiksav
+        rts                     /* Jump to vector stored in _tiksav */
 
 
 
@@ -304,7 +304,7 @@ savesr:
         .ds.w    1
 
 save_etv_critic:
-        .ds.l    1      // save area for character-mode critical error vector
+        .ds.l    1      /* save area for character-mode critical error vector */
 
 savetrap2:
         .ds.l    1
@@ -327,31 +327,31 @@ _NUM_TICK:
 _CMP_TICK:
         .ds.l    1
 _enable_ceh:
-        .ds.w    1      // flag to enable gui critical error handler
+        .ds.w    1      /* flag to enable gui critical error handler */
 
 /*
  *  data areas used by the critical error handler
  */
 save_spsuper:
-        .ds.l    1              // save area for contents of UDA_SPSUPER
+        .ds.l    1              /* save area for contents of UDA_SPSUPER */
 save_spcriterr:
-        .ds.l    1              // save area for stack ptr on entry
+        .ds.l    1              /* save area for stack ptr on entry */
 
 /*
  *  the following private stack used to be 512 words, but that wasn't
  *  enough in all cases after some updates around nov/2016 increased
  *  just_draw()'s stack usage slightly.
  */
-        .ds.w   768             // private stack
+        .ds.w   768             /* private stack */
 criterr_stack:
 
 /*
  * miscellaneous stacks
  */
         .ds.b    0x80
-gstack:                         // gsx stack for mouse
+gstack:                         /* gsx stack for mouse */
 
         .ds.b    0x80
-tstack:                         // tick stack
+tstack:                         /* tick stack */
         .ds.l    1
 #endif

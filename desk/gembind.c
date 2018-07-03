@@ -72,7 +72,7 @@ static LONG             addr_out[AO_SIZE];
 
 static __inline__ WORD gem(const GEMBLK *gb)
 {
-#if __arm__
+#ifdef __arm__
     register WORD retval __asm__("r0");
     register WORD opcode __asm__("r0") = 200; /* AES */
     register const GEMBLK *gbreg __asm__("r1") = gb;

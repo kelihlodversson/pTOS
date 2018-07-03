@@ -59,31 +59,6 @@ static inline void stop_until_interrupt(void)
 #else
 extern void stop_until_interrupt(void);
 #endif
-/*
- * Push/Pop registers from stack, with ColdFire support.
- * This is intended to be used inside inline assembly.
- * Borrowed from MiNTLib:
- * https://github.com/freemint/mintlib/blob/master/include/compiler.h
- */
-#ifdef __mcoldfire__
-
-#define PUSH_SP(regs,size)              \
-    "lea     -" #size "(sp),sp\n\t"     \
-    "movem.l " regs ",(sp)\n\t"
-
-#define POP_SP(regs,size)               \
-    "movem.l (sp)," regs "\n\t"         \
-    "lea     " #size "(sp),sp\n\t"
-
-#elif !defined(__arm__)
-
-#define PUSH_SP(regs,size)              \
-    "movem.l " regs ",-(sp)\n\t"
-
-#define POP_SP(regs,size)               \
-    "movem.l (sp)+," regs "\n\t"
-
-#endif
 
 /*
  * WORD swpw(WORD val);
@@ -104,22 +79,11 @@ extern void stop_until_interrupt(void);
     : "cc"       /* clobbered */          \
     );                                    \
   })
-#elif defined(__m68k__)
-#define swpw(a)                           \
-  __asm__ volatile                        \
-  ("ror   #8,%0"                          \
-  : "=d"(a)          /* outputs */        \
-  : "0"(a)           /* inputs  */        \
-  : "cc"             /* clobbered */      \
-  )
-#elif defined(__arm__)
-#define swpw(a)                           \
-  __asm__ volatile                        \
-  ("rev16 %0, %0"                          \
-  : "=r"(a)          /* outputs */        \
-  : "0"(a)           /* inputs  */        \
-  :                  /* clobbered */      \
-  )
+#else
+static __inline UWORD swpw(UWORD v)
+{
+    return ((((v) >> 8) & 0xffu) | (((v) & 0xffu) << 8));
+}
 #endif
 
 /* Copy and swap an UWORD from *src to *dest */
@@ -154,25 +118,11 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
     : "cc", "memory" /* clobbered */      \
     );                                    \
   })
-#elif defined(__m68k__)
-#define swpl(a)                           \
-  __asm__ volatile                        \
-  ("ror   #8,%0\n\t"                      \
-   "swap  %0\n\t"                         \
-   "ror   #8,%0"                          \
-  : "=d"(a)          /* outputs */        \
-  : "0"(a)           /* inputs  */        \
-  : "cc"             /* clobbered */      \
-  )
-#elif defined(__arm__)
-#define swpl(a)                           \
-  __asm__ volatile                        \
-  ("rev %0, %0"                            \
-  : "=r"(a)          /* outputs */        \
-  : "0"(a)           /* inputs  */        \
-  :                  /* clobbered */      \
-  )
-
+#else
+static __inline ULONG swpl(ULONG v)
+{
+   return (((v >> 24) & 0xffu) | ((v >> 8) & 0xff00u) | ((v & 0xffu) << 24) | ((v & 0xff00u) << 8));
+}
 #endif
 
 
@@ -209,8 +159,11 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
   : "0"(a)           /* inputs  */        \
   : "cc"             /* clobbered */      \
   )
-#elif defined(__arm__)
-#define swpw2(a) swpw(a)
+#else
+static __inline ULONG swpw2(ULONG v)
+{
+   return ((v >> 8) & 0xff0000u) | ((v << 8) & 0xff000000u) | ((v >> 8) & 0xffu) | ((v << 8) & 0xff00u);
+}
 #endif
 
 
@@ -218,9 +171,7 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
  * rolw1(WORD x);
  *  rotates x leftwards by 1 bit
  */
-#if defined(__mcoldfire__) || defined(__arm__)
-#define rolw1(x)    x=(x>>15)|(x<<1)
-#elif defined(__m68k__)
+#if defined(__m68k__) && !defined(__mcoldfire__)
 #define rolw1(x)                    \
     __asm__ volatile                \
     ("rol.w #1,%1"                  \
@@ -228,6 +179,8 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
     : "0"(x)        /* inputs */    \
     : "cc"          /* clobbered */ \
     )
+#else
+#define rolw1(x)    x=(x>>15)|(x<<1)
 #endif
 
 
@@ -235,9 +188,7 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
  * rorw1(WORD x);
  *  rotates x rightwards by 1 bit
  */
-#if defined(__mcoldfire__) || defined(__arm__)
-#define rorw1(x)    x=(x>>1)|(x<<15)
-#else
+#if defined(__m68k__) && !defined(__mcoldfire__)
 #define rorw1(x)                    \
     __asm__ volatile                \
     ("ror.w #1,%1"                  \
@@ -245,6 +196,8 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
     : "0" (x)       /* inputs */    \
     : "cc"          /* clobbered */ \
     )
+#else
+#define rorw1(x)    x=(x>>1)|(x<<15)
 #endif
 
 
@@ -263,6 +216,9 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
  */
 
 #if defined(__mcoldfire__) || defined(__m68k__)
+
+extern void disable_interrupts(void);
+extern void enable_interrupts(void);
 
 #define set_sr(a)                         \
 __extension__                             \
@@ -326,13 +282,16 @@ __extension__                             \
   _r;                                     \
 })
 
+extern ULONG disable_interrupts(void);
+extern void enable_interrupts(void);
+
 #ifdef TARGET_RPI1
 #define flush_prefetch_buffer()	    __asm__ volatile ("mcr p15, 0, %0, c7, c5,  4" : : "r" (0) : "memory")
 
 #define data_sync_barrier()         __asm__ volatile ("mcr p15, 0, %0, c7, c10, 4" : : "r" (0) : "memory")
 #define data_mem_barrier()          __asm__ volatile ("mcr p15, 0, %0, c7, c10, 5" : : "r" (0) : "memory")
 
-#define peripheral_begin()          data_sync_barrier()	// ignored here
+#define peripheral_begin()          data_sync_barrier()	/* ignored here */
 #define peripheral_end()            data_mem_barrier()
 #else
 #define flush_prefetch_buffer()     __asm__ volatile ("isb" ::: "memory")
@@ -340,7 +299,7 @@ __extension__                             \
 #define data_sync_barrier()         __asm__ volatile ("dsb" ::: "memory")
 #define data_mem_barrier()          __asm__ volatile ("dmb" ::: "memory")
 
-#define peripheral_begin()  ((void) 0)	// ignored here
+#define peripheral_begin()  ((void) 0)	/* ignored here */
 #define peripheral_end()    ((void) 0)
 #endif
 
@@ -370,9 +329,9 @@ __extension__                                      \
   ((void (*)(void))addr)();                        \
   __asm__ volatile ("movem.l (sp)+,d0-d7/a0-a6");  \
 })
-#elif defined(__arm__)
-// not used on arm curently, but we assume anything called follows the eabi, so
-// no registers need to be saved apart from what the compiler already does
+#else
+/* not used on arm curently, but we assume anything called follows the abi, so */
+/* no registers need to be saved apart from what the compiler already does */
 #define regsafe_call(addr)                         \
   ((void (*)(void))addr)();
 #endif
@@ -383,13 +342,7 @@ __extension__                                      \
  * Loops for the specified count; for a 1 millisecond delay on the
  * current system, use the value in the global 'loopcount_1_msec'.
  */
-#ifdef __arm__
-    #define delay_loop(count) __extension__ \
-    ({                                      \
-        ULONG _count = (count);             \
-        while(_count) {_count--;}           \
-    })
-#else
+#if defined(__m68k__)
 #define delay_loop(count)                   \
   __extension__                             \
   ({ULONG _count = (count);                 \
@@ -402,6 +355,12 @@ __extension__                                      \
     : "cc", "memory"    /* clobbered */     \
     );                                      \
   })
+#else
+    #define delay_loop(count) __extension__ \
+    ({                                      \
+        ULONG _count = (count);             \
+        while(_count) {_count--;}           \
+    })
 #endif
 
 #endif /* ASM_H */

@@ -579,7 +579,7 @@ static void insert_icon(OBJECT *tree, WORD obj, WORD nicon)
     ib = G.g_iblist[nicon];
     ib.ib_ptext = "";
     objptr->ob_type = G_ICON;
-    objptr->ob_spec = (LONG)&ib;
+    objptr->ob_spec.iconblk = &ib;
 }
 
 

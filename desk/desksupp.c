@@ -216,7 +216,7 @@ static void get_xywh(OBJECT olist[], WORD obj, WORD *px, WORD *py,
  */
 static ICONBLK *get_iconblk_ptr(OBJECT olist[], WORD obj)
 {
-    return (ICONBLK *)olist[obj].ob_spec;
+    return olist[obj].ob_spec.iconblk;
 }
 
 
@@ -1252,7 +1252,7 @@ static WORD format_floppy(OBJECT *tree, WORD max_width, WORD incr)
         return -1;
 
     tree[FMT_BAR].ob_width = 0;
-    tree[FMT_BAR].ob_spec = 0x00FF1121L;
+    tree[FMT_BAR].ob_spec.index = 0x00FF1121L;
 
     graf_mouse(HGLASS,NULL);    /* say we're busy */
 
@@ -1382,7 +1382,7 @@ void do_format(void)
     incr = tree[FMT_BAR].ob_width / MAXTRACK;
     max_width = incr * MAXTRACK;
     tree[FMT_BAR].ob_width = max_width;
-    tree[FMT_BAR].ob_spec = 0x00FF1101L;
+    tree[FMT_BAR].ob_spec.index = 0x00FF1101L;
 
     /*
      * do the actual work
@@ -1406,7 +1406,7 @@ void do_format(void)
                 rc = -1;
         }
         tree[FMT_BAR].ob_width = max_width;     /* reset to starting values */
-        tree[FMT_BAR].ob_spec = 0x00FF1101L;
+        tree[FMT_BAR].ob_spec.index = 0x00FF1101L;
         tree[FMT_OK].ob_state &= ~SELECTED;
     } while (rc == 0);
 }

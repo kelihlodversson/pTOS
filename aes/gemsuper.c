@@ -98,7 +98,7 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
         pglobal->ap_count = 1;              /* # concurrent procs */
         pglobal->ap_id = rlr->p_pid;
         tree = rs_trees[DESKTOP];
-        pglobal->ap_private = tree[ROOT].ob_spec;
+        pglobal->ap_private = tree[ROOT].ob_spec.index;
         pglobal->ap_planes = gl_nplanes;
         pglobal->ap_3resv = (LONG)&D;
         ret = ap_init();
@@ -179,7 +179,7 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
         break;
     case MENU_TEXT:
         tree = (OBJECT *)MM_ITREE;
-        strcpy((char *)tree[ITEM_NUM].ob_spec,(char *)MM_PTEXT);
+        strcpy(tree[ITEM_NUM].ob_spec.free_string,(char *)MM_PTEXT);
         break;
     case MENU_REGISTER:
         ret = mn_register(MM_PID, (BYTE *)MM_PSTR);

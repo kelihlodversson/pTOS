@@ -42,13 +42,13 @@ static TEDINFO  edblk;
 
 static void ob_getsp(OBJECT *tree, WORD obj, TEDINFO *pted)
 {
-    LONG    spec;
+    OBSPEC  spec;
     OBJECT  *objptr = tree + obj;
 
     spec = objptr->ob_spec;
     if (objptr->ob_flags & INDIRECT)
-        spec = *((LONG *)spec);
-    *pted = *(TEDINFO *)spec;   /* return TEDINFO */
+        spec = *(spec.indirect);
+    *pted = *(spec.tedinfo);   /* return TEDINFO */
 }
 
 

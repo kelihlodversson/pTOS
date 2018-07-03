@@ -23,7 +23,11 @@ OUTPUT_FORMAT(binary)
 #if defined (MACHINE_AMIGA)
 # define ROM_ORIGIN 0x00fc0000
 #elif defined (MACHINE_RPI)
-# define ROM_ORIGIN 0x00008000
+# ifdef TARGET_RPI3
+#   define ROM_ORIGIN 0x00080000
+# else
+#   define ROM_ORIGIN 0x00008000
+# endif
 #elif defined (TARGET_CART)
 # define ROM_ORIGIN 0x00fa0000
 #elif defined (TARGET_192)
@@ -74,7 +78,7 @@ SECTIONS
         /* System variables are located at fixed addresses */
 #include "tosvars.ld"
         . = 0x800; /* Extend sysvars area upto end of supervisor-only RAM */
-        sysvars_end = .;
+        _sysvars_end = .;
     } >stram
 
 #if CONF_WITH_STATIC_ALT_RAM

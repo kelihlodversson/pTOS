@@ -86,45 +86,22 @@ static void inline scrn_clip(IntPoint* point)
     point->y = point->y < 0 ? 0 : point->y > yres ? yres : point->y ;
 }
 
-void mouse_int(void);
-void wheel_int(void);
-void mov_cur(WORD x, WORD y);
 
 /*
  * _mouse_int - Mouse interrupt routine
+ * buf: address of mouse buffer from aciavecs.S
  * TODO
  */
-void mouse_int(void)
+void mouse_int(UBYTE *buf)
 {
 
 }
 
 /*
  * _wheel_int - Mouse wheel interrupt routine
+ * buf: address of IKBD status packet buffer from aciavecs.S
  * TODO
  */
-void wheel_int(void)
+void wheel_int(UBYTE *buf)
 {
-
-}
-
-/*
- * mov_cur - moves the mouse cursor to its new location
- *           unless the cursor is currently hidden.
- *
- * Inputs:
- *    r0 = new x-coordinate for mouse cursor
- *    r1 = new y-coordinate for mouse cursor
- *
- * Outputs:        None
- */
-void mov_cur(WORD x, WORD y)
-{
-    if (!HIDE_CNT)
-    {
-        // TODO: disable interrupts around this
-        newx = x;
-        newy = y;
-        draw_flag = TRUE;
-    }
 }

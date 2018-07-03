@@ -27,9 +27,6 @@ extern LONG     CMP_TICK;                       /* indicates to tick    */
                                                 /*   tchange            */
 
 
-extern void disable_interrupts(void);
-extern void enable_interrupts(void);
-
 extern void far_bcha(void);
 extern void far_mcha(void);
 extern void aes_wheel(void);
@@ -45,6 +42,6 @@ extern void retake(void);
 
 extern void drawrat(WORD newx, WORD newy);
 
-//extern void aestrap();
+extern void aestrap(void);
 
 #endif

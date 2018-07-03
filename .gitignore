@@ -29,3 +29,5 @@
 /local.mk
 /dsm.txt
 /fal_dsm.txt
+/.gdbinit
+aes/asm_struct_gen.h

@@ -41,6 +41,7 @@
 #include "gsx2.h"
 #include "funcdef.h"
 #include "string.h"
+#include "asm.h"
 
 /* Global variables: */
 BOOL     gl_play;

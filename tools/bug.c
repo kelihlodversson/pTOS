@@ -196,7 +196,7 @@ static char * now(void)
     struct tm local_time;
     char tz_sign;
     long tz_min;
-    char buf[40];
+    char buf[80];
 
     time (&now);
     local_time = *localtime (&now);

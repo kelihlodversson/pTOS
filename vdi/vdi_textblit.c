@@ -248,14 +248,19 @@ static void pre_blit(LOCALVARS *vars)
     WORD weight, skew, size, n, tmp_style;
     WORD dest_width, dest_height;
     WORD *p;
+#ifndef MACHINE_RPI
     LONG offset;
-    UBYTE *src, *dst;
+    UBYTE *src;
+#endif
+    UBYTE *dst;
 
     vars->height = vars->DELY;
 
     vars->tsdad = SOURCEX & 0x000f;     /* source dot address */
+#ifndef MACHINE_RPI
     offset = (SOURCEY+vars->DELY-1) * (LONG)vars->s_next + ((SOURCEX >> 3) & ~1);
     src = (UBYTE *)vars->sform + offset;/* bottom of font char source */
+#endif
     vars->s_next = -vars->s_next;       /* we draw from the bottom up */
 
     weight = WEIGHT;
@@ -340,7 +345,9 @@ static void pre_blit(LOCALVARS *vars)
              * we may be able to speed up the following by calculating
              * the args in outline() rather than passing them
              */
+#ifndef MACHINE_RPI
             src = vars->sform;
+#endif
             vars->sform += vars->s_next;
 #ifndef MACHINE_RPI
             outline(vars+1, src, vars->s_next);
@@ -462,7 +469,7 @@ void text_blt(void)
 
     vars.buffa = SCRPT2;
     dely = vars.DELY;
-    delx = vars.DELX;
+    vars.tmp_delx = delx = vars.DELX;
 
     if (SCALE)
     {

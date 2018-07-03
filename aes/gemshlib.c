@@ -244,14 +244,14 @@ static void sh_draw(const BYTE *lcmd, BOOL clear)
 
     if (clear)
     {
-        LONG specsave = tree[ROOT].ob_spec;
-        tree[ROOT].ob_spec = CLEAR_SCREEN;  /* white desktop screen */
+        LONG specsave = tree[ROOT].ob_spec.index;
+        tree[ROOT].ob_spec.index = CLEAR_SCREEN;  /* white desktop screen */
         ob_draw(tree, ROOT, 0);
-        tree[ROOT].ob_spec = specsave;
+        tree[ROOT].ob_spec.index = specsave;
     }
     else
     {
-        TEDINFO *ted = (TEDINFO *)tree[DTNAME].ob_spec;
+        TEDINFO *ted = tree[DTNAME].ob_spec.tedinfo;
         ted->te_ptext = (BYTE *)lcmd;       /* text string displayed in menu bar */
         ob_draw(tree, ROOT, MAX_DEPTH);
     }

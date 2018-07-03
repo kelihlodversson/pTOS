@@ -369,7 +369,7 @@ _arm_dispatch_fiq:
     // TODO: fixme
     rfefd  sp!             /* load pc and CPSR from stack */
 
-.section .data
+.section .bss
 
     .align 14
 ttbr0:

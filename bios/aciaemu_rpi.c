@@ -20,10 +20,10 @@
 //   void (*midivec)( UBYTE data );  /* MIDI Input */
 //   void (*vkbderr)( UBYTE data );  /* IKBD Error */
 //   void (*vmiderr)( UBYTE data );  /* MIDI Error */
-//   void (*statvec)(char *buf);     /* IKBD Status */
-//   void (*mousevec)(char *buf);    /* IKBD Mouse */
-//   void (*clockvec)(char *buf);    /* IKBD Clock */
-//   void (*joyvec)(char *buf);      /* IKBD Joystick */
+//   void (*statvec)(UBYTE *buf);    /* IKBD Status */
+//   void (*mousevec)(UBYTE *buf);   /* IKBD Mouse */
+//   void (*clockvec)(UBYTE *buf);   /* IKBD Clock */
+//   void (*joyvec)(UBYTE *buf);     /* IKBD Joystick */
 //   void (*midisys)( void );        /* Main MIDI Vector */
 //   void (*ikbdsys)( void );        /* Main IKBD Vector */
 // } KBDVECS;
@@ -119,17 +119,18 @@ UBYTE joybuf[3];
 
 void midivec( UBYTE data );
 void kbdvec( UBYTE data );
-static void _dummy( void ) {}
+static void _dummy_p(UBYTE *unused) { UNUSED(unused); }
+static void _dummy_c(UBYTE unused) { UNUSED(unused); }
 
 void init_acia_vecs(void)
 {
-    kbdvecs.mousevec = (void (*)(char *))_dummy;
+    kbdvecs.mousevec = _dummy_p;
     _kbdvec = kbdvec;
     kbdvecs.midivec = midivec;
-    kbdvecs.vkbderr = (void (*)(UBYTE))_dummy;
-    kbdvecs.vmiderr = (void (*)(UBYTE))_dummy;
-    kbdvecs.statvec = (void (*)(char *))_dummy;
-    kbdvecs.mousevec = (void (*)(char *))_dummy;
+    kbdvecs.vkbderr = _dummy_c;
+    kbdvecs.vmiderr = _dummy_c;
+    kbdvecs.statvec = _dummy_p;
+    kbdvecs.mousevec = _dummy_p;
 
     ikbdiorec.buf = ikbdibufbuf;
     ikbdiorec.size = 0x100;

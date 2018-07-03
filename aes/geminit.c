@@ -66,6 +66,7 @@
 #include "string.h"
 #include "biosdefs.h"
 #include "kprint.h"
+#include "asm.h"
 
 extern LONG init_p0_stkptr(void); /* called only from gemstart.S */
 extern void run_accs_and_desktop(void); /* called only from gemstart.S */

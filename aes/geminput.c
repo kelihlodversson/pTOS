@@ -38,6 +38,7 @@
 #include "gemgsxif.h"
 #include "rectfunc.h"
 #include "kprint.h"
+#include "asm.h"
 
 
 extern void wheel_change(WORD wheel_number, WORD wheel_amount); /* called only from aes/gemdosif.S */

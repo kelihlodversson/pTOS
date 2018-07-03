@@ -38,7 +38,7 @@ struct param rel_pblock;        /* mouse parameter block */
  *
  */
 
-void Initmous(WORD type, struct param *param, PFVOID newvec)
+void Initmous(WORD type, struct param *param, void (*newvec)(UBYTE *))
 {
     long retval = -1;           /* ok, if it stays so... */
     struct param *p =
@@ -119,6 +119,6 @@ void Initmous(WORD type, struct param *param, PFVOID newvec)
             kbdvecs.mousevec = newvec;  /* set mouse vector */
 
     } else {                    /* if error */
-        kbdvecs.mousevec = just_rts;    /* set dummy vector */
+        kbdvecs.mousevec = (void (*)(UBYTE *))just_rts;    /* set dummy vector */
     }
 }

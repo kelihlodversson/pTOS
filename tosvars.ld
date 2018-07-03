@@ -28,7 +28,7 @@ _proc_usp       = 0x3c8;        /* saved user stackpointer */
 _proc_stk       = 0x3cc;        /* 16 words from exception stack */
 
 /* ==== Start of System variables =========================================== */
-sysvars_start   = 0x400;
+_sysvars_start  = 0x400;
 #ifdef MACHINE_RPI
 _etv_timer      = 0x400;        /* GEM event timer vector */
 _etv_critic     = 0x404;        /* GEM critical error handler */

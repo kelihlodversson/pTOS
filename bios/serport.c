@@ -27,6 +27,9 @@
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
 #endif
+#if CONF_WITH_RASPI_UART0
+#include "raspi_uart.h"
+#endif
 
 /*
  * defines
@@ -728,7 +731,7 @@ void init_serport(void)
     amiga_rs232_init();
 #endif
 
-#ifdef CONF_WITH_RASPI_UART0
+#if CONF_WITH_RASPI_UART0
     raspi_uart0_init();
 #endif
 

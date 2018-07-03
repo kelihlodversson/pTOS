@@ -23,6 +23,8 @@
 #include "../bios/tosvars.h"
 #include "../bios/lineavars.h"
 #include "kprint.h"
+#include "asm.h"
+
 #ifdef MACHINE_RPI
 #   include "raspi_mouse.h"
 #else
@@ -39,42 +41,20 @@ struct Mcdb_ {
 #endif
 
 /* mouse related linea variables in bios/lineavars.S */
-#ifdef __arm__
 extern void     (*user_but)(WORD status);      /* user button vector */
-#else
-extern void     (*user_but)(void);      /* user button vector */
-#endif
-extern void     (*user_cur)(void);      /* user cursor vector */
+extern void     (*user_cur)(WORD x, WORD y);      /* user cursor vector */
 extern void     (*user_mot)(void);      /* user motion vector */
 extern Mcdb     mouse_cdb;              /* storage for mouse sprite */
 
-/* call the vectors from C */
-#ifdef __arm__
-#define call_user_but user_but
-#define call_user_wheel user_wheel
-
-#else
-extern void call_user_but(WORD status);
-extern void call_user_wheel(WORD wheel_number, WORD wheel_amount);
-#endif
 /* prototypes */
 static void cur_display(Mcdb *sprite, MCS *savebuf, WORD x, WORD y);
 static void cur_replace(MCS *savebuf);
 static void vb_draw(void);             /* user button vector */
 
-/* prototypes for functions in vdi_asm.S */
-extern void mouse_int(void);    /* mouse interrupt routine */
-extern void wheel_int(void);    /* wheel interrupt routine */
-extern void mov_cur(int new_x, int new_y);      /* user button vector */
-
 
 /* FIXME: should go to linea variables */
-#ifdef __arm__
-void     (*user_wheel)(WORD wheel_number, WORD wheel_amount);   /* user provided mouse wheel vector */
-#else
-void     (*user_wheel)(void);   /* user provided mouse wheel vector */
-#endif
-PFVOID old_statvec;             /* original IKBD status packet routine */
+void (*user_wheel)(WORD wheel_number, WORD wheel_amount);   /* user provided mouse wheel vector */
+void (*old_statvec)(UBYTE *);             /* original IKBD status packet routine */
 
 
 #if !WITH_AES
@@ -128,8 +108,17 @@ static const MFORM arrow_mform = {
  * do_nothing - doesn't do much  :-)
  */
 
-static void do_nothing(void)
+static void do_nothing_v(void)
 {
+}
+static void do_nothing_i(WORD a)
+{
+	UNUSED(a);
+}
+static void do_nothing_ii(WORD a, WORD b)
+{
+	UNUSED(a);
+	UNUSED(b);
 }
 
 
@@ -395,6 +384,99 @@ void vdi_v_valuator(Vwk * vwk)
 
 
 
+#ifdef __mc68000__
+/*
+ * Call the user_but vector from C
+ */
+static void call_user_but(WORD status)
+{
+	register WORD val asm("d0") = status;
+	register void (*func)(WORD) asm("a0") = user_but; /* prototype not quite right: status passed in d0 */
+	
+	__asm__ __volatile__(
+		" jsr (%[a0])"
+	:
+	: "d"(val), [a0]"a"(func)
+	: "cc" AND_MEMORY);
+}
+
+/*
+ * Call the user_wheel vector from C.
+ */
+static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
+{
+	register WORD number asm("d0") = wheel_number;
+	register WORD amount asm("d1") = wheel_amount;
+	register void (*func)(WORD, WORD) asm("a0") = user_wheel; /* prototype not quite right: status passed in d0 */
+	
+	__asm__ __volatile__(
+		" jsr (%[a0])"
+	:
+	: "d"(number), "d"(amount), [a0]"a"(func)
+	: "cc" AND_MEMORY);
+}
+#endif
+
+#ifdef __arm__
+/*
+ * Call the user_but vector from C
+ */
+static void call_user_but(WORD status)
+{
+	register WORD val asm("r0") = status;
+	register void (*func)(WORD) asm("r1") = user_but; /* prototype not quite right: status passed in d0 */
+	
+	__asm__ __volatile__(
+		" blx %[func]"
+	:
+	: "r"(val), [func]"r"(func)
+	: "cc" AND_MEMORY);
+}
+
+/*
+ * Call the user_wheel vector from C.
+ */
+static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
+{
+	register WORD number asm("r0") = wheel_number;
+	register WORD amount asm("r1") = wheel_amount;
+	register void (*func)(WORD, WORD) asm("r0") = user_wheel; /* prototype not quite right: status passed in d0 */
+	
+	__asm__ __volatile__(
+		" blx %[func]"
+	:
+	: "r"(number), "r"(amount), [func]"r"(func)
+	: "cc" AND_MEMORY);
+}
+
+/*
+ * mov_cur - moves the mouse cursor to its new location
+ *           unless the cursor is currently hidden.
+ *
+ * Inputs:
+ *    r0 = new x-coordinate for mouse cursor
+ *    r1 = new y-coordinate for mouse cursor
+ *
+ * Outputs:        None
+ */
+void mov_cur(WORD new_x, WORD new_y)      /* user button vector */
+{
+	ULONG cpsr;
+	
+	if (HIDE_CNT == 0)
+		return;
+	cpsr = disable_interrupts();
+	newx = new_x;
+	newy = new_y;
+	draw_flag = TRUE;
+	set_cpsr(cpsr);
+}
+
+#endif /* __arm__ */
+
+
+
+
 /*
  * vdi_vex_butv
  *
@@ -411,11 +493,11 @@ void vdi_v_valuator(Vwk * vwk)
  */
 void vdi_vex_butv(Vwk * vwk)
 {
-    LONG * pointer;
+    void (**pointer)(WORD status);
 
-    pointer = (LONG*)&CONTRL[9];
-    *pointer = (LONG)user_but;
-    user_but = (void (*)(void)) *--pointer;
+    pointer = (void (**)(WORD))&CONTRL[9];
+    *pointer = user_but;
+    user_but = *--pointer;
 }
 
 
@@ -461,11 +543,11 @@ void vdi_vex_motv(Vwk * vwk)
  */
 void vdi_vex_curv(Vwk * vwk)
 {
-    LONG * pointer;
+    void (**pointer)(WORD, WORD);
 
-    pointer = (LONG*) &CONTRL[9];
-    *pointer = (LONG) user_cur;
-    user_cur = (void (*)(void)) *--pointer;
+    pointer = (void (**)(WORD, WORD)) &CONTRL[9];
+    *pointer = user_cur;
+    user_cur = *--pointer;
 }
 
 
@@ -488,11 +570,11 @@ void vdi_vex_curv(Vwk * vwk)
  */
 void vdi_vex_wheelv(Vwk * vwk)
 {
-    LONG * pointer;
+    void (**pointer)(WORD, WORD);
 
-    pointer = (LONG*) &CONTRL[9];
-    *pointer = (LONG) user_wheel;
-    user_wheel = (void (*)(void)) *--pointer;
+    pointer = (void (**)(WORD, WORD)) &CONTRL[9];
+    *pointer = user_cur;
+    user_cur = *--pointer;
 }
 #endif
 
@@ -640,10 +722,10 @@ void vdimouse_init(void)
     GCURX = DEV_TAB[0] / 2;     /* initialize the mouse to center */
     GCURY = DEV_TAB[1] / 2;
 
-    user_but = do_nothing;
-    user_mot = do_nothing;
+    user_but = do_nothing_i;
+    user_mot = do_nothing_v;
     user_cur = mov_cur;         /* initialize user_cur vector */
-    user_wheel = do_nothing;
+    user_wheel = do_nothing_ii;
 
     /* Move in the default mouse form (presently the arrow) */
     set_mouse_form(default_mform(), &mouse_cdb);
@@ -659,7 +741,7 @@ void vdimouse_init(void)
     *vblqueue = (LONG)vb_draw;   /* set GEM VBL-routine to vbl_list[0] */
 
     /* Initialize mouse via XBIOS in relative mode */
-    Initmous(1, (LONG)&mouse_params, (LONG)mouse_int);
+    Initmous(1, &mouse_params, mouse_int);
 
     kbd_vectors = (struct kbdvecs *)Kbdvbase();
     old_statvec = kbd_vectors->statvec;
@@ -678,10 +760,10 @@ void vdimouse_exit(void)
     LONG * pointer;             /* help for storing LONGs in INTIN */
     struct kbdvecs *kbd_vectors;
 
-    user_but = do_nothing;
-    user_mot = do_nothing;
-    user_cur = do_nothing;
-    user_wheel = do_nothing;
+    user_but = do_nothing_i;
+    user_mot = do_nothing_v;
+    user_cur = do_nothing_ii;
+    user_wheel = do_nothing_ii;
 
     pointer = vblqueue;         /* vblqueue points to start of vbl_list[] */
     *pointer = (LONG)vb_draw;   /* set GEM VBL-routine to vbl_list[0] */
@@ -734,6 +816,7 @@ static void vb_draw(void)
 
 
 
+#ifndef MACHINE_RPI
 /*
  * cur_display_clip()
  *
@@ -818,6 +901,8 @@ static void cur_display_clip(WORD op,Mcdb *sprite,MCS *mcs,UWORD *mask_start,UWO
         cdb_mask <<= 1;
     } /* loop through planes */
 }
+#endif
+
 
 /*
  * cur_display() - blits a "cursor" to the destination

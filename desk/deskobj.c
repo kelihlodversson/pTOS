@@ -38,8 +38,8 @@
 
 static const OBJECT gl_sampob[2] =
 {
-    { NIL, NIL, NIL, G_IBOX, NONE, NORMAL, 0x0L, 0, 0, 0, 0 },
-    { NIL, NIL, NIL, G_BOX,  NONE, NORMAL, 0x00001100L, 0, 0, 0, 0 }
+    { NIL, NIL, NIL, G_IBOX, NONE, NORMAL, { 0x0L }, 0, 0, 0, 0 },
+    { NIL, NIL, NIL, G_BOX,  NONE, NORMAL, { 0x00001100L }, 0, 0, 0, 0 }
 };
 
 

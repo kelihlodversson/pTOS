@@ -23,12 +23,14 @@ ULONG raspi_get_ticks(void);
 void raspi_delay_ms(ULONG ms);
 void raspi_delay_us(ULONG us);
 
-// The IRQ list is taken from Linux and is:
-//	Copyright (C) 2010 Broadcom
-//	Copyright (C) 2003 ARM Limited
-//	Copyright (C) 2000 Deep Blue Solutions Ltd.
-//	Licensed under GPL2
-// IRQs
+/*
+ * The IRQ list is taken from Linux and is:
+ *	Copyright (C) 2010 Broadcom
+ *	Copyright (C) 2003 ARM Limited
+ *	Copyright (C) 2000 Deep Blue Solutions Ltd.
+ *	Licensed under GPL2
+ * IRQs
+ */
 #define ARM_IRQS_PER_REG        32
 
 #define ARM_IRQ1_BASE           0
