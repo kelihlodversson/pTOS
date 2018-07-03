@@ -126,7 +126,7 @@ savestate:
         stmia   r2, {r4-r11}
         add     r2, r1, UDA_REGS    // storage for regs r0+
         pop     {r4-r7}             // copy the old values of r0-r3 to the save structure
-        stmia   r2!, {r4-r7}        // (note: we leave the reurn address on the stack as it will be used by _switchto when swiching back to this process)
+        stmia   r2, {r4-r7}        // (note: we leave the return address on the stack as it will be used by _switchto when swiching back to this process)
 
         cps     #0x1f
         str     sp, [r1, UDA_SPUSER]    // Save old usp in UDA struct
@@ -140,7 +140,7 @@ savestate:
 
 _switchto:
         // r0 points to UDA struct
-        mrs     ip, cpsr        // current psr saved in lr
+        mrs     ip, cpsr        // current psr saved in ip
         cpsid   if              // disable interrupts
         mov     r1, #0
         ldr     r2, =_indisp

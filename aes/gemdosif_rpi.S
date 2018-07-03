@@ -103,7 +103,11 @@ trapaes:
         blx     _super                  // Calling super (opcode and paramblock parameters are already in r0 and r1)
         cpsid   if                      // mask out interrupts
 
-        // r6 is callee saved, and therefore still points to PD_UDA from above
+        // Even though r6 is preserved across function calls, we have to reload
+        // the value in case the contents of _rlr was changed.
+        ldr     r6,     =_rlr
+        ldr     r6,     [r6]
+        ldr     r6,     [r6, PD_UDA]
         mov     r3,     #0
         strh    r3,     [r6, UDA_INSUPER]     // Flag that we have left _super
         str     sp,     [r6, UDA_SPSUPER]     // Save current stack pointer
