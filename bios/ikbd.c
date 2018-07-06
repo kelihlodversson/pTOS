@@ -65,7 +65,7 @@ static WORD convert_scancode(UBYTE *scancodeptr);
 
 /*
  * support for mouse emulation:
- *  alt-insert, alt-home => mouse buttons
+ *  alt-insert, alt-home => mouse buttons (standard, but Amiga differs, see below)
  *  alt-arrowkeys: mouse movement
  */
 #define KEY_HELP    0x62
@@ -76,6 +76,13 @@ static WORD convert_scancode(UBYTE *scancodeptr);
 #define KEY_LTARROW 0x4b
 #define KEY_RTARROW 0x4d
 #define KEY_DNARROW 0x50
+#ifdef MACHINE_AMIGA
+#define KEY_EMULATE_LEFT_BUTTON     KEY_DELETE
+#define KEY_EMULATE_RIGHT_BUTTON    KEY_HELP
+#else
+#define KEY_EMULATE_LEFT_BUTTON     KEY_INSERT
+#define KEY_EMULATE_RIGHT_BUTTON    KEY_HOME
+#endif
 
 #define MOUSE_REL_POS_REPORT    0xf8    /* values for mouse_packet[0] */
 #define RIGHT_BUTTON_DOWN       0x01    /* these values are OR'ed in */
@@ -249,13 +256,8 @@ void push_ascii_ikbdiorec(UBYTE ascii)
 static BOOL is_mouse_key(WORD key)
 {
     switch(key) {
-#ifdef MACHINE_AMIGA
-    case KEY_DELETE:
-    case KEY_HELP:
-#else
-    case KEY_INSERT:
-    case KEY_HOME:
-#endif
+    case KEY_EMULATE_LEFT_BUTTON:
+    case KEY_EMULATE_RIGHT_BUTTON:
     case KEY_UPARROW:
     case KEY_DNARROW:
     case KEY_LTARROW:
@@ -296,7 +298,7 @@ static BOOL handle_mouse_mode(WORD newkey)
      * if we shouldn't be in emulation mode, but we are, send an
      * appropriate mouse packet and exit
      */
-    if (!(shifty&MODE_ALT) || !is_mouse_key(newkey)) {
+    if (!(shifty&MODE_ALT) || !is_mouse_key(newkey & ~KEY_RELEASED)) {
         if (mouse_packet[0]) {  /* emulating, need to clean up */
             init_mouse_packet(mouse_packet);
             call_mousevec(mouse_packet);
@@ -311,8 +313,15 @@ static BOOL handle_mouse_mode(WORD newkey)
      */
     if (!mouse_packet[0]) {
         KDEBUG(("Entering mouse emulation mode\n"));
-        init_mouse_packet(mouse_packet);
+        mouse_packet[0] = MOUSE_REL_POS_REPORT;
     }
+
+    /*
+     * always reset the x,y distance variables for the next
+     * mouse packet.  this is important when the packet is
+     * an emulated mouse button click.
+     */
+    mouse_packet[1] = mouse_packet[2] = 0;
 
     /*
      * set movement distance according to the Shift and Control keys.
@@ -327,19 +336,17 @@ static BOOL handle_mouse_mode(WORD newkey)
     else distance = 8;
 
     switch(newkey) {
-#ifdef MACHINE_AMIGA
-    case KEY_DELETE:
-#else
-    case KEY_INSERT:
-#endif
+    case KEY_EMULATE_LEFT_BUTTON:
         mouse_packet[0] |= LEFT_BUTTON_DOWN;
         break;
-#ifdef MACHINE_AMIGA
-    case KEY_HELP:
-#else
-    case KEY_HOME:
-#endif
+    case KEY_EMULATE_LEFT_BUTTON | KEY_RELEASED:
+        mouse_packet[0] &= ~LEFT_BUTTON_DOWN;
+        break;
+    case KEY_EMULATE_RIGHT_BUTTON:
         mouse_packet[0] |= RIGHT_BUTTON_DOWN;
+        break;
+    case KEY_EMULATE_RIGHT_BUTTON | KEY_RELEASED:
+        mouse_packet[0] &= ~RIGHT_BUTTON_DOWN;
         break;
     case KEY_UPARROW:
         distance = -distance;
@@ -656,8 +663,7 @@ void kbd_int(UBYTE scancode)
     }
 
     if (scancode & KEY_RELEASED) {
-        scancode = scancode_only;
-        switch (scancode) {
+        switch (scancode_only) {
         case KEY_RSHIFT:
             shifty &= ~MODE_RSHIFT;     /* clear bit */
             break;

@@ -315,10 +315,7 @@ void vdi_v_locator(Vwk * vwk)
  */
 void vdi_v_show_c(Vwk * vwk)
 {
-    if (!INTIN[0] && linea_vars.HIDE_CNT)
-        linea_vars.HIDE_CNT = 1;           /* reset cursor to on */
-
-    dis_cur();
+    linea_show_mouse();
 }
 
 
@@ -328,7 +325,7 @@ void vdi_v_show_c(Vwk * vwk)
  */
 void vdi_v_hide_c(Vwk * vwk)
 {
-    hide_cur();
+    linea_hide_mouse();
 }
 
 
@@ -621,7 +618,7 @@ static void set_mouse_form(const MFORM *src, Mcdb *dst)
  */
 void vdi_vsc_form(Vwk * vwk)
 {
-    set_mouse_form((const MFORM *)INTIN, &linea_vars.mouse_cdb);
+    linea_transform_mouse();
 }
 
 
@@ -1105,4 +1102,22 @@ void draw_sprite(void)
 void undraw_sprite(void)
 {
     cur_replace(sprite_sav);
+}
+
+void linea_show_mouse(void)
+{
+    if (!INTIN[0] && linea_vars.HIDE_CNT)
+        linea_vars.HIDE_CNT = 1;           /* reset cursor to on */
+
+    dis_cur();
+}
+
+void linea_hide_mouse(void)
+{
+    hide_cur();
+}
+
+void linea_transform_mouse(void)
+{
+    set_mouse_form((const MFORM *)INTIN, &linea_vars.mouse_cdb);
 }
