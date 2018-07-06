@@ -50,6 +50,7 @@ _deskstart:
 .bss
 
 // Space for the Stack:
+.align 4
 _deskstackbottom:
-        .ds.b   DESKSTACKSIZE
+        .word   DESKSTACKSIZE
 deskustack:
