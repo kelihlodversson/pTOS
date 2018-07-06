@@ -74,4 +74,10 @@ static inline uint32_t __attribute__((__const__)) read_cpuid_mputype(void)
 	return read_cpuid(CPUID_MPUIR);
 }
 
+#ifndef TARGET_RPI1
+void clean_data_cache(void);
+void invalidate_data_cache_all(void);
+void flush_branch_target_cache(void);
+#endif
+
 #endif /* PROCESSOR_ARM_H */
