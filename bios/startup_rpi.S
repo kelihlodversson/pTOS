@@ -20,54 +20,25 @@
 // ==== References ===========================================================
 
         // TOS System variables
-        .extern resvalid
-        .extern resvector
         .extern _stktop
 #        // Memory
-        .extern meminit       // initialize the memory and its controller
+        .extern _raspi_vcmem_init  // initialize the memory size and system variables
 
         // BIOS C part
         .extern _biosmain     // BIOS C entry point
 
         // Overall memory map
-        .extern __etext       // end of text section
-        .extern __edata       // end of data section
         .extern __endvdibss   // end of VDI BSS
-
-/*
- * Helper macro to enter SVC mode cleanly and mask interrupts. reg is
- * a scratch register for the macro to overwrite.
- *
- * This macro is intended for forcing the CPU into SVC mode at boot time.
- * you cannot return to the original mode.
- *
- * Copied from the circle project: https://github.com/rsta2/circle
- */
-	.macro safe_svcmode_maskall reg:req
-
-	mrs	\reg , cpsr
-	eor	\reg, \reg, #0x1A		/* test for HYP mode */
-	tst	\reg, #0x1F
-	bic	\reg , \reg , #0x1F		/* clear mode bits */
-	orr	\reg , \reg , #0xC0 | 0x13	/* mask IRQ/FIQ bits and set SVC mode */
-	bne	1f				/* branch if not HYP mode */
-	orr	\reg, \reg, #0x100		/* mask Abort bit */
-	adr	lr, 2f
-	msr	spsr_cxsf, \reg
-	.word	0xE12EF30E	/* msr ELR_hyp, lr */
-	.word	0xE160006E	/* eret */
-1:	msr	cpsr_c, \reg
-2:
-
-	.endm
-	.text
 
 // ===========================================================================
 // ==== TEXT segment (TOS image) =============================================
 // ===========================================================================
 
         .text
-
+#ifndef TARGET_RPI1
+        .arch_extension sec
+#endif
+        .arch_extension virt    // To use the eret and msr ELR_hyp, lr instructions below
 
 /*
  * OSHEADER
@@ -140,12 +111,38 @@ os_dummy:
  *
  */
 
+.extern _raspi_screen_init
+.extern _raspi_screen_debug
 .balign 4
 _main:
 
-	safe_svcmode_maskall r0
+    ldr r1, =_start_in_hyp
+    mov r2, #0
+    str r2, [r1]
+    bl  switch_from_hyp
 
 #ifndef TARGET_RPI1
+    /* with some firmware versions, for some reason we need to call into monitor mode and unset the NS bit */
+    /* copy our temporary monitor vectors to the old vector base address. */
+    mrc p15, 0, r1, c12, c0, 0 ;@ get vbar
+    ldr r0,=_monitor_vectors
+    ldmia r0!,{r2,r3,r4,r5,r6,r7}
+    stmia r1!,{r2,r3,r4,r5,r6,r7}
+
+    /* flush caches etc.*/
+    mov r12,#0
+    mcr p15, 0, r12, c7, c10, 1
+    dsb
+    mov r12, #0
+    mcr p15, 0, r12, c7, c5, 0
+    mov r12, #0
+    mcr p15, 0, r12, c7, c5, 6
+    dsb
+    isb
+
+    /* call into our newly inserted monitor handler to clear the NS bit */
+    //smc #0
+
     /* Since TOS does not support SMP, a quick hack to tell remaining cores to
     start execution in _start_secondary */
 
@@ -189,50 +186,6 @@ _core0:
 	cps	#0x13				/* set supervior mode */
 	ldr	sp, =_stktop
 
-    #if 0
-    /* Enable MMU */
-    mrc     p15, 0, r1, c1, c0,  1      // Read AUX Control register
-    orr     r1, #1 << 6     // restrict cache size to 16K on RPI1, SMP_Cace on RPI2+
-    mcr     p15, 0, r1, c1, c0,  1
-
-    ldr     r1, =ttbr0              // addr(TTBR0)
-
-    ldr     r2, =0x0000040E
-    mov     r3, #0                  // from 0x00000000
-    mov     r4, #0x200              //   to 0x1FFFFFFF
-    bl      set_pgtbl_entry
-
-    ldr     r2, =0x00002416
-    mov     r3, #0x200              // from 0x20000000 (incl. peripherals)
-    mov     r4, #0x1000             //   to 0xFFFFFFFF
-    bl      set_pgtbl_entry
-
-    ldr     r2, =0x0000040E
-    mov     r3, #0x480              // framebuffer at 0x48000000
-    mov     r4, #0x490              // make 16 Mbyte cacheable
-    bl      set_pgtbl_entry
-
-    mov     r3, #3
-    mcr     p15, #0, r3, c3, c0, #0 // set domain 0 to master
-
-    mcr     p15, #0, r1, c2, c0, #0 // set TTBR0 (addr of ttbr0)  (ptblwlk inner non cacheable,
-                                    // outer non-cacheable, not shareable memory)
-    /* Start L1 Cache */
-    mov     r3, #0
-    mcr     p15, #0, r3, c7, c7, #0 /* Invalidate data cache and flush prefetch buffer */
-    mcr     p15, #0, r3, c8, c7, #0 /* Invalidate TLB */
-    mrc     p15, #0, r2, c1, c0, #0 /* Read Control Register Configuration Data */
-#ifdef TARGET_RPI1
-    orr     r2, #1 << 23         /* EXTENDED_PAGE_TABLE */
-#endif
-    orr     r2, #1 << 12         /* L1_INSTRUCTION_CACHE */
-    orr     r2, #1 << 11         /* BRANCH_PREDICTION */
-    orr     r2, #1 << 2          /* L1_CACHE */
-    bic     r2, #1 << 1          /* Allow unaligned access */
-    orr     r2, #1 << 0          /* MMU enable */
-    mcr     p15, #0, r2, c1, c0, #0 /* Write Control Register Configuration Data */
-    #endif
-
 	ldr	r0, =arm_vectors
 	mcr	p15, 0, r0, c12, c0, 0		/* set VBAR to our table at the start of the os */
 
@@ -240,9 +193,7 @@ _core0:
  * memory configuration
  */
 
-    bl     meminit         // do/test memory config and clear it (needs sp)
-
-
+    bl     _raspi_vcmem_init         // ask the video core for the memory configuration (needs sp)
 
 /*
  * From now, the stack is allowed, and C code can be used.
@@ -251,14 +202,45 @@ _core0:
 
     b     _biosmain
 
-set_pgtbl_entry:
-    lsl     r0, r3, #20             // = r3 * 0x100000 (1M)
-    orr     r0, r2
-    str     r0, [r1, r3, lsl #2]
-    add     r3, #1
-    cmp     r3, r4
-    bne     set_pgtbl_entry
-    mov     pc, lr
+/* Exit from HYP mode if the boot loader started there */
+switch_from_hyp:
+	mrs	r0 , cpsr
+    /* test for HYP mode */
+	eor	r0, r0, #0x1A
+	tst	r0, #0x1F
+    /* clear mode bits */
+	bic	r0 , r0 , #0x1F
+    /* mask IRQ/FIQ bits and set SVC mode */
+	orr	r0 , r0 , #0xC0 | 0x13
+    /* mask Abort bit */
+    orr	r0, r0, #0x100
+    /* branch if not HYP mode */
+	bne	1f
+
+    ldr r1, =_start_in_hyp
+    mov r2, #1
+    str r2, [r1]
+
+    msr	spsr_cxsf, r0
+
+    mrc     p15, 0, r2, c1, c0,  0
+    bic     r1, r1, #(1 << 1)
+    mcr     p15, 0, r2, c1, c0,  0
+
+	@ Disable all traps, so we don't get any nasty surprise
+	mov	r7, #0
+	mcr	p15, 4, r7, c1, c1, 0	@ HCR
+	mcr	p15, 4, r7, c1, c1, 2	@ HCPTR
+	mcr	p15, 4, r7, c1, c1, 3	@ HSTR
+	mcr	p15, 4, r7, c1, c0, 0	@ HSCTLR
+	mrc	p15, 4, r7, c1, c1, 1	@ HDCR
+	and	r7, #0x1f		@ Preserve HPMN
+	mcr	p15, 4, r7, c1, c1, 1	@ HDCR
+
+    msr ELR_hyp, lr
+    eret
+1:	msr	cpsr_cxsf, r0
+    bx lr
 
 #ifndef TARGET_RPI1
 
@@ -369,8 +351,34 @@ _arm_dispatch_fiq:
     // TODO: fixme
     rfefd  sp!             /* load pc and CPSR from stack */
 
-.section .bss
+// Helper exception vectors to get the processor into secure mode:
+#ifndef TARGET_RPI1
+_monitor_vectors:
+    .word 0	/* reset */
+    .word 0 /* undef */
+    adr pc, _secure_monitor
+    .word 0
+    .word 0
+    .word 0
+    .word 0
+    .word 0
+    .word 0	/* pad */
 
-    .align 14
-ttbr0:
-    .space  4 << 12                        // 4 bytes * 4096 entries
+.align 5
+_secure_monitor:
+    mrc     p15, 0, r1, c1, c1, 0   @ read SCR
+    bic     r1, r1, #0x4e	        @ clear IRQ, FIQ, EA, nET bits
+    orr     r1, r1, #0x31	        @ enable NS, AW, FW bits
+    mcr     p15, 0, r1, c1, c1, 0	@ write SCR (with NS bit set)
+
+    // Allow unaligned access
+    // mrc     p15, 0, r2, c1, c0,  0
+    // bic     r2, r2, #(1 << 1)
+    // mcr     p15, 0, r2, c1, c0,  0
+
+    movs    pc, lr @ return to non-secure SVC
+#endif
+
+.data
+.global _start_in_hyp
+_start_in_hyp: .ds.l 1

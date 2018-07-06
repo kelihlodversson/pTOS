@@ -87,13 +87,17 @@
 #ifndef PROCESSOR_H
 #define PROCESSOR_H
 
-extern void processor_init(void);
-extern void detect_cpu(void);
-extern void detect_fpu(void);
+void processor_init(void);
+void detect_cpu(void);
+void detect_fpu(void);
 /* invalidate_instruction_cache() is declared in include/biosext.h */
-extern void instruction_cache_kludge(void *start,long size);
-extern void flush_data_cache(void *start, long size);
-extern void invalidate_data_cache(void *start, long size);
+void instruction_cache_kludge(void *start,long size);
+void flush_data_cache(void *start, long size);
+#ifdef TARGET_RPI1
+void invalidate_data_cache(void *start, long size) __attribute__ ((optimize (3)));
+#else
+void invalidate_data_cache(void *start, long size);
+#endif
 extern LONG mcpu;
 extern LONG fputype;
 extern WORD longframe;

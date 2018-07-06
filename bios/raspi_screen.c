@@ -148,42 +148,6 @@ void raspi_screen_init(void)
     raspi_screen_width_in_bytes = init_tags.get_pitch.value;
 }
 
-
-extern char sysvars_start[];
-extern char sysvars_end[];
-
-void raspi_vcmem_init(void)
-{
-    struct
-    {
-        prop_tag_2u32_t    get_arm_memory;
-        prop_tag_2u32_t    get_vc_memory;
-    } init_tags;
-    
-    init_tags.get_arm_memory.tag.tag_id = PROPTAG_GET_ARM_MEMORY;
-    init_tags.get_arm_memory.tag.value_buf_size = 8;
-    init_tags.get_arm_memory.tag.value_length = 8;
-    init_tags.get_vc_memory.tag.tag_id = PROPTAG_GET_VC_MEMORY;
-    init_tags.get_vc_memory.tag.value_buf_size = 8;
-    init_tags.get_vc_memory.tag.value_length = 8;
-
-    raspi_prop_get_tags(&init_tags, sizeof(init_tags));
-
-	/* Clear the sysvars */
-	bzero(sysvars_start, sysvars_end - sysvars_start);
-	
-	/* Store the ST-RAM parameters in the ST-RAM itself */
-	phystop = (UBYTE *)(init_tags.get_arm_memory.value1 + init_tags.get_arm_memory.value2);
-
-   /*
-    * Clear the BSS segment.
-    * Our stack is explicitly set outside the BSS, so this is safe:
-    * bzero() will be able to return.
-    */
-    bzero(_bss, _ebss - _bss);
-}
-
-
 /*
  * Initialise Raspberry PI palette
  */

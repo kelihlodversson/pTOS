@@ -76,6 +76,11 @@ _enter:
         bne     2f               // if in svc state, don't use user stack
 
         mov     r8, sp           // save super stack pointer
+        mov     r9, lr
+        cps     #0x1f
+        mov     r10, sp
+        cps     #0x13
+
         srsfd   sp!, #0x1f       // save LR and SPSR on user stack
         cps     #0x1f            // system mode: sp is now user stack pointer
         b       3f

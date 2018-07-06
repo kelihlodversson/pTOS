@@ -336,13 +336,13 @@ void dopanic(const char *fmt, ...)
 #ifdef __arm__
     } else {
         struct {
-            ULONG fsr;
             ULONG far;
+            ULONG fsr;
             ULONG* pc;
             ULONG spsr;
         } *s = (void*)proc_stk;
 
-        pc = s->pc;
+        pc = (UWORD*)s->pc;
         sr = s->spsr;
 
         if (proc_enum >= 2 && proc_enum < ARRAY_SIZE(exc_messages)) {
@@ -353,10 +353,14 @@ void dopanic(const char *fmt, ...)
                      (int) proc_enum);
         }
 
-        kcprintf("fsr=%08lx far=%08lx\n",
-                 s->fsr, s->far);
-        kcprintf("spsr=%08lx pc=%08lx\n",
-                 s->spsr, (ULONG)s->pc);
+        ULONG control;
+        extern long start_in_hyp;
+        asm volatile ("mrc p15, 0, %0, c1, c0,  0" : "=r" (control));
+        kcprintf("fsr=%08lx far=%08lx sctrl=%08lx\n",
+                 s->fsr, s->far, control);
+        kcprintf("spsr=%08lx pc=%08lx hyp boot=%3s\n",
+                 s->spsr, (ULONG)s->pc, start_in_hyp?"yes":"no");
+
     }
 #elif defined(__mcoldfire__)
     } else {

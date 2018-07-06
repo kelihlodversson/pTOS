@@ -11,6 +11,13 @@
  */
 
 #include "asmdefs.h"
+#ifdef MACHINE_RPI
+// Arm processors require native words to be aligned.
+// This means that the line-a variables have incompatible offsets compared to 68k
+#   define EXTRA_ALIGN .balign 4
+#else
+#   define EXTRA_ALIGN
+#endif
 
 
                 .bss
@@ -98,6 +105,7 @@ _cur_font:      .ds.l   1       // -906 current VDI font
 
 /* The mouse form storage area: */
 
+EXTRA_ALIGN
 _mouse_cdb:
 _m_pos_hx:       .ds.w   1       // -856 (cdb+0) Mouse hot spot - x coord
 _m_pos_hy:       .ds.w   1       // -854 (cdb+2) Mouse hot spot - y coord
@@ -121,6 +129,7 @@ _DEV_TAB:
 
 /* Mouse data */
 
+EXTRA_ALIGN
 _mdata:                         // Block of mouse pointer data
 _GCURX:         .ds.w   1       // -602 mouse X position
 _GCURY:         .ds.w   1       // -600 mouse Y position
@@ -133,10 +142,13 @@ _REQ_COL:       .ds.w   48      // -594 48 WORDs of RGB data (color registers)
 
 /* Workstation PTSOUT information */
 
+
+EXTRA_ALIGN
 _SIZ_TAB:       .ds.w   15      // -498 size table
 
 _TERM_CH:       .ds.w   1       // -468 pressed key, aciii + scancode
 _chc_mode:      .ds.w   1       // -466 input mode choice
+EXTRA_ALIGN
 _CUR_WORK:      .ds.l   1       // -464 parameter block of current workst.
 _def_font:      .ds.l   1       // -460 default font
 _font_ring:     .ds.l   4       // -456 three pointers to sysfonts and NULL
@@ -159,18 +171,23 @@ _mouse_flag:    .ds.b   1       // -339 non-zero if mouse ints disabled
 
 _sav_cur_x:     .ds.w   1       // -338 save area for cursor cell coords.
 _sav_cur_y:     .ds.w   1       // -336 save area for cursor cell coords.
+EXTRA_ALIGN
 retsav:         .ds.l   1       // -334 I'm not sure if this is right here
 
+EXTRA_ALIGN
 _mouse_cursor_save:             // covers the following five items; note that
                                 // this area is only used when v_planes <= 4
 _save_len:      .ds.w   1       // -330 height of saved form
+EXTRA_ALIGN
 _save_addr:     .ds.l   1       // -328 screen addr of saved form
 _save_stat:     .ds.b   1       // -324 save status
                 .ds.b   1
+EXTRA_ALIGN
 _save_area:     .ds.l   64      // -322 form save area
 
 /* Timer vectors */
 
+EXTRA_ALIGN
 _tim_addr:      .ds.l   1       // -66  timer interrupt vector
 _tim_chain:     .ds.l   1       // -62  timer interrupt vector save
 _user_but:      .ds.l   1       // -58  user button vector
@@ -179,6 +196,7 @@ _user_mot:      .ds.l   1       // -50  user motion vector
 
 /* VDI ESC variables */
 
+EXTRA_ALIGN
 _v_cel_ht:      .ds.w   1       // -46  cell height (width is 8)
 _v_cel_mx:      .ds.w   1       // -44  columns on the screen minus 1
 _v_cel_my:      .ds.w   1       // -42  rows on the screen minus 1
@@ -191,11 +209,13 @@ _v_cur_cx:      .ds.w   1       // -28  current cursor column
 _v_cur_cy:      .ds.w   1       // -26  current cursor row
 _v_period:      .ds.b   1       // -24  cursor blink rate
 _v_cur_tim:     .ds.b   1       // -23  cursor blink timer.
+EXTRA_ALIGN
 _v_fnt_ad:      .ds.l   1       // -22  pointer to current monospace font
 _v_fnt_nd:      .ds.w   1       // -18  ascii code of last cell in font
 _v_fnt_st:      .ds.w   1       // -16  ascii code of first cell in font
 _v_fnt_wr:      .ds.w   1       // -14  font cell wrap
 _V_REZ_HZ:      .ds.w   1       // -12  horizontal resolution in pixels
+EXTRA_ALIGN
 _v_off_ad:      .ds.l   1       // -10  pointer to font offset table
 _v_stat_0:      .ds.b   1       // -6   video cell system status (was in words)
                 .ds.b   1       //      dummy
@@ -270,16 +290,13 @@ _BYTES_LIN:     .ds.w   1       // -2   byte per screen line
 
 // ==== Global GSX Variables =================================================
 
-#ifdef MACHINE_RPI
-
-
-.balign 4
-#endif
+EXTRA_ALIGN
 line_a_vars:                            // This is the base line-a pointer
 
 _v_planes:      .ds.w   1               // +0   number of video planes.
 _v_lin_wr:      .ds.w   1               // +2   number of bytes/video line.
 
+EXTRA_ALIGN
 _local_pb:
 _CONTRL:        .ds.l   1               // +4   ptr to the CONTRL array.
 _INTIN:         .ds.l   1               // +8   ptr to the INTIN array.
@@ -306,6 +323,7 @@ _X1:            .ds.w   1               // _X1 coordinate for squares
 _Y1:            .ds.w   1               // _Y1 coordinate for squares
 _X2:            .ds.w   1               // _X2 coordinate for squares
 _Y2:            .ds.w   1               // _Y2 coordinate for squares
+EXTRA_ALIGN
 _PATPTR:        .ds.l   1               // fill pattern pointer
 _PATMSK:        .ds.w   1               // fill pattern "mask" (line count)
 _MFILL:         .ds.w   1               // multi-plane fill flag. (0 => 1 plane)
@@ -326,6 +344,7 @@ _DESTX:         .ds.w   1
 _DESTY:         .ds.w   1               // upper left of destination on screen
 _DELX:          .ds.w   1
 _DELY:          .ds.w   1               // width and height of character
+EXTRA_ALIGN
 _FBASE:         .ds.l   1               // pointer to font data
 _FWIDTH:        .ds.w   1               // width of font form (in bytes)
 _STYLE:         .ds.w   1               // special effects
@@ -337,8 +356,10 @@ _LOFF:          .ds.w   1               // skew above and below baseline
 _SCALE:         .ds.w   1               // scale character
 _CHUP:          .ds.w   1               // character rotation vector
 _TEXTFG:        .ds.w   1               // text foreground color
+EXTRA_ALIGN
 _SCRTCHP:       .ds.l   1               // pointer to base of scratch buffer
 _SCRPT2:        .ds.w   1               // large buffer base offset
 _TEXTBG:        .ds.w   1               // text background color
 _COPYTRAN:      .ds.w   1               // Flag for Copy-raster-form (<>0 = Transparent)
+EXTRA_ALIGN
 _FILL_ABORT:    .ds.l   1               // Address of Routine for testing break out of contourfill function

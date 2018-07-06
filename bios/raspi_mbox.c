@@ -77,7 +77,7 @@ BOOL raspi_prop_get_tag(ULONG tag_id, void *tag, ULONG tag_size, ULONG request_p
 	return TRUE;
 }
 
-static UBYTE mailbox_buffer[4096] __attribute__ ((aligned (16)));
+extern UBYTE mailbox_buffer[];
 
 BOOL raspi_prop_get_tags(void *tags, ULONG tags_size)
 {
