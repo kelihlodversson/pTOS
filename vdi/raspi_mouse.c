@@ -77,7 +77,7 @@ static void raspi_hw_cur_set_sprite(Mcdb *sprite)
         UWORD pixel_mask = 0x8000;
         for(x=0; x<16; x++, pixel_mask >>= 1)
         {
-            pointer_image[x][y] = ((*mask) & pixel_mask) ? (((*data) & pixel_mask) ? fg : bg) : clear;
+            pointer_image[y][x] = ((*mask) & pixel_mask) ? (((*data) & pixel_mask) ? fg : bg) : clear;
         }
     }
 
