@@ -52,7 +52,7 @@ void clfix(CLNO cl, CLNO link, DMD *dm)
     if (dm->m_16)
     {
         buf = getrec(recnum,dm->m_fatofd,1);
-        swpw(link);
+        link = h2le16(link);
         *(CLNO *)(buf+offset) = link;
         return;
     }
@@ -81,9 +81,9 @@ void clfix(CLNO cl, CLNO link, DMD *dm)
     f |= *(UBYTE *)buf;
 
     /* update */
-    swpw(f);
+    f = h2le16(f);
     f = (f & mask) | link;
-    swpw(f);
+    f = le2h16(f);
 
     /* write back */
     buf = getrec(recnum,dm->m_fatofd,1) + offset;
@@ -123,8 +123,7 @@ CLNO getrealcl(CLNO cl, DMD *dm)
     if (dm->m_16)
     {
         f = *(CLNO *)buf;
-        swpw(f);
-        return f;
+        return le2h16(f);
     }
 
     /*
@@ -135,7 +134,7 @@ CLNO getrealcl(CLNO cl, DMD *dm)
         buf = getrec(recnum+1,dm->m_fatofd,0);
     f |= *(UBYTE *)buf;
 
-    swpw(f);
+    f = le2h16(f);
 
     if (IS_ODD(cl))
         cl = f >> 4;

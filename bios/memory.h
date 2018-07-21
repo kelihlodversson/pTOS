@@ -14,13 +14,14 @@
 #define MEMORY_H
 
 /* Bit definitions for meminit_flags */
-
+#ifndef MACHINE_RPI
 #define MEMINIT_BIT_FIRST_BOOT 0
 /* If this bit is set, this means it is the first time that this EmuTOS
  * instance is run. This is always true for a cold boot from ROM. This is
  * always false for a reset. If EmuTOS lives in RAM, it is only true the first
  * time it is run. */
 #define MEMINIT_FIRST_BOOT (1 << MEMINIT_BIT_FIRST_BOOT)
+#endif
 
 #if CONF_WITH_FALCON_MMU
 # define MEMINIT_BIT_FALCON_MMU 1 /* This machine has Falcon MMU */

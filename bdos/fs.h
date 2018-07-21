@@ -23,6 +23,11 @@
 
 #include "biosdefs.h"
 #include "pd.h"
+#ifdef MACHINE_RPI
+#   define OPT_PACKED  __attribute__((packed))
+#else
+#   define OPT_PACKED
+#endif
 
 /*
  *  fix conditionals
@@ -101,7 +106,7 @@ typedef struct
 {
     UWORD time;         /* Time like Tgettime() */
     UWORD date;         /* Date like Tgetdate() */
-} DOSTIME;
+} OPT_PACKED DOSTIME;
 
 
 
@@ -132,7 +137,7 @@ struct _ofd
     WORD  o_usecnt;     /* use count for inherited files        */
     OFD   *o_thread;    /* mulitple open thread list            */
     UWORD o_mod;        /* mode file opened in (see below)      */
-} ;
+} OPT_PACKED ;
 
 /*
  * bit usage in o_mod
@@ -173,7 +178,7 @@ typedef struct
     DOSTIME f_td;           /* time, date */
     CLNO f_clust;
     long f_fileln;
-} FCB;
+} OPT_PACKED FCB;
 
 #define ERASE_MARKER    0xe5    /* in f_name[0], indicates erased file */
 
@@ -214,7 +219,7 @@ struct _dnd         /* directory node descriptor */
 
     long d_scan;        /*  current posn in dir for DND tree    */
     OFD  *d_files;      /* open files on this node              */
-} ;
+} OPT_PACKED ;
 
 /*
  * bit usage in d_flag
@@ -250,7 +255,7 @@ struct _dmd         /* drive media block */
     OFD    *m_ofl;      /*  list of open files                  */
     DND    *m_dtl;      /* root of directory tree list          */
     UWORD  m_16;        /* 16 bit fat ?                         */
-} ;
+} OPT_PACKED;
 
 
 
@@ -288,7 +293,7 @@ struct _bcb
     UBYTE   b_dirty;    /*  true if buffer dirty        */
     DMD     *b_dm;      /*  ptr to drive media block    */
     char    *b_bufr;    /*  pointer to buffer (API)     */
-} ;
+} OPT_PACKED;
 
 /*
  * FTAB - Open File Table Entry
@@ -325,7 +330,7 @@ typedef struct
     DOSTIME dt_td;              /*  time, date fields from fcb  22-25   */
     long  dt_fileln;            /*  file length field from fcb  26-29   */
     char  dt_fname[14];         /*  file name from fcb          30-43   */
-} DTAINFO;                      /*    includes null terminator          */
+} OPT_PACKED DTAINFO;                      /*    includes null terminator          */
 
 #define DTA_DRIVEMASK   0x0000001fL
 
@@ -333,7 +338,7 @@ typedef struct
 typedef struct {
     DND   *dnd;                 /* DND for directory */
     WORD  use;                  /* use count */
-} DIRTBL_ENTRY;
+} OPT_PACKED DIRTBL_ENTRY;
 
 
 /* External Declarations */

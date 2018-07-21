@@ -28,12 +28,25 @@
 #include "acsi.h"
 #include "scsi.h"
 #include "sd.h"
+#include "raspi_emmc.h"
 
 /*==== Defines ============================================================*/
 
 #define REMOVABLE_PARTITIONS    1   /* minimum # partitions for removable unit */
 
 extern LONG drvrem;                 /* bitmap of removable media drives */
+
+#ifdef MACHINE_RPI
+#   define OPT_PACKED  __attribute__((packed))
+#else
+#   define OPT_PACKED
+#endif
+
+#if IS_BIG_ENDIAN
+#   define BOOTSIG_MAGIC 0x55aa
+#else
+#   define BOOTSIG_MAGIC 0xaa55
+#endif
 
 /*==== Structures =========================================================*/
 typedef struct {
@@ -42,13 +55,13 @@ typedef struct {
     UBYTE fill5[3];
     ULONG start;        /* little-endian */
     ULONG size;         /* little-endian */
-} PARTENTRY;
+} __attribute__((packed)) PARTENTRY;
 
 typedef struct {
     UBYTE filler[446];
     PARTENTRY entry[4];
     UWORD bootsig;
-} MBR;
+} __attribute__((packed)) MBR;
 
 /*==== Global variables ===================================================*/
 
@@ -264,6 +277,11 @@ LONG disk_mediach(UWORD unit)
         ret = sd_ioctl(reldev,GET_MEDIACHANGE,NULL);
         break;
 #endif /* CONF_WITH_SDMMC */
+#if CONF_WITH_RASPI_EMMC
+    case SDMMC_BUS:
+        ret = raspi_emmc_ioctl(reldev,GET_MEDIACHANGE,NULL);
+        break;
+#endif /* CONF_WITH_RASPI_EMMC */
     default:
         ret = EUNDEV;
     }
@@ -390,7 +408,7 @@ typedef union
 
 PHYSSECT physsect, physsect2;
 
-#if CONF_WITH_IDE
+#if CONF_WITH_IDE && IS_BIG_ENDIAN
 
 /*
  * This function is only used during byteswap detection.
@@ -401,7 +419,7 @@ static void byteswap(UBYTE *buffer, ULONG size)
     UWORD *p;
 
     for (p = (UWORD *)buffer; p < (UWORD *)(buffer+size); p++)
-        swpw(*p);
+        *p = bswap16(*p);
 }
 
 static void maybe_fix_byteswap(UWORD unit, PHYSSECT *pphyssect)
@@ -446,14 +464,14 @@ static int atari_partition(UWORD unit,LONG *devices_available)
 
     KINFO(("%cd%c: ","ashf????"[major>>3],'a'+(major&0x07)));
 
-#if CONF_WITH_IDE
+#if CONF_WITH_IDE && IS_BIG_ENDIAN
     /* IDE drives may be byteswapped if partitioned on foreign hardware */
     if (IS_IDE_DEVICE(major))
         maybe_fix_byteswap(unit, &physsect);
 #endif /* CONF_WITH_IDE */
 
     /* check for DOS disk without partitions */
-    if (mbr->bootsig == 0x55aa) {
+    if (mbr->bootsig == BOOTSIG_MAGIC) {
         ULONG size = check_for_no_partitions(sect);
         if (size) {
             if (add_partition(unit,devices_available,"BGM",0UL,size) < 0)
@@ -464,7 +482,7 @@ static int atari_partition(UWORD unit,LONG *devices_available)
     }
 
     /* check for DOS master boot record */
-    if (mbr->bootsig == 0x55aa) {
+    if (mbr->bootsig == BOOTSIG_MAGIC) {
         /* follow DOS PTBL */
         int i;
 
@@ -498,11 +516,9 @@ static int atari_partition(UWORD unit,LONG *devices_available)
                 pid[1] = 'D';
                 pid[2] = type;
 
-                start = mbr->entry[i].start;    /* little-endian */
-                swpl(start);
+                start = le2h32(mbr->entry[i].start);    /* little-endian */
 
-                size = mbr->entry[i].size;      /* little-endian */
-                swpl(size);
+                size = le2h32(mbr->entry[i].size);      /* little-endian */
 
                 if (size == 0UL) {
                     KDEBUG((" entry for zero-length partition ignored\n"));
@@ -741,6 +757,12 @@ static LONG internal_inquire(UWORD unit, ULONG *blocksize, ULONG *deviceflags, c
         flags = XH_TARGET_REMOVABLE;    /* medium is removable */
         break;
 #endif /* CONF_WITH_SDMMC */
+#if CONF_WITH_RASPI_EMMC
+    case SDMMC_BUS:
+        ret = raspi_emmc_ioctl(reldev,GET_DISKNAME,name);
+        flags = XH_TARGET_REMOVABLE;    /* medium is removable */
+        break;
+#endif /* CONF_WITH_RASPI_EMMC */
     default:
         ret = EUNDEV;
     }
@@ -827,6 +849,14 @@ LONG disk_get_capacity(UWORD unit, ULONG *blocks, ULONG *blocksize)
             return ret;
         break;
 #endif /* CONF_WITH_SDMMC */
+#if CONF_WITH_RASPI_EMMC
+    case SDMMC_BUS:
+        ret = raspi_emmc_ioctl(reldev,GET_DISKINFO,info);
+        KDEBUG(("raspi_emmc_ioctl(%d) returned %ld\n", reldev, ret));
+        if (ret < 0)
+            return ret;
+        break;
+#endif /* CONF_WITH_RASPI_EMMC */
     default:
         return EUNDEV;
     }
@@ -885,6 +915,12 @@ LONG disk_rw(UWORD unit, UWORD rw, ULONG sector, UWORD count, UBYTE *buf)
 #if CONF_WITH_SDMMC
     case SDMMC_BUS:
         ret = sd_rw(rw, sector, count, buf, reldev);
+        KDEBUG(("sd_rw() returned %ld\n", ret));
+        break;
+#endif /* CONF_WITH_SDMMC */
+#if CONF_WITH_RASPI_EMMC
+    case SDMMC_BUS:
+        ret = raspi_emmc_rw(rw, sector, count, buf, reldev);
         KDEBUG(("sd_rw() returned %ld\n", ret));
         break;
 #endif /* CONF_WITH_SDMMC */

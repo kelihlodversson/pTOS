@@ -20,8 +20,12 @@ PFVOID raspi_connect_irq(int irq, PFVOID handler);
 void raspi_int_handler(void);
 void raspi_timer3_handler(void);
 ULONG raspi_get_ticks(void);
-void raspi_delay_ms(ULONG ms);
 void raspi_delay_us(ULONG us);
+
+extern inline void raspi_delay_ms(ULONG ms)
+{
+    raspi_delay_us(ms * 1000);
+}
 
 /*
  * The IRQ list is taken from Linux and is:

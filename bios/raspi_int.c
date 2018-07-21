@@ -127,11 +127,6 @@ ULONG raspi_get_ticks(void)
     return ARM_SYSTIMER.count_lo;
 }
 
-void raspi_delay_ms(ULONG ms)
-{
-    raspi_delay_us(ms * 1000);
-}
-
 void raspi_delay_us(ULONG us)
 {
     if (us > 0)

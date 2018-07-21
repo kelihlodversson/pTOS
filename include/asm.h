@@ -60,6 +60,40 @@ static inline void stop_until_interrupt(void)
 extern void stop_until_interrupt(void);
 #endif
 
+#if defined(__arm__) && ! defined(__armbe__)
+#define IS_LITTLE_ENDIAN    1
+#define IS_BIG_ENDIAN       0
+#else
+#define IS_LITTLE_ENDIAN    0
+#define IS_BIG_ENDIAN       1
+#endif
+
+// Assuming GNUC
+#define bswap16		__builtin_bswap16
+#define bswap32		__builtin_bswap32
+
+#if IS_BIG_ENDIAN
+#   define le2h32(x) bswap32(x)
+#   define le2h16(x) bswap16(x)
+#   define h2le32(x) bswap32(x)
+#   define h2le16(x) bswap16(x)
+#   define be2h32(x) (x)
+#   define be2h16(x) (x)
+#   define h2be32(x) (x)
+#   define h2be16(x) (x)
+#elif IS_LITTLE_ENDIAN
+#   define be2h32(x) bswap32(x)
+#   define be2h16(x) bswap16(x)
+#   define h2be32(x) bswap32(x)
+#   define h2be16(x) bswap16(x)
+#   define le2h32(x) (x)
+#   define le2h16(x) (x)
+#   define h2le32(x) (x)
+#   define h2le16(x) (x)
+#else
+#   error "Either IS_LITTLE_ENDIAN or IS_BIG_ENDIAN has to be 1"
+#endif
+
 /*
  * WORD swpw(WORD val);
  *   swap endianess of val, 16 bits only.

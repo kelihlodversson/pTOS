@@ -227,7 +227,7 @@ bios_src +=  raspi_memory.c processor_arm.S vectorsasm_arm.S vectors_arm.c aciae
              mfp.c midi.c mouse.c nvram.c panicasm_arm.S \
              parport.c screen.c serport.c sound.c videl.c vt52.c xhdi.c \
              delay.c sd.c memory2.c bootparams.c raspi_uart.c raspi_int.c \
-			 raspi_mbox.c raspi_screen.c
+			 raspi_mbox.c raspi_screen.c raspi_emmc.c
 
 ifneq (1,$(RPI))
 bios_src +=  cache_armv7.S

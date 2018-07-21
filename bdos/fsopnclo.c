@@ -184,10 +184,8 @@ long ixcreat(char *name, char attr)
     f->f_attrib = attr;
     for (i = 0; i < 10; i++)
         f->f_fill[i] = 0;
-    f->f_td.time = current_time;
-    swpw(f->f_td.time);
-    f->f_td.date = current_date;
-    swpw(f->f_td.date);
+    f->f_td.time = le2h16(current_time);
+    f->f_td.date = le2h16(current_date);
     f->f_clust = 0;
     f->f_fileln = 0;
     ixlseek(fd,pos);
@@ -295,10 +293,8 @@ static long makopn(FCB *f, DND *dn, int h, int mod)
     }
     else
     {
-        p->o_strtcl = f->f_clust;       /*  1st cluster of file */
-        swpw(p->o_strtcl);
-        p->o_fileln = f->f_fileln;      /*  init length of file */
-        swpl(p->o_fileln);
+        p->o_strtcl = le2h16(f->f_clust);       /*  1st cluster of file */
+        p->o_fileln = le2h32(f->f_fileln);      /*  init length of file */
         p->o_td.date = f->f_td.date;    /* note: OFD time/date are  */
         p->o_td.time = f->f_td.time;    /*  actually little-endian! */
     }
@@ -473,8 +469,8 @@ long ixclose(OFD *fd, int part)
         fcb = (FCB *)ixread(fd->o_dirfil,32L,NULL);
         attr = fcb->f_attrib;               /* get attributes */
         memcpy(&fcb->f_td,&fd->o_td,10);    /* copy date/time, start, length */
-        swpw(fcb->f_clust);                 /*  & fixup byte order */
-        swpl(fcb->f_fileln);
+        fcb->f_clust = le2h16(fcb->f_clust);  /*  & fixup byte order */
+        fcb->f_fileln = le2h32(fcb->f_fileln);
 
         if (part & CL_DIR)
             fcb->f_fileln = 0L;             /* dir lengths on disk are zero */
@@ -595,8 +591,7 @@ long ixdel(DND *dn, FCB *f, long pos)
      * Traverse this file's chain of allocated clusters, freeing them.
      */
     dm = dn->d_drv;
-    n = f->f_clust;
-    swpw(n);
+    n = le2h16(f->f_clust);
 
     while (n && !endofchain(n))
     {

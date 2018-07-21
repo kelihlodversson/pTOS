@@ -206,6 +206,10 @@ static void bus_init(void)
 #if CONF_WITH_SDMMC
     sd_init();
 #endif
+
+#if CONF_WITH_RASPI_EMMC
+    raspi_emmc_init();
+#endif
 }
 
 #if CONF_WITH_BOOT_SECTOR

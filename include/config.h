@@ -459,6 +459,9 @@
 # ifndef CONF_WITH_ARM_PMMU
 #  define CONF_WITH_ARM_PMMU 1
 # endif
+# ifndef CONF_WITH_RASPI_EMMC
+#  define CONF_WITH_RASPI_EMMC 1
+# endif
 #endif
 /*
  * By default, EmuTOS is built for Atari ST/TT/Falcon compatible hardware.
@@ -884,6 +887,14 @@
 #ifndef CONF_WITH_SDMMC
 # define CONF_WITH_SDMMC 0
 #endif
+
+/*
+ * Set CONF_WITH_RASPI_EMMC to 1 to activate SD/MMC bus support on the Raspberry pi
+ */
+#ifndef CONF_WITH_RASPI_EMMC
+# define CONF_WITH_RASPI_EMMC 0
+#endif
+
 
 /*
  * Set CONF_WITH_ATARI_VIDEO to 1 to enable support for ST Shifter and higher
