@@ -50,7 +50,12 @@ extern long cookie_akp;
  */
 
 /* Convenience macro to test if first boot. See MEMINIT_BIT_FIRST_BOOT. */
+#ifdef MACHINE_RPI
+// Currently we're always treat each boot as the first on the Raspberry PI
+#define FIRST_BOOT 1
+#else
 #define FIRST_BOOT (meminit_flags & MEMINIT_FIRST_BOOT)
+#endif
 
 #if CONF_WITH_FALCON_MMU
 # define HAS_FALCON_MMU (meminit_flags & MEMINIT_FALCON_MMU)
