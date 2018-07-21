@@ -296,13 +296,11 @@ vdi_src += vdi_bezier.c vdi_col.c vdi_control.c vdi_esc.c \
 		   vdi_textblit.c
 
 
-
-
 ifeq (1,$(COLDFIRE))
 vdi_src += vdi_tblit_cf.S
 else
 ifdef RPI
-#vdi_src += vdi_blit_rpi.c
+vdi_src += vdi_tblit_c.c
 else
 vdi_src += vdi_blit.S vdi_tblit.S
 endif

@@ -18,6 +18,7 @@
 
 #include "../bios/tosvars.h"
 #include "vdi_defs.h"
+#include "vdi_textblit.h"
 #include "../bios/lineavars.h"
 #include "kprint.h"
 
@@ -27,91 +28,7 @@ const WORD scrtsiz = 99;
 WORD deftxbuf[1000];
 #endif /* MACHINE_RPI */
 
-/*
- * the following structure mimics the format of the stack frame
- * containing the local variables used by the lower-level assembler
- * routines.  comments are taken from the assembler source.
- *
- * this could (and should) be cleaned up at some time, but any changes
- * MUST be synchronised with corresponding changes to the assembler code.
- */
-typedef struct {
-                        /* temporary working variables */
-    WORD chup_flag;         /* chup-1800 */
-    WORD blt_flag;
-    WORD unused1;           /* was tmp_style */
-                        /* working copies of the clipping variables */
-    WORD YMX_CLIP;
-    WORD XMX_CLIP;
-    WORD YMN_CLIP;
-    WORD XMN_CLIP;
-    WORD CLIP;
-                        /* working copies of often-used globals */
-    WORD CHUP;
-    WORD DESTY;
-    WORD DELY;
-    WORD DESTX;
-    WORD DELX;
-    WORD unused3;           /* was SKEWMASK */
-    WORD WRT_MODE;
-    WORD STYLE;
-                        /* temps for arbitrary text scaling */
-    WORD swap_tmps;         /* nonzero if temps are swapped */
-    WORD tmp_dely;          /* temp DELY,DELX used by scaling */
-    WORD tmp_delx;
-                        /* colour, planes, etc */
-    WORD nextwrd;           /* offset to next word in same plane */
-    WORD nbrplane;          /* # planes */
-    WORD forecol;           /* foreground colour */
-                        /* masks for special effects */
-    WORD thknover;          /* overflow for word thicken */
-    WORD skew_msk;          /* rotate this to check shift */
-    WORD lite_msk;          /* AND with this to get light effect */
-    WORD ambient;           /* background colour */
-    WORD smear;             /* amount to increase width */
-                        /* vectors that may contain twoptable entries */
-    void *litejpw;          /* vector for word function after lighten */
-    void *thknjpw;          /* vector for word function after thicken */
-                        /* vectors that may contain a toptable entry */
-    void *litejpwf;         /* vector for word fringe function after lighten */
-    void *thknjpwf;         /* vector for word fringe function after thicken */
-    void *skewjmp;          /* vector for function after skew */
-    void *litejmp;          /* vector for function after lighten */
-    void *thknjmp;          /* vector for function after thicken */
-                        /* other general-usage stuff */
-    WORD wrd_cnt;           /* number inner loop words for left/right */
-    WORD shif_cnt;          /* shift count for use by left/right shift routines */
-    WORD rota_msk;          /* overlap between words in inner loop */
-    WORD left_msk;          /* fringes of destination to be affected */
-    WORD rite_msk;
-    WORD thk_msk;           /* right fringe mask, before thicken */
-    WORD src_wthk;
-    WORD src_wrd;           /* # full words between fringes (source) (before thicken) */
-    WORD dest_wrd;          /* # full words between fringes (destination) */
-    WORD tddad;             /* destination dot address */
-    WORD tsdad;             /* source dot address (pixel address, 0-15 word offset) */
-    WORD height;            /* height of area in pixels */
-    WORD width;             /* width of area in pixels */
-    WORD d_next;            /* width of dest form (_v_lin_wr formerly used) */
-    WORD s_next;            /* width of source form (formerly s_width) */
-    void *dform;            /* start of destination form */
-    void *sform;            /* start of source form */
-    WORD unused2;           /* was buffc */
-    WORD buffb;             /* for rotate */
-    WORD buffa;             /* for clip & prerotate blt */
-} LOCALVARS;
 
-/* here we should have the preprocessor verify the length of LOCALVARS */
-
-#ifndef MACHINE_RPI
-/*
- * assembler functions in vdi_tblit.S
- */
-void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst);
-void outline(LOCALVARS *vars, UBYTE *buf, WORD form_width);
-void rotate(LOCALVARS *vars);
-void scale(LOCALVARS *vars);
-#endif /* ! MACHINE_RPI */
 
 
 /*
@@ -371,7 +288,11 @@ static void screen_blit(LOCALVARS *vars)
     vars->forecol = linea_vars.TEXTFG;
     vars->ambient = 0;          /* logically TEXTBG, but that isn't set up by the VDI */
     vars->nbrplane = linea_vars.v_planes;
+#if CONF_CHUNKY_PIXELS
+    vars->nextwrd = sizeof(WORD);
+#else
     vars->nextwrd = vars->nbrplane * sizeof(WORD);
+#endif
     vars->height = vars->DELY;
     vars->width = vars->DELX;
 
@@ -390,15 +311,21 @@ static void screen_blit(LOCALVARS *vars)
      * instruction rather than calling _mulsi3(): this by itself speeds
      * up plain text output by about 3% ...
      */
+#if CONF_CHUNKY_PIXELS
+    vars->tddad = 0;
+    vars->dform = v_bas_ad;
+    vars->dform += (vars->DESTX * linea_vars.v_planes) >> 3;
+    vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)linea_vars.v_lin_wr;  /* add y coordinate part of addr */
+    vars->d_next = -linea_vars.v_lin_wr;
+#else
     vars->tddad = vars->DESTX & 0x000f;
     vars->dform = v_bas_ad;
     vars->dform += (vars->DESTX&0xfff0)>>shift_offset[linea_vars.v_planes];        /* add x coordinate part of addr */
     vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)linea_vars.v_lin_wr; /* add y coordinate part of addr */
     vars->d_next = -linea_vars.v_lin_wr;
+#endif
 
-#ifndef MACHINE_RPI
     normal_blit(vars+1, vars->sform, vars->dform);  /* call assembler helper function */
-#endif /* MACHINE_RPI */
 }
 
 
