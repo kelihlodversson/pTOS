@@ -138,8 +138,8 @@ void raspi_screen_init(void)
         {{PROPTAG_ALLOCATE_BUFFER,       8, 4}, 0},
         {{PROPTAG_GET_PITCH,             4, 0}}
     };
-    raspi_screen_width = init_tags.set_physical_dim.value1 = init_tags.set_virtual_dim.value1 = 640;
-    raspi_screen_height = init_tags.set_physical_dim.value2 = init_tags.set_virtual_dim.value2 = 400;
+    raspi_screen_width = init_tags.set_physical_dim.value1 = init_tags.set_virtual_dim.value1 = 1280;
+    raspi_screen_height = init_tags.set_physical_dim.value2 = init_tags.set_virtual_dim.value2 = 720;
 
     raspi_prop_get_tags(&init_tags, sizeof(init_tags));
 
