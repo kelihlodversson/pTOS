@@ -307,15 +307,24 @@ UBYTE * raspi_cell_addr(int x, int y)
 void raspi_blank_out (int topx, int topy, int botx, int boty)
 {
     UWORD color = linea_vars.v_col_bg;             /* bg color value */
-    int width, row;
-    UBYTE * addr = raspi_cell_addr(topx, topy);   /* running pointer to screen */
-    width = botx - topx;
-    topy *= linea_vars.v_cel_ht;
-    boty *= linea_vars.v_cel_ht;
-    for (row = topy; row < boty; row++)
+    int width, height, row;
+    width = (botx - topx + 1) * 8;
+    height = (boty - topy + 1) * linea_vars.v_cel_ht;
+    UBYTE * addr = raspi_cell_addr(topx, topy);
+
+    if (width >= raspi_screen_width_in_bytes)
     {
-        memset(addr+(row * raspi_screen_width_in_bytes), color, width);
+        memset(addr, color, height * raspi_screen_width_in_bytes);
     }
+    else
+    {
+        for (row = 0; row < height; row++)
+        {
+            memset(addr+(row *  raspi_screen_width_in_bytes), color, width);
+        }
+    }
+
+    color = (color+1) % 64;
 }
 
 void raspi_cell_xfer(UBYTE * src, UBYTE * dst)
