@@ -35,13 +35,16 @@
  */
 #ifdef __arm__
 #define BLOCK_PAD_BYTES 4
+#define OSM_PAYLOAD_BYTES 128
 #else
 #define BLOCK_PAD_BYTES 2
+#define OSM_PAYLOAD_BYTES 128
 #endif
+#define OSM_PAYLOAD (OSM_PAYLOAD_BYTES/sizeof(WORD))
 #define BLOCK_PAD (BLOCK_PAD_BYTES/sizeof(WORD))
 
 #define NUM_OSM_BLOCKS  118         /* more than TOS, probably larger than necessary */
-#define LEN_OSM_BLOCK   (BLOCK_PAD_BYTES+64)      /* in bytes */
+#define LEN_OSM_BLOCK   (BLOCK_PAD_BYTES+OSM_PAYLOAD_BYTES)      /* in bytes */
 /* size of os memory pool, in words: */
 #define LENOSM          (LEN_OSM_BLOCK*NUM_OSM_BLOCKS/sizeof(WORD))
 
@@ -113,11 +116,6 @@ static LONG dbggtblk;
 static WORD *getosm(WORD n)
 {
     WORD *m;
-#ifdef __arm__
-    // force 32 bit alingment on arm
-    if(n & 1)
-        n++;
-#endif
 
     if (n > osmlen)
     {
@@ -320,7 +318,7 @@ void *xmgetblk(WORD memtype)
      *  allocate block
      */
     i = 4;                          /* always from root[4] */
-    w = 32;                         /* number of words */
+    w = OSM_PAYLOAD;                /* number of words */
 
     /*
      * we should execute the following loop a maximum of twice: the second
@@ -338,7 +336,7 @@ void *xmgetblk(WORD memtype)
         /* nothing on free list, try pool */
         if ( (m = getosm(w+BLOCK_PAD)) )    /* include size of control word */
         {
-            *m = i;               /* put size in control word */
+            *m = i;               /* put index in control word */
             m += BLOCK_PAD;
             break;
         }

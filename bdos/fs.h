@@ -137,7 +137,7 @@ struct _ofd
     WORD  o_usecnt;     /* use count for inherited files        */
     OFD   *o_thread;    /* mulitple open thread list            */
     UWORD o_mod;        /* mode file opened in (see below)      */
-} OPT_PACKED ;
+} ;
 
 /*
  * bit usage in o_mod
@@ -219,7 +219,7 @@ struct _dnd         /* directory node descriptor */
 
     long d_scan;        /*  current posn in dir for DND tree    */
     OFD  *d_files;      /* open files on this node              */
-} OPT_PACKED ;
+}  ;
 
 /*
  * bit usage in d_flag
@@ -255,7 +255,7 @@ struct _dmd         /* drive media block */
     OFD    *m_ofl;      /*  list of open files                  */
     DND    *m_dtl;      /* root of directory tree list          */
     UWORD  m_16;        /* 16 bit fat ?                         */
-} OPT_PACKED;
+} ;
 
 
 
@@ -330,7 +330,7 @@ typedef struct
     DOSTIME dt_td;              /*  time, date fields from fcb  22-25   */
     long  dt_fileln;            /*  file length field from fcb  26-29   */
     char  dt_fname[14];         /*  file name from fcb          30-43   */
-} OPT_PACKED DTAINFO;                      /*    includes null terminator          */
+} DTAINFO;                      /*    includes null terminator          */
 
 #define DTA_DRIVEMASK   0x0000001fL
 
