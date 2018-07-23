@@ -799,14 +799,25 @@ WORD wind_get_grect(WORD w_handle, WORD w_field, GRECT *gr)
 
 WORD wind_set(WORD w_handle, WORD w_field, ...) /* WORD w2, WORD w3, WORD w4, WORD w5) */
 {
+    LONG longarg;
     va_list ap;
-
     va_start(ap, w_field);
 
     WM_HANDLE = w_handle;
     WM_WFIELD = w_field;
-    WM_IX = va_arg(ap, int);
-    WM_IY = va_arg(ap, int);
+    switch(w_field)
+    {
+        case WF_NAME:
+        case WF_INFO:
+        case WF_NEWDESK:
+            longarg = va_arg(ap, LONG);
+            memcpy(&(WM_IX), &longarg, sizeof(LONG));
+        break;
+        default:
+            WM_IX = va_arg(ap, int);
+            WM_IY = va_arg(ap, int);
+        break;
+    }
     WM_IW = va_arg(ap, int);
     WM_IH = va_arg(ap, int);
     va_end(ap);
