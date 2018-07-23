@@ -34,9 +34,12 @@
 //
 // Broadcom BCM2835 ARM Peripherals Guide
 //
-#define ENABLE_KDEBUG
-#define EMMC_DEBUG
-#define EMMC_DEBUG2
+//#define ENABLE_KDEBUG
+//#define EMMC_DEBUG
+//#define EMMC_DEBUG2
+
+// Write protect until read support is debugged
+#define EMMC_DEBUG_WP
 
 #include "config.h"
 #include "portab.h"
@@ -531,40 +534,6 @@ void raspi_act_led_off(void)
 
 void raspi_emmc_init(void)
 {
-#if 0 // defined(TARGET_RPI2) || defined(TARGET_RPI3)
-    {
-        unsigned gpio_pin;
-        for (gpio_pin = 34; gpio_pin <= 39; gpio_pin++)
-        {
-            peripheral_begin();
-        	unsigned shift = (gpio_pin % 10) * 3;
-            ULONG value = ARM_GPIO_GPFSEL3;
-            value &= ~(7 << shift);
-            ARM_GPIO_GPFSEL3 = value;
-
-            ARM_GPIO_GPPUD = 0; // pullup mode = 0
-            raspi_delay_us(5);
-            ARM_GPIO_GPPUDCLK1 = 1 << (gpio_pin % 32);
-            raspi_delay_us(5);
-            ARM_GPIO_GPPUD = 0;
-            ARM_GPIO_GPPUDCLK1 = 0;
-            peripheral_end();
-
-        }
-        for (gpio_pin = 48; gpio_pin <= 53; gpio_pin++)
-        {
-            peripheral_begin();
-        	volatile ULONG* sel_reg = (gpio_pin < 50 ? &ARM_GPIO_GPFSEL4 : &ARM_GPIO_GPFSEL5);
-        	unsigned shift = (gpio_pin % 10) * 3;
-            ULONG value = *sel_reg;
-            value &= ~(7 << shift);
-            value |= 7 << shift; // Set Alternate function no 3
-            *sel_reg = value;
-            peripheral_end();
-        }
-    }
-#endif
-
     peripheral_begin();
 
     if (card_init() != 0)
@@ -585,6 +554,14 @@ LONG raspi_emmc_rw(WORD rw,LONG sector,WORD count,UBYTE *buf,WORD dev)
 
     if (count == 0)
         return 0;
+
+#ifdef EMMC_DEBUG_WP
+    if (rw & RW_RW)
+    {
+        KDEBUG(("raspi_emmc_rw: Protecting against write of count %d to sector %ld\n",count, sector));
+        return EWRPRO;
+    }
+#endif
 
     raspi_act_led_on();
     peripheral_begin();
@@ -762,7 +739,7 @@ static ULONG get_clock_divider(ULONG base_clock, ULONG target_rate)
             denominator = divisor * 2;
         }
         int actual_clock = base_clock / denominator;
-        KDEBUG(("base_clock: %d, target_rate: %d, divisor: %08x, actual_clock: %d, ret: %08x\n", base_clock, target_rate, divisor, actual_clock, ret));
+        KDEBUG(("base_clock: %ld, target_rate: %ld, divisor: %08x, actual_clock: %d, ret: %08lx\n", base_clock, target_rate, divisor, actual_clock, ret));
 #endif
 
         return ret;
@@ -784,7 +761,7 @@ static int switch_clock_rate(ULONG base_clock, ULONG target_rate)
     ULONG divider = get_clock_divider(base_clock, target_rate);
     if (divider == SD_GET_CLOCK_DIVIDER_FAIL)
     {
-        KDEBUG(("Couldn't get a valid divider for target rate %d Hz\n", target_rate));
+        KDEBUG(("Couldn't get a valid divider for target rate %ld Hz\n", target_rate));
 
         return -1;
     }
@@ -813,7 +790,7 @@ static int switch_clock_rate(ULONG base_clock, ULONG target_rate)
     raspi_delay_us(2000);
 
 #ifdef EMMC_DEBUG2
-    KDEBUG(("Successfully set clock rate to %d Hz\n", target_rate));
+    KDEBUG(("Successfully set clock rate to %ld Hz\n", target_rate));
 #endif
 
     return 0;
@@ -1055,7 +1032,7 @@ static void handle_card_interrupt(void)
     ULONG status = EMMC_STATUS;
 
     KDEBUG(("Card interrupt\n"));
-    KDEBUG(("controller status: %08x\n", status));
+    KDEBUG(("controller status: %08lx\n", status));
 #endif
 
     // Get the card status
@@ -1071,7 +1048,7 @@ static void handle_card_interrupt(void)
         else
         {
 #ifdef EMMC_DEBUG2
-            KDEBUG(("card status: %08x\n", card.last_r0));
+            KDEBUG(("card status: %08lx\n", card.last_r0));
 #endif
         }
     }
@@ -1167,7 +1144,7 @@ static void handle_interrupts(void)
     if (irpts & 0x8000)
     {
 #ifdef EMMC_DEBUG2
-        KDEBUG(("spurious error interrupt: %08x\n", irpts));
+        KDEBUG(("spurious error interrupt: %08lx\n", irpts));
 #endif
         reset_mask |= 0xffff0000;
     }
@@ -1237,7 +1214,7 @@ static BOOL issue_command(ULONG command, ULONG argument, int timeout)
 #ifdef EMMC_DEBUG2
     if (FAIL)
     {
-        KINFO(("Error issuing %s%lu (intr %08x)\n", card.last_cmd & IS_APP_CMD ? "ACMD" : "CMD", card.last_cmd & 0xff, card.last_interrupt));
+        KINFO(("Error issuing %s%lu (intr %08lx)\n", card.last_cmd & IS_APP_CMD ? "ACMD" : "CMD", card.last_cmd & 0xff, card.last_interrupt));
 
         if (card.last_error == 0)
         {
@@ -1283,7 +1260,7 @@ static int card_reset(void)
         return -1;
     }
 #ifdef EMMC_DEBUG2
-    KDEBUG(("control0: %08x, control1: %08x, control2: %08x\n",
+    KDEBUG(("control0: %08lx, control1: %08lx, control2: %08lx\n",
                 EMMC_CONTROL0, EMMC_CONTROL1, EMMC_CONTROL2));
 #endif
 
@@ -1300,7 +1277,7 @@ static int card_reset(void)
         return -1;
     }
 #ifdef EMMC_DEBUG2
-    KDEBUG(("status: %08x\n", status_reg));
+    KDEBUG(("status: %08lx\n", status_reg));
 #endif
 
     // Clear control2
@@ -1344,7 +1321,7 @@ static int card_reset(void)
         return -1;
     }
 #ifdef EMMC_DEBUG2
-    KDEBUG(("control0: %08x, control1: %08x\n",
+    KDEBUG(("control0: %08lx, control1: %08lx\n",
                 EMMC_CONTROL0, EMMC_CONTROL1));
 #endif
 
@@ -1476,7 +1453,7 @@ static int card_reset(void)
         {
             KINFO(("SDIO card detected - not currently supported\n"));
 #ifdef EMMC_DEBUG2
-            KDEBUG(("CMD5 returned %08x\n", card.last_r0));
+            KDEBUG(("CMD5 returned %08lx\n", card.last_r0));
 #endif
 
             return -1;
@@ -1493,7 +1470,7 @@ static int card_reset(void)
         return -1;
     }
 #ifdef EMMC_DEBUG2
-    KDEBUG(("inquiry ACMD41 returned %08x\n", card.last_r0));
+    KDEBUG(("inquiry ACMD41 returned %08lx\n", card.last_r0));
 #endif
 
     // Call initialization ACMD41
@@ -1551,7 +1528,7 @@ static int card_reset(void)
     }
 
 #ifdef EMMC_DEBUG2
-    KDEBUG(("card identified: OCR: %04x, 1.8v support: %d, SDHC support: %d\n", card.card_ocr, card.card_supports_18v, card.card_supports_sdhc));
+    KDEBUG(("card identified: OCR: %04lx, 1.8v support: %ld, SDHC support: %ld\n", card.card_ocr, card.card_supports_18v, card.card_supports_sdhc));
 #endif
 
     // At this point, we know the card is definitely an SD card, so will definitely
@@ -1634,7 +1611,7 @@ static int card_reset(void)
         if (dat30 != 0xf)
         {
 #ifdef EMMC_DEBUG
-            KDEBUG(("DAT[3:0] did not settle to 1111b (%01x)\n", dat30));
+            KDEBUG(("DAT[3:0] did not settle to 1111b (%01lx)\n", dat30));
 #endif
             card.failed_voltage_switch = 1;
             power_off();
@@ -1673,7 +1650,7 @@ static int card_reset(void)
 
     ULONG cmd3_resp = card.last_r0;
 #ifdef EMMC_DEBUG2
-    KDEBUG(("CMD3 response: %08x\n", cmd3_resp));
+    KDEBUG(("CMD3 response: %08lx\n", cmd3_resp));
 #endif
 
     card.card_rca = (cmd3_resp >> 16) & 0xffff;
@@ -1712,7 +1689,7 @@ static int card_reset(void)
     }
 
 #ifdef EMMC_DEBUG2
-    KDEBUG(("RCA: %04x\n", card.card_rca));
+    KDEBUG(("RCA: %04lx\n", card.card_rca));
 #endif
 
     // Now select the card (toggles it to transfer state)
@@ -1796,9 +1773,9 @@ static int card_reset(void)
         }
     }
 #ifdef EMMC_DEBUG2
-    KDEBUG(("SCR[0]: %08x, SCR[1]: %08x\n", card.scr.scr[0], card.scr.scr[1]));;
-    KDEBUG(("SCR: %08x%08x\n", be2h32(card.scr.scr[0]), be2h32(card.scr.scr[1])));
-    KDEBUG(("SCR: version %s, bus_widths %01x\n", sd_versions[card.scr.sd_version], card.scr.sd_bus_widths));
+    KDEBUG(("SCR[0]: %08lx, SCR[1]: %08lx\n", card.scr.scr[0], card.scr.scr[1]));;
+    KDEBUG(("SCR: %08lx%08lx\n", be2h32(card.scr.scr[0]), be2h32(card.scr.scr[1])));
+    KDEBUG(("SCR: version %s, bus_widths %01lx\n", sd_versions[card.scr.sd_version], card.scr.sd_bus_widths));
 #endif
 
     if (card.scr.sd_bus_widths & 4)
@@ -1839,7 +1816,7 @@ static int card_reset(void)
 
     KINFO(("Found a valid version %s SD card\n", sd_versions[card.scr.sd_version]));
 #ifdef EMMC_DEBUG2
-    KDEBUG(("setup successful (status %d)\n", status));
+    KDEBUG(("setup successful (status %ld)\n", status));
 #endif
 
     // Reset interrupt register
@@ -1867,7 +1844,7 @@ static int card_init(void)
 #ifdef EMMC_DEBUG2
     ULONG vendor = ver >> 24;
     ULONG slot_status = ver & 0xff;
-    KDEBUG(("Vendor %x, SD version %x, slot status %x\n", vendor, sdversion, slot_status));
+    KDEBUG(("Vendor %lx, SD version %lx, slot status %lx\n", vendor, sdversion, slot_status));
 #endif
     card.hci_ver = sdversion;
     if (card.hci_ver < 2)
@@ -1902,7 +1879,7 @@ static int ensure_data_mode(void)
     }
 
 #ifdef EMMC_DEBUG2
-    KDEBUG(("ensure_data_mode() obtaining status register for card_rca %08x: \n", card.card_rca));
+    KDEBUG(("ensure_data_mode() obtaining status register for card_rca %08lx: \n", card.card_rca));
 #endif
 
     if (!issue_command(SEND_STATUS, card.card_rca << 16, DEFAULT_CMD_TIMEOUT))
@@ -1916,7 +1893,7 @@ static int ensure_data_mode(void)
     ULONG status = card.last_r0;
     ULONG cur_state = (status >> 9) & 0xf;
 #ifdef EMMC_DEBUG2
-    KDEBUG(("status %d\n", cur_state));
+    KDEBUG(("status %ld\n", cur_state));
 #endif
     if (cur_state == 3)
     {
@@ -1969,7 +1946,7 @@ static int ensure_data_mode(void)
         status = card.last_r0;
         cur_state = (status >> 9) & 0xf;
 #ifdef EMMC_DEBUG2
-        KDEBUG(("status %d\n", cur_state));
+        KDEBUG(("status %ld\n", cur_state));
 #endif
 
         if(cur_state != 4)
@@ -2039,7 +2016,7 @@ static int do_data_command(int is_write, UBYTE *buf, int block_count, ULONG bloc
         else
         {
             KINFO(("error sending CMD%d\n", command));
-            KDEBUG(("error = %08x\n", card.last_error));
+            KDEBUG(("error = %08lx\n", card.last_error));
 
             if (++retry_count < max_retries)
             {
