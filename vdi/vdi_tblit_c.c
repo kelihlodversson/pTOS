@@ -26,9 +26,10 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst)
     WORD dest_bitoffset = vars->tddad;
     WORD src_bitoffset = vars->tsdad;
 #if CONF_CHUNKY_PIXELS
+    UBYTE tmp;
     if (vars->nbrplane == 8 && vars->nextwrd == sizeof(WORD))
     {
-        if (src_bitoffset > 8) // We treat the source as a sequence of (big endian) bytes instead of words
+        if (src_bitoffset > 7) // We treat the source as a sequence of (big endian) bytes instead of words
         {
             src++;
             src_bitoffset-= 8;
@@ -41,19 +42,26 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst)
             UBYTE c = *lsrc;
             for( x = 0; x < vars->width; x++ )
             {
-                if (c & src_bit_mask)
-                {
-                    dst[x] = vars->forecol;
-                }
+                tmp = (c & src_bit_mask)?vars->forecol:vars->ambient;
                 switch (vars->WRT_MODE) {
                     default:
                     case 0: /* REPLACE */
+                    dst[x] = tmp;
                     break;
                     case 1: /* TRANS */
+                    if (c & src_bit_mask)
+                    {
+                        dst[x] = tmp;
+                    }
                     break;
                     case 2: /* XOR */
+                    dst[x] ^= tmp;
                     break;
                     case 3: /* INVERS */
+                    if (!(c & src_bit_mask))
+                    {
+                        dst[x] = tmp;
+                    }
                     break;
                 }
                 src_bit_mask >>= 1;
