@@ -1657,7 +1657,7 @@ WORD deskmain(void)
     app_blddesk();
 
     /* Take over the desktop */
-    wind_set_pww(0, WF_NEWDESK, G.g_screen, 1, 0);
+    wind_set(0, WF_NEWDESK, G.g_screen, 1, 0);
 
     /* establish desktop's state from info found in app_start,
      * open windows

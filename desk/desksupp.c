@@ -401,8 +401,8 @@ WORD do_diropen(WNODE *pw, WORD new_win, WORD curr_icon,
     /* set new name and info lines for window */
     win_sname(pw);
     win_sinfo(pw);
-    wind_set_pww(pw->w_id, WF_NAME, pw->w_name, 0, 0);
-    wind_set_pww(pw->w_id, WF_INFO, pw->w_info, 0, 0);
+    wind_set(pw->w_id, WF_NAME, pw->w_name, 0, 0);
+    wind_set(pw->w_id, WF_INFO, pw->w_info, 0, 0);
 
     /* do actual wind_open  */
     do_wopen(new_win, pw->w_id, curr_icon,

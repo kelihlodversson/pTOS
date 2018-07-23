@@ -797,24 +797,19 @@ WORD wind_get_grect(WORD w_handle, WORD w_field, GRECT *gr)
 }
 
 
-WORD wind_set(WORD w_handle, WORD w_field, WORD x, WORD y, WORD w, WORD h)
+WORD wind_set(WORD w_handle, WORD w_field, ...) /* WORD w2, WORD w3, WORD w4, WORD w5) */
 {
-    WM_HANDLE = w_handle;
-    WM_WFIELD = w_field;
-    WM_IX = x;
-    WM_IY = y;
-    WM_IW = w;
-    WM_IH = h;
-    return gem_if(AES_CTRL_CODE(WIND_SET, 6, 1, 0));
-}
+    va_list ap;
 
-WORD wind_set_pww(WORD w_handle, WORD w_field, void* p, WORD w, WORD h)
-{
+    va_start(ap, w_field);
+
     WM_HANDLE = w_handle;
     WM_WFIELD = w_field;
-    *((void**)&WM_IX) = p;
-    WM_IW = w;
-    WM_IH = h;
+    WM_IX = va_arg(ap, int);
+    WM_IY = va_arg(ap, int);
+    WM_IW = va_arg(ap, int);
+    WM_IH = va_arg(ap, int);
+    va_end(ap);
     return gem_if(AES_CTRL_CODE(WIND_SET, 6, 1, 0));
 }
 
