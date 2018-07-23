@@ -52,5 +52,5 @@ _deskstart:
 // Space for the Stack:
 .align 4
 _deskstackbottom:
-        .word   DESKSTACKSIZE
+        .space   DESKSTACKSIZE
 deskustack:
