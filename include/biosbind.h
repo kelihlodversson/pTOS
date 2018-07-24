@@ -39,6 +39,8 @@ static __inline__ void bios_v_l(int op, long a)
     __asm__ volatile (
         "svc 13"
         :
+          /* r0-r1 are marked as output, as they are clobbered, but since they are used for input, we can't put them in the clobber list */
+          "=r"(_r0), "=r"(_r1)
         : "r"(_r0), "r"(_r1)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
@@ -64,6 +66,8 @@ static __inline__ void bios_v_ww(int op, short a, short b)
     __asm__ volatile (
         "svc 13"
         :
+          /* r0-r2 are marked as output, as they are clobbered, but since they are used for input, we can't put them in the clobber list */
+          "=r"(_r0), "=r"(_r1), "=r"(_r2)
         : "r"(_r0), "r"(_r1), "r"(_r2)
         : "r3", "r12", "lr",  "memory", "cc"
     );
@@ -90,7 +94,9 @@ static __inline__ short bios_w_w(int op, short a)
     register long _r1 __asm__("r1")=(long)(a);
     __asm__ volatile (
         "svc 13"
-        : "=r"(_r0)
+        : "=r"(_r0),
+          /* r1 is marked as output, as it's clobbered, but since they are used for input, we can't put it in the clobber list */
+          "=r"(_r1)
         : "r"(_r0), "r"(_r1)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
@@ -144,7 +150,9 @@ static __inline__ long bios_l_w(int op, short a)
     register long _r1 __asm__("r1")=(long)(a);
     __asm__ volatile (
         "svc 13"
-        : "=r"(_r0)
+        : "=r"(_r0),
+          /* r1 is marked as output, as it's clobbered, but since they are used for input, we can't put it in the clobber list */
+          "=r"(_r1)
         : "r"(_r0), "r"(_r1)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
@@ -173,7 +181,9 @@ static __inline__ long bios_l_ww(int op, short a, short b)
     register long _r2 __asm__("r2")=(long)(b);
     __asm__ volatile (
         "svc 13"
-        : "=r"(_r0)
+        : "=r"(_r0),
+          /* r1-r2 are marked as output, as they are clobbered, but since they are used for input, we can't put them in the clobber list */
+          "=r"(_r1), "=r"(_r2)
         : "r"(_r0), "r"(_r1), "r"(_r2)
         : "r3", "r12", "lr",  "memory", "cc"
     );
@@ -203,7 +213,9 @@ static __inline__ long bios_l_wl(int op, short a, long b)
     register long _r2 __asm__("r2")=(long)(b);
     __asm__ volatile (
         "svc 13"
-        : "=r"(_r0)
+        : "=r"(_r0),
+          /* r1-r2 are marked as output, as they are clobbered, but since they are used for input, we can't put them in the clobber list */
+          "=r"(_r1), "=r"(_r2)
         : "r"(_r0), "r"(_r1), "r"(_r2)
         : "r3", "r12", "lr",  "memory", "cc"
     );
@@ -237,7 +249,9 @@ bios_l_wlwwwl(int op, short a, long b, short c, short d, short e, long f)
     register long _r5 __asm__("r5")=(long)(e);
     __asm__ volatile (
         "svc 13"
-        : "=r"(_r0)
+        : "=r"(_r0),
+          /* r1-r3 are marked as output, as they are clobbered, but since they are used for input, we can't put them in the clobber list */
+          "=r"(_r1), "=r"(_r2), "=r"(_r3)
         : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3), "r"(_r4), "r"(_r5)
         : "r12", "lr",  "memory", "cc"
     );
