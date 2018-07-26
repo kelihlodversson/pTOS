@@ -124,7 +124,7 @@
 
 #include "config.h"
 #include "portab.h"
-#include "asm.h"
+#include "endian.h"
 #include "fs.h"
 #include "time.h"
 #include "mem.h"
@@ -245,7 +245,7 @@ long xmkdir(char *s)
     memcpy(f2, dots, 22);
     f2->f_attrib = FA_SUBDIR;
     f2->f_td = f0->o_td;            /* time/date are little-endian */
-    cl = le2h16(f0->o_strtcl);
+    cl = le2cpu16(f0->o_strtcl);
     f2->f_clust = cl;
     f2->f_fileln = 0;
     f2++;
@@ -264,7 +264,7 @@ long xmkdir(char *s)
     else
     {
         f2->f_td = f->o_dirfil->o_td;   /* time/date are little-endian */
-        f2->f_clust = le2h16(f->o_dirfil->o_strtcl);
+        f2->f_clust = le2cpu16(f->o_dirfil->o_strtcl);
     }
     f2->f_fileln = 0;
     memcpy(f, f0, sizeof(OFD));
@@ -675,14 +675,14 @@ long xgsdtof(DOSTIME *buf, int h, int wrt)
 
     if (wrt)
     {
-        swpcopyw(&buf->time, &f->o_td.time);
-        swpcopyw(&buf->date, &f->o_td.date);
+        f->o_td.time = cpu2le16(buf->time);
+        f->o_td.date = cpu2le16(buf->date);
         f->o_flag |= O_DIRTY;           /* M01.01.0918.01 */
     }
     else
     {
-        swpcopyw(&f->o_td.time, &buf->time);
-        swpcopyw(&f->o_td.date, &buf->date);
+        buf->time = le2cpu16(f->o_td.time);
+        buf->date = le2cpu16(f->o_td.date);
     }
 
     return E_OK;
@@ -928,10 +928,10 @@ long xrename(int n, char *p1, char *p2)
 
     /* get old attribute & time/date/cluster/length */
     att = f->f_attrib;
-    filetime = le2h16(f->f_td.time);
-    filedate = le2h16(f->f_td.date);
-    clust = le2h16(f->f_clust);
-    fileln = le2h16(f->f_fileln);
+    filetime = le2cpu16(f->f_td.time);
+    filedate = le2cpu16(f->f_td.date);
+    clust = le2cpu16(f->f_clust);
+    fileln = le2cpu16(f->f_fileln);
 
     /*
      * get the DND for the target folder
@@ -1000,8 +1000,8 @@ long xrename(int n, char *p1, char *p2)
         }
 
         /* copy the time/date/cluster/length to the OFD */
-        swpcopyw(&filetime,&fd2->o_td.time);    /* must be little-endian! */
-        swpcopyw(&filedate,&fd2->o_td.date);
+        fd2->o_td.time = cpu2le16(filetime);    /* must be little-endian! */
+        fd2->o_td.date = cpu2le16(filedate);
         fd2->o_strtcl = clust;
         fd2->o_fileln = fileln;
 
@@ -1020,7 +1020,7 @@ long xrename(int n, char *p1, char *p2)
             if (!fd2->o_dnode->d_name[0])   /* empty name means root */
                 temp = 0;
             else temp = fdparent->o_strtcl; /* else real start cluster */
-            temp = h2le16(temp);            /* convert to disk format */
+            temp = cpu2le16(temp);            /* convert to disk format */
             if (update_fcb(fd2,32+26,2L,(BYTE *)&temp) < 0)
             {
                 KDEBUG(("xrename(): can't update .. entry\n"));
@@ -1631,7 +1631,7 @@ static DND *makdnd(DND *p, FCB *b)
     /* complete the initialization */
 
     p1->d_ofd = (OFD *) 0;
-    p1->d_strtcl = le2h16(b->f_clust);
+    p1->d_strtcl = le2cpu16(b->f_clust);
     p1->d_drv = p->d_drv;
     p1->d_dirfil = fd;
     p1->d_dirpos = fd->o_bytnum - 32;
@@ -1817,9 +1817,9 @@ static BOOL match(char *s1, char *s2)
 static void makbuf(FCB *f, DTAINFO *dt)
 {                                       /*  M01.01.03   */
     dt->dt_fattr = f->f_attrib;
-    dt->dt_td.time = le2h16(f->f_td.time);
-    dt->dt_td.date = le2h16(f->f_td.date);
-    dt->dt_fileln = le2h32(f->f_fileln);
+    dt->dt_td.time = le2cpu16(f->f_td.time);
+    dt->dt_td.date = le2cpu16(f->f_td.date);
+    dt->dt_fileln = le2cpu32(f->f_fileln);
 
     packit(f->f_name,dt->dt_fname);
 }

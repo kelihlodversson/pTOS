@@ -60,40 +60,6 @@ static inline void stop_until_interrupt(void)
 extern void stop_until_interrupt(void);
 #endif
 
-#if defined(__arm__) && ! defined(__armbe__)
-#define IS_LITTLE_ENDIAN    1
-#define IS_BIG_ENDIAN       0
-#else
-#define IS_LITTLE_ENDIAN    0
-#define IS_BIG_ENDIAN       1
-#endif
-
-// Assuming GNUC
-#define bswap16		__builtin_bswap16
-#define bswap32		__builtin_bswap32
-
-#if IS_BIG_ENDIAN
-#   define le2h32(x) bswap32(x)
-#   define le2h16(x) bswap16(x)
-#   define h2le32(x) bswap32(x)
-#   define h2le16(x) bswap16(x)
-#   define be2h32(x) (x)
-#   define be2h16(x) (x)
-#   define h2be32(x) (x)
-#   define h2be16(x) (x)
-#elif IS_LITTLE_ENDIAN
-#   define be2h32(x) bswap32(x)
-#   define be2h16(x) bswap16(x)
-#   define h2be32(x) bswap32(x)
-#   define h2be16(x) bswap16(x)
-#   define le2h32(x) (x)
-#   define le2h16(x) (x)
-#   define h2le32(x) (x)
-#   define h2le16(x) (x)
-#else
-#   error "Either IS_LITTLE_ENDIAN or IS_BIG_ENDIAN has to be 1"
-#endif
-
 /*
  * WORD swpw(WORD val);
  *   swap endianess of val, 16 bits only.
@@ -113,52 +79,17 @@ extern void stop_until_interrupt(void);
     : "cc"       /* clobbered */          \
     );                                    \
   })
+#elif defined(__m68k__)
+#define swpw(a)                           \
+  __asm__ volatile                        \
+  ("ror   #8,%0"                          \
+  : "=d"(a)          /* outputs */        \
+  : "0"(a)           /* inputs  */        \
+  : "cc"             /* clobbered */      \
+  )
 #else
-static __inline UWORD swpw(UWORD v)
-{
-    return ((((v) >> 8) & 0xffu) | (((v) & 0xffu) << 8));
-}
+#define swpw(a) @swpw_not_supported
 #endif
-
-/* Copy and swap an UWORD from *src to *dest */
-static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
-{
-    const UBYTE_ALIAS* s = (const UBYTE_ALIAS*)src;
-    UBYTE_ALIAS* d = (UBYTE_ALIAS*)dest;
-
-    d[0] = s[1];
-    d[1] = s[0];
-}
-
-/*
- * WORD swpl(LONG val);
- *   swap endianess of val, 32 bits only.
- *   e.g. ABCD => DCBA
- */
-
-#ifdef __mcoldfire__
-#define swpl(a)                           \
-  __extension__                           \
-  ({long _tmp;                            \
-    __asm__ volatile                      \
-    ("move.b  (%1),%0\n\t"                \
-     "move.b  3(%1),(%1)\n\t"             \
-     "move.b  %0,3(%1)\n\t"               \
-     "move.b  1(%1),%0\n\t"               \
-     "move.b  2(%1),1(%1)\n\t"            \
-     "move.b  %0,2(%1)"                   \
-    : "=d"(_tmp)      /* outputs */       \
-    : "a"(&a)        /* inputs  */        \
-    : "cc", "memory" /* clobbered */      \
-    );                                    \
-  })
-#else
-static __inline ULONG swpl(ULONG v)
-{
-   return (((v >> 24) & 0xffu) | ((v >> 8) & 0xff00u) | ((v & 0xffu) << 24) | ((v & 0xff00u) << 8));
-}
-#endif
-
 
 /*
  * WORD swpw2(ULONG val);
@@ -194,10 +125,7 @@ static __inline ULONG swpl(ULONG v)
   : "cc"             /* clobbered */      \
   )
 #else
-static __inline ULONG swpw2(ULONG v)
-{
-   return ((v >> 8) & 0xff0000u) | ((v << 8) & 0xff000000u) | ((v >> 8) & 0xffu) | ((v << 8) & 0xff00u);
-}
+#define swpw2(a) @swpw2_not_supported
 #endif
 
 
@@ -214,7 +142,7 @@ static __inline ULONG swpw2(ULONG v)
     : "cc"          /* clobbered */ \
     )
 #else
-#define rolw1(x)    x=(x>>15)|(x<<1)
+#define rolw1(x)    ((x)=((x)>>15)|((x)<<1))
 #endif
 
 
@@ -231,7 +159,7 @@ static __inline ULONG swpw2(ULONG v)
     : "cc"          /* clobbered */ \
     )
 #else
-#define rorw1(x)    x=(x>>1)|(x<<15)
+#define rorw1(x)    ((x)=((x)>>1)|((x)<<15))
 #endif
 
 

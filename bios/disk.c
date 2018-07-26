@@ -16,7 +16,7 @@
 #include "portab.h"
 #include "gemerror.h"
 #include "disk.h"
-#include "asm.h"
+#include "endian.h"
 #include "blkdev.h"
 #include "kprint.h"
 #include "xhdi.h"
@@ -516,9 +516,9 @@ static int atari_partition(UWORD unit,LONG *devices_available)
                 pid[1] = 'D';
                 pid[2] = type;
 
-                start = le2h32(mbr->entry[i].start);    /* little-endian */
+                start = le2cpu32(mbr->entry[i].start);    /* little-endian */
 
-                size = le2h32(mbr->entry[i].size);      /* little-endian */
+                size = le2cpu32(mbr->entry[i].size);      /* little-endian */
 
                 if (size == 0UL) {
                     KDEBUG((" entry for zero-length partition ignored\n"));

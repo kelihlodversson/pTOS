@@ -45,6 +45,7 @@
 #include "portab.h"
 
 #include "disk.h"
+#include "endian.h"
 #include "asm.h"
 #include "blkdev.h"
 #include "delay.h"
@@ -1740,7 +1741,7 @@ static int card_reset(void)
 
     // Determine card version
     // Note that the SCR is big-endian
-    ULONG scr0 = be2h32 (card.scr.scr[0]);
+    ULONG scr0 = be2cpu32 (card.scr.scr[0]);
     card.scr.sd_version = SD_VER_UNKNOWN;
     ULONG sd_spec = (scr0 >> (56 - 32)) & 0xf;
     ULONG sd_spec3 = (scr0 >> (47 - 32)) & 0x1;
@@ -1774,7 +1775,7 @@ static int card_reset(void)
     }
 #ifdef EMMC_DEBUG2
     KDEBUG(("SCR[0]: %08lx, SCR[1]: %08lx\n", card.scr.scr[0], card.scr.scr[1]));;
-    KDEBUG(("SCR: %08lx%08lx\n", be2h32(card.scr.scr[0]), be2h32(card.scr.scr[1])));
+    KDEBUG(("SCR: %08lx%08lx\n", be2cpu32(card.scr.scr[0]), be2cpu32(card.scr.scr[1])));
     KDEBUG(("SCR: version %s, bus_widths %01lx\n", sd_versions[card.scr.sd_version], card.scr.sd_bus_widths));
 #endif
 

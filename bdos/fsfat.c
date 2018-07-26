@@ -12,7 +12,7 @@
 
 #include "config.h"
 #include "portab.h"
-#include "asm.h"
+#include "endian.h"
 #include "fs.h"
 #include "gemerror.h"
 #include "kprint.h"
@@ -52,7 +52,7 @@ void clfix(CLNO cl, CLNO link, DMD *dm)
     if (dm->m_16)
     {
         buf = getrec(recnum,dm->m_fatofd,1);
-        link = h2le16(link);
+        link = cpu2le16(link);
         *(CLNO *)(buf+offset) = link;
         return;
     }
@@ -81,9 +81,9 @@ void clfix(CLNO cl, CLNO link, DMD *dm)
     f |= *(UBYTE *)buf;
 
     /* update */
-    f = h2le16(f);
+    f = cpu2le16(f);
     f = (f & mask) | link;
-    f = le2h16(f);
+    f = le2cpu16(f);
 
     /* write back */
     buf = getrec(recnum,dm->m_fatofd,1) + offset;
@@ -123,7 +123,7 @@ CLNO getrealcl(CLNO cl, DMD *dm)
     if (dm->m_16)
     {
         f = *(CLNO *)buf;
-        return le2h16(f);
+        return le2cpu16(f);
     }
 
     /*
@@ -134,7 +134,7 @@ CLNO getrealcl(CLNO cl, DMD *dm)
         buf = getrec(recnum+1,dm->m_fatofd,0);
     f |= *(UBYTE *)buf;
 
-    f = le2h16(f);
+    f = le2cpu16(f);
 
     if (IS_ODD(cl))
         cl = f >> 4;

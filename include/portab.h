@@ -19,11 +19,13 @@
 #define PORTAB_H
 
 /*
- * The following include provides definitions for NULL, size_t...
+ * stddef.h provides definitions for NULL, size_t...
  * It is provided by the compiler itself, so this is not a dependency
  * to the standard library.
+ * stdint.h is likewise fine for freestanding environments
  */
 #include <stddef.h>
+#include <stdint.h>
 
 /*
  *  Compiler Definitions
@@ -84,12 +86,12 @@
  */
 
 typedef char            BYTE;                   /*  Signed byte         */
-typedef unsigned char   UBYTE;                  /*  Unsigned byte       */
-typedef unsigned long   ULONG;                  /*  unsigned 32 bit word*/
+typedef uint8_t         UBYTE;                  /*  Unsigned byte       */
+typedef uint32_t        ULONG;                  /*  unsigned 32 bit word*/
 typedef int             BOOL;                   /*  boolean, TRUE or FALSE */
-typedef short int       WORD;                   /*  signed 16 bit word  */
-typedef unsigned short  UWORD;                  /*  unsigned 16 bit word*/
-typedef long            LONG;                   /*  signed 32 bit word  */
+typedef int16_t         WORD;                   /*  signed 16 bit word  */
+typedef uint16_t        UWORD;                  /*  unsigned 16 bit word*/
+typedef int32_t         LONG;                   /*  signed 32 bit word  */
 
 /* pointer to function returning LONG */
 typedef LONG (*PFLONG)(void);
