@@ -26,6 +26,7 @@
 #include "gembind.h"
 #include "aesbind.h"
 #include "kprint.h"
+#include "string.h"
 #include <stdarg.h>
 
 
