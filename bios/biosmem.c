@@ -64,8 +64,8 @@ void bmem_init(void)
     KDEBUG(("       stktop = %p\n", stktop));
     KDEBUG(("_end_os_stram = %p\n", _end_os_stram));
 
-    /* Start of available ST-RAM */
-    end_os = _end_os_stram;
+    /* Start of available ST-RAM aligned to 4 bytes */
+    end_os = (UBYTE*)(((ULONG)_end_os_stram + 3 ) & ~3);
     membot = end_os;
     KDEBUG(("       membot = %p\n", membot));
 
@@ -83,8 +83,6 @@ void bmem_init(void)
     bmem_allowed = TRUE;
 #endif
 }
-
-
 
 /*
  * Allocate an ST-RAM buffer.
@@ -148,6 +146,11 @@ void getmpb(MPB * mpb)
     themd.m_link = NULL;        /* no next memory descriptor */
     themd.m_start = membot;
     themd.m_length = memtop - themd.m_start;
+
+    /* Both base address and length of available memory should be aligned */
+    assert(((ULONG)themd.m_start & 3 ) ==  0);
+    assert(((ULONG)themd.m_length & 3 ) ==  0);
+    
     themd.m_own = NULL;         /* no owner's process descriptor */
 
     mpb->mp_mfl = &themd;       /* free list set to initial MD */
