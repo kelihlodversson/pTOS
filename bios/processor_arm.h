@@ -76,7 +76,7 @@ static inline uint32_t __attribute__((__const__)) read_cpuid_mputype(void)
 
 #ifndef TARGET_RPI1
 void clean_data_cache(void);
-void invalidate_data_cache_all(void);
+void flush_data_cache_all(void);
 void flush_branch_target_cache(void);
 #endif
 

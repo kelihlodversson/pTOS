@@ -99,6 +99,7 @@ _flush_branch_target_cache:
         bx lr
 
 
+#ifdef TARGET_RPI1
 /*
  * void flush_data_cache(void *start, long length)
  *
@@ -115,19 +116,6 @@ _flush_branch_target_cache:
 _flush_data_cache:
         bx lr   // Assuming write-through on arm
 
-/*
- * void invalidate_data_cache(void *start, long length)
- *
- * invalidate data cache after data has been read with DMA
- *
- * for both modes of data cache (write_through and copyback),
- * the cache needs to be invalidated
- */
- #ifdef TARGET_RPI1
- .globl  _invalidate_data_cache
-_invalidate_data_cache:
-        bx lr
-
  .globl  _invalidate_data_cache_all
 _invalidate_data_cache_all:
         mov ip, #0
@@ -142,7 +130,7 @@ _clean_data_cache:
 		mcr p15, 0, ip, c7, c10, 4
         bx lr
 #else
-// RPI2+ definition is in cache_armv7.S
+// RPI2+ definition is in cache_armv7.c
 #endif
 
 // ===========================================================================

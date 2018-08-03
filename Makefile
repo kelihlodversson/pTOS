@@ -230,7 +230,7 @@ bios_src +=  raspi_memory.c processor_arm.S vectorsasm_arm.S vectors_arm.c aciae
 			 raspi_mbox.c raspi_screen.c raspi_emmc.c
 
 ifneq (1,$(RPI))
-bios_src +=  cache_armv7.S
+bios_src +=  cache_armv7.c cache_armv7_asm.S
 endif
 
 else

@@ -222,7 +222,9 @@ static void init_mmu(ULONG memory_size)
     asm volatile ("mcr p15, 0, %0, c3, c0,  0" : : "r" (  DOMAIN_CLIENT << 0
                                                         | DOMAIN_CLIENT << 2));
 
-    invalidate_data_cache_all();
+#ifndef TARGET_RPI1
+    flush_data_cache_all();
+#endif
 
     // required if MMU was previously enabled and not properly reset
     invalidate_instruction_cache(0, memory_size);
