@@ -70,6 +70,11 @@ MD *ffit(long amount, MPB *mp)
             if (q->m_length > maxval)
                 maxval = q->m_length;
 
+        if ((maxval & 3 ) != 0)
+        {
+            assert((maxval & 3 )== 0);
+            maxval &= ~3;
+        }
         KDEBUG(("BDOS ffit: maxval=%ld\n",maxval));
         return (MD *)maxval;
     }
@@ -226,6 +231,11 @@ void freeit(MD *m, MPB *mp)
 WORD shrinkit(MD *m, MPB *mp, LONG newlen)
 {
     MD *f, *p, *q;
+    /*
+     * round the size up to a multiple of 4 bytes to keep alignment;
+     * alignment on long boundaries is faster in FastRAM
+     */
+    newlen = (newlen + 3) & ~3;
 
     /*
      * Create a memory descriptor for the freed portion of memory.
