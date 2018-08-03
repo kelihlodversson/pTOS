@@ -37,8 +37,8 @@
         .text
 #ifndef TARGET_RPI1
         .arch_extension sec
-#endif
         .arch_extension virt    // To use the eret and msr ELR_hyp, lr instructions below
+#endif
 
 /*
  * OSHEADER
@@ -116,12 +116,12 @@ os_dummy:
 .balign 4
 _main:
 
+#ifndef TARGET_RPI1
     ldr r1, =_start_in_hyp
     mov r2, #0
     str r2, [r1]
     bl  switch_from_hyp
 
-#ifndef TARGET_RPI1
     /* with some firmware versions, for some reason we need to call into monitor mode and unset the NS bit */
     /* copy our temporary monitor vectors to the old vector base address. */
     mrc p15, 0, r1, c12, c0, 0 ;@ get vbar
@@ -203,6 +203,8 @@ _core0:
     b     _biosmain
 
 /* Exit from HYP mode if the boot loader started there */
+#ifndef TARGET_RPI1
+
 switch_from_hyp:
 	mrs	r0 , cpsr
     /* test for HYP mode */
@@ -241,8 +243,6 @@ switch_from_hyp:
     eret
 1:	msr	cpsr_cxsf, r0
     bx lr
-
-#ifndef TARGET_RPI1
 
 	.globl	_start_secondary
 _start_secondary:
