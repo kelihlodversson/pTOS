@@ -72,6 +72,39 @@ void init_user_vec(void)
 
 }
 
+/*
+ * int_vbl - Int 0x70 - VBL interrupt
+ *
+ * no video resolution change is done.
+ */
+void int_vbl(void)
+{
+    int i;
+    PFVOID* vbl_list;
+    frclock++; // increase num of happened ints
+    if(!(--vblsem)) // check vbl semaphore (TODO: non-atomic)
+    {
+        vbclock++;
+        blink();
+#if CONF_WITH_FDC
+        flopvbl();
+#endif
+        // vblqueue handling
+        vbl_list = (PFVOID*)vblqueue;
+        if(vbl_list)
+        {
+            for(i = 0; i<nvbls; i++)
+            {
+                if(vbl_list[i])
+                {
+                    vbl_list[i]();
+                }
+            }
+        }
+    }
+    vblsem++; // release vbl semaphore (TODO: non-atomic)
+}
+
 // A side effect of that we are using a dispatch routine to calculate the correct
 // vector number, the r0 register should contain the (simulated) vector address.
 static void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far)

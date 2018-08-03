@@ -15,8 +15,8 @@
 #include "vectors.h"
 #include "mfp.h"
 
-#define HZ		                200			// ticks per second
-#define CLOCKHZ	                1000000     // Sytem timer runs at 1MHz
+#define HZ                                200      // ticks per second
+#define CLOCKHZ                        1000000     // Sytem timer runs at 1MHz
 
 typedef struct {
         volatile ULONG irq_basic_pending;
@@ -30,8 +30,6 @@ typedef struct {
         volatile ULONG disable_irqs_2;
         volatile ULONG disable_basic_irqs;
 } arm_interrupt_controller_t;
-
-
 
 typedef struct {
     volatile ULONG control;
@@ -72,33 +70,43 @@ static inline void disable_irq(int num)
 
 void raspi_timer3_handler(void)
 {
-    // peripheral_begin();
-	ULONG compare = ARM_SYSTIMER.compare[3] + CLOCKHZ / HZ;
-    ARM_SYSTIMER.compare[3] = compare;
-
-	if (compare < ARM_SYSTIMER.count_lo)
-	{
-		compare = ARM_SYSTIMER.count_lo + CLOCKHZ / HZ;
-		ARM_SYSTIMER.compare[3] = compare;
-	}
     vector_5ms();
 
+    peripheral_begin();
+    ULONG compare = ARM_SYSTIMER.compare[3] + CLOCKHZ / HZ;
+    ARM_SYSTIMER.compare[3] = compare;
+
+    if (compare < ARM_SYSTIMER.count_lo)
+    {
+        compare = ARM_SYSTIMER.count_lo + CLOCKHZ / HZ;
+        ARM_SYSTIMER.compare[3] = compare;
+    }
     ARM_SYSTIMER.control = (1 << 3);
-    // peripheral_end();
+    peripheral_end();
 }
 
-// ==== Timer C interrupt handler ============================================
+#if WITH_USB
+extern void usb_mouse_timerc (void);
+#endif
+extern void int_vbl(void);
 
+// ==== Timer C interrupt handler ============================================
 void int_timerc(void)
 {
     hz_200++;
     timer_c_sieve = (timer_c_sieve << 1) | (timer_c_sieve >> 15);
-    if (timer_c_sieve & 4) // If the highest bit in any nibble is 1, we are in the 4th call
+    if (timer_c_sieve & 4) // If the highest bit in any nybble is 1, we are in the 4th call
     {
         kb_timerc_int();
 #       if CONF_WITH_YM2149
             sndirq();   // dosound support
 #       endif
+#       if WITH_USB
+            usb_mouse_timerc();
+#       endif
+
+        // Fake vbl interrupt every 4 timer_c calls (50Hz)
+        int_vbl();
     }
 }
 
@@ -127,11 +135,16 @@ ULONG raspi_get_ticks(void)
     return ARM_SYSTIMER.count_lo;
 }
 
+ULONG raspi_get_timer(ULONG base)
+{
+    return (ARM_SYSTIMER.count_lo / (CLOCKHZ / 1000)) - base;
+}
+
 void raspi_delay_us(ULONG us)
 {
     if (us > 0)
     {
-    	ULONG ticks = us * (CLOCKHZ / 1000000) + 1;
+        ULONG ticks = us * (CLOCKHZ / 1000000) + 1;
         ULONG start = raspi_get_ticks();
         while (raspi_get_ticks() - start < ticks)
         {
@@ -162,20 +175,20 @@ void raspi_int_handler(void)
     ULONG curr;
     // peripheral_begin();
 
-	ULONG pending[3];
-	pending[0] = ARM_IC.irq_pending_1;
-	pending[1] = ARM_IC.irq_pending_2;
-	pending[2] = ARM_IC.irq_basic_pending & 0xFF;
+    ULONG pending[3];
+    pending[0] = ARM_IC.irq_pending_1;
+    pending[1] = ARM_IC.irq_pending_2;
+    pending[2] = ARM_IC.irq_basic_pending & 0xFF;
 
     // peripheral_end();
 
-	for (reg = 0; reg < 3; reg++)
-	{
-		curr = pending[reg];
+    for (reg = 0; reg < 3; reg++)
+    {
+        curr = pending[reg];
         irq = reg * ARM_IRQS_PER_REG;
-		while (curr != 0)
+        while (curr != 0)
         {
-			if (curr & 1)
+            if (curr & 1)
             {
                 if (raspi_irq_handlers[irq] != NULL)
                 {
@@ -187,8 +200,8 @@ void raspi_int_handler(void)
                     disable_irq(irq);
                 }
             }
-			curr >>= 1;
-		    irq++;
-		}
-	}
+            curr >>= 1;
+            irq++;
+        }
+    }
 }

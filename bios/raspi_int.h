@@ -21,6 +21,7 @@ void raspi_int_handler(void);
 void raspi_timer3_handler(void);
 ULONG raspi_get_ticks(void);
 void raspi_delay_us(ULONG us);
+ULONG raspi_get_timer(ULONG base);
 
 extern inline void raspi_delay_ms(ULONG ms)
 {
