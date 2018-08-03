@@ -664,26 +664,6 @@ WORD get_monitor_type(void)
 #endif
 }
 
-#if !defined(MACHINE_RPI)
-/* calculate initial VRAM size based on video hardware */
-static ULONG initial_vram_size(void)
-{
-#ifdef MACHINE_AMIGA
-    return amiga_initial_vram_size();
-#else
-    if (HAS_VIDEL)
-        return FALCON_VRAM_SIZE;
-    else if (HAS_TT_SHIFTER)
-        return TT_VRAM_SIZE;
-    else
-    {
-        /* ST TOS rounds the VRAM size to upper kilobyte, so we do. */
-        return (ST_VRAM_SIZE + 1023) & -1024;
-    }
-#endif
-}
-#endif
-
 /* Settings for the different video modes */
 struct video_mode {
     UBYTE       planes;         /* count of color planes (v_planes) */
@@ -704,6 +684,34 @@ static const struct video_mode video_mode[] = {
 #endif
 };
 
+#if !defined(MACHINE_RPI)
+/* calculate the VRAM size required by a video mode */
+static ULONG shifter_vram_size(UWORD vmode)
+{
+    ULONG bytes_per_plane_line = video_mode[vmode].hz_rez / 8;
+    ULONG bytes_per_plane = bytes_per_plane_line * video_mode[vmode].vt_rez;
+    return bytes_per_plane * video_mode[vmode].planes;
+}
+
+/* calculate initial VRAM size based on video hardware */
+static ULONG initial_vram_size(void)
+{
+#ifdef MACHINE_AMIGA
+    return amiga_initial_vram_size();
+#else
+    if (HAS_VIDEL)
+        return FALCON_VRAM_SIZE;
+    else if (HAS_TT_SHIFTER)
+        return shifter_vram_size(6); /* TT high */
+    else
+    {
+        /* ST TOS rounds the VRAM size to upper kilobyte, so we do. */
+        ULONG vram_size = shifter_vram_size(0); /* ST low */
+        return (vram_size + 1023) & -1024;
+    }
+#endif
+}
+#endif
 static void shifter_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez)
 {
     WORD vmode;                         /* video mode */
