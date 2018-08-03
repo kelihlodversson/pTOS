@@ -1208,7 +1208,7 @@ long usb_lowlevel_init(void *ucd_priv)
     err = dwc2_init_core(priv);
     if(err)
     {
-        KINFO(("usb_lowlevel_init: dwc2_init_core returned error %l\n",err));
+        KINFO(("usb_lowlevel_init: dwc2_init_core returned error %ld\n",err));
         return err;
     }
 

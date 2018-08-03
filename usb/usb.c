@@ -856,8 +856,6 @@ void usb_free_device(long dev_index)
  * Returns 0 for success, != 0 for error.
  */
 #define GET_DESCRIPTOR_BUFSIZE    64
-#undef KDEBUG
-#define KDEBUG(x) KINFO(x)
 long usb_new_device(struct usb_device *dev)
 {
     long addr, err;

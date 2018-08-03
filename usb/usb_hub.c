@@ -338,7 +338,6 @@ usb_hub_configure(struct usb_device *dev)
     long i;
     struct usb_hub_device *hub;
     unsigned char buffer[USB_BUFSIZ];
-    int ret;
 
     /* "allocate" Hub device */
     hub = usb_hub_allocate();
