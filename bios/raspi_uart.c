@@ -22,6 +22,8 @@
 #include "kprint.h"
 #include "delay.h"
 #include "asm.h"
+#include "raspi_mbox.h"
+#include "raspi_int.h"
 
 #if CONF_WITH_RASPI_UART0
 
@@ -51,9 +53,32 @@
 #define UART0_ITOP   (*(volatile ULONG*)(UART0_BASE+0x88))
 #define UART0_TDR    (*(volatile ULONG*)(UART0_BASE+0x8C))
 
+#define BAUDRATE 115200
+static ULONG get_base_clock(void);
+
+// Get the current base clock rate in Hz
+static ULONG get_base_clock(void)
+{
+    prop_tag_2u32_t tag_clock_rate;
+    tag_clock_rate.value1 = CLOCK_ID_UART;
+    if (!raspi_prop_get_tag(PROPTAG_GET_CLOCK_RATE, &tag_clock_rate, sizeof tag_clock_rate, sizeof(ULONG)*2))
+    {
+        KINFO(("Cannot get clock rate\n"));
+
+        tag_clock_rate.value2 = 0;
+    }
+    return tag_clock_rate.value2;
+}
+
 void raspi_uart0_init(void)
 {
     ULONG val;
+    ULONG clock_rate = get_base_clock();
+	ULONG baud16 = BAUDRATE * 16;
+	ULONG int_div = clock_rate / baud16;
+	ULONG fractdiv2 = (clock_rate % baud16) * 8 / BAUDRATE;
+	ULONG fractdiv = fractdiv2 / 2 + fractdiv2 % 2;
+
     UART0_CR = 0;
 
     val = GPFSEL1;
@@ -66,16 +91,17 @@ void raspi_uart0_init(void)
 
     GPFSEL1 = val;
 
-    GPPUD = 0;
+    /*GPPUD = 0;
     delay_loop(loopcount_1_msec*3);
     GPPUDCLK0 = ((1<<14)|(1<<15));
     delay_loop(loopcount_1_msec*3);
     GPPUDCLK0 = 0;
-
+    */
+    UART0_IMSC = 0;
     UART0_ICR = 0x7FF;
-    UART0_IBRD = 1;
-    UART0_FBRD = 40;
-    UART0_LCRH = 0x70;
+    UART0_IBRD = int_div;
+    UART0_FBRD = fractdiv;
+    UART0_LCRH = (3 << 5);
     UART0_CR = 0x301;
 }
 
