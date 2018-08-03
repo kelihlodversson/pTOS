@@ -42,7 +42,7 @@ extern LONG drvrem;                 /* bitmap of removable media drives */
 #   define OPT_PACKED
 #endif
 
-#if IS_BIG_ENDIAN
+#if BYTE_ORDER == BIG_ENDIAN
 #   define BOOTSIG_MAGIC 0x55aa
 #else
 #   define BOOTSIG_MAGIC 0xaa55
@@ -408,7 +408,7 @@ typedef union
 
 PHYSSECT physsect, physsect2;
 
-#if CONF_WITH_IDE && IS_BIG_ENDIAN
+#if CONF_WITH_IDE && BYTE_ORDER == BIG_ENDIAN
 
 /*
  * This function is only used during byteswap detection.
@@ -464,7 +464,7 @@ static int atari_partition(UWORD unit,LONG *devices_available)
 
     KINFO(("%cd%c: ","ashf????"[major>>3],'a'+(major&0x07)));
 
-#if CONF_WITH_IDE && IS_BIG_ENDIAN
+#if CONF_WITH_IDE && BYTE_ORDER == BIG_ENDIAN
     /* IDE drives may be byteswapped if partitioned on foreign hardware */
     if (IS_IDE_DEVICE(major))
         maybe_fix_byteswap(unit, &physsect);
