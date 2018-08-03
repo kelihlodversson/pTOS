@@ -462,6 +462,9 @@
 # ifndef CONF_WITH_RASPI_EMMC
 #  define CONF_WITH_RASPI_EMMC 1
 # endif
+# ifndef CONF_RASPI_MOUSE_CURSOR
+#  define CONF_RASPI_MOUSE_CURSOR 0
+# endif
 #endif
 /*
  * By default, EmuTOS is built for Atari ST/TT/Falcon compatible hardware.
@@ -1560,6 +1563,10 @@
  */
 #ifndef HD_DETECT_RETRIES
 # define HD_DETECT_RETRIES 0
+#endif
+
+#ifndef CONF_RASPI_MOUSE_CURSOR
+# define CONF_RASPI_MOUSE_CURSOR 0
 #endif
 
 /*

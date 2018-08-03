@@ -368,7 +368,7 @@ static void call_user_but(WORD status)
 {
 	register WORD val asm("d0") = status;
 	register void (*func)(WORD) asm("a0") = linea_vars.user_but; /* prototype not quite right: status passed in d0 */
-	
+
 	__asm__ __volatile__(
 		" jsr (%[a0])"
 	:
@@ -384,7 +384,7 @@ static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
 	register WORD number asm("d0") = wheel_number;
 	register WORD amount asm("d1") = wheel_amount;
 	register void (*func)(WORD, WORD) asm("a0") = user_wheel; /* prototype not quite right: status passed in d0 */
-	
+
 	__asm__ __volatile__(
 		" jsr (%[a0])"
 	:
@@ -399,14 +399,8 @@ static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
  */
 static void call_user_but(WORD status)
 {
-	register WORD val asm("r0") = status;
-	register void (*func)(WORD) asm("r1") = linea_vars.user_but; /* prototype not quite right: status passed in d0 */
-	
-	__asm__ __volatile__(
-		" blx %[func]"
-	:
-	: "r"(val), [func]"r"(func)
-	: "cc" AND_MEMORY);
+	void (*func)(WORD) = linea_vars.user_but; /* prototype not quite right: status passed in d0 */
+	func(status);
 }
 
 /*
@@ -414,15 +408,8 @@ static void call_user_but(WORD status)
  */
 static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
 {
-	register WORD number asm("r0") = wheel_number;
-	register WORD amount asm("r1") = wheel_amount;
-	register void (*func)(WORD, WORD) asm("r0") = user_wheel; /* prototype not quite right: status passed in d0 */
-	
-	__asm__ __volatile__(
-		" blx %[func]"
-	:
-	: "r"(number), "r"(amount), [func]"r"(func)
-	: "cc" AND_MEMORY);
+	void (*func)(WORD, WORD) = user_wheel; /* prototype not quite right: status passed in d0 */
+    func(wheel_number, wheel_amount);
 }
 
 /*
@@ -438,8 +425,7 @@ static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
 void mov_cur(WORD new_x, WORD new_y)      /* user button vector */
 {
 	ULONG cpsr;
-	
-	if (linea_vars.HIDE_CNT == 0)
+	if (linea_vars.HIDE_CNT)
 		return;
 	cpsr = disable_interrupts();
 	linea_vars.newx = new_x;
@@ -765,7 +751,6 @@ void vdimouse_exit(void)
 static void vb_draw(void)
 {
     disable_interrupts();
-//    WORD old_sr = set_sr(0x2700);       /* disable interrupts */
     if (linea_vars.draw_flag) {
         linea_vars.draw_flag = FALSE;
         enable_interrupts();
@@ -885,10 +870,84 @@ static void cur_display_clip(WORD op,Mcdb *sprite,MCS *mcs,UWORD *mask_start,UWO
  * within one screen word (per plane), so we only save 32 bytes/plane.
  */
 
+#if defined(MACHINE_RPI) && !CONF_RASPI_MOUSE_CURSOR
+// The mcs struct is not big enough for 8bpp
+static struct {
+    WORD x;
+    WORD y;
+    WORD width;
+    WORD height;
+    UBYTE buffer[16*16];
+} mouse_save;
+#endif
+
 static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
 {
 #ifdef MACHINE_RPI
+#if CONF_RASPI_MOUSE_CURSOR
     raspi_hw_cur_display(sprite, x, y);
+#else
+    int row_count;
+    UBYTE *addr;
+    UWORD *data;
+    UWORD cdb_fg, cdb_bg, current_bit, start_bit, end_bit;
+    UBYTE *save_data = mouse_save.buffer;
+    x -= sprite->xhot;          /* x = left side of destination block */
+    y -= sprite->yhot;          /* y = top of destination block */
+    data = sprite->maskdata;  /* MASK/DATA for cursor */
+    cdb_bg = sprite->bg_col;    /* get mouse background color bits */
+    cdb_fg = sprite->fg_col;    /* get mouse foreground color bits */
+
+    start_bit = 0x8000;
+    end_bit = 0x0000;
+
+    mouse_save.width = 16;
+    if(x < 0)
+    {
+        start_bit >>= (-x);
+        mouse_save.width += x;
+        x = 0;
+    }
+    else if (x >= (linea_vars.DEV_TAB[0]-15))
+    {
+        end_bit = 0x8000 >> (linea_vars.DEV_TAB[0]-x);
+        mouse_save.width = linea_vars.DEV_TAB[0]-x;
+    }
+
+    row_count = 16;
+    if(y < 0)
+    {
+        row_count += y;
+        data -= y*2;
+        y=0;
+    }
+    else if (y > (linea_vars.DEV_TAB[1]-15))
+    {
+        row_count = linea_vars.DEV_TAB[1] - y + 1;
+    }
+    mouse_save.height = row_count;
+    mouse_save.x = x;
+    mouse_save.y = y;
+
+    while(row_count--)
+    {
+        addr = get_start_addr(x, y++);
+        for(current_bit = start_bit; current_bit > end_bit; current_bit >>= 1)
+        {
+            *(save_data++) = *addr;
+            if(data[1] & current_bit)
+            {
+                *addr = cdb_fg;
+            }
+            else if (data[0] & current_bit)
+            {
+                *addr = cdb_bg;
+            }
+            addr++;
+        }
+        data += 2;
+    }
+#endif
 #else
     int row_count, plane, inc, op, dst_inc;
     UWORD * addr, * mask_start;
@@ -1081,6 +1140,18 @@ static void cur_replace (MCS *mcs)
         for (row = mcs->len - 1; row >= 0; row--) {
             *dst = *src++;
             dst += dst_inc;         /* next row of screen */
+        }
+    }
+#elif !CONF_RASPI_MOUSE_CURSOR
+    int row, col;
+    UBYTE* addr;
+    UBYTE* data = mouse_save.buffer;
+    for (row = 0; row<mouse_save.height; row++)
+    {
+        addr = (UBYTE*)get_start_addr(mouse_save.x, mouse_save.y+row);
+        for (col = 0; col<mouse_save.width; col++)
+        {
+            *addr++ = *data++;
         }
     }
 #endif
