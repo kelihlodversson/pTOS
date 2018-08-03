@@ -520,7 +520,7 @@ struct cardinfo
     int report_mediach;
 };
 
-struct cardinfo card;
+static struct cardinfo card;
 
 void raspi_act_led_on(void)
 {
