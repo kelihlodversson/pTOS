@@ -17,6 +17,7 @@
 #include "vdi_defs.h"
 #include "../bios/lineavars.h"
 #include "string.h"
+#include "kprint.h"
 
 extern void screen(void);
 
@@ -91,11 +92,52 @@ static void inline scrn_clip(IntPoint* point)
 /*
  * _mouse_int - Mouse interrupt routine
  * buf: address of mouse buffer from aciavecs.S
- * TODO
  */
 void mouse_int(UBYTE *buf)
 {
+    WORD pressed, previous;
+    BYTE delta_x, delta_y;
+    IntPoint point;
+    void (*user_but)(WORD) = linea_vars.user_but;
+    void (*user_mot)(IntPoint*) = (void (*)(IntPoint*))linea_vars.user_mot;
+    void (*user_cur)(WORD,WORD) = linea_vars.user_cur;
 
+    if(linea_vars.mouse_flag) // If we are in a show/hide operation
+    {
+        return;              // just exit.
+    }
+    if ((buf[0] & 0xf8) == 0xf8) // relative mouse packet header?
+    {
+        pressed = (buf[0] & 2) >> 1 | (buf[0] & 1) << 1;
+        previous = linea_vars.cur_ms_stat & 3;
+        if (pressed != previous)
+        {
+            pressed |= (linea_vars.MOUSE_BT & ~3); // keep additional mouse button states
+            linea_vars.MOUSE_BT = pressed;
+            user_but(pressed);
+            pressed |= ((previous ^ pressed) << 6); // compute which buttons have changed and put deltas in bits 6 & 7
+            linea_vars.cur_ms_stat = pressed;
+        }
+
+        delta_x = buf[1];
+        delta_y = buf[2];
+        if (delta_x || delta_y)
+        {
+            linea_vars.cur_ms_stat |= ~(1<<5);  // Set motion status
+            point.x = linea_vars.GCURX + delta_x;
+            point.y = linea_vars.GCURY + delta_y;
+            scrn_clip(&point);
+            user_mot(&point);                   // call user to modify x,y
+            scrn_clip(&point);
+            linea_vars.GCURX = point.x;
+            linea_vars.GCURY = point.y;
+            user_cur(point.x, point.y);         // call user to draw cursor
+        }
+        else
+        {
+            linea_vars.cur_ms_stat &= ~(1<<5); // Clear motion status
+        }
+    }
 }
 
 /*

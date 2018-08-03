@@ -100,6 +100,10 @@ extern long xmaddalt(UBYTE *start, long size); /* found in bdos/mem.h */
 extern void setup_68040_pmmu(void);
 #endif
 
+#if WITH_USB
+extern void usb_init(void); /* found in usb.h */
+#endif
+
 /*==== Declarations =======================================================*/
 
 /* Drive specific declarations */
@@ -188,7 +192,7 @@ static struct {
 void detect_cpu(void)
 {
 	int i;
-	
+
 	mcpu = read_cpuid_id();
 	mcpu_name = arm_unknown;
 	for (i = 0; i < (int)ARRAY_SIZE(arm_cputypes); i++)
@@ -428,6 +432,11 @@ static void bios_init(void)
     init_acia_vecs();   /* Init the ACIA interrupt vector and related stuff */
     KDEBUG(("after init_acia_vecs()\n"));
     boot_status |= MIDI_AVAILABLE;  /* track progress */
+#if WITH_USB
+	KDEBUG(("usb_init()\n"));
+	usb_init();
+    KDEBUG(("after usb_init()\n"));
+#endif
 
     /* Now we can enable the interrupts.
      * We need a timer for DMA timeouts in floppy and harddisk initialisation.

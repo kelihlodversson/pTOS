@@ -119,6 +119,7 @@ ifdef RPI
 ELF = 1
 TOOLCHAIN_PREFIX = arm-none-eabi-
 TOOLCHAIN_CFLAGS = -fleading-underscore -fno-reorder-functions -DELF_TOOLCHAIN
+WITH_USB = 1
 else # Not Raspberry PI
 # Override with 1 to use the ELF toolchain instead of the MiNT one
 ELF = 0
@@ -132,6 +133,7 @@ else
 TOOLCHAIN_PREFIX = m68k-atari-mint-
 TOOLCHAIN_CFLAGS =
 endif
+WITH_USB = 0
 endif
 
 # indent flags
@@ -188,7 +190,7 @@ WARNFLAGS += -Wold-style-definition -Wtype-limits
 endif
 endif
 
-DEFINES = $(LOCALCONF) -DWITH_AES=$(WITH_AES) -DWITH_CLI=$(WITH_CLI) $(DEF)
+DEFINES = $(LOCALCONF) -DWITH_AES=$(WITH_AES) -DWITH_CLI=$(WITH_CLI) -DWITH_USB=$(WITH_USB) $(DEF)
 CFLAGS = $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) $(OPTFLAGS) $(OTHERFLAGS) $(WARNFLAGS) $(INC) $(DEFINES)
 
 CPPFLAGS = $(CFLAGS)
@@ -246,6 +248,14 @@ bios_src +=  memory.S processor.S vectors.S aciavecs.S bios.c xbios.c acsi.c \
 endif
 ifeq (1,$(COLDFIRE))
   bios_src += coldfire.c coldfire2.S spi.c
+endif
+
+#
+# usb bios extensions - based on USB code in FreeMint and Uboot
+#
+usb_src = usb.c ucd.c udd.c usb_api.c usb_hub.c udd_mouse.c
+ifdef RPI
+usb_src += ucd_dwc2.c
 endif
 
 #
@@ -359,6 +369,7 @@ cli_src = cmdasm.S cmdmain.c cmdedit.c cmdexec.c cmdint.c cmdparse.c cmdutil.c
 #
 
 bios_copts =
+usb_copts =
 bdos_copts =
 util_copts =
 cli_copts  =
@@ -411,6 +422,10 @@ endif
 
 ifeq ($(WITH_CLI),1)
  optional_dirs += cli
+endif
+
+ifeq ($(WITH_USB),1)
+ optional_dirs += usb
 endif
 
 dirs = $(core_dirs) $(optional_dirs)
