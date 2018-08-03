@@ -24,28 +24,27 @@ For more information on which Qemu versions to use, see [Circle's Qemu documenta
 
 There are a few directions that could make this project more useful:
 
-### Get it to boot on actual hardware (and more testing on emulators).
-
-* Currently boots on some versions of Qemu.
-* Fails to boot on Raspberry PI 3.
-* Manages to set the default palette on Raspberry PI Zero but hangs with a white screen somewhere after that.
-
 ### Add support for chunky graphics in VDI (and/or replace it with parts of fVDI.)
 
-* Some initial hacks for 8bb framebuffer already in progress.
+Some initial hacks for 8bb framebuffer already in progress:
+* Lines and pattern fills implemented.
+* Font rendering supported without text effects.
+* Raster functions are still not implemented. Icons show up as garbled output as they are poked into the right memory location, but the bitblit functions still assume bitplanes.
 
-### Add SD card support.
+### SD card support.
 
-* The coldfire driver can possibly be adapted to support the EMMC controller.
+* Adapted the EMMC controller code from the Circle project. Write is currently disabled for safety.
 
 ### Add a simple USB stack to emulate an IKBD keyboard.
 
-* The USB stack in Mint seems to have support to be compiled for TOS only, and looks promising.
-* (Failing that, use the UART pins to connect an ATARI ST keyboard to the machine with some 5 to 3.3V level shifting.
+* The USB stack in Mint has been integrated with some host controller code from U-Boot.
+* Currently does not work reliably on RPI3.
+* Only mice devices in boot report mode is currently implemented.
 
 ### Create a mint/TOS/arm binutils and gcc toolchain port.
 
 * Otherwise having an OS without apps is no fun in the long run.
+* Reusing bFLT toolchains may be easier than hacking support for an ARM version the old TOS format.
 
 ## Help highly appreciated
 
