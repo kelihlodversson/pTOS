@@ -83,7 +83,7 @@ static void raspi_hw_cur_set_sprite(Mcdb *sprite)
 
     prop_tag_cursor_info_t tag;
     tag.width = tag.height = 16;
-    tag.pixels = GPU_MEM_BASE + (ULONG)pointer_image;
+    tag.pixels = phys_to_bus((ULONG)pointer_image);
     tag.hotspot_x = sprite->xhot;
     tag.hotspot_y = sprite->yhot;
     raspi_prop_get_tag(PROPTAG_SET_CURSOR_INFO, &tag, sizeof(prop_tag_cursor_info_t), 6*4);

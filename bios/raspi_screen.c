@@ -143,7 +143,7 @@ void raspi_screen_init(void)
 
     raspi_prop_get_tags(&init_tags, sizeof(init_tags));
 
-    raspi_screenbase = (UBYTE*) (init_tags.allocate_buffer.value1 & 0x3fffffff);
+    raspi_screenbase = (UBYTE*) bus_to_phys(init_tags.allocate_buffer.value1);
     raspi_screen_size = init_tags.allocate_buffer.value2;
     raspi_screen_width_in_bytes = init_tags.get_pitch.value;
 }
