@@ -780,8 +780,8 @@ erase_from_bol_impl (void)
 
     cursor_off();               /* hide cursor */
     /* save the x and y coords of cursor */
-    s_cur_x = v_cur_cx;
-    s_cur_y = v_cur_cy;
+    s_cur_x = linea_vars.v_cur_cx;
+    s_cur_y = linea_vars.v_cur_cy;
 
     /* are we in column 0?*/
     if ( linea_vars.v_cur_cx == 0 )
