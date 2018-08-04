@@ -200,15 +200,17 @@ SECTIONS
  */
 #define DEFINE_SYMBOL_ALIAS(alias, impl) EXTERN(impl) PROVIDE(alias = impl);
 #define ELF_LIB_REF(symbol) DEFINE_SYMBOL_ALIAS(_##symbol, symbol)
+#if !defined (MACHINE_RPI)
 ELF_LIB_REF(__mulsi3)
 ELF_LIB_REF(__divsi3)
 ELF_LIB_REF(__modsi3)
 ELF_LIB_REF(__udivsi3)
 ELF_LIB_REF(__umodsi3)
+ELF_LIB_REF(__aeabi_udiv)
+ELF_LIB_REF(__aeabi_udivmod)
+#endif
 ELF_LIB_REF(__aeabi_idiv)
 ELF_LIB_REF(__aeabi_idivmod)
-ELF_LIB_REF(__aeabi_udiv)
 ELF_LIB_REF(__aeabi_uidiv)
-ELF_LIB_REF(__aeabi_udivmod)
 ELF_LIB_REF(__aeabi_uidivmod)
 #endif
