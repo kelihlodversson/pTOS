@@ -99,7 +99,7 @@ void mouse_int(UBYTE *buf)
     BYTE delta_x, delta_y;
     IntPoint point;
     void (*user_but)(WORD) = linea_vars.user_but;
-    void (*user_mot)(IntPoint*) = (void (*)(IntPoint*))linea_vars.user_mot;
+    void (*user_mot)(ULONG) = (void (*)(LONG))linea_vars.user_mot;
     void (*user_cur)(WORD,WORD) = linea_vars.user_cur;
 
     if(linea_vars.mouse_flag) // If we are in a show/hide operation
@@ -127,7 +127,7 @@ void mouse_int(UBYTE *buf)
             point.x = linea_vars.GCURX + delta_x;
             point.y = linea_vars.GCURY + delta_y;
             scrn_clip(&point);
-            user_mot(&point);                   // call user to modify x,y
+            user_mot(MAKE_ULONG(point.x,point.y));                   // call user to modify x,y
             scrn_clip(&point);
             linea_vars.GCURX = point.x;
             linea_vars.GCURY = point.y;
