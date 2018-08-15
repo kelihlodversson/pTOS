@@ -7,6 +7,7 @@
 #include "raspi_io.h"
 #include "raspi_int.h"
 #include "raspi_mbox.h"
+#include "raspi_memory.h"
 #include "tosvars.h"
 #include "string.h"
 #include "kprint.h"
@@ -77,11 +78,9 @@ BOOL raspi_prop_get_tag(ULONG tag_id, void *tag, ULONG tag_size, ULONG request_p
 	return TRUE;
 }
 
-extern UBYTE mailbox_buffer[];
-
 BOOL raspi_prop_get_tags(void *tags, ULONG tags_size)
 {
-    prop_buffer_t* buffer = (prop_buffer_t*)&mailbox_buffer;
+    prop_buffer_t* buffer = (prop_buffer_t*)raspi_get_coherent_buffer(COHERENT_TAG_MAILBOX);
 	ULONG buffer_size = sizeof (prop_buffer_t) + tags_size + sizeof (ULONG);
     ULONG *end_tag = (ULONG *) (buffer->tags + tags_size);
     ULONG gpu_buffer_address = (GPU_MEM_BASE + (ULONG) buffer)>>4;

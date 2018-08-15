@@ -12,6 +12,10 @@
 #   ifdef MACHINE_RPI
 
 void raspi_vcmem_init(void);
+UBYTE* raspi_get_coherent_buffer(int tag);
+#define COHERENT_TAG_MAILBOX 0
+
+
 
 #   endif /* MACHINE_RPI */
 #endif /* RASPI_MEMORY_H */

@@ -24,13 +24,56 @@
 #include "string.h"
 #include "biosext.h"
 
+#define MEGABYTE    0x100000
+#ifdef TARGET_RPI1
+#define MMU_MODE    ( ARM_CONTROL_MMU                   \
+                    | ARM_CONTROL_L1_CACHE              \
+                    | ARM_CONTROL_L1_INSTRUCTION_CACHE  \
+                    | ARM_CONTROL_BRANCH_PREDICTION     \
+                    | ARM_CONTROL_EXTENDED_PAGE_TABLE)
+
+#define TTBR_MODE    ( ARM_TTBR_INNER_CACHEABLE         \
+                     | ARM_TTBR_OUTER_NON_CACHEABLE)
+#else
+#define MMU_MODE    ( ARM_CONTROL_MMU                   \
+                    | ARM_CONTROL_L1_CACHE              \
+                    | ARM_CONTROL_L1_INSTRUCTION_CACHE  \
+                    | ARM_CONTROL_BRANCH_PREDICTION)
+
+#define TTBR_MODE   ( ARM_TTBR_INNER_WRITE_BACK        \
+                    | ARM_TTBR_OUTER_WRITE_BACK)
+#endif
+#define TTBCR_SPLIT    0
+#define PAGE_TABLE0_ENTRIES    4096
+#define PAGE_TABLE0_SIZE       (PAGE_TABLE0_ENTRIES* sizeof(struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR))
 
 static void init_mmu(ULONG memory_size);
+
 extern char sysvars_start[];
 extern char sysvars_end[];
 
+static UBYTE* coherent_buffer;
+struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR* raspi_page_table0;
+
+UBYTE* raspi_get_coherent_buffer(int tag)
+{
+    return coherent_buffer + (tag * 4096);
+}
+
 void raspi_vcmem_init(void)
 {
+    /* Clear the sysvars */
+    bzero(sysvars_start, sysvars_end - sysvars_start);
+    /*
+    * Clear the BSS segment.
+    * Our stack is explicitly set outside the BSS, so this is safe:
+    * bzero() will be able to return.
+    */
+
+    bzero(_bss, _ebss - _bss);
+
+    // Temporary set coherent_buffer base to aligned RAM before we know the total size
+    coherent_buffer  = (UBYTE*)(((ULONG)_end_os_stram + (5*MEGABYTE)) & ~(MEGABYTE-1));
     struct
     {
         prop_tag_2u32_t    get_arm_memory;
@@ -43,108 +86,23 @@ void raspi_vcmem_init(void)
     init_tags.get_vc_memory.tag.tag_id = PROPTAG_GET_VC_MEMORY;
     init_tags.get_vc_memory.tag.value_buf_size = 8;
     init_tags.get_vc_memory.tag.value_length = 8;
-
     raspi_prop_get_tags(&init_tags, sizeof(init_tags));
 
-    /* Clear the sysvars */
-    bzero(sysvars_start, sysvars_end - sysvars_start);
+    ULONG top_of_ram = (init_tags.get_arm_memory.value1 + init_tags.get_arm_memory.value2);
 
-    /* Store the ST-RAM parameters in the ST-RAM itself */
-    phystop = (UBYTE *)(init_tags.get_arm_memory.value1 + init_tags.get_arm_memory.value2);
+    /* Reserve the topmost megabyte for page tables and cache coherent buffers */
+    phystop = (UBYTE *)((top_of_ram - MEGABYTE) & ~(MEGABYTE-1));
 
-   /*
-    * Clear the BSS segment.
-    * Our stack is explicitly set outside the BSS, so this is safe:
-    * bzero() will be able to return.
-    */
-    bzero(_bss, _ebss - _bss);
+    raspi_page_table0 = (struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR*)phystop;
+    coherent_buffer = phystop + PAGE_TABLE0_SIZE;
 
     /* Now the bss has been cleared, we can enable the MMU and caches */
     init_mmu((ULONG)phystop);
 }
 
-#define MEGABYTE    0x100000
-#ifdef TARGET_RPI1
-#define MMU_MODE    ( ARM_CONTROL_MMU                   \
-                    | ARM_CONTROL_L1_CACHE              \
-                    | ARM_CONTROL_L1_INSTRUCTION_CACHE  \
-                    | ARM_CONTROL_BRANCH_PREDICTION     \
-                    | ARM_CONTROL_EXTENDED_PAGE_TABLE)
-
-#define TTBCR_SPLIT    3
-#define PAGE_TABLE0_ENTRIES    512
-#define TTBR_MODE    ( ARM_TTBR_INNER_CACHEABLE         \
-                     | ARM_TTBR_OUTER_NON_CACHEABLE)
-#else
-#define MMU_MODE    ( ARM_CONTROL_MMU                   \
-                    | ARM_CONTROL_L1_CACHE              \
-                    | ARM_CONTROL_L1_INSTRUCTION_CACHE  \
-                    | ARM_CONTROL_BRANCH_PREDICTION)
-
-#define TTBCR_SPLIT    2
-#define PAGE_TABLE0_ENTRIES    1024
-#define TTBR_MODE   ( ARM_TTBR_INNER_WRITE_BACK        \
-                    | ARM_TTBR_OUTER_WRITE_BACK)
-#endif
-
-#define PAGE_TABLE1_ENTRIES 4096
-
-// Todo figure out a less wasteful way to allocate these:
-UBYTE mailbox_buffer[MEGABYTE] __attribute__ ((aligned (MEGABYTE)));
-struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR raspi_page_table0[PAGE_TABLE0_ENTRIES] __attribute__ ((aligned (4*1024)));
-struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR raspi_page_table1[PAGE_TABLE1_ENTRIES] __attribute__ ((aligned (4*1024)));
-
 static void init_mmu(ULONG memory_size)
 {
     unsigned i;
-    for (i = 0; i < PAGE_TABLE1_ENTRIES; i++)
-    {
-        ULONG base_address = MEGABYTE * i;
-
-        struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *entry = &raspi_page_table1[i];
-
-        // outer and inner write back, no write allocate
-        entry->Value10 = 2;
-        entry->BBit    = 1;
-        entry->CBit    = 1;
-        entry->XNBit   = 0;
-        entry->Domain  = 0;
-        entry->IMPBit  = 0;
-        entry->AP      = AP_ALL_ACCESS;
-        entry->TEX     = 0;
-        entry->APXBit  = APX_RW_ACCESS;
-        entry->SBit    = 1;
-        entry->NGBit   = 0;
-        entry->Value0  = 0;
-        entry->SBZ     = 0;
-        entry->Base    = ARMV6MMUL1SECTIONBASE (base_address);
-
-        if (base_address < (ULONG)sysvars_end)
-        {
-            entry->AP       = AP_SYSTEM_ACCESS;
-            entry->APXBit   = APX_RW_ACCESS;
-        }
-        else if (base_address >= (ULONG) _text && base_address < (ULONG) _etext)
-        {
-            entry->AP       = AP_SYSTEM_ACCESS;
-            entry->APXBit   = APX_RO_ACCESS;
-        }
-        else if (base_address >= (ULONG) _etext)
-        {
-            // entry->XNBit = 1; // We will be loading code into ram eventually, so we don't want this
-
-            if (base_address >= memory_size)
-            {
-                // shared device
-                entry->XNBit = 1;
-                entry->BBit  = 1;
-                entry->CBit  = 0;
-                entry->TEX   = 0;
-                entry->SBit  = 1;
-            }
-        }
-    }
-
     clean_data_cache ();
 
     for (i = 0; i < PAGE_TABLE0_ENTRIES; i++)
@@ -169,8 +127,9 @@ static void init_mmu(ULONG memory_size)
         entry->SBZ     = 0;
         entry->Base    = ARMV6MMUL1SECTIONBASE (base_address);
 
-        // The mailbox needs a coherent memory region
-        if (base_address == (ULONG)mailbox_buffer)
+        // We actually have a megabyte of memory above phystop we use
+        // for the page table and cache coherent buffers:
+        if (base_address == memory_size)
         {
             // strongly ordered
             entry->BBit  = 0;
@@ -178,8 +137,8 @@ static void init_mmu(ULONG memory_size)
             entry->TEX   = 0;
             entry->SBit  = 1;
         }
-
-        if (base_address >= memory_size)
+        else
+        if (base_address > memory_size)
         {
             // shared device
             entry->XNBit = 1;
@@ -187,11 +146,6 @@ static void init_mmu(ULONG memory_size)
             entry->CBit  = 0;
             entry->TEX   = 0;
             entry->SBit  = 1;
-        }
-
-        if (i >= PAGE_TABLE1_ENTRIES)
-        {
-            entry->XNBit = 1;
         }
     }
 
@@ -210,13 +164,13 @@ static void init_mmu(ULONG memory_size)
     asm volatile ("mrc p15, 0, %0, c0, c0,  3" : "=r" (TLB_type));
 
     // set TTB control
-    asm volatile ("mcr p15, 0, %0, c2, c0,  2" : : "r" (TTBCR_SPLIT));
+    asm volatile ("mcr p15, 0, %0, c2, c0,  2" : : "r" (0));
 
     // set TTBR0
     asm volatile ("mcr p15, 0, %0, c2, c0,  0" : : "r" ((ULONG)raspi_page_table0 | TTBR_MODE));
 
     // set TTBR1
-    asm volatile ("mcr p15, 0, %0, c2, c0,  1" : : "r" ((ULONG)raspi_page_table1 | TTBR_MODE));
+    asm volatile ("mcr p15, 0, %0, c2, c0,  1" : : "r" ((ULONG)raspi_page_table0 | TTBR_MODE));
 
     // set Domain Access Control register (Domain 0 and 1 to client)
     asm volatile ("mcr p15, 0, %0, c3, c0,  0" : : "r" (  DOMAIN_CLIENT << 0
