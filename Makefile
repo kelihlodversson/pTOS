@@ -1428,15 +1428,18 @@ DEP_FILES = $(patsubst %,dep/%.d,$(basename $(notdir $(DEP_SRC))))
 
 .PHONY: depend
 NODEP += depend
-depend: dep $DEP_FILES
+depend: $DEP_FILES
 
 TOCLEAN += $(DEP_FILES)
-NODEP += $(DEP_FILES)
+NODEP += $(DEP_FILES) dep
 
-dep/%.d: %.c $(GEN_SRC)
+dep:
+	mkdir -p dep
+
+dep/%.d: %.c $(GEN_SRC) dep
 	$(CC) $(CFILE_FLAGS) -MM -MF $@ -MT obj/$(basename $(notdir $<)).o -DGENERATING_DEPENDENCIES $<
 
-dep/%.d: %.S $(GEN_SRC)
+dep/%.d: %.S $(GEN_SRC) dep
 	$(CC) $(SFILE_FLAGS) -MM -MF $@ -MT obj/$(basename $(notdir $<)).o -DGENERATING_DEPENDENCIES $<
 
 # Do not include or rebuild dependencies for the targets listed in NODEP
