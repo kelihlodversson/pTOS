@@ -194,7 +194,7 @@ WARNFLAGS = -Wall -Wundef -Wmissing-prototypes -Wstrict-prototypes
 #-Wshadow
 #-Werror
 
-GCCVERSION := $(shell $(CC) -dumpversion | cut -d. -f1)
+GCCVERSION := $(shell $(CC) -dumpversion  2>/dev/null | cut -d. -f1)
 # add warning flags not supported by GCC v2
 ifneq (,$(GCCVERSION))
 ifneq (2,$(GCCVERSION))
