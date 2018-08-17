@@ -1,4 +1,5 @@
 /obj/
+/dep/
 *.tr.c
 *_preprocessed.*
 /*.dsm
