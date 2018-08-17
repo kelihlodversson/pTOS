@@ -51,14 +51,7 @@ extern long trap1_pexec(short mode, const char * path,
   const void * tail, const char * env);
 
 /* Wrapper around the STOP instruction. This preserves SR. */
-#ifdef __arm__
-static inline void stop_until_interrupt(void)
-{
-    __asm__ volatile ("wfi");
-}
-#else
 extern void stop_until_interrupt(void);
-#endif
 
 /*
  * WORD swpw(WORD val);
@@ -79,7 +72,7 @@ extern void stop_until_interrupt(void);
     : "cc"       /* clobbered */          \
     );                                    \
   })
-#elif defined(__m68k__)
+#else
 #define swpw(a)                           \
   __asm__ volatile                        \
   ("ror   #8,%0"                          \
@@ -87,8 +80,6 @@ extern void stop_until_interrupt(void);
   : "0"(a)           /* inputs  */        \
   : "cc"             /* clobbered */      \
   )
-#else
-#define swpw(a) @swpw_not_supported
 #endif
 
 /*
@@ -113,7 +104,7 @@ extern void stop_until_interrupt(void);
     : "cc", "memory" /* clobbered */      \
     );                                    \
   })
-#elif defined(__m68k__)
+#else
 #define swpw2(a)                          \
   __asm__ volatile                        \
   ("ror   #8,%0\n\t"                      \
@@ -124,8 +115,6 @@ extern void stop_until_interrupt(void);
   : "0"(a)           /* inputs  */        \
   : "cc"             /* clobbered */      \
   )
-#else
-#define swpw2(a) @swpw2_not_supported
 #endif
 
 
@@ -133,7 +122,7 @@ extern void stop_until_interrupt(void);
  * rolw1(WORD x);
  *  rotates x leftwards by 1 bit
  */
-#if defined(__m68k__) && !defined(__mcoldfire__)
+#ifndef __mcoldfire__
 #define rolw1(x)                    \
     __asm__ volatile                \
     ("rol.w #1,%1"                  \
@@ -150,7 +139,7 @@ extern void stop_until_interrupt(void);
  * rorw1(WORD x);
  *  rotates x rightwards by 1 bit
  */
-#if defined(__m68k__) && !defined(__mcoldfire__)
+#ifndef __mcoldfire__
 #define rorw1(x)                    \
     __asm__ volatile                \
     ("ror.w #1,%1"                  \
@@ -176,8 +165,6 @@ extern void stop_until_interrupt(void);
  * WORD set_sr(WORD new);
  *   sets sr to the new value, and return the old sr value
  */
-
-#if defined(__mcoldfire__) || defined(__m68k__)
 
 extern void disable_interrupts(void);
 extern void enable_interrupts(void);
@@ -212,63 +199,6 @@ __extension__                             \
   );                                      \
   _r;                                     \
 })
-#elif defined(__arm__)
-#define set_sr(a) @USE_set_cpsr_on_ARM
-#define get_sr(a) @USE_get_cpsr_on_ARM
-
-#define cpsr_ie() __asm__ volatile ("cpsie i")
-#define cpsr_id() __asm__ volatile ("cpsid i")
-
-#define set_cpsr(a)                       \
-__extension__                             \
-({int _r, _a = (a);                       \
-  __asm__ volatile                        \
-  ("mrs %0, cpsr\n\t"                     \
-   "msr cpsr_cfxs, %1"                    \
-  : "=r"(_r)        /* outputs */         \
-  : "r"(_a)          /* inputs  */        \
-  : "cc", "memory"   /* clobbered */      \
-  );                                      \
-  _r;                                     \
-})
-
-#define get_cpsr()                        \
- __extension__                            \
-({int _r;                                 \
-  __asm__ volatile                        \
-  ("mrs %0, cpsr\n\t"                     \
-  : "=r"(_r)        /* outputs */         \
-  :                  /* inputs  */        \
-  : "cc", "memory"   /* clobbered */      \
-  );                                      \
-  _r;                                     \
-})
-
-extern ULONG disable_interrupts(void);
-extern void enable_interrupts(void);
-
-#ifdef TARGET_RPI1
-#define flush_prefetch_buffer()	    __asm__ volatile ("mcr p15, 0, %0, c7, c5,  4" : : "r" (0) : "memory")
-
-#define data_sync_barrier()         __asm__ volatile ("mcr p15, 0, %0, c7, c10, 4" : : "r" (0) : "memory")
-#define data_mem_barrier()          __asm__ volatile ("mcr p15, 0, %0, c7, c10, 5" : : "r" (0) : "memory")
-
-#define peripheral_begin()          data_sync_barrier()	/* ignored here */
-#define peripheral_end()            data_mem_barrier()
-#else
-#define flush_prefetch_buffer()     __asm__ volatile ("isb" ::: "memory")
-
-#define data_sync_barrier()         __asm__ volatile ("dsb" ::: "memory")
-#define data_mem_barrier()          __asm__ volatile ("dmb" ::: "memory")
-
-#define peripheral_begin()  ((void) 0)	/* ignored here */
-#define peripheral_end()    ((void) 0)
-#endif
-
-#define instruction_sync_barrier()  flush_prefetch_buffer()
-#define instruction_mem_barrier()   flush_prefetch_buffer()
-
-#endif
 
 /*
  * void regsafe_call(void *addr)
@@ -284,27 +214,19 @@ __extension__                                      \
   __asm__ volatile ("movem.l (sp),d0-d7/a0-a6\n\t" \
                     "lea     60(sp),sp");          \
 })
-#elif defined(__m68k__)
+#else
 #define regsafe_call(addr)                         \
 __extension__                                      \
 ({__asm__ volatile ("movem.l d0-d7/a0-a6,-(sp)");  \
   ((void (*)(void))addr)();                        \
   __asm__ volatile ("movem.l (sp)+,d0-d7/a0-a6");  \
 })
-#else
-/* not used on arm curently, but we assume anything called follows the abi, so */
-/* no registers need to be saved apart from what the compiler already does */
-#define regsafe_call(addr)                         \
-  ((void (*)(void))addr)();
 #endif
-
-
 
 /*
  * Loops for the specified count; for a 1 millisecond delay on the
  * current system, use the value in the global 'loopcount_1_msec'.
  */
-#if defined(__m68k__)
 #define delay_loop(count)                   \
   __extension__                             \
   ({ULONG _count = (count);                 \
@@ -317,12 +239,5 @@ __extension__                                      \
     : "cc", "memory"    /* clobbered */     \
     );                                      \
   })
-#else
-    #define delay_loop(count) __extension__ \
-    ({                                      \
-        ULONG _count = (count);             \
-        while(_count) {_count--;}           \
-    })
-#endif
 
 #endif /* ASM_H */
