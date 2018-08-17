@@ -6,7 +6,7 @@
 #include "portab.h"
 #include "asm.h"
 #include "endian.h"
-#include "../bios/processor.h"
+#include "processor.h"
 
 #define roundup(x, y)   (((x) + ((y) - 1)) & ~((y) - 1))
 #define __pure               __attribute__((pure))

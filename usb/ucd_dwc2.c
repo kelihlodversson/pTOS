@@ -10,8 +10,8 @@
 #include "usb_io.h"
 #include "wait_bit.h"
 #include "usbroothubdes.h"
-#include "../bios/raspi_int.h"
-#include "../bios/raspi_mbox.h"
+#include "raspi_int.h"
+#include "raspi_mbox.h"
 //#include "dwc2_udc_otg_priv.h"
 #include "ucd_dwc2.h"
 

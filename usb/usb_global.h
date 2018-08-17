@@ -29,14 +29,14 @@
 #include "endian.h"
 #include "biosdefs.h"
 #include "gemerror.h"
-#include "../bios/cookie.h"
+#include "cookie.h"
 
 #include "../bdos/fs.h"
 #include "../bdos/mem.h"
 
 #ifdef MACHINE_RPI
 #include "raspi_io.h"
-#include "../bios/raspi_int.h"
+#include "raspi_int.h"
 #endif
 
 #ifndef MACHINE_RPI

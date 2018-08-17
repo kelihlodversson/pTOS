@@ -116,13 +116,20 @@ NODEP := %.c %.h %.pot
 
 ifdef RPI
 # Raspberry PI is always ELF
+ARCH = arm
+MACHINE ?= raspi
 ELF = 1
 TOOLCHAIN_PREFIX = arm-none-eabi-
 TOOLCHAIN_CFLAGS = -fleading-underscore -fno-reorder-functions -DELF_TOOLCHAIN
 WITH_USB = 1
 else # Not Raspberry PI
+ifeq (1,$(COLDFIRE))
+ARCH += coldfire
+endif
+ARCH += m68k
+MACHINE ?= atari
 # Override with 1 to use the ELF toolchain instead of the MiNT one
-ELF = 0
+ELF ?= 0
 
 ifeq (1,$(ELF))
 # Standard ELF toolchain
@@ -169,7 +176,12 @@ endif
 
 MULTILIBFLAGS = $(CPUFLAGS) -fsigned-char -g
 endif
-INC = -Iinclude
+
+current_dir = $(filter-out .,$(word 1,$(subst /, ,$(dir $<))))
+arch_subdirs = $(addprefix machine/,$(MACHINE)) $(addprefix arch/,$(ARCH))
+include_dirs = $(addprefix include/,$(arch_subdirs)) include $(if $(current_dir), $(addprefix $(current_dir)/,$(arch_subdirs)) $(current_dir))
+INC = $(addprefix -I,$(include_dirs))
+
 OTHERFLAGS = -fomit-frame-pointer -fno-common
 
 # Optimization flags (affects ROM size and execution speed)
@@ -209,42 +221,32 @@ NATIVECC = gcc -ansi -pedantic $(WARNFLAGS) -W $(BUILD_TOOLS_OPTFLAGS)
 #
 
 # The source below must be the first to be linked
-bios_src =
-ifdef RPI
-bios_src += startup_rpi.S
-else
-bios_src += startup.S
-endif
+bios_src = startup.S
 
 
 # These sources will be placed in ST-RAM by the linked script
 bios_src += lowstram.c
 
 # Other BIOS sources can be put in any order
-ifdef RPI
-bios_src +=  raspi_memory.c processor_arm.S vectorsasm_arm.S vectors_arm.c aciaemu_rpi.c bios.c xbios.c acsi.c \
+bios_src +=  memory.S processor.S vectors.S bios.c xbios.c acsi.c \
              biosmem.c blkdev.c chardev.c clock.c conout.c cookie.c country.c \
              disk.c dma.c dmasound.c floppy.c font.c ide.c ikbd.c initinfo.c \
              kprint.c lineainit.c machine.c \
-             mfp.c midi.c mouse.c nvram.c panicasm_arm.S \
+             mfp.c midi.c mouse.c nvram.c panicasm.S \
              parport.c screen.c serport.c sound.c videl.c vt52.c xhdi.c \
-             delay.c sd.c memory2.c bootparams.c raspi_uart.c raspi_int.c \
-			 raspi_mbox.c raspi_screen.c raspi_emmc.c
+             delay.c sd.c memory2.c bootparams.c scsi.c
+ifdef RPI
+bios_src +=  vectorsasm.S aciaemu.c raspi_uart.c raspi_int.c \
+			 		 	 raspi_mbox.c raspi_screen.c raspi_emmc.c
 
 ifneq (1,$(RPI))
 bios_src +=  cache_armv7.c cache_armv7_asm.S
 endif
 
 else
-bios_src +=  memory.S processor.S vectors.S aciavecs.S bios.c xbios.c acsi.c \
-             biosmem.c blkdev.c chardev.c clock.c conout.c cookie.c country.c \
-             disk.c dma.c dmasound.c floppy.c font.c ide.c ikbd.c initinfo.c \
-             kprint.c kprintasm.S linea.S lineainit.c machine.c \
-             mfp.c midi.c mouse.c natfeat.S natfeats.c nvram.c panicasm.S \
-             parport.c screen.c serport.c sound.c videl.c vt52.c xhdi.c \
+bios_src +=  aciavecs.S kprintasm.S linea.S natfeat.S natfeats.c \
              pmmu030.c 68040_pmmu.S \
-             amiga.c amiga2.S aros.c aros2.S \
-             delay.c delayasm.S sd.c memory2.c bootparams.c scsi.c nova.c
+             amiga.c amiga2.S aros.c aros2.S delayasm.S nova.c
 endif
 ifeq (1,$(COLDFIRE))
   bios_src += coldfire.c coldfire2.S spi.c
@@ -264,22 +266,15 @@ endif
 
 bdos_src = bdosmain.c console.c fsbuf.c fsdir.c fsdrive.c fsfat.c fsglob.c \
            fshand.c fsio.c fsmain.c fsopnclo.c iumem.c kpgmld.c osmem.c \
-           proc.c time.c umem.c
-ifdef RPI
-bdos_src += rwa_rpi.S
-else
-bdos_src += rwa.S
-endif
+           proc.c time.c umem.c rwa.S
 
 #
 # source code in util/
 #
-ifdef RPI
-util_src = doprintf.c intmath.c langs.c memmove_c.c nls.c string.c miscasm_rpi.S \
-           setjmp_rpi.S
-else
-util_src = doprintf.c intmath.c langs.c memmove.S memset.S miscasm.S \
-           nls.c nlsasm.S setjmp.S string.c stringasm.S
+util_src = doprintf.c intmath.c langs.c memmove.c string.c miscasm.S \
+           nls.c setjmp.S
+ifndef RPI
+util_src += memset.S nlsasm.S stringasm.S
 endif
 # The functions in the following modules are used by the AES and EmuDesk
 ifeq ($(WITH_AES),1)
@@ -292,27 +287,20 @@ endif
 #
 # source code in vdi/
 #
-vdi_src =
+vdi_src = vdi_entry.cS vdi_bezier.c vdi_col.c vdi_control.c vdi_esc.c \
+          vdi_fill.c vdi_gdp.c vdi_input.c vdi_line.c vdi_main.c \
+          vdi_marker.c vdi_misc.c vdi_mouse.c vdi_raster.c vdi_text.c \
+					vdi_textblit.c
+
 
 ifdef RPI
-vdi_src += vdi_rpi.c raspi_mouse.c
-else
-vdi_src += vdi_asm.S
+vdi_src += raspi_mouse.c
 endif
 
-vdi_src += vdi_bezier.c vdi_col.c vdi_control.c vdi_esc.c \
-           vdi_fill.c vdi_gdp.c vdi_input.c vdi_line.c vdi_main.c \
-           vdi_marker.c vdi_misc.c vdi_mouse.c vdi_raster.c vdi_text.c \
-		   vdi_textblit.c
-
-
-ifeq (1,$(COLDFIRE))
-vdi_src += vdi_tblit_cf.S
-else
-ifdef RPI
-vdi_src += vdi_tblit_c.c
-else
-vdi_src += vdi_blit.S vdi_tblit.S
+vdi_src += vdi_tblit.cS
+ifneq (1,$(COLDFIRE))
+ifndef RPI
+vdi_src += vdi_blit.S
 endif
 endif
 
@@ -369,7 +357,8 @@ cli_src = cmdasm.S cmdmain.c cmdedit.c cmdexec.c cmdint.c cmdparse.c cmdutil.c
 #
 
 bios_copts =
-usb_copts =
+# The USB code is conceptually part of the bios and needs access to the bios private headers
+usb_copts = $(addprefix -Ibios/,$(arch_subdirs)) -Ibios
 bdos_copts =
 util_copts =
 cli_copts  =
@@ -429,9 +418,11 @@ ifeq ($(WITH_USB),1)
 endif
 
 dirs = $(core_dirs) $(optional_dirs)
+arch_dirs = $(foreach A,$(ARCH),$(patsubst %,%/arch/$(A),$(dirs)))
+machine_dirs = $(foreach M,$(MACHINE),$(patsubst %,%/machine/$(M),$(dirs)))
 
-vpath %.c $(dirs)
-vpath %.S $(dirs)
+vpath %.c $(machine_dirs) $(arch_dirs) $(dirs)
+vpath %.S $(machine_dirs) $(arch_dirs) $(dirs)
 
 #
 # country-specific settings
@@ -443,10 +434,10 @@ include country.mk
 # everything should work fine below.
 #
 
-SRC = $(foreach d,$(dirs),$(addprefix $(d)/,$($(d)_src)))
+SRC = $(foreach d,$(dirs),$($(d)_src))
 
-CORE_OBJ = $(foreach d,$(core_dirs),$(patsubst %.c,obj/%.o,$(patsubst %.S,obj/%.o,$($(d)_src)))) $(FONTOBJ) obj/version.o
-OPTIONAL_OBJ = $(foreach d,$(optional_dirs),$(patsubst %.c,obj/%.o,$(patsubst %.S,obj/%.o,$($(d)_src))))
+CORE_OBJ = $(foreach d,$(core_dirs),$(patsubst %,obj/%.o,$(basename $($(d)_src)))) $(FONTOBJ) obj/version.o
+OPTIONAL_OBJ = $(foreach d,$(optional_dirs),$(patsubst %,obj/%.o,$(basename $($(d)_src))))
 OBJECTS = $(CORE_OBJ) $(OPTIONAL_OBJ)
 
 #
@@ -662,10 +653,11 @@ endif
 NODEP += amiga
 amiga: UNIQUE = $(COUNTRY)
 amiga: OPTFLAGS = $(SMALL_OPTFLAGS)
+amiga: MACHINE = amiga
 amiga: override DEF += -DTARGET_AMIGA_ROM $(AMIGA_DEFS)
 amiga:
 	@echo "# Building Amiga EmuTOS into $(ROM_AMIGA)"
-	$(MAKE) CPUFLAGS=$(CPUFLAGS) DEF='$(DEF)' OPTFLAGS=$(OPTFLAGS) UNIQUE=$(UNIQUE) ROM_AMIGA=$(ROM_AMIGA) $(ROM_AMIGA)
+	$(MAKE) CPUFLAGS=$(CPUFLAGS) DEF='$(DEF)' OPTFLAGS=$(OPTFLAGS) UNIQUE=$(UNIQUE) ROM_AMIGA=$(ROM_AMIGA) MACHINE=$(MACHINE) $(ROM_AMIGA)
 	@MEMBOT=$(call SHELL_SYMADDR,__end_os_stram,emutos.map);\
 	echo "# RAM used: $$(($$MEMBOT)) bytes ($$(($$MEMBOT - $(MEMBOT_TOS162))) bytes more than TOS 1.62)"
 
@@ -683,6 +675,7 @@ NODEP += amigavampire
 amigavampire: CPUFLAGS = $(VAMPIRE_CPUFLAGS)
 amigavampire: override DEF += $(VAMPIRE_DEF)
 amigavampire: ROM_AMIGA = $(VAMPIRE_ROM_AMIGA)
+amigavampire: MACHINE = amiga
 amigavampire: amiga
 
 #
@@ -1171,8 +1164,8 @@ bios/header.h: tools/mkheader.awk obj/country
 
 TOCLEAN += obj/*.o */*.dsm
 
-CFILE_FLAGS = $(strip $(CFLAGS) $($(subst /,_,$(dir $<))copts))
-SFILE_FLAGS = $(strip $(CFLAGS) $($(subst /,_,$(dir $<))sopts))
+CFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_copts))
+SFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_sopts))
 
 obj/%.o : %.tr.c
 	$(CC) $(CFILE_FLAGS) -c $< -o $@
@@ -1196,7 +1189,7 @@ aes/asm_struct_gen.h: aes/gen_asm_defines.c
 # because it might be processed by the wrong compiler
 # when choosing a non-m68k target
 #
-vdi/lineaasm_m68k.h: vdi/gen_asm_defines.c bios/lineavars.h
+include/arch/m68k/lineaasm.h: vdi/gen_asm_defines.c bios/lineavars.h
 	@echo "warning: $@ is out of date" >&2
 	@echo "run \"$(CC) $(CFILE_FLAGS) -S $< -o - | grep '^#define' > $@\" to regenerate it" >&2
 
@@ -1382,7 +1375,7 @@ clean:
 PORTASM = pacf
 PORTASMFLAGS = -blanks on -core v4 -hardware_divide -hardware_mac -a gnu -out_syntax standard -nowarning 402,502,900,1111,1150 -noerrfile
 
-GENERATED_COLDFIRE_SOURCES = vdi/vdi_tblit_cf.S
+GENERATED_COLDFIRE_SOURCES = vdi/arch/coldfire/vdi_tblit.S
 
 .PHONY: coldfire-sources
 NODEP += coldfire-sources
@@ -1431,27 +1424,27 @@ include release.mk
 
 ALL_UTIL_SRC = $(wildcard util/*.[cS])
 DEP_SRC = $(sort $(SRC) $(ALL_UTIL_SRC))
+DEP_FILES = $(patsubst %,dep/%.d,$(basename $(notdir $(DEP_SRC))))
 
 .PHONY: depend
 NODEP += depend
-depend: makefile.dep
+depend: dep $DEP_FILES
 
-TOCLEAN += makefile.dep
-NODEP += makefile.dep
-# Theoretically, makefile.dep should depend on $(DEP_SRC). But in that case,
-# makefile.dep would be rebuilt every time a single source is modified, even
-# for trivial changes. This would be useless in most cases. As a pragmatic
-# workaround, makefile.dep only depends on generated sources, which ensures
-# they are always created first.
-makefile.dep: $(GEN_SRC)
-	$(CC) $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) -MM $(INC) $(DEF) -DGENERATING_DEPENDENCIES $(DEP_SRC) | sed -e '/:/s,^,obj/,' >makefile.dep
+TOCLEAN += $(DEP_FILES)
+NODEP += $(DEP_FILES)
 
-# Do not include or rebuild makefile.dep for the targets listed in NODEP
+dep/%.d: %.c $(GEN_SRC)
+	$(CC) $(CFILE_FLAGS) -MM -MF $@ -MT obj/$(basename $(notdir $<)).o -DGENERATING_DEPENDENCIES $<
+
+dep/%.d: %.S $(GEN_SRC)
+	$(CC) $(SFILE_FLAGS) -MM -MF $@ -MT obj/$(basename $(notdir $<)).o -DGENERATING_DEPENDENCIES $<
+
+# Do not include or rebuild dependencies for the targets listed in NODEP
 # as well as the default target (currently "help").
 # Since NODEP is used inside an ifeq condition, it must be fully set before
 # being used. Be sure to keep this block at the end of the Makefile.
 ifneq (,$(MAKECMDGOALS))
 ifeq (,$(filter $(NODEP), $(MAKECMDGOALS)))
--include makefile.dep
+-include $(DEP_FILES)
 endif
 endif

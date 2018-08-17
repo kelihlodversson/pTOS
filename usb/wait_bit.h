@@ -11,7 +11,7 @@
 
 #include "portab.h"
 #include "usb_io.h"
-#include "../bios/raspi_int.h"
+#include "raspi_int.h"
 
 /**
  * wait_for_bit_x()     waits for bit set/cleared in register
