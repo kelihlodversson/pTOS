@@ -241,7 +241,7 @@
 #define SD_VER_3            4
 #define SD_VER_4            5
 
-const char *sd_versions[] =
+const char * const sd_versions[] =
 {
     "unknown",
     "1.0 or 1.01",
@@ -252,7 +252,7 @@ const char *sd_versions[] =
 };
 
 #ifdef EMMC_DEBUG2
-const char *err_irpts[] =
+const char * const err_irpts[] =
 {
     "CMD_TIMEOUT",
     "CMD_CRC",

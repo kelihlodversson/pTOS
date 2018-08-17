@@ -266,8 +266,8 @@ _arm_dispatch_undef:
     sub    r3, r3, #4
     ldr    r2, [r3]
 
-    ldr    r0, =#0xfff000f0
-    ldr    r1, =#0xe7f000f0
+    ldr    r0, =0xfff000f0
+    ldr    r1, =0xe7f000f0
     and    r0, r0, r2
     cmp    r0, r1
     moveq  r0, #0x28       // VEC_LINEA - we use e7f...f. as the lineA emulation
@@ -379,6 +379,6 @@ _secure_monitor:
     movs    pc, lr @ return to non-secure SVC
 #endif
 
-.data
+.bss
 .global _start_in_hyp
 _start_in_hyp: .ds.l 1

@@ -60,17 +60,22 @@ UBYTE* raspi_get_coherent_buffer(int tag)
     return coherent_buffer + (tag * 4096);
 }
 
+extern long start_in_hyp;
 void raspi_vcmem_init(void)
 {
+    /* Preserve the contents of start_in_hyp across clearing the bss segment */
+    long start_in_hyp_sv = start_in_hyp;
+
     /* Clear the sysvars */
     bzero(sysvars_start, sysvars_end - sysvars_start);
+
     /*
     * Clear the BSS segment.
     * Our stack is explicitly set outside the BSS, so this is safe:
     * bzero() will be able to return.
     */
-
     bzero(_bss, _ebss - _bss);
+    start_in_hyp = start_in_hyp_sv;
 
     // Temporary set coherent_buffer base to aligned RAM before we know the total size
     coherent_buffer  = (UBYTE*)(((ULONG)_end_os_stram + (5*MEGABYTE)) & ~(MEGABYTE-1));
