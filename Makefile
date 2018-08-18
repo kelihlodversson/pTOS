@@ -452,41 +452,106 @@ all:	help
 NODEP += help
 help: UNIQUE = $(COUNTRY)
 help:
-	@echo "target  meaning"
-	@echo "------  -------"
-	@echo "help    this help message"
-	@echo "version display the EmuTOS version"
-	@echo "192     $(ROM_192), EmuTOS ROM padded to size 192 KB"
-	@echo "256     $(ROM_256), EmuTOS ROM padded to size 256 KB"
-	@echo "512     $(ROM_512), EmuTOS ROM padded to size 512 KB"
-	@echo "aranym  $(ROM_ARANYM), suitable for ARAnyM"
-	@echo "firebee $(SREC_FIREBEE), to be flashed on the FireBee"
-	@echo "firebee-prg emutos.prg, a RAM tos for the FireBee"
-	@echo "amiga   $(ROM_AMIGA), EmuTOS ROM for Amiga hardware"
-	@echo "amigavampire $(VAMPIRE_ROM_AMIGA), EmuTOS ROM for Amiga optimized for Vampire V2"
-	@echo "amigakd $(AMIGA_KICKDISK), EmuTOS as Amiga 1000 Kickstart disk"
-	@echo "amigaflop $(EMUTOS_ADF), EmuTOS RAM as Amiga boot floppy"
-	@echo "amigaflopvampire $(EMUTOS_VAMPIRE_ADF), EmuTOS RAM as Amiga boot floppy optimized for Vampire V2"
-	@echo "m548x-dbug $(SREC_M548X_DBUG), EmuTOS-RAM for dBUG on ColdFire Evaluation Boards"
-	@echo "m548x-bas  $(SREC_M548X_BAS), EmuTOS for BaS_gcc on ColdFire Evaluation Boards"
-	@echo "m548x-prg  emutos.prg, a RAM tos for ColdFire Evaluation Boards with BaS_gcc"
-	@echo "prg     emutos.prg, a RAM tos"
-	@echo "flop    $(EMUTOS_ST), a bootable floppy with RAM tos"
-	@echo "all192  all 192 KB images"
-	@echo "all256  all 256 KB images"
-	@echo "allprg  all emutos*.prg"
-	@echo "allflop all emutos*.st"
-	@echo "cart    $(ROM_CARTRIDGE), EmuTOS as a diagnostic cartridge"
+	@echo "pTOS - Portable EmuTOS - Build Options:"
+	@echo "target       meaning"
+	@echo "------       -------"
+	@echo "help         EmuTOS make options"
+	@echo "help-atari   EmuTOS for Atari build options"
+	@echo "help-cf      EmuTOS for ColdFire build options"
+	@echo "help-amiga   EmuTOS for Amiga build options"
+	@echo "help-arm     EmuTOS for ARM build options"
+	@echo "version      display the EmuTOS version"
 	@echo "clean"
-	@echo "expand  expand tabs to spaces"
-	@echo "crlf    convert all end of lines to LF"
-	@echo "charset check the charset of all the source files"
-	@echo "bugready set up files in preparation for 'bug update'"
-	@echo "gitready same as $(MAKE) expand crlf"
-	@echo "depend  creates dependancy file (makefile.dep)"
-	@echo "dsm     dsm.txt, an edited disassembly of MG"
-	@echo "*.dsm   disassembly of any .c or almost any .img file"
-	@echo "release build the release archives into $(RELEASE_DIR)"
+	@echo "expand       expand tabs to spaces"
+	@echo "crlf         convert all end of lines to LF"
+	@echo "charset      check the charset of all the source files"
+	@echo "bugready     set up files in preparation for 'bug update'"
+	@echo "gitready     same as $(MAKE) expand crlf"
+	@echo "depend       creates dependancy file (makefile.dep)"
+	@echo "dsm          dsm.txt, an edited disassembly of MG"
+	@echo "*.dsm        disassembly of any .c or almost any .img file"
+	@echo "release      build the release archives into $(RELEASE_DIR)"
+
+.PHONY: help-atari
+NODEP += help-atari
+help-atari:
+	@echo "pTOS - Portable EmuTOS - Atari Options:"
+	@echo "target       meaning"
+	@echo "------       -------"
+	@echo "help         EmuTOS make options"
+	@echo "help-atari   EmuTOS for Atari build options"
+	@echo "help-cf      EmuTOS for ColdFire build options"
+	@echo "help-amiga   EmuTOS for Amiga build options"
+	@echo "help-arm     EmuTOS for ARM build options"
+	@echo "version      display the EmuTOS version"
+	@echo "clean"
+	@echo "192          $(ROM_192), EmuTOS ROM padded to size 192 KB"
+	@echo "256          $(ROM_256), EmuTOS ROM padded to size 256 KB"
+	@echo "512          $(ROM_512), EmuTOS ROM padded to size 512 KB"
+	@echo "aranym       $(ROM_ARANYM), suitable for ARAnyM"
+	@echo "prg          emutos.prg, a RAM tos"
+	@echo "flop         $(EMUTOS_ST), a bootable floppy with RAM tos"
+	@echo "all192       build all 192 KB images"
+	@echo "all256       build all 256 KB images"
+	@echo "allprg       build all emutos*.prg"
+	@echo "allflop      build all emutos*.st"
+	@echo "cart         $(ROM_CARTRIDGE), EmuTOS as a diagnostic cartridge"
+
+.PHONY: help-cf
+NODEP += help-cf
+help-cf:
+	@echo "pTOS - Portable EmuTOS - ColdFire Options:"
+	@echo "target       meaning"
+	@echo "------       -------"
+	@echo "help         EmuTOS make options"
+	@echo "help-atari   EmuTOS for Atari build options"
+	@echo "help-cf      EmuTOS for ColdFire build options"
+	@echo "help-amiga   EmuTOS for Amiga build options"
+	@echo "help-arm     EmuTOS for ARM build options"
+	@echo "version      display the EmuTOS version"
+	@echo "clean"
+	@echo "firebee      $(SREC_FIREBEE), to be flashed on the FireBee"
+	@echo "firebee-prg  emutos.prg, a RAM tos for the FireBee"
+	@echo "m548x-dbug   $(SREC_M548X_DBUG), EmuTOS-RAM for dBUG on ColdFire Evaluation Boards"
+	@echo "m548x-bas    $(SREC_M548X_BAS), EmuTOS for BaS_gcc on ColdFire Evaluation Boards"
+	@echo "m548x-prg    emutos.prg, a RAM tos for ColdFire Evaluation Boards with BaS_gcc"
+
+.PHONY: help-amiga
+NODEP += help-amiga
+help-amiga:
+	@echo "pTOS - Portable EmuTOS - Amiga Options:"
+	@echo "target       meaning"
+	@echo "------       -------"
+	@echo "help         EmuTOS make options"
+	@echo "help-atari   EmuTOS for Atari build options"
+	@echo "help-cf      EmuTOS for ColdFire build options"
+	@echo "help-amiga   EmuTOS for Amiga build options"
+	@echo "help-arm     EmuTOS for ARM build options"
+	@echo "version      display the EmuTOS version"
+	@echo "clean"
+	@echo "amiga        $(ROM_AMIGA), EmuTOS ROM for Amiga hardware"
+	@echo "amigavampire $(VAMPIRE_ROM_AMIGA), EmuTOS ROM for Amiga optimized for Vampire V2"
+	@echo "amigakd      $(AMIGA_KICKDISK), EmuTOS as Amiga 1000 Kickstart disk"
+	@echo "amigaflop    $(EMUTOS_ADF), EmuTOS RAM as Amiga boot floppy"
+	@echo "amigaflopvampire $(EMUTOS_VAMPIRE_ADF), EmuTOS RAM as Amiga boot floppy optimized for Vampire V2"
+	@echo "aros         read and edit Makefile, search for AROS"
+
+.PHONY: help-arm
+NODEP += help-arm
+help-arm:
+	@echo "pTOS - Portable EmuTOS - ARM Options:"
+	@echo "target       meaning"
+	@echo "------       -------"
+	@echo "help         EmuTOS make options"
+	@echo "help-atari   EmuTOS for Atari build options"
+	@echo "help-cf      EmuTOS for ColdFire build options"
+	@echo "help-amiga   EmuTOS for Amiga build options"
+	@echo "help-arm     EmuTOS for ARM build options"
+	@echo "version      display the EmuTOS version"
+	@echo "clean"
+	@echo "rpi1         kernel.img, for RPi 0/A/A+/B/B+/CM0"
+	@echo "rpi2         kernel7.img, for RPi 2B+"
+	@echo "rpi3         kernel8-32.img, for RPi 3/3+/CM3"
 
 # Display the EmuTOS version
 .PHONY: version
@@ -597,7 +662,8 @@ $(ROM_512): $(EMUTOS_IMG) mkrom
 	./mkrom pad $(ROMSIZE)k $< $(ROM_512)
 
 .PHONY: falcon
-falcon: help
+NODEP += falcon
+falcon: help-atari
 
 #
 # ARAnyM Image
@@ -642,6 +708,10 @@ TOCLEAN += *.rom
 
 ROM_AMIGA = emutos-amiga.rom
 AMIGA_DEFS =
+
+.PHONY: aros
+NODEP += aros
+aros: help-amiga
 
 # AROS support is disabled by default due to license issues
 AROS = 0
