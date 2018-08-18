@@ -489,13 +489,13 @@ help-atari:
 	@echo "256          $(ROM_256), EmuTOS ROM padded to size 256 KB"
 	@echo "512          $(ROM_512), EmuTOS ROM padded to size 512 KB"
 	@echo "aranym       $(ROM_ARANYM), suitable for ARAnyM"
-        @echo "prg          emutos.prg, a RAM tos"
-        @echo "flop         $(EMUTOS_ST), a bootable floppy with RAM tos"
-        @echo "all192       build all 192 KB images"
-        @echo "all256       build all 256 KB images"
-        @echo "allprg       build all emutos*.prg"
-        @echo "allflop      build all emutos*.st"
-        @echo "cart         $(ROM_CARTRIDGE), EmuTOS as a diagnostic cartridge"
+	@echo "prg          emutos.prg, a RAM tos"
+	@echo "flop         $(EMUTOS_ST), a bootable floppy with RAM tos"
+	@echo "all192       build all 192 KB images"
+	@echo "all256       build all 256 KB images"
+	@echo "allprg       build all emutos*.prg"
+	@echo "allflop      build all emutos*.st"
+	@echo "cart         $(ROM_CARTRIDGE), EmuTOS as a diagnostic cartridge"
 
 .PHONY: help-cf
 NODEP += help-cf
