@@ -33,3 +33,4 @@
 /.gdbinit
 aes/asm_struct_gen.h
 .tags*
+.vscode
