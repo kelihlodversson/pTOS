@@ -108,7 +108,6 @@ usb_mouse_irq (struct usb_device *dev)
 
 void usb_mouse_timerc (void)
 {
-	long i, change = 0;
 	long actlen = 0;
 	long r;
 
@@ -125,43 +124,31 @@ void usb_mouse_timerc (void)
 	{
 		return;
 	}
-	for (i = 0; i < actlen; i++)
-	{
-		if (mse_data.new[i] != mse_data.data[i])
-		{
-			change = 1;
-			break;
-		}
-	}
-	if (change)
+
 	{
 		char info, old_info;
 		char delta_x, delta_y;
 		char extra, old_extra;
+		BOOL change = FALSE;
 
 		(void)old_extra;
-		#if 0
-		if ((actlen >= 6) && (mse_data.new[0] == 1))
-		{					   /* report-ID */
-			info = mse_data.new[1];
-			old_info = mse_data.data[1];
-			delta_x = mse_data.new[2];
-			delta_y = mse_data.new[3];
-			extra = mse_data.new[4];
-			old_extra = mse_data.data[4];
-		}
-		else
-		#endif
 		{					   /* boot report */
 			info = mse_data.new[0];
 			old_info = mse_data.data[0];
+			change |= info != old_info;
 			delta_x = mse_data.new[1];
 			delta_y = mse_data.new[2];
+			change |= !!delta_x || !!delta_y;
 			if (actlen >= 3)
 			{
 				extra = mse_data.new[3];
 				old_extra = mse_data.data[3];
+				change |= extra != old_extra;
 			}
+		}
+		if(!change)
+		{
+			return;
 		}
 
 		// Build ikbd mouse packet
@@ -176,17 +163,6 @@ void usb_mouse_timerc (void)
 			mousexvec ((info & 4)?0x37:0xb7);
 		}
 
-#if 0
-	// TODO: some mice flip these bits on mouse wheel movement if they don't have a 4th and a 5th button
-		if ((extra ^ old_extra) & 0x10)
-		{					   /* 4th button */
-			mousexvec ((extra & 0x10)?0x5e:0xde);
-		}
-		if ((extra ^ old_extra) & 0x20)
-		{					   /* 5th button */
-			mousexvec ((extra & 0x20)?0x5f:0xdf);
-		}
-#endif
 		// Mouse wheel is stored in the low nybble of the extra byte
 		switch (extra & 0xf)
 		{
