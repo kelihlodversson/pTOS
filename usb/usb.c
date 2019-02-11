@@ -861,7 +861,7 @@ static long get_descriptor_len(struct usb_device *dev, long len, long expect_len
 
 	desc = (struct usb_device_descriptor *)tmpbuf;
 
-	err = usb_get_descriptor(dev, USB_DT_DEVICE, 0, desc, expect_len);
+	err = usb_get_descriptor(dev, USB_DT_DEVICE, 0, desc, len);
 	if (err < expect_len) {
 		if (err < 0) {
 			ALERT(("unable to get device descriptor (error=%d)\n",
