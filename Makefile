@@ -110,6 +110,9 @@ TOCLEAN = *~ */*~ $(CORE) *.tmp obj/*.h $(GEN_SRC)
 
 NODEP := %.c %.h %.pot
 
+# Emutos requires C90 with some GNU extensions.
+CSTANDARD = -std=gnu90
+
 #
 # compilation flags
 #
@@ -203,7 +206,7 @@ endif
 endif
 
 DEFINES = $(LOCALCONF) -DWITH_AES=$(WITH_AES) -DWITH_CLI=$(WITH_CLI) -DWITH_USB=$(WITH_USB) $(DEF)
-CFLAGS = $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) $(OPTFLAGS) $(OTHERFLAGS) $(WARNFLAGS) $(INC) $(DEFINES)
+CFLAGS = $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) $(CSTANDARD) $(OPTFLAGS) $(OTHERFLAGS) $(WARNFLAGS) $(INC) $(DEFINES)
 
 CPPFLAGS = $(CFLAGS)
 
