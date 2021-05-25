@@ -28,7 +28,7 @@
 /*
  * Determine if this EmuTOS is built for ROM or RAM.
  */
-#if defined(TARGET_PRG) || defined(TARGET_FLOPPY) || defined(TARGET_AMIGA_FLOPPY) || defined(TARGET_RPI1) || defined(TARGET_RPI2) || defined(TARGET_RPI3)
+#if defined(TARGET_PRG) || defined(TARGET_FLOPPY) || defined(TARGET_AMIGA_FLOPPY) || defined(TARGET_RPI1) || defined(TARGET_RPI2) || defined(TARGET_RPI3) || defined(TARGET_RPI4)
 #  define EMUTOS_LIVES_IN_RAM 1
 # else
 #  define EMUTOS_LIVES_IN_RAM 0
@@ -418,7 +418,7 @@
 # endif
 #endif
 
-#if defined(TARGET_RPI1) ||defined(TARGET_RPI2) ||defined(TARGET_RPI3)
+#if defined(TARGET_RPI1) ||defined(TARGET_RPI2) || defined(TARGET_RPI3) || defined(TARGET_RPI4)
 # define MACHINE_RPI
 #endif
 

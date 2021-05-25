@@ -85,13 +85,15 @@
  *  Types
  */
 
-typedef char            BYTE;                   /*  Signed byte         */
-typedef uint8_t         UBYTE;                  /*  Unsigned byte       */
-typedef uint32_t        ULONG;                  /*  unsigned 32 bit word*/
 typedef int             BOOL;                   /*  boolean, TRUE or FALSE */
+typedef char            BYTE;                   /*  Signed byte         */
 typedef int16_t         WORD;                   /*  signed 16 bit word  */
-typedef uint16_t        UWORD;                  /*  unsigned 16 bit word*/
 typedef int32_t         LONG;                   /*  signed 32 bit word  */
+typedef int64_t         QUAD;                   /*  signed 64 bit word*/
+typedef uint8_t         UBYTE;                  /*  Unsigned byte       */
+typedef uint16_t        UWORD;                  /*  unsigned 16 bit word*/
+typedef uint32_t        ULONG;                  /*  unsigned 32 bit word*/
+typedef uint64_t        UQUAD;                  /*  unsigned 64 bit word*/
 
 /* pointer to function returning LONG */
 typedef LONG (*PFLONG)(void);

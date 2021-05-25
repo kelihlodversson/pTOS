@@ -44,7 +44,9 @@ static long asynch_allowed;
 
 
 // Bultin drivers:
+#ifndef TARGET_RPI4
 extern void dwc2_init (void);
+#endif
 extern int usb_mouse_init (void);
 
 /***************************************************************************
@@ -70,7 +72,9 @@ void usb_init(void)
     setup_usb_module_api();
 
     /* Initialize built-in drivers */
+#ifndef TARGET_RPI4
     dwc2_init();
+#endif
     usb_mouse_init();
 }
 

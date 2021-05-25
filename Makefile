@@ -124,7 +124,11 @@ MACHINE ?= raspi
 ELF = 1
 TOOLCHAIN_PREFIX = arm-none-eabi-
 TOOLCHAIN_CFLAGS = -fleading-underscore -fno-reorder-functions -DELF_TOOLCHAIN
+ifeq (4,$(RPI))
+WITH_USB = 0
+else
 WITH_USB = 1
+endif
 else # Not Raspberry PI
 ifeq (1,$(COLDFIRE))
 ARCH += coldfire
@@ -173,8 +177,11 @@ IMG_RPI = kernel7.img
 else ifeq (3,$(RPI))
 CPUFLAGS = -march=armv8-a -mtune=cortex-a53 -marm -mfpu=neon-fp-armv8 -mfloat-abi=hard
 IMG_RPI = kernel8-32.img
+else ifeq (4,$(RPI))
+CPUFLAGS = -march=armv8-a -mtune=cortex-a72 -marm -mfpu=neon-fp-armv8 -mfloat-abi=hard
+IMG_RPI = kernel7l.img
 else
-$(error Unknown Raspberry PI version $(RPI). Use only 1,2 or 3)
+$(error Unknown Raspberry PI version $(RPI). Use only 1, 2, 3, or 4)
 endif
 
 MULTILIBFLAGS = $(CPUFLAGS) -fsigned-char -g
@@ -260,7 +267,12 @@ endif
 #
 usb_src = usb.c ucd.c udd.c usb_api.c usb_hub.c udd_mouse.c
 ifdef RPI
+ifeq (4,$(RPI))
+# TODO: USB support for RPI4
+else
+# RPI 1,2,3 have a DWC2 OTG usb controller
 usb_src += ucd_dwc2.c
+endif
 endif
 
 #
@@ -555,6 +567,7 @@ help-arm:
 	@echo "rpi1         kernel.img, for RPi 0/A/A+/B/B+/CM0"
 	@echo "rpi2         kernel7.img, for RPi 2B+"
 	@echo "rpi3         kernel8-32.img, for RPi 3/3+/CM3"
+	@echo "rpi4         kernel7l.img, for RPi 4/400"
 
 # Display the EmuTOS version
 .PHONY: version
@@ -798,11 +811,23 @@ rpi2:
 NODEP += rpi3
 rpi3: UNIQUE = $(COUNTRY)
 rpi3: IMG_RPI = kernel8-32.img
-rpi2: OPTFLAGS = -O2
+rpi3: OPTFLAGS = -O2
 rpi3: override DEF += -DTARGET_RPI3 $(RPI_DEFS)
 rpi3:
 	@echo "# Building Raspberry Pi 3 EmuTOS into $(IMG_RPI)"
 	$(MAKE) RPI=3 WITH_CLI=0 DEF='$(DEF)' OPTFLAGS=$(OPTFLAGS) UNIQUE=$(UNIQUE) IMG_RPI=$(IMG_RPI) $(IMG_RPI)
+	@MEMBOT=$(call SHELL_SYMADDR,__end_os_stram,emutos.map);\
+	echo "# RAM used: $$(($$MEMBOT)) bytes ($$(($$MEMBOT - $(MEMBOT_TOS162))) bytes more than TOS 1.62)"
+
+.PHONY: rpi4
+NODEP += rpi4
+rpi4: UNIQUE = $(COUNTRY)
+rpi4: IMG_RPI = kernel7l.img
+rpi4: OPTFLAGS = -O2
+rpi4: override DEF += -DTARGET_RPI4 $(RPI_DEFS)
+rpi4:
+	@echo "# Building Raspberry Pi 4 EmuTOS into $(IMG_RPI)"
+	$(MAKE) RPI=4 WITH_CLI=0 DEF='$(DEF)' OPTFLAGS=$(OPTFLAGS) UNIQUE=$(UNIQUE) IMG_RPI=$(IMG_RPI) $(IMG_RPI)
 	@MEMBOT=$(call SHELL_SYMADDR,__end_os_stram,emutos.map);\
 	echo "# RAM used: $$(($$MEMBOT)) bytes ($$(($$MEMBOT - $(MEMBOT_TOS162))) bytes more than TOS 1.62)"
 

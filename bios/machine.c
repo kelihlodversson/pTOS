@@ -731,9 +731,13 @@ const char * machine_name(void)
     return "BCM2835";
 # elif defined(TARGET_RPI2)
     return "BCM2836";
-# else
+# elif defined(TARGET_RPI3)
     return "BCM2837";
-# endif
+# elif defined(TARGET_RPI4)
+    return "BCM2711";
+#else
+    return "Unknown Raspberry PI";
+#endif
 #elif defined(MACHINE_M548X)
     return m548x_machine_name();
 #else
