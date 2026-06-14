@@ -29,9 +29,10 @@
 #if CONF_WITH_APOLLO_68080
         .globl  _is_apollo_68080
 #endif
-#if CONF_WITH_CACHE_CONTROL
+#if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
         .globl  _cache_exists
         .globl  _set_cache
+        .globl  _get_cache
 #endif
 
         .extern _longframe              // If not 0, use long stack frames
@@ -354,7 +355,7 @@ m68060:
         move.l  d1,d0           // recover the enable value
 
 init_cacr:
-#if CONF_WITH_CACHE_CONTROL
+#if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
         move.l  d0,cacr_enable  // save value to use when enabling caches
 #endif
         MOVEC_D0_CACR
@@ -565,15 +566,19 @@ cpushl_bc:
 #endif
 
 
-#if CONF_WITH_CACHE_CONTROL
+#if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
 /*
  * C A C H E   C O N T R O L   F O R   E M U D E S K
+ * ... also used by Nova graphics card code on the Falcon
  *
  * WORD cache_exists(void);
  *  returns 1 if processor has cache, 0 otherwise
  *
  * void set_cache(WORD enable);
  *  sets cache state: if 'enable' is zero, disables, otherwise enables
+ *
+ * WORD get_cache(void);
+ *  returns 0 if the cache is fully disabled or not present, != 0 otherwise
  */
 _cache_exists:
         moveq.l #0,d0               // assume 68000, 68010
@@ -607,6 +612,18 @@ sc_cacr:
         MOVEC_D0_CACR
 sc_exit:
         rts
+
+_get_cache:
+        jbsr    _cache_exists
+        tst.w   d0
+        jeq     gc_exit             // no cache, do nothing
+
+        MOVEC_CACR_D0
+        and.l   cacr_enable,d0      // AND with processor-dependent mask, and treat...
+        sne     d0                  // cache as enabled if any of the mask bits are set
+        ext.w   d0
+gc_exit:
+        rts
 #endif
 
         SECTION_RODATA
@@ -639,6 +656,6 @@ temp:           .ds.l   1
 _is_apollo_68080:   .ds.w   1
 #endif
 
-#if CONF_WITH_CACHE_CONTROL
+#if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
 cacr_enable:    .ds.l   1
 #endif

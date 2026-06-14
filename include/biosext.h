@@ -52,9 +52,10 @@ void flush_data_cache(void *start, long size);
 void invalidate_data_cache(void *start, long size);
 void invalidate_instruction_cache(void *start, long size);
 
-#if CONF_WITH_CACHE_CONTROL
+#if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
 WORD cache_exists(void);
 void set_cache(WORD enable);
+WORD get_cache(void);
 #endif
 
 /* bios allocation of ST-RAM */
