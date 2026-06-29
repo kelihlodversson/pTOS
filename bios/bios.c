@@ -403,7 +403,7 @@ static void bios_init(void)
      * Detect this situation and warn the user.
      * This method is ugly, but safe for releases as they are thoroughly tested.
      */
-    if (IS_ARANYM && ULONG_AT(0x00e80000) == 0)
+    if (IS_ARANYM && ((ULONG)_edata > 0x00e80000ul) && ULONG_AT(0x00e80000) == 0)
     {
         kcprintf(
             "\r\n"
