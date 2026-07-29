@@ -15,9 +15,20 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
           sudo apt-get update
           sudo apt-get install cross-mint-essential
 
+      Two other m68k toolchains are supported, chosen under "m68k
+      toolchain" in the Toolchain menu:
+
+          m68k-atari-mint       cross-mint, the default, as above
+          m68k-atari-mintelf    Vincent Rivière's newer ELF based tools,
+                                http://vincent.riviere.free.fr/soft/m68k-atari-mintelf/
+          bare m68k-elf         a plain m68k-elf toolchain, no MiNT at all
+
+      Picking one selects both the compiler prefix and the flags it needs;
+      there is nothing else to set.  The two ELF toolchains are built with
+      -fleading-underscore, --register-prefix-optional and -DELF_TOOLCHAIN,
+      which cross-mint does not want.
+
       Other toolchains, such as the old one from SpareMiNT, may also work.
-      A plain m68k-elf toolchain can be used instead by enabling "Use a
-      bare m68k-elf toolchain" in the Toolchain menu.
 
   Raspberry Pi (ARM)
       Any bare metal arm-none-eabi toolchain, for example the one Debian
@@ -25,14 +36,13 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
 
           sudo apt-get install gcc-arm-none-eabi
 
-If your toolchain is installed under a name other than the one the build
-expects, set "Cross compiler prefix" in the Toolchain menu to match, for
-instance "m68k-atari-mintelf-" for Vincent Rivière's newer ELF based
-toolchain (http://vincent.riviere.free.fr/soft/m68k-atari-mintelf/).  The
-option takes any prefix, and is independent of the rest of the Toolchain
-menu; an ELF toolchain also wants "Use a bare m68k-elf toolchain" enabled,
-which is what selects -fleading-underscore and the other flags such a
-toolchain needs.
+If your toolchain is installed under a name other than the one that goes
+with the choice above, fill in "Cross compiler prefix override" in the same
+menu.  It renames the executables only; the flags keep following the
+toolchain you picked.  A one-off build can override it without touching the
+configuration at all:
+
+    make CROSS_COMPILE=m68k-atari-mintelf-
 
 You will also need:
 

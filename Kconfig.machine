@@ -257,22 +257,64 @@ endmenu
 
 menu "Toolchain"
 
-config TOOLCHAIN_ELF
-	bool "Use a bare m68k-elf toolchain"
+choice
+	prompt "m68k toolchain"
 	depends on ARCH_M68K
-	default n
+	default BUILD_TOOLCHAIN_MINT
 	help
-	  By default the m68k build uses the cross-mint toolchain.  Say y to
-	  build with a plain m68k-elf toolchain instead.
+	  Which of the m68k toolchains to build with.  This selects the
+	  compiler prefix and the flags the toolchain needs; both can still
+	  be overridden below.
+
+config BUILD_TOOLCHAIN_MINT
+	bool "m68k-atari-mint (cross-mint)"
+	help
+	  Vincent Rivière's cross-mint tools, the toolchain EmuTOS has always
+	  been built with.  It emits a.out objects and already gives external
+	  symbols a leading underscore, so it needs no special flags.
+
+	  http://vincent.riviere.free.fr/soft/m68k-atari-mint/
+
+config BUILD_TOOLCHAIN_MINTELF
+	bool "m68k-atari-mintelf"
+	help
+	  Vincent Rivière's newer ELF based toolchain for MiNT.  Being an ELF
+	  toolchain it is built with the same flags as the bare m68k-elf one
+	  below: -fleading-underscore to match the hand written assembler,
+	  --register-prefix-optional to let it write d0 rather than %d0, and
+	  -DELF_TOOLCHAIN for the parts of the sources and of emutos.ld that
+	  differ between a.out and ELF.
+
+	  http://vincent.riviere.free.fr/soft/m68k-atari-mintelf/
+
+config BUILD_TOOLCHAIN_ELF
+	bool "bare m68k-elf"
+	help
+	  A plain m68k-elf toolchain, with no MiNT support at all.  It works
+	  because EmuTOS is freestanding, and takes the same flags as the
+	  mintelf toolchain above.
+
+endchoice
+
+# The two ELF toolchains need the same treatment.  Note that
+# -fleading-underscore and -DELF_TOOLCHAIN go together: emutos.ld defines
+# leading-underscore aliases for the libgcc helpers precisely because our
+# code is compiled with the former, and that block is guarded by the latter.
+config BUILD_TOOLCHAIN_IS_ELF
+	bool
+	default y if BUILD_TOOLCHAIN_MINTELF || BUILD_TOOLCHAIN_ELF
 
 config CROSS_COMPILE
-	string "Cross compiler prefix"
-	default "arm-none-eabi-" if ARCH_ARM
-	default "m68k-elf-" if TOOLCHAIN_ELF
-	default "m68k-atari-mint-"
+	string "Cross compiler prefix override"
+	default ""
 	help
 	  Prefix prepended to the name of every binutils/gcc executable, for
 	  example "m68k-atari-mint-".
+
+	  Leave this empty, which is the usual case, to get the prefix that
+	  goes with the toolchain selected above, or arm-none-eabi- on ARM.
+	  Fill it in when your toolchain is installed under a different name;
+	  the flags still follow the toolchain chosen above, not the prefix.
 
 config CPUFLAGS
 	string "Compiler flags describing the target CPU"
