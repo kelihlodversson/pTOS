@@ -105,12 +105,24 @@ def makefile_lines(kconf, path, config_name):
 
 
 def write(path, lines):
+    """Write lines to path, replacing it atomically.
+
+    An interrupted run must not leave a truncated file behind: make includes
+    obj/auto.conf, and would silently build from whatever half of it survived.
+    """
     directory = os.path.dirname(path)
     if directory and not os.path.isdir(directory):
         os.makedirs(directory)
 
-    with open(path, "w") as f:
-        f.write("".join(lines))
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            f.write("".join(lines))
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
 
 
 def main():

@@ -23,6 +23,10 @@
 
 MAKEFLAGS = --no-print-directory
 
+# Remove the target of any recipe that fails, so that a partially written
+# image or generated file can never be mistaken for an up to date one.
+.DELETE_ON_ERROR:
+
 # Building the configured image is what "make" alone does.  This has to be
 # stated explicitly, because the first rule of the makefile belongs to the
 # configuration system included below.
@@ -233,8 +237,8 @@ else
 CORE = core
 endif
 
-TOCLEAN = *~ */*~ $(CORE) *.tmp obj/*.o obj/*.d obj/*.h obj/*.c obj/*.ld \
-          obj/auto.conf */*.dsm
+TOCLEAN = *~ */*~ $(CORE) *.tmp obj/*.tmp obj/*.o obj/*.d obj/*.h obj/*.c \
+          obj/*.ld obj/auto.conf */*.dsm
 
 #
 # GEN_SRC accumulates the generated source files.  They are built before
