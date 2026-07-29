@@ -154,6 +154,16 @@ OBJECTS = $(CORE_OBJ) $(OPTIONAL_OBJ)
 # Toolchain and compilation flags
 #
 
+# Name of the cross toolchain.  It follows the toolchain selected in the
+# configuration; CROSS_COMPILE is only an override for a toolchain
+# installed under a different name, and is left unset unless the user
+# filled it in.  A command line CROSS_COMPILE= still wins over both.
+CROSS_COMPILE-$(ARCH_ARM) = arm-none-eabi-
+CROSS_COMPILE-$(BUILD_TOOLCHAIN_MINT) = m68k-atari-mint-
+CROSS_COMPILE-$(BUILD_TOOLCHAIN_MINTELF) = m68k-atari-mintelf-
+CROSS_COMPILE-$(BUILD_TOOLCHAIN_ELF) = m68k-elf-
+CROSS_COMPILE ?= $(CROSS_COMPILE-y)
+
 CC = $(CROSS_COMPILE)gcc
 CPP = $(CC) -E
 OBJDUMP = $(CROSS_COMPILE)objdump
@@ -167,7 +177,7 @@ MULTILIBFLAGS = $(CPUFLAGS) -fsigned-char
 TOOLCHAIN_CFLAGS = -fleading-underscore -fno-reorder-functions -DELF_TOOLCHAIN
 else
 MULTILIBFLAGS = $(CPUFLAGS) -mshort
-ifdef TOOLCHAIN_ELF
+ifdef BUILD_TOOLCHAIN_IS_ELF
 TOOLCHAIN_CFLAGS = -fleading-underscore -Wa,--register-prefix-optional \
                    -fno-reorder-functions -DELF_TOOLCHAIN
 endif

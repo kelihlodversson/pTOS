@@ -3,15 +3,46 @@ Installing:
 You will need a (cross-)GCC toolchain for the machine you are building for:
 
   Atari, ARAnyM, Amiga, ColdFire (m68k)
-      Vincent Rivière's m68k-atari-mint tools:
+      Vincent Rivière's m68k-atari-mint cross-tools, which is what the
+      build expects by default:
       http://vincent.riviere.free.fr/soft/m68k-atari-mint/
+
+      On Debian and Ubuntu they are packaged, which is by far the quickest
+      way to get a working toolchain.  This is also what the CI build uses,
+      see .travis/register_apt_repositories.sh:
+
+          sudo add-apt-repository ppa:vriviere/ppa
+          sudo apt-get update
+          sudo apt-get install cross-mint-essential
+
+      Two other m68k toolchains are supported, chosen under "m68k
+      toolchain" in the Toolchain menu:
+
+          m68k-atari-mint       cross-mint, the default, as above
+          m68k-atari-mintelf    Vincent Rivière's newer ELF based tools,
+                                http://vincent.riviere.free.fr/soft/m68k-atari-mintelf/
+          bare m68k-elf         a plain m68k-elf toolchain, no MiNT at all
+
+      Picking one selects both the compiler prefix and the flags it needs;
+      there is nothing else to set.  The two ELF toolchains are built with
+      -fleading-underscore, --register-prefix-optional and -DELF_TOOLCHAIN,
+      which cross-mint does not want.
+
       Other toolchains, such as the old one from SpareMiNT, may also work.
-      A plain m68k-elf toolchain can be used instead by enabling
-      "Use a bare m68k-elf toolchain" in the configuration.
 
   Raspberry Pi (ARM)
-      Any bare metal arm-none-eabi toolchain, for example the one shipped
-      by Debian and Ubuntu as gcc-arm-none-eabi.
+      Any bare metal arm-none-eabi toolchain, for example the one Debian
+      and Ubuntu ship:
+
+          sudo apt-get install gcc-arm-none-eabi
+
+If your toolchain is installed under a name other than the one that goes
+with the choice above, fill in "Cross compiler prefix override" in the same
+menu.  It renames the executables only; the flags keep following the
+toolchain you picked.  A one-off build can override it without touching the
+configuration at all:
+
+    make CROSS_COMPILE=m68k-atari-mintelf-
 
 You will also need:
 

@@ -26,9 +26,11 @@ make                     # build the image named in the "is ready" line
 ```
 
 Requirements: GNU make, `pip3 install kconfiglib`, and a cross toolchain —
-`arm-none-eabi-*` for the Raspberry Pi, `m68k-atari-mint-*` for everything else
-(a plain `m68k-elf-*` toolchain works too, via "Use a bare m68k-elf
-toolchain" in the Toolchain menu).
+`arm-none-eabi-*` for the Raspberry Pi, and for everything else one of the
+three offered under "m68k toolchain" in the Toolchain menu: `m68k-atari-mint-`
+(cross-mint, the default), `m68k-atari-mintelf-`, or a bare `m68k-elf-`.  That
+choice sets both the prefix and the flags; `doc/install.txt` says where to get
+them.
 
 `make clean` keeps `.config`; `make distclean` removes it too. Changing
 `.config` rebuilds everything, which is intended.

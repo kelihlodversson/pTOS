@@ -66,6 +66,9 @@ void raspi_vcmem_init(void)
     /* Preserve the contents of start_in_hyp across clearing the bss segment */
     long start_in_hyp_sv = start_in_hyp;
 
+    /* Likewise for the registers startup.S saved on entry */
+    arm_boot_regs_t arm_boot_regs_sv = arm_boot_regs;
+
     /* Clear the sysvars */
     bzero(sysvars_start, sysvars_end - sysvars_start);
 
@@ -76,6 +79,13 @@ void raspi_vcmem_init(void)
     */
     bzero(_bss, _ebss - _bss);
     start_in_hyp = start_in_hyp_sv;
+    arm_boot_regs = arm_boot_regs_sv;
+
+    /*
+     * Describe the board before anything reads a peripheral register: the
+     * mailbox call below already needs the peripheral and GPU bases.
+     */
+    raspi_board_init();
 
     // Temporary set coherent_buffer base to aligned RAM before we know the total size
     coherent_buffer  = (UBYTE*)(((ULONG)_end_os_stram + (5*MEGABYTE)) & ~(MEGABYTE-1));

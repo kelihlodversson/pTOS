@@ -40,12 +40,6 @@ typedef struct {
 
 #ifndef TARGET_RPI1
 
-#ifdef TARGET_RPI4
-#define ARM_LOCAL_BASE 0xff800000
-#else
-#define ARM_LOCAL_BASE 0x40000000
-#endif 
-
 typedef struct {
     volatile ULONG control;
     volatile ULONG res0;
@@ -86,7 +80,7 @@ typedef struct {
 #define CTRL_PROC_CLK_TIMER (1 << 7) // 1=AXI/APB clock, 0 = crystal clock
 #define CTRL_AXIERRIRW_EN (1 << 6) // 1 to mask AXI error interrupt
 
-#define ARM_LOCAL (*((arm_local_t*)ARM_LOCAL_BASE))
+#define ARM_LOCAL (*((arm_local_t*)raspi_board.local_base))
 
 #endif
 
@@ -111,7 +105,7 @@ static inline void enable_irq(int num)
     else 
     {
 #ifdef TARGET_RPI1 
-        ASSERT(0);
+        assert(0);
 #else
         ARM_LOCAL.timer_int_control[0] |= (1 << (num-ARM_IRQLOCAL_BASE));
 #endif
@@ -129,7 +123,7 @@ static inline void disable_irq(int num)
     else 
     {
 #ifdef TARGET_RPI1 
-        ASSERT(0);
+        assert(0);
 #else
         ARM_LOCAL.timer_int_control[0] &= ~(1 << (num-ARM_IRQLOCAL_BASE));
 #endif
@@ -138,17 +132,27 @@ static inline void disable_irq(int num)
 
 void raspi_timer3_handler(void)
 {
+    ULONG compare;
+
     vector_5ms();
-#ifdef TARGET_RPI4
-    ULONG cntp_cval_low, cntp_cval_high;
-  	asm volatile ("mrrc p15, 2, %0, %1, c14" : "=r" (cntp_cval_low), "=r" (cntp_cval_high));
-    UQUAD cntp_cval = ((UQUAD) cntp_cval_high << 32 | cntp_cval_low) + CLOCKHZ / HZ;
-	asm volatile ("mcrr p15, 2, %0, %1, c14" :: "r" (cntp_cval & 0xffffffffU),
-						    "r" (cntp_cval >> 32));    
-  
-#else
+
+#if CPU_ARMV7
+    if (raspi_board.timer_kind == RASPI_TIMER_GENERIC)
+    {
+        ULONG cntp_cval_low, cntp_cval_high;
+        UQUAD cntp_cval;
+
+        asm volatile ("mrrc p15, 2, %0, %1, c14" : "=r" (cntp_cval_low),
+                                                   "=r" (cntp_cval_high));
+        cntp_cval = ((UQUAD) cntp_cval_high << 32 | cntp_cval_low) + CLOCKHZ / HZ;
+        asm volatile ("mcrr p15, 2, %0, %1, c14" :: "r" (cntp_cval & 0xffffffffU),
+                                                    "r" (cntp_cval >> 32));
+        return;
+    }
+#endif
+
     peripheral_begin();
-    ULONG compare = ARM_SYSTIMER.compare[3] + CLOCKHZ / HZ;
+    compare = ARM_SYSTIMER.compare[3] + CLOCKHZ / HZ;
     ARM_SYSTIMER.compare[3] = compare;
 
     if (compare < ARM_SYSTIMER.count_lo)
@@ -158,7 +162,6 @@ void raspi_timer3_handler(void)
     }
     ARM_SYSTIMER.control = (1 << 3);
     peripheral_end();
-#endif
 }
 
 #if CONF_WITH_USB
@@ -198,40 +201,45 @@ void raspi_interrupt_init(void)
 
 void raspi_init_system_timer(void)
 {
-#ifdef TARGET_RPI4 
-    // Use physical counter on Raspberry 4
-    raspi_connect_irq (ARM_IRQLOCAL0_CNTPNS, raspi_timer3_handler);
-
-    ULONG cntpct_low, cntpct_high;
-	asm volatile ("mrrc p15, 0, %0, %1, c14" : "=r" (cntpct_low), "=r" (cntpct_high));
-
-	UQUAD cntp_cval = ((UQUAD) cntpct_high << 32 | cntpct_low) + CLOCKHZ / HZ;
-	asm volatile ("mcrr p15, 2, %0, %1, c14" :: "r" (cntp_cval & 0xffffffffU),
-						    "r" (cntp_cval >> 32));
-
-	asm volatile ("mcr p15, 0, %0, c14, c2, 1" :: "r" (1));    
-
-	ULONG cnt_frq;
-	asm volatile ("mrc p15, 0, %0, c14, c0, 0" : "=r" (cnt_frq));
-
-	ULONG prescaler = ARM_LOCAL.prescaler;
-    
-#if defined(TARGET_RPI2) || defined(TARGET_RPI3)
-    if (cnt_frq != 19200000 || prescaler != 0x6AAAAAB)
-#else
-    if (cnt_frq != 54000000 || prescaler != 39768216U)
-#endif
+#if CPU_ARMV7
+    if (raspi_board.timer_kind == RASPI_TIMER_GENERIC)
     {
-        panic("USE_PHYSICAL_COUNTER is not supported (freq %lu, pre 0x%lx)\n", cnt_frq, prescaler);
+        ULONG cntpct_low, cntpct_high;
+        ULONG cnt_frq, prescaler;
+        UQUAD cntp_cval;
+
+        // Use the physical counter of the ARM generic timer
+        raspi_connect_irq (raspi_board.timer_irq, raspi_timer3_handler);
+
+        asm volatile ("mrrc p15, 0, %0, %1, c14" : "=r" (cntpct_low),
+                                                   "=r" (cntpct_high));
+
+        cntp_cval = ((UQUAD) cntpct_high << 32 | cntpct_low) + CLOCKHZ / HZ;
+        asm volatile ("mcrr p15, 2, %0, %1, c14" :: "r" (cntp_cval & 0xffffffffU),
+                                                    "r" (cntp_cval >> 32));
+
+        asm volatile ("mcr p15, 0, %0, c14, c2, 1" :: "r" (1));
+
+        // The tick arithmetic above assumes the firmware programmed the
+        // prescaler so that the counter advances at CLOCKHZ.
+        asm volatile ("mrc p15, 0, %0, c14, c0, 0" : "=r" (cnt_frq));
+        prescaler = ARM_LOCAL.prescaler;
+
+        if (cnt_frq != raspi_board.timer_freq
+            || prescaler != raspi_board.timer_prescaler)
+        {
+            panic("USE_PHYSICAL_COUNTER is not supported (freq %lu, pre 0x%lx)\n", cnt_frq, prescaler);
+        }
+        return;
     }
-#else
+#endif
+
     ARM_SYSTIMER.count_lo = (ULONG) -(30 * CLOCKHZ);
     ARM_SYSTIMER.compare[3] = ARM_SYSTIMER.count_lo + CLOCKHZ / HZ;
     // peripheral_end();
 
     // Set up timer 3 interrupt to emulate the ST 200Hz timer
-    raspi_connect_irq (ARM_IRQ_TIMER3, raspi_timer3_handler);
-#endif
+    raspi_connect_irq (raspi_board.timer_irq, raspi_timer3_handler);
 }
 
 ULONG raspi_get_ticks(void)
