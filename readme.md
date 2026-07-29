@@ -1,5 +1,7 @@
 # pTOS
-Native EmuTOS port to the Raspberry PI.
+Portable EmuTOS. The "p" stands for portable — and for the Raspberry PI,
+which is the first machine this port targets, with the ambition of
+supporting further hardware later on.
 
 See https://github.com/emutos/emutos for the original project.
 Parts of this project are derived from the [Circle bare metal framework](https://github.com/rsta2/circle) for Raspberry PI.

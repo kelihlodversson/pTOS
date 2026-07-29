@@ -1,9 +1,14 @@
 # pTOS
 
-A native port of [EmuTOS](https://github.com/emutos/emutos) — a free
-implementation of the Atari TOS — to the Raspberry Pi. The upstream Atari,
+Portable EmuTOS. The "p" stands for portable — and for the Raspberry Pi, the
+first machine this port of [EmuTOS](https://github.com/emutos/emutos) (a free
+implementation of the Atari TOS) targets, with the ambition of supporting
+further hardware later on.
+
+Portability is therefore the point, not a side effect: the upstream Atari,
 Amiga and ColdFire targets still build, so a change to shared code has to keep
-working on m68k as well as on ARM.
+working on m68k as well as on ARM, and anything machine specific belongs behind
+a configuration option or in an `arch/`/`machine/` subdirectory.
 
 This is a freestanding OS image: no libc, no host runtime. Everything the code
 needs lives in `util/` and `include/`.

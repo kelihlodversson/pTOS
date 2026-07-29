@@ -1,9 +1,14 @@
 # Copilot instructions for pTOS
 
-pTOS is a port of [EmuTOS](https://github.com/emutos/emutos), a free
-implementation of the Atari TOS, to the Raspberry Pi. The upstream Atari,
-Amiga and ColdFire targets still build, so shared code must keep working on
-m68k as well as on ARM.
+pTOS is portable EmuTOS: the "p" stands for portable, and for the Raspberry
+Pi, the first machine this port of [EmuTOS](https://github.com/emutos/emutos)
+(a free implementation of the Atari TOS) targets, with the ambition of
+supporting further hardware later on.
+
+Portability is the point, not a side effect. The upstream Atari, Amiga and
+ColdFire targets still build, so shared code must keep working on m68k as well
+as on ARM, and anything machine specific belongs behind a configuration option
+or in an `arch/`/`machine/` subdirectory.
 
 This is a freestanding OS image: there is no libc and no host runtime. Do not
 suggest `stdio.h`, `stdlib.h`, `malloc` or any other hosted facility. What the
