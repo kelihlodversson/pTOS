@@ -1,0 +1,3 @@
+# Amiga 1000 Kickstart disk
+MACHINE_AMIGA=y
+TARGET_AMIGA_KICKDISK=y

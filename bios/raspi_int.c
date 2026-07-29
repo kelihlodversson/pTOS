@@ -161,7 +161,7 @@ void raspi_timer3_handler(void)
 #endif
 }
 
-#if WITH_USB
+#if CONF_WITH_USB
 extern void usb_mouse_timerc (void);
 #endif
 extern void int_vbl(void);
@@ -177,7 +177,7 @@ void int_timerc(void)
 #       if CONF_WITH_YM2149
             sndirq();   // dosound support
 #       endif
-#       if WITH_USB
+#       if CONF_WITH_USB
             usb_mouse_timerc();
 #       endif
 

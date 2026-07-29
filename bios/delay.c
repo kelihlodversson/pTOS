@@ -53,7 +53,7 @@ void calibration_timer(void);
 void init_delay(void)
 {
 #if defined (MACHINE_FIREBEE) || defined (MACHINE_M548X)
-    loopcount_1_msec = SDCLK_FREQUENCY_MHZ * 1000;
+    loopcount_1_msec = SDCLK_FREQUENCY_MHZ * 1000UL;
 #else
 # if CONF_WITH_APOLLO_68080
     if (is_apollo_68080)

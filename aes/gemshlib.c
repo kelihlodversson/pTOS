@@ -84,7 +84,7 @@ GLOBAL WORD gl_nextrez;
 
 /* Prototypes: */
 extern void deskstart(void) NORETURN;   /* see ../desk/deskstart.S */
-#if WITH_CLI != 0
+#if CONF_WITH_CLI != 0
 extern void coma_start(void) NORETURN;  /* see cli/cmdasm.S */
 #endif
 
@@ -578,7 +578,7 @@ static WORD sh_ldapp(SHELL *psh)
         return 0;
     }
 
-#if WITH_CLI != 0
+#if CONF_WITH_CLI != 0
     if (strcmp(D.s_cmd, "EMUCON") == 0)
     {
         /* start the EmuCON shell: */

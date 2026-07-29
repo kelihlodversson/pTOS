@@ -13,5 +13,5 @@ emulator. Due to size limitation, it has limited features:
 - EmuCON only
 
 These cartridge images have been built using:
-make cart
+make cartridge_defconfig && make
 

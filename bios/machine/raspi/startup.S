@@ -81,7 +81,7 @@ os_end:
 os_res1:
     .word   _main       // os_res1, reserved
 _os_magic:
-#if WITH_AES
+#if CONF_WITH_AES
     .word   _ui_mupb    // os_magic, pointer to GEM's MUPB
 #else
     .word   0           // os_magic, pointer to GEM's MUPB

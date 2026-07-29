@@ -92,7 +92,7 @@ os_end:
 os_res1:
     .dc.l   _main       // os_res1, reserved
 _os_magic:
-#if WITH_AES
+#if CONF_WITH_AES
     .dc.l   _ui_mupb    // os_magic, pointer to GEM's MUPB
 #else
     .dc.l   0           // os_magic, pointer to GEM's MUPB

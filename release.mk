@@ -14,6 +14,10 @@
 # This file contains the targets used to build the release archives.
 # It is included from the main Makefile.
 #
+# Each archive is produced by starting from one of the configurations in
+# configs/, so what is released is exactly what "make <name>_defconfig &&
+# make" produces.
+#
 
 # This subset of the doc directory will be included in all the binary archives
 DOCFILES = doc/announce.txt doc/authors.txt doc/bugs.txt doc/changelog.txt \
@@ -23,18 +27,39 @@ DOCFILES = doc/announce.txt doc/authors.txt doc/bugs.txt doc/changelog.txt \
 # The archives will be placed into this directory
 RELEASE_DIR = release-archives
 
+# Build the image described by the configuration $(1), for the default
+# country of that configuration.
+define build-config
+$(MAKE) distclean && $(MAKE) $(1)_defconfig && $(MAKE)
+endef
+
+# Same, but once per country.  Only makes sense for single-country images.
+define build-config-all-countries
+$(MAKE) distclean && $(MAKE) $(1)_defconfig && \
+for i in $(COUNTRIES); do echo; $(MAKE) COUNTRY=$$i UNIQUE=$$i || exit 1; done
+endef
+
+# Copy the mouse cursor and icon resources an archive may want to customise.
+define copy-resources
+cp aes/mform.def $(1)/emucurs.def && cp aes/mform.rsc $(1)/emucurs.rsc && \
+cp desk/icon.def $(1)/emuicon.def && cp desk/icon.rsc $(1)/emuicon.rsc
+endef
+
+# Assemble the documentation of an archive and convert it to DOS line endings.
+define copy-docs
+cat doc/readme-$(2).txt readme.txt >$(1)/readme.txt && mkdir $(1)/doc && \
+cp $(DOCFILES) $(1)/doc && find $(1) -name '*.txt' -exec unix2dos '{}' ';'
+endef
+
 .PHONY: release-clean
-NODEP += release-clean
 release-clean:
 	rm -rf $(RELEASE_DIR)
 
 .PHONY: release-mkdir
-NODEP += release-mkdir
 release-mkdir:
 	mkdir $(RELEASE_DIR)
 
 .PHONY: release-src
-NODEP += release-src
 RELEASE_SRC = emutos-src-$(VERSION)
 release-src:
 	mkdir $(RELEASE_DIR)/$(RELEASE_SRC)
@@ -42,254 +67,162 @@ release-src:
 	find $(RELEASE_DIR)/$(RELEASE_SRC) -type d -exec chmod 755 '{}' ';'
 	find $(RELEASE_DIR)/$(RELEASE_SRC) -type f -exec chmod 644 '{}' ';'
 	find $(RELEASE_DIR)/$(RELEASE_SRC) -type f -name '*.sh' -exec chmod 755 '{}' ';'
+	find $(RELEASE_DIR)/$(RELEASE_SRC) -type f -name '*.py' -exec chmod 755 '{}' ';'
 	tar -C $(RELEASE_DIR) --owner=0 --group=0 -zcf $(RELEASE_DIR)/$(RELEASE_SRC).tar.gz $(RELEASE_SRC)
 	rm -r $(RELEASE_DIR)/$(RELEASE_SRC)
 
 .PHONY: release-512k
-NODEP += release-512k
-RELEASE_512K = emutos-512k-$(VERSION)
+RELEASE_512K = $(RELEASE_DIR)/emutos-512k-$(VERSION)
 release-512k:
-	$(MAKE) clean
-	$(MAKE) 512
-	mkdir $(RELEASE_DIR)/$(RELEASE_512K)
-	cp etos512k.img etos512k.sym $(RELEASE_DIR)/$(RELEASE_512K)
-	cp aes/mform.def $(RELEASE_DIR)/$(RELEASE_512K)/emucurs.def
-	cp aes/mform.rsc $(RELEASE_DIR)/$(RELEASE_512K)/emucurs.rsc
-	cp desk/icon.def $(RELEASE_DIR)/$(RELEASE_512K)/emuicon.def
-	cp desk/icon.rsc $(RELEASE_DIR)/$(RELEASE_512K)/emuicon.rsc
-	cat doc/readme-512k.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_512K)/readme.txt
-	mkdir $(RELEASE_DIR)/$(RELEASE_512K)/doc
-	cp $(DOCFILES) $(RELEASE_DIR)/$(RELEASE_512K)/doc
-	find $(RELEASE_DIR)/$(RELEASE_512K) -name '*.txt' -exec unix2dos '{}' ';'
-	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_512K).zip $(RELEASE_512K)
-	rm -r $(RELEASE_DIR)/$(RELEASE_512K)
+	$(call build-config,atari512)
+	mkdir $(RELEASE_512K)
+	cp etos512k.img etos512k.sym $(RELEASE_512K)
+	$(call copy-resources,$(RELEASE_512K))
+	$(call copy-docs,$(RELEASE_512K),512k)
+	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_512K)).zip $(notdir $(RELEASE_512K))
+	rm -r $(RELEASE_512K)
 
 .PHONY: release-256k
-NODEP += release-256k
-RELEASE_256K = emutos-256k-$(VERSION)
+RELEASE_256K = $(RELEASE_DIR)/emutos-256k-$(VERSION)
 release-256k:
-	$(MAKE) clean
-	$(MAKE) all256
-	mkdir $(RELEASE_DIR)/$(RELEASE_256K)
-	cp etos256*.img $(RELEASE_DIR)/$(RELEASE_256K)
-	cp aes/mform.def $(RELEASE_DIR)/$(RELEASE_256K)/emucurs.def
-	cp aes/mform.rsc $(RELEASE_DIR)/$(RELEASE_256K)/emucurs.rsc
-	cp desk/icon.def $(RELEASE_DIR)/$(RELEASE_256K)/emuicon.def
-	cp desk/icon.rsc $(RELEASE_DIR)/$(RELEASE_256K)/emuicon.rsc
-	cat doc/readme-256k.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_256K)/readme.txt
-	mkdir $(RELEASE_DIR)/$(RELEASE_256K)/doc
-	cp $(DOCFILES) $(RELEASE_DIR)/$(RELEASE_256K)/doc
-	find $(RELEASE_DIR)/$(RELEASE_256K) -name '*.txt' -exec unix2dos '{}' ';'
-	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_256K).zip $(RELEASE_256K)
-	rm -r $(RELEASE_DIR)/$(RELEASE_256K)
+	$(call build-config-all-countries,atari256)
+	mkdir $(RELEASE_256K)
+	cp etos256*.img $(RELEASE_256K)
+	$(call copy-resources,$(RELEASE_256K))
+	$(call copy-docs,$(RELEASE_256K),256k)
+	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_256K)).zip $(notdir $(RELEASE_256K))
+	rm -r $(RELEASE_256K)
 
 .PHONY: release-192k
-NODEP += release-192k
-RELEASE_192K = emutos-192k-$(VERSION)
+RELEASE_192K = $(RELEASE_DIR)/emutos-192k-$(VERSION)
 release-192k:
-	$(MAKE) clean
-	$(MAKE) all192
-	mkdir $(RELEASE_DIR)/$(RELEASE_192K)
-	cp etos192*.img $(RELEASE_DIR)/$(RELEASE_192K)
-	cp aes/mform.def $(RELEASE_DIR)/$(RELEASE_192K)/emucurs.def
-	cp aes/mform.rsc $(RELEASE_DIR)/$(RELEASE_192K)/emucurs.rsc
-	cp desk/icon.def $(RELEASE_DIR)/$(RELEASE_192K)/emuicon.def
-	cp desk/icon.rsc $(RELEASE_DIR)/$(RELEASE_192K)/emuicon.rsc
-	cat doc/readme-192k.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_192K)/readme.txt
-	mkdir $(RELEASE_DIR)/$(RELEASE_192K)/doc
-	find $(RELEASE_DIR)/$(RELEASE_192K) -name '*.txt' -exec unix2dos '{}' ';'
-	cp $(DOCFILES) $(RELEASE_DIR)/$(RELEASE_192K)/doc
-	find $(RELEASE_DIR)/$(RELEASE_192K) -name '*.txt' -exec unix2dos '{}' ';'
-	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_192K).zip $(RELEASE_192K)
-	rm -r $(RELEASE_DIR)/$(RELEASE_192K)
+	$(call build-config-all-countries,atari192)
+	mkdir $(RELEASE_192K)
+	cp etos192*.img $(RELEASE_192K)
+	$(call copy-resources,$(RELEASE_192K))
+	$(call copy-docs,$(RELEASE_192K),192k)
+	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_192K)).zip $(notdir $(RELEASE_192K))
+	rm -r $(RELEASE_192K)
 
 .PHONY: release-cartridge
-NODEP += release-cartridge
-RELEASE_CARTRIDGE = emutos-cartridge-$(VERSION)
+RELEASE_CARTRIDGE = $(RELEASE_DIR)/emutos-cartridge-$(VERSION)
 release-cartridge:
-	$(MAKE) clean
-	$(MAKE) cart
-	mkdir $(RELEASE_DIR)/$(RELEASE_CARTRIDGE)
-	cp $(ROM_CARTRIDGE) $(RELEASE_DIR)/$(RELEASE_CARTRIDGE)
-	cp emutos.stc $(RELEASE_DIR)/$(RELEASE_CARTRIDGE)
-	cat doc/readme-cartridge.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_CARTRIDGE)/readme.txt
-	mkdir $(RELEASE_DIR)/$(RELEASE_CARTRIDGE)/doc
-	cp $(DOCFILES) $(RELEASE_DIR)/$(RELEASE_CARTRIDGE)/doc
-	find $(RELEASE_DIR)/$(RELEASE_CARTRIDGE) -name '*.txt' -exec unix2dos '{}' ';'
-	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_CARTRIDGE).zip $(RELEASE_CARTRIDGE)
-	rm -r $(RELEASE_DIR)/$(RELEASE_CARTRIDGE)
+	$(call build-config,cartridge)
+	mkdir $(RELEASE_CARTRIDGE)
+	cp etoscart.img emutos.stc $(RELEASE_CARTRIDGE)
+	$(call copy-docs,$(RELEASE_CARTRIDGE),cartridge)
+	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_CARTRIDGE)).zip $(notdir $(RELEASE_CARTRIDGE))
+	rm -r $(RELEASE_CARTRIDGE)
 
 .PHONY: release-aranym
-NODEP += release-aranym
-RELEASE_ARANYM = emutos-aranym-$(VERSION)
+RELEASE_ARANYM = $(RELEASE_DIR)/emutos-aranym-$(VERSION)
 release-aranym:
-	$(MAKE) clean
-	$(MAKE) aranym
-	mkdir $(RELEASE_DIR)/$(RELEASE_ARANYM)
-	cp $(ROM_ARANYM) $(RELEASE_DIR)/$(RELEASE_ARANYM)
-	cp aes/mform.def $(RELEASE_DIR)/$(RELEASE_ARANYM)/emucurs.def
-	cp aes/mform.rsc $(RELEASE_DIR)/$(RELEASE_ARANYM)/emucurs.rsc
-	cp desk/icon.def $(RELEASE_DIR)/$(RELEASE_ARANYM)/emuicon.def
-	cp desk/icon.rsc $(RELEASE_DIR)/$(RELEASE_ARANYM)/emuicon.rsc
-	cat doc/readme-aranym.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_ARANYM)/readme.txt
-	mkdir $(RELEASE_DIR)/$(RELEASE_ARANYM)/doc
-	cp $(DOCFILES) $(RELEASE_DIR)/$(RELEASE_ARANYM)/doc
-	find $(RELEASE_DIR)/$(RELEASE_ARANYM) -name '*.txt' -exec unix2dos '{}' ';'
-	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_ARANYM).zip $(RELEASE_ARANYM)
-	rm -r $(RELEASE_DIR)/$(RELEASE_ARANYM)
+	$(call build-config,aranym)
+	mkdir $(RELEASE_ARANYM)
+	cp emutos-aranym.img $(RELEASE_ARANYM)
+	$(call copy-resources,$(RELEASE_ARANYM))
+	$(call copy-docs,$(RELEASE_ARANYM),aranym)
+	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_ARANYM)).zip $(notdir $(RELEASE_ARANYM))
+	rm -r $(RELEASE_ARANYM)
 
 .PHONY: release-firebee
-NODEP += release-firebee
-RELEASE_FIREBEE = emutos-firebee-$(VERSION)
+RELEASE_FIREBEE = $(RELEASE_DIR)/emutos-firebee-$(VERSION)
 release-firebee:
-	$(MAKE) clean
-	$(MAKE) firebee
-	mkdir $(RELEASE_DIR)/$(RELEASE_FIREBEE)
-	cp $(SREC_FIREBEE) $(RELEASE_DIR)/$(RELEASE_FIREBEE)
-	cp aes/mform.def $(RELEASE_DIR)/$(RELEASE_FIREBEE)/emucurs.def
-	cp aes/mform.rsc $(RELEASE_DIR)/$(RELEASE_FIREBEE)/emucurs.rsc
-	cp desk/icon.def $(RELEASE_DIR)/$(RELEASE_FIREBEE)/emuicon.def
-	cp desk/icon.rsc $(RELEASE_DIR)/$(RELEASE_FIREBEE)/emuicon.rsc
-	cat doc/readme-firebee.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_FIREBEE)/readme.txt
-	mkdir $(RELEASE_DIR)/$(RELEASE_FIREBEE)/doc
-	cp $(DOCFILES) $(RELEASE_DIR)/$(RELEASE_FIREBEE)/doc
-	find $(RELEASE_DIR)/$(RELEASE_FIREBEE) -name '*.txt' -exec unix2dos '{}' ';'
-	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_FIREBEE).zip $(RELEASE_FIREBEE)
-	rm -r $(RELEASE_DIR)/$(RELEASE_FIREBEE)
+	$(call build-config,firebee)
+	mkdir $(RELEASE_FIREBEE)
+	cp emutosfb.s19 $(RELEASE_FIREBEE)
+	$(call copy-resources,$(RELEASE_FIREBEE))
+	$(call copy-docs,$(RELEASE_FIREBEE),firebee)
+	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_FIREBEE)).zip $(notdir $(RELEASE_FIREBEE))
+	rm -r $(RELEASE_FIREBEE)
 
 .PHONY: release-amiga-rom
-NODEP += release-amiga-rom
-RELEASE_AMIGA_ROM = emutos-amiga-rom-$(VERSION)
+RELEASE_AMIGA_ROM = $(RELEASE_DIR)/emutos-amiga-rom-$(VERSION)
 release-amiga-rom:
-	$(MAKE) clean
-	$(MAKE) amigakd
-	mkdir $(RELEASE_DIR)/$(RELEASE_AMIGA_ROM)
-	cp $(ROM_AMIGA) $(RELEASE_DIR)/$(RELEASE_AMIGA_ROM)
-	cp $(AMIGA_KICKDISK) $(RELEASE_DIR)/$(RELEASE_AMIGA_ROM)
-	$(MAKE) clean
-	$(MAKE) amigavampire
-	cp $(VAMPIRE_ROM_AMIGA) $(RELEASE_DIR)/$(RELEASE_AMIGA_ROM)
-	cp aes/mform.def $(RELEASE_DIR)/$(RELEASE_AMIGA_ROM)/emucurs.def
-	cp aes/mform.rsc $(RELEASE_DIR)/$(RELEASE_AMIGA_ROM)/emucurs.rsc
-	cp desk/icon.def $(RELEASE_DIR)/$(RELEASE_AMIGA_ROM)/emuicon.def
-	cp desk/icon.rsc $(RELEASE_DIR)/$(RELEASE_AMIGA_ROM)/emuicon.rsc
-	cat doc/readme-amiga-rom.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_AMIGA_ROM)/readme.txt
-	mkdir $(RELEASE_DIR)/$(RELEASE_AMIGA_ROM)/doc
-	cp $(DOCFILES) $(RELEASE_DIR)/$(RELEASE_AMIGA_ROM)/doc
-	find $(RELEASE_DIR)/$(RELEASE_AMIGA_ROM) -name '*.txt' -exec unix2dos '{}' ';'
-	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_AMIGA_ROM).zip $(RELEASE_AMIGA_ROM)
-	rm -r $(RELEASE_DIR)/$(RELEASE_AMIGA_ROM)
+	$(call build-config,amiga-kickdisk)
+	mkdir $(RELEASE_AMIGA_ROM)
+	cp emutos-amiga.rom emutos-kickdisk.adf $(RELEASE_AMIGA_ROM)
+	$(call build-config,amiga-vampire)
+	cp emutos-vampire.rom $(RELEASE_AMIGA_ROM)
+	$(call copy-resources,$(RELEASE_AMIGA_ROM))
+	$(call copy-docs,$(RELEASE_AMIGA_ROM),amiga-rom)
+	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_AMIGA_ROM)).zip $(notdir $(RELEASE_AMIGA_ROM))
+	rm -r $(RELEASE_AMIGA_ROM)
 
 .PHONY: release-amiga-floppy
-NODEP += release-amiga-floppy
-RELEASE_AMIGA_FLOPPY = emutos-amiga-floppy-$(VERSION)
+RELEASE_AMIGA_FLOPPY = $(RELEASE_DIR)/emutos-amiga-floppy-$(VERSION)
 release-amiga-floppy:
-	$(MAKE) clean
-	$(MAKE) amigaflop
-	mkdir $(RELEASE_DIR)/$(RELEASE_AMIGA_FLOPPY)
-	cp $(EMUTOS_ADF) $(RELEASE_DIR)/$(RELEASE_AMIGA_FLOPPY)
-	$(MAKE) clean
-	$(MAKE) amigaflopvampire
-	cp $(EMUTOS_VAMPIRE_ADF) $(RELEASE_DIR)/$(RELEASE_AMIGA_FLOPPY)
-	cp aes/mform.def $(RELEASE_DIR)/$(RELEASE_AMIGA_FLOPPY)/emucurs.def
-	cp aes/mform.rsc $(RELEASE_DIR)/$(RELEASE_AMIGA_FLOPPY)/emucurs.rsc
-	cp desk/icon.def $(RELEASE_DIR)/$(RELEASE_AMIGA_FLOPPY)/emuicon.def
-	cp desk/icon.rsc $(RELEASE_DIR)/$(RELEASE_AMIGA_FLOPPY)/emuicon.rsc
-	cat doc/readme-amiga-floppy.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_AMIGA_FLOPPY)/readme.txt
-	mkdir $(RELEASE_DIR)/$(RELEASE_AMIGA_FLOPPY)/doc
-	cp $(DOCFILES) $(RELEASE_DIR)/$(RELEASE_AMIGA_FLOPPY)/doc
-	find $(RELEASE_DIR)/$(RELEASE_AMIGA_FLOPPY) -name '*.txt' -exec unix2dos '{}' ';'
-	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_AMIGA_FLOPPY).zip $(RELEASE_AMIGA_FLOPPY)
-	rm -r $(RELEASE_DIR)/$(RELEASE_AMIGA_FLOPPY)
+	$(call build-config,amigaflop)
+	mkdir $(RELEASE_AMIGA_FLOPPY)
+	cp emutos.adf $(RELEASE_AMIGA_FLOPPY)
+	$(call build-config,amigaflop-vampire)
+	cp emutos-vampire.adf $(RELEASE_AMIGA_FLOPPY)
+	$(call copy-resources,$(RELEASE_AMIGA_FLOPPY))
+	$(call copy-docs,$(RELEASE_AMIGA_FLOPPY),amiga-floppy)
+	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_AMIGA_FLOPPY)).zip $(notdir $(RELEASE_AMIGA_FLOPPY))
+	rm -r $(RELEASE_AMIGA_FLOPPY)
 
 .PHONY: release-m548x-dbug
-NODEP += release-m548x-dbug
-RELEASE_M548X_DBUG = emutos-m548x-dbug-$(VERSION)
+RELEASE_M548X_DBUG = $(RELEASE_DIR)/emutos-m548x-dbug-$(VERSION)
 release-m548x-dbug:
-	$(MAKE) clean
-	$(MAKE) m548x-dbug
-	mkdir $(RELEASE_DIR)/$(RELEASE_M548X_DBUG)
-	cp $(SREC_M548X_DBUG) $(RELEASE_DIR)/$(RELEASE_M548X_DBUG)
-	cat doc/readme-m548x-dbug.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_M548X_DBUG)/readme.txt
-	mkdir $(RELEASE_DIR)/$(RELEASE_M548X_DBUG)/doc
-	cp $(DOCFILES) $(RELEASE_DIR)/$(RELEASE_M548X_DBUG)/doc
-	find $(RELEASE_DIR)/$(RELEASE_M548X_DBUG) -name '*.txt' -exec unix2dos '{}' ';'
-	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_M548X_DBUG).zip $(RELEASE_M548X_DBUG)
-	rm -r $(RELEASE_DIR)/$(RELEASE_M548X_DBUG)
+	$(call build-config,m548x-dbug)
+	mkdir $(RELEASE_M548X_DBUG)
+	cp emutos-m548x-dbug.s19 $(RELEASE_M548X_DBUG)
+	$(call copy-docs,$(RELEASE_M548X_DBUG),m548x-dbug)
+	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_M548X_DBUG)).zip $(notdir $(RELEASE_M548X_DBUG))
+	rm -r $(RELEASE_M548X_DBUG)
 
 .PHONY: release-m548x-bas
-NODEP += release-m548x-bas
-RELEASE_M548X_BAS = emutos-m548x-bas-$(VERSION)
+RELEASE_M548X_BAS = $(RELEASE_DIR)/emutos-m548x-bas-$(VERSION)
 release-m548x-bas:
-	$(MAKE) clean
-	$(MAKE) m548x-bas
-	mkdir $(RELEASE_DIR)/$(RELEASE_M548X_BAS)
-	cp $(SREC_M548X_BAS) $(RELEASE_DIR)/$(RELEASE_M548X_BAS)
-	cat doc/readme-m548x-bas.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_M548X_BAS)/readme.txt
-	mkdir $(RELEASE_DIR)/$(RELEASE_M548X_BAS)/doc
-	cp $(DOCFILES) $(RELEASE_DIR)/$(RELEASE_M548X_BAS)/doc
-	find $(RELEASE_DIR)/$(RELEASE_M548X_BAS) -name '*.txt' -exec unix2dos '{}' ';'
-	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_M548X_BAS).zip $(RELEASE_M548X_BAS)
-	rm -r $(RELEASE_DIR)/$(RELEASE_M548X_BAS)
+	$(call build-config,m548x-bas)
+	mkdir $(RELEASE_M548X_BAS)
+	cp emutos-m548x-bas.s19 $(RELEASE_M548X_BAS)
+	$(call copy-docs,$(RELEASE_M548X_BAS),m548x-bas)
+	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_M548X_BAS)).zip $(notdir $(RELEASE_M548X_BAS))
+	rm -r $(RELEASE_M548X_BAS)
 
 .PHONY: release-prg
-NODEP += release-prg
-RELEASE_PRG = emutos-prg-$(VERSION)
+RELEASE_PRG = $(RELEASE_DIR)/emutos-prg-$(VERSION)
 release-prg:
-	$(MAKE) clean
-	$(MAKE) allprg
-	mkdir $(RELEASE_DIR)/$(RELEASE_PRG)
-	cp emutos*.prg $(RELEASE_DIR)/$(RELEASE_PRG)
-	cp aes/mform.def $(RELEASE_DIR)/$(RELEASE_PRG)/emucurs.def
-	cp aes/mform.rsc $(RELEASE_DIR)/$(RELEASE_PRG)/emucurs.rsc
-	cp desk/icon.def $(RELEASE_DIR)/$(RELEASE_PRG)/emuicon.def
-	cp desk/icon.rsc $(RELEASE_DIR)/$(RELEASE_PRG)/emuicon.rsc
-	cat doc/readme-prg.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_PRG)/readme.txt
-	mkdir $(RELEASE_DIR)/$(RELEASE_PRG)/doc
-	cp $(DOCFILES) $(RELEASE_DIR)/$(RELEASE_PRG)/doc
-	find $(RELEASE_DIR)/$(RELEASE_PRG) -name '*.txt' -exec unix2dos '{}' ';'
-	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_PRG).zip $(RELEASE_PRG)
-	rm -r $(RELEASE_DIR)/$(RELEASE_PRG)
+	$(call build-config,prg)
+	mkdir $(RELEASE_PRG)
+	cp emutos.prg $(RELEASE_PRG)
+	$(call build-config-all-countries,prg)
+	cp emutos*.prg $(RELEASE_PRG)
+	$(call copy-resources,$(RELEASE_PRG))
+	$(call copy-docs,$(RELEASE_PRG),prg)
+	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_PRG)).zip $(notdir $(RELEASE_PRG))
+	rm -r $(RELEASE_PRG)
 
 .PHONY: release-floppy
-NODEP += release-floppy
-RELEASE_FLOPPY = emutos-floppy-$(VERSION)
+RELEASE_FLOPPY = $(RELEASE_DIR)/emutos-floppy-$(VERSION)
 release-floppy:
-	$(MAKE) clean
-	$(MAKE) allflop
-	mkdir $(RELEASE_DIR)/$(RELEASE_FLOPPY)
-	cp emutos*.st $(RELEASE_DIR)/$(RELEASE_FLOPPY)
-	cp aes/mform.def $(RELEASE_DIR)/$(RELEASE_FLOPPY)/emucurs.def
-	cp aes/mform.rsc $(RELEASE_DIR)/$(RELEASE_FLOPPY)/emucurs.rsc
-	cp desk/icon.def $(RELEASE_DIR)/$(RELEASE_FLOPPY)/emuicon.def
-	cp desk/icon.rsc $(RELEASE_DIR)/$(RELEASE_FLOPPY)/emuicon.rsc
-	cat doc/readme-floppy.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_FLOPPY)/readme.txt
-	mkdir $(RELEASE_DIR)/$(RELEASE_FLOPPY)/doc
-	cp $(DOCFILES) $(RELEASE_DIR)/$(RELEASE_FLOPPY)/doc
-	find $(RELEASE_DIR)/$(RELEASE_FLOPPY) -name '*.txt' -exec unix2dos '{}' ';'
-	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_FLOPPY).zip $(RELEASE_FLOPPY)
-	rm -r $(RELEASE_DIR)/$(RELEASE_FLOPPY)
+	$(call build-config-all-countries,floppy)
+	mkdir $(RELEASE_FLOPPY)
+	cp emutos*.st $(RELEASE_FLOPPY)
+	$(call copy-resources,$(RELEASE_FLOPPY))
+	$(call copy-docs,$(RELEASE_FLOPPY),floppy)
+	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_FLOPPY)).zip $(notdir $(RELEASE_FLOPPY))
+	rm -r $(RELEASE_FLOPPY)
 
 .PHONY: release-emucon
-NODEP += release-emucon
-RELEASE_EMUCON = emucon
+RELEASE_EMUCON = $(RELEASE_DIR)/emucon
 release-emucon:
-	$(MAKE) clean
-	cd cli && make
-	mkdir $(RELEASE_DIR)/$(RELEASE_EMUCON)
-	cp cli/emucon2.tos $(RELEASE_DIR)/$(RELEASE_EMUCON)
-	cp cli/readme.txt $(RELEASE_DIR)/$(RELEASE_EMUCON)
-	unix2dos $(RELEASE_DIR)/$(RELEASE_EMUCON)/readme.txt
-	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_EMUCON)-$(VERSION).zip $(RELEASE_EMUCON)
-	rm -r $(RELEASE_DIR)/$(RELEASE_EMUCON)
+	$(MAKE) distclean
+	$(MAKE) -C cli
+	mkdir $(RELEASE_EMUCON)
+	cp cli/emucon2.tos cli/readme.txt $(RELEASE_EMUCON)
+	unix2dos $(RELEASE_EMUCON)/readme.txt
+	cd $(RELEASE_DIR) && zip -9 -r emucon-$(VERSION).zip emucon
+	rm -r $(RELEASE_EMUCON)
 
 # Main goal to build a full release distribution
 .PHONY: release
-NODEP += release
-release: clean release-clean release-mkdir \
+release: distclean release-clean release-mkdir \
   release-src release-512k release-256k release-192k release-cartridge \
   release-aranym release-firebee release-amiga-rom release-amiga-floppy \
   release-m548x-dbug release-m548x-bas release-prg release-floppy \
   release-emucon
-	$(MAKE) clean
+	$(MAKE) distclean
 	@echo '# Packages successfully generated inside $(RELEASE_DIR)'

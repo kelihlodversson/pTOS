@@ -50,5 +50,5 @@ emulator supporting NatFeats.  Under Hatari, you may need to enable this
 feature manually: please refer to the Hatari documentation.
 
 This ROM image has been built using:
-make 512
+make atari512_defconfig && make
 

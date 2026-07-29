@@ -1,0 +1,182 @@
+#
+# Kconfig.image - boot image format and OS identification
+#
+# Copyright (C) 2001-2017 The EmuTOS development team.
+#
+# This file is distributed under the GPL, version 2 or at your
+# option any later version.  See doc/license.txt for details.
+#
+
+menu "Boot image"
+
+choice
+	prompt "Image type"
+	default TARGET_RPI_KERNEL if MACHINE_RPI
+	default TARGET_AMIGA_ROM if MACHINE_AMIGA
+	default TARGET_SREC if ARCH_COLDFIRE
+	default TARGET_512 if MACHINE_ARANYM
+	default TARGET_256
+	help
+	  Select what the build should produce.  Only the image types that
+	  make sense for the selected machine are offered.
+
+config TARGET_192
+	bool "Atari ROM image, 192 KB"
+	depends on CONF_ATARI_HARDWARE && !ARCH_COLDFIRE
+	help
+	  A 192 KB ROM image, mapped at 0x00fc0000, for machines with the
+	  original two 96 KB ROM sockets.  Space is very tight, so most of
+	  the optional features are disabled by default.
+
+config TARGET_256
+	bool "Atari ROM image, 256 KB"
+	depends on CONF_ATARI_HARDWARE && !ARCH_COLDFIRE
+	help
+	  A 256 KB ROM image, mapped at 0x00e00000.  This is the usual
+	  choice for ST/STe hardware and for Hatari.
+
+config TARGET_512
+	bool "Atari ROM image, 512 KB"
+	depends on CONF_ATARI_HARDWARE && !ARCH_COLDFIRE
+	help
+	  A 512 KB ROM image, mapped at 0x00e00000.  This is the full
+	  featured image, suitable for the TT, the Falcon and ARAnyM.
+
+config TARGET_CART
+	bool "Atari diagnostic cartridge image, 128 KB"
+	depends on CONF_ATARI_HARDWARE && !ARCH_COLDFIRE
+	help
+	  A diagnostic cartridge image, mapped at 0x00fa0000.  It is limited
+	  to 128 KB, so the AES and the desktop cannot be included.
+
+config TARGET_PRG
+	bool "Atari RAM TOS program (emutos.prg)"
+	depends on ARCH_M68K
+	help
+	  A regular Atari program that replaces the TOS in RAM when run from
+	  an existing TOS.
+
+config TARGET_FLOPPY
+	bool "Atari bootable floppy image (.st)"
+	depends on CONF_ATARI_HARDWARE && !ARCH_COLDFIRE
+	help
+	  A bootable floppy image containing a RAM TOS and a boot sector
+	  that loads it.
+
+config TARGET_SREC
+	bool "Motorola S-record image (.s19)"
+	depends on ARCH_COLDFIRE
+	help
+	  An S-record image to be loaded by the dBUG monitor or flashed on a
+	  ColdFire board.
+
+config TARGET_AMIGA_ROM
+	bool "Amiga ROM image"
+	depends on MACHINE_AMIGA
+
+config TARGET_AMIGA_KICKDISK
+	bool "Amiga 1000 Kickstart disk (.adf)"
+	depends on MACHINE_AMIGA
+	help
+	  An Amiga ROM image wrapped in a Kickstart floppy image, for the
+	  Amiga 1000.
+
+config TARGET_AMIGA_FLOPPY
+	bool "Amiga bootable floppy image (.adf)"
+	depends on MACHINE_AMIGA
+
+config TARGET_RPI_KERNEL
+	bool "Raspberry Pi kernel image"
+	depends on MACHINE_RPI
+	help
+	  A flat binary kernel image to be copied on the boot partition of
+	  the SD card.  The file name expected by the firmware depends on
+	  the Raspberry Pi model and is chosen automatically.
+
+endchoice
+
+config SREC_LMA
+	hex "Load address of the S-record image"
+	depends on TARGET_SREC
+	default 0xe0600000 if MACHINE_FIREBEE
+	default 0xe0100000 if CONF_WITH_BAS_MEMORY_MAP
+	default 0x00e00000
+	help
+	  Address the S-record image is loaded at.  Use 0x00e00000 for the
+	  dBUG monitor and 0xe0100000 for BaS_gcc on an M548x board.
+
+config IMAGE_NAME
+	string "Name of the generated image file"
+	default ""
+	help
+	  Override the name of the file produced by the build.  Leave it
+	  empty to let the build system derive a name from the image type
+	  and, where relevant, from the selected country.
+
+#
+# Derived symbols.  EMUTOS_LIVES_IN_RAM tells the rest of the system that
+# the image is loaded into RAM instead of being mapped from ROM.
+#
+
+config EMUTOS_LIVES_IN_RAM
+	bool
+	default y if TARGET_PRG || TARGET_FLOPPY || TARGET_AMIGA_FLOPPY || TARGET_RPI_KERNEL
+
+config DIAGNOSTIC_CARTRIDGE
+	bool
+	default y if TARGET_CART
+
+config CONF_WITH_BOOT_SECTOR
+	bool "Execute the boot sector of the boot device"
+	default n if MACHINE_RPI
+	default y
+	help
+	  Load and run the boot sector of the boot device.  This is required
+	  to boot from a floppy or from a hard disk driver.
+
+config CONF_WITH_RESET
+	bool "Execute the reset instruction during startup"
+	depends on ARCH_M68K_CLASSIC
+	default n if EMUTOS_LIVES_IN_RAM
+	default y
+	help
+	  Say n to bypass the "reset" instruction during startup.  It is
+	  bypassed by default in EmuTOS RAM, because it causes crashes very
+	  early in startup (the "black screen" problem).  It is surmised that
+	  the hardware reset may reset the RAM controller, allowing or
+	  causing RAM contents to change.
+
+endmenu
+
+menu "OS identification"
+
+config TOS_VERSION
+	hex "TOS version reported by the OS header"
+	default 0x104 if TARGET_192
+	default 0x206
+	range 0x100 0xffff
+	help
+	  This is just a version number; the features of EmuTOS are not
+	  affected.  Note that some software checks for a TOS version below
+	  1.06 to determine that the ROM is located at 0x00fc0000, which is
+	  why the 192 KB image reports 1.04.
+
+config GEMDOS_VERSION
+	hex "GEMDOS version returned by Sversion()"
+	default 0x2000
+	help
+	  The value contains the minor version number in the high-order byte
+	  and the major version number in the low-order byte.  Useful values
+	  are 0x1300 (TOS 1.0), 0x1500 (TOS 1.04), 0x1700 (TOS 1.62),
+	  0x1900 (TOS 2.01), 0x2000 (TOS 2.06) and 0x3000 (TOS 4.0x).
+
+config AES_VERSION
+	hex "AES version returned by appl_init()"
+	default 0x0140
+	help
+	  Useful values are 0x0120 (TOS 1.02), 0x0140 (TOS 1.04 and 1.62),
+	  0x0320 (TOS 2.06 and 3.06) and 0x0340 (TOS 4.04).  Do not change
+	  this arbitrarily, as each value implies the presence or absence of
+	  certain AES functions.
+
+endmenu

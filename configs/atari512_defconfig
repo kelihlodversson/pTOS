@@ -1,0 +1,4 @@
+# 512 KB Atari ROM image, for the TT and the Falcon
+TARGET_512=y
+# The multi-language image supports every country at run time.
+# BUILD_UNIQUE_COUNTRY is not set

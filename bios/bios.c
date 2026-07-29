@@ -88,7 +88,7 @@ extern void stonx_kprintf_init(void);
 extern void run_cartridge_applications(WORD typebit); /* found in startup.S */
 #endif
 
-#if WITH_CLI
+#if CONF_WITH_CLI
 extern void coma_start(void) NORETURN;  /* found in cli/cmdasm.S */
 #endif
 
@@ -100,7 +100,7 @@ extern long xmaddalt(UBYTE *start, long size); /* found in bdos/mem.h */
 extern void setup_68040_pmmu(void);
 #endif
 
-#if WITH_USB
+#if CONF_WITH_USB
 extern void usb_init(void); /* found in usb.h */
 #endif
 
@@ -432,7 +432,7 @@ static void bios_init(void)
     init_acia_vecs();   /* Init the ACIA interrupt vector and related stuff */
     KDEBUG(("after init_acia_vecs()\n"));
     boot_status |= MIDI_AVAILABLE;  /* track progress */
-#if WITH_USB
+#if CONF_WITH_USB
 	KDEBUG(("usb_init()\n"));
 	usb_init();
     KDEBUG(("after usb_init()\n"));
@@ -487,9 +487,9 @@ static void bios_init(void)
 #endif
 
     /* set start of user interface */
-#if WITH_AES
+#if CONF_WITH_AES
     exec_os = ui_start;
-#elif WITH_CLI
+#elif CONF_WITH_CLI
     exec_os = coma_start;
 #else
     exec_os = NULL;
@@ -794,7 +794,7 @@ void biosmain(void)
     p += sizeof(DEF_PATH);
     *p = '\0';                          /* terminate with double nul */
 
-#if WITH_CLI
+#if CONF_WITH_CLI
     if (bootflags & BOOTFLAG_EARLY_CLI) {   /* run an early console */
         PD *pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", default_env);
         pd->p_tbase = (BYTE *) coma_start;

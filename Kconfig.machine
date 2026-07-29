@@ -1,0 +1,326 @@
+#
+# Kconfig.machine - target machine, CPU and toolchain selection
+#
+# Copyright (C) 2001-2017 The EmuTOS development team.
+#
+# This file is distributed under the GPL, version 2 or at your
+# option any later version.  See doc/license.txt for details.
+#
+
+menu "Target machine"
+
+choice
+	prompt "Machine"
+	default MACHINE_ATARI
+	help
+	  Select the hardware pTOS is built for.  This determines the CPU
+	  architecture, the set of hardware drivers that can be enabled and
+	  the kind of boot images that can be produced.
+
+config MACHINE_ATARI
+	bool "Atari ST/STe/Mega/TT/Falcon"
+	help
+	  Atari 68000-68060 hardware, and emulators thereof (Hatari, STeem,
+	  ...).  This is the classic EmuTOS target.
+
+config MACHINE_ARANYM
+	bool "ARAnyM emulator"
+	help
+	  The ARAnyM virtual machine.  This is Atari compatible hardware, but
+	  a number of legacy devices are not emulated, so support for them is
+	  left out of the image by default.
+
+config MACHINE_AMIGA
+	bool "Commodore Amiga"
+	help
+	  Amiga hardware with a 68000-compatible CPU, including the Vampire
+	  accelerator boards.  No Atari specific hardware is present.
+
+config MACHINE_FIREBEE
+	bool "ACP FireBee (ColdFire V4e)"
+	help
+	  The FireBee Atari clone, based on a Freescale MCF5474 ColdFire
+	  processor.  EmuTOS runs on top of the BaS firmware.
+
+config MACHINE_M548X
+	bool "Freescale M548x ColdFire evaluation board"
+	help
+	  Freescale/NXP M5484LITE and similar ColdFire evaluation boards,
+	  running either under the dBUG monitor or on top of BaS_gcc.
+
+config MACHINE_RPI
+	bool "Raspberry Pi"
+	help
+	  Native bare metal port to the ARM based Raspberry Pi boards.
+	  This is the target this fork of EmuTOS was created for.
+
+endchoice
+
+choice
+	prompt "Raspberry Pi model"
+	depends on MACHINE_RPI
+	default TARGET_RPI2
+	help
+	  Each Raspberry Pi generation uses a different CPU core and expects
+	  a differently named kernel image on the boot partition.
+
+config TARGET_RPI1
+	bool "Raspberry Pi 1, Zero, A, A+, B, B+, CM0 (ARM1176)"
+
+config TARGET_RPI2
+	bool "Raspberry Pi 2B+ (Cortex-A7)"
+
+config TARGET_RPI3
+	bool "Raspberry Pi 3, 3+, CM3 (Cortex-A53)"
+
+config TARGET_RPI4
+	bool "Raspberry Pi 4, 400 (Cortex-A72)"
+
+endchoice
+
+#
+# Architecture symbols.  These are not user selectable; they are derived
+# from the machine and are used to pick the arch/ and machine/ source
+# subdirectories as well as the arch specific compiler flags.
+#
+
+config ARCH_M68K
+	bool
+	default y if MACHINE_ATARI || MACHINE_ARANYM || MACHINE_AMIGA || ARCH_COLDFIRE
+
+config ARCH_COLDFIRE
+	bool
+	default y if MACHINE_FIREBEE || MACHINE_M548X
+
+config ARCH_ARM
+	bool
+	default y if MACHINE_RPI
+
+# ARMv7 and later provide cache maintenance operations that the ARM1176
+# of the first generation Raspberry Pi does not have.
+config CPU_ARMV7
+	bool
+	default y if TARGET_RPI2 || TARGET_RPI3 || TARGET_RPI4
+
+# Plain 68000-68060, i.e. m68k but not ColdFire.  Some hand written
+# assembler is only valid on those.
+config ARCH_M68K_CLASSIC
+	bool
+	default y if ARCH_M68K && !ARCH_COLDFIRE
+
+# Set when the machine provides Atari ST compatible chipset registers.
+config CONF_ATARI_HARDWARE
+	bool
+	default y if MACHINE_ATARI || MACHINE_ARANYM || MACHINE_FIREBEE
+
+menu "Processor features"
+
+config CONF_WITH_ADVANCED_CPU
+	bool "Support for 68010-68060 CPUs"
+	depends on ARCH_M68K_CLASSIC
+	default n if TARGET_192
+	default y
+	help
+	  Include the code needed to run on CPUs more advanced than the
+	  68000.  Disabling this saves ROM space on machines that are known
+	  to have a plain 68000.
+
+config CONF_WITH_APOLLO_68080
+	bool "Support for the Apollo 68080 CPU"
+	depends on CONF_WITH_ADVANCED_CPU
+	default n if TARGET_192 || TARGET_CART || MACHINE_ARANYM
+	default y
+	help
+	  Detect and use the Apollo 68080 soft core found on Vampire
+	  accelerator boards.
+
+config CONF_WITH_MULTI_CORE
+	bool "Multi-core support"
+	depends on TARGET_RPI2 || TARGET_RPI3
+	default n
+	help
+	  Experimental support for starting the secondary cores of the
+	  Raspberry Pi 2 and 3.
+
+config SDCLK_FREQUENCY_MHZ
+	int "System clock frequency (MHz)"
+	depends on ARCH_COLDFIRE
+	default 132 if MACHINE_FIREBEE
+	default 100
+	help
+	  Frequency of the ColdFire system clock.  It is used to program the
+	  general purpose timer and to calibrate the delay loops.
+
+config CONF_WITH_BAS_MEMORY_MAP
+	bool "Use the BaS memory map"
+	depends on MACHINE_FIREBEE || MACHINE_M548X
+	default y if MACHINE_FIREBEE
+	default n
+	help
+	  Set this when EmuTOS runs on top of the BaS (either the FireBee
+	  firmware or BaS_gcc on a ColdFire evaluation board).  The BaS has
+	  already set up the memory map before EmuTOS is started.
+
+config CONF_WITH_ARM_PMMU
+	bool "Set up the ARM MMU"
+	depends on ARCH_ARM
+	default y
+	help
+	  Install page tables and enable the MMU.  This is required to enable
+	  the data cache on ARM.
+
+config CONF_WITH_68030_PMMU
+	bool "Install a PMMU tree on 68030"
+	depends on CONF_WITH_ADVANCED_CPU && CONF_ATARI_HARDWARE
+	default n if TARGET_192 || MACHINE_ARANYM || MACHINE_FIREBEE
+	default y
+	help
+	  This provides improved performance by allowing the data cache to
+	  be enabled on a 68030.
+
+config CONF_WITH_68040_PMMU
+	bool "Install a PMMU tree on 68040 (experimental)"
+	depends on CONF_WITH_ADVANCED_CPU && CONF_ATARI_HARDWARE
+	default n
+	help
+	  This provides improved performance by allowing the data cache to
+	  be enabled.  It also allows FreeMiNT to be run on a 68040 without
+	  using set_mmu.prg.  This is currently experimental.
+
+config CONF_WITH_BUS_ERROR
+	bool "Hardware generates bus errors"
+	depends on CONF_ATARI_HARDWARE
+	default y
+	help
+	  Set this if the hardware triggers a Bus Error exception when
+	  reading or writing data at an invalid address.  This is true on
+	  Atari machines, and is used to probe for optional hardware.
+
+endmenu
+
+menu "Emulator support"
+
+config DETECT_NATIVE_FEATURES
+	bool "Detect the NatFeats emulator interface"
+	depends on ARCH_M68K_CLASSIC && CONF_ATARI_HARDWARE
+	default n if TARGET_192 || TARGET_CART
+	default y
+	help
+	  Detect and use the native features provided by the standard
+	  "native features" interface implemented by ARAnyM and others.
+	  The detection code uses illegal instructions, so it must be
+	  disabled on ColdFire and on real hardware where it is not wanted.
+
+config CONF_WITH_ARANYM
+	bool "ARAnyM specific features and workarounds"
+	depends on DETECT_NATIVE_FEATURES
+	default y
+	help
+	  Enable workarounds for the parts of the Atari hardware that ARAnyM
+	  does not emulate accurately.
+
+config STONX_NATIVE_PRINT
+	bool "STonX native print"
+	depends on ARCH_M68K_CLASSIC
+	default n
+	help
+	  Set this if your emulator provides a STonX-like native_print()
+	  function, i.e. if the code
+	      .dc.w 0xa0ff
+	      .dc.l 0
+	  executes the native function void print_native(char *string).
+
+config USE_STOP_INSN_TO_FREE_HOST_CPU
+	bool "Halt the CPU in idle loops"
+	default y
+	help
+	  Wait for the next interrupt instead of spinning while there is
+	  nothing to do (the STOP instruction on m68k).  Say n for emulators
+	  that do not emulate that instruction properly; the only effect is
+	  that they burn host CPU time in busy loops.
+
+config CONF_WITH_UAE
+	bool "Support the advanced features of the UAE emulator"
+	depends on MACHINE_AMIGA
+	default y
+
+config CONF_WITH_AROS
+	bool "Include the sources coming from the AROS project"
+	depends on MACHINE_AMIGA
+	default n
+	help
+	  The AROS sources provide a faster Amiga implementation of some low
+	  level routines, but they are covered by a different license.  They
+	  are therefore disabled by default.
+
+endmenu
+
+menu "Toolchain"
+
+config TOOLCHAIN_ELF
+	bool "Use a bare m68k-elf toolchain"
+	depends on ARCH_M68K
+	default n
+	help
+	  By default the m68k build uses the cross-mint toolchain.  Say y to
+	  build with a plain m68k-elf toolchain instead.
+
+config CROSS_COMPILE
+	string "Cross compiler prefix"
+	default "arm-none-eabi-" if ARCH_ARM
+	default "m68k-elf-" if TOOLCHAIN_ELF
+	default "m68k-atari-mint-"
+	help
+	  Prefix prepended to the name of every binutils/gcc executable, for
+	  example "m68k-atari-mint-".
+
+config CPUFLAGS
+	string "Compiler flags describing the target CPU"
+	default "-march=armv6k -mtune=arm1176jzf-s -marm -mfpu=vfp -mfloat-abi=hard" if TARGET_RPI1
+	default "-march=armv7-a -marm -mfpu=neon-vfpv4 -mfloat-abi=hard" if TARGET_RPI2
+	default "-march=armv8-a -mtune=cortex-a53 -marm -mfpu=neon-fp-armv8 -mfloat-abi=hard" if TARGET_RPI3
+	default "-march=armv8-a -mtune=cortex-a72 -marm -mfpu=neon-fp-armv8 -mfloat-abi=hard" if TARGET_RPI4
+	default "-mcpu=5474" if MACHINE_FIREBEE
+	default "-mcpu=5475" if MACHINE_M548X
+	default "-m68040" if MACHINE_ARANYM
+	default "-m68000"
+	help
+	  Passed to the compiler and to the linker to select the instruction
+	  set of the generated code.
+
+choice
+	prompt "Optimization level"
+	default OPTIMIZE_SIZE if TARGET_192 || TARGET_256 || TARGET_CART || TARGET_PRG || TARGET_FLOPPY || TARGET_AMIGA_ROM || TARGET_AMIGA_KICKDISK || TARGET_AMIGA_FLOPPY
+	default OPTIMIZE_SPEED
+
+config OPTIMIZE_SPEED
+	bool "Optimize for speed (-O2)"
+
+config OPTIMIZE_SIZE
+	bool "Optimize for size (-Os)"
+
+config OPTIMIZE_NONE
+	bool "No optimization (-O0)"
+	help
+	  Only useful for debugging.  The resulting image is far too big to
+	  fit in a ROM.
+
+endchoice
+
+config OPTFLAGS
+	string
+	default "-O2" if OPTIMIZE_SPEED
+	default "-Os" if OPTIMIZE_SIZE
+	default "-O0" if OPTIMIZE_NONE
+
+config DEBUG_INFO
+	bool "Compile with debugging information (-g)"
+	default y if ARCH_ARM
+	default n
+	help
+	  Produce an image containing debugging symbols, usable from gdb.
+	  This does not change the code that is generated.
+
+endmenu
+
+endmenu

@@ -1,0 +1,2 @@
+# S-record image for the dBUG monitor of an M548x board
+MACHINE_M548X=y

@@ -41,7 +41,7 @@ void (*user_wheel)(WORD wheel_number, WORD wheel_amount);   /* user provided mou
 void (*old_statvec)(UBYTE *);             /* original IKBD status packet routine */
 
 
-#if !WITH_AES
+#if !CONF_WITH_AES
 /* Default Mouse Cursor Definition */
 static const MFORM arrow_mform = {
     1, 0, 1, 0, 1,

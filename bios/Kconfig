@@ -1,0 +1,455 @@
+#
+# bios/Kconfig - hardware support
+#
+# Copyright (C) 2001-2017 The EmuTOS development team.
+#
+# This file is distributed under the GPL, version 2 or at your
+# option any later version.  See doc/license.txt for details.
+#
+
+menu "Memory"
+
+config CONF_STRAM_SIZE
+	hex "Size of the ST-RAM, in bytes (0 = autodetect)"
+	default 0xe00000 if MACHINE_M548X
+	default 0x0
+	help
+	  Actual size of the ST-RAM.  If set to 0, the amount of ST-RAM is
+	  detected at boot time.
+
+config CONF_WITH_ALT_RAM
+	bool "Alternate RAM support"
+	default n if TARGET_192
+	default y
+	help
+	  Support RAM outside of the 14 MB ST-RAM area, made available to
+	  applications through Maddalt()/Mxalloc().
+
+config CONF_WITH_TTRAM
+	bool "TT-RAM detection"
+	depends on CONF_WITH_ALT_RAM
+	default n if TARGET_192 || MACHINE_AMIGA || MACHINE_RPI
+	default y
+	help
+	  Detect and use the fast RAM found in the 32-bit address space of
+	  TT and Falcon compatible machines.
+
+config CONF_TTRAM_SIZE
+	hex "Size of the TT-RAM, in bytes (0 = autodetect)"
+	depends on CONF_WITH_TTRAM
+	default 0x3000000 if MACHINE_M548X
+	default 0x0
+	help
+	  Actual size of the TT-RAM.  If set to 0, the amount of TT-RAM is
+	  detected at boot time.
+
+config CONF_WITH_STATIC_ALT_RAM
+	bool "Put the EmuTOS static data in Alt-RAM"
+	depends on CONF_WITH_ALT_RAM
+	default n
+	help
+	  This can only work if the main Alt-RAM address is known at compile
+	  time.  The actual Alt-RAM region is described in emutos.ld.
+
+config STATIC_ALT_RAM_ADDRESS
+	hex "Address of the static Alt-RAM region"
+	depends on CONF_WITH_STATIC_ALT_RAM
+	default 0x08000000
+	help
+	  Start address of the Alt-RAM region known at compile time.
+
+config STATIC_ALT_RAM_SIZE
+	hex "Size of the static Alt-RAM region"
+	depends on CONF_WITH_STATIC_ALT_RAM
+	help
+	  Size of the Alt-RAM region, when it is known at compile time.
+	  Leave this empty to have the size determined at boot time.
+
+config CONF_WITH_FRB
+	bool "_FRB cookie"
+	depends on CONF_WITH_ALT_RAM && CONF_ATARI_HARDWARE
+	default y
+	help
+	  Automatically allocate the _FRB buffer used by DMA transfers to and
+	  from Alt-RAM, and publish the matching cookie.
+
+config CONF_WITH_ST_MMU
+	bool "ST MMU support"
+	depends on CONF_ATARI_HARDWARE
+	default y
+
+config CONF_WITH_TT_MMU
+	bool "TT MMU support"
+	depends on CONF_ATARI_HARDWARE
+	default n if TARGET_192 || MACHINE_FIREBEE
+	default y
+
+config CONF_WITH_FALCON_MMU
+	bool "Falcon MMU support"
+	depends on CONF_ATARI_HARDWARE
+	default n if TARGET_192
+	default y
+
+config CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
+	bool "Detect the first boot without using memconf"
+	default y if EMUTOS_LIVES_IN_RAM || MACHINE_FIREBEE || MACHINE_M548X
+	default n
+	help
+	  Detect a first boot even when memconf is not called.  This is
+	  useful when the RAM is already initialized before EmuTOS boots,
+	  which is always the case on the FireBee, where the RAM is set up
+	  by the BaS, and whenever EmuTOS itself lives in RAM.
+
+endmenu
+
+menu "Storage devices"
+
+config CONF_WITH_ACSI
+	bool "ACSI support"
+	depends on CONF_ATARI_HARDWARE
+	default n if MACHINE_ARANYM || MACHINE_FIREBEE
+	default y
+	help
+	  Support for the Atari ACSI hard disk interface.  It is broken in
+	  the current FireBee hardware and is not emulated by ARAnyM.
+
+config CONF_WITH_SCSI
+	bool "SCSI support"
+	depends on CONF_ATARI_HARDWARE && CONF_WITH_MFP
+	default n if TARGET_192 || TARGET_256 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
+	default y
+	help
+	  Support for the NCR5380 SCSI interface of the TT and the Falcon.
+
+config CONF_WITH_IDE
+	bool "IDE support"
+	default n if TARGET_192 || MACHINE_RPI
+	default y
+	help
+	  Support for the IDE interface found on the Falcon, on the Amiga
+	  and on the ColdFire boards.
+
+config CONF_WITH_SDMMC
+	bool "SD/MMC bus support"
+	default y if MACHINE_FIREBEE
+	default n
+	help
+	  Support for SD and MMC cards attached to an SPI bus.
+
+config CONF_WITH_RASPI_EMMC
+	bool "Raspberry Pi EMMC (SD card) support"
+	depends on MACHINE_RPI
+	default y
+	help
+	  Support for the SD card slot of the Raspberry Pi, using the
+	  on-chip EMMC controller.
+
+config CONF_WITH_FDC
+	bool "Floppy disk controller support"
+	depends on CONF_ATARI_HARDWARE && CONF_WITH_MFP && CONF_WITH_YM2149
+	default y
+
+config CONF_WITH_XHDI
+	bool "XHDI support"
+	default n if TARGET_192 || MACHINE_RPI
+	default y
+	help
+	  Provide the XHDI cookie and the XHDI entry point, which give
+	  applications direct access to the mounted block devices.
+
+config CONF_WITH_MONSTER
+	bool "MonSTer expansion card support"
+	depends on CONF_ATARI_HARDWARE
+	default n if TARGET_192 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
+	default y
+	help
+	  Detect and use the ST/STe MonSTer expansion card.
+
+config HD_DETECT_RETRIES
+	int "Retry count when probing for hard disks"
+	default 0
+	help
+	  Setting this to a non-zero value is usually not necessary, and
+	  increases the boot time by roughly (0.1 * retries * n) seconds,
+	  where n is the number of devices that are not present.  It may
+	  however help with misbehaving hardware.
+
+endmenu
+
+menu "Serial ports and console"
+
+config CONF_WITH_MFP
+	bool "MFP 68901 support"
+	depends on CONF_ATARI_HARDWARE
+	default y
+	help
+	  The Multi Function Peripheral provides the timers, the interrupt
+	  controller, the parallel port and one of the serial ports of every
+	  Atari machine except the FireBee.
+
+config CONF_WITH_MFP_RS232
+	bool "MFP RS-232 support"
+	depends on CONF_WITH_MFP
+	default y
+
+config CONF_WITH_TT_MFP
+	bool "TT MFP support"
+	depends on CONF_ATARI_HARDWARE
+	default n if TARGET_192 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
+	default y
+
+config CONF_WITH_SCC
+	bool "SCC 85C30 support"
+	depends on CONF_ATARI_HARDWARE
+	default n if TARGET_192 || MACHINE_ARANYM || MACHINE_FIREBEE
+	default y
+	help
+	  The Serial Communication Controller provides the serial ports of
+	  the Mega STe, the TT and the Falcon.
+
+config CONF_WITH_COLDFIRE_RS232
+	bool "Internal ColdFire serial port"
+	depends on ARCH_COLDFIRE
+	default y
+
+config CONF_WITH_RASPI_UART0
+	bool "Raspberry Pi PL011 UART support"
+	depends on MACHINE_RPI
+	default y
+	help
+	  Use the PL011 UART available on the GPIO header as a serial port.
+
+config CONF_WITH_PRINTER_PORT
+	bool "Parallel printer port support"
+	depends on CONF_WITH_MFP
+	default y
+
+config CONF_WITH_MIDI_ACIA
+	bool "MIDI ACIA support"
+	depends on CONF_WITH_MFP
+	default y
+
+config CONF_WITH_IKBD_ACIA
+	bool "IKBD ACIA support"
+	depends on CONF_WITH_MFP
+	default y
+	help
+	  The Intelligent Keyboard controller is attached to an ACIA 6850 on
+	  every Atari machine.
+
+config CONF_SERIAL_IKBD
+	bool "IKBD devices on the serial port"
+	default n
+	help
+	  Allow an IKBD keyboard, mouse or joystick to be plugged on the
+	  serial port.
+
+config CONF_SERIAL_CONSOLE
+	bool "Use the serial port as the system console"
+	default y if !CONF_WITH_ATARI_VIDEO && !MACHINE_AMIGA
+	default n
+	help
+	  Send the console output to the serial port in addition to the
+	  screen, and read the console input exclusively from the serial
+	  port.  This is the only way to interact with a machine that has no
+	  supported video hardware.
+
+config CONF_SERIAL_CONSOLE_ANSI
+	bool "The serial console understands ANSI escape sequences"
+	depends on CONF_SERIAL_CONSOLE
+	default y
+	help
+	  Say y if the terminal connected to the serial port uses ANSI
+	  escape sequences.  Say n if it is an Atari VT52 terminal.
+
+config CONF_WITH_FLEXCAN
+	bool "FlexCAN controller support"
+	depends on MACHINE_FIREBEE || MACHINE_M548X
+	default y if MACHINE_M548X
+	default n
+	help
+	  This allows an Eiffel keyboard adapter to be plugged on the CAN
+	  port of ColdFire evaluation boards.
+
+config CONF_WITH_VME
+	bool "Mega STe VME bus support"
+	depends on CONF_ATARI_HARDWARE
+	default n if TARGET_192 || MACHINE_ARANYM
+	default y
+
+config CONF_WITH_DIP_SWITCHES
+	bool "STe/TT/Falcon DIP switches support"
+	depends on CONF_ATARI_HARDWARE
+	default n if TARGET_192
+	default y
+
+endmenu
+
+menu "Video"
+
+config CONF_WITH_ATARI_VIDEO
+	bool "Atari video hardware support"
+	depends on CONF_ATARI_HARDWARE
+	default y
+	help
+	  Support for the ST Shifter and its successors.  Without this, the
+	  system has no screen unless a graphics card is used.
+
+config CONF_WITH_STE_SHIFTER
+	bool "STe Shifter support"
+	depends on CONF_WITH_ATARI_VIDEO
+	default n if TARGET_192 || MACHINE_ARANYM || MACHINE_FIREBEE
+	default y
+
+config CONF_WITH_TT_SHIFTER
+	bool "TT Shifter support"
+	depends on CONF_WITH_ATARI_VIDEO
+	default n if TARGET_192 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
+	default y
+
+config CONF_WITH_VIDEL
+	bool "Falcon Videl support"
+	depends on CONF_WITH_ATARI_VIDEO
+	default n if TARGET_192
+	default y
+
+config CONF_WITH_BLITTER
+	bool "Blitter support"
+	depends on CONF_ATARI_HARDWARE
+	default n if MACHINE_FIREBEE
+	default y
+
+config CONF_WITH_NOVA
+	bool "Nova graphics card support"
+	depends on CONF_ATARI_HARDWARE
+	default n if TARGET_192 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
+	default y
+
+config CONF_VRAM_ADDRESS
+	hex "Fixed video RAM address (0 = allocate in ST-RAM)"
+	default 0x0
+	help
+	  Set the video RAM address to a fixed location, outside ST-RAM or
+	  Alt-RAM.  This allows the use of custom graphics cards.  Set to 0
+	  to allocate the video RAM in ST-RAM as usual.
+
+endmenu
+
+menu "Sound"
+
+config CONF_WITH_YM2149
+	bool "YM2149 soundchip support"
+	depends on CONF_ATARI_HARDWARE
+	default y
+	help
+	  Besides sound, the YM2149 provides the floppy drive selection and
+	  the parallel port data lines.
+
+config CONF_WITH_DMASOUND
+	bool "STe/TT/Falcon DMA sound support"
+	depends on CONF_ATARI_HARDWARE
+	default n if TARGET_192
+	default y
+
+config CONF_WITH_XBIOS_SOUND
+	bool "Falcon XBIOS sound extension"
+	depends on CONF_WITH_DMASOUND
+	default n if TARGET_192
+	default y
+	help
+	  Provide some of the Falcon XBIOS sound functions when running on
+	  STe or TT compatible hardware.
+
+endmenu
+
+menu "Clock and NVRAM"
+
+config CONF_WITH_IKBD_CLOCK
+	bool "IKBD clock support"
+	depends on CONF_ATARI_HARDWARE
+	default n if MACHINE_ARANYM
+	default y
+
+config CONF_WITH_MEGARTC
+	bool "Mega ST real-time clock support"
+	depends on CONF_ATARI_HARDWARE
+	default n if MACHINE_ARANYM || MACHINE_FIREBEE
+	default y
+
+config CONF_WITH_ICDRTC
+	bool "ICD AdSCSI Plus ST real-time clock support"
+	depends on CONF_WITH_ACSI
+	default n if TARGET_192 || TARGET_CART || MACHINE_FIREBEE
+	default y
+	help
+	  Support for the real-time clock on the ICD AdSCSI Plus ST board,
+	  which is attached via the ACSI interface.  It is useless on the
+	  FireBee, which has an NVRAM clock.
+
+config CONF_WITH_NVRAM
+	bool "NVRAM support"
+	depends on CONF_ATARI_HARDWARE
+	default n if TARGET_192
+	default y
+
+endmenu
+
+menu "Miscellaneous BIOS features"
+
+config CONF_COLDFIRE_TIMER_C
+	bool "Simulate Timer C with an internal ColdFire timer"
+	depends on ARCH_COLDFIRE && !CONF_WITH_MFP
+	default y
+	help
+	  The 200 Hz system timer is normally provided by the MFP.  On a
+	  ColdFire board without MFP it has to be simulated using one of the
+	  general purpose timers of the processor.
+
+config CONF_RASPI_TIMER_C
+	bool "Simulate Timer C with an ARM timer"
+	depends on MACHINE_RPI
+	default y
+	help
+	  The 200 Hz system timer is provided by one of the ARM side timers
+	  of the BCM283x SoC.
+
+config CONF_WITH_CARTRIDGE
+	bool "ROM port cartridge support"
+	depends on CONF_ATARI_HARDWARE && !DIAGNOSTIC_CARTRIDGE
+	default n if MACHINE_ARANYM
+	default y
+	help
+	  Run the application cartridge plugged in the ROM port, if any.
+	  Diagnostic and application cartridges have different magic
+	  numbers, so a diagnostic cartridge can not also be an application
+	  cartridge.
+
+config CONF_WITH_SFP004
+	bool "Mega ST SFP004 FPU support"
+	depends on CONF_ATARI_HARDWARE
+	default n if MACHINE_ARANYM || MACHINE_FIREBEE
+	default y
+
+config CONF_WITH_BIOS_EXTENSIONS
+	bool "BIOS extension functions"
+	default n if TARGET_192 || TARGET_CART
+	default y
+
+config CONF_WITH_SHUTDOWN
+	bool "Shutdown support"
+	default n if TARGET_192 || TARGET_CART
+	default y if DETECT_NATIVE_FEATURES || MACHINE_FIREBEE || MACHINE_AMIGA
+	default n
+	help
+	  Enable the shutdown() function, which tries to power off the
+	  machine when that is possible.
+
+config USE_STATIC_INLINES
+	bool "Use static inline functions"
+	default y
+	help
+	  Compile some very small functions as static inlines.  This makes
+	  the code both smaller and faster on any reasonably modern
+	  compiler.
+
+endmenu

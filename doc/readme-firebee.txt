@@ -65,5 +65,5 @@ The FireBee ROM features:
 - NVRAM boot resolution is currently ignored, 640x480x16 is always used
 
 This ROM image has been built using:
-make firebee
+make firebee_defconfig && make
 

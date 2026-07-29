@@ -1,0 +1,3 @@
+# S-record image for BaS_gcc on an M548x board
+MACHINE_M548X=y
+CONF_WITH_BAS_MEMORY_MAP=y

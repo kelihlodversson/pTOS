@@ -66,10 +66,10 @@ Unsupported Atari features:
 - Sound
 
 This ROM image has been built using:
-make amiga
+make amiga_defconfig && make
 
 The Vampire V2 ROM image has been built using:
-make amigavampire
+make amiga-vampire_defconfig && make
 
 (*) This additional hardware support is provided by sources imported
 from the AROS project. Unfortunately, due to AROS and GPL licenses
@@ -77,7 +77,10 @@ incompatibility, this support is disabled in the official EmuTOS
 binaries.
 
 You can enable full AROS support by rebuilding EmuTOS from sources using:
-make amiga AROS=1
+make amiga_defconfig
+then enable "Include the sources coming from the AROS project"
+in the "Emulator support" menu of "make menuconfig", and build with
+make
 
 Personal usage of the resulting binary will be fully allowed.
 However, due to the licensing issue, redistribution of such binary

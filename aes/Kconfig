@@ -1,0 +1,54 @@
+#
+# aes/Kconfig - AES options
+#
+# Copyright (C) 2001-2017 The EmuTOS development team.
+#
+# This file is distributed under the GPL, version 2 or at your
+# option any later version.  See doc/license.txt for details.
+#
+
+menu "AES"
+
+config CONF_WITH_AES
+	bool "Include the AES and the EmuDesk desktop"
+	default n if TARGET_CART
+	default y
+	help
+	  Without the AES there is no graphical desktop; EmuTOS boots
+	  straight into EmuCON or runs the program found on the boot device.
+	  This is only useful when the image size is severely restricted,
+	  such as for the diagnostic cartridge.
+
+if CONF_WITH_AES
+
+config AES_STACK_SIZE
+	int "Size of the private AES stack, in LONGs"
+	default 2048 if MACHINE_FIREBEE || MACHINE_M548X
+	default 590
+	help
+	  Size of the private stack of each AES process.  It is used for the
+	  AES itself, including every call it makes to the VDI, the BIOS and
+	  GEMDOS.
+
+	  An application that calls v_gtext() via a USERDEF and links to
+	  Gemlib needs a large AES stack, because Gemlib's v_gtext() puts a
+	  1024-word buffer on the stack.  This is principally a problem when
+	  recompiling for ColdFire systems, hence the larger default there.
+
+	  A suitable value can be estimated by enabling CONF_DEBUG_AES_STACK.
+
+config CONF_WITH_PCGEM
+	bool "PC-GEM compatible AES functions"
+	default n if TARGET_192
+	default y
+
+config CONF_WITH_LOADABLE_CURSORS
+	bool "Loadable mouse cursors"
+	default y
+	help
+	  Allow the mouse cursors to be loaded from A:\EMUCURS.RSC instead
+	  of using the built-in ones.
+
+endif
+
+endmenu

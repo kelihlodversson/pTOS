@@ -1,0 +1,3 @@
+# Raspberry Pi 1, Zero, A, A+, B, B+ and CM0
+MACHINE_RPI=y
+TARGET_RPI1=y

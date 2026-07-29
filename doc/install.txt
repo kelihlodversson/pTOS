@@ -1,116 +1,180 @@
 Installing:
 
-You will need a (cross-)GCC toolchain for TOS/MiNT.
-Currently, the only supported one is Vincent Rivière's m68k-atari-mint tools:
-http://vincent.riviere.free.fr/soft/m68k-atari-mint/
-Other toolchains, such as the old one from SpareMiNT, may also work, too.
-You will also need GNU make (tested with make 4.2.1).
+You will need a (cross-)GCC toolchain for the machine you are building for:
 
-Building EmuTOS
-===============
+  Atari, ARAnyM, Amiga, ColdFire (m68k)
+      Vincent Rivière's m68k-atari-mint tools:
+      http://vincent.riviere.free.fr/soft/m68k-atari-mint/
+      Other toolchains, such as the old one from SpareMiNT, may also work.
+      A plain m68k-elf toolchain can be used instead by enabling
+      "Use a bare m68k-elf toolchain" in the configuration.
 
-To build, first do:
+  Raspberry Pi (ARM)
+      Any bare metal arm-none-eabi toolchain, for example the one shipped
+      by Debian and Ubuntu as gcc-arm-none-eabi.
 
-    make help
+You will also need:
 
-This will display the list of all possible targets.
+  * GNU make (tested with make 4.2.1)
+  * Python 3 with kconfiglib, which provides the configuration front ends:
+        pip3 install kconfiglib
 
-To build the standard etos512k.img, do
 
-    make 512
+Configuring and building
+========================
 
-To build EmuTOS for a different default country (changes the language and the
-keyboard), do
+The build is configured the way the Linux kernel is.  You first pick one of
+the ready-made configurations, optionally adjust it, and then build:
 
-    make 512 COUNTRY=en
-or
-    make 512 COUNTRY=fr
-or
-    make 512 COUNTRY=de
+    make help                   # list the available configurations
+    make atari512_defconfig     # start from one of them
+    make menuconfig             # optional: adjust the configuration
+    make                        # build the image
 
-NOTE: by specifying COUNTRY=xx, all countries are included in the binary,
-but a flag in the TOS header will indicate country 'xx'. If, however, the
-EmuTOS image is booted on an emulator featuring NVRAM emulation (such as
-ARAnyM), the country number in the NVRAM will override that setting of the
-country in the TOS header.
+The chosen settings are stored in the file .config in the top directory.
+From there, "make" generates obj/autoconf.h for the C code and
+obj/auto.conf for the build system itself; neither should be edited by
+hand.  Changing .config causes the whole image to be rebuilt.
 
-To build EmuTOS for a single country only, you must use UNIQUE instead of
-COUNTRY. This is mainly useful for the 192 and 256 KB targets. Example:
+"make menuconfig" opens a full screen menu in the terminal.  Every option
+carries a help text, reachable with '?', and options that make no sense for
+the selected machine are simply not offered.  "make guiconfig" does the
+same in a window, if Tk is installed.
 
-    make 256 UNIQUE=fr
+Other configuration targets:
 
-Many options are set via the configuration file include/config.h.  They can
-be overridden most easily via #defines in a user-created file localconf.h.
+    make oldconfig      ask about the options added since the last run
+    make olddefconfig   accept the default value for every new option
+    make savedefconfig  write a minimal ./defconfig for the current .config
+    make allnoconfig    disable every optional feature
+    make distclean      remove everything, including .config
 
-A complete list of targets
-==========================
+To contribute a new configuration, adjust it with "make menuconfig", run
+"make savedefconfig", and copy the resulting ./defconfig file to
+configs/<name>_defconfig.
 
-EmuTOS binaries
----------------
 
-192         etos192k.img, EmuTOS ROM padded to size 192 KB (starting at 0x00fc0000)
-256         etos256k.img, EmuTOS ROM padded to size 256 KB (starting at 0x00e00000)
-512         etos512k.img, EmuTOS ROM padded to size 512 KB (starting at 0x00e00000)
-aranym      emutos-aranym.img, suitable for ARAnyM
-firebee     emutosfb.s19, to be flashed on the FireBee
-firebee-prg emutos.prg, a RAM tos for the FireBee
-amiga       emutos-amiga.rom, EmuTOS ROM for Amiga hardware
-amigakd     emutos-kickdisk.adf, EmuTOS as Amiga 1000 Kickstart disk
-amigaflop   emutos.adf, EmuTOS RAM as Amiga boot floppy
-amigaflopvampire emutos-vampire.adf, EmuTOS RAM as Amiga boot floppy optimized for Vampire V2
-amigavampire     emutos-vampire.rom, EmuTOS ROM for Amiga optimized for Vampire V2
-m548x-dbug  emutos-m548x-dbug.s19, EmuTOS-RAM for dBUG on ColdFire Evaluation Boards
-m548x-bas   emutos-m548x-bas.s19, EmuTOS-RAM for BaS_gcc on ColdFire Evaluation Boards
-m548x-prg   emutos.prg, a RAM tos for ColdFire Evaluation Boards with BaS_gcc
-prg         emutos.prg, a RAM tos
-flop        emutos.st, a bootable floppy with RAM tos
-cart        etoscart.img, EmuTOS as a diagnostic cartridge
+Available configurations
+========================
 
-Binary targets modifiers
-------------------------
+Atari and compatible
+--------------------
 
-nothing     same as COUNTRY=us
-COUNTRY=xx  all countries in the binary, country xx being the default
-UNIQUE=xx   a smaller binary with only support for country xx
-DEF='-DSOMEDEFINE=value'
-            used to override the default settings from include/config.h.
-            WARNING: do "make clean" first.
+atari192            etos192us.img, ROM padded to 192 KB (at 0x00fc0000)
+atari256            etos256us.img, ROM padded to 256 KB (at 0x00e00000)
+atari512            etos512k.img, ROM padded to 512 KB (at 0x00e00000),
+                    multi-language
+cartridge           etoscart.img and emutos.stc, diagnostic cartridge
+prg                 emutos.prg, a RAM TOS, multi-language
+floppy              emutosus.st, a bootable floppy holding a RAM TOS
+aranym              emutos-aranym.img, suitable for ARAnyM
+
+Amiga
+-----
+
+amiga               emutos-amiga.rom, ROM for Amiga hardware
+amiga-vampire       emutos-vampire.rom, optimized for the Vampire V2
+amiga-kickdisk      emutos-kickdisk.adf, Kickstart disk for the Amiga 1000
+amigaflop           emutos.adf, RAM TOS as an Amiga boot floppy
+amigaflop-vampire   emutos-vampire.adf, the same for the Vampire V2
+
+ColdFire
+--------
+
+firebee             emutosfb.s19, to be flashed on the FireBee
+firebee-prg         emutos.prg, a RAM TOS for the FireBee
+m548x-dbug          emutos-m548x-dbug.s19, for dBUG on ColdFire boards
+m548x-bas           emutos-m548x-bas.s19, for BaS_gcc on ColdFire boards
+m548x-prg           emutos.prg, a RAM TOS for ColdFire boards with BaS_gcc
+
+Raspberry Pi
+------------
+
+rpi1                kernel.img, for the Pi 1, Zero, A, A+, B, B+ and CM0
+rpi2                kernel7.img, for the Pi 2B+
+rpi3                kernel8-32.img, for the Pi 3, 3+ and CM3
+rpi4                kernel7l.img, for the Pi 4 and 400
+
+
+Countries and languages
+=======================
+
+The country selects the keyboard layout, the character set and the date and
+time format.  It is picked in the "Localization" menu of the configuration.
+
+A single-country image contains only the messages of that country, which
+saves a large amount of space; this is what most configurations use.  Turn
+"Build a single-country image" off to get an image that supports every
+country and picks one at boot time, from the NVRAM if the machine has one,
+and otherwise from the country code stored in the OS header.  The atari512,
+aranym, firebee and prg configurations are multi-language.
+
+The country can also be overridden for a single build, without touching the
+configuration.  This is how the release archives are built for every
+country in turn:
+
+    make atari256_defconfig
+    make COUNTRY=de UNIQUE=de
+
+COUNTRY sets the country code in the OS header, UNIQUE restricts the image
+to that one country.  Leave UNIQUE empty for a multi-language image.
+
+
+Other make targets
+==================
 
 Utility targets
 ---------------
 
+tools       build the host tools used by the build itself
 bugready    for translations: sets up files in preparation for 'bug update'
 
 Debug targets
 -------------
 
-dsm         dsm.txt, an edited disassembly of emutos.img
+dsm         dsm.txt, an edited disassembly of the image
 *.dsm       disassembly of any .c or almost any .img file
 
 Git-related targets
 -------------------
 
-depend      generates dependencies
-clean       cleans all generated files
+clean       remove the generated files, keeping .config
+distclean   remove everything, including .config
 charset     check the charset of all the source files
 crlf        convert all end-of-lines to LF
 expand      expand tabs to spaces
-gitready    ensure the files have a proper format for Git (same as 'make crlf expand')
+gitready    ensure the files have a proper format for Git (crlf + expand)
 checkindent try 'indent' without altering the files
 indent      indent all files - never done yet :-(
 
 Release-related targets
--------------------
+-----------------------
 
-all192      all 192 KB images
-all256      all 256 KB images
-allprg      all emutos*.prg
-allflop     all emutos*.st
 release     build the release archives into release-archives
 
 
+Adding a configuration option
+=============================
+
+Options live in the Kconfig file of the directory they belong to
+(bios/Kconfig, vdi/Kconfig, ...), or in one of the top level Kconfig.*
+files for the machine, the image format and the localization.  A bool
+option named CONF_WITH_FOO becomes "#define CONF_WITH_FOO 0" or
+"#define CONF_WITH_FOO 1" in the generated header, so the sources can test
+it with #if even though -Wundef is in effect.
+
+Options named MACHINE_* and TARGET_* are only defined when they are set, so
+that they can be tested with #ifdef, and options named BUILD_* never reach
+the C code at all.
+
+To make a source file conditional, add it to the obj-y list of the
+directory it lives in with the matching option, Linux style:
+
+    obj-$(CONF_WITH_FOO) += foo.o
+
+
 STonX-specific notes
-=======================
+====================
 
 EmuTOS now no longer needs changes to STonX. It will run on a normal STonX.
 
@@ -147,14 +211,12 @@ things:
 
 (STonX release 0.8.0 and later already has this function)
 
-2. Switch on STonX debugging output by setting STONX_NATIVE_PRINT to 1
-   before building EmuTOS. Do this by creating a file called localconf.h
-   (in the same folder as the EmuTOS Makefile) with one line:
-   #define STONX_NATIVE_PRINT 1
+2. Enable "STonX native print" in the "Emulator support" menu of the
+   configuration.
 
 
 Good luck!
 
--- 
+--
 The EmuTOS development team
 http://emutos.sourceforge.net/

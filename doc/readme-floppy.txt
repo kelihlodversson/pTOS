@@ -44,5 +44,5 @@ On Windows, you can use the RawWrite tool:
 http://www.chrysocome.net/rawwrite
 
 These special versions have been built using:
-make allflop
+make release-floppy
 
