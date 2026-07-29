@@ -105,7 +105,7 @@ static inline void enable_irq(int num)
     else 
     {
 #ifdef TARGET_RPI1 
-        ASSERT(0);
+        assert(0);
 #else
         ARM_LOCAL.timer_int_control[0] |= (1 << (num-ARM_IRQLOCAL_BASE));
 #endif
@@ -123,7 +123,7 @@ static inline void disable_irq(int num)
     else 
     {
 #ifdef TARGET_RPI1 
-        ASSERT(0);
+        assert(0);
 #else
         ARM_LOCAL.timer_int_control[0] &= ~(1 << (num-ARM_IRQLOCAL_BASE));
 #endif
