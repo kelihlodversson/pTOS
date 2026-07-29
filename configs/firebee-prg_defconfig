@@ -1,0 +1,6 @@
+# RAM TOS program for the FireBee
+MACHINE_FIREBEE=y
+TARGET_PRG=y
+OPTIMIZE_SPEED=y
+# The multi-language image supports every country at run time.
+# BUILD_UNIQUE_COUNTRY is not set

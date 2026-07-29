@@ -69,5 +69,5 @@ Only text I/O through an RS/232 terminal or PS/2 keyboard
 the ones trying direct access to the Atari hardware will not work.
 
 This ROM image has been built using:
-make m548x-dbug
+make m548x-dbug_defconfig && make
 

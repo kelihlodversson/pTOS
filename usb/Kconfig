@@ -1,0 +1,30 @@
+#
+# usb/Kconfig - USB stack options
+#
+# Copyright (C) 2001-2017 The EmuTOS development team.
+#
+# This file is distributed under the GPL, version 2 or at your
+# option any later version.  See doc/license.txt for details.
+#
+
+menu "USB support"
+
+config CONF_WITH_USB
+	bool "USB stack"
+	depends on MACHINE_RPI && !TARGET_RPI4
+	default y
+	help
+	  A minimal USB stack, derived from the one in FreeMiNT and U-Boot.
+	  It currently provides mice using the HID boot report protocol.
+	  A host controller driver is required, so the stack is only
+	  available on machines that have one.
+
+config CONF_WITH_USB_DWC2
+	bool
+	default y if CONF_WITH_USB && MACHINE_RPI
+	help
+	  The Synopsys DesignWare USB 2.0 OTG host controller, used on the
+	  Raspberry Pi 1, 2 and 3.  The Raspberry Pi 4 uses a different
+	  controller, which is not supported yet.
+
+endmenu

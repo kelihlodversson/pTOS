@@ -42,5 +42,5 @@ Note that selecting Norwegian/Swedish currently sets the language to English,
 but the keyboard layout to Norwegian/Swedish.
 
 This ROM image has been built using:
-make aranym
+make aranym_defconfig && make
 

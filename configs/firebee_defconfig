@@ -1,0 +1,4 @@
+# S-record image to be flashed on the FireBee
+MACHINE_FIREBEE=y
+# The multi-language image supports every country at run time.
+# BUILD_UNIQUE_COUNTRY is not set

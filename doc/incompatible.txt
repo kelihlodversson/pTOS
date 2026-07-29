@@ -35,7 +35,7 @@ data because of this, and crashes.
 Workarounds:
 Issue with Gods demo and few other games, can be worked around by
 using special high-RAM build of EmuTOS, that uses higher RAM addresses
-for loading programs and memory allocations: make 512 UNIQUE=uk
+for loading programs and memory allocations: make atari512_defconfig && make COUNTRY=uk UNIQUE=uk
 DEF="-DSTATIC_ALT_RAM_ADDRESS=0x00080000 -DCONF_WITH_FRB=0"
 
 However, this doesn't help with programs which also expect

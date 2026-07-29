@@ -39,5 +39,5 @@ For multilanguage version, the default language is English.
 It can be changed by setting the NVRAM appropriately.
 
 These special versions have been built using:
-make allprg
+make release-prg
 

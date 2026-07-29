@@ -276,7 +276,7 @@ WORD initinfo(ULONG *pshiftbits)
      * If additional info lines are going to be printed in specific cases,
      * then initinfo_height must be adjusted in the same way here.
      */
-#if WITH_CLI
+#if CONF_WITH_CLI
     initinfo_height += 1;
 #endif
 #if CONF_WITH_AROS
@@ -349,7 +349,7 @@ WORD initinfo(ULONG *pshiftbits)
         display_message(_("Hold <Alternate> to skip HDD boot"));
     }
     display_message(_("Press key 'X' to boot from X:"));
-#if WITH_CLI
+#if CONF_WITH_CLI
     display_message(_("Press <Esc> to run an early console"));
 #endif
 #if CONF_WITH_AROS
@@ -412,7 +412,7 @@ WORD initinfo(ULONG *pshiftbits)
             int c = LOBYTE(bconin2());
 
             c = toupper(c);
-#if WITH_CLI
+#if CONF_WITH_CLI
             if (c == 0x1b) {
                 bootflags |= BOOTFLAG_EARLY_CLI;
             } else

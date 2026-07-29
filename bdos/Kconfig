@@ -1,0 +1,33 @@
+#
+# bdos/Kconfig - GEMDOS options
+#
+# Copyright (C) 2001-2017 The EmuTOS development team.
+#
+# This file is distributed under the GPL, version 2 or at your
+# option any later version.  See doc/license.txt for details.
+#
+
+menu "GEMDOS (BDOS)"
+
+config CONF_LOGSEC_SIZE
+	int "Maximum logical sector size, in bytes"
+	default 512
+	range 512 16384
+	help
+	  Maximum size of the logical sectors GEMDOS can handle.  If a
+	  larger value is found on a mounted drive during startup, that
+	  value is used instead.  The value must be a power of two between
+	  512 and 16384 inclusive.
+
+	  This is only significant for Atari style FAT filesystems; DOS
+	  style FAT filesystems always use 512 byte logical sectors.
+
+config CONF_PREFER_STRAM_DISK_BUFFERS
+	bool "Allocate the disk buffers in ST-RAM"
+	default y if CONF_ATARI_HARDWARE
+	default n
+	help
+	  Say y when disk buffers are more efficient in ST-RAM, which is the
+	  case whenever floppy or ACSI DMA transfers are used.
+
+endmenu

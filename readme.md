@@ -11,9 +11,20 @@ as most of the VDI is completely non-functional.
 
 Currently all development effort happens using Qemu with the raspi2 machine type.
 
-To create an image, run make rpi2 (rpi1 and rpi3 target are also available, but
-even less tested than the rpi2 one.)
-To test it using Quemu, run
+The build is configured the way the Linux kernel is: pick one of the
+configurations in `configs/`, optionally adjust it with `make menuconfig`,
+then build. You need a bare metal `arm-none-eabi` toolchain and the
+`kconfiglib` Python module (`pip3 install kconfiglib`).
+
+    make rpi2_defconfig
+    make
+
+`rpi1`, `rpi3` and `rpi4` configurations are also available, but are even
+less tested than the `rpi2` one. `make help` lists every configuration,
+including the Atari, Amiga and ColdFire ones inherited from EmuTOS, and
+`doc/install.txt` describes the build system in more detail.
+
+To test the result using Qemu, run
     qemu-system-arm -M raspi2 -bios kernel7.img  -d guest_errors -serial stdio
 
 You can additionally pass "-S -s" to allow attaching a remote gdb to the machine.

@@ -1,3 +1,9 @@
+# Build configuration
+/.config
+/.config.old
+/defconfig
+
+# Build output
 /obj/
 /dep/
 *.tr.c
@@ -14,23 +20,40 @@
 /*.rom
 /*.map
 /*.elf
-/localconf.h
-/makefile.dep
-/needcountry.tmp
-/mkheader
+/dsm.txt
+/fal_dsm.txt
+/release-archives/
+
+# Generated sources
+/include/i18nconf.h
+/bios/ctables.h
+/bios/header.h
+/util/langs.c
+/aes/asm_struct_gen.h
+/aes/gem_rsc.[ch]
+/aes/mforms.[ch]
+/desk/desk_rsc.[ch]
+/desk/icons.[ch]
+/po/messages.pot
+
+# Host tools built by the Makefile
 /bug
 /draft
 /erd
 /grd
 /ird
 /mrd
+/mkflop
+/mkheader
 /mkrom
+/tos-lang-change
 /temp.rsc
 /temp.def
+/needcountry.tmp
+
+# Local overrides and editor droppings
 /local.mk
-/dsm.txt
-/fal_dsm.txt
 /.gdbinit
-aes/asm_struct_gen.h
 .tags*
 .vscode
+__pycache__/

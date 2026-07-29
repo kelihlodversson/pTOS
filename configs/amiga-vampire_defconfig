@@ -1,0 +1,7 @@
+# Amiga ROM image optimized for the Vampire V2 accelerator
+MACHINE_AMIGA=y
+CPUFLAGS="-m68040"
+CONF_WITH_STATIC_ALT_RAM=y
+STATIC_ALT_RAM_ADDRESS=0x08000000
+STATIC_ALT_RAM_SIZE=0x07e00000
+IMAGE_NAME="emutos-vampire.rom"

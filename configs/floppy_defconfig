@@ -1,0 +1,2 @@
+# Atari bootable floppy image
+TARGET_FLOPPY=y

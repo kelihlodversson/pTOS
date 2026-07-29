@@ -1,0 +1,7 @@
+# Amiga bootable floppy image optimized for the Vampire V2 accelerator
+MACHINE_AMIGA=y
+TARGET_AMIGA_FLOPPY=y
+CPUFLAGS="-m68040"
+CONF_WITH_STATIC_ALT_RAM=y
+STATIC_ALT_RAM_ADDRESS=0x08000000
+IMAGE_NAME="emutos-vampire.adf"

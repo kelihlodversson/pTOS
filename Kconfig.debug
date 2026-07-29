@@ -1,0 +1,123 @@
+#
+# Kconfig.debug - diagnostics and debugging
+#
+# Copyright (C) 2001-2017 The EmuTOS development team.
+#
+# This file is distributed under the GPL, version 2 or at your
+# option any later version.  See doc/license.txt for details.
+#
+
+menu "Startup screen and debugging"
+
+config FULL_INITINFO
+	bool "Full welcome screen"
+	default y
+	help
+	  Say n to display the EmuTOS version as a single line of text
+	  instead of the full welcome screen.  This is only useful when
+	  there are severe image size restrictions.
+
+config ALWAYS_SHOW_INITINFO
+	bool "Show the welcome screen on warm boot too"
+	default y if MACHINE_M548X || MACHINE_RPI
+	default n
+	help
+	  By default the welcome screen is only shown on cold boot.  Say y
+	  to display it on both cold boot and warm boot (reset).
+
+config INITINFO_DURATION
+	int "Duration of the welcome screen, in seconds"
+	default 8 if MACHINE_FIREBEE
+	default 3
+	help
+	  On emulators, three seconds is enough to read the text and
+	  optionally to press Shift to keep the screen displayed.  On real
+	  hardware it can take several seconds for the monitor to recover
+	  from stand-by mode, so a longer duration is wise.  If set to 0,
+	  the welcome screen is never displayed.
+
+choice
+	prompt "Debug output channel"
+	default DEBUG_PRINT_NONE
+	help
+	  Where kprintf() and the KDEBUG() traces are sent.  Only one
+	  channel can be active at a time.
+
+config DEBUG_PRINT_NONE
+	bool "None (or native features only)"
+	help
+	  Debug output is discarded, unless the emulator provides a native
+	  print function, in which case that is used.
+
+config DEBUG_PRINT_CONSOLE
+	bool "BIOS console"
+
+config DEBUG_PRINT_RS232
+	bool "MFP RS-232 or Raspberry Pi UART"
+	help
+	  Useful for an emulator without any native debug print capability,
+	  and for real hardware.
+
+config DEBUG_PRINT_SCC
+	bool "SCC port B"
+	depends on CONF_WITH_SCC
+	help
+	  Primarily for use with real Falcon hardware, which does not use
+	  the MFP USART.
+
+config DEBUG_PRINT_COLDFIRE
+	bool "ColdFire serial port"
+	depends on CONF_WITH_COLDFIRE_RS232
+
+config DEBUG_PRINT_MIDI
+	bool "MIDI out"
+	depends on CONF_WITH_MIDI_ACIA
+
+endchoice
+
+#
+# Derived symbols matching the macros used by the sources.  The choice
+# above guarantees that at most one of them is set.
+#
+
+config CONSOLE_DEBUG_PRINT
+	bool
+	default y if DEBUG_PRINT_CONSOLE
+
+config RS232_DEBUG_PRINT
+	bool
+	default y if DEBUG_PRINT_RS232
+	default y if DEBUG_PRINT_NONE && CONF_SERIAL_CONSOLE && !CONF_WITH_COLDFIRE_RS232
+
+config SCC_DEBUG_PRINT
+	bool
+	default y if DEBUG_PRINT_SCC
+
+config COLDFIRE_DEBUG_PRINT
+	bool
+	default y if DEBUG_PRINT_COLDFIRE
+	default y if DEBUG_PRINT_NONE && CONF_SERIAL_CONSOLE && CONF_WITH_COLDFIRE_RS232
+
+config MIDI_DEBUG_PRINT
+	bool
+	default y if DEBUG_PRINT_MIDI
+
+config CONF_WITH_ASSERT
+	bool "Enable the assert() function"
+	default n if TARGET_192 || TARGET_CART
+	default y
+
+config CONF_DEBUG_AES_STACK
+	bool "Trace the AES stack usage"
+	depends on CONF_WITH_AES
+	default n
+	help
+	  Trace the internal AES stack usage in order to estimate a suitable
+	  value for AES_STACK_SIZE.
+
+config CONF_DEBUG_DESK_STACK
+	bool "Monitor the desktop stack usage"
+	depends on CONF_WITH_AES
+	default n
+
+endmenu

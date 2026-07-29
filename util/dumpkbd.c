@@ -7,6 +7,9 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+/* This standalone utility never wants the inline versions, whatever the
+ * configuration says. */
+#undef USE_STATIC_INLINES
 #define USE_STATIC_INLINES 0
 
 #include <osbind.h>

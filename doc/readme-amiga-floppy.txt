@@ -60,6 +60,6 @@ Special features of emutos-vampire.adf:
 - EmuTOS itself runs in FastRAM, for best performance
 
 These floppy images have been built using:
-make amigaflop
-make amigaflopvampire
+make amigaflop_defconfig && make
+make amigaflop-vampire_defconfig && make
 

@@ -1,0 +1,3 @@
+# Raspberry Pi 3, 3+ and CM3
+MACHINE_RPI=y
+TARGET_RPI3=y

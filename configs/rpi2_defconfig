@@ -1,0 +1,3 @@
+# Raspberry Pi 2B+
+MACHINE_RPI=y
+TARGET_RPI2=y

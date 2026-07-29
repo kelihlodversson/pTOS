@@ -1,0 +1,59 @@
+#
+# desk/Kconfig - EmuDesk options
+#
+# Copyright (C) 2001-2017 The EmuTOS development team.
+#
+# This file is distributed under the GPL, version 2 or at your
+# option any later version.  See doc/license.txt for details.
+#
+
+menu "EmuDesk desktop"
+	depends on CONF_WITH_AES
+
+config CONF_WITH_WINDOW_ICONS
+	bool "Icons for files and folders"
+	default n if TARGET_192
+	default y
+
+config CONF_WITH_DESKTOP_SHORTCUTS
+	bool "Desktop shortcuts"
+	default n if TARGET_192
+	default y
+	help
+	  Allow files and folders to be installed on the desktop as
+	  shortcuts.
+
+config CONF_WITH_BACKGROUNDS
+	bool "Configurable backgrounds"
+	default n if TARGET_192
+	default y
+	help
+	  Allow the background pattern and colour of the desktop and of the
+	  windows to be configured.
+
+config CONF_WITH_FILEMASK
+	bool "Configurable file mask"
+	default n if TARGET_192
+	default y
+
+config CONF_WITH_DESKTOP_CONFIG
+	bool "Desktop configuration dialog"
+	default n if TARGET_192
+	default y
+
+config CONF_WITH_FORMAT
+	bool "Floppy formatting"
+	depends on CONF_ATARI_HARDWARE
+	default n if TARGET_192 || MACHINE_ARANYM || MACHINE_FIREBEE
+	default y
+
+config CONF_WITH_SHOW_FILE
+	bool "Show a file by double-clicking on it"
+	default n if TARGET_192
+	default y
+
+config CONF_WITH_EASTER_EGG
+	bool "EmuDesk easter egg"
+	default y
+
+endmenu

@@ -1,0 +1,3 @@
+# Raspberry Pi 4 and 400
+MACHINE_RPI=y
+TARGET_RPI4=y

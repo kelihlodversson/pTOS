@@ -10,7 +10,7 @@
  */
 
 #include "asmdefs.h"
-#include "../aes/asmstruct.h"
+#include "../../../aes/asmstruct.h"
 
 #define DESKSTACKSIZE   2048    /* in bytes: must be multiple of 4 */
 

@@ -41,5 +41,5 @@ emulator supporting NatFeats.  Under Hatari, you may need to enable this
 feature manually: please refer to the Hatari documentation.
 
 These ROM images have been built using:
-make all256
+make release-256k
 

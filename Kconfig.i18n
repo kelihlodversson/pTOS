@@ -1,0 +1,82 @@
+#
+# Kconfig.i18n - country and language selection
+#
+# Copyright (C) 2001-2017 The EmuTOS development team.
+#
+# This file is distributed under the GPL, version 2 or at your
+# option any later version.  See doc/license.txt for details.
+#
+# The country codes below must match the table in country.mk, which also
+# defines the language, keyboard layout, charset and date/time format used
+# for each of them.
+#
+
+menu "Localization"
+
+choice
+	prompt "Country"
+	default BUILD_COUNTRY_US
+	help
+	  The country the image is built for.  It selects the keyboard
+	  layout, the character set, the date and time format and, unless a
+	  multi-language image is built, the language of all messages.
+
+config BUILD_COUNTRY_US
+	bool "United States"
+config BUILD_COUNTRY_DE
+	bool "Germany"
+config BUILD_COUNTRY_FR
+	bool "France"
+config BUILD_COUNTRY_CZ
+	bool "Czech Republic"
+config BUILD_COUNTRY_GR
+	bool "Greece"
+config BUILD_COUNTRY_ES
+	bool "Spain"
+config BUILD_COUNTRY_FI
+	bool "Finland"
+config BUILD_COUNTRY_SG
+	bool "Switzerland (German)"
+config BUILD_COUNTRY_RU
+	bool "Russia"
+config BUILD_COUNTRY_IT
+	bool "Italy"
+config BUILD_COUNTRY_UK
+	bool "United Kingdom"
+config BUILD_COUNTRY_NO
+	bool "Norway"
+config BUILD_COUNTRY_SE
+	bool "Sweden"
+
+endchoice
+
+config BUILD_COUNTRY
+	string
+	default "us" if BUILD_COUNTRY_US
+	default "de" if BUILD_COUNTRY_DE
+	default "fr" if BUILD_COUNTRY_FR
+	default "cz" if BUILD_COUNTRY_CZ
+	default "gr" if BUILD_COUNTRY_GR
+	default "es" if BUILD_COUNTRY_ES
+	default "fi" if BUILD_COUNTRY_FI
+	default "sg" if BUILD_COUNTRY_SG
+	default "ru" if BUILD_COUNTRY_RU
+	default "it" if BUILD_COUNTRY_IT
+	default "uk" if BUILD_COUNTRY_UK
+	default "no" if BUILD_COUNTRY_NO
+	default "se" if BUILD_COUNTRY_SE
+
+config BUILD_UNIQUE_COUNTRY
+	bool "Build a single-country image"
+	default y
+	help
+	  Say y to build an image supporting only the country selected
+	  above.  All messages are translated at build time and only the
+	  fonts of the matching charset are included, which saves a large
+	  amount of ROM space.
+
+	  Say n to build a multi-language image, where the language is
+	  picked at boot time from the NVRAM or from the country code stored
+	  in the OS header.
+
+endmenu

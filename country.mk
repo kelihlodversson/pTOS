@@ -81,30 +81,33 @@ i18n_se_cset = ST
 i18n_se_idt  = IDT_24H | IDT_DDMMYY | '/'
 
 COUNTRIES = us de fr cz gr es fi sg ru it uk no se
+
+ETOSLANG = $(i18n_$(COUNTRY)_lang)
+ETOSKEYB = $(i18n_$(COUNTRY)_keyb)
+ETOSCSET = $(i18n_$(COUNTRY)_cset)
+ETOSIDT = $(i18n_$(COUNTRY)_idt)
+
+# COUNTRY is empty until the configuration has been read, and while running
+# a target that does not need one, such as "make clean".
+ifneq (,$(COUNTRY))
+
 ifeq (,$(findstring $(COUNTRY),$(COUNTRIES)))
 $(error Unknown COUNTRY=$(COUNTRY))
 endif
 
-#
-
-ETOSLANG = $(i18n_$(COUNTRY)_lang)
 ifeq (,$(ETOSLANG))
 $(error Variable i18n_$(COUNTRY)_lang incorrectly configured)
 endif
-
-ETOSKEYB = $(i18n_$(COUNTRY)_keyb)
 ifeq (,$(ETOSKEYB))
 $(error Variable i18n_$(COUNTRY)_keyb incorrectly configured)
 endif
-
-ETOSCSET = $(i18n_$(COUNTRY)_cset)
 ifeq (,$(ETOSCSET))
 $(error Variable i18n_$(COUNTRY)_cset incorrectly configured)
 endif
-
-ETOSIDT = $(i18n_$(COUNTRY)_idt)
 ifeq (,$(ETOSIDT))
 $(error Variable i18n_$(COUNTRY)_idt incorrectly configured)
+endif
+
 endif
 
 #
@@ -115,10 +118,10 @@ FONTOBJ_L9 = fnt_l9_6x6.o fnt_l9_8x8.o fnt_l9_8x16.o
 FONTOBJ_GR = fnt_gr_6x6.o fnt_gr_8x8.o fnt_gr_8x16.o
 FONTOBJ_RU = fnt_ru_6x6.o fnt_ru_8x8.o fnt_ru_8x16.o
 FONTOBJ_ALL = $(FONTOBJ_ST) $(FONTOBJ_L2) $(FONTOBJ_L9) $(FONTOBJ_GR) $(FONTOBJ_RU)
-FONTOBJ_COMMON = obj/fnt_off_6x6.o obj/fnt_off_8x8.o
+FONTOBJ_COMMON = fnt_off_6x6.o fnt_off_8x8.o
 
 ifneq (,$(UNIQUE))
-FONTOBJ = $(FONTOBJ_$(ETOSCSET):%=obj/%) $(FONTOBJ_COMMON)
+FONTOBJ = $(FONTOBJ_$(ETOSCSET)) $(FONTOBJ_COMMON)
 else
-FONTOBJ = $(FONTOBJ_ALL:%=obj/%) $(FONTOBJ_COMMON)
+FONTOBJ = $(FONTOBJ_ALL) $(FONTOBJ_COMMON)
 endif
