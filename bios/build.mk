@@ -34,8 +34,8 @@ obj-$(ARCH_ARM) += vectorsasm.o aciaemu.o
 # by the first generation Raspberry Pi.
 obj-$(CPU_ARMV7) += cache_armv7.o cache_armv7_asm.o
 
-obj-$(MACHINE_RPI) += raspi_uart.o raspi_int.o raspi_mbox.o raspi_screen.o \
-	 raspi_emmc.o
+obj-$(MACHINE_RPI) += raspi_board.o raspi_uart.o raspi_int.o raspi_mbox.o \
+	 raspi_screen.o raspi_emmc.o
 
 # Fonts.  A multi-language image needs the fonts of every charset, a
 # single-country one only those of its own charset.  See country.mk.

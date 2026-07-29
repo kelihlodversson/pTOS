@@ -41,6 +41,9 @@
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
 #endif
+#ifdef MACHINE_RPI
+#include "raspi_io.h"
+#endif
 
 #if CONF_WITH_ADVANCED_CPU
 UBYTE is_bus32; /* 1 if address bus is 32-bit, 0 if it is 24-bit */
@@ -727,17 +730,7 @@ const char * machine_name(void)
 #elif defined(MACHINE_AMIGA)
     return "Amiga";
 #elif defined(MACHINE_RPI)
-# if defined(TARGET_RPI1)
-    return "BCM2835";
-# elif defined(TARGET_RPI2)
-    return "BCM2836";
-# elif defined(TARGET_RPI3)
-    return "BCM2837";
-# elif defined(TARGET_RPI4)
-    return "BCM2711";
-#else
-    return "Unknown Raspberry PI";
-#endif
+    return raspi_board.name;
 #elif defined(MACHINE_M548X)
     return m548x_machine_name();
 #else

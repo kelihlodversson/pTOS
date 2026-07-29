@@ -116,6 +116,28 @@ os_dummy:
 .balign 4
 _main:
 
+    /*
+     * The boot loader hands us r0 = 0, r1 = the ARM Linux machine type and
+     * r2 = the address of the ATAG list, or of a flattened device tree when
+     * the firmware built one.  Nothing consumes them yet, but r0-r2 are
+     * reused a few instructions below, so save them while they still mean
+     * something.  Note that QEMU started with -bios does not set them up at
+     * all, so a reader must not assume the pointer is valid.
+     */
+#ifndef TARGET_RPI1
+    /*
+     * Only the boot core is handed meaningful values.  The ARM1176 of the
+     * first generation Pi has no MPIDR, but it has no secondary cores
+     * either, so the test is only needed here.
+     */
+    mrc p15, 0, r3, c0, c0, 5   /* read MPIDR into r3 */
+    ands r3, r3, #3
+    bne 1f
+#endif
+    ldr r3, =_arm_boot_regs
+    stmia r3, {r0-r2}
+1:
+
 #ifndef TARGET_RPI1
     ldr r1, =_start_in_hyp
     mov r2, #0
@@ -382,3 +404,11 @@ _secure_monitor:
 .bss
 .global _start_in_hyp
 _start_in_hyp: .ds.l 1
+
+/*
+ * r0, r1 and r2 as saved at the top of _main.  This is BSS, so like
+ * _start_in_hyp above it has to be carried across the bzero() in
+ * raspi_vcmem_init().  The layout matches arm_boot_regs_t in raspi_io.h.
+ */
+.global _arm_boot_regs
+_arm_boot_regs: .ds.l 3
