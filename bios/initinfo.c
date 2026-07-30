@@ -54,6 +54,13 @@
 #define INFO_LENGTH 40      /* width of info lines (must fit in low-rez) */
 #define LOGO_LENGTH 23      /* must equal length of strings in pTOS logo */
 
+/*
+ * number of lines printed by initinfo() apart from the logo, used to centre
+ * the screen vertically; see initinfo() for the breakdown.  Lines that are
+ * only printed in specific cases are added to initinfo_height there.
+ */
+#define INITINFO_BASE_HEIGHT 14
+
 /* allowed values for Mxalloc mode: (defined in mem.h) */
 #define MX_STRAM 0
 #define MX_TTRAM 1
@@ -259,7 +266,12 @@ static void cprintf_bytesize(ULONG bytes)
 WORD initinfo(ULONG *pshiftbits)
 {
     int screen_height = linea_vars.v_cel_my + 1;
-    int initinfo_height = 20; /* Define ENABLE_KDEBUG to guess correct value */
+    /*
+     * The lines that are always printed: the logo, two separators of two
+     * lines each, six 'pair' lines, two messages, a blank line, and the
+     * final inverse line.  Define ENABLE_KDEBUG to check the total.
+     */
+    int initinfo_height = LOGO_HEIGHT + INITINFO_BASE_HEIGHT;
     int top_margin;
 #ifdef ENABLE_KDEBUG
     int actual_initinfo_height;
