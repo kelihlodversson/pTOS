@@ -5,7 +5,7 @@
 # on every push and must never publish anything, and publishing must not be a
 # side effect of a normal build.
 #
-# Triggered either by pushing a version tag such as v0.2.0, or by hand.  A
+# Triggered either by pushing a version tag such as v0.1.0, or by hand.  A
 # manual run without a tag publishes a snapshot prerelease instead, so that
 # nothing here ever writes to the upstream EmuTOS SourceForge project the way
 # the old Travis deployment did.
@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to publish, e.g. v0.2.0.  Empty publishes a snapshot prerelease.'
+        description: 'Tag to publish, e.g. v0.1.0.  Empty publishes a snapshot prerelease.'
         required: false
         default: ''
 
@@ -52,7 +52,7 @@ jobs:
           tag="$TAG_INPUT"
 
           if [ -n "$tag" ]; then
-            # v0.2.0 is the tag, 0.2.0 is what goes into the image and into
+            # v0.1.0 is the tag, 0.1.0 is what goes into the image and into
             # the names of the archives.
             version="${tag#v}"
           else
@@ -63,7 +63,7 @@ jobs:
             tag="snapshot-$version"
           fi
 
-          # A snapshot, or a semver pre-release suffix such as v0.2.0-rc1, is
+          # A snapshot, or a semver pre-release suffix such as v0.1.0-rc1, is
           # not a final release.
           case "$tag" in
           *-*) prerelease=true ;;

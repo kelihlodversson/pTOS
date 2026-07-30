@@ -195,7 +195,7 @@ build.yml       builds every configuration in configs/ as a job of its own,
                 release archives.  Every image is kept as a workflow
                 artifact.
 release.yml     publishes a GitHub release.  It runs when a version tag such
-                as v0.2.0 is pushed, and can also be started by hand, which
+                as v0.1.0 is pushed, and can also be started by hand, which
                 publishes a snapshot prerelease instead.
 
 Both get their toolchain from .github/actions/setup-toolchain, which is the
