@@ -52,7 +52,7 @@
 /*==== Defines ============================================================*/
 
 #define INFO_LENGTH 40      /* width of info lines (must fit in low-rez) */
-#define LOGO_LENGTH 34      /* must equal length of strings in EmuTOS logo */
+#define LOGO_LENGTH 23      /* must equal length of strings in pTOS logo */
 
 /* allowed values for Mxalloc mode: (defined in mem.h) */
 #define MX_STRAM 0
@@ -66,11 +66,11 @@ extern long total_alt_ram(void); /* in bdos/umem.c */
 
 #define LOGO_HEIGHT 5
 static char const logo[LOGO_HEIGHT][LOGO_LENGTH+1] =
-    { "11111111111 7777777777  777   7777",
-      "1                  7   7   7 7    ",
-      "1111   1 1  1   1  7   7   7  777 ",
-      "1     1 1 1 1   1  7   7   7     7",
-      "11111 1   1  111   7    777  7777 " };
+    { "77777777777  777   7777",
+      "1111    7   7   7 7    ",
+      "1   1   7   7   7  777 ",
+      "1111    7   7   7     7",
+      "1       7    777  7777 " };
 
 /* Print n spaces */
 static void print_spaces(WORD n)
@@ -299,7 +299,7 @@ WORD initinfo(ULONG *pshiftbits)
     /* Centre the logo horizontally */
     left_margin = (SCREEN_WIDTH-LOGO_LENGTH) / 2;
 
-    /* Now print the EmuTOS Logo */
+    /* Now print the pTOS Logo */
     for (i = 0; i < ARRAY_SIZE(logo); i++)
         print_art(logo[i]);
 
