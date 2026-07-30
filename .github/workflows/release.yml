@@ -172,6 +172,11 @@ jobs:
           TAG: ${{ needs.version.outputs.tag }}
           VERSION: ${{ needs.version.outputs.version }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
+          # Where the notes of the very first release begin.  The only tags
+          # older than it are the ones this fork inherited from upstream
+          # EmuTOS, and VERSION_0_9_9 is the newest upstream release that
+          # master actually contains, so it is where pTOS proper starts.
+          NOTES_BASE_TAG: VERSION_0_9_9
         run: |
           ls -l release-archives
 
@@ -181,13 +186,32 @@ jobs:
           fi
 
           # --generate-notes leaves the release notes to GitHub, which derives
-          # them from the commits and pull requests since the last release.
+          # them from the commits and pull requests since the previous
+          # release.  Only the first release has no previous one: GitHub then
+          # falls back to the oldest tag it can find, which here is an
+          # inherited upstream tag, and the changelog ends up covering years
+          # of EmuTOS history from before this fork existed.
+          #
+          # So give it a starting point in that case, and only in that case.
+          # --notes-start-tag overrides the previous release rather than
+          # standing in for it, so passing it every time would make each
+          # release repeat everything already listed in the one before.
+          previous=$(gh release list --limit 1 --json tagName --jq '.[].tagName' || true)
+          notes_start=
+          if [ -n "$previous" ]; then
+            echo "Previous release is $previous; GitHub starts the notes there"
+          else
+            echo "No previous release; starting the notes at $NOTES_BASE_TAG"
+            notes_start="--notes-start-tag $NOTES_BASE_TAG"
+          fi
+
           # --target matters only for a manual run, where the tag does not
           # exist yet and is created at this commit.
           gh release create "$TAG" release-archives/* \
             --title "pTOS $VERSION" \
             --target "$GITHUB_SHA" \
             --generate-notes \
+            $notes_start \
             $prerelease
 
           echo "Published $TAG" >>"$GITHUB_STEP_SUMMARY"
