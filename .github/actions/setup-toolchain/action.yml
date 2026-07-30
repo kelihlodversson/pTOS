@@ -72,10 +72,20 @@ runs:
     - name: Report the versions in use
       shell: bash
       run: |
-        make --version | head -1
-        python3 --version
+        # Deliberately not "cmd | head -1".  head closes the pipe as soon as
+        # it has its line, the writer then gets a write error, and the shell
+        # runs with pipefail, so the step fails -- but only when the writer
+        # loses the race, which makes it look like an unrelated flake.
+        first_line() {
+          local output
+          output="$("$@" 2>&1)"
+          printf '%s\n' "${output%%$'\n'*}"
+        }
+
+        first_line make --version
+        first_line python3 --version
         python3 -c 'import kconfiglib; print("kconfiglib", kconfiglib.VERSION)'
         case '${{ inputs.arch }}' in
-        m68k) m68k-atari-mint-gcc --version | head -1 ;;
-        arm)  arm-none-eabi-gcc --version | head -1 ;;
+        m68k) first_line m68k-atari-mint-gcc --version ;;
+        arm)  first_line arm-none-eabi-gcc --version ;;
         esac
