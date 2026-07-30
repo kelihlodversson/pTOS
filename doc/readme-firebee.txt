@@ -43,18 +43,18 @@ This tool runs on MS Windows and requires additional hardware.
 http://didierm.pagesperso-orange.fr/firebee.htm
 Get it from the tos060.lzh archive, in the tos060/flash.too folder.
 On your FireBee, start FireTOS, run FLASH060.PRG and flash ptosfb.s19.
-You can also use FLASH_CF.PRG from EmuTOS itself.
+You can also use FLASH_CF.PRG from pTOS itself.
 
-In both cases, the correct EmuTOS flash parameters are prefilled,
+In both cases, the correct pTOS flash parameters are prefilled,
 you don't need to change anything.
 
-To start EmuTOS on the FireBee, you have 2 options.
+To start pTOS on the FireBee, you have 2 options.
 
 1) Put DIP switch #5 down and DIP switch #6 up. This is the preferred
-method; EmuTOS will be started directly from the BaS in fully native mode.
+method; pTOS will be started directly from the BaS in fully native mode.
 
 2) Start FireTOS. At the very beginning, a boot menu appears. Select 2 - EMUTOS.
-This will run EmuTOS over FreeRTOS and enable extra features, such as support
+This will run pTOS over FreeRTOS and enable extra features, such as support
 for USB keyboard and mouse.
 
 The FireBee ROM features:
