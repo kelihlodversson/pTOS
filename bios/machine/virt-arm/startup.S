@@ -12,6 +12,8 @@
         .extern _stktop
         .extern _biosmain
         .extern __endvdibss
+        .extern _virt_mmu_bootstrap
+        .extern _phystop
 
         .text
 
@@ -78,24 +80,67 @@ os_dummy:
     .ascii  "CAMELTOS"
 
 /*
- * _main -- placeholder for this task only.  Later tasks replace the
- * body: Task 3 adds the MMU bring-up and the jump into virtual
- * addressing, Task 4 hands off to _biosmain.
+ * _main -- two-phase boot: a physical-mode "hello" (proves the CPU
+ * reached here and the UART works before the MMU is on), then the
+ * MMU bring-up (bios/machine/virt-arm/virt_mmu.c) using only literal
+ * physical constants, then a long jump into virtual addressing, then
+ * a second "hello" plus a sysvars round-trip check using ordinary
+ * symbol-based addressing to prove the low fixed-address TOS system
+ * variables (tosvars.ld) are correctly mapped via the low MMU window.
+ * Task 4 replaces the tail of this with a hand-off to _biosmain.
  */
 .balign 4
 _main:
-    ldr sp, =0x47ff0000     /* literal physical scratch address, well within a 128M -m allocation */
+    ldr sp, =0x47ff0000
     bl  _virt_uart0_init
-    ldr r4, =hello_msg
+    ldr r4, =hello_msg_phys
+    bl  print_string
+
+    /* MMU bring-up: literal physical constants only, no linked symbols */
+    mov r0, #0x08000000     /* 128 MiB RAM window, matches -m 128 in the qemu invocation below */
+    ldr r1, =0x47f00000     /* page table: fixed physical scratch address, top of a 128M RAM allocation */
+    bl  _virt_mmu_bootstrap
+
+    ldr pc, =virt_arm_post_mmu
+
+virt_arm_post_mmu:
+    ldr sp, =0x47ff0000     /* still the physical scratch stack; Task 4 switches to _stktop */
+    ldr r4, =hello_msg_virt
+    bl  print_string
+
+    /* sysvars round-trip: _phystop is one of the fixed low sysvars
+     * addresses (see tosvars.ld); if the low MMU window is wired
+     * correctly this read/write pair works exactly like any other
+     * global variable. */
+    ldr r0, =_phystop
+    ldr r1, =0x12345678
+    str r1, [r0]
+    ldr r2, [r0]
+    cmp r1, r2
+    ldreq r4, =sysvars_ok_msg
+    ldrne r4, =sysvars_fail_msg
+    bl  print_string
+
+2:  b   2b
+
+print_string:
+    push {r4, lr}
 1:  ldrb r0, [r4], #1
     cmp r0, #0
     beq 2f
     bl  _virt_uart0_write_byte
     b   1b
-2:  b   2b
+2:  pop {r4, lr}
+    bx  lr
 
-hello_msg:
+hello_msg_phys:
     .asciz "virt-arm: pre-MMU boot OK\r\n"
+hello_msg_virt:
+    .asciz "virt-arm: post-MMU boot OK\r\n"
+sysvars_ok_msg:
+    .asciz "virt-arm: sysvars alias OK\r\n"
+sysvars_fail_msg:
+    .asciz "virt-arm: sysvars alias FAILED\r\n"
     .align 2
 
     .globl _arm_dispatch_undef

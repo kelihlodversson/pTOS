@@ -66,10 +66,36 @@ MEMORY
 # define REGION_READ_WRITE  REGION_RAM
 #endif
 
+/* On the QEMU ARM 'virt' machine, RAM starts at physical 0x40000000, but
+ * the image is still linked (VMA) at the same low addresses as every
+ * other machine so the fixed-address TOS system variables keep working.
+ * LMA_AT(section) makes QEMU load that stram section's bytes at
+ * link_address + 0x40000000; a static MMU table built early in
+ * startup.S then maps virtual 0x0-and-up back onto that physical
+ * window. See docs/superpowers/plans/2026-07-30-arm-virt-support.md.
+ *
+ * This is deliberately AT(ADDR(section) + 0x40000000) -- an explicit
+ * per-section load address -- rather than a shared "AT>stram_lma"
+ * load memory region: several of these sections (.first_stram,
+ * .low_stram, .stack, .laststram) hold no actual data, just
+ * location-counter reservations, so GNU ld emits them as SHT_NOBITS.
+ * A load memory region's address only advances by the sections
+ * explicitly assigned to it, but NOBITS sections do not consume any
+ * of that region's space, so a shared AT>region silently stops
+ * tracking "VMA + 0x40000000" as soon as a NOBITS section intervenes
+ * -- every later section collapses back onto the region's origin
+ * instead of its correct offset. AT(ADDR(section) + ...) computes
+ * each section's own load address directly and is immune to that. */
+#if defined (MACHINE_VIRT_ARM)
+# define LMA_AT(section) AT(ADDR(section) + 0x40000000)
+#else
+# define LMA_AT(section)
+#endif
+
 SECTIONS
 {
     /* First section in ST-RAM */
-    .first_stram :
+    .first_stram : LMA_AT(.first_stram)
     {
         /* System variables are located at fixed addresses */
 #include "tosvars.ld"
@@ -89,7 +115,7 @@ SECTIONS
     /* This section is the internal BIOS stack.
      * It will *not* be cleared on startup or reset.
      */
-    .stack :
+    .stack : LMA_AT(.stack)
     {
         _stkbot = .;
         . += 2K;
@@ -102,7 +128,7 @@ SECTIONS
      * from user mode, can be put here.
      * Warning: this area is not cleared at startup.
      */
-    .low_stram :
+    .low_stram : LMA_AT(.low_stram)
     {
         __low_stram_start = .;
         obj/lowstram.o(.bss COMMON)
@@ -117,7 +143,7 @@ SECTIONS
 #if defined (MACHINE_RPI)
      .text ROM_ORIGIN :
 #else
-     .text :
+     .text : LMA_AT(.text)
 #endif
     {
         CREATE_OBJECT_SYMBOLS
@@ -133,7 +159,7 @@ SECTIONS
      * Since a read-only DATA segment is useless, we try to keep it empty by
      * making all initialized variables const, so they go to the TEXT segment.
      */
-    .data :
+    .data : LMA_AT(.data)
     {
         __data = .;
         *(.data)
@@ -143,7 +169,7 @@ SECTIONS
     /* The BSS segment contains uninitialized global variables.
      * It will be cleared by the startup code.
      */
-    .bss :
+    .bss : LMA_AT(.bss)
     {
         __bss = .;
         *(.bss COMMON)
@@ -166,7 +192,7 @@ SECTIONS
      * It is usually empty, just used to calculate the last address
      * of ST-RAM statically used by EmuTOS.
      */
-    .laststram :
+    .laststram : LMA_AT(.laststram)
     {
         __end_os_stram = .;
     } >stram
