@@ -142,8 +142,8 @@ long xgettime(void)
 long xsettime(UWORD t)
 {
     if (((t & SEC_BM) >= 30)                /* 30 "double-seconds" per minute */
-     || ((t & MIN_BM) >= (60 << MIN_SHIFT)) /* 60 minutes per hour */
-     || ((t & HRS_BM) >= (24 << HRS_SHIFT)))/* 24 hours per day */
+     || ((t & MIN_BM) >= (60U << MIN_SHIFT))    /* 60 minutes per hour */
+     || ((t & HRS_BM) >= (24U << HRS_SHIFT)))   /* 24 hours per day */
         return ERR;
 
     /* tell bios about new time: it will update current_time for us */
@@ -193,15 +193,15 @@ static void tikfrk(int n)
     /* handle minute rollover */
 
     current_time &= ~SEC_BM;
-    current_time += (1 << MIN_SHIFT);
-    if ((current_time & MIN_BM) != (60 << MIN_SHIFT))
+    current_time += (1U << MIN_SHIFT);
+    if ((current_time & MIN_BM) != (60U << MIN_SHIFT))
         return;
 
     /* handle hour rollover */
 
     current_time &= ~MIN_BM;
-    current_time += (1 << HRS_SHIFT);
-    if ((current_time & HRS_BM) != (24 << HRS_SHIFT))
+    current_time += (1U << HRS_SHIFT);
+    if ((current_time & HRS_BM) != (24U << HRS_SHIFT))
         return;
 
     /* handle day rollover */
@@ -220,11 +220,11 @@ static void tikfrk(int n)
     /* handle month rollover */
 
     current_date &= ~DAY_BM;
-    current_date += (1 << MTH_SHIFT) + 1;
-    if ((current_date & MTH_BM) <= (12 << MTH_SHIFT))
+    current_date += (1U << MTH_SHIFT) + 1;
+    if ((current_date & MTH_BM) <= (12U << MTH_SHIFT))
         return;
 
     /* handle year rollover */
     current_date &= YRS_BM;
-    current_date += (1 << YRS_SHIFT) + (1 << MTH_SHIFT) + 1;
+    current_date += (1U << YRS_SHIFT) + (1U << MTH_SHIFT) + 1U;
 }
