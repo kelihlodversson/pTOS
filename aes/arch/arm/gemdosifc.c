@@ -25,7 +25,6 @@ int criterr_handler(WORD error, WORD drive);
 typedef int (*criterr_handler_t)(WORD, WORD);
 
 
-static ULONG save_cpsr;
 static criterr_handler_t save_etv_critic; /* save area for character-mode critical error vector */
 WORD enable_ceh;   /* flag to enable gui critical error handler */
 
@@ -42,39 +41,6 @@ const WORD err_tbl[17] = {
         4,2,2,2,0,3,4,2,     /* errors -9 to -16 */
         5                   /* error -17 (EOTHER, currently not implemented) */
 };
-
-static inline ULONG read_cpsr(void)
-{
-    unsigned int res;
-    asm volatile (
-        "mrs     %0, cpsr"
-        : "=r"(res)
-    );
-    return res;
-}
-
-static inline void write_cpsr(ULONG cpsr)
-{
-    asm volatile (
-        "msr     cpsr_c, %0"
-        :
-        : "r"(cpsr)
-    );
-}
-
-/* disable interrupts */
-ULONG disable_interrupts(void)
-{
-    save_cpsr = read_cpsr();
-    asm volatile ("cpsid if");
-    return save_cpsr;
-}
-
-/* restore interrupt mask as it was before disable_interrupts() */
-void enable_interrupts(void)
-{
-    write_cpsr(save_cpsr);
-}
 
 /*
  * DOS error trapping code: restores aestrap & critical error vector

@@ -15,7 +15,7 @@ obj-y += startup.o
 obj-y += lowstram.o
 
 # The remaining BIOS objects can come in any order.
-obj-y += memory.o processor.o vectors.o bios.o xbios.o acsi.o biosmem.o \
+obj-y += memory.o processor.o intmask.o vectors.o bios.o xbios.o acsi.o biosmem.o \
 	 blkdev.o chardev.o clock.o conout.o cookie.o country.o disk.o \
 	 dma.o dmasound.o floppy.o font.o ide.o ikbd.o initinfo.o kprint.o \
 	 lineainit.o machine.o mfp.o midi.o mouse.o nvram.o panicasm.o \
