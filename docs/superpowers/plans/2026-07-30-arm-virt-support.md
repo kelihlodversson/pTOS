@@ -1232,7 +1232,57 @@ git commit -m "arm-virt: add GICv2 driver and ARM generic timer tick, reach full
 
 ---
 
-### Task 6: Documentation and final acceptance check
+### Task 6: Fix the SVC/TRAP #1 GEMDOS dispatch crash
+
+**Why this task exists:** not in the original plan. Task 5's review confirmed its own scope (GICv2 + timer) works and is correctly verified, but building it exposed that `bios_init()` can now run to completion for the first time on this target — and the very next thing `biosmain()` does, `trap1(0x30)` (`bios/bios.c:753`, `Sversion()`), crashes with a repeating Data-Abort-then-Undefined-Instruction loop. This is the **first SVC/TRAP exception ever taken** on virt-arm (every earlier task's boot hung before reaching this point), so it was never exercised before. The design's stated v1 Definition of Done is "boot + console + timer, matching the raspi port's current maturity" (raspi reaches AES launch and fails there); virt-arm needs to reach that same point before Task 7's final acceptance check can honestly confirm it.
+
+**Facts established already (verified independently by Task 5's reviewer, not just claimed):**
+- The crash is in `bdos/arch/arm/rwa.S`'s `_enter` (the TRAP #1 / GEMDOS front end) or in reaching it via `_arm_dispatch_svc` (`bios/machine/virt-arm/startup.S:184-190`) — not in Task 5's own GIC/timer code, and not in interrupt delivery generally.
+- IRQ vector dispatch through the same `arm_vectors` table (`bios/machine/virt-arm/startup.S:39-47`) is proven working: the ARM generic timer's periodic IRQ is delivered and handled correctly (Task 5 confirmed via register dump and trace). This means the low-address MMU window built in Task 3 correctly backs the vector-table-adjacent memory at runtime, ruling out "the MMU mapping is broken" as an explanation.
+- `_arm_dispatch_svc` decodes the SVC immediate and loads a handler pointer from a **fixed low virtual address** (`ip = (instr & 0xF) << 2`, then `ldr ip, [ip, #0x80]` — i.e. reads from absolute address `imm*4 + 0x80`, not table-relative). This is the same low fixed-address scheme as the TOS sysvars Task 3 already proved works (`0x380`-`0x800`), and `0x80`-`0x100` is inside that same low window, so the read itself should be able to succeed if `Setexc()`/`init_exc_vec()` (`bios/arch/arm/vectors.c`) already populated that slot correctly by this point in boot — `osinit_before_xmaddalt()` (`bdos/bdosmain.c:328`) does call `Setexc(0x21, (long)enter)` before `bios_init()` returns, so the slot should be populated with `_enter`'s address before `trap1(0x30)` runs.
+- `bdos/arch/arm/rwa.S` (`_enter`, `_gouser`, `x20`, etc.) is architecture-generic code, shared with `raspi`'s ARM build (not machine-specific) — and raspi reaches past this exact call today. So the bug is not a defect in `rwa.S` itself in the abstract; something about virt-arm's environment at this point differs from raspi's in a way that breaks it (candidates: `_run`'s value/initialization state, CPU mode/PSR handling around the `svc` instruction, the exact vector-table contents at `0x84`, or something else Task 5 didn't chase down).
+
+**This is a debugging task, not a transcription task** — no code is given because the root cause isn't known yet. Use `systematic-debugging` methodology: reproduce, form a hypothesis, test the narrowest thing that confirms or rules it out, don't guess-and-check broadly.
+
+- [ ] **Step 1: Reproduce with full diagnostics**
+
+Temporarily enable `ENABLE_KDEBUG` in `bios/bios.c` and force `boot_status |= RS232_AVAILABLE` at the top of `biosmain()` (Task 4's and Task 5's reports both document this exact technique and how to revert it cleanly — read `.superpowers/sdd/2026-07-30-arm-virt-support/task-4-report.md` and `task-5-report.md` for the precedent). Rebuild and boot with `-d guest_errors,int` (not just `guest_errors` — the exception trace is what showed the Data-Abort/Undefined-Instruction loop in Task 5's diagnosis) to see the exact fault address(es) and confirm you're looking at the same failure Task 5 described.
+
+- [ ] **Step 2: Root-cause it**
+
+Some concrete things worth checking, in no particular order — pick whichever your evidence points to first, don't work this list top-to-bottom blindly:
+- Disassemble around the fault PC/LR (`arm-none-eabi-objdump -d obj/*.o` or `virt-arm.elf`) and map the faulting address back to source, the same technique Task 5 used for the `vbl_list` bug.
+- Check what `_run` actually contains at the moment `_enter` dereferences it (`bdos/arch/arm/rwa.S:66-68`) — is it correctly zero/valid at this point in boot on this target, and does `_enter`'s logic handle whatever value it legitimately has this early (before any process/basepage exists)?
+- Check whether `Setexc(0x21, (long)enter)` (`bdos/bdosmain.c:328`, via `osinit_before_xmaddalt()`) actually wrote a valid pointer into the low vector slot the way it's supposed to, and whether that pointer is the physical/virtual address you expect at the point it's dereferenced.
+- Check the CPSR/mode state across the `svc` instruction and `_arm_dispatch_svc`'s `bx ip` — compare against what raspi's boot path does differently, if anything, before reaching the same call.
+
+- [ ] **Step 3: Fix it**
+
+The fix belongs wherever the root cause actually is — that might be `bdos/arch/arm/rwa.S`, `bios/machine/virt-arm/startup.S`, `bios/arch/arm/vectors.c`, or elsewhere. If the root cause turns out to be in architecture-generic code (not `bios/machine/virt-arm/`), fix it there rather than working around it in virt-arm-specific code, and flag in your report that raspi should be re-tested too (it's not expected to regress, since raspi already exercises this path successfully today, but say so explicitly rather than assuming).
+
+- [ ] **Step 4: Verify against the original Task 5 pass criterion**
+
+```sh
+make virt-arm_defconfig && make
+timeout 30 qemu-system-arm -M virt -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -display none -serial stdio < /dev/null > /tmp/virt-boot.log 2>&1 &
+```
+Wait ~20-25s (known sandbox serial-output latency, documented in every prior task's report) before reading the log. Expected: boot reaches the same point the raspi port reaches — BIOS runs, AES launch attempted, then fails — with no `guest_errors` output at any point. This is the actual Definition of Done Task 5's brief stated and this task exists to finish reaching. If you reach a *different* blocker than AES-launch-then-fail, record exactly where, the same way Task 4 and Task 5's reports did — don't assume you must keep going past this task's own scope to force a match.
+
+Also re-run the `rpi2_defconfig` regression build if your fix touches anything outside `bios/machine/virt-arm/`:
+```sh
+make distclean && make rpi2_defconfig && make
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add <whatever files your fix touched>
+git commit -m "arm-virt: fix SVC/TRAP #1 GEMDOS dispatch, reach AES-launch parity with raspi"
+```
+
+---
+
+### Task 7: Documentation and final acceptance check
 
 **Files:**
 - Modify: `readme.md`
