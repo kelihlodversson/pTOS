@@ -15,6 +15,7 @@
 #include "virt_pic.h"
 #include "virt_timer.h"
 #include "vectors.h"
+#include "asm.h"
 
 #define HZ                    200     /* ticks per second, matches the Atari 200 Hz timer C */
 #define VIRT_TIMER_PPI_PHYS   30      /* non-secure physical timer, fixed by the GIC/generic-timer binding */
@@ -33,7 +34,7 @@ static void virt_timer_tick(void)
      * unlike raspi's raspi_timer3_handler() which can call vector_5ms()
      * unconditionally because raspi only ever connects/enables its
      * timer IRQ from inside init_system_timer(), after vector_5ms is
-     * already set. See task-5-report.md for the full account. */
+     * already set. */
     if (vector_5ms)
         vector_5ms();
 
@@ -59,4 +60,5 @@ void virt_timer_init(void)
     asm volatile ("mcrr p15, 2, %0, %1, c14" :: "r" ((ULONG)(cval & 0xffffffffUL)),
                                                 "r" ((ULONG)(cval >> 32)));
     asm volatile ("mcr p15, 0, %0, c14, c2, 1" :: "r" (1));   /* CNTP_CTL: ENABLE */
+    flush_prefetch_buffer();    /* ISB: the timer is live from here on */
 }

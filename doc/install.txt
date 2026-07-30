@@ -30,7 +30,7 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
 
       Other toolchains, such as the old one from SpareMiNT, may also work.
 
-  Raspberry Pi (ARM)
+  Raspberry Pi, QEMU 'virt' (ARM)
       Any bare metal arm-none-eabi toolchain, for example the one Debian
       and Ubuntu ship:
 
@@ -125,6 +125,25 @@ rpi1                kernel.img, for the Pi 1, Zero, A, A+, B, B+ and CM0
 rpi2                kernel7.img, for the Pi 2B+
 rpi3                kernel8-32.img, for the Pi 3, 3+ and CM3
 rpi4                kernel7l.img, for the Pi 4 and 400
+
+ARM virt
+--------
+
+virt-arm            virt-arm.elf, for QEMU's generic ARM "virt" board
+
+The virt board is emulation only; there is no such physical machine.  It
+gives the ARM port a target that does not depend on Raspberry Pi hardware
+at all: a PL011 serial console, a GICv2 interrupt controller and the ARM
+generic timer.  The image is an ELF file rather than a raw binary, because
+RAM starts at physical 0x40000000 while EmuTOS is linked at the usual low
+addresses, and QEMU's ELF loader is what places it correctly.  Run it with:
+
+    make virt-arm_defconfig && make
+    qemu-system-arm -M virt -cpu cortex-a7 -m 128 -kernel virt-arm.elf \
+        -d guest_errors -serial stdio
+
+Adding "-S -s" lets a remote gdb attach, as with the Raspberry Pi
+configurations.
 
 
 Countries and languages

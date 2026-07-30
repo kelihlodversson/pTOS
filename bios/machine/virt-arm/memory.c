@@ -13,8 +13,9 @@
 /*
  * bios/build.mk lists memory.o unconditionally, and vpath resolves it to
  * this file for MACHINE_VIRT_ARM (the way bios/machine/raspi/memory.c is
- * resolved for MACHINE_RPI). This task's startup.S never calls into any
- * memory or MMU initialization routine -- _main just spins -- so there is
- * nothing to put here yet. A later task (see the comment above _main in
- * startup.S) adds the real MMU bring-up, analogous to raspi_vcmem_init().
+ * resolved for MACHINE_RPI). This machine needs no runtime memory
+ * initialization of its own: the RAM size is fixed by the QEMU command
+ * line and startup.S sets phystop directly, and the MMU bring-up lives in
+ * virt_mmu.c, called from startup.S before any C code runs. So this file
+ * is deliberately empty.
  */

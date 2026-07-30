@@ -85,7 +85,18 @@ MEMORY
  * tracking "VMA + 0x40000000" as soon as a NOBITS section intervenes
  * -- every later section collapses back onto the region's origin
  * instead of its correct offset. AT(ADDR(section) + ...) computes
- * each section's own load address directly and is immune to that. */
+ * each section's own load address directly and is immune to that.
+ *
+ * This also relies on an implicit fixup in QEMU's -kernel ELF loader:
+ * the image's e_entry is a *virtual* address (low ST-RAM, which pre-MMU
+ * is flash on this board, not RAM), and QEMU rewrites it to the matching
+ * physical address whenever a segment has p_vaddr != p_paddr, i.e. by
+ * the same +0x40000000 offset LMA_AT applies here.  That rewrite only
+ * happens when the entry point falls inside an executable (PF_X),
+ * non-empty (p_filesz-covered) segment.  If a future layout change ever
+ * breaks that condition -- an empty or non-executable first segment, or
+ * an entry point outside it -- QEMU silently jumps to the unmapped
+ * virtual address instead, with no diagnostic of any kind. */
 #if defined (MACHINE_VIRT_ARM)
 # define LMA_AT(section) AT(ADDR(section) + 0x40000000)
 #else
@@ -111,7 +122,7 @@ SECTIONS
     } >altram
 #endif
 
-#if !defined (MACHINE_RPI)
+#if !defined (MACHINE_RPI) && !defined (MACHINE_VIRT_ARM)
     /* This section is the internal BIOS stack.
      * It will *not* be cleared on startup or reset.
      */
@@ -176,11 +187,12 @@ SECTIONS
         __ebss = .;
     } >REGION_READ_WRITE
 
-#if defined (MACHINE_RPI)
-    /* On the RPI we put the BIOS stack /after/ the rom data.
-     * We have more RAM, so make it a little bigger than in the ST case
+#if defined (MACHINE_RPI) || defined (MACHINE_VIRT_ARM)
+    /* On the ARM machines (RPI, QEMU virt) we put the BIOS stack /after/
+     * the rom data.  We have more RAM, so make it a little bigger than in
+     * the ST case.
      */
-    .stack :
+    .stack : LMA_AT(.stack)
     {
         _stkbot = .;
         . += 32K;

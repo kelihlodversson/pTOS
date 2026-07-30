@@ -279,25 +279,8 @@ _arm_dispatch_fiq:
     cps    #0x13
     rfefd  sp!
 
-/*
- * Placeholders below -- needed only so that code shared with every other
- * ARM machine (bios/kprint.c's panic handler, bios/mfp.c's non-MFP timer
- * setup) links successfully. _virt_int_handler, called by this file's
- * own _arm_dispatch_irq above, is no longer a stub: as of Task 5 it is a
- * real C function in virt_pic.c (GICv2 driver), reached because
- * -fleading-underscore makes its C symbol `virt_int_handler` link as
- * `_virt_int_handler`.
- */
-
 /* bios/kprint.c's dopanic() reads this, unconditionally, on every machine
  * built with __arm__.  This machine never enters HYP mode (see the comment
  * at the top of _main), so it is always 0. */
     .globl _start_in_hyp
 _start_in_hyp: .word 0
-
-/* bios/mfp.c's init_system_timer() installs this as vector_5ms whenever
- * CONF_WITH_MFP is off, regardless of whether a real periodic tick has
- * been wired up yet. */
-    .globl _int_timerc
-_int_timerc:
-    bx  lr

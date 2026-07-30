@@ -43,7 +43,15 @@ void virt_pic_init(void)
 
 PFVOID virt_connect_irq(int irq, PFVOID handler)
 {
-    PFVOID old = virt_irq_handlers[irq];
+    PFVOID old;
+
+    if (irq < 0 || irq >= VIRT_IRQ_LINES)
+    {
+        KDEBUG(("virt_connect_irq: IRQ %d out of range\n", irq));
+        return 0;
+    }
+
+    old = virt_irq_handlers[irq];
 
     virt_irq_handlers[irq] = handler;
     GICD_IPRIORITYR(irq) = 0x80;
@@ -55,6 +63,12 @@ void virt_int_handler(void)
 {
     ULONG iar = GICC_IAR;
     ULONG irq = iar & 0x3ffUL;
+
+    /* 1023 is the GICv2 spurious interrupt ID: the acknowledge did not
+     * hand us a real interrupt, and the architecture says not to write
+     * EOIR for it. Just return. */
+    if (irq == 1023)
+        return;
 
     if (irq < VIRT_IRQ_LINES && virt_irq_handlers[irq])
         ((void (*)(void))virt_irq_handlers[irq])();

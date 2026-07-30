@@ -345,7 +345,7 @@ static void bios_init(void)
 #elif defined(MACHINE_VIRT_ARM)
     virt_pic_init();
     virt_timer_init();
-    asm volatile ("cpsie i");
+    cpsr_ie();          /* enable IRQs, now that the GIC and the tick exist */
 #endif
 
     /* Initialize the BIOS memory management */
@@ -392,10 +392,10 @@ static void bios_init(void)
              * the TOS low-memory sysvars block in tosvars.ld -- is only
              * guaranteed 2-byte (m68k WORD) alignment, since its layout
              * must match original Atari TOS byte-for-byte. The resulting
-             * unaligned VSTR faults with a Data Abort. See task-5-report.md
-             * for how this was diagnosed (MACHINE_VIRT_ARM only, but the
-             * loop itself and the underlying alignment mismatch are not
-             * machine-specific, so this guards every ARM build). */
+             * unaligned VSTR faults with a Data Abort. Observed on
+             * MACHINE_VIRT_ARM, but neither the loop nor the underlying
+             * alignment mismatch is machine-specific, so this guards
+             * every ARM build. */
             *(volatile LONG *)&vbl_list[i] = 0;
         }
     }
