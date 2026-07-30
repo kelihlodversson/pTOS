@@ -180,11 +180,21 @@ jobs:
         run: |
           ls -l release-archives
 
+          # Without nullglob, a pattern that matches nothing leaves the
+          # literal pattern string in the array, and gh release create would
+          # then fail on a non-existent path with a confusing error instead
+          # of the clear one below.
+          shopt -s nullglob
+
           # The Raspberry Pi is what this fork is for, so its archive is
           # listed first regardless of how the file names sort -- every
           # archive here now starts with "ptos-", so alphabetical order no
           # longer happens to put it anywhere in particular.
           raspi=(release-archives/ptos-raspi-*)
+          if [ "${#raspi[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one release-archives/ptos-raspi-* archive, found ${#raspi[@]}"
+            exit 1
+          fi
           others=()
           for f in release-archives/*; do
             skip=
