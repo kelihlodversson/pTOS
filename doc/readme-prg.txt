@@ -5,20 +5,20 @@ or hard disk) without the need of replacing the system ROM.
 This is the simplest way to test EmuTOS on real hardware.
 The drawback is less available RAM compared to ROM versions.
 
-emutos.prg - Multilanguage
-emutoscz.prg - Czech (PAL)
-emutosde.prg - German (PAL)
-emutoses.prg - Spanish (PAL)
-emutosfi.prg - Finnish (PAL)
-emutosfr.prg - French (PAL)
-emutosgr.prg - Greek (PAL)
-emutosit.prg - Italian (PAL)
-emutosno.prg - Norwegian (PAL)
-emutosru.prg - Russian (PAL)
-emutosse.prg - Swedish (PAL)
-emutossg.prg - Swiss German (PAL)
-emutosuk.prg - English (PAL)
-emutosus.prg - English (NTSC)
+ptos.prg - Multilanguage
+ptoscz.prg - Czech (PAL)
+ptosde.prg - German (PAL)
+ptoses.prg - Spanish (PAL)
+ptosfi.prg - Finnish (PAL)
+ptosfr.prg - French (PAL)
+ptosgr.prg - Greek (PAL)
+ptosit.prg - Italian (PAL)
+ptosno.prg - Norwegian (PAL)
+ptosru.prg - Russian (PAL)
+ptosse.prg - Swedish (PAL)
+ptossg.prg - Swiss German (PAL)
+ptosuk.prg - English (PAL)
+ptosus.prg - English (NTSC)
 
 The following optional files are also supplied:
 emucurs.rsc - modifiable mouse cursors for the AES/desktop

@@ -3,7 +3,7 @@ EmuTOS - M548x dBUG version
 This EmuTOS version runs on ColdFire V4e Evaluation Boards (EVB).
 No graphical output, only text mode ColdFire TOS programs through RS-232.
 
-emutos-m548x-dbug.s19 - RAM executable (English)
+ptos-m548x-dbug.s19 - RAM executable (English)
 
 Supported hardware:
 
@@ -41,15 +41,15 @@ see the dBUG prompt.
 
 2) Ensure that your TCP/IP connection is properly configured, on both sides.
 
-3) Put emutos-m548x-dbug.s19 at the root of your TFTP server.
+3) Put ptos-m548x-dbug.s19 at the root of your TFTP server.
 
 4) In the terminal, type the following command to download the binary:
-dn emutos-m548x-dbug.s19
+dn ptos-m548x-dbug.s19
 
 5) Then type the following command to run EmuTOS:
 go
 
-6) You will see the EmuTOS welcome screen.
+6) You will see the pTOS welcome screen.
 Press C to enter the early console.
 
 7) If you wait too much, the desktop will run in the background.

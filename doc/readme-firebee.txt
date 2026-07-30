@@ -3,7 +3,7 @@ EmuTOS - FireBee version
 This ROM is suitable for FireBee hardware.  See:
 http://firebee.org/
 
-emutosfb.s19 - Multilanguage
+ptosfb.s19 - Multilanguage
 
 The following optional files are also supplied:
 emucurs.rsc - modifiable mouse cursors for the AES/desktop
@@ -42,7 +42,7 @@ This tool runs on MS Windows and requires additional hardware.
 2) Didier Méquignon's FLASH060.PRG
 http://didierm.pagesperso-orange.fr/firebee.htm
 Get it from the tos060.lzh archive, in the tos060/flash.too folder.
-On your FireBee, start FireTOS, run FLASH060.PRG and flash emutosfb.s19.
+On your FireBee, start FireTOS, run FLASH060.PRG and flash ptosfb.s19.
 You can also use FLASH_CF.PRG from EmuTOS itself.
 
 In both cases, the correct EmuTOS flash parameters are prefilled,

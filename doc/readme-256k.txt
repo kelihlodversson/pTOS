@@ -11,19 +11,19 @@ These ROMs will work fine on Hatari with any hardware combination.
 
 Each ROM contains a single language:
 
-etos256cz.img - Czech (PAL)
-etos256de.img - German (PAL)
-etos256es.img - Spanish (PAL)
-etos256fi.img - Finnish (PAL)
-etos256fr.img - French (PAL)
-etos256gr.img - Greek (PAL)
-etos256it.img - Italian (PAL)
-etos256no.img - Norwegian (PAL)
-etos256ru.img - Russian (PAL)
-etos256se.img - Swedish (PAL)
-etos256sg.img - Swiss German (PAL)
-etos256us.img - English (NTSC)
-etos256uk.img - English (PAL)
+ptos256cz.img - Czech (PAL)
+ptos256de.img - German (PAL)
+ptos256es.img - Spanish (PAL)
+ptos256fi.img - Finnish (PAL)
+ptos256fr.img - French (PAL)
+ptos256gr.img - Greek (PAL)
+ptos256it.img - Italian (PAL)
+ptos256no.img - Norwegian (PAL)
+ptos256ru.img - Russian (PAL)
+ptos256se.img - Swedish (PAL)
+ptos256sg.img - Swiss German (PAL)
+ptos256us.img - English (NTSC)
+ptos256uk.img - English (PAL)
 
 The following optional files are also supplied:
 emucurs.rsc - modifiable mouse cursors for the AES/desktop

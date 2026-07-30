@@ -12,8 +12,8 @@ This ROM is the optimal one for Hatari, with any hardware combination.
 Some legacy programs don't work with 512k TOS images, for those one may
 need to use a smaller EmuTOS image.
 
-etos512k.img - Multilanguage
-etos512k.sym - Symbol address information for Hatari debugger and profiler
+ptos512k.img - Multilanguage
+ptos512k.sym - Symbol address information for Hatari debugger and profiler
 
 The following optional files are also supplied:
 emucurs.rsc - modifiable mouse cursors for the AES/desktop

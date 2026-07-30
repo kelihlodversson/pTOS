@@ -2,9 +2,9 @@ EmuTOS - Amiga ROM version
 
 This EmuTOS version is a ROM for Amiga hardware.
 
-emutos-amiga.rom - English ROM
-emutos-kickdisk.adf - English Amiga 1000 Kickstart disk
-emutos-vampire.rom - English ROM optimized for Vampire V2 accelerators
+ptos-amiga.rom - English ROM
+ptos-kickdisk.adf - English Amiga 1000 Kickstart disk
+ptos-vampire.rom - English ROM optimized for Vampire V2 accelerators
 
 The following optional files are also supplied:
 emucurs.rsc - modifiable mouse cursors for the AES/desktop
@@ -31,7 +31,7 @@ No AmigaOS component is required, or even usable.
 
 EmuTOS for Amiga has been successfully tested on:
 - WinUAE emulator, with any hardware and CPU combination
-- Amiga 1000, using emutos-kickdisk.adf instead of the Kickstart floppy
+- Amiga 1000, using ptos-kickdisk.adf instead of the Kickstart floppy
 - Amiga 1200 with Blizzard 1260 accelerator board, using BlizKick
 - Amiga 600, as ROM replacement
 - Amiga 500 with Vampire V2 accelerator board and experimental MapROM feature
@@ -87,5 +87,5 @@ However, due to the licensing issue, redistribution of such binary
 is strictly forbidden.
 
 Note: Alt-RAM support is available without AROS support with the EmuTOS floppy
-for Amiga. See the emutos-amiga-floppy-*.zip archive.
+for Amiga. See the ptos-amiga-floppy-*.zip archive.
 

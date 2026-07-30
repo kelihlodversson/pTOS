@@ -268,46 +268,46 @@ ROM_IMAGE := $(if $(TARGET_192)$(TARGET_256)$(TARGET_512)$(TARGET_CART),y)
 
 ifdef TARGET_192
 ROMSIZE = 192
-image-default = etos192$(UNIQUE).img
+image-default = ptos192$(UNIQUE).img
 MEMBOT_REFERENCE = TOS102
 endif
 ifdef TARGET_256
 ROMSIZE = 256
-image-default = etos256$(UNIQUE).img
+image-default = ptos256$(UNIQUE).img
 MEMBOT_REFERENCE = TOS162
 endif
 ifdef TARGET_512
 ROMSIZE = 512
-image-default = etos512k.img
+image-default = ptos512k.img
 # The symbol file is useful when debugging this image under Hatari.
 image-extra = $(basename $(IMAGE)).sym
 MEMBOT_REFERENCE = TOS404
 endif
 ifdef TARGET_CART
 ROMSIZE = 128
-image-default = etoscart.img
+image-default = ptoscart.img
 MEMBOT_REFERENCE = TOS102
 endif
 ifdef TARGET_PRG
-image-default = emutos$(UNIQUE).prg
+image-default = ptos$(UNIQUE).prg
 endif
 ifdef TARGET_FLOPPY
-image-default = emutos$(UNIQUE).st
+image-default = ptos$(UNIQUE).st
 endif
 ifdef TARGET_SREC
-image-default = $(if $(MACHINE_FIREBEE),emutosfb.s19,emutos-m548x-$(if $(CONF_WITH_BAS_MEMORY_MAP),bas,dbug).s19)
+image-default = $(if $(MACHINE_FIREBEE),ptosfb.s19,ptos-m548x-$(if $(CONF_WITH_BAS_MEMORY_MAP),bas,dbug).s19)
 MEMBOT_REFERENCE = TOS404
 endif
 ifdef TARGET_AMIGA_ROM
-image-default = emutos-amiga.rom
+image-default = ptos-amiga.rom
 MEMBOT_REFERENCE = TOS162
 endif
 ifdef TARGET_AMIGA_KICKDISK
-image-default = emutos-kickdisk.adf
+image-default = ptos-kickdisk.adf
 MEMBOT_REFERENCE = TOS162
 endif
 ifdef TARGET_AMIGA_FLOPPY
-image-default = emutos.adf
+image-default = ptos.adf
 endif
 ifdef TARGET_RPI_KERNEL
 image-default = $(strip \
@@ -435,7 +435,7 @@ ifdef ROM_IMAGE
 $(IMAGE): $(EMUTOS_IMG) mkrom
 	./mkrom pad $(ROMSIZE)k $< $@
 ifdef TARGET_CART
-	./mkrom stc $(EMUTOS_IMG) emutos.stc
+	./mkrom stc $(EMUTOS_IMG) ptos.stc
 endif
 endif
 
@@ -465,7 +465,7 @@ endif
 # Amiga images
 #
 
-AMIGA_ROM = emutos-amiga.rom
+AMIGA_ROM = ptos-amiga.rom
 
 ifdef TARGET_AMIGA_ROM
 $(IMAGE): $(EMUTOS_IMG) mkrom
