@@ -12,8 +12,6 @@
 #include "asmdefs.h"
 #include "asmstruct.h"
 
-        .globl  _disable_interrupts
-        .globl  _enable_interrupts
         .globl  _giveerr
         .globl  _takeerr
         .globl  _retake
@@ -34,6 +32,10 @@
         .globl  _tikcod
         .globl  _enable_ceh
 
+/* now defined by the BIOS, in bios/arch/m68k/intmask.S */
+        .extern _disable_interrupts
+        .extern _enable_interrupts
+
         .extern _eralert
         .extern _rlr
         .extern _super
@@ -44,33 +46,6 @@
         .extern _tchange
         .extern _b_delay
         .extern _os_beg
-
-/* disable interrupts */
-_disable_interrupts:
-#ifdef __mcoldfire__
-        move.l  d0,-(sp)
-        move.w  sr,d0
-        move.w  d0,savesr
-        ori.l   #0x0700,d0
-        move.w  d0,sr
-        move.l  (sp)+,d0
-#else
-        move    sr,savesr
-        ori     #0x0700,sr
-#endif
-        rts
-
-/* restore interrupt mask as it was before cli() */
-_enable_interrupts:
-#ifdef __mcoldfire__
-        move.l  d0,-(sp)
-        move.w  savesr,d0
-        move.w  d0,sr
-        move.l  (sp)+,d0
-#else
-        move    savesr,sr
-#endif
-        rts
 
 
 /*
@@ -458,9 +433,6 @@ err_tbl_end:
         .equ    err_tbl_last,(err_tbl_end-err_tbl)
 
 .bss
-
-savesr:
-        .ds.w    1
 
 save_etv_critic:
         .ds.l    1      // save area for character-mode critical error vector

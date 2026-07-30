@@ -1,0 +1,229 @@
+#
+# Ordinary build validation for pTOS.
+#
+# Every configuration in configs/ is built on its own, so that a change to
+# shared code that breaks one machine says which machine it broke.  The m68k
+# release archives are built too, because "make release" exercises code paths
+# (all countries, the source archive, EmuCON) that a single image build does
+# not.
+#
+# Publishing releases is deliberately not part of this workflow; see
+# release.yml.
+#
+
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# Superseded runs of a pull request are of no interest.  Runs on master are
+# left alone, so that every commit there keeps its own result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # The matrices are derived from configs/ instead of being written out here,
+  # so that adding a configuration automatically makes it a compatibility
+  # check without anyone having to remember this file.
+  configurations:
+    name: Enumerate configurations
+    runs-on: ubuntu-latest
+    outputs:
+      m68k: ${{ steps.enumerate.outputs.m68k }}
+      arm: ${{ steps.enumerate.outputs.arm }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Split the configurations by architecture
+        id: enumerate
+        run: |
+          # ["rpi1","rpi2"] from a space separated list, [] when it is empty.
+          # Written out by hand rather than with jq, so that this job needs
+          # nothing beyond the shell.  A defconfig name never needs escaping.
+          to_json() {
+            local out= sep=
+            for name in $1; do
+              out="$out$sep\"$name\""
+              sep=,
+            done
+            printf '[%s]' "$out"
+          }
+
+          m68k=
+          arm=
+          for config in configs/*_defconfig; do
+            name=$(basename "$config" _defconfig)
+            # MACHINE_RPI is what selects the ARM architecture; everything
+            # else in configs/ is m68k or ColdFire.
+            if grep -q '^MACHINE_RPI=y' "$config"; then
+              arm="$arm $name"
+            else
+              m68k="$m68k $name"
+            fi
+          done
+
+          # One JSON array per architecture, for the matrices below.
+          echo "m68k=$(to_json "$m68k")" >>"$GITHUB_OUTPUT"
+          echo "arm=$(to_json "$arm")" >>"$GITHUB_OUTPUT"
+
+          {
+            echo '## Configurations to build'
+            echo
+            echo "m68k:$m68k"
+            echo
+            echo "arm:$arm"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  m68k:
+    # The configuration name is the job name, so a failure is identified by
+    # the entry in the checks list, without opening any logs.
+    name: ${{ matrix.config }}
+    needs: configurations
+    # Pinned: the m68k toolchain comes from a PPA, which does not necessarily
+    # have packages for whatever ubuntu-latest currently points at.
+    runs-on: ubuntu-22.04
+    strategy:
+      # Every configuration is an independent compatibility check, so one
+      # failure must not hide the state of the others.
+      fail-fast: false
+      matrix:
+        config: ${{ fromJSON(needs.configurations.outputs.m68k) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: m68k
+
+      - name: Build ${{ matrix.config }}
+        env:
+          CONFIG: ${{ matrix.config }}
+        run: |
+          make "${CONFIG}_defconfig"
+          make
+
+      - name: Collect the build products
+        run: |
+          mkdir products
+          # The name of the image depends on the configuration, so take
+          # whatever the build produced rather than guessing.
+          for product in *.img *.prg *.st *.s19 *.stc *.rom *.adf *.sym emutos.map; do
+            if [ -e "$product" ]; then
+              cp "$product" products/
+            fi
+          done
+          ls -l products
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ptos-${{ matrix.config }}
+          path: products/
+          retention-days: 14
+
+      - name: Report the failure
+        if: failure()
+        run: |
+          echo "::error title=${{ matrix.config }}::the ${{ matrix.config }} configuration failed"
+
+  arm:
+    name: ${{ matrix.config }}
+    needs: configurations
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config: ${{ fromJSON(needs.configurations.outputs.arm) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: arm
+
+      - name: Build ${{ matrix.config }}
+        env:
+          CONFIG: ${{ matrix.config }}
+        run: |
+          make "${CONFIG}_defconfig"
+          make
+
+      - name: Collect the build products
+        run: |
+          mkdir products
+          # kernel.img, kernel7.img, kernel8-32.img or kernel7l.img, plus the
+          # ELF the image was extracted from, which still has the symbols.
+          for product in *.img emutos.elf emutos.map; do
+            if [ -e "$product" ]; then
+              cp "$product" products/
+            fi
+          done
+          ls -l products
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ptos-${{ matrix.config }}
+          path: products/
+          retention-days: 14
+
+      - name: Report the failure
+        if: failure()
+        run: |
+          echo "::error title=${{ matrix.config }}::the ${{ matrix.config }} configuration failed"
+
+  release-archives:
+    name: Release archives
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: m68k
+
+      # Not a release: these archives are only kept as workflow artifacts, to
+      # confirm that "make release" still works and to have something to
+      # download from a build of master.  release.yml is what publishes.
+      - name: Build the release archives
+        run: |
+          VERSION="$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)"
+          echo "VERSION=$VERSION"
+          make release VERSION="$VERSION"
+          ls -l release-archives
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ptos-release-archives
+          path: release-archives/
+          retention-days: 14
+
+  # A single job to require in the branch protection rules, so that the list
+  # does not have to be edited every time a configuration is added.
+  all-builds:
+    name: All builds
+    needs: [m68k, arm, release-archives]
+    # Runs even when a configuration failed, which is the whole point, but not
+    # when the run was cancelled: superseding a pull request run is normal, and
+    # reporting the leftover as a failed build is just misleading.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the results
+        run: |
+          echo "m68k configurations: ${{ needs.m68k.result }}"
+          echo "arm configurations:  ${{ needs.arm.result }}"
+          echo "release archives:    ${{ needs.release-archives.result }}"
+          case '${{ needs.m68k.result }}:${{ needs.arm.result }}:${{ needs.release-archives.result }}' in
+          success:success:success) ;;
+          *)
+            echo "::error::at least one configuration failed to build"
+            exit 1
+            ;;
+          esac
