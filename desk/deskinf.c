@@ -490,7 +490,7 @@ static WORD count_ffs(char *path)
 {
     G.g_nfiles = G.g_ndirs = G.g_size = 0L;
 
-    return d_doop(0, OP_COUNT, path, path, 0L, NULL);
+    return d_doop(0, OP_COUNT, path, path, NULL, NULL);
 }
 
 
