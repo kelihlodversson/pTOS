@@ -33,9 +33,14 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
 {
     struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *table =
         (struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *) pagetable_phys;
+    ULONG max_window_sections = VIRT_GIC_DIST_BASE / MEGABYTE;
     ULONG ram_window_sections = ram_size_bytes / MEGABYTE;
+    ULONG ram_base_section = VIRT_RAM_BASE / MEGABYTE;
     ULONG i;
     ULONG control, aux_control;
+
+    if (ram_window_sections > max_window_sections)
+        ram_window_sections = max_window_sections;
 
     clean_data_cache();
 
@@ -43,9 +48,19 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
     {
         struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *entry = &table[i];
         ULONG phys_base;
-        BOOL is_ram = (i < ram_window_sections);
+        /* Two disjoint aliases of the same physical RAM need Normal
+         * (cacheable, executable) attributes: the low virtual window
+         * used by the fixed-address sysvars, and the identity mapping
+         * at VIRT_RAM_BASE -- which is where this function itself is
+         * physically executing right now, pre-MMU, and must keep
+         * executing from immediately after the MMU-enable write below,
+         * until startup.S's explicit jump into virtual addressing. */
+        BOOL low_window = (i < ram_window_sections);
+        BOOL ram_identity = (i >= ram_base_section
+                           && i < ram_base_section + ram_window_sections);
+        BOOL is_ram = low_window || ram_identity;
 
-        if (is_ram)
+        if (low_window)
             phys_base = i * MEGABYTE + VIRT_RAM_BASE;
         else
             phys_base = i * MEGABYTE;
@@ -99,4 +114,9 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
     control &= ~ARM_CONTROL_STRICT_ALIGNMENT;
     control |= MMU_MODE;
     asm volatile ("mcr p15, 0, %0, c1, c0,  0" : : "r" (control) : "memory");
+
+    /* Context-synchronize before relying on the new translation regime --
+     * required by the architecture, and specifically what makes the very
+     * next instruction fetch (back in startup.S) behave predictably. */
+    flush_prefetch_buffer();
 }

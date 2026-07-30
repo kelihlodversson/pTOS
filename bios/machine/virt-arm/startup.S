@@ -93,7 +93,10 @@ os_dummy:
 _main:
     ldr sp, =0x47ff0000
     bl  _virt_uart0_init
-    ldr r4, =hello_msg_phys
+    adr r4, hello_msg_phys     /* PC-relative: correct at the physical PC we're
+                                 * actually executing at pre-MMU, unlike
+                                 * "ldr r4, =symbol" which loads the linked
+                                 * (virtual) address -- not valid yet. */
     bl  print_string
 
     /* MMU bring-up: literal physical constants only, no linked symbols */
