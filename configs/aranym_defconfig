@@ -1,5 +1,5 @@
 # 512 KB ROM image for the ARAnyM emulator
 MACHINE_ARANYM=y
-IMAGE_NAME="emutos-aranym.img"
+IMAGE_NAME="ptos-aranym.img"
 # The multi-language image supports every country at run time.
 # BUILD_UNIQUE_COUNTRY is not set

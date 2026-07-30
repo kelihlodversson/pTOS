@@ -5,19 +5,19 @@ without the need of replacing the system ROM.
 This is the simplest way to test EmuTOS on real hardware from a floppy.
 The drawback is less available RAM compared to ROM versions.
 
-emutoscz.st - Czech (PAL)
-emutosde.st - German (PAL)
-emutoses.st - Spanish (PAL)
-emutosfi.st - Finnish (PAL)
-emutosfr.st - French (PAL)
-emutosgr.st - Greek (PAL)
-emutosit.st - Italian (PAL)
-emutosno.st - Norwegian (PAL)
-emutosru.st - Russian (PAL)
-emutosse.st - Swedish (PAL)
-emutossg.st - Swiss German (PAL)
-emutosuk.st - English (PAL)
-emutosus.st - English (NTSC)
+ptoscz.st - Czech (PAL)
+ptosde.st - German (PAL)
+ptoses.st - Spanish (PAL)
+ptosfi.st - Finnish (PAL)
+ptosfr.st - French (PAL)
+ptosgr.st - Greek (PAL)
+ptosit.st - Italian (PAL)
+ptosno.st - Norwegian (PAL)
+ptosru.st - Russian (PAL)
+ptosse.st - Swedish (PAL)
+ptossg.st - Swiss German (PAL)
+ptosuk.st - English (PAL)
+ptosus.st - English (NTSC)
 
 The following optional files are also supplied:
 emucurs.rsc - modifiable mouse cursors for the AES/desktop

@@ -5,7 +5,7 @@
 # on every push and must never publish anything, and publishing must not be a
 # side effect of a normal build.
 #
-# Triggered either by pushing a version tag such as v0.2.0, or by hand.  A
+# Triggered either by pushing a version tag such as v0.1.0, or by hand.  A
 # manual run without a tag publishes a snapshot prerelease instead, so that
 # nothing here ever writes to the upstream EmuTOS SourceForge project the way
 # the old Travis deployment did.
@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to publish, e.g. v0.2.0.  Empty publishes a snapshot prerelease.'
+        description: 'Tag to publish, e.g. v0.1.0.  Empty publishes a snapshot prerelease.'
         required: false
         default: ''
 
@@ -52,7 +52,7 @@ jobs:
           tag="$TAG_INPUT"
 
           if [ -n "$tag" ]; then
-            # v0.2.0 is the tag, 0.2.0 is what goes into the image and into
+            # v0.1.0 is the tag, 0.1.0 is what goes into the image and into
             # the names of the archives.
             version="${tag#v}"
           else
@@ -63,7 +63,7 @@ jobs:
             tag="snapshot-$version"
           fi
 
-          # A snapshot, or a semver pre-release suffix such as v0.2.0-rc1, is
+          # A snapshot, or a semver pre-release suffix such as v0.1.0-rc1, is
           # not a final release.
           case "$tag" in
           *-*) prerelease=true ;;
@@ -172,8 +172,35 @@ jobs:
           TAG: ${{ needs.version.outputs.tag }}
           VERSION: ${{ needs.version.outputs.version }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
+          # Where the notes of the very first release begin.  The only tags
+          # older than it are the ones this fork inherited from upstream
+          # EmuTOS, and VERSION_0_9_9 is the newest upstream release that
+          # master actually contains, so it is where pTOS proper starts.
+          NOTES_BASE_TAG: VERSION_0_9_9
         run: |
           ls -l release-archives
+
+          # Without nullglob, a pattern that matches nothing leaves the
+          # literal pattern string in the array, and gh release create would
+          # then fail on a non-existent path with a confusing error instead
+          # of the clear one below.
+          shopt -s nullglob
+
+          # The Raspberry Pi is what this fork is for, so its archive is
+          # listed first regardless of how the file names sort -- every
+          # archive here now starts with "ptos-", so alphabetical order no
+          # longer happens to put it anywhere in particular.
+          raspi=(release-archives/ptos-raspi-*)
+          if [ "${#raspi[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one release-archives/ptos-raspi-* archive, found ${#raspi[@]}"
+            exit 1
+          fi
+          others=()
+          for f in release-archives/*; do
+            skip=
+            for r in "${raspi[@]}"; do [ "$f" = "$r" ] && skip=1; done
+            [ -z "$skip" ] && others+=("$f")
+          done
 
           prerelease=
           if [ "$PRERELEASE" = true ]; then
@@ -181,13 +208,37 @@ jobs:
           fi
 
           # --generate-notes leaves the release notes to GitHub, which derives
-          # them from the commits and pull requests since the last release.
+          # them from the commits and pull requests since the previous
+          # release.  Only the first release has no previous one: GitHub then
+          # falls back to the oldest tag it can find, which here is an
+          # inherited upstream tag, and the changelog ends up covering years
+          # of EmuTOS history from before this fork existed.
+          #
+          # So give it a starting point in that case, and only in that case.
+          # --notes-start-tag overrides the previous release rather than
+          # standing in for it, so passing it every time would make each
+          # release repeat everything already listed in the one before.
+          # No "|| true" here on purpose: a real failure of "gh release list"
+          # (auth, API outage) must abort the step rather than be treated the
+          # same as "no previous release" and silently anchor the notes
+          # wrong.  A repo with no releases yet is not an error case -- gh
+          # exits 0 and prints nothing -- so nothing legitimate needs masking.
+          previous=$(gh release list --limit 1 --json tagName --jq '.[].tagName')
+          notes_start=
+          if [ -n "$previous" ]; then
+            echo "Previous release is $previous; GitHub starts the notes there"
+          else
+            echo "No previous release; starting the notes at $NOTES_BASE_TAG"
+            notes_start="--notes-start-tag $NOTES_BASE_TAG"
+          fi
+
           # --target matters only for a manual run, where the tag does not
           # exist yet and is created at this commit.
-          gh release create "$TAG" release-archives/* \
+          gh release create "$TAG" "${raspi[@]}" "${others[@]}" \
             --title "pTOS $VERSION" \
             --target "$GITHUB_SHA" \
             --generate-notes \
+            $notes_start \
             $prerelease
 
           echo "Published $TAG" >>"$GITHUB_STEP_SUMMARY"

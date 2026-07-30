@@ -2,8 +2,8 @@ EmuTOS - Amiga floppy version
 
 This EmuTOS version is a boot floppy for Amiga.
 
-emutos.adf - English Amiga boot floppy
-emutos-vampire.adf - Same floppy, optimized for Vampire V2 accelerators
+ptos.adf - English Amiga boot floppy
+ptos-vampire.adf - Same floppy, optimized for Vampire V2 accelerators
 
 The following optional files are also supplied:
 emucurs.rsc - modifiable mouse cursors for the AES/desktop
@@ -55,7 +55,7 @@ Unsupported Atari features:
 - Color video modes
 - Sound
 
-Special features of emutos-vampire.adf:
+Special features of ptos-vampire.adf:
 - Optimized for 68040 (best option for Apollo 68080)
 - EmuTOS itself runs in FastRAM, for best performance
 

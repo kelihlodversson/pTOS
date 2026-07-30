@@ -91,32 +91,32 @@ Available configurations
 Atari and compatible
 --------------------
 
-atari192            etos192us.img, ROM padded to 192 KB (at 0x00fc0000)
-atari256            etos256us.img, ROM padded to 256 KB (at 0x00e00000)
-atari512            etos512k.img, ROM padded to 512 KB (at 0x00e00000),
+atari192            ptos192us.img, ROM padded to 192 KB (at 0x00fc0000)
+atari256            ptos256us.img, ROM padded to 256 KB (at 0x00e00000)
+atari512            ptos512k.img, ROM padded to 512 KB (at 0x00e00000),
                     multi-language
-cartridge           etoscart.img and emutos.stc, diagnostic cartridge
-prg                 emutos.prg, a RAM TOS, multi-language
-floppy              emutosus.st, a bootable floppy holding a RAM TOS
-aranym              emutos-aranym.img, suitable for ARAnyM
+cartridge           ptoscart.img and ptos.stc, diagnostic cartridge
+prg                 ptos.prg, a RAM TOS, multi-language
+floppy              ptosus.st, a bootable floppy holding a RAM TOS
+aranym              ptos-aranym.img, suitable for ARAnyM
 
 Amiga
 -----
 
-amiga               emutos-amiga.rom, ROM for Amiga hardware
-amiga-vampire       emutos-vampire.rom, optimized for the Vampire V2
-amiga-kickdisk      emutos-kickdisk.adf, Kickstart disk for the Amiga 1000
-amigaflop           emutos.adf, RAM TOS as an Amiga boot floppy
-amigaflop-vampire   emutos-vampire.adf, the same for the Vampire V2
+amiga               ptos-amiga.rom, ROM for Amiga hardware
+amiga-vampire       ptos-vampire.rom, optimized for the Vampire V2
+amiga-kickdisk      ptos-kickdisk.adf, Kickstart disk for the Amiga 1000
+amigaflop           ptos.adf, RAM TOS as an Amiga boot floppy
+amigaflop-vampire   ptos-vampire.adf, the same for the Vampire V2
 
 ColdFire
 --------
 
-firebee             emutosfb.s19, to be flashed on the FireBee
-firebee-prg         emutos.prg, a RAM TOS for the FireBee
-m548x-dbug          emutos-m548x-dbug.s19, for dBUG on ColdFire boards
-m548x-bas           emutos-m548x-bas.s19, for BaS_gcc on ColdFire boards
-m548x-prg           emutos.prg, a RAM TOS for ColdFire boards with BaS_gcc
+firebee             ptosfb.s19, to be flashed on the FireBee
+firebee-prg         ptos.prg, a RAM TOS for the FireBee
+m548x-dbug          ptos-m548x-dbug.s19, for dBUG on ColdFire boards
+m548x-bas           ptos-m548x-bas.s19, for BaS_gcc on ColdFire boards
+m548x-prg           ptos.prg, a RAM TOS for ColdFire boards with BaS_gcc
 
 Raspberry Pi
 ------------
@@ -195,7 +195,7 @@ build.yml       builds every configuration in configs/ as a job of its own,
                 release archives.  Every image is kept as a workflow
                 artifact.
 release.yml     publishes a GitHub release.  It runs when a version tag such
-                as v0.2.0 is pushed, and can also be started by hand, which
+                as v0.1.0 is pushed, and can also be started by hand, which
                 publishes a snapshot prerelease instead.
 
 Both get their toolchain from .github/actions/setup-toolchain, which is the

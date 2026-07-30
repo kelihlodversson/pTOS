@@ -62,7 +62,7 @@ release-mkdir:
 	mkdir $(RELEASE_DIR)
 
 .PHONY: release-src
-RELEASE_SRC = emutos-src-$(VERSION)
+RELEASE_SRC = ptos-src-$(VERSION)
 release-src:
 	mkdir $(RELEASE_DIR)/$(RELEASE_SRC)
 	cp -R $(filter-out . .. .git $(RELEASE_DIR), $(shell echo * .*)) $(RELEASE_DIR)/$(RELEASE_SRC)
@@ -74,135 +74,135 @@ release-src:
 	rm -r $(RELEASE_DIR)/$(RELEASE_SRC)
 
 .PHONY: release-512k
-RELEASE_512K = $(RELEASE_DIR)/emutos-512k-$(VERSION)
+RELEASE_512K = $(RELEASE_DIR)/ptos-512k-$(VERSION)
 release-512k:
 	$(call build-config,atari512)
 	mkdir $(RELEASE_512K)
-	cp etos512k.img etos512k.sym $(RELEASE_512K)
+	cp ptos512k.img ptos512k.sym $(RELEASE_512K)
 	$(call copy-resources,$(RELEASE_512K))
 	$(call copy-docs,$(RELEASE_512K),512k)
 	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_512K)).zip $(notdir $(RELEASE_512K))
 	rm -r $(RELEASE_512K)
 
 .PHONY: release-256k
-RELEASE_256K = $(RELEASE_DIR)/emutos-256k-$(VERSION)
+RELEASE_256K = $(RELEASE_DIR)/ptos-256k-$(VERSION)
 release-256k:
 	$(call build-config-all-countries,atari256)
 	mkdir $(RELEASE_256K)
-	cp etos256*.img $(RELEASE_256K)
+	cp ptos256*.img $(RELEASE_256K)
 	$(call copy-resources,$(RELEASE_256K))
 	$(call copy-docs,$(RELEASE_256K),256k)
 	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_256K)).zip $(notdir $(RELEASE_256K))
 	rm -r $(RELEASE_256K)
 
 .PHONY: release-192k
-RELEASE_192K = $(RELEASE_DIR)/emutos-192k-$(VERSION)
+RELEASE_192K = $(RELEASE_DIR)/ptos-192k-$(VERSION)
 release-192k:
 	$(call build-config-all-countries,atari192)
 	mkdir $(RELEASE_192K)
-	cp etos192*.img $(RELEASE_192K)
+	cp ptos192*.img $(RELEASE_192K)
 	$(call copy-resources,$(RELEASE_192K))
 	$(call copy-docs,$(RELEASE_192K),192k)
 	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_192K)).zip $(notdir $(RELEASE_192K))
 	rm -r $(RELEASE_192K)
 
 .PHONY: release-cartridge
-RELEASE_CARTRIDGE = $(RELEASE_DIR)/emutos-cartridge-$(VERSION)
+RELEASE_CARTRIDGE = $(RELEASE_DIR)/ptos-cartridge-$(VERSION)
 release-cartridge:
 	$(call build-config,cartridge)
 	mkdir $(RELEASE_CARTRIDGE)
-	cp etoscart.img emutos.stc $(RELEASE_CARTRIDGE)
+	cp ptoscart.img ptos.stc $(RELEASE_CARTRIDGE)
 	$(call copy-docs,$(RELEASE_CARTRIDGE),cartridge)
 	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_CARTRIDGE)).zip $(notdir $(RELEASE_CARTRIDGE))
 	rm -r $(RELEASE_CARTRIDGE)
 
 .PHONY: release-aranym
-RELEASE_ARANYM = $(RELEASE_DIR)/emutos-aranym-$(VERSION)
+RELEASE_ARANYM = $(RELEASE_DIR)/ptos-aranym-$(VERSION)
 release-aranym:
 	$(call build-config,aranym)
 	mkdir $(RELEASE_ARANYM)
-	cp emutos-aranym.img $(RELEASE_ARANYM)
+	cp ptos-aranym.img $(RELEASE_ARANYM)
 	$(call copy-resources,$(RELEASE_ARANYM))
 	$(call copy-docs,$(RELEASE_ARANYM),aranym)
 	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_ARANYM)).zip $(notdir $(RELEASE_ARANYM))
 	rm -r $(RELEASE_ARANYM)
 
 .PHONY: release-firebee
-RELEASE_FIREBEE = $(RELEASE_DIR)/emutos-firebee-$(VERSION)
+RELEASE_FIREBEE = $(RELEASE_DIR)/ptos-firebee-$(VERSION)
 release-firebee:
 	$(call build-config,firebee)
 	mkdir $(RELEASE_FIREBEE)
-	cp emutosfb.s19 $(RELEASE_FIREBEE)
+	cp ptosfb.s19 $(RELEASE_FIREBEE)
 	$(call copy-resources,$(RELEASE_FIREBEE))
 	$(call copy-docs,$(RELEASE_FIREBEE),firebee)
 	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_FIREBEE)).zip $(notdir $(RELEASE_FIREBEE))
 	rm -r $(RELEASE_FIREBEE)
 
 .PHONY: release-amiga-rom
-RELEASE_AMIGA_ROM = $(RELEASE_DIR)/emutos-amiga-rom-$(VERSION)
+RELEASE_AMIGA_ROM = $(RELEASE_DIR)/ptos-amiga-rom-$(VERSION)
 release-amiga-rom:
 	$(call build-config,amiga-kickdisk)
 	mkdir $(RELEASE_AMIGA_ROM)
-	cp emutos-amiga.rom emutos-kickdisk.adf $(RELEASE_AMIGA_ROM)
+	cp ptos-amiga.rom ptos-kickdisk.adf $(RELEASE_AMIGA_ROM)
 	$(call build-config,amiga-vampire)
-	cp emutos-vampire.rom $(RELEASE_AMIGA_ROM)
+	cp ptos-vampire.rom $(RELEASE_AMIGA_ROM)
 	$(call copy-resources,$(RELEASE_AMIGA_ROM))
 	$(call copy-docs,$(RELEASE_AMIGA_ROM),amiga-rom)
 	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_AMIGA_ROM)).zip $(notdir $(RELEASE_AMIGA_ROM))
 	rm -r $(RELEASE_AMIGA_ROM)
 
 .PHONY: release-amiga-floppy
-RELEASE_AMIGA_FLOPPY = $(RELEASE_DIR)/emutos-amiga-floppy-$(VERSION)
+RELEASE_AMIGA_FLOPPY = $(RELEASE_DIR)/ptos-amiga-floppy-$(VERSION)
 release-amiga-floppy:
 	$(call build-config,amigaflop)
 	mkdir $(RELEASE_AMIGA_FLOPPY)
-	cp emutos.adf $(RELEASE_AMIGA_FLOPPY)
+	cp ptos.adf $(RELEASE_AMIGA_FLOPPY)
 	$(call build-config,amigaflop-vampire)
-	cp emutos-vampire.adf $(RELEASE_AMIGA_FLOPPY)
+	cp ptos-vampire.adf $(RELEASE_AMIGA_FLOPPY)
 	$(call copy-resources,$(RELEASE_AMIGA_FLOPPY))
 	$(call copy-docs,$(RELEASE_AMIGA_FLOPPY),amiga-floppy)
 	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_AMIGA_FLOPPY)).zip $(notdir $(RELEASE_AMIGA_FLOPPY))
 	rm -r $(RELEASE_AMIGA_FLOPPY)
 
 .PHONY: release-m548x-dbug
-RELEASE_M548X_DBUG = $(RELEASE_DIR)/emutos-m548x-dbug-$(VERSION)
+RELEASE_M548X_DBUG = $(RELEASE_DIR)/ptos-m548x-dbug-$(VERSION)
 release-m548x-dbug:
 	$(call build-config,m548x-dbug)
 	mkdir $(RELEASE_M548X_DBUG)
-	cp emutos-m548x-dbug.s19 $(RELEASE_M548X_DBUG)
+	cp ptos-m548x-dbug.s19 $(RELEASE_M548X_DBUG)
 	$(call copy-docs,$(RELEASE_M548X_DBUG),m548x-dbug)
 	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_M548X_DBUG)).zip $(notdir $(RELEASE_M548X_DBUG))
 	rm -r $(RELEASE_M548X_DBUG)
 
 .PHONY: release-m548x-bas
-RELEASE_M548X_BAS = $(RELEASE_DIR)/emutos-m548x-bas-$(VERSION)
+RELEASE_M548X_BAS = $(RELEASE_DIR)/ptos-m548x-bas-$(VERSION)
 release-m548x-bas:
 	$(call build-config,m548x-bas)
 	mkdir $(RELEASE_M548X_BAS)
-	cp emutos-m548x-bas.s19 $(RELEASE_M548X_BAS)
+	cp ptos-m548x-bas.s19 $(RELEASE_M548X_BAS)
 	$(call copy-docs,$(RELEASE_M548X_BAS),m548x-bas)
 	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_M548X_BAS)).zip $(notdir $(RELEASE_M548X_BAS))
 	rm -r $(RELEASE_M548X_BAS)
 
 .PHONY: release-prg
-RELEASE_PRG = $(RELEASE_DIR)/emutos-prg-$(VERSION)
+RELEASE_PRG = $(RELEASE_DIR)/ptos-prg-$(VERSION)
 release-prg:
 	$(call build-config,prg)
 	mkdir $(RELEASE_PRG)
-	cp emutos.prg $(RELEASE_PRG)
+	cp ptos.prg $(RELEASE_PRG)
 	$(call build-config-all-countries,prg)
-	cp emutos*.prg $(RELEASE_PRG)
+	cp ptos*.prg $(RELEASE_PRG)
 	$(call copy-resources,$(RELEASE_PRG))
 	$(call copy-docs,$(RELEASE_PRG),prg)
 	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_PRG)).zip $(notdir $(RELEASE_PRG))
 	rm -r $(RELEASE_PRG)
 
 .PHONY: release-floppy
-RELEASE_FLOPPY = $(RELEASE_DIR)/emutos-floppy-$(VERSION)
+RELEASE_FLOPPY = $(RELEASE_DIR)/ptos-floppy-$(VERSION)
 release-floppy:
 	$(call build-config-all-countries,floppy)
 	mkdir $(RELEASE_FLOPPY)
-	cp emutos*.st $(RELEASE_FLOPPY)
+	cp ptos*.st $(RELEASE_FLOPPY)
 	$(call copy-resources,$(RELEASE_FLOPPY))
 	$(call copy-docs,$(RELEASE_FLOPPY),floppy)
 	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_FLOPPY)).zip $(notdir $(RELEASE_FLOPPY))
@@ -216,7 +216,7 @@ release-emucon:
 	mkdir $(RELEASE_EMUCON)
 	cp cli/emucon2.tos cli/readme.txt $(RELEASE_EMUCON)
 	unix2dos $(RELEASE_EMUCON)/readme.txt
-	cd $(RELEASE_DIR) && zip -9 -r emucon-$(VERSION).zip emucon
+	cd $(RELEASE_DIR) && zip -9 -r ptos-emucon-$(VERSION).zip emucon
 	rm -r $(RELEASE_EMUCON)
 
 # Main goal to build a full release distribution

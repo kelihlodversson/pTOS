@@ -11,19 +11,19 @@ the Hatari emulator's Falcon emulation due to missing VIDEL support.
 
 Each ROM contains a single language:
 
-etos192cz.img - Czech (PAL)
-etos192de.img - German (PAL)
-etos192es.img - Spanish (PAL)
-etos192fi.img - Finnish (PAL)
-etos192fr.img - French (PAL)
-etos192gr.img - Greek (PAL)
-etos192it.img - Italian (PAL)
-etos192no.img - Norwegian (PAL)
-etos192ru.img - Russian (PAL)
-etos192se.img - Swedish (PAL)
-etos192sg.img - Swiss German (PAL)
-etos192us.img - English (NTSC)
-etos192uk.img - English (PAL)
+ptos192cz.img - Czech (PAL)
+ptos192de.img - German (PAL)
+ptos192es.img - Spanish (PAL)
+ptos192fi.img - Finnish (PAL)
+ptos192fr.img - French (PAL)
+ptos192gr.img - Greek (PAL)
+ptos192it.img - Italian (PAL)
+ptos192no.img - Norwegian (PAL)
+ptos192ru.img - Russian (PAL)
+ptos192se.img - Swedish (PAL)
+ptos192sg.img - Swiss German (PAL)
+ptos192us.img - English (NTSC)
+ptos192uk.img - English (PAL)
 
 The following optional files are also supplied:
 emucurs.rsc - modifiable mouse cursors for the AES/desktop

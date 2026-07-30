@@ -3,7 +3,7 @@ EmuTOS - ARAnyM version
 This ROM is optimized for ARAnyM:
 https://aranym.github.io/
 
-emutos-aranym.img - Multilanguage
+ptos-aranym.img - Multilanguage
 
 The following optional files are also supplied:
 emucurs.rsc - modifiable mouse cursors for the AES/desktop
