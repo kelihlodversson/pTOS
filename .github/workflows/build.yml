@@ -209,7 +209,10 @@ jobs:
   all-builds:
     name: All builds
     needs: [m68k, arm, release-archives]
-    if: always()
+    # Runs even when a configuration failed, which is the whole point, but not
+    # when the run was cancelled: superseding a pull request run is normal, and
+    # reporting the leftover as a failed build is just misleading.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Check the results
