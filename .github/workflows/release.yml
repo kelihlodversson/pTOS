@@ -180,6 +180,18 @@ jobs:
         run: |
           ls -l release-archives
 
+          # The Raspberry Pi is what this fork is for, so its archive is
+          # listed first regardless of how the file names sort -- every
+          # archive here now starts with "ptos-", so alphabetical order no
+          # longer happens to put it anywhere in particular.
+          raspi=(release-archives/ptos-raspi-*)
+          others=()
+          for f in release-archives/*; do
+            skip=
+            for r in "${raspi[@]}"; do [ "$f" = "$r" ] && skip=1; done
+            [ -z "$skip" ] && others+=("$f")
+          done
+
           prerelease=
           if [ "$PRERELEASE" = true ]; then
             prerelease=--prerelease
@@ -207,7 +219,7 @@ jobs:
 
           # --target matters only for a manual run, where the tag does not
           # exist yet and is created at this commit.
-          gh release create "$TAG" release-archives/* \
+          gh release create "$TAG" "${raspi[@]}" "${others[@]}" \
             --title "pTOS $VERSION" \
             --target "$GITHUB_SHA" \
             --generate-notes \
