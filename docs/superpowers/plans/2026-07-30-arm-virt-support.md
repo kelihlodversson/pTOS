@@ -1053,8 +1053,6 @@ GICv2 register offsets are architecturally fixed (see "Background" above); this 
 #define GICD_ISENABLER0  (*(volatile ULONG*)(VIRT_GIC_DIST_BASE + 0x100))
 #define GICD_ICENABLER0  (*(volatile ULONG*)(VIRT_GIC_DIST_BASE + 0x180))
 #define GICD_IPRIORITYR(n) (*(volatile UBYTE*)(VIRT_GIC_DIST_BASE + 0x400 + (n)))
-#define GICD_ICFGR1      (*(volatile ULONG*)(VIRT_GIC_DIST_BASE + 0xC04)) /* covers IRQ 16-31 */
-
 #define GICC_CTLR  (*(volatile ULONG*)(VIRT_GIC_CPU_BASE + 0x000))
 #define GICC_PMR   (*(volatile ULONG*)(VIRT_GIC_CPU_BASE + 0x004))
 #define GICC_IAR   (*(volatile ULONG*)(VIRT_GIC_CPU_BASE + 0x00C))
