@@ -126,6 +126,30 @@ virt_arm_post_mmu:
     ldrne r4, =sysvars_fail_msg
     bl  print_string
 
+    /*
+     * The round-trip test above only proves the sysvars alias works; it
+     * leaves _phystop holding the test pattern instead of a real value.
+     * _phystop is not a scratch variable -- bios/biosmem.c's bmem_init()
+     * reads it directly ("memtop = phystop") to size the entire free-
+     * memory pool. Leaving it at 0x12345678 (~291MB) made every later
+     * allocation (including the TPA for the first launched process)
+     * wildly oversized, which is what actually produced the corrupt,
+     * out-of-range stack pointers that crashed GEMDOS process dispatch.
+     *
+     * The real top of usable RAM is the top of the low MMU window built
+     * by virt_mmu_bootstrap() (see the call above: 0x08000000 bytes,
+     * hardcoded to match this file's own MMU size argument and the
+     * qemu -m 128 invocation documented for this target), minus the 1MB
+     * reserved at its very top for the MMU page table itself (see the
+     * 0x47f00000 page-table address passed to virt_mmu_bootstrap: that is
+     * VIRT_RAM_BASE + 0x07f00000, i.e. 127MB into the window) -- the same
+     * "reserve the last megabyte" convention bios/machine/raspi/memory.c
+     * uses for the same reason.
+     */
+    ldr r0, =_phystop
+    ldr r1, =0x07f00000
+    str r1, [r0]
+
     /* Clear the BSS segment now that virtual addressing is live. */
     ldr r0, =__bss
     ldr r1, =__ebss
@@ -135,6 +159,20 @@ virt_arm_post_mmu:
     str r2, [r0], #4
     b   1b
 2:
+
+    /*
+     * Install the exception vector table above.  Nothing has touched VBAR
+     * up to this point, so it still holds its reset value of 0, and the
+     * CPU vectors every exception into the low TOS system variables --
+     * which are data, so the first exception of any kind (an SVC from
+     * trap1(), or the generic timer IRQ) executes garbage and turns into
+     * an endless Undefined Instruction loop at address 0x04.  The linked
+     * address of arm_vectors is valid here because the low MMU window
+     * maps virtual 0..RAM_SIZE onto physical VIRT_RAM_BASE..  See
+     * bios/machine/raspi/startup.S, which does the same thing.
+     */
+    ldr r0, =arm_vectors
+    mcr p15, 0, r0, c12, c0, 0
 
     ldr sp, =_stktop
     b   _biosmain
