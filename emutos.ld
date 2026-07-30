@@ -14,7 +14,7 @@
  * to allow #include, #define, #if, etc. */
 #include "include/config.h"
 
-#if !defined(MACHINE_RPI)
+#if !defined(MACHINE_RPI) && !defined(MACHINE_VIRT_ARM)
 /* Create a plain binary file, without any header (not possible on ARM) */
 OUTPUT_FORMAT(binary)
 #endif
