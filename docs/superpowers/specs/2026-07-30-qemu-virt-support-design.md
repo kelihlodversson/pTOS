@@ -93,6 +93,19 @@ New arch path; nothing existing to reuse, since it's the first non-Atari
   `OSHEADER` the way the classic Atari boot does; needs verifying against
   `bios/startup.S` for layout compatibility during implementation, and a
   variant written if it doesn't line up directly.
+- **Cross-reference from the ARM plan:** `tosvars.ld` hardcodes ~147 TOS
+  system-variable addresses as absolute constants in `0x380`–`0x800`
+  (see the ARM implementation plan's memory-layout task), and the
+  classic ROM-based Atari targets (`TARGET_192`/`256`/`512`/`CART`)
+  already split this into two distinct regions: `stram` (origin `0`,
+  holding the fixed-address sysvars) and `rom` (origin `0x00e00000`,
+  holding `.text`). Whether m68k `virt` needs anything beyond that
+  existing two-region split — it does have real RAM at physical `0x0`,
+  unlike ARM `virt`, so it may just work unmodified — or needs its own
+  address-translation trick (the board's default CPU, m68040, has a
+  PMMU already used elsewhere in this codebase via
+  `CONF_WITH_68040_PMMU`) should be checked explicitly when #26 is
+  designed, rather than assumed from the ARM plan.
 - New `goldfish_tty.c` driving the Goldfish TTY device at `0xff008000` for
   console I/O.
 - New `goldfish_pic.c` driving the Goldfish PIC (6 instances at
