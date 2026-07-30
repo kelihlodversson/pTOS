@@ -45,6 +45,18 @@ jobs:
       - name: Split the configurations by architecture
         id: enumerate
         run: |
+          # ["rpi1","rpi2"] from a space separated list, [] when it is empty.
+          # Written out by hand rather than with jq, so that this job needs
+          # nothing beyond the shell.  A defconfig name never needs escaping.
+          to_json() {
+            local out= sep=
+            for name in $1; do
+              out="$out$sep\"$name\""
+              sep=,
+            done
+            printf '[%s]' "$out"
+          }
+
           m68k=
           arm=
           for config in configs/*_defconfig; do
@@ -59,8 +71,8 @@ jobs:
           done
 
           # One JSON array per architecture, for the matrices below.
-          echo "m68k=$(printf '%s\n' $m68k | jq -Rnc '[inputs|select(length>0)]')" >>"$GITHUB_OUTPUT"
-          echo "arm=$(printf '%s\n' $arm | jq -Rnc '[inputs|select(length>0)]')" >>"$GITHUB_OUTPUT"
+          echo "m68k=$(to_json "$m68k")" >>"$GITHUB_OUTPUT"
+          echo "arm=$(to_json "$arm")" >>"$GITHUB_OUTPUT"
 
           {
             echo '## Configurations to build'
