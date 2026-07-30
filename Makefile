@@ -770,10 +770,16 @@ obj/version.o: obj/version.c
 EXTRA_OBJ = obj/minicrt.o obj/boot.o obj/bootram.o obj/ramtos.o \
             obj/bootsect.o obj/amigaboot.o obj/date.o obj/dumpkbd.o
 
+# Only when the AES is built: it describes aes/struct.h, whose uda holds
+# AES_STACK_SIZE longs, and the configuration only defines AES_STACK_SIZE
+# when CONF_WITH_AES is set.  Generating it unconditionally breaks the
+# configurations that leave the AES out, such as the diagnostic cartridge.
+ifdef CONF_WITH_AES
 GEN_SRC += aes/asm_struct_gen.h
 
 aes/asm_struct_gen.h: aes/gen_asm_defines.c $(AUTOCONF_H)
 	$(CC) $(CFILE_FLAGS) -S $< -o - | grep '^#define' > $@
+endif
 
 #
 # We don't generate this automatically, because it might be processed by
