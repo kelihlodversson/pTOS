@@ -318,6 +318,7 @@ Cache
 192K ROMs:
 This is not available.
 
+Other ROMs:
 This item allows you to enable or disable the CPU hardware cache.  The
 item is greyed-out if the CPU does not have a cache.
 
