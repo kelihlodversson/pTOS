@@ -46,8 +46,10 @@ cp desk/icon.def $(1)/emuicon.def && cp desk/icon.rsc $(1)/emuicon.rsc
 endef
 
 # Assemble the documentation of an archive and convert it to DOS line endings.
+# The generic part is readme_emutos.txt, which is what upstream EmuTOS calls
+# readme.txt; here that name is taken by the archive being assembled.
 define copy-docs
-cat doc/readme-$(2).txt readme.txt >$(1)/readme.txt && mkdir $(1)/doc && \
+cat doc/readme-$(2).txt readme_emutos.txt >$(1)/readme.txt && mkdir $(1)/doc && \
 cp $(DOCFILES) $(1)/doc && find $(1) -name '*.txt' -exec unix2dos '{}' ';'
 endef
 

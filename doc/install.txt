@@ -8,8 +8,8 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
       http://vincent.riviere.free.fr/soft/m68k-atari-mint/
 
       On Debian and Ubuntu they are packaged, which is by far the quickest
-      way to get a working toolchain.  This is also what the CI build uses,
-      see .travis/register_apt_repositories.sh:
+      way to get a working toolchain.  This is also what the CI build
+      installs, see .github/actions/setup-toolchain/action.yml:
 
           sudo add-apt-repository ppa:vriviere/ppa
           sudo apt-get update
@@ -182,6 +182,26 @@ Release-related targets
 -----------------------
 
 release     build the release archives into release-archives
+
+
+Continuous integration
+======================
+
+GitHub Actions builds the tree on every push and pull request to master.
+The workflows live in .github/workflows:
+
+build.yml       builds every configuration in configs/ as a job of its own,
+                so a failure names the machine it broke, and builds the m68k
+                release archives.  Every image is kept as a workflow
+                artifact.
+release.yml     publishes a GitHub release.  It runs when a version tag such
+                as v0.2.0 is pushed, and can also be started by hand, which
+                publishes a snapshot prerelease instead.
+
+Both get their toolchain from .github/actions/setup-toolchain, which is the
+authoritative list of what a build needs installed.  Adding a configuration
+to configs/ is enough to have it built; the matrices are derived from that
+directory rather than listed in the workflows.
 
 
 Adding a configuration option

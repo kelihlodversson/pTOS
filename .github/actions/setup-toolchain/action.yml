@@ -1,0 +1,81 @@
+#
+# Install everything a pTOS build needs: the cross toolchain for one
+# architecture, and the Python configuration front end.
+#
+# This is a composite action rather than a copy of the same steps in every
+# job, because the build workflow and the release workflow both need it.
+#
+
+name: Set up a pTOS toolchain
+description: Install a cross toolchain and the kconfiglib configuration front end.
+
+inputs:
+  arch:
+    description: >
+      Which cross toolchain to install: "m68k" for the Atari, Amiga and
+      ColdFire targets, or "arm" for the Raspberry Pi ones.
+    required: true
+
+runs:
+  using: composite
+
+  steps:
+    # A typo in a matrix entry would otherwise install nothing and fail much
+    # later, in the middle of a build, with a confusing error.
+    - name: Check the requested architecture
+      shell: bash
+      run: |
+        case '${{ inputs.arch }}' in
+        m68k|arm) ;;
+        *)
+          echo "::error::unknown arch '${{ inputs.arch }}', expected 'm68k' or 'arm'"
+          exit 1
+          ;;
+        esac
+
+    # Vincent Rivière's cross-mint packages are not part of Ubuntu itself, so
+    # the m68k toolchain comes from his PPA.  This is why the jobs that build
+    # m68k images pin an Ubuntu version the PPA actually has packages for,
+    # instead of following ubuntu-latest.
+    - name: Install the m68k cross toolchain
+      if: inputs.arch == 'm68k'
+      shell: bash
+      run: |
+        sudo add-apt-repository -y ppa:vriviere/ppa
+        sudo apt-get update -qq
+        # dos2unix provides unix2dos, which "make release" uses to convert the
+        # documentation in the archives to DOS line endings.
+        sudo apt-get install -y cross-mint-essential dos2unix
+
+    # A plain bare metal arm-none-eabi toolchain is all the Raspberry Pi
+    # targets need, and Ubuntu packages one.
+    - name: Install the ARM cross toolchain
+      if: inputs.arch == 'arm'
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y gcc-arm-none-eabi
+
+    - name: Install Python 3
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    # kconfiglib provides "make <name>_defconfig" and the menuconfig front
+    # ends.  Nothing can be configured, and therefore built, without it.
+    - name: Install kconfiglib
+      shell: bash
+      run: python3 -m pip install --disable-pip-version-check kconfiglib
+
+    # Recorded in the log because a build that breaks only in CI is nearly
+    # always a toolchain version difference.
+    - name: Report the versions in use
+      shell: bash
+      run: |
+        make --version | head -1
+        python3 --version
+        python3 -c 'import kconfiglib; print("kconfiglib", kconfiglib.VERSION)'
+        case '${{ inputs.arch }}' in
+        m68k) m68k-atari-mint-gcc --version | head -1 ;;
+        arm)  arm-none-eabi-gcc --version | head -1 ;;
+        esac

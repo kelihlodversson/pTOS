@@ -1,0 +1,193 @@
+#
+# Publishing a pTOS release.
+#
+# This is kept apart from build.yml on purpose: ordinary build validation runs
+# on every push and must never publish anything, and publishing must not be a
+# side effect of a normal build.
+#
+# Triggered either by pushing a version tag such as v0.2.0, or by hand.  A
+# manual run without a tag publishes a snapshot prerelease instead, so that
+# nothing here ever writes to the upstream EmuTOS SourceForge project the way
+# the old Travis deployment did.
+#
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish, e.g. v0.2.0.  Empty publishes a snapshot prerelease.'
+        required: false
+        default: ''
+
+# One release at a time, and never cancel one half way through publishing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Determine the version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the tag and the version
+        id: version
+        # Through the environment rather than expanded into the script, so
+        # that nothing in a tag name can be read as shell.
+        env:
+          TAG_INPUT: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+        run: |
+          tag="$TAG_INPUT"
+
+          if [ -n "$tag" ]; then
+            # v0.2.0 is the tag, 0.2.0 is what goes into the image and into
+            # the names of the archives.
+            version="${tag#v}"
+          else
+            # Same shape of version as the old Travis snapshots.  The tag gets
+            # a prefix so that snapshots are obvious in the tag list; the
+            # version itself does not, because it ends up in the image.
+            version="$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)"
+            tag="snapshot-$version"
+          fi
+
+          # A snapshot, or a semver pre-release suffix such as v0.2.0-rc1, is
+          # not a final release.
+          case "$tag" in
+          *-*) prerelease=true ;;
+          *)   prerelease=false ;;
+          esac
+
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >>"$GITHUB_OUTPUT"
+
+          {
+            echo "## $tag"
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| tag | \`$tag\` |"
+            echo "| version | \`$version\` |"
+            echo "| prerelease | \`$prerelease\` |"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  m68k-archives:
+    name: m68k release archives
+    needs: version
+    # Pinned: see .github/actions/setup-toolchain.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: m68k
+
+      - name: Build the release archives
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          make release VERSION="$VERSION"
+          ls -l release-archives
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-archives-m68k
+          path: release-archives/
+
+  raspi-images:
+    name: Raspberry Pi kernels
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: arm
+
+      # "make release" only covers the m68k targets.  The Raspberry Pi is what
+      # this fork exists for, so its kernels are packaged here and attached to
+      # the same release.
+      - name: Build the Raspberry Pi kernels
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          archive="ptos-raspi-$VERSION"
+          mkdir -p "release-archives/$archive"
+
+          for config in rpi1 rpi2 rpi3 rpi4; do
+            echo "::group::$config"
+            make distclean
+            make "${config}_defconfig"
+            make VERSION="$VERSION"
+            # One kernel image at a time: distclean removed the previous one,
+            # so whatever matches now belongs to this configuration.
+            cp kernel*.img "release-archives/$archive"/
+            echo "::endgroup::"
+          done
+
+          cp readme.md doc/license.txt "release-archives/$archive"/
+          cd release-archives && zip -9 -r "$archive.zip" "$archive" && rm -r "$archive"
+          ls -l .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-archives-raspi
+          path: release-archives/
+
+  publish:
+    name: Publish the release
+    needs: [version, m68k-archives, raspi-images]
+    runs-on: ubuntu-latest
+    permissions:
+      # Creating a release, and the tag behind it for a manual run.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Collect the archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-archives-*
+          merge-multiple: true
+          path: release-archives
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          ls -l release-archives
+
+          prerelease=
+          if [ "$PRERELEASE" = true ]; then
+            prerelease=--prerelease
+          fi
+
+          # --generate-notes leaves the release notes to GitHub, which derives
+          # them from the commits and pull requests since the last release.
+          # --target matters only for a manual run, where the tag does not
+          # exist yet and is created at this commit.
+          gh release create "$TAG" release-archives/* \
+            --title "pTOS $VERSION" \
+            --target "$GITHUB_SHA" \
+            --generate-notes \
+            $prerelease
+
+          echo "Published $TAG" >>"$GITHUB_STEP_SUMMARY"
