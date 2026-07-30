@@ -34,14 +34,14 @@ To use the CompactFlash card, you need to have programmed the CPLD
 (the board manufacturer) to get the appropriate software package.
 https://support.logicpd.com/
 
-How to flash EmuTOS:
+How to flash pTOS:
 You just have to flash ptos-m548x-bas.s19 with your favorite flash tool.
 Beware: The start address specified in this file is set regarding to the BaS
 address space, which is different than dBUG's one. If you use Freescale's
 CF Flasher on Windows, you need to go to the Target Config dialog and set the
 Flash Base Address to 0xE0000000 before flashing.
 
-How to run EmuTOS:
+How to run pTOS:
 
 1) Switch on the EVB.
 You will see a few BaS_gcc debug messages in the terminal.

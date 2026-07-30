@@ -34,7 +34,7 @@ To use the CompactFlash card, you need to have programmed the CPLD
 (the board manufacturer) to get the appropriate software package.
 https://support.logicpd.com/
 
-How to run EmuTOS:
+How to run pTOS:
 
 1) Ensure that your serial connection works fine. In the terminal, you should
 see the dBUG prompt.
@@ -46,7 +46,7 @@ see the dBUG prompt.
 4) In the terminal, type the following command to download the binary:
 dn ptos-m548x-dbug.s19
 
-5) Then type the following command to run EmuTOS:
+5) Then type the following command to run pTOS:
 go
 
 6) You will see the pTOS welcome screen.
