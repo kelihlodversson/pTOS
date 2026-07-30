@@ -122,8 +122,9 @@ virt_arm_post_mmu:
     str r1, [r0]
     ldr r2, [r0]
     cmp r1, r2
-    ldreq r4, =sysvars_ok_msg
-    ldrne r4, =sysvars_fail_msg
+    bne sysvars_check_failed
+
+    ldr r4, =sysvars_ok_msg
     bl  print_string
 
     /*
@@ -186,6 +187,17 @@ print_string:
     b   1b
 2:  pop {r4, lr}
     bx  lr
+
+/*
+ * If the low MMU window is wrong, _phystop's alias doesn't actually reach
+ * the fixed low sysvars addresses everything from here on depends on.
+ * Continuing (BSS clear, _biosmain) would silently corrupt or misread
+ * low memory instead of failing loudly, so halt here instead.
+ */
+sysvars_check_failed:
+    ldr r4, =sysvars_fail_msg
+    bl  print_string
+1:  b   1b
 
 hello_msg_phys:
     .asciz "virt-arm: pre-MMU boot OK\r\n"
