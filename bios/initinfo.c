@@ -309,7 +309,7 @@ WORD initinfo(ULONG *pshiftbits)
     /* Print separator followed by blank line */
     set_line();
 
-    pair_start(_("EmuTOS Version")); cprintf("%s", version); pair_end();
+    pair_start(_("pTOS Version")); cprintf("%s", version); pair_end();
 
     pair_start(_("CPU type"));
 #ifdef __mcoldfire__
@@ -453,7 +453,7 @@ WORD initinfo(ULONG *pshiftbits)
 
 WORD initinfo(ULONG *pshiftbits)
 {
-    cprintf("EmuTOS Version %s\r\n", version);
+    cprintf("pTOS Version %s\r\n", version);
 
     *pshiftbits = kbshift(-1);
     return bootdev;
