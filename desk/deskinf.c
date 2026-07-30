@@ -405,18 +405,31 @@ WORD inf_show(OBJECT *tree, WORD start)
 
 /*
  *  Insert an unsigned long value into the te_ptext field of the TEDINFO
- *  structure for the specified object, truncating if necessary
+ *  structure for the specified object; if the value is too large for the
+ *  te_ptext field, we fill it with asterisks
  */
 void inf_numset(OBJECT *tree, WORD obj, ULONG value)
 {
     WORD len;
     TEDINFO *ted;
     OBJECT  *objptr = tree + obj;
+    char numstr[12];        /* max ULONG needs 10 digits + NUL */
 
     ted = (TEDINFO *)objptr->ob_spec;
     len = ted->te_txtlen - 1;
+    if (len >= sizeof(numstr))
+        len = sizeof(numstr) - 1;
 
-    sprintf(ted->te_ptext,"%*lu",len,value);
+    /*
+     * we create the formatted string in a temporary buffer.  if the
+     * string is longer than the available space in the te_ptext field,
+     * we fill the te_ptext field with asterisks to indicate overflow.
+     * otherwise, we just copy the buffer to te_ptext
+     */
+    if (sprintf(numstr, "%*lu", len, value) > len)
+        memset(ted->te_ptext, '*', len);
+    else
+        strcpy(ted->te_ptext, numstr);
 }
 
 
