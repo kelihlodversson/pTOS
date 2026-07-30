@@ -64,13 +64,14 @@
 extern long total_alt_ram(void); /* in bdos/umem.c */
 #endif
 
-#define LOGO_HEIGHT 5
+#define LOGO_HEIGHT 6
 static char const logo[LOGO_HEIGHT][LOGO_LENGTH+1] =
     { "77777777777  777   7777",
-      "1111    7   7   7 7    ",
-      "1   1   7   7   7  777 ",
-      "1111    7   7   7     7",
-      "1       7    777  7777 " };
+      "        7   7   7 7    ",
+      "1111    7   7   7  777 ",
+      "1   1   7   7   7     7",
+      "1111    7    777  7777 ",
+      "1                      " };
 
 /* Print n spaces */
 static void print_spaces(WORD n)
@@ -258,7 +259,7 @@ static void cprintf_bytesize(ULONG bytes)
 WORD initinfo(ULONG *pshiftbits)
 {
     int screen_height = linea_vars.v_cel_my + 1;
-    int initinfo_height = 19; /* Define ENABLE_KDEBUG to guess correct value */
+    int initinfo_height = 20; /* Define ENABLE_KDEBUG to guess correct value */
     int top_margin;
 #ifdef ENABLE_KDEBUG
     int actual_initinfo_height;
