@@ -30,6 +30,9 @@
 #if CONF_WITH_RASPI_UART0
 #include "raspi_uart.h"
 #endif
+#if CONF_WITH_VIRT_UART
+#include "virt_uart.h"
+#endif
 
 /*
  * defines
@@ -130,6 +133,8 @@ LONG bconstat1(void)
     return 0;
 #elif CONF_WITH_RASPI_UART0
     return raspi_uart0_can_read() ? -1 : 0;
+#elif CONF_WITH_VIRT_UART
+    return virt_uart0_can_read() ? -1 : 0;
 #elif CONF_WITH_COLDFIRE_RS232
     return coldfire_rs232_can_read() ? -1 : 0;
 #elif CONF_WITH_MFP_RS232
@@ -154,6 +159,8 @@ LONG bconin1(void)
     return coldfire_rs232_read_byte();
 #elif CONF_WITH_RASPI_UART0
     return raspi_uart0_read_byte();
+#elif CONF_WITH_VIRT_UART
+    return virt_uart0_read_byte();
 #elif CONF_WITH_MFP_RS232
     /* Return character...
      * FIXME: We ought to use Iorec() for this... */
@@ -170,6 +177,8 @@ LONG bcostat1(void)
     return coldfire_rs232_can_write() ? -1 : 0;
 #elif CONF_WITH_RASPI_UART0
     return raspi_uart0_can_write() ? -1 : 0;
+#elif CONF_WITH_VIRT_UART
+    return virt_uart0_can_write() ? -1 : 0;
 #elif CONF_WITH_MFP_RS232
     if (MFP_BASE->tsr & 0x80)
         return -1;
@@ -191,6 +200,9 @@ LONG bconout1(WORD dev, WORD b)
     return 1;
 #elif CONF_WITH_RASPI_UART0
     raspi_uart0_write_byte(b);
+    return 1;
+#elif CONF_WITH_VIRT_UART
+    virt_uart0_write_byte(b);
     return 1;
 #elif CONF_WITH_MFP_RS232
     /* Output to RS232 interface */
@@ -733,6 +745,9 @@ void init_serport(void)
 
 #if CONF_WITH_RASPI_UART0
     raspi_uart0_init();
+#endif
+#if CONF_WITH_VIRT_UART
+    virt_uart0_init();
 #endif
 
 #if !CONF_SERIAL_IKBD

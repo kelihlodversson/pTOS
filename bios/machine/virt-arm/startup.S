@@ -14,6 +14,8 @@
         .extern __endvdibss
         .extern _virt_mmu_bootstrap
         .extern _phystop
+        .extern __bss
+        .extern __ebss
 
         .text
 
@@ -124,7 +126,18 @@ virt_arm_post_mmu:
     ldrne r4, =sysvars_fail_msg
     bl  print_string
 
-2:  b   2b
+    /* Clear the BSS segment now that virtual addressing is live. */
+    ldr r0, =__bss
+    ldr r1, =__ebss
+    mov r2, #0
+1:  cmp r0, r1
+    bge 2f
+    str r2, [r0], #4
+    b   1b
+2:
+
+    ldr sp, =_stktop
+    b   _biosmain
 
 print_string:
     push {r4, lr}
@@ -231,12 +244,12 @@ _arm_dispatch_fiq:
 /*
  * Placeholders below -- needed only so that code shared with every other
  * ARM machine (bios/kprint.c's panic handler, bios/mfp.c's non-MFP timer
- * setup) and this file's own _arm_dispatch_irq link successfully. Nothing
- * in this task ever reaches them: IRQs are never unmasked and _biosmain is
- * never called. Task 5 (GICv2 driver and timer tick) replaces
- * _virt_int_handler with a real implementation in virt_pic.c and must
- * delete the stub below; task 4 (hand-off to _biosmain) may need to do the
- * same for _int_timerc once virt_timer_init() exists.
+ * setup) and this file's own _arm_dispatch_irq link successfully. As of
+ * Task 4, _biosmain is reached, but IRQs are still never unmasked (there
+ * is no GIC driver yet), so _virt_int_handler is never actually invoked.
+ * Task 5 (GICv2 driver and timer tick) replaces _virt_int_handler with a
+ * real implementation in virt_pic.c and must delete the stub below; it
+ * may need to do the same for _int_timerc once virt_timer_init() exists.
  */
 
 /* bios/kprint.c's dopanic() reads this, unconditionally, on every machine
