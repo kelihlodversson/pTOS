@@ -54,7 +54,7 @@ void messagenl(const char *msg)
  */
 void errmsg(LONG rc)
 {
-char buf[20];
+char buf[32];   /* must hold translated "error code %ld" (%ld can be 11 chars) */
 const char *p;
 
     switch(rc) {
