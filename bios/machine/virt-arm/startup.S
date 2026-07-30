@@ -79,14 +79,24 @@ os_dummy:
 
 /*
  * _main -- placeholder for this task only.  Later tasks replace the
- * body: Task 2 adds a physical-mode UART "hello", Task 3 adds the MMU
- * bring-up and the jump into virtual addressing, Task 4 hands off to
- * _biosmain.
+ * body: Task 3 adds the MMU bring-up and the jump into virtual
+ * addressing, Task 4 hands off to _biosmain.
  */
 .balign 4
 _main:
     ldr sp, =0x47ff0000     /* literal physical scratch address, well within a 128M -m allocation */
-1:  b   1b
+    bl  _virt_uart0_init
+    ldr r4, =hello_msg
+1:  ldrb r0, [r4], #1
+    cmp r0, #0
+    beq 2f
+    bl  _virt_uart0_write_byte
+    b   1b
+2:  b   2b
+
+hello_msg:
+    .asciz "virt-arm: pre-MMU boot OK\r\n"
+    .align 2
 
     .globl _arm_dispatch_undef
 _arm_dispatch_undef:
