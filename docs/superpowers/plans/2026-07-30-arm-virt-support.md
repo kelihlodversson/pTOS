@@ -14,7 +14,7 @@
 - Use `portab.h` types (`WORD`, `LONG`, `UBYTE`, `UWORD`, `ULONG`, `BOOL`), not bare `int`/`long`.
 - Trace with `KDEBUG(("..."))` / `KINFO(())` from `include/kprint.h`, never a private printf.
 - New source files: object basenames must be unique across the whole tree (objects land flat in `obj/`).
-- `bios/machine/virt-arm/startup.o` must be the first object listed in that directory's `build.mk` (link-order rule from `doc/install.txt`/root `CLAUDE.md`).
+- **Correction found during Task 1's review, binding for every remaining task:** machine subdirectories do **not** have their own `build.mk` — only `bios/`, `bdos/`, `vdi/`, `aes/`, `desk/`, `cli/`, `usb/`, `util/` do, and the top-level `Makefile` only `include`s those. `bios/machine/raspi/` has no `build.mk`; `startup.o` and `memory.o` reach it purely because `bios/build.mk` already unconditionally lists `obj-y += startup.o` (first, per the link-order rule) and `obj-y += memory.o`, resolved to the machine-specific file by `vpath`. Extra machine-specific objects (raspi's UART/interrupt/mailbox/screen/eMMC drivers) are added directly to `bios/build.mk` as `obj-$(MACHINE_RPI) += raspi_board.o raspi_uart.o raspi_int.o raspi_mbox.o raspi_screen.o raspi_emmc.o`. Every task below that says "modify `bios/machine/virt-arm/build.mk`" means: add or extend a single `obj-$(MACHINE_VIRT_ARM) += ...` line in `bios/build.mk` instead, in the same style. Do not create a `bios/machine/virt-arm/build.mk` file — it would never be read.
 - Do not add per-target defaults to `include/config.h` — Kconfig only.
 - Every task in this plan is verified by building with the `arm-none-eabi-` toolchain and booting the result under QEMU; there is no unit-test suite for BIOS/boot code in this codebase, so "the expected string appears on the QEMU serial console, and `-d guest_errors` prints nothing unexpected" is the test.
 - Design reference: `docs/superpowers/specs/2026-07-30-qemu-virt-support-design.md`.
@@ -49,7 +49,6 @@ This means the image is **linked** at low virtual addresses (exactly like the ra
 - Modify: `Kconfig.image`
 - Modify: `Makefile`
 - Create: `configs/virt-arm_defconfig`
-- Create: `bios/machine/virt-arm/build.mk`
 - Create: `bios/machine/virt-arm/virt_memmap.h`
 - Create: `bios/machine/virt-arm/startup.S`
 
@@ -185,7 +184,7 @@ Create `bios/machine/virt-arm/virt_memmap.h`:
 
 - [ ] **Step 6: Write the startup.S skeleton**
 
-Create `bios/machine/virt-arm/startup.S`. This is closely modeled on `bios/machine/raspi/startup.S`: same `OSHEADER`/vector-table layout at the top (this part is generic ARM boot-header boilerplate, not Raspberry Pi specific) and the same six `_arm_dispatch_*` exception trampolines (`_arm_dispatch_undef`, `_arm_dispatch_svc`, `_arm_dispatch_prefetch_abort`, `_arm_dispatch_data_abort`, `_arm_dispatch_irq`, `_arm_dispatch_fiq` — copy these six trampolines verbatim from `bios/machine/raspi/startup.S:222-296`, they only reference the shared `bios/arch/arm` mechanism, nothing raspi-specific), but:
+Create `bios/machine/virt-arm/startup.S`. This is closely modeled on `bios/machine/raspi/startup.S`: same `OSHEADER`/vector-table layout at the top (this part is generic ARM boot-header boilerplate, not Raspberry Pi specific) and the same six `_arm_dispatch_*` exception trampolines (`_arm_dispatch_undef`, `_arm_dispatch_svc`, `_arm_dispatch_prefetch_abort`, `_arm_dispatch_data_abort`, `_arm_dispatch_irq`, `_arm_dispatch_fiq` — copy these six trampolines verbatim, including their inline comments, from `bios/machine/raspi/startup.S:278-375` (not the OSHEADER/HYP-exit code above them), they only reference the shared `bios/arch/arm` mechanism, nothing raspi-specific), but:
 - no VideoCore mailbox call, no HYP-mode exit dance, no secondary-core parking (QEMU's `virt` `-kernel` boot starts a single CPU already in SVC mode)
 - `_arm_dispatch_irq` calls `_virt_int_handler` (defined in Task 5) instead of `_raspi_int_handler`
 - `_main` is a placeholder for now: set the stack pointer to a literal physical scratch address and spin forever, so this task's only job is proving the image builds and the CPU reaches this code without faulting
@@ -364,16 +363,9 @@ _arm_dispatch_fiq:
     rfefd  sp!
 ```
 
-- [ ] **Step 7: Add `bios/machine/virt-arm/build.mk`**
+- [ ] **Step 7: No build.mk needed**
 
-```make
-#
-# bios/machine/virt-arm/build.mk - QEMU ARM 'virt' machine objects
-#
-
-# The startup code must be the very first object linked into the image.
-obj-y += startup.o
-```
+`bios/build.mk` already has `obj-y += startup.o` (first, satisfying the link-order rule) and `obj-y += memory.o` unconditionally — with `MACHINE-$(MACHINE_VIRT_ARM) += virt-arm` from Step 3 in place, `vpath` resolves both to `bios/machine/virt-arm/` automatically once `MACHINE_VIRT_ARM` is selected, exactly as it already does for `bios/machine/raspi/startup.S`. Nothing to create for this step; it exists only so a later task that adds a genuinely new object (not already unconditional) knows where that object needs to go (`bios/build.mk`'s own `obj-$(MACHINE_VIRT_ARM) += ...` line — see Task 2).
 
 - [ ] **Step 8: Build**
 
@@ -396,8 +388,7 @@ Expected: the command runs for ~3 seconds and is killed by `timeout` (exit code 
 
 ```bash
 git add Kconfig.machine Kconfig.image Makefile configs/virt-arm_defconfig \
-        bios/machine/virt-arm/build.mk bios/machine/virt-arm/virt_memmap.h \
-        bios/machine/virt-arm/startup.S
+        bios/machine/virt-arm/virt_memmap.h bios/machine/virt-arm/startup.S
 git commit -m "arm-virt: add MACHINE_VIRT_ARM skeleton that boots to a spin loop"
 ```
 
@@ -408,8 +399,10 @@ git commit -m "arm-virt: add MACHINE_VIRT_ARM skeleton that boots to a spin loop
 **Files:**
 - Create: `bios/machine/virt-arm/virt_uart.h`
 - Create: `bios/machine/virt-arm/virt_uart.c`
-- Modify: `bios/machine/virt-arm/build.mk`
+- Modify: `bios/build.mk`
 - Modify: `bios/machine/virt-arm/startup.S`
+
+**Important build-system note:** machine subdirectories do not have their own `build.mk` — `bios/machine/raspi/` has none either. `bios/build.mk` is the single file that lists every BIOS object; machine-specific extra objects are added there directly as `obj-$(MACHINE_RPI) += raspi_board.o raspi_uart.o ...` (see that exact line in `bios/build.mk` for the pattern to copy). This task adds a new line the same way: `obj-$(MACHINE_VIRT_ARM) += virt_uart.o`.
 
 **Interfaces:**
 - Consumes: `VIRT_UART0_BASE` from `virt_memmap.h` (Task 1).
@@ -521,14 +514,11 @@ UBYTE virt_uart0_read_byte(void)
 
 - [ ] **Step 3: Add it to the build**
 
-In `bios/machine/virt-arm/build.mk`, change:
+In `bios/build.mk`, find the `obj-$(MACHINE_RPI) += raspi_board.o raspi_uart.o raspi_int.o raspi_mbox.o raspi_screen.o raspi_emmc.o` line and add immediately after it:
 ```make
-obj-y += startup.o
+obj-$(MACHINE_VIRT_ARM) += virt_uart.o
 ```
-to:
-```make
-obj-y += startup.o virt_uart.o
-```
+(`startup.o` and `memory.o` need no change here — they're already unconditional in this same file, per Task 1.)
 
 - [ ] **Step 4: Print a physical-mode string from `_main`**
 
@@ -566,7 +556,7 @@ Expected output: exactly one line, `virt-arm: pre-MMU boot OK`, then the command
 
 ```bash
 git add bios/machine/virt-arm/virt_uart.h bios/machine/virt-arm/virt_uart.c \
-        bios/machine/virt-arm/build.mk bios/machine/virt-arm/startup.S
+        bios/build.mk bios/machine/virt-arm/startup.S
 git commit -m "arm-virt: add PL011 UART driver, verify physical-mode boot prints to it"
 ```
 
@@ -577,6 +567,7 @@ git commit -m "arm-virt: add PL011 UART driver, verify physical-mode boot prints
 **Files:**
 - Modify: `emutos.ld`
 - Modify: `bios/machine/virt-arm/startup.S`
+- Modify: `bios/build.mk`
 - Create: `bios/machine/virt-arm/virt_mmu.c`
 - Create: `bios/machine/virt-arm/virt_mmu.h`
 
@@ -829,9 +820,9 @@ Add `.extern _virt_mmu_bootstrap` and `.extern _phystop` near the top of the fil
 
 - [ ] **Step 5: Add `virt_mmu.o` to the build**
 
-In `bios/machine/virt-arm/build.mk`:
+`bios/machine/raspi/` has no `build.mk` of its own — machine-specific objects are added directly to `bios/build.mk`. In `bios/build.mk`, extend the line Task 2 added:
 ```make
-obj-y += startup.o virt_uart.o virt_mmu.o
+obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o
 ```
 
 - [ ] **Step 6: Build and verify**
@@ -852,7 +843,7 @@ then the command runs until `timeout` kills it. No `guest_errors` output. If it 
 
 ```bash
 git add emutos.ld bios/machine/virt-arm/virt_mmu.h bios/machine/virt-arm/virt_mmu.c \
-        bios/machine/virt-arm/build.mk bios/machine/virt-arm/startup.S
+        bios/build.mk bios/machine/virt-arm/startup.S
 git commit -m "arm-virt: build a static MMU tree so the fixed-address sysvars work"
 ```
 
@@ -992,7 +983,7 @@ git commit -m "arm-virt: hand off to _biosmain, route the BIOS console through t
 - Create: `bios/machine/virt-arm/virt_pic.c`
 - Create: `bios/machine/virt-arm/virt_timer.h`
 - Create: `bios/machine/virt-arm/virt_timer.c`
-- Modify: `bios/machine/virt-arm/build.mk`
+- Modify: `bios/build.mk`
 - Modify: `bios/bios.c`
 
 **Interfaces:**
@@ -1183,9 +1174,9 @@ void virt_timer_init(void)
 
 - [ ] **Step 5: Add the new objects to the build**
 
-In `bios/machine/virt-arm/build.mk`:
+`bios/machine/raspi/` has no `build.mk` of its own — machine-specific objects are added directly to `bios/build.mk`. In `bios/build.mk`, extend the line from Tasks 2/3 one more time:
 ```make
-obj-y += startup.o virt_uart.o virt_mmu.o virt_pic.o virt_timer.o
+obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o virt_pic.o virt_timer.o
 ```
 
 - [ ] **Step 6: Wire the init calls into `bios/bios.c`**
@@ -1223,7 +1214,7 @@ Expected: the three boot-check lines, the `KDEBUG` trace from Task 4, and this t
 ```bash
 git add bios/machine/virt-arm/virt_pic.h bios/machine/virt-arm/virt_pic.c \
         bios/machine/virt-arm/virt_timer.h bios/machine/virt-arm/virt_timer.c \
-        bios/machine/virt-arm/build.mk bios/bios.c
+        bios/build.mk bios/bios.c
 git commit -m "arm-virt: add GICv2 driver and ARM generic timer tick, reach full boot"
 ```
 
