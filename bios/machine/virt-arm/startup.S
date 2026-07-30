@@ -244,12 +244,11 @@ _arm_dispatch_fiq:
 /*
  * Placeholders below -- needed only so that code shared with every other
  * ARM machine (bios/kprint.c's panic handler, bios/mfp.c's non-MFP timer
- * setup) and this file's own _arm_dispatch_irq link successfully. As of
- * Task 4, _biosmain is reached, but IRQs are still never unmasked (there
- * is no GIC driver yet), so _virt_int_handler is never actually invoked.
- * Task 5 (GICv2 driver and timer tick) replaces _virt_int_handler with a
- * real implementation in virt_pic.c and must delete the stub below; it
- * may need to do the same for _int_timerc once virt_timer_init() exists.
+ * setup) links successfully. _virt_int_handler, called by this file's
+ * own _arm_dispatch_irq above, is no longer a stub: as of Task 5 it is a
+ * real C function in virt_pic.c (GICv2 driver), reached because
+ * -fleading-underscore makes its C symbol `virt_int_handler` link as
+ * `_virt_int_handler`.
  */
 
 /* bios/kprint.c's dopanic() reads this, unconditionally, on every machine
@@ -263,9 +262,4 @@ _start_in_hyp: .word 0
  * been wired up yet. */
     .globl _int_timerc
 _int_timerc:
-    bx  lr
-
-/* _arm_dispatch_irq above calls this; see the block comment above. */
-    .globl _virt_int_handler
-_virt_int_handler:
     bx  lr
