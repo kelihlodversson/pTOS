@@ -648,11 +648,29 @@ $(EMUTOS_IMG): $(TRANS_SRC)
 
 obj/%.o : %.tr.c
 	$(CC) $(CFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
+else
+# A '.d' generated for a translated country names the '.tr.c' as the source
+# of its '.o'.  -MMD -MP only writes the phony targets that keep a deleted
+# *header* from breaking the build; the source itself never gets one, so
+# without a rule for the '.tr.c' make stops at "No rule to make target
+# 'bios/bios.tr.c'" as soon as an untranslated country follows a translated
+# one -- which is what every "make release" does when it walks the
+# countries.  Deleting the stale '.d' is not enough, because make has read
+# it long before any recipe runs.
+#
+# An empty rule is exactly what -MP would have emitted: the missing '.tr.c'
+# counts as made, and the '.o' is rebuilt from the plain '.c'.
+$(TRANS_SRC): ;
 endif
 
 # obj/country contains the current values of $(COUNTRY) and $(UNIQUE).
 # Whenever it changes, the stale translated sources and objects are
 # removed, even without doing a full rebuild.
+#
+# The generated dependency file goes with them: it describes a '.tr.c' that
+# no longer exists, so leaving it behind would be a trap for the next reader.
+# See the empty rule for $(TRANS_SRC) above for why removing it here cannot
+# be what keeps the build working.
 
 # A phony target is never up to date, so the recipe below always runs.
 # If it does not touch obj/country, the target is considered up to date.
@@ -673,8 +691,9 @@ obj/country: always-execute-recipe | obj
 	for i in $(TRANS_SRC); \
 	do \
 	  j=obj/`basename $$i tr.c`o; \
-	  echo "rm -f $$i $$j"; \
-	  rm -f $$i $$j; \
+	  d=obj/`basename $$i tr.c`d; \
+	  echo "rm -f $$i $$j $$d"; \
+	  rm -f $$i $$j $$d; \
 	done
 
 #
