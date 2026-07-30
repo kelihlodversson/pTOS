@@ -577,35 +577,21 @@ git commit -m "arm-virt: add PL011 UART driver, verify physical-mode boot prints
 
 - [ ] **Step 1: Add the LMA/VMA split to `emutos.ld`**
 
-The image stays linked (VMA) exactly where every other machine links it — `stram : ORIGIN = 0x00000000` is unchanged, and so is `ROM_ORIGIN`. What changes is where QEMU actually loads the bytes (LMA): `link_address + VIRT_RAM_BASE`. Add a second memory region and an `AT>` clause to every section that lands in `stram`.
+The image stays linked (VMA) exactly where every other machine links it — `stram : ORIGIN = 0x00000000` is unchanged, and so is `ROM_ORIGIN`. What changes is where QEMU actually loads the bytes (LMA): `link_address + VIRT_RAM_BASE`.
 
-In `emutos.ld`, in the `MEMORY` block (around line 44-51), add a physical-load-address region right after `stram`:
+**Use a per-section `AT(...)` clause, not a shared `AT>region`.** A shared load-memory region (`MEMORY { stram_lma : ... }` referenced via `AT>stram_lma` on each section) looks like the natural approach, but GNU ld only advances that region's "next free load address" pointer for sections that actually contain data (`PROGBITS`) — `.first_stram`, `.low_stram`, and the BIOS-stack `.stack` section (see below) hold no real data, only location-counter reservations for fixed-address symbol slots, so ld emits them as `NOBITS` and they never advance the shared region's pointer. The first real (`PROGBITS`) section then lands at the bare region origin instead of `origin + its own VMA`, silently producing the wrong load address for everything (verify this for yourself with `arm-none-eabi-readelf -l` on the built image if you want to see it directly — every segment's `PhysAddr` collapses to `VIRT_RAM_BASE` instead of `VIRT_RAM_BASE + VMA`). A per-section `AT(ADDR(section) + VIRT_RAM_BASE)` clause computes each section's load address directly from its own VMA and has no such failure mode.
 
-```
-MEMORY
-{
-    stram : ORIGIN = 0x00000000, LENGTH = 14M
-#if defined (MACHINE_VIRT_ARM)
-    stram_lma : ORIGIN = 0x40000000, LENGTH = 14M
-#endif
-    rom : ORIGIN = ROM_ORIGIN, LENGTH = ROM_LENGTH
-#ifdef STATIC_ALT_RAM_ADDRESS
-    altram : ORIGIN = STATIC_ALT_RAM_ADDRESS, LENGTH = 1M
-#endif
-}
-```
-
-Just above `SECTIONS {` (around line 60-68), add the LMA-clause helper macro next to the existing `REGION_RAM`/`REGION_READ_ONLY` macros:
+Just above `SECTIONS {` (around line 60-68), add the LMA helper macro next to the existing `REGION_RAM`/`REGION_READ_ONLY` macros:
 
 ```
 #if defined (MACHINE_VIRT_ARM)
-# define LMA_CLAUSE AT>stram_lma
+# define LMA_AT(section) AT(ADDR(section) + 0x40000000)
 #else
-# define LMA_CLAUSE
+# define LMA_AT(section)
 #endif
 ```
 
-Then append `LMA_CLAUSE` to the region clause of every section currently placed `>stram`, `>REGION_READ_ONLY` or `>REGION_READ_WRITE` (since `REGION_RAM` is `stram` and `EMUTOS_LIVES_IN_RAM` makes `REGION_READ_ONLY`/`REGION_READ_WRITE` resolve to it too, this is every section in the file for this target): `.first_stram` (`>stram` → `>stram LMA_CLAUSE`), `.low_stram` (`>stram` → `>stram LMA_CLAUSE`), `.text` (`>REGION_READ_ONLY` → `>REGION_READ_ONLY LMA_CLAUSE`), `.data` (same), `.bss` (`>REGION_READ_WRITE` → `>REGION_READ_WRITE LMA_CLAUSE`), `.laststram` (`>stram` → `>stram LMA_CLAUSE`). Leave the `#if defined(MACHINE_RPI) .stack : ... >REGION_READ_WRITE` block alone (it is `MACHINE_RPI`-only, never active for `MACHINE_VIRT_ARM`).
+Then add `LMA_AT(name)` right after each section's `name :` (before its `{`, which is where a plain `AT(...)` clause belongs — unlike `AT>region`, it doesn't go after the closing `}`/region name) for every section that lands in `stram`/`REGION_READ_ONLY`/`REGION_READ_WRITE` (since `REGION_RAM` is `stram` and `EMUTOS_LIVES_IN_RAM` makes `REGION_READ_ONLY`/`REGION_READ_WRITE` resolve to it too, this is every section in the file for this target): `.first_stram`, `.low_stram`, `.text`, `.data`, `.bss`, `.laststram` — **and** the generic (non-Raspberry-Pi) BIOS-stack section, `#if !defined(MACHINE_RPI) .stack : { ... }` (a small `NOBITS` reservation, distinct from the *other*, `MACHINE_RPI`-only `.stack` block further down in the file, which stays untouched since it's inactive for `MACHINE_VIRT_ARM`). Getting this last one is easy to miss — it's easy to assume "the `.stack` section is RPI-only" from skimming the file, when there are actually two, and the generic one is exactly the one active here.
 
 - [ ] **Step 2: Write `virt_mmu.h`**
 
@@ -650,7 +636,9 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys);
 
 - [ ] **Step 3: Write `virt_mmu.c`**
 
-Section-descriptor field values are the same attributes `bios/machine/raspi/memory.c:118-176` (`init_mmu`) uses for RAM (cacheable, shareable) versus everything above it (device: not cacheable, not bufferable, execute-never); the difference here is the `Base` field of the low window is offset by the RAM's physical base instead of being identity.
+Section-descriptor field values are the same attributes `bios/machine/raspi/memory.c:118-176` (`init_mmu`) uses for RAM (cacheable, shareable) versus everything above it (device: not cacheable, not bufferable, execute-never).
+
+**This needs two RAM-attributed regions, not one — a point the first draft of this plan got wrong and a task review caught.** The low virtual window `[0, ram_size)` maps to physical `[VIRT_RAM_BASE, VIRT_RAM_BASE+ram_size)` so the fixed-address sysvars work — that part is as described above. But the code executing this very function is *physically* running at its identity address (`VIRT_RAM_BASE` and up, since pre-MMU execution is physical), and that identity-mapped section must **also** be Normal/cacheable/executable RAM, not device — if it's left execute-never (as "everything outside the low window" would naively suggest), the CPU takes a Prefetch Abort on the very next instruction fetch after the MMU-enable write, because it's still fetching from `VIRT_RAM_BASE`-relative addresses at that exact moment and the identity mapping of that address is what's live until the explicit jump-to-virtual in `startup.S`. Also clamp the low window so it can never reach into the peripheral range (`VIRT_GIC_DIST_BASE` and up) even if a future caller passes a larger `ram_size_bytes` — at `-m 128` this doesn't yet bite (128 MiB ends exactly at `VIRT_GIC_DIST_BASE`), but nothing before this fix stopped a larger value from mapping RAM straight over the GIC and UART.
 
 ```c
 /*
@@ -688,9 +676,14 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
 {
     struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *table =
         (struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *) pagetable_phys;
+    ULONG max_window_sections = VIRT_GIC_DIST_BASE / MEGABYTE;
     ULONG ram_window_sections = ram_size_bytes / MEGABYTE;
+    ULONG ram_base_section = VIRT_RAM_BASE / MEGABYTE;
     ULONG i;
     ULONG control, aux_control;
+
+    if (ram_window_sections > max_window_sections)
+        ram_window_sections = max_window_sections;
 
     clean_data_cache();
 
@@ -698,9 +691,19 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
     {
         struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *entry = &table[i];
         ULONG phys_base;
-        BOOL is_ram = (i < ram_window_sections);
+        /* Two disjoint aliases of the same physical RAM need Normal
+         * (cacheable, executable) attributes: the low virtual window
+         * used by the fixed-address sysvars, and the identity mapping
+         * at VIRT_RAM_BASE -- which is where this function itself is
+         * physically executing right now, pre-MMU, and must keep
+         * executing from immediately after the MMU-enable write below,
+         * until startup.S's explicit jump into virtual addressing. */
+        BOOL low_window = (i < ram_window_sections);
+        BOOL ram_identity = (i >= ram_base_section
+                           && i < ram_base_section + ram_window_sections);
+        BOOL is_ram = low_window || ram_identity;
 
-        if (is_ram)
+        if (low_window)
             phys_base = i * MEGABYTE + VIRT_RAM_BASE;
         else
             phys_base = i * MEGABYTE;
@@ -754,19 +757,26 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
     control &= ~ARM_CONTROL_STRICT_ALIGNMENT;
     control |= MMU_MODE;
     asm volatile ("mcr p15, 0, %0, c1, c0,  0" : : "r" (control) : "memory");
+
+    /* Context-synchronize before relying on the new translation regime --
+     * required by the architecture, and specifically what makes the very
+     * next instruction fetch (back in startup.S) behave predictably. */
+    flush_prefetch_buffer();
 }
 ```
 
 - [ ] **Step 4: Wire it into `startup.S`**
 
-Replace the `_main` body written in Task 2 with the full two-phase sequence: a physical-mode "hello" (kept from Task 2, as the first sanity check), then the MMU bring-up (a literal physical page-table address and a literal physical RAM size, both plain numbers so they're safe pre-MMU), then a long jump into virtual addressing, then a second "hello" and a sysvars round-trip check using normal (symbol-based) addressing to prove the low window is correctly mapped:
+Replace the `_main` body written in Task 2 with the full two-phase sequence: a physical-mode "hello" (kept from Task 2, as the first sanity check), then the MMU bring-up (a literal physical page-table address and a literal physical RAM size, both plain numbers so they're safe pre-MMU), then a long jump into virtual addressing, then a second "hello" and a sysvars round-trip check using normal (symbol-based) addressing to prove the low window is correctly mapped.
+
+**Getting the pre-MMU string address right matters here, and is easy to get wrong** — this plan's own first draft got it wrong, caught by a task review. `ldr r4, =hello_msg_phys` loads the label's *linked* (virtual) address, same as any other symbol reference; before the MMU is on and the low window is mapped, that virtual address is not backed by anything (this section's `LMA_AT(...)` from Task 3's `emutos.ld` change means the bytes physically live `0x40000000` higher than that). Use `adr` instead, which computes the label's address as a PC-relative offset from the *current, physical* PC — giving the right answer both before and after the MMU is enabled, unlike `ldr r4, =symbol`:
 
 ```asm
 .balign 4
 _main:
     ldr sp, =0x47ff0000
     bl  _virt_uart0_init
-    ldr r4, =hello_msg_phys
+    adr r4, hello_msg_phys
     bl  print_string
 
     /* MMU bring-up: literal physical constants only, no linked symbols */
@@ -781,9 +791,11 @@ virt_arm_post_mmu:
     ldr r4, =hello_msg_virt
     bl  print_string
 
-    /* sysvars round-trip: _phystop lives at the fixed low address 0x424
-     * (see tosvars.ld); if the low MMU window is wired correctly this
-     * read/write pair works exactly like any other global variable. */
+    /* sysvars round-trip: _phystop lives at a fixed low address defined
+     * in tosvars.ld (0x42e for a non-RPI machine, which this is -- do
+     * not assume the MACHINE_RPI value from that same file); if the low
+     * MMU window is wired correctly this read/write pair works exactly
+     * like any other global variable. */
     ldr r0, =_phystop
     ldr r1, =0x12345678
     str r1, [r0]
@@ -1256,7 +1268,7 @@ make distclean && make rpi2_defconfig && make
 make distclean && make atari256_defconfig && make
 make distclean && make amiga_defconfig && make
 ```
-Expected: all three succeed unchanged. This specifically guards against a mistake in the `emutos.ld`/`Kconfig.image`/`Kconfig.machine` edits from Task 1 and Task 3 leaking into other machines' builds (e.g. a missing `#if defined(MACHINE_VIRT_ARM)` guard around the new `LMA_CLAUSE`/`stram_lma` region).
+Expected: all three succeed unchanged. This specifically guards against a mistake in the `emutos.ld`/`Kconfig.image`/`Kconfig.machine` edits from Task 1 and Task 3 leaking into other machines' builds (e.g. a missing `#if defined(MACHINE_VIRT_ARM)` guard around the new `LMA_AT(...)` macro).
 
 - [ ] **Step 4: Run `make gitready` and commit**
 
