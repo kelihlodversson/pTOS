@@ -37,17 +37,29 @@ runs:
     # the m68k toolchain comes from his PPA.  This is why the jobs that build
     # m68k images pin an Ubuntu version the PPA actually has packages for,
     # instead of following ubuntu-latest.
+    #
+    # A second, separate PPA (vriviere/mintelf, not vriviere/ppa) provides
+    # the ELF-based toolchain (m68k-atari-mintelf-*, install prefix distinct
+    # from cross-mint-essential's a.out one, so both coexist without
+    # conflict). MACHINE_VIRT_M68K is the only target that needs it: it
+    # links a real ELF image for QEMU's -kernel loader (emutos.ld forces
+    # OUTPUT_FORMAT(elf32-m68k) for it), and the a.out toolchain's linker
+    # has no elf32-m68k target compiled in at all. Installed unconditionally
+    # for every m68k job regardless of which configs it happens to build,
+    # rather than threading "does this job's matrix include virt-m68k"
+    # through to this composite action.
     - name: Install the m68k cross toolchain
       if: inputs.arch == 'm68k'
       shell: bash
       run: |
         sudo add-apt-repository -y ppa:vriviere/ppa
+        sudo add-apt-repository -y ppa:vriviere/mintelf
         sudo apt-get update -qq
         # dos2unix provides unix2dos, which "make release" uses to convert the
         # documentation in the archives to DOS line endings, and zip is what
         # packs each archive.  Both happen to be on the runner images already;
         # they are named here so that this action really is the whole list.
-        sudo apt-get install -y cross-mint-essential dos2unix zip
+        sudo apt-get install -y cross-mint-essential cross-mintelf-essential dos2unix zip
 
     # A plain bare metal arm-none-eabi toolchain is all the Raspberry Pi
     # targets need, and Ubuntu packages one.
@@ -89,6 +101,9 @@ runs:
         first_line python3 --version
         python3 -c 'import kconfiglib; print("kconfiglib", kconfiglib.VERSION)'
         case '${{ inputs.arch }}' in
-        m68k) first_line m68k-atari-mint-gcc --version ;;
+        m68k)
+          first_line m68k-atari-mint-gcc --version
+          first_line m68k-atari-mintelf-gcc --version
+          ;;
         arm)  first_line arm-none-eabi-gcc --version ;;
         esac

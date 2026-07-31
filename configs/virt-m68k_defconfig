@@ -1,0 +1,36 @@
+# ELF kernel image for QEMU's m68k 'virt' machine (qemu-system-m68k -M virt)
+MACHINE_VIRT_M68K=y
+
+# QEMU's m68k 'virt' board defaults to an m68040 core (see hw/m68k/virt.c's
+# mc->default_cpu_type), but this targets m68020 instead: QEMU's m68k
+# target unconditionally cpu_abort()s (crashes the whole VM) reading the
+# 68060-only PCR control register instead of raising the guest illegal
+# -instruction exception every other unsupported-register case gets
+# (target/m68k/helper.c: HELPER(m68k_movec_from), case M68K_CR_PCR).
+# bios/arch/m68k/processor.S's CPU detection -- shared, generic code used
+# by every m68k machine -- deliberately probes that exact register to
+# tell 68040 from 68060 apart, protected by its own exception vectors;
+# that protection can't help here because QEMU aborts before the guest
+# ever sees a trap. Targeting m68020 avoids the problem entirely: that
+# same detection routine resolves to "68020" from an earlier, unrelated
+# probe (the CACR cache-control register) before ever reaching the PCR
+# read. No v1 functionality needs 68040 (this port uses no PMMU); revisit
+# if a later feature needs 68040-specific behavior, or once upstream QEMU
+# fixes this (there is no per-target CPUFLAGS default for this board yet,
+# unlike the Raspberry Pi targets, so spell it out explicitly here,
+# following the MACHINE_ARANYM precedent in Kconfig.machine).
+CPUFLAGS="-m68020"
+
+# QEMU's 'virt' board has no IDE interface; without this, bios/ide.c fails
+# to build because struct IDE is never defined for this machine. Matched
+# to the same override already used by MACHINE_RPI and MACHINE_VIRT_ARM.
+CONF_WITH_IDE=n
+
+# Unlike every other m68k target, this one is pinned to the ELF toolchain
+# rather than leaving the choice to the environment: emutos.ld forces
+# OUTPUT_FORMAT(elf32-m68k) for MACHINE_VIRT_M68K (QEMU's -kernel loader
+# needs a real ELF image, not a flat binary), and the default a.out
+# toolchain's linker has no elf32-m68k target compiled in at all ("target
+# elf32-m68k not found" -- found via CI, which only installs the a.out
+# toolchain and has no ELF-capable one without this).
+BUILD_TOOLCHAIN_MINTELF=y

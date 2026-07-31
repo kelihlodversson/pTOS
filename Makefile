@@ -95,6 +95,7 @@ MACHINE-$(MACHINE_M548X) += atari
 MACHINE-$(MACHINE_AMIGA) += amiga
 MACHINE-$(MACHINE_RPI) += raspi
 MACHINE-$(MACHINE_VIRT_ARM) += virt-arm
+MACHINE-$(MACHINE_VIRT_M68K) += virt-m68k
 MACHINE = $(MACHINE-y)
 
 ifdef CONFIGURED
@@ -322,6 +323,10 @@ ifdef TARGET_VIRT_ARM_KERNEL
 image-default = virt-arm.elf
 MEMBOT_REFERENCE = TOS162
 endif
+ifdef TARGET_VIRT_M68K_KERNEL
+image-default = virt-m68k.elf
+MEMBOT_REFERENCE = TOS162
+endif
 
 IMAGE = $(if $(IMAGE_NAME),$(IMAGE_NAME),$(image-default))
 
@@ -471,6 +476,15 @@ endif
 #
 
 ifdef TARGET_VIRT_ARM_KERNEL
+$(IMAGE): $(EMUTOS_IMG)
+	cp $< $@
+endif
+
+#
+# QEMU virt (m68k) kernel image — passed to QEMU as an ELF, unchanged
+#
+
+ifdef TARGET_VIRT_M68K_KERNEL
 $(IMAGE): $(EMUTOS_IMG)
 	cp $< $@
 endif

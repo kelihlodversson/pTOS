@@ -72,6 +72,10 @@
 #include "virt_pic.h"
 #include "virt_timer.h"
 #endif
+#ifdef MACHINE_VIRT_M68K
+#include "goldfish_pic.h"
+#include "goldfish_rtc.h"
+#endif
 
 
 /*==== Defines ============================================================*/
@@ -346,6 +350,9 @@ static void bios_init(void)
     virt_pic_init();
     virt_timer_init();     /* arms the GIC/timer; the CPU stays masked until
                              * the shared cpsr_ie() below, same as raspi */
+#elif defined(MACHINE_VIRT_M68K)
+    goldfish_pic_init();
+    goldfish_rtc_init();
 #endif
 
     /* Initialize the BIOS memory management */
