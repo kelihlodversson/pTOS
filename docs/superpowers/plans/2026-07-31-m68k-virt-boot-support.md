@@ -19,6 +19,41 @@
 - Source basenames must be unique across the whole tree (objects land flat in `obj/`).
 - Reference doc: `docs/superpowers/specs/2026-07-30-qemu-virt-support-design.md`. GitHub issue: #26 (tracking issue #24). Branch: `m68k-virt/boot-support`, draft PR #36.
 
+## Environment note: m68k toolchain fix already applied
+
+Before Task 1's implementer could verify anything, the only installed m68k
+toolchain in this environment (`m68k-atari-mintelf-gcc` 13.3.0 — the
+default `m68k-atari-mint-gcc` a.out toolchain isn't installed here at all)
+turned out to ICE (`internal compiler error: in print_operand_address, at
+config/m68k/m68k.cc:5226`) compiling `bios/xbios.c`'s `supexec()`. This was
+independently reproduced against the **pre-existing, unmodified**
+`aranym_defconfig` target — no virt-m68k code involved — confirming it as
+an environment/compiler defect, not something Task 1 introduced. Root
+cause, isolated by a clobber-list bisection: the ICE is triggered
+specifically by clobbering `a6` in `supexec()`'s fixed-register inline asm
+(every other clobbered register is fine). The project always builds with
+`-fomit-frame-pointer` (`Makefile`'s `OTHERFLAGS`), so `a6` is never used
+as a dedicated frame pointer here, but GCC's m68k backend still ICEs on
+this specific combination of a hard-register asm operand plus an `a6`
+clobber during its "final" RTL pass.
+
+Fix already committed (separately from this plan's 4 tasks, since it's an
+unrelated pre-existing bug, not part of the virt-m68k feature): in
+`bios/xbios.c`'s `supexec()`, `a6` is saved/restored by hand around the
+`jsr` inside the asm block (`move.l a6,-(sp)` / `move.l (sp)+,a6`) and
+removed from the clobber list. This is the textbook-correct way to protect
+a register from a call when the compiler can't be told about it directly:
+the physical register is provably restored to its original value
+regardless of what the called code does to it, so removing it from the
+clobber list changes nothing observable — it just stops relying on the
+buggy code path. Verified by rebuilding `aranym_defconfig` (unrelated
+existing target) end-to-end with the ELF toolchain after the fix: full
+link succeeds, image produced, no ICE.
+
+This fix must land before any task in this plan can be build-verified in
+this environment. It does not change any virt-m68k-specific code or
+behavior.
+
 ## Hardware reference (verified against QEMU source, not memory)
 
 QEMU source read directly from `/home/freyr/qemu` (`hw/m68k/virt.c`, `hw/intc/goldfish_pic.c`, `hw/intc/m68k_irqc.c`, `hw/rtc/goldfish_rtc.c`, `hw/char/goldfish_tty.c`, `target/m68k/cpu.c`) to pin down every register offset and the interrupt wiring used below — nothing here is from general Goldfish-device recollection.
@@ -67,7 +102,6 @@ QEMU source read directly from `/home/freyr/qemu` (`hw/m68k/virt.c`, `hw/intc/go
 - Modify: `Kconfig.machine`
 - Modify: `Kconfig.image`
 - Modify: `Makefile`
-- Modify: `bios/build.mk`
 - Create: `configs/virt-m68k_defconfig`
 - Create: `bios/machine/virt-m68k/startup.S`
 - Create: `bios/machine/virt-m68k/memory.c`
@@ -152,15 +186,9 @@ $(IMAGE): $(EMUTOS_IMG)
 endif
 ```
 
-- [ ] **Step 4: Wire `bios/build.mk`**
+- [ ] **Step 4: No `bios/build.mk` line needed yet**
 
-Add after the existing `obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o virt_pic.o virt_timer.o` line:
-
-```make
-obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfish_rtc_isr.o
-```
-
-(`memory.o` and `startup.o` don't need a line here: `startup.o` is already in the unconditional `obj-y` list at the top of the file, and `memory.o` is already in the unconditional list further down — both resolve to `bios/machine/virt-m68k/` via `vpath` once that directory exists, the same way they resolve to `bios/machine/virt-arm/` today.)
+`startup.o` is already in the unconditional `obj-y` list at the top of `bios/build.mk`, and `memory.o` is already in the unconditional list further down — both resolve to `bios/machine/virt-m68k/` via `vpath` once that directory exists, the same way they resolve to `bios/machine/virt-arm/` today. **Do not** add an `obj-$(MACHINE_VIRT_M68K) += ...` line in this task: the Goldfish driver objects it would list don't have source files until Tasks 2 and 3, and this task's own build+link step (Step 9 below) would fail with "cannot find obj/goldfish_tty.o" if that line existed here. Tasks 2 and 3 each add their own driver's object to this line when they create its source file.
 
 - [ ] **Step 5: Create `configs/virt-m68k_defconfig`**
 
@@ -350,7 +378,7 @@ Expected: the process runs for the full 5 seconds (killed by `timeout`, exit cod
 - [ ] **Step 10: Commit**
 
 ```bash
-git add Kconfig.machine Kconfig.image Makefile bios/build.mk \
+git add Kconfig.machine Kconfig.image Makefile \
     configs/virt-m68k_defconfig \
     bios/machine/virt-m68k/startup.S bios/machine/virt-m68k/memory.c
 git commit -m "m68k-virt: add machine/image Kconfig, build wiring, and minimal boot"
@@ -365,6 +393,7 @@ git commit -m "m68k-virt: add machine/image Kconfig, build wiring, and minimal b
 - Create: `bios/machine/virt-m68k/goldfish_tty.c`
 - Modify: `bios/Kconfig`
 - Modify: `bios/serport.c`
+- Modify: `bios/build.mk`
 
 **Interfaces:**
 - Consumes: nothing from Task 1 beyond the machine already booting.
@@ -514,7 +543,17 @@ In `bconout1()`:
 
 (No init call is needed in `init_serport()`: unlike the PL011 UART, the Goldfish TTY has no baud-rate/format registers to program — `PUT_CHAR` and `CMD_READ_BUFFER` work immediately with no setup.)
 
-- [ ] **Step 5: Build and smoke-test with a console**
+- [ ] **Step 5: Wire `bios/build.mk`**
+
+Add after the existing `obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o virt_pic.o virt_timer.o` line:
+
+```make
+obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o
+```
+
+(Task 3 extends this same line with the PIC/RTC objects — don't create a second `obj-$(MACHINE_VIRT_M68K)` line, append to this one.)
+
+- [ ] **Step 6: Build and smoke-test with a console**
 
 Run: `make virt-m68k_defconfig && make`
 Then:
@@ -526,11 +565,11 @@ timeout 5 qemu-system-m68k -M virt -m 128 -kernel virt-m68k.elf \
 ```
 Expected: `KDEBUG` lines appear on stdout (e.g. `machine_init()`, `bmem_init()`, `chardev_init()`, `init_serport()`), then output stops at `calibrate_delay()` (still no working timer — Task 3), and the process runs the full 5 seconds. `virt-m68k-qemu.log` stays empty.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add bios/machine/virt-m68k/goldfish_tty.h bios/machine/virt-m68k/goldfish_tty.c \
-    bios/Kconfig bios/serport.c
+    bios/Kconfig bios/serport.c bios/build.mk
 git commit -m "m68k-virt: add Goldfish TTY console driver"
 ```
 
@@ -545,6 +584,7 @@ git commit -m "m68k-virt: add Goldfish TTY console driver"
 - Create: `bios/machine/virt-m68k/goldfish_rtc.c`
 - Create: `bios/machine/virt-m68k/goldfish_rtc_isr.S`
 - Modify: `bios/bios.c`
+- Modify: `bios/build.mk`
 
 **Interfaces:**
 - Consumes: `goldfish_pic_enable(int pic, int bit)` (defined this task, used within it); `_vector_5ms` (an existing shared `void (*)(void)` global declared in `bios/bios.c`, already set to `int_timerc` by the existing shared `bios/mfp.c: init_system_timer()` — see reference section above, no change needed there).
@@ -801,7 +841,15 @@ Add the init calls, next to the existing `#elif defined(MACHINE_VIRT_ARM)` block
 #endif
 ```
 
-- [ ] **Step 7: Build and smoke-test the full boot**
+- [ ] **Step 7: Wire `bios/build.mk`**
+
+Extend the `obj-$(MACHINE_VIRT_M68K)` line Task 2 created:
+
+```make
+obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfish_rtc_isr.o
+```
+
+- [ ] **Step 8: Build and smoke-test the full boot**
 
 Run: `make virt-m68k_defconfig && make`
 Then:
@@ -813,12 +861,12 @@ timeout 8 qemu-system-m68k -M virt -m 128 -kernel virt-m68k.elf \
 ```
 Expected: `KDEBUG` output now progresses **past** `calibrate_delay()` to later init lines (`chardev_init()`, `init_serport()`, `bmem_init()`, `screen_init()`, `cookie_init()`, ...), since `calibrate_delay()` depends on `_hz_200` actually incrementing — proof the RTC interrupt is really firing and `int_timerc` is really running. Matching the ARM/raspi milestone, it's fine (expected, out of v1 scope) if boot eventually stalls or panics once it reaches AES/VDI-dependent code; what this step confirms is that the timer works. `virt-m68k-qemu.log` should still be empty of guest errors up to that point.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add bios/machine/virt-m68k/goldfish_pic.h bios/machine/virt-m68k/goldfish_pic.c \
     bios/machine/virt-m68k/goldfish_rtc.h bios/machine/virt-m68k/goldfish_rtc.c \
-    bios/machine/virt-m68k/goldfish_rtc_isr.S bios/bios.c
+    bios/machine/virt-m68k/goldfish_rtc_isr.S bios/bios.c bios/build.mk
 git commit -m "m68k-virt: add Goldfish PIC/RTC interrupt routing and periodic tick"
 ```
 
