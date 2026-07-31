@@ -56,7 +56,19 @@ PD      *run;           /* ptr to PD for current process */
  * internal variables
  */
 
+/*
+ * common supervisor stack for all processes: every trap #1 call from every
+ * process runs its BDOS-side C code on this stack (see other_sp in
+ * proc_go() and its use in gouser(), bdos/arch/arm/rwa.S). On ARM, AAPCS
+ * requires sp to be 8-byte aligned at every public interface, which gcc's
+ * auto-vectorizer (-mfpu=neon-vfpv4) relies on, but a plain WORD array
+ * carries no alignment guarantee beyond the compiler's incidental default.
+ */
+#if ARCH_ARM
+static WORD    supstk[SUPSIZ] __attribute__((aligned(8)));
+#else
 static WORD    supstk[SUPSIZ]; /* common sup stack for all processes */
+#endif
 static jmp_buf bakbuf;         /* longjmp buffer */
 
 
@@ -364,6 +376,20 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
     /* memory values */
     p->p_lowtpa = (BYTE *)p;               /*  M01.01.06   */
     p->p_hitpa  = (BYTE *)p  +  max;       /*  M01.01.06   */
+#if ARCH_ARM
+    /*
+     * p_hitpa becomes the actual initial user-mode sp of any process
+     * launched from this PD: proc_go()'s gouser_stack is unwound entirely
+     * by gouser() (bdos/arch/arm/rwa.S), landing sp at exactly p_hitpa, not
+     * at a gouser_stack-relative offset. AAPCS requires sp to be 8-byte
+     * aligned at every public interface, which gcc's auto-vectorizer
+     * (-mfpu=neon-vfpv4) relies on, but the free-memory allocator this
+     * pointer comes from (alloc_tpa()/ffit()/getmpb()) only guarantees
+     * 4-byte alignment. Round down; losing at most 7 bytes of TPA is
+     * harmless.
+     */
+    p->p_hitpa = (BYTE *)((ULONG)p->p_hitpa & ~7UL);
+#endif
     p->p_xdta = (DTA *) p->p_cmdlin;       /* default p_xdta is p_cmdlin */
     p->p_env = envptr;
 
