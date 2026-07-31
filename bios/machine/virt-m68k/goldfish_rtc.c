@@ -41,7 +41,8 @@ static void goldfish_rtc_arm_next(void)
 {
     ULONG lo, hi, new_lo, new_hi;
 
-    lo = RTC_TIME_LOW;    /* latches TIME_HIGH as a side effect (see goldfish_rtc_read()) */
+    lo = RTC_TIME_LOW;    /* latches TIME_HIGH as a side effect (see the real device
+                           * model's goldfish_rtc_read(), hw/rtc/goldfish_rtc.c) */
     hi = RTC_TIME_HIGH;
 
     new_lo = lo + TICK_NS;

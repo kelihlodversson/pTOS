@@ -104,7 +104,7 @@ _main:
         lea     __ebss,a1
 clear_bss:
         cmp.l   a1,a0
-        jge     clear_bss_done
+        jhs     clear_bss_done          // unsigned compare: these are addresses, not signed values
         clr.l   (a0)+
         jra     clear_bss
 clear_bss_done:
