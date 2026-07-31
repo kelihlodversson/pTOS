@@ -194,6 +194,14 @@ SECTIONS
      */
     .stack : LMA_AT(.stack)
     {
+        /* _stktop is shared by _biosmain and by every ARM exception mode's
+         * initial sp (IRQ/ABT/UND/SVC/FIQ; see each machine's startup.S).
+         * AAPCS requires sp to be 8-byte aligned at every public interface,
+         * which gcc's auto-vectorizer (-mfpu=neon-vfpv4) relies on, but
+         * nothing otherwise constrains where the preceding .bss section
+         * happens to end, so force it here.
+         */
+        . = ALIGN(8);
         _stkbot = .;
         . += 32K;
         _stktop = .;
