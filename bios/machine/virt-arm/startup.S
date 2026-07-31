@@ -88,8 +88,8 @@ os_dummy:
  * physical constants, then a long jump into virtual addressing, then
  * a second "hello" plus a sysvars round-trip check using ordinary
  * symbol-based addressing to prove the low fixed-address TOS system
- * variables (tosvars.ld) are correctly mapped via the low MMU window.
- * Task 4 replaces the tail of this with a hand-off to _biosmain.
+ * variables (tosvars.ld) are correctly mapped via the low MMU window,
+ * then hands off to _biosmain.
  */
 .balign 4
 _main:
@@ -109,7 +109,7 @@ _main:
     ldr pc, =virt_arm_post_mmu
 
 virt_arm_post_mmu:
-    ldr sp, =0x47ff0000     /* still the physical scratch stack; Task 4 switches to _stktop */
+    ldr sp, =0x47ff0000     /* physical scratch stack, until the switch to _stktop below */
     ldr r4, =hello_msg_virt
     bl  print_string
 
