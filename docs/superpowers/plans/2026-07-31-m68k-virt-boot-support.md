@@ -1113,6 +1113,40 @@ Push the branch, then edit PR #36's description to check off the completed items
 
 ---
 
+## Final whole-branch review: one Critical fix
+
+The final review (after all 4 tasks passed individually) found a real, Critical
+bug no task-scoped review could see, because it spans two files owned by two
+different tasks: `bios/machine/virt-m68k/goldfish_rtc_isr.S` (Task 3) restored
+`a0` from the stack, then immediately clobbered it to compute the tail-jump
+target into `int_timerc` (`bios/arch/m68k/vectors.S`, not part of this branch)
+— and since that tail-jump never returns, `a0` was never correctly restored
+before control passed back to whatever was interrupted. This corrupted the
+interrupted context's `a0` on every tick (including every tick before
+`init_system_timer()` runs, via the equally-broken `no_tick` path).
+
+Fixed with the same frame-synthesis technique `bios/arch/m68k/amiga2.S`
+already uses for the identical problem on Amiga (a tail call into a routine
+that ends in its own `RTE`), simplified since this board is always 68020+.
+**Empirically tested against the hypothesis that this corruption was the
+actual cause of the "`_hz_200` freezes at 2" behavior** (Task 3's own
+finding): after the fix, `_hz_200` still reaches exactly 2 and stops,
+unchanged. This refutes that hypothesis and leaves Task 3's original
+conclusion (a separate, pre-existing, shared AES/VDI dispatch issue, not
+part of this branch) standing on firmer ground — the corruption was real
+and worth fixing, but it was not the freeze's cause.
+
+Also applied from the same review: `goldfish_pic_enable()` now takes `WORD`
+not `int`; `goldfish_rtc_init()` uses the existing `VEC_LEVEL6` macro instead
+of raw address arithmetic; a comment in `bios/serport.c` explaining the
+missing Goldfish TTY init call; `ENTRY(_os_entry)` added to `emutos.ld` for
+both QEMU virt boards; and a `doc/install.txt` section (`CLAUDE.md` names
+this file, not `readme.md`, as authoritative for "every configuration").
+Full detail: `.superpowers/sdd/2026-07-31-m68k-virt-boot-support/task-3-report.md`'s
+"Final whole-branch review fix" section.
+
+---
+
 ## Self-Review
 
 **Spec coverage:** v1 scope (boot + console + timer, matching raspi/virt-arm's milestone) — Tasks 1-3. Kconfig additions exactly as resolved in the design doc's "resolved" section — Task 1 Steps 1-2, Task 2 Step 3. `tosvars.ld` needing no changes — verified in the Hardware reference section; `emutos.ld` needed two small, targeted additions found only by actually linking (see "Additional gaps..."), folded into Task 1 Step 4. Build wiring (`Makefile`, `build.mk`, defconfig) — Task 1 Steps 3-5. Definition of done (`make virt-m68k_defconfig && make` + qemu boot to a working console and a verified-firing timer interrupt) — Task 4 Step 2. `readme.md` documentation — Task 4 Step 1.

@@ -761,6 +761,9 @@ void init_serport(void)
 #if CONF_WITH_VIRT_UART
     virt_uart0_init();
 #endif
+    /* No CONF_WITH_GOLDFISH_TTY init call: the device needs no baud-rate/
+     * format setup, and goldfish_tty.c never issues CMD_INT_ENABLE, so
+     * input is polled-only in v1 (bconin1() busy-waits on BYTES_READY). */
 
 #if !CONF_SERIAL_IKBD
     (*rsconfptr)(B9600, 0, 0x88, 1, 1, 0);

@@ -32,6 +32,15 @@ OUTPUT_FORMAT(binary)
 OUTPUT_FORMAT(elf32-m68k)
 #endif
 
+#if defined(MACHINE_VIRT_ARM) || defined(MACHINE_VIRT_M68K)
+/* Both -kernel-loading QEMU boards otherwise rely on the linker's
+ * last-resort "address of .text" fallback to pick an entry point, which
+ * only works because startup.o happens to be first in obj-y (see
+ * bios/build.mk). Naming the real entry point removes that silent
+ * -failure-mode dependency for the two targets that actually need one. */
+ENTRY(_os_entry)
+#endif
+
 /* The ROM address depends on the target */
 #if defined (MACHINE_AMIGA)
 # define ROM_ORIGIN 0x00fc0000

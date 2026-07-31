@@ -12,6 +12,7 @@
 #endif
 
 #include "portab.h"
+#include "vectors.h"
 #include "goldfish_pic.h"
 #include "goldfish_rtc.h"
 
@@ -26,11 +27,11 @@
 
 /* QEMU wires this RTC instance to PIC index 5 ("PIC #6"), bit 0 (see
  * hw/m68k/virt.c: VIRT_GF_RTC_IRQ_BASE = PIC_IRQ(6, 1)), which the m68k
- * IRQ controller (hw/intc/m68k_irqc.c) takes at CPU autovector level 6,
- * i.e. vector 30 -- RAM vector-table address 30*4 = 0x78. */
+ * IRQ controller (hw/intc/m68k_irqc.c) takes at CPU autovector level 6 --
+ * VEC_LEVEL6 (bios/vectors.h), the same fixed sysvar address (0x78)
+ * init_exc_vec() defaults to just_rte before this overwrites it. */
 #define GOLDFISH_RTC_PIC_INDEX  5
 #define GOLDFISH_RTC_PIC_BIT    0
-#define GOLDFISH_RTC_VECTOR     30
 
 #define TICK_NS  5000000UL   /* 5 ms = 200 Hz, matches the classic Atari timer C rate */
 
@@ -59,7 +60,7 @@ void goldfish_rtc_service(void)
 
 void goldfish_rtc_init(void)
 {
-    *(volatile ULONG*)((ULONG)GOLDFISH_RTC_VECTOR * 4) = (ULONG)goldfish_rtc_isr;
+    VEC_LEVEL6 = goldfish_rtc_isr;
 
     RTC_IRQ_ENABLED = 1;
     goldfish_rtc_arm_next();

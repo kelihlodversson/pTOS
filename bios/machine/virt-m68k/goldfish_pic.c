@@ -29,13 +29,13 @@
 
 void goldfish_pic_init(void)
 {
-    int n;
+    WORD n;
 
     for (n = 0; n < GOLDFISH_PIC_COUNT; n++)
         PIC_IRQ_DISABLE_ALL(n) = 1;   /* value is ignored; any write disables all 32 lines */
 }
 
-void goldfish_pic_enable(int pic, int bit)
+void goldfish_pic_enable(WORD pic, WORD bit)
 {
     PIC_ENABLE(pic) = (1UL << bit);
 }

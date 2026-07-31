@@ -12,7 +12,7 @@
 #ifdef MACHINE_VIRT_M68K
 
 void goldfish_pic_init(void);
-void goldfish_pic_enable(int pic, int bit);
+void goldfish_pic_enable(WORD pic, WORD bit);
 
 #endif /* MACHINE_VIRT_M68K */
 
