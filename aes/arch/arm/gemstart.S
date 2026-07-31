@@ -116,6 +116,11 @@ aes_restart:
         ldr     sp, =_D // D is a badly named global variable containing all the global gem vars
         add     sp, sp, r0
 
+        // Enforce AAPCS's 8-byte stack alignment before entering C: see the
+        // comment on the equivalent "bic sp, sp, #7" in _accdesk_start below
+        // for why THEGLO/UDA's own alignment isn't a strong enough guarantee.
+        bic     sp, sp, #7
+
         // go in C
         bl      _gem_main
 
@@ -145,6 +150,15 @@ _accdesk_start:
         ldr     sp, =_D
         ldr     sp, [sp, UDA_SPSUPER]   // use AES process 0 stack
 
+        // u_spsuper is not guaranteed to still be 8-byte aligned here: _dos_exec
+        // (below) temporarily rewrites it from its own live sp minus a fixed
+        // offset to guard against reentrancy, and that live sp reflects wherever
+        // gem_main()'s call depth happened to be at the Pexec() call site. gcc's
+        // auto-vectorizer (-mfpu=neon-vfpv4) requires AAPCS's 8-byte stack
+        // alignment for NEON/VFP loads of local variables and will Data Abort if
+        // it doesn't hold, so enforce it here at the point of use rather than
+        // trying to keep every upstream contributor aligned.
+        bic     sp, sp, #7
 
         ldr     r3, [r11, #PD_p_tlen]       // calc memory required
         ldr     r2, [r11, #PD_p_dlen]
