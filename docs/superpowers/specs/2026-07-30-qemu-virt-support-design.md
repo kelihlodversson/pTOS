@@ -52,6 +52,16 @@ config MACHINE_VIRT_M68K
 - `ARCH_M68K` default gains `|| MACHINE_VIRT_M68K`. `MACHINE_VIRT_M68K` is
   **not** added to `CONF_ATARI_HARDWARE`'s default-y list — same treatment as
   `MACHINE_AMIGA` — since the board has no Atari chipset.
+- That one exclusion cascades further than on ARM: `DETECT_NATIVE_FEATURES`,
+  `CONF_WITH_BUS_ERROR`, `CONF_WITH_68030_PMMU`, and `CONF_WITH_68040_PMMU`
+  all `depends on ... CONF_ATARI_HARDWARE`, so they switch off automatically
+  with no per-defconfig override needed. Unlike `virt-arm_defconfig`, which
+  has to explicitly turn off `CONF_WITH_CLI` and `CONF_WITH_LINEA` (their
+  only implementations, `cmdasm.S`/`linea.S`, are m68k-only), `virt-m68k`
+  keeps both **on** by default: it is `ARCH_M68K_CLASSIC`, so those
+  implementations apply unchanged. `CONF_WITH_IDE=n` is still needed in
+  `configs/virt-m68k_defconfig` (no IDE controller on this board), matching
+  the ARM defconfig's reasoning.
 - New `Kconfig.image` entries, following the existing `TARGET_RPI_KERNEL`
   precedent (`EMUTOS_LIVES_IN_RAM = y`, flat/ELF output, no ROM header):
   - `TARGET_VIRT_ARM_KERNEL` depends on `MACHINE_VIRT_ARM`
@@ -86,26 +96,44 @@ unchanged.
 New arch path; nothing existing to reuse, since it's the first non-Atari
 -chipset, non-ColdFire m68k machine.
 
-- New `startup.S` sets up the supervisor stack and vector table per the
-  classic m68k exception table conventions already used in
-  `bios/arch/m68k`, but skips all Atari MFP/ACIA setup. RAM starts at
-  `0x0` on this board, so the reset vector table doubles as the pTOS
-  `OSHEADER` the way the classic Atari boot does; needs verifying against
-  `bios/startup.S` for layout compatibility during implementation, and a
-  variant written if it doesn't line up directly.
-- **Cross-reference from the ARM plan:** `tosvars.ld` hardcodes ~147 TOS
-  system-variable addresses as absolute constants in `0x380`–`0x800`
-  (see the ARM implementation plan's memory-layout task), and the
-  classic ROM-based Atari targets (`TARGET_192`/`256`/`512`/`CART`)
-  already split this into two distinct regions: `stram` (origin `0`,
-  holding the fixed-address sysvars) and `rom` (origin `0x00e00000`,
-  holding `.text`). Whether m68k `virt` needs anything beyond that
-  existing two-region split — it does have real RAM at physical `0x0`,
-  unlike ARM `virt`, so it may just work unmodified — or needs its own
-  address-translation trick (the board's default CPU, m68040, has a
-  PMMU already used elsewhere in this codebase via
-  `CONF_WITH_68040_PMMU`) should be checked explicitly when #26 is
-  designed, rather than assumed from the ARM plan.
+- New `startup.S`, modeled on `virt-arm`'s (a new file, not a derivative of
+  `bios/arch/m68k/startup.S`, which is saturated with Atari-only steps: the
+  Falcon reset-instruction dance, ST-MMU bank-register probe, cartridge
+  detection, PMMU/cache teardown for real 68020-60 hardware). None of that
+  applies: QEMU's `-kernel` loader jumps straight to the ELF entry point
+  with the CPU already in supervisor mode, so there is no hardware
+  reset-vector fetch to satisfy. The `OSHEADER` fields (`_os_entry`,
+  `reseth`, `os_magic`, etc.) stay in the same shape as every other machine
+  purely for TOS-header-format compatibility — they do **not** need to
+  double as the real CPU reset vector the way ROM-resident Atari boot
+  requires, since nothing reads vectors 0/1 from physical address 0 here.
+  Needed steps: disable interrupts, set the initial supervisor stack
+  pointer, reset the VBR to 0, jump to `_biosmain`. `bios/arch/m68k/vectors.S`
+  (`init_exc_vec`/`init_user_vec`) is architecture-generic — it writes the
+  vector 2-63 default table and vectors 64-255 user table into RAM, with no
+  Atari-hardware assumptions — and is already invoked later from shared
+  `bios/bios.c`, not from machine-specific `startup.S`, so it needs no
+  changes and no early call from the new file.
+- **Cross-reference from the ARM plan, resolved:** `tosvars.ld` needs no
+  changes. It already branches on `#if ARCH_ARM` vs. a plain `#else` for
+  the classic m68k layout; `MACHINE_VIRT_M68K` sets `ARCH_M68K` (not
+  `ARCH_ARM`), so it falls into the `#else` branch — the same tightly
+  packed, 2-byte-aligned layout every Atari/Amiga/ColdFire target already
+  uses — automatically, with no new arch conditional needed.
+  `emutos.ld` similarly needs **no changes**: `MACHINE_VIRT_M68K` is
+  neither `MACHINE_RPI` nor `MACHINE_VIRT_ARM`, so it falls into the
+  existing "classic" branches for both the `.text`/`ROM_ORIGIN` placement
+  and the `.stack` section (2 KiB, placed in low `stram` before `.text`) —
+  the same path `TARGET_PRG` and every other RAM-resident, non-ROM m68k
+  target already exercises successfully. This works because m68k `virt`'s
+  RAM sits at physical `0x0`, exactly where `stram` is already anchored;
+  unlike ARM `virt` (RAM at `0x40000000`), there is no VMA/LMA split or
+  MMU bootstrap trick needed to make the fixed-address TOS system
+  variables land in real memory. No PMMU is required for v1 either:
+  `CONF_WITH_68040_PMMU` (and `CONF_WITH_68030_PMMU`) `depends on
+  CONF_ATARI_HARDWARE`, which `MACHINE_VIRT_M68K` deliberately doesn't set
+  (see Kconfig section below), so both stay off without any extra
+  handling.
 - New `goldfish_tty.c` driving the Goldfish TTY device at `0xff008000` for
   console I/O.
 - New `goldfish_pic.c` driving the Goldfish PIC (6 instances at
