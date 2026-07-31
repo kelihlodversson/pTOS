@@ -13,6 +13,28 @@ a configuration option or in an `arch/`/`machine/` subdirectory.
 This is a freestanding OS image: no libc, no host runtime. Everything the code
 needs lives in `util/` and `include/`.
 
+## Workflow
+
+Every change starts from a GitHub issue. If none exists for the work, create
+it first.
+
+1. Create a branch off `master` named `{type}/{issue}-{title-with-dashes}`,
+   where `{type}` is the kind of work (`feature`, `bugfix`, `chore`, …) and
+   `{issue}` is the issue number — e.g. `bugfix/37-fix-usb-detection`.
+2. Immediately push an empty commit and open a **draft** PR from it, before
+   any real work exists:
+   ```sh
+   git commit --allow-empty -m "Start work on #<issue>"
+   git push -u origin HEAD
+   gh pr create --draft --title "..." --body "Fixes #<issue>"
+   ```
+3. Then do the work. For anything longer than a single sitting, commit and
+   push incrementally rather than holding a large diff locally.
+4. When it's done, mark the PR ready for review (`gh pr ready`).
+
+The user merges the PR themselves once they're satisfied and any review
+comments are addressed — never merge or force-push a PR as part of this flow.
+
 ## Building
 
 The build is configured the way the Linux kernel is. There is no `make rpi2`;
