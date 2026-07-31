@@ -3,3 +3,4 @@
 #
 
 obj-y += cmdasm.o cmdmain.o cmdedit.o cmdexec.o cmdint.o cmdparse.o cmdutil.o
+obj-$(ARCH_ARM) += cmdgetwh.o

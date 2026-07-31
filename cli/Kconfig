@@ -11,7 +11,7 @@ menu "EmuCON command line"
 
 config CONF_WITH_CLI
 	bool "Include the built-in EmuCON command interpreter"
-	default n if TARGET_192 || MACHINE_RPI
+	default n if TARGET_192
 	default y
 	help
 	  EmuCON is a small command line interpreter built into the image.
