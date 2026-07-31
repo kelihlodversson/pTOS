@@ -85,7 +85,12 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
         }
         else
         {
-            /* device: not cacheable, not bufferable */
+            /* device: TEX=0, C=0, B=1 selects Shareable Device memory (not
+             * cacheable) -- with TEX=0, C and B jointly index the memory
+             * type table rather than acting as independent cacheable/
+             * bufferable flags, so B=1 here is part of that selector, not
+             * a separate "bufferable" attribute. Same encoding as the
+             * "shared device" case in bios/machine/raspi/memory.c. */
             entry->BBit = 1;
             entry->CBit = 0;
             entry->TEX  = 0;
