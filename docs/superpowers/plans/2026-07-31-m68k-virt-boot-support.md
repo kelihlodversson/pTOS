@@ -4,7 +4,7 @@
 
 **Goal:** Add a `virt-m68k` machine target so pTOS boots under `qemu-system-m68k -M virt`, reaching a running BIOS with a working serial console and a ticking periodic timer — the same v1 milestone the ARM virt port (#25) and Raspberry Pi port already reach.
 
-**Architecture:** A new `bios/machine/virt-m68k/` directory, modeled on `bios/machine/virt-arm/`'s shape but with its own from-scratch `startup.S` (not derived from the Atari-only `bios/arch/m68k/startup.S`). Three Goldfish devices provide console (`goldfish_tty`), interrupt routing (`goldfish_pic`), and the periodic tick (`goldfish_rtc`), all at fixed physical addresses QEMU's `hw/m68k/virt.c` hard-codes. `tosvars.ld` and `emutos.ld` need **no changes at all** — `MACHINE_VIRT_M68K` falls into the existing classic-m68k branches of both (see the design doc's "resolved" section) because this board's RAM sits at physical `0x0`, exactly where every other m68k target already expects it.
+**Architecture:** A new `bios/machine/virt-m68k/` directory, modeled on `bios/machine/virt-arm/`'s shape but with its own from-scratch `startup.S` (not derived from the Atari-only `bios/arch/m68k/startup.S`). Three Goldfish devices provide console (`goldfish_tty`), interrupt routing (`goldfish_pic`), and the periodic tick (`goldfish_rtc`), all at fixed physical addresses QEMU's `hw/m68k/virt.c` hard-codes. `tosvars.ld` needs **no changes at all** — `MACHINE_VIRT_M68K` falls into the existing classic-m68k branch (see the design doc's "resolved" section) because this board's RAM sits at physical `0x0`, exactly where every other m68k target already expects it. `emutos.ld` needs two small, targeted additions (not the sysvar/MMU rework `MACHINE_VIRT_ARM` needed) — see "Additional gaps found only by actually building and booting Task 1" below.
 
 **Tech Stack:** C90 (`-std=gnu90`), hand-written m68k assembly (GNU `as`, `-mshort` off — this is `ARCH_M68K_CLASSIC`, not ColdFire), Kconfig/Kbuild-style build system, `qemu-system-m68k -M virt` for smoke testing.
 
@@ -54,6 +54,76 @@ This fix must land before any task in this plan can be build-verified in
 this environment. It does not change any virt-m68k-specific code or
 behavior.
 
+## Additional gaps found only by actually building and booting Task 1
+
+The original design doc's claim that `tosvars.ld`/`emutos.ld` need "no
+changes at all" turned out to be incomplete, and three more gaps only
+surfaced by carrying Task 1 all the way through a real build and a real
+`qemu-system-m68k` boot (config generation alone doesn't catch any of
+these — they're all link-time or runtime failures). All four are folded
+into Task 1's steps above; this section is the record of why:
+
+- **`emutos.ld`'s `OUTPUT_FORMAT(binary)`** is guarded by `#if
+  !defined(MACHINE_RPI) && !defined(MACHINE_VIRT_ARM)` — missing
+  `MACHINE_VIRT_M68K`. Left as-is, the link produces a raw flat binary
+  (renamed `.elf` but not one), which `qemu-system-m68k -M virt -kernel`
+  rejects outright ("could not load kernel"). Fixed by adding
+  `MACHINE_VIRT_M68K` to that guard, **and** by adding a new
+  `#if defined(MACHINE_VIRT_M68K) OUTPUT_FORMAT(elf32-m68k) #endif` block:
+  `m68k-atari-mintelf-ld`'s *default* target (used when no
+  `OUTPUT_FORMAT` applies) is `elf32-atariprg`, a MiNT-PRG-flavored ELF
+  variant tailored for `mintbin`'s PRG conversion — not a generic ELF32,
+  and its relocation handling rejects some relocations this link
+  produces outright (`invalid relocation type 2 for target
+  elf32-atariprg`). `elf32-m68k` is a plain, generic target the same
+  linker also supports directly.
+- **`CONF_WITH_TTRAM`** (`bios/Kconfig`) defaults to `y` for every
+  `ARCH_M68K_CLASSIC` machine except `TARGET_192`/`MACHINE_AMIGA`, and its
+  detection code unconditionally calls `check_read_byte()` (gated by
+  `CONF_WITH_BUS_ERROR`, off for us) — an undefined-reference link error.
+  `MACHINE_VIRT_M68K` needs the same exclusion Amiga already has, for the
+  same reason: no Atari-style bus-error-probed expansion RAM exists here.
+- The `Kconfig.image` image-type `choice` has no
+  `default TARGET_VIRT_M68K_KERNEL if MACHINE_VIRT_M68K` line, unlike
+  `MACHINE_RPI`/`MACHINE_AMIGA`. Without it the choice silently resolves
+  to `TARGET_PRG` (`depends on ARCH_M68K` only, so it's visible — and
+  wins — for any m68k machine), not caught by `make virt-m68k_defconfig`
+  succeeding, only by the wrong build recipe running.
+- `detect_32bit_address_bus()` (`bios/arch/m68k/memory.S`, called
+  unconditionally from `bios/bios.c` under `#if CONF_WITH_ADVANCED_CPU`,
+  which we want on) is lost when our own `memory.c` overrides that file
+  via `vpath` — another undefined-reference link error. Fixed by giving
+  `bios/machine/virt-m68k/memory.c` a real (trivial) implementation: this
+  board's CPUs (68020-68060) always have a 32-bit address bus and no
+  chipset that could mirror addresses, so the Atari-hardware probe this
+  replaces is simply not needed — the answer is always `TRUE`.
+
+A fourth issue was runtime-only, found by actually running
+`qemu-system-m68k`, and changes the target's CPU choice rather than a
+build file: `bios/arch/m68k/processor.S`'s shared, generic CPU-detection
+code (`_detect_cpu`, run by every m68k machine) deliberately probes the
+68060-only PCR control register to distinguish 68040 from 68060,
+protected by its own temporary exception vectors (the same technique
+`detect_32bit_address_bus()` uses) — a real 68040 raises an illegal
+-instruction exception on that access, which the protection catches
+cleanly. QEMU's m68k target does not: `target/m68k/helper.c`'s
+`HELPER(m68k_movec_from)` handles `M68K_CR_PCR` (and `CAAR`, `BUSCR`)
+with an unconditional `cpu_abort()` — a fatal, whole-VM crash — instead
+of falling through to the `raise_exception_ra(env, EXCP_ILLEGAL, ...)`
+path every other "register not implemented on this CPU model" case
+already uses. This is a genuine QEMU bug (confirmed by reading
+`target/m68k/helper.c` directly), not something fixable from pTOS's side,
+and it reproduces on any CPU model that reaches that detection branch
+(not just `-m68040`, the board's default). Targeting `-cpu m68020`
+instead sidesteps it completely: 68020 detection resolves from an
+earlier, unrelated probe (the CACR cache-control register) before
+`_detect_cpu` ever reaches the PCR read. No v1 functionality needs 68040
+(this port uses no PMMU), so `configs/virt-m68k_defconfig`'s `CPUFLAGS`
+and every `qemu-system-m68k` invocation in this plan target `-m68020` /
+`-cpu m68020` instead of the board's own m68040 default. Revisit if a
+later feature needs 68040-specific behavior, or once upstream QEMU fixes
+this.
+
 ## Hardware reference (verified against QEMU source, not memory)
 
 QEMU source read directly from `/home/freyr/qemu` (`hw/m68k/virt.c`, `hw/intc/goldfish_pic.c`, `hw/intc/m68k_irqc.c`, `hw/rtc/goldfish_rtc.c`, `hw/char/goldfish_tty.c`, `target/m68k/cpu.c`) to pin down every register offset and the interrupt wiring used below — nothing here is from general Goldfish-device recollection.
@@ -76,12 +146,13 @@ QEMU source read directly from `/home/freyr/qemu` (`hw/m68k/virt.c`, `hw/intc/go
 - `Kconfig.image` (modify) — `TARGET_VIRT_M68K_KERNEL`, `EMUTOS_LIVES_IN_RAM` default.
 - `bios/Kconfig` (modify) — `CONF_WITH_GOLDFISH_TTY`.
 - `Makefile` (modify) — `MACHINE-$(MACHINE_VIRT_M68K)`, image-default/build rule.
+- `emutos.ld` (modify) — real ELF output for this machine instead of a flat binary or the toolchain's `elf32-atariprg` default.
 - `bios/build.mk` (modify) — new `obj-$(MACHINE_VIRT_M68K)` line.
 - `bios/bios.c` (modify) — include + machine-init dispatch, mirroring the existing `MACHINE_VIRT_ARM` branch.
 - `bios/serport.c` (modify) — include + 4 `#elif CONF_WITH_GOLDFISH_TTY` branches, mirroring the existing `CONF_WITH_VIRT_UART` branches.
 - `configs/virt-m68k_defconfig` (create).
 - `bios/machine/virt-m68k/startup.S` (create) — boot entry, OSHEADER, bss clear, `_phystop` set, jump to `_biosmain`.
-- `bios/machine/virt-m68k/memory.c` (create) — empty placeholder, satisfies the unconditional `obj-y += memory.o`.
+- `bios/machine/virt-m68k/memory.c` (create) — `detect_32bit_address_bus()` (always true on this board; see "Additional gaps..." above), satisfies the unconditional `obj-y += memory.o`.
 - `bios/machine/virt-m68k/goldfish_tty.c` / `.h` (create) — console driver.
 - `bios/machine/virt-m68k/goldfish_pic.c` / `.h` (create) — interrupt routing.
 - `bios/machine/virt-m68k/goldfish_rtc.c` / `.h` (create) — periodic tick, device-side logic.
@@ -101,13 +172,15 @@ QEMU source read directly from `/home/freyr/qemu` (`hw/m68k/virt.c`, `hw/intc/go
 **Files:**
 - Modify: `Kconfig.machine`
 - Modify: `Kconfig.image`
+- Modify: `bios/Kconfig`
 - Modify: `Makefile`
+- Modify: `emutos.ld`
 - Create: `configs/virt-m68k_defconfig`
 - Create: `bios/machine/virt-m68k/startup.S`
 - Create: `bios/machine/virt-m68k/memory.c`
 
 **Interfaces:**
-- Produces: a bootable ELF (`virt-m68k.elf`) that clears BSS, sets `_phystop`, and reaches `_biosmain`. No console output yet (Task 2), no working timer yet (Task 3) — `_biosmain` will run past `machine_init()` (a no-op for this machine, see reference section above) and hang inside `calibrate_delay()` waiting for `_hz_200` to change, since nothing drives the timer yet. That hang, with **no** `guest_errors`/`unimp` output, is this task's actual pass signal.
+- Produces: a bootable ELF (`virt-m68k.elf`) that clears BSS, sets `_phystop`, and reaches `_biosmain`. No console output yet (Task 2), no working timer yet (Task 3) — `_biosmain` will run past `machine_init()` (a no-op for this machine, see reference section above) and hang inside `calibrate_delay()` waiting for `_hz_200` to change, since nothing drives the timer yet. That hang, with at most one benign, expected `Illegal Instruction` log entry from CPU detection (see the "Additional gaps..." section above) and no other `guest_errors`/`unimp` output, is this task's actual pass signal.
 
 - [ ] **Step 1: Add `MACHINE_VIRT_M68K` to `Kconfig.machine`**
 
@@ -148,6 +221,14 @@ config TARGET_VIRT_M68K_KERNEL
 	  binary: QEMU's ELF loader is used directly.
 ```
 
+Also add a `default` to the choice itself, next to the existing `default TARGET_RPI_KERNEL if MACHINE_RPI` / `default TARGET_AMIGA_ROM if MACHINE_AMIGA` lines near the top of the same `choice` block:
+
+```kconfig
+	default TARGET_VIRT_M68K_KERNEL if MACHINE_VIRT_M68K
+```
+
+Without this, the choice falls through to `TARGET_PRG` instead (`depends on ARCH_M68K` only, so it's visible — and silently wins — for any m68k machine, unlike the ARM virt port where `TARGET_VIRT_ARM_KERNEL` happens to be the *only* visible option so no explicit default is needed there). This is only caught by actually building and checking which image type came out, not by config generation alone: `make virt-m68k_defconfig` succeeds either way, `.config` just ends up with `TARGET_PRG=y` instead.
+
 Then extend `EMUTOS_LIVES_IN_RAM`:
 
 ```kconfig
@@ -156,7 +237,49 @@ config EMUTOS_LIVES_IN_RAM
 	default y if TARGET_PRG || TARGET_FLOPPY || TARGET_AMIGA_FLOPPY || TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL || TARGET_VIRT_M68K_KERNEL
 ```
 
-- [ ] **Step 3: Wire the Makefile**
+- [ ] **Step 3: Exclude `MACHINE_VIRT_M68K` from `CONF_WITH_TTRAM`'s default in `bios/Kconfig`**
+
+`CONF_WITH_TTRAM` (`bios/Kconfig`) defaults to `y` for every `ARCH_M68K_CLASSIC` machine except the ones its `default n if ...` list explicitly excludes (currently `TARGET_192` and `MACHINE_AMIGA`). Its detection code (`bios/memory2.c: detect_ttram_size()`) assumes Atari-style bus-error probing (`check_read_byte()`, gated by `CONF_WITH_BUS_ERROR`, which `depends on CONF_ATARI_HARDWARE` and is therefore off for us) to find 32-bit-space expansion RAM — hardware that doesn't exist on this board, the same reason `MACHINE_AMIGA` is already excluded. Left at its default, this reaches an unconditional call to `check_read_byte()` with no implementation linked, an undefined-reference link error only caught by actually linking the image (Step 10 below), not by config generation. Change:
+
+```kconfig
+config CONF_WITH_TTRAM
+	bool "TT-RAM detection"
+	depends on CONF_WITH_ALT_RAM && !ARCH_ARM
+	default n if TARGET_192 || MACHINE_AMIGA || MACHINE_VIRT_M68K
+	default y
+```
+
+- [ ] **Step 4: Fix `emutos.ld`'s output format for this machine**
+
+Change the `OUTPUT_FORMAT(binary)` guard near the top of the file:
+
+```
+#if !defined(MACHINE_RPI) && !defined(MACHINE_VIRT_ARM) && !defined(MACHINE_VIRT_M68K)
+/* Create a plain binary file, without any header (not possible on ARM).
+ * MACHINE_VIRT_M68K is excluded for a different reason than the ARM
+ * machines: it needs a real ELF image for QEMU's -kernel loader (see
+ * hw/m68k/virt.c's use of load_elf()), not a flat binary -- unlike every
+ * other m68k target, none of which boot via an ELF loader. */
+OUTPUT_FORMAT(binary)
+#endif
+```
+
+Then add, immediately after that `#endif` (before the `/* The ROM address depends on the target */` comment):
+
+```
+#if defined(MACHINE_VIRT_M68K)
+/* m68k-atari-mintelf-ld's default output target for this toolchain is
+ * elf32-atariprg (tailored to produce MiNT PRG executables via mintbin),
+ * not a generic ELF32; QEMU's -kernel loader (hw/m68k/virt.c) needs a
+ * plain ELF image, and elf32-atariprg's relocation handling also rejects
+ * some relocations this link produces. Force the generic target instead. */
+OUTPUT_FORMAT(elf32-m68k)
+#endif
+```
+
+Without both changes, the link either produces a flat binary QEMU's `-kernel` loader rejects ("could not load kernel"), or fails outright with `invalid relocation type 2 for target elf32-atariprg` once the first part is fixed alone. Neither failure is visible from config generation — only from actually linking (Step 10 below).
+
+- [ ] **Step 5: Wire the Makefile**
 
 Add after the existing `MACHINE-$(MACHINE_VIRT_ARM) += virt-arm` line:
 
@@ -186,21 +309,35 @@ $(IMAGE): $(EMUTOS_IMG)
 endif
 ```
 
-- [ ] **Step 4: No `bios/build.mk` line needed yet**
+- [ ] **Step 6: No `bios/build.mk` line needed yet**
 
-`startup.o` is already in the unconditional `obj-y` list at the top of `bios/build.mk`, and `memory.o` is already in the unconditional list further down — both resolve to `bios/machine/virt-m68k/` via `vpath` once that directory exists, the same way they resolve to `bios/machine/virt-arm/` today. **Do not** add an `obj-$(MACHINE_VIRT_M68K) += ...` line in this task: the Goldfish driver objects it would list don't have source files until Tasks 2 and 3, and this task's own build+link step (Step 9 below) would fail with "cannot find obj/goldfish_tty.o" if that line existed here. Tasks 2 and 3 each add their own driver's object to this line when they create its source file.
+`startup.o` is already in the unconditional `obj-y` list at the top of `bios/build.mk`, and `memory.o` is already in the unconditional list further down — both resolve to `bios/machine/virt-m68k/` via `vpath` once that directory exists, the same way they resolve to `bios/machine/virt-arm/` today. **Do not** add an `obj-$(MACHINE_VIRT_M68K) += ...` line in this task: the Goldfish driver objects it would list don't have source files until Tasks 2 and 3, and this task's own build+link step (Step 11 below) would fail with "cannot find obj/goldfish_tty.o" if that line existed here. Tasks 2 and 3 each add their own driver's object to this line when they create its source file.
 
-- [ ] **Step 5: Create `configs/virt-m68k_defconfig`**
+- [ ] **Step 7: Create `configs/virt-m68k_defconfig`**
 
 ```
 # ELF kernel image for QEMU's m68k 'virt' machine (qemu-system-m68k -M virt)
 MACHINE_VIRT_M68K=y
 
 # QEMU's m68k 'virt' board defaults to an m68040 core (see hw/m68k/virt.c's
-# mc->default_cpu_type); there is no per-target CPUFLAGS default for it yet
-# (unlike the Raspberry Pi targets), so spell it out explicitly, following
-# the MACHINE_ARANYM precedent in Kconfig.machine.
-CPUFLAGS="-m68040"
+# mc->default_cpu_type), but this targets m68020 instead: QEMU's m68k
+# target unconditionally cpu_abort()s (crashes the whole VM) reading the
+# 68060-only PCR control register instead of raising the guest illegal
+# -instruction exception every other unsupported-register case gets
+# (target/m68k/helper.c: HELPER(m68k_movec_from), case M68K_CR_PCR).
+# bios/arch/m68k/processor.S's CPU detection -- shared, generic code used
+# by every m68k machine -- deliberately probes that exact register to
+# tell 68040 from 68060 apart, protected by its own exception vectors;
+# that protection can't help here because QEMU aborts before the guest
+# ever sees a trap. Targeting m68020 avoids the problem entirely: that
+# same detection routine resolves to "68020" from an earlier, unrelated
+# probe (the CACR cache-control register) before ever reaching the PCR
+# read. No v1 functionality needs 68040 (this port uses no PMMU); revisit
+# if a later feature needs 68040-specific behavior, or once upstream QEMU
+# fixes this (there is no per-target CPUFLAGS default for this board yet,
+# unlike the Raspberry Pi targets, so spell it out explicitly here,
+# following the MACHINE_ARANYM precedent in Kconfig.machine).
+CPUFLAGS="-m68020"
 
 # QEMU's 'virt' board has no IDE interface; without this, bios/ide.c fails
 # to build because struct IDE is never defined for this machine. Matched
@@ -208,11 +345,11 @@ CPUFLAGS="-m68040"
 CONF_WITH_IDE=n
 ```
 
-- [ ] **Step 6: Create `bios/machine/virt-m68k/memory.c`**
+- [ ] **Step 8: Create `bios/machine/virt-m68k/memory.c`**
 
 ```c
 /*
- * memory.c - QEMU virt (m68k) memory initialization placeholder
+ * memory.c - QEMU virt (m68k) memory initialization
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -223,17 +360,41 @@ CONF_WITH_IDE=n
 #error This file must only be compiled for the QEMU virt (m68k) target
 #endif
 
+#include "portab.h"
+#include "machine.h"
+
 /*
  * bios/build.mk lists memory.o unconditionally, and vpath resolves it to
  * this file for MACHINE_VIRT_M68K (the way bios/machine/virt-arm/memory.c
  * is resolved for MACHINE_VIRT_ARM). This machine needs no runtime memory
- * initialization of its own: the RAM size is fixed by the QEMU command
- * line, and startup.S sets _phystop directly before any C code runs. So
- * this file is deliberately empty.
+ * initialization of its own beyond the one function below: the RAM size
+ * is fixed by the QEMU command line, and startup.S sets _phystop directly
+ * before any C code runs.
  */
+
+#if CONF_WITH_ADVANCED_CPU
+/*
+ * bios/arch/m68k/memory.S's detect_32bit_address_bus() (which every other
+ * ARCH_M68K_CLASSIC machine links unmodified) probes for a 32-bit address
+ * bus by writing to a fixed low address and checking for its 24-bit
+ * wraparound mirror, using a temporary Bus Error vector as a safety net --
+ * a real Atari-hardware quirk (the 68000/68010/68EC030's 24-bit-only
+ * address bus) that never exists on QEMU's m68k 'virt' board. The board's
+ * only selectable CPUs are 68020-68060 (see hw/m68k/virt.c), and there is
+ * no chipset that could mirror addresses even if there were: the answer
+ * is always 32-bit, so this replaces the Atari-specific probe with that
+ * fixed answer instead of linking bios/arch/m68k/memory.S (which this
+ * machine's own memory.c already overrides via vpath, the way
+ * bios/machine/virt-arm/memory.c overrides it for MACHINE_VIRT_ARM).
+ */
+BOOL detect_32bit_address_bus(void)
+{
+    return TRUE;
+}
+#endif
 ```
 
-- [ ] **Step 7: Create `bios/machine/virt-m68k/startup.S`**
+- [ ] **Step 9: Create `bios/machine/virt-m68k/startup.S`**
 
 ```asm
 /*
@@ -357,28 +518,28 @@ clear_bss_done:
         jmp     _biosmain
 ```
 
-- [ ] **Step 8: Build it**
+- [ ] **Step 10: Build it**
 
 Run: `make virt-m68k_defconfig && make`
-Expected: build succeeds, producing `virt-m68k.elf` in the repo root. If it fails on an unresolved `int_timerc`/`vector_5ms`/etc. symbol, that means `ARCH_M68K_CLASSIC`'s generic objects (`obj-$(ARCH_M68K)` in `bios/build.mk`) aren't being pulled in — double check `ARCH_M68K` actually evaluates to `y` for this config via `grep ARCH_M68K obj/autoconf.h`.
+Expected: build succeeds, producing `virt-m68k.elf` in the repo root. If it fails on an unresolved `int_timerc`/`vector_5ms`/etc. symbol, that means `ARCH_M68K_CLASSIC`'s generic objects (`obj-$(ARCH_M68K)` in `bios/build.mk`) aren't being pulled in — double check `ARCH_M68K` actually evaluates to `y` for this config via `grep ARCH_M68K obj/autoconf.h`. This build system defaults to the `m68k-atari-mint-` (a.out) toolchain; if it isn't installed in your environment, select the ELF one instead (`make menuconfig` → Toolchain → `m68k-atari-mintelf`, or add `BUILD_TOOLCHAIN_MINTELF=y` to a local copy of the defconfig — don't commit that into `configs/virt-m68k_defconfig` itself, every other m68k defconfig leaves the toolchain choice to the build environment). Verify the output is real ELF, not a flat binary: `file virt-m68k.elf` should say "ELF 32-bit MSB executable, Motorola m68k" (Step 4's `emutos.ld` fix).
 
-- [ ] **Step 9: Smoke-test the boot (no console yet — this task's real pass/fail signal)**
+- [ ] **Step 11: Smoke-test the boot (no console yet — this task's real pass/fail signal)**
 
 Run:
 ```sh
-timeout 5 qemu-system-m68k -M virt -m 128 -kernel virt-m68k.elf \
+timeout 5 qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf \
     -serial file:/tmp/claude-1000/-home-freyr-pTOS/91d8b1db-8d57-4da9-b541-d71de376d987/scratchpad/virt-m68k-serial.log \
     -d guest_errors,unimp -D /tmp/claude-1000/-home-freyr-pTOS/91d8b1db-8d57-4da9-b541-d71de376d987/scratchpad/virt-m68k-qemu.log \
     -monitor none -display none
 echo "exit: $?"
 cat /tmp/claude-1000/-home-freyr-pTOS/91d8b1db-8d57-4da9-b541-d71de376d987/scratchpad/virt-m68k-qemu.log
 ```
-Expected: the process runs for the full 5 seconds (killed by `timeout`, exit code 124), `virt-m68k-qemu.log` is **empty** (no Address Error / Illegal Instruction / unimplemented-device entries), and `virt-m68k-serial.log` is empty (no console driver yet). An empty guest-errors log after 5 seconds of real execution is meaningful here: `calibrate_delay()` spins waiting on `_hz_200`, which nothing increments yet in this task, so the CPU is legitimately parked in a tight, harmless loop — not crashed, not silently rebooting. If the log is non-empty, or the process exits before the timeout fires, something in the boot chain (bss clear, `_phystop`, stack) is wrong.
+Expected: the process runs for the full 5 seconds (killed by `timeout`, exit code 124), and `virt-m68k-serial.log` is empty (no console driver yet). `virt-m68k-qemu.log` may contain **one** benign `Illegal Instruction` entry from `bios/arch/m68k/processor.S`'s CPU detection deliberately probing an opcode/register only valid on more advanced CPUs to positively identify the 68020 (see "Additional gaps..." above) — that specific, single, early entry is expected and means detection completed correctly, not a crash. What would indicate a real problem: any entry *after* that one, more than one entry, an "unimplemented device" entry, or the process exiting before the timeout fires — any of those mean something in the boot chain (bss clear, `_phystop`, stack) is wrong.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
-git add Kconfig.machine Kconfig.image Makefile \
+git add Kconfig.machine Kconfig.image bios/Kconfig Makefile emutos.ld \
     configs/virt-m68k_defconfig \
     bios/machine/virt-m68k/startup.S bios/machine/virt-m68k/memory.c
 git commit -m "m68k-virt: add machine/image Kconfig, build wiring, and minimal boot"
@@ -558,12 +719,12 @@ obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o
 Run: `make virt-m68k_defconfig && make`
 Then:
 ```sh
-timeout 5 qemu-system-m68k -M virt -m 128 -kernel virt-m68k.elf \
+timeout 5 qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf \
     -serial stdio -d guest_errors,unimp \
     -D /tmp/claude-1000/-home-freyr-pTOS/91d8b1db-8d57-4da9-b541-d71de376d987/scratchpad/virt-m68k-qemu.log \
     -monitor none -display none
 ```
-Expected: `KDEBUG` lines appear on stdout (e.g. `machine_init()`, `bmem_init()`, `chardev_init()`, `init_serport()`), then output stops at `calibrate_delay()` (still no working timer — Task 3), and the process runs the full 5 seconds. `virt-m68k-qemu.log` stays empty.
+Expected: `KDEBUG` lines appear on stdout (e.g. `machine_init()`, `bmem_init()`, `chardev_init()`, `init_serport()`), then output stops at `calibrate_delay()` (still no working timer — Task 3), and the process runs the full 5 seconds. `virt-m68k-qemu.log` has at most the one benign, expected `Illegal Instruction` entry from CPU detection noted in Task 1 — no other entries.
 
 - [ ] **Step 7: Commit**
 
@@ -854,12 +1015,12 @@ obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfis
 Run: `make virt-m68k_defconfig && make`
 Then:
 ```sh
-timeout 8 qemu-system-m68k -M virt -m 128 -kernel virt-m68k.elf \
+timeout 8 qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf \
     -serial stdio -d guest_errors,unimp \
     -D /tmp/claude-1000/-home-freyr-pTOS/91d8b1db-8d57-4da9-b541-d71de376d987/scratchpad/virt-m68k-qemu.log \
     -monitor none -display none
 ```
-Expected: `KDEBUG` output now progresses **past** `calibrate_delay()` to later init lines (`chardev_init()`, `init_serport()`, `bmem_init()`, `screen_init()`, `cookie_init()`, ...), since `calibrate_delay()` depends on `_hz_200` actually incrementing — proof the RTC interrupt is really firing and `int_timerc` is really running. Matching the ARM/raspi milestone, it's fine (expected, out of v1 scope) if boot eventually stalls or panics once it reaches AES/VDI-dependent code; what this step confirms is that the timer works. `virt-m68k-qemu.log` should still be empty of guest errors up to that point.
+Expected: `KDEBUG` output now progresses **past** `calibrate_delay()` to later init lines (`chardev_init()`, `init_serport()`, `bmem_init()`, `screen_init()`, `cookie_init()`, ...), since `calibrate_delay()` depends on `_hz_200` actually incrementing — proof the RTC interrupt is really firing and `int_timerc` is really running. Matching the ARM/raspi milestone, it's fine (expected, out of v1 scope) if boot eventually stalls or panics once it reaches AES/VDI-dependent code; what this step confirms is that the timer works. `virt-m68k-qemu.log` should have only the one benign, expected `Illegal Instruction` entry from CPU detection (Task 1) — no other guest errors up to that point.
 
 - [ ] **Step 9: Commit**
 
@@ -889,7 +1050,7 @@ Add, right after the existing `To test the ARM virt port, run` section (readme.m
 To test the m68k `virt` port, run
 
     make virt-m68k_defconfig && make
-    qemu-system-m68k -M virt -m 128 -kernel virt-m68k.elf -d guest_errors -serial stdio
+    qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_errors -serial stdio
 ```
 
 - [ ] **Step 2: Run the definition-of-done check from the design doc**
@@ -897,7 +1058,7 @@ To test the m68k `virt` port, run
 Run:
 ```sh
 make virt-m68k_defconfig && make
-timeout 8 qemu-system-m68k -M virt -m 128 -kernel virt-m68k.elf -d guest_errors -serial stdio
+timeout 8 qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_errors -serial stdio
 ```
 Expected: matches the design doc's stated definition of done — the image boots, `KDEBUG` output is visible on the serial console, and it reaches the same point the ARM virt and Raspberry Pi ports reach (BIOS runs; full AES/desktop success is out of v1 scope and not required here).
 
