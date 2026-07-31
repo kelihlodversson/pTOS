@@ -180,7 +180,7 @@ QEMU source read directly from `/home/freyr/qemu` (`hw/m68k/virt.c`, `hw/intc/go
 - Create: `bios/machine/virt-m68k/memory.c`
 
 **Interfaces:**
-- Produces: a bootable ELF (`virt-m68k.elf`) that clears BSS, sets `_phystop`, and reaches `_biosmain`. No console output yet (Task 2), no working timer yet (Task 3) — `_biosmain` will run past `machine_init()` (a no-op for this machine, see reference section above) and hang inside `calibrate_delay()` waiting for `_hz_200` to change, since nothing drives the timer yet. That hang, with at most one benign, expected `Illegal Instruction` log entry from CPU detection (see the "Additional gaps..." section above) and no other `guest_errors`/`unimp` output, is this task's actual pass signal.
+- Produces: a bootable ELF (`virt-m68k.elf`) that clears BSS, sets `_phystop`, and reaches `_biosmain`. No console output yet (Task 2), no working timer yet (Task 3). **Correction, found during Task 2:** `bios/delay.c`'s `calibrate_delay()` is entirely `#if CONF_WITH_MFP`-gated and is a no-op on this machine (`CONF_WITH_MFP=0`, no MFP chip on this board) — boot does not hang there regardless of whether a timer exists; it silently proceeds all the way to the AES desktop's `evnt_multi()` event loop and idles there instead (the same "reaches AES, waits for input" milestone raspi/virt-arm already reach). Since nothing produces console output yet in this task either way, this is unobservable from outside and doesn't change this task's pass signal: the process still runs the full 5-second smoke-test window with at most one benign, expected `Illegal Instruction` log entry from CPU detection (see the "Additional gaps..." section above) and no other `guest_errors`/`unimp` output — silently idling at the AES event loop and "hung waiting on a byte that will never arrive" both produce that exact same external signature. It does mean `_hz_200` genuinely not incrementing can't be verified through *this* task's black-box smoke test alone — see Task 3's smoke test, which reads `_hz_200` directly through the QEMU monitor instead of inferring it from where boot stalls.
 
 - [ ] **Step 1: Add `MACHINE_VIRT_M68K` to `Kconfig.machine`**
 
@@ -724,7 +724,9 @@ timeout 5 qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf \
     -D /tmp/claude-1000/-home-freyr-pTOS/91d8b1db-8d57-4da9-b541-d71de376d987/scratchpad/virt-m68k-qemu.log \
     -monitor none -display none
 ```
-Expected: `KDEBUG` lines appear on stdout (e.g. `machine_init()`, `bmem_init()`, `chardev_init()`, `init_serport()`), then output stops at `calibrate_delay()` (still no working timer — Task 3), and the process runs the full 5 seconds. `virt-m68k-qemu.log` has at most the one benign, expected `Illegal Instruction` entry from CPU detection noted in Task 1 — no other entries.
+Expected: `VDI video mode = 320x200 4-bit`, `AES: EMUDESK: appl_init()`, and `AES: EMUDESK: evnt_multi()` appear on stdout — these are unconditional, not gated behind `KDEBUG`/`ENABLE_KDEBUG` (which is off by default everywhere in this tree, per-file, and requires manually uncommenting; there is no Kconfig switch for it), so they're what a stock build actually prints, not the `KDEBUG` trace lines a developer would see with `ENABLE_KDEBUG` uncommented locally. Boot does **not** stop at `calibrate_delay()` (see Task 1's correction above: it's a no-op on this machine) — it silently reaches the AES desktop's `evnt_multi()` event loop and idles there for the rest of the window; that's the pass signal, not a hang partway through. The process runs the full 5 seconds either way. `virt-m68k-qemu.log` has at most the one benign, expected `Illegal Instruction` entry from CPU detection noted in Task 1 — no other entries.
+
+To verify the driver end-to-end beyond those three lines (optional but recommended — this is how Task 2 was actually verified during implementation): temporarily uncomment `/* #define ENABLE_KDEBUG */` at the top of `bios/bios.c` and add `boot_status |= RS232_AVAILABLE;` as the first line of `bios_init()` (in `bios/bios.c`), rebuild, and re-run the same qemu command — full `KDEBUG` trace output (`machine_init()`, `bmem_init()`, `chardev_init()`, `init_serport()`, etc.) should appear on stdout in order, proving the console works from the very first traced line of boot. Revert both changes before committing (`git diff bios/bios.c` must be empty).
 
 - [ ] **Step 7: Commit**
 
@@ -1013,14 +1015,42 @@ obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfis
 - [ ] **Step 8: Build and smoke-test the full boot**
 
 Run: `make virt-m68k_defconfig && make`
-Then:
+
+**Do not use "boot progresses past `calibrate_delay()`" as evidence the timer works** — Task 1/2 already established that `calibrate_delay()` is a no-op on this machine (`CONF_WITH_MFP=0`) and boot reaches the AES desktop regardless of whether any timer interrupt ever fires. The only real proof is reading `_hz_200` (the 200 Hz tick counter `bios/arch/m68k/vectors.S`'s `_int_timerc` increments on every call, at RAM address `0x4ba` per `tosvars.ld`'s classic-m68k layout — confirm with `m68k-atari-mintelf-nm virt-m68k.elf | grep _hz_200` if in doubt) through QEMU's monitor twice, a second or so apart, and checking it actually increased:
+
 ```sh
-timeout 8 qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf \
-    -serial stdio -d guest_errors,unimp \
-    -D /tmp/claude-1000/-home-freyr-pTOS/91d8b1db-8d57-4da9-b541-d71de376d987/scratchpad/virt-m68k-qemu.log \
-    -monitor none -display none
+SCRATCH=/tmp/claude-1000/-home-freyr-pTOS/91d8b1db-8d57-4da9-b541-d71de376d987/scratchpad
+SOCK=$SCRATCH/virt-m68k-mon.sock
+rm -f $SOCK
+qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf \
+    -serial file:$SCRATCH/virt-m68k-serial.log -d guest_errors,unimp -D $SCRATCH/virt-m68k-qemu.log \
+    -monitor unix:$SOCK,server,nowait -display none &
+QEMU_PID=$!
+sleep 1
+python3 - "$SOCK" <<'PYEOF'
+import socket, sys, time
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(sys.argv[1])
+time.sleep(0.3); s.recv(65536)  # discard banner
+def read_hz200():
+    s.sendall(b"xp/1xw 0x4ba\n")
+    time.sleep(0.3)
+    return s.recv(65536).decode(errors="replace").splitlines()[-2].split(": ")[1]
+v1 = read_hz200()
+time.sleep(1.0)
+v2 = read_hz200()
+print("hz_200 first read: ", v1)
+print("hz_200 second read:", v2)
+assert v1 != v2, "hz_200 did not change -- timer is not ticking"
+print("PASS: hz_200 is incrementing")
+PYEOF
+STATUS=$?
+kill $QEMU_PID 2>/dev/null; wait $QEMU_PID 2>/dev/null
+cat $SCRATCH/virt-m68k-qemu.log
+exit $STATUS
 ```
-Expected: `KDEBUG` output now progresses **past** `calibrate_delay()` to later init lines (`chardev_init()`, `init_serport()`, `bmem_init()`, `screen_init()`, `cookie_init()`, ...), since `calibrate_delay()` depends on `_hz_200` actually incrementing — proof the RTC interrupt is really firing and `int_timerc` is really running. Matching the ARM/raspi milestone, it's fine (expected, out of v1 scope) if boot eventually stalls or panics once it reaches AES/VDI-dependent code; what this step confirms is that the timer works. `virt-m68k-qemu.log` should have only the one benign, expected `Illegal Instruction` entry from CPU detection (Task 1) — no other guest errors up to that point.
+
+Expected: the python script prints `PASS: hz_200 is incrementing` (two different, increasing hex values roughly a second apart — with the design's 5ms/200Hz tick, expect on the order of ~200 counts difference, but any genuine increase is sufficient proof the interrupt fires; an assertion failure means the RTC/PIC wiring isn't working). `virt-m68k-qemu.log` should have only the one benign, expected `Illegal Instruction` entry from CPU detection (Task 1) — no other guest errors.
 
 - [ ] **Step 9: Commit**
 
@@ -1060,7 +1090,7 @@ Run:
 make virt-m68k_defconfig && make
 timeout 8 qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_errors -serial stdio
 ```
-Expected: matches the design doc's stated definition of done — the image boots, `KDEBUG` output is visible on the serial console, and it reaches the same point the ARM virt and Raspberry Pi ports reach (BIOS runs; full AES/desktop success is out of v1 scope and not required here).
+Expected: matches the design doc's stated definition of done — the image boots, the serial console works (visible via the stock, unconditional `VDI video mode`/`AES: EMUDESK: appl_init()`/`evnt_multi()` lines on stdout — see Task 2's corrected Step 6 for why those, not `KDEBUG` trace lines, are what a stock build actually prints), the periodic timer genuinely ticks (per Task 3's `_hz_200` monitor check, not "boot progresses past `calibrate_delay()`" — that no-ops on this machine regardless), and it reaches the same point the ARM virt and Raspberry Pi ports reach (BIOS runs, AES desktop reached; full AES/desktop interactivity is out of v1 scope and not required here).
 
 - [ ] **Step 3: Also confirm the existing targets still build (portability check per CLAUDE.md)**
 
@@ -1086,7 +1116,7 @@ Push the branch, then edit PR #36's description to check off the completed items
 
 ## Self-Review
 
-**Spec coverage:** v1 scope (boot + console + timer, matching raspi/virt-arm's milestone) — Tasks 1-3. Kconfig additions exactly as resolved in the design doc's "resolved" section — Task 1 Steps 1-2, Task 2 Step 3. `tosvars.ld`/`emutos.ld` needing no changes — verified in the Hardware reference section, no task touches either file. Build wiring (`Makefile`, `build.mk`, defconfig) — Task 1 Steps 3-5. Definition of done (`make virt-m68k_defconfig && make` + qemu boot to visible `KDEBUG`) — Task 4 Step 2. `readme.md` documentation — Task 4 Step 1.
+**Spec coverage:** v1 scope (boot + console + timer, matching raspi/virt-arm's milestone) — Tasks 1-3. Kconfig additions exactly as resolved in the design doc's "resolved" section — Task 1 Steps 1-2, Task 2 Step 3. `tosvars.ld`/`emutos.ld` needing no changes — verified in the Hardware reference section, no task touches either file. Build wiring (`Makefile`, `build.mk`, defconfig) — Task 1 Steps 3-5. Definition of done (`make virt-m68k_defconfig && make` + qemu boot to a working console and a verified-ticking timer) — Task 4 Step 2. `readme.md` documentation — Task 4 Step 1.
 
 **Placeholder scan:** none found — every step has real, complete code or a concrete shell command with a stated expected result.
 
