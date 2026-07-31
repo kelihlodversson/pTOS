@@ -54,6 +54,18 @@ config MACHINE_RPI
 	  Native bare metal port to the ARM based Raspberry Pi boards.
 	  This is the target this fork of EmuTOS was created for.
 
+config MACHINE_VIRT_ARM
+	bool "QEMU virt (ARM)"
+	help
+	  QEMU's generic ARM 'virt' board (qemu-system-arm -M virt). No real
+	  hardware; there is no VideoCore/mailbox interface. Exposes a
+	  PL011 UART, a GICv2 interrupt controller, and RAM starting at
+	  physical 0x40000000 (unlike every other supported machine, whose
+	  RAM starts at 0). Boots a -kernel ELF directly; the fixed
+	  low-address TOS system variables are made to work via a small
+	  statically built MMU translation table set up early in the boot
+	  sequence, not by moving them.
+
 endchoice
 
 choice
@@ -94,13 +106,13 @@ config ARCH_COLDFIRE
 
 config ARCH_ARM
 	bool
-	default y if MACHINE_RPI
+	default y if MACHINE_RPI || MACHINE_VIRT_ARM
 
 # ARMv7 and later provide cache maintenance operations that the ARM1176
 # of the first generation Raspberry Pi does not have.
 config CPU_ARMV7
 	bool
-	default y if TARGET_RPI2 || TARGET_RPI3 || TARGET_RPI4
+	default y if TARGET_RPI2 || TARGET_RPI3 || TARGET_RPI4 || MACHINE_VIRT_ARM
 
 # Plain 68000-68060, i.e. m68k but not ColdFire.  Some hand written
 # assembler is only valid on those.

@@ -50,8 +50,9 @@ extern long cookie_akp;
  */
 
 /* Convenience macro to test if first boot. See MEMINIT_BIT_FIRST_BOOT. */
-#ifdef MACHINE_RPI
-// Currently we're always treat each boot as the first on the Raspberry PI
+#if ARCH_ARM
+// Currently we always treat each boot as the first one on the ARM machines:
+// none of them has any persistent boot-state detection.
 #define FIRST_BOOT 1
 #else
 #define FIRST_BOOT (meminit_flags & MEMINIT_FIRST_BOOT)

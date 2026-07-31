@@ -22,11 +22,11 @@
 #include "../bios/lineavars.h"
 #include "kprint.h"
 
-#ifdef MACHINE_RPI
+#if ARCH_ARM
 // TODO: everything
 const WORD scrtsiz = 99;
 WORD deftxbuf[1000];
-#endif /* MACHINE_RPI */
+#endif /* ARCH_ARM */
 
 
 
@@ -165,7 +165,7 @@ static void pre_blit(LOCALVARS *vars)
     WORD weight, skew, size, n, tmp_style;
     WORD dest_width, dest_height;
     WORD *p;
-#ifndef MACHINE_RPI
+#if !ARCH_ARM
     LONG offset;
     UBYTE *src;
 #endif
@@ -174,7 +174,7 @@ static void pre_blit(LOCALVARS *vars)
     vars->height = vars->DELY;
 
     vars->tsdad = linea_vars.SOURCEX & 0x000f;     /* source dot address */
-#ifndef MACHINE_RPI
+#if !ARCH_ARM
     offset = (linea_vars.SOURCEY+vars->DELY-1) * (LONG)vars->s_next + ((linea_vars.SOURCEX >> 3) & ~1);
     src = (UBYTE *)vars->sform + offset;/* bottom of font char source */
 #endif
@@ -246,9 +246,9 @@ static void pre_blit(LOCALVARS *vars)
     tmp_style = vars->STYLE;        /* save temporarily */
     vars->STYLE &= (F_SKEW|F_THICKEN);  /* only thicken, skew */
 
-#ifndef MACHINE_RPI
+#if !ARCH_ARM
     normal_blit(vars+1, src, dst);  /* call assembler helper function */
-#endif /* MACHINE_RPI */
+#endif /* !ARCH_ARM */
 
     vars->STYLE = tmp_style;        /* restore */
     vars->WRT_MODE = linea_vars.WRT_MODE;
@@ -262,13 +262,13 @@ static void pre_blit(LOCALVARS *vars)
              * we may be able to speed up the following by calculating
              * the args in outline() rather than passing them
              */
-#ifndef MACHINE_RPI
+#if !ARCH_ARM
             src = vars->sform;
 #endif
             vars->sform += vars->s_next;
-#ifndef MACHINE_RPI
+#if !ARCH_ARM
             outline(vars+1, src, vars->s_next);
-#endif /* MACHINE_RPI */
+#endif /* !ARCH_ARM */
         }
     }
 
@@ -459,16 +459,16 @@ void text_blt(void)
 
     if (vars.CHUP)
     {
-#ifndef MACHINE_RPI
+#if !ARCH_ARM
         rotate(&vars+1);    /* call assembler helper function */
-#endif /* MACHINE_RPI */
+#endif /* !ARCH_ARM */
     }
 
     if (linea_vars.SCALE)
     {
-#ifndef MACHINE_RPI
+#if !ARCH_ARM
         scale(&vars+1);     /* call assembler helper function */
-#endif /* MACHINE_RPI */
+#endif /* !ARCH_ARM */
     }
 
     if (vars.STYLE & F_THICKEN)

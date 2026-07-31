@@ -164,30 +164,9 @@ void raspi_timer3_handler(void)
     peripheral_end();
 }
 
-#if CONF_WITH_USB
-extern void usb_mouse_timerc (void);
-#endif
-extern void int_vbl(void);
-
-// ==== Timer C interrupt handler ============================================
-void int_timerc(void)
-{
-    hz_200++;
-    timer_c_sieve = (timer_c_sieve << 1) | (timer_c_sieve >> 15);
-    if (timer_c_sieve & 4) // If the highest bit in any nybble is 1, we are in the 4th call
-    {
-        kb_timerc_int();
-#       if CONF_WITH_YM2149
-            sndirq();   // dosound support
-#       endif
-#       if CONF_WITH_USB
-            usb_mouse_timerc();
-#       endif
-
-        // Fake vbl interrupt every 4 timer_c calls (50Hz)
-        int_vbl();
-    }
-}
+// int_timerc(), the Timer C interrupt handler this machine's tick drives
+// through vector_5ms, is machine-independent and lives in
+// bios/arch/arm/vectors.c, shared by every ARM machine.
 
 void raspi_interrupt_init(void)
 {

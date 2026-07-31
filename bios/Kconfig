@@ -27,12 +27,16 @@ config CONF_WITH_ALT_RAM
 
 config CONF_WITH_TTRAM
 	bool "TT-RAM detection"
-	depends on CONF_WITH_ALT_RAM
-	default n if TARGET_192 || MACHINE_AMIGA || MACHINE_RPI
+	depends on CONF_WITH_ALT_RAM && !ARCH_ARM
+	default n if TARGET_192 || MACHINE_AMIGA
 	default y
 	help
 	  Detect and use the fast RAM found in the 32-bit address space of
 	  TT and Falcon compatible machines.
+
+	  This cannot be selected on ARM: TT-RAM is reported through the
+	  ramtop/ramvalid system variables, which do not exist in the ARM
+	  variant of the fixed sysvars layout (see tosvars.ld).
 
 config CONF_TTRAM_SIZE
 	hex "Size of the TT-RAM, in bytes (0 = autodetect)"
@@ -218,6 +222,14 @@ config CONF_WITH_RASPI_UART0
 	default y
 	help
 	  Use the PL011 UART available on the GPIO header as a serial port.
+
+config CONF_WITH_VIRT_UART
+	bool "QEMU virt (ARM) PL011 UART support"
+	depends on MACHINE_VIRT_ARM
+	default y
+	help
+	  Use the PL011 UART exposed by QEMU's ARM 'virt' machine as the
+	  serial console.
 
 config CONF_WITH_PRINTER_PORT
 	bool "Parallel printer port support"

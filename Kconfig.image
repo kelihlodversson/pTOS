@@ -93,6 +93,15 @@ config TARGET_RPI_KERNEL
 	  the SD card.  The file name expected by the firmware depends on
 	  the Raspberry Pi model and is chosen automatically.
 
+config TARGET_VIRT_ARM_KERNEL
+	bool "QEMU virt (ARM) kernel image"
+	depends on MACHINE_VIRT_ARM
+	help
+	  An ELF image passed directly to "qemu-system-arm -M virt -kernel".
+	  Unlike the Raspberry Pi kernel image, this is not converted to a
+	  flat binary: QEMU's ELF loader is used directly, so the entry
+	  point and load addresses come from the ELF header.
+
 endchoice
 
 config SREC_LMA
@@ -120,7 +129,7 @@ config IMAGE_NAME
 
 config EMUTOS_LIVES_IN_RAM
 	bool
-	default y if TARGET_PRG || TARGET_FLOPPY || TARGET_AMIGA_FLOPPY || TARGET_RPI_KERNEL
+	default y if TARGET_PRG || TARGET_FLOPPY || TARGET_AMIGA_FLOPPY || TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL
 
 config DIAGNOSTIC_CARTRIDGE
 	bool

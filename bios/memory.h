@@ -14,7 +14,7 @@
 #define MEMORY_H
 
 /* Bit definitions for meminit_flags */
-#ifndef MACHINE_RPI
+#if !ARCH_ARM
 #define MEMINIT_BIT_FIRST_BOOT 0
 /* If this bit is set, this means it is the first time that this EmuTOS
  * instance is run. This is always true for a cold boot from ROM. This is

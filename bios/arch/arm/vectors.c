@@ -25,6 +25,7 @@
 #include "asm.h"
 #include "xbios.h"
 #include "sound.h"
+#include "mfp.h"
 
 // ==== Definitions ==========================================================
 
@@ -103,6 +104,32 @@ void int_vbl(void)
         }
     }
     vblsem++; // release vbl semaphore (TODO: non-atomic)
+}
+
+#if CONF_WITH_USB
+extern void usb_mouse_timerc (void);
+#endif
+
+// ==== Timer C interrupt handler ============================================
+// Machine-independent: every ARM machine's periodic tick (raspi's system /
+// generic timer, virt's generic timer) ends up here through vector_5ms.
+void int_timerc(void)
+{
+    hz_200++;
+    timer_c_sieve = (timer_c_sieve << 1) | (timer_c_sieve >> 15);
+    if (timer_c_sieve & 4) // If the highest bit in any nybble is 1, we are in the 4th call
+    {
+        kb_timerc_int();
+#       if CONF_WITH_YM2149
+            sndirq();   // dosound support
+#       endif
+#       if CONF_WITH_USB
+            usb_mouse_timerc();
+#       endif
+
+        // Fake vbl interrupt every 4 timer_c calls (50Hz)
+        int_vbl();
+    }
 }
 
 // A side effect of that we are using a dispatch routine to calculate the correct

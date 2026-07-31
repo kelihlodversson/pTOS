@@ -1,0 +1,31 @@
+# ELF kernel image for QEMU's ARM 'virt' machine (qemu-system-arm -M virt)
+MACHINE_VIRT_ARM=y
+
+# No architecture-specific default exists yet for this machine (unlike the
+# Raspberry Pi targets), so the CPU used for testing (QEMU's cortex-a7) is
+# spelled out explicitly here, following the precedent set by
+# amiga-vampire_defconfig for its own CPUFLAGS override.
+CPUFLAGS="-march=armv7-a -mtune=cortex-a7 -marm -mfpu=neon-vfpv4 -mfloat-abi=hard"
+
+# QEMU's 'virt' board has no IDE interface; without this, bios/ide.c fails
+# to build because struct IDE is never defined for this machine. Raspberry
+# Pi gets the same treatment via a Kconfig default (MACHINE_RPI); matched
+# here explicitly.
+CONF_WITH_IDE=n
+
+# cli/cmdasm.S is hand written m68k assembler with no ARM counterpart, so
+# it cannot be assembled for this machine. Raspberry Pi excludes it the
+# same way via a Kconfig default (MACHINE_RPI); matched here explicitly.
+CONF_WITH_CLI=n
+
+# The Line-A emulator (vdi/Kconfig) is only implemented for 68k-class
+# hardware (bios/arch/m68k/linea.S provides int_linea()); there is no ARM
+# implementation. Raspberry Pi already turns this off via a Kconfig
+# default (MACHINE_RPI); matched here explicitly.
+CONF_WITH_LINEA=n
+
+# XHDI support (bios/Kconfig) pulls in bios/xhdi.c, which references
+# xhdi_vec, implemented only in bios/arch/m68k/natfeat.S. Raspberry Pi
+# already turns this off via a Kconfig default (MACHINE_RPI); matched
+# here explicitly.
+CONF_WITH_XHDI=n

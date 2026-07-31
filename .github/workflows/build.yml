@@ -61,9 +61,9 @@ jobs:
           arm=
           for config in configs/*_defconfig; do
             name=$(basename "$config" _defconfig)
-            # MACHINE_RPI is what selects the ARM architecture; everything
-            # else in configs/ is m68k or ColdFire.
-            if grep -q '^MACHINE_RPI=y' "$config"; then
+            # MACHINE_RPI or MACHINE_VIRT_ARM is what selects the ARM
+            # architecture; everything else in configs/ is m68k or ColdFire.
+            if grep -qE '^MACHINE_(RPI|VIRT_ARM)=y' "$config"; then
               arm="$arm $name"
             else
               m68k="$m68k $name"

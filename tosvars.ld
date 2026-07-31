@@ -29,7 +29,17 @@ _proc_stk       = 0x3cc;        /* 16 words from exception stack */
 
 /* ==== Start of System variables =========================================== */
 _sysvars_start  = 0x400;
-#ifdef MACHINE_RPI
+/*
+ * The layout below is the ARM one: every LONG sysvar is placed on a 4 byte
+ * boundary, and the m68k-only variables are dropped to make room.  It is
+ * required on every ARM machine, not just the Raspberry Pi: ARM LONG objects
+ * have 4 byte alignment, so the compiler is free to emit STRD/LDRD (and, once
+ * it vectorises, VSTR/VLDR) against them, and those instructions take an
+ * alignment Data Abort on an odd-word address regardless of SCTLR.A.  With
+ * the m68k layout below -- where -mshort only requires 2 byte alignment, so
+ * e.g. _themd sits at 0x48e -- such an access faults.
+ */
+#if ARCH_ARM
 _etv_timer      = 0x400;        /* GEM event timer vector */
 _etv_critic     = 0x404;        /* GEM critical error handler */
 _etv_term       = 0x408;        /* GEM program termination vector */
