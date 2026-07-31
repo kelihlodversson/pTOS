@@ -344,8 +344,8 @@ static void bios_init(void)
     raspi_interrupt_init();
 #elif defined(MACHINE_VIRT_ARM)
     virt_pic_init();
-    virt_timer_init();
-    cpsr_ie();          /* enable IRQs, now that the GIC and the tick exist */
+    virt_timer_init();     /* arms the GIC/timer; the CPU stays masked until
+                             * the shared cpsr_ie() below, same as raspi */
 #endif
 
     /* Initialize the BIOS memory management */
