@@ -15,6 +15,7 @@ choice
 	default TARGET_AMIGA_ROM if MACHINE_AMIGA
 	default TARGET_SREC if ARCH_COLDFIRE
 	default TARGET_512 if MACHINE_ARANYM
+	default TARGET_VIRT_M68K_KERNEL if MACHINE_VIRT_M68K
 	default TARGET_256
 	help
 	  Select what the build should produce.  Only the image types that
@@ -102,6 +103,14 @@ config TARGET_VIRT_ARM_KERNEL
 	  flat binary: QEMU's ELF loader is used directly, so the entry
 	  point and load addresses come from the ELF header.
 
+config TARGET_VIRT_M68K_KERNEL
+	bool "QEMU virt (m68k) kernel image"
+	depends on MACHINE_VIRT_M68K
+	help
+	  An ELF image passed directly to "qemu-system-m68k -M virt -kernel".
+	  Like the ARM virt kernel image, this is not converted to a flat
+	  binary: QEMU's ELF loader is used directly.
+
 endchoice
 
 config SREC_LMA
@@ -129,7 +138,7 @@ config IMAGE_NAME
 
 config EMUTOS_LIVES_IN_RAM
 	bool
-	default y if TARGET_PRG || TARGET_FLOPPY || TARGET_AMIGA_FLOPPY || TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL
+	default y if TARGET_PRG || TARGET_FLOPPY || TARGET_AMIGA_FLOPPY || TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL || TARGET_VIRT_M68K_KERNEL
 
 config DIAGNOSTIC_CARTRIDGE
 	bool

@@ -66,6 +66,15 @@ config MACHINE_VIRT_ARM
 	  statically built MMU translation table set up early in the boot
 	  sequence, not by moving them.
 
+config MACHINE_VIRT_M68K
+	bool "QEMU virt (m68k)"
+	help
+	  QEMU's generic m68k 'virt' board (qemu-system-m68k -M virt). No
+	  Atari-compatible chipset; Goldfish PIC/RTC/TTY at fixed
+	  addresses, boots a -kernel ELF directly. RAM starts at physical
+	  0x0, same as every Atari/Amiga/ColdFire target, so no MMU
+	  bootstrap trick is needed the way MACHINE_VIRT_ARM needs one.
+
 endchoice
 
 choice
@@ -98,7 +107,7 @@ endchoice
 
 config ARCH_M68K
 	bool
-	default y if MACHINE_ATARI || MACHINE_ARANYM || MACHINE_AMIGA || ARCH_COLDFIRE
+	default y if MACHINE_ATARI || MACHINE_ARANYM || MACHINE_AMIGA || MACHINE_VIRT_M68K || ARCH_COLDFIRE
 
 config ARCH_COLDFIRE
 	bool

@@ -28,7 +28,7 @@ config CONF_WITH_ALT_RAM
 config CONF_WITH_TTRAM
 	bool "TT-RAM detection"
 	depends on CONF_WITH_ALT_RAM && !ARCH_ARM
-	default n if TARGET_192 || MACHINE_AMIGA
+	default n if TARGET_192 || MACHINE_AMIGA || MACHINE_VIRT_M68K
 	default y
 	help
 	  Detect and use the fast RAM found in the 32-bit address space of
