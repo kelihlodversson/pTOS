@@ -343,6 +343,15 @@ CPUFLAGS="-m68020"
 # to build because struct IDE is never defined for this machine. Matched
 # to the same override already used by MACHINE_RPI and MACHINE_VIRT_ARM.
 CONF_WITH_IDE=n
+
+# Unlike every other m68k target, this one is pinned to the ELF toolchain
+# rather than leaving the choice to the environment: emutos.ld forces
+# OUTPUT_FORMAT(elf32-m68k) for MACHINE_VIRT_M68K (QEMU's -kernel loader
+# needs a real ELF image, not a flat binary), and the default a.out
+# toolchain's linker has no elf32-m68k target compiled in at all ("target
+# elf32-m68k not found" -- found via CI, which only installs the a.out
+# toolchain and has no ELF-capable one without this).
+BUILD_TOOLCHAIN_MINTELF=y
 ```
 
 - [ ] **Step 8: Create `bios/machine/virt-m68k/memory.c`**
@@ -521,7 +530,7 @@ clear_bss_done:
 - [ ] **Step 10: Build it**
 
 Run: `make virt-m68k_defconfig && make`
-Expected: build succeeds, producing `virt-m68k.elf` in the repo root. If it fails on an unresolved `int_timerc`/`vector_5ms`/etc. symbol, that means `ARCH_M68K_CLASSIC`'s generic objects (`obj-$(ARCH_M68K)` in `bios/build.mk`) aren't being pulled in — double check `ARCH_M68K` actually evaluates to `y` for this config via `grep ARCH_M68K obj/autoconf.h`. This build system defaults to the `m68k-atari-mint-` (a.out) toolchain; if it isn't installed in your environment, select the ELF one instead (`make menuconfig` → Toolchain → `m68k-atari-mintelf`, or add `BUILD_TOOLCHAIN_MINTELF=y` to a local copy of the defconfig — don't commit that into `configs/virt-m68k_defconfig` itself, every other m68k defconfig leaves the toolchain choice to the build environment). Verify the output is real ELF, not a flat binary: `file virt-m68k.elf` should say "ELF 32-bit MSB executable, Motorola m68k" (Step 4's `emutos.ld` fix).
+Expected: build succeeds, producing `virt-m68k.elf` in the repo root. If it fails on an unresolved `int_timerc`/`vector_5ms`/etc. symbol, that means `ARCH_M68K_CLASSIC`'s generic objects (`obj-$(ARCH_M68K)` in `bios/build.mk`) aren't being pulled in — double check `ARCH_M68K` actually evaluates to `y` for this config via `grep ARCH_M68K obj/autoconf.h`. **Correction, found via CI (not visible in this sandbox, which only ever had the ELF toolchain installed):** `configs/virt-m68k_defconfig` pins `BUILD_TOOLCHAIN_MINTELF=y` — unlike every other m68k defconfig, which leaves the toolchain choice to the build environment, this one cannot: the a.out toolchain's linker has no `elf32-m68k` target compiled in at all (`target elf32-m68k not found`), and `emutos.ld` requires it for this machine (Step 4's fix). If `m68k-atari-mintelf-gcc` isn't installed locally, install it (a separate package/PPA from the default a.out toolchain — see `.github/actions/setup-toolchain/action.yml` for the two PPAs CI now installs) rather than overriding the config back to the a.out toolchain. Verify the output is real ELF, not a flat binary: `file virt-m68k.elf` should say "ELF 32-bit MSB executable, Motorola m68k" (Step 4's `emutos.ld` fix).
 
 - [ ] **Step 11: Smoke-test the boot (no console yet — this task's real pass/fail signal)**
 
@@ -1142,8 +1151,42 @@ of raw address arithmetic; a comment in `bios/serport.c` explaining the
 missing Goldfish TTY init call; `ENTRY(_os_entry)` added to `emutos.ld` for
 both QEMU virt boards; and a `doc/install.txt` section (`CLAUDE.md` names
 this file, not `readme.md`, as authoritative for "every configuration").
-Full detail: `.superpowers/sdd/2026-07-31-m68k-virt-boot-support/task-3-report.md`'s
-"Final whole-branch review fix" section.
+A scoped re-review confirmed the assembly fix byte-by-byte and found no new
+breakage. (The SDD workspace holding the full investigation transcript was
+deleted per process once this review passed clean, per the standing
+convention — the outcome above is the durable record.)
+
+## CI failure found after merge: the ELF toolchain isn't a local preference
+
+Everything above was verified in a sandbox that happened to have only the
+ELF-capable m68k toolchain installed (`m68k-atari-mintelf-gcc`) and never
+the project's actual default (`m68k-atari-mint-gcc`, a.out). The real CI
+run on this PR's `virt-m68k` job failed immediately: `/usr/lib/gcc/m68k
+-atari-mint/4.6.4/.../ld: target elf32-m68k not found`. The default a.out
+toolchain's linker has no ELF backend compiled in at all — not a wrong
+default, a capability the binary genuinely lacks — so `emutos.ld`'s
+`OUTPUT_FORMAT(elf32-m68k)` (needed for QEMU's `-kernel` loader, see
+"Additional gaps..." above) can never succeed with it. This means the
+"leave the toolchain choice to the environment, like every other m68k
+defconfig" decision made earlier in this plan (see the now-corrected Task
+1 Step 7 text) was wrong specifically for this target: every other m68k
+config produces the same flat-binary output regardless of which m68k
+toolchain builds it, so leaving the choice open is genuinely a preference
+for them; `virt-m68k` structurally requires ELF output, which only one of
+the two toolchains can produce at all.
+
+Fixed two ways:
+- `configs/virt-m68k_defconfig` now pins `BUILD_TOOLCHAIN_MINTELF=y`.
+- `.github/actions/setup-toolchain/action.yml` (used by both the build and
+  release workflows) now also installs `cross-mintelf-essential` from a
+  **second, separate** PPA (`ppa:vriviere/mintelf` — distinct from
+  `ppa:vriviere/ppa`, which only has the a.out toolchain; confirmed via
+  Launchpad that `vriviere/mintelf` publishes for `jammy`, matching the
+  Ubuntu version this workflow already pins for the m68k PPA's sake)
+  alongside the existing `cross-mint-essential`, for every m68k job
+  regardless of which configs it happens to build. The two toolchains
+  install under distinct binary prefixes (`m68k-atari-mint-*` vs.
+  `m68k-atari-mintelf-*`) and coexist without conflict.
 
 ---
 
