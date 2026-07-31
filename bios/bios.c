@@ -385,18 +385,7 @@ static void bios_init(void)
     {
         int i;
         for(i = 0 ; i < 8 ; i++) {
-            /* volatile store: defeats gcc's auto-vectorizer, which on this
-             * ARM target (built with -mfpu=neon-vfpv4 -mfloat-abi=hard)
-             * turns this loop into vst1.8/vstr NEON/VFP stores. Those
-             * require 4-byte alignment, but vbl_list -- like the rest of
-             * the TOS low-memory sysvars block in tosvars.ld -- is only
-             * guaranteed 2-byte (m68k WORD) alignment, since its layout
-             * must match original Atari TOS byte-for-byte. The resulting
-             * unaligned VSTR faults with a Data Abort. Observed on
-             * MACHINE_VIRT_ARM, but neither the loop nor the underlying
-             * alignment mismatch is machine-specific, so this guards
-             * every ARM build. */
-            *(volatile LONG *)&vbl_list[i] = 0;
+            vbl_list[i] = 0;
         }
     }
 
