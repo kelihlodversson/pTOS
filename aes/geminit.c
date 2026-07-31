@@ -132,8 +132,25 @@ extern void accdesk_start(void) NORETURN;   /* see gemstart.S */
 LONG init_p0_stkptr(void)
 {
     UDA *u = &D.g_int[0].a_uda;
+    ULONG *stack_top = &u->u_supstk + 1;
 
-    u->u_spsuper = &u->u_supstk + 1;
+#if ARCH_ARM
+    /*
+     * ARM requires the stack pointer to be 8-byte aligned at every public
+     * interface (AAPCS), and gcc's auto-vectorizer (-mfpu=neon-vfpv4) relies
+     * on that invariant for NEON/VFP loads and stores of local variables,
+     * faulting with a Data Abort if it doesn't hold. THEGLO (D), which this
+     * stack lives at the end of, carries no alignment guarantee beyond the
+     * plain 4-byte alignment of its LONG members, so round the computed
+     * stack top down to the nearest 8-byte boundary. This is the stack used
+     * both by gem_main() itself and, via u_spsuper, by the accessory/desktop
+     * process spawned from it (see _accdesk_start in gemstart.S), so gsx_init()
+     * inherits whatever alignment is set up here.
+     */
+    stack_top = (ULONG *)((ULONG)stack_top & ~7UL);
+#endif
+
+    u->u_spsuper = stack_top;
 
     return (char *)u->u_spsuper - (char *)u;
 }
