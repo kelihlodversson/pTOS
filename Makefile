@@ -221,6 +221,10 @@ CPPFLAGS = $(CFLAGS)
 # BIOS private headers.
 usb_copts = $(addprefix -Ibios/,$(arch_subdirs)) -Ibios
 
+# virtio_blk.c (bios/) needs the shared virtio-mmio transport header from
+# util/.
+bios_copts = -Iutil
+
 CFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_copts))
 SFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_sopts))
 

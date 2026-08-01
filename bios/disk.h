@@ -24,8 +24,9 @@
 #define SCSI_BUS            1
 #define IDE_BUS             2
 #define SDMMC_BUS           3
+#define VIRTIO_BUS          4
 
-#define MAX_BUS             SDMMC_BUS
+#define MAX_BUS             VIRTIO_BUS
 #define DEVICES_PER_BUS     8
 
 #define UNITSNUM            (NUMFLOPPIES+(DEVICES_PER_BUS*(MAX_BUS+1)))
@@ -35,6 +36,7 @@
 #define IS_SCSI_DEVICE(major)   (GET_BUS(major) == SCSI_BUS)
 #define IS_IDE_DEVICE(major)    (GET_BUS(major) == IDE_BUS)
 #define IS_SDMMC_DEVICE(major)  (GET_BUS(major) == SDMMC_BUS)
+#define IS_VIRTIO_DEVICE(major) (GET_BUS(major) == VIRTIO_BUS)
 
 /*
  * commands used for internal xxx_ioctl() calls

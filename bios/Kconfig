@@ -148,6 +148,24 @@ config CONF_WITH_RASPI_EMMC
 	  Support for the SD card slot of the Raspberry Pi, using the
 	  on-chip EMMC controller.
 
+config CONF_WITH_VIRTIO
+	bool "virtio-mmio transport support"
+	depends on MACHINE_VIRT_ARM || MACHINE_VIRT_M68K
+	default y
+	help
+	  Shared driver for the virtio-mmio transports QEMU's ARM and m68k
+	  'virt' boards expose. No effect without a device driver built on
+	  top of it (see CONF_WITH_VIRTIO_BLK).
+
+config CONF_WITH_VIRTIO_BLK
+	bool "virtio-blk disk driver"
+	depends on CONF_WITH_VIRTIO
+	default y
+	help
+	  Block device driver for virtio-blk devices found on the
+	  virtio-mmio transport. Devices appear as a new disk bus,
+	  partitioned the same way as ACSI/IDE/SD devices.
+
 config CONF_WITH_FDC
 	bool "Floppy disk controller support"
 	depends on CONF_ATARI_HARDWARE && CONF_WITH_MFP && CONF_WITH_YM2149
