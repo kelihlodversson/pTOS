@@ -586,6 +586,20 @@ git push
 - Modify: `bios/machine/virt-arm/virt_mmu.h`, `bios/machine/virt-arm/virt_mmu.c` — add `ULONG virt_to_phys(void *va)` (`return (ULONG)va + VIRT_RAM_BASE;`). Required and load-bearing: `virt-arm` runs with the MMU on and `emutos.ld` links the whole kernel — `.text`/`.data`/`.bss`, including every static/stack address `util/virtio.c` and `bios/virtio_blk.c` hand to the device — into the low virtual window `[0, ram_size)`, which `virt_mmu_bootstrap()` maps onto physical `[VIRT_RAM_BASE, VIRT_RAM_BASE+ram_size)`. virtio-mmio devices sit outside this MMU and only understand physical addresses; a bare `(ULONG)` cast of a C pointer (as naively used below) points the device at whatever physical memory the untranslated low address collides with (in testing: `virt.flash0`, silently dropped writes, no interrupt ever raised). Every address `virtio_setup_queue()`, `virtio_submit()`'s callers, or a descriptor's `addr_lo` field hands to the device on this board must go through `virt_to_phys()` first.
 - Modify: `util/virtio.c` (replace the Task-1 stub bodies)
 - Modify: `bios/virtio_blk.c` (replace `virtio_blk_ioctl`/`virtio_blk_rw`, extend `virtio_blk_init`)
+- Modify: `include/endian.h` — add `cpu2le64`/`le2cpu64`, mirroring the existing `bswap32`/`le2cpu32`/`cpu2le32` pattern exactly:
+  ```c
+  #define bswap64		__builtin_bswap64
+  ```
+  placed next to the existing `#define bswap32 __builtin_bswap32` line, then in both the `BIG_ENDIAN` and `LITTLE_ENDIAN` branches add (next to the existing `le2cpu32`/`cpu2le32` lines):
+  ```c
+  /* BIG_ENDIAN branch: */
+  #   define le2cpu64(x) (bswap64(x))
+  #   define cpu2le64(x) (bswap64(x))
+  /* LITTLE_ENDIAN branch: */
+  #   define le2cpu64(x) (x)
+  #   define cpu2le64(x) (x)
+  ```
+  Required: the virtio-blk request header's `sector` field is a 64-bit LE-by-spec field (see `struct virtio_blk_req` below) — without this, `hdr->sector`'s stored bit pattern is only correct on a little-endian CPU (silently, since `virt-arm` is LE-native) and would be byte-order-wrong on `virt-m68k` (big-endian) once Task 3 runs this same shared code. `UQUAD` (`include/portab.h`) is the unsigned 64-bit type to pass through `cpu2le64`.
 
 **Interfaces:**
 - Consumes: `VIRTIO_DEV`, `virtio_probe()` from Task 1; `virt_connect_irq(int irq, PFVOID handler)` (existing, being extended here to accept `irq >= 32`); `VIRT_VIRTIO_MMIO_BASE`/`_STRIDE`/`_COUNT`/`_IRQ_BASE` (already added to `virt_memmap.h` in Task 1, since `bios/virtio_blk.c` needed them from the start).
@@ -774,8 +788,12 @@ Replace the entire file body (keep the header comment and `#if CONF_WITH_VIRTIO_
 #include "kprint.h"
 #include "string.h"
 #include "endian.h"
+#include "tosvars.h"
 #include "virtio.h"
 #include "virtio_blk.h"
+
+#define VIRTIO_BLK_TIMEOUT_MSEC   1000UL
+#define VIRTIO_BLK_TIMEOUT_TICKS  ((VIRTIO_BLK_TIMEOUT_MSEC*CLOCKS_PER_SEC+999)/1000)
 
 #if defined(MACHINE_VIRT_ARM)
 #include "virt_memmap.h"
@@ -955,9 +973,9 @@ LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
 
     for (i = 0; i < (WORD)count; i++)
     {
-        hdr->type = (rw & RW_RW) ? VIRTIO_BLK_T_OUT : VIRTIO_BLK_T_IN;
-        hdr->reserved = 0;
-        hdr->sector = (QUAD)(sector + i);
+        hdr->type = cpu2le32((rw & RW_RW) ? VIRTIO_BLK_T_OUT : VIRTIO_BLK_T_IN);
+        hdr->reserved = cpu2le32(0);
+        hdr->sector = (QUAD)cpu2le64((UQUAD)(sector + i));
         *status = 0xff;
 
         virtio_desc_set(&virtio_blk_dev[dev], 0, VIRTIO_BLK_PHYS(hdr), (ULONG)sizeof(*hdr), VIRTIO_DESC_F_NEXT, 1);
@@ -980,11 +998,25 @@ LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
         virtio_submit(&virtio_blk_dev[dev], 0);
         virtio_notify(&virtio_blk_dev[dev]);
 
-        while (!virtio_blk_dev[dev].done)
         {
+            /* Every other block-I/O driver in this tree bounds its hardware
+             * wait with a timeout (see e.g. bios/sd.c's SD_READ_TIMEOUT_TICKS
+             * idiom) rather than looping forever; a misrouted interrupt or an
+             * unresponsive device must not hang the BIOS permanently. */
+            LONG timeout = hz_200 + VIRTIO_BLK_TIMEOUT_TICKS;
+
+            while (!virtio_blk_dev[dev].done)
+            {
+                if (hz_200 >= timeout)
+                {
+                    ret = (rw & RW_RW) ? EWRITF : EREADF;
+                    KDEBUG(("virtio_blk_rw: unit %d timed out\n", dev));
+                    return ret;
+                }
 #if ARCH_ARM
-            __asm__ volatile("wfi");
+                __asm__ volatile("wfi");
 #endif
+            }
         }
 
 #if ARCH_ARM
