@@ -101,26 +101,11 @@ BOOL virtio_probe(ULONG base, UWORD want_device_id, VIRTIO_DEV *dev)
     }
 
     dev->base = base;
+    dev->phys_offset = 0;
     dev->last_used_idx = 0;
     dev->done = FALSE;
     return TRUE;
 }
-
-#if ARCH_ARM
-/* This port's ARM boards run with the MMU on and the kernel linked into a
- * low "virtual window" that aliases physical RAM at a non-zero base (see
- * virt_mmu.h's virt_to_phys() for the full explanation) -- so a plain
- * (ULONG) cast of a static/stack address is NOT the physical address a
- * DMA-capable device like virtio-mmio needs. Every address handed to the
- * device (the three queue base registers here, and each descriptor's
- * addr_lo in virtio_desc_set() -- filled in by callers that also apply
- * this) must go through virt_to_phys() first. m68k has no such aliasing:
- * virtual and physical addresses are identical, so this is a no-op there. */
-extern ULONG virt_to_phys(void *va);
-#define VIRTIO_PHYS(p) virt_to_phys((void *)(p))
-#else
-#define VIRTIO_PHYS(p) ((ULONG)(p))
-#endif
 
 BOOL virtio_setup_queue(VIRTIO_DEV *dev)
 {
@@ -143,12 +128,15 @@ BOOL virtio_setup_queue(VIRTIO_DEV *dev)
     dev->used.flags = 0;
     dev->used.idx = 0;
 
+    /* The device is not behind this port's MMU (where one exists), so the
+     * three queue base registers take physical addresses; dev->phys_offset
+     * turns our own linked addresses into those (0 where they coincide). */
     vreg_write(&regs->queue_num, VIRTIO_QUEUE_SIZE);
-    vreg_write(&regs->queue_desc_low,   VIRTIO_PHYS(dev->desc));
+    vreg_write(&regs->queue_desc_low,   (ULONG)dev->desc + dev->phys_offset);
     vreg_write(&regs->queue_desc_high,  0);
-    vreg_write(&regs->queue_driver_low, VIRTIO_PHYS(&dev->avail));
+    vreg_write(&regs->queue_driver_low, (ULONG)&dev->avail + dev->phys_offset);
     vreg_write(&regs->queue_driver_high,0);
-    vreg_write(&regs->queue_device_low, VIRTIO_PHYS(&dev->used));
+    vreg_write(&regs->queue_device_low, (ULONG)&dev->used + dev->phys_offset);
     vreg_write(&regs->queue_device_high,0);
     vreg_write(&regs->queue_ready, 1);
 

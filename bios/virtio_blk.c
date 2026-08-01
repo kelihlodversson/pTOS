@@ -6,6 +6,7 @@
  */
 
 /*#define ENABLE_KDEBUG*/
+/*#define ENABLE_VIRTIO_BLK_SELFTEST*/
 
 #include "config.h"
 
@@ -28,20 +29,15 @@
 #if defined(MACHINE_VIRT_ARM)
 #include "virt_memmap.h"
 #include "virt_pic.h"
-#include "virt_mmu.h"
+#include "processor.h"
 #define VIRTIO_MMIO_BASE    VIRT_VIRTIO_MMIO_BASE
 #define VIRTIO_MMIO_STRIDE  VIRT_VIRTIO_MMIO_STRIDE
 #define VIRTIO_MMIO_COUNT   VIRT_VIRTIO_MMIO_COUNT
-/* Descriptor addresses must be physical, not the kernel's own (virtual,
- * low-window) addresses -- see virt_to_phys()'s comment in virt_mmu.h. */
-#define VIRTIO_BLK_PHYS(p)  virt_to_phys((void *)(p))
 #elif defined(MACHINE_VIRT_M68K)
 #include "goldfish_pic.h"
 #define VIRTIO_MMIO_BASE    0xff010000UL
 #define VIRTIO_MMIO_STRIDE  0x200UL
 #define VIRTIO_MMIO_COUNT   128
-/* m68k has no MMU aliasing: virtual and physical addresses coincide. */
-#define VIRTIO_BLK_PHYS(p)  ((ULONG)(p))
 #endif
 
 #define VIRTIO_BLK_DEVICE_ID  2
@@ -59,8 +55,29 @@ struct virtio_blk_req
 static VIRTIO_DEV virtio_blk_dev[DEVICES_PER_BUS];
 static ULONG virtio_blk_capacity[DEVICES_PER_BUS];   /* in 512-byte sectors */
 static struct virtio_blk_req virtio_blk_hdr[DEVICES_PER_BUS];
-static UBYTE virtio_blk_status[DEVICES_PER_BUS];
 static WORD virtio_blk_count;
+
+/* Each unit's status byte gets its own padded, cache-line-aligned slot, so
+ * invalidate_data_cache() on one unit's status (needed after every I/O
+ * completion, to see the device's fresh write past whatever the CPU had
+ * cached) can never discard a dirty write to an unrelated driver static
+ * sharing the same cache line.  64 bytes is a conservative upper bound for
+ * this port's ARM D-cache line size (also fine as a no-op on m68k, which
+ * never calls invalidate_data_cache() at all). */
+typedef struct
+{
+    UBYTE value;
+    UBYTE reserved[63];
+} VIRTIO_BLK_STATUS_SLOT;
+
+static VIRTIO_BLK_STATUS_SLOT virtio_blk_status[DEVICES_PER_BUS] __attribute__((aligned(64)));
+
+/* Latched when a unit's I/O times out: the abandoned request may still be
+ * completed by the device afterwards (DMA'ing into a buffer the caller has
+ * since reused, and setting dev->done for a request nobody is waiting on),
+ * so the queue's state is no longer trustworthy.  Refuse further I/O on
+ * that unit rather than keep sharing it. */
+static BOOL virtio_blk_failed[DEVICES_PER_BUS];
 
 static ULONG virtio_blk_read_capacity(ULONG base)
 {
@@ -100,28 +117,42 @@ static void virtio_blk_connect_irq(WORD slot, WORD unit)
 #endif
 }
 
-#ifdef ENABLE_KDEBUG
+#ifdef ENABLE_VIRTIO_BLK_SELFTEST
 /* Safe on this driver specifically: both virt boards are QEMU-only, no real
  * hardware exists for either (see the design doc), so there is no risk of
  * clobbering a real disk. Exercises the write path, which disk_init_all()'s
- * boot-time partition scan never does on its own (it only reads). */
+ * boot-time partition scan never does on its own (it only reads).  It has
+ * its own switch rather than riding on ENABLE_KDEBUG, so that enabling
+ * tracing on this file does not by itself overwrite the disk image.
+ *
+ * The transfer deliberately spans more than 64 sectors, where 64*SECTOR_SIZE
+ * passes 32767: that is the range in which virtio_blk_rw()'s per-sector
+ * address arithmetic would break if it were ever done in a 16-bit int on
+ * -mshort m68k.  (At -O2 the compiler tends to widen such a loop by itself,
+ * so a PASS here is coverage of the multi-sector path rather than proof
+ * that no 16-bit arithmetic remains -- read the code for that.) */
+#define VIRTIO_BLK_SELFTEST_SECTORS 100
+/* The same 16-bit limit applies to this constant expression, hence the cast:
+ * 100*512 does not fit in an int on m68k. */
+#define VIRTIO_BLK_SELFTEST_BYTES   (VIRTIO_BLK_SELFTEST_SECTORS * (ULONG)SECTOR_SIZE)
+
 static void virtio_blk_selftest(WORD unit)
 {
-    static UBYTE pattern[SECTOR_SIZE];
-    static UBYTE readback[SECTOR_SIZE];
-    WORD i;
+    static UBYTE pattern[VIRTIO_BLK_SELFTEST_BYTES];
+    static UBYTE readback[VIRTIO_BLK_SELFTEST_BYTES];
+    LONG i;
     LONG ret;
 
-    for (i = 0; i < SECTOR_SIZE; i++)
+    for (i = 0; i < (LONG)sizeof(pattern); i++)
         pattern[i] = (UBYTE)(i ^ 0xa5);
 
-    ret = virtio_blk_rw(RW_WRITE, 1, 1, pattern, unit);
+    ret = virtio_blk_rw(RW_WRITE, 1, VIRTIO_BLK_SELFTEST_SECTORS, pattern, unit);
     KDEBUG(("virtio_blk_selftest: write returned %ld\n", ret));
 
-    ret = virtio_blk_rw(RW_READ, 1, 1, readback, unit);
+    ret = virtio_blk_rw(RW_READ, 1, VIRTIO_BLK_SELFTEST_SECTORS, readback, unit);
     KDEBUG(("virtio_blk_selftest: read returned %ld\n", ret));
 
-    if (memcmp(pattern, readback, SECTOR_SIZE) == 0)
+    if (memcmp(pattern, readback, sizeof(pattern)) == 0)
         KDEBUG(("virtio_blk_selftest: unit %d PASS\n", unit));
     else
         KDEBUG(("virtio_blk_selftest: unit %d FAIL\n", unit));
@@ -142,6 +173,17 @@ void virtio_blk_init(void)
         if (!virtio_probe(base, VIRTIO_BLK_DEVICE_ID, &virtio_blk_dev[virtio_blk_count]))
             continue;
 
+        /* The transport is architecture-neutral: tell it, once per device,
+         * how this board's RAM addresses look from the device's side.  On
+         * ARM the kernel is linked into a low virtual window aliasing
+         * physical RAM at VIRT_RAM_BASE (see virt_mmu_bootstrap()); m68k
+         * has no such aliasing. */
+#if defined(MACHINE_VIRT_ARM)
+        virtio_blk_dev[virtio_blk_count].phys_offset = VIRT_RAM_BASE;
+#elif defined(MACHINE_VIRT_M68K)
+        virtio_blk_dev[virtio_blk_count].phys_offset = 0;
+#endif
+
         if (!virtio_setup_queue(&virtio_blk_dev[virtio_blk_count]))
         {
             KDEBUG(("virtio_blk_init: slot %d found but queue setup failed\n", slot));
@@ -149,6 +191,7 @@ void virtio_blk_init(void)
         }
 
         virtio_blk_capacity[virtio_blk_count] = virtio_blk_read_capacity(base);
+        virtio_blk_failed[virtio_blk_count] = FALSE;
         virtio_blk_connect_irq(slot, virtio_blk_count);
 
         KDEBUG(("virtio_blk_init: unit %d at slot %d (base 0x%08lx, %lu sectors)\n",
@@ -159,7 +202,7 @@ void virtio_blk_init(void)
          * unit that's still being registered would be rejected as EUNDEV. */
         virtio_blk_count++;
 
-#ifdef ENABLE_KDEBUG
+#ifdef ENABLE_VIRTIO_BLK_SELFTEST
         virtio_blk_selftest(virtio_blk_count - 1);
 #endif
     }
@@ -171,6 +214,8 @@ LONG virtio_blk_ioctl(UWORD drv, UWORD ctrl, void *arg)
 {
     if (drv >= (UWORD)virtio_blk_count)
         return EUNDEV;
+    if (virtio_blk_failed[drv])
+        return EDRVNR;
 
     switch (ctrl)
     {
@@ -195,37 +240,50 @@ LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
 {
     struct virtio_blk_req *hdr;
     UBYTE *status;
+    UBYTE *sectbuf;
+    ULONG phys_offset;
     WORD i;
     LONG ret = 0;
 
     if (dev >= (WORD)virtio_blk_count)
         return EUNDEV;
+    if (virtio_blk_failed[dev])
+        return EDRVNR;
 
     hdr = &virtio_blk_hdr[dev];
-    status = &virtio_blk_status[dev];
+    status = &virtio_blk_status[dev].value;
+    phys_offset = virtio_blk_dev[dev].phys_offset;
 
-    for (i = 0; i < (WORD)count; i++)
+    /* Walk a byte pointer rather than computing buf + i*SECTOR_SIZE: int is
+     * 16 bits on m68k, so that multiply would overflow from i == 64 on. */
+    sectbuf = buf;
+
+    for (i = 0; i < (WORD)count; i++, sectbuf += SECTOR_SIZE)
     {
         hdr->type = cpu2le32((rw & RW_RW) ? VIRTIO_BLK_T_OUT : VIRTIO_BLK_T_IN);
         hdr->reserved = cpu2le32(0);
         hdr->sector = (QUAD)cpu2le64((UQUAD)(sector + i));
         *status = 0xff;
 
-        virtio_desc_set(&virtio_blk_dev[dev], 0, VIRTIO_BLK_PHYS(hdr), (ULONG)sizeof(*hdr), VIRTIO_DESC_F_NEXT, 1);
-        virtio_desc_set(&virtio_blk_dev[dev], 1, VIRTIO_BLK_PHYS(buf + i * SECTOR_SIZE), SECTOR_SIZE,
+        virtio_desc_set(&virtio_blk_dev[dev], 0, (ULONG)hdr + phys_offset,
+                         (ULONG)sizeof(*hdr), VIRTIO_DESC_F_NEXT, 1);
+        virtio_desc_set(&virtio_blk_dev[dev], 1, (ULONG)sectbuf + phys_offset, SECTOR_SIZE,
                          (UWORD)(VIRTIO_DESC_F_NEXT | ((rw & RW_RW) ? 0 : VIRTIO_DESC_F_WRITE)), 2);
-        virtio_desc_set(&virtio_blk_dev[dev], 2, VIRTIO_BLK_PHYS(status), 1, VIRTIO_DESC_F_WRITE, 0);
+        virtio_desc_set(&virtio_blk_dev[dev], 2, (ULONG)status + phys_offset, 1, VIRTIO_DESC_F_WRITE, 0);
 
 #if ARCH_ARM
-        {
-            extern void flush_data_cache(void *start, long size);
-            extern void invalidate_data_cache(void *start, long size);
-
-            flush_data_cache(hdr, sizeof(*hdr));
-            if (rw & RW_RW)
-                flush_data_cache(buf + i * SECTOR_SIZE, SECTOR_SIZE);
-            invalidate_data_cache(status, 1);
-        }
+        /* Everything the device will look at has to reach RAM first, so
+         * these are flushes (clean+invalidate), never invalidates: a bare
+         * invalidate_data_cache() discards a dirty line without writing it
+         * back, which would throw the value away instead of publishing it.
+         * *status is flushed too, and for two reasons: the 0xff poison is
+         * only meaningful if it actually reaches RAM, and cleaning the line
+         * now means a later natural eviction cannot write our stale 0xff
+         * back over the completion code the device is about to DMA there. */
+        flush_data_cache(hdr, sizeof(*hdr));
+        flush_data_cache(status, 1);
+        if (rw & RW_RW)
+            flush_data_cache(sectbuf, SECTOR_SIZE);
 #endif
 
         virtio_submit(&virtio_blk_dev[dev], 0);
@@ -242,6 +300,11 @@ LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
             {
                 if (hz_200 >= timeout)
                 {
+                    /* The request stays in flight: the device may still
+                     * complete it later, into a buffer the caller is free
+                     * to reuse from here on.  Latch the unit as failed so
+                     * nothing else queues work on it. */
+                    virtio_blk_failed[dev] = TRUE;
                     ret = (rw & RW_RW) ? EWRITF : EREADF;
                     KDEBUG(("virtio_blk_rw: unit %d timed out\n", dev));
                     return ret;
@@ -253,13 +316,13 @@ LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
         }
 
 #if ARCH_ARM
-        {
-            extern void invalidate_data_cache(void *start, long size);
-
-            invalidate_data_cache(status, 1);
-            if (!(rw & RW_RW))
-                invalidate_data_cache(buf + i * SECTOR_SIZE, SECTOR_SIZE);
-        }
+        /* Device-written buffers: drop whatever the CPU had cached so we
+         * see the device's fresh writes.  *status sits alone in its own
+         * cache-line-aligned slot, so this cannot discard a dirty write to
+         * a neighbouring static. */
+        invalidate_data_cache(status, 1);
+        if (!(rw & RW_RW))
+            invalidate_data_cache(sectbuf, SECTOR_SIZE);
 #endif
 
         if (*status != 0)

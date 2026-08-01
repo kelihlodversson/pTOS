@@ -51,6 +51,17 @@ typedef struct
 typedef struct
 {
     ULONG base;             /* mmio base address of this device's transport window */
+    ULONG phys_offset;      /* physical_address - virtual(linked)_address, for any
+                             * RAM address associated with this device's virtqueue
+                             * memory (dev->desc/avail/used, and any caller-owned
+                             * buffer descriptors point at).  The device sits
+                             * outside this port's MMU (where one exists) and
+                             * only understands physical addresses; add this
+                             * offset to a linked address to get the physical one.
+                             * 0 on boards with no such aliasing.  virtio_probe()
+                             * zeroes this; the caller sets it once, right after a
+                             * successful virtio_probe(), before calling
+                             * virtio_setup_queue(). */
     UWORD last_used_idx;    /* used->idx last consumed by virtio_handle_interrupt() */
     volatile BOOL done;     /* set by virtio_handle_interrupt(), cleared by virtio_submit() */
     VIRTIO_DESC  desc[VIRTIO_QUEUE_SIZE];
@@ -60,21 +71,25 @@ typedef struct
 
 /* Probes one virtio-mmio slot: checks magic/version/device-id, negotiates
  * VIRTIO_F_VERSION_1 only. On success dev->base/last_used_idx/done are
- * initialized and the device is left in the FEATURES_OK state (no queue
- * configured yet, DRIVER_OK not set). Returns FALSE if the slot is empty,
- * is a different device type, or isn't version-2 virtio-mmio. */
+ * initialized, dev->phys_offset is zeroed (the caller must set it before
+ * virtio_setup_queue() if this board's RAM is aliased), and the device is
+ * left in the FEATURES_OK state (no queue configured yet, DRIVER_OK not
+ * set). Returns FALSE if the slot is empty, is a different device type,
+ * or isn't version-2 virtio-mmio. */
 BOOL virtio_probe(ULONG base, UWORD want_device_id, VIRTIO_DEV *dev);
 
-/* Configures queue 0 from dev->desc/avail/used and sets DRIVER_OK.
+/* Configures queue 0 from dev->desc/avail/used and sets DRIVER_OK.  The
+ * three queue base registers are programmed with dev->phys_offset applied,
+ * so the caller must have set that field first (see virtio_probe()).
  * Must be called exactly once after a successful virtio_probe(). */
 BOOL virtio_setup_queue(VIRTIO_DEV *dev);
 
 /* Writes one descriptor slot (LE-encoded). addr must already be the
  * physical address the device should DMA to/from -- on boards where the
- * kernel's own addresses are not physical addresses (see virt_to_phys()
- * in bios/machine/virt-arm/virt_mmu.h), the caller is responsible for the
- * translation before calling this. addr_hi is always 0 (neither virt
- * board needs a 64-bit DMA address). */
+ * kernel's own addresses are not physical addresses, the caller is
+ * responsible for the translation (adding dev->phys_offset) before
+ * calling this. addr_hi is always 0 (neither virt board needs a 64-bit
+ * DMA address). */
 void virtio_desc_set(VIRTIO_DEV *dev, UWORD index, ULONG addr, ULONG len, UWORD flags, UWORD next);
 
 /* Appends head_index to the avail ring and bumps avail->idx. Clears dev->done. */
