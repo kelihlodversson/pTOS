@@ -36,6 +36,14 @@
 - Modify: `bios/Kconfig`
 - Modify: `bios/disk.h`
 - Modify: `bios/disk.c`
+- Modify: `Makefile` — add `bios_copts = -Iutil` (next to the existing `usb_copts` line). Without this, `bios/virtio_blk.c`'s `#include "virtio.h"` can't resolve, since the per-directory include search only adds a source directory's own machine/arch/generic paths, not other top-level directories.
+- Modify: `bios/blkdev.c` — inside `bus_init()`, right after the existing `raspi_emmc_init()` call, add:
+  ```c
+  #if CONF_WITH_VIRTIO_BLK
+      virtio_blk_init();
+  #endif
+  ```
+  (with `#include "virtio_blk.h"` added to the top of the file). `disk_init_all()` never calls per-bus init functions itself — every bus driver registers its init call in `blkdev.c`'s `bus_init()` — so without this, `virtio_blk_init()` is defined but never invoked and the boot-test in Step 12 finds nothing.
 
 **Interfaces:**
 - Produces (from `util/virtio.h`, used by Task 2/3):
@@ -543,14 +551,15 @@ Expected: both builds succeed with no new warnings/errors. This confirms the `di
 make distclean
 make virt-arm_defconfig && make -j"$(nproc)"
 qemu-system-arm -M virt -cpu cortex-a7 -kernel <image-from-the-"is-ready"-line> \
+  -global virtio-mmio.force-legacy=false \
   -serial stdio -d guest_errors \
   -drive file=/tmp/virtio-test.img,if=none,format=raw,id=hd0 \
   -device virtio-blk-device,drive=hd0
 ```
 
-(Create `/tmp/virtio-test.img` first: `truncate -s 16M /tmp/virtio-test.img`.)
+(Create `/tmp/virtio-test.img` first: `truncate -s 16M /tmp/virtio-test.img`. The `-global virtio-mmio.force-legacy=false` flag is required: this QEMU's `virt` board defaults virtio-mmio transports to legacy/version-1, which `virtio_probe()` correctly rejects since it's modern/version-2 only — without the flag you'll see `0 device(s) found` and that is *not* a driver bug.)
 
-Expected KDEBUG output includes `virtio_blk_init: found device at slot 0` and `virtio_blk_init: 1 device(s) found`. This confirms `virtio_probe()`'s magic/version/device-id/feature-negotiation sequence is correct against real QEMU device emulation, independent of the queue/interrupt code Task 2 adds.
+Expected KDEBUG output includes `virtio_blk_init: found device at slot N` (N depends on QEMU's internal device-plugging order — with a single `-device virtio-blk-device` it is not necessarily slot 0) and `virtio_blk_init: 1 device(s) found`. This confirms `virtio_probe()`'s magic/version/device-id/feature-negotiation sequence is correct against real QEMU device emulation, independent of the queue/interrupt code Task 2 adds. `ENABLE_KDEBUG` must be enabled in `bios/virtio_blk.c` (and `disk.c`) to see this output — it's off by default like every other driver in this tree.
 
 - [ ] **Step 13: `make gitready` and commit**
 
@@ -558,7 +567,8 @@ Expected KDEBUG output includes `virtio_blk_init: found device at slot 0` and `v
 make gitready
 git add util/virtio.h util/virtio.c bios/virtio_blk.h bios/virtio_blk.c \
         bios/machine/virt-arm/virt_memmap.h \
-        util/build.mk bios/build.mk bios/Kconfig bios/disk.h bios/disk.c
+        util/build.mk bios/build.mk bios/Kconfig bios/disk.h bios/disk.c \
+        Makefile bios/blkdev.c
 git commit -m "virtio: add transport probe/negotiate and virtio-blk discovery"
 git push
 ```
@@ -997,12 +1007,16 @@ make virt-arm_defconfig
 grep ENABLE_KDEBUG obj/autoconf.h
 make -j"$(nproc)"
 truncate -s 16M /tmp/virtio-test.img
-qemu-system-arm -M virt -cpu cortex-a7 -kernel <image> -serial stdio -d guest_errors \
+qemu-system-arm -M virt -cpu cortex-a7 -kernel <image> \
+  -global virtio-mmio.force-legacy=false \
+  -serial stdio -d guest_errors \
   -drive file=/tmp/virtio-test.img,if=none,format=raw,id=hd0 \
   -device virtio-blk-device,drive=hd0
 ```
 
-Expected KDEBUG output: `virtio_blk_init: unit 0 at slot 0 ...`, `virtio_blk_selftest: write returned 0`, `virtio_blk_selftest: read returned 0`, `virtio_blk_selftest: unit 0 PASS`. A `FAIL` here means either the GIC SPI wiring (Step 3) or the queue/cache-maintenance code (Steps 4-5) is wrong — check first whether the interrupt fires at all (add a temporary `KDEBUG(("virt_int_handler: irq %lu\n", irq))` in `virt_int_handler` if the wait loop hangs) before re-checking descriptor/cache logic.
+(`-global virtio-mmio.force-legacy=false` is required — see Task 1 Step 12's note; this QEMU defaults `virt`'s virtio-mmio transports to legacy/version-1, which the transport correctly rejects.)
+
+Expected KDEBUG output: `virtio_blk_init: unit 0 at slot N ...` (N is whatever slot QEMU assigns — not necessarily 0), `virtio_blk_selftest: write returned 0`, `virtio_blk_selftest: read returned 0`, `virtio_blk_selftest: unit 0 PASS`. A `FAIL` here means either the GIC SPI wiring (Step 3) or the queue/cache-maintenance code (Steps 4-5) is wrong — check first whether the interrupt fires at all (add a temporary `KDEBUG(("virt_int_handler: irq %lu\n", irq))` in `virt_int_handler` if the wait loop hangs) before re-checking descriptor/cache logic.
 
 - [ ] **Step 6: `make gitready` and commit**
 
@@ -1233,12 +1247,16 @@ make virt-m68k_defconfig
 grep ENABLE_KDEBUG obj/autoconf.h
 make -j"$(nproc)"
 truncate -s 16M /tmp/virtio-test-m68k.img
-qemu-system-m68k -M virt -kernel <image> -serial stdio -d guest_errors \
+qemu-system-m68k -M virt -kernel <image> \
+  -global virtio-mmio.force-legacy=false \
+  -serial stdio -d guest_errors \
   -drive file=/tmp/virtio-test-m68k.img,if=none,format=raw,id=hd0 \
   -device virtio-blk-device,drive=hd0
 ```
 
-Expected KDEBUG output, same shape as Task 2's ARM test: `virtio_blk_init: unit 0 at slot 0 ...`, `virtio_blk_selftest: unit 0 PASS`. If the wait loop in `virtio_blk_rw()` hangs, first confirm the autovector actually landed (temporary `KDEBUG` at the top of `goldfish_pic_dispatch()`) before re-checking descriptor/PIC-index math — slot 0 must map to `pic_index=1, bit=0` per `virtio_blk_connect_irq()` in Task 2's `bios/virtio_blk.c`.
+(Same `-global virtio-mmio.force-legacy=false` requirement as Task 1/2's ARM tests — verify it's still needed on this QEMU's m68k `virt` board before assuming it isn't; if `0 device(s) found` appears without it, add it.)
+
+Expected KDEBUG output, same shape as Task 2's ARM test: `virtio_blk_init: unit 0 at slot N ...` (N not necessarily 0), `virtio_blk_selftest: unit 0 PASS`. If the wait loop in `virtio_blk_rw()` hangs, first confirm the autovector actually landed (temporary `KDEBUG` at the top of `goldfish_pic_dispatch()`) before re-checking descriptor/PIC-index math — slot 0 must map to `pic_index=1, bit=0` per `virtio_blk_connect_irq()` in Task 2's `bios/virtio_blk.c`.
 
 - [ ] **Step 6: `make gitready` and commit**
 
@@ -1268,10 +1286,11 @@ Find the existing `qemu-system-arm -M virt ...` and `qemu-system-m68k -M virt ..
 To also attach a virtio-blk disk:
 
     qemu-system-arm -M virt -cpu cortex-a7 -kernel kernel.elf -serial stdio \
+      -global virtio-mmio.force-legacy=false \
       -drive file=disk.img,if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
 ```
 
-(and the m68k equivalent, dropping `-cpu cortex-a7`). Match the existing invocation's exact flags/formatting rather than the ones written here, since this step is describing an addition, not a replacement.
+(and the m68k equivalent, dropping `-cpu cortex-a7`). The `-global virtio-mmio.force-legacy=false` flag is required on QEMU versions that default `virt`'s virtio-mmio transports to legacy/version-1 (confirmed necessary on QEMU 10.1 during Task 1/2/3's testing) — this driver only speaks modern/version-2 virtio-mmio. Match the existing invocation's exact flags/formatting rather than the ones written here, since this step is describing an addition, not a replacement.
 
 - [ ] **Step 2: Regenerate and diff the defconfigs**
 
