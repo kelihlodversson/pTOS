@@ -1295,14 +1295,14 @@ make virt-m68k_defconfig
 grep ENABLE_KDEBUG obj/autoconf.h
 make -j"$(nproc)"
 truncate -s 16M /tmp/virtio-test-m68k.img
-qemu-system-m68k -M virt -kernel <image> \
+qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel <image> \
   -global virtio-mmio.force-legacy=false \
-  -serial stdio -d guest_errors \
+  -serial stdio -d guest_errors -display none \
   -drive file=/tmp/virtio-test-m68k.img,if=none,format=raw,id=hd0 \
   -device virtio-blk-device,drive=hd0
 ```
 
-(Same `-global virtio-mmio.force-legacy=false` requirement as Task 1/2's ARM tests — verify it's still needed on this QEMU's m68k `virt` board before assuming it isn't; if `0 device(s) found` appears without it, add it.)
+(`-m 128 -cpu m68020` matches this repo's already-documented `virt-m68k` invocation in `readme.md` — without `-cpu m68020`, QEMU defaults to m68060 and crashes on an unimplemented control-register probe. `-display none` avoids needing a display in a headless sandbox. Same `-global virtio-mmio.force-legacy=false` requirement as Task 1/2's ARM tests.)
 
 Expected KDEBUG output, same shape as Task 2's ARM test: `virtio_blk_init: unit 0 at slot N ...` (N not necessarily 0), `virtio_blk_selftest: unit 0 PASS`. If the wait loop in `virtio_blk_rw()` hangs, first confirm the autovector actually landed (temporary `KDEBUG` at the top of `goldfish_pic_dispatch()`) before re-checking descriptor/PIC-index math — slot 0 must map to `pic_index=1, bit=0` per `virtio_blk_connect_irq()` in Task 2's `bios/virtio_blk.c`.
 
@@ -1338,7 +1338,7 @@ To also attach a virtio-blk disk:
       -drive file=disk.img,if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
 ```
 
-(and the m68k equivalent, dropping `-cpu cortex-a7`). The `-global virtio-mmio.force-legacy=false` flag is required on QEMU versions that default `virt`'s virtio-mmio transports to legacy/version-1 (confirmed necessary on QEMU 10.1 during Task 1/2/3's testing) — this driver only speaks modern/version-2 virtio-mmio. Match the existing invocation's exact flags/formatting rather than the ones written here, since this step is describing an addition, not a replacement.
+(and the m68k equivalent: `qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel kernel.elf -serial stdio -global virtio-mmio.force-legacy=false -drive ... -device virtio-blk-device,drive=hd0`, matching `readme.md`'s existing `-m 128 -cpu m68020` invocation rather than the ARM flags). The `-global virtio-mmio.force-legacy=false` flag is required on QEMU versions that default `virt`'s virtio-mmio transports to legacy/version-1 (confirmed necessary on QEMU 10.1 during Task 1/2/3's testing) — this driver only speaks modern/version-2 virtio-mmio. Match the existing invocation's exact flags/formatting rather than the ones written here, since this step is describing an addition, not a replacement.
 
 - [ ] **Step 2: Regenerate and diff the defconfigs**
 
