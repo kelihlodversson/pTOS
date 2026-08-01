@@ -143,8 +143,11 @@ BOOL virtio_probe(ULONG base, UWORD want_device_id, VIRTIO_DEV *dev);
  * Must be called exactly once after a successful virtio_probe(). */
 BOOL virtio_setup_queue(VIRTIO_DEV *dev);
 
-/* Writes one descriptor slot (LE-encoded). addr is a flat 32-bit address;
- * addr_hi is always 0 (neither virt board needs a 64-bit DMA address). */
+/* Writes one descriptor slot (LE-encoded). addr must already be a
+ * physical address (see VIRTIO_PHYS() in virtio.c / VIRTIO_BLK_PHYS() in
+ * virtio_blk.c on virt-arm, where the MMU aliases the kernel's low
+ * virtual window onto physical RAM at VIRT_RAM_BASE) -- addr_hi is
+ * always 0 (neither virt board needs a 64-bit DMA address). */
 void virtio_desc_set(VIRTIO_DEV *dev, UWORD index, ULONG addr, ULONG len, UWORD flags, UWORD next);
 
 /* Appends head_index to the avail ring and bumps avail->idx. Clears dev->done. */
@@ -580,6 +583,7 @@ git push
 **Files:**
 - Modify: `bios/machine/virt-arm/virt_pic.h`
 - Modify: `bios/machine/virt-arm/virt_pic.c`
+- Modify: `bios/machine/virt-arm/virt_mmu.h`, `bios/machine/virt-arm/virt_mmu.c` — add `ULONG virt_to_phys(void *va)` (`return (ULONG)va + VIRT_RAM_BASE;`). Required and load-bearing: `virt-arm` runs with the MMU on and `emutos.ld` links the whole kernel — `.text`/`.data`/`.bss`, including every static/stack address `util/virtio.c` and `bios/virtio_blk.c` hand to the device — into the low virtual window `[0, ram_size)`, which `virt_mmu_bootstrap()` maps onto physical `[VIRT_RAM_BASE, VIRT_RAM_BASE+ram_size)`. virtio-mmio devices sit outside this MMU and only understand physical addresses; a bare `(ULONG)` cast of a C pointer (as naively used below) points the device at whatever physical memory the untranslated low address collides with (in testing: `virt.flash0`, silently dropped writes, no interrupt ever raised). Every address `virtio_setup_queue()`, `virtio_submit()`'s callers, or a descriptor's `addr_lo` field hands to the device on this board must go through `virt_to_phys()` first.
 - Modify: `util/virtio.c` (replace the Task-1 stub bodies)
 - Modify: `bios/virtio_blk.c` (replace `virtio_blk_ioctl`/`virtio_blk_rw`, extend `virtio_blk_init`)
 
@@ -683,11 +687,11 @@ BOOL virtio_setup_queue(VIRTIO_DEV *dev)
     dev->used.idx = 0;
 
     vreg_write(&regs->queue_num, VIRTIO_QUEUE_SIZE);
-    vreg_write(&regs->queue_desc_low,   (ULONG)dev->desc);
+    vreg_write(&regs->queue_desc_low,   VIRTIO_PHYS(dev->desc));
     vreg_write(&regs->queue_desc_high,  0);
-    vreg_write(&regs->queue_driver_low, (ULONG)&dev->avail);
+    vreg_write(&regs->queue_driver_low, VIRTIO_PHYS(&dev->avail));
     vreg_write(&regs->queue_driver_high,0);
-    vreg_write(&regs->queue_device_low, (ULONG)&dev->used);
+    vreg_write(&regs->queue_device_low, VIRTIO_PHYS(&dev->used));
     vreg_write(&regs->queue_device_high,0);
     vreg_write(&regs->queue_ready, 1);
 
@@ -717,6 +721,10 @@ void virtio_submit(VIRTIO_DEV *dev, UWORD head_index)
 #if ARCH_ARM
 extern void flush_data_cache(void *start, long size);
 extern void invalidate_data_cache(void *start, long size);
+extern ULONG virt_to_phys(void *va);
+#define VIRTIO_PHYS(p) virt_to_phys((void *)(p))
+#else
+#define VIRTIO_PHYS(p) ((ULONG)(p))
 #endif
 
 void virtio_notify(VIRTIO_DEV *dev)
@@ -779,6 +787,13 @@ Replace the entire file body (keep the header comment and `#if CONF_WITH_VIRTIO_
 #define VIRTIO_MMIO_BASE    0xff010000UL
 #define VIRTIO_MMIO_STRIDE  0x200UL
 #define VIRTIO_MMIO_COUNT   128
+#endif
+
+#if defined(MACHINE_VIRT_ARM)
+extern ULONG virt_to_phys(void *va);
+#define VIRTIO_BLK_PHYS(p) virt_to_phys((void *)(p))
+#elif defined(MACHINE_VIRT_M68K)
+#define VIRTIO_BLK_PHYS(p) ((ULONG)(p))   /* no MMU aliasing on this port's m68k boards */
 #endif
 
 #define VIRTIO_BLK_DEVICE_ID  2
@@ -891,11 +906,11 @@ void virtio_blk_init(void)
         KDEBUG(("virtio_blk_init: unit %d at slot %d (base 0x%08lx, %lu sectors)\n",
                 virtio_blk_count, slot, base, virtio_blk_capacity[virtio_blk_count]));
 
-#ifdef ENABLE_KDEBUG
-        virtio_blk_selftest(virtio_blk_count);
-#endif
+        virtio_blk_count++;   /* before the self-test: virtio_blk_rw()/_ioctl() reject any dev >= virtio_blk_count */
 
-        virtio_blk_count++;
+#ifdef ENABLE_KDEBUG
+        virtio_blk_selftest(virtio_blk_count - 1);
+#endif
     }
 
     KDEBUG(("virtio_blk_init: %d device(s) found\n", virtio_blk_count));
@@ -945,10 +960,10 @@ LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
         hdr->sector = (QUAD)(sector + i);
         *status = 0xff;
 
-        virtio_desc_set(&virtio_blk_dev[dev], 0, (ULONG)hdr, (ULONG)sizeof(*hdr), VIRTIO_DESC_F_NEXT, 1);
-        virtio_desc_set(&virtio_blk_dev[dev], 1, (ULONG)(buf + i * SECTOR_SIZE), SECTOR_SIZE,
+        virtio_desc_set(&virtio_blk_dev[dev], 0, VIRTIO_BLK_PHYS(hdr), (ULONG)sizeof(*hdr), VIRTIO_DESC_F_NEXT, 1);
+        virtio_desc_set(&virtio_blk_dev[dev], 1, VIRTIO_BLK_PHYS(buf + i * SECTOR_SIZE), SECTOR_SIZE,
                          (UWORD)(VIRTIO_DESC_F_NEXT | ((rw & RW_RW) ? 0 : VIRTIO_DESC_F_WRITE)), 2);
-        virtio_desc_set(&virtio_blk_dev[dev], 2, (ULONG)status, 1, VIRTIO_DESC_F_WRITE, 0);
+        virtio_desc_set(&virtio_blk_dev[dev], 2, VIRTIO_BLK_PHYS(status), 1, VIRTIO_DESC_F_WRITE, 0);
 
 #if ARCH_ARM
         {
