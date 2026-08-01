@@ -4,30 +4,33 @@
                      + __GNUC_MINOR__ * 100 \
                      + __GNUC_PATCHLEVEL__)
                      
-#define LITTLE_ENDIAN	1234	/* LSB first */
-#define BIG_ENDIAN	4321	/* MSB first */
+#define LITTLE_ENDIAN   1234    /* LSB first */
+#define BIG_ENDIAN      4321    /* MSB first */
 
 #if defined(__arm__) && ! defined(__armbe__)
-#   define BYTE_ORDER	LITTLE_ENDIAN
+#   define BYTE_ORDER   LITTLE_ENDIAN
 #else
-#   define BYTE_ORDER	BIG_ENDIAN
+#   define BYTE_ORDER   BIG_ENDIAN
 #endif
 
 
 
 // Assuming GNUC
 #if (GCC_VERSION >= 40800)
-#   define bswap16		__builtin_bswap16
+#   define bswap16              __builtin_bswap16
 #else
 #   define bswap16(x) ((((x)&0xff00)>>8)|(((x)&0xff)<<8))
 #endif
-#define bswap32		__builtin_bswap32
+#define bswap32         __builtin_bswap32
+#define bswap64         __builtin_bswap64
 
 #if BYTE_ORDER == BIG_ENDIAN
 #   define le2cpu32(x) (bswap32(x))
 #   define le2cpu16(x) (bswap16(x))
 #   define cpu2le32(x) (bswap32(x))
 #   define cpu2le16(x) (bswap16(x))
+#   define le2cpu64(x) (bswap64(x))
+#   define cpu2le64(x) (bswap64(x))
 #   define be2cpu32(x) (x)
 #   define be2cpu16(x) (x)
 #   define cpu2be32(x) (x)
@@ -41,6 +44,8 @@
 #   define le2cpu16(x) (x)
 #   define cpu2le32(x) (x)
 #   define cpu2le16(x) (x)
+#   define le2cpu64(x) (x)
+#   define cpu2le64(x) (x)
 #else
 # error unknown BYTE_ORDER
 #endif

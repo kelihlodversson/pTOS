@@ -17,8 +17,13 @@
 #include "kprint.h"
 #include "string.h"
 #include "endian.h"
+#include "mfp.h"
+#include "tosvars.h"
 #include "virtio.h"
 #include "virtio_blk.h"
+
+#define VIRTIO_BLK_TIMEOUT_MSEC   1000UL
+#define VIRTIO_BLK_TIMEOUT_TICKS  ((VIRTIO_BLK_TIMEOUT_MSEC*CLOCKS_PER_SEC+999)/1000)
 
 #if defined(MACHINE_VIRT_ARM)
 #include "virt_memmap.h"
@@ -200,9 +205,9 @@ LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
 
     for (i = 0; i < (WORD)count; i++)
     {
-        hdr->type = (rw & RW_RW) ? VIRTIO_BLK_T_OUT : VIRTIO_BLK_T_IN;
-        hdr->reserved = 0;
-        hdr->sector = (QUAD)(sector + i);
+        hdr->type = cpu2le32((rw & RW_RW) ? VIRTIO_BLK_T_OUT : VIRTIO_BLK_T_IN);
+        hdr->reserved = cpu2le32(0);
+        hdr->sector = (QUAD)cpu2le64((UQUAD)(sector + i));
         *status = 0xff;
 
         virtio_desc_set(&virtio_blk_dev[dev], 0, VIRTIO_BLK_PHYS(hdr), (ULONG)sizeof(*hdr), VIRTIO_DESC_F_NEXT, 1);
@@ -225,11 +230,25 @@ LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
         virtio_submit(&virtio_blk_dev[dev], 0);
         virtio_notify(&virtio_blk_dev[dev]);
 
-        while (!virtio_blk_dev[dev].done)
         {
+            /* Every other block-I/O driver in this tree bounds its hardware
+             * wait with a timeout (see e.g. bios/sd.c's SD_READ_TIMEOUT_TICKS
+             * idiom) rather than looping forever; a misrouted interrupt or an
+             * unresponsive device must not hang the BIOS permanently. */
+            LONG timeout = hz_200 + VIRTIO_BLK_TIMEOUT_TICKS;
+
+            while (!virtio_blk_dev[dev].done)
+            {
+                if (hz_200 >= timeout)
+                {
+                    ret = (rw & RW_RW) ? EWRITF : EREADF;
+                    KDEBUG(("virtio_blk_rw: unit %d timed out\n", dev));
+                    return ret;
+                }
 #if ARCH_ARM
-            __asm__ volatile("wfi");
+                __asm__ volatile("wfi");
 #endif
+            }
         }
 
 #if ARCH_ARM
