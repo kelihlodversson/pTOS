@@ -789,6 +789,7 @@ Replace the entire file body (keep the header comment and `#if CONF_WITH_VIRTIO_
 #include "string.h"
 #include "endian.h"
 #include "tosvars.h"
+#include "mfp.h"
 #include "virtio.h"
 #include "virtio_blk.h"
 
