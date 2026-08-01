@@ -69,8 +69,12 @@ BOOL virtio_probe(ULONG base, UWORD want_device_id, VIRTIO_DEV *dev);
  * Must be called exactly once after a successful virtio_probe(). */
 BOOL virtio_setup_queue(VIRTIO_DEV *dev);
 
-/* Writes one descriptor slot (LE-encoded). addr is a flat 32-bit address;
- * addr_hi is always 0 (neither virt board needs a 64-bit DMA address). */
+/* Writes one descriptor slot (LE-encoded). addr must already be the
+ * physical address the device should DMA to/from -- on boards where the
+ * kernel's own addresses are not physical addresses (see virt_to_phys()
+ * in bios/machine/virt-arm/virt_mmu.h), the caller is responsible for the
+ * translation before calling this. addr_hi is always 0 (neither virt
+ * board needs a 64-bit DMA address). */
 void virtio_desc_set(VIRTIO_DEV *dev, UWORD index, ULONG addr, ULONG len, UWORD flags, UWORD next);
 
 /* Appends head_index to the avail ring and bumps avail->idx. Clears dev->done. */

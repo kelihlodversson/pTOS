@@ -17,9 +17,10 @@
 #include "kprint.h"
 
 #define GICD_CTLR        (*(volatile ULONG*)(VIRT_GIC_DIST_BASE + 0x000))
-#define GICD_ISENABLER0  (*(volatile ULONG*)(VIRT_GIC_DIST_BASE + 0x100))
-#define GICD_ICENABLER0  (*(volatile ULONG*)(VIRT_GIC_DIST_BASE + 0x180))
+#define GICD_ISENABLER(n) (*(volatile ULONG*)(VIRT_GIC_DIST_BASE + 0x100 + 4*((n)/32)))
+#define GICD_ICENABLER(n) (*(volatile ULONG*)(VIRT_GIC_DIST_BASE + 0x180 + 4*((n)/32)))
 #define GICD_IPRIORITYR(n) (*(volatile UBYTE*)(VIRT_GIC_DIST_BASE + 0x400 + (n)))
+#define GICD_ITARGETSR(n) (*(volatile UBYTE*)(VIRT_GIC_DIST_BASE + 0x800 + (n)))
 #define GICC_CTLR  (*(volatile ULONG*)(VIRT_GIC_CPU_BASE + 0x000))
 #define GICC_PMR   (*(volatile ULONG*)(VIRT_GIC_CPU_BASE + 0x004))
 #define GICC_IAR   (*(volatile ULONG*)(VIRT_GIC_CPU_BASE + 0x00C))
@@ -34,11 +35,12 @@ void virt_pic_init(void)
     for (i = 0; i < VIRT_IRQ_LINES; i++)
         virt_irq_handlers[i] = 0;
 
-    GICD_ICENABLER0 = 0xffffffffUL;   /* disable everything to start from a known state */
-    GICD_CTLR = 1;                    /* enable distributor */
+    for (i = 0; i < VIRT_IRQ_LINES; i += 32)
+        GICD_ICENABLER(i) = 0xffffffffUL;   /* disable everything to start from a known state */
+    GICD_CTLR = 1;                          /* enable distributor */
 
-    GICC_PMR = 0xff;                  /* let every priority through */
-    GICC_CTLR = 1;                    /* enable this CPU's interface */
+    GICC_PMR = 0xff;                        /* let every priority through */
+    GICC_CTLR = 1;                          /* enable this CPU's interface */
 }
 
 PFVOID virt_connect_irq(int irq, PFVOID handler)
@@ -55,7 +57,9 @@ PFVOID virt_connect_irq(int irq, PFVOID handler)
 
     virt_irq_handlers[irq] = handler;
     GICD_IPRIORITYR(irq) = 0x80;
-    GICD_ISENABLER0 = (1UL << irq);
+    if (irq >= 32)
+        GICD_ITARGETSR(irq) = 0x01;    /* SPIs need explicit CPU targeting; PPIs are implicitly per-CPU */
+    GICD_ISENABLER(irq) = (1UL << (irq % 32));
     return old;
 }
 

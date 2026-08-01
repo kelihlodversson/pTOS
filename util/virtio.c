@@ -106,23 +106,105 @@ BOOL virtio_probe(ULONG base, UWORD want_device_id, VIRTIO_DEV *dev)
     return TRUE;
 }
 
+#if ARCH_ARM
+/* This port's ARM boards run with the MMU on and the kernel linked into a
+ * low "virtual window" that aliases physical RAM at a non-zero base (see
+ * virt_mmu.h's virt_to_phys() for the full explanation) -- so a plain
+ * (ULONG) cast of a static/stack address is NOT the physical address a
+ * DMA-capable device like virtio-mmio needs. Every address handed to the
+ * device (the three queue base registers here, and each descriptor's
+ * addr_lo in virtio_desc_set() -- filled in by callers that also apply
+ * this) must go through virt_to_phys() first. m68k has no such aliasing:
+ * virtual and physical addresses are identical, so this is a no-op there. */
+extern ULONG virt_to_phys(void *va);
+#define VIRTIO_PHYS(p) virt_to_phys((void *)(p))
+#else
+#define VIRTIO_PHYS(p) ((ULONG)(p))
+#endif
+
 BOOL virtio_setup_queue(VIRTIO_DEV *dev)
 {
-    return FALSE;   /* implemented in Task 2 */
+    volatile VIRTIO_MMIO_REGS *regs = (volatile VIRTIO_MMIO_REGS *)dev->base;
+    ULONG qmax;
+    WORD i;
+
+    vreg_write(&regs->queue_sel, 0);
+    if (vreg_read(&regs->queue_ready) != 0)
+        return FALSE;
+
+    qmax = vreg_read(&regs->queue_num_max);
+    if (qmax < VIRTIO_QUEUE_SIZE)
+        return FALSE;
+
+    for (i = 0; i < VIRTIO_QUEUE_SIZE; i++)
+        virtio_desc_set(dev, i, 0, 0, 0, 0);
+    dev->avail.flags = 0;
+    dev->avail.idx = 0;
+    dev->used.flags = 0;
+    dev->used.idx = 0;
+
+    vreg_write(&regs->queue_num, VIRTIO_QUEUE_SIZE);
+    vreg_write(&regs->queue_desc_low,   VIRTIO_PHYS(dev->desc));
+    vreg_write(&regs->queue_desc_high,  0);
+    vreg_write(&regs->queue_driver_low, VIRTIO_PHYS(&dev->avail));
+    vreg_write(&regs->queue_driver_high,0);
+    vreg_write(&regs->queue_device_low, VIRTIO_PHYS(&dev->used));
+    vreg_write(&regs->queue_device_high,0);
+    vreg_write(&regs->queue_ready, 1);
+
+    vreg_write(&regs->status, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER
+                             | VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);
+    return TRUE;
 }
 
 void virtio_desc_set(VIRTIO_DEV *dev, UWORD index, ULONG addr, ULONG len, UWORD flags, UWORD next)
 {
+    dev->desc[index].addr_lo = cpu2le32(addr);
+    dev->desc[index].addr_hi = cpu2le32(0);
+    dev->desc[index].len     = cpu2le32(len);
+    dev->desc[index].flags   = cpu2le16(flags);
+    dev->desc[index].next    = cpu2le16(next);
 }
 
 void virtio_submit(VIRTIO_DEV *dev, UWORD head_index)
 {
+    UWORD slot = le2cpu16(dev->avail.idx) % VIRTIO_QUEUE_SIZE;
+
+    dev->avail.ring[slot] = cpu2le16(head_index);
+    dev->avail.idx = cpu2le16((UWORD)(le2cpu16(dev->avail.idx) + 1));
+    dev->done = FALSE;
 }
+
+#if ARCH_ARM
+extern void flush_data_cache(void *start, long size);
+extern void invalidate_data_cache(void *start, long size);
+#endif
 
 void virtio_notify(VIRTIO_DEV *dev)
 {
+    volatile VIRTIO_MMIO_REGS *regs = (volatile VIRTIO_MMIO_REGS *)dev->base;
+
+#if ARCH_ARM
+    flush_data_cache(dev->desc, sizeof(dev->desc));
+    flush_data_cache(&dev->avail, sizeof(dev->avail));
+#endif
+    vreg_write(&regs->queue_notify, 0);
 }
 
 void virtio_handle_interrupt(VIRTIO_DEV *dev)
 {
+    volatile VIRTIO_MMIO_REGS *regs = (volatile VIRTIO_MMIO_REGS *)dev->base;
+    ULONG isr = vreg_read(&regs->interrupt_status);
+
+    vreg_write(&regs->interrupt_ack, isr);
+
+#if ARCH_ARM
+    invalidate_data_cache(&dev->used, sizeof(dev->used));
+#endif
+
+    if (le2cpu16(dev->used.idx) != dev->last_used_idx)
+    {
+        dev->last_used_idx = le2cpu16(dev->used.idx);
+        dev->done = TRUE;
+    }
 }

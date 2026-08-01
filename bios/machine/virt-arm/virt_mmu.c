@@ -125,3 +125,8 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
      * next instruction fetch (back in startup.S) behave predictably. */
     flush_prefetch_buffer();
 }
+
+ULONG virt_to_phys(void *va)
+{
+    return (ULONG)va + VIRT_RAM_BASE;
+}
