@@ -36,6 +36,7 @@
  * low-window) addresses -- see virt_to_phys()'s comment in virt_mmu.h. */
 #define VIRTIO_BLK_PHYS(p)  virt_to_phys((void *)(p))
 #elif defined(MACHINE_VIRT_M68K)
+#include "goldfish_pic.h"
 #define VIRTIO_MMIO_BASE    0xff010000UL
 #define VIRTIO_MMIO_STRIDE  0x200UL
 #define VIRTIO_MMIO_COUNT   128
