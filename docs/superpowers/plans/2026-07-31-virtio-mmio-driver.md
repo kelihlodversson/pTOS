@@ -69,7 +69,7 @@
 - Produces (from `bios/virtio_blk.h`): `void virtio_blk_init(void); LONG virtio_blk_ioctl(UWORD drv, UWORD ctrl, void *arg); LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev);`
 - Produces (from `bios/disk.h`): `#define VIRTIO_BUS 4`, `#define MAX_BUS VIRTIO_BUS`, `#define IS_VIRTIO_DEVICE(major) (GET_BUS(major) == VIRTIO_BUS)`.
 
-- [ ] **Step 1: Write `util/virtio.h`**
+- [x] **Step 1: Write `util/virtio.h`**
 
 ```c
 /*
@@ -164,7 +164,7 @@ void virtio_handle_interrupt(VIRTIO_DEV *dev);
 #endif /* VIRTIO_H */
 ```
 
-- [ ] **Step 2: Write `util/virtio.c` (probe/negotiate only for this task)**
+- [x] **Step 2: Write `util/virtio.c` (probe/negotiate only for this task)**
 
 ```c
 /*
@@ -299,7 +299,7 @@ void virtio_handle_interrupt(VIRTIO_DEV *dev)
 
   Note: the last four functions are stubbed here only so the file compiles and links; Task 2 replaces every one of these bodies with a real implementation. This mirrors how `virt_uart.c` etc. were built up incrementally in the existing git history for this port.
 
-- [ ] **Step 3: Add virtio-mmio constants to `virt_memmap.h`**
+- [x] **Step 3: Add virtio-mmio constants to `virt_memmap.h`**
 
 Modify `bios/machine/virt-arm/virt_memmap.h`, adding before the closing `#endif /* MACHINE_VIRT_ARM */`. `bios/virtio_blk.c` (Step 4 below) needs these to build for `MACHINE_VIRT_ARM` even before any queue/interrupt code exists, since it uses them to compute each probed slot's address:
 
@@ -315,7 +315,7 @@ Modify `bios/machine/virt-arm/virt_memmap.h`, adding before the closing `#endif 
 #define VIRT_VIRTIO_IRQ_BASE     48
 ```
 
-- [ ] **Step 4: Write `bios/virtio_blk.h`**
+- [x] **Step 4: Write `bios/virtio_blk.h`**
 
 ```c
 /*
@@ -340,7 +340,7 @@ LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev);
 #endif /* VIRTIO_BLK_H */
 ```
 
-- [ ] **Step 5: Write `bios/virtio_blk.c` (discovery-only for this task)**
+- [x] **Step 5: Write `bios/virtio_blk.c` (discovery-only for this task)**
 
 ```c
 /*
@@ -410,7 +410,7 @@ LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
 #endif /* CONF_WITH_VIRTIO_BLK */
 ```
 
-- [ ] **Step 6: Wire `util/build.mk`**
+- [x] **Step 6: Wire `util/build.mk`**
 
 Modify `util/build.mk`, adding after the existing `obj-y +=` block:
 
@@ -418,7 +418,7 @@ Modify `util/build.mk`, adding after the existing `obj-y +=` block:
 obj-$(CONF_WITH_VIRTIO) += virtio.o
 ```
 
-- [ ] **Step 7: Wire `bios/build.mk`**
+- [x] **Step 7: Wire `bios/build.mk`**
 
 Modify `bios/build.mk`, adding a new line after the `MACHINE_VIRT_M68K` line (currently line 42):
 
@@ -426,7 +426,7 @@ Modify `bios/build.mk`, adding a new line after the `MACHINE_VIRT_M68K` line (cu
 obj-$(CONF_WITH_VIRTIO_BLK) += virtio_blk.o
 ```
 
-- [ ] **Step 8: Add Kconfig options**
+- [x] **Step 8: Add Kconfig options**
 
 Modify `bios/Kconfig`, inserting after the `CONF_WITH_RASPI_EMMC` block (after line 149):
 
@@ -450,7 +450,7 @@ config CONF_WITH_VIRTIO_BLK
 	  partitioned the same way as ACSI/IDE/SD devices.
 ```
 
-- [ ] **Step 9: Add the `VIRTIO_BUS` bus type to `bios/disk.h`**
+- [x] **Step 9: Add the `VIRTIO_BUS` bus type to `bios/disk.h`**
 
 Modify `bios/disk.h`:
 
@@ -476,7 +476,7 @@ Modify `bios/disk.h`:
 
 (Only the lines shown change; the rest of `disk.h` is untouched. Match existing column alignment when editing — this codebase aligns the `#define` value column within each block.)
 
-- [ ] **Step 10: Wire `bios/disk.c`**
+- [x] **Step 10: Wire `bios/disk.c`**
 
 Add the include near the top, alongside the existing driver includes (after `#include "raspi_emmc.h"` at line 31):
 
@@ -537,7 +537,7 @@ In `disk_rw()` (`bios/disk.c`, `switch(bus)` starting at line 893), after the `C
 #endif /* CONF_WITH_VIRTIO_BLK */
 ```
 
-- [ ] **Step 11: Verify portability — build every non-virt config**
+- [x] **Step 11: Verify portability — build every non-virt config**
 
 ```bash
 make distclean
@@ -548,7 +548,7 @@ make rpi2_defconfig && make -j"$(nproc)" 2>&1 | tail -20
 
 Expected: both builds succeed with no new warnings/errors. This confirms the `disk.c`/`disk.h` changes fully compile out (`CONF_WITH_VIRTIO_BLK` is `0` for both, since neither sets `MACHINE_VIRT_ARM`/`MACHINE_VIRT_M68K`) and don't disturb the shared `majors[]`/`UNITSNUM` sizing other buses rely on. If any other defconfig exists in `configs/` beyond these two and `virt-arm`/`virt-m68k`, build it too.
 
-- [ ] **Step 12: Build and boot-test discovery on ARM**
+- [x] **Step 12: Build and boot-test discovery on ARM**
 
 ```bash
 make distclean
@@ -564,7 +564,7 @@ qemu-system-arm -M virt -cpu cortex-a7 -kernel <image-from-the-"is-ready"-line> 
 
 Expected KDEBUG output includes `virtio_blk_init: found device at slot N` (N depends on QEMU's internal device-plugging order — with a single `-device virtio-blk-device` it is not necessarily slot 0) and `virtio_blk_init: 1 device(s) found`. This confirms `virtio_probe()`'s magic/version/device-id/feature-negotiation sequence is correct against real QEMU device emulation, independent of the queue/interrupt code Task 2 adds. `ENABLE_KDEBUG` must be enabled in `bios/virtio_blk.c` (and `disk.c`) to see this output — it's off by default like every other driver in this tree.
 
-- [ ] **Step 13: `make gitready` and commit**
+- [x] **Step 13: `make gitready` and commit**
 
 ```bash
 make gitready
@@ -605,7 +605,7 @@ git push
 - Consumes: `VIRTIO_DEV`, `virtio_probe()` from Task 1; `virt_connect_irq(int irq, PFVOID handler)` (existing, being extended here to accept `irq >= 32`); `VIRT_VIRTIO_MMIO_BASE`/`_STRIDE`/`_COUNT`/`_IRQ_BASE` (already added to `virt_memmap.h` in Task 1, since `bios/virtio_blk.c` needed them from the start).
 - Produces: `virtio_setup_queue()`, `virtio_desc_set()`, `virtio_submit()`, `virtio_notify()`, `virtio_handle_interrupt()` — real implementations, used unchanged by Task 3 on m68k.
 
-- [ ] **Step 1: Extend `virt_pic.h` for SPI range**
+- [x] **Step 1: Extend `virt_pic.h` for SPI range**
 
 Modify `bios/machine/virt-arm/virt_pic.h`:
 
@@ -613,7 +613,7 @@ Modify `bios/machine/virt-arm/virt_pic.h`:
 #define VIRT_IRQ_LINES  80     /* PPIs (16-31) plus GIC SPI 16-47 (INTID 48-79) for virtio-mmio */
 ```
 
-- [ ] **Step 2: Extend `virt_pic.c` for SPI enable/target/dispatch**
+- [x] **Step 2: Extend `virt_pic.c` for SPI enable/target/dispatch**
 
 Modify `bios/machine/virt-arm/virt_pic.c`. Replace the register macro block:
 
@@ -674,7 +674,7 @@ PFVOID virt_connect_irq(int irq, PFVOID handler)
 
 `virt_int_handler()` is unchanged (its `irq < VIRT_IRQ_LINES` bound now covers the larger array automatically).
 
-- [ ] **Step 3: Implement the real virtqueue functions in `util/virtio.c`**
+- [x] **Step 3: Implement the real virtqueue functions in `util/virtio.c`**
 
 Replace the four stub bodies from Task 1 (`virtio_setup_queue`, `virtio_desc_set`, `virtio_submit`, `virtio_notify`, `virtio_handle_interrupt`) with:
 
@@ -773,7 +773,7 @@ void virtio_handle_interrupt(VIRTIO_DEV *dev)
 
 (`VIRTIO_STATUS_*` macros already exist from Task 1's `virtio_probe()`.)
 
-- [ ] **Step 4: Implement the real `virtio_blk_init`/`_ioctl`/`_rw` in `bios/virtio_blk.c`**
+- [x] **Step 4: Implement the real `virtio_blk_init`/`_ioctl`/`_rw` in `bios/virtio_blk.c`**
 
 Replace the entire file body (keep the header comment and `#if CONF_WITH_VIRTIO_BLK` guard) with:
 
@@ -1046,7 +1046,7 @@ LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
 
   Note: `goldfish_pic_connect_irq` is referenced in `virtio_blk_connect_irq()` for the `MACHINE_VIRT_M68K` branch but not yet defined until Task 3 — this is fine, since that branch is `#ifdef`-dead code on the ARM build this task targets. It will start compiling for real once Task 3 provides the header/function.
 
-- [ ] **Step 5: Build and boot-test full read/write on ARM**
+- [x] **Step 5: Build and boot-test full read/write on ARM**
 
 ```bash
 make distclean
@@ -1066,7 +1066,7 @@ qemu-system-arm -M virt -cpu cortex-a7 -kernel <image> \
 
 Expected KDEBUG output: `virtio_blk_init: unit 0 at slot N ...` (N is whatever slot QEMU assigns — not necessarily 0), `virtio_blk_selftest: write returned 0`, `virtio_blk_selftest: read returned 0`, `virtio_blk_selftest: unit 0 PASS`. A `FAIL` here means either the GIC SPI wiring (Step 3) or the queue/cache-maintenance code (Steps 4-5) is wrong — check first whether the interrupt fires at all (add a temporary `KDEBUG(("virt_int_handler: irq %lu\n", irq))` in `virt_int_handler` if the wait loop hangs) before re-checking descriptor/cache logic.
 
-- [ ] **Step 6: `make gitready` and commit**
+- [x] **Step 6: `make gitready` and commit**
 
 ```bash
 make gitready
@@ -1090,7 +1090,7 @@ git push
 - Consumes: `VIRTIO_DEV`, `virtio_probe/_setup_queue/_desc_set/_submit/_notify/_handle_interrupt` from Tasks 1-2 (architecture-neutral, unchanged). `bios/virtio_blk.c`'s `#elif defined(MACHINE_VIRT_M68K)` branch (already written in Task 2, calling `goldfish_pic_connect_irq`) starts compiling for real once this task's header exists.
 - Produces: `PFVOID goldfish_pic_connect_irq(WORD pic_index, WORD bit, PFVOID handler);` — mirrors `virt_connect_irq`'s shape.
 
-- [ ] **Step 1: Extend `goldfish_pic.h`**
+- [x] **Step 1: Extend `goldfish_pic.h`**
 
 Modify `bios/machine/virt-m68k/goldfish_pic.h`:
 
@@ -1120,7 +1120,7 @@ void goldfish_pic_dispatch(WORD pic_index);
 #endif /* GOLDFISH_PIC_H */
 ```
 
-- [ ] **Step 2: Extend `goldfish_pic.c`**
+- [x] **Step 2: Extend `goldfish_pic.c`**
 
 Modify `bios/machine/virt-m68k/goldfish_pic.c`, adding the `PENDING` register macro, the handler table, `goldfish_pic_connect_irq()`, and `goldfish_pic_dispatch()`. Also add `#include "vectors.h"` and `#include "kprint.h"` to the top include block.
 
@@ -1220,7 +1220,7 @@ void goldfish_pic_dispatch(WORD pic_index)
 
   (`PIC_STATUS` is defined for completeness/documentation of the register layout but not used by this driver — `PIC_PENDING` is what carries the per-bit mask `goldfish_pic_dispatch()` needs. The PIC's `pending` bits are level-sensitive at the hardware level: they track the device line directly and clear themselves once the device's own interrupt-acknowledge lowers its line, exactly as `goldfish_rtc.c`'s existing `RTC_CLEAR_INTERRUPT` write already relies on for the RTC. Nothing here needs to write `PIC_ENABLE`/`PIC_IRQ_DISABLE_ALL` to "ack" — those registers mask lines, they don't acknowledge them.)
 
-- [ ] **Step 3: Write `bios/machine/virt-m68k/goldfish_pic_isr.S`**
+- [x] **Step 3: Write `bios/machine/virt-m68k/goldfish_pic_isr.S`**
 
 ```asm
 /*
@@ -1279,7 +1279,7 @@ _goldfish_pic_isr4:
         rte
 ```
 
-- [ ] **Step 4: Wire the new object into `bios/build.mk`**
+- [x] **Step 4: Wire the new object into `bios/build.mk`**
 
 Modify `bios/build.mk`, changing the existing `MACHINE_VIRT_M68K` line:
 
@@ -1287,7 +1287,7 @@ Modify `bios/build.mk`, changing the existing `MACHINE_VIRT_M68K` line:
 obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfish_rtc_isr.o goldfish_pic_isr.o
 ```
 
-- [ ] **Step 5: Build and boot-test full read/write on m68k**
+- [x] **Step 5: Build and boot-test full read/write on m68k**
 
 ```bash
 make distclean
@@ -1306,7 +1306,7 @@ qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel <image> \
 
 Expected KDEBUG output, same shape as Task 2's ARM test: `virtio_blk_init: unit 0 at slot N ...` (N not necessarily 0), `virtio_blk_selftest: unit 0 PASS`. If the wait loop in `virtio_blk_rw()` hangs, first confirm the autovector actually landed (temporary `KDEBUG` at the top of `goldfish_pic_dispatch()`) before re-checking descriptor/PIC-index math — slot 0 must map to `pic_index=1, bit=0` per `virtio_blk_connect_irq()` in Task 2's `bios/virtio_blk.c`.
 
-- [ ] **Step 6: `make gitready` and commit**
+- [x] **Step 6: `make gitready` and commit**
 
 ```bash
 make gitready
@@ -1326,7 +1326,7 @@ git push
 
 **Interfaces:** None — this task only documents and verifies work from Tasks 1-3.
 
-- [ ] **Step 1: Add virtio-blk QEMU invocations to `readme.md`**
+- [x] **Step 1: Add virtio-blk QEMU invocations to `readme.md`**
 
 Find the existing `qemu-system-arm -M virt ...` and `qemu-system-m68k -M virt ...` invocations in `readme.md` (added when `virt-arm`/`virt-m68k` boot support landed) and add a `-drive`/`-device virtio-blk-device` variant directly below each, e.g.:
 
@@ -1340,7 +1340,7 @@ To also attach a virtio-blk disk:
 
 (and the m68k equivalent: `qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel kernel.elf -serial stdio -global virtio-mmio.force-legacy=false -drive ... -device virtio-blk-device,drive=hd0`, matching `readme.md`'s existing `-m 128 -cpu m68020` invocation rather than the ARM flags). The `-global virtio-mmio.force-legacy=false` flag is required on QEMU versions that default `virt`'s virtio-mmio transports to legacy/version-1 (confirmed necessary on QEMU 10.1 during Task 1/2/3's testing) — this driver only speaks modern/version-2 virtio-mmio. Match the existing invocation's exact flags/formatting rather than the ones written here, since this step is describing an addition, not a replacement.
 
-- [ ] **Step 2: Regenerate and diff the defconfigs**
+- [x] **Step 2: Regenerate and diff the defconfigs**
 
 ```bash
 make virt-arm_defconfig
@@ -1351,7 +1351,7 @@ diff defconfig configs/virt-arm_defconfig
 
 Expected: no diff (both options default to `y` under `MACHINE_VIRT_ARM`). Repeat for `virt-m68k_defconfig`. If either diff is non-empty, copy `defconfig` over the tracked file, since that means the new options' Kconfig defaults didn't come out the way Task 1 intended.
 
-- [ ] **Step 3: Full build matrix**
+- [x] **Step 3: Full build matrix**
 
 ```bash
 for cfg in configs/*_defconfig; do
@@ -1365,7 +1365,7 @@ done
 
 Expected: every configuration in `configs/` builds cleanly. This is the final portability check CLAUDE.md requires for any change touching shared code (`disk.c`/`disk.h`/`Kconfig`/`build.mk` here).
 
-- [ ] **Step 4: `make gitready` and commit**
+- [x] **Step 4: `make gitready` and commit**
 
 ```bash
 make gitready
@@ -1374,7 +1374,7 @@ git commit -m "virtio: document QEMU virtio-blk invocation, verify defconfigs"
 git push
 ```
 
-- [ ] **Step 5: Mark the PR ready for review**
+- [x] **Step 5: Mark the PR ready for review**
 
 ```bash
 gh pr ready
