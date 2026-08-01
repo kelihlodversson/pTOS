@@ -21,6 +21,11 @@
 #else
 #   define bswap16(x) ((((x)&0xff00)>>8)|(((x)&0xff)<<8))
 #endif
+/* bswap32/bswap64 are used unconditionally, unlike bswap16 above: both
+ * __builtin_bswap32 and __builtin_bswap64 have been available since the
+ * same GCC release (4.3), so guarding one without the other would protect
+ * nothing -- a toolchain too old for __builtin_bswap64 is already too old
+ * for the unconditional __builtin_bswap32 use below. */
 #define bswap32         __builtin_bswap32
 #define bswap64         __builtin_bswap64
 

@@ -53,7 +53,7 @@ To also attach a virtio-blk disk:
       -global virtio-mmio.force-legacy=false \
       -drive file=disk.img,if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
 
-The `-global virtio-mmio.force-legacy=false` flag is required on Qemu
+The `-global virtio-mmio.force-legacy=false` flag is required on QEMU
 versions that default the `virt` machine's virtio-mmio transports to
 legacy/version-1; the virtio-blk driver only speaks modern/version-2
 virtio-mmio.

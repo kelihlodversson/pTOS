@@ -50,6 +50,15 @@ typedef struct
 
 typedef struct
 {
+    /* The virtio spec requires the descriptor table to be 16-byte aligned;
+     * it's listed first so the struct's own __attribute__((aligned(16)))
+     * below (which also pads sizeof(VIRTIO_DEV) up to a multiple of 16,
+     * keeping every element of an array of these aligned too) applies to
+     * it directly, rather than to whatever offset it would otherwise land
+     * at behind the smaller fields. */
+    VIRTIO_DESC  desc[VIRTIO_QUEUE_SIZE];
+    VIRTIO_AVAIL avail;
+    VIRTIO_USED  used;
     ULONG base;             /* mmio base address of this device's transport window */
     ULONG phys_offset;      /* physical_address - virtual(linked)_address, for any
                              * RAM address associated with this device's virtqueue
@@ -64,10 +73,7 @@ typedef struct
                              * virtio_setup_queue(). */
     UWORD last_used_idx;    /* used->idx last consumed by virtio_handle_interrupt() */
     volatile BOOL done;     /* set by virtio_handle_interrupt(), cleared by virtio_submit() */
-    VIRTIO_DESC  desc[VIRTIO_QUEUE_SIZE];
-    VIRTIO_AVAIL avail;
-    VIRTIO_USED  used;
-} VIRTIO_DEV;
+} __attribute__((aligned(16))) VIRTIO_DEV;
 
 /* Probes one virtio-mmio slot: checks magic/version/device-id, negotiates
  * VIRTIO_F_VERSION_1 only. On success dev->base/last_used_idx/done are
