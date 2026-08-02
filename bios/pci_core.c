@@ -239,18 +239,20 @@ static void pci_decode_bars(pci_device_t *device)
     UWORD bar;
     UWORD last;
     ULONG original;
+    BOOL skip_next;
 
     memset(device->resources, 0, sizeof(device->resources));
 
     for (bar = 0; bar < PCI_MAX_BARS; bar++) {
-        pci_decode_bar(device, bar);
-        if ((device->resources[bar].length != 0UL) &&
-            ((device->resources[bar].flags & PCI_RESOURCE_IO) == 0U)) {
-            if (pci_read_config_raw(device, PCI_CONFIG_BAR0 + (bar * 4U), 4, &original) == PCI_SUCCESSFUL) {
-                if ((original & PCI_BAR_MEM_TYPE_MASK) == PCI_BAR_MEM_TYPE_64)
-                    bar++;
-            }
+        skip_next = FALSE;
+        if (pci_read_config_raw(device, PCI_CONFIG_BAR0 + (bar * 4U), 4, &original) == PCI_SUCCESSFUL) {
+            if (((original & PCI_BAR_IO) == 0UL) &&
+                ((original & PCI_BAR_MEM_TYPE_MASK) == PCI_BAR_MEM_TYPE_64))
+                skip_next = TRUE;
         }
+        pci_decode_bar(device, bar);
+        if (skip_next)
+            bar++;
     }
 
     last = PCI_MAX_BARS;
