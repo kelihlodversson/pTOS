@@ -11,7 +11,7 @@ menu "USB support"
 
 config CONF_WITH_USB
 	bool "USB stack"
-	depends on MACHINE_RPI && !TARGET_RPI4
+	depends on MACHINE_RPI
 	default y
 	help
 	  A minimal USB stack, derived from the one in FreeMiNT and U-Boot.
@@ -21,10 +21,16 @@ config CONF_WITH_USB
 
 config CONF_WITH_USB_DWC2
 	bool
-	default y if CONF_WITH_USB && MACHINE_RPI
+	default y if CONF_WITH_USB && MACHINE_RPI && !TARGET_RPI4
 	help
 	  The Synopsys DesignWare USB 2.0 OTG host controller, used on the
-	  Raspberry Pi 1, 2 and 3.  The Raspberry Pi 4 uses a different
-	  controller, which is not supported yet.
+	  Raspberry Pi 1, 2 and 3.
+
+config CONF_WITH_USB_XHCI
+	bool
+	default y if CONF_WITH_USB && TARGET_RPI4
+	help
+	  The xHCI host controller used for the Raspberry Pi 4/400 external
+	  USB ports through the VL805 PCIe bridge.
 
 endmenu
