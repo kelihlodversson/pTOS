@@ -58,6 +58,9 @@
 #include "delay.h"
 #include "biosbind.h"
 #include "memory.h"
+#if CONF_WITH_PCI
+#include "pci.h"
+#endif
 #include "nova.h"
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
@@ -367,6 +370,11 @@ static void bios_init(void)
     cookie_init();      /* sets a cookie jar */
     KDEBUG(("fill_cookie_jar()\n"));
     fill_cookie_jar();  /* detect hardware features and fill the cookie jar */
+
+#if CONF_WITH_PCI
+    KDEBUG(("pci_init()\n"));
+    pci_init();
+#endif
 
     /* Set up the BIOS console output */
     KDEBUG(("linea_init()\n"));
