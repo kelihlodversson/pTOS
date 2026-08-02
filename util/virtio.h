@@ -72,6 +72,12 @@ typedef struct
                              * successful virtio_probe(), before calling
                              * virtio_setup_queue(). */
     UWORD last_used_idx;    /* used->idx last consumed by virtio_handle_interrupt() */
+    UWORD pop_idx;          /* used->idx last consumed by virtio_pop_used() -- independent
+                             * of last_used_idx: that one tracks "did anything complete"
+                             * for a single synchronous waiter (virtio_blk's model), this
+                             * one tracks "which entries has the caller actually drained"
+                             * for a queue that keeps several buffers in flight at once
+                             * (virtio-input's eventq). */
     volatile BOOL done;     /* set by virtio_handle_interrupt(), cleared by virtio_submit() */
 } __attribute__((aligned(16))) VIRTIO_DEV;
 
@@ -108,5 +114,15 @@ void virtio_notify(VIRTIO_DEV *dev);
  * as the interrupt source. Acks the device's InterruptStatus and, if the
  * used ring advanced, sets dev->done. */
 void virtio_handle_interrupt(VIRTIO_DEV *dev);
+
+/* Drains one not-yet-consumed used-ring entry: returns TRUE and fills
+ * *out_index (the descriptor index the device completed) and *out_len
+ * (bytes the device wrote/read), advancing past it; returns FALSE once
+ * the caller has caught up with dev->used.idx. Call this after
+ * virtio_handle_interrupt() has run (so dev->used is fresh). Unlike
+ * dev->done, which a single synchronous waiter clears by re-submitting,
+ * this lets a caller that keeps several buffers in flight (like
+ * virtio-input's eventq) drain them all in one interrupt. */
+BOOL virtio_pop_used(VIRTIO_DEV *dev, UWORD *out_index, ULONG *out_len);
 
 #endif /* VIRTIO_H */

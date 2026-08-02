@@ -112,6 +112,10 @@ extern void setup_68040_pmmu(void);
 extern void usb_init(void); /* found in usb.h */
 #endif
 
+#if CONF_WITH_VIRTIO_INPUT
+extern void virtio_input_init(void); /* found in virtio_input.h */
+#endif
+
 /*==== Declarations =======================================================*/
 
 /* Drive specific declarations */
@@ -451,6 +455,11 @@ static void bios_init(void)
         KDEBUG(("usb_init()\n"));
         usb_init();
     KDEBUG(("after usb_init()\n"));
+#endif
+#if CONF_WITH_VIRTIO_INPUT
+        KDEBUG(("virtio_input_init()\n"));
+        virtio_input_init();
+    KDEBUG(("after virtio_input_init()\n"));
 #endif
 
     /* Now we can enable the interrupts.
