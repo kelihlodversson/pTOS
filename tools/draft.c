@@ -1612,9 +1612,14 @@ int i;
 PRIVATE int write_rsc_file(char *name,char *ext)
 {
 FILE *fp;
+char outpath[MAX_STRLEN];
+char tmppath[MAX_STRLEN];
 int rc = 0;
 
-    fp = openfile(name,ext,"wb");
+    sprintf(outpath,"%s.%s",name,ext);
+    sprintf(tmppath,"%s.%s.tmp",name,ext);
+
+    fp = fopen(tmppath,"wb");
     if (!fp)
         return -1;
 
@@ -1630,7 +1635,14 @@ int rc = 0;
     if (fwrite(rschdr_out,rsh_out.rssize,1,fp) != 1)
         rc = -1;
 
-    fclose(fp);
+    if (fclose(fp) != 0)
+        rc = -1;
+
+    if ((rc == 0) && (rename(tmppath,outpath) != 0))
+        rc = -1;
+
+    if (rc != 0)
+        remove(tmppath);
 
     return rc;
 }
@@ -1639,11 +1651,16 @@ int rc = 0;
 PRIVATE int write_def_file(char *name,char *ext)
 {
 FILE *fp;
+char outpath[MAX_STRLEN];
+char tmppath[MAX_STRLEN];
 DEF_ENTRY *d;
 DEF_EXT entry;
 int i, rc = 0;
 
-    fp = openfile(name,ext,"wb");
+    sprintf(outpath,"%s.%s",name,ext);
+    sprintf(tmppath,"%s.%s.tmp",name,ext);
+
+    fp = fopen(tmppath,"wb");
     if (!fp)
         return -1;
 
@@ -1677,7 +1694,14 @@ int i, rc = 0;
         if (fwrite(&entry,sizeof(entry),1,fp) != 1)
             rc = -1;
     }
-    fclose(fp);
+    if (fclose(fp) != 0)
+        rc = -1;
+
+    if ((rc == 0) && (rename(tmppath,outpath) != 0))
+        rc = -1;
+
+    if (rc != 0)
+        remove(tmppath);
 
     return rc;
 }
