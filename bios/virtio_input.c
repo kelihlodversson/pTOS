@@ -6,7 +6,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-/*#define ENABLE_KDEBUG*/
+#define ENABLE_KDEBUG
 
 #include "config.h"
 
@@ -71,10 +71,19 @@ static UBYTE virtio_input_cfg_query(ULONG base, UBYTE select, UBYTE subsel)
 static void virtio_input_read_absinfo(ULONG base, UBYTE axis, LONG *out_min, LONG *out_max)
 {
     volatile ULONG *data = (volatile ULONG *)(base + VIRTIO_INPUT_CFG_DATA);
+    UBYTE size;
 
-    virtio_input_cfg_query(base, VIRTIO_INPUT_CFG_ABS_INFO, axis);
-    *out_min = (LONG)le2cpu32(data[0]);
-    *out_max = (LONG)le2cpu32(data[1]);
+    size = virtio_input_cfg_query(base, VIRTIO_INPUT_CFG_ABS_INFO, axis);
+    if (size > 0)
+    {
+        *out_min = (LONG)le2cpu32(data[0]);
+        *out_max = (LONG)le2cpu32(data[1]);
+    }
+    else
+    {
+        *out_min = 0;
+        *out_max = 0;
+    }
 }
 
 void virtio_input_init(void)
@@ -93,18 +102,13 @@ void virtio_input_init(void)
         if (!virtio_probe(base, VIRTIO_INPUT_DEVICE_ID, &probe_dev))
             continue;
 
-        if (virtio_input_cfg_query(base, VIRTIO_INPUT_CFG_EV_BITS, EV_KEY) != 0)
-        {
-            if (virtio_input_kbd_present)
-            {
-                KDEBUG(("virtio_input_init: slot %d is another keyboard, ignored\n", slot));
-                continue;
-            }
-            virtio_input_kbd_dev = probe_dev;
-            virtio_input_kbd_present = TRUE;
-            KDEBUG(("virtio_input_init: keyboard at slot %d (base 0x%08lx)\n", slot, base));
-        }
-        else if (virtio_input_cfg_query(base, VIRTIO_INPUT_CFG_EV_BITS, EV_ABS) != 0)
+        /* EV_ABS/EV_REL are checked before EV_KEY: QEMU's virtio-tablet-device
+         * and virtio-mouse-device both also report nonzero EV_KEY size (for
+         * their button codes), so an EV_KEY-first check would misclassify
+         * them as a second keyboard and never detect the pointer. No real
+         * keyboard reports motion capability, so "EV_KEY set, EV_ABS/EV_REL
+         * not" is what actually identifies a keyboard. */
+        if (virtio_input_cfg_query(base, VIRTIO_INPUT_CFG_EV_BITS, EV_ABS) != 0)
         {
             if (virtio_input_ptr_present)
             {
@@ -131,6 +135,17 @@ void virtio_input_init(void)
             virtio_input_ptr_is_abs = FALSE;
             virtio_input_ptr_present = TRUE;
             KDEBUG(("virtio_input_init: mouse at slot %d (base 0x%08lx)\n", slot, base));
+        }
+        else if (virtio_input_cfg_query(base, VIRTIO_INPUT_CFG_EV_BITS, EV_KEY) != 0)
+        {
+            if (virtio_input_kbd_present)
+            {
+                KDEBUG(("virtio_input_init: slot %d is another keyboard, ignored\n", slot));
+                continue;
+            }
+            virtio_input_kbd_dev = probe_dev;
+            virtio_input_kbd_present = TRUE;
+            KDEBUG(("virtio_input_init: keyboard at slot %d (base 0x%08lx)\n", slot, base));
         }
         else
         {
