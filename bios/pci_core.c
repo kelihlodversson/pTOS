@@ -11,6 +11,7 @@
 
 #include "pci.h"
 #include "pci_backend.h"
+#include "endian.h"
 #include "kprint.h"
 #include "string.h"
 
@@ -18,6 +19,12 @@
 #define PCI_DEVICES_PER_BUS 32
 #define PCI_FUNCTIONS_PER_DEVICE 8
 #define PCI_HEADER_MULTIFUNCTION 0x80U
+#define PCI_BAR_IO              0x00000001UL
+#define PCI_BAR_MEM_TYPE_MASK   0x00000006UL
+#define PCI_BAR_MEM_TYPE_64     0x00000004UL
+#define PCI_BAR_MEM_PREFETCH    0x00000008UL
+#define PCI_BAR_IO_MASK         0xfffffffcUL
+#define PCI_BAR_MEM_MASK        0xfffffff0UL
 
 typedef struct {
     PCI_HANDLE handle;
@@ -47,8 +54,11 @@ static LONG pci_write_config_raw(pci_device_t *device, UWORD reg, UWORD size, UL
 static void pci_scan_bus(UBYTE bus);
 static void pci_scan_device(UBYTE bus, UBYTE dev);
 static void pci_add_function(UBYTE bus, UBYTE dev, UBYTE func);
+static void pci_decode_bars(pci_device_t *device);
+static void pci_decode_bar(pci_device_t *device, UWORD bar);
+static ULONG pci_bar_size(ULONG mask, BOOL io);
 static BOOL pci_class_matches(ULONG device_class, ULONG requested_class);
-static LONG pci_check_resource_access(pci_device_t *device, ULONG address, ULONG size, BOOL io);
+static LONG pci_find_resource_for_address(pci_device_t *device, BOOL io, ULONG address, UWORD size, pci_resource_t **resource);
 static LONG pci_read_bus_byte(PCI_HANDLE handle, ULONG address, BOOL io, UBYTE *value);
 static LONG pci_read_bus_word(PCI_HANDLE handle, ULONG address, BOOL io, UWORD *value);
 static LONG pci_read_bus_long(PCI_HANDLE handle, ULONG address, BOOL io, ULONG *value);
@@ -217,9 +227,100 @@ static void pci_add_function(UBYTE bus, UBYTE dev, UBYTE func)
         value = 0UL;
     device->interrupt_pin = (UBYTE)value;
 
+    pci_decode_bars(device);
+
     device->callback = 0;
     device->used = 0;
     pci_device_count++;
+}
+
+static void pci_decode_bars(pci_device_t *device)
+{
+    UWORD bar;
+    UWORD last;
+    ULONG original;
+
+    memset(device->resources, 0, sizeof(device->resources));
+
+    for (bar = 0; bar < PCI_MAX_BARS; bar++) {
+        pci_decode_bar(device, bar);
+        if ((device->resources[bar].length != 0UL) &&
+            ((device->resources[bar].flags & PCI_RESOURCE_IO) == 0U)) {
+            if (pci_read_config_raw(device, PCI_CONFIG_BAR0 + (bar * 4U), 4, &original) == PCI_SUCCESSFUL) {
+                if ((original & PCI_BAR_MEM_TYPE_MASK) == PCI_BAR_MEM_TYPE_64)
+                    bar++;
+            }
+        }
+    }
+
+    last = PCI_MAX_BARS;
+    for (bar = 0; bar < PCI_MAX_BARS; bar++) {
+        if (device->resources[bar].length != 0UL)
+            last = bar;
+    }
+
+    if (last < PCI_MAX_BARS)
+        device->resources[last].flags |= PCI_RESOURCE_LAST;
+}
+
+static void pci_decode_bar(pci_device_t *device, UWORD bar)
+{
+    UWORD reg;
+    ULONG original;
+    ULONG mask;
+    ULONG masked_address;
+    ULONG phys_address;
+    BOOL io;
+    pci_resource_t *resource;
+
+    reg = PCI_CONFIG_BAR0 + (bar * 4U);
+
+    if (pci_read_config_raw(device, reg, 4, &original) != PCI_SUCCESSFUL)
+        return;
+    if (original == 0UL)
+        return;
+
+    if (pci_write_config_raw(device, reg, 4, 0xffffffffUL) != PCI_SUCCESSFUL)
+        return;
+    if (pci_read_config_raw(device, reg, 4, &mask) != PCI_SUCCESSFUL) {
+        pci_write_config_raw(device, reg, 4, original);
+        return;
+    }
+    pci_write_config_raw(device, reg, 4, original);
+
+    if (mask == 0UL)
+        return;
+
+    io = (original & PCI_BAR_IO) != 0UL;
+    masked_address = original & (io ? PCI_BAR_IO_MASK : PCI_BAR_MEM_MASK);
+    mask &= io ? PCI_BAR_IO_MASK : PCI_BAR_MEM_MASK;
+    if (mask == 0UL)
+        return;
+
+    if ((pci_backend != 0) && (pci_backend->bus_to_phys != 0)) {
+        if (pci_backend->bus_to_phys(masked_address, io, &phys_address) != PCI_SUCCESSFUL)
+            return;
+    } else {
+        phys_address = masked_address;
+    }
+
+    resource = &device->resources[bar];
+    resource->flags = PCI_RESOURCE_8BIT | PCI_RESOURCE_16BIT |
+                      PCI_RESOURCE_32BIT | PCI_RESOURCE_ORDER_INTEL;
+    if (io)
+        resource->flags |= PCI_RESOURCE_IO;
+    resource->start = masked_address;
+    resource->length = pci_bar_size(mask, io);
+    resource->offset = phys_address - masked_address;
+    resource->dmaoffset = 0UL;
+}
+
+static ULONG pci_bar_size(ULONG mask, BOOL io)
+{
+    ULONG masked_size;
+
+    masked_size = mask & (io ? PCI_BAR_IO_MASK : PCI_BAR_MEM_MASK);
+    return (~masked_size) + 1UL;
 }
 
 LONG pci_init(void)
@@ -396,14 +497,11 @@ LONG pci_get_resource(PCI_HANDLE handle, UWORD bar, pci_resource_t *resource)
 {
     pci_device_t *device;
 
-    if (resource == 0)
-        return PCI_GENERAL_ERROR;
-
     device = pci_device_from_handle(handle);
     if (device == 0)
         return PCI_BAD_HANDLE;
 
-    if (bar >= PCI_MAX_BARS)
+    if ((bar >= PCI_MAX_BARS) || (resource == 0))
         return PCI_BAD_RESOURCE;
 
     if (device->resources[bar].length == 0UL)
@@ -413,28 +511,30 @@ LONG pci_get_resource(PCI_HANDLE handle, UWORD bar, pci_resource_t *resource)
     return PCI_SUCCESSFUL;
 }
 
-static LONG pci_check_resource_access(pci_device_t *device, ULONG address, ULONG size, BOOL io)
+static LONG pci_find_resource_for_address(pci_device_t *device, BOOL io, ULONG address, UWORD size, pci_resource_t **resource)
 {
     UWORD bar;
     ULONG end;
     ULONG resource_end;
-    pci_resource_t *resource;
+    pci_resource_t *candidate;
 
-    if (size == 0UL)
+    if ((device == 0) || (resource == 0) || (size == 0U))
         return PCI_BAD_RESOURCE;
 
-    end = address + size - 1UL;
+    end = address + (ULONG)size;
     if (end < address)
         return PCI_BAD_RESOURCE;
 
     for (bar = 0; bar < PCI_MAX_BARS; bar++) {
-        resource = &device->resources[bar];
-        if (resource->length != 0UL) {
-            if (((resource->flags & PCI_RESOURCE_IO) != 0U) == io) {
-                resource_end = resource->start + resource->length - 1UL;
-                if (resource_end >= resource->start) {
-                    if ((address >= resource->start) && (end <= resource_end))
+        candidate = &device->resources[bar];
+        if (candidate->length != 0UL) {
+            if (((candidate->flags & PCI_RESOURCE_IO) != 0U) == io) {
+                resource_end = candidate->start + candidate->length;
+                if (resource_end >= candidate->start) {
+                    if ((address >= candidate->start) && (end <= resource_end)) {
+                        *resource = candidate;
                         return PCI_SUCCESSFUL;
+                    }
                 }
             }
         }
@@ -446,79 +546,103 @@ static LONG pci_check_resource_access(pci_device_t *device, ULONG address, ULONG
 static LONG pci_read_bus_byte(PCI_HANDLE handle, ULONG address, BOOL io, UBYTE *value)
 {
     pci_device_t *device;
+    pci_resource_t *resource;
+    volatile UBYTE *ptr;
 
     if (value == 0)
         return PCI_GENERAL_ERROR;
     device = pci_device_from_handle(handle);
     if (device == 0)
         return PCI_BAD_HANDLE;
-    if (pci_check_resource_access(device, address, 1UL, io) != PCI_SUCCESSFUL)
+    if (pci_find_resource_for_address(device, io, address, 1U, &resource) != PCI_SUCCESSFUL)
         return PCI_BAD_RESOURCE;
-    return PCI_FUNC_NOT_SUPPORTED;
+    ptr = (volatile UBYTE *)(address + resource->offset);
+    *value = *ptr;
+    return PCI_SUCCESSFUL;
 }
 
 static LONG pci_read_bus_word(PCI_HANDLE handle, ULONG address, BOOL io, UWORD *value)
 {
     pci_device_t *device;
+    pci_resource_t *resource;
+    volatile UWORD *ptr;
 
     if (value == 0)
         return PCI_GENERAL_ERROR;
     device = pci_device_from_handle(handle);
     if (device == 0)
         return PCI_BAD_HANDLE;
-    if (pci_check_resource_access(device, address, 2UL, io) != PCI_SUCCESSFUL)
+    if (pci_find_resource_for_address(device, io, address, 2U, &resource) != PCI_SUCCESSFUL)
         return PCI_BAD_RESOURCE;
-    return PCI_FUNC_NOT_SUPPORTED;
+    ptr = (volatile UWORD *)(address + resource->offset);
+    *value = le2cpu16(*ptr);
+    return PCI_SUCCESSFUL;
 }
 
 static LONG pci_read_bus_long(PCI_HANDLE handle, ULONG address, BOOL io, ULONG *value)
 {
     pci_device_t *device;
+    pci_resource_t *resource;
+    volatile ULONG *ptr;
 
     if (value == 0)
         return PCI_GENERAL_ERROR;
     device = pci_device_from_handle(handle);
     if (device == 0)
         return PCI_BAD_HANDLE;
-    if (pci_check_resource_access(device, address, 4UL, io) != PCI_SUCCESSFUL)
+    if (pci_find_resource_for_address(device, io, address, 4U, &resource) != PCI_SUCCESSFUL)
         return PCI_BAD_RESOURCE;
-    return PCI_FUNC_NOT_SUPPORTED;
+    ptr = (volatile ULONG *)(address + resource->offset);
+    *value = le2cpu32(*ptr);
+    return PCI_SUCCESSFUL;
 }
 
 static LONG pci_write_bus_byte(PCI_HANDLE handle, ULONG address, BOOL io, UBYTE value)
 {
     pci_device_t *device;
+    pci_resource_t *resource;
+    volatile UBYTE *ptr;
 
     device = pci_device_from_handle(handle);
     if (device == 0)
         return PCI_BAD_HANDLE;
-    if (pci_check_resource_access(device, address, 1UL, io) != PCI_SUCCESSFUL)
+    if (pci_find_resource_for_address(device, io, address, 1U, &resource) != PCI_SUCCESSFUL)
         return PCI_BAD_RESOURCE;
-    return PCI_FUNC_NOT_SUPPORTED;
+    ptr = (volatile UBYTE *)(address + resource->offset);
+    *ptr = value;
+    return PCI_SUCCESSFUL;
 }
 
 static LONG pci_write_bus_word(PCI_HANDLE handle, ULONG address, BOOL io, UWORD value)
 {
     pci_device_t *device;
+    pci_resource_t *resource;
+    volatile UWORD *ptr;
 
     device = pci_device_from_handle(handle);
     if (device == 0)
         return PCI_BAD_HANDLE;
-    if (pci_check_resource_access(device, address, 2UL, io) != PCI_SUCCESSFUL)
+    if (pci_find_resource_for_address(device, io, address, 2U, &resource) != PCI_SUCCESSFUL)
         return PCI_BAD_RESOURCE;
-    return PCI_FUNC_NOT_SUPPORTED;
+    ptr = (volatile UWORD *)(address + resource->offset);
+    *ptr = cpu2le16(value);
+    return PCI_SUCCESSFUL;
 }
 
 static LONG pci_write_bus_long(PCI_HANDLE handle, ULONG address, BOOL io, ULONG value)
 {
     pci_device_t *device;
+    pci_resource_t *resource;
+    volatile ULONG *ptr;
 
     device = pci_device_from_handle(handle);
     if (device == 0)
         return PCI_BAD_HANDLE;
-    if (pci_check_resource_access(device, address, 4UL, io) != PCI_SUCCESSFUL)
+    if (pci_find_resource_for_address(device, io, address, 4U, &resource) != PCI_SUCCESSFUL)
         return PCI_BAD_RESOURCE;
-    return PCI_FUNC_NOT_SUPPORTED;
+    ptr = (volatile ULONG *)(address + resource->offset);
+    *ptr = cpu2le32(value);
+    return PCI_SUCCESSFUL;
 }
 
 LONG pci_read_mem_byte(PCI_HANDLE handle, ULONG address, UBYTE *value)
@@ -611,12 +735,11 @@ LONG pci_get_card_used(PCI_HANDLE handle, pci_card_callback_t *callback)
 {
     pci_device_t *device;
 
-    if (callback == 0)
-        return PCI_GENERAL_ERROR;
     device = pci_device_from_handle(handle);
     if (device == 0)
         return PCI_BAD_HANDLE;
-    *callback = device->callback;
+    if (callback != 0)
+        *callback = device->callback;
     return device->used;
 }
 
@@ -628,7 +751,7 @@ LONG pci_set_card_used(PCI_HANDLE handle, pci_card_callback_t callback, LONG sta
     if (device == 0)
         return PCI_BAD_HANDLE;
     if ((state < 0) || (state > 3))
-        return PCI_SET_FAILED;
+        return PCI_GENERAL_ERROR;
     if (state == 2)
         device->callback = callback;
     else
@@ -661,7 +784,7 @@ LONG pci_virt_to_bus(PCI_HANDLE handle, ULONG address, pci_mem_t *mem)
             return PCI_GENERAL_ERROR;
     }
     mem->address = bus_address;
-    mem->length = 0xffffffffUL;
+    mem->length = 0xffffffffUL - address;
     return PCI_SUCCESSFUL;
 }
 
@@ -681,7 +804,7 @@ LONG pci_bus_to_virt(PCI_HANDLE handle, ULONG address, pci_mem_t *mem)
             return PCI_GENERAL_ERROR;
     }
     mem->address = phys_address;
-    mem->length = 0xffffffffUL;
+    mem->length = 0xffffffffUL - address;
     return PCI_SUCCESSFUL;
 }
 
@@ -690,7 +813,7 @@ LONG pci_virt_to_phys(ULONG address, pci_mem_t *mem)
     if (mem == 0)
         return PCI_GENERAL_ERROR;
     mem->address = address;
-    mem->length = 0xffffffffUL;
+    mem->length = 0xffffffffUL - address;
     return PCI_SUCCESSFUL;
 }
 
@@ -699,7 +822,7 @@ LONG pci_phys_to_virt(ULONG address, pci_mem_t *mem)
     if (mem == 0)
         return PCI_GENERAL_ERROR;
     mem->address = address;
-    mem->length = 0xffffffffUL;
+    mem->length = 0xffffffffUL - address;
     return PCI_SUCCESSFUL;
 }
 
