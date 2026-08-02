@@ -38,6 +38,9 @@
 #include "usb.h"
 #include "usb_hub.h"
 #include "usb_api.h"
+#if CONF_WITH_USB_XHCI
+#include "ucd_xhci.h"
+#endif
 
 struct usb_device usb_dev[USB_MAX_DEVICE];
 static long asynch_allowed;
@@ -46,9 +49,6 @@ static long asynch_allowed;
 /* Built-in drivers: */
 #if CONF_WITH_USB_DWC2
 extern void dwc2_init(void);
-#endif
-#if CONF_WITH_USB_XHCI
-extern void xhci_init(void);
 #endif
 extern int usb_mouse_init(void);
 
