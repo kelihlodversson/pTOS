@@ -630,10 +630,19 @@ void run_accs_and_desktop(void)
 
     sh_tographic();                 /* go into graphic mode */
 
-    /* take the tick interrupt */
-    disable_interrupts();
+    /*
+     * take the tick interrupt.
+     *
+     * No disable_interrupts()/enable_interrupts() pair here: gsx_tick()
+     * reaches vdi_vex_timv() (vdi/vdi_misc.c), which already wraps its own
+     * critical section (swapping linea_vars.tim_addr) the same way. Nesting
+     * the two would corrupt the single sr save slot in
+     * bios/arch/m68k/intmask.S -- disable_interrupts()/enable_interrupts()
+     * are documented not to nest -- leaving interrupts permanently masked
+     * after the outer enable_interrupts() "restores" the already-masked sr
+     * that the inner pair clobbered it with (issue #46).
+     */
     gl_ticktime = gsx_tick(tikaddr, &tiksav);
-    enable_interrupts();
 
     /* set initial click rate: must do this after setting gl_ticktime */
     ev_dclick(3, TRUE);
@@ -652,10 +661,9 @@ void run_accs_and_desktop(void)
     sh_init();                      /* init for shell loop */
     sh_main(isgem);                 /* main shell loop */
 
-    /* give back the tick   */
-    disable_interrupts();
+    /* give back the tick (see the comment above the first gsx_tick() call:
+     * no disable_interrupts()/enable_interrupts() pair needed here either) */
     gl_ticktime = gsx_tick(tiksav, &tiksav);
-    enable_interrupts();
 
     /* close workstation    */
     gsx_wsclose();
