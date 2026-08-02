@@ -12,6 +12,8 @@
 #endif
 
 #include "portab.h"
+#include "vectors.h"
+#include "kprint.h"
 #include "goldfish_pic.h"
 
 /*
@@ -22,10 +24,20 @@
  */
 #define GOLDFISH_PIC_BASE(n)    (0xff000000UL + (ULONG)(n) * 0x1000UL)
 
+#define PIC_STATUS(n)           (*(volatile ULONG*)(GOLDFISH_PIC_BASE(n) + 0x00))
+#define PIC_PENDING(n)          (*(volatile ULONG*)(GOLDFISH_PIC_BASE(n) + 0x04))
 #define PIC_IRQ_DISABLE_ALL(n)  (*(volatile ULONG*)(GOLDFISH_PIC_BASE(n) + 0x08))
 #define PIC_ENABLE(n)           (*(volatile ULONG*)(GOLDFISH_PIC_BASE(n) + 0x10))
 
 #define GOLDFISH_PIC_COUNT  6
+
+extern void goldfish_pic_isr1(void);   /* goldfish_pic_isr.S, PIC index 1 -> autovector level 2 */
+extern void goldfish_pic_isr2(void);   /* PIC index 2 -> autovector level 3 */
+extern void goldfish_pic_isr3(void);   /* PIC index 3 -> autovector level 4 */
+extern void goldfish_pic_isr4(void);   /* PIC index 4 -> autovector level 5 */
+
+static PFVOID pic_handlers[GOLDFISH_PIC_COUNT][32];
+static BOOL pic_vector_installed[GOLDFISH_PIC_COUNT];
 
 void goldfish_pic_init(void)
 {
@@ -38,4 +50,50 @@ void goldfish_pic_init(void)
 void goldfish_pic_enable(WORD pic, WORD bit)
 {
     PIC_ENABLE(pic) = (1UL << bit);
+}
+
+static void install_pic_vector(WORD pic_index)
+{
+    switch (pic_index)
+    {
+    case 1: VEC_LEVEL2 = goldfish_pic_isr1; break;
+    case 2: VEC_LEVEL3 = goldfish_pic_isr2; break;
+    case 3: VEC_LEVEL4 = goldfish_pic_isr3; break;
+    case 4: VEC_LEVEL5 = goldfish_pic_isr4; break;
+    }
+}
+
+PFVOID goldfish_pic_connect_irq(WORD pic_index, WORD bit, PFVOID handler)
+{
+    PFVOID old;
+
+    if (pic_index < 1 || pic_index > 4 || bit < 0 || bit >= 32)
+    {
+        KDEBUG(("goldfish_pic_connect_irq: (%d,%d) out of range\n", pic_index, bit));
+        return 0;
+    }
+
+    old = pic_handlers[pic_index][bit];
+    pic_handlers[pic_index][bit] = handler;
+
+    if (!pic_vector_installed[pic_index])
+    {
+        install_pic_vector(pic_index);
+        pic_vector_installed[pic_index] = TRUE;
+    }
+
+    goldfish_pic_enable(pic_index, bit);
+    return old;
+}
+
+void goldfish_pic_dispatch(WORD pic_index)
+{
+    ULONG pending = PIC_PENDING(pic_index);
+    WORD bit;
+
+    for (bit = 0; bit < 32; bit++)
+    {
+        if ((pending & (1UL << bit)) && pic_handlers[pic_index][bit])
+            ((void (*)(void))pic_handlers[pic_index][bit])();
+    }
 }

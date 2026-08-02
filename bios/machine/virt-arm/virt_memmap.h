@@ -20,6 +20,16 @@
 #define VIRT_GIC_CPU_BASE   0x08010000UL
 #define VIRT_UART0_BASE     0x09000000UL
 
+/* virtio-mmio: 32 transports, 0x200 bytes apart, starting at GIC SPI 16
+ * (see hw/arm/virt.c: base_memmap[VIRT_MMIO], irqmap[VIRT_MMIO],
+ * NUM_VIRTIO_TRANSPORTS). GIC INTIDs are SPI number + 32, so transport i's
+ * IRQ is GIC INTID 48+i -- see virt_connect_irq() in virt_pic.c (extended
+ * for this in Task 2). */
+#define VIRT_VIRTIO_MMIO_BASE    0x0a000000UL
+#define VIRT_VIRTIO_MMIO_STRIDE  0x200UL
+#define VIRT_VIRTIO_MMIO_COUNT   32
+#define VIRT_VIRTIO_IRQ_BASE     48
+
 #endif /* MACHINE_VIRT_ARM */
 
 #endif /* VIRT_MEMMAP_H */

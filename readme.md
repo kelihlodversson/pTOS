@@ -36,10 +36,27 @@ To test the ARM `virt` port, run
     make virt-arm_defconfig && make
     qemu-system-arm -M virt -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -serial stdio
 
+To also attach a virtio-blk disk:
+
+    qemu-system-arm -M virt -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -serial stdio \
+      -global virtio-mmio.force-legacy=false \
+      -drive file=disk.img,if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
+
 To test the m68k `virt` port, run
 
     make virt-m68k_defconfig && make
     qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_errors -serial stdio
+
+To also attach a virtio-blk disk:
+
+    qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_errors -serial stdio \
+      -global virtio-mmio.force-legacy=false \
+      -drive file=disk.img,if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
+
+The `-global virtio-mmio.force-legacy=false` flag is required on QEMU
+versions that default the `virt` machine's virtio-mmio transports to
+legacy/version-1; the virtio-blk driver only speaks modern/version-2
+virtio-mmio.
 
 For more information on which Qemu versions to use, see [Circle's Qemu documentation](https://github.com/rsta2/circle/blob/f5999e58f14b90204aafa7859428661cd01b22b1/doc/qemu.txt)
 

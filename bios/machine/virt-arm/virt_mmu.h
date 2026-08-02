@@ -31,6 +31,18 @@
  */
 void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys);
 
+/*
+ * Translates a linked (virtual, low-window) address of RAM -- e.g. the
+ * address of a static/stack variable -- into the physical address that a
+ * DMA-capable device (such as a virtio-mmio transport) must be given
+ * instead. Devices are not behind this port's MMU, so they only ever see
+ * physical addresses: virtual [0, ram_size) is what the CPU sees, but the
+ * same bytes sit at physical [VIRT_RAM_BASE, VIRT_RAM_BASE + ram_size)
+ * (see virt_mmu_bootstrap() above). Valid for any address of RAM the
+ * kernel itself addresses; not meaningful for peripheral MMIO addresses.
+ */
+ULONG virt_to_phys(void *va);
+
 #endif /* MACHINE_VIRT_ARM */
 
 #endif /* VIRT_MMU_H */
