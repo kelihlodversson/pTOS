@@ -90,14 +90,23 @@ them by ID, so `virtio_input_init()`:
 2. For each match, reads config space to determine role, via the
    select/subsel/size/data window at offset `0x100` from the device's mmio
    base (per the virtio-input spec):
-   - Write `select = 0x11` (`EV_BITS`), `subsel = 0x01` (`EV_KEY`), read
-     `size`. Nonzero → this device has keys → keyboard role.
-   - Otherwise write `subsel = 0x03` (`EV_ABS`), read `size`. Nonzero → this
-     device reports absolute position → tablet role (preferred pointer).
+   - Write `select = 0x11` (`EV_BITS`), `subsel = 0x03` (`EV_ABS`), read
+     `size`. Nonzero → this device reports absolute position → tablet role
+     (preferred pointer).
    - Otherwise write `subsel = 0x02` (`EV_REL`), read `size`. Nonzero → this
      device reports relative motion → mouse role.
+   - Otherwise write `subsel = 0x01` (`EV_KEY`), read `size`. Nonzero → this
+     device has keys and no motion capability → keyboard role.
    - Zero size on all three → unrecognized role; the slot is probed but not
      registered (`KDEBUG`-logged and skipped).
+
+   **Note (found during Task 1 review, confirmed live against QEMU):** `EV_KEY`
+   must be checked *last*, not first. QEMU's `virtio-tablet-device` (and
+   `virtio-mouse-device`) report nonzero `EV_KEY` size too, for their button
+   codes — a keyboard-first check misclassifies them as a second keyboard and
+   drops the pointer entirely. Checking `EV_ABS`/`EV_REL` first is safe because
+   no real keyboard reports motion capability, so "has `EV_KEY` and neither
+   `EV_ABS` nor `EV_REL`" is what actually means "keyboard."
 3. The first match of each role is registered; a second device of an
    already-filled role is `KDEBUG`-logged and left unregistered — no
    multi-keyboard/multi-pointer support (YAGNI: QEMU command lines for this

@@ -243,18 +243,13 @@ void virtio_input_init(void)
         if (!virtio_probe(base, VIRTIO_INPUT_DEVICE_ID, &probe_dev))
             continue;
 
-        if (virtio_input_cfg_query(base, VIRTIO_INPUT_CFG_EV_BITS, EV_KEY) != 0)
-        {
-            if (virtio_input_kbd_present)
-            {
-                KDEBUG(("virtio_input_init: slot %d is another keyboard, ignored\n", slot));
-                continue;
-            }
-            virtio_input_kbd_dev = probe_dev;
-            virtio_input_kbd_present = TRUE;
-            KDEBUG(("virtio_input_init: keyboard at slot %d (base 0x%08lx)\n", slot, base));
-        }
-        else if (virtio_input_cfg_query(base, VIRTIO_INPUT_CFG_EV_BITS, EV_ABS) != 0)
+        /* EV_ABS/EV_REL are checked before EV_KEY: QEMU's virtio-tablet-device
+         * and virtio-mouse-device both also report nonzero EV_KEY size (for
+         * their button codes), so an EV_KEY-first check would misclassify
+         * them as a second keyboard and never detect the pointer. No real
+         * keyboard reports motion capability, so "EV_KEY set, EV_ABS/EV_REL
+         * not" is what actually identifies a keyboard. */
+        if (virtio_input_cfg_query(base, VIRTIO_INPUT_CFG_EV_BITS, EV_ABS) != 0)
         {
             if (virtio_input_ptr_present)
             {
@@ -281,6 +276,17 @@ void virtio_input_init(void)
             virtio_input_ptr_is_abs = FALSE;
             virtio_input_ptr_present = TRUE;
             KDEBUG(("virtio_input_init: mouse at slot %d (base 0x%08lx)\n", slot, base));
+        }
+        else if (virtio_input_cfg_query(base, VIRTIO_INPUT_CFG_EV_BITS, EV_KEY) != 0)
+        {
+            if (virtio_input_kbd_present)
+            {
+                KDEBUG(("virtio_input_init: slot %d is another keyboard, ignored\n", slot));
+                continue;
+            }
+            virtio_input_kbd_dev = probe_dev;
+            virtio_input_kbd_present = TRUE;
+            KDEBUG(("virtio_input_init: keyboard at slot %d (base 0x%08lx)\n", slot, base));
         }
         else
         {
@@ -671,31 +677,13 @@ void virtio_input_init(void)
         if (!virtio_probe(base, VIRTIO_INPUT_DEVICE_ID, &probe_dev))
             continue;
 
-        if (virtio_input_cfg_query(base, VIRTIO_INPUT_CFG_EV_BITS, EV_KEY) != 0)
-        {
-            if (virtio_input_kbd_present)
-            {
-                KDEBUG(("virtio_input_init: slot %d is another keyboard, ignored\n", slot));
-                continue;
-            }
-
-            virtio_input_kbd_dev = probe_dev;
-#if defined(MACHINE_VIRT_ARM)
-            virtio_input_kbd_dev.phys_offset = VIRT_RAM_BASE;
-#elif defined(MACHINE_VIRT_M68K)
-            virtio_input_kbd_dev.phys_offset = 0;
-#endif
-            if (!virtio_setup_queue(&virtio_input_kbd_dev))
-            {
-                KDEBUG(("virtio_input_init: slot %d keyboard queue setup failed\n", slot));
-                continue;
-            }
-            virtio_input_connect_irq(slot, virtio_input_kbd_isr);
-            virtio_input_setup_eventq(&virtio_input_kbd_dev, virtio_input_kbd_buf);
-            virtio_input_kbd_present = TRUE;
-            KDEBUG(("virtio_input_init: keyboard at slot %d (base 0x%08lx)\n", slot, base));
-        }
-        else if (virtio_input_cfg_query(base, VIRTIO_INPUT_CFG_EV_BITS, EV_ABS) != 0)
+        /* EV_ABS/EV_REL are checked before EV_KEY: QEMU's virtio-tablet-device
+         * and virtio-mouse-device both also report nonzero EV_KEY size (for
+         * their button codes), so an EV_KEY-first check would misclassify
+         * them as a second keyboard and never detect the pointer. No real
+         * keyboard reports motion capability, so "EV_KEY set, EV_ABS/EV_REL
+         * not" is what actually identifies a keyboard. */
+        if (virtio_input_cfg_query(base, VIRTIO_INPUT_CFG_EV_BITS, EV_ABS) != 0)
         {
             if (virtio_input_ptr_present)
             {
@@ -748,6 +736,30 @@ void virtio_input_init(void)
             virtio_input_setup_eventq(&virtio_input_ptr_dev, virtio_input_ptr_buf);
             virtio_input_ptr_present = TRUE;
             KDEBUG(("virtio_input_init: mouse at slot %d (base 0x%08lx)\n", slot, base));
+        }
+        else if (virtio_input_cfg_query(base, VIRTIO_INPUT_CFG_EV_BITS, EV_KEY) != 0)
+        {
+            if (virtio_input_kbd_present)
+            {
+                KDEBUG(("virtio_input_init: slot %d is another keyboard, ignored\n", slot));
+                continue;
+            }
+
+            virtio_input_kbd_dev = probe_dev;
+#if defined(MACHINE_VIRT_ARM)
+            virtio_input_kbd_dev.phys_offset = VIRT_RAM_BASE;
+#elif defined(MACHINE_VIRT_M68K)
+            virtio_input_kbd_dev.phys_offset = 0;
+#endif
+            if (!virtio_setup_queue(&virtio_input_kbd_dev))
+            {
+                KDEBUG(("virtio_input_init: slot %d keyboard queue setup failed\n", slot));
+                continue;
+            }
+            virtio_input_connect_irq(slot, virtio_input_kbd_isr);
+            virtio_input_setup_eventq(&virtio_input_kbd_dev, virtio_input_kbd_buf);
+            virtio_input_kbd_present = TRUE;
+            KDEBUG(("virtio_input_init: keyboard at slot %d (base 0x%08lx)\n", slot, base));
         }
         else
         {
