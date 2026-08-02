@@ -90,8 +90,20 @@ struct virtio_input_event
     ULONG value;
 };
 
-static struct virtio_input_event virtio_input_kbd_buf[VIRTIO_QUEUE_SIZE];
-static struct virtio_input_event virtio_input_ptr_buf[VIRTIO_QUEUE_SIZE];
+/* Each event buffer gets a cache-line-aligned span of its own, following
+ * bios/virtio_blk.c's status-slot precedent: the per-entry
+ * invalidate_data_cache() in virtio_input_drain() (needed to see the
+ * device's fresh write past whatever the CPU had cached) is a pure
+ * invalidate, so a driver static sharing a line with these would silently
+ * lose its pending CPU writes on every input interrupt.  The alignment also
+ * guarantees no entry straddles a line boundary, which would leave part of
+ * it uninvalidated and hence read back stale.  An array of VIRTIO_QUEUE_SIZE
+ * 8-byte events is a whole number of 64-byte lines, so no trailing pad is
+ * needed. */
+static struct virtio_input_event virtio_input_kbd_buf[VIRTIO_QUEUE_SIZE]
+        __attribute__((aligned(VIRTIO_CACHE_LINE)));
+static struct virtio_input_event virtio_input_ptr_buf[VIRTIO_QUEUE_SIZE]
+        __attribute__((aligned(VIRTIO_CACHE_LINE)));
 
 #define VIRTIO_INPUT_KEY_AUTOREPEAT  2
 #define VIRTIO_INPUT_KEY_RELEASED    0x80   /* mirrors ikbd.c's private
@@ -275,22 +287,43 @@ static void virtio_input_drain(VIRTIO_DEV *dev, struct virtio_input_event *buf, 
 
     while (virtio_pop_used(dev, &idx, &len))
     {
-        (void)len;
+        /* Never trust the device's descriptor index as an array subscript:
+         * a malformed one would index outside buf[] and the descriptor
+         * table.  Such an entry can't be recycled either (we have no valid
+         * descriptor slot to rewrite), so just drop it. */
+        if (idx >= VIRTIO_QUEUE_SIZE)
+        {
+            KDEBUG(("virtio_input: bad descriptor index %u from used ring, dropped\n", idx));
+            continue;
+        }
+
 #if ARCH_ARM
         invalidate_data_cache(&buf[idx], sizeof(buf[idx]));
 #endif
-        type  = le2cpu16(buf[idx].type);
-        code  = le2cpu16(buf[idx].code);
-        value = le2cpu32(buf[idx].value);
 
-        if (role == VIRTIO_INPUT_ROLE_KEYBOARD)
+        /* A short write means the device didn't produce a whole event;
+         * decoding it would read fields it never filled in.  The buffer is
+         * still ours, so it gets recycled below either way. */
+        if (len < (ULONG)sizeof(buf[idx]))
         {
-            if (type == EV_KEY)
-                virtio_input_handle_key(code, value);
+            KDEBUG(("virtio_input: short event, %ld of %ld bytes, ignored\n",
+                    len, (LONG)sizeof(buf[idx])));
         }
         else
         {
-            virtio_input_handle_pointer(type, code, value);
+            type  = le2cpu16(buf[idx].type);
+            code  = le2cpu16(buf[idx].code);
+            value = le2cpu32(buf[idx].value);
+
+            if (role == VIRTIO_INPUT_ROLE_KEYBOARD)
+            {
+                if (type == EV_KEY)
+                    virtio_input_handle_key(code, value);
+            }
+            else
+            {
+                virtio_input_handle_pointer(type, code, value);
+            }
         }
 
         virtio_desc_set(dev, idx, (ULONG)&buf[idx] + dev->phys_offset,

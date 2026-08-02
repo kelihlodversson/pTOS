@@ -121,9 +121,17 @@ void midivec( UBYTE data );
 void kbdvec( UBYTE data );
 static void _dummy_p(UBYTE *unused) { UNUSED(unused); }
 static void _dummy_c(UBYTE unused) { UNUSED(unused); }
+static void _dummy_w(WORD unused) { UNUSED(unused); }
 
 void init_acia_vecs(void)
 {
+    // mousexvec must never be NULL: mouse drivers call it from interrupt
+    // context for the extra buttons, possibly before the VDI has started
+    // and installed its own handler (and it is never installed at all in a
+    // boot without the VDI).  The m68k version of this file has the same
+    // contract, with just_rts as the initial value.
+    mousexvec = _dummy_w;
+
     kbdvecs.mousevec = _dummy_p;
     _kbdvec = kbdvec;
     kbdvecs.midivec = midivec;

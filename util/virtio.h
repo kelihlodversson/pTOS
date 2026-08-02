@@ -11,6 +11,10 @@
 
 #define VIRTIO_QUEUE_SIZE  8   /* descriptors/ring slots per queue; power of two */
 
+/* Conservative upper bound for this port's ARM D-cache line size (also fine
+ * as a no-op on m68k, which never invalidates anything). */
+#define VIRTIO_CACHE_LINE  64
+
 #define VIRTIO_DESC_F_NEXT   1
 #define VIRTIO_DESC_F_WRITE  2
 
@@ -58,7 +62,17 @@ typedef struct
      * at behind the smaller fields. */
     VIRTIO_DESC  desc[VIRTIO_QUEUE_SIZE];
     VIRTIO_AVAIL avail;
-    VIRTIO_USED  used;
+    /* The used ring is the only part of this struct the device writes, so
+     * it is the only part invalidate_data_cache() is ever pointed at (see
+     * virtio_handle_interrupt()).  That is a pure invalidate on ARM, with
+     * no clean first, so anything sharing a cache line with it loses its
+     * pending CPU writes every time an interrupt arrives.  Give the used
+     * ring its own aligned span, padded out to a whole number of cache
+     * lines, so the driver-owned fields below -- notably pop_idx, which
+     * virtio_pop_used() carries across interrupts -- can never share one
+     * with it. */
+    VIRTIO_USED  used __attribute__((aligned(VIRTIO_CACHE_LINE)));
+    UBYTE used_pad[VIRTIO_CACHE_LINE - (sizeof(VIRTIO_USED) % VIRTIO_CACHE_LINE)];
     ULONG base;             /* mmio base address of this device's transport window */
     ULONG phys_offset;      /* physical_address - virtual(linked)_address, for any
                              * RAM address associated with this device's virtqueue
