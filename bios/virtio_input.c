@@ -18,7 +18,9 @@
 #include "virtio.h"
 #include "virtio_input.h"
 #include "ikbd.h"
+#include "tosvars.h"
 #include "virtio_input_keytbl.h"
+#include "lineavars.h"
 
 #if defined(MACHINE_VIRT_ARM)
 #include "virt_memmap.h"
@@ -57,6 +59,20 @@ extern void invalidate_data_cache(void *start, long size);
 #define ABS_X  0x00
 #define ABS_Y  0x01
 
+#define REL_X  0x00
+#define REL_Y  0x01
+
+#define BTN_LEFT    0x110
+#define BTN_RIGHT   0x111
+#define BTN_MIDDLE  0x112
+
+#define VIRTIO_INPUT_MOUSE_LEFT   0x02   /* MOUSE_REL_POS_REPORT button bits -- see
+                                           * bios/ikbd.c's private LEFT_BUTTON_DOWN/
+                                           * RIGHT_BUTTON_DOWN #defines, confirmed also
+                                           * by usb/udd_mouse.c's identical packet[0]
+                                           * construction */
+#define VIRTIO_INPUT_MOUSE_RIGHT  0x01
+
 static VIRTIO_DEV virtio_input_kbd_dev;
 static VIRTIO_DEV virtio_input_ptr_dev;
 static BOOL virtio_input_kbd_present;
@@ -83,6 +99,108 @@ static struct virtio_input_event virtio_input_ptr_buf[VIRTIO_QUEUE_SIZE];
                                               * isn't exported via ikbd.h */
 
 typedef enum { VIRTIO_INPUT_ROLE_KEYBOARD, VIRTIO_INPUT_ROLE_POINTER } VIRTIO_INPUT_ROLE;
+
+static UBYTE virtio_input_ptr_buttons;
+static BOOL virtio_input_x_valid, virtio_input_y_valid;   /* have we seen a baseline EV_ABS sample yet? */
+static LONG virtio_input_last_scaled_x, virtio_input_last_scaled_y;
+
+/* Sends one or more 3-byte IKBD relative-mouse packets covering (dx, dy),
+ * chunking into signed-byte-range steps if either component overflows
+ * it. Always sends at least one packet (even (0, 0), for button-only
+ * changes), since the ST always reports current button state alongside
+ * whatever motion happened. */
+static void virtio_input_send_mouse_delta(WORD dx, WORD dy)
+{
+    UBYTE packet[3];
+    WORD step_x, step_y;
+
+    do
+    {
+        step_x = (dx > 127) ? 127 : (dx < -128) ? -128 : dx;
+        step_y = (dy > 127) ? 127 : (dy < -128) ? -128 : dy;
+
+        packet[0] = (UBYTE)(0xf8 | virtio_input_ptr_buttons);
+        packet[1] = (UBYTE)step_x;
+        packet[2] = (UBYTE)step_y;
+        call_mousevec(packet);
+
+        dx = (WORD)(dx - step_x);
+        dy = (WORD)(dy - step_y);
+    } while (dx != 0 || dy != 0);
+}
+
+static LONG virtio_input_scale_abs(LONG value, LONG min, LONG max, WORD screen_max)
+{
+    if (max <= min)
+        return 0;
+    return (value - min) * (LONG)screen_max / (max - min);
+}
+
+static void virtio_input_handle_pointer(UWORD type, UWORD code, ULONG raw_value)
+{
+    LONG value = (LONG)raw_value;
+
+    switch (type)
+    {
+    case EV_KEY:
+        switch (code)
+        {
+        case BTN_LEFT:
+            if (value)
+                virtio_input_ptr_buttons |= VIRTIO_INPUT_MOUSE_LEFT;
+            else
+                virtio_input_ptr_buttons &= ~VIRTIO_INPUT_MOUSE_LEFT;
+            virtio_input_send_mouse_delta(0, 0);
+            break;
+        case BTN_RIGHT:
+            if (value)
+                virtio_input_ptr_buttons |= VIRTIO_INPUT_MOUSE_RIGHT;
+            else
+                virtio_input_ptr_buttons &= ~VIRTIO_INPUT_MOUSE_RIGHT;
+            virtio_input_send_mouse_delta(0, 0);
+            break;
+        case BTN_MIDDLE:
+            /* No 3rd button bit in the relative-mouse packet; matches
+             * usb/udd_mouse.c's handling of its own 3rd button. */
+            mousexvec(value ? 0x37 : 0xb7);
+            break;
+        default:
+            break;
+        }
+        break;
+
+    case EV_REL:
+        if (code == REL_X)
+            virtio_input_send_mouse_delta((WORD)value, 0);
+        else if (code == REL_Y)
+            virtio_input_send_mouse_delta(0, (WORD)value);
+        break;
+
+    case EV_ABS:
+        if (code == ABS_X)
+        {
+            LONG scaled = virtio_input_scale_abs(value, virtio_input_abs_min_x, virtio_input_abs_max_x,
+                                                  (WORD)(linea_vars.V_REZ_HZ - 1));
+            if (virtio_input_x_valid)
+                virtio_input_send_mouse_delta((WORD)(scaled - virtio_input_last_scaled_x), 0);
+            virtio_input_last_scaled_x = scaled;
+            virtio_input_x_valid = TRUE;
+        }
+        else if (code == ABS_Y)
+        {
+            LONG scaled = virtio_input_scale_abs(value, virtio_input_abs_min_y, virtio_input_abs_max_y,
+                                                  (WORD)(linea_vars.V_REZ_VT - 1));
+            if (virtio_input_y_valid)
+                virtio_input_send_mouse_delta(0, (WORD)(scaled - virtio_input_last_scaled_y));
+            virtio_input_last_scaled_y = scaled;
+            virtio_input_y_valid = TRUE;
+        }
+        break;
+
+    default:
+        break;   /* EV_SYN and anything else: nothing to do per-event */
+    }
+}
 
 static void virtio_input_handle_key(UWORD code, ULONG value)
 {
@@ -170,7 +288,10 @@ static void virtio_input_drain(VIRTIO_DEV *dev, struct virtio_input_event *buf, 
             if (type == EV_KEY)
                 virtio_input_handle_key(code, value);
         }
-        /* VIRTIO_INPUT_ROLE_POINTER: dispatch added in Task 3 */
+        else
+        {
+            virtio_input_handle_pointer(type, code, value);
+        }
 
         virtio_desc_set(dev, idx, (ULONG)&buf[idx] + dev->phys_offset,
                          (ULONG)sizeof(buf[idx]), VIRTIO_DESC_F_WRITE, 0);

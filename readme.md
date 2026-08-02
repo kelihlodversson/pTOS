@@ -42,6 +42,12 @@ To also attach a virtio-blk disk:
       -global virtio-mmio.force-legacy=false \
       -drive file=disk.img,if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
 
+To also attach virtio-input keyboard and tablet devices:
+
+    qemu-system-arm -M virt -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -serial stdio \
+      -global virtio-mmio.force-legacy=false \
+      -device virtio-keyboard-device -device virtio-tablet-device
+
 To test the m68k `virt` port, run
 
     make virt-m68k_defconfig && make
@@ -52,6 +58,12 @@ To also attach a virtio-blk disk:
     qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_errors -serial stdio \
       -global virtio-mmio.force-legacy=false \
       -drive file=disk.img,if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
+
+To also attach virtio-input keyboard and tablet devices:
+
+    qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_errors -serial stdio \
+      -global virtio-mmio.force-legacy=false \
+      -device virtio-keyboard-device -device virtio-tablet-device
 
 The `-global virtio-mmio.force-legacy=false` flag is required on QEMU
 versions that default the `virt` machine's virtio-mmio transports to
