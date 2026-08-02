@@ -77,14 +77,35 @@ static __inline__ WORD gem(const GEMBLK *gb)
     register WORD retval __asm__("r0");
     register WORD opcode __asm__("r0") = 200; /* AES */
     register const GEMBLK *gbreg __asm__("r1") = gb;
+    register WORD gbreg_clobbered __asm__("r1");
 
+    /* "svc 2" runs the whole AES call chain (trapaes, super(), xif(),
+     * crysbind(), and the individual handler for this opcode) as ordinary
+     * C function calls, which are free to clobber r1 like any other
+     * caller-saved register. The compiler must be told r1 no longer
+     * holds gbreg afterwards -- without that, GCC has been seen to keep
+     * using the (by then stale) r1 to address int_out[] for the output
+     * macros (WM_OX and friends) that follow, handing the caller whatever
+     * r1 happened to hold deep inside the call chain instead of the real
+     * reply -- e.g. wind_get(0, WF_WXYWH, ...) silently returning garbage
+     * screen geometry, which corrupts everything downstream that sizes
+     * itself from it (issue #45).
+     *
+     * A plain "r1" clobber can't express this: gbreg is already pinned to
+     * r1 as an input, and GCC rejects clobbering a register that's also a
+     * local-register-variable operand. Declaring a second r1-bound
+     * variable as a (discarded) output, the same way retval/opcode
+     * already share r0, tells the compiler r1's value is gone once the
+     * asm completes, same as a clobber would.
+     */
     __asm__ volatile
     (
         "svc 2"
-        : "=r"(retval)
+        : "=r"(retval), "=r"(gbreg_clobbered)
         : "r"(opcode), "r"(gbreg)
         : "r2", "r3", "r7", "r12", "lr",  "memory", "cc"
     );
+    (void)gbreg_clobbered;
 #else
     register WORD retval __asm__("d0");
     register WORD opcode __asm__("d0") = 200; /* AES */
