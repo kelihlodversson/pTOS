@@ -43,7 +43,7 @@ obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfis
 
 obj-$(CONF_WITH_VIRTIO_BLK) += virtio_blk.o
 
-obj-$(CONF_WITH_VIRTIO_INPUT) += virtio_input.o
+obj-$(CONF_WITH_VIRTIO_INPUT) += virtio_input.o virtio_input_keytbl.o
 
 # Fonts.  A multi-language image needs the fonts of every charset, a
 # single-country one only those of its own charset.  See country.mk.

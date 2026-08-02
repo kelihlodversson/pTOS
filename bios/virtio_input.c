@@ -17,16 +17,24 @@
 #include "endian.h"
 #include "virtio.h"
 #include "virtio_input.h"
+#include "ikbd.h"
+#include "virtio_input_keytbl.h"
 
 #if defined(MACHINE_VIRT_ARM)
 #include "virt_memmap.h"
+#include "virt_pic.h"
 #define VIRTIO_MMIO_BASE    VIRT_VIRTIO_MMIO_BASE
 #define VIRTIO_MMIO_STRIDE  VIRT_VIRTIO_MMIO_STRIDE
 #define VIRTIO_MMIO_COUNT   VIRT_VIRTIO_MMIO_COUNT
 #elif defined(MACHINE_VIRT_M68K)
+#include "goldfish_pic.h"
 #define VIRTIO_MMIO_BASE    0xff010000UL
 #define VIRTIO_MMIO_STRIDE  0x200UL
 #define VIRTIO_MMIO_COUNT   128
+#endif
+
+#if ARCH_ARM
+extern void invalidate_data_cache(void *start, long size);
 #endif
 
 #define VIRTIO_INPUT_DEVICE_ID  18
@@ -57,6 +65,45 @@ static BOOL virtio_input_ptr_is_abs;      /* TRUE: tablet (EV_ABS), FALSE: mouse
 static LONG virtio_input_abs_min_x, virtio_input_abs_max_x;
 static LONG virtio_input_abs_min_y, virtio_input_abs_max_y;
 
+/* Wire format of one eventq entry (virtio-input spec 5.8.6.2): 8 bytes,
+ * every field little-endian regardless of guest endianness. */
+struct virtio_input_event
+{
+    UWORD type;
+    UWORD code;
+    ULONG value;
+};
+
+static struct virtio_input_event virtio_input_kbd_buf[VIRTIO_QUEUE_SIZE];
+static struct virtio_input_event virtio_input_ptr_buf[VIRTIO_QUEUE_SIZE];
+
+#define VIRTIO_INPUT_KEY_AUTOREPEAT  2
+#define VIRTIO_INPUT_KEY_RELEASED    0x80   /* mirrors ikbd.c's private
+                                              * KEY_RELEASED bit, which
+                                              * isn't exported via ikbd.h */
+
+typedef enum { VIRTIO_INPUT_ROLE_KEYBOARD, VIRTIO_INPUT_ROLE_POINTER } VIRTIO_INPUT_ROLE;
+
+static void virtio_input_handle_key(UWORD code, ULONG value)
+{
+    UBYTE scancode;
+
+    if (value == VIRTIO_INPUT_KEY_AUTOREPEAT)
+        return;   /* bios/ikbd.c's kb_timerc_int() already owns repeat timing */
+
+    if (code >= VIRTIO_INPUT_KEYTBL_SIZE || virtio_input_keytbl[code] == 0)
+    {
+        KDEBUG(("virtio_input: no scancode for evdev KEY code %u\n", code));
+        return;
+    }
+
+    scancode = virtio_input_keytbl[code];
+    if (value == 0)
+        scancode |= VIRTIO_INPUT_KEY_RELEASED;
+
+    kbd_int(scancode);
+}
+
 /* Writes select/subsel, returns the "size" byte -- nonzero means the
  * device supports that (select, subsel) query. */
 static UBYTE virtio_input_cfg_query(ULONG base, UBYTE select, UBYTE subsel)
@@ -86,11 +133,79 @@ static void virtio_input_read_absinfo(ULONG base, UBYTE axis, LONG *out_min, LON
     }
 }
 
+static void virtio_input_setup_eventq(VIRTIO_DEV *dev, struct virtio_input_event *buf)
+{
+    UWORD i;
+
+    for (i = 0; i < VIRTIO_QUEUE_SIZE; i++)
+    {
+        virtio_desc_set(dev, i, (ULONG)&buf[i] + dev->phys_offset,
+                         (ULONG)sizeof(buf[i]), VIRTIO_DESC_F_WRITE, 0);
+        virtio_submit(dev, i);
+    }
+    virtio_notify(dev);
+}
+
+static void virtio_input_drain(VIRTIO_DEV *dev, struct virtio_input_event *buf, VIRTIO_INPUT_ROLE role)
+{
+    UWORD idx;
+    ULONG len;
+    UWORD type, code;
+    ULONG value;
+
+    virtio_handle_interrupt(dev);
+
+    while (virtio_pop_used(dev, &idx, &len))
+    {
+        (void)len;
+#if ARCH_ARM
+        invalidate_data_cache(&buf[idx], sizeof(buf[idx]));
+#endif
+        type  = le2cpu16(buf[idx].type);
+        code  = le2cpu16(buf[idx].code);
+        value = le2cpu32(buf[idx].value);
+
+        if (role == VIRTIO_INPUT_ROLE_KEYBOARD)
+        {
+            if (type == EV_KEY)
+                virtio_input_handle_key(code, value);
+        }
+        /* VIRTIO_INPUT_ROLE_POINTER: dispatch added in Task 3 */
+
+        virtio_desc_set(dev, idx, (ULONG)&buf[idx] + dev->phys_offset,
+                         (ULONG)sizeof(buf[idx]), VIRTIO_DESC_F_WRITE, 0);
+        virtio_submit(dev, idx);
+    }
+
+    virtio_notify(dev);
+}
+
+static void virtio_input_kbd_isr(void)
+{
+    virtio_input_drain(&virtio_input_kbd_dev, virtio_input_kbd_buf, VIRTIO_INPUT_ROLE_KEYBOARD);
+}
+
+static void virtio_input_ptr_isr(void)
+{
+    virtio_input_drain(&virtio_input_ptr_dev, virtio_input_ptr_buf, VIRTIO_INPUT_ROLE_POINTER);
+}
+
+static void virtio_input_connect_irq(WORD slot, PFVOID handler)
+{
+#if defined(MACHINE_VIRT_ARM)
+    virt_connect_irq(VIRT_VIRTIO_IRQ_BASE + slot, handler);
+#elif defined(MACHINE_VIRT_M68K)
+    goldfish_pic_connect_irq((WORD)(1 + slot / 32), (WORD)(slot % 32), handler);
+#endif
+}
+
 void virtio_input_init(void)
 {
     WORD slot;
     ULONG base;
     VIRTIO_DEV probe_dev;
+
+    virtio_input_keytbl_init();
 
     virtio_input_kbd_present = FALSE;
     virtio_input_ptr_present = FALSE;
@@ -115,10 +230,23 @@ void virtio_input_init(void)
                 KDEBUG(("virtio_input_init: slot %d is another pointer, ignored\n", slot));
                 continue;
             }
+
             virtio_input_ptr_dev = probe_dev;
             virtio_input_ptr_is_abs = TRUE;
+#if defined(MACHINE_VIRT_ARM)
+            virtio_input_ptr_dev.phys_offset = VIRT_RAM_BASE;
+#elif defined(MACHINE_VIRT_M68K)
+            virtio_input_ptr_dev.phys_offset = 0;
+#endif
+            if (!virtio_setup_queue(&virtio_input_ptr_dev))
+            {
+                KDEBUG(("virtio_input_init: slot %d tablet queue setup failed\n", slot));
+                continue;
+            }
             virtio_input_read_absinfo(base, ABS_X, &virtio_input_abs_min_x, &virtio_input_abs_max_x);
             virtio_input_read_absinfo(base, ABS_Y, &virtio_input_abs_min_y, &virtio_input_abs_max_y);
+            virtio_input_connect_irq(slot, virtio_input_ptr_isr);
+            virtio_input_setup_eventq(&virtio_input_ptr_dev, virtio_input_ptr_buf);
             virtio_input_ptr_present = TRUE;
             KDEBUG(("virtio_input_init: tablet at slot %d (base 0x%08lx, x %ld..%ld, y %ld..%ld)\n",
                     slot, base, virtio_input_abs_min_x, virtio_input_abs_max_x,
@@ -131,8 +259,21 @@ void virtio_input_init(void)
                 KDEBUG(("virtio_input_init: slot %d is another pointer, ignored\n", slot));
                 continue;
             }
+
             virtio_input_ptr_dev = probe_dev;
             virtio_input_ptr_is_abs = FALSE;
+#if defined(MACHINE_VIRT_ARM)
+            virtio_input_ptr_dev.phys_offset = VIRT_RAM_BASE;
+#elif defined(MACHINE_VIRT_M68K)
+            virtio_input_ptr_dev.phys_offset = 0;
+#endif
+            if (!virtio_setup_queue(&virtio_input_ptr_dev))
+            {
+                KDEBUG(("virtio_input_init: slot %d mouse queue setup failed\n", slot));
+                continue;
+            }
+            virtio_input_connect_irq(slot, virtio_input_ptr_isr);
+            virtio_input_setup_eventq(&virtio_input_ptr_dev, virtio_input_ptr_buf);
             virtio_input_ptr_present = TRUE;
             KDEBUG(("virtio_input_init: mouse at slot %d (base 0x%08lx)\n", slot, base));
         }
@@ -143,7 +284,20 @@ void virtio_input_init(void)
                 KDEBUG(("virtio_input_init: slot %d is another keyboard, ignored\n", slot));
                 continue;
             }
+
             virtio_input_kbd_dev = probe_dev;
+#if defined(MACHINE_VIRT_ARM)
+            virtio_input_kbd_dev.phys_offset = VIRT_RAM_BASE;
+#elif defined(MACHINE_VIRT_M68K)
+            virtio_input_kbd_dev.phys_offset = 0;
+#endif
+            if (!virtio_setup_queue(&virtio_input_kbd_dev))
+            {
+                KDEBUG(("virtio_input_init: slot %d keyboard queue setup failed\n", slot));
+                continue;
+            }
+            virtio_input_connect_irq(slot, virtio_input_kbd_isr);
+            virtio_input_setup_eventq(&virtio_input_kbd_dev, virtio_input_kbd_buf);
             virtio_input_kbd_present = TRUE;
             KDEBUG(("virtio_input_init: keyboard at slot %d (base 0x%08lx)\n", slot, base));
         }
