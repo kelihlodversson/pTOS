@@ -48,7 +48,7 @@ static void pci_scan_bus(UBYTE bus);
 static void pci_scan_device(UBYTE bus, UBYTE dev);
 static void pci_add_function(UBYTE bus, UBYTE dev, UBYTE func);
 static BOOL pci_class_matches(ULONG device_class, ULONG requested_class);
-static pci_resource_t *pci_find_resource(pci_device_t *device, ULONG address, BOOL io);
+static LONG pci_check_resource_access(pci_device_t *device, ULONG address, ULONG size, BOOL io);
 static LONG pci_read_bus_byte(PCI_HANDLE handle, ULONG address, BOOL io, UBYTE *value);
 static LONG pci_read_bus_word(PCI_HANDLE handle, ULONG address, BOOL io, UWORD *value);
 static LONG pci_read_bus_long(PCI_HANDLE handle, ULONG address, BOOL io, ULONG *value);
@@ -406,26 +406,41 @@ LONG pci_get_resource(PCI_HANDLE handle, UWORD bar, pci_resource_t *resource)
     if (bar >= PCI_MAX_BARS)
         return PCI_BAD_RESOURCE;
 
+    if (device->resources[bar].length == 0UL)
+        return PCI_BAD_RESOURCE;
+
     *resource = device->resources[bar];
     return PCI_SUCCESSFUL;
 }
 
-static pci_resource_t *pci_find_resource(pci_device_t *device, ULONG address, BOOL io)
+static LONG pci_check_resource_access(pci_device_t *device, ULONG address, ULONG size, BOOL io)
 {
     UWORD bar;
+    ULONG end;
+    ULONG resource_end;
     pci_resource_t *resource;
+
+    if (size == 0UL)
+        return PCI_BAD_RESOURCE;
+
+    end = address + size - 1UL;
+    if (end < address)
+        return PCI_BAD_RESOURCE;
 
     for (bar = 0; bar < PCI_MAX_BARS; bar++) {
         resource = &device->resources[bar];
         if (resource->length != 0UL) {
             if (((resource->flags & PCI_RESOURCE_IO) != 0U) == io) {
-                if ((address >= resource->start) && (address < resource->start + resource->length))
-                    return resource;
+                resource_end = resource->start + resource->length - 1UL;
+                if (resource_end >= resource->start) {
+                    if ((address >= resource->start) && (end <= resource_end))
+                        return PCI_SUCCESSFUL;
+                }
             }
         }
     }
 
-    return 0;
+    return PCI_BAD_RESOURCE;
 }
 
 static LONG pci_read_bus_byte(PCI_HANDLE handle, ULONG address, BOOL io, UBYTE *value)
@@ -437,10 +452,9 @@ static LONG pci_read_bus_byte(PCI_HANDLE handle, ULONG address, BOOL io, UBYTE *
     device = pci_device_from_handle(handle);
     if (device == 0)
         return PCI_BAD_HANDLE;
-    if (pci_find_resource(device, address, io) == 0)
+    if (pci_check_resource_access(device, address, 1UL, io) != PCI_SUCCESSFUL)
         return PCI_BAD_RESOURCE;
-    *value = *((volatile UBYTE *)address);
-    return PCI_SUCCESSFUL;
+    return PCI_FUNC_NOT_SUPPORTED;
 }
 
 static LONG pci_read_bus_word(PCI_HANDLE handle, ULONG address, BOOL io, UWORD *value)
@@ -452,10 +466,9 @@ static LONG pci_read_bus_word(PCI_HANDLE handle, ULONG address, BOOL io, UWORD *
     device = pci_device_from_handle(handle);
     if (device == 0)
         return PCI_BAD_HANDLE;
-    if (pci_find_resource(device, address, io) == 0)
+    if (pci_check_resource_access(device, address, 2UL, io) != PCI_SUCCESSFUL)
         return PCI_BAD_RESOURCE;
-    *value = *((volatile UWORD *)address);
-    return PCI_SUCCESSFUL;
+    return PCI_FUNC_NOT_SUPPORTED;
 }
 
 static LONG pci_read_bus_long(PCI_HANDLE handle, ULONG address, BOOL io, ULONG *value)
@@ -467,10 +480,9 @@ static LONG pci_read_bus_long(PCI_HANDLE handle, ULONG address, BOOL io, ULONG *
     device = pci_device_from_handle(handle);
     if (device == 0)
         return PCI_BAD_HANDLE;
-    if (pci_find_resource(device, address, io) == 0)
+    if (pci_check_resource_access(device, address, 4UL, io) != PCI_SUCCESSFUL)
         return PCI_BAD_RESOURCE;
-    *value = *((volatile ULONG *)address);
-    return PCI_SUCCESSFUL;
+    return PCI_FUNC_NOT_SUPPORTED;
 }
 
 static LONG pci_write_bus_byte(PCI_HANDLE handle, ULONG address, BOOL io, UBYTE value)
@@ -480,10 +492,9 @@ static LONG pci_write_bus_byte(PCI_HANDLE handle, ULONG address, BOOL io, UBYTE 
     device = pci_device_from_handle(handle);
     if (device == 0)
         return PCI_BAD_HANDLE;
-    if (pci_find_resource(device, address, io) == 0)
+    if (pci_check_resource_access(device, address, 1UL, io) != PCI_SUCCESSFUL)
         return PCI_BAD_RESOURCE;
-    *((volatile UBYTE *)address) = value;
-    return PCI_SUCCESSFUL;
+    return PCI_FUNC_NOT_SUPPORTED;
 }
 
 static LONG pci_write_bus_word(PCI_HANDLE handle, ULONG address, BOOL io, UWORD value)
@@ -493,10 +504,9 @@ static LONG pci_write_bus_word(PCI_HANDLE handle, ULONG address, BOOL io, UWORD 
     device = pci_device_from_handle(handle);
     if (device == 0)
         return PCI_BAD_HANDLE;
-    if (pci_find_resource(device, address, io) == 0)
+    if (pci_check_resource_access(device, address, 2UL, io) != PCI_SUCCESSFUL)
         return PCI_BAD_RESOURCE;
-    *((volatile UWORD *)address) = value;
-    return PCI_SUCCESSFUL;
+    return PCI_FUNC_NOT_SUPPORTED;
 }
 
 static LONG pci_write_bus_long(PCI_HANDLE handle, ULONG address, BOOL io, ULONG value)
@@ -506,10 +516,9 @@ static LONG pci_write_bus_long(PCI_HANDLE handle, ULONG address, BOOL io, ULONG 
     device = pci_device_from_handle(handle);
     if (device == 0)
         return PCI_BAD_HANDLE;
-    if (pci_find_resource(device, address, io) == 0)
+    if (pci_check_resource_access(device, address, 4UL, io) != PCI_SUCCESSFUL)
         return PCI_BAD_RESOURCE;
-    *((volatile ULONG *)address) = value;
-    return PCI_SUCCESSFUL;
+    return PCI_FUNC_NOT_SUPPORTED;
 }
 
 LONG pci_read_mem_byte(PCI_HANDLE handle, ULONG address, UBYTE *value)
@@ -618,7 +627,12 @@ LONG pci_set_card_used(PCI_HANDLE handle, pci_card_callback_t callback, LONG sta
     device = pci_device_from_handle(handle);
     if (device == 0)
         return PCI_BAD_HANDLE;
-    device->callback = callback;
+    if ((state < 0) || (state > 3))
+        return PCI_SET_FAILED;
+    if (state == 2)
+        device->callback = callback;
+    else
+        device->callback = 0;
     device->used = state;
     return PCI_SUCCESSFUL;
 }
@@ -627,7 +641,7 @@ LONG pci_get_pagesize(ULONG *pagesize)
 {
     if (pagesize == 0)
         return PCI_GENERAL_ERROR;
-    *pagesize = 4096UL;
+    *pagesize = 0UL;
     return PCI_SUCCESSFUL;
 }
 
