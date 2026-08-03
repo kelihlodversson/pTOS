@@ -13,6 +13,7 @@
 #if CONF_WITH_VIRTIO_INPUT
 
 #include "portab.h"
+#include "asm.h"
 #include "kprint.h"
 #include "endian.h"
 #include "virtio.h"
@@ -276,14 +277,49 @@ static void virtio_input_setup_eventq(VIRTIO_DEV *dev, struct virtio_input_event
     virtio_notify(dev);
 }
 
+/* Everything this driver dispatches into -- bios/ikbd.c's kbd_int(), and the
+ * VDI/AES chain behind call_mousevec() (vdi/arch/m68k/vdi_entry.S's
+ * mouse_int(), then the AES's far_bcha()/far_mcha() in
+ * aes/arch/m68k/gemdosif.S) -- is written on the assumption that it cannot be
+ * interrupted by the system timer tick.  On every other m68k machine that
+ * holds for free: mouse and key packets arrive from the IKBD interrupt at the
+ * same IPL as the tick (both are IPL 6 on the Atari -- ACIA and MFP timer C),
+ * so the two paths can never nest.  aes/gemdisp.c's forkq() states the
+ * requirement outright ("q a fork process, enter with ints OFF"), and both
+ * far_mcha() and the AES's own tick routine _tikcod call it; those two also
+ * switch to private stacks whose saved stack pointer lives in a single global
+ * slot each (gstksave/tstksave, aes/arch/m68k/gemdosif.S), which likewise only
+ * works if they cannot interrupt one another.
+ *
+ * QEMU's m68k virt board gives no such guarantee.  The virtio-mmio slots hang
+ * off Goldfish PIC instances 1-4, which hw/intc/m68k_irqc.c takes at CPU
+ * autovector levels 2-5 -- all *below* the Goldfish RTC on instance 5, whose
+ * level 6 drives EmuTOS's 200 Hz tick.  So the tick preempts this dispatch
+ * mid-flight and re-enters forkq(), corrupting the AES fork queue (fpt/fpcnt
+ * and D.g_fpdx[]) until the dispatcher calls a garbage f_code.
+ *
+ * Masking to IPL 7 for the duration of the dispatch restores the mutual
+ * exclusion those handlers require.  No tick is lost by it: the Goldfish RTC's
+ * interrupt line stays asserted until goldfish_rtc_service() acknowledges it,
+ * so a tick raised while we are masked is simply taken on the way out.
+ *
+ * Nothing is needed on ARM, where the CPU masks IRQs on exception entry.
+ */
 static void virtio_input_drain(VIRTIO_DEV *dev, struct virtio_input_event *buf, VIRTIO_INPUT_ROLE role)
 {
     UWORD idx;
     ULONG len;
     UWORD type, code;
     ULONG value;
+#if defined(MACHINE_VIRT_M68K)
+    WORD saved_sr;
+#endif
 
     virtio_handle_interrupt(dev);
+
+#if defined(MACHINE_VIRT_M68K)
+    saved_sr = set_sr(0x2700);
+#endif
 
     while (virtio_pop_used(dev, &idx, &len))
     {
@@ -330,6 +366,10 @@ static void virtio_input_drain(VIRTIO_DEV *dev, struct virtio_input_event *buf, 
                          (ULONG)sizeof(buf[idx]), VIRTIO_DESC_F_WRITE, 0);
         virtio_submit(dev, idx);
     }
+
+#if defined(MACHINE_VIRT_M68K)
+    set_sr(saved_sr);
+#endif
 
     virtio_notify(dev);
 }
