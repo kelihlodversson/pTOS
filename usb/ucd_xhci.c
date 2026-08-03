@@ -61,7 +61,7 @@ static long xhci_lowlevel_init(struct xhci_priv *priv)
     priv->have_resources = raspi_vl805_get_resources(&priv->resources);
     if (!priv->have_resources) {
         KINFO(("xhci: VL805 controller not available\n"));
-        return -1;
+        return EOPNOTSUPP;
     }
 
     KINFO(("xhci: MMIO 0x%lx size 0x%lx irq %u\n",
@@ -69,7 +69,7 @@ static long xhci_lowlevel_init(struct xhci_priv *priv)
            priv->resources.mmio_size,
            priv->resources.irq));
     KINFO(("xhci: controller bring-up is not implemented yet\n"));
-    return -1;
+    return EOPNOTSUPP;
 }
 
 static long xhci_ioctl(struct ucdif *u, short cmd, long arg)
@@ -89,10 +89,10 @@ static long xhci_ioctl(struct ucdif *u, short cmd, long arg)
     case SUBMIT_INT_MSG:
         (void)arg;
         KINFO(("xhci: transfer submission is not implemented yet\n"));
-        return -1;
+        return EOPNOTSUPP;
     default:
         (void)arg;
-        return -1;
+        return EINVFN;
     }
 }
 

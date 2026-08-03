@@ -71,7 +71,7 @@ config CONF_WITH_USB_DWC2
 
 config CONF_WITH_USB_XHCI
 	bool
-	depends on CONF_WITH_PCI
+	depends on CONF_WITH_USB && TARGET_RPI4 && CONF_WITH_PCI
 	default y if CONF_WITH_USB && TARGET_RPI4
 	help
 	  The xHCI host controller used for the Raspberry Pi 4/400 external
@@ -205,11 +205,15 @@ Create `bios/machine/raspi/raspi_vl805.c` with:
 #include "raspi_vl805.h"
 
 #define VL805_XHCI_CLASSCODE 0x0c0330UL
+#define VL805_BAR_IO 0x00000001UL
+#define VL805_BAR_MEM_TYPE_MASK 0x00000006UL
+#define VL805_BAR_MEM_TYPE_64 0x00000004UL
 
 BOOL raspi_vl805_get_resources(raspi_vl805_resources_t *resources)
 {
     PCI_HANDLE handle;
     pci_resource_t resource;
+    ULONG bar0;
     UBYTE irq;
     LONG ret;
 
@@ -222,6 +226,18 @@ BOOL raspi_vl805_get_resources(raspi_vl805_resources_t *resources)
     ret = pci_find_classcode(VL805_XHCI_CLASSCODE, 0UL, 0, &handle);
     if (ret != PCI_SUCCESSFUL) {
         KINFO(("VL805/xHCI: PCI device not found (%ld)\n", ret));
+        return FALSE;
+    }
+
+    ret = pci_read_config_long(handle, PCI_CONFIG_BAR0, &bar0);
+    if (ret != PCI_SUCCESSFUL) {
+        KINFO(("VL805/xHCI: PCI BAR0 cannot be read (%ld)\n", ret));
+        return FALSE;
+    }
+
+    if (((bar0 & VL805_BAR_IO) == 0UL) &&
+        ((bar0 & VL805_BAR_MEM_TYPE_MASK) == VL805_BAR_MEM_TYPE_64)) {
+        KINFO(("VL805/xHCI: 64-bit PCI BAR0 is not supported yet\n"));
         return FALSE;
     }
 
@@ -381,7 +397,7 @@ static long xhci_lowlevel_init(struct xhci_priv *priv)
     priv->have_resources = raspi_vl805_get_resources(&priv->resources);
     if (!priv->have_resources) {
         KINFO(("xhci: VL805 controller not available\n"));
-        return -1;
+        return EOPNOTSUPP;
     }
 
     KINFO(("xhci: MMIO 0x%lx size 0x%lx irq %u\n",
@@ -389,7 +405,7 @@ static long xhci_lowlevel_init(struct xhci_priv *priv)
            priv->resources.mmio_size,
            priv->resources.irq));
     KINFO(("xhci: controller bring-up is not implemented yet\n"));
-    return -1;
+    return EOPNOTSUPP;
 }
 
 static long xhci_ioctl(struct ucdif *u, short cmd, long arg)
@@ -409,10 +425,10 @@ static long xhci_ioctl(struct ucdif *u, short cmd, long arg)
     case SUBMIT_INT_MSG:
         (void)arg;
         KINFO(("xhci: transfer submission is not implemented yet\n"));
-        return -1;
+        return EOPNOTSUPP;
     default:
         (void)arg;
-        return -1;
+        return EINVFN;
     }
 }
 

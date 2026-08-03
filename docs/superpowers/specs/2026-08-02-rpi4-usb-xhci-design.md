@@ -39,7 +39,7 @@ This keeps the generic USB layer stable while making the Pi 4 path compile and f
 
 ### Kconfig and Build Wiring
 
-`CONF_WITH_USB` should depend on `MACHINE_RPI` and at least one supported host-controller option. For Raspberry Pi 4, it also depends on `CONF_WITH_PCI` because the external USB controller is discovered through PCI. `CONF_WITH_USB_DWC2` remains the default for Raspberry Pi 1/2/3. `CONF_WITH_USB_XHCI` becomes the Raspberry Pi 4 host-controller option and depends on `CONF_WITH_PCI`.
+`CONF_WITH_USB` should depend on `MACHINE_RPI` and at least one supported host-controller option. For Raspberry Pi 4, it also depends on `CONF_WITH_PCI` because the external USB controller is discovered through PCI. `CONF_WITH_USB_DWC2` remains the default for Raspberry Pi 1/2/3. `CONF_WITH_USB_XHCI` becomes the Raspberry Pi 4 host-controller option and depends on `CONF_WITH_USB`, `TARGET_RPI4`, and `CONF_WITH_PCI` so it cannot pull Raspberry Pi-specific VL805 code into other PCI-enabled targets.
 
 `usb/build.mk` adds `obj-$(CONF_WITH_USB_XHCI) += ucd_xhci.o`.
 
@@ -57,6 +57,7 @@ The initialization order remains simple: set up the generic USB API, initialize 
 Add a Raspberry Pi-specific helper that owns VL805 resource policy and keeps it out of generic USB code. BCM2711 PCIe discovery itself belongs to the generic PCI backend. The helper's first interface should be small:
 
 - Locate the VL805 xHCI function with generic PCI class lookup.
+- Reject 64-bit BAR0 explicitly until the generic PCI resource layer and Raspberry Pi mapping code can represent and map that address correctly.
 - Request the xHCI BAR resource with `pci_get_resource()`.
 - Return the xHCI MMIO base, size, and IRQ if available and usable.
 - Return failure without touching generic USB state when not available.
@@ -83,7 +84,8 @@ Once the xHCI controller is operational, the existing USB core allocates a root 
 ## Error Handling
 
 - If PCI/VL805 is missing, uninitialized, or unsupported, `LOWLEVEL_INIT` returns failure and logs a concise `KINFO` message.
-- If the VL805 BAR is absent, is an I/O resource, or maps to an unavailable high PCI MMIO window, resource discovery returns failure without pretending the controller is usable.
+- If the VL805 BAR is absent, is 64-bit, is an I/O resource, or maps to an unavailable high PCI MMIO window, resource discovery returns failure without pretending the controller is usable.
+- Until xHCI bring-up and transfers exist, the xHCI UCD returns explicit `EOPNOTSUPP` for unsupported operations and `EINVFN` for unknown ioctls.
 - If xHCI reset or halt/start transitions time out, return failure rather than continuing with partial state.
 - If DMA ring allocation or alignment requirements cannot be met, return failure before registering devices.
 - Avoid panics for absent hardware because QEMU raspi4b and non-Pi4 builds may expose different USB hardware.
