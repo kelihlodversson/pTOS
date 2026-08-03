@@ -43,6 +43,7 @@ obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfis
 
 obj-$(CONF_WITH_PCI) += pci_core.o
 obj-$(CONF_WITH_PCI_VIRT_ECAM) += virt_pci.o
+obj-$(CONF_WITH_PCI_RPI4_BRCMSTB) += raspi_pci.o
 
 obj-$(CONF_WITH_VIRTIO_BLK) += virtio_blk.o
 

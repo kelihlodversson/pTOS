@@ -16,12 +16,14 @@
 #include "string.h"
 
 #define PCI_MAX_DEVICES 64
+#define PCI_MAX_BUSES 8
 #define PCI_DEVICES_PER_BUS 32
 #define PCI_FUNCTIONS_PER_DEVICE 8
 #define PCI_HEADER_MULTIFUNCTION 0x80U
 #define PCI_HEADER_TYPE_MASK     0x7fU
 #define PCI_HEADER_TYPE_DEVICE   0x00U
 #define PCI_HEADER_TYPE_BRIDGE   0x01U
+#define PCI_CLASS_BRIDGE_PCI 0x060400UL
 #define PCI_BRIDGE_BARS          2
 #define PCI_BAR_IO              0x00000001UL
 #define PCI_BAR_MEM_TYPE_MASK   0x00000006UL
@@ -49,6 +51,8 @@ typedef struct {
 static const pci_backend_t *pci_backend;
 static pci_device_t pci_devices[PCI_MAX_DEVICES];
 static UWORD pci_device_count;
+static BOOL pci_bus_scanned[PCI_MAX_BUSES];
+static UBYTE pci_next_bus;
 static BOOL pci_table_full_reported;
 
 static pci_device_t *pci_device_from_handle(PCI_HANDLE handle);
@@ -57,7 +61,9 @@ static LONG pci_read_config_raw(pci_device_t *device, UWORD reg, UWORD size, ULO
 static LONG pci_write_config_raw(pci_device_t *device, UWORD reg, UWORD size, ULONG value);
 static void pci_scan_bus(UBYTE bus);
 static void pci_scan_device(UBYTE bus, UBYTE dev);
-static void pci_add_function(UBYTE bus, UBYTE dev, UBYTE func);
+static pci_device_t *pci_add_function(UBYTE bus, UBYTE dev, UBYTE func);
+static void pci_scan_bridge(pci_device_t *device);
+static BOOL pci_is_pci_bridge(const pci_device_t *device);
 static void pci_decode_bars(pci_device_t *device);
 static void pci_decode_bar(pci_device_t *device, UWORD bar);
 static UWORD pci_bar_limit(const pci_device_t *device);
@@ -148,6 +154,12 @@ static void pci_scan_bus(UBYTE bus)
 {
     UBYTE dev;
 
+    if (bus >= PCI_MAX_BUSES)
+        return;
+    if (pci_bus_scanned[bus])
+        return;
+
+    pci_bus_scanned[bus] = TRUE;
     for (dev = 0; dev < PCI_DEVICES_PER_BUS; dev++)
         pci_scan_device(bus, dev);
 }
@@ -155,6 +167,7 @@ static void pci_scan_bus(UBYTE bus)
 static void pci_scan_device(UBYTE bus, UBYTE dev)
 {
     ULONG value;
+    pci_device_t *device;
     UBYTE header_type;
     UBYTE func;
 
@@ -167,7 +180,9 @@ static void pci_scan_device(UBYTE bus, UBYTE dev)
     if ((UWORD)value == PCI_ANY_VENDOR)
         return;
 
-    pci_add_function(bus, dev, 0);
+    device = pci_add_function(bus, dev, 0);
+    if (device != 0)
+        pci_scan_bridge(device);
 
     if (pci_backend->read_config(bus, dev, 0, PCI_CONFIG_HEADER_TYPE, 1, &value) != PCI_SUCCESSFUL)
         return;
@@ -178,13 +193,55 @@ static void pci_scan_device(UBYTE bus, UBYTE dev)
 
     for (func = 1; func < PCI_FUNCTIONS_PER_DEVICE; func++) {
         if (pci_backend->read_config(bus, dev, func, PCI_CONFIG_VENDOR_ID, 2, &value) == PCI_SUCCESSFUL) {
-            if ((UWORD)value != PCI_ANY_VENDOR)
-                pci_add_function(bus, dev, func);
+            if ((UWORD)value != PCI_ANY_VENDOR) {
+                device = pci_add_function(bus, dev, func);
+                if (device != 0)
+                    pci_scan_bridge(device);
+            }
         }
     }
 }
 
-static void pci_add_function(UBYTE bus, UBYTE dev, UBYTE func)
+static BOOL pci_is_pci_bridge(const pci_device_t *device)
+{
+    if (device == 0)
+        return FALSE;
+    if ((device->header_type & PCI_HEADER_TYPE_MASK) != PCI_HEADER_TYPE_BRIDGE)
+        return FALSE;
+    return (device->classcode & PCI_CLASS_CODE_MASK) == PCI_CLASS_BRIDGE_PCI;
+}
+
+static void pci_scan_bridge(pci_device_t *device)
+{
+    ULONG value;
+    UBYTE secondary;
+    UBYTE subordinate;
+
+    if (!pci_is_pci_bridge(device))
+        return;
+
+    if (pci_read_config_raw(device, PCI_CONFIG_SECONDARY_BUS, 1, &value) != PCI_SUCCESSFUL)
+        return;
+    secondary = (UBYTE)value;
+
+    if (pci_read_config_raw(device, PCI_CONFIG_SUBORDINATE_BUS, 1, &value) != PCI_SUCCESSFUL)
+        return;
+    subordinate = (UBYTE)value;
+
+    if ((secondary == 0U) || (subordinate < secondary)) {
+        if (pci_next_bus >= PCI_MAX_BUSES)
+            return;
+        secondary = pci_next_bus++;
+        subordinate = secondary;
+        pci_write_config_raw(device, PCI_CONFIG_PRIMARY_BUS, 1, (ULONG)device->bus);
+        pci_write_config_raw(device, PCI_CONFIG_SECONDARY_BUS, 1, (ULONG)secondary);
+        pci_write_config_raw(device, PCI_CONFIG_SUBORDINATE_BUS, 1, (ULONG)subordinate);
+    }
+
+    pci_scan_bus(secondary);
+}
+
+static pci_device_t *pci_add_function(UBYTE bus, UBYTE dev, UBYTE func)
 {
     ULONG value;
     ULONG base;
@@ -197,7 +254,7 @@ static void pci_add_function(UBYTE bus, UBYTE dev, UBYTE func)
             KINFO(("pci: device table full\n"));
             pci_table_full_reported = TRUE;
         }
-        return;
+        return 0;
     }
 
     device = &pci_devices[pci_device_count];
@@ -207,23 +264,23 @@ static void pci_add_function(UBYTE bus, UBYTE dev, UBYTE func)
     device->func = func;
 
     if (pci_backend->read_config(bus, dev, func, PCI_CONFIG_VENDOR_ID, 2, &value) != PCI_SUCCESSFUL)
-        return;
+        return 0;
     device->vendor = (UWORD)value;
 
     if (pci_backend->read_config(bus, dev, func, PCI_CONFIG_DEVICE_ID, 2, &value) != PCI_SUCCESSFUL)
-        return;
+        return 0;
     device->device = (UWORD)value;
 
     if (pci_backend->read_config(bus, dev, func, PCI_CONFIG_BASE_CLASS, 1, &base) != PCI_SUCCESSFUL)
-        return;
+        return 0;
     if (pci_backend->read_config(bus, dev, func, PCI_CONFIG_SUBCLASS, 1, &subclass) != PCI_SUCCESSFUL)
-        return;
+        return 0;
     if (pci_backend->read_config(bus, dev, func, PCI_CONFIG_PROGIF, 1, &progif) != PCI_SUCCESSFUL)
-        return;
+        return 0;
     device->classcode = ((base & 0xffUL) << 16) | ((subclass & 0xffUL) << 8) | (progif & 0xffUL);
 
     if (pci_backend->read_config(bus, dev, func, PCI_CONFIG_HEADER_TYPE, 1, &value) != PCI_SUCCESSFUL)
-        return;
+        return 0;
     device->header_type = (UBYTE)value;
 
     if (pci_backend->read_config(bus, dev, func, PCI_CONFIG_INTERRUPT_LINE, 1, &value) != PCI_SUCCESSFUL)
@@ -239,6 +296,7 @@ static void pci_add_function(UBYTE bus, UBYTE dev, UBYTE func)
     device->callback = 0;
     device->used = 0;
     pci_device_count++;
+    return device;
 }
 
 static void pci_decode_bars(pci_device_t *device)
@@ -354,6 +412,8 @@ LONG pci_init(void)
     pci_device_count = 0;
     pci_table_full_reported = FALSE;
     memset(pci_devices, 0, sizeof(pci_devices));
+    memset(pci_bus_scanned, 0, sizeof(pci_bus_scanned));
+    pci_next_bus = 1U;
     pci_backend = pci_backend_get();
 
     if ((pci_backend == 0) || (pci_backend->init == 0))
@@ -863,6 +923,8 @@ LONG pci_virt_to_bus(PCI_HANDLE handle, ULONG address, pci_mem_t *mem)
     bus_address = address;
     if ((pci_backend != 0) && (pci_backend->phys_to_bus != 0)) {
         ret = pci_backend->phys_to_bus(address, FALSE, &bus_address);
+        if (ret == PCI_BACKEND_UNMAPPABLE)
+            return PCI_BAD_RESOURCE;
         if ((ret != PCI_SUCCESSFUL) && (ret != PCI_BAD_RESOURCE))
             return PCI_GENERAL_ERROR;
     }
@@ -885,6 +947,8 @@ LONG pci_bus_to_virt(PCI_HANDLE handle, ULONG address, pci_mem_t *mem)
     phys_address = address;
     if ((pci_backend != 0) && (pci_backend->bus_to_phys != 0)) {
         ret = pci_backend->bus_to_phys(address, FALSE, &phys_address);
+        if (ret == PCI_BACKEND_UNMAPPABLE)
+            return PCI_BAD_RESOURCE;
         if ((ret != PCI_SUCCESSFUL) && (ret != PCI_BAD_RESOURCE))
             return PCI_GENERAL_ERROR;
     }

@@ -11,6 +11,8 @@
 #include "portab.h"
 #include "pci.h"
 
+#define PCI_BACKEND_UNMAPPABLE       -1000L
+
 typedef struct {
     ULONG ecam_base;
     ULONG ecam_size;
@@ -25,6 +27,7 @@ typedef struct {
     LONG (*get_windows)(pci_backend_windows_t *windows);
     LONG (*read_config)(UBYTE bus, UBYTE dev, UBYTE func, UWORD reg, UWORD size, ULONG *value);
     LONG (*write_config)(UBYTE bus, UBYTE dev, UBYTE func, UWORD reg, UWORD size, ULONG value);
+    /* PCI_BAD_RESOURCE means outside this backend's windows; callers may fall back. */
     LONG (*bus_to_phys)(ULONG bus_address, BOOL io, ULONG *phys_address);
     LONG (*phys_to_bus)(ULONG phys_address, BOOL io, ULONG *bus_address);
     LONG (*hook_interrupt)(PCI_HANDLE handle, UBYTE line, pci_interrupt_handler_t handler, void *param);
