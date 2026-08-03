@@ -217,8 +217,18 @@ static LONG raspi_pci_init(void)
 
     power_state.value1 = DEVICE_ID_USB_HCD;
     power_state.value2 = POWER_STATE_ON | POWER_STATE_WAIT;
-    if (!raspi_prop_get_tag(PROPTAG_SET_POWER_STATE, &power_state, sizeof power_state, sizeof(ULONG) * 2))
-        KDEBUG(("pci: RPi4 USB power-state request failed\n"));
+    if (!raspi_prop_get_tag(PROPTAG_SET_POWER_STATE, &power_state, sizeof power_state, sizeof(ULONG) * 2)) {
+        KINFO(("pci: RPi4 USB power-state request failed\n"));
+        return PCI_GENERAL_ERROR;
+    }
+    if (power_state.value2 & POWER_STATE_NO_DEVICE) {
+        KINFO(("pci: RPi4 USB power domain not found\n"));
+        return PCI_DEVICE_NOT_FOUND;
+    }
+    if (!(power_state.value2 & POWER_STATE_ON)) {
+        KINFO(("pci: RPi4 USB power domain did not power on\n"));
+        return PCI_GENERAL_ERROR;
+    }
 
     raspi_pci_set_bridge_reset(TRUE);
     raspi_pci_set_perst(TRUE);
