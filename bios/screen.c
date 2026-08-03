@@ -712,41 +712,57 @@ static ULONG initial_vram_size(void)
 #endif
 }
 #endif
-static void shifter_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez)
+static BOOL shifter_get_current_mode_desc(SCREEN_MODE_DESC *mode)
 {
     WORD vmode;                         /* video mode */
 
     vmode = (sshiftmod & 7);            /* Get video mode from copy of hardware */
     KDEBUG(("vmode: %d\n", vmode));
 
-    *planes = video_mode[vmode].planes;
-    *hz_rez = video_mode[vmode].hz_rez;
-    *vt_rez = video_mode[vmode].vt_rez;
+    mode->width = video_mode[vmode].hz_rez;
+    mode->height = video_mode[vmode].vt_rez;
+    mode->bits_per_pixel = video_mode[vmode].planes;
+    mode->pitch = (ULONG)mode->width / 8UL * mode->bits_per_pixel;
+    mode->layout = SCREEN_LAYOUT_PLANAR;
+    mode->color_model = SCREEN_COLOR_INDEXED;
+    mode->pixel_format = SCREEN_PIXEL_NONE;
+    mode->flags = 0UL;
+    return screen_mode_validate(mode);
 }
 
-static void atari_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez)
+static BOOL atari_get_current_mode_desc(SCREEN_MODE_DESC *mode)
 {
 #if CONF_WITH_VIDEL
-    if (has_videl) {
-        videl_get_current_mode_info(planes, hz_rez, vt_rez);
-    } else
+    if (has_videl)
+        return videl_get_current_mode_desc(mode);
+    else
 #endif
     {
-        shifter_get_current_mode_info(planes, hz_rez, vt_rez);
+        return shifter_get_current_mode_desc(mode);
     }
+}
+
+BOOL screen_get_current_mode_desc(SCREEN_MODE_DESC *mode)
+{
+    MAYBE_UNUSED(atari_get_current_mode_desc);
+
+#ifdef MACHINE_AMIGA
+    return amiga_get_current_mode_desc(mode);
+#elif defined(MACHINE_RPI)
+    return raspi_get_current_mode_desc(mode);
+#else
+    return atari_get_current_mode_desc(mode);
+#endif
 }
 
 void screen_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez)
 {
-    MAYBE_UNUSED(atari_get_current_mode_info);
+    SCREEN_MODE_DESC mode;
 
-#ifdef MACHINE_AMIGA
-    amiga_get_current_mode_info(planes, hz_rez, vt_rez);
-#elif defined(MACHINE_RPI)
-    raspi_get_current_mode_info(planes, hz_rez, vt_rez);
-#else
-    atari_get_current_mode_info(planes, hz_rez, vt_rez);
-#endif
+    screen_get_current_mode_desc(&mode);
+    *planes = mode.bits_per_pixel;
+    *hz_rez = mode.width;
+    *vt_rez = mode.height;
 }
 
 /* returns 'standard' pixel sizes */

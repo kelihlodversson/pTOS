@@ -345,11 +345,17 @@ WORD amiga_check_moderez(WORD moderez)
     return (return_mode==current_mode)?0:return_mode;
 }
 
-void amiga_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez)
+BOOL amiga_get_current_mode_desc(SCREEN_MODE_DESC *mode)
 {
-    *planes = 1;
-    *hz_rez = amiga_screen_width;
-    *vt_rez = amiga_screen_height;
+    mode->width = amiga_screen_width;
+    mode->height = amiga_screen_height;
+    mode->bits_per_pixel = 1;
+    mode->pitch = amiga_screen_width_in_bytes;
+    mode->layout = SCREEN_LAYOUT_PLANAR;
+    mode->color_model = SCREEN_COLOR_INDEXED;
+    mode->pixel_format = SCREEN_PIXEL_NONE;
+    mode->flags = 0UL;
+    return screen_mode_validate(mode);
 }
 
 void amiga_screen_init(void)

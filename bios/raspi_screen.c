@@ -234,11 +234,17 @@ WORD raspi_check_moderez(WORD moderez)
 
 }
 
-void raspi_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez)
+BOOL raspi_get_current_mode_desc(SCREEN_MODE_DESC *mode)
 {
-    *planes = 8;
-    *hz_rez = raspi_screen_width;
-    *vt_rez = raspi_screen_height;
+    mode->width = raspi_screen_width;
+    mode->height = raspi_screen_height;
+    mode->bits_per_pixel = 8;
+    mode->pitch = raspi_screen_width_in_bytes;
+    mode->layout = SCREEN_LAYOUT_PACKED;
+    mode->color_model = SCREEN_COLOR_INDEXED;
+    mode->pixel_format = SCREEN_PIXEL_NONE;
+    mode->flags = 0UL;
+    return screen_mode_validate(mode);
 }
 
 void raspi_setphys(const UBYTE *addr)

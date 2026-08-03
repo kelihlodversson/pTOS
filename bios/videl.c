@@ -824,11 +824,29 @@ WORD videl_check_moderez(WORD moderez)
     return (return_mode==current_mode)?0:return_mode;
 }
 
-void videl_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez)
+BOOL videl_get_current_mode_desc(SCREEN_MODE_DESC *mode)
 {
-    *planes = get_videl_bpp();
-    *hz_rez = get_videl_width();
-    *vt_rez = get_videl_height();
+    UWORD bpp;
+
+    bpp = get_videl_bpp();
+    mode->width = get_videl_width();
+    mode->height = get_videl_height();
+    mode->bits_per_pixel = bpp;
+    mode->flags = 0UL;
+
+    if (bpp == 16) {
+        mode->layout = SCREEN_LAYOUT_PACKED;
+        mode->color_model = SCREEN_COLOR_TRUECOLOR;
+        mode->pixel_format = SCREEN_PIXEL_RGB555;
+        mode->pitch = (ULONG)(*(volatile UWORD *)0xffff8210) * 2UL;
+    } else {
+        mode->layout = SCREEN_LAYOUT_PLANAR;
+        mode->color_model = SCREEN_COLOR_INDEXED;
+        mode->pixel_format = SCREEN_PIXEL_NONE;
+        mode->pitch = (ULONG)mode->width / 8UL * bpp;
+    }
+
+    return screen_mode_validate(mode);
 }
 
 /*

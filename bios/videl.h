@@ -33,6 +33,7 @@
 
 #include "portab.h"
 #include "tosvars.h"
+#include "screen_mode.h"
 
 #define SPSHIFT             0xffff8266L
 
@@ -93,7 +94,7 @@ WORD vgetrgb(WORD index,WORD count,ULONG *rgb);
 WORD get_videl_mode(void);
 WORD vfixmode(WORD mode);
 WORD videl_check_moderez(WORD moderez);
-void videl_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez);
+BOOL videl_get_current_mode_desc(SCREEN_MODE_DESC *mode);
 
 extern WORD current_video_mode;
 

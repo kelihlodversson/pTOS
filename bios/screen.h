@@ -16,6 +16,7 @@
 
 #include "portab.h"
 #include "tosvars.h"
+#include "screen_mode.h"
 
 #define ST_VRAM_SIZE        32000UL
 #define TT_VRAM_SIZE        153600UL
@@ -119,6 +120,7 @@ void set_rez_hacked(void);
 int rez_changeable(void);
 WORD get_monitor_type(void);
 void screen_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez);
+BOOL screen_get_current_mode_desc(SCREEN_MODE_DESC *mode);
 void get_pixel_size(WORD *width,WORD *height);
 
 /* hardware independant xbios routines */

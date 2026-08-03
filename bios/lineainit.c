@@ -38,11 +38,16 @@ struct _lineavars linea_vars;
 
 void linea_init(void)
 {
+    SCREEN_MODE_DESC mode;
 
-    screen_get_current_mode_info(&linea_vars.v_planes, &linea_vars.V_REZ_HZ, &linea_vars.V_REZ_VT);
+    if (!screen_get_current_mode_desc(&mode))
+        panic("Invalid current screen mode");
 
-    linea_vars.v_lin_wr = linea_vars.V_REZ_HZ / 8 * linea_vars.v_planes;     /* bytes per line */
-    linea_vars.BYTES_LIN = linea_vars.v_lin_wr;       /* I think BYTES_LIN = v_lin_wr (PES) */
+    linea_vars.v_planes = mode.bits_per_pixel;
+    linea_vars.V_REZ_HZ = mode.width;
+    linea_vars.V_REZ_VT = mode.height;
+    linea_vars.v_lin_wr = (UWORD)mode.pitch;        /* bytes per line */
+    linea_vars.BYTES_LIN = (UWORD)mode.pitch;       /* I think BYTES_LIN = v_lin_wr (PES) */
 
     mcs_ptr = (linea_vars.v_planes <= 4) ? (MCS *)&linea_vars.mouse_cursor_save : &ext_mouse_cursor_save;
 
