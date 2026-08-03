@@ -923,6 +923,8 @@ LONG pci_virt_to_bus(PCI_HANDLE handle, ULONG address, pci_mem_t *mem)
     bus_address = address;
     if ((pci_backend != 0) && (pci_backend->phys_to_bus != 0)) {
         ret = pci_backend->phys_to_bus(address, FALSE, &bus_address);
+        if (ret == PCI_BACKEND_UNMAPPABLE)
+            return PCI_BAD_RESOURCE;
         if ((ret != PCI_SUCCESSFUL) && (ret != PCI_BAD_RESOURCE))
             return PCI_GENERAL_ERROR;
     }
@@ -945,9 +947,9 @@ LONG pci_bus_to_virt(PCI_HANDLE handle, ULONG address, pci_mem_t *mem)
     phys_address = address;
     if ((pci_backend != 0) && (pci_backend->bus_to_phys != 0)) {
         ret = pci_backend->bus_to_phys(address, FALSE, &phys_address);
-        if (ret == PCI_BAD_RESOURCE)
-            return ret;
-        if (ret != PCI_SUCCESSFUL)
+        if (ret == PCI_BACKEND_UNMAPPABLE)
+            return PCI_BAD_RESOURCE;
+        if ((ret != PCI_SUCCESSFUL) && (ret != PCI_BAD_RESOURCE))
             return PCI_GENERAL_ERROR;
     }
     mem->address = phys_address;

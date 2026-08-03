@@ -344,7 +344,7 @@ static LONG raspi_pci_bus_to_phys(ULONG bus_address, BOOL io, ULONG *phys_addres
         (bus_address >= RASPI_PCIE_MMIO_BUS_BASE + RASPI_PCIE_MMIO_SIZE))
         return PCI_BAD_RESOURCE;
 
-    return PCI_BAD_RESOURCE;
+    return PCI_BACKEND_UNMAPPABLE;
 }
 
 static LONG raspi_pci_phys_to_bus(ULONG phys_address, BOOL io, ULONG *bus_address)
