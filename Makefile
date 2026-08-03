@@ -47,7 +47,7 @@ include tools/kconfig.mk
 # Goals that must work without a configuration, either because they are
 # what produces one, or because they do not compile anything.
 UNCONFIGURED_GOALS = $(CONFIG_TARGETS) help version clean distclean \
-                     expand crlf charset gitready indent checkindent \
+                     charset gitready indent checkindent \
                      bugready coldfire-sources
 
 ifeq (,$(filter $(UNCONFIGURED_GOALS),$(MAKECMDGOALS))$(filter release%,$(MAKECMDGOALS)))
@@ -919,21 +919,6 @@ indent:
 # gitready
 #
 
-EXPAND_FILES = $(wildcard */*.[chS] */*/*.[chS] */*/*/*.[chS] */*.awk */*.sh)
-EXPAND_NOFILES = vdi/arch/coldfire/vdi_tblit.S
-
-.PHONY: expand
-expand:
-	@for i in `grep -l '	' $(filter-out $(EXPAND_NOFILES), $(EXPAND_FILES))` ; do \
-		echo expanding $$i; \
-		expand <$$i >expand.tmp; \
-		mv expand.tmp $$i; \
-	done
-
-.PHONY: crlf
-crlf:
-	find . -type f '!' -path './.git/*' '!' -name '*.rsc' '!' -name '*.def' | xargs dos2unix
-
 # Check the sources charset (no automatic fix)
 .PHONY: charset
 charset:
@@ -941,7 +926,8 @@ charset:
 	find . -type f '!' -path '*/.git/*' '!' -path './obj/*' '!' -path './*.img' '!' -path './?rd*' '!' -path './draft*' '!' -path './bug*' '!' -path './mkrom*' '!' -name '*.def' '!' -name '*.rsc' '!' -name '*.icn' '!' -name '*.po' -print0 | xargs -0 file -i |grep -v us-ascii
 
 .PHONY: gitready
-gitready: expand crlf
+gitready:
+	tools/check-gitready.sh
 
 #
 # ColdFire autoconverted sources.
