@@ -60,3 +60,6 @@ __pycache__/
 
 # Subagent-driven-development scratch workspace (ledgers, briefs, reports)
 /.superpowers/
+
+# Local git worktrees
+/.worktrees/
