@@ -10,7 +10,7 @@ QEMU's current Raspberry Pi 4 model is not a functional validation target for th
 
 - Enable `CONF_WITH_PCI` for `TARGET_RPI4` only among Raspberry Pi targets.
 - Add a Raspberry Pi 4 BCM2711 PCIe backend behind the existing `pci_backend_t` interface.
-- Initialize the BCM2711 PCIe root complex enough for the shared PCI core to enumerate bus 0 and the downstream VL805 device.
+- Initialize the BCM2711 PCIe root complex enough for the shared PCI core to enumerate the root complex and the downstream VL805 device.
 - Provide config-space read/write callbacks using the Broadcom index/data register mechanism, not generic ECAM.
 - Describe the BCM2711 outbound memory window in the generic PCI resource model.
 - Provide bus/physical address translation for the supported PCI memory window.
@@ -22,7 +22,7 @@ QEMU's current Raspberry Pi 4 model is not a functional validation target for th
 - Do not implement MSI or MSI-X.
 - Do not add xHCI/VL805 driver logic; issue #37 consumes this backend later.
 - Do not add QEMU-specific fallbacks for Pi 4 PCIe because QEMU does not emulate this hardware path.
-- Do not change the generic PCI core unless the existing backend interface is insufficient.
+- Do not change the generic PCI core beyond the minimal bridge-bus enumeration needed for devices behind the Raspberry Pi 4 root complex.
 
 ## Architecture
 
@@ -38,6 +38,8 @@ bios/machine/raspi/raspi_pci.h
 `pci_backend_get()` for the Raspberry Pi backend should return the BCM2711 backend when `CONF_WITH_PCI_RPI4_BRCMSTB` is selected. The existing QEMU ARM virt backend remains unchanged and selected only by `CONF_WITH_PCI_VIRT_ECAM`.
 
 All BCM2711 register offsets, bit masks, link-training sequence details, and address-window constants belong in the Raspberry Pi backend file or a Raspberry Pi PCI header. Shared PCI code should continue to see only the generic backend callbacks.
+
+The generic PCI core from issue #56 currently scans bus 0 only. The Raspberry Pi 4 controller presents a PCIe root complex/root port, with VL805 behind the downstream bus. Issue #57 may therefore add minimal shared bridge enumeration: detect PCI-to-PCI bridge class/header type, assign or read secondary/subordinate bus numbers, and scan the secondary bus. This should be kept host-bridge-neutral and should not grow into a full PCI bus allocator beyond what the Pi 4 topology needs.
 
 ## Hardware Model
 
