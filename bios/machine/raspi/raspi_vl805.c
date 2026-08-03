@@ -49,7 +49,7 @@ BOOL raspi_vl805_get_resources(raspi_vl805_resources_t *resources)
 
     irq = 0;
     ret = pci_read_config_byte(handle, PCI_CONFIG_INTERRUPT_LINE, &irq);
-    if (ret != PCI_SUCCESSFUL)
+    if ((ret != PCI_SUCCESSFUL) || (irq == 0xffU))
         irq = 0;
 
     if (resources != 0) {
