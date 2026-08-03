@@ -67,8 +67,8 @@ To also attach virtio-input keyboard and tablet devices:
 
 The `-global virtio-mmio.force-legacy=false` flag is required on QEMU
 versions that default the `virt` machine's virtio-mmio transports to
-legacy/version-1; the virtio-blk driver only speaks modern/version-2
-virtio-mmio.
+legacy/version-1; the shared virtio-mmio transport driver only speaks
+modern/version-2 virtio-mmio.
 
 For more information on which Qemu versions to use, see [Circle's Qemu documentation](https://github.com/rsta2/circle/blob/f5999e58f14b90204aafa7859428661cd01b22b1/doc/qemu.txt)
 

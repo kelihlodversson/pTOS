@@ -33,6 +33,14 @@ void virtio_input_keytbl_init(void)
     for (i = 1; i <= VIRTIO_INPUT_KEYTBL_IDENTITY_MAX; i++)
         virtio_input_keytbl[i] = (UBYTE)i;
 
+    /* KEY_KPASTERISK (keypad *) is the one evdev code in the identity range
+     * above whose Atari scancode (0x37) has a special, non-key meaning:
+     * bios/ikbd.c reads it as "mouse button 3" and routes it to mousexvec()
+     * instead of normal key handling. The numeric keypad is out of scope for
+     * this driver, so drop this one code back to 0 (unmapped) rather than
+     * letting it fire a phantom middle-click. */
+    virtio_input_keytbl[55] = 0;
+
     /* Navigation cluster: evdev numbers these from the AT "E0-prefixed"
      * extended set, which doesn't line up with the identity block above.
      * Atari's IKBD has its own fixed codes for the same keys (see

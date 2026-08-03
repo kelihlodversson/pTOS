@@ -268,6 +268,16 @@ static void virtio_input_setup_eventq(VIRTIO_DEV *dev, struct virtio_input_event
 {
     UWORD i;
 
+#if ARCH_ARM
+    /* Invalidate before the first submission: if the BSS clear at boot left
+     * dirty cache lines over these buffers, a later natural eviction could
+     * write stale zeros back over an event the device has already DMA'd in,
+     * racing ahead of the ISR's own invalidate_data_cache() call in
+     * virtio_input_drain() below. Not needed on m68k, which has no data
+     * cache in this port. */
+    invalidate_data_cache(buf, (long)sizeof(struct virtio_input_event) * VIRTIO_QUEUE_SIZE);
+#endif
+
     for (i = 0; i < VIRTIO_QUEUE_SIZE; i++)
     {
         virtio_desc_set(dev, i, (ULONG)&buf[i] + dev->phys_offset,
