@@ -38,16 +38,19 @@
 #include "usb.h"
 #include "usb_hub.h"
 #include "usb_api.h"
+#if CONF_WITH_USB_XHCI
+#include "ucd_xhci.h"
+#endif
 
 struct usb_device usb_dev[USB_MAX_DEVICE];
 static long asynch_allowed;
 
 
-// Bultin drivers:
-#ifndef TARGET_RPI4
-extern void dwc2_init (void);
+/* Built-in drivers: */
+#if CONF_WITH_USB_DWC2
+extern void dwc2_init(void);
 #endif
-extern int usb_mouse_init (void);
+extern int usb_mouse_init(void);
 
 /***************************************************************************
  * Init USB Device
@@ -72,8 +75,11 @@ void usb_init(void)
     setup_usb_module_api();
 
     /* Initialize built-in drivers */
-#ifndef TARGET_RPI4
+#if CONF_WITH_USB_DWC2
     dwc2_init();
+#endif
+#if CONF_WITH_USB_XHCI
+    xhci_init();
 #endif
     usb_mouse_init();
 }
