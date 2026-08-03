@@ -11,7 +11,7 @@ menu "USB support"
 
 config CONF_WITH_USB
 	bool "USB stack"
-	depends on MACHINE_RPI
+	depends on MACHINE_RPI && (!TARGET_RPI4 || CONF_WITH_PCI)
 	default y
 	help
 	  A minimal USB stack, derived from the one in FreeMiNT and U-Boot.
