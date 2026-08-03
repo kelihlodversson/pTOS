@@ -48,6 +48,7 @@ The backend should use the Linux BCM2711 device-tree map as the fixed hardware d
 - PCIe controller registers: bus address `0x7d500000`, CPU physical address `0xfd500000`, size `0x9310`.
 - Outbound PCI memory range: PCI bus address `0xf8000000`, CPU physical address `0x600000000`, size `0x04000000`.
 - Inbound DMA range: PCI bus address `0x00000000`, CPU physical address `0x00000000`, size `0xc0000000`.
+- The initial backend programs a conservative 2 GiB inbound window (`0x80000000`) rather than the full 3 GiB hardware limit, avoiding any claim of DMA coverage above the lower power-of-two RAM viewport until bounce buffering or split inbound windows exist.
 
 pTOS is currently a 32-bit ARM image. The outbound CPU physical address is above 4 GiB, so the design must either rely on an already-established MMU mapping that makes the window accessible at a 32-bit virtual address, or explicitly add one before the PCI resource helpers are usable. If the current MMU code cannot map this range yet, the backend may still support config-space enumeration while memory resource access must return `PCI_BAD_RESOURCE` until the mapping is implemented.
 
@@ -58,7 +59,7 @@ The initialization should follow the minimal root-complex setup used by the Linu
 - Power on the relevant USB/PCIe hardware through the existing mailbox power-state mechanism when required.
 - Assert bridge reset and, for BCM2711, PERST# before changing controller state.
 - Deassert bridge reset, bring SerDes out of IDDQ, and program controller miscellaneous control fields for SCB access, unsupported-request behavior, RCB mode, and BCM2711 burst size.
-- Program inbound window 2 for the lower RAM range, respecting the BCM2711 first-3GB limitation.
+- Program inbound window 2 for the lower 2 GiB RAM range, within the BCM2711 first-3GB limitation.
 - Program outbound memory window 0 for the fixed 64 MiB PCI memory aperture.
 - Set the root complex class code to PCI-to-PCI bridge (`0x060400`) so generic enumeration sees a proper host bridge.
 - Deassert PERST#, wait for link training, and verify link-up before allowing downstream config-space access.
@@ -93,7 +94,7 @@ The backend should translate PCI bus addresses in the outbound memory range to t
 
 I/O port resources are not expected on the Raspberry Pi 4 host bridge and should return `PCI_BAD_RESOURCE`.
 
-RAM translation helpers should keep the generic identity behavior unless a concrete PCI DMA consumer needs a different mapping. The documented BCM2711 DMA limit is the lower 3 GiB; the design does not add bounce buffering.
+RAM translation helpers should keep the generic identity behavior unless a concrete PCI DMA consumer needs a different mapping. The documented BCM2711 DMA limit is the lower 3 GiB, but this first backend only advertises a 2 GiB inbound window; the design does not add bounce buffering.
 
 ## Interrupts
 
