@@ -58,6 +58,9 @@
 #include "delay.h"
 #include "biosbind.h"
 #include "memory.h"
+#if CONF_WITH_PCI
+#include "pci.h"
+#endif
 #include "nova.h"
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
@@ -423,6 +426,11 @@ static void bios_init(void)
 #if CONF_WITH_SCC
     if (has_scc)
         boot_status |= SCC_AVAILABLE;   /* track progress */
+#endif
+
+#if CONF_WITH_PCI
+    KDEBUG(("pci_init()\n"));
+    pci_init();
 #endif
 
     /* The sound init must be done before allowing MFC interrupts,
