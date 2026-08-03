@@ -69,7 +69,7 @@ The first pass should expose native functions equivalent to these service groups
 
 - `pci_init()` scans and caches devices.
 - `pci_find_device(UWORD vendor, UWORD device, UWORD index, PCI_HANDLE *handle)` finds by vendor/device. `vendor == 0xffff` iterates all discovered devices.
-- `pci_find_classcode(ULONG classcode, ULONG mask, UWORD index, PCI_HANDLE *handle)` finds by class code using explicit mask bits.
+- `pci_find_classcode(ULONG classcode, UWORD index, PCI_HANDLE *handle)` finds by class code using Atari-style mask bits embedded in the high byte of the `classcode` argument.
 - `pci_read_config_byte/word/long()` and `pci_write_config_byte/word/long()` access configuration space through a handle.
 - `pci_get_resource(PCI_HANDLE handle, UWORD bar, pci_resource_t *resource)` returns decoded BAR resources.
 - `pci_read_io_*`, `pci_write_io_*`, `pci_read_mem_*`, and `pci_write_mem_*` access resource-backed regions where implemented.
@@ -83,10 +83,10 @@ Exact function names can be adjusted to match project conventions during plannin
 
 Define documented PCI error/status values in the public header. They should include at least:
 
-- `PCI_OK` for success.
+- `PCI_SUCCESSFUL` for success.
 - `PCI_DEVICE_NOT_FOUND` when lookup misses.
 - `PCI_BAD_HANDLE` for invalid handles.
-- `PCI_BAD_REGISTER` for invalid configuration-space offsets or sizes.
+- `PCI_BAD_REGISTER_NUMBER` for invalid configuration-space offsets or sizes.
 - `PCI_BAD_RESOURCE` for absent or invalid BAR/resource requests.
 - `PCI_FUNC_NOT_SUPPORTED` for optional services the backend cannot provide.
 

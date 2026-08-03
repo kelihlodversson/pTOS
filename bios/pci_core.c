@@ -598,6 +598,10 @@ static LONG pci_find_resource_for_address(pci_device_t *device, BOOL io, ULONG a
     if ((device == 0) || (resource == 0) || (size == 0U))
         return PCI_BAD_RESOURCE;
 
+    if (((size == 2U) && ((address & 1UL) != 0UL)) ||
+        ((size == 4U) && ((address & 3UL) != 0UL)))
+        return PCI_BAD_RESOURCE;
+
     end = address + (ULONG)size;
     if (end < address)
         return PCI_BAD_RESOURCE;

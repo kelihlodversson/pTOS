@@ -146,11 +146,17 @@ static LONG virt_pci_phys_to_bus(ULONG phys_address, BOOL io, ULONG *bus_address
 
 static LONG virt_pci_hook_interrupt(PCI_HANDLE handle, UBYTE line, pci_interrupt_handler_t handler, void *param)
 {
+    (void)handle;
+    (void)line;
+    (void)handler;
+    (void)param;
     return PCI_FUNC_NOT_SUPPORTED;
 }
 
 static LONG virt_pci_unhook_interrupt(PCI_HANDLE handle, UBYTE line)
 {
+    (void)handle;
+    (void)line;
     return PCI_FUNC_NOT_SUPPORTED;
 }
 
