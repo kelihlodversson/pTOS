@@ -19,6 +19,10 @@
 #define PCI_DEVICES_PER_BUS 32
 #define PCI_FUNCTIONS_PER_DEVICE 8
 #define PCI_HEADER_MULTIFUNCTION 0x80U
+#define PCI_HEADER_TYPE_MASK     0x7fU
+#define PCI_HEADER_TYPE_DEVICE   0x00U
+#define PCI_HEADER_TYPE_BRIDGE   0x01U
+#define PCI_BRIDGE_BARS          2
 #define PCI_BAR_IO              0x00000001UL
 #define PCI_BAR_MEM_TYPE_MASK   0x00000006UL
 #define PCI_BAR_MEM_TYPE_64     0x00000004UL
@@ -56,8 +60,11 @@ static void pci_scan_device(UBYTE bus, UBYTE dev);
 static void pci_add_function(UBYTE bus, UBYTE dev, UBYTE func);
 static void pci_decode_bars(pci_device_t *device);
 static void pci_decode_bar(pci_device_t *device, UWORD bar);
+static UWORD pci_bar_limit(const pci_device_t *device);
 static ULONG pci_bar_size(ULONG mask, BOOL io);
 static BOOL pci_class_matches(ULONG device_class, ULONG requested_class);
+static void pci_self_check(void);
+static void pci_dummy_interrupt(void *param);
 static LONG pci_find_resource_for_address(pci_device_t *device, BOOL io, ULONG address, UWORD size, pci_resource_t **resource);
 static LONG pci_read_bus_byte(PCI_HANDLE handle, ULONG address, BOOL io, UBYTE *value);
 static LONG pci_read_bus_word(PCI_HANDLE handle, ULONG address, BOOL io, UWORD *value);
@@ -238,16 +245,19 @@ static void pci_decode_bars(pci_device_t *device)
 {
     UWORD bar;
     UWORD last;
+    UWORD limit;
     ULONG original;
     BOOL skip_next;
 
     memset(device->resources, 0, sizeof(device->resources));
 
-    for (bar = 0; bar < PCI_MAX_BARS; bar++) {
+    limit = pci_bar_limit(device);
+    for (bar = 0; bar < limit; bar++) {
         skip_next = FALSE;
         if (pci_read_config_raw(device, PCI_CONFIG_BAR0 + (bar * 4U), 4, &original) == PCI_SUCCESSFUL) {
             if (((original & PCI_BAR_IO) == 0UL) &&
-                ((original & PCI_BAR_MEM_TYPE_MASK) == PCI_BAR_MEM_TYPE_64))
+                ((original & PCI_BAR_MEM_TYPE_MASK) == PCI_BAR_MEM_TYPE_64) &&
+                (bar + 1U < limit))
                 skip_next = TRUE;
         }
         pci_decode_bar(device, bar);
@@ -263,6 +273,18 @@ static void pci_decode_bars(pci_device_t *device)
 
     if (last < PCI_MAX_BARS)
         device->resources[last].flags |= PCI_RESOURCE_LAST;
+}
+
+static UWORD pci_bar_limit(const pci_device_t *device)
+{
+    UBYTE type;
+
+    type = device->header_type & PCI_HEADER_TYPE_MASK;
+    if (type == PCI_HEADER_TYPE_DEVICE)
+        return PCI_MAX_BARS;
+    if (type == PCI_HEADER_TYPE_BRIDGE)
+        return PCI_BRIDGE_BARS;
+    return 0;
 }
 
 static void pci_decode_bar(pci_device_t *device, UWORD bar)
@@ -343,6 +365,7 @@ LONG pci_init(void)
 
     pci_scan_bus(0);
     KINFO(("pci: %u device(s) found\n", pci_device_count));
+    pci_self_check();
 
     return PCI_SUCCESSFUL;
 }
@@ -388,6 +411,58 @@ static BOOL pci_class_matches(ULONG device_class, ULONG requested_class)
         mask &= 0x00ffff00UL;
 
     return (device_class & mask) == (requested_class & mask & PCI_CLASS_CODE_MASK);
+}
+
+static void pci_dummy_interrupt(void *param)
+{
+    (void)param;
+}
+
+static void pci_self_check(void)
+{
+    PCI_HANDLE handle;
+    PCI_HANDLE all_handle;
+    pci_mem_t mem;
+    ULONG value;
+    UWORD word;
+    LONG ret;
+
+    if (pci_device_count == 0)
+        return;
+
+    mem.address = 0UL;
+    mem.length = 0UL;
+    handle = pci_devices[0].handle;
+
+    ret = pci_find_device(pci_devices[0].vendor, pci_devices[0].device, 0, &handle);
+    if ((ret != PCI_SUCCESSFUL) || (handle != pci_devices[0].handle))
+        KINFO(("pci: self-check exact lookup failed (%ld)\n", ret));
+
+    ret = pci_find_device(PCI_ANY_VENDOR, 0, 0, &all_handle);
+    if ((ret != PCI_SUCCESSFUL) || (all_handle != pci_devices[0].handle))
+        KINFO(("pci: self-check wildcard lookup failed (%ld)\n", ret));
+
+    ret = pci_find_classcode(pci_devices[0].classcode | PCI_CLASS_MASK_PROGIF, 0, &handle);
+    if (ret != PCI_SUCCESSFUL)
+        KINFO(("pci: self-check class lookup failed (%ld)\n", ret));
+
+    ret = pci_read_config_long(PCI_HANDLE_NONE, PCI_CONFIG_VENDOR_ID, &value);
+    if (ret != PCI_BAD_HANDLE)
+        KINFO(("pci: self-check invalid handle returned %ld\n", ret));
+
+    ret = pci_read_config_word(pci_devices[0].handle, 0xffU, &word);
+    if (ret != PCI_BAD_REGISTER_NUMBER)
+        KINFO(("pci: self-check invalid register returned %ld\n", ret));
+
+    ret = pci_hook_interrupt(pci_devices[0].handle, pci_dummy_interrupt, 0);
+    if ((ret != PCI_SUCCESSFUL) && (ret != PCI_FUNC_NOT_SUPPORTED))
+        KINFO(("pci: self-check interrupt hook returned %ld\n", ret));
+    if (ret == PCI_SUCCESSFUL)
+        pci_unhook_interrupt(pci_devices[0].handle);
+
+    ret = pci_virt_to_bus(pci_devices[0].handle, 0x40000000UL, &mem);
+    if ((ret != PCI_SUCCESSFUL) || (mem.address != 0x40000000UL))
+        KINFO(("pci: self-check RAM virt-to-bus failed (%ld, %08lx)\n", ret, mem.address));
 }
 
 LONG pci_find_classcode(ULONG classcode, UWORD index, PCI_HANDLE *handle)
@@ -773,6 +848,7 @@ LONG pci_get_pagesize(ULONG *pagesize)
 LONG pci_virt_to_bus(PCI_HANDLE handle, ULONG address, pci_mem_t *mem)
 {
     ULONG bus_address;
+    LONG ret;
     pci_device_t *device;
 
     if (mem == 0)
@@ -782,7 +858,8 @@ LONG pci_virt_to_bus(PCI_HANDLE handle, ULONG address, pci_mem_t *mem)
         return PCI_BAD_HANDLE;
     bus_address = address;
     if ((pci_backend != 0) && (pci_backend->phys_to_bus != 0)) {
-        if (pci_backend->phys_to_bus(address, FALSE, &bus_address) != PCI_SUCCESSFUL)
+        ret = pci_backend->phys_to_bus(address, FALSE, &bus_address);
+        if ((ret != PCI_SUCCESSFUL) && (ret != PCI_BAD_RESOURCE))
             return PCI_GENERAL_ERROR;
     }
     mem->address = bus_address;
@@ -793,6 +870,7 @@ LONG pci_virt_to_bus(PCI_HANDLE handle, ULONG address, pci_mem_t *mem)
 LONG pci_bus_to_virt(PCI_HANDLE handle, ULONG address, pci_mem_t *mem)
 {
     ULONG phys_address;
+    LONG ret;
     pci_device_t *device;
 
     if (mem == 0)
@@ -802,7 +880,8 @@ LONG pci_bus_to_virt(PCI_HANDLE handle, ULONG address, pci_mem_t *mem)
         return PCI_BAD_HANDLE;
     phys_address = address;
     if ((pci_backend != 0) && (pci_backend->bus_to_phys != 0)) {
-        if (pci_backend->bus_to_phys(address, FALSE, &phys_address) != PCI_SUCCESSFUL)
+        ret = pci_backend->bus_to_phys(address, FALSE, &phys_address);
+        if ((ret != PCI_SUCCESSFUL) && (ret != PCI_BAD_RESOURCE))
             return PCI_GENERAL_ERROR;
     }
     mem->address = phys_address;

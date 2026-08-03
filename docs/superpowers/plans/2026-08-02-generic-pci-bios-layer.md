@@ -606,6 +606,7 @@ static ULONG pci_bar_size(ULONG mask, BOOL io);
 Requirements:
 
 - During `pci_add_function()`, call `pci_decode_bars()` after interrupt fields are read.
+- Limit BAR probing by PCI header type: type 0 devices have six BARs, type 1 bridges have two BARs, and other header types are not BAR-decoded by this first implementation.
 - For each BAR, save the original value, write `0xffffffffUL`, read the mask, restore the original value, and skip BARs where original or mask is zero.
 - I/O BAR bus address is `original & PCI_BAR_IO_MASK` and size uses `mask & PCI_BAR_IO_MASK`.
 - Memory BAR bus address is `original & PCI_BAR_MEM_MASK` and size uses `mask & PCI_BAR_MEM_MASK`.
@@ -693,7 +694,7 @@ Requirements:
 
 - `pci_get_pagesize()` writes `0` and returns `PCI_SUCCESSFUL`.
 - Handle-based functions validate the handle before using backend translation.
-- For the first backend, translation is identity unless backend `phys_to_bus()` or `bus_to_phys()` maps the address through a PCI window.
+- For the first backend, translation is identity when backend `phys_to_bus()` or `bus_to_phys()` reports that the address is outside its PCI windows; PCI window translations still use the backend result.
 - Fill `pci_mem_t.address` with the translated address and `pci_mem_t.length` with `0xffffffffUL - address` when translation succeeds.
 
 - [ ] **Step 7: Compile-check resource implementation**
@@ -767,11 +768,11 @@ Run the QEMU command appropriate for the produced `virt-arm` image. If the build
 qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -display none -serial stdio -device virtio-net-pci
 ```
 
-Expected: boot reaches BIOS startup far enough to print PCI initialization, and the log includes `pci: N device(s) found` with `N` greater than zero. If the command line needs this tree's documented virt-arm boot flags, adjust only the machine/image arguments and record the exact command in the report.
+Expected: boot reaches BIOS startup far enough to print PCI initialization, and the log includes `pci: N device(s) found` with `N` greater than zero. PCI self-check failures must not appear in the log. If the command line needs this tree's documented virt-arm boot flags, adjust only the machine/image arguments and record the exact command in the report.
 
 - [ ] **Step 4: Verify debug discoverability without adding permanent diagnostics**
 
-Inspect boot output from Step 3. If `pci: N device(s) found` is the only PCI log, keep it. Do not add a permanent CLI command in issue #56 because `virt-arm_defconfig` disables CLI and this feature is a BIOS service, not a user command.
+Inspect boot output from Step 3. The PCI core may run a boot-time self-check that logs only failures through existing kernel logging; it should cover exact lookup, wildcard lookup, class-code masks, invalid handle/register errors, interrupt hook supported-or-unsupported status, and identity RAM DMA translation. Do not add a permanent CLI command in issue #56 because `virt-arm_defconfig` disables CLI and this feature is a BIOS service, not a user command.
 
 - [ ] **Step 5: Run readiness checks**
 

@@ -163,7 +163,7 @@ Runtime checks under QEMU ARM `virt`:
 - Confirm invalid handles and invalid config offsets return documented errors.
 - Confirm optional interrupt hook/unhook either work or return `PCI_FUNC_NOT_SUPPORTED`.
 
-Unit-style tests are not established for BIOS code in this tree, so validation should be build checks plus QEMU runtime smoke tests and small diagnostic logging or CLI hooks only if they fit existing project patterns.
+Unit-style tests are not established for BIOS code in this tree, so validation should be build checks plus QEMU runtime smoke tests and small diagnostic logging or CLI hooks only if they fit existing project patterns. The first PCI backend uses a boot-time self-check in the PCI core that reports failures through existing kernel logging and exercises exact lookup, wildcard lookup, class-code mask lookup, invalid handle/register errors, interrupt hook supported-or-unsupported status, and RAM identity DMA translation without adding a user-facing command.
 
 ## Follow-Up Integration
 
