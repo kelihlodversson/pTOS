@@ -20,6 +20,7 @@
 #include "machine.h"
 #include "screen.h"
 #include "videl.h"
+#include "vdi_backend_api.h"
 #include "asm.h"
 #include "tosvars.h"
 #include "lineavars.h"
@@ -1012,6 +1013,10 @@ void setscreen(UBYTE *logLoc, const UBYTE *physLoc, WORD rez, WORD videlmode)
         font_set_default(videlmode);
         vt52_init();
     }
+
+    /* the screen geometry or the logical base may have changed, so every
+     * workstation must rebind to the matching backend */
+    vdi_screen_mode_changed();
 }
 
 void setpalette(const UWORD *palettePtr)

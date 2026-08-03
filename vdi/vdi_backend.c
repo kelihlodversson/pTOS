@@ -65,6 +65,11 @@ BOOL vdi_backend_bind(Vwk *vwk, const SCREEN_MODE_DESC *mode, UBYTE *framebuffer
         break;
     }
 
+    /* Tear down any previous backend before opening a new one, so a
+     * re-bind (e.g. after setscreen) cannot leak backend state. */
+    if (state->ops != NULL && state->ops->close != NULL)
+        state->ops->close(vwk);
+
     state->ops = ops;
     state->framebuffer = framebuffer;
     if (ops == NULL)

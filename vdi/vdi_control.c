@@ -20,6 +20,7 @@
 #include "../bios/screen.h"
 #include "asm.h"
 #include "string.h"
+#include "vdi_backend_api.h"
 
 
 static Vwk virt_work;          /* attribute areas for workstations */
@@ -160,6 +161,35 @@ Vwk * get_vwk_by_handle(WORD handle)
     } while ((vwk = vwk->next_work));
 
     return NULL;
+}
+
+
+
+Vwk *vdi_get_screen_vwk(void)
+{
+    return &virt_work;
+}
+
+
+
+/*
+ * Called from the BIOS setscreen() path: rebind the physical workstation
+ * and every virtual one to the backend matching the current screen mode.
+ * If no backend supports the mode, the workstations are left unbound and
+ * drawing no-ops until a supported mode is restored.
+ */
+void vdi_screen_mode_changed(void)
+{
+    SCREEN_MODE_DESC mode;
+    Vwk *vwk;
+
+    if (!screen_get_current_mode_desc(&mode))
+        return;
+
+    vdi_backend_bind(&virt_work, &mode, v_bas_ad);
+
+    for (vwk = virt_work.next_work; vwk != NULL; vwk = vwk->next_work)
+        vdi_backend_clone(vwk, &virt_work);
 }
 
 
@@ -347,6 +377,7 @@ void vdi_v_opnvwk(Vwk * vwk)
 
     vwk->handle = CONTRL->handle = handle;
     init_wk(vwk);
+    vdi_backend_clone(vwk, &virt_work);
     linea_vars.CUR_WORK = vwk;
 }
 
@@ -415,6 +446,15 @@ void vdi_v_opnwk(Vwk * vwk)
     text_init();                /* initialize the SIZ_TAB info */
 
     init_wk(vwk);
+
+    /* Bind the physical workstation to the backend matching the current
+     * screen mode.  Virtual workstations are cloned from it at open. */
+    {
+        SCREEN_MODE_DESC mode;
+
+        if (screen_get_current_mode_desc(&mode))
+            vdi_backend_bind(vwk, &mode, v_bas_ad);
+    }
 
     timer_init();
     vdimouse_init();            /* initialize mouse */
