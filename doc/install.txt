@@ -218,9 +218,7 @@ Git-related targets
 clean       remove the generated files, keeping .config
 distclean   remove everything, including .config
 charset     check the charset of all the source files
-crlf        convert all end-of-lines to LF
-expand      expand tabs to spaces
-gitready    ensure the files have a proper format for Git (crlf + expand)
+gitready    check changed files for Git formatting problems
 checkindent try 'indent' without altering the files
 indent      indent all files - never done yet :-(
 
