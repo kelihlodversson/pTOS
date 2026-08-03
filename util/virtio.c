@@ -103,6 +103,7 @@ BOOL virtio_probe(ULONG base, UWORD want_device_id, VIRTIO_DEV *dev)
     dev->base = base;
     dev->phys_offset = 0;
     dev->last_used_idx = 0;
+    dev->pop_idx = 0;
     dev->done = FALSE;
     return TRUE;
 }
@@ -195,4 +196,19 @@ void virtio_handle_interrupt(VIRTIO_DEV *dev)
         dev->last_used_idx = le2cpu16(dev->used.idx);
         dev->done = TRUE;
     }
+}
+
+BOOL virtio_pop_used(VIRTIO_DEV *dev, ULONG *out_index, ULONG *out_len)
+{
+    UWORD slot;
+
+    if (dev->pop_idx == le2cpu16(dev->used.idx))
+        return FALSE;
+
+    slot = dev->pop_idx % VIRTIO_QUEUE_SIZE;
+    *out_index = le2cpu32(dev->used.ring[slot].id);
+    *out_len = le2cpu32(dev->used.ring[slot].len);
+    dev->pop_idx++;
+
+    return TRUE;
 }

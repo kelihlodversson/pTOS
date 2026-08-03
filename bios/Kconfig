@@ -166,6 +166,16 @@ config CONF_WITH_VIRTIO_BLK
 	  virtio-mmio transport. Devices appear as a new disk bus,
 	  partitioned the same way as ACSI/IDE/SD devices.
 
+config CONF_WITH_VIRTIO_INPUT
+	bool "virtio-input keyboard/mouse driver"
+	depends on CONF_WITH_VIRTIO
+	default y
+	help
+	  Keyboard and mouse/tablet driver for virtio-input devices found on
+	  the virtio-mmio transport, for the QEMU virt-arm/virt-m68k boards.
+	  No effect without a virtio-keyboard-device / virtio-tablet-device /
+	  virtio-mouse-device on the QEMU command line.
+
 config CONF_WITH_FDC
 	bool "Floppy disk controller support"
 	depends on CONF_ATARI_HARDWARE && CONF_WITH_MFP && CONF_WITH_YM2149

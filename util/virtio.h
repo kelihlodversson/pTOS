@@ -11,6 +11,10 @@
 
 #define VIRTIO_QUEUE_SIZE  8   /* descriptors/ring slots per queue; power of two */
 
+/* Conservative upper bound for this port's ARM D-cache line size (also fine
+ * as a no-op on m68k, which never invalidates anything). */
+#define VIRTIO_CACHE_LINE  64
+
 #define VIRTIO_DESC_F_NEXT   1
 #define VIRTIO_DESC_F_WRITE  2
 
@@ -58,7 +62,17 @@ typedef struct
      * at behind the smaller fields. */
     VIRTIO_DESC  desc[VIRTIO_QUEUE_SIZE];
     VIRTIO_AVAIL avail;
-    VIRTIO_USED  used;
+    /* The used ring is the only part of this struct the device writes, so
+     * it is the only part invalidate_data_cache() is ever pointed at (see
+     * virtio_handle_interrupt()).  That is a pure invalidate on ARM, with
+     * no clean first, so anything sharing a cache line with it loses its
+     * pending CPU writes every time an interrupt arrives.  Give the used
+     * ring its own aligned span, padded out to a whole number of cache
+     * lines, so the driver-owned fields below -- notably pop_idx, which
+     * virtio_pop_used() carries across interrupts -- can never share one
+     * with it. */
+    VIRTIO_USED  used __attribute__((aligned(VIRTIO_CACHE_LINE)));
+    UBYTE used_pad[VIRTIO_CACHE_LINE - (sizeof(VIRTIO_USED) % VIRTIO_CACHE_LINE)];
     ULONG base;             /* mmio base address of this device's transport window */
     ULONG phys_offset;      /* physical_address - virtual(linked)_address, for any
                              * RAM address associated with this device's virtqueue
@@ -72,6 +86,12 @@ typedef struct
                              * successful virtio_probe(), before calling
                              * virtio_setup_queue(). */
     UWORD last_used_idx;    /* used->idx last consumed by virtio_handle_interrupt() */
+    UWORD pop_idx;          /* used->idx last consumed by virtio_pop_used() -- independent
+                             * of last_used_idx: that one tracks "did anything complete"
+                             * for a single synchronous waiter (virtio_blk's model), this
+                             * one tracks "which entries has the caller actually drained"
+                             * for a queue that keeps several buffers in flight at once
+                             * (virtio-input's eventq). */
     volatile BOOL done;     /* set by virtio_handle_interrupt(), cleared by virtio_submit() */
 } __attribute__((aligned(16))) VIRTIO_DEV;
 
@@ -108,5 +128,23 @@ void virtio_notify(VIRTIO_DEV *dev);
  * as the interrupt source. Acks the device's InterruptStatus and, if the
  * used ring advanced, sets dev->done. */
 void virtio_handle_interrupt(VIRTIO_DEV *dev);
+
+/* Drains one not-yet-consumed used-ring entry: returns TRUE and fills
+ * *out_index (the descriptor index the device completed) and *out_len
+ * (bytes the device wrote/read), advancing past it; returns FALSE once
+ * the caller has caught up with dev->used.idx. Call this after
+ * virtio_handle_interrupt() has run (so dev->used is fresh). Unlike
+ * dev->done, which a single synchronous waiter clears by re-submitting,
+ * this lets a caller that keeps several buffers in flight (like
+ * virtio-input's eventq) drain them all in one interrupt.
+ *
+ * *out_index is the device-provided id verbatim (ULONG, per the virtio
+ * spec's used-ring layout), not narrowed to the queue's actual index
+ * range: a malformed device could set high bits that a premature
+ * narrowing to UWORD would silently discard, turning an out-of-range id
+ * into a plausible-looking small one and defeating a caller's bounds
+ * check. Callers MUST validate *out_index against their queue size
+ * themselves before using it as an array/descriptor subscript. */
+BOOL virtio_pop_used(VIRTIO_DEV *dev, ULONG *out_index, ULONG *out_len);
 
 #endif /* VIRTIO_H */
