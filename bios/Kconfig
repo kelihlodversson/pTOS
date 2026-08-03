@@ -202,8 +202,9 @@ menu "PCI bus support"
 
 config CONF_WITH_PCI
 	bool "PCI bus support"
-	depends on MACHINE_VIRT_ARM
+	depends on MACHINE_VIRT_ARM || TARGET_RPI4
 	default y if MACHINE_VIRT_ARM
+	default y if TARGET_RPI4
 	help
 	  Native pTOS PCI layer modeled on useful Atari PCI BIOS service
 	  semantics. This provides discovery, configuration-space access,
@@ -216,6 +217,13 @@ config CONF_WITH_PCI_VIRT_ECAM
 	default y
 	help
 	  QEMU ARM virt generic ECAM PCIe backend.
+
+config CONF_WITH_PCI_RPI4_BRCMSTB
+	bool
+	depends on CONF_WITH_PCI && TARGET_RPI4
+	default y
+	help
+	  Raspberry Pi 4 BCM2711 PCIe host bridge backend.
 
 endmenu
 
