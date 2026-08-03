@@ -9,14 +9,22 @@
 
 menu "VDI"
 
-config CONF_CHUNKY_PIXELS
-	bool "Chunky framebuffer"
+config CONF_WITH_VDI_TRUECOLOR
+	bool "Packed truecolor VDI backend"
 	default y if MACHINE_RPI
+	default y if CONF_WITH_VIDEL
 	default n
 	help
-	  Treat the framebuffer as a packed array of pixel values instead of
-	  interleaved bitplanes.  This is required on hardware that does not
-	  use the Atari bitplane layout.
+	  Build the packed 16-bit truecolor VDI drawing backend.  It is used
+	  on machines whose framebuffer is a packed array of 16-bit pixel
+	  values instead of interleaved bitplanes.
+
+# Temporary alias: the routed primitive forks in the VDI source files still
+# test CONF_CHUNKY_PIXELS until they are replaced by backend dispatch.
+# Remove this symbol together with those forks.
+config CONF_CHUNKY_PIXELS
+	bool
+	default y if CONF_WITH_VDI_TRUECOLOR
 
 config CONF_WITH_LINEA
 	bool "Line-A emulator"

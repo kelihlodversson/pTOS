@@ -16,6 +16,7 @@
 #include "portab.h"
 #include "fonthdr.h"
 #include "vdipb.h"
+#include "vdi_backend.h"
 
 #define HAVE_BEZIER 0           /* switch on bezier capability */
 
@@ -91,7 +92,7 @@
  * Small subset of Vwk data, used by draw_rect_common to hide VDI/Line-A
  * specific details from rectangle & polygon drawing.
  */
-typedef struct {
+typedef struct VwkAttrib_ {
     WORD clip;       /* polygon clipping on/off */
     WORD multifill;  /* Multi-plane fill flag   */
     UWORD patmsk;    /* Current pattern mask    */
@@ -102,7 +103,7 @@ typedef struct {
 
 
 /* type that can be cast from clipping part of Wvk */
-typedef struct {
+typedef struct VwkClip_ {
     WORD xmn_clip;              /* Low x point of clipping rectangle    */
     WORD xmx_clip;              /* High x point of clipping rectangle   */
     WORD ymn_clip;              /* Low y point of clipping rectangle    */
@@ -167,6 +168,7 @@ struct Vwk_ {
     WORD ymx_clip;              /* High y point of clipping rectangle   */
     /* newly added */
     WORD bez_qual;              /* actual quality for bezier curves */
+    VDI_BACKEND_STATE backend;  /* per-workstation drawing backend state */
 };
 
 typedef struct Rect_ Rect;

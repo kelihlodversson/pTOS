@@ -9,6 +9,9 @@ obj-y += vdi_entry.o vdi_bezier.o vdi_col.o vdi_control.o vdi_esc.o \
 
 obj-$(MACHINE_RPI) += raspi_mouse.o
 
+obj-y += vdi_backend.o vdi_backend_planar.o
+obj-$(CONF_WITH_VDI_TRUECOLOR) += vdi_backend_truecolor.o
+
 obj-y += vdi_tblit.o
 
 # The hand written blitter code is only valid on a real 68000 family CPU.
