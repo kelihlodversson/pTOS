@@ -371,11 +371,6 @@ static void bios_init(void)
     KDEBUG(("fill_cookie_jar()\n"));
     fill_cookie_jar();  /* detect hardware features and fill the cookie jar */
 
-#if CONF_WITH_PCI
-    KDEBUG(("pci_init()\n"));
-    pci_init();
-#endif
-
     /* Set up the BIOS console output */
     KDEBUG(("linea_init()\n"));
     linea_init();       /* initialize screen related line-a variables */
@@ -431,6 +426,11 @@ static void bios_init(void)
 #if CONF_WITH_SCC
     if (has_scc)
         boot_status |= SCC_AVAILABLE;   /* track progress */
+#endif
+
+#if CONF_WITH_PCI
+    KDEBUG(("pci_init()\n"));
+    pci_init();
 #endif
 
     /* The sound init must be done before allowing MFC interrupts,

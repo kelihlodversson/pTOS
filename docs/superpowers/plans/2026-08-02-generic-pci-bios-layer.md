@@ -764,7 +764,7 @@ Expected: all configured builds succeed if the required toolchains are installed
 Run the QEMU command appropriate for the produced `virt-arm` image. If the build output says an ELF image is ready, use that image path in this shape:
 
 ```bash
-qemu-system-arm -M virt -cpu cortex-a7 -kernel emutos.elf -nographic -serial stdio -device virtio-net-pci
+qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -display none -serial stdio -device virtio-net-pci
 ```
 
 Expected: boot reaches BIOS startup far enough to print PCI initialization, and the log includes `pci: N device(s) found` with `N` greater than zero. If the command line needs this tree's documented virt-arm boot flags, adjust only the machine/image arguments and record the exact command in the report.

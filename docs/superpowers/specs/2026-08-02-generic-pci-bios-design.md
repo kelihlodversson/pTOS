@@ -119,13 +119,14 @@ The generic core should decode PCI BARs by writing all ones, reading back the si
 - Size.
 - Flags such as prefetchable and 64-bit memory.
 
-The QEMU ARM `virt` backend should describe its PCI windows from QEMU's machine layout:
+The QEMU ARM `virt` backend should describe its low PCI windows from QEMU's
+`virt,highmem=off` machine layout:
 
 - ECAM base `0x3f000000`, size `0x01000000`.
 - PCI MMIO window base `0x10000000`, size `0x2eff0000`.
 - PCI PIO window base `0x3eff0000`, size `0x00010000`.
 
-The backend should implement config-space access through ECAM. Resource translation should map QEMU's low MMIO and PIO windows according to the fixed virt memory map. High PCI windows are not required for the first implementation.
+The backend should implement config-space access through ECAM. Resource translation should map QEMU's low MMIO and PIO windows according to the fixed virt memory map. High PCI windows are not required for the first implementation; validation must run QEMU with `-M virt,highmem=off` so ECAM is available at the low `0x3f000000` address implemented by this backend.
 
 ## Interrupts
 
@@ -154,7 +155,7 @@ Build checks:
 
 Runtime checks under QEMU ARM `virt`:
 
-- Boot the `virt-arm` image under QEMU with at least one PCI device attached.
+- Boot the `virt-arm` image under QEMU with `-M virt,highmem=off` and at least one PCI device attached.
 - Confirm PCI initialization logs at least one discovered device.
 - Confirm vendor/device lookup can find a known QEMU device.
 - Confirm vendor `0xffff` iteration returns discovered devices in stable order.
