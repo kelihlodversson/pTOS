@@ -69,7 +69,7 @@ The first pass should expose native functions equivalent to these service groups
 
 - `pci_init()` scans and caches devices.
 - `pci_find_device(UWORD vendor, UWORD device, UWORD index, PCI_HANDLE *handle)` finds by vendor/device. `vendor == 0xffff` iterates all discovered devices.
-- `pci_find_classcode(ULONG classcode, UWORD index, PCI_HANDLE *handle)` finds by class code using Atari-style mask bits embedded in the high byte of the `classcode` argument.
+- `pci_find_classcode(ULONG classcode, ULONG mask, UWORD index, PCI_HANDLE *handle)` finds by class code using a separate mask argument.
 - `pci_read_config_byte/word/long()` and `pci_write_config_byte/word/long()` access configuration space through a handle.
 - `pci_get_resource(PCI_HANDLE handle, UWORD bar, pci_resource_t *resource)` returns decoded BAR resources.
 - `pci_read_io_*`, `pci_write_io_*`, `pci_read_mem_*`, and `pci_write_mem_*` access resource-backed regions where implemented.
@@ -78,6 +78,8 @@ The first pass should expose native functions equivalent to these service groups
 - `pci_bus_to_phys()` and `pci_phys_to_bus()` return identity mappings for the first backend unless a backend supplies translation.
 
 Exact function names can be adjusted to match project conventions during planning, but the groups above are required.
+
+The original Atari PCI BIOS packs class-code ignore bits into the high byte of the class-code register argument. pTOS intentionally uses a separate `mask` parameter in the native C API so callers pass the 24-bit class code and the comparison mask independently. The pTOS mask constants preserve the Atari semantics: `PCI_CLASS_MASK_BASE` ignores base class, `PCI_CLASS_MASK_SUBCLASS` ignores subclass, and `PCI_CLASS_MASK_PROGIF` ignores programming interface.
 
 ## Error Codes
 

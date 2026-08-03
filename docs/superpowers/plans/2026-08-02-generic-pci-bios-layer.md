@@ -142,7 +142,7 @@ typedef LONG (*pci_card_callback_t)(LONG function);
 
 LONG pci_init(void);
 LONG pci_find_device(UWORD vendor, UWORD device, UWORD index, PCI_HANDLE *handle);
-LONG pci_find_classcode(ULONG classcode, UWORD index, PCI_HANDLE *handle);
+LONG pci_find_classcode(ULONG classcode, ULONG mask, UWORD index, PCI_HANDLE *handle);
 LONG pci_read_config_byte(PCI_HANDLE handle, UWORD reg, UBYTE *value);
 LONG pci_read_config_word(PCI_HANDLE handle, UWORD reg, UWORD *value);
 LONG pci_read_config_long(PCI_HANDLE handle, UWORD reg, ULONG *value);
@@ -441,7 +441,7 @@ Implement these public functions in `bios/pci_core.c`:
 ```c
 LONG pci_init(void);
 LONG pci_find_device(UWORD vendor, UWORD device, UWORD index, PCI_HANDLE *handle);
-LONG pci_find_classcode(ULONG classcode, UWORD index, PCI_HANDLE *handle);
+LONG pci_find_classcode(ULONG classcode, ULONG mask, UWORD index, PCI_HANDLE *handle);
 ```
 
 Requirements:
@@ -449,7 +449,7 @@ Requirements:
 - `pci_init()` clears the device table, calls `pci_backend_get()`, calls `backend->init()`, scans bus 0, logs `KINFO(("pci: %u device(s) found\n", pci_device_count));`, and returns `PCI_SUCCESSFUL` when backend init succeeds even if no devices are found.
 - `pci_find_device()` must not return `PCI_BAD_VENDOR_ID` for `vendor == PCI_ANY_VENDOR`; ignore `device` in that case to match the Atari special case.
 - `pci_find_device()` returns `PCI_DEVICE_NOT_FOUND` and sets `*handle = PCI_HANDLE_NONE` when no match exists.
-- `pci_find_classcode()` applies mask bits from the high byte of `classcode`: bit 26 ignores base class, bit 25 ignores subclass, bit 24 ignores programming interface.
+- `pci_find_classcode()` applies mask bits from the separate `mask` parameter: bit 26 ignores base class, bit 25 ignores subclass, bit 24 ignores programming interface. This intentionally differs from the Atari PCI BIOS packed `D0` argument while preserving the same comparison semantics for native pTOS C callers.
 - Both lookup functions treat a null output pointer as `PCI_GENERAL_ERROR`.
 
 - [ ] **Step 6: Implement public config read/write functions**

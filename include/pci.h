@@ -73,7 +73,7 @@ typedef LONG (*pci_card_callback_t)(LONG function);
 
 LONG pci_init(void);
 LONG pci_find_device(UWORD vendor, UWORD device, UWORD index, PCI_HANDLE *handle);
-LONG pci_find_classcode(ULONG classcode, UWORD index, PCI_HANDLE *handle);
+LONG pci_find_classcode(ULONG classcode, ULONG mask, UWORD index, PCI_HANDLE *handle);
 LONG pci_read_config_byte(PCI_HANDLE handle, UWORD reg, UBYTE *value);
 LONG pci_read_config_word(PCI_HANDLE handle, UWORD reg, UWORD *value);
 LONG pci_read_config_long(PCI_HANDLE handle, UWORD reg, ULONG *value);

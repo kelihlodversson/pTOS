@@ -62,7 +62,7 @@ static void pci_decode_bars(pci_device_t *device);
 static void pci_decode_bar(pci_device_t *device, UWORD bar);
 static UWORD pci_bar_limit(const pci_device_t *device);
 static ULONG pci_bar_size(ULONG mask, BOOL io);
-static BOOL pci_class_matches(ULONG device_class, ULONG requested_class);
+static BOOL pci_class_matches(ULONG device_class, ULONG requested_class, ULONG requested_mask);
 static void pci_self_check(void);
 static void pci_dummy_interrupt(void *param);
 static LONG pci_find_resource_for_address(pci_device_t *device, BOOL io, ULONG address, UWORD size, pci_resource_t **resource);
@@ -398,16 +398,16 @@ LONG pci_find_device(UWORD vendor, UWORD device, UWORD index, PCI_HANDLE *handle
     return PCI_DEVICE_NOT_FOUND;
 }
 
-static BOOL pci_class_matches(ULONG device_class, ULONG requested_class)
+static BOOL pci_class_matches(ULONG device_class, ULONG requested_class, ULONG requested_mask)
 {
     ULONG mask;
 
     mask = PCI_CLASS_CODE_MASK;
-    if ((requested_class & PCI_CLASS_MASK_BASE) != 0UL)
+    if ((requested_mask & PCI_CLASS_MASK_BASE) != 0UL)
         mask &= 0x0000ffffUL;
-    if ((requested_class & PCI_CLASS_MASK_SUBCLASS) != 0UL)
+    if ((requested_mask & PCI_CLASS_MASK_SUBCLASS) != 0UL)
         mask &= 0x00ff00ffUL;
-    if ((requested_class & PCI_CLASS_MASK_PROGIF) != 0UL)
+    if ((requested_mask & PCI_CLASS_MASK_PROGIF) != 0UL)
         mask &= 0x00ffff00UL;
 
     return (device_class & mask) == (requested_class & mask & PCI_CLASS_CODE_MASK);
@@ -442,7 +442,7 @@ static void pci_self_check(void)
     if ((ret != PCI_SUCCESSFUL) || (all_handle != pci_devices[0].handle))
         KINFO(("pci: self-check wildcard lookup failed (%ld)\n", ret));
 
-    ret = pci_find_classcode(pci_devices[0].classcode | PCI_CLASS_MASK_PROGIF, 0, &handle);
+    ret = pci_find_classcode(pci_devices[0].classcode, PCI_CLASS_MASK_PROGIF, 0, &handle);
     if (ret != PCI_SUCCESSFUL)
         KINFO(("pci: self-check class lookup failed (%ld)\n", ret));
 
@@ -465,7 +465,7 @@ static void pci_self_check(void)
         KINFO(("pci: self-check RAM virt-to-bus failed (%ld, %08lx)\n", ret, mem.address));
 }
 
-LONG pci_find_classcode(ULONG classcode, UWORD index, PCI_HANDLE *handle)
+LONG pci_find_classcode(ULONG classcode, ULONG mask, UWORD index, PCI_HANDLE *handle)
 {
     UWORD i;
     UWORD found;
@@ -477,7 +477,7 @@ LONG pci_find_classcode(ULONG classcode, UWORD index, PCI_HANDLE *handle)
 
     found = 0;
     for (i = 0; i < pci_device_count; i++) {
-        if (pci_class_matches(pci_devices[i].classcode, classcode)) {
+        if (pci_class_matches(pci_devices[i].classcode, classcode, mask)) {
             if (found == index) {
                 *handle = pci_devices[i].handle;
                 return PCI_SUCCESSFUL;
