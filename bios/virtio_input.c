@@ -91,16 +91,17 @@ struct virtio_input_event
     ULONG value;
 };
 
-/* Each event buffer gets a cache-line-aligned span of its own, following
- * bios/virtio_blk.c's status-slot precedent: the per-entry
+/* Each event buffer -- the whole VIRTIO_QUEUE_SIZE-entry array, not each
+ * individual entry -- is aligned to its own cache-line-aligned span,
+ * following bios/virtio_blk.c's status-slot precedent: the per-entry
  * invalidate_data_cache() in virtio_input_drain() (needed to see the
  * device's fresh write past whatever the CPU had cached) is a pure
- * invalidate, so a driver static sharing a line with these would silently
- * lose its pending CPU writes on every input interrupt.  The alignment also
- * guarantees no entry straddles a line boundary, which would leave part of
- * it uninvalidated and hence read back stale.  An array of VIRTIO_QUEUE_SIZE
- * 8-byte events is a whole number of 64-byte lines, so no trailing pad is
- * needed. */
+ * invalidate, so a driver static sharing a line with the array would
+ * silently lose its pending CPU writes on every input interrupt.  Aligning
+ * the array's base also guarantees no individual entry straddles a line
+ * boundary (which would leave part of it uninvalidated and hence read back
+ * stale), since an 8-byte event size divides evenly into a 64-byte line:
+ * every entry starts and ends within a single line, never spanning two. */
 static struct virtio_input_event virtio_input_kbd_buf[VIRTIO_QUEUE_SIZE]
         __attribute__((aligned(VIRTIO_CACHE_LINE)));
 static struct virtio_input_event virtio_input_ptr_buf[VIRTIO_QUEUE_SIZE]
