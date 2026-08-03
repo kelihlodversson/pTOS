@@ -4,7 +4,7 @@
 
 **Goal:** Build the first Raspberry Pi 4/400 USB foundation by enabling a configured xHCI host-controller path that compiles and fails safely until real hardware validation is available.
 
-**Architecture:** Keep the existing generic USB stack unchanged and add a second host-controller driver beside DWC2. Put Raspberry Pi 4 VL805/PCIe resource discovery behind a small machine-specific BIOS helper so generic USB code depends only on configuration symbols and a resource-returning interface.
+**Architecture:** Keep the existing generic USB stack unchanged and add a second host-controller driver beside DWC2. Put Raspberry Pi 4 VL805 resource discovery behind a small machine-specific BIOS helper that consumes the generic PCI layer, so generic USB code depends only on configuration symbols and a resource-returning interface.
 
 **Tech Stack:** C90 with GNU extensions, Kconfig, Kbuild-style `build.mk`, freestanding pTOS BIOS/USB code, `KINFO(())`/`KDEBUG(())` tracing, existing `struct ucdif` USB controller-driver API.
 
@@ -13,7 +13,7 @@
 - Preserve Raspberry Pi 1/2/3 DWC2 behavior.
 - Raspberry Pi 4/400 external USB uses VL805 behind BCM2711 PCIe, not DWC2.
 - Local QEMU `raspi4b` cannot validate the real Pi 4 USB path because it disables `brcm,bcm2711-pcie` and wires only DWC2.
-- Do not add a generic PCI subsystem beyond the Pi 4 resource helper.
+- Do not add private PCIe/VL805 discovery in the USB path; consume the generic PCI layer from issues #56 and #57.
 - Do not replace the existing USB enumeration, hub, or HID mouse layers.
 - Keep machine-specific hardware details behind Raspberry Pi-specific BIOS files.
 - C code must remain C90-compatible: declarations at the top of blocks, `/* */` comments, pTOS fixed-width types where relevant.
@@ -23,11 +23,11 @@
 
 ## File Structure
 
-- Modify `usb/Kconfig`: make `CONF_WITH_USB` available on Raspberry Pi 4 when an xHCI controller exists; add `CONF_WITH_USB_XHCI`; keep DWC2 defaulted only for Raspberry Pi 1/2/3.
+- Modify `usb/Kconfig`: make `CONF_WITH_USB` available on Raspberry Pi 4 only when PCI is enabled; add `CONF_WITH_USB_XHCI`; keep DWC2 defaulted only for Raspberry Pi 1/2/3.
 - Modify `usb/build.mk`: compile `ucd_xhci.o` only when `CONF_WITH_USB_XHCI` is set.
 - Modify `usb/usb.c`: use `CONF_WITH_USB_DWC2` and `CONF_WITH_USB_XHCI` for built-in host-controller declarations and initialization.
 - Create `bios/machine/raspi/raspi_vl805.h`: define `raspi_vl805_resources_t` and declare `raspi_vl805_get_resources()`.
-- Create `bios/machine/raspi/raspi_vl805.c`: provide the first Pi 4 VL805 resource helper; initially returns failure with a trace instead of pretending hardware is usable.
+- Create `bios/machine/raspi/raspi_vl805.c`: provide the first Pi 4 VL805 resource helper using generic PCI lookup and fail safely when resources are absent or unusable.
 - Modify `bios/build.mk`: compile `raspi_vl805.o` only for `CONF_WITH_USB_XHCI`.
 - Create `usb/ucd_xhci.h`: declare `xhci_init()`.
 - Create `usb/ucd_xhci.c`: add a `struct ucdif`-based xHCI UCD skeleton that registers, probes VL805 resources, and fails safely for unsupported transfers.
@@ -42,7 +42,7 @@
 - Modify: `usb/usb.c:46-78`
 
 **Interfaces:**
-- Consumes: existing Kconfig symbols `MACHINE_RPI`, `TARGET_RPI4`, `CONF_WITH_USB_DWC2`.
+- Consumes: existing Kconfig symbols `MACHINE_RPI`, `TARGET_RPI4`, `CONF_WITH_USB_DWC2`, `CONF_WITH_PCI`.
 - Produces: new Kconfig symbol `CONF_WITH_USB_XHCI`; new function declaration/use `void xhci_init(void)` guarded by `CONF_WITH_USB_XHCI`.
 
 - [ ] **Step 1: Update USB Kconfig dependencies**
@@ -54,7 +54,7 @@ menu "USB support"
 
 config CONF_WITH_USB
 	bool "USB stack"
-	depends on MACHINE_RPI
+	depends on MACHINE_RPI && (!TARGET_RPI4 || CONF_WITH_PCI)
 	default y
 	help
 	  A minimal USB stack, derived from the one in FreeMiNT and U-Boot.
@@ -71,6 +71,7 @@ config CONF_WITH_USB_DWC2
 
 config CONF_WITH_USB_XHCI
 	bool
+	depends on CONF_WITH_PCI
 	default y if CONF_WITH_USB && TARGET_RPI4
 	help
 	  The xHCI host controller used for the Raspberry Pi 4/400 external
@@ -150,7 +151,7 @@ git commit -m "Wire Raspberry Pi 4 USB xHCI configuration"
 - Modify: `bios/build.mk`
 
 **Interfaces:**
-- Consumes: `config.h`, `portab.h`, `kprint.h`, Raspberry Pi target symbols.
+- Consumes: `config.h`, `portab.h`, `kprint.h`, `pci.h`, Raspberry Pi target symbols, and initialized generic PCI enumeration.
 - Produces: `typedef struct raspi_vl805_resources_t { ULONG mmio_base; ULONG mmio_size; UWORD irq; } raspi_vl805_resources_t;` and `BOOL raspi_vl805_get_resources(raspi_vl805_resources_t *resources);`.
 
 - [ ] **Step 1: Create the public helper header**
@@ -200,18 +201,53 @@ Create `bios/machine/raspi/raspi_vl805.c` with:
 #endif
 
 #include "kprint.h"
+#include "pci.h"
 #include "raspi_vl805.h"
+
+#define VL805_XHCI_CLASSCODE 0x0c0330UL
 
 BOOL raspi_vl805_get_resources(raspi_vl805_resources_t *resources)
 {
+    PCI_HANDLE handle;
+    pci_resource_t resource;
+    UBYTE irq;
+    LONG ret;
+
     if (resources != 0) {
         resources->mmio_base = 0;
         resources->mmio_size = 0;
         resources->irq = 0;
     }
 
-    KINFO(("VL805/xHCI: BCM2711 PCIe discovery is not implemented yet\n"));
-    return FALSE;
+    ret = pci_find_classcode(VL805_XHCI_CLASSCODE, 0UL, 0, &handle);
+    if (ret != PCI_SUCCESSFUL) {
+        KINFO(("VL805/xHCI: PCI device not found (%ld)\n", ret));
+        return FALSE;
+    }
+
+    ret = pci_get_resource(handle, 0, &resource);
+    if (ret != PCI_SUCCESSFUL) {
+        KINFO(("VL805/xHCI: PCI BAR0 is not usable yet (%ld)\n", ret));
+        return FALSE;
+    }
+
+    if ((resource.flags & PCI_RESOURCE_IO) != 0U) {
+        KINFO(("VL805/xHCI: PCI BAR0 is an I/O resource\n"));
+        return FALSE;
+    }
+
+    irq = 0;
+    ret = pci_read_config_byte(handle, PCI_CONFIG_INTERRUPT_LINE, &irq);
+    if ((ret != PCI_SUCCESSFUL) || (irq == 0xffU))
+        irq = 0;
+
+    if (resources != 0) {
+        resources->mmio_base = resource.start + resource.offset;
+        resources->mmio_size = resource.length;
+        resources->irq = (UWORD)irq;
+    }
+
+    return TRUE;
 }
 ```
 
@@ -234,7 +270,7 @@ make rpi4_defconfig
 make obj/raspi_vl805.o
 ```
 
-Expected: `obj/raspi_vl805.o` builds or the build proceeds until a missing external toolchain is reported. If the target name is not accepted by the Makefile, run `make` and verify the compile command includes `raspi_vl805.c`.
+Expected: `obj/raspi_vl805.o` builds or the build proceeds until a missing external toolchain is reported. Runtime resource discovery may still fail safely until the Raspberry Pi 4 PCI backend can expose a usable 32-bit-accessible MMIO BAR for the VL805.
 
 - [ ] **Step 5: Commit the VL805 helper**
 
@@ -242,7 +278,7 @@ Run:
 
 ```bash
 git add bios/machine/raspi/raspi_vl805.h bios/machine/raspi/raspi_vl805.c bios/build.mk
-git commit -m "Add Raspberry Pi 4 VL805 resource stub"
+git commit -m "Add Raspberry Pi 4 VL805 resource helper"
 ```
 
 ---
@@ -502,6 +538,6 @@ Expected: branch `feature/37-add-usb-support-for-rpi4-400` updates PR #55.
 
 ## Self-Review
 
-- Spec coverage: Task 1 covers Kconfig/build and config-driven init; Task 2 covers Pi 4-specific VL805 discovery boundary; Task 3 covers xHCI UCD skeleton and safe failure; Task 4 covers QEMU/hardware validation limits through build and documentation checks.
+- Spec coverage: Task 1 covers Kconfig/build and config-driven init; Task 2 covers Pi 4-specific VL805 resource boundary backed by generic PCI; Task 3 covers xHCI UCD skeleton and safe failure; Task 4 covers QEMU/hardware validation limits through build and documentation checks.
 - Placeholder scan: No placeholders are present; incomplete hardware bring-up is intentionally represented as explicit safe-failure behavior.
 - Type consistency: `raspi_vl805_resources_t`, `raspi_vl805_get_resources()`, and `xhci_init()` signatures are defined before use and are consistent across tasks.
