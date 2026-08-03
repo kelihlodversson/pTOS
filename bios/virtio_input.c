@@ -183,6 +183,13 @@ static void virtio_input_handle_pointer(UWORD type, UWORD code, ULONG raw_value)
         break;
 
     case EV_REL:
+        /* (WORD)value truncates rather than clamps a delta outside
+         * [-32768, 32767]; accepted rather than fixed. QEMU's virtio-mouse
+         * derives REL_X/REL_Y from per-poll host mouse motion, which is
+         * single-digit to low-hundreds, orders of magnitude under the
+         * truncation point. Worst case is one wrong-direction jump,
+         * self-corrected by the next event -- no crash, no persistent
+         * state damage (unlike the ABS path, this keeps no accumulator). */
         if (code == REL_X)
             virtio_input_send_mouse_delta((WORD)value, 0);
         else if (code == REL_Y)
