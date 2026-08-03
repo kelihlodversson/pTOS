@@ -187,6 +187,7 @@ void vdi_screen_mode_changed(void)
         return;
 
     vdi_backend_bind(&virt_work, &mode, v_bas_ad);
+    vdi_backend_palette_init(&virt_work);
 
     for (vwk = virt_work.next_work; vwk != NULL; vwk = vwk->next_work)
         vdi_backend_clone(vwk, &virt_work);
@@ -452,8 +453,10 @@ void vdi_v_opnwk(Vwk * vwk)
     {
         SCREEN_MODE_DESC mode;
 
-        if (screen_get_current_mode_desc(&mode))
+        if (screen_get_current_mode_desc(&mode)) {
             vdi_backend_bind(vwk, &mode, v_bas_ad);
+            vdi_backend_palette_init(vwk);
+        }
     }
 
     timer_init();

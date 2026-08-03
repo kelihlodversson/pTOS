@@ -721,23 +721,11 @@ get_color (UWORD mask, UWORD * addr)
  * output:
  *     pixel value
  */
-
 static UWORD
 pixelread(const WORD x, const WORD y)
 {
-#if CONF_CHUNKY_PIXELS
-    return *((UBYTE*)get_start_addr(x, y)) ;
-#else
-    UWORD *addr;
-    UWORD mask;
-
-    /* convert x,y to start address and bit mask */
-    addr = get_start_addr(x, y);
-    addr += linea_vars.v_planes;                   /* start at highest-order bit_plane */
-    mask = 0x8000 >> (x&0xf);           /* initial bit position in WORD */
-
-    return get_color(mask, addr);       /* return the composed color value */
-#endif
+    /* dispatch through the backend of the physical workstation */
+    return (UWORD)vdi_read_pixel(vdi_get_screen_vwk(), x, y);
 }
 
 static UWORD
@@ -1052,14 +1040,22 @@ void vdi_v_get_pixel(Vwk * vwk)
     WORD *int_out;
     const WORD x = PTSIN[0];       /* fetch x coord. */
     const WORD y = PTSIN[1];       /* fetch y coord. */
-
-    /* Get the requested pixel */
-    pel = (WORD)pixelread(x,y);
+    ULONG raw = vdi_read_pixel(vwk, x, y);
 
     int_out = INTOUT;
-    *int_out++ = pel;
 
-    *int_out = REV_MAP_COL[pel];
+    if (vwk->backend.ops != NULL
+        && vdi_backend_kind(&vwk->backend.mode) == VDI_BACKEND_TRUECOLOR16) {
+        /* no colour index exists: report the raw packed pixel instead */
+        *int_out++ = 0;
+        *int_out = (WORD)raw;
+    } else {
+        /* Get the requested pixel */
+        pel = (WORD)raw;
+        *int_out++ = pel;
+        *int_out = REV_MAP_COL[pel];
+    }
+
     CONTRL->nintout = 2;
 }
 
@@ -1078,7 +1074,7 @@ WORD
 get_pix(void)
 {
     /* return the composed color value */
-    return pixelread(PTSIN[0], PTSIN[1]);
+    return (WORD)vdi_read_pixel(vdi_get_screen_vwk(), PTSIN[0], PTSIN[1]);
 }
 
 /*
@@ -1092,36 +1088,8 @@ get_pix(void)
 void
 put_pix(void)
 {
-    UWORD *addr;
-    UWORD color;
-#if !CONF_CHUNKY_PIXELS
-    UWORD mask;
-    int plane;
-#endif
     const WORD x = PTSIN[0];
     const WORD y = PTSIN[1];
 
-    /* convert x,y to start address */
-    addr = get_start_addr(x, y);
-    /* co-ordinates can wrap, but cannot write outside screen,
-     * alternatively this could check against v_bas_ad+vram_size()
-     */
-    if (addr < (UWORD*)v_bas_ad || addr >= get_start_addr(linea_vars.V_REZ_HZ, linea_vars.V_REZ_VT)) {
-        return;
-    }
-    color = INTIN[0];           /* device dependent encoded color bits */
-
-#if CONF_CHUNKY_PIXELS
-    *((UBYTE*)addr) = color & 0xff;
-#else
-    mask = 0x8000 >> (x&0xf);   /* initial bit position in WORD */
-
-    for (plane = linea_vars.v_planes-1; plane >= 0; plane-- ) {
-        color = color >> 1| color << 15;        /* rotate color bits */
-        if (color&0x8000)
-            *addr++ |= mask;
-        else
-            *addr++ &= ~mask;
-    }
-#endif
+    vdi_write_pixel(vdi_get_screen_vwk(), x, y, INTIN[0]);
 }

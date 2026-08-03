@@ -100,3 +100,31 @@ void vdi_backend_close(Vwk *vwk)
     vwk->backend.ops = NULL;
     vwk->backend.framebuffer = NULL;
 }
+
+UBYTE *vdi_pixel_addr(const Vwk *vwk, WORD x, WORD y)
+{
+    if (vwk->backend.ops != NULL && vwk->backend.ops->pixel_addr != NULL)
+        return vwk->backend.ops->pixel_addr(vwk, x, y);
+    return NULL;
+}
+
+ULONG vdi_read_pixel(const Vwk *vwk, WORD x, WORD y)
+{
+    if (vwk->backend.ops != NULL && vwk->backend.ops->read_pixel != NULL)
+        return vwk->backend.ops->read_pixel(vwk, x, y);
+    return 0UL;
+}
+
+BOOL vdi_write_pixel(Vwk *vwk, WORD x, WORD y, ULONG pixel)
+{
+    if (vwk->backend.ops != NULL && vwk->backend.ops->write_pixel != NULL)
+        return vwk->backend.ops->write_pixel(vwk, x, y, pixel);
+    return FALSE;
+}
+
+BOOL vdi_backend_set_color(Vwk *vwk, WORD index, const WORD *rgb)
+{
+    if (vwk->backend.ops != NULL && vwk->backend.ops->set_color != NULL)
+        return vwk->backend.ops->set_color(vwk, index, rgb);
+    return FALSE;
+}

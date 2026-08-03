@@ -635,6 +635,34 @@ void vdi_vs_color(Vwk *vwk)
 
     colnum = INTIN[0];      /* may have been munged on TT system, see above */
     set_color(colnum, rgb);
+
+    /* keep the backend pseudo-palette in step with the colour requests */
+    vdi_backend_set_color(vwk, colnum, rgb);
+}
+
+
+/*
+ * vdi_backend_palette_init - initialize the pseudo-palette of a backend
+ *
+ * Called right after the physical workstation has been bound, so that
+ * drawing can translate VDI pens to packed pixel values before any
+ * vs_color call.  Backends without a pseudo-palette are left alone.
+ */
+void vdi_backend_palette_init(Vwk *vwk)
+{
+    WORD i;
+
+    if (vwk->backend.ops == NULL || vwk->backend.ops->set_color == NULL)
+        return;
+
+    for (i = 0; i < MAXCOLOURS; i++) {
+        if (i < 16)
+            vwk->backend.ops->set_color(vwk, i, linea_vars.REQ_COL[i]);
+#if EXTENDED_PALETTE
+        else
+            vwk->backend.ops->set_color(vwk, i, req_col2[i-16]);
+#endif
+    }
 }
 
 

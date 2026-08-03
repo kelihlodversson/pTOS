@@ -178,17 +178,11 @@ void timer_exit(void)
 
 UWORD * get_start_addr(const WORD x, const WORD y)
 {
-    UBYTE * addr;
-
-    /* init address counter */
-    addr = v_bas_ad;                    /* start of screen */
-
-#if CONF_CHUNKY_PIXELS
-    addr += (x * linea_vars.v_planes) >> 3;
-    addr += (LONG)y * linea_vars.v_lin_wr;         /* add y coordinate part of addr */
-#else
-    addr += (x&0xfff0)>>shift_offset[linea_vars.v_planes]; /* add x coordinate part of addr */
-    addr += (LONG)y * linea_vars.v_lin_wr;         /* add y coordinate part of addr */
-#endif
-    return (UWORD*)addr;
+    /*
+     * Compatibility wrapper for the Line-A level helpers: the address
+     * of pixel (x,y) is a property of the backend bound to the physical
+     * workstation, not of the line drawing code.  Returns NULL when no
+     * backend is bound.
+     */
+    return (UWORD *)vdi_pixel_addr(vdi_get_screen_vwk(), x, y);
 }

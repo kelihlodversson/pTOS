@@ -92,6 +92,24 @@ BOOL vdi_backend_clone(Vwk *vwk, const Vwk *source);
 /* Tear down the backend state of a workstation. */
 void vdi_backend_close(Vwk *vwk);
 
+/* Dispatched pixel primitives.  They fail (return NULL / 0 / FALSE) when
+ * the workstation has no backend or the backend has no pixel support. */
+UBYTE *vdi_pixel_addr(const Vwk *vwk, WORD x, WORD y);
+ULONG vdi_read_pixel(const Vwk *vwk, WORD x, WORD y);
+BOOL vdi_write_pixel(Vwk *vwk, WORD x, WORD y, ULONG pixel);
+
+/*
+ * Update the pseudo-palette entry of a VDI pen from its requested RGB
+ * (0-1000 components).  Returns FALSE when the backend has no palette.
+ */
+BOOL vdi_backend_set_color(Vwk *vwk, WORD index, const WORD *rgb);
+
+/*
+ * Initialize the pseudo-palette of a workstation from the current VDI
+ * colour requests.  Called right after binding the physical workstation.
+ */
+void vdi_backend_palette_init(Vwk *vwk);
+
 /*
  * Return the physical handle-1 screen workstation, never a virtual one.
  * This preserves the documented compatibility behaviour of the fake
