@@ -48,7 +48,8 @@ include tools/kconfig.mk
 # what produces one, or because they do not compile anything.
 UNCONFIGURED_GOALS = $(CONFIG_TARGETS) help version clean distclean \
                      charset gitready indent checkindent \
-                     bugready coldfire-sources
+                     bugready coldfire-sources test-screen-mode \
+                     test-vdi-backend test-vdi-truecolor
 
 ifeq (,$(filter $(UNCONFIGURED_GOALS),$(MAKECMDGOALS))$(filter release%,$(MAKECMDGOALS)))
 
@@ -928,6 +929,23 @@ charset:
 .PHONY: gitready
 gitready:
 	tools/check-gitready.sh
+
+#
+# Native host tests: they compile a small piece of the OS with the host
+# compiler, so they run without any target configuration.
+#
+
+.PHONY: test-screen-mode
+test-screen-mode:
+	tools/test-screen-mode.sh
+
+.PHONY: test-vdi-backend
+test-vdi-backend:
+	tools/test-vdi-backend.sh
+
+.PHONY: test-vdi-truecolor
+test-vdi-truecolor:
+	tools/test-vdi-truecolor.sh
 
 #
 # ColdFire autoconverted sources.
