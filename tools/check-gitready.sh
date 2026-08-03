@@ -54,9 +54,21 @@ check_crlf_files()
     done
 }
 
+check_tracked_crlf()
+{
+    files=$(git ls-files --eol -- '*.c' '*.h' '*.S' '*.awk' '*.sh' | \
+        awk -F '\t' '$1 ~ /w\/crlf/ { print $2 }')
+
+    for file in $files; do
+        printf '%s: contains CRLF\n' "$file"
+        status=1
+    done
+}
+
 check_diff staged --cached
 check_diff unstaged
 check_crlf_files
+check_tracked_crlf
 
 if [ $status -eq 0 ]; then
     echo 'gitready checks passed.'

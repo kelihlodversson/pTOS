@@ -19,6 +19,9 @@ cp "$repo_root/country.mk" "$tmpdir/country.mk"
 cp "$repo_root/release.mk" "$tmpdir/release.mk"
 cp "$repo_root/tools/kconfig.mk" "$tmpdir/tools/kconfig.mk"
 cp "$repo_root/po/POTFILES.in" "$tmpdir/po/POTFILES.in"
+if [ -f "$repo_root/.gitattributes" ]; then
+    cp "$repo_root/.gitattributes" "$tmpdir/.gitattributes"
+fi
 for dir in aes bdos bios cli desk usb util vdi; do
     mkdir -p "$tmpdir/$dir"
     cp "$repo_root/$dir/build.mk" "$tmpdir/$dir/build.mk"
@@ -55,7 +58,7 @@ fi
 git reset -q -- src/changed.c
 rm -f src/changed.c
 printf 'int\tbad;\r\n' >src/changed.c
-git add src/changed.c
+git add src/changed.c 2>/dev/null
 
 if make -s gitready >gitready-tab.log 2>&1; then
     echo 'gitready accepted a staged tab/CRLF change'
@@ -70,7 +73,7 @@ fi
 git reset -q -- src/changed.c
 rm -f src/changed.c
 printf 'int crlf_only;\r\n' >src/changed.c
-git add src/changed.c
+git add src/changed.c 2>/dev/null
 
 if make -s gitready >gitready-crlf.log 2>&1; then
     echo 'gitready accepted a staged CRLF-only change'
@@ -79,6 +82,23 @@ fi
 
 if ! cmp -s src/untouched.c src/untouched.c.orig; then
     echo 'gitready modified an unrelated tracked file while rejecting CRLF input'
+    exit 1
+fi
+
+git reset -q -- src/changed.c
+rm -f src/changed.c
+printf 'int tracked_crlf;\n' >src/tracked_crlf.c
+git add src/tracked_crlf.c
+git commit -q -m tracked-crlf-baseline
+printf 'int tracked_crlf;\r\n' >src/tracked_crlf.c
+
+if make -s gitready >gitready-tracked-crlf.log 2>&1; then
+    echo 'gitready accepted a tracked CRLF-only rewrite'
+    exit 1
+fi
+
+if ! cmp -s src/untouched.c src/untouched.c.orig; then
+    echo 'gitready modified an unrelated tracked file while rejecting tracked CRLF input'
     exit 1
 fi
 
