@@ -102,4 +102,17 @@ if ! cmp -s src/untouched.c src/untouched.c.orig; then
     exit 1
 fi
 
+git checkout -q -- src/tracked_crlf.c
+printf 'int\tuntracked_tab;\n' >src/untracked_tab.c
+
+if make -s gitready >gitready-untracked-tab.log 2>&1; then
+    echo 'gitready accepted an untracked tabbed source file'
+    exit 1
+fi
+
+if ! cmp -s src/untouched.c src/untouched.c.orig; then
+    echo 'gitready modified an unrelated tracked file while rejecting untracked tab input'
+    exit 1
+fi
+
 echo 'gitready safety test passed'
