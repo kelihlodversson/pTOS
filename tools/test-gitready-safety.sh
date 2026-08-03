@@ -57,13 +57,28 @@ rm -f src/changed.c
 printf 'int\tbad;\r\n' >src/changed.c
 git add src/changed.c
 
-if make -s gitready >gitready-bad.log 2>&1; then
+if make -s gitready >gitready-tab.log 2>&1; then
     echo 'gitready accepted a staged tab/CRLF change'
     exit 1
 fi
 
 if ! cmp -s src/untouched.c src/untouched.c.orig; then
     echo 'gitready modified an unrelated tracked file while rejecting bad input'
+    exit 1
+fi
+
+git reset -q -- src/changed.c
+rm -f src/changed.c
+printf 'int crlf_only;\r\n' >src/changed.c
+git add src/changed.c
+
+if make -s gitready >gitready-crlf.log 2>&1; then
+    echo 'gitready accepted a staged CRLF-only change'
+    exit 1
+fi
+
+if ! cmp -s src/untouched.c src/untouched.c.orig; then
+    echo 'gitready modified an unrelated tracked file while rejecting CRLF input'
     exit 1
 fi
 

@@ -35,8 +35,28 @@ check_diff()
     fi
 }
 
+check_worktree_crlf()
+{
+    git diff --name-only --diff-filter=ACMRT -- '*.c' '*.h' '*.S' '*.awk' '*.sh'
+    git diff --cached --name-only --diff-filter=ACMRT -- '*.c' '*.h' '*.S' '*.awk' '*.sh'
+    git ls-files --others --exclude-standard -- '*.c' '*.h' '*.S' '*.awk' '*.sh'
+}
+
+check_crlf_files()
+{
+    files=$(check_worktree_crlf | sort -u)
+
+    for file in $files; do
+        if [ -f "$file" ] && awk '/\r$/ { found = 1 } END { exit found ? 0 : 1 }' "$file"; then
+            printf '%s: contains CRLF\n' "$file"
+            status=1
+        fi
+    done
+}
+
 check_diff staged --cached
 check_diff unstaged
+check_crlf_files
 
 if [ $status -eq 0 ]; then
     echo 'gitready checks passed.'
