@@ -47,7 +47,7 @@ include tools/kconfig.mk
 # Goals that must work without a configuration, either because they are
 # what produces one, or because they do not compile anything.
 UNCONFIGURED_GOALS = $(CONFIG_TARGETS) help version clean distclean \
-                     expand crlf charset gitready indent checkindent \
+                     charset gitready indent checkindent \
                      bugready coldfire-sources
 
 ifeq (,$(filter $(UNCONFIGURED_GOALS),$(MAKECMDGOALS))$(filter release%,$(MAKECMDGOALS)))
@@ -95,6 +95,7 @@ MACHINE-$(MACHINE_M548X) += atari
 MACHINE-$(MACHINE_AMIGA) += amiga
 MACHINE-$(MACHINE_RPI) += raspi
 MACHINE-$(MACHINE_VIRT_ARM) += virt-arm
+MACHINE-$(MACHINE_VIRT_M68K) += virt-m68k
 MACHINE = $(MACHINE-y)
 
 ifdef CONFIGURED
@@ -220,6 +221,10 @@ CPPFLAGS = $(CFLAGS)
 # BIOS private headers.
 usb_copts = $(addprefix -Ibios/,$(arch_subdirs)) -Ibios
 
+# virtio_blk.c (bios/) needs the shared virtio-mmio transport header from
+# util/.
+bios_copts = -Iutil
+
 CFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_copts))
 SFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_sopts))
 
@@ -320,6 +325,10 @@ MEMBOT_REFERENCE = TOS162
 endif
 ifdef TARGET_VIRT_ARM_KERNEL
 image-default = virt-arm.elf
+MEMBOT_REFERENCE = TOS162
+endif
+ifdef TARGET_VIRT_M68K_KERNEL
+image-default = virt-m68k.elf
 MEMBOT_REFERENCE = TOS162
 endif
 
@@ -471,6 +480,15 @@ endif
 #
 
 ifdef TARGET_VIRT_ARM_KERNEL
+$(IMAGE): $(EMUTOS_IMG)
+	cp $< $@
+endif
+
+#
+# QEMU virt (m68k) kernel image — passed to QEMU as an ELF, unchanged
+#
+
+ifdef TARGET_VIRT_M68K_KERNEL
 $(IMAGE): $(EMUTOS_IMG)
 	cp $< $@
 endif
@@ -901,21 +919,6 @@ indent:
 # gitready
 #
 
-EXPAND_FILES = $(wildcard */*.[chS] */*/*.[chS] */*/*/*.[chS] */*.awk */*.sh)
-EXPAND_NOFILES = vdi/arch/coldfire/vdi_tblit.S
-
-.PHONY: expand
-expand:
-	@for i in `grep -l '	' $(filter-out $(EXPAND_NOFILES), $(EXPAND_FILES))` ; do \
-		echo expanding $$i; \
-		expand <$$i >expand.tmp; \
-		mv expand.tmp $$i; \
-	done
-
-.PHONY: crlf
-crlf:
-	find . -type f '!' -path './.git/*' '!' -name '*.rsc' '!' -name '*.def' | xargs dos2unix
-
 # Check the sources charset (no automatic fix)
 .PHONY: charset
 charset:
@@ -923,7 +926,8 @@ charset:
 	find . -type f '!' -path '*/.git/*' '!' -path './obj/*' '!' -path './*.img' '!' -path './?rd*' '!' -path './draft*' '!' -path './bug*' '!' -path './mkrom*' '!' -name '*.def' '!' -name '*.rsc' '!' -name '*.icn' '!' -name '*.po' -print0 | xargs -0 file -i |grep -v us-ascii
 
 .PHONY: gitready
-gitready: expand crlf
+gitready:
+	tools/check-gitready.sh
 
 #
 # ColdFire autoconverted sources.

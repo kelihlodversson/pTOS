@@ -145,6 +145,33 @@ addresses, and QEMU's ELF loader is what places it correctly.  Run it with:
 Adding "-S -s" lets a remote gdb attach, as with the Raspberry Pi
 configurations.
 
+m68k virt
+---------
+
+virt-m68k           virt-m68k.elf, for QEMU's generic m68k "virt" board
+
+Also emulation only, and also an ELF image for the same reason (QEMU's
+-kernel loader), but otherwise unrelated to the ARM virt board above: no
+Atari-compatible chipset, no MMU trick needed (this board's RAM already
+starts at physical 0x0, where EmuTOS expects it). Console, interrupt
+routing and the periodic tick come from three "Goldfish" devices (a TTY,
+a PIC, and an RTC used as a one-shot alarm re-armed on every interrupt).
+Run it with:
+
+    make virt-m68k_defconfig && make
+    qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf \
+        -d guest_errors -serial stdio
+
+Both flags after -M virt matter, not just the -kernel one: -m 128 is
+required because the image hardcodes 128 MiB as the top of RAM (there is
+no FDT parsing yet to size it from the command line), and -cpu m68020 is
+required instead of the board's own m68040 default because this specific
+QEMU version fatally aborts the whole VM -- instead of raising the guest
+CPU exception EmuTOS's shared CPU-detection code expects and handles --
+when that code probes a 68060-only register while telling 68040 and
+68060 apart. m68020 detection resolves earlier in that same routine, so
+it never reaches the register QEMU mishandles.
+
 
 Countries and languages
 =======================
@@ -191,9 +218,7 @@ Git-related targets
 clean       remove the generated files, keeping .config
 distclean   remove everything, including .config
 charset     check the charset of all the source files
-crlf        convert all end-of-lines to LF
-expand      expand tabs to spaces
-gitready    ensure the files have a proper format for Git (crlf + expand)
+gitready    check changed files for Git formatting problems
 checkindent try 'indent' without altering the files
 indent      indent all files - never done yet :-(
 

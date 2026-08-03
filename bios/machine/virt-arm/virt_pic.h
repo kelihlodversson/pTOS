@@ -11,7 +11,7 @@
 
 #ifdef MACHINE_VIRT_ARM
 
-#define VIRT_IRQ_LINES  32     /* only PPIs (16-31) are used by this port; no SPI needed for v1 */
+#define VIRT_IRQ_LINES  80     /* PPIs (16-31) plus GIC SPI 16-47 (INTID 48-79) for virtio-mmio */
 
 void virt_pic_init(void);
 PFVOID virt_connect_irq(int irq, PFVOID handler);

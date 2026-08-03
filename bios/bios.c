@@ -58,6 +58,9 @@
 #include "delay.h"
 #include "biosbind.h"
 #include "memory.h"
+#if CONF_WITH_PCI
+#include "pci.h"
+#endif
 #include "nova.h"
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
@@ -71,6 +74,10 @@
 #ifdef MACHINE_VIRT_ARM
 #include "virt_pic.h"
 #include "virt_timer.h"
+#endif
+#ifdef MACHINE_VIRT_M68K
+#include "goldfish_pic.h"
+#include "goldfish_rtc.h"
 #endif
 
 
@@ -346,6 +353,9 @@ static void bios_init(void)
     virt_pic_init();
     virt_timer_init();     /* arms the GIC/timer; the CPU stays masked until
                              * the shared cpsr_ie() below, same as raspi */
+#elif defined(MACHINE_VIRT_M68K)
+    goldfish_pic_init();
+    goldfish_rtc_init();
 #endif
 
     /* Initialize the BIOS memory management */
@@ -416,6 +426,11 @@ static void bios_init(void)
 #if CONF_WITH_SCC
     if (has_scc)
         boot_status |= SCC_AVAILABLE;   /* track progress */
+#endif
+
+#if CONF_WITH_PCI
+    KDEBUG(("pci_init()\n"));
+    pci_init();
 #endif
 
     /* The sound init must be done before allowing MFC interrupts,

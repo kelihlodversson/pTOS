@@ -742,12 +742,22 @@ static LONG supexec(PFLONG codeptr)
     register LONG retval __asm__("d0");
     register PFLONG func __asm__("a0") = codeptr;
 
+    /* a6 is saved/restored around the call instead of being listed as a
+     * clobber: some m68k-atari-mintelf-gcc 13.3.0 builds ICE in
+     * print_operand_address (RTL "final" pass) when a6 is clobbered by
+     * an inline asm that also binds fixed hard registers as operands,
+     * even though the project always builds with -fomit-frame-pointer
+     * (so a6 is never used as a dedicated frame pointer here). Manually
+     * preserving it makes the "assume it can clobber all of them" clause
+     * above still hold for a6, without relying on the buggy code path. */
     __asm__ volatile
     (
+        "move.l  a6,-(sp)\n\t"
         "jsr     (a0)\n\t"
+        "move.l  (sp)+,a6\n\t"
     : "=r"(retval)
     : "r"(func)
-    : "d1", "d2", "d3", "d4", "d5", "d6", "d7", "a1", "a2", "a3", "a4", "a5", "a6", "memory", "cc"
+    : "d1", "d2", "d3", "d4", "d5", "d6", "d7", "a1", "a2", "a3", "a4", "a5", "memory", "cc"
     );
 
     return retval;

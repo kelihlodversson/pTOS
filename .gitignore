@@ -57,3 +57,6 @@
 .tags*
 .vscode
 __pycache__/
+
+# Subagent-driven-development scratch workspace (ledgers, briefs, reports)
+/.superpowers/

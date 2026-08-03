@@ -33,7 +33,12 @@
 
 /*
  * system calls
+ *
+ * The standalone build (emucon2.tos) keeps its own private trap wrappers
+ * from cmdasm.S.  The ROM build uses the shared portable dispatchers that
+ * already work on both m68k and ARM.
  */
+#ifdef STANDALONE_CONSOLE
 extern LONG jmp_gemdos(WORD, ...);
 extern LONG jmp_bios(WORD, ...);
 extern LONG jmp_xbios(WORD, ...);
@@ -53,6 +58,36 @@ extern LONG jmp_xbios(WORD, ...);
 #define jmp_xbios_l(a,b)        jmp_xbios((WORD)(a),(LONG)(b))
 #define jmp_xbios_llww(a,b,c,d,e)   jmp_xbios((WORD)a,(LONG)b,(LONG)c,(WORD)d,(WORD)e)
 #define jmp_xbios_ww(a,b,c)     jmp_xbios((WORD)(a),(WORD)(b),(WORD)(c))
+
+#else /* ROM build: use the shared portable trap dispatchers */
+#include "asm.h"        /* trap1(), trap1_pexec() */
+#include "biosbind.h"   /* Bconstat(), Bconin(), Bconout() */
+#include "xbiosbind.h"  /* Setscreen(), Cursconf(), Kbrate() */
+
+/* xbiosbind.h declares Supexec void (marked "??? void") but EmuCON reads
+   the called function's return value.  Use xbios_l_lll with two harmless
+   padding arguments so we get the long return value back.              */
+#undef Supexec
+static __inline__ long cli_supexec_(long a)
+{
+    return xbios_l_lll(38, a, 0L, 0L);
+}
+#define Supexec(a) cli_supexec_((long)(a))
+
+#define jmp_gemdos_v(a)         trap1((int)(a))
+#define jmp_gemdos_w(a,b)       trap1((int)(a),(WORD)(b))
+#define jmp_gemdos_l(a,b)       trap1((int)(a),(LONG)(b))
+#define jmp_gemdos_p(a,b)       trap1((int)(a),(void*)(b))
+#define jmp_gemdos_ww(a,b,c)    trap1((int)(a),(WORD)(b),(WORD)(c))
+#define jmp_gemdos_pw(a,b,c)    trap1((int)(a),(void *)(b),(WORD)(c))
+#define jmp_gemdos_wlp(a,b,c,d) trap1((int)(a),(WORD)(b),(LONG)(c),(void *)(d))
+#define jmp_gemdos_wpp(a,b,c,d) trap1((int)(a),(WORD)(b),(void *)(c),(void *)(d))
+#define jmp_gemdos_pww(a,b,c,d) trap1((int)(a),(void *)(b),(WORD)(c),(WORD)(d))
+/* Pexec needs the 5-argument form; trap1_pexec handles the extra argument */
+#define jmp_gemdos_wppp(a,b,c,d,e) \
+    trap1_pexec((short)(b),(const char *)(c),(const void *)(d),(const char *)(e))
+
+#endif /* STANDALONE_CONSOLE */
 
 #define Dsetdrv(a)          jmp_gemdos_w(0x0e,a)
 #define Dgetdrv()           jmp_gemdos_v(0x19)
@@ -79,14 +114,20 @@ extern LONG jmp_xbios(WORD, ...);
 #define Fsnext()            jmp_gemdos_v(0x4f)
 #define Frename(a,b,c)      jmp_gemdos_wpp(0x56,a,b,c)
 
+#ifdef STANDALONE_CONSOLE
+/* ROM build gets these from biosbind.h included above */
 #define Bconstat(a)         jmp_bios_w(0x01,a)
 #define Bconin(a)           jmp_bios_w(0x02,a)
 #define Bconout(a,b)        jmp_bios_ww(0x03,a,b)
+#endif
 
+#ifdef STANDALONE_CONSOLE
+/* ROM build gets these from xbiosbind.h included above */
 #define Setscreen(a,b,c,d)  jmp_xbios_llww(0x05,a,b,c,d)
 #define Cursconf(a,b)       jmp_xbios_ww(0x15,a,b)
 #define Kbrate(a,b)         jmp_xbios_ww(0x23,a,b)
 #define Supexec(a)          jmp_xbios_l(0x26,a)
+#endif
 
 
 /*
@@ -227,6 +268,6 @@ WORD strequal(const char *s1,const char *s2);
 char *strlower(char *str);
 char *strupper(char *str);
 
-/* cmdasm.S */
+/* cmdasm.S (m68k) or cmdgetwh.c (ARM) */
 ULONG getwh(void);
 WORD getht(void);

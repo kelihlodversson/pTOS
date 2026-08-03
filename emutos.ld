@@ -14,9 +14,31 @@
  * to allow #include, #define, #if, etc. */
 #include "include/config.h"
 
-#if !defined(MACHINE_RPI) && !defined(MACHINE_VIRT_ARM)
-/* Create a plain binary file, without any header (not possible on ARM) */
+#if !defined(MACHINE_RPI) && !defined(MACHINE_VIRT_ARM) && !defined(MACHINE_VIRT_M68K)
+/* Create a plain binary file, without any header (not possible on ARM).
+ * MACHINE_VIRT_M68K is excluded for a different reason than the ARM
+ * machines: it needs a real ELF image for QEMU's -kernel loader (see
+ * hw/m68k/virt.c's use of load_elf()), not a flat binary -- unlike every
+ * other m68k target, none of which boot via an ELF loader. */
 OUTPUT_FORMAT(binary)
+#endif
+
+#if defined(MACHINE_VIRT_M68K)
+/* m68k-atari-mintelf-ld's default output target for this toolchain is
+ * elf32-atariprg (tailored to produce MiNT PRG executables via mintbin),
+ * not a generic ELF32; QEMU's -kernel loader (hw/m68k/virt.c) needs a
+ * plain ELF image, and elf32-atariprg's relocation handling also rejects
+ * some relocations this link produces. Force the generic target instead. */
+OUTPUT_FORMAT(elf32-m68k)
+#endif
+
+#if defined(MACHINE_VIRT_ARM) || defined(MACHINE_VIRT_M68K)
+/* Both -kernel-loading QEMU boards otherwise rely on the linker's
+ * last-resort "address of .text" fallback to pick an entry point, which
+ * only works because startup.o happens to be first in obj-y (see
+ * bios/build.mk). Naming the real entry point removes that silent
+ * -failure-mode dependency for the two targets that actually need one. */
+ENTRY(_os_entry)
 #endif
 
 /* The ROM address depends on the target */

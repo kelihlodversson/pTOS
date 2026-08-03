@@ -28,7 +28,7 @@ config CONF_WITH_ALT_RAM
 config CONF_WITH_TTRAM
 	bool "TT-RAM detection"
 	depends on CONF_WITH_ALT_RAM && !ARCH_ARM
-	default n if TARGET_192 || MACHINE_AMIGA
+	default n if TARGET_192 || MACHINE_AMIGA || MACHINE_VIRT_M68K
 	default y
 	help
 	  Detect and use the fast RAM found in the 32-bit address space of
@@ -148,6 +148,24 @@ config CONF_WITH_RASPI_EMMC
 	  Support for the SD card slot of the Raspberry Pi, using the
 	  on-chip EMMC controller.
 
+config CONF_WITH_VIRTIO
+	bool "virtio-mmio transport support"
+	depends on MACHINE_VIRT_ARM || MACHINE_VIRT_M68K
+	default y
+	help
+	  Shared driver for the virtio-mmio transports QEMU's ARM and m68k
+	  'virt' boards expose. No effect without a device driver built on
+	  top of it (see CONF_WITH_VIRTIO_BLK).
+
+config CONF_WITH_VIRTIO_BLK
+	bool "virtio-blk disk driver"
+	depends on CONF_WITH_VIRTIO
+	default y
+	help
+	  Block device driver for virtio-blk devices found on the
+	  virtio-mmio transport. Devices appear as a new disk bus,
+	  partitioned the same way as ACSI/IDE/SD devices.
+
 config CONF_WITH_FDC
 	bool "Floppy disk controller support"
 	depends on CONF_ATARI_HARDWARE && CONF_WITH_MFP && CONF_WITH_YM2149
@@ -177,6 +195,35 @@ config HD_DETECT_RETRIES
 	  increases the boot time by roughly (0.1 * retries * n) seconds,
 	  where n is the number of devices that are not present.  It may
 	  however help with misbehaving hardware.
+
+endmenu
+
+menu "PCI bus support"
+
+config CONF_WITH_PCI
+	bool "PCI bus support"
+	depends on MACHINE_VIRT_ARM || TARGET_RPI4
+	default y if MACHINE_VIRT_ARM
+	default y if TARGET_RPI4
+	help
+	  Native pTOS PCI layer modeled on useful Atari PCI BIOS service
+	  semantics. This provides discovery, configuration-space access,
+	  resource reporting and card ownership through pTOS C APIs, not the
+	  Atari _PCI cookie or function-table ABI.
+
+config CONF_WITH_PCI_VIRT_ECAM
+	bool
+	depends on CONF_WITH_PCI && MACHINE_VIRT_ARM
+	default y
+	help
+	  QEMU ARM virt generic ECAM PCIe backend.
+
+config CONF_WITH_PCI_RPI4_BRCMSTB
+	bool
+	depends on CONF_WITH_PCI && TARGET_RPI4
+	default y
+	help
+	  Raspberry Pi 4 BCM2711 PCIe host bridge backend.
 
 endmenu
 
@@ -230,6 +277,14 @@ config CONF_WITH_VIRT_UART
 	help
 	  Use the PL011 UART exposed by QEMU's ARM 'virt' machine as the
 	  serial console.
+
+config CONF_WITH_GOLDFISH_TTY
+	bool "QEMU virt (m68k) Goldfish TTY support"
+	depends on MACHINE_VIRT_M68K
+	default y
+	help
+	  Use the Goldfish TTY device exposed by QEMU's m68k 'virt' machine
+	  as the serial console.
 
 config CONF_WITH_PRINTER_PORT
 	bool "Parallel printer port support"

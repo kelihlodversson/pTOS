@@ -29,6 +29,7 @@
 #include "scsi.h"
 #include "sd.h"
 #include "raspi_emmc.h"
+#include "virtio_blk.h"
 
 /*==== Defines ============================================================*/
 
@@ -168,7 +169,8 @@ void disk_init_all(void)
         {16, 18, 17, 19, 20, 22, 21, 23,    /* IDE primary/secondary */
          8, 9, 10, 11, 12, 13, 14, 15,      /* SCSI */
          0, 1, 2, 3, 4, 5, 6, 7,            /* ACSI */
-         24, 25, 26, 27, 28, 29, 30, 31};   /* SD/MMC */
+         24, 25, 26, 27, 28, 29, 30, 31,    /* SD/MMC */
+         32, 33, 34, 35, 36, 37, 38, 39};   /* virtio-blk */
     int i;
     LONG devices_available = 0L;
     LONG bitmask;
@@ -282,6 +284,11 @@ LONG disk_mediach(UWORD unit)
         ret = raspi_emmc_ioctl(reldev,GET_MEDIACHANGE,NULL);
         break;
 #endif /* CONF_WITH_RASPI_EMMC */
+#if CONF_WITH_VIRTIO_BLK
+    case VIRTIO_BUS:
+        ret = virtio_blk_ioctl(reldev,GET_MEDIACHANGE,NULL);
+        break;
+#endif /* CONF_WITH_VIRTIO_BLK */
     default:
         ret = EUNDEV;
     }
@@ -763,6 +770,11 @@ static LONG internal_inquire(UWORD unit, ULONG *blocksize, ULONG *deviceflags, c
         flags = XH_TARGET_REMOVABLE;    /* medium is removable */
         break;
 #endif /* CONF_WITH_RASPI_EMMC */
+#if CONF_WITH_VIRTIO_BLK
+    case VIRTIO_BUS:
+        ret = virtio_blk_ioctl(reldev,GET_DISKNAME,name);
+        break;
+#endif /* CONF_WITH_VIRTIO_BLK */
     default:
         ret = EUNDEV;
     }
@@ -857,6 +869,14 @@ LONG disk_get_capacity(UWORD unit, ULONG *blocks, ULONG *blocksize)
             return ret;
         break;
 #endif /* CONF_WITH_RASPI_EMMC */
+#if CONF_WITH_VIRTIO_BLK
+    case VIRTIO_BUS:
+        ret = virtio_blk_ioctl(reldev,GET_DISKINFO,info);
+        KDEBUG(("virtio_blk_ioctl(%d) returned %ld\n", reldev, ret));
+        if (ret < 0)
+            return ret;
+        break;
+#endif /* CONF_WITH_VIRTIO_BLK */
     default:
         return EUNDEV;
     }
@@ -924,6 +944,12 @@ LONG disk_rw(UWORD unit, UWORD rw, ULONG sector, UWORD count, UBYTE *buf)
         KDEBUG(("sd_rw() returned %ld\n", ret));
         break;
 #endif /* CONF_WITH_SDMMC */
+#if CONF_WITH_VIRTIO_BLK
+    case VIRTIO_BUS:
+        ret = virtio_blk_rw(rw, sector, count, buf, reldev);
+        KDEBUG(("virtio_blk_rw() returned %ld\n", ret));
+        break;
+#endif /* CONF_WITH_VIRTIO_BLK */
     default:
         ret = EUNDEV;
     }

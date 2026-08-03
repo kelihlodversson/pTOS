@@ -31,6 +31,7 @@
 #include "scsi.h"
 #include "ide.h"
 #include "sd.h"
+#include "virtio_blk.h"
 #include "biosext.h"
 #include "biosmem.h"
 #include "xhdi.h"
@@ -209,6 +210,10 @@ static void bus_init(void)
 
 #if CONF_WITH_RASPI_EMMC
     raspi_emmc_init();
+#endif
+
+#if CONF_WITH_VIRTIO_BLK
+    virtio_blk_init();
 #endif
 }
 
