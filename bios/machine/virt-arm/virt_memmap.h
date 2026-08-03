@@ -19,6 +19,12 @@
 #define VIRT_GIC_DIST_BASE  0x08000000UL
 #define VIRT_GIC_CPU_BASE   0x08010000UL
 #define VIRT_UART0_BASE     0x09000000UL
+#define VIRT_PCIE_MMIO_BASE     0x10000000UL
+#define VIRT_PCIE_MMIO_SIZE     0x2eff0000UL
+#define VIRT_PCIE_PIO_BASE      0x3eff0000UL
+#define VIRT_PCIE_PIO_SIZE      0x00010000UL
+#define VIRT_PCIE_ECAM_BASE     0x3f000000UL
+#define VIRT_PCIE_ECAM_SIZE     0x01000000UL
 
 /* virtio-mmio: 32 transports, 0x200 bytes apart, starting at GIC SPI 16
  * (see hw/arm/virt.c: base_memmap[VIRT_MMIO], irqmap[VIRT_MMIO],
