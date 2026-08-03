@@ -198,7 +198,7 @@ void virtio_handle_interrupt(VIRTIO_DEV *dev)
     }
 }
 
-BOOL virtio_pop_used(VIRTIO_DEV *dev, UWORD *out_index, ULONG *out_len)
+BOOL virtio_pop_used(VIRTIO_DEV *dev, ULONG *out_index, ULONG *out_len)
 {
     UWORD slot;
 
@@ -206,7 +206,7 @@ BOOL virtio_pop_used(VIRTIO_DEV *dev, UWORD *out_index, ULONG *out_len)
         return FALSE;
 
     slot = dev->pop_idx % VIRTIO_QUEUE_SIZE;
-    *out_index = (UWORD)le2cpu32(dev->used.ring[slot].id);
+    *out_index = le2cpu32(dev->used.ring[slot].id);
     *out_len = le2cpu32(dev->used.ring[slot].len);
     dev->pop_idx++;
 

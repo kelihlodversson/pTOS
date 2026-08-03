@@ -317,7 +317,7 @@ static void virtio_input_setup_eventq(VIRTIO_DEV *dev, struct virtio_input_event
  */
 static void virtio_input_drain(VIRTIO_DEV *dev, struct virtio_input_event *buf, VIRTIO_INPUT_ROLE role)
 {
-    UWORD idx;
+    ULONG idx;
     ULONG len;
     UWORD type, code;
     ULONG value;
@@ -339,7 +339,7 @@ static void virtio_input_drain(VIRTIO_DEV *dev, struct virtio_input_event *buf, 
          * descriptor slot to rewrite), so just drop it. */
         if (idx >= VIRTIO_QUEUE_SIZE)
         {
-            KDEBUG(("virtio_input: bad descriptor index %u from used ring, dropped\n", idx));
+            KDEBUG(("virtio_input: bad descriptor index %lu from used ring, dropped\n", idx));
             continue;
         }
 
@@ -372,9 +372,9 @@ static void virtio_input_drain(VIRTIO_DEV *dev, struct virtio_input_event *buf, 
             }
         }
 
-        virtio_desc_set(dev, idx, (ULONG)&buf[idx] + dev->phys_offset,
+        virtio_desc_set(dev, (UWORD)idx, (ULONG)&buf[idx] + dev->phys_offset,
                          (ULONG)sizeof(buf[idx]), VIRTIO_DESC_F_WRITE, 0);
-        virtio_submit(dev, idx);
+        virtio_submit(dev, (UWORD)idx);
     }
 
 #if defined(MACHINE_VIRT_M68K)

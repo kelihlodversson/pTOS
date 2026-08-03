@@ -136,7 +136,15 @@ void virtio_handle_interrupt(VIRTIO_DEV *dev);
  * virtio_handle_interrupt() has run (so dev->used is fresh). Unlike
  * dev->done, which a single synchronous waiter clears by re-submitting,
  * this lets a caller that keeps several buffers in flight (like
- * virtio-input's eventq) drain them all in one interrupt. */
-BOOL virtio_pop_used(VIRTIO_DEV *dev, UWORD *out_index, ULONG *out_len);
+ * virtio-input's eventq) drain them all in one interrupt.
+ *
+ * *out_index is the device-provided id verbatim (ULONG, per the virtio
+ * spec's used-ring layout), not narrowed to the queue's actual index
+ * range: a malformed device could set high bits that a premature
+ * narrowing to UWORD would silently discard, turning an out-of-range id
+ * into a plausible-looking small one and defeating a caller's bounds
+ * check. Callers MUST validate *out_index against their queue size
+ * themselves before using it as an array/descriptor subscript. */
+BOOL virtio_pop_used(VIRTIO_DEV *dev, ULONG *out_index, ULONG *out_len);
 
 #endif /* VIRTIO_H */
