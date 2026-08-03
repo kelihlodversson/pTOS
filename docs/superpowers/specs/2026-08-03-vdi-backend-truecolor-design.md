@@ -4,9 +4,9 @@
 
 Issue #35 tracks finishing the VDI chunky-pixel work and aligning pTOS with upstream EmuTOS truecolor VDI work. The current tree treats `CONF_CHUNKY_PIXELS` as a compile-time switch that forks shared VDI function bodies. On Raspberry Pi it means 8bpp packed indexed pixels, while Atari-style code remains interleaved bitplanes.
 
-That shape does not scale. Pixel depth alone cannot distinguish planar 8bpp from packed 8bpp, and non-Atari targets should not pretend they can use Atari planar primitives. The new direction is to make pixel layout and color model explicit runtime properties of a VDI workstation, then dispatch VDI primitives through a backend table.
+That shape does not scale. Pixel depth alone cannot distinguish planar 8bpp from packed 8bpp, and targets without planar framebuffers should not pretend they can use Atari planar primitives. The new direction is to make pixel layout and color model explicit runtime properties of a VDI workstation, then dispatch VDI primitives through a backend table.
 
-The first target non-Atari layout is 16bpp packed truecolor. Raspberry Pi framebuffer initialization should request a 16bpp mode instead of preserving the existing 8bpp packed indexed mode.
+The first new layout target is 16bpp packed truecolor. Raspberry Pi framebuffer initialization should request a 16bpp mode instead of preserving the existing 8bpp packed indexed mode. Atari hardware that exposes packed truecolor, such as Falcon VIDEL truecolor or graphics-card modes, should select the same truecolor backend family through its mode descriptor.
 
 ## Goals
 
@@ -23,7 +23,7 @@ The first target non-Atari layout is 16bpp packed truecolor. Raspberry Pi frameb
 - Do not keep 8bpp packed Raspberry Pi mode as a required supported backend.
 - Do not add multi-screen support yet.
 - Do not backport the whole upstream EmuTOS VDI truecolor series in one step.
-- Do not make non-Atari platforms fall back to Atari planar algorithms.
+- Do not make any platform fall back to planar algorithms unless its descriptor reports a planar framebuffer.
 
 ## Architecture
 
@@ -41,25 +41,25 @@ The mode descriptor records:
 
 The first layout values are:
 
-- `VDI_LAYOUT_PLANAR`: Atari interleaved bitplanes only.
-- `VDI_LAYOUT_PACKED_TRUECOLOR`: packed pixels, first implemented for 16bpp non-Atari framebuffers.
+- `VDI_LAYOUT_PLANAR`: interleaved bitplanes for hardware that actually exposes planar framebuffers.
+- `VDI_LAYOUT_PACKED_TRUECOLOR`: packed pixels, first implemented for 16bpp framebuffers.
 
 The first color models are:
 
-- indexed CLUT for Atari planar modes.
-- truecolor for packed non-Atari modes.
+- indexed CLUT for planar modes.
+- truecolor for packed modes.
 
 Backends are selected from the mode descriptor. A mode is unsupported if no backend exists for its layout, color model, and bpp combination.
 
 ## Backends
 
-### Atari Planar Backend
+### Planar Backend
 
-The Atari planar backend owns the existing interleaved-bitplane algorithms. It is selected only for Atari planar modes. Current non-Atari targets do not support planar framebuffers and must not select this backend.
+The planar backend owns the existing interleaved-bitplane algorithms. It is selected only for descriptors that report a planar framebuffer. Current Raspberry Pi targets do not support planar framebuffers and must not select this backend.
 
 ### Packed Truecolor Backend
 
-The packed truecolor backend is the supported non-Atari path. The first concrete target is a 16bpp Raspberry Pi framebuffer. The backend should be written so RGB555 vs RGB565 can be represented in the descriptor instead of buried in call sites.
+The packed truecolor backend is the supported path for packed truecolor framebuffers on any platform. The first concrete target is a 16bpp Raspberry Pi framebuffer, but Falcon VIDEL truecolor and Atari graphics-card modes should use the same backend family when their screen drivers report compatible descriptors. The backend should be written so RGB555 vs RGB565 can be represented in the descriptor instead of buried in call sites.
 
 Raspberry Pi screen initialization changes its mailbox depth request from 8 to 16, records the returned pitch, and reports a packed truecolor descriptor. The existing fixed VideoCore 256-entry palette is not part of the normal truecolor path.
 
@@ -97,7 +97,7 @@ Legacy Line-A fields remain compatibility fields populated from the current scre
 
 - `v_planes` remains the legacy depth/count visible to old callers.
 - `v_lin_wr` and `BYTES_LIN` come from the descriptor pitch.
-- depth-sensitive cursor and console setup must not assume non-Atari truecolor is planar.
+- depth-sensitive cursor and console setup must not infer planar vs packed layout from platform or depth alone.
 
 No separate active-backend global is part of the design. A later implementation may cache a derived pointer for speed, but the source of truth is the current screen workstation.
 
@@ -109,15 +109,15 @@ The legacy API can remain as a wrapper for old callers while `linea_init()` and 
 
 Target behavior:
 
-- Atari screen drivers report planar indexed descriptors.
+- Atari screen drivers report descriptors matching the actual hardware mode: planar indexed for ST-style modes, or packed truecolor for Falcon/graphics-card truecolor modes.
 - Raspberry Pi reports packed 16bpp truecolor descriptors.
-- Other non-Atari targets must report a supported packed truecolor descriptor or fail mode selection until a backend is implemented.
+- Other targets must report a descriptor matching their actual framebuffer layout and color model; if no backend supports that descriptor, mode selection fails.
 
 `linea_init()` calculates `v_lin_wr` and `BYTES_LIN` from descriptor pitch, not from `V_REZ_HZ / 8 * v_planes`.
 
 ## Palette and Color Mapping
 
-Atari planar indexed modes keep hardware CLUT semantics.
+Planar indexed modes keep hardware CLUT semantics.
 
 Packed truecolor modes need a pseudo-palette so existing VDI color indexes still map to truecolor pixel values. The pseudo-palette should be per workstation, matching the direction of upstream EmuTOS truecolor work. `vs_color()` and `vq_color()` for truecolor backends update and query this pseudo-palette rather than programming an 8bpp framebuffer palette.
 
@@ -137,7 +137,7 @@ Resolution changes update legacy Line-A fields and the current screen workstatio
 
 Reject unsupported modes early. Examples include:
 
-- non-Atari planar descriptors
+- descriptors that do not match the actual framebuffer layout
 - Raspberry Pi framebuffer depth other than the implemented 16bpp mode
 - zero pitch
 - pitch smaller than `width * bytes_per_pixel`
@@ -174,8 +174,9 @@ Focused checks:
 - Raspberry Pi requests 16bpp framebuffer depth.
 - Raspberry Pi descriptor reports packed truecolor and mailbox pitch.
 - `linea_vars.v_lin_wr` and `BYTES_LIN` use descriptor pitch.
-- Atari descriptors select the planar backend.
-- Non-Atari planar descriptors are rejected.
+- Planar descriptors select the planar backend.
+- Packed truecolor descriptors select the packed truecolor backend, including Atari truecolor modes when available.
+- Descriptors that do not match the actual framebuffer layout are rejected.
 - `CONF_CHUNKY_PIXELS` no longer forks shared primitive bodies after conversion.
 
 Runtime validation on real Raspberry Pi hardware is required before claiming visual correctness. QEMU can validate builds and some boot paths, but not all framebuffer behavior.
