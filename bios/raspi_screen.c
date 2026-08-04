@@ -320,6 +320,20 @@ void raspi_blank_out (int topx, int topy, int botx, int boty)
 {
     UWORD color = linea_vars.v_col_bg;             /* bg color value */
     int width, height, row;
+
+    /*
+     * memset() below writes one byte per pixel, only correct at 8bpp.
+     * On a 16bpp chunky backend (e.g. MACHINE_RPI truecolor) that would
+     * clear at the wrong stride/width instead of corrupting memory, but
+     * a partial, wrong-color clear is still worse than leaving the
+     * console area undrawn -- skip it instead, consistent with
+     * raspi_cell_xfer()/raspi_neg_cell() below and the same fail-safe
+     * gate used by end_pts()/abline() (vdi/vdi_fill.c, vdi/vdi_line.c)
+     * and the mouse cursor (vdi/vdi_mouse.c).
+     */
+    if (linea_vars.v_planes != 8)
+        return;
+
     width = (botx - topx + 1) * 8;
     height = (boty - topy + 1) * linea_vars.v_cel_ht;
     UBYTE * addr = raspi_cell_addr(topx, topy);
@@ -344,6 +358,20 @@ void raspi_cell_xfer(UBYTE * src, UBYTE * dst)
     UWORD fg;
     UWORD bg;
     int fnt_wr, line_wr, y;
+
+    /*
+     * The glyph-blit loop below writes dst[] one byte per pixel, only
+     * correct at 8bpp. On a 16bpp chunky backend (e.g. MACHINE_RPI
+     * truecolor) skip drawing rather than corrupt the framebuffer with
+     * a byte-width write -- same bug class, and same fail-safe gate, as
+     * end_pts()/abline() (vdi/vdi_fill.c, vdi/vdi_line.c) and the mouse
+     * cursor (vdi/vdi_mouse.c). This means the BIOS text console (boot
+     * banner, EmuCON, panic output) renders nothing on 16bpp RPi rather
+     * than unreadable color noise; converting it to draw correctly at
+     * 16bpp is out of scope here.
+     */
+    if (linea_vars.v_planes != 8)
+        return;
 
     fnt_wr = linea_vars.v_fnt_wr;
     line_wr = linea_vars.v_lin_wr;
@@ -373,6 +401,18 @@ void raspi_cell_xfer(UBYTE * src, UBYTE * dst)
 void raspi_neg_cell(UBYTE * cell)
 {
     int len;
+
+    /*
+     * The invert loop below toggles *cell one byte per pixel, only
+     * correct at 8bpp. On a 16bpp chunky backend (e.g. MACHINE_RPI
+     * truecolor) skip drawing rather than corrupt the framebuffer with
+     * a byte-width write -- same bug class, and same fail-safe gate, as
+     * end_pts()/abline() (vdi/vdi_fill.c, vdi/vdi_line.c) and the mouse
+     * cursor (vdi/vdi_mouse.c).
+     */
+    if (linea_vars.v_planes != 8)
+        return;
+
     linea_vars.v_stat_0 |= M_CRIT;                 /* start of critical section. */
     for(len = 0; len < linea_vars.v_cel_ht; len++)
     {
