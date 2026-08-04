@@ -119,7 +119,7 @@ See [`doc/elfload.txt`](doc/elfload.txt) for details.
 
 The build system is configured similarly to the Linux kernel.
 
-Select one of the configurations in `configs/`, optionally customise it with `menuconfig`, and build:
+Select one of the configurations in `configs/`, optionally customise it with `make menuconfig`, and build:
 
 ```sh
 make rpi2_defconfig
