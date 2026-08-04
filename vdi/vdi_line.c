@@ -1436,6 +1436,19 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
     }
     adr = (UBYTE*)get_start_addr(x1, y1);       /* init address counter */
 
+    /*
+     * The Bresenham loops below write *adr as a single byte, which is
+     * only correct for 8bpp chunky pixels. On a 16bpp chunky backend
+     * (e.g. MACHINE_RPI truecolor) skip drawing rather than corrupt the
+     * framebuffer with a byte-width write. Mirrors the same accepted
+     * fail-safe gate used by normal_blit() in vdi/arch/arm/vdi_tblit.c.
+     * Horizontal lines (y1 == y2) never reach here: they return early
+     * above via draw_rect_common(), which already dispatches through the
+     * backend's own fill_rect().
+     */
+    if (linea_vars.v_planes != 8)
+        return;
+
     if (dx >= dy) {
         WORD  eps = -dx;        /* epsilon */
         WORD  e1 = 2*dy;        /* epsilon 1 */

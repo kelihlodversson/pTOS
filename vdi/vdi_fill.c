@@ -837,6 +837,16 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
     addr = get_start_addr(x, y);
     mask = 0x8000 >> (x & 0x000f);   /* fetch the pixel mask. */
 #if CONF_CHUNKY_PIXELS
+    /*
+     * search_to_right()/search_to_left() below walk the framebuffer
+     * byte-by-byte, which is only correct for 8bpp chunky pixels. On a
+     * 16bpp chunky backend (e.g. MACHINE_RPI truecolor), skip the search
+     * entirely and report "nothing found" rather than let the byte-walk
+     * run against the wrong pixel width. Mirrors the same accepted
+     * fail-safe gate used by normal_blit() in vdi/arch/arm/vdi_tblit.c.
+     */
+    if (linea_vars.v_planes != 8)
+        return 0;
     color = *((UBYTE*)addr);
 #else
     addr += linea_vars.v_planes;                   /* start at highest-order bit_plane */
