@@ -11,6 +11,14 @@
 #ifndef PGHDR_H
 #define PGHDR_H
 
+/*
+ * executable formats understood by the program loader.  The format is
+ * detected from the file's magic number by kpgmhdrld() and drives the
+ * dispatch in kpgmld().
+ */
+#define PGMLD_PRG   0       /* classic Atari GEMDOS PRG (m68k)      */
+#define PGMLD_ELF   1       /* ELF loader (ET_EXEC/-q or ET_DYN PIE)*/
+
 typedef struct
 {
         /*  magic number is already read  */
