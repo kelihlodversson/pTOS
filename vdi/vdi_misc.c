@@ -192,3 +192,13 @@ UWORD * get_start_addr(const WORD x, const WORD y)
 #endif
     return (UWORD*)addr;
 }
+
+UWORD *planar_get_start_addr(WORD x, WORD y)
+{
+    UBYTE *addr;
+
+    addr = v_bas_ad;                    /* start of screen */
+    addr += (x&0xfff0)>>shift_offset[linea_vars.v_planes]; /* add x coordinate part of addr */
+    addr += (LONG)y * linea_vars.v_lin_wr;         /* add y coordinate part of addr */
+    return (UWORD*)addr;
+}

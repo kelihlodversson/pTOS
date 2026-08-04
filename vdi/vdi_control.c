@@ -15,11 +15,13 @@
 #include "portab.h"
 #include "../bios/lineavars.h"
 #include "vdi_defs.h"
-/* #include "kprint.h" */
+/* #define ENABLE_KDEBUG */
+#include "kprint.h"
 #include "biosbind.h"
 #include "../bios/screen.h"
 #include "asm.h"
 #include "string.h"
+#include "vdi_backend.h"
 
 
 static Vwk virt_work;          /* attribute areas for workstations */
@@ -408,6 +410,12 @@ void vdi_v_opnwk(Vwk * vwk)
     CONTRL->handle = vwk->handle = 1;
     vwk->next_work = NULL;
 
+    screen_get_current_mode_desc(&vwk->mode);
+    vwk->backend = vdi_backend_select(&vwk->mode);
+    KDEBUG(("vdi_v_opnwk: mode layout=%d color_model=%d bpp=%d backend=%s\n",
+            vwk->mode.layout, vwk->mode.color_model, vwk->mode.bits_per_pixel,
+            vwk->backend ? "selected" : "none"));
+
     linea_vars.line_cw = -1;    /* invalidate current line width */
 
     init_colors();              /* Initialize palette etc. */
@@ -510,4 +518,10 @@ void vdi_vq_extnd(Vwk * vwk)
 void vdi_v_nop(Vwk * vwk)
 {
     /* will never be implemented */
+}
+
+
+const vdi_backend_ops *vdi_screen_backend(void)
+{
+    return virt_work.backend;
 }

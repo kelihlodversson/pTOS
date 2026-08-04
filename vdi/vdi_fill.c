@@ -689,8 +689,13 @@ clipbox(const VwkClip * clip, Rect * rect)
 
 /*
  * get_color - Get color value of requested pixel.
+ *
+ * NOTE: this is no longer guarded by `#if !CONF_CHUNKY_PIXELS`: besides
+ * the non-chunky branches in this file, it is also called unconditionally
+ * by planar_get_pixel(), which the planar VDI backend must link on every
+ * configuration (including chunky-pixel ones such as MACHINE_RPI), since
+ * that backend's table is always built (see vdi_backend_planar.c).
  */
-#if !CONF_CHUNKY_PIXELS
 static UWORD
 get_color (UWORD mask, UWORD * addr)
 {
@@ -710,7 +715,6 @@ get_color (UWORD mask, UWORD * addr)
 
     return color;       /* this is the color we are searching for */
 }
-#endif
 
 /*
  * pixelread - gets a pixel's color index value
@@ -738,6 +742,18 @@ pixelread(const WORD x, const WORD y)
 
     return get_color(mask, addr);       /* return the composed color value */
 #endif
+}
+
+UWORD planar_get_pixel(WORD x, WORD y)
+{
+    UWORD *addr;
+    UWORD mask;
+
+    addr = planar_get_start_addr(x, y);
+    addr += linea_vars.v_planes;            /* start at highest-order bit_plane */
+    mask = 0x8000 >> (x&0xf);               /* initial bit position in WORD */
+
+    return get_color(mask, addr);           /* return the composed color value */
 }
 
 static UWORD
@@ -1124,4 +1140,22 @@ put_pix(void)
             *addr++ &= ~mask;
     }
 #endif
+}
+
+void planar_put_pixel(WORD x, WORD y, UWORD color)
+{
+    UWORD *addr;
+    UWORD mask;
+    int plane;
+
+    addr = planar_get_start_addr(x, y);
+    mask = 0x8000 >> (x&0xf);   /* initial bit position in WORD */
+
+    for (plane = linea_vars.v_planes-1; plane >= 0; plane-- ) {
+        color = color >> 1| color << 15;        /* rotate color bits */
+        if (color&0x8000)
+            *addr++ |= mask;
+        else
+            *addr++ &= ~mask;
+    }
 }

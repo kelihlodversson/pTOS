@@ -5,7 +5,7 @@
 obj-y += vdi_entry.o vdi_bezier.o vdi_col.o vdi_control.o vdi_esc.o \
 	 vdi_fill.o vdi_gdp.o vdi_input.o vdi_line.o vdi_main.o \
 	 vdi_marker.o vdi_misc.o vdi_mouse.o vdi_raster.o vdi_text.o \
-	 vdi_textblit.o
+	 vdi_textblit.o vdi_backend.o vdi_backend_planar.o
 
 obj-$(MACHINE_RPI) += raspi_mouse.o
 

@@ -574,6 +574,183 @@ void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
 #endif
 }
 
+void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
+{
+    UWORD leftmask, rightmask, *addr;
+    const UWORD patmsk = attr->patmsk;
+    const int yinc = (linea_vars.v_lin_wr>>1) - linea_vars.v_planes;
+    int width, centre, y;
+#if CONF_WITH_BLITTER
+    BLITPARM b;
+#endif
+
+    leftmask = 0xffff >> (rect->x1 & 0x0f);
+    rightmask = 0xffff << (15 - (rect->x2 & 0x0f));
+    width = (rect->x2 >> 4) - (rect->x1 >> 4) + 1;
+    if (width == 1) {           /* i.e. all bits within 1 WORD */
+        leftmask &= rightmask;  /* so combine masks */
+        rightmask = 0;
+    }
+    addr = get_start_addr(rect->x1,rect->y1);   /* init address ptr */
+
+#if CONF_WITH_BLITTER
+    if (blitter_is_enabled)
+    {
+        b.leftmask = leftmask;
+        b.rightmask = rightmask;
+        b.width = width;
+        b.addr = addr;
+
+        /*
+         * special handling for common horizontal line case
+         */
+        if (rect->y1 == rect->y2)
+        {
+            if (blit_hline(attr, rect, &b))         /* if it ran ok, */
+                return;                             /* we're done    */
+        }
+        else
+        {
+            if (blit_rect_common(attr, rect, &b))   /* if it ran ok, */
+                return;                             /* we're done    */
+        }
+    }
+#endif
+
+    centre = width - 2;
+
+    switch(attr->wrt_mode) {
+    case 3:                 /* erase (reverse transparent) mode */
+        for (y = rect->y1; y <= rect->y2; y++, addr += yinc) {
+            int patind = patmsk & y;   /* starting pattern */
+            int plane;
+            UWORD color;
+
+            for (plane = 0, color = attr->color; plane < linea_vars.v_planes; plane++, color>>=1, addr++) {
+                UWORD *work = addr;
+                UWORD pattern = ~attr->patptr[patind];
+                int n;
+
+                if (color & 0x0001) {
+                    *work |= pattern & leftmask;    /* left section */
+                    work += linea_vars.v_planes;
+                    for (n = 0; n < centre; n++) {  /* centre section */
+                        *work |= pattern;
+                        work += linea_vars.v_planes;
+                    }
+                    if (rightmask) {                /* right section */
+                        *work |= pattern & rightmask;
+                    }
+                } else {
+                    *work &= ~(pattern & leftmask); /* left section */
+                    work += linea_vars.v_planes;
+                    for (n = 0; n < centre; n++) {  /* centre section */
+                        *work &= ~pattern;
+                        work += linea_vars.v_planes;
+                    }
+                    if (rightmask) {                /* right section */
+                        *work &= ~(pattern & rightmask);
+                    }
+                }
+                if (attr->multifill)
+                    patind += 16;                   /* advance pattern data */
+            }
+        }
+        break;
+    case 2:                 /* xor mode */
+        for (y = rect->y1; y <= rect->y2; y++, addr += yinc) {
+            int patind = patmsk & y;   /* starting pattern */
+            int plane;
+            UWORD color;
+
+            for (plane = 0, color = attr->color; plane < linea_vars.v_planes; plane++, color>>=1, addr++) {
+                UWORD *work = addr;
+                UWORD pattern = attr->patptr[patind];
+                int n;
+
+                *work ^= pattern & leftmask;        /* left section */
+                work += linea_vars.v_planes;
+                for (n = 0; n < centre; n++) {      /* centre section */
+                    *work ^= pattern;
+                    work += linea_vars.v_planes;
+                }
+                if (rightmask) {                    /* right section */
+                    *work ^= pattern & rightmask;
+                }
+                if (attr->multifill)
+                    patind += 16;                   /* advance pattern data */
+            }
+        }
+        break;
+    case 1:                 /* transparent mode */
+        for (y = rect->y1; y <= rect->y2; y++, addr += yinc) {
+            int patind = patmsk & y;   /* starting pattern */
+            int plane;
+            UWORD color;
+
+            for (plane = 0, color = attr->color; plane < linea_vars.v_planes; plane++, color>>=1, addr++) {
+                UWORD *work = addr;
+                UWORD pattern = attr->patptr[patind];
+                int n;
+
+                if (color & 0x0001) {
+                    *work |= pattern & leftmask;    /* left section */
+                    work += linea_vars.v_planes;
+                    for (n = 0; n < centre; n++) {  /* centre section */
+                        *work |= pattern;
+                        work += linea_vars.v_planes;
+                    }
+                    if (rightmask) {                /* right section */
+                        *work |= pattern & rightmask;
+                    }
+                } else {
+                    *work &= ~(pattern & leftmask); /* left section */
+                    work += linea_vars.v_planes;
+                    for (n = 0; n < centre; n++) {  /* centre section */
+                        *work &= ~pattern;
+                        work += linea_vars.v_planes;
+                    }
+                    if (rightmask) {                /* right section */
+                        *work &= ~(pattern & rightmask);
+                    }
+                }
+                if (attr->multifill)
+                    patind += 16;                   /* advance pattern data */
+            }
+        }
+        break;
+    default:                /* replace mode */
+        for (y = rect->y1; y <= rect->y2; y++, addr += yinc) {
+            int patind = patmsk & y;   /* starting pattern */
+            int plane;
+            UWORD color;
+
+            for (plane = 0, color = attr->color; plane < linea_vars.v_planes; plane++, color>>=1, addr++) {
+                UWORD data, *work = addr;
+                UWORD pattern = (color & 0x0001) ? attr->patptr[patind] : 0x0000;
+                int n;
+
+                data = *work & ~leftmask;           /* left section */
+                data |= pattern & leftmask;
+                *work = data;
+                work += linea_vars.v_planes;
+                for (n = 0; n < centre; n++) {      /* centre section */
+                    *work = pattern;
+                    work += linea_vars.v_planes;
+                }
+                if (rightmask) {                    /* right section */
+                    data = *work & ~rightmask;
+                    data |= pattern & rightmask;
+                    *work = data;
+                }
+                if (attr->multifill)
+                    patind += 16;                   /* advance pattern data */
+            }
+        }
+        break;
+    }
+}
+
 
 /*
  * helper to copy relevant Vwk members to VwkAttrib struct which is
