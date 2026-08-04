@@ -75,9 +75,21 @@ The result is an ordinary ELF that readelf, objdump and gdb understand.
 Building a compatible program (m68k)
 ------------------------------------
 
-The same two recipes work with a bare-metal m68k ELF toolchain (m68k-elf-).
+The same two recipes work with m68k ELF toolchains.  Besides a bare-metal
+m68k-elf- toolchain, Vincent Riviere's mintelf toolchain
+(m68k-atari-mintelf-) can produce ELF executables for the loader as well.
 The m68k psABI uses RELA relocations, so the retained entries are
 R_68K_32 / R_68K_RELATIVE in SHT_RELA sections; the loader handles those:
+
+  # mintelf toolchain (ELF output):
+  m68k-atari-mintelf-gcc -ffreestanding -nostdlib -fno-pic -c prog.c -o prog.o
+  m68k-atari-mintelf-ld -q -Ttext=0 -e _start prog.o -o prog.elf
+
+  # or, position independent:
+  m68k-atari-mintelf-gcc -ffreestanding -nostdlib -fPIE -c prog.c -o prog.o
+  m68k-atari-mintelf-ld -pie --no-dynamic-linker -e _start prog.o -o prog.elf
+
+  # bare-metal toolchain equivalents:
 
   # fixed base, --emit-relocs:
   m68k-elf-gcc -ffreestanding -nostdlib -fno-pic -c prog.c -o prog.o
