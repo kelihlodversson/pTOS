@@ -13,6 +13,7 @@
 #endif
 
 #include "portab.h"
+#include "screen_mode.h"
 #include "raspi_io.h"
 #include "raspi_int.h"
 #include "raspi_mbox.h"
@@ -239,6 +240,17 @@ void raspi_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez)
     *planes = 8;
     *hz_rez = raspi_screen_width;
     *vt_rez = raspi_screen_height;
+}
+
+void raspi_get_current_mode_desc(SCREEN_MODE_DESC *desc)
+{
+    desc->width = raspi_screen_width;
+    desc->height = raspi_screen_height;
+    desc->pitch = raspi_screen_width_in_bytes;
+    desc->bits_per_pixel = 8;                  /* Task 5 raises this to 16 */
+    desc->layout = SCREEN_LAYOUT_PACKED;
+    desc->color_model = SCREEN_COLOR_INDEXED;  /* Task 5 changes this to TRUECOLOR */
+    desc->pixel_format = SCREEN_PIXEL_NONE;
 }
 
 void raspi_setphys(const UBYTE *addr)

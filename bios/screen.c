@@ -749,6 +749,41 @@ void screen_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez)
 #endif
 }
 
+/*
+ * Fills in a descriptor for a planar (interleaved-bitplane) mode from
+ * the legacy planes/resolution triple. v_lin_wr's classic formula
+ * (V_REZ_HZ/8*planes) is only correct for planar layouts -- that's
+ * exactly why it can't be reused as-is for packed depths, which is why
+ * this helper is planar-only.
+ */
+static void planar_mode_desc(SCREEN_MODE_DESC *desc, UWORD planes, UWORD hz_rez, UWORD vt_rez)
+{
+    desc->width = hz_rez;
+    desc->height = vt_rez;
+    desc->bits_per_pixel = planes;
+    desc->layout = SCREEN_LAYOUT_PLANAR;
+    desc->color_model = SCREEN_COLOR_INDEXED;
+    desc->pixel_format = SCREEN_PIXEL_NONE;
+    desc->pitch = (ULONG)hz_rez / 8 * planes;
+}
+
+void screen_get_current_mode_desc(SCREEN_MODE_DESC *desc)
+{
+    UWORD planes, hz_rez, vt_rez;
+
+    MAYBE_UNUSED(atari_get_current_mode_info);
+
+#if defined(MACHINE_RPI)
+    raspi_get_current_mode_desc(desc);
+#elif defined(MACHINE_AMIGA)
+    amiga_get_current_mode_info(&planes, &hz_rez, &vt_rez);
+    planar_mode_desc(desc, planes, hz_rez, vt_rez);
+#else
+    atari_get_current_mode_info(&planes, &hz_rez, &vt_rez);
+    planar_mode_desc(desc, planes, hz_rez, vt_rez);
+#endif
+}
+
 /* returns 'standard' pixel sizes */
 static __inline__ void get_std_pixel_size(WORD *width,WORD *height)
 {
