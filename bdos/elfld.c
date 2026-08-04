@@ -590,6 +590,14 @@ LONG elf_pgmld(FH h, PD *p)
         if (ph.p_type != PT_LOAD || ph.p_filesz == 0)
             continue;
 
+        /* p_offset and p_filesz are 32-bit unsigned; xlseek/xread take
+         * signed LONGs.  Values >= 0x80000000 would become negative and
+         * drive a bogus seek or an oversized read before the short-read
+         * check below could catch it. */
+        if (ph.p_offset > (ULONG)0x7fffffffUL
+         || ph.p_filesz > (ULONG)0x7fffffffUL)
+            return EPLFMT;
+
         r = xlseek((LONG)ph.p_offset, h, 0);
         if (r < 0L)
             return r;
