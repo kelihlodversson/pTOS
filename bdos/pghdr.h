@@ -17,7 +17,7 @@
  * dispatch in kpgmld().
  */
 #define PGMLD_PRG   0       /* classic Atari GEMDOS PRG (m68k)      */
-#define PGMLD_ELF   1       /* ELF linked with ld --emit-relocs     */
+#define PGMLD_ELF   1       /* ELF loader (ET_EXEC/-q or ET_DYN PIE)*/
 
 typedef struct
 {

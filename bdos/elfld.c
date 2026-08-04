@@ -105,6 +105,7 @@
 #endif
 
 #define ELF32_R_TYPE(i) ((UBYTE)(i))
+#define ELF_LONG_MAX    0x7fffffffUL
 
 typedef struct {
     UBYTE   e_ident[EI_NIDENT];
@@ -187,6 +188,22 @@ static LONG read_at(FH h, ULONG offset, void *buf, LONG len)
     return 0;
 }
 
+/* ULONG arithmetic helpers: return TRUE when the operation overflows u32 */
+static BOOL u32_add_overflow(ULONG a, ULONG b, ULONG *sum)
+{
+    *sum = a + b;
+    return *sum < a;
+}
+
+static BOOL u32_mul_overflow(ULONG a, ULONG b, ULONG *prod)
+{
+    if (a != 0UL && b > 0xffffffffUL / a)
+        return TRUE;
+
+    *prod = a * b;
+    return FALSE;
+}
+
 /* validate the ELF header and make sure it targets this machine */
 static LONG elf_check_ehdr(const Elf32_Ehdr *e)
 {
@@ -219,7 +236,10 @@ static LONG elf_check_ehdr(const Elf32_Ehdr *e)
 static LONG elf_scan(FH h, const Elf32_Ehdr *e, ELFINFO *info)
 {
     Elf32_Phdr ph;
+    ULONG phoff;
+    ULONG ph_table_size;
     ULONG seg_end;
+    ULONG span;
     LONG r;
     UWORD i;
     BOOL seen = FALSE;
@@ -228,10 +248,17 @@ static LONG elf_scan(FH h, const Elf32_Ehdr *e, ELFINFO *info)
     info->file_end = 0;
     info->mem_end = 0;
 
+    if (u32_mul_overflow((ULONG)e->e_phnum, (ULONG)e->e_phentsize, &ph_table_size)
+     || u32_add_overflow(e->e_phoff, ph_table_size, &span))
+        return EPLFMT;
+
     for (i = 0; i < e->e_phnum; i++)
     {
-        r = read_at(h, e->e_phoff + (ULONG)i * e->e_phentsize,
-                    &ph, (LONG)sizeof(ph));
+        if (u32_mul_overflow((ULONG)i, (ULONG)e->e_phentsize, &phoff)
+         || u32_add_overflow(e->e_phoff, phoff, &phoff))
+            return EPLFMT;
+
+        r = read_at(h, phoff, &ph, (LONG)sizeof(ph));
         if (r < 0L)
             return r;
 
@@ -261,6 +288,18 @@ static LONG elf_scan(FH h, const Elf32_Ehdr *e, ELFINFO *info)
     }
 
     if (!seen)
+        return EPLFMT;
+
+    span = info->file_end - info->link_base;
+    if (span > ELF_LONG_MAX)
+        return EPLFMT;
+
+    span = info->mem_end - info->file_end;
+    if (span > ELF_LONG_MAX)
+        return EPLFMT;
+
+    span = info->mem_end - info->link_base;
+    if (span > ELF_LONG_MAX)
         return EPLFMT;
 
     return 0;
@@ -387,10 +426,16 @@ static LONG elf_relocate_section(FH h, const Elf32_Shdr *sh, BOOL rela,
     if (entsize != structsize || (sh->sh_size % entsize) != 0)
         return EPLFMT;
 
+    if (sh->sh_size != 0UL && u32_add_overflow(sh->sh_offset, sh->sh_size, &offset))
+        return EPLFMT;
+
     count = sh->sh_size / entsize;
     for (i = 0; i < count; i++)
     {
-        offset = sh->sh_offset + i * entsize;
+        if (u32_mul_overflow(i, entsize, &offset)
+         || u32_add_overflow(sh->sh_offset, offset, &offset))
+            return EPLFMT;
+
         r = read_at(h, offset, &ent, (LONG)structsize);
         if (r < 0L)
             return r;
@@ -410,6 +455,8 @@ static LONG elf_relocate(FH h, const Elf32_Ehdr *e, BYTE *load_base,
                          const ELFINFO *info, LONG bias)
 {
     Elf32_Shdr sh;
+    ULONG shoff;
+    ULONG sh_table_size;
     LONG r;
     UWORD i;
 
@@ -425,10 +472,17 @@ static LONG elf_relocate(FH h, const Elf32_Ehdr *e, BYTE *load_base,
      || e->e_shentsize < (UWORD)sizeof(Elf32_Shdr))
         return EPLFMT;
 
+    if (u32_mul_overflow((ULONG)e->e_shnum, (ULONG)e->e_shentsize, &sh_table_size)
+     || u32_add_overflow(e->e_shoff, sh_table_size, &shoff))
+        return EPLFMT;
+
     for (i = 0; i < e->e_shnum; i++)
     {
-        r = read_at(h, e->e_shoff + (ULONG)i * e->e_shentsize,
-                    &sh, (LONG)sizeof(sh));
+        if (u32_mul_overflow((ULONG)i, (ULONG)e->e_shentsize, &shoff)
+         || u32_add_overflow(e->e_shoff, shoff, &shoff))
+            return EPLFMT;
+
+        r = read_at(h, shoff, &sh, (LONG)sizeof(sh));
         if (r < 0L)
             return r;
 
@@ -461,6 +515,8 @@ LONG elf_pgmld(FH h, PD *p)
     BYTE *load_base;
     LONG bias;
     LONG tpalen;
+    ULONG phoff;
+    ULONG ph_table_size;
     LONG r;
     UWORD i;
 
@@ -504,10 +560,17 @@ LONG elf_pgmld(FH h, PD *p)
      * of the heap all start cleared, then read the file backed parts. */
     bzero(load_base, (LONG)p->p_hitpa - (LONG)load_base);
 
+    if (u32_mul_overflow((ULONG)ehdr.e_phnum, (ULONG)ehdr.e_phentsize, &ph_table_size)
+     || u32_add_overflow(ehdr.e_phoff, ph_table_size, &phoff))
+        return EPLFMT;
+
     for (i = 0; i < ehdr.e_phnum; i++)
     {
-        r = read_at(h, ehdr.e_phoff + (ULONG)i * ehdr.e_phentsize,
-                    &ph, (LONG)sizeof(ph));
+        if (u32_mul_overflow((ULONG)i, (ULONG)ehdr.e_phentsize, &phoff)
+         || u32_add_overflow(ehdr.e_phoff, phoff, &phoff))
+            return EPLFMT;
+
+        r = read_at(h, phoff, &ph, (LONG)sizeof(ph));
         if (r < 0L)
             return r;
 

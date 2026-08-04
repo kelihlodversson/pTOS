@@ -52,7 +52,8 @@ config CONF_WITH_ELF_LOADER
 	  own relocation table.  It reads the relocations from the section
 	  headers, so the binary must keep them (do not strip it).
 
-	  This is mandatory on ARM, which cannot produce the m68k specific PRG
-	  format at all, and is available on m68k as an alternative to PRG.
+	  This is enabled by default on ARM, which cannot produce the m68k
+	  specific PRG format at all, and is available on m68k as an
+	  alternative to PRG.
 
 endmenu
