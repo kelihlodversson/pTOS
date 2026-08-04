@@ -19,14 +19,17 @@
  *
  *  - ET_DYN, i.e. a position independent executable (PIE, "ld -pie
  *    --no-dynamic-linker"): its only load-time fixups are the additive
- *    R_*_RELATIVE dynamic relocations in .rel.dyn, and a program that
- *    embeds no absolute pointers in its initialised data needs none at all.
+ *    R_*_RELATIVE dynamic relocations in .rel.dyn / .rela.dyn, and a program
+ *    that embeds no absolute pointers in its initialised data needs none at
+ *    all.
  *
  * In both cases the loader applies "actual_load_addr - link_base" to every
  * absolute slot, exactly the additive fixup the PRG loader does with its
  * own byte stream relocation table (see kpgmld.c:pgfix01()).  Relocation
  * information is read from the section headers, so the binary must not be
- * stripped of them.
+ * stripped of them.  Both ELF relocation encodings are handled: REL, which
+ * ARM emits and which keeps the addend in the target word, and RELA, which
+ * m68k emits and which carries an explicit addend field.
  *
  * ARM needs this because it cannot produce the m68k specific PRG format;
  * m68k can use it too as a normal alternative to PRG.
@@ -79,15 +82,20 @@
 #define SHT_REL     9
 
 /* machine type and the "add the load bias to a 32-bit word" relocation
- * type for the architecture we are built for. */
+ * type for the architecture we are built for.  ELF_SLOT_ALIGN is the
+ * alignment a 32-bit relocated slot must have: ARM faults on a 32-bit
+ * access that is not 4-byte aligned, whereas m68k only requires 2-byte
+ * alignment (and routinely relocates 2-byte-aligned instruction operands). */
 #if ARCH_ARM
 #define ELF_EM_EXPECTED 40      /* EM_ARM */
 #define ELF_R_DIR32     2       /* R_ARM_ABS32 */
 #define ELF_R_RELATIVE  23      /* R_ARM_RELATIVE */
+#define ELF_SLOT_ALIGN  4
 #else
 #define ELF_EM_EXPECTED 4       /* EM_68K */
 #define ELF_R_DIR32     1       /* R_68K_32 */
 #define ELF_R_RELATIVE  22      /* R_68K_RELATIVE */
+#define ELF_SLOT_ALIGN  2
 #endif
 
 #if BYTE_ORDER == LITTLE_ENDIAN
@@ -299,9 +307,23 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
     return 0;
 }
 
-/* apply a single relocation: add the load bias to the 32-bit word at vaddr */
+/*
+ * apply a single relocation to the 32-bit word at vaddr.
+ *
+ * Both relocation encodings are supported.  REL (used by ARM) keeps the
+ * addend in the target word itself, so the fixup is simply "add the load
+ * bias": the slot already holds the link-time value.  RELA (used by m68k)
+ * carries an explicit r_addend field instead:
+ *
+ *  - for a RELATIVE relocation the addend is the link-time address of the
+ *    target and the in-file slot may be zero, so the result is computed
+ *    from scratch as bias + addend rather than by adding to the slot;
+ *  - for an absolute (DIR32) relocation against a defined symbol, ld has
+ *    already folded symbol+addend into the slot when producing a static
+ *    ET_EXEC (--emit-relocs), so adding the bias is correct there too.
+ */
 static LONG elf_fixup(BYTE *load_base, const ELFINFO *info, LONG bias,
-                      ULONG vaddr, UBYTE type)
+                      ULONG vaddr, UBYTE type, BOOL rela, ULONG addend)
 {
     ULONG *slot;
 
@@ -321,51 +343,61 @@ static LONG elf_fixup(BYTE *load_base, const ELFINFO *info, LONG bias,
 
     slot = (ULONG *)(load_base + (vaddr - info->link_base));
 
-    /* a 32-bit absolute slot must be word aligned or the access faults on ARM */
-    if ((ULONG)slot & (sizeof(ULONG) - 1))
+    /* the slot must satisfy the target's 32-bit access alignment (4 bytes on
+     * ARM, 2 on m68k) or the load/store below would fault */
+    if ((ULONG)slot & (ELF_SLOT_ALIGN - 1))
         return EPLFMT;
 
-    /* unsigned add wraps modulo 2^32, which applies a negative bias correctly */
-    *slot += (ULONG)bias;
+    /* unsigned arithmetic wraps modulo 2^32, so a negative bias applies
+     * correctly whether we add to the slot or recompute it outright */
+    if (rela && type == ELF_R_RELATIVE)
+        *slot = (ULONG)bias + addend;
+    else
+        *slot += (ULONG)bias;
 
     return 0;
 }
 
-/* walk one SHT_REL section and relocate every entry in it */
-static LONG elf_relocate_section(FH h, const Elf32_Shdr *sh,
+/* walk one SHT_REL / SHT_RELA section and relocate every entry in it */
+static LONG elf_relocate_section(FH h, const Elf32_Shdr *sh, BOOL rela,
                                  BYTE *load_base, const ELFINFO *info,
                                  LONG bias)
 {
-    Elf32_Rel rel;
+    Elf32_Rela ent;     /* a RELA record is a REL record plus an addend */
+    ULONG structsize;
     ULONG entsize;
     ULONG offset;
     ULONG count;
+    ULONG addend;
     ULONG i;
     LONG r;
 
+    structsize = rela ? (ULONG)sizeof(Elf32_Rela) : (ULONG)sizeof(Elf32_Rel);
+
     entsize = sh->sh_entsize;
     if (entsize == 0)
-        entsize = (ULONG)sizeof(Elf32_Rel);
+        entsize = structsize;
 
     /*
-     * only trust a table whose entry size matches Elf32_Rel exactly and
-     * whose total size is a whole number of entries; otherwise a malformed
-     * sh_entsize / sh_size could drive out-of-bounds reads or leave a
-     * partially parsed relocation table.
+     * only trust a table whose entry size matches the record for its type
+     * exactly and whose total size is a whole number of entries; otherwise
+     * a malformed sh_entsize / sh_size could drive out-of-bounds reads or
+     * leave a partially parsed relocation table.
      */
-    if (entsize != (ULONG)sizeof(Elf32_Rel) || (sh->sh_size % entsize) != 0)
+    if (entsize != structsize || (sh->sh_size % entsize) != 0)
         return EPLFMT;
 
     count = sh->sh_size / entsize;
     for (i = 0; i < count; i++)
     {
         offset = sh->sh_offset + i * entsize;
-        r = read_at(h, offset, &rel, (LONG)sizeof(rel));
+        r = read_at(h, offset, &ent, (LONG)structsize);
         if (r < 0L)
             return r;
 
-        r = elf_fixup(load_base, info, bias, rel.r_offset,
-                      ELF32_R_TYPE(rel.r_info));
+        addend = rela ? ent.r_addend : 0UL;
+        r = elf_fixup(load_base, info, bias, ent.r_offset,
+                      ELF32_R_TYPE(ent.r_info), rela, addend);
         if (r < 0L)
             return r;
     }
@@ -401,10 +433,9 @@ static LONG elf_relocate(FH h, const Elf32_Ehdr *e, BYTE *load_base,
             return r;
 
         if (sh.sh_type == SHT_REL)
-            r = elf_relocate_section(h, &sh, load_base, info, bias);
+            r = elf_relocate_section(h, &sh, FALSE, load_base, info, bias);
         else if (sh.sh_type == SHT_RELA)
-            return EPLFMT;  /* RELA addends are not applied; reject to avoid
-                             * silently mis-relocating the image */
+            r = elf_relocate_section(h, &sh, TRUE, load_base, info, bias);
         else
             continue;
 

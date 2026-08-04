@@ -47,9 +47,9 @@ it was built for, in either of two forms:
 In both cases the relocation entries are read from the section headers, so
 the binary must keep them: do not strip it (no "strip", no "ld -s").  A
 binary that must be relocated but has no usable section header table is
-rejected.  Only REL relocation sections (SHT_REL) are applied; RELA sections
-are rejected, because their addends are not yet handled.  On ARM a stock
-toolchain emits REL, so this covers the recipe below.
+rejected.  Both ELF relocation encodings are applied: REL sections
+(SHT_REL), which ARM emits with the addend stored in the target word, and
+RELA sections (SHT_RELA), which m68k emits with an explicit addend field.
 
 
 Building a compatible program (ARM)
@@ -70,6 +70,22 @@ This works with a stock arm-none-eabi toolchain, no patched gcc or ld:
 
 The result is an ordinary ELF that readelf, objdump and gdb understand.
 "readelf -r prog.elf" shows the relocations the loader will apply.
+
+
+Building a compatible program (m68k)
+------------------------------------
+
+The same two recipes work with a bare-metal m68k ELF toolchain (m68k-elf-).
+The m68k psABI uses RELA relocations, so the retained entries are
+R_68K_32 / R_68K_RELATIVE in SHT_RELA sections; the loader handles those:
+
+  # fixed base, --emit-relocs:
+  m68k-elf-gcc -ffreestanding -nostdlib -fno-pic -c prog.c -o prog.o
+  m68k-elf-ld -q -Ttext=0 -e _start prog.o -o prog.elf
+
+  # or, position independent:
+  m68k-elf-gcc -ffreestanding -nostdlib -fPIE -c prog.c -o prog.o
+  m68k-elf-ld -pie --no-dynamic-linker -e _start prog.o -o prog.elf
 
 Programs start executing at the ELF entry point (e_entry); the PT_LOAD
 segments are placed in the TPA and the rest of it, including .bss, is zeroed.
