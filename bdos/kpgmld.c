@@ -60,16 +60,21 @@ LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h)
 
     r = xread(*h, 4L, magic);   /* read magic number */
     if (r < 0L)
-        return r;
-    if (r != 4)
-        return EPLFMT;
+        goto fail;
+    if (r != 4) {
+        r = EPLFMT;
+        goto fail;
+    }
 
 #if CONF_WITH_ELF_LOADER
     /* ELF binary linked with ld --emit-relocs (see elfld.c) */
     if (magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F')
     {
         pgmld_format = PGMLD_ELF;
-        return elf_pgmhdrld(*h, hd);
+        r = elf_pgmhdrld(*h, hd);
+        if (r)
+            goto fail;
+        return 0;
     }
 #endif
 
@@ -81,20 +86,25 @@ LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h)
         /* rewind past the 2-byte magic word to the program header */
         r = xlseek(2L, *h, 0);
         if (r < 0L)
-            return r;
+            goto fail;
 
         /* read in the program header */
         r = xread(*h, (LONG)sizeof(PGMHDR01), hd);
         if (r < 0L)
-            return r;
-        if (r != (LONG)sizeof(PGMHDR01))
-            return EPLFMT;
+            goto fail;
+        if (r != (LONG)sizeof(PGMHDR01)) {
+            r = EPLFMT;
+            goto fail;
+        }
 
         return 0;
     }
 
     KDEBUG(("BDOS xpgmld: Unknown executable format!\n"));
-    return EPLFMT;
+    r = EPLFMT;
+fail:
+    xclose(*h);
+    return r;
 }
 
 
