@@ -19,12 +19,18 @@ config CONF_CHUNKY_PIXELS
 	  use the Atari bitplane layout.
 
 config CONF_WITH_VDI_TRUECOLOR
-	bool "Packed truecolor VDI backend"
+	bool "Packed truecolor VDI backend" if !MACHINE_RPI
 	default y if MACHINE_RPI
 	default n
 	help
 	  Build the packed-truecolor VDI backend (vdi_backend_truecolor.o).
 	  Raspberry Pi is the first machine that uses it -- see issue #35.
+
+	  Raspberry Pi's screen descriptor unconditionally reports a
+	  truecolor mode, so this backend is mandatory there: the prompt is
+	  hidden (and the option forced to y) whenever MACHINE_RPI is set,
+	  since turning it off would leave vdi_backend_select() with no
+	  matching backend and a NULL dereference on the first draw.
 
 config CONF_WITH_LINEA
 	bool "Line-A emulator"
