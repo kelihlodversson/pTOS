@@ -134,7 +134,7 @@ void raspi_screen_init(void)
     {
         {{PROPTAG_SET_PHYS_WIDTH_HEIGHT, 8, 8}},
         {{PROPTAG_SET_VIRT_WIDTH_HEIGHT, 8, 8}},
-        {{PROPTAG_SET_DEPTH,             4, 4}, 8},
+        {{PROPTAG_SET_DEPTH,             4, 4}, 16},
         {{PROPTAG_SET_VIRTUAL_OFFSET,    8, 8}, 0, 0},
         {{PROPTAG_ALLOCATE_BUFFER,       8, 4}, 0},
         {{PROPTAG_GET_PITCH,             4, 0}}
@@ -247,10 +247,10 @@ void raspi_get_current_mode_desc(SCREEN_MODE_DESC *desc)
     desc->width = raspi_screen_width;
     desc->height = raspi_screen_height;
     desc->pitch = raspi_screen_width_in_bytes;
-    desc->bits_per_pixel = 8;                  /* Task 5 raises this to 16 */
+    desc->bits_per_pixel = 16;
     desc->layout = SCREEN_LAYOUT_PACKED;
-    desc->color_model = SCREEN_COLOR_INDEXED;  /* Task 5 changes this to TRUECOLOR */
-    desc->pixel_format = SCREEN_PIXEL_NONE;
+    desc->color_model = SCREEN_COLOR_TRUECOLOR;
+    desc->pixel_format = SCREEN_PIXEL_RGB565;
 }
 
 void raspi_setphys(const UBYTE *addr)

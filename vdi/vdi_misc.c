@@ -17,6 +17,7 @@
 #include "biosbind.h"
 #include "../bios/tosvars.h"
 #include "vdi_defs.h"
+#include "vdi_backend.h"
 #include "../bios/lineavars.h"
 
 
@@ -178,19 +179,7 @@ void timer_exit(void)
 
 UWORD * get_start_addr(const WORD x, const WORD y)
 {
-    UBYTE * addr;
-
-    /* init address counter */
-    addr = v_bas_ad;                    /* start of screen */
-
-#if CONF_CHUNKY_PIXELS
-    addr += (x * linea_vars.v_planes) >> 3;
-    addr += (LONG)y * linea_vars.v_lin_wr;         /* add y coordinate part of addr */
-#else
-    addr += (x&0xfff0)>>shift_offset[linea_vars.v_planes]; /* add x coordinate part of addr */
-    addr += (LONG)y * linea_vars.v_lin_wr;         /* add y coordinate part of addr */
-#endif
-    return (UWORD*)addr;
+    return vdi_screen_backend()->get_start_addr(x, y);
 }
 
 UWORD *planar_get_start_addr(WORD x, WORD y)

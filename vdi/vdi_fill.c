@@ -14,6 +14,7 @@
 #include "config.h"
 #include "portab.h"
 #include "vdi_defs.h"
+#include "vdi_backend.h"
 #include "../bios/tosvars.h"
 #include "../bios/lineavars.h"
 
@@ -729,19 +730,7 @@ get_color (UWORD mask, UWORD * addr)
 static UWORD
 pixelread(const WORD x, const WORD y)
 {
-#if CONF_CHUNKY_PIXELS
-    return *((UBYTE*)get_start_addr(x, y)) ;
-#else
-    UWORD *addr;
-    UWORD mask;
-
-    /* convert x,y to start address and bit mask */
-    addr = get_start_addr(x, y);
-    addr += linea_vars.v_planes;                   /* start at highest-order bit_plane */
-    mask = 0x8000 >> (x&0xf);           /* initial bit position in WORD */
-
-    return get_color(mask, addr);       /* return the composed color value */
-#endif
+    return vdi_screen_backend()->get_pixel(x, y);
 }
 
 UWORD planar_get_pixel(WORD x, WORD y)
@@ -1109,13 +1098,9 @@ void
 put_pix(void)
 {
     UWORD *addr;
-    UWORD color;
-#if !CONF_CHUNKY_PIXELS
-    UWORD mask;
-    int plane;
-#endif
     const WORD x = PTSIN[0];
     const WORD y = PTSIN[1];
+    UWORD color;
 
     /* convert x,y to start address */
     addr = get_start_addr(x, y);
@@ -1127,19 +1112,7 @@ put_pix(void)
     }
     color = INTIN[0];           /* device dependent encoded color bits */
 
-#if CONF_CHUNKY_PIXELS
-    *((UBYTE*)addr) = color & 0xff;
-#else
-    mask = 0x8000 >> (x&0xf);   /* initial bit position in WORD */
-
-    for (plane = linea_vars.v_planes-1; plane >= 0; plane-- ) {
-        color = color >> 1| color << 15;        /* rotate color bits */
-        if (color&0x8000)
-            *addr++ |= mask;
-        else
-            *addr++ &= ~mask;
-    }
-#endif
+    vdi_screen_backend()->put_pixel(x, y, color);
 }
 
 void planar_put_pixel(WORD x, WORD y, UWORD color)
