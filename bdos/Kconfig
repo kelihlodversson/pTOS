@@ -30,4 +30,29 @@ config CONF_PREFER_STRAM_DISK_BUFFERS
 	  Say y when disk buffers are more efficient in ST-RAM, which is the
 	  case whenever floppy or ACSI DMA transfers are used.
 
+config CONF_WITH_ELF_LOADER
+	bool "Load ELF executables"
+	default y if ARCH_ARM
+	default n
+	help
+	  Add a second, ELF based executable loader alongside the classic
+	  Atari GEMDOS PRG format.  Pexec() picks the loader by inspecting the
+	  file's magic number, so both formats can coexist.
+
+	  The program must be a statically linked ELF for this machine, in one
+	  of two forms:
+
+	    * a fixed base ET_EXEC linked with "ld --emit-relocs" (ld -q),
+	      which keeps its relocation entries in the binary, or
+	    * a position independent ET_DYN (PIE, "ld -pie
+	      --no-dynamic-linker").
+
+	  The loader places the PT_LOAD segments in the TPA and applies the
+	  retained relocation entries, exactly like the PRG loader applies its
+	  own relocation table.  It reads the relocations from the section
+	  headers, so the binary must keep them (do not strip it).
+
+	  This is mandatory on ARM, which cannot produce the m68k specific PRG
+	  format at all, and is available on m68k as an alternative to PRG.
+
 endmenu

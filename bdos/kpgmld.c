@@ -32,6 +32,14 @@ static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd);
 static LONG pgfix01(void *lastcp, LONG nrelbytes, PGMINFO *pi);
 
 /*
+ * executable format detected by kpgmhdrld() and consumed by kpgmld().
+ * xexec() (the only caller) loads a program's header and body in two
+ * consecutive, strictly serial steps, so a single module variable is
+ * enough to carry the format between them; it never needs to nest.
+ */
+static WORD pgmld_format;
+
+/*
  * kpgmhdrld - load program header
  *
  * contrary to what was before, we load the prg header first,
@@ -42,7 +50,7 @@ static LONG pgfix01(void *lastcp, LONG nrelbytes, PGMINFO *pi);
 LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h)
 {
     LONG r;
-    WORD magic;
+    UBYTE magic[4];
 
     r = xopen(s, 0);            /* open file for read */
     if (r < 0L)
@@ -50,27 +58,43 @@ LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h)
 
     *h = (FH) r ;               /* get file handle */
 
-    r = xread(*h, 2L, &magic);  /* read magic number */
+    r = xread(*h, 4L, magic);   /* read magic number */
     if (r < 0L)
         return r;
-    if (r != 2)
+    if (r != 4)
         return EPLFMT;
 
-    /* alternate executable formats will not be handled */
-    if (magic != 0x601a)
+#if CONF_WITH_ELF_LOADER
+    /* ELF binary linked with ld --emit-relocs (see elfld.c) */
+    if (magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F')
     {
-        KDEBUG(("BDOS xpgmld: Unknown executable format!\n"));
-        return EPLFMT;
+        pgmld_format = PGMLD_ELF;
+        return elf_pgmhdrld(*h, hd);
+    }
+#endif
+
+    /* classic Atari GEMDOS PRG */
+    if (magic[0] == 0x60 && magic[1] == 0x1a)
+    {
+        pgmld_format = PGMLD_PRG;
+
+        /* rewind past the 2-byte magic word to the program header */
+        r = xlseek(2L, *h, 0);
+        if (r < 0L)
+            return r;
+
+        /* read in the program header */
+        r = xread(*h, (LONG)sizeof(PGMHDR01), hd);
+        if (r < 0L)
+            return r;
+        if (r != (LONG)sizeof(PGMHDR01))
+            return EPLFMT;
+
+        return 0;
     }
 
-    /* read in the program header */
-    r = xread(*h, (LONG)sizeof(PGMHDR01), hd);
-    if (r < 0L)
-        return r;
-    if (r != (LONG)sizeof(PGMHDR01))
-        return EPLFMT;
-
-    return 0;
+    KDEBUG(("BDOS xpgmld: Unknown executable format!\n"));
+    return EPLFMT;
 }
 
 
@@ -88,9 +112,14 @@ LONG kpgmld(PD *p, FH h, PGMHDR01 *hd)
 {
     LONG r;
 
-    r = pgmld01(h, p, hd);
+#if CONF_WITH_ELF_LOADER
+    if (pgmld_format == PGMLD_ELF)
+        r = elf_pgmld(h, p);
+    else
+#endif
+        r = pgmld01(h, p, hd);
 
-    KDEBUG(("BDOS pgmld01: return code=0x%lx\n",r));
+    KDEBUG(("BDOS pgmld: return code=0x%lx\n",r));
 
     xclose(h);
     return r;

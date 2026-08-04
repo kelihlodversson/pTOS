@@ -35,6 +35,14 @@ WORD xtermres(long blkln, WORD rc);
 LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h);
 LONG kpgmld(PD *p, FH h, PGMHDR01 *hd);
 
+#if CONF_WITH_ELF_LOADER
+/*
+ * in elfld.c
+ */
+LONG elf_pgmhdrld(FH h, PGMHDR01 *hd);
+LONG elf_pgmld(FH h, PD *p);
+#endif
+
 #if DETECT_NATIVE_FEATURES
 LONG kpgm_relocate( PD *p, long length); /* SOP */
 #endif
