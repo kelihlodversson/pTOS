@@ -175,6 +175,11 @@ static LONG read_at(FH h, ULONG offset, void *buf, LONG len)
 {
     LONG r;
 
+    /* ELF offsets are 32-bit unsigned; xlseek takes a signed LONG.
+     * Offsets >= 0x80000000 would become negative and cause a bogus seek. */
+    if (offset > (ULONG)0x7fffffffUL)
+        return EPLFMT;
+
     r = xlseek((LONG)offset, h, 0);
     if (r < 0L)
         return r;
@@ -352,14 +357,10 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
  * Both relocation encodings are supported.  REL (used by ARM) keeps the
  * addend in the target word itself, so the fixup is simply "add the load
  * bias": the slot already holds the link-time value.  RELA (used by m68k)
- * carries an explicit r_addend field instead:
- *
- *  - for a RELATIVE relocation the addend is the link-time address of the
- *    target and the in-file slot may be zero, so the result is computed
- *    from scratch as bias + addend rather than by adding to the slot;
- *  - for an absolute (DIR32) relocation against a defined symbol, ld has
- *    already folded symbol+addend into the slot when producing a static
- *    ET_EXEC (--emit-relocs), so adding the bias is correct there too.
+ * carries an explicit r_addend field; the in-file slot may be zero or
+ * partial, so the relocated value is always recomputed from scratch as
+ * bias + addend (for RELATIVE the addend is the link-time target address;
+ * for DIR32 it is the full symbol+addend value the linker folded in).
  */
 static LONG elf_fixup(BYTE *load_base, const ELFINFO *info, LONG bias,
                       ULONG vaddr, UBYTE type, BOOL rela, ULONG addend)
@@ -388,8 +389,17 @@ static LONG elf_fixup(BYTE *load_base, const ELFINFO *info, LONG bias,
         return EPLFMT;
 
     /* unsigned arithmetic wraps modulo 2^32, so a negative bias applies
-     * correctly whether we add to the slot or recompute it outright */
-    if (rela && type == ELF_R_RELATIVE)
+     * correctly whether we add to the slot or recompute it outright.
+     *
+     * For RELA the addend lives in r_addend, not in the target slot:
+     *  - RELATIVE: the slot may be zero; recompute from scratch.
+     *  - DIR32: ld folds symbol+addend into the slot for ET_EXEC
+     *    (--emit-relocs); for a correctly-produced PIE the slot is the
+     *    addend itself.  In both cases the result is bias + addend, but
+     *    we read addend from r_addend rather than from *slot, so we
+     *    recompute here too.
+     */
+    if (rela)
         *slot = (ULONG)bias + addend;
     else
         *slot += (ULONG)bias;
@@ -539,7 +549,10 @@ LONG elf_pgmld(FH h, PD *p)
 
     /* the image is loaded at the first byte after the basepage */
     load_base = (BYTE *)(p + 1);
-    bias = (LONG)load_base - (LONG)info.link_base;
+    /* compute the bias in unsigned then reinterpret as signed; this avoids
+     * signed overflow UB when either operand has its high bit set, and the
+     * relocation arithmetic downstream already relies on unsigned wrap. */
+    bias = (LONG)((ULONG)load_base - info.link_base);
 
     tpalen = (LONG)(p->p_hitpa - p->p_lowtpa) - (LONG)sizeof(PD);
     if ((LONG)(info.mem_end - info.link_base) > tpalen)

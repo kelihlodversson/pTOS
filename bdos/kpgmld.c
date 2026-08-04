@@ -100,7 +100,7 @@ LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h)
         return 0;
     }
 
-    KDEBUG(("BDOS xpgmld: Unknown executable format!\n"));
+    KDEBUG(("BDOS kpgmhdrld: Unknown executable format!\n"));
     r = EPLFMT;
 fail:
     xclose(*h);
