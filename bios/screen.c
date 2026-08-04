@@ -772,6 +772,9 @@ void screen_get_current_mode_desc(SCREEN_MODE_DESC *desc)
     UWORD planes, hz_rez, vt_rez;
 
     MAYBE_UNUSED(atari_get_current_mode_info);
+    MAYBE_UNUSED(planes);
+    MAYBE_UNUSED(hz_rez);
+    MAYBE_UNUSED(vt_rez);
 
 #if defined(MACHINE_RPI)
     raspi_get_current_mode_desc(desc);
