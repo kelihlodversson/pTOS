@@ -81,13 +81,16 @@ m68k-elf- toolchain, Vincent Riviere's mintelf toolchain
 The m68k psABI uses RELA relocations, so the retained entries are
 R_68K_32 / R_68K_RELATIVE in SHT_RELA sections; the loader handles those:
 
-  # mintelf toolchain (ELF output):
+  # mintelf toolchain (ELF output).  m68k-atari-mintelf-ld defaults to
+  # elf32-atariprg, so force a generic ELF32 target explicitly:
   m68k-atari-mintelf-gcc -ffreestanding -nostdlib -fno-pic -c prog.c -o prog.o
-  m68k-atari-mintelf-ld -q -Ttext=0 -e _start prog.o -o prog.elf
+  m68k-atari-mintelf-ld --oformat=elf32-m68k -q -Ttext=0 -e _start \
+      prog.o -o prog.elf
 
   # or, position independent:
   m68k-atari-mintelf-gcc -ffreestanding -nostdlib -fPIE -c prog.c -o prog.o
-  m68k-atari-mintelf-ld -pie --no-dynamic-linker -e _start prog.o -o prog.elf
+  m68k-atari-mintelf-ld --oformat=elf32-m68k -pie --no-dynamic-linker \
+      -e _start prog.o -o prog.elf
 
   # bare-metal toolchain equivalents:
 
