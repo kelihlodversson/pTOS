@@ -45,7 +45,11 @@ it was built for, in either of two forms:
      stores no absolute pointer in its initialised data needs none at all.
 
 In both cases the relocation entries are read from the section headers, so
-the binary must keep them: do not strip it (no "strip", no "ld -s").
+the binary must keep them: do not strip it (no "strip", no "ld -s").  A
+binary that must be relocated but has no usable section header table is
+rejected.  Only REL relocation sections (SHT_REL) are applied; RELA sections
+are rejected, because their addends are not yet handled.  On ARM a stock
+toolchain emits REL, so this covers the recipe below.
 
 
 Building a compatible program (ARM)

@@ -233,6 +233,11 @@ static LONG elf_scan(FH h, const Elf32_Ehdr *e, ELFINFO *info)
         if (ph.p_filesz > ph.p_memsz)
             return EPLFMT;
 
+        /* reject a segment whose extent wraps past the top of the 32-bit
+         * address space; p_filesz <= p_memsz, so testing p_memsz suffices */
+        if (ph.p_vaddr + ph.p_memsz < ph.p_vaddr)
+            return EPLFMT;
+
         if (!seen || ph.p_vaddr < info->link_base)
             info->link_base = ph.p_vaddr;
 
@@ -303,22 +308,35 @@ static LONG elf_fixup(BYTE *load_base, const ELFINFO *info, LONG bias,
     if (type != ELF_R_DIR32 && type != ELF_R_RELATIVE)
         return 0;   /* PC-relative and other slots need no load-time fixup */
 
-    /* the slot must lie fully inside the loaded image */
-    if (vaddr < info->link_base || vaddr + sizeof(ULONG) > info->mem_end)
+    /*
+     * the slot must lie fully inside the loaded image.  Compute the bounds
+     * without ever forming vaddr + sizeof(ULONG), which could wrap past the
+     * top of the address space for a crafted r_offset.
+     */
+    if (vaddr < info->link_base)
+        return EPLFMT;
+    if (info->mem_end < (ULONG)sizeof(ULONG)
+     || vaddr > info->mem_end - (ULONG)sizeof(ULONG))
         return EPLFMT;
 
     slot = (ULONG *)(load_base + (vaddr - info->link_base));
+
+    /* a 32-bit absolute slot must be word aligned or the access faults on ARM */
+    if ((ULONG)slot & (sizeof(ULONG) - 1))
+        return EPLFMT;
+
+    /* unsigned add wraps modulo 2^32, which applies a negative bias correctly */
     *slot += (ULONG)bias;
 
     return 0;
 }
 
-/* walk one SHT_REL / SHT_RELA section and relocate every entry in it */
-static LONG elf_relocate_section(FH h, const Elf32_Shdr *sh, BOOL rela,
+/* walk one SHT_REL section and relocate every entry in it */
+static LONG elf_relocate_section(FH h, const Elf32_Shdr *sh,
                                  BYTE *load_base, const ELFINFO *info,
                                  LONG bias)
 {
-    union { Elf32_Rel rel; Elf32_Rela rela; } ent;
+    Elf32_Rel rel;
     ULONG entsize;
     ULONG offset;
     ULONG count;
@@ -327,19 +345,27 @@ static LONG elf_relocate_section(FH h, const Elf32_Shdr *sh, BOOL rela,
 
     entsize = sh->sh_entsize;
     if (entsize == 0)
-        entsize = rela ? (ULONG)sizeof(Elf32_Rela) : (ULONG)sizeof(Elf32_Rel);
+        entsize = (ULONG)sizeof(Elf32_Rel);
+
+    /*
+     * only trust a table whose entry size matches Elf32_Rel exactly and
+     * whose total size is a whole number of entries; otherwise a malformed
+     * sh_entsize / sh_size could drive out-of-bounds reads or leave a
+     * partially parsed relocation table.
+     */
+    if (entsize != (ULONG)sizeof(Elf32_Rel) || (sh->sh_size % entsize) != 0)
+        return EPLFMT;
 
     count = sh->sh_size / entsize;
     for (i = 0; i < count; i++)
     {
         offset = sh->sh_offset + i * entsize;
-        r = read_at(h, offset, &ent,
-                    rela ? (LONG)sizeof(Elf32_Rela) : (LONG)sizeof(Elf32_Rel));
+        r = read_at(h, offset, &rel, (LONG)sizeof(rel));
         if (r < 0L)
             return r;
 
-        r = elf_fixup(load_base, info, bias, ent.rel.r_offset,
-                      ELF32_R_TYPE(ent.rel.r_info));
+        r = elf_fixup(load_base, info, bias, rel.r_offset,
+                      ELF32_R_TYPE(rel.r_info));
         if (r < 0L)
             return r;
     }
@@ -358,8 +384,14 @@ static LONG elf_relocate(FH h, const Elf32_Ehdr *e, BYTE *load_base,
     if (bias == 0)
         return 0;   /* loaded at its link address: nothing to relocate */
 
-    if (e->e_shoff == 0 || e->e_shentsize < (UWORD)sizeof(Elf32_Shdr))
-        return 0;   /* no section table: assume no relocations were kept */
+    /*
+     * we are loading at a non-link address, so relocations are mandatory.
+     * A stripped binary with no usable section header table cannot be fixed
+     * up, so reject it rather than silently loading an unrelocated image.
+     */
+    if (e->e_shoff == 0 || e->e_shnum == 0
+     || e->e_shentsize < (UWORD)sizeof(Elf32_Shdr))
+        return EPLFMT;
 
     for (i = 0; i < e->e_shnum; i++)
     {
@@ -369,9 +401,10 @@ static LONG elf_relocate(FH h, const Elf32_Ehdr *e, BYTE *load_base,
             return r;
 
         if (sh.sh_type == SHT_REL)
-            r = elf_relocate_section(h, &sh, FALSE, load_base, info, bias);
+            r = elf_relocate_section(h, &sh, load_base, info, bias);
         else if (sh.sh_type == SHT_RELA)
-            r = elf_relocate_section(h, &sh, TRUE, load_base, info, bias);
+            return EPLFMT;  /* RELA addends are not applied; reject to avoid
+                             * silently mis-relocating the image */
         else
             continue;
 
@@ -411,6 +444,11 @@ LONG elf_pgmld(FH h, PD *p)
     r = elf_scan(h, &ehdr, &info);
     if (r < 0L)
         return r;
+
+    /* the entry point must fall inside the loaded image, or p_tbase would
+     * point outside the TPA (underflow below link_base, or past mem_end) */
+    if (ehdr.e_entry < info.link_base || ehdr.e_entry >= info.mem_end)
+        return EPLFMT;
 
     /* the image is loaded at the first byte after the basepage */
     load_base = (BYTE *)(p + 1);
