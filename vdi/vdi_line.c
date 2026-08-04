@@ -591,7 +591,7 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
         leftmask &= rightmask;  /* so combine masks */
         rightmask = 0;
     }
-    addr = get_start_addr(rect->x1,rect->y1);   /* init address ptr */
+    addr = planar_get_start_addr(rect->x1,rect->y1);   /* init address ptr */
 
 #if CONF_WITH_BLITTER
     if (blitter_is_enabled)
