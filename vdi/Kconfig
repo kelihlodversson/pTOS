@@ -20,12 +20,11 @@ config CONF_CHUNKY_PIXELS
 
 config CONF_WITH_VDI_TRUECOLOR
 	bool "Packed truecolor VDI backend"
+	default y if MACHINE_RPI
 	default n
 	help
 	  Build the packed-truecolor VDI backend (vdi_backend_truecolor.o).
-	  Not yet functional on its own -- see CONF_CHUNKY_PIXELS and issue
-	  #35. Left off by default until a screen driver actually reports a
-	  truecolor descriptor.
+	  Raspberry Pi is the first machine that uses it -- see issue #35.
 
 config CONF_WITH_LINEA
 	bool "Line-A emulator"

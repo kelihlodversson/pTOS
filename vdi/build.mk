@@ -7,6 +7,8 @@ obj-y += vdi_entry.o vdi_bezier.o vdi_col.o vdi_control.o vdi_esc.o \
 	 vdi_marker.o vdi_misc.o vdi_mouse.o vdi_raster.o vdi_text.o \
 	 vdi_textblit.o vdi_backend.o vdi_backend_planar.o
 
+obj-$(CONF_WITH_VDI_TRUECOLOR) += vdi_backend_truecolor.o
+
 obj-$(MACHINE_RPI) += raspi_mouse.o
 
 obj-y += vdi_tblit.o
