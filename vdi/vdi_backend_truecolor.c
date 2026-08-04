@@ -88,7 +88,7 @@ static void truecolor_fill_rect(const VwkAttrib *attr, const Rect *rect)
     WORD x, y, i;
 
     for (y = rect->y1; y <= rect->y2; y++, row += linea_vars.v_lin_wr) {
-        int patind = patmsk & y;   /* starting pattern */
+        WORD patind = patmsk & y;   /* starting pattern */
         UWORD pattern = attr->patptr[patind];
         UWORD *dst = (UWORD *)row;
 
