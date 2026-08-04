@@ -367,7 +367,18 @@ static BOOL blit_rect_common(const VwkAttrib *attr, const Rect *rect, BLITPARM *
  */
 void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
 {
-    vdi_screen_backend()->fill_rect(attr, rect);
+    const vdi_backend_ops *backend = vdi_screen_backend();
+
+    /*
+     * Belt-and-suspenders: vdi_screen_backend() self-initializes now,
+     * but if a machine's mode descriptor never validates against any
+     * backend (see vdi_backend_select()), it still returns NULL.
+     * Simply skip drawing rather than dereference NULL.
+     */
+    if (!backend)
+        return;
+
+    backend->fill_rect(attr, rect);
 }
 
 void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)

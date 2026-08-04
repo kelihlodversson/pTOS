@@ -523,5 +523,20 @@ void vdi_v_nop(Vwk * vwk)
 
 const vdi_backend_ops *vdi_screen_backend(void)
 {
+    /*
+     * virt_work.backend is BSS-zero (NULL) until vdi_v_opnwk() runs,
+     * but Line-A (bios/arch/m68k/linea.S) dispatches straight to the
+     * put_pix/get_pix/line/rect/fill routines below, and is reachable
+     * from AUTO-folder programs and other pre-AES code paths long
+     * before vdi_v_opnwk() is ever called -- on cartridge_defconfig
+     * (CONF_WITH_AES=n), it is never called at all. Self-initialize
+     * here so the first Line-A call gets a real backend instead of a
+     * NULL one, mirroring what vdi_v_opnwk() itself does.
+     */
+    if (!virt_work.backend)
+    {
+        screen_get_current_mode_desc(&virt_work.mode);
+        virt_work.backend = vdi_backend_select(&virt_work.mode);
+    }
     return virt_work.backend;
 }

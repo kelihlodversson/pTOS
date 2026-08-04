@@ -179,7 +179,19 @@ void timer_exit(void)
 
 UWORD * get_start_addr(const WORD x, const WORD y)
 {
-    return vdi_screen_backend()->get_start_addr(x, y);
+    const vdi_backend_ops *backend = vdi_screen_backend();
+
+    /*
+     * Belt-and-suspenders: vdi_screen_backend() self-initializes now,
+     * but if a machine's mode descriptor never validates against any
+     * backend (see vdi_backend_select()), it still returns NULL. Fall
+     * back to v_bas_ad, an in-bounds address, rather than dereference
+     * NULL -- matches put_pix()'s own bounds check against v_bas_ad.
+     */
+    if (!backend)
+        return (UWORD *)v_bas_ad;
+
+    return backend->get_start_addr(x, y);
 }
 
 UWORD *planar_get_start_addr(WORD x, WORD y)
