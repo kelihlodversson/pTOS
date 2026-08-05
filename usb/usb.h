@@ -166,7 +166,7 @@ struct usb_config {
 
         unsigned char   no_of_if;       /* number of interfaces */
         struct usb_interface if_desc[USB_MAXINTERFACES];
-} __attribute__ ((packed));
+};
 
 enum {
         /* Maximum packet size; encoded as 0,1,2,3 = 8,16,32,64 */
@@ -381,5 +381,43 @@ long udd_register(struct uddif *a);
 long udd_unregister(struct uddif *a);
 long ucd_register(struct ucdif *a, struct usb_device **dev);
 long ucd_unregister(struct ucdif *a);
+
+/*
+ * Compile-time checks: wire-format descriptor sizes must match the USB
+ * specification.  Internal parsed structures must not be packed (their
+ * pointer members must be naturally aligned).
+ *
+ * C90 lacks _Static_assert, so we use the negative-array-size trick.
+ */
+#define USB_CT_ASSERT(cond, name) \
+        typedef char usb_ct_assert_##name[(cond) ? 1 : -1]
+
+/* Wire-format sizes (USB spec, bytes) */
+USB_CT_ASSERT(sizeof(struct usb_descriptor_header)    == 2,  descriptor_header_size);
+USB_CT_ASSERT(sizeof(struct usb_device_descriptor)    == 18, device_descriptor_size);
+USB_CT_ASSERT(sizeof(struct usb_config_descriptor)    == 9,  config_descriptor_size);
+USB_CT_ASSERT(sizeof(struct usb_interface_descriptor) == 9,  interface_descriptor_size);
+USB_CT_ASSERT(sizeof(struct usb_ss_ep_comp_descriptor)== 6,  ss_ep_comp_descriptor_size);
+USB_CT_ASSERT(sizeof(struct devrequest)               == 8,  devrequest_size);
+
+/*
+ * usb_endpoint_descriptor uses aligned(2) so that arrays of these structs
+ * keep wMaxPacketSize 16-bit aligned.  The aligned(2) attribute rounds the
+ * struct size up to 10 bytes.  Verify the key field offsets instead.
+ */
+USB_CT_ASSERT(__builtin_offsetof(struct usb_endpoint_descriptor, wMaxPacketSize) == 4,
+              endpoint_wMaxPacketSize_offset);
+
+/*
+ * Internal parsed structures: verify that usb_config.if_desc starts at a
+ * naturally-aligned boundary (i.e. the struct is no longer inadvertently
+ * packed).  The alignment of if_desc must be a multiple of the alignment
+ * required by struct usb_interface.
+ */
+USB_CT_ASSERT(__builtin_offsetof(struct usb_config, if_desc) %
+              __alignof__(struct usb_interface) == 0,
+              usb_config_if_desc_alignment);
+
+#undef USB_CT_ASSERT
 
 #endif /*_USB_H_ */

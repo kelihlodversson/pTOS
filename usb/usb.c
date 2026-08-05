@@ -349,7 +349,7 @@ long usb_parse_config(struct usb_device *dev, unsigned char *buffer, long cfgno)
         KDEBUG(("ERROR: Invalid USB CFG length (%d)\n", head->bLength));
         return -1;
     }
-    memcpy(&dev->config, head, USB_DT_CONFIG_SIZE);
+    memcpy(&dev->config.desc, head, USB_DT_CONFIG_SIZE);
     dev->config.desc.wTotalLength = le2cpu16(dev->config.desc.wTotalLength);
     dev->config.no_of_if = 0;
 
