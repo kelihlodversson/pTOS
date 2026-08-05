@@ -401,12 +401,19 @@ USB_CT_ASSERT(sizeof(struct usb_ss_ep_comp_descriptor)== 6,  ss_ep_comp_descript
 USB_CT_ASSERT(sizeof(struct devrequest)               == 8,  devrequest_size);
 
 /*
- * usb_endpoint_descriptor uses aligned(2) so that arrays of these structs
- * keep wMaxPacketSize 16-bit aligned.  The aligned(2) attribute rounds the
- * struct size up to 10 bytes.  Verify the key field offsets instead.
+ * usb_endpoint_descriptor: the USB wire format is 9 bytes, but the struct
+ * uses aligned(2) so that every element in ep_desc[] keeps wMaxPacketSize
+ * on a 16-bit boundary.  The aligned(2) attribute pads the size to 10 bytes.
+ * Verify the field offset, the type alignment, and the array stride so that
+ * removing or weakening the aligned(2) attribute will be caught at compile
+ * time.
  */
 USB_CT_ASSERT(__builtin_offsetof(struct usb_endpoint_descriptor, wMaxPacketSize) == 4,
               endpoint_wMaxPacketSize_offset);
+USB_CT_ASSERT(__alignof__(struct usb_endpoint_descriptor) >= 2,
+              endpoint_descriptor_alignment);
+USB_CT_ASSERT(sizeof(struct usb_endpoint_descriptor) % 2 == 0,
+              endpoint_descriptor_array_stride);
 
 /*
  * Internal parsed structures: verify that usb_config.if_desc starts at a
