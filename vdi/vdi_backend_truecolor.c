@@ -105,12 +105,35 @@ static UWORD rgb565_from_prgb(ULONG prgb)
     return (UWORD)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
 }
 
+/*
+ * default_prgb_palette[] converted to RGB565, built lazily on first use.
+ * truecolor_get_pixel() searches this space on every call, so it matters
+ * that the conversion happens once rather than being redone for every
+ * candidate on every pixel read.
+ */
+static UWORD rgb565_palette[256];
+static BOOL rgb565_palette_ready;
+
+static void ensure_rgb565_palette(void)
+{
+    WORD i;
+
+    if (rgb565_palette_ready)
+        return;
+
+    for (i = 0; i < 256; i++)
+        rgb565_palette[i] = rgb565_from_prgb(default_prgb_palette[i]);
+
+    rgb565_palette_ready = TRUE;
+}
+
 static UWORD truecolor_pixel_for_index(WORD index)
 {
     if (index < 0 || index > 255)
         index = 0;
 
-    return rgb565_from_prgb(default_prgb_palette[index]);
+    ensure_rgb565_palette();
+    return rgb565_palette[index];
 }
 
 /*
@@ -138,8 +161,9 @@ static UWORD truecolor_get_pixel(WORD x, WORD y)
      * comment on default_prgb_palette[] above), not a 0-15 VDI pen
      * number, so this has to search the full 256-entry space to match.
      */
+    ensure_rgb565_palette();
     for (i = 0; i < 256; i++) {
-        if (rgb565_from_prgb(default_prgb_palette[i]) == raw)
+        if (rgb565_palette[i] == raw)
             return (UWORD)i;
     }
 

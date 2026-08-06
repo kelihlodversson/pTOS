@@ -63,10 +63,12 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode);
  * The backend ops table for the current screen workstation. Self-
  * initializes on first call if vdi_v_opnwk() hasn't run yet (see the
  * comment on the definition) -- callers do not need to call vdi_v_opnwk()
- * first. Returns NULL only in the vdi_backend_select() case above; no
- * caller in this codebase currently guards against it, since it cannot
- * happen for any of this codebase's drivers today. There is currently
- * exactly one screen.
+ * first. Returns NULL only in the vdi_backend_select() case above, which
+ * cannot happen for any of this codebase's drivers today -- but callers
+ * still guard against it (see get_start_addr()/pixelread()/put_pix()/
+ * draw_rect_common()) since this whole path only builds for MACHINE_RPI,
+ * which has none of cartridge_defconfig's byte-budget pressure. There is
+ * currently exactly one screen.
  */
 const vdi_backend_ops *vdi_screen_backend(void);
 

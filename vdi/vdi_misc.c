@@ -180,7 +180,18 @@ void timer_exit(void)
 UWORD * get_start_addr(const WORD x, const WORD y)
 {
 #if CONF_WITH_VDI_TRUECOLOR
-    return vdi_screen_backend()->get_start_addr(x, y);
+    const vdi_backend_ops *backend = vdi_screen_backend();
+
+    /*
+     * Unlike the CONF_WITH_VDI_TRUECOLOR=0 case below, this path builds
+     * only for machines that carry the runtime-selection machinery (i.e.
+     * MACHINE_RPI), which has none of cartridge_defconfig's byte budget
+     * pressure -- so guard against vdi_backend_select() returning NULL for
+     * a descriptor no backend supports, rather than dereferencing it.
+     */
+    if (!backend)
+        return NULL;
+    return backend->get_start_addr(x, y);
 #else
     /*
      * With the truecolor backend compiled out, planar is the only backend

@@ -368,7 +368,11 @@ static BOOL blit_rect_common(const VwkAttrib *attr, const Rect *rect, BLITPARM *
 void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
 {
 #if CONF_WITH_VDI_TRUECOLOR
-    vdi_screen_backend()->fill_rect(attr, rect);
+    const vdi_backend_ops *backend = vdi_screen_backend();
+
+    /* see the comment in get_start_addr() (vdi_misc.c) */
+    if (backend)
+        backend->fill_rect(attr, rect);
 #else
     /* see the comment in get_start_addr() (vdi_misc.c) */
     planar_fill_rect(attr, rect);
