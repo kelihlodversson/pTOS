@@ -46,6 +46,13 @@ BOOL screen_mode_desc_valid(const SCREEN_MODE_DESC *desc)
              */
             if (desc->bits_per_pixel != 16)
                 return FALSE;
+            /*
+             * The RGB565 backend does UWORD loads/stores per pixel and
+             * relies on every scanline starting 2-byte aligned; an odd
+             * pitch would misalign every other row.
+             */
+            if (desc->pitch & 1)
+                return FALSE;
             break;
         default:
             return FALSE;

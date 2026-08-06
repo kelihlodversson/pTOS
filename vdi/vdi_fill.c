@@ -693,9 +693,10 @@ clipbox(const VwkClip * clip, Rect * rect)
  *
  * NOTE: this is no longer guarded by `#if !CONF_CHUNKY_PIXELS`: besides
  * the non-chunky branches in this file, it is also called unconditionally
- * by planar_get_pixel(), which the planar VDI backend must link on every
- * configuration (including chunky-pixel ones such as MACHINE_RPI), since
- * that backend's table is always built (see vdi_backend_planar.c).
+ * by planar_get_pixel(), which every configuration links -- either
+ * directly, when CONF_WITH_VDI_TRUECOLOR=0 (see the #else branch in
+ * pixelread() below), or through the planar VDI backend's ops table,
+ * when CONF_WITH_VDI_TRUECOLOR=1 (see vdi_backend_planar.c).
  */
 static UWORD
 get_color (UWORD mask, UWORD * addr)
