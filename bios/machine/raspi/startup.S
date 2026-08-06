@@ -219,9 +219,20 @@ _core0:
     mrc     p15, 0, ip, c1, c0, 2
     orr     ip, ip, #0xF00000       /* enable cp10 (single precision) and cp11 (double precision) */
     mcr     p15, 0, ip, c1, c0, 2
+#ifdef TARGET_RPI1
+    mov     ip, #0
+    mcr     p15, 0, ip, c7, c5, 4   /* flush prefetch buffer (ARMv6 has no isb) */
+#else
+    isb                             /* make the CPACR change visible before the first CP10/11 access */
+#endif
     mov     ip, #0x40000000         /* FPEXC.EN (bit 30) */
     mcr     p10, 7, ip, c8, c0, 0   /* VMSR FPEXC, ip */
+#ifdef TARGET_RPI1
+    mov     ip, #0
+    mcr     p15, 0, ip, c7, c5, 4
+#else
     isb
+#endif
 
 /*
  * memory configuration
@@ -260,7 +271,7 @@ switch_from_hyp:
     msr spsr_cxsf, r0
 
     mrc     p15, 0, r2, c1, c0,  0
-    bic     r1, r1, #(1 << 1)
+    bic     r2, r2, #(1 << 1)
     mcr     p15, 0, r2, c1, c0,  0
 
     @ Disable all traps, so we don't get any nasty surprise
