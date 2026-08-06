@@ -1,6 +1,6 @@
 ---
 name: ptos-smoketest
-description: Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS) image boots under an emulator. Covers Hatari for m68k Atari targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi2, virt-arm and virt-m68k machines. Use when asked to boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung boot, or when you need emulator invocations, --run-vbls/--avirecord/--trace flags, the Hatari debugger gotchas (spurious breakpoints, echo crash), or the Falcon IDE 31s boot wait.
+description: Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS) image boots under an emulator. Covers Hatari for m68k Atari targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi2 (QEMU machine `raspi2b`), virt-arm and virt-m68k machines. Use when asked to boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung boot, or when you need emulator invocations, --run-vbls/--avirecord/--trace flags, the Hatari debugger gotchas (spurious breakpoints, echo crash), or the Falcon IDE 31s boot wait.
 ---
 
 # pTOS Smoke Testing
@@ -18,7 +18,7 @@ the pTOS tree). Relevant outputs:
 | Config | Emulator | Image | Machine |
 |---|---|---|---|
 | `atari512_defconfig` | hatari | `ptos512k.img` (+ `.sym` `.map`) | `--machine ste`, `--machine falcon`, `--machine tt` |
-| `rpi2_defconfig` | qemu-system-arm | `kernel7.img` | `-M raspi2` (video + serial) |
+| `rpi2_defconfig` | qemu-system-arm | `kernel7.img` | `-M raspi2b` (video + serial) |
 | `virt-arm_defconfig` | qemu-system-arm | `virt-arm.elf` | `-M virt,highmem=off -cpu cortex-a7` (headless) |
 | `virt-m68k_defconfig` | qemu-system-m68k | `virt-m68k.elf` | `-M virt -cpu m68020` (headless) |
 
@@ -112,9 +112,11 @@ The pTOS `readme.md` is the user-facing source; this skill is the agent-facing
 copy. Invocations (verified in-tree):
 
 ```sh
-# raspi2 — only target with real video output; reads KDEBUG on the serial console
+# raspi2 — only target with real video output; reads KDEBUG on the serial console.
+# NOTE: the machine is `raspi2b` on QEMU >= 9 (`-M raspi2` is gone). Requires the
+# FPU-enable fix (#98) — without it the first vldr in _raspi_vcmem_init traps.
 make rpi2_defconfig && make
-qemu-system-arm -M raspi2 -bios kernel7.img -d guest_errors -serial stdio
+qemu-system-arm -M raspi2b -bios kernel7.img -d guest_errors -serial stdio
 
 # virt-arm (headless, no framebuffer)
 # REQUIRED: -M virt,highmem=off — pTOS has no support for accessing memory or
@@ -151,7 +153,7 @@ timeout 5 qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt
 cat /tmp/qemu.log
 ```
 
-- **raspi2**: serial KDEBUG shows `vdi_v_opnwk: mode layout=1 color_model=0
+- **raspi2** (booted with `-M raspi2b`): serial KDEBUG shows `vdi_v_opnwk: mode layout=1 color_model=0
   bpp=8 backend=none` (later `color_model=1 ... backend=selected`); no
   `guest_errors`; screen draws.
 - **virt-arm / virt-m68k**: process survives the full `timeout` window
