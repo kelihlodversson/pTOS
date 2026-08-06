@@ -13,6 +13,7 @@
 #endif
 
 #include "portab.h"
+#include "screen_mode.h"
 #include "raspi_io.h"
 #include "raspi_int.h"
 #include "raspi_mbox.h"
@@ -133,7 +134,7 @@ void raspi_screen_init(void)
     {
         {{PROPTAG_SET_PHYS_WIDTH_HEIGHT, 8, 8}},
         {{PROPTAG_SET_VIRT_WIDTH_HEIGHT, 8, 8}},
-        {{PROPTAG_SET_DEPTH,             4, 4}, 8},
+        {{PROPTAG_SET_DEPTH,             4, 4}, 16},
         {{PROPTAG_SET_VIRTUAL_OFFSET,    8, 8}, 0, 0},
         {{PROPTAG_ALLOCATE_BUFFER,       8, 4}, 0},
         {{PROPTAG_GET_PITCH,             4, 0}}
@@ -241,6 +242,17 @@ void raspi_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez)
     *vt_rez = raspi_screen_height;
 }
 
+void raspi_get_current_mode_desc(SCREEN_MODE_DESC *desc)
+{
+    desc->width = raspi_screen_width;
+    desc->height = raspi_screen_height;
+    desc->pitch = raspi_screen_width_in_bytes;
+    desc->bits_per_pixel = 16;
+    desc->layout = SCREEN_LAYOUT_PACKED;
+    desc->color_model = SCREEN_COLOR_TRUECOLOR;
+    desc->pixel_format = SCREEN_PIXEL_RGB565;
+}
+
 void raspi_setphys(const UBYTE *addr)
 {
 
@@ -308,6 +320,20 @@ void raspi_blank_out (int topx, int topy, int botx, int boty)
 {
     UWORD color = linea_vars.v_col_bg;             /* bg color value */
     int width, height, row;
+
+    /*
+     * memset() below writes one byte per pixel, only correct at 8bpp.
+     * On a 16bpp chunky backend (e.g. MACHINE_RPI truecolor) that would
+     * clear at the wrong stride/width instead of corrupting memory, but
+     * a partial, wrong-color clear is still worse than leaving the
+     * console area undrawn -- skip it instead, consistent with
+     * raspi_cell_xfer()/raspi_neg_cell() below and the same fail-safe
+     * gate used by end_pts()/abline() (vdi/vdi_fill.c, vdi/vdi_line.c)
+     * and the mouse cursor (vdi/vdi_mouse.c).
+     */
+    if (linea_vars.v_planes != 8)
+        return;
+
     width = (botx - topx + 1) * 8;
     height = (boty - topy + 1) * linea_vars.v_cel_ht;
     UBYTE * addr = raspi_cell_addr(topx, topy);
@@ -332,6 +358,20 @@ void raspi_cell_xfer(UBYTE * src, UBYTE * dst)
     UWORD fg;
     UWORD bg;
     int fnt_wr, line_wr, y;
+
+    /*
+     * The glyph-blit loop below writes dst[] one byte per pixel, only
+     * correct at 8bpp. On a 16bpp chunky backend (e.g. MACHINE_RPI
+     * truecolor) skip drawing rather than corrupt the framebuffer with
+     * a byte-width write -- same bug class, and same fail-safe gate, as
+     * end_pts()/abline() (vdi/vdi_fill.c, vdi/vdi_line.c) and the mouse
+     * cursor (vdi/vdi_mouse.c). This means the BIOS text console (boot
+     * banner, EmuCON, panic output) renders nothing on 16bpp RPi rather
+     * than unreadable color noise; converting it to draw correctly at
+     * 16bpp is out of scope here.
+     */
+    if (linea_vars.v_planes != 8)
+        return;
 
     fnt_wr = linea_vars.v_fnt_wr;
     line_wr = linea_vars.v_lin_wr;
@@ -361,6 +401,18 @@ void raspi_cell_xfer(UBYTE * src, UBYTE * dst)
 void raspi_neg_cell(UBYTE * cell)
 {
     int len;
+
+    /*
+     * The invert loop below toggles *cell one byte per pixel, only
+     * correct at 8bpp. On a 16bpp chunky backend (e.g. MACHINE_RPI
+     * truecolor) skip drawing rather than corrupt the framebuffer with
+     * a byte-width write -- same bug class, and same fail-safe gate, as
+     * end_pts()/abline() (vdi/vdi_fill.c, vdi/vdi_line.c) and the mouse
+     * cursor (vdi/vdi_mouse.c).
+     */
+    if (linea_vars.v_planes != 8)
+        return;
+
     linea_vars.v_stat_0 |= M_CRIT;                 /* start of critical section. */
     for(len = 0; len < linea_vars.v_cel_ht; len++)
     {

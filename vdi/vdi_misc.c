@@ -17,6 +17,7 @@
 #include "biosbind.h"
 #include "../bios/tosvars.h"
 #include "vdi_defs.h"
+#include "vdi_backend.h"
 #include "../bios/lineavars.h"
 
 
@@ -178,17 +179,38 @@ void timer_exit(void)
 
 UWORD * get_start_addr(const WORD x, const WORD y)
 {
-    UBYTE * addr;
+#if CONF_WITH_VDI_TRUECOLOR
+    const vdi_backend_ops *backend = vdi_screen_backend();
 
-    /* init address counter */
-    addr = v_bas_ad;                    /* start of screen */
-
-#if CONF_CHUNKY_PIXELS
-    addr += (x * linea_vars.v_planes) >> 3;
-    addr += (LONG)y * linea_vars.v_lin_wr;         /* add y coordinate part of addr */
+    /*
+     * Unlike the CONF_WITH_VDI_TRUECOLOR=0 case below, this path builds
+     * only for machines that carry the runtime-selection machinery (i.e.
+     * MACHINE_RPI), which has none of cartridge_defconfig's byte budget
+     * pressure -- so guard against vdi_backend_select() returning NULL for
+     * a descriptor no backend supports, rather than dereferencing it.
+     */
+    if (!backend)
+        return NULL;
+    return backend->get_start_addr(x, y);
 #else
+    /*
+     * With the truecolor backend compiled out, planar is the only backend
+     * that can ever be selected -- call it directly instead of paying for
+     * vdi_screen_backend()'s self-init check and an indirect call the
+     * result of which is already known at compile time. This matters on
+     * cartridge_defconfig, whose 128 KB image has essentially no spare
+     * room for dispatch overhead that can only ever resolve one way.
+     */
+    return planar_get_start_addr(x, y);
+#endif
+}
+
+UWORD *planar_get_start_addr(WORD x, WORD y)
+{
+    UBYTE *addr;
+
+    addr = v_bas_ad;                    /* start of screen */
     addr += (x&0xfff0)>>shift_offset[linea_vars.v_planes]; /* add x coordinate part of addr */
     addr += (LONG)y * linea_vars.v_lin_wr;         /* add y coordinate part of addr */
-#endif
     return (UWORD*)addr;
 }

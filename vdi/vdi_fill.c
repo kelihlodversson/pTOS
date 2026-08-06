@@ -14,6 +14,7 @@
 #include "config.h"
 #include "portab.h"
 #include "vdi_defs.h"
+#include "vdi_backend.h"
 #include "../bios/tosvars.h"
 #include "../bios/lineavars.h"
 
@@ -689,8 +690,14 @@ clipbox(const VwkClip * clip, Rect * rect)
 
 /*
  * get_color - Get color value of requested pixel.
+ *
+ * NOTE: this is no longer guarded by `#if !CONF_CHUNKY_PIXELS`: besides
+ * the non-chunky branches in this file, it is also called unconditionally
+ * by planar_get_pixel(), which every configuration links -- either
+ * directly, when CONF_WITH_VDI_TRUECOLOR=0 (see the #else branch in
+ * pixelread() below), or through the planar VDI backend's ops table,
+ * when CONF_WITH_VDI_TRUECOLOR=1 (see vdi_backend_planar.c).
  */
-#if !CONF_CHUNKY_PIXELS
 static UWORD
 get_color (UWORD mask, UWORD * addr)
 {
@@ -710,7 +717,6 @@ get_color (UWORD mask, UWORD * addr)
 
     return color;       /* this is the color we are searching for */
 }
-#endif
 
 /*
  * pixelread - gets a pixel's color index value
@@ -725,19 +731,29 @@ get_color (UWORD mask, UWORD * addr)
 static UWORD
 pixelread(const WORD x, const WORD y)
 {
-#if CONF_CHUNKY_PIXELS
-    return *((UBYTE*)get_start_addr(x, y)) ;
+#if CONF_WITH_VDI_TRUECOLOR
+    const vdi_backend_ops *backend = vdi_screen_backend();
+
+    /* see the comment in get_start_addr() (vdi_misc.c) */
+    if (!backend)
+        return 0;
+    return backend->get_pixel(x, y);
 #else
+    /* see the comment in get_start_addr() (vdi_misc.c) */
+    return planar_get_pixel(x, y);
+#endif
+}
+
+UWORD planar_get_pixel(WORD x, WORD y)
+{
     UWORD *addr;
     UWORD mask;
 
-    /* convert x,y to start address and bit mask */
-    addr = get_start_addr(x, y);
-    addr += linea_vars.v_planes;                   /* start at highest-order bit_plane */
-    mask = 0x8000 >> (x&0xf);           /* initial bit position in WORD */
+    addr = planar_get_start_addr(x, y);
+    addr += linea_vars.v_planes;            /* start at highest-order bit_plane */
+    mask = 0x8000 >> (x&0xf);               /* initial bit position in WORD */
 
-    return get_color(mask, addr);       /* return the composed color value */
-#endif
+    return get_color(mask, addr);           /* return the composed color value */
 }
 
 static UWORD
@@ -832,6 +848,16 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
     addr = get_start_addr(x, y);
     mask = 0x8000 >> (x & 0x000f);   /* fetch the pixel mask. */
 #if CONF_CHUNKY_PIXELS
+    /*
+     * search_to_right()/search_to_left() below walk the framebuffer
+     * byte-by-byte, which is only correct for 8bpp chunky pixels. On a
+     * 16bpp chunky backend (e.g. MACHINE_RPI truecolor), skip the search
+     * entirely and report "nothing found" rather than let the byte-walk
+     * run against the wrong pixel width. Mirrors the same accepted
+     * fail-safe gate used by normal_blit() in vdi/arch/arm/vdi_tblit.c.
+     */
+    if (linea_vars.v_planes != 8)
+        return 0;
     color = *((UBYTE*)addr);
 #else
     addr += linea_vars.v_planes;                   /* start at highest-order bit_plane */
@@ -1093,16 +1119,19 @@ void
 put_pix(void)
 {
     UWORD *addr;
-    UWORD color;
-#if !CONF_CHUNKY_PIXELS
-    UWORD mask;
-    int plane;
-#endif
     const WORD x = PTSIN[0];
     const WORD y = PTSIN[1];
+    UWORD color;
 
     /* convert x,y to start address */
     addr = get_start_addr(x, y);
+#if CONF_WITH_VDI_TRUECOLOR
+    /* see the comment in get_start_addr() (vdi_misc.c) -- addr can be NULL
+     * here, and comparing a NULL pointer against v_bas_ad below would be
+     * undefined behaviour, not just a wrong answer */
+    if (!addr)
+        return;
+#endif
     /* co-ordinates can wrap, but cannot write outside screen,
      * alternatively this could check against v_bas_ad+vram_size()
      */
@@ -1111,9 +1140,27 @@ put_pix(void)
     }
     color = INTIN[0];           /* device dependent encoded color bits */
 
-#if CONF_CHUNKY_PIXELS
-    *((UBYTE*)addr) = color & 0xff;
+#if CONF_WITH_VDI_TRUECOLOR
+    {
+        const vdi_backend_ops *backend = vdi_screen_backend();
+
+        /* see the comment in get_start_addr() (vdi_misc.c) */
+        if (backend)
+            backend->put_pixel(x, y, color);
+    }
 #else
+    /* see the comment in get_start_addr() (vdi_misc.c) */
+    planar_put_pixel(x, y, color);
+#endif
+}
+
+void planar_put_pixel(WORD x, WORD y, UWORD color)
+{
+    UWORD *addr;
+    UWORD mask;
+    int plane;
+
+    addr = planar_get_start_addr(x, y);
     mask = 0x8000 >> (x&0xf);   /* initial bit position in WORD */
 
     for (plane = linea_vars.v_planes-1; plane >= 0; plane-- ) {
@@ -1123,5 +1170,4 @@ put_pix(void)
         else
             *addr++ &= ~mask;
     }
-#endif
 }

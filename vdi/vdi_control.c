@@ -15,11 +15,13 @@
 #include "portab.h"
 #include "../bios/lineavars.h"
 #include "vdi_defs.h"
-/* #include "kprint.h" */
+/* #define ENABLE_KDEBUG */
+#include "kprint.h"
 #include "biosbind.h"
 #include "../bios/screen.h"
 #include "asm.h"
 #include "string.h"
+#include "vdi_backend.h"
 
 
 static Vwk virt_work;          /* attribute areas for workstations */
@@ -408,6 +410,20 @@ void vdi_v_opnwk(Vwk * vwk)
     CONTRL->handle = vwk->handle = 1;
     vwk->next_work = NULL;
 
+#if CONF_WITH_VDI_TRUECOLOR
+    /*
+     * Without the truecolor backend, planar is the only backend that can
+     * ever be selected, and the four primitives that would otherwise
+     * dispatch through it call it directly (see vdi_misc.c/vdi_fill.c/
+     * vdi_line.c) -- there is nothing here for vwk->mode/vwk->backend to
+     * usefully drive, so skip computing them.
+     */
+    screen_get_current_mode_desc(&vwk->mode);
+    vwk->backend = vdi_backend_select(&vwk->mode);
+    KDEBUG(("vdi_v_opnwk: mode layout=%d color_model=%d bpp=%d\n",
+            vwk->mode.layout, vwk->mode.color_model, vwk->mode.bits_per_pixel));
+#endif
+
     linea_vars.line_cw = -1;    /* invalidate current line width */
 
     init_colors();              /* Initialize palette etc. */
@@ -451,6 +467,34 @@ void vdi_v_clswk(Vwk * vwk)
 
 void vdi_v_clrwk(Vwk * vwk)
 {
+#if CONF_WITH_VDI_TRUECOLOR
+    /*
+     * memset()-ing raw pixel value 0 means pen 0 in planar/indexed modes
+     * (all bitplane bits clear composes to color index 0), but not in a
+     * packed truecolor framebuffer: the truecolor backend maps pen 0 to
+     * white (truecolor_pixel_for_index(0), RGB565 0xffff), not raw zero,
+     * the same as every other primitive treats "pen 0" -- see
+     * truecolor_fill_rect()'s replace-mode default. Clear through the
+     * backend with a solid pen-0 fill instead, so it stays correct
+     * whichever backend vdi_screen_backend() has actually selected.
+     */
+    VwkAttrib attr;
+    Rect rect;
+
+    attr.clip = 0;
+    attr.multifill = 0;
+    attr.patmsk = 0;
+    attr.patptr = &SOLID;
+    attr.wrt_mode = 0;                  /* MD_REPLACE */
+    attr.color = 0;
+
+    rect.x1 = 0;
+    rect.y1 = 0;
+    rect.x2 = linea_vars.V_REZ_HZ - 1;
+    rect.y2 = linea_vars.V_REZ_VT - 1;
+
+    draw_rect_common(&attr, &rect);
+#else
     ULONG size;
 
     /* Calculate screen size */
@@ -458,6 +502,7 @@ void vdi_v_clrwk(Vwk * vwk)
 
     /* clear the screen */
     memset(v_bas_ad, 0, size);
+#endif
 }
 
 
@@ -511,3 +556,32 @@ void vdi_v_nop(Vwk * vwk)
 {
     /* will never be implemented */
 }
+
+
+#if CONF_WITH_VDI_TRUECOLOR
+const vdi_backend_ops *vdi_screen_backend(void)
+{
+    /*
+     * virt_work.backend is BSS-zero (NULL) until vdi_v_opnwk() runs,
+     * but Line-A (bios/arch/m68k/linea.S) dispatches straight to the
+     * put_pix/get_pix/line/rect/fill routines below, and is reachable
+     * from AUTO-folder programs and other pre-AES code paths long
+     * before vdi_v_opnwk() is ever called -- on cartridge_defconfig
+     * (CONF_WITH_AES=n), it is never called at all. Self-initialize
+     * here so the first Line-A call gets a real backend instead of a
+     * NULL one, mirroring what vdi_v_opnwk() itself does.
+     *
+     * Only built when CONF_WITH_VDI_TRUECOLOR is set: without it, planar
+     * is the only backend that could ever be selected, so the four
+     * primitives that would dispatch through this call planar directly
+     * instead (see vdi_misc.c/vdi_fill.c/vdi_line.c) and this function
+     * has no caller.
+     */
+    if (!virt_work.backend)
+    {
+        screen_get_current_mode_desc(&virt_work.mode);
+        virt_work.backend = vdi_backend_select(&virt_work.mode);
+    }
+    return virt_work.backend;
+}
+#endif

@@ -97,12 +97,12 @@ static void do_nothing_v(void)
 }
 static void do_nothing_i(WORD a)
 {
-	UNUSED(a);
+    UNUSED(a);
 }
 static void do_nothing_ii(WORD a, WORD b)
 {
-	UNUSED(a);
-	UNUSED(b);
+    UNUSED(a);
+    UNUSED(b);
 }
 
 
@@ -366,14 +366,14 @@ void vdi_v_valuator(Vwk * vwk)
  */
 static void call_user_but(WORD status)
 {
-	register WORD val asm("d0") = status;
-	register void (*func)(WORD) asm("a0") = linea_vars.user_but; /* prototype not quite right: status passed in d0 */
+    register WORD val asm("d0") = status;
+    register void (*func)(WORD) asm("a0") = linea_vars.user_but; /* prototype not quite right: status passed in d0 */
 
-	__asm__ __volatile__(
-		" jsr (%[a0])"
-	:
-	: "d"(val), [a0]"a"(func)
-	: "cc" AND_MEMORY);
+    __asm__ __volatile__(
+        " jsr (%[a0])"
+    :
+    : "d"(val), [a0]"a"(func)
+    : "cc" AND_MEMORY);
 }
 
 /*
@@ -381,15 +381,15 @@ static void call_user_but(WORD status)
  */
 static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
 {
-	register WORD number asm("d0") = wheel_number;
-	register WORD amount asm("d1") = wheel_amount;
-	register void (*func)(WORD, WORD) asm("a0") = user_wheel; /* prototype not quite right: status passed in d0 */
+    register WORD number asm("d0") = wheel_number;
+    register WORD amount asm("d1") = wheel_amount;
+    register void (*func)(WORD, WORD) asm("a0") = user_wheel; /* prototype not quite right: status passed in d0 */
 
-	__asm__ __volatile__(
-		" jsr (%[a0])"
-	:
-	: "d"(number), "d"(amount), [a0]"a"(func)
-	: "cc" AND_MEMORY);
+    __asm__ __volatile__(
+        " jsr (%[a0])"
+    :
+    : "d"(number), "d"(amount), [a0]"a"(func)
+    : "cc" AND_MEMORY);
 }
 #endif
 
@@ -399,8 +399,8 @@ static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
  */
 static void call_user_but(WORD status)
 {
-	void (*func)(WORD) = linea_vars.user_but; /* prototype not quite right: status passed in d0 */
-	func(status);
+    void (*func)(WORD) = linea_vars.user_but; /* prototype not quite right: status passed in d0 */
+    func(status);
 }
 
 /*
@@ -408,7 +408,7 @@ static void call_user_but(WORD status)
  */
 static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
 {
-	void (*func)(WORD, WORD) = user_wheel; /* prototype not quite right: status passed in d0 */
+    void (*func)(WORD, WORD) = user_wheel; /* prototype not quite right: status passed in d0 */
     func(wheel_number, wheel_amount);
 }
 
@@ -424,14 +424,14 @@ static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
  */
 void mov_cur(WORD new_x, WORD new_y)      /* user button vector */
 {
-	ULONG cpsr;
-	if (linea_vars.HIDE_CNT)
-		return;
-	cpsr = disable_interrupts();
-	linea_vars.newx = new_x;
-	linea_vars.newy = new_y;
-	linea_vars.draw_flag = TRUE;
-	set_cpsr(cpsr);
+    ULONG cpsr;
+    if (linea_vars.HIDE_CNT)
+        return;
+    cpsr = disable_interrupts();
+    linea_vars.newx = new_x;
+    linea_vars.newy = new_y;
+    linea_vars.draw_flag = TRUE;
+    set_cpsr(cpsr);
 }
 
 #endif /* __arm__ */
@@ -892,6 +892,23 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
     UWORD *data;
     UWORD cdb_fg, cdb_bg, current_bit, start_bit, end_bit;
     UBYTE *save_data = mouse_save.buffer;
+
+    /*
+     * The pixel writes below (*addr = cdb_fg / cdb_bg) touch memory one
+     * byte per pixel, which is only correct for 8bpp chunky pixels. On a
+     * 16bpp chunky backend (e.g. MACHINE_RPI truecolor) skip drawing
+     * rather than corrupt the framebuffer with a byte-width write.
+     * Clear mouse_save.height so a later cur_replace() call against this
+     * save state restores nothing instead of a stale rectangle. Mirrors
+     * the same fail-safe gate used for end_pts()/abline() in
+     * vdi/vdi_fill.c and vdi/vdi_line.c.
+     */
+    if (linea_vars.v_planes != 8)
+    {
+        mouse_save.height = 0;
+        return;
+    }
+
     x -= sprite->xhot;          /* x = left side of destination block */
     y -= sprite->yhot;          /* y = top of destination block */
     data = sprite->maskdata;  /* MASK/DATA for cursor */
@@ -1146,6 +1163,19 @@ static void cur_replace (MCS *mcs)
     int row, col;
     UBYTE* addr;
     UBYTE* data = mouse_save.buffer;
+
+    /*
+     * Defensive belt-and-suspenders: cur_display() already clears
+     * mouse_save.height to 0 (making the loop below a no-op) whenever it
+     * skips drawing because linea_vars.v_planes != 8, but no-op here too
+     * in case this is ever reached with stale save state from elsewhere.
+     * The restore below is a byte-per-pixel copy, only correct at 8bpp;
+     * on a 16bpp chunky backend it would corrupt the framebuffer exactly
+     * like the write side in cur_display() would.
+     */
+    if (linea_vars.v_planes != 8)
+        return;
+
     for (row = 0; row<mouse_save.height; row++)
     {
         addr = (UBYTE*)get_start_addr(mouse_save.x, mouse_save.y+row);

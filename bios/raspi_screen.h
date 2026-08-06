@@ -10,9 +10,12 @@
 #ifndef RASPI_SCREEN_H
 #   define RASPI_SCREEN_H
 #   ifdef MACHINE_RPI
+#include "screen_mode.h"
+
 void raspi_screen_init(void);
 WORD raspi_check_moderez(WORD moderez);
 void raspi_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez);
+void raspi_get_current_mode_desc(SCREEN_MODE_DESC *desc);
 void raspi_setphys(const UBYTE *addr);
 UBYTE *raspi_physbase(void);
 WORD raspi_setcolor(WORD colorNum, WORD color);

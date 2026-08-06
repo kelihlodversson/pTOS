@@ -14,6 +14,7 @@
 #include "intmath.h"
 #include "asm.h"
 #include "vdi_defs.h"
+#include "vdi_backend.h"
 #include "blitter.h"
 #include "../bios/lineavars.h"
 #include "../bios/machine.h"    /* for blitter-related items */
@@ -366,38 +367,20 @@ static BOOL blit_rect_common(const VwkAttrib *attr, const Rect *rect, BLITPARM *
  */
 void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
 {
-#if CONF_CHUNKY_PIXELS
-    const UWORD patmsk = attr->patmsk;
-    UBYTE *addr = (UBYTE *)get_start_addr(0,rect->y1);
-    int x, y, i;
+#if CONF_WITH_VDI_TRUECOLOR
+    const vdi_backend_ops *backend = vdi_screen_backend();
 
-
-    // currently only 8bpp is supported
-    for(y = rect->y1; y <= rect->y2; y++, addr+=linea_vars.v_lin_wr)
-    {
-        int patind = patmsk & y;   /* starting pattern */
-        UWORD color = attr->color;
-
-        UWORD pattern = attr->patptr[patind];
-        for(x = rect->x1, i=0; x <= rect->x2; x++, i++)
-        {
-            switch(attr->wrt_mode)
-            {
-            case 3:                 /* erase (reverse transparent) mode */
-                addr[x] |= pattern & ((1<<15)>>(i & 15)) ? 0 : color & 0xff;
-            break;
-            case 2:                 /* xor mode */
-                addr[x] ^= pattern & ((1<<15)>>(i & 15)) ? color & 0xff : 0;
-            break;
-            case 1:                 /* transparent mode */
-                addr[x] |= pattern & ((1<<15)>>(i & 15)) ? color & 0xff : 0;
-            break;
-            default: /* replace mode */
-                addr[x] = pattern & ((1<<15)>>(i & 15)) ? color & 0xff : 0;
-            }
-        }
-    }
+    /* see the comment in get_start_addr() (vdi_misc.c) */
+    if (backend)
+        backend->fill_rect(attr, rect);
 #else
+    /* see the comment in get_start_addr() (vdi_misc.c) */
+    planar_fill_rect(attr, rect);
+#endif
+}
+
+void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
+{
     UWORD leftmask, rightmask, *addr;
     const UWORD patmsk = attr->patmsk;
     const int yinc = (linea_vars.v_lin_wr>>1) - linea_vars.v_planes;
@@ -413,7 +396,7 @@ void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
         leftmask &= rightmask;  /* so combine masks */
         rightmask = 0;
     }
-    addr = get_start_addr(rect->x1,rect->y1);   /* init address ptr */
+    addr = planar_get_start_addr(rect->x1,rect->y1);   /* init address ptr */
 
 #if CONF_WITH_BLITTER
     if (blitter_is_enabled)
@@ -571,7 +554,6 @@ void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
         }
         break;
     }
-#endif
 }
 
 
@@ -1462,6 +1444,19 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
         yinc = (LONG) linea_vars.v_lin_wr;         /* add one line of bytes */
     }
     adr = (UBYTE*)get_start_addr(x1, y1);       /* init address counter */
+
+    /*
+     * The Bresenham loops below write *adr as a single byte, which is
+     * only correct for 8bpp chunky pixels. On a 16bpp chunky backend
+     * (e.g. MACHINE_RPI truecolor) skip drawing rather than corrupt the
+     * framebuffer with a byte-width write. Mirrors the same accepted
+     * fail-safe gate used by normal_blit() in vdi/arch/arm/vdi_tblit.c.
+     * Horizontal lines (y1 == y2) never reach here: they return early
+     * above via draw_rect_common(), which already dispatches through the
+     * backend's own fill_rect().
+     */
+    if (linea_vars.v_planes != 8)
+        return;
 
     if (dx >= dy) {
         WORD  eps = -dx;        /* epsilon */

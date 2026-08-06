@@ -14,6 +14,7 @@
 #include "lineavars.h"
 #include "kprint.h"
 #include "screen.h"
+#include "screen_mode.h"
 
 #define DBG_LINEA 0
 
@@ -38,10 +39,14 @@ struct _lineavars linea_vars;
 
 void linea_init(void)
 {
+    SCREEN_MODE_DESC desc;
 
-    screen_get_current_mode_info(&linea_vars.v_planes, &linea_vars.V_REZ_HZ, &linea_vars.V_REZ_VT);
+    screen_get_current_mode_desc(&desc);
 
-    linea_vars.v_lin_wr = linea_vars.V_REZ_HZ / 8 * linea_vars.v_planes;     /* bytes per line */
+    linea_vars.v_planes = desc.bits_per_pixel;
+    linea_vars.V_REZ_HZ = desc.width;
+    linea_vars.V_REZ_VT = desc.height;
+    linea_vars.v_lin_wr = desc.pitch;         /* bytes per line */
     linea_vars.BYTES_LIN = linea_vars.v_lin_wr;       /* I think BYTES_LIN = v_lin_wr (PES) */
 
     mcs_ptr = (linea_vars.v_planes <= 4) ? (MCS *)&linea_vars.mouse_cursor_save : &ext_mouse_cursor_save;

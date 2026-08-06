@@ -22,6 +22,11 @@ obj-y += memory.o processor.o intmask.o vectors.o bios.o xbios.o acsi.o biosmem.
 	 parport.o screen.o serport.o sound.o videl.o vt52.o xhdi.o delay.o \
 	 sd.o memory2.o bootparams.o scsi.o
 
+# screen_mode_desc_valid() (screen_mode.c) has exactly one caller,
+# vdi_backend_select() (vdi/vdi_backend.c), which only exists when the VDI
+# backend is runtime-selectable -- see vdi/build.mk.
+obj-$(CONF_WITH_VDI_TRUECOLOR) += screen_mode.o
+
 obj-$(ARCH_M68K) += aciavecs.o kprintasm.o linea.o natfeat.o natfeats.o \
 	 pmmu030.o 68040_pmmu.o amiga.o amiga2.o aros.o aros2.o delayasm.o \
 	 nova.o

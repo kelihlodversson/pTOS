@@ -16,6 +16,9 @@
 #include "portab.h"
 #include "fonthdr.h"
 #include "vdipb.h"
+#include "screen_mode.h"
+
+struct vdi_backend_ops;   /* forward declaration -- full definition in vdi_backend.h */
 
 #define HAVE_BEZIER 0           /* switch on bezier capability */
 
@@ -167,6 +170,8 @@ struct Vwk_ {
     WORD ymx_clip;              /* High y point of clipping rectangle   */
     /* newly added */
     WORD bez_qual;              /* actual quality for bezier curves */
+    SCREEN_MODE_DESC mode;      /* backend mode descriptor for this workstation's screen */
+    const struct vdi_backend_ops *backend; /* dispatch table selected for `mode`; NULL if none matched */
 };
 
 typedef struct Rect_ Rect;
@@ -239,6 +244,10 @@ void wideline(Vwk * vwk, Point * point, int count);
 /* common drawing function */
 void Vwk2Attrib(const Vwk *vwk, VwkAttrib *attr, const UWORD color);
 void draw_rect_common(const VwkAttrib *attr, const Rect *rect);
+UWORD *planar_get_start_addr(WORD x, WORD y);
+UWORD planar_get_pixel(WORD x, WORD y);
+void planar_put_pixel(WORD x, WORD y, UWORD color);
+void planar_fill_rect(const VwkAttrib *attr, const Rect *rect);
 void clc_flit (const VwkAttrib * attr, const VwkClip * clipper, const Point * point, WORD y, int vectors);
 void abline (const Line * line, const WORD wrt_mode, UWORD color);
 void contourfill(const VwkAttrib * attr, const VwkClip *clip);
