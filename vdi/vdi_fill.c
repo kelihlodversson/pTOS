@@ -730,7 +730,12 @@ get_color (UWORD mask, UWORD * addr)
 static UWORD
 pixelread(const WORD x, const WORD y)
 {
+#if CONF_WITH_VDI_TRUECOLOR
     return vdi_screen_backend()->get_pixel(x, y);
+#else
+    /* see the comment in get_start_addr() (vdi_misc.c) */
+    return planar_get_pixel(x, y);
+#endif
 }
 
 UWORD planar_get_pixel(WORD x, WORD y)
@@ -1122,7 +1127,12 @@ put_pix(void)
     }
     color = INTIN[0];           /* device dependent encoded color bits */
 
+#if CONF_WITH_VDI_TRUECOLOR
     vdi_screen_backend()->put_pixel(x, y, color);
+#else
+    /* see the comment in get_start_addr() (vdi_misc.c) */
+    planar_put_pixel(x, y, color);
+#endif
 }
 
 void planar_put_pixel(WORD x, WORD y, UWORD color)

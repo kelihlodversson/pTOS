@@ -5,9 +5,13 @@
 obj-y += vdi_entry.o vdi_bezier.o vdi_col.o vdi_control.o vdi_esc.o \
 	 vdi_fill.o vdi_gdp.o vdi_input.o vdi_line.o vdi_main.o \
 	 vdi_marker.o vdi_misc.o vdi_mouse.o vdi_raster.o vdi_text.o \
-	 vdi_textblit.o vdi_backend.o vdi_backend_planar.o
+	 vdi_textblit.o
 
-obj-$(CONF_WITH_VDI_TRUECOLOR) += vdi_backend_truecolor.o
+# Without the truecolor backend, planar is the only backend that could ever
+# be selected, so the primitives that would dispatch through it call it
+# directly instead (see vdi_misc.c/vdi_fill.c/vdi_line.c) and this runtime
+# selection machinery has no caller left to justify its size.
+obj-$(CONF_WITH_VDI_TRUECOLOR) += vdi_backend.o vdi_backend_planar.o vdi_backend_truecolor.o
 
 obj-$(MACHINE_RPI) += raspi_mouse.o
 

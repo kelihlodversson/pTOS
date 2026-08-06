@@ -410,10 +410,19 @@ void vdi_v_opnwk(Vwk * vwk)
     CONTRL->handle = vwk->handle = 1;
     vwk->next_work = NULL;
 
+#if CONF_WITH_VDI_TRUECOLOR
+    /*
+     * Without the truecolor backend, planar is the only backend that can
+     * ever be selected, and the four primitives that would otherwise
+     * dispatch through it call it directly (see vdi_misc.c/vdi_fill.c/
+     * vdi_line.c) -- there is nothing here for vwk->mode/vwk->backend to
+     * usefully drive, so skip computing them.
+     */
     screen_get_current_mode_desc(&vwk->mode);
     vwk->backend = vdi_backend_select(&vwk->mode);
     KDEBUG(("vdi_v_opnwk: mode layout=%d color_model=%d bpp=%d\n",
             vwk->mode.layout, vwk->mode.color_model, vwk->mode.bits_per_pixel));
+#endif
 
     linea_vars.line_cw = -1;    /* invalidate current line width */
 
@@ -520,6 +529,7 @@ void vdi_v_nop(Vwk * vwk)
 }
 
 
+#if CONF_WITH_VDI_TRUECOLOR
 const vdi_backend_ops *vdi_screen_backend(void)
 {
     /*
@@ -531,6 +541,12 @@ const vdi_backend_ops *vdi_screen_backend(void)
      * (CONF_WITH_AES=n), it is never called at all. Self-initialize
      * here so the first Line-A call gets a real backend instead of a
      * NULL one, mirroring what vdi_v_opnwk() itself does.
+     *
+     * Only built when CONF_WITH_VDI_TRUECOLOR is set: without it, planar
+     * is the only backend that could ever be selected, so the four
+     * primitives that would dispatch through this call planar directly
+     * instead (see vdi_misc.c/vdi_fill.c/vdi_line.c) and this function
+     * has no caller.
      */
     if (!virt_work.backend)
     {
@@ -539,3 +555,4 @@ const vdi_backend_ops *vdi_screen_backend(void)
     }
     return virt_work.backend;
 }
+#endif

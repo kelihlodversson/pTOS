@@ -179,7 +179,19 @@ void timer_exit(void)
 
 UWORD * get_start_addr(const WORD x, const WORD y)
 {
+#if CONF_WITH_VDI_TRUECOLOR
     return vdi_screen_backend()->get_start_addr(x, y);
+#else
+    /*
+     * With the truecolor backend compiled out, planar is the only backend
+     * that can ever be selected -- call it directly instead of paying for
+     * vdi_screen_backend()'s self-init check and an indirect call the
+     * result of which is already known at compile time. This matters on
+     * cartridge_defconfig, whose 128 KB image has essentially no spare
+     * room for dispatch overhead that can only ever resolve one way.
+     */
+    return planar_get_start_addr(x, y);
+#endif
 }
 
 UWORD *planar_get_start_addr(WORD x, WORD y)

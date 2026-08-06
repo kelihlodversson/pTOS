@@ -34,6 +34,20 @@ typedef struct vdi_backend_ops {
 } vdi_backend_ops;
 
 /*
+ * This runtime selection machinery -- vdi_backend_select(),
+ * vdi_screen_backend(), and the planar backend's ops table -- only exists
+ * when CONF_WITH_VDI_TRUECOLOR is set (see vdi/build.mk). Without a
+ * truecolor backend, planar is the only backend that could ever be
+ * selected, so the primitives that would otherwise dispatch through it
+ * (get_start_addr/pixelread/put_pix/draw_rect_common in vdi_misc.c/
+ * vdi_fill.c/vdi_line.c) call planar_get_start_addr()/planar_get_pixel()/
+ * planar_put_pixel()/planar_fill_rect() directly instead. This matters on
+ * cartridge_defconfig, whose 128 KB image has essentially no room for
+ * dispatch overhead that can only ever resolve one way.
+ */
+#if CONF_WITH_VDI_TRUECOLOR
+
+/*
  * Picks a backend ops table for a mode descriptor, or NULL if no backend
  * supports that layout/color-model/pixel-format combination.
  *
@@ -57,8 +71,8 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode);
 const vdi_backend_ops *vdi_screen_backend(void);
 
 extern const vdi_backend_ops planar_backend_ops;
-#if CONF_WITH_VDI_TRUECOLOR
 extern const vdi_backend_ops packed_truecolor_backend_ops;
-#endif
+
+#endif /* CONF_WITH_VDI_TRUECOLOR */
 
 #endif /* VDI_BACKEND_H */
