@@ -205,7 +205,7 @@ _core0:
     ldr sp, =_stktop
     cps #0x1B               /* set "undefined" mode */
     ldr sp, =_stktop
-    cps #0x13               /* set supervior mode */
+    cps #0x13               /* set supervisor mode */
     ldr sp, =_stktop
 
     ldr r0, =arm_vectors
@@ -281,7 +281,7 @@ switch_from_hyp:
     mcr p15, 4, r7, c1, c1, 3   @ HSTR
     mcr p15, 4, r7, c1, c0, 0   @ HSCTLR
     mrc p15, 4, r7, c1, c1, 1   @ HDCR
-    and r7, #0x1f       @ Preserve HPMN
+    and r7, r7, #0x1f   @ Preserve HPMN
     mcr p15, 4, r7, c1, c1, 1   @ HDCR
 
     msr ELR_hyp, lr
@@ -300,8 +300,8 @@ _start_secondary:
 
     .globl _arm_dispatch_undef
 _arm_dispatch_undef:
-    srsfd  sp!, #0x13      /* push lr and SPSR onto supervior stack */
-    cps    #0x13           /* switch to supervior mode */
+    srsfd  sp!, #0x13      /* push lr and SPSR onto supervisor stack */
+    cps    #0x13           /* switch to supervisor mode */
 
     sub    sp, #4*15
     stmia  sp, {r0-r14}^   /* store user registers r0-r14 (unbanked) */
@@ -337,8 +337,8 @@ _arm_dispatch_svc:
 _arm_dispatch_prefetch_abort:
 
     sub    lr, lr, #4      /* lr: correct PC of aborted program */
-    srsfd  sp!, #0x13      /* push lr and SPSR onto supervior stack */
-    cps    #0x13           /* switch to supervior mode */
+    srsfd  sp!, #0x13      /* push lr and SPSR onto supervisor stack */
+    cps    #0x13           /* switch to supervisor mode */
 
     sub    sp, #4*15
     stmia  sp, {r0-r14}^   /* store user registers r0-r14 (unbanked) */
@@ -358,8 +358,8 @@ _arm_dispatch_prefetch_abort:
     .globl _arm_dispatch_data_abort
 _arm_dispatch_data_abort:
     sub lr, lr, #8         /* lr: correct PC of aborted program */
-    srsfd  sp!, #0x13      /* push lr and SPSR onto supervior stack */
-    cps    #0x13           /* switch to supervior mode */
+    srsfd  sp!, #0x13      /* push lr and SPSR onto supervisor stack */
+    cps    #0x13           /* switch to supervisor mode */
 
     sub    sp, #4*15
     stmia  sp, {r0-r14}^   /* store user registers r0-r14 (unbanked) */
@@ -380,8 +380,8 @@ _arm_dispatch_data_abort:
     .globl _arm_dispatch_irq
 _arm_dispatch_irq:
     sub    lr, lr, #4      /* lr: correct PC of aborted program */
-    srsfd  sp!, #0x13      /* push lr and SPSR onto supervior stack */
-    cps    #0x13           /* switch to supervior mode */
+    srsfd  sp!, #0x13      /* push lr and SPSR onto supervisor stack */
+    cps    #0x13           /* switch to supervisor mode */
     stmfd  sp!, {r0-r3, ip, lr} /* store registers not saved by the C handler (link register is important in case the interrupt interrupted while the processor was in SVC mode.)*/
     bl     _raspi_int_handler
     ldmfd  sp!, {r0-r3, ip, lr}
@@ -391,8 +391,8 @@ _arm_dispatch_irq:
     .globl _arm_dispatch_fiq
 _arm_dispatch_fiq:
     sub    lr, lr, #4      /* lr: correct PC of aborted program */
-    srsfd  sp!, #0x13      /* push lr and SPSR onto supervior stack */
-    cps    #0x13           /* switch to supervior mode */
+    srsfd  sp!, #0x13      /* push lr and SPSR onto supervisor stack */
+    cps    #0x13           /* switch to supervisor mode */
     // TODO: fixme
     rfefd  sp!             /* load pc and CPSR from stack */
 
