@@ -53,6 +53,7 @@
 
 # Local overrides and editor droppings
 /local.mk
+/.worktrees/
 /.gdbinit
 .tags*
 .vscode

@@ -1,0 +1,106 @@
+pTOS - ELF executable loader
+============================
+
+pTOS can load programs in two formats.  The classic Atari GEMDOS PRG format
+(bdos/kpgmld.c) is m68k specific: its relocation table is a byte stream of
+m68k address fixups that ARM cannot produce at all.  Alongside it sits a
+second, ELF based loader (bdos/elfld.c), enabled by the CONF_WITH_ELF_LOADER
+option (on by default on ARM, available on m68k as an alternative to PRG).
+
+Pexec() chooses between the two by inspecting the file's magic number, so
+both formats coexist: a file starting with 0x7f 'E' 'L' 'F' is loaded by the
+ELF loader, one starting with 0x601a by the PRG loader.
+
+
+Why relocation is needed
+------------------------
+
+pTOS has no MMU and a single physical address space, so a program is loaded
+wherever there happens to be free memory, not at a fixed virtual address.
+The loader must therefore fix up every absolute address in the program once
+it knows the real load address -- exactly what the GEMDOS relocation table
+does on m68k.  The ELF loader gets the same information from standard ELF
+relocation entries and applies the same additive fixup:
+
+    *slot += actual_load_address - link_base
+
+Only 32-bit absolute relocations need this (R_ARM_ABS32 / R_ARM_RELATIVE on
+ARM, R_68K_32 / R_68K_RELATIVE on m68k); PC-relative slots are left alone
+because a uniform shift of the whole image preserves their offsets.
+
+
+Accepted binaries
+-----------------
+
+The loader accepts a statically linked, native-endian ELF32 for the machine
+it was built for, in either of two forms:
+
+  1. A fixed base ET_EXEC linked with "ld --emit-relocs" (ld -q).  Normally
+     ld consumes and discards relocations at link time; -q keeps them in the
+     final binary so the loader can re-apply them at a different base.
+
+  2. A position independent ET_DYN (PIE), linked with
+     "ld -pie --no-dynamic-linker".  A PIE carries only the additive
+     R_*_RELATIVE dynamic relocations it actually needs, and a program that
+     stores no absolute pointer in its initialised data needs none at all.
+
+In both cases the relocation entries are read from the section headers, so
+the binary must keep them: do not strip it (no "strip", no "ld -s").  A
+binary that must be relocated but has no usable section header table is
+rejected.  Both ELF relocation encodings are applied: REL sections
+(SHT_REL), which ARM emits with the addend stored in the target word, and
+RELA sections (SHT_RELA), which m68k emits with an explicit addend field.
+
+
+Building a compatible program (ARM)
+-----------------------------------
+
+This works with a stock arm-none-eabi toolchain, no patched gcc or ld:
+
+  # fixed base, --emit-relocs.  -mword-relocations keeps gcc from emitting
+  # MOVW/MOVT split relocations, so every absolute slot is a plain 32-bit
+  # R_ARM_ABS32 word that the loader can fix up directly.
+  arm-none-eabi-gcc -ffreestanding -nostdlib -fno-pic -mword-relocations \
+      -c prog.c -o prog.o
+  arm-none-eabi-ld -q -Ttext=0 -e _start prog.o -o prog.elf
+
+  # or, position independent:
+  arm-none-eabi-gcc -ffreestanding -nostdlib -fPIE -c prog.c -o prog.o
+  arm-none-eabi-ld -pie --no-dynamic-linker -e _start prog.o -o prog.elf
+
+The result is an ordinary ELF that readelf, objdump and gdb understand.
+"readelf -r prog.elf" shows the relocations the loader will apply.
+
+
+Building a compatible program (m68k)
+------------------------------------
+
+The same two recipes work with m68k ELF toolchains.  Besides a bare-metal
+m68k-elf- toolchain, Vincent Riviere's mintelf toolchain
+(m68k-atari-mintelf-) can produce ELF executables for the loader as well.
+The m68k psABI uses RELA relocations, so the retained entries are
+R_68K_32 / R_68K_RELATIVE in SHT_RELA sections; the loader handles those:
+
+  # mintelf toolchain (ELF output).  m68k-atari-mintelf-ld defaults to
+  # elf32-atariprg, so force a generic ELF32 target explicitly:
+  m68k-atari-mintelf-gcc -ffreestanding -nostdlib -fno-pic -c prog.c -o prog.o
+  m68k-atari-mintelf-ld --oformat=elf32-m68k -q -Ttext=0 -e _start \
+      prog.o -o prog.elf
+
+  # or, position independent:
+  m68k-atari-mintelf-gcc -ffreestanding -nostdlib -fPIE -c prog.c -o prog.o
+  m68k-atari-mintelf-ld --oformat=elf32-m68k -pie --no-dynamic-linker \
+      -e _start prog.o -o prog.elf
+
+  # bare-metal toolchain equivalents:
+
+  # fixed base, --emit-relocs:
+  m68k-elf-gcc -ffreestanding -nostdlib -fno-pic -c prog.c -o prog.o
+  m68k-elf-ld -q -Ttext=0 -e _start prog.o -o prog.elf
+
+  # or, position independent:
+  m68k-elf-gcc -ffreestanding -nostdlib -fPIE -c prog.c -o prog.o
+  m68k-elf-ld -pie --no-dynamic-linker -e _start prog.o -o prog.elf
+
+Programs start executing at the ELF entry point (e_entry); the PT_LOAD
+segments are placed in the TPA and the rest of it, including .bss, is zeroed.

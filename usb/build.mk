@@ -8,3 +8,4 @@
 obj-y += usb.o ucd.o udd.o usb_api.o usb_hub.o udd_mouse.o
 
 obj-$(CONF_WITH_USB_DWC2) += ucd_dwc2.o
+obj-$(CONF_WITH_USB_XHCI) += ucd_xhci.o
