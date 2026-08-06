@@ -58,7 +58,7 @@ them.
 `.config` rebuilds everything, which is intended.
 
 To smoke-test a build, use the `ptos-smoketest` skill
-(`~/.claude/skills/ptos-smoketest/SKILL.md`). It has the verified QEMU
+(`.claude/skills/ptos-smoketest/SKILL.md`). It has the verified QEMU
 invocations for the raspi2, virt-arm and virt-m68k machines and the Hatari
 invocations for the Atari m68k targets, with pass signals and emulator
 gotchas (unreliable Hatari debugger breakpoints, the Falcon IDE 31 s boot
