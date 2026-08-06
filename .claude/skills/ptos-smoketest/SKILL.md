@@ -17,7 +17,7 @@ the pTOS tree). Relevant outputs:
 
 | Config | Emulator | Image | Machine |
 |---|---|---|---|
-| `atari512_defconfig` | hatari | `ptos512k.img` (+ `.sym` `.map`) | `--machine ste\|falcon\|tt` |
+| `atari512_defconfig` | hatari | `ptos512k.img` (+ `.sym` `.map`) | `--machine ste`, `--machine falcon`, `--machine tt` |
 | `rpi2_defconfig` | qemu-system-arm | `kernel7.img` | `-M raspi2` (video + serial) |
 | `virt-arm_defconfig` | qemu-system-arm | `virt-arm.elf` | `-M virt,highmem=off -cpu cortex-a7` (headless) |
 | `virt-m68k_defconfig` | qemu-system-m68k | `virt-m68k.elf` | `-M virt -cpu m68020` (headless) |
@@ -28,8 +28,9 @@ with `symbols <file>`; there is no `--symbols` CLI option).
 
 ## Hatari smoke test (m68k Atari)
 
-`--run-vbls N` paces emulation at ~real time (50 Hz VBL: 3000 VBLs ≈ 60 s
-wall). The debugger `--parse` mode runs at full speed and is NOT paced.
+`--run-vbls N` paces emulation at ~real time. At 50 Hz VBL, 3000 VBLs is ~60 s
+of emulated time; expect somewhat more wall time due to Hatari overhead. The
+debugger `--parse` mode runs at full speed and is NOT paced.
 
 ### Boot-completion check (RELIABLE — use this)
 
