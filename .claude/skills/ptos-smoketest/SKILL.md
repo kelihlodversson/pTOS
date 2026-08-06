@@ -22,9 +22,12 @@ the pTOS tree). Relevant outputs:
 | `virt-arm_defconfig` | qemu-system-arm | `virt-arm.elf` | `-M virt,highmem=off -cpu cortex-a7` (headless) |
 | `virt-m68k_defconfig` | qemu-system-m68k | `virt-m68k.elf` | `-M virt -cpu m68020` (headless) |
 
-Atari configs need a mint-ELF toolchain (`BUILD_TOOLCHAIN_MINTELF=y`, e.g. via
-menuconfig) and produce symbols in `ptos512k.sym` (load in the Hatari debugger
-with `symbols <file>`; there is no `--symbols` CLI option).
+Atari configs build with the default mint toolchain (`m68k-atari-mint-`, a.out)
+and produce symbols in `ptos512k.sym` (load in the Hatari debugger with
+`symbols <file>`; there is no `--symbols` CLI option). Only the virt-m68k
+image is pinned to the ELF toolchain (`BUILD_TOOLCHAIN_MINTELF=y`,
+`m68k-atari-mintelf-`), since QEMU's `-kernel` loader needs an
+`elf32-m68k`-format kernel.
 
 ## Hatari smoke test (m68k Atari)
 

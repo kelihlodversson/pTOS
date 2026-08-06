@@ -62,7 +62,7 @@ To smoke-test a build, use the `ptos-smoketest` skill
 invocations for the raspi2, virt-arm and virt-m68k machines and the Hatari
 invocations for the Atari m68k targets, with pass signals and emulator
 gotchas (unreliable Hatari debugger breakpoints, the Falcon IDE 31 s boot
-wait). Minimal ARM smoke test, for reference:
+wait). Minimal raspi2 smoke test, for reference:
 
 ```sh
 qemu-system-arm -M raspi2 -bios kernel7.img -d guest_errors -serial stdio
