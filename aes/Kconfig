@@ -51,7 +51,7 @@ config CONF_WITH_LOADABLE_CURSORS
 
 config CONF_WITH_COLOUR_ICONS
 	bool "Colour icons"
-	default n if TARGET_192
+	default n if TARGET_192 || TARGET_CART
 	default y
 	help
 	  Recognise 'new format' RSC files and render the CICONBLK colour

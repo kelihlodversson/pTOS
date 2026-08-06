@@ -11,6 +11,7 @@
 #define GEMGRAF_H
 
 #include "gsxdefs.h"
+#include "obdefs.h"
 
 WORD gsx_chkclip(GRECT *pt);
 void gsx_cline(UWORD x1, UWORD y1, UWORD x2, UWORD y2);

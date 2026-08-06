@@ -333,6 +333,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
             break;
         case G_ICON:
             cicon = NULL;
+            /* drop thru */
 #if CONF_WITH_COLOUR_ICONS
         case G_CICON:   /* a CICONBLK starts with an ICONBLK */
             if (obtype == G_CICON)
