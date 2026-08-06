@@ -59,14 +59,15 @@ them.
 
 To smoke-test a build, use the `ptos-smoketest` skill
 (`.claude/skills/ptos-smoketest/SKILL.md`). It has the verified QEMU
-invocations for the raspi2 (QEMU machine `raspi2b`), virt-arm and virt-m68k
-machines and the Hatari
+invocations for the raspi1 (QEMU machine `raspi1ap`), raspi2 (QEMU machine
+`raspi2b`), virt-arm and virt-m68k machines and the Hatari
 invocations for the Atari m68k targets, with pass signals and emulator
 gotchas (unreliable Hatari debugger breakpoints, the Falcon IDE 31 s boot
-wait). Minimal raspi2 smoke test, for reference:
+wait). Minimal raspi1 smoke test, for reference:
 
 ```sh
-qemu-system-arm -M raspi2b -bios kernel7.img -d guest_errors -serial stdio
+make rpi1_defconfig && make
+qemu-system-arm -M raspi1ap -bios kernel.img -d guest_errors -serial stdio
 ```
 
 ## How the configuration works
