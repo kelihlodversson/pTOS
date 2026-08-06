@@ -467,6 +467,34 @@ void vdi_v_clswk(Vwk * vwk)
 
 void vdi_v_clrwk(Vwk * vwk)
 {
+#if CONF_WITH_VDI_TRUECOLOR
+    /*
+     * memset()-ing raw pixel value 0 means pen 0 in planar/indexed modes
+     * (all bitplane bits clear composes to color index 0), but not in a
+     * packed truecolor framebuffer: the truecolor backend maps pen 0 to
+     * white (truecolor_pixel_for_index(0), RGB565 0xffff), not raw zero,
+     * the same as every other primitive treats "pen 0" -- see
+     * truecolor_fill_rect()'s replace-mode default. Clear through the
+     * backend with a solid pen-0 fill instead, so it stays correct
+     * whichever backend vdi_screen_backend() has actually selected.
+     */
+    VwkAttrib attr;
+    Rect rect;
+
+    attr.clip = 0;
+    attr.multifill = 0;
+    attr.patmsk = 0;
+    attr.patptr = &SOLID;
+    attr.wrt_mode = 0;                  /* MD_REPLACE */
+    attr.color = 0;
+
+    rect.x1 = 0;
+    rect.y1 = 0;
+    rect.x2 = linea_vars.V_REZ_HZ - 1;
+    rect.y2 = linea_vars.V_REZ_VT - 1;
+
+    draw_rect_common(&attr, &rect);
+#else
     ULONG size;
 
     /* Calculate screen size */
@@ -474,6 +502,7 @@ void vdi_v_clrwk(Vwk * vwk)
 
     /* clear the screen */
     memset(v_bas_ad, 0, size);
+#endif
 }
 
 
