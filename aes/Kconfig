@@ -49,6 +49,18 @@ config CONF_WITH_LOADABLE_CURSORS
 	  Allow the mouse cursors to be loaded from A:\EMUCURS.RSC instead
 	  of using the built-in ones.
 
+config CONF_WITH_COLOUR_ICONS
+	bool "Colour icons"
+	default n if TARGET_192
+	default y
+	help
+	  Recognise 'new format' RSC files and render the CICONBLK colour
+	  icon data they may contain, as in Atari TOS 4.  Resources without
+	  colour icon data, and legacy mono ICONBLK icons, are unaffected.
+
+	  Space is tight on the smallest ROM targets, so this is disabled
+	  by default there.
+
 endif
 
 endmenu

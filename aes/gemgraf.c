@@ -25,6 +25,7 @@
 #include "intmath.h"
 #include "gsxdefs.h"
 #include "funcdef.h"
+#include "gemdos.h"
 
 #include "gemgraf.h"
 #include "gemgsxif.h"
@@ -685,12 +686,70 @@ static void gr_gblt(WORD *pimage, GRECT *pi, WORD col1, WORD col2)
 }
 
 
+#if CONF_WITH_COLOUR_ICONS
+/*
+ *  Blit a previously-transformed colour icon from memory to screen
+ */
+static void gr_colourblit(WORD *pdata, GRECT *pi, WORD num_planes)
+{
+    WORD pxyarray[8];
+
+    gsx_fix(&gl_src, pdata, pi->g_w/8, pi->g_h);
+    gl_src.fd_nplanes = num_planes;
+
+    gsx_fix(&gl_dst, ORGADDR, 0, 0);
+    gl_dst.fd_nplanes = num_planes;
+
+    gsx_moff();
+    pxyarray[0] = 0;
+    pxyarray[1] = 0;
+    pxyarray[2] = pi->g_w - 1;
+    pxyarray[3] = pi->g_h - 1;
+    pxyarray[4] = pi->g_x;
+    pxyarray[5] = pi->g_y;
+    pxyarray[6] = pi->g_x + pi->g_w - 1;
+    pxyarray[7] = pi->g_y + pi->g_h - 1;
+    gsx_mon();
+
+    vro_cpyfm(S_OR_D, pxyarray, &gl_src, &gl_dst);
+}
+
+
+/*
+ *  Create a dithered copy of the specified mask and return its address
+ *
+ *  returns NULL if memory can't be allocated
+ */
+static WORD *dither_mask(WORD *pdata, WORD w, WORD h)
+{
+    WORD width = w / 16;    /* in WORDs */
+    WORD i, j, dither;
+    WORD *mask, *p, *q;
+
+    mask = dos_alloc_anyram((LONG)width * sizeof(WORD) * h);
+    if (!mask)
+        return NULL;
+
+    for (i = 0, p = pdata, q = mask; i < h; i++)
+    {
+        dither = (i & 1) ? 0xaaaa : 0x5555;
+        for (j = 0; j < width; j++)
+            *q++ = *p++ & dither;
+    }
+
+    return mask;
+}
+#endif
+
+
 /*
  *  Routine to draw an icon, which is a graphic image with a text
- *  string underneath it
+ *  string underneath it.  If colour icons are enabled and 'cicon' is
+ *  not NULL, the colour icon data it points to is drawn instead of
+ *  the mono pmask/pdata bitmaps.
  */
 void gr_gicon(WORD state, WORD *pmask, WORD *pdata, BYTE *ptext, WORD ch,
-              WORD chx, WORD chy, GRECT *pi, GRECT *pt)
+              WORD chx, WORD chy, GRECT *pi, GRECT *pt, CICON *cicon)
 {
     WORD    ifgcol, ibgcol;
     WORD    tfgcol, tbgcol, tmp;
@@ -700,13 +759,30 @@ void gr_gicon(WORD state, WORD *pmask, WORD *pdata, BYTE *ptext, WORD ch,
     tbgcol = ibgcol = (ch >> 8) & 0x000f;
     ch &= 0x00ff;
 
+#if CONF_WITH_COLOUR_ICONS
+    if (cicon)
+    {
+        /* use the 'selected' data/mask if available */
+        if ((state & SELECTED) && cicon->sel_data)
+        {
+            pdata = cicon->sel_data;
+            pmask = cicon->sel_mask;
+        }
+        else
+        {
+            pdata = cicon->col_data;
+            pmask = cicon->col_mask;
+        }
+    }
+#endif
+
     /* invert if selected   */
     if (state & SELECTED)
     {
         tmp = tfgcol;
         tfgcol = tbgcol;
         tbgcol = tmp;
-        if (!(state & DRAW3D))
+        if (!cicon && !(state & DRAW3D))
         {
             tmp = ifgcol;
             ifgcol = ibgcol;
@@ -725,18 +801,37 @@ void gr_gicon(WORD state, WORD *pmask, WORD *pdata, BYTE *ptext, WORD ch,
     }
 
     /* draw the image */
-    gr_gblt(pdata, pi, ifgcol, ibgcol);
-
-    if ((state & SELECTED) && (state & DRAW3D))
+#if CONF_WITH_COLOUR_ICONS
+    if (cicon)
     {
-        pi->g_x--;
-        pi->g_y--;
-        gr_gblt(pmask, pi, ifgcol, ibgcol);
-        pi->g_x += 2;
-        pi->g_y += 2;
-        gr_gblt(pmask, pi, ifgcol, ibgcol);
-        pi->g_x--;
-        pi->g_y--;
+        gr_colourblit(pdata, pi, cicon->num_planes);
+        if ((state & SELECTED) && !cicon->sel_data)
+        {
+            /* no dedicated selected asset: darken via a dithered mask */
+            WORD *dmask = dither_mask(pmask, pi->g_w, pi->g_h);
+            if (dmask)
+            {
+                gr_gblt(dmask, pi, BLACK, WHITE);
+                dos_free(dmask);
+            }
+        }
+    }
+    else
+#endif
+    {
+        gr_gblt(pdata, pi, ifgcol, ibgcol);
+
+        if ((state & SELECTED) && (state & DRAW3D))
+        {
+            pi->g_x--;
+            pi->g_y--;
+            gr_gblt(pmask, pi, ifgcol, ibgcol);
+            pi->g_x += 2;
+            pi->g_y += 2;
+            gr_gblt(pmask, pi, ifgcol, ibgcol);
+            pi->g_x--;
+            pi->g_y--;
+        }
     }
 
     /* draw the character */

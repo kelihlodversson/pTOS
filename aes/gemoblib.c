@@ -209,6 +209,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
     TEDINFO edblk;
     BITBLK bi;
     ICONBLK ib;
+    CICON *cicon;
 
     ch = ob_sst(tree, obj, &spec, &state, &obtype, &flags, &t, &th);
 
@@ -331,6 +332,12 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
                     bi.bi_hl, MD_TRANS, bi.bi_color, WHITE);
             break;
         case G_ICON:
+            cicon = NULL;
+#if CONF_WITH_COLOUR_ICONS
+        case G_CICON:   /* a CICONBLK starts with an ICONBLK */
+            if (obtype == G_CICON)
+                cicon = spec.ciconblk->mainlist;
+#endif
             ib = *(spec.iconblk);
             ib.ib_xicon += t.g_x;
             ib.ib_yicon += t.g_y;
@@ -338,7 +345,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
             ib.ib_ytext += t.g_y;
             gr_gicon(state, ib.ib_pmask, ib.ib_pdata, ib.ib_ptext,
                     ib.ib_char, ib.ib_xchar, ib.ib_ychar,
-                    (GRECT *)&ib.ib_xicon, (GRECT *)&ib.ib_xtext);  /* FIXME: Ugly typecasting */
+                    (GRECT *)&ib.ib_xicon, (GRECT *)&ib.ib_xtext, cicon);  /* FIXME: Ugly typecasting */
             state &= ~SELECTED;
             break;
         case G_USERDEF:
@@ -715,6 +722,9 @@ void ob_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
         else
         {
             if ((obtype != G_ICON) &&
+#if CONF_WITH_COLOUR_ICONS
+               (obtype != G_CICON) &&
+#endif
                ((new_state ^ curr_state) & SELECTED) )
             {
                 bb_fill(MD_XOR, FIS_SOLID, IP_SOLID, t.g_x+th, t.g_y+th,

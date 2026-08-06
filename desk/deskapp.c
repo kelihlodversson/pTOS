@@ -471,34 +471,39 @@ static WORD setup_iconblks(const ICONBLK *ibstart, WORD count)
 }
 
 /*
- * try to load icons from user-supplied resource
+ * try to load user-supplied resource
  */
-static WORD load_user_icons(void)
+static WORD load_icon_file(void)
 {
-    RSHDR *hdr;
-    ICONBLK *ibptr, *ib;
-    WORD i, n, rc, w, h;
     BYTE icon_rsc_name[sizeof(ICON_RSC_NAME)];
 
     /* Do not load user icons if Control was held on startup */
     if (bootflags & BOOTFLAG_SKIP_AUTO_ACC)
         return -1;
 
-    /*
-     * determine the number of icons in the user's icon resource
-     */
     strcpy(icon_rsc_name, ICON_RSC_NAME);
     icon_rsc_name[0] += G.g_stdrv;  /* Adjust drive letter  */
-    if (!rsrc_load(icon_rsc_name))
-    {
-        KDEBUG(("can't load user desktop icons from %s\n",icon_rsc_name));
-        return -1;
-    }
+    if (rsrc_load(icon_rsc_name))
+        return 0;
+
+    KDEBUG(("can't load user desktop icon file %s\n",icon_rsc_name));
+    return -1;
+}
+
+
+/*
+ * try to set up mono icons
+ */
+static WORD setup_mono_icons(void)
+{
+    RSHDR *hdr;
+    ICONBLK *ibptr, *ib;
+    WORD i, n, rc, w, h;
 
     hdr = (RSHDR *)(AP_1RESV);
     if (hdr->rsh_nib < BUILTIN_IBLKS)   /* must have at least the minimum set */
     {
-        KDEBUG(("too few user desktop icons (%d)\n",hdr->rsh_nib));
+        KDEBUG(("too few user desktop mono icons (%d)\n",hdr->rsh_nib));
         rsrc_free();
         return -1;
     }
@@ -515,7 +520,7 @@ static WORD load_user_icons(void)
     {
         if ((ib->ib_wicon != w) || (ib->ib_hicon != h))
         {
-            KDEBUG(("user desktop icon %d has wrong size (%dx%d)\n",
+            KDEBUG(("user desktop mono icon %d has wrong size (%dx%d)\n",
                     i,ib->ib_wicon,ib->ib_hicon));
             rsrc_free();
             return -1;
@@ -591,10 +596,13 @@ static WORD app_rdicon(void)
     /*
      * try to load user icons; if that fails, use builtin
      */
-    if (load_user_icons() < 0)
-        return setup_iconblks(icon_rs_iconblk, BUILTIN_IBLKS);
+    if (load_icon_file() == 0)
+    {
+        if (setup_mono_icons() == 0)
+            return 0;
+    }
 
-    return 0;
+    return setup_iconblks(icon_rs_iconblk, BUILTIN_IBLKS);
 }
 
 
