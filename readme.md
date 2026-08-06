@@ -34,17 +34,17 @@ You can additionally pass "-S -s" to allow attaching a remote gdb to the machine
 To test the ARM `virt` port, run
 
     make virt-arm_defconfig && make
-    qemu-system-arm -M virt -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -serial stdio
+    qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -serial stdio
 
 To also attach a virtio-blk disk:
 
-    qemu-system-arm -M virt -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -serial stdio \
+    qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -serial stdio \
       -global virtio-mmio.force-legacy=false \
       -drive file=disk.img,if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
 
 To also attach virtio-input keyboard and tablet devices:
 
-    qemu-system-arm -M virt -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -serial stdio \
+    qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -serial stdio \
       -global virtio-mmio.force-legacy=false \
       -device virtio-keyboard-device -device virtio-tablet-device
 
@@ -69,6 +69,11 @@ The `-global virtio-mmio.force-legacy=false` flag is required on QEMU
 versions that default the `virt` machine's virtio-mmio transports to
 legacy/version-1; the shared virtio-mmio transport driver only speaks
 modern/version-2 virtio-mmio.
+
+The `-M virt,highmem=off` option is required on the ARM `virt` machine:
+pTOS has no support for accessing memory or MMIO above the 4 GiB boundary
+yet, and the low mapping keeps ECAM at the `0x3f000000` address that the
+PCI backend implements.
 
 For more information on which Qemu versions to use, see [Circle's Qemu documentation](https://github.com/rsta2/circle/blob/f5999e58f14b90204aafa7859428661cd01b22b1/doc/qemu.txt)
 
