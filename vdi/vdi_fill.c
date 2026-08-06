@@ -1125,6 +1125,13 @@ put_pix(void)
 
     /* convert x,y to start address */
     addr = get_start_addr(x, y);
+#if CONF_WITH_VDI_TRUECOLOR
+    /* see the comment in get_start_addr() (vdi_misc.c) -- addr can be NULL
+     * here, and comparing a NULL pointer against v_bas_ad below would be
+     * undefined behaviour, not just a wrong answer */
+    if (!addr)
+        return;
+#endif
     /* co-ordinates can wrap, but cannot write outside screen,
      * alternatively this could check against v_bas_ad+vram_size()
      */

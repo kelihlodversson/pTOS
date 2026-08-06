@@ -10,13 +10,21 @@
 menu "VDI"
 
 config CONF_CHUNKY_PIXELS
-	bool "Chunky framebuffer"
+	bool "Chunky framebuffer" if !MACHINE_RPI
 	default y if MACHINE_RPI
 	default n
 	help
 	  Treat the framebuffer as a packed array of pixel values instead of
 	  interleaved bitplanes.  This is required on hardware that does not
 	  use the Atari bitplane layout.
+
+	  Several VDI primitives (see vdi_textblit.c, vdi_fill.c, vdi_line.c)
+	  still fork their body on this option instead of dispatching through
+	  the truecolor backend -- see issue #35's remaining-work items. The
+	  prompt is hidden (and the option forced to y) whenever MACHINE_RPI
+	  is set, since its framebuffer is packed 16bpp truecolor and
+	  disabling this would compile those primitives' bitplane-assuming
+	  bodies against it, corrupting memory instead of just being slow.
 
 config CONF_WITH_VDI_TRUECOLOR
 	bool "Packed truecolor VDI backend" if !MACHINE_RPI
