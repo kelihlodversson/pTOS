@@ -63,12 +63,12 @@ _os_entry:
 arm_vectors:
     b   _main                   // os_entry, branch to _main
     b   _arm_dispatch_undef
-    b	_arm_dispatch_svc
-    b	_arm_dispatch_prefetch_abort
-    b	_arm_dispatch_data_abort
-    b	_arm_dispatch_undef
-    b	_arm_dispatch_irq
-    b	_arm_dispatch_fiq
+    b   _arm_dispatch_svc
+    b   _arm_dispatch_prefetch_abort
+    b   _arm_dispatch_data_abort
+    b   _arm_dispatch_undef
+    b   _arm_dispatch_irq
+    b   _arm_dispatch_fiq
 
 os_version:
     .word   TOS_VERSION // os_version, TOS version
@@ -197,19 +197,31 @@ _core0:
 
     /* Note that we set all the stack pointers to point to the same place,
       as we actually only use the user and supervisor stack pointer. */
-	cps	#0x11				/* set fiq mode */
-	ldr	sp, =_stktop
-	cps	#0x12				/* set irq mode */
-	ldr	sp, =_stktop
-	cps	#0x17				/* set abort mode */
-	ldr	sp, =_stktop
-	cps	#0x1B				/* set "undefined" mode */
-	ldr	sp, =_stktop
-	cps	#0x13				/* set supervior mode */
-	ldr	sp, =_stktop
+    cps #0x11               /* set fiq mode */
+    ldr sp, =_stktop
+    cps #0x12               /* set irq mode */
+    ldr sp, =_stktop
+    cps #0x17               /* set abort mode */
+    ldr sp, =_stktop
+    cps #0x1B               /* set "undefined" mode */
+    ldr sp, =_stktop
+    cps #0x13               /* set supervior mode */
+    ldr sp, =_stktop
 
-	ldr	r0, =arm_vectors
-	mcr	p15, 0, r0, c12, c0, 0		/* set VBAR to our table at the start of the os */
+    ldr r0, =arm_vectors
+    mcr p15, 0, r0, c12, c0, 0      /* set VBAR to our table at the start of the os */
+
+    /* Enable VFP/NEON before the first C code runs.  On real hardware the
+     * firmware does this; QEMU's raspi2b resets with CPACR = 0 and
+     * FPEXC.EN = 0, so the first vldr in _raspi_vcmem_init would take an
+     * undefined instruction exception before processor_init() gets the
+     * chance to enable them. */
+    mrc     p15, 0, ip, c1, c0, 2
+    orr     ip, ip, #0xF00000       /* enable cp10 (single precision) and cp11 (double precision) */
+    mcr     p15, 0, ip, c1, c0, 2
+    mov     ip, #0x40000000         /* FPEXC.EN (bit 30) */
+    mcr     p10, 7, ip, c8, c0, 0   /* VMSR FPEXC, ip */
+    isb
 
 /*
  * memory configuration
@@ -228,50 +240,50 @@ _core0:
 #ifndef TARGET_RPI1
 
 switch_from_hyp:
-	mrs	r0 , cpsr
+    mrs r0 , cpsr
     /* test for HYP mode */
-	eor	r0, r0, #0x1A
-	tst	r0, #0x1F
+    eor r0, r0, #0x1A
+    tst r0, #0x1F
     /* clear mode bits */
-	bic	r0 , r0 , #0x1F
+    bic r0 , r0 , #0x1F
     /* mask IRQ/FIQ bits and set SVC mode */
-	orr	r0 , r0 , #0xC0 | 0x13
+    orr r0 , r0 , #0xC0 | 0x13
     /* mask Abort bit */
-    orr	r0, r0, #0x100
+    orr r0, r0, #0x100
     /* branch if not HYP mode */
-	bne	1f
+    bne 1f
 
     ldr r1, =_start_in_hyp
     mov r2, #1
     str r2, [r1]
 
-    msr	spsr_cxsf, r0
+    msr spsr_cxsf, r0
 
     mrc     p15, 0, r2, c1, c0,  0
     bic     r1, r1, #(1 << 1)
     mcr     p15, 0, r2, c1, c0,  0
 
-	@ Disable all traps, so we don't get any nasty surprise
-	mov	r7, #0
-	mcr	p15, 4, r7, c1, c1, 0	@ HCR
-	mcr	p15, 4, r7, c1, c1, 2	@ HCPTR
-	mcr	p15, 4, r7, c1, c1, 3	@ HSTR
-	mcr	p15, 4, r7, c1, c0, 0	@ HSCTLR
-	mrc	p15, 4, r7, c1, c1, 1	@ HDCR
-	and	r7, #0x1f		@ Preserve HPMN
-	mcr	p15, 4, r7, c1, c1, 1	@ HDCR
+    @ Disable all traps, so we don't get any nasty surprise
+    mov r7, #0
+    mcr p15, 4, r7, c1, c1, 0   @ HCR
+    mcr p15, 4, r7, c1, c1, 2   @ HCPTR
+    mcr p15, 4, r7, c1, c1, 3   @ HSTR
+    mcr p15, 4, r7, c1, c0, 0   @ HSCTLR
+    mrc p15, 4, r7, c1, c1, 1   @ HDCR
+    and r7, #0x1f       @ Preserve HPMN
+    mcr p15, 4, r7, c1, c1, 1   @ HDCR
 
     msr ELR_hyp, lr
     eret
-1:	msr	cpsr_cxsf, r0
+1:  msr cpsr_cxsf, r0
     bx lr
 
-	.globl	_start_secondary
+    .globl  _start_secondary
 _start_secondary:
-	dsb
+    dsb
     cpsid ifa
-1:	wfi
-	b	1b
+1:  wfi
+    b   1b
 
 #endif
 
@@ -281,7 +293,7 @@ _arm_dispatch_undef:
     cps    #0x13           /* switch to supervior mode */
 
     sub    sp, #4*15
-	stmia  sp, {r0-r14}^   /* store user registers r0-r14 (unbanked) */
+    stmia  sp, {r0-r14}^   /* store user registers r0-r14 (unbanked) */
 
     // get the offending instruction
     ldr    r3, [sp, #+4*15]
@@ -313,12 +325,12 @@ _arm_dispatch_svc:
     .globl _arm_dispatch_prefetch_abort
 _arm_dispatch_prefetch_abort:
 
-    sub	   lr, lr, #4      /* lr: correct PC of aborted program */
+    sub    lr, lr, #4      /* lr: correct PC of aborted program */
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervior stack */
     cps    #0x13           /* switch to supervior mode */
 
     sub    sp, #4*15
-	stmia  sp, {r0-r14}^   /* store user registers r0-r14 (unbanked) */
+    stmia  sp, {r0-r14}^   /* store user registers r0-r14 (unbanked) */
     mrc p15, 0, r2, c5, c0,  1  // FSR in r2
     mrc p15, 0, r3, c6, c0,  2  // FAR in r3
 
@@ -334,12 +346,12 @@ _arm_dispatch_prefetch_abort:
 
     .globl _arm_dispatch_data_abort
 _arm_dispatch_data_abort:
-	sub	lr, lr, #8         /* lr: correct PC of aborted program */
+    sub lr, lr, #8         /* lr: correct PC of aborted program */
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervior stack */
     cps    #0x13           /* switch to supervior mode */
 
     sub    sp, #4*15
-	stmia  sp, {r0-r14}^   /* store user registers r0-r14 (unbanked) */
+    stmia  sp, {r0-r14}^   /* store user registers r0-r14 (unbanked) */
     mrc p15, 0, r2, c6, c0,  0  // FAR in r2
     mrc p15, 0, r3, c5, c0,  0  // FSR in r3
 
@@ -356,7 +368,7 @@ _arm_dispatch_data_abort:
     .extern _raspi_int_handler
     .globl _arm_dispatch_irq
 _arm_dispatch_irq:
-	sub	   lr, lr, #4      /* lr: correct PC of aborted program */
+    sub    lr, lr, #4      /* lr: correct PC of aborted program */
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervior stack */
     cps    #0x13           /* switch to supervior mode */
     stmfd  sp!, {r0-r3, ip, lr} /* store registers not saved by the C handler (link register is important in case the interrupt interrupted while the processor was in SVC mode.)*/
@@ -367,7 +379,7 @@ _arm_dispatch_irq:
 
     .globl _arm_dispatch_fiq
 _arm_dispatch_fiq:
-	sub	   lr, lr, #4      /* lr: correct PC of aborted program */
+    sub    lr, lr, #4      /* lr: correct PC of aborted program */
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervior stack */
     cps    #0x13           /* switch to supervior mode */
     // TODO: fixme
@@ -376,7 +388,7 @@ _arm_dispatch_fiq:
 // Helper exception vectors to get the processor into secure mode:
 #ifndef TARGET_RPI1
 _monitor_vectors:
-    .word 0	/* reset */
+    .word 0 /* reset */
     .word 0 /* undef */
     adr pc, _secure_monitor
     .word 0
@@ -384,14 +396,14 @@ _monitor_vectors:
     .word 0
     .word 0
     .word 0
-    .word 0	/* pad */
+    .word 0 /* pad */
 
 .align 5
 _secure_monitor:
     mrc     p15, 0, r1, c1, c1, 0   @ read SCR
-    bic     r1, r1, #0x4e	        @ clear IRQ, FIQ, EA, nET bits
-    orr     r1, r1, #0x31	        @ enable NS, AW, FW bits
-    mcr     p15, 0, r1, c1, c1, 0	@ write SCR (with NS bit set)
+    bic     r1, r1, #0x4e           @ clear IRQ, FIQ, EA, nET bits
+    orr     r1, r1, #0x31           @ enable NS, AW, FW bits
+    mcr     p15, 0, r1, c1, c1, 0   @ write SCR (with NS bit set)
 
     // Allow unaligned access
     // mrc     p15, 0, r2, c1, c0,  0
