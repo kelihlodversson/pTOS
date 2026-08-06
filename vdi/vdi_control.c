@@ -412,9 +412,8 @@ void vdi_v_opnwk(Vwk * vwk)
 
     screen_get_current_mode_desc(&vwk->mode);
     vwk->backend = vdi_backend_select(&vwk->mode);
-    KDEBUG(("vdi_v_opnwk: mode layout=%d color_model=%d bpp=%d backend=%s\n",
-            vwk->mode.layout, vwk->mode.color_model, vwk->mode.bits_per_pixel,
-            vwk->backend ? "selected" : "none"));
+    KDEBUG(("vdi_v_opnwk: mode layout=%d color_model=%d bpp=%d\n",
+            vwk->mode.layout, vwk->mode.color_model, vwk->mode.bits_per_pixel));
 
     linea_vars.line_cw = -1;    /* invalidate current line width */
 

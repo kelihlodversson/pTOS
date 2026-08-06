@@ -36,13 +36,23 @@ typedef struct vdi_backend_ops {
 /*
  * Picks a backend ops table for a mode descriptor, or NULL if no backend
  * supports that layout/color-model/pixel-format combination.
+ *
+ * Every existing driver reports a descriptor a backend handles (planar+
+ * indexed, or on MACHINE_RPI, packed+truecolor+RGB565), and can only be
+ * queried once its video hardware is set up, so in practice this cannot
+ * return NULL for any of them. The check exists for whichever future
+ * driver reports something no backend yet implements.
  */
 const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode);
 
 /*
- * The backend ops table for the current screen workstation, or NULL if
- * none was selected (e.g. the screen's mode descriptor doesn't match
- * any backend yet). There is currently exactly one screen.
+ * The backend ops table for the current screen workstation. Self-
+ * initializes on first call if vdi_v_opnwk() hasn't run yet (see the
+ * comment on the definition) -- callers do not need to call vdi_v_opnwk()
+ * first. Returns NULL only in the vdi_backend_select() case above; no
+ * caller in this codebase currently guards against it, since it cannot
+ * happen for any of this codebase's drivers today. There is currently
+ * exactly one screen.
  */
 const vdi_backend_ops *vdi_screen_backend(void);
 

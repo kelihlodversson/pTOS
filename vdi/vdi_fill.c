@@ -730,18 +730,7 @@ get_color (UWORD mask, UWORD * addr)
 static UWORD
 pixelread(const WORD x, const WORD y)
 {
-    const vdi_backend_ops *backend = vdi_screen_backend();
-
-    /*
-     * Belt-and-suspenders: vdi_screen_backend() self-initializes now,
-     * but if a machine's mode descriptor never validates against any
-     * backend (see vdi_backend_select()), it still returns NULL.
-     * Report "no color" rather than dereference NULL.
-     */
-    if (!backend)
-        return 0;
-
-    return backend->get_pixel(x, y);
+    return vdi_screen_backend()->get_pixel(x, y);
 }
 
 UWORD planar_get_pixel(WORD x, WORD y)
@@ -1122,17 +1111,6 @@ put_pix(void)
     const WORD x = PTSIN[0];
     const WORD y = PTSIN[1];
     UWORD color;
-    const vdi_backend_ops *backend;
-
-    /*
-     * Belt-and-suspenders: vdi_screen_backend() self-initializes now,
-     * but if a machine's mode descriptor never validates against any
-     * backend (see vdi_backend_select()), it still returns NULL.
-     * Simply skip drawing rather than dereference NULL.
-     */
-    backend = vdi_screen_backend();
-    if (!backend)
-        return;
 
     /* convert x,y to start address */
     addr = get_start_addr(x, y);
@@ -1144,7 +1122,7 @@ put_pix(void)
     }
     color = INTIN[0];           /* device dependent encoded color bits */
 
-    backend->put_pixel(x, y, color);
+    vdi_screen_backend()->put_pixel(x, y, color);
 }
 
 void planar_put_pixel(WORD x, WORD y, UWORD color)
