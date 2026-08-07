@@ -690,9 +690,7 @@ Smoke: raspi1 (`-M raspi1ap`, screendump check for text), virt-arm and virt-m68k
 
 - [x] **Step 3: Update the design doc's open-follow-ups** — done in commit `334a4510`: marked the text-blit backport (#86 / issue #35 Part 2a) done in `docs/superpowers/specs/2026-08-03-vdi-backend-truecolor-design.md`, and noted the chunky 8bpp `nbrplane==8` branch in `vdi/arch/arm/vdi_tblit.c` is now unreachable on truecolor backends and can be removed when `CONF_CHUNKY_PIXELS` is retired.
 
-- [ ] **Step 4: Request review and mark the PR ready**
-
-`git push`, then `gh pr ready 104`. Summarize for the reviewer: what each commit does, the reference files used, and the smoke evidence.
+- [x] **Step 4: Request review and mark the PR ready** — marked ready via `gh pr ready 104`; PR is now non-draft and open for review.
 
 ---
 
