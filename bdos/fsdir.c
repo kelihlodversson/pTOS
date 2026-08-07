@@ -1018,7 +1018,6 @@ long xrename(int n, char *p1, char *p2)
         dfd->o_td.date = cpu2le16(filedate);
         dfd->o_strtcl = clust;
         dfd->o_fileln = fileln;
-        dfd->o_usecnt++;
 
         /* if this is really a folder we're moving, we need to
          * do two things: fix up the parent directory pointer in
