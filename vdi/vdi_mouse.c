@@ -914,8 +914,10 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
     }
     else if (x >= (linea_vars.DEV_TAB[0]-15))
     {
-        end_bit = 0x8000 >> (linea_vars.DEV_TAB[0]-x);
-        mouse_save.width = linea_vars.DEV_TAB[0]-x;
+        /* DEV_TAB[0] is the last valid pixel column (V_REZ_HZ-1), so the
+         * visible width is inclusive of it: DEV_TAB[0]-x+1, not DEV_TAB[0]-x. */
+        end_bit = 0x8000 >> (linea_vars.DEV_TAB[0]-x+1);
+        mouse_save.width = linea_vars.DEV_TAB[0]-x+1;
     }
 
     row_count = 16;
