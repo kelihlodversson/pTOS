@@ -13,6 +13,8 @@
 #include "config.h"
 #include "portab.h"
 #include "vdi_defs.h"
+#include "vdi_raster.h"
+#include "vdi_backend.h"
 #include "blitter.h"
 #include "../bios/lineavars.h"
 #include "../bios/tosvars.h"
@@ -100,24 +102,6 @@ static const UBYTE skew_flags[8] = {
 #endif
 
 
-/* bitblt modes */
-#define BM_ALL_WHITE   0
-#define BM_S_AND_D     1
-#define BM_S_AND_NOTD  2
-#define BM_S_ONLY      3
-#define BM_NOTS_AND_D  4
-#define BM_D_ONLY      5
-#define BM_S_XOR_D     6
-#define BM_S_OR_D      7
-#define BM_NOT_SORD    8
-#define BM_NOT_SXORD   9
-#define BM_NOT_D      10
-#define BM_S_OR_NOTD  11
-#define BM_NOT_S      12
-#define BM_NOTS_OR_D  13
-#define BM_NOT_SANDD  14
-#define BM_ALL_BLACK  15
-
 /* flag:1 SOURCE and PATTERN   flag:0 SOURCE only */
 #define PAT_FLAG        16
 
@@ -132,44 +116,6 @@ static const UBYTE skew_flags[8] = {
 #define XMAX_D  6       /* x of lower right of destination rectangle */
 #define YMAX_D  7       /* y of lower right of destination rectangle */
 
-
-/* 76-byte line-A BITBLT struct passing parameters to bitblt */
-struct blit_frame {
-    WORD b_wd;          /* +00 width of block in pixels */
-    WORD b_ht;          /* +02 height of block in pixels */
-    WORD plane_ct;      /* +04 number of consecutive planes to blt */
-    UWORD fg_col;       /* +06 foreground color (logic op table index:hi bit) */
-    UWORD bg_col;       /* +08 background color (logic op table index:lo bit) */
-    UBYTE op_tab[4];    /* +10 logic ops for all fore and background combos */
-    WORD s_xmin;        /* +14 minimum X: source */
-    WORD s_ymin;        /* +16 minimum Y: source */
-    UWORD * s_form;     /* +18 source form base address */
-    WORD s_nxwd;        /* +22 offset to next word in line  (in bytes) */
-    WORD s_nxln;        /* +24 offset to next line in plane (in bytes) */
-    WORD s_nxpl;        /* +26 offset to next plane from start of current plane */
-    WORD d_xmin;        /* +28 minimum X: destination */
-    WORD d_ymin;        /* +30 minimum Y: destination */
-    UWORD * d_form;     /* +32 destination form base address */
-    WORD d_nxwd;        /* +36 offset to next word in line  (in bytes) */
-    WORD d_nxln;        /* +38 offset to next line in plane (in bytes) */
-    WORD d_nxpl;        /* +40 offset to next plane from start of current plane */
-    UWORD * p_addr;     /* +42 address of pattern buffer   (0:no pattern) */
-    WORD p_nxln;        /* +46 offset to next line in pattern  (in bytes) */
-    WORD p_nxpl;        /* +48 offset to next plane in pattern (in bytes) */
-    WORD p_mask;        /* +50 pattern index mask */
-
-    /* these frame parameters are internally set */
-    WORD p_indx;        /* +52 initial pattern index */
-    UWORD * s_addr;     /* +54 initial source address */
-    WORD s_xmax;        /* +58 maximum X: source */
-    WORD s_ymax;        /* +60 maximum Y: source */
-    UWORD * d_addr;     /* +62 initial destination address */
-    WORD d_xmax;        /* +66 maximum X: destination */
-    WORD d_ymax;        /* +68 maximum Y: destination */
-    WORD inner_ct;      /* +70 blt inner loop initial count */
-    WORD dst_wr;        /* +72 destination form wrap (in bytes) */
-    WORD src_wr;        /* +74 source form wrap (in bytes) */
-};
 
 /* Raster definitions */
 typedef struct {
@@ -723,16 +669,6 @@ bit_blt (void)
 #endif
 
 
-/* common settings needed both by VDI and line-A raster
- * operations, but being given through different means.
- */
-struct raster_t {
-    VwkClip *clipper;
-    int clip;
-    int multifill;
-    int transparent;
-};
-
 /*
  * setup_pattern - if bit 5 of mode is set, use pattern with blit
  */
@@ -871,7 +807,18 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
     else {
         /* source form is screen */
         info->s_form = (UWORD*) v_bas_ad;
-        info->s_nxwd = linea_vars.v_planes * 2;
+#if CONF_WITH_VDI_TRUECOLOR
+        /*
+         * The packed-truecolor backend has no bitplanes: each screen word
+         * is already one whole pixel, so the "next word" step is 2 bytes
+         * and there is a single conceptual plane -- see the comment on
+         * plane_ct below.
+         */
+        if (vdi_screen_is_truecolor())
+            info->s_nxwd = 2;
+        else
+#endif
+            info->s_nxwd = linea_vars.v_planes * 2;
         info->s_nxln = linea_vars.v_lin_wr;
     }
 
@@ -886,8 +833,17 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
     else {
         /* destination form is screen */
         info->d_form = (UWORD*) v_bas_ad;
-        info->plane_ct = linea_vars.v_planes;
-        info->d_nxwd = linea_vars.v_planes * 2;
+#if CONF_WITH_VDI_TRUECOLOR
+        if (vdi_screen_is_truecolor()) {
+            info->plane_ct = 1;
+            info->d_nxwd = 2;
+        }
+        else
+#endif
+        {
+            info->plane_ct = linea_vars.v_planes;
+            info->d_nxwd = linea_vars.v_planes * 2;
+        }
         info->d_nxln = linea_vars.v_lin_wr;
 
         /* check if clipping is enabled, when destination is screen */
@@ -904,6 +860,14 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
 
     info->s_nxpl = 2;           /* next plane offset (source) */
     info->d_nxpl = 2;           /* next plane offset (destination) */
+
+#if CONF_WITH_VDI_TRUECOLOR
+    /* the packed-truecolor backend's single conceptual plane above is
+     * always valid -- the check below only applies to the planar
+     * per-plane blitter. */
+    if (vdi_screen_is_truecolor())
+        return FALSE;
+#endif
 
     /* only 8, 4, 2 and 1 planes are valid (destination) */
     return info->plane_ct & ~0x000f;
@@ -930,6 +894,8 @@ cpy_raster(struct raster_t *raster, struct blit_frame *info)
         mode &= ~PAT_FLAG;      /* set bit to 0! */
         setup_pattern(raster, info);   /* fill in pattern related stuff */
     }
+
+    raster->mode = mode;        /* raw request, for the truecolor backend */
 
     /* if true, the plane count is invalid or clipping took all! */
     if (setup_info(raster, info))
@@ -973,6 +939,9 @@ cpy_raster(struct raster_t *raster, struct blit_frame *info)
             bg_col = 1;
         bg_col = MAP_COL[bg_col];
 
+        raster->fg_col = fg_col;    /* raw colors, for the truecolor backend */
+        raster->bg_col = bg_col;
+
         switch(mode) {
         case MD_TRANS:
             info->op_tab[0] = 04;    /* fg:0 bg:0  D' <- [not S] and D */
@@ -1009,12 +978,41 @@ cpy_raster(struct raster_t *raster, struct blit_frame *info)
         }
     }
 
+#if CONF_WITH_VDI_TRUECOLOR
+    {
+        const vdi_backend_ops *backend = vdi_screen_backend();
+
+        /* see the comment in get_start_addr() (vdi_misc.c); a NULL
+         * raster_copy slot means a backend that doesn't implement this
+         * primitive (see the vdi_backend_ops comment in vdi_backend.h) */
+        if (backend && backend->raster_copy)
+            backend->raster_copy(raster, info);
+    }
+#else
     /*
-     * call assembler blit routine or C-implementation.  we call the
-     * assembler version if we're not on ColdFire and either
-     * (a) the blitter isn't configured, or
-     * (b) it's configured but not available.
+     * With the truecolor backend compiled out, planar is the only backend
+     * that can ever be selected -- call it directly instead of paying for
+     * vdi_screen_backend()'s self-init check and an indirect call the
+     * result of which is already known at compile time (see the comment
+     * on get_start_addr() in vdi_misc.c).
      */
+    planar_raster_copy(raster, info);
+#endif
+}
+
+/*
+ * planar_raster_copy - dispatch a fully-set-up blit_frame to the hardware
+ * blitter or its C/assembler emulation
+ *
+ * call assembler blit routine or C-implementation.  we call the
+ * assembler version if we're not on ColdFire and either
+ * (a) the blitter isn't configured, or
+ * (b) it's configured but not available.
+ */
+void
+planar_raster_copy(struct raster_t *raster, struct blit_frame *info)
+{
+    (void)raster;
     blit_info = info;
 
 #if ASM_BLIT_IS_AVAILABLE

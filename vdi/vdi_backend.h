@@ -11,6 +11,7 @@
 #include "screen_mode.h"
 #include "vdi_defs.h"
 #include "vdi_textblit.h"
+#include "vdi_raster.h"
 
 /*
  * A NULL slot means "this backend does not implement this primitive" --
@@ -19,10 +20,9 @@
  * supports (see vdi_backend_select()), so an incompatible fallback can
  * never happen by construction.
  *
- * This table currently only covers the primitives this slice converts.
- * Follow-up slices (line/vline, raster copy, mouse cursor, full palette
- * -- issue #35 parts 2b/5) add their own slots when they actually
- * implement them.
+ * This table currently covers the primitives converted so far. Follow-up
+ * slices (line/vline, mouse cursor, full palette -- issue #35 parts 2b/5)
+ * add their own slots when they actually implement them.
  */
 typedef struct vdi_backend_ops {
     BOOL (*open)(Vwk *vwk);
@@ -33,6 +33,7 @@ typedef struct vdi_backend_ops {
     void (*put_pixel)(WORD x, WORD y, UWORD color);
     void (*fill_rect)(const VwkAttrib *attr, const Rect *rect);
     void (*text_blit)(LOCALVARS *vars);
+    void (*raster_copy)(struct raster_t *raster, struct blit_frame *info);
 } vdi_backend_ops;
 
 /*
