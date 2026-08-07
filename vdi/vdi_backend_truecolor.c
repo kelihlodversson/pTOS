@@ -554,7 +554,19 @@ static void truecolor_raster_copy(struct raster_t *raster, struct blit_frame *in
             WORD x;
 
             for (x = 0; x < info->b_wd; x++) {
-                BOOL set = (get_src_word(p) & mask) != 0;
+                /*
+                 * Icon mask/data words (unlike font glyph bytes -- see
+                 * get_src_word() above) are stored as WORD *value*
+                 * arrays by the resource compiler (tools/erd.c), which
+                 * the target compiler already lays out in its native
+                 * byte order. A native dereference here matches that,
+                 * and matches how the planar blitter reads the same
+                 * MFDB-sourced words (GetMemW() in vdi_raster.c);
+                 * get_src_word()'s manual big-endian byte reassembly
+                 * would double-handle the byte order and scramble every
+                 * word on a little-endian target.
+                 */
+                BOOL set = (*(const UWORD *)p & mask) != 0;
 
                 switch (raster->mode) {
                 case MD_REPLACE:
