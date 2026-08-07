@@ -982,8 +982,10 @@ cpy_raster(struct raster_t *raster, struct blit_frame *info)
     {
         const vdi_backend_ops *backend = vdi_screen_backend();
 
-        /* see the comment in get_start_addr() (vdi_misc.c) */
-        if (backend)
+        /* see the comment in get_start_addr() (vdi_misc.c); a NULL
+         * raster_copy slot means a backend that doesn't implement this
+         * primitive (see the vdi_backend_ops comment in vdi_backend.h) */
+        if (backend && backend->raster_copy)
             backend->raster_copy(raster, info);
     }
 #else
