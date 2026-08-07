@@ -756,20 +756,24 @@ UWORD planar_get_pixel(WORD x, WORD y)
     return get_color(mask, addr);           /* return the composed color value */
 }
 
-static UWORD
-search_to_right (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_col, UWORD * addr)
+/*
+ * planar_search_right/planar_search_left - scan a horizontal run of
+ * matching color on the interleaved-bitplane screen, for contourfill()'s
+ * seed-fill (see end_pts() below and the vdi_backend_ops comment in
+ * vdi_backend.h). Unlike pixelread()'s general-purpose per-pixel
+ * dispatch, these walk the bitplane mask/address incrementally instead
+ * of recomputing it from (x,y) at every step.
+ */
+WORD
+planar_search_right(const VwkClip * clip, WORD x, WORD y, UWORD search_col)
 {
-#if CONF_CHUNKY_PIXELS
-    UBYTE* adr = (UBYTE*)addr;
-#endif
+    UWORD *addr = planar_get_start_addr(x, y) + linea_vars.v_planes;
+    UWORD mask = 0x8000 >> (x & 0x000f);
 
     /* is x coord < x resolution ? */
     while( x++ < clip->xmx_clip ) {
         UWORD color;
 
-#if CONF_CHUNKY_PIXELS
-        color = *(adr++);
-#else
         /* need to jump over interleaved bit_plane? */
         mask = mask >> 1 | mask << 15;  /* roll right */
         if ( mask & 0x8000 )
@@ -777,7 +781,6 @@ search_to_right (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_co
 
         /* search, while pixel color != search color */
         color = get_color(mask, addr);
-#endif
         if ( search_col != color ) {
             break;
         }
@@ -786,19 +789,16 @@ search_to_right (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_co
     return x - 1;       /* output x coord -1 to endxright. */
 }
 
-static UWORD
-search_to_left (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_col, UWORD * addr)
+WORD
+planar_search_left(const VwkClip * clip, WORD x, WORD y, UWORD search_col)
 {
-#if CONF_CHUNKY_PIXELS
-    UBYTE* adr = (UBYTE*)addr;
-#endif
+    UWORD *addr = planar_get_start_addr(x, y) + linea_vars.v_planes;
+    UWORD mask = 0x8000 >> (x & 0x000f);
+
     /* Now, search to the left. */
     while (x-- > clip->xmn_clip) {
         UWORD color;
 
-#if CONF_CHUNKY_PIXELS
-        color = *(adr--);
-#else
         /* need to jump over interleaved bit_plane? */
         mask = mask >> 15 | mask << 1;  /* roll left */
         if ( mask & 0x0001 )
@@ -806,7 +806,6 @@ search_to_left (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_col
 
         /* search, while pixel color != search color */
         color = get_color(mask, addr);
-#endif
         if ( search_col != color )
             break;
 
@@ -837,36 +836,39 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
         BOOL seed_type)
 {
     UWORD color;
-    UWORD * addr;
-    UWORD mask;
 
     /* see, if we are in the y clipping range */
-    if ( y < clip->ymn_clip || y > clip->ymx_clip)
+    if ( y < clip->ymn_clip || y > clip->ymx_clip) {
+        *xleftout = *xrightout = x;
         return 0;
+    }
 
-    /* convert x,y to start address and bit mask */
-    addr = get_start_addr(x, y);
-    mask = 0x8000 >> (x & 0x000f);   /* fetch the pixel mask. */
-#if CONF_CHUNKY_PIXELS
-    /*
-     * search_to_right()/search_to_left() below walk the framebuffer
-     * byte-by-byte, which is only correct for 8bpp chunky pixels. On a
-     * 16bpp chunky backend (e.g. MACHINE_RPI truecolor), skip the search
-     * entirely and report "nothing found" rather than let the byte-walk
-     * run against the wrong pixel width. Mirrors the same accepted
-     * fail-safe gate used by normal_blit() in vdi/arch/arm/vdi_tblit.c.
-     */
-    if (linea_vars.v_planes != 8)
-        return 0;
-    color = *((UBYTE*)addr);
+#if CONF_WITH_VDI_TRUECOLOR
+    {
+        const vdi_backend_ops *backend = vdi_screen_backend();
+
+        /* see the comment in get_start_addr() (vdi_misc.c) */
+        if (!backend) {
+            *xleftout = *xrightout = x;
+            return 0;
+        }
+        /* get the search color -- reuse backend, don't re-derive it via pixelread() */
+        color = backend->get_pixel(x, y);
+        *xrightout = backend->search_right(clip, x, y, color);
+        *xleftout = backend->search_left(clip, x, y, color);
+    }
 #else
-    addr += linea_vars.v_planes;                   /* start at highest-order bit_plane */
-
-    /* get search color and the left and right end */
-    color = get_color (mask, addr);
+    /*
+     * With the truecolor backend compiled out, planar is the only backend
+     * that can ever be selected -- call it directly instead of paying for
+     * vdi_screen_backend()'s self-init check and an indirect call the
+     * result of which is already known at compile time (see the comment
+     * on get_start_addr() in vdi_misc.c).
+     */
+    color = planar_get_pixel(x, y);
+    *xrightout = planar_search_right(clip, x, y, color);
+    *xleftout = planar_search_left(clip, x, y, color);
 #endif
-    *xrightout = search_to_right (clip, x, mask, color, addr);
-    *xleftout = search_to_left (clip, x, mask, color, addr);
 
     /* see, if the whole found segment is of search color? */
     if ( color != search_color ) {
@@ -910,20 +912,37 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
         search_color = pixelread(xleft,oldy);
         seed_type = 1;
     } else {
-        const WORD plane_mask[] = { 1, 3, 7, 15 };
-
         /* Range check the color and convert the index to a pixel value */
         if (search_color >= linea_vars.DEV_TAB[13])
             return;
 
-        /*
-         * We mandate that white is all bits on.  Since this yields 15
-         * in rom, we must limit it to how many planes there really are.
-         * Anding with the mask is only necessary when the driver supports
-         * move than one resolution.
-         */
-        search_color =
-            (MAP_COL[search_color] & plane_mask[linea_vars.INQ_TAB[4] - 1]);
+#if CONF_WITH_VDI_TRUECOLOR
+        if (vdi_screen_is_truecolor()) {
+            /*
+             * pixelread()/get_pixel() return the full, unmasked MAP_COL
+             * hardware palette index (0-255, see the comment on
+             * default_prgb_palette[] in vdi_backend_truecolor.c) -- there
+             * are no bitplanes on a packed screen to truncate this down
+             * to, unlike the planar case below, whose plane_mask[] only
+             * covers 1-4 planes and would both read out of bounds and
+             * mask search_color down to the point that it could never
+             * again match pixelread()'s output.
+             */
+            search_color = MAP_COL[search_color];
+        } else
+#endif
+        {
+            const WORD plane_mask[] = { 1, 3, 7, 15 };
+
+            /*
+             * We mandate that white is all bits on.  Since this yields 15
+             * in rom, we must limit it to how many planes there really are.
+             * Anding with the mask is only necessary when the driver supports
+             * more than one resolution.
+             */
+            search_color =
+                (MAP_COL[search_color] & plane_mask[linea_vars.INQ_TAB[4] - 1]);
+        }
         seed_type = 0;
     }
 

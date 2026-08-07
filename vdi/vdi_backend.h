@@ -21,8 +21,8 @@
  * never happen by construction.
  *
  * This table currently covers the primitives converted so far. Follow-up
- * slices (line/vline, mouse cursor, full palette -- issue #35 parts 2b/5)
- * add their own slots when they actually implement them.
+ * slices (mouse cursor, full palette -- issue #35 parts 2b/5) add their
+ * own slots when they actually implement them.
  */
 typedef struct vdi_backend_ops {
     BOOL (*open)(Vwk *vwk);
@@ -34,6 +34,26 @@ typedef struct vdi_backend_ops {
     void (*fill_rect)(const VwkAttrib *attr, const Rect *rect);
     void (*text_blit)(LOCALVARS *vars);
     void (*raster_copy)(struct raster_t *raster, struct blit_frame *info);
+
+    /*
+     * Draws a single non-horizontal line (abline()'s horizontal case is
+     * handled earlier via fill_rect(), see draw_rect_common()). linemask
+     * is the current line-style state (see LN_MASK); returns the state
+     * after rotating one bit per pixel drawn, for the caller to save back.
+     */
+    UWORD (*draw_line)(const Line *line, WORD wrt_mode, UWORD color, UWORD linemask);
+
+    /*
+     * Scan right/left from (x,y) along a horizontal line for the last
+     * pixel matching search_col (a MAP_COL-mapped hardware palette index,
+     * like get_pixel()'s return value) before the first mismatch or the
+     * clip edge -- used by contourfill()'s seed-fill scan (see end_pts()
+     * in vdi_fill.c). Mandatory, like get_pixel()/put_pixel(): a backend
+     * that implements get_pixel() can always answer this too, by
+     * construction, so callers don't need to guard the slot itself.
+     */
+    WORD (*search_right)(const VwkClip *clip, WORD x, WORD y, UWORD search_col);
+    WORD (*search_left)(const VwkClip *clip, WORD x, WORD y, UWORD search_col);
 } vdi_backend_ops;
 
 /*
