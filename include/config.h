@@ -71,8 +71,18 @@
 /*
  * System configuration definitions
  */
-#define NUM_WIN 8               /* maximum number of windows (the     */
-                                /* desktop itself counts as 1 window) */
+/*
+ * Maximum number of windows (the desktop itself counts as 1 window)
+ *
+ * Later AES versions support more windows; like upstream, we raise
+ * the limit from 8 to 16 when the AES is configured above version
+ * 0x0320 (TOS 2.06/3.06).
+ */
+#if (AES_VERSION > 0x0320)
+# define NUM_WIN 16
+#else
+# define NUM_WIN 8
+#endif
 
 #define NUM_ACCS 6              /* maximum number of desk accessory   */
                                 /* files (.ACC) that will be loaded   */
