@@ -1616,8 +1616,8 @@ char outpath[MAX_STRLEN];
 char tmppath[MAX_STRLEN];
 int rc = 0;
 
-    sprintf(outpath,"%s.%s",name,ext);
-    sprintf(tmppath,"%s.%s.tmp",name,ext);
+    snprintf(outpath,sizeof(outpath),"%s.%s",name,ext);
+    snprintf(tmppath,sizeof(tmppath),"%s.%s.tmp",name,ext);
 
     fp = fopen(tmppath,"wb");
     if (!fp)
@@ -1657,8 +1657,8 @@ DEF_ENTRY *d;
 DEF_EXT entry;
 int i, rc = 0;
 
-    sprintf(outpath,"%s.%s",name,ext);
-    sprintf(tmppath,"%s.%s.tmp",name,ext);
+    snprintf(outpath,sizeof(outpath),"%s.%s",name,ext);
+    snprintf(tmppath,sizeof(tmppath),"%s.%s.tmp",name,ext);
 
     fp = fopen(tmppath,"wb");
     if (!fp)
