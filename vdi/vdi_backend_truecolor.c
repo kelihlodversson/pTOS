@@ -231,6 +231,22 @@ static void truecolor_fill_rect(const VwkAttrib *attr, const Rect *rect)
 }
 
 /*
+ * fetch the source word in big-endian (Motorola font) byte order
+ *
+ * The text source -- the font itself, or the intermediate buffer that
+ * pre_blit() filled -- is a big-endian byte stream: normal_blit() in
+ * vdi/arch/arm/vdi_tblit.c reads it as a sequence of bytes for that
+ * reason, and the m68k assembler reads it as big-endian words.  A native
+ * UWORD load byte-swaps adjacent glyphs on little-endian machines (even
+ * character codes render their successor, odd ones their predecessor),
+ * so assemble the word from its bytes instead.
+ */
+static UWORD get_src_word(const UBYTE *p)
+{
+    return (UWORD)(((UWORD)p[0] << 8) | (UWORD)p[1]);
+}
+
+/*
  * truecolor text blit: output the current glyph to a packed RGB565 screen
  *
  * port of the upstream screen_blit16() (see vdi_textblit.c in EmuTOS),
@@ -240,7 +256,8 @@ static void truecolor_fill_rect(const VwkAttrib *attr, const Rect *rect)
  */
 static void truecolor_text_blit(LOCALVARS *vars)
 {
-    UWORD *p, *q;
+    UBYTE *p;
+    UWORD *q;
     UBYTE *src, *dst;
     UWORD fgcol, bgcol, src_mask, mask, skew_mask;
     WORD h, w, skew, skew_start;
@@ -324,14 +341,14 @@ static void truecolor_text_blit(LOCALVARS *vars)
     default:    /* WM_REPLACE */
         for (h = vars->height; h > 0; h--, src += vars->s_next, dst += vars->d_next)
         {
-            p = (UWORD *)src;
+            p = src;
             q = (UWORD *)dst;
             for (w = vars->width, mask = src_mask; w > 0; w--)
             {
-                *q++ = (*p & mask) ? fgcol : bgcol;
+                *q++ = (get_src_word(p) & mask) ? fgcol : bgcol;
                 rorw1(mask);
                 if (mask == 0x8000)
-                    p++;
+                    p += 2;
             }
             /*
              * special handling for skewed text: since the character cells
@@ -354,16 +371,16 @@ static void truecolor_text_blit(LOCALVARS *vars)
     case WM_TRANS:
         for (h = vars->height; h > 0; h--, src += vars->s_next, dst += vars->d_next)
         {
-            p = (UWORD *)src;
+            p = src;
             q = (UWORD *)dst;
             for (w = vars->width, mask = src_mask; w > 0; w--)
             {
-                if (*p & mask)
+                if (get_src_word(p) & mask)
                     *q = fgcol;
                 q++;
                 rorw1(mask);
                 if (mask == 0x8000)
-                    p++;
+                    p += 2;
             }
             /*
              * see comments for WM_REPLACE (above) for an explanation of
@@ -385,16 +402,16 @@ static void truecolor_text_blit(LOCALVARS *vars)
     case WM_XOR:
         for (h = vars->height; h > 0; h--, src += vars->s_next, dst += vars->d_next)
         {
-            p = (UWORD *)src;
+            p = src;
             q = (UWORD *)dst;
             for (w = vars->width, mask = src_mask; w > 0; w--)
             {
-                if (*p & mask)
+                if (get_src_word(p) & mask)
                     *q = ~*q;
                 q++;
                 rorw1(mask);
                 if (mask == 0x8000)
-                    p++;
+                    p += 2;
             }
             /*
              * see comments for WM_REPLACE (above) for an explanation of
@@ -416,7 +433,7 @@ static void truecolor_text_blit(LOCALVARS *vars)
     case WM_ERASE:
         for (h = vars->height; h > 0; h--, src += vars->s_next, dst += vars->d_next)
         {
-            p = (UWORD *)src;
+            p = src;
             q = (UWORD *)dst;
             for (w = vars->width, mask = src_mask; w > 0; w--)
             {
@@ -424,12 +441,12 @@ static void truecolor_text_blit(LOCALVARS *vars)
                  * behaviour here differs from TOS 4.04 - for further info,
                  * see the comments in direct_screen_blit16()
                  */
-                if (!(*p & mask))
+                if (!(get_src_word(p) & mask))
                     *q = fgcol;
                 q++;
                 rorw1(mask);
                 if (mask == 0x8000)
-                    p++;
+                    p += 2;
             }
             /*
              * see comments for WM_REPLACE (above) for an explanation of
