@@ -480,6 +480,146 @@ static void truecolor_text_blit(LOCALVARS *vars)
     }
 }
 
+/*
+ * apply a VDI boolean raster-op (see BM_* in vdi_raster.h) to a source
+ * and destination pixel, a whole 16-bit RGB565 word at a time -- the
+ * same semantics the planar blitter emulator's do_blit() applies per
+ * bitplane in vdi_raster.c, just applied once per pixel since this
+ * backend has no planes to loop over.
+ */
+static UWORD apply_raster_op(WORD op, UWORD src, UWORD dst)
+{
+    switch (op & 0x0f) {
+    case BM_ALL_WHITE:  return 0x0000;
+    case BM_S_AND_D:    return (UWORD)(src & dst);
+    case BM_S_AND_NOTD: return (UWORD)(src & ~dst);
+    case BM_S_ONLY:     return src;
+    case BM_NOTS_AND_D: return (UWORD)(~src & dst);
+    case BM_D_ONLY:     return dst;
+    case BM_S_XOR_D:    return (UWORD)(src ^ dst);
+    case BM_S_OR_D:     return (UWORD)(src | dst);
+    case BM_NOT_SORD:   return (UWORD)~(src | dst);
+    case BM_NOT_SXORD:  return (UWORD)~(src ^ dst);
+    case BM_NOT_D:      return (UWORD)~dst;
+    case BM_S_OR_NOTD:  return (UWORD)(src | ~dst);
+    case BM_NOT_S:      return (UWORD)~src;
+    case BM_NOTS_OR_D:  return (UWORD)(~src | dst);
+    case BM_NOT_SANDD:  return (UWORD)~(src & dst);
+    case BM_ALL_BLACK:  return 0xffff;
+    default:            return dst;
+    }
+}
+
+/*
+ * truecolor raster copy: backs vro_cpyfm()/vrt_cpyfm()/linea_raster()
+ * (see cpy_raster() in vdi_raster.c) for the packed RGB565 screen.
+ *
+ * setup_info() only ever reports s_nxwd/d_nxwd == 2 and plane_ct == 1 for
+ * a screen-side MFDB with this backend selected -- a screen word is
+ * already one whole pixel, there are no bitplanes to interleave.
+ * Anything else (a multi-plane colour-icon MFDB, see gr_colourblit() in
+ * aes/gemgraf.c) falls outside what this backend can interpret; rather
+ * than misreading plane-interleaved memory as packed pixels, it is
+ * silently skipped -- colour icons don't render via this path yet, which
+ * is no worse than the memory corruption the planar blitter emulator
+ * would otherwise produce here.
+ */
+static void truecolor_raster_copy(struct raster_t *raster, struct blit_frame *info)
+{
+    WORD y;
+
+    if (info->d_nxwd != 2)
+        return;
+
+    if (raster->transparent) {
+        /*
+         * 1bpp source (an icon shape/mask) to packed colour destination.
+         * fg_col/bg_col are hardware palette indices; raster->mode is the
+         * write mode requested by INTIN[0] (MD_REPLACE/TRANS/XOR/ERASE)
+         * -- see the switch in cpy_raster() this mirrors, and
+         * truecolor_text_blit() above for the same source-bit-walking
+         * idiom applied to glyphs instead of icons.
+         */
+        UWORD fgpix = truecolor_pixel_for_index((WORD)raster->fg_col);
+        UWORD bgpix = truecolor_pixel_for_index((WORD)raster->bg_col);
+
+        for (y = 0; y < info->b_ht; y++) {
+            const UBYTE *srow = (const UBYTE *)info->s_form
+                + (LONG)(info->s_ymin + y) * info->s_nxln;
+            UBYTE *drow = (UBYTE *)info->d_form
+                + (LONG)(info->d_ymin + y) * info->d_nxln;
+            const UBYTE *p = srow + (LONG)(info->s_xmin >> 4) * info->s_nxwd;
+            UWORD *q = (UWORD *)(drow + (LONG)info->d_xmin * info->d_nxwd);
+            UWORD mask = 0x8000 >> (info->s_xmin & 0x0f);
+            WORD x;
+
+            for (x = 0; x < info->b_wd; x++) {
+                BOOL set = (get_src_word(p) & mask) != 0;
+
+                switch (raster->mode) {
+                case MD_REPLACE:
+                    *q = set ? fgpix : bgpix;
+                    break;
+                case MD_TRANS:
+                    if (set)
+                        *q = fgpix;
+                    break;
+                case MD_XOR:
+                    if (set)
+                        *q = ~*q;
+                    break;
+                case MD_ERASE:
+                    if (!set)
+                        *q = bgpix;
+                    break;
+                }
+                q++;
+
+                rorw1(mask);
+                if (mask == 0x8000)
+                    p += 2;
+            }
+        }
+        return;
+    }
+
+    /* COPY RASTER OPAQUE: packed destination word == packed source word */
+    if (info->s_nxwd != 2)
+        return;
+
+    {
+        BOOL forward_y = TRUE, forward_x = TRUE;
+
+        /*
+         * Source and destination can be the same screen buffer (e.g. a
+         * window drag or scroll) with overlapping rectangles -- pick a
+         * scan direction that never overwrites source pixels before
+         * they've been read, the same way bit_blt() picks a starting
+         * corner for the planar blitter.
+         */
+        if (info->s_form == info->d_form) {
+            if (info->d_ymin > info->s_ymin)
+                forward_y = FALSE;
+            else if ((info->d_ymin == info->s_ymin) && (info->d_xmin > info->s_xmin))
+                forward_x = FALSE;
+        }
+
+        for (y = 0; y < info->b_ht; y++) {
+            WORD row = forward_y ? y : (info->b_ht - 1 - y);
+            const UWORD *srow = (const UWORD *)((const UBYTE *)info->s_form
+                + (LONG)(info->s_ymin + row) * info->s_nxln + (LONG)info->s_xmin * info->s_nxwd);
+            UWORD *drow = (UWORD *)((UBYTE *)info->d_form
+                + (LONG)(info->d_ymin + row) * info->d_nxln + (LONG)info->d_xmin * info->d_nxwd);
+            WORD x;
+
+            for (x = 0; x < info->b_wd; x++) {
+                WORD col = forward_x ? x : (info->b_wd - 1 - x);
+                drow[col] = apply_raster_op(info->op_tab[0], srow[col], drow[col]);
+            }
+        }
+    }
+}
+
 static BOOL truecolor_open(Vwk *vwk)
 {
     (void)vwk;
@@ -499,4 +639,5 @@ const vdi_backend_ops packed_truecolor_backend_ops = {
     truecolor_put_pixel,
     truecolor_fill_rect,
     truecolor_text_blit,
+    truecolor_raster_copy,
 };
