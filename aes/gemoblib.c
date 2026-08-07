@@ -199,7 +199,7 @@ static WORD ob_user(OBJECT *tree, WORD obj, GRECT *pt, OBSPEC spec,
 /*
  *  Routine to determine if expanded text is all dashes
  */
-static BOOL is_dashes(WORD *s, WORD len)
+static BOOL is_dashes(const WORD *s, WORD len)
 {
     while(len--)
     {
