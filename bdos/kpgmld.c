@@ -311,6 +311,8 @@ static LONG pgfix01(void *lastcp, LONG nrelbytes, PGMINFO *pi)
 
             if (cp >= bbase)
                 return EPLFMT;
+            if (((LONG)cp) & 1)
+                return EPLFMT;
             *((long *)cp) += tbase;
         }
         ++rp;
