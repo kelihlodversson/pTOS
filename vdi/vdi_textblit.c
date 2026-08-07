@@ -170,9 +170,30 @@ static WORD do_clip(LOCALVARS *vars)
  * little-endian ARM too.  It also avoids the unaligned ULONG load,
  * which would fault on ARM.
  */
+/*
+ * the scratch buffer used for outlined/skewed text is a sequence of
+ * (big endian) words with bit 15 the leftmost pixel, the same layout as
+ * the screen itself.  It is produced and consumed by normal_blit() and
+ * the truecolor backend through byte-ordered accessors, so outline()
+ * must not dereference UWORD* pointers directly on little-endian
+ * machines: the accessors below are endian-neutral (a no-op on m68k).
+ */
+static UWORD get_buf_word(const UWORD *p)
+{
+    const UBYTE *b = (const UBYTE *)p;
+    return (UWORD)(((UWORD)b[0] << 8) | (UWORD)b[1]);
+}
+
+static void put_buf_word(UWORD *p, UWORD w)
+{
+    UBYTE *b = (UBYTE *)p;
+    b[0] = (UBYTE)(w >> 8);
+    b[1] = (UBYTE)(w & 0xff);
+}
+
 static ULONG merge_byte(UWORD *p, UWORD n)
 {
-    return ((ULONG)p[0] << 16) | ((ULONG)(p[1] >> 8) << 8) | (n & 0xFF);
+    return ((ULONG)get_buf_word(p) << 16) | ((ULONG)(get_buf_word(p + 1) >> 8) << 8) | (n & 0xFF);
 }
 
 
@@ -188,6 +209,10 @@ static ULONG merge_byte(UWORD *p, UWORD n)
  *              1 2 3
  *              7 X 8
  *              4 5 6
+ *
+ * the scratch buffer holds (big endian) words with bit 15 as the leftmost
+ * pixel, so it must be accessed through get_buf_word()/put_buf_word()
+ * rather than by dereferencing UWORD* directly on little-endian machines.
  */
 void outline(LOCALVARS *vars)
 {
@@ -211,7 +236,7 @@ void outline(LOCALVARS *vars)
         prev = 0;
         curr = 0;
         /* endian-neutral (and alignment-safe) form of `(*(ULONG *)nextline) >> 1` */
-        bottom_left = (((ULONG)nextline[0] << 16) | (ULONG)nextline[1]) >> 1;
+        bottom_left = (((ULONG)get_buf_word(nextline) << 16) | (ULONG)get_buf_word(nextline + 1)) >> 1;
 
         /* process one word at a time */
         for (j = form_width, scratch = (UWORD *)vars->sform; j > 0; j--)
@@ -252,13 +277,16 @@ void outline(LOCALVARS *vars)
             result |= (current_left | current_right);
             result >>= 16;                      /* move to lower 16 bits */
 
-            prev = curr = *currline;
+            prev = curr = get_buf_word(currline);
             prev = (prev ^ result) & result;
-            *currline++ = prev;
-            prev = *scratch;
-            *scratch++ = curr;
+            put_buf_word(currline, prev);
+            currline++;
+            prev = get_buf_word(scratch);
+            put_buf_word(scratch, curr);
+            scratch++;
 
-            tmp = *nextline++;
+            tmp = get_buf_word(nextline);
+            nextline++;
             bottom_left = merge_byte(nextline, tmp);
             rorl(bottom_left, 1);
         }
