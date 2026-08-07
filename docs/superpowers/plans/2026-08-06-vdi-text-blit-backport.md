@@ -675,7 +675,7 @@ Committed as `1db646ea` "vdi: fix 1-plane text blit endianness on little-endian 
 
 **Files:** none (verification only).
 
-- [~] **Step 1: Full build + smoke matrix** — rpi1 ✓, virt-arm ✓, virt-m68k ✓; atari512 + Hatari not yet run (needs the mint toolchain sed/olddefconfig switch).
+- [x] **Step 1: Full build + smoke matrix** — rpi1 ✓ (desktop; outline/skew/thicken each score=0), virt-arm ✓ (idles to `evnt_multi`), virt-m68k ✓ (idles to `evnt_multi`), atari512 ✓ (built with the `m68k-atari-mintelf-` toolchain; Hatari `--machine ste --memsize 4` reaches the GEM desktop — menu bar + status bar + icons present in the AVI last frame, avoiding the Falcon IDE 31 s wait by using STE).
 
 ```sh
 make rpi1_defconfig && make
@@ -688,9 +688,7 @@ Smoke: raspi1 (`-M raspi1ap`, screendump check for text), virt-arm and virt-m68k
 
 - [x] **Step 2: `make gitready` and `git diff --check`** — passed; `git status` shows only the two intended files (`vdi/arch/arm/vdi_tblit.c`, `vdi/vdi_textblit.c`).
 
-- [ ] **Step 3: Update the design doc's open-follow-ups**
-
-Edit `docs/superpowers/specs/2026-08-03-vdi-backend-truecolor-design.md`: mark the text-blit backport (issue #35 Part 2a, this issue #86) as done; note the `CONF_CHUNKY_PIXELS` fork that remains in `vdi/arch/arm/vdi_tblit.c` is now unreachable dead code (it predates truecolor and can be removed when the option itself is retired in a later slice).
+- [x] **Step 3: Update the design doc's open-follow-ups** — done in commit `334a4510`: marked the text-blit backport (#86 / issue #35 Part 2a) done in `docs/superpowers/specs/2026-08-03-vdi-backend-truecolor-design.md`, and noted the chunky 8bpp `nbrplane==8` branch in `vdi/arch/arm/vdi_tblit.c` is now unreachable on truecolor backends and can be removed when `CONF_CHUNKY_PIXELS` is retired.
 
 - [ ] **Step 4: Request review and mark the PR ready**
 
