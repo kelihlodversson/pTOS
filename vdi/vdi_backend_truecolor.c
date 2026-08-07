@@ -731,6 +731,42 @@ static UWORD truecolor_draw_line(const Line *line, WORD wrt_mode, UWORD color, U
     return linemask;
 }
 
+/*
+ * truecolor_search_right/truecolor_search_left: scan a horizontal run of
+ * matching color on the packed RGB565 screen, for contourfill()'s
+ * seed-fill (see end_pts() in vdi_fill.c and the vdi_backend_ops comment
+ * in vdi_backend.h).
+ *
+ * search_col is a MAP_COL-mapped hardware palette index, like
+ * get_pixel()'s return value -- converted to its raw RGB565 pixel once,
+ * up front, rather than calling get_pixel() (and paying its 256-entry
+ * reverse palette search) again for every pixel of a scan that can span
+ * the whole screen width.
+ */
+static WORD truecolor_search_right(const VwkClip *clip, WORD x, WORD y, UWORD search_col)
+{
+    UWORD pixel = truecolor_pixel_for_index((WORD)search_col);
+    const UWORD *addr = truecolor_get_start_addr(x, y);
+
+    while (x++ < clip->xmx_clip) {
+        if (*++addr != pixel)
+            break;
+    }
+    return x - 1;       /* output x coord -1 to endxright. */
+}
+
+static WORD truecolor_search_left(const VwkClip *clip, WORD x, WORD y, UWORD search_col)
+{
+    UWORD pixel = truecolor_pixel_for_index((WORD)search_col);
+    const UWORD *addr = truecolor_get_start_addr(x, y);
+
+    while (x-- > clip->xmn_clip) {
+        if (*--addr != pixel)
+            break;
+    }
+    return x + 1;       /* output x coord + 1 to endxleft. */
+}
+
 static BOOL truecolor_open(Vwk *vwk)
 {
     (void)vwk;
@@ -752,4 +788,6 @@ const vdi_backend_ops packed_truecolor_backend_ops = {
     truecolor_text_blit,
     truecolor_raster_copy,
     truecolor_draw_line,
+    truecolor_search_right,
+    truecolor_search_left,
 };

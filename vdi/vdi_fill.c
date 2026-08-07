@@ -756,19 +756,20 @@ UWORD planar_get_pixel(WORD x, WORD y)
     return get_color(mask, addr);           /* return the composed color value */
 }
 
-static UWORD
-search_to_right (const VwkClip * clip, WORD x, WORD y, UWORD mask, const UWORD search_col, UWORD * addr)
+/*
+ * planar_search_right/planar_search_left - scan a horizontal run of
+ * matching color on the interleaved-bitplane screen, for contourfill()'s
+ * seed-fill (see end_pts() below and the vdi_backend_ops comment in
+ * vdi_backend.h). Unlike pixelread()'s general-purpose per-pixel
+ * dispatch, these walk the bitplane mask/address incrementally instead
+ * of recomputing it from (x,y) at every step.
+ */
+WORD
+planar_search_right(const VwkClip * clip, WORD x, WORD y, UWORD search_col)
 {
-#if CONF_WITH_VDI_TRUECOLOR
-    if (vdi_screen_is_truecolor()) {
-        /* is x coord < x resolution ? */
-        while (x++ < clip->xmx_clip) {
-            if (search_col != pixelread(x, y))
-                break;
-        }
-        return x - 1;       /* output x coord -1 to endxright. */
-    }
-#endif
+    UWORD *addr = planar_get_start_addr(x, y) + linea_vars.v_planes;
+    UWORD mask = 0x8000 >> (x & 0x000f);
+
     /* is x coord < x resolution ? */
     while( x++ < clip->xmx_clip ) {
         UWORD color;
@@ -788,19 +789,12 @@ search_to_right (const VwkClip * clip, WORD x, WORD y, UWORD mask, const UWORD s
     return x - 1;       /* output x coord -1 to endxright. */
 }
 
-static UWORD
-search_to_left (const VwkClip * clip, WORD x, WORD y, UWORD mask, const UWORD search_col, UWORD * addr)
+WORD
+planar_search_left(const VwkClip * clip, WORD x, WORD y, UWORD search_col)
 {
-#if CONF_WITH_VDI_TRUECOLOR
-    if (vdi_screen_is_truecolor()) {
-        /* Now, search to the left. */
-        while (x-- > clip->xmn_clip) {
-            if (search_col != pixelread(x, y))
-                break;
-        }
-        return x + 1;       /* output x coord + 1 to endxleft. */
-    }
-#endif
+    UWORD *addr = planar_get_start_addr(x, y) + linea_vars.v_planes;
+    UWORD mask = 0x8000 >> (x & 0x000f);
+
     /* Now, search to the left. */
     while (x-- > clip->xmn_clip) {
         UWORD color;
@@ -842,8 +836,6 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
         BOOL seed_type)
 {
     UWORD color;
-    UWORD * addr;
-    UWORD mask;
 
     /* see, if we are in the y clipping range */
     if ( y < clip->ymn_clip || y > clip->ymx_clip) {
@@ -851,36 +843,32 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
         return 0;
     }
 
-    /* convert x,y to start address and bit mask */
-    addr = get_start_addr(x, y);
-    mask = 0x8000 >> (x & 0x000f);   /* fetch the pixel mask. */
+    /* get the search color */
+    color = pixelread(x, y);
+
 #if CONF_WITH_VDI_TRUECOLOR
-    if (vdi_screen_is_truecolor()) {
-        /*
-         * No bitplanes to compose on a packed screen -- get_pixel()
-         * already returns the MAP_COL-mapped hardware palette index
-         * search_color/end_pts() need, same as planar's get_color()
-         * below, just via a full pixel read instead of a bit extract.
-         */
-        color = pixelread(x, y);
-    } else
-#endif
     {
-        /* see the comment in get_start_addr() (vdi_misc.c) -- addr can be
-         * NULL here, and the get_color() dereference below would be
-         * undefined behaviour, not just a wrong answer */
-        if (!addr) {
+        const vdi_backend_ops *backend = vdi_screen_backend();
+
+        /* see the comment in get_start_addr() (vdi_misc.c) */
+        if (!backend) {
             *xleftout = *xrightout = x;
             return 0;
         }
-
-        addr += linea_vars.v_planes;                   /* start at highest-order bit_plane */
-
-        /* get search color and the left and right end */
-        color = get_color (mask, addr);
+        *xrightout = backend->search_right(clip, x, y, color);
+        *xleftout = backend->search_left(clip, x, y, color);
     }
-    *xrightout = search_to_right (clip, x, y, mask, color, addr);
-    *xleftout = search_to_left (clip, x, y, mask, color, addr);
+#else
+    /*
+     * With the truecolor backend compiled out, planar is the only backend
+     * that can ever be selected -- call it directly instead of paying for
+     * vdi_screen_backend()'s self-init check and an indirect call the
+     * result of which is already known at compile time (see the comment
+     * on get_start_addr() in vdi_misc.c).
+     */
+    *xrightout = planar_search_right(clip, x, y, color);
+    *xleftout = planar_search_left(clip, x, y, color);
+#endif
 
     /* see, if the whole found segment is of search color? */
     if ( color != search_color ) {

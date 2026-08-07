@@ -42,6 +42,18 @@ typedef struct vdi_backend_ops {
      * after rotating one bit per pixel drawn, for the caller to save back.
      */
     UWORD (*draw_line)(const Line *line, WORD wrt_mode, UWORD color, UWORD linemask);
+
+    /*
+     * Scan right/left from (x,y) along a horizontal line for the last
+     * pixel matching search_col (a MAP_COL-mapped hardware palette index,
+     * like get_pixel()'s return value) before the first mismatch or the
+     * clip edge -- used by contourfill()'s seed-fill scan (see end_pts()
+     * in vdi_fill.c). Mandatory, like get_pixel()/put_pixel(): a backend
+     * that implements get_pixel() can always answer this too, by
+     * construction, so callers don't need to guard the slot itself.
+     */
+    WORD (*search_right)(const VwkClip *clip, WORD x, WORD y, UWORD search_col);
+    WORD (*search_left)(const VwkClip *clip, WORD x, WORD y, UWORD search_col);
 } vdi_backend_ops;
 
 /*

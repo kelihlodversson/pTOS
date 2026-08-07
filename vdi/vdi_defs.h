@@ -294,6 +294,8 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect);
 void clc_flit (const VwkAttrib * attr, const VwkClip * clipper, const Point * point, WORD y, int vectors);
 void abline (const Line * line, const WORD wrt_mode, UWORD color);
 UWORD planar_draw_line(const Line * line, WORD wrt_mode, UWORD color, UWORD linemask);
+WORD planar_search_right(const VwkClip * clip, WORD x, WORD y, UWORD search_col);
+WORD planar_search_left(const VwkClip * clip, WORD x, WORD y, UWORD search_col);
 void contourfill(const VwkAttrib * attr, const VwkClip *clip);
 
 /* initialization of subsystems */
