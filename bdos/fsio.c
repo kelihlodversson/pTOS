@@ -43,7 +43,7 @@ long eof(int h)
     if (!f)
         return EIHNDL;
 
-    if (f->o_bytnum >= f->o_fileln)
+    if (f->o_bytnum >= f->o_dfd->o_fileln)
         return 1;
 
     return 0;
@@ -71,7 +71,7 @@ long    xlseek(long n, int h, int flg)
         return(EIHNDL);
 
     if (flg == 2)
-        n += f->o_fileln;
+        n += f->o_dfd->o_fileln;
     else if (flg == 1)
         n += f->o_bytnum;
     else if (flg)
@@ -99,8 +99,9 @@ long ixlseek(OFD *p,long n)
 {
     CLNO clnum, clx, curnum, i;
     DMD *dm = p->o_dmd;
+    DFD *dfd = p->o_dfd;
 
-    if ((n < 0) || (n > p->o_fileln))
+    if ((n < 0) || (n > dfd->o_fileln))
         return ERANGE;
 
     if (n == 0)
@@ -138,7 +139,7 @@ long ixlseek(OFD *p,long n)
         clx = p->o_curcl;
     }
     else            /* we have to start at the beginning */
-        clx = p->o_strtcl;
+        clx = dfd->o_strtcl;
 
     /*
      * note: if we're seeking to a position which is at a cluster boundary,
@@ -208,7 +209,7 @@ long    ixread(OFD *p, long len, void *ubufr)
      * but this is not compatible with Atari TOS ...
      */
 
-    if (len > (maxlen = p->o_fileln - p->o_bytnum))
+    if (len > (maxlen = p->o_dfd->o_fileln - p->o_bytnum))
         len = maxlen;
 
     if (len > 0)
@@ -272,15 +273,17 @@ long    ixwrite(OFD *p, long len, void *ubufr)
 
 static void addit(OFD *p, long siz, int flg)
 {
+    DFD *dfd = p->o_dfd;
+
     p->o_bytnum += siz;
 
     if (flg)
         p->o_curbyt += siz;
 
-    if (p->o_bytnum > p->o_fileln)
+    if (p->o_bytnum > dfd->o_fileln)
     {
-        p->o_fileln = p->o_bytnum;
-        p->o_flag |= O_DIRTY;
+        dfd->o_fileln = p->o_bytnum;
+        dfd->o_flag |= O_DIRTY;
     }
 }
 
