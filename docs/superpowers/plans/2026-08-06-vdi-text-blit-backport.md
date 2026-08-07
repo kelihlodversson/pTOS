@@ -10,8 +10,8 @@
 
 **Reference files (read-only inputs, never edited):**
 - `/tmp/opencode/vdi_textblit_2019.c` — upstream `vdi/vdi_textblit.c` at `43adfabf` (1084 lines). The target body for Task 1.
-- `/tmp/opencode/vdi_textblit_2024.c` — upstream at `21df385a`. `screen_blit16()` (lines 974-1187) is the template for the truecolor backend's `text_blit` (Task 3).
-- `/tmp/opencode/upstream_tblit_43adfabf.S` — upstream `vdi/vdi_tblit.S` at `43adfabf` (1394 lines). The target shape for pTOS's m68k `vdi_tblit.S` (Task 2).
+- `/tmp/opencode/vdi_textblit_2024.c` — upstream at `21df385a`. `screen_blit16()` (lines 974-1187) is the template for the truecolor backend's `text_blit` (Task 2).
+- `/tmp/opencode/upstream_tblit_43adfabf.S` — upstream `vdi/vdi_tblit.S` at `43adfabf` (1394 lines). The target shape for pTOS's m68k `vdi_tblit.S` after the Task 1 asm deletion.
 
 ---
 
@@ -24,7 +24,7 @@
 - Never edit `obj/autoconf.h` or `obj/auto.conf`; they are generated from `.config`.
 - `LOCALVARS` field **offsets** are read by the m68k/coldfire `normal_blit` asm via literal `(a6)` offsets. The struct may be renamed/re-commented but the field order and types in Task 1 MUST match the current header exactly (verify with `git diff` on the struct block).
 - Backend contract (`vdi_backend.h`): a NULL ops slot means "not implemented", never a fallback. Planar primitives are called directly only when `!CONF_WITH_VDI_TRUECOLOR` (see `draw_rect_common()` at `vdi/vdi_line.c:368`).
-- `CONF_CHUNKY_PIXELS` is forced `y` on `MACHINE_RPI` and its forks in `vdi_fill.c`/`vdi_line.c`/`arch/arm/vdi_tblit.c` are separate issue-#35 work — do not touch them. The text path drops its `CONF_CHUNKY_PIXELS` fork only when the backend dispatch replaces it (Task 3).
+- `CONF_CHUNKY_PIXELS` is forced `y` on `MACHINE_RPI` and its forks in `vdi_fill.c`/`vdi_line.c`/`arch/arm/vdi_tblit.c` are separate issue-#35 work — do not touch them. The text path drops its `CONF_CHUNKY_PIXELS` fork only when the backend dispatch replaces it (Task 2).
 - pTOS accesses line-A variables as `linea_vars.<name>` (the asm uses the `LA()` macro); `v_bas_ad` is a global `UBYTE *`. Upstream's bare `STYLE`, `SOURCEX`, `DESTX`, … names must be rewritten with the `linea_vars.` prefix.
 - Upstream's `v_planes_shift` does not exist in pTOS; the equivalent is `shift_offset[linea_vars.v_planes]` (`bios/lineainit.c:26`, declared `bios/lineavars.h:46`).
 - Built-in 8x16 font metrics (from `bios/fnt_gr_8x16.c:297-309`): `max_cell_width=8`, `left_offset=1`, `right_offset=7`, `form_height=16`, `form_width=256`.
@@ -43,13 +43,13 @@ The whole `vdi_textblit.*` pair becomes the upstream `43adfabf` implementation, 
 - Modify: `include/arch/m68k/asm.h`, `include/arch/arm/asm.h` — add `roll`/`rorl` (m68k with `__mcoldfire__` fallback)
 - Modify: `vdi/vdi_textblit.h` — LOCALVARS layout (renames only), C-only helper prototypes
 - Modify: `vdi/vdi_textblit.c` — full rewrite (see below)
-- Modify: `vdi/arch/m68k/vdi_tblit.S`, `vdi/arch/coldfire/vdi_tblit.S` — delete the `_deftxbuf`/`_scrtsiz`/size-calc block so the C buffer definitions can take over without duplicate symbols (see Step 5 item 8)
+- Modify: `vdi/arch/m68k/vdi_tblit.S`, `vdi/arch/coldfire/vdi_tblit.S` — delete the `_deftxbuf`/`_scrtsiz`/size-calc block AND the `_outline`/`_rotate`/`_scale` glue + `outlin`/`rotation`/`replicat` bodies so the C definitions/helpers can take over without duplicate symbols (see Step 5 items 8 and 9)
 - Reference: `/tmp/opencode/vdi_textblit_2019.c`
 - Test: `vdi/vdi_textblit.c` no longer contains `#if ARCH_ARM` or `#if !ARCH_ARM`
 
 **Interfaces:**
 - Consumes: existing `linea_vars` fields, `v_bas_ad`, `shift_offset[]`, `normal_blit()` (asm, unchanged), `SCRTCHP`/`SCRPT2`.
-- Produces: `void outline(LOCALVARS *vars)`, `void rotate(LOCALVARS *vars)`, `void scale(LOCALVARS *vars)` (portable C, all arches); `WORD deftxbuf[]` + `const WORD scrtsiz` defined in C for all architectures (the asm definitions are deleted in this same task). `SCRATCHBUF_SIZE`/`SCRATCHBUF_OFFSET` macros consumed here and by Task 3.
+- Produces: `void outline(LOCALVARS *vars)`, `void rotate(LOCALVARS *vars)`, `void scale(LOCALVARS *vars)` (portable C, all arches); `WORD deftxbuf[]` + `const WORD scrtsiz` defined in C for all architectures (the asm definitions are deleted in this same task). `SCRATCHBUF_SIZE`/`SCRATCHBUF_OFFSET` macros consumed here and by Task 2.
 
 - [ ] **Step 1: Add `WM_*`, `OUTLINE_THICKNESS`, and scratch-buffer size macros to `vdi/vdi_defs.h`**
 
@@ -154,7 +154,7 @@ Note: with `-Wundef` these are plain macros, no issue. `n` is a constant at ever
 
 - [ ] **Step 3: Update `vdi/vdi_textblit.h` to the 2019 LOCALVARS layout**
 
-Take the struct from `/tmp/opencode/vdi_textblit_2019.c` lines 34-98 verbatim (it renames pTOS's `chup_flag`→`unused5`, `YMX_CLIP/XMX_CLIP/YMN_CLIP/XMN_CLIP/CLIP`→`unused6..10`, `CHUP`→`unused11`, `buffb`→`unused4`, and changes `void *dform/sform` to `UBYTE *`). **Do not reorder fields and do not change types** — offsets must stay identical to today, because `vdi/arch/m68k/vdi_tblit.S` and `vdi/arch/coldfire/vdi_tblit.S` read them by literal offset (still true after Task 2, which keeps `normal_blit`).
+Take the struct from `/tmp/opencode/vdi_textblit_2019.c` lines 34-98 verbatim (it renames pTOS's `chup_flag`→`unused5`, `YMX_CLIP/XMX_CLIP/YMN_CLIP/XMN_CLIP/CLIP`→`unused6..10`, `CHUP`→`unused11`, `buffb`→`unused4`, and changes `void *dform/sform` to `UBYTE *`). **Do not reorder fields and do not change types** — offsets must stay identical to today, because `vdi/arch/m68k/vdi_tblit.S` and `vdi/arch/coldfire/vdi_tblit.S` read them by literal offset (still true after Task 1's asm deletion, which keeps `normal_blit`).
 
 Then replace the prototype block (current lines 90-100) with the upstream set, without the `MACHINE_RPI` guard:
 
@@ -173,6 +173,28 @@ Verify with `git diff --word-diff` that only field NAMES and the `void *`→`UBY
 - [ ] **Step 4: Add the `reverse_nybble` table and `merge_byte()`**
 
 These belong in `vdi/vdi_textblit.c` (Step 5 copies the whole file, so just confirm they are present there). No separate action.
+
+**Endianness verification (done, T1S4/T1S5 will apply the fix):** upstream's `merge_byte()` reinterprets `UWORD *` memory as a `ULONG` and is therefore big-endian-only — running it on little-endian ARM produces a corrupted outline. Verified empirically: the unmodified algorithm yields a correct outline on m68k (BE, QEMU virt-m68k) but garbage on x86 (LE). The `bottom_left = (*(ULONG *)nextline) >> 1;` line in `outline()` has the same problem (and is also an unaligned long load that faults on ARM). The endian-neutral replacement, verified to produce byte-identical output on BE and LE (matching upstream's BE behavior exactly), is:
+
+```c
+static ULONG merge_byte(UWORD *p, UWORD n)
+{
+    /* this is the 2019 EmuTOS version, but written to be endian-neutral:
+     * on big-endian it is exactly equivalent to the original
+     * `*(ULONG *)p` union trick, and it works on little-endian ARM too */
+    return ((ULONG)p[0] << 16) | ((ULONG)(p[1] >> 8) << 8) | (n & 0xFF);
+}
+```
+
+and in `outline()`:
+
+```c
+    /* endian-neutral (and alignment-safe) replacement for
+     * `bottom_left = (*(ULONG *)nextline) >> 1;` */
+    bottom_left = (((ULONG)nextline[0] << 16) | (ULONG)nextline[1]) >> 1;
+```
+
+Both changes are `#if`-free and apply on every architecture; m68k behavior is unchanged (identical output).
 
 - [ ] **Step 5: Rewrite `vdi/vdi_textblit.c`**
 
@@ -197,7 +219,7 @@ Start from `/tmp/opencode/vdi_textblit_2019.c` (all 1084 lines) and apply these 
 4. In `screen_blit()`, keep pTOS's `#if CONF_CHUNKY_PIXELS` dest-address fork (current lines 314-326) instead of upstream's planar-only version. `vars->nextwrd` keeps its fork too. **Do not** adopt `v_planes_shift`. The `normal_blit(vars+1, vars->sform, vars->dform)` call stays.
 5. Replace upstream's `check_clip()`/`do_clip()` direct global reads as per item 3. The `!CLIP` early-return in `do_clip()` (upstream behavior, commit 04376451 — no automatic clip-to-screen) is intentional and must stay.
 6. `pre_blit()`: `outline(vars)` call replaces the removed asm call; the `normal_blit(vars+1, src, dst)` call stays.
-7. `text_blt()`: `rotate(&vars)` / `scale(&vars)` replace the removed asm calls; `vars.buffa = 0;` at the top as in upstream. The `switch(CHUP)` uses `linea_vars.CHUP` and upstream's `FALLTHROUGH;` (already defined in `include/portab.h`).
+7. `text_blt()`: `rotate(&vars)` / `scale(&vars)` replace the removed asm calls; `vars.buffa = 0;` at the top as in upstream. The `switch(CHUP)` uses `linea_vars.CHUP` and upstream's `FALLTHROUGH;` (already defined in `include/portab.h`). **Adopt upstream's call ordering `scale(&vars)` → `pre_blit(&vars)` → `rotate(&vars)`** (upstream commit 6260508a "Improve text output quality"): pTOS's current file runs `pre_blit` → `rotate` → `scale`, which was the pre-6260508a order. The 2019 target scales first, exactly as TOS 2/3/4 do, and consequently `pre_blit()` drops the old `#if !ARCH_ARM` `if (!SCALE)` outline guards and the `max(weight/2,1)` skew/thicken halving — those existed only to compensate for scaling-*after*-effects, which this backport ends. This changes m68k behavior only for scaled+styled text, which pTOS never rendered correctly (the RPi port was explicitly "unscaled and unrotated only"). Plain text is untouched.
 8. Delete the old `#if ARCH_ARM` stub (`const WORD scrtsiz = 99; WORD deftxbuf[1000];`). In its place, define the buffer in C **unconditionally** (all architectures) at the top of the file, outside any `#if`:
 
    ```c
@@ -209,7 +231,18 @@ Start from `/tmp/opencode/vdi_textblit_2019.c` (all 1084 lines) and apply these 
    WORD deftxbuf[SCRATCHBUF_SIZE/sizeof(WORD)];
    ```
 
-   **Do this in the same commit as the m68k/coldfire asm buffer deletion (Task 1 Step 5 must include deleting `_deftxbuf`/`_scrtsiz` + the size-calc block from both `vdi_tblit.S` files).** Rationale: the m68k/coldfire asm *also* defines `_deftxbuf`/`_scrtsiz`; if both the C file and the asm define them, the m68k link fails with duplicate symbols. The asm buffer scheme (`scrtsiz=cel_siz=64`, `deftxbuf=buf_siz=276` bytes) is entirely replaced by the upstream one (`scrtsiz=212`, `deftxbuf=424` bytes); nothing in the (still present, soon-deleted) asm outline/rotate/scale bodies references `_deftxbuf`/`_scrtsiz` by symbol, so removing the asm data definitions does not break them. This keeps every commit green on all architectures.
+   **Do this in the same commit as the m68k/coldfire asm buffer deletion (Task 1 Step 5 must include deleting `_deftxbuf`/`_scrtsiz` + the size-calc block from both `vdi_tblit.S` files).** Rationale: the m68k/coldfire asm *also* defines `_deftxbuf`/`_scrtsiz`; if both the C file and the asm define them, the m68k link fails with duplicate symbols. The asm buffer scheme (`scrtsiz=cel_siz=64`, `deftxbuf=buf_siz=276` bytes) is entirely replaced by the upstream one (`scrtsiz=212`, `deftxbuf=424` bytes); nothing in the (soon-deleted, see item 9) asm outline/rotate/scale bodies references `_deftxbuf`/`_scrtsiz` by symbol, so removing the asm data definitions does not break them. This keeps every commit green on all architectures.
+
+9. **Delete the asm `_outline`/`_rotate`/`_scale` glue and the `outlin`/`rotation`/`replicat` bodies from BOTH `vdi_tblit.S` files (m68k and coldfire), in this same Task 1 commit.** This is mandatory, not optional: the C file now defines `outline`/`rotate`/`scale` unconditionally, and on m68k those C symbols are `_outline`/`_rotate`/`_scale` — the exact symbols the asm glue still defines. Leaving them in produces a duplicate-symbol link error on every m68k/coldfire build. (This is precisely how upstream did it: commits b657563f / 6752e168 / 80d92353 / c202b59a rewrote each function in C and deleted its asm counterpart in the *same* commit; upstream never had a state where the C helpers and the asm bodies coexisted.)
+
+   Removal checklist (from the former Task 2, now merged here), m68k first, then coldfire (locate by symbol, not line number):
+
+   1. The `_outline`/`_rotate`/`_scale` `.globl` lines (m68k around lines 116-123).
+   2. The `_outline`/`_rotate`/`_scale` glue routines (m68k lines 408-434): they pass `&vars+1` as `a6` — that ABI is gone once the C helpers take plain `LOCALVARS *`.
+   3. The `outlin`/`rotation`/`replicat` bodies and any helper subroutines referenced ONLY by them (per the diff, m68k lines ~1581-2102). Verify exclusivity: `grep` each symbol in the deleted tail against `norm_blt`'s code first; anything shared must stay.
+   4. The `#define OUTLINE 4` once its only users (the `outlin` bodies) are gone. The `buffb`/`chup_flag`/`CLIP`/`X*CLIP`/`CHUP` `#define`s (m68k lines 297-389) become unused by `norm_blt` but were referenced by the deleted code paths — if they are all inside the deleted region, remove them too; otherwise leave them (harmless) rather than risk an offset mismatch. Keep `buffa`, `tddad`, `tsdad`, `sform`, `dform`, etc. that `norm_blt` uses.
+
+   Do **not** touch: `norm_blt`, `do_rot`, `get_mask`, `plane_loop`, `wrmappin`, `toptable`, `twoptble`, `skewop*`, `thknop*`, `liteop*`, `fshft`, `do_sh`, `mlt_left`, `mlt_rite`, `do_ritem`, `msk_done`. `normal_blit(vars+1, src, dst)` must remain callable from C on m68k/coldfire.
 
 - [ ] **Step 6: Build all four configs**
 
@@ -230,6 +263,8 @@ make olddefconfig && make
 
 Expected: all four build (the C buffer definitions are unconditional, so no arch needs the old stub or the asm buffer). Fix any `-Wundef`/C90 warnings. `git diff --check` clean.
 
+   **Execution notes (2026-08-07):** all four built clean. The atari512 "toolchain revert / malformed .config line" symptoms from earlier were an artifact of running `tools/genconfig.py` from a bare shell: kconfig.mk exports `CONFIG_=` (empty), which kconfiglib reads as its `config_prefix`; without it, kconfiglib defaults to the `CONFIG_` prefix and rejects every unprefixed `.config` line as malformed. Run genconfig as `CONFIG_= python3 tools/genconfig.py ...` (or via `make`, which exports it). `make olddefconfig` is still broken with kconfiglib 14.1.0 (`--kconfig` vs positional arg) but is not needed: the atari512 `.config` keeps `BUILD_TOOLCHAIN_MINTELF=y` across `make atari512_defconfig` + direct genconfig runs. Also note the atari512 build hits a pre-existing `make -j` RSC race (issue #53); pre-generate `desk/desk_rsc.c desk/desk_rsc.h aes/gem_rsc.* desk/icons.* aes/mforms.*` serially, or build on current master where #54's grouped targets fix it.
+
 - [ ] **Step 7: Smoke test the m68k target (behavior unchanged)**
 
 ```sh
@@ -248,9 +283,11 @@ hatari --tos ptos512k.img --machine ste --memsize 4 --sound off \
 ```
 and run the desktop-detection Python from the ptos-smoketest skill (`green > 1000` ⇒ desktop). The desktop uses plain text, so this verifies the common path end-to-end; styled-text parity is verified by diff-review against `/tmp/opencode/vdi_textblit_2019.c`.
 
-- [ ] **Step 8: Self-review the transplant**
+- [x] **Step 8: Self-review the transplant**
 
 `diff -u /tmp/opencode/vdi_textblit_2019.c vdi/vdi_textblit.c` and walk every hunk: each must be one of (a) the `linea_vars.` prefix, (b) include-list change, (c) `CONF_CHUNKY_PIXELS` fork, (d) speedup block removal, (e) the `deftxbuf`/`scrtsiz` definitions, or (f) a pTOS-comment tweak. Any hunk that changes logic needs justification.
+
+   Done: after normalizing `linea_vars.` and the struct/include/comment noise, the only remaining deltas are (c) the two `CONF_CHUNKY_PIXELS` blocks, (d) the `direct_screen_blit` speedup block (absent in pTOS), (e) `scrtsiz`/`deftxbuf`, (f) comment/`/* */`-style tweaks, plus the three approved logic changes: endian-neutral `merge_byte`/`bottom_left` (T1S4), `check_clip`/`do_clip` reading `linea_vars` globals directly, and `v_planes_shift` → `shift_offset[v_planes]` (matches `vdi/vdi_misc.c:213`).
 
 - [ ] **Step 9: Commit**
 
@@ -263,53 +300,13 @@ git commit -m "vdi: port text outline/rotate/scale to C, backport 2019 text_blt"
 
 ---
 
-### Task 2: Drop outline/rotate/scale from the m68k/coldfire assembler
+### ~~Task 2~~ — merged into Task 1 (Step 5 item 9)
 
-After Task 1 the C helpers exist and the asm `_deftxbuf`/`_scrtsiz`/size-calc block is already gone (moved into Task 1 so the C buffer definitions can take over). This task deletes the now-dead asm outline/rotate/scale glue and bodies.
-
-**Files:**
-- Modify: `vdi/arch/m68k/vdi_tblit.S`
-- Modify: `vdi/arch/coldfire/vdi_tblit.S`
-- Reference: `/tmp/opencode/upstream_tblit_43adfabf.S`
-
-**Interfaces:**
-- Consumes: Task 1's `scrtsiz`/`deftxbuf` C definitions and the portable C helpers.
-- Produces: `_normal_blit` only asm entry remaining; both asm files become shape-identical to upstream `43adfabf` modulo `LA()` naming. `normal_blit(vars+1, src, dst)` still callable from C on m68k/coldfire.
-
-- [ ] **Step 1: m68k `vdi_tblit.S` — delete the now-dead sections**
-
-Remove exactly these, leaving the `norm_blt`/`wrmappin`/`toptable`/`twoptble`/`skewop`/`thknop`/`liteop`/`fshft` machinery intact:
-1. The `_outline`/`_rotate`/`_scale` `.globl` lines (around lines 116-123).
-2. The `_outline`/`_rotate`/`_scale` glue routines (around lines 408-434).
-3. The `outlin`/`rotation`/`replicat` bodies and any helper subroutines referenced ONLY by them (per the diff, pTOS lines ~1581-2102). Verify exclusivity: `grep` each symbol in the deleted tail against `norm_blt`'s code first; anything shared must stay.
-4. The `#define OUTLINE 4` (line 108) once its only users (the `outlin` bodies at 1780/1882) are gone.
-
-Do **not** touch: `norm_blt`, `do_rot`, `get_mask`, `plane_loop`, `wrmappin`, `toptable`, `twoptble`, `skewop*`, `thknop*`, `liteop*`, `fshft`, `do_sh`, `mlt_left`, `mlt_rite`, `do_ritem`, `msk_done`. The `buffb`/`chup_flag`/`CLIP`/`X*CLIP`/`CHUP` `#define`s (around lines 297-389) become unused by normal_blit but are referenced by the deleted code paths — confirm they are all in the deleted region and, if so, remove them too; otherwise leave them (harmless) rather than risk an offset mismatch. Keep `buffa`, `tddad`, `tsdad`, `sform`, `dform`, etc. defines that `norm_blt` uses.
-
-`make gitready` will flag trailing whitespace; keep the file's 4-space-as-code-column style.
-
-- [ ] **Step 2: coldfire `vdi_tblit.S` — same deletions**
-
-Apply the identical four deletions to `vdi/arch/coldfire/vdi_tblit.S` (same symbol names; the body layout differs, so locate `outlin`/`rotation`/`replicat` and the `_deftxbuf`/`_scrtsiz`/glue blocks by symbol, not by line number). Keep `_normal_blit` and its machinery.
-
-- [ ] **Step 3: Build all configs**
-
-Repeat Task 1 Step 6's build matrix (rpi1, virt-arm, virt-m68k, atari512 via the toolchain switch; coldfire via `m548x-bas_defconfig` or `firebee_defconfig` if the toolchain is present — if not, skip coldfire build and note it). Expect zero new warnings; `git diff --check` clean. If any build shows a duplicate `deftxbuf`/`scrtsiz` symbol, the asm deletion missed a `.globl`/definition — fix.
-
-- [ ] **Step 4: Smoke test m68k (behavior must be identical to Task 1)**
-
-Run the Task 1 Step 7 virt-m68k smoke test again. Expected: same pass signals. This is the "m68k asm path still draws plain text" gate.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add vdi/arch/m68k/vdi_tblit.S vdi/arch/coldfire/vdi_tblit.S
-git commit -m "vdi: remove assembler text outline/rotate/scale; use the C helpers"
-```
+The former "drop outline/rotate/scale from the m68k/coldfire assembler" task is folded into Task 1 Step 5 item 9: the asm glue + bodies must be deleted **in the same commit** as the C transplant, because the C helpers define the exact symbols (`_outline`/`_rotate`/`_scale` on m68k) that the asm still exports — leaving them in fails the m68k link with duplicate symbols. The m68k/coldfire `vdi_tblit.S` files keep only `_normal_blit` and its `norm_blt` machinery, and `normal_blit(vars+1, src, dst)` remains callable from C. The final `git commit` for Task 1 therefore covers both files together with `vdi_textblit.c` (see Task 1 Step 9).
 
 ---
 
-### Task 3: Route glyph output through `vdi_backend_ops`
+### Task 2: Route glyph output through `vdi_backend_ops`
 
 Add a `text_blit` slot to the backend ops, implement it for planar and packed-truecolor, and dispatch from `screen_blit()`/`text_blt()`.
 
@@ -549,13 +546,13 @@ git commit -m "vdi: dispatch text blit through the backend ops table"
 
 ---
 
-### Task 4: ARM `normal_blit` — 1-plane buffer blit with skew/thicken
+### Task 3: ARM `normal_blit` — 1-plane buffer blit with skew/thicken
 
 The ARM `normal_blit` (currently `vdi/arch/arm/vdi_tblit.c`) only handles the legacy 8bpp chunky case. `pre_blit()`'s intermediate-buffer copy is a 1-plane bitplane blit; on RPi it must be implemented so outlined/rotated/scaled/skewed/thickened text works.
 
 **Files:**
 - Modify: `vdi/arch/arm/vdi_tblit.c`
-- Reference: the 1-plane semantics of `norm_blt` in `vdi/arch/m68k/vdi_tblit.S` (kept from Task 2)
+- Reference: the 1-plane semantics of `norm_blt` in `vdi/arch/m68k/vdi_tblit.S` (kept from Task 1)
 
 **Interfaces:**
 - Consumes: `LOCALVARS` fields set by `pre_blit()` (Task 1): `nbrplane=1`, `nextwrd=2`, `tddad` (0 or 1), `tsdad` (0-15), `forecol=1`, `ambient=0`, `WRT_MODE=0`, `width`, `height`, `s_next`, `d_next`, `STYLE` (mask of `F_SKEW`/`F_THICKEN`), `skew_msk` (= `linea_vars.SKEWMASK`).
@@ -654,7 +651,7 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst)
 - [ ] **Step 4: Validate against the m68k reference**
 
 Parity check for the styled-text path: on m68k the same `pre_blit` parameters flow through the asm `norm_blt`; on ARM through the new C. Since the two cannot run side by side easily, verify by reasoning + desktop output:
-1. Boot rpi1 per Task 3 Step 8; screenshot. The desktop, menus, and any outlined/rotated/scaled text drawn by the AES (menu bar uses plain text; draw styled text only if an app does) must look sane — at minimum plain text is unaffected because it never enters `normal_blit` (screen_blit16 blits the font directly).
+1. Boot rpi1 per Task 2 Step 8; screenshot. The desktop, menus, and any outlined/rotated/scaled text drawn by the AES (menu bar uses plain text; draw styled text only if an app does) must look sane — at minimum plain text is unaffected because it never enters `normal_blit` (screen_blit16 blits the font directly).
 2. If styled text cannot be exercised from the desktop, draw it from the line-A emulator with a tiny test: set `STYLE=F_OUTLINE`, `DESTX/Y`, `DELX=8/DELY=16`, `SOURCEX=0`, `FBASE=font`, call `v_put_text`/`text_blt` and screendump. Keep this as an optional, time-boxed check (30 min); do not let it block the task.
 
 - [ ] **Step 5: Commit**
@@ -666,7 +663,7 @@ git commit -m "vdi: implement 1-plane text buffer blit for ARM normal_blit"
 
 ---
 
-### Task 5: Final verification + PR ready
+### Task 4: Final verification + PR ready
 
 **Files:** none (verification only).
 
@@ -697,8 +694,8 @@ Edit `docs/superpowers/specs/2026-08-03-vdi-backend-truecolor-design.md`: mark t
 
 ## Self-review
 
-- **Spec coverage:** Issue #86's acceptance criteria map 1:1 — (1) ARM no longer compiles out outline/rotate/scale → Task 1; (2) text dispatches through `vdi_backend_ops` like the other primitives → Task 3; (3) RPi RGB565 renders text correctly → Task 3 (plain text) + Task 4 (styled). The listed upstream commits are all inside the two transplanted reference states (`43adfabf` body + `21df385a` `screen_blit16` + `need_preblit`).
-- **Placeholders:** Step 2 of Task 4 is the only "sketch" — it is deliberately a design note, not pasted code, because the final loop must be derived from the asm semantics rather than transcribed; the invariants that matter are enumerated so the implementer can't guess. All other tasks give exact content or exact copy-from paths.
-- **Type consistency:** `LOCALVARS` layout unchanged across tasks (renames only); `text_blit` op signature `void (*)(LOCALVARS *)` is consistent between the header, both backends, and `screen_blit()`; `planar_text_blit`/`truecolor_text_blit` names match their ops-table wiring; `vdi_screen_is_truecolor()` used exactly where `text_blt()` needs it.
-- **Dependency order:** Task 1 defines the macros/struct/helpers; Task 2 relies on them to delete the asm; Task 3 relies on both; Task 4 relies on Task 1's `pre_blit` fields. Each task ends green.
-- **Known deferred items:** coldfire build verification depends on an installed m68k toolchain that may not be present (flagged in Task 2 Step 3); exact visual parity of exotic skew/thicken glyphs is validated by code review rather than a pixel-level test harness (no test infra exists for this freestanding image).
+- **Spec coverage:** Issue #86's acceptance criteria map 1:1 — (1) ARM no longer compiles out outline/rotate/scale → Task 1; (2) text dispatches through `vdi_backend_ops` like the other primitives → Task 2; (3) RPi RGB565 renders text correctly → Task 2 (plain text) + Task 3 (styled). The listed upstream commits are all inside the two transplanted reference states (`43adfabf` body + `21df385a` `screen_blit16` + `need_preblit`).
+- **Placeholders:** Step 2 of Task 3 is the only "sketch" — it is deliberately a design note, not pasted code, because the final loop must be derived from the asm semantics rather than transcribed; the invariants that matter are enumerated so the implementer can't guess. All other tasks give exact content or exact copy-from paths.
+- **Dependency order:** Task 1 defines the macros/struct/helpers and deletes the asm duplicates; Task 2 (backend dispatch) relies on Task 1; Task 3 (ARM `normal_blit`) relies on Task 1's `pre_blit` fields; Task 4 verifies everything. Each task ends green.
+- **Known deferred items:** coldfire build verification depends on an installed m68k toolchain that may not be present (flagged in Task 1 Step 6); exact visual parity of exotic skew/thicken glyphs is validated by code review rather than a pixel-level test harness (no test infra exists for this freestanding image).
+- **External notes (2026-08-07):** PR #54 (issue #53, the `make -j` RSC race) merged to master and was merged into this branch — the `&:` grouped-target + atomic `draft.c` writes are confirmed working (each RSC recipe runs once under `-j`). The `snprintf` implicit-declaration warning that #54 introduced (it builds with `gcc -ansi -pedantic`, where glibc hides `snprintf` without a feature-test macro) is tracked in issue #125, not fixed here.

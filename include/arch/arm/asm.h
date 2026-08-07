@@ -61,6 +61,10 @@ static inline void stop_until_interrupt(void)
 #define rolw1(x)    ((x)=((x)>>15)|((x)<<1))
 #define rorw1(x)    ((x)=((x)>>1)|((x)<<15))
 
+/* 32-bit rotates; the outline() text helper needs count 1 and 2 */
+#define roll(x,n)   ((x)=(((x)>>(32-(n)))|((x)<<(n))))
+#define rorl(x,n)   ((x)=(((x)<<(32-(n)))|((x)>>(n))))
+
 #define set_sr(a) @USE_set_cpsr_on_ARM
 #define get_sr(a) @USE_get_cpsr_on_ARM
 
@@ -96,12 +100,12 @@ extern ULONG disable_interrupts(void);
 extern void enable_interrupts(void);
 
 #ifdef TARGET_RPI1
-#define flush_prefetch_buffer()	    __asm__ volatile ("mcr p15, 0, %0, c7, c5,  4" : : "r" (0) : "memory")
+#define flush_prefetch_buffer()      __asm__ volatile ("mcr p15, 0, %0, c7, c5,  4" : : "r" (0) : "memory")
 
 #define data_sync_barrier()         __asm__ volatile ("mcr p15, 0, %0, c7, c10, 4" : : "r" (0) : "memory")
 #define data_mem_barrier()          __asm__ volatile ("mcr p15, 0, %0, c7, c10, 5" : : "r" (0) : "memory")
 
-#define peripheral_begin()          data_sync_barrier()	/* ignored here */
+#define peripheral_begin()          data_sync_barrier() /* ignored here */
 #define peripheral_end()            data_mem_barrier()
 #else
 #define flush_prefetch_buffer()     __asm__ volatile ("isb" ::: "memory")
@@ -109,7 +113,7 @@ extern void enable_interrupts(void);
 #define data_sync_barrier()         __asm__ volatile ("dsb" ::: "memory")
 #define data_mem_barrier()          __asm__ volatile ("dmb" ::: "memory")
 
-#define peripheral_begin()  ((void) 0)	/* ignored here */
+#define peripheral_begin()  ((void) 0) /* ignored here */
 #define peripheral_end()    ((void) 0)
 #endif
 

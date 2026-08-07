@@ -22,17 +22,17 @@
  */
 typedef struct {
                         /* temporary working variables */
-    WORD chup_flag;         /* chup-1800 */
+    WORD unused5;           /* was chup_flag (=CHUP-1800) */
     WORD blt_flag;
     WORD unused1;           /* was tmp_style */
                         /* working copies of the clipping variables */
-    WORD YMX_CLIP;
-    WORD XMX_CLIP;
-    WORD YMN_CLIP;
-    WORD XMN_CLIP;
-    WORD CLIP;
+    WORD unused6;           /* was YMX_CLIP */
+    WORD unused7;           /* was XMX_CLIP */
+    WORD unused8;           /* was YMN_CLIP */
+    WORD unused9;           /* was XMN_CLIP */
+    WORD unused10;          /* was CLIP */
                         /* working copies of often-used globals */
-    WORD CHUP;
+    WORD unused11;          /* was CHUP */
     WORD DESTY;
     WORD DELY;
     WORD DESTX;
@@ -79,24 +79,24 @@ typedef struct {
     WORD width;             /* width of area in pixels */
     WORD d_next;            /* width of dest form (_v_lin_wr formerly used) */
     WORD s_next;            /* width of source form (formerly s_width) */
-    void *dform;            /* start of destination form */
-    void *sform;            /* start of source form */
+    UBYTE *dform;           /* start of destination form */
+    UBYTE *sform;           /* start of source form */
     WORD unused2;           /* was buffc */
-    WORD buffb;             /* for rotate */
+    WORD unused4;           /* was buffb */
     WORD buffa;             /* for clip & prerotate blt */
 } LOCALVARS;
 
 /* here we should have the preprocessor verify the length of LOCALVARS */
 /*
-* assembler functions in vdi_tblit.S or portable c versions in vdi_tblit_c.c
-*/
+ * assembler functions in vdi_tblit.S (m68k/coldfire)
+ */
 void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst);
 
-#ifndef MACHINE_RPI
-void outline(LOCALVARS *vars, UBYTE *buf, WORD form_width);
-void rotate(LOCALVARS *vars);
+/*
+ * portable C implementations, provided on every target
+ */
+void outline(LOCALVARS *vars);
+void rotate(LOCALVARS *vars);   /* actually local, but non-static improves performance */
 void scale(LOCALVARS *vars);
-
-#endif /* ! MACHINE_RPI */
 
 #endif /* VDI_TEXTBLIT_H */
