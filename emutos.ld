@@ -274,6 +274,7 @@ ELF_LIB_REF(__divsi3)
 ELF_LIB_REF(__modsi3)
 ELF_LIB_REF(__udivsi3)
 ELF_LIB_REF(__umodsi3)
+ELF_LIB_REF(__bswapsi2)
 ELF_LIB_REF(__aeabi_udiv)
 ELF_LIB_REF(__aeabi_udivmod)
 #endif

@@ -29,8 +29,8 @@ make                     # build
 There are no per-target make goals such as `make rpi2` or `make 512`; each is a
 defconfig in `configs/`. Requirements are GNU make, `kconfiglib`
 (`pip3 install kconfiglib`), and a cross toolchain: `arm-none-eabi-*` for the
-Raspberry Pi, and for m68k one of `m68k-atari-mint-` (the default),
-`m68k-atari-mintelf-` or a bare `m68k-elf-`, picked under "m68k toolchain" in
+Raspberry Pi, and for m68k one of `m68k-atari-mintelf-` (the default),
+`m68k-atari-mint-` or a bare `m68k-elf-`, picked under "m68k toolchain" in
 the Toolchain menu. See `doc/install.txt` for where to get them.
 
 ## Configuration
