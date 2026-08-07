@@ -61,6 +61,13 @@ config CONF_WITH_COLOUR_ICONS
 	  Space is tight on the smallest ROM targets, so this is disabled
 	  by default there.
 
+config CONF_WITH_NICELINES
+	bool "Menu nicelines"
+	default y
+	help
+	  Draw menu separator lines with the VDI instead of rendering the
+	  traditional disabled dash string.
+
 endif
 
 endmenu
