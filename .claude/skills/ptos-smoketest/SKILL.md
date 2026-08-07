@@ -1,6 +1,6 @@
 ---
 name: ptos-smoketest
-description: Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS) image boots under an emulator. Covers Hatari for m68k Atari targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi1 (QEMU machine `raspi1ap`), raspi2 (QEMU machine `raspi2b`), virt-arm and virt-m68k machines. Use when asked to boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung boot, or when you need emulator invocations, --run-vbls/--avirecord/--trace flags, the Hatari debugger gotchas (spurious breakpoints, echo crash), or the Falcon IDE 31s boot wait.
+description: Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS) image boots under an emulator. Covers Hatari for m68k Atari targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi1 (QEMU machine `raspi1ap`), raspi2 (QEMU machine `raspi2b`), virt-arm and virt-m68k machines. Use when asked to boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung boot, or when you need emulator invocations, --run-vbls/--avirecord/--trace flags, the Hatari debugger gotchas (spurious breakpoints, echo crash), the Falcon IDE 31s boot wait, or the floppy motor/deselection timeouts (motor on/off 1.5-3s + deselect 5s = ~20s STE baseline).
 ---
 
 # pTOS Smoke Testing
@@ -36,9 +36,11 @@ debugger `--parse` mode runs at full speed and is NOT paced.
 
 ### Boot-completion check (RELIABLE — use this)
 
-Record an AVI and inspect frames; the pass signal is the GEM desktop rendering
-(EmuTOS default background pattern, a white+green 2×2 checkerboard
-`IP_4PATT`, plus floppy/hard-drive icons).
+Record an AVI and inspect frames; the pass signal is the GEM desktop
+rendering. The default EmuTOS desktop uses the `IP_4PATT` background
+(a white+green 2×2 checkerboard on color machines, plain light-gray
+on ST/STE mono), a menu bar across the top, and floppy/hard-drive
+icons above the bottom status bar.
 
 ```sh
 hatari --tos ptos512k.img --machine ste --memsize 4 --sound off \
@@ -46,7 +48,11 @@ hatari --tos ptos512k.img --machine ste --memsize 4 --sound off \
 ```
 
 Analyze with python3 + PIL (PIL is installed; `ffmpeg`/`scrot`/`import` are
-NOT). Extract frames and scan for the desktop:
+NOT). Extract frames and scan for the desktop. A green-only checkerboard
+test is **unreliable**: it false-negatives on ST/STE (mono or non-checker
+palettes). Check for the menu bar text (black pixels row near the top)
+*and* the status bar (light-gray row near the bottom) instead — both
+present means the desktop drew:
 
 ```python
 import re, io
@@ -54,11 +60,26 @@ from PIL import Image
 d = open('/tmp/boot.avi','rb').read()
 starts = [m.start() for m in re.finditer(b'\x89PNG\r\n\x1a\n', d)]
 frames = [d[s:e] for s,e in zip(starts, starts[1:]+[len(d)])]
-# green checkerboard + icons above the bottom status bar = desktop
+w,h = Image.open(io.BytesIO(frames[-1])).size
 px = Image.open(io.BytesIO(frames[-1])).convert('RGB').load()
-green = sum(1 for y in range(0,460,4) for x in range(0,640,4)
-            if px[x,y][1] > 200 and px[x,y][0] < 80)
-print('desktop' if green > 1000 else 'not booted yet')
+# menu bar: a text-like black row in the top 20% (50 < count < half-width,
+# so a solid black boot splash does not false-positive)
+menu = 0
+for y in range(0, int(h*0.20), 2):
+    blk = sum(1 for x in range(0,w,2) if px[x,y] == (0,0,0))
+    if 50 < blk < w//2:
+        menu = blk
+        break
+# status bar: a light-gray band (>= 80% width) somewhere in the bottom 15%
+status = False
+for y in range(int(h*0.85), h, 2):
+    gray = sum(1 for x in range(0,w,4)
+               if px[x,y] == (192,192,192))
+    if gray > w//4 * 0.8:
+        status = True
+        break
+print('desktop' if menu and status else 'not booted yet',
+      '(menu=%d)' % menu)
 ```
 
 ### Measured boot times (atari512 image, this machine)
@@ -79,6 +100,21 @@ A plain run without AVI is closer to real time; 3000 VBLs ≈ 76 s wall.
 Fix any one of: attach `--ide-master <any file>` (a raw file works as an ATA
 disk), use `--machine ste`, or build without `CONF_WITH_IDE`. This is NOT the
 floppy drive; that part of boot is the ~17-19 s baseline on both machines.
+
+### Floppy motor / deselection timeouts
+
+The ST FDC has no explicit "drive present" bit; `flop_detect_drive()`
+(`bios/floppy.c:389`) infers a drive from the `TRACK0` status line and is fast
+(~ms). The waits that show up in the boot timeline come from the motor and
+deselection timers (`bios/floppy.c:156-160`), all in `_hz_200` ticks:
+
+- `MOTORON_TIMEOUT`  = 1.5 s  — per-FDC-command wait when the motor is already on.
+- `MOTOROFF_TIMEOUT` = 3.0 s  — per-FDC-command wait when the motor is off (adds spinup).
+- `DESELECT_TIMEOUT` = 5.0 s  — `flopunlk()` schedules drive deselection this far in the future; `flopvbl()` (every 8th VBL) performs it.
+
+With no disk inserted these add up to the ~17-19 s STE baseline alongside GEM
+initialisation; they are not a single "stuck" wait like the Falcon IDE one, so
+a boot that takes ~20 s on STE with no floppy image attached is normal.
 
 ### Traces
 

@@ -7,10 +7,12 @@
 
 #include "config.h"
 #include "portab.h"
+#include "asm.h"
 #include "../bios/lineavars.h"
 #include "../bios/tosvars.h"
 #include "vdi_defs.h"
 #include "vdi_backend.h"
+#include "kprint.h"
 
 /*
  * Default VDI palette, as packed 0x00BBGGRR values -- mirrors the full
@@ -228,6 +230,244 @@ static void truecolor_fill_rect(const VwkAttrib *attr, const Rect *rect)
     }
 }
 
+/*
+ * fetch the source word in big-endian (Motorola font) byte order
+ *
+ * The text source -- the font itself, or the intermediate buffer that
+ * pre_blit() filled -- is a big-endian byte stream: normal_blit() in
+ * vdi/arch/arm/vdi_tblit.c reads it as a sequence of bytes for that
+ * reason, and the m68k assembler reads it as big-endian words.  A native
+ * UWORD load byte-swaps adjacent glyphs on little-endian machines (even
+ * character codes render their successor, odd ones their predecessor),
+ * so assemble the word from its bytes instead.
+ */
+static UWORD get_src_word(const UBYTE *p)
+{
+    return (UWORD)(((UWORD)p[0] << 8) | (UWORD)p[1]);
+}
+
+/*
+ * truecolor text blit: output the current glyph to a packed RGB565 screen
+ *
+ * port of the upstream screen_blit16() (see vdi_textblit.c in EmuTOS),
+ * adapted to the pTOS backend contract: colours come from the backend's
+ * own palette conversion instead of CUR_WORK->ext->palette, and line-A
+ * variables are read through linea_vars.
+ */
+static void truecolor_text_blit(LOCALVARS *vars)
+{
+    UBYTE *p;
+    UWORD *q;
+    UBYTE *src, *dst;
+    UWORD fgcol, bgcol, src_mask, mask, skew_mask;
+    WORD h, w, skew, skew_start;
+
+    /*
+     * set skew-related values
+     *
+     * NOTE: we can't test for skewed text using vars->STYLE, since
+     * pre_blit() clears F_SKEW and F_THICKEN after it has processed them.
+     */
+    skew = linea_vars.LOFF + linea_vars.ROFF;
+    skew_mask = (UWORD)vars->skew_msk;
+    skew_start = vars->height;
+
+    /*
+     * the following adjustments are for skewed+outlined text, and make
+     * the output almost the same as produced by TOS4.
+     *
+     * 1. since the source of skewed and/or outlined text must be an
+     *    intermediate buffer, SOURCEX *must* be 0, and we force that.
+     *    NOTE: in versions of TOS prior to TOS4 (& in TOS4 non-TC
+     *    resolutions), this adjustment is not made.  As a result, text
+     *    output is typically clipped.
+     *
+     * 2. a negative value for the nominal destination position is OK,
+     *    because outlining has adjusted the starting position of characters
+     *    leftwards.  however, such values are prohibited by do_clip(),
+     *    which adjusts var->DESTX.  we adjust it back here ...
+     *    NOTE: this situation can only happen at the beginning of a
+     *    screen line.
+     *
+     * 3. for bigger fonts, skewing must not start at the bottom of the
+     *    buffer, otherwise parts of the outline are clipped too agressively.
+     *    at the moment, this fix is a bit of a kludge, though it works well
+     *    enough.
+     */
+    if (skew && (vars->STYLE&F_OUTLINE))
+    {
+        if (linea_vars.SOURCEX)
+        {
+            KDEBUG(("SOURCEX (was %d) forced to zero for intermediate buffer\n", linea_vars.SOURCEX));
+            linea_vars.SOURCEX = 0;
+            vars->tsdad = 0;    /* this was set from SOURCEX in screen_blit() */
+        }
+
+        if (linea_vars.DESTX < 0)
+        {
+            KDEBUG(("vars->DESTX (was %d) set to DESTX (%d)\n", vars->DESTX, linea_vars.DESTX));
+            vars->DESTX = linea_vars.DESTX;
+        }
+        if (vars->height > 8)       /* not a 6-point font */
+            skew_start -= OUTLINE_THICKNESS;
+    }
+
+    /*
+     * set up source stuff
+     */
+    src = vars->sform;
+    src_mask = 0x8000 >> vars->tsdad;
+
+    /*
+     * set up destination stuff
+     */
+    vars->dform = v_bas_ad;
+    vars->dform += vars->DESTX * sizeof(WORD);      /* add x coordinate part of addr */
+    vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)linea_vars.v_lin_wr; /* add y coordinate part of addr */
+    vars->d_next = -linea_vars.v_lin_wr;
+    dst = vars->dform;
+
+    /*
+     * set up colours
+     */
+    fgcol = truecolor_pixel_for_index(vars->forecol);
+    bgcol = truecolor_pixel_for_index(0);
+
+    switch(vars->WRT_MODE) {
+    /*
+     * when called via lineA, modes 4-19 (corresponding to BitBlt modes 0-15)
+     * are theoretically possible.  however, at this time we do not support them.
+     */
+    default:    /* WM_REPLACE */
+        for (h = vars->height; h > 0; h--, src += vars->s_next, dst += vars->d_next)
+        {
+            p = src;
+            q = (UWORD *)dst;
+            for (w = vars->width, mask = src_mask; w > 0; w--)
+            {
+                *q++ = (get_src_word(p) & mask) ? fgcol : bgcol;
+                rorw1(mask);
+                if (mask == 0x8000)
+                    p += 2;
+            }
+            /*
+             * special handling for skewed text: since the character cells
+             * are effectively slanted, we must shift the starting position
+             * of a cell rightwards as we go up the character.
+             */
+            if (skew && (h <= skew_start))  /* OK to shift box for skewed text? */
+            {
+                rolw1(skew_mask);
+                if (skew_mask & 0x8000)
+                {
+                    rorw1(src_mask);
+                    if (src_mask == 0x8000)
+                        src++;
+                    dst += sizeof(UWORD);
+                }
+            }
+        }
+        break;
+    case WM_TRANS:
+        for (h = vars->height; h > 0; h--, src += vars->s_next, dst += vars->d_next)
+        {
+            p = src;
+            q = (UWORD *)dst;
+            for (w = vars->width, mask = src_mask; w > 0; w--)
+            {
+                if (get_src_word(p) & mask)
+                    *q = fgcol;
+                q++;
+                rorw1(mask);
+                if (mask == 0x8000)
+                    p += 2;
+            }
+            /*
+             * see comments for WM_REPLACE (above) for an explanation of
+             * the following
+             */
+            if (skew && (h <= skew_start))  /* OK to shift box for skewed text? */
+            {
+                rolw1(skew_mask);
+                if (skew_mask & 0x8000)
+                {
+                    rorw1(src_mask);
+                    if (src_mask == 0x8000)
+                        src++;
+                    dst += sizeof(UWORD);
+                }
+            }
+        }
+        break;
+    case WM_XOR:
+        for (h = vars->height; h > 0; h--, src += vars->s_next, dst += vars->d_next)
+        {
+            p = src;
+            q = (UWORD *)dst;
+            for (w = vars->width, mask = src_mask; w > 0; w--)
+            {
+                if (get_src_word(p) & mask)
+                    *q = ~*q;
+                q++;
+                rorw1(mask);
+                if (mask == 0x8000)
+                    p += 2;
+            }
+            /*
+             * see comments for WM_REPLACE (above) for an explanation of
+             * the following
+             */
+            if (skew && (h <= skew_start))  /* OK to shift box for skewed text? */
+            {
+                rolw1(skew_mask);
+                if (skew_mask & 0x8000)
+                {
+                    rorw1(src_mask);
+                    if (src_mask == 0x8000)
+                        src++;
+                    dst += sizeof(UWORD);
+                }
+            }
+        }
+        break;
+    case WM_ERASE:
+        for (h = vars->height; h > 0; h--, src += vars->s_next, dst += vars->d_next)
+        {
+            p = src;
+            q = (UWORD *)dst;
+            for (w = vars->width, mask = src_mask; w > 0; w--)
+            {
+                /*
+                 * behaviour here differs from TOS 4.04 - for further info,
+                 * see the comments in direct_screen_blit16()
+                 */
+                if (!(get_src_word(p) & mask))
+                    *q = fgcol;
+                q++;
+                rorw1(mask);
+                if (mask == 0x8000)
+                    p += 2;
+            }
+            /*
+             * see comments for WM_REPLACE (above) for an explanation of
+             * the following
+             */
+            if (skew && (h <= skew_start))  /* OK to shift box for skewed text? */
+            {
+                rolw1(skew_mask);
+                if (skew_mask & 0x8000)
+                {
+                    rorw1(src_mask);
+                    if (src_mask == 0x8000)
+                        src++;
+                    dst += sizeof(UWORD);
+                }
+            }
+        }
+        break;
+    }
+}
+
 static BOOL truecolor_open(Vwk *vwk)
 {
     (void)vwk;
@@ -246,4 +486,5 @@ const vdi_backend_ops packed_truecolor_backend_ops = {
     truecolor_get_pixel,
     truecolor_put_pixel,
     truecolor_fill_rect,
+    truecolor_text_blit,
 };

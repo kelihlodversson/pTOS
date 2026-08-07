@@ -10,6 +10,7 @@
 #include "portab.h"
 #include "screen_mode.h"
 #include "vdi_defs.h"
+#include "vdi_textblit.h"
 
 /*
  * A NULL slot means "this backend does not implement this primitive" --
@@ -19,9 +20,9 @@
  * never happen by construction.
  *
  * This table currently only covers the primitives this slice converts.
- * Follow-up slices (line/vline, raster copy, text blit, mouse cursor,
- * full palette -- issue #35 parts 2b/5) add their own slots when they
- * actually implement them.
+ * Follow-up slices (line/vline, raster copy, mouse cursor, full palette
+ * -- issue #35 parts 2b/5) add their own slots when they actually
+ * implement them.
  */
 typedef struct vdi_backend_ops {
     BOOL (*open)(Vwk *vwk);
@@ -31,6 +32,7 @@ typedef struct vdi_backend_ops {
     UWORD (*get_pixel)(WORD x, WORD y);
     void (*put_pixel)(WORD x, WORD y, UWORD color);
     void (*fill_rect)(const VwkAttrib *attr, const Rect *rect);
+    void (*text_blit)(LOCALVARS *vars);
 } vdi_backend_ops;
 
 /*
@@ -71,6 +73,14 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode);
  * currently exactly one screen.
  */
 const vdi_backend_ops *vdi_screen_backend(void);
+
+/*
+ * Is the current screen workstation driven by the packed-truecolor
+ * backend?  Used by text_blt() to decide whether styled text must go
+ * through pre_blit() (the truecolor path cannot apply skew/thicken at
+ * blit time the way the planar assembler does).
+ */
+BOOL vdi_screen_is_truecolor(void);
 
 extern const vdi_backend_ops planar_backend_ops;
 extern const vdi_backend_ops packed_truecolor_backend_ops;

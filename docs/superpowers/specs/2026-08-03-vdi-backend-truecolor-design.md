@@ -208,12 +208,23 @@ open follow-up.
 
 ## Open Follow-Ups
 
-- Backport upstream's portable-C text helper rewrite (issue #35 Part 2a) —
-  independent of this work, can land before or after.
+- Backport upstream's portable-C text helper rewrite (issue #35 Part 2a)
+  — done in #86 (PR #104): the text blit now dispatches through the backend
+  ops table like the other primitives, the ported C `outline()`/`rotate()`/
+  `scale()` shared by all arches now run on ARM, and the ARM `normal_blit`
+  1-plane scratch-buffer blit handles skew/thicken/outline. The shared
+  `outline()` and the ARM 1-plane blit both now access their big-endian
+  scratch words through endian-neutral accessors, so the ring walk and
+  per-column mask writes are correct on little-endian ARM as well as m68k.
+  (Independent of the earlier truecolor-backend slice, landed before it
+  could regress ARM styled text.)
 - Port or adapt upstream/fVDI packed-truecolor raster primitives (issue #5).
 - Implement full pseudo-palette semantics for truecolor workstations.
 - Decide whether `CONF_CHUNKY_PIXELS` is removed outright once the backend
   conversion is complete, or replaced by a clearer option such as
-  `CONF_WITH_VDI_TRUECOLOR`.
+  `CONF_WITH_VDI_TRUECOLOR`. The chunky 8bpp `nbrplane==8` branch in
+  `vdi/arch/arm/vdi_tblit.c` is now unreachable on truecolor backends (RPi
+  renders text through the backend dispatch, not the chunky fallback) and
+  can be removed when the option itself is retired in a later slice.
 - Extend the design for multiple screen workstations if pTOS ever gains
   multi-screen support.
