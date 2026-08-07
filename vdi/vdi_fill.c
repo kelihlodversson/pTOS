@@ -843,9 +843,6 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
         return 0;
     }
 
-    /* get the search color */
-    color = pixelread(x, y);
-
 #if CONF_WITH_VDI_TRUECOLOR
     {
         const vdi_backend_ops *backend = vdi_screen_backend();
@@ -855,6 +852,8 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
             *xleftout = *xrightout = x;
             return 0;
         }
+        /* get the search color -- reuse backend, don't re-derive it via pixelread() */
+        color = backend->get_pixel(x, y);
         *xrightout = backend->search_right(clip, x, y, color);
         *xleftout = backend->search_left(clip, x, y, color);
     }
@@ -866,6 +865,7 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
      * result of which is already known at compile time (see the comment
      * on get_start_addr() in vdi_misc.c).
      */
+    color = planar_get_pixel(x, y);
     *xrightout = planar_search_right(clip, x, y, color);
     *xleftout = planar_search_left(clip, x, y, color);
 #endif
@@ -938,7 +938,7 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
              * We mandate that white is all bits on.  Since this yields 15
              * in rom, we must limit it to how many planes there really are.
              * Anding with the mask is only necessary when the driver supports
-             * move than one resolution.
+             * more than one resolution.
              */
             search_color =
                 (MAP_COL[search_color] & plane_mask[linea_vars.INQ_TAB[4] - 1]);

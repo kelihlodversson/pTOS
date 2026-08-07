@@ -1385,7 +1385,7 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
     UWORD x1,y1,x2,y2;          /* the coordinates */
     UWORD linemask = linea_vars.LN_MASK;   /* linestyle bits */
 
-    /* Make x axis always goind up */
+    /* Make x axis always going up */
     if (line->x2 < line->x1) {
         /* if delta x < 0 then draw from point 2 to 1 */
         x1 = line->x2;
@@ -1476,7 +1476,7 @@ planar_draw_line(const Line * line, WORD wrt_mode, UWORD color, UWORD linemask)
     WORD dy;                    /* height of rectangle around line */
     WORD yinc;                  /* in/decrease for each y step */
 
-    /* Make x axis always goind up */
+    /* Make x axis always going up */
     if (line->x2 < line->x1) {
         /* if delta x < 0 then draw from point 2 to 1 */
         x1 = line->x2;
