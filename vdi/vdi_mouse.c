@@ -871,8 +871,11 @@ static void cur_display_clip(WORD op,Mcdb *sprite,MCS *mcs,UWORD *mask_start,UWO
  * within one screen word (per plane), so we only save 32 bytes/plane.
  */
 
-#if defined(MACHINE_RPI) && !CONF_RASPI_MOUSE_CURSOR
-/* The mcs struct is not big enough for a 16bpp packed truecolor cursor */
+#ifdef MACHINE_RPI
+/* The mcs struct is not big enough for a 16bpp packed truecolor cursor.
+ * Also serves as the software cursor's fallback save area when
+ * CONF_RASPI_MOUSE_CURSOR is set but the hardware cursor is unavailable at
+ * runtime -- see raspi_hw_cursor_available below. */
 static struct {
     WORD x;
     WORD y;
@@ -880,19 +883,39 @@ static struct {
     WORD height;
     UWORD buffer[16*16];
 } mouse_save;
+
+#if CONF_RASPI_MOUSE_CURSOR
+/*
+ * Starts TRUE and latches to FALSE the first time the hardware cursor's
+ * mailbox calls fail (e.g. under QEMU, or firmware that doesn't implement
+ * the cursor property tags). Once latched off, cur_display() stops trying
+ * the hardware cursor and uses the software cursor for the rest of the
+ * session -- a failed mailbox round-trip is not worth repeating on every
+ * draw call.
+ */
+static BOOL raspi_hw_cursor_available = TRUE;
+#endif
 #endif
 
 static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
 {
 #ifdef MACHINE_RPI
-#if CONF_RASPI_MOUSE_CURSOR
-    raspi_hw_cur_display(sprite, x, y);
-#else
     int row_count;
     UWORD *addr;
     UWORD *data;
     UWORD cdb_fg, cdb_bg, current_bit, start_bit, end_bit;
     UWORD *save_data = mouse_save.buffer;
+
+#if CONF_RASPI_MOUSE_CURSOR
+    if (raspi_hw_cursor_available && raspi_hw_cur_display(sprite, x, y))
+    {
+        mouse_save.height = 0;  /* hardware overlay drawn; nothing to restore */
+        return;
+    }
+    /* First failure (or already latched off): use the software cursor
+     * below, and don't try the hardware cursor again this session. */
+    raspi_hw_cursor_available = FALSE;
+#endif
 
     x -= sprite->xhot;          /* x = left side of destination block */
     y -= sprite->yhot;          /* y = top of destination block */
@@ -953,7 +976,6 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
         }
         data += 2;
     }
-#endif
 #else
     int row_count, plane, inc, op, dst_inc;
     UWORD * addr, * mask_start;
@@ -1148,11 +1170,14 @@ static void cur_replace (MCS *mcs)
             dst += dst_inc;         /* next row of screen */
         }
     }
-#elif !CONF_RASPI_MOUSE_CURSOR
+#else
     int row, col;
     UWORD* addr;
     UWORD* data = mouse_save.buffer;
 
+    /* mouse_save.height is 0 whenever the hardware cursor drew this frame
+     * (see cur_display()), so this is a no-op in that case -- there is
+     * nothing to restore. */
     for (row = 0; row<mouse_save.height; row++)
     {
         addr = get_start_addr(mouse_save.x, mouse_save.y+row);
