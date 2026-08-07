@@ -3,24 +3,25 @@ Installing:
 You will need a (cross-)GCC toolchain for the machine you are building for:
 
   Atari, ARAnyM, Amiga, ColdFire (m68k)
-      Vincent Rivière's m68k-atari-mint cross-tools, which is what the
-      build expects by default:
-      http://vincent.riviere.free.fr/soft/m68k-atari-mint/
+      Vincent Rivière's m68k-atari-mintelf ELF-based tools, which is what
+      the build expects by default:
+      http://vincent.riviere.free.fr/soft/m68k-atari-mintelf/
 
       On Debian and Ubuntu they are packaged, which is by far the quickest
       way to get a working toolchain.  This is also what the CI build
       installs, see .github/actions/setup-toolchain/action.yml:
 
-          sudo add-apt-repository ppa:vriviere/ppa
+          sudo add-apt-repository ppa:vriviere/mintelf
           sudo apt-get update
-          sudo apt-get install cross-mint-essential
+          sudo apt-get install cross-mintelf-essential
 
       Two other m68k toolchains are supported, chosen under "m68k
       toolchain" in the Toolchain menu:
 
-          m68k-atari-mint       cross-mint, the default, as above
-          m68k-atari-mintelf    Vincent Rivière's newer ELF based tools,
+          m68k-atari-mintelf    the newer ELF based tools, the default,
                                 http://vincent.riviere.free.fr/soft/m68k-atari-mintelf/
+          m68k-atari-mint       the older cross-mint a.out tools,
+                                http://vincent.riviere.free.fr/soft/m68k-atari-mint/
           bare m68k-elf         a plain m68k-elf toolchain, no MiNT at all
 
       Picking one selects both the compiler prefix and the flags it needs;

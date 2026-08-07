@@ -49,8 +49,8 @@ make                     # build the image named in the "is ready" line
 
 Requirements: GNU make, `pip3 install kconfiglib`, and a cross toolchain —
 `arm-none-eabi-*` for the Raspberry Pi, and for everything else one of the
-three offered under "m68k toolchain" in the Toolchain menu: `m68k-atari-mint-`
-(cross-mint, the default), `m68k-atari-mintelf-`, or a bare `m68k-elf-`.  That
+three offered under "m68k toolchain" in the Toolchain menu: `m68k-atari-mintelf-`
+(the default), `m68k-atari-mint-` (cross-mint), or a bare `m68k-elf-`.  That
 choice sets both the prefix and the flags; `doc/install.txt` says where to get
 them.
 
