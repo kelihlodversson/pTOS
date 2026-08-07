@@ -566,7 +566,7 @@ The ARM `normal_blit` (currently `vdi/arch/arm/vdi_tblit.c`) only handles the le
 - Consumes: `LOCALVARS` fields set by `pre_blit()` (Task 1): `nbrplane=1`, `nextwrd=2`, `tddad` (0 or 1), `tsdad` (0-15), `forecol=1`, `ambient=0`, `WRT_MODE=0`, `width`, `height`, `s_next`, `d_next`, `STYLE` (mask of `F_SKEW`/`F_THICKEN`), `skew_msk` (= `linea_vars.SKEWMASK`).
 - Produces: correct 1-plane output in the scratch buffer for `nbrplane==1 && nextwrd==2` calls; leaves the 8bpp chunky path (`CONF_CHUNKY_PIXELS && nbrplane==8`) untouched.
 
-- [ ] **Step 1: Understand the semantics (read, don't code yet)**
+- [x] **Step 1: Understand the semantics (read, don't code yet)**
 
 Read the kept `norm_blt`/`skewop`/`thknop*` sections in `vdi/arch/m68k/vdi_tblit.S` and confirm the model used here:
 - Source and destination are sequences of 16-bit big-endian words; bit 15 = leftmost pixel.
@@ -576,7 +576,7 @@ Read the kept `norm_blt`/`skewop`/`thknop*` sections in `vdi/arch/m68k/vdi_tblit
 - Thicken: each set source bit becomes `vars->smear` consecutive set pixels; dest width already includes the extra `smear` columns (`pre_blit` adds `weight` to `dest_width`).
 - Skew: per row (bottom row first), rotate `skew_msk` left by 1; if the rotated-out bit was set, increase the running row shift; dest column `x` then reads source column `x - shift` (bits shifted out left are background). This reproduces the asm's `lsr.l #1` source packing.
 
-- [ ] **Step 2: Implement the 1-plane path**
+- [x] **Step 2: Implement the 1-plane path**
 
 Extend `normal_blit()` in `vdi/arch/arm/vdi_tblit.c`. Keep the `vars--` adjustment. Structure:
 
@@ -652,22 +652,22 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst)
 - Thicken writes `smear` pixels per source pixel and the row is `width` pixels wide, so the last `smear-1` source columns may fall off the right edge (compare: `pre_blit` grows `dest_width` by `weight`).
 - `WRT_MODE` is applied per dest pixel to the *written* bit only (word read-modify-write via `dword`/`dmask`).
 
-- [ ] **Step 3: Build**
+- [x] **Step 3: Build**
 
-`make rpi1_defconfig && make` (and `make virt-arm_defconfig && make`). Clean build, `git diff --check` clean.
+`make rpi1_defconfig && make` (and `make virt-arm_defconfig && make`). Clean build, `git diff --check` clean. — Both built clean; the one new `-Wunused-variable` on `src_bitoffset` (non-chunky virt configs) was fixed by moving the declaration inside its `#if CONF_CHUNKY_PIXELS` guard, and the never-referenced `dest_bitoffset` (pre-existing dead code) was removed.
 
-- [ ] **Step 4: Validate against the m68k reference**
+- [x] **Step 4: Validate against the m68k reference**
 
 Parity check for the styled-text path: on m68k the same `pre_blit` parameters flow through the asm `norm_blt`; on ARM through the new C. Since the two cannot run side by side easily, verify by reasoning + desktop output:
 1. Boot rpi1 per Task 2 Step 8; screenshot. The desktop, menus, and any outlined/rotated/scaled text drawn by the AES (menu bar uses plain text; draw styled text only if an app does) must look sane — at minimum plain text is unaffected because it never enters `normal_blit` (screen_blit16 blits the font directly).
 2. If styled text cannot be exercised from the desktop, draw it from the line-A emulator with a tiny test: set `STYLE=F_OUTLINE`, `DESTX/Y`, `DELX=8/DELY=16`, `SOURCEX=0`, `FBASE=font`, call `v_put_text`/`text_blt` and screendump. Keep this as an optional, time-boxed check (30 min); do not let it block the task.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
-```bash
-git add vdi/arch/arm/vdi_tblit.c
-git commit -m "vdi: implement 1-plane text buffer blit for ARM normal_blit"
-```
+Committed as `1db646ea` "vdi: fix 1-plane text blit endianness on little-endian ARM" (the commit also includes the shared `outline()` endianness fix in `vdi/vdi_textblit.c`, since the 1-plane path and the outline ring-walk read the same big-endian buffer words and had to be fixed together). Pixel-exact validation evidence:
+- outline `score=0 hits=890` (`/tmp/rpi_outline_final.ppm`, final code with `F_OUTLINE` forced — the temp force was reverted before the commit).
+- skew `score=0 hits=736` and thicken `score=0 hits=997` (rendering-identical build; validators in `/tmp/opencode/validate_styled.py`).
+- virt-m68k and virt-arm idle to `AES: EMUDESK: evnt_multi()` with no guest errors — m68k path unchanged by the endianness accessors (no-op on big-endian).
 
 ---
 
@@ -675,7 +675,7 @@ git commit -m "vdi: implement 1-plane text buffer blit for ARM normal_blit"
 
 **Files:** none (verification only).
 
-- [ ] **Step 1: Full build + smoke matrix**
+- [~] **Step 1: Full build + smoke matrix** — rpi1 ✓, virt-arm ✓, virt-m68k ✓; atari512 + Hatari not yet run (needs the mint toolchain sed/olddefconfig switch).
 
 ```sh
 make rpi1_defconfig && make
@@ -686,9 +686,7 @@ make atari512_defconfig   # then the sed + olddefconfig toolchain switch, then m
 
 Smoke: raspi1 (`-M raspi1ap`, screendump check for text), virt-arm and virt-m68k (`timeout 5` idle = pass), and the atari512 Hatari desktop AVI check if time permits.
 
-- [ ] **Step 2: `make gitready` and `git diff --check`**
-
-Run `make gitready`; fix anything it flags. Confirm `git status` shows only the intended files.
+- [x] **Step 2: `make gitready` and `git diff --check`** — passed; `git status` shows only the two intended files (`vdi/arch/arm/vdi_tblit.c`, `vdi/vdi_textblit.c`).
 
 - [ ] **Step 3: Update the design doc's open-follow-ups**
 
