@@ -293,6 +293,7 @@ void planar_put_pixel(WORD x, WORD y, UWORD color);
 void planar_fill_rect(const VwkAttrib *attr, const Rect *rect);
 void clc_flit (const VwkAttrib * attr, const VwkClip * clipper, const Point * point, WORD y, int vectors);
 void abline (const Line * line, const WORD wrt_mode, UWORD color);
+UWORD planar_draw_line(const Line * line, WORD wrt_mode, UWORD color, UWORD linemask);
 void contourfill(const VwkAttrib * attr, const VwkClip *clip);
 
 /* initialization of subsystems */

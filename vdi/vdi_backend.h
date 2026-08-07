@@ -21,8 +21,8 @@
  * never happen by construction.
  *
  * This table currently covers the primitives converted so far. Follow-up
- * slices (line/vline, mouse cursor, full palette -- issue #35 parts 2b/5)
- * add their own slots when they actually implement them.
+ * slices (mouse cursor, full palette -- issue #35 parts 2b/5) add their
+ * own slots when they actually implement them.
  */
 typedef struct vdi_backend_ops {
     BOOL (*open)(Vwk *vwk);
@@ -34,6 +34,14 @@ typedef struct vdi_backend_ops {
     void (*fill_rect)(const VwkAttrib *attr, const Rect *rect);
     void (*text_blit)(LOCALVARS *vars);
     void (*raster_copy)(struct raster_t *raster, struct blit_frame *info);
+
+    /*
+     * Draws a single non-horizontal line (abline()'s horizontal case is
+     * handled earlier via fill_rect(), see draw_rect_common()). linemask
+     * is the current line-style state (see LN_MASK); returns the state
+     * after rotating one bit per pixel drawn, for the caller to save back.
+     */
+    UWORD (*draw_line)(const Line *line, WORD wrt_mode, UWORD color, UWORD linemask);
 } vdi_backend_ops;
 
 /*

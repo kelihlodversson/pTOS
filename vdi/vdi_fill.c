@@ -757,19 +757,22 @@ UWORD planar_get_pixel(WORD x, WORD y)
 }
 
 static UWORD
-search_to_right (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_col, UWORD * addr)
+search_to_right (const VwkClip * clip, WORD x, WORD y, UWORD mask, const UWORD search_col, UWORD * addr)
 {
-#if CONF_CHUNKY_PIXELS
-    UBYTE* adr = (UBYTE*)addr;
+#if CONF_WITH_VDI_TRUECOLOR
+    if (vdi_screen_is_truecolor()) {
+        /* is x coord < x resolution ? */
+        while (x++ < clip->xmx_clip) {
+            if (search_col != pixelread(x, y))
+                break;
+        }
+        return x - 1;       /* output x coord -1 to endxright. */
+    }
 #endif
-
     /* is x coord < x resolution ? */
     while( x++ < clip->xmx_clip ) {
         UWORD color;
 
-#if CONF_CHUNKY_PIXELS
-        color = *(adr++);
-#else
         /* need to jump over interleaved bit_plane? */
         mask = mask >> 1 | mask << 15;  /* roll right */
         if ( mask & 0x8000 )
@@ -777,7 +780,6 @@ search_to_right (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_co
 
         /* search, while pixel color != search color */
         color = get_color(mask, addr);
-#endif
         if ( search_col != color ) {
             break;
         }
@@ -787,18 +789,22 @@ search_to_right (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_co
 }
 
 static UWORD
-search_to_left (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_col, UWORD * addr)
+search_to_left (const VwkClip * clip, WORD x, WORD y, UWORD mask, const UWORD search_col, UWORD * addr)
 {
-#if CONF_CHUNKY_PIXELS
-    UBYTE* adr = (UBYTE*)addr;
+#if CONF_WITH_VDI_TRUECOLOR
+    if (vdi_screen_is_truecolor()) {
+        /* Now, search to the left. */
+        while (x-- > clip->xmn_clip) {
+            if (search_col != pixelread(x, y))
+                break;
+        }
+        return x + 1;       /* output x coord + 1 to endxleft. */
+    }
 #endif
     /* Now, search to the left. */
     while (x-- > clip->xmn_clip) {
         UWORD color;
 
-#if CONF_CHUNKY_PIXELS
-        color = *(adr--);
-#else
         /* need to jump over interleaved bit_plane? */
         mask = mask >> 15 | mask << 1;  /* roll left */
         if ( mask & 0x0001 )
@@ -806,7 +812,6 @@ search_to_left (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_col
 
         /* search, while pixel color != search color */
         color = get_color(mask, addr);
-#endif
         if ( search_col != color )
             break;
 
@@ -841,32 +846,33 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
     UWORD mask;
 
     /* see, if we are in the y clipping range */
-    if ( y < clip->ymn_clip || y > clip->ymx_clip)
+    if ( y < clip->ymn_clip || y > clip->ymx_clip) {
+        *xleftout = *xrightout = x;
         return 0;
+    }
 
     /* convert x,y to start address and bit mask */
     addr = get_start_addr(x, y);
     mask = 0x8000 >> (x & 0x000f);   /* fetch the pixel mask. */
-#if CONF_CHUNKY_PIXELS
-    /*
-     * search_to_right()/search_to_left() below walk the framebuffer
-     * byte-by-byte, which is only correct for 8bpp chunky pixels. On a
-     * 16bpp chunky backend (e.g. MACHINE_RPI truecolor), skip the search
-     * entirely and report "nothing found" rather than let the byte-walk
-     * run against the wrong pixel width. Mirrors the same accepted
-     * fail-safe gate used by normal_blit() in vdi/arch/arm/vdi_tblit.c.
-     */
-    if (linea_vars.v_planes != 8)
-        return 0;
-    color = *((UBYTE*)addr);
-#else
-    addr += linea_vars.v_planes;                   /* start at highest-order bit_plane */
-
-    /* get search color and the left and right end */
-    color = get_color (mask, addr);
+#if CONF_WITH_VDI_TRUECOLOR
+    if (vdi_screen_is_truecolor()) {
+        /*
+         * No bitplanes to compose on a packed screen -- get_pixel()
+         * already returns the MAP_COL-mapped hardware palette index
+         * search_color/end_pts() need, same as planar's get_color()
+         * below, just via a full pixel read instead of a bit extract.
+         */
+        color = pixelread(x, y);
+    } else
 #endif
-    *xrightout = search_to_right (clip, x, mask, color, addr);
-    *xleftout = search_to_left (clip, x, mask, color, addr);
+    {
+        addr += linea_vars.v_planes;                   /* start at highest-order bit_plane */
+
+        /* get search color and the left and right end */
+        color = get_color (mask, addr);
+    }
+    *xrightout = search_to_right (clip, x, y, mask, color, addr);
+    *xleftout = search_to_left (clip, x, y, mask, color, addr);
 
     /* see, if the whole found segment is of search color? */
     if ( color != search_color ) {

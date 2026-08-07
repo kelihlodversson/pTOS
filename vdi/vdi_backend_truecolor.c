@@ -632,6 +632,105 @@ static void truecolor_raster_copy(struct raster_t *raster, struct blit_frame *in
     }
 }
 
+/*
+ * truecolor draw_line: backs abline() (vdi_line.c) for non-horizontal
+ * lines on the packed RGB565 screen (abline() handles horizontal lines
+ * itself, via fill_rect(), and never calls this for one).
+ *
+ * A packed screen has no bitplanes to loop over, so this is a single-pass
+ * Bresenham writing one whole pixel per step, unlike the planar
+ * implementation's per-bitplane loop (planar_draw_line() in vdi_line.c).
+ * The write-mode semantics are derived directly from that function's
+ * per-bitplane logic, composed across a whole pixel instead of one bit
+ * per plane:
+ *  - replace: every step writes either the line color or (at a line-
+ *    style gap) palette index 0 -- matching replace mode's planar
+ *    behaviour of also clearing gaps, not leaving them untouched.
+ *  - transparent (or): only "on" steps write the line color; gaps are
+ *    untouched.
+ *  - xor: only "on" steps invert whatever pixel is already there,
+ *    regardless of the requested color -- matching the planar loop's
+ *    unconditional bit flip (compare truecolor_fill_rect()'s xor case).
+ *  - reverse transparent (not): only "on" steps write the complement of
+ *    the line color's palette index, mapped through the palette; gaps
+ *    are untouched.
+ */
+static UWORD truecolor_draw_line(const Line *line, WORD wrt_mode, UWORD color, UWORD linemask)
+{
+    UWORD x1, y1, x2, y2;
+    WORD dx, dy, loopcnt;
+    LONG yinc;
+    UBYTE *adr;
+    UWORD fgpix, bg0pix, notpix;
+
+    if (line->x2 < line->x1) {
+        x1 = line->x2; y1 = line->y2;
+        x2 = line->x1; y2 = line->y1;
+    } else {
+        x1 = line->x1; y1 = line->y1;
+        x2 = line->x2; y2 = line->y2;
+    }
+
+    dx = x2 - x1;
+    dy = y2 - y1;
+
+    fgpix = truecolor_pixel_for_index((WORD)color);
+    bg0pix = truecolor_pixel_for_index(0);
+    notpix = truecolor_pixel_for_index((WORD)(~color & 0xff));
+
+    if (dy < 0) {
+        dy = -dy;
+        yinc = -(LONG)linea_vars.v_lin_wr;
+    } else {
+        yinc = (LONG)linea_vars.v_lin_wr;
+    }
+    adr = (UBYTE *)truecolor_get_start_addr(x1, y1);
+
+    if (dx >= dy) {
+        WORD eps = -dx, e1 = 2*dy, e2 = 2*dx;
+
+        for (loopcnt = dx; loopcnt >= 0; loopcnt--) {
+            UWORD *p = (UWORD *)adr;
+
+            rolw1(linemask);
+            switch (wrt_mode) {
+            case 3: if (linemask & 1) *p = notpix; break;
+            case 2: if (linemask & 1) *p ^= 0xffff; break;
+            case 1: if (linemask & 1) *p = fgpix; break;
+            default: *p = (linemask & 1) ? fgpix : bg0pix; break;
+            }
+            adr += 2;
+            eps += e1;
+            if (eps >= 0) {
+                eps -= e2;
+                adr += yinc;
+            }
+        }
+    } else {
+        WORD eps = -dy, e1 = 2*dx, e2 = 2*dy;
+
+        for (loopcnt = dy; loopcnt >= 0; loopcnt--) {
+            UWORD *p = (UWORD *)adr;
+
+            rolw1(linemask);
+            switch (wrt_mode) {
+            case 3: if (linemask & 1) *p = notpix; break;
+            case 2: if (linemask & 1) *p ^= 0xffff; break;
+            case 1: if (linemask & 1) *p = fgpix; break;
+            default: *p = (linemask & 1) ? fgpix : bg0pix; break;
+            }
+            adr += yinc;
+            eps += e1;
+            if (eps >= 0) {
+                eps -= e2;
+                adr += 2;
+            }
+        }
+    }
+
+    return linemask;
+}
+
 static BOOL truecolor_open(Vwk *vwk)
 {
     (void)vwk;
@@ -652,4 +751,5 @@ const vdi_backend_ops packed_truecolor_backend_ops = {
     truecolor_fill_rect,
     truecolor_text_blit,
     truecolor_raster_copy,
+    truecolor_draw_line,
 };
