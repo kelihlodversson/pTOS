@@ -39,7 +39,7 @@ WORD deftxbuf[SCRATCHBUF_SIZE/sizeof(WORD)];
 /*
  * the following table maps a 4-bit sequence to its reverse
  */
-static UBYTE reverse_nybble[] =
+const static UBYTE reverse_nybble[] =
 /*  0000  0001  0010  0011  0100  0101  0110  0111  */
 {   0x00, 0x08, 0x04, 0x0c, 0x02, 0x0a, 0x06, 0x0e,
 /*  1000  1001  1010  1011  1100  1101  1110  1111  */
