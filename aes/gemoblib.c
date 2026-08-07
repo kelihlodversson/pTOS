@@ -393,7 +393,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
              * for an apparent menu separator, replace the traditional
              * string of dashes with a drawn line for neatness
              */
-            if ((obtype == G_STRING) && (state & DISABLED) && is_dashes(intin, len))
+            if ((obtype == G_STRING) && (state & DISABLED) && (len > 3) && is_dashes(intin, len))
                 gsx_cline(t.g_x, t.g_y+t.g_h/2, t.g_x+t.g_w-1, t.g_y+t.g_h/2);
             else
 #endif
