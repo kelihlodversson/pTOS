@@ -17,8 +17,8 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
           sudo apt-get update
           sudo apt-get install cross-mintelf-essential
 
-      Two other m68k toolchains are supported, chosen under "m68k
-      toolchain" in the Toolchain menu:
+      Three m68k toolchains are offered, chosen under "m68k toolchain"
+      in the Toolchain menu:
 
           m68k-atari-mintelf    the newer ELF based tools, the default,
                                 http://vincent.riviere.free.fr/soft/m68k-atari-mintelf/

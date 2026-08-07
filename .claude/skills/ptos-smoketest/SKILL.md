@@ -26,8 +26,7 @@ the pTOS tree). Relevant outputs:
 Atari configs build with the default mintelf toolchain (`m68k-atari-mintelf-`)
 and produce symbols in `ptos512k.sym` (load in the Hatari debugger with
 `symbols <file>`; there is no `--symbols` CLI option). The virt-m68k image is
-also ELF (`BUILD_TOOLCHAIN_MINTELF=y`), since QEMU's `-kernel` loader needs an
-`elf32-m68k`-format kernel.
+also ELF, since QEMU's `-kernel` loader needs an `elf32-m68k`-format kernel.
 
 ## Hatari smoke test (m68k Atari)
 

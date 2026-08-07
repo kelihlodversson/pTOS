@@ -26,11 +26,9 @@ CPUFLAGS="-m68020"
 # to the same override already used by MACHINE_RPI and MACHINE_VIRT_ARM.
 CONF_WITH_IDE=n
 
-# Unlike every other m68k target, this one is pinned to the ELF toolchain
-# rather than leaving the choice to the environment: emutos.ld forces
+# This target must be built with an ELF-capable toolchain: emutos.ld forces
 # OUTPUT_FORMAT(elf32-m68k) for MACHINE_VIRT_M68K (QEMU's -kernel loader
-# needs a real ELF image, not a flat binary), and the default a.out
-# toolchain's linker has no elf32-m68k target compiled in at all ("target
-# elf32-m68k not found" -- found via CI, which only installs the a.out
-# toolchain and has no ELF-capable one without this).
-BUILD_TOOLCHAIN_MINTELF=y
+# needs a real ELF image, not a flat binary), and the a.out toolchain's
+# linker has no elf32-m68k target compiled in at all ("target elf32-m68k
+# not found").  The default mintelf toolchain provides it, so nothing needs
+# to be set here; only a hand-picked cross-mint choice would break this.
