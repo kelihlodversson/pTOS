@@ -28,6 +28,7 @@
 
 #ifdef MACHINE_RPI
 #   include "raspi_mouse.h"
+#   include "vdi_backend.h"
 #endif
 
 /* prototypes */
@@ -871,13 +872,13 @@ static void cur_display_clip(WORD op,Mcdb *sprite,MCS *mcs,UWORD *mask_start,UWO
  */
 
 #if defined(MACHINE_RPI) && !CONF_RASPI_MOUSE_CURSOR
-// The mcs struct is not big enough for 8bpp
+/* The mcs struct is not big enough for a 16bpp packed truecolor cursor */
 static struct {
     WORD x;
     WORD y;
     WORD width;
     WORD height;
-    UBYTE buffer[16*16];
+    UWORD buffer[16*16];
 } mouse_save;
 #endif
 
@@ -888,32 +889,18 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
     raspi_hw_cur_display(sprite, x, y);
 #else
     int row_count;
-    UBYTE *addr;
+    UWORD *addr;
     UWORD *data;
     UWORD cdb_fg, cdb_bg, current_bit, start_bit, end_bit;
-    UBYTE *save_data = mouse_save.buffer;
-
-    /*
-     * The pixel writes below (*addr = cdb_fg / cdb_bg) touch memory one
-     * byte per pixel, which is only correct for 8bpp chunky pixels. On a
-     * 16bpp chunky backend (e.g. MACHINE_RPI truecolor) skip drawing
-     * rather than corrupt the framebuffer with a byte-width write.
-     * Clear mouse_save.height so a later cur_replace() call against this
-     * save state restores nothing instead of a stale rectangle. Mirrors
-     * the same fail-safe gate used for end_pts()/abline() in
-     * vdi/vdi_fill.c and vdi/vdi_line.c.
-     */
-    if (linea_vars.v_planes != 8)
-    {
-        mouse_save.height = 0;
-        return;
-    }
+    UWORD *save_data = mouse_save.buffer;
 
     x -= sprite->xhot;          /* x = left side of destination block */
     y -= sprite->yhot;          /* y = top of destination block */
     data = sprite->maskdata;  /* MASK/DATA for cursor */
-    cdb_bg = sprite->bg_col;    /* get mouse background color bits */
-    cdb_fg = sprite->fg_col;    /* get mouse foreground color bits */
+    /* sprite->bg_col/fg_col are MAP_COL-mapped palette indices; the packed
+     * truecolor framebuffer needs the raw RGB565 pixel value instead */
+    cdb_bg = vdi_truecolor_pixel_for_index(sprite->bg_col);
+    cdb_fg = vdi_truecolor_pixel_for_index(sprite->fg_col);
 
     start_bit = 0x8000;
     end_bit = 0x0000;
@@ -927,8 +914,10 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
     }
     else if (x >= (linea_vars.DEV_TAB[0]-15))
     {
-        end_bit = 0x8000 >> (linea_vars.DEV_TAB[0]-x);
-        mouse_save.width = linea_vars.DEV_TAB[0]-x;
+        /* DEV_TAB[0] is the last valid pixel column (V_REZ_HZ-1), so the
+         * visible width is inclusive of it: DEV_TAB[0]-x+1, not DEV_TAB[0]-x. */
+        end_bit = 0x8000 >> (linea_vars.DEV_TAB[0]-x+1);
+        mouse_save.width = linea_vars.DEV_TAB[0]-x+1;
     }
 
     row_count = 16;
@@ -1161,24 +1150,12 @@ static void cur_replace (MCS *mcs)
     }
 #elif !CONF_RASPI_MOUSE_CURSOR
     int row, col;
-    UBYTE* addr;
-    UBYTE* data = mouse_save.buffer;
-
-    /*
-     * Defensive belt-and-suspenders: cur_display() already clears
-     * mouse_save.height to 0 (making the loop below a no-op) whenever it
-     * skips drawing because linea_vars.v_planes != 8, but no-op here too
-     * in case this is ever reached with stale save state from elsewhere.
-     * The restore below is a byte-per-pixel copy, only correct at 8bpp;
-     * on a 16bpp chunky backend it would corrupt the framebuffer exactly
-     * like the write side in cur_display() would.
-     */
-    if (linea_vars.v_planes != 8)
-        return;
+    UWORD* addr;
+    UWORD* data = mouse_save.buffer;
 
     for (row = 0; row<mouse_save.height; row++)
     {
-        addr = (UBYTE*)get_start_addr(mouse_save.x, mouse_save.y+row);
+        addr = get_start_addr(mouse_save.x, mouse_save.y+row);
         for (col = 0; col<mouse_save.width; col++)
         {
             *addr++ = *data++;

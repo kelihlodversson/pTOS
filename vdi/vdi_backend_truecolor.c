@@ -139,6 +139,18 @@ static UWORD truecolor_pixel_for_index(WORD index)
 }
 
 /*
+ * Public wrapper for callers outside this backend that need to turn a
+ * MAP_COL-mapped hardware palette index into the raw RGB565 pixel value
+ * this backend would write for it -- e.g. the RPi software mouse cursor
+ * in vdi/vdi_mouse.c, which draws by poking pixels directly rather than
+ * going through put_pixel()/fill_rect().
+ */
+UWORD vdi_truecolor_pixel_for_index(WORD index)
+{
+    return truecolor_pixel_for_index(index);
+}
+
+/*
  * Address calculation for a packed 16bpp (2 bytes/pixel) framebuffer.
  * Fixed at 2 bytes/pixel because this backend is only ever selected for
  * SCREEN_PIXEL_RGB565 (see vdi_backend_select()).

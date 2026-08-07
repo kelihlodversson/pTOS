@@ -85,6 +85,14 @@ BOOL vdi_screen_is_truecolor(void);
 extern const vdi_backend_ops planar_backend_ops;
 extern const vdi_backend_ops packed_truecolor_backend_ops;
 
+/*
+ * Turns a MAP_COL-mapped hardware palette index into the raw RGB565 pixel
+ * value the packed-truecolor backend would write for it. Used by callers
+ * that poke pixels directly instead of going through put_pixel()/
+ * fill_rect() -- currently the RPi software mouse cursor in vdi_mouse.c.
+ */
+UWORD vdi_truecolor_pixel_for_index(WORD index);
+
 #endif /* CONF_WITH_VDI_TRUECOLOR */
 
 #endif /* VDI_BACKEND_H */
