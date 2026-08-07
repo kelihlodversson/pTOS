@@ -7,7 +7,11 @@ that upstream EmuTOS landed after pTOS's fork point (`aaf30d28fb`) but that this
 tree never received. The issue lists ten upstream commit hashes; one of them
 (`1e6758ef`) is a re-applied duplicate of another (`05797930` — its own commit
 message says "previously committed as 0579793", identical diff), so there are
-**nine logical fixes** to port.
+**nine logical fixes** to port. Implementation analysis additionally found that
+the last fix (`f73f452b`) depends on upstream's OFD/DFD restructure
+(`1c120131`, "Reorganise the filesystem's OFD structure", committed one day
+earlier explicitly "in preparation for" the fix), which pTOS also lacks; the
+user approved porting that pair together, making **ten commits** in total.
 
 Audit outcome, against current master (`77b7c31b`, PR-#128 toolchain default
 now `m68k-atari-mintelf`):
@@ -57,10 +61,11 @@ pTOS's current code.
    One-line guard so an empty pathname followed by `:` is not mis-parsed as a
    drive spec. Clean apply expected; reuse orphan `7266b4f5` as reference.
 
-2. **`96165134` — rename of a read-only file wrongly disallowed** … wait,
-   re-check direction: the upstream fix *disallows* renaming a read-only file
-   (adds an `FA_RO` → `EACCDN` check in `xrename`). Append the 6-line guard.
-   Clean apply expected; reuse orphan `673f688c` as reference.
+2. **`96165134` — renaming a read-only file must be disallowed**
+   (`bdos/fsdir.c`). The upstream fix *adds* an `FA_RO` → `EACCDN` check in
+   `xrename()` (the issue's paraphrase has the direction inverted; the patch
+   is unambiguous). Append the 6-line guard. Clean apply expected; reuse
+   orphan `673f688c` as reference.
 
 3. **`05797930` — corrupted PRG relocation table, odd offset** (`bdos/kpgmld.c`).
    Adds `if (((LONG)cp) & 1) return EPLFMT;` to `pgfix01()` so an odd
@@ -73,40 +78,74 @@ pTOS's current code.
    file that is open in another process cannot be silently duplicated.
    Small conflict vs pTOS; reconcile.
 
-5. **`d4757152` — first file in an empty filesystem corrupts cluster 0**
-   (`bdos/fsio.c`). Adds a `first_time` guard so the free-cluster scan does
-   not clobber cluster 0 when the directory is empty. Small conflict;
-   reconcile.
+5. **`d4757152` — first file in empty filesystem corrupts its first cluster**
+   (`bdos/fsio.c`). A `last == 0L` "first time through" test was used to
+   capture `p->o_currec`, but `o_currec` is legitimately 0 for the first
+   record, so the test misses the genuine first pass the second time around.
+   Replaced with an explicit `BOOL first_time` flag. Small context conflict
+   vs pTOS's `xrw_recs`; reconcile.
 
-6. **`8e04469b` — file-handle leak in Pexec() on load errors** (`bdos/kpgmld.c`,
-   `bdos/proc.c`, `bdos/proc.h`). Ensures the file handle is closed on every
-   error path of `xexec()`. **Substantive**: pTOS actively maintains the ARM
-   ELF loader in these same files; reconcile by porting the leak fix onto the
-   ELF path as well as the PRG path, not by taking the upstream structure
-   wholesale.
+6. **`8e04469b` — file-handle leak in Pexec() on load errors** (`bdos/proc.c`
+   only, in pTOS). Upstream's fix also refactors `kpgmhdrld()`'s signature
+   (open moves into `xexec()`). **pTOS does not need that refactor**: pTOS's
+   `kpgmhdrld()` already self-closes the handle on its own error paths
+   (the `fail: xclose(*h)` block, added for the ELF/PRG dispatch), and pTOS's
+   `kpgmld()` already closes `h` unconditionally before returning. The leak
+   is therefore confined to the three `xexec()` error paths that run *between*
+   `kpgmhdrld`'s success and the `kpgmld` call: the `alloc_env` failure
+   `return ENSMEM`, the `alloc_tpa` failure `return ENSMEM`, and the `setjmp`
+   longjmp handler. Port = insert `xclose(fh);` on those three paths. No
+   `kpgmld.c` or `proc.h` change. Reused orphan `8eb432e2`-style minimalism
+   applies to commit 3, not here.
 
 7. **`e65ae149` — Mshrink() corrupts the free-memory-descriptor chain**
-   (`bdos/iumem.c`). The freed portion's MD must be placed on the allocated
-   list before `freeit()` (which coalesces), not inserted into the free list.
-   **Substantive**: pTOS's `shrinkit()` rounds `newlen` up to a multiple of 4
-   for FastRAM alignment — that rounding **must survive**. Reconcile: keep
-   the rounding, apply the list-management fix around it.
+   (`bdos/iumem.c`). A single contiguous free area must be described by one
+   MD; `Mshrink()` called twice on the same block could leave two adjacent
+   MDs on the free chain. Fix: instead of inserting the freed portion's MD
+   directly into the free list (which bypasses coalescing), place it on the
+   **allocated** list (`f->m_link = mp->mp_mal; mp->mp_mal = f;`), update
+   `m->m_length`, then call `freeit(f, mp)` which coalesces. **Substantive**:
+   pTOS's `shrinkit()` rounds `newlen` up to a multiple of 4 for FastRAM
+   alignment — that rounding **must survive**. Reconcile: keep the rounding,
+   drop the `p`/`q` locals, replace the free-list insertion block with the
+   allocated-list push + `freeit()`.
 
-8. **`d2d08811` — off-by-one range tests in Fclose() for standard handles**
-   (`bdos/fsopnclo.c`). Restructures `xclose()` so a standard handle mapped
-   via `Fforce()` is closed correctly. Upstream rewrites the function's
-   structure; pTOS's `xclose()` already differs. Decide per-branch: take
-   upstream wholesale only if pTOS has no divergent logic of its own there;
-   otherwise reconcile.
+8. **`d2d08811` — off-by-one range test in Fclose() for standard handles**
+   (`bdos/fsopnclo.c`). When closing a standard handle, the test for "mapped
+   to a character device" was `if (h <= 0)` — but handle 0 is a valid standard
+   handle, so `<= 0` wrongly treats "Fforce'd to stdin" as done. Upstream also
+   adds a guard against a standard handle being Fforce'd to *another* standard
+   handle (returns `EIHNDL`). Analysis resolved the earlier open question:
+   pTOS's `xclose()` standard-handle branch has the **same structure** as
+   upstream's pre-fix code, so the fix maps **1:1** — change `if (h <= 0)` to
+   `if (h < 0)` and add `if (h < NUMSTD) return EIHNDL;`. The "conflict"
+   reported by probe was context drift elsewhere in the file, not in the
+   edited hunk.
 
-9. **`f73f452b` — lost clusters with concurrent writes** (`bdos/fs.h`,
-   `bdos/fsopnclo.c`). **Largest change.** Adds a `o_usecnt` reference count
-   and a "base OFD" concept to `DFD` so that multiple OFDs of the same file
-   share one copy of the directory data and the base OFD is freed only when
-   the last user closes. Struct layout change in `fs.h` (~10 added lines) plus
-   refcount plumbing in `fsopnclo.c` (~14 added lines). Done last so it is
-   the cheapest to drop if it destabilizes boot; verify all initializer and
-   sizeof fallout across the tree.
+9a. **`1c120131` — reorganise the OFD: introduce DFD** (`bdos/fs.h`,
+    `bdos/fsdir.c`, `bdos/fsdrive.c`, `bdos/fsfat.c`, `bdos/fsio.c`,
+    `bdos/fsopnclo.c`). **Prerequisite for `f73f452b`** (committed one day
+    earlier, described as "in preparation for a fix to a filesystem bug that
+    can cause lost clusters"). pTOS's OFD currently holds `o_td`/`o_strtcl`/
+    `o_fileln`/`o_usecnt` directly and `makopn()` *memcpys* the metadata from
+    an already-open OFD ("a bit clumsily"); there is no `DFD`, no `o_disk`,
+    no `o_dfd` anywhere in the tree. The 64-byte OFD `FOLDRnnn.PRG`
+    constraint survives upstream's restructure (the embedded `DFD o_disk`
+    still fits). Conflicts in `fsdir.c`, `fsio.c`, `fsopnclo.c` (pTOS-specific
+    `le2cpu16/le2cpu32` endian conversions in `makopn` and elsewhere); the
+    restructure must be reconciled to keep pTOS's endian handling. Cleanly
+    applies to `fs.h`, `fsdrive.c`, `fsfat.c`.
+
+9b. **`f73f452b` — lost clusters with concurrent writes to the same file**
+    (`bdos/fs.h` comment + `bdos/fsopnclo.c`). Each handle independently
+    acquired free clusters but the on-disk chain reflected only the last
+    handle closed — the bug also exists in Atari TOS 1–3, fixed in TOS 4.
+    The fix (built on `1c120131`): `makopn()` now shares a single DFD via
+    `o_dfd` (incrementing `o_usecnt` when the file is already open), and
+    `sftdel()` decrements `o_usecnt`, freeing the non-base OFD immediately
+    and freeing the base OFD only when the count hits zero. Done last so it
+    is the cheapest to drop if it destabilizes boot; verify all initializer
+    and `sizeof` fallout across the tree.
 
 ## Verification
 
@@ -131,13 +170,16 @@ End of batch, after `f73f452b`:
 
 - Per-commit commits mean `git revert` isolates any single fix that
   regresses the post-merge Hatari boot.
-- `f73f452b` is last precisely so it can be dropped independently.
+- `1c120131` + `f73f452b` are last precisely so they can be dropped as a
+  pair if the restructure destabilizes boot.
 - Each commit message records the pTOS-specific adaptation made, so a
   future re-sync with upstream is unambiguous about what was ported vs
   reconciled.
 
-## Open question for the plan phase
+## Resolved open questions
 
-- Whether `d2d08811` should take upstream's `xclose()` rewrite wholesale or
-  be reconciled onto pTOS's current structure. Left to the implementation
-  plan to decide by diffing the two `xclose()` bodies.
+- `d2d08811` maps 1:1 onto pTOS's current `xclose()` standard-handle
+  branch (`if (h <= 0)` → `if (h < 0)` plus the `h < NUMSTD` guard); no
+  rewrite decision needed. Resolved during plan-source gathering.
+- `f73f452b` cannot port alone; `1c120131` (OFD/DFD restructure) is a
+  prerequisite. User approved porting both as commits 9a/9b.
