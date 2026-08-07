@@ -570,7 +570,7 @@ AES v3.40 (TOS >= v4):
  -      objc_sysvar            (3D look)
 
 TOS v4 extended AES functionality:
- -      RSC file color icon support
+ >      RSC file color icon support   (planar only; truecolor rendering: #107)
 
 
  Misc desktop functions

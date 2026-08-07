@@ -85,6 +85,7 @@
 #define G_FBOXTEXT  30
 #define G_ICON      31
 #define G_TITLE     32
+#define G_CICON     33
 
 #define NONE        0x0000      /* Object flags */
 #define SELECTABLE  0x0001
@@ -174,6 +175,22 @@ typedef struct
         WORD    ib_htext;
 } ICONBLK;
 
+typedef struct _CICON
+{
+        WORD    num_planes;     /* number of planes for this version */
+        WORD    *col_data;      /* ptrs to colour icon mask & data */
+        WORD    *col_mask;
+        WORD    *sel_data;      /* ptrs to optional icon/mask for SELECTED state */
+        WORD    *sel_mask;
+        struct  _CICON *next_res;
+} CICON;
+
+typedef struct
+{
+        ICONBLK monoblk;        /* mono version of icon */
+        CICON   *mainlist;
+} CICONBLK;
+
 typedef struct
 {
         void    *bi_pdata;      /* ptr to bit forms data        */
@@ -234,6 +251,7 @@ typedef union obspecptr
         bfobspec    obspec;
         TEDINFO     *tedinfo;
         ICONBLK     *iconblk;
+        CICONBLK    *ciconblk;
         BITBLK      *bitblk;
         USERBLK     *userblk;
         char        *free_string;
