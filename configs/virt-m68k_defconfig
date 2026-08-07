@@ -30,5 +30,6 @@ CONF_WITH_IDE=n
 # OUTPUT_FORMAT(elf32-m68k) for MACHINE_VIRT_M68K (QEMU's -kernel loader
 # needs a real ELF image, not a flat binary), and the a.out toolchain's
 # linker has no elf32-m68k target compiled in at all ("target elf32-m68k
-# not found").  The default mintelf toolchain provides it, so nothing needs
-# to be set here; only a hand-picked cross-mint choice would break this.
+# not found").  Kconfig forbids the cross-mint toolchain for this machine
+# (BUILD_TOOLCHAIN_MINT depends on !MACHINE_VIRT_M68K), so the default
+# mintelf is guaranteed; nothing needs pinning in this defconfig.

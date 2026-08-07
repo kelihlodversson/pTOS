@@ -8,14 +8,15 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
       http://vincent.riviere.free.fr/soft/m68k-atari-mintelf/
 
       On Debian and Ubuntu they are packaged, which is by far the quickest
-      way to get a working toolchain.  The CI build installs this package
-      from the same PPA too, plus the older cross-mint one for the a.out
-      choice and the tools "make release" needs, see
-      .github/actions/setup-toolchain/action.yml:
+      way to get a working toolchain:
 
           sudo add-apt-repository ppa:vriviere/mintelf
           sudo apt-get update
           sudo apt-get install cross-mintelf-essential
+
+      The CI build installs this package from the same PPA too, plus the
+      older cross-mint one for the a.out choice and the tools "make
+      release" needs, see .github/actions/setup-toolchain/action.yml.
 
       Three m68k toolchains are offered, chosen under "m68k toolchain"
       in the Toolchain menu:
