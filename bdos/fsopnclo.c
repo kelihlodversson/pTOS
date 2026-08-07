@@ -158,7 +158,8 @@ long ixcreat(char *name, char attr)
                 return EACCDN;          /*  subdir or read only  */
         }
         pos -= 32;
-        ixdel(dn,f,pos);
+        if (ixdel(dn,f,pos) < 0)    /* file currently open by another process? */
+            return EACCDN;
     }
     else
         pos = 0;
