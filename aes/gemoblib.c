@@ -195,6 +195,23 @@ static WORD ob_user(OBJECT *tree, WORD obj, GRECT *pt, OBSPEC spec,
 }
 
 
+#if CONF_WITH_NICELINES
+/*
+ *  Routine to determine if expanded text is all dashes
+ */
+static BOOL is_dashes(const WORD *s, WORD len)
+{
+    while(len--)
+    {
+        if (*s++ != '-')
+            return FALSE;
+    }
+
+    return TRUE;
+}
+#endif
+
+
 /*
  *  Routine to draw an object from an object tree.
  */
@@ -371,6 +388,15 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
                 tmpx = t.g_x + ((t.g_w-(len*gl_wchar))/2);
             else
                 tmpx = t.g_x;
+#if CONF_WITH_NICELINES
+            /*
+             * for an apparent menu separator, replace the traditional
+             * string of dashes with a drawn line for neatness
+             */
+            if ((obtype == G_STRING) && (state & DISABLED) && (len > 3) && is_dashes(intin, len))
+                gsx_cline(t.g_x, t.g_y+t.g_h/2, t.g_x+t.g_w-1, t.g_y+t.g_h/2);
+            else
+#endif
             gsx_tblt(IBM, tmpx, tmpy, len);
         }
     }

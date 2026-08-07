@@ -41,13 +41,15 @@ runs:
     # A second, separate PPA (vriviere/mintelf, not vriviere/ppa) provides
     # the ELF-based toolchain (m68k-atari-mintelf-*, install prefix distinct
     # from cross-mint-essential's a.out one, so both coexist without
-    # conflict). MACHINE_VIRT_M68K is the only target that needs it: it
-    # links a real ELF image for QEMU's -kernel loader (emutos.ld forces
-    # OUTPUT_FORMAT(elf32-m68k) for it), and the a.out toolchain's linker
-    # has no elf32-m68k target compiled in at all. Installed unconditionally
-    # for every m68k job regardless of which configs it happens to build,
-    # rather than threading "does this job's matrix include virt-m68k"
-    # through to this composite action.
+    # conflict). It is the default m68k toolchain (Kconfig.machine), so a
+    # default m68k build uses it unless the choice is overridden. It is
+    # also the only toolchain that can produce the real ELF image
+    # MACHINE_VIRT_M68K needs for QEMU's -kernel loader (emutos.ld forces
+    # OUTPUT_FORMAT(elf32-m68k) for it, and the a.out toolchain's linker
+    # has no elf32-m68k target compiled in at all). Installed
+    # unconditionally for every m68k job regardless of which configs it
+    # happens to build, rather than threading "does this job's matrix
+    # include virt-m68k" through to this composite action.
     - name: Install the m68k cross toolchain
       if: inputs.arch == 'm68k'
       shell: bash

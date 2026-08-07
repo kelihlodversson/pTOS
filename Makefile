@@ -172,7 +172,7 @@ OBJDUMP = $(CROSS_COMPILE)objdump
 OBJCOPY = $(CROSS_COMPILE)objcopy
 
 # The native C compiler, used for the build tools.
-NATIVECC = gcc -ansi -pedantic $(WARNFLAGS) -W -O
+NATIVECC = gcc -std=gnu90 -pedantic $(WARNFLAGS) -W -O
 
 ifdef ARCH_ARM
 MULTILIBFLAGS = $(CPUFLAGS) -fsigned-char
