@@ -708,7 +708,11 @@ static void screen_blit(LOCALVARS *vars)
     vars->forecol = linea_vars.TEXTFG;
     vars->ambient = 0;          /* logically TEXTBG, but that isn't set up by the VDI */
     vars->nbrplane = linea_vars.v_planes;
+#if CONF_CHUNKY_PIXELS
+    vars->nextwrd = sizeof(WORD);
+#else
     vars->nextwrd = vars->nbrplane * sizeof(WORD);
+#endif
     vars->height = vars->DELY;
     vars->width = vars->DELX;
 

@@ -211,7 +211,7 @@ open follow-up.
 - Backport upstream's portable-C text helper rewrite (issue #35 Part 2a)
   — done in #86 (PR #104): the text blit now dispatches through the backend
   ops table like the other primitives, the ported C `outline()`/`rotate()`/
-  `scale()` shared by all arches share run on ARM, and the ARM `normal_blit`
+  `scale()` shared by all arches now run on ARM, and the ARM `normal_blit`
   1-plane scratch-buffer blit handles skew/thicken/outline. The shared
   `outline()` and the ARM 1-plane blit both now access their big-endian
   scratch words through endian-neutral accessors, so the ring walk and
