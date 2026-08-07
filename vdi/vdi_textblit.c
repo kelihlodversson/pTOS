@@ -20,6 +20,7 @@
 #include "../bios/tosvars.h"
 #include "vdi_defs.h"
 #include "vdi_textblit.h"
+#include "vdi_backend.h"
 #include "../bios/lineavars.h"
 #include "kprint.h"
 
@@ -679,11 +680,7 @@ static void screen_blit(LOCALVARS *vars)
     vars->forecol = linea_vars.TEXTFG;
     vars->ambient = 0;          /* logically TEXTBG, but that isn't set up by the VDI */
     vars->nbrplane = linea_vars.v_planes;
-#if CONF_CHUNKY_PIXELS
-    vars->nextwrd = sizeof(WORD);
-#else
     vars->nextwrd = vars->nbrplane * sizeof(WORD);
-#endif
     vars->height = vars->DELY;
     vars->width = vars->DELX;
 
@@ -695,24 +692,38 @@ static void screen_blit(LOCALVARS *vars)
     vars->sform += offset;
     vars->s_next = -vars->s_next;   /* we draw from the bottom up */
 
-    /*
-     * calculate the screen address
-     *
-     * note that the casts below allow the compiler to generate a mulu
-     * instruction rather than calling _mulsi3(): this by itself speeds
-     * up plain text output by about 3% ...
-     */
+#if CONF_WITH_VDI_TRUECOLOR
+    {
+        const vdi_backend_ops *backend = vdi_screen_backend();
+
+        /* see the comment in get_start_addr() (vdi_misc.c) */
+        if (backend)
+            backend->text_blit(vars);
+    }
+#else
+    planar_text_blit(vars);
+#endif
+}
+
+/*
+ * planar text blit: output the current glyph to a bitplane screen
+ *
+ * this is the historical path; the packed-truecolor backend has its own
+ * version (see vdi_backend_truecolor.c)
+ */
+void planar_text_blit(LOCALVARS *vars)
+{
 #if CONF_CHUNKY_PIXELS
     vars->tddad = 0;
     vars->dform = v_bas_ad;
     vars->dform += (vars->DESTX * linea_vars.v_planes) >> 3;
-    vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)linea_vars.v_lin_wr;  /* add y coordinate part of addr */
+    vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)linea_vars.v_lin_wr;
     vars->d_next = -linea_vars.v_lin_wr;
 #else
     vars->tddad = vars->DESTX & 0x000f;
     vars->dform = v_bas_ad;
-    vars->dform += (vars->DESTX&0xfff0)>>shift_offset[linea_vars.v_planes];        /* add x coordinate part of addr */
-    vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)linea_vars.v_lin_wr; /* add y coordinate part of addr */
+    vars->dform += (vars->DESTX&0xfff0)>>shift_offset[linea_vars.v_planes];
+    vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)linea_vars.v_lin_wr;
     vars->d_next = -linea_vars.v_lin_wr;
 #endif
 
@@ -771,6 +782,7 @@ void text_blt(void)
     LOCALVARS vars;
     WORD clipped, delx, dely, weight;
     WORD temp;
+    BOOL need_preblit = FALSE;
 
     vars.swap_tmps = 0;
 
@@ -842,20 +854,31 @@ void text_blt(void)
     }
 
     /*
-     * the following is equivalent to:
+     * decide if we need to copy the source glyph to a temporary buffer
+     * so we can manipulate it before the actual screen blit
+     *
+     * we copy in the following situations:
+     *  (in truecolor mode) if (skewing OR thickening OR outlining), OR
      *  if outlining, OR
      *     rotating AND (skewing OR thickening), OR
      *     skewing AND clipping-is-required,
      *      call pre_blit()
      */
-    if (vars.STYLE & (F_SKEW|F_THICKEN|F_OUTLINE))
+#if CONF_WITH_VDI_TRUECOLOR
+    if (vdi_screen_is_truecolor() && (vars.STYLE & (F_SKEW|F_THICKEN|F_OUTLINE)))
+        need_preblit = TRUE;
+    else
+#endif
+    if (vars.STYLE & F_OUTLINE)
+        need_preblit = TRUE;
+    else if (linea_vars.CHUP && (vars.STYLE & (F_SKEW|F_THICKEN)))
+        need_preblit = TRUE;
+    else if ((vars.STYLE & F_SKEW) && clipped)
+        need_preblit = TRUE;
+
+    if (need_preblit)
     {
-        if (linea_vars.CHUP
-         || ((vars.STYLE & F_SKEW) && clipped)
-         || (vars.STYLE & F_OUTLINE))
-        {
-            pre_blit(&vars);
-        }
+        pre_blit(&vars);
     }
 
     if (linea_vars.CHUP)

@@ -322,7 +322,7 @@ Add a `text_blit` slot to the backend ops, implement it for planar and packed-tr
 - Consumes: `LOCALVARS` (from Task 1), `v_bas_ad`/`linea_vars.v_lin_wr`, `truecolor_pixel_for_index()` (static helper in the truecolor backend file), `normal_blit()`.
 - Produces: `const vdi_backend_ops` grows a `void (*text_blit)(LOCALVARS *vars)` member; `BOOL vdi_screen_is_truecolor(void)`; `void planar_text_blit(LOCALVARS *vars)` (defined in `vdi_textblit.c`, exported for the planar ops table).
 
-- [ ] **Step 1: Extend the ops struct and add the helper**
+- [x] **Step 1: Extend the ops struct and add the helper**
 
 `vdi/vdi_backend.h`:
 
@@ -360,7 +360,7 @@ BOOL vdi_screen_is_truecolor(void)
 }
 ```
 
-- [ ] **Step 2: `screen_blit()` dispatches to the backend**
+- [x] **Step 2: `screen_blit()` dispatches to the backend**
 
 In `vdi/vdi_textblit.c`, replace the dest-address setup + `normal_blit(...)` tail of `screen_blit()` (currently the `#if CONF_CHUNKY_PIXELS`/`#else` block and the call) with the `draw_rect_common()` dispatch pattern:
 
@@ -395,7 +395,7 @@ In `vdi/vdi_textblit.c`, replace the dest-address setup + `normal_blit(...)` tai
 
 The `#if CONF_CHUNKY_PIXELS` fork around `nextwrd`/dest-address is deleted — the backends own destination addressing now. Add `#include "vdi_backend.h"` to the file.
 
-- [ ] **Step 3: Add `planar_text_blit()`**
+- [x] **Step 3: Add `planar_text_blit()`**
 
 In `vdi/vdi_textblit.c` (following the `planar_fill_rect` pattern in `vdi/vdi_line.c:382` — shared implementation, called directly when truecolor is off and via the ops table when it is on). This is exactly the old planar dest-address code plus the `normal_blit` call, with the `CONF_CHUNKY_PIXELS` fork retained for safety (it can never run on RPi, where the truecolor backend is selected, but must remain correct if it does):
 
@@ -431,7 +431,7 @@ Declare it in `vdi/vdi_textblit.h` next to `normal_blit`:
 void planar_text_blit(LOCALVARS *vars);
 ```
 
-- [ ] **Step 4: Wire the ops tables**
+- [x] **Step 4: Wire the ops tables**
 
 `vdi/vdi_backend_planar.c`:
 ```c
@@ -463,7 +463,7 @@ const vdi_backend_ops packed_truecolor_backend_ops = {
 };
 ```
 
-- [ ] **Step 5: Implement `truecolor_text_blit()`**
+- [x] **Step 5: Implement `truecolor_text_blit()`**
 
 Port upstream `screen_blit16` (`/tmp/opencode/vdi_textblit_2024.c` lines 974-1186) into `vdi/vdi_backend_truecolor.c`. Changes from the upstream text:
 
@@ -486,7 +486,7 @@ Port upstream `screen_blit16` (`/tmp/opencode/vdi_textblit_2024.c` lines 974-118
 6. `KDEBUG(("SOURCEX ..."))` calls: use the pTOS `KDEBUG` from `kprint.h` (already included); keep the messages.
 7. `WORD fgcol, bgcol` are `UWORD` after the palette change; declare all locals at the top of the block (C90).
 
-- [ ] **Step 6: `text_blt()` — force `pre_blit` for styled text on truecolor**
+- [x] **Step 6: `text_blt()` — force `pre_blit` for styled text on truecolor**
 
 In `vdi/vdi_textblit.c`, replace the current `if (vars.STYLE & (F_SKEW|F_THICKEN|F_OUTLINE))` nest (Task 1's upstream text) with the 2024 `need_preblit` structure (from `/tmp/opencode/vdi_textblit_2024.c` lines 1372-1387), with the truecolor condition mapped to pTOS:
 
@@ -516,11 +516,11 @@ In `vdi/vdi_textblit.c`, replace the current `if (vars.STYLE & (F_SKEW|F_THICKEN
 
 (`BOOL`/`FALSE` come from `portab.h`.) Move the `rotate()`/`scale()`/`smear`/`do_clip()`/`screen_blit()` calls below it exactly as the 2019 file has them after the pre-blit decision.
 
-- [ ] **Step 7: Build all configs**
+- [x] **Step 7: Build all configs**
 
 Task 1 Step 6 matrix again. Expected: builds clean. `git diff --check` clean.
 
-- [ ] **Step 8: Smoke test — RPi now renders text**
+- [x] **Step 8: Smoke test — RPi now renders text**
 
 ```sh
 make rpi1_defconfig && make
@@ -535,6 +535,13 @@ Better: run with `-monitor stdio` interactively (or pipe a `sleep` + `screendump
 3. Inspect `/tmp/rpi.ppm` with Python/PIL: the menu bar and any window text pixels must not be all-background. Minimal check: count pixels differing from the boot-checkerboard background in the top 20 scan lines (menu-bar text region); `> 0` distinct non-background colors in the menu strip is the pass signal that glyphs are actually being written (previously the truecolor path wrote nothing, so this strip was uniform).
 
 Also run the virt-m68k smoke test (Task 1 Step 7) to confirm the planar path still boots unchanged.
+
+Execution notes (verified):
+- `-serial stdio` cannot be combined with `-monitor stdio` on QEMU 10.1 — use `-serial file:/tmp/rpi_serial.log -display none -monitor stdio` and pipe `sleep 60; screendump; quit` into the monitor via stdin.
+- rpi1 boots to `VDI video mode = 1280x720 16-bit`, `AES: EMUDESK: appl_init()`, `evnt_multi()` (desktop idle). Screendump analysis: top 18 scan lines are the white menu bar with black "Desk File View Options" glyph pixels (rows 3-15, e.g. 40 black pixels in row 5) — >0 distinct non-background colors in the strip, so glyphs are being written. Rows below show the white desktop background alternating with the green boot checkerboard at odd x — that is the desktop pattern region, not text, and is unrelated to the text path.
+- `skew_msk`: upstream 2024 never initializes it in C; it is seeded by the m68k/coldfire `normal_blit` asm (default `0x8000`, or `LA(SKEWMASK)` when F_SKEW — vdi/arch/m68k/vdi_tblit.S lines 411/535) via the `normal_blit(vars+1,...)` call in `pre_blit()`, which always runs before the truecolor `text_blit` for styled text (`need_preblit` forces it). For plain text `skew == LOFF+ROFF == 0`, so `skew_mask` is never used. Task 3's ARM `normal_blit` must seed it too.
+- virt-m68k planar smoke: boots to `evnt_multi()`, only the benign `Illegal instruction f35f @ 154e` (`_detect_fpu`) in qemu.log.
+- Note: `make atari512_defconfig` resets `.config` toolchain choice to cross-mint (default) which is not installed; the working atari512 build used `.config` edited to `BUILD_TOOLCHAIN_MINTELF=y`. Not caused by this task.
 
 - [ ] **Step 9: Commit**
 

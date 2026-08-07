@@ -93,6 +93,13 @@ typedef struct {
 void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst);
 
 /*
+ * planar text blit: output the current glyph to a bitplane screen.
+ * shared implementation, called directly when truecolor is off and via
+ * the planar backend's ops table when it is on (see vdi_backend.h)
+ */
+void planar_text_blit(LOCALVARS *vars);
+
+/*
  * portable C implementations, provided on every target
  */
 void outline(LOCALVARS *vars);

@@ -27,3 +27,8 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
 
     return NULL;
 }
+
+BOOL vdi_screen_is_truecolor(void)
+{
+    return vdi_screen_backend() == &packed_truecolor_backend_ops;
+}
