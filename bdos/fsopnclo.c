@@ -405,8 +405,10 @@ long xclose(int h)
     {
         h = run->p_uft[h];
         run->p_uft[h0] = get_default_handle(h0);    /* revert to default */
-        if (h <= 0)                 /* M01.01.1023.01 */
+        if (h < 0)                  /* M01.01.1023.01 */
             return E_OK;
+        if (h < NUMSTD)             /* "can't happen" (bug in Fforce()?) */
+            return EIHNDL;
     }
     else if (((long) sft[h-NUMSTD].f_ofd) < 0L)
     {
