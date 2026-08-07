@@ -912,20 +912,37 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
         search_color = pixelread(xleft,oldy);
         seed_type = 1;
     } else {
-        const WORD plane_mask[] = { 1, 3, 7, 15 };
-
         /* Range check the color and convert the index to a pixel value */
         if (search_color >= linea_vars.DEV_TAB[13])
             return;
 
-        /*
-         * We mandate that white is all bits on.  Since this yields 15
-         * in rom, we must limit it to how many planes there really are.
-         * Anding with the mask is only necessary when the driver supports
-         * move than one resolution.
-         */
-        search_color =
-            (MAP_COL[search_color] & plane_mask[linea_vars.INQ_TAB[4] - 1]);
+#if CONF_WITH_VDI_TRUECOLOR
+        if (vdi_screen_is_truecolor()) {
+            /*
+             * pixelread()/get_pixel() return the full, unmasked MAP_COL
+             * hardware palette index (0-255, see the comment on
+             * default_prgb_palette[] in vdi_backend_truecolor.c) -- there
+             * are no bitplanes on a packed screen to truncate this down
+             * to, unlike the planar case below, whose plane_mask[] only
+             * covers 1-4 planes and would both read out of bounds and
+             * mask search_color down to the point that it could never
+             * again match pixelread()'s output.
+             */
+            search_color = MAP_COL[search_color];
+        } else
+#endif
+        {
+            const WORD plane_mask[] = { 1, 3, 7, 15 };
+
+            /*
+             * We mandate that white is all bits on.  Since this yields 15
+             * in rom, we must limit it to how many planes there really are.
+             * Anding with the mask is only necessary when the driver supports
+             * move than one resolution.
+             */
+            search_color =
+                (MAP_COL[search_color] & plane_mask[linea_vars.INQ_TAB[4] - 1]);
+        }
         seed_type = 0;
     }
 
