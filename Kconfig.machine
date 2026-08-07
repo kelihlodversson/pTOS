@@ -289,11 +289,16 @@ choice
 
 config BUILD_TOOLCHAIN_MINT
 	bool "m68k-atari-mint (cross-mint)"
+	depends on !MACHINE_VIRT_M68K
 	help
 	  Vincent Rivière's cross-mint tools, the older a.out toolchain
 	  EmuTOS has traditionally been built with.  It emits a.out objects
 	  and already gives external symbols a leading underscore, so it
 	  needs no special flags.
+
+	  Not available for MACHINE_VIRT_M68K, whose link is forced to
+	  OUTPUT_FORMAT(elf32-m68k) by emutos.ld (QEMU's -kernel loader
+	  needs a real ELF image) -- this toolchain's linker cannot emit it.
 
 	  http://vincent.riviere.free.fr/soft/m68k-atari-mint/
 
