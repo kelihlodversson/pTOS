@@ -281,7 +281,7 @@ menu "Toolchain"
 choice
 	prompt "m68k toolchain"
 	depends on ARCH_M68K
-	default BUILD_TOOLCHAIN_MINT
+	default BUILD_TOOLCHAIN_MINTELF
 	help
 	  Which of the m68k toolchains to build with.  This selects the
 	  compiler prefix and the flags the toolchain needs; both can still
@@ -290,21 +290,22 @@ choice
 config BUILD_TOOLCHAIN_MINT
 	bool "m68k-atari-mint (cross-mint)"
 	help
-	  Vincent Rivière's cross-mint tools, the toolchain EmuTOS has always
-	  been built with.  It emits a.out objects and already gives external
-	  symbols a leading underscore, so it needs no special flags.
+	  Vincent Rivière's cross-mint tools, the older a.out toolchain
+	  EmuTOS has traditionally been built with.  It emits a.out objects
+	  and already gives external symbols a leading underscore, so it
+	  needs no special flags.
 
 	  http://vincent.riviere.free.fr/soft/m68k-atari-mint/
 
 config BUILD_TOOLCHAIN_MINTELF
 	bool "m68k-atari-mintelf"
 	help
-	  Vincent Rivière's newer ELF based toolchain for MiNT.  Being an ELF
-	  toolchain it is built with the same flags as the bare m68k-elf one
-	  below: -fleading-underscore to match the hand written assembler,
-	  --register-prefix-optional to let it write d0 rather than %d0, and
-	  -DELF_TOOLCHAIN for the parts of the sources and of emutos.ld that
-	  differ between a.out and ELF.
+	  Vincent Rivière's newer ELF based toolchain for MiNT, the default.
+	  Being an ELF toolchain it is built with the same flags as the bare
+	  m68k-elf one below: -fleading-underscore to match the hand written
+	  assembler, --register-prefix-optional to let it write d0 rather
+	  than %d0, and -DELF_TOOLCHAIN for the parts of the sources and of
+	  emutos.ld that differ between a.out and ELF.
 
 	  http://vincent.riviere.free.fr/soft/m68k-atari-mintelf/
 
