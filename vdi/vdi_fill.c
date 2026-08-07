@@ -866,6 +866,14 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
     } else
 #endif
     {
+        /* see the comment in get_start_addr() (vdi_misc.c) -- addr can be
+         * NULL here, and the get_color() dereference below would be
+         * undefined behaviour, not just a wrong answer */
+        if (!addr) {
+            *xleftout = *xrightout = x;
+            return 0;
+        }
+
         addr += linea_vars.v_planes;                   /* start at highest-order bit_plane */
 
         /* get search color and the left and right end */

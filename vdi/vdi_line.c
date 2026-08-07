@@ -1424,8 +1424,10 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
     {
         const vdi_backend_ops *backend = vdi_screen_backend();
 
-        /* see the comment in get_start_addr() (vdi_misc.c) */
-        if (backend)
+        /* see the comment in get_start_addr() (vdi_misc.c); a NULL
+         * draw_line slot means a backend that doesn't implement this
+         * primitive (see the vdi_backend_ops comment in vdi_backend.h) */
+        if (backend && backend->draw_line)
             linea_vars.LN_MASK = backend->draw_line(line, wrt_mode, color, linemask);
     }
 #else
@@ -1466,6 +1468,7 @@ planar_draw_line(const Line * line, WORD wrt_mode, UWORD color, UWORD linemask)
 {
     UWORD *adr;
     const WORD xinc = linea_vars.v_planes; /* positive increase for each x step, planes WORDS */
+    const UWORD start_mask = linemask;     /* linestyle bits, as of entry */
     int plane;
     UWORD msk;
     UWORD x1,y1,x2,y2;          /* the coordinates */
@@ -1512,7 +1515,7 @@ planar_draw_line(const Line * line, WORD wrt_mode, UWORD color, UWORD linemask)
         /* load values fresh for this bitplane */
         addr = adr;             /* initial start address for changes */
         bit = msk;              /* initial bit position in WORD */
-        linemask = linea_vars.LN_MASK;
+        linemask = start_mask;  /* re-run the line style from its starting bit */
 
         if (dx >= dy) {
             e1 = 2*dy;
