@@ -1616,8 +1616,10 @@ char outpath[MAX_STRLEN];
 char tmppath[MAX_STRLEN];
 int rc = 0;
 
-    snprintf(outpath,sizeof(outpath),"%s.%s",name,ext);
-    snprintf(tmppath,sizeof(tmppath),"%s.%s.tmp",name,ext);
+    if (snprintf(outpath,sizeof(outpath),"%s.%s",name,ext) >= (int)sizeof(outpath))
+        return -1;
+    if (snprintf(tmppath,sizeof(tmppath),"%s.%s.tmp",name,ext) >= (int)sizeof(tmppath))
+        return -1;
 
     fp = fopen(tmppath,"wb");
     if (!fp)
@@ -1657,8 +1659,10 @@ DEF_ENTRY *d;
 DEF_EXT entry;
 int i, rc = 0;
 
-    snprintf(outpath,sizeof(outpath),"%s.%s",name,ext);
-    snprintf(tmppath,sizeof(tmppath),"%s.%s.tmp",name,ext);
+    if (snprintf(outpath,sizeof(outpath),"%s.%s",name,ext) >= (int)sizeof(outpath))
+        return -1;
+    if (snprintf(tmppath,sizeof(tmppath),"%s.%s.tmp",name,ext) >= (int)sizeof(tmppath))
+        return -1;
 
     fp = fopen(tmppath,"wb");
     if (!fp)
