@@ -227,12 +227,14 @@ long log_media(BPB *b, int drv)
     f->o_dfd = dfd = &f->o_disk;
     dfd->o_fileln = n * rsiz;           /*  size of file (root dir)     */
     d->d_strtcl = dfd->o_strtcl = 2;    /*  root start pseudo-cluster   */
+    dfd->o_usecnt = 1;                  /*  one OFD uses this DFD       */
 
     fo = dm->m_fatofd;                  /*  OFD for 'fat file'          */
     fo->o_dmd = dm;                     /*  link with DMD               */
     fo->o_dfd = dfd = &fo->o_disk;
     dfd->o_fileln = fs * rsiz;          /*  FAT size                    */
     dfd->o_strtcl = 2;                  /*  FAT start pseudo-cluster    */
+    dfd->o_usecnt = 1;                  /*  one OFD uses this DFD       */
 
     dm->m_recoff[BT_FAT] = (RECNO)b->fatrec;
     dm->m_recoff[BT_ROOT] = (RECNO)b->fatrec + fs;

@@ -6,7 +6,7 @@
 
 **Architecture:** This is a *port*, not a blind `git cherry-pick`. pTOS's `bdos/` diverges from upstream (ARM/ELF-loader maintenance in `kpgmld.c`/`proc.c`, FastRAM 4-byte alignment in `iumem.c`, `le2cpu16`/`le2cpu32` endian conversions in `makopn`, and a restructured `xrw()` in `fsio.c`). Each fix is applied to pTOS's current code; the upstream commit gives the canonical change. Each fix lands as its own commit, ordered low-to-high risk; the tree builds and stays green after every commit.
 
-**Tech Stack:** C90 with GNU extensions (`-std=gnu90'), freestanding (no libc). Kconfig build (`.config` → `obj/autoconf.h`). Cross toolchains: `arm-none-eabi-` (ARM), `m68k-atari-mintelf-` (m68k, default since PR #128). Emulators for verification: QEMU `raspi2b` (ARM), Hatari `ste` (m68k).
+**Tech Stack:** C90 with GNU extensions (`-std=gnu90`), freestanding (no libc). Kconfig build (`.config` → `obj/autoconf.h`). Cross toolchains: `arm-none-eabi-` (ARM), `m68k-atari-mintelf-` (m68k, default since PR #128). Emulators for verification: QEMU `raspi2b` (ARM), Hatari `ste` (m68k).
 
 ## Global Constraints
 

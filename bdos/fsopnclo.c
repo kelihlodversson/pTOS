@@ -288,7 +288,7 @@ static long makopn(FCB *f, DND *dn, int h, int mod)
     dn->d_files = p;
     /*
      * if this file is already open, we copy the DFD pointer; this
-     * ensures that that all OFDs for the same file use the same DFD.
+     * ensures that all OFDs for the same file use the same DFD.
      * otherwise, we use the DFD in the current OFD.
      */
     if (p2)
