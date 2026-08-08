@@ -48,6 +48,17 @@ hatari --tos ptos512k.img --machine ste --memsize 4 --sound off \
 Analyze with python3 + PIL (PIL is installed; `ffmpeg`/`scrot`/`import` are
 NOT). Extract frames and scan for the desktop:
 
+> **False alarms to expect (benign, verified on master and all branches):**
+> - Two `WARN : Bus Error reading at address $4fffff` / `$cc03c3, PC=$e00c20
+>   op_e3=4a10` lines print at every STE boot. They are memory probes in OS
+>   init (`TST.B (A0)`), not a hang. Ignore them.
+> - The `green = 0` result from the OLD step-4 sampling grid (`range(0,460,4)`
+>   × `range(0,640,4)`) was a **false negative**: it only samples pixels with
+>   `x%4==0,y%4==0`, which lands on a single phase of the 2×2 checkerboard and
+>   misses the pattern entirely when it is offset by one pixel. The detector
+>   below uses step 1 for this reason. A `green` count in the tens of thousands
+>   (e.g. ~100k) at step 1 is the normal desktop, not a rendering bug.
+
 ```python
 import re, io
 from PIL import Image
@@ -55,8 +66,12 @@ d = open('/tmp/boot.avi','rb').read()
 starts = [m.start() for m in re.finditer(b'\x89PNG\r\n\x1a\n', d)]
 frames = [d[s:e] for s,e in zip(starts, starts[1:]+[len(d)])]
 # green checkerboard + icons above the bottom status bar = desktop
+# IMPORTANT: sample every pixel (step 1). A coarser grid (e.g. step 4,
+# x%4==0,y%4==0) systematically misses the WHOLE checkerboard when the
+# 2x2 IP_4PATT pattern is phase-offset by one pixel, giving a false
+# 'not booted yet' on a desktop that is fully rendered.
 px = Image.open(io.BytesIO(frames[-1])).convert('RGB').load()
-green = sum(1 for y in range(0,460,4) for x in range(0,640,4)
+green = sum(1 for y in range(0,460) for x in range(0,640)
             if px[x,y][1] > 200 and px[x,y][0] < 80)
 print('desktop' if green > 1000 else 'not booted yet')
 ```
@@ -186,3 +201,5 @@ cat /tmp/qemu.log
 | `qemu-system-m68k` with default CPU | always `-cpu m68020` |
 | `-M virt` without `highmem=off` | use `-M virt,highmem=off` — no >4 GiB access support |
 | Expecting video from virt-arm/virt-m68k | headless; check serial + guest_errors only |
+| Desktop detector says `green = 0` on a booted STE | Sampling grid was phase-sensitive (e.g. step 4) and missed the phase-offset checkerboard; re-check with the step-1 snippet above |
+| STE boot prints two `Bus Error reading at address $4fffff/$cc03c3` warnings | Benign init probes at `PC=$e00c20` (`TST.B (A0)`); present on every boot, ignore |
