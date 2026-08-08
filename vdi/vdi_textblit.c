@@ -724,7 +724,7 @@ static void screen_blit(LOCALVARS *vars)
     vars->sform += offset;
     vars->s_next = -vars->s_next;   /* we draw from the bottom up */
 
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_DISPATCH
     {
         const vdi_backend_ops *backend = vdi_screen_backend();
 
@@ -732,6 +732,9 @@ static void screen_blit(LOCALVARS *vars)
         if (backend)
             backend->text_blit(vars);
     }
+#elif CONF_WITH_VDI_BACKEND_TRUECOLOR
+    /* see the comment in get_start_addr() (vdi_misc.c) */
+    truecolor_text_blit(vars);
 #else
     planar_text_blit(vars);
 #endif
@@ -896,7 +899,7 @@ void text_blt(void)
      *     skewing AND clipping-is-required,
      *      call pre_blit()
      */
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
     if (vdi_screen_is_truecolor() && (vars.STYLE & (F_SKEW|F_THICKEN|F_OUTLINE)))
         need_preblit = TRUE;
     else

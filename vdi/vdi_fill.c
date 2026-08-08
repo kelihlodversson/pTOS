@@ -694,9 +694,9 @@ clipbox(const VwkClip * clip, Rect * rect)
  * NOTE: this is no longer guarded by `#if !CONF_CHUNKY_PIXELS`: besides
  * the non-chunky branches in this file, it is also called unconditionally
  * by planar_get_pixel(), which every configuration links -- either
- * directly, when CONF_WITH_VDI_TRUECOLOR=0 (see the #else branch in
- * pixelread() below), or through the planar VDI backend's ops table,
- * when CONF_WITH_VDI_TRUECOLOR=1 (see vdi_backend_planar.c).
+ * directly, in a planar-only build (see the #else branch in pixelread()
+ * below), or through the planar VDI backend's ops table, when the
+ * dispatcher is built (see vdi_backend_planar.c).
  */
 static UWORD
 get_color (UWORD mask, UWORD * addr)
@@ -731,13 +731,16 @@ get_color (UWORD mask, UWORD * addr)
 static UWORD
 pixelread(const WORD x, const WORD y)
 {
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_DISPATCH
     const vdi_backend_ops *backend = vdi_screen_backend();
 
     /* see the comment in get_start_addr() (vdi_misc.c) */
     if (!backend)
         return 0;
     return backend->get_pixel(x, y);
+#elif CONF_WITH_VDI_BACKEND_TRUECOLOR
+    /* see the comment in get_start_addr() (vdi_misc.c) */
+    return truecolor_get_pixel(x, y);
 #else
     /* see the comment in get_start_addr() (vdi_misc.c) */
     return planar_get_pixel(x, y);
@@ -843,7 +846,7 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
         return 0;
     }
 
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_DISPATCH
     {
         const vdi_backend_ops *backend = vdi_screen_backend();
 
@@ -857,13 +860,18 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
         *xrightout = backend->search_right(clip, x, y, color);
         *xleftout = backend->search_left(clip, x, y, color);
     }
+#elif CONF_WITH_VDI_BACKEND_TRUECOLOR
+    /*
+     * Truecolor-only build: call the packed backend's primitives directly
+     * (see the comment in get_start_addr() in vdi_misc.c).
+     */
+    color = truecolor_get_pixel(x, y);
+    *xrightout = truecolor_search_right(clip, x, y, color);
+    *xleftout = truecolor_search_left(clip, x, y, color);
 #else
     /*
-     * With the truecolor backend compiled out, planar is the only backend
-     * that can ever be selected -- call it directly instead of paying for
-     * vdi_screen_backend()'s self-init check and an indirect call the
-     * result of which is already known at compile time (see the comment
-     * on get_start_addr() in vdi_misc.c).
+     * Planar-only build: call the planar primitives directly (see the
+     * comment on get_start_addr() in vdi_misc.c).
      */
     color = planar_get_pixel(x, y);
     *xrightout = planar_search_right(clip, x, y, color);
@@ -916,7 +924,7 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
         if (search_color >= linea_vars.DEV_TAB[13])
             return;
 
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
         if (vdi_screen_is_truecolor()) {
             /*
              * pixelread()/get_pixel() return the full, unmasked MAP_COL
@@ -1144,7 +1152,7 @@ put_pix(void)
 
     /* convert x,y to start address */
     addr = get_start_addr(x, y);
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_DISPATCH
     /* see the comment in get_start_addr() (vdi_misc.c) -- addr can be NULL
      * here, and comparing a NULL pointer against v_bas_ad below would be
      * undefined behaviour, not just a wrong answer */
@@ -1159,7 +1167,7 @@ put_pix(void)
     }
     color = INTIN[0];           /* device dependent encoded color bits */
 
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_DISPATCH
     {
         const vdi_backend_ops *backend = vdi_screen_backend();
 
@@ -1167,6 +1175,9 @@ put_pix(void)
         if (backend)
             backend->put_pixel(x, y, color);
     }
+#elif CONF_WITH_VDI_BACKEND_TRUECOLOR
+    /* see the comment in get_start_addr() (vdi_misc.c) */
+    truecolor_put_pixel(x, y, color);
 #else
     /* see the comment in get_start_addr() (vdi_misc.c) */
     planar_put_pixel(x, y, color);

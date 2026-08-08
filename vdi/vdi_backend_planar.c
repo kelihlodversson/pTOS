@@ -21,7 +21,7 @@ static void planar_close(Vwk *vwk)
     (void)vwk;
 }
 
-const vdi_backend_ops planar_backend_ops = {
+vdi_backend_ops planar_backend_ops = {
     planar_open,
     planar_close,
     planar_get_start_addr,

@@ -18,7 +18,7 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
     if (mode->layout == SCREEN_LAYOUT_PLANAR && mode->color_model == SCREEN_COLOR_INDEXED)
         return &planar_backend_ops;
 
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
     if (mode->layout == SCREEN_LAYOUT_PACKED
         && mode->color_model == SCREEN_COLOR_TRUECOLOR
         && mode->pixel_format == SCREEN_PIXEL_RGB565)
@@ -26,9 +26,4 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
 #endif
 
     return NULL;
-}
-
-BOOL vdi_screen_is_truecolor(void)
-{
-    return vdi_screen_backend() == &packed_truecolor_backend_ops;
 }

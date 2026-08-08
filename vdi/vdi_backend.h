@@ -15,14 +15,10 @@
 
 /*
  * A NULL slot means "this backend does not implement this primitive" --
- * never "fall back to another backend." A backend is only ever selected
- * for descriptors whose layout/color-model/bpp combination it actually
- * supports (see vdi_backend_select()), so an incompatible fallback can
- * never happen by construction.
- *
- * This table currently covers the primitives converted so far. Follow-up
- * slices (mouse cursor, full palette -- issue #35 parts 2b/5) add their
- * own slots when they actually implement them.
+ * never "fall back to another backend." NULL slots are filled with generic
+ * defaults by vdi_backend_ops_init() (task 2); mandatory slots are
+ * get_start_addr, get_pixel, put_pixel (and get_raw_pixel/put_raw_pixel
+ * once task 2 adds them).
  */
 typedef struct vdi_backend_ops {
     BOOL (*open)(Vwk *vwk);
@@ -58,17 +54,19 @@ typedef struct vdi_backend_ops {
 
 /*
  * This runtime selection machinery -- vdi_backend_select(),
- * vdi_screen_backend(), and the planar backend's ops table -- only exists
- * when CONF_WITH_VDI_TRUECOLOR is set (see vdi/build.mk). Without a
- * truecolor backend, planar is the only backend that could ever be
- * selected, so the primitives that would otherwise dispatch through it
- * (get_start_addr/pixelread/put_pix/draw_rect_common in vdi_misc.c/
- * vdi_fill.c/vdi_line.c) call planar_get_start_addr()/planar_get_pixel()/
- * planar_put_pixel()/planar_fill_rect() directly instead. This matters on
- * cartridge_defconfig, whose 128 KB image has essentially no room for
- * dispatch overhead that can only ever resolve one way.
+ * vdi_screen_backend(), the vdi_backend_ops table, and the per-renderer
+ * tables -- only exists when CONF_WITH_VDI_BACKEND_DISPATCH is set (more
+ * than one renderer enabled, see vdi/build.mk). With exactly one
+ * renderer, the primitives that would otherwise dispatch through it
+ * (get_start_addr/pixelread/put_pix/draw_rect_common/text_blit/raster_copy/
+ * abline/end_pts in vdi_misc.c/vdi_fill.c/vdi_line.c/vdi_textblit.c/
+ * vdi_raster.c) call that renderer's primitives directly instead -- the
+ * planar ones for a planar-only build, the truecolor ones for a
+ * truecolor-only build. This matters on cartridge_defconfig, whose 128 KB
+ * image has essentially no room for dispatch overhead that can only ever
+ * resolve one way.
  */
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_DISPATCH
 
 /*
  * Picks a backend ops table for a mode descriptor, or NULL if no backend
@@ -89,22 +87,33 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode);
  * first. Returns NULL only in the vdi_backend_select() case above, which
  * cannot happen for any of this codebase's drivers today -- but callers
  * still guard against it (see get_start_addr()/pixelread()/put_pix()/
- * draw_rect_common()) since this whole path only builds for MACHINE_RPI,
- * which has none of cartridge_defconfig's byte-budget pressure. There is
- * currently exactly one screen.
+ * draw_rect_common()). There is currently exactly one screen.
  */
 const vdi_backend_ops *vdi_screen_backend(void);
+
+extern vdi_backend_ops planar_backend_ops;
+extern vdi_backend_ops packed_truecolor_backend_ops;
+
+#endif /* CONF_WITH_VDI_BACKEND_DISPATCH */
 
 /*
  * Is the current screen workstation driven by the packed-truecolor
  * backend?  Used by text_blt() to decide whether styled text must go
- * through pre_blit() (the truecolor path cannot apply skew/thicken at
- * blit time the way the planar assembler does).
+ * through pre_blit(), by cpy_raster() for the packed 1-plane MFDB layout,
+ * and by contourfill() for the full MAP_COL palette index.
+ *
+ * Inline so it exists in all three build modes: under dispatch it is the
+ * runtime check against the selected table; with exactly one renderer the
+ * answer is a compile-time constant.
  */
-BOOL vdi_screen_is_truecolor(void);
-
-extern const vdi_backend_ops planar_backend_ops;
-extern const vdi_backend_ops packed_truecolor_backend_ops;
+static inline BOOL vdi_screen_is_truecolor(void)
+{
+#if CONF_WITH_VDI_BACKEND_DISPATCH
+    return vdi_screen_backend() == &packed_truecolor_backend_ops;
+#else
+    return CONF_WITH_VDI_BACKEND_TRUECOLOR;
+#endif
+}
 
 /*
  * Turns a MAP_COL-mapped hardware palette index into the raw RGB565 pixel
@@ -112,8 +121,8 @@ extern const vdi_backend_ops packed_truecolor_backend_ops;
  * that poke pixels directly instead of going through put_pixel()/
  * fill_rect() -- currently the RPi software mouse cursor in vdi_mouse.c.
  */
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
 UWORD vdi_truecolor_pixel_for_index(WORD index);
-
-#endif /* CONF_WITH_VDI_TRUECOLOR */
+#endif
 
 #endif /* VDI_BACKEND_H */

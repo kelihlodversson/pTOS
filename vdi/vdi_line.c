@@ -367,12 +367,15 @@ static BOOL blit_rect_common(const VwkAttrib *attr, const Rect *rect, BLITPARM *
  */
 void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
 {
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_DISPATCH
     const vdi_backend_ops *backend = vdi_screen_backend();
 
     /* see the comment in get_start_addr() (vdi_misc.c) */
     if (backend)
         backend->fill_rect(attr, rect);
+#elif CONF_WITH_VDI_BACKEND_TRUECOLOR
+    /* see the comment in get_start_addr() (vdi_misc.c) */
+    truecolor_fill_rect(attr, rect);
 #else
     /* see the comment in get_start_addr() (vdi_misc.c) */
     planar_fill_rect(attr, rect);
@@ -1420,24 +1423,19 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
         return;
     }
 
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_DISPATCH
     {
         const vdi_backend_ops *backend = vdi_screen_backend();
 
-        /* see the comment in get_start_addr() (vdi_misc.c); a NULL
-         * draw_line slot means a backend that doesn't implement this
-         * primitive (see the vdi_backend_ops comment in vdi_backend.h) */
-        if (backend && backend->draw_line)
+        /* see the comment in get_start_addr() (vdi_misc.c) */
+        if (backend)
             linea_vars.LN_MASK = backend->draw_line(line, wrt_mode, color, linemask);
     }
+#elif CONF_WITH_VDI_BACKEND_TRUECOLOR
+    /* see the comment in get_start_addr() (vdi_misc.c) */
+    linea_vars.LN_MASK = truecolor_draw_line(line, wrt_mode, color, linemask);
 #else
-    /*
-     * With the truecolor backend compiled out, planar is the only backend
-     * that can ever be selected -- call it directly instead of paying for
-     * vdi_screen_backend()'s self-init check and an indirect call the
-     * result of which is already known at compile time (see the comment
-     * on get_start_addr() in vdi_misc.c).
-     */
+    /* see the comment in get_start_addr() (vdi_misc.c) */
     linea_vars.LN_MASK = planar_draw_line(line, wrt_mode, color, linemask);
 #endif
 }

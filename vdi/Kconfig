@@ -26,19 +26,43 @@ config CONF_CHUNKY_PIXELS
 	  disabling this would compile those primitives' bitplane-assuming
 	  bodies against it, corrupting memory instead of just being slow.
 
-config CONF_WITH_VDI_TRUECOLOR
-	bool "Packed truecolor VDI backend" if !MACHINE_RPI
+config CONF_WITH_VDI_BACKEND_PLANAR
+	bool "Planar (indexed bitplane) VDI backend"
+	default y if !MACHINE_RPI
+	default n
+	help
+	  Build the planar (interleaved-bitplane) VDI backend -- the classic
+	  Atari screen layout, and the only renderer needed for any indexed
+	  planar screen (all Atari-family machines, virt-arm, virt-m68k).
+
+	  Disabling it while the truecolor backend is enabled removes the
+	  runtime dispatcher (see vdi/build.mk), which is what a machine whose
+	  descriptor can only report packed truecolor -- like the Raspberry
+	  Pi -- wants.  At least one renderer must stay enabled.
+
+config CONF_WITH_VDI_BACKEND_TRUECOLOR
+	bool "Packed truecolor VDI backend"
 	default y if MACHINE_RPI
 	default n
 	help
-	  Build the packed-truecolor VDI backend (vdi_backend_truecolor.o).
-	  Raspberry Pi is the first machine that uses it -- see issue #35.
+	  Build the packed-truecolor VDI backend (vdi_backend_truecolor.o),
+	  for packed 16bpp RGB565 framebuffers.  Raspberry Pi is the first
+	  machine that uses it -- see issue #35.
 
 	  Raspberry Pi's screen descriptor unconditionally reports a
 	  truecolor mode, so this backend is mandatory there: the prompt is
 	  hidden (and the option forced to y) whenever MACHINE_RPI is set,
-	  since turning it off would leave vdi_backend_select() with no
-	  matching backend and a NULL dereference on the first draw.
+	  since turning it off would leave the RPi screen with no matching
+	  renderer.
+
+config CONF_WITH_VDI_BACKEND_DISPATCH
+	bool
+	default y if CONF_WITH_VDI_BACKEND_PLANAR && CONF_WITH_VDI_BACKEND_TRUECOLOR
+	help
+	  Runtime dispatch between more than one VDI renderer.  Derived: it
+	  is on exactly when two or more renderers are enabled, so a single
+	  renderer build carries no dispatch machinery at all -- the callers
+	  call that one renderer's primitives directly.
 
 config CONF_WITH_LINEA
 	bool "Line-A emulator"

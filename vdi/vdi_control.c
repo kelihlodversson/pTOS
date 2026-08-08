@@ -410,11 +410,10 @@ void vdi_v_opnwk(Vwk * vwk)
     CONTRL->handle = vwk->handle = 1;
     vwk->next_work = NULL;
 
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_DISPATCH
     /*
-     * Without the truecolor backend, planar is the only backend that can
-     * ever be selected, and the four primitives that would otherwise
-     * dispatch through it call it directly (see vdi_misc.c/vdi_fill.c/
+     * With only one renderer, the primitives that would otherwise dispatch
+     * through vwk->backend call it directly (see vdi_misc.c/vdi_fill.c/
      * vdi_line.c) -- there is nothing here for vwk->mode/vwk->backend to
      * usefully drive, so skip computing them.
      */
@@ -467,7 +466,7 @@ void vdi_v_clswk(Vwk * vwk)
 
 void vdi_v_clrwk(Vwk * vwk)
 {
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
     /*
      * memset()-ing raw pixel value 0 means pen 0 in planar/indexed modes
      * (all bitplane bits clear composes to color index 0), but not in a
@@ -558,7 +557,7 @@ void vdi_v_nop(Vwk * vwk)
 }
 
 
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_DISPATCH
 const vdi_backend_ops *vdi_screen_backend(void)
 {
     /*
@@ -571,11 +570,10 @@ const vdi_backend_ops *vdi_screen_backend(void)
      * here so the first Line-A call gets a real backend instead of a
      * NULL one, mirroring what vdi_v_opnwk() itself does.
      *
-     * Only built when CONF_WITH_VDI_TRUECOLOR is set: without it, planar
-     * is the only backend that could ever be selected, so the four
-     * primitives that would dispatch through this call planar directly
-     * instead (see vdi_misc.c/vdi_fill.c/vdi_line.c) and this function
-     * has no caller.
+     * Only built when CONF_WITH_VDI_BACKEND_DISPATCH is set: with one
+     * renderer the primitives that would dispatch through this call that
+     * renderer's primitives directly instead (see vdi_misc.c/vdi_fill.c/
+     * vdi_line.c) and this function has no caller.
      */
     if (!virt_work.backend)
     {
