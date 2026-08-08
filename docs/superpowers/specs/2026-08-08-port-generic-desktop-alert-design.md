@@ -35,10 +35,10 @@ WORD fun_alert_merge(WORD defbut, WORD stnum, ...)
     _Static_assert(sizeof(void *) >= sizeof(long), "incompatible type sizes");
 
     va_start(ap, stnum);
-    sprintf(G.g_work, desktop_str_addr(stnum), va_arg(ap, void *));
+    sprintf(G.g_1text, desktop_str_addr(stnum), va_arg(ap, void *));
     va_end(ap);
 
-    return form_alert(defbut, G.g_work);
+    return form_alert(defbut, G.g_1text);
 }
 ```
 
@@ -59,7 +59,6 @@ upstream's final state.
 | Upstream | Fork | Port action |
 | --- | --- | --- |
 | `desktop_str_addr(stnum)` | `rsrc_gaddr_rom(R_STRING, stnum, (void **)&G.a_alert)` (no `desktop_str_addr` in fork) | keep fork's fetch inside the variadic body |
-| `G.g_work` buffer | `G.g_1text` buffer | keep `G.g_1text` |
 | `deskapp.c` retry loop calls `fun_alert_string(1, STCRTFIL, ...)` | fork `save_to_disk()` (deskapp.c:906) has no retry loop; uses `fun_alert(1, STSVINF)`/`fun_alert(1, STNOINF)` | no change |
 | `deskdir.c` STDELFIL/STDELDIR/STOPFAIL/STCRTFIL `fun_alert_string` calls | fork has no such retry loops | no change |
 | `desksupp.c` STFILENF/STTRINFO/STPRINFO `fun_alert_string` calls | fork lacks these call sites | no change |

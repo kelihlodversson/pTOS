@@ -14,7 +14,7 @@
 - **`int` is 16 bits on m68k** (`-mshort`), 32 bits on ARM. `void *` is 32-bit on both targets.
 - `-Wundef` is on: every `#if` symbol must be defined. Feature symbols are always defined `0`/`1`. Never edit `obj/autoconf.h` / `obj/auto.conf`.
 - The fork has **no `desktop_str_addr`** — always fetch strings with `rsrc_gaddr_rom(R_STRING, stnum, (void **)&G.a_alert)`, exactly as `fun_alert()` at `desk/deskfun.c:68` does.
-- The fork buffers merged alerts into `G.g_1text` (there is no `G.g_work` in this fork).
+- Upstream commit `47f05896` and the fork both buffer merged alerts into `G.g_1text` — no buffer change needed.
 - `_Static_assert` is already used in this fork (`aes/gemaplib.c:203`) and is accepted by the toolchains.
 - `deskdir.c:437` (`STDISKFU`) and `deskdir.c:878` (`STDELDIS`) already call `fun_alert_merge` — do not touch them.
 - Verification before completion: build the affected configs and run the smoke tests listed in each task; report real output, not assumptions.
@@ -75,7 +75,7 @@ WORD fun_alert_merge(WORD defbut, WORD stnum, ...)
 }
 ```
 
-The result must look exactly like the upstream commit's `deskfun.c` hunk, except `rsrc_gaddr_rom(...)` replaces upstream's `desktop_str_addr(stnum)` and `G.g_1text` replaces upstream's `G.g_work`.
+The result must look exactly like the upstream commit's `deskfun.c` hunk, except `rsrc_gaddr_rom(...)` replaces upstream's `desktop_str_addr(stnum)` (the `G.g_1text` buffer is identical upstream and in the fork).
 
 - [x] **Step 3: Replace the three prototypes in deskfun.h**
 
