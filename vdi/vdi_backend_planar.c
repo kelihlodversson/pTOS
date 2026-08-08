@@ -28,4 +28,9 @@ const vdi_backend_ops planar_backend_ops = {
     planar_get_pixel,
     planar_put_pixel,
     planar_fill_rect,
+    planar_text_blit,
+    planar_raster_copy,
+    planar_draw_line,
+    planar_search_right,
+    planar_search_left,
 };

@@ -1382,21 +1382,10 @@ void arrow(Vwk * vwk, Point * point, int count)
  */
 void abline (const Line * line, WORD wrt_mode, UWORD color)
 {
-#if CONF_CHUNKY_PIXELS
-    UBYTE *adr;
-#else
-    UWORD *adr;
-    const WORD xinc = linea_vars.v_planes; /* positive increase for each x step, planes WORDS */
-    int plane;
-    UWORD msk;
-#endif
     UWORD x1,y1,x2,y2;          /* the coordinates */
-    WORD dx;                    /* width of rectangle around line */
-    WORD dy;                    /* height of rectangle around line */
-    WORD yinc;                  /* in/decrease for each y step */
     UWORD linemask = linea_vars.LN_MASK;   /* linestyle bits */
 
-    /* Make x axis always goind up */
+    /* Make x axis always going up */
     if (line->x2 < line->x1) {
         /* if delta x < 0 then draw from point 2 to 1 */
         x1 = line->x2;
@@ -1431,98 +1420,80 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
         return;
     }
 
+#if CONF_WITH_VDI_TRUECOLOR
+    {
+        const vdi_backend_ops *backend = vdi_screen_backend();
+
+        /* see the comment in get_start_addr() (vdi_misc.c); a NULL
+         * draw_line slot means a backend that doesn't implement this
+         * primitive (see the vdi_backend_ops comment in vdi_backend.h) */
+        if (backend && backend->draw_line)
+            linea_vars.LN_MASK = backend->draw_line(line, wrt_mode, color, linemask);
+    }
+#else
+    /*
+     * With the truecolor backend compiled out, planar is the only backend
+     * that can ever be selected -- call it directly instead of paying for
+     * vdi_screen_backend()'s self-init check and an indirect call the
+     * result of which is already known at compile time (see the comment
+     * on get_start_addr() in vdi_misc.c).
+     */
+    linea_vars.LN_MASK = planar_draw_line(line, wrt_mode, color, linemask);
+#endif
+}
+
+/*
+ * planar_draw_line - draw a non-horizontal line on the interleaved-
+ * bitplane screen, one bitplane at a time
+ *
+ * This routine draws a line between (x1,y1) and (x2,y2), modified by the
+ * LN_MASK line style and wrt_mode write mode. abline() above handles
+ * horizontal lines itself (via draw_rect_common()) and never calls this
+ * for one; this routine handles all interleaved-bitplane video
+ * resolutions.
+ *
+ * Note that for line-drawing the background color is always 0 (i.e., there
+ * is no user-settable background color).  This fact allows coding short-cuts
+ * in the implementation of "replace" and "not" modes, resulting in faster
+ * execution of their inner loops.
+ *
+ * This routines is more or less the one from the original VDI asm part.
+ * I could not take bresenham, because pixels were set improperly in
+ * use with the polygone filling part, did look ugly.  (MAD)
+ *
+ * returns: LN_MASK rotated to proper alignment with (x2,y2).
+ */
+UWORD
+planar_draw_line(const Line * line, WORD wrt_mode, UWORD color, UWORD linemask)
+{
+    UWORD *adr;
+    const WORD xinc = linea_vars.v_planes; /* positive increase for each x step, planes WORDS */
+    const UWORD start_mask = linemask;     /* linestyle bits, as of entry */
+    int plane;
+    UWORD msk;
+    UWORD x1,y1,x2,y2;          /* the coordinates */
+    WORD dx;                    /* width of rectangle around line */
+    WORD dy;                    /* height of rectangle around line */
+    WORD yinc;                  /* in/decrease for each y step */
+
+    /* Make x axis always going up */
+    if (line->x2 < line->x1) {
+        /* if delta x < 0 then draw from point 2 to 1 */
+        x1 = line->x2;
+        y1 = line->y2;
+        x2 = line->x1;
+        y2 = line->y1;
+    } else {
+        /* positive, start with first point */
+        x1 = line->x1;
+        y1 = line->y1;
+        x2 = line->x2;
+        y2 = line->y2;
+    }
+
     dx = x2 - x1;
     dy = y2 - y1;
 
-
-#if CONF_CHUNKY_PIXELS
-    /* calculate increase values for x and y to add to actual address */
-    if (dy < 0) {
-        dy = -dy;                       /* make dy absolute */
-        yinc = (LONG) -1 * linea_vars.v_lin_wr;    /* sub one line of bytes */
-    } else {
-        yinc = (LONG) linea_vars.v_lin_wr;         /* add one line of bytes */
-    }
-    adr = (UBYTE*)get_start_addr(x1, y1);       /* init address counter */
-
-    /*
-     * The Bresenham loops below write *adr as a single byte, which is
-     * only correct for 8bpp chunky pixels. On a 16bpp chunky backend
-     * (e.g. MACHINE_RPI truecolor) skip drawing rather than corrupt the
-     * framebuffer with a byte-width write. Mirrors the same accepted
-     * fail-safe gate used by normal_blit() in vdi/arch/arm/vdi_tblit.c.
-     * Horizontal lines (y1 == y2) never reach here: they return early
-     * above via draw_rect_common(), which already dispatches through the
-     * backend's own fill_rect().
-     */
-    if (linea_vars.v_planes != 8)
-        return;
-
-    if (dx >= dy) {
-        WORD  eps = -dx;        /* epsilon */
-        WORD  e1 = 2*dy;        /* epsilon 1 */
-        WORD  e2 = 2*dx;        /* epsilon 2 */
-        WORD  loopcnt;
-
-        for (loopcnt=dx;loopcnt >= 0;loopcnt--) {
-            rolw1(linemask);        /* get next bit of line style */
-            if (linemask&0x0001) {
-                switch (wrt_mode) {
-                case 3:              /* reverse transparent  */
-                    *adr |= (~color & 0xff);
-                    break;
-                case 2:              /* xor */
-                    *adr ^= (color & 0xff);
-                    break;
-                case 1:              /* or */
-                    *adr |= (color & 0xff);
-                    break;
-                case 0:              /* rep */
-                    *adr = (color & 0xff);
-                    break;
-                }
-            }
-            adr++;
-            eps += e1;
-            if (eps >= 0 ) {
-                eps -= e2;
-                adr += yinc;       /* increment y */
-            }
-        }
-    }
-    else
-    {
-        WORD  eps = -dy;        /* epsilon */
-        WORD  e1 = 2*dx;        /* epsilon 1 */
-        WORD  e2 = 2*dy;        /* epsilon 2 */
-        WORD  loopcnt;
-        for (loopcnt=dy;loopcnt >= 0;loopcnt--) {
-            rolw1(linemask);        /* get next bit of line style */
-            if (linemask&0x0001) {
-                switch (wrt_mode) {
-                case 3:              /* reverse transparent  */
-                    *adr |= (~color & 0xff);
-                    break;
-                case 2:              /* xor */
-                    *adr ^= (color & 0xff);
-                    break;
-                case 1:              /* or */
-                    *adr |= (color & 0xff);
-                    break;
-                case 0:              /* rep */
-                    *adr = (color & 0xff);
-                    break;
-                }
-            }
-            adr += yinc;
-            eps += e1;
-            if (eps >= 0 ) {
-                eps -= e2;
-                adr++;
-            }
-        }
-    }
-#else
     /* calculate increase values for x and y to add to actual address */
     if (dy < 0) {
         dy = -dy;                       /* make dy absolute */
@@ -1530,7 +1501,7 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
     } else {
         yinc = (LONG) linea_vars.v_lin_wr / 2;     /* add one line of words */
     }
-    adr = get_start_addr(x1, y1);       /* init address counter */
+    adr = planar_get_start_addr(x1, y1);       /* init address counter */
     msk = 0x8000 >> (x1&0xf);           /* initial bit position in WORD */
 
     for (plane = linea_vars.v_planes-1; plane >= 0; plane-- ) {
@@ -1544,7 +1515,7 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
         /* load values fresh for this bitplane */
         addr = adr;             /* initial start address for changes */
         bit = msk;              /* initial bit position in WORD */
-        linemask = linea_vars.LN_MASK;
+        linemask = start_mask;  /* re-run the line style from its starting bit */
 
         if (dx >= dy) {
             e1 = 2*dy;
@@ -1782,9 +1753,8 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
         adr++;
         color >>= 1;    /* shift color index: next plane */
     }
-#endif
 
-    linea_vars.LN_MASK = linemask;
+    return linemask;
 }
 
 

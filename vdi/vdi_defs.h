@@ -89,6 +89,49 @@ struct vdi_backend_ops;   /* forward declaration -- full definition in vdi_backe
 #define F_OUTLINE   16
 #define F_SHADOW    32
 
+/* Write modes used by the line-A text engine (MD_* minus one). */
+#define WM_REPLACE      (MD_REPLACE-1)
+#define WM_TRANS        (MD_TRANS-1)
+#define WM_XOR          (MD_XOR-1)
+#define WM_ERASE        (MD_ERASE-1)
+
+#define OUTLINE_THICKNESS   1   /* outline thickness in pixels (vdi_text.c uses it too) */
+
+/*
+ * Text scratch buffer sizing, calculated from the built-in 8x16 font
+ * metrics exactly as the original assembler code did (see EmuTOS commits
+ * 6d833b0b/e7fa27c8/7d157b8a and the (now deleted) size-calc comments in
+ * vdi/arch/m68k/vdi_tblit.S).  SCRATCHBUF_OFFSET is the size of each of the
+ * two half-buffers used for rotation/outlining/effects; the buffer must
+ * hold two of them (rotation can use either half, outline needs both).
+ * Keep the #error guard so a future larger font cannot silently overflow.
+ */
+#define FORM_HT         16          /* form height of the 8x16 font */
+#define MX_CEL_WD       8           /* maximum cell width */
+#define SKEW_OFFS       (1+7)       /* left_offset + right_offset of the 8x16 font */
+
+#define CEL2_WW     ((((2*(SKEW_OFFS+MX_CEL_WD))+3+15)/16)*2)
+#define CEL2_WH     ((2*(SKEW_OFFS+MX_CEL_WD))+2)
+#define CEL2_HH     ((2*FORM_HT)+2)
+#define CEL2_HW     ((((2*FORM_HT)+3+15)/16)*2)
+#define CEL2_SZ0    (CEL2_WW*CEL2_HH)
+#define CEL2_SZ9    (CEL2_WH*CEL2_HW)
+#if CEL2_SZ0 >= CEL2_SZ9
+# define CEL2_SIZ   (CEL2_SZ0)
+#else
+# define CEL2_SIZ   (CEL2_SZ9)
+#endif
+#if CEL2_WW >= CEL2_HW
+# define OUT_ADD    (CEL2_WW+2)
+#else
+# define OUT_ADD    (CEL2_HW+2)
+#endif
+#define SCRATCHBUF_OFFSET   (CEL2_SIZ+OUT_ADD)
+#define SCRATCHBUF_SIZE     (2*212)         /* 424 bytes */
+#if SCRATCHBUF_SIZE < (2*SCRATCHBUF_OFFSET)
+# error SCRATCHBUF_SIZE is too small for the built-in 8x16 font
+#endif
+
 
 /*
  * Small subset of Vwk data, used by draw_rect_common to hide VDI/Line-A
@@ -250,6 +293,9 @@ void planar_put_pixel(WORD x, WORD y, UWORD color);
 void planar_fill_rect(const VwkAttrib *attr, const Rect *rect);
 void clc_flit (const VwkAttrib * attr, const VwkClip * clipper, const Point * point, WORD y, int vectors);
 void abline (const Line * line, const WORD wrt_mode, UWORD color);
+UWORD planar_draw_line(const Line * line, WORD wrt_mode, UWORD color, UWORD linemask);
+WORD planar_search_right(const VwkClip * clip, WORD x, WORD y, UWORD search_col);
+WORD planar_search_left(const VwkClip * clip, WORD x, WORD y, UWORD search_col);
 void contourfill(const VwkAttrib * attr, const VwkClip *clip);
 
 /* initialization of subsystems */

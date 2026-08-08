@@ -56,9 +56,17 @@ config CONF_WITH_VDI_EXTENSIONS
 config CONF_RASPI_MOUSE_CURSOR
 	bool "Use the Raspberry Pi hardware mouse cursor"
 	depends on MACHINE_RPI
+	default y if TARGET_RPI1 || TARGET_RPI2 || TARGET_RPI3
 	default n
 	help
 	  Draw the mouse pointer using the hardware cursor of the VideoCore
 	  GPU instead of drawing it into the framebuffer.
+
+	  Enabled by default on real Pi 1-3 hardware, where it works. RPi4's
+	  mailbox/GPU differences haven't been verified yet, so it defaults
+	  off there (see issue #131). QEMU does not emulate the cursor
+	  mailbox property tags; when they fail at runtime, the software
+	  cursor is used instead regardless of this setting, so it is safe
+	  to leave enabled for QEMU-targeted configs too.
 
 endmenu

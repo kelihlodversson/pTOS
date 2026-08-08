@@ -33,22 +33,24 @@ static ULONG last_sprite_checksum;
 static ULONG pointer_image[16][16];
 
 static ULONG raspi_cur_calc_checksum(Mcdb *sprite);
-static void raspi_hw_cur_set_sprite(Mcdb *sprite);
+static BOOL raspi_hw_cur_set_sprite(Mcdb *sprite);
 
-void raspi_hw_cur_display(Mcdb *sprite, WORD x, WORD y)
+BOOL raspi_hw_cur_display(Mcdb *sprite, WORD x, WORD y)
 {
     ULONG checksum = raspi_cur_calc_checksum(sprite);
+    prop_tag_cursor_state_t tag;
+
     if (checksum != last_sprite_checksum)
     {
-        raspi_hw_cur_set_sprite(sprite);
+        if (!raspi_hw_cur_set_sprite(sprite))
+            return FALSE;
         last_sprite_checksum = checksum;
     }
-    prop_tag_cursor_state_t tag;
     tag.enable = 1;
     tag.pos_x = x;
     tag.pos_y = y;
     tag.flags = CURSOR_FLAGS_FB_COORDS;
-    raspi_prop_get_tag(PROPTAG_SET_CURSOR_STATE, &tag, sizeof(prop_tag_cursor_state_t), 4*4);
+    return raspi_prop_get_tag(PROPTAG_SET_CURSOR_STATE, &tag, sizeof(prop_tag_cursor_state_t), 4*4);
 }
 
 
@@ -64,7 +66,7 @@ static ULONG raspi_cur_calc_checksum(Mcdb *sprite)
     return res;
 }
 
-static void raspi_hw_cur_set_sprite(Mcdb *sprite)
+static BOOL raspi_hw_cur_set_sprite(Mcdb *sprite)
 {
     int x,y;
     ULONG fg = raspi_dflt_palette[sprite->fg_col] | 0xff000000;
@@ -72,6 +74,8 @@ static void raspi_hw_cur_set_sprite(Mcdb *sprite)
     ULONG clear = 0x00000000;
     UWORD* mask = sprite->maskdata;
     UWORD* data = sprite->maskdata+1;
+    prop_tag_cursor_info_t tag;
+
     for(y=0; y<16; y++, mask += 2, data += 2)
     {
         UWORD pixel_mask = 0x8000;
@@ -81,10 +85,9 @@ static void raspi_hw_cur_set_sprite(Mcdb *sprite)
         }
     }
 
-    prop_tag_cursor_info_t tag;
     tag.width = tag.height = 16;
     tag.pixels = phys_to_bus((ULONG)pointer_image);
     tag.hotspot_x = sprite->xhot;
     tag.hotspot_y = sprite->yhot;
-    raspi_prop_get_tag(PROPTAG_SET_CURSOR_INFO, &tag, sizeof(prop_tag_cursor_info_t), 6*4);
+    return raspi_prop_get_tag(PROPTAG_SET_CURSOR_INFO, &tag, sizeof(prop_tag_cursor_info_t), 6*4);
 }
