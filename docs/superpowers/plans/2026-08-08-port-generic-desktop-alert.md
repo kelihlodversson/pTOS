@@ -37,7 +37,7 @@ Delivers the whole port: `deskfun.c`/`deskfun.h` consolidation and the two `desk
 - Consumes: existing `rsrc_gaddr_rom` (from `aesbind.h`/`deskbind.h`, already used at `deskfun.c:68`), `form_alert()`, `G.a_alert`, `G.g_1text`, `filename_start()`, `sprintf`.
 - Produces: single prototype `WORD fun_alert_merge(WORD defbut, WORD stnum, ...);` in `desk/deskfun.h`; variadic definition in `desk/deskfun.c`. Removes `fun_alert_long` and `fun_alert_string` entirely (no other references remain after the `desksupp.c` renames).
 
-- [ ] **Step 1: Add `#include <stdarg.h>` to deskfun.c**
+- [x] **Step 1: Add `#include <stdarg.h>` to deskfun.c**
 
 In `desk/deskfun.c`, add `#include <stdarg.h>` immediately after the `/* #define ENABLE_KDEBUG */` block, before `#include "config.h"` (line 24):
 
@@ -48,7 +48,7 @@ In `desk/deskfun.c`, add `#include <stdarg.h>` immediately after the `/* #define
 
 The `#include <stdarg.h>` line is placed directly above the existing `#include "config.h"`.
 
-- [ ] **Step 2: Replace the three alert helpers in deskfun.c**
+- [x] **Step 2: Replace the three alert helpers in deskfun.c**
 
 Replace the whole block from `desk/deskfun.c:73` (the comment `/*\n *  Issue an alert after merging in an optional character variable\n */`) through line 110 (`#endif` closing `CONF_WITH_DESKTOP_SHORTCUTS`) with:
 
@@ -77,7 +77,7 @@ WORD fun_alert_merge(WORD defbut, WORD stnum, ...)
 
 The result must look exactly like the upstream commit's `deskfun.c` hunk, except `rsrc_gaddr_rom(...)` replaces upstream's `desktop_str_addr(stnum)` and `G.g_1text` replaces upstream's `G.g_work`.
 
-- [ ] **Step 3: Replace the three prototypes in deskfun.h**
+- [x] **Step 3: Replace the three prototypes in deskfun.h**
 
 In `desk/deskfun.h`, replace lines 20-29 (the three prototypes plus both `#if` guard blocks) with a single prototype:
 
@@ -88,7 +88,7 @@ WORD fun_alert_merge(WORD defbut, WORD stnum, ...);
 
 The `fun_alert` line stays; `fun_alert_merge` becomes variadic; the `#if CONF_WITH_FORMAT` / `#if CONF_WITH_DESKTOP_SHORTCUTS` blocks around `fun_alert_long` / `fun_alert_string` are deleted.
 
-- [ ] **Step 4: Rename the two desksupp.c call sites**
+- [x] **Step 4: Rename the two desksupp.c call sites**
 
 In `desk/desksupp.c`:
 
@@ -97,7 +97,7 @@ In `desk/desksupp.c`:
 
 Do not change anything else on those lines or around them.
 
-- [ ] **Step 5: Grep for stale references**
+- [x] **Step 5: Grep for stale references**
 
 Run:
 
@@ -107,7 +107,7 @@ grep -rn "fun_alert_string\|fun_alert_long" --include="*.c" --include="*.h" . | 
 
 Expected: no output (exit status 1). If any hits remain outside `obj/`, the renames were missed.
 
-- [ ] **Step 6: Build atari512 and rpi2**
+- [x] **Step 6: Build atari512 and rpi2**
 
 ```sh
 make atari512_defconfig && make clean && make
@@ -116,7 +116,7 @@ make rpi2_defconfig && make clean && make
 
 Expected: both build successfully with no warnings related to `deskfun` / `stdarg` / `fun_alert`. `rpi2` exercises the ARM toolchain; `atari512` exercises m68k with the guarded `CONF_WITH_FORMAT` caller (`STFMTINF`) compiled in.
 
-- [ ] **Step 7: Build with the guards toggled (atari512)**
+- [x] **Step 7: Build with the guards toggled (atari512)**
 
 Prove the merged function is unconditional — build with `CONF_WITH_DESKTOP_SHORTCUTS` and `CONF_WITH_FORMAT` both off:
 
@@ -128,7 +128,7 @@ make clean && make
 
 Expected: builds clean. The guards now only gate the *callers* (the `STRMVLOC` block at `desksupp.c:306-…` and the format dialog at `desksupp.c:1147-…`), while the variadic `fun_alert_merge` itself always compiles. `.config` uses Kconfiglib format; commenting out the `=y` lines with the `# CONF_WITH_... is not set` form is the correct way to disable a symbol (there is no `scripts/config` tool in this fork).
 
-- [ ] **Step 8: Restore the config and run gitready**
+- [x] **Step 8: Restore the config and run gitready**
 
 ```sh
 make atari512_defconfig
@@ -137,7 +137,7 @@ make gitready
 
 Expected: `make gitready` reports no whitespace/format problems.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add desk/deskfun.c desk/deskfun.h desk/desksupp.c
@@ -158,7 +158,7 @@ Delivers the spec's verification section: all five configs build with the expect
 - Consumes: the variadic `fun_alert_merge` from Task 1 and the renamed callers.
 - Produces: verified evidence for the PR that the port builds and boots on planar (m68k + ARM) and truecolor (m68k dispatch + ARM) configurations.
 
-- [ ] **Step 1: Build the full matrix from a clean tree**
+- [x] **Step 1: Build the full matrix from a clean tree**
 
 ```sh
 make distclean
@@ -171,23 +171,23 @@ make rpi2-sparse_defconfig && make clean && make
 
 Expected: all five build cleanly. `atari512` / `virt-arm` build the planar backend only (no `obj/vdi_backend*.o`); `rpi2` builds truecolor only (`obj/vdi_backend_truecolor.o`); `atari512-dispatch` / `rpi2-sparse` build both plus `obj/vdi_backend.o`.
 
-- [ ] **Step 2: Hatari boot atari512**
+- [x] **Step 2: Hatari boot atari512**
 
 Follow `.claude/skills/ptos-smoketest/SKILL.md` for the atari512 Hatari invocation (after rebuilding `ptos512k.img` — the matrix leaves `rpi2-sparse`'s image as the last built, so run `make atari512_defconfig && make clean && make` first if `ptos512k.img` is absent).
 
 Expected: GEM desktop reachable; all-pixel checkerboard counts `green > 40000 && white > 50000`. The known pre-existing `WARN : Bus Error reading at $4fffff/$cc03c3, PC=$e00c20` may appear — it is noise, identical on stock builds.
 
-- [ ] **Step 3: Hatari boot atari512-dispatch**
+- [x] **Step 3: Hatari boot atari512-dispatch**
 
 Run the atari512-dispatch Hatari invocation from the smoketest skill. Expected: desktop reachable (same checkerboard pass signal).
 
-- [ ] **Step 4: QEMU boot rpi2-sparse and virt-arm**
+- [x] **Step 4: QEMU boot rpi2-sparse and virt-arm**
 
 Rebuild each config (`make rpi2-sparse_defconfig && make clean && make`, then `make virt-arm_defconfig && make clean && make`) and boot under QEMU per the smoketest skill.
 
 Expected: both reach the GEM desktop (`rc=124` after the timeout is the expected way to stop a healthy boot); `guest_errors` log empty or containing only pre-existing, unrelated messages.
 
-- [ ] **Step 5: Confirm no stale references in the final tree**
+- [x] **Step 5: Confirm no stale references in the final tree**
 
 ```sh
 grep -rn "fun_alert_string\|fun_alert_long" --include="*.c" --include="*.h" . | grep -v "\.git\|obj/"
@@ -195,7 +195,7 @@ grep -rn "fun_alert_string\|fun_alert_long" --include="*.c" --include="*.h" . | 
 
 Expected: no output.
 
-- [ ] **Step 6: Final gitready and commit**
+- [x] **Step 6: Final gitready and commit**
 
 ```sh
 make atari512_defconfig
