@@ -76,6 +76,41 @@ green = sum(1 for y in range(0,460) for x in range(0,640)
 print('desktop' if green > 1000 else 'not booted yet')
 ```
 
+### Cartridge smoke test (ptoscart.img)
+
+`cartridge_defconfig` builds a **128 KB Atari diagnostic cartridge**
+(`ptoscart.img`, `TARGET_CART`), mapped at `0x00fa0000` with the diagnostic
+magic `0xfa52235f`. It is a diagnostic image, NOT a full OS: it is limited to
+128 KB, so **the AES and the desktop cannot be included** (`Kconfig.image`).
+
+- **It needs a separate machine TOS ROM.** Hatari requires `--tos <file>` and
+  pTOS's own ROM images cannot run the cartridge: pTOS has cartridge detection
+  compiled out (`CONF_WITH_CARTRIDGE` is fixed to 0), so a pTOS `--tos` never
+  checks for `$fa52235f` and the cartridge is ignored. Use a real Atari TOS
+  (e.g. TOS 2.06 for the STE) as the machine TOS:
+  ```sh
+  make cartridge_defconfig && make
+  hatari --tos /path/to/tos206us.img --cartridge ptoscart.img \
+    --machine ste --memsize 4 --sound off \
+    --avirecord --avi-vcodec png --avi-file /tmp/cart.avi --run-vbls 900
+  ```
+- **It does NOT boot to the desktop** — the GEM desktop does not exist in this
+  image. The green-checkerboard detector above must NOT be used as the pass
+  signal. Instead, the cartridge runs its diagnostics and renders a **text
+  screen** (light-grey `238,238,238` background with black character glyphs).
+  Pass = the last frame shows thousands of dark text pixels:
+  ```python
+  px = Image.open(io.BytesIO(frames[-1])).convert('RGB').load()
+  dark = sum(1 for y in range(0,588) for x in range(0,832)
+             if px[x,y][0] < 100)
+  print('diag text screen' if dark > 1000 else 'not rendered')
+  ```
+  (Measured on a TOS 2.06/STE boot: ~3-8k dark pixels on the stable text
+  screen. Frame 0 is the uniform-black power-on state — ignore it; the text
+  is up by ~VBL 300. The `WARN : Bus Error reading at address $4fffff,
+  PC=$fa05ca op_e3=4a10` line is the cartridge probing past the 4 MB RAM —
+  benign, ignore.)
+
 ### Measured boot times (atari512 image, this machine)
 
 | Machine | Desktop at | Wall (AVI, ~10 fps) |
@@ -203,3 +238,5 @@ cat /tmp/qemu.log
 | Expecting video from virt-arm/virt-m68k | headless; check serial + guest_errors only |
 | Desktop detector says `green = 0` on a booted STE | Sampling grid was phase-sensitive (e.g. step 4) and missed the phase-offset checkerboard; re-check with the step-1 snippet above |
 | STE boot prints two `Bus Error reading at address $4fffff/$cc03c3` warnings | Benign init probes at `PC=$e00c20` (`TST.B (A0)`); present on every boot, ignore |
+| Testing `ptoscart.img` as the `--tos` image | It is a cartridge, not a TOS: pass it via `--cartridge` and supply a real Atari TOS ROM with `--tos` (pTOS ROMs have cartridge detection compiled out) |
+| Expecting a desktop from `ptoscart.img` | The 128 KB cartridge excludes the AES/desktop; pass signal is the rendered diagnostic text screen, not the checkerboard |
