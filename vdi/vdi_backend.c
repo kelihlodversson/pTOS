@@ -101,7 +101,7 @@ static void default_text_blit(LOCALVARS *vars)
 {
     const vdi_backend_ops *ops = vdi_screen_backend();
     UBYTE *src, *p;
-    UWORD src_mask, mask;
+    UWORD src_mask, mask, src_word;
     WORD w, h, x, y;
 
     /*
@@ -118,20 +118,22 @@ static void default_text_blit(LOCALVARS *vars)
         mask = src_mask;
 
         for (w = vars->width; w > 0; w--) {
+            src_word = get_src_word(p);
+
             switch (vars->WRT_MODE) {
             case WM_REPLACE:
-                ops->put_pixel(x, y, (get_src_word(p) & mask) ? (UWORD)vars->forecol : 0);
+                ops->put_pixel(x, y, (src_word & mask) ? (UWORD)vars->forecol : 0);
                 break;
             case WM_TRANS:
-                if (get_src_word(p) & mask)
+                if (src_word & mask)
                     ops->put_pixel(x, y, (UWORD)vars->forecol);
                 break;
             case WM_ERASE:
-                if (!(get_src_word(p) & mask))
+                if (!(src_word & mask))
                     ops->put_pixel(x, y, (UWORD)vars->forecol);
                 break;
             case WM_XOR:
-                if (get_src_word(p) & mask)
+                if (src_word & mask)
                     ops->put_raw_pixel(x, y, ops->get_raw_pixel(x, y) ^ 0xffff);
                 break;
             }
