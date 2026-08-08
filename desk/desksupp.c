@@ -341,7 +341,7 @@ static void remove_locate_shortcut(WORD curr)
     if (!pa)        /* can't happen */
         return;
 
-    rc = fun_alert_string(1, STRMVLOC, filename_start(pa->a_pdata));
+    rc = fun_alert_merge(1, STRMVLOC, filename_start(pa->a_pdata));
     switch(rc)
     {
     case 1:             /* Remove */
@@ -1407,7 +1407,7 @@ void do_format(void)
             drive = (tree[FMT_DRVA].ob_state & SELECTED) ? 0 : 1;
             refresh_drive('A'+drive);           /* update relevant windows */
             dos_space(drive + 1, &total, &avail);
-            if (fun_alert_long(2, STFMTINF, avail) == 2)
+            if (fun_alert_merge(2, STFMTINF, avail) == 2)
                 rc = -1;
         }
         tree[FMT_BAR].ob_width = max_width;     /* reset to starting values */
