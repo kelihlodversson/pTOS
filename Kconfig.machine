@@ -139,7 +139,7 @@ menu "Processor features"
 config CONF_WITH_ADVANCED_CPU
 	bool "Support for 68010-68060 CPUs"
 	depends on ARCH_M68K_CLASSIC
-	default n if TARGET_192
+	default n if TARGET_192 || TARGET_CART
 	default y
 	help
 	  Include the code needed to run on CPUs more advanced than the

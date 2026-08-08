@@ -19,7 +19,7 @@ config CONF_STRAM_SIZE
 
 config CONF_WITH_ALT_RAM
 	bool "Alternate RAM support"
-	default n if TARGET_192
+	default n if TARGET_192 || TARGET_CART
 	default y
 	help
 	  Support RAM outside of the 14 MB ST-RAM area, made available to
@@ -85,13 +85,13 @@ config CONF_WITH_ST_MMU
 config CONF_WITH_TT_MMU
 	bool "TT MMU support"
 	depends on CONF_ATARI_HARDWARE
-	default n if TARGET_192 || MACHINE_FIREBEE
+	default n if TARGET_192 || TARGET_CART || MACHINE_FIREBEE
 	default y
 
 config CONF_WITH_FALCON_MMU
 	bool "Falcon MMU support"
 	depends on CONF_ATARI_HARDWARE
-	default n if TARGET_192
+	default n if TARGET_192 || TARGET_CART
 	default y
 
 config CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
@@ -127,7 +127,7 @@ config CONF_WITH_SCSI
 
 config CONF_WITH_IDE
 	bool "IDE support"
-	default n if TARGET_192 || MACHINE_RPI
+	default n if TARGET_192 || TARGET_CART || MACHINE_RPI
 	default y
 	help
 	  Support for the IDE interface found on the Falcon, on the Amiga
@@ -183,7 +183,7 @@ config CONF_WITH_FDC
 
 config CONF_WITH_XHDI
 	bool "XHDI support"
-	default n if TARGET_192 || MACHINE_RPI
+	default n if TARGET_192 || TARGET_CART || MACHINE_RPI
 	default y
 	help
 	  Provide the XHDI cookie and the XHDI entry point, which give
@@ -262,7 +262,7 @@ config CONF_WITH_TT_MFP
 config CONF_WITH_SCC
 	bool "SCC 85C30 support"
 	depends on CONF_ATARI_HARDWARE
-	default n if TARGET_192 || MACHINE_ARANYM || MACHINE_FIREBEE
+	default n if TARGET_192 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
 	default y
 	help
 	  The Serial Communication Controller provides the serial ports of
@@ -351,13 +351,13 @@ config CONF_WITH_FLEXCAN
 config CONF_WITH_VME
 	bool "Mega STe VME bus support"
 	depends on CONF_ATARI_HARDWARE
-	default n if TARGET_192 || MACHINE_ARANYM
+	default n if TARGET_192 || TARGET_CART || MACHINE_ARANYM
 	default y
 
 config CONF_WITH_DIP_SWITCHES
 	bool "STe/TT/Falcon DIP switches support"
 	depends on CONF_ATARI_HARDWARE
-	default n if TARGET_192
+	default n if TARGET_192 || TARGET_CART
 	default y
 
 endmenu
@@ -375,7 +375,7 @@ config CONF_WITH_ATARI_VIDEO
 config CONF_WITH_STE_SHIFTER
 	bool "STe Shifter support"
 	depends on CONF_WITH_ATARI_VIDEO
-	default n if TARGET_192 || MACHINE_ARANYM || MACHINE_FIREBEE
+	default n if TARGET_192 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
 	default y
 
 config CONF_WITH_TT_SHIFTER
@@ -387,7 +387,7 @@ config CONF_WITH_TT_SHIFTER
 config CONF_WITH_VIDEL
 	bool "Falcon Videl support"
 	depends on CONF_WITH_ATARI_VIDEO
-	default n if TARGET_192
+	default n if TARGET_192 || TARGET_CART
 	default y
 
 config CONF_WITH_BLITTER
@@ -425,7 +425,7 @@ config CONF_WITH_YM2149
 config CONF_WITH_DMASOUND
 	bool "STe/TT/Falcon DMA sound support"
 	depends on CONF_ATARI_HARDWARE
-	default n if TARGET_192
+	default n if TARGET_192 || TARGET_CART
 	default y
 
 config CONF_WITH_XBIOS_SOUND
@@ -466,7 +466,7 @@ config CONF_WITH_ICDRTC
 config CONF_WITH_NVRAM
 	bool "NVRAM support"
 	depends on CONF_ATARI_HARDWARE
-	default n if TARGET_192
+	default n if TARGET_192 || TARGET_CART
 	default y
 
 endmenu
