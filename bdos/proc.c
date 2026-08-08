@@ -290,6 +290,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     env_ptr = alloc_env(hdr.h01_flags, env);
     if (env_ptr == NULL) {
         KDEBUG(("BDOS xexec: no memory for environment\n"));
+        xclose(fh);
         return ENSMEM;
     }
 
@@ -301,6 +302,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     if (p == NULL) {
         KDEBUG(("BDOS xexec: no memory for TPA\n"));
         xmfree(env_ptr);
+        xclose(fh);
         return ENSMEM;
     }
 
@@ -326,9 +328,10 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
         KDEBUG(("Error and longjmp in xexec()!\n"));
 
-        /* free any memory allocated yet */
+        /* free any memory allocated so far & close the file */
         xmfree(cur_p->p_env);
         xmfree(cur_p);
+        xclose(fh);
 
         /* we still have to jump back to bdosmain.c so that the proper error
          * handling can occur.
