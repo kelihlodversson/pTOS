@@ -15,10 +15,11 @@
 
 /*
  * A NULL slot means "this backend does not implement this primitive" --
- * never "fall back to another backend." NULL slots are filled with generic
- * defaults by vdi_backend_ops_init() (task 2); mandatory slots are
- * get_start_addr, get_pixel, put_pixel (and get_raw_pixel/put_raw_pixel
- * once task 2 adds them).
+ * never "fall back to another backend." The dispatcher's
+ * vdi_backend_ops_init() (see below) fills every NULL slot with a
+ * renderer-agnostic default built only on the mandatory primitives
+ * (get_start_addr, get_pixel, put_pixel, get_raw_pixel, put_raw_pixel),
+ * which must be non-NULL.  open/close default to no-ops.
  */
 typedef struct vdi_backend_ops {
     BOOL (*open)(Vwk *vwk);
@@ -27,6 +28,16 @@ typedef struct vdi_backend_ops {
     UWORD *(*get_start_addr)(WORD x, WORD y);
     UWORD (*get_pixel)(WORD x, WORD y);
     void (*put_pixel)(WORD x, WORD y, UWORD color);
+    /*
+     * Raw framebuffer word access, bypassing the palette-index mapping of
+     * get_pixel()/put_pixel().  Mandatory: the generic defaults need it to
+     * express bitwise operations (XOR write mode, the opaque boolean-raster-
+     * op path of raster_copy), which a palette index cannot represent.  On
+     * the planar backend the raw value is the composed plane index, i.e.
+     * get_pixel()/put_pixel() themselves.
+     */
+    UWORD (*get_raw_pixel)(WORD x, WORD y);
+    void (*put_raw_pixel)(WORD x, WORD y, UWORD raw);
     void (*fill_rect)(const VwkAttrib *attr, const Rect *rect);
     void (*text_blit)(LOCALVARS *vars);
     void (*raster_copy)(struct raster_t *raster, struct blit_frame *info);
@@ -44,9 +55,8 @@ typedef struct vdi_backend_ops {
      * pixel matching search_col (a MAP_COL-mapped hardware palette index,
      * like get_pixel()'s return value) before the first mismatch or the
      * clip edge -- used by contourfill()'s seed-fill scan (see end_pts()
-     * in vdi_fill.c). Mandatory, like get_pixel()/put_pixel(): a backend
-     * that implements get_pixel() can always answer this too, by
-     * construction, so callers don't need to guard the slot itself.
+     * in vdi_fill.c).  A backend that does not provide its own gets the
+     * generic default (see vdi_backend_ops_init()).
      */
     WORD (*search_right)(const VwkClip *clip, WORD x, WORD y, UWORD search_col);
     WORD (*search_left)(const VwkClip *clip, WORD x, WORD y, UWORD search_col);
@@ -93,6 +103,13 @@ const vdi_backend_ops *vdi_screen_backend(void);
 
 extern vdi_backend_ops planar_backend_ops;
 extern vdi_backend_ops packed_truecolor_backend_ops;
+
+/*
+ * Installs a generic default into every NULL slot of a backend ops table
+ * (see the defaults in vdi_backend.c).  Mandatory slots must already be
+ * non-NULL.  Idempotent: safe to call on every vdi_backend_select().
+ */
+void vdi_backend_ops_init(vdi_backend_ops *ops);
 
 #endif /* CONF_WITH_VDI_BACKEND_DISPATCH */
 

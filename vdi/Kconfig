@@ -64,6 +64,19 @@ config CONF_WITH_VDI_BACKEND_DISPATCH
 	  renderer build carries no dispatch machinery at all -- the callers
 	  call that one renderer's primitives directly.
 
+config CONF_VDI_SPARSE_TABLE
+	bool "Exercise the generic backend defaults"
+	depends on CONF_WITH_VDI_BACKEND_DISPATCH
+	default n
+	help
+	  For testing issue #138's generic dispatch-table defaults: make the
+	  packed-truecolor backend leave its optional ops slots NULL so the
+	  dispatcher's init function fills them with the generic default
+	  implementations, which are then exercised against the real RGB565
+	  framebuffer.  Only meaningful when both renderers are enabled
+	  (otherwise there is no dispatcher).  Do not enable in production
+	  images.
+
 config CONF_WITH_LINEA
 	bool "Line-A emulator"
 	default n if MACHINE_RPI

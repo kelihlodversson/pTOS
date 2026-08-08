@@ -767,6 +767,16 @@ WORD truecolor_search_left(const VwkClip *clip, WORD x, WORD y, UWORD search_col
     return x + 1;       /* output x coord + 1 to endxleft. */
 }
 
+static UWORD truecolor_get_raw_pixel(WORD x, WORD y)
+{
+    return *truecolor_get_start_addr(x, y);
+}
+
+static void truecolor_put_raw_pixel(WORD x, WORD y, UWORD raw)
+{
+    *truecolor_get_start_addr(x, y) = raw;
+}
+
 static BOOL truecolor_open(Vwk *vwk)
 {
     (void)vwk;
@@ -784,10 +794,19 @@ vdi_backend_ops packed_truecolor_backend_ops = {
     truecolor_get_start_addr,
     truecolor_get_pixel,
     truecolor_put_pixel,
+    truecolor_get_raw_pixel,
+    truecolor_put_raw_pixel,
+#if CONF_VDI_SPARSE_TABLE
+    /* The optional slots are left NULL so vdi_backend_ops_init() fills them
+     * with the generic defaults -- this exercises issue #138's defaults
+     * against the real RGB565 framebuffer. Never in production images. */
+    NULL, NULL, NULL, NULL, NULL, NULL,
+#else
     truecolor_fill_rect,
     truecolor_text_blit,
     truecolor_raster_copy,
     truecolor_draw_line,
     truecolor_search_right,
     truecolor_search_left,
+#endif
 };

@@ -982,7 +982,8 @@ cpy_raster(struct raster_t *raster, struct blit_frame *info)
     {
         const vdi_backend_ops *backend = vdi_screen_backend();
 
-        /* see the comment in get_start_addr() (vdi_misc.c) */
+        /* see the comment in get_start_addr() (vdi_misc.c); every optional
+         * slot is filled with a generic default by vdi_backend_ops_init() */
         if (backend)
             backend->raster_copy(raster, info);
     }
