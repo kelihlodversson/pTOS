@@ -63,7 +63,7 @@ Buy-laid blast-radius facts (verified, current master `77b7c31b`):
 
 **Reference:** orphan pTOS commit `7266b4f5` already carried this exact one-line adaptation; reproduce it verbatim.
 
-- [ ] **Step 1: Inspect the current site**
+- [x] **Step 1: Inspect the current site**
 
 ```sh
 grep -n "if we start with drive spec" bdos/fsdir.c
@@ -74,7 +74,7 @@ Expect line ~1672:
     if (n[1] == ':')            /*  if we start with drive spec */
 ```
 
-- [ ] **Step 2: Apply the one-line guard**
+- [x] **Step 2: Apply the one-line guard**
 
 Change that line to:
 ```c
@@ -83,7 +83,7 @@ Change that line to:
 
 (The bug: `dcrack(const char **np)` dereferences `n[1]` without checking `n[0]`. When the caller passes an empty string immediately followed elsewhere by `:`, `n[0]` is `'\0'`, the old test still read `n[1]`, mis-parsing a phantom drive spec.)
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 ```sh
 make gitready
@@ -92,7 +92,7 @@ make rpi2_defconfig && make
 ```
 All green, `... is ready` printed for both.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```
 dcrack: guard against empty pathname followed by a colon
@@ -116,7 +116,7 @@ Steps: `git add bdos/fsdir.c && git commit && git push`.
 
 **Reference:** orphan pTOS commit `673f688c` already carried this exact 6-line adaptation; reproduce verbatim. (Issue #109's paraphrase inverts the direction; the patch is unambiguous — it *adds* the disallow.)
 
-- [ ] **Step 1: Inspect the current site**
+- [x] **Step 1: Inspect the current site**
 
 ```sh
 grep -n "if (!f).*old path doesn't exist" bdos/fsdir.c
@@ -130,7 +130,7 @@ Expect ~line 916–918:
     /* at this point:
 ```
 
-- [ ] **Step 2: Insert the 6-line guard between the two**
+- [x] **Step 2: Insert the 6-line guard between the two**
 
 Between the `if (!f) return EFILNF;` and the `/* at this point:` comment, insert:
 ```c
@@ -142,7 +142,7 @@ Between the `if (!f) return EFILNF;` and the `/* at this point:` comment, insert
 
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 ```sh
 make gitready
@@ -150,7 +150,7 @@ make atari512_defconfig && make
 make rpi2_defconfig && make
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```
 xrename: disallow renaming a read-only file
@@ -175,7 +175,7 @@ Refs #109
 
 **Reference:** orphan pTOS commit `8eb432e2` already adapted this to pTOS's `void *lastcp` signature; reproduce verbatim. (Skip `1e6758ef` — duplicate of this fix.)
 
-- [ ] **Step 1: Locate the existing `cp >= bbase` test**
+- [x] **Step 1: Locate the existing `cp >= bbase` test**
 
 ```sh
 grep -n "if (cp >= bbase)" bdos/kpgmld.c
@@ -187,7 +187,7 @@ Expect ~line 313, inside `pgfix01()`:
             *((long *)cp) += tbase;
 ```
 
-- [ ] **Step 2: Add the odd-offset test immediately after the `bbase` test**
+- [x] **Step 2: Add the odd-offset test immediately after the `bbase` test**
 
 ```c
             if (cp >= bbase)
@@ -199,7 +199,7 @@ Expect ~line 313, inside `pgfix01()`:
 
 (The bug: a PRG with a corrupted relocation table containing an odd offset crashed with an address error on 68000 — `*((long *)cp)` requires 2-byte alignment — exactly like Atari TOS, instead of returning `EPLFMT`.)
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 ```sh
 make gitready
@@ -208,7 +208,7 @@ make rpi2_defconfig && make
 ```
 (`LONG` is a `portab.h` type; no new suffixes needed. `((LONG)cp)` widens the pointer for the `& 1` mask, safe on both `int`-16 and `int`-32 arches.)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```
 kpgmld: return EPLFMT for an odd relocation-table offset
@@ -232,7 +232,7 @@ Refs #109
 **Files:**
 - Modify: `bdos/fsopnclo.c` (function `ixcreat`, currently ~line 161)
 
-- [ ] **Step 1: Locate the bare `ixdel` call**
+- [x] **Step 1: Locate the bare `ixdel` call**
 
 ```sh
 grep -n "ixdel(dn,f,pos);" bdos/fsopnclo.c
@@ -247,7 +247,7 @@ Expect ~line 161, inside `ixcreat()`:
 ```
 (Note pTOS uses `pos -= 32;` here, whereas upstream used `pos -= sizeof(FCB);` — both compile to the same value since `sizeof(FCB) == 32`; do not change this line.)
 
-- [ ] **Step 2: Check the return value of ixdel**
+- [x] **Step 2: Check the return value of ixdel**
 
 ```c
         pos -= 32;
@@ -260,7 +260,7 @@ Expect ~line 161, inside `ixcreat()`:
 
 (The bug: `Fcreate()` over an existing file called `ixdel()` to delete it, but did not check that the delete worked. If the file was open in another process the delete could fail, yet `Fcreate()` continued and could create a second file with the same name.)
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 ```sh
 make gitready
@@ -268,7 +268,7 @@ make atari512_defconfig && make
 make rpi2_defconfig && make
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```
 ixcreat: check ixdel() return when overwriting an existing file
@@ -294,7 +294,7 @@ Refs #109
 
 **Why this is gated:** upstream `d4757152` fixes the "first time through" sentinel `if (last == 0L) last = p->o_currec;` in the *upstream* helper `xrw_recs()`. pTOS's `fsio.c` was **restructured**: the single `static long xrw(int wrtflg, OFD *p, long len, char *ubufr)` (line 315) absorbed the body and REPLACED the sentinel with a contiguity test `if ((!rc) && (p->o_currec == last + nrecs))` (line 415). The textual fix upstream replaces (`if (last == 0L)`) **does not exist in pTOS**. The bug may have been restructured away. Confirm before porting.
 
-- [ ] **Step 1: Confirm the structural divergence**
+- [x] **Step 1: Confirm the structural divergence**
 
 ```sh
 grep -n "if (last == 0L)" bdos/fsio.c                   # expect: NO match
@@ -302,7 +302,7 @@ grep -n "xrw\|last = nrecs = 0L\|p->o_currec == last + nrecs" bdos/fsio.c
 ```
 Expected: `xrw` at line 315, `last = nrecs = 0L;` at line 403, `p->o_currec == last + nrecs` at line 415. No `if (last == 0L)` sentinel.
 
-- [ ] **Step 2: Read pTOS's whole-cluster loop**
+- [x] **Step 2: Read pTOS's whole-cluster loop**
 
 `bdos/fsio.c`:
 ```c
@@ -335,7 +335,7 @@ mulio:
 ```
 Trace the first-file-empty-FS write: a new file's first allocated record is non-zero (it sits after the root dir region), so on the first pass `p->o_currec != 0`, while `last == 0`, `nrecs == 0` ⇒ the contiguity test `(p->o_currec == 0)` is **false** ⇒ the `else` branch runs with `nrecs == 0` ⇒ `usrio(wrtflg,0,last=0,...)` writes zero records (harmless) ⇒ `last = p->o_currec`. The buggy sentinel upstream was that `last == 0L` re-fired on the next pass; pTOS has no such re-firing sentinel.
 
-- [ ] **Step 3: Decide**
+- [x] **Step 3: Decide**
 
 If the trace confirms pTOS's restructured loop does **not** reintroduce the `last == 0L` sentinel, **SKIP the port** — record the decision so a future re-sync against upstream is unambiguous:
 
@@ -358,7 +358,7 @@ If a runtime check is wanted before committing to skipping: build `atari512`, ru
 
 If, instead, re-examination shows the bug DOES reproduce, apply the conceptual fix: add a `BOOL first_time;` local in `xrw`'s block (line 326 declarations), set `first_time = TRUE;` after `last = nrecs = 0L;` (line 403), and guard the `last = p->o_currec;` at line 432 accordingly so that an initial `o_currec` of 0 cannot be re-clobbered. Do NOT port upstream's `xrw_recs` structure back.
 
-- [ ] **Step 4: Verify (whichever branch)**
+- [x] **Step 4: Verify (whichever branch)**
 
 ```sh
 make gitready
@@ -376,7 +376,7 @@ make rpi2_defconfig && make
 
 **Why pTOS differs from upstream:** upstream also refactored `kpgmhdrld()`'s signature (it moved the `xopen()` into `xexec()`). **pTOS does NOT need that refactor**: pTOS's `kpgmhdrld()` already self-closes the handle on its own error paths (the `fail: xclose(*h);` block at `bdos/kpgmld.c` ~106, present for the ELF/PRG dispatch), and pTOS's `kpgmld()` already closes `h` unconditionally before returning (`bdos/kpgmld.c:134`). The leak is therefore confined to the three `xexec()` paths that run **between** `kpgmhdrld()`'s success and the `kpgmld()` call. So this task touches ONLY `bdos/proc.c` — no `kpgmld.c` signature change, no `proc.h` change.
 
-- [ ] **Step 1: Re-read the three leak sites**
+- [x] **Step 1: Re-read the three leak sites**
 
 ```sh
 sed -n '283,350p' bdos/proc.c
@@ -418,7 +418,7 @@ The relevant structure in pTOS's `xexec()`:
 ```
 (The `return rc;` after `kpgmhdrld` does NOT leak: pTOS's `kpgmhdrld` has the `fail: xclose(*h)` label and returns through it on every error. The post-`kpgmld` path does NOT leak: `kpgmld` does `xclose(h)` at line 134. Only the three intermediate paths leak.)
 
-- [ ] **Step 2: Insert `xclose(fh);` on the three paths**
+- [x] **Step 2: Insert `xclose(fh);` on the three paths**
 
 In `xexec()`, at the `alloc_env` failure (Leak 1):
 ```c
@@ -453,7 +453,7 @@ In the `longjmp` handler (Leak 3), before `longjmp`:
 
 No change to `kpgmhdrld()`'s signature, no change to `kpgmld.c`, no change to `proc.h`.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 ```sh
 make gitready
@@ -462,7 +462,7 @@ make rpi2_defconfig && make
 ```
 (Both the PRG and ELF load paths now close `fh` on every post-`kpgmhdrld` failure, because the ELF path goes through the same `xexec()` body — the leak fix applies to both program formats for free.)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```
 xexec: close the file handle on the post-kpgmhdrld load-error paths
@@ -493,7 +493,7 @@ Refs #109
 
 **What pTOS adds that must survive:** `shrinkit()` rounds `newlen` up to a multiple of 4 bytes "to keep alignment; alignment on long boundaries is faster in FastRAM" (lines 234–238). Upstream's `e65ae149` does not have this rounding. KEEP IT. Upstream's mechanism: place the freed portion's MD on the **allocated** list, update `m->m_length`, then call `freeit(f, mp)` which coalesces — instead of inserting directly into the free list (which breaks coalescing when `Mshrink()` is called repeatedly on the same block, leaving 2+ adjacent MDs describing adjacent free memory).
 
-- [ ] **Step 1: Re-read the current `shrinkit()`**
+- [x] **Step 1: Re-read the current `shrinkit()`**
 
 ```sh
 sed -n '231,273p' bdos/iumem.c
@@ -537,7 +537,7 @@ WORD shrinkit(MD *m, MPB *mp, LONG newlen)
 }
 ```
 
-- [ ] **Step 2: Apply the fix, keeping the rounding**
+- [x] **Step 2: Apply the fix, keeping the rounding**
 
 Change `MD *f, *p, *q;` to `MD *f;`. Keep the rounding block (`newlen = (newlen + 3) & ~3;`) untouched. Replace the "Add it to the free list" insertion block with pushing onto the allocated list, and call `freeit()` after updating `m->m_length`:
 
@@ -587,7 +587,7 @@ WORD shrinkit(MD *m, MPB *mp, LONG newlen)
 
 (`freeit(MD *m, MPB *mp)` already exists in this file, `bdos/iumem.c:147`. It removes `m` from the allocated list and places it on the free list with neighbor coalescing — exactly what upstream's `e65ae149` relies on. Verify with `grep -n "void freeit" bdos/iumem.c`.)
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 ```sh
 make gitready
@@ -595,7 +595,7 @@ make atari512_defconfig && make
 make rpi2_defconfig && make
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```
 shrinkit: coalesce the freed portion through freeit()
@@ -622,7 +622,7 @@ Refs #109
 
 **Resolved (no rewrite needed):** pTOS's `xclose()` standard-handle branch has the **same structure** as upstream's pre-fix code. The fix maps 1:1 — change `if (h <= 0)` to `if (h < 0)` AND add a guard against a standard handle Fforce'd to another standard handle.
 
-- [ ] **Step 1: Re-read the branch**
+- [x] **Step 1: Re-read the branch**
 
 ```sh
 sed -n '391,430p' bdos/fsopnclo.c
@@ -642,7 +642,7 @@ Current:
     }
 ```
 
-- [ ] **Step 2: Change the test and add the standard-handle guard**
+- [x] **Step 2: Change the test and add the standard-handle guard**
 
 ```c
     if ((h0 = h) < NUMSTD)
@@ -662,7 +662,7 @@ Current:
 
 (The bug: `if (h <= 0)` treated "Fforce'd to stdin (h == 0)" as "mapped to a character device, done", short-circuiting the close. Handle 0 is a valid standard handle. The new `if (h < 0)` keeps "mapped to a character device" returning `E_OK`, while `h < NUMSTD` catches a standard handle Fforce'd to *another* standard handle — illegal, returns `EIHNDL` — and only `h >= NUMSTD` falls through to close the non-standard handle below.)
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 ```sh
 make gitready
@@ -670,7 +670,7 @@ make atari512_defconfig && make
 make rpi2_defconfig && make
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```
 xclose: fix off-by-one range test for standard handles
@@ -706,7 +706,7 @@ Refs #109
 
 **What pTOS adds that must survive:** `makopn()` writes the start cluster and file length via `le2cpu16(f->f_clust)` and `le2cpu32(f->f_fileln)` — pTOS's endian conversions. Upstream's pre-fix `makopn` used `swpw(p->o_strtcl); swpl(p->o_fileln);`. When porting the `makopn` hunk, keep the `le2cpu16`/`le2cpu32` form, redirecting into the DFD.
 
-- [ ] **Step 1: Apply the `fs.h` keystone**
+- [x] **Step 1: Apply the `fs.h` keystone**
 
 In `bdos/fs.h`, **before** the `/* OFD - open file descriptor */` comment (currently ~line 113), insert the `DFD` typedef and `O_DIRTY` macro exactly as upstream:
 ```c
@@ -745,7 +745,7 @@ Then in `struct _ofd` (currently ~lines 119–140), make these field changes:
 
 Confirm the 64-byte `FOLDRnnn.PRG` OFD constraint comment stays (upstream kept it; the embedded `DFD o_disk` still fits — upstream verified this in production).
 
-- [ ] **Step 2: Update `fsdir.c` call sites**
+- [x] **Step 2: Update `fsdir.c` call sites**
 
 `git show 1c120131 -- bdos/fsdir.c` is the canonical reference. The transformations:
 - **`xmkdir()`**: add `DFD *dfd;` local; replace `f0->o_td`→`f0->o_dfd->o_td`, `f0->o_strtcl`→`f0->o_dfd->o_strtcl`; for the `f->o_dirfil->o_td`/`o_strtcl` accesses, go through `f->o_dirfil->o_dfd`; the `f->o_flag |= O_DIRTY;` line becomes `f->o_disk.o_flag |= O_DIRTY;` (upstream comment: "must set flag in f, not f0!").
@@ -754,18 +754,18 @@ Confirm the 64-byte `FOLDRnnn.PRG` OFD constraint comment stays (upstream kept i
   - **Ordering note:** Task 2 already added the `FA_RO` guard higher up in `xrename()`. The Task 9a hunks are further *down* in the function and do not overlap. Verify by re-reading the function before editing.
 - **`makofd()`**: add `DFD *dfd;`; set `dfd = &f->o_disk; f->o_dfd = dfd;` early; replace `f->o_strtcl = p->d_strtcl;`, `f->o_fileln = DIR_FILE_LENGTH;`, `f->o_td.date/time = p->d_td.*` with `dfd->...` assignments; set `dfd->o_usecnt = 1;`. Keep `f->o_dirfil`, `f->o_dnode`, `f->o_dirbyt`, `f->o_dmd` untouched.
 
-- [ ] **Step 3: Update `fsdrive.c` `log_media()`**
+- [x] **Step 3: Update `fsdrive.c` `log_media()`**
 
 `git show 1c120131 -- bdos/fsdrive.c`. The transformations:
 - Add `DFD *dfd;` local.
 - For the root-dir OFD `f`: set `f->o_dfd = dfd = &f->o_disk;`; replace `f->o_fileln = n * rsiz;` → `dfd->o_fileln = n * rsiz;`; replace `d->d_strtcl = f->o_strtcl = 2;` → `d->d_strtcl = dfd->o_strtcl = 2;`.
 - For the FAT OFD `fo`: set `fo->o_dfd = dfd = &fo->o_disk;` (reuse `dfd`); replace `fo->o_strtcl = 2;` and the later `fo->o_fileln = fs * rsiz;` with `dfd->o_strtcl = 2;` and `dfd->o_fileln = fs * rsiz;`. (Upstream folds the trailing `fo->o_fileln = fs * rsiz;` up into the `dfd` block.)
 
-- [ ] **Step 4: Update `fsfat.c` `nextcl()`**
+- [x] **Step 4: Update `fsfat.c` `nextcl()`**
 
 `git show 1c120131 -- bdos/fsfat.c`. Add `DFD *dfd = p->o_dfd;` at the top of `nextcl`; replace `p->o_strtcl` → `dfd->o_strtcl` (the `cl2 = (p->o_strtcl ? p->o_strtcl : ENDOFCHAIN)` and the `p->o_strtcl = cl2; p->o_flag |= O_DIRTY;` branches) with `dfd->o_strtcl` / `dfd->o_flag`.
 
-- [ ] **Step 5: Update `fsio.c` sites**
+- [x] **Step 5: Update `fsio.c` sites**
 
 `git show 1c120131 -- bdos/fsio.c`. The transformations:
 - **`addit()`**: add `DFD *dfd = p->o_dfd;`; replace `p->o_fileln` and `p->o_flag` with `dfd->o_fileln` and `dfd->o_flag`.
@@ -775,7 +775,7 @@ Confirm the 64-byte `FOLDRnnn.PRG` OFD constraint comment stays (upstream kept i
 - **`ixread()`**: `p->o_fileln - p->o_bytnum` → `p->o_dfd->o_fileln - p->o_bytnum`.
 - **`xrw()` (Task 5 restructured function)**: `grep -n "o_fileln\|o_strtcl\|o_td\|o_flag\|o_usecnt" bdos/fsio.c` after the named-site changes and fix any remaining references inside `xrw()` (it may reference `p->o_fileln` for `addit`/eof-like checks — confirm none remain).
 
-- [ ] **Step 6: Update `fsopnclo.c` sites**
+- [x] **Step 6: Update `fsopnclo.c` sites**
 
 `git show 1c120131 -- bdos/fsopnclo.c`. The transformations:
 - **`ixcreat()`**: `getofd(f2)->o_flag |= O_DIRTY;` → `getofd(f2)->o_dfd->o_flag |= O_DIRTY;`.
@@ -798,7 +798,7 @@ Confirm the 64-byte `FOLDRnnn.PRG` OFD constraint comment stays (upstream kept i
   (Do NOT introduce `swpw(dfd->o_strtcl); swpl(dfd->o_fileln);` — that is upstream's form; pTOS uses the explicit `le2cpu16/32` conversions, which must survive.)
 - **`ixclose()`**: add `DFD *dfd = fd->o_dfd;` local; replace `fd->o_flag` (the `O_DIRTY` test, the clearing) with `dfd->o_flag`; replace the `memcpy(&fcb->f_td,&fd->o_td,10)` with `memcpy(&fcb->f_td,&dfd->o_td,10)`.
 
-- [ ] **Step 7: Whole-tree sweep for stragglers**
+- [x] **Step 7: Whole-tree sweep for stragglers**
 
 ```sh
 grep -rnE "\->o_flag|\->o_td|\->o_strtcl|\->o_fileln|\->o_usecnt" bdos/ include/ bios/
@@ -806,7 +806,7 @@ grep -rn "O_DIRTY" bdos/ include/ bios/ | grep define
 ```
 After the edits, `o_flag`/`o_td`/`o_strtcl`/`o_fileln` should only appear as `o_dfd->...` or `o_disk....` references; `O_DIRTY` should have exactly one `#define`. (Blast radius is verified contained, so no external sites should surface.)
 
-- [ ] **Step 8: Verify**
+- [x] **Step 8: Verify**
 
 ```sh
 make gitready
@@ -815,7 +815,7 @@ make rpi2_defconfig && make
 ```
 If a reference was missed, the build fails with "no member named `o_fileln`" (or `o_td`/`o_strtcl`/`o_flag`/`o_usecnt`); fix the missed site, rebuild.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```
 fs: reorganise the OFD with an embedded DFD structure
@@ -847,7 +847,7 @@ Refs #109
 
 **Why this builds on 9a:** `f73f452b` assumes `DFD`, `o_dfd`, `o_disk`, and `o_usecnt`-in-DFD all exist (now in place from 9a). The fix: a file opened multiple times shares a *single* DFD via `o_dfd`; the first-opened OFD is the "base", holding the embedded `o_disk`; later opens point `o_dfd` at the base's DFD and bump `o_usecnt`. On close, decrement; free the non-base OFD immediately, and free the base OFD only when the count hits zero. This is exactly the lost-cluster bug: each handle acquired free clusters independently, and the chain written to disk reflected only the last handle closed — sharing one DFD keeps a single authoritative copy of strtcl/fileln so cluster allocation is visible to all handles.
 
-- [ ] **Step 1: Update the DFD doc comment in `fs.h`**
+- [x] **Step 1: Update the DFD doc comment in `fs.h`**
 
 `git show f73f452b -- bdos/fs.h`. Replace the "a future change will ensure that ..." paragraph (just added in Task 9a) with the post-fix wording:
 ```c
@@ -865,7 +865,7 @@ Refs #109
  */
 ```
 
-- [ ] **Step 2: Rewrite `makopn()`'s DFD setup to share**
+- [x] **Step 2: Rewrite `makopn()`'s DFD setup to share**
 
 `git show f73f452b -- bdos/fsopnclo.c` is the canonical reference. In `makopn()`, the block Task 9a added:
 ```c
@@ -915,7 +915,7 @@ is restructured to:
 ```
 (Still keep pTOS's `le2cpu16`/`le2cpu32`, not `swpw`/`swpl`. The key behavioural change: when the file is already open (`p2` non-NULL), the new OFD's `o_dfd` now points at `p2->o_dfd` (the base's DFD) instead of copying the data into its own `o_disk`. `o_usecnt` reflects the count.)
 
-- [ ] **Step 3: Refcount-aware `sftdel()`**
+- [x] **Step 3: Refcount-aware `sftdel()`**
 
 In `sftdel()` (currently ~line 360), the post-9a body is:
 ```c
@@ -970,7 +970,7 @@ static void sftdel(FTAB *sftp)
 ```
 (`offsetof` needs `<stddef.h>`; pTOS freestanding headers provide it — confirm `grep -rn "offsetof" bdos/ include/ | head` shows it already used elsewhere in the tree, or the build's include path supplies it. Upstream uses `offsetof` here, so the build supports it.)
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 ```sh
 make gitready
@@ -978,7 +978,7 @@ make atari512_defconfig && make
 make rpi2_defconfig && make
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```
 fs: share the DFD across OFDs of the same file (fix lost clusters)
@@ -1009,14 +1009,14 @@ Refs #109
 
 This task exercises the GEMDOS paths the PR changed: file open/close/rename/create (`fsopnclo.c`, `fsdir.c`), program load (`proc.c`), memory shrink (`iumem.c`), cluster allocation (`fsio.c`, `fsfat.c`). Load the ptos-smoketest skill for the verified invocations.
 
-- [ ] **Step 1: Build the m68k image for the smoke test**
+- [x] **Step 1: Build the m68k image for the smoke test**
 
 ```sh
 make atari512_defconfig && make
 ```
 Confirm `ptos512k.img is ready`.
 
-- [ ] **Step 2: Hatari STE boot test**
+- [x] **Step 2: Hatari STE boot test**
 
 ```sh
 hatari --tos ptos512k.img --machine ste --memsize 4 --sound off \
@@ -1024,7 +1024,7 @@ hatari --tos ptos512k.img --machine ste --memsize 4 --sound off \
 ```
 Pass signal (from the skill): the GEM desktop renders — EmuTOS default background `IP_4PATT` (white+green 2×2 checkerboard) plus floppy/hard-drive icons. Analyze the last AVI frame with the skill's PIL snippet (extract PNG frames, count green checkerboard pixels: `> 1000 ⇒ desktop ⇒ booted`). **Do NOT use Hatari debugger breakpoints** (unreliable per the skill).
 
-- [ ] **Step 3: Optional — QEMU raspi2 boot (ARM)**
+- [x] **Step 3: Optional — QEMU raspi2 boot (ARM)**
 
 ```sh
 make rpi2_defconfig && make
@@ -1032,11 +1032,11 @@ timeout 30 qemu-system-arm -M raspi2b -bios kernel7.img -d guest_errors -D /tmp/
 ```
 Pass signal: `AES: EMUDESK: appl_init()` then `AES: EMUDESK: evnt_multi()` on serial; `guest_errors` log empty except the benign `bcm2835_systmr_write: read-only ofs 0x4`.
 
-- [ ] **Step 4: Restore the user's preferred `.config`**
+- [x] **Step 4: Restore the user's preferred `.config`**
 
 The per-commit loop repeatedly ran `make atari512_defconfig` / `make rpi2_defconfig`. Restore whatever `.config` the user had before this session (if `make distclean` would lose something wanted, ask). `.config` is untracked (gitignored), so nothing in the PR is affected.
 
-- [ ] **Step 5: Mark the PR ready for review**
+- [x] **Step 5: Mark the PR ready for review**
 
 ```sh
 gh pr ready 130
