@@ -179,27 +179,33 @@ void timer_exit(void)
 
 UWORD * get_start_addr(const WORD x, const WORD y)
 {
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_DISPATCH
     const vdi_backend_ops *backend = vdi_screen_backend();
 
     /*
-     * Unlike the CONF_WITH_VDI_TRUECOLOR=0 case below, this path builds
-     * only for machines that carry the runtime-selection machinery (i.e.
-     * MACHINE_RPI), which has none of cartridge_defconfig's byte budget
-     * pressure -- so guard against vdi_backend_select() returning NULL for
-     * a descriptor no backend supports, rather than dereferencing it.
+     * Unlike the direct-call cases below, this path builds only for
+     * configurations with more than one renderer, which have none of
+     * cartridge_defconfig's byte-budget pressure -- so guard against
+     * vdi_backend_select() returning NULL for a descriptor no backend
+     * supports, rather than dereferencing it.
      */
     if (!backend)
         return NULL;
     return backend->get_start_addr(x, y);
+#elif CONF_WITH_VDI_BACKEND_TRUECOLOR
+    /*
+     * Truecolor-only build: call the packed backend's address arithmetic
+     * directly -- vdi_screen_backend() and its self-init check have no
+     * caller left, so the machinery is compiled out entirely.
+     */
+    return truecolor_get_start_addr(x, y);
 #else
     /*
-     * With the truecolor backend compiled out, planar is the only backend
-     * that can ever be selected -- call it directly instead of paying for
-     * vdi_screen_backend()'s self-init check and an indirect call the
-     * result of which is already known at compile time. This matters on
-     * cartridge_defconfig, whose 128 KB image has essentially no spare
-     * room for dispatch overhead that can only ever resolve one way.
+     * Planar-only build: call the planar address arithmetic directly
+     * instead of paying for an indirect call the result of which is
+     * already known at compile time. This matters on cartridge_defconfig,
+     * whose 128 KB image has essentially no spare room for dispatch
+     * overhead that can only ever resolve one way.
      */
     return planar_get_start_addr(x, y);
 #endif

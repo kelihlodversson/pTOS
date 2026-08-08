@@ -21,12 +21,14 @@ static void planar_close(Vwk *vwk)
     (void)vwk;
 }
 
-const vdi_backend_ops planar_backend_ops = {
+vdi_backend_ops planar_backend_ops = {
     planar_open,
     planar_close,
     planar_get_start_addr,
     planar_get_pixel,
     planar_put_pixel,
+    planar_get_pixel,       /* get_raw_pixel: a planar pixel's raw value is its composed colour index */
+    planar_put_pixel,       /* put_raw_pixel: same for writing */
     planar_fill_rect,
     planar_text_blit,
     planar_raster_copy,

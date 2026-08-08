@@ -291,6 +291,15 @@ UWORD *planar_get_start_addr(WORD x, WORD y);
 UWORD planar_get_pixel(WORD x, WORD y);
 void planar_put_pixel(WORD x, WORD y, UWORD color);
 void planar_fill_rect(const VwkAttrib *attr, const Rect *rect);
+/* truecolor backend primitives (vdi_backend_truecolor.c) -- callable
+ * directly in truecolor-only builds, where the dispatcher is compiled out */
+UWORD *truecolor_get_start_addr(WORD x, WORD y);
+UWORD truecolor_get_pixel(WORD x, WORD y);
+void truecolor_put_pixel(WORD x, WORD y, UWORD color);
+void truecolor_fill_rect(const VwkAttrib *attr, const Rect *rect);
+UWORD truecolor_draw_line(const Line *line, WORD wrt_mode, UWORD color, UWORD linemask);
+WORD truecolor_search_right(const VwkClip *clip, WORD x, WORD y, UWORD search_col);
+WORD truecolor_search_left(const VwkClip *clip, WORD x, WORD y, UWORD search_col);
 void clc_flit (const VwkAttrib * attr, const VwkClip * clipper, const Point * point, WORD y, int vectors);
 void abline (const Line * line, const WORD wrt_mode, UWORD color);
 UWORD planar_draw_line(const Line * line, WORD wrt_mode, UWORD color, UWORD linemask);

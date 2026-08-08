@@ -807,7 +807,7 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
     else {
         /* source form is screen */
         info->s_form = (UWORD*) v_bas_ad;
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
         /*
          * The packed-truecolor backend has no bitplanes: each screen word
          * is already one whole pixel, so the "next word" step is 2 bytes
@@ -833,7 +833,7 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
     else {
         /* destination form is screen */
         info->d_form = (UWORD*) v_bas_ad;
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
         if (vdi_screen_is_truecolor()) {
             info->plane_ct = 1;
             info->d_nxwd = 2;
@@ -861,7 +861,7 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
     info->s_nxpl = 2;           /* next plane offset (source) */
     info->d_nxpl = 2;           /* next plane offset (destination) */
 
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
     /* the packed-truecolor backend's single conceptual plane above is
      * always valid -- the check below only applies to the planar
      * per-plane blitter. */
@@ -978,24 +978,20 @@ cpy_raster(struct raster_t *raster, struct blit_frame *info)
         }
     }
 
-#if CONF_WITH_VDI_TRUECOLOR
+#if CONF_WITH_VDI_BACKEND_DISPATCH
     {
         const vdi_backend_ops *backend = vdi_screen_backend();
 
-        /* see the comment in get_start_addr() (vdi_misc.c); a NULL
-         * raster_copy slot means a backend that doesn't implement this
-         * primitive (see the vdi_backend_ops comment in vdi_backend.h) */
-        if (backend && backend->raster_copy)
+        /* see the comment in get_start_addr() (vdi_misc.c); every optional
+         * slot is filled with a generic default by vdi_backend_ops_init() */
+        if (backend)
             backend->raster_copy(raster, info);
     }
+#elif CONF_WITH_VDI_BACKEND_TRUECOLOR
+    /* see the comment in get_start_addr() (vdi_misc.c) */
+    truecolor_raster_copy(raster, info);
 #else
-    /*
-     * With the truecolor backend compiled out, planar is the only backend
-     * that can ever be selected -- call it directly instead of paying for
-     * vdi_screen_backend()'s self-init check and an indirect call the
-     * result of which is already known at compile time (see the comment
-     * on get_start_addr() in vdi_misc.c).
-     */
+    /* see the comment in get_start_addr() (vdi_misc.c) */
     planar_raster_copy(raster, info);
 #endif
 }

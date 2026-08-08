@@ -238,12 +238,14 @@ timeout 5 qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt
 cat /tmp/qemu.log
 ```
 
-- **raspi1** (booted with `-M raspi1ap`): serial KDEBUG shows `vdi_v_opnwk: mode layout=1 color_model=0
-  bpp=8 backend=none` (later `color_model=1 ... backend=selected`); no
-  `guest_errors`; screen draws.
-- **raspi2** (booted with `-M raspi2b`): serial KDEBUG shows `vdi_v_opnwk: mode layout=1 color_model=0
-  bpp=8 backend=none` (later `color_model=1 ... backend=selected`); no
-  `guest_errors`; screen draws.
+- **raspi1** (booted with `-M raspi1ap`): no `guest_errors`; screen draws.
+- **raspi2** (booted with `-M raspi2b`): no `guest_errors`; screen draws.
+- The `vdi_v_opnwk: mode layout=... bpp=...` KDEBUG (and its `backend=selected`
+  variant) only prints when the VDI runtime dispatcher is built in (both
+  renderers enabled, `CONF_WITH_VDI_BACKEND_DISPATCH`, e.g.
+  `rpi2-sparse_defconfig`) — default single-renderer rpi1/rpi2 builds have no
+  dispatcher and print no such line. The reliable pass signal is no
+  `guest_errors` + the screen drawing.
 - **virt-arm / virt-m68k**: process survives the full `timeout` window
   (rc=124), no `guest_errors`/`unimp` output beyond ONE benign `Illegal
   Instruction` entry on m68k from `_detect_fpu` (expected, means CPU

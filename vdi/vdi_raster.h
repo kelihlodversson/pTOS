@@ -102,9 +102,10 @@ struct raster_t {
  * Planar raster-copy backend: dispatches info (already fully set up by
  * cpy_raster()) to the hardware blitter or its C/assembler emulation.
  * Exposed here so vdi_backend_planar.c's ops table can reference it, and
- * so cpy_raster() can call it directly when CONF_WITH_VDI_TRUECOLOR is
- * off (see the comment on vdi_backend_ops in vdi_backend.h).
+ * so cpy_raster() can call it directly in a planar-only build (see the
+ * comment on vdi_backend_ops in vdi_backend.h).
  */
 void planar_raster_copy(struct raster_t *raster, struct blit_frame *info);
+void truecolor_raster_copy(struct raster_t *raster, struct blit_frame *info);
 
 #endif /* VDI_RASTER_H */

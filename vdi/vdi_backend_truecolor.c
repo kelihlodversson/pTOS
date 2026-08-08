@@ -155,7 +155,7 @@ UWORD vdi_truecolor_pixel_for_index(WORD index)
  * Fixed at 2 bytes/pixel because this backend is only ever selected for
  * SCREEN_PIXEL_RGB565 (see vdi_backend_select()).
  */
-static UWORD *truecolor_get_start_addr(WORD x, WORD y)
+UWORD *truecolor_get_start_addr(WORD x, WORD y)
 {
     UBYTE *addr;
 
@@ -165,7 +165,7 @@ static UWORD *truecolor_get_start_addr(WORD x, WORD y)
     return (UWORD *)addr;
 }
 
-static UWORD truecolor_get_pixel(WORD x, WORD y)
+UWORD truecolor_get_pixel(WORD x, WORD y)
 {
     UWORD raw = *truecolor_get_start_addr(x, y);
     WORD i;
@@ -184,14 +184,14 @@ static UWORD truecolor_get_pixel(WORD x, WORD y)
     return 0;   /* not one of the default 256 -- index 0 is white, the closest we can do without guessing */
 }
 
-static void truecolor_put_pixel(WORD x, WORD y, UWORD color)
+void truecolor_put_pixel(WORD x, WORD y, UWORD color)
 {
     UWORD *addr = truecolor_get_start_addr(x, y);
 
     *addr = truecolor_pixel_for_index((WORD)color);
 }
 
-static void truecolor_fill_rect(const VwkAttrib *attr, const Rect *rect)
+void truecolor_fill_rect(const VwkAttrib *attr, const Rect *rect)
 {
     const UWORD patmsk = attr->patmsk;
     UWORD pixel = truecolor_pixel_for_index((WORD)attr->color);
@@ -266,7 +266,7 @@ static UWORD get_src_word(const UBYTE *p)
  * own palette conversion instead of CUR_WORK->ext->palette, and line-A
  * variables are read through linea_vars.
  */
-static void truecolor_text_blit(LOCALVARS *vars)
+void truecolor_text_blit(LOCALVARS *vars)
 {
     UBYTE *p;
     UWORD *q;
@@ -524,7 +524,7 @@ static UWORD apply_raster_op(WORD op, UWORD src, UWORD dst)
  * is no worse than the memory corruption the planar blitter emulator
  * would otherwise produce here.
  */
-static void truecolor_raster_copy(struct raster_t *raster, struct blit_frame *info)
+void truecolor_raster_copy(struct raster_t *raster, struct blit_frame *info)
 {
     WORD y;
 
@@ -655,7 +655,7 @@ static void truecolor_raster_copy(struct raster_t *raster, struct blit_frame *in
  *    the line color's palette index, mapped through the palette; gaps
  *    are untouched.
  */
-static UWORD truecolor_draw_line(const Line *line, WORD wrt_mode, UWORD color, UWORD linemask)
+UWORD truecolor_draw_line(const Line *line, WORD wrt_mode, UWORD color, UWORD linemask)
 {
     UWORD x1, y1, x2, y2;
     WORD dx, dy, loopcnt;
@@ -743,7 +743,7 @@ static UWORD truecolor_draw_line(const Line *line, WORD wrt_mode, UWORD color, U
  * reverse palette search) again for every pixel of a scan that can span
  * the whole screen width.
  */
-static WORD truecolor_search_right(const VwkClip *clip, WORD x, WORD y, UWORD search_col)
+WORD truecolor_search_right(const VwkClip *clip, WORD x, WORD y, UWORD search_col)
 {
     UWORD pixel = truecolor_pixel_for_index((WORD)search_col);
     const UWORD *addr = truecolor_get_start_addr(x, y);
@@ -755,7 +755,7 @@ static WORD truecolor_search_right(const VwkClip *clip, WORD x, WORD y, UWORD se
     return x - 1;       /* output x coord -1 to endxright. */
 }
 
-static WORD truecolor_search_left(const VwkClip *clip, WORD x, WORD y, UWORD search_col)
+WORD truecolor_search_left(const VwkClip *clip, WORD x, WORD y, UWORD search_col)
 {
     UWORD pixel = truecolor_pixel_for_index((WORD)search_col);
     const UWORD *addr = truecolor_get_start_addr(x, y);
@@ -765,6 +765,16 @@ static WORD truecolor_search_left(const VwkClip *clip, WORD x, WORD y, UWORD sea
             break;
     }
     return x + 1;       /* output x coord + 1 to endxleft. */
+}
+
+static UWORD truecolor_get_raw_pixel(WORD x, WORD y)
+{
+    return *truecolor_get_start_addr(x, y);
+}
+
+static void truecolor_put_raw_pixel(WORD x, WORD y, UWORD raw)
+{
+    *truecolor_get_start_addr(x, y) = raw;
 }
 
 static BOOL truecolor_open(Vwk *vwk)
@@ -778,16 +788,25 @@ static void truecolor_close(Vwk *vwk)
     (void)vwk;
 }
 
-const vdi_backend_ops packed_truecolor_backend_ops = {
+vdi_backend_ops packed_truecolor_backend_ops = {
     truecolor_open,
     truecolor_close,
     truecolor_get_start_addr,
     truecolor_get_pixel,
     truecolor_put_pixel,
+    truecolor_get_raw_pixel,
+    truecolor_put_raw_pixel,
+#if CONF_VDI_SPARSE_TABLE
+    /* The optional slots are left NULL so vdi_backend_ops_init() fills them
+     * with the generic defaults -- this exercises issue #138's defaults
+     * against the real RGB565 framebuffer. Never in production images. */
+    NULL, NULL, NULL, NULL, NULL, NULL,
+#else
     truecolor_fill_rect,
     truecolor_text_blit,
     truecolor_raster_copy,
     truecolor_draw_line,
     truecolor_search_right,
     truecolor_search_left,
+#endif
 };

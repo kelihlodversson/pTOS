@@ -143,6 +143,12 @@
 # endif
 #endif
 
+#if !CONF_WITH_VDI_BACKEND_PLANAR
+# if !CONF_WITH_VDI_BACKEND_TRUECOLOR
+#  error At least one VDI renderer (CONF_WITH_VDI_BACKEND_PLANAR or CONF_WITH_VDI_BACKEND_TRUECOLOR) must be enabled.
+# endif
+#endif
+
 #if !CONF_WITH_YM2149
 # if CONF_WITH_FDC
 #  error CONF_WITH_FDC requires CONF_WITH_YM2149.
