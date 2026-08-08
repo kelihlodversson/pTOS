@@ -140,6 +140,16 @@ static inline BOOL vdi_screen_is_truecolor(void)
  */
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
 UWORD vdi_truecolor_pixel_for_index(WORD index);
+
+/*
+ * vs_color()/vq_color() pseudo-palette access for the truecolor backend
+ * (issue #89) -- see the definitions in vdi_backend_truecolor.c for the
+ * single-shared-table rationale. index is a MAP_COL-mapped hardware
+ * palette register index; r/g/b are VDI-scale color values (0-1000).
+ * Called from vdi_vs_color()/vdi_vq_color() in vdi_col.c.
+ */
+void vdi_truecolor_set_color(WORD index, WORD r, WORD g, WORD b);
+void vdi_truecolor_get_color(WORD index, WORD *r, WORD *g, WORD *b);
 #endif
 
 #endif /* VDI_BACKEND_H */

@@ -17,6 +17,7 @@
 #include "vdi_col.h"
 #include "../bios/lineavars.h"
 #include "../bios/screen.h"
+#include "vdi_backend.h"
 
 #define EXTENDED_PALETTE (CONF_WITH_VIDEL || CONF_WITH_TT_SHIFTER || defined(MACHINE_RPI))
 
@@ -634,6 +635,15 @@ void vdi_vs_color(Vwk *vwk)
     }
 
     colnum = INTIN[0];      /* may have been munged on TT system, see above */
+
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    if (vdi_screen_is_truecolor())
+    {
+        vdi_truecolor_set_color(MAP_COL[colnum], rgb[0], rgb[1], rgb[2]);
+        return;
+    }
+#endif
+
     set_color(colnum, rgb);
 }
 
@@ -783,6 +793,14 @@ void vdi_vq_color(Vwk *vwk)
      */
     colnum = INTIN[0];          /* may have been munged on TT system, see above */
     hwreg = MAP_COL[colnum];    /* get hardware register */
+
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    if (vdi_screen_is_truecolor())
+    {
+        vdi_truecolor_get_color(hwreg, &INTOUT[1], &INTOUT[2], &INTOUT[3]);
+        return;
+    }
+#endif
 
 #if CONF_WITH_VIDEL
     if (has_videl)

@@ -27,9 +27,9 @@
  * (rather than clamping anything outside 0-15 to index 0, which used
  * to alias pen 1 to default_prgb_palette[0] == white) keeps this
  * consistent with the indexed framebuffer the old 8bpp path used to
- * write into. This is the "default mapping needed by colors already
- * in use" the design calls for -- full vs_color()/vq_color()
- * truecolor semantics are a follow-up.
+ * write into. This is the boot-time default -- vdi_truecolor_set_color()
+ * below (issue #89) is what lets vs_color() actually change entries away
+ * from it at runtime.
  */
 static const ULONG default_prgb_palette[256] = {
     0x00ffffff, 0x000000ff, 0x0000ff00, 0x0000ffff,
@@ -148,6 +148,68 @@ static UWORD truecolor_pixel_for_index(WORD index)
 UWORD vdi_truecolor_pixel_for_index(WORD index)
 {
     return truecolor_pixel_for_index(index);
+}
+
+/*
+ * VDI-scale (0-1000 per component) <-> RGB565 conversion for
+ * vs_color()/vq_color() (issue #89). Uses rounding division rather than
+ * rgb565_from_prgb()'s truncating shifts above, since those start from an
+ * already-8-bit component -- vs_color() gives full 0-1000 precision that's
+ * worth rounding rather than truncating away.
+ */
+static UWORD rgb565_from_vdi(WORD r, WORD g, WORD b)
+{
+    UWORD r5 = (UWORD)(((LONG)r * 31 + 500) / 1000);
+    UWORD g6 = (UWORD)(((LONG)g * 63 + 500) / 1000);
+    UWORD b5 = (UWORD)(((LONG)b * 31 + 500) / 1000);
+
+    return (UWORD)((r5 << 11) | (g6 << 5) | b5);
+}
+
+static void vdi_from_rgb565(UWORD raw, WORD *r, WORD *g, WORD *b)
+{
+    UWORD r5 = (raw >> 11) & 0x1f;
+    UWORD g6 = (raw >> 5) & 0x3f;
+    UWORD b5 = raw & 0x1f;
+
+    *r = (WORD)(((LONG)r5 * 1000 + 15) / 31);
+    *g = (WORD)(((LONG)g6 * 1000 + 31) / 63);
+    *b = (WORD)(((LONG)b5 * 1000 + 15) / 31);
+}
+
+/*
+ * vs_color()/vq_color() pseudo-palette read/write ports for the truecolor
+ * backend (issue #89), called from vdi_vs_color()/vdi_vq_color() in
+ * vdi_col.c. index is a MAP_COL-mapped hardware palette register index,
+ * like every other index this file takes -- not a 0-15 VDI pen number.
+ *
+ * There is exactly one screen (see the vdi_screen_backend() comment in
+ * vdi_control.c), so unlike upstream's per-Vwk VwkExt::palette this is one
+ * shared table rather than one per virtual workstation -- matching how
+ * set_color() in vdi_col.c treats every other backend's hardware palette
+ * registers: a single physical resource that the most recent vs_color()
+ * call (from whichever workstation) last wrote, not a per-workstation
+ * fiction layered on hardware that doesn't have per-workstation state
+ * either. rgb565_palette[] (see ensure_rgb565_palette() above) already is
+ * exactly that shared resource; these two functions are its mutation and
+ * query entry points.
+ */
+void vdi_truecolor_set_color(WORD index, WORD r, WORD g, WORD b)
+{
+    if (index < 0 || index > 255)
+        return;
+
+    ensure_rgb565_palette();
+    rgb565_palette[index] = rgb565_from_vdi(r, g, b);
+}
+
+void vdi_truecolor_get_color(WORD index, WORD *r, WORD *g, WORD *b)
+{
+    if (index < 0 || index > 255)
+        index = 0;
+
+    ensure_rgb565_palette();
+    vdi_from_rgb565(rgb565_palette[index], r, g, b);
 }
 
 /*
