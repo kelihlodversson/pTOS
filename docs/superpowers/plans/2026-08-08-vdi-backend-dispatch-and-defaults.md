@@ -42,7 +42,7 @@ Delivers issue #138 part 1: renderer-count gating with direct-truecolor and dire
 - Consumes: existing `planar_*` prototypes in `vdi/vdi_defs.h:290-298`, `vdi/vdi_textblit.h:100`, `vdi/vdi_raster.h:108`.
 - Produces: `CONF_WITH_VDI_BACKEND_PLANAR`, `CONF_WITH_VDI_BACKEND_TRUECOLOR`, `CONF_WITH_VDI_BACKEND_DISPATCH`; direct-callable `truecolor_get_start_addr()` / `truecolor_get_pixel()` / `truecolor_put_pixel()` / `truecolor_fill_rect()` / `truecolor_draw_line()` / `truecolor_search_right()` / `truecolor_search_left()` / `truecolor_text_blit()` / `truecolor_raster_copy()`; header inline `vdi_screen_is_truecolor()` valid in all three modes.
 
-- [ ] **Step 1: Replace the Kconfig option**
+- [x] **Step 1: Replace the Kconfig option**
 
 In `vdi/Kconfig`, replace the whole `config CONF_WITH_VDI_TRUECOLOR` block (lines 29-41) with:
 
@@ -96,7 +96,7 @@ config CONF_WITH_VDI_TRUECOLOR
 	default y if CONF_WITH_VDI_BACKEND_TRUECOLOR
 ```
 
-- [ ] **Step 2: Update the object gating in `vdi/build.mk`**
+- [x] **Step 2: Update the object gating in `vdi/build.mk`**
 
 Replace line 14:
 
@@ -115,7 +115,7 @@ obj-$(CONF_WITH_VDI_BACKEND_DISPATCH) += vdi_backend.o vdi_backend_planar.o
 obj-$(CONF_WITH_VDI_BACKEND_TRUECOLOR) += vdi_backend_truecolor.o
 ```
 
-- [ ] **Step 3: Update the `screen_mode.o` gating in `bios/build.mk`**
+- [x] **Step 3: Update the `screen_mode.o` gating in `bios/build.mk`**
 
 Replace line 28:
 
@@ -131,7 +131,7 @@ obj-$(CONF_WITH_VDI_BACKEND_DISPATCH) += screen_mode.o
 
 (`screen_mode_desc_valid()` is only called by `vdi_backend_select()` in `vdi/vdi_backend.c`, which itself only builds under dispatch.)
 
-- [ ] **Step 4: Restructure `vdi/vdi_backend.h`**
+- [x] **Step 4: Restructure `vdi/vdi_backend.h`**
 
 Rewrite the guards and the big comment (lines 59-117). Replace everything from the comment block starting `/* This runtime selection machinery` through the final `#endif /* CONF_WITH_VDI_TRUECOLOR */` with:
 
@@ -214,7 +214,7 @@ UWORD vdi_truecolor_pixel_for_index(WORD index);
 
 The `vdi_backend_ops` typedef and its contract comment stay where they are, inside the new `#if CONF_WITH_VDI_BACKEND_DISPATCH` block (the struct is only referenced under dispatch). Update the typedef comment's wording: "A NULL slot means 'this backend does not implement this primitive' -- never 'fall back to another backend'... NULL slots are filled with generic defaults by `vdi_backend_ops_init()` (task 2); mandatory slots are `get_start_addr`, `get_pixel`, `put_pixel` (and `get_raw_pixel`/`put_raw_pixel` once task 2 adds them)." Keep `search_right`/`search_left`'s "Mandatory" comment as-is for now (task 2 amends it).
 
-- [ ] **Step 5: Update `vdi/vdi_backend.c`**
+- [x] **Step 5: Update `vdi/vdi_backend.c`**
 
 - Change the `#if CONF_WITH_VDI_TRUECOLOR` around the truecolor select arm (line 21) to `#if CONF_WITH_VDI_BACKEND_TRUECOLOR` (always true under dispatch; kept for symmetry).
 - Delete the out-of-line `vdi_screen_is_truecolor()` (lines 31-34) — it moved to the header as an inline.
@@ -241,13 +241,13 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
 }
 ```
 
-- [ ] **Step 6: Update the three gates in `vdi/vdi_control.c`**
+- [x] **Step 6: Update the three gates in `vdi/vdi_control.c`**
 
 - Line 413 (`vdi_v_opnwk` sets `vwk->mode`/`vwk->backend`): `#if CONF_WITH_VDI_TRUECOLOR` → `#if CONF_WITH_VDI_BACKEND_DISPATCH` (the block only drives the dispatch machinery).
 - Line 470 (`vdi_v_clrwk`): `#if CONF_WITH_VDI_TRUECOLOR` → `#if CONF_WITH_VDI_BACKEND_TRUECOLOR` (a *behavior* gate: a packed truecolor screen's pen 0 is white, so it must clear through `draw_rect_common()`, never `memset(v_bas_ad, 0, ...)`).
 - Line 561 (`vdi_screen_backend()` definition): `#if CONF_WITH_VDI_TRUECOLOR` → `#if CONF_WITH_VDI_BACKEND_DISPATCH`. Also update the comment inside it that says "Only built when CONF_WITH_VDI_TRUECOLOR is set" → "Only built when CONF_WITH_VDI_BACKEND_DISPATCH is set".
 
-- [ ] **Step 7: Expose the truecolor primitives**
+- [x] **Step 7: Expose the truecolor primitives**
 
 In `vdi/vdi_backend_truecolor.c`, drop `static` from: `truecolor_get_start_addr` (line 158), `truecolor_get_pixel` (168), `truecolor_put_pixel` (187), `truecolor_fill_rect` (194), `truecolor_text_blit` (269), `truecolor_raster_copy` (527), `truecolor_draw_line` (658), `truecolor_search_right` (746), `truecolor_search_left` (758). Leave `truecolor_open`/`truecolor_close` static (table-only).
 
@@ -279,7 +279,7 @@ In `vdi/vdi_raster.h`, next to `planar_raster_copy` (line 108):
 void truecolor_raster_copy(struct raster_t *raster, struct blit_frame *info);
 ```
 
-- [ ] **Step 8: Convert the dispatch sites to three-way arms**
+- [x] **Step 8: Convert the dispatch sites to three-way arms**
 
 For each site below, the pattern is the same: the old `#if CONF_WITH_VDI_TRUECOLOR` / `#else` becomes `#if CONF_WITH_VDI_BACKEND_DISPATCH` / `#elif CONF_WITH_VDI_BACKEND_TRUECOLOR` (direct truecolor) / `#else` (direct planar). Update the accompanying comments to name the new symbols.
 
@@ -485,7 +485,7 @@ The write site becomes three-way:
 #endif
 ```
 
-- [ ] **Step 9: Convert the truecolor-behavior gates**
+- [x] **Step 9: Convert the truecolor-behavior gates**
 
 These sites test *truecolor-specific behavior*, not dispatch — their `#if CONF_WITH_VDI_TRUECOLOR` becomes `#if CONF_WITH_VDI_BACKEND_TRUECOLOR`. The `vdi_screen_is_truecolor()` calls inside them now resolve to the header inline (compile-time constant in single-renderer builds):
 
@@ -496,14 +496,14 @@ These sites test *truecolor-specific behavior*, not dispatch — their `#if CONF
 - `vdi/vdi_backend.c:21` — already done in Step 5.
 - `vdi/vdi_mouse.c:29-32` — leave untouched: the include is under `#ifdef MACHINE_RPI` and the `vdi_truecolor_pixel_for_index()` calls (lines 925-926) are inside the `#ifdef MACHINE_RPI` block at line 902, and `CONF_WITH_VDI_BACKEND_TRUECOLOR` is forced `y` on `MACHINE_RPI`.
 
-- [ ] **Step 10: Remove the Kconfig alias and any leftovers**
+- [x] **Step 10: Remove the Kconfig alias and any leftovers**
 
 Delete the temporary `CONF_WITH_VDI_TRUECOLOR` alias added in Step 1. Then:
 
 Run: `grep -rn "CONF_WITH_VDI_TRUECOLOR" vdi/ bios/ include/ --include=*.c --include=*.h --include=*.mk`
 Expected: no matches (only `docs/superpowers/*` history and `.claude/skills` may still mention the old name — those are updated in Task 3).
 
-- [ ] **Step 11: Verify all three build modes**
+- [x] **Step 11: Verify all three build modes**
 
 Run, from a clean tree (`make distclean` once):
 
@@ -518,14 +518,14 @@ Run, from a clean tree (`make distclean` once):
 
 Run `make gitready` at the end.
 
-- [ ] **Step 12: Smoke-test the RPi build**
+- [x] **Step 12: Smoke-test the RPi build**
 
 ```sh
 timeout 30 qemu-system-arm -M raspi2b -bios kernel7.img -d guest_errors -serial stdio
 ```
 Expected: no `guest_errors`; the screen draws (raspi2 boots to the desktop). Note the `vdi_v_opnwk: mode layout=...` serial KDEBUG no longer prints on default rpi2 builds (it is dispatch-only) — the smoketest skill's serial note is updated in Task 3.
 
-- [ ] **Step 13: Commit**
+- [x] **Step 13: Commit**
 
 ```bash
 git add vdi/Kconfig vdi/build.mk bios/build.mk vdi/vdi_backend.h vdi/vdi_backend.c \
@@ -554,7 +554,7 @@ Delivers issue #138 part 2: the raw-pixel read/write pair (making XOR and opaque
 - Consumes: the three-way arms and the exposed `truecolor_*` / `planar_*` primitives from Task 1; `vdi_screen_backend()` (dispatch only).
 - Produces: `vdi_backend_ops` members `get_raw_pixel`/`put_raw_pixel`; `vdi_backend_ops_init(vdi_backend_ops *ops)`; static defaults `default_fill_rect` / `default_draw_line` / `default_text_blit` / `default_raster_copy` / `default_search_right` / `default_search_left` / `default_open` / `default_close`; non-const `planar_backend_ops` / `packed_truecolor_backend_ops`; `CONF_VDI_SPARSE_TABLE`.
 
-- [ ] **Step 1: Add the sparse-table Kconfig option**
+- [x] **Step 1: Add the sparse-table Kconfig option**
 
 In `vdi/Kconfig`, after the `CONF_WITH_VDI_BACKEND_DISPATCH` block:
 
@@ -573,7 +573,7 @@ config CONF_VDI_SPARSE_TABLE
 	  images.
 ```
 
-- [ ] **Step 2: Extend `vdi/vdi_backend.h`**
+- [x] **Step 2: Extend `vdi/vdi_backend.h`**
 
 Add the two members to `vdi_backend_ops`, right after `put_pixel`:
 
@@ -609,7 +609,7 @@ extern vdi_backend_ops packed_truecolor_backend_ops;
 void vdi_backend_ops_init(vdi_backend_ops *ops);
 ```
 
-- [ ] **Step 3: Non-const tables + raw-pixel entries in the planar backend**
+- [x] **Step 3: Non-const tables + raw-pixel entries in the planar backend**
 
 `vdi/vdi_backend_planar.c` (lines 24-36):
 
@@ -633,7 +633,7 @@ vdi_backend_ops planar_backend_ops = {
 
 (`vdi_backend_ops_init()` may mutate the table, so it is no longer `const`.)
 
-- [ ] **Step 4: Non-const truecolor table + raw-pixel entries + sparse initializer**
+- [x] **Step 4: Non-const truecolor table + raw-pixel entries + sparse initializer**
 
 Add the two raw-pixel primitives before `truecolor_open` (after `truecolor_search_left`, line 768):
 
@@ -676,7 +676,7 @@ vdi_backend_ops packed_truecolor_backend_ops = {
 };
 ```
 
-- [ ] **Step 5: Generic defaults and the init function in `vdi/vdi_backend.c`**
+- [x] **Step 5: Generic defaults and the init function in `vdi/vdi_backend.c`**
 
 Extend the includes at the top (after the existing `#include "vdi_backend.h"`):
 
@@ -1028,7 +1028,7 @@ Update `vdi_backend_select()` to install the defaults before returning (both arm
 #endif
 ```
 
-- [ ] **Step 6: Drop the remaining slot guards at call sites**
+- [x] **Step 6: Drop the remaining slot guards at call sites**
 
 `vdi/vdi_line.c` (1423-1432) — the NULL-slot guard becomes just the NULL-backend guard:
 
@@ -1058,7 +1058,7 @@ Update `vdi_backend_select()` to install the defaults before returning (both arm
     }
 ```
 
-- [ ] **Step 7: Create the two test configurations**
+- [x] **Step 7: Create the two test configurations**
 
 Build each with `make menuconfig` (or edit `.config`), then `make savedefconfig` and copy `./defconfig` to `configs/`:
 
@@ -1080,7 +1080,7 @@ CONF_VDI_SPARSE_TABLE=y
 
 (plus the machine/target lines; `make savedefconfig` writes the exact minimal set.)
 
-- [ ] **Step 8: Verify the dispatch + sparse build**
+- [x] **Step 8: Verify the dispatch + sparse build**
 
 ```sh
 make rpi2-sparse_defconfig && make
@@ -1088,7 +1088,7 @@ timeout 30 qemu-system-arm -M raspi2b -bios kernel7.img -d guest_errors -serial 
 ```
 Expected: builds; `obj/vdi_backend.o` present; no `guest_errors`; boots to the desktop with `fill_rect`, `draw_line`, `text_blit`, `search_*` and `raster_copy` all running through the generic defaults. (A correctly drawn desktop — text, icons, mouse — is the evidence the defaults work; the XOR rubber-band and window drags go through `default_fill_rect`/`default_raster_copy`.)
 
-- [ ] **Step 9: Verify the other three build modes still work**
+- [x] **Step 9: Verify the other three build modes still work**
 
 ```sh
 make atari512_defconfig && make          # planar-only, direct calls
@@ -1103,7 +1103,7 @@ Smoke-test the dispatch-on-m68k config under Hatari (desktop reached, `vdi_v_opn
 hatari --tos ptos512k.img --machine ste --memsize 4 --sound off --run-vbls 3000
 ```
 
-- [ ] **Step 10: Run `make gitready` and commit**
+- [x] **Step 10: Run `make gitready` and commit**
 
 ```bash
 make gitready
@@ -1124,16 +1124,16 @@ Closes out the issue: stale comments, the smoketest skill's serial note, and a f
 - Modify: `vdi/vdi_fill.c:697-699` — stale comment if it names the old symbol
 - Test: full matrix below
 
-- [ ] **Step 1: Update the smoketest skill's raspi serial note**
+- [x] **Step 1: Update the smoketest skill's raspi serial note**
 
 The `vdi_v_opnwk: mode layout=1 color_model=1 bpp=16 backend=selected` KDEBUG only prints on dispatch builds now (it is gated on `CONF_WITH_VDI_BACKEND_DISPATCH`). Update the two raspi rows of the pass-signal list to say: serial KDEBUG shows the mode line only when the dispatcher is built (both renderers enabled); the reliable pass signal is no `guest_errors` + the screen drawing. Note `rpi2-sparse_defconfig` prints `backend=selected`.
 
-- [ ] **Step 2: Fix stale comments**
+- [x] **Step 2: Fix stale comments**
 
 - `vdi/vdi_raster.h` (around line 105): update any text saying `CONF_WITH_VDI_TRUECOLOR` → the dispatch symbol (match the surrounding sentence's intent).
 - Grep the whole tree for `CONF_WITH_VDI_TRUECOLOR` outside `docs/superpowers/*` and fix any remaining code comment.
 
-- [ ] **Step 3: Full verification matrix**
+- [x] **Step 3: Full verification matrix**
 
 From a clean tree:
 
@@ -1142,12 +1142,12 @@ From a clean tree:
 | `atari512_defconfig` | planar only | builds; no `obj/vdi_backend*.o`; boots under Hatari STE to desktop |
 | `rpi2_defconfig` | truecolor only | builds; only `obj/vdi_backend_truecolor.o`; boots under QEMU `raspi2b` |
 | `virt-arm_defconfig` | planar only | builds; no `obj/vdi_backend*.o`; survives `timeout 5` QEMU run, no `guest_errors` |
-| `atari512-dispatch_defconfig` | both (dispatch) | builds; all three `obj/vdi_backend*.o`; boots under Hatari, `backend=selected` |
+| `atari512-dispatch_defconfig` | both (dispatch) | builds; all three `obj/vdi_backend*.o`; boots under Hatari to desktop (the `backend=selected` KDEBUG is gated on `ENABLE_KDEBUG`, off by default) |
 | `rpi2-sparse_defconfig` | both (dispatch, sparse) | builds; boots under QEMU `raspi2b`, defaults exercised |
 
 Each QEMU/Hatari run per the smoketest skill invocations. Record real output in the PR description.
 
-- [ ] **Step 4: Final checks and commit**
+- [x] **Step 4: Final checks and commit**
 
 ```bash
 make gitready
