@@ -271,7 +271,11 @@ long xmkdir(char *s)
     }
     f2->f_fileln = 0;
     memcpy(f, f0, sizeof(OFD));
-    f->o_disk.o_flag |= O_DIRTY;    /* must set flag in f, not f0! */
+    /* the memcpy also copied f->o_dfd, which now points at f0's embedded
+     * DFD; nextcl() already marked that DFD O_DIRTY, so ixclose() below
+     * sees the flag and writes the parent directory entry.  the O_DIRTY
+     * set here is belt-and-braces for the same DFD. */
+    f->o_disk.o_flag |= O_DIRTY;
     ixclose(f,CL_DIR | CL_FULL);    /* force flush and write */
     xmfreblk(f);
     sft[h-NUMSTD].f_own = 0;
