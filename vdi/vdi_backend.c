@@ -64,7 +64,7 @@ static void default_fill_rect(const VwkAttrib *attr, const Rect *rect)
         UWORD pattern = attr->patptr[patmsk & y];
 
         for (x = rect->x1, i = 0; x <= rect->x2; x++, i++) {
-            BOOL set = (pattern & ((1 << 15) >> (i & 15))) != 0;
+            BOOL set = (pattern & (0x8000 >> (i & 15))) != 0;
 
             switch (attr->wrt_mode) {
             case 3:                 /* erase (reverse transparent) */

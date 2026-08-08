@@ -41,7 +41,7 @@ config CONF_WITH_VDI_BACKEND_PLANAR
 	  Pi -- wants.  At least one renderer must stay enabled.
 
 config CONF_WITH_VDI_BACKEND_TRUECOLOR
-	bool "Packed truecolor VDI backend"
+	bool "Packed truecolor VDI backend" if !MACHINE_RPI
 	default y if MACHINE_RPI
 	default n
 	help
