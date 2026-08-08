@@ -215,6 +215,18 @@ struct Vwk_ {
     WORD bez_qual;              /* actual quality for bezier curves */
     SCREEN_MODE_DESC mode;      /* backend mode descriptor for this workstation's screen */
     const struct vdi_backend_ops *backend; /* dispatch table selected for `mode`; NULL if none matched */
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    /*
+     * vs_color()/vq_color() pseudo-palette for the truecolor backend
+     * (issue #89): MAP_COL-mapped hardware palette index -> RGB565 pixel.
+     * Genuinely per-workstation, matching upstream's VwkExt::palette --
+     * a vs_color() on one workstation must not affect another. Seeded to
+     * the backend's defaults by init_wk() (vdi_control.c) whenever a
+     * workstation is opened; see vdi_backend_active_vwk() in vdi_backend.h
+     * for how the drawing primitives pick which workstation's copy to use.
+     */
+    UWORD tc_palette[256];
+#endif
 };
 
 typedef struct Rect_ Rect;
@@ -271,6 +283,7 @@ void arb_line(Line * line);
 int GSX_ENTRY(int op, VDIPB* paramblock);
 /* C Support routines */
 Vwk * get_vwk_by_handle(WORD);
+Vwk * vdi_physical_vwk(void);
 UWORD * get_start_addr(const WORD x, const WORD y);
 void set_LN_MASK(Vwk *vwk);
 void st_fl_ptr(Vwk *);

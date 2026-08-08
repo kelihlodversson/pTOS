@@ -37,6 +37,15 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
 }
 
 /*
+ * vdi_backend_set_active_vwk()/vdi_backend_active_vwk() (issue #89) live in
+ * vdi_backend_truecolor.c, not here: this file is only built when
+ * CONF_WITH_VDI_BACKEND_DISPATCH is set (both renderers enabled, see
+ * vdi/build.mk), but the truecolor backend -- and so these two functions'
+ * only caller, vdi_main.c's screen() -- exists in single-renderer RPi
+ * builds too, which don't build this file at all.
+ */
+
+/*
  * Generic backend defaults (issue #138): renderer-agnostic fallbacks built
  * only on the mandatory primitives (get_start_addr, get_pixel, put_pixel,
  * get_raw_pixel, put_raw_pixel).  They run through vdi_screen_backend(),

@@ -166,6 +166,13 @@ Vwk * get_vwk_by_handle(WORD handle)
 
 
 
+Vwk * vdi_physical_vwk(void)
+{
+    return &virt_work;
+}
+
+
+
 /* Set Clip Region */
 void vdi_vs_clip(Vwk * vwk)
 {
@@ -290,6 +297,10 @@ static void init_wk(Vwk * vwk)
 
     vwk->multifill = 0;
     vwk->ud_ls = LINE_STYLE[0];
+
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    vdi_truecolor_init_palette(vwk);
+#endif
 
     pb = CONTRL;
     pb->nptsout = 6;

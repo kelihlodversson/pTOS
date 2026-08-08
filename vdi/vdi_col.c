@@ -639,7 +639,7 @@ void vdi_vs_color(Vwk *vwk)
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
     if (vdi_screen_is_truecolor())
     {
-        vdi_truecolor_set_color(MAP_COL[colnum], rgb[0], rgb[1], rgb[2]);
+        vdi_truecolor_set_color(vwk, MAP_COL[colnum], rgb[0], rgb[1], rgb[2]);
         return;
     }
 #endif
@@ -797,7 +797,7 @@ void vdi_vq_color(Vwk *vwk)
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
     if (vdi_screen_is_truecolor())
     {
-        vdi_truecolor_get_color(hwreg, &INTOUT[1], &INTOUT[2], &INTOUT[3]);
+        vdi_truecolor_get_color(vwk, hwreg, &INTOUT[1], &INTOUT[2], &INTOUT[3]);
         return;
     }
 #endif

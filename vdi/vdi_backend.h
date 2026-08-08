@@ -143,13 +143,29 @@ UWORD vdi_truecolor_pixel_for_index(WORD index);
 
 /*
  * vs_color()/vq_color() pseudo-palette access for the truecolor backend
- * (issue #89) -- see the definitions in vdi_backend_truecolor.c for the
- * single-shared-table rationale. index is a MAP_COL-mapped hardware
- * palette register index; r/g/b are VDI-scale color values (0-1000).
- * Called from vdi_vs_color()/vdi_vq_color() in vdi_col.c.
+ * (issue #89). Genuinely per-workstation (see the tc_palette comment on
+ * struct Vwk_ in vdi_defs.h): vwk identifies which workstation's palette
+ * to read/write. index is a MAP_COL-mapped hardware palette register
+ * index; r/g/b are VDI-scale color values (0-1000). Called from
+ * vdi_vs_color()/vdi_vq_color() in vdi_col.c, which already have the
+ * right vwk from the VDI dispatcher.
  */
-void vdi_truecolor_set_color(WORD index, WORD r, WORD g, WORD b);
-void vdi_truecolor_get_color(WORD index, WORD *r, WORD *g, WORD *b);
+void vdi_truecolor_set_color(Vwk *vwk, WORD index, WORD r, WORD g, WORD b);
+void vdi_truecolor_get_color(const Vwk *vwk, WORD index, WORD *r, WORD *g, WORD *b);
+
+/* Seeds vwk's pseudo-palette with the backend's boot-time defaults. Called
+ * by init_wk() (vdi_control.c) whenever a workstation is opened, and by
+ * vdi_backend_active_vwk() (see above) for the physical workstation if
+ * drawing happens before vdi_v_opnwk() ever runs. */
+void vdi_truecolor_init_palette(Vwk *vwk);
+
+/*
+ * The workstation whose pseudo-palette get_pixel()/put_pixel()/etc.
+ * (none of which take a Vwk*) should translate indices through -- see the
+ * definitions in vdi_backend.c. Sole writer is vdi_main.c's screen().
+ */
+void vdi_backend_set_active_vwk(Vwk *vwk);
+Vwk *vdi_backend_active_vwk(void);
 #endif
 
 #endif /* VDI_BACKEND_H */

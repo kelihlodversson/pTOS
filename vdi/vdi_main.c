@@ -14,6 +14,7 @@
 #include "vdi_defs.h"
 #include "../bios/lineavars.h"
 #include "kprint.h"
+#include "vdi_backend.h"
 
 /* forward prototypes */
 void screen(void);
@@ -139,6 +140,15 @@ void screen(void)
         if (vwk->fill_style != 4)       /* multifill just for user */
             vwk->multifill = 0;
     }
+
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    /*
+     * v_opnwk()/v_opnvwk() (opcodes 1/100) have no handle yet -- vwk is
+     * NULL above -- so fall back to the physical workstation; that's also
+     * exactly right for v_opnwk(), which initializes it (see #89).
+     */
+    vdi_backend_set_active_vwk(vwk ? vwk : vdi_physical_vwk());
+#endif
 
     if (opcode >= 1 && opcode < 1+JMPTB1_ENTRIES) {
         (*jmptb1[opcode - 1]) (vwk);
