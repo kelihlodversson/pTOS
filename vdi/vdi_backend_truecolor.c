@@ -12,6 +12,7 @@
 #include "../bios/tosvars.h"
 #include "vdi_defs.h"
 #include "vdi_backend.h"
+#include "vdi_col.h"
 #include "kprint.h"
 
 /*
@@ -109,10 +110,39 @@ static UWORD rgb565_from_prgb(ULONG prgb)
 }
 
 /*
- * Seeds vwk's pseudo-palette (issue #89) with default_prgb_palette[]
- * converted to RGB565. Called by init_wk() (vdi_control.c) whenever a
- * workstation is opened, and by vdi_backend_active_vwk() below for the
- * physical workstation if drawing happens before vdi_v_opnwk() ever runs.
+ * Full-precision packed-0x00BBGGRR -> VDI-scale (0-1000 per component)
+ * conversion, for seeding tc_req_col[] (issue #89) -- unlike
+ * rgb565_from_prgb() above, this doesn't go through the 5/6/5-bit
+ * quantization, since tc_req_col holds "requested", not "actual", values.
+ */
+static void vdi_from_prgb(ULONG prgb, WORD *r, WORD *g, WORD *b)
+{
+    UBYTE rb = (UBYTE)(prgb & 0xffUL);
+    UBYTE gb = (UBYTE)((prgb >> 8) & 0xffUL);
+    UBYTE bb = (UBYTE)((prgb >> 16) & 0xffUL);
+
+    *r = (WORD)(((LONG)rb * 1000 + 127) / 255);
+    *g = (WORD)(((LONG)gb * 1000 + 127) / 255);
+    *b = (WORD)(((LONG)bb * 1000 + 127) / 255);
+}
+
+/*
+ * Seeds vwk's pseudo-palette (issue #89) with default_prgb_palette[].
+ * Called by init_wk() (vdi_control.c) whenever a workstation is opened,
+ * and by physical_vwk_seeded() below for the physical workstation if
+ * drawing happens before vdi_v_opnwk() ever runs.
+ *
+ * Seeds both tc_palette[] (RGB565, hwreg-indexed, what get_pixel()/
+ * put_pixel()/vq_color(pen,1) read) and tc_req_col[] (VDI 0-1000 scale,
+ * pen-indexed, what vq_color(pen,0) reads) from the same source, via
+ * MAP_COL[pen] to find which hwreg's default a given pen currently has --
+ * so the two forms of vq_color() agree at boot, before any vs_color()
+ * call. (MAP_COL is guaranteed populated here: init_colors() -- which
+ * builds it -- always runs before the first init_wk(), and the physical-
+ * workstation fallback path only matters for tc_palette, which
+ * get_pixel()/put_pixel() read via MAP_COL-mapped indices callers already
+ * computed themselves; tc_req_col is only ever read through vq_color(),
+ * which requires an already-opened, already-init_wk()'d Vwk.)
  */
 void vdi_truecolor_init_palette(Vwk *vwk)
 {
@@ -120,6 +150,10 @@ void vdi_truecolor_init_palette(Vwk *vwk)
 
     for (i = 0; i < 256; i++)
         vwk->tc_palette[i] = rgb565_from_prgb(default_prgb_palette[i]);
+
+    for (i = 0; i < 256; i++)
+        vdi_from_prgb(default_prgb_palette[MAP_COL[i]],
+                      &vwk->tc_req_col[i][0], &vwk->tc_req_col[i][1], &vwk->tc_req_col[i][2]);
 }
 
 /*
@@ -144,6 +178,29 @@ void vdi_truecolor_init_palette(Vwk *vwk)
  * for a 256-entry palette placed well beyond that.
  */
 static Vwk *active_vwk;
+static BOOL physical_palette_seeded;
+
+/*
+ * The physical workstation, with its tc_palette/tc_req_col guaranteed
+ * seeded -- even the very first time this is called, which can happen
+ * before vdi_v_opnwk() has ever run (Line-A reachable pre-AES, or before
+ * any screen() dispatch at all; see the vdi_screen_backend() self-init
+ * comment in vdi_control.c for the same situation with .mode/.backend).
+ * Idempotent past the first call: init_wk() (vdi_control.c) re-seeds the
+ * physical workstation's palette for real whenever vdi_v_opnwk() actually
+ * runs, which this flag does not need to track -- it only needs to know
+ * whether *some* seeding has happened yet.
+ */
+static Vwk *physical_vwk_seeded(void)
+{
+    Vwk *phys = vdi_physical_vwk();
+
+    if (!physical_palette_seeded) {
+        vdi_truecolor_init_palette(phys);
+        physical_palette_seeded = TRUE;
+    }
+    return phys;
+}
 
 void vdi_backend_set_active_vwk(Vwk *vwk)
 {
@@ -152,18 +209,18 @@ void vdi_backend_set_active_vwk(Vwk *vwk)
 
 Vwk *vdi_backend_active_vwk(void)
 {
-    if (!active_vwk) {
-        /*
-         * Nothing has gone through screen() yet -- e.g. Line-A reachable
-         * before vdi_v_opnwk() ever runs (see the vdi_screen_backend()
-         * comment in vdi_control.c for the same situation with
-         * .mode/.backend). Fall back to the physical workstation, and
-         * since init_wk() hasn't necessarily seeded it yet either, seed
-         * it here.
-         */
-        active_vwk = vdi_physical_vwk();
-        vdi_truecolor_init_palette(active_vwk);
-    }
+    /*
+     * vdi_main.c's screen() sets active_vwk to the physical workstation
+     * for opcodes with no handle yet (v_opnwk()/v_opnvwk()) as well as
+     * for nothing-dispatched-yet -- so "active_vwk is currently the
+     * physical workstation" (not just "active_vwk is NULL") is the
+     * condition that needs the seeding check, or a program that only
+     * ever opens virtual workstations could leave the physical palette
+     * BSS-zero (all black) while something reads it in between.
+     */
+    if (!active_vwk || active_vwk == vdi_physical_vwk())
+        return physical_vwk_seeded();
+
     return active_vwk;
 }
 
@@ -183,13 +240,26 @@ static UWORD truecolor_pixel_for_index(WORD index)
 /*
  * Public wrapper for callers outside this backend that need to turn a
  * MAP_COL-mapped hardware palette index into the raw RGB565 pixel value
- * this backend would write for it -- e.g. the RPi software mouse cursor
- * in vdi/vdi_mouse.c, which draws by poking pixels directly rather than
- * going through put_pixel()/fill_rect().
+ * this backend would write for it -- currently only the RPi software
+ * mouse cursor in vdi/vdi_mouse.c, which draws by poking pixels directly
+ * rather than going through put_pixel()/fill_rect().
+ *
+ * Deliberately reads the *physical* workstation's palette rather than
+ * active_vwk: the cursor is a screen-global element (its bg_col/fg_col
+ * are hardware-register indices, not tied to any one workstation), and
+ * it is drawn from the VBL interrupt (vdi_mouse.c's vb_draw()) as well as
+ * from Line-A text output, both of which run independently of -- and can
+ * race -- whatever VDI call last set active_vwk. Using the physical
+ * workstation keeps the cursor's colors from changing whenever some
+ * other (possibly virtual) workstation happens to have been the most
+ * recent VDI caller.
  */
 UWORD vdi_truecolor_pixel_for_index(WORD index)
 {
-    return truecolor_pixel_for_index(index);
+    if (index < 0 || index > 255)
+        index = 0;
+
+    return physical_vwk_seeded()->tc_palette[index];
 }
 
 /*
@@ -235,6 +305,17 @@ void vdi_truecolor_set_color(Vwk *vwk, WORD index, WORD r, WORD g, WORD b)
 {
     if (index < 0 || index > 255)
         return;
+
+    /*
+     * Defend the public contract even though the only current caller
+     * (vdi_vs_color()) already clamps: r/g/b feed straight into 5/6-bit
+     * field packing below, and an out-of-range value (or a future caller
+     * that forgets to clamp) would corrupt the packed RGB565 word rather
+     * than just look wrong.
+     */
+    if (r < 0) r = 0; else if (r > 1000) r = 1000;
+    if (g < 0) g = 0; else if (g > 1000) g = 1000;
+    if (b < 0) b = 0; else if (b > 1000) b = 1000;
 
     vwk->tc_palette[index] = rgb565_from_vdi(r, g, b);
 }

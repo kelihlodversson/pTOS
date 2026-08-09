@@ -615,6 +615,30 @@ void vdi_vs_color(Vwk *vwk)
         colnum = adjust_tt_colnum(colnum);  /* handles palette bank issues */
 #endif
 
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    if (vdi_screen_is_truecolor())
+    {
+        /*
+         * Per-workstation "requested"/"actual" state (issue #89), mirroring
+         * upstream's VwkExt::req_col/palette: unlike the global
+         * REQ_COL/req_col2 below, storing into vwk->tc_req_col here means a
+         * vs_color() on one workstation cannot leak into another
+         * workstation's vq_color(pen,0) answer.
+         */
+        for (i = 0, intin = INTIN+1, rgbptr = rgb; i < 3; i++, intin++, rgbptr++)
+        {
+            vwk->tc_req_col[colnum][i] = *intin;
+            if (*intin > 1000)
+                *rgbptr = 1000;
+            else if (*intin < 0)
+                *rgbptr = 0;
+            else *rgbptr = *intin;
+        }
+        vdi_truecolor_set_color(vwk, MAP_COL[INTIN[0]], rgb[0], rgb[1], rgb[2]);
+        return;
+    }
+#endif
+
     /*
      * Copy raw values to the "requested colour" arrays, then clamp
      * them to 0-1000 before calling set_color()
@@ -635,15 +659,6 @@ void vdi_vs_color(Vwk *vwk)
     }
 
     colnum = INTIN[0];      /* may have been munged on TT system, see above */
-
-#if CONF_WITH_VDI_BACKEND_TRUECOLOR
-    if (vdi_screen_is_truecolor())
-    {
-        vdi_truecolor_set_color(vwk, MAP_COL[colnum], rgb[0], rgb[1], rgb[2]);
-        return;
-    }
-#endif
-
     set_color(colnum, rgb);
 }
 
@@ -769,6 +784,31 @@ void vdi_vq_color(Vwk *vwk)
         colnum = adjust_tt_colnum(colnum);  /* handles palette bank issues */
 #endif
 
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    if (vdi_screen_is_truecolor())
+    {
+        /*
+         * Both forms come from vwk's own per-workstation state (issue
+         * #89): tc_req_col for "last requested", tc_palette (via
+         * vdi_truecolor_get_color()) for "actual" -- see the tc_req_col
+         * comment on struct Vwk_ in vdi_defs.h for why this doesn't read
+         * the global REQ_COL/req_col2 the way the non-truecolor path
+         * below does.
+         */
+        if (INTIN[1] == 0)  /* return last-requested value */
+        {
+            INTOUT[1] = vwk->tc_req_col[colnum][0];
+            INTOUT[2] = vwk->tc_req_col[colnum][1];
+            INTOUT[3] = vwk->tc_req_col[colnum][2];
+        }
+        else                /* return actual current value */
+        {
+            vdi_truecolor_get_color(vwk, MAP_COL[INTIN[0]], &INTOUT[1], &INTOUT[2], &INTOUT[3]);
+        }
+        return;
+    }
+#endif
+
     if (INTIN[1] == 0)  /* return last-requested value */
     {
         if (colnum < 16)
@@ -793,14 +833,6 @@ void vdi_vq_color(Vwk *vwk)
      */
     colnum = INTIN[0];          /* may have been munged on TT system, see above */
     hwreg = MAP_COL[colnum];    /* get hardware register */
-
-#if CONF_WITH_VDI_BACKEND_TRUECOLOR
-    if (vdi_screen_is_truecolor())
-    {
-        vdi_truecolor_get_color(vwk, hwreg, &INTOUT[1], &INTOUT[2], &INTOUT[3]);
-        return;
-    }
-#endif
 
 #if CONF_WITH_VIDEL
     if (has_videl)

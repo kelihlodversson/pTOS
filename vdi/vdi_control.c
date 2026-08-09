@@ -378,6 +378,26 @@ void vdi_v_clsvwk(Vwk * vwk)
 
     work_ptr->next_work = vwk->next_work;
     linea_vars.CUR_WORK = work_ptr;
+
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    /*
+     * vdi_main.c's screen() set the truecolor backend's active workstation
+     * to vwk for this very call (it's the Vwk resolved for CONTRL->handle),
+     * so freeing vwk below would leave that pointer dangling until the
+     * next VDI call -- and it can be read asynchronously in between, e.g.
+     * by Line-A text output reaching truecolor_pixel_for_index() straight
+     * from the line-A entry, bypassing screen() (see
+     * vdi_backend_active_vwk() in vdi_backend_truecolor.c; the VBL mouse
+     * cursor is not at risk here, since vdi_truecolor_pixel_for_index()
+     * reads the physical workstation directly rather than active_vwk).
+     * Point it back at the physical workstation, matching what v_clswk()
+     * gets for free by resolving handle 1 before it frees any virtual
+     * ones.
+     */
+    if (vwk == vdi_backend_active_vwk())
+        vdi_backend_set_active_vwk(vdi_physical_vwk());
+#endif
+
     trap1(X_MFREE, vwk);
 }
 

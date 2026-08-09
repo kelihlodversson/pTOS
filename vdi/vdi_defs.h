@@ -226,6 +226,17 @@ struct Vwk_ {
      * for how the drawing primitives pick which workstation's copy to use.
      */
     UWORD tc_palette[256];
+    /*
+     * vs_color()'s raw "last requested" values (VDI 0-1000 scale) for the
+     * truecolor backend, indexed like REQ_COL/req_col2 by VDI pen number
+     * (not MAP_COL-mapped) -- mirrors upstream's VwkExt::req_col so that
+     * vq_color(pen,0) ("last requested") and vq_color(pen,1) ("actual",
+     * via tc_palette above) stay consistent per-workstation instead of
+     * reading the global REQ_COL/req_col2, which stay unpopulated for
+     * pens 16-255 on RPi (no VIDEL/TT hardware to seed them). Seeded
+     * alongside tc_palette by vdi_truecolor_init_palette().
+     */
+    WORD tc_req_col[256][3];
 #endif
 };
 
