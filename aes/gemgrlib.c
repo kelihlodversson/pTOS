@@ -387,6 +387,8 @@ void gr_mouse(WORD mode, MFORM *maddr)
     switch(mode)
     {
     default:
+        if (mode > USER_DEF)    /* unknown mode beyond M_OFF/M_ON: ignore, as before */
+            break;
         if ((mode < ARROW) || (mode > OUTLN_CROSS))
             mode = ARROW;       /* fail safe */
         maddr = mouse_cursor[mode];
