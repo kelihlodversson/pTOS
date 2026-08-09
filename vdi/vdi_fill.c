@@ -691,12 +691,12 @@ clipbox(const VwkClip * clip, Rect * rect)
 /*
  * get_color - Get color value of requested pixel.
  *
- * NOTE: this is no longer guarded by `#if !CONF_CHUNKY_PIXELS`: besides
- * the non-chunky branches in this file, it is also called unconditionally
- * by planar_get_pixel(), which every configuration links -- either
- * directly, in a planar-only build (see the #else branch in pixelread()
- * below), or through the planar VDI backend's ops table, when the
- * dispatcher is built (see vdi_backend_planar.c).
+ * NOTE: besides the planar scan-line fill paths in this file (see
+ * end_pts() below), it is also called unconditionally by
+ * planar_get_pixel(), which every configuration links -- either directly,
+ * in a planar-only build (see the #else branch in pixelread() below), or
+ * through the planar VDI backend's ops table, when the dispatcher is
+ * built (see vdi_backend_planar.c).
  */
 static UWORD
 get_color (UWORD mask, UWORD * addr)
