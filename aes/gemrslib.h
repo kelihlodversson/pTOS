@@ -10,6 +10,7 @@
 #ifndef GEMRSLIB_H
 #define GEMRSLIB_H
 
+#include "obdefs.h"                 /* for OBJECT */
 #include "rsdefs.h"                 /* for RSHDR */
 
 typedef struct aesglobal {
@@ -33,5 +34,6 @@ WORD rs_gaddr(AESGLOBAL *pglobal, UWORD rtype, UWORD rindex, void **rsaddr);
 WORD rs_saddr(AESGLOBAL *pglobal, UWORD rtype, UWORD rindex, void *rsaddr);
 void rs_fixit(AESGLOBAL *pglobal);
 WORD rs_load(AESGLOBAL *pglobal, BYTE *rsfname);
+OBJECT *rs_loadmem(AESGLOBAL *pglobal, const void *rsmem);
 
 #endif

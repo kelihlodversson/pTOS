@@ -810,6 +810,39 @@ WORD rs_saddr(AESGLOBAL *pglobal, UWORD rtype, UWORD rindex, void *rsaddr)
 
 
 /*
+ *  parse & fix up a complete resource image already held in memory
+ *  (shared by rs_readit() and rs_loadmem())
+ */
+static void rs_parse(AESGLOBAL *pglobal, RSHDR *hdr, LONG rslsize)
+{
+    WORD ibcnt;
+
+    /* init global */
+    rs_global = pglobal;
+    rs_hdr = hdr;               /* fix_*() helpers read this static */
+    rs_global->ap_rscmem = hdr;
+    rs_global->ap_rsclen = rslsize;
+
+    /*
+     * transfer RT_TRINDEX to global and turn all offsets from
+     * base of file into pointers
+     */
+    fix_trindex();
+#if CONF_WITH_COLOUR_ICONS
+    fix_cicons();
+#endif
+    fix_tedinfo();
+    ibcnt = hdr->rsh_nib;
+    fix_nptrs(ibcnt, R_IBPMASK);
+    fix_nptrs(ibcnt, R_IBPDATA);
+    fix_nptrs(ibcnt, R_IBPTEXT);
+    fix_nptrs(hdr->rsh_nbb, R_BIPDATA);
+    fix_nptrs(hdr->rsh_nstring, R_FRSTR);
+    fix_nptrs(hdr->rsh_nimages, R_FRIMG);
+}
+
+
+/*
  *  Read resource file into memory and fix everything up except the
  *  x,y,w,h, parts which depend upon a GSX open workstation.  In the
  *  case of the GEM resource file this workstation will not have
@@ -817,7 +850,6 @@ WORD rs_saddr(AESGLOBAL *pglobal, UWORD rtype, UWORD rindex, void *rsaddr)
  */
 static WORD rs_readit(AESGLOBAL *pglobal,UWORD fd)
 {
-    WORD ibcnt;
     LONG rslsize;
     RSHDR hdr_buff;
 
@@ -849,29 +881,55 @@ static WORD rs_readit(AESGLOBAL *pglobal,UWORD fd)
     if (dos_read(fd, rslsize, rs_hdr) != rslsize)
         return FALSE;           /* error or short read */
 
-    /* init global */
-    rs_global = pglobal;
-    rs_global->ap_rscmem = rs_hdr;
-    rs_global->ap_rsclen = rslsize;
-
-    /*
-     * transfer RT_TRINDEX to global and turn all offsets from
-     * base of file into pointers
-     */
-    fix_trindex();
-#if CONF_WITH_COLOUR_ICONS
-    fix_cicons();
-#endif
-    fix_tedinfo();
-    ibcnt = rs_hdr->rsh_nib;
-    fix_nptrs(ibcnt, R_IBPMASK);
-    fix_nptrs(ibcnt, R_IBPDATA);
-    fix_nptrs(ibcnt, R_IBPTEXT);
-    fix_nptrs(rs_hdr->rsh_nbb, R_BIPDATA);
-    fix_nptrs(rs_hdr->rsh_nstring, R_FRSTR);
-    fix_nptrs(rs_hdr->rsh_nimages, R_FRIMG);
+    rs_parse(pglobal, rs_hdr, rslsize);
 
     return TRUE;
+}
+
+
+static AESGLOBAL rs_own_global;
+
+/*
+ *  rs_loadmem: load a resource image already held in memory
+ *
+ *  rsmem must be a complete 'new format' resource file image -- the same
+ *  bytes rsrc_load() would read from disk; it is copied to freshly
+ *  allocated memory and parsed exactly like rs_readit() does, then fixed
+ *  up like rs_load() (including fix_objects(), which wires G_CICON
+ *  ob_spec's to their CICONBLKs).  Returns the root tree, or NULL.
+ *
+ *  pglobal may be NULL: an internal AESGLOBAL is then used.  This is the
+ *  desktop test hook's path (CONF_WITH_VDI_CICON_TEST) -- it has no
+ *  application context of its own.
+ */
+OBJECT *rs_loadmem(AESGLOBAL *pglobal, const void *rsmem)
+{
+    const RSHDR *hdr = (const RSHDR *)rsmem;
+    RSHDR *buf;
+    LONG rslsize;
+
+    rslsize = hdr->rsh_rssize;
+
+#if CONF_WITH_COLOUR_ICONS
+    /* for 'new format' resources, rsh_rssize is the offset of the
+     * extension array, whose first LONG is the true total length (see
+     * get_ciconblkptr()) -- mirroring rs_readit()'s size probe */
+    if (hdr->rsh_vrsn & NEW_FORMAT_RSC)
+        rslsize = *(const LONG *)((const BYTE *)rsmem + hdr->rsh_rssize);
+#endif
+
+    buf = (RSHDR *)dos_alloc_anyram(rslsize);
+    if (!buf)
+        return NULL;
+
+    memcpy(buf, rsmem, rslsize);
+
+    if (!pglobal)
+        pglobal = &rs_own_global;
+    rs_parse(pglobal, buf, rslsize);
+    rs_fixit(pglobal);
+
+    return pglobal->ap_ptree[0];
 }
 
 
