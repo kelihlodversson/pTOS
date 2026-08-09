@@ -40,61 +40,7 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst)
     // The caller passes a pointer to the end of the vars structure as that how
     // the original assembler version consumes it, so we simply subtract one.
     vars--;
-#if CONF_CHUNKY_PIXELS
-    WORD src_bitoffset = vars->tsdad;
-    UBYTE tmp;
-    if (vars->nbrplane == 8 && vars->nextwrd == sizeof(WORD))
-    {
-        if (src_bitoffset > 7) // We treat the source as a sequence of (big endian) bytes instead of words
-        {
-            src++;
-            src_bitoffset-= 8;
-        }
-
-        for( y = 0; y < vars->height; y++ )
-        {
-            UBYTE src_bit_mask = 0x80 >> src_bitoffset;
-            UBYTE* lsrc = src;
-            UBYTE c = *lsrc;
-            for( x = 0; x < vars->width; x++ )
-            {
-                tmp = (c & src_bit_mask)?vars->forecol:vars->ambient;
-                switch (vars->WRT_MODE) {
-                    default:
-                    case 0: /* REPLACE */
-                    dst[x] = tmp;
-                    break;
-                    case 1: /* TRANS */
-                    if (c & src_bit_mask)
-                    {
-                        dst[x] = tmp;
-                    }
-                    break;
-                    case 2: /* XOR */
-                    dst[x] ^= tmp;
-                    break;
-                    case 3: /* INVERS */
-                    if (!(c & src_bit_mask))
-                    {
-                        dst[x] = tmp;
-                    }
-                    break;
-                }
-                src_bit_mask >>= 1;
-                if(src_bit_mask == 0)
-                {
-                    src_bit_mask = 0x80;
-                    c = *(++lsrc);
-                }
-            }
-            src += vars->s_next;
-            dst += vars->d_next;
-        }
-    }
-    else
-#endif
-    {
-        if (vars->nbrplane == 1 && vars->nextwrd == 2)
+    if (vars->nbrplane == 1 && vars->nextwrd == 2)
         {
             /*
              * 1-plane buffer blit, as set up by pre_blit().
@@ -183,5 +129,4 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst)
         {
             // TODO implement other bitplane blits here
         }
-    }
 }

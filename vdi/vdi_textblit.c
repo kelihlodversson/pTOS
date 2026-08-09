@@ -708,11 +708,7 @@ static void screen_blit(LOCALVARS *vars)
     vars->forecol = linea_vars.TEXTFG;
     vars->ambient = 0;          /* logically TEXTBG, but that isn't set up by the VDI */
     vars->nbrplane = linea_vars.v_planes;
-#if CONF_CHUNKY_PIXELS
-    vars->nextwrd = sizeof(WORD);
-#else
     vars->nextwrd = vars->nbrplane * sizeof(WORD);
-#endif
     vars->height = vars->DELY;
     vars->width = vars->DELX;
 
@@ -748,19 +744,11 @@ static void screen_blit(LOCALVARS *vars)
  */
 void planar_text_blit(LOCALVARS *vars)
 {
-#if CONF_CHUNKY_PIXELS
-    vars->tddad = 0;
-    vars->dform = v_bas_ad;
-    vars->dform += (vars->DESTX * linea_vars.v_planes) >> 3;
-    vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)linea_vars.v_lin_wr;
-    vars->d_next = -linea_vars.v_lin_wr;
-#else
     vars->tddad = vars->DESTX & 0x000f;
     vars->dform = v_bas_ad;
     vars->dform += (vars->DESTX&0xfff0)>>shift_offset[linea_vars.v_planes];
     vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)linea_vars.v_lin_wr;
     vars->d_next = -linea_vars.v_lin_wr;
-#endif
 
     normal_blit(vars+1, vars->sform, vars->dform);  /* call assembler helper function */
 }
