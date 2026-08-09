@@ -91,6 +91,15 @@ WORD fun_alert(WORD defbut, WORD stnum)
  *  than the slot we forwarded.  The same pattern has shipped in upstream
  *  EmuTOS since 2019 and runs on real m68k hardware, so treat it as
  *  intentional rather than something to "fix".
+ *
+ *  The varargs list is contracted to hold exactly one merge value: only
+ *  the first argument is read and forwarded to sprintf().  Every alert
+ *  string used with this function therefore has exactly one conversion
+ *  specifier (STDISKFU/STDELDIS "%c", STRMVLOC "%s", STFMTINF "%ld"),
+ *  and passing a string with more specifiers than values would make
+ *  sprintf() read past the end of its argument list.  Do not extend
+ *  this function to merge several values; write a dedicated helper
+ *  instead.
  */
 WORD fun_alert_merge(WORD defbut, WORD stnum, ...)
 {
