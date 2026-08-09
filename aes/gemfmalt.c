@@ -32,6 +32,7 @@
 #include "gemoblib.h"
 #include "gemobed.h"
 #include "geminit.h"
+#include "geminput.h"
 #include "gemrslib.h"
 #include "gemgraf.h"
 #include "gemfmlib.h"
@@ -335,15 +336,22 @@ WORD fm_alert(WORD defbut, BYTE *palstr)
     ob_draw(tree, ROOT, MAX_DEPTH);
 
     /*
-     * turn on the mouse.  ct_mouse(TRUE) also sets gl_mowner to rlr,
-     * which is required for DAs to be able to issue form_alert()s: if
-     * mouse ownership isn't updated, the desktop remains the mouse
-     * owner, and the system queues any mouse clicks to the desktop's
-     * evnt_multi() rather than the evnt_multi() issued by fm_do()
-     * below.  this would result in the DA (and then the whole system)
-     * hanging.
+     * turn on the mouse and set the mouse owner.  the latter is required
+     * for DAs to be able to issue form_alert()s.
+     *
+     * if we don't update mouse ownership, the desktop will remain the
+     * mouse owner, and the system will queue any mouse clicks to the
+     * desktop's evnt_multi(), rather than the evnt_multi() issued by
+     * the fm_do() below.  this will result in the DA (and then the whole
+     * system) hanging.
+     *
+     * ct_mouse(TRUE) no longer does this itself as of #146/803fe7a8: it
+     * is also called from GRAF_MOUSE handling now, where reassigning
+     * ownership on every mouse-form toggle would steal it from whoever
+     * actually holds it.
      */
     ct_mouse(TRUE);
+    gl_mowner = rlr;
 
     /* let user pick button */
     i = fm_do(tree, 0);
