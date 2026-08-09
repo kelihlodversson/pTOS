@@ -522,7 +522,7 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
     WORD mx, my;
     OBJECT *tree;
     ULONG bitmask;
-    BYTE *ad_fpath, *ad_fname, *ad_ftitle;
+    BYTE *ad_fpath, *ad_fname;
     WORD drive;
     WORD dclkret, cont, newlist, newsel, newdrive;
     BYTE *pstr;
@@ -567,9 +567,8 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
     tree = rs_trees[FSELECTR];
     obj = tree + FTITLE;
     tedinfo = obj->ob_spec.tedinfo;
-    ad_ftitle = tedinfo->te_ptext;
     set_mask(mask, locstr);             /* save caller's mask */
-    strcpy(ad_ftitle, mask);            /*  & copy to title line */
+    tedinfo->te_ptext = mask;           /*  & point title line at it */
 
     obj = tree + FSDIRECT;
     tedinfo = obj->ob_spec.tedinfo;
