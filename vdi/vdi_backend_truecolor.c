@@ -137,21 +137,33 @@ static void vdi_from_prgb(ULONG prgb, WORD *r, WORD *g, WORD *b)
  * pen-indexed, what vq_color(pen,0) reads) from the same source, via
  * MAP_COL[pen] to find which hwreg's default a given pen currently has --
  * so the two forms of vq_color() agree at boot, before any vs_color()
- * call. (MAP_COL is guaranteed populated here: init_colors() -- which
- * builds it -- always runs before the first init_wk(), and the physical-
- * workstation fallback path only matters for tc_palette, which
- * get_pixel()/put_pixel() read via MAP_COL-mapped indices callers already
- * computed themselves; tc_req_col is only ever read through vq_color(),
- * which requires an already-opened, already-init_wk()'d Vwk.)
+ * call.
+ *
+ * The tc_req_col loop is bounded by DEV_TAB[13] (the pen count for the
+ * current screen, capped at 256), not a flat 256: MAP_COL[] itself is
+ * only sized MAXCOLOURS entries (16 when EXTENDED_PALETTE is off -- e.g.
+ * a hypothetical non-RPi build with CONF_WITH_VDI_BACKEND_TRUECOLOR
+ * enabled by hand alongside the dispatcher), so indexing it up to 255
+ * unconditionally would read out of bounds. tc_palette[] has no such
+ * limit -- it is indexed directly by hwreg, not through MAP_COL[] -- so
+ * it stays a flat 256. Pens above DEV_TAB[13] are never valid VDI pens
+ * (vdi_vs_color()/vdi_vq_color() both reject colnum >= DEV_TAB[13] before
+ * ever touching tc_req_col), so leaving them unseeded here is fine.
  */
 void vdi_truecolor_init_palette(Vwk *vwk)
 {
-    WORD i;
+    WORD i, npens;
 
     for (i = 0; i < 256; i++)
         vwk->tc_palette[i] = rgb565_from_prgb(default_prgb_palette[i]);
 
-    for (i = 0; i < 256; i++)
+    npens = linea_vars.DEV_TAB[13];
+    if (npens < 0)
+        npens = 0;
+    else if (npens > 256)
+        npens = 256;
+
+    for (i = 0; i < npens; i++)
         vdi_from_prgb(default_prgb_palette[MAP_COL[i]],
                       &vwk->tc_req_col[i][0], &vwk->tc_req_col[i][1], &vwk->tc_req_col[i][2]);
 }

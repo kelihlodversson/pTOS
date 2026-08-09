@@ -162,7 +162,10 @@ void vdi_truecolor_init_palette(Vwk *vwk);
 /*
  * The workstation whose pseudo-palette get_pixel()/put_pixel()/etc.
  * (none of which take a Vwk*) should translate indices through -- see the
- * definitions in vdi_backend.c. Sole writer is vdi_main.c's screen().
+ * definitions in vdi_backend_truecolor.c. Written by vdi_main.c's
+ * screen() once per VDI call, and by vdi_v_clsvwk() (vdi_control.c),
+ * which points it back at the physical workstation if the Vwk it is
+ * about to free is the currently active one.
  */
 void vdi_backend_set_active_vwk(Vwk *vwk);
 Vwk *vdi_backend_active_vwk(void);
