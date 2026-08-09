@@ -777,7 +777,7 @@ static LONG xbios_26(PFLONG codeptr)
 
     return retval;
 #else
-    /* On arm we assume the function follows the eabi and dont save any additional registers */
+    /* On arm we assume the function follows the eabi and don't save any additional registers */
     return codeptr();
 #endif
 }
@@ -1064,7 +1064,7 @@ extern LONG xbios_unimpl(void);
 #if defined(__m68k__)
 extern LONG supexec(PFLONG);   /* implemented in vectors.S */
 #else
-/* On arm we assume the function follows the eabi and dont save any additional registers */
+/* On arm we assume the function follows the eabi and don't save any additional registers */
 static LONG supexec(PFLONG codeptr)
 {
     return codeptr();
