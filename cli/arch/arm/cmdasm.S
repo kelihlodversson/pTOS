@@ -11,9 +11,18 @@
  */
 
 #include "asmdefs.h"
-#include "../../../aes/asmstruct.h"
 
 #define COMASTACKSIZE   4096    /* in bytes: must be multiple of 4 */
+
+/* PD field offsets from include/pd.h, hardcoded rather than pulled from
+ * aes/asm_struct_gen.h: that header is only generated when CONF_WITH_AES
+ * is set (its generator needs AES_STACK_SIZE), but EmuCON must also build
+ * with the AES left out.  cli/cmdasm.S (m68k) hardcodes the same offsets
+ * for the same reason. */
+#define PD_p_tlen       0x0c
+#define PD_p_dlen       0x14
+#define PD_p_blen       0x1c
+#define SIZEOF_PD       0x100
 
         .globl  _coma_start
         .extern _cmdmain

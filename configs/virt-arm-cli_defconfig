@@ -1,0 +1,38 @@
+# ELF kernel image for QEMU's ARM 'virt' machine (qemu-system-arm -M virt),
+# booting straight to the EmuCON command line over the serial console
+# instead of the GEM desktop. Meant for a fast inner dev loop: the pass/fail
+# signal is text on -serial stdio, no screen capture or frame analysis
+# needed. See virt-arm_defconfig for the full-stack (AES/VDI) target.
+MACHINE_VIRT_ARM=y
+
+# No architecture-specific default exists yet for this machine (unlike the
+# Raspberry Pi targets), so the CPU used for testing (QEMU's cortex-a7) is
+# spelled out explicitly here, following the precedent set by
+# amiga-vampire_defconfig for its own CPUFLAGS override.
+CPUFLAGS="-march=armv7-a -mtune=cortex-a7 -marm -mfpu=neon-vfpv4 -mfloat-abi=hard"
+
+# QEMU's 'virt' board has no IDE interface; without this, bios/ide.c fails
+# to build because struct IDE is never defined for this machine. Raspberry
+# Pi gets the same treatment via a Kconfig default (MACHINE_RPI); matched
+# here explicitly.
+CONF_WITH_IDE=n
+
+# The Line-A emulator (vdi/Kconfig) is only implemented for 68k-class
+# hardware (bios/arch/m68k/linea.S provides int_linea()); there is no ARM
+# implementation. Raspberry Pi already turns this off via a Kconfig
+# default (MACHINE_RPI); matched here explicitly.
+CONF_WITH_LINEA=n
+
+# XHDI support (bios/Kconfig) pulls in bios/xhdi.c, which references
+# xhdi_vec, implemented only in bios/arch/m68k/natfeat.S. Raspberry Pi
+# already turns this off via a Kconfig default (MACHINE_RPI); matched
+# here explicitly.
+CONF_WITH_XHDI=n
+
+# The whole point of this defconfig: leave the AES/EmuDesk out, so EmuTOS
+# boots straight into EmuCON (aes/Kconfig) instead of the graphical
+# desktop. CONF_WITH_CLI is left at its default (y): unlike virt-arm's
+# desktop defconfig, this target actually needs EmuCON, and it now builds
+# cleanly here (see cli/arch/arm/cmdasm.S, which no longer depends on the
+# AES-only-generated aes/asm_struct_gen.h for its basepage offsets).
+CONF_WITH_AES=n

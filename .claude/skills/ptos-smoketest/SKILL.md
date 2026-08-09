@@ -22,6 +22,8 @@ the pTOS tree). Relevant outputs:
 | `rpi2_defconfig` | qemu-system-arm | `kernel7.img` | `-M raspi2b` (video + serial) |
 | `virt-arm_defconfig` | qemu-system-arm | `virt-arm.elf` | `-M virt,highmem=off -cpu cortex-a7` (headless) |
 | `virt-m68k_defconfig` | qemu-system-m68k | `virt-m68k.elf` | `-M virt -cpu m68020` (headless) |
+| `virt-arm-cli_defconfig` | qemu-system-arm | `virt-arm.elf` | same as `virt-arm_defconfig`, but boots to EmuCON, not the desktop |
+| `virt-m68k-cli_defconfig` | qemu-system-m68k | `virt-m68k.elf` | same as `virt-m68k_defconfig`, but boots to EmuCON, not the desktop |
 
 Atari configs build with the default mintelf toolchain (`m68k-atari-mintelf-`)
 and produce symbols in `ptos512k.sym` (load in the Hatari debugger with
@@ -213,6 +215,15 @@ qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf -
 # virt-m68k (headless) — MUST use -cpu m68020: the 68040 CACR probe hits a fatal QEMU bug
 make virt-m68k_defconfig && make
 qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_errors -serial stdio
+
+# virt-arm-cli / virt-m68k-cli — same images/invocations as above, but boot to
+# EmuCON instead of the desktop (CONF_WITH_AES=n). Fastest smoke check: no AVI,
+# no framebuffer, just text on -serial stdio. Do not expect typed input to work
+# (see pass-signal notes below — serial console input is not wired up yet).
+make virt-arm-cli_defconfig && make
+qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -serial stdio
+make virt-m68k-cli_defconfig && make
+qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_errors -serial stdio
 ```
 
 Device variants (both virt ports; `force-legacy=false` is required on QEMU
@@ -257,6 +268,19 @@ cat /tmp/qemu.log
 - Known issue: `_hz_200` may stall on virt targets (shared AES/gemdisp.c
   IRQ-mask bug, affects raspi too) — a timer that fires correctly at least
   once is the v1 bar.
+- **virt-arm-cli / virt-m68k-cli** (`CONF_WITH_AES=n`, boots straight to
+  EmuCON instead of the desktop — for a fast dev-loop check that avoids
+  AVI/frame analysis entirely): pass signal is `Welcome to EmuCON2 version
+  ...` followed by the `A:>` prompt appearing in the `-serial stdio` output,
+  with no `guest_errors`/`unimp` beyond the same benign m68k `_detect_fpu`
+  entry noted above. Reaching the prompt is itself the thing to check for —
+  **do not try to type a command and expect a response**: `CONF_SERIAL_CONSOLE`
+  input injection (`push_ascii_ikbdiorec`) is only wired to an RX interrupt
+  handler for ColdFire (`bios/coldfire.c`); virt-arm's PL011 and virt-m68k's
+  Goldfish TTY have no equivalent hookup yet, so keystrokes sent over
+  `-serial stdio` are never delivered to EmuCON. Serial console *output*
+  works fully on both; *input* does not (verified: a `printf 'ver\r'`
+  written to QEMU's stdin after the prompt produces no echo and no response).
 
 ## Common mistakes
 
@@ -272,3 +296,4 @@ cat /tmp/qemu.log
 | STE boot prints two `Bus Error reading at address $4fffff/$cc03c3` warnings | Benign init probes at `PC=$e00c20` (`TST.B (A0)`); present on every boot, ignore |
 | Testing `ptoscart.img` as the `--tos` image | It is a cartridge, not a TOS: pass it via `--cartridge` and supply a real Atari TOS ROM with `--tos` (pTOS ROMs have cartridge detection compiled out) |
 | Expecting a desktop from `ptoscart.img` | The 128 KB cartridge excludes the AES/desktop; pass signal is the rendered diagnostic text screen, not the checkerboard |
+| Typing a command at the `virt-arm-cli`/`virt-m68k-cli` EmuCON prompt over `-serial stdio` and expecting a response | Serial console input isn't wired up on these machines (only ColdFire has the RX-interrupt hookup); reaching the `A:>` prompt is the pass signal, not a round-tripped command |
