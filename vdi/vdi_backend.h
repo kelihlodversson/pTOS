@@ -171,4 +171,13 @@ void vdi_backend_set_active_vwk(Vwk *vwk);
 Vwk *vdi_backend_active_vwk(void);
 #endif
 
+/*
+ * Extern backend query + write-mode helpers, visible to the AES via
+ * include/gsxdefs.h.  vdi_colour_blit_mode() is defined in vdi/vdi_raster.c
+ * (always built); vdi_truecolor_screen() in vdi_backend_truecolor.c (built
+ * exactly when this backend is).  See gr_colourblit() (aes/gemgraf.c).
+ */
+BOOL vdi_truecolor_screen(void);
+WORD vdi_colour_blit_mode(void);
+
 #endif /* VDI_BACKEND_H */

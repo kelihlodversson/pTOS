@@ -382,6 +382,73 @@ static void transform_cicon(WORD *src, WORD *dest, WORD w, WORD h, WORD planes)
     vrn_trnfm(&gl_src, &gl_dst);
 }
 
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+/*
+ *  pack one plane-major colour array (the RSC layout transform_cicon()
+ *  reads) into w*h packed pixels: each pixel's colour code is the OR of
+ *  its bit across the planes, then mapped to RGB565 via the physical
+ *  workstation's palette.
+ *
+ *  The bit order below -- plane p contributes bit (1<<p) of the colour
+ *  code -- is the calibration constant the design calls out; the first
+ *  screencap (Task 6) confirms or flips it to (1 << (planes-1-p)).
+ */
+static void pack_planes(const WORD *data, UWORD *pix, WORD planes, WORD w, WORD h)
+{
+    WORD mono_words = w / 16;
+    WORD x, y, p;
+
+    for (y = 0; y < h; y++)
+    {
+        const WORD *rowbase = data + (LONG)y * mono_words;
+
+        for (x = 0; x < w; x++)
+        {
+            UWORD mask = 0x8000 >> (x & 0x0f);
+            WORD code = 0;
+
+            for (p = 0; p < planes; p++)
+            {
+                const WORD *plane = rowbase + (LONG)p * mono_words * h;
+                if (plane[x >> 4] & mask)
+                    code |= (WORD)(1 << p);
+            }
+            *pix++ = vdi_truecolor_pixel_for_index(code);
+        }
+    }
+}
+
+/*
+ *  pack_cicon: convert the selected CICON's standard-format colour data
+ *  to the packed-truecolor layout.  The normal and (optional) selected
+ *  buffers are packed back-to-back in a single allocation so
+ *  free_cicon_buffers() (which frees only cicon->col_data) still works.
+ */
+static BOOL pack_cicon(CICON *cicon, WORD w, WORD h)
+{
+    LONG pixels = (LONG)w * h;
+    UWORD *packed;
+
+    packed = dos_alloc_anyram(pixels * (cicon->sel_data ? 2 : 1) * sizeof(UWORD));
+    if (!packed)
+        return FALSE;
+
+    pack_planes(cicon->col_data, packed, cicon->num_planes, w, h);
+    cicon->col_data = (WORD *)packed;
+
+    if (cicon->sel_data)
+    {
+        UWORD *selbuf = packed + pixels;
+
+        pack_planes(cicon->sel_data, selbuf, cicon->num_planes, w, h);
+        cicon->sel_data = (WORD *)selbuf;
+    }
+
+    cicon->num_planes = 1;
+    return TRUE;
+}
+#endif
+
 /*
  * for each CICONBLK in the resource, select the CICON with the number of
  * planes that best matches the current resolution.  then expand the icon
@@ -405,6 +472,27 @@ static void transform_all_cicons(LONG num_cicons, CICONBLK **ciconblkptr)
             continue;
         w = ciconblk->monoblk.ib_wicon;
         h = ciconblk->monoblk.ib_hicon;
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+        /*
+         * Packed-truecolor screen: there are no bitplanes to expand to.
+         * Convert the standard-format colour planes straight to one
+         * RGB565 pixel per bit (w*h UWORDs, num_planes=1), the layout
+         * truecolor_raster_copy()'s opaque path reads.  Skipping
+         * expand_cicondata()/transform_cicon() here is what avoids the
+         * 16-plane interleaved form that setup_info() cannot interpret.
+         * Pixels whose colour code is 0 keep their own palette colour
+         * (the icon background -- the mask blit in gr_gicon() is what
+         * paints the object's background over the shape); this is the
+         * deliberate truecolor look, see the design doc.
+         */
+        if (vdi_truecolor_screen())
+        {
+            cicon->next_res = NULL;
+            if (!pack_cicon(cicon, w, h))
+                ciconblk->mainlist = NULL;  /* no colour for this icon */
+            continue;
+        }
+#endif
         data_size = (LONG)(w/8*gl_nplanes) * h;
         expand = (cicon->num_planes != gl_nplanes); /* boolean */
 
