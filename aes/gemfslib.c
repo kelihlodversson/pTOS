@@ -528,7 +528,11 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
     BYTE *pstr;
     GRECT pt;
     BYTE locstr[LEN_ZPATH+4], locold[LEN_ZPATH+4];  /* at least 3 bytes longer than 'mask' */
-    BYTE mask[LEN_ZPATH+1], selname[LEN_FSNAME];
+    /* static: the FTITLE object's te_ptext is pointed directly at mask
+     * (see below) and that pointer can outlive this call, e.g. if the
+     * resource tree is redrawn without another fs_input() call first */
+    static BYTE mask[LEN_ZPATH+1];
+    BYTE selname[LEN_FSNAME];
     OBJECT *obj;
     TEDINFO *tedinfo;
 

@@ -1122,7 +1122,11 @@ void app_save(WORD todisk)
         *pcurr++ = '\n';
         if (pcurr-gl_afile >= SIZE_AFILE)   /* overflow check */
         {
-            for (pcurr -= 2; *pcurr != '\n'; pcurr--)
+            /* the '#R' revision line written at the very start of this
+             * function always ends in '\n', so this is guaranteed to
+             * find one; the lower bound just keeps that guarantee from
+             * being a silent buffer underrun if it's ever violated */
+            for (pcurr -= 2; (pcurr > gl_afile) && (*pcurr != '\n'); pcurr--)
                 ;
             pcurr++;        /* point after previous line */
             break;
