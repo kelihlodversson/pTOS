@@ -18,15 +18,7 @@
 #define CLOSE_TO_ROOT   2       /* display root folder in window */
 
 WORD fun_alert(WORD defbut, WORD stnum);
-WORD fun_alert_merge(WORD defbut, WORD stnum, BYTE merge);
-
-#if CONF_WITH_FORMAT
-WORD fun_alert_long(WORD defbut, WORD stnum, LONG merge);
-#endif
-
-#if CONF_WITH_DESKTOP_SHORTCUTS
-WORD fun_alert_string(WORD defbut, WORD stnum, BYTE *merge);
-#endif
+WORD fun_alert_merge(WORD defbut, WORD stnum, ...);
 
 #if CONF_WITH_FILEMASK
 void fun_mask(WNODE *pw);

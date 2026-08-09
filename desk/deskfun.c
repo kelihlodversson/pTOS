@@ -21,6 +21,7 @@
 
 /* #define ENABLE_KDEBUG */
 
+#include <stdarg.h>
 #include "config.h"
 #include "portab.h"
 #include "obdefs.h"
@@ -71,43 +72,47 @@ WORD fun_alert(WORD defbut, WORD stnum)
 
 
 /*
- *  Issue an alert after merging in an optional character variable
+ *  Issue an alert after merging in a variable
+ *
+ *  The following way of handling multiple types for the variable to be
+ *  merged is a bit of a kludge, but at least we make an attempt to
+ *  avoid obvious problems ...
+ *
+ *  The merge value is read as a pointer-sized slot (32 bits on both
+ *  m68k and ARM) and forwarded verbatim to sprintf().  This works in
+ *  practice because every value a caller can supply is at most
+ *  pointer-sized: a char promoted to int for "%c", a char * for "%s",
+ *  and a long for "%ld", the last guaranteed to fit by the
+ *  _Static_assert() in the function body below.  sprintf() re-reads the
+ *  value from its own varargs list with the type its format specifier
+ *  demands (see doprintf() in util/doprintf.c), so a slot that is only re-interpreted
+ *  as a smaller or equal-sized type never reads past the value; "%c"
+ *  takes an int, which on m68k is 16 bits and on ARM 32, both no wider
+ *  than the slot we forwarded.  The same pattern has shipped in upstream
+ *  EmuTOS since 2019 and runs on real m68k hardware, so treat it as
+ *  intentional rather than something to "fix".
+ *
+ *  The varargs list is contracted to hold exactly one merge value: only
+ *  the first argument is read and forwarded to sprintf().  Every alert
+ *  string used with this function therefore has exactly one conversion
+ *  specifier (STDISKFU/STDELDIS "%c", STRMVLOC "%s", STFMTINF "%ld"),
+ *  and passing a string with more specifiers than values would make
+ *  sprintf() read past the end of its argument list.  Do not use this
+ *  function to merge several values without rewriting it first (e.g. by
+ *  going through a vsprintf()-style helper that takes a va_list).
  */
-WORD fun_alert_merge(WORD defbut, WORD stnum, BYTE merge)
+WORD fun_alert_merge(WORD defbut, WORD stnum, ...)
 {
+    va_list ap;
+    _Static_assert(sizeof(void *) >= sizeof(long), "incompatible type sizes");
+
+    va_start(ap, stnum);
     rsrc_gaddr_rom(R_STRING, stnum, (void **)&G.a_alert);
-    sprintf(G.g_1text, G.a_alert, merge);
+    sprintf(G.g_1text, G.a_alert, va_arg(ap, void *));
+    va_end(ap);
 
     return form_alert(defbut, G.g_1text);
 }
-
-
-#if CONF_WITH_FORMAT
-/*
- *  Issue an alert after merging in a long variable
- */
-WORD fun_alert_long(WORD defbut, WORD stnum, LONG merge)
-{
-    rsrc_gaddr_rom(R_STRING, stnum, (void **)&G.a_alert);
-    sprintf(G.g_1text, G.a_alert, merge);
-
-    return form_alert(defbut, G.g_1text);
-}
-#endif
-
-
-#if CONF_WITH_DESKTOP_SHORTCUTS
-/*
- *  Issue an alert after merging in a string
- */
-WORD fun_alert_string(WORD defbut, WORD stnum, BYTE *merge)
-{
-    rsrc_gaddr_rom(R_STRING, stnum, (void **)&G.a_alert);
-    sprintf(G.g_1text, G.a_alert, merge);
-
-    return form_alert(defbut, G.g_1text);
-}
-#endif
 
 
 void fun_msg(WORD type, WORD w3, WORD w4, WORD w5, WORD w6, WORD w7)
