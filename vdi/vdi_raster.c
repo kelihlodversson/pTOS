@@ -785,6 +785,24 @@ dont_clip (struct blit_frame * info)
 }
 
 /*
+ *  The write mode gr_colourblit() must pass for colour-icon data on the
+ *  current screen (see aes/gemgraf.c).  With packed data the blit must
+ *  replace pixels outright: S_OR_D would OR RGB565 values
+ *  (apply_raster_op's BM_S_OR_D = src|dst), corrupting them.  The
+ *  planar backend needs S_OR_D (its data planes are mask-ANDed and
+ *  composed over the mask blit).  BM_S_ONLY/S_OR_D are numerically equal
+ *  to the AES's S_ONLY/S_OR_D.
+ */
+WORD vdi_colour_blit_mode(void)
+{
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    if (vdi_screen_is_truecolor())
+        return BM_S_ONLY;
+#endif
+    return BM_S_OR_D;
+}
+
+/*
  * setup_info - fill the info structure with MFDB values
  */
 static BOOL
@@ -803,6 +821,22 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
         info->s_form = src->fd_addr;
         info->s_nxwd = src->fd_nplanes * 2;
         info->s_nxln = src->fd_wdwidth * info->s_nxwd;
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+        /*
+         * Packed-truecolor source forms hold one whole pixel per word,
+         * so a row of fd_w pixels spans fd_w*2 bytes.  gsx_fix() sizes
+         * memory MFDBs with the planar convention fd_wdwidth = fd_w/16;
+         * using that here would make s_nxln 8 times too small and the
+         * opaque copy would read w/8 bytes per row instead of 2w.  Only
+         * the opaque device-dependent case (the AES's packed colour-icon
+         * data -- gr_colourblit()) wants the packed stride: transparent
+         * sources are 1bpp masks whose fd_wdwidth stride is correct, and
+         * fd_stand sources (bb_save/bb_restore's gl_tmp) keep their own
+         * consistent fd_wdwidth-based layout.
+         */
+        if (vdi_screen_is_truecolor() && !raster->transparent && !src->fd_stand)
+            info->s_nxln = src->fd_w * 2;
+#endif
     }
     else {
         /* source form is screen */
