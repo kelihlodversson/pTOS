@@ -32,6 +32,7 @@
 #include "gemoblib.h"
 #include "gemobed.h"
 #include "geminit.h"
+#include "geminput.h"
 #include "gemrslib.h"
 #include "gemgraf.h"
 #include "gemfmlib.h"
@@ -334,8 +335,18 @@ WORD fm_alert(WORD defbut, BYTE *palstr)
     gsx_sclip(&d);
     ob_draw(tree, ROOT, MAX_DEPTH);
 
-    /* turn on the mouse    */
+    /*
+     * turn on the mouse and set the mouse owner.  the latter is required
+     * for DAs to be able to issue form_alert()s.
+     *
+     * if we don't update mouse ownership, the desktop will remain the
+     * mouse owner, and the system will queue any mouse clicks to the
+     * desktop's evnt_multi(), rather than the evnt_multi() issued by
+     * the fm_do() below.  this will result in the DA (and then the whole
+     * system) hanging.
+     */
     ct_mouse(TRUE);
+    gl_mowner = rlr;
 
     /* let user pick button */
     i = fm_do(tree, 0);
