@@ -732,16 +732,31 @@ static void xbios_25(void)
  * BIOS or GEMDOS calls. This function is meant to allow programs
  * to hack hardware and protected locations without having to fiddle
  * with GEMDOS get/set supervisor mode call.
- * There is no rule regarding to which registers might be clobbered by the user
- * function. For safety, we assume it can clobber all of them.
+ *
+ * On m68k, the normal version of supexec() is a tiny assembler
+ * trampoline (see vectors.S) that jumps to the user's code instead
+ * of calling it, so it adds no stack frame of its own. This matters
+ * because there is no rule about how much stack the user's function
+ * needs, and some callers (e.g. certain game loaders) run with very
+ * little stack to spare.
+ *
+ * The debug version lives here and is much uglier since it has to
+ * protect itself against GCC possibly generating code to use registers
+ * which might have been clobbered by the called user function. There
+ * are no rules about this, so for safety, we assume it can clobber all
+ * of them.
  */
-
-static LONG supexec(PFLONG codeptr)
+#if DBG_XBIOS
+static LONG xbios_26(PFLONG codeptr)
 {
 #if defined(__m68k__)
     register LONG retval __asm__("d0");
     register PFLONG func __asm__("a0") = codeptr;
+#endif
 
+    kprintf("XBIOS: Supexec(%p)\n", codeptr);
+
+#if defined(__m68k__)
     /* a6 is saved/restored around the call instead of being listed as a
      * clobber: some m68k-atari-mintelf-gcc 13.3.0 builds ICE in
      * print_operand_address (RTL "final" pass) when a6 is clobbered by
@@ -762,16 +777,9 @@ static LONG supexec(PFLONG codeptr)
 
     return retval;
 #else
-    /* On arm we assume the function follows the eabi and dont save any additional registers */
+    /* On arm we assume the function follows the eabi and don't save any additional registers */
     return codeptr();
 #endif
-}
-
-#if DBG_XBIOS
-static LONG xbios_26(PFLONG codeptr)
-{
-    kprintf("XBIOS: Supexec(%p)\n", codeptr);
-    return supexec(codeptr);
 }
 #endif
 
@@ -1052,6 +1060,16 @@ LONG xbios_do_unimpl(WORD number)
 }
 
 extern LONG xbios_unimpl(void);
+
+#if defined(__m68k__)
+extern LONG supexec(PFLONG);   /* implemented in vectors.S */
+#else
+/* On arm we assume the function follows the eabi and don't save any additional registers */
+static LONG supexec(PFLONG codeptr)
+{
+    return codeptr();
+}
+#endif
 
 
 /*

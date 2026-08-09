@@ -689,12 +689,18 @@ LONG blkdev_getbpb(WORD dev)
 
 static LONG blkdev_mediach(WORD dev)
 {
-    BLKDEV *b = &blkdev[dev];
-    UWORD unit = b->unit;
+    BLKDEV *b;
+    UWORD unit;
     LONG ret;
 
-    if ((dev < 0 ) || (dev >= BLKDEVNUM) || !(b->flags&DEVICE_VALID))
+    if ((dev < 0 ) || (dev >= BLKDEVNUM))
         return EUNDEV;  /* unknown device */
+
+    b = &blkdev[dev];
+    if (!(b->flags&DEVICE_VALID))
+        return EUNDEV;  /* unknown device */
+
+    unit = b->unit;
 
     /* if we've already marked the drive as MEDIACHANGE, don't change it */
     if (b->mediachange == MEDIACHANGE)

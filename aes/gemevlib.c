@@ -97,6 +97,31 @@ UWORD ev_button(WORD bflgclks, UWORD bmask, UWORD bstate, WORD rets[])
 
 
 /*
+ *  Retrieve a pending message: either a real one from the process's
+ *  message queue, or a synthetic WM_ARROWED sent by ctlmgr() while
+ *  a window arrow gadget is held down (see handle_arrow_msg()).
+ */
+void ev_mesag(WORD *mebuff)
+{
+    if ((rlr->p_qindex == 0) && (rlr->p_msg.action >= 0))
+    {
+        *mebuff++ = WM_ARROWED;
+        *mebuff++ = rlr->p_pid;
+        *mebuff++ = 0;
+        *mebuff++ = rlr->p_msg.wh;
+        *mebuff++ = rlr->p_msg.action;
+        *mebuff++ = 0;
+        *mebuff++ = 0;
+        *mebuff = 0;
+        rlr->p_msg.action = -1;
+        return;
+    }
+
+    ap_rdwr(MU_MESAG, rlr, 16, mebuff);
+}
+
+
+/*
  *  Wait for the mouse to leave or enter a specified rectangle
  */
 UWORD ev_mouse(MOBLK *pmo, WORD rets[])
@@ -186,9 +211,9 @@ WORD ev_multi(WORD flags, MOBLK *pmo1, MOBLK *pmo2, LONG tmcount,
     /* quick check message */
     if (flags & MU_MESAG)
     {
-        if (rlr->p_qindex > 0)
+        if ((rlr->p_qindex > 0) || (rlr->p_msg.action >= 0))
         {
-            ap_rdwr(MU_MESAG, rlr, 16, mebuff);
+            ev_mesag(mebuff);
             what |= MU_MESAG;
         }
     }

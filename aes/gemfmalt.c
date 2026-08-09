@@ -334,7 +334,15 @@ WORD fm_alert(WORD defbut, BYTE *palstr)
     gsx_sclip(&d);
     ob_draw(tree, ROOT, MAX_DEPTH);
 
-    /* turn on the mouse    */
+    /*
+     * turn on the mouse.  ct_mouse(TRUE) also sets gl_mowner to rlr,
+     * which is required for DAs to be able to issue form_alert()s: if
+     * mouse ownership isn't updated, the desktop remains the mouse
+     * owner, and the system queues any mouse clicks to the desktop's
+     * evnt_multi() rather than the evnt_multi() issued by fm_do()
+     * below.  this would result in the DA (and then the whole system)
+     * hanging.
+     */
     ct_mouse(TRUE);
 
     /* let user pick button */

@@ -11,10 +11,13 @@
 
 
 
+/* #define ENABLE_KDEBUG */
+
 #include "config.h"
 #include "portab.h"
 #include "vdi_defs.h"
 #include "vdi_backend.h"
+#include "kprint.h"
 #include "../bios/tosvars.h"
 #include "../bios/lineavars.h"
 
@@ -22,7 +25,6 @@
 #define NOT_FOUND -1
 #define DOWN_FLAG 0x8000
 #define QSIZE 200
-#define QMAX QSIZE-1
 
 
 
@@ -461,13 +463,18 @@ clc_flit (const VwkAttrib * attr, const VwkClip * clipper, const Point * point, 
     if ( intersections > 1 )
         bub_sort(fill_buffer, intersections);
 
-    if (attr->clip) {
-        /* Clipping is in force.  Once the endpoints of the line segment have */
-        /* been adjusted for the border, clip them to the left and right sides */
-        /* of the clipping rectangle. */
+    /*
+     * Testing under Atari TOS shows that the fill area always *includes*
+     * the left & right perimeter (for those functions that allow the
+     * perimeter to be drawn separately, it is drawn on top of the edge
+     * pixels).  We now conform to Atari TOS.
+     */
 
-        /* The x-coordinates of each line segment are adjusted so that the */
-        /* border of the figure will not be drawn with the fill pattern. */
+    if (attr->clip) {
+        /*
+         * Clipping is in force.  Clip the endpoints of the line segment
+         * to the left and right sides of the clipping rectangle.
+         */
 
         /* loop through buffered points */
         WORD * ptr = fill_buffer;
@@ -475,13 +482,9 @@ clc_flit (const VwkAttrib * attr, const VwkClip * clipper, const Point * point, 
             WORD x1, x2;
             Rect rect;
 
-            /* grab a pair of adjusted intersections */
-            x1 = *ptr++ + 1;
-            x2 = *ptr++ - 1;
-
-            /* do nothing, if starting point greater than ending point */
-            if ( x1 > x2 )
-                continue;
+            /* grab a pair of endpoints */
+            x1 = *ptr++;
+            x2 = *ptr++;
 
             if ( x1 < clipper->xmn_clip ) {
                 if ( x2 < clipper->xmn_clip )
@@ -506,33 +509,19 @@ clc_flit (const VwkAttrib * attr, const VwkClip * clipper, const Point * point, 
     else {
         /* Clipping is not in force.  Draw from point to point. */
 
-        /* This code has been modified from the version in the screen driver. */
-        /* The x-coordinates of each line segment are adjusted so that the */
-        /* border of the figure will not be drawn with the fill pattern.  If */
-        /* the starting point is greater than the ending point then nothing is */
-        /* done. */
-
         /* loop through buffered points */
         WORD * ptr = fill_buffer;
         for (i = intersections / 2 - 1; i >= 0; i--) {
-            WORD x1, x2;
             Rect rect;
 
-            /* grab a pair of adjusted endpoints */
-            x1 = *ptr++ + 1 ;   /* word */
-            x2 = *ptr++ - 1 ;   /* word */
+            /* grab a pair of endpoints */
+            rect.x1 = *ptr++;
+            rect.y1 = y;
+            rect.x2 = *ptr++;
+            rect.y2 = y;
 
-            /* If starting point greater than ending point, nothing is done. */
-            /* is start still to left of end? */
-            if ( x1 <= x2 ) {
-                rect.x1 = x1;
-                rect.y1 = y;
-                rect.x2 = x2;
-                rect.y2 = y;
-
-                /* rectangle fill routine draws horizontal line */
-                draw_rect_common(attr, &rect);
-            }
+            /* rectangle fill routine draws horizontal line */
+            draw_rect_common(attr, &rect);
         }
     }
 }
@@ -574,8 +563,6 @@ polygon(Vwk * vwk, Point * ptsin, int count)
             if (fill_maxy >= clipper->ymn_clip) {
                 /* polygon starts before clip */
                 fill_miny = clipper->ymn_clip - 1;       /* polygon partial overlap */
-                if (fill_miny < 1)
-                    fill_miny = 1;
             } else
                 return;         /* polygon entirely before clip */
         }
@@ -904,7 +891,9 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
     WORD xright;                /* */
     WORD direction;             /* is next scan line up or down */
     BOOL notdone;               /* does seedpoint==search_color */
-    BOOL gotseed;               /* a seed was put in the Q      */
+    WORD gotseed;               /* 1 => seed was put in the Q */
+                                 /* 0 => no seed was put in the Q */
+                                 /* -1 => queue overflowed */
     BOOL seed_type;             /* indicates the type of fill */
 
     xleft = PTSIN[0];
@@ -973,26 +962,32 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
             direction = (oldy & DOWN_FLAG) ? 1 : -1;
             gotseed = get_seed(attr, clip, oldxleft, (oldy + direction),
                                &newxleft, &newxright, seed_type);
+            if (gotseed < 0)
+                return;         /* error, quit */
 
             if ((newxleft < (oldxleft - 1)) && gotseed) {
                 xleft = oldxleft;
                 while (xleft > newxleft) {
                     --xleft;
-                    get_seed(attr, clip, xleft, oldy ^ DOWN_FLAG,
-                             &xleft, &xright, seed_type);
+                    if (get_seed(attr, clip, xleft, oldy ^ DOWN_FLAG,
+                             &xleft, &xright, seed_type) < 0)
+                        return; /* error, quit */
                 }
             }
             while (newxright < oldxright) {
                 ++newxright;
                 gotseed = get_seed(attr, clip, newxright, oldy + direction,
                                    &xleft, &newxright, seed_type);
+                if (gotseed < 0)
+                    return;     /* error, quit */
             }
             if ((newxright > (oldxright + 1)) && gotseed) {
                 xright = oldxright;
                 while (xright < newxright) {
                     ++xright;
-                    get_seed(attr, clip, xright, oldy ^ DOWN_FLAG,
-                             &xleft, &xright, seed_type);
+                    if (get_seed(attr, clip, xright, oldy ^ DOWN_FLAG,
+                             &xleft, &xright, seed_type) < 0)
+                        return; /* error, quit */
                 }
             }
 
@@ -1073,9 +1068,9 @@ get_seed(const VwkAttrib * attr, const VwkClip * clip,
         }
 
         if (qhole == NOT_FOUND) {
-            if ((qtop += 3) > QMAX) {
-                qtmp = qbottom;
-                qtop -= 3;
+            if ((qtop += 3) > QSIZE) {  /* can't raise qtop ... */
+                KDEBUG(("contourfill(): queue overflow\n"));
+                return -1;      /* error */
             }
         } else
             qtmp = qhole;

@@ -127,9 +127,20 @@
 
 #define INF_REV_LEVEL   0x01    /* revision level when creating EMUDESK.INF */
 
+/*
+ * the maximum size of an EMUDESK.INF line (see app_save())
+ */
+#define MAX_SIZE_INF_LINE   (MAXPATHLEN+100)    /* conservative */
+
 static WORD     inf_rev_level;  /* revision level of current EMUDESK.INF */
 
-static BYTE     gl_afile[SIZE_AFILE];
+/*
+ * gl_afile is sized larger than SIZE_AFILE by the length of one line,
+ * so that app_save() only needs to check for buffer overflow at the
+ * end of each line, rather than before every write within it.  the
+ * data actually saved/loaded is always bounded to SIZE_AFILE bytes.
+ */
+static BYTE     gl_afile[SIZE_AFILE+MAX_SIZE_INF_LINE];
 static BYTE     *gl_buffer;
 
 
@@ -1109,6 +1120,17 @@ void app_save(WORD todisk)
         }
         *pcurr++ = '\r';
         *pcurr++ = '\n';
+        if (pcurr-gl_afile >= SIZE_AFILE)   /* overflow check */
+        {
+            /* the '#R' revision line written at the very start of this
+             * function always ends in '\n', so this is guaranteed to
+             * find one; the lower bound just keeps that guarantee from
+             * being a silent buffer underrun if it's ever violated */
+            for (pcurr -= 2; (pcurr > gl_afile) && (*pcurr != '\n'); pcurr--)
+                ;
+            pcurr++;        /* point after previous line */
+            break;
+        }
     }
     *pcurr++ = 0x0;
 
@@ -1228,6 +1250,9 @@ void app_blddesk(void)
 ANODE *app_afind_by_id(WORD obid)
 {
     ANODE *pa;
+
+    if (obid < WOBS_START)      /* validate obid */
+        return NULL;
 
     for (pa = G.g_ahead; pa; pa = pa->a_next)
     {

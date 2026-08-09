@@ -522,13 +522,17 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
     WORD mx, my;
     OBJECT *tree;
     ULONG bitmask;
-    BYTE *ad_fpath, *ad_fname, *ad_ftitle;
+    BYTE *ad_fpath, *ad_fname;
     WORD drive;
     WORD dclkret, cont, newlist, newsel, newdrive;
     BYTE *pstr;
     GRECT pt;
     BYTE locstr[LEN_ZPATH+4], locold[LEN_ZPATH+4];  /* at least 3 bytes longer than 'mask' */
-    BYTE mask[LEN_ZPATH+1], selname[LEN_FSNAME];
+    /* static: the FTITLE object's te_ptext is pointed directly at mask
+     * (see below) and that pointer can outlive this call, e.g. if the
+     * resource tree is redrawn without another fs_input() call first */
+    static BYTE mask[LEN_ZPATH+1];
+    BYTE selname[LEN_FSNAME];
     OBJECT *obj;
     TEDINFO *tedinfo;
 
@@ -567,9 +571,8 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
     tree = rs_trees[FSELECTR];
     obj = tree + FTITLE;
     tedinfo = obj->ob_spec.tedinfo;
-    ad_ftitle = tedinfo->te_ptext;
     set_mask(mask, locstr);             /* save caller's mask */
-    strcpy(ad_ftitle, mask);            /*  & copy to title line */
+    tedinfo->te_ptext = mask;           /*  & point title line at it */
 
     obj = tree + FSDIRECT;
     tedinfo = obj->ob_spec.tedinfo;

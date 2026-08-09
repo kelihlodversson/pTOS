@@ -4,13 +4,8 @@ AES/VDI/Line-A bugs:
   http://sourceforge.net/mailarchive/message.php?msg_id=29276993
   This is due to a bug somewhere in the ugly text_blt() assembler
   function in vdi_tblit.S.
-- Thick arcs going partly outside of screen have incorrectly
-  drawn pixels at top of screen in vdiline tester.
 - In "MathMaze" and "The Ultimate Minesweeper", game win and score
   dialogs leave left/bottom outline on screen when they close.
-- Line-A polygons are one pixel short at both sides.  This is
-  because clc_flit() function does it for VDI (where perimeter
-  is drawn separately).  It is visible e.g. in "Japlish" game.
 
 Desktop bugs:
 - Sometimes, if ^C is pressed during a "Show file" operation, the menu

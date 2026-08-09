@@ -712,7 +712,6 @@ void linea_polygon(void)
         clipper.xmn_clip = 0;
         clipper.xmx_clip = xres;
     }
-    /* compared to real line-A, clc_flit explicitly skips outline */
     clc_flit(&attr, &clipper, points, linea_vars.Y1, count);
 }
 
