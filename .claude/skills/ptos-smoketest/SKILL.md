@@ -218,8 +218,10 @@ qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_error
 
 # virt-arm-cli / virt-m68k-cli — same images/invocations as above, but boot to
 # EmuCON instead of the desktop (CONF_WITH_AES=n). Fastest smoke check: no AVI,
-# no framebuffer, just text on -serial stdio. Do not expect typed input to work
-# (see pass-signal notes below — serial console input is not wired up yet).
+# no framebuffer, just text on -serial stdio. Console input is implemented
+# (polling, see pass-signal notes below) but interactive verification in a
+# sandboxed shell may be unreliable for environment reasons unrelated to the
+# driver -- check with strace before assuming it's broken.
 make virt-arm-cli_defconfig && make
 qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -serial stdio
 make virt-m68k-cli_defconfig && make
@@ -273,14 +275,34 @@ cat /tmp/qemu.log
   AVI/frame analysis entirely): pass signal is `Welcome to EmuCON2 version
   ...` followed by the `A:>` prompt appearing in the `-serial stdio` output,
   with no `guest_errors`/`unimp` beyond the same benign m68k `_detect_fpu`
-  entry noted above. Reaching the prompt is itself the thing to check for —
-  **do not try to type a command and expect a response**: `CONF_SERIAL_CONSOLE`
-  input injection (`push_ascii_ikbdiorec`) is only wired to an RX interrupt
-  handler for ColdFire (`bios/coldfire.c`); virt-arm's PL011 and virt-m68k's
-  Goldfish TTY have no equivalent hookup yet, so keystrokes sent over
-  `-serial stdio` are never delivered to EmuCON. Serial console *output*
-  works fully on both; *input* does not (verified: a `printf 'ver\r'`
-  written to QEMU's stdin after the prompt produces no echo and no response).
+  entry noted above.
+  - **Console input**: `CONF_SERIAL_CONSOLE` input injection
+    (`push_ascii_ikbdiorec`) is wired up for both machines by *polling* the
+    UART/TTY from the existing 200 Hz periodic tick
+    (`virt_uart0_poll_rx()` from `virt_timer_tick()`;
+    `goldfish_tty_poll_rx()` from `goldfish_rtc_service()`) rather than a
+    dedicated RX interrupt — deliberately, mirroring how ColdFire's is the
+    only machine with a real RX-interrupt hookup
+    (`coldfire_rs232_enable_interrupt()`). This also fixed a real pre-existing
+    bug: virt-arm's PL011 init never set `LCRH.FEN`, so the UART never
+    actually ran in FIFO mode despite the code comment claiming it did.
+  - **Verifying input interactively is unreliable in a sandboxed/CI
+    shell.** `strace -f -e trace=read,poll,ppoll` on a spawned
+    `qemu-system-arm -M virt ... -serial stdio` process, in at least one
+    such environment, showed `ppoll()` repeatedly reporting `fd=0`
+    (stdin) as `POLLIN`-ready — then QEMU never issued the matching
+    `read(0, ...)` before the fd hit `POLLHUP` and was dropped from the
+    poll set entirely. TX was unaffected (verified extensively: boot
+    banner, EmuCON prompt, etc. all render correctly), and QEMU's own
+    monitor chardev on the same spawned process consumed typed input
+    correctly in the same session — so this looks like a QEMU/host-pty
+    interaction gap specific to the guest-UART chardev path in that
+    container, not a general "no ptys here" limitation, and not something
+    the pTOS-side driver can work around. **Do not conclude the feature is
+    broken from a failed automated keystroke test alone** — first confirm
+    with `strace` (or by testing from a real interactive terminal) whether
+    the environment is actually delivering bytes to QEMU's serial chardev
+    at all before suspecting the driver.
 
 ## Common mistakes
 
@@ -296,4 +318,4 @@ cat /tmp/qemu.log
 | STE boot prints two `Bus Error reading at address $4fffff/$cc03c3` warnings | Benign init probes at `PC=$e00c20` (`TST.B (A0)`); present on every boot, ignore |
 | Testing `ptoscart.img` as the `--tos` image | It is a cartridge, not a TOS: pass it via `--cartridge` and supply a real Atari TOS ROM with `--tos` (pTOS ROMs have cartridge detection compiled out) |
 | Expecting a desktop from `ptoscart.img` | The 128 KB cartridge excludes the AES/desktop; pass signal is the rendered diagnostic text screen, not the checkerboard |
-| Typing a command at the `virt-arm-cli`/`virt-m68k-cli` EmuCON prompt over `-serial stdio` and expecting a response | Serial console input isn't wired up on these machines (only ColdFire has the RX-interrupt hookup); reaching the `A:>` prompt is the pass signal, not a round-tripped command |
+| A scripted keystroke at the `virt-arm-cli`/`virt-m68k-cli` EmuCON prompt over `-serial stdio` gets no response | Input is implemented (polled from the 200 Hz tick), but some sandboxed shells never deliver the bytes to QEMU's serial chardev at all (`ppoll()` sees stdin `POLLIN` but QEMU never `read()`s it) — confirm with `strace` before assuming the driver is broken; reaching the `A:>` prompt alone is still a valid automated pass signal either way |

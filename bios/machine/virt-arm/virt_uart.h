@@ -15,6 +15,7 @@ BOOL virt_uart0_can_write(void);
 void virt_uart0_write_byte(UBYTE b);
 BOOL virt_uart0_can_read(void);
 UBYTE virt_uart0_read_byte(void);
+void virt_uart0_poll_rx(void);
 
 #endif /* MACHINE_VIRT_ARM */
 

@@ -15,6 +15,9 @@
 #include "vectors.h"
 #include "goldfish_pic.h"
 #include "goldfish_rtc.h"
+#if CONF_WITH_GOLDFISH_TTY
+#include "goldfish_tty.h"
+#endif
 
 #define GOLDFISH_RTC_BASE  0xff006000UL   /* first of 2 instances; only this one is used */
 
@@ -57,6 +60,10 @@ void goldfish_rtc_service(void)
 {
     RTC_CLEAR_INTERRUPT = 1;
     goldfish_rtc_arm_next();
+
+#if CONF_SERIAL_CONSOLE && CONF_WITH_GOLDFISH_TTY
+    goldfish_tty_poll_rx();
+#endif
 }
 
 void goldfish_rtc_init(void)
