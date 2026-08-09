@@ -306,8 +306,22 @@ def validate(buf, byteorder):
     assert u16(BLOCK_OFFSET + 22) == ICON_W     # ib_wicon
     assert u16(BLOCK_OFFSET + 24) == ICON_H     # ib_hicon
     assert u32(BLOCK_OFFSET + 34) == 1          # mainlist
-    # and fixup_colour_icons() reads from the CICON struct
-    assert u16(BLOCK_OFFSET + 38 + 256 + 12) == NUM_PLANES
+
+    # fix_objects() reads ob_type and ob_spec.index from each OBJECT
+    assert u16(OBJECT_OFFSET + 6) == G_IBOX              # OBJECT[0].ob_type
+    assert u16(OBJECT_OFFSET + OBJECT_SIZE + 6) == G_CICON  # OBJECT[1].ob_type
+    assert u32(OBJECT_OFFSET + OBJECT_SIZE + 12) == 0     # OBJECT[1].ob_spec.index
+
+    # fixup_colour_icons() reads num_planes, sel_data, next_res from CICON.
+    # CICON struct offset = BLOCK_OFFSET + 38 + 64*2 + 64*2 + 12 (same as
+    # parser_block_walk()); within the struct (padded by gcc to 24 bytes):
+    #   0 num_planes, 2 pad, 4 col_data, 8 col_mask, 12 sel_data,
+    #   16 sel_mask, 20 next_res
+    cicon_off = BLOCK_OFFSET + CICONBLK_SIZE + MONO_WORDS * 2 * 2 + TEXT_SIZE
+    assert cicon_off == BLOCK_OFFSET + 38 + 64 * 2 + 64 * 2 + 12
+    assert u16(cicon_off) == NUM_PLANES               # num_planes
+    assert u32(cicon_off + 12) == 0                   # sel_data (no variant)
+    assert u32(cicon_off + 20) == 0                   # next_res (no more CICONs)
 
     # the CICONBLK block is exactly as long as the parser's walk of it
     assert parser_block_walk() == BLOCK_OFFSET + BLOCK_SIZE
@@ -319,12 +333,12 @@ def validate(buf, byteorder):
     assert u32(RSSIZE + 8) == 0             # terminator
 
 
-def c_array_lines(name, buf):
-    lines = ["const UBYTE cicontest_rsc_%s[] = {" % name]
+def byte_lines(buf):
+    """Emit `buf` as C initialiser rows (no array wrapper)."""
+    lines = []
     for i in range(0, len(buf), 12):
         chunk = ", ".join("0x%02x" % b for b in buf[i:i + 12])
         lines.append("    %s," % chunk)
-    lines.append("};")
     return lines
 
 
@@ -338,38 +352,40 @@ def emit_c(be, le):
         " *",
         " * A 'new format' RSC (rsh_vrsn = NEW_FORMAT_RSC) describing a single",
         " * tree with one 4-plane colour icon.  The colour codes are direct",
-        " * palette indices (1/2/4/8 = blue/green/red/dark grey in the standard",
-        " * 16-colour palette), one per quadrant of the 32x32 icon:",
+        " * palette indices (slots 1/2/4/8), one per quadrant of the 32x32 icon:",
         " *",
-        " *   1 (blue)  2 (green)",
-        " *   4 (red)   8 (dark grey)",
+        " *   slot 1  slot 2",
+        " *   slot 4  slot 8",
         " *",
         " * The background colour (code 0) is a Task 6 calibration item: it is",
         " * rendered from the palette and should match the desktop background.",
         " *",
-        " * Both target byte orders are emitted and selected by __BYTE_ORDER__",
-        " * below (m68k is big-endian, ARM little-endian).  The CICONBLK block",
+        " * One byte order is emitted, selected at compile time by __BYTE_ORDER__",
+        " * (m68k is big-endian, ARM little-endian); only the running target's",
+        " * bytes land in the single cicontest_rsc[] array.  The CICONBLK block",
         " * is exactly contiguous, because aes/gemrslib.c computes every section",
         " * position arithmetically (fixup_all_ciconblks/fixup_colour_icons).",
         " */",
         "",
         "#include \"portab.h\"",
         "",
-        "#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__",
-        "#define cicontest_rsc cicontest_rsc_littleendian",
-        "#else",
-        "#define cicontest_rsc cicontest_rsc_bigendian",
-        "#endif",
-        "",
-        "extern const UBYTE cicontest_rsc[];",
-        "",
         "#define CICONTEST_RSC_SIZE %d" % TOTAL,
         "",
+        "const UBYTE cicontest_rsc[] = {",
+        "#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__",
+        "    /* little-endian (ARM) */",
     ]
-    lines += c_array_lines("bigendian", be)
-    lines.append("")
-    lines += c_array_lines("littleendian", le)
-    lines.append("")
+    lines += byte_lines(le)
+    lines += [
+        "#else",
+        "    /* big-endian (m68k) */",
+    ]
+    lines += byte_lines(be)
+    lines += [
+        "#endif",
+        "};",
+        "",
+    ]
     return "\n".join(lines)
 
 
