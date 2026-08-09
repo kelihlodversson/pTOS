@@ -20,6 +20,7 @@
         .globl  _biostrap       // call BIOS from C
         .globl  _xbiostrap      // call XBIOS from C
         .globl  _xbios_unimpl
+        .globl  _supexec
 
         .globl  _check_read_byte
         .globl  _int_vbl
@@ -1135,6 +1136,13 @@ _xbios_unimpl:
        addq.l   #2,sp
        rts
 
+/*
+ * Supexec() function handler
+ * See xbios.c for more information.
+ */
+_supexec:
+        movea.l 4(a7),a0
+        jmp     (a0)
 
 #if CONF_WITH_BUS_ERROR
 
