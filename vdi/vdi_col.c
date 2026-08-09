@@ -624,10 +624,16 @@ void vdi_vs_color(Vwk *vwk)
          * REQ_COL/req_col2 below, storing into vwk->tc_req_col here means a
          * vs_color() on one workstation cannot leak into another
          * workstation's vq_color(pen,0) answer.
+         *
+         * Indexed by INTIN[0], the pen as passed in -- not colnum, which
+         * may have been bank-adjusted above -- since tc_req_col (unlike
+         * REQ_COL/req_col2) is documented as plain pen-indexed. vq_color()
+         * reads it back by INTIN[0] too (see below), so a bank adjustment
+         * here would desync the two.
          */
         for (i = 0, intin = INTIN+1, rgbptr = rgb; i < 3; i++, intin++, rgbptr++)
         {
-            vwk->tc_req_col[colnum][i] = *intin;
+            vwk->tc_req_col[INTIN[0]][i] = *intin;
             if (*intin > 1000)
                 *rgbptr = 1000;
             else if (*intin < 0)
@@ -794,12 +800,16 @@ void vdi_vq_color(Vwk *vwk)
          * comment on struct Vwk_ in vdi_defs.h for why this doesn't read
          * the global REQ_COL/req_col2 the way the non-truecolor path
          * below does.
+         *
+         * Indexed by INTIN[0] rather than colnum, matching how
+         * vdi_vs_color() stores it -- colnum may have been bank-adjusted
+         * above, but tc_req_col is plain pen-indexed.
          */
         if (INTIN[1] == 0)  /* return last-requested value */
         {
-            INTOUT[1] = vwk->tc_req_col[colnum][0];
-            INTOUT[2] = vwk->tc_req_col[colnum][1];
-            INTOUT[3] = vwk->tc_req_col[colnum][2];
+            INTOUT[1] = vwk->tc_req_col[INTIN[0]][0];
+            INTOUT[2] = vwk->tc_req_col[INTIN[0]][1];
+            INTOUT[3] = vwk->tc_req_col[INTIN[0]][2];
         }
         else                /* return actual current value */
         {
