@@ -97,9 +97,9 @@ WORD fun_alert(WORD defbut, WORD stnum)
  *  string used with this function therefore has exactly one conversion
  *  specifier (STDISKFU/STDELDIS "%c", STRMVLOC "%s", STFMTINF "%ld"),
  *  and passing a string with more specifiers than values would make
- *  sprintf() read past the end of its argument list.  Do not extend
- *  this function to merge several values; write a dedicated helper
- *  instead.
+ *  sprintf() read past the end of its argument list.  Do not use this
+ *  function to merge several values without rewriting it first (e.g. by
+ *  forwarding the whole va_list to sprintf()).
  */
 WORD fun_alert_merge(WORD defbut, WORD stnum, ...)
 {
