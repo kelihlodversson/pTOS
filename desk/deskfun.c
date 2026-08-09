@@ -83,9 +83,9 @@ WORD fun_alert(WORD defbut, WORD stnum)
  *  practice because every value a caller can supply is at most
  *  pointer-sized: a char promoted to int for "%c", a char * for "%s",
  *  and a long for "%ld", the last guaranteed to fit by the
- *  _Static_assert() above.  sprintf() re-reads the value from its own
- *  varargs list with the type its format specifier demands (see
- *  doprintf() in util/doprintf.c), so a slot that is only re-interpreted
+ *  _Static_assert() in the function body below.  sprintf() re-reads the
+ *  value from its own varargs list with the type its format specifier
+ *  demands (see doprintf() in util/doprintf.c), so a slot that is only re-interpreted
  *  as a smaller or equal-sized type never reads past the value; "%c"
  *  takes an int, which on m68k is 16 bits and on ARM 32, both no wider
  *  than the slot we forwarded.  The same pattern has shipped in upstream
@@ -99,7 +99,7 @@ WORD fun_alert(WORD defbut, WORD stnum)
  *  and passing a string with more specifiers than values would make
  *  sprintf() read past the end of its argument list.  Do not use this
  *  function to merge several values without rewriting it first (e.g. by
- *  forwarding the whole va_list to sprintf()).
+ *  going through a vsprintf()-style helper that takes a va_list).
  */
 WORD fun_alert_merge(WORD defbut, WORD stnum, ...)
 {
