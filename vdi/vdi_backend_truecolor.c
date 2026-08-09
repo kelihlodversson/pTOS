@@ -12,6 +12,7 @@
 #include "../bios/tosvars.h"
 #include "vdi_defs.h"
 #include "vdi_backend.h"
+#include "vdi_col.h"
 #include "kprint.h"
 
 /*
@@ -27,9 +28,10 @@
  * (rather than clamping anything outside 0-15 to index 0, which used
  * to alias pen 1 to default_prgb_palette[0] == white) keeps this
  * consistent with the indexed framebuffer the old 8bpp path used to
- * write into. This is the "default mapping needed by colors already
- * in use" the design calls for -- full vs_color()/vq_color()
- * truecolor semantics are a follow-up.
+ * write into. This is only the boot-time default that
+ * vdi_truecolor_init_palette() below (issue #89) seeds each workstation's
+ * own tc_palette[] from -- vdi_truecolor_set_color() is what lets
+ * vs_color() change a workstation's entries away from it at runtime.
  */
 static const ULONG default_prgb_palette[256] = {
     0x00ffffff, 0x000000ff, 0x0000ff00, 0x0000ffff,
@@ -108,25 +110,135 @@ static UWORD rgb565_from_prgb(ULONG prgb)
 }
 
 /*
- * default_prgb_palette[] converted to RGB565, built lazily on first use.
- * truecolor_get_pixel() searches this space on every call, so it matters
- * that the conversion happens once rather than being redone for every
- * candidate on every pixel read.
+ * Full-precision packed-0x00BBGGRR -> VDI-scale (0-1000 per component)
+ * conversion, for seeding tc_req_col[] (issue #89) -- unlike
+ * rgb565_from_prgb() above, this doesn't go through the 5/6/5-bit
+ * quantization, since tc_req_col holds "requested", not "actual", values.
  */
-static UWORD rgb565_palette[256];
-static BOOL rgb565_palette_ready;
-
-static void ensure_rgb565_palette(void)
+static void vdi_from_prgb(ULONG prgb, WORD *r, WORD *g, WORD *b)
 {
-    WORD i;
+    UBYTE rb = (UBYTE)(prgb & 0xffUL);
+    UBYTE gb = (UBYTE)((prgb >> 8) & 0xffUL);
+    UBYTE bb = (UBYTE)((prgb >> 16) & 0xffUL);
 
-    if (rgb565_palette_ready)
-        return;
+    *r = (WORD)(((LONG)rb * 1000 + 127) / 255);
+    *g = (WORD)(((LONG)gb * 1000 + 127) / 255);
+    *b = (WORD)(((LONG)bb * 1000 + 127) / 255);
+}
+
+/*
+ * Seeds vwk's pseudo-palette (issue #89) with default_prgb_palette[].
+ * Called by init_wk() (vdi_control.c) whenever a workstation is opened,
+ * and by physical_vwk_seeded() below for the physical workstation if
+ * drawing happens before vdi_v_opnwk() ever runs.
+ *
+ * Seeds both tc_palette[] (RGB565, hwreg-indexed, what get_pixel()/
+ * put_pixel()/vq_color(pen,1) read) and tc_req_col[] (VDI 0-1000 scale,
+ * pen-indexed, what vq_color(pen,0) reads) from the same source, via
+ * MAP_COL[pen] to find which hwreg's default a given pen currently has --
+ * so the two forms of vq_color() agree at boot, before any vs_color()
+ * call.
+ *
+ * The tc_req_col loop is bounded by DEV_TAB[13] (the pen count for the
+ * current screen, capped at 256), not a flat 256: MAP_COL[] itself is
+ * only sized MAXCOLOURS entries (16 when EXTENDED_PALETTE is off -- e.g.
+ * a hypothetical non-RPi build with CONF_WITH_VDI_BACKEND_TRUECOLOR
+ * enabled by hand alongside the dispatcher), so indexing it up to 255
+ * unconditionally would read out of bounds. tc_palette[] has no such
+ * limit -- it is indexed directly by hwreg, not through MAP_COL[] -- so
+ * it stays a flat 256. Pens above DEV_TAB[13] are never valid VDI pens
+ * (vdi_vs_color()/vdi_vq_color() both reject colnum >= DEV_TAB[13] before
+ * ever touching tc_req_col), so leaving them unseeded here is fine.
+ */
+void vdi_truecolor_init_palette(Vwk *vwk)
+{
+    WORD i, npens;
 
     for (i = 0; i < 256; i++)
-        rgb565_palette[i] = rgb565_from_prgb(default_prgb_palette[i]);
+        vwk->tc_palette[i] = rgb565_from_prgb(default_prgb_palette[i]);
 
-    rgb565_palette_ready = TRUE;
+    npens = linea_vars.DEV_TAB[13];
+    if (npens < 0)
+        npens = 0;
+    else if (npens > 256)
+        npens = 256;
+
+    for (i = 0; i < npens; i++)
+        vdi_from_prgb(default_prgb_palette[MAP_COL[i]],
+                      &vwk->tc_req_col[i][0], &vwk->tc_req_col[i][1], &vwk->tc_req_col[i][2]);
+}
+
+/*
+ * The workstation whose pseudo-palette the drawing primitives below
+ * (get_pixel/put_pixel/fill_rect/text_blit/raster_copy/draw_line/
+ * search_left/search_right) translate indices through -- none of them
+ * take a Vwk*, so vdi_main.c's screen() dispatcher is the sole writer,
+ * via vdi_backend_set_active_vwk(), once per VDI call, with the Vwk
+ * resolved for that call's handle (or the physical workstation for
+ * v_opnwk()/v_opnvwk(), which have no handle yet).
+ *
+ * Lives here rather than in vdi_backend.c because this file is built
+ * whenever CONF_WITH_VDI_BACKEND_TRUECOLOR is set, including the
+ * single-renderer RPi default; vdi_backend.c only builds when both
+ * renderers are enabled (see vdi/build.mk).
+ *
+ * This is a fresh pTOS-internal variable rather than linea_vars.CUR_WORK,
+ * because CUR_WORK is part of the documented line-A ABI: user code can
+ * point it at a fake reduced "workstation" (see the NOTE on Vwk_ in
+ * vdi_defs.h), which is safe for CUR_WORK's existing single-WORD use
+ * (fill_color, at a fixed low offset) but would be an out-of-bounds read
+ * for a 256-entry palette placed well beyond that.
+ */
+static Vwk *active_vwk;
+static BOOL physical_palette_seeded;
+
+/*
+ * The physical workstation, with its tc_palette/tc_req_col guaranteed
+ * seeded -- even the very first time this is called, which can happen
+ * before vdi_v_opnwk() has ever run (Line-A reachable pre-AES, or before
+ * any screen() dispatch at all; see the vdi_screen_backend() self-init
+ * comment in vdi_control.c for the same situation with .mode/.backend).
+ * Idempotent past the first call: init_wk() (vdi_control.c) re-seeds the
+ * physical workstation's palette for real whenever vdi_v_opnwk() actually
+ * runs, which this flag does not need to track -- it only needs to know
+ * whether *some* seeding has happened yet.
+ */
+static Vwk *physical_vwk_seeded(void)
+{
+    Vwk *phys = vdi_physical_vwk();
+
+    if (!physical_palette_seeded) {
+        vdi_truecolor_init_palette(phys);
+        physical_palette_seeded = TRUE;
+    }
+    return phys;
+}
+
+void vdi_backend_set_active_vwk(Vwk *vwk)
+{
+    active_vwk = vwk;
+}
+
+Vwk *vdi_backend_active_vwk(void)
+{
+    /*
+     * vdi_main.c's screen() sets active_vwk to the physical workstation
+     * for opcodes with no handle yet (v_opnwk()/v_opnvwk()) as well as
+     * for nothing-dispatched-yet -- so "active_vwk is currently the
+     * physical workstation" (not just "active_vwk is NULL") is the
+     * condition that needs the seeding check, or a program that only
+     * ever opens virtual workstations could leave the physical palette
+     * BSS-zero (all black) while something reads it in between.
+     */
+    if (!active_vwk || active_vwk == vdi_physical_vwk())
+        return physical_vwk_seeded();
+
+    return active_vwk;
+}
+
+static UWORD *active_palette(void)
+{
+    return vdi_backend_active_vwk()->tc_palette;
 }
 
 static UWORD truecolor_pixel_for_index(WORD index)
@@ -134,20 +246,98 @@ static UWORD truecolor_pixel_for_index(WORD index)
     if (index < 0 || index > 255)
         index = 0;
 
-    ensure_rgb565_palette();
-    return rgb565_palette[index];
+    return active_palette()[index];
 }
 
 /*
  * Public wrapper for callers outside this backend that need to turn a
  * MAP_COL-mapped hardware palette index into the raw RGB565 pixel value
- * this backend would write for it -- e.g. the RPi software mouse cursor
- * in vdi/vdi_mouse.c, which draws by poking pixels directly rather than
- * going through put_pixel()/fill_rect().
+ * this backend would write for it -- currently only the RPi software
+ * mouse cursor in vdi/vdi_mouse.c, which draws by poking pixels directly
+ * rather than going through put_pixel()/fill_rect().
+ *
+ * Deliberately reads the *physical* workstation's palette rather than
+ * active_vwk: the cursor is a screen-global element (its bg_col/fg_col
+ * are hardware-register indices, not tied to any one workstation), and
+ * it is drawn from the VBL interrupt (vdi_mouse.c's vb_draw()) as well as
+ * from Line-A text output, both of which run independently of -- and can
+ * race -- whatever VDI call last set active_vwk. Using the physical
+ * workstation keeps the cursor's colors from changing whenever some
+ * other (possibly virtual) workstation happens to have been the most
+ * recent VDI caller.
  */
 UWORD vdi_truecolor_pixel_for_index(WORD index)
 {
-    return truecolor_pixel_for_index(index);
+    if (index < 0 || index > 255)
+        index = 0;
+
+    return physical_vwk_seeded()->tc_palette[index];
+}
+
+/*
+ * VDI-scale (0-1000 per component) <-> RGB565 conversion for
+ * vs_color()/vq_color() (issue #89). Uses rounding division rather than
+ * rgb565_from_prgb()'s truncating shifts above, since those start from an
+ * already-8-bit component -- vs_color() gives full 0-1000 precision that's
+ * worth rounding rather than truncating away.
+ */
+static UWORD rgb565_from_vdi(WORD r, WORD g, WORD b)
+{
+    UWORD r5 = (UWORD)(((LONG)r * 31 + 500) / 1000);
+    UWORD g6 = (UWORD)(((LONG)g * 63 + 500) / 1000);
+    UWORD b5 = (UWORD)(((LONG)b * 31 + 500) / 1000);
+
+    return (UWORD)((r5 << 11) | (g6 << 5) | b5);
+}
+
+static void vdi_from_rgb565(UWORD raw, WORD *r, WORD *g, WORD *b)
+{
+    UWORD r5 = (raw >> 11) & 0x1f;
+    UWORD g6 = (raw >> 5) & 0x3f;
+    UWORD b5 = raw & 0x1f;
+
+    *r = (WORD)(((LONG)r5 * 1000 + 15) / 31);
+    *g = (WORD)(((LONG)g6 * 1000 + 31) / 63);
+    *b = (WORD)(((LONG)b5 * 1000 + 15) / 31);
+}
+
+/*
+ * vs_color()/vq_color() pseudo-palette read/write ports for the truecolor
+ * backend (issue #89), called from vdi_vs_color()/vdi_vq_color() in
+ * vdi_col.c with the vwk those already have from the VDI dispatcher.
+ * index is a MAP_COL-mapped hardware palette register index, like every
+ * other index this file takes -- not a 0-15 VDI pen number.
+ *
+ * Genuinely per-workstation: each Vwk carries its own tc_palette[], so a
+ * vs_color() on one workstation cannot affect another's rendering, unlike
+ * put_pixel()/get_pixel()/etc. above which -- having no Vwk* of their own
+ * -- go through vdi_backend_active_vwk() instead.
+ */
+void vdi_truecolor_set_color(Vwk *vwk, WORD index, WORD r, WORD g, WORD b)
+{
+    if (index < 0 || index > 255)
+        return;
+
+    /*
+     * Defend the public contract even though the only current caller
+     * (vdi_vs_color()) already clamps: r/g/b feed straight into 5/6-bit
+     * field packing below, and an out-of-range value (or a future caller
+     * that forgets to clamp) would corrupt the packed RGB565 word rather
+     * than just look wrong.
+     */
+    if (r < 0) r = 0; else if (r > 1000) r = 1000;
+    if (g < 0) g = 0; else if (g > 1000) g = 1000;
+    if (b < 0) b = 0; else if (b > 1000) b = 1000;
+
+    vwk->tc_palette[index] = rgb565_from_vdi(r, g, b);
+}
+
+void vdi_truecolor_get_color(const Vwk *vwk, WORD index, WORD *r, WORD *g, WORD *b)
+{
+    if (index < 0 || index > 255)
+        index = 0;
+
+    vdi_from_rgb565(vwk->tc_palette[index], r, g, b);
 }
 
 /*
@@ -168,6 +358,7 @@ UWORD *truecolor_get_start_addr(WORD x, WORD y)
 UWORD truecolor_get_pixel(WORD x, WORD y)
 {
     UWORD raw = *truecolor_get_start_addr(x, y);
+    const UWORD *palette = active_palette();
     WORD i;
 
     /*
@@ -175,13 +366,12 @@ UWORD truecolor_get_pixel(WORD x, WORD y)
      * comment on default_prgb_palette[] above), not a 0-15 VDI pen
      * number, so this has to search the full 256-entry space to match.
      */
-    ensure_rgb565_palette();
     for (i = 0; i < 256; i++) {
-        if (rgb565_palette[i] == raw)
+        if (palette[i] == raw)
             return (UWORD)i;
     }
 
-    return 0;   /* not one of the default 256 -- index 0 is white, the closest we can do without guessing */
+    return 0;   /* not one of the active palette's 256 -- index 0 is white, the closest we can do without guessing */
 }
 
 void truecolor_put_pixel(WORD x, WORD y, UWORD color)
