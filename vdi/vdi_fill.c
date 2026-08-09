@@ -11,10 +11,13 @@
 
 
 
+/* #define ENABLE_KDEBUG */
+
 #include "config.h"
 #include "portab.h"
 #include "vdi_defs.h"
 #include "vdi_backend.h"
+#include "kprint.h"
 #include "../bios/tosvars.h"
 #include "../bios/lineavars.h"
 
@@ -22,7 +25,6 @@
 #define NOT_FOUND -1
 #define DOWN_FLAG 0x8000
 #define QSIZE 200
-#define QMAX QSIZE-1
 
 
 
@@ -904,7 +906,9 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
     WORD xright;                /* */
     WORD direction;             /* is next scan line up or down */
     BOOL notdone;               /* does seedpoint==search_color */
-    BOOL gotseed;               /* a seed was put in the Q      */
+    WORD gotseed;               /* 1 => seed was put in the Q */
+                                 /* 0 => no seed was put in the Q */
+                                 /* -1 => queue overflowed */
     BOOL seed_type;             /* indicates the type of fill */
 
     xleft = PTSIN[0];
@@ -973,26 +977,32 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
             direction = (oldy & DOWN_FLAG) ? 1 : -1;
             gotseed = get_seed(attr, clip, oldxleft, (oldy + direction),
                                &newxleft, &newxright, seed_type);
+            if (gotseed < 0)
+                return;         /* error, quit */
 
             if ((newxleft < (oldxleft - 1)) && gotseed) {
                 xleft = oldxleft;
                 while (xleft > newxleft) {
                     --xleft;
-                    get_seed(attr, clip, xleft, oldy ^ DOWN_FLAG,
-                             &xleft, &xright, seed_type);
+                    if (get_seed(attr, clip, xleft, oldy ^ DOWN_FLAG,
+                             &xleft, &xright, seed_type) < 0)
+                        return; /* error, quit */
                 }
             }
             while (newxright < oldxright) {
                 ++newxright;
                 gotseed = get_seed(attr, clip, newxright, oldy + direction,
                                    &xleft, &newxright, seed_type);
+                if (gotseed < 0)
+                    return;     /* error, quit */
             }
             if ((newxright > (oldxright + 1)) && gotseed) {
                 xright = oldxright;
                 while (xright < newxright) {
                     ++xright;
-                    get_seed(attr, clip, xright, oldy ^ DOWN_FLAG,
-                             &xleft, &xright, seed_type);
+                    if (get_seed(attr, clip, xright, oldy ^ DOWN_FLAG,
+                             &xleft, &xright, seed_type) < 0)
+                        return; /* error, quit */
                 }
             }
 
@@ -1073,9 +1083,9 @@ get_seed(const VwkAttrib * attr, const VwkClip * clip,
         }
 
         if (qhole == NOT_FOUND) {
-            if ((qtop += 3) > QMAX) {
-                qtmp = qbottom;
-                qtop -= 3;
+            if ((qtop += 3) > QSIZE) {  /* can't raise qtop ... */
+                KDEBUG(("contourfill(): queue overflow\n"));
+                return -1;      /* error */
             }
         } else
             qtmp = qhole;
