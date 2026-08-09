@@ -334,11 +334,12 @@ static UWORD raspi_console_color(UWORD index)
 void raspi_blank_out (int topx, int topy, int botx, int boty)
 {
     UWORD color = raspi_console_color(linea_vars.v_col_bg); /* bg colour value */
+    UWORD * addr;
     int width, height, row, px;
 
     width = (botx - topx + 1) * 8;              /* pixels */
     height = (boty - topy + 1) * linea_vars.v_cel_ht;
-    UWORD * addr = (UWORD *) raspi_cell_addr(topx, topy);
+    addr = (UWORD *) raspi_cell_addr(topx, topy);
 
     if (width * sizeof(UWORD) >= raspi_screen_width_in_bytes)
     {
@@ -377,7 +378,7 @@ void raspi_cell_xfer(UBYTE * src, UBYTE * dst)
 
     for(y = 0; y < linea_vars.v_cel_ht; y++)
     {
-        UBYTE cel = *src;//[fnt_wr*y];
+        UBYTE cel = *src;
         UWORD * drow = (UWORD *) dst + line_wr*y;
         int pixel;
         for(pixel = 0; pixel < 8; pixel++) {

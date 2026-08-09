@@ -14,7 +14,7 @@
 - **`int` is 16 bits on m68k** (`-mshort`). Use `WORD`/`LONG`/`UBYTE`/`UWORD`/`ULONG`.
 - `-Wundef` is on: every `#if` symbol must be defined. Never reference `CONF_CHUNKY_PIXELS` after Task 1.
 - `bios/raspi_screen.c` is `MACHINE_RPI`-only (`#error` otherwise) and the framebuffer is always packed 16bpp RGB565 — the console code never needs an 8bpp path after Part B.
-- The console colours `v_col_fg`/`v_col_bg` are ST default-palette indices (0-15), set by `bios/vt52.c`; `raspi_dflt_palette[]` in the same file is the 256-entry ST palette in `0x00RRGGBB`.
+- The console colours `v_col_fg`/`v_col_bg` are ST default-palette indices (0-15), set by `bios/vt52.c`; `raspi_dflt_palette[]` in the same file is the 256-entry ST palette in `0x00BBGGRR` byte order (least-significant byte = red, e.g. `PRGB_RED = 0x000000ff`, `PRGB_BLUE = 0x00ff0000`).
 - `v_lin_wr` = pitch in bytes, `v_cel_wr` = `v_lin_wr * form_height`, `v_cel_ht` = font height — already 16bpp-correct; only the per-pixel and per-cell x addressing are 8bpp-assuming.
 - Verification before completion: build every config in `configs/`, smoke-test an RPi image, report real output.
 
