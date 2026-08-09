@@ -61,9 +61,12 @@ The decoder performs two passes:
    words as native `WORD`s.
 
 After materialisation, `rs_hdr` and `AESGLOBAL.ap_rscmem` refer only to native
-memory. Existing native APIs (`rs_gaddr()`, `rs_saddr()`, `rs_fixit()`,
-`OBJECT *`, `ICONBLK *`, and `CICONBLK *`) remain unchanged.  Native fixup
-code may continue to use `sizeof()` because it no longer traverses disk bytes.
+memory. The native image retains an `RSHDR` at its base; its section offsets
+are remapped to the native record arrays. This preserves existing users that
+compute, for example, `ap_rscmem + rsh_iconblk` to reach native `ICONBLK`s.
+Existing native APIs (`rs_gaddr()`, `rs_saddr()`, `rs_fixit()`, `OBJECT *`,
+`ICONBLK *`, and `CICONBLK *`) remain unchanged. Native fixup code may
+continue to use `sizeof()` because it no longer traverses disk bytes.
 
 The raw image is scratch input and is released after decoding. `rs_free()`
 releases the one materialised image and CICON conversion buffers as it does
