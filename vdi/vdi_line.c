@@ -1363,9 +1363,9 @@ void arrow(Vwk * vwk, Point * point, int count)
  * in the implementation of "replace" and "not" modes, resulting in faster
  * execution of their inner loops.
  *
- * This routines is more or less the one from the original VDI asm part.
+ * This routine is more or less the one from the original VDI asm part.
  * I could not take bresenham, because pixels were set improperly in
- * use with the polygone filling part, did look ugly.  (MAD)
+ * use with the polygon filling part, did look ugly.  (MAD)
  *
  * input:
  *     X1, Y1, X2, Y2 = coordinates.
@@ -1457,9 +1457,9 @@ void abline (const Line * line, WORD wrt_mode, UWORD color)
  * in the implementation of "replace" and "not" modes, resulting in faster
  * execution of their inner loops.
  *
- * This routines is more or less the one from the original VDI asm part.
+ * This routine is more or less the one from the original VDI asm part.
  * I could not take bresenham, because pixels were set improperly in
- * use with the polygone filling part, did look ugly.  (MAD)
+ * use with the polygon filling part, did look ugly.  (MAD)
  *
  * returns: LN_MASK rotated to proper alignment with (x2,y2).
  */

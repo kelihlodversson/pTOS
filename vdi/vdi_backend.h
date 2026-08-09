@@ -18,7 +18,11 @@
  * never "fall back to another backend." A backend is only ever selected
  * for descriptors whose layout/color-model/bpp combination it actually
  * supports (see vdi_backend_select()), so an incompatible fallback can
- * never happen by construction.
+ * never happen by construction. This only applies to optional
+ * primitives, individually documented as such below -- mandatory slots
+ * (get_pixel, put_pixel, fill_rect, text_blit, search_right, search_left,
+ * ...) are never NULL for a backend actually selected, and callers don't
+ * guard the slot itself for those.
  *
  * This table currently covers the primitives converted so far. Follow-up
  * slices (mouse cursor, full palette -- issue #35 parts 2b/5) add their
