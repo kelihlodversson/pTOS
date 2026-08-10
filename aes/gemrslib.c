@@ -349,7 +349,7 @@ static BOOL scan_disk_cicons(const struct disk_rsc *disk, struct disk_cicon_info
     offset = disk_ulong(disk, disk->hdr.rsh_rssize+4L);
     if ((offset == 0L) || (offset == (ULONG)-1L))
         return TRUE;
-    if ((offset & 3L) || !disk_range(disk, offset, 4L))
+    if ((offset & 1L) || !disk_range(disk, offset, 4L))
         return FALSE;
     info->table = offset;
     for (pos = offset; disk_range(disk, pos, 4L); pos += 4L)
