@@ -311,7 +311,8 @@ static BOOL scan_disk_ciconblk(const struct disk_rsc *disk, LONG offset,
             return FALSE;
         header = pos;
         planes = disk_uword(disk, header+D_CICON_PLANES);
-        if ((planes <= 0L) || (words > (disk->size-header-DISK_CICON_SIZE)/(2L*(planes+1L))))
+        if ((planes <= 0L) || (planes > 16L)
+            || (words > (disk->size-header-DISK_CICON_SIZE)/(2L*(planes+1L))))
             return FALSE;
         payload = words*2L*(planes+1L);
         pos = header + DISK_CICON_SIZE;
