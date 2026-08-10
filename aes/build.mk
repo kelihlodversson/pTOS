@@ -10,3 +10,4 @@ obj-y += gemaplib.o gemasync.o gemctrl.o gemdisp.o gemevlib.o gemflag.o \
 	 geminit.o geminput.o gemmnlib.o gemobed.o gemobjop.o gemoblib.o \
 	 gempd.o gemqueue.o gemrslib.o gemsclib.o gemshlib.o gemsuper.o \
 	 gemwmlib.o gemwrect.o gsx2.o gem_rsc.o mforms.o
+obj-$(CONF_WITH_LEGACY_RSC_LOAD) += rsload_legacy.o
