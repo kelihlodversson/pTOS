@@ -15,7 +15,7 @@
 - Decode every disk scalar/offset with explicit BE readers; never cast raw bytes to `RSHDR *`, `LONG *`, `OBJECT *`, `CICONBLK *`, or `CICON *`.
 - The decoded native allocation starts at `ap_rscmem`; native header offsets must address contiguous native arrays so `deskapp.c:setup_mono_icons()` keeps working unchanged.
 - `ap_rsclen` and every native header offset are UWORD. Reject a decoded native image larger than 65535 bytes rather than truncating it.
-- Preserve the public AES resource API and its lifetime model: `rs_loadmem()` copies caller bytes; `rs_free()` frees one materialized allocation plus separately allocated CICON conversion buffers.
+- Preserve the public AES resource API and its lifetime model; change the private helper to `rs_loadmem(AESGLOBAL *pglobal, const void *rsmem, LONG size)` so both file and memory input are bounds-checked. `rs_free()` frees one materialized allocation plus separately allocated CICON conversion buffers.
 - C90: declarations at the start of a block, `/* */` comments, 4 spaces, no hard tabs. `int` is 16-bit on m68k: use WORD/UWORD/LONG/ULONG/BOOL and cast arithmetic deliberately.
 - Never edit generated configuration files (`obj/autoconf.h`, `obj/auto.conf`) or shipped defconfigs. `CONF_WITH_VDI_CICON_TEST` remains default n.
 - `make gitready` before every commit. Stage only intended source/docs files.
@@ -331,7 +331,18 @@ native tables without calling `fix_long()`.
 
 Change `rs_readit()` to read the disk header bytes into `UBYTE header[DISK_RSHDR_SIZE]`, decode it with `disk_header()`, allocate/read exactly `disk.size` disk bytes, call `materialize_rsc()`, then free the scratch disk allocation. On seek/read failure, free every temporary allocation before returning FALSE.
 
-Change `rs_loadmem()` to call `disk_header()` directly on `rsmem`, then `materialize_rsc()`; it no longer copies input itself because materialization makes the owned copy. Preserve NULL `pglobal` handling and return `pglobal->ap_ptree[0]` only after `rs_fixit()` succeeds.
+Change its signature and declaration to:
+
+```c
+OBJECT *rs_loadmem(AESGLOBAL *pglobal, const void *rsmem, LONG size);
+```
+
+It calls `disk_header()` directly on `rsmem` with `size`, then
+`materialize_rsc()`; it no longer copies input itself because materialization
+makes the owned copy. Preserve NULL `pglobal` handling and return
+`pglobal->ap_ptree[0]` only after `rs_fixit()` succeeds. Update the only caller
+in `desk/deskmain.c` to `rs_loadmem(NULL, cicontest_rsc, CICONTEST_RSC_SIZE)`;
+keep the size macro in the generated fixture.
 
 - [ ] **Step 7: Build ordinary-resource regressions**
 

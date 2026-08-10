@@ -47,7 +47,10 @@ the same convention.
 
 ## Decode Boundary
 
-`rs_readit()` and `rs_loadmem()` first obtain an immutable raw RSC byte image.
+`rs_readit()` and `rs_loadmem(AESGLOBAL *, const void *, LONG size)` first
+obtain an immutable raw RSC byte image. `rs_loadmem()` rejects an image whose
+header-declared length exceeds its explicit `size` argument; its private
+desktop-hook caller passes `CICONTEST_RSC_SIZE`.
 A new internal decoder reads that image with bounded `read_be_u16()` and
 `read_be_u32()` helpers and materialises a native mutable resource image.
 
