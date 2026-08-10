@@ -8,9 +8,10 @@ already disables colour icons, and its m68k native RSC structures have the
 same big-endian layout as Atari disk RSC records.  It can therefore retain the
 previous in-place loader without losing a supported feature.
 
-The same loader is the approved fallback for the fixed 256 KB ROM when its
-language variants exhaust that target's ROM budget.  Both constrained ROM
-sizes can use the in-place loader without changing its implementation.
+The same loader is the approved default for the fixed 256 KB ROM to ensure
+every language variant, including French, fits that target's ROM budget.  Both
+constrained ROM sizes can use the in-place loader without changing its
+implementation.
 
 ## Configuration
 
@@ -20,8 +21,9 @@ Add an AES Kconfig boolean, `CONF_WITH_LEGACY_RSC_LOAD`:
   native structure layout and must never be selected on ARM.
 - It defaults to `y` for `TARGET_192` and `TARGET_256`, and `n` for every
   other target.
-- Its help text explains that it preserves the constrained 192 KB and 256 KB
-  ROM budgets, while normal builds use the portable canonical loader.
+- Its help text explains that it preserves the 192 KB ROM budget and ensures
+  every 256 KB language variant fits its ROM budget, while normal builds use
+  the portable canonical loader.
 - It remains selectable for other m68k configurations when their ROM budget
   requires it.
 

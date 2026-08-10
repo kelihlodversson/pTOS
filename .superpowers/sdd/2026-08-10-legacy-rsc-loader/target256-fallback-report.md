@@ -84,3 +84,13 @@ Both generated configurations selected portable loading and built successfully:
 
 `make atari512_defconfig` and `make rpi1_defconfig` update `.config` only;
 explicitly regenerating `obj/autoconf.h` was necessary before each assertion.
+
+## Review Follow-Up
+
+The original 256 KB Kconfig help incorrectly said that the whole 256 KB ROM
+budget could not accommodate the portable loader.  The baseline measurements
+showed that the U.S. and German portable images fit, while French overflowed.
+The help and design specification now state that the legacy default ensures
+every 256 KB language variant, including French, fits the ROM budget.  This is
+a documentation-only correction; the Kconfig default and loader implementation
+are unchanged.
