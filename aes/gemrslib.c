@@ -780,7 +780,7 @@ static void pack_planes(const WORD *data, UWORD *pix, WORD planes, WORD w, WORD 
             {
                 const WORD *plane = rowbase + (LONG)p * mono_words * h;
                 if (plane[x >> 4] & mask)
-                    code |= (WORD)(1 << p);
+                    code |= (WORD)(1UL << p);
             }
             *pix++ = vdi_truecolor_pixel_for_index(code);
         }
@@ -1543,7 +1543,8 @@ OBJECT *rs_loadmem(AESGLOBAL *pglobal, const void *rsmem, LONG size)
 
     if (!pglobal)
         pglobal = &rs_own_global;
-    if (!disk_header(&disk, rsmem, size) || !materialize_rsc(pglobal, &disk))
+    if (!disk_header(&disk, rsmem, size) || (disk.hdr.rsh_ntree <= 0)
+        || !materialize_rsc(pglobal, &disk))
         return NULL;
     rs_fixit(pglobal);
 
