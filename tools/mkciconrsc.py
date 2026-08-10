@@ -20,14 +20,14 @@ The layout is the canonical disk walk for a NEW_FORMAT_RSC resource:
     OBJECTs (2 * 24 bytes)
     trindex (one LONG, offset of the tree root)
     CICONBLK ptr table ([ciconblk_offset, -1L])
-    CICONBLK block (contiguous, 970 bytes, see below)
+    CICONBLK block (contiguous, 968 bytes, see below)
     extension array ([total_len, ptr_table_offset, 0L])
 
 The CICONBLK block is laid out for the canonical disk parser, which computes
 every next-section position arithmetically:
 
     CICONBLK(38) + mono pdata(64 w) + mono pmask(64 w) + text(12)
-    + CICON(22) + alignment padding(2) + col_data(64*4 w) + col_mask(64 w)
+    + CICON(22) + col_data(64*4 w) + col_mask(64 w)
 
 Run as:  python3 tools/mkciconrsc.py > desk/cicontest_rsc.c
 """
@@ -46,7 +46,6 @@ RSHDR_SIZE = 18 * 2                         # 10 UWORDs + 7 WORDs + 1 UWORD
 ICONBLK_SIZE = 3 * 4 + 11 * 2               # monoblk: 3 ptrs + 11 WORDs
 CICONBLK_SIZE = ICONBLK_SIZE + 4            # + mainlist LONG
 CICON_SIZE = 2 + 5 * 4                      # WORD + 5 disk LONGs
-CICON_PAD_SIZE = 2                          # align colour data after CICON
 OBJECT_SIZE = 6 * 2 + 4 + 4 * 2             # 6 WORDs + ob_spec + 4 WORDs
 
 # section sizes, in bytes
@@ -58,7 +57,6 @@ BLOCK_SIZE = (CICONBLK_SIZE
                + MONO_WORDS * 2              # mono pmask
                + TEXT_SIZE
                + CICON_SIZE
-               + CICON_PAD_SIZE
                + MONO_WORDS * 2 * NUM_PLANES # col_data, plane-major
               + MONO_WORDS * 2)             # col_mask
 EXTARRAY_SIZE = 3 * 4
@@ -69,7 +67,7 @@ assert CICONBLK_SIZE == 38, "CICONBLK must be 38 bytes"
 assert CICON_SIZE == 22, "CICON must be 22 bytes"
 assert OBJECT_SIZE == 24, "OBJECT must be 24 bytes"
 assert MONO_WORDS == 64, "mono_words must be 64 for a 32x32 icon"
-assert BLOCK_SIZE == 970, "CICONBLK block must be 970 bytes"
+assert BLOCK_SIZE == 968, "CICONBLK block must be 968 bytes"
 
 # section offsets, from the start of the RSC image
 OBJECT_OFFSET = RSHDR_SIZE
@@ -79,8 +77,8 @@ BLOCK_OFFSET = PTRTABLE_OFFSET + PTRTABLE_SIZE
 RSSIZE = BLOCK_OFFSET + BLOCK_SIZE          # == offset of extarray
 TOTAL = RSSIZE + EXTARRAY_SIZE              # == extarray[0]
 
-assert TOTAL == 1078, "total RSC must be 1078 bytes"
-assert RSSIZE == 1066, "rsh_rssize must be 1066 bytes"
+assert TOTAL == 1076, "total RSC must be 1076 bytes"
+assert RSSIZE == 1064, "rsh_rssize must be 1064 bytes"
 
 NEW_FORMAT_RSC = 0x0004
 G_IBOX = 25
@@ -234,20 +232,12 @@ def build_rsc():
     assert len(blob.buf) - block_start == (CICONBLK_SIZE + MONO_WORDS * 4
                                             + TEXT_SIZE + CICON_SIZE)
 
-    # Standard Atari RSC records align the following colour bitmap on a
-    # LONG boundary; this padding is not part of the 22-byte CICON record.
-    blob.raw(b"\0" * CICON_PAD_SIZE)
-    assert len(blob.buf) - block_start == (CICONBLK_SIZE + MONO_WORDS * 4
-                                            + TEXT_SIZE + CICON_SIZE
-                                            + CICON_PAD_SIZE)
-
     # col_data: plane-major, one full 32x32 bitmap per plane
     for plane in range(NUM_PLANES):
         for word in plane_words(plane):
             blob.word(word)
     assert len(blob.buf) - block_start == (CICONBLK_SIZE + MONO_WORDS * 4
                                             + TEXT_SIZE + CICON_SIZE
-                                            + CICON_PAD_SIZE
                                             + MONO_WORDS * 2 * NUM_PLANES)
 
     # col_mask: filled
@@ -273,7 +263,6 @@ def parser_block_walk():
     pos += MONO_WORDS * 2                   # mono pmask; q += mono_words
     pos += TEXT_SIZE                        # icon text; q += 12/2 words
     pos += CICON_SIZE                       # disk CICON
-    pos += CICON_PAD_SIZE                   # align following colour data
     pos += MONO_WORDS * 2 * NUM_PLANES      # col_data; q += mono_words*planes
     pos += MONO_WORDS * 2                   # col_mask; q += mono_words
     return pos                              # == end of CICONBLK block
@@ -330,7 +319,7 @@ def validate(buf):
     assert u32(cicon_off + 18) == 0                   # next_res (no more CICONs)
 
     # One plane owns each quadrant: TL=1, TR=2, BL=4, BR=8.
-    plane_data_off = cicon_off + CICON_SIZE + CICON_PAD_SIZE
+    plane_data_off = cicon_off + CICON_SIZE
     assert u16(plane_data_off) == 0xffff              # plane 0, top-left
     assert u16(plane_data_off + 2) == 0               # plane 0, top-right
     assert u16(plane_data_off + 64) == 0              # plane 0, bottom-left
