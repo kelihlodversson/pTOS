@@ -799,7 +799,8 @@ static BOOL search_recursive(WORD curr, BYTE *pathname, BYTE *searchwild)
     }
     dos_sdta(save_dta); /* in case we must return */
 
-    switch(ret) {
+    switch(ret)
+    {
     case 0:             /* file found, display folder */
         if (!search_display(curr, pathname, searchwild))
             return FALSE;   /* user cancelled */
@@ -859,7 +860,8 @@ static BOOL search_icon(WORD win, WORD curr, BYTE *searchwild)
     if (!pa)
         return TRUE;
 
-    switch(pa->a_type) {
+    switch(pa->a_type)
+    {
     case AT_ISFOLD:
 #if CONF_WITH_DESKTOP_SHORTCUTS
         if (pa->a_flags & AF_ISDESK)
