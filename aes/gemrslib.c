@@ -291,7 +291,7 @@ static BOOL scan_disk_ciconblk(const struct disk_rsc *disk, LONG offset,
 {
     LONG words, pos, i, planes, header, payload;
     BOOL selected;
-    ULONG next;
+    ULONG count, next;
 
     if (!disk_range(disk, offset, DISK_CICONBLK_SIZE))
         return FALSE;
@@ -301,10 +301,11 @@ static BOOL scan_disk_ciconblk(const struct disk_rsc *disk, LONG offset,
         || (words < 0L) || (words > (disk->size-DISK_CICONBLK_SIZE-12L)/4L))
         return FALSE;
     pos = offset + DISK_CICONBLK_SIZE + words*4L + 12L;
-    if (!disk_range(disk, pos, 0L)
-        || (disk_ulong(disk, offset+D_CICONBLK_MAINLIST) > (ULONG)((disk->size-pos)/DISK_CICON_SIZE)))
+    count = disk_ulong(disk, offset+D_CICONBLK_MAINLIST);
+    if (!disk_range(disk, pos, 0L) || (count > 0x7fffL-*cicon_count)
+        || (count > (ULONG)((disk->size-pos)/DISK_CICON_SIZE)))
         return FALSE;
-    for (i = 0; i < (LONG)disk_ulong(disk, offset+D_CICONBLK_MAINLIST); i++)
+    for (i = 0; i < (LONG)count; i++)
     {
         if (!disk_range(disk, pos, DISK_CICON_SIZE))
             return FALSE;
@@ -325,10 +326,10 @@ static BOOL scan_disk_ciconblk(const struct disk_rsc *disk, LONG offset,
             pos += payload;
         }
         next = disk_ulong(disk, header+D_CICON_NEXT_RES);
-        if (next != (ULONG)((i+1L < (LONG)disk_ulong(disk, offset+D_CICONBLK_MAINLIST)) ? 1L : 0L))
+        if (next != (ULONG)((i+1L < (LONG)count) ? 1L : 0L))
             return FALSE;
     }
-    *cicon_count += disk_ulong(disk, offset+D_CICONBLK_MAINLIST);
+    *cicon_count += count;
     return TRUE;
 }
 
