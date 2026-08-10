@@ -388,6 +388,12 @@ static BOOL layout_ordinary(const struct disk_rsc *disk, const struct disk_cicon
         {
             ULONG cicon_index = disk_ulong(disk, object+D_OBJ_SPEC);
 
+            if (disk_uword(disk, object+D_OBJ_FLAGS) & INDIRECT)
+            {
+                if (!disk_range(disk, cicon_index, sizeof(ULONG)))
+                    return FALSE;
+                cicon_index = disk_ulong(disk, cicon_index);
+            }
             if (!cicons->table || (cicon_index >= (ULONG)cicons->ciconblks))
                 return FALSE;
         }
