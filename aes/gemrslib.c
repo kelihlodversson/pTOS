@@ -1108,6 +1108,8 @@ static void fix_objects(void)
 #if CONF_WITH_COLOUR_ICONS
             if (ciconblkptr)
             {
+                if (obj->ob_flags & INDIRECT)
+                    fix_long(&obj->ob_spec.index);
                 spec = (obj->ob_flags & INDIRECT) ? obj->ob_spec.indirect : &obj->ob_spec;
                 spec->ciconblk = ciconblkptr[spec->index];
             }
