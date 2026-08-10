@@ -828,7 +828,7 @@ static BOOL search_recursive(WORD curr, BYTE *pathname, BYTE *searchwild)
         {
             if (!add_one_level(pathname, dta.d_fname))
                 continue;   /* pathname is too long, silently ignore: FIXME */
-            ok = search_recursive(0, pathname, searchwild);
+            ok = search_recursive(curr, pathname, searchwild);
             remove_one_level(pathname);
             if (!ok)
                 break;

@@ -567,7 +567,10 @@ cpushl_bc:
  * C A C H E   C O N T R O L   F O R   E M U D E S K
  *
  * WORD cache_exists(void);
- *  returns 1 if processor has cache, 0 otherwise
+ *  returns 1 if this file's cache control (below) supports the current
+ *  processor, 0 otherwise. Note this is narrower than "has a cache": a
+ *  bare 68020 does have one, but _processor_init() above never sets up
+ *  cacr_enable for it, so it's excluded here too.
  *
  * void set_cache(WORD enable);
  *  sets cache state: if 'enable' is zero, disables, otherwise enables
