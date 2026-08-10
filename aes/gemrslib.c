@@ -132,8 +132,15 @@ struct disk_rsc {
 
 struct native_rsc_layout {
     LONG object, tedinfo, iconblk, bitblk;
-    LONG userblk, trindex, frstr, frimg, raw, total;
+    LONG userblk, trindex, frstr, frimg;
+    LONG extension, cicon_table, ciconblks, cicons, raw, total;
     LONG nuserblk;
+};
+
+struct disk_cicon_info {
+    LONG table;
+    LONG ciconblks;
+    LONG cicons;
 };
 
 static BOOL disk_range(const struct disk_rsc *disk, LONG offset, LONG length)
@@ -279,7 +286,86 @@ static BOOL userblk_offset(const struct disk_rsc *disk, ULONG spec, LONG *index)
     return found;
 }
 
-static BOOL layout_ordinary(const struct disk_rsc *disk, struct native_rsc_layout *layout)
+static BOOL scan_disk_ciconblk(const struct disk_rsc *disk, LONG offset,
+                               LONG *cicon_count)
+{
+    LONG words, pos, i, planes, header, payload;
+    BOOL selected;
+    ULONG next;
+
+    if (!disk_range(disk, offset, DISK_CICONBLK_SIZE))
+        return FALSE;
+    words = (((LONG)disk_word(disk, offset+22L) + 15L) / 16L)
+        * disk_word(disk, offset+24L);
+    if ((disk_word(disk, offset+22L) < 0) || (disk_word(disk, offset+24L) < 0)
+        || (words < 0L) || (words > (disk->size-DISK_CICONBLK_SIZE-12L)/4L))
+        return FALSE;
+    pos = offset + DISK_CICONBLK_SIZE + words*4L + 12L;
+    if (!disk_range(disk, pos, 0L)
+        || (disk_ulong(disk, offset+D_CICONBLK_MAINLIST) > (ULONG)((disk->size-pos)/DISK_CICON_SIZE)))
+        return FALSE;
+    for (i = 0; i < (LONG)disk_ulong(disk, offset+D_CICONBLK_MAINLIST); i++)
+    {
+        if (!disk_range(disk, pos, DISK_CICON_SIZE))
+            return FALSE;
+        header = pos;
+        planes = disk_uword(disk, header+D_CICON_PLANES);
+        if ((planes <= 0L) || (words > (disk->size-header-DISK_CICON_SIZE)/(2L*(planes+1L))))
+            return FALSE;
+        payload = words*2L*(planes+1L);
+        pos = header + DISK_CICON_SIZE;
+        if (!disk_range(disk, pos, payload))
+            return FALSE;
+        pos += payload;
+        selected = disk_ulong(disk, header+D_CICON_SEL_DATA) != 0L;
+        if (selected)
+        {
+            if (!disk_range(disk, pos, payload))
+                return FALSE;
+            pos += payload;
+        }
+        next = disk_ulong(disk, header+D_CICON_NEXT_RES);
+        if (next != (ULONG)((i+1L < (LONG)disk_ulong(disk, offset+D_CICONBLK_MAINLIST)) ? 1L : 0L))
+            return FALSE;
+    }
+    *cicon_count += disk_ulong(disk, offset+D_CICONBLK_MAINLIST);
+    return TRUE;
+}
+
+static BOOL scan_disk_cicons(const struct disk_rsc *disk, struct disk_cicon_info *info)
+{
+    LONG pos;
+    ULONG offset;
+
+    info->table = 0L;
+    info->ciconblks = 0L;
+    info->cicons = 0L;
+    if ((disk->hdr.rsh_vrsn & NEW_FORMAT_RSC) == 0)
+        return TRUE;
+    if (!disk_range(disk, disk->hdr.rsh_rssize, 12L)
+        || (disk_ulong(disk, disk->hdr.rsh_rssize) != (ULONG)disk->size))
+        return FALSE;
+    offset = disk_ulong(disk, disk->hdr.rsh_rssize+4L);
+    if ((offset == 0L) || (offset == (ULONG)-1L))
+        return TRUE;
+    if ((offset & 3L) || !disk_range(disk, offset, 4L))
+        return FALSE;
+    info->table = offset;
+    for (pos = offset; disk_range(disk, pos, 4L); pos += 4L)
+    {
+        offset = disk_ulong(disk, pos);
+        if (offset == (ULONG)-1L)
+            return TRUE;
+        if (!scan_disk_ciconblk(disk, offset, &info->cicons)
+            || (info->ciconblks == 0x7fffL))
+            return FALSE;
+        info->ciconblks++;
+    }
+    return FALSE;
+}
+
+static BOOL layout_ordinary(const struct disk_rsc *disk, const struct disk_cicon_info *cicons,
+                            struct native_rsc_layout *layout)
 {
     const RSHDR *hdr = &disk->hdr;
     LONG offset, i, userblk_index;
@@ -295,6 +381,13 @@ static BOOL layout_ordinary(const struct disk_rsc *disk, struct native_rsc_layou
     {
         LONG object = hdr->rsh_object + i*DISK_OBJECT_SIZE;
 
+        if ((disk_uword(disk, object+D_OBJ_TYPE) & 0x00ff) == G_CICON)
+        {
+            ULONG cicon_index = disk_ulong(disk, object+D_OBJ_SPEC);
+
+            if (!cicons->table || (cicon_index >= (ULONG)cicons->ciconblks))
+                return FALSE;
+        }
         if ((disk_uword(disk, object+D_OBJ_TYPE) & 0x00ff) == G_USERDEF)
         {
             ULONG spec = disk_ulong(disk, object+D_OBJ_SPEC);
@@ -328,6 +421,14 @@ static BOOL layout_ordinary(const struct disk_rsc *disk, struct native_rsc_layou
     if (!layout_add(&offset, (LONG)hdr->rsh_nstring * sizeof(void *))) return FALSE;
     layout->frimg = align_long(offset);
     if (!layout_add(&offset, (LONG)hdr->rsh_nimages * sizeof(void *))) return FALSE;
+    layout->extension = align_long(offset);
+    if (!layout_add(&offset, 3L * sizeof(LONG))) return FALSE;
+    layout->cicon_table = align_long(offset);
+    if (!layout_add(&offset, (cicons->ciconblks + 1L) * sizeof(CICONBLK *))) return FALSE;
+    layout->ciconblks = align_long(offset);
+    if (!layout_add(&offset, cicons->ciconblks * sizeof(CICONBLK))) return FALSE;
+    layout->cicons = align_long(offset);
+    if (!layout_add(&offset, cicons->cicons * sizeof(CICON))) return FALSE;
     layout->raw = align_long(offset);
     if (!layout_add(&offset, disk->size)) return FALSE;
     layout->total = offset;
@@ -545,6 +646,7 @@ static void fixup_all_ciconblks(LONG num_blks, CICONBLK **ciconblkptr, CICON *ci
         }
     }
 }
+#endif
 
 /*
  * returns pointer to a CICON that best matches the current resolution
@@ -887,11 +989,9 @@ static WORD free_cicon_buffers(RSHDR *hdr)
  *      . expanding the icon if necessary
  *      . converting the icon to device-dependent form
  */
-static void fix_cicons(void)
+static void transform_cicons(RSHDR *hdr)
 {
-    RSHDR *hdr = rs_hdr;
     CICONBLK **ciconblkptr, **p;
-    CICON *cicondata;
     LONG num_ciconblks;
 
     /* find the CICONBLK ptr table & count the CICONBLKs */
@@ -902,16 +1002,8 @@ static void fix_cicons(void)
     for (num_ciconblks = 0, p = ciconblkptr; *p != (CICONBLK *)-1L; p++)
         num_ciconblks++;
 
-    /* the CICON data area starts immediately after the pointer table */
-    cicondata = (CICON *)(p+1);
-
-    /* fixup the pointers in the resource */
-    fixup_all_ciconblks(num_ciconblks, ciconblkptr, cicondata);
-
-    /* transform all the icons to device-dependent format */
     transform_all_cicons(num_ciconblks, ciconblkptr);
 }
-#endif
 #endif
 
 
@@ -927,6 +1019,11 @@ static void fix_objects(void)
         obtype = obj->ob_type & 0x00ff;
         switch (obtype)
         {
+        case G_CICON:
+#if CONF_WITH_COLOUR_ICONS
+            obj->ob_spec.ciconblk = get_ciconblkptr(rs_hdr)[obj->ob_spec.index];
+#endif
+            break;
         case G_BOX:
         case G_IBOX:
         case G_BOXCHAR:
@@ -1025,6 +1122,81 @@ static BOOL copy_disk_words(WORD *dest, const struct disk_rsc *disk, LONG offset
     return TRUE;
 }
 
+static BOOL materialize_cicons(UBYTE *image, const struct native_rsc_layout *layout,
+                               const struct disk_rsc *disk, const struct disk_cicon_info *info)
+{
+    LONG pos, table_pos, block, words, count, i, j, header;
+    CICONBLK **table;
+    CICONBLK *ciconblk;
+    CICON *cicon;
+    BOOL selected;
+
+    table = (CICONBLK **)(image + layout->cicon_table);
+    if (!info->table)
+    {
+        table[0] = (CICONBLK *)-1L;
+        return TRUE;
+    }
+    cicon = (CICON *)(image + layout->cicons);
+    for (i = 0, table_pos = info->table; i < info->ciconblks; i++, table_pos += 4L)
+    {
+        block = disk_ulong(disk, table_pos);
+        ciconblk = (CICONBLK *)(image + layout->ciconblks + i*sizeof(CICONBLK));
+        table[i] = ciconblk;
+        words = (((LONG)disk_word(disk, block+22L) + 15L) / 16L)
+            * disk_word(disk, block+24L);
+        ciconblk->monoblk.ib_wicon = disk_word(disk, block+22L);
+        ciconblk->monoblk.ib_hicon = disk_word(disk, block+24L);
+        ciconblk->monoblk.ib_char = disk_word(disk, block+12L);
+        ciconblk->monoblk.ib_xchar = disk_word(disk, block+14L);
+        ciconblk->monoblk.ib_ychar = disk_word(disk, block+16L);
+        ciconblk->monoblk.ib_xicon = disk_word(disk, block+18L);
+        ciconblk->monoblk.ib_yicon = disk_word(disk, block+20L);
+        ciconblk->monoblk.ib_xtext = disk_word(disk, block+26L);
+        ciconblk->monoblk.ib_ytext = disk_word(disk, block+28L);
+        ciconblk->monoblk.ib_wtext = disk_word(disk, block+30L);
+        ciconblk->monoblk.ib_htext = disk_word(disk, block+32L);
+        pos = block + DISK_CICONBLK_SIZE;
+        ciconblk->monoblk.ib_pdata = (WORD *)(image + layout->raw + pos);
+        if (!copy_disk_words(ciconblk->monoblk.ib_pdata, disk, pos, words)) return FALSE;
+        pos += words*2L;
+        ciconblk->monoblk.ib_pmask = (WORD *)(image + layout->raw + pos);
+        if (!copy_disk_words(ciconblk->monoblk.ib_pmask, disk, pos, words)) return FALSE;
+        pos += words*2L;
+        ciconblk->monoblk.ib_ptext = (BYTE *)(image + layout->raw + pos);
+        pos += 12L;
+        count = disk_ulong(disk, block+D_CICONBLK_MAINLIST);
+        ciconblk->mainlist = count ? cicon : NULL;
+        for (j = 0; j < count; j++, cicon++)
+        {
+            header = pos;
+            selected = disk_ulong(disk, header+D_CICON_SEL_DATA) != 0L;
+            cicon->num_planes = disk_word(disk, header+D_CICON_PLANES);
+            pos += DISK_CICON_SIZE;
+            cicon->col_data = (WORD *)(image + layout->raw + pos);
+            if (!copy_disk_words(cicon->col_data, disk, pos, words*cicon->num_planes)) return FALSE;
+            pos += words*cicon->num_planes*2L;
+            cicon->col_mask = (WORD *)(image + layout->raw + pos);
+            if (!copy_disk_words(cicon->col_mask, disk, pos, words)) return FALSE;
+            pos += words*2L;
+            cicon->sel_data = NULL;
+            cicon->sel_mask = NULL;
+            if (selected)
+            {
+                cicon->sel_data = (WORD *)(image + layout->raw + pos);
+                if (!copy_disk_words(cicon->sel_data, disk, pos, words*cicon->num_planes)) return FALSE;
+                pos += words*cicon->num_planes*2L;
+                cicon->sel_mask = (WORD *)(image + layout->raw + pos);
+                if (!copy_disk_words(cicon->sel_mask, disk, pos, words)) return FALSE;
+                pos += words*2L;
+            }
+            cicon->next_res = (j+1L < count) ? cicon+1 : NULL;
+        }
+    }
+    table[info->ciconblks] = (CICONBLK *)-1L;
+    return TRUE;
+}
+
 static BOOL decode_object_spec(OBSPEC *native, UWORD type, ULONG spec,
                                UBYTE *image, const struct native_rsc_layout *layout,
                                const struct disk_rsc *disk)
@@ -1062,6 +1234,7 @@ static BOOL decode_object_spec(OBSPEC *native, UWORD type, ULONG spec,
 static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
 {
     struct native_rsc_layout layout;
+    struct disk_cicon_info cicons;
     RSHDR *hdr;
     UBYTE *image;
     OBJECT *obj;
@@ -1075,8 +1248,7 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
     LONG i, off, words, bytes;
     USERBLK *userblk;
 
-    /* Task 3 owns the extension and CICON materialization. */
-    if ((disk->hdr.rsh_vrsn & NEW_FORMAT_RSC) || !layout_ordinary(disk, &layout))
+    if (!scan_disk_cicons(disk, &cicons) || !layout_ordinary(disk, &cicons, &layout))
         return FALSE;
     image = dos_alloc_anyram(layout.total);
     if (!image)
@@ -1090,7 +1262,9 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         || (layout.iconblk > 0xffffL) || (layout.bitblk > 0xffffL)
         || (layout.userblk > 0xffffL)
         || (layout.trindex > 0xffffL) || (layout.frstr > 0xffffL)
-        || (layout.frimg > 0xffffL) || (layout.raw + disk->hdr.rsh_string > 0xffffL)
+        || (layout.frimg > 0xffffL) || (layout.extension > 0xffffL)
+        || (layout.cicon_table > 0xffffL) || (layout.ciconblks > 0xffffL)
+        || (layout.cicons > 0xffffL) || (layout.raw + disk->hdr.rsh_string > 0xffffL)
         || (layout.raw + disk->hdr.rsh_imdata > 0xffffL))
         goto fail;
     hdr->rsh_object = layout.object;
@@ -1100,9 +1274,15 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
     hdr->rsh_trindex = layout.trindex;
     hdr->rsh_frstr = layout.frstr;
     hdr->rsh_frimg = layout.frimg;
+    hdr->rsh_rssize = layout.extension;
     hdr->rsh_string = layout.raw + disk->hdr.rsh_string;
     hdr->rsh_imdata = layout.raw + disk->hdr.rsh_imdata;
     memcpy(image + layout.raw, disk->base, disk->size);
+    ((LONG *)(image + layout.extension))[0] = layout.total;
+    ((LONG *)(image + layout.extension))[1] = cicons.table ? layout.cicon_table : 0L;
+    ((LONG *)(image + layout.extension))[2] = 0L;
+    if (!materialize_cicons(image, &layout, disk, &cicons))
+        goto fail;
 
     if (!disk_range(disk, disk->hdr.rsh_object, (LONG)hdr->rsh_nobs * DISK_OBJECT_SIZE)
         || !disk_range(disk, disk->hdr.rsh_tedinfo, (LONG)hdr->rsh_nted * DISK_TEDINFO_SIZE)
@@ -1214,6 +1394,9 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         frimg[i] = native_bitblk_ptr(image, &layout, disk, spec);
         if (!frimg[i]) goto fail;
     }
+#if CONF_WITH_COLOUR_ICONS
+    transform_cicons(hdr);
+#endif
     pglobal->ap_rscmem = hdr;
     pglobal->ap_rsclen = layout.total;
     pglobal->ap_ptree = trees;
@@ -1242,6 +1425,10 @@ WORD rs_free(AESGLOBAL *pglobal)
 
     rs_sglobe(pglobal);
 
+#if CONF_WITH_COLOUR_ICONS
+    if (free_cicon_buffers(rs_global->ap_rscmem))
+        rc = 0;
+#endif
     if (dos_free(rs_global->ap_rscmem))
         rc = 0;
 
