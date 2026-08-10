@@ -661,17 +661,17 @@ static BOOL mark_matching_fnodes(WNODE *pw, BYTE *searchwild)
 {
     WORD first_match = -1, n;
     FNODE *pf;
+    GRECT gr;
 
     /*
-     * select all matching FNODEs that currently have a screen object
-     * (see fnode_is_selected(): items scrolled out of view do not have one)
+     * first pass: just find the first match, so we know where to scroll to.
+     * (also counts every match found, visible or not, for fun_search()'s
+     * "no more files" alert)
      */
     for (pf = pw->w_pnode.p_flist, n = 0; pf; pf = pf->f_next, n++)
     {
         if (wildcmp(searchwild, pf->f_name))
         {
-            if (pf->f_obid != NIL)
-                G.g_screen[pf->f_obid].ob_state |= SELECTED;
             fnodes_found++;
             if (first_match < 0)
                 first_match = n;
@@ -681,10 +681,30 @@ static BOOL mark_matching_fnodes(WNODE *pw, BYTE *searchwild)
         return FALSE;
 
     /*
-     * update info line & redisplay window, showing first match
+     * scroll to the first match *before* marking selections: this may
+     * allocate screen objects for FNODEs that had none (see
+     * fnode_is_selected()), including the first match itself if it was
+     * off-screen
+     */
+    win_dispfile(pw, first_match);
+
+    /*
+     * second pass: select all matching FNODEs that now have a screen object
+     */
+    for (pf = pw->w_pnode.p_flist; pf; pf = pf->f_next)
+    {
+        if ((pf->f_obid != NIL) && wildcmp(searchwild, pf->f_name))
+            G.g_screen[pf->f_obid].ob_state |= SELECTED;
+    }
+
+    /*
+     * update info line & force a redraw: win_dispfile() above only redraws
+     * if it had to scroll, but the selection highlight needs to be drawn
+     * even when the first match was already visible
      */
     win_sinfo(pw);
-    win_dispfile(pw, first_match);
+    wind_get_grect(pw->w_id, WF_WXYWH, &gr);
+    fun_msg(WM_REDRAW, pw->w_id, gr.g_x, gr.g_y, gr.g_w, gr.g_h);
 
     return TRUE;
 }

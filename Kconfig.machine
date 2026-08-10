@@ -163,7 +163,7 @@ config CONF_WITH_CACHE_CONTROL
 	help
 	  Add a desktop menu item to enable or disable the CPU cache(s), as
 	  on Atari TOS 3/4.  The menu item is greyed out at runtime on CPUs
-	  that don't support caching (68000/68010).
+	  this doesn't support cache control for (68000/68010/68020).
 
 config CONF_WITH_MULTI_CORE
 	bool "Multi-core support"

@@ -573,8 +573,8 @@ cpushl_bc:
  *  sets cache state: if 'enable' is zero, disables, otherwise enables
  */
 _cache_exists:
-        moveq.l #0,d0               // assume 68000, 68010
-        cmpi.b  #20,_mcpu+3
+        moveq.l #0,d0               // assume 68000/68010/68020: _processor_init()
+        cmpi.b  #30,_mcpu+3         // only sets up cacr_enable for 68030 and up
         jmi     ce_exit
         moveq.l #1,d0
 ce_exit:
