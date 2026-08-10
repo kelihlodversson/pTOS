@@ -22,103 +22,17 @@
 
 ---
 
-### Task 1: Define and validate the canonical disk-RSC reader
+### Task 1: Emit the canonical CICON RSC fixture
 
 **Files:**
-- Modify: `aes/gemrslib.c` — include `endian.h`; add disk record offsets/sizes, bounded BE readers, and a validated decoded-header descriptor before resource materialization
 - Modify: `tools/mkciconrsc.py` — encode one canonical BE RSC and assert every fixed wire offset/size
 - Modify (generated): `desk/cicontest_rsc.c` — one canonical `const UBYTE cicontest_rsc[]`, no `__BYTE_ORDER__` branch
 
 **Interfaces:**
-- Consumes: `be2cpu16()` / `be2cpu32()` from `include/endian.h`; disk bytes from `rs_readit()`/`rs_loadmem()`; `NEW_FORMAT_RSC` from `rsdefs.h`.
-- Produces: private `struct disk_rsc` containing `const UBYTE *base`, `LONG size`, decoded native `RSHDR hdr`, and true disk size; private `disk_uword()`, `disk_word()`, `disk_ulong()`, `disk_range()` helpers returning BOOL; `disk_decode_rshdr()` for the initial fixed 36-byte file header and `disk_header()` for complete-image validation.
+- Consumes: the fixed standard Atari CICON disk layout: RSHDR 36, CICONBLK 38, CICON 22 bytes; `pack_planes()` plane-major/MSB-first contract.
+- Produces: one canonical BE `const UBYTE cicontest_rsc[]` of 1078 bytes, accepted by the decoder Task 2 adds.
 
-- [ ] **Step 1: Add exact disk-schema constants in `aes/gemrslib.c`**
-
-Add `#include "endian.h"` with the other shared headers. Place these after the existing RSC type constants; they describe bytes on disk only and are not C structure sizes:
-
-```c
-#define DISK_RSHDR_SIZE       36
-#define DISK_OBJECT_SIZE      24
-#define DISK_TEDINFO_SIZE     28
-#define DISK_ICONBLK_SIZE     34
-#define DISK_BITBLK_SIZE      14
-#define DISK_CICONBLK_SIZE    38
-#define DISK_CICON_SIZE       22
-
-#define D_RSH_VRSN            0
-#define D_RSH_OBJECT          2
-#define D_RSH_TEDINFO         4
-#define D_RSH_ICONBLK         6
-#define D_RSH_BITBLK          8
-#define D_RSH_FRSTR          10
-#define D_RSH_STRING         12
-#define D_RSH_IMDATA         14
-#define D_RSH_FRIMG          16
-#define D_RSH_TRINDEX        18
-#define D_RSH_NOBS           20
-#define D_RSH_NTREE          22
-#define D_RSH_NTED           24
-#define D_RSH_NIB            26
-#define D_RSH_NBB            28
-#define D_RSH_NSTRING        30
-#define D_RSH_NIMAGES        32
-#define D_RSH_RSSIZE         34
-```
-
-Add matching named field offsets for OBJECT, TEDINFO, ICONBLK, BITBLK, CICONBLK, and CICON; use the fixed table in `docs/superpowers/specs/2026-08-09-portable-rsrc-load-design.md` rather than `offsetof()`.
-
-- [ ] **Step 2: Add bounded big-endian field readers**
-
-Add private helpers that accept an offset and fail before touching out-of-range bytes:
-
-```c
-static BOOL disk_range(const struct disk_rsc *disk, LONG offset, LONG length)
-{
-    return (offset >= 0L) && (length >= 0L)
-        && (offset <= disk->size) && (length <= disk->size-offset);
-}
-
-static UWORD disk_uword(const struct disk_rsc *disk, LONG offset)
-{
-    UWORD value;
-
-    memcpy(&value, disk->base + offset, sizeof(value));
-    return be2cpu16(value);
-}
-
-static ULONG disk_ulong(const struct disk_rsc *disk, LONG offset)
-{
-    ULONG value;
-
-    memcpy(&value, disk->base + offset, sizeof(value));
-    return be2cpu32(value);
-}
-```
-
-Use `memcpy()` rather than dereferencing an unaligned `UWORD *`/`ULONG *`. Add `disk_word()` as `(WORD)disk_uword()`.
-
-- [ ] **Step 3: Decode and validate the disk header**
-
-Add `static void disk_decode_rshdr(RSHDR *hdr, const UBYTE *base)` that reads
-the eighteen fixed header fields through `be2cpu16()`/`memcpy()` only; it is
-safe with exactly `DISK_RSHDR_SIZE` input bytes and does no span validation.
-
-Add `static BOOL disk_header(struct disk_rsc *disk, const UBYTE *base, LONG available)` that calls `disk_decode_rshdr()` and then:
-
-1. Rejects `available < DISK_RSHDR_SIZE`.
-2. Reads all eighteen RSHDR fields through the helpers into `disk->hdr`.
-3. Sets `disk->size` to `rsh_rssize` for an old-format resource.
-4. For `NEW_FORMAT_RSC`, validates the 12-byte extension prefix at `rsh_rssize`, reads `extarray[0]` as the true size, and uses that as `disk->size`.
-5. Rejects zero, negative, or `disk->size > available` values.
-6. Validates every nonzero fixed-table offset/count span with `disk_range()`:
-   `rsh_object + nobs*24`, `rsh_tedinfo + nted*28`, `rsh_iconblk + nib*34`,
-   `rsh_bitblk + nbb*14`, `rsh_trindex + ntree*4`, `rsh_frstr + nstring*4`,
-   and `rsh_frimg + nimages*4`.
-
-Use LONG products such as `(LONG)hdr.rsh_nobs * DISK_OBJECT_SIZE`.
-
-- [ ] **Step 4: Make the generator a canonical BE fixture**
+- [ ] **Step 1: Make the generator a canonical BE fixture**
 
 In `tools/mkciconrsc.py` remove target layout/byte-order selection. Emit disk CICONBLK=38 and CICON=22 exactly:
 
@@ -149,7 +63,7 @@ const UBYTE cicontest_rsc[] = {
 
 Keep `#define CICONTEST_RSC_SIZE 1078`; remove the `__BYTE_ORDER__` preprocessor branch.
 
-- [ ] **Step 5: Run fixture checks before wiring the decoder**
+- [ ] **Step 2: Run fixture checks before wiring the decoder**
 
 ```sh
 python3 tools/mkciconrsc.py > desk/cicontest_rsc.c
@@ -161,12 +75,12 @@ make atari512_defconfig && make
 
 Expected: generator exits 0; generated file is byte-identical; both default builds succeed because the hook remains off.
 
-- [ ] **Step 6: Commit the canonical fixture and reader scaffolding**
+- [ ] **Step 3: Commit the canonical fixture**
 
 ```sh
 make gitready
-git add aes/gemrslib.c tools/mkciconrsc.py desk/cicontest_rsc.c
-git commit -m "aes: define canonical RSC disk reader (#150)"
+git add tools/mkciconrsc.py desk/cicontest_rsc.c
+git commit -m "tools: emit canonical CICON RSC fixture (#150)"
 ```
 
 ---
@@ -179,10 +93,51 @@ git commit -m "aes: define canonical RSC disk reader (#150)"
 - Modify: `desk/deskapp.c` — only if the native pseudo-image contract cannot preserve `hdr + hdr->rsh_iconblk`; expected outcome is no code change
 
 **Interfaces:**
-- Consumes: Task 1 `disk_header()` and wire readers; `dos_alloc_anyram()`/`dos_free()`; existing native `RSHDR`, `OBJECT`, `TEDINFO`, `ICONBLK`, `BITBLK` definitions.
+- Consumes: Task 1 canonical BE fixture; `include/endian.h`; `dos_alloc_anyram()`/`dos_free()`; existing native `RSHDR`, `OBJECT`, `TEDINFO`, `ICONBLK`, `BITBLK` definitions.
 - Produces: private `materialize_rsc(AESGLOBAL *, const struct disk_rsc *)` returning BOOL; after success `ap_rscmem` is one allocated native image, `ap_ptree` is a native `OBJECT **`, and all non-CICON pointers are native pointers or the existing `(void *)-1L` sentinel.
 
-- [ ] **Step 1: Define a native image layout descriptor**
+- [ ] **Step 1: Add and immediately use the canonical disk reader**
+
+Add `#include "endian.h"` with the shared headers. Add exact disk-schema
+constants for RSHDR=36, OBJECT=24, TEDINFO=28, ICONBLK=34, BITBLK=14,
+CICONBLK=38, and CICON=22, plus named offsets for every field listed in the
+approved spec. These constants describe disk bytes only; never use
+`sizeof(native_struct)` to traverse disk input.
+
+Add private `struct disk_rsc` (`const UBYTE *base`, `LONG size`, native decoded
+`RSHDR hdr`) and these helpers:
+
+```c
+static BOOL disk_range(const struct disk_rsc *disk, LONG offset, LONG length)
+{
+    return (offset >= 0L) && (length >= 0L)
+        && (offset <= disk->size) && (length <= disk->size-offset);
+}
+
+static UWORD disk_uword(const struct disk_rsc *disk, LONG offset)
+{
+    UWORD value;
+
+    memcpy(&value, disk->base + offset, sizeof(value));
+    return be2cpu16(value);
+}
+
+static ULONG disk_ulong(const struct disk_rsc *disk, LONG offset)
+{
+    ULONG value;
+
+    memcpy(&value, disk->base + offset, sizeof(value));
+    return be2cpu32(value);
+}
+```
+
+Use `memcpy()` rather than unaligned UWORD/ULONG casts; add `disk_word()` as
+`(WORD)disk_uword()`. Add `disk_decode_rshdr()` to decode precisely 36 header
+bytes without span validation. Add `disk_header()` for a complete image: it
+calls `disk_decode_rshdr()`, derives old-format size from rsh_rssize or
+new-format size from BE `extarray[0]`, rejects image sizes outside `available`,
+
+- [ ] **Step 2: Define a native image layout descriptor**
 
 Add a private `struct native_rsc_layout` with LONG offsets for header, object,
 TEDINFO, ICONBLK, BITBLK, tree table, free-string table, free-image table,
@@ -202,7 +157,7 @@ uses native `sizeof(OBJECT/TEDINFO/ICONBLK/BITBLK)`, reserves native pointer
 tables with `sizeof(void *)`, and reserves `disk->size` raw-tail bytes. It
 rejects a negative/overflowed result or a result above `0xffffL`.
 
-- [ ] **Step 2: Allocate one image and create its native header**
+- [ ] **Step 3: Allocate one image and create its native header**
 
 `materialize_rsc()` allocates `layout.total`, clears it, and sets:
 
@@ -224,7 +179,7 @@ Copy the disk bytes to `image + layout.raw` once. Validate every converted
 header offset fits UWORD before assignment. Do not publish `pglobal` until all
 materialization succeeds; free `image` on every failure path.
 
-- [ ] **Step 3: Decode OBJECT, TEDINFO, ICONBLK, and BITBLK tables**
+- [ ] **Step 4: Decode OBJECT, TEDINFO, ICONBLK, and BITBLK tables**
 
 Before the table loops, implement these four private helpers: `native_disk_ptr()`
 (valid disk offset to `image + layout.raw + offset`), `native_tedinfo_ptr()`,
@@ -297,7 +252,7 @@ disk BE word into the raw tail as a native WORD via `copy_disk_words()`.
 For every non-sentinel text/string pointer, require a NUL byte before
 `disk->size`; this keeps the later `strlen()` in `fix_tedinfo()` bounded.
 
-- [ ] **Step 4: Materialize tree/free pointer tables and preserve API lookups**
+- [ ] **Step 5: Materialize tree/free pointer tables and preserve API lookups**
 
 Build native tables instead of mutating disk LONGs:
 
@@ -316,7 +271,7 @@ Set `pglobal->ap_ptree = trees`; native `get_addr()` continues to work because
 the remapped header offsets point at native contiguous arrays and the table
 slots are native pointers.
 
-- [ ] **Step 5: Replace in-place ordinary fixups with native finalization**
+- [ ] **Step 6: Replace in-place ordinary fixups with native finalization**
 
 Remove ordinary disk-overlay calls from `rs_parse()`:
 
@@ -331,7 +286,7 @@ Remove ordinary disk-overlay calls from `rs_parse()`:
 Retain `get_addr()` but simplify its pointer cases to return native fields and
 native tables without calling `fix_long()`.
 
-- [ ] **Step 6: Route file and memory wrappers through the decoder**
+- [ ] **Step 7: Route file and memory wrappers through the decoder**
 
 Change `rs_readit()` to read the disk header bytes into `UBYTE header[DISK_RSHDR_SIZE]` and call `disk_decode_rshdr()`. For an old-format RSC, the preliminary disk size is `header.rsh_rssize`; for `NEW_FORMAT_RSC`, seek to `header.rsh_rssize`, read exactly four extension bytes, and decode their BE ULONG true length. Validate that preliminary size is at least 36, allocate/read exactly that many disk bytes from file offset zero, then call `disk_header()` on the complete buffer before `materialize_rsc()`. On seek/read failure, free every temporary allocation before returning FALSE.
 
@@ -348,7 +303,7 @@ makes the owned copy. Preserve NULL `pglobal` handling and return
 in `desk/deskmain.c` to `rs_loadmem(NULL, cicontest_rsc, CICONTEST_RSC_SIZE)`;
 keep the size macro in the generated fixture.
 
-- [ ] **Step 7: Build ordinary-resource regressions**
+- [ ] **Step 8: Build ordinary-resource regressions**
 
 ```sh
 make distclean
@@ -360,7 +315,7 @@ timeout 30 qemu-system-arm -M raspi2b -bios kernel7.img \
 
 Expected: both builds succeed; default rpi2 reaches `AES: EMUDESK: evnt_multi()`; no new guest errors. This covers normal built-in native C resources and confirms no default configuration links the optional test hook.
 
-- [ ] **Step 8: Commit the ordinary decoder**
+- [ ] **Step 9: Commit the ordinary decoder**
 
 ```sh
 make gitready
