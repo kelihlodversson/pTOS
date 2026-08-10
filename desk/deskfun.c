@@ -872,6 +872,8 @@ static BOOL search_icon(WORD win, WORD curr, BYTE *searchwild)
 #endif
         {
             WNODE *temp = win_find(win);
+            if (!temp)
+                return TRUE;    /* window gone: skip this icon */
             strcpy(pathname, temp->w_pnode.p_spec);
             strcpy(filename_start(pathname), pf->f_name);
         }
