@@ -86,6 +86,14 @@ The existing truecolor conversion in `transform_all_cicons()` then receives
 native CICONs. No target-specific RSC array or compiler-layout assumption is
 needed.
 
+## USERDEF Policy
+
+`G_USERDEF` callbacks are executable native pointers and cannot be portable
+disk data. The decoder materialises each referenced USERBLK as native memory,
+decodes its `ub_parm`, and sets `ub_code = NULL`. Repeated disk references to
+one USERBLK resolve to the same native USERBLK. Applications must install a
+native callback after loading the resource.
+
 ## Embedded Test Resource
 
 `tools/mkciconrsc.py` emits one canonical big-endian `cicontest_rsc[]` array.

@@ -242,6 +242,12 @@ default:
 }
 ```
 
+Handle `G_USERDEF` before the default: scan objects for distinct disk USERBLK
+offsets, reserve a native `USERBLK` table in `struct native_rsc_layout`, and
+map repeated disk offsets to one native USERBLK. Decode disk `ub_parm` into the
+native record and set `ub_code = NULL`; a disk callback cannot be portable and
+the application installs its native callback after load.
+
 For `INDIRECT`, decode the pointed LONG into a native LONG slot in the raw
 tail before assigning `ob_spec.indirect`; never leave a BE disk LONG behind.
 
