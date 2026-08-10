@@ -502,8 +502,12 @@ static void win_blt(WNODE *pw, WORD newcv)
  */
 void win_dispfile(WNODE *pw, WORD n)
 {
-    WORD row = n / pw->w_pncol;
+    WORD row;
 
+    if (pw->w_pncol < 1)   /* defensive: shouldn't happen, see win_ocalc() */
+        return;
+
+    row = n / pw->w_pncol;
     if ((row < pw->w_cvrow) || (row >= pw->w_cvrow + pw->w_pnrow))
         win_blt(pw, row);
 }

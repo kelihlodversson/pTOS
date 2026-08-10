@@ -888,6 +888,8 @@ static BOOL search_icon(WORD win, WORD curr, BYTE *searchwild)
         return TRUE;
     }
 
+    if (strlen(pathname) + 4 >= MAXPATHLEN)    /* strlen("\\*.*") */
+        return TRUE;    /* pathname too long: skip this icon */
     strcat(pathname, "\\*.*");
 
     if (!search_recursive(curr, pathname, searchwild))
