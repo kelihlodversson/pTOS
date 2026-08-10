@@ -76,6 +76,9 @@ static char    free_str[256];   /* must be long enough for longest freestring in
 #define DISK_TEDINFO_SIZE   28
 #define DISK_ICONBLK_SIZE   34
 #define DISK_BITBLK_SIZE    14
+#define DISK_CICONBLK_SIZE  38
+#define DISK_CICON_SIZE     22
+#define DISK_USERBLK_SIZE   8
 
 #define D_RSH_VRSN          0
 #define D_RSH_OBJECT        2
@@ -108,6 +111,19 @@ static char    free_str[256];   /* must be long enough for longest freestring in
 #define D_OBJ_WIDTH         20
 #define D_OBJ_HEIGHT        22
 
+#define D_CICONBLK_MONOBLK  0
+#define D_CICONBLK_MAINLIST 34
+
+#define D_CICON_PLANES      0
+#define D_CICON_COL_DATA    2
+#define D_CICON_COL_MASK    6
+#define D_CICON_SEL_DATA    10
+#define D_CICON_SEL_MASK    14
+#define D_CICON_NEXT_RES    18
+
+#define D_USERBLK_CODE      0
+#define D_USERBLK_PARM      4
+
 struct disk_rsc {
     const UBYTE *base;
     LONG size;
@@ -116,7 +132,8 @@ struct disk_rsc {
 
 struct native_rsc_layout {
     LONG object, tedinfo, iconblk, bitblk;
-    LONG trindex, frstr, frimg, raw, total;
+    LONG userblk, trindex, frstr, frimg, raw, total;
+    LONG nuserblk;
 };
 
 static BOOL disk_range(const struct disk_rsc *disk, LONG offset, LONG length)
@@ -208,15 +225,92 @@ static BOOL layout_add(LONG *offset, LONG length)
     return TRUE;
 }
 
+static BOOL userblk_offset(const struct disk_rsc *disk, ULONG spec, LONG *index)
+{
+    LONG i, off;
+    ULONG value;
+    BOOL found;
+
+    if (!disk_range(disk, spec, DISK_USERBLK_SIZE))
+        return FALSE;
+    *index = 0;
+    found = FALSE;
+    for (i = 0; i < disk->hdr.rsh_nobs; i++)
+    {
+        off = disk->hdr.rsh_object + i*DISK_OBJECT_SIZE;
+        if ((disk_uword(disk, off+D_OBJ_TYPE) & 0x00ff) != G_USERDEF)
+            continue;
+        value = disk_ulong(disk, off+D_OBJ_SPEC);
+        if (disk_uword(disk, off+D_OBJ_FLAGS) & INDIRECT)
+        {
+            if (!disk_range(disk, value, sizeof(ULONG)))
+                return FALSE;
+            value = disk_ulong(disk, value);
+        }
+        if (!disk_range(disk, value, DISK_USERBLK_SIZE))
+            return FALSE;
+        if (value == spec)
+            found = TRUE;
+        if (value < spec)
+        {
+            LONG j;
+
+            for (j = 0; j < i; j++)
+            {
+                LONG previous = disk->hdr.rsh_object + j*DISK_OBJECT_SIZE;
+                ULONG previous_value;
+
+                if ((disk_uword(disk, previous+D_OBJ_TYPE) & 0x00ff) != G_USERDEF)
+                    continue;
+                previous_value = disk_ulong(disk, previous+D_OBJ_SPEC);
+                if (disk_uword(disk, previous+D_OBJ_FLAGS) & INDIRECT)
+                {
+                    if (!disk_range(disk, previous_value, sizeof(ULONG)))
+                        return FALSE;
+                    previous_value = disk_ulong(disk, previous_value);
+                }
+                if (previous_value == value)
+                    break;
+            }
+            if (j == i)
+                (*index)++;
+        }
+    }
+    return found;
+}
+
 static BOOL layout_ordinary(const struct disk_rsc *disk, struct native_rsc_layout *layout)
 {
     const RSHDR *hdr = &disk->hdr;
-    LONG offset;
+    LONG offset, i, userblk_index;
 
     if ((hdr->rsh_nobs < 0) || (hdr->rsh_ntree < 0) || (hdr->rsh_nted < 0)
         || (hdr->rsh_nib < 0) || (hdr->rsh_nbb < 0) || (hdr->rsh_nstring < 0)
         || (hdr->rsh_nimages < 0))
         return FALSE;
+    if (!disk_range(disk, hdr->rsh_object, (LONG)hdr->rsh_nobs * DISK_OBJECT_SIZE))
+        return FALSE;
+    layout->nuserblk = 0;
+    for (i = 0; i < hdr->rsh_nobs; i++)
+    {
+        LONG object = hdr->rsh_object + i*DISK_OBJECT_SIZE;
+
+        if ((disk_uword(disk, object+D_OBJ_TYPE) & 0x00ff) == G_USERDEF)
+        {
+            ULONG spec = disk_ulong(disk, object+D_OBJ_SPEC);
+
+            if (disk_uword(disk, object+D_OBJ_FLAGS) & INDIRECT)
+            {
+                if (!disk_range(disk, spec, sizeof(ULONG)))
+                    return FALSE;
+                spec = disk_ulong(disk, spec);
+            }
+            if (!userblk_offset(disk, spec, &userblk_index))
+                return FALSE;
+            if (userblk_index >= layout->nuserblk)
+                layout->nuserblk = userblk_index + 1;
+        }
+    }
     offset = sizeof(RSHDR);
     layout->object = align_long(offset);
     if (!layout_add(&offset, (LONG)hdr->rsh_nobs * sizeof(OBJECT))) return FALSE;
@@ -226,6 +320,8 @@ static BOOL layout_ordinary(const struct disk_rsc *disk, struct native_rsc_layou
     if (!layout_add(&offset, (LONG)hdr->rsh_nib * sizeof(ICONBLK))) return FALSE;
     layout->bitblk = align_long(offset);
     if (!layout_add(&offset, (LONG)hdr->rsh_nbb * sizeof(BITBLK))) return FALSE;
+    layout->userblk = align_long(offset);
+    if (!layout_add(&offset, layout->nuserblk * sizeof(USERBLK))) return FALSE;
     layout->trindex = align_long(offset);
     if (!layout_add(&offset, (LONG)hdr->rsh_ntree * sizeof(void *))) return FALSE;
     layout->frstr = align_long(offset);
@@ -370,6 +466,7 @@ static void *get_addr(UWORD rstype, UWORD rsindex)
 
 
 #if CONF_WITH_COLOUR_ICONS
+#if 0                           /* Task 3 replaces raw CICON parsing. */
 /*
  * fixup all of the CICONs for a CICONBLK
  *
@@ -790,7 +887,7 @@ static WORD free_cicon_buffers(RSHDR *hdr)
  *      . expanding the icon if necessary
  *      . converting the icon to device-dependent form
  */
-static void __attribute__((unused)) fix_cicons(void)
+static void fix_cicons(void)
 {
     RSHDR *hdr = rs_hdr;
     CICONBLK **ciconblkptr, **p;
@@ -815,6 +912,7 @@ static void __attribute__((unused)) fix_cicons(void)
     transform_all_cicons(num_ciconblks, ciconblkptr);
 }
 #endif
+#endif
 
 
 static void fix_objects(void)
@@ -822,10 +920,6 @@ static void fix_objects(void)
     WORD ii;
     WORD obtype;
     OBJECT *obj;
-#if CONF_WITH_COLOUR_ICONS
-    CICONBLK **ciconblkptr = get_ciconblkptr(rs_hdr);
-#endif
-
     for (ii = 0; ii < rs_hdr->rsh_nobs; ii++)
     {
         obj = (OBJECT *)get_addr(R_OBJECT, ii);
@@ -833,12 +927,6 @@ static void fix_objects(void)
         obtype = obj->ob_type & 0x00ff;
         switch (obtype)
         {
-#if CONF_WITH_COLOUR_ICONS
-        case G_CICON:
-            if (ciconblkptr)
-                obj->ob_spec.index = (LONG)ciconblkptr[obj->ob_spec.index];
-            break;
-#endif
         case G_BOX:
         case G_IBOX:
         case G_BOXCHAR:
@@ -902,6 +990,16 @@ static BITBLK *native_bitblk_ptr(UBYTE *image, const struct native_rsc_layout *l
         + (index/DISK_BITBLK_SIZE) * sizeof(BITBLK));
 }
 
+static USERBLK *native_userblk_ptr(UBYTE *image, const struct native_rsc_layout *layout,
+                                   const struct disk_rsc *disk, ULONG offset)
+{
+    LONG index;
+
+    if (!userblk_offset(disk, offset, &index))
+        return NULL;
+    return (USERBLK *)(image + layout->userblk + index*sizeof(USERBLK));
+}
+
 static BOOL disk_string(const struct disk_rsc *disk, ULONG offset)
 {
     LONG i;
@@ -927,6 +1025,40 @@ static BOOL copy_disk_words(WORD *dest, const struct disk_rsc *disk, LONG offset
     return TRUE;
 }
 
+static BOOL decode_object_spec(OBSPEC *native, UWORD type, ULONG spec,
+                               UBYTE *image, const struct native_rsc_layout *layout,
+                               const struct disk_rsc *disk)
+{
+    switch (type & 0x00ff)
+    {
+    case G_TEXT:
+    case G_BOXTEXT:
+    case G_FTEXT:
+    case G_FBOXTEXT:
+        native->tedinfo = native_tedinfo_ptr(image, layout, disk, spec);
+        return native->tedinfo != NULL;
+    case G_IMAGE:
+        native->bitblk = native_bitblk_ptr(image, layout, disk, spec);
+        return native->bitblk != NULL;
+    case G_ICON:
+        native->iconblk = native_iconblk_ptr(image, layout, disk, spec);
+        return native->iconblk != NULL;
+    case G_STRING:
+    case G_BUTTON:
+    case G_TITLE:
+        if (!disk_string(disk, spec))
+            return FALSE;
+        native->free_string = native_disk_ptr(image, layout, disk, spec);
+        return native->free_string != NULL;
+    case G_USERDEF:
+        native->userblk = native_userblk_ptr(image, layout, disk, spec);
+        return native->userblk != NULL;
+    default:
+        native->index = (LONG)spec;
+        return TRUE;
+    }
+}
+
 static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
 {
     struct native_rsc_layout layout;
@@ -940,9 +1072,11 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
     BYTE **frstr;
     void **frimg;
     ULONG spec;
-    LONG i, off, words;
+    LONG i, off, words, bytes;
+    USERBLK *userblk;
 
-    if (!layout_ordinary(disk, &layout))
+    /* Task 3 owns the extension and CICON materialization. */
+    if ((disk->hdr.rsh_vrsn & NEW_FORMAT_RSC) || !layout_ordinary(disk, &layout))
         return FALSE;
     image = dos_alloc_anyram(layout.total);
     if (!image)
@@ -954,6 +1088,7 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         || !disk_range(disk, disk->hdr.rsh_imdata, 0L)
         || (layout.object > 0xffffL) || (layout.tedinfo > 0xffffL)
         || (layout.iconblk > 0xffffL) || (layout.bitblk > 0xffffL)
+        || (layout.userblk > 0xffffL)
         || (layout.trindex > 0xffffL) || (layout.frstr > 0xffffL)
         || (layout.frimg > 0xffffL) || (layout.raw + disk->hdr.rsh_string > 0xffffL)
         || (layout.raw + disk->hdr.rsh_imdata > 0xffffL))
@@ -1001,7 +1136,8 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         off = disk->hdr.rsh_iconblk + i*DISK_ICONBLK_SIZE;
         icon = (ICONBLK *)(image + layout.iconblk + i*sizeof(ICONBLK));
         icon->ib_wicon = disk_word(disk, off+22L); icon->ib_hicon = disk_word(disk, off+24L);
-        words = (LONG)(icon->ib_wicon/16) * icon->ib_hicon;
+        if ((icon->ib_wicon < 0) || (icon->ib_hicon < 0)) goto fail;
+        words = ((LONG)(icon->ib_wicon + 15) / 16L) * icon->ib_hicon;
         spec = disk_ulong(disk, off);
         if (!native_disk_ptr(image, &layout, disk, spec) || !copy_disk_words((WORD *)(image + layout.raw + spec), disk, spec, words)) goto fail;
         icon->ib_pmask = (WORD *)(image + layout.raw + spec);
@@ -1022,11 +1158,26 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         off = disk->hdr.rsh_bitblk + i*DISK_BITBLK_SIZE;
         bit = (BITBLK *)(image + layout.bitblk + i*sizeof(BITBLK));
         bit->bi_wb = disk_word(disk, off+4L); bit->bi_hl = disk_word(disk, off+6L);
-        words = ((LONG)bit->bi_wb * bit->bi_hl) / 2L;
+        bytes = (LONG)bit->bi_wb * bit->bi_hl;
+        if ((bit->bi_wb < 0) || (bit->bi_hl < 0) || (bytes < 0L) || (bytes & 1L)) goto fail;
+        words = bytes / 2L;
         spec = disk_ulong(disk, off);
         if (!native_disk_ptr(image, &layout, disk, spec) || !copy_disk_words((WORD *)(image + layout.raw + spec), disk, spec, words)) goto fail;
         bit->bi_pdata = image + layout.raw + spec;
         bit->bi_x = disk_word(disk, off+8L); bit->bi_y = disk_word(disk, off+10L); bit->bi_color = disk_word(disk, off+12L);
+    }
+    for (i = 0; i < hdr->rsh_nobs; i++)
+    {
+        off = disk->hdr.rsh_object + i*DISK_OBJECT_SIZE;
+        if ((disk_uword(disk, off+D_OBJ_TYPE) & 0x00ff) != G_USERDEF)
+            continue;
+        spec = disk_ulong(disk, off+D_OBJ_SPEC);
+        if (disk_uword(disk, off+D_OBJ_FLAGS) & INDIRECT)
+            spec = disk_ulong(disk, spec);
+        userblk = native_userblk_ptr(image, &layout, disk, spec);
+        if (!userblk) goto fail;
+        userblk->ub_code = NULL;
+        userblk->ub_parm = (LONG)disk_ulong(disk, spec+D_USERBLK_PARM);
     }
     for (i = 0; i < hdr->rsh_nobs; i++)
     {
@@ -1038,22 +1189,11 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         if (obj->ob_flags & INDIRECT)
         {
             if ((spec & 3L) || !disk_range(disk, spec, 4L)) goto fail;
-            *(LONG *)(image + layout.raw + spec) = (LONG)disk_ulong(disk, spec);
             obj->ob_spec.indirect = (OBSPEC *)(image + layout.raw + spec);
+            if (!decode_object_spec(obj->ob_spec.indirect, obj->ob_type,
+                                    disk_ulong(disk, spec), image, &layout, disk)) goto fail;
         }
-        else switch (obj->ob_type & 0x00ff)
-        {
-        case G_TEXT: case G_BOXTEXT: case G_FTEXT: case G_FBOXTEXT:
-            obj->ob_spec.tedinfo = native_tedinfo_ptr(image, &layout, disk, spec); if (!obj->ob_spec.tedinfo) goto fail; break;
-        case G_IMAGE:
-            obj->ob_spec.bitblk = native_bitblk_ptr(image, &layout, disk, spec); if (!obj->ob_spec.bitblk) goto fail; break;
-        case G_ICON:
-            obj->ob_spec.iconblk = native_iconblk_ptr(image, &layout, disk, spec); if (!obj->ob_spec.iconblk) goto fail; break;
-        case G_STRING: case G_BUTTON: case G_TITLE:
-            if (!disk_string(disk, spec)) goto fail;
-            obj->ob_spec.free_string = native_disk_ptr(image, &layout, disk, spec); if (!obj->ob_spec.free_string) goto fail; break;
-        default: obj->ob_spec.index = (LONG)spec; break;
-        }
+        else if (!decode_object_spec(&obj->ob_spec, obj->ob_type, spec, image, &layout, disk)) goto fail;
         obj->ob_x = disk_word(disk, off+16L); obj->ob_y = disk_word(disk, off+18L);
         obj->ob_width = disk_word(disk, off+20L); obj->ob_height = disk_word(disk, off+22L);
     }
@@ -1068,7 +1208,12 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
     frstr = (BYTE **)(image + layout.frstr);
     for (i = 0; i < hdr->rsh_nstring; i++) { spec = disk_ulong(disk, disk->hdr.rsh_frstr+i*4L); if (!disk_string(disk, spec)) goto fail; frstr[i] = (spec == (ULONG)-1L) ? (BYTE *)-1L : native_disk_ptr(image, &layout, disk, spec); }
     frimg = (void **)(image + layout.frimg);
-    for (i = 0; i < hdr->rsh_nimages; i++) { spec = disk_ulong(disk, disk->hdr.rsh_frimg+i*4L); frimg[i] = native_disk_ptr(image, &layout, disk, spec); if (!frimg[i]) goto fail; }
+    for (i = 0; i < hdr->rsh_nimages; i++)
+    {
+        spec = disk_ulong(disk, disk->hdr.rsh_frimg+i*4L);
+        frimg[i] = native_bitblk_ptr(image, &layout, disk, spec);
+        if (!frimg[i]) goto fail;
+    }
     pglobal->ap_rscmem = hdr;
     pglobal->ap_rsclen = layout.total;
     pglobal->ap_ptree = trees;
@@ -1096,11 +1241,6 @@ WORD rs_free(AESGLOBAL *pglobal)
     WORD rc = 1;    /* default rc => OK */
 
     rs_sglobe(pglobal);
-
-#if CONF_WITH_COLOUR_ICONS
-    if (free_cicon_buffers(rs_hdr) < 0)
-        rc = 0;
-#endif
 
     if (dos_free(rs_global->ap_rscmem))
         rc = 0;
