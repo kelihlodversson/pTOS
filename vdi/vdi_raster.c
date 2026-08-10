@@ -790,7 +790,7 @@ dont_clip (struct blit_frame * info)
  *  replace pixels outright: S_OR_D would OR RGB565 values
  *  (apply_raster_op's BM_S_OR_D = src|dst), corrupting them.  The
  *  planar backend needs S_OR_D (its data planes are mask-ANDed and
- *  composed over the mask blit).  BM_S_ONLY/S_OR_D are numerically equal
+ *  composed over the mask blit).  BM_S_ONLY/BM_S_OR_D are numerically equal
  *  to the AES's S_ONLY/S_OR_D.
  */
 WORD vdi_colour_blit_mode(void)

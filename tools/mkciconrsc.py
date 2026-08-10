@@ -371,7 +371,7 @@ def emit_c(buf):
         "",
         "#include \"portab.h\"",
         "",
-        "#define CICONTEST_RSC_SIZE %d" % TOTAL,
+        "const LONG cicontest_rsc_size = %dL;" % TOTAL,
         "",
         "const UBYTE cicontest_rsc[] = {",
     ]

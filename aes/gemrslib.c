@@ -1212,6 +1212,22 @@ static BOOL disk_string(const struct disk_rsc *disk, ULONG offset)
     return FALSE;
 }
 
+static BOOL disk_string_capacity(const struct disk_rsc *disk, ULONG offset, WORD length)
+{
+    LONG i;
+
+    if (length < 0)
+        return FALSE;
+    if (offset == (ULONG)-1L)
+        return TRUE;
+    if (!disk_range(disk, offset, (LONG)length))
+        return FALSE;
+    for (i = 0; i < length; i++)
+        if (!disk->base[offset+i])
+            return TRUE;
+    return FALSE;
+}
+
 static BOOL copy_disk_words(WORD *dest, const struct disk_rsc *disk, LONG offset, LONG count)
 {
     LONG i;
@@ -1399,10 +1415,12 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         off = disk->hdr.rsh_tedinfo + i*DISK_TEDINFO_SIZE;
         ted = (TEDINFO *)(image + layout.tedinfo + i*sizeof(TEDINFO));
         spec = disk_ulong(disk, off);
-        if (!disk_string(disk, spec)) goto fail;
+        ted->te_txtlen = disk_word(disk, off+24L);
+        if (!disk_string_capacity(disk, spec, ted->te_txtlen)) goto fail;
         ted->te_ptext = (spec == (ULONG)-1L) ? (BYTE *)-1L : native_disk_ptr(image, &layout, disk, spec);
         spec = disk_ulong(disk, off+4L);
-        if (!disk_string(disk, spec)) goto fail;
+        ted->te_tmplen = disk_word(disk, off+26L);
+        if (!disk_string_capacity(disk, spec, ted->te_tmplen)) goto fail;
         ted->te_ptmplt = (spec == (ULONG)-1L) ? (BYTE *)-1L : native_disk_ptr(image, &layout, disk, spec);
         spec = disk_ulong(disk, off+8L);
         if (!disk_string(disk, spec)) goto fail;
@@ -1410,7 +1428,6 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         ted->te_font = disk_word(disk, off+12L); ted->te_junk1 = disk_word(disk, off+14L);
         ted->te_just = disk_word(disk, off+16L); ted->te_color = disk_word(disk, off+18L);
         ted->te_junk2 = disk_word(disk, off+20L); ted->te_thickness = disk_word(disk, off+22L);
-        ted->te_txtlen = disk_word(disk, off+24L); ted->te_tmplen = disk_word(disk, off+26L);
     }
     for (i = 0; i < hdr->rsh_nib; i++)
     {
