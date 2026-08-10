@@ -478,6 +478,22 @@ Optionally smoke-boot the result with the `ptos-smoketest` skill (QEMU `raspi1ap
 
 ---
 
+## Progress Ledger
+
+### Task 1: Add the derived symbol and record the baseline — DONE (approved)
+
+- Commit `c9d5d12f` "kconfig: add derived portable RSC loader option", task review approved (no issues).
+- New authoritative baseline (design-doc figure in parens, when different):
+  - atari192: 2036 bytes free (doc: 2068, −32, toolchain drift)
+  - atari256: 7221 bytes free (doc: 7255, −34, toolchain drift)
+  - atari512: 16461 bytes free (exact match)
+  - atari512 + CONF_WITH_VDI_CICON_TEST=y: 15317 bytes free (not in doc)
+  - rpi1: RAM-used 570368 (not in doc)
+- `CONF_WITH_PORTABLE_RSC_LOAD` verified in `obj/autoconf.h`: 0 on atari192/256, 1 on atari512 and rpi1.
+- Parking: `aes/Kconfig` gains the derived symbol; `#if CONF_WITH_LEGACY_RSC_LOAD` sites in `gemrslib.c` are at lines 580, 1002, 1038, 1093(dual), 1602, 1651+ (portable `#if !...`).
+
+---
+
 ## Self-Review
 
 - **Spec coverage** (design doc `2026-08-10-rsrc-loader-split-design.md`):
