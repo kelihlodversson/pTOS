@@ -607,7 +607,11 @@ Expected: all build (test hook off by default; `cicontest_rsc.o` absent). Also `
 grep -rn "v_planes" aes/gemrslib.c aes/gemgraf.c
 grep -rn "planes > 8" aes/
 ```
-Expected: the `grep -rn "v_planes"` output must show only the pre-existing uses (none added by this work; the AES additions use `vdi_truecolor_screen()`/`vdi_colour_blit_mode()` only); the second grep has no matches.
+Expected: both scans have no matches.  The formerly expected pre-existing
+`v_planes` use is no longer present in these target files after the portable
+decoder work; an empty first scan is stronger proof that no depth dispatch was
+added.  The AES additions use `vdi_truecolor_screen()`/
+`vdi_colour_blit_mode()` instead.
 
 - [ ] **Step 6: `make gitready` and commit**
 
@@ -620,6 +624,23 @@ Commit in logical pieces (Tasks 1+2 backend/AES rendering; Task 3 loader; Tasks 
 Task 4 exercised the same 1076-byte big-endian `desk/cicontest_rsc.c` through
 `rs_loadmem(NULL, cicontest_rsc)` on both targets with
 `CONF_WITH_VDI_CICON_TEST=y`.
+
+Fixture identity was verified before the emulator runs:
+
+```sh
+python3 tools/mkciconrsc.py > /tmp/cicontest_rsc.c
+cmp -s /tmp/cicontest_rsc.c desk/cicontest_rsc.c
+# fixture regeneration: MATCH
+
+python3 -c 'import hashlib, re; text=open("desk/cicontest_rsc.c", encoding="ascii").read(); match=re.search(r"const UBYTE cicontest_rsc\[\] = \{(.*?)\};", text, re.S); assert match; data=bytes(int(token, 0) for token in re.findall(r"0x[0-9a-fA-F]+|[0-9]+", match.group(1))); assert len(data) == 1076; print("cicontest_rsc bytes:", len(data)); print("first bytes:", data[:2].hex(" ")); print("sha256:", hashlib.sha256(data).hexdigest())'
+# cicontest_rsc bytes: 1076
+# first bytes: 00 04
+# sha256: eb14ebc9e1bde3f41057c7c104bac1f207800b3d2e33f2e3b2afdf6af30cf9a0
+```
+
+The exact checked-in C source was compiled as `obj/cicontest_rsc.o` in both
+test-enabled target builds, so ARM and m68k consumed the same `UBYTE` literal
+sequence.
 
 - rpi2/QEMU 10.1.0: after the required 22-second delay, `/tmp/cicon-arm.ppm`
   was 1280x720.  The 32x32 icon at `(16,16)` sampled as TL `(248,0,0)`, TR
@@ -635,6 +656,25 @@ Task 4 exercised the same 1076-byte big-endian `desk/cicontest_rsc.c` through
 The ARM result is not the strict reversal `8,4,2,1`; therefore the calibration
 constant remains `code |= (WORD)(1 << p)` in `pack_planes()`.  No source or
 fixture change is warranted.
+
+The default-off regression matrix completed without a `FAIL:` line:
+
+```text
+ptos512k.img is ready
+kernel.img is ready
+kernel7.img is ready
+virt-arm.elf is ready
+virt-m68k.elf is ready
+```
+
+Both required depth scans were empty:
+
+```sh
+grep -rn "v_planes" aes/gemrslib.c aes/gemgraf.c
+grep -rn "planes > 8" aes/
+```
+
+No output was produced by either command.
 
 ---
 
