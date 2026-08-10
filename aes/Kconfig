@@ -64,18 +64,18 @@ config CONF_WITH_COLOUR_ICONS
 config CONF_WITH_LEGACY_RSC_LOAD
 	bool "Use legacy resource loader"
 	depends on ARCH_M68K
-	default y if TARGET_192
+	default y if TARGET_192 || TARGET_256
 	default n
 	help
 	  Use the former in-place resource loader instead of the portable
 	  canonical resource loader.  It relies on the m68k native structure
 	  layout matching Atari's big-endian resource-file layout.
 
-	  The 192 KB ROM enables this by default because its ROM budget cannot
-	  accommodate the portable loader.  Other m68k images should normally
-	  use the portable loader, but may select this option when space is
-	  more important than the portable loader's canonical decoding and
-	  validation.
+	  The 192 KB and 256 KB ROMs enable this by default because their ROM
+	  budgets cannot accommodate the portable loader.  Larger m68k images
+	  should normally use the portable loader, but may select this option
+	  when space is more important than the portable loader's canonical
+	  decoding and validation.
 
 config CONF_WITH_NICELINES
 	bool "Menu nicelines"
