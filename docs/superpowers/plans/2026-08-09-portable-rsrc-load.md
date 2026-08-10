@@ -30,7 +30,7 @@
 
 **Interfaces:**
 - Consumes: the fixed standard Atari CICON disk layout: RSHDR 36, CICONBLK 38, CICON 22 bytes; `pack_planes()` plane-major/MSB-first contract.
-- Produces: one canonical BE `const UBYTE cicontest_rsc[]` of 1078 bytes, accepted by the decoder Task 2 adds.
+- Produces: one canonical BE `const UBYTE cicontest_rsc[]` of 1076 bytes, accepted by the decoder Task 2 adds.
 
 - [ ] **Step 1: Make the generator a canonical BE fixture**
 
@@ -52,7 +52,7 @@ blob.long(0)       # next_res marker
 
 Use only `Blob("big")`. Keep validation assertions for: `rsh_object=36`,
 `rsh_trindex=84`, CICON pointer table offset 88, CICONBLK offset 96,
-`rsh_rssize=1066`, `extarray[0]=1078`, CICON `num_planes` at block+306,
+`rsh_rssize=1064`, `extarray[0]=1076`, CICON `num_planes` at block+306,
 and the four plane quadrants. Emit exactly:
 
 ```c
@@ -61,7 +61,7 @@ const UBYTE cicontest_rsc[] = {
 };
 ```
 
-Keep `#define CICONTEST_RSC_SIZE 1078`; remove the `__BYTE_ORDER__` preprocessor branch.
+Do not emit padding after the 22-byte disk CICON header: its colour data begins immediately at byte 22. Keep `#define CICONTEST_RSC_SIZE 1076`; remove the `__BYTE_ORDER__` preprocessor branch.
 
 - [ ] **Step 2: Run fixture checks before wiring the decoder**
 
