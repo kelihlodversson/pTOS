@@ -1137,7 +1137,7 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         icon = (ICONBLK *)(image + layout.iconblk + i*sizeof(ICONBLK));
         icon->ib_wicon = disk_word(disk, off+22L); icon->ib_hicon = disk_word(disk, off+24L);
         if ((icon->ib_wicon < 0) || (icon->ib_hicon < 0)) goto fail;
-        words = ((LONG)(icon->ib_wicon + 15) / 16L) * icon->ib_hicon;
+        words = (((LONG)icon->ib_wicon + 15L) / 16L) * icon->ib_hicon;
         spec = disk_ulong(disk, off);
         if (!native_disk_ptr(image, &layout, disk, spec) || !copy_disk_words((WORD *)(image + layout.raw + spec), disk, spec, words)) goto fail;
         icon->ib_pmask = (WORD *)(image + layout.raw + spec);
