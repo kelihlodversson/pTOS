@@ -226,10 +226,14 @@ static void detect_features(void)
 /*
  * Routine to set cache on/off: must be Supexec'd because the set_cache()
  * function must run in supervisor state
+ *
+ * returns LONG (rather than void) to match the PFLONG callback signature
+ * Supexec() actually invokes (see getjar() in cli/cmdutil.c)
  */
-static void desktop_set_cache(void)
+static LONG desktop_set_cache(void)
 {
     set_cache(G.g_cache);
+    return 0;
 }
 #endif
 
