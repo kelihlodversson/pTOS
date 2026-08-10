@@ -827,7 +827,7 @@ static BOOL search_recursive(WORD curr, BYTE *pathname, BYTE *searchwild)
         if (dta.d_attrib & F_SUBDIR)
         {
             if (!add_one_level(pathname, dta.d_fname))
-                continue;   /* pathname is too long, silently ignore: FIXME */
+                continue;   /* pathname too long for this subfolder: skip it */
             ok = search_recursive(curr, pathname, searchwild);
             remove_one_level(pathname);
             if (!ok)
