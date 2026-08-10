@@ -46,6 +46,7 @@
 #if CONF_WITH_VDI_CICON_TEST
 #include "../aes/gemrslib.h"    /* rs_loadmem() */
 extern const UBYTE cicontest_rsc[];
+#define CICONTEST_RSC_SIZE 1076
 #endif
 
 #include "aesbind.h"
@@ -1596,7 +1597,7 @@ static void desk_cicon_test(void)
 {
     OBJECT *tree;
 
-    tree = rs_loadmem(NULL, cicontest_rsc);
+    tree = rs_loadmem(NULL, cicontest_rsc, CICONTEST_RSC_SIZE);
     if (!tree)
     {
         KDEBUG(("desk_cicon_test: in-memory RSC load failed\n"));

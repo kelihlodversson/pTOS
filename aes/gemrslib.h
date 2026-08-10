@@ -20,7 +20,7 @@ typedef struct aesglobal {
     LONG ap_private;                /* for use by application */
     OBJECT **ap_ptree;              /* pointer to array of tree addresses */
                                 /* the following are not advertised to applications */
-    RSHDR *ap_rscmem;               /* address of rsc file in memory */
+    RSHDR *ap_rscmem;               /* native materialized resource image */
     UWORD ap_rsclen;                /* length of rsc file */
     WORD ap_planes;                 /* # of colour planes on screen */
     LONG ap_3resv;                  /* ptr to AES global area D (struct THEGLO) */
@@ -34,6 +34,6 @@ WORD rs_gaddr(AESGLOBAL *pglobal, UWORD rtype, UWORD rindex, void **rsaddr);
 WORD rs_saddr(AESGLOBAL *pglobal, UWORD rtype, UWORD rindex, void *rsaddr);
 void rs_fixit(AESGLOBAL *pglobal);
 WORD rs_load(AESGLOBAL *pglobal, BYTE *rsfname);
-OBJECT *rs_loadmem(AESGLOBAL *pglobal, const void *rsmem);
+OBJECT *rs_loadmem(AESGLOBAL *pglobal, const void *rsmem, LONG size);
 
 #endif
