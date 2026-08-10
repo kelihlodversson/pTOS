@@ -773,7 +773,7 @@ static void transform_cicon(WORD *src, WORD *dest, WORD w, WORD h, WORD planes)
  */
 static void pack_planes(const WORD *data, UWORD *pix, WORD planes, WORD w, WORD h)
 {
-    WORD mono_words = (w + 15) / 16;
+    LONG mono_words = ((LONG)w + 15) / 16;
     WORD x, y, p;
 
     for (y = 0; y < h; y++)
@@ -1622,9 +1622,9 @@ static WORD rs_readit(AESGLOBAL *pglobal, UWORD fd)
     if (!rs_hdr)
         return FALSE;
     if (dos_lseek(fd, 0, 0x0L) < 0L)
-        return FALSE;
+        goto fail;
     if (dos_read(fd, rslsize, rs_hdr) != rslsize)
-        return FALSE;
+        goto fail;
     rs_global = pglobal;
     rs_global->ap_rscmem = rs_hdr;
     rs_global->ap_rsclen = rslsize;
@@ -1641,6 +1641,10 @@ static WORD rs_readit(AESGLOBAL *pglobal, UWORD fd)
     fix_nptrs(rs_hdr->rsh_nstring, R_FRSTR);
     fix_nptrs(rs_hdr->rsh_nimages, R_FRIMG);
     return TRUE;
+fail:
+    dos_free(rs_hdr);
+    rs_hdr = NULL;
+    return FALSE;
 }
 #endif
 
