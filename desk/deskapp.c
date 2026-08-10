@@ -112,6 +112,9 @@
     /* these apply when launching an application that is not an 'installed application' */
 #define INF_E5_APPDIR   0x40    /* 1 => set current dir to app's dir (else to top window dir) */
 #define INF_E5_ISFULL   0x20    /* 1 => pass full path in args (else filename only) */
+#if CONF_WITH_CACHE_CONTROL
+#define INF_E5_NOCACHE  0x08    /* 1 => disable cache */
+#endif
 
                             /* 'Q' bytes 1-6 (default desktop/window pattern/colour values) */
 #define INF_Q1_DEFAULT  (IP_4PATT << 4) | BLACK     /* desktop, 1 plane */
@@ -839,6 +842,9 @@ void app_start(void)
             G.g_cnxsave.cs_appdir = ((envr & INF_E5_APPDIR) != 0);
             G.g_cnxsave.cs_fullpath = ((envr & INF_E5_ISFULL) != 0);
 #endif
+#if CONF_WITH_CACHE_CONTROL
+            G.g_cnxsave.cs_cache = ((envr & INF_E5_NOCACHE) == 0);
+#endif
             break;
 #if CONF_WITH_BACKGROUNDS
         case 'Q':                       /* desktop/window pattern/colour */
@@ -1031,6 +1037,9 @@ void app_save(WORD todisk)
 #if CONF_WITH_DESKTOP_CONFIG
     env5 |= G.g_cnxsave.cs_appdir ? INF_E5_APPDIR : 0;
     env5 |= G.g_cnxsave.cs_fullpath ? INF_E5_ISFULL : 0;
+#endif
+#if CONF_WITH_CACHE_CONTROL
+    env5 |= (G.g_cnxsave.cs_cache) ? 0 : INF_E5_NOCACHE;
 #endif
     pcurr += sprintf(pcurr,"#E %02X %02X %02X %02X %02X\r\n",
                     env1,env2,HIBYTE(mode),LOBYTE(mode),env5);

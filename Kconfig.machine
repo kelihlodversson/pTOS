@@ -155,6 +155,16 @@ config CONF_WITH_APOLLO_68080
 	  Detect and use the Apollo 68080 soft core found on Vampire
 	  accelerator boards.
 
+config CONF_WITH_CACHE_CONTROL
+	bool "'Cache' desktop menu item"
+	depends on CONF_WITH_ADVANCED_CPU
+	default n if TARGET_192 || TARGET_CART
+	default y
+	help
+	  Add a desktop menu item to enable or disable the CPU cache(s), as
+	  on Atari TOS 3/4.  The menu item is greyed out at runtime on CPUs
+	  this doesn't support cache control for (68000/68010/68020).
+
 config CONF_WITH_MULTI_CORE
 	bool "Multi-core support"
 	depends on TARGET_RPI2 || TARGET_RPI3

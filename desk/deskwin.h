@@ -87,8 +87,14 @@ void win_free(WNODE *thewin);
 WNODE *win_alloc(WORD obid);
 WNODE *win_find(WORD wh);
 void win_top(WNODE *thewin);
+#if CONF_WITH_BOTTOMTOTOP
+WNODE *win_onbottom(void);
+#endif
 WNODE *win_ontop(void);
 void win_bldview(WNODE *pwin, WORD x, WORD y, WORD w, WORD h);
+#if CONF_WITH_SEARCH
+void win_dispfile(WNODE *pw, WORD n);
+#endif
 void win_slide(WORD wh, WORD sl_value);
 void win_arrow(WORD wh, WORD arrow_type);
 void win_srtall(void);

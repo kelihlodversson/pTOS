@@ -61,6 +61,11 @@
  */
 static BOOL exit_desktop;
 
+#if CONF_WITH_SEARCH
+static WORD fnodes_found;
+static WNODE *search_window;
+#endif
+
 /*
  *  Issue an alert
  */
@@ -206,6 +211,36 @@ void fun_rebld(BYTE *ptst)
 
     graf_mouse(ARROW, NULL);
 } /* fun_rebld */
+
+
+#if CONF_WITH_SELECTALL
+/*
+ *  Select all files/folders in a window
+ *
+ *  Note: unlike Atari TOS, this can only select icons that currently have
+ *  a screen object allocated (see fnode_is_selected()), so items scrolled
+ *  out of view are not marked selected.
+ */
+void fun_selectall(WNODE *pw)
+{
+    GRECT gr;
+    FNODE *pf;
+
+    /* paranoia - check for desktop pseudo-window */
+    if (pw->w_root == DROOT)
+        return;
+
+    for (pf = pw->w_pnode.p_flist; pf; pf = pf->f_next)
+    {
+        if (pf->f_obid != NIL)
+            G.g_screen[pf->f_obid].ob_state |= SELECTED;
+    }
+
+    win_sinfo(pw);
+    wind_get_grect(pw->w_id, WF_WXYWH, &gr);
+    fun_msg(WM_REDRAW, pw->w_id, gr.g_x, gr.g_y, gr.g_w, gr.g_h);
+}
+#endif
 
 
 #if CONF_WITH_FILEMASK
@@ -516,6 +551,399 @@ static void remove_one_level(BYTE *pathname)
 
     strcpy(prev+1,filename);
 }
+
+
+#if CONF_WITH_SEARCH
+/*
+ *  Converts string to wildcard-format spec
+ *
+ *  the string is obtained from the dialog box via unfmt_str()
+ *
+ *  sample conversions:
+ *      "A"         => "A*.*"
+ *      ".DOC"      => "*.DOC"
+ *      "X?Y.?Z"    => "X?Y*.?Z*"
+ */
+static void convert(BYTE *wildcard, BYTE *str)
+{
+    WORD i;
+    BYTE *p, *q;
+
+    /* convert name */
+    for (i = 0, p = str, q = wildcard; i < 8; i++)
+    {
+        if (!*p || (*p == '.'))
+        {
+            *q++ = '*';
+            break;
+        }
+        if (*p == '*')
+        {
+            *q++ = *p++;
+            break;
+        }
+        *q++ = *p++;
+    }
+    *q++ = '.';
+
+    /* look for end of name */
+    while (TRUE)
+    {
+        if (!*p)
+            break;
+        if (*p++ == '.')
+            break;
+    }
+
+    /* convert type */
+    for (i = 0; i < 3; i++)
+    {
+        if (!*p)
+        {
+            *q++ = '*';
+            break;
+        }
+        if (*p == '*')
+        {
+            *q++ = *p++;
+            break;
+        }
+        *q++ = *p++;
+    }
+    *q++ = '\0';
+}
+
+
+/*
+ *  Prompt for Search specification
+ *
+ *  returns FALSE if Cancel, or specification is empty
+ */
+static BOOL search_prompt(BYTE *searchname)
+{
+    BYTE filemask[LEN_ZFNAME];
+    OBJECT *tree;
+
+    tree = G.a_trees[ADSEARCH];
+
+    /*
+     * clear any leftover value in dialog
+     */
+    inf_sset(tree, SFNAME, "");
+
+    /*
+     * get user input & if not 'OK', return FALSE
+     */
+    inf_show(tree, ROOT);
+    if (inf_what(tree, SFOK, SFCANCEL) != 1)
+        return FALSE;
+
+    /*
+     * extract searchname from dialog
+     *
+     * returns TRUE iff the input is not empty
+     */
+    inf_sget(tree, SFNAME, filemask);
+    unfmt_str(filemask, searchname);
+
+    return *searchname ? TRUE : FALSE;
+}
+
+
+/*
+ *  Mark files/folders matching specification and, if one or more
+ *  are found, redisplays window with the first-found match as high
+ *  as possible within the window
+ *
+ *  if no matches are found, returns FALSE and does not redisplay
+ */
+static BOOL mark_matching_fnodes(WNODE *pw, BYTE *searchwild)
+{
+    WORD first_match = -1, n;
+    FNODE *pf;
+    GRECT gr;
+
+    /*
+     * first pass: just find the first match, so we know where to scroll to.
+     * (also counts every match found, visible or not, for fun_search()'s
+     * "no more files" alert)
+     */
+    for (pf = pw->w_pnode.p_flist, n = 0; pf; pf = pf->f_next, n++)
+    {
+        if (wildcmp(searchwild, pf->f_name))
+        {
+            fnodes_found++;
+            if (first_match < 0)
+                first_match = n;
+        }
+    }
+    if (first_match < 0)
+        return FALSE;
+
+    /*
+     * scroll to the first match *before* marking selections: this may
+     * allocate screen objects for FNODEs that had none (see
+     * fnode_is_selected()), including the first match itself if it was
+     * off-screen
+     */
+    win_dispfile(pw, first_match);
+
+    /*
+     * second pass: select all matching FNODEs that now have a screen object
+     */
+    for (pf = pw->w_pnode.p_flist; pf; pf = pf->f_next)
+    {
+        if ((pf->f_obid != NIL) && wildcmp(searchwild, pf->f_name))
+            G.g_screen[pf->f_obid].ob_state |= SELECTED;
+    }
+
+    /*
+     * update info line & force a redraw: win_dispfile() above only redraws
+     * if it had to scroll, but the selection highlight needs to be drawn
+     * even when the first match was already visible
+     */
+    win_sinfo(pw);
+    wind_get_grect(pw->w_id, WF_WXYWH, &gr);
+    fun_msg(WM_REDRAW, pw->w_id, gr.g_x, gr.g_y, gr.g_w, gr.g_h);
+
+    return TRUE;
+}
+
+
+/*
+ *  Display a folder with matching FNODEs marked
+ */
+static BOOL search_display(WORD curr, BYTE *pathname, BYTE *searchwild)
+{
+    BOOL newwin = FALSE;
+
+    if (!search_window)
+    {
+        search_window = win_alloc(curr);
+        if (!search_window)
+        {
+            fun_alert(1, STNOWIND);
+            return FALSE;
+        }
+        newwin = TRUE;
+    }
+
+    /*
+     * we open the new path, after closing the previous one (which
+     * doesn't exist if this is a new window)
+     */
+    if (!newwin)
+        pn_close(&search_window->w_pnode);
+    if (!do_diropen(search_window, newwin, curr, pathname,
+                    (GRECT *)&G.g_screen[search_window->w_root].ob_x, FALSE))
+    {
+        /* bad pathname or error reading directory */
+        if (newwin)
+        {
+            win_free(search_window);
+            search_window = NULL;
+        }
+        return FALSE;
+    }
+
+    /*
+     * now mark matching FNODEs
+     */
+    mark_matching_fnodes(search_window, searchwild);
+
+    /*
+     *  we marked one or more FNODEs, ask if user wants to continue
+     */
+    if (fun_alert(1, STCNSRCH) != 1)
+        return FALSE;   /* user cancelled */
+
+    return TRUE;
+}
+
+
+/*
+ *  Recursively search folder icons
+ *
+ *  returns FALSE iff we should stop immediately, e.g. because user cancelled
+ */
+static BOOL search_recursive(WORD curr, BYTE *pathname, BYTE *searchwild)
+{
+    DTA dta, *save_dta;
+    BYTE *p;
+    WORD ret;
+    BOOL ok;
+
+    /*
+     * we must use a local DTA to manage the recursive search
+     */
+    save_dta = dos_gdta();
+    dos_sdta(&dta);
+
+    /*
+     * check if there is a filename match; if so, display the folder
+     *
+     * if 'searchwild' (unlike the "*.*" it temporarily replaces) doesn't
+     * fit in the space remaining in 'pathname', treat this folder as a
+     * non-match rather than overflow the caller's buffer
+     */
+    p = filename_start(pathname);
+    if (strlen(searchwild) < (WORD)(MAXPATHLEN - (p - pathname)))
+    {
+        strcpy(p, searchwild);
+        ret = dos_sfirst(pathname, F_SUBDIR);
+        strcpy(p, "*.*");
+    }
+    else
+    {
+        ret = ENMFIL;
+    }
+    dos_sdta(save_dta); /* in case we must return */
+
+    switch(ret)
+    {
+    case 0:             /* file found, display folder */
+        if (!search_display(curr, pathname, searchwild))
+            return FALSE;   /* user cancelled */
+        FALLTHROUGH;
+    case ENMFIL:        /* nothing found, continue processing */
+    case EFILNF:
+        break;
+    default:            /* some strange kind of error, ignore silently */
+        return TRUE;
+    }
+
+    /*
+     * at this point, either there were no matching filenames, or we found
+     * some but the user wants to continue.  we do an fsfirst/fsnext loop
+     * and call ourselves for every folder found.
+     */
+    dos_sdta(&dta);     /* original DTA is already saved */
+
+    for (ret = dos_sfirst(pathname, F_SUBDIR), ok = TRUE; ret == 0; ret = dos_snext())
+    {
+        if (dta.d_fname[0] == '.')  /* ignore . and .. */
+            continue;
+
+        if (dta.d_attrib & F_SUBDIR)
+        {
+            if (!add_one_level(pathname, dta.d_fname))
+                continue;   /* pathname too long for this subfolder: skip it */
+            ok = search_recursive(curr, pathname, searchwild);
+            remove_one_level(pathname);
+            if (!ok)
+                break;
+        }
+    }
+
+    dos_sdta(save_dta);
+
+    /*
+     * by design, errors from fsfirst/fsnext are ignored
+     */
+    return ok;
+}
+
+
+/*
+ *  Process the specified icon
+ *
+ *  returns TRUE iff we should continue
+ */
+static BOOL search_icon(WORD win, WORD curr, BYTE *searchwild)
+{
+    ANODE *pa;
+    FNODE *pf;
+    BYTE pathname[MAXPATHLEN];
+    BYTE *p;
+
+    pa = i_find(win, curr, &pf, NULL);
+    if (!pa)
+        return TRUE;
+
+    switch(pa->a_type)
+    {
+    case AT_ISFOLD:
+#if CONF_WITH_DESKTOP_SHORTCUTS
+        if (pa->a_flags & AF_ISDESK)
+        {
+            strcpy(pathname, pa->a_pdata);
+        }
+        else
+#endif
+        {
+            WNODE *temp = win_find(win);
+            if (!temp)
+                return TRUE;    /* window gone: skip this icon */
+            strcpy(pathname, temp->w_pnode.p_spec);
+            strcpy(filename_start(pathname), pf->f_name);
+        }
+        break;
+    case AT_ISDISK:
+        p = pathname;
+        *p++ = pa->a_letter;
+        *p++ = ':';
+        *p = '\0';
+        break;
+    default:            /* do nothing for file, trash or printer icon */
+        return TRUE;
+    }
+
+    if (strlen(pathname) + 4 >= MAXPATHLEN)    /* strlen("\\*.*") */
+        return TRUE;    /* pathname too long: skip this icon */
+    strcat(pathname, "\\*.*");
+
+    if (!search_recursive(curr, pathname, searchwild))
+        return FALSE;   /* propagate error to fun_search() */
+
+    return TRUE;
+}
+
+
+/*
+ *  Perform the desktop Search function
+ */
+void fun_search(WORD curr, WNODE *pw)
+{
+    BYTE searchname[LEN_ZFNAME], searchwild[LEN_ZFNAME];
+
+    if (!search_prompt(searchname))     /* prompt for name to search for */
+        return;
+
+    convert(searchwild, searchname);    /* convert to standard wildcard */
+
+    /*
+     * if there are one or more highlighted icons, process them
+     */
+    fnodes_found = 0;
+    if (curr)
+    {
+        WORD win = G.g_cwin;    /* save because the global variables */
+        WORD root = G.g_croot;  /*  will be changed by search_icon() */
+        GRECT gr;
+
+        search_window = NULL;
+        for ( ; curr; curr = win_isel(G.g_screen, root, curr))
+        {
+            if (!search_icon(win, curr, searchwild))
+                return;         /* user cancelled search */
+        }
+        if (fnodes_found)
+        {
+            fun_alert(1, STNOMORE); /* no more files */
+            wind_get_grect(win, WF_WXYWH, &gr);
+            do_wredraw(win, gr.g_x, gr.g_y, gr.g_w, gr.g_h);   /* redraw the original window (may be desktop) */
+            return;
+        }
+    }
+    else    /* otherwise handle an open window with no highlighted icons */
+    {
+        mark_matching_fnodes(pw, searchwild);
+    }
+
+    if (!fnodes_found)
+        fun_alert_merge(1, STFILENF, searchname);
+}
+#endif
 
 
 /*

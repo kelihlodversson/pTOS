@@ -234,6 +234,24 @@ void win_top(WNODE *thewin)
 }
 
 
+#if CONF_WITH_BOTTOMTOTOP
+/*
+ *  Find the WNODE for the bottom (least-recently-topped) open window;
+ *  if none is open, return NULL
+ */
+WNODE *win_onbottom(void)
+{
+    WNODE *p, *last = NULL;
+
+    for (p = G.g_wfirst; p; p = p->w_next)
+        if (p->w_id)
+            last = p;
+
+    return last;
+}
+#endif
+
+
 /*
  *  Find out if the window node on top has size; if it does, then it
  *  is the currently active window.  If not, then no window is on
@@ -475,6 +493,25 @@ static void win_blt(WNODE *pw, WORD newcv)
 
     do_wredraw(pw->w_id, c.g_x, c.g_y, c.g_w, c.g_h);
 }
+
+
+#if CONF_WITH_SEARCH
+/*
+ *  Scroll the window, if necessary, so that the file at virtual grid
+ *  position 'n' (0-based, row-major) is visible
+ */
+void win_dispfile(WNODE *pw, WORD n)
+{
+    WORD row;
+
+    if (pw->w_pncol < 1)   /* defensive: shouldn't happen, see win_ocalc() */
+        return;
+
+    row = n / pw->w_pncol;
+    if ((row < pw->w_cvrow) || (row >= pw->w_cvrow + pw->w_pnrow))
+        win_blt(pw, row);
+}
+#endif
 
 
 /*
