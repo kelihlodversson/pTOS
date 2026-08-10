@@ -7,17 +7,14 @@
 # This file is distributed under the GPL, version 2 or at your
 # option any later version.  See doc/license.txt for details.
 #
-"""Generate desk/cicontest_rsc.c, a minimal 'new format' RSC as C bytes.
+"""Generate desk/cicontest_rsc.c, a canonical big-endian RSC as C bytes.
 
-Writes a C source file to stdout defining the test resource twice, once
-per target byte order (m68k is big-endian, ARM little-endian; the parser
-in aes/gemrslib.c reads native structs/words, so the embedded bytes must
-match the running target).  The resource is a single tree with a root
-G_IBOX and one 4-plane 32x32 colour icon whose planes split the icon into
-four quadrants, one direct palette index per quadrant (codes 1/2/4/8).
+Writes a standard Atari disk image to stdout.  The resource is a single
+tree with a root G_IBOX and one 4-plane 32x32 colour icon whose planes split
+the icon into four quadrants, one direct palette index per quadrant
+(codes 1/2/4/8).
 
-The layout mirrors exactly what aes/gemrslib.c expects when loading a
-NEW_FORMAT_RSC resource:
+The layout is the canonical disk walk for a NEW_FORMAT_RSC resource:
 
     RSHDR (36 bytes, rsh_rssize = offset of the extension array)
     OBJECTs (2 * 24 bytes)
@@ -26,12 +23,11 @@ NEW_FORMAT_RSC resource:
     CICONBLK block (contiguous, 970 bytes, see below)
     extension array ([total_len, ptr_table_offset, 0L])
 
-The CICONBLK block is laid out the way fixup_all_ciconblks() and
-fixup_colour_icons() walk it, with NO padding between sections -- the
-parser computes every next-section position arithmetically:
+The CICONBLK block is laid out for the canonical disk parser, which computes
+every next-section position arithmetically:
 
     CICONBLK(38) + mono pdata(64 w) + mono pmask(64 w) + text(12)
-    + CICON(24) + col_data(64*4 w) + col_mask(64 w)
+    + CICON(22) + alignment padding(2) + col_data(64*4 w) + col_mask(64 w)
 
 Run as:  python3 tools/mkciconrsc.py > desk/cicontest_rsc.c
 """
@@ -44,12 +40,13 @@ NUM_PLANES = 4
 MONO_WORDS = (ICON_W // 16) * ICON_H        # words in one 32x32 bitmap
 TEXT_SIZE = 12                              # bytes of icon text
 
-# struct sizes (bytes) fixed by rsdefs.h / obdefs.h and required by the
-# parser in aes/gemrslib.c -- change these only together with the parser.
+# disk record sizes (bytes) fixed by rsdefs.h / obdefs.h and the standard
+# Atari RSC format -- change these only together with the portable decoder.
 RSHDR_SIZE = 18 * 2                         # 10 UWORDs + 7 WORDs + 1 UWORD
 ICONBLK_SIZE = 3 * 4 + 11 * 2               # monoblk: 3 ptrs + 11 WORDs
 CICONBLK_SIZE = ICONBLK_SIZE + 4            # + mainlist LONG
-CICON_SIZE = 2 + 2 + 5 * 4                  # WORD + pad + 5 ptrs
+CICON_SIZE = 2 + 5 * 4                      # WORD + 5 disk LONGs
+CICON_PAD_SIZE = 2                          # align colour data after CICON
 OBJECT_SIZE = 6 * 2 + 4 + 4 * 2             # 6 WORDs + ob_spec + 4 WORDs
 
 # section sizes, in bytes
@@ -58,18 +55,18 @@ TRINDEX_SIZE = 4
 PTRTABLE_SIZE = 2 * 4
 BLOCK_SIZE = (CICONBLK_SIZE
               + MONO_WORDS * 2              # mono pdata
-              + MONO_WORDS * 2              # mono pmask
-              + TEXT_SIZE
-              + CICON_SIZE
-              + MONO_WORDS * 2 * NUM_PLANES # col_data, plane-major
+               + MONO_WORDS * 2              # mono pmask
+               + TEXT_SIZE
+               + CICON_SIZE
+               + CICON_PAD_SIZE
+               + MONO_WORDS * 2 * NUM_PLANES # col_data, plane-major
               + MONO_WORDS * 2)             # col_mask
 EXTARRAY_SIZE = 3 * 4
 
-# the sizes fixup_all_ciconblks() / fixup_colour_icons() arithmetic
-# (aes/gemrslib.c:251-280) relies on; kept as asserts so a change to the
-# struct layout above fails loudly instead of emitting a corrupt file
+# The canonical disk walk relies on these sizes.  Keep assertions so changes
+# to the record layout fail loudly instead of emitting a corrupt file.
 assert CICONBLK_SIZE == 38, "CICONBLK must be 38 bytes"
-assert CICON_SIZE == 24, "CICON must be 24 bytes"
+assert CICON_SIZE == 22, "CICON must be 22 bytes"
 assert OBJECT_SIZE == 24, "OBJECT must be 24 bytes"
 assert MONO_WORDS == 64, "mono_words must be 64 for a 32x32 icon"
 assert BLOCK_SIZE == 970, "CICONBLK block must be 970 bytes"
@@ -83,6 +80,7 @@ RSSIZE = BLOCK_OFFSET + BLOCK_SIZE          # == offset of extarray
 TOTAL = RSSIZE + EXTARRAY_SIZE              # == extarray[0]
 
 assert TOTAL == 1078, "total RSC must be 1078 bytes"
+assert RSSIZE == 1066, "rsh_rssize must be 1066 bytes"
 
 NEW_FORMAT_RSC = 0x0004
 G_IBOX = 25
@@ -130,9 +128,9 @@ def plane_words(plane):
     return words
 
 
-def build_rsc(byteorder):
-    """Assemble the whole RSC image for one byte order, asserting as we go."""
-    blob = Blob(byteorder)
+def build_rsc():
+    """Assemble the canonical big-endian RSC image, asserting as we go."""
+    blob = Blob("big")
 
     # RSHDR (36 bytes); every offset below is asserted against the
     # running byte position
@@ -225,26 +223,32 @@ def build_rsc(byteorder):
     blob.raw(ICON_TEXT + b"\0" * (TEXT_SIZE - len(ICON_TEXT)))
     assert len(blob.buf) - block_start == CICONBLK_SIZE + MONO_WORDS * 4 + TEXT_SIZE
 
-    # CICON struct (24 bytes): num_planes + 2 bytes padding (CICON_SIZE
-    # includes it; gcc lays out col_data at struct offset 4) + 5 LONG ptrs.
-    # no selected variant, single CICON.
+    # Disk CICON (22 bytes): num_planes + 5 LONG markers.  The pointers are
+    # disk offsets to be decoded by the portable loader, so they are zero.
     blob.word(NUM_PLANES)                   # num_planes
-    blob.word(0)                            # padding before col_data
-    blob.long(0)                            # col_data (fixed up)
-    blob.long(0)                            # col_mask (fixed up)
-    blob.long(0)                            # sel_data (none)
-    blob.long(0)                            # sel_mask (none)
-    blob.long(0)                            # next_res: no more CICONs
+    blob.long(0)                            # col_data marker
+    blob.long(0)                            # col_mask marker
+    blob.long(0)                            # sel_data marker
+    blob.long(0)                            # sel_mask marker
+    blob.long(0)                            # next_res marker
     assert len(blob.buf) - block_start == (CICONBLK_SIZE + MONO_WORDS * 4
-                                           + TEXT_SIZE + CICON_SIZE)
+                                            + TEXT_SIZE + CICON_SIZE)
+
+    # Standard Atari RSC records align the following colour bitmap on a
+    # LONG boundary; this padding is not part of the 22-byte CICON record.
+    blob.raw(b"\0" * CICON_PAD_SIZE)
+    assert len(blob.buf) - block_start == (CICONBLK_SIZE + MONO_WORDS * 4
+                                            + TEXT_SIZE + CICON_SIZE
+                                            + CICON_PAD_SIZE)
 
     # col_data: plane-major, one full 32x32 bitmap per plane
     for plane in range(NUM_PLANES):
         for word in plane_words(plane):
             blob.word(word)
     assert len(blob.buf) - block_start == (CICONBLK_SIZE + MONO_WORDS * 4
-                                           + TEXT_SIZE + CICON_SIZE
-                                           + MONO_WORDS * 2 * NUM_PLANES)
+                                            + TEXT_SIZE + CICON_SIZE
+                                            + CICON_PAD_SIZE
+                                            + MONO_WORDS * 2 * NUM_PLANES)
 
     # col_mask: filled
     for _ in range(MONO_WORDS):
@@ -262,22 +266,23 @@ def build_rsc(byteorder):
 
 
 def parser_block_walk():
-    """Replay fixup_all_ciconblks()/fixup_colour_icons() (gemrslib.c)."""
+    """Replay the canonical CICONBLK disk walk."""
     pos = BLOCK_OFFSET                      # CICONBLK *p = cicondata
     pos += CICONBLK_SIZE                    # q = (WORD *)(p+1)
     pos += MONO_WORDS * 2                   # mono pdata; q += mono_words
     pos += MONO_WORDS * 2                   # mono pmask; q += mono_words
     pos += TEXT_SIZE                        # icon text; q += 12/2 words
-    pos += CICON_SIZE                       # CICON struct
+    pos += CICON_SIZE                       # disk CICON
+    pos += CICON_PAD_SIZE                   # align following colour data
     pos += MONO_WORDS * 2 * NUM_PLANES      # col_data; q += mono_words*planes
     pos += MONO_WORDS * 2                   # col_mask; q += mono_words
     return pos                              # == end of CICONBLK block
 
 
-def validate(buf, byteorder):
+def validate(buf):
     """Read the emitted image back and check every field the parser uses."""
-    u16 = lambda off: int.from_bytes(buf[off:off + 2], byteorder)
-    u32 = lambda off: int.from_bytes(buf[off:off + 4], byteorder)
+    u16 = lambda off: int.from_bytes(buf[off:off + 2], "big")
+    u32 = lambda off: int.from_bytes(buf[off:off + 4], "big")
 
     assert u16(0) == NEW_FORMAT_RSC
     assert u16(2) == OBJECT_OFFSET
@@ -312,16 +317,27 @@ def validate(buf, byteorder):
     assert u16(OBJECT_OFFSET + OBJECT_SIZE + 6) == G_CICON  # OBJECT[1].ob_type
     assert u32(OBJECT_OFFSET + OBJECT_SIZE + 12) == 0     # OBJECT[1].ob_spec.index
 
-    # fixup_colour_icons() reads num_planes, sel_data, next_res from CICON.
+    # The portable decoder reads disk CICON num_planes and marker fields.
     # CICON struct offset = BLOCK_OFFSET + 38 + 64*2 + 64*2 + 12 (same as
-    # parser_block_walk()); within the struct (padded by gcc to 24 bytes):
-    #   0 num_planes, 2 pad, 4 col_data, 8 col_mask, 12 sel_data,
-    #   16 sel_mask, 20 next_res
+    # parser_block_walk()); its 22-byte disk layout is:
+    #   0 num_planes, 2 col_data, 6 col_mask, 10 sel_data,
+    #   14 sel_mask, 18 next_res
     cicon_off = BLOCK_OFFSET + CICONBLK_SIZE + MONO_WORDS * 2 * 2 + TEXT_SIZE
     assert cicon_off == BLOCK_OFFSET + 38 + 64 * 2 + 64 * 2 + 12
+    assert cicon_off == BLOCK_OFFSET + 306
     assert u16(cicon_off) == NUM_PLANES               # num_planes
-    assert u32(cicon_off + 12) == 0                   # sel_data (no variant)
-    assert u32(cicon_off + 20) == 0                   # next_res (no more CICONs)
+    assert u32(cicon_off + 10) == 0                   # sel_data (no variant)
+    assert u32(cicon_off + 18) == 0                   # next_res (no more CICONs)
+
+    # One plane owns each quadrant: TL=1, TR=2, BL=4, BR=8.
+    plane_data_off = cicon_off + CICON_SIZE + CICON_PAD_SIZE
+    assert u16(plane_data_off) == 0xffff              # plane 0, top-left
+    assert u16(plane_data_off + 2) == 0               # plane 0, top-right
+    assert u16(plane_data_off + 64) == 0              # plane 0, bottom-left
+    assert u16(plane_data_off + 128) == 0             # plane 1, top-left
+    assert u16(plane_data_off + 130) == 0xffff        # plane 1, top-right
+    assert u16(plane_data_off + 320) == 0xffff        # plane 2, bottom-left
+    assert u16(plane_data_off + 450) == 0xffff        # plane 3, bottom-right
 
     # the CICONBLK block is exactly as long as the parser's walk of it
     assert parser_block_walk() == BLOCK_OFFSET + BLOCK_SIZE
@@ -342,7 +358,7 @@ def byte_lines(buf):
     return lines
 
 
-def emit_c(be, le):
+def emit_c(buf):
     lines = [
         "/*",
         " * cicontest_rsc.c - truecolor colour-icon test resource",
@@ -360,11 +376,8 @@ def emit_c(be, le):
         " * The background colour (code 0) is a Task 6 calibration item: it is",
         " * rendered from the palette and should match the desktop background.",
         " *",
-        " * One byte order is emitted, selected at compile time by __BYTE_ORDER__",
-        " * (m68k is big-endian, ARM little-endian); only the running target's",
-        " * bytes land in the single cicontest_rsc[] array.  The CICONBLK block",
-        " * is exactly contiguous, because aes/gemrslib.c computes every section",
-        " * position arithmetically (fixup_all_ciconblks/fixup_colour_icons).",
+        " * This is one canonical big-endian Atari disk image.  Its CICONBLK block",
+        " * is exactly contiguous for the portable decoder's arithmetic disk walk.",
         " */",
         "",
         "#include \"portab.h\"",
@@ -372,17 +385,9 @@ def emit_c(be, le):
         "#define CICONTEST_RSC_SIZE %d" % TOTAL,
         "",
         "const UBYTE cicontest_rsc[] = {",
-        "#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__",
-        "    /* little-endian (ARM) */",
     ]
-    lines += byte_lines(le)
+    lines += byte_lines(buf)
     lines += [
-        "#else",
-        "    /* big-endian (m68k) */",
-    ]
-    lines += byte_lines(be)
-    lines += [
-        "#endif",
         "};",
         "",
     ]
@@ -390,11 +395,9 @@ def emit_c(be, le):
 
 
 def main():
-    be = build_rsc("big")
-    le = build_rsc("little")
-    validate(be, "big")
-    validate(le, "little")
-    sys.stdout.write(emit_c(be, le))
+    buf = build_rsc()
+    validate(buf)
+    sys.stdout.write(emit_c(buf))
 
 
 if __name__ == "__main__":
