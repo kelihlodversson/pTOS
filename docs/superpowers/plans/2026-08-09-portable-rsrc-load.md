@@ -31,7 +31,7 @@
 
 **Interfaces:**
 - Consumes: `be2cpu16()` / `be2cpu32()` from `include/endian.h`; disk bytes from `rs_readit()`/`rs_loadmem()`; `NEW_FORMAT_RSC` from `rsdefs.h`.
-- Produces: private `struct disk_rsc` containing `const UBYTE *base`, `LONG size`, decoded native `RSHDR hdr`, and true disk size; private `disk_uword()`, `disk_word()`, `disk_ulong()`, `disk_range()` helpers returning BOOL.
+- Produces: private `struct disk_rsc` containing `const UBYTE *base`, `LONG size`, decoded native `RSHDR hdr`, and true disk size; private `disk_uword()`, `disk_word()`, `disk_ulong()`, `disk_range()` helpers returning BOOL; `disk_decode_rshdr()` for the initial fixed 36-byte file header and `disk_header()` for complete-image validation.
 
 - [ ] **Step 1: Add exact disk-schema constants in `aes/gemrslib.c`**
 
@@ -100,7 +100,11 @@ Use `memcpy()` rather than dereferencing an unaligned `UWORD *`/`ULONG *`. Add `
 
 - [ ] **Step 3: Decode and validate the disk header**
 
-Add `static BOOL disk_header(struct disk_rsc *disk, const UBYTE *base, LONG available)` that:
+Add `static void disk_decode_rshdr(RSHDR *hdr, const UBYTE *base)` that reads
+the eighteen fixed header fields through `be2cpu16()`/`memcpy()` only; it is
+safe with exactly `DISK_RSHDR_SIZE` input bytes and does no span validation.
+
+Add `static BOOL disk_header(struct disk_rsc *disk, const UBYTE *base, LONG available)` that calls `disk_decode_rshdr()` and then:
 
 1. Rejects `available < DISK_RSHDR_SIZE`.
 2. Reads all eighteen RSHDR fields through the helpers into `disk->hdr`.
@@ -329,7 +333,7 @@ native tables without calling `fix_long()`.
 
 - [ ] **Step 6: Route file and memory wrappers through the decoder**
 
-Change `rs_readit()` to read the disk header bytes into `UBYTE header[DISK_RSHDR_SIZE]`, decode it with `disk_header()`, allocate/read exactly `disk.size` disk bytes, call `materialize_rsc()`, then free the scratch disk allocation. On seek/read failure, free every temporary allocation before returning FALSE.
+Change `rs_readit()` to read the disk header bytes into `UBYTE header[DISK_RSHDR_SIZE]` and call `disk_decode_rshdr()`. For an old-format RSC, the preliminary disk size is `header.rsh_rssize`; for `NEW_FORMAT_RSC`, seek to `header.rsh_rssize`, read exactly four extension bytes, and decode their BE ULONG true length. Validate that preliminary size is at least 36, allocate/read exactly that many disk bytes from file offset zero, then call `disk_header()` on the complete buffer before `materialize_rsc()`. On seek/read failure, free every temporary allocation before returning FALSE.
 
 Change its signature and declaration to:
 
