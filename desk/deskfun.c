@@ -736,7 +736,15 @@ static BOOL search_display(WORD curr, BYTE *pathname, BYTE *searchwild)
         pn_close(&search_window->w_pnode);
     if (!do_diropen(search_window, newwin, curr, pathname,
                     (GRECT *)&G.g_screen[search_window->w_root].ob_x, FALSE))
-        return FALSE;   /* bad pathname or error reading directory */
+    {
+        /* bad pathname or error reading directory */
+        if (newwin)
+        {
+            win_free(search_window);
+            search_window = NULL;
+        }
+        return FALSE;
+    }
 
     /*
      * now mark matching FNODEs
