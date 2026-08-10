@@ -615,6 +615,29 @@ Commit in logical pieces (Tasks 1+2 backend/AES rendering; Task 3 loader; Tasks 
 
 ---
 
+### Portable RSC calibration evidence (2026-08-10)
+
+Task 4 exercised the same 1076-byte big-endian `desk/cicontest_rsc.c` through
+`rs_loadmem(NULL, cicontest_rsc)` on both targets with
+`CONF_WITH_VDI_CICON_TEST=y`.
+
+- rpi2/QEMU 10.1.0: after the required 22-second delay, `/tmp/cicon-arm.ppm`
+  was 1280x720.  The 32x32 icon at `(16,16)` sampled as TL `(248,0,0)`, TR
+  `(0,252,0)`, BL `(0,0,248)`, BR `(136,136,136)`: palette codes 1, 2, 4,
+  and 8 in canonical order.  Serial reached `AES: EMUDESK: evnt_multi()`;
+  there was no resource-load failure or Data Abort.  The sole guest-error
+  line was the known `bcm2835_systmr_write: read-only ofs 0x4` artifact.
+- atari512/Hatari 2.5.0 STE AVI, VBL 3000: the final 832x588 frame has the
+  scaled icon at `(128,74)`, with quadrant-centre RGB values TL `(255,0,0)`,
+  TR `(0,255,0)`, BL `(0,0,255)`, BR `(102,102,102)`.  The four quadrants
+  are unswapped and distinct over the GEM desktop.
+
+The ARM result is not the strict reversal `8,4,2,1`; therefore the calibration
+constant remains `code |= (WORD)(1 << p)` in `pack_planes()`.  No source or
+fixture change is warranted.
+
+---
+
 ## Self-Review
 
 **Spec coverage (issue #107):**
