@@ -765,7 +765,7 @@ static void transform_cicon(WORD *src, WORD *dest, WORD w, WORD h, WORD planes)
  */
 static void pack_planes(const WORD *data, UWORD *pix, WORD planes, WORD w, WORD h)
 {
-    WORD mono_words = w / 16;
+    WORD mono_words = (w + 15) / 16;
     WORD x, y, p;
 
     for (y = 0; y < h; y++)
@@ -1014,6 +1014,7 @@ static void fix_objects(void)
     WORD ii;
     WORD obtype;
     OBJECT *obj;
+    OBSPEC *spec;
     for (ii = 0; ii < rs_hdr->rsh_nobs; ii++)
     {
         obj = (OBJECT *)get_addr(R_OBJECT, ii);
@@ -1023,7 +1024,8 @@ static void fix_objects(void)
         {
         case G_CICON:
 #if CONF_WITH_COLOUR_ICONS
-            obj->ob_spec.ciconblk = get_ciconblkptr(rs_hdr)[obj->ob_spec.index];
+            spec = (obj->ob_flags & INDIRECT) ? obj->ob_spec.indirect : &obj->ob_spec;
+            spec->ciconblk = get_ciconblkptr(rs_hdr)[spec->index];
 #endif
             break;
         case G_BOX:
