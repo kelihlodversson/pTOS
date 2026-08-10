@@ -226,11 +226,10 @@ static void fix_objects(void)
     WORD ii;
     WORD obtype;
     OBJECT *obj;
-#if CONF_WITH_LEGACY_RSC_LOAD
 #if CONF_WITH_COLOUR_ICONS
+#if CONF_WITH_LEGACY_RSC_LOAD
     CICONBLK **ciconblkptr = get_ciconblkptr(rs_hdr);
 #endif
-#else
     OBSPEC *spec;
 #endif
 
@@ -242,13 +241,16 @@ static void fix_objects(void)
         switch (obtype)
         {
         case G_CICON:
+#if CONF_WITH_COLOUR_ICONS
 #if CONF_WITH_LEGACY_RSC_LOAD
-#if CONF_WITH_COLOUR_ICONS
             if (ciconblkptr)
-                obj->ob_spec.index = (LONG)ciconblkptr[obj->ob_spec.index];
-#endif
+            {
+                if (obj->ob_flags & INDIRECT)
+                    fix_long(&obj->ob_spec.index);
+                spec = (obj->ob_flags & INDIRECT) ? obj->ob_spec.indirect : &obj->ob_spec;
+                spec->ciconblk = ciconblkptr[spec->index];
+            }
 #else
-#if CONF_WITH_COLOUR_ICONS
             spec = (obj->ob_flags & INDIRECT) ? obj->ob_spec.indirect : &obj->ob_spec;
             spec->ciconblk = get_ciconblkptr(rs_hdr)[spec->index];
 #endif
