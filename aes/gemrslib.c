@@ -70,6 +70,7 @@ static AESGLOBAL *rs_global;
 static char    tmprsfname[128];
 static char    free_str[256];   /* must be long enough for longest freestring in gem.rsc */
 
+#if !CONF_WITH_LEGACY_RSC_LOAD
 /* RSC records on disk are always big-endian and have these fixed sizes. */
 #define DISK_RSHDR_SIZE     36
 #define DISK_OBJECT_SIZE    24
@@ -436,6 +437,7 @@ static BOOL layout_ordinary(const struct disk_rsc *disk, const struct disk_cicon
     layout->total = offset;
     return layout->total <= 0xffffL;
 }
+#endif
 
 
 /*
@@ -569,7 +571,7 @@ static void *get_addr(UWORD rstype, UWORD rsindex)
 
 
 #if CONF_WITH_COLOUR_ICONS
-#if 0                           /* Task 3 replaces raw CICON parsing. */
+#if CONF_WITH_LEGACY_RSC_LOAD
 /*
  * fixup all of the CICONs for a CICONBLK
  *
@@ -991,6 +993,23 @@ static WORD free_cicon_buffers(RSHDR *hdr)
  *      . expanding the icon if necessary
  *      . converting the icon to device-dependent form
  */
+#if CONF_WITH_LEGACY_RSC_LOAD
+static void fix_cicons(void)
+{
+    CICONBLK **ciconblkptr, **p;
+    CICON *cicondata;
+    LONG num_ciconblks;
+
+    ciconblkptr = get_ciconblkptr(rs_hdr);
+    if (!ciconblkptr)
+        return;
+    for (num_ciconblks = 0, p = ciconblkptr; *p != (CICONBLK *)-1L; p++)
+        num_ciconblks++;
+    cicondata = (CICON *)(p+1);
+    fixup_all_ciconblks(num_ciconblks, ciconblkptr, cicondata);
+    transform_all_cicons(num_ciconblks, ciconblkptr);
+}
+#else
 static void transform_cicons(RSHDR *hdr)
 {
     CICONBLK **ciconblkptr, **p;
@@ -1007,14 +1026,77 @@ static void transform_cicons(RSHDR *hdr)
     transform_all_cicons(num_ciconblks, ciconblkptr);
 }
 #endif
+#endif
 
+
+#if CONF_WITH_LEGACY_RSC_LOAD
+static BOOL fix_long(LONG *plong)
+{
+    LONG lngval;
+
+    lngval = *plong;
+    if (lngval != -1L)
+    {
+        *plong = (LONG)rs_hdr + lngval;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static void fix_trindex(void)
+{
+    WORD ii;
+    LONG *ptreebase;
+
+    ptreebase = (LONG *)get_sub(R_TREE, rs_hdr->rsh_trindex, sizeof(LONG));
+    rs_global->ap_ptree = (OBJECT **)ptreebase;
+    for (ii = 0; ii < rs_hdr->rsh_ntree; ii++)
+        fix_long(ptreebase+ii);
+}
+
+static void fix_nptrs(WORD cnt, WORD type)
+{
+    WORD i;
+
+    for (i = 0; i < cnt; i++)
+        fix_long(get_addr(type, i));
+}
+
+static BOOL fix_ptr(WORD type, WORD index)
+{
+    return fix_long(get_addr(type, index));
+}
+
+static void fix_tedinfo(void)
+{
+    WORD ii;
+    TEDINFO *ted;
+
+    for (ii = 0; ii < rs_hdr->rsh_nted; ii++)
+    {
+        ted = (TEDINFO *)get_addr(R_TEDINFO, ii);
+        if (fix_ptr(R_TEPTEXT, ii))
+            ted->te_txtlen = strlen(ted->te_ptext) + 1;
+        if (fix_ptr(R_TEPTMPLT, ii))
+            ted->te_tmplen = strlen(ted->te_ptmplt) + 1;
+        fix_ptr(R_TEPVALID, ii);
+    }
+}
+#endif
 
 static void fix_objects(void)
 {
     WORD ii;
     WORD obtype;
     OBJECT *obj;
+#if CONF_WITH_LEGACY_RSC_LOAD
+#if CONF_WITH_COLOUR_ICONS
+    CICONBLK **ciconblkptr = get_ciconblkptr(rs_hdr);
+#endif
+#else
     OBSPEC *spec;
+#endif
+
     for (ii = 0; ii < rs_hdr->rsh_nobs; ii++)
     {
         obj = (OBJECT *)get_addr(R_OBJECT, ii);
@@ -1023,9 +1105,16 @@ static void fix_objects(void)
         switch (obtype)
         {
         case G_CICON:
+#if CONF_WITH_LEGACY_RSC_LOAD
+#if CONF_WITH_COLOUR_ICONS
+            if (ciconblkptr)
+                obj->ob_spec.index = (LONG)ciconblkptr[obj->ob_spec.index];
+#endif
+#else
 #if CONF_WITH_COLOUR_ICONS
             spec = (obj->ob_flags & INDIRECT) ? obj->ob_spec.indirect : &obj->ob_spec;
             spec->ciconblk = get_ciconblkptr(rs_hdr)[spec->index];
+#endif
 #endif
             break;
         case G_BOX:
@@ -1033,11 +1122,15 @@ static void fix_objects(void)
         case G_BOXCHAR:
             break;
         default:
+#if CONF_WITH_LEGACY_RSC_LOAD
+            fix_long(&obj->ob_spec.index);
+#endif
             break;
         }
     }
 }
 
+#if !CONF_WITH_LEGACY_RSC_LOAD
 static void *native_disk_ptr(UBYTE *image, const struct native_rsc_layout *layout,
                              const struct disk_rsc *disk, LONG offset)
 {
@@ -1409,6 +1502,7 @@ fail:
     dos_free(image);
     return FALSE;
 }
+#endif
 
 /*
  *  Set global addresses that are used by the resource library subroutines
@@ -1480,6 +1574,52 @@ WORD rs_saddr(AESGLOBAL *pglobal, UWORD rtype, UWORD rindex, void *rsaddr)
  *  case of the GEM resource file this workstation will not have
  *  been loaded into memory yet.
  */
+#if CONF_WITH_LEGACY_RSC_LOAD
+static WORD rs_readit(AESGLOBAL *pglobal, UWORD fd)
+{
+    WORD ibcnt;
+    LONG rslsize;
+    RSHDR hdr_buff;
+
+    if (dos_read(fd, sizeof(hdr_buff), &hdr_buff) != sizeof(hdr_buff))
+        return FALSE;
+    rslsize = hdr_buff.rsh_rssize;
+#if CONF_WITH_COLOUR_ICONS
+    if (hdr_buff.rsh_vrsn & NEW_FORMAT_RSC)
+    {
+        if (dos_lseek(fd, 0, rslsize) < 0L)
+            return FALSE;
+        if (dos_read(fd, sizeof(rslsize), &rslsize) != sizeof(rslsize))
+            return FALSE;
+    }
+#endif
+    rs_hdr = (RSHDR *)dos_alloc_anyram(rslsize);
+    if (!rs_hdr)
+        return FALSE;
+    if (dos_lseek(fd, 0, 0x0L) < 0L)
+        return FALSE;
+    if (dos_read(fd, rslsize, rs_hdr) != rslsize)
+        return FALSE;
+    rs_global = pglobal;
+    rs_global->ap_rscmem = rs_hdr;
+    rs_global->ap_rsclen = rslsize;
+    fix_trindex();
+#if CONF_WITH_COLOUR_ICONS
+    fix_cicons();
+#endif
+    fix_tedinfo();
+    ibcnt = rs_hdr->rsh_nib;
+    fix_nptrs(ibcnt, R_IBPMASK);
+    fix_nptrs(ibcnt, R_IBPDATA);
+    fix_nptrs(ibcnt, R_IBPTEXT);
+    fix_nptrs(rs_hdr->rsh_nbb, R_BIPDATA);
+    fix_nptrs(rs_hdr->rsh_nstring, R_FRSTR);
+    fix_nptrs(rs_hdr->rsh_nimages, R_FRIMG);
+    return TRUE;
+}
+#endif
+
+#if !CONF_WITH_LEGACY_RSC_LOAD
 static WORD rs_readit(AESGLOBAL *pglobal,UWORD fd)
 {
     UBYTE header[DISK_RSHDR_SIZE];
@@ -1553,6 +1693,7 @@ OBJECT *rs_loadmem(AESGLOBAL *pglobal, const void *rsmem, LONG size)
 
     return pglobal->ap_ptree[0];
 }
+#endif
 
 
 /*
