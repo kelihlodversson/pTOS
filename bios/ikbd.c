@@ -873,6 +873,11 @@ void kbd_init(void)
 #if CONF_SERIAL_CONSOLE
 # ifdef __mcoldfire__
     coldfire_rs232_enable_interrupt();
+# elif CONF_WITH_VIRT_UART || CONF_WITH_GOLDFISH_TTY
+    /* virt-arm/virt-m68k read console input by polling the UART/TTY from
+     * their periodic timer tick (virt_uart0_poll_rx() / goldfish_tty_poll_rx(),
+     * called from virt_timer.c / goldfish_rtc.c) rather than a dedicated
+     * RX interrupt, so there is nothing to enable here. */
 # else
     /* FIXME: Enable interrupts on other hardware. */
 # endif

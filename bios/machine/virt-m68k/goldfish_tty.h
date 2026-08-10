@@ -15,6 +15,7 @@ BOOL goldfish_tty_can_write(void);
 void goldfish_tty_write_byte(UBYTE b);
 BOOL goldfish_tty_can_read(void);
 UBYTE goldfish_tty_read_byte(void);
+void goldfish_tty_poll_rx(void);
 
 #endif /* MACHINE_VIRT_M68K */
 

@@ -12,6 +12,7 @@
 
 #include "portab.h"
 #include "goldfish_tty.h"
+#include "ikbd.h"
 
 #define GOLDFISH_TTY_BASE  0xff008000UL
 
@@ -56,3 +57,24 @@ UBYTE goldfish_tty_read_byte(void)
 
     return goldfish_tty_rx_byte;
 }
+
+#if CONF_SERIAL_CONSOLE
+
+/* Feeds bytes typed at the far end of -serial into the same emulated
+ * IKBD event queue a real keyboard would use, so CONF_SERIAL_CONSOLE
+ * ("read the console input exclusively from the serial port") actually
+ * has something to read. Called from goldfish_rtc_service() (200 Hz)
+ * rather than a dedicated Goldfish PIC interrupt: instance 0 (the TTY's)
+ * has no ISR wired up on this board yet (see the "already claimed"
+ * comment in goldfish_pic.h), and polling the already-proven-reliable
+ * RTC tick avoids depending on unverified PIC-instance/bit wiring for
+ * it, at the cost of at most 5 ms of latency -- imperceptible for a
+ * human typing. Mirrors how coldfire_rs232_interrupt_handler() feeds
+ * push_ascii_ikbdiorec() on ColdFire machines, minus the interrupt. */
+void goldfish_tty_poll_rx(void)
+{
+    while (goldfish_tty_can_read())
+        push_ascii_ikbdiorec(goldfish_tty_read_byte());
+}
+
+#endif /* CONF_SERIAL_CONSOLE */

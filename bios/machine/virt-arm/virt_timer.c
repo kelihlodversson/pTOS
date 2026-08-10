@@ -16,6 +16,9 @@
 #include "virt_timer.h"
 #include "vectors.h"
 #include "asm.h"
+#if CONF_WITH_VIRT_UART
+#include "virt_uart.h"
+#endif
 
 #define HZ                    200     /* ticks per second, matches the Atari 200 Hz timer C */
 #define VIRT_TIMER_PPI_PHYS   30      /* non-secure physical timer, fixed by the GIC/generic-timer binding */
@@ -26,6 +29,10 @@ static void virt_timer_tick(void)
 {
     ULONG cval_low, cval_high;
     UQUAD cval;
+
+#if CONF_SERIAL_CONSOLE && CONF_WITH_VIRT_UART
+    virt_uart0_poll_rx();
+#endif
 
     /* virt_timer_init() connects and enables this IRQ well before
      * mfp.c's init_system_timer() sets vector_5ms (that happens much

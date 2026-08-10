@@ -13,6 +13,7 @@
 #include "portab.h"
 #include "virt_memmap.h"
 #include "virt_uart.h"
+#include "ikbd.h"
 
 #define UART0_DR     (*(volatile ULONG*)(VIRT_UART0_BASE+0x00))
 #define UART0_FR     (*(volatile ULONG*)(VIRT_UART0_BASE+0x18))
@@ -42,7 +43,7 @@ void virt_uart0_init(void)
     UART0_ICR = 0x7FF;
     UART0_IBRD = int_div;
     UART0_FBRD = fractdiv;
-    UART0_LCRH = (3 << 5);     /* 8 bits, no parity, FIFOs enabled */
+    UART0_LCRH = (3 << 5) | (1 << 4);  /* 8 bits, no parity, FIFOs enabled (FEN) */
     UART0_CR = 0x301;          /* UARTEN | TXE | RXE */
 }
 
@@ -69,3 +70,24 @@ UBYTE virt_uart0_read_byte(void)
         ;
     return (UBYTE) UART0_DR;
 }
+
+#if CONF_SERIAL_CONSOLE
+
+/* Feeds bytes typed at the far end of -serial into the same emulated
+ * IKBD event queue a real keyboard would use, so CONF_SERIAL_CONSOLE
+ * ("read the console input exclusively from the serial port") actually
+ * has something to read. Called from virt_timer_tick() (200 Hz) rather
+ * than a UART interrupt: the PL011 needs both RXIM (FIFO trigger level,
+ * several bytes) and RTIM (timeout) unmasked to catch a single
+ * interactively typed character sitting alone in the FIFO, and polling
+ * the already-proven-reliable timer tick avoids depending on that
+ * interrupt path, at the cost of at most 5 ms of latency -- imperceptible
+ * for a human typing. Mirrors how coldfire_rs232_interrupt_handler() feeds
+ * push_ascii_ikbdiorec() on ColdFire machines, minus the interrupt. */
+void virt_uart0_poll_rx(void)
+{
+    while (virt_uart0_can_read())
+        push_ascii_ikbdiorec(virt_uart0_read_byte());
+}
+
+#endif /* CONF_SERIAL_CONSOLE */
