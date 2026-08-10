@@ -10,13 +10,15 @@ previous in-place loader without losing a supported feature.
 
 ## Configuration
 
-Add a hidden AES Kconfig boolean, `CONF_WITH_LEGACY_RSC_LOAD`:
+Add an AES Kconfig boolean, `CONF_WITH_LEGACY_RSC_LOAD`:
 
 - It depends on `ARCH_M68K`, because the in-place loader relies on the m68k
   native structure layout and must never be selected on ARM.
 - It defaults to `y` for `TARGET_192` and `n` for every other target.
 - Its help text explains that it exists solely to preserve the 192 KB ROM
   budget, while normal builds use the portable canonical loader.
+- It remains selectable for other m68k configurations when their ROM budget
+  requires it.
 
 Keeping the policy in Kconfig makes a future `TARGET_256` space decision a
 default change rather than another source-level target fork.
