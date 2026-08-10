@@ -126,6 +126,9 @@ typedef struct
     BYTE cs_timefmt;            /* Time format */
     BYTE cs_datefmt;            /* Date format */
     BYTE cs_blitter;            /* Blitter enabled */
+#if CONF_WITH_CACHE_CONTROL
+    BYTE cs_cache;              /* Cache enabled */
+#endif
     BYTE cs_appdir;             /* Appl dir is default for non-installed apps */
     BYTE cs_fullpath;           /* Full path for arg to non-installed apps */
     WSAVE cs_wnode[NUM_WNODES]; /* window save info */

@@ -977,7 +977,7 @@ void do_fopen(WNODE *pw, WORD curr, BYTE *pathname, WORD allow_new_win)
  *
  *  returns FALSE iff the resulting pathname would be too long
  */
-static BOOL add_one_level(BYTE *pathname,BYTE *folder)
+BOOL add_one_level(BYTE *pathname,BYTE *folder)
 {
     WORD plen, flen;
     BYTE filename[LEN_ZFNAME+1], *p;

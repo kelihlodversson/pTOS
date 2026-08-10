@@ -18,6 +18,11 @@ extern UBYTE bootflags;
 
 void invalidate_instruction_cache(void *start, long size);
 
+#if CONF_WITH_CACHE_CONTROL
+WORD cache_exists(void);
+void set_cache(WORD enable);
+#endif
+
 #if CONF_WITH_SHUTDOWN
 BOOL can_shutdown(void);
 #endif

@@ -138,17 +138,29 @@ static const BYTE ILL_DOCU[] =  { IDSKITEM, IAPPITEM, RICNITEM, 0 };
 static const BYTE ILL_FOLD[] =  { IDSKITEM, IAPPITEM, RICNITEM, 0 };
 static const BYTE ILL_FDSK[] =  { IAPPITEM, 0 };
 static const BYTE ILL_HDSK[] =  { IAPPITEM, 0 };
-static const BYTE ILL_NOSEL[] = { OPENITEM, SHOWITEM, DELTITEM, IAPPITEM, RICNITEM, 0 };
+static const BYTE ILL_NOSEL[] = {
+    OPENITEM, SHOWITEM,
+#if CONF_WITH_SEARCH
+    SRCHITEM,
+#endif
+    DELTITEM, IAPPITEM, RICNITEM, 0 };
 static const BYTE ILL_MULTSEL[] = { OPENITEM, 0 };
 static const BYTE ILL_TRASH[] = { OPENITEM, DELTITEM, IDSKITEM, IAPPITEM, 0 };
 static const BYTE ILL_NOWIN[] = {
     NFOLITEM, CLOSITEM, CLSWITEM,
+#if CONF_WITH_SELECTALL
+    SLCTITEM,
+#endif
 #if CONF_WITH_FILEMASK
     MASKITEM,
 #endif
     0 };
 static const BYTE ILL_OPENWIN[] = {
-    SHOWITEM, NFOLITEM, CLOSITEM, CLSWITEM,
+    SHOWITEM,
+#if CONF_WITH_SEARCH
+    SRCHITEM,
+#endif
+    NFOLITEM, CLOSITEM, CLSWITEM,
 #if CONF_WITH_FILEMASK
     MASKITEM,
 #endif
@@ -196,12 +208,30 @@ static char separator[MAXLEN_SEPARATOR+1];
 
 static int can_change_resolution;
 static int blitter_is_present;
+#if CONF_WITH_CACHE_CONTROL
+static int cache_is_present;
+#endif
 
 static void detect_features(void)
 {
     can_change_resolution = rez_changeable();
     blitter_is_present = Blitmode(-1) & 0x0002;
+#if CONF_WITH_CACHE_CONTROL
+    cache_is_present = cache_exists();
+#endif
 }
+
+
+#if CONF_WITH_CACHE_CONTROL
+/*
+ * Routine to set cache on/off: must be Supexec'd because the set_cache()
+ * function must run in supervisor state
+ */
+static void desktop_set_cache(void)
+{
+    set_cache(G.g_cache);
+}
+#endif
 
 
 #if CONF_DEBUG_DESK_STACK
@@ -334,6 +364,11 @@ static void men_update(void)
     else
         men_list(tree, ILL_NOWIN, FALSE);
 
+#if CONF_WITH_BOTTOMTOTOP
+    /* cycling windows only makes sense with two or more open */
+    menu_ienable(tree, BTOPITEM, win_onbottom() != win_ontop());
+#endif
+
 #if CONF_WITH_SHUTDOWN
     menu_ienable(tree, QUITITEM, can_shutdown());
 #endif
@@ -348,6 +383,16 @@ static void men_update(void)
     }
     else
         menu_ienable(tree, BLITITEM, FALSE);
+#endif
+
+#if CONF_WITH_CACHE_CONTROL
+    if (cache_is_present)
+    {
+        menu_ienable(tree, CACHITEM, TRUE);
+        menu_icheck(tree, CACHITEM, G.g_cache);
+    }
+    else
+        menu_ienable(tree, CACHITEM, FALSE);
 #endif
 }
 
@@ -428,6 +473,12 @@ static WORD do_filemenu(WORD item)
         if (pw)
             inf_disk(pw->w_pnode.p_spec[0]);
         break;
+#if CONF_WITH_SEARCH
+    case SRCHITEM:
+        if (curr || pw)
+            fun_search(curr, pw);
+        break;
+#endif
     case NFOLITEM:
         if (pw)
             fun_mkdir(pw);
@@ -440,6 +491,23 @@ static WORD do_filemenu(WORD item)
         if (pw)
             fun_close(pw, CLOSE_WINDOW);
         break;
+#if CONF_WITH_BOTTOMTOTOP
+    case BTOPITEM:
+        pw = win_onbottom();
+        if (pw)
+        {
+            GRECT gr;
+            wind_get_grect(pw->w_id, WF_WXYWH, &gr);
+            fun_msg(WM_TOPPED, pw->w_id, gr.g_x, gr.g_y, gr.g_w, gr.g_h);
+        }
+        break;
+#endif
+#if CONF_WITH_SELECTALL
+    case SLCTITEM:
+        if (pw)
+            fun_selectall(pw);
+        break;
+#endif
 #if CONF_WITH_FILEMASK
     case MASKITEM:
         if (pw)
@@ -614,6 +682,13 @@ static WORD do_optnmenu(WORD item)
         G.g_blitter = !G.g_blitter;
         menu_icheck(G.a_trees[ADMENU], BLITITEM, G.g_blitter);  /* flip blit mode */
         Blitmode(G.g_blitter);
+        break;
+#endif
+#if CONF_WITH_CACHE_CONTROL
+    case CACHITEM:
+        G.g_cache = !G.g_cache;
+        menu_icheck(G.a_trees[ADMENU], CACHITEM, G.g_cache);    /* flip cache mode */
+        Supexec((LONG)desktop_set_cache);   /* uses G.g_cache */
         break;
 #endif
     }
@@ -1078,6 +1153,9 @@ static void cnx_put(void)
     G.g_cnxsave.cs_timefmt = G.g_ctimeform;
     G.g_cnxsave.cs_datefmt = G.g_cdateform;
     G.g_cnxsave.cs_blitter = G.g_blitter;
+#if CONF_WITH_CACHE_CONTROL
+    G.g_cnxsave.cs_cache = G.g_cache;
+#endif
 #if CONF_WITH_DESKTOP_CONFIG
     G.g_cnxsave.cs_appdir = G.g_appdir;
     G.g_cnxsave.cs_fullpath = G.g_fullpath;
@@ -1132,6 +1210,9 @@ static void cnx_get(void)
     G.g_ctimeform = G.g_cnxsave.cs_timefmt;
     G.g_cdateform = G.g_cnxsave.cs_datefmt;
     G.g_blitter   = G.g_cnxsave.cs_blitter;
+#if CONF_WITH_CACHE_CONTROL
+    G.g_cache     = G.g_cnxsave.cs_cache;
+#endif
 #if CONF_WITH_DESKTOP_CONFIG
     G.g_appdir    = G.g_cnxsave.cs_appdir;
     G.g_fullpath  = G.g_cnxsave.cs_fullpath;
@@ -1672,6 +1753,14 @@ WORD deskmain(void)
      */
     if (blitter_is_present)
         Blitmode(G.g_blitter?1:0);
+#endif
+
+#if CONF_WITH_CACHE_CONTROL
+    /*
+     * we now have the cache state from EMUDESK.INF, so we can apply it
+     */
+    if (cache_is_present)
+        Supexec((LONG)desktop_set_cache);
 #endif
 
     men_update();

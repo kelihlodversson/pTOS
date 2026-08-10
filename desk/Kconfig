@@ -52,6 +52,30 @@ config CONF_WITH_SHOW_FILE
 	default n if TARGET_192
 	default y
 
+config CONF_WITH_SEARCH
+	bool "'Search' desktop menu item"
+	default n if TARGET_192
+	default y
+	help
+	  Prompt for a search string, then search for matching files and
+	  folders, as on Atari TOS 2/3/4.
+
+config CONF_WITH_SELECTALL
+	bool "'Select all items' desktop menu item"
+	default n if TARGET_192
+	default y
+	help
+	  Select all items in the currently-topped window, as on Atari TOS
+	  2/3/4.  Only items with an on-screen icon are marked; unlike Atari
+	  TOS, items scrolled out of view are not.
+
+config CONF_WITH_BOTTOMTOTOP
+	bool "'Cycle windows' desktop menu item"
+	default n if TARGET_192
+	default y
+	help
+	  Top the bottom window, as on Atari TOS 2/3/4.
+
 config CONF_WITH_EASTER_EGG
 	bool "EmuDesk easter egg"
 	default y

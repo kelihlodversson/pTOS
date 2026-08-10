@@ -292,6 +292,19 @@ typedef struct
  */
 char *exclude_items[] =
 {
+                                /* configurable items under 'File' */
+#if !CONF_WITH_SEARCH
+    "SRCHITEM",
+    "ADSEARCH",
+    "STCNSRCH",
+    "STNOMORE",
+#endif
+#if !CONF_WITH_BOTTOMTOTOP
+    "BTOPITEM",
+#endif
+#if !CONF_WITH_SELECTALL
+    "SLCTITEM",
+#endif
 #if !CONF_WITH_BACKGROUNDS
     "BACKGRND",
     "SEP_VW1",
@@ -300,6 +313,10 @@ char *exclude_items[] =
 #if !CONF_WITH_BLITTER
     "BLITITEM",
     "SEP_OP1",
+#endif
+#if !CONF_WITH_CACHE_CONTROL
+    "CACHITEM",
+    "SEP_OP2",
 #endif
 #if !CONF_WITH_DESKTOP_CONFIG
     "CONFITEM",

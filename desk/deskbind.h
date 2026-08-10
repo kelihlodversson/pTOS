@@ -167,6 +167,9 @@ typedef struct
 /*GLOBAL*/ BYTE         g_ctimeform;            /* curr. time format    */
 /*GLOBAL*/ BYTE         g_cdateform;            /* curr. date format    */
 /*GLOBAL*/ BYTE         g_blitter;              /* curr. blitter enable */
+#if CONF_WITH_CACHE_CONTROL
+/*GLOBAL*/ BYTE         g_cache;                /* curr. cache enable   */
+#endif
 /*GLOBAL*/ BYTE         g_appdir;               /* default dir is application dir */
 /*GLOBAL*/ BYTE         g_fullpath;             /* use full path for parameter */
 
