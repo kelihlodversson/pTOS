@@ -753,11 +753,22 @@ static BOOL search_recursive(WORD curr, BYTE *pathname, BYTE *searchwild)
 
     /*
      * check if there is a filename match; if so, display the folder
+     *
+     * if 'searchwild' (unlike the "*.*" it temporarily replaces) doesn't
+     * fit in the space remaining in 'pathname', treat this folder as a
+     * non-match rather than overflow the caller's buffer
      */
     p = filename_start(pathname);
-    strcpy(p, searchwild);
-    ret = dos_sfirst(pathname, F_SUBDIR);
-    strcpy(p, "*.*");
+    if (strlen(searchwild) < (WORD)(MAXPATHLEN - (p - pathname)))
+    {
+        strcpy(p, searchwild);
+        ret = dos_sfirst(pathname, F_SUBDIR);
+        strcpy(p, "*.*");
+    }
+    else
+    {
+        ret = ENMFIL;
+    }
     dos_sdta(save_dta); /* in case we must return */
 
     switch(ret) {
@@ -813,7 +824,7 @@ static BOOL search_icon(WORD win, WORD curr, BYTE *searchwild)
 {
     ANODE *pa;
     FNODE *pf;
-    BYTE pathname[LEN_ZPATH];
+    BYTE pathname[MAXPATHLEN];
     BYTE *p;
 
     pa = i_find(win, curr, &pf, NULL);
