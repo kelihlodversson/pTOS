@@ -58,7 +58,7 @@ config CONF_WITH_EASTER_EGG
 
 config CONF_WITH_VDI_CICON_TEST
 	bool "Embedded colour-icon rendering test"
-	depends on CONF_WITH_AES && CONF_WITH_COLOUR_ICONS
+	depends on CONF_WITH_AES && CONF_WITH_COLOUR_ICONS && !CONF_WITH_LEGACY_RSC_LOAD
 	default n
 	help
 	  Test hook for issue #107: embeds a hand-built 'new format' RSC

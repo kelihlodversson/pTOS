@@ -629,7 +629,7 @@ static void fixup_all_ciconblks(LONG num_blks, CICONBLK **ciconblkptr, CICON *ci
     {
         ciconblkptr[i] = p;
         num_cicons = (LONG)(p->mainlist);   /* number of colour icons for this CICONBLK */
-        mono_words = (LONG)(p->monoblk.ib_wicon/16) * p->monoblk.ib_hicon;
+        mono_words = (((LONG)p->monoblk.ib_wicon + 15L) / 16L) * p->monoblk.ib_hicon;
         q = (WORD *)(p+1);                  /* point to start of data area */
 
         p->monoblk.ib_pdata = q;            /* fixup mono icon */
@@ -1089,11 +1089,10 @@ static void fix_objects(void)
     WORD ii;
     WORD obtype;
     OBJECT *obj;
-#if CONF_WITH_LEGACY_RSC_LOAD
 #if CONF_WITH_COLOUR_ICONS
+#if CONF_WITH_LEGACY_RSC_LOAD
     CICONBLK **ciconblkptr = get_ciconblkptr(rs_hdr);
 #endif
-#else
     OBSPEC *spec;
 #endif
 
@@ -1108,7 +1107,10 @@ static void fix_objects(void)
 #if CONF_WITH_LEGACY_RSC_LOAD
 #if CONF_WITH_COLOUR_ICONS
             if (ciconblkptr)
-                obj->ob_spec.index = (LONG)ciconblkptr[obj->ob_spec.index];
+            {
+                spec = (obj->ob_flags & INDIRECT) ? obj->ob_spec.indirect : &obj->ob_spec;
+                spec->ciconblk = ciconblkptr[spec->index];
+            }
 #endif
 #else
 #if CONF_WITH_COLOUR_ICONS
