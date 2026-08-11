@@ -145,12 +145,12 @@ split are the measured ones below.
     free (pre-split 2036, design-doc estimate 2068).
   - `atari256` (legacy + colour icons): `ptos256us.img` with 7115 bytes
     free (pre-split 7221, design-doc estimate 7255).
-  - `atari512` (portable + colour icons): `ptos512k.img` with 16375 bytes
+  - `atari512` (portable + colour icons): `ptos512k.img` with 16399 bytes
     free (pre-split 16461).
   - `atari512` with `CONF_WITH_VDI_CICON_TEST=y`: exercises `rs_loadmem()`
-    from its new file.
+    from its new file; 15255 bytes free.
   - `rpi1` (portable + truecolor backend): exercises `pack_planes()`/`pack_cicon()`;
-    RAM-used 570496 bytes (pre-split 570368).
+    RAM-used 570368 bytes (pre-split 570368).
 - `make gitready` must pass.
 - The French 256 KB variant must still fit (Release archives CI job).
 

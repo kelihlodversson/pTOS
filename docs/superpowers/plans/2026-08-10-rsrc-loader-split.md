@@ -473,7 +473,7 @@ Must complete with `# ptos256fr.img done (N bytes free)` and N >= 0 (this is the
 make distclean
 # then Tasks 2-4's builds in order; every image size / free byte / RAM figure
 # must equal the post-split baseline exactly (atari192 1914, atari256 7115,
-# atari512 16375, rpi1 RAM 570496)
+# atari512 16399, atari512+CICON_TEST 15255, rpi1 RAM 570368)
 ```
 
 - [ ] **Step 3: Final review**
@@ -510,6 +510,17 @@ Optionally smoke-boot the result with the `ptos-smoketest` skill (QEMU `raspi1ap
 - Root cause: baseline inlined static `rs_readit`/`fix_objects`/`get_sub` into `rs_load`/`rs_fixit`; external linkage forces standalone copies (+122/+106/+86 bytes on m68k, +128 on ARM).
 - Review: approved. Task quality Approved, no Critical/Important.
 - Task 2: minor (deferred): stale orphaned comment at `aes/gemrslib.c:44-45` ("type definitions for use by an application when calling rsrc_gaddr and rsrc_saddr") — was the banner for the removed R_* constants, now dangles above the LOCALS banner. Delete or reword to point at `rsload.h`. To fix before merge.
+
+### Task 3: Extract the portable loader — DONE (owner ruling, pending review)
+
+- Commit `e824c903` "aes: move portable RSC loader into its own file" (only `rsload_portable.c`, `gemrslib.c`, `build.mk`). Move is verbatim; `make gitready` passes; no `CONF_WITH_LEGACY_RSC_LOAD` in `rsload_portable.c`, none at all left in `gemrslib.c`.
+- Deviation: added `#include "endian.h"` to `rsload_portable.c` (the brief's starter header omitted it; the moved disk parser uses `be2cpu16`/`be2cpu32` — verified, needed to link).
+- Deviation: cosmetic — collapsed run-on blank lines and deleted two comments belonging to moved functions at the removal sites. No code changed.
+- Size drift (same accepted TU-boundary class as Task 2): atari192/256 EXACT (1914/7115 — legacy path untouched); atari512 16375→**16399** (+24 free); atari512+CICON_TEST **15255** newly recorded (delta vs plain atari512 = 1144, identical to pre-split); rpi1 RAM 570496→**570368** (−128).
+- Verified by implementer: clean worktree at `183abd93` reproduces both Task-2 baselines exactly; symbol-level nm on both arches shows every symbol moved intact, each of `rs_readit`/`fix_objects`/`rs_loadmem`/`rs_hdr`/`rs_global` defined exactly once; cross-TU undefined sets are precisely the documented loader↔library interface.
+- Smoke tests pass: rpi1 boots to `evnt_multi()` under QEMU (16-bit truecolor, zero guest_errors); atari512 boots to GEM desktop under Hatari.
+- New authoritative baseline (post-Task-3): atari192 **1914**, atari256 **7115**, atari512 **16399**, atari512+CICON_TEST **15255**, rpi1 RAM **570368**. Task 4 verifies against these.
+- TODO: task review (spec + quality) still pending.
 
 ---
 
