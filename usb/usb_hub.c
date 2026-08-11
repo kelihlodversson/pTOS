@@ -503,7 +503,8 @@ usb_hub_events(struct usb_hub_device *hub)
          * but we don't have a child for it yet" the same as a change.
          */
         if ((portchange & USB_PORT_STAT_C_CONNECTION) ||
-            ((portstatus & USB_PORT_STAT_CONNECTION) && !dev->children[i]))
+            ((portstatus & (USB_PORT_STAT_CONNECTION | USB_PORT_STAT_ENABLE)) ==
+                (USB_PORT_STAT_CONNECTION | USB_PORT_STAT_ENABLE) && !dev->children[i]))
         {
             changed |= USB_PORT_STAT_C_CONNECTION;
             KDEBUG(("port %ld connection change\n", i + 1));
