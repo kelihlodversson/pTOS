@@ -485,3 +485,32 @@ OFD *getofd(int h)
 
     return sft[n].f_ofd;
 }
+
+
+#if CONF_WITH_PLUGGABLE_FS
+/*
+ *  getpfsslot - returns ptr to the sft[] entry for a handle owned by a
+ *  pluggable filesystem driver (see fs/pfs.c), or NULL if 'h' is not a
+ *  valid handle or does not belong to one.
+ *
+ *  Mirrors getofd() (above), including std-handle indirection via the
+ *  same syshnd(), so every caller of xread()/xwrite()/xclose() - not
+ *  just osif() - reaches a pluggable handle correctly.
+ */
+FTAB *getpfsslot(int h)
+{
+    WORD n;
+
+    if ((h < 0) | (h >= NUMHANDLES))
+        return NULL;
+
+    n = syshnd(h);
+    if (n < 0)
+        return NULL;
+
+    if (!sft[n].f_pfs.fs)
+        return NULL;
+
+    return &sft[n];
+}
+#endif

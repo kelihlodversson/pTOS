@@ -23,6 +23,10 @@
 
 #include "biosdefs.h"
 #include "pd.h"
+
+#if CONF_WITH_PLUGGABLE_FS
+#include "pfs.h"        /* PFSCOOKIE is embedded by value in FTAB below */
+#endif
 #ifdef MACHINE_RPI
 #   define OPT_PACKED  __attribute__((packed))
 #else
@@ -322,6 +326,13 @@ typedef struct
     OFD *f_ofd;
     PD  *f_own;         /* file owners */
     int f_use;          /* use count */
+#if CONF_WITH_PLUGGABLE_FS
+    PFSCOOKIE f_pfs;    /* f_pfs.fs != NULL marks a handle owned by a
+                         * pluggable filesystem driver with no legacy OFD
+                         * of its own; see fs/pfs.c.  Embedded by value,
+                         * not a pointer, so there is nothing to allocate
+                         * or free alongside the slot itself. */
+#endif
 } FTAB;
 
 
@@ -487,6 +498,9 @@ void xsetdta(DTAINFO *addr);
 long xsetdrv(int drv);
 long xgetdrv(void);
 OFD  *getofd(int h);
+#if CONF_WITH_PLUGGABLE_FS
+FTAB *getpfsslot(int h);
+#endif
 
 
 /*

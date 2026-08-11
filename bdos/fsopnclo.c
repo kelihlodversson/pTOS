@@ -56,6 +56,9 @@
 #include "time.h"
 #include "console.h"
 #include "kprint.h"
+#if CONF_WITH_PLUGGABLE_FS
+#include "pfs.h"
+#endif
 
 /* the following characters are disallowed in the name when creating
  * or renaming files or folders.  this is *mostly* the same list as
@@ -446,6 +449,27 @@ long xclose(int h)
 
         return E_OK;
     }
+
+#if CONF_WITH_PLUGGABLE_FS
+    /*
+     * 'h' is a real sft[] handle at this point (either unchanged, or the
+     * handle a std-handle redirection was pointing at, above) - if it
+     * belongs to a pluggable driver, close it there instead of treating
+     * f_ofd as an OFD*.
+     */
+    if (sft[h-NUMSTD].f_pfs.fs)
+    {
+        rc = pfs_handle_close(&sft[h-NUMSTD].f_pfs);
+
+        if (!(--sft[h-NUMSTD].f_use))
+        {
+            sft[h-NUMSTD].f_pfs.fs = 0;
+            sft[h-NUMSTD].f_own = 0;
+        }
+
+        return rc;
+    }
+#endif
 
     if (!(fd = getofd(h)))
         return EIHNDL;

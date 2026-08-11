@@ -27,6 +27,9 @@
 #include "biosext.h"
 #include "asm.h"
 #include "../bios/tosvars.h"
+#if CONF_WITH_PLUGGABLE_FS
+#include "pfs.h"
+#endif
 
 
 /*
@@ -146,6 +149,20 @@ static void ixterm(PD *r)
         if ((h = r->p_curdir[i]) != 0)
             decr_curdir_usage(h);
     }
+
+#if CONF_WITH_PLUGGABLE_FS
+    /*
+     * p_curdir[] above indexes fs/pfs.c's own directory table instead of
+     * dirtbl[] for a pluggable drive - decr_curdir_usage() is harmless
+     * either way (it no-ops below NCURDIR's dirtbl[] range and dirtbl[]
+     * stays empty for the lifetime of a pluggable-fs build, since
+     * nothing calls incr_curdir_usage() once this option is on), but the
+     * pluggable table still needs its own matching cleanup so its slots
+     * (and any open Fsfirst/Fsnext searches this process owned) don't
+     * leak.
+     */
+    pfs_proc_exit(r);
+#endif
 
     /* free each item in the allocated list that is owned by 'r' */
 

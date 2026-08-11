@@ -1,0 +1,54 @@
+#
+# fs/Kconfig - pluggable filesystem layer options
+#
+# This file is distributed under the GPL, version 2 or at your
+# option any later version.  See doc/license.txt for details.
+#
+
+menu "Pluggable filesystems"
+
+config CONF_WITH_PLUGGABLE_FS
+	bool "Pluggable filesystem driver support"
+	default n
+	help
+	  Routes GEMDOS filesystem calls (Fopen, Fread, Dsetpath, Fsfirst,
+	  ...) through a common pluggable interface, instead of calling the
+	  built-in FAT code directly.  The built-in FAT filesystem itself is
+	  wrapped as an instance of this interface, so it keeps working
+	  exactly as before; the point is to let a driver expose a whole
+	  filesystem (not just a block device) as a GEMDOS drive, which the
+	  built-in FAT code and block device layer alone cannot do.
+
+	  This has no visible effect by itself beyond the built-in FAT
+	  wrapper; it exists so a driver (e.g. a virtio-9p host directory
+	  bridge) can register against it.
+
+	  Say n unless a driver needs this.  Off by default: when off,
+	  GEMDOS calls the built-in FAT code directly, exactly as when this
+	  option does not exist, at zero extra size/RAM cost.  Only turn
+	  this on for machines with room to spare.
+
+config CONF_WITH_PLUGGABLE_FS_TEST
+	bool "Pluggable filesystem self-test driver"
+	depends on CONF_WITH_PLUGGABLE_FS
+	default n
+	help
+	  Registers a tiny built-in in-memory filesystem driver exposing a
+	  single fixed drive letter with one read-only file, purely to
+	  exercise the pluggable filesystem layer end-to-end without needing
+	  a real driver.  Development/test scaffolding only; say n unless
+	  you are testing the pluggable filesystem layer itself.
+
+config CONF_PFS_MAX_SEARCHES
+	int "Maximum concurrent pluggable Fsfirst/Fsnext searches"
+	depends on CONF_WITH_PLUGGABLE_FS
+	default 8
+	range 1 40
+	help
+	  Number of concurrent Fsfirst/Fsnext directory searches the
+	  pluggable filesystem layer can track at once, across all
+	  pluggable drives and processes.  Each slot costs a handful of
+	  bytes; raise this only if an application legitimately keeps many
+	  directory searches open at the same time.
+
+endmenu

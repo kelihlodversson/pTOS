@@ -114,7 +114,12 @@ long xdup(int h)
      * in the OFD pointer variable
      */
     if ((h = run->p_uft[h]) > 0)
+    {
         sft[i].f_ofd = sft[h-NUMSTD].f_ofd;
+#if CONF_WITH_PLUGGABLE_FS
+        sft[i].f_pfs = sft[h-NUMSTD].f_pfs;    /* carry a foreign driver's cookie too */
+#endif
+    }
     else
         sft[i].f_ofd = (OFD *)(long)h;
 

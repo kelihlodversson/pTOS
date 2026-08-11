@@ -17,6 +17,9 @@
 #include "biosbind.h"
 #include "string.h"
 #include "kprint.h"
+#if CONF_WITH_PLUGGABLE_FS
+#include "pfs.h"
+#endif
 
 
 /*
@@ -185,6 +188,14 @@ long    xread(int h, long len, void *ubufr)
     OFD *p;
     long ret;
 
+#if CONF_WITH_PLUGGABLE_FS
+    {
+        FTAB *slot = getpfsslot(h);
+        if (slot)
+            return pfs_handle_read(&slot->f_pfs, len, ubufr);
+    }
+#endif
+
     p = getofd(h);
     if ( p )
         ret = ixread(p,len,ubufr);
@@ -234,6 +245,14 @@ long    xwrite(int h, long len, void *ubufr)
 {
     OFD *p;
     long ret;
+
+#if CONF_WITH_PLUGGABLE_FS
+    {
+        FTAB *slot = getpfsslot(h);
+        if (slot)
+            return pfs_handle_write(&slot->f_pfs, len, ubufr);
+    }
+#endif
 
     p = getofd(h);
 
