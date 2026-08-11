@@ -125,6 +125,7 @@ extern void pfs_test_init(void); /* found in fs/pfs_test.c */
 
 #if CONF_WITH_VIRTIO_9P
 extern void virtio_9p_init(void); /* found in virtio_9p.h */
+extern void v9p_pfs_init(void); /* found in fs/virtio_9p_pfs.c */
 #endif
 
 /*==== Declarations =======================================================*/
@@ -510,6 +511,9 @@ static void bios_init(void)
     KDEBUG(("virtio_9p_init()\n"));
     virtio_9p_init();
     KDEBUG(("after virtio_9p_init()\n"));
+    KDEBUG(("v9p_pfs_init()\n"));
+    v9p_pfs_init();
+    KDEBUG(("after v9p_pfs_init()\n"));
 #endif
 
     /* initialize BIOS components */

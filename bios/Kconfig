@@ -196,6 +196,29 @@ config CONF_VIRTIO_9P_MSIZE
 	  read/write chunk size. Costs 2x this value in static RAM (request
 	  and reply buffers).
 
+config CONF_VIRTIO_9P_MAX_FIDS
+	int "Maximum concurrent virtio-9p fids"
+	depends on CONF_WITH_VIRTIO_9P
+	default 96
+	range 16 256
+	help
+	  Fixed pool of 9p fid slots, one per live pluggable-fs cookie this
+	  driver owns (see fs/pfs.h's PFSCOOKIE). Budget: OPNFILES (40) +
+	  CONF_PFS_MAX_CWD (default 40) + CONF_PFS_MAX_SEARCHES (default 8)
+	  + headroom for fids held transiently mid-call (e.g. while walking
+	  a multi-component path).
+
+config CONF_VIRTIO_9P_DRIVE
+	int "Drive letter for the virtio-9p host directory (0=A: ... 25=Z:)"
+	depends on CONF_WITH_VIRTIO_9P
+	default 16
+	range 0 25
+	help
+	  Fixed drive letter this driver claims for v1 (default 16 = Q:,
+	  chosen to avoid colliding with CONF_PFS_TEST_DRIVE's own default
+	  of 15/P:). Only the first virtio-9p device found on the
+	  virtio-mmio transport is bound.
+
 config CONF_WITH_FDC
 	bool "Floppy disk controller support"
 	depends on CONF_ATARI_HARDWARE && CONF_WITH_MFP && CONF_WITH_YM2149
