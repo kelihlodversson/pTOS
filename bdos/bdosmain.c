@@ -490,43 +490,6 @@ restrt:
         return rc;
     }
 
-    /*
-     * for Fopen(), Fcreate() we check for special names.  This must run
-     * before any path/drive dispatch (pluggable or not, below) since
-     * these aren't real drive paths.
-     */
-    rc = 0;
-    if ((fn == GEMDOS_FOPEN) || (fn == GEMDOS_FCREATE)) /* open, create */
-    {
-        const SPECNAME *entry;
-        p = *((char **) &pw[1]);
-        for (i = 0, entry = specname_table; i < SN_ENTRIES; i++, entry++)
-        {
-            if (strcmp(p,entry->name) == 0)
-            {
-                rc = entry->handle;
-                break;
-            }
-        }
-    }
-
-#if CONF_WITH_PLUGGABLE_FS
-    /*
-     * route GEMDOS path-based filesystem calls through the pluggable
-     * filesystem layer instead of dispatching them via funcs[] below -
-     * this includes drives backed by the built-in FAT code, wrapped as
-     * fat_pfs_ops (fs/fatfs_pfs.c), so funcs[]'s entries for these
-     * calls are unreachable whenever this option is on.  Fread/
-     * Fwrite/Fclose are deliberately NOT routed here: they stay on the
-     * normal dispatch path below, and xread()/xwrite()/xclose()
-     * themselves are pluggable-aware instead (fsio.c/fsopnclo.c) - that
-     * covers every caller of those three, not just osif(), such as the
-     * process-termination handle cleanup in proc.c.
-     */
-    if (!rc && pfs_is_fs_call(fn))
-        return pfs_dispatch(fn, pw);
-#endif
-
     f = &funcs[fn];
     typ = f->stdio_typ;
 
@@ -689,6 +652,44 @@ restrt:
         }
     }
 
+
+    /*
+     * for Fopen(), Fcreate() we check for special names
+     */
+    rc = 0;
+    if ((fn == GEMDOS_FOPEN) || (fn == GEMDOS_FCREATE)) /* open, create */
+    {
+        const SPECNAME *entry;
+        p = *((char **) &pw[1]);
+        for (i = 0, entry = specname_table; i < SN_ENTRIES; i++, entry++)
+        {
+            if (strcmp(p,entry->name) == 0)
+            {
+                rc = entry->handle;
+                break;
+            }
+        }
+    }
+
+#if CONF_WITH_PLUGGABLE_FS
+    /*
+     * route GEMDOS path-based filesystem calls through the pluggable
+     * filesystem layer instead of dispatching them via funcs[] below -
+     * this includes drives backed by the built-in FAT code, wrapped as
+     * fat_pfs_ops (fs/fatfs_pfs.c), so funcs[]'s entries for these
+     * calls are unreachable whenever this option is on.  Fread/
+     * Fwrite/Fclose are deliberately NOT routed here: they stay on the
+     * normal dispatch path above (typ&0x80 doesn't apply to any of the
+     * calls pfs_is_fs_call() recognises, so this doesn't need to run
+     * any earlier than this, its original upstream position), and
+     * xread()/xwrite()/xclose() themselves are made pluggable-aware
+     * instead (fsio.c/fsopnclo.c) - that covers every caller of those
+     * three, not just osif(), such as the process-termination handle
+     * cleanup in proc.c.
+     */
+    if (!rc && pfs_is_fs_call(fn))
+        return pfs_dispatch(fn, pw);
+#endif
 
     if (!rc)
     {

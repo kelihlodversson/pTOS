@@ -371,5 +371,9 @@ struct pfs_ops fat_pfs_ops = {
     fat_chattr,
     fat_dfree,
     fat_mediach,
-    fat_release
+    fat_release,
+    TRUE            /* native_handles: xopen()/ixcreat() already
+                     * allocate a real sft[] slot - see fat_open()/
+                     * fat_create() and pfs_do_open()/pfs_do_create()
+                     * in fs/pfs.c. */
 };

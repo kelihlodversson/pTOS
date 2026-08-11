@@ -154,6 +154,8 @@ static struct pfs_ops pfs_test_ops = {
     pfstest_dfree,
     pfstest_mediach,
     NULL                /* release: nothing to release */
+    /* native_handles omitted: defaults to FALSE, since this driver has
+     * no handle management of its own - see fs/pfs.h. */
 };
 
 void pfs_test_init(void)

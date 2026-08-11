@@ -118,6 +118,19 @@ struct pfs_ops {
      * per-cookie cleanup.
      */
     void (*release)(PFSCOOKIE *fc);
+
+    /* TRUE if open()/create() already returns a real, live GEMDOS
+     * handle in the successful cookie's 'index' - fat_pfs_ops does,
+     * since xopen()/ixcreat() already allocate their own sft[] slot
+     * internally.  The core then hands that handle straight back to
+     * the caller instead of also wrapping it in a second sft[] slot of
+     * its own (which would needlessly consume two system handles per
+     * open file).  Leave FALSE (the default for an omitted trailing
+     * field) for a driver with no handle management of its own, e.g. a
+     * future 9p driver - the core allocates and owns the handle for
+     * those, same as before this field existed.
+     */
+    BOOL native_handles;
 };
 
 /* Claim 'drive' (0 = A:, 1 = B:, ...) for 'fs', up front (e.g. from a

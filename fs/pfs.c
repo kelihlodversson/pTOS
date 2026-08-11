@@ -75,7 +75,7 @@ LONG pfs_register_drive(WORD drive, struct pfs_ops *fs)
     if ((drive < 0) || (drive >= BLKDEVNUM))
         return EDRIVE;
 
-    if (!fs->root)
+    if (!fs || !fs->root)
         return EINVFN;
 
     rc = fs->root(fs, drive, &root);
@@ -635,6 +635,9 @@ static LONG pfs_do_open(const char *path, WORD mode)
     if (rc < 0)
         return rc;
 
+    if (fs->native_handles)
+        return fc.index;
+
     fc.pos = 0;
     rc = pfs_alloc_handle(&fc);
     if (rc < 0)
@@ -667,6 +670,9 @@ static LONG pfs_do_create(const char *path, UWORD attr)
         fs->release(&dir);
     if (rc < 0)
         return rc;
+
+    if (fs->native_handles)
+        return fc.index;
 
     fc.pos = 0;
     rc = pfs_alloc_handle(&fc);
@@ -829,7 +835,11 @@ static LONG pfs_do_sfirst(char *path, WORD att)
         if (rc < 0)
         {
             pfs_search_free(&pfs_searches[i]);
-            return rc;
+            /* Fsfirst() reports "nothing matched" as EFILNF - ENMFIL
+             * ("no more files") is Fsnext()'s exhaustion code, not
+             * Fsfirst()'s, matching xsfirst()'s own convention
+             * (bdos/fsdir.c). */
+            return (rc == ENMFIL) ? EFILNF : rc;
         }
 
         if (pfs_match(name8_3, pfs_searches[i].pattern) &&
@@ -846,7 +856,7 @@ static LONG pfs_do_snext(void)
     WORD i;
 
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-        if (pfs_searches[i].owner == run->p_xdta)
+        if ((pfs_searches[i].owner == run->p_xdta) && (pfs_searches[i].proc == run))
             break;
     if (i == CONF_PFS_MAX_SEARCHES)
         return ENMFIL;
