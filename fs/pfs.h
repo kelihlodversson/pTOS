@@ -107,13 +107,21 @@ struct pfs_ops {
     LONG (*rename)(PFSCOOKIE *olddir, const char *oldname,
                     PFSCOOKIE *newdir, const char *newname);
 
-    /* Fattrib-style get-or-set: reads *dos_attr when 'set' is FALSE,
-     * writes it when TRUE.  Fdatime is deliberately not covered here -
-     * unlike Fattrib it addresses an already-open handle, not a
-     * (directory, name) pair, so it belongs with the handle-based
-     * Fread/Fwrite/Fclose dispatch (see pfs_handle_read() etc. above)
-     * rather than this vtable; left as a follow-up since nothing in
-     * this PR's scope needs it yet. */
+    /* Fattrib-style get-or-set: on entry, '*dos_attr' holds the attribute
+     * bits to apply when 'set' is TRUE and is unused when 'set' is FALSE
+     * (a plain "get"). On a successful return, '*dos_attr' must hold
+     * whatever pfs_do_chmod() should hand straight back as the GEMDOS
+     * Fattrib() result: the current on-disk attributes for a "get", and
+     * for a "set", the value actually applied - i.e. an echo of the
+     * input, NOT the pre-change attributes, matching xchmod()'s own
+     * convention (bdos/fsdir.c) which fat_chattr() (fs/fatfs_pfs.c)
+     * already follows.
+     *
+     * Fdatime is deliberately not covered here - unlike Fattrib it
+     * addresses an already-open handle, not a (directory, name) pair, so
+     * it belongs with the handle-based Fread/Fwrite/Fclose dispatch (see
+     * pfs_handle_read() etc. above) rather than this vtable; left as a
+     * follow-up since nothing in this PR's scope needs it yet. */
     LONG (*chattr)(PFSCOOKIE *dir, const char *name, BOOL set, UWORD *dos_attr);
 
     /* out[0..3] = {free clusters, total clusters, bytes/sector,

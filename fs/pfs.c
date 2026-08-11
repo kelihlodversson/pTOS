@@ -550,7 +550,12 @@ static LONG pfs_do_chdir(const char *path)
             return EINVFN;
         rc = fs->root(fs, drive, &dir);
         dir_owned = TRUE;
-        name = path[1] ? path + 1 : path;
+        name = path + 1;       /* always strip the leading SLASH - even
+                                 * when that's all 'path' is ("\\"),
+                                 * leaving name[0]==0 so the Dsetpath("\\")
+                                 * case below is recognised instead of
+                                 * handing a leading-slash string to
+                                 * fs->lookup(). */
         newpath[0] = 0;
     }
     else
