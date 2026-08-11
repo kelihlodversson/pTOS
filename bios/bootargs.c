@@ -240,17 +240,22 @@ static int parse_lang_param(const char *cmdline)
 int bootargs_get_country(void)
 {
     ULONG ptr = arm_boot_regs.atags;
-    const ULONG *magic;
+    const ULONG *fdt_magic;
+    const struct atag_header *first_tag;
     const char *cmdline;
 
     if (!ptr)
         return -1;
 
-    magic = (const ULONG *)ptr;
-    if (fdt32_to_cpu(*magic) == FDT_MAGIC)
+    /* An FDT starts with a magic word; an ATAG list starts with the
+     * ATAG_CORE record's {size,tag} header, tag second -- check that,
+     * not the size word first. */
+    fdt_magic = (const ULONG *)ptr;
+    first_tag = (const struct atag_header *)ptr;
+    if (fdt32_to_cpu(*fdt_magic) == FDT_MAGIC)
         cmdline = fdt_find_bootargs((const struct fdt_header *)ptr);
-    else if (*magic == ATAG_CORE)
-        cmdline = atag_find_cmdline((const struct atag_header *)ptr);
+    else if (first_tag->tag == ATAG_CORE)
+        cmdline = atag_find_cmdline(first_tag);
     else
         cmdline = NULL;
 
