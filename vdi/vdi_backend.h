@@ -167,6 +167,11 @@ void vdi_truecolor_get_color(const Vwk *vwk, WORD index, WORD *r, WORD *g, WORD 
  * drawing happens before vdi_v_opnwk() ever runs. */
 void vdi_truecolor_init_palette(Vwk *vwk);
 
+/* Bytes per packed pixel of the current screen (2 for RGB565, 4 for
+ * XRGB8888) -- v_planes / 8. Used by the software mouse cursor, the AES
+ * colour-icon packers and setup_info() instead of hard-coding 2. */
+UWORD vdi_truecolor_pixel_size(void);
+
 /*
  * The workstation whose pseudo-palette get_pixel()/put_pixel()/etc.
  * (none of which take a Vwk*) should translate indices through -- see the

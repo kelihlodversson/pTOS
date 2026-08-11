@@ -154,8 +154,15 @@ void vdi_truecolor_init_palette(Vwk *vwk)
 {
     WORD i, npens;
 
-    for (i = 0; i < 256; i++)
-        vwk->tc_palette[i] = rgb565_from_prgb(default_prgb_palette[i]);
+    for (i = 0; i < 256; i++) {
+        if (linea_vars.v_planes == 32) {
+            /* XRGB8888: default_prgb_palette[] is already 0x00BBGGRR,
+             * DRM XRGB8888 layout missing only the alpha byte */
+            vwk->tc_palette[i] = default_prgb_palette[i] | 0xff000000UL;
+        } else {
+            vwk->tc_palette[i] = rgb565_from_prgb(default_prgb_palette[i]);
+        }
+    }
 
     npens = linea_vars.DEV_TAB[13];
     if (npens < 0)
@@ -265,6 +272,17 @@ BOOL vdi_truecolor_screen(void)
 }
 
 /*
+ * Bytes per packed pixel of the current screen (2 for RGB565, 4 for
+ * XRGB8888).  v_planes is the descriptor's bits_per_pixel (lineainit.c),
+ * so this is exactly bpp/8.  Used by the software mouse cursor, the AES
+ * colour-icon packers and setup_info() to stop hard-coding 2.
+ */
+UWORD vdi_truecolor_pixel_size(void)
+{
+    return (UWORD)(linea_vars.v_planes / 8);
+}
+
+/*
  * Public wrapper for callers outside this backend that need to turn a
  * MAP_COL-mapped hardware palette index into the raw RGB565 pixel value
  * this backend would write for it -- currently only the RPi software
@@ -303,6 +321,15 @@ static UWORD rgb565_from_vdi(WORD r, WORD g, WORD b)
     UWORD b5 = (UWORD)(((LONG)b * 31 + 500) / 1000);
 
     return (UWORD)((r5 << 11) | (g6 << 5) | b5);
+}
+
+/*
+ * VDI-scale (0-1000) component -> 8 bits, rounding division like
+ * rgb565_from_vdi() above.  Used by the XRGB8888 packing path.
+ */
+static UBYTE vdi_from_vdi8(WORD c)
+{
+    return (UBYTE)(((LONG)c * 255 + 500) / 1000);
 }
 
 static void vdi_from_rgb565(UWORD raw, WORD *r, WORD *g, WORD *b)
@@ -344,7 +371,13 @@ void vdi_truecolor_set_color(Vwk *vwk, WORD index, WORD r, WORD g, WORD b)
     if (g < 0) g = 0; else if (g > 1000) g = 1000;
     if (b < 0) b = 0; else if (b > 1000) b = 1000;
 
-    vwk->tc_palette[index] = rgb565_from_vdi(r, g, b);
+    if (linea_vars.v_planes == 32) {
+        ULONG prgb = (ULONG)vdi_from_vdi8(r) | ((ULONG)vdi_from_vdi8(g) << 8)
+                   | ((ULONG)vdi_from_vdi8(b) << 16);
+        vwk->tc_palette[index] = prgb | 0xff000000UL;
+    } else {
+        vwk->tc_palette[index] = rgb565_from_vdi(r, g, b);
+    }
 }
 
 void vdi_truecolor_get_color(const Vwk *vwk, WORD index, WORD *r, WORD *g, WORD *b)
@@ -352,7 +385,14 @@ void vdi_truecolor_get_color(const Vwk *vwk, WORD index, WORD *r, WORD *g, WORD 
     if (index < 0 || index > 255)
         index = 0;
 
-    vdi_from_rgb565(vwk->tc_palette[index], r, g, b);
+    if (linea_vars.v_planes == 32) {
+        ULONG packed = vwk->tc_palette[index];
+        *r = (WORD)(((LONG)((packed >> 16) & 0xffUL) * 1000 + 127) / 255);
+        *g = (WORD)(((LONG)((packed >>  8) & 0xffUL) * 1000 + 127) / 255);
+        *b = (WORD)(((LONG)(packed & 0xffUL) * 1000 + 127) / 255);
+    } else {
+        vdi_from_rgb565(vwk->tc_palette[index], r, g, b);
+    }
 }
 
 /*
