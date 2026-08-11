@@ -20,11 +20,16 @@
  * own comment on why a lossless DOS-attribute mapping can't be built on
  * top of a Unix mode bit.
  *
- * Stage 5 adds a directory-listing cache (v9p_dircache[], see its own
+ * Stage 5 added a directory-listing cache (v9p_dircache[], see its own
  * comment) amortising v9p_resolve_name()'s short->long scan across
  * repeated lookups against the same directory - correctness-preserving,
  * not new capability: every path that used to hit the server for every
  * single resolution still gets the right answer, just faster on a hit.
+ *
+ * Stage 6 adds dfree() (Tstatfs) and closes out #157's v1 scope -
+ * mkdir/rmdir/remove/rename/dfree round out every pfs_ops entry this
+ * driver ever intends to implement; mediach and native_handles were
+ * never applicable here (see their own NULL/FALSE below).
  */
 
 #include "config.h"
@@ -865,6 +870,41 @@ static LONG v9p_pfs_rename(PFSCOOKIE *olddir, const char *oldname,
 }
 
 /* ------------------------------------------------------------------ */
+/* dfree                                                                 */
+/* ------------------------------------------------------------------ */
+
+/* Tstatfs takes any fid within the filesystem, not specifically a
+ * directory's own - the persistent attach fid v9p_root_fid() already
+ * keeps alive for the driver's whole lifetime is enough, no walk
+ * needed. */
+static LONG v9p_pfs_dfree(struct pfs_ops *fs, WORD drive, ULONG out[4])
+{
+    P9STATFS stat;
+    LONG rc;
+
+    (void)fs;
+    (void)drive;    /* this driver only ever serves CONF_VIRTIO_9P_DRIVE */
+
+    rc = v9p_statfs(v9p_root_fid(), &stat);
+    if (rc < 0)
+        return rc;
+
+    /* GEMDOS's Dfree() has no concept of a 9p block, only DOS clusters -
+     * map 1:1, one "cluster" == one 9p block, so out[3] (sectors/cluster)
+     * is always 1. stat.blocks/.bfree are a full UQUAD; clamping them
+     * into a 32-bit ULONG is a plain narrowing comparison/cast, not a
+     * division, so - unlike v9p_unixtime_to_gemdos()'s UQUAD parameter
+     * problem - this needs no libgcc 64-bit division helper this
+     * freestanding build doesn't link in. */
+    out[0] = (stat.bfree > 0xFFFFFFFFUL) ? 0xFFFFFFFFUL : (ULONG)stat.bfree;
+    out[1] = (stat.blocks > 0xFFFFFFFFUL) ? 0xFFFFFFFFUL : (ULONG)stat.blocks;
+    out[2] = stat.bsize;
+    out[3] = 1;
+
+    return E_OK;
+}
+
+/* ------------------------------------------------------------------ */
 
 static void v9p_pfs_release(PFSCOOKIE *fc)
 {
@@ -895,7 +935,7 @@ static struct pfs_ops v9p_pfs_ops = {
     v9p_pfs_remove,
     v9p_pfs_rename,
     NULL,               /* chattr: no lossless GEMDOS-attribute<->9p mapping */
-    NULL,               /* dfree: a later stage */
+    v9p_pfs_dfree,
     NULL,               /* mediach */
     v9p_pfs_release,
     FALSE               /* native_handles: this driver has no handle

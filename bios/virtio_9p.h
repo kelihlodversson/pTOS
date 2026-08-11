@@ -140,6 +140,21 @@ LONG v9p_unlinkat(ULONG dfid, const char *name, ULONG flags);
  * directories may be the same fid for a plain same-directory rename. */
 LONG v9p_renameat(ULONG olddfid, const char *oldname, ULONG newdfid, const char *newname);
 
+/* The handful of Tstatfs/Rstatfs fields with a GEMDOS Dfree() use - see
+ * v9p_statfs()'s own comment for why files/ffree/fsid/namelen aren't
+ * kept (same reasoning as P9GETATTR above). */
+typedef struct
+{
+    ULONG bsize;
+    UQUAD blocks;
+    UQUAD bfree;
+} P9STATFS;
+
+/* Fetches filesystem-level free-space info for the filesystem containing
+ * 'fid' (Tstatfs). Returns E_OK with '*out' filled, or a negative
+ * gemerror.h code. */
+LONG v9p_statfs(ULONG fid, P9STATFS *out);
+
 #endif /* CONF_WITH_VIRTIO_9P */
 
 #endif /* VIRTIO_9P_H */

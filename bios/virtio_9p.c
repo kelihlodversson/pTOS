@@ -85,6 +85,8 @@
 #define P9_RUNLINKAT 77
 #define P9_TRENAMEAT 74
 #define P9_RRENAMEAT 75
+#define P9_TSTATFS   8
+#define P9_RSTATFS   9
 #define P9_RLERROR   7
 
 #define V9P_MAX_MOUNT_TAG  32   /* QEMU's own MAX_TAG_LEN */
@@ -1307,6 +1309,75 @@ LONG v9p_renameat(ULONG olddfid, const char *oldname, ULONG newdfid, const char 
         KDEBUG(("virtio_9p: unexpected reply type %u to Trenameat\n", rtype));
         return EINTRN;
     }
+
+    return E_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tstatfs                                                              */
+/* ------------------------------------------------------------------ */
+
+LONG v9p_statfs(ULONG fid, P9STATFS *out)
+{
+    UBYTE *p = v9p_tbuf;
+    UBYTE *size_field;
+    ULONG len;
+    LONG rc;
+    const UBYTE *rp;
+    UBYTE rtype;
+    UWORD rtag;
+    ULONG type;
+
+    size_field = p;
+    p += 4;
+    p = v9p_put8(p, P9_TSTATFS);
+    p = v9p_put16(p, V9P_TAG);
+    p = v9p_put32(p, fid);
+
+    len = (ULONG)(p - v9p_tbuf);
+    v9p_put32(size_field, len);
+
+    rc = v9p_transact(len);
+    if (rc < 0)
+        return rc;
+    if ((ULONG)rc < 7)
+        return EINTRN;
+
+    rp = v9p_rbuf + 4;
+    rp = v9p_get8(rp, &rtype);
+    rp = v9p_get16(rp, &rtag);
+
+    if (rtag != V9P_TAG)
+    {
+        KDEBUG(("virtio_9p: Rstatfs tag 0x%x != 0x%x\n", rtag, V9P_TAG));
+        return EINTRN;
+    }
+    if (rtype == P9_RLERROR)
+    {
+        ULONG ecode;
+        v9p_get32(rp, &ecode);
+        return v9p_errno_to_gemerror(ecode);
+    }
+    if (rtype != P9_RSTATFS)
+    {
+        KDEBUG(("virtio_9p: unexpected reply type %u to Tstatfs\n", rtype));
+        return EINTRN;
+    }
+
+    /* type[4] bsize[4] blocks[8] bfree[8] bavail[8] files[8] ffree[8]
+     * fsid[8] namelen[4] - only bsize/blocks/bfree have a GEMDOS Dfree()
+     * use (see v9p_pfs_dfree() in fs/virtio_9p_pfs.c). */
+    if ((ULONG)rc < 7 + 4 + 4 + 8 + 8)
+    {
+        KDEBUG(("virtio_9p: Rstatfs reply too short\n"));
+        return EINTRN;
+    }
+
+    rp = v9p_get32(rp, &type);
+    (void)type;     /* the filesystem's magic number (statfs(2) f_type) - no GEMDOS use */
+    rp = v9p_get32(rp, &out->bsize);
+    rp = v9p_get64(rp, &out->blocks);
+    rp = v9p_get64(rp, &out->bfree);
 
     return E_OK;
 }
