@@ -131,17 +131,26 @@ public API they do not define.
 
 ## Behaviour And Verification
 
-This is a pure refactor: no logic changes, no new options for users, no size
-budget change.
+This is a pure refactor: no logic changes and no new options for users.  The
+split costs a small, unavoidable code-size increase: the loader interface
+(`rsload.h`) promotes `rs_readit()`/`fix_objects()` and the shared helpers
+from `static` to external, which disables GCC whole-function inlining across
+translation units (this build uses no LTO).  The pre-split figures are a
+baseline for reference, but the authoritative comparison figures after the
+split are the measured ones below.
 
 - Verify by building the full configuration matrix and comparing image sizes
-  against the recorded pre-split values:
-  - `atari192` (legacy, no colour icons): `ptos192us.img` with 2068 bytes free.
-  - `atari256` (legacy + colour icons): `ptos256us.img` with 7255 bytes free.
-  - `atari512` (portable + colour icons): `ptos512k.img` with 16461 bytes free.
+  against the recorded post-split values (pre-split baseline in parens):
+  - `atari192` (legacy, no colour icons): `ptos192us.img` with 1914 bytes
+    free (pre-split 2036, design-doc estimate 2068).
+  - `atari256` (legacy + colour icons): `ptos256us.img` with 7115 bytes
+    free (pre-split 7221, design-doc estimate 7255).
+  - `atari512` (portable + colour icons): `ptos512k.img` with 16375 bytes
+    free (pre-split 16461).
   - `atari512` with `CONF_WITH_VDI_CICON_TEST=y`: exercises `rs_loadmem()`
     from its new file.
-  - `rpi1` (portable + truecolor backend): exercises `pack_planes()`/`pack_cicon()`.
+  - `rpi1` (portable + truecolor backend): exercises `pack_planes()`/`pack_cicon()`;
+    RAM-used 570496 bytes (pre-split 570368).
 - `make gitready` must pass.
 - The French 256 KB variant must still fit (Release archives CI job).
 

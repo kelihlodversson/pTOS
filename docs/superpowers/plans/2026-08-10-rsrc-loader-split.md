@@ -10,7 +10,13 @@
 
 ## Global Constraints
 
-- Pure refactor: no logic changes, no user-visible options, no size budget change. Image sizes and "bytes free" figures must match the pre-split baseline exactly.
+- Pure refactor: no logic changes, no user-visible options.  The split
+  inherently costs a small amount of code size: the `rsload.h` interface
+  promotes `rs_readit()`/`fix_objects()` and the shared helpers from `static`
+  to external, disabling GCC whole-function inlining across translation units
+  (no LTO).  This drift was accepted by the plan owner; the post-Task-2
+  measured sizes are the authoritative comparison baseline (see Progress
+  Ledger).
 - The derived `CONF_WITH_PORTABLE_RSC_LOAD` symbol is invisible: no prompt, no help text.
 - The two loader files must contain **no** `#if CONF_WITH_LEGACY_RSC_LOAD` inside; they are selected by `build.mk`. `#if CONF_WITH_COLOUR_ICONS` and `#if CONF_WITH_VDI_BACKEND_TRUECOLOR` feature guards remain.
 - Exactly one loader links on every configuration; no duplicate `rs_readit()`/`fix_objects()` symbols.
@@ -330,13 +336,16 @@ obj-$(CONF_WITH_LEGACY_RSC_LOAD) += rsload_legacy.o
 - [ ] **Step 5: Build and compare against baseline**
 
 ```sh
-make atari192_defconfig && make          # expect: # ptos192us.img done (2068 bytes free)
-make atari256_defconfig && make          # expect: # ptos256us.img done (7255 bytes free)
-make atari512_defconfig && make          # expect: # ptos512k.img done (16461 bytes free)
+make atari192_defconfig && make          # expect: # ptos192us.img done (1914 bytes free)
+make atari256_defconfig && make          # expect: # ptos256us.img done (7115 bytes free)
+make atari512_defconfig && make          # expect: # ptos512k.img done (16375 bytes free)
 make rpi1_defconfig && make              # expect: identical RAM-used figure to baseline
 ```
 
-All four must build with the exact baseline sizes/free-bytes. If a size differs, stop: a move went wrong (e.g. a guard dropped on code that should stay).
+Baseline (post-split, authoritative after owner acceptance of the inlining
+drift): atari192 1914, atari256 7115, atari512 16375, rpi1 RAM 570496.  If a
+size differs from this, stop: a move went wrong (e.g. a guard dropped on code
+that should stay).
 
 - [ ] **Step 6: `make gitready` and commit**
 
@@ -463,7 +472,8 @@ Must complete with `# ptos256fr.img done (N bytes free)` and N >= 0 (this is the
 ```sh
 make distclean
 # then Tasks 2-4's builds in order; every image size / free byte / RAM figure
-# must equal the Task 1 baseline exactly
+# must equal the post-split baseline exactly (atari192 1914, atari256 7115,
+# atari512 16375, rpi1 RAM 570496)
 ```
 
 - [ ] **Step 3: Final review**
@@ -491,6 +501,14 @@ Optionally smoke-boot the result with the `ptos-smoketest` skill (QEMU `raspi1ap
   - rpi1: RAM-used 570368 (not in doc)
 - `CONF_WITH_PORTABLE_RSC_LOAD` verified in `obj/autoconf.h`: 0 on atari192/256, 1 on atari512 and rpi1.
 - Parking: `aes/Kconfig` gains the derived symbol; `#if CONF_WITH_LEGACY_RSC_LOAD` sites in `gemrslib.c` are at lines 580, 1002, 1038, 1093(dual), 1602, 1651+ (portable `#if !...`).
+
+### Task 2: Extract the legacy loader — DONE (owner ruling, pending review)
+
+- Commit `fd49b3ac` "aes: move legacy RSC loader into its own file" — the split itself is faithful (byte-for-byte verified, `make gitready` passes, no `#if CONF_WITH_LEGACY_RSC_LOAD` in `rsload_legacy.c`).
+- Plan contradiction resolved by owner: the `rsload.h` interface's static→external promotion disables cross-TU inlining (no LTO), so sizes drift. Owner decision: **accept the drift; post-split measured sizes are the new authoritative baseline** (design doc and plan updated accordingly).
+- New authoritative baseline: atari192 **1914** free (was 2036), atari256 **7115** free (was 7221), atari512 **16375** free (was 16461), rpi1 RAM **570496** (was 570368).
+- Root cause: baseline inlined static `rs_readit`/`fix_objects`/`get_sub` into `rs_load`/`rs_fixit`; external linkage forces standalone copies (+122/+106/+86 bytes on m68k, +128 on ARM).
+- TODO: task review (spec + quality) still pending.
 
 ---
 
