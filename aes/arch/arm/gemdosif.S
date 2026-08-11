@@ -138,7 +138,7 @@ trapaes:
 .text
 
 _far_bcha:
-        push_privstack gstksave
+        push_privstack gstack
         push    {r0-r3,lr}
         bl      _b_click
         pop     {r0-r3,lr}
@@ -146,7 +146,7 @@ _far_bcha:
         bx      lr
 
 _far_mcha:
-        push_privstack gstksave
+        push_privstack gstack
         push    {r0-r3,lr}
         ldmfd   sp, {r1,r2} // shift arg 1 and 2 up by one
         ldr     r0, =_mchange
@@ -158,7 +158,7 @@ _far_mcha:
 #if CONF_WITH_VDI_EXTENSIONS
 /* AES mouse wheel handler called by the VDI */
 _aes_wheel:
-        push_privstack gstksave
+        push_privstack gstack
         push    {r0-r3,lr}
         ldmfd   sp, {r1,r2} // shift arg 1 and 2 up by one
         ldr     r0, =_wheel_change
@@ -228,13 +228,19 @@ _CMP_TICK:
 
 /*
  * miscellaneous stacks
+ *
+ * 8-byte aligned (not just 4): these become the live sp for _far_bcha/
+ * _far_mcha/_aes_wheel/_tikcod (see push_privstack above), and GCC's
+ * -mfpu=neon-vfpv4 auto-vectorizer will opportunistically use 8-byte-
+ * aligned NEON loads/stores for stack locals anywhere downstream of
+ * that -- same class of bug as #31/#33.
  */
-        .balign 4
+        .balign 8
 
         .space  0x400
 gstack:                         // gsx stack for mouse
 
-        .balign 4
+        .balign 8
         .space  0x400
 tstack:                         // tick stack
         .space  4

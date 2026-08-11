@@ -775,7 +775,22 @@ void gem_main(void)
         rlr->p_appdir[0] = '\0'; /* by default, no application directory */
         /* if not rlr then initialize his stack pointer */
         if (i != 0)
-            rlr->p_uda->u_spsuper = &rlr->p_uda->u_supstk;
+        {
+            ULONG *stack_top = &rlr->p_uda->u_supstk;
+
+#if ARCH_ARM
+            /* Same reasoning as init_p0_stkptr(): ARM/AAPCS requires the
+             * stack pointer to be 8-byte aligned wherever gcc's NEON/VFP
+             * auto-vectorizer might spill a local there, but u_supstk's
+             * offset within UDA isn't a multiple of 8, so this is never
+             * naturally aligned -- round down explicitly. Process 0 gets
+             * this treatment via init_p0_stkptr(); every other internal
+             * process and desk accessory (i != 0) needs it too, since
+             * they all run AES/VDI code on this same private stack. */
+            stack_top = (ULONG *)((ULONG)stack_top & ~7UL);
+#endif
+            rlr->p_uda->u_spsuper = stack_top;
+        }
         rlr->p_pid = i;
         rlr->p_stat = 0;
         rlr->p_msg.action = -1;
