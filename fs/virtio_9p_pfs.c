@@ -652,6 +652,8 @@ static LONG v9p_pfs_read(PFSCOOKIE *fc, LONG pos, LONG len, UBYTE *buf)
 
 static LONG v9p_pfs_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *out)
 {
+    char realname[V9P_MAX_NAME + 1];
+    const char *createname;
     ULONG fid;
     QID9P qid;
     LONG rc;
@@ -659,6 +661,21 @@ static LONG v9p_pfs_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOK
     (void)attr; /* no lossless GEMDOS-attribute-bits -> 9p mapping at
                  * create time, same reasoning as chattr() staying NULL
                  * (see this file's header comment) */
+
+    /* An existing entry may already map to this 8.3 name without being
+     * a literal byte-for-byte match (e.g. a host file "foo.txt", whose
+     * filename8_3() form is the same "FOO.TXT" GEMDOS is asking to
+     * (re)create) - Tlcreate must target THAT real name so O_TRUNC
+     * actually truncates it, not create a second, case/long-name-variant
+     * file alongside it on a case-sensitive host. Only a genuinely new
+     * name falls back to GEMDOS's own literal (always-uppercase) form. */
+    rc = v9p_resolve_name((ULONG)dir->index, name, realname, sizeof(realname));
+    if (rc == E_OK)
+        createname = realname;
+    else if (rc == EFILNF)
+        createname = name;
+    else
+        return rc;
 
     /* Tlcreate repurposes whatever fid it's given into the new file's
      * fid (see v9p_lcreate()'s own comment in virtio_9p.h) - walk a
@@ -670,7 +687,7 @@ static LONG v9p_pfs_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOK
 
     /* GEMDOS's Fcreate() always hands back a file open for read+write,
      * truncated to empty whether or not it already existed. */
-    rc = v9p_lcreate(fid, name, 2 /* O_RDWR */ | V9P_O_CREAT | V9P_O_TRUNC, 0644, &qid);
+    rc = v9p_lcreate(fid, createname, 2 /* O_RDWR */ | V9P_O_CREAT | V9P_O_TRUNC, 0644, &qid);
     if (rc < 0)
     {
         v9p_clunk(fid);
@@ -806,7 +823,22 @@ static LONG v9p_pfs_readdir(PFSCOOKIE *dir, LONG *cursor, char *name, int namele
  * v9p_pfs_create()'s own scope for v1. */
 static LONG v9p_pfs_mkdir(PFSCOOKIE *dir, const char *name)
 {
-    LONG rc = v9p_mkdir((ULONG)dir->index, name, 0755, NULL);
+    char realname[V9P_MAX_NAME + 1];
+    LONG rc;
+
+    /* GEMDOS Dcreate() must fail (EACCDN, matching xrename()'s own
+     * "destination already exists" convention in bdos/fsdir.c) if 'name'
+     * already exists under its 8.3 mapping - a literal Tmkdir alone
+     * would not catch an existing entry that only matches after
+     * short<->long resolution (e.g. a case difference on a
+     * case-sensitive host). */
+    rc = v9p_resolve_name((ULONG)dir->index, name, realname, sizeof(realname));
+    if (rc >= 0)
+        return EACCDN;
+    if (rc != EFILNF)
+        return rc;
+
+    rc = v9p_mkdir((ULONG)dir->index, name, 0755, NULL);
 
     if (rc >= 0)
         v9p_dircache_invalidate((ULONG)dir->index);
@@ -850,15 +882,28 @@ static LONG v9p_pfs_rename(PFSCOOKIE *olddir, const char *oldname,
                             PFSCOOKIE *newdir, const char *newname)
 {
     char realoldname[V9P_MAX_NAME + 1];
+    char realnewname[V9P_MAX_NAME + 1];
     LONG rc;
 
     rc = v9p_resolve_name((ULONG)olddir->index, oldname, realoldname, sizeof(realoldname));
     if (rc < 0)
         return rc;
 
-    /* 'newname' must not already exist - passed through as GEMDOS gave
-     * it (an 8.3 name) rather than resolved, same "no long-name
+    /* GEMDOS Frename() must fail (EACCDN, see xrename()'s own
+     * ixsfirst()-based check in bdos/fsdir.c) if 'newname' already
+     * exists - unlike Trenameat, which follows POSIX rename(2) semantics
+     * and would otherwise silently replace an existing target (or, via
+     * an 8.3 mapping that only matches after resolution, create a
+     * case/long-name-variant duplicate instead of detecting the
+     * collision at all). 'newname' itself is passed through as GEMDOS
+     * gave it (an 8.3 name) once confirmed free, same "no long-name
      * synthesis on write" scope as create()/mkdir(). */
+    rc = v9p_resolve_name((ULONG)newdir->index, newname, realnewname, sizeof(realnewname));
+    if (rc >= 0)
+        return EACCDN;
+    if (rc != EFILNF)
+        return rc;
+
     rc = v9p_renameat((ULONG)olddir->index, realoldname, (ULONG)newdir->index, newname);
     if (rc >= 0)
     {
