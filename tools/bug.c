@@ -2538,7 +2538,7 @@ static void make(void)
         th = xmalloc(numref * sizeof(*th));
         memset(th, 0, numref * sizeof(*th));
         ti = xmalloc(numref * sizeof(*ti));
-        memset(th, 0, numref * sizeof(*ti));
+        memset(ti, 0, numref * sizeof(*ti));
         have_translation = xmalloc(numref * sizeof(*have_translation));
         memset(have_translation, 0, numref * sizeof(*have_translation));
 

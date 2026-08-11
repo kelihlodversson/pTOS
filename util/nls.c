@@ -53,7 +53,7 @@ const char *etos_gettext(unsigned long msgid)
 {
   nls_key_offset offset;
 
-/* check for empty string - often used in RSC - must return original address */
+/* check for empty string - often used in RSC - return the canonical empty string */
   if (msgid == 0)
     return nls_key_strings;
 
