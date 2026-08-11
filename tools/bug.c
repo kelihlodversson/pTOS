@@ -2643,8 +2643,16 @@ static void make(void)
             int rc;
 
             t = translations->buf + j;
-            sprintf(tmp, "    /* %5u %5u */ ", ti[tr], j);
-            tr++;
+            if (j == 0)
+            {
+                /* offset 0 is the reserved "no translation" sentinel, not a ti[] entry */
+                sprintf(tmp, "    /* %5u %5u */ ", 0, j);
+            }
+            else
+            {
+                sprintf(tmp, "    /* %5u %5u */ ", ti[tr], j);
+                tr++;
+            }
             rc = print_canon(f, t, tmp, TRUE, TRUE);
             if (rc < 0) /* error in alert format */
             {
