@@ -223,7 +223,7 @@ static BOOL pfs_match(const char *name, const char *pattern)
  * this drive's root" - which is exactly what a freshly Pexec()'d
  * process's zero-initialised p_curdir[] already reads as.
  */
-#define PFS_MAX_CWD 16
+#define PFS_MAX_CWD CONF_PFS_MAX_CWD
 
 typedef struct {
     struct pfs_ops *fs;

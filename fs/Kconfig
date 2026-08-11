@@ -51,4 +51,19 @@ config CONF_PFS_MAX_SEARCHES
 	  bytes; raise this only if an application legitimately keeps many
 	  directory searches open at the same time.
 
+config CONF_PFS_MAX_CWD
+	int "Maximum cached pluggable current directories"
+	depends on CONF_WITH_PLUGGABLE_FS
+	default 40
+	range 1 40
+	help
+	  Number of distinct non-root current-directory cookies (across all
+	  drives and processes) the pluggable filesystem layer can cache at
+	  once - the pluggable-fs equivalent of the legacy dirtbl[]'s fixed
+	  NCURDIR (40) capacity. Each slot costs a path buffer plus a
+	  cookie, so lower this for a ROM/RAM-tight build that enables
+	  CONF_WITH_PLUGGABLE_FS but doesn't need the full legacy capacity;
+	  the default matches dirtbl[] so enabling pluggable fs support
+	  doesn't reduce this system limit.
+
 endmenu

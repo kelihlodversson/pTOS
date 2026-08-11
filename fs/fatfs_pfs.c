@@ -36,6 +36,7 @@ static LONG fat_abspath(PFSCOOKIE *dir, const char *tail, char *buf, int buflen)
 {
     DND *dn = (DND *)dir->index;
     char *p = buf;
+    char *end;
     int len;
 
     if (buflen < 4)
@@ -45,11 +46,23 @@ static LONG fat_abspath(PFSCOOKIE *dir, const char *tail, char *buf, int buflen)
     *p++ = ':';
 
     len = buflen - 3;      /* -2 for "X:" already written, -1 for the null strlcpy always leaves room for */
-    p = dopath(dn, p, &len);
-    if (len < 0)
-        len = 0;
+    end = dopath(dn, p, &len);
+    /*
+     * dopath() silently stops writing when it runs out of room (its own
+     * comment: "len must never go < 0") rather than reporting truncation
+     * - it always ends a component it *did* finish with SLASH, so 'len'
+     * hitting exactly 0 without the last byte written being SLASH means
+     * it stopped mid-component.  Treat that - and 'tail' not fitting in
+     * whatever room is left - as ERANGE rather than silently operating
+     * on the wrong (truncated) path.
+     */
+    if ((len == 0) && ((end == p) || (end[-1] != SLASH)))
+        return ERANGE;
 
-    strlcpy(p, tail, (size_t)len + 1);
+    if (strlen(tail) > (size_t)len)
+        return ERANGE;
+
+    strlcpy(end, tail, (size_t)len + 1);
 
     return E_OK;
 }
