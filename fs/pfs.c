@@ -189,7 +189,27 @@ static BOOL pfs_seg_match(const char *name, const char *pattern)
             return *name == 0;
 
         if (*name == 0)
-            return FALSE;
+        {
+            /*
+             * 'name' ran out but 'pattern' hasn't - the built-in FAT
+             * matcher (bdos/fsdir.c's builds()/match()) packs both
+             * sides into fixed-width, space-padded 8.3 fields, so a
+             * shorter name still has implicit trailing spaces for the
+             * rest of 'pattern' to compare against: '?' matches that
+             * padding like it matches anything else, a literal space
+             * genuinely equals it, and a '*' anywhere in the remainder
+             * still matches the (empty) rest - only a literal
+             * non-space character is a real mismatch.
+             */
+            for (; *pattern; pattern++)
+            {
+                if (*pattern == '*')
+                    return TRUE;
+                if ((*pattern != '?') && (*pattern != ' '))
+                    return FALSE;
+            }
+            return TRUE;
+        }
 
         if ((*pattern != '?') &&
             (toupper((UBYTE)*pattern) != toupper((UBYTE)*name)))
