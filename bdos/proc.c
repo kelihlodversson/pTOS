@@ -27,6 +27,9 @@
 #include "biosext.h"
 #include "asm.h"
 #include "../bios/tosvars.h"
+#if CONF_WITH_PLUGGABLE_FS
+#include "pfs.h"
+#endif
 
 
 /*
@@ -146,6 +149,20 @@ static void ixterm(PD *r)
         if ((h = r->p_curdir[i]) != 0)
             decr_curdir_usage(h);
     }
+
+#if CONF_WITH_PLUGGABLE_FS
+    /*
+     * p_curdir[] above indexes fs/pfs.c's own directory table instead of
+     * dirtbl[] for a pluggable drive - decr_curdir_usage() is harmless
+     * either way (it no-ops below NCURDIR's dirtbl[] range and dirtbl[]
+     * stays empty for the lifetime of a pluggable-fs build, since
+     * nothing calls incr_curdir_usage() once this option is on), but the
+     * pluggable table still needs its own matching cleanup so its slots
+     * (and any open Fsfirst/Fsnext searches this process owned) don't
+     * leak.
+     */
+    pfs_proc_exit(r);
+#endif
 
     /* free each item in the allocated list that is owned by 'r' */
 
@@ -424,6 +441,14 @@ static void init_pd_files(PD *p)
         p->p_curdir[i] = dn;
         if (dn)
             dirtbl[dn].use++;
+#if CONF_WITH_PLUGGABLE_FS
+        /* p_curdir[] indexes fs/pfs.c's own table instead when this
+         * option is on (see the comment above PFS_MAX_CWD in fs/pfs.c);
+         * the dirtbl[] bump above is harmless but meaningless in that
+         * case, so also bump the table actually in use. */
+        if (dn)
+            pfs_cwd_addref((WORD)dn);
+#endif
     }
 
     /* and current drive */

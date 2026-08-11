@@ -116,6 +116,7 @@ optional-dirs-y = vdi
 optional-dirs-$(CONF_WITH_AES) += aes desk
 optional-dirs-$(CONF_WITH_CLI) += cli
 optional-dirs-$(CONF_WITH_USB) += usb
+optional-dirs-$(CONF_WITH_PLUGGABLE_FS) += fs
 
 core_dirs = $(core-dirs-y)
 optional_dirs = $(optional-dirs-y)
@@ -218,12 +219,23 @@ CPPFLAGS = $(CFLAGS)
 
 # Per-directory extra options; $(bios_copts) applies to bios/, and so on.
 # The USB code is conceptually part of the BIOS and needs access to the
-# BIOS private headers.
-usb_copts = $(addprefix -Ibios/,$(arch_subdirs)) -Ibios
+# BIOS private headers.  It also pulls in bdos/fs.h (via usb_global.h),
+# which needs -Ifs below when CONF_WITH_PLUGGABLE_FS is set.
+usb_copts = $(addprefix -Ibios/,$(arch_subdirs)) -Ibios -Ifs
 
 # virtio_blk.c (bios/) needs the shared virtio-mmio transport header from
 # util/.
 bios_copts = -Iutil
+
+# bdosmain.c's osif() dispatch hook needs the pluggable filesystem layer's
+# public API from fs/, when CONF_WITH_PLUGGABLE_FS is set - as does every
+# other bdos/ file that includes fs.h, since FTAB now embeds a PFSCOOKIE
+# by value when that option is on.
+bdos_copts = -Ifs
+
+# fatfs_pfs.c (fs/) wraps the built-in FAT filesystem, so it needs bdos/'s
+# private headers.
+fs_copts = -Ibdos
 
 CFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_copts))
 SFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_sopts))
