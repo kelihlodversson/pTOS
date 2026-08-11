@@ -502,13 +502,14 @@ Optionally smoke-boot the result with the `ptos-smoketest` skill (QEMU `raspi1ap
 - `CONF_WITH_PORTABLE_RSC_LOAD` verified in `obj/autoconf.h`: 0 on atari192/256, 1 on atari512 and rpi1.
 - Parking: `aes/Kconfig` gains the derived symbol; `#if CONF_WITH_LEGACY_RSC_LOAD` sites in `gemrslib.c` are at lines 580, 1002, 1038, 1093(dual), 1602, 1651+ (portable `#if !...`).
 
-### Task 2: Extract the legacy loader — DONE (owner ruling, pending review)
+### Task 2: Extract the legacy loader — DONE (approved)
 
 - Commit `fd49b3ac` "aes: move legacy RSC loader into its own file" — the split itself is faithful (byte-for-byte verified, `make gitready` passes, no `#if CONF_WITH_LEGACY_RSC_LOAD` in `rsload_legacy.c`).
 - Plan contradiction resolved by owner: the `rsload.h` interface's static→external promotion disables cross-TU inlining (no LTO), so sizes drift. Owner decision: **accept the drift; post-split measured sizes are the new authoritative baseline** (design doc and plan updated accordingly).
 - New authoritative baseline: atari192 **1914** free (was 2036), atari256 **7115** free (was 7221), atari512 **16375** free (was 16461), rpi1 RAM **570496** (was 570368).
 - Root cause: baseline inlined static `rs_readit`/`fix_objects`/`get_sub` into `rs_load`/`rs_fixit`; external linkage forces standalone copies (+122/+106/+86 bytes on m68k, +128 on ARM).
-- TODO: task review (spec + quality) still pending.
+- Review: approved. Task quality Approved, no Critical/Important.
+- Task 2: minor (deferred): stale orphaned comment at `aes/gemrslib.c:44-45` ("type definitions for use by an application when calling rsrc_gaddr and rsrc_saddr") — was the banner for the removed R_* constants, now dangles above the LOCALS banner. Delete or reword to point at `rsload.h`. To fix before merge.
 
 ---
 
