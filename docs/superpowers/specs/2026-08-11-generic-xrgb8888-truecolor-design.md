@@ -93,27 +93,41 @@ for `INQ_TAB[4] == 32` (direct colour, no LUT), like the existing `== 16`.
 
 **B1. New `vdi/vdi_backend_truecolor_tmpl.c`** — not an object in build.mk;
 `#include`d by both wrappers (the fVDI technique). Holds the
-pixel-parameterized drawing code as `static` functions written against the
-macros `PIXEL`, `PIXEL_SIZE`, `PACK_PIXEL`, `UNPACK_PIXEL`: get_start_addr,
-get_pixel, put_pixel, get_raw_pixel, put_raw_pixel, fill_rect, text_blit,
-raster_copy, draw_line, search_left, search_right. The `d_nxwd != 2` /
+pixel-parameterized drawing code as `static` functions written against just
+two macros — `PIXEL` (the storage type, UWORD or ULONG) and `PIXEL_SIZE` (2 or
+4): get_start_addr, get_pixel, put_pixel, get_raw_pixel, put_raw_pixel,
+fill_rect, text_blit, raster_copy, draw_line, search_left, search_right.
+
+No pack/unpack macros are needed in the template: colour→pixel conversion goes
+through `truecolor_pixel_for_index()`/`vdi_truecolor_pixel_for_index()`, which
+read the (widened) `tc_palette[]` and are therefore already format-agnostic;
+only the strided storage and the XOR masks differ. The hardcoded `addr += x *
+2` (vdi_backend_truecolor.c:368) and `dst[x] ^= 0xffff` (line 432) become
+`addr += x * PIXEL_SIZE` and `dst[x] ^= (PIXEL)-1`. The `d_nxwd != 2` /
 `s_nxwd != 2` guards in the raster-copy path become `PIXEL_SIZE` comparisons.
+`get_pixel()`'s palette search (lines 373-390) compares against `tc_palette[]`,
+which is ULONG in both formats, so it needs no format logic.
 
 **B2. `vdi/vdi_backend_truecolor.c`** (RGB565 wrapper, same object name):
-`#define PIXEL UWORD` / `#define PIXEL_SIZE 2` / `#define PACK_PIXEL(v) \
-rgb565_from_prgb(v)` and includes the template. It keeps **all shared state**:
-`active_vwk`, `physical_vwk_seeded`, `default_prgb_palette[]`, and the
-format-independent exports (`vdi_truecolor_pixel_for_index`,
-`vdi_backend_active_vwk`/`set_active_vwk`, `vdi_truecolor_screen`). It defines
-`packed_truecolor_backend_ops`.
+`#define PIXEL UWORD` / `#define PIXEL_SIZE 2` and includes the template. It
+keeps **all shared state**: `active_vwk`, `physical_vwk_seeded`,
+`default_prgb_palette[]`, and the format-independent exports
+(`vdi_truecolor_pixel_for_index`, `vdi_backend_active_vwk`/`set_active_vwk`,
+`vdi_truecolor_screen`). It defines `packed_truecolor_backend_ops` from the
+template's static functions. Because `vdi_defs.h:320-326` and
+`vdi_textblit.c:733` call the primitives by name in **single-renderer**
+builds, this wrapper also provides thin extern forwarding stubs under
+`#if !CONF_WITH_VDI_BACKEND_DISPATCH` for the nine direct-call names
+(`truecolor_get_start_addr`, `_get_pixel`, `_put_pixel`, `_fill_rect`,
+`_draw_line`, `_search_right`, `_search_left`, `_raster_copy`, `_text_blit`).
+Under dispatch these names are never referenced, so the 32 bpp wrapper cannot
+collide with them.
 
 **B3. New `vdi/vdi_backend_truecolor32.c`** (XRGB8888 wrapper): `#define
-PIXEL ULONG` / `#define PIXEL_SIZE 4` / `#define PACK_PIXEL(v) ((v) |
-0xff000000UL)` (the existing `0x00BBGGRR` palette data is already in DRM
-XRGB8888 layout, missing only the alpha byte) and includes the template. It
-defines `packed_truecolor32_backend_ops`. No shared state: everything lives in
-the RGB565 wrapper's object, which is always built when `CONF_WITH_VDI_BACKEND_TRUECOLOR`
-is set.
+PIXEL ULONG` / `#define PIXEL_SIZE 4` and includes the template. It defines
+`packed_truecolor32_backend_ops`. No shared state and no extern stubs:
+everything lives in the RGB565 wrapper's object, which is always built when
+`CONF_WITH_VDI_BACKEND_TRUECOLOR` is set.
 
 **B4. New Kconfig `CONF_WITH_VDI_BACKEND_TRUECOLOR32`:** `depends on
 CONF_WITH_VDI_BACKEND_TRUECOLOR && CONF_WITH_VDI_BACKEND_DISPATCH`, default n.
@@ -131,11 +145,13 @@ packed_truecolor32_backend_ops` in vdi_backend.h under dispatch.
 truecolor screen. The single-copy palette functions in
 `vdi_backend_truecolor.c` pick the pack format at runtime:
 
-- `vdi_truecolor_init_palette()` seeds `tc_palette[]` via `PACK_PIXEL`-equivalent
-  logic keyed on `v_planes == 32`; `tc_req_col[]` is unchanged (VDI 0-1000 scale,
-  format-independent).
+- `vdi_truecolor_init_palette()` seeds `tc_palette[]` packing each default
+  colour as RGB565 or XRGB8888 keyed on `v_planes == 32`; `tc_req_col[]` is
+  unchanged (VDI 0-1000 scale, format-independent).
 - `vdi_truecolor_set_color()` / `vdi_truecolor_get_color()` pack/unpack keyed
-  the same way (vdi_col.c:643, 816 call them unchanged).
+  the same way (vdi_col.c:643, 816 call them unchanged). For XRGB8888 the
+  packed value is `prgb | 0xff000000UL` — the existing `0x00BBGGRR` palette
+  data is already in DRM XRGB8888 layout, missing only the alpha byte.
 - `pixel_size = linea_vars.v_planes / 8` is the shared size helper, exposed as
   `vdi_truecolor_pixel_size()` (declared in vdi_backend.h).
 
@@ -216,10 +232,10 @@ Modified:
   is always built when `CONF_WITH_VDI_BACKEND_TRUECOLOR` is set — true today and
   preserved by B4's `depends on`. A future 32-bpp-only single-renderer build
   would need to relocate shared state; explicitly out of scope.
-- Text blit on ARM reaches the truecolor pixel conversion via the template's
-  `text_blit`; the m68k Line-A path (bios/arch/m68k/linea.S) calls
-  `vdi_truecolor_pixel_for_index()` directly — its UWORD storage truncates the
-  ULONG harmlessly because m68k truecolor is always RGB565. Verify at
-  implementation that ARM text output never pokes UWORD pixels directly.
+- The template is all-`static`; single-renderer builds rely on the nine extern
+  forwarding stubs in the RGB565 wrapper (B2). Verify at implementation that
+  no dispatch build references the bare `truecolor_*` names (grep shows the
+  direct calls in vdi_misc.c/vdi_fill.c/vdi_line.c/vdi_raster.c/vdi_textblit.c
+  are all in `#else` branches of `CONF_WITH_VDI_BACKEND_DISPATCH`).
 - `tc_palette` widening adds 512 B per workstation (mxalloc'd Vwks on ST-RAM);
   negligible but noted.
