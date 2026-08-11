@@ -54,6 +54,21 @@ BOOL screen_mode_desc_valid(const SCREEN_MODE_DESC *desc)
             if (desc->pitch & 1)
                 return FALSE;
             break;
+        case SCREEN_PIXEL_XRGB8888:
+            /*
+             * Mirror of the RGB565 check: vdi_backend_select() picks the
+             * 32 bpp backend off pixel_format alone, so a descriptor
+             * claiming XRGB8888 with the wrong bits_per_pixel would drive
+             * 4-byte address arithmetic against a buffer that isn't 32 bpp.
+             * Reject the mismatch here instead.  The 32 bpp backend does
+             * ULONG loads/stores per pixel and relies on every scanline
+             * starting 4-byte aligned.
+             */
+            if (desc->bits_per_pixel != 32)
+                return FALSE;
+            if (desc->pitch & 3)
+                return FALSE;
+            break;
         default:
             return FALSE;
         }

@@ -17,6 +17,7 @@
 
 #define SCREEN_PIXEL_NONE      0   /* not applicable: indexed color */
 #define SCREEN_PIXEL_RGB565    1   /* 5 red / 6 green / 5 blue bits, packed into a UWORD */
+#define SCREEN_PIXEL_XRGB8888  2   /* 8 red / 8 green / 8 blue / 8 ignored bits, packed into a ULONG */
 
 typedef struct {
     UWORD width;          /* visible width, in pixels */
