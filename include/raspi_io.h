@@ -12,6 +12,8 @@
 
 #ifdef MACHINE_RPI
 
+#include "arm_boot.h"
+
 #define GPU_L2_CACHE_ENABLED
 
 #define GPU_IO_BASE         0x7e000000
@@ -49,20 +51,6 @@ typedef struct {
 extern raspi_board_t raspi_board;
 
 void raspi_board_init(void);
-
-/*
- * Registers as they were handed to us by the boot loader: r0 is zero, r1
- * is the ARM Linux machine type and r2 points at the ATAG list or at a
- * flattened device tree.  Nothing reads them yet, but they only exist for
- * the first few instructions of startup.S, so they are saved there.
- */
-typedef struct {
-    ULONG r0;
-    ULONG machine_type;
-    ULONG atags;
-} arm_boot_regs_t;
-
-extern arm_boot_regs_t arm_boot_regs;
 
 #define ARM_IO_BASE     (raspi_board.io_base)
 #define ARM_IO_END      (ARM_IO_BASE + 0xFFFFFF)
