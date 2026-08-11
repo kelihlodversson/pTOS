@@ -51,6 +51,7 @@ static long asynch_allowed;
 extern void dwc2_init(void);
 #endif
 extern int usb_mouse_init(void);
+extern int usb_keyboard_init(void);
 
 /***************************************************************************
  * Init USB Device
@@ -82,6 +83,7 @@ void usb_init(void)
     xhci_init();
 #endif
     usb_mouse_init();
+    usb_keyboard_init();
 }
 
 /******************************************************************************
@@ -455,22 +457,22 @@ long usb_get_descriptor(struct usb_device *dev, unsigned char type,
  */
 long usb_get_configuration_len(struct usb_device *dev, long cfgno)
 {
-	long result;
-	unsigned char buffer[9];
-	struct usb_config_descriptor *config;
+    long result;
+    unsigned char buffer[9];
+    struct usb_config_descriptor *config;
 
-	config = (struct usb_config_descriptor *)&buffer[0];
-	result = usb_get_descriptor(dev, USB_DT_CONFIG, cfgno, buffer, 9);
-	if (result < 9) {
-		if (result < 0)
-			ALERT(("unable to get descriptor, error %lX\n",
-				dev->status));
-		else
-			ALERT(("config descriptor too short " \
-				"(expected %i, got %i)\n", 9, result));
-		return -1;
-	}
-	return le2cpu16(config->wTotalLength);
+    config = (struct usb_config_descriptor *)&buffer[0];
+    result = usb_get_descriptor(dev, USB_DT_CONFIG, cfgno, buffer, 9);
+    if (result < 9) {
+        if (result < 0)
+            ALERT(("unable to get descriptor, error %lX\n",
+                dev->status));
+        else
+            ALERT(("config descriptor too short " \
+                "(expected %i, got %i)\n", 9, result));
+        return -1;
+    }
+    return le2cpu16(config->wTotalLength);
 }
 
 /**********************************************************************
@@ -742,21 +744,21 @@ errout:
  */
 
 void usb_find_usb2_hub_address_port(struct usb_device *udev,
-			       uint8_t *hub_address, uint8_t *hub_port)
+                   uint8_t *hub_address, uint8_t *hub_port)
 {
-	/* Find out the nearest parent which is high speed */
-	while (udev->parent->parent != NULL)
-		if (udev->parent->speed != USB_SPEED_HIGH) {
-			udev = udev->parent;
-		} else {
-			*hub_address = udev->parent->devnum;
-			*hub_port = udev->portnr;
-			return;
-		}
+    /* Find out the nearest parent which is high speed */
+    while (udev->parent->parent != NULL)
+        if (udev->parent->speed != USB_SPEED_HIGH) {
+            udev = udev->parent;
+        } else {
+            *hub_address = udev->parent->devnum;
+            *hub_port = udev->portnr;
+            return;
+        }
 
-	KINFO(("Error: Cannot find high speed parent of usb-1 device\n"));
-	*hub_address = 0;
-	*hub_port = 0;
+    KINFO(("Error: Cannot find high speed parent of usb-1 device\n"));
+    *hub_address = 0;
+    *hub_port = 0;
 }
 
 
@@ -860,269 +862,269 @@ void usb_free_device(long dev_index)
 
 static int usb_hub_port_reset(struct usb_device *dev, struct usb_device *hub)
 {
-	return 0;
+    return 0;
 }
 
 static long get_descriptor_len(struct usb_device *dev, long len, long expect_len)
 {
-	struct usb_device_descriptor *desc;
-	unsigned char tmpbuf[USB_BUFSIZ];
-	long err;
+    struct usb_device_descriptor *desc;
+    unsigned char tmpbuf[USB_BUFSIZ];
+    long err;
 
-	desc = (struct usb_device_descriptor *)tmpbuf;
+    desc = (struct usb_device_descriptor *)tmpbuf;
 
-	err = usb_get_descriptor(dev, USB_DT_DEVICE, 0, desc, len);
-	if (err < expect_len) {
-		if (err < 0) {
-			ALERT(("unable to get device descriptor (error=%d)\n",
-				err));
-			return err;
-		} else {
-			ALERT(("USB device descriptor short read (expected %i, got %i)\n",
-				expect_len, err));
-			return -1;
-		}
-	}
-	memcpy(&dev->descriptor, tmpbuf, sizeof(dev->descriptor));
+    err = usb_get_descriptor(dev, USB_DT_DEVICE, 0, desc, len);
+    if (err < expect_len) {
+        if (err < 0) {
+            ALERT(("unable to get device descriptor (error=%d)\n",
+                err));
+            return err;
+        } else {
+            ALERT(("USB device descriptor short read (expected %i, got %i)\n",
+                expect_len, err));
+            return -1;
+        }
+    }
+    memcpy(&dev->descriptor, tmpbuf, sizeof(dev->descriptor));
 
-	return 0;
+    return 0;
 }
 
 static long usb_setup_descriptor(struct usb_device *dev, BOOL do_read)
 {
-	/*
-	 * This is a Windows scheme of initialization sequence, with double
-	 * reset of the device (Linux uses the same sequence)
-	 * Some equipment is said to work only with such init sequence; this
-	 * patch is based on the work by Alan Stern:
-	 * http://sourceforge.net/mailarchive/forum.php?
-	 * thread_id=5729457&forum_id=5398
-	 */
+    /*
+     * This is a Windows scheme of initialization sequence, with double
+     * reset of the device (Linux uses the same sequence)
+     * Some equipment is said to work only with such init sequence; this
+     * patch is based on the work by Alan Stern:
+     * http://sourceforge.net/mailarchive/forum.php?
+     * thread_id=5729457&forum_id=5398
+     */
 
-	/*
-	 * send 64-byte GET-DEVICE-DESCRIPTOR request.  Since the descriptor is
-	 * only 18 bytes long, this will terminate with a short packet.  But if
-	 * the maxpacket size is 8 or 16 the device may be waiting to transmit
-	 * some more, or keeps on retransmitting the 8 byte header.
-	 */
+    /*
+     * send 64-byte GET-DEVICE-DESCRIPTOR request.  Since the descriptor is
+     * only 18 bytes long, this will terminate with a short packet.  But if
+     * the maxpacket size is 8 or 16 the device may be waiting to transmit
+     * some more, or keeps on retransmitting the 8 byte header.
+     */
 
-	if (dev->speed == USB_SPEED_LOW) {
-		dev->descriptor.bMaxPacketSize0 = 8;
-		dev->maxpacketsize = PACKET_SIZE_8;
-	} else {
-		dev->descriptor.bMaxPacketSize0 = 64;
-		dev->maxpacketsize = PACKET_SIZE_64;
-	}
-	dev->epmaxpacketin[0] = dev->descriptor.bMaxPacketSize0;
-	dev->epmaxpacketout[0] = dev->descriptor.bMaxPacketSize0;
+    if (dev->speed == USB_SPEED_LOW) {
+        dev->descriptor.bMaxPacketSize0 = 8;
+        dev->maxpacketsize = PACKET_SIZE_8;
+    } else {
+        dev->descriptor.bMaxPacketSize0 = 64;
+        dev->maxpacketsize = PACKET_SIZE_64;
+    }
+    dev->epmaxpacketin[0] = dev->descriptor.bMaxPacketSize0;
+    dev->epmaxpacketout[0] = dev->descriptor.bMaxPacketSize0;
 
-	if (do_read && dev->speed == USB_SPEED_FULL) {
-		long err;
+    if (do_read && dev->speed == USB_SPEED_FULL) {
+        long err;
 
-		/*
-		 * Validate we've received only at least 8 bytes, not that
-		 * we've received the entire descriptor. The reasoning is:
-		 * - The code only uses fields in the first 8 bytes, so
-		 *   that's all we need to have fetched at this stage.
-		 * - The smallest maxpacket size is 8 bytes. Before we know
-		 *   the actual maxpacket the device uses, the USB controller
-		 *   may only accept a single packet. Consequently we are only
-		 *   guaranteed to receive 1 packet (at least 8 bytes) even in
-		 *   a non-error case.
-		 *
-		 * At least the DWC2 controller needs to be programmed with
-		 * the number of packets in addition to the number of bytes.
-		 * A request for 64 bytes of data with the maxpacket guessed
-		 * as 64 (above) yields a request for 1 packet.
-		 */
-		err = get_descriptor_len(dev, 64, 8);
-		if (err)
-			return err;
-	}
+        /*
+         * Validate we've received only at least 8 bytes, not that
+         * we've received the entire descriptor. The reasoning is:
+         * - The code only uses fields in the first 8 bytes, so
+         *   that's all we need to have fetched at this stage.
+         * - The smallest maxpacket size is 8 bytes. Before we know
+         *   the actual maxpacket the device uses, the USB controller
+         *   may only accept a single packet. Consequently we are only
+         *   guaranteed to receive 1 packet (at least 8 bytes) even in
+         *   a non-error case.
+         *
+         * At least the DWC2 controller needs to be programmed with
+         * the number of packets in addition to the number of bytes.
+         * A request for 64 bytes of data with the maxpacket guessed
+         * as 64 (above) yields a request for 1 packet.
+         */
+        err = get_descriptor_len(dev, 64, 8);
+        if (err)
+            return err;
+    }
 
-	dev->epmaxpacketin[0] = dev->descriptor.bMaxPacketSize0;
-	dev->epmaxpacketout[0] = dev->descriptor.bMaxPacketSize0;
-	switch (dev->descriptor.bMaxPacketSize0) {
-	case 8:
-		dev->maxpacketsize  = PACKET_SIZE_8;
-		break;
-	case 16:
-		dev->maxpacketsize = PACKET_SIZE_16;
-		break;
-	case 32:
-		dev->maxpacketsize = PACKET_SIZE_32;
-		break;
-	case 64:
-		dev->maxpacketsize = PACKET_SIZE_64;
-		break;
-	default:
-		ALERT(("%s: invalid max packet size\n", __func__));
-		return -1;
-	}
+    dev->epmaxpacketin[0] = dev->descriptor.bMaxPacketSize0;
+    dev->epmaxpacketout[0] = dev->descriptor.bMaxPacketSize0;
+    switch (dev->descriptor.bMaxPacketSize0) {
+    case 8:
+        dev->maxpacketsize  = PACKET_SIZE_8;
+        break;
+    case 16:
+        dev->maxpacketsize = PACKET_SIZE_16;
+        break;
+    case 32:
+        dev->maxpacketsize = PACKET_SIZE_32;
+        break;
+    case 64:
+        dev->maxpacketsize = PACKET_SIZE_64;
+        break;
+    default:
+        ALERT(("%s: invalid max packet size\n", __func__));
+        return -1;
+    }
 
-	return 0;
+    return 0;
 }
 
 static long usb_prepare_device(struct usb_device *dev, long addr, BOOL do_read,
-			      struct usb_device *parent)
+                  struct usb_device *parent)
 {
-	long err;
+    long err;
 
-	err = usb_setup_descriptor(dev, do_read);
+    err = usb_setup_descriptor(dev, do_read);
   ALERT(("usb_setup_descriptor -> %ld\n",err));
 
-	if (err)
+    if (err)
   {
     dev->devnum = addr;
-		return err;
+        return err;
   }
-	err = usb_hub_port_reset(dev, parent);
+    err = usb_hub_port_reset(dev, parent);
   ALERT(("usb_hub_port_reset -> %ld\n",err));
 
-	if (err)
-		return err;
+    if (err)
+        return err;
 
   dev->devnum = addr;
 
-	err = usb_set_address(dev); /* set address */
+    err = usb_set_address(dev); /* set address */
   ALERT(("usb_set_address -> %ld\n",err));
 
-	if (err < 0) {
-		ALERT(("\n      USB device not accepting new address " \
-			"(error=%lX)\n", dev->status));
-		return err;
-	}
+    if (err < 0) {
+        ALERT(("\n      USB device not accepting new address " \
+            "(error=%lX)\n", dev->status));
+        return err;
+    }
 
-	mdelay(10);	/* Let the SET_ADDRESS settle */
+    mdelay(10); /* Let the SET_ADDRESS settle */
 
-	/*
-	 * If we haven't read device descriptor before, read it here
-	 * after device is assigned an address. This is only applicable
-	 * to xHCI so far.
-	 */
-	if (!do_read) {
-		err = usb_setup_descriptor(dev, TRUE);
+    /*
+     * If we haven't read device descriptor before, read it here
+     * after device is assigned an address. This is only applicable
+     * to xHCI so far.
+     */
+    if (!do_read) {
+        err = usb_setup_descriptor(dev, TRUE);
     ALERT(("usb_setup_descriptor -> %ld\n",err));
-		if (err)
-			return err;
-	}
+        if (err)
+            return err;
+    }
 
-	return 0;
+    return 0;
 }
 
 long usb_select_config(struct usb_device *dev)
 {
   unsigned char tmpbuf[USB_BUFSIZ];
-	long err;
+    long err;
 
-	err = get_descriptor_len(dev, USB_DT_DEVICE_SIZE, USB_DT_DEVICE_SIZE);
-	if (err)
-		return err;
+    err = get_descriptor_len(dev, USB_DT_DEVICE_SIZE, USB_DT_DEVICE_SIZE);
+    if (err)
+        return err;
 
-	/* correct le values */
-	dev->descriptor.bcdUSB = le2cpu16(dev->descriptor.bcdUSB);
-	dev->descriptor.idVendor = le2cpu16(dev->descriptor.idVendor);
-	dev->descriptor.idProduct = le2cpu16(dev->descriptor.idProduct);
-	dev->descriptor.bcdDevice = le2cpu16(dev->descriptor.bcdDevice);
+    /* correct le values */
+    dev->descriptor.bcdUSB = le2cpu16(dev->descriptor.bcdUSB);
+    dev->descriptor.idVendor = le2cpu16(dev->descriptor.idVendor);
+    dev->descriptor.idProduct = le2cpu16(dev->descriptor.idProduct);
+    dev->descriptor.bcdDevice = le2cpu16(dev->descriptor.bcdDevice);
 
-	/*
-	 * Kingston DT Ultimate 32GB USB 3.0 seems to be extremely sensitive
-	 * about this first Get Descriptor request. If there are any other
-	 * requests in the first microframe, the stick crashes. Wait about
-	 * one microframe duration here (1mS for USB 1.x , 125uS for USB 2.0).
-	 */
-	mdelay(1);
+    /*
+     * Kingston DT Ultimate 32GB USB 3.0 seems to be extremely sensitive
+     * about this first Get Descriptor request. If there are any other
+     * requests in the first microframe, the stick crashes. Wait about
+     * one microframe duration here (1mS for USB 1.x , 125uS for USB 2.0).
+     */
+    mdelay(1);
 
-	/* only support for one config for now */
-	err = usb_get_configuration_len(dev, 0);
-	if (err >= 0) {
-		if (err >= USB_BUFSIZ)
-			err = -1;
-		else
-			err = usb_get_configuration_no(dev, 0, tmpbuf, err);
-	}
-	if (err < 0) {
-		ALERT(("usb_select_config: Cannot read configuration, " \
-		       "skipping device %04x:%04x\n",
-		       dev->descriptor.idVendor, dev->descriptor.idProduct));
-		return err;
-	}
-	usb_parse_config(dev, tmpbuf, 0);
-	usb_set_maxpacket(dev);
-	/*
-	 * we set the default configuration here
-	 * This seems premature. If the driver wants a different configuration
-	 * it will need to select itself.
-	 */
-	err = usb_set_configuration(dev, dev->config.desc.bConfigurationValue);
-	if (err < 0) {
-		ALERT(("failed to set default configuration " \
-			"len %d, status %lX\n", dev->act_len, dev->status));
-		return err;
-	}
+    /* only support for one config for now */
+    err = usb_get_configuration_len(dev, 0);
+    if (err >= 0) {
+        if (err >= USB_BUFSIZ)
+            err = -1;
+        else
+            err = usb_get_configuration_no(dev, 0, tmpbuf, err);
+    }
+    if (err < 0) {
+        ALERT(("usb_select_config: Cannot read configuration, " \
+               "skipping device %04x:%04x\n",
+               dev->descriptor.idVendor, dev->descriptor.idProduct));
+        return err;
+    }
+    usb_parse_config(dev, tmpbuf, 0);
+    usb_set_maxpacket(dev);
+    /*
+     * we set the default configuration here
+     * This seems premature. If the driver wants a different configuration
+     * it will need to select itself.
+     */
+    err = usb_set_configuration(dev, dev->config.desc.bConfigurationValue);
+    if (err < 0) {
+        ALERT(("failed to set default configuration " \
+            "len %d, status %lX\n", dev->act_len, dev->status));
+        return err;
+    }
 
-	/*
-	 * Wait until the Set Configuration request gets processed by the
-	 * device. This is required by at least SanDisk Cruzer Pop USB 2.0
-	 * and Kingston DT Ultimate 32GB USB 3.0 on DWC2 OTG controller.
-	 */
-	mdelay(10);
+    /*
+     * Wait until the Set Configuration request gets processed by the
+     * device. This is required by at least SanDisk Cruzer Pop USB 2.0
+     * and Kingston DT Ultimate 32GB USB 3.0 on DWC2 OTG controller.
+     */
+    mdelay(10);
 
-	KDEBUG(("new device strings: Mfr=%d, Product=%d, SerialNumber=%d\n",
-	      dev->descriptor.iManufacturer, dev->descriptor.iProduct,
-	      dev->descriptor.iSerialNumber));
-	memset(dev->mf, 0, sizeof(dev->mf));
-	memset(dev->prod, 0, sizeof(dev->prod));
-	memset(dev->serial, 0, sizeof(dev->serial));
-	if (dev->descriptor.iManufacturer)
-		usb_string(dev, dev->descriptor.iManufacturer,
-			   dev->mf, sizeof(dev->mf));
-	if (dev->descriptor.iProduct)
-		usb_string(dev, dev->descriptor.iProduct,
-			   dev->prod, sizeof(dev->prod));
-	if (dev->descriptor.iSerialNumber)
-		usb_string(dev, dev->descriptor.iSerialNumber,
-			   dev->serial, sizeof(dev->serial));
-	KDEBUG(("Manufacturer %s\n", dev->mf));
-	KDEBUG(("Product      %s\n", dev->prod));
-	KDEBUG(("SerialNumber %s\n", dev->serial));
+    KDEBUG(("new device strings: Mfr=%d, Product=%d, SerialNumber=%d\n",
+          dev->descriptor.iManufacturer, dev->descriptor.iProduct,
+          dev->descriptor.iSerialNumber));
+    memset(dev->mf, 0, sizeof(dev->mf));
+    memset(dev->prod, 0, sizeof(dev->prod));
+    memset(dev->serial, 0, sizeof(dev->serial));
+    if (dev->descriptor.iManufacturer)
+        usb_string(dev, dev->descriptor.iManufacturer,
+               dev->mf, sizeof(dev->mf));
+    if (dev->descriptor.iProduct)
+        usb_string(dev, dev->descriptor.iProduct,
+               dev->prod, sizeof(dev->prod));
+    if (dev->descriptor.iSerialNumber)
+        usb_string(dev, dev->descriptor.iSerialNumber,
+               dev->serial, sizeof(dev->serial));
+    KDEBUG(("Manufacturer %s\n", dev->mf));
+    KDEBUG(("Product      %s\n", dev->prod));
+    KDEBUG(("SerialNumber %s\n", dev->serial));
 
-	return 0;
+    return 0;
 }
 
 
 long usb_setup_device(struct usb_device *dev, BOOL do_read,
-		     struct usb_device *parent)
+             struct usb_device *parent)
 {
-	long addr;
-	long ret;
+    long addr;
+    long ret;
 
-	/* We still haven't set the Address yet */
-	addr = dev->devnum;
-	dev->devnum = 0;
+    /* We still haven't set the Address yet */
+    addr = dev->devnum;
+    dev->devnum = 0;
 
-	ret = usb_prepare_device(dev, addr, do_read, parent);
+    ret = usb_prepare_device(dev, addr, do_read, parent);
   ALERT(("usb_prepare_device -> %ld\n",ret));
 
-	if (ret)
-		return ret;
-	ret = usb_select_config(dev);
+    if (ret)
+        return ret;
+    ret = usb_select_config(dev);
   ALERT(("usb_select_config -> %ld\n",ret));
 
-	return ret;
+    return ret;
 }
 
 long usb_new_device(struct usb_device *dev)
 {
-	BOOL do_read = TRUE;
-	long err;
+    BOOL do_read = TRUE;
+    long err;
   int idx = 0;
 
-	err = usb_setup_device(dev, do_read, dev->parent);
-	if (err)
+    err = usb_setup_device(dev, do_read, dev->parent);
+    if (err)
   {
     ALERT(("usb_setup_device -> %ld\n",err));
-		return err;
+        return err;
   }
 
   /* now probe if the device is a hub */
@@ -1133,7 +1135,7 @@ long usb_new_device(struct usb_device *dev)
       }
   }
 
-	return 0;
+    return 0;
 }
 
 /********************************************************************

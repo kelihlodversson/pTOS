@@ -108,6 +108,7 @@ void int_vbl(void)
 
 #if CONF_WITH_USB
 extern void usb_mouse_timerc (void);
+extern void usb_keyboard_timerc (void);
 #endif
 
 // ==== Timer C interrupt handler ============================================
@@ -125,6 +126,7 @@ void int_timerc(void)
 #       endif
 #       if CONF_WITH_USB
             usb_mouse_timerc();
+            usb_keyboard_timerc();
 #       endif
 
         // Fake vbl interrupt every 4 timer_c calls (50Hz)

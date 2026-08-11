@@ -488,7 +488,23 @@ usb_hub_events(struct usb_hub_device *hub)
         KDEBUG(("Port %ld Status %x Change %x\n",
                 i + 1, portstatus, portchange));
 
-        if (portchange & USB_PORT_STAT_C_CONNECTION)
+        /*
+         * Normally a newly attached device is caught by the
+         * C_CONNECTION change bit. But the very first scan of a hub
+         * (usb_hub_init(), called once at boot) can observe a port
+         * that is already CONNECTION|ENABLE with no change bit set --
+         * e.g. QEMU's dwc2-usb model reports its downstream hub this
+         * way, since the "connect" already happened as a side effect
+         * of the hub's own enumeration, before this driver ever polled
+         * it. Since there is no periodic re-scan afterwards, missing
+         * this at the one boot-time pass means the device (and
+         * anything behind it, like a keyboard/mouse on a downstream
+         * hub) is never enumerated at all. Treat "connected, enabled,
+         * but we don't have a child for it yet" the same as a change.
+         */
+        if ((portchange & USB_PORT_STAT_C_CONNECTION) ||
+            ((portstatus & (USB_PORT_STAT_CONNECTION | USB_PORT_STAT_ENABLE)) ==
+                (USB_PORT_STAT_CONNECTION | USB_PORT_STAT_ENABLE) && !dev->children[i]))
         {
             changed |= USB_PORT_STAT_C_CONNECTION;
             KDEBUG(("port %ld connection change\n", i + 1));
@@ -533,9 +549,9 @@ usb_hub_events(struct usb_hub_device *hub)
         if (portstatus & USB_PORT_STAT_SUSPEND)
         {
             changed |= USB_PORT_STAT_SUSPEND;
-            KDEBUG(("port %ld suspend change\n", i + 1);
+            KDEBUG(("port %ld suspend change\n", i + 1));
             usb_clear_port_feature(dev, i + 1,
-                        USB_PORT_FEAT_SUSPEND));
+                        USB_PORT_FEAT_SUSPEND);
         }
 
         if (portchange & USB_PORT_STAT_C_OVERCURRENT)
