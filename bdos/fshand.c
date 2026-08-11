@@ -117,11 +117,27 @@ long xdup(int h)
     {
         sft[i].f_ofd = sft[h-NUMSTD].f_ofd;
 #if CONF_WITH_PLUGGABLE_FS
-        sft[i].f_pfs = sft[h-NUMSTD].f_pfs;    /* carry a foreign driver's cookie too */
+        /*
+         * carry a foreign driver's cookie too - a plain struct copy,
+         * which means the two handles get independent PFSCOOKIE.pos
+         * values instead of sharing a file position the way dup'd FAT
+         * handles do via their shared OFD.  No driver in this tree
+         * relies on shared-position dup semantics yet (FAT handles
+         * bypass this path entirely via native_handles, see fs/pfs.h),
+         * but a future driver that needs real Fdup() parity would need
+         * an indirection here (e.g. a shared, refcounted position)
+         * rather than this value copy.
+         */
+        sft[i].f_pfs = sft[h-NUMSTD].f_pfs;
 #endif
     }
     else
+    {
         sft[i].f_ofd = (OFD *)(long)h;
+#if CONF_WITH_PLUGGABLE_FS
+        sft[i].f_pfs.fs = 0;   /* establish "not pluggable" for this fresh slot */
+#endif
+    }
 
     sft[i].f_use = 1;
 

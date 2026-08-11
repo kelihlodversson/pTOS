@@ -266,8 +266,18 @@ static void pfs_dirtbl_release(WORD n)
     }
 }
 
-/* Cookie + absolute path string for 'drive' in the calling process. */
-static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const char **path)
+/* Cookie + absolute path string for 'drive' in the calling process.
+ *
+ * '*owned' tells the caller whether '*out' is a fresh reference it must
+ * release itself (TRUE - the cache missed, so this came straight from
+ * fs->root()) or a copy of the cookie pfs_dirtbl[] still owns (FALSE -
+ * the cache hit).  Releasing a borrowed copy would tear down a resource
+ * the cache still thinks is alive out from under it - harmless for FAT
+ * today (release() no-ops for a plain directory cookie), but a real
+ * hazard for a driver whose release() actually frees something (e.g. a
+ * future 9p driver's fid).
+ */
+static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const char **path, BOOL *owned)
 {
     WORD n = run->p_curdir[drive];
 
@@ -276,6 +286,7 @@ static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const ch
     {
         *out = pfs_dirtbl[n].cwd;
         *path = pfs_dirtbl[n].path;
+        *owned = FALSE;
         return E_OK;
     }
 
@@ -283,6 +294,7 @@ static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const ch
         return EINVFN;
 
     *path = "";
+    *owned = TRUE;
     return fs->root(fs, drive, out);
 }
 
@@ -329,6 +341,9 @@ typedef struct {
     DTA *owner;         /* NULL = free slot */
     PD *proc;
     PFSCOOKIE dir;
+    BOOL dir_owned;      /* does this slot own 'dir' (must release it),
+                          * or is it a borrowed alias of a pfs_dirtbl[]
+                          * entry (must not) - see pfs_cwd_get(). */
     LONG cursor;
     UWORD attr;
     char pattern[LEN_ZFNAME];
@@ -338,7 +353,7 @@ static PFS_SEARCH pfs_searches[CONF_PFS_MAX_SEARCHES];
 
 static void pfs_search_free(PFS_SEARCH *s)
 {
-    if (s->dir.fs && s->dir.fs->release)
+    if (s->dir_owned && s->dir.fs && s->dir.fs->release)
         s->dir.fs->release(&s->dir);
     s->owner = NULL;
     s->proc = NULL;
@@ -377,13 +392,23 @@ static void pfs_attr_to_dta(DTAINFO *dt, const char *name, const PFSATTR *a)
  * drive's root; relative paths resolve from the cached current
  * directory.
  */
+/* Resolve the containing directory of 'path', as above, and report via
+ * '*owned' whether the caller must release '*dircookie' itself (TRUE) or
+ * it's a borrowed alias of a cookie pfs_dirtbl[] still owns (FALSE - only
+ * possible when 'path' is relative and empty, i.e. "." - the resolved
+ * directory is the cached current directory itself, handed back as-is).
+ * Every caller must gate its own fs->release(dircookie) call on *owned,
+ * exactly like pfs_cwd_get() (which this delegates the same hazard to
+ * for the relative-path case) already documents.
+ */
 static LONG pfs_resolve_dir(struct pfs_ops *fs, WORD drive, const char *path,
-                             PFSCOOKIE *dircookie, const char **name)
+                             PFSCOOKIE *dircookie, const char **name, BOOL *owned)
 {
     char dirpart[LEN_ZPATH];
     const char *base;
     PFSCOOKIE start;
     const char *startpath;
+    BOOL start_owned;
     LONG rc;
 
     *name = pfs_split(path, dirpart, sizeof(dirpart));
@@ -393,11 +418,12 @@ static LONG pfs_resolve_dir(struct pfs_ops *fs, WORD drive, const char *path,
         if (!fs->root)
             return EINVFN;
         rc = fs->root(fs, drive, &start);
+        start_owned = TRUE;   /* fs->root() always hands back a fresh reference */
         base = dirpart[0] ? dirpart + 1 : dirpart;     /* skip the leading slash */
     }
     else
     {
-        rc = pfs_cwd_get(fs, drive, &start, &startpath);
+        rc = pfs_cwd_get(fs, drive, &start, &startpath, &start_owned);
         base = dirpart;
     }
     if (rc < 0)
@@ -405,15 +431,28 @@ static LONG pfs_resolve_dir(struct pfs_ops *fs, WORD drive, const char *path,
 
     if (!base[0])
     {
+        /* the resolved directory *is* 'start' - ownership passes through
+         * unchanged, whichever way pfs_cwd_get()/fs->root() set it. */
         *dircookie = start;
+        *owned = start_owned;
         return E_OK;
     }
 
+    /* every non-empty 'base' means fs->lookup() below produces a brand
+     * new cookie, always owned by the caller - regardless of whether
+     * 'start' (released right below, only if it was actually ours to
+     * release) was borrowed. */
+    *owned = TRUE;
+
     if (!fs->lookup)
+    {
+        if (start_owned && fs->release)
+            fs->release(&start);
         return EPTHNF;
+    }
 
     rc = fs->lookup(&start, base, dircookie);
-    if (fs->release)
+    if (start_owned && fs->release)
         fs->release(&start);
 
     return rc;
@@ -444,18 +483,19 @@ static LONG pfs_do_mkdir(const char *path)
     WORD drive = pfs_path_drive(path, &path);
     PFSCOOKIE dir;
     const char *name;
+    BOOL owned;
     LONG rc;
 
     fs = pfs_drive_fs(drive);
     if (!fs)
         return EDRIVE;
 
-    rc = pfs_resolve_dir(fs, drive, path, &dir, &name);
+    rc = pfs_resolve_dir(fs, drive, path, &dir, &name, &owned);
     if (rc < 0)
         return rc;
 
     rc = fs->mkdir ? fs->mkdir(&dir, name) : EACCDN;
-    if (fs->release)
+    if (owned && fs->release)
         fs->release(&dir);
 
     return rc;
@@ -467,18 +507,19 @@ static LONG pfs_do_rmdir(const char *path)
     WORD drive = pfs_path_drive(path, &path);
     PFSCOOKIE dir;
     const char *name;
+    BOOL owned;
     LONG rc;
 
     fs = pfs_drive_fs(drive);
     if (!fs)
         return EDRIVE;
 
-    rc = pfs_resolve_dir(fs, drive, path, &dir, &name);
+    rc = pfs_resolve_dir(fs, drive, path, &dir, &name, &owned);
     if (rc < 0)
         return rc;
 
     rc = fs->rmdir ? fs->rmdir(&dir, name) : EACCDN;
-    if (fs->release)
+    if (owned && fs->release)
         fs->release(&dir);
 
     return rc;
@@ -492,6 +533,7 @@ static LONG pfs_do_chdir(const char *path)
     const char *name;
     PFSCOOKIE target;
     char newpath[LEN_ZPATH];
+    BOOL dir_owned;
     LONG rc;
 
     fs = pfs_drive_fs(drive);
@@ -506,13 +548,14 @@ static LONG pfs_do_chdir(const char *path)
         if (!fs->root)
             return EINVFN;
         rc = fs->root(fs, drive, &dir);
+        dir_owned = TRUE;
         name = path[1] ? path + 1 : path;
         newpath[0] = 0;
     }
     else
     {
         const char *cwdpath;
-        rc = pfs_cwd_get(fs, drive, &dir, &cwdpath);
+        rc = pfs_cwd_get(fs, drive, &dir, &cwdpath, &dir_owned);
         name = path;
         strlcpy(newpath, cwdpath, sizeof(newpath));
     }
@@ -521,21 +564,28 @@ static LONG pfs_do_chdir(const char *path)
 
     if (!name[0])
     {
+        /* Dsetpath(".") or Dsetpath("\\") - 'dir' *is* the new current
+         * directory.  pfs_cwd_set() copies it into pfs_dirtbl[] on
+         * success, taking over whatever reference it held (owned or
+         * not) - release it ourselves only if that hand-off didn't
+         * happen (cwd_set failed) and it was ours to begin with. */
         rc = pfs_cwd_set(drive, fs, &dir, newpath);
-        if (fs->release)
+        if ((rc < 0) && dir_owned && fs->release)
             fs->release(&dir);
         return rc;
     }
 
     if (!fs->lookup)
     {
-        if (fs->release)
+        if (dir_owned && fs->release)
             fs->release(&dir);
         return EPTHNF;
     }
 
+    /* fs->lookup() always produces a fresh, caller-owned 'target',
+     * regardless of whether 'dir' was borrowed. */
     rc = fs->lookup(&dir, name, &target);
-    if (fs->release)
+    if (dir_owned && fs->release)
         fs->release(&dir);
     if (rc < 0)
         return rc;
@@ -563,7 +613,9 @@ static LONG pfs_do_chdir(const char *path)
         }
     }
 
-    if (fs->release)
+    /* same hand-off logic as above: 'target' is always owned here, but
+     * only ours to release if pfs_cwd_set() didn't take it over. */
+    if ((rc < 0) && fs->release)
         fs->release(&target);
 
     return rc;
@@ -575,19 +627,20 @@ static LONG pfs_do_getdir(char *buf, WORD drv)
     WORD drive = drv ? (WORD)(drv - 1) : run->p_curdrv;
     PFSCOOKIE cwd;
     const char *path;
+    BOOL owned;
     LONG rc;
 
     fs = pfs_drive_fs(drive);
     if (!fs)
         return EDRIVE;
 
-    rc = pfs_cwd_get(fs, drive, &cwd, &path);
+    rc = pfs_cwd_get(fs, drive, &cwd, &path, &owned);
     if (rc < 0)
     {
         *buf = 0;
         return rc;
     }
-    if (fs->release)
+    if (owned && fs->release)
         fs->release(&cwd);
 
     strlcpy(buf, path, LEN_ZPATH);
@@ -619,18 +672,19 @@ static LONG pfs_do_open(const char *path, WORD mode)
     WORD drive = pfs_path_drive(path, &path);
     PFSCOOKIE dir, fc;
     const char *name;
+    BOOL owned;
     LONG rc;
 
     fs = pfs_drive_fs(drive);
     if (!fs)
         return EDRIVE;
 
-    rc = pfs_resolve_dir(fs, drive, path, &dir, &name);
+    rc = pfs_resolve_dir(fs, drive, path, &dir, &name, &owned);
     if (rc < 0)
         return rc;
 
     rc = fs->open ? fs->open(&dir, name, mode, &fc) : EACCDN;
-    if (fs->release)
+    if (owned && fs->release)
         fs->release(&dir);
     if (rc < 0)
         return rc;
@@ -655,18 +709,19 @@ static LONG pfs_do_create(const char *path, UWORD attr)
     WORD drive = pfs_path_drive(path, &path);
     PFSCOOKIE dir, fc;
     const char *name;
+    BOOL owned;
     LONG rc;
 
     fs = pfs_drive_fs(drive);
     if (!fs)
         return EDRIVE;
 
-    rc = pfs_resolve_dir(fs, drive, path, &dir, &name);
+    rc = pfs_resolve_dir(fs, drive, path, &dir, &name, &owned);
     if (rc < 0)
         return rc;
 
     rc = fs->create ? fs->create(&dir, name, attr, &fc) : EACCDN;
-    if (fs->release)
+    if (owned && fs->release)
         fs->release(&dir);
     if (rc < 0)
         return rc;
@@ -691,18 +746,19 @@ static LONG pfs_do_unlink(const char *path)
     WORD drive = pfs_path_drive(path, &path);
     PFSCOOKIE dir;
     const char *name;
+    BOOL owned;
     LONG rc;
 
     fs = pfs_drive_fs(drive);
     if (!fs)
         return EDRIVE;
 
-    rc = pfs_resolve_dir(fs, drive, path, &dir, &name);
+    rc = pfs_resolve_dir(fs, drive, path, &dir, &name, &owned);
     if (rc < 0)
         return rc;
 
     rc = fs->remove ? fs->remove(&dir, name) : EACCDN;
-    if (fs->release)
+    if (owned && fs->release)
         fs->release(&dir);
 
     return rc;
@@ -715,19 +771,20 @@ static LONG pfs_do_chmod(const char *path, WORD wrt, WORD mod)
     PFSCOOKIE dir;
     const char *name;
     UWORD attr;
+    BOOL owned;
     LONG rc;
 
     fs = pfs_drive_fs(drive);
     if (!fs)
         return EDRIVE;
 
-    rc = pfs_resolve_dir(fs, drive, path, &dir, &name);
+    rc = pfs_resolve_dir(fs, drive, path, &dir, &name, &owned);
     if (rc < 0)
         return rc;
 
     attr = (UWORD)mod;
     rc = fs->chattr ? fs->chattr(&dir, name, wrt ? TRUE : FALSE, &attr) : EINVFN;
-    if (fs->release)
+    if (owned && fs->release)
         fs->release(&dir);
     if (rc < 0)
         return rc;
@@ -742,6 +799,7 @@ static LONG pfs_do_rename(const char *p1, const char *p2)
     WORD drive2 = pfs_path_drive(p2, &p2);
     PFSCOOKIE dir1, dir2;
     const char *name1, *name2;
+    BOOL owned1, owned2;
     LONG rc;
 
     if (drive1 != drive2)
@@ -751,22 +809,22 @@ static LONG pfs_do_rename(const char *p1, const char *p2)
     if (!fs)
         return EDRIVE;
 
-    rc = pfs_resolve_dir(fs, drive1, p1, &dir1, &name1);
+    rc = pfs_resolve_dir(fs, drive1, p1, &dir1, &name1, &owned1);
     if (rc < 0)
         return rc;
 
-    rc = pfs_resolve_dir(fs, drive1, p2, &dir2, &name2);
+    rc = pfs_resolve_dir(fs, drive1, p2, &dir2, &name2, &owned2);
     if (rc < 0)
     {
-        if (fs->release) fs->release(&dir1);
+        if (owned1 && fs->release) fs->release(&dir1);
         return rc;
     }
 
     rc = fs->rename ? fs->rename(&dir1, name1, &dir2, name2) : EACCDN;
     if (fs->release)
     {
-        fs->release(&dir1);
-        fs->release(&dir2);
+        if (owned1) fs->release(&dir1);
+        if (owned2) fs->release(&dir2);
     }
 
     return rc;
@@ -778,6 +836,7 @@ static LONG pfs_do_sfirst(char *path, WORD att)
     WORD drive = pfs_path_drive(path, (const char **)&path);
     PFSCOOKIE dir;
     const char *name;
+    BOOL owned;
     WORD i;
     LONG rc;
 
@@ -785,7 +844,7 @@ static LONG pfs_do_sfirst(char *path, WORD att)
     if (!fs)
         return EDRIVE;
 
-    rc = pfs_resolve_dir(fs, drive, path, &dir, &name);
+    rc = pfs_resolve_dir(fs, drive, path, &dir, &name, &owned);
     if (rc < 0)
         return rc;
 
@@ -807,7 +866,7 @@ static LONG pfs_do_sfirst(char *path, WORD att)
                 break;
         if (i == CONF_PFS_MAX_SEARCHES)
         {
-            if (fs->release) fs->release(&dir);
+            if (owned && fs->release) fs->release(&dir);
             return ENHNDL;
         }
     }
@@ -815,6 +874,7 @@ static LONG pfs_do_sfirst(char *path, WORD att)
     pfs_searches[i].owner = run->p_xdta;
     pfs_searches[i].proc = run;
     pfs_searches[i].dir = dir;
+    pfs_searches[i].dir_owned = owned;
     pfs_searches[i].cursor = 0;
     pfs_searches[i].attr = att;
     strlcpy(pfs_searches[i].pattern, name, sizeof(pfs_searches[i].pattern));

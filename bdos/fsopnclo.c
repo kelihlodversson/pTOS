@@ -383,6 +383,17 @@ static void sftdel(FTAB *sftp)
     s->f_ofd = 0;
     s->f_own = 0;
     s->f_use = 0;
+#if CONF_WITH_PLUGGABLE_FS
+    /*
+     * this slot is only ever a legacy (non-pluggable) handle by the
+     * time sftdel() runs on it - see the CONF_WITH_PLUGGABLE_FS branch
+     * near the top of xclose() - but establish the invariant "free slot
+     * implies f_pfs.fs == NULL" here regardless, so opnfil()/makopn()
+     * (which know nothing about f_pfs) can never hand out a slot with a
+     * stale non-NULL f_pfs.fs left over from an earlier pluggable use.
+     */
+    s->f_pfs.fs = 0;
+#endif
 
     /*
      * if there are no other sft entries with same OFD, delete the OFD
