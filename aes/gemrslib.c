@@ -41,8 +41,6 @@
  * defines & typedefs
  */
 
-/* type definitions for use by an application when calling      */
-/*  rsrc_gaddr and rsrc_saddr                                   */
 
 
 
@@ -353,6 +351,17 @@ static BOOL pack_cicon(CICON *cicon, WORD w, WORD h)
 }
 #endif
 
+/*
+ * initialise the colour icon stuff
+ *
+ * this includes:
+ *  . filling in the CICONBLK pointer table
+ *  . for each CICONBLK:
+ *      . fixing up all of the internal data/mask/text pointers
+ *      . determining the appropriate icon for the current resolution
+ *      . expanding the icon if necessary
+ *      . converting the icon to device-dependent form
+ */
 /*
  * for each CICONBLK in the resource, select the CICON with the number of
  * planes that best matches the current resolution.  then expand the icon

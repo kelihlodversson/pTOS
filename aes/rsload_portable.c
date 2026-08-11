@@ -837,6 +837,12 @@ fail:
 }
 
 
+/*
+ *  Read resource file into memory and fix everything up except the
+ *  x,y,w,h, parts which depend upon a GSX open workstation.  In the
+ *  case of the GEM resource file this workstation will not have
+ *  been loaded into memory yet.
+ */
 WORD rs_readit(AESGLOBAL *pglobal,UWORD fd)
 {
     UBYTE header[DISK_RSHDR_SIZE];
