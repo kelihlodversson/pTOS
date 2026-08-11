@@ -838,19 +838,26 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
 
         /*
          * fd_stand memory buffers are a different case again: bb_save()/
-         * bb_restore() (aes/gemgsxif.c) and their gemfmalt.c callers use
-         * one (gl_tmp) as a raw scratch copy of packed screen pixels, sized
-         * with the same stale planar fd_nplanes*2 convention above (16
-         * bitplanes' worth of "words" instead of 2 bytes/pixel). Without
-         * this, s_nxwd never equals 2, so truecolor_raster_copy()'s sanity
-         * check on it silently no-ops every restore -- the menu (or
-         * anything else using this save/restore pair) is drawn but never
-         * erased when dismissed. There's no plane-interleaving to
-         * misinterpret in this buffer (unlike a genuine multi-plane
-         * colour-icon MFDB, which is never fd_stand), so packed stride is
-         * always correct here.
+         * bb_restore() (aes/gemgsxif.c) use one (gl_tmp) as a raw scratch
+         * copy of packed screen pixels, sized with the same stale planar
+         * fd_nplanes*2 convention above (16 bitplanes' worth of "words"
+         * instead of 2 bytes/pixel). Without this, s_nxwd never equals 2,
+         * so truecolor_raster_copy()'s sanity check on it silently no-ops
+         * every restore -- the menu (or anything else using this
+         * save/restore pair) is drawn but never erased when dismissed.
+         *
+         * fd_stand alone isn't enough to identify this case though: it
+         * also marks genuine device-independent standard-format MFDBs
+         * that an application can legitimately pass to vro_cpyfm(), and
+         * those keep their own content-driven, generally small
+         * fd_nplanes and must NOT be reinterpreted as packed truecolor
+         * data. gl_tmp is distinguishable because gsx_fix() sizes it
+         * directly from the live screen (aes/gemgsxif.c), so its
+         * fd_nplanes always equals the screen's own plane count -- 16 for
+         * RGB565 -- which a real standard bitmap has no reason to match.
          */
-        if (vdi_screen_is_truecolor() && !raster->transparent && src->fd_stand) {
+        if (vdi_screen_is_truecolor() && !raster->transparent && src->fd_stand
+            && src->fd_nplanes == linea_vars.v_planes) {
             info->s_nxwd = 2;
             info->s_nxln = src->fd_w * 2;
         }
@@ -882,11 +889,15 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
         info->d_nxwd = dst->fd_nplanes * 2;
         info->d_nxln = dst->fd_wdwidth * info->d_nxwd;
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
-        /* Mirror the source-side fd_stand case above: bb_save() writes
-         * the screen's packed pixels into gl_tmp (a fd_stand memory
-         * destination) the same way bb_restore() reads them back out, so
-         * this needs the same packed stride and single "plane" pass. */
-        if (vdi_screen_is_truecolor() && !raster->transparent && dst->fd_stand) {
+        /* Mirror the source-side fd_stand case above, including the
+         * fd_nplanes-matches-the-screen check that tells gl_tmp apart
+         * from a genuine standard-format destination MFDB: bb_save()
+         * writes the screen's packed pixels into gl_tmp (a fd_stand
+         * memory destination) the same way bb_restore() reads them back
+         * out, so this needs the same packed stride and single "plane"
+         * pass. */
+        if (vdi_screen_is_truecolor() && !raster->transparent && dst->fd_stand
+            && dst->fd_nplanes == linea_vars.v_planes) {
             info->plane_ct = 1;
             info->d_nxwd = 2;
             info->d_nxln = dst->fd_w * 2;
