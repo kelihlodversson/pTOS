@@ -5,6 +5,9 @@
 # needed. See virt-arm_defconfig for the full-stack (AES/VDI) target.
 MACHINE_VIRT_ARM=y
 
+# The multi-language image supports every country at run time.
+# BUILD_UNIQUE_COUNTRY is not set
+
 # No architecture-specific default exists yet for this machine (unlike the
 # Raspberry Pi targets), so the CPU used for testing (QEMU's cortex-a7) is
 # spelled out explicitly here, following the precedent set by
