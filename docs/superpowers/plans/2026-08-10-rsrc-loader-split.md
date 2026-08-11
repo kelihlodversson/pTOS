@@ -526,6 +526,13 @@ Optionally smoke-boot the result with the `ptos-smoketest` skill (QEMU `raspi1ap
 - Task 3: minor (deferred): `aes/rsload_portable.c` — the doc comment that preceded `rs_readit()` ("Read resource file into memory and fix everything up except the x,y,w,h parts…") was deleted instead of moving with the function; `rs_readit` now has no comment while `rs_loadmem` (whose comment was moved) does. Restore it.
 - Task 3: minor (deferred): `aes/gemrslib.c` — the "initialise the colour icon stuff" block comment (CICONBLK pointer-table filling / pointer fixing / resolution selection / expansion / device conversion) was deleted, but it describes the functions that REMAIN in gemrslib.c's `#if CONF_WITH_COLOUR_ICONS` block (`transform_all_cicons`, `get_ciconblkptr`, `expand_cicondata`, …), leaving them undocumented. Re-attach above `transform_all_cicons`. To fix before merge.
 
+### Deferred fixes from Tasks 2-3 review — DONE
+
+- Task 2 minor: stale orphaned comment at `aes/gemrslib.c` (the R_* banner, "type definitions for use by an application when calling rsrc_gaddr and rsrc_saddr") deleted; both surrounding comment blocks intact.
+- Task 3 minor: `rs_readit()` doc comment restored verbatim in `aes/rsload_portable.c` AND `aes/rsload_legacy.c` (matches pre-split text; both loader arms).
+- Task 3 minor: "initialise the colour icon stuff" block comment re-attached above `transform_all_cicons()` in `aes/gemrslib.c` (matches pre-split text).
+- Comment-only changes; `make gitready` passes; no code, symbols or sizes affected.
+
 ### Task 4: Final verification — DONE (approved)
 
 - Commit: none (verification only; working tree clean).
