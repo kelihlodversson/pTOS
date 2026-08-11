@@ -218,14 +218,16 @@ struct Vwk_ {
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
     /*
      * vs_color()/vq_color() pseudo-palette for the truecolor backend
-     * (issue #89): MAP_COL-mapped hardware palette index -> RGB565 pixel.
-     * Genuinely per-workstation, matching upstream's VwkExt::palette --
-     * a vs_color() on one workstation must not affect another. Seeded to
-     * the backend's defaults by init_wk() (vdi_control.c) whenever a
-     * workstation is opened; see vdi_backend_active_vwk() in vdi_backend.h
-     * for how the drawing primitives pick which workstation's copy to use.
+     * (issue #89): MAP_COL-mapped hardware palette index -> the active
+     * format's packed pixel value (RGB565 in the low 16 bits, XRGB8888
+     * over all 32).  Genuinely per-workstation, matching upstream's
+     * VwkExt::palette -- a vs_color() on one workstation must not affect
+     * another. Seeded to the backend's defaults by init_wk()
+     * (vdi_control.c) whenever a workstation is opened; see
+     * vdi_backend_active_vwk() in vdi_backend.h for how the drawing
+     * primitives pick which workstation's copy to use.
      */
-    UWORD tc_palette[256];
+    ULONG tc_palette[256];
     /*
      * vs_color()'s raw "last requested" values (VDI 0-1000 scale) for the
      * truecolor backend, indexed like REQ_COL/req_col2 by VDI pen number

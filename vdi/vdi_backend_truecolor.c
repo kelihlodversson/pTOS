@@ -236,7 +236,7 @@ Vwk *vdi_backend_active_vwk(void)
     return active_vwk;
 }
 
-static UWORD *active_palette(void)
+static ULONG *active_palette(void)
 {
     return vdi_backend_active_vwk()->tc_palette;
 }
@@ -281,7 +281,7 @@ BOOL vdi_truecolor_screen(void)
  * other (possibly virtual) workstation happens to have been the most
  * recent VDI caller.
  */
-UWORD vdi_truecolor_pixel_for_index(WORD index)
+ULONG vdi_truecolor_pixel_for_index(WORD index)
 {
     if (index < 0 || index > 255)
         index = 0;
@@ -373,16 +373,18 @@ UWORD *truecolor_get_start_addr(WORD x, WORD y)
 UWORD truecolor_get_pixel(WORD x, WORD y)
 {
     UWORD raw = *truecolor_get_start_addr(x, y);
-    const UWORD *palette = active_palette();
+    const ULONG *palette = active_palette();
     WORD i;
 
     /*
      * Callers expect a hardware palette register index back (see the
      * comment on default_prgb_palette[] above), not a 0-15 VDI pen
      * number, so this has to search the full 256-entry space to match.
+     * The stored palette values are ULONGs now (the active format's
+     * packed pixel); for RGB565 the upper bits are zero.
      */
     for (i = 0; i < 256; i++) {
-        if (palette[i] == raw)
+        if (palette[i] == (ULONG)raw)
             return (UWORD)i;
     }
 
@@ -972,14 +974,14 @@ WORD truecolor_search_left(const VwkClip *clip, WORD x, WORD y, UWORD search_col
     return x + 1;       /* output x coord + 1 to endxleft. */
 }
 
-static UWORD truecolor_get_raw_pixel(WORD x, WORD y)
+static ULONG truecolor_get_raw_pixel(WORD x, WORD y)
 {
-    return *truecolor_get_start_addr(x, y);
+    return (ULONG)*truecolor_get_start_addr(x, y);
 }
 
-static void truecolor_put_raw_pixel(WORD x, WORD y, UWORD raw)
+static void truecolor_put_raw_pixel(WORD x, WORD y, ULONG raw)
 {
-    *truecolor_get_start_addr(x, y) = raw;
+    *truecolor_get_start_addr(x, y) = (UWORD)raw;
 }
 
 static BOOL truecolor_open(Vwk *vwk)
@@ -1014,4 +1016,5 @@ vdi_backend_ops packed_truecolor_backend_ops = {
     truecolor_search_right,
     truecolor_search_left,
 #endif
+    2,                          /* pixel_size */
 };

@@ -143,7 +143,7 @@ void bb_fill(WORD mode, WORD fis, WORD patt, WORD hx, WORD hy, WORD hw, WORD hh)
  */
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
 BOOL vdi_truecolor_screen(void);
-UWORD vdi_truecolor_pixel_for_index(WORD index);
+ULONG vdi_truecolor_pixel_for_index(WORD index);
 #endif
 WORD vdi_colour_blit_mode(void);
 

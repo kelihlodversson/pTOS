@@ -63,6 +63,16 @@ static void default_close(Vwk *vwk)
     (void)vwk;
 }
 
+/*
+ * Raw XOR mask covering one whole pixel of the selected backend.  Not
+ * (1UL << (pixel_size * 8)) - 1: for pixel_size 4 that shifts a 32-bit
+ * ULONG by 32, which is undefined.
+ */
+static ULONG raw_xor_mask(const vdi_backend_ops *ops)
+{
+    return (ops->pixel_size == 4) ? 0xffffffffUL : 0xffffUL;
+}
+
 static void default_fill_rect(const VwkAttrib *attr, const Rect *rect)
 {
     const vdi_backend_ops *ops = vdi_screen_backend();
@@ -83,7 +93,7 @@ static void default_fill_rect(const VwkAttrib *attr, const Rect *rect)
             case 2:                 /* xor -- invert the raw word (palette
                                      * indices cannot express bitwise ops) */
                 if (set)
-                    ops->put_raw_pixel(x, y, ops->get_raw_pixel(x, y) ^ 0xffff);
+                    ops->put_raw_pixel(x, y, ops->get_raw_pixel(x, y) ^ raw_xor_mask(ops));
                 break;
             case 1:                 /* transparent */
                 if (set)
@@ -143,7 +153,7 @@ static void default_text_blit(LOCALVARS *vars)
                 break;
             case WM_XOR:
                 if (src_word & mask)
-                    ops->put_raw_pixel(x, y, ops->get_raw_pixel(x, y) ^ 0xffff);
+                    ops->put_raw_pixel(x, y, ops->get_raw_pixel(x, y) ^ raw_xor_mask(ops));
                 break;
             }
             x++;
@@ -219,7 +229,7 @@ static void default_raster_copy(struct raster_t *raster, struct blit_frame *info
                     break;
                 case MD_XOR:
                     if (set)
-                        ops->put_raw_pixel(dx, dy, ops->get_raw_pixel(dx, dy) ^ 0xffff);
+                        ops->put_raw_pixel(dx, dy, ops->get_raw_pixel(dx, dy) ^ raw_xor_mask(ops));
                     break;
                 case MD_ERASE:
                     if (!set)
@@ -294,7 +304,7 @@ static UWORD default_draw_line(const Line *line, WORD wrt_mode, UWORD color, UWO
             rolw1(linemask);
             switch (wrt_mode) {
             case 3: if (linemask & 1) ops->put_pixel(x, y, (UWORD)(~color & 0xff)); break;
-            case 2: if (linemask & 1) ops->put_raw_pixel(x, y, ops->get_raw_pixel(x, y) ^ 0xffff); break;
+            case 2: if (linemask & 1) ops->put_raw_pixel(x, y, ops->get_raw_pixel(x, y) ^ raw_xor_mask(ops)); break;
             case 1: if (linemask & 1) ops->put_pixel(x, y, color); break;
             default: ops->put_pixel(x, y, (linemask & 1) ? color : 0); break;
             }
@@ -312,7 +322,7 @@ static UWORD default_draw_line(const Line *line, WORD wrt_mode, UWORD color, UWO
             rolw1(linemask);
             switch (wrt_mode) {
             case 3: if (linemask & 1) ops->put_pixel(x, y, (UWORD)(~color & 0xff)); break;
-            case 2: if (linemask & 1) ops->put_raw_pixel(x, y, ops->get_raw_pixel(x, y) ^ 0xffff); break;
+            case 2: if (linemask & 1) ops->put_raw_pixel(x, y, ops->get_raw_pixel(x, y) ^ raw_xor_mask(ops)); break;
             case 1: if (linemask & 1) ops->put_pixel(x, y, color); break;
             default: ops->put_pixel(x, y, (linemask & 1) ? color : 0); break;
             }
