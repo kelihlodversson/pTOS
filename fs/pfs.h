@@ -45,11 +45,19 @@ typedef struct pfs_attr {
 } PFSATTR;
 
 /*
- * Per-driver operations vtable.  Every entry is optional; a NULL entry
- * makes the layer return EINVFN (or EACCDN for a write-type call) to the
- * GEMDOS caller.  All functions return a GEMDOS/BDOS status: 0 or positive
- * on success, a negative gemerror.h code on failure - the same convention
- * used throughout bdos/ and bios/.
+ * Per-driver operations vtable.  Every entry is optional; fs/pfs.c treats
+ * a NULL entry as "this driver doesn't support that operation" and
+ * returns a GEMDOS/BDOS error without calling it, but the exact code
+ * depends on which entry: EINVFN for root()/dfree() (the driver can't
+ * function at all without them), EPTHNF for lookup() (nothing beyond the
+ * root is resolvable), EACCDN for the write-type calls
+ * (open/create/mkdir/rmdir/remove/rename/chattr-when-setting, matching
+ * GEMDOS's usual "not permitted" code for an unsupported operation), and
+ * E_OK for a missing close() (nothing to do, see pfs_handle_close()) -
+ * see each entry's own comment below for anything call-specific.  All
+ * functions return a GEMDOS/BDOS status: 0 or positive on success, a
+ * negative gemerror.h code on failure - the same convention used
+ * throughout bdos/ and bios/.
  */
 struct pfs_ops {
     /* Root directory cookie for 'drive' on this driver instance.  A

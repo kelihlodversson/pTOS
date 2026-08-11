@@ -574,6 +574,72 @@ static LONG pfs_do_rmdir(const char *path)
     return rc;
 }
 
+/* Append 'tail' (a possibly multi-component relative path, e.g. what
+ * pfs_do_chdir() just handed to fs->lookup()) onto the cached
+ * current-directory path string '*newpath' (capacity 'cap'), folding "."
+ * and ".." components the way a canonical path does rather than blindly
+ * concatenating them.  fs->lookup() itself may resolve those components
+ * just fine (whatever tree-walking the driver does for the resolved
+ * cookie, e.g. FAT's dcrack()/findit()), but the *cached path string* is
+ * built up independently here - Dgetpath() returns it directly - so
+ * without this folding it could end up with a dangling ".." component
+ * that the built-in FAT implementation's DND-tree-derived Dgetpath()
+ * (dopath()) could never produce.  ".." above the root is clamped there,
+ * matching dopath()'s own behavior of never walking past a NULL
+ * d_parent.  Returns E_OK, or ERANGE if a component wouldn't fit.
+ */
+static LONG pfs_path_append(char *newpath, size_t cap, const char *tail)
+{
+    const char *p = tail;
+
+    for (;;)
+    {
+        const char *start = p;
+        size_t len;
+
+        while (*p && (*p != SLASH))
+            p++;
+        len = (size_t)(p - start);
+
+        if ((len == 1) && (start[0] == '.'))
+        {
+            /* "." - no-op */
+        }
+        else if ((len == 2) && (start[0] == '.') && (start[1] == '.'))
+        {
+            /* pop the last component - no strrchr() in include/string.h,
+             * so scan for it directly. */
+            char *last = newpath;
+            char *q;
+
+            for (q = newpath; *q; q++)
+                if (*q == SLASH)
+                    last = q;
+
+            if (last != newpath)
+                *last = 0;
+            else
+                newpath[0] = 0;
+        }
+        else if (len)
+        {
+            size_t curlen = strlen(newpath);
+            size_t sep = curlen ? 1 : 0;
+
+            if (curlen + sep + len >= cap)
+                return ERANGE;
+            if (sep)
+                newpath[curlen++] = SLASH;
+            memcpy(newpath + curlen, start, len);
+            newpath[curlen + len] = 0;
+        }
+
+        if (!*p)
+            return E_OK;
+        p++;    /* skip the SLASH */
+    }
+}
+
 static LONG pfs_do_chdir(const char *path)
 {
     struct pfs_ops *fs;
@@ -644,28 +710,13 @@ static LONG pfs_do_chdir(const char *path)
     if (rc < 0)
         return rc;
 
-    /* append "\name" (or just "name" if newpath is still empty, i.e. the
-     * new directory is directly under the drive root) to the cached
-     * path string; a path that doesn't fit is an error, not something
-     * to silently truncate - this string is what Dgetpath() returns and
-     * what later relative lookups are built from. */
-    {
-        size_t len = strlen(newpath);
-        size_t namelen = strlen(name);
-        size_t sep = len ? 1 : 0;
-
-        if (len + sep + namelen >= sizeof(newpath))
-        {
-            rc = ERANGE;
-        }
-        else
-        {
-            if (sep)
-                newpath[len++] = SLASH;
-            memcpy(newpath + len, name, namelen + 1);      /* + null terminator */
-            rc = pfs_cwd_set(drive, fs, &target, newpath);
-        }
-    }
+    /* fold 'name's components (which may include "." / "..") onto the
+     * cached path string - this is what Dgetpath() returns and what
+     * later relative lookups are built from, so it needs to stay
+     * canonical, not just whatever fs->lookup() was able to resolve. */
+    rc = pfs_path_append(newpath, sizeof(newpath), name);
+    if (rc >= 0)
+        rc = pfs_cwd_set(drive, fs, &target, newpath);
 
     /* same hand-off logic as above: 'target' is always owned here, but
      * only ours to release if pfs_cwd_set() didn't take it over. */
