@@ -469,6 +469,22 @@ config CONF_WITH_NVRAM
 	default n if TARGET_192 || TARGET_CART
 	default y
 
+config CONF_WITH_BOOTARGS_LANG
+	bool "Boot command line language/keyboard override"
+	depends on MACHINE_RPI || MACHINE_VIRT_ARM
+	default y
+	help
+	  These machines have no NVRAM (see CONF_WITH_NVRAM) to store the
+	  country/keyboard setting a multi-language image picks at run
+	  time.  Say y to read it instead from a "ptos.lang=xx" parameter
+	  on the ARM boot loader's command line, where xx is one of the
+	  two-letter country codes listed in country.mk (e.g. "de", "fr",
+	  "uk").  On the Raspberry Pi, set this in cmdline.txt; under QEMU,
+	  pass -append "ptos.lang=xx".  Only takes effect on a
+	  multi-language image (say n to BUILD_UNIQUE_COUNTRY); with no
+	  matching parameter, or on a single-country image, the country
+	  baked in at build time is used as before.
+
 endmenu
 
 menu "Miscellaneous BIOS features"
