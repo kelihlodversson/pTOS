@@ -375,15 +375,30 @@ static void pfs_search_free(PFS_SEARCH *s)
 
 /* Is a directory entry with attribute byte 'entry_attr' visible to an
  * Fsfirst/Fsnext search whose caller-supplied filter is 'searchattr'?
- * Standard GEMDOS rule: FA_RO/FA_ARCHIVE entries are always visible;
- * FA_HIDDEN/FA_SYSTEM/FA_SUBDIR/FA_VOL entries are visible only if the
- * search filter also sets that bit.
+ * Deliberately bug-for-bug matches bdos/fsdir.c's match()/ixsfirst(), not
+ * a "clean" reading of the GEMDOS spec, since this is what FAT already
+ * does today and this layer has to reproduce that exactly (see
+ * fs/fatfs_pfs.c's file header) - including its quirk that an entry
+ * combining a gated bit (FA_HIDDEN/FA_SYSTEM/FA_SUBDIR/FA_VOL) with
+ * FA_ARCHIVE or FA_RO is visible even when the gated bit wasn't
+ * requested, because ixsfirst() ORs FA_ARCHIVE|FA_RO into the search
+ * mask before match()'s plain bitwise-AND test - a plain "is the gated
+ * subset a subset of the requested bits" check (as this function
+ * previously was) does not reproduce that.
  */
 static BOOL pfs_attr_visible(UWORD entry_attr, UWORD searchattr)
 {
-    UWORD gated = entry_attr & (FA_HIDDEN | FA_SYSTEM | FA_SUBDIR | FA_VOL);
+    UWORD effective;
 
-    return (gated & ~searchattr) == 0;
+    if (searchattr == FA_VOL)
+        return (entry_attr & FA_VOL) != 0;
+
+    effective = searchattr | FA_ARCHIVE | FA_RO;
+
+    if (!entry_attr)
+        return TRUE;
+
+    return (effective & entry_attr) != 0;
 }
 
 static void pfs_attr_to_dta(DTAINFO *dt, const char *name, const PFSATTR *a)
