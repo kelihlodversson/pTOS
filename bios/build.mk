@@ -20,7 +20,7 @@ obj-y += memory.o processor.o intmask.o vectors.o bios.o xbios.o acsi.o biosmem.
 	 dma.o dmasound.o floppy.o font.o ide.o ikbd.o initinfo.o kprint.o \
 	 lineainit.o machine.o mfp.o midi.o mouse.o nvram.o panicasm.o \
 	 parport.o screen.o serport.o sound.o videl.o vt52.o xhdi.o delay.o \
-	 sd.o memory2.o bootparams.o scsi.o
+	 sd.o memory2.o bootparams.o bootargs.o scsi.o
 
 # screen_mode_desc_valid() (screen_mode.c) has exactly one caller,
 # vdi_backend_select() (vdi/vdi_backend.c), which only exists when the VDI

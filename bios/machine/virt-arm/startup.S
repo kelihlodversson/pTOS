@@ -93,6 +93,21 @@ os_dummy:
  */
 .balign 4
 _main:
+    /*
+     * The boot loader hands us r0 = 0, r1 = the ARM Linux machine type
+     * (or 0xffffffff for "use the device tree") and r2 = the address of
+     * the ATAG list or of a flattened device tree, per the standard ARM
+     * Linux boot protocol -- see bios/machine/raspi/startup.S, which
+     * does the same thing.  r0-r2 are needed for the MMU bring-up call
+     * below and are not preserved across it, so stash them in
+     * callee-saved registers (AAPCS guarantees _virt_uart0_init() and
+     * _virt_mmu_bootstrap() leave r8-r10 alone) until BSS has been
+     * cleared and arm_boot_regs can actually be written to.
+     */
+    mov r8, r0
+    mov r9, r1
+    mov r10, r2
+
     ldr sp, =0x47ff0000
     bl  _virt_uart0_init
     adr r4, hello_msg_phys     /* PC-relative: correct at the physical PC we're
@@ -160,6 +175,15 @@ virt_arm_post_mmu:
     str r2, [r0], #4
     b   1b
 2:
+
+    /*
+     * Now that BSS is cleared (arm_boot_regs lives there, like every
+     * other global) and virtual addressing is live, store the boot
+     * loader registers saved in r8-r10 above.  Mirrors
+     * bios/machine/raspi/startup.S.
+     */
+    ldr r3, =_arm_boot_regs
+    stmia r3, {r8-r10}
 
     /*
      * Install the exception vector table above.  Nothing has touched VBAR
@@ -296,3 +320,15 @@ _arm_dispatch_fiq:
  * at the top of _main), so it is always 0. */
     .globl _start_in_hyp
 _start_in_hyp: .word 0
+
+/*
+ * r0, r1 and r2 as saved near the top of _main.  This is BSS, so it is
+ * cleared by the loop above _before_ _main stores into it (unlike
+ * bios/machine/raspi/startup.S, which has to preserve it across a
+ * bzero() called much later from C).  The layout matches arm_boot_regs_t
+ * in include/arch/arm/arm_boot.h.
+ */
+.bss
+.balign 4
+.global _arm_boot_regs
+_arm_boot_regs: .ds.l 3
