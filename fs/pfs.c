@@ -78,6 +78,19 @@ LONG pfs_register_drive(WORD drive, struct pfs_ops *fs)
     if (!fs || !fs->root)
         return EINVFN;
 
+    /*
+     * Reject re-registering an already-claimed drive rather than
+     * silently swapping the driver out from under it - existing
+     * handles and pfs_dirtbl[]/pfs_searches[] cookies would keep
+     * pointing at the old driver's cookies while pfs_drive[] now
+     * dispatches new calls to a different one, an inconsistency no
+     * caller here is prepared to reconcile.  A driver that genuinely
+     * wants to replace another's claim needs an explicit unregister
+     * step - not needed by anything in this tree yet.
+     */
+    if (pfs_drive[drive])
+        return EACCDN;
+
     rc = fs->root(fs, drive, &root);
     if (rc < 0)
         return rc;
@@ -789,7 +802,15 @@ static LONG pfs_do_chmod(const char *path, WORD wrt, WORD mod)
         return rc;
 
     attr = (UWORD)mod;
-    rc = fs->chattr ? fs->chattr(&dir, name, wrt ? TRUE : FALSE, &attr) : EINVFN;
+    if (fs->chattr)
+        rc = fs->chattr(&dir, name, wrt ? TRUE : FALSE, &attr);
+    else
+        rc = wrt ? EACCDN : EINVFN;    /* unimplemented write op -> EACCDN,
+                                         * matching mkdir/remove/rename's
+                                         * convention for "not supported by
+                                         * this driver"; a plain get with
+                                         * nothing to read is EINVFN, as
+                                         * before. */
     if (owned && fs->release)
         fs->release(&dir);
     if (rc < 0)
