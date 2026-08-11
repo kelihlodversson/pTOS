@@ -526,6 +526,15 @@ Optionally smoke-boot the result with the `ptos-smoketest` skill (QEMU `raspi1ap
 - Task 3: minor (deferred): `aes/rsload_portable.c` — the doc comment that preceded `rs_readit()` ("Read resource file into memory and fix everything up except the x,y,w,h parts…") was deleted instead of moving with the function; `rs_readit` now has no comment while `rs_loadmem` (whose comment was moved) does. Restore it.
 - Task 3: minor (deferred): `aes/gemrslib.c` — the "initialise the colour icon stuff" block comment (CICONBLK pointer-table filling / pointer fixing / resolution selection / expansion / device conversion) was deleted, but it describes the functions that REMAIN in gemrslib.c's `#if CONF_WITH_COLOUR_ICONS` block (`transform_all_cicons`, `get_ciconblkptr`, `expand_cicondata`, …), leaving them undocumented. Re-attach above `transform_all_cicons`. To fix before merge.
 
+### Task 4: Final verification — DONE (approved)
+
+- Commit: none (verification only; working tree clean).
+- French 256K variant: `# ptos256fr.img done (5649 bytes free)` — fits (N >= 0 constraint satisfied).
+- Clean full-matrix re-run (from `make distclean`) matched the post-split baseline exactly on all five: atari192 1914, atari256 7115, atari512 16399, atari512+CICON_TEST 15255, rpi1 RAM 570368.
+- Structural checks pass: `gemrslib.c` has only calls to `fix_objects`/`rs_readit` (no definitions); no `#if CONF_WITH_LEGACY_RSC_LOAD` in either loader file; `build.mk` has exactly the two loader lines; `make gitready` passes.
+- Smoke boots: rpi1 QEMU reached `evnt_multi()` with 0 guest_errors; atari256 Hatari reached the GEM desktop (legacy loader exercised).
+- Pending: final whole-branch review.
+
 ---
 
 ## Self-Review
