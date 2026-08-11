@@ -118,15 +118,25 @@ void int_timerc(void)
 {
     hz_200++;
     timer_c_sieve = (timer_c_sieve << 1) | (timer_c_sieve >> 15);
+
+    /* Poll USB HID devices on every timer tick (200 Hz).  A boot mouse
+     * with SET_IDLE=0 has a 1-deep FIFO and only emits a report on state
+     * change; if a button press is followed quickly by a release (within
+     * a single poll interval), the press is overwritten before we read
+     * it and the click is lost.  udd_mouse.c drains the endpoint FIFO on
+     * each call, but that only helps if the poll interval is short enough
+     * to catch the event between the two state changes.  Keyboards also
+     * NAK when idle so the extra polls are cheap.  See issue #167. */
+#   if CONF_WITH_USB
+        usb_mouse_timerc();
+        usb_keyboard_timerc();
+#   endif
+
     if (timer_c_sieve & 4) // If the highest bit in any nybble is 1, we are in the 4th call
     {
         kb_timerc_int();
 #       if CONF_WITH_YM2149
             sndirq();   // dosound support
-#       endif
-#       if CONF_WITH_USB
-            usb_mouse_timerc();
-            usb_keyboard_timerc();
 #       endif
 
         // Fake vbl interrupt every 4 timer_c calls (50Hz)

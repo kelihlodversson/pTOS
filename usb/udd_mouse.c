@@ -106,52 +106,49 @@ usb_mouse_irq (struct usb_device *dev)
 	return 0;
 }
 
+/* Maximum number of reports to drain in a single call.  A boot mouse
+ * with SET_IDLE=0 emits one report per state change and its FIFO is
+ * typically one report deep, so two or three iterations is the norm;
+ * the cap is just a guard against a misbehaving device. */
+#define MOUSE_DRAIN_MAX 8
+
 void usb_mouse_timerc (void)
 {
 	long actlen = 0;
 	long r;
+	int iter;
 
 	if (mse_data.pusb_dev == NULL)
 		return;
 
-	r = usb_bulk_msg (mse_data.pusb_dev,
-					  mse_data.irqpipe,
-					  mse_data.new,
-					  mse_data.irqmaxp > 8 ? 8 : mse_data.irqmaxp,
-					  &actlen, USB_CNTL_TIMEOUT * 5, 1);
-
-	if ((r != 0) || (actlen < 3) || (actlen > 8))
-	{
-		return;
-	}
-
+	/* Drain the endpoint FIFO: a boot mouse with SET_IDLE=0 only
+	 * emits a report when its state changes, and the FIFO is
+	 * typically one report deep.  If a button press is followed
+	 * quickly by a release (within one poll interval), the press
+	 * is overwritten before we read it.  Polling in a loop until
+	 * the endpoint NAKs recovers both events. */
+	for (iter = 0; iter < MOUSE_DRAIN_MAX; iter++)
 	{
 		char info, old_info;
 		char delta_x, delta_y;
-		char extra, old_extra;
-		BOOL change = FALSE;
+		char extra;
 
-		(void)old_extra;
-		{					   /* boot report */
-			info = mse_data.new[0];
-			old_info = mse_data.data[0];
-			change |= info != old_info;
-			delta_x = mse_data.new[1];
-			delta_y = mse_data.new[2];
-			change |= !!delta_x || !!delta_y;
-			if (actlen >= 3)
-			{
-				extra = mse_data.new[3];
-				old_extra = mse_data.data[3];
-				change |= extra != old_extra;
-			}
-		}
-		if(!change)
-		{
-			return;
-		}
+		r = usb_bulk_msg (mse_data.pusb_dev,
+						  mse_data.irqpipe,
+						  mse_data.new,
+						  mse_data.irqmaxp > 8 ? 8 : mse_data.irqmaxp,
+						  &actlen, USB_CNTL_TIMEOUT * 5, 1);
 
-		// Build ikbd mouse packet
+		if ((r != 0) || (actlen < 3) || (actlen > 8))
+			return;			   /* NAK or error: FIFO drained */
+
+		info = mse_data.new[0];
+		old_info = mse_data.data[0];
+		delta_x = mse_data.new[1];
+		delta_y = mse_data.new[2];
+		extra = (actlen >= 4) ? mse_data.new[3] : 0;
+
+		/* Build ikbd mouse packet */
 		mouse_packet[0] =
 			((info & 1) << 1) |
 			((info & 2) >> 1) | 0xF8;
@@ -163,7 +160,7 @@ void usb_mouse_timerc (void)
 			mousexvec ((info & 4)?0x37:0xb7);
 		}
 
-		// Mouse wheel is stored in the low nybble of the extra byte
+		/* Mouse wheel is stored in the low nybble of the extra byte */
 		switch (extra & 0xf)
 		{
 			case 0x1:		/* Wheel up */
@@ -180,10 +177,11 @@ void usb_mouse_timerc (void)
 			break;
 			case 0:
 			default:
-			break; // Default is no movement
+			break; /* Default is no movement */
 		}
 
 		call_mousevec(mouse_packet);
+
 		mse_data.data[0] = mse_data.new[0];
 		mse_data.data[1] = mse_data.new[1];
 		mse_data.data[2] = mse_data.new[2];
