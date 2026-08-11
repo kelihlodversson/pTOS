@@ -829,13 +829,31 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
          * using that here would make s_nxln 8 times too small and the
          * opaque copy would read w/8 bytes per row instead of 2w.  Only
          * the opaque device-dependent case (the AES's packed colour-icon
-         * data -- gr_colourblit()) wants the packed stride: transparent
-         * sources are 1bpp masks whose fd_wdwidth stride is correct, and
-         * fd_stand sources (bb_save/bb_restore's gl_tmp) keep their own
-         * consistent fd_wdwidth-based layout.
+         * data -- gr_colourblit()) wants the packed stride here:
+         * transparent sources are 1bpp masks whose fd_wdwidth stride is
+         * correct as-is.
          */
         if (vdi_screen_is_truecolor() && !raster->transparent && !src->fd_stand)
             info->s_nxln = src->fd_w * 2;
+
+        /*
+         * fd_stand memory buffers are a different case again: bb_save()/
+         * bb_restore() (aes/gemgsxif.c) and their gemfmalt.c callers use
+         * one (gl_tmp) as a raw scratch copy of packed screen pixels, sized
+         * with the same stale planar fd_nplanes*2 convention above (16
+         * bitplanes' worth of "words" instead of 2 bytes/pixel). Without
+         * this, s_nxwd never equals 2, so truecolor_raster_copy()'s sanity
+         * check on it silently no-ops every restore -- the menu (or
+         * anything else using this save/restore pair) is drawn but never
+         * erased when dismissed. There's no plane-interleaving to
+         * misinterpret in this buffer (unlike a genuine multi-plane
+         * colour-icon MFDB, which is never fd_stand), so packed stride is
+         * always correct here.
+         */
+        if (vdi_screen_is_truecolor() && !raster->transparent && src->fd_stand) {
+            info->s_nxwd = 2;
+            info->s_nxln = src->fd_w * 2;
+        }
 #endif
     }
     else {
@@ -863,6 +881,17 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
         info->plane_ct = dst->fd_nplanes;
         info->d_nxwd = dst->fd_nplanes * 2;
         info->d_nxln = dst->fd_wdwidth * info->d_nxwd;
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+        /* Mirror the source-side fd_stand case above: bb_save() writes
+         * the screen's packed pixels into gl_tmp (a fd_stand memory
+         * destination) the same way bb_restore() reads them back out, so
+         * this needs the same packed stride and single "plane" pass. */
+        if (vdi_screen_is_truecolor() && !raster->transparent && dst->fd_stand) {
+            info->plane_ct = 1;
+            info->d_nxwd = 2;
+            info->d_nxln = dst->fd_w * 2;
+        }
+#endif
     }
     else {
         /* destination form is screen */
