@@ -18,8 +18,9 @@
  * never "fall back to another backend." The dispatcher's
  * vdi_backend_ops_init() (see below) fills every NULL slot with a
  * renderer-agnostic default built only on the mandatory primitives
- * (get_start_addr, get_pixel, put_pixel, get_raw_pixel, put_raw_pixel),
- * which must be non-NULL.  open/close default to no-ops.
+ * (get_start_addr, get_pixel, put_pixel, get_raw_pixel, put_raw_pixel,
+ * set_color, get_color), which must be non-NULL.  open/close default to
+ * no-ops.
  */
 typedef struct vdi_backend_ops {
     BOOL (*open)(Vwk *vwk);
@@ -38,6 +39,27 @@ typedef struct vdi_backend_ops {
      */
     UWORD (*get_raw_pixel)(WORD x, WORD y);
     void (*put_raw_pixel)(WORD x, WORD y, UWORD raw);
+
+    /*
+     * Write/read the "actual" hardware or backend palette entry for a VDI
+     * pen (see vdi_vs_color()/vdi_vq_color() in vdi_col.c, issue #171).
+     * pen is the raw pen number as passed by the caller (VDI's INTIN[0]),
+     * not adjusted for TT palette banking -- each backend resolves it
+     * through its own indexing (MAP_COL[] for both current backends).
+     * rgb holds VDI-scale (0-1000) component values; set_color's caller
+     * has already range-clamped them.
+     *
+     * Mandatory, like the raw-pixel pair above: there is no renderer-
+     * agnostic way to write a hardware/backend palette, so there is no
+     * generic default to fall back to.  The separate "last requested"
+     * value cache (REQ_COL/req_col2 vs. a workstation's tc_req_col) is a
+     * backend-specific storage layout, not a primitive -- it stays inline
+     * at the vdi_col.c call site, the same kind of setup/data-layout
+     * decision as cpy_raster()'s packed-MFDB-layout branches.
+     */
+    void (*set_color)(Vwk *vwk, WORD pen, WORD *rgb);
+    void (*get_color)(const Vwk *vwk, WORD pen, WORD *rgb);
+
     void (*fill_rect)(const VwkAttrib *attr, const Rect *rect);
     void (*text_blit)(LOCALVARS *vars);
     void (*raster_copy)(struct raster_t *raster, struct blit_frame *info);
