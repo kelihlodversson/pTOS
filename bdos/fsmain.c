@@ -501,7 +501,7 @@ FTAB *getpfsslot(int h)
 {
     WORD n;
 
-    if ((h < 0) | (h >= NUMHANDLES))
+    if ((h < 0) || (h >= NUMHANDLES))
         return NULL;
 
     n = syshnd(h);
