@@ -43,6 +43,12 @@
 #include "version.h"
 #include "../bios/header.h"
 
+#if CONF_WITH_VDI_CICON_TEST
+#include "../aes/gemrslib.h"    /* rs_loadmem() */
+extern const UBYTE cicontest_rsc[];
+extern const LONG cicontest_rsc_size;
+#endif
+
 #include "aesbind.h"
 #include "desksupp.h"
 #include "deskins.h"
@@ -1663,6 +1669,31 @@ WORD rsrc_gaddr_rom(WORD rstype, WORD rsid, void **paddr)
 }
 
 
+#if CONF_WITH_VDI_CICON_TEST
+/*
+ *  issue #107 test hook: draw the embedded colour icon over the desktop
+ *  background.  No appl_init()/appl_exit() here -- the desktop already
+ *  called appl_init() (ap_exit() would tear the desktop down).  Loads
+ *  the RSC in memory (rpi2 has no filesystem) and draws via the normal
+ *  obj_draw() path so the truecolor and planar renderings both go
+ *  through gr_gicon().
+ */
+static void desk_cicon_test(void)
+{
+    OBJECT *tree;
+
+    tree = rs_loadmem(NULL, cicontest_rsc, cicontest_rsc_size);
+    if (!tree)
+    {
+        KDEBUG(("desk_cicon_test: in-memory RSC load failed\n"));
+        return;
+    }
+
+    objc_draw(tree, ROOT, MAX_DEPTH, 0, 0, gl_width, gl_height);
+}
+#endif
+
+
 WORD deskmain(void)
 {
     WORD ii, done, flags;
@@ -1774,6 +1805,10 @@ WORD deskmain(void)
     menu_bar(menutree, 1);
     desk_wait(FALSE);
     wind_update(END_UPDATE);
+
+#if CONF_WITH_VDI_CICON_TEST
+    desk_cicon_test();
+#endif
 
     /* get ready for main loop */
     flags = MU_BUTTON | MU_MESAG | MU_KEYBD;

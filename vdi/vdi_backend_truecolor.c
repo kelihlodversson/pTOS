@@ -250,6 +250,21 @@ static UWORD truecolor_pixel_for_index(WORD index)
 }
 
 /*
+ * Linkable backend query for the AES (declared in include/gsxdefs.h):
+ * is the current screen workstation driven by the packed-truecolor
+ * backend?  Thin wrapper over vdi_screen_is_truecolor(), which the AES
+ * cannot call -- that inline lives in vdi_backend.h, a vdi/-private
+ * header the AES never includes.  This file is built exactly when
+ * CONF_WITH_VDI_BACKEND_TRUECOLOR is set, matching the A1 branch's
+ * compile-time guard in aes/gemrslib.c; under backend dispatch it is the
+ * runtime check against the selected ops table.
+ */
+BOOL vdi_truecolor_screen(void)
+{
+    return vdi_screen_is_truecolor();
+}
+
+/*
  * Public wrapper for callers outside this backend that need to turn a
  * MAP_COL-mapped hardware palette index into the raw RGB565 pixel value
  * this backend would write for it -- currently only the RPi software

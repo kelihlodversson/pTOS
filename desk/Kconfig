@@ -80,4 +80,15 @@ config CONF_WITH_EASTER_EGG
 	bool "EmuDesk easter egg"
 	default y
 
+config CONF_WITH_VDI_CICON_TEST
+	bool "Embedded colour-icon rendering test"
+	depends on CONF_WITH_AES && CONF_WITH_COLOUR_ICONS && !CONF_WITH_LEGACY_RSC_LOAD
+	default n
+	help
+	  Test hook for issue #107: embeds a hand-built 'new format' RSC
+	  with a single G_CICON and draws it over the desktop background at
+	  boot, exercising gr_gicon() -> gr_colourblit() on both the packed
+	  truecolor (RPi) and the planar (Atari) paths.  For verification
+	  only -- do not enable in production images.
+
 endmenu

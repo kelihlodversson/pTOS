@@ -31,6 +31,8 @@
 #include "geminit.h"
 #include "gemrslib.h"
 #include "gemgsxif.h"
+#include "rsload.h"
+#include "endian.h"
 
 #include "string.h"
 #include "nls.h"
@@ -39,36 +41,15 @@
  * defines & typedefs
  */
 
-/* type definitions for use by an application when calling      */
-/*  rsrc_gaddr and rsrc_saddr                                   */
-
-#define R_TREE      0
-#define R_OBJECT    1
-#define R_TEDINFO   2
-#define R_ICONBLK   3
-#define R_BITBLK    4
-#define R_STRING    5               /* gets pointer to free strings */
-#define R_IMAGEDATA 6               /* gets pointer to free images  */
-#define R_OBSPEC    7
-#define R_TEPTEXT   8               /* sub ptrs in TEDINFO  */
-#define R_TEPTMPLT  9
-#define R_TEPVALID  10
-#define R_IBPMASK   11              /* sub ptrs in ICONBLK  */
-#define R_IBPDATA   12
-#define R_IBPTEXT   13
-#define R_BIPDATA   14              /* sub ptrs in BITBLK   */
-#define R_FRSTR     15              /* gets addr of ptr to free strings     */
-#define R_FRIMG     16              /* gets addr of ptr to free images      */
 
 
 
 /*******  LOCALS  **********************/
 
-static RSHDR   *rs_hdr;
-static AESGLOBAL *rs_global;
+RSHDR   *rs_hdr;
+AESGLOBAL *rs_global;
 static char    tmprsfname[128];
 static char    free_str[256];   /* must be long enough for longest freestring in gem.rsc */
-
 
 /*
  *  Fix up a character position, from offset,row/col to a pixel value.
@@ -123,7 +104,7 @@ void rs_obfix(OBJECT *tree, WORD curob)
 }
 
 
-static void *get_sub(UWORD rsindex, UWORD offset, UWORD rsize)
+void *get_sub(UWORD rsindex, UWORD offset, UWORD rsize)
 {
     /* get base of objects and then index in */
     return (char *)rs_hdr + offset + rsize * rsindex;
@@ -133,7 +114,7 @@ static void *get_sub(UWORD rsindex, UWORD offset, UWORD rsize)
 /*
  *  return address of given type and index, INTERNAL ROUTINE
  */
-static void *get_addr(UWORD rstype, UWORD rsindex)
+void *get_addr(UWORD rstype, UWORD rsindex)
 {
     WORD size;
     UWORD offset;
@@ -201,85 +182,6 @@ static void *get_addr(UWORD rstype, UWORD rsindex)
 
 
 #if CONF_WITH_COLOUR_ICONS
-/*
- * fixup all of the CICONs for a CICONBLK
- *
- * returns a pointer to the next CICONBLK
- */
-static CICONBLK *fixup_colour_icons(LONG num_cicons, LONG mono_words, CICON *start)
-{
-    CICON *p = start;
-    WORD *q;
-    LONG i;
-
-    /*
-     * loop through all the CICONs for one CICONBLK
-     *
-     * p points to the current CICON; q tracks sections of CICON data.
-     * at the end, p will point to the start of the next CICONBLK
-     */
-    for (i = 0; i < num_cicons; i++)
-    {
-        q = (WORD *)(p+1);                  /* point to start of data area */
-        p->col_data = q;
-        q += mono_words * p->num_planes;
-        p->col_mask = q;
-        q += mono_words;                    /* mask is one plane */
-        if (p->sel_data)
-        {
-            p->sel_data = q;
-            q += mono_words * p->num_planes;
-            p->sel_mask = q;
-            q += mono_words;                /* mask is one plane */
-        }
-        if (p->next_res == (CICON *)1L)     /* more CICONs follow */
-            p->next_res = (CICON *)q;
-        else
-            p->next_res = NULL;
-        p = (CICON *)q;
-    }
-
-    return (CICONBLK *)p;
-}
-
-/*
- * this fixes up all of the CICONBLK-related pointers:
- *  . the CICONBLK pointer table
- *  . the pointers in the ICONBLK contained in the CICONBLK
- *  . the pointers in the CICON
- */
-static void fixup_all_ciconblks(LONG num_blks, CICONBLK **ciconblkptr, CICON *cicondata)
-{
-    CICONBLK *p = (CICONBLK *)cicondata;
-    WORD *q;
-    LONG i, num_cicons, mono_words;
-
-    for (i = 0; i < num_blks; i++)
-    {
-        ciconblkptr[i] = p;
-        num_cicons = (LONG)(p->mainlist);   /* number of colour icons for this CICONBLK */
-        mono_words = (LONG)(p->monoblk.ib_wicon/16) * p->monoblk.ib_hicon;
-        q = (WORD *)(p+1);                  /* point to start of data area */
-
-        p->monoblk.ib_pdata = q;            /* fixup mono icon */
-        q += mono_words;
-        p->monoblk.ib_pmask = q;
-        q += mono_words;
-        p->monoblk.ib_ptext = (BYTE *)q;
-        q += 12 / 2;                        /* length of icon text */
-        if (num_cicons)
-        {
-            p->mainlist = (CICON *)q;
-            p = fixup_colour_icons(num_cicons, mono_words, (CICON *)q);
-        }
-        else
-        {
-            p->mainlist = NULL;
-            p = (CICONBLK *)q;
-        }
-    }
-}
-
 /*
  * returns pointer to a CICON that best matches the current resolution
  *
@@ -382,12 +284,90 @@ static void transform_cicon(WORD *src, WORD *dest, WORD w, WORD h, WORD planes)
     vrn_trnfm(&gl_src, &gl_dst);
 }
 
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+/*
+ *  pack one plane-major colour array (the RSC layout transform_cicon()
+ *  reads) into w*h packed pixels: each pixel's colour code is the OR of
+ *  its bit across the planes, then mapped to RGB565 via the physical
+ *  workstation's palette.
+ *
+ *  The bit order below -- plane p contributes bit (1<<p) of the colour
+ *  code -- is the calibration constant the design calls out; the first
+ *  screencap (Task 6) confirms or flips it to (1 << (planes-1-p)).
+ */
+static void pack_planes(const WORD *data, UWORD *pix, WORD planes, WORD w, WORD h)
+{
+    LONG mono_words = ((LONG)w + 15) / 16;
+    WORD x, y, p;
+
+    for (y = 0; y < h; y++)
+    {
+        const WORD *rowbase = data + (LONG)y * mono_words;
+
+        for (x = 0; x < w; x++)
+        {
+            UWORD mask = 0x8000 >> (x & 0x0f);
+            WORD code = 0;
+
+            for (p = 0; p < planes; p++)
+            {
+                const WORD *plane = rowbase + (LONG)p * mono_words * h;
+                if (plane[x >> 4] & mask)
+                    code |= (WORD)(1UL << p);
+            }
+            *pix++ = vdi_truecolor_pixel_for_index(code);
+        }
+    }
+}
+
+/*
+ *  pack_cicon: convert the selected CICON's standard-format colour data
+ *  to the packed-truecolor layout.  The normal and (optional) selected
+ *  buffers are packed back-to-back in a single allocation so
+ *  free_cicon_buffers() (which frees only cicon->col_data) still works.
+ */
+static BOOL pack_cicon(CICON *cicon, WORD w, WORD h)
+{
+    LONG pixels = (LONG)w * h;
+    UWORD *packed;
+
+    packed = dos_alloc_anyram(pixels * (cicon->sel_data ? 2 : 1) * sizeof(UWORD));
+    if (!packed)
+        return FALSE;
+
+    pack_planes(cicon->col_data, packed, cicon->num_planes, w, h);
+    cicon->col_data = (WORD *)packed;
+
+    if (cicon->sel_data)
+    {
+        UWORD *selbuf = packed + pixels;
+
+        pack_planes(cicon->sel_data, selbuf, cicon->num_planes, w, h);
+        cicon->sel_data = (WORD *)selbuf;
+    }
+
+    cicon->num_planes = 1;
+    return TRUE;
+}
+#endif
+
+/*
+ * initialise the colour icon stuff
+ *
+ * this includes:
+ *  . filling in the CICONBLK pointer table
+ *  . for each CICONBLK:
+ *      . fixing up all of the internal data/mask/text pointers
+ *      . determining the appropriate icon for the current resolution
+ *      . expanding the icon if necessary
+ *      . converting the icon to device-dependent form
+ */
 /*
  * for each CICONBLK in the resource, select the CICON with the number of
  * planes that best matches the current resolution.  then expand the icon
  * if necessary, and transform it from standard to device-dependent format
  */
-static void transform_all_cicons(LONG num_cicons, CICONBLK **ciconblkptr)
+void transform_all_cicons(LONG num_cicons, CICONBLK **ciconblkptr)
 {
     CICONBLK *ciconblk;
     CICON *cicon;
@@ -405,6 +385,27 @@ static void transform_all_cicons(LONG num_cicons, CICONBLK **ciconblkptr)
             continue;
         w = ciconblk->monoblk.ib_wicon;
         h = ciconblk->monoblk.ib_hicon;
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+        /*
+         * Packed-truecolor screen: there are no bitplanes to expand to.
+         * Convert the standard-format colour planes straight to one
+         * RGB565 pixel per bit (w*h UWORDs, num_planes=1), the layout
+         * truecolor_raster_copy()'s opaque path reads.  Skipping
+         * expand_cicondata()/transform_cicon() here is what avoids the
+         * 16-plane interleaved form that setup_info() cannot interpret.
+         * Pixels whose colour code is 0 keep their own palette colour
+         * (the icon background -- the mask blit in gr_gicon() is what
+         * paints the object's background over the shape); this is the
+         * deliberate truecolor look, see the design doc.
+         */
+        if (vdi_truecolor_screen())
+        {
+            cicon->next_res = NULL;
+            if (!pack_cicon(cicon, w, h))
+                ciconblk->mainlist = NULL;  /* no colour for this icon */
+            continue;
+        }
+#endif
         data_size = (LONG)(w/8*gl_nplanes) * h;
         expand = (cicon->num_planes != gl_nplanes); /* boolean */
 
@@ -468,7 +469,7 @@ static void transform_all_cicons(LONG num_cicons, CICONBLK **ciconblkptr)
  *
  * returns NULL if none
  */
-static CICONBLK **get_ciconblkptr(RSHDR *hdr)
+CICONBLK **get_ciconblkptr(RSHDR *hdr)
 {
     LONG *extarray;
     LONG cptr_offset;
@@ -521,139 +522,7 @@ static WORD free_cicon_buffers(RSHDR *hdr)
 
     return rc;
 }
-
-/*
- * initialise the colour icon stuff
- *
- * this includes:
- *  . filling in the CICONBLK pointer table
- *  . for each CICONBLK:
- *      . fixing up all of the internal data/mask/text pointers
- *      . determining the appropriate icon for the current resolution
- *      . expanding the icon if necessary
- *      . converting the icon to device-dependent form
- */
-static void fix_cicons(void)
-{
-    RSHDR *hdr = rs_hdr;
-    CICONBLK **ciconblkptr, **p;
-    CICON *cicondata;
-    LONG num_ciconblks;
-
-    /* find the CICONBLK ptr table & count the CICONBLKs */
-    ciconblkptr = get_ciconblkptr(hdr);
-    if (!ciconblkptr)   /* yes, we have no CICONBLKs */
-        return;
-
-    for (num_ciconblks = 0, p = ciconblkptr; *p != (CICONBLK *)-1L; p++)
-        num_ciconblks++;
-
-    /* the CICON data area starts immediately after the pointer table */
-    cicondata = (CICON *)(p+1);
-
-    /* fixup the pointers in the resource */
-    fixup_all_ciconblks(num_ciconblks, ciconblkptr, cicondata);
-
-    /* transform all the icons to device-dependent format */
-    transform_all_cicons(num_ciconblks, ciconblkptr);
-}
 #endif
-
-
-static BOOL fix_long(LONG *plong)
-{
-    LONG lngval;
-
-    lngval = *plong;
-    if (lngval != -1L)
-    {
-        *plong = (LONG)rs_hdr + lngval;
-        return TRUE;
-    }
-
-    return FALSE;
-}
-
-
-static void fix_trindex(void)
-{
-    WORD ii;
-    LONG *ptreebase;
-
-    ptreebase = (LONG *)get_sub(R_TREE, rs_hdr->rsh_trindex, sizeof(LONG));
-    rs_global->ap_ptree = (OBJECT **)ptreebase;
-
-    for (ii = 0; ii < rs_hdr->rsh_ntree; ii++)
-    {
-        fix_long(ptreebase+ii);
-    }
-}
-
-
-static void fix_objects(void)
-{
-    WORD ii;
-    WORD obtype;
-    OBJECT *obj;
-#if CONF_WITH_COLOUR_ICONS
-    CICONBLK **ciconblkptr = get_ciconblkptr(rs_hdr);
-#endif
-
-    for (ii = 0; ii < rs_hdr->rsh_nobs; ii++)
-    {
-        obj = (OBJECT *)get_addr(R_OBJECT, ii);
-        rs_obfix(obj, 0);
-        obtype = obj->ob_type & 0x00ff;
-        switch (obtype)
-        {
-#if CONF_WITH_COLOUR_ICONS
-        case G_CICON:
-            if (ciconblkptr)
-                obj->ob_spec.index = (LONG)ciconblkptr[obj->ob_spec.index];
-            break;
-#endif
-        case G_BOX:
-        case G_IBOX:
-        case G_BOXCHAR:
-            break;
-        default:
-            fix_long(&obj->ob_spec.index);
-            break;
-        }
-    }
-}
-
-
-static void fix_nptrs(WORD cnt, WORD type)
-{
-    WORD i;
-
-    for (i = 0; i < cnt; i++)
-        fix_long(get_addr(type, i));
-}
-
-
-static BOOL fix_ptr(WORD type, WORD index)
-{
-    return fix_long(get_addr(type, index));
-}
-
-
-static void fix_tedinfo(void)
-{
-    WORD ii;
-    TEDINFO *ted;
-
-    for (ii = 0; ii < rs_hdr->rsh_nted; ii++)
-    {
-        ted = (TEDINFO *)get_addr(R_TEDINFO, ii);
-        if (fix_ptr(R_TEPTEXT, ii))
-            ted->te_txtlen = strlen(ted->te_ptext) + 1;
-        if (fix_ptr(R_TEPTMPLT, ii))
-            ted->te_tmplen = strlen(ted->te_ptmplt) + 1;
-        fix_ptr(R_TEPVALID, ii);
-    }
-}
 
 
 /*
@@ -676,10 +545,9 @@ WORD rs_free(AESGLOBAL *pglobal)
     rs_sglobe(pglobal);
 
 #if CONF_WITH_COLOUR_ICONS
-    if (free_cicon_buffers(rs_hdr) < 0)
+    if (free_cicon_buffers(rs_global->ap_rscmem))
         rc = 0;
 #endif
-
     if (dos_free(rs_global->ap_rscmem))
         rc = 0;
 
@@ -718,72 +586,6 @@ WORD rs_saddr(AESGLOBAL *pglobal, UWORD rtype, UWORD rindex, void *rsaddr)
     }
 
     return FALSE;
-}
-
-
-/*
- *  Read resource file into memory and fix everything up except the
- *  x,y,w,h, parts which depend upon a GSX open workstation.  In the
- *  case of the GEM resource file this workstation will not have
- *  been loaded into memory yet.
- */
-static WORD rs_readit(AESGLOBAL *pglobal,UWORD fd)
-{
-    WORD ibcnt;
-    LONG rslsize;
-    RSHDR hdr_buff;
-
-    /* read the header */
-    if (dos_read(fd, sizeof(hdr_buff), &hdr_buff) != sizeof(hdr_buff))
-        return FALSE;           /* error or short read */
-
-    /* get size of resource & allocate memory */
-    rslsize = hdr_buff.rsh_rssize;
-
-#if CONF_WITH_COLOUR_ICONS
-    /* for 'new format' resource files, get actual resource size */
-    if (hdr_buff.rsh_vrsn & NEW_FORMAT_RSC)
-    {
-        if (dos_lseek(fd, 0, rslsize) < 0L)
-            return FALSE;
-        if (dos_read(fd, sizeof(rslsize), &rslsize) != sizeof(rslsize))
-            return FALSE;
-    }
-#endif
-
-    rs_hdr = (RSHDR *)dos_alloc_anyram(rslsize);
-    if (!rs_hdr)
-        return FALSE;
-
-    /* read it all in */
-    if (dos_lseek(fd, 0, 0x0L) < 0L)    /* mode 0: absolute offset */
-        return FALSE;
-    if (dos_read(fd, rslsize, rs_hdr) != rslsize)
-        return FALSE;           /* error or short read */
-
-    /* init global */
-    rs_global = pglobal;
-    rs_global->ap_rscmem = rs_hdr;
-    rs_global->ap_rsclen = rslsize;
-
-    /*
-     * transfer RT_TRINDEX to global and turn all offsets from
-     * base of file into pointers
-     */
-    fix_trindex();
-#if CONF_WITH_COLOUR_ICONS
-    fix_cicons();
-#endif
-    fix_tedinfo();
-    ibcnt = rs_hdr->rsh_nib;
-    fix_nptrs(ibcnt, R_IBPMASK);
-    fix_nptrs(ibcnt, R_IBPDATA);
-    fix_nptrs(ibcnt, R_IBPTEXT);
-    fix_nptrs(rs_hdr->rsh_nbb, R_BIPDATA);
-    fix_nptrs(rs_hdr->rsh_nstring, R_FRSTR);
-    fix_nptrs(rs_hdr->rsh_nimages, R_FRIMG);
-
-    return TRUE;
 }
 
 

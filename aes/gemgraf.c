@@ -688,7 +688,10 @@ static void gr_gblt(WORD *pimage, GRECT *pi, WORD col1, WORD col2)
 
 #if CONF_WITH_COLOUR_ICONS
 /*
- *  Blit a previously-transformed colour icon from memory to screen
+ *  Blit a previously-transformed colour icon from memory to screen.
+ *  The write mode is backend-owned: planar keeps S_OR_D (mask-ANDed
+ *  planes composed over the mask blit), packed truecolor needs
+ *  BM_S_ONLY so RGB565 values are replaced, not ORed.
  */
 static void gr_colourblit(WORD *pdata, GRECT *pi, WORD num_planes)
 {
@@ -711,7 +714,7 @@ static void gr_colourblit(WORD *pdata, GRECT *pi, WORD num_planes)
     pxyarray[7] = pi->g_y + pi->g_h - 1;
     gsx_mon();
 
-    vro_cpyfm(S_OR_D, pxyarray, &gl_src, &gl_dst);
+    vro_cpyfm(vdi_colour_blit_mode(), pxyarray, &gl_src, &gl_dst);
 }
 
 

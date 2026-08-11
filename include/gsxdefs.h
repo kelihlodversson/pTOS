@@ -134,4 +134,17 @@ void gsx_start(void);
 void gsx_tblt(WORD tb_f, WORD x, WORD y, WORD tb_nc);
 void bb_fill(WORD mode, WORD fis, WORD patt, WORD hx, WORD hy, WORD hw, WORD hh);
 
+/*
+ * Backend-owned screen queries for the packed-truecolor backend.  The
+ * AES may not include vdi/vdi_backend.h (its inline vdi_screen_is_truecolor()
+ * is not linkable), so these thin externs are the interface -- the
+ * definitions live in vdi/vdi_raster.c (vdi_colour_blit_mode) and
+ * vdi/vdi_backend_truecolor.c (vdi_truecolor_screen).
+ */
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+BOOL vdi_truecolor_screen(void);
+UWORD vdi_truecolor_pixel_for_index(WORD index);
+#endif
+WORD vdi_colour_blit_mode(void);
+
 #endif
