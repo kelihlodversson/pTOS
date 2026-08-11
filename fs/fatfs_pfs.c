@@ -45,7 +45,8 @@ static LONG fat_abspath(PFSCOOKIE *dir, const char *tail, char *buf, int buflen)
     *p++ = (char)('A' + dn->d_drv->m_drvnum);
     *p++ = ':';
 
-    len = buflen - 3;      /* -2 for "X:" already written, -1 for the null strlcpy always leaves room for */
+    len = buflen - 3;      /* -2 for "X:" already written, -1 to always
+                             * leave room for strlcpy()'s trailing null */
     end = dopath(dn, p, &len);
     /*
      * dopath() silently stops writing when it runs out of room (its own

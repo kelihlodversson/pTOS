@@ -643,13 +643,26 @@ static LONG pfs_path_append(char *newpath, size_t cap, const char *tail)
 static LONG pfs_do_chdir(const char *path)
 {
     struct pfs_ops *fs;
-    WORD drive = pfs_path_drive(path, &path);
+    WORD drive;
     PFSCOOKIE dir;
     const char *name;
     PFSCOOKIE target;
     char newpath[LEN_ZPATH];
     BOOL dir_owned;
     LONG rc;
+    const char *t;
+
+    /* matches legacy xchdir()'s contains_wildcard_characters() check
+     * (bdos/fsdir.c) - Dsetpath() is not a search, and a driver's
+     * lookup() has no obligation to treat '*'/'?' as anything but
+     * literal characters, so without this a wildcard path would either
+     * behave inconsistently across drivers or just fail to resolve,
+     * instead of the fixed EPTHNF GEMDOS callers can already rely on. */
+    for (t = path; *t; t++)
+        if ((*t == '*') || (*t == '?'))
+            return EPTHNF;
+
+    drive = pfs_path_drive(path, &path);
 
     fs = pfs_drive_fs(drive);
     if (!fs)
