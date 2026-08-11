@@ -176,6 +176,26 @@ config CONF_WITH_VIRTIO_INPUT
 	  No effect without a virtio-keyboard-device / virtio-tablet-device /
 	  virtio-mouse-device on the QEMU command line.
 
+config CONF_WITH_VIRTIO_9P
+	bool "virtio-9p (9P2000.L) GEMDOS host directory driver"
+	depends on CONF_WITH_VIRTIO && CONF_WITH_PLUGGABLE_FS
+	default y
+	help
+	  Exposes a QEMU virtio-9p-device host directory ("-fsdev local ...
+	  -device virtio-9p-device,mount_tag=...") as a GEMDOS drive, for the
+	  virt-arm/virt-m68k boards. No effect without a matching device on
+	  the QEMU command line.
+
+config CONF_VIRTIO_9P_MSIZE
+	int "virtio-9p max message size (msize)"
+	depends on CONF_WITH_VIRTIO_9P
+	default 8192
+	range 1024 65536
+	help
+	  Negotiated with the device via Tversion; bounds per-request
+	  read/write chunk size. Costs 2x this value in static RAM (request
+	  and reply buffers).
+
 config CONF_WITH_FDC
 	bool "Floppy disk controller support"
 	depends on CONF_ATARI_HARDWARE && CONF_WITH_MFP && CONF_WITH_YM2149
