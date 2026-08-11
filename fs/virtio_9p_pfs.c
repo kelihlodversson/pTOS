@@ -14,11 +14,17 @@
  * gemdos/path.c, see filename8_3()/v9p_resolve_name() below), and a
  * Unix-epoch-to-GEMDOS-date/time helper for readdir()'s PFSATTR.
  *
- * Stage 4 adds the write path (create/write/mkdir/rmdir/remove/rename)
+ * Stage 4 added the write path (create/write/mkdir/rmdir/remove/rename)
  * and multi-component lookup() (Dsetpath into a subdirectory several
  * levels deep, "."/".." handling). chattr() stays NULL - see fs/pfs.h's
  * own comment on why a lossless DOS-attribute mapping can't be built on
  * top of a Unix mode bit.
+ *
+ * Stage 5 adds a directory-listing cache (v9p_dircache[], see its own
+ * comment) amortising v9p_resolve_name()'s short->long scan across
+ * repeated lookups against the same directory - correctness-preserving,
+ * not new capability: every path that used to hit the server for every
+ * single resolution still gets the right answer, just faster on a hit.
  */
 
 #include "config.h"
@@ -189,14 +195,113 @@ static void v9p_filename8_3(char *dest, int destlen, const char *source)
     strlcpy(dest, buf, (size_t)destlen);
 }
 
+/* ------------------------------------------------------------------ */
+/* directory-listing cache for short->long name resolution              */
+/* ------------------------------------------------------------------ */
+
+/* Fixed pool, one slot per cached directory listing, amortising
+ * v9p_resolve_name()'s linear Treaddir scan across repeated lookups
+ * against the same directory - the common case for e.g. a desktop copy
+ * of several files out of one source directory, since fs/pfs.c's own
+ * current-directory cache (pfs_cwd_get()) keeps handing back the same
+ * fid across separate Fopen/Fcreate/... calls for a relative path.
+ *
+ * Keyed by the directory's *fid number*, not its 9p qid.path as #157's
+ * plan originally called for: PFSCOOKIE (fs/pfs.h) has no spare field to
+ * stash a qid.path in alongside the fid it already carries in 'index'.
+ * This is still fully correct as long as every place that clunks a fid
+ * also invalidates its cache slot (v9p_pfs_release() below) - a live fid
+ * always names the same directory for its whole lifetime, and once
+ * clunked it can never be looked up again, so a later fid that happens
+ * to reuse the same pool-slot number can never collide with a stale
+ * entry - v9p_dircache_invalidate() has already dropped it by then.
+ *
+ * Cache-assisted, not cache-required: v9p_resolve_name() falls back to
+ * a full uncached scan whenever the cache has no slot for 'dirfid', or
+ * the slot exists but isn't 'complete' (the directory has more real
+ * entries than CONF_VIRTIO_9P_MAX_DIRCACHE_ENTRIES, or some real name
+ * was too long for V9P_DIRCACHE_NAMELEN to hold) - so a small pool only
+ * costs speed, never a wrong answer. */
+#define V9P_DIRCACHE_NAMELEN  32
+
+typedef struct
+{
+    char short_name[13];
+    char real_name[V9P_DIRCACHE_NAMELEN];
+} V9P_DIRCACHE_ENTRY;
+
+typedef struct
+{
+    BOOL used;
+    ULONG fid;
+    BOOL complete;      /* FALSE: some real entry didn't fit - a MISS
+                         * against 'entries' below still means "ask the
+                         * server", not "definitely absent" */
+    WORD nentries;
+    V9P_DIRCACHE_ENTRY entries[CONF_VIRTIO_9P_MAX_DIRCACHE_ENTRIES];
+} V9P_DIRCACHE_SLOT;
+
+static V9P_DIRCACHE_SLOT v9p_dircache[CONF_VIRTIO_9P_MAX_DIRCACHE];
+
+static WORD v9p_dircache_find(ULONG fid)
+{
+    WORD i;
+
+    for (i = 0; i < CONF_VIRTIO_9P_MAX_DIRCACHE; i++)
+        if (v9p_dircache[i].used && (v9p_dircache[i].fid == fid))
+            return i;
+
+    return -1;
+}
+
+/* Drops 'fid's cache slot, if any - called whenever 'fid' is clunked
+ * (see this section's own comment on why that keeps the fid-keyed cache
+ * safe) or whenever this driver mutates a directory it might have
+ * cached (create/mkdir/rmdir/remove/either side of rename) - no
+ * fine-grained patching, the whole slot just goes stale. */
+static void v9p_dircache_invalidate(ULONG fid)
+{
+    WORD i = v9p_dircache_find(fid);
+
+    if (i >= 0)
+        v9p_dircache[i].used = FALSE;
+}
+
+/* Finds 'fid's existing slot, or allocates one - first an unused slot,
+ * falling back to evicting slot 0 if the pool is full (see #157's plan:
+ * "exhaustion evicts slot 0", no recency tracking needed for a handful
+ * of slots). Either way the returned slot is reset to empty: a reused
+ * existing-but-incomplete slot must start over rather than accumulate
+ * duplicate entries across repeated rescans. */
+static WORD v9p_dircache_slot_for(ULONG fid)
+{
+    WORD i = v9p_dircache_find(fid);
+
+    if (i < 0)
+    {
+        for (i = 0; i < CONF_VIRTIO_9P_MAX_DIRCACHE; i++)
+            if (!v9p_dircache[i].used)
+                break;
+        if (i == CONF_VIRTIO_9P_MAX_DIRCACHE)
+            i = 0;
+    }
+
+    v9p_dircache[i].used = TRUE;
+    v9p_dircache[i].fid = fid;
+    v9p_dircache[i].complete = FALSE;
+    v9p_dircache[i].nentries = 0;
+
+    return i;
+}
+
 /* Short (8.3, as GEMDOS hands to open()/create()/...) -> long name
- * resolution: no persisted mapping table, just a live linear scan of
- * 'dirfid's real entries (ParaTos's tos_path_to_unix() does the same,
- * for the same reason - a directory's real contents are the only source
- * of truth for what a given hash tail actually maps to). Matches "." and
- * ".." unchanged. Uncached for this stage - a directory-listing cache
- * amortising this is a later stage (see #157's plan); this is correct,
- * just not fast for a large directory. */
+ * resolution: checks 'dirfid's directory-listing cache first, falling
+ * back to a live linear scan of 'dirfid's real entries (ParaTos's
+ * tos_path_to_unix() does the same, for the same reason - a directory's
+ * real contents are the only source of truth for what a given hash tail
+ * actually maps to) on a miss, populating/replacing the cache slot as it
+ * goes. Matches "." and ".." unchanged, bypassing the cache entirely -
+ * they are never real Treaddir entries. */
 static LONG v9p_resolve_name(ULONG dirfid, const char *name, char *realname, int realname_len)
 {
     UQUAD offset = 0;
@@ -204,6 +309,8 @@ static LONG v9p_resolve_name(ULONG dirfid, const char *name, char *realname, int
     QID9P qid;
     BOOL is_dir;
     LONG rc;
+    WORD slot;
+    BOOL overflowed = FALSE;
 
     if ((name[0] == '.') && ((name[1] == 0) || ((name[1] == '.') && (name[2] == 0))))
     {
@@ -211,24 +318,66 @@ static LONG v9p_resolve_name(ULONG dirfid, const char *name, char *realname, int
         return E_OK;
     }
 
+    slot = v9p_dircache_find(dirfid);
+    if (slot >= 0)
+    {
+        WORD i;
+
+        for (i = 0; i < v9p_dircache[slot].nentries; i++)
+            if (v9p_streqi(v9p_dircache[slot].entries[i].short_name, name))
+            {
+                strlcpy(realname, v9p_dircache[slot].entries[i].real_name, (size_t)realname_len);
+                return E_OK;
+            }
+
+        if (v9p_dircache[slot].complete)
+            return EFILNF;      /* every real entry is accounted for -
+                                 * a miss here is a genuine miss */
+    }
+
+    /* Cache miss (no slot, or an incomplete one with no hit) - rescan
+     * from scratch, replacing whatever partial data that slot held. */
+    slot = v9p_dircache_slot_for(dirfid);
+
     for (;;)
     {
         rc = v9p_readdir_one(dirfid, &offset, realname, realname_len, &qid, &is_dir);
         if (rc < 0)
-            return (rc == ENMFIL) ? EFILNF : rc;
+        {
+            if (rc == ENMFIL)
+            {
+                v9p_dircache[slot].complete = !overflowed;
+                return EFILNF;
+            }
+            return rc;
+        }
 
         if ((strcmp(realname, ".") == 0) || (strcmp(realname, "..") == 0))
             continue;
 
-        if (v9p_streqi(realname, name))
-            return E_OK;                        /* realname already holds the match */
+        v9p_filename8_3(candidate8_3, sizeof(candidate8_3), realname);
 
-        if (strlen(name) <= 12)
+        if ((v9p_dircache[slot].nentries < CONF_VIRTIO_9P_MAX_DIRCACHE_ENTRIES) &&
+            (strlen(realname) < V9P_DIRCACHE_NAMELEN))
         {
-            v9p_filename8_3(candidate8_3, sizeof(candidate8_3), realname);
-            if (v9p_streqi(candidate8_3, name))
-                return E_OK;                     /* realname already holds the match */
+            WORD n = v9p_dircache[slot].nentries;
+
+            strlcpy(v9p_dircache[slot].entries[n].short_name, candidate8_3,
+                    sizeof(v9p_dircache[slot].entries[n].short_name));
+            strlcpy(v9p_dircache[slot].entries[n].real_name, realname,
+                    sizeof(v9p_dircache[slot].entries[n].real_name));
+            v9p_dircache[slot].nentries = (WORD)(n + 1);
         }
+        else
+        {
+            overflowed = TRUE;  /* won't fit - this slot can never be
+                                 * trusted for a "definitely absent"
+                                 * answer, even if we otherwise reach
+                                 * end-of-directory below */
+        }
+
+        if (v9p_streqi(realname, name) || v9p_streqi(candidate8_3, name))
+            return E_OK;                        /* realname already holds the match */
     }
 }
 
@@ -523,6 +672,8 @@ static LONG v9p_pfs_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOK
         return rc;
     }
 
+    v9p_dircache_invalidate((ULONG)dir->index);
+
     out->fs = dir->fs;
     out->index = (LONG)fid;
     out->aux = 0;
@@ -650,7 +801,12 @@ static LONG v9p_pfs_readdir(PFSCOOKIE *dir, LONG *cursor, char *name, int namele
  * v9p_pfs_create()'s own scope for v1. */
 static LONG v9p_pfs_mkdir(PFSCOOKIE *dir, const char *name)
 {
-    return v9p_mkdir((ULONG)dir->index, name, 0755, NULL);
+    LONG rc = v9p_mkdir((ULONG)dir->index, name, 0755, NULL);
+
+    if (rc >= 0)
+        v9p_dircache_invalidate((ULONG)dir->index);
+
+    return rc;
 }
 
 static LONG v9p_pfs_rmdir(PFSCOOKIE *dir, const char *name)
@@ -662,7 +818,11 @@ static LONG v9p_pfs_rmdir(PFSCOOKIE *dir, const char *name)
     if (rc < 0)
         return rc;
 
-    return v9p_unlinkat((ULONG)dir->index, realname, V9P_AT_REMOVEDIR);
+    rc = v9p_unlinkat((ULONG)dir->index, realname, V9P_AT_REMOVEDIR);
+    if (rc >= 0)
+        v9p_dircache_invalidate((ULONG)dir->index);
+
+    return rc;
 }
 
 static LONG v9p_pfs_remove(PFSCOOKIE *dir, const char *name)
@@ -674,7 +834,11 @@ static LONG v9p_pfs_remove(PFSCOOKIE *dir, const char *name)
     if (rc < 0)
         return rc;
 
-    return v9p_unlinkat((ULONG)dir->index, realname, 0);
+    rc = v9p_unlinkat((ULONG)dir->index, realname, 0);
+    if (rc >= 0)
+        v9p_dircache_invalidate((ULONG)dir->index);
+
+    return rc;
 }
 
 static LONG v9p_pfs_rename(PFSCOOKIE *olddir, const char *oldname,
@@ -690,7 +854,14 @@ static LONG v9p_pfs_rename(PFSCOOKIE *olddir, const char *oldname,
     /* 'newname' must not already exist - passed through as GEMDOS gave
      * it (an 8.3 name) rather than resolved, same "no long-name
      * synthesis on write" scope as create()/mkdir(). */
-    return v9p_renameat((ULONG)olddir->index, realoldname, (ULONG)newdir->index, newname);
+    rc = v9p_renameat((ULONG)olddir->index, realoldname, (ULONG)newdir->index, newname);
+    if (rc >= 0)
+    {
+        v9p_dircache_invalidate((ULONG)olddir->index);
+        v9p_dircache_invalidate((ULONG)newdir->index);
+    }
+
+    return rc;
 }
 
 /* ------------------------------------------------------------------ */
@@ -705,6 +876,7 @@ static void v9p_pfs_release(PFSCOOKIE *fc)
             v9p_readdir_pool[slot].used = FALSE;
         fc->aux = 0;
     }
+    v9p_dircache_invalidate((ULONG)fc->index);
     v9p_clunk((ULONG)fc->index);
 }
 
