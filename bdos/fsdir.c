@@ -141,16 +141,17 @@
 static int namlen(char *s11);
 static char *packit(char *s, char *d);
 static void unpackit(const char *src, char *dst);
-static char *dopath(DND *p, char *buf, int *len);
+char *dopath(DND *p, char *buf, int *len);     /* exposed via fs_internal.h for fs/fatfs_pfs.c */
 static DND *makdnd(DND *p, FCB *b);
 static DND *dcrack(const char **np);
 static int getpath(const char *p, char *d, int dirspec);
 static BOOL match(char *s1, char *s2);
-static void makbuf(FCB *f, DTAINFO *dt);
+void makbuf(FCB *f, DTAINFO *dt);      /* exposed via fs_internal.h for fs/fatfs_pfs.c */
 static DND *getdnd(char *n, DND *d);
 static void snipdnd(DND *dnd);
 static void freednd(DND *dn);
 static BOOL is_subdir(const char *s1,DND *dn1, DND *dn2);
+FCB *ixsnext(DTAINFO *dt);     /* exposed via fs_internal.h for fs/fatfs_pfs.c */
 
 /*
  *  local macros
@@ -532,7 +533,7 @@ long xsfirst(char *name, int att)
 /*
  * ixsnest
  */
-static FCB *ixsnext(DTAINFO *dt)
+FCB *ixsnext(DTAINFO *dt)
 {
     char name[12];
     char *buf, *bufend;
@@ -1353,7 +1354,7 @@ static void unpackit(const char *src, char *dst)
  *
  *      M01.01.1024.02
  */
-static char *dopath(DND *p, char *buf, int *len)
+char *dopath(DND *p, char *buf, int *len)
 {
     char temp[LEN_ZFNAME];
     char *tp;
@@ -1830,7 +1831,7 @@ static BOOL match(char *s1, char *s2)
 /*                              M01.01.0527.02
  *  makbuf - copy info from FCB into DTA info area
  */
-static void makbuf(FCB *f, DTAINFO *dt)
+void makbuf(FCB *f, DTAINFO *dt)
 {                                       /*  M01.01.03   */
     dt->dt_fattr = f->f_attrib;
     dt->dt_td.time = le2cpu16(f->f_td.time);

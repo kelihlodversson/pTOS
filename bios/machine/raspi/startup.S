@@ -119,8 +119,9 @@ _main:
     /*
      * The boot loader hands us r0 = 0, r1 = the ARM Linux machine type and
      * r2 = the address of the ATAG list, or of a flattened device tree when
-     * the firmware built one.  Nothing consumes them yet, but r0-r2 are
-     * reused a few instructions below, so save them while they still mean
+     * the firmware built one.  bios/bootargs.c reads this to recognize a
+     * "ptos.lang=xx" parameter on the command line.  r0-r2 are reused a
+     * few instructions below, so save them while they still mean
      * something.  Note that QEMU started with -bios does not set them up at
      * all, so a reader must not assume the pointer is valid.
      */
@@ -431,7 +432,8 @@ _start_in_hyp: .ds.l 1
 /*
  * r0, r1 and r2 as saved at the top of _main.  This is BSS, so like
  * _start_in_hyp above it has to be carried across the bzero() in
- * raspi_vcmem_init().  The layout matches arm_boot_regs_t in raspi_io.h.
+ * raspi_vcmem_init().  The layout matches arm_boot_regs_t in
+ * include/arch/arm/arm_boot.h.
  */
 .global _arm_boot_regs
 _arm_boot_regs: .ds.l 3

@@ -119,6 +119,10 @@ extern void usb_init(void); /* found in usb.h */
 extern void virtio_input_init(void); /* found in virtio_input.h */
 #endif
 
+#if CONF_WITH_PLUGGABLE_FS_TEST
+extern void pfs_test_init(void); /* found in fs/pfs_test.c */
+#endif
+
 /*==== Declarations =======================================================*/
 
 /* Drive specific declarations */
@@ -490,6 +494,13 @@ static void bios_init(void)
     KDEBUG(("blkdev_init()\n"));
     blkdev_init();      /* floppy and harddisk initialisation */
     KDEBUG(("after blkdev_init()\n"));
+
+#if CONF_WITH_PLUGGABLE_FS_TEST
+    /* after blkdev_init(), which resets drvbits - see fs/pfs_test.c */
+    KDEBUG(("pfs_test_init()\n"));
+    pfs_test_init();
+    KDEBUG(("after pfs_test_init()\n"));
+#endif
 
     /* initialize BIOS components */
 

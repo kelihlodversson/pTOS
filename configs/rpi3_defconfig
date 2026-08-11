@@ -1,3 +1,5 @@
 # Raspberry Pi 3, 3+ and CM3
 MACHINE_RPI=y
 TARGET_RPI3=y
+# The multi-language image supports every country at run time.
+# BUILD_UNIQUE_COUNTRY is not set

@@ -28,7 +28,7 @@ Where is it in the code
   bios/ctrycodes.h
 
 - language: this is covered by the 'nls' stuff, in files
-  util/langs.[ch], util/nls.c, util/nlsasm.S
+  util/langs.h, util/nls.c
 
 - keyboard:
   bios/country.h holds #defines for the keyboard codes;
@@ -75,6 +75,73 @@ See in bios.c:
 
 Here, function get_lang_name() is the method from country.c to obtain
 the language name.
+
+Overriding at boot time on ARM (no NVRAM)
+------------------------------------------
+
+CONF_WITH_NVRAM depends on CONF_ATARI_HARDWARE, so it is never set on
+the Raspberry Pi or on QEMU's ARM 'virt' machine: those machines have
+no NVRAM at all, so a multi-language image built for them normally has
+no way to override the country/keyboard baked in as the COUNTRY
+Makefile variable, short of rebuilding.
+
+CONF_WITH_BOOTARGS_LANG (bios/Kconfig, on by default for those
+machines) adds a second override source that does not need NVRAM: a
+"ptos.lang=xx" parameter on the ARM boot loader's command line, where
+xx is one of the two-letter country codes in country.mk (e.g. "de",
+"fr", "uk" -- case insensitive). bios/bootargs.c reads it from
+whichever boot-info format the boot loader actually used -- a classic
+ATAG list, or a flattened device tree's /chosen/bootargs property --
+and detect_akp() (bios/country.c) applies it exactly the way it
+applies an NVRAM override, just from a different source.
+
+To set it:
+
+- on real Raspberry Pi hardware, add it to cmdline.txt on the boot
+  partition, e.g.:
+
+    ptos.lang=de
+
+- under QEMU: as of this writing, there is no known invocation that
+  both boots pTOS successfully AND delivers -append to it. This was
+  checked empirically, not assumed; do not follow older advice to use
+  "-kernel kernel.img" (the raw Raspberry Pi image) -- it does not work:
+
+    - -bios kernel7.img (the normal, documented way to run this OS on
+      the Raspberry Pi machine models -- doc/install.txt, the
+      ptos-smoketest skill) boots correctly, but QEMU rejects -append
+      outright with this loader.
+
+    - -kernel emutos.elf (the ELF build, the only invocation that
+      exists for the QEMU ARM 'virt' machine) also boots correctly,
+      but -append has no effect: arm_boot_regs.atags comes back zero,
+      same as with -bios. This applies to both the Raspberry Pi and
+      'virt' machine models.
+
+    - -kernel kernel7.img (the raw, non-ELF Raspberry Pi image) is the
+      only invocation that actually populates arm_boot_regs.atags with
+      real boot info, confirming bios/bootargs.c's ATAG parsing works
+      end to end -- but QEMU's raw-kernel loader expects the Linux
+      "zImage" format (a magic header, self-relocating code), which
+      kernel7.img is not (it follows the real Raspberry Pi GPU
+      firmware's loading convention instead, which -bios matches).
+      QEMU computes a bogus load address from it and jumps into
+      unmapped memory before any pTOS code runs at all. This is a gap
+      in QEMU's raw-image loading heuristics, not a bug introduced by
+      CONF_WITH_BOOTARGS_LANG, and it reproduces with -append entirely
+      absent from the command line.
+
+  bios/bootargs.c was instead verified by compiling it standalone on
+  the host and feeding it the real ATAG and FDT bytes QEMU generates
+  for "ptos.lang=de" (captured via -machine dumpdtb= and a minimal
+  standalone test binary) -- this caught and fixed a real bug in the
+  ATAG magic check before it shipped. A real Raspberry Pi should work
+  as described above, since that is the boot path bios/bootargs.c was
+  written against; this has not been confirmed on physical hardware.
+
+  With no "ptos.lang=" parameter recognized (or no boot info at all,
+  as with every currently working QEMU invocation), the country baked
+  in at build time is used, same as always.
 
 New country check list
 ----------------------
@@ -130,5 +197,6 @@ bios/ctables.h - table from country.mk usable from C code
 bios/header.h - contains the default country for the TOS header
 bios/keyb_xx.h - keyboard layout for keyboard 'xx'
 bios/fnt_xx_*.c - fonts for charset 'xx'
+bios/bootargs.c - ARM boot command line country/keyboard override (no NVRAM)
 bios/country.h - defines for keyboard and charset names
 bios/ctrycodes.h - defines for country names

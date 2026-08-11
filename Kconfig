@@ -28,6 +28,7 @@ menu "Kernel features"
 
 source "bios/Kconfig"
 source "bdos/Kconfig"
+source "fs/Kconfig"
 source "vdi/Kconfig"
 source "aes/Kconfig"
 source "desk/Kconfig"

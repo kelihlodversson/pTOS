@@ -21,6 +21,7 @@
 #include "nvram.h"
 #include "tosvars.h"
 #include "header.h"
+#include "bootargs.h"
 
 /*
  * country tables - we define the data structures here, then include the
@@ -140,7 +141,11 @@ static int get_charset_index(void)
  * the default values are taken from os_conf;
  *
  * if configured for multilanguage and NVRAM, and NVRAM is readable,
- * we override the defaults with the values from NVRAM
+ * we override the defaults with the values from NVRAM;
+ *
+ * if configured for multilanguage and there is no NVRAM (every ARM
+ * machine), we instead look for a "ptos.lang=xx" parameter on the boot
+ * loader's command line (see bios/bootargs.c)
  */
 void detect_akp(void)
 {
@@ -158,6 +163,18 @@ void detect_akp(void)
             /* Override with the NVRAM settings */
             country = buf[0];
             keyboard = buf[1];
+        }
+    }
+#endif
+
+#if CONF_WITH_BOOTARGS_LANG && CONF_MULTILANG
+    {
+        int override = bootargs_get_country();
+        if (override >= 0)
+        {
+            /* Override with the boot command line settings */
+            country = override;
+            keyboard = override;
         }
     }
 #endif

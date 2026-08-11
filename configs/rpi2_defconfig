@@ -1,3 +1,5 @@
 # Raspberry Pi 2B+
 MACHINE_RPI=y
 TARGET_RPI2=y
+# The multi-language image supports every country at run time.
+# BUILD_UNIQUE_COUNTRY is not set

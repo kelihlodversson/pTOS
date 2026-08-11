@@ -116,6 +116,7 @@ optional-dirs-y = vdi
 optional-dirs-$(CONF_WITH_AES) += aes desk
 optional-dirs-$(CONF_WITH_CLI) += cli
 optional-dirs-$(CONF_WITH_USB) += usb
+optional-dirs-$(CONF_WITH_PLUGGABLE_FS) += fs
 
 core_dirs = $(core-dirs-y)
 optional_dirs = $(optional-dirs-y)
@@ -218,12 +219,23 @@ CPPFLAGS = $(CFLAGS)
 
 # Per-directory extra options; $(bios_copts) applies to bios/, and so on.
 # The USB code is conceptually part of the BIOS and needs access to the
-# BIOS private headers.
-usb_copts = $(addprefix -Ibios/,$(arch_subdirs)) -Ibios
+# BIOS private headers.  It also pulls in bdos/fs.h (via usb_global.h),
+# which needs -Ifs below when CONF_WITH_PLUGGABLE_FS is set.
+usb_copts = $(addprefix -Ibios/,$(arch_subdirs)) -Ibios -Ifs
 
 # virtio_blk.c (bios/) needs the shared virtio-mmio transport header from
 # util/.
 bios_copts = -Iutil
+
+# bdosmain.c's osif() dispatch hook needs the pluggable filesystem layer's
+# public API from fs/, when CONF_WITH_PLUGGABLE_FS is set - as does every
+# other bdos/ file that includes fs.h, since FTAB now embeds a PFSCOOKIE
+# by value when that option is on.
+bdos_copts = -Ifs
+
+# fatfs_pfs.c (fs/) wraps the built-in FAT filesystem, so it needs bdos/'s
+# private headers.
+fs_copts = -Ibdos
 
 CFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_copts))
 SFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_sopts))
@@ -618,6 +630,18 @@ po/messages.pot: bug po/POTFILES.in $(shell grep -v '^#' po/POTFILES.in)
 # Resource support
 #
 
+# erd/grd normally fold repeated strings ("OK", "Cancel", ...) into one
+# shared 'char[]' array referenced from every object that uses them. That
+# array can only be initialized from a real string literal.  In a
+# multi-language (CONF_WITH_NLS) build the resource sources are translated
+# with 'bug translate all' (see the NLS support section below), which turns
+# every N_(...) into a numeric message id disguised as a pointer -- valid
+# for initializing a 'const char *', not a 'char[]'.  -n disables the shared
+# table so each object gets its own N_()-wrapped pointer instead.
+ifeq (,$(UNIQUE))
+NOSHAREARG = -n
+endif
+
 DESKRSC_BASE = desk/desktop
 DESKRSCGEN_BASE = desk/desk_rsc
 GEMRSC_BASE = aes/gem
@@ -633,9 +657,9 @@ GEN_SRC += $(DESKRSCGEN_BASE).c $(DESKRSCGEN_BASE).h \
 
 $(DESKRSCGEN_BASE).c $(DESKRSCGEN_BASE).h &: draft erd $(DESKRSC_BASE).rsc $(DESKRSC_BASE).def
 	./draft $(DESKRSC_BASE) temp
-	./erd -pdesk temp $(DESKRSCGEN_BASE)
+	./erd $(NOSHAREARG) -pdesk temp $(DESKRSCGEN_BASE)
 $(GEMRSCGEN_BASE).c $(GEMRSCGEN_BASE).h &: grd $(GEMRSC_BASE).rsc $(GEMRSC_BASE).def
-	./grd $(GEMRSC_BASE) $(GEMRSCGEN_BASE)
+	./grd $(NOSHAREARG) $(GEMRSC_BASE) $(GEMRSCGEN_BASE)
 $(ICONRSCGEN_BASE).c $(ICONRSCGEN_BASE).h &: ird $(ICONRSC_BASE).rsc $(ICONRSC_BASE).def
 	./ird -picon $(ICONRSC_BASE) $(ICONRSCGEN_BASE)
 $(MFORMRSCGEN_BASE).c $(MFORMRSCGEN_BASE).h &: mrd $(MFORMRSC_BASE).rsc $(MFORMRSC_BASE).def
@@ -647,8 +671,8 @@ $(MFORMRSCGEN_BASE).c $(MFORMRSCGEN_BASE).h &: mrd $(MFORMRSC_BASE).rsc $(MFORMR
 
 .PHONY: bugready
 bugready: bug erd grd
-	./erd -pdesk $(DESKRSC_BASE) $(DESKRSCGEN_BASE)
-	./grd $(GEMRSC_BASE) $(GEMRSCGEN_BASE)
+	./erd $(NOSHAREARG) -pdesk $(DESKRSC_BASE) $(DESKRSCGEN_BASE)
+	./grd $(NOSHAREARG) $(GEMRSC_BASE) $(GEMRSCGEN_BASE)
 	./bug xgettext
 
 #
@@ -662,7 +686,8 @@ bugready: bug erd grd
 # falsely keep the French translations.  See the obj/country target below.
 #
 
-TRANS_SRC = $(shell sed -e '/^[^a-z]/d;s/\.c/.tr&/' <po/POTFILES.in)
+TRANS_CSRC = $(shell sed -e '/^[^a-z]/d' <po/POTFILES.in)
+TRANS_SRC = $(subst .c,.tr.c,$(TRANS_CSRC))
 
 TOCLEAN += */*.tr.c obj/country
 
@@ -672,14 +697,28 @@ TRANSLATE = 1
 endif
 endif
 
-ifdef TRANSLATE
 $(EMUTOS_IMG): $(TRANS_SRC)
+
+ifdef TRANSLATE
+obj/%.o : %.tr.c
+	$(CC) $(CFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
 
 %.tr.c : %.c po/$(ETOSLANG).po bug po/LINGUAS obj/country
 	./bug translate $(ETOSLANG) $<
-
+else ifeq (,$(UNIQUE))
 obj/%.o : %.tr.c
 	$(CC) $(CFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
+
+# Multi-language (CONF_WITH_NLS) image: util/nls.c's etos_gettext() indexes
+# a per-language offset table directly, so every _()/N_() call site must be
+# rewritten at build time to carry the numeric message id instead of the
+# original string -- that's what 'bug translate all' does.  All of
+# po/POTFILES.in is translated in a single pass (a grouped target, so make
+# only runs the recipe once) because message ids come from po/messages.pot
+# and must stay consistent across every translated file, exactly as they do
+# in the offset tables 'bug make' writes to util/langs.c.
+$(TRANS_SRC) &: po/messages.pot bug po/LINGUAS $(TRANS_CSRC) obj/country
+	./bug translate all $(TRANS_CSRC)
 else
 # A '.d' generated for a translated country names the '.tr.c' as the source
 # of its '.o'.  -MMD -MP only writes the phony targets that keep a deleted

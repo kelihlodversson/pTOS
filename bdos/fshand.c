@@ -94,9 +94,31 @@ long ixforce(int std, int h, PD *p)
 long xdup(int h)
 {
     int i;
+    long fh;
 
     if ((h < 0) || (h >= NUMSTD))
         return EIHNDL;          /* only dup standard */
+
+    fh = run->p_uft[h];
+
+#if CONF_WITH_PLUGGABLE_FS
+    /*
+     * A foreign driver's cookie has no shared/refcounted lifetime today
+     * - xclose() calls a driver's close()/release() once per sft[] slot,
+     * gated only on that slot's own f_use (bdos/fsopnclo.c).  Copying
+     * the cookie into a second, independently-tracked slot would let
+     * each slot's f_use reach zero on its own and double-release the
+     * same driver-side resource, as well as give the two handles
+     * independent PFSCOOKIE.pos values instead of a shared file
+     * position.  Refuse the dup rather than corrupt driver state; FAT
+     * handles are unaffected (they're never tagged f_pfs, see
+     * native_handles in fs/pfs.h), so this only blocks foreign drivers,
+     * none of which are in this tree yet - lift it once pluggable
+     * handles get a real shared/refcounted cookie.
+     */
+    if ((fh > 0) && sft[fh-NUMSTD].f_pfs.fs)
+        return EIHNDL;
+#endif
 
     for (i = 0; i < OPNFILES; i++)      /* find the first free handle */
         if (!sft[i].f_own)
@@ -113,10 +135,17 @@ long xdup(int h)
      * entry to the new entry; otherwise, store the BIOS handle
      * in the OFD pointer variable
      */
-    if ((h = run->p_uft[h]) > 0)
-        sft[i].f_ofd = sft[h-NUMSTD].f_ofd;
+    if (fh > 0)
+    {
+        sft[i].f_ofd = sft[fh-NUMSTD].f_ofd;
+    }
     else
-        sft[i].f_ofd = (OFD *)(long)h;
+    {
+        sft[i].f_ofd = (OFD *)fh;
+    }
+#if CONF_WITH_PLUGGABLE_FS
+    sft[i].f_pfs.fs = 0;   /* pluggable handles are rejected above */
+#endif
 
     sft[i].f_use = 1;
 

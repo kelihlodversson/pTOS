@@ -56,6 +56,9 @@
 #include "time.h"
 #include "console.h"
 #include "kprint.h"
+#if CONF_WITH_PLUGGABLE_FS
+#include "pfs.h"
+#endif
 
 /* the following characters are disallowed in the name when creating
  * or renaming files or folders.  this is *mostly* the same list as
@@ -380,6 +383,17 @@ static void sftdel(FTAB *sftp)
     s->f_ofd = 0;
     s->f_own = 0;
     s->f_use = 0;
+#if CONF_WITH_PLUGGABLE_FS
+    /*
+     * this slot is only ever a legacy (non-pluggable) handle by the
+     * time sftdel() runs on it - see the CONF_WITH_PLUGGABLE_FS branch
+     * near the top of xclose() - but establish the invariant "free slot
+     * implies f_pfs.fs == NULL" here regardless, so opnfil()/makopn()
+     * (which know nothing about f_pfs) can never hand out a slot with a
+     * stale non-NULL f_pfs.fs left over from an earlier pluggable use.
+     */
+    s->f_pfs.fs = 0;
+#endif
 
     /*
      * if there are no other sft entries with same OFD, delete the OFD
@@ -446,6 +460,40 @@ long xclose(int h)
 
         return E_OK;
     }
+
+#if CONF_WITH_PLUGGABLE_FS
+    /*
+     * 'h' is a real sft[] handle at this point (either unchanged, or the
+     * handle a std-handle redirection was pointing at, above) - if it
+     * belongs to a pluggable driver, close it there instead of treating
+     * f_ofd as an OFD*.
+     */
+    if (sft[h-NUMSTD].f_pfs.fs)
+    {
+        struct pfs_ops *pfs = sft[h-NUMSTD].f_pfs.fs;
+
+        /*
+         * close() runs on every xclose() of this slot, same as ixclose()
+         * does for the legacy OFD path below; release() only runs once
+         * the last sft[] reference to this cookie is gone (mirrors
+         * sftdel() being called only when f_use reaches zero), so a
+         * duplicated handle (Fforce()-shared slot, or an xdup()-copied
+         * one) doesn't have its driver resources torn down while a
+         * sibling handle still expects them to be live.
+         */
+        rc = pfs_handle_close(&sft[h-NUMSTD].f_pfs);
+
+        if (!(--sft[h-NUMSTD].f_use))
+        {
+            if (pfs->release)
+                pfs->release(&sft[h-NUMSTD].f_pfs);
+            sft[h-NUMSTD].f_pfs.fs = 0;
+            sft[h-NUMSTD].f_own = 0;
+        }
+
+        return rc;
+    }
+#endif
 
     if (!(fd = getofd(h)))
         return EIHNDL;

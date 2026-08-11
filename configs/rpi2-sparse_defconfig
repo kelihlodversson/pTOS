@@ -1,3 +1,5 @@
 MACHINE_RPI=y
 CONF_WITH_VDI_BACKEND_PLANAR=y
 CONF_VDI_SPARSE_TABLE=y
+# The multi-language image supports every country at run time.
+# BUILD_UNIQUE_COUNTRY is not set
