@@ -126,6 +126,35 @@ keyboard_disconnect (struct usb_device *dev)
 {
     if (dev == kbd_data.pusb_dev)
     {
+        /* Synthesize releases for anything still held, so an unplug
+         * mid-keypress can't leave a modifier (Shift/Ctrl/Alt) latched
+         * or a key auto-repeating forever from the AES's point of view --
+         * it never sees a final report telling it those went up. */
+        int i;
+
+        for (i = 0; i < 6; i++)
+        {
+            UBYTE key = kbd_data.keys[i];
+            if (key && key < USB_KEYTBL_SIZE)
+            {
+                UBYTE scancode = usb_keytbl[key];
+                if (scancode)
+                    kbd_int (scancode | KEY_RELEASED);
+            }
+        }
+
+        for (i = 0; i < 8; i++)
+        {
+            if (kbd_data.modifier & (1 << i))
+            {
+                UBYTE scancode = usb_modtbl[i];
+                if (scancode)
+                    kbd_int (scancode | KEY_RELEASED);
+            }
+        }
+
+        kbd_data.modifier = 0;
+        memset (kbd_data.keys, 0, sizeof (kbd_data.keys));
         kbd_data.pusb_dev = NULL;
     }
 
@@ -177,6 +206,20 @@ void usb_keyboard_timerc (void)
 
         if ((r != 0) || (actlen < 8))
             return;
+
+        /* Usages 0x01-0x03 (ErrorRollOver/POSTFail/ErrorUndefined) mean
+         * the device can't report its actual key state this poll (e.g.
+         * more than 6 keys held at once) -- every array slot is filled
+         * with one of these instead of real usages. Treating them as
+         * real keycodes would make every currently-held key look
+         * released (it won't be found in this bogus array) and then
+         * "pressed" again once real reports resume. Skip the report
+         * instead, leaving the last known-good state in place. */
+        for (i = 0; i < 6; i++)
+        {
+            if (report[2 + i] >= 1 && report[2 + i] <= 3)
+                return;
+        }
 
         kbd_data.new_modifier = report[0];
         for (i = 0; i < 6; i++)
@@ -291,8 +334,9 @@ keyboard_probe (struct usb_device *dev, unsigned int ifnum)
         return -1;
     }
 
-    if ((ep_desc->bmAttributes &
-         USB_ENDPOINT_XFERTYPE_MASK) == USB_ENDPOINT_XFER_INT)
+    if (((ep_desc->bmAttributes &
+          USB_ENDPOINT_XFERTYPE_MASK) == USB_ENDPOINT_XFER_INT) &&
+        (ep_desc->bEndpointAddress & USB_ENDPOINT_DIR_MASK) == USB_DIR_IN)
     {
         kbd_data.ep_int =
             ep_desc->bEndpointAddress & USB_ENDPOINT_NUMBER_MASK;
