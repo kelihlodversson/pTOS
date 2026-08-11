@@ -126,12 +126,18 @@ keyboard_disconnect (struct usb_device *dev)
 {
     if (dev == kbd_data.pusb_dev)
     {
+        /* Clear pusb_dev first: usb_keyboard_timerc() (called from the
+         * Timer-C interrupt) gates purely on pusb_dev != NULL, so this
+         * stops it from polling a device that's being torn down before
+         * touching anything else in kbd_data. */
+        int i;
+
+        kbd_data.pusb_dev = NULL;
+
         /* Synthesize releases for anything still held, so an unplug
          * mid-keypress can't leave a modifier (Shift/Ctrl/Alt) latched
          * or a key auto-repeating forever from the AES's point of view --
          * it never sees a final report telling it those went up. */
-        int i;
-
         for (i = 0; i < 6; i++)
         {
             UBYTE key = kbd_data.keys[i];
@@ -155,7 +161,6 @@ keyboard_disconnect (struct usb_device *dev)
 
         kbd_data.modifier = 0;
         memset (kbd_data.keys, 0, sizeof (kbd_data.keys));
-        kbd_data.pusb_dev = NULL;
     }
 
     return 0;
@@ -347,12 +352,10 @@ keyboard_probe (struct usb_device *dev, unsigned int ifnum)
         return -1;
     }
 
-    kbd_data.pusb_dev = dev;
-
     kbd_data.irqinterval =
         (kbd_data.irqinterval > 0) ? kbd_data.irqinterval : 255;
     kbd_data.irqpipe =
-        usb_rcvintpipe (kbd_data.pusb_dev, (long) kbd_data.ep_int);
+        usb_rcvintpipe (dev, (long) kbd_data.ep_int);
     kbd_data.irqmaxp = usb_maxpacket (dev, kbd_data.irqpipe);
     dev->irq_handle = usb_keyboard_irq;
     kbd_data.modifier = 0;
@@ -361,6 +364,11 @@ keyboard_probe (struct usb_device *dev, unsigned int ifnum)
 
     usb_set_protocol (dev, iface->desc.bInterfaceNumber, 0); /* boot */
     usb_set_idle (dev, iface->desc.bInterfaceNumber, 0, 0);
+
+    /* Publish pusb_dev last: usb_keyboard_timerc() (Timer-C interrupt)
+     * gates purely on pusb_dev != NULL, so everything else above must
+     * already be valid by the time this becomes visible to it. */
+    kbd_data.pusb_dev = dev;
 
     KINFO (("%s: exit keyboard_probe success\n", __FILE__));
 
