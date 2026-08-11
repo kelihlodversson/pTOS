@@ -67,11 +67,21 @@
 #define P9_RWALK     111
 #define P9_TCLUNK    120
 #define P9_RCLUNK    121
+#define P9_TLOPEN    12
+#define P9_RLOPEN    13
+#define P9_TREAD     116
+#define P9_RREAD     117
+#define P9_TGETATTR  24
+#define P9_RGETATTR  25
+#define P9_TREADDIR  40
+#define P9_RREADDIR  41
 #define P9_RLERROR   7
 
 #define V9P_MAX_MOUNT_TAG  32   /* QEMU's own MAX_TAG_LEN */
 #define V9P_NOFID    0xFFFFFFFFUL
 #define V9P_MAXWELEM 16         /* 9P2000.L's own per-Twalk component cap */
+#define V9P_QTDIR    0x80       /* qid.type bit: this qid is a directory */
+#define P9_GETATTR_BASIC  ((UQUAD)0x7ff)  /* mode|nlink|uid|gid|rdev|atime|mtime|ctime|ino|size|blocks */
 
 static VIRTIO_DEV v9p_dev;
 
@@ -132,6 +142,13 @@ static UBYTE *v9p_put32(UBYTE *p, ULONG v)
     ULONG le = cpu2le32(v);
     memcpy(p, &le, 4);
     return p + 4;
+}
+
+static UBYTE *v9p_put64(UBYTE *p, UQUAD v)
+{
+    UQUAD le = cpu2le64(v);
+    memcpy(p, &le, 8);
+    return p + 8;
 }
 
 static UBYTE *v9p_putstr(UBYTE *p, const char *s)
@@ -637,6 +654,323 @@ ULONG v9p_root_fid(void)
 BOOL virtio_9p_present(void)
 {
     return v9p_attached;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tlopen                                                               */
+/* ------------------------------------------------------------------ */
+
+LONG v9p_lopen(ULONG fid, ULONG flags)
+{
+    UBYTE *p = v9p_tbuf;
+    UBYTE *size_field;
+    ULONG len;
+    LONG rc;
+    const UBYTE *rp;
+    UBYTE rtype;
+    UWORD rtag;
+    QID9P qid;
+    ULONG iounit;
+
+    size_field = p;
+    p += 4;
+    p = v9p_put8(p, P9_TLOPEN);
+    p = v9p_put16(p, V9P_TAG);
+    p = v9p_put32(p, fid);
+    p = v9p_put32(p, flags);
+
+    len = (ULONG)(p - v9p_tbuf);
+    v9p_put32(size_field, len);
+
+    rc = v9p_transact(len);
+    if (rc < 0)
+        return rc;
+    if ((ULONG)rc < 7)
+        return EINTRN;
+
+    rp = v9p_rbuf + 4;
+    rp = v9p_get8(rp, &rtype);
+    rp = v9p_get16(rp, &rtag);
+
+    if (rtag != V9P_TAG)
+    {
+        KDEBUG(("virtio_9p: Rlopen tag 0x%x != 0x%x\n", rtag, V9P_TAG));
+        return EINTRN;
+    }
+    if (rtype == P9_RLERROR)
+    {
+        ULONG ecode;
+        v9p_get32(rp, &ecode);
+        return v9p_errno_to_gemerror(ecode);
+    }
+    if (rtype != P9_RLOPEN)
+    {
+        KDEBUG(("virtio_9p: unexpected reply type %u to Tlopen\n", rtype));
+        return EINTRN;
+    }
+    if ((ULONG)rc < 7 + 13 + 4)
+    {
+        KDEBUG(("virtio_9p: Rlopen reply too short\n"));
+        return EINTRN;
+    }
+
+    rp = v9p_getqid(rp, &qid);
+    rp = v9p_get32(rp, &iounit);
+    (void)iounit;   /* not used - v9p_read()/future v9p_write() chunk
+                     * against the negotiated msize instead, which is
+                     * always a safe bound regardless of what the server
+                     * reports here (0 legitimately means "no opinion"). */
+
+    v9p_fid_pool[fid].qid = qid;
+
+    return E_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tread                                                                */
+/* ------------------------------------------------------------------ */
+
+LONG v9p_read(ULONG fid, UQUAD offset, ULONG count, UBYTE *buf)
+{
+    UBYTE *p = v9p_tbuf;
+    UBYTE *size_field;
+    ULONG len, maxdata, rcount;
+    LONG rc;
+    const UBYTE *rp;
+    UBYTE rtype;
+    UWORD rtag;
+
+    /* Rread's own envelope (size[4] type[1] tag[2] count[4], 11 bytes)
+     * has to fit alongside the requested data within v9p_msize. */
+    maxdata = (v9p_msize > 11) ? (v9p_msize - 11) : 0;
+    if (count > maxdata)
+        count = maxdata;
+    if (count == 0)
+        return 0;
+
+    size_field = p;
+    p += 4;
+    p = v9p_put8(p, P9_TREAD);
+    p = v9p_put16(p, V9P_TAG);
+    p = v9p_put32(p, fid);
+    p = v9p_put64(p, offset);
+    p = v9p_put32(p, count);
+
+    len = (ULONG)(p - v9p_tbuf);
+    v9p_put32(size_field, len);
+
+    rc = v9p_transact(len);
+    if (rc < 0)
+        return rc;
+    if ((ULONG)rc < 7)
+        return EINTRN;
+
+    rp = v9p_rbuf + 4;
+    rp = v9p_get8(rp, &rtype);
+    rp = v9p_get16(rp, &rtag);
+
+    if (rtag != V9P_TAG)
+    {
+        KDEBUG(("virtio_9p: Rread tag 0x%x != 0x%x\n", rtag, V9P_TAG));
+        return EINTRN;
+    }
+    if (rtype == P9_RLERROR)
+    {
+        ULONG ecode;
+        v9p_get32(rp, &ecode);
+        return v9p_errno_to_gemerror(ecode);
+    }
+    if (rtype != P9_RREAD)
+    {
+        KDEBUG(("virtio_9p: unexpected reply type %u to Tread\n", rtype));
+        return EINTRN;
+    }
+
+    rp = v9p_get32(rp, &rcount);
+    if ((ULONG)rc < 11 + rcount)
+    {
+        KDEBUG(("virtio_9p: Rread reply shorter than its own count field\n"));
+        return EINTRN;
+    }
+
+    memcpy(buf, rp, rcount);
+
+    return (LONG)rcount;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tgetattr                                                             */
+/* ------------------------------------------------------------------ */
+
+LONG v9p_getattr(ULONG fid, P9GETATTR *out)
+{
+    UBYTE *p = v9p_tbuf;
+    UBYTE *size_field;
+    ULONG len;
+    LONG rc;
+    const UBYTE *rp;
+    UBYTE rtype;
+    UWORD rtag;
+
+    size_field = p;
+    p += 4;
+    p = v9p_put8(p, P9_TGETATTR);
+    p = v9p_put16(p, V9P_TAG);
+    p = v9p_put32(p, fid);
+    p = v9p_put64(p, P9_GETATTR_BASIC);
+
+    len = (ULONG)(p - v9p_tbuf);
+    v9p_put32(size_field, len);
+
+    rc = v9p_transact(len);
+    if (rc < 0)
+        return rc;
+    if ((ULONG)rc < 7)
+        return EINTRN;
+
+    rp = v9p_rbuf + 4;
+    rp = v9p_get8(rp, &rtype);
+    rp = v9p_get16(rp, &rtag);
+
+    if (rtag != V9P_TAG)
+    {
+        KDEBUG(("virtio_9p: Rgetattr tag 0x%x != 0x%x\n", rtag, V9P_TAG));
+        return EINTRN;
+    }
+    if (rtype == P9_RLERROR)
+    {
+        ULONG ecode;
+        v9p_get32(rp, &ecode);
+        return v9p_errno_to_gemerror(ecode);
+    }
+    if (rtype != P9_RGETATTR)
+    {
+        KDEBUG(("virtio_9p: unexpected reply type %u to Tgetattr\n", rtype));
+        return EINTRN;
+    }
+
+    /* valid[8] qid[13] mode[4] uid[4] gid[4] nlink[8] rdev[8] size[8]
+     * blksize[8] blocks[8] atime_sec[8] atime_nsec[8] mtime_sec[8] ... -
+     * a fixed layout regardless of what request_mask actually asked for
+     * (only 'valid' - trusted but not separately checked here - says
+     * which fields the server considers meaningful). Only mode/size/
+     * mtime_sec are kept: the rest has no GEMDOS use this driver needs
+     * yet (see P9GETATTR's own comment in virtio_9p.h). */
+    if ((ULONG)rc < 7 + 8 + 13 + 4 + 4 + 4 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8)
+    {
+        KDEBUG(("virtio_9p: Rgetattr reply too short\n"));
+        return EINTRN;
+    }
+
+    rp += 8;                              /* valid */
+    rp = v9p_getqid(rp, &out->qid);
+    rp = v9p_get32(rp, &out->mode);
+    rp += 4 + 4;                          /* uid, gid */
+    rp += 8 + 8;                          /* nlink, rdev */
+    rp = v9p_get64(rp, &out->size);
+    rp += 8 + 8;                          /* blksize, blocks */
+    rp += 8 + 8;                          /* atime_sec, atime_nsec */
+    rp = v9p_get64(rp, &out->mtime_sec);
+
+    return E_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/* Treaddir                                                             */
+/* ------------------------------------------------------------------ */
+
+LONG v9p_readdir_one(ULONG dir_fid, UQUAD *offset, char *name, int namelen,
+                      QID9P *outqid, BOOL *is_dir)
+{
+    UBYTE *p = v9p_tbuf;
+    UBYTE *size_field;
+    ULONG len, reqcount;
+    LONG rc;
+    const UBYTE *rp;
+    UBYTE rtype;
+    UWORD rtag;
+    ULONG datacount;
+    QID9P qid;
+    UQUAD entry_offset;
+    UBYTE etype;
+    UWORD wirenamelen;
+
+    /* Ask for as much as fits, even though only the first packed dirent
+     * in the reply is ever decoded (see v9p_readdir_one()'s own comment
+     * in virtio_9p.h) - simplicity over efficiency for this stage; a
+     * caching layer that amortises this over multiple entries per
+     * request is a later stage's job, not this primitive's. */
+    reqcount = (v9p_msize > 11) ? (v9p_msize - 11) : 11;
+
+    size_field = p;
+    p += 4;
+    p = v9p_put8(p, P9_TREADDIR);
+    p = v9p_put16(p, V9P_TAG);
+    p = v9p_put32(p, dir_fid);
+    p = v9p_put64(p, *offset);
+    p = v9p_put32(p, reqcount);
+
+    len = (ULONG)(p - v9p_tbuf);
+    v9p_put32(size_field, len);
+
+    rc = v9p_transact(len);
+    if (rc < 0)
+        return rc;
+    if ((ULONG)rc < 7)
+        return EINTRN;
+
+    rp = v9p_rbuf + 4;
+    rp = v9p_get8(rp, &rtype);
+    rp = v9p_get16(rp, &rtag);
+
+    if (rtag != V9P_TAG)
+    {
+        KDEBUG(("virtio_9p: Rreaddir tag 0x%x != 0x%x\n", rtag, V9P_TAG));
+        return EINTRN;
+    }
+    if (rtype == P9_RLERROR)
+    {
+        ULONG ecode;
+        v9p_get32(rp, &ecode);
+        return v9p_errno_to_gemerror(ecode);
+    }
+    if (rtype != P9_RREADDIR)
+    {
+        KDEBUG(("virtio_9p: unexpected reply type %u to Treaddir\n", rtype));
+        return EINTRN;
+    }
+
+    rp = v9p_get32(rp, &datacount);
+    if (datacount == 0)
+        return ENMFIL;      /* end of directory */
+
+    /* one packed dirent: qid[13] offset[8] type[1] name[s] */
+    if (datacount < 13 + 8 + 1 + 2)
+    {
+        KDEBUG(("virtio_9p: Rreaddir entry too short\n"));
+        return EINTRN;
+    }
+
+    rp = v9p_getqid(rp, &qid);
+    rp = v9p_get64(rp, &entry_offset);
+    rp = v9p_get8(rp, &etype);
+    rp = v9p_get16(rp, &wirenamelen);
+    (void)etype;    /* DT_*-style hint; qid.type's QTDIR bit is this
+                     * driver's authoritative "is this a directory" -
+                     * see is_dir below and virtio_9p.h's comment. */
+
+    if (wirenamelen >= (UWORD)namelen)
+        wirenamelen = (UWORD)(namelen - 1);   /* truncate, never overflow */
+    memcpy(name, rp, wirenamelen);
+    name[wirenamelen] = 0;
+
+    *offset = entry_offset;
+    if (outqid)
+        *outqid = qid;
+    if (is_dir)
+        *is_dir = (qid.type & V9P_QTDIR) ? TRUE : FALSE;
+
+    return E_OK;
 }
 
 /* ------------------------------------------------------------------ */
