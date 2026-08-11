@@ -542,6 +542,12 @@ Optionally smoke-boot the result with the `ptos-smoketest` skill (QEMU `raspi1ap
 - Smoke boots: rpi1 QEMU reached `evnt_multi()` with 0 guest_errors; atari256 Hatari reached the GEM desktop (legacy loader exercised).
 - Pending: final whole-branch review.
 
+### Final whole-branch review — DONE (ready to merge)
+
+- Reviewed `0a999b11..HEAD` on the most capable model. Verdict: **Ready to merge (With fixes)** — no Critical/Important; the verbatim-move and structural requirements all confirmed; only the three deferred-minor comment items remained.
+- Fix wave: `6db07849` "aes: restore moved loader documentation" + `df6b1a0b` "docs: record deferred fix completion" (see "Deferred fixes" section above). Re-review: all three findings ADDRESSED, no new breakage. Sizes re-confirmed unchanged (atari256 7115, atari512 16399), `make gitready` passes.
+- All tasks complete. Plan workspace `.superpowers/sdd/2026-08-10-rsrc-loader-split/` holds the briefs/reports/review packages; delete per skill after the user merges.
+
 ---
 
 ## Self-Review
