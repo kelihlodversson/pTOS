@@ -138,7 +138,7 @@ trapaes:
 .text
 
 _far_bcha:
-        push_privstack gstksave
+        push_privstack gstack
         push    {r0-r3,lr}
         bl      _b_click
         pop     {r0-r3,lr}
@@ -146,7 +146,7 @@ _far_bcha:
         bx      lr
 
 _far_mcha:
-        push_privstack gstksave
+        push_privstack gstack
         push    {r0-r3,lr}
         ldmfd   sp, {r1,r2} // shift arg 1 and 2 up by one
         ldr     r0, =_mchange
@@ -158,7 +158,7 @@ _far_mcha:
 #if CONF_WITH_VDI_EXTENSIONS
 /* AES mouse wheel handler called by the VDI */
 _aes_wheel:
-        push_privstack gstksave
+        push_privstack gstack
         push    {r0-r3,lr}
         ldmfd   sp, {r1,r2} // shift arg 1 and 2 up by one
         ldr     r0, =_wheel_change
@@ -183,7 +183,13 @@ _justretf:
 
 _tikcod:
         push_privstack tstack
-        push    {r0-r4,lr}
+        // r5 is otherwise unused here -- included purely to pad this to a
+        // multiple of 8 bytes (7 regs = 28, +4 from push_privstack's own
+        // str = 32), so sp lands 8-byte aligned at the bl's below. tstack
+        // is now explicitly 8-byte aligned (see its .balign 8 above), and
+        // AAPCS requires 8-byte sp alignment at any public interface such
+        // as these calls.
+        push    {r0-r5,lr}
         ldr     r4, =_NUM_TICK
         ldmia   r4, {r1,r2} // r1 <- *NUM_TICK; r2 <- *CMP_TICK
         teq     r2, #0      // if (*CMP_TICK != 0)
@@ -200,7 +206,7 @@ _tikcod:
         mov     r0, #1
         bl      _b_delay    // b_delay(1);
 
-        pop     {r0-r4,lr}
+        pop     {r0-r5,lr}
         pop_privstack
 
         b        _tiksav    // Chain to vector stored in _tiksav
@@ -228,13 +234,19 @@ _CMP_TICK:
 
 /*
  * miscellaneous stacks
+ *
+ * 8-byte aligned (not just 4): these become the live sp for _far_bcha/
+ * _far_mcha/_aes_wheel/_tikcod (see push_privstack above), and GCC's
+ * -mfpu=neon-vfpv4 auto-vectorizer will opportunistically use 8-byte-
+ * aligned NEON loads/stores for stack locals anywhere downstream of
+ * that -- same class of bug as #31/#33.
  */
-        .balign 4
+        .balign 8
 
         .space  0x400
 gstack:                         // gsx stack for mouse
 
-        .balign 4
+        .balign 8
         .space  0x400
 tstack:                         // tick stack
         .space  4

@@ -246,6 +246,18 @@ _dos_exec:
         str     ip, [sp, #+4*5]         // Save rlr->p_uda->u_spsuper where we saved r5 earlier
 
         sub     ip, sp, #0x50           // Adjust the stack (see above)
+
+        // This value stays live in UDA_SPSUPER for as long as the launched
+        // child runs -- for the desktop shell (launched from
+        // _run_accs_and_desktop), that's the entire session, since Pexec
+        // (mode "load and go") doesn't return until the child terminates.
+        // Every re-entrant trap #2 call the desktop makes in the meantime
+        // switches to this stack, so it needs the same AAPCS 8-byte
+        // alignment as every other UDA_SPSUPER site (init_p0_stkptr(),
+        // geminit.c's process-init loop, _accdesk_start above) -- gcc's
+        // NEON/VFP auto-vectorizer Data Aborts otherwise the first time it
+        // vectorizes a stack local deep enough in that call chain.
+        bic     ip, ip, #7
         str     ip, [r7, UDA_SPSUPER]
 
         bl      _enable_interrupts
