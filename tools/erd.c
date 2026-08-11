@@ -12,10 +12,12 @@
  *  very similar to a general-purpose resource decompiler, but has a
  *  number of EmuTOS-specific features.
  *
- *  Syntax: erd [-d] [-p<prefix>] [-v] <RSCfile> <Cfile>
+ *  Syntax: erd [-d] [-n] [-p<prefix>] [-v] <RSCfile> <Cfile>
  *
  *      where:
  *          -d          requests debugging output
+ *          -n          disables the shared string table (needed when
+ *                      strings are msgid-based, as in multi-language builds)
  *          -p          specifies the prefix to apply to the names
  *                      of all generated data items
  *          -v          requests verbose output (start & end messages)
@@ -3067,7 +3069,7 @@ PRIVATE void usage(char *s)
 {
     if (*s)
         fprintf(stderr,"%s %s: %s\n",PROGRAM_NAME,VERSION,s);
-    fprintf(stderr,"usage: %s [-d] [-p<prefix>] [-v] <rsc_file> <c_file>\n",PROGRAM_NAME);
+    fprintf(stderr,"usage: %s [-d] [-n] [-p<prefix>] [-v] <rsc_file> <c_file>\n",PROGRAM_NAME);
 
     exit(2);
 }
