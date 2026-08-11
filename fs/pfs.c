@@ -159,10 +159,11 @@ static const char *pfs_split(const char *path, char *dirbuf, int dirbuflen)
 }
 
 /* Simple DOS-style '?'/'*' wildcard match, case-insensitive, applied
- * separately to the base and extension (split at the last '.').  '*'
+ * separately to the base and extension (split at the name's '.').  '*'
  * matches the rest of the segment it appears in; '?' matches exactly
  * one character.  Both 'name' and 'pattern' are already GEMDOS 8.3
- * names, as guaranteed by pfs_ops.readdir()'s contract.
+ * names, as guaranteed by pfs_ops.readdir()'s contract - so there is at
+ * most one '.', and splitting on the first one found is unambiguous.
  */
 static BOOL pfs_seg_match(const char *name, const char *pattern)
 {
@@ -848,6 +849,29 @@ static LONG pfs_do_sfirst(char *path, WORD att)
     if (rc < 0)
         return rc;
 
+    /*
+     * A search's directory cookie lives in pfs_searches[] for as long as
+     * the search runs, independently of whatever pfs_resolve_dir()
+     * resolved it from - readdir() may attach driver-private state to
+     * this exact copy (fat_readdir_pool[], via cookie->aux), which must
+     * be freed by pfs_search_free() when the search is abandoned.  That
+     * can only happen if this slot owns its cookie outright, so a
+     * borrowed one (the cached current directory, see pfs_resolve_dir())
+     * is upgraded here to an independent reference via an empty-path
+     * lookup() - see fs/pfs.h's "empty path = dup" convention - rather
+     * than stored as a bare alias pfs_search_free() must not release.
+     */
+    if (!owned)
+    {
+        PFSCOOKIE owned_dir;
+
+        rc = fs->lookup ? fs->lookup(&dir, "", &owned_dir) : EINVFN;
+        if (rc < 0)
+            return rc;
+        dir = owned_dir;
+        owned = TRUE;
+    }
+
     /* a new Fsfirst() on a DTA that already has a search running (common
      * - callers rarely exhaust a search before starting another) must
      * replace it, not leak a second slot and leave pfs_do_snext()
@@ -1004,14 +1028,17 @@ LONG pfs_handle_write(PFSCOOKIE *fc, LONG len, const UBYTE *buf)
     return n;
 }
 
+/* Only calls the driver's close(), never release() - a single cookie can
+ * be referenced by several sft[] entries at once (std-handle redirection
+ * via Fforce()/ixforce() bumps the same slot's f_use; xdup() copies the
+ * cookie into a second slot), so release() must wait until the caller
+ * (bdos/fsopnclo.c's xclose()) sees the last reference go away, exactly
+ * like the legacy OFD path calls ixclose() on every close but only frees
+ * the sft[] slot itself (sftdel()) once f_use reaches zero.
+ */
 LONG pfs_handle_close(PFSCOOKIE *fc)
 {
-    LONG rc = fc->fs->close ? fc->fs->close(fc) : E_OK;
-
-    if (fc->fs->release)
-        fc->fs->release(fc);
-
-    return rc;
+    return fc->fs->close ? fc->fs->close(fc) : E_OK;
 }
 
 

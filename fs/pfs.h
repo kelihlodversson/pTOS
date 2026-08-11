@@ -69,6 +69,17 @@ struct pfs_ops {
      * standalone "file cookie" independent of a (directory, name) pair,
      * and not every driver can produce one (FAT only tree-caches
      * directories, not files).
+     *
+     * An empty 'path' ("") means "give me a fresh, independently
+     * releasable reference to 'dir' itself" - a dup, not a no-op alias.
+     * fs/pfs.c relies on this to upgrade a borrowed cookie (one it must
+     * not release, e.g. the cached current directory) into one it owns
+     * and must eventually release(), for state that outlives the call
+     * that resolved 'dir' (see pfs_do_sfirst()'s search table).  For a
+     * driver whose cookies carry no refcounted resource (like FAT's,
+     * which just wrap a cached DND*), this can simply be `*out = *dir;`;
+     * a driver that does refcount (e.g. a future 9p fid) must actually
+     * bump it here.
      */
     LONG (*lookup)(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out);
 
@@ -184,6 +195,12 @@ LONG pfs_dispatch(WORD fn, WORD *pw);
  * the FTAB slot's embedded cookie; position tracking is entirely
  * internal to these three (see PFSCOOKIE.pos above) - callers just
  * pass the handle's ongoing sequential position through, GEMDOS-style.
+ *
+ * pfs_handle_close() only calls the driver's close(), not release() -
+ * the same cookie can be referenced by more than one sft[] entry at once
+ * (Fforce()-shared slots, xdup()-copied slots), so the caller must call
+ * fs->release() itself, and only once the last sft[] reference is gone -
+ * see bdos/fsopnclo.c's xclose().
  */
 LONG pfs_handle_read(PFSCOOKIE *fc, LONG len, UBYTE *buf);
 LONG pfs_handle_write(PFSCOOKIE *fc, LONG len, const UBYTE *buf);

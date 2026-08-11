@@ -470,10 +470,23 @@ long xclose(int h)
      */
     if (sft[h-NUMSTD].f_pfs.fs)
     {
+        struct pfs_ops *pfs = sft[h-NUMSTD].f_pfs.fs;
+
+        /*
+         * close() runs on every xclose() of this slot, same as ixclose()
+         * does for the legacy OFD path below; release() only runs once
+         * the last sft[] reference to this cookie is gone (mirrors
+         * sftdel() being called only when f_use reaches zero), so a
+         * duplicated handle (Fforce()-shared slot, or an xdup()-copied
+         * one) doesn't have its driver resources torn down while a
+         * sibling handle still expects them to be live.
+         */
         rc = pfs_handle_close(&sft[h-NUMSTD].f_pfs);
 
         if (!(--sft[h-NUMSTD].f_use))
         {
+            if (pfs->release)
+                pfs->release(&sft[h-NUMSTD].f_pfs);
             sft[h-NUMSTD].f_pfs.fs = 0;
             sft[h-NUMSTD].f_own = 0;
         }
