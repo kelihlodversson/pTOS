@@ -9,13 +9,16 @@
  * straight onto bios/virtio_9p.c's v9p_walk()/v9p_clunk()/... - no 9P
  * wire-format or virtio-mmio knowledge lives here.
  *
- * Stage 3 of #157 adds read-only browsing: open()/read()/readdir(), the
+ * Stage 3 of #157 added read-only browsing: open()/read()/readdir(), the
  * GEMDOS 8.3 long<->short name mapping (ported from ParaTos's
  * gemdos/path.c, see filename8_3()/v9p_resolve_name() below), and a
- * Unix-epoch-to-GEMDOS-date/time helper for readdir()'s PFSATTR. lookup()
- * still only supports the empty-path "dup" case - single/multi-component
- * directory-path resolution (Dsetpath into a subdirectory) and the write
- * path (create/write/mkdir/rmdir/remove/rename/chattr) are later stages.
+ * Unix-epoch-to-GEMDOS-date/time helper for readdir()'s PFSATTR.
+ *
+ * Stage 4 adds the write path (create/write/mkdir/rmdir/remove/rename)
+ * and multi-component lookup() (Dsetpath into a subdirectory several
+ * levels deep, "."/".." handling). chattr() stays NULL - see fs/pfs.h's
+ * own comment on why a lossless DOS-attribute mapping can't be built on
+ * top of a Unix mode bit.
  */
 
 #include "config.h"
@@ -56,44 +59,6 @@ static LONG v9p_pfs_root(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out)
     }
 
     out->fs = fs;
-    out->index = (LONG)fid;
-    out->aux = 0;
-    out->pos = 0;
-
-    return E_OK;
-}
-
-static LONG v9p_pfs_lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
-{
-    ULONG fid;
-    QID9P qid;
-    LONG rc;
-
-    if (path[0])
-    {
-        /* Multi-component path resolution (splitting on '\', handling
-         * "."/"..", chaining Twalk calls) is a later stage - see #157's
-         * plan. For now only the "give me a fresh, independently
-         * releasable dup of 'dir' itself" contract (empty path) is
-         * supported. */
-        return EPTHNF;
-    }
-
-    rc = v9p_walk((ULONG)dir->index, 0, NULL, &fid, &qid);
-    if (rc < 0)
-        return rc;
-
-    /* Same Tlopen-before-Treaddir requirement as v9p_pfs_root() - a
-     * lookup("") dup must remain just as usable for readdir() as the
-     * cookie it was duplicated from. */
-    rc = v9p_lopen(fid, 0);
-    if (rc < 0)
-    {
-        v9p_clunk(fid);
-        return rc;
-    }
-
-    out->fs = dir->fs;
     out->index = (LONG)fid;
     out->aux = 0;
     out->pos = 0;
@@ -267,6 +232,104 @@ static LONG v9p_resolve_name(ULONG dirfid, const char *name, char *realname, int
     }
 }
 
+/* Resolves a possibly multi-component directory path (Dsetpath, or the
+ * containing-directory half of a longer Fopen/Fcreate/... path pfs.c's
+ * own pfs_resolve_dir() has already split the final component off of) -
+ * '.' components are dropped, '..' passed through as a literal Twalk
+ * component (accepted by QEMU's 9pfs, verified against a real device
+ * during Stage 4), everything else resolved short->long via
+ * v9p_resolve_name() before being walked, one component at a time.
+ *
+ * One Twalk per component rather than batching up to the protocol's own
+ * 16-component cap: unlike a plain 9p client, this driver can't hand the
+ * server a batch of wnames up front, because resolving component N's
+ * short name requires already having walked to component N-1's fid (to
+ * list *its* real directory contents) - the dependency is inherent, not
+ * a missed optimization.
+ *
+ * An empty 'path' still means the "fresh, independently releasable dup
+ * of 'dir' itself" contract fs/pfs.h documents - falls out of the loop
+ * below running zero times, no separate branch needed. */
+static LONG v9p_pfs_lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
+{
+    ULONG curfid = (ULONG)dir->index;
+    BOOL owned = FALSE;
+    QID9P qid;
+    LONG rc;
+    const char *p = path;
+
+    while (*p)
+    {
+        char comp[V9P_MAX_NAME + 1];
+        char realname[V9P_MAX_NAME + 1];
+        const char *wname[1];
+        ULONG newfid;
+        int i = 0;
+
+        while (*p && (*p != SLASH) && (i < V9P_MAX_NAME))
+            comp[i++] = *p++;
+        comp[i] = 0;
+        if (*p == SLASH)
+            p++;
+
+        if (!comp[0] || ((comp[0] == '.') && (comp[1] == 0)))
+            continue;
+
+        if ((comp[0] == '.') && (comp[1] == '.') && (comp[2] == 0))
+        {
+            wname[0] = "..";
+        }
+        else
+        {
+            rc = v9p_resolve_name(curfid, comp, realname, sizeof(realname));
+            if (rc < 0)
+            {
+                if (owned)
+                    v9p_clunk(curfid);
+                return rc;
+            }
+            wname[0] = realname;
+        }
+
+        rc = v9p_walk(curfid, 1, wname, &newfid, &qid);
+        if (rc < 0)
+        {
+            if (owned)
+                v9p_clunk(curfid);
+            return rc;
+        }
+
+        if (owned)
+            v9p_clunk(curfid);
+        curfid = newfid;
+        owned = TRUE;
+    }
+
+    if (!owned)
+    {
+        rc = v9p_walk(curfid, 0, NULL, &curfid, &qid);
+        if (rc < 0)
+            return rc;
+        owned = TRUE;
+    }
+
+    /* Same Tlopen-before-Treaddir requirement as v9p_pfs_root() - every
+     * directory cookie this driver hands out must remain readdir()-able. */
+    rc = v9p_lopen(curfid, 0);
+    if (rc < 0)
+    {
+        v9p_clunk(curfid);
+        return rc;
+    }
+
+    out->fs = dir->fs;
+    out->index = (LONG)curfid;
+    out->aux = 0;
+    out->pos = 0;
+
+    return E_OK;
+}
+
 /* ------------------------------------------------------------------ */
 /* Unix-epoch -> GEMDOS packed date/time                                */
 /* ------------------------------------------------------------------ */
@@ -367,7 +430,7 @@ static LONG v9p_pfs_stat(ULONG dirfid, const char *name, BOOL is_dir, PFSATTR *o
 }
 
 /* ------------------------------------------------------------------ */
-/* open/read                                                            */
+/* open/create/read/write                                               */
 /* ------------------------------------------------------------------ */
 
 static LONG v9p_pfs_open(PFSCOOKIE *dir, const char *name, WORD mode, PFSCOOKIE *out)
@@ -417,6 +480,70 @@ static LONG v9p_pfs_read(PFSCOOKIE *fc, LONG pos, LONG len, UBYTE *buf)
             return rc;
         if (rc == 0)
             break;      /* EOF */
+
+        total += rc;
+        buf += rc;
+        pos += rc;
+        len -= rc;
+    }
+
+    return total;
+}
+
+/* Linux open(2) flags Tlcreate needs that this driver otherwise has no
+ * use for (v9p_lopen() only ever sees GEMDOS's already-Linux-shaped
+ * RO/WO/RW mode) - confirmed against include/uapi/asm-generic/fcntl.h. */
+#define V9P_O_CREAT   0100UL
+#define V9P_O_TRUNC   01000UL
+
+static LONG v9p_pfs_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *out)
+{
+    ULONG fid;
+    QID9P qid;
+    LONG rc;
+
+    (void)attr; /* no lossless GEMDOS-attribute-bits -> 9p mapping at
+                 * create time, same reasoning as chattr() staying NULL
+                 * (see this file's header comment) */
+
+    /* Tlcreate repurposes whatever fid it's given into the new file's
+     * fid (see v9p_lcreate()'s own comment in virtio_9p.h) - walk a
+     * throwaway dup of the directory rather than handing it dir->index
+     * directly, since 'dir' must stay a usable directory cookie. */
+    rc = v9p_walk((ULONG)dir->index, 0, NULL, &fid, &qid);
+    if (rc < 0)
+        return rc;
+
+    /* GEMDOS's Fcreate() always hands back a file open for read+write,
+     * truncated to empty whether or not it already existed. */
+    rc = v9p_lcreate(fid, name, 2 /* O_RDWR */ | V9P_O_CREAT | V9P_O_TRUNC, 0644, &qid);
+    if (rc < 0)
+    {
+        v9p_clunk(fid);
+        return rc;
+    }
+
+    out->fs = dir->fs;
+    out->index = (LONG)fid;
+    out->aux = 0;
+    out->pos = 0;
+
+    return E_OK;
+}
+
+static LONG v9p_pfs_write(PFSCOOKIE *fc, LONG pos, LONG len, const UBYTE *buf)
+{
+    LONG total = 0;
+
+    while (len > 0)
+    {
+        LONG rc = v9p_write((ULONG)fc->index, (UQUAD)pos, (ULONG)len, buf);
+
+        if (rc < 0)
+            return rc;
+        if (rc == 0)
+            break;      /* shouldn't happen for a write the server accepted,
+                         * but avoid looping forever if it ever does */
 
         total += rc;
         buf += rc;
@@ -514,6 +641,59 @@ static LONG v9p_pfs_readdir(PFSCOOKIE *dir, LONG *cursor, char *name, int namele
 }
 
 /* ------------------------------------------------------------------ */
+/* mkdir/rmdir/remove/rename                                            */
+/* ------------------------------------------------------------------ */
+
+/* Unlike Tlcreate, Tmkdir never repurposes 'dfid' - no throwaway dup
+ * needed. The new subdirectory's real name is 'name' verbatim (GEMDOS's
+ * own 8.3 form, uppercase) - no long-name synthesis on write, matching
+ * v9p_pfs_create()'s own scope for v1. */
+static LONG v9p_pfs_mkdir(PFSCOOKIE *dir, const char *name)
+{
+    return v9p_mkdir((ULONG)dir->index, name, 0755, NULL);
+}
+
+static LONG v9p_pfs_rmdir(PFSCOOKIE *dir, const char *name)
+{
+    char realname[V9P_MAX_NAME + 1];
+    LONG rc;
+
+    rc = v9p_resolve_name((ULONG)dir->index, name, realname, sizeof(realname));
+    if (rc < 0)
+        return rc;
+
+    return v9p_unlinkat((ULONG)dir->index, realname, V9P_AT_REMOVEDIR);
+}
+
+static LONG v9p_pfs_remove(PFSCOOKIE *dir, const char *name)
+{
+    char realname[V9P_MAX_NAME + 1];
+    LONG rc;
+
+    rc = v9p_resolve_name((ULONG)dir->index, name, realname, sizeof(realname));
+    if (rc < 0)
+        return rc;
+
+    return v9p_unlinkat((ULONG)dir->index, realname, 0);
+}
+
+static LONG v9p_pfs_rename(PFSCOOKIE *olddir, const char *oldname,
+                            PFSCOOKIE *newdir, const char *newname)
+{
+    char realoldname[V9P_MAX_NAME + 1];
+    LONG rc;
+
+    rc = v9p_resolve_name((ULONG)olddir->index, oldname, realoldname, sizeof(realoldname));
+    if (rc < 0)
+        return rc;
+
+    /* 'newname' must not already exist - passed through as GEMDOS gave
+     * it (an 8.3 name) rather than resolved, same "no long-name
+     * synthesis on write" scope as create()/mkdir(). */
+    return v9p_renameat((ULONG)olddir->index, realoldname, (ULONG)newdir->index, newname);
+}
+
+/* ------------------------------------------------------------------ */
 
 static void v9p_pfs_release(PFSCOOKIE *fc)
 {
@@ -532,18 +712,18 @@ static struct pfs_ops v9p_pfs_ops = {
     v9p_pfs_root,
     v9p_pfs_lookup,
     v9p_pfs_open,
-    NULL,               /* create: a later stage */
+    v9p_pfs_create,
     NULL,               /* close: nothing to flush - Tclunk (release())
                          * does the real cleanup */
     v9p_pfs_read,
-    NULL,               /* write */
+    v9p_pfs_write,
     v9p_pfs_readdir,
-    NULL,               /* mkdir */
-    NULL,               /* rmdir */
-    NULL,               /* remove */
-    NULL,               /* rename */
-    NULL,               /* chattr */
-    NULL,               /* dfree */
+    v9p_pfs_mkdir,
+    v9p_pfs_rmdir,
+    v9p_pfs_remove,
+    v9p_pfs_rename,
+    NULL,               /* chattr: no lossless GEMDOS-attribute<->9p mapping */
+    NULL,               /* dfree: a later stage */
     NULL,               /* mediach */
     v9p_pfs_release,
     FALSE               /* native_handles: this driver has no handle

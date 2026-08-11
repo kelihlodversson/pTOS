@@ -75,6 +75,16 @@
 #define P9_RGETATTR  25
 #define P9_TREADDIR  40
 #define P9_RREADDIR  41
+#define P9_TLCREATE  14
+#define P9_RLCREATE  15
+#define P9_TWRITE    118
+#define P9_RWRITE    119
+#define P9_TMKDIR    72
+#define P9_RMKDIR    73
+#define P9_TUNLINKAT 76
+#define P9_RUNLINKAT 77
+#define P9_TRENAMEAT 74
+#define P9_RRENAMEAT 75
 #define P9_RLERROR   7
 
 #define V9P_MAX_MOUNT_TAG  32   /* QEMU's own MAX_TAG_LEN */
@@ -969,6 +979,334 @@ LONG v9p_readdir_one(ULONG dir_fid, UQUAD *offset, char *name, int namelen,
         *outqid = qid;
     if (is_dir)
         *is_dir = (qid.type & V9P_QTDIR) ? TRUE : FALSE;
+
+    return E_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tlcreate                                                             */
+/* ------------------------------------------------------------------ */
+
+/* Unlike Twalk, Tlcreate does not allocate a new fid: 'fid' must already
+ * name the containing directory, and on success it stops being a
+ * directory fid and becomes the newly created (and already open) file's
+ * fid instead - so the caller must pass a throwaway dup of the directory
+ * fid it still wants to use afterwards, never the directory cookie's own
+ * fid. */
+LONG v9p_lcreate(ULONG fid, const char *name, ULONG flags, ULONG mode, QID9P *outqid)
+{
+    UBYTE *p = v9p_tbuf;
+    UBYTE *size_field;
+    ULONG len;
+    LONG rc;
+    const UBYTE *rp;
+    UBYTE rtype;
+    UWORD rtag;
+    QID9P qid;
+    ULONG iounit;
+
+    size_field = p;
+    p += 4;
+    p = v9p_put8(p, P9_TLCREATE);
+    p = v9p_put16(p, V9P_TAG);
+    p = v9p_put32(p, fid);
+    p = v9p_putstr(p, name);
+    p = v9p_put32(p, flags);
+    p = v9p_put32(p, mode);
+    p = v9p_put32(p, 0);       /* gid: pTOS has no multi-user concept, same as Tattach's n_uname */
+
+    len = (ULONG)(p - v9p_tbuf);
+    v9p_put32(size_field, len);
+
+    rc = v9p_transact(len);
+    if (rc < 0)
+        return rc;
+    if ((ULONG)rc < 7)
+        return EINTRN;
+
+    rp = v9p_rbuf + 4;
+    rp = v9p_get8(rp, &rtype);
+    rp = v9p_get16(rp, &rtag);
+
+    if (rtag != V9P_TAG)
+    {
+        KDEBUG(("virtio_9p: Rlcreate tag 0x%x != 0x%x\n", rtag, V9P_TAG));
+        return EINTRN;
+    }
+    if (rtype == P9_RLERROR)
+    {
+        ULONG ecode;
+        v9p_get32(rp, &ecode);
+        return v9p_errno_to_gemerror(ecode);
+    }
+    if (rtype != P9_RLCREATE)
+    {
+        KDEBUG(("virtio_9p: unexpected reply type %u to Tlcreate\n", rtype));
+        return EINTRN;
+    }
+    if ((ULONG)rc < 7 + 13 + 4)
+    {
+        KDEBUG(("virtio_9p: Rlcreate reply too short\n"));
+        return EINTRN;
+    }
+
+    rp = v9p_getqid(rp, &qid);
+    rp = v9p_get32(rp, &iounit);
+    (void)iounit;   /* see v9p_lopen()'s own comment - chunk against msize instead */
+
+    v9p_fid_pool[fid].qid = qid;
+    if (outqid)
+        *outqid = qid;
+
+    return E_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/* Twrite                                                               */
+/* ------------------------------------------------------------------ */
+
+LONG v9p_write(ULONG fid, UQUAD offset, ULONG count, const UBYTE *buf)
+{
+    UBYTE *p = v9p_tbuf;
+    UBYTE *size_field;
+    ULONG len, maxdata, rcount;
+    LONG rc;
+    const UBYTE *rp;
+    UBYTE rtype;
+    UWORD rtag;
+
+    /* Twrite's own envelope (size[4] type[1] tag[2] fid[4] offset[8]
+     * count[4], 23 bytes) has to fit alongside the data being written
+     * within v9p_msize. */
+    maxdata = (v9p_msize > 23) ? (v9p_msize - 23) : 0;
+    if (count > maxdata)
+        count = maxdata;
+    if (count == 0)
+        return 0;
+
+    size_field = p;
+    p += 4;
+    p = v9p_put8(p, P9_TWRITE);
+    p = v9p_put16(p, V9P_TAG);
+    p = v9p_put32(p, fid);
+    p = v9p_put64(p, offset);
+    p = v9p_put32(p, count);
+    memcpy(p, buf, count);
+    p += count;
+
+    len = (ULONG)(p - v9p_tbuf);
+    v9p_put32(size_field, len);
+
+    rc = v9p_transact(len);
+    if (rc < 0)
+        return rc;
+    if ((ULONG)rc < 7)
+        return EINTRN;
+
+    rp = v9p_rbuf + 4;
+    rp = v9p_get8(rp, &rtype);
+    rp = v9p_get16(rp, &rtag);
+
+    if (rtag != V9P_TAG)
+    {
+        KDEBUG(("virtio_9p: Rwrite tag 0x%x != 0x%x\n", rtag, V9P_TAG));
+        return EINTRN;
+    }
+    if (rtype == P9_RLERROR)
+    {
+        ULONG ecode;
+        v9p_get32(rp, &ecode);
+        return v9p_errno_to_gemerror(ecode);
+    }
+    if (rtype != P9_RWRITE)
+    {
+        KDEBUG(("virtio_9p: unexpected reply type %u to Twrite\n", rtype));
+        return EINTRN;
+    }
+    if ((ULONG)rc < 11)
+    {
+        KDEBUG(("virtio_9p: Rwrite reply too short\n"));
+        return EINTRN;
+    }
+
+    v9p_get32(rp, &rcount);
+
+    return (LONG)rcount;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tmkdir                                                               */
+/* ------------------------------------------------------------------ */
+
+LONG v9p_mkdir(ULONG dfid, const char *name, ULONG mode, QID9P *outqid)
+{
+    UBYTE *p = v9p_tbuf;
+    UBYTE *size_field;
+    ULONG len;
+    LONG rc;
+    const UBYTE *rp;
+    UBYTE rtype;
+    UWORD rtag;
+    QID9P qid;
+
+    size_field = p;
+    p += 4;
+    p = v9p_put8(p, P9_TMKDIR);
+    p = v9p_put16(p, V9P_TAG);
+    p = v9p_put32(p, dfid);
+    p = v9p_putstr(p, name);
+    p = v9p_put32(p, mode);
+    p = v9p_put32(p, 0);       /* gid */
+
+    len = (ULONG)(p - v9p_tbuf);
+    v9p_put32(size_field, len);
+
+    rc = v9p_transact(len);
+    if (rc < 0)
+        return rc;
+    if ((ULONG)rc < 7)
+        return EINTRN;
+
+    rp = v9p_rbuf + 4;
+    rp = v9p_get8(rp, &rtype);
+    rp = v9p_get16(rp, &rtag);
+
+    if (rtag != V9P_TAG)
+    {
+        KDEBUG(("virtio_9p: Rmkdir tag 0x%x != 0x%x\n", rtag, V9P_TAG));
+        return EINTRN;
+    }
+    if (rtype == P9_RLERROR)
+    {
+        ULONG ecode;
+        v9p_get32(rp, &ecode);
+        return v9p_errno_to_gemerror(ecode);
+    }
+    if (rtype != P9_RMKDIR)
+    {
+        KDEBUG(("virtio_9p: unexpected reply type %u to Tmkdir\n", rtype));
+        return EINTRN;
+    }
+    if ((ULONG)rc < 7 + 13)
+    {
+        KDEBUG(("virtio_9p: Rmkdir reply too short\n"));
+        return EINTRN;
+    }
+
+    rp = v9p_getqid(rp, &qid);
+    if (outqid)
+        *outqid = qid;
+
+    return E_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tunlinkat                                                            */
+/* ------------------------------------------------------------------ */
+
+LONG v9p_unlinkat(ULONG dfid, const char *name, ULONG flags)
+{
+    UBYTE *p = v9p_tbuf;
+    UBYTE *size_field;
+    ULONG len;
+    LONG rc;
+    const UBYTE *rp;
+    UBYTE rtype;
+    UWORD rtag;
+
+    size_field = p;
+    p += 4;
+    p = v9p_put8(p, P9_TUNLINKAT);
+    p = v9p_put16(p, V9P_TAG);
+    p = v9p_put32(p, dfid);
+    p = v9p_putstr(p, name);
+    p = v9p_put32(p, flags);
+
+    len = (ULONG)(p - v9p_tbuf);
+    v9p_put32(size_field, len);
+
+    rc = v9p_transact(len);
+    if (rc < 0)
+        return rc;
+    if ((ULONG)rc < 7)
+        return EINTRN;
+
+    rp = v9p_rbuf + 4;
+    rp = v9p_get8(rp, &rtype);
+    rp = v9p_get16(rp, &rtag);
+
+    if (rtag != V9P_TAG)
+    {
+        KDEBUG(("virtio_9p: Runlinkat tag 0x%x != 0x%x\n", rtag, V9P_TAG));
+        return EINTRN;
+    }
+    if (rtype == P9_RLERROR)
+    {
+        ULONG ecode;
+        v9p_get32(rp, &ecode);
+        return v9p_errno_to_gemerror(ecode);
+    }
+    if (rtype != P9_RUNLINKAT)
+    {
+        KDEBUG(("virtio_9p: unexpected reply type %u to Tunlinkat\n", rtype));
+        return EINTRN;
+    }
+
+    return E_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/* Trenameat                                                            */
+/* ------------------------------------------------------------------ */
+
+LONG v9p_renameat(ULONG olddfid, const char *oldname, ULONG newdfid, const char *newname)
+{
+    UBYTE *p = v9p_tbuf;
+    UBYTE *size_field;
+    ULONG len;
+    LONG rc;
+    const UBYTE *rp;
+    UBYTE rtype;
+    UWORD rtag;
+
+    size_field = p;
+    p += 4;
+    p = v9p_put8(p, P9_TRENAMEAT);
+    p = v9p_put16(p, V9P_TAG);
+    p = v9p_put32(p, olddfid);
+    p = v9p_putstr(p, oldname);
+    p = v9p_put32(p, newdfid);
+    p = v9p_putstr(p, newname);
+
+    len = (ULONG)(p - v9p_tbuf);
+    v9p_put32(size_field, len);
+
+    rc = v9p_transact(len);
+    if (rc < 0)
+        return rc;
+    if ((ULONG)rc < 7)
+        return EINTRN;
+
+    rp = v9p_rbuf + 4;
+    rp = v9p_get8(rp, &rtype);
+    rp = v9p_get16(rp, &rtag);
+
+    if (rtag != V9P_TAG)
+    {
+        KDEBUG(("virtio_9p: Rrenameat tag 0x%x != 0x%x\n", rtag, V9P_TAG));
+        return EINTRN;
+    }
+    if (rtype == P9_RLERROR)
+    {
+        ULONG ecode;
+        v9p_get32(rp, &ecode);
+        return v9p_errno_to_gemerror(ecode);
+    }
+    if (rtype != P9_RRENAMEAT)
+    {
+        KDEBUG(("virtio_9p: unexpected reply type %u to Trenameat\n", rtype));
+        return EINTRN;
+    }
 
     return E_OK;
 }

@@ -105,6 +105,41 @@ LONG v9p_getattr(ULONG fid, P9GETATTR *out);
 LONG v9p_readdir_one(ULONG dir_fid, UQUAD *offset, char *name, int namelen,
                       QID9P *outqid, BOOL *is_dir);
 
+/* Linux's AT_REMOVEDIR, for v9p_unlinkat()'s 'flags' - confirmed against
+ * include/uapi/linux/fcntl.h. */
+#define V9P_AT_REMOVEDIR  0x200UL
+
+/* Creates 'name' inside the directory 'fid' names and opens it for I/O in
+ * one round trip (Tlcreate). Like Tlopen, 'flags' are Linux-style open(2)
+ * flags. Unlike v9p_walk(), this does NOT allocate a new fid: 'fid' stops
+ * being usable as a directory fid and becomes the new file's fid instead
+ * - callers must pass a throwaway dup (a 0-component v9p_walk()) of the
+ * directory fid they still need afterwards, never the directory cookie's
+ * own fid. */
+LONG v9p_lcreate(ULONG fid, const char *name, ULONG flags, ULONG mode, QID9P *outqid);
+
+/* Writes 'count' bytes from 'buf' at 'offset' to 'fid' (already
+ * Tlopen'd/v9p_lcreate()'d). Internally caps 'count' to whatever fits in
+ * one Twrite/Rwrite round trip given the negotiated msize - the caller
+ * loops (adjusting 'offset') for a request larger than that. Returns the
+ * number of bytes actually written, or a negative gemerror.h code. */
+LONG v9p_write(ULONG fid, UQUAD offset, ULONG count, const UBYTE *buf);
+
+/* Creates a subdirectory 'name' inside the directory 'dfid' names
+ * (Tmkdir) - unlike v9p_lcreate(), 'dfid' remains a valid directory fid
+ * afterwards, since Tmkdir never repurposes it. */
+LONG v9p_mkdir(ULONG dfid, const char *name, ULONG mode, QID9P *outqid);
+
+/* Removes 'name' from the directory 'dfid' names (Tunlinkat) - pass
+ * V9P_AT_REMOVEDIR in 'flags' for an (empty) subdirectory, 0 for a plain
+ * file. */
+LONG v9p_unlinkat(ULONG dfid, const char *name, ULONG flags);
+
+/* Renames/moves 'oldname' (inside the directory 'olddfid' names) to
+ * 'newname' (inside the directory 'newdfid' names) - Trenameat. The two
+ * directories may be the same fid for a plain same-directory rename. */
+LONG v9p_renameat(ULONG olddfid, const char *oldname, ULONG newdfid, const char *newname);
+
 #endif /* CONF_WITH_VIRTIO_9P */
 
 #endif /* VIRTIO_9P_H */
