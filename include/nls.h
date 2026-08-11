@@ -21,7 +21,7 @@
 
 #define NLS_MSGID_FLAG 0x80000000UL
 
-# define _(a) etos_gettext(a)
+# define _(a) etos_gettext((unsigned long)(a))
 # define N_(a) ((char *)((unsigned long)(a) | NLS_MSGID_FLAG))
 # define gettext(a) etos_gettext((unsigned long)(a))
 const char *etos_gettext(unsigned long msgid);
