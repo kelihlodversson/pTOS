@@ -226,6 +226,12 @@ static LONG fat_readdir(PFSCOOKIE *dir, LONG *cursor, char *name, int namelen, P
 
         fat_readdir_pool[i].used = TRUE;
         *cursor = i + 1;
+        /* remember which pool slot this cookie's search owns, so
+         * fat_release() can free it if the search is abandoned before
+         * running to end-of-directory (a new Fsfirst() on the same DTA,
+         * or the owning process exiting - see fs/pfs.c's
+         * pfs_search_free()). */
+        dir->aux = i + 1;
 
         fat_readdir_result(name, namelen, outattr, &fat_readdir_pool[i].dta);
         return E_OK;
@@ -241,6 +247,7 @@ static LONG fat_readdir(PFSCOOKIE *dir, LONG *cursor, char *name, int namelen, P
         if (!f)
         {
             fat_readdir_pool[slot].used = FALSE;
+            dir->aux = 0;
             return ENMFIL;
         }
 
@@ -328,6 +335,26 @@ static LONG fat_mediach(struct pfs_ops *fs, WORD drive)
     return Mediach(drive);
 }
 
+/* DND-based directory cookies and sft[]-backed file handles both
+ * outlive a single call already (the DND tree is a cache, and file
+ * handles are freed by close), so there is nothing to release for
+ * those. The one thing that does need releasing is a directory
+ * cookie's attached fat_readdir_pool[] slot, if fat_readdir() gave it
+ * one (cookie->aux != 0) and the search was abandoned before running
+ * to end-of-directory - see fat_readdir()'s comment.
+ */
+static void fat_release(PFSCOOKIE *fc)
+{
+    if (fc->aux > 0)
+    {
+        WORD slot = (WORD)(fc->aux - 1);
+
+        if ((slot >= 0) && (slot < CONF_PFS_MAX_SEARCHES))
+            fat_readdir_pool[slot].used = FALSE;
+        fc->aux = 0;
+    }
+}
+
 struct pfs_ops fat_pfs_ops = {
     fat_root,
     fat_lookup,
@@ -344,9 +371,5 @@ struct pfs_ops fat_pfs_ops = {
     fat_chattr,
     fat_dfree,
     fat_mediach,
-    NULL            /* release: DND-based directory cookies and sft[]-
-                     * backed file handles both outlive a single call
-                     * already (the DND tree is a cache, and file
-                     * handles are freed by close), so there is nothing
-                     * per-cookie to release here. */
+    fat_release
 };

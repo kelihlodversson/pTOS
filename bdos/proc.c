@@ -441,6 +441,14 @@ static void init_pd_files(PD *p)
         p->p_curdir[i] = dn;
         if (dn)
             dirtbl[dn].use++;
+#if CONF_WITH_PLUGGABLE_FS
+        /* p_curdir[] indexes fs/pfs.c's own table instead when this
+         * option is on (see the comment above PFS_MAX_CWD in fs/pfs.c);
+         * the dirtbl[] bump above is harmless but meaningless in that
+         * case, so also bump the table actually in use. */
+        if (dn)
+            pfs_cwd_addref((WORD)dn);
+#endif
     }
 
     /* and current drive */

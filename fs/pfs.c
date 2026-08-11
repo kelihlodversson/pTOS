@@ -235,6 +235,37 @@ typedef struct {
 
 static PFS_DIRTBL_ENTRY pfs_dirtbl[PFS_MAX_CWD];
 
+/* One more process now shares pfs_dirtbl[n] - e.g. bdos/proc.c's
+ * init_pd_files() inheriting p_curdir[] into a freshly created process,
+ * mirroring the bump it already does to the legacy dirtbl[n].use for a
+ * non-pluggable drive. n==0 (root sentinel) is a no-op, matching how it
+ * is never a real slot.
+ */
+void pfs_cwd_addref(WORD n)
+{
+    if ((n > 0) && (n < PFS_MAX_CWD) && pfs_dirtbl[n].use)
+        pfs_dirtbl[n].use++;
+}
+
+/* Drop this process's reference to pfs_dirtbl[n] (n==0, the root
+ * sentinel, is a no-op); releases the driver's cookie once nothing
+ * references the slot any more.  Shared by pfs_cwd_set() (replacing a
+ * process's own cached directory) and pfs_proc_exit() (process
+ * termination).
+ */
+static void pfs_dirtbl_release(WORD n)
+{
+    if ((n > 0) && (n < PFS_MAX_CWD) && pfs_dirtbl[n].use)
+    {
+        if (!--pfs_dirtbl[n].use)
+        {
+            if (pfs_dirtbl[n].fs->release)
+                pfs_dirtbl[n].fs->release(&pfs_dirtbl[n].cwd);
+            pfs_dirtbl[n].fs = NULL;
+        }
+    }
+}
+
 /* Cookie + absolute path string for 'drive' in the calling process. */
 static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const char **path)
 {
@@ -263,11 +294,7 @@ static LONG pfs_cwd_set(WORD drive, struct pfs_ops *fs, PFSCOOKIE *cwd, const ch
     WORD old = run->p_curdir[drive];
     WORD i;
 
-    if ((old > 0) && (old < PFS_MAX_CWD) && pfs_dirtbl[old].use)
-    {
-        if (!--pfs_dirtbl[old].use)
-            pfs_dirtbl[old].fs = NULL;
-    }
+    pfs_dirtbl_release(old);
 
     if (!path[0])
     {
@@ -513,15 +540,29 @@ static LONG pfs_do_chdir(const char *path)
     if (rc < 0)
         return rc;
 
-    if (newpath[0] && (strlen(newpath) < sizeof(newpath) - 1))
-        strcat(newpath, "\\");
+    /* append "\name" (or just "name" if newpath is still empty, i.e. the
+     * new directory is directly under the drive root) to the cached
+     * path string; a path that doesn't fit is an error, not something
+     * to silently truncate - this string is what Dgetpath() returns and
+     * what later relative lookups are built from. */
     {
         size_t len = strlen(newpath);
-        if (len < sizeof(newpath) - 1)
-            strlcpy(newpath + len, name, sizeof(newpath) - len);
+        size_t namelen = strlen(name);
+        size_t sep = len ? 1 : 0;
+
+        if (len + sep + namelen >= sizeof(newpath))
+        {
+            rc = ERANGE;
+        }
+        else
+        {
+            if (sep)
+                newpath[len++] = SLASH;
+            memcpy(newpath + len, name, namelen + 1);      /* + null terminator */
+            rc = pfs_cwd_set(drive, fs, &target, newpath);
+        }
     }
 
-    rc = pfs_cwd_set(drive, fs, &target, newpath);
     if (fs->release)
         fs->release(&target);
 
@@ -742,13 +783,27 @@ static LONG pfs_do_sfirst(char *path, WORD att)
     if (rc < 0)
         return rc;
 
+    /* a new Fsfirst() on a DTA that already has a search running (common
+     * - callers rarely exhaust a search before starting another) must
+     * replace it, not leak a second slot and leave pfs_do_snext()
+     * matching whichever of the two comes first in the table. */
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-        if (!pfs_searches[i].owner)
+        if ((pfs_searches[i].owner == run->p_xdta) && (pfs_searches[i].proc == run))
             break;
-    if (i == CONF_PFS_MAX_SEARCHES)
+    if (i < CONF_PFS_MAX_SEARCHES)
     {
-        if (fs->release) fs->release(&dir);
-        return ENHNDL;
+        pfs_search_free(&pfs_searches[i]);
+    }
+    else
+    {
+        for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
+            if (!pfs_searches[i].owner)
+                break;
+        if (i == CONF_PFS_MAX_SEARCHES)
+        {
+            if (fs->release) fs->release(&dir);
+            return ENHNDL;
+        }
     }
 
     pfs_searches[i].owner = run->p_xdta;
@@ -843,15 +898,7 @@ void pfs_proc_exit(PD *r)
      * (otherwise unused, while this option is on) legacy table.
      */
     for (i = 0; i < BLKDEVNUM; i++)
-    {
-        WORD n = r->p_curdir[i];
-
-        if ((n > 0) && (n < PFS_MAX_CWD) && pfs_dirtbl[n].use)
-        {
-            if (!--pfs_dirtbl[n].use)
-                pfs_dirtbl[n].fs = NULL;
-        }
-    }
+        pfs_dirtbl_release(r->p_curdir[i]);
 }
 
 

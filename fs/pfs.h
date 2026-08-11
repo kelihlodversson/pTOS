@@ -183,4 +183,13 @@ LONG pfs_handle_close(PFSCOOKIE *fc);
  */
 void pfs_proc_exit(PD *r);
 
+/* Called from bdos/proc.c's init_pd_files() for each non-zero p_curdir[]
+ * entry ('n', an index into fs/pfs.c's own directory table) it copies
+ * into a newly created process - mirrors the bump init_pd_files()
+ * already does to the legacy dirtbl[n].use for a non-pluggable drive,
+ * so a pluggable current-directory slot shared by a parent and child
+ * process is not invalidated by one of them exiting first.
+ */
+void pfs_cwd_addref(WORD n);
+
 #endif /* PFS_H */
