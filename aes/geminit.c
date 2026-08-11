@@ -776,7 +776,10 @@ void gem_main(void)
         /* if not rlr then initialize his stack pointer */
         if (i != 0)
         {
-            ULONG *stack_top = &rlr->p_uda->u_supstk;
+            /* One word past u_supstk, matching init_p0_stkptr()'s stack_top
+             * (same struct, same convention: u_supstk itself is usable
+             * stack space, not just an end-of-array marker). */
+            ULONG *stack_top = &rlr->p_uda->u_supstk + 1;
 
 #if ARCH_ARM
             /* Same reasoning as init_p0_stkptr(): ARM/AAPCS requires the

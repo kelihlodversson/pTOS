@@ -183,7 +183,13 @@ _justretf:
 
 _tikcod:
         push_privstack tstack
-        push    {r0-r4,lr}
+        // r5 is otherwise unused here -- included purely to pad this to a
+        // multiple of 8 bytes (7 regs = 28, +4 from push_privstack's own
+        // str = 32), so sp lands 8-byte aligned at the bl's below. tstack
+        // is now explicitly 8-byte aligned (see its .balign 8 above), and
+        // AAPCS requires 8-byte sp alignment at any public interface such
+        // as these calls.
+        push    {r0-r5,lr}
         ldr     r4, =_NUM_TICK
         ldmia   r4, {r1,r2} // r1 <- *NUM_TICK; r2 <- *CMP_TICK
         teq     r2, #0      // if (*CMP_TICK != 0)
@@ -200,7 +206,7 @@ _tikcod:
         mov     r0, #1
         bl      _b_delay    // b_delay(1);
 
-        pop     {r0-r4,lr}
+        pop     {r0-r5,lr}
         pop_privstack
 
         b        _tiksav    // Chain to vector stored in _tiksav
