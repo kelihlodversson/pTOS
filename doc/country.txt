@@ -28,7 +28,7 @@ Where is it in the code
   bios/ctrycodes.h
 
 - language: this is covered by the 'nls' stuff, in files
-  util/langs.[ch], util/nls.c, util/nlsasm.S
+  util/langs.h, util/nls.c
 
 - keyboard:
   bios/country.h holds #defines for the keyboard codes;
@@ -102,20 +102,46 @@ To set it:
 
     ptos.lang=de
 
-- under QEMU, pass it with -append, e.g.:
+- under QEMU: as of this writing, there is no known invocation that
+  both boots pTOS successfully AND delivers -append to it. This was
+  checked empirically, not assumed; do not follow older advice to use
+  "-kernel kernel.img" (the raw Raspberry Pi image) -- it does not work:
 
-    qemu-system-arm -M raspi1ap -kernel kernel.img -append "ptos.lang=de"
+    - -bios kernel7.img (the normal, documented way to run this OS on
+      the Raspberry Pi machine models -- doc/install.txt, the
+      ptos-smoketest skill) boots correctly, but QEMU rejects -append
+      outright with this loader.
 
-  Note this needs -kernel, not the -bios invocation documented
-  elsewhere for this OS (doc/install.txt, the ptos-smoketest skill):
-  QEMU only builds ATAG/FDT boot info for a kernel loaded with
-  -kernel, and only for the QEMU ARM 'virt' machine does that boot
-  info reliably reach the guest; on the Raspberry Pi machine models,
-  it needs a raw (non-ELF) kernel image specifically -- loading the
-  same image as an ELF file gets no boot info passed at all, same as
-  -bios. With no "ptos.lang=" parameter recognized (or no boot info
-  at all, as with -bios), the country baked in at build time is used,
-  same as always.
+    - -kernel emutos.elf (the ELF build, the only invocation that
+      exists for the QEMU ARM 'virt' machine) also boots correctly,
+      but -append has no effect: arm_boot_regs.atags comes back zero,
+      same as with -bios. This applies to both the Raspberry Pi and
+      'virt' machine models.
+
+    - -kernel kernel7.img (the raw, non-ELF Raspberry Pi image) is the
+      only invocation that actually populates arm_boot_regs.atags with
+      real boot info, confirming bios/bootargs.c's ATAG parsing works
+      end to end -- but QEMU's raw-kernel loader expects the Linux
+      "zImage" format (a magic header, self-relocating code), which
+      kernel7.img is not (it follows the real Raspberry Pi GPU
+      firmware's loading convention instead, which -bios matches).
+      QEMU computes a bogus load address from it and jumps into
+      unmapped memory before any pTOS code runs at all. This is a gap
+      in QEMU's raw-image loading heuristics, not a bug introduced by
+      CONF_WITH_BOOTARGS_LANG, and it reproduces with -append entirely
+      absent from the command line.
+
+  bios/bootargs.c was instead verified by compiling it standalone on
+  the host and feeding it the real ATAG and FDT bytes QEMU generates
+  for "ptos.lang=de" (captured via -machine dumpdtb= and a minimal
+  standalone test binary) -- this caught and fixed a real bug in the
+  ATAG magic check before it shipped. A real Raspberry Pi should work
+  as described above, since that is the boot path bios/bootargs.c was
+  written against; this has not been confirmed on physical hardware.
+
+  With no "ptos.lang=" parameter recognized (or no boot info at all,
+  as with every currently working QEMU invocation), the country baked
+  in at build time is used, same as always.
 
 New country check list
 ----------------------
