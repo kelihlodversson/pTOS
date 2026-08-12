@@ -901,6 +901,42 @@ static BOOL raspi_hw_cursor_available = TRUE;
 #endif
 #endif
 
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+/*
+ * Save the pixel at addr8 into *save and draw the cursor colour there when
+ * the corresponding mask bit is set.  Accesses exactly psize bytes -- UWORD
+ * at psize 2, ULONG at psize 4 -- so a 2-byte-pixel cursor neither smears
+ * the pixel to its right (a 4-byte access would read and overwrite it) nor
+ * reads/writes past the end of the page-exact framebuffer.  Pixels are kept
+ * zero-extended in the ULONG save area; save and restore must agree on the
+ * element width (see cur_replace()).
+ */
+static ULONG *cursor_save_draw(UBYTE *addr8, ULONG *save, UWORD *data,
+                               UWORD current_bit, ULONG cdb_fg, ULONG cdb_bg,
+                               UWORD psize)
+{
+    if (psize == 2)
+    {
+        UWORD *px = (UWORD *)addr8;
+        *save = *px;
+        if (data[1] & current_bit)
+            *px = (UWORD)cdb_fg;
+        else if (data[0] & current_bit)
+            *px = (UWORD)cdb_bg;
+    }
+    else
+    {
+        ULONG *px = (ULONG *)addr8;
+        *save = *px;
+        if (data[1] & current_bit)
+            *px = cdb_fg;
+        else if (data[0] & current_bit)
+            *px = cdb_bg;
+    }
+    return save + 1;
+}
+#endif
+
 static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
 {
 #ifdef MACHINE_RPI
@@ -974,16 +1010,8 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
             UBYTE *addr8 = base;
             for(current_bit = start_bit; current_bit > end_bit; current_bit >>= 1)
             {
-                ULONG *px = (ULONG *)addr8;
-                *(save_data++) = *px;
-                if(data[1] & current_bit)
-                {
-                    *px = cdb_fg;
-                }
-                else if (data[0] & current_bit)
-                {
-                    *px = cdb_bg;
-                }
+                save_data = cursor_save_draw(addr8, save_data, data, current_bit,
+                                             cdb_fg, cdb_bg, psize);
                 addr8 += psize;
             }
             data += 2;
@@ -1201,15 +1229,25 @@ static void cur_replace (MCS *mcs)
     for (row = 0; row<mouse_save.height; row++)
     {
         UBYTE *addr8 = (UBYTE *)get_start_addr(mouse_save.x, mouse_save.y+row);
-        for (col = 0; col<mouse_save.width; col++)
+        if (psize == 2)
         {
-            *(ULONG *)addr8 = *data++;
-            addr8 += psize;
+            for (col = 0; col<mouse_save.width; col++)
+            {
+                *(UWORD *)addr8 = (UWORD)*data++;
+                addr8 += 2;
+            }
+        }
+        else
+        {
+            for (col = 0; col<mouse_save.width; col++)
+            {
+                *(ULONG *)addr8 = *data++;
+                addr8 += 4;
+            }
         }
     }
 #endif
 }
-
 
 /* line-A support */
 
