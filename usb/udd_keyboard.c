@@ -7,10 +7,8 @@
 /*
  * USB HID boot-keyboard class driver.
  *
- * Modeled on udd_mouse.c: probes for a HID boot-protocol keyboard
- * interface, then polls its interrupt endpoint from the raspi timer-C
- * tick (see usb_keyboard_timerc() below, hooked up next to
- * usb_mouse_timerc() in bios/arch/arm/vectors.c).
+ * Probes for a HID boot-protocol keyboard interface and receives reports
+ * through its interrupt endpoint.
  */
 
 static long keyboard_ioctl (struct uddif *, short, long);
@@ -45,9 +43,11 @@ struct kbd_data
     UBYTE keys[6];                /* last set of up to 6 pressed key usages */
     UBYTE new_modifier;
     UBYTE new_keys[6];
+    UBYTE report[8];
 };
 
 static struct kbd_data kbd_data;
+static struct usb_async_int_msg keyboard_request;
 
 /*
  * USB HID keyboard usage ID (Usage Page 0x07) -> Atari IKBD scancode.
@@ -126,12 +126,9 @@ keyboard_disconnect (struct usb_device *dev)
 {
     if (dev == kbd_data.pusb_dev)
     {
-        /* Clear pusb_dev first: usb_keyboard_timerc() (called from the
-         * Timer-C interrupt) gates purely on pusb_dev != NULL, so this
-         * stops it from polling a device that's being torn down before
-         * touching anything else in kbd_data. */
         int i;
 
+        usb_cancel_async_int_msg(&keyboard_request);
         kbd_data.pusb_dev = NULL;
 
         /* Synthesize releases for anything still held, so an unplug
@@ -166,12 +163,6 @@ keyboard_disconnect (struct usb_device *dev)
     return 0;
 }
 
-static long
-usb_keyboard_irq (struct usb_device *dev)
-{
-    return 0;
-}
-
 /* TRUE if usage 'key' (nonzero) is present anywhere in the 6-entry array */
 static BOOL
 usb_keyboard_key_in(const UBYTE *keys, UBYTE key)
@@ -189,47 +180,32 @@ usb_keyboard_key_in(const UBYTE *keys, UBYTE key)
     return FALSE;
 }
 
-void usb_keyboard_timerc (void);
-void usb_keyboard_timerc (void)
+static void keyboard_report_complete(struct usb_async_int_msg *msg,
+                                     LONG status, LONG actual_length)
 {
-    long actlen = 0;
-    long r;
     UBYTE changed_mod;
     int i;
 
-    if (kbd_data.pusb_dev == NULL)
-        return;
-
+    if (status || actual_length < 8)
     {
-        UBYTE report[8];
-
-        r = usb_bulk_msg (kbd_data.pusb_dev,
-                          kbd_data.irqpipe,
-                          report,
-                          kbd_data.irqmaxp > 8 ? 8 : kbd_data.irqmaxp,
-                          &actlen, USB_CNTL_TIMEOUT * 5, 1);
-
-        if ((r != 0) || (actlen < 8))
-            return;
-
-        /* Usages 0x01-0x03 (ErrorRollOver/POSTFail/ErrorUndefined) mean
-         * the device can't report its actual key state this poll (e.g.
-         * more than 6 keys held at once) -- every array slot is filled
-         * with one of these instead of real usages. Treating them as
-         * real keycodes would make every currently-held key look
-         * released (it won't be found in this bogus array) and then
-         * "pressed" again once real reports resume. Skip the report
-         * instead, leaving the last known-good state in place. */
-        for (i = 0; i < 6; i++)
-        {
-            if (report[2 + i] >= 1 && report[2 + i] <= 3)
-                return;
-        }
-
-        kbd_data.new_modifier = report[0];
-        for (i = 0; i < 6; i++)
-            kbd_data.new_keys[i] = report[2 + i];
+        KDEBUG(("usb keyboard interrupt transfer failed (%ld, %ld)\n",
+                status, actual_length));
+        return;
     }
+
+    /* Usages 0x01-0x03 (ErrorRollOver/POSTFail/ErrorUndefined) mean
+     * the device can't report its actual key state this report (e.g.
+     * more than 6 keys held at once). Skip it, leaving the last known-good
+     * state in place. */
+    for (i = 0; i < 6; i++)
+    {
+        if (kbd_data.report[2 + i] >= 1 && kbd_data.report[2 + i] <= 3)
+            return;
+    }
+
+    kbd_data.new_modifier = kbd_data.report[0];
+    for (i = 0; i < 6; i++)
+        kbd_data.new_keys[i] = kbd_data.report[2 + i];
 
     /* Released keys first, so a key that vanishes from one slot and
      * reappears in another in the same report doesn't get treated as
@@ -357,7 +333,6 @@ keyboard_probe (struct usb_device *dev, unsigned int ifnum)
     kbd_data.irqpipe =
         usb_rcvintpipe (dev, (long) kbd_data.ep_int);
     kbd_data.irqmaxp = usb_maxpacket (dev, kbd_data.irqpipe);
-    dev->irq_handle = usb_keyboard_irq;
     kbd_data.modifier = 0;
     memset (kbd_data.keys, 0, sizeof (kbd_data.keys));
     memset (kbd_data.new_keys, 0, sizeof (kbd_data.new_keys));
@@ -365,10 +340,20 @@ keyboard_probe (struct usb_device *dev, unsigned int ifnum)
     usb_set_protocol (dev, iface->desc.bInterfaceNumber, 0); /* boot */
     usb_set_idle (dev, iface->desc.bInterfaceNumber, 0, 0);
 
-    /* Publish pusb_dev last: usb_keyboard_timerc() (Timer-C interrupt)
-     * gates purely on pusb_dev != NULL, so everything else above must
-     * already be valid by the time this becomes visible to it. */
+    keyboard_request.dev = dev;
+    keyboard_request.pipe = kbd_data.irqpipe;
+    keyboard_request.buffer = kbd_data.report;
+    keyboard_request.transfer_len = kbd_data.irqmaxp > 8 ? 8 : kbd_data.irqmaxp;
+    keyboard_request.interval = kbd_data.irqinterval;
+    keyboard_request.callback = keyboard_report_complete;
+    keyboard_request.context = &kbd_data;
     kbd_data.pusb_dev = dev;
+
+    if (usb_submit_async_int_msg(&keyboard_request))
+    {
+        kbd_data.pusb_dev = NULL;
+        return -1;
+    }
 
     KINFO (("%s: exit keyboard_probe success\n", __FILE__));
 
