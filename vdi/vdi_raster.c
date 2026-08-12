@@ -810,6 +810,8 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
 {
     MFDB *src,*dst;
     BOOL use_clip = FALSE;
+    /* bytes per packed pixel (2 for RGB565, 4 for XRGB8888) */
+    const UWORD packed_ppb = (UWORD)(linea_vars.v_planes / 8);
 
     /* Get the pointers to the MFDBs */
     src = (MFDB *)CONTRL->ptr1; /* a5, source MFDB */
@@ -834,7 +836,7 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
          * correct as-is.
          */
         if (vdi_screen_is_truecolor() && !raster->transparent && !src->fd_stand)
-            info->s_nxln = src->fd_w * 2;
+            info->s_nxln = src->fd_w * packed_ppb;
 
         /*
          * fd_stand memory buffers are a different case again: bb_save()/
@@ -858,8 +860,8 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
          */
         if (vdi_screen_is_truecolor() && !raster->transparent && src->fd_stand
             && src->fd_nplanes == linea_vars.v_planes) {
-            info->s_nxwd = 2;
-            info->s_nxln = src->fd_w * 2;
+            info->s_nxwd = packed_ppb;
+            info->s_nxln = src->fd_w * packed_ppb;
         }
 #endif
     }
@@ -869,12 +871,12 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
         /*
          * The packed-truecolor backend has no bitplanes: each screen word
-         * is already one whole pixel, so the "next word" step is 2 bytes
-         * and there is a single conceptual plane -- see the comment on
+         * is already one whole pixel, so the "next word" step is the packed
+         * pixel size and there is a single conceptual plane -- see the comment on
          * plane_ct below.
          */
         if (vdi_screen_is_truecolor())
-            info->s_nxwd = 2;
+            info->s_nxwd = packed_ppb;
         else
 #endif
             info->s_nxwd = linea_vars.v_planes * 2;
@@ -894,13 +896,13 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
          * from a genuine standard-format destination MFDB: bb_save()
          * writes the screen's packed pixels into gl_tmp (a fd_stand
          * memory destination) the same way bb_restore() reads them back
-         * out, so this needs the same packed stride and single "plane"
+         * out, so this needs the packed pixel size and single "plane"
          * pass. */
         if (vdi_screen_is_truecolor() && !raster->transparent && dst->fd_stand
             && dst->fd_nplanes == linea_vars.v_planes) {
             info->plane_ct = 1;
-            info->d_nxwd = 2;
-            info->d_nxln = dst->fd_w * 2;
+            info->d_nxwd = packed_ppb;
+            info->d_nxln = dst->fd_w * packed_ppb;
         }
 #endif
     }
@@ -910,7 +912,7 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
         if (vdi_screen_is_truecolor()) {
             info->plane_ct = 1;
-            info->d_nxwd = 2;
+            info->d_nxwd = packed_ppb;
         }
         else
 #endif
