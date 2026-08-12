@@ -190,7 +190,7 @@ time; e.g. the 31 s IDE wait polls `_hz_200` at `0x4ba`, `addq.l #1,$4ba` at
 ## QEMU smoke test (raspi1 / raspi2 / virt-arm / virt-m68k)
 
 The pTOS `readme.md` is the user-facing source; this skill is the agent-facing
-copy. Invocations (verified in-tree):
+copy. Required invocations:
 
 ```sh
 # raspi1 — only the A+ exists as a QEMU machine (`raspi1ap`); there is no Pi 1

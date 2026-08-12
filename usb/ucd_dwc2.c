@@ -49,6 +49,9 @@ struct dwc2_async_slot
     UBYTE hub_port;
     UBYTE *dma_buffer;
     ULONG generation;
+    ULONG next_frame;
+    BOOL scheduled;
+    BOOL error_pending;
 };
 
 struct dwc2_priv {
@@ -102,9 +105,13 @@ static struct dwc2_async_slot *dwc2_async_alloc(struct dwc2_priv *priv,
                                                  struct usb_async_int_msg *msg);
 static void dwc2_async_start(struct dwc2_priv *priv,
                              struct dwc2_async_slot *slot);
+static void dwc2_async_schedule(struct dwc2_priv *priv,
+                                 struct dwc2_async_slot *slot);
 static void dwc2_async_stop(struct dwc2_priv *priv,
                             struct dwc2_async_slot *slot);
 static void dwc2_async_release(struct dwc2_async_slot *slot);
+static void dwc2_async_halted(struct dwc2_priv *priv,
+                               struct dwc2_async_slot *slot);
 static void dwc2_async_complete(struct dwc2_priv *priv,
                                 struct dwc2_async_slot *slot,
                                 LONG status, LONG actual_length);
@@ -576,6 +583,39 @@ static struct dwc2_async_slot *dwc2_async_alloc(struct dwc2_priv *priv,
     return NULL;
 }
 
+static ULONG dwc2_async_interval(struct dwc2_priv *priv,
+                                  struct usb_async_int_msg *msg)
+{
+    ULONG interval;
+
+    interval = msg->interval;
+    if (!interval)
+        interval = 1;
+    if (msg->dev->speed == USB_SPEED_HIGH) {
+        if (interval > 16)
+            interval = 16;
+        return 1UL << (interval - 1);
+    }
+
+    if ((readl(&priv->regs->hprt0) & DWC2_HPRT0_PRTSPD_MASK) ==
+        DWC2_HPRT0_PRTSPD_HIGH)
+        return interval * 8;
+
+    return interval;
+}
+
+static void dwc2_async_schedule(struct dwc2_priv *priv,
+                                 struct dwc2_async_slot *slot)
+{
+    ULONG frame;
+
+    frame = readl(&priv->regs->host_regs.hfnum) & DWC2_HFNUM_MAX_FRNUM;
+    slot->next_frame = (frame + dwc2_async_interval(priv, slot->msg)) &
+                       DWC2_HFNUM_MAX_FRNUM;
+    slot->scheduled = TRUE;
+    setbits_le32(&priv->regs->gintmsk, DWC2_GINTMSK_SOFINTR);
+}
+
 static void dwc2_async_start(struct dwc2_priv *priv,
                              struct dwc2_async_slot *slot)
 {
@@ -586,8 +626,10 @@ static void dwc2_async_start(struct dwc2_priv *priv,
     ULONG hcintmsk;
     ULONG hfnum;
 
-    if (!slot->active || slot->cancelled || slot->stopping)
+    if (!slot->active || slot->cancelled || slot->stopping ||
+        slot->error_pending)
         return;
+    slot->scheduled = FALSE;
 
     KINFO(("dwc2_async: start channel=%d generation=%lu split=%d pid=%d\n",
            channel, slot->generation, slot->split_state, slot->pid));
@@ -649,7 +691,7 @@ static void dwc2_async_stop(struct dwc2_priv *priv,
     }
     writel(0, &hc->hcintmsk);
     writel(0x3fff, &hc->hcint);
-    dwc2_async_release(slot);
+    dwc2_async_halted(priv, slot);
 }
 
 static void dwc2_async_release(struct dwc2_async_slot *slot)
@@ -659,6 +701,47 @@ static void dwc2_async_release(struct dwc2_async_slot *slot)
     slot->cancelled = FALSE;
     slot->stopping = FALSE;
     slot->msg = NULL;
+}
+
+static void dwc2_async_halted(struct dwc2_priv *priv,
+                               struct dwc2_async_slot *slot)
+{
+    WORD index = slot - priv->async;
+    WORD channel = DWC2_ASYNC_FIRST_CHANNEL + index;
+    struct dwc2_hc_regs *hc = &priv->regs->hc_regs[channel];
+
+    writel(0, &hc->hcintmsk);
+    clrbits_le32(&priv->regs->host_regs.haintmsk, 1UL << channel);
+    if (slot->error_pending) {
+        struct usb_async_int_msg *msg = slot->msg;
+
+        slot->error_pending = FALSE;
+        dwc2_async_release(slot);
+        msg->callback(msg, -1, 0);
+    } else
+        dwc2_async_release(slot);
+}
+
+static void dwc2_async_shutdown(struct dwc2_priv *priv,
+                                struct dwc2_async_slot *slot)
+{
+    WORD index = slot - priv->async;
+    WORD channel = DWC2_ASYNC_FIRST_CHANNEL + index;
+    struct dwc2_hc_regs *hc = &priv->regs->hc_regs[channel];
+    int ret;
+
+    if (!slot->msg)
+        return;
+    dwc2_async_stop(priv, slot);
+    if (!slot->stopping)
+        return;
+    ret = wait_for_bit_le32(&hc->hcint, DWC2_HCINT_CHHLTD, TRUE, 2000);
+    if (ret) {
+        KINFO(("dwc2_async: halt timeout channel=%d\n", channel));
+        return;
+    }
+    writel(readl(&hc->hcint), &hc->hcint);
+    dwc2_async_halted(priv, slot);
 }
 
 static void dwc2_async_complete(struct dwc2_priv *priv,
@@ -695,7 +778,7 @@ static void dwc2_async_finish_success(struct dwc2_priv *priv,
     dwc2_async_complete(priv, slot, 0, actual_length);
     if (slot->active && !slot->cancelled && !slot->stopping &&
         slot->msg == msg && slot->generation == generation)
-        dwc2_async_start(priv, slot);
+        dwc2_async_schedule(priv, slot);
     else
         KINFO(("dwc2_async: no-rearm generation=%lu\n", generation));
 }
@@ -703,10 +786,14 @@ static void dwc2_async_finish_success(struct dwc2_priv *priv,
 static void dwc2_async_finish_error(struct dwc2_priv *priv,
                                     struct dwc2_async_slot *slot)
 {
-    struct usb_async_int_msg *msg = slot->msg;
-
+    slot->error_pending = TRUE;
     dwc2_async_stop(priv, slot);
-    msg->callback(msg, -1, 0);
+}
+
+static BOOL dwc2_async_frame_due(ULONG frame, ULONG next_frame)
+{
+    return ((frame - next_frame) & DWC2_HFNUM_MAX_FRNUM) <
+           (DWC2_HFNUM_MAX_FRNUM / 2);
 }
 
 static void dwc2_irq_handler(void)
@@ -715,10 +802,11 @@ static void dwc2_irq_handler(void)
     struct dwc2_core_regs *regs = priv->regs;
     ULONG gintsts;
     ULONG pending;
+    ULONG frame;
     WORD index;
 
     gintsts = readl(&regs->gintsts);
-    if (!(gintsts & DWC2_GINTSTS_HCINTR))
+    if (!(gintsts & (DWC2_GINTSTS_HCINTR | DWC2_GINTSTS_SOFINTR)))
         return;
 
     pending = readl(&regs->host_regs.haint) &
@@ -736,9 +824,7 @@ static void dwc2_irq_handler(void)
         writel(hcint, &hc->hcint);
         if (slot->stopping) {
             if (hcint & DWC2_HCINT_CHHLTD) {
-                writel(0, &hc->hcintmsk);
-                clrbits_le32(&regs->host_regs.haintmsk, 1UL << channel);
-                dwc2_async_release(slot);
+                dwc2_async_halted(priv, slot);
             }
             continue;
         }
@@ -764,7 +850,7 @@ static void dwc2_irq_handler(void)
                 slot->split_state = DWC2_ASYNC_SPLIT_START;
                 KINFO(("dwc2_async: split-complete-nak generation=%lu\n",
                        slot->generation));
-                dwc2_async_start(priv, slot);
+                dwc2_async_schedule(priv, slot);
             } else if (slot->split_state == DWC2_ASYNC_SPLIT_COMPLETE &&
                        (hcint & DWC2_HCINT_XFERCOMP)) {
                 slot->split_state = DWC2_ASYNC_SPLIT_START;
@@ -778,12 +864,31 @@ static void dwc2_irq_handler(void)
             KINFO(("dwc2_async: rearm generation=%lu reason=%s\n",
                    slot->generation, (hcint & DWC2_HCINT_NAK) ? "nak" :
                    "chhltd"));
-            dwc2_async_start(priv, slot);
+            dwc2_async_schedule(priv, slot);
         } else {
             dwc2_async_finish_error(priv, slot);
         }
     }
-    writel(DWC2_GINTSTS_HCINTR, &regs->gintsts);
+    if (gintsts & DWC2_GINTSTS_SOFINTR) {
+        BOOL waiting = FALSE;
+
+        frame = readl(&regs->host_regs.hfnum) & DWC2_HFNUM_MAX_FRNUM;
+        for (index = 0; index < DWC2_ASYNC_SLOT_COUNT; index++) {
+            struct dwc2_async_slot *slot = &priv->async[index];
+
+            if (!slot->active || slot->cancelled || slot->stopping ||
+                slot->error_pending || !slot->scheduled)
+                continue;
+            if (dwc2_async_frame_due(frame, slot->next_frame))
+                dwc2_async_start(priv, slot);
+            else
+                waiting = TRUE;
+        }
+        if (!waiting)
+            clrbits_le32(&regs->gintmsk, DWC2_GINTMSK_SOFINTR);
+    }
+    writel(gintsts & (DWC2_GINTSTS_HCINTR | DWC2_GINTSTS_SOFINTR),
+           &regs->gintsts);
 }
 
 /*
@@ -1576,9 +1681,9 @@ long usb_lowlevel_stop(void *ucd_priv)
     WORD index;
 
     for (index = 0; index < DWC2_ASYNC_SLOT_COUNT; index++) {
-        if (priv->async[index].active)
-            dwc2_async_stop(priv, &priv->async[index]);
+        dwc2_async_shutdown(priv, &priv->async[index]);
     }
+    clrbits_le32(&priv->regs->gintmsk, DWC2_GINTMSK_SOFINTR);
     clrbits_le32(&priv->regs->gintmsk, DWC2_GINTMSK_HCINTR);
     clrbits_le32(&priv->regs->gahbcfg, DWC2_GAHBCFG_GLBLINTRMSK);
     if (priv->irq_connected)
