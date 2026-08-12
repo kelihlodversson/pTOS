@@ -25,6 +25,7 @@
 #include "biosbind.h"
 #include "string.h"
 #include "kprint.h"
+#include "mem.h"
 #include "endian.h"
 #include "time.h"
 
@@ -212,6 +213,129 @@ static LONG fat_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *
     out->index = f2;
     out->aux = 0;
     out->pos = 0;
+    return E_OK;
+}
+
+/*
+ *  dots - the "." and ".." directory entries written by fat_mkdir()
+ */
+static const char dots[22] = ".          ";
+
+/*
+ *  namlen - parameter points to a character string of 11 bytes max
+ */
+static int namlen(char *s11)                            /* M01.01.1107.01 */
+{
+    int i, len;
+
+    for (i = len = 1; i <= 11; i++, s11++)
+    {
+        if (*s11 && (*s11 != ' '))
+        {
+            len++;
+            if (i == 9)
+                len++;
+        }
+    }
+
+    return len;
+}
+
+/*
+ *  fat_mkdir - make a directory, given a containing-directory cookie
+ *  'dir' and the new directory's final component 'name'.  Core of the
+ *  GEMDOS 0x39 (Dcreate) opcode; the in-gate vtable entry and the
+ *  off fat_mkdir_path() shim both reach this code.
+ *
+ *  Body is the verbatim xmkdir() from bdos/fsdir.c (M01.01.1107.01 etc.)
+ *  with the original ixcreat(s, FA_SUBDIR) open replaced by fat_create().
+ */
+static LONG fat_mkdir(PFSCOOKIE *dir, const char *name)
+{
+    OFD *f;
+    FCB *f2;
+    OFD *fd,*f0;
+    DFD *dfd;
+    FCB *b;
+    DND *dn;
+    int h,cl,plen;
+    long rc;
+    PFSCOOKIE newfc;
+
+    rc = fat_create(dir, name, FA_SUBDIR, &newfc);
+    if (rc < 0)
+        return rc;
+    h = (int)newfc.index;
+
+    f = getofd(h);
+
+    /* build a DND in the tree */
+    fd = f->o_dirfil;
+
+    ixlseek(fd,f->o_dirbyt);
+    b = (FCB *) ixread(fd,32L,NULL);
+
+    /* is the total path length too long? */    /* M01.01.1107.01 */
+    plen = namlen( b->f_name );
+    for (dn = f->o_dnode; dn; dn = dn->d_parent)
+        plen += namlen(dn->d_name);
+    if (plen >= (LEN_ZPATH-3))
+    {
+        ixdel(f->o_dnode, b, f->o_dirbyt);
+        return EACCDN;
+    }
+
+    /* note: makdnd() and makofd() only return if they succeed */
+    dn = makdnd(f->o_dnode,b);
+    f0 = makofd(dn);            /* makofd() also updates dn->d_ofd */
+
+    /* initialize dir cluster */
+    if (nextcl(f0,1))
+    {
+        ixdel(f->o_dnode, b, f->o_dirbyt);      /* M01.01.1103.01 */
+        f->o_dnode->d_left = NULL;              /* M01.01.1103.01 */
+        freednd(dn);                            /* M01.01.1031.02 */
+        return EACCDN;
+    }
+
+    f2 = dirinit(dn);                   /* pointer to dirty dir block */
+
+    /* write identifier */
+    memcpy(f2, dots, 22);
+    f2->f_attrib = FA_SUBDIR;
+    dfd = f0->o_dfd;
+    f2->f_td = dfd->o_td;            /* time/date are little-endian */
+    cl = le2cpu16(dfd->o_strtcl);
+    f2->f_clust = cl;
+    f2->f_fileln = 0;
+    f2++;
+
+    /* write parent entry .. */
+    memcpy(f2, dots, 22);
+    f2->f_name[1] = '.';           /* This is .. */
+    f2->f_attrib = FA_SUBDIR;
+    /* if creating a folder in the root, the parent entry needs special handling */
+    if (!fd->o_dnode)
+    {
+        f2->f_td.time = 0;          /* time/date of parent must be zero */
+        f2->f_td.date = 0;
+        f2->f_clust = 0;            /* cluster number is zero too */
+    }
+    else
+    {
+        dfd = f->o_dirfil->o_dfd;
+        f2->f_td = dfd->o_td;   /* time/date are little-endian */
+        f2->f_clust = le2cpu16(dfd->o_strtcl);
+    }
+    f2->f_fileln = 0;
+    memcpy(f, f0, sizeof(OFD));
+    /* the memcpy also copied f->o_dfd, which now points at f0's embedded
+     * DFD; nextcl() already marked that DFD O_DIRTY, so ixclose() below
+     * sees the flag and writes the parent directory entry. */
+    ixclose(f,CL_DIR | CL_FULL);    /* force flush and write */
+    xmfreblk(f);
+    sft[h-NUMSTD].f_own = 0;
+    sft[h-NUMSTD].f_ofd = 0;
     return E_OK;
 }
 
@@ -422,17 +546,6 @@ static LONG fat_readdir(PFSCOOKIE *dir, LONG *cursor, char *name, int namelen, P
     return E_OK;
 }
 
-static LONG fat_mkdir(PFSCOOKIE *dir, const char *name)
-{
-    char path[LEN_ZPATH];
-    LONG rc = fat_abspath(dir, name, path, sizeof(path));
-
-    if (rc < 0)
-        return rc;
-
-    return xmkdir(path);
-}
-
 static LONG fat_rmdir(PFSCOOKIE *dir, const char *name)
 {
     char path[LEN_ZPATH];
@@ -585,5 +698,22 @@ LONG fat_creat_path(char *name, char attr)
     if (rc < 0)
         return rc;
     return out.index;
+}
+
+LONG fat_mkdir_path(char *s)
+{
+    DND *dn;
+    const char *sp;
+    PFSCOOKIE dir;
+
+    if ((long)(dn = findit(s, &sp, 0)) < 0)
+        return (long)dn;
+    if (!dn)
+        return EPTHNF;
+    dir.fs = NULL;
+    dir.index = (LONG)dn;
+    dir.aux = 0;
+    dir.pos = 0;
+    return fat_mkdir(&dir, sp);
 }
 #endif

@@ -132,13 +132,16 @@
 #include "biosbind.h"
 #include "string.h"
 #include "kprint.h"
+#include "fatfs.h"
+#if CONF_WITH_PLUGGABLE_FS
+#include "pfs.h"
+#endif
 
 #define ROOT_PSEUDO_CLUSTER 1   /* see comments in xrename() */
 
 /*
  * forward prototypes
  */
-static int namlen(char *s11);
 char *packit(char *s, char *d);
 static void unpackit(const char *src, char *dst);
 char *dopath(DND *p, char *buf, int *len);     /* exposed via fs_internal.h for fs/fatfs_pfs.c */
@@ -160,35 +163,9 @@ FCB *ixsnext(DTAINFO *dt);     /* exposed via fs_internal.h for fs/fatfs_pfs.c *
 
 
 /*
- *  dots
- */
-static const char dots[22] = ".          ";
-
-/*
  *  counter used by free_available_dnds()
  */
 static LONG freed_dnds, freed_ofds; /* count of DNDs & OFDs made available */
-
-
-/*
- *  namlen - parameter points to a character string of 11 bytes max
- */
-static int namlen(char *s11)                            /* M01.01.1107.01 */
-{
-    int i, len;
-
-    for (i = len = 1; i <= 11; i++, s11++)
-    {
-        if (*s11 && (*s11 != ' '))
-        {
-            len++;
-            if (i == 9)
-                len++;
-        }
-    }
-
-    return len;
-}
 
 
 /*
@@ -198,88 +175,11 @@ static int namlen(char *s11)                            /* M01.01.1107.01 */
  */
 long xmkdir(char *s)
 {
-    OFD *f;
-    FCB *f2;
-    OFD *fd,*f0;
-    DFD *dfd;
-    FCB *b;
-    DND *dn;
-    int h,cl,plen;
-    long rc;
-
-    if ((h = rc = ixcreat(s,FA_SUBDIR)) < 0)
-        return rc;
-
-    f = getofd(h);
-
-    /* build a DND in the tree */
-    fd = f->o_dirfil;
-
-    ixlseek(fd,f->o_dirbyt);
-    b = (FCB *) ixread(fd,32L,NULL);
-
-    /* is the total path length too long? */    /* M01.01.1107.01 */
-    plen = namlen( b->f_name );
-    for (dn = f->o_dnode; dn; dn = dn->d_parent)
-        plen += namlen(dn->d_name);
-    if (plen >= (LEN_ZPATH-3))
-    {
-        ixdel(f->o_dnode, b, f->o_dirbyt);
-        return EACCDN;
-    }
-
-    /* note: makdnd() and makofd() only return if they succeed */
-    dn = makdnd(f->o_dnode,b);
-    f0 = makofd(dn);            /* makofd() also updates dn->d_ofd */
-
-    /* initialize dir cluster */
-    if (nextcl(f0,1))
-    {
-        ixdel(f->o_dnode, b, f->o_dirbyt);      /* M01.01.1103.01 */
-        f->o_dnode->d_left = NULL;              /* M01.01.1103.01 */
-        freednd(dn);                            /* M01.01.1031.02 */
-        return EACCDN;
-    }
-
-    f2 = dirinit(dn);                   /* pointer to dirty dir block */
-
-    /* write identifier */
-    memcpy(f2, dots, 22);
-    f2->f_attrib = FA_SUBDIR;
-    dfd = f0->o_dfd;
-    f2->f_td = dfd->o_td;            /* time/date are little-endian */
-    cl = le2cpu16(dfd->o_strtcl);
-    f2->f_clust = cl;
-    f2->f_fileln = 0;
-    f2++;
-
-    /* write parent entry .. */
-    memcpy(f2, dots, 22);
-    f2->f_name[1] = '.';           /* This is .. */
-    f2->f_attrib = FA_SUBDIR;
-    /* if creating a folder in the root, the parent entry needs special handling */
-    if (!fd->o_dnode)
-    {
-        f2->f_td.time = 0;          /* time/date of parent must be zero */
-        f2->f_td.date = 0;
-        f2->f_clust = 0;            /* cluster number is zero too */
-    }
-    else
-    {
-        dfd = f->o_dirfil->o_dfd;
-        f2->f_td = dfd->o_td;   /* time/date are little-endian */
-        f2->f_clust = le2cpu16(dfd->o_strtcl);
-    }
-    f2->f_fileln = 0;
-    memcpy(f, f0, sizeof(OFD));
-    /* the memcpy also copied f->o_dfd, which now points at f0's embedded
-     * DFD; nextcl() already marked that DFD O_DIRTY, so ixclose() below
-     * sees the flag and writes the parent directory entry. */
-    ixclose(f,CL_DIR | CL_FULL);    /* force flush and write */
-    xmfreblk(f);
-    sft[h-NUMSTD].f_own = 0;
-    sft[h-NUMSTD].f_ofd = 0;
-    return E_OK;
+#if CONF_WITH_PLUGGABLE_FS
+    return pfs_do_mkdir(s);
+#else
+    return fat_mkdir_path(s);
+#endif
 }
 
 
