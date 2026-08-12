@@ -27,6 +27,63 @@
 #include "kprint.h"
 #include "endian.h"
 
+/*
+ * fat_countfree - fast scan of FAT16 filesystem to count free clusters
+ */
+static CLNO fat_countfree(DMD *dm)
+{
+    int recnum, offset;
+    CLNO free, clnum;
+    char *buf;
+
+    for (clnum = 2, free = 0; clnum < dm->m_numcl+2; )
+    {
+        /*
+         * get the next FAT record
+         */
+        recnum = (clnum * sizeof(CLNO)) >> dm->m_rblog;
+        offset = (clnum * sizeof(CLNO)) & dm->m_rbm;
+        buf = getrec(recnum, dm->m_fatofd, 0);
+
+        /*
+         * scan the FAT record, counting free slots
+         */
+        for ( ; (offset < dm->m_recsiz) && (clnum < (dm->m_numcl+2)); offset += sizeof(CLNO), clnum++)
+        {
+            if (*(CLNO *)(buf+offset) == 0)
+                free++;
+        }
+    }
+
+    return free;
+}
+
+static LONG fat_dfree(struct pfs_ops *fs, WORD drive, ULONG out[4])
+{
+    CLNO i, free;
+    long n;
+    DMD *dm;
+
+    (void)fs;
+    if ((n = ckdrv(drive, TRUE)) < 0)
+        return ERR;
+    dm = drvtbl[n];
+    if (dm->m_16)
+        free = fat_countfree(dm);
+    else
+    {
+        free = 0;
+        for (i = 0; i < dm->m_numcl; i++)
+            if (!getrealcl(i + 2, dm))
+                free++;
+    }
+    out[0] = (ULONG)free;
+    out[1] = (ULONG)dm->m_numcl;
+    out[2] = (ULONG)dm->m_recsiz;
+    out[3] = (ULONG)dm->m_clsiz;
+    return E_OK;
+}
+
 #if CONF_WITH_PLUGGABLE_FS
 
 #define FAT_ALL_ATTR (FA_RO | FA_HIDDEN | FA_SYSTEM | FA_VOL | FA_SUBDIR | FA_ARCHIVE)
@@ -341,12 +398,6 @@ static LONG fat_chattr(PFSCOOKIE *dir, const char *name, BOOL set, UWORD *dos_at
     return E_OK;
 }
 
-static LONG fat_dfree(struct pfs_ops *fs, WORD drive, ULONG out[4])
-{
-    (void)fs;
-    return xgetfree((long *)out, drive + 1);
-}
-
 static LONG fat_mediach(struct pfs_ops *fs, WORD drive)
 {
     (void)fs;
@@ -397,3 +448,11 @@ struct pfs_ops fat_pfs_ops = {
 };
 
 #endif /* CONF_WITH_PLUGGABLE_FS */
+
+#if !CONF_WITH_PLUGGABLE_FS
+LONG fat_getfree_path(long *buf, int drv)
+{
+    WORD drive = drv ? (WORD)(drv - 1) : run->p_curdrv;
+    return fat_dfree(NULL, drive, (ULONG *)buf);
+}
+#endif
