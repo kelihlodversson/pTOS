@@ -361,6 +361,7 @@ static LONG fat_chattr(PFSCOOKIE *dir, const char *name, BOOL set, UWORD *dos_at
     char mod = (char)*dos_attr;
     long pos;
 
+    pos = 0;
     if (!scan(dn, name, FA_NORM, &pos))
         return EFILNF;
     if (set && (mod & ~FA_NORM))
