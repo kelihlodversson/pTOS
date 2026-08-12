@@ -121,6 +121,10 @@ static void mouse_report_complete(struct usb_async_int_msg *msg,
 	delta_x = mse_data.report[1];
 	delta_y = mse_data.report[2];
 	extra = (actual_length >= 4) ? mse_data.report[3] : 0;
+	if (actual_length < 4)
+		mse_data.data[3] = 0;
+	mse_data.data[4] = 0;
+	mse_data.data[5] = 0;
 	changed = (info != old_info) || delta_x || delta_y
 		|| ((actual_length >= 4) && (extra != mse_data.data[3]));
 	if (!changed)
@@ -157,10 +161,6 @@ static void mouse_report_complete(struct usb_async_int_msg *msg,
 	mse_data.data[2] = delta_y;
 	if (actual_length >= 4)
 		mse_data.data[3] = extra;
-	else
-		mse_data.data[3] = 0;
-	mse_data.data[4] = 0;
-	mse_data.data[5] = 0;
 }
 
 /*******************************************************************************
