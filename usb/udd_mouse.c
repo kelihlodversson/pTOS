@@ -23,7 +23,6 @@ extern void (*old_ikbd_int) (void);
 extern void interrupt_ikbd (void);
 
 static UBYTE mouse_packet[6];
-void usb_mouse_timerc (void);
 
 /*
  * END kernel interface
@@ -59,17 +58,16 @@ struct mse_data
 {
 	struct usb_device *pusb_dev;        /* this usb_device */
 	unsigned char ep_in;        /* in endpoint */
-	unsigned char ep_out;       /* out ....... */
 	unsigned char ep_int;       /* interrupt . */
-	long *irq_handle;            /* for USB int requests */
 	unsigned long irqpipe;      /* pipe for release_irq */
 	unsigned char irqmaxp;      /* max packed for irq Pipe */
 	unsigned char irqinterval;  /* Intervall for IRQ Pipe */
 	char data[8];
-	char new[8];
+	UBYTE report[8];
 };
 
 static struct mse_data mse_data;
+static struct usb_async_int_msg mouse_request;
 
 /*
  * --- Inteface functions
@@ -94,103 +92,75 @@ mouse_disconnect (struct usb_device *dev)
 {
 	if (dev == mse_data.pusb_dev)
 	{
+		usb_cancel_async_int_msg(&mouse_request);
 		mse_data.pusb_dev = NULL;
 	}
 
 	return 0;
 }
 
-static long
-usb_mouse_irq (struct usb_device *dev)
+static void mouse_report_complete(struct usb_async_int_msg *msg,
+                                  LONG status, LONG actual_length)
 {
-	return 0;
-}
+	UBYTE info;
+	UBYTE old_info;
+	BYTE delta_x;
+	BYTE delta_y;
+	UBYTE extra;
+	BOOL changed;
 
-void usb_mouse_timerc (void)
-{
-	long actlen = 0;
-	long r;
-
-	if (mse_data.pusb_dev == NULL)
-		return;
-
-	r = usb_bulk_msg (mse_data.pusb_dev,
-					  mse_data.irqpipe,
-					  mse_data.new,
-					  mse_data.irqmaxp > 8 ? 8 : mse_data.irqmaxp,
-					  &actlen, USB_CNTL_TIMEOUT * 5, 1);
-
-	if ((r != 0) || (actlen < 3) || (actlen > 8))
+	if (status || actual_length < 3 || actual_length > 8)
 	{
+		KDEBUG(("usb mouse interrupt transfer failed (%ld, %ld)\n",
+			status, actual_length));
 		return;
 	}
 
+	info = mse_data.report[0];
+	old_info = mse_data.data[0];
+	delta_x = mse_data.report[1];
+	delta_y = mse_data.report[2];
+	extra = (actual_length >= 4) ? mse_data.report[3] : 0;
+	changed = (info != old_info) || delta_x || delta_y
+		|| ((actual_length >= 4) && (extra != mse_data.data[3]));
+	if (!changed)
+		return;
+
+	mouse_packet[0] = ((info & 1) << 1) | ((info & 2) >> 1) | 0xf8;
+	mouse_packet[1] = delta_x;
+	mouse_packet[2] = delta_y;
+
+	if ((info ^ old_info) & 4)
+		mousexvec((info & 4) ? 0x37 : 0xb7);
+
+	switch (extra & 0x0f)
 	{
-		char info, old_info;
-		char delta_x, delta_y;
-		char extra, old_extra;
-		BOOL change = FALSE;
-
-		(void)old_extra;
-		{					   /* boot report */
-			info = mse_data.new[0];
-			old_info = mse_data.data[0];
-			change |= info != old_info;
-			delta_x = mse_data.new[1];
-			delta_y = mse_data.new[2];
-			change |= !!delta_x || !!delta_y;
-			if (actlen >= 3)
-			{
-				extra = mse_data.new[3];
-				old_extra = mse_data.data[3];
-				change |= extra != old_extra;
-			}
-		}
-		if(!change)
-		{
-			return;
-		}
-
-		// Build ikbd mouse packet
-		mouse_packet[0] =
-			((info & 1) << 1) |
-			((info & 2) >> 1) | 0xF8;
-		mouse_packet[1] = delta_x;
-		mouse_packet[2] = delta_y;
-
-		if ((info ^ old_info) & 4)
-		{					   /* 3rd button */
-			mousexvec ((info & 4)?0x37:0xb7);
-		}
-
-		// Mouse wheel is stored in the low nybble of the extra byte
-		switch (extra & 0xf)
-		{
-			case 0x1:		/* Wheel up */
-			mousexvec (0x59);
-			break;
-			case 0x2:		/* Wheel right */
-			mousexvec (0x5d);
-			break;
-			case 0xe:		/* Wheel left */
-			mousexvec (0x5c);
-			break;
-			case 0xf:		/* Wheel down */
-			mousexvec (0x5a);
-			break;
-			case 0:
-			default:
-			break; // Default is no movement
-		}
-
-		call_mousevec(mouse_packet);
-		mse_data.data[0] = mse_data.new[0];
-		mse_data.data[1] = mse_data.new[1];
-		mse_data.data[2] = mse_data.new[2];
-		mse_data.data[3] = mse_data.new[3];
-		mse_data.data[4] = mse_data.new[4];
-		mse_data.data[5] = mse_data.new[5];
+	case 0x1:
+		mousexvec(0x59);
+		break;
+	case 0x2:
+		mousexvec(0x5d);
+		break;
+	case 0xe:
+		mousexvec(0x5c);
+		break;
+	case 0xf:
+		mousexvec(0x5a);
+		break;
+	default:
+		break;
 	}
+
+	call_mousevec(mouse_packet);
+	mse_data.data[0] = info;
+	mse_data.data[1] = delta_x;
+	mse_data.data[2] = delta_y;
+	if (actual_length >= 4)
+		mse_data.data[3] = extra;
+	else
+		mse_data.data[3] = 0;
+	mse_data.data[4] = 0;
+	mse_data.data[5] = 0;
 }
 
 /*******************************************************************************
@@ -265,16 +235,13 @@ mouse_probe (struct usb_device *dev, unsigned int ifnum)
 		return -1;
 	}
 
-	mse_data.pusb_dev = dev;
-
 	mse_data.irqinterval =
 		(mse_data.irqinterval > 0) ? mse_data.irqinterval : 255;
 	mse_data.irqpipe =
-		usb_rcvintpipe (mse_data.pusb_dev, (long) mse_data.ep_int);
+		usb_rcvintpipe (dev, (long) mse_data.ep_int);
 	mse_data.irqmaxp = usb_maxpacket (dev, mse_data.irqpipe);
-	dev->irq_handle = usb_mouse_irq;
 	memset (mse_data.data, 0, 8);
-	memset (mse_data.new, 0, 8);
+	memset (mse_data.report, 0, 8);
 
 	// if(mse_data.irqmaxp < 6)
 	usb_set_protocol(dev, iface->desc.bInterfaceNumber, 0); /* boot */
@@ -282,8 +249,22 @@ mouse_probe (struct usb_device *dev, unsigned int ifnum)
 	//usb_set_protocol (dev, iface->desc.bInterfaceNumber, 1);    /* report */
 
 	usb_set_idle (dev, iface->desc.bInterfaceNumber, 0, 0);     /* report
-                                                                 * infinite
-                                                                 */
+	                                                              * infinite
+	                                                              */
+	mouse_request.dev = dev;
+	mouse_request.pipe = mse_data.irqpipe;
+	mouse_request.buffer = mse_data.report;
+	mouse_request.transfer_len = mse_data.irqmaxp > 8 ? 8 : mse_data.irqmaxp;
+	mouse_request.interval = mse_data.irqinterval;
+	mouse_request.callback = mouse_report_complete;
+	mouse_request.context = &mse_data;
+	mse_data.pusb_dev = dev;
+
+	if (usb_submit_async_int_msg(&mouse_request))
+	{
+		mse_data.pusb_dev = NULL;
+		return -1;
+	}
 
 KINFO (("%s: exit mouse_probe success\n", __FILE__));
 
