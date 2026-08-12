@@ -427,6 +427,8 @@ long ixdel(DND *dn, FCB *f, long pos);
 /* internal check for illegal name */
 BOOL contains_illegal_characters(const char *test);
 
+long opnfil(FCB *f, DND *dn, int mod);
+
 /*
  * in fsbuf.c
  */
@@ -488,6 +490,11 @@ int incr_curdir_usage(DND *dnd);
 void decr_curdir_usage(int index);
 OFD *makofd(DND *p);
 WORD free_available_dnds(void);
+
+DND *makdnd(DND *p, FCB *b);
+DND *getdnd(char *n, DND *d);
+void freednd(DND *dn);
+char *packit(char *s, char *d);
 
 
 /*

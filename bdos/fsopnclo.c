@@ -71,7 +71,7 @@
  * forward prototypes
  */
 static long ixopen(char *name, int mod);
-static long opnfil(FCB *f, DND *dn, int mod);
+long opnfil(FCB *f, DND *dn, int mod);
 static long makopn(FCB *f, DND *dn, int h, int mod);
 static FTAB *sftofdsrch(OFD *ofd);
 static void sftdel(FTAB *sftp);
@@ -325,7 +325,7 @@ static long makopn(FCB *f, DND *dn, int h, int mod)
 **  NOTES:
 **          make a pointer to the ith entry of sft
 */
-static long opnfil(FCB *f, DND *dn, int mod)
+long opnfil(FCB *f, DND *dn, int mod)
 {
     int i;
     int h;

@@ -33,3 +33,6 @@ CONF_WITH_IDE=n
 # not found").  Kconfig forbids the cross-mint toolchain for this machine
 # (BUILD_TOOLCHAIN_MINT depends on !MACHINE_VIRT_M68K), so the default
 # mintelf is guaranteed; nothing needs pinning in this defconfig.
+
+CONF_WITH_PLUGGABLE_FS=y
+CONF_WITH_PLUGGABLE_FS_TEST=y

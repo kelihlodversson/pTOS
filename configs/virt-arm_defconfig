@@ -32,3 +32,6 @@ CONF_WITH_LINEA=n
 # already turns this off via a Kconfig default (MACHINE_RPI); matched
 # here explicitly.
 CONF_WITH_XHDI=n
+
+CONF_WITH_PLUGGABLE_FS=y
+CONF_WITH_PLUGGABLE_FS_TEST=y

@@ -238,4 +238,22 @@ void pfs_proc_exit(PD *r);
  */
 void pfs_cwd_addref(WORD n);
 
+/* The 12 GEMDOS-shaped helpers the bdos/ x* shims call when
+ * CONF_WITH_PLUGGABLE_FS is on.  Signatures mirror the GEMDOS opcodes:
+ * dfree/getdir take the 1-based-or-0 drive word GEMDOS passes; the path
+ * ones take raw path strings.  See the mapping table in
+ * docs/superpowers/specs/2026-08-11-invert-pluggable-fs-dispatch-design.md */
+LONG pfs_do_dfree(WORD drv, ULONG *buf);
+LONG pfs_do_mkdir(const char *path);
+LONG pfs_do_rmdir(const char *path);
+LONG pfs_do_chdir(const char *path);
+LONG pfs_do_getdir(char *buf, WORD drv);
+LONG pfs_do_open(const char *path, WORD mode);
+LONG pfs_do_create(const char *path, UWORD attr);
+LONG pfs_do_unlink(const char *path);
+LONG pfs_do_chmod(const char *path, WORD wrt, WORD mod);
+LONG pfs_do_rename(const char *p1, const char *p2);
+LONG pfs_do_sfirst(char *path, WORD att);
+LONG pfs_do_snext(void);
+
 #endif /* PFS_H */

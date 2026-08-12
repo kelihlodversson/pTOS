@@ -139,17 +139,17 @@
  * forward prototypes
  */
 static int namlen(char *s11);
-static char *packit(char *s, char *d);
+char *packit(char *s, char *d);
 static void unpackit(const char *src, char *dst);
 char *dopath(DND *p, char *buf, int *len);     /* exposed via fs_internal.h for fs/fatfs_pfs.c */
-static DND *makdnd(DND *p, FCB *b);
+DND *makdnd(DND *p, FCB *b);
 static DND *dcrack(const char **np);
 static int getpath(const char *p, char *d, int dirspec);
 static BOOL match(char *s1, char *s2);
 void makbuf(FCB *f, DTAINFO *dt);      /* exposed via fs_internal.h for fs/fatfs_pfs.c */
-static DND *getdnd(char *n, DND *d);
+DND *getdnd(char *n, DND *d);
 static void snipdnd(DND *dnd);
-static void freednd(DND *dn);
+void freednd(DND *dn);
 static BOOL is_subdir(const char *s1,DND *dn1, DND *dn2);
 FCB *ixsnext(DTAINFO *dt);     /* exposed via fs_internal.h for fs/fatfs_pfs.c */
 
@@ -1286,7 +1286,7 @@ FCB *dirinit(DND *dn)
  * into:
  *   NAME.EXT
  */
-static char *packit(char *s, char *d)
+char *packit(char *s, char *d)
 {
     char *s0;
     int i;
@@ -1588,7 +1588,7 @@ FCB *scan(DND *dnd, const char *n, WORD att, LONG *posp)
  *  makdnd - make a child subdirectory of directory p
  *              M01.01.SCC.FS.07
  */
-static DND *makdnd(DND *p, FCB *b)
+DND *makdnd(DND *p, FCB *b)
 {
     DIRTBL_ENTRY *dt;
     DND *p1;
@@ -1846,7 +1846,7 @@ void makbuf(FCB *f, DTAINFO *dt)
 /*
  *  getdnd - find a dnd with matching name
  */
-static DND *getdnd(char *n, DND *d)
+DND *getdnd(char *n, DND *d)
 {
     DND *dnd;
 
@@ -1877,7 +1877,7 @@ static void snipdnd(DND *dnd)
  *  freednd - free an allocated and linked-in DND
  *
  */
-static void freednd(DND *dn)                    /* M01.01.1031.02 */
+void freednd(DND *dn)                    /* M01.01.1031.02 */
 {
     if (dn->d_ofd)                  /* free associated OFD if it's linked */
         xmfreblk(dn->d_ofd);

@@ -20,10 +20,14 @@
 #include "pfs.h"
 #include "fs.h"
 #include "fs_internal.h"
+#include "fatfs.h"
 #include "gemerror.h"
 #include "biosbind.h"
 #include "string.h"
 #include "kprint.h"
+#include "endian.h"
+
+#if CONF_WITH_PLUGGABLE_FS
 
 #define FAT_ALL_ATTR (FA_RO | FA_HIDDEN | FA_SYSTEM | FA_VOL | FA_SUBDIR | FA_ARCHIVE)
 
@@ -391,3 +395,5 @@ struct pfs_ops fat_pfs_ops = {
                      * fat_create() and pfs_do_open()/pfs_do_create()
                      * in fs/pfs.c. */
 };
+
+#endif /* CONF_WITH_PLUGGABLE_FS */

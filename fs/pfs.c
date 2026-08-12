@@ -512,7 +512,7 @@ static LONG pfs_resolve_dir(struct pfs_ops *fs, WORD drive, const char *path,
 /* per-call handlers                                                  */
 /* ------------------------------------------------------------------ */
 
-static LONG pfs_do_dfree(WORD drv, ULONG *buf)
+LONG pfs_do_dfree(WORD drv, ULONG *buf)
 {
     struct pfs_ops *fs;
     WORD drive = drv ? (WORD)(drv - 1) : run->p_curdrv;
@@ -526,7 +526,7 @@ static LONG pfs_do_dfree(WORD drv, ULONG *buf)
     return fs->dfree(fs, drive, buf);
 }
 
-static LONG pfs_do_mkdir(const char *path)
+LONG pfs_do_mkdir(const char *path)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, &path);
@@ -550,7 +550,7 @@ static LONG pfs_do_mkdir(const char *path)
     return rc;
 }
 
-static LONG pfs_do_rmdir(const char *path)
+LONG pfs_do_rmdir(const char *path)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, &path);
@@ -640,7 +640,7 @@ static LONG pfs_path_append(char *newpath, size_t cap, const char *tail)
     }
 }
 
-static LONG pfs_do_chdir(const char *path)
+LONG pfs_do_chdir(const char *path)
 {
     struct pfs_ops *fs;
     WORD drive;
@@ -739,7 +739,7 @@ static LONG pfs_do_chdir(const char *path)
     return rc;
 }
 
-static LONG pfs_do_getdir(char *buf, WORD drv)
+LONG pfs_do_getdir(char *buf, WORD drv)
 {
     struct pfs_ops *fs;
     WORD drive = drv ? (WORD)(drv - 1) : run->p_curdrv;
@@ -784,7 +784,7 @@ static LONG pfs_alloc_handle(PFSCOOKIE *fc)
     return i + NUMSTD;
 }
 
-static LONG pfs_do_open(const char *path, WORD mode)
+LONG pfs_do_open(const char *path, WORD mode)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, &path);
@@ -821,7 +821,7 @@ static LONG pfs_do_open(const char *path, WORD mode)
     return rc;
 }
 
-static LONG pfs_do_create(const char *path, UWORD attr)
+LONG pfs_do_create(const char *path, UWORD attr)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, &path);
@@ -858,7 +858,7 @@ static LONG pfs_do_create(const char *path, UWORD attr)
     return rc;
 }
 
-static LONG pfs_do_unlink(const char *path)
+LONG pfs_do_unlink(const char *path)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, &path);
@@ -882,7 +882,7 @@ static LONG pfs_do_unlink(const char *path)
     return rc;
 }
 
-static LONG pfs_do_chmod(const char *path, WORD wrt, WORD mod)
+LONG pfs_do_chmod(const char *path, WORD wrt, WORD mod)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, &path);
@@ -918,7 +918,7 @@ static LONG pfs_do_chmod(const char *path, WORD wrt, WORD mod)
     return attr;
 }
 
-static LONG pfs_do_rename(const char *p1, const char *p2)
+LONG pfs_do_rename(const char *p1, const char *p2)
 {
     struct pfs_ops *fs;
     WORD drive1 = pfs_path_drive(p1, &p1);
@@ -956,7 +956,7 @@ static LONG pfs_do_rename(const char *p1, const char *p2)
     return rc;
 }
 
-static LONG pfs_do_sfirst(char *path, WORD att)
+LONG pfs_do_sfirst(char *path, WORD att)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, (const char **)&path);
@@ -1060,7 +1060,7 @@ static LONG pfs_do_sfirst(char *path, WORD att)
     }
 }
 
-static LONG pfs_do_snext(void)
+LONG pfs_do_snext(void)
 {
     WORD i;
 
