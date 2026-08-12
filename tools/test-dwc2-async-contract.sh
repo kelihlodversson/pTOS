@@ -23,5 +23,10 @@ require 'struct usb_async_int_msg \*msg = slot->msg' \
 require 'msg->callback\(msg, -1, 0\)' 'error callback after slot release'
 require 'wait_for_bit_le32\(&hc->hcint, DWC2_HCINT_CHHLTD' \
     'shutdown halt wait'
+require 'BOOL shutting_down' 'controller shutdown state'
+require 'priv->shutting_down' 'shutdown state guards'
+require 'return ETIMEDOUT' 'halt timeout defers controller reset'
+require '!priv->shutting_down' 'callback and rearm shutdown guard'
+require 'if \(!priv->shutting_down\)' 'synchronous shutdown halt observer'
 
 echo 'dwc2 async contract test passed'

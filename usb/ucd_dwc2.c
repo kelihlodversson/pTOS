@@ -71,6 +71,7 @@ struct dwc2_priv {
     struct dwc2_async_slot async[DWC2_ASYNC_SLOT_COUNT];
     ULONG async_generation;
     BOOL irq_connected;
+    BOOL shutting_down;
 };
 
 /* We need cacheline-aligned buffers for DMA transfers and dcache support */
@@ -686,7 +687,8 @@ static void dwc2_async_stop(struct dwc2_priv *priv,
         writel(DWC2_HCINT_CHHLTD, &hc->hcint);
         writel(DWC2_HCINTMSK_CHHLTD, &hc->hcintmsk);
         setbits_le32(&hc->hcchar, DWC2_HCCHAR_CHEN | DWC2_HCCHAR_CHDIS);
-        setbits_le32(&priv->regs->host_regs.haintmsk, 1UL << channel);
+        if (!priv->shutting_down)
+            setbits_le32(&priv->regs->host_regs.haintmsk, 1UL << channel);
         return;
     }
     writel(0, &hc->hcintmsk);
@@ -712,17 +714,20 @@ static void dwc2_async_halted(struct dwc2_priv *priv,
 
     writel(0, &hc->hcintmsk);
     clrbits_le32(&priv->regs->host_regs.haintmsk, 1UL << channel);
-    if (slot->error_pending) {
+    if (slot->error_pending && !priv->shutting_down) {
         struct usb_async_int_msg *msg = slot->msg;
 
         slot->error_pending = FALSE;
         dwc2_async_release(slot);
         msg->callback(msg, -1, 0);
-    } else
+    } else {
+        if (slot->error_pending)
+            KINFO(("dwc2_async: suppress error callback during shutdown\n"));
         dwc2_async_release(slot);
+    }
 }
 
-static void dwc2_async_shutdown(struct dwc2_priv *priv,
+static LONG dwc2_async_shutdown(struct dwc2_priv *priv,
                                 struct dwc2_async_slot *slot)
 {
     WORD index = slot - priv->async;
@@ -731,17 +736,19 @@ static void dwc2_async_shutdown(struct dwc2_priv *priv,
     int ret;
 
     if (!slot->msg)
-        return;
+        return E_OK;
     dwc2_async_stop(priv, slot);
     if (!slot->stopping)
-        return;
+        return E_OK;
     ret = wait_for_bit_le32(&hc->hcint, DWC2_HCINT_CHHLTD, TRUE, 2000);
     if (ret) {
-        KINFO(("dwc2_async: halt timeout channel=%d\n", channel));
-        return;
+        KINFO(("dwc2_async: halt timeout channel=%d; controller retained\n",
+               channel));
+        return ETIMEDOUT;
     }
     writel(readl(&hc->hcint), &hc->hcint);
     dwc2_async_halted(priv, slot);
+    return E_OK;
 }
 
 static void dwc2_async_complete(struct dwc2_priv *priv,
@@ -750,7 +757,7 @@ static void dwc2_async_complete(struct dwc2_priv *priv,
 {
     (void)priv;
 
-    if (slot->active && !slot->cancelled)
+    if (slot->active && !slot->cancelled && !priv->shutting_down)
         slot->msg->callback(slot->msg, status, actual_length);
 }
 
@@ -777,6 +784,7 @@ static void dwc2_async_finish_success(struct dwc2_priv *priv,
            actual_length));
     dwc2_async_complete(priv, slot, 0, actual_length);
     if (slot->active && !slot->cancelled && !slot->stopping &&
+        !priv->shutting_down &&
         slot->msg == msg && slot->generation == generation)
         dwc2_async_schedule(priv, slot);
     else
@@ -1509,6 +1517,7 @@ static LONG dwc2_submit_async_int_msg(struct dwc2_priv *priv,
     struct dwc2_async_slot *slot;
 
     if (!msg || !msg->dev || !msg->buffer || !msg->callback ||
+        priv->shutting_down ||
         !priv->irq_connected ||
         msg->transfer_len <= 0 || msg->transfer_len > DWC2_ASYNC_DMA_SIZE ||
         !usb_pipein(msg->pipe) || usb_pipetype(msg->pipe) != PIPE_INTERRUPT)
@@ -1546,6 +1555,11 @@ static LONG dwc2_cancel_async_int_msg(struct dwc2_priv *priv,
 
     if (!msg)
         return EINVAL;
+
+    if (priv->shutting_down) {
+        KINFO(("dwc2_async: cancel ignored during shutdown\n"));
+        return E_OK;
+    }
 
     slot = dwc2_async_find(priv, msg);
     if (!slot)
@@ -1679,9 +1693,13 @@ long usb_lowlevel_stop(void *ucd_priv)
 {
     struct dwc2_priv *priv = ucd_priv;
     WORD index;
+    LONG ret;
 
+    priv->shutting_down = TRUE;
     for (index = 0; index < DWC2_ASYNC_SLOT_COUNT; index++) {
-        dwc2_async_shutdown(priv, &priv->async[index]);
+        ret = dwc2_async_shutdown(priv, &priv->async[index]);
+        if (ret)
+            return ret;
     }
     clrbits_le32(&priv->regs->gintmsk, DWC2_GINTMSK_SOFINTR);
     clrbits_le32(&priv->regs->gintmsk, DWC2_GINTMSK_HCINTR);
