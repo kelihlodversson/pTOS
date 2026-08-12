@@ -29,6 +29,8 @@ vdi_backend_ops planar_backend_ops = {
     planar_put_pixel,
     planar_get_pixel,       /* get_raw_pixel: a planar pixel's raw value is its composed colour index */
     planar_put_pixel,       /* put_raw_pixel: same for writing */
+    planar_set_color,
+    planar_get_color,
     planar_fill_rect,
     planar_text_blit,
     planar_raster_copy,

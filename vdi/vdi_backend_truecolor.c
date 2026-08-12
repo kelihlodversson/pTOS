@@ -356,6 +356,24 @@ void vdi_truecolor_get_color(const Vwk *vwk, WORD index, WORD *r, WORD *g, WORD 
 }
 
 /*
+ * vdi_backend_ops.set_color/get_color adapters (issue #171): the ops slots
+ * take a raw VDI pen and a 3-element rgb[] array -- see the comment on
+ * those slots in vdi_backend.h -- while vdi_truecolor_set_color()/
+ * vdi_truecolor_get_color() above take an already MAP_COL-mapped index and
+ * three separate components, matching every other index this file takes.
+ * These just bridge the two conventions.
+ */
+static void truecolor_ops_set_color(Vwk *vwk, WORD pen, WORD *rgb)
+{
+    vdi_truecolor_set_color(vwk, MAP_COL[pen], rgb[0], rgb[1], rgb[2]);
+}
+
+static void truecolor_ops_get_color(const Vwk *vwk, WORD pen, WORD *rgb)
+{
+    vdi_truecolor_get_color(vwk, MAP_COL[pen], &rgb[0], &rgb[1], &rgb[2]);
+}
+
+/*
  * Address calculation for a packed 16bpp (2 bytes/pixel) framebuffer.
  * Fixed at 2 bytes/pixel because this backend is only ever selected for
  * SCREEN_PIXEL_RGB565 (see vdi_backend_select()).
@@ -1001,6 +1019,8 @@ vdi_backend_ops packed_truecolor_backend_ops = {
     truecolor_put_pixel,
     truecolor_get_raw_pixel,
     truecolor_put_raw_pixel,
+    truecolor_ops_set_color,
+    truecolor_ops_get_color,
 #if CONF_VDI_SPARSE_TABLE
     /* The optional slots are left NULL so vdi_backend_ops_init() fills them
      * with the generic defaults -- this exercises issue #138's defaults

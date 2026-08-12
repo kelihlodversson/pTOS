@@ -362,6 +362,7 @@ void vdi_backend_ops_init(vdi_backend_ops *ops)
     if (!ops->search_left) ops->search_left = default_search_left;
 
     if (!ops->get_start_addr || !ops->get_pixel || !ops->put_pixel
-        || !ops->get_raw_pixel || !ops->put_raw_pixel)
+        || !ops->get_raw_pixel || !ops->put_raw_pixel
+        || !ops->set_color || !ops->get_color)
         KDEBUG(("vdi_backend_ops_init: backend is missing a mandatory primitive\n"));
 }

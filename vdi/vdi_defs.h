@@ -315,6 +315,11 @@ UWORD *planar_get_start_addr(WORD x, WORD y);
 UWORD planar_get_pixel(WORD x, WORD y);
 void planar_put_pixel(WORD x, WORD y, UWORD color);
 void planar_fill_rect(const VwkAttrib *attr, const Rect *rect);
+/* planar_set_color/planar_get_color (vdi_col.c) -- hardware colour-register
+ * read/write for the planar backend, see the vdi_backend_ops comment on
+ * set_color/get_color in vdi_backend.h */
+void planar_set_color(Vwk *vwk, WORD pen, WORD *rgb);
+void planar_get_color(const Vwk *vwk, WORD pen, WORD *rgb);
 /* truecolor backend primitives (vdi_backend_truecolor.c) -- callable
  * directly in truecolor-only builds, where the dispatcher is compiled out */
 UWORD *truecolor_get_start_addr(WORD x, WORD y);
