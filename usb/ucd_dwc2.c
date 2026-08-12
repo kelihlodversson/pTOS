@@ -44,7 +44,6 @@ struct dwc2_async_slot
     BOOL cancelled;
     BOOL stopping;
     BOOL split;
-    BOOL split_complete;
     DWC2_ASYNC_SPLIT_STATE split_state;
     UBYTE hub_addr;
     UBYTE hub_port;
@@ -590,6 +589,8 @@ static void dwc2_async_start(struct dwc2_priv *priv,
     if (!slot->active || slot->cancelled || slot->stopping)
         return;
 
+    KDEBUG(("dwc2_async: start channel=%d generation=%lu split=%d pid=%d\n",
+            channel, slot->generation, slot->split_state, slot->pid));
     dwc_otg_hc_init(regs, channel, slot->msg->dev,
                     usb_pipedevice(slot->msg->pipe),
                     usb_pipeendpoint(slot->msg->pipe), TRUE,
@@ -636,7 +637,7 @@ static void dwc2_async_stop(struct dwc2_priv *priv,
     slot->active = FALSE;
     slot->cancelled = TRUE;
     slot->stopping = TRUE;
-    KDEBUG(("%s: channel %d generation %lu\n", __func__, channel,
+    KDEBUG(("dwc2_async: stop channel=%d generation=%lu\n", channel,
             slot->generation));
     clrbits_le32(&priv->regs->host_regs.haintmsk, 1UL << channel);
     if (readl(&hc->hcchar) & DWC2_HCCHAR_CHEN) {
@@ -653,7 +654,7 @@ static void dwc2_async_stop(struct dwc2_priv *priv,
 
 static void dwc2_async_release(struct dwc2_async_slot *slot)
 {
-    KDEBUG(("%s: generation %lu\n", __func__, slot->generation));
+    KDEBUG(("dwc2_async: release generation=%lu\n", slot->generation));
     slot->active = FALSE;
     slot->cancelled = FALSE;
     slot->stopping = FALSE;
@@ -689,13 +690,14 @@ static void dwc2_async_finish_success(struct dwc2_priv *priv,
     invalidate_data_cache(slot->dma_buffer,
                           roundup(actual_length, ARCH_DMA_MINALIGN));
     memcpy(msg->buffer, slot->dma_buffer, actual_length);
+    KDEBUG(("dwc2_async: complete generation=%lu length=%ld\n", generation,
+            actual_length));
     dwc2_async_complete(priv, slot, 0, actual_length);
     if (slot->active && !slot->cancelled && !slot->stopping &&
         slot->msg == msg && slot->generation == generation)
         dwc2_async_start(priv, slot);
     else
-        KDEBUG(("%s: completion generation %lu not rearmed\n", __func__,
-                generation));
+        KDEBUG(("dwc2_async: no-rearm generation=%lu\n", generation));
 }
 
 static void dwc2_async_finish_error(struct dwc2_priv *priv,
@@ -732,6 +734,8 @@ static void dwc2_irq_handler(void)
 
         hcint = readl(&hc->hcint);
         writel(hcint, &hc->hcint);
+        KDEBUG(("dwc2_async: irq channel=%d generation=%lu hcint=%08lx split=%d\n",
+                channel, slot->generation, hcint, slot->split_state));
 
         if (slot->stopping) {
             if (hcint & DWC2_HCINT_CHHLTD) {
@@ -750,13 +754,19 @@ static void dwc2_irq_handler(void)
             if (slot->split_state == DWC2_ASYNC_SPLIT_START &&
                 (hcint & DWC2_HCINT_ACK)) {
                 slot->split_state = DWC2_ASYNC_SPLIT_COMPLETE;
+                KDEBUG(("dwc2_async: split-start-ack generation=%lu\n",
+                        slot->generation));
                 dwc2_async_start(priv, slot);
             } else if (slot->split_state == DWC2_ASYNC_SPLIT_COMPLETE &&
                        (hcint & DWC2_HCINT_NYET)) {
+                KDEBUG(("dwc2_async: split-complete-nyet generation=%lu\n",
+                        slot->generation));
                 dwc2_async_start(priv, slot);
             } else if (slot->split_state == DWC2_ASYNC_SPLIT_COMPLETE &&
                        (hcint & DWC2_HCINT_NAK)) {
                 slot->split_state = DWC2_ASYNC_SPLIT_START;
+                KDEBUG(("dwc2_async: split-complete-nak generation=%lu\n",
+                        slot->generation));
                 dwc2_async_start(priv, slot);
             } else if (slot->split_state == DWC2_ASYNC_SPLIT_COMPLETE &&
                        (hcint & DWC2_HCINT_XFERCOMP)) {
@@ -768,6 +778,9 @@ static void dwc2_irq_handler(void)
         } else if (hcint & DWC2_HCINT_XFERCOMP) {
             dwc2_async_finish_success(priv, slot, hc);
         } else if ((hcint & DWC2_HCINT_NAK) || hcint == DWC2_HCINT_CHHLTD) {
+            KDEBUG(("dwc2_async: rearm generation=%lu reason=%s\n",
+                    slot->generation, (hcint & DWC2_HCINT_NAK) ? "nak" :
+                    "chhltd"));
             dwc2_async_start(priv, slot);
         } else {
             dwc2_async_finish_error(priv, slot);
@@ -1417,6 +1430,8 @@ static LONG dwc2_submit_async_int_msg(struct dwc2_priv *priv,
     slot->split_state = slot->split ? DWC2_ASYNC_SPLIT_START :
                         DWC2_ASYNC_SPLIT_NONE;
     slot->active = TRUE;
+    KDEBUG(("dwc2_async: submit generation=%lu split=%d\n",
+            slot->generation, slot->split_state));
     dwc2_async_start(priv, slot);
 
     return E_OK;
