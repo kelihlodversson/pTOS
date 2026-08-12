@@ -28,6 +28,8 @@
 
 #ifdef MACHINE_RPI
 #   include "raspi_mouse.h"
+#endif
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
 #   include "vdi_backend.h"
 #endif
 
@@ -871,19 +873,21 @@ static void cur_display_clip(WORD op,Mcdb *sprite,MCS *mcs,UWORD *mask_start,UWO
  * within one screen word (per plane), so we only save 32 bytes/plane.
  */
 
-#ifdef MACHINE_RPI
-/* The mcs struct is not big enough for a 16bpp packed truecolor cursor.
- * Also serves as the software cursor's fallback save area when
- * CONF_RASPI_MOUSE_CURSOR is set but the hardware cursor is unavailable at
- * runtime -- see raspi_hw_cursor_available below. */
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+/* The mcs struct is not big enough for a packed truecolor cursor (2 or 4
+ * bytes/pixel).  Also serves as the software cursor's fallback save area
+ * when CONF_RASPI_MOUSE_CURSOR is set but the hardware cursor is
+ * unavailable at runtime -- see raspi_hw_cursor_available below. */
 static struct {
     WORD x;
     WORD y;
     WORD width;
     WORD height;
-    UWORD buffer[16*16];
+    ULONG buffer[16*16];
 } mouse_save;
+#endif
 
+#ifdef MACHINE_RPI
 #if CONF_RASPI_MOUSE_CURSOR
 /*
  * Starts TRUE and latches to FALSE the first time the hardware cursor's
@@ -900,12 +904,6 @@ static BOOL raspi_hw_cursor_available = TRUE;
 static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
 {
 #ifdef MACHINE_RPI
-    int row_count;
-    UWORD *addr;
-    UWORD *data;
-    UWORD cdb_fg, cdb_bg, current_bit, start_bit, end_bit;
-    UWORD *save_data = mouse_save.buffer;
-
 #if CONF_RASPI_MOUSE_CURSOR
     if (raspi_hw_cursor_available && raspi_hw_cur_display(sprite, x, y))
     {
@@ -916,200 +914,222 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
      * below, and don't try the hardware cursor again this session. */
     raspi_hw_cursor_available = FALSE;
 #endif
+#endif
 
-    x -= sprite->xhot;          /* x = left side of destination block */
-    y -= sprite->yhot;          /* y = top of destination block */
-    data = sprite->maskdata;  /* MASK/DATA for cursor */
-    /* sprite->bg_col/fg_col are MAP_COL-mapped palette indices; the packed
-     * truecolor framebuffer needs the raw RGB565 pixel value instead */
-    cdb_bg = vdi_truecolor_pixel_for_index(sprite->bg_col);
-    cdb_fg = vdi_truecolor_pixel_for_index(sprite->fg_col);
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    if (vdi_screen_is_truecolor())
+    {
+        /* packed truecolor cursor (2 or 4 bytes/pixel) */
+        int row_count;
+        UWORD *data;
+        UWORD current_bit, start_bit, end_bit;
+        ULONG cdb_fg, cdb_bg;
+        UWORD psize = vdi_truecolor_pixel_size();
+        ULONG *save_data = mouse_save.buffer;
 
-    start_bit = 0x8000;
-    end_bit = 0x0000;
+        x -= sprite->xhot;          /* x = left side of destination block */
+        y -= sprite->yhot;          /* y = top of destination block */
+        data = sprite->maskdata;  /* MASK/DATA for cursor */
+        /* sprite->bg_col/fg_col are MAP_COL-mapped palette indices; the packed
+         * truecolor framebuffer needs the raw pixel value instead */
+        cdb_bg = vdi_truecolor_pixel_for_index(sprite->bg_col);
+        cdb_fg = vdi_truecolor_pixel_for_index(sprite->fg_col);
 
-    mouse_save.width = 16;
-    if(x < 0)
-    {
-        start_bit >>= (-x);
-        mouse_save.width += x;
-        x = 0;
-    }
-    else if (x >= (linea_vars.DEV_TAB[0]-15))
-    {
-        /* DEV_TAB[0] is the last valid pixel column (V_REZ_HZ-1), so the
-         * visible width is inclusive of it: DEV_TAB[0]-x+1, not DEV_TAB[0]-x. */
-        end_bit = 0x8000 >> (linea_vars.DEV_TAB[0]-x+1);
-        mouse_save.width = linea_vars.DEV_TAB[0]-x+1;
-    }
+        start_bit = 0x8000;
+        end_bit = 0x0000;
 
-    row_count = 16;
-    if(y < 0)
-    {
-        row_count += y;
-        data -= y*2;
-        y=0;
-    }
-    else if (y > (linea_vars.DEV_TAB[1]-15))
-    {
-        row_count = linea_vars.DEV_TAB[1] - y + 1;
-    }
-    mouse_save.height = row_count;
-    mouse_save.x = x;
-    mouse_save.y = y;
-
-    while(row_count--)
-    {
-        addr = get_start_addr(x, y++);
-        for(current_bit = start_bit; current_bit > end_bit; current_bit >>= 1)
+        mouse_save.width = 16;
+        if(x < 0)
         {
-            *(save_data++) = *addr;
-            if(data[1] & current_bit)
-            {
-                *addr = cdb_fg;
-            }
-            else if (data[0] & current_bit)
-            {
-                *addr = cdb_bg;
-            }
-            addr++;
+            start_bit >>= (-x);
+            mouse_save.width += x;
+            x = 0;
         }
-        data += 2;
-    }
-#else
-    int row_count, plane, inc, op, dst_inc;
-    UWORD * addr, * mask_start;
-    UWORD shft, cdb_fg, cdb_bg;
-    UWORD cdb_mask;             /* for checking cdb_bg/cdb_fg */
-    ULONG *save;
+        else if (x >= (linea_vars.DEV_TAB[0]-15))
+        {
+            /* DEV_TAB[0] is the last valid pixel column (V_REZ_HZ-1), so the
+             * visible width is inclusive of it: DEV_TAB[0]-x+1, not DEV_TAB[0]-x. */
+            end_bit = 0x8000 >> (linea_vars.DEV_TAB[0]-x+1);
+            mouse_save.width = linea_vars.DEV_TAB[0]-x+1;
+        }
 
-    x -= sprite->xhot;          /* x = left side of destination block */
-    y -= sprite->yhot;          /* y = top of destination block */
-
-    mcs->stat = 0x00;           /* reset status of save buffer */
-
-    /*
-     * clip x axis
-     */
-    if (x < 0) {            /* clip left */
-        x += 16;                /* get address of right word */
-        op = 1;                 /* remember we're clipping left */
-    }
-    else if (x >= (linea_vars.DEV_TAB[0]-15)) {    /* clip right */
-        op = 2;                 /* remember we're clipping right */
-    }
-    else {                  /* no clipping */
-        op = 0;                 /* longword save */
-        mcs->stat |= MCS_LONGS; /* mark savearea as longword save */
-    }
-
-    /*
-     * clip y axis
-     */
-    mask_start = sprite->maskdata;  /* MASK/DATA for cursor */
-    if (y < 0) {            /* clip top */
-        row_count = y + 16;
-        mask_start -= y << 1;   /* point to first visible row of MASK/FORM */
-        y = 0;                  /* and reset starting row */
-    }
-    else if (y > (linea_vars.DEV_TAB[1]-15)) { /* clip bottom */
-        row_count = linea_vars.DEV_TAB[1] - y + 1;
-    }
-    else {
         row_count = 16;
+        if(y < 0)
+        {
+            row_count += y;
+            data -= y*2;
+            y=0;
+        }
+        else if (y > (linea_vars.DEV_TAB[1]-15))
+        {
+            row_count = linea_vars.DEV_TAB[1] - y + 1;
+        }
+        mouse_save.height = row_count;
+        mouse_save.x = x;
+        mouse_save.y = y;
+
+        while(row_count--)
+        {
+            UBYTE *base = (UBYTE *)get_start_addr(x, y++);
+            UBYTE *addr8 = base;
+            for(current_bit = start_bit; current_bit > end_bit; current_bit >>= 1)
+            {
+                ULONG *px = (ULONG *)addr8;
+                *(save_data++) = *px;
+                if(data[1] & current_bit)
+                {
+                    *px = cdb_fg;
+                }
+                else if (data[0] & current_bit)
+                {
+                    *px = cdb_bg;
+                }
+                addr8 += psize;
+            }
+            data += 2;
+        }
     }
+#ifndef MACHINE_RPI
+    else
+#endif
+#endif
+#ifndef MACHINE_RPI
+    {
+        /* planar cursor -- unchanged MCS_LONGS handling */
+        int row_count, plane, inc, op, dst_inc;
+        UWORD * addr, * mask_start;
+        UWORD shft, cdb_fg, cdb_bg;
+        UWORD cdb_mask;             /* for checking cdb_bg/cdb_fg */
+        ULONG *save;
 
-    /*
-     *  Compute the bit offset into the desired word, save it, and remove
-     *  these bits from the x-coordinate.
-     */
-    addr = get_start_addr(x, y);
-    shft = 16 - (x&0x0f);       /* amount to shift forms by */
+        x -= sprite->xhot;          /* x = left side of destination block */
+        y -= sprite->yhot;          /* y = top of destination block */
 
-    /*
-     *  Store values required by cur_replace()
-     */
-    mcs->len = row_count;       /* number of cursor rows */
-    mcs->addr = addr;           /* save area: origin of material */
-    mcs->stat |= MCS_VALID;     /* flag the buffer as being loaded */
+        mcs->stat = 0x00;           /* reset status of save buffer */
 
-    /*
-     *  To allow performance optimisations in this function, we handle
-     *  L/R clipping in a separate function
-     */
-    if (op) {
-        cur_display_clip(op,sprite,mcs,mask_start,shft);
-        return;
+        /*
+         * clip x axis
+         */
+        if (x < 0) {            /* clip left */
+            x += 16;                /* get address of right word */
+            op = 1;                 /* remember we're clipping left */
+        }
+        else if (x >= (linea_vars.DEV_TAB[0]-15)) {    /* clip right */
+            op = 2;                 /* remember we're clipping right */
+        }
+        else {                  /* no clipping */
+            op = 0;                 /* longword save */
+            mcs->stat |= MCS_LONGS; /* mark savearea as longword save */
+        }
+
+        /*
+         * clip y axis
+         */
+        mask_start = sprite->maskdata;  /* MASK/DATA for cursor */
+        if (y < 0) {            /* clip top */
+            row_count = y + 16;
+            mask_start -= y << 1;   /* point to first visible row of MASK/FORM */
+            y = 0;                  /* and reset starting row */
+        }
+        else if (y > (linea_vars.DEV_TAB[1]-15)) { /* clip bottom */
+            row_count = linea_vars.DEV_TAB[1] - y + 1;
+        }
+        else {
+            row_count = 16;
+        }
+
+        /*
+         *  Compute the bit offset into the desired word, save it, and remove
+         *  these bits from the x-coordinate.
+         */
+        addr = get_start_addr(x, y);
+        shft = 16 - (x&0x0f);       /* amount to shift forms by */
+
+        /*
+         *  Store values required by cur_replace()
+         */
+        mcs->len = row_count;       /* number of cursor rows */
+        mcs->addr = addr;           /* save area: origin of material */
+        mcs->stat |= MCS_VALID;     /* flag the buffer as being loaded */
+
+        /*
+         *  To allow performance optimisations in this function, we handle
+         *  L/R clipping in a separate function
+         */
+        if (op) {
+            cur_display_clip(op,sprite,mcs,mask_start,shft);
+            return;
+        }
+
+        /*
+         * The rest of this function handles the no-L/R clipping case
+         */
+        inc = linea_vars.v_planes;             /* # distance to next word in same plane */
+        dst_inc = linea_vars.v_lin_wr >> 1;    /* calculate number of words in a scan line */
+
+        save = mcs->area;           /* for long stores */
+
+        cdb_bg = sprite->bg_col;    /* get mouse background color bits */
+        cdb_fg = sprite->fg_col;    /* get mouse foreground color bits */
+
+        /* plane controller, draw cursor in each graphic plane */
+        for (plane = linea_vars.v_planes - 1, cdb_mask = 0x0001; plane >= 0; plane--) {
+            int row;
+            UWORD * src, * dst;
+
+            /* setup the things we need for each plane again */
+            src = mask_start;               /* calculated mask data begin */
+            dst = addr++;                   /* current destination address */
+
+            /* loop through rows */
+            for (row = row_count - 1; row >= 0; row--) {
+                ULONG bits;                 /* our graphics data */
+                ULONG fg;                   /* the foreground color */
+                ULONG bg;                   /* the background color */
+
+                /*
+                 * first, save the existing data
+                 */
+                bits = ((ULONG)*dst) << 16; /* bring to left pos. */
+                bits |= *(dst + inc);
+                *save++ = bits;
+
+                /*
+                 * align the forms with the cursor position on the screen
+                 */
+
+                /* get and align background & foreground forms */
+                bg = (ULONG)*src++ << shft;
+                fg = (ULONG)*src++ << shft;
+
+                /*
+                 * logical operation for cursor interaction with screen
+                 * note that this only implements the "VDI" mode
+                 */
+
+                /* select operation for mouse mask background color */
+                if (cdb_bg & cdb_mask)
+                    bits |= bg;
+                else
+                    bits &= ~bg;
+
+                /* select operation for mouse mask foreground color */
+                if (cdb_fg & cdb_mask)
+                    bits |= fg;
+                else
+                    bits &= ~fg;
+
+                /*
+                 * update the screen with the new data
+                 */
+                *dst = (UWORD)(bits >> 16);
+                *(dst + inc) = (UWORD)bits;
+                dst += dst_inc;             /* next row of screen */
+            } /* loop through rows */
+
+            cdb_mask <<= 1;
+        } /* loop through planes */
     }
-
-    /*
-     * The rest of this function handles the no-L/R clipping case
-     */
-    inc = linea_vars.v_planes;             /* # distance to next word in same plane */
-    dst_inc = linea_vars.v_lin_wr >> 1;    /* calculate number of words in a scan line */
-
-    save = mcs->area;           /* for long stores */
-
-    cdb_bg = sprite->bg_col;    /* get mouse background color bits */
-    cdb_fg = sprite->fg_col;    /* get mouse foreground color bits */
-
-    /* plane controller, draw cursor in each graphic plane */
-    for (plane = linea_vars.v_planes - 1, cdb_mask = 0x0001; plane >= 0; plane--) {
-        int row;
-        UWORD * src, * dst;
-
-        /* setup the things we need for each plane again */
-        src = mask_start;               /* calculated mask data begin */
-        dst = addr++;                   /* current destination address */
-
-        /* loop through rows */
-        for (row = row_count - 1; row >= 0; row--) {
-            ULONG bits;                 /* our graphics data */
-            ULONG fg;                   /* the foreground color */
-            ULONG bg;                   /* the background color */
-
-            /*
-             * first, save the existing data
-             */
-            bits = ((ULONG)*dst) << 16; /* bring to left pos. */
-            bits |= *(dst + inc);
-            *save++ = bits;
-
-            /*
-             * align the forms with the cursor position on the screen
-             */
-
-            /* get and align background & foreground forms */
-            bg = (ULONG)*src++ << shft;
-            fg = (ULONG)*src++ << shft;
-
-            /*
-             * logical operation for cursor interaction with screen
-             * note that this only implements the "VDI" mode
-             */
-
-            /* select operation for mouse mask background color */
-            if (cdb_bg & cdb_mask)
-                bits |= bg;
-            else
-                bits &= ~bg;
-
-            /* select operation for mouse mask foreground color */
-            if (cdb_fg & cdb_mask)
-                bits |= fg;
-            else
-                bits &= ~fg;
-
-            /*
-             * update the screen with the new data
-             */
-            *dst = (UWORD)(bits >> 16);
-            *(dst + inc) = (UWORD)bits;
-            dst += dst_inc;             /* next row of screen */
-        } /* loop through rows */
-
-        cdb_mask <<= 1;
-    } /* loop through planes */
 #endif
 }
 
@@ -1172,18 +1192,19 @@ static void cur_replace (MCS *mcs)
     }
 #else
     int row, col;
-    UWORD* addr;
-    UWORD* data = mouse_save.buffer;
+    UWORD psize = vdi_truecolor_pixel_size();
+    ULONG *data = mouse_save.buffer;
 
     /* mouse_save.height is 0 whenever the hardware cursor drew this frame
      * (see cur_display()), so this is a no-op in that case -- there is
      * nothing to restore. */
     for (row = 0; row<mouse_save.height; row++)
     {
-        addr = get_start_addr(mouse_save.x, mouse_save.y+row);
+        UBYTE *addr8 = (UBYTE *)get_start_addr(mouse_save.x, mouse_save.y+row);
         for (col = 0; col<mouse_save.width; col++)
         {
-            *addr++ = *data++;
+            *(ULONG *)addr8 = *data++;
+            addr8 += psize;
         }
     }
 #endif
