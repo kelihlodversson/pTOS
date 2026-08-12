@@ -288,14 +288,14 @@ static void transform_cicon(WORD *src, WORD *dest, WORD w, WORD h, WORD planes)
 /*
  *  pack one plane-major colour array (the RSC layout transform_cicon()
  *  reads) into w*h packed pixels: each pixel's colour code is the OR of
- *  its bit across the planes, then mapped to RGB565 via the physical
- *  workstation's palette.
+ *  its bit across the planes, then mapped to the active-format packed
+ *  pixel via the physical workstation's palette.
  *
  *  The bit order below -- plane p contributes bit (1<<p) of the colour
  *  code -- is the calibration constant the design calls out; the first
  *  screencap (Task 6) confirms or flips it to (1 << (planes-1-p)).
  */
-static void pack_planes(const WORD *data, UWORD *pix, WORD planes, WORD w, WORD h)
+static void pack_planes(const WORD *data, ULONG *pix, WORD planes, WORD w, WORD h)
 {
     LONG mono_words = ((LONG)w + 15) / 16;
     WORD x, y, p;
@@ -329,9 +329,9 @@ static void pack_planes(const WORD *data, UWORD *pix, WORD planes, WORD w, WORD 
 static BOOL pack_cicon(CICON *cicon, WORD w, WORD h)
 {
     LONG pixels = (LONG)w * h;
-    UWORD *packed;
+    ULONG *packed;
 
-    packed = dos_alloc_anyram(pixels * (cicon->sel_data ? 2 : 1) * sizeof(UWORD));
+    packed = dos_alloc_anyram(pixels * (cicon->sel_data ? 2 : 1) * vdi_truecolor_pixel_size());
     if (!packed)
         return FALSE;
 
@@ -340,7 +340,7 @@ static BOOL pack_cicon(CICON *cicon, WORD w, WORD h)
 
     if (cicon->sel_data)
     {
-        UWORD *selbuf = packed + pixels;
+        ULONG *selbuf = packed + pixels;
 
         pack_planes(cicon->sel_data, selbuf, cicon->num_planes, w, h);
         cicon->sel_data = (WORD *)selbuf;
