@@ -475,30 +475,11 @@ long ixclose(OFD *fd, int part)
  */
 long xunlink(char *name)
 {
-    DND *dn;
-    FCB *f;
-    const char *s;
-    long pos;
-
-    /* first find path */
-
-    if ((long)(dn = findit(name,&s,0)) < 0)                 /* M01.01.1212.01 */
-        return (long)dn;
-    if (!dn)                                                /* M01.01.1214.01 */
-        return EFILNF;
-
-    /* now scan for filename */
-
-    pos = 0;
-    if (!(f = scan(dn,s,FA_NORM,&pos)))
-        return EFILNF;
-
-    if (f->f_attrib & FA_RO)
-        return EACCDN;
-
-    pos -= 32;
-
-    return ixdel(dn,f,pos);
+#if CONF_WITH_PLUGGABLE_FS
+    return pfs_do_unlink(name);
+#else
+    return fat_unlink_path(name);
+#endif
 }
 
 

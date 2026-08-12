@@ -339,6 +339,21 @@ static LONG fat_mkdir(PFSCOOKIE *dir, const char *name)
     return E_OK;
 }
 
+static LONG fat_remove(PFSCOOKIE *dir, const char *name)
+{
+    DND *dn = (DND *)dir->index;
+    FCB *f;
+    long pos;
+
+    pos = 0;
+    if (!(f = scan(dn, name, FA_NORM, &pos)))
+        return EFILNF;
+    if (f->f_attrib & FA_RO)
+        return EACCDN;
+    pos -= 32;
+    return ixdel(dn, f, pos);
+}
+
 #if CONF_WITH_PLUGGABLE_FS
 
 #define FAT_ALL_ATTR (FA_RO | FA_HIDDEN | FA_SYSTEM | FA_VOL | FA_SUBDIR | FA_ARCHIVE)
@@ -557,17 +572,6 @@ static LONG fat_rmdir(PFSCOOKIE *dir, const char *name)
     return xrmdir(path);
 }
 
-static LONG fat_remove(PFSCOOKIE *dir, const char *name)
-{
-    char path[LEN_ZPATH];
-    LONG rc = fat_abspath(dir, name, path, sizeof(path));
-
-    if (rc < 0)
-        return rc;
-
-    return xunlink(path);
-}
-
 static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
                         PFSCOOKIE *newdir, const char *newname)
 {
@@ -715,5 +719,22 @@ LONG fat_mkdir_path(char *s)
     dir.aux = 0;
     dir.pos = 0;
     return fat_mkdir(&dir, sp);
+}
+
+LONG fat_unlink_path(char *name)
+{
+    DND *dn;
+    const char *s;
+    PFSCOOKIE dir;
+
+    if ((long)(dn = findit(name, &s, 0)) < 0)
+        return (long)dn;
+    if (!dn)
+        return EFILNF;
+    dir.fs = NULL;
+    dir.index = (LONG)dn;
+    dir.aux = 0;
+    dir.pos = 0;
+    return fat_remove(&dir, s);
 }
 #endif
