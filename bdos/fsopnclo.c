@@ -50,6 +50,7 @@
 #include "portab.h"
 #include "endian.h"
 #include "fs.h"
+#include "fatfs.h"
 #include "gemerror.h"
 #include "string.h"
 #include "mem.h"
@@ -70,7 +71,6 @@
 /*
  * forward prototypes
  */
-static long ixopen(char *name, int mod);
 long opnfil(FCB *f, DND *dn, int mod);
 static long makopn(FCB *f, DND *dn, int h, int mod);
 static FTAB *sftofdsrch(OFD *ofd);
@@ -219,42 +219,12 @@ long ixcreat(char *name, char attr)
  */
 long xopen(char *name, int mod)
 {
-    return ixopen(name, mod&VALID_FOPEN_BITS);
-}
-
-/*
-**  ixopen - open a file
-**
-**  returns
-**      <0 = error
-**      >0 = file handle
-*/
-static long ixopen(char *name, int mod)
-{
-    FCB *f;
-    DND *dn;
-    const char *s;
-    long pos;
-
-    /* first find path */
-    if ((long)(dn = findit(name,&s,0)) < 0)         /* M01.01.1212.01 */
-        return (long)dn;
-    if (!dn)                                        /* M01.01.1214.01 */
-        return EFILNF;
-
-    /*
-     **  now scan the directory file for a matching filename
-     */
-
-    pos = 0;
-    if (!(f = scan(dn,s,FA_NORM,&pos)))
-        return EFILNF;
-
-    /* Check to see if the file is read only */
-    if ((f -> f_attrib & FA_RO) && (mod != 0))
-        return EACCDN;
-
-    return opnfil(f, dn, mod);
+    int m = mod & VALID_FOPEN_BITS;
+#if CONF_WITH_PLUGGABLE_FS
+    return pfs_do_open(name, m);
+#else
+    return fat_open_path(name, m);
+#endif
 }
 
 

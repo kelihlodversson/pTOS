@@ -84,6 +84,28 @@ static LONG fat_dfree(struct pfs_ops *fs, WORD drive, ULONG out[4])
     return E_OK;
 }
 
+static LONG fat_open(PFSCOOKIE *dir, const char *name, WORD mode, PFSCOOKIE *out)
+{
+    FCB *f;
+    DND *dn = (DND *)dir->index;
+    long pos;
+    LONG rc;
+
+    pos = 0;
+    if (!(f = scan(dn, name, FA_NORM, &pos)))
+        return EFILNF;
+    if ((f->f_attrib & FA_RO) && (mode != 0))
+        return EACCDN;
+    rc = opnfil(f, dn, mode);
+    if (rc < 0)
+        return rc;
+    out->fs = dir->fs;
+    out->index = rc;
+    out->aux = 0;
+    out->pos = 0;
+    return E_OK;
+}
+
 #if CONF_WITH_PLUGGABLE_FS
 
 #define FAT_ALL_ATTR (FA_RO | FA_HIDDEN | FA_SYSTEM | FA_VOL | FA_SUBDIR | FA_ARCHIVE)
@@ -175,27 +197,6 @@ static LONG fat_lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
 
     out->fs = &fat_pfs_ops;
     out->index = (LONG)dn;
-    out->aux = 0;
-    out->pos = 0;
-
-    return E_OK;
-}
-
-static LONG fat_open(PFSCOOKIE *dir, const char *name, WORD mode, PFSCOOKIE *out)
-{
-    char path[LEN_ZPATH];
-    LONG rc, h;
-
-    rc = fat_abspath(dir, name, path, sizeof(path));
-    if (rc < 0)
-        return rc;
-
-    h = xopen(path, mode);
-    if (h < 0)
-        return h;
-
-    out->fs = &fat_pfs_ops;
-    out->index = h;
     out->aux = 0;
     out->pos = 0;
 
@@ -454,5 +455,26 @@ LONG fat_getfree_path(long *buf, int drv)
 {
     WORD drive = drv ? (WORD)(drv - 1) : run->p_curdrv;
     return fat_dfree(NULL, drive, (ULONG *)buf);
+}
+
+LONG fat_open_path(char *name, int mod)
+{
+    DND *dn;
+    const char *s;
+    PFSCOOKIE dir, out;
+    LONG rc;
+
+    if ((long)(dn = findit(name, &s, 0)) < 0)
+        return (long)dn;
+    if (!dn)
+        return EFILNF;
+    dir.fs = NULL;
+    dir.index = (LONG)dn;
+    dir.aux = 0;
+    dir.pos = 0;
+    rc = fat_open(&dir, s, mod, &out);
+    if (rc < 0)
+        return rc;
+    return out.index;
 }
 #endif
