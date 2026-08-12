@@ -86,7 +86,12 @@ static void sftdel(FTAB *sftp);
  */
 long xcreat(char *name, char attr)
 {
-    return ixcreat(name, attr & ~FA_SUBDIR);
+    int a = attr & ~FA_SUBDIR;
+#if CONF_WITH_PLUGGABLE_FS
+    return pfs_do_create(name, (UWORD)a);
+#else
+    return fat_creat_path(name, (char)a);
+#endif
 }
 
 
@@ -98,113 +103,11 @@ long xcreat(char *name, char attr)
  */
 long ixcreat(char *name, char attr)
 {
-    DND *dn;
-    OFD *fd;
-    FCB *f;
-    const char *s;
-    char n[2], a[11];                       /*  M01.01.03   */
-    int i, f2;                              /*  M01.01.03   */
-    long pos, rc;
-
-    n[0] = (char)ERASE_MARKER; n[1] = 0;
-
-    /* first find path */
-
-    if ((long)(dn = findit(name,&s,0)) < 0) /* M01.01.1212.01 */
-        return (long)dn;
-    if (!dn)                                /* M01.01.1214.01 */
-        return EPTHNF;
-
-    if (!*s || (*s == '.'))         /*  no file name || '.' || '..' */
-        return EPTHNF;
-
-    /*  M01.01.0721.01  */
-    if (contains_illegal_characters(s))
-        return EACCDN;
-
-    /*
-     * if the volume label attribute is set, no others are allowed
-     */
-    if ((attr&FA_VOL) && (attr != FA_VOL))
-        return EACCDN;
-
-    /*
-     * volume labels may only be created in the root
-     */
-    if ((attr == FA_VOL) && dn->d_parent)
-        return EACCDN;
-
-    if (!(fd = dn->d_ofd))
-        fd = makofd(dn);            /* makofd() also updates dn->d_ofd */
-
-    /*
-     * if a matching file already exists, we delete it first.  note
-     * that the definition of matching, and the action taken, differs
-     * depending on whether the file is a volume label or not:
-     *  . for a volume label, *any* existing volume label matches
-     *    and will be deleted (reference: Rainbow TOS Release Notes)
-     *  . for other files, the name must match, and the existing
-     *    file will be deleted unless (a) it's read-only or a folder
-     *    or (b) the file being created is a folder.
-     */
-    pos = 0;
-    if (attr == FA_VOL)
-        f = scan(dn,"*.*",FA_VOL,&pos);
-    else f = scan(dn,s,FA_NORM|FA_SUBDIR,&pos);
-
-    if (f)                  /* found matching file / label */
-    {
-        if (attr != FA_VOL) /* for normal files, need to check more stuff */
-        {
-                                        /* M01.01.0730.01   */
-            if ((f->f_attrib & (FA_SUBDIR | FA_RO)) || (attr == FA_SUBDIR))
-                return EACCDN;          /*  subdir or read only  */
-        }
-        pos -= 32;
-        if (ixdel(dn,f,pos) < 0)    /* file currently open by another process? */
-            return EACCDN;
-    }
-    else
-        pos = 0;
-
-    /* now scan for empty space */
-
-    /*  M01.01.SCC.FS.02  */
-    while( !( f = scan(dn,n,0xff,&pos) ) )
-    {
-        /*  not in current dir, need to grow  */
-        if (!fd->o_dnode)           /*  but can't grow root  */
-            return EACCDN;
-
-        if ( nextcl(fd,1) )
-            return EACCDN;
-
-        f = dirinit(dn);
-        pos = 0;
-    }
-
-    builds(s,a);
-    pos -= 32;
-    f->f_attrib = attr;
-    for (i = 0; i < 10; i++)
-        f->f_fill[i] = 0;
-    f->f_td.time = le2cpu16(current_time);
-    f->f_td.date = le2cpu16(current_date);
-    f->f_clust = 0;
-    f->f_fileln = 0;
-    ixlseek(fd,pos);
-    ixwrite(fd,11L,a);              /* write name, set dirty flag */
-    ixclose(fd,CL_DIR);             /* partial close to flush */
-    ixlseek(fd,pos);
-    s = (char*) ixread(fd,32L,NULL);
-    f2 = rc = opnfil((FCB*)s,dn,(f->f_attrib&FA_RO)?RO_MODE:RW_MODE);
-
-    if (rc < 0)
-        return rc;
-
-    getofd(f2)->o_dfd->o_flag |= O_DIRTY;
-
-    return f2;
+#if CONF_WITH_PLUGGABLE_FS
+    return pfs_do_create(name, (UWORD)(UBYTE)attr);
+#else
+    return fat_creat_path(name, attr);
+#endif
 }
 
 

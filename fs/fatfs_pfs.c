@@ -26,6 +26,7 @@
 #include "string.h"
 #include "kprint.h"
 #include "endian.h"
+#include "time.h"
 
 /*
  * fat_countfree - fast scan of FAT16 filesystem to count free clusters
@@ -101,6 +102,114 @@ static LONG fat_open(PFSCOOKIE *dir, const char *name, WORD mode, PFSCOOKIE *out
         return rc;
     out->fs = dir->fs;
     out->index = rc;
+    out->aux = 0;
+    out->pos = 0;
+    return E_OK;
+}
+
+static LONG fat_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *out)
+{
+    DND *dn = (DND *)dir->index;
+    OFD *fd;
+    FCB *f;
+    const char *s = name;
+    char n[2], a[11];                       /*  M01.01.03   */
+    int i, f2;                              /*  M01.01.03   */
+    long pos, rc;
+
+    n[0] = (char)ERASE_MARKER; n[1] = 0;
+
+    if (!*s || (*s == '.'))         /*  no file name || '.' || '..' */
+        return EPTHNF;
+
+    /*  M01.01.0721.01  */
+    if (contains_illegal_characters(s))
+        return EACCDN;
+
+    /*
+     * if the volume label attribute is set, no others are allowed
+     */
+    if ((attr&FA_VOL) && (attr != FA_VOL))
+        return EACCDN;
+
+    /*
+     * volume labels may only be created in the root
+     */
+    if ((attr == FA_VOL) && dn->d_parent)
+        return EACCDN;
+
+    if (!(fd = dn->d_ofd))
+        fd = makofd(dn);            /* makofd() also updates dn->d_ofd */
+
+    /*
+     * if a matching file already exists, we delete it first.  note
+     * that the definition of matching, and the action taken, differs
+     * depending on whether the file is a volume label or not:
+     *  . for a volume label, *any* existing volume label matches
+     *    and will be deleted (reference: Rainbow TOS Release Notes)
+     *  . for other files, the name must match, and the existing
+     *    file will be deleted unless (a) it's read-only or a folder
+     *    or (b) the file being created is a folder.
+     */
+    pos = 0;
+    if (attr == FA_VOL)
+        f = scan(dn,"*.*",FA_VOL,&pos);
+    else f = scan(dn,s,FA_NORM|FA_SUBDIR,&pos);
+
+    if (f)                  /* found matching file / label */
+    {
+        if (attr != FA_VOL) /* for normal files, need to check more stuff */
+        {
+                                        /* M01.01.0730.01   */
+            if ((f->f_attrib & (FA_SUBDIR | FA_RO)) || (attr == FA_SUBDIR))
+                return EACCDN;          /*  subdir or read only  */
+        }
+        pos -= 32;
+        if (ixdel(dn,f,pos) < 0)    /* file currently open by another process? */
+            return EACCDN;
+    }
+    else
+        pos = 0;
+
+    /* now scan for empty space */
+
+    /*  M01.01.SCC.FS.02  */
+    while( !( f = scan(dn,n,0xff,&pos) ) )
+    {
+        /*  not in current dir, need to grow  */
+        if (!fd->o_dnode)           /*  but can't grow root  */
+            return EACCDN;
+
+        if ( nextcl(fd,1) )
+            return EACCDN;
+
+        f = dirinit(dn);
+        pos = 0;
+    }
+
+    builds(s,a);
+    pos -= 32;
+    f->f_attrib = (UBYTE)attr;
+    for (i = 0; i < 10; i++)
+        f->f_fill[i] = 0;
+    f->f_td.time = le2cpu16(current_time);
+    f->f_td.date = le2cpu16(current_date);
+    f->f_clust = 0;
+    f->f_fileln = 0;
+    ixlseek(fd,pos);
+    ixwrite(fd,11L,a);              /* write name, set dirty flag */
+    ixclose(fd,CL_DIR);             /* partial close to flush */
+    ixlseek(fd,pos);
+    s = (char*) ixread(fd,32L,NULL);
+    f2 = rc = opnfil((FCB*)s,dn,(f->f_attrib&FA_RO)?RO_MODE:RW_MODE);
+
+    if (rc < 0)
+        return rc;
+
+    getofd(f2)->o_dfd->o_flag |= O_DIRTY;
+
+    out->fs = dir->fs;
+    out->index = f2;
     out->aux = 0;
     out->pos = 0;
     return E_OK;
@@ -197,27 +306,6 @@ static LONG fat_lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
 
     out->fs = &fat_pfs_ops;
     out->index = (LONG)dn;
-    out->aux = 0;
-    out->pos = 0;
-
-    return E_OK;
-}
-
-static LONG fat_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *out)
-{
-    char path[LEN_ZPATH];
-    LONG rc, h;
-
-    rc = fat_abspath(dir, name, path, sizeof(path));
-    if (rc < 0)
-        return rc;
-
-    h = xcreat(path, (char)attr);
-    if (h < 0)
-        return h;
-
-    out->fs = &fat_pfs_ops;
-    out->index = h;
     out->aux = 0;
     out->pos = 0;
 
@@ -473,6 +561,27 @@ LONG fat_open_path(char *name, int mod)
     dir.aux = 0;
     dir.pos = 0;
     rc = fat_open(&dir, s, mod, &out);
+    if (rc < 0)
+        return rc;
+    return out.index;
+}
+
+LONG fat_creat_path(char *name, char attr)
+{
+    DND *dn;
+    const char *s;
+    PFSCOOKIE dir, out;
+    LONG rc;
+
+    if ((long)(dn = findit(name, &s, 0)) < 0)
+        return (long)dn;
+    if (!dn)
+        return EPTHNF;
+    dir.fs = NULL;
+    dir.index = (LONG)dn;
+    dir.aux = 0;
+    dir.pos = 0;
+    rc = fat_create(&dir, s, (UWORD)(UBYTE)attr, &out);
     if (rc < 0)
         return rc;
     return out.index;
