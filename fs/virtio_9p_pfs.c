@@ -272,6 +272,22 @@ static void v9p_dircache_invalidate(ULONG fid)
         v9p_dircache[i].used = FALSE;
 }
 
+/* Tclunk's 'fid' after dropping its cache slot (if any) - any fid this
+ * file ever hands to v9p_resolve_name() as a dirfid may have picked up a
+ * cache slot there, so every clunk of a fid that *could* have been such
+ * a dirfid must invalidate first, not just the "own" directory cookies
+ * v9p_pfs_release() already covers. v9p_pfs_lookup()'s intermediate
+ * per-component fids (caught by Copilot's review of this PR) are exactly
+ * that case: each is 'curfid' - the dirfid just passed to
+ * v9p_resolve_name() - for one loop iteration before being superseded
+ * and clunked on the next. Harmless to call on a fid that was never
+ * cached (v9p_dircache_invalidate() is a no-op miss). */
+static void v9p_clunk_uncached(ULONG fid)
+{
+    v9p_dircache_invalidate(fid);
+    v9p_clunk(fid);
+}
+
 /* Finds 'fid's existing slot, or allocates one - first an unused slot,
  * falling back to evicting slot 0 if the pool is full (see #157's plan:
  * "exhaustion evicts slot 0", no recency tracking needed for a handful
@@ -423,6 +439,20 @@ static LONG v9p_pfs_lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
         while (*p && (*p != SLASH) && (i < V9P_MAX_NAME))
             comp[i++] = *p++;
         comp[i] = 0;
+
+        if (*p && (*p != SLASH))
+        {
+            /* the inner loop above stopped because comp[] ran out of
+             * room, not because it reached a real end of component - a
+             * silent truncation here would turn one long name into
+             * multiple bogus path components. No real GEMDOS caller can
+             * hit this (8.3 components never exceed 12 bytes), but fail
+             * loudly rather than resolve the wrong thing if one ever
+             * does. */
+            if (owned)
+                v9p_clunk_uncached(curfid);
+            return ERANGE;
+        }
         if (*p == SLASH)
             p++;
 
@@ -439,7 +469,7 @@ static LONG v9p_pfs_lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
             if (rc < 0)
             {
                 if (owned)
-                    v9p_clunk(curfid);
+                    v9p_clunk_uncached(curfid);
                 return rc;
             }
             wname[0] = realname;
@@ -449,12 +479,27 @@ static LONG v9p_pfs_lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
         if (rc < 0)
         {
             if (owned)
-                v9p_clunk(curfid);
+                v9p_clunk_uncached(curfid);
+            return rc;
+        }
+
+        /* Treaddir needs the fid already Tlopen'd (see v9p_pfs_root()'s
+         * own comment) - and unlike that single-component case, ANY fid
+         * here might still need a Treaddir of its own, if a later path
+         * component's short-name resolution has to scan it. Lopen every
+         * fid the moment it's created, not just the one this function
+         * finally returns. */
+        rc = v9p_lopen(newfid, 0);
+        if (rc < 0)
+        {
+            v9p_clunk_uncached(newfid);
+            if (owned)
+                v9p_clunk_uncached(curfid);
             return rc;
         }
 
         if (owned)
-            v9p_clunk(curfid);
+            v9p_clunk_uncached(curfid);
         curfid = newfid;
         owned = TRUE;
     }
@@ -465,15 +510,17 @@ static LONG v9p_pfs_lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
         if (rc < 0)
             return rc;
         owned = TRUE;
-    }
 
-    /* Same Tlopen-before-Treaddir requirement as v9p_pfs_root() - every
-     * directory cookie this driver hands out must remain readdir()-able. */
-    rc = v9p_lopen(curfid, 0);
-    if (rc < 0)
-    {
-        v9p_clunk(curfid);
-        return rc;
+        /* Same Tlopen-before-Treaddir requirement as above - a
+         * 0-component dup starts from dir->index (which the caller
+         * already lopen'd), but every directory cookie this driver hands
+         * out must independently satisfy the invariant on its own fid. */
+        rc = v9p_lopen(curfid, 0);
+        if (rc < 0)
+        {
+            v9p_clunk_uncached(curfid);
+            return rc;
+        }
     }
 
     out->fs = dir->fs;
