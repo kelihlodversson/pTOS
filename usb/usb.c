@@ -139,6 +139,29 @@ long usb_submit_int_msg(struct usb_device *dev, unsigned long pipe,
     return (*ucd->ioctl)(ucd, SUBMIT_INT_MSG, (long)&arg);
 }
 
+LONG usb_submit_async_int_msg(struct usb_async_int_msg *msg)
+{
+    struct ucdif *ucd;
+
+    if (!msg || !msg->dev || !msg->buffer || msg->transfer_len <= 0
+        || !msg->callback)
+        return -1;
+
+    ucd = msg->dev->controller;
+    return (*ucd->ioctl)(ucd, SUBMIT_ASYNC_INT_MSG, (LONG)msg);
+}
+
+LONG usb_cancel_async_int_msg(struct usb_async_int_msg *msg)
+{
+    struct ucdif *ucd;
+
+    if (!msg || !msg->dev)
+        return -1;
+
+    ucd = msg->dev->controller;
+    return (*ucd->ioctl)(ucd, CANCEL_ASYNC_INT_MSG, (LONG)msg);
+}
+
 /*
  * submits a control message and waits for completion (at least timeout * 1ms)
  * If timeout is 0, we don't wait for completion (used as example to set and

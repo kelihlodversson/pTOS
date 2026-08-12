@@ -177,6 +177,7 @@ enum {
 };
 
 struct usb_device;
+struct usb_async_int_msg;
 
 struct usb_device
 {
@@ -251,6 +252,8 @@ long usb_bulk_msg            (struct usb_device *dev, unsigned long pipe,
                               long flags);
 long usb_submit_int_msg      (struct usb_device *dev, unsigned long pipe,
                               void *buffer, long transfer_len, long interval);
+LONG usb_submit_async_int_msg(struct usb_async_int_msg *msg);
+LONG usb_cancel_async_int_msg(struct usb_async_int_msg *msg);
 long usb_disable_asynch      (long disable);
 long usb_maxpacket           (struct usb_device *dev, unsigned long pipe);
 long usb_get_configuration_no(struct usb_device *dev, long cfgno,
