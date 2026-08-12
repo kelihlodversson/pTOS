@@ -290,39 +290,11 @@ long xrmdir(char *p)
  */
 long xchmod(char *p, int wrt, char mod)
 {
-    OFD *fd;
-    DND *dn;                                /*  M01.01.03   */
-    const char *s;
-    long pos;
-
-    if ((long)(dn = findit(p,&s,0)) < 0)    /* M01.01.1212.01 */
-        return (long)dn;
-    if (!(long)dn)                          /* M01.01.1214.01 */
-        return EPTHNF;
-
-    pos = 0;
-
-    if (!scan(dn, s, FA_NORM, &pos))        /*  M01.01.03   */
-        return EFILNF;
-
-    /*
-     * disallow attempts to set invalid bits for an ordinary file
-     */
-    if (wrt && (mod&~FA_NORM))
-        return EACCDN;
-
-    pos -= 21;                              /* point at attribute in file */
-    fd = dn->d_ofd;
-    ixlseek(fd,pos);
-    if (!wrt)
-        ixread(fd,1L,&mod);
-    else
-    {
-        ixwrite(fd,1L,&mod);
-        ixclose(fd,CL_DIR);                 /* for flush */
-    }
-
-    return mod;
+#if CONF_WITH_PLUGGABLE_FS
+    return pfs_do_chmod(p, wrt, mod);
+#else
+    return fat_chmod_path(p, wrt, mod);
+#endif
 }
 
 

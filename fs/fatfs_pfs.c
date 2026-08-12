@@ -354,6 +354,31 @@ static LONG fat_remove(PFSCOOKIE *dir, const char *name)
     return ixdel(dn, f, pos);
 }
 
+static LONG fat_chattr(PFSCOOKIE *dir, const char *name, BOOL set, UWORD *dos_attr)
+{
+    DND *dn = (DND *)dir->index;
+    OFD *fd;
+    char mod = (char)*dos_attr;
+    long pos;
+
+    if (!scan(dn, name, FA_NORM, &pos))
+        return EFILNF;
+    if (set && (mod & ~FA_NORM))
+        return EACCDN;
+    pos -= 21;
+    fd = dn->d_ofd;
+    ixlseek(fd, pos);
+    if (!set)
+        ixread(fd, 1L, &mod);
+    else
+    {
+        ixwrite(fd, 1L, &mod);
+        ixclose(fd, CL_DIR);
+    }
+    *dos_attr = (UWORD)(UBYTE)mod;
+    return E_OK;
+}
+
 #if CONF_WITH_PLUGGABLE_FS
 
 #define FAT_ALL_ATTR (FA_RO | FA_HIDDEN | FA_SYSTEM | FA_VOL | FA_SUBDIR | FA_ARCHIVE)
@@ -588,22 +613,6 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
     return xrename(0, oldpath, newpath);
 }
 
-static LONG fat_chattr(PFSCOOKIE *dir, const char *name, BOOL set, UWORD *dos_attr)
-{
-    char path[LEN_ZPATH];
-    LONG rc = fat_abspath(dir, name, path, sizeof(path));
-
-    if (rc < 0)
-        return rc;
-
-    rc = xchmod(path, set ? 1 : 0, (char)*dos_attr);
-    if (rc < 0)
-        return rc;
-
-    *dos_attr = (UWORD)rc;
-    return E_OK;
-}
-
 static LONG fat_mediach(struct pfs_ops *fs, WORD drive)
 {
     (void)fs;
@@ -736,5 +745,27 @@ LONG fat_unlink_path(char *name)
     dir.aux = 0;
     dir.pos = 0;
     return fat_remove(&dir, s);
+}
+
+LONG fat_chmod_path(char *p, int wrt, char mod)
+{
+    DND *dn;
+    const char *s;
+    PFSCOOKIE dir;
+    UWORD attr = (UWORD)(UBYTE)mod;
+    LONG rc;
+
+    if ((long)(dn = findit(p, &s, 0)) < 0)
+        return (long)dn;
+    if (!dn)
+        return EPTHNF;
+    dir.fs = NULL;
+    dir.index = (LONG)dn;
+    dir.aux = 0;
+    dir.pos = 0;
+    rc = fat_chattr(&dir, s, wrt ? TRUE : FALSE, &attr);
+    if (rc < 0)
+        return rc;
+    return (long)(char)attr;
 }
 #endif
