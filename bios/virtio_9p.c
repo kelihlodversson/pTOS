@@ -953,6 +953,16 @@ LONG v9p_readdir_one(ULONG dir_fid, UQUAD *offset, char *name, int namelen,
     }
 
     rp = v9p_get32(rp, &datacount);
+    /* datacount is the device's own claim about how much dirent data
+     * follows - never trust it (or anything derived from it, like
+     * wirenamelen below) without first confirming the reply actually
+     * contains that many bytes, the same way v9p_read() already checks
+     * its own count field before touching it. */
+    if ((ULONG)rc < 11 + datacount)
+    {
+        KDEBUG(("virtio_9p: Rreaddir reply shorter than its own count field\n"));
+        return EINTRN;
+    }
     if (datacount == 0)
         return ENMFIL;      /* end of directory */
 
@@ -971,6 +981,16 @@ LONG v9p_readdir_one(ULONG dir_fid, UQUAD *offset, char *name, int namelen,
                      * driver's authoritative "is this a directory" -
                      * see is_dir below and virtio_9p.h's comment. */
 
+    /* Clamp against what datacount itself accounts for (now verified
+     * against the real reply length above), not just the caller's own
+     * 'namelen' buffer below - a wirenamelen inconsistent with datacount
+     * must never let the memcpy read past the confirmed-present region. */
+    {
+        ULONG max_from_datacount = datacount - (13 + 8 + 1 + 2);
+
+        if ((ULONG)wirenamelen > max_from_datacount)
+            wirenamelen = (UWORD)max_from_datacount;
+    }
     if (wirenamelen >= (UWORD)namelen)
         wirenamelen = (UWORD)(namelen - 1);   /* truncate, never overflow */
     memcpy(name, rp, wirenamelen);

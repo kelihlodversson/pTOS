@@ -128,12 +128,26 @@ static void v9p_filename8_3(char *dest, int destlen, const char *source)
         return;
     }
 
-    for (s = source + slen - 1; s >= source; s--)
-        if (*s == '.')
+    /* Scans backward for the last '.' without ever forming a pointer
+     * before 'source' - checking (s >= source) after an unconditional
+     * s-- would do exactly that on the final step, which is undefined
+     * behavior even though every real target here has flat, unsegmented
+     * memory where it would cause no actual fault. */
+    if (slen > 0)
+    {
+        s = source + slen - 1;
+        for (;;)
         {
-            dot = s;
-            break;
+            if (*s == '.')
+            {
+                dot = s;
+                break;
+            }
+            if (s == source)
+                break;
+            s--;
         }
+    }
     if (dot == source)
         dot = NULL;     /* a leading dot doesn't count as an extension separator */
 
@@ -221,12 +235,19 @@ static void v9p_filename8_3(char *dest, int destlen, const char *source)
  * to reuse the same pool-slot number can never collide with a stale
  * entry - v9p_dircache_invalidate() has already dropped it by then.
  *
- * Cache-assisted, not cache-required: v9p_resolve_name() falls back to
- * a full uncached scan whenever the cache has no slot for 'dirfid', or
- * the slot exists but isn't 'complete' (the directory has more real
- * entries than CONF_VIRTIO_9P_MAX_DIRCACHE_ENTRIES, or some real name
- * was too long for V9P_DIRCACHE_NAMELEN to hold) - so a small pool only
- * costs speed, never a wrong answer. */
+ * Cache-assisted, not cache-required: v9p_resolve_name() only ever
+ * trusts the cache for a HIT (a positive match), never for a miss - the
+ * host directory can change from outside this driver's view at any time
+ * (live host directory access while a developer edits files on the host
+ * is this whole driver's reason to exist, see #157), so a cached
+ * "definitely absent" answer could go stale and let create()/mkdir()/
+ * rename() silently do the wrong thing against a name that now exists
+ * for real. A miss - whether there is no slot for 'dirfid', or the slot
+ * exists but doesn't contain 'name' - always falls back to a live
+ * rescan; a directory with more real entries than
+ * CONF_VIRTIO_9P_MAX_DIRCACHE_ENTRIES, or a real name too long for
+ * V9P_DIRCACHE_NAMELEN, simply never gets that entry cached, so it's
+ * always resolved live too. Only costs speed, never a wrong answer. */
 #define V9P_DIRCACHE_NAMELEN  32
 
 typedef struct
@@ -239,9 +260,6 @@ typedef struct
 {
     BOOL used;
     ULONG fid;
-    BOOL complete;      /* FALSE: some real entry didn't fit - a MISS
-                         * against 'entries' below still means "ask the
-                         * server", not "definitely absent" */
     WORD nentries;
     V9P_DIRCACHE_ENTRY entries[CONF_VIRTIO_9P_MAX_DIRCACHE_ENTRIES];
 } V9P_DIRCACHE_SLOT;
@@ -292,8 +310,8 @@ static void v9p_clunk_uncached(ULONG fid)
  * falling back to evicting slot 0 if the pool is full (see #157's plan:
  * "exhaustion evicts slot 0", no recency tracking needed for a handful
  * of slots). Either way the returned slot is reset to empty: a reused
- * existing-but-incomplete slot must start over rather than accumulate
- * duplicate entries across repeated rescans. */
+ * slot must start over rather than accumulate duplicate entries across
+ * repeated rescans. */
 static WORD v9p_dircache_slot_for(ULONG fid)
 {
     WORD i = v9p_dircache_find(fid);
@@ -309,20 +327,21 @@ static WORD v9p_dircache_slot_for(ULONG fid)
 
     v9p_dircache[i].used = TRUE;
     v9p_dircache[i].fid = fid;
-    v9p_dircache[i].complete = FALSE;
     v9p_dircache[i].nentries = 0;
 
     return i;
 }
 
 /* Short (8.3, as GEMDOS hands to open()/create()/...) -> long name
- * resolution: checks 'dirfid's directory-listing cache first, falling
- * back to a live linear scan of 'dirfid's real entries (ParaTos's
+ * resolution: checks 'dirfid's directory-listing cache first for a HIT,
+ * falling back to a live linear scan of 'dirfid's real entries (ParaTos's
  * tos_path_to_unix() does the same, for the same reason - a directory's
  * real contents are the only source of truth for what a given hash tail
- * actually maps to) on a miss, populating/replacing the cache slot as it
- * goes. Matches "." and ".." unchanged, bypassing the cache entirely -
- * they are never real Treaddir entries. */
+ * actually maps to) whenever the cache doesn't have one, populating/
+ * replacing the cache slot as it goes. A cache MISS is never trusted as
+ * "definitely absent" by itself - see this section's own comment on why.
+ * Matches "." and ".." unchanged, bypassing the cache entirely - they are
+ * never real Treaddir entries. */
 static LONG v9p_resolve_name(ULONG dirfid, const char *name, char *realname, int realname_len)
 {
     UQUAD offset = 0;
@@ -331,7 +350,6 @@ static LONG v9p_resolve_name(ULONG dirfid, const char *name, char *realname, int
     BOOL is_dir;
     LONG rc;
     WORD slot;
-    BOOL overflowed = FALSE;
 
     if ((name[0] == '.') && ((name[1] == 0) || ((name[1] == '.') && (name[2] == 0))))
     {
@@ -350,28 +368,19 @@ static LONG v9p_resolve_name(ULONG dirfid, const char *name, char *realname, int
                 strlcpy(realname, v9p_dircache[slot].entries[i].real_name, (size_t)realname_len);
                 return E_OK;
             }
-
-        if (v9p_dircache[slot].complete)
-            return EFILNF;      /* every real entry is accounted for -
-                                 * a miss here is a genuine miss */
     }
 
-    /* Cache miss (no slot, or an incomplete one with no hit) - rescan
-     * from scratch, replacing whatever partial data that slot held. */
+    /* Cache miss (no slot, or a slot that doesn't contain 'name') -
+     * rescan live, replacing whatever data that slot held; a miss here
+     * is only ever "not found *right now*", not cached as a standing
+     * answer. */
     slot = v9p_dircache_slot_for(dirfid);
 
     for (;;)
     {
         rc = v9p_readdir_one(dirfid, &offset, realname, realname_len, &qid, &is_dir);
         if (rc < 0)
-        {
-            if (rc == ENMFIL)
-            {
-                v9p_dircache[slot].complete = !overflowed;
-                return EFILNF;
-            }
-            return rc;
-        }
+            return (rc == ENMFIL) ? EFILNF : rc;
 
         if ((strcmp(realname, ".") == 0) || (strcmp(realname, "..") == 0))
             continue;
@@ -388,13 +397,6 @@ static LONG v9p_resolve_name(ULONG dirfid, const char *name, char *realname, int
             strlcpy(v9p_dircache[slot].entries[n].real_name, realname,
                     sizeof(v9p_dircache[slot].entries[n].real_name));
             v9p_dircache[slot].nentries = (WORD)(n + 1);
-        }
-        else
-        {
-            overflowed = TRUE;  /* won't fit - this slot can never be
-                                 * trusted for a "definitely absent"
-                                 * answer, even if we otherwise reach
-                                 * end-of-directory below */
         }
 
         if (v9p_streqi(realname, name) || v9p_streqi(candidate8_3, name))
@@ -622,7 +624,13 @@ static LONG v9p_pfs_stat(ULONG dirfid, const char *name, BOOL is_dir, PFSATTR *o
 
     v9p_unixtime_to_gemdos((ULONG)attr.mtime_sec, &gdate, &gtime);
 
-    out->size = (ULONG)attr.size;
+    /* attr.size is a full UQUAD; PFSATTR.size is only ULONG (GEMDOS's own
+     * file-size field has never been wider than 32 bits, matching every
+     * other pfs_ops implementation's limit - see fs/pfs.h). Saturate
+     * rather than silently wrap a >4GB host file down to a tiny-looking
+     * one - the same clamp v9p_pfs_dfree() already uses for stat.blocks/
+     * .bfree, just for a size instead of a block count. */
+    out->size = (attr.size > 0xFFFFFFFFUL) ? 0xFFFFFFFFUL : (ULONG)attr.size;
     out->dos_attr = (UWORD)((is_dir ? FA_SUBDIR : 0) | ((attr.mode & 0200) ? 0 : FA_RO));
     out->date = gdate;
     out->time = gtime;
