@@ -354,6 +354,73 @@ static LONG fat_remove(PFSCOOKIE *dir, const char *name)
     return ixdel(dn, f, pos);
 }
 
+/* Remove an already-resolved directory DND. */
+static LONG fat_rmdir_dnd(DND *d)
+{
+    DND *d1, **q;
+    FCB *f;
+    OFD *fd, *f2;
+    long pos;
+
+    if (!d->d_parent)
+        return EACCDN;
+
+    if (!(fd = d->d_ofd))
+        fd = makofd(d);
+
+    ixlseek(fd, 0x40L);
+    do
+    {
+        if (!(f = (FCB *)ixread(fd, 32L, NULL)))
+            break;
+    } while ((f->f_name[0] == (char)ERASE_MARKER) || (f->f_attrib == FA_LFN));
+
+    if ((f != (FCB *)NULL) && (f->f_name[0] != 0x00))
+        return EACCDN;
+
+    for (d1 = *(q = &d->d_parent->d_left); d1 != d; d1 = *(q = &d1->d_right))
+        ;
+
+    if (d->d_files)
+        return EINTRN;
+    if (d->d_left)
+        return EINTRN;
+
+    *q = d->d_right;
+
+    if (d->d_ofd)
+        xmfreblk(d->d_ofd);
+
+    d1 = d->d_parent;
+    xmfreblk(d);
+
+    ixlseek((f2 = fd->o_dirfil), (pos = fd->o_dirbyt));
+    f = (FCB *)ixread(f2, 32L, NULL);
+
+    return ixdel(d1, f, pos);
+}
+
+static LONG __attribute__((unused)) fat_rmdir(PFSCOOKIE *dir, const char *name)
+{
+    DND *parent = (DND *)dir->index;
+    DND *d;
+    FCB *f;
+    long pos;
+
+    if (!*name || (*name == '.'))
+        return EPTHNF;
+
+    pos = 0;
+    f = scan(parent, name, FA_SUBDIR, &pos);
+    if (!f)
+        return EPTHNF;
+    d = getdnd(&f->f_name[0], parent);
+    if (!d)
+        return EPTHNF;
+
+    return fat_rmdir_dnd(d);
+}
+
 static LONG fat_chattr(PFSCOOKIE *dir, const char *name, BOOL set, UWORD *dos_attr)
 {
     DND *dn = (DND *)dir->index;
@@ -587,17 +654,6 @@ static LONG fat_readdir(PFSCOOKIE *dir, LONG *cursor, char *name, int namelen, P
     return E_OK;
 }
 
-static LONG fat_rmdir(PFSCOOKIE *dir, const char *name)
-{
-    char path[LEN_ZPATH];
-    LONG rc = fat_abspath(dir, name, path, sizeof(path));
-
-    if (rc < 0)
-        return rc;
-
-    return xrmdir(path);
-}
-
 static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
                         PFSCOOKIE *newdir, const char *newname)
 {
@@ -729,6 +785,20 @@ LONG fat_mkdir_path(char *s)
     dir.aux = 0;
     dir.pos = 0;
     return fat_mkdir(&dir, sp);
+}
+
+LONG fat_rmdir_path(char *p)
+{
+    DND *d;
+    const char *s;
+
+    if ((long)(d = findit(p, &s, 1)) < 0)
+        return (long)d;
+    if (!d)
+        return EPTHNF;
+    (void)s;
+
+    return fat_rmdir_dnd(d);
 }
 
 LONG fat_unlink_path(char *name)
