@@ -68,13 +68,18 @@
   preserve the configuration with `make savedefconfig`, and build it:
 
   ```sh
-  make rpi2_defconfig
-  make menuconfig
-  make savedefconfig
-  make
+   gmake rpi2_defconfig
+   gmake menuconfig
+   gmake savedefconfig
+   gmake
   ```
 
-  Expected: successful build producing `kernel7.img` that boots directly into
+   On macOS, use Homebrew GNU Make (`gmake`): the system `make` is GNU Make
+   3.81 while this tree requires 4.3 or later.  Do not run `olddefconfig` with
+   `--kconfig`: the installed kconfiglib accepts `Kconfig` only as a positional
+   argument.
+
+   Expected: successful build producing `kernel7.img` that boots directly into
   EmuCon, without AES or EmuDesk.
 
 - [ ] **Step 3: Create the required FAT16 test image outside the repository**
