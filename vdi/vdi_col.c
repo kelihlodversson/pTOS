@@ -1007,7 +1007,11 @@ void init_colors(void)
          */
         const vdi_backend_ops *const backend = vdi_screen_backend();
         void (*const set_hw_color)(Vwk *vwk, WORD pen, WORD *rgb) =
-            (backend && !vdi_screen_is_truecolor()) ? backend->set_color : NULL;
+            (backend && backend != &packed_truecolor_backend_ops
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR32
+             && backend != &packed_truecolor32_backend_ops
+#endif
+            ) ? backend->set_color : NULL;
 #elif CONF_WITH_VDI_BACKEND_TRUECOLOR
         void (*const set_hw_color)(Vwk *vwk, WORD pen, WORD *rgb) = NULL;
 #else
