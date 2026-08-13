@@ -162,7 +162,7 @@ Immediately after `#include "config.h"` and before `#include "string.h"` in
 `util/string.c`, add:
 
 ```c
-#ifdef ARCH_ARM
+#if ARCH_ARM
 #undef USE_STATIC_INLINES
 #define USE_STATIC_INLINES 0
 #endif
