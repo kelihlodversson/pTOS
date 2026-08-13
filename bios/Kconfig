@@ -605,6 +605,7 @@ config CONF_WITH_SHUTDOWN
 
 config USE_STATIC_INLINES
 	bool "Use static inline functions"
+	depends on !ARCH_ARM
 	default y
 	help
 	  Compile some very small functions as static inlines.  This makes

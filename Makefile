@@ -21,6 +21,19 @@
 # its options.
 #
 
+# Grouped targets require GNU Make 4.3.  Apple still ships GNU Make 3.81 as
+# /usr/bin/make, so reject it before make parses any grouped-target rules.
+MAKE_MAJOR = $(word 1,$(subst ., ,$(MAKE_VERSION)))
+MAKE_MINOR = $(word 2,$(subst ., ,$(MAKE_VERSION)))
+ifneq (,$(filter 0 1 2 3,$(MAKE_MAJOR)))
+$(error GNU Make 4.3 or later is required (found $(MAKE_VERSION)); use Homebrew gmake on macOS)
+endif
+ifeq (4,$(MAKE_MAJOR))
+ifneq (,$(filter 0 1 2,$(MAKE_MINOR)))
+$(error GNU Make 4.3 or later is required (found $(MAKE_VERSION)); use Homebrew gmake on macOS)
+endif
+endif
+
 MAKEFLAGS = --no-print-directory
 
 # Remove the target of any recipe that fails, so that a partially written

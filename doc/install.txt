@@ -50,7 +50,9 @@ configuration at all:
 
 You will also need:
 
-  * GNU make 4.3 or later (grouped targets are used; make 4.2.x will not work)
+  * GNU make 4.3 or later (grouped targets are used; make 4.2.x will not work).
+    macOS ships GNU Make 3.81 as /usr/bin/make; install GNU make with Homebrew
+    and run gmake instead.
   * Python 3 with kconfiglib, which provides the configuration front ends:
         pip3 install kconfiglib
 
