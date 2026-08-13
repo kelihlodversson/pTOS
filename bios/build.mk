@@ -44,6 +44,7 @@ obj-$(MACHINE_RPI) += raspi_board.o raspi_uart.o raspi_int.o raspi_mbox.o \
 obj-$(CONF_WITH_USB_XHCI) += raspi_vl805.o
 
 obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o virt_pic.o virt_timer.o
+obj-$(CONF_WITH_VDI_TRUECOLOR32_TEST) += virt_screen.o
 
 obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfish_rtc_isr.o goldfish_pic_isr.o
 

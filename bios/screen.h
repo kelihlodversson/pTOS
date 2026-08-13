@@ -121,6 +121,11 @@ int rez_changeable(void);
 WORD get_monitor_type(void);
 void screen_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez);
 void screen_get_current_mode_desc(SCREEN_MODE_DESC *desc);
+#if CONF_WITH_VDI_TRUECOLOR32_TEST
+void virt_arm_screen_init(void);
+void virt_arm_get_current_mode_desc(SCREEN_MODE_DESC *desc);
+void virt_arm_screen_report(void);
+#endif
 void get_pixel_size(WORD *width,WORD *height);
 
 /* hardware independant xbios routines */

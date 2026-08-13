@@ -19,7 +19,8 @@
 #include "../bios/screen.h"
 #include "vdi_backend.h"
 
-#define EXTENDED_PALETTE (CONF_WITH_VIDEL || CONF_WITH_TT_SHIFTER || defined(MACHINE_RPI))
+#define EXTENDED_PALETTE (CONF_WITH_VIDEL || CONF_WITH_TT_SHIFTER || defined(MACHINE_RPI) \
+    || CONF_WITH_VDI_TRUECOLOR32_TEST)
 
 #if EXTENDED_PALETTE
 #define MAXCOLOURS  256
