@@ -4,7 +4,7 @@
 
 **Goal:** Make ARM images build with Arm GNU Toolchain 15 and fail immediately with a clear error when GNU Make is older than 4.3.
 
-**Architecture:** Add a parse-time GNU Make version check near the top of the root Makefile, before grouped-target syntax is read. Make `util/string.c` emit the existing external `strcpy()` implementation for ARM only, so GCC 15 ARMv6's synthesized `_strcpy` reference has a provider while call sites retain their static inline implementation. Cover the Make guard with a standalone shell test using a temporary Makefile copy, then build `rpi1` and `rpi2` with the local GCC 15 toolchain.
+**Architecture:** Add a parse-time GNU Make version check near the top of the root Makefile, before grouped-target syntax is read. Make `bios/Kconfig` disable `USE_STATIC_INLINES` on ARM, so `util/string.c` emits the existing external `strcpy()` implementation for GCC 15 ARMv6's synthesized `_strcpy` reference. Cover the Make guard with a standalone shell test using a temporary Makefile copy, then build `rpi1` and `rpi2` with the local GCC 15 toolchain.
 
 **Tech Stack:** GNU Make 4.3+, POSIX shell, Arm GNU Toolchain 15.3.1, freestanding GNU C90.
 
@@ -12,8 +12,8 @@
 
 - Require GNU Make 4.3 or later; 4.2.x and earlier must fail during Makefile parsing.
 - The error must identify the detected Make version and direct macOS users to use Homebrew `gmake`.
-- Emit the existing `strcpy()` implementation in `util/string.c` for ARM only;
-  do not disable GCC builtins or optimization passes.
+- Disable `USE_STATIC_INLINES` on ARM in `bios/Kconfig`; do not disable GCC
+  builtins or optimization passes.
 - Do not alter m68k or ColdFire compiler flags.
 - Validate local GCC 15 builds for `rpi1` and `rpi2` using `gmake`.
 - Run `gmake gitready` before completion.
@@ -129,16 +129,16 @@ git add Makefile tools/test-make-version.sh
 git commit -m "Require GNU Make 4.3"
 ```
 
-### Task 2: Provide ARM `strcpy()` for GCC 15
+### Task 2: Disable Static Inlines on ARM for GCC 15
 
 **Files:**
-- Modify: `util/string.c:18-31`
+- Modify: `bios/Kconfig:606-612`
 
 **Interfaces:**
 - Consumes: `ARCH_ARM`, `USE_STATIC_INLINES`, `include/string.h`, and the existing
   `strcpy()` implementation in `util/string.c`.
 - Produces: an ARM global `_strcpy` definition for GCC 15-generated references;
-  m68k and ColdFire preprocessing and symbols remain unchanged.
+  m68k and ColdFire retain static inlines.
 
 - [ ] **Step 1: Create the failing compiler-behavior check**
 
@@ -156,22 +156,18 @@ grep -F "undefined reference to \`_strcpy'" gcc15-before.log
 
 Expected: the `grep` succeeds, proving the regression is the GCC 15 `_strcpy` link failure rather than a generator or configuration failure. If `bug translate all` crashes first, rerun only after it completes successfully; do not treat that unrelated host-tool crash as evidence for this task.
 
-- [ ] **Step 2: Emit the existing implementation for ARM only**
+- [ ] **Step 2: Make static inlines unavailable on ARM**
 
-Immediately after `#include "config.h"` and before `#include "string.h"` in
-`util/string.c`, add:
+Add this dependency to `USE_STATIC_INLINES` in `bios/Kconfig`:
 
-```c
-#if ARCH_ARM
-#undef USE_STATIC_INLINES
-#define USE_STATIC_INLINES 0
-#endif
+```text
+	depends on !ARCH_ARM
 ```
 
-This makes the existing `#if !(USE_STATIC_INLINES)` block compile the external
-`strcpy()` implementation only in the ARM `util/string.c` translation unit.
-Do not change the function body, `include/string.h`, compiler flags, or m68k
-and ColdFire behavior.
+This makes the existing `#if !(USE_STATIC_INLINES)` block in `util/string.c`
+compile the external `strcpy()` implementation for ARM. Do not change the
+function body, `include/string.h`, compiler flags, or m68k and ColdFire
+behavior.
 
 - [ ] **Step 3: Verify the focused regression is fixed**
 
@@ -213,7 +209,7 @@ Expected: exit zero with `gitready checks passed.`
 - [ ] **Step 6: Commit GCC 15 compatibility support**
 
 ```sh
-git add util/string.c
+git add bios/Kconfig
 git commit -m "Support GCC 15 ARM builds"
 ```
 

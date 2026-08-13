@@ -40,10 +40,9 @@ reference. `-fno-builtin-strcpy`, `always_inline`, and
 `-fno-tree-loop-distribute-patterns` do not reliably prevent that late
 transformation.
 
-`util/string.c` will locally override `USE_STATIC_INLINES` to 0 only when
-`ARCH_ARM` is defined, allowing it to supply `_strcpy`. Other ARM translation
-units continue to use the header's static inline implementation. m68k and
-ColdFire retain their existing behavior.
+`bios/Kconfig` will make `USE_STATIC_INLINES` unavailable on ARM, allowing
+`util/string.c` to supply `_strcpy` normally. m68k and ColdFire retain their
+existing static-inline setting.
 
 No m68k or ColdFire flags change.
 

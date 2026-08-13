@@ -16,10 +16,6 @@
  */
 
 #include "config.h"
-#if ARCH_ARM
-#undef USE_STATIC_INLINES
-#define USE_STATIC_INLINES 0
-#endif
 #include "portab.h"
 #include <stdarg.h>
 #include "doprintf.h"
