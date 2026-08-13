@@ -656,38 +656,21 @@ void planar_get_st_color(const Vwk *vwk, WORD pen, WORD *rgb)
     rgb[2] = st2vdi(c);
 }
 
-/*
- * planar_set_color/planar_get_color - the direct-call entry points
- * screen_set_color()/screen_get_color() use when CONF_WITH_VDI_BACKEND_
- * DISPATCH is off (issue #171): a single-renderer planar build has no
- * SCREEN_MODE_DESC/vdi_backend_select() step at all (see vdi_v_opnwk(),
- * vdi_control.c), so there is no descriptor-driven table to pick the right
- * planar_*_color family from the way vdi_backend_select() does for a
- * dispatch build (issue #173). These resolve the same has_videl/
- * has_tt_shifter/has_ste_shifter family choice once instead, cached in
- * hw_set_color/hw_get_color, and call straight through to the same
- * per-family functions above -- so there is exactly one implementation of
- * each family's palette I/O, just two different "pick it once" mechanisms
- * for the two build configurations.
- *
- * hw_set_color/hw_get_color/hw_adjust_colnum below are deliberately declared
- * with no initializer, so they zero-init into .bss instead of .data: on the
- * m68k targets, .data shares emutos.ld's read-only ROM region with .text
- * (see its FIXME comment, and the "DATA segment is not empty" check in the
- * top-level Makefile), so a non-zero static initializer here would place
- * them somewhere select_color_family()'s writes below could silently fail
- * on real hardware -- these three exist precisely to be written at runtime,
- * so they must live in .bss, not .data.
- */
-static void (*hw_set_color)(Vwk *vwk, WORD pen, WORD *rgb);
-static void (*hw_get_color)(const Vwk *vwk, WORD pen, WORD *rgb);
-
 #if CONF_WITH_TT_SHIFTER
 /*
  * hw_adjust_colnum - resolved-once counterpart (issue #173, secondary scope
  * item) to the has_tt_shifter check vdi_vs_color()/vdi_vq_color() used to
  * repeat on every call before adjust_tt_colnum() (see above): identity on
  * every non-TT family, adjust_tt_colnum itself once TT is confirmed present.
+ *
+ * Needed in every build with CONF_WITH_TT_SHIFTER, regardless of dispatch
+ * state: the bank-adjusted colnum it produces feeds REQ_COL/req_col2
+ * storage in vdi_vs_color()/vdi_vq_color(), bookkeeping that is shared
+ * across backends, not planar hardware I/O -- unlike hw_set_color/
+ * hw_get_color below, it has no dispatch-table equivalent to defer to.
+ *
+ * No initializer, like hw_set_color/hw_get_color below: see the comment
+ * there for why these need .bss, not .data.
  */
 static WORD identity_colnum(WORD colnum)
 {
@@ -695,27 +678,63 @@ static WORD identity_colnum(WORD colnum)
 }
 
 static WORD (*hw_adjust_colnum)(WORD colnum);
+
+static void select_colnum_adjust(void)
+{
+    hw_adjust_colnum = has_tt_shifter ? adjust_tt_colnum : identity_colnum;
+}
 #endif
 
+#if !CONF_WITH_VDI_BACKEND_DISPATCH && !CONF_WITH_VDI_BACKEND_TRUECOLOR
 /*
- * Resolves hw_set_color/hw_get_color/hw_adjust_colnum once (issue #173).
- * Called from init_colors(), which itself runs once per physical
- * workstation open, before any palette read/write -- has_videl/
- * has_tt_shifter/has_ste_shifter are boot-time constants (see
- * detect_video(), bios/machine.c), so this mirrors, for the non-dispatch
- * build, exactly what planar_mode_desc() computes into
- * SCREEN_MODE_DESC.shifter for the dispatch build. planar_set_color()/
- * planar_get_color() below trust that init_colors() has already run and
- * dispatch through hw_set_color/hw_get_color unconditionally -- no NULL
- * check, which would just be the per-call runtime test this issue removes,
- * re-added one level down.
+ * planar_set_color/planar_get_color - the direct-call entry points
+ * screen_set_color()/screen_get_color() use when neither dispatch nor the
+ * truecolor backend is built in (issue #171): a pure single-planar-renderer
+ * build has no SCREEN_MODE_DESC/vdi_backend_select() step at all (see
+ * vdi_v_opnwk(), vdi_control.c), so there is no descriptor-driven table to
+ * pick the right planar_*_color family from the way vdi_backend_select()
+ * does for a dispatch build (issue #173). These resolve the same
+ * has_videl/has_tt_shifter/has_ste_shifter family choice once instead,
+ * cached in hw_set_color/hw_get_color, and call straight through to the
+ * same per-family functions above -- so there is exactly one implementation
+ * of each family's palette I/O, just two different "pick it once"
+ * mechanisms for the two build configurations.
+ *
+ * This whole block -- statics, select_color_family() and the two entry
+ * points -- only exists in that one configuration: a dispatch build always
+ * reaches palette I/O through backend->set_color/get_color (a
+ * planar_*_backend_ops table entry, never through here, see
+ * vdi_backend_planar.c), and a truecolor-only build never touches planar
+ * code at all. Compiling this in for either would be exactly the dispatch
+ * overhead that can only ever resolve one way that issue #138 already
+ * excludes elsewhere (see vdi_backend.h).
+ *
+ * hw_set_color/hw_get_color below are deliberately declared with no
+ * initializer, so they zero-init into .bss instead of .data: on the m68k
+ * targets, .data shares emutos.ld's read-only ROM region with .text (see
+ * its FIXME comment, and the "DATA segment is not empty" check in the
+ * top-level Makefile), so a non-zero static initializer here would place
+ * them somewhere select_color_family()'s writes below could silently fail
+ * on real hardware -- these exist precisely to be written at runtime, so
+ * they must live in .bss, not .data.
+ */
+static void (*hw_set_color)(Vwk *vwk, WORD pen, WORD *rgb);
+static void (*hw_get_color)(const Vwk *vwk, WORD pen, WORD *rgb);
+
+/*
+ * Resolves hw_set_color/hw_get_color once (issue #173). Called from
+ * init_colors(), which itself runs once per physical workstation open,
+ * before any palette read/write -- has_videl/has_tt_shifter/has_ste_shifter
+ * are boot-time constants (see detect_video(), bios/machine.c), so this
+ * mirrors, for this build configuration, exactly what planar_mode_desc()
+ * computes into SCREEN_MODE_DESC.shifter for a dispatch build.
+ * planar_set_color()/planar_get_color() below trust that init_colors() has
+ * already run and dispatch through hw_set_color/hw_get_color
+ * unconditionally -- no NULL check, which would just be the per-call
+ * runtime test this issue removes, re-added one level down.
  */
 static void select_color_family(void)
 {
-#if CONF_WITH_TT_SHIFTER
-    hw_adjust_colnum = identity_colnum;
-#endif
-
 #if CONF_WITH_VIDEL
     if (has_videl)
     {
@@ -729,7 +748,6 @@ static void select_color_family(void)
     {
         hw_set_color = planar_set_tt_color;
         hw_get_color = planar_get_tt_color;
-        hw_adjust_colnum = adjust_tt_colnum;
         return;
     }
 #endif
@@ -754,6 +772,7 @@ void planar_get_color(const Vwk *vwk, WORD pen, WORD *rgb)
 {
     hw_get_color(vwk, pen, rgb);
 }
+#endif /* !CONF_WITH_VDI_BACKEND_DISPATCH && !CONF_WITH_VDI_BACKEND_TRUECOLOR */
 
 /*
  * screen_set_color/screen_get_color - dispatch a palette write/read to the
@@ -893,12 +912,21 @@ void init_colors(void)
 {
     int i;
 
+#if CONF_WITH_TT_SHIFTER
+    /* Resolve hw_adjust_colnum (issue #173) -- needed by vdi_vs_color()/
+     * vdi_vq_color() regardless of which backend is active, see the
+     * comment on select_colnum_adjust() above. */
+    select_colnum_adjust();
+#endif
+
+#if !CONF_WITH_VDI_BACKEND_DISPATCH && !CONF_WITH_VDI_BACKEND_TRUECOLOR
     /*
      * Resolve which hardware palette family drives planar_set_color()/
      * planar_get_color() (issue #173), before anything below reads or
      * writes a hardware colour register through them.
      */
     select_color_family();
+#endif
 
     /* set up palette */
     memcpy(linea_vars.REQ_COL, st_palette, sizeof(st_palette));    /* use ST as default */
@@ -937,7 +965,19 @@ void init_colors(void)
     for (i = 0; i < linea_vars.DEV_TAB[13]; i++)
         REV_MAP_COL[MAP_COL[i]] = i;
 
-    /* now initialise the hardware */
+#if !CONF_WITH_VDI_BACKEND_DISPATCH && !CONF_WITH_VDI_BACKEND_TRUECOLOR
+    /*
+     * Now initialise the hardware. Planar-only: the truecolor backend has
+     * no shared hardware palette to preload here (RGB565 packed pixels
+     * *are* the colour), and seeds each workstation's own pseudo-palette
+     * separately, from vdi_truecolor_init_palette() (init_wk(),
+     * vdi_control.c) instead -- see the vdi_screen_is_truecolor() branches
+     * above.  In a dispatch build, this step (like the pre-#173 code
+     * before it) is only reachable at all in this build configuration, so
+     * a dispatch build that ends up with the planar backend selected at
+     * runtime does not get its hardware palette preloaded here either;
+     * that gap predates this refactor.
+     */
     for (i = 0; i < linea_vars.DEV_TAB[13]; i++)
     {
         if (i < 16)
@@ -947,6 +987,7 @@ void init_colors(void)
             hw_set_color(NULL, i, req_col2[i-16]);
 #endif
     }
+#endif
 
 #ifdef HATARI_DUOCHROME_WORKAROUND
     /*
