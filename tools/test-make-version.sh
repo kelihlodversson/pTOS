@@ -17,26 +17,45 @@ cp "$repo_root/Makefile" "$tmpdir/Makefile"
 
 cd "$tmpdir"
 
-if make -f Makefile MAKE_VERSION=4.2 help >make-4.2.log 2>&1; then
-    echo 'Makefile accepted GNU Make 4.2'
-    exit 1
-fi
+expect_rejected()
+{
+    version=$1
+    log=make-$version.log
 
-if ! grep -F 'GNU Make 4.3 or later is required' make-4.2.log >/dev/null; then
-    cat make-4.2.log
-    echo 'GNU Make 4.2 did not report the required version diagnostic'
-    exit 1
-fi
+    if make -f Makefile MAKE_VERSION=$version help >$log 2>&1; then
+        echo "Makefile accepted GNU Make $version"
+        exit 1
+    fi
 
-if make -f Makefile MAKE_VERSION=4.3 help >make-4.3.log 2>&1; then
-    echo 'GNU Make 4.3 unexpectedly completed the incomplete temporary build'
-    exit 1
-fi
+    if ! grep -F 'GNU Make 4.3 or later is required' $log >/dev/null; then
+        cat $log
+        echo "GNU Make $version did not report the required version diagnostic"
+        exit 1
+    fi
+}
 
-if grep -F 'GNU Make 4.3 or later is required' make-4.3.log >/dev/null; then
-    cat make-4.3.log
-    echo 'GNU Make 4.3 was rejected by the version guard'
-    exit 1
-fi
+expect_accepted()
+{
+    version=$1
+    log=make-$version.log
+
+    if make -f Makefile MAKE_VERSION=$version help >$log 2>&1; then
+        echo "GNU Make $version unexpectedly completed the incomplete temporary build"
+        exit 1
+    fi
+
+    if grep -F 'GNU Make 4.3 or later is required' $log >/dev/null; then
+        cat $log
+        echo "GNU Make $version was rejected by the version guard"
+        exit 1
+    fi
+}
+
+expect_rejected 3.81
+expect_rejected 4.0
+expect_rejected 4.2
+expect_accepted 4.3
+expect_accepted 4.4
+expect_accepted 4.10
 
 echo 'GNU Make version test passed'
