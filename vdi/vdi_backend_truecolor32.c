@@ -29,10 +29,15 @@
 #undef PIXEL_SIZE
 #undef PIXEL
 
+static UWORD *truecolor32_get_start_addr(WORD x, WORD y)
+{
+    return (UWORD *)tc_get_start_addr(x, y);
+}
+
 vdi_backend_ops packed_truecolor32_backend_ops = {
     NULL,                       /* open: generic default */
     NULL,                       /* close: generic default */
-    (UWORD *(*)(WORD, WORD))tc_get_start_addr,
+    truecolor32_get_start_addr,
     tc_get_pixel,
     tc_put_pixel,
     tc_get_raw_pixel,
