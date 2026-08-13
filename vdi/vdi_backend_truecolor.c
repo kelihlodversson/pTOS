@@ -377,9 +377,9 @@ void vdi_truecolor_get_color(const Vwk *vwk, WORD index, WORD *r, WORD *g, WORD 
 
     if (linea_vars.v_planes == 32) {
         ULONG packed = vwk->tc_palette[index];
-        *r = (WORD)(((LONG)((packed >> 16) & 0xffUL) * 1000 + 127) / 255);
+        *r = (WORD)(((LONG)(packed & 0xffUL) * 1000 + 127) / 255);
         *g = (WORD)(((LONG)((packed >>  8) & 0xffUL) * 1000 + 127) / 255);
-        *b = (WORD)(((LONG)(packed & 0xffUL) * 1000 + 127) / 255);
+        *b = (WORD)(((LONG)((packed >> 16) & 0xffUL) * 1000 + 127) / 255);
     } else {
         vdi_from_rgb565(vwk->tc_palette[index], r, g, b);
     }

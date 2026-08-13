@@ -1175,6 +1175,39 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
  */
 static void cur_replace (MCS *mcs)
 {
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    if (vdi_screen_is_truecolor())
+    {
+        int row, col;
+        UWORD psize = vdi_truecolor_pixel_size();
+        ULONG *data = mouse_save.buffer;
+
+        /* mouse_save.height is 0 whenever the hardware cursor drew this
+         * frame (see cur_display()), so there is nothing to restore. */
+        for (row = 0; row < mouse_save.height; row++)
+        {
+            UBYTE *addr8 = (UBYTE *)get_start_addr(mouse_save.x, mouse_save.y+row);
+            if (psize == 2)
+            {
+                for (col = 0; col < mouse_save.width; col++)
+                {
+                    *(UWORD *)addr8 = (UWORD)*data++;
+                    addr8 += 2;
+                }
+            }
+            else
+            {
+                for (col = 0; col < mouse_save.width; col++)
+                {
+                    *(ULONG *)addr8 = *data++;
+                    addr8 += 4;
+                }
+            }
+        }
+        return;
+    }
+#endif
+
 #ifndef MACHINE_RPI
     WORD plane, row;
     UWORD *addr, *src, *dst;
@@ -1216,34 +1249,6 @@ static void cur_replace (MCS *mcs)
         for (row = mcs->len - 1; row >= 0; row--) {
             *dst = *src++;
             dst += dst_inc;         /* next row of screen */
-        }
-    }
-#else
-    int row, col;
-    UWORD psize = vdi_truecolor_pixel_size();
-    ULONG *data = mouse_save.buffer;
-
-    /* mouse_save.height is 0 whenever the hardware cursor drew this frame
-     * (see cur_display()), so this is a no-op in that case -- there is
-     * nothing to restore. */
-    for (row = 0; row<mouse_save.height; row++)
-    {
-        UBYTE *addr8 = (UBYTE *)get_start_addr(mouse_save.x, mouse_save.y+row);
-        if (psize == 2)
-        {
-            for (col = 0; col<mouse_save.width; col++)
-            {
-                *(UWORD *)addr8 = (UWORD)*data++;
-                addr8 += 2;
-            }
-        }
-        else
-        {
-            for (col = 0; col<mouse_save.width; col++)
-            {
-                *(ULONG *)addr8 = *data++;
-                addr8 += 4;
-            }
         }
     }
 #endif

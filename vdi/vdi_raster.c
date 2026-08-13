@@ -882,10 +882,10 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
         info->s_form = (UWORD*) v_bas_ad;
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
         /*
-         * The packed-truecolor backend has no bitplanes: each screen word
-         * is already one whole pixel, so the "next word" step is the packed
-         * pixel size and there is a single conceptual plane -- see the comment on
-         * plane_ct below.
+         * The packed-truecolor backend has no bitplanes: each packed pixel
+         * is the whole colour value, so the "next word" step is the packed
+         * pixel size and there is a single conceptual plane -- see the
+         * comment on plane_ct below.
          */
         if (vdi_screen_is_truecolor())
             info->s_nxwd = packed_ppb;
