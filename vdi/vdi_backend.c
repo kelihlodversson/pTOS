@@ -31,8 +31,13 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
          * screen.c) from has_videl/has_tt_shifter/has_ste_shifter.
          *
          * The default case (SCREEN_SHIFTER_ST, or any shifter this build
-         * didn't configure in -- can't happen for a valid descriptor, see
-         * screen_mode_desc_valid()) needs no patch: the copied defaults are
+         * didn't configure in -- can't happen in practice, since the only
+         * planar producer of mode->shifter, planar_mode_desc() in bios/
+         * screen.c, derives it from the same HAS_TT_SHIFTER/HAS_STE_SHIFTER/
+         * HAS_VIDEL macros that gate the #if CONF_WITH_* cases below; note
+         * screen_mode_desc_valid() alone does not guarantee this, since it
+         * only checks mode->shifter's value range, not which shifters this
+         * build has compiled in) needs no patch: the copied defaults are
          * already the ST-shifter pair.
          */
         memcpy(&planar_backend_ops, &default_planar_backend_ops, sizeof(planar_backend_ops));
