@@ -994,14 +994,13 @@ void init_colors(void)
      * long as the active backend actually is planar.
      */
     {
-        void (*set_hw_color)(Vwk *vwk, WORD pen, WORD *rgb);
-
 #if CONF_WITH_VDI_BACKEND_DISPATCH
-        set_hw_color = vdi_screen_is_truecolor() ? NULL : vdi_screen_backend()->set_color;
+        void (*const set_hw_color)(Vwk *vwk, WORD pen, WORD *rgb) =
+            vdi_screen_is_truecolor() ? NULL : vdi_screen_backend()->set_color;
 #elif CONF_WITH_VDI_BACKEND_TRUECOLOR
-        set_hw_color = NULL;
+        void (*const set_hw_color)(Vwk *vwk, WORD pen, WORD *rgb) = NULL;
 #else
-        set_hw_color = hw_set_color;
+        void (*const set_hw_color)(Vwk *vwk, WORD pen, WORD *rgb) = hw_set_color;
 #endif
 
         if (set_hw_color)
