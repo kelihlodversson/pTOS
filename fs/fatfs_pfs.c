@@ -849,6 +849,29 @@ LONG fat_chdir_path(char *p)
     return E_OK;
 }
 
+LONG fat_getdir_path(char *buf, int drv)
+{
+    DND *p;
+    int n;
+    int len;
+
+    drv = (drv == 0) ? run->p_curdrv : drv - 1;
+
+    if (!(Drvmap() & (1L << drv)) || (ckdrv(drv, FALSE) < 0))
+    {
+        *buf = 0;
+        return EDRIVE;
+    }
+
+    n = run->p_curdir[drv];
+    p = dirtbl[n].dnd;
+    len = LEN_ZPATH - 3;
+    buf = dopath(p, buf, &len);
+    *--buf = 0;
+
+    return E_OK;
+}
+
 LONG fat_unlink_path(char *name)
 {
     DND *dn;

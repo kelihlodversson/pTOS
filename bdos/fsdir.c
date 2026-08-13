@@ -976,25 +976,11 @@ void decr_curdir_usage(int n)
  */
 long xgetdir(char *buf, int drv)
 {
-    DND *p;
-    int n;
-    int len;                                            /* M01.01.1024.02 */
-
-    drv = (drv == 0) ? run->p_curdrv : drv-1;
-
-    if (!(Drvmap() & (1L<<drv)) || (ckdrv(drv, FALSE) < 0))     /* M01.01.1031.01 */
-    {
-        *buf = 0;
-        return EDRIVE;
-    }
-
-    n = run->p_curdir[drv];
-    p = dirtbl[n].dnd;
-    len = LEN_ZPATH - 3;                                /* M01.01.1024.02 */
-    buf = dopath(p,buf,&len);                           /* M01.01.1024.02 */
-    *--buf = 0;     /* null as last char, not slash */
-
-    return E_OK;
+#if CONF_WITH_PLUGGABLE_FS
+    return pfs_do_getdir(buf, drv);
+#else
+    return fat_getdir_path(buf, drv);
+#endif
 }
 
 
