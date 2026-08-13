@@ -111,6 +111,9 @@ const vdi_backend_ops *vdi_screen_backend(void);
 
 extern vdi_backend_ops planar_backend_ops;
 extern vdi_backend_ops packed_truecolor_backend_ops;
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR32
+extern vdi_backend_ops packed_truecolor32_backend_ops;
+#endif
 
 /*
  * Installs a generic default into every NULL slot of a backend ops table
@@ -134,7 +137,13 @@ void vdi_backend_ops_init(vdi_backend_ops *ops);
 static inline BOOL vdi_screen_is_truecolor(void)
 {
 #if CONF_WITH_VDI_BACKEND_DISPATCH
-    return vdi_screen_backend() == &packed_truecolor_backend_ops;
+    const vdi_backend_ops *backend = vdi_screen_backend();
+
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR32
+    if (backend == &packed_truecolor32_backend_ops)
+        return TRUE;
+#endif
+    return backend == &packed_truecolor_backend_ops;
 #else
     return CONF_WITH_VDI_BACKEND_TRUECOLOR;
 #endif

@@ -33,6 +33,15 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
     }
 #endif
 
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR32
+    if (mode->layout == SCREEN_LAYOUT_PACKED
+        && mode->color_model == SCREEN_COLOR_TRUECOLOR
+        && mode->pixel_format == SCREEN_PIXEL_XRGB8888) {
+        vdi_backend_ops_init(&packed_truecolor32_backend_ops);
+        return &packed_truecolor32_backend_ops;
+    }
+#endif
+
     return NULL;
 }
 
