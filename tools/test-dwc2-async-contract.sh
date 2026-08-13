@@ -66,7 +66,10 @@ require_multiline '\(frame - slot->ssplit_frame\)[\s\S]*> 4[\s\S]*slot->split_st
     'complete-split NYET retry window is limited to four microframes'
 require_file 'config CONF_DEBUG_USB_ASYNC' "$usb_kconfig" \
     'shared USB async trace option'
-require_file 'default n' "$usb_kconfig" 'async trace disabled by default'
+if ! rg -U -q 'config CONF_DEBUG_USB_ASYNC[\s\S]*default n[\s\S]*help' "$usb_kconfig"; then
+    echo 'missing async DWC2 contract: async trace disabled by default'
+    exit 1
+fi
 if ! rg -U -q '#if CONF_DEBUG_USB_ASYNC[\s\S]*#define KINFO_USB_ASYNC\(a\) KINFO\(a\)[\s\S]*#else[\s\S]*#define KINFO_USB_ASYNC\(a\) \(\(void\)0\)[\s\S]*#endif' "$usb_header"; then
     echo 'missing async DWC2 contract: compile-time USB async trace gate'
     exit 1
