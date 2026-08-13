@@ -131,25 +131,48 @@ const vdi_backend_ops *vdi_screen_backend(void);
  * unconditional fallback (also what any non-Atari-shifter planar driver,
  * e.g. Amiga, resolves to); the other three exist only when their hardware
  * family is configured in.
+ *
+ * const: every slot in every planar variant is always populated at compile
+ * time, so none of them ever need vdi_backend_ops_init()'s NULL-slot fill-in
+ * (see vdi_backend_ops_validate() below, which vdi_backend_select() uses for
+ * these instead). This isn't just style -- on the m68k targets, .data lives
+ * in the same read-only ROM region as .text (see the FIXME in emutos.ld and
+ * the "DATA segment is not empty" check in the top-level Makefile); a
+ * non-const table there would accept writes that silently do nothing on
+ * real hardware. packed_truecolor_backend_ops can leave optional slots NULL
+ * under CONF_VDI_SPARSE_TABLE (see vdi_backend_truecolor.c), so it genuinely
+ * needs vdi_backend_ops_init()'s mutation and stays non-const -- it only
+ * matters on MACHINE_RPI, where the "ROM" is actually writable RAM.
  */
-extern vdi_backend_ops planar_st_backend_ops;
+extern const vdi_backend_ops planar_st_backend_ops;
 #if CONF_WITH_STE_SHIFTER
-extern vdi_backend_ops planar_ste_backend_ops;
+extern const vdi_backend_ops planar_ste_backend_ops;
 #endif
 #if CONF_WITH_TT_SHIFTER
-extern vdi_backend_ops planar_tt_backend_ops;
+extern const vdi_backend_ops planar_tt_backend_ops;
 #endif
 #if CONF_WITH_VIDEL
-extern vdi_backend_ops planar_videl_backend_ops;
+extern const vdi_backend_ops planar_videl_backend_ops;
 #endif
 extern vdi_backend_ops packed_truecolor_backend_ops;
 
 /*
  * Installs a generic default into every NULL slot of a backend ops table
- * (see the defaults in vdi_backend.c).  Mandatory slots must already be
- * non-NULL.  Idempotent: safe to call on every vdi_backend_select().
+ * (see the defaults in vdi_backend.c), then validates it (see
+ * vdi_backend_ops_validate() below). Mutates ops, so it cannot be used on a
+ * const table -- see the planar_*_backend_ops comment above. Idempotent:
+ * safe to call on every vdi_backend_select().
  */
 void vdi_backend_ops_init(vdi_backend_ops *ops);
+
+/*
+ * Read-only counterpart to vdi_backend_ops_init(), for tables that are
+ * always fully populated and never need the NULL-slot fill-in (currently
+ * the planar_*_backend_ops variants, which are const). KDEBUGs if a
+ * mandatory primitive is missing, same check vdi_backend_ops_init() runs
+ * after filling defaults.
+ */
+void vdi_backend_ops_validate(const vdi_backend_ops *ops);
 
 #endif /* CONF_WITH_VDI_BACKEND_DISPATCH */
 

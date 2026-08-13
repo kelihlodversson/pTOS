@@ -28,8 +28,16 @@ static void planar_close(Vwk *vwk)
  * set_color/get_color is shifter-agnostic and shared verbatim between the
  * variants -- plane count, not chip family, is what the rest of the planar
  * backend varies on, and that's already handled generically.
+ *
+ * const: every slot below is always populated, so vdi_backend_select() only
+ * ever runs the read-only vdi_backend_ops_validate() on these, never the
+ * mutating vdi_backend_ops_init(). That matters on the m68k targets, where
+ * .data shares emutos.ld's read-only ROM region with .text (see its FIXME
+ * comment) -- a non-const table here would silently fail to hold any write,
+ * and vdi_backend_ops_init() would never actually need to write anything to
+ * a table with no NULL slots, so nothing is lost by not calling it.
  */
-vdi_backend_ops planar_st_backend_ops = {
+const vdi_backend_ops planar_st_backend_ops = {
     planar_open,
     planar_close,
     planar_get_start_addr,
@@ -48,7 +56,7 @@ vdi_backend_ops planar_st_backend_ops = {
 };
 
 #if CONF_WITH_STE_SHIFTER
-vdi_backend_ops planar_ste_backend_ops = {
+const vdi_backend_ops planar_ste_backend_ops = {
     planar_open,
     planar_close,
     planar_get_start_addr,
@@ -68,7 +76,7 @@ vdi_backend_ops planar_ste_backend_ops = {
 #endif
 
 #if CONF_WITH_TT_SHIFTER
-vdi_backend_ops planar_tt_backend_ops = {
+const vdi_backend_ops planar_tt_backend_ops = {
     planar_open,
     planar_close,
     planar_get_start_addr,
@@ -88,7 +96,7 @@ vdi_backend_ops planar_tt_backend_ops = {
 #endif
 
 #if CONF_WITH_VIDEL
-vdi_backend_ops planar_videl_backend_ops = {
+const vdi_backend_ops planar_videl_backend_ops = {
     planar_open,
     planar_close,
     planar_get_start_addr,

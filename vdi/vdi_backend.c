@@ -20,7 +20,7 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
         return NULL;
 
     if (mode->layout == SCREEN_LAYOUT_PLANAR && mode->color_model == SCREEN_COLOR_INDEXED) {
-        vdi_backend_ops *ops;
+        const vdi_backend_ops *ops;
 
         /*
          * Which hardware palette family (issue #173): mode->shifter was
@@ -52,7 +52,12 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
             break;
         }
 
-        vdi_backend_ops_init(ops);
+        /*
+         * Not vdi_backend_ops_init(): the planar_*_backend_ops variants are
+         * const (see vdi_backend.h) and never have a NULL slot to fill in,
+         * so only the read-only mandatory-primitive check applies.
+         */
+        vdi_backend_ops_validate(ops);
         return ops;
     }
 
@@ -382,6 +387,14 @@ static WORD default_search_left(const VwkClip *clip, WORD x, WORD y, UWORD searc
     return x + 1;       /* output x coord + 1 to endxleft. */
 }
 
+void vdi_backend_ops_validate(const vdi_backend_ops *ops)
+{
+    if (!ops->get_start_addr || !ops->get_pixel || !ops->put_pixel
+        || !ops->get_raw_pixel || !ops->put_raw_pixel
+        || !ops->set_color || !ops->get_color)
+        KDEBUG(("vdi_backend_ops_validate: backend is missing a mandatory primitive\n"));
+}
+
 void vdi_backend_ops_init(vdi_backend_ops *ops)
 {
     if (!ops->open) ops->open = default_open;
@@ -393,8 +406,5 @@ void vdi_backend_ops_init(vdi_backend_ops *ops)
     if (!ops->search_right) ops->search_right = default_search_right;
     if (!ops->search_left) ops->search_left = default_search_left;
 
-    if (!ops->get_start_addr || !ops->get_pixel || !ops->put_pixel
-        || !ops->get_raw_pixel || !ops->put_raw_pixel
-        || !ops->set_color || !ops->get_color)
-        KDEBUG(("vdi_backend_ops_init: backend is missing a mandatory primitive\n"));
+    vdi_backend_ops_validate(ops);
 }

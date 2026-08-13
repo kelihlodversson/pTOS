@@ -669,9 +669,18 @@ void planar_get_st_color(const Vwk *vwk, WORD pen, WORD *rgb)
  * per-family functions above -- so there is exactly one implementation of
  * each family's palette I/O, just two different "pick it once" mechanisms
  * for the two build configurations.
+ *
+ * hw_set_color/hw_get_color/hw_adjust_colnum below are deliberately declared
+ * with no initializer, so they zero-init into .bss instead of .data: on the
+ * m68k targets, .data shares emutos.ld's read-only ROM region with .text
+ * (see its FIXME comment, and the "DATA segment is not empty" check in the
+ * top-level Makefile), so a non-zero static initializer here would place
+ * them somewhere select_color_family()'s writes below could silently fail
+ * on real hardware -- these three exist precisely to be written at runtime,
+ * so they must live in .bss, not .data.
  */
-static void (*hw_set_color)(Vwk *vwk, WORD pen, WORD *rgb) = planar_set_st_color;
-static void (*hw_get_color)(const Vwk *vwk, WORD pen, WORD *rgb) = planar_get_st_color;
+static void (*hw_set_color)(Vwk *vwk, WORD pen, WORD *rgb);
+static void (*hw_get_color)(const Vwk *vwk, WORD pen, WORD *rgb);
 
 #if CONF_WITH_TT_SHIFTER
 /*
@@ -685,19 +694,27 @@ static WORD identity_colnum(WORD colnum)
     return colnum;
 }
 
-static WORD (*hw_adjust_colnum)(WORD colnum) = identity_colnum;
+static WORD (*hw_adjust_colnum)(WORD colnum);
 #endif
 
 /*
- * Resolves hw_set_color/hw_get_color once (issue #173). Called from
- * init_colors(), which itself runs once per physical workstation open,
- * before any palette read/write -- has_videl/has_tt_shifter/has_ste_shifter
- * are boot-time constants (see detect_video(), bios/machine.c), so this
- * mirrors, for the non-dispatch build, exactly what planar_mode_desc()
- * computes into SCREEN_MODE_DESC.shifter for the dispatch build.
+ * Resolves hw_set_color/hw_get_color/hw_adjust_colnum once (issue #173).
+ * Called from init_colors(), which itself runs once per physical
+ * workstation open, before any palette read/write -- has_videl/
+ * has_tt_shifter/has_ste_shifter are boot-time constants (see
+ * detect_video(), bios/machine.c), so this mirrors, for the non-dispatch
+ * build, exactly what planar_mode_desc() computes into
+ * SCREEN_MODE_DESC.shifter for the dispatch build. Also called lazily by
+ * planar_set_color()/planar_get_color() below, so a caller reachable before
+ * init_colors() has run (none currently) still gets a real answer instead
+ * of dispatching through a still-NULL .bss function pointer.
  */
 static void select_color_family(void)
 {
+#if CONF_WITH_TT_SHIFTER
+    hw_adjust_colnum = identity_colnum;
+#endif
+
 #if CONF_WITH_VIDEL
     if (has_videl)
     {
@@ -729,11 +746,15 @@ static void select_color_family(void)
 
 void planar_set_color(Vwk *vwk, WORD pen, WORD *rgb)
 {
+    if (!hw_set_color)
+        select_color_family();
     hw_set_color(vwk, pen, rgb);
 }
 
 void planar_get_color(const Vwk *vwk, WORD pen, WORD *rgb)
 {
+    if (!hw_get_color)
+        select_color_family();
     hw_get_color(vwk, pen, rgb);
 }
 
