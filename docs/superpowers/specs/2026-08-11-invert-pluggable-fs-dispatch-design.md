@@ -1,5 +1,8 @@
 # Invert Pluggable-FS Dispatch Design
 
+> **Status:** Implemented by PR #176. The Context below records the
+> pre-change architecture; the Target Architecture describes the resulting design.
+
 ## Context
 
 Issue #174, following PR #159 (the pluggable filesystem layer). Today the

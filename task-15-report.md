@@ -10,3 +10,6 @@
   it was not changed.
 - Verification: `make gitready` and a clean representative build are run
   before the task commit.
+- Fix round 1/5: added the PR #176 implementation status note to the approved
+  design spec, explicitly retaining Context as pre-change background.
+- Verification: `git diff --check` passes before the fix-round commit.
