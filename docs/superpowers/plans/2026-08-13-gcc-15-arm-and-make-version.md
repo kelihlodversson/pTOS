@@ -4,7 +4,7 @@
 
 **Goal:** Make ARM images build with Arm GNU Toolchain 15 and fail immediately with a clear error when GNU Make is older than 4.3.
 
-**Architecture:** Add a parse-time GNU Make version check near the top of the root Makefile, before grouped-target syntax is read. Add the narrow ARM-only compiler switch that preserves the project `strcpy()` implementation under GCC 15. Cover the Make guard with a standalone shell test using a temporary Makefile copy, then build `rpi1` and `rpi2` with the local GCC 15 toolchain.
+**Architecture:** Add a parse-time GNU Make version check near the top of the root Makefile, before grouped-target syntax is read. Make `util/string.c` emit the existing external `strcpy()` implementation for ARM only, so GCC 15 ARMv6's synthesized `_strcpy` reference has a provider while call sites retain their static inline implementation. Cover the Make guard with a standalone shell test using a temporary Makefile copy, then build `rpi1` and `rpi2` with the local GCC 15 toolchain.
 
 **Tech Stack:** GNU Make 4.3+, POSIX shell, Arm GNU Toolchain 15.3.1, freestanding GNU C90.
 
@@ -12,8 +12,8 @@
 
 - Require GNU Make 4.3 or later; 4.2.x and earlier must fail during Makefile parsing.
 - The error must identify the detected Make version and direct macOS users to use Homebrew `gmake`.
-- Add only `-fno-tree-loop-distribute-patterns` for ARM; do not disable all
-  GCC builtins or unrelated optimization passes.
+- Emit the existing `strcpy()` implementation in `util/string.c` for ARM only;
+  do not disable GCC builtins or optimization passes.
 - Do not alter m68k or ColdFire compiler flags.
 - Validate local GCC 15 builds for `rpi1` and `rpi2` using `gmake`.
 - Run `gmake gitready` before completion.
@@ -129,14 +129,16 @@ git add Makefile tools/test-make-version.sh
 git commit -m "Require GNU Make 4.3"
 ```
 
-### Task 2: Preserve ARM `strcpy()` Calls Under GCC 15
+### Task 2: Provide ARM `strcpy()` for GCC 15
 
 **Files:**
-- Modify: `Makefile:178-187`
+- Modify: `util/string.c:18-31`
 
 **Interfaces:**
-- Consumes: `ARCH_ARM`, `TOOLCHAIN_CFLAGS`, and `include/string.h`'s `USE_STATIC_INLINES` implementation.
-- Produces: ARM compile commands containing `-fno-tree-loop-distribute-patterns`; m68k and ColdFire compile commands remain unchanged.
+- Consumes: `ARCH_ARM`, `USE_STATIC_INLINES`, `include/string.h`, and the existing
+  `strcpy()` implementation in `util/string.c`.
+- Produces: an ARM global `_strcpy` definition for GCC 15-generated references;
+  m68k and ColdFire preprocessing and symbols remain unchanged.
 
 - [ ] **Step 1: Create the failing compiler-behavior check**
 
@@ -154,26 +156,22 @@ grep -F "undefined reference to \`_strcpy'" gcc15-before.log
 
 Expected: the `grep` succeeds, proving the regression is the GCC 15 `_strcpy` link failure rather than a generator or configuration failure. If `bug translate all` crashes first, rerun only after it completes successfully; do not treat that unrelated host-tool crash as evidence for this task.
 
-- [ ] **Step 2: Add the minimal ARM-only compiler flag**
+- [ ] **Step 2: Emit the existing implementation for ARM only**
 
-Change the ARM assignment in `Makefile` from:
+Immediately after `#include "config.h"` and before `#include "string.h"` in
+`util/string.c`, add:
 
-```make
-TOOLCHAIN_CFLAGS = -fleading-underscore -fno-reorder-functions -DELF_TOOLCHAIN
+```c
+#ifdef ARCH_ARM
+#undef USE_STATIC_INLINES
+#define USE_STATIC_INLINES 0
+#endif
 ```
 
-to:
-
-```make
-TOOLCHAIN_CFLAGS = -fleading-underscore -fno-reorder-functions \
-                  -fno-tree-loop-distribute-patterns -DELF_TOOLCHAIN
-```
-
-Add a concise comment immediately above the assignment explaining that GCC 15's
-loop-distribution optimization can turn the static inline `strcpy()` into an
-unavailable external reference in freestanding ARM builds. Do not add
-`-fno-builtin` or disable unrelated optimization passes, and do not change
-non-ARM flags.
+This makes the existing `#if !(USE_STATIC_INLINES)` block compile the external
+`strcpy()` implementation only in the ARM `util/string.c` translation unit.
+Do not change the function body, `include/string.h`, compiler flags, or m68k
+and ColdFire behavior.
 
 - [ ] **Step 3: Verify the focused regression is fixed**
 
@@ -185,8 +183,9 @@ gmake rpi1_defconfig
 gmake
 ```
 
-Expected: exit zero and `# kernel.img is ready`. Confirm the compile commands
-include `-fno-tree-loop-distribute-patterns`.
+Expected: exit zero and `# kernel.img is ready`. Confirm
+`arm-none-eabi-nm emutos.elf` contains a `T _strcpy` definition and no undefined
+`_strcpy` symbol.
 
 - [ ] **Step 4: Validate the requested ARM configurations**
 
@@ -214,7 +213,7 @@ Expected: exit zero with `gitready checks passed.`
 - [ ] **Step 6: Commit GCC 15 compatibility support**
 
 ```sh
-git add Makefile
+git add util/string.c
 git commit -m "Support GCC 15 ARM builds"
 ```
 

@@ -32,13 +32,18 @@ Makefile parsing.
 
 ### GCC 15 Compatibility
 
-Add `-fno-tree-loop-distribute-patterns` to the ARM-only compiler flags in
-`Makefile`. GCC 15.3 recognizes the loop in the project's static inline
-`strcpy()` and, after inlining, rewrites it into an external
-`__builtin_strcpy` call. Disabling this one late loop transformation preserves
-the inline implementation while leaving other compiler builtins and
-optimizations enabled. `-fno-builtin-strcpy` and `always_inline` do not stop
-this later transformation.
+Emit the existing `util/string.c` `strcpy()` implementation for ARM while
+retaining the static inline implementation at call sites. GCC 15.3 recognizes
+the inline loop and rewrites it into an external `__builtin_strcpy` call. On
+ARMv7 it inlines that builtin, but on ARMv6 it leaves an unresolved `_strcpy`
+reference. `-fno-builtin-strcpy`, `always_inline`, and
+`-fno-tree-loop-distribute-patterns` do not reliably prevent that late
+transformation.
+
+`util/string.c` will locally override `USE_STATIC_INLINES` to 0 only when
+`ARCH_ARM` is defined, allowing it to supply `_strcpy`. Other ARM translation
+units continue to use the header's static inline implementation. m68k and
+ColdFire retain their existing behavior.
 
 No m68k or ColdFire flags change.
 
