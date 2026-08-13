@@ -68,16 +68,16 @@
   preserve the configuration with `make savedefconfig`, and build it:
 
   ```sh
-   gmake rpi2_defconfig
-   gmake menuconfig
-   gmake savedefconfig
-   gmake
-  ```
+   make rpi2_defconfig
+   make menuconfig
+   make savedefconfig
+   make
+   ```
 
-   On macOS, use Homebrew GNU Make (`gmake`): the system `make` is GNU Make
-   3.81 while this tree requires 4.3 or later.  Do not run `olddefconfig` with
-   `--kconfig`: the installed kconfiglib accepts `Kconfig` only as a positional
-   argument.
+   In the tested macOS environment, use Homebrew GNU Make (`gmake`) in place
+   of the system `make`, which is GNU Make 3.81 while this tree requires 4.3
+   or later. In that environment, do not run `olddefconfig` with `--kconfig`:
+   the installed kconfiglib accepts `Kconfig` only as a positional argument.
 
    Expected: successful build producing `kernel7.img` that boots directly into
   EmuCon, without AES or EmuDesk.
@@ -133,16 +133,19 @@
 
   Delete the temporary traces from `usb/udd_keyboard.c` and `bios/ikbd.c`.  Retain no diagnostic-only changes there.
 
-- [ ] **Step 7: Commit the diagnostic evidence only if it contains a lasting, concise trace**
+- [ ] **Step 7: Commit retained Task 1 documentation or lasting diagnostics**
 
-  Do not commit temporary instrumentation.  If a lasting `proc_go()` trace is justified by existing `KDEBUG` conventions, commit it separately:
+   Do not commit temporary instrumentation. Commit accurate, environment-
+   specific diagnostic command corrections made to this plan separately. If a
+   lasting `proc_go()` trace is justified by existing `KDEBUG` conventions,
+   commit it separately:
 
   ```sh
   git add bdos/proc.c
   git commit -m "Trace ARM process interrupt state"
   ```
 
-  Otherwise proceed with no commit from this task.
+   Otherwise proceed with no commit from this task.
 
 ### Task 2: Implement Only the Injection Correction Proven by Task 1
 
