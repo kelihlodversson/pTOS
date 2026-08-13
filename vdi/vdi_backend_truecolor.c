@@ -112,6 +112,12 @@ static UWORD rgb565_from_prgb(ULONG prgb)
     return (UWORD)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
 }
 
+static ULONG xrgb8888_from_prgb(ULONG prgb)
+{
+    return 0xff000000UL | ((prgb & 0x000000ffUL) << 16)
+           | (prgb & 0x0000ff00UL) | ((prgb & 0x00ff0000UL) >> 16);
+}
+
 /*
  * Full-precision packed-0x00BBGGRR -> VDI-scale (0-1000 per component)
  * conversion, for seeding tc_req_col[] (issue #89) -- unlike
@@ -159,9 +165,9 @@ void vdi_truecolor_init_palette(Vwk *vwk)
 
     for (i = 0; i < 256; i++) {
         if (linea_vars.v_planes == 32) {
-            /* XRGB8888: default_prgb_palette[] is already 0x00BBGGRR,
-             * DRM XRGB8888 layout missing only the alpha byte */
-            vwk->tc_palette[i] = default_prgb_palette[i] | 0xff000000UL;
+            /* XRGB8888: convert 0x00BBGGRR to 0xFFRRGGBB, the DRM
+             * XRGB8888 pixel value (little-endian bytes B,G,R,X) */
+            vwk->tc_palette[i] = xrgb8888_from_prgb(default_prgb_palette[i]);
         } else {
             vwk->tc_palette[i] = rgb565_from_prgb(default_prgb_palette[i]);
         }

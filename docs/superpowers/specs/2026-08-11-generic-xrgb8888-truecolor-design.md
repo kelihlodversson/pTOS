@@ -145,13 +145,15 @@ packed_truecolor32_backend_ops` in vdi_backend.h under dispatch.
 truecolor screen. The single-copy palette functions in
 `vdi_backend_truecolor.c` pick the pack format at runtime:
 
-- `vdi_truecolor_init_palette()` seeds `tc_palette[]` packing each default
-  colour as RGB565 or XRGB8888 keyed on `v_planes == 32`; `tc_req_col[]` is
-  unchanged (VDI 0-1000 scale, format-independent).
+- `vdi_truecolor_init_palette()` seeds `tc_palette[]` keyed on
+  `v_planes == 32`: each default `0x00BBGGRR` entry is packed as RGB565
+  (`rgb565_from_prgb()`) or converted to the XRGB8888 pixel value
+  `0xFFRRGGBB` (`xrgb8888_from_prgb()`); `tc_req_col[]` is unchanged (VDI
+  0-1000 scale, format-independent).
 - `vdi_truecolor_set_color()` / `vdi_truecolor_get_color()` pack/unpack keyed
   the same way (vdi_col.c:643, 816 call them unchanged). For XRGB8888 the
-  packed value is `prgb | 0xff000000UL` — the existing `0x00BBGGRR` palette
-  data is already in DRM XRGB8888 layout, missing only the alpha byte.
+  packed value is `prgb | 0xff000000UL`, `prgb` assembled from the VDI-scale
+  r/g/b components in `0x00BBGGRR` byte order.
 - `pixel_size = linea_vars.v_planes / 8` is the shared size helper, exposed as
   `vdi_truecolor_pixel_size()` (declared in vdi_backend.h).
 
