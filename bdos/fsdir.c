@@ -295,32 +295,11 @@ long ixsfirst(char *name, WORD att, DTAINFO *addr)
  */
 long xsfirst(char *name, int att)
 {
-    long result;
-    DTAINFO *dt;                            /* M01.01.1209.01 */
-    const char *t;
-    BOOL wildcard;
-
-    dt = (DTAINFO *)(run->p_xdta);          /* M01.01.1209.01 */
-
-    /* set an indication of 'uninitialized DTA' */
-    dt->dt_offset_drive = -1L;
-
-    result = ixsfirst(name, att, dt);       /* M01.01.1209.01 */
-    if (result < 0)
-        return result;
-
-    wildcard = FALSE;
-    for (t = name; *t; t++)
-        if ((*t == '?') || (*t == '*'))
-        {
-            wildcard = TRUE;
-            break;
-        }
-
-    if (!wildcard)
-        return result;
-
-    return E_OK;
+#if CONF_WITH_PLUGGABLE_FS
+    return pfs_do_sfirst(name, att);
+#else
+    return fat_sfirst_path(name, att);
+#endif
 }
 
 
@@ -438,26 +417,11 @@ FCB *ixsnext(DTAINFO *dt)
  */
 long xsnext(void)
 {
-    FCB *f;
-    DTAINFO *dt;
-
-    dt = (DTAINFO *)run->p_xdta;            /* M01.01.1209.01 */
-
-    /* has the DTA been initialized? */
-    if (dt->dt_offset_drive < 0L)
-        return ENMFIL;
-
-    f = ixsnext(dt);
-
-    if (f == NULL)                          /* end of directory */
-    {
-        dt->dt_offset_drive = -1L;
-        return ENMFIL;
-    }
-
-    makbuf(f,(DTAINFO *)run->p_xdta);
-
-    return E_OK;
+#if CONF_WITH_PLUGGABLE_FS
+    return pfs_do_snext();
+#else
+    return fat_snext_path();
+#endif
 }
 
 

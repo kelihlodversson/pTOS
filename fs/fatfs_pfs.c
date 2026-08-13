@@ -736,6 +736,37 @@ static BOOL contains_wildcard_characters(const char *test)
     return FALSE;
 }
 
+LONG fat_sfirst_path(char *name, int att)
+{
+    long result;
+    DTAINFO *dt;
+
+    dt = (DTAINFO *)(run->p_xdta);
+    dt->dt_offset_drive = -1L;
+    result = ixsfirst(name, att, dt);
+    if ((result < 0) || !contains_wildcard_characters(name))
+        return result;
+    return E_OK;
+}
+
+LONG fat_snext_path(void)
+{
+    FCB *f;
+    DTAINFO *dt;
+
+    dt = (DTAINFO *)run->p_xdta;
+    if (dt->dt_offset_drive < 0L)
+        return ENMFIL;
+    f = ixsnext(dt);
+    if (f == NULL)
+    {
+        dt->dt_offset_drive = -1L;
+        return ENMFIL;
+    }
+    makbuf(f, (DTAINFO *)run->p_xdta);
+    return E_OK;
+}
+
 LONG fat_getfree_path(long *buf, int drv)
 {
     WORD drive = drv ? (WORD)(drv - 1) : run->p_curdrv;
