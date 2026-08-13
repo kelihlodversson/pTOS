@@ -108,7 +108,7 @@ static struct dwc2_async_slot *dwc2_async_alloc(struct dwc2_priv *priv,
 static void dwc2_async_start(struct dwc2_priv *priv,
                              struct dwc2_async_slot *slot);
 static void dwc2_async_schedule(struct dwc2_priv *priv,
-                                  struct dwc2_async_slot *slot);
+                                 struct dwc2_async_slot *slot);
 static void dwc2_async_schedule_split_complete(struct dwc2_priv *priv,
                                                 struct dwc2_async_slot *slot);
 static void dwc2_async_stop(struct dwc2_priv *priv,
@@ -609,7 +609,7 @@ static ULONG dwc2_async_interval(struct dwc2_priv *priv,
 }
 
 static void dwc2_async_schedule(struct dwc2_priv *priv,
-                                  struct dwc2_async_slot *slot)
+                                 struct dwc2_async_slot *slot)
 {
     ULONG frame;
 
