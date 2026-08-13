@@ -32,10 +32,13 @@ Makefile parsing.
 
 ### GCC 15 Compatibility
 
-Add `-fno-builtin-strcpy` to the ARM-only compiler flags in `Makefile`. This
-prevents GCC from lowering the project's static inline `strcpy()` calls into an
-external `_strcpy` reference. It leaves other compiler builtins and
-optimizations enabled.
+Add `-fno-tree-loop-distribute-patterns` to the ARM-only compiler flags in
+`Makefile`. GCC 15.3 recognizes the loop in the project's static inline
+`strcpy()` and, after inlining, rewrites it into an external
+`__builtin_strcpy` call. Disabling this one late loop transformation preserves
+the inline implementation while leaving other compiler builtins and
+optimizations enabled. `-fno-builtin-strcpy` and `always_inline` do not stop
+this later transformation.
 
 No m68k or ColdFire flags change.
 
