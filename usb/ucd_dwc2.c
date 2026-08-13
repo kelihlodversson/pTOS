@@ -795,6 +795,12 @@ static void dwc2_async_finish_success(struct dwc2_priv *priv,
     actual_length = msg->transfer_len -
                     ((hctsiz & DWC2_HCTSIZ_XFERSIZE_MASK) >>
                      DWC2_HCTSIZ_XFERSIZE_OFFSET);
+    if (actual_length < 0 || actual_length > msg->transfer_len) {
+        KINFO(("dwc2_async: invalid completion length=%ld generation=%lu\n",
+               actual_length, generation));
+        dwc2_async_finish_error(priv, slot);
+        return;
+    }
     slot->pid = (hctsiz & DWC2_HCTSIZ_PID_MASK) >> DWC2_HCTSIZ_PID_OFFSET;
     invalidate_data_cache(slot->dma_buffer,
                           roundup(actual_length, ARCH_DMA_MINALIGN));
@@ -835,8 +841,11 @@ static void dwc2_irq_handler(void)
     gintsts = readl(&regs->gintsts);
     if (!(gintsts & (DWC2_GINTSTS_HCINTR | DWC2_GINTSTS_SOFINTR)))
         return;
-    if (priv->shutting_down)
+    if (priv->shutting_down) {
+        writel(gintsts & (DWC2_GINTSTS_HCINTR | DWC2_GINTSTS_SOFINTR),
+               &regs->gintsts);
         return;
+    }
 
     pending = readl(&regs->host_regs.haint) &
               readl(&regs->host_regs.haintmsk);
@@ -1719,13 +1728,13 @@ long usb_lowlevel_stop(void *ucd_priv)
     LONG ret;
 
     priv->shutting_down = TRUE;
+    clrbits_le32(&priv->regs->gintmsk, DWC2_GINTMSK_SOFINTR);
+    clrbits_le32(&priv->regs->gintmsk, DWC2_GINTMSK_HCINTR);
     for (index = 0; index < DWC2_ASYNC_SLOT_COUNT; index++) {
         ret = dwc2_async_shutdown(priv, &priv->async[index]);
         if (ret)
             return ret;
     }
-    clrbits_le32(&priv->regs->gintmsk, DWC2_GINTMSK_SOFINTR);
-    clrbits_le32(&priv->regs->gintmsk, DWC2_GINTMSK_HCINTR);
     clrbits_le32(&priv->regs->gahbcfg, DWC2_GAHBCFG_GLBLINTRMSK);
     if (priv->irq_connected)
         raspi_connect_irq(ARM_IRQ_USB, NULL);

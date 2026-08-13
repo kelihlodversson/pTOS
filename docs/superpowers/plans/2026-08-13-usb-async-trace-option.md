@@ -4,7 +4,7 @@
 
 **Goal:** Add an opt-in shared USB asynchronous trace macro so normal HID operation does not flood serial debug output.
 
-**Architecture:** `usb/Kconfig` owns a disabled-by-default `CONF_DEBUG_USB_ASYNC` option. `usb/usb.h` exposes `KINFO_USB_ASYNC(args)`, which compiles to `KINFO(args)` when enabled and otherwise to a no-op. DWC2 uses it only for repeated transfer-progress messages.
+**Architecture:** `usb/Kconfig` owns a disabled-by-default `CONF_DEBUG_USB_ASYNC` option. `usb/usb_global.h` exposes `KINFO_USB_ASYNC(args)`, which compiles to `KINFO(args)` when enabled and otherwise to a no-op. DWC2 uses it only for repeated transfer-progress messages.
 
 **Tech Stack:** Kconfig, C90 GNU C, pTOS USB stack, shell contract test.
 

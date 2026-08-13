@@ -2,6 +2,11 @@
 
 set -eu
 
+if ! command -v rg >/dev/null 2>&1; then
+    echo 'tools/test-dwc2-async-contract.sh requires ripgrep (rg)'
+    exit 1
+fi
+
 repo_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 source=$repo_root/usb/ucd_dwc2.c
 usb_source=$repo_root/usb/usb.c
@@ -47,8 +52,12 @@ require 'priv->shutting_down' 'shutdown state guards'
 require 'return ETIMEDOUT' 'halt timeout defers controller reset'
 require '!priv->shutting_down' 'callback and rearm shutdown guard'
 require 'if \(!priv->shutting_down\)' 'synchronous shutdown halt observer'
-require_multiline 'gintsts = readl\(&regs->gintsts\);[\s\S]*if \(priv->shutting_down\)[\s\S]*return;[\s\S]*pending = readl\(&regs->host_regs.haint\)' \
-    'IRQ returns during shutdown before handling async channel interrupts'
+require_multiline 'gintsts = readl\(&regs->gintsts\);[\s\S]*if \(priv->shutting_down\) \{[\s\S]*writel\(gintsts & \(DWC2_GINTSTS_HCINTR \| DWC2_GINTSTS_SOFINTR\),[\s\S]*return;' \
+    'IRQ acknowledges pending sources during shutdown without channel handling'
+require_multiline 'priv->shutting_down = TRUE;[\s\S]*clrbits_le32\(&priv->regs->gintmsk, DWC2_GINTMSK_SOFINTR\);[\s\S]*clrbits_le32\(&priv->regs->gintmsk, DWC2_GINTMSK_HCINTR\);[\s\S]*for \(index = 0; index < DWC2_ASYNC_SLOT_COUNT; index\+\+\)' \
+    'shutdown masks DWC2 IRQ sources before draining async slots'
+require_multiline 'actual_length = msg->transfer_len -[\s\S]*if \(actual_length < 0 \|\| actual_length > msg->transfer_len\) \{[\s\S]*dwc2_async_finish_error\(priv, slot\);[\s\S]*return;' \
+    'async completion validates DMA length before cache and copy'
 require 'ULONG ssplit_frame' 'per-slot start-split frame'
 require 'dwc2_async_schedule_split_complete' 'deferred complete-split scheduling'
 require_multiline 'slot->ssplit_frame = readl\(&regs->host_regs.hfnum\)[\s\S]*DWC2_ASYNC_SPLIT_COMPLETE[\s\S]*dwc2_async_schedule_split_complete' \
