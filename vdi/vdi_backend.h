@@ -124,36 +124,41 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode);
 const vdi_backend_ops *vdi_screen_backend(void);
 
 /*
- * One planar_*_backend_ops per hardware palette family (issue #173),
- * selected by vdi_backend_select() from SCREEN_MODE_DESC.shifter -- see
- * the comment on vdi_backend_ops.set_color/get_color above and on
- * SCREEN_MODE_DESC.shifter (screen_mode.h). planar_st_backend_ops is the
- * unconditional fallback (also what any non-Atari-shifter planar driver,
- * e.g. Amiga, resolves to); the other three exist only when their hardware
- * family is configured in.
+ * default_planar_backend_ops/planar_backend_ops (vdi_backend_planar.c) --
+ * the planar backend's ops table, selected by vdi_backend_select() for a
+ * planar screen (issue #173 and its follow-up).
  *
- * const: every slot in every planar variant is always populated at compile
- * time, so none of them ever need vdi_backend_ops_init()'s NULL-slot fill-in
- * (see vdi_backend_ops_validate() below, which vdi_backend_select() uses for
- * these instead). This isn't just style -- on the m68k targets, .data lives
- * in the same read-only ROM region as .text (see the FIXME in emutos.ld and
- * the "DATA segment is not empty" check in the top-level Makefile); a
+ * A single hardware palette family (ST/STE/TT/Videl, see
+ * SCREEN_MODE_DESC.shifter) only ever varies set_color/get_color -- every
+ * other slot is shifter-agnostic. Rather than one const table per family
+ * (four near-identical 15-pointer tables, all but two pointers duplicated),
+ * vdi_backend_select() keeps only the ST-shifter defaults in ROM
+ * (default_planar_backend_ops) and patches a single mutable copy,
+ * planar_backend_ops, at runtime: memcpy() the defaults in, then overwrite
+ * set_color/get_color for the selected family if it isn't ST -- see
+ * vdi_backend_select() in vdi_backend.c.
+ *
+ * const/non-const split matters on the m68k targets, where .data shares
+ * emutos.ld's read-only ROM region with .text (see its FIXME comment): a
  * non-const table there would accept writes that silently do nothing on
- * real hardware. packed_truecolor_backend_ops can leave optional slots NULL
- * under CONF_VDI_SPARSE_TABLE (see vdi_backend_truecolor.c), so it genuinely
- * needs vdi_backend_ops_init()'s mutation and stays non-const -- it only
- * matters on MACHINE_RPI, where the "ROM" is actually writable RAM.
+ * real hardware, and a table this is only ever memcpy()'d *from* has
+ * nothing to gain from living in writable storage. planar_backend_ops has
+ * no initializer, so it lands in .bss -- real RAM even on those targets --
+ * not .data.
+ *
+ * Both are always fully populated (default_planar_backend_ops at compile
+ * time, planar_backend_ops by the copy-then-patch above), so
+ * vdi_backend_select() only ever runs the read-only
+ * vdi_backend_ops_validate() on planar_backend_ops, never the mutating
+ * vdi_backend_ops_init() -- see the comment on that pair below.
+ * packed_truecolor_backend_ops is different: it can leave optional slots
+ * NULL under CONF_VDI_SPARSE_TABLE (see vdi_backend_truecolor.c), so it
+ * genuinely needs vdi_backend_ops_init()'s mutation and stays non-const --
+ * that only matters on MACHINE_RPI, where the "ROM" is actually writable
+ * RAM.
  */
-extern const vdi_backend_ops planar_st_backend_ops;
-#if CONF_WITH_STE_SHIFTER
-extern const vdi_backend_ops planar_ste_backend_ops;
-#endif
-#if CONF_WITH_TT_SHIFTER
-extern const vdi_backend_ops planar_tt_backend_ops;
-#endif
-#if CONF_WITH_VIDEL
-extern const vdi_backend_ops planar_videl_backend_ops;
-#endif
+extern const vdi_backend_ops default_planar_backend_ops;
+extern vdi_backend_ops planar_backend_ops;
 extern vdi_backend_ops packed_truecolor_backend_ops;
 
 /*

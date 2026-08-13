@@ -13,6 +13,7 @@
 #include "../bios/lineavars.h"  /* linea_vars */
 #include "asm.h"                /* rolw1/rorw1 */
 #include "kprint.h"             /* KDEBUG */
+#include "string.h"             /* memcpy */
 
 const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
 {
@@ -20,45 +21,52 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
         return NULL;
 
     if (mode->layout == SCREEN_LAYOUT_PLANAR && mode->color_model == SCREEN_COLOR_INDEXED) {
-        const vdi_backend_ops *ops;
-
         /*
-         * Which hardware palette family (issue #173): mode->shifter was
-         * resolved once, at mode-descriptor time, by planar_mode_desc()
-         * (bios/screen.c) from has_videl/has_tt_shifter/has_ste_shifter.
-         * Falls back to the ST variant for any shifter this build didn't
-         * configure in (can't happen for a valid descriptor -- see
-         * screen_mode_desc_valid() -- but a build lacking, say,
-         * CONF_WITH_VIDEL has no planar_videl_backend_ops to select).
+         * Copy the ST-shifter defaults in, then patch set_color/get_color
+         * for the actual hardware palette family (issue #173 follow-up;
+         * see the comment on default_planar_backend_ops/planar_backend_ops
+         * in vdi_backend.h for why this is a runtime copy-and-patch rather
+         * than one const table per family). mode->shifter was resolved
+         * once, at mode-descriptor time, by planar_mode_desc() (bios/
+         * screen.c) from has_videl/has_tt_shifter/has_ste_shifter.
+         *
+         * The default case (SCREEN_SHIFTER_ST, or any shifter this build
+         * didn't configure in -- can't happen for a valid descriptor, see
+         * screen_mode_desc_valid()) needs no patch: the copied defaults are
+         * already the ST-shifter pair.
          */
+        memcpy(&planar_backend_ops, &default_planar_backend_ops, sizeof(planar_backend_ops));
+
         switch (mode->shifter) {
 #if CONF_WITH_VIDEL
         case SCREEN_SHIFTER_VIDEL:
-            ops = &planar_videl_backend_ops;
+            planar_backend_ops.set_color = planar_set_videl_color;
+            planar_backend_ops.get_color = planar_get_videl_color;
             break;
 #endif
 #if CONF_WITH_TT_SHIFTER
         case SCREEN_SHIFTER_TT:
-            ops = &planar_tt_backend_ops;
+            planar_backend_ops.set_color = planar_set_tt_color;
+            planar_backend_ops.get_color = planar_get_tt_color;
             break;
 #endif
 #if CONF_WITH_STE_SHIFTER
         case SCREEN_SHIFTER_STE:
-            ops = &planar_ste_backend_ops;
+            planar_backend_ops.set_color = planar_set_ste_color;
+            planar_backend_ops.get_color = planar_get_ste_color;
             break;
 #endif
         default:
-            ops = &planar_st_backend_ops;
             break;
         }
 
         /*
-         * Not vdi_backend_ops_init(): the planar_*_backend_ops variants are
-         * const (see vdi_backend.h) and never have a NULL slot to fill in,
-         * so only the read-only mandatory-primitive check applies.
+         * Not vdi_backend_ops_init(): planar_backend_ops is always fully
+         * populated by the copy-and-patch above, with no NULL slot to fill
+         * in, so only the read-only mandatory-primitive check applies.
          */
-        vdi_backend_ops_validate(ops);
-        return ops;
+        vdi_backend_ops_validate(&planar_backend_ops);
+        return &planar_backend_ops;
     }
 
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR

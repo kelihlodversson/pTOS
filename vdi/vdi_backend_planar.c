@@ -22,22 +22,22 @@ static void planar_close(Vwk *vwk)
 }
 
 /*
- * One vdi_backend_ops variant per planar hardware palette family (issue
- * #173), selected by vdi_backend_select() from SCREEN_MODE_DESC.shifter
- * (see screen_mode.h, planar_mode_desc() in bios/screen.c). Every slot but
- * set_color/get_color is shifter-agnostic and shared verbatim between the
- * variants -- plane count, not chip family, is what the rest of the planar
- * backend varies on, and that's already handled generically.
+ * default_planar_backend_ops - the ST-shifter table, the only planar
+ * vdi_backend_ops this file defines (issue #173 follow-up).
  *
- * const: every slot below is always populated, so vdi_backend_select() only
- * ever runs the read-only vdi_backend_ops_validate() on these, never the
- * mutating vdi_backend_ops_init(). That matters on the m68k targets, where
- * .data shares emutos.ld's read-only ROM region with .text (see its FIXME
- * comment) -- a non-const table here would silently fail to hold any write,
- * and vdi_backend_ops_init() would never actually need to write anything to
- * a table with no NULL slots, so nothing is lost by not calling it.
+ * Earlier revisions of this file defined one const table per planar
+ * hardware palette family (ST/STE/TT/Videl), all sharing every slot but
+ * set_color/get_color verbatim -- four near-identical 15-pointer tables,
+ * each living in ROM on the m68k targets. vdi_backend_select() now keeps
+ * only this one in ROM and patches a single mutable copy, planar_backend_ops
+ * (below), at runtime instead -- see the comment there.
+ *
+ * const: this table itself is never written to (only memcpy()'d from), so
+ * it stays in ROM on the m68k targets, where .data shares emutos.ld's
+ * read-only region with .text (see its FIXME comment) -- a non-const table
+ * here would accept writes that silently do nothing on real hardware.
  */
-const vdi_backend_ops planar_st_backend_ops = {
+const vdi_backend_ops default_planar_backend_ops = {
     planar_open,
     planar_close,
     planar_get_start_addr,
@@ -55,62 +55,15 @@ const vdi_backend_ops planar_st_backend_ops = {
     planar_search_left,
 };
 
-#if CONF_WITH_STE_SHIFTER
-const vdi_backend_ops planar_ste_backend_ops = {
-    planar_open,
-    planar_close,
-    planar_get_start_addr,
-    planar_get_pixel,
-    planar_put_pixel,
-    planar_get_pixel,
-    planar_put_pixel,
-    planar_set_ste_color,
-    planar_get_ste_color,
-    planar_fill_rect,
-    planar_text_blit,
-    planar_raster_copy,
-    planar_draw_line,
-    planar_search_right,
-    planar_search_left,
-};
-#endif
-
-#if CONF_WITH_TT_SHIFTER
-const vdi_backend_ops planar_tt_backend_ops = {
-    planar_open,
-    planar_close,
-    planar_get_start_addr,
-    planar_get_pixel,
-    planar_put_pixel,
-    planar_get_pixel,
-    planar_put_pixel,
-    planar_set_tt_color,
-    planar_get_tt_color,
-    planar_fill_rect,
-    planar_text_blit,
-    planar_raster_copy,
-    planar_draw_line,
-    planar_search_right,
-    planar_search_left,
-};
-#endif
-
-#if CONF_WITH_VIDEL
-const vdi_backend_ops planar_videl_backend_ops = {
-    planar_open,
-    planar_close,
-    planar_get_start_addr,
-    planar_get_pixel,
-    planar_put_pixel,
-    planar_get_pixel,
-    planar_put_pixel,
-    planar_set_videl_color,
-    planar_get_videl_color,
-    planar_fill_rect,
-    planar_text_blit,
-    planar_raster_copy,
-    planar_draw_line,
-    planar_search_right,
-    planar_search_left,
-};
-#endif
+/*
+ * planar_backend_ops - the table vdi_backend_select() actually hands out
+ * for a planar screen (issue #173 follow-up).
+ *
+ * No initializer, so this lands in .bss (real RAM even on the m68k
+ * targets), not .data -- see the comment on default_planar_backend_ops
+ * above. vdi_backend_select() populates it on every call: memcpy() the ST
+ * defaults from default_planar_backend_ops, then patch set_color/get_color
+ * to the selected shifter family's pair if it isn't ST (which needs no
+ * patch -- the copied defaults are already correct).
+ */
+vdi_backend_ops planar_backend_ops;
