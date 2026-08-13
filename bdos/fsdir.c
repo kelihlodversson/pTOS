@@ -287,20 +287,6 @@ long ixsfirst(char *name, WORD att, DTAINFO *addr)
 
 
 /*
- *  contains_wildcard_characters - check for wildcard chars in specified string
- */
-static BOOL contains_wildcard_characters(const char *test)
-{
-    const char *t;
-
-    for (t = test; *t; t++)
-        if ((*t == '?') || (*t == '*'))
-            return TRUE;
-
-    return FALSE;
-}
-
-/*
  *  xsfirst - search first for matching name, into dta
  *
  *  Function 0x4E   f_sfirst
@@ -311,6 +297,8 @@ long xsfirst(char *name, int att)
 {
     long result;
     DTAINFO *dt;                            /* M01.01.1209.01 */
+    const char *t;
+    BOOL wildcard;
 
     dt = (DTAINFO *)(run->p_xdta);          /* M01.01.1209.01 */
 
@@ -319,7 +307,15 @@ long xsfirst(char *name, int att)
 
     result = ixsfirst(name, att, dt);       /* M01.01.1209.01 */
 
-    if ((result < 0) || !contains_wildcard_characters(name))
+    wildcard = FALSE;
+    for (t = name; *t; t++)
+        if ((*t == '?') || (*t == '*'))
+        {
+            wildcard = TRUE;
+            break;
+        }
+
+    if ((result < 0) || !wildcard)
         return result;
 
     return E_OK;
@@ -896,49 +892,11 @@ long xrename(int n, char *p1, char *p2)
  */
 long xchdir(char *p)
 {
-    DND *dnd;
-    long rc;
-    int olddir, newdir, dlog;
-    const char *s;
-
-    if (contains_wildcard_characters(p))
-        return EPTHNF;
-
-    if (p[1] == ':')
-        dlog = toupper(p[0]) - 'A';
-    else
-        dlog = run->p_curdrv;
-
-    /*
-     * remember old current directory pointer
-     */
-    olddir = run->p_curdir[dlog];
-
-    /*
-     * get the DND for the new directory
-     */
-    rc = (long)(dnd = findit(p,&s,1));
-    if (rc < 0L)
-        return rc;
-    if (!dnd)
-        return EPTHNF;
-
-    /*
-     * search dirtbl[]: if entry matches, update usage count;
-     * otherwise, create new entry
-     */
-    newdir = incr_curdir_usage(dnd);
-    if (newdir < 0)                 /* no space in dirtbl[] */
-        return EPTHNF;
-    run->p_curdir[dlog] = newdir;   /* link to process  */
-
-    /*
-     * fixup old current directory
-     */
-    if (olddir)
-        decr_curdir_usage(olddir);
-
-    return E_OK;
+#if CONF_WITH_PLUGGABLE_FS
+    return pfs_do_chdir(p);
+#else
+    return fat_chdir_path(p);
+#endif
 }
 
 

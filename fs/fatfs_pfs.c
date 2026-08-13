@@ -722,6 +722,20 @@ struct pfs_ops fat_pfs_ops = {
 #endif /* CONF_WITH_PLUGGABLE_FS */
 
 #if !CONF_WITH_PLUGGABLE_FS
+/*
+ * contains_wildcard_characters - check for wildcard chars in specified string
+ */
+static BOOL contains_wildcard_characters(const char *test)
+{
+    const char *t;
+
+    for (t = test; *t; t++)
+        if ((*t == '?') || (*t == '*'))
+            return TRUE;
+
+    return FALSE;
+}
+
 LONG fat_getfree_path(long *buf, int drv)
 {
     WORD drive = drv ? (WORD)(drv - 1) : run->p_curdrv;
@@ -799,6 +813,40 @@ LONG fat_rmdir_path(char *p)
     (void)s;
 
     return fat_rmdir_dnd(d);
+}
+
+LONG fat_chdir_path(char *p)
+{
+    DND *dnd;
+    long rc;
+    int olddir, newdir, dlog;
+    const char *s;
+
+    if (contains_wildcard_characters(p))
+        return EPTHNF;
+
+    if (p[1] == ':')
+        dlog = toupper(p[0]) - 'A';
+    else
+        dlog = run->p_curdrv;
+
+    olddir = run->p_curdir[dlog];
+
+    rc = (long)(dnd = findit(p, &s, 1));
+    if (rc < 0L)
+        return rc;
+    if (!dnd)
+        return EPTHNF;
+
+    newdir = incr_curdir_usage(dnd);
+    if (newdir < 0)
+        return EPTHNF;
+    run->p_curdir[dlog] = newdir;
+
+    if (olddir)
+        decr_curdir_usage(olddir);
+
+    return E_OK;
 }
 
 LONG fat_unlink_path(char *name)
