@@ -147,95 +147,138 @@
 
    Otherwise proceed with no commit from this task.
 
-### Task 2: Implement Only the Injection Correction Proven by Task 1
+### Task 2: Trace the ARM DWC2 IRQ Path
 
 **Files:**
-- Modify: exact file and function identified by Task 1
+- Modify temporarily: `bios/raspi_int.c:263-317`
+- Modify temporarily: `usb/ucd_dwc2.c:832-932`
 
 **Interfaces:**
-- Consumes: Task 1 evidence for one proven failure boundary.
-- Produces: the existing HID press/release sequence delivered through the single pTOS BIOS input path, with the missing required side effect restored.
+- Consumes: the submitted keyboard async slot and generation from
+  `usb/udd_keyboard.c`, `raspi_int_handler()`, and `dwc2_irq_handler()`.
+- Produces: serial evidence classifying a manual USB key press as absent from
+  the Raspberry Pi IRQ dispatcher, absent from DWC2 host-channel completion,
+  or blocked before `dwc2_async_complete()` invokes the callback.
 
-- [ ] **Step 1: State the single confirmed hypothesis before editing**
+- [ ] **Step 1: Add bounded, temporary IRQ-path diagnostics**
 
-  Write the result in the issue work notes in this exact form:
+  In `bios/raspi_int.c`, when the pending peripheral IRQ scan selects
+  `ARM_IRQ_USB` and finds a handler, add one `KDEBUG()` that records USB IRQ
+  dispatch. In `usb/ucd_dwc2.c`, add `KDEBUG()` calls at these exact points:
 
-  ```text
-  Hypothesis: <one boundary> prevents EmuCon from receiving USB key <key> because <trace evidence>.
+  ```c
+  /* dwc2_irq_handler(): after reading gintsts */
+  KDEBUG(("dwc2_irq: gintsts=%08lx\n", gintsts));
+
+  /* each pending DWC2 async channel, after reading hcint */
+  KDEBUG(("dwc2_irq: channel=%d generation=%lu hcint=%08lx\n",
+          channel, slot->generation, hcint));
+
+  /* dwc2_async_complete(): immediately before the callback */
+  KDEBUG(("dwc2_async: deliver generation=%lu status=%ld length=%ld\n",
+          slot->generation, status, actual_length));
   ```
 
-  Do not edit code until the statement names one of: DWC2 IRQ delivery,
-  IRQ-context direct injection, a missing `send_data()`/`fake_hwint()` side
-  effect, queue visibility, or child CPSR IRQ masking.
+  Ensure the trace is bounded to USB dispatches and active async channels. Do
+  not log every non-USB IRQ, poll loop, or SOF frame. Do not alter channel
+  state, interrupt masks, callback ordering, or HID injection.
 
-- [ ] **Step 2: Implement the corresponding minimal experiment**
+- [ ] **Step 2: Build the AES-free Raspberry Pi 2 diagnostic image**
 
-  Apply exactly one change matching the hypothesis:
-
-  ```text
-  IRQ-context direct injection: defer only existing kbd_int() calls; do not poll USB.
-  Missing vector/interrupt side effect: add the minimal pTOS-native equivalent around the existing kbd_int() path.
-  Child CPSR IRQ masking: clear only the CPSR IRQ mask in the ARM child SPSR.
-  ```
-
-  Preserve key ordering: released keys, released modifiers, pressed modifiers,
-  then pressed keys.  Do not combine these alternatives in one experiment.
-
-- [ ] **Step 3: Build the AES-free Raspberry Pi 2 diagnostic image to verify the change**
-
-  Run:
+  On this macOS host use `gmake`. Start from the RPi2 default configuration,
+  set `CONF_WITH_AES=n` in `make menuconfig`, and build:
 
   ```sh
-  make rpi2_defconfig
-  make menuconfig
-  make
+  gmake rpi2_defconfig
+  gmake menuconfig
+  gmake
   ```
 
-  Set `CONF_WITH_AES=n` in `make menuconfig`. Expected: successful build
-  producing a direct-to-EmuCon `kernel7.img`.
+  Expected: a successful `kernel7.img` build that boots directly to EmuCon.
 
-- [ ] **Step 4: Verify direct EmuCon, then desktop-launched EmuCon, on Raspberry Pi 2 QEMU**
+- [ ] **Step 3: Capture a manual key press in the traced direct EmuCon image**
 
   Run:
 
   ```sh
   qemu-system-arm -M raspi2b -bios kernel7.img -d guest_errors \
+    -D /var/folders/_3/s5x2rvs93b9d1b0hmmt664mh0000gn/T/opencode/rpi2-irq-path-qemu.log \
     -device usb-mouse -device usb-kbd \
     -drive file=/var/folders/_3/s5x2rvs93b9d1b0hmmt664mh0000gn/T/opencode/empty-fat16-sd.img,if=sd,format=raw \
-    -serial stdio
+    -serial file:/var/folders/_3/s5x2rvs93b9d1b0hmmt664mh0000gn/T/opencode/rpi2-irq-path-serial.log
   ```
 
-  First verify direct EmuCon accepts `help`. Then rebuild normal
-  `rpi2_defconfig` and verify:
+  In the visible QEMU window, wait for `C:>`, focus the window, and press
+  `h` once. Preserve the serial and guest-error logs.
+
+- [ ] **Step 4: Classify the first missing signal and remove diagnostics**
+
+  Classify the capture exactly as one of:
 
   ```text
-  1. Use the keyboard in the GEM desktop.
-  2. Select File > Execute EmuCon.
-  3. Type help and press Enter; verify command output.
-  4. Type exit and press Enter; verify return to GEM.
+  A. No Raspberry Pi USB-dispatch trace: USB IRQ is not delivered to the
+     pTOS dispatcher; inspect the child CPSR IRQ mask and QEMU device input.
+  B. USB-dispatch trace but no DWC2 channel trace: DWC2 global/host interrupt
+     state does not expose the keyboard channel.
+  C. Channel trace without XFERCOMP: inspect hcint state and DWC2 async
+     scheduling/rearm conditions.
+  D. XFERCOMP trace without deliver trace: inspect dwc2_async_complete() slot
+     state (`active`, `cancelled`, and `shutting_down`).
+  E. Deliver trace: resume the existing HID-to-kbd_int()/IOREC diagnosis;
+     only then compare upstream vector injection semantics.
   ```
 
-  Expected: every step succeeds and no new guest errors appear after desktop startup.
+  Remove all temporary traces and local `ENABLE_KDEBUG` definitions after the
+  capture. Rebuild once to prove the cleanup compiles. Record the exact class,
+  relevant register values, and next single hypothesis in the task report.
 
-- [ ] **Step 5: Commit the minimal proven fix**
+- [ ] **Step 5: Commit only retained documentation**
 
-  Run:
+  Do not commit temporary diagnostics or a production fix from this task. If
+  the plan or report needs a precise correction based on the capture, commit
+  only those documents:
 
   ```sh
-  git add <only-the-proven-source-files>
-  git commit -m "Fix USB keyboard console input"
+  git add docs/superpowers/specs/2026-08-13-rpi-emucon-usb-keyboard-design.md \
+    docs/superpowers/plans/2026-08-13-rpi-emucon-usb-keyboard.md
+  git commit -m "Document #185 IRQ path findings"
   ```
 
-### Task 3: Confirm Raspberry Pi 1 and Guard Against Shared-Target Regression
+### Task 3: Implement and Validate the Correction Proven by Task 2
 
 **Files:**
 - Modify: none expected
 
 **Interfaces:**
-- Consumes: the single injection correction from Task 2.
-- Produces: QEMU evidence that the same BIOS input path works on `raspi1ap` and that an m68k configuration still builds without changes.
+- Consumes: one classified IRQ-path failure from Task 2.
+- Produces: the smallest correction for that failure plus QEMU evidence that
+  direct and desktop-launched EmuCon accept USB input on `raspi1ap` and
+  `raspi2b`.
 
-- [ ] **Step 1: Build the AES-free Raspberry Pi 1 diagnostic image**
+- [ ] **Step 1: State and test one correction hypothesis**
+
+  Write this in the issue work notes before editing production code:
+
+  ```text
+  Hypothesis: <Task 2 class and exact state> prevents USB keyboard completion
+  because <register/trace evidence>. The minimal correction is <one change>.
+  ```
+
+  Do not combine IRQ-mask, DWC2 state-machine, and HID-injection changes.
+
+- [ ] **Step 2: Implement the minimal correction and build direct EmuCon**
+
+  Modify only the file/function named by the hypothesis. Rebuild the
+  AES-free RPi2 image and manually verify that `help` is echoed and executed
+  at direct EmuCon. If it fails, return to Task 2 with new diagnostics; do not
+  stack a second correction.
+
+- [ ] **Step 3: Verify the desktop-launched RPi2 regression path**
+
+  Rebuild normal `rpi2_defconfig`, then manually verify desktop keyboard
+  input, File > Execute EmuCon, `help`, and `exit`.
+
+- [ ] **Step 4: Build the AES-free Raspberry Pi 1 diagnostic image**
 
   Run:
 
@@ -249,7 +292,7 @@
   Set `CONF_WITH_AES=n` in `make menuconfig`. Expected: successful build
   producing a direct-to-EmuCon `kernel.img`.
 
-- [ ] **Step 2: Verify direct EmuCon and desktop-launched EmuCon on Raspberry Pi 1 QEMU**
+- [ ] **Step 5: Verify direct EmuCon and desktop-launched EmuCon on Raspberry Pi 1 QEMU**
 
   Run:
 
@@ -265,7 +308,7 @@
   `exit`. Expected: both direct and desktop-launched EmuCon accept input;
   desktop-launched `exit` returns to GEM.
 
-- [ ] **Step 3: Build an m68k configuration without altering its behavior**
+- [ ] **Step 6: Build an m68k configuration without altering its behavior**
 
   Run:
 
@@ -276,7 +319,7 @@
   Expected: successful build.  The selected integration boundary must keep the
   m68k keyboard path unchanged.
 
-- [ ] **Step 4: Run repository hygiene checks**
+- [ ] **Step 7: Run repository hygiene checks**
 
   Run:
 
@@ -288,7 +331,7 @@
 
   Expected: formatter/checks pass; no FAT16 image, serial log, or temporary trace remains in the worktree.
 
-- [ ] **Step 5: Update GitHub issue #185 with evidence and close it if the acceptance criteria pass**
+- [ ] **Step 8: Update GitHub issue #185 with evidence and close it if the acceptance criteria pass**
 
   Add a comment describing the confirmed injection difference and fix,
   including whether pTOS required deferred execution, a vector side effect, or

@@ -42,19 +42,19 @@ and `bconin2()` consumption boundaries while reproducing the failure in QEMU.
 This identifies whether events stop at USB interrupt delivery, report
 completion, queue insertion, or queue consumption after AES launches EmuCon.
 
-First test whether calling `kbd_int()` directly from the DWC2 IRQ callback is
-the regression, using a minimal deferred execution mechanism in the USB/BIOS
-integration layer.  The deferred path must retain the existing HID report
-translation and BIOS `kbd_int()` queue path; it must not poll USB from
-`bconin2()` or create an EmuCon-specific input route.  Only change ARM process
-CPSR handling if the diagnostic evidence independently proves that IRQ masking
-prevents USB completion delivery.
+First trace the ARM DWC2 IRQ path without changing behavior.  The trace must
+show whether the Raspberry Pi interrupt dispatcher receives and invokes the
+USB handler, whether the handler observes a host-channel interrupt, and
+whether the submitted keyboard channel reaches a completion state.  Direct
+EmuCon fails before the DWC2 callback, so neither `kbd_int()` injection nor
+the AES child-process CPSR can be selected as a cause before this result.
 
-Before replacing the current injection path, trace the actual values inserted
-into `ikbdiorec` and the `bconin2()` values consumed by EmuCon.  Compare that
-with the upstream `send_data()` contract and `fake_hwint()` role.  Implement
-an upstream-style vector injection only if this proves a missing consumer-
-visible side effect; do not add it merely to match upstream structure.
+Only after the IRQ-path trace identifies the failed condition, apply one
+minimal correction at that condition.  Preserve the existing HID report
+translation and BIOS `kbd_int()` queue path.  Do not poll USB from `bconin2()`
+or create an EmuCon-specific input route.  Compare the upstream `send_data()`
+and `fake_hwint()` semantics only if DWC2 completion reaches `kbd_int()` and
+the BIOS queue path is then shown to miss a consumer-visible side effect.
 
 Diagnostic instrumentation is temporary and must not remain in the final
 change unless it is a concise, useful existing-style trace.
