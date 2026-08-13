@@ -4,10 +4,10 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  *
- * Holds the DND/name-shaped FAT core, the path-level entry points used
- * when pluggable filesystem support is off, and the fat_pfs_ops adapter
- * used when it is on.  See
- * docs/superpowers/specs/2026-08-11-invert-pluggable-fs-dispatch-design.md.
+ * Holds the DND/name-shaped FAT cores and path-level wrappers used when
+ * pluggable filesystem support is off.  When it is on, fat_pfs_ops exposes
+ * those cores through the vtable; root, lookup and readdir support remain
+ * specific to that vtable path.
  */
 
 #include "config.h"

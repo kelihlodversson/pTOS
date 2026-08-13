@@ -6,10 +6,9 @@
  *
  * A drive letter can be claimed by a driver implementing 'struct pfs_ops'
  * instead of by the built-in FAT filesystem.  When CONF_WITH_PLUGGABLE_FS
- * is set, every drive - including the built-in FAT ones, wrapped by
- * fatfs_pfs.c as fat_pfs_ops - is dispatched through this interface.
- * See docs/superpowers/specs/2026-08-11-invert-pluggable-fs-dispatch-design.md
- * for the design this implements.
+ * is set, the bdos/ x* filesystem shims call the pfs_do_*() helpers below;
+ * they resolve every drive, including built-in FAT drives served by
+ * fat_pfs_ops, through this interface.
  */
 
 #ifndef PFS_H
@@ -172,8 +171,8 @@ struct pfs_ops {
  */
 LONG pfs_register_drive(WORD drive, struct pfs_ops *fs);
 
-/* The built-in FAT filesystem, wrapped as a pfs_ops instance (see
- * fs/fatfs_pfs.c).  One shared instance serves every FAT drive letter -
+/* The built-in FAT filesystem as a pfs_ops instance (see fs/fatfs_pfs.c).
+ * One shared instance serves every FAT drive letter -
  * pfs_do_*() drive resolution falls back to this for any drive
  * pfs_register_drive() hasn't explicitly claimed.
  */

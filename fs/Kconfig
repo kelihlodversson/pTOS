@@ -17,7 +17,8 @@ config CONF_WITH_PLUGGABLE_FS
 	  working either way: when off, the GEMDOS shims call fatfs_pfs.c's
 	  fat_*_path() entry points directly; when on, they call the pfs_do_*()
 	  helpers here, which dispatch through a per-drive vtable (with the
-	  FAT code wrapped as fat_pfs_ops).  Say n unless a driver needs this.
+	  FAT implementation available as fat_pfs_ops).  Say n unless a driver
+	  needs this.
 
 config CONF_WITH_PLUGGABLE_FS_TEST
 	bool "Pluggable filesystem self-test driver"
