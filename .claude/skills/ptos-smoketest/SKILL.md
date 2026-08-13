@@ -190,20 +190,22 @@ time; e.g. the 31 s IDE wait polls `_hz_200` at `0x4ba`, `addq.l #1,$4ba` at
 ## QEMU smoke test (raspi1 / raspi2 / virt-arm / virt-m68k)
 
 The pTOS `readme.md` is the user-facing source; this skill is the agent-facing
-copy. Invocations (verified in-tree):
+copy. Required invocations:
 
 ```sh
 # raspi1 — only the A+ exists as a QEMU machine (`raspi1ap`); there is no Pi 1
 # Model B machine. Same BCM2835/ARM1176 silicon, boots to the desktop. Requires
 # the FPU-enable fix (#98) — without it the first vldr in _raspi_vcmem_init traps.
 make rpi1_defconfig && make
-qemu-system-arm -M raspi1ap -bios kernel.img -d guest_errors -serial stdio
+qemu-system-arm -M raspi1ap -bios kernel.img -device usb-mouse -device usb-kbd \
+  -d guest_errors -serial stdio
 
 # raspi2 — real video output like raspi1; reads KDEBUG on the serial console.
 # NOTE: the machine is `raspi2b` on QEMU >= 9 (`-M raspi2` is gone). Requires the
 # FPU-enable fix (#98) — without it the first vldr in _raspi_vcmem_init traps.
 make rpi2_defconfig && make
-qemu-system-arm -M raspi2b -bios kernel7.img -d guest_errors -serial stdio
+qemu-system-arm -M raspi2b -bios kernel7.img -device usb-mouse -device usb-kbd \
+  -d guest_errors -serial stdio
 
 # virt-arm (headless, no framebuffer)
 # REQUIRED: -M virt,highmem=off — pTOS has no support for accessing memory or
@@ -228,6 +230,10 @@ make virt-m68k-cli_defconfig && make
 qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_errors -serial stdio
 ```
 
+`-device usb-mouse -device usb-kbd` is mandatory when validating USB HID
+input: without these devices, the class drivers register but neither a mouse
+nor keyboard is enumerated.
+
 Device variants (both virt ports; `force-legacy=false` is required on QEMU
 versions that default virtio-mmio to legacy v1):
 
@@ -251,14 +257,19 @@ timeout 5 qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt
 cat /tmp/qemu.log
 ```
 
-- **raspi1** (booted with `-M raspi1ap`): no `guest_errors`; screen draws.
-- **raspi2** (booted with `-M raspi2b`): no `guest_errors`; screen draws.
+- **raspi1** (booted with `-M raspi1ap`): no `guest_errors`; the screen reaches
+  the normal boot/desktop path; and, with `-device usb-mouse -device usb-kbd`,
+  serial traces confirm both mouse and keyboard HID probes.
+- **raspi2** (booted with `-M raspi2b`): no `guest_errors`; the screen reaches
+  the normal boot/desktop path; and, with `-device usb-mouse -device usb-kbd`,
+  serial traces confirm both mouse and keyboard HID probes.
 - The `vdi_v_opnwk: mode layout=... bpp=...` KDEBUG (and its `backend=selected`
   variant) only prints when the VDI runtime dispatcher is built in (both
   renderers enabled, `CONF_WITH_VDI_BACKEND_DISPATCH`, e.g.
   `rpi2-sparse_defconfig`) — default single-renderer rpi1/rpi2 builds have no
-  dispatcher and print no such line. The reliable pass signal is no
-  `guest_errors` + the screen drawing.
+  dispatcher and print no such line. For Raspberry Pi HID validation, the
+  reliable pass signal is no `guest_errors`, the screen reaching the normal
+  boot/desktop path, and mouse and keyboard HID probe traces.
 - **virt-arm / virt-m68k**: process survives the full `timeout` window
   (rc=124), no `guest_errors`/`unimp` output beyond ONE benign `Illegal
   Instruction` entry on m68k from `_detect_fpu` (expected, means CPU
