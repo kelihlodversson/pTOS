@@ -94,8 +94,16 @@ extern long ucd_unregister(struct ucdif *a);
 void usb_stop(void)
 {
     struct ucdif *a;
+    struct usb_device *dev;
+    long i;
 
     asynch_allowed = 1;
+
+    for (i = 0; i < USB_MAX_DEVICE; i++) {
+        dev = usb_get_dev_index(i);
+        if (dev && !dev->parent)
+            usb_disconnect(dev);
+    }
 
     for (a = allucdifs; a; a = a->next) {
         ucd_unregister(a);
@@ -795,8 +803,10 @@ usb_disconnect(struct usb_device *dev)
     {
         long i;
 
-        ALERT(("USB disconnect on device %ld", dev->parent->devnum));
-        KDEBUG(("USB device disconnect on device %s\n", dev->parent->prod));
+        if (dev->parent) {
+            ALERT(("USB disconnect on device %ld", dev->parent->devnum));
+            KDEBUG(("USB device disconnect on device %s\n", dev->parent->prod));
+        }
 
         KDEBUG(("USB disconnected, device number %ld\n", dev->devnum));
         KDEBUG(("USB device disconnected, device %s\n", dev->prod));
@@ -810,11 +820,14 @@ usb_disconnect(struct usb_device *dev)
         /* Free up all the children.. */
         for (i = 0; i < dev->maxchild; i++)
         {
-            KDEBUG(("Disconnect children %ld\n", dev->children[i]->devnum));
-            struct usb_device *child = dev->children[i];
-            KDEBUG(("child %lx\n", child));
-            usb_disconnect(child);
-            dev->children[i] = NULL;
+            if (dev->children[i]) {
+                struct usb_device *child = dev->children[i];
+
+                KDEBUG(("Disconnect children %ld\n", child->devnum));
+                KDEBUG(("child %lx\n", child));
+                usb_disconnect(child);
+                dev->children[i] = NULL;
+            }
         }
 
         /* See if it's a hub */

@@ -49,6 +49,7 @@ struct dwc2_async_slot
     UBYTE hub_port;
     UBYTE *dma_buffer;
     ULONG generation;
+    ULONG ssplit_frame;
     ULONG next_frame;
     BOOL scheduled;
     BOOL error_pending;
@@ -107,7 +108,9 @@ static struct dwc2_async_slot *dwc2_async_alloc(struct dwc2_priv *priv,
 static void dwc2_async_start(struct dwc2_priv *priv,
                              struct dwc2_async_slot *slot);
 static void dwc2_async_schedule(struct dwc2_priv *priv,
-                                 struct dwc2_async_slot *slot);
+                                  struct dwc2_async_slot *slot);
+static void dwc2_async_schedule_split_complete(struct dwc2_priv *priv,
+                                                struct dwc2_async_slot *slot);
 static void dwc2_async_stop(struct dwc2_priv *priv,
                             struct dwc2_async_slot *slot);
 static void dwc2_async_release(struct dwc2_async_slot *slot);
@@ -606,13 +609,29 @@ static ULONG dwc2_async_interval(struct dwc2_priv *priv,
 }
 
 static void dwc2_async_schedule(struct dwc2_priv *priv,
-                                 struct dwc2_async_slot *slot)
+                                  struct dwc2_async_slot *slot)
 {
     ULONG frame;
 
     frame = readl(&priv->regs->host_regs.hfnum) & DWC2_HFNUM_MAX_FRNUM;
     slot->next_frame = (frame + dwc2_async_interval(priv, slot->msg)) &
                        DWC2_HFNUM_MAX_FRNUM;
+    slot->scheduled = TRUE;
+    setbits_le32(&priv->regs->gintmsk, DWC2_GINTMSK_SOFINTR);
+}
+
+static void dwc2_async_schedule_split_complete(struct dwc2_priv *priv,
+                                                struct dwc2_async_slot *slot)
+{
+    ULONG frame;
+
+    frame = readl(&priv->regs->host_regs.hfnum) & DWC2_HFNUM_MAX_FRNUM;
+    if (((frame - slot->ssplit_frame) & DWC2_HFNUM_MAX_FRNUM) > 4) {
+        slot->split_state = DWC2_ASYNC_SPLIT_START;
+        dwc2_async_schedule(priv, slot);
+        return;
+    }
+    slot->next_frame = (frame + 1) & DWC2_HFNUM_MAX_FRNUM;
     slot->scheduled = TRUE;
     setbits_le32(&priv->regs->gintmsk, DWC2_GINTMSK_SOFINTR);
 }
@@ -846,15 +865,17 @@ static void dwc2_irq_handler(void)
         if (slot->split) {
             if (slot->split_state == DWC2_ASYNC_SPLIT_START &&
                 (hcint & DWC2_HCINT_ACK)) {
+                slot->ssplit_frame = readl(&regs->host_regs.hfnum) &
+                                     DWC2_HFNUM_MAX_FRNUM;
                 slot->split_state = DWC2_ASYNC_SPLIT_COMPLETE;
                 KINFO(("dwc2_async: split-start-ack generation=%lu\n",
                        slot->generation));
-                dwc2_async_start(priv, slot);
+                dwc2_async_schedule_split_complete(priv, slot);
             } else if (slot->split_state == DWC2_ASYNC_SPLIT_COMPLETE &&
                        (hcint & DWC2_HCINT_NYET)) {
                 KINFO(("dwc2_async: split-complete-nyet generation=%lu\n",
                        slot->generation));
-                dwc2_async_start(priv, slot);
+                dwc2_async_schedule_split_complete(priv, slot);
             } else if (slot->split_state == DWC2_ASYNC_SPLIT_COMPLETE &&
                        (hcint & DWC2_HCINT_NAK)) {
                 slot->split_state = DWC2_ASYNC_SPLIT_START;
