@@ -190,9 +190,9 @@ NATIVECC = gcc -std=gnu90 -pedantic $(WARNFLAGS) -W -O
 
 ifdef ARCH_ARM
 MULTILIBFLAGS = $(CPUFLAGS) -fsigned-char
-# GCC 15 can turn static inline strcpy() into an unavailable external reference.
+# GCC 15 can turn a static inline strcpy() loop into an unavailable external reference.
 TOOLCHAIN_CFLAGS = -fleading-underscore -fno-reorder-functions \
-                   -fno-builtin-strcpy -DELF_TOOLCHAIN
+                   -fno-tree-loop-distribute-patterns -DELF_TOOLCHAIN
 else
 MULTILIBFLAGS = $(CPUFLAGS) -mshort
 ifdef BUILD_TOOLCHAIN_IS_ELF
