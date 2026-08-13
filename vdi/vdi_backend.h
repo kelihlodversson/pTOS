@@ -123,15 +123,62 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode);
  */
 const vdi_backend_ops *vdi_screen_backend(void);
 
+/*
+ * default_planar_backend_ops/planar_backend_ops (vdi_backend_planar.c) --
+ * the planar backend's ops table, selected by vdi_backend_select() for a
+ * planar screen (issue #173 and its follow-up).
+ *
+ * A single hardware palette family (ST/STE/TT/Videl, see
+ * SCREEN_MODE_DESC.shifter) only ever varies set_color/get_color -- every
+ * other slot is shifter-agnostic. Rather than one const table per family
+ * (four near-identical 15-pointer tables, all but two pointers duplicated),
+ * vdi_backend_select() keeps only the ST-shifter defaults in ROM
+ * (default_planar_backend_ops) and patches a single mutable copy,
+ * planar_backend_ops, at runtime: memcpy() the defaults in, then overwrite
+ * set_color/get_color for the selected family if it isn't ST -- see
+ * vdi_backend_select() in vdi_backend.c.
+ *
+ * const/non-const split matters on the m68k targets, where .data shares
+ * emutos.ld's read-only ROM region with .text (see its FIXME comment): a
+ * non-const table there would accept writes that silently do nothing on
+ * real hardware, and a table this is only ever memcpy()'d *from* has
+ * nothing to gain from living in writable storage. planar_backend_ops has
+ * no initializer, so it lands in .bss -- real RAM even on those targets --
+ * not .data.
+ *
+ * Both are always fully populated (default_planar_backend_ops at compile
+ * time, planar_backend_ops by the copy-then-patch above), so
+ * vdi_backend_select() only ever runs the read-only
+ * vdi_backend_ops_validate() on planar_backend_ops, never the mutating
+ * vdi_backend_ops_init() -- see the comment on that pair below.
+ * packed_truecolor_backend_ops is different: it can leave optional slots
+ * NULL under CONF_VDI_SPARSE_TABLE (see vdi_backend_truecolor.c), so it
+ * genuinely needs vdi_backend_ops_init()'s mutation and stays non-const --
+ * that only matters on MACHINE_RPI, where the "ROM" is actually writable
+ * RAM.
+ */
+extern const vdi_backend_ops default_planar_backend_ops;
 extern vdi_backend_ops planar_backend_ops;
 extern vdi_backend_ops packed_truecolor_backend_ops;
 
 /*
  * Installs a generic default into every NULL slot of a backend ops table
- * (see the defaults in vdi_backend.c).  Mandatory slots must already be
- * non-NULL.  Idempotent: safe to call on every vdi_backend_select().
+ * (see the defaults in vdi_backend.c), then validates it (see
+ * vdi_backend_ops_validate() below). Mutates ops, so it cannot be used on a
+ * const table -- see the default_planar_backend_ops/planar_backend_ops
+ * comment above. Idempotent: safe to call on every vdi_backend_select().
  */
 void vdi_backend_ops_init(vdi_backend_ops *ops);
+
+/*
+ * Read-only counterpart to vdi_backend_ops_init(), for tables that are
+ * always fully populated and never need the NULL-slot fill-in (currently
+ * planar_backend_ops: not const itself, but always fully populated by the
+ * copy-and-patch in vdi_backend_select(), so it never has a NULL slot to
+ * fill in either). KDEBUGs if a mandatory primitive is missing, same check
+ * vdi_backend_ops_init() runs after filling defaults.
+ */
+void vdi_backend_ops_validate(const vdi_backend_ops *ops);
 
 #endif /* CONF_WITH_VDI_BACKEND_DISPATCH */
 

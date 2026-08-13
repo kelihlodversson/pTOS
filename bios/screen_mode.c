@@ -22,7 +22,20 @@ BOOL screen_mode_desc_valid(const SCREEN_MODE_DESC *desc)
 
     switch (desc->layout) {
     case SCREEN_LAYOUT_PLANAR:
+        switch (desc->shifter) {
+        case SCREEN_SHIFTER_ST:
+        case SCREEN_SHIFTER_STE:
+        case SCREEN_SHIFTER_TT:
+        case SCREEN_SHIFTER_VIDEL:
+            break;
+        default:
+            return FALSE;
+        }
+        break;
     case SCREEN_LAYOUT_PACKED:
+        /* shifter is meaningless for a packed layout (see screen_mode.h) */
+        if (desc->shifter != SCREEN_SHIFTER_NONE)
+            return FALSE;
         break;
     default:
         return FALSE;

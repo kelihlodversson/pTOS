@@ -18,6 +18,14 @@
 #define SCREEN_PIXEL_NONE      0   /* not applicable: indexed color */
 #define SCREEN_PIXEL_RGB565    1   /* 5 red / 6 green / 5 blue bits, packed into a UWORD */
 
+#define SCREEN_SHIFTER_NONE    0   /* not applicable: SCREEN_LAYOUT_PACKED */
+#define SCREEN_SHIFTER_ST      1   /* plain ST shifter, or an equivalent single
+                                     * hardware palette with no ST/STE/TT/Videl
+                                     * distinction (e.g. Amiga) */
+#define SCREEN_SHIFTER_STE     2   /* STe shifter */
+#define SCREEN_SHIFTER_TT      3   /* TT shifter */
+#define SCREEN_SHIFTER_VIDEL   4   /* Falcon Videl */
+
 typedef struct {
     UWORD width;          /* visible width, in pixels */
     UWORD height;         /* visible height, in pixels */
@@ -26,6 +34,10 @@ typedef struct {
     UBYTE layout;          /* SCREEN_LAYOUT_* */
     UBYTE color_model;     /* SCREEN_COLOR_* */
     UBYTE pixel_format;    /* SCREEN_PIXEL_*, meaningful only for SCREEN_COLOR_TRUECOLOR */
+    UBYTE shifter;         /* SCREEN_SHIFTER_*, meaningful only for SCREEN_LAYOUT_PLANAR:
+                             * which hardware palette family drives vs_color()/vq_color()
+                             * (issue #173), so vdi_backend_select() can resolve it once
+                             * per workstation instead of every palette read/write */
 } SCREEN_MODE_DESC;
 
 /*
