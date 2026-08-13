@@ -553,15 +553,20 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
     if (strtcl1 != strtcl2)
     {
         OFD *fd2, *fdparent;
+        BOOL dn1_was_locked, dn2_was_locked;
 
         if (is_subdir(s1,dn1,dn2))
             return EACCDN;
 
+        dn1_was_locked = dn1->d_flag & DND_LOCKED;
+        dn2_was_locked = dn2->d_flag & DND_LOCKED;
         dn1->d_flag |= DND_LOCKED;
         dn2->d_flag |= DND_LOCKED;
         rc = fat_create(newdir, newname, (UWORD)(UBYTE)att, &newfc);
-        dn1->d_flag &= ~DND_LOCKED;
-        dn2->d_flag &= ~DND_LOCKED;
+        if (!dn1_was_locked)
+            dn1->d_flag &= ~DND_LOCKED;
+        if (!dn2_was_locked)
+            dn2->d_flag &= ~DND_LOCKED;
         if (rc < 0)
             return EPTHNF;
         hnew = (int)newfc.index;

@@ -44,3 +44,11 @@ and the existing non-empty DATA-segment warning for virt-arm.
 - `make distclean && make atari512_defconfig && make` completed successfully.
 - `make distclean && make virt-arm_defconfig && make` completed successfully.
 - `make gitready` and `git diff --check` passed.
+
+## Review Fix Round 2
+
+- Preserved pre-existing `DND_LOCKED` bits on both source and destination
+  DNDs across cross-directory `fat_create()`.
+- `make distclean && make atari512_defconfig && make` completed successfully.
+- `make distclean && make virt-arm_defconfig && make` completed successfully.
+- `make gitready` and `git diff --check` passed.
