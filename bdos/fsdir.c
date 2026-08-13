@@ -306,6 +306,8 @@ long xsfirst(char *name, int att)
     dt->dt_offset_drive = -1L;
 
     result = ixsfirst(name, att, dt);       /* M01.01.1209.01 */
+    if (result < 0)
+        return result;
 
     wildcard = FALSE;
     for (t = name; *t; t++)
@@ -315,7 +317,7 @@ long xsfirst(char *name, int att)
             break;
         }
 
-    if ((result < 0) || !wildcard)
+    if (!wildcard)
         return result;
 
     return E_OK;

@@ -35,3 +35,12 @@ to use the static helper in `fatfs_pfs.c`.
 - `make gitready` passed.
 
 The target builds retain unrelated existing compiler warnings in AES/VDI code.
+
+## Fix Round 1
+
+- Restored `xsfirst()`'s original short-circuit behavior by returning
+  immediately after a negative `ixsfirst()` result, before the temporary
+  inline wildcard scan can read `name`.
+- `make distclean && make atari512_defconfig && make` completed successfully.
+- `make distclean && make virt-arm_defconfig && make` completed successfully.
+- `make gitready` passed.
