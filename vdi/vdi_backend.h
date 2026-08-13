@@ -165,17 +165,18 @@ extern vdi_backend_ops packed_truecolor_backend_ops;
  * Installs a generic default into every NULL slot of a backend ops table
  * (see the defaults in vdi_backend.c), then validates it (see
  * vdi_backend_ops_validate() below). Mutates ops, so it cannot be used on a
- * const table -- see the planar_*_backend_ops comment above. Idempotent:
- * safe to call on every vdi_backend_select().
+ * const table -- see the default_planar_backend_ops/planar_backend_ops
+ * comment above. Idempotent: safe to call on every vdi_backend_select().
  */
 void vdi_backend_ops_init(vdi_backend_ops *ops);
 
 /*
  * Read-only counterpart to vdi_backend_ops_init(), for tables that are
  * always fully populated and never need the NULL-slot fill-in (currently
- * the planar_*_backend_ops variants, which are const). KDEBUGs if a
- * mandatory primitive is missing, same check vdi_backend_ops_init() runs
- * after filling defaults.
+ * planar_backend_ops: not const itself, but always fully populated by the
+ * copy-and-patch in vdi_backend_select(), so it never has a NULL slot to
+ * fill in either). KDEBUGs if a mandatory primitive is missing, same check
+ * vdi_backend_ops_init() runs after filling defaults.
  */
 void vdi_backend_ops_validate(const vdi_backend_ops *ops);
 

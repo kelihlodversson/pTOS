@@ -530,10 +530,11 @@ static WORD adjust_mono_values(WORD colnum,WORD *rgb,WORD fudge)
 /*
  * planar_set_*_color/planar_get_*_color - vdi_backend_ops.set_color/
  * get_color for one specific planar hardware palette family (issue #173).
- * Each is the vdi_backend_ops table entry for its family's variant
- * (planar_videl_backend_ops etc., see vdi_backend_planar.c), selected once
- * per workstation open via SCREEN_MODE_DESC.shifter -> vdi_backend_select()
- * (see planar_mode_desc(), bios/screen.c) rather than re-testing has_videl/
+ * Each is what vdi_backend_select() patches into planar_backend_ops's
+ * set_color/get_color slots for the selected family (see
+ * vdi_backend_planar.c/vdi_backend.c), selected once per workstation open
+ * via SCREEN_MODE_DESC.shifter -> vdi_backend_select() (see
+ * planar_mode_desc(), bios/screen.c) rather than re-testing has_videl/
  * has_tt_shifter/has_ste_shifter on every vs_color()/vq_color() call the way
  * the pre-#173 set_color()/planar_get_color() did.
  *
@@ -711,12 +712,13 @@ static void select_colnum_adjust(void)
  *
  * This whole block -- statics, select_color_family() and the two entry
  * points -- only exists in that one configuration: a dispatch build always
- * reaches palette I/O through backend->set_color/get_color (a
- * planar_*_backend_ops table entry, never through here, see
- * vdi_backend_planar.c), and a truecolor-only build never touches planar
- * code at all. Compiling this in for either would be exactly the dispatch
- * overhead that can only ever resolve one way that issue #138 already
- * excludes elsewhere (see vdi_backend.h).
+ * reaches palette I/O through backend->set_color/get_color (planar_backend_
+ * ops's patched set_color/get_color slots for a planar screen, never
+ * through here -- see vdi_backend_planar.c/vdi_backend.c), and a
+ * truecolor-only build never touches planar code at all. Compiling this in
+ * for either would be exactly the dispatch overhead that can only ever
+ * resolve one way that issue #138 already excludes elsewhere (see
+ * vdi_backend.h).
  *
  * hw_set_color/hw_get_color below are deliberately declared with no
  * initializer, so they zero-init into .bss instead of .data: on the m68k

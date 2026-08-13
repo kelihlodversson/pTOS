@@ -319,16 +319,18 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect);
  * read/write called directly in non-dispatch, planar-only builds (issue
  * #171), see the vdi_backend_ops comment on set_color/get_color in
  * vdi_backend.h. Only defined in that one build configuration (issue #173)
- * -- a dispatch build reaches palette I/O through a planar_*_backend_ops
- * table entry instead, and a truecolor-only build never touches planar
- * code at all. */
+ * -- a dispatch build reaches palette I/O through planar_backend_ops's
+ * patched set_color/get_color slots instead (see vdi_backend_planar.c/
+ * vdi_backend.c), and a truecolor-only build never touches planar code at
+ * all. */
 #if !CONF_WITH_VDI_BACKEND_DISPATCH && !CONF_WITH_VDI_BACKEND_TRUECOLOR
 void planar_set_color(Vwk *vwk, WORD pen, WORD *rgb);
 void planar_get_color(const Vwk *vwk, WORD pen, WORD *rgb);
 #endif
 /* planar_set_*_color/planar_get_*_color (vdi_col.c) -- per-shifter-family
- * vdi_backend_ops.set_color/get_color entries (issue #173), one pair per
- * planar_*_backend_ops variant (vdi_backend_planar.c); see the comment on
+ * vdi_backend_ops.set_color/get_color entries (issue #173), one pair
+ * patched into planar_backend_ops's slots for the selected shifter family
+ * (vdi_backend_planar.c/vdi_backend.c); see the comment on
  * SCREEN_MODE_DESC.shifter (screen_mode.h) */
 void planar_set_st_color(Vwk *vwk, WORD pen, WORD *rgb);
 void planar_get_st_color(const Vwk *vwk, WORD pen, WORD *rgb);
