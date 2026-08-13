@@ -152,8 +152,10 @@ truecolor screen. The single-copy palette functions in
   0-1000 scale, format-independent).
 - `vdi_truecolor_set_color()` / `vdi_truecolor_get_color()` pack/unpack keyed
   the same way (vdi_col.c:643, 816 call them unchanged). For XRGB8888 the
-  packed value is `prgb | 0xff000000UL`, `prgb` assembled from the VDI-scale
-  r/g/b components in `0x00BBGGRR` byte order.
+  packed value is `prgb | 0xff000000UL` == `0xFFRRGGBB`, `prgb` assembled
+  from the VDI-scale r/g/b components with r in bits 23:16, g in bits 15:8,
+  b in bits 7:0 (the little-endian XRGB8888 pixel value, memory bytes
+  B,G,R,X); `vdi_truecolor_get_color()` unpacks the same layout.
 - `pixel_size = linea_vars.v_planes / 8` is the shared size helper, exposed as
   `vdi_truecolor_pixel_size()` (declared in vdi_backend.h).
 

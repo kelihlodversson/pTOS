@@ -368,8 +368,10 @@ void vdi_truecolor_set_color(Vwk *vwk, WORD index, WORD r, WORD g, WORD b)
     if (b < 0) b = 0; else if (b > 1000) b = 1000;
 
     if (linea_vars.v_planes == 32) {
-        ULONG prgb = (ULONG)vdi_from_vdi8(r) | ((ULONG)vdi_from_vdi8(g) << 8)
-                   | ((ULONG)vdi_from_vdi8(b) << 16);
+        /* XRGB8888: pack 0xFFRRGGBB, the DRM XRGB8888 pixel value
+         * (little-endian memory bytes B,G,R,X) */
+        ULONG prgb = (ULONG)vdi_from_vdi8(b) | ((ULONG)vdi_from_vdi8(g) << 8)
+                   | ((ULONG)vdi_from_vdi8(r) << 16);
         vwk->tc_palette[index] = prgb | 0xff000000UL;
     } else {
         vwk->tc_palette[index] = rgb565_from_vdi(r, g, b);
@@ -383,9 +385,9 @@ void vdi_truecolor_get_color(const Vwk *vwk, WORD index, WORD *r, WORD *g, WORD 
 
     if (linea_vars.v_planes == 32) {
         ULONG packed = vwk->tc_palette[index];
-        *r = (WORD)(((LONG)(packed & 0xffUL) * 1000 + 127) / 255);
+        *r = (WORD)(((LONG)((packed >> 16) & 0xffUL) * 1000 + 127) / 255);
         *g = (WORD)(((LONG)((packed >>  8) & 0xffUL) * 1000 + 127) / 255);
-        *b = (WORD)(((LONG)((packed >> 16) & 0xffUL) * 1000 + 127) / 255);
+        *b = (WORD)(((LONG)(packed & 0xffUL) * 1000 + 127) / 255);
     } else {
         vdi_from_rgb565(vwk->tc_palette[index], r, g, b);
     }

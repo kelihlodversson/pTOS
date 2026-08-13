@@ -15,9 +15,12 @@ the red, green, and blue bytes from a PRGB value and packs them as
 `0xFFRRGGBB`.  `vdi_truecolor_init_palette()` uses this helper only when
 `linea_vars.v_planes == 32`.
 
-The RGB565 conversion and the existing 32bpp `vs_color()` / `vq_color()`
-conversion stay unchanged.  They already use their respective representations
-correctly.
+The RGB565 conversion stays unchanged.  The 32bpp `vs_color()` / `vq_color()`
+conversion was corrected alongside the boot palette to the `0xFFRRGGBB`
+convention: `vdi_truecolor_set_color()` packs the VDI-scale r/g/b components
+as `0xFFRRGGBB` (the little-endian XRGB8888 pixel value, memory bytes
+B,G,R,X) and `vdi_truecolor_get_color()` unpacks the same layout, matching
+what `vdi_truecolor_init_palette()` now seeds.
 
 ## Verification
 
