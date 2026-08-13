@@ -316,10 +316,29 @@ UWORD planar_get_pixel(WORD x, WORD y);
 void planar_put_pixel(WORD x, WORD y, UWORD color);
 void planar_fill_rect(const VwkAttrib *attr, const Rect *rect);
 /* planar_set_color/planar_get_color (vdi_col.c) -- hardware colour-register
- * read/write for the planar backend, see the vdi_backend_ops comment on
- * set_color/get_color in vdi_backend.h */
+ * read/write called directly in non-dispatch, planar-only builds (issue
+ * #171), see the vdi_backend_ops comment on set_color/get_color in
+ * vdi_backend.h */
 void planar_set_color(Vwk *vwk, WORD pen, WORD *rgb);
 void planar_get_color(const Vwk *vwk, WORD pen, WORD *rgb);
+/* planar_set_*_color/planar_get_*_color (vdi_col.c) -- per-shifter-family
+ * vdi_backend_ops.set_color/get_color entries (issue #173), one pair per
+ * planar_*_backend_ops variant (vdi_backend_planar.c); see the comment on
+ * SCREEN_MODE_DESC.shifter (screen_mode.h) */
+void planar_set_st_color(Vwk *vwk, WORD pen, WORD *rgb);
+void planar_get_st_color(const Vwk *vwk, WORD pen, WORD *rgb);
+#if CONF_WITH_STE_SHIFTER
+void planar_set_ste_color(Vwk *vwk, WORD pen, WORD *rgb);
+void planar_get_ste_color(const Vwk *vwk, WORD pen, WORD *rgb);
+#endif
+#if CONF_WITH_TT_SHIFTER
+void planar_set_tt_color(Vwk *vwk, WORD pen, WORD *rgb);
+void planar_get_tt_color(const Vwk *vwk, WORD pen, WORD *rgb);
+#endif
+#if CONF_WITH_VIDEL
+void planar_set_videl_color(Vwk *vwk, WORD pen, WORD *rgb);
+void planar_get_videl_color(const Vwk *vwk, WORD pen, WORD *rgb);
+#endif
 /* truecolor backend primitives (vdi_backend_truecolor.c) -- callable
  * directly in truecolor-only builds, where the dispatcher is compiled out */
 UWORD *truecolor_get_start_addr(WORD x, WORD y);

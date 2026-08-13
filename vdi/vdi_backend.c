@@ -20,8 +20,40 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
         return NULL;
 
     if (mode->layout == SCREEN_LAYOUT_PLANAR && mode->color_model == SCREEN_COLOR_INDEXED) {
-        vdi_backend_ops_init(&planar_backend_ops);
-        return &planar_backend_ops;
+        vdi_backend_ops *ops;
+
+        /*
+         * Which hardware palette family (issue #173): mode->shifter was
+         * resolved once, at mode-descriptor time, by planar_mode_desc()
+         * (bios/screen.c) from has_videl/has_tt_shifter/has_ste_shifter.
+         * Falls back to the ST variant for any shifter this build didn't
+         * configure in (can't happen for a valid descriptor -- see
+         * screen_mode_desc_valid() -- but a build lacking, say,
+         * CONF_WITH_VIDEL has no planar_videl_backend_ops to select).
+         */
+        switch (mode->shifter) {
+#if CONF_WITH_VIDEL
+        case SCREEN_SHIFTER_VIDEL:
+            ops = &planar_videl_backend_ops;
+            break;
+#endif
+#if CONF_WITH_TT_SHIFTER
+        case SCREEN_SHIFTER_TT:
+            ops = &planar_tt_backend_ops;
+            break;
+#endif
+#if CONF_WITH_STE_SHIFTER
+        case SCREEN_SHIFTER_STE:
+            ops = &planar_ste_backend_ops;
+            break;
+#endif
+        default:
+            ops = &planar_st_backend_ops;
+            break;
+        }
+
+        vdi_backend_ops_init(ops);
+        return ops;
     }
 
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR

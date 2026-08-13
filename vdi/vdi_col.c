@@ -501,14 +501,9 @@ static WORD videl2vdi(LONG col)
  *
  * We do the same ...
  */
-static WORD adjust_mono_values(WORD colnum,WORD *rgb)
+static WORD adjust_mono_values(WORD colnum,WORD *rgb,WORD fudge)
 {
-    WORD i, sum, fudge = ST_MONO_FUDGE_FACTOR;
-
-#if CONF_WITH_STE_SHIFTER
-    if (has_ste_shifter)
-        fudge = STE_MONO_FUDGE_FACTOR;
-#endif
+    WORD i, sum;
 
     for (i = 0, sum = 0; i < 3; i++)
     {
@@ -532,41 +527,76 @@ static WORD adjust_mono_values(WORD colnum,WORD *rgb)
 }
 
 
-/* Set an entry in the hardware color palette
+/*
+ * planar_set_*_color/planar_get_*_color - vdi_backend_ops.set_color/
+ * get_color for one specific planar hardware palette family (issue #173).
+ * Each is the vdi_backend_ops table entry for its family's variant
+ * (planar_videl_backend_ops etc., see vdi_backend_planar.c), selected once
+ * per workstation open via SCREEN_MODE_DESC.shifter -> vdi_backend_select()
+ * (see planar_mode_desc(), bios/screen.c) rather than re-testing has_videl/
+ * has_tt_shifter/has_ste_shifter on every vs_color()/vq_color() call the way
+ * the pre-#173 set_color()/planar_get_color() did.
  *
- * Input is VDI-style: colnum is VDI pen#, rgb[] entries are 0-1000
+ * vwk is unused -- unlike the truecolor backend's per-workstation pseudo-
+ * palette, this backend writes real hardware colour registers, which are
+ * necessarily shared across every workstation. pen is the raw VDI pen
+ * number; each resolves it to a hardware register through MAP_COL[] itself,
+ * matching vdi_truecolor_set_color()/vdi_truecolor_get_color()'s own
+ * MAP_COL[]-mapped index convention (see screen_set_color()/
+ * screen_get_color() below).
  */
-static void set_color(WORD colnum, WORD *rgb)
+#if CONF_WITH_VIDEL
+void planar_set_videl_color(Vwk *vwk, WORD pen, WORD *rgb)
+{
+    WORD hwreg = MAP_COL[pen];
+    LONG videlrgb;
+
+    (void)vwk;
+    videlrgb = (vdi2videl(rgb[0]) << 16) | (vdi2videl(rgb[1]) << 8) | vdi2videl(rgb[2]);
+    VsetRGB(hwreg,1,(LONG)&videlrgb);
+}
+
+void planar_get_videl_color(const Vwk *vwk, WORD pen, WORD *rgb)
+{
+    WORD hwreg = MAP_COL[pen];
+    LONG videlrgb;
+
+    (void)vwk;
+    VgetRGB(hwreg,1,(LONG)&videlrgb);
+    rgb[0] = videl2vdi(videlrgb >> 16);
+    rgb[1] = videl2vdi(videlrgb >> 8);
+    rgb[2] = videl2vdi(videlrgb);
+}
+#endif
+
+#if CONF_WITH_TT_SHIFTER
+void planar_set_tt_color(Vwk *vwk, WORD pen, WORD *rgb)
+{
+    (void)vwk;
+    set_tt_color(pen, rgb);
+}
+
+void planar_get_tt_color(const Vwk *vwk, WORD pen, WORD *rgb)
+{
+    (void)vwk;
+    query_tt_color(pen, rgb);
+}
+#endif
+
+#if CONF_WITH_STE_SHIFTER
+void planar_set_ste_color(Vwk *vwk, WORD pen, WORD *rgb)
 {
     WORD r, g, b;
-    WORD hwreg = MAP_COL[colnum];   /* get hardware register */
+    WORD hwreg = MAP_COL[pen];
 
+    (void)vwk;
     r = rgb[0];
     g = rgb[1];
     b = rgb[2];
 
-#if CONF_WITH_VIDEL
-    if (has_videl)
-    {
-        LONG videlrgb;
-
-        videlrgb = (vdi2videl(r) << 16) | (vdi2videl(g) << 8) | vdi2videl(b);
-        VsetRGB(hwreg,1,(LONG)&videlrgb);
-        return;
-    }
-#endif
-
-#if CONF_WITH_TT_SHIFTER
-    if (has_tt_shifter)
-    {
-        set_tt_color(colnum,rgb);
-        return;
-    }
-#endif
-
     if (linea_vars.v_planes == 1)  /* special handling for monochrome screens */
     {
-        hwreg = adjust_mono_values(hwreg,rgb);  /* may update rgb[] */
+        hwreg = adjust_mono_values(hwreg, rgb, STE_MONO_FUDGE_FACTOR);  /* may update rgb[] */
         if (hwreg < 0)                          /* 'do nothing' */
             return;
         r = rgb[0];
@@ -574,82 +604,137 @@ static void set_color(WORD colnum, WORD *rgb)
         b = rgb[2];
     }
 
-#if CONF_WITH_STE_SHIFTER
-    if (has_ste_shifter)
-    {
-        r = vdi2ste(r);
-        g = vdi2ste(g);
-        b = vdi2ste(b);
-    }
-    else
-#endif
-    {
-        r = vdi2st(r);
-        g = vdi2st(g);
-        b = vdi2st(b);
-    }
-
-    Setcolor(hwreg, (r << 8) | (g << 4) | b);
+    Setcolor(hwreg, (vdi2ste(r) << 8) | (vdi2ste(g) << 4) | vdi2ste(b));
 }
 
-/*
- * planar_set_color/planar_get_color - vdi_backend_ops.set_color/get_color
- * for the planar backend (issue #171): hardware colour-register read/write.
- * vwk is unused -- unlike the truecolor backend's per-workstation pseudo-
- * palette, this backend writes real hardware colour registers, which are
- * necessarily shared across every workstation. pen is the raw VDI pen
- * number; both resolve it to a hardware register through MAP_COL[]
- * themselves, matching vdi_truecolor_set_color()/vdi_truecolor_get_color()'s
- * own MAP_COL[]-mapped index convention (see screen_set_color()/
- * screen_get_color() below).
- */
-void planar_set_color(Vwk *vwk, WORD pen, WORD *rgb)
-{
-    (void)vwk;
-    set_color(pen, rgb);
-}
-
-void planar_get_color(const Vwk *vwk, WORD pen, WORD *rgb)
+void planar_get_ste_color(const Vwk *vwk, WORD pen, WORD *rgb)
 {
     WORD hwreg = MAP_COL[pen];
     WORD c;
 
     (void)vwk;
+    c = Setcolor(hwreg, -1);
+    rgb[0] = ste2vdi(c >> 8);
+    rgb[1] = ste2vdi(c >> 4);
+    rgb[2] = ste2vdi(c);
+}
+#endif
 
+/* plain ST shifter -- the unconditional fallback family */
+void planar_set_st_color(Vwk *vwk, WORD pen, WORD *rgb)
+{
+    WORD r, g, b;
+    WORD hwreg = MAP_COL[pen];
+
+    (void)vwk;
+    r = rgb[0];
+    g = rgb[1];
+    b = rgb[2];
+
+    if (linea_vars.v_planes == 1)  /* special handling for monochrome screens */
+    {
+        hwreg = adjust_mono_values(hwreg, rgb, ST_MONO_FUDGE_FACTOR);  /* may update rgb[] */
+        if (hwreg < 0)                          /* 'do nothing' */
+            return;
+        r = rgb[0];
+        g = rgb[1];
+        b = rgb[2];
+    }
+
+    Setcolor(hwreg, (vdi2st(r) << 8) | (vdi2st(g) << 4) | vdi2st(b));
+}
+
+void planar_get_st_color(const Vwk *vwk, WORD pen, WORD *rgb)
+{
+    WORD hwreg = MAP_COL[pen];
+    WORD c;
+
+    (void)vwk;
+    c = Setcolor(hwreg, -1);
+    rgb[0] = st2vdi(c >> 8);
+    rgb[1] = st2vdi(c >> 4);
+    rgb[2] = st2vdi(c);
+}
+
+/*
+ * planar_set_color/planar_get_color - the direct-call entry points
+ * screen_set_color()/screen_get_color() use when CONF_WITH_VDI_BACKEND_
+ * DISPATCH is off (issue #171): a single-renderer planar build has no
+ * SCREEN_MODE_DESC/vdi_backend_select() step at all (see vdi_v_opnwk(),
+ * vdi_control.c), so there is no descriptor-driven table to pick the right
+ * planar_*_color family from the way vdi_backend_select() does for a
+ * dispatch build (issue #173). These resolve the same has_videl/
+ * has_tt_shifter/has_ste_shifter family choice once instead, cached in
+ * hw_set_color/hw_get_color, and call straight through to the same
+ * per-family functions above -- so there is exactly one implementation of
+ * each family's palette I/O, just two different "pick it once" mechanisms
+ * for the two build configurations.
+ */
+static void (*hw_set_color)(Vwk *vwk, WORD pen, WORD *rgb) = planar_set_st_color;
+static void (*hw_get_color)(const Vwk *vwk, WORD pen, WORD *rgb) = planar_get_st_color;
+
+#if CONF_WITH_TT_SHIFTER
+/*
+ * hw_adjust_colnum - resolved-once counterpart (issue #173, secondary scope
+ * item) to the has_tt_shifter check vdi_vs_color()/vdi_vq_color() used to
+ * repeat on every call before adjust_tt_colnum() (see above): identity on
+ * every non-TT family, adjust_tt_colnum itself once TT is confirmed present.
+ */
+static WORD identity_colnum(WORD colnum)
+{
+    return colnum;
+}
+
+static WORD (*hw_adjust_colnum)(WORD colnum) = identity_colnum;
+#endif
+
+/*
+ * Resolves hw_set_color/hw_get_color once (issue #173). Called from
+ * init_colors(), which itself runs once per physical workstation open,
+ * before any palette read/write -- has_videl/has_tt_shifter/has_ste_shifter
+ * are boot-time constants (see detect_video(), bios/machine.c), so this
+ * mirrors, for the non-dispatch build, exactly what planar_mode_desc()
+ * computes into SCREEN_MODE_DESC.shifter for the dispatch build.
+ */
+static void select_color_family(void)
+{
 #if CONF_WITH_VIDEL
     if (has_videl)
     {
-        LONG videlrgb;
-
-        VgetRGB(hwreg,1,(LONG)&videlrgb);
-        rgb[0] = videl2vdi(videlrgb >> 16);
-        rgb[1] = videl2vdi(videlrgb >> 8);
-        rgb[2] = videl2vdi(videlrgb);
+        hw_set_color = planar_set_videl_color;
+        hw_get_color = planar_get_videl_color;
         return;
     }
 #endif
 #if CONF_WITH_TT_SHIFTER
     if (has_tt_shifter)
     {
-        query_tt_color(pen,rgb);
+        hw_set_color = planar_set_tt_color;
+        hw_get_color = planar_get_tt_color;
+        hw_adjust_colnum = adjust_tt_colnum;
         return;
     }
 #endif
 #if CONF_WITH_STE_SHIFTER
     if (has_ste_shifter)
     {
-        c = Setcolor(hwreg, -1);
-        rgb[0] = ste2vdi(c >> 8);
-        rgb[1] = ste2vdi(c >> 4);
-        rgb[2] = ste2vdi(c);
+        hw_set_color = planar_set_ste_color;
+        hw_get_color = planar_get_ste_color;
         return;
     }
 #endif
-    /* ST shifter */
-    c = Setcolor(hwreg, -1);
-    rgb[0] = st2vdi(c >> 8);
-    rgb[1] = st2vdi(c >> 4);
-    rgb[2] = st2vdi(c);
+    hw_set_color = planar_set_st_color;
+    hw_get_color = planar_get_st_color;
+}
+
+void planar_set_color(Vwk *vwk, WORD pen, WORD *rgb)
+{
+    hw_set_color(vwk, pen, rgb);
+}
+
+void planar_get_color(const Vwk *vwk, WORD pen, WORD *rgb)
+{
+    hw_get_color(vwk, pen, rgb);
 }
 
 /*
@@ -718,8 +803,7 @@ void vdi_vs_color(Vwk *vwk)
     }
 
 #if CONF_WITH_TT_SHIFTER
-    if (has_tt_shifter)
-        colnum = adjust_tt_colnum(colnum);  /* handles palette bank issues */
+    colnum = hw_adjust_colnum(colnum);  /* handles palette bank issues (issue #173) */
 #endif
 
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
@@ -791,6 +875,13 @@ void init_colors(void)
 {
     int i;
 
+    /*
+     * Resolve which hardware palette family drives planar_set_color()/
+     * planar_get_color() (issue #173), before anything below reads or
+     * writes a hardware colour register through them.
+     */
+    select_color_family();
+
     /* set up palette */
     memcpy(linea_vars.REQ_COL, st_palette, sizeof(st_palette));    /* use ST as default */
 
@@ -832,10 +923,10 @@ void init_colors(void)
     for (i = 0; i < linea_vars.DEV_TAB[13]; i++)
     {
         if (i < 16)
-            set_color(i, linea_vars.REQ_COL[i]);
+            hw_set_color(NULL, i, linea_vars.REQ_COL[i]);
 #if EXTENDED_PALETTE
         else
-            set_color(i, req_col2[i-16]);
+            hw_set_color(NULL, i, req_col2[i-16]);
 #endif
     }
 
@@ -903,8 +994,7 @@ void vdi_vq_color(Vwk *vwk)
     INTOUT[0] = colnum;
 
 #if CONF_WITH_TT_SHIFTER
-    if (has_tt_shifter)
-        colnum = adjust_tt_colnum(colnum);  /* handles palette bank issues */
+    colnum = hw_adjust_colnum(colnum);  /* handles palette bank issues (issue #173) */
 #endif
 
     if (INTIN[1] == 0)  /* return last-requested value */

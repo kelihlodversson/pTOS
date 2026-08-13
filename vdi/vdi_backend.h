@@ -123,7 +123,25 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode);
  */
 const vdi_backend_ops *vdi_screen_backend(void);
 
-extern vdi_backend_ops planar_backend_ops;
+/*
+ * One planar_*_backend_ops per hardware palette family (issue #173),
+ * selected by vdi_backend_select() from SCREEN_MODE_DESC.shifter -- see
+ * the comment on vdi_backend_ops.set_color/get_color above and on
+ * SCREEN_MODE_DESC.shifter (screen_mode.h). planar_st_backend_ops is the
+ * unconditional fallback (also what any non-Atari-shifter planar driver,
+ * e.g. Amiga, resolves to); the other three exist only when their hardware
+ * family is configured in.
+ */
+extern vdi_backend_ops planar_st_backend_ops;
+#if CONF_WITH_STE_SHIFTER
+extern vdi_backend_ops planar_ste_backend_ops;
+#endif
+#if CONF_WITH_TT_SHIFTER
+extern vdi_backend_ops planar_tt_backend_ops;
+#endif
+#if CONF_WITH_VIDEL
+extern vdi_backend_ops planar_videl_backend_ops;
+#endif
 extern vdi_backend_ops packed_truecolor_backend_ops;
 
 /*

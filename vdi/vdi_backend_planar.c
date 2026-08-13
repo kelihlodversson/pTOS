@@ -21,7 +21,15 @@ static void planar_close(Vwk *vwk)
     (void)vwk;
 }
 
-vdi_backend_ops planar_backend_ops = {
+/*
+ * One vdi_backend_ops variant per planar hardware palette family (issue
+ * #173), selected by vdi_backend_select() from SCREEN_MODE_DESC.shifter
+ * (see screen_mode.h, planar_mode_desc() in bios/screen.c). Every slot but
+ * set_color/get_color is shifter-agnostic and shared verbatim between the
+ * variants -- plane count, not chip family, is what the rest of the planar
+ * backend varies on, and that's already handled generically.
+ */
+vdi_backend_ops planar_st_backend_ops = {
     planar_open,
     planar_close,
     planar_get_start_addr,
@@ -29,8 +37,8 @@ vdi_backend_ops planar_backend_ops = {
     planar_put_pixel,
     planar_get_pixel,       /* get_raw_pixel: a planar pixel's raw value is its composed colour index */
     planar_put_pixel,       /* put_raw_pixel: same for writing */
-    planar_set_color,
-    planar_get_color,
+    planar_set_st_color,
+    planar_get_st_color,
     planar_fill_rect,
     planar_text_blit,
     planar_raster_copy,
@@ -38,3 +46,63 @@ vdi_backend_ops planar_backend_ops = {
     planar_search_right,
     planar_search_left,
 };
+
+#if CONF_WITH_STE_SHIFTER
+vdi_backend_ops planar_ste_backend_ops = {
+    planar_open,
+    planar_close,
+    planar_get_start_addr,
+    planar_get_pixel,
+    planar_put_pixel,
+    planar_get_pixel,
+    planar_put_pixel,
+    planar_set_ste_color,
+    planar_get_ste_color,
+    planar_fill_rect,
+    planar_text_blit,
+    planar_raster_copy,
+    planar_draw_line,
+    planar_search_right,
+    planar_search_left,
+};
+#endif
+
+#if CONF_WITH_TT_SHIFTER
+vdi_backend_ops planar_tt_backend_ops = {
+    planar_open,
+    planar_close,
+    planar_get_start_addr,
+    planar_get_pixel,
+    planar_put_pixel,
+    planar_get_pixel,
+    planar_put_pixel,
+    planar_set_tt_color,
+    planar_get_tt_color,
+    planar_fill_rect,
+    planar_text_blit,
+    planar_raster_copy,
+    planar_draw_line,
+    planar_search_right,
+    planar_search_left,
+};
+#endif
+
+#if CONF_WITH_VIDEL
+vdi_backend_ops planar_videl_backend_ops = {
+    planar_open,
+    planar_close,
+    planar_get_start_addr,
+    planar_get_pixel,
+    planar_put_pixel,
+    planar_get_pixel,
+    planar_put_pixel,
+    planar_set_videl_color,
+    planar_get_videl_color,
+    planar_fill_rect,
+    planar_text_blit,
+    planar_raster_copy,
+    planar_draw_line,
+    planar_search_right,
+    planar_search_left,
+};
+#endif
