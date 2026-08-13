@@ -104,3 +104,34 @@ make rpi2_defconfig && make gitready
 Result: passed (`gitready checks passed`).  The final command restores the
 stock rpi2 configuration; generated configuration files are not included in
 the commit.
+
+## Review Fix: Format-Matched CICON Storage
+
+The previous implementation allocated RGB565 storage at two bytes per pixel
+but advanced `ULONG *` selected-buffer pointers by `pixels`.  That placed a
+selected RGB565 icon at four bytes per pixel, beyond the allocation, and also
+did not preserve the `WORD *` layout consumed by `aes/gemgraf.c`.
+
+`aes/gemrslib.c` now obtains the active pixel size once for each CICON.  The
+common plane traversal writes either one `UWORD` (the low 16 bits) per RGB565
+pixel or one `ULONG` per XRGB8888 pixel.  Selected buffers advance by
+`pixels` in the matching pointer type, so RGB565 remains contiguous `UWORD`
+storage and XRGB8888 is contiguous `ULONG` storage.  The CICON assignments
+remain `WORD *` casts as required by the ABI.
+
+### Verification of Review Fix
+
+- `make rpi2_defconfig && make`: passed; produced `kernel7.img`.
+- Stock rpi2 QEMU boot: `timeout 45 qemu-system-arm -M raspi2b -bios
+  kernel7.img -d guest_errors -D /tmp/task-7-fix-rpi2-qemu.log -display none
+  -serial stdio` reached `AES: EMUDESK: evnt_multi()` after USB scanning.  The
+  guest-error log was empty.
+- RGB565 CICON build: appended `CONF_WITH_VDI_CICON_TEST=y` to the rpi2
+  `.config` and ran `make`; it passed and linked `obj/cicontest_rsc.o`.
+- RGB565 CICON QEMU boot: the same 45-second QEMU smoke test reached
+  `AES: EMUDESK: evnt_multi()` with an empty guest-error log.  A monitor
+  `screendump` after 30 seconds produced `/tmp/task-7-fix-cicon.ppm`; its test
+  icon's expected red quadrant included pixel `(16,16) = (248,0,0)`.
+- `make atari512_defconfig && make`: passed and produced `ptos512k.img`.
+- `make rpi2_defconfig && make gitready`: passed (`gitready checks passed`),
+  restoring the stock rpi2 configuration.
