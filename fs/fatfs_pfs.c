@@ -1,18 +1,13 @@
 /*
- * fatfs_pfs.c - wraps the built-in FAT filesystem as a pfs_ops instance
+ * fatfs_pfs.c - built-in FAT filesystem implementation
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  *
- * A thin adapter, not a reimplementation: every entry point here
- * reconstructs an absolute path string (drive letter + dopath()'s walk
- * up from a directory cookie's DND) and calls the existing, unmodified
- * GEMDOS-level FAT functions (findit(), xopen(), ixcreat(), xmkdir(),
- * ...) - never relying on a process's ambient current-directory state,
- * since fs/pfs.c tracks that itself (see pfs.c's "current-directory
- * tracking" section).  Only dopath(), ixsnext() and makbuf() needed
- * exposing beyond bdos/fs.h's already-public FAT API; see
- * bdos/fs_internal.h.
+ * Holds the DND/name-shaped FAT core, the path-level entry points used
+ * when pluggable filesystem support is off, and the fat_pfs_ops adapter
+ * used when it is on.  See
+ * docs/superpowers/specs/2026-08-11-invert-pluggable-fs-dispatch-design.md.
  */
 
 #include "config.h"
@@ -293,7 +288,7 @@ static int namlen(char *s11)                            /* M01.01.1107.01 */
  *  off fat_mkdir_path() shim both reach this code.
  *
  *  Body is the verbatim xmkdir() from bdos/fsdir.c (M01.01.1107.01 etc.)
- *  with the original ixcreat(s, FA_SUBDIR) open replaced by fat_create().
+ *  with its original create open replaced by fat_create().
  */
 static LONG fat_mkdir(PFSCOOKIE *dir, const char *name)
 {
@@ -888,7 +883,7 @@ struct pfs_ops fat_pfs_ops = {
     fat_dfree,
     fat_mediach,
     fat_release,
-    TRUE            /* native_handles: xopen()/ixcreat() already
+    TRUE            /* native_handles: fat_open()/fat_create() already
                      * allocate a real sft[] slot - see fat_open()/
                      * fat_create() and pfs_do_open()/pfs_do_create()
                      * in fs/pfs.c. */

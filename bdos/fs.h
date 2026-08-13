@@ -410,7 +410,6 @@ long xdup(int h);
 
 /* create file with specified name, attributes */
 long xcreat(char *name, char attr);
-long ixcreat(char *name, char attr);
 
 /* open a file (path name) */
 long xopen(char *name, int mod);

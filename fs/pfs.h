@@ -7,9 +7,9 @@
  * A drive letter can be claimed by a driver implementing 'struct pfs_ops'
  * instead of by the built-in FAT filesystem.  When CONF_WITH_PLUGGABLE_FS
  * is set, every drive - including the built-in FAT ones, wrapped by
- * fatfs_pfs.c as fat_pfs_ops - is dispatched through this interface from
- * bdos/bdosmain.c's osif().  See docs/superpowers/specs for the design
- * this implements.
+ * fatfs_pfs.c as fat_pfs_ops - is dispatched through this interface.
+ * See docs/superpowers/specs/2026-08-11-invert-pluggable-fs-dispatch-design.md
+ * for the design this implements.
  */
 
 #ifndef PFS_H
@@ -148,7 +148,7 @@ struct pfs_ops {
 
     /* TRUE if open()/create() already returns a real, live GEMDOS
      * handle in the successful cookie's 'index' - fat_pfs_ops does,
-     * since xopen()/ixcreat() already allocate their own sft[] slot
+     * since fat_open()/fat_create() already allocate their own sft[] slot
      * internally.  The core then hands that handle straight back to
      * the caller instead of also wrapping it in a second sft[] slot of
      * its own (which would needlessly consume two system handles per
@@ -174,37 +174,10 @@ LONG pfs_register_drive(WORD drive, struct pfs_ops *fs);
 
 /* The built-in FAT filesystem, wrapped as a pfs_ops instance (see
  * fs/fatfs_pfs.c).  One shared instance serves every FAT drive letter -
- * pfs_dispatch()'s drive resolution falls back to this for any drive
+ * pfs_do_*() drive resolution falls back to this for any drive
  * pfs_register_drive() hasn't explicitly claimed.
  */
 extern struct pfs_ops fat_pfs_ops;
-
-/* True if GEMDOS function number 'fn' is one this layer handles
- * (Fopen/Fread/Dsetpath/Fsfirst/... - see fs/pfs.c). Used by osif()'s
- * dispatch hook.
- */
-BOOL pfs_is_fs_call(WORD fn);
-
-/* Dispatch GEMDOS function 'fn' with BDOS's raw argument words 'pw'
- * (pw[0] is the function number itself, pw[1..] the arguments) to the
- * pluggable filesystem layer.  Only called when pfs_is_fs_call(fn) is
- * true.  Note Fread(0x3F)/Fwrite(0x40)/Fclose(0x3E) are NOT among the
- * calls pfs_is_fs_call() recognises: those stay on GEMDOS's normal
- * handle-dispatch path and are instead made pluggable-aware directly in
- * xread()/xwrite()/xclose() (bdos/fsio.c, fsopnclo.c) via the three
- * functions below, so every caller of those three - not just osif() -
- * reaches a pluggable handle correctly (e.g. process-termination
- * cleanup in bdos/proc.c). Returns the same LONG osif() itself would
- * return to the caller.  'pw' is exactly osif()'s own argument-words
- * pointer, which is LONG-sized on ARM (one slot per real argument) and
- * WORD-sized on m68k (one slot per 16-bit stack unit) - see osif() in
- * bdos/bdosmain.c.
- */
-#ifdef __arm__
-LONG pfs_dispatch(WORD fn, LONG *pw);
-#else
-LONG pfs_dispatch(WORD fn, WORD *pw);
-#endif
 
 /* Handle-based dispatch for a handle already resolved (by the bdos/
  * caller, via getpfsslot()) to belong to a pluggable driver.  'fc' is

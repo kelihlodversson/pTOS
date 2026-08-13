@@ -96,22 +96,6 @@ long xcreat(char *name, char attr)
 
 
 /*
-**  ixcreat - internal routine for creating files
-*/
-/*  name: path name of file
- *  attr: atttributes
- */
-long ixcreat(char *name, char attr)
-{
-#if CONF_WITH_PLUGGABLE_FS
-    return pfs_do_create(name, (UWORD)(UBYTE)attr);
-#else
-    return fat_creat_path(name, attr);
-#endif
-}
-
-
-/*
  *  xopen - open a file (path name)
  *
  *  Function 0x3D   Fopen

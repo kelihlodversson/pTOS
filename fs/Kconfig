@@ -12,21 +12,12 @@ config CONF_WITH_PLUGGABLE_FS
 	default n
 	help
 	  Routes GEMDOS filesystem calls (Fopen, Fread, Dsetpath, Fsfirst,
-	  ...) through a common pluggable interface, instead of calling the
-	  built-in FAT code directly.  The built-in FAT filesystem itself is
-	  wrapped as an instance of this interface, so it keeps working
-	  exactly as before; the point is to let a driver expose a whole
-	  filesystem (not just a block device) as a GEMDOS drive, which the
-	  built-in FAT code and block device layer alone cannot do.
-
-	  This has no visible effect by itself beyond the built-in FAT
-	  wrapper; it exists so a driver (e.g. a virtio-9p host directory
-	  bridge) can register against it.
-
-	  Say n unless a driver needs this.  Off by default: when off,
-	  GEMDOS calls the built-in FAT code directly, exactly as when this
-	  option does not exist, at zero extra size/RAM cost.  Only turn
-	  this on for machines with room to spare.
+	  ...) through a pluggable interface so a driver can expose a whole
+	  filesystem as a GEMDOS drive.  The built-in FAT filesystem keeps
+	  working either way: when off, the GEMDOS shims call fatfs_pfs.c's
+	  fat_*_path() entry points directly; when on, they call the pfs_do_*()
+	  helpers here, which dispatch through a per-drive vtable (with the
+	  FAT code wrapped as fat_pfs_ops).  Say n unless a driver needs this.
 
 config CONF_WITH_PLUGGABLE_FS_TEST
 	bool "Pluggable filesystem self-test driver"
