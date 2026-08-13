@@ -820,8 +820,10 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
 {
     MFDB *src,*dst;
     BOOL use_clip = FALSE;
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
     /* bytes per packed pixel (2 for RGB565, 4 for XRGB8888) */
     const UWORD packed_ppb = (UWORD)(linea_vars.v_planes / 8);
+#endif
 
     /* Get the pointers to the MFDBs */
     src = (MFDB *)CONTRL->ptr1; /* a5, source MFDB */
