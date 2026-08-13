@@ -835,8 +835,10 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
          * transparent sources are 1bpp masks whose fd_wdwidth stride is
          * correct as-is.
          */
-        if (vdi_screen_is_truecolor() && !raster->transparent && !src->fd_stand)
+        if (vdi_screen_is_truecolor() && !raster->transparent && !src->fd_stand) {
+            info->s_nxwd = packed_ppb;
             info->s_nxln = src->fd_w * packed_ppb;
+        }
 
         /*
          * fd_stand memory buffers are a different case again: bb_save()/
