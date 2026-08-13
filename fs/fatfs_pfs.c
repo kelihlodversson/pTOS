@@ -510,9 +510,15 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
     CLNO clust;
     LONG fileln, rc;
     PFSCOOKIE newfc;
+    BOOL was_locked;
 
     posp = 0L;
-    if (scan(dn2,s2,FA_SUBDIR|FA_ARCHIVE|FA_RO,&posp))
+    was_locked = dn1->d_flag & DND_LOCKED;
+    dn1->d_flag |= DND_LOCKED;
+    f = scan(dn2,s2,FA_SUBDIR|FA_ARCHIVE|FA_RO,&posp);
+    if (!was_locked)
+        dn1->d_flag &= ~DND_LOCKED;
+    if (f)
         return EACCDN;
 
     dmd1 = dn1->d_drv;
@@ -1111,12 +1117,18 @@ long fat_rename_path(char *p1, char *p2)
     DND *dn1, *dn2;
     const char *s1, *s2;
     PFSCOOKIE old, new;
+    BOOL was_locked;
 
     if ((long)(dn1 = findit(p1, &s1, 0)) < 0)
         return (long)dn1;
     if (!dn1)
         return EPTHNF;
-    if ((long)(dn2 = findit(p2, &s2, 0)) < 0)
+    was_locked = dn1->d_flag & DND_LOCKED;
+    dn1->d_flag |= DND_LOCKED;
+    dn2 = findit(p2, &s2, 0);
+    if (!was_locked)
+        dn1->d_flag &= ~DND_LOCKED;
+    if ((long)dn2 < 0)
         return (long)dn2;
     if (!dn2)
         return EPTHNF;

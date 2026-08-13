@@ -34,3 +34,13 @@
 
 The target builds retain unrelated existing compiler warnings in AES/VDI code
 and the existing non-empty DATA-segment warning for virt-arm.
+
+## Review Fix Round 1
+
+- Protected the source DND while the OFF wrapper resolves the destination
+  path, restoring only a lock acquired by this call.
+- Protected the source DND while the common core scans the destination for an
+  existing entry, again preserving a pre-existing `DND_LOCKED` bit.
+- `make distclean && make atari512_defconfig && make` completed successfully.
+- `make distclean && make virt-arm_defconfig && make` completed successfully.
+- `make gitready` and `git diff --check` passed.
