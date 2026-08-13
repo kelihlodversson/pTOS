@@ -17,6 +17,7 @@
 #endif
 
 #include "portab.h"
+#include "screen.h"
 #include "screen_mode.h"
 #include "biosmem.h"
 #include "tosvars.h"

@@ -55,11 +55,18 @@ vdi_backend_ops packed_truecolor32_backend_ops = {
     tc_put_raw_pixel,
     truecolor32_ops_set_color,
     truecolor32_ops_get_color,
+#if CONF_VDI_SPARSE_TABLE
+    /* The optional slots are left NULL so vdi_backend_ops_init() fills them
+     * with the generic defaults -- same sparse behavior as the 16bpp RGB565
+     * wrapper (see vdi_backend_truecolor.c). */
+    NULL, NULL, NULL, NULL, NULL, NULL,
+#else
     tc_fill_rect,
     tc_text_blit,
     tc_raster_copy,
     tc_draw_line,
     tc_search_right,
     tc_search_left,
+#endif
     4,                          /* pixel_size */
 };
