@@ -671,6 +671,15 @@ void planar_get_st_color(const Vwk *vwk, WORD pen, WORD *rgb)
  *
  * No initializer, like hw_set_color/hw_get_color below: see the comment
  * there for why these need .bss, not .data.
+ *
+ * hw_adjust_colnum's call sites (vdi_vs_color()/vdi_vq_color()) dispatch
+ * through it unconditionally, with no "has it been resolved yet" check:
+ * every reachable path to a VDI opcode handler runs through vdi_v_opnwk()
+ * first, which calls init_colors() (and so select_colnum_adjust()) before
+ * any workstation exists to make such a call on. A lazy self-init guard
+ * here would just be defending against a call order this codebase's
+ * control flow doesn't allow -- the same per-call runtime check issue
+ * #173 exists to remove, reintroduced for a case that can't happen.
  */
 static WORD identity_colnum(WORD colnum)
 {
@@ -965,29 +974,49 @@ void init_colors(void)
     for (i = 0; i < linea_vars.DEV_TAB[13]; i++)
         REV_MAP_COL[MAP_COL[i]] = i;
 
-#if !CONF_WITH_VDI_BACKEND_DISPATCH && !CONF_WITH_VDI_BACKEND_TRUECOLOR
     /*
-     * Now initialise the hardware. Planar-only: the truecolor backend has
-     * no shared hardware palette to preload here (RGB565 packed pixels
-     * *are* the colour), and seeds each workstation's own pseudo-palette
-     * separately, from vdi_truecolor_init_palette() (init_wk(),
-     * vdi_control.c) instead -- see the vdi_screen_is_truecolor() branches
-     * above.  In a dispatch build, this step (like the pre-#173 code
-     * before it) is only reachable at all in this build configuration, so
-     * a dispatch build that ends up with the planar backend selected at
-     * runtime does not get its hardware palette preloaded here either;
-     * that gap predates this refactor.
+     * Now initialise the hardware -- but only if the active backend is
+     * planar: the truecolor backend has no shared hardware palette to
+     * preload here (RGB565 packed pixels *are* the colour), and seeds each
+     * workstation's own pseudo-palette separately, from
+     * vdi_truecolor_init_palette() (init_wk(), vdi_control.c) instead --
+     * see the vdi_screen_is_truecolor() branches above.
+     *
+     * Pre-#173, this unconditionally called the single planar-only
+     * set_color(), even in what's now a dispatch build, so a dispatch
+     * build's planar hardware always got preloaded here regardless of
+     * which backend ended up active for a given screen. set_hw_color below
+     * preserves that: hw_set_color directly when planar is the only
+     * renderer (the common case, and the only one where it's declared --
+     * see above), or the selected backend's own set_color when dispatch
+     * means hw_set_color doesn't exist -- vwk is unused by every
+     * planar_set_*_color() (see above), so passing NULL here is safe as
+     * long as the active backend actually is planar.
      */
-    for (i = 0; i < linea_vars.DEV_TAB[13]; i++)
     {
-        if (i < 16)
-            hw_set_color(NULL, i, linea_vars.REQ_COL[i]);
+        void (*set_hw_color)(Vwk *vwk, WORD pen, WORD *rgb);
+
+#if CONF_WITH_VDI_BACKEND_DISPATCH
+        set_hw_color = vdi_screen_is_truecolor() ? NULL : vdi_screen_backend()->set_color;
+#elif CONF_WITH_VDI_BACKEND_TRUECOLOR
+        set_hw_color = NULL;
+#else
+        set_hw_color = hw_set_color;
+#endif
+
+        if (set_hw_color)
+        {
+            for (i = 0; i < linea_vars.DEV_TAB[13]; i++)
+            {
+                if (i < 16)
+                    set_hw_color(NULL, i, linea_vars.REQ_COL[i]);
 #if EXTENDED_PALETTE
-        else
-            hw_set_color(NULL, i, req_col2[i-16]);
+                else
+                    set_hw_color(NULL, i, req_col2[i-16]);
 #endif
+            }
+        }
     }
-#endif
 
 #ifdef HATARI_DUOCHROME_WORKAROUND
     /*
