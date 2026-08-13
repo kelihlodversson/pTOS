@@ -704,10 +704,11 @@ static WORD (*hw_adjust_colnum)(WORD colnum);
  * has_tt_shifter/has_ste_shifter are boot-time constants (see
  * detect_video(), bios/machine.c), so this mirrors, for the non-dispatch
  * build, exactly what planar_mode_desc() computes into
- * SCREEN_MODE_DESC.shifter for the dispatch build. Also called lazily by
- * planar_set_color()/planar_get_color() below, so a caller reachable before
- * init_colors() has run (none currently) still gets a real answer instead
- * of dispatching through a still-NULL .bss function pointer.
+ * SCREEN_MODE_DESC.shifter for the dispatch build. planar_set_color()/
+ * planar_get_color() below trust that init_colors() has already run and
+ * dispatch through hw_set_color/hw_get_color unconditionally -- no NULL
+ * check, which would just be the per-call runtime test this issue removes,
+ * re-added one level down.
  */
 static void select_color_family(void)
 {
@@ -746,15 +747,11 @@ static void select_color_family(void)
 
 void planar_set_color(Vwk *vwk, WORD pen, WORD *rgb)
 {
-    if (!hw_set_color)
-        select_color_family();
     hw_set_color(vwk, pen, rgb);
 }
 
 void planar_get_color(const Vwk *vwk, WORD pen, WORD *rgb)
 {
-    if (!hw_get_color)
-        select_color_family();
     hw_get_color(vwk, pen, rgb);
 }
 
