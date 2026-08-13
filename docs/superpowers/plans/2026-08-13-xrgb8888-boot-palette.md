@@ -63,7 +63,7 @@ Run:
 
 ```bash
 ! git grep -n 'tc_palette\[i\] = default_prgb_palette\[i\] | 0xff000000UL' -- vdi/vdi_backend_truecolor.c
-git grep -n 'xrgb8888_from_prgb(default_prgb_palette[i])' -- vdi/vdi_backend_truecolor.c
+git grep -n 'xrgb8888_from_prgb(default_prgb_palette\[i\])' -- vdi/vdi_backend_truecolor.c
 ```
 
 Expected: the old direct assignment has no matches; the helper call has one match.
