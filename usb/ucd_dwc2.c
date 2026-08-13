@@ -1733,15 +1733,16 @@ long usb_lowlevel_stop(void *ucd_priv)
     for (index = 0; index < DWC2_ASYNC_SLOT_COUNT; index++) {
         ret = dwc2_async_shutdown(priv, &priv->async[index]);
         if (ret)
-            return ret;
+            break;
     }
     clrbits_le32(&priv->regs->gahbcfg, DWC2_GAHBCFG_GLBLINTRMSK);
     if (priv->irq_connected)
         raspi_connect_irq(ARM_IRQ_USB, NULL);
     priv->irq_connected = FALSE;
-    dwc2_uninit_common(priv->regs);
+    if (!ret)
+        dwc2_uninit_common(priv->regs);
 
-    return 0;
+    return ret;
 }
 
 /*

@@ -58,6 +58,8 @@ require_multiline 'gintsts = readl\(&regs->gintsts\);[\s\S]*if \(priv->shutting_
     'IRQ acknowledges pending sources during shutdown without channel handling'
 require_multiline 'priv->shutting_down = TRUE;[\s\S]*clrbits_le32\(&priv->regs->gintmsk, DWC2_GINTMSK_SOFINTR\);[\s\S]*clrbits_le32\(&priv->regs->gintmsk, DWC2_GINTMSK_HCINTR\);[\s\S]*for \(index = 0; index < DWC2_ASYNC_SLOT_COUNT; index\+\+\)' \
     'shutdown masks DWC2 IRQ sources before draining async slots'
+require_multiline 'ret = dwc2_async_shutdown\(priv, &priv->async\[index\]\);[\s\S]*if \(ret\)[\s\S]*break;[\s\S]*clrbits_le32\(&priv->regs->gahbcfg, DWC2_GAHBCFG_GLBLINTRMSK\);[\s\S]*raspi_connect_irq\(ARM_IRQ_USB, NULL\);[\s\S]*return ret;' \
+    'shutdown disconnects global IRQ handling after a slot halt failure'
 require_multiline 'actual_length = msg->transfer_len -[\s\S]*if \(actual_length < 0 \|\| actual_length > msg->transfer_len\) \{[\s\S]*dwc2_async_finish_error\(priv, slot\);[\s\S]*return;' \
     'async completion validates DMA length before cache and copy'
 require 'ULONG ssplit_frame' 'per-slot start-split frame'
