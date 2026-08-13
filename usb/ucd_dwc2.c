@@ -816,6 +816,8 @@ static void dwc2_irq_handler(void)
     gintsts = readl(&regs->gintsts);
     if (!(gintsts & (DWC2_GINTSTS_HCINTR | DWC2_GINTSTS_SOFINTR)))
         return;
+    if (priv->shutting_down)
+        return;
 
     pending = readl(&regs->host_regs.haint) &
               readl(&regs->host_regs.haintmsk);

@@ -13,6 +13,14 @@ require()
     fi
 }
 
+require_multiline()
+{
+    if ! rg -U -q "$1" "$source"; then
+        echo "missing async DWC2 contract: $2"
+        exit 1
+    fi
+}
+
 require 'next_frame' 'per-slot next eligible frame'
 require 'dwc2_async_interval' 'USB speed-aware interval conversion'
 require 'DWC2_GINTMSK_SOFINTR' 'SOF wakeup for deferred transfers'
@@ -28,5 +36,7 @@ require 'priv->shutting_down' 'shutdown state guards'
 require 'return ETIMEDOUT' 'halt timeout defers controller reset'
 require '!priv->shutting_down' 'callback and rearm shutdown guard'
 require 'if \(!priv->shutting_down\)' 'synchronous shutdown halt observer'
+require_multiline 'gintsts = readl\(&regs->gintsts\);[\s\S]*if \(priv->shutting_down\)[\s\S]*return;[\s\S]*pending = readl\(&regs->host_regs.haint\)' \
+    'IRQ returns during shutdown before handling async channel interrupts'
 
 echo 'dwc2 async contract test passed'
