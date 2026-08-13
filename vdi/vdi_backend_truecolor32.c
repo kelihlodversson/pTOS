@@ -21,6 +21,7 @@
 #include "../bios/tosvars.h"
 #include "vdi_defs.h"
 #include "vdi_backend.h"
+#include "vdi_col.h"
 #include "kprint.h"
 
 #define PIXEL ULONG
@@ -34,6 +35,16 @@ static UWORD *truecolor32_get_start_addr(WORD x, WORD y)
     return (UWORD *)tc_get_start_addr(x, y);
 }
 
+static void truecolor32_ops_set_color(Vwk *vwk, WORD pen, WORD *rgb)
+{
+    vdi_truecolor_set_color(vwk, MAP_COL[pen], rgb[0], rgb[1], rgb[2]);
+}
+
+static void truecolor32_ops_get_color(const Vwk *vwk, WORD pen, WORD *rgb)
+{
+    vdi_truecolor_get_color(vwk, MAP_COL[pen], &rgb[0], &rgb[1], &rgb[2]);
+}
+
 vdi_backend_ops packed_truecolor32_backend_ops = {
     NULL,                       /* open: generic default */
     NULL,                       /* close: generic default */
@@ -42,6 +53,8 @@ vdi_backend_ops packed_truecolor32_backend_ops = {
     tc_put_pixel,
     tc_get_raw_pixel,
     tc_put_raw_pixel,
+    truecolor32_ops_set_color,
+    truecolor32_ops_get_color,
     tc_fill_rect,
     tc_text_blit,
     tc_raster_copy,

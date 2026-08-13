@@ -44,6 +44,8 @@
 #define SUBMIT_CONTROL_MSG    (('U'<< 8) | 2)
 #define SUBMIT_BULK_MSG        (('U'<< 8) | 3)
 #define SUBMIT_INT_MSG        (('U'<< 8) | 4)
+#define SUBMIT_ASYNC_INT_MSG  (('U' << 8) | 5)
+#define CANCEL_ASYNC_INT_MSG  (('U' << 8) | 6)
 
 struct bulk_msg
 {
@@ -71,6 +73,21 @@ struct int_msg
     void             *buffer;
     long             transfer_len;
     long             interval;
+};
+
+struct usb_async_int_msg;
+typedef void (*usb_async_int_callback_t)(struct usb_async_int_msg *msg,
+                                         LONG status, LONG actual_length);
+
+struct usb_async_int_msg
+{
+    struct usb_device *dev;
+    ULONG pipe;
+    void *buffer;
+    LONG transfer_len;
+    LONG interval;
+    usb_async_int_callback_t callback;
+    void *context;
 };
 
 struct ucdif

@@ -42,12 +42,12 @@
 #ifndef MACHINE_RPI
 static inline ULONG phys_to_bus(ULONG phys)
 {
-	return phys;
+    return phys;
 }
 
 static inline ULONG bus_to_phys(ULONG bus)
 {
-	return bus;
+    return bus;
 }
 #endif
 
@@ -60,9 +60,15 @@ typedef char Path[MAXPATHLEN];
 # define ALERT(x)       KINFO(x)
 # define DEBUG(x)       KDEBUG(x)
 
+#if CONF_DEBUG_USB_ASYNC
+#define KINFO_USB_ASYNC(a) KINFO(a)
+#else
+#define KINFO_USB_ASYNC(a) ((void)0)
+#endif
+
 #ifdef MACHINE_RPI
-#define mdelay(x) 	raspi_delay_ms(x)
-#define udelay(x) 	raspi_delay_us(x)
+#define mdelay(x)     raspi_delay_ms(x)
+#define udelay(x)     raspi_delay_us(x)
 #define get_timer(x) raspi_get_timer(x)
 #else
 #error "The USB driver can currently only be compiled on RPI"

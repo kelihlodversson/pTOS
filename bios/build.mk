@@ -56,6 +56,8 @@ obj-$(CONF_WITH_VIRTIO_BLK) += virtio_blk.o
 
 obj-$(CONF_WITH_VIRTIO_INPUT) += virtio_input.o virtio_input_keytbl.o
 
+obj-$(CONF_WITH_VIRTIO_9P) += virtio_9p.o
+
 # Fonts.  A multi-language image needs the fonts of every charset, a
 # single-country one only those of its own charset.  See country.mk.
 obj-y += $(FONTOBJ)

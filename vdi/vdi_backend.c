@@ -13,6 +13,7 @@
 #include "../bios/lineavars.h"  /* linea_vars */
 #include "asm.h"                /* rolw1/rorw1 */
 #include "kprint.h"             /* KDEBUG */
+#include "string.h"             /* memcpy */
 
 const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
 {
@@ -20,7 +21,56 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode)
         return NULL;
 
     if (mode->layout == SCREEN_LAYOUT_PLANAR && mode->color_model == SCREEN_COLOR_INDEXED) {
-        vdi_backend_ops_init(&planar_backend_ops);
+        /*
+         * Copy the ST-shifter defaults in, then patch set_color/get_color
+         * for the actual hardware palette family (issue #173 follow-up;
+         * see the comment on default_planar_backend_ops/planar_backend_ops
+         * in vdi_backend.h for why this is a runtime copy-and-patch rather
+         * than one const table per family). mode->shifter was resolved
+         * once, at mode-descriptor time, by planar_mode_desc() (bios/
+         * screen.c) from has_videl/has_tt_shifter/has_ste_shifter.
+         *
+         * The default case (SCREEN_SHIFTER_ST, or any shifter this build
+         * didn't configure in -- can't happen in practice, since the only
+         * planar producer of mode->shifter, planar_mode_desc() in bios/
+         * screen.c, derives it from the same HAS_TT_SHIFTER/HAS_STE_SHIFTER/
+         * HAS_VIDEL macros that gate the #if CONF_WITH_* cases below; note
+         * screen_mode_desc_valid() alone does not guarantee this, since it
+         * only checks mode->shifter's value range, not which shifters this
+         * build has compiled in) needs no patch: the copied defaults are
+         * already the ST-shifter pair.
+         */
+        memcpy(&planar_backend_ops, &default_planar_backend_ops, sizeof(planar_backend_ops));
+
+        switch (mode->shifter) {
+#if CONF_WITH_VIDEL
+        case SCREEN_SHIFTER_VIDEL:
+            planar_backend_ops.set_color = planar_set_videl_color;
+            planar_backend_ops.get_color = planar_get_videl_color;
+            break;
+#endif
+#if CONF_WITH_TT_SHIFTER
+        case SCREEN_SHIFTER_TT:
+            planar_backend_ops.set_color = planar_set_tt_color;
+            planar_backend_ops.get_color = planar_get_tt_color;
+            break;
+#endif
+#if CONF_WITH_STE_SHIFTER
+        case SCREEN_SHIFTER_STE:
+            planar_backend_ops.set_color = planar_set_ste_color;
+            planar_backend_ops.get_color = planar_get_ste_color;
+            break;
+#endif
+        default:
+            break;
+        }
+
+        /*
+         * Not vdi_backend_ops_init(): planar_backend_ops is always fully
+         * populated by the copy-and-patch above, with no NULL slot to fill
+         * in, so only the read-only mandatory-primitive check applies.
+         */
+        vdi_backend_ops_validate(&planar_backend_ops);
         return &planar_backend_ops;
     }
 
@@ -369,6 +419,14 @@ static WORD default_search_left(const VwkClip *clip, WORD x, WORD y, UWORD searc
     return x + 1;       /* output x coord + 1 to endxleft. */
 }
 
+void vdi_backend_ops_validate(const vdi_backend_ops *ops)
+{
+    if (!ops->get_start_addr || !ops->get_pixel || !ops->put_pixel
+        || !ops->get_raw_pixel || !ops->put_raw_pixel
+        || !ops->set_color || !ops->get_color)
+        KDEBUG(("vdi_backend_ops_validate: backend is missing a mandatory primitive\n"));
+}
+
 void vdi_backend_ops_init(vdi_backend_ops *ops)
 {
     if (!ops->open) ops->open = default_open;
@@ -380,7 +438,5 @@ void vdi_backend_ops_init(vdi_backend_ops *ops)
     if (!ops->search_right) ops->search_right = default_search_right;
     if (!ops->search_left) ops->search_left = default_search_left;
 
-    if (!ops->get_start_addr || !ops->get_pixel || !ops->put_pixel
-        || !ops->get_raw_pixel || !ops->put_raw_pixel)
-        KDEBUG(("vdi_backend_ops_init: backend is missing a mandatory primitive\n"));
+    vdi_backend_ops_validate(ops);
 }

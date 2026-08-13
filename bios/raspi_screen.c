@@ -251,6 +251,7 @@ void raspi_get_current_mode_desc(SCREEN_MODE_DESC *desc)
     desc->layout = SCREEN_LAYOUT_PACKED;
     desc->color_model = SCREEN_COLOR_TRUECOLOR;
     desc->pixel_format = SCREEN_PIXEL_RGB565;
+    desc->shifter = SCREEN_SHIFTER_NONE;
 }
 
 void raspi_setphys(const UBYTE *addr)

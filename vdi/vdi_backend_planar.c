@@ -21,11 +21,8 @@ static void planar_close(Vwk *vwk)
     (void)vwk;
 }
 
-/*
- * ULONG raw-pixel adapters for the ops table: a planar pixel's raw value
- * is its composed colour index, which fits a UWORD; widen to the ops
- * interface's ULONG on the way in/out.
- */
+/* ULONG raw-pixel adapters for the ops table: a planar pixel's raw value
+ * is its composed colour index, which fits a UWORD. */
 static ULONG planar_get_raw_pixel(WORD x, WORD y)
 {
     return (ULONG)planar_get_pixel(x, y);
@@ -36,7 +33,23 @@ static void planar_put_raw_pixel(WORD x, WORD y, ULONG raw)
     planar_put_pixel(x, y, (UWORD)raw);
 }
 
-vdi_backend_ops planar_backend_ops = {
+/*
+ * default_planar_backend_ops - the ST-shifter table, the only planar
+ * vdi_backend_ops this file defines (issue #173 follow-up).
+ *
+ * Earlier revisions of this file defined one const table per planar
+ * hardware palette family (ST/STE/TT/Videl), all sharing every slot but
+ * set_color/get_color verbatim -- four near-identical 15-pointer tables,
+ * each living in ROM on the m68k targets. vdi_backend_select() now keeps
+ * only this one in ROM and patches a single mutable copy, planar_backend_ops
+ * (below), at runtime instead -- see the comment there.
+ *
+ * const: this table itself is never written to (only memcpy()'d from), so
+ * it stays in ROM on the m68k targets, where .data shares emutos.ld's
+ * read-only region with .text (see its FIXME comment) -- a non-const table
+ * here would accept writes that silently do nothing on real hardware.
+ */
+const vdi_backend_ops default_planar_backend_ops = {
     planar_open,
     planar_close,
     planar_get_start_addr,
@@ -44,6 +57,8 @@ vdi_backend_ops planar_backend_ops = {
     planar_put_pixel,
     planar_get_raw_pixel,
     planar_put_raw_pixel,
+    planar_set_st_color,
+    planar_get_st_color,
     planar_fill_rect,
     planar_text_blit,
     planar_raster_copy,
@@ -52,3 +67,16 @@ vdi_backend_ops planar_backend_ops = {
     planar_search_left,
     2,                          /* pixel_size */
 };
+
+/*
+ * planar_backend_ops - the table vdi_backend_select() actually hands out
+ * for a planar screen (issue #173 follow-up).
+ *
+ * No initializer, so this lands in .bss (real RAM even on the m68k
+ * targets), not .data -- see the comment on default_planar_backend_ops
+ * above. vdi_backend_select() populates it on every call: memcpy() the ST
+ * defaults from default_planar_backend_ops, then patch set_color/get_color
+ * to the selected shifter family's pair if it isn't ST (which needs no
+ * patch -- the copied defaults are already correct).
+ */
+vdi_backend_ops planar_backend_ops;

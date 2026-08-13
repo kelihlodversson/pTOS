@@ -792,6 +792,11 @@ dont_clip (struct blit_frame * info)
  *  planar backend needs S_OR_D (its data planes are mask-ANDed and
  *  composed over the mask blit).  BM_S_ONLY/BM_S_OR_D are numerically equal
  *  to the AES's S_ONLY/S_OR_D.
+ *
+ *  Audited under issue #171: this picks the write-mode *argument* a later,
+ *  already-dispatched raster_copy() call is made with -- it does not draw
+ *  anything itself -- so it is the same kind of setup/data-layout decision
+ *  as setup_info()'s below, not a leftover pre-dispatch primitive.
  */
 WORD vdi_colour_blit_mode(void)
 {
@@ -804,6 +809,11 @@ WORD vdi_colour_blit_mode(void)
 
 /*
  * setup_info - fill the info structure with MFDB values
+ *
+ * Audited under issue #171: every vdi_screen_is_truecolor() check below is
+ * the packed-MFDB-layout exception documented on that function -- picking
+ * plane strides/counts to feed to the already-dispatched raster_copy(), not
+ * a drawing primitive itself.
  */
 static BOOL
 setup_info (struct raster_t *raster, struct blit_frame * info)

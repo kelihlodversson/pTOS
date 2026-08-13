@@ -2813,7 +2813,7 @@ static void translate(char *lang, int count, char **filenames)
                 warn("I only translate .c files");
                 return;
             }
-            to = xmalloc(len+3);
+            to = xmalloc(len+4);
             strcpy(to, from);
             strcpy(to+len-2, ".tr.c");
         }

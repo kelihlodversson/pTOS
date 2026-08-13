@@ -9,3 +9,5 @@
 obj-y += pfs.o fatfs_pfs.o
 
 obj-$(CONF_WITH_PLUGGABLE_FS_TEST) += pfs_test.o
+
+obj-$(CONF_WITH_VIRTIO_9P) += virtio_9p_pfs.o

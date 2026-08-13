@@ -106,11 +106,6 @@ void int_vbl(void)
     vblsem++; // release vbl semaphore (TODO: non-atomic)
 }
 
-#if CONF_WITH_USB
-extern void usb_mouse_timerc (void);
-extern void usb_keyboard_timerc (void);
-#endif
-
 // ==== Timer C interrupt handler ============================================
 // Machine-independent: every ARM machine's periodic tick (raspi's system /
 // generic timer, virt's generic timer) ends up here through vector_5ms.
@@ -124,11 +119,6 @@ void int_timerc(void)
 #       if CONF_WITH_YM2149
             sndirq();   // dosound support
 #       endif
-#       if CONF_WITH_USB
-            usb_mouse_timerc();
-            usb_keyboard_timerc();
-#       endif
-
         // Fake vbl interrupt every 4 timer_c calls (50Hz)
         int_vbl();
     }

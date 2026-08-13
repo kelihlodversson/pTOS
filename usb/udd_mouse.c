@@ -23,7 +23,6 @@ extern void (*old_ikbd_int) (void);
 extern void interrupt_ikbd (void);
 
 static UBYTE mouse_packet[6];
-void usb_mouse_timerc (void);
 
 /*
  * END kernel interface
@@ -41,35 +40,34 @@ static long mouse_probe (struct usb_device *dev, unsigned int ifnum);
 static char lname[] = "USB mouse class driver\0";
 
 static struct uddif mouse_uif = {
-	0,                          /* *next */
-	USB_API_VERSION,            /* API */
-	USB_DEVICE,                 /* class */
-	lname,                      /* lname */
-	"mouse",                    /* name */
-	0,                          /* unit */
-	0,                          /* flags */
-	mouse_probe,                /* probe */
-	mouse_disconnect,           /* disconnect */
-	0,                          /* resrvd1 */
-	mouse_ioctl,                /* ioctl */
-	0,                          /* resrvd2 */
+    0,                          /* *next */
+    USB_API_VERSION,            /* API */
+    USB_DEVICE,                 /* class */
+    lname,                      /* lname */
+    "mouse",                    /* name */
+    0,                          /* unit */
+    0,                          /* flags */
+    mouse_probe,                /* probe */
+    mouse_disconnect,           /* disconnect */
+    0,                          /* resrvd1 */
+    mouse_ioctl,                /* ioctl */
+    0,                          /* resrvd2 */
 };
 
 struct mse_data
 {
-	struct usb_device *pusb_dev;        /* this usb_device */
-	unsigned char ep_in;        /* in endpoint */
-	unsigned char ep_out;       /* out ....... */
-	unsigned char ep_int;       /* interrupt . */
-	long *irq_handle;            /* for USB int requests */
-	unsigned long irqpipe;      /* pipe for release_irq */
-	unsigned char irqmaxp;      /* max packed for irq Pipe */
-	unsigned char irqinterval;  /* Intervall for IRQ Pipe */
-	char data[8];
-	char new[8];
+    struct usb_device *pusb_dev;        /* this usb_device */
+    unsigned char ep_in;        /* in endpoint */
+    unsigned char ep_int;       /* interrupt . */
+    unsigned long irqpipe;      /* pipe for release_irq */
+    unsigned char irqmaxp;      /* max packed for irq Pipe */
+    unsigned char irqinterval;  /* Intervall for IRQ Pipe */
+    char data[8];
+    UBYTE report[8];
 };
 
 static struct mse_data mse_data;
+static struct usb_async_int_msg mouse_request;
 
 /*
  * --- Inteface functions
@@ -78,7 +76,7 @@ static struct mse_data mse_data;
 
 static long mouse_ioctl (struct uddif *u, short cmd, long arg)
 {
-	return E_OK;
+    return E_OK;
 }
 
 /*
@@ -92,105 +90,79 @@ static long mouse_ioctl (struct uddif *u, short cmd, long arg)
 static long
 mouse_disconnect (struct usb_device *dev)
 {
-	if (dev == mse_data.pusb_dev)
-	{
-		mse_data.pusb_dev = NULL;
-	}
+    if (dev == mse_data.pusb_dev)
+    {
+        usb_cancel_async_int_msg(&mouse_request);
+        mse_data.pusb_dev = NULL;
+    }
 
-	return 0;
+    return 0;
 }
 
-static long
-usb_mouse_irq (struct usb_device *dev)
+static void mouse_report_complete(struct usb_async_int_msg *msg,
+                                  LONG status, LONG actual_length)
 {
-	return 0;
-}
+    UBYTE info;
+    UBYTE old_info;
+    BYTE delta_x;
+    BYTE delta_y;
+    UBYTE extra;
+    BOOL changed;
 
-void usb_mouse_timerc (void)
-{
-	long actlen = 0;
-	long r;
+    (void)msg;
 
-	if (mse_data.pusb_dev == NULL)
-		return;
+    if (status || actual_length < 3 || actual_length > 8)
+    {
+        KDEBUG(("usb mouse interrupt transfer failed (%ld, %ld)\n",
+            status, actual_length));
+        return;
+    }
 
-	r = usb_bulk_msg (mse_data.pusb_dev,
-					  mse_data.irqpipe,
-					  mse_data.new,
-					  mse_data.irqmaxp > 8 ? 8 : mse_data.irqmaxp,
-					  &actlen, USB_CNTL_TIMEOUT * 5, 1);
+    info = mse_data.report[0];
+    old_info = mse_data.data[0];
+    delta_x = mse_data.report[1];
+    delta_y = mse_data.report[2];
+    extra = (actual_length >= 4) ? mse_data.report[3] : 0;
+    if (actual_length < 4)
+        mse_data.data[3] = 0;
+    mse_data.data[4] = 0;
+    mse_data.data[5] = 0;
+    changed = (info != old_info) || delta_x || delta_y
+        || ((actual_length >= 4) && (extra != mse_data.data[3]));
+    if (!changed)
+        return;
 
-	if ((r != 0) || (actlen < 3) || (actlen > 8))
-	{
-		return;
-	}
+    mouse_packet[0] = ((info & 1) << 1) | ((info & 2) >> 1) | 0xf8;
+    mouse_packet[1] = delta_x;
+    mouse_packet[2] = delta_y;
 
-	{
-		char info, old_info;
-		char delta_x, delta_y;
-		char extra, old_extra;
-		BOOL change = FALSE;
+    if ((info ^ old_info) & 4)
+        mousexvec((info & 4) ? 0x37 : 0xb7);
 
-		(void)old_extra;
-		{					   /* boot report */
-			info = mse_data.new[0];
-			old_info = mse_data.data[0];
-			change |= info != old_info;
-			delta_x = mse_data.new[1];
-			delta_y = mse_data.new[2];
-			change |= !!delta_x || !!delta_y;
-			if (actlen >= 3)
-			{
-				extra = mse_data.new[3];
-				old_extra = mse_data.data[3];
-				change |= extra != old_extra;
-			}
-		}
-		if(!change)
-		{
-			return;
-		}
+    switch (extra & 0x0f)
+    {
+    case 0x1:
+        mousexvec(0x59);
+        break;
+    case 0x2:
+        mousexvec(0x5d);
+        break;
+    case 0xe:
+        mousexvec(0x5c);
+        break;
+    case 0xf:
+        mousexvec(0x5a);
+        break;
+    default:
+        break;
+    }
 
-		// Build ikbd mouse packet
-		mouse_packet[0] =
-			((info & 1) << 1) |
-			((info & 2) >> 1) | 0xF8;
-		mouse_packet[1] = delta_x;
-		mouse_packet[2] = delta_y;
-
-		if ((info ^ old_info) & 4)
-		{					   /* 3rd button */
-			mousexvec ((info & 4)?0x37:0xb7);
-		}
-
-		// Mouse wheel is stored in the low nybble of the extra byte
-		switch (extra & 0xf)
-		{
-			case 0x1:		/* Wheel up */
-			mousexvec (0x59);
-			break;
-			case 0x2:		/* Wheel right */
-			mousexvec (0x5d);
-			break;
-			case 0xe:		/* Wheel left */
-			mousexvec (0x5c);
-			break;
-			case 0xf:		/* Wheel down */
-			mousexvec (0x5a);
-			break;
-			case 0:
-			default:
-			break; // Default is no movement
-		}
-
-		call_mousevec(mouse_packet);
-		mse_data.data[0] = mse_data.new[0];
-		mse_data.data[1] = mse_data.new[1];
-		mse_data.data[2] = mse_data.new[2];
-		mse_data.data[3] = mse_data.new[3];
-		mse_data.data[4] = mse_data.new[4];
-		mse_data.data[5] = mse_data.new[5];
-	}
+    call_mousevec(mouse_packet);
+    mse_data.data[0] = info;
+    mse_data.data[1] = delta_x;
+    mse_data.data[2] = delta_y;
+    if (actual_length >= 4)
+        mse_data.data[3] = extra;
 }
 
 /*******************************************************************************
@@ -200,111 +172,122 @@ void usb_mouse_timerc (void)
 static long
 mouse_probe (struct usb_device *dev, unsigned int ifnum)
 {
-	struct usb_interface *iface;
-	struct usb_endpoint_descriptor *ep_desc;
+    struct usb_interface *iface;
+    struct usb_endpoint_descriptor *ep_desc;
 
-	/*
-	 * Only one mouse at time
-	 */
-	if (mse_data.pusb_dev)
-	{
-		return -1;
-	}
+    /*
+     * Only one mouse at time
+     */
+    if (mse_data.pusb_dev)
+    {
+        return -1;
+    }
 
-	if (dev == NULL)
-	{
-		return -1;
-	}
+    if (dev == NULL)
+    {
+        return -1;
+    }
 
-	usb_disable_asynch (1);     /* asynch transfer not allowed */
+    usb_disable_asynch (1);     /* asynch transfer not allowed */
 
-	/*
-	 * let's examine the device now
-	 */
-	iface = &dev->config.if_desc[ifnum];
-	if (!iface)
-	{
-		return -1;
-	}
+    /*
+     * let's examine the device now
+     */
+    iface = &dev->config.if_desc[ifnum];
+    if (!iface)
+    {
+        return -1;
+    }
 
-	if (iface->desc.bInterfaceClass != USB_CLASS_HID)
-	{
-		return -1;
-	}
+    if (iface->desc.bInterfaceClass != USB_CLASS_HID)
+    {
+        return -1;
+    }
 
-	if (iface->desc.bInterfaceSubClass != USB_SUB_HID_BOOT)
-	{
-		return -1;
-	}
+    if (iface->desc.bInterfaceSubClass != USB_SUB_HID_BOOT)
+    {
+        return -1;
+    }
 
-	if (iface->desc.bInterfaceProtocol != 2)
-	{
-		return -1;
-	}
+    if (iface->desc.bInterfaceProtocol != 2)
+    {
+        return -1;
+    }
 
-	if (iface->desc.bNumEndpoints != 1)
-	{
-		return -1;
-	}
+    if (iface->desc.bNumEndpoints != 1)
+    {
+        return -1;
+    }
 
-	ep_desc = &iface->ep_desc[0];
-	if (!ep_desc)
-	{
-		return -1;
-	}
+    ep_desc = &iface->ep_desc[0];
+    if (!ep_desc)
+    {
+        return -1;
+    }
 
-	if ((ep_desc->bmAttributes &
-		 USB_ENDPOINT_XFERTYPE_MASK) == USB_ENDPOINT_XFER_INT)
-	{
-		mse_data.ep_int =
-			ep_desc->bEndpointAddress & USB_ENDPOINT_NUMBER_MASK;
-		mse_data.irqinterval = ep_desc->bInterval;
-	}
-	else
-	{
-		return -1;
-	}
+    if ((ep_desc->bmAttributes &
+         USB_ENDPOINT_XFERTYPE_MASK) == USB_ENDPOINT_XFER_INT)
+    {
+        mse_data.ep_int =
+            ep_desc->bEndpointAddress & USB_ENDPOINT_NUMBER_MASK;
+        mse_data.irqinterval = ep_desc->bInterval;
+    }
+    else
+    {
+        return -1;
+    }
 
-	mse_data.pusb_dev = dev;
+    mse_data.irqinterval =
+        (mse_data.irqinterval > 0) ? mse_data.irqinterval : 255;
+    mse_data.irqpipe =
+        usb_rcvintpipe (dev, (long) mse_data.ep_int);
+    mse_data.irqmaxp = usb_maxpacket (dev, mse_data.irqpipe);
+    memset (mse_data.data, 0, 8);
+    memset (mse_data.report, 0, 8);
 
-	mse_data.irqinterval =
-		(mse_data.irqinterval > 0) ? mse_data.irqinterval : 255;
-	mse_data.irqpipe =
-		usb_rcvintpipe (mse_data.pusb_dev, (long) mse_data.ep_int);
-	mse_data.irqmaxp = usb_maxpacket (dev, mse_data.irqpipe);
-	dev->irq_handle = usb_mouse_irq;
-	memset (mse_data.data, 0, 8);
-	memset (mse_data.new, 0, 8);
+    // if(mse_data.irqmaxp < 6)
+    usb_set_protocol(dev, iface->desc.bInterfaceNumber, 0); /* boot */
+    // else
+    //usb_set_protocol (dev, iface->desc.bInterfaceNumber, 1);    /* report */
 
-	// if(mse_data.irqmaxp < 6)
-	usb_set_protocol(dev, iface->desc.bInterfaceNumber, 0); /* boot */
-	// else
-	//usb_set_protocol (dev, iface->desc.bInterfaceNumber, 1);    /* report */
+    usb_set_idle (dev, iface->desc.bInterfaceNumber, 0, 0);     /* report
+                                                                  * infinite
+                                                                  */
+    mouse_request.dev = dev;
+    mouse_request.pipe = mse_data.irqpipe;
+    mouse_request.buffer = mse_data.report;
+    mouse_request.transfer_len = mse_data.irqmaxp > 8 ? 8 : mse_data.irqmaxp;
+    mouse_request.interval = mse_data.irqinterval;
+    mouse_request.callback = mouse_report_complete;
+    mouse_request.context = &mse_data;
+    mse_data.pusb_dev = dev;
 
-	usb_set_idle (dev, iface->desc.bInterfaceNumber, 0, 0);     /* report
-                                                                 * infinite
-                                                                 */
+    if (usb_submit_async_int_msg(&mouse_request))
+    {
+        mse_data.pusb_dev = NULL;
+        return -1;
+    }
 
 KINFO (("%s: exit mouse_probe success\n", __FILE__));
 
-	return 0;
+    return 0;
 }
 
 int usb_mouse_init (void);
 int usb_mouse_init (void)
 {
-	long ret;
+    long ret;
 
-	KINFO (("%s: enter init\n", __FILE__));
+    KINFO (("%s: enter init\n", __FILE__));
 
-	ret = udd_register (&mouse_uif);
+    ret = udd_register (&mouse_uif);
 
-	if (ret)
-	{
-		KINFO (("%s: udd register failed! %ld\n", __FILE__, ret));
-		return 1;
-	}
+    if (ret)
+    {
+        KINFO (("%s: udd register failed! %ld\n", __FILE__, ret));
+        return 1;
+    }
 
-	KINFO(("%s: udd register ok\n", __FILE__));
-	return 0;
+    KINFO(("%s: udd register ok\n", __FILE__));
+    return 0;
 }

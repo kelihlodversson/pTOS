@@ -924,6 +924,11 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
              * covers 1-4 planes and would both read out of bounds and
              * mask search_color down to the point that it could never
              * again match pixelread()'s output.
+             *
+             * Audited under issue #171: this is the palette-index-choice
+             * exception documented on vdi_screen_is_truecolor() itself --
+             * picking which value the already-dispatched search_right()/
+             * search_left() are asked to match, not a primitive.
              */
             search_color = MAP_COL[search_color];
         } else

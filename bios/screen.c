@@ -768,6 +768,26 @@ static void planar_mode_desc(SCREEN_MODE_DESC *desc, UWORD planes, UWORD hz_rez,
     desc->color_model = SCREEN_COLOR_INDEXED;
     desc->pixel_format = SCREEN_PIXEL_NONE;
     desc->pitch = (ULONG)hz_rez / 8 * planes;
+
+    /*
+     * Which hardware palette family drives this screen (issue #173) -- a
+     * boot-time constant, like has_videl/has_tt_shifter/has_ste_shifter
+     * themselves (see detect_video(), machine.c), so this only needs
+     * computing once per workstation open, not on every vs_color()/
+     * vq_color() call. HAS_VIDEL/HAS_TT_SHIFTER/HAS_STE_SHIFTER (machine.h)
+     * are always-defined macros (0 when the corresponding CONF_WITH_* is
+     * off), so no #if is needed here; on machines with none of these
+     * chips (e.g. Amiga), every branch reads 0 and shifter falls through
+     * to the single generic hardware-palette family, SCREEN_SHIFTER_ST.
+     */
+    if (HAS_VIDEL)
+        desc->shifter = SCREEN_SHIFTER_VIDEL;
+    else if (HAS_TT_SHIFTER)
+        desc->shifter = SCREEN_SHIFTER_TT;
+    else if (HAS_STE_SHIFTER)
+        desc->shifter = SCREEN_SHIFTER_STE;
+    else
+        desc->shifter = SCREEN_SHIFTER_ST;
 }
 
 void screen_get_current_mode_desc(SCREEN_MODE_DESC *desc)

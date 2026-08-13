@@ -385,6 +385,16 @@ void vdi_truecolor_get_color(const Vwk *vwk, WORD index, WORD *r, WORD *g, WORD 
     }
 }
 
+static void truecolor_ops_set_color(Vwk *vwk, WORD pen, WORD *rgb)
+{
+    vdi_truecolor_set_color(vwk, MAP_COL[pen], rgb[0], rgb[1], rgb[2]);
+}
+
+static void truecolor_ops_get_color(const Vwk *vwk, WORD pen, WORD *rgb)
+{
+    vdi_truecolor_get_color(vwk, MAP_COL[pen], &rgb[0], &rgb[1], &rgb[2]);
+}
+
 /* The drawing code lives in the shared template, instantiated here for
  * 16bpp RGB565.  The 32 bpp XRGB8888 instantiation is
  * vdi_backend_truecolor32.c.  Everything in the template is static; the
@@ -414,6 +424,8 @@ vdi_backend_ops packed_truecolor_backend_ops = {
     tc_put_pixel,
     tc_get_raw_pixel,
     tc_put_raw_pixel,
+    truecolor_ops_set_color,
+    truecolor_ops_get_color,
 #if CONF_VDI_SPARSE_TABLE
     /* The optional slots are left NULL so vdi_backend_ops_init() fills them
      * with the generic defaults -- this exercises issue #138's defaults

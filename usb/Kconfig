@@ -34,4 +34,13 @@ config CONF_WITH_USB_XHCI
 	  The xHCI host controller used for the Raspberry Pi 4/400 external
 	  USB ports through the VL805 PCIe bridge.
 
+config CONF_DEBUG_USB_ASYNC
+	bool "Trace asynchronous USB transfers"
+	depends on CONF_WITH_USB
+	default n
+	help
+	  Enable high-frequency progress traces from USB host-controller
+	  asynchronous transfers.  This is useful while diagnosing USB transfer
+	  scheduling, but can flood serial debug output during normal HID use.
+
 endmenu
