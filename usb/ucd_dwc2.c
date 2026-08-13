@@ -651,8 +651,8 @@ static void dwc2_async_start(struct dwc2_priv *priv,
         return;
     slot->scheduled = FALSE;
 
-    KINFO(("dwc2_async: start channel=%d generation=%lu split=%d pid=%d\n",
-           channel, slot->generation, slot->split_state, slot->pid));
+    KINFO_USB_ASYNC(("dwc2_async: start channel=%d generation=%lu split=%d pid=%d\n",
+                     channel, slot->generation, slot->split_state, slot->pid));
     dwc_otg_hc_init(regs, channel, slot->msg->dev,
                     usb_pipedevice(slot->msg->pipe),
                     usb_pipeendpoint(slot->msg->pipe), TRUE,
@@ -799,8 +799,8 @@ static void dwc2_async_finish_success(struct dwc2_priv *priv,
     invalidate_data_cache(slot->dma_buffer,
                           roundup(actual_length, ARCH_DMA_MINALIGN));
     memcpy(msg->buffer, slot->dma_buffer, actual_length);
-    KINFO(("dwc2_async: complete generation=%lu length=%ld\n", generation,
-           actual_length));
+    KINFO_USB_ASYNC(("dwc2_async: complete generation=%lu length=%ld\n", generation,
+                     actual_length));
     dwc2_async_complete(priv, slot, 0, actual_length);
     if (slot->active && !slot->cancelled && !slot->stopping &&
         !priv->shutting_down &&
@@ -868,19 +868,19 @@ static void dwc2_irq_handler(void)
                 slot->ssplit_frame = readl(&regs->host_regs.hfnum) &
                                      DWC2_HFNUM_MAX_FRNUM;
                 slot->split_state = DWC2_ASYNC_SPLIT_COMPLETE;
-                KINFO(("dwc2_async: split-start-ack generation=%lu\n",
-                       slot->generation));
+                KINFO_USB_ASYNC(("dwc2_async: split-start-ack generation=%lu\n",
+                                 slot->generation));
                 dwc2_async_schedule_split_complete(priv, slot);
             } else if (slot->split_state == DWC2_ASYNC_SPLIT_COMPLETE &&
                        (hcint & DWC2_HCINT_NYET)) {
-                KINFO(("dwc2_async: split-complete-nyet generation=%lu\n",
-                       slot->generation));
+                KINFO_USB_ASYNC(("dwc2_async: split-complete-nyet generation=%lu\n",
+                                 slot->generation));
                 dwc2_async_schedule_split_complete(priv, slot);
             } else if (slot->split_state == DWC2_ASYNC_SPLIT_COMPLETE &&
                        (hcint & DWC2_HCINT_NAK)) {
                 slot->split_state = DWC2_ASYNC_SPLIT_START;
-                KINFO(("dwc2_async: split-complete-nak generation=%lu\n",
-                       slot->generation));
+                KINFO_USB_ASYNC(("dwc2_async: split-complete-nak generation=%lu\n",
+                                 slot->generation));
                 dwc2_async_schedule(priv, slot);
             } else if (slot->split_state == DWC2_ASYNC_SPLIT_COMPLETE &&
                        (hcint & DWC2_HCINT_XFERCOMP)) {
@@ -892,9 +892,9 @@ static void dwc2_irq_handler(void)
         } else if (hcint & DWC2_HCINT_XFERCOMP) {
             dwc2_async_finish_success(priv, slot, hc);
         } else if ((hcint & DWC2_HCINT_NAK) || hcint == DWC2_HCINT_CHHLTD) {
-            KINFO(("dwc2_async: rearm generation=%lu reason=%s\n",
-                   slot->generation, (hcint & DWC2_HCINT_NAK) ? "nak" :
-                   "chhltd"));
+            KINFO_USB_ASYNC(("dwc2_async: rearm generation=%lu reason=%s\n",
+                             slot->generation, (hcint & DWC2_HCINT_NAK) ? "nak" :
+                             "chhltd"));
             dwc2_async_schedule(priv, slot);
         } else {
             dwc2_async_finish_error(priv, slot);

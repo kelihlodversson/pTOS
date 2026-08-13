@@ -5,11 +5,21 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 source=$repo_root/usb/ucd_dwc2.c
 usb_source=$repo_root/usb/usb.c
+usb_header=$repo_root/usb/usb_global.h
+usb_kconfig=$repo_root/usb/Kconfig
 
 require()
 {
     if ! rg -q "$1" "$source"; then
         echo "missing async DWC2 contract: $2"
+        exit 1
+    fi
+}
+
+require_file()
+{
+    if ! rg -q "$1" "$2"; then
+        echo "missing async DWC2 contract: $3"
         exit 1
     fi
 }
@@ -45,6 +55,15 @@ require_multiline 'slot->ssplit_frame = readl\(&regs->host_regs.hfnum\)[\s\S]*DW
     'start-split ACK records its frame before scheduling the complete split'
 require_multiline '\(frame - slot->ssplit_frame\)[\s\S]*> 4[\s\S]*slot->split_state = DWC2_ASYNC_SPLIT_START[\s\S]*dwc2_async_schedule' \
     'complete-split NYET retry window is limited to four microframes'
+require_file 'config CONF_DEBUG_USB_ASYNC' "$usb_kconfig" \
+    'shared USB async trace option'
+require_file 'default n' "$usb_kconfig" 'async trace disabled by default'
+if ! rg -U -q '#if CONF_DEBUG_USB_ASYNC[\s\S]*#define KINFO_USB_ASYNC\(a\) KINFO\(a\)[\s\S]*#else[\s\S]*#define KINFO_USB_ASYNC\(a\) \(\(void\)0\)[\s\S]*#endif' "$usb_header"; then
+    echo 'missing async DWC2 contract: compile-time USB async trace gate'
+    exit 1
+fi
+require_multiline 'KINFO_USB_ASYNC\(\("dwc2_async: start[\s\S]*KINFO_USB_ASYNC\(\("dwc2_async: complete[\s\S]*KINFO_USB_ASYNC\(\("dwc2_async: split-start-ack[\s\S]*KINFO_USB_ASYNC\(\("dwc2_async: split-complete-nyet[\s\S]*KINFO_USB_ASYNC\(\("dwc2_async: split-complete-nak[\s\S]*KINFO_USB_ASYNC\(\("dwc2_async: rearm' \
+    'DWC2 high-frequency async traces use the shared trace gate'
 
 if ! rg -U -q 'for \(i = 0; i < USB_MAX_DEVICE; i\+\+\)[\s\S]*usb_disconnect\(dev\);[\s\S]*for \(a = allucdifs' "$usb_source"; then
     echo 'missing USB teardown contract: disconnect devices before stopping controller'
