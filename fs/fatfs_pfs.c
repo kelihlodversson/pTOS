@@ -447,7 +447,11 @@ static LONG __attribute__((unused)) fat_rmdir(PFSCOOKIE *dir, const char *name)
     FCB *f;
     long pos;
 
-    if (!*name || (*name == '.'))
+    /* pfs_resolve_dir() resolves a trailing slash to the target directory. */
+    if (!*name)
+        return fat_rmdir_dnd(parent);
+
+    if (*name == '.')
         return EPTHNF;
 
     pos = 0;
