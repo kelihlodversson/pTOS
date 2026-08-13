@@ -29,6 +29,51 @@
 #include "endian.h"
 #include "time.h"
 
+#define ROOT_PSEUDO_CLUSTER 1
+
+static void unpackit(const char *src, char *dst)
+{
+    const char *s;
+    char *d;
+    int i;
+
+    memset(dst,' ',11);
+
+    for (i = 0, s = src, d = dst; (i < 8) && *s && (*s != '.'); i++)
+        *d++ = *s++;
+
+    while(*s)
+        if (*s++ == '.')
+            break;
+
+    for (i = 0, d = dst+8; (i < 3) && *s; i++)
+        *d++ = *s++;
+
+    *(dst+11) = '\0';
+}
+
+static BOOL is_subdir(const char *s1,DND *dn1, DND *dn2)
+{
+    char s2[LEN_ZFNAME];
+
+    if (dn2->d_parent != dn1)
+        return FALSE;
+
+    packit(dn2->d_name,s2);
+
+    return strncasecmp(s1,s2,LEN_ZFNAME) ? FALSE : TRUE;
+}
+
+static WORD update_fcb(OFD *fd,LONG posp,LONG len,BYTE *buf)
+{
+    if (ixlseek(fd,posp) != posp)
+        return -1;
+    if (ixwrite(fd,len,buf) != len)
+        return -1;
+
+    return 0;
+}
+
 /*
  * fat_countfree - fast scan of FAT16 filesystem to count free clusters
  */
@@ -447,6 +492,141 @@ static LONG fat_chattr(PFSCOOKIE *dir, const char *name, BOOL set, UWORD *dos_at
     return E_OK;
 }
 
+static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
+                       PFSCOOKIE *newdir, const char *newname)
+{
+    OFD *fd;
+    DFD *dfd;
+    FCB *f;
+    DND *dn1 = (DND *)olddir->index;
+    DND *dn2 = (DND *)newdir->index;
+    DMD *dmd1, *dmd2;
+    CLNO strtcl1, strtcl2, temp;
+    const char *s1 = oldname, *s2 = newname;
+    char buf[11], att;
+    int hnew;
+    long posp;
+    UWORD filetime, filedate;
+    CLNO clust;
+    LONG fileln, rc;
+    PFSCOOKIE newfc;
+
+    posp = 0L;
+    if (scan(dn2,s2,FA_SUBDIR|FA_ARCHIVE|FA_RO,&posp))
+        return EACCDN;
+
+    dmd1 = dn1->d_drv;
+    strtcl1 = dn1->d_parent ? dn1->d_strtcl : ROOT_PSEUDO_CLUSTER;
+
+    posp = 0L;
+    f = scan(dn1,s1,FA_NORM|FA_SUBDIR,&posp);
+    if (!f)
+        return EFILNF;
+
+    if (f->f_attrib & FA_RO)
+        return EACCDN;
+
+    fd = dn1->d_ofd;
+    posp -= 32;
+
+    att = f->f_attrib;
+    filetime = le2cpu16(f->f_td.time);
+    filedate = le2cpu16(f->f_td.date);
+    clust = le2cpu16(f->f_clust);
+    fileln = le2cpu16(f->f_fileln);
+
+    dmd2 = dn2->d_drv;
+    strtcl2 = dn2->d_parent ? dn2->d_strtcl : ROOT_PSEUDO_CLUSTER;
+
+    if (contains_illegal_characters(s2))
+        return EACCDN;
+
+    if (dmd1 != dmd2)
+        return ENSAME;
+
+    if (strtcl1 != strtcl2)
+    {
+        OFD *fd2, *fdparent;
+
+        if (is_subdir(s1,dn1,dn2))
+            return EACCDN;
+
+        dn1->d_flag |= DND_LOCKED;
+        dn2->d_flag |= DND_LOCKED;
+        rc = fat_create(newdir, newname, (UWORD)(UBYTE)att, &newfc);
+        dn1->d_flag &= ~DND_LOCKED;
+        dn2->d_flag &= ~DND_LOCKED;
+        if (rc < 0)
+            return EPTHNF;
+        hnew = (int)newfc.index;
+        fd2 = getofd(hnew);
+
+        buf[0] = (char)ERASE_MARKER;
+        if (update_fcb(fd,posp,1L,buf) < 0)
+        {
+            KDEBUG(("xrename(): can't erase old entry\n"));
+            return EACCDN;
+        }
+
+        dfd = fd2->o_dfd;
+        dfd->o_td.time = cpu2le16(filetime);
+        dfd->o_td.date = cpu2le16(filedate);
+        dfd->o_strtcl = clust;
+        dfd->o_fileln = fileln;
+
+        fdparent = fd2->o_dirfil;
+        if (att&FA_SUBDIR) {
+            dfd->o_fileln = 0x7fffffffL;
+
+            if (!fd2->o_dnode->d_name[0])
+                temp = 0;
+            else temp = fdparent->o_dfd->o_strtcl;
+            temp = cpu2le16(temp);
+            if (update_fcb(fd2,32+26,2L,(BYTE *)&temp) < 0)
+            {
+                KDEBUG(("xrename(): can't update .. entry\n"));
+                return EINTRN;
+            }
+
+            if (update_fcb(fdparent,fd2->o_dirbyt+11,1L,&att) < 0)
+            {
+                KDEBUG(("xrename(): can't update parent's attr byte\n"));
+                return EINTRN;
+            }
+        }
+        dfd->o_flag |= O_DIRTY;
+        if (att&FA_SUBDIR) {
+            ixclose(fd2,CL_DIR|CL_FULL);
+            xmfreblk(fd2);
+            sft[hnew-NUMSTD].f_own = 0;
+            sft[hnew-NUMSTD].f_ofd = 0;
+        } else xclose(hnew);
+        ixclose(fdparent,CL_DIR);
+    }
+    else
+    {
+        builds(s2,buf);
+        if (update_fcb(fd,posp,11L,buf) < 0)
+        {
+            KDEBUG(("xrename(): can't update FCB with new name\n"));
+            return EACCDN;
+        }
+    }
+
+    if (att&FA_SUBDIR) {
+        DND *dnd;
+        char s[LEN_ZFNAME];
+        unpackit(s1,s);
+        dnd = getdnd(s,dn1);
+        if (dnd) {
+            KDEBUG(("xrename(): delete existing DND @ %p\n",dnd));
+            freednd(dnd);
+        }
+    }
+
+    return ixclose(fd,CL_DIR);
+}
+
 #if CONF_WITH_PLUGGABLE_FS
 
 #define FAT_ALL_ATTR (FA_RO | FA_HIDDEN | FA_SYSTEM | FA_VOL | FA_SUBDIR | FA_ARCHIVE)
@@ -652,22 +832,6 @@ static LONG fat_readdir(PFSCOOKIE *dir, LONG *cursor, char *name, int namelen, P
     }
 
     return E_OK;
-}
-
-static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
-                        PFSCOOKIE *newdir, const char *newname)
-{
-    char oldpath[LEN_ZPATH], newpath[LEN_ZPATH];
-    LONG rc;
-
-    rc = fat_abspath(olddir, oldname, oldpath, sizeof(oldpath));
-    if (rc < 0)
-        return rc;
-    rc = fat_abspath(newdir, newname, newpath, sizeof(newpath));
-    if (rc < 0)
-        return rc;
-
-    return xrename(0, oldpath, newpath);
 }
 
 static LONG fat_mediach(struct pfs_ops *fs, WORD drive)
@@ -940,5 +1104,30 @@ LONG fat_chmod_path(char *p, int wrt, char mod)
     if (rc < 0)
         return rc;
     return (long)(char)attr;
+}
+
+long fat_rename_path(char *p1, char *p2)
+{
+    DND *dn1, *dn2;
+    const char *s1, *s2;
+    PFSCOOKIE old, new;
+
+    if ((long)(dn1 = findit(p1, &s1, 0)) < 0)
+        return (long)dn1;
+    if (!dn1)
+        return EPTHNF;
+    if ((long)(dn2 = findit(p2, &s2, 0)) < 0)
+        return (long)dn2;
+    if (!dn2)
+        return EPTHNF;
+    old.fs = NULL;
+    old.index = (LONG)dn1;
+    old.aux = 0;
+    old.pos = 0;
+    new.fs = NULL;
+    new.index = (LONG)dn2;
+    new.aux = 0;
+    new.pos = 0;
+    return fat_rename(&old, s1, &new, s2);
 }
 #endif
