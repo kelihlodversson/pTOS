@@ -995,8 +995,16 @@ void init_colors(void)
      */
     {
 #if CONF_WITH_VDI_BACKEND_DISPATCH
+        /*
+         * vdi_screen_backend() can return NULL (see its comment in
+         * vdi_backend.h -- can't happen for any of this codebase's drivers
+         * today, but every other call site still guards it, so this does
+         * too); resolved once here rather than via vdi_screen_is_truecolor()
+         * so this doesn't call vdi_screen_backend() a second time.
+         */
+        const vdi_backend_ops *const backend = vdi_screen_backend();
         void (*const set_hw_color)(Vwk *vwk, WORD pen, WORD *rgb) =
-            vdi_screen_is_truecolor() ? NULL : vdi_screen_backend()->set_color;
+            (backend && backend != &packed_truecolor_backend_ops) ? backend->set_color : NULL;
 #elif CONF_WITH_VDI_BACKEND_TRUECOLOR
         void (*const set_hw_color)(Vwk *vwk, WORD pen, WORD *rgb) = NULL;
 #else
