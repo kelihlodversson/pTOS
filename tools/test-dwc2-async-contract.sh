@@ -12,6 +12,8 @@ source=$repo_root/usb/ucd_dwc2.c
 usb_source=$repo_root/usb/usb.c
 usb_header=$repo_root/usb/usb_global.h
 usb_kconfig=$repo_root/usb/Kconfig
+mouse_source=$repo_root/usb/udd_mouse.c
+keyboard_source=$repo_root/usb/udd_keyboard.c
 
 require()
 {
@@ -83,6 +85,14 @@ if ! rg -U -q 'for \(i = 0; i < USB_MAX_DEVICE; i\+\+\)[\s\S]*usb_disconnect\(de
 fi
 if ! rg -q 'if \(dev->children\[i\]\)' "$usb_source"; then
     echo 'missing USB teardown contract: ignore empty child slots'
+    exit 1
+fi
+if ! rg -U -q 'static void mouse_report_complete\([\s\S]*\{[\s\S]*\(void\)msg;' "$mouse_source"; then
+    echo 'missing async DWC2 contract: mouse callback marks request unused'
+    exit 1
+fi
+if ! rg -U -q 'static void keyboard_report_complete\([\s\S]*\{[\s\S]*\(void\)msg;' "$keyboard_source"; then
+    echo 'missing async DWC2 contract: keyboard callback marks request unused'
     exit 1
 fi
 

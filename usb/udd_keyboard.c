@@ -186,6 +186,8 @@ static void keyboard_report_complete(struct usb_async_int_msg *msg,
     UBYTE changed_mod;
     int i;
 
+    (void)msg;
+
     if (status || actual_length < 8)
     {
         KDEBUG(("usb keyboard interrupt transfer failed (%ld, %ld)\n",
