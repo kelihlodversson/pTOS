@@ -215,7 +215,7 @@ config CONF_WITH_ARM_PMMU
 
 config CONF_WITH_MMU_TEXT_PROTECT
 	bool "Write-protect the kernel text segment"
-	depends on MACHINE_RPI
+	depends on MACHINE_RPI && CONF_WITH_ARM_PMMU
 	default y
 	help
 	  Break out the first megabyte of RAM into a page table and mark

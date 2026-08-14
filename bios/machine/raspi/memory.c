@@ -74,6 +74,14 @@ void raspi_mmu_protect_range(ULONG start, ULONG end)
     ULONG protect_end   = (end + SMALL_PAGE_SIZE - 1) & ~(SMALL_PAGE_SIZE - 1);
     unsigned p;
 
+    /* text_protect_l2[] only has entries for section 0 (the first
+     * megabyte); silently protecting just the subset that fits would
+     * leave the rest of [start,end) writable while looking enabled -
+     * defeating the point of a feature whose whole job is to fail loudly. */
+    if (protect_start >= SECTION_SIZE || protect_end > SECTION_SIZE)
+        panic("raspi_mmu_protect_range(%p,%p): outside the first megabyte\n",
+              (void*)start, (void*)end);
+
     for (p = 0; p < ARRAY_SIZE(text_protect_l2); p++)
     {
         ULONG page_addr = SMALL_PAGE_SIZE * p;
