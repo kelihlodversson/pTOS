@@ -245,7 +245,14 @@ static void init_mmu(ULONG memory_size)
         coarse_desc.Domain  = 0;
         coarse_desc.IMPBit  = 0;
         coarse_desc.Base    = ARMV6MMUL1COARSEBASE((ULONG)text_protect_l2);
-        *(struct TARMV6MMU_LEVEL1_COARSE_PAGE_TABLE_DESCRIPTOR *)&raspi_page_table0[0] = coarse_desc;
+
+        /* raspi_page_table0[0] is declared as a section descriptor, but a
+         * coarse-page-table descriptor is the same 4-byte hardware slot
+         * under a different bitfield layout. Reinterpreting it via a
+         * pointer cast between the two unrelated struct types would
+         * violate strict aliasing; memcpy() is well-defined regardless
+         * of the types on either side. */
+        memcpy(&raspi_page_table0[0], &coarse_desc, sizeof(coarse_desc));
     }
 #endif /* CONF_WITH_MMU_TEXT_PROTECT */
 
