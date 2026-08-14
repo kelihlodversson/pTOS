@@ -1289,7 +1289,9 @@ ANODE *app_afind_by_name(WORD atype, WORD ignore, BYTE *pspec, BYTE *pname, WORD
     WORD match;
     BYTE pathname[MAXPATHLEN];
 
+    KINFO(("app_afind_by_name: pspec=%p(%s) pname=%p\n", pspec, pspec, pname));
     strcpy(pathname,pspec);                 /* build full pathname */
+    KINFO(("app_afind_by_name: pname=%p(%s)\n", pname, pname));
     strcpy(filename_start(pathname),pname);
 
     for (pa = G.g_ahead; pa; pa = pa->a_next)

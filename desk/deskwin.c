@@ -324,6 +324,8 @@ static void win_ocalc(WNODE *pwin, WORD wfit, WORD hfit, FNODE **ppstart)
  */
 static void win_icalc(FNODE *pfnode, WNODE *pwin)
 {
+    KINFO(("win_icalc: pfnode=%p f_name=%p f_attr=%02x\n",
+           pfnode, pfnode->f_name, (unsigned)(UBYTE)pfnode->f_attr));
     pfnode->f_pa = app_afind_by_name((pfnode->f_attr&F_SUBDIR) ? AT_ISFOLD : AT_ISFILE,
                         AF_ISDESK, pwin->w_pnode.p_spec, pfnode->f_name, &pfnode->f_isap);
 }
