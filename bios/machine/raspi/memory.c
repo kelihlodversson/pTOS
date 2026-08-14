@@ -50,6 +50,7 @@
 
 static void init_mmu(ULONG memory_size);
 
+#if CONF_WITH_MMU_TEXT_PROTECT
 /* page-granularity table covering section 0 (0x0-0xFFFFF), so ranges
  * within the first megabyte can be marked read-only individually.
  * Populated by init_mmu(), narrowed later (after boot-time
@@ -84,6 +85,7 @@ void raspi_mmu_protect_range(ULONG start, ULONG end)
 
     KINFO(("mmu diag: write-protecting [%p,%p)\n", (void*)protect_start, (void*)protect_end));
 }
+#endif /* CONF_WITH_MMU_TEXT_PROTECT */
 
 extern char sysvars_start[];
 extern char sysvars_end[];
@@ -200,6 +202,7 @@ static void init_mmu(ULONG memory_size)
         }
     }
 
+#if CONF_WITH_MMU_TEXT_PROTECT
     /*
      * replace section 0's identity mapping with a coarse (4KB page)
      * table so ranges within the first megabyte can be marked
@@ -237,6 +240,7 @@ static void init_mmu(ULONG memory_size)
         coarse_desc.Base    = ARMV6MMUL1COARSEBASE((ULONG)text_protect_l2);
         *(struct TARMV6MMU_LEVEL1_COARSE_PAGE_TABLE_DESCRIPTOR *)&raspi_page_table0[0] = coarse_desc;
     }
+#endif /* CONF_WITH_MMU_TEXT_PROTECT */
 
     clean_data_cache ();
 
@@ -286,6 +290,7 @@ static void init_mmu(ULONG memory_size)
     control |= MMU_MODE;
     asm volatile ("mcr p15, 0, %0, c1, c0,  0" : : "r" (control) : "memory");
 
+#if CONF_WITH_MMU_TEXT_PROTECT
     /* [_text, _etext) is .text+.rodata only - genuinely never written.
      * _bss is NOT a safe upper bound: .data sits between _etext and
      * _bss and, despite emutos.ld's aspiration that it stay empty,
@@ -302,6 +307,7 @@ static void init_mmu(ULONG memory_size)
      */
     raspi_mmu_protect_range((ULONG)_text,
         (ULONG)_etext & ~(SMALL_PAGE_SIZE - 1));
+#endif /* CONF_WITH_MMU_TEXT_PROTECT */
 }
 
 

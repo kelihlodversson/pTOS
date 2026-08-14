@@ -213,6 +213,20 @@ config CONF_WITH_ARM_PMMU
 	  Install page tables and enable the MMU.  This is required to enable
 	  the data cache on ARM.
 
+config CONF_WITH_MMU_TEXT_PROTECT
+	bool "Write-protect the kernel text segment"
+	depends on MACHINE_RPI
+	default y
+	help
+	  Break out the first megabyte of RAM into a page table and mark
+	  [_text, _etext) read-only, so a stray write into kernel code or
+	  read-only data faults immediately at the writing instruction
+	  instead of silently corrupting memory that only crashes later
+	  (possibly much later) when it is executed or read. Costs one
+	  extra page table and a little startup time; say n only if you
+	  need every byte of that page table's 4 KB back, or the kernel
+	  legitimately self-modifies code in the first megabyte.
+
 config CONF_WITH_68030_PMMU
 	bool "Install a PMMU tree on 68030"
 	depends on CONF_WITH_ADVANCED_CPU && CONF_ATARI_HARDWARE
