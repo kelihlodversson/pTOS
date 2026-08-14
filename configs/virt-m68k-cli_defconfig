@@ -45,3 +45,10 @@ CONF_WITH_IDE=n
 # AES-only-generated aes/asm_struct_gen.h, so it was never coupled to
 # CONF_WITH_AES the way the ARM cmdasm.S used to be.
 CONF_WITH_AES=n
+
+# Enables the pluggable filesystem layer (fs/Kconfig) and, on by default
+# once this is set, the virtio-9p GEMDOS driver (bios/Kconfig's
+# CONF_WITH_VIRTIO_9P) - lets CI build and boot-test a QEMU
+# virtio-9p-device host directory as drive Q: (see #157). No effect
+# without a matching -fsdev/-device on the QEMU command line.
+CONF_WITH_PLUGGABLE_FS=y

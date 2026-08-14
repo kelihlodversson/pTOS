@@ -44,6 +44,7 @@ obj-$(MACHINE_RPI) += raspi_board.o raspi_uart.o raspi_int.o raspi_mbox.o \
 obj-$(CONF_WITH_USB_XHCI) += raspi_vl805.o
 
 obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o virt_pic.o virt_timer.o
+obj-$(CONF_WITH_VDI_TRUECOLOR32_TEST) += virt_screen.o
 
 obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfish_rtc_isr.o goldfish_pic_isr.o
 
@@ -54,6 +55,8 @@ obj-$(CONF_WITH_PCI_RPI4_BRCMSTB) += raspi_pci.o
 obj-$(CONF_WITH_VIRTIO_BLK) += virtio_blk.o
 
 obj-$(CONF_WITH_VIRTIO_INPUT) += virtio_input.o virtio_input_keytbl.o
+
+obj-$(CONF_WITH_VIRTIO_9P) += virtio_9p.o
 
 # Fonts.  A multi-language image needs the fonts of every charset, a
 # single-country one only those of its own charset.  See country.mk.

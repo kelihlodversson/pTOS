@@ -792,6 +792,11 @@ dont_clip (struct blit_frame * info)
  *  planar backend needs S_OR_D (its data planes are mask-ANDed and
  *  composed over the mask blit).  BM_S_ONLY/BM_S_OR_D are numerically equal
  *  to the AES's S_ONLY/S_OR_D.
+ *
+ *  Audited under issue #171: this picks the write-mode *argument* a later,
+ *  already-dispatched raster_copy() call is made with -- it does not draw
+ *  anything itself -- so it is the same kind of setup/data-layout decision
+ *  as setup_info()'s below, not a leftover pre-dispatch primitive.
  */
 WORD vdi_colour_blit_mode(void)
 {
@@ -804,12 +809,21 @@ WORD vdi_colour_blit_mode(void)
 
 /*
  * setup_info - fill the info structure with MFDB values
+ *
+ * Audited under issue #171: every vdi_screen_is_truecolor() check below is
+ * the packed-MFDB-layout exception documented on that function -- picking
+ * plane strides/counts to feed to the already-dispatched raster_copy(), not
+ * a drawing primitive itself.
  */
 static BOOL
 setup_info (struct raster_t *raster, struct blit_frame * info)
 {
     MFDB *src,*dst;
     BOOL use_clip = FALSE;
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    /* bytes per packed pixel (2 for RGB565, 4 for XRGB8888) */
+    const UWORD packed_ppb = (UWORD)(linea_vars.v_planes / 8);
+#endif
 
     /* Get the pointers to the MFDBs */
     src = (MFDB *)CONTRL->ptr1; /* a5, source MFDB */
@@ -823,18 +837,22 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
         info->s_nxln = src->fd_wdwidth * info->s_nxwd;
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
         /*
-         * Packed-truecolor source forms hold one whole pixel per word,
-         * so a row of fd_w pixels spans fd_w*2 bytes.  gsx_fix() sizes
-         * memory MFDBs with the planar convention fd_wdwidth = fd_w/16;
-         * using that here would make s_nxln 8 times too small and the
-         * opaque copy would read w/8 bytes per row instead of 2w.  Only
-         * the opaque device-dependent case (the AES's packed colour-icon
+         * Packed-truecolor source forms hold one whole pixel in
+         * packed_ppb bytes, so a row of fd_w pixels spans fd_w *
+         * packed_ppb bytes.  gsx_fix() sizes memory MFDBs with the
+         * planar convention fd_wdwidth = fd_w/16, which yields a
+         * stride of fd_w/8 bytes -- right only for planar forms, far
+         * too small for packed ones, so the opaque copy would read
+         * w/8 bytes per row instead of w * packed_ppb.  Only the
+         * opaque device-dependent case (the AES's packed colour-icon
          * data -- gr_colourblit()) wants the packed stride here:
-         * transparent sources are 1bpp masks whose fd_wdwidth stride is
-         * correct as-is.
+         * transparent sources are 1bpp masks whose fd_wdwidth stride
+         * is correct as-is.
          */
-        if (vdi_screen_is_truecolor() && !raster->transparent && !src->fd_stand)
-            info->s_nxln = src->fd_w * 2;
+        if (vdi_screen_is_truecolor() && !raster->transparent && !src->fd_stand) {
+            info->s_nxwd = packed_ppb;
+            info->s_nxln = src->fd_w * packed_ppb;
+        }
 
         /*
          * fd_stand memory buffers are a different case again: bb_save()/
@@ -858,8 +876,8 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
          */
         if (vdi_screen_is_truecolor() && !raster->transparent && src->fd_stand
             && src->fd_nplanes == linea_vars.v_planes) {
-            info->s_nxwd = 2;
-            info->s_nxln = src->fd_w * 2;
+            info->s_nxwd = packed_ppb;
+            info->s_nxln = src->fd_w * packed_ppb;
         }
 #endif
     }
@@ -868,13 +886,13 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
         info->s_form = (UWORD*) v_bas_ad;
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
         /*
-         * The packed-truecolor backend has no bitplanes: each screen word
-         * is already one whole pixel, so the "next word" step is 2 bytes
-         * and there is a single conceptual plane -- see the comment on
-         * plane_ct below.
+         * The packed-truecolor backend has no bitplanes: each packed pixel
+         * is the whole colour value, so the "next word" step is the packed
+         * pixel size and there is a single conceptual plane -- see the
+         * comment on plane_ct below.
          */
         if (vdi_screen_is_truecolor())
-            info->s_nxwd = 2;
+            info->s_nxwd = packed_ppb;
         else
 #endif
             info->s_nxwd = linea_vars.v_planes * 2;
@@ -894,13 +912,13 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
          * from a genuine standard-format destination MFDB: bb_save()
          * writes the screen's packed pixels into gl_tmp (a fd_stand
          * memory destination) the same way bb_restore() reads them back
-         * out, so this needs the same packed stride and single "plane"
+         * out, so this needs the packed pixel size and single "plane"
          * pass. */
         if (vdi_screen_is_truecolor() && !raster->transparent && dst->fd_stand
             && dst->fd_nplanes == linea_vars.v_planes) {
             info->plane_ct = 1;
-            info->d_nxwd = 2;
-            info->d_nxln = dst->fd_w * 2;
+            info->d_nxwd = packed_ppb;
+            info->d_nxln = dst->fd_w * packed_ppb;
         }
 #endif
     }
@@ -910,7 +928,7 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
         if (vdi_screen_is_truecolor()) {
             info->plane_ct = 1;
-            info->d_nxwd = 2;
+            info->d_nxwd = packed_ppb;
         }
         else
 #endif

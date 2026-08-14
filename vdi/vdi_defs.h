@@ -218,14 +218,16 @@ struct Vwk_ {
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
     /*
      * vs_color()/vq_color() pseudo-palette for the truecolor backend
-     * (issue #89): MAP_COL-mapped hardware palette index -> RGB565 pixel.
-     * Genuinely per-workstation, matching upstream's VwkExt::palette --
-     * a vs_color() on one workstation must not affect another. Seeded to
-     * the backend's defaults by init_wk() (vdi_control.c) whenever a
-     * workstation is opened; see vdi_backend_active_vwk() in vdi_backend.h
-     * for how the drawing primitives pick which workstation's copy to use.
+     * (issue #89): MAP_COL-mapped hardware palette index -> the active
+     * format's packed pixel value (RGB565 in the low 16 bits, XRGB8888
+     * over all 32).  Genuinely per-workstation, matching upstream's
+     * VwkExt::palette -- a vs_color() on one workstation must not affect
+     * another. Seeded to the backend's defaults by init_wk()
+     * (vdi_control.c) whenever a workstation is opened; see
+     * vdi_backend_active_vwk() in vdi_backend.h for how the drawing
+     * primitives pick which workstation's copy to use.
      */
-    UWORD tc_palette[256];
+    ULONG tc_palette[256];
     /*
      * vs_color()'s raw "last requested" values (VDI 0-1000 scale) for the
      * truecolor backend, indexed like REQ_COL/req_col2 by VDI pen number
@@ -315,6 +317,37 @@ UWORD *planar_get_start_addr(WORD x, WORD y);
 UWORD planar_get_pixel(WORD x, WORD y);
 void planar_put_pixel(WORD x, WORD y, UWORD color);
 void planar_fill_rect(const VwkAttrib *attr, const Rect *rect);
+/* planar_set_color/planar_get_color (vdi_col.c) -- hardware colour-register
+ * read/write called directly in non-dispatch, planar-only builds (issue
+ * #171), see the vdi_backend_ops comment on set_color/get_color in
+ * vdi_backend.h. Only defined in that one build configuration (issue #173)
+ * -- a dispatch build reaches palette I/O through planar_backend_ops's
+ * patched set_color/get_color slots instead (see vdi_backend_planar.c/
+ * vdi_backend.c), and a truecolor-only build never touches planar code at
+ * all. */
+#if !CONF_WITH_VDI_BACKEND_DISPATCH && !CONF_WITH_VDI_BACKEND_TRUECOLOR
+void planar_set_color(Vwk *vwk, WORD pen, WORD *rgb);
+void planar_get_color(const Vwk *vwk, WORD pen, WORD *rgb);
+#endif
+/* planar_set_*_color/planar_get_*_color (vdi_col.c) -- per-shifter-family
+ * vdi_backend_ops.set_color/get_color entries (issue #173), one pair
+ * patched into planar_backend_ops's slots for the selected shifter family
+ * (vdi_backend_planar.c/vdi_backend.c); see the comment on
+ * SCREEN_MODE_DESC.shifter (screen_mode.h) */
+void planar_set_st_color(Vwk *vwk, WORD pen, WORD *rgb);
+void planar_get_st_color(const Vwk *vwk, WORD pen, WORD *rgb);
+#if CONF_WITH_STE_SHIFTER
+void planar_set_ste_color(Vwk *vwk, WORD pen, WORD *rgb);
+void planar_get_ste_color(const Vwk *vwk, WORD pen, WORD *rgb);
+#endif
+#if CONF_WITH_TT_SHIFTER
+void planar_set_tt_color(Vwk *vwk, WORD pen, WORD *rgb);
+void planar_get_tt_color(const Vwk *vwk, WORD pen, WORD *rgb);
+#endif
+#if CONF_WITH_VIDEL
+void planar_set_videl_color(Vwk *vwk, WORD pen, WORD *rgb);
+void planar_get_videl_color(const Vwk *vwk, WORD pen, WORD *rgb);
+#endif
 /* truecolor backend primitives (vdi_backend_truecolor.c) -- callable
  * directly in truecolor-only builds, where the dispatcher is compiled out */
 UWORD *truecolor_get_start_addr(WORD x, WORD y);

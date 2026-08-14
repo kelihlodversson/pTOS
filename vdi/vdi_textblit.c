@@ -886,6 +886,11 @@ void text_blt(void)
      *     rotating AND (skewing OR thickening), OR
      *     skewing AND clipping-is-required,
      *      call pre_blit()
+     *
+     * Audited under issue #171: this is the text_blt() pre-blit-decision
+     * exception documented on vdi_screen_is_truecolor() itself -- deciding
+     * whether to run pre_blit() ahead of the already-dispatched text_blit(),
+     * not a primitive.
      */
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
     if (vdi_screen_is_truecolor() && (vars.STYLE & (F_SKEW|F_THICKEN|F_OUTLINE)))

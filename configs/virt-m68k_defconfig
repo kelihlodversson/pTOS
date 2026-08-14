@@ -34,5 +34,9 @@ CONF_WITH_IDE=n
 # (BUILD_TOOLCHAIN_MINT depends on !MACHINE_VIRT_M68K), so the default
 # mintelf is guaranteed; nothing needs pinning in this defconfig.
 
+# Enables the pluggable filesystem layer (fs/Kconfig) and, on by default
+# once this is set, the virtio-9p GEMDOS driver (bios/Kconfig's
+# CONF_WITH_VIRTIO_9P) - lets CI build and boot-test a QEMU
+# virtio-9p-device host directory as drive Q: (see #157). No effect
+# without a matching -fsdev/-device on the QEMU command line.
 CONF_WITH_PLUGGABLE_FS=y
-CONF_WITH_PLUGGABLE_FS_TEST=y

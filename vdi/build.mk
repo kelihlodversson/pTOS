@@ -13,6 +13,7 @@ obj-y += vdi_entry.o vdi_bezier.o vdi_col.o vdi_control.o vdi_esc.o \
 # vdi_fill.c/vdi_line.c) and nothing dispatches through these tables.
 obj-$(CONF_WITH_VDI_BACKEND_DISPATCH) += vdi_backend.o vdi_backend_planar.o
 obj-$(CONF_WITH_VDI_BACKEND_TRUECOLOR) += vdi_backend_truecolor.o
+obj-$(CONF_WITH_VDI_BACKEND_TRUECOLOR32) += vdi_backend_truecolor32.o
 
 obj-$(MACHINE_RPI) += raspi_mouse.o
 

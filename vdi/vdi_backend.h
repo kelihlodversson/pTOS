@@ -18,8 +18,9 @@
  * never "fall back to another backend." The dispatcher's
  * vdi_backend_ops_init() (see below) fills every NULL slot with a
  * renderer-agnostic default built only on the mandatory primitives
- * (get_start_addr, get_pixel, put_pixel, get_raw_pixel, put_raw_pixel),
- * which must be non-NULL.  open/close default to no-ops.
+ * (get_start_addr, get_pixel, put_pixel, get_raw_pixel, put_raw_pixel,
+ * set_color, get_color), which must be non-NULL.  open/close default to
+ * no-ops.
  */
 typedef struct vdi_backend_ops {
     BOOL (*open)(Vwk *vwk);
@@ -29,15 +30,37 @@ typedef struct vdi_backend_ops {
     UWORD (*get_pixel)(WORD x, WORD y);
     void (*put_pixel)(WORD x, WORD y, UWORD color);
     /*
-     * Raw framebuffer word access, bypassing the palette-index mapping of
-     * get_pixel()/put_pixel().  Mandatory: the generic defaults need it to
-     * express bitwise operations (XOR write mode, the opaque boolean-raster-
-     * op path of raster_copy), which a palette index cannot represent.  On
-     * the planar backend the raw value is the composed plane index, i.e.
+     * Raw pixel access, bypassing the palette-index mapping of
+     * get_pixel()/put_pixel().  A raw value is a ULONG holding the active
+     * format's packed pixel (RGB565 in the low 16 bits, XRGB8888 over all
+     * 32).  Mandatory: the generic defaults need it to express bitwise
+     * operations (XOR write mode, the opaque boolean-raster-op path of
+     * raster_copy), which a palette index cannot represent.  On the planar
+     * backend the raw value is the composed plane index, i.e.
      * get_pixel()/put_pixel() themselves.
      */
-    UWORD (*get_raw_pixel)(WORD x, WORD y);
-    void (*put_raw_pixel)(WORD x, WORD y, UWORD raw);
+    ULONG (*get_raw_pixel)(WORD x, WORD y);
+    void (*put_raw_pixel)(WORD x, WORD y, ULONG raw);
+
+    /*
+     * Write/read the "actual" hardware or backend palette entry for a VDI
+     * pen (see vdi_vs_color()/vdi_vq_color() in vdi_col.c, issue #171).
+     * pen is the raw pen number as passed by the caller (VDI's INTIN[0]),
+     * not adjusted for TT palette banking -- each backend resolves it
+     * through its own indexing (MAP_COL[] for both current backends).
+     * rgb holds VDI-scale (0-1000) component values; set_color's caller
+     * has already range-clamped them.
+     *
+     * Mandatory, like the raw-pixel pair above: there is no renderer-
+     * agnostic way to write a hardware/backend palette, so there is no
+     * generic default to fall back to.  The separate "last requested"
+     * value cache (REQ_COL/req_col2 vs. a workstation's tc_req_col) is a
+     * backend-specific storage layout, not a primitive -- it stays inline
+     * at the vdi_col.c call site, the same kind of setup/data-layout
+     * decision as cpy_raster()'s packed-MFDB-layout branches.
+     */
+    void (*set_color)(Vwk *vwk, WORD pen, WORD *rgb);
+    void (*get_color)(const Vwk *vwk, WORD pen, WORD *rgb);
     void (*fill_rect)(const VwkAttrib *attr, const Rect *rect);
     void (*text_blit)(LOCALVARS *vars);
     void (*raster_copy)(struct raster_t *raster, struct blit_frame *info);
@@ -60,6 +83,12 @@ typedef struct vdi_backend_ops {
      */
     WORD (*search_right)(const VwkClip *clip, WORD x, WORD y, UWORD search_col);
     WORD (*search_left)(const VwkClip *clip, WORD x, WORD y, UWORD search_col);
+    /*
+     * Bytes per packed pixel (2 for RGB565, 4 for XRGB8888).  Used by
+     * vdi_backend_ops_init()'s generic defaults to compute a raw XOR mask
+     * that covers one whole pixel.  Mandatory, always set by the table.
+     */
+    UWORD pixel_size;
 } vdi_backend_ops;
 
 /*
@@ -101,15 +130,65 @@ const vdi_backend_ops *vdi_backend_select(const SCREEN_MODE_DESC *mode);
  */
 const vdi_backend_ops *vdi_screen_backend(void);
 
+/*
+ * default_planar_backend_ops/planar_backend_ops (vdi_backend_planar.c) --
+ * the planar backend's ops table, selected by vdi_backend_select() for a
+ * planar screen (issue #173 and its follow-up).
+ *
+ * A single hardware palette family (ST/STE/TT/Videl, see
+ * SCREEN_MODE_DESC.shifter) only ever varies set_color/get_color -- every
+ * other slot is shifter-agnostic. Rather than one const table per family
+ * (four near-identical 15-pointer tables, all but two pointers duplicated),
+ * vdi_backend_select() keeps only the ST-shifter defaults in ROM
+ * (default_planar_backend_ops) and patches a single mutable copy,
+ * planar_backend_ops, at runtime: memcpy() the defaults in, then overwrite
+ * set_color/get_color for the selected family if it isn't ST -- see
+ * vdi_backend_select() in vdi_backend.c.
+ *
+ * const/non-const split matters on the m68k targets, where .data shares
+ * emutos.ld's read-only ROM region with .text (see its FIXME comment): a
+ * non-const table there would accept writes that silently do nothing on
+ * real hardware, and a table this is only ever memcpy()'d *from* has
+ * nothing to gain from living in writable storage. planar_backend_ops has
+ * no initializer, so it lands in .bss -- real RAM even on those targets --
+ * not .data.
+ *
+ * Both are always fully populated (default_planar_backend_ops at compile
+ * time, planar_backend_ops by the copy-then-patch above), so
+ * vdi_backend_select() only ever runs the read-only
+ * vdi_backend_ops_validate() on planar_backend_ops, never the mutating
+ * vdi_backend_ops_init() -- see the comment on that pair below.
+ * packed_truecolor_backend_ops is different: it can leave optional slots
+ * NULL under CONF_VDI_SPARSE_TABLE (see vdi_backend_truecolor.c), so it
+ * genuinely needs vdi_backend_ops_init()'s mutation and stays non-const --
+ * that only matters on MACHINE_RPI, where the "ROM" is actually writable
+ * RAM.
+ */
+extern const vdi_backend_ops default_planar_backend_ops;
 extern vdi_backend_ops planar_backend_ops;
 extern vdi_backend_ops packed_truecolor_backend_ops;
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR32
+extern vdi_backend_ops packed_truecolor32_backend_ops;
+#endif
 
 /*
  * Installs a generic default into every NULL slot of a backend ops table
- * (see the defaults in vdi_backend.c).  Mandatory slots must already be
- * non-NULL.  Idempotent: safe to call on every vdi_backend_select().
+ * (see the defaults in vdi_backend.c), then validates it (see
+ * vdi_backend_ops_validate() below). Mutates ops, so it cannot be used on a
+ * const table -- see the default_planar_backend_ops/planar_backend_ops
+ * comment above. Idempotent: safe to call on every vdi_backend_select().
  */
 void vdi_backend_ops_init(vdi_backend_ops *ops);
+
+/*
+ * Read-only counterpart to vdi_backend_ops_init(), for tables that are
+ * always fully populated and never need the NULL-slot fill-in (currently
+ * planar_backend_ops: not const itself, but always fully populated by the
+ * copy-and-patch in vdi_backend_select(), so it never has a NULL slot to
+ * fill in either). KDEBUGs if a mandatory primitive is missing, same check
+ * vdi_backend_ops_init() runs after filling defaults.
+ */
+void vdi_backend_ops_validate(const vdi_backend_ops *ops);
 
 #endif /* CONF_WITH_VDI_BACKEND_DISPATCH */
 
@@ -126,7 +205,13 @@ void vdi_backend_ops_init(vdi_backend_ops *ops);
 static inline BOOL vdi_screen_is_truecolor(void)
 {
 #if CONF_WITH_VDI_BACKEND_DISPATCH
-    return vdi_screen_backend() == &packed_truecolor_backend_ops;
+    const vdi_backend_ops *backend = vdi_screen_backend();
+
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR32
+    if (backend == &packed_truecolor32_backend_ops)
+        return TRUE;
+#endif
+    return backend == &packed_truecolor_backend_ops;
 #else
     return CONF_WITH_VDI_BACKEND_TRUECOLOR;
 #endif
@@ -139,7 +224,7 @@ static inline BOOL vdi_screen_is_truecolor(void)
  * fill_rect() -- currently the RPi software mouse cursor in vdi_mouse.c.
  */
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
-UWORD vdi_truecolor_pixel_for_index(WORD index);
+ULONG vdi_truecolor_pixel_for_index(WORD index);
 
 /*
  * vs_color()/vq_color() pseudo-palette access for the truecolor backend
@@ -158,6 +243,11 @@ void vdi_truecolor_get_color(const Vwk *vwk, WORD index, WORD *r, WORD *g, WORD 
  * vdi_backend_active_vwk() (see above) for the physical workstation if
  * drawing happens before vdi_v_opnwk() ever runs. */
 void vdi_truecolor_init_palette(Vwk *vwk);
+
+/* Bytes per packed pixel of the current screen (2 for RGB565, 4 for
+ * XRGB8888) -- v_planes / 8. Used by the software mouse cursor, the AES
+ * colour-icon packers and setup_info() instead of hard-coding 2. */
+UWORD vdi_truecolor_pixel_size(void);
 
 /*
  * The workstation whose pseudo-palette get_pixel()/put_pixel()/etc.

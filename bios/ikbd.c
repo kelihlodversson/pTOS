@@ -404,14 +404,28 @@ static BOOL handle_mouse_mode(WORD newkey)
 static WORD kb_initial;
 static WORD kb_repeat;
 static WORD kb_ticks;
-static union {
-    ULONG key;                  /* combined value */
-    struct {
-        UBYTE shifty;           /* state of 'shifty' */
-        UBYTE scancode;         /* actual scancode */
-        UWORD ascii;            /* derived ascii value */
-    } k;
+static struct {
+    UBYTE shifty;           /* state of 'shifty' */
+    UBYTE scancode;         /* actual scancode */
+    UWORD ascii;            /* derived ascii value */
 } kb_last;
+
+/*
+ * Pack kb_last into the shifty/scancode/ascii ULONG that bconin2() callers
+ * expect (shifty in bits 24-31, scancode in bits 16-23, ascii in bits 0-15
+ * -- see bconin2()'s "value &= 0x00ffffffL" and push_ascii_ikbdiorec()'s
+ * identical layout). This used to be a union with kb_last.key as the ULONG
+ * view, which only produced this layout on a big-endian host; on ARM it
+ * silently read back a scrambled value, e.g. the ASCII character landing in
+ * bits 16-23 instead of bits 0-15, so every USB-sourced keystroke read as
+ * ASCII NUL and was discarded by callers like EmuCON's read_line().
+ */
+static ULONG kb_last_key(void)
+{
+    return MAKE_ULONG(kb_last.scancode, kb_last.ascii) |
+           ((ULONG)kb_last.shifty << 24);
+}
+
 static PFVOID kb_last_ikbdsys;  /* ikbdsys when kb_last was set */
 
 WORD kbrate(WORD initial, WORD repeat)
@@ -471,19 +485,19 @@ static void do_key_repeat(void)
 
     /* Play the key click sound */
     if (conterm & 1)
-        keyclick(kb_last.k.scancode);
+        keyclick(kb_last.scancode);
 
     /*
      * changing the modifier keys no longer stops key repeat, so when
      * they change, we must do the scancode conversion again
      */
-    if (shifty != kb_last.k.shifty) {
+    if (shifty != kb_last.shifty) {
         UBYTE scancode;
 
         /* use a copy of scancode because convert_scancode() can change it */
-        scancode = kb_last.k.scancode;
-        kb_last.k.ascii = convert_scancode(&scancode);
-        kb_last.k.shifty = shifty;
+        scancode = kb_last.scancode;
+        kb_last.ascii = convert_scancode(&scancode);
+        kb_last.shifty = shifty;
         kb_last_ikbdsys = kbdvecs.ikbdsys;
     }
 
@@ -491,7 +505,7 @@ static void do_key_repeat(void)
     if (mouse_packet[0]) {
         KDEBUG(("Repeating mouse packet %02x%02x%02x\n",mouse_packet[0],mouse_packet[1],mouse_packet[2]));
         call_mousevec(mouse_packet);
-    } else push_ikbdiorec(kb_last.key);
+    } else push_ikbdiorec(kb_last_key());
 
     /* The key will repeat again until some key up */
     kb_ticks = kb_repeat;
@@ -758,16 +772,16 @@ void kbd_int(UBYTE scancode)
     /*
      * save last key info for do_key_repeat()
      */
-    kb_last.k.shifty = shifty;
-    kb_last.k.scancode = scancode;
-    kb_last.k.ascii = ascii;
+    kb_last.shifty = shifty;
+    kb_last.scancode = scancode;
+    kb_last.ascii = ascii;
     kb_last_ikbdsys = kbdvecs.ikbdsys;
 
     /*
      * if we're not sending mouse packets, send a real key
      */
     if (!mouse_packet[0])
-        push_ikbdiorec(kb_last.key);
+        push_ikbdiorec(kb_last_key());
 }
 
 
