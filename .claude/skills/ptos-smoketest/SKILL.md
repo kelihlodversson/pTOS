@@ -230,6 +230,33 @@ make virt-m68k-cli_defconfig && make
 qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_errors -serial stdio
 ```
 
+### No `raspi3b`/`raspi4b` QEMU target for pTOS's 32-bit ARM builds
+
+pTOS's Raspberry Pi builds (`rpi1_defconfig`, `rpi2_defconfig`, ...) are
+AArch32 (`arm-none-eabi-`, `kernel.img`/`kernel7.img`). QEMU's `raspi3b` and
+`raspi4b` machines (`qemu-system-aarch64`) are **AArch64-only and cannot boot
+them** — this is a fixed QEMU limitation, not a pTOS gap or a flag to
+discover:
+
+- Each raspi machine's board-revision code hardcodes an SoC/CPU type at the
+  `TypeInfo` level (`raspi2b` → BCM2836/cortex-a7, `arm_machine_interfaces`;
+  `raspi3b`/`raspi4b` → BCM2837/BCM2711, cortex-a53/a72,
+  `aarch64_machine_interfaces`) in `hw/arm/raspi.c`. There is no property,
+  CLI flag, or kernel-header autodetection that switches a raspi3b/raspi4b
+  instance into AArch32 boot.
+- On real hardware this is `start.elf`'s job: it picks 32- vs 64-bit mode
+  from `config.txt` (`arm_64bit`) and which of `kernel.img`/`kernel7.img`/
+  `kernel8.img` is present, then sets up the CPU reset state accordingly.
+  QEMU doesn't emulate the GPU/`start.elf` boot ROM, and a raw `kernel7.img`
+  has no header QEMU could use to autodetect its bitness anyway.
+- **Practical stand-in**: `qemu-system-arm -M raspi2b -bios kernel7.img`
+  (`rpi2_defconfig`, already in the table above) is the closest available
+  smoke test for 32-bit-mode Pi 2/3 behavior — real Pi 2 and Pi 3 boot the
+  same `kernel7.img` in AArch32 mode, so raspi2b under QEMU is a reasonable
+  proxy even when the thing you actually care about is Pi 3 hardware.
+- If pTOS ever grows an AArch64 port (producing a `kernel8.img`), *that*
+  build could target `-M raspi3b`/`raspi4b` — but that doesn't exist today.
+
 `-device usb-mouse -device usb-kbd` is mandatory when validating USB HID
 input: without these devices, the class drivers register but neither a mouse
 nor keyboard is enumerated.
@@ -325,6 +352,7 @@ cat /tmp/qemu.log
 | `qemu-system-m68k` with default CPU | always `-cpu m68020` |
 | `-M virt` without `highmem=off` | use `-M virt,highmem=off` — no >4 GiB access support |
 | Expecting video from virt-arm/virt-m68k | headless; check serial + guest_errors only |
+| Trying `qemu-system-aarch64 -M raspi3b -bios kernel7.img` for a 32-bit pTOS build | `raspi3b`/`raspi4b` are AArch64-only in QEMU, no override exists; use `raspi2b` under `qemu-system-arm` instead |
 | Desktop detector says `green = 0` on a booted STE | Sampling grid was phase-sensitive (e.g. step 4) and missed the phase-offset checkerboard; re-check with the step-1 snippet above |
 | STE boot prints two `Bus Error reading at address $4fffff/$cc03c3` warnings | Benign init probes at `PC=$e00c20` (`TST.B (A0)`); present on every boot, ignore |
 | Testing `ptoscart.img` as the `--tos` image | It is a cartridge, not a TOS: pass it via `--cartridge` and supply a real Atari TOS ROM with `--tos` (pTOS ROMs have cartridge detection compiled out) |
