@@ -257,6 +257,12 @@ _arm_dispatch_undef:
 
     .globl _arm_dispatch_svc
 _arm_dispatch_svc:
+    // See the matching comment in bios/machine/raspi/startup.S: taking the
+    // svc exception already masked IRQ (architectural), and unlike m68k
+    // TRAP #n this would leave any handler that blocks waiting for an
+    // interrupt (e.g. bconin2()'s stop_until_interrupt() loop) unable to
+    // ever be woken (#185).
+    cpsie i
     ldr ip, [lr, #-4]
     and ip, ip, #0xF
     lsl ip, ip, #0x2

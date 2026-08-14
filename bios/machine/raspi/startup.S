@@ -328,6 +328,16 @@ _arm_dispatch_undef:
 
     .globl _arm_dispatch_svc
 _arm_dispatch_svc:
+    // Taking the svc exception itself already masked IRQ (architectural,
+    // not our choice). Unlike m68k TRAP #n, which never raised the
+    // interrupt priority level, that means any handler below which blocks
+    // waiting for an interrupt -- e.g. bconin2()'s stop_until_interrupt()
+    // loop in bios/ikbd.c waiting on kb_timerc_int() -- would deadlock:
+    // the interrupt it needs can't fire while it's masked here. A call
+    // that returns normally is unaffected (rfefd restores CPSR from the
+    // pre-trap SPSR_svc), so this only bit us on the first blocking
+    // console read a process makes (#185).
+    cpsie i
     ldr ip, [lr, #-4]      // load svc instruction from code
     and ip, ip, #0xF       // mask out low nybble of instruction (we emulate trap #0 - #15)
     lsl ip, ip, #0x2       // multiply index by 4
