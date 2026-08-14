@@ -837,15 +837,17 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
         info->s_nxln = src->fd_wdwidth * info->s_nxwd;
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
         /*
-         * Packed-truecolor source forms hold one whole pixel per word,
-         * so a row of fd_w pixels spans fd_w*2 bytes.  gsx_fix() sizes
-         * memory MFDBs with the planar convention fd_wdwidth = fd_w/16;
-         * using that here would make s_nxln 8 times too small and the
-         * opaque copy would read w/8 bytes per row instead of 2w.  Only
-         * the opaque device-dependent case (the AES's packed colour-icon
+         * Packed-truecolor source forms hold one whole pixel in
+         * packed_ppb bytes, so a row of fd_w pixels spans fd_w *
+         * packed_ppb bytes.  gsx_fix() sizes memory MFDBs with the
+         * planar convention fd_wdwidth = fd_w/16, which yields a
+         * stride of fd_w/8 bytes -- right only for planar forms, far
+         * too small for packed ones, so the opaque copy would read
+         * w/8 bytes per row instead of w * packed_ppb.  Only the
+         * opaque device-dependent case (the AES's packed colour-icon
          * data -- gr_colourblit()) wants the packed stride here:
-         * transparent sources are 1bpp masks whose fd_wdwidth stride is
-         * correct as-is.
+         * transparent sources are 1bpp masks whose fd_wdwidth stride
+         * is correct as-is.
          */
         if (vdi_screen_is_truecolor() && !raster->transparent && !src->fd_stand) {
             info->s_nxwd = packed_ppb;
