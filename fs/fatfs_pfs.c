@@ -538,7 +538,7 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
     filetime = le2cpu16(f->f_td.time);
     filedate = le2cpu16(f->f_td.date);
     clust = le2cpu16(f->f_clust);
-    fileln = le2cpu16(f->f_fileln);
+    fileln = le2cpu32(f->f_fileln);
 
     dmd2 = dn2->d_drv;
     strtcl2 = dn2->d_parent ? dn2->d_strtcl : ROOT_PSEUDO_CLUSTER;
