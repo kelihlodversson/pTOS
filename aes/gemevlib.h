@@ -25,22 +25,15 @@ WORD ev_dclick(WORD rate, WORD setit);
 
 /*
  * combine clicks/mask/state into LONG
+ *
+ * downorup() (geminput.c) decodes this value with explicit byte
+ * shifts, so it must be built the same way here: a union of a
+ * {WORD,BYTE,BYTE} struct and a LONG is endian-dependent and gives
+ * the wrong layout on little-endian targets (same bug class as
+ * kb_last in bios/ikbd.c, see issue #185).
  */
 static __inline__ LONG combine_cms(WORD clicks,WORD mask,WORD state)
 {
-    union {
-        LONG result;
-        struct {
-            WORD c;
-            BYTE m;
-            BYTE s;
-        } combined;
-    } u;
-
-    u.combined.c = clicks;
-    u.combined.m = mask;
-    u.combined.s = state;
-
-    return u.result;
+    return (((LONG)clicks & 0xffffL) << 16) | (((LONG)mask & 0xff) << 8) | ((LONG)state & 0xff);
 }
 #endif
