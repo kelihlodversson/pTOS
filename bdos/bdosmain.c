@@ -415,23 +415,6 @@ static void offree(DMD *d)
 }
 
 
-/* diagnostic canary for #194: strcat()'s own code has been observed
- * getting overwritten at runtime. Compare the instruction word at
- * strcat()+4 against its known-good encoding on every GEMDOS call to
- * bisect when the corruption happens. To be removed once #194 is
- * understood. */
-#define CANARY_EXPECTED 0xe1a03002UL   /* "mov r3, r2" - strcat()+4, verified via objdump */
-static void check_canary(int fn)
-{
-    volatile ULONG *addr = (volatile ULONG *)((char *)strcat + 4);
-
-    if (*addr != CANARY_EXPECTED)
-    {
-        KINFO(("CANARY TRIPPED [bdos] before fn=0x%04x: strcat+4=%08lx (expected %08lx)\n",
-               fn, *addr, (ULONG)CANARY_EXPECTED));
-    }
-}
-
 /*
  *  osif -
  */
@@ -454,8 +437,6 @@ restrt:
     fn = pw[0];
     if (fn > MAX_FNCALL)
         return EINVFN;
-
-    check_canary(fn);
 
     KDEBUG(("BDOS (fn=0x%04x)\n",fn));
 

@@ -82,8 +82,6 @@ static char *fm_strbrk(OBJECT *start,WORD maxnum,WORD maxlen,char *alert,
 
     for (i = 0, obj = start; i < maxnum; i++, obj++, alert++) {
         p = obj->ob_spec.free_string;
-        KINFO(("fm_strbrk: i=%d obj=%p ob_type=%04x free_string=%p\n",
-               i, (void*)obj, obj->ob_type, (void*)p));
         for (j = 0; j < maxlen; j++) {
             if (endsubstring(*alert))
                 break;
@@ -149,16 +147,6 @@ static void fm_parse(OBJECT *tree, BYTE *palstr, WORD *picnum, WORD *pnummsg,
 {
     OBJECT *obj = tree;
     BYTE *alert = palstr;
-    int i;
-
-    for (i = 0; i < MAX_LINENUM; i++)
-        KINFO(("fm_parse: pre-check msg[%d]=%p ob_type=%04x free_string=%p\n",
-               i, (void*)(tree+MSGOFF+i), (tree+MSGOFF+i)->ob_type,
-               (void*)(tree+MSGOFF+i)->ob_spec.free_string));
-    for (i = 0; i < MAX_BUTNUM; i++)
-        KINFO(("fm_parse: pre-check but[%d]=%p ob_type=%04x free_string=%p\n",
-               i, (void*)(tree+BUTOFF+i), (tree+BUTOFF+i)->ob_type,
-               (void*)(tree+BUTOFF+i)->ob_spec.free_string));
 
     *picnum = alert[1] - '0';
 

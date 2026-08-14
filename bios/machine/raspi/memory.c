@@ -50,11 +50,11 @@
 
 static void init_mmu(ULONG memory_size);
 
-/* diagnostic for #194: page-granularity table covering section 0
- * (0x0-0xFFFFF), so ranges within the first megabyte can be marked
- * read-only individually. Populated by init_mmu(), extended later
- * (after boot-time initializers have finished writing their targets)
- * by raspi_mmu_protect_range(). */
+/* page-granularity table covering section 0 (0x0-0xFFFFF), so ranges
+ * within the first megabyte can be marked read-only individually.
+ * Populated by init_mmu(), narrowed later (after boot-time
+ * initializers have finished writing their targets) by
+ * raspi_mmu_protect_range(). */
 static struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR
     text_protect_l2[ARMV6MMU_LEVEL2_COARSE_PAGE_TABLE_SIZE / sizeof(struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR)]
     __attribute__((aligned(ARMV6MMU_LEVEL2_COARSE_PAGE_TABLE_SIZE)));
@@ -201,11 +201,11 @@ static void init_mmu(ULONG memory_size)
     }
 
     /*
-     * diagnostic for #194: replace section 0's identity mapping with a
-     * coarse (4KB page) table so ranges within the first megabyte can
-     * be marked read-only at page granularity while everything else
-     * stays writable exactly as before. A write into a protected range
-     * now faults immediately at the writing instruction instead of
+     * replace section 0's identity mapping with a coarse (4KB page)
+     * table so ranges within the first megabyte can be marked
+     * read-only at page granularity while everything else stays
+     * writable exactly as before. A write into a protected range now
+     * faults immediately at the writing instruction instead of
      * silently corrupting whatever it hits, which only surfaces later
      * (possibly much later) when the corrupted memory is used.
      */

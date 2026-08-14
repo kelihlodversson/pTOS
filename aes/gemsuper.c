@@ -79,30 +79,12 @@ static void aestrace(const char* message)
 #define aestrace(a)
 #endif
 
-/* diagnostic canary for #194: strcat()'s own code has been observed
- * getting overwritten at runtime. Snapshot the instruction word at
- * strcat()+4 once, then compare on every AES trap to bisect when the
- * corruption happens. To be removed once #194 is understood. */
-#define CANARY_EXPECTED 0xe1a03002UL   /* "mov r3, r2" - strcat()+4, verified via objdump */
-static void check_canary(WORD opcode)
-{
-    volatile ULONG *addr = (volatile ULONG *)((char *)strcat + 4);
-
-    if (*addr != CANARY_EXPECTED)
-    {
-        KINFO(("CANARY TRIPPED [aes] before opcode=0x%x: strcat+4=%08lx (expected %08lx)\n",
-               opcode, *addr, (ULONG)CANARY_EXPECTED));
-    }
-}
-
 static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_in[], WORD int_out[], LONG addr_in[])
 {
     LONG    count, buparm;
     OBJECT  *tree;
     WORD    ret;
     WORD    unsupported = FALSE;
-
-    check_canary(opcode);
 
     count = 0L;
     ret = TRUE;
