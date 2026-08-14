@@ -15,13 +15,26 @@
 #define u16 unsigned short
 #define u32 unsigned long
 
+/*
+ * both structs mirror the on-disk Atari rootsector layout exactly, with
+ * no gaps: __attribute__((packed)) is required, not decorative. Without
+ * it, a strict-alignment target (ARM) inserts 2 padding bytes before
+ * icdpart[] to align its u32 fields to a 4-byte boundary, shifting every
+ * field from icdpart[] onwards (icdpart, hd_siz, part, bsl_st, bsl_cnt,
+ * checksum) 2 bytes off from where the real data is - confirmed via
+ * -g/DWARF: struct rootsector compiled to 516 bytes instead of the 512
+ * a disk sector actually is. m68k's own struct-layout defaults happen
+ * not to need the padding here, which is presumably why this went
+ * unnoticed: this header was carried over from Linux's m68k-only
+ * atari_rootsec.h with no port-specific adjustment.
+ */
 struct partition_info
 {
   u8 flg;                       /* bit 0: active; bit 7: bootable */
   char id[3];                   /* "GEM", "BGM", "XGM", or other */
   u32 st;                       /* start of partition */
   u32 siz;                      /* length of partition */
-};
+} __attribute__((packed));
 
 struct rootsector
 {
@@ -33,6 +46,6 @@ struct rootsector
   u32 bsl_st;                           /* start of bad sector list */
   u32 bsl_cnt;                          /* length of bad sector list */
   u16 checksum;                         /* checksum for bootable disks */
-};
+} __attribute__((packed));
 
 #endif /* ATARI_ROOTSEC_H */
