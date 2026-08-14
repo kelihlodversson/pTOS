@@ -23,6 +23,7 @@
 #include "processor.h"
 #include "string.h"
 #include "biosext.h"
+#include "kprint.h"
 
 #define MEGABYTE    0x100000
 #ifdef TARGET_RPI1
@@ -162,6 +163,58 @@ static void init_mmu(ULONG memory_size)
             entry->TEX   = 0;
             entry->SBit  = 1;
         }
+    }
+
+    /*
+     * diagnostic for #194: replace section 0's identity mapping with a
+     * coarse (4KB page) table so [_text, _bss) - the linker's own
+     * read-only range, see emutos.ld - can be marked read-only while
+     * .bss/heap above it stay writable. A write into that range will
+     * now fault immediately at the writing instruction instead of
+     * silently corrupting code that only crashes later when executed.
+     * To be reverted once #194 is understood.
+     */
+    {
+        static struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR
+            text_protect_l2[ARMV6MMU_LEVEL2_COARSE_PAGE_TABLE_SIZE / sizeof(struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR)]
+            __attribute__((aligned(ARMV6MMU_LEVEL2_COARSE_PAGE_TABLE_SIZE)));
+        /* [_text, _etext) is .text+.rodata only - genuinely never written.
+         * _bss is NOT the right upper bound: .data sits between _etext and
+         * _bss and, despite emutos.ld's aspiration that it stay empty,
+         * currently holds structs with legitimately-mutable fields (e.g.
+         * usb/ucd_dwc2.c's dwc2_uif, linked into a list via its ->next
+         * field) - protecting up to _bss faults on those. */
+        ULONG protect_start = (ULONG)_text  & ~(SMALL_PAGE_SIZE - 1);
+        ULONG protect_end   = (ULONG)_etext & ~(SMALL_PAGE_SIZE - 1);
+        unsigned p;
+        struct TARMV6MMU_LEVEL1_COARSE_PAGE_TABLE_DESCRIPTOR coarse_desc;
+
+        for (p = 0; p < ARRAY_SIZE(text_protect_l2); p++)
+        {
+            ULONG page_addr = SMALL_PAGE_SIZE * p;
+            struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR *pg = &text_protect_l2[p];
+
+            pg->XNBit  = 0;
+            pg->Value1 = 1;
+            pg->BBit   = 1;
+            pg->CBit   = 1;
+            pg->AP     = AP_ALL_ACCESS;
+            pg->TEX    = 0;
+            pg->APXBit = (page_addr >= protect_start && page_addr < protect_end)
+                         ? APX_RO_ACCESS : APX_RW_ACCESS;
+            pg->SBit   = 1;
+            pg->NGBit  = 0;
+            pg->Base   = ARMV6MMUL2SMALLPAGEBASE(page_addr);
+        }
+
+        coarse_desc.Value01 = 1;
+        coarse_desc.SBZ     = 0;
+        coarse_desc.Domain  = 0;
+        coarse_desc.IMPBit  = 0;
+        coarse_desc.Base    = ARMV6MMUL1COARSEBASE((ULONG)text_protect_l2);
+        *(struct TARMV6MMU_LEVEL1_COARSE_PAGE_TABLE_DESCRIPTOR *)&raspi_page_table0[0] = coarse_desc;
+
+        KINFO(("mmu diag: write-protecting [%p,%p)\n", (void*)protect_start, (void*)protect_end));
     }
 
     clean_data_cache ();
