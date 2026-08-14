@@ -77,24 +77,31 @@ void clfix(CLNO cl, CLNO link, DMD *dm)
 
     spans = (dm->m_recsiz-offset == 1); /* content spans FAT sectors ... */
 
-    /* get current contents */
+    /*
+     * get current contents.  a 12-bit FAT entry is packed across two
+     * bytes shared with its neighbour; buf[offset] holds the low 8
+     * bits of an even entry (or the low nibble of an odd one, shared
+     * with the preceding even entry's high nibble), buf[offset+1]
+     * holds the rest.  Building f as (byte1<<8)|byte0 - low byte
+     * first - makes the mask/shift below endian-independent: no
+     * cpu2le16()/le2cpu16() needed, since f was never a raw multi-byte
+     * memory read to begin with.
+     */
     buf = getrec(recnum,dm->m_fatofd,0) + offset;
-    f = *(UBYTE *)buf++ << 8;
+    f = *(UBYTE *)buf++;
     if (spans)
         buf = getrec(recnum+1,dm->m_fatofd,0);
-    f |= *(UBYTE *)buf;
+    f |= (CLNO)(*(UBYTE *)buf) << 8;
 
     /* update */
-    f = cpu2le16(f);
     f = (f & mask) | link;
-    f = le2cpu16(f);
 
     /* write back */
     buf = getrec(recnum,dm->m_fatofd,1) + offset;
-    *(UBYTE *)buf++ = f >> 8;
+    *(UBYTE *)buf++ = LOBYTE(f);
     if (spans)
         buf = getrec(recnum+1,dm->m_fatofd,1);
-    *(UBYTE *)buf = LOBYTE(f);
+    *(UBYTE *)buf = f >> 8;
 }
 
 
@@ -132,13 +139,13 @@ CLNO getrealcl(CLNO cl, DMD *dm)
 
     /*
      * handle 12-bit FATs
+     * see the comment in clfix() on why f is built low-byte-first,
+     * with no cpu2le16()/le2cpu16() needed.
      */
-    f = *(UBYTE *)buf++ << 8;
+    f = *(UBYTE *)buf++;
     if (dm->m_recsiz-offset == 1) /* content spans FAT sectors ... */
         buf = getrec(recnum+1,dm->m_fatofd,0);
-    f |= *(UBYTE *)buf;
-
-    f = le2cpu16(f);
+    f |= (CLNO)(*(UBYTE *)buf) << 8;
 
     if (IS_ODD(cl))
         cl = f >> 4;

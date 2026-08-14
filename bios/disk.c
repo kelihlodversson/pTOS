@@ -339,15 +339,21 @@ void disk_rescan(UWORD unit)
    least one of the primary entries is ok this way */
 static int VALID_PARTITION(struct partition_info *pi, unsigned long hdsiz)
 {
+    /* st/siz are big-endian on disk (the historical Atari/m68k rootsector
+     * format) regardless of host byte order - must be converted before use */
+    ULONG st = be2cpu32(pi->st);
+    ULONG siz = be2cpu32(pi->siz);
+
     KDEBUG(("disk.c: checking if a partition is valid...\n"));
     KDEBUG(("        flag: %s\n", (pi->flg & 1) ? "OK" : "Failed" ));
-    KDEBUG(("        partition start (%ld <= %ld): %s\n", pi->st, hdsiz, (pi->st <= hdsiz) ? "OK" : "Failed" ));
-    KDEBUG(("        partition end (%ld <= %ld): %s\n", pi->st + pi->siz, hdsiz, (pi->st + pi->siz <= hdsiz) ? "OK" : "Failed" ));
+    KDEBUG(("        partition start (%lu <= %lu): %s\n", st, hdsiz, (st <= hdsiz) ? "OK" : "Failed" ));
+    KDEBUG(("        partition end (start %lu + size %lu <= %lu): %s\n",
+            st, siz, hdsiz, (st <= hdsiz && siz <= hdsiz - st) ? "OK" : "Failed" ));
 
     return ((pi->flg & 1) &&
         /* isalnum(pi->id[0]) && isalnum(pi->id[1]) && isalnum(pi->id[2]) && */
-        pi->st <= hdsiz &&
-        pi->st + pi->siz <= hdsiz);
+        st <= hdsiz &&
+        siz <= hdsiz - st);   /* not "st + siz <= hdsiz": that can overflow */
 }
 
 static int OK_id(const char *s)
@@ -594,7 +600,7 @@ static int atari_partition(UWORD unit,LONG *devices_available)
         return 1;
     }
 
-    hd_size = rs->hd_siz;
+    hd_size = be2cpu32(rs->hd_siz);
 
     /* Verify this is an Atari rootsector: */
     if (!VALID_PARTITION(&rs->part[0], hd_size) &&
@@ -637,7 +643,7 @@ static int atari_partition(UWORD unit,LONG *devices_available)
         /* active partition */
         if (memcmp (pi->id, "XGM", 3) != 0) {
             /* we don't care about other id's */
-            if (add_partition(unit,devices_available,pi->id,pi->st,pi->siz) < 0)
+            if (add_partition(unit,devices_available,pi->id,be2cpu32(pi->st),be2cpu32(pi->siz)) < 0)
                 break;  /* max number of partitions reached */
 
             KINFO((" %c%c%c", pi->id[0], pi->id[1], pi->id[2]));
@@ -648,7 +654,7 @@ static int atari_partition(UWORD unit,LONG *devices_available)
         part_fmt = 1;
 #endif
         KINFO((" XGM<"));
-        partsect = extensect = pi->st;
+        partsect = extensect = be2cpu32(pi->st);
         while (1) {
             if (disk_rw(unit, RW_READ, partsect, 1, physsect2.sect)) {
                 KINFO((" block %ld read failed\n", partsect));
@@ -662,7 +668,7 @@ static int atari_partition(UWORD unit,LONG *devices_available)
             }
 
             if (add_partition(unit,devices_available,xrs->part[0].id,
-                              partsect+xrs->part[0].st,xrs->part[0].siz) < 0)
+                              partsect+be2cpu32(xrs->part[0].st),be2cpu32(xrs->part[0].siz)) < 0)
                 break;  /* max number of partitions reached */
 
             KINFO((" %c%c%c", xrs->part[0].id[0], xrs->part[0].id[1], xrs->part[0].id[2]));
@@ -676,7 +682,7 @@ static int atari_partition(UWORD unit,LONG *devices_available)
                 break;
             }
 
-            partsect = xrs->part[1].st + extensect;
+            partsect = be2cpu32(xrs->part[1].st) + extensect;
         }
     }
 #ifdef ICD_PARTS
@@ -690,7 +696,7 @@ static int atari_partition(UWORD unit,LONG *devices_available)
                 if (!((pi->flg & 1) && OK_id(pi->id)))
                     continue;
                 part_fmt = 2;
-                if (add_partition(unit,devices_available,pi->id,pi->st,pi->siz) < 0)
+                if (add_partition(unit,devices_available,pi->id,be2cpu32(pi->st),be2cpu32(pi->siz)) < 0)
                     break;  /* max number of partitions reached */
                 KINFO((" %c%c%c", pi->id[0], pi->id[1], pi->id[2]));
             }

@@ -16,6 +16,7 @@
 #include "config.h"
 #include "portab.h"
 #include "string.h"
+#include "endian.h"
 #include "gemerror.h"
 #include "kprint.h"
 #include "asm.h"
@@ -75,6 +76,15 @@ static UWORD getiword(UBYTE *addr)
 
 /*
  * compute word checksum
+ *
+ * this implements the historical Atari boot-sector "is this sector
+ * executable" test: sum the sector as 256 big-endian 16-bit words: a
+ * total of 0x1234 marks it bootable.  The definition is big-endian
+ * regardless of host, so each word must be converted with be2cpu16()
+ * before summing - a native pointer-cast read here would silently
+ * checksum the wrong bytes together on a little-endian host, since
+ * summing byte-swapped words does not generally produce the same
+ * total as summing the words in the order the format defines.
  */
 UWORD compute_cksum(const UWORD *buf)
 {
@@ -83,7 +93,7 @@ UWORD compute_cksum(const UWORD *buf)
     const UWORD *p = buf;
 
     for (i = 0, sum = 0; i < SECTOR_SIZE/sizeof(UWORD); i++)
-        sum += *p++;
+        sum += be2cpu16(*p++);
 
     return sum;
 }

@@ -28,8 +28,12 @@
  * forward prototypes
  */
 
+#if CONF_WITH_PRG_LOADER
 static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd);
+#endif
+#if CONF_WITH_PRG_LOADER || DETECT_NATIVE_FEATURES
 static LONG pgfix01(void *lastcp, LONG nrelbytes, PGMINFO *pi);
+#endif
 
 /*
  * executable format detected by kpgmhdrld() and consumed by kpgmld().
@@ -78,6 +82,7 @@ LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h)
     }
 #endif
 
+#if CONF_WITH_PRG_LOADER
     /* classic Atari GEMDOS PRG */
     if (magic[0] == 0x60 && magic[1] == 0x1a)
     {
@@ -99,6 +104,7 @@ LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h)
 
         return 0;
     }
+#endif
 
     KDEBUG(("BDOS kpgmhdrld: Unknown executable format!\n"));
     r = EPLFMT;
@@ -122,12 +128,21 @@ LONG kpgmld(PD *p, FH h, PGMHDR01 *hd)
 {
     LONG r;
 
+    switch (pgmld_format) {
 #if CONF_WITH_ELF_LOADER
-    if (pgmld_format == PGMLD_ELF)
+    case PGMLD_ELF:
         r = elf_pgmld(h, p);
-    else
+        break;
 #endif
+#if CONF_WITH_PRG_LOADER
+    case PGMLD_PRG:
         r = pgmld01(h, p, hd);
+        break;
+#endif
+    default:
+        r = EPLFMT;
+        break;
+    }
 
     KDEBUG(("BDOS pgmld: return code=0x%lx\n",r));
 
@@ -151,6 +166,7 @@ LONG kpgmld(PD *p, FH h, PGMHDR01 *hd)
  * - call pgfix01() to fix up the code using that info
  * - zero out the bss
  */
+#if CONF_WITH_PRG_LOADER
 static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd)
 {
     PGMINFO *pi;
@@ -269,6 +285,7 @@ static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd)
 
     return 0;
 }
+#endif /* CONF_WITH_PRG_LOADER */
 
 
 /*
@@ -287,6 +304,7 @@ static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd)
  *  pi        - program info pointer
  */
 
+#if CONF_WITH_PRG_LOADER || DETECT_NATIVE_FEATURES
 static LONG pgfix01(void *lastcp, LONG nrelbytes, PGMINFO *pi)
 {
     UBYTE *cp;              /*  code pointer                */
@@ -320,6 +338,7 @@ static LONG pgfix01(void *lastcp, LONG nrelbytes, PGMINFO *pi)
 
     return (++n == 0) ? 1 : 0;
 }
+#endif /* CONF_WITH_PRG_LOADER || DETECT_NATIVE_FEATURES */
 
 
 #if DETECT_NATIVE_FEATURES

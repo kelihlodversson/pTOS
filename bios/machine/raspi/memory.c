@@ -7,6 +7,8 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+/* #define ENABLE_KDEBUG */
+
 #include "config.h"
 #ifndef MACHINE_RPI
 #error This file must only be compiled for raspberry PI targets
@@ -23,6 +25,7 @@
 #include "processor.h"
 #include "string.h"
 #include "biosext.h"
+#include "kprint.h"
 
 #define MEGABYTE    0x100000
 #ifdef TARGET_RPI1
@@ -48,6 +51,56 @@
 #define PAGE_TABLE0_SIZE       (PAGE_TABLE0_ENTRIES* sizeof(struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR))
 
 static void init_mmu(ULONG memory_size);
+
+#if CONF_WITH_MMU_TEXT_PROTECT
+/* page-granularity table covering section 0 (0x0-0xFFFFF), so ranges
+ * within the first megabyte can be marked read-only individually.
+ * Populated by init_mmu(), narrowed later (after boot-time
+ * initializers have finished writing their targets) by
+ * raspi_mmu_protect_range(). */
+static struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR
+    text_protect_l2[ARMV6MMU_LEVEL2_COARSE_PAGE_TABLE_SIZE / sizeof(struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR)]
+    __attribute__((aligned(ARMV6MMU_LEVEL2_COARSE_PAGE_TABLE_SIZE)));
+
+/*
+ * mark [start, end) read-only at page granularity. Both must fall
+ * within section 0 (the first megabyte) - the only section init_mmu()
+ * has broken out into a page table. Rounds start down / end up to
+ * page boundaries, so it may protect a little more than asked.
+ */
+void raspi_mmu_protect_range(ULONG start, ULONG end)
+{
+    ULONG protect_start = start & ~(SMALL_PAGE_SIZE - 1);
+    ULONG protect_end   = (end + SMALL_PAGE_SIZE - 1) & ~(SMALL_PAGE_SIZE - 1);
+    unsigned p;
+
+    /* text_protect_l2[] only has entries for section 0 (the first
+     * megabyte); silently protecting just the subset that fits would
+     * leave the rest of [start,end) writable while looking enabled -
+     * defeating the point of a feature whose whole job is to fail loudly. */
+    if (protect_start >= SECTION_SIZE || protect_end > SECTION_SIZE)
+        panic("raspi_mmu_protect_range(%p,%p): outside the first megabyte\n",
+              (void*)start, (void*)end);
+
+    for (p = 0; p < ARRAY_SIZE(text_protect_l2); p++)
+    {
+        ULONG page_addr = SMALL_PAGE_SIZE * p;
+        if (page_addr >= protect_start && page_addr < protect_end)
+            text_protect_l2[p].APXBit = APX_RO_ACCESS;
+    }
+
+    /* the updated descriptors just went through the D-cache like any other
+     * write; without cleaning them out, the MMU's table walk can still see
+     * the old (writable) descriptor in RAM and the protection would not
+     * reliably take effect. */
+    clean_data_cache();
+    asm volatile ("mcr p15, 0, %0, c8, c7, 0" : : "r" (0));   /* invalidate unified TLB */
+    data_sync_barrier();
+    flush_prefetch_buffer();
+
+    KDEBUG(("mmu: write-protecting [%p,%p)\n", (void*)protect_start, (void*)protect_end));
+}
+#endif /* CONF_WITH_MMU_TEXT_PROTECT */
 
 extern char sysvars_start[];
 extern char sysvars_end[];
@@ -164,6 +217,53 @@ static void init_mmu(ULONG memory_size)
         }
     }
 
+#if CONF_WITH_MMU_TEXT_PROTECT
+    /*
+     * replace section 0's identity mapping with a coarse (4KB page)
+     * table so ranges within the first megabyte can be marked
+     * read-only at page granularity while everything else stays
+     * writable exactly as before. A write into a protected range now
+     * faults immediately at the writing instruction instead of
+     * silently corrupting whatever it hits, which only surfaces later
+     * (possibly much later) when the corrupted memory is used.
+     */
+    {
+        unsigned p;
+        struct TARMV6MMU_LEVEL1_COARSE_PAGE_TABLE_DESCRIPTOR coarse_desc;
+
+        for (p = 0; p < ARRAY_SIZE(text_protect_l2); p++)
+        {
+            ULONG page_addr = SMALL_PAGE_SIZE * p;
+            struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR *pg = &text_protect_l2[p];
+
+            pg->XNBit  = 0;
+            pg->Value1 = 1;
+            pg->BBit   = 1;
+            pg->CBit   = 1;
+            pg->AP     = AP_ALL_ACCESS;
+            pg->TEX    = 0;
+            pg->APXBit = APX_RW_ACCESS;   /* narrowed later by raspi_mmu_protect_range() */
+            pg->SBit   = 1;
+            pg->NGBit  = 0;
+            pg->Base   = ARMV6MMUL2SMALLPAGEBASE(page_addr);
+        }
+
+        coarse_desc.Value01 = 1;
+        coarse_desc.SBZ     = 0;
+        coarse_desc.Domain  = 0;
+        coarse_desc.IMPBit  = 0;
+        coarse_desc.Base    = ARMV6MMUL1COARSEBASE((ULONG)text_protect_l2);
+
+        /* raspi_page_table0[0] is declared as a section descriptor, but a
+         * coarse-page-table descriptor is the same 4-byte hardware slot
+         * under a different bitfield layout. Reinterpreting it via a
+         * pointer cast between the two unrelated struct types would
+         * violate strict aliasing; memcpy() is well-defined regardless
+         * of the types on either side. */
+        memcpy(&raspi_page_table0[0], &coarse_desc, sizeof(coarse_desc));
+    }
+#endif /* CONF_WITH_MMU_TEXT_PROTECT */
+
     clean_data_cache ();
 
     ULONG aux_control;
@@ -211,6 +311,25 @@ static void init_mmu(ULONG memory_size)
 #endif
     control |= MMU_MODE;
     asm volatile ("mcr p15, 0, %0, c1, c0,  0" : : "r" (control) : "memory");
+
+#if CONF_WITH_MMU_TEXT_PROTECT
+    /* [_text, _etext) is .text+.rodata only - genuinely never written.
+     * _bss is NOT a safe upper bound: .data sits between _etext and
+     * _bss and, despite emutos.ld's aspiration that it stay empty,
+     * currently holds structs with legitimately-mutable fields (e.g.
+     * usb/ucd_dwc2.c's dwc2_uif, linked into a list via its ->next
+     * field) - protecting up to _bss faults on those.
+     *
+     * raspi_mmu_protect_range() rounds its end argument UP to a page
+     * boundary, which is the right default for a caller that wants at
+     * least [start,end) covered - but here it would drag in whatever
+     * .data shares _etext's page (e.g. dwc2_uif) if _etext isn't
+     * itself page-aligned. Round down explicitly instead: losing at
+     * most one page of .rodata protection is harmless.
+     */
+    raspi_mmu_protect_range((ULONG)_text,
+        (ULONG)_etext & ~(SMALL_PAGE_SIZE - 1));
+#endif /* CONF_WITH_MMU_TEXT_PROTECT */
 }
 
 

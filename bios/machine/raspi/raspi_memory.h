@@ -15,6 +15,12 @@ void raspi_vcmem_init(void);
 UBYTE* raspi_get_coherent_buffer(int tag);
 #define COHERENT_TAG_MAILBOX 0
 
+#if CONF_WITH_MMU_TEXT_PROTECT
+/* mark [start, end) read-only at page granularity.
+ * Both must fall within the first megabyte of RAM. See memory.c. */
+void raspi_mmu_protect_range(ULONG start, ULONG end);
+#endif
+
 
 
 #   endif /* MACHINE_RPI */
