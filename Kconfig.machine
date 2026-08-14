@@ -224,7 +224,7 @@ config CONF_WITH_MMU_TEXT_PROTECT
 	  instead of silently corrupting memory that only crashes later
 	  (possibly much later) when it is executed or read. Costs one
 	  extra page table and a little startup time; say n only if you
-	  need every byte of that page table's 4 KB back, or the kernel
+	  need every byte of that page table's 1 KB back, or the kernel
 	  legitimately self-modifies code in the first megabyte.
 
 config CONF_WITH_68030_PMMU

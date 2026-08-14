@@ -404,7 +404,6 @@ WORD sh_find(BYTE *pspec)
     /* (1) search in the application directory */
     if (rlr->p_appdir[0] != '\0')
     {
-        KINFO(("sh_find: D.g_work=%p p_appdir=%p pname=%p\n", D.g_work, rlr->p_appdir, pname));
         strcpy(D.g_work, rlr->p_appdir);
         strcat(D.g_work, pname);
         if (dos_sfirst(D.g_work, F_RDONLY | F_SYSTEM) == 0) /* found */

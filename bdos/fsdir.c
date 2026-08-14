@@ -120,7 +120,7 @@
 **      scan)..
 */
 
-#define ENABLE_KDEBUG
+/* #define ENABLE_KDEBUG */
 
 #include "config.h"
 #include "portab.h"

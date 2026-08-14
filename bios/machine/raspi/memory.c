@@ -7,6 +7,8 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+/* #define ENABLE_KDEBUG */
+
 #include "config.h"
 #ifndef MACHINE_RPI
 #error This file must only be compiled for raspberry PI targets
@@ -83,7 +85,7 @@ void raspi_mmu_protect_range(ULONG start, ULONG end)
     data_sync_barrier();
     flush_prefetch_buffer();
 
-    KINFO(("mmu diag: write-protecting [%p,%p)\n", (void*)protect_start, (void*)protect_end));
+    KDEBUG(("mmu: write-protecting [%p,%p)\n", (void*)protect_start, (void*)protect_end));
 }
 #endif /* CONF_WITH_MMU_TEXT_PROTECT */
 

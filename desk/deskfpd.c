@@ -282,8 +282,6 @@ WORD pn_active(PNODE *pn, BOOL include_folders)
 #endif
         if (G.g_wdta.d_fname[0] == '.') /* skip "." & ".." entries */
             continue;
-        KINFO(("pn_active: #%d attr=%02x name=%p(%s)\n",
-               count, (unsigned)(UBYTE)G.g_wdta.d_attrib, G.g_wdta.d_fname, G.g_wdta.d_fname));
         memcpy(&fn->f_attr, &G.g_wdta.d_attrib, sizeof(DTA)-offsetof(DTA,d_attrib));
         fn->f_seq = count++;
         size += fn->f_size;
