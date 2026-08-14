@@ -428,13 +428,16 @@ static LONG fat_rmdir_dnd(DND *d)
 
     *q = d->d_right;
 
+    f2 = fd->o_dirfil;
+    pos = fd->o_dirbyt;
+
     if (d->d_ofd)
         xmfreblk(d->d_ofd);
 
     d1 = d->d_parent;
     xmfreblk(d);
 
-    ixlseek((f2 = fd->o_dirfil), (pos = fd->o_dirbyt));
+    ixlseek(f2, pos);
     f = (FCB *)ixread(f2, 32L, NULL);
 
     return ixdel(d1, f, pos);
