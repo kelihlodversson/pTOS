@@ -21,46 +21,6 @@
 #include "../bios/tosvars.h"    /* for drvbits, same convention as
                                  * bdos/proc.c and bdos/umem.c */
 
-/*
- * GEMDOS function numbers this layer dispatches.  Fread(0x3F)/
- * Fwrite(0x40)/Fclose(0x3E) are deliberately absent - see pfs.h.
- */
-#define FN_DFREE        0x36
-#define FN_DCREATE      0x39
-#define FN_DDELETE      0x3A
-#define FN_DSETPATH     0x3B
-#define FN_FCREATE      0x3C
-#define FN_FOPEN        0x3D
-#define FN_FDELETE      0x41
-#define FN_FATTRIB      0x43
-#define FN_DGETPATH     0x47
-#define FN_FSFIRST      0x4E
-#define FN_FSNEXT       0x4F
-#define FN_FRENAME      0x56
-
-BOOL pfs_is_fs_call(WORD fn)
-{
-    switch (fn)
-    {
-    case FN_DFREE:
-    case FN_DCREATE:
-    case FN_DDELETE:
-    case FN_DSETPATH:
-    case FN_FCREATE:
-    case FN_FOPEN:
-    case FN_FDELETE:
-    case FN_FATTRIB:
-    case FN_DGETPATH:
-    case FN_FSFIRST:
-    case FN_FSNEXT:
-    case FN_FRENAME:
-        return TRUE;
-    default:
-        return FALSE;
-    }
-}
-
-
 /* ------------------------------------------------------------------ */
 /* drive table                                                        */
 /* ------------------------------------------------------------------ */
@@ -512,7 +472,7 @@ static LONG pfs_resolve_dir(struct pfs_ops *fs, WORD drive, const char *path,
 /* per-call handlers                                                  */
 /* ------------------------------------------------------------------ */
 
-static LONG pfs_do_dfree(WORD drv, ULONG *buf)
+LONG pfs_do_dfree(WORD drv, ULONG *buf)
 {
     struct pfs_ops *fs;
     WORD drive = drv ? (WORD)(drv - 1) : run->p_curdrv;
@@ -526,7 +486,7 @@ static LONG pfs_do_dfree(WORD drv, ULONG *buf)
     return fs->dfree(fs, drive, buf);
 }
 
-static LONG pfs_do_mkdir(const char *path)
+LONG pfs_do_mkdir(const char *path)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, &path);
@@ -550,7 +510,7 @@ static LONG pfs_do_mkdir(const char *path)
     return rc;
 }
 
-static LONG pfs_do_rmdir(const char *path)
+LONG pfs_do_rmdir(const char *path)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, &path);
@@ -640,7 +600,7 @@ static LONG pfs_path_append(char *newpath, size_t cap, const char *tail)
     }
 }
 
-static LONG pfs_do_chdir(const char *path)
+LONG pfs_do_chdir(const char *path)
 {
     struct pfs_ops *fs;
     WORD drive;
@@ -739,7 +699,7 @@ static LONG pfs_do_chdir(const char *path)
     return rc;
 }
 
-static LONG pfs_do_getdir(char *buf, WORD drv)
+LONG pfs_do_getdir(char *buf, WORD drv)
 {
     struct pfs_ops *fs;
     WORD drive = drv ? (WORD)(drv - 1) : run->p_curdrv;
@@ -784,7 +744,7 @@ static LONG pfs_alloc_handle(PFSCOOKIE *fc)
     return i + NUMSTD;
 }
 
-static LONG pfs_do_open(const char *path, WORD mode)
+LONG pfs_do_open(const char *path, WORD mode)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, &path);
@@ -821,7 +781,7 @@ static LONG pfs_do_open(const char *path, WORD mode)
     return rc;
 }
 
-static LONG pfs_do_create(const char *path, UWORD attr)
+LONG pfs_do_create(const char *path, UWORD attr)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, &path);
@@ -858,7 +818,7 @@ static LONG pfs_do_create(const char *path, UWORD attr)
     return rc;
 }
 
-static LONG pfs_do_unlink(const char *path)
+LONG pfs_do_unlink(const char *path)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, &path);
@@ -882,7 +842,7 @@ static LONG pfs_do_unlink(const char *path)
     return rc;
 }
 
-static LONG pfs_do_chmod(const char *path, WORD wrt, WORD mod)
+LONG pfs_do_chmod(const char *path, WORD wrt, WORD mod)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, &path);
@@ -918,7 +878,7 @@ static LONG pfs_do_chmod(const char *path, WORD wrt, WORD mod)
     return attr;
 }
 
-static LONG pfs_do_rename(const char *p1, const char *p2)
+LONG pfs_do_rename(const char *p1, const char *p2)
 {
     struct pfs_ops *fs;
     WORD drive1 = pfs_path_drive(p1, &p1);
@@ -956,7 +916,7 @@ static LONG pfs_do_rename(const char *p1, const char *p2)
     return rc;
 }
 
-static LONG pfs_do_sfirst(char *path, WORD att)
+LONG pfs_do_sfirst(char *path, WORD att)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, (const char **)&path);
@@ -1060,7 +1020,7 @@ static LONG pfs_do_sfirst(char *path, WORD att)
     }
 }
 
-static LONG pfs_do_snext(void)
+LONG pfs_do_snext(void)
 {
     WORD i;
 
@@ -1165,76 +1125,3 @@ LONG pfs_handle_close(PFSCOOKIE *fc)
 {
     return fc->fs->close ? fc->fs->close(fc) : E_OK;
 }
-
-
-/* ------------------------------------------------------------------ */
-/* top-level dispatch                                                  */
-/* ------------------------------------------------------------------ */
-
-#ifdef __arm__
-LONG pfs_dispatch(WORD fn, LONG *pw)
-{
-    switch (fn)
-    {
-    case FN_DFREE:
-        return pfs_do_dfree((WORD)pw[2], (ULONG *)pw[1]);
-    case FN_DCREATE:
-        return pfs_do_mkdir((char *)pw[1]);
-    case FN_DDELETE:
-        return pfs_do_rmdir((char *)pw[1]);
-    case FN_DSETPATH:
-        return pfs_do_chdir((char *)pw[1]);
-    case FN_FCREATE:
-        return pfs_do_create((char *)pw[1], (UWORD)pw[2]);
-    case FN_FOPEN:
-        return pfs_do_open((char *)pw[1], (WORD)pw[2]);
-    case FN_FDELETE:
-        return pfs_do_unlink((char *)pw[1]);
-    case FN_FATTRIB:
-        return pfs_do_chmod((char *)pw[1], (WORD)pw[2], (WORD)pw[3]);
-    case FN_DGETPATH:
-        return pfs_do_getdir((char *)pw[1], (WORD)pw[2]);
-    case FN_FSFIRST:
-        return pfs_do_sfirst((char *)pw[1], (WORD)pw[2]);
-    case FN_FSNEXT:
-        return pfs_do_snext();
-    case FN_FRENAME:
-        return pfs_do_rename((char *)pw[2], (char *)pw[3]);
-    default:
-        return EINVFN;
-    }
-}
-#else
-LONG pfs_dispatch(WORD fn, WORD *pw)
-{
-    switch (fn)
-    {
-    case FN_DFREE:
-        return pfs_do_dfree(pw[3], *(ULONG **)&pw[1]);
-    case FN_DCREATE:
-        return pfs_do_mkdir(*(char **)&pw[1]);
-    case FN_DDELETE:
-        return pfs_do_rmdir(*(char **)&pw[1]);
-    case FN_DSETPATH:
-        return pfs_do_chdir(*(char **)&pw[1]);
-    case FN_FCREATE:
-        return pfs_do_create(*(char **)&pw[1], pw[3]);
-    case FN_FOPEN:
-        return pfs_do_open(*(char **)&pw[1], pw[3]);
-    case FN_FDELETE:
-        return pfs_do_unlink(*(char **)&pw[1]);
-    case FN_FATTRIB:
-        return pfs_do_chmod(*(char **)&pw[1], pw[3], pw[4]);
-    case FN_DGETPATH:
-        return pfs_do_getdir(*(char **)&pw[1], pw[3]);
-    case FN_FSFIRST:
-        return pfs_do_sfirst(*(char **)&pw[1], pw[3]);
-    case FN_FSNEXT:
-        return pfs_do_snext();
-    case FN_FRENAME:
-        return pfs_do_rename(*(char **)&pw[2], *(char **)&pw[4]);
-    default:
-        return EINVFN;
-    }
-}
-#endif

@@ -33,9 +33,6 @@
 #include "string.h"
 #include "kprint.h"
 #include "dos.h"
-#if CONF_WITH_PLUGGABLE_FS
-#include "pfs.h"
-#endif
 
 /*
 **  externals
@@ -670,26 +667,6 @@ restrt:
             }
         }
     }
-
-#if CONF_WITH_PLUGGABLE_FS
-    /*
-     * route GEMDOS path-based filesystem calls through the pluggable
-     * filesystem layer instead of dispatching them via funcs[] below -
-     * this includes drives backed by the built-in FAT code, wrapped as
-     * fat_pfs_ops (fs/fatfs_pfs.c), so funcs[]'s entries for these
-     * calls are unreachable whenever this option is on.  Fread/
-     * Fwrite/Fclose are deliberately NOT routed here: they stay on the
-     * normal dispatch path above (typ&0x80 doesn't apply to any of the
-     * calls pfs_is_fs_call() recognises, so this doesn't need to run
-     * any earlier than this, its original upstream position), and
-     * xread()/xwrite()/xclose() themselves are made pluggable-aware
-     * instead (fsio.c/fsopnclo.c) - that covers every caller of those
-     * three, not just osif(), such as the process-termination handle
-     * cleanup in proc.c.
-     */
-    if (!rc && pfs_is_fs_call(fn))
-        return pfs_dispatch(fn, pw);
-#endif
 
     if (!rc)
     {

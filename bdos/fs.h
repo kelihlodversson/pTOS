@@ -410,7 +410,6 @@ long xdup(int h);
 
 /* create file with specified name, attributes */
 long xcreat(char *name, char attr);
-long ixcreat(char *name, char attr);
 
 /* open a file (path name) */
 long xopen(char *name, int mod);
@@ -426,6 +425,8 @@ long ixdel(DND *dn, FCB *f, long pos);
 
 /* internal check for illegal name */
 BOOL contains_illegal_characters(const char *test);
+
+long opnfil(FCB *f, DND *dn, int mod);
 
 /*
  * in fsbuf.c
@@ -488,6 +489,11 @@ int incr_curdir_usage(DND *dnd);
 void decr_curdir_usage(int index);
 OFD *makofd(DND *p);
 WORD free_available_dnds(void);
+
+DND *makdnd(DND *p, FCB *b);
+DND *getdnd(char *n, DND *d);
+void freednd(DND *dn);
+char *packit(char *s, char *d);
 
 
 /*

@@ -14,6 +14,10 @@
 #include "portab.h"
 #include "endian.h"
 #include "fs.h"
+#include "fatfs.h"
+#if CONF_WITH_PLUGGABLE_FS
+#include "pfs.h"
+#endif
 #include "gemerror.h"
 #include "kprint.h"
 
@@ -293,38 +297,6 @@ int nextcl(OFD *p, int wrtflg)
 }
 
 
-/*
- * countfree16 - fast scan of FAT16 filesystem to count free clusters
- */
-static CLNO countfree16(DMD *dm)
-{
-    int recnum, offset;
-    CLNO free, clnum;
-    char *buf;
-
-    for (clnum = 2, free = 0; clnum < dm->m_numcl+2; )
-    {
-        /*
-         * get the next FAT record
-         */
-        recnum = (clnum * sizeof(CLNO)) >> dm->m_rblog;
-        offset = (clnum * sizeof(CLNO)) & dm->m_rbm;
-        buf = getrec(recnum, dm->m_fatofd, 0);
-
-        /*
-         * scan the FAT record, counting free slots
-         */
-        for ( ; (offset < dm->m_recsiz) && (clnum < (dm->m_numcl+2)); offset += sizeof(CLNO), clnum++)
-        {
-            if (*(CLNO *)(buf+offset) == 0)
-                free++;
-        }
-    }
-
-    return free;
-}
-
-
 /*      Function 0x36   d_free
                 get disk free space data into buffer *
         Error returns
@@ -336,32 +308,9 @@ static CLNO countfree16(DMD *dm)
 */
 long xgetfree(long *buf, int drv)
 {
-    CLNO i, free;
-    long n;
-    DMD *dm;
-
-    drv = (drv ? drv-1 : run->p_curdrv);
-
-    if ((n = ckdrv(drv, TRUE)) < 0)
-        return ERR;
-
-    dm = drvtbl[n];
-    if (dm->m_16)
-    {
-        free = countfree16(dm);
-    }
-    else
-    {
-        free = 0;
-        for (i = 0; i < dm->m_numcl; i++)
-            if (!getrealcl(i+2,dm))     /* cluster numbers start at 2 */
-                free++;
-    }
-
-    *buf++ = (long)(free);
-    *buf++ = (long)(dm->m_numcl);
-    *buf++ = (long)(dm->m_recsiz);
-    *buf = (long)(dm->m_clsiz);
-
-    return E_OK;
+#if CONF_WITH_PLUGGABLE_FS
+    return pfs_do_dfree(drv, (ULONG *)buf);
+#else
+    return fat_getfree_path(buf, drv);
+#endif
 }

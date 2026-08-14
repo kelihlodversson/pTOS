@@ -122,14 +122,13 @@ endif
 #
 
 # Core directories are essential for basic OS operation.
-core-dirs-y = bios bdos util
+core-dirs-y = bios bdos fs util
 
 # Optional directories may be disabled for reduced features.
 optional-dirs-y = vdi
 optional-dirs-$(CONF_WITH_AES) += aes desk
 optional-dirs-$(CONF_WITH_CLI) += cli
 optional-dirs-$(CONF_WITH_USB) += usb
-optional-dirs-$(CONF_WITH_PLUGGABLE_FS) += fs
 
 core_dirs = $(core-dirs-y)
 optional_dirs = $(optional-dirs-y)
