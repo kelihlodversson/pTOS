@@ -81,6 +81,11 @@ void raspi_mmu_protect_range(ULONG start, ULONG end)
             text_protect_l2[p].APXBit = APX_RO_ACCESS;
     }
 
+    /* the updated descriptors just went through the D-cache like any other
+     * write; without cleaning them out, the MMU's table walk can still see
+     * the old (writable) descriptor in RAM and the protection would not
+     * reliably take effect. */
+    clean_data_cache();
     asm volatile ("mcr p15, 0, %0, c8, c7, 0" : : "r" (0));   /* invalidate unified TLB */
     data_sync_barrier();
     flush_prefetch_buffer();

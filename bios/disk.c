@@ -352,7 +352,7 @@ static int VALID_PARTITION(struct partition_info *pi, unsigned long hdsiz)
     return ((pi->flg & 1) &&
         /* isalnum(pi->id[0]) && isalnum(pi->id[1]) && isalnum(pi->id[2]) && */
         st <= hdsiz &&
-        st + siz <= hdsiz);
+        siz <= hdsiz - st);   /* not "st + siz <= hdsiz": that can overflow */
 }
 
 static int OK_id(const char *s)
