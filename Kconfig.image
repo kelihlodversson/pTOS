@@ -146,11 +146,19 @@ config DIAGNOSTIC_CARTRIDGE
 
 config CONF_WITH_BOOT_SECTOR
 	bool "Execute the boot sector of the boot device"
-	default n if MACHINE_RPI
+	depends on ARCH_M68K
 	default y
 	help
 	  Load and run the boot sector of the boot device.  This is required
 	  to boot from a floppy or from a hard disk driver.
+
+	  The boot sector format is an Atari/m68k convention: a sector whose
+	  words sum to a magic checksum is jumped into directly, with no
+	  further check that its contents are actually machine code for the
+	  running CPU.  That is only safe where the boot sector can only ever
+	  contain m68k code, so this is restricted to m68k targets - a
+	  non-m68k machine must not go looking for, and jumping into, code in
+	  a foreign instruction set.
 
 config CONF_WITH_RESET
 	bool "Execute the reset instruction during startup"
