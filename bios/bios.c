@@ -436,6 +436,9 @@ static void bios_init(void)
     KDEBUG(("init_serport()\n"));
     init_serport();
     boot_status |= RS232_AVAILABLE;     /* track progress */
+#if CONF_WITH_VDI_TRUECOLOR32_TEST
+    virt_arm_screen_report();
+#endif
 #if CONF_WITH_SCC
     if (has_scc)
         boot_status |= SCC_AVAILABLE;   /* track progress */

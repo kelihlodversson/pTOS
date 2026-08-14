@@ -21,6 +21,18 @@ static void planar_close(Vwk *vwk)
     (void)vwk;
 }
 
+/* ULONG raw-pixel adapters for the ops table: a planar pixel's raw value
+ * is its composed colour index, which fits a UWORD. */
+static ULONG planar_get_raw_pixel(WORD x, WORD y)
+{
+    return (ULONG)planar_get_pixel(x, y);
+}
+
+static void planar_put_raw_pixel(WORD x, WORD y, ULONG raw)
+{
+    planar_put_pixel(x, y, (UWORD)raw);
+}
+
 /*
  * default_planar_backend_ops - the ST-shifter table, the only planar
  * vdi_backend_ops this file defines (issue #173 follow-up).
@@ -43,8 +55,8 @@ const vdi_backend_ops default_planar_backend_ops = {
     planar_get_start_addr,
     planar_get_pixel,
     planar_put_pixel,
-    planar_get_pixel,       /* get_raw_pixel: a planar pixel's raw value is its composed colour index */
-    planar_put_pixel,       /* put_raw_pixel: same for writing */
+    planar_get_raw_pixel,
+    planar_put_raw_pixel,
     planar_set_st_color,
     planar_get_st_color,
     planar_fill_rect,
@@ -53,6 +65,7 @@ const vdi_backend_ops default_planar_backend_ops = {
     planar_draw_line,
     planar_search_right,
     planar_search_left,
+    2,                          /* pixel_size */
 };
 
 /*

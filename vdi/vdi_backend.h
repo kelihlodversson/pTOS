@@ -30,15 +30,17 @@ typedef struct vdi_backend_ops {
     UWORD (*get_pixel)(WORD x, WORD y);
     void (*put_pixel)(WORD x, WORD y, UWORD color);
     /*
-     * Raw framebuffer word access, bypassing the palette-index mapping of
-     * get_pixel()/put_pixel().  Mandatory: the generic defaults need it to
-     * express bitwise operations (XOR write mode, the opaque boolean-raster-
-     * op path of raster_copy), which a palette index cannot represent.  On
-     * the planar backend the raw value is the composed plane index, i.e.
+     * Raw pixel access, bypassing the palette-index mapping of
+     * get_pixel()/put_pixel().  A raw value is a ULONG holding the active
+     * format's packed pixel (RGB565 in the low 16 bits, XRGB8888 over all
+     * 32).  Mandatory: the generic defaults need it to express bitwise
+     * operations (XOR write mode, the opaque boolean-raster-op path of
+     * raster_copy), which a palette index cannot represent.  On the planar
+     * backend the raw value is the composed plane index, i.e.
      * get_pixel()/put_pixel() themselves.
      */
-    UWORD (*get_raw_pixel)(WORD x, WORD y);
-    void (*put_raw_pixel)(WORD x, WORD y, UWORD raw);
+    ULONG (*get_raw_pixel)(WORD x, WORD y);
+    void (*put_raw_pixel)(WORD x, WORD y, ULONG raw);
 
     /*
      * Write/read the "actual" hardware or backend palette entry for a VDI
@@ -59,7 +61,6 @@ typedef struct vdi_backend_ops {
      */
     void (*set_color)(Vwk *vwk, WORD pen, WORD *rgb);
     void (*get_color)(const Vwk *vwk, WORD pen, WORD *rgb);
-
     void (*fill_rect)(const VwkAttrib *attr, const Rect *rect);
     void (*text_blit)(LOCALVARS *vars);
     void (*raster_copy)(struct raster_t *raster, struct blit_frame *info);
@@ -82,6 +83,12 @@ typedef struct vdi_backend_ops {
      */
     WORD (*search_right)(const VwkClip *clip, WORD x, WORD y, UWORD search_col);
     WORD (*search_left)(const VwkClip *clip, WORD x, WORD y, UWORD search_col);
+    /*
+     * Bytes per packed pixel (2 for RGB565, 4 for XRGB8888).  Used by
+     * vdi_backend_ops_init()'s generic defaults to compute a raw XOR mask
+     * that covers one whole pixel.  Mandatory, always set by the table.
+     */
+    UWORD pixel_size;
 } vdi_backend_ops;
 
 /*
@@ -160,6 +167,9 @@ const vdi_backend_ops *vdi_screen_backend(void);
 extern const vdi_backend_ops default_planar_backend_ops;
 extern vdi_backend_ops planar_backend_ops;
 extern vdi_backend_ops packed_truecolor_backend_ops;
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR32
+extern vdi_backend_ops packed_truecolor32_backend_ops;
+#endif
 
 /*
  * Installs a generic default into every NULL slot of a backend ops table
@@ -195,7 +205,13 @@ void vdi_backend_ops_validate(const vdi_backend_ops *ops);
 static inline BOOL vdi_screen_is_truecolor(void)
 {
 #if CONF_WITH_VDI_BACKEND_DISPATCH
-    return vdi_screen_backend() == &packed_truecolor_backend_ops;
+    const vdi_backend_ops *backend = vdi_screen_backend();
+
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR32
+    if (backend == &packed_truecolor32_backend_ops)
+        return TRUE;
+#endif
+    return backend == &packed_truecolor_backend_ops;
 #else
     return CONF_WITH_VDI_BACKEND_TRUECOLOR;
 #endif
@@ -208,7 +224,7 @@ static inline BOOL vdi_screen_is_truecolor(void)
  * fill_rect() -- currently the RPi software mouse cursor in vdi_mouse.c.
  */
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
-UWORD vdi_truecolor_pixel_for_index(WORD index);
+ULONG vdi_truecolor_pixel_for_index(WORD index);
 
 /*
  * vs_color()/vq_color() pseudo-palette access for the truecolor backend
@@ -227,6 +243,11 @@ void vdi_truecolor_get_color(const Vwk *vwk, WORD index, WORD *r, WORD *g, WORD 
  * vdi_backend_active_vwk() (see above) for the physical workstation if
  * drawing happens before vdi_v_opnwk() ever runs. */
 void vdi_truecolor_init_palette(Vwk *vwk);
+
+/* Bytes per packed pixel of the current screen (2 for RGB565, 4 for
+ * XRGB8888) -- v_planes / 8. Used by the software mouse cursor, the AES
+ * colour-icon packers and setup_info() instead of hard-coding 2. */
+UWORD vdi_truecolor_pixel_size(void);
 
 /*
  * The workstation whose pseudo-palette get_pixel()/put_pixel()/etc.

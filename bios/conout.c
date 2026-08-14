@@ -163,7 +163,14 @@ ascii_out (int ch)
 void
 blank_out (int topx, int topy, int botx, int boty)
 {
-#ifdef MACHINE_RPI
+#if CONF_WITH_VDI_TRUECOLOR32_TEST
+    /* The test framebuffer is packed pixels, not interleaved planes. The
+     * serial console does not need a screen clear before VDI takes over. */
+    UNUSED(topx);
+    UNUSED(topy);
+    UNUSED(botx);
+    UNUSED(boty);
+#elif defined(MACHINE_RPI)
     raspi_blank_out(topx, topy, botx, boty);
 #else
     UWORD color = linea_vars.v_col_bg;             /* bg color value */

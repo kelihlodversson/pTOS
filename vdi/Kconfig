@@ -38,6 +38,23 @@ config CONF_WITH_VDI_BACKEND_TRUECOLOR
 	  since turning it off would leave the RPi screen with no matching
 	  renderer.
 
+config CONF_WITH_VDI_BACKEND_TRUECOLOR32
+	bool "Packed 32bpp XRGB8888 truecolor VDI backend"
+	depends on CONF_WITH_VDI_BACKEND_TRUECOLOR && CONF_WITH_VDI_BACKEND_DISPATCH
+	default n
+	help
+	  Build the XRGB8888 (32bpp) variant of the packed-truecolor VDI
+	  backend (vdi_backend_truecolor32.o), sharing its drawing code with
+	  the 16bpp RGB565 backend via the PIXEL/PIXEL_SIZE template
+	  (vdi_backend_truecolor_tmpl.c).  Only selectable with the runtime
+	  dispatcher enabled, since a single-renderer 32bpp build is not a
+	  supported configuration.
+
+	  The active pixel format comes from the screen mode descriptor
+	  (SCREEN_PIXEL_XRGB8888), never from per-machine code.  Raspberry Pi
+	  stays RGB565; this exists for machines like QEMU's virt-arm whose
+	  (test) framebuffer is 32 bpp -- see issue #91.
+
 config CONF_WITH_VDI_BACKEND_DISPATCH
 	bool
 	default y if CONF_WITH_VDI_BACKEND_PLANAR && CONF_WITH_VDI_BACKEND_TRUECOLOR

@@ -427,7 +427,8 @@ void vdi_v_opnwk(Vwk * vwk)
     get_pixel_size(&xsize,&ysize);
 
     /* Indicate whether LUT is supported */
-    if ((linea_vars.INQ_TAB[4] == 16) || (get_monitor_type() == MON_MONO))
+    if ((linea_vars.INQ_TAB[4] == 16) || (linea_vars.INQ_TAB[4] == 32)
+        || (get_monitor_type() == MON_MONO))
         linea_vars.INQ_TAB[5] = 0;
     else linea_vars.INQ_TAB[5] = 1;
 

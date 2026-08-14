@@ -19,7 +19,8 @@
 #include "../bios/screen.h"
 #include "vdi_backend.h"
 
-#define EXTENDED_PALETTE (CONF_WITH_VIDEL || CONF_WITH_TT_SHIFTER || defined(MACHINE_RPI))
+#define EXTENDED_PALETTE (CONF_WITH_VIDEL || CONF_WITH_TT_SHIFTER || defined(MACHINE_RPI) \
+    || CONF_WITH_VDI_BACKEND_TRUECOLOR32)
 
 #if EXTENDED_PALETTE
 #define MAXCOLOURS  256
@@ -1001,12 +1002,16 @@ void init_colors(void)
          * vdi_screen_backend() can return NULL (see its comment in
          * vdi_backend.h -- can't happen for any of this codebase's drivers
          * today, but every other call site still guards it, so this does
-         * too); resolved once here rather than via vdi_screen_is_truecolor()
-         * so this doesn't call vdi_screen_backend() a second time.
+         * too). Truecolor backends keep per-workstation pseudo-palettes, so
+         * they cannot be preloaded through this NULL-workstation path.
          */
         const vdi_backend_ops *const backend = vdi_screen_backend();
         void (*const set_hw_color)(Vwk *vwk, WORD pen, WORD *rgb) =
-            (backend && backend != &packed_truecolor_backend_ops) ? backend->set_color : NULL;
+            (backend && backend != &packed_truecolor_backend_ops
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR32
+             && backend != &packed_truecolor32_backend_ops
+#endif
+            ) ? backend->set_color : NULL;
 #elif CONF_WITH_VDI_BACKEND_TRUECOLOR
         void (*const set_hw_color)(Vwk *vwk, WORD pen, WORD *rgb) = NULL;
 #else

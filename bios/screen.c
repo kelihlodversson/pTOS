@@ -576,7 +576,10 @@ static void screen_init_mode(void)
 /* Initialize the video address (mode is already set) */
 static void screen_init_address(void)
 {
-#ifdef MACHINE_RPI
+#if CONF_WITH_VDI_TRUECOLOR32_TEST
+    virt_arm_screen_init();
+    setphys(v_bas_ad);
+#elif defined(MACHINE_RPI)
     raspi_screen_init();
     v_bas_ad = raspi_physbase();
     setphys(v_bas_ad);
@@ -796,7 +799,9 @@ void screen_get_current_mode_desc(SCREEN_MODE_DESC *desc)
     MAYBE_UNUSED(hz_rez);
     MAYBE_UNUSED(vt_rez);
 
-#if defined(MACHINE_RPI)
+#if CONF_WITH_VDI_TRUECOLOR32_TEST
+    virt_arm_get_current_mode_desc(desc);
+#elif defined(MACHINE_RPI)
     raspi_get_current_mode_desc(desc);
 #elif defined(MACHINE_AMIGA)
     amiga_get_current_mode_info(&planes, &hz_rez, &vt_rez);
