@@ -346,8 +346,8 @@ static int VALID_PARTITION(struct partition_info *pi, unsigned long hdsiz)
 
     KDEBUG(("disk.c: checking if a partition is valid...\n"));
     KDEBUG(("        flag: %s\n", (pi->flg & 1) ? "OK" : "Failed" ));
-    KDEBUG(("        partition start (%ld <= %ld): %s\n", st, hdsiz, (st <= hdsiz) ? "OK" : "Failed" ));
-    KDEBUG(("        partition end (%ld <= %ld): %s\n", st + siz, hdsiz, (st + siz <= hdsiz) ? "OK" : "Failed" ));
+    KDEBUG(("        partition start (%lu <= %lu): %s\n", st, hdsiz, (st <= hdsiz) ? "OK" : "Failed" ));
+    KDEBUG(("        partition end (%lu <= %lu): %s\n", st + siz, hdsiz, (st + siz <= hdsiz) ? "OK" : "Failed" ));
 
     return ((pi->flg & 1) &&
         /* isalnum(pi->id[0]) && isalnum(pi->id[1]) && isalnum(pi->id[2]) && */
