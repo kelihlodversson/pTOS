@@ -34,6 +34,6 @@ WORD ev_dclick(WORD rate, WORD setit);
  */
 static __inline__ LONG combine_cms(WORD clicks,WORD mask,WORD state)
 {
-    return (((LONG)clicks & 0xffffL) << 16) | (((LONG)mask & 0xff) << 8) | ((LONG)state & 0xff);
+    return (LONG)(MAKE_ULONG(clicks, 0) | ((ULONG)(UBYTE)mask << 8) | (UBYTE)state);
 }
 #endif
