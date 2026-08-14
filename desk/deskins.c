@@ -532,6 +532,7 @@ WORD ins_app(WORD curr)
 
             if (!installed)
             {
+                KINFO(("ins_app: pathname=%p(%s) pfname=%p\n", pathname, pathname, pfname));
                 strcat(pathname,pfname);    /* build full pathname */
                 scan_str(pathname,&pa->a_pappl);
             }
@@ -1120,6 +1121,7 @@ void ins_shortcut(WORD wh, WORD mx, WORD my)
         p = pw->w_pnode.p_spec;
         q = filename_start(p);
         strlcpy(pathname,p,q-p+1);  /* copy pathname including trailing backslash */
+        KINFO(("ins_shortcut: pathname=%p(%s) f_name=%p\n", pathname, pathname, pf->f_name));
         strcat(pathname,pf->f_name);
 
         /*
