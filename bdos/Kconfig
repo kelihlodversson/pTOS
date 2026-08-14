@@ -56,4 +56,19 @@ config CONF_WITH_ELF_LOADER
 	  specific PRG format at all, and is available on m68k as an
 	  alternative to PRG.
 
+config CONF_WITH_PRG_LOADER
+	bool "Load classic Atari GEMDOS PRG executables"
+	depends on ARCH_M68K
+	default y
+	help
+	  Recognize and load the classic Atari GEMDOS PRG executable format
+	  (magic 0x601a) in Pexec().  A PRG's TEXT segment is raw m68k machine
+	  code with an m68k specific relocation table; loading one just places
+	  those bytes in the TPA and jumps in, with no check that the CPU
+	  running Pexec() can execute them. That is only meaningful where the
+	  file can only ever contain m68k code, so this is restricted to m68k
+	  targets - a non-m68k machine must not go looking for, and jumping
+	  into, code in a foreign instruction set. Non-m68k targets rely on
+	  CONF_WITH_ELF_LOADER instead.
+
 endmenu
