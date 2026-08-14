@@ -1,7 +1,8 @@
 # Invert Pluggable-FS Dispatch Design
 
-> **Status:** Implemented by PR #176. The Context below records the
-> pre-change architecture; the Target Architecture describes the resulting design.
+> **Status:** Implemented, pending review and merge. The Context below
+> records the pre-change architecture; the Target Architecture describes
+> the resulting design.
 
 ## Context
 
