@@ -82,6 +82,8 @@ static char *fm_strbrk(OBJECT *start,WORD maxnum,WORD maxlen,char *alert,
 
     for (i = 0, obj = start; i < maxnum; i++, obj++, alert++) {
         p = obj->ob_spec.free_string;
+        KINFO(("fm_strbrk: i=%d obj=%p ob_type=%04x free_string=%p\n",
+               i, (void*)obj, obj->ob_type, (void*)p));
         for (j = 0; j < maxlen; j++) {
             if (endsubstring(*alert))
                 break;
