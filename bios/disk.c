@@ -897,6 +897,10 @@ LONG disk_rw(UWORD unit, UWORD rw, ULONG sector, UWORD count, UBYTE *buf)
     WORD bus, reldev;
     MAYBE_UNUSED(reldev);
 
+    if ((LONG)buf < 0x00020000L)
+        KINFO(("disk_rw: SUSPICIOUS buf=%p unit=%d rw=%d sector=%lu count=%u\n",
+               buf, unit, rw, sector, count));
+
 #if DETECT_NATIVE_FEATURES
     if (units[unit].features & UNIT_NATFEATS) {
         ret = NFCall(get_xhdi_nfid() + XHREADWRITE, (long)major, (long)0, (long)rw, (long)sector, (long)count, buf);

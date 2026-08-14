@@ -335,9 +335,13 @@ void dopanic(const char *fmt, ...)
                  (ULONG)s->pc);
 #ifdef __arm__
     } else {
+        /* field order must match any_vec()'s local struct in
+         * bios/arch/arm/vectors.c, which is what actually wrote this
+         * frame to proc_stk: fsr first, then far.
+         */
         struct {
-            ULONG far;
             ULONG fsr;
+            ULONG far;
             ULONG* pc;
             ULONG spsr;
         } *s = (void*)proc_stk;
