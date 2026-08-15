@@ -19,7 +19,7 @@ This issue (tracked as #201) designs and builds a small C-level abstraction for 
 - Back the API with a generic walker that selects the largest fitting page level automatically.
 - Isolate hardware descriptor formats per architecture behind a small header contract selected through the existing `arch/`/`machine/` vpath mechanism.
 - Gate feature differences (page-table level count, page sizes, pointer width, supported attributes) via typedefs and `MMU_ARCH_*` defines.
-- Support physical addresses wider than the virtual address space on ARM32 (highmem/LPAE), while keeping virtual addresses 32-bit there.
+- Support physical addresses wider than the virtual address space on ARM32 (highmem/LPAE), while keeping virtual addresses — and `virt_addr_t`, which tracks pointer width — 32-bit there.
 - Provide the foundation for dynamic device mappings (`ioremap`), replacing the existing per-machine MMU setup code, and future process virtual memory.
 
 ## Scope (Phase 1)
@@ -37,7 +37,8 @@ backends are follow-up phases.
 
 - Do not design a full Linux-style folded PGD/PUD/PMD/PTE walk with per-level helper proliferation.
 - Do not implement address-space or process memory management in this issue.
-- Do not remove the pre-MMU `virt_mmu_bootstrap()`; it runs before BSS and C code exist and its job is to make the layer runnable.
+- Do not build a generalized VM object model (mapped file objects, copy-on-write, reference-counted physical pages); this layer only maintains page-table descriptors for ranges the caller already knows the physical backing of.
+- Do not remove the pre-MMU `virt_mmu_bootstrap()`; it runs before BSS and C code exist and its job is to make the layer runnable, and it stays architecture-specific and outside the maintenance layer.
 - Do not port the 68030/68040 setup code in this issue; that is follow-up phase 2 (m68k short-format backend).
 - Do not implement ARM LPAE, AArch64 or x86-64 backends in this issue; the abstraction must leave room for them, not build them.
 
@@ -46,10 +47,10 @@ backends are follow-up phases.
 Three component kinds, following existing pTOS conventions (`arch/`/`machine/` subdirectories, vpath selection, unique object basenames):
 
 1. **Shared API** (`include/mmu.h`): types, attribute flags, error codes, and the range-based API.
-2. **Generic walker** (`bios/mmu_walk.c`): shared C that splits a range into the largest fitting granules per level, walks down creating or removing intermediate tables, and installs or clears leaf entries. It never touches hardware descriptor bits itself.
+2. **Generic walker** (`bios/mmu_walk.c`): shared C that splits a range into the largest fitting granules per level, walks down creating or removing intermediate tables, demotes large leaves when an operation only covers part of one, and installs or clears leaf entries. It never touches hardware descriptor bits itself.
 3. **Architecture backends**: one header contract plus one implementation per descriptor format, selected by vpath:
    - `bios/arch/arm/mmu_shortdesc.h` + `.c` — VMSAv6/v7 short-descriptor (reference backend, this issue)
-   - `bios/arch/m68k/mmu_short.h` + `.c` — m68k short-format (follow-up phase 2; covers 68030 *and* 68040/68060, because the entry format is the same and only the level geometry differs)
+   - `bios/arch/m68k/mmu_short.h` + `.c` — m68k short-format (follow-up phase 2; the walker and geometry-as-data approach are shared, but whether 68030 and 68040/68060 end up as one backend or two variants is decided during that phase — see Follow-Up Integration)
    - later: LPAE, AArch64, x86-64 backends
 
 The backend provides (a) the page-table geometry as a `const` array of level descriptors and (b) small entry operations as static inline functions in the header. The walker includes the arch header and calls these operations directly; there are no function-pointer tables in the hot path. Only one descriptor format compiles per configuration, so this stays cheap and C90-friendly.
@@ -75,20 +76,40 @@ Examples of the resulting level tables:
 
 The walker needs no knowledge of which CPU it is on beyond the level descriptors and the entry ops.
 
+### Leaf demotion (table splitting)
+
+`mmu_map_range()` always picks the largest leaf size that fits a sub-range, so a single 1 MiB ARM section or a 68040 large leaf can end up covering address ranges a later call only wants to touch part of — for example, marking one 4 KiB page inside a 1 MiB kernel text section read-only. `mmu_protect_range()` and `mmu_unmap_range()` handle this by demoting the leaf before touching it:
+
+1. If the requested sub-range covers an existing leaf entirely, the walker operates on that leaf directly (clears it, or rewrites its attributes) — no demotion needed.
+2. If the requested sub-range covers only part of an existing large leaf, the walker allocates a next-level table, sized and aligned per that level's geometry entry, through `mmu_table_alloc_t`.
+3. The walker populates every entry of that new table with a leaf mapping equivalent to the corresponding slice of the original large leaf: physical address advancing by the child level's granule size starting from the original leaf's base PA, and the same `mmu_attr_t` attributes the original leaf carried.
+4. Only once the child table is fully populated does the walker overwrite the parent's leaf descriptor with a table descriptor pointing at the new child (marked allocator-owned — see Table Ownership); this single write is what makes the split visible.
+5. The walker then continues the requested protect or unmap at the finer level. If the requested sub-range is still smaller than the new level's leaf size, this recurses into another demotion — this applies on any backend with more than two useful leaf levels (68030, 68040/68060, LPAE, AArch64, x86-64), not just a single split.
+
+Demotion is one-directional in Phase 1: once split, a range is never automatically re-coalesced back into a large leaf. A future coalescing operation, if ever needed, is out of scope here.
+
 ## Address Model And Attributes
 
 `include/mmu.h` defines:
 
 ```c
-typedef ULONG virt_addr_t;          /* becomes 64-bit on AArch64/x86-64 */
+typedef uintptr_t virt_addr_t;   /* pointer-sized: matches the target's VA/pointer width */
+
 #if CONF_MMU_PHYS_64
-typedef unsigned long long phys_addr_t;
+typedef UQUAD phys_addr_t;       /* uint64_t, from portab.h */
 #else
-typedef ULONG phys_addr_t;
+typedef ULONG phys_addr_t;       /* uint32_t, from portab.h */
 #endif
 ```
 
-`phys_addr_t` grows to 64 bits when the configuration needs it (`CONF_MMU_PHYS_64`, set by the future LPAE/highmem option), so ARM32 can represent physical addresses above 4 GiB now even though virtual pointers stay 32-bit.
+`virt_addr_t` is `uintptr_t` (from `<stdint.h>`, already pulled in by `include/portab.h`), never `ULONG`: `ULONG` is a fixed 32-bit type in this tree (`uint32_t` everywhere, including on 64-bit targets), which would silently truncate AArch64/x86-64 pointers. `uintptr_t` tracks whatever the target's C pointer width actually is, so this header needs no per-architecture `#ifdef` for it.
+
+`phys_addr_t` is sized independently of pointer width, gated by `CONF_MMU_PHYS_64`, using the existing pTOS fixed-width types (`ULONG`/`UQUAD` from `portab.h`) rather than `unsigned long long`. This is what lets ARM32 LPAE keep 32-bit virtual addresses/pointers while physical addresses widen to 64 bits: `CONF_MMU_PHYS_64` toggles `phys_addr_t` alone and never touches `virt_addr_t`.
+
+The two types are deliberately not interchangeable:
+
+- A `virt_addr_t` is always safe to use as a C pointer's numeric value on that target — they share width by construction.
+- A `phys_addr_t` is **never** safe to treat as a C pointer, even on a target where identity mapping currently makes the numeric values coincide (e.g. today's ARM32 boot-time identity map, or the 68030 static tree). Physical addresses reach C code only as `phys_addr_t` values — passed to/from `mmu_map_range()`, carried in `struct mmu_table_ref.phys`, and handled by backend descriptor encoders. Converting one to a pointer is only ever valid at a boundary that has separately established the target is actually identity-mapped there (for example, early bootstrap code walking the identity map it just built); such a conversion must be an explicit, narrow, commented cast at that boundary, never implicit and never assumed generally true.
 
 Attributes are a small cross-architecture bitmask (`mmu_attr_t`) that each backend maps to hardware bits:
 
@@ -96,45 +117,104 @@ Attributes are a small cross-architecture bitmask (`mmu_attr_t`) that each backe
 - permissions: `MMU_ATTR_READ`, `MMU_ATTR_WRITE`, `MMU_ATTR_EXEC`, `MMU_ATTR_USER`
 - `MMU_ATTR_GLOBAL`, `MMU_ATTR_SHAREABLE`
 
-Feature gating lives in the backend header as `MMU_ARCH_*` defines: `MMU_ARCH_LEVELS`, `MMU_ARCH_HAS_EXEC`, `MMU_ARCH_HAS_USER`, `MMU_ARCH_HAS_BIG_PAGES`, `MMU_ARCH_PHYS_BITS`, `MMU_ARCH_TABLE_ALIGN`. Attributes a backend cannot express (for example m68k has no execute bit) are ignored silently by that backend, so callers can share mapping code across architectures.
+Feature gating lives in the backend header as `MMU_ARCH_*` defines: `MMU_ARCH_LEVELS`, `MMU_ARCH_HAS_EXEC`, `MMU_ARCH_HAS_USER`, `MMU_ARCH_HAS_BIG_PAGES`, `MMU_ARCH_PHYS_BITS`, `MMU_ARCH_TABLE_ALIGN`, plus any further per-memory-type/shareability capability bits a backend needs. A backend simply omits a capability define it lacks; see Attributes under API Shape for how the walker uses these.
 
 ## API Shape
 
 ```c
-typedef void *(*mmu_table_alloc_t)(void *cookie);
-typedef void (*mmu_table_free_t)(void *table, void *cookie);
+struct mmu_table_ref {
+    void *virt;           /* address software uses to write the table     */
+    phys_addr_t phys;     /* address to encode into the parent descriptor */
+};
+
+typedef int  (*mmu_table_alloc_t)(unsigned level, size_t size, size_t align,
+                                  struct mmu_table_ref *table, void *cookie);
+typedef void (*mmu_table_free_t)(const struct mmu_table_ref *table,
+                                 unsigned level, void *cookie);
 
 void mmu_set_table_allocator(mmu_table_alloc_t alloc, mmu_table_free_t free,
                              void *cookie);
 
-int mmu_map_range(void *root, virt_addr_t va, phys_addr_t pa,
-                  size_t size, mmu_attr_t attrs);
-int mmu_unmap_range(void *root, virt_addr_t va, size_t size);
-int mmu_protect_range(void *root, virt_addr_t va, size_t size,
-                      mmu_attr_t attrs);
-void mmu_sync_range(virt_addr_t va, size_t size);
+int  mmu_map_range(void *root, virt_addr_t va, phys_addr_t pa,
+                   size_t size, mmu_attr_t attrs);
+int  mmu_unmap_range(void *root, virt_addr_t va, size_t size);
+int  mmu_protect_range(void *root, virt_addr_t va, size_t size,
+                       mmu_attr_t attrs);
 void mmu_sync_all(void);
 ```
 
-- `size` rounds up to the smallest page size; `va` and `pa` must be aligned to the smallest page size.
-- `root` is an opaque pointer to the root table, owned by whoever set it up (boot code keeps owning the table memory; the layer only edits its contents).
+- `root` is an opaque pointer to the root table, always caller-owned (see Table Ownership); the layer only ever edits its contents.
+- `mmu_table_alloc_t` receives the level being populated and that level's table size/alignment (from its geometry entry — see Level Geometry As Data), and must fill in both the `virt` address the walker will use to write entries and the `phys` address to encode into the parent descriptor. It returns `MMU_OK` on success or `MMU_ERR_NOMEM` on failure. `mmu_table_free_t` is the inverse, given the same pair plus the level, and — per Table Ownership — is only ever called on tables the layer itself allocated.
 - `mmu_map_range()` maps at the largest fitting level for each sub-range.
-- `mmu_unmap_range()` clears entries and frees now-empty intermediate tables through the free hook.
+- `mmu_unmap_range()` clears leaf entries and frees now-empty allocator-owned intermediate tables through the free hook (see Table Ownership).
 - `mmu_protect_range()` changes attributes of existing mappings (this is what Raspberry Pi's `raspi_mmu_protect_range()` generalizes).
-- `mmu_sync_range()`/`mmu_sync_all()` perform the per-architecture cache and TLB maintenance after table writes (ARM: clean range plus TLB invalidation, building on the existing `mmu_page_table_flush()` in `bios/arch/arm/cache_armv7.c`; m68k: `pflusha`/flush of affected entries).
+- `mmu_protect_range()` and `mmu_unmap_range()` demote (split) a large leaf when the requested range covers only part of it; see Leaf Demotion.
+- All three range operations synchronize page-table memory and TLB/instruction state internally as part of a successful call (see Synchronization); callers do not need a separate sync call in the common path.
+
+This is the semantic contract; the exact spelling of `mmu_table_alloc_t`/`mmu_table_ref` may change during implementation if a cleaner C90-compatible form fits the tree better, but the level/size/align input and virt+phys output it carries must not be dropped.
+
+### Table ownership
+
+- The **root table** is always caller-owned: it is set up by boot code (a static tree, or a table pre-populated before `mmu_set_table_allocator()` is even called) and handed to every API call through the `root` parameter. The walker never allocates, replaces, or frees the root table object itself — only its entries.
+- Every **intermediate table below the root** that the walker itself creates — while `mmu_map_range()` grows the tree, or during leaf demotion — is **MMU-layer owned**. Only such tables may ever be passed to `mmu_table_free_t`.
+- `mmu_unmap_range()` frees an intermediate table only when (a) it is allocator-owned per the rule above, and (b) the unmap just removed its last remaining entry, making it fully empty. It must never free a table it cannot prove it (or a prior call through the same allocator) created.
+- Because the tree can only grow below the root through `mmu_table_alloc_t`, the walker recognizes an allocator-owned table by a **reserved software-available bit** in the descriptor that installs it in its parent (every descriptor format this API targets — ARM short/long-descriptor, m68k, x86/x86-64 — reserves at least one software-available bit suitable for this). The backend contract requires each backend to set that bit when installing a descriptor produced from an `mmu_table_alloc_t` allocation; the walker checks the bit before ever unlinking a table and calling `mmu_table_free_t` on it.
+- Pre-existing/static tables (e.g. Raspberry Pi's boot-time coarse table, or the 68030's compiled-in tree) that are spliced into the reachable tree without going through `mmu_table_alloc_t` never carry that bit, so the walker leaves the table itself in place even if all its entries become empty — only the *entries* are edited by `mmu_unmap_range()`/`mmu_protect_range()`, never the table object. A port that wants a formerly-static table fully absorbed into layer ownership should rebuild it once through `mmu_map_range()` after installing the allocator, rather than splicing the static table in.
+
+### Alignment and range semantics
+
+- `va` must be aligned to the backend's smallest page size; `pa` (for `mmu_map_range()`) must likewise be aligned to the smallest page size.
+- `size` may be any positive length and is rounded up internally to a whole number of smallest pages; it does not need to be pre-aligned.
+- `size == 0` is rejected with `MMU_ERR_INVAL` rather than treated as a no-op, so a caller cannot silently mis-call the API with a range that was truncated to nothing.
+- These rules are identical for `mmu_map_range()`, `mmu_unmap_range()` and `mmu_protect_range()`.
+
+### Partial coverage and holes
+
+- `mmu_map_range()` fails the whole call with `MMU_ERR_OVERLAP` on the first part of the requested range it finds already mapped; it never partially maps a range.
+- `mmu_unmap_range()` and `mmu_protect_range()` fail the whole call with `MMU_ERR_NOTMAPPED` if any part of the requested range is unmapped; they never operate on just the mapped subset of a range that has holes. A caller that expects holes must query or split the range itself — the layer does not guess.
+
+### Transactional semantics
+
+Every range operation runs in two passes over the same requested range, using the same walker/backend code paths in a "dry" and a "commit" mode:
+
+1. **Validate + reserve.** Walk the range without installing anything: check every sub-range against the partial-coverage rule (`MMU_ERR_OVERLAP` / `MMU_ERR_NOTMAPPED`), check every requested attribute against the backend's capability bits (`MMU_ERR_UNSUPPORTED`; see Attributes), and allocate — but do not yet link in — every intermediate table the operation could need, including tables needed for leaf demotion. If this pass fails for any reason (bad range, unsupported attribute, or `MMU_ERR_NOMEM` from a table allocation), everything allocated during this pass is freed immediately through the free hook and the call returns the error; the address space is left exactly as it was before the call.
+2. **Commit.** Using only the resources reserved in pass 1, install every table descriptor, leaf mapping, and demotion split. Because all memory was already reserved and all checks already passed, this pass cannot fail with `MMU_ERR_NOMEM`, `MMU_ERR_OVERLAP`, `MMU_ERR_NOTMAPPED` or `MMU_ERR_UNSUPPORTED` — there is nothing left to unwind.
+
+The "no partial mapping on failure" guarantee is therefore a direct consequence of the two-pass structure rather than a per-step undo log: a failing call never reaches pass 2, and a call that reaches pass 2 always finishes. After any failing call — including one that would have required a leaf demotion, newly allocated intermediate tables, or newly installed leaf mappings — the address space (mappings, attributes, and existing table structure) is observationally equivalent to its state immediately before the call. This is the Phase 1 contract for `mmu_map_range()`, `mmu_unmap_range()` and `mmu_protect_range()`.
+
+### Synchronization
+
+Two distinct pieces of hardware state must be brought up to date after a successful pass 2, and they cover different address ranges:
+
+1. **Page-table memory visibility.** The table entries the walker just wrote live in ordinary memory, addressed through each table's `virt` pointer (the root, or a `struct mmu_table_ref.virt`). Before hardware can walk them, that memory must be made visible per the target's cache/ordering rules. This operates on the *table storage addresses*, not on the mapped range.
+2. **TLB / instruction-stream invalidation.** Any translation — and, for executable mappings, any cached instruction fetch — for the *mapped virtual-address range* the caller passed to the API call must be invalidated so subsequent accesses observe the new mapping.
+
+The existing ARM helper `mmu_page_table_flush(start, stop)` in `bios/arch/arm/cache_armv7.c` already performs (1) for the byte range `[start, stop)` of page-table memory (`flush_dcache_range()`), followed by a whole-TLB invalidate (`v7_inval_tlb()`) for (2). Its `start`/`stop` arguments are page-table *storage* addresses, not the mapped VA range being changed, and its TLB invalidation is currently whole-TLB rather than range-based; the walker calls it accordingly — with the table-memory range it just wrote — and must not be described, or extended, as though `start`/`stop` were the mapped range.
+
+The generic walker performs both kinds of synchronization itself, once per successful call rather than once per leaf write, using: the set of table-memory byte ranges it wrote during pass 2, and the single top-level `va`/`size` the caller requested. It hands both to backend-provided synchronization operations as part of the entry-op contract; a backend that can only invalidate the whole TLB (like the current ARMv7 backend) is free to do so, while a backend with range-based TLB invalidation can do less work. Because synchronization happens inside the range calls, callers never need a separate sync call in the common path.
+
+`mmu_sync_all(void)` is the one remaining public synchronization entry point, and is deliberately coarse: it cleans/flushes all page-table memory reachable from `root` and performs a full TLB (and, where applicable, I-cache/branch-predictor) invalidate for the whole address space. It exists only for boundary cases outside the range API's own bookkeeping — for example, immediately after `virt_mmu_bootstrap()` hands off a statically-built table to the layer, or after a caller splices a pre-existing/static table into the tree directly instead of going through `mmu_map_range()`. It is not needed, and should not be called, after an ordinary successful `mmu_map_range()`/`mmu_unmap_range()`/`mmu_protect_range()` call. `mmu_sync_range()` is not part of the public API: every use case it would have served is now covered by the synchronization built into the range calls themselves.
+
+### Attributes
+
+Backends declare what they can represent through the `MMU_ARCH_HAS_*` capability defines in the arch header (see Address Model And Attributes). The walker's validate pass (pass 1, above) checks every requested attribute bit against the current backend's capability bits before pass 2 runs:
+
+- A requested attribute the backend cannot represent at all fails the whole call with `MMU_ERR_UNSUPPORTED`. The layer never silently drops or weakens a security- or correctness-relevant attribute — execute permission, user/supervisor access, memory type, shareability — to make a request "succeed".
+- A backend may still *normalize* a request internally — for example, folding a requested memory type onto the closest hardware type it implements — but only where the two are genuinely equivalent for that backend; that is a backend implementation detail, not attribute-dropping, and must not change caller-visible permission or memory-type semantics.
+- Different m68k MMUs expose different protection capabilities: the 68030 and 68040/68060 descriptor formats do not share one bit set, so backends must not be lumped together as "m68k has no execute/user bits". Each backend defines its own `MMU_ARCH_HAS_*` set from its actual descriptor format, and callers that need a cross-backend guarantee test the capability bits rather than assuming anything from the CPU family name.
 
 ## Error Codes
 
 ```c
-#define MMU_OK            0
-#define MMU_ERR_NOMEM     1   /* table page allocation failed */
-#define MMU_ERR_INVAL     2   /* misaligned va/pa/size, unknown attribute */
-#define MMU_ERR_OVERLAP   3   /* an existing mapping is in the way */
+#define MMU_OK              0
+#define MMU_ERR_NOMEM        1   /* table allocation failed */
+#define MMU_ERR_INVAL         2   /* misaligned va/pa, zero-length size, or malformed attrs */
+#define MMU_ERR_OVERLAP       3   /* mmu_map_range(): part of the range is already mapped */
+#define MMU_ERR_NOTMAPPED     4   /* mmu_unmap_range()/mmu_protect_range(): part of the range is not mapped */
+#define MMU_ERR_UNSUPPORTED   5   /* a requested attribute is not representable on this backend */
 ```
 
-- `MMU_ERR_OVERLAP` treats overlapping mappings as a caller bug; the layer does not guess.
-- On allocation failure mid-walk, the call unwinds atomically: tables created during the call are freed again, so no partial mapping is ever left behind.
-- Boot-time callers may treat `MMU_ERR_NOMEM` as fatal (panic); ioremap-style callers propagate the error.
+`MMU_ERR_OVERLAP` and `MMU_ERR_NOTMAPPED` are the two sides of the same rule: the layer never guesses at partial ranges, whether the surprise is an existing mapping (`mmu_map_range()`) or a hole (`mmu_unmap_range()`/`mmu_protect_range()`). Boot-time callers may treat `MMU_ERR_NOMEM` as fatal (panic); `ioremap`-style callers propagate all of these errors. See Transactional Semantics for exactly what state failure leaves behind.
 
 ## Configuration And Build
 
@@ -149,18 +229,26 @@ Do not add per-target defaults to `include/config.h`; the feature options follow
 ## Initialization Flow
 
 1. Machine boot code sets the table allocator with `mmu_set_table_allocator()` (static pool now, real page allocator later).
-2. Boot-time mapping code expresses the identity map and any text-protection ranges through `mmu_map_range()`/`mmu_protect_range()`.
-3. Dynamic callers (later: PCI/ioremap) call `mmu_map_range()`/`mmu_unmap_range()` at runtime; `mmu_sync_range()` is called automatically after each mutation.
+2. If boot code hands the layer a table built outside the range API — the statically-built result of `virt_mmu_bootstrap()`, or a spliced-in static table — it calls `mmu_sync_all()` once to bring hardware state into agreement with that table before relying on the API's own per-call synchronization for anything after.
+3. Boot-time mapping code expresses the identity map and any text-protection ranges through `mmu_map_range()`/`mmu_protect_range()`.
+4. Dynamic callers (later: PCI/ioremap) call `mmu_map_range()`/`mmu_unmap_range()` at runtime; synchronization happens automatically as part of each successful call (see Synchronization).
 
-The pre-MMU `virt_mmu_bootstrap()` stays exactly as it is: it is the enabling step that lets C code and this layer run.
+The pre-MMU `virt_mmu_bootstrap()` stays exactly as it is: it is the enabling step that lets C code and this layer run, and it remains architecture-specific and outside the maintenance layer.
 
 ## Testing And Validation
 
 Reference validation is QEMU ARM `virt`:
 
 - `make virt-arm_defconfig && make` builds.
-- Boot to the GEM desktop under QEMU (per the ptos-smoketest skill) to confirm the layer is boot-neutral.
-- At boot, map a small device region (for example the virtio PIO/MMIO window) with `mmu_map_range()`, read it back, unmap it, and re-map it, exercising walker create/delete and the sync path.
+- Boot to the GEM desktop under QEMU (per the ptos-smoketest skill) to confirm the layer is boot-neutral — this remains the general regression test.
+- A dedicated runtime check exercises the operations the abstraction actually needs to prove. `virt_mmu_bootstrap()` already establishes valid short-descriptor section mappings across the whole 4 GiB VA space, so a test that simply maps an arbitrary "free" region is likely to collide with an existing mapping rather than testing anything new. Instead:
+  1. Choose a known-safe existing section mapping from the `virt-arm` bootstrap table — one not required for the boot path past this point (for example an unused RAM or scratch MMIO section) — and confirm via the backend's own accessors that it starts as a single large leaf (section).
+  2. Call `mmu_protect_range()` (or `mmu_unmap_range()`) on a sub-range small enough to force section-to-page demotion, and confirm the call returns `MMU_OK`.
+  3. Verify the pages *outside* the requested sub-range still read back with the original mapping and attributes, proving the demotion populated the child table correctly (Leaf Demotion, step 3).
+  4. Verify the pages *inside* the requested sub-range now carry the new attributes (or are unmapped, for the unmap variant).
+  5. Access memory through both the changed and unchanged pages after each mutation, not only at the end, to prove TLB/cache synchronization actually took effect — a stale TLB entry would otherwise let this check pass despite a wrong descriptor.
+  6. Remap or restore the original attributes over the demoted sub-range through `mmu_map_range()`/`mmu_protect_range()`.
+  7. Where the sequence leaves a now-empty allocator-owned child table (for example after unmapping the whole demoted range instead of restoring it), confirm `mmu_unmap_range()` freed it through the free hook.
 - Exercise `mmu_protect_range()` on the low RAM window through the shared API (the same operation Raspberry Pi's text-protect performs).
 
 Raspberry Pi migration validation is a build check:
@@ -175,14 +263,16 @@ m68k verification belongs to phase 2 (virt-m68k / Hatari). Unit-style tests are 
 
 ## Follow-Up Integration
 
-- **Phase 2 (m68k):** `bios/arch/m68k/mmu_short.h` + `.c` short-format backend; port 68040's assembler `create_table` to C on the new layer; express the 68030 static tree through the layer.
+- **Phase 2 (m68k):** the generic walker and its geometry-driven leaf/demotion logic are reused as-is; page-table geometry (level count, granule sizes) is expressed as data per Level Geometry As Data. Descriptor encoding helpers may be shared between 68030 and 68040/68060 where their hardware formats genuinely permit it, but this is not committed to up front — the two CPUs' descriptor formats differ in more than level geometry (available cache/protection bits and descriptor capabilities also differ). `bios/arch/m68k/mmu_short.h` + `.c` may therefore end up as one shared backend or as separate 68030 / 68040-68060 variants; port 68040's assembler `create_table` to C on the new layer, and express the 68030 static tree through the layer, whichever backend split that phase settles on.
 - **Phase 3 (LPAE/highmem, issue #76):** LPAE backend with 64-bit `phys_addr_t`, dynamic device mappings, and `ioremap()`/`iounmap()`; move `pci_phys_to_virt()` and PCI resource mapping onto `mmu_map_range()`.
 - Later: AArch64 and x86-64 backends behind the same contract.
 
 ## Risks
 
 - The geometry-driven walker must handle level counts from 2 (ARM short-desc) to 4 (x86-64) without per-level code explosion; the level-descriptor array plus entry ops is the mitigation.
-- Overlap handling is strict (`MMU_ERR_OVERLAP`) to keep the walker deterministic; callers must unmap before re-mapping with different attributes.
-- Attribute semantics differ across architectures (e.g. m68k lacks execute and user bits); backends must ignore unrepresentable attributes consistently so shared callers behave identically.
+- Overlap and hole handling are strict (`MMU_ERR_OVERLAP` for map, `MMU_ERR_NOTMAPPED` for unmap/protect) to keep the walker deterministic; callers must unmap before re-mapping with different attributes, and must not assume best-effort behaviour over a range containing holes.
+- The two-pass (validate+reserve, then commit) walker structure that gives the transactional guarantee doubles the walk cost of every range call; this is accepted for Phase 1 given BIOS/kernel-time call frequency, since this is not a hot path.
+- Table-ownership tracking relies on a reserved software-available bit in each backend's table descriptor; a future descriptor format with no spare bits would need a different (e.g. side-table) tracking mechanism, out of scope until such a backend is designed.
+- Attribute semantics differ across architectures, and even within one CPU family (68030 vs. 68040/68060 protection bits differ); backends expose what they can represent via `MMU_ARCH_HAS_*` capability bits, and the walker rejects unrepresentable security-relevant attributes with `MMU_ERR_UNSUPPORTED` rather than silently weakening a request.
 - The pre-MMU bootstrap window is architecture-specific by nature and must stay out of the shared layer; the spec deliberately keeps `virt_mmu_bootstrap()` untouched.
 - `int` is 16 bits on m68k and 32 bits on ARM; the API must use `portab.h` fixed-width types and suffix constants that must survive on m68k.
