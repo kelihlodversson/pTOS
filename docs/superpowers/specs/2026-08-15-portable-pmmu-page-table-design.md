@@ -70,21 +70,23 @@ Examples of the resulting level tables:
 | Backend | Levels | Granules | Leaf sizes |
 | --- | --- | --- | --- |
 | ARM short-desc | 2 | 1 MiB, 4 KiB | 1 MiB section, 4 KiB small page |
-| 68030 | 3 | 256 MiB, 16 MiB, 1 MiB | 1 MiB (page descriptor) |
-| 68040/68060 | 3 | 256 MiB, 2 MiB, 4 KiB | 4 KiB |
+| 68030 | 3 | 256 MiB, 16 MiB, 1 MiB | 256 MiB, 16 MiB, 1 MiB (any level may hold a page descriptor) |
+| 68040/68060 | 3 | 32 MiB, 256 KiB, 4 KiB | 4 KiB (root and pointer levels are table-only in the current assembler `create_table`) |
 | LPAE / AArch64 / x86-64 | 3-4 | ... | 1 GiB, 2 MiB, 4 KiB |
 
 The walker needs no knowledge of which CPU it is on beyond the level descriptors and the entry ops.
 
+The 68030 and 68040/68060 rows are taken directly from the existing inherited code, not estimated: `bios/pmmu030.c`'s `tia`/`tib1`/`tib2`/`tic` tables each have 16 entries over their respective VA span (4 GiB/16, 256 MiB/16, 16 MiB/16), and `PMMU_SF_PAGE()` leaf descriptors appear at all three levels (`tia`, `tib1` and `tic`), not only the finest one. `bios/arch/m68k/68040_pmmu.S`'s `create_table` extracts a 7-bit root index from VA bits 25-31 (`rol.l #7,d4` then a 7-bit mask — 32 MiB per root entry), a 7-bit pointer index from VA bits 18-24 (`swap d5` then a 9-bit mask starting at bit 2 — 256 KiB per pointer entry), and a 6-bit page index from VA bits 12-17 (4 KiB pages); it only ever writes page-level descriptors, so root and pointer levels are table-only today.
+
 ### Leaf demotion (table splitting)
 
-`mmu_map_range()` always picks the largest leaf size that fits a sub-range, so a single 1 MiB ARM section or a 68040 large leaf can end up covering address ranges a later call only wants to touch part of — for example, marking one 4 KiB page inside a 1 MiB kernel text section read-only. `mmu_protect_range()` and `mmu_unmap_range()` handle this by demoting the leaf before touching it:
+`mmu_map_range()` always picks the largest leaf size that fits a sub-range, so a single large leaf — a 1 MiB ARM section, a 68030 256 MiB/16 MiB/1 MiB page descriptor, or a future LPAE/AArch64/x86-64 block — can end up covering address ranges a later call only wants to touch part of; for example, marking one 4 KiB page inside a 1 MiB kernel text section read-only. `mmu_protect_range()` and `mmu_unmap_range()` handle this by demoting the leaf before touching it:
 
 1. If the requested sub-range covers an existing leaf entirely, the walker operates on that leaf directly (clears it, or rewrites its attributes) — no demotion needed.
 2. If the requested sub-range covers only part of an existing large leaf, the walker allocates a next-level table, sized and aligned per that level's geometry entry, through `mmu_table_alloc_type`.
 3. The walker populates every entry of that new table with a leaf mapping equivalent to the corresponding slice of the original large leaf: physical address advancing by the child level's granule size starting from the original leaf's base PA, and the same `mmu_attr_type` attributes the original leaf carried.
-4. Only once the child table is fully populated does the walker overwrite the parent's leaf descriptor with a table descriptor pointing at the new child (marked allocator-owned — see Table Ownership); this single write is what makes the split visible.
-5. The walker then continues the requested protect or unmap at the finer level. If the requested sub-range is still smaller than the new level's leaf size, this recurses into another demotion — this applies on any backend with more than two useful leaf levels (68030, 68040/68060, LPAE, AArch64, x86-64), not just a single split.
+4. Only once the child table is fully populated does the walker register it as allocator-owned and overwrite the parent's leaf descriptor with a table descriptor pointing at the new child (see Table Ownership And Resolution); this single write is what makes the split visible.
+5. The walker then continues the requested protect or unmap at the finer level. If the requested sub-range is still smaller than the new level's leaf size, this recurses into another demotion — this applies on any backend with more than two useful leaf levels (68030, LPAE, AArch64, x86-64), not just a single split.
 
 Demotion is one-directional in Phase 1: once split, a range is never automatically re-coalesced back into a large leaf. A future coalescing operation, if ever needed, is out of scope here.
 
@@ -121,9 +123,11 @@ typedef uint32_t mmu_attr_type;
 
 that each backend maps to hardware bits:
 
-- memory type: `MMU_ATTR_DEVICE`, `MMU_ATTR_WRITE_THROUGH`, `MMU_ATTR_WRITE_BACK`
+- memory type: `MMU_ATTR_STRONGLY_ORDERED`, `MMU_ATTR_DEVICE`, `MMU_ATTR_WRITE_THROUGH`, `MMU_ATTR_WRITE_BACK`
 - permissions: `MMU_ATTR_READ`, `MMU_ATTR_WRITE`, `MMU_ATTR_EXEC`, `MMU_ATTR_USER`
 - `MMU_ATTR_GLOBAL`, `MMU_ATTR_SHAREABLE`
+
+`MMU_ATTR_STRONGLY_ORDERED` exists because Phase 1 has to preserve a memory type distinction the current Raspberry Pi `init_mmu()` already makes and is not otherwise representable: the reserved top-of-RAM megabyte holding page tables and cache-coherent buffers is mapped `TEX=0,C=0,B=0` ("strongly ordered": no reordering, no buffering, the strictest ARM memory type), which is stricter than the `TEX=0,C=0,B=1` ("shared device") mapping `init_mmu()` uses for the MMIO region above it. Folding both into a single generic `MMU_ATTR_DEVICE` would either lose that distinction or force the ARM backend to guess; a backend without a dedicated encoding for it may normalize `MMU_ATTR_STRONGLY_ORDERED` to its strictest available device-like type, per the normalization rule below.
 
 Feature gating lives in the backend header as `MMU_ARCH_*` defines: `MMU_ARCH_LEVELS`, `MMU_ARCH_HAS_EXEC`, `MMU_ARCH_HAS_USER`, `MMU_ARCH_HAS_BIG_PAGES`, `MMU_ARCH_PHYS_BITS`, `MMU_ARCH_TABLE_ALIGN`, plus any further per-memory-type/shareability capability bits a backend needs. A backend simply omits a capability define it lacks; see Attributes under API Shape for how the walker uses these.
 
@@ -143,31 +147,38 @@ typedef void (*mmu_table_free_type)(const struct mmu_table_ref *table,
 void mmu_set_table_allocator(mmu_table_alloc_type alloc,
                              mmu_table_free_type free, void *cookie);
 
+int  mmu_table_adopt(const struct mmu_table_ref *table, unsigned level);
+
 int  mmu_map_range(void *root, virt_addr_type va, phys_addr_type pa,
                    size_t size, mmu_attr_type attrs);
 int  mmu_unmap_range(void *root, virt_addr_type va, size_t size);
 int  mmu_protect_range(void *root, virt_addr_type va, size_t size,
                        mmu_attr_type attrs);
-void mmu_sync_all(void);
+void mmu_sync_all(void *root);
 ```
 
-- `root` is an opaque pointer to the root table, always caller-owned (see Table Ownership); the layer only ever edits its contents.
-- `mmu_table_alloc_type` receives the level being populated and that level's table size/alignment (from its geometry entry — see Level Geometry As Data), and must fill in both the `virt` address the walker will use to write entries and the `phys` address to encode into the parent descriptor. It returns `MMU_OK` on success or `MMU_ERR_NOMEM` on failure. `mmu_table_free_type` is the inverse, given the same pair plus the level, and — per Table Ownership — is only ever called on tables the layer itself allocated.
+- `root` is an opaque pointer to the root table, always caller-owned (see Table Ownership And Resolution); the layer only ever edits its contents.
+- `mmu_table_alloc_type` receives the level being populated and that level's table size/alignment (from its geometry entry — see Level Geometry As Data), and must fill in both the `virt` address the walker will use to write entries and the `phys` address to encode into the parent descriptor. It returns `MMU_OK` on success or `MMU_ERR_NOMEM` on failure. `mmu_table_free_type` is the inverse, given the same pair plus the level, and — per Table Ownership And Resolution — is only ever called on tables the layer itself allocated.
+- `mmu_table_adopt()` registers a table the caller built outside the allocator (a pre-existing/static table spliced directly into the tree) so the walker can resolve and walk into it; see Table Ownership And Resolution.
 - `mmu_map_range()` maps at the largest fitting level for each sub-range.
-- `mmu_unmap_range()` clears leaf entries and frees now-empty allocator-owned intermediate tables through the free hook (see Table Ownership).
+- `mmu_unmap_range()` clears leaf entries and frees now-empty allocator-owned intermediate tables through the free hook (see Table Ownership And Resolution).
 - `mmu_protect_range()` changes attributes of existing mappings (this is what Raspberry Pi's `raspi_mmu_protect_range()` generalizes).
 - `mmu_protect_range()` and `mmu_unmap_range()` demote (split) a large leaf when the requested range covers only part of it; see Leaf Demotion.
 - All three range operations synchronize page-table memory and TLB/instruction state internally as part of a successful call (see Synchronization); callers do not need a separate sync call in the common path.
 
-This is the semantic contract; the exact spelling of `mmu_table_alloc_type`/`mmu_table_ref` may change during implementation if a cleaner C90-compatible form fits the tree better, but the level/size/align input and virt+phys output it carries must not be dropped.
+This is the semantic contract; the exact spelling of `mmu_table_alloc_type`/`mmu_table_ref`/`mmu_table_adopt` may change during implementation if a cleaner C90-compatible form fits the tree better, but the level/size/align input and virt+phys output the allocator carries, and the resolution mechanism below, must not be dropped.
 
-### Table ownership
+### Table ownership and resolution
 
-- The **root table** is always caller-owned: it is set up by boot code (a static tree, or a table pre-populated before `mmu_set_table_allocator()` is even called) and handed to every API call through the `root` parameter. The walker never allocates, replaces, or frees the root table object itself — only its entries.
-- Every **intermediate table below the root** that the walker itself creates — while `mmu_map_range()` grows the tree, or during leaf demotion — is **MMU-layer owned**. Only such tables may ever be passed to `mmu_table_free_type`.
-- `mmu_unmap_range()` frees an intermediate table only when (a) it is allocator-owned per the rule above, and (b) the unmap just removed its last remaining entry, making it fully empty. It must never free a table it cannot prove it (or a prior call through the same allocator) created.
-- Because the tree can only grow below the root through `mmu_table_alloc_type`, the walker recognizes an allocator-owned table by a **reserved software-available bit** in the descriptor that installs it in its parent (every descriptor format this API targets — ARM short/long-descriptor, m68k, x86/x86-64 — reserves at least one software-available bit suitable for this). The backend contract requires each backend to set that bit when installing a descriptor produced from an `mmu_table_alloc_type` allocation; the walker checks the bit before ever unlinking a table and calling `mmu_table_free_type` on it.
-- Pre-existing/static tables (e.g. Raspberry Pi's boot-time coarse table, or the 68030's compiled-in tree) that are spliced into the reachable tree without going through `mmu_table_alloc_type` never carry that bit, so the walker leaves the table itself in place even if all its entries become empty — only the *entries* are edited by `mmu_unmap_range()`/`mmu_protect_range()`, never the table object. A port that wants a formerly-static table fully absorbed into layer ownership should rebuild it once through `mmu_map_range()` after installing the allocator, rather than splicing the static table in.
+Once a table is linked into the tree, its parent descriptor only ever holds the child's `phys` address — that is what hardware descriptor formats encode. A later call that walks back down through that descriptor, to map/unmap/protect something inside it or below it, needs a `virt` pointer to actually read and write the child table's entries in C. The `{virt, phys}` pair the allocator returned at creation time is not, by itself, still reachable at that point, so the walker needs a way to get from a descriptor's `phys` back to a usable `virt`.
+
+The walker solves this with an internal **table registry**: a private lookup structure, keyed by `phys`, that records `{virt, level, allocator_owned}` for every intermediate table currently reachable below any root — `root` itself is excluded, since its `virt` is passed directly on every call and nothing points *to* it. The registry is walker-internal state, not part of the public contract; an array, sorted list, or small hash table are all valid implementations, and none of this is hot-path (see Risks).
+
+- The **root table** is always caller-owned: it is set up by boot code (a static tree, or a table pre-populated before `mmu_set_table_allocator()` is even called) and handed to every API call through the `root` parameter directly, so it never needs a registry entry. The walker never allocates, replaces, or frees the root table object itself — only its entries.
+- Every **intermediate table below the root** that the walker itself creates — while `mmu_map_range()` grows the tree, or during leaf demotion — is **MMU-layer owned**. When such a table is linked into the tree (the parent descriptor write in pass 2 of Transactional Semantics), the walker registers it with `allocator_owned = true`. Only registry entries with `allocator_owned = true` may ever be passed to `mmu_table_free_type`.
+- `mmu_unmap_range()` frees an intermediate table only when (a) its registry entry has `allocator_owned = true`, and (b) the unmap just removed its last remaining entry, making it fully empty; freeing it also removes its registry entry. The walker must never free a table it cannot find as an allocator-owned registry entry.
+- Pre-existing/static tables that a machine port splices directly into the tree without going through `mmu_table_alloc_type` (e.g. Raspberry Pi's boot-time coarse table, or the 68030's compiled-in tree) are not automatically resolvable — nothing recorded their `virt` — so before any range call needs to walk through one, the port registers it once with `mmu_table_adopt(&ref, level)`, where `ref.virt`/`ref.phys` are the table's already-known addresses. `mmu_table_adopt()` inserts a registry entry with `allocator_owned = false`: the walker can now resolve and edit the table's entries via `mmu_unmap_range()`/`mmu_protect_range()`, but will never call `mmu_table_free_type` on it, however empty it becomes. A port that wants a formerly-static table fully absorbed into layer ownership should rebuild it once through `mmu_map_range()` after installing the allocator, instead of adopting it.
+- A `phys` value the walker extracts from a descriptor while walking, but cannot find in the registry, indicates a table reachable from `root` that was never allocated or adopted — a configuration bug in the port, not a runtime condition the range API is expected to recover from.
 
 ### Alignment and range semantics
 
@@ -185,8 +196,8 @@ This is the semantic contract; the exact spelling of `mmu_table_alloc_type`/`mmu
 
 Every range operation runs in two passes over the same requested range, using the same walker/backend code paths in a "dry" and a "commit" mode:
 
-1. **Validate + reserve.** Walk the range without installing anything: check every sub-range against the partial-coverage rule (`MMU_ERR_OVERLAP` / `MMU_ERR_NOTMAPPED`), check every requested attribute against the backend's capability bits (`MMU_ERR_UNSUPPORTED`; see Attributes), and allocate — but do not yet link in — every intermediate table the operation could need, including tables needed for leaf demotion. If this pass fails for any reason (bad range, unsupported attribute, or `MMU_ERR_NOMEM` from a table allocation), everything allocated during this pass is freed immediately through the free hook and the call returns the error; the address space is left exactly as it was before the call.
-2. **Commit.** Using only the resources reserved in pass 1, install every table descriptor, leaf mapping, and demotion split. Because all memory was already reserved and all checks already passed, this pass cannot fail with `MMU_ERR_NOMEM`, `MMU_ERR_OVERLAP`, `MMU_ERR_NOTMAPPED` or `MMU_ERR_UNSUPPORTED` — there is nothing left to unwind.
+1. **Validate + reserve.** Walk the range without installing anything: check every sub-range against the partial-coverage rule (`MMU_ERR_OVERLAP` / `MMU_ERR_NOTMAPPED`), check every requested attribute against the backend's capability bits (`MMU_ERR_UNSUPPORTED`; see Attributes), and allocate — but do not yet link in — every intermediate table the operation could need, including tables needed for leaf demotion. This also reserves a table-registry slot (see Table Ownership And Resolution) for each such table, so pass 2's registration of newly linked tables cannot fail either. If this pass fails for any reason (bad range, unsupported attribute, `MMU_ERR_NOMEM` from a table allocation, or no free registry slot), everything allocated during this pass is freed immediately through the free hook and the call returns the error; the address space is left exactly as it was before the call.
+2. **Commit.** Using only the resources reserved in pass 1, install every table descriptor, leaf mapping, and demotion split, and register each newly linked table. Because all memory and registry slots were already reserved and all checks already passed, this pass cannot fail with `MMU_ERR_NOMEM`, `MMU_ERR_OVERLAP`, `MMU_ERR_NOTMAPPED` or `MMU_ERR_UNSUPPORTED` — there is nothing left to unwind.
 
 The "no partial mapping on failure" guarantee is therefore a direct consequence of the two-pass structure rather than a per-step undo log: a failing call never reaches pass 2, and a call that reaches pass 2 always finishes. After any failing call — including one that would have required a leaf demotion, newly allocated intermediate tables, or newly installed leaf mappings — the address space (mappings, attributes, and existing table structure) is observationally equivalent to its state immediately before the call. This is the Phase 1 contract for `mmu_map_range()`, `mmu_unmap_range()` and `mmu_protect_range()`.
 
@@ -201,7 +212,7 @@ The existing ARM helper `mmu_page_table_flush(start, stop)` in `bios/arch/arm/ca
 
 The generic walker performs both kinds of synchronization itself, once per successful call rather than once per leaf write, using: the set of table-memory byte ranges it wrote during pass 2, and the single top-level `va`/`size` the caller requested. It hands both to backend-provided synchronization operations as part of the entry-op contract; a backend that can only invalidate the whole TLB (like the current ARMv7 backend) is free to do so, while a backend with range-based TLB invalidation can do less work. Because synchronization happens inside the range calls, callers never need a separate sync call in the common path.
 
-`mmu_sync_all(void)` is the one remaining public synchronization entry point, and is deliberately coarse: it cleans/flushes all page-table memory reachable from `root` and performs a full TLB (and, where applicable, I-cache/branch-predictor) invalidate for the whole address space. It exists only for boundary cases outside the range API's own bookkeeping — for example, immediately after `virt_mmu_bootstrap()` hands off a statically-built table to the layer, or after a caller splices a pre-existing/static table into the tree directly instead of going through `mmu_map_range()`. It is not needed, and should not be called, after an ordinary successful `mmu_map_range()`/`mmu_unmap_range()`/`mmu_protect_range()` call. `mmu_sync_range()` is not part of the public API: every use case it would have served is now covered by the synchronization built into the range calls themselves.
+`mmu_sync_all(void *root)` is the one remaining public synchronization entry point, and is deliberately coarse: given the root of a tree, it cleans/flushes all page-table memory reachable from that `root` (walking through registered and adopted tables — see Table Ownership And Resolution) and performs a full TLB (and, where applicable, I-cache/branch-predictor) invalidate for the whole address space. It takes `root` explicitly, like every other range function, rather than assuming a single active tree: the layer has no global "current root" concept. It exists only for boundary cases outside the range API's own bookkeeping — for example, immediately after `virt_mmu_bootstrap()` hands off a statically-built table to the layer, or after a caller splices a pre-existing/static table into the tree directly instead of going through `mmu_map_range()`. It is not needed, and should not be called, after an ordinary successful `mmu_map_range()`/`mmu_unmap_range()`/`mmu_protect_range()` call. `mmu_sync_range()` is not part of the public API: every use case it would have served is now covered by the synchronization built into the range calls themselves.
 
 ### Attributes
 
@@ -237,7 +248,7 @@ Do not add per-target defaults to `include/config.h`; the feature options follow
 ## Initialization Flow
 
 1. Machine boot code sets the table allocator with `mmu_set_table_allocator()` (static pool now, real page allocator later).
-2. If boot code hands the layer a table built outside the range API — the statically-built result of `virt_mmu_bootstrap()`, or a spliced-in static table — it calls `mmu_sync_all()` once to bring hardware state into agreement with that table before relying on the API's own per-call synchronization for anything after.
+2. If boot code hands the layer a table built outside the range API — the statically-built result of `virt_mmu_bootstrap()`, or a spliced-in static table registered with `mmu_table_adopt()` — it calls `mmu_sync_all(root)` once to bring hardware state into agreement with that table before relying on the API's own per-call synchronization for anything after.
 3. Boot-time mapping code expresses the identity map and any text-protection ranges through `mmu_map_range()`/`mmu_protect_range()`.
 4. Dynamic callers (later: PCI/ioremap) call `mmu_map_range()`/`mmu_unmap_range()` at runtime; synchronization happens automatically as part of each successful call (see Synchronization).
 
@@ -261,7 +272,7 @@ Reference validation is QEMU ARM `virt`:
 
 Raspberry Pi migration validation is a build check:
 
-- `make rpi2_defconfig && make` builds with `init_mmu()`/`raspi_mmu_protect_range()` rewritten on the new API, with text-protect behaviour unchanged. Raspberry Pi is not QEMU-boot-tested here (QEMU's Pi support is not the primary reference environment per readme.md), so runtime verification of the migrated code is the shared protect path exercised on virt-arm.
+- `make rpi2_defconfig && make` builds with `init_mmu()`/`raspi_mmu_protect_range()` rewritten on the new API, with text-protect behaviour unchanged: `init_mmu()` keeps building `text_protect_l2` and its coarse descriptor exactly as today, then registers it once with `mmu_table_adopt()` so `mmu_protect_range()` can resolve and edit it (see Table Ownership And Resolution); the reserved top-of-RAM megabyte keeps its distinct `MMU_ATTR_STRONGLY_ORDERED` mapping (see Address Model And Attributes). Raspberry Pi is not QEMU-boot-tested here (QEMU's Pi support is not the primary reference environment per readme.md), so runtime verification of the migrated code is the shared protect path exercised on virt-arm.
 
 Other build checks:
 
@@ -280,7 +291,8 @@ m68k verification belongs to phase 2 (virt-m68k / Hatari). Unit-style tests are 
 - The geometry-driven walker must handle level counts from 2 (ARM short-desc) to 4 (x86-64) without per-level code explosion; the level-descriptor array plus entry ops is the mitigation.
 - Overlap and hole handling are strict (`MMU_ERR_OVERLAP` for map, `MMU_ERR_NOTMAPPED` for unmap/protect) to keep the walker deterministic; callers must unmap before re-mapping with different attributes, and must not assume best-effort behaviour over a range containing holes.
 - The two-pass (validate+reserve, then commit) walker structure that gives the transactional guarantee doubles the walk cost of every range call; this is accepted for Phase 1 given BIOS/kernel-time call frequency, since this is not a hot path.
-- Table-ownership tracking relies on a reserved software-available bit in each backend's table descriptor; a future descriptor format with no spare bits would need a different (e.g. side-table) tracking mechanism, out of scope until such a backend is designed.
+- Table PA-to-VA resolution and ownership tracking both live in the walker's internal registry (see Table Ownership And Resolution), not in hardware descriptor bits — pTOS's own ARM short-descriptor coarse-table descriptor, for example, has only SBZ ("should be zero") and one implementation-defined bit, neither a general-purpose software field, so the registry approach avoids relying on a spare bit that may not exist in every backend's format. The registry has bounded capacity, sized for the number of live intermediate tables (small at BIOS/kernel time); pass 1 reserving a slot per new table means a full registry surfaces as `MMU_ERR_NOMEM` during validate + reserve, never as an unwind failure during commit.
+- Any pre-existing/static table a port splices into the tree must be registered once via `mmu_table_adopt()` before a range call walks through it; forgetting to adopt one is a port bug the walker cannot detect in advance (see the last bullet of Table Ownership And Resolution) — this is a discipline the Raspberry Pi and 68030 migrations need to get right.
 - Attribute semantics differ across architectures, and even within one CPU family (68030 vs. 68040/68060 protection bits differ); backends expose what they can represent via `MMU_ARCH_HAS_*` capability bits, and the walker rejects unrepresentable security-relevant attributes with `MMU_ERR_UNSUPPORTED` rather than silently weakening a request.
 - The pre-MMU bootstrap window is architecture-specific by nature and must stay out of the shared layer; the spec deliberately keeps `virt_mmu_bootstrap()` untouched.
 - `int` is 16 bits on m68k and 32 bits on ARM; the API must use `portab.h` fixed-width types and suffix constants that must survive on m68k.

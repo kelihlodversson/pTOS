@@ -145,9 +145,11 @@ same object.
   The codebase overwhelmingly uses `/* */` comments; match the file you are in.
 - 4 spaces, never a hard tab, in `.c`, `.h` and `.S`. Run `make gitready`
   before committing.
-- **`int` is 16 bits on m68k** (`-mshort`) and 32 bits on ARM. Use the
-  `portab.h` types — `WORD`, `LONG`, `UBYTE`, `UWORD`, `ULONG`, `BOOL` — and
-  suffix constants that must survive on m68k (`132 * 1000UL`).
+- **`int` is 16 bits on m68k** (`-mshort`) and 32 bits on ARM. Suffix
+  constants that must survive on m68k (`132 * 1000UL`). For inherited/ABI-
+  facing code, use the traditional `portab.h` types — `WORD`, `LONG`,
+  `UBYTE`, `UWORD`, `ULONG`, `BOOL`; for new architecture-neutral
+  infrastructure, follow Type naming below instead.
 - Assembler: leading underscore on symbols callable from C, CDECL conventions,
   68000-only instructions, `movem.l` never `movem.w`.
 - Trace with `KDEBUG(("..."))` / `KINFO(())` from `include/kprint.h`, not with
