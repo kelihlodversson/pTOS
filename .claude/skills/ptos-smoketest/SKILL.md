@@ -276,9 +276,13 @@ make release-raspi-resources DEST=/tmp/sdcard
 # QEMU's SD card model requires a power-of-2 image size ("SD card size has
 # to be a power of 2, e.g. 64 MiB") -- mkraspi-image.sh's output is not
 # (real hardware has no such restriction; this is a QEMU-only quirk).
-# Resize a scratch copy for the test, never the real release artifact:
+# Resize a scratch copy UP for the test, never the real release artifact:
+# mkraspi-image.sh's 256 MiB FAT16 floor plus the 1 MiB MBR gap means the
+# image is already >256 MiB, so resizing *down* to 64M would truncate and
+# corrupt the partition instead of just padding it. 512M is the next
+# power of 2 above that.
 cp /tmp/ptos-raspi.img /tmp/ptos-raspi-qemu.img
-qemu-img resize -f raw /tmp/ptos-raspi-qemu.img 64M
+qemu-img resize -f raw /tmp/ptos-raspi-qemu.img 512M
 
 qemu-system-arm -M raspi1ap -bios kernel.img \
   -drive file=/tmp/ptos-raspi-qemu.img,format=raw,if=sd \
@@ -402,5 +406,5 @@ cat /tmp/qemu.log
 | Testing `ptoscart.img` as the `--tos` image | It is a cartridge, not a TOS: pass it via `--cartridge` and supply a real Atari TOS ROM with `--tos` (pTOS ROMs have cartridge detection compiled out) |
 | Expecting a desktop from `ptoscart.img` | The 128 KB cartridge excludes the AES/desktop; pass signal is the rendered diagnostic text screen, not the checkerboard |
 | A scripted keystroke at the `virt-arm-cli`/`virt-m68k-cli` EmuCON prompt over `-serial stdio` gets no response | Input is implemented (polled from the 200 Hz tick), but some sandboxed shells never deliver the bytes to QEMU's serial chardev at all (`ppoll()` sees stdin `POLLIN` but QEMU never `read()`s it) — confirm with `strace` before assuming the driver is broken; reaching the `A:>` prompt alone is still a valid automated pass signal either way |
-| `qemu-system-arm ... -drive file=ptos-raspi.img,format=raw,if=sd` fails with "SD card size has to be a power of 2" | `mkraspi-image.sh`'s output isn't power-of-2 sized (real hardware doesn't care) — `qemu-img resize -f raw <scratch-copy> 64M` a copy for the test, never the real release artifact |
+| `qemu-system-arm ... -drive file=ptos-raspi.img,format=raw,if=sd` fails with "SD card size has to be a power of 2" | `mkraspi-image.sh`'s output isn't power-of-2 sized (real hardware doesn't care) — `qemu-img resize -f raw <scratch-copy> 512M` a copy for the test, never the real release artifact; resizing *down* (e.g. to 64M) truncates and corrupts the partition instead of padding it |
 | Attaching the SD card image via `-drive if=sd` without also passing `-bios`/`-kernel` | QEMU doesn't emulate the GPU/`start.elf` boot ROM, so it never reads `kernel*.img` off the disk itself — pass both: `-bios kernel.img -drive file=...,if=sd` |
