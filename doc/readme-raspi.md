@@ -29,6 +29,9 @@ with **dd**, **Raspberry Pi Imager** or **balenaEtcher**. Alternatively, on
 a card you have already partitioned and formatted yourself, just copy over
 the contents of ptos-raspi-<version>.zip.
 
+The card's partition has room to spare beyond what's on it, so it is ready
+to use for your own files right away.
+
 ## Optional extras
 
 The following optional files are also supplied:

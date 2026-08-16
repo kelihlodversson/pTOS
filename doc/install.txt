@@ -160,6 +160,11 @@ subset and readme.txt every other pTOS release archive carries (see
 
 tools/mkraspi-image.sh builds the .img from a directory of files with
 mtools and sfdisk alone, without ever mounting or loop-attaching anything.
+The FAT16 partition is always at least 256 MiB, far more than the content
+needs, so the card is immediately usable for the user's own files once
+flashed -- comfortably inside FAT16's own ~2 GiB limit (doc/fat16.txt), and
+the extra space costs virtually nothing in the zipped archive, since it is
+unused, all-zero sectors.
 readme.txt's source is doc/readme-raspi.md: tools/md2atari.py renders its
 Markdown headings and **bold** spans as Atari VT52 reverse-video escapes
 (see "CONOUT Escape Sequences" in doc/bios.txt), the only styling EmuCON's

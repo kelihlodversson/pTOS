@@ -38,10 +38,15 @@ for f in "$srcdir"/*; do
 done
 
 # Round the content up to whole MiBs and pad generously for FAT overhead
-# and cluster rounding, then enforce FAT16's own minimum volume size.
+# and cluster rounding, then enforce a floor well past that: real SD cards
+# are gigabytes in size, so there is no reason to hand back a card with
+# barely any room on it once flashed. 256 MiB leaves comfortable space to
+# save files or drop data onto the card while staying well inside FAT16's
+# own ~2 GiB limit (doc/fat16.txt) -- and since the extra space is unused,
+# all-zero sectors, it costs virtually nothing in the zipped archive.
 partition_mib=$(( (total_bytes + 1024 * 1024 - 1) / (1024 * 1024) + 8 ))
-if [ "$partition_mib" -lt 32 ]; then
-    partition_mib=32
+if [ "$partition_mib" -lt 256 ]; then
+    partition_mib=256
 fi
 
 workdir=$(mktemp -d)
