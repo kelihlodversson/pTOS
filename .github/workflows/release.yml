@@ -123,9 +123,11 @@ jobs:
       # for the MBR, both without ever mounting or loop-attaching anything --
       # see tools/mkraspi-image.sh.  dos2unix provides unix2dos, which "make
       # release-raspi-resources" uses on the bundled text files, same as
-      # every other pTOS release archive.
+      # every other pTOS release archive.  curl is what
+      # tools/fetch-raspi-firmware.sh downloads with, listed explicitly
+      # rather than assumed from the runner image.
       - name: Install SD card image tooling
-        run: sudo apt-get update && sudo apt-get install -y mtools dosfstools fdisk dos2unix
+        run: sudo apt-get update && sudo apt-get install -y mtools dosfstools fdisk dos2unix curl
 
       - name: Fetch the Raspberry Pi boot firmware
         run: ./tools/fetch-raspi-firmware.sh release-archives/raspi-firmware

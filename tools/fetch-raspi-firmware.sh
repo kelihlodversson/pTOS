@@ -19,6 +19,13 @@
 
 set -eu
 
+for tool in curl sha256sum; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "$0: $tool is required but not installed" >&2
+        exit 1
+    fi
+done
+
 FIRMWARE_COMMIT=3d301dd924bcd758a4c8cb19fe8531031f033f43
 
 # file:sha256, one per line.  start.elf/fixup.dat boot the Pi 1-3 (and every
