@@ -42,6 +42,7 @@ obj-$(CPU_ARMV7) += cache_armv7.o cache_armv7_asm.o
 obj-$(MACHINE_RPI) += raspi_board.o raspi_uart.o raspi_int.o raspi_mbox.o \
 	 raspi_screen.o raspi_emmc.o
 obj-$(CONF_WITH_USB_XHCI) += raspi_vl805.o
+obj-$(CONF_WITH_RASPI_VSYNC_IRQ) += raspi_vsync.o
 
 obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o virt_pic.o virt_timer.o
 obj-$(CONF_WITH_VDI_TRUECOLOR32_TEST) += virt_screen.o

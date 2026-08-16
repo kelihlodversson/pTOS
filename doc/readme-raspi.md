@@ -46,3 +46,30 @@ versions of the Atari TOS desktop.
 These images have been built using:
 make rpi1_defconfig && make
 (and likewise for rpi2, rpi3 and rpi4)
+
+## Real vsync-driven VBL (Pi 1, 2 and 3 only)
+
+By default, pTOS's VBL (vertical blank) interrupt on the Raspberry Pi is
+faked at a fixed 50 Hz off the 200 Hz system timer, unrelated to whatever
+the display is actually doing.
+
+If the kernel was built with `CONF_WITH_RASPI_VSYNC_IRQ` (off by default;
+see `make menuconfig`'s Video menu), pTOS can instead drive VBL from a real
+vsync interrupt, when the firmware provides one. This requires adding to
+`config.txt`:
+
+```
+fake_vsync_isr=1
+```
+
+`fake_vsync_isr` is a legacy, otherwise undocumented option -- it is not
+part of the officially documented `config.txt` option set, was historically
+used by RISC OS on the BCM2835/36/37, and may not work, or may need pairing
+with other options, on all firmware versions; it has not yet been verified
+against current firmware on real hardware. It is entirely optional: without
+it (including with no `config.txt` at all, the default described above),
+pTOS keeps faking VBL at 50 Hz exactly as before, and if it stops arriving
+after having worked, pTOS falls back to the 50 Hz fake automatically.
+
+Not applicable to the Pi 4: see issue #206 for its Pixel Valve-based vsync
+instead.

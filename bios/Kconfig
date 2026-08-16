@@ -467,6 +467,28 @@ config CONF_WITH_NOVA
 	default n if TARGET_192 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
 	default y
 
+config CONF_WITH_RASPI_VSYNC_IRQ
+	bool "Raspberry Pi real vsync-driven VBL (SMI IRQ)"
+	depends on MACHINE_RPI && !TARGET_RPI4
+	default n
+	help
+	  Some Raspberry Pi GPU firmware builds support a legacy, otherwise
+	  undocumented config.txt option ("fake_vsync_isr=1") that raises an
+	  SMI interrupt synchronized to the real display refresh -- a
+	  facility historically used by RISC OS on the BCM2835/36/37.  Say y
+	  to drive VBL from that interrupt when it is actually arriving,
+	  instead of always faking it off the 200 Hz system timer; VBL falls
+	  back to the timer-driven 50 Hz automatically whenever the real
+	  interrupt is absent or stops arriving.  See doc/readme-raspi.md
+	  for the config.txt addition this depends on.
+
+	  pTOS ships with no config.txt by default, and the firmware option
+	  this looks for is opt-in, so leaving this off changes nothing;
+	  turning it on without the firmware option is also harmless, since
+	  the interrupt this reacts to then simply never arrives.  It
+	  defaults to n because the SMI interrupt has not yet been verified
+	  against current firmware on real Pi 1/2/3 hardware.
+
 config CONF_VRAM_ADDRESS
 	hex "Fixed video RAM address (0 = allocate in ST-RAM)"
 	default 0x0
