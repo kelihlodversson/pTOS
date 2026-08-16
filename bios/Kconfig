@@ -476,17 +476,23 @@ config CONF_WITH_RASPI_VSYNC_IRQ
 	  undocumented config.txt option ("fake_vsync_isr=1") that raises an
 	  SMI interrupt synchronized to the real display refresh -- a
 	  facility historically used by RISC OS on the BCM2835/36/37.  Say y
-	  to drive VBL from that interrupt when it is actually arriving,
-	  instead of always faking it off the 200 Hz system timer; VBL falls
-	  back to the timer-driven 50 Hz automatically whenever the real
-	  interrupt is absent or stops arriving.  See doc/readme-raspi.md
+	  to let pTOS drive VBL from that interrupt when it is actually
+	  arriving and validated as a real firmware-vblank event, instead of
+	  always faking it off the 200 Hz system timer; VBL falls back to
+	  the timer-driven 50 Hz automatically whenever the real interrupt
+	  is absent, unvalidated or stops arriving.  See doc/readme-raspi.md
 	  for the config.txt addition this depends on.
 
-	  pTOS ships with no config.txt by default, and the firmware option
-	  this looks for is opt-in, so leaving this on changes nothing unless
-	  fake_vsync_isr=1 is also set; turning it on without the firmware
-	  option is harmless, since the interrupt this reacts to then simply
-	  never arrives.
+	  This is a runtime-detected capability, not a boot-time assumption,
+	  which is why it defaults to y: pTOS ships with no config.txt by
+	  default, and the firmware option this looks for is opt-in, so
+	  nothing about VBL timing changes unless fake_vsync_isr=1 is also
+	  set in config.txt *and* the firmware actually raises a validated
+	  vblank SMI.  Until then, and on any firmware that never raises
+	  one, VBL keeps coming from the existing 200 Hz-derived fallback
+	  exactly as before.  Whether current Raspberry Pi firmware still
+	  provides this legacy mechanism at all has not yet been verified
+	  on real Pi 1/2/3 hardware.
 
 config CONF_VRAM_ADDRESS
 	hex "Fixed video RAM address (0 = allocate in ST-RAM)"

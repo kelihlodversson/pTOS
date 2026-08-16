@@ -56,7 +56,8 @@ the display is actually doing.
 The shipped Pi 1/2/3 kernels are built with `CONF_WITH_RASPI_VSYNC_IRQ`
 (on by default; see `make menuconfig`'s Video menu), which lets pTOS
 instead drive VBL from a real vsync interrupt when the firmware provides
-one. This requires adding to `config.txt`:
+one. This is a runtime-detected capability: building it in changes nothing
+by itself. To actually get real-vsync-driven VBL, add to `config.txt`:
 
 ```
 fake_vsync_isr=1
@@ -68,8 +69,12 @@ used by RISC OS on the BCM2835/36/37, and may not work, or may need pairing
 with other options, on all firmware versions; it has not yet been verified
 against current firmware on real hardware. It is entirely optional: without
 it (including with no `config.txt` at all, the default described above),
-pTOS keeps faking VBL at 50 Hz exactly as before, and if it stops arriving
-after having worked, pTOS falls back to the 50 Hz fake automatically.
+pTOS keeps faking VBL at 50 Hz exactly as before. pTOS only switches to
+real vsync once it has actually seen and validated a firmware-generated
+vblank interrupt; a firmware build that doesn't raise one, or a stray,
+unrelated SMI interrupt, is never mistaken for real vsync. If validated
+real vsync stops arriving after having worked, pTOS falls back to the
+50 Hz fake automatically, and re-locks onto real vsync if it resumes.
 
 Not applicable to the Pi 4: see issue #206 for its Pixel Valve-based vsync
 instead.
