@@ -170,6 +170,15 @@ Markdown headings and **bold** spans as Atari VT52 reverse-video escapes
 (see "CONOUT Escape Sequences" in doc/bios.txt), the only styling EmuCON's
 TYPE command -- likely how this readme actually gets read -- can show.
 
+desk/emudesk-raspi.inf, copied to the card as EMUDESK.INF, is the same
+desktop setup EmuTOS/pTOS falls back to when no EMUDESK.INF is present at
+all (see desk_inf_data1/desk_inf_data2 in desk/deskapp.c: the drive and
+Trash icons, and the file-type-to-icon associations), except its first
+window slot has C:\*.* as its saved path instead of being empty. Since
+cnx_get() (desk/deskmain.c) opens every window slot with a non-empty path
+at boot, the desktop comes up with a window already open on the card's
+contents instead of a bare desktop.
+
 Both GitHub Actions workflows produce them (see "Continuous integration"
 below): build.yml keeps them as a workflow artifact of every push and pull
 request, so a card to test a change on real hardware is one download away
