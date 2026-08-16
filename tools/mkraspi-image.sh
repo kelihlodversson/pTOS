@@ -30,6 +30,15 @@ if [ ! -d "$srcdir" ]; then
     exit 1
 fi
 
+# An empty $srcdir leaves "$srcdir"/* unexpanded (the literal string, POSIX
+# glob semantics), which would otherwise reach du below and fail there with
+# a confusing "No such file or directory" instead of this.
+set -- "$srcdir"/*
+if [ ! -e "$1" ]; then
+    echo "$0: $srcdir: directory is empty" >&2
+    exit 1
+fi
+
 # 1 MiB alignment, as any modern partitioning tool would use.
 sector_size=512
 partition_start=2048

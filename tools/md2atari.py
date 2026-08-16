@@ -47,10 +47,13 @@ def render_markdown_line(line):
 
 
 def write_lines(path, render):
+    # sys.stdout.buffer, not sys.stdout: text-mode stdout does its own
+    # newline translation on some platforms, which would turn the '\r\n'
+    # already being written here into '\r\r\n'.
     with open(path, encoding='utf-8') as f:
         for line in f:
             rendered = render(line.rstrip('\n')) if render else line.rstrip('\n')
-            sys.stdout.write(rendered + '\r\n')
+            sys.stdout.buffer.write((rendered + '\r\n').encode('utf-8'))
 
 
 def main(argv):
