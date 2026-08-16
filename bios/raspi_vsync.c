@@ -30,8 +30,9 @@
  * real vsync source is the Pixel Valve, tracked separately (#206).
  *
  * The exact SMI acknowledge sequence current firmware needs -- if any
- * -- is unverified; this has not yet been tested against real Pi 1/2/3
- * hardware, which is why CONF_WITH_RASPI_VSYNC_IRQ defaults to n.
+ * -- is unverified; without fake_vsync_isr=1 in config.txt, the SMI
+ * IRQ this connects simply never arrives, so CONF_WITH_RASPI_VSYNC_IRQ
+ * defaults to y.
  */
 
 #include "config.h"

@@ -53,10 +53,10 @@ By default, pTOS's VBL (vertical blank) interrupt on the Raspberry Pi is
 faked at a fixed 50 Hz off the 200 Hz system timer, unrelated to whatever
 the display is actually doing.
 
-If the kernel was built with `CONF_WITH_RASPI_VSYNC_IRQ` (off by default;
-see `make menuconfig`'s Video menu), pTOS can instead drive VBL from a real
-vsync interrupt, when the firmware provides one. This requires adding to
-`config.txt`:
+The shipped Pi 1/2/3 kernels are built with `CONF_WITH_RASPI_VSYNC_IRQ`
+(on by default; see `make menuconfig`'s Video menu), which lets pTOS
+instead drive VBL from a real vsync interrupt when the firmware provides
+one. This requires adding to `config.txt`:
 
 ```
 fake_vsync_isr=1

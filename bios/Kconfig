@@ -470,7 +470,7 @@ config CONF_WITH_NOVA
 config CONF_WITH_RASPI_VSYNC_IRQ
 	bool "Raspberry Pi real vsync-driven VBL (SMI IRQ)"
 	depends on MACHINE_RPI && !TARGET_RPI4
-	default n
+	default y
 	help
 	  Some Raspberry Pi GPU firmware builds support a legacy, otherwise
 	  undocumented config.txt option ("fake_vsync_isr=1") that raises an
@@ -483,11 +483,10 @@ config CONF_WITH_RASPI_VSYNC_IRQ
 	  for the config.txt addition this depends on.
 
 	  pTOS ships with no config.txt by default, and the firmware option
-	  this looks for is opt-in, so leaving this off changes nothing;
-	  turning it on without the firmware option is also harmless, since
-	  the interrupt this reacts to then simply never arrives.  It
-	  defaults to n because the SMI interrupt has not yet been verified
-	  against current firmware on real Pi 1/2/3 hardware.
+	  this looks for is opt-in, so leaving this on changes nothing unless
+	  fake_vsync_isr=1 is also set; turning it on without the firmware
+	  option is harmless, since the interrupt this reacts to then simply
+	  never arrives.
 
 config CONF_VRAM_ADDRESS
 	hex "Fixed video RAM address (0 = allocate in ST-RAM)"
