@@ -204,11 +204,74 @@ jobs:
           path: release-archives/
           retention-days: 14
 
+  raspi-sdcard:
+    name: Raspberry Pi SD card image
+    needs: [arm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The kernel images the arm matrix above already built for rpi1-4 --
+      # rebuilding them here too would just double the wait.  rpi2-sparse is
+      # a VDI test variant of rpi2, not part of the SD card; the pattern's
+      # single-digit character class excludes it (and the virt-arm ones,
+      # which are QEMU-only and have no kernel*.img at all).
+      - name: Collect the rpi1-4 kernel images
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ptos-rpi[1-4]
+          merge-multiple: true
+          path: raspi-build
+
+      # mtools/dosfstools build the FAT16 partition and fdisk provides sfdisk
+      # for the MBR, both without ever mounting or loop-attaching anything --
+      # see tools/mkraspi-image.sh.  dos2unix provides unix2dos, which "make
+      # release-raspi-resources" uses on the bundled text files, same as
+      # every other pTOS release archive.  curl is what
+      # tools/fetch-raspi-firmware.sh downloads with, listed explicitly
+      # rather than assumed from the runner image.
+      - name: Install SD card image tooling
+        run: sudo apt-get update && sudo apt-get install -y mtools dosfstools fdisk dos2unix curl zip
+
+      - name: Fetch the Raspberry Pi boot firmware
+        run: ./tools/fetch-raspi-firmware.sh sdcard/raspi-firmware
+
+      # Not a release, so no version tag: a snapshot string identifies the
+      # commit this artifact was built from, same as release-archives above.
+      - name: Assemble the SD card contents
+        run: |
+          VERSION="$(date -u +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)"
+          echo "VERSION=$VERSION"
+          archive="ptos-raspi-$VERSION"
+          mkdir -p "sdcard/$archive"
+
+          cp raspi-build/kernel*.img "sdcard/$archive"/
+          cp sdcard/raspi-firmware/* "sdcard/$archive"/
+          rm -r sdcard/raspi-firmware
+
+          # The loadable mouse cursor and desktop icon resources, and a
+          # readme.txt plus a doc/ subset -- the same optional extras every
+          # other pTOS release archive carries, from release.mk.
+          make release-raspi-resources DEST="sdcard/$archive"
+
+          ./tools/mkraspi-image.sh "sdcard/$archive" "sdcard/$archive.img"
+
+          cd sdcard
+          zip -9 -r "$archive.zip" "$archive" && rm -r "$archive"
+          zip -9 "$archive.img.zip" "$archive.img" && rm "$archive.img"
+          ls -l .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ptos-raspi-sdcard
+          path: sdcard/
+          retention-days: 14
+
   # A single job to require in the branch protection rules, so that the list
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [m68k, arm, release-archives]
+    needs: [m68k, arm, release-archives, raspi-sdcard]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
@@ -220,8 +283,9 @@ jobs:
           echo "m68k configurations: ${{ needs.m68k.result }}"
           echo "arm configurations:  ${{ needs.arm.result }}"
           echo "release archives:    ${{ needs.release-archives.result }}"
-          case '${{ needs.m68k.result }}:${{ needs.arm.result }}:${{ needs.release-archives.result }}' in
-          success:success:success) ;;
+          echo "raspi SD card image: ${{ needs.raspi-sdcard.result }}"
+          case '${{ needs.m68k.result }}:${{ needs.arm.result }}:${{ needs.release-archives.result }}:${{ needs.raspi-sdcard.result }}' in
+          success:success:success:success) ;;
           *)
             echo "::error::at least one configuration failed to build"
             exit 1

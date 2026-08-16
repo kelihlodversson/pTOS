@@ -128,9 +128,63 @@ Raspberry Pi
 ------------
 
 rpi1                kernel.img, for the Pi 1, Zero, A, A+, B, B+ and CM0
-rpi2                kernel7.img, for the Pi 2B+
+rpi2                kernel7.img, for the Pi 2B
 rpi3                kernel8-32.img, for the Pi 3, 3+ and CM3
 rpi4                kernel7l.img, for the Pi 4 and 400
+
+QEMU loads a kernel image directly and needs nothing else, but real
+Raspberry Pi hardware does: the GPU reads its own boot firmware
+(bootcode.bin, start*.elf, fixup*.dat) off the SD card before it ever gets
+to loading a kernel*.img. The four kernel images above are named so the
+firmware picks the right one and CPU mode for whichever board is plugged
+in -- including kernel8-32.img's "-32" forcing 32-bit mode on the Pi 3, 3+
+and CM3 even though those boards can also run 64-bit code -- so a single SD
+card built from all four boots the whole Pi 1-4 lineup and no config.txt is
+needed.
+
+This combination -- the four kernel images, the matching boot firmware
+fetched by tools/fetch-raspi-firmware.sh from a pinned, checksum-verified
+commit of https://github.com/raspberrypi/firmware and redistributed under
+its LICENCE.broadcom, and the same optional emucurs.rsc/emuicon.rsc, doc/
+subset and readme.txt every other pTOS release archive carries (see
+"release-raspi-resources" in release.mk) -- ships as two files:
+
+    ptos-raspi-<version>.zip       the loose files, to drop onto an SD
+                                    card that is already partitioned and
+                                    formatted
+    ptos-raspi-<version>.img.zip   a raw disk image (MBR partition table,
+                                    one FAT16 partition) that dd,
+                                    Raspberry Pi Imager or balenaEtcher can
+                                    write directly, with no manual
+                                    partitioning or formatting
+
+tools/mkraspi-image.sh builds the .img from a directory of files with
+mtools, dosfstools and sfdisk, without ever mounting or loop-attaching
+anything.
+The FAT16 partition is always at least 256 MiB, far more than the content
+needs, so the card is immediately usable for the user's own files once
+flashed -- comfortably inside FAT16's own ~2 GiB limit (doc/fat16.txt), and
+the extra space costs virtually nothing in the zipped archive, since it is
+unused, all-zero sectors.
+readme.txt's source is doc/readme-raspi.md: tools/md2atari.py renders its
+Markdown headings and **bold** spans as Atari VT52 reverse-video escapes
+(see "CONOUT Escape Sequences" in doc/bios.txt), the only styling EmuCON's
+TYPE command -- likely how this readme actually gets read -- can show.
+
+desk/emudesk-raspi.inf, copied to the card as EMUDESK.INF, is the same
+desktop setup EmuTOS/pTOS falls back to when no EMUDESK.INF is present at
+all (see desk_inf_data1/desk_inf_data2 in desk/deskapp.c: the drive and
+Trash icons, and the file-type-to-icon associations), except its first
+window slot has C:\*.* as its saved path instead of being empty. Since
+cnx_get() (desk/deskmain.c) opens every window slot with a non-empty path
+at boot, the desktop comes up with a window already open on the card's
+contents instead of a bare desktop.
+
+Both GitHub Actions workflows produce them (see "Continuous integration"
+below): build.yml keeps them as a workflow artifact of every push and pull
+request, so a card to test a change on real hardware is one download away
+without waiting for a release, and release.yml additionally attaches them
+to every tagged release.
 
 ARM virt
 --------
@@ -242,8 +296,8 @@ The workflows live in .github/workflows:
 
 build.yml       builds every configuration in configs/ as a job of its own,
                 so a failure names the machine it broke, and builds the m68k
-                release archives.  Every image is kept as a workflow
-                artifact.
+                release archives and the Raspberry Pi SD card image (see
+                above).  Every image is kept as a workflow artifact.
 release.yml     publishes a GitHub release.  It runs when a version tag such
                 as v0.1.0 is pushed, and can also be started by hand, which
                 publishes a snapshot prerelease instead.

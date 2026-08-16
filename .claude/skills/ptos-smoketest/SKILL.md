@@ -1,6 +1,6 @@
 ---
 name: ptos-smoketest
-description: Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS) image boots under an emulator. Covers Hatari for m68k Atari targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi1 (QEMU machine `raspi1ap`), raspi2 (QEMU machine `raspi2b`), virt-arm and virt-m68k machines. Use when asked to boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung boot, or when you need emulator invocations, --run-vbls/--avirecord/--trace flags, the Hatari debugger gotchas (spurious breakpoints, echo crash), the Falcon IDE 31s boot wait, or the floppy motor/deselection timeouts (motor on/off 1.5-3s + deselect 5s = ~20s STE baseline).
+description: Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS) image boots under an emulator. Covers Hatari for m68k Atari targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi1 (QEMU machine `raspi1ap`), raspi2 (QEMU machine `raspi2b`), virt-arm and virt-m68k machines, plus testing the flashable Raspberry Pi SD card disk image (`tools/mkraspi-image.sh`) by attaching it to QEMU as a raw `-drive if=sd`. Use when asked to boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung boot, verify the SD card image's MBR/FAT16 partition is readable by pTOS's own eMMC driver, or when you need emulator invocations, --run-vbls/--avirecord/--trace flags, the Hatari debugger gotchas (spurious breakpoints, echo crash), the Falcon IDE 31s boot wait, the floppy motor/deselection timeouts (motor on/off 1.5-3s + deselect 5s = ~20s STE baseline), or QEMU's power-of-2 SD card image size requirement.
 ---
 
 # pTOS Smoke Testing
@@ -257,6 +257,54 @@ discover:
 - If pTOS ever grows an AArch64 port (producing a `kernel8.img`), *that*
   build could target `-M raspi3b`/`raspi4b` — but that doesn't exist today.
 
+### Testing the flashable SD card image (`-drive if=sd`)
+
+`tools/mkraspi-image.sh` (see `doc/install.txt`) builds a raw MBR + FAT16
+disk image bundling the boot firmware and the `kernel*.img` builds for a
+real SD card. Attaching it to QEMU as the emulated SD card — instead of
+just `-bios`/`-kernel` — tests pTOS's own `bios/raspi_emmc.c` driver and
+MBR parser against the actual artifact, not just that `mtools` can read it
+back:
+
+```sh
+make rpi1_defconfig && make
+./tools/fetch-raspi-firmware.sh /tmp/sdcard
+cp kernel.img /tmp/sdcard/
+make release-raspi-resources DEST=/tmp/sdcard
+./tools/mkraspi-image.sh /tmp/sdcard /tmp/ptos-raspi.img
+
+# QEMU's SD card model requires a power-of-2 image size ("SD card size has
+# to be a power of 2, e.g. 64 MiB") -- mkraspi-image.sh's output is not
+# (real hardware has no such restriction; this is a QEMU-only quirk).
+# Resize a scratch copy UP for the test, never the real release artifact:
+# mkraspi-image.sh's 256 MiB FAT16 floor plus the 1 MiB MBR gap means the
+# image is already >256 MiB, so resizing *down* to 64M would truncate and
+# corrupt the partition instead of just padding it. 512M is the next
+# power of 2 above that.
+cp /tmp/ptos-raspi.img /tmp/ptos-raspi-qemu.img
+qemu-img resize -f raw /tmp/ptos-raspi-qemu.img 512M
+
+qemu-system-arm -M raspi1ap -bios kernel.img \
+  -drive file=/tmp/ptos-raspi-qemu.img,format=raw,if=sd \
+  -d guest_errors -serial stdio
+```
+
+`-bios`/`-kernel` is still required even with the disk attached: QEMU does
+not emulate the GPU/`start.elf` boot ROM, so it never reads `kernel*.img`
+off the disk image itself — only pTOS, once running, reads the disk.
+
+Pass signals (verified on rpi1):
+- `Found a valid version 2.00 SD card` — `bios/raspi_emmc.c` initialized
+  the attached image as a real SD card.
+- `fda: MBR at 0 $0e` — pTOS's own MBR parser read the partition table
+  `mkraspi-image.sh` wrote and recognized type `$0e` (FAT16 LBA).
+- `GEMDOS drives: C` on the boot banner — the FAT16 partition mounted.
+- Boot proceeds to `AES: EMUDESK: evnt_multi()` with zero `guest_errors`,
+  same as a plain `-bios`-only boot.
+
+`raspi2b` takes the same `-drive ...,if=sd` treatment with `-bios
+kernel7.img`; the size restriction and pass signals are identical.
+
 `-device usb-mouse -device usb-kbd` is mandatory when validating USB HID
 input: without these devices, the class drivers register but neither a mouse
 nor keyboard is enumerated.
@@ -358,3 +406,5 @@ cat /tmp/qemu.log
 | Testing `ptoscart.img` as the `--tos` image | It is a cartridge, not a TOS: pass it via `--cartridge` and supply a real Atari TOS ROM with `--tos` (pTOS ROMs have cartridge detection compiled out) |
 | Expecting a desktop from `ptoscart.img` | The 128 KB cartridge excludes the AES/desktop; pass signal is the rendered diagnostic text screen, not the checkerboard |
 | A scripted keystroke at the `virt-arm-cli`/`virt-m68k-cli` EmuCON prompt over `-serial stdio` gets no response | Input is implemented (polled from the 200 Hz tick), but some sandboxed shells never deliver the bytes to QEMU's serial chardev at all (`ppoll()` sees stdin `POLLIN` but QEMU never `read()`s it) — confirm with `strace` before assuming the driver is broken; reaching the `A:>` prompt alone is still a valid automated pass signal either way |
+| `qemu-system-arm ... -drive file=ptos-raspi.img,format=raw,if=sd` fails with "SD card size has to be a power of 2" | `mkraspi-image.sh`'s output isn't power-of-2 sized (real hardware doesn't care) — `qemu-img resize -f raw <scratch-copy> 512M` a copy for the test, never the real release artifact; resizing *down* (e.g. to 64M) truncates and corrupts the partition instead of padding it |
+| Attaching the SD card image via `-drive if=sd` without also passing `-bios`/`-kernel` | QEMU doesn't emulate the GPU/`start.elf` boot ROM, so it never reads `kernel*.img` off the disk itself — pass both: `-bios kernel.img -drive file=...,if=sd` |

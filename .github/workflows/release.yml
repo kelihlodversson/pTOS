@@ -119,9 +119,24 @@ jobs:
         with:
           arch: arm
 
+      # mtools/dosfstools build the FAT16 partition and fdisk provides sfdisk
+      # for the MBR, both without ever mounting or loop-attaching anything --
+      # see tools/mkraspi-image.sh.  dos2unix provides unix2dos, which "make
+      # release-raspi-resources" uses on the bundled text files, same as
+      # every other pTOS release archive.  curl is what
+      # tools/fetch-raspi-firmware.sh downloads with, listed explicitly
+      # rather than assumed from the runner image.
+      - name: Install SD card image tooling
+        run: sudo apt-get update && sudo apt-get install -y mtools dosfstools fdisk dos2unix curl
+
+      - name: Fetch the Raspberry Pi boot firmware
+        run: ./tools/fetch-raspi-firmware.sh release-archives/raspi-firmware
+
       # "make release" only covers the m68k targets.  The Raspberry Pi is what
       # this fork exists for, so its kernels are packaged here and attached to
-      # the same release.
+      # the same release, together with the GPU boot firmware needed to reach
+      # them on real hardware (see tools/fetch-raspi-firmware.sh) -- neither
+      # is any use to someone with real hardware without the other.
       - name: Build the Raspberry Pi kernels
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -140,8 +155,23 @@ jobs:
             echo "::endgroup::"
           done
 
-          cp readme.md doc/license.txt "release-archives/$archive"/
-          cd release-archives && zip -9 -r "$archive.zip" "$archive" && rm -r "$archive"
+          cp release-archives/raspi-firmware/* "release-archives/$archive"/
+          rm -r release-archives/raspi-firmware
+
+          # The loadable mouse cursor and desktop icon resources, and a
+          # readme.txt plus a doc/ subset -- the same optional extras every
+          # other pTOS release archive carries, from release.mk.
+          make release-raspi-resources DEST="release-archives/$archive"
+
+          # A raw disk image for dd/Raspberry Pi Imager/balenaEtcher, built
+          # from the very same files, before the directory is zipped up for
+          # whoever just wants to drop files onto an SD card they already
+          # formatted.
+          ./tools/mkraspi-image.sh "release-archives/$archive" "release-archives/$archive.img"
+
+          cd release-archives
+          zip -9 -r "$archive.zip" "$archive" && rm -r "$archive"
+          zip -9 "$archive.img.zip" "$archive.img" && rm "$archive.img"
           ls -l .
 
       - uses: actions/upload-artifact@v4
@@ -186,13 +216,14 @@ jobs:
           # of the clear one below.
           shopt -s nullglob
 
-          # The Raspberry Pi is what this fork is for, so its archive is
-          # listed first regardless of how the file names sort -- every
-          # archive here now starts with "ptos-", so alphabetical order no
-          # longer happens to put it anywhere in particular.
+          # The Raspberry Pi is what this fork is for, so its archives (the
+          # zip of loose files and the flashable disk image) are listed
+          # first regardless of how the file names sort -- every archive
+          # here now starts with "ptos-", so alphabetical order no longer
+          # happens to put them anywhere in particular.
           raspi=(release-archives/ptos-raspi-*)
-          if [ "${#raspi[@]}" -ne 1 ]; then
-            echo "::error::expected exactly one release-archives/ptos-raspi-* archive, found ${#raspi[@]}"
+          if [ "${#raspi[@]}" -eq 0 ]; then
+            echo "::error::expected at least one release-archives/ptos-raspi-* archive, found none"
             exit 1
           fi
           others=()

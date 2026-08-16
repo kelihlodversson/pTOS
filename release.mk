@@ -208,6 +208,30 @@ release-floppy:
 	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_FLOPPY)).zip $(notdir $(RELEASE_FLOPPY))
 	rm -r $(RELEASE_FLOPPY)
 
+.PHONY: release-raspi-resources
+release-raspi-resources:
+	@if [ -z '$(DEST)' ]; then \
+	  echo 'DEST is not set; usage: make release-raspi-resources DEST=<archive-dir>' >&2; \
+	  exit 1; \
+	fi
+	mkdir -p $(DEST)
+	$(call copy-resources,$(DEST))
+	# desk/emudesk-raspi.inf: same #R/#E/#Q/#M/#T/file-type-association
+	# content deskapp.c's own built-in default generates (see
+	# desk_inf_data1/desk_inf_data2), except the first #W window slot
+	# has C:\*.* as its path instead of being empty -- deskmain.c opens
+	# every #W slot with a non-empty path at boot, so this alone is what
+	# makes the desktop come up with a window already open on the drive.
+	cp desk/emudesk-raspi.inf $(DEST)/EMUDESK.INF
+	# Like copy-docs, but readme.txt is rendered from Markdown with Atari
+	# VT52 escapes (tools/md2atari.py) instead of a plain doc/readme-*.txt,
+	# CRLF line endings included -- unix2dos refuses those escape bytes as
+	# "binary", so it cannot do that part for us here.
+	$(PYTHON) tools/md2atari.py doc/readme-raspi.md readme_emutos.txt >$(DEST)/readme.txt
+	mkdir -p $(DEST)/doc
+	cp $(DOCFILES) $(DEST)/doc
+	find $(DEST)/doc -name '*.txt' -exec unix2dos '{}' ';'
+
 .PHONY: release-emucon
 RELEASE_EMUCON = $(RELEASE_DIR)/emucon
 release-emucon:
