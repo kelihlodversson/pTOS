@@ -214,6 +214,7 @@ release-raspi-resources:
 	  echo 'DEST is not set; usage: make release-raspi-resources DEST=<archive-dir>' >&2; \
 	  exit 1; \
 	fi
+	mkdir -p $(DEST)
 	$(call copy-resources,$(DEST))
 	# desk/emudesk-raspi.inf: same #R/#E/#Q/#M/#T/file-type-association
 	# content deskapp.c's own built-in default generates (see
