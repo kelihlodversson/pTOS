@@ -9,3 +9,18 @@
 # delete this file, or just this line, to opt back out; either way pTOS
 # boots and runs exactly the same.
 fake_vsync_isr=1
+
+# pTOS: language/keyboard/font override. This image supports every
+# country below at run time; the one baked in at build time (US
+# English) is used unless overridden. This is NOT set in this file --
+# config.txt only configures the GPU firmware, not pTOS itself. Instead,
+# edit cmdline.txt on this card so it contains a single line with a
+# "ptos.lang=xx" parameter, where xx is one of the two-letter codes
+# below (case insensitive; see doc/country.txt for details):
+#
+#   us de fr cz gr es fi sg ru it uk no se
+#
+# For example, to boot with the built-in default (US English) made
+# explicit -- a working line to copy into cmdline.txt and edit:
+#
+#   ptos.lang=us

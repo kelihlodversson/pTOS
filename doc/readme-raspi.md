@@ -85,3 +85,22 @@ real vsync stops arriving after having worked, pTOS falls back to the
 
 Not applicable to the Pi 4: see issue #206 for its Pixel Valve-based vsync
 instead.
+
+## Language / keyboard override
+
+This image supports every country in the list below at run time; US
+English is what's baked in at build time and used unless overridden. The
+override isn't set in `config.txt` (that file only configures the GPU
+firmware, not pTOS itself) -- instead, put a single line in `cmdline.txt`
+on this card:
+
+```
+ptos.lang=xx
+```
+
+where `xx` is one of `us de fr cz gr es fi sg ru it uk no se`
+(case-insensitive). `config.txt` has this written out as a comment, with
+the same code list, ready to copy into `cmdline.txt`. See
+`doc/country.txt` for the full mechanism, including how it's read from
+the ARM boot loader's ATAG/device-tree command line rather than from
+NVRAM (which these machines don't have).
