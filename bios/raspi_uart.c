@@ -158,4 +158,4 @@ void raspi_uart0_poll_rx(void)
 
 #endif /* CONF_SERIAL_CONSOLE */
 
-#endif /* CONF_WITH_COLDFIRE_RS232 */
+#endif /* CONF_WITH_RASPI_UART0 */
