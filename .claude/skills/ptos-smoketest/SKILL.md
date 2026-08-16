@@ -286,6 +286,13 @@ cat /tmp/qemu.log
     (`coldfire_rs232_enable_interrupt()`). This also fixed a real pre-existing
     bug: virt-arm's PL011 init never set `LCRH.FEN`, so the UART never
     actually ran in FIFO mode despite the code comment claiming it did.
+    raspi1/raspi2 (below) use the same PL011 and the same polling pattern
+    via `raspi_uart0_poll_rx()` from `raspi_timer3_handler()` (#190), even
+    though there is no `rpi*-cli` config to boot straight to EmuCON — on
+    raspi, `CONF_SERIAL_CONSOLE` defaults on alongside the video desktop
+    (`default y if !CONF_WITH_ATARI_VIDEO && !MACHINE_AMIGA`), so serial
+    input there feeds the same console the video desktop uses, not a
+    separate EmuCON boot path.
   - **Verifying input interactively is unreliable in a sandboxed/CI
     shell.** `strace -f -e trace=read,poll,ppoll` on a spawned
     `qemu-system-arm -M virt ... -serial stdio` process, in at least one

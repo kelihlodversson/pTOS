@@ -14,6 +14,7 @@
 #include "asm.h"
 #include "vectors.h"
 #include "mfp.h"
+#include "raspi_uart.h"
 
 #define HZ                                200      // ticks per second
 #define CLOCKHZ                        1000000     // Sytem timer runs at 1MHz
@@ -133,6 +134,10 @@ static inline void disable_irq(int num)
 void raspi_timer3_handler(void)
 {
     ULONG compare;
+
+#if CONF_SERIAL_CONSOLE && CONF_WITH_RASPI_UART0
+    raspi_uart0_poll_rx();
+#endif
 
     vector_5ms();
 

@@ -74,10 +74,10 @@ void raspi_uart0_init(void)
 {
     ULONG val;
     ULONG clock_rate = get_base_clock();
-	ULONG baud16 = BAUDRATE * 16;
-	ULONG int_div = clock_rate / baud16;
-	ULONG fractdiv2 = (clock_rate % baud16) * 8 / BAUDRATE;
-	ULONG fractdiv = fractdiv2 / 2 + fractdiv2 % 2;
+    ULONG baud16 = BAUDRATE * 16;
+    ULONG int_div = clock_rate / baud16;
+    ULONG fractdiv2 = (clock_rate % baud16) * 8 / BAUDRATE;
+    ULONG fractdiv = fractdiv2 / 2 + fractdiv2 % 2;
 
     UART0_CR = 0;
 
@@ -140,5 +140,22 @@ UBYTE raspi_uart0_read_byte(void)
     /* Read the received byte */
     return (UBYTE) UART0_DR;
 }
+
+#if CONF_SERIAL_CONSOLE
+
+/* Feeds bytes typed at the far end of -serial (or a real serial cable)
+ * into the same emulated IKBD event queue a real keyboard would use, so
+ * CONF_SERIAL_CONSOLE ("read the console input exclusively from the
+ * serial port") actually has something to read. Called from
+ * raspi_timer3_handler() (200 Hz) rather than a UART interrupt, mirroring
+ * virt_uart0_poll_rx() on the QEMU virt-arm machine, which uses the same
+ * PL011 UART. */
+void raspi_uart0_poll_rx(void)
+{
+    while (raspi_uart0_can_read())
+        push_ascii_ikbdiorec(raspi_uart0_read_byte());
+}
+
+#endif /* CONF_SERIAL_CONSOLE */
 
 #endif /* CONF_WITH_COLDFIRE_RS232 */
