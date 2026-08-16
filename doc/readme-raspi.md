@@ -99,8 +99,8 @@ ptos.lang=xx
 ```
 
 where `xx` is one of `us de fr cz gr es fi sg ru it uk no se`
-(case-insensitive). `config.txt` has this written out as a comment, with
-the same code list, ready to copy into `cmdline.txt`. See
-`doc/country.txt` for the full mechanism, including how it's read from
-the ARM boot loader's ATAG/device-tree command line rather than from
-NVRAM (which these machines don't have).
+(case-insensitive). This card doesn't ship a `cmdline.txt` -- create one
+yourself with that single line. See `doc/country.txt` for the full
+mechanism, including how it's read from the ARM boot loader's
+ATAG/device-tree command line rather than from NVRAM (which these
+machines don't have).
