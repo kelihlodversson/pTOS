@@ -160,6 +160,10 @@ subset and readme.txt every other pTOS release archive carries (see
 
 tools/mkraspi-image.sh builds the .img from a directory of files with
 mtools and sfdisk alone, without ever mounting or loop-attaching anything.
+readme.txt's source is doc/readme-raspi.md: tools/md2atari.py renders its
+Markdown headings and **bold** spans as Atari VT52 reverse-video escapes
+(see "CONOUT Escape Sequences" in doc/bios.txt), the only styling EmuCON's
+TYPE command -- likely how this readme actually gets read -- can show.
 
 Both GitHub Actions workflows produce them (see "Continuous integration"
 below): build.yml keeps them as a workflow artifact of every push and pull

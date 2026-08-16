@@ -215,7 +215,18 @@ release-raspi-resources:
 	  exit 1; \
 	fi
 	$(call copy-resources,$(DEST))
-	$(call copy-docs,$(DEST),raspi)
+	# Like copy-docs, but readme.txt is rendered from Markdown with Atari
+	# VT52 escapes (tools/md2atari.py) instead of a plain doc/readme-*.txt.
+	# unix2dos refuses those escape bytes as "binary", and CRLF is not just
+	# cosmetic here: VT52's LF moves the cursor down without returning it
+	# to column 0 (see ascii_lf/ascii_cr in bios/vt52.c), so a bare LF
+	# staircases every line when this is read with EmuCON's TYPE. sed adds
+	# the CR by hand instead.
+	{ tools/md2atari.py doc/readme-raspi.md; cat readme_emutos.txt; } | \
+	  sed 's/\r$$//; s/$$/\r/' >$(DEST)/readme.txt
+	mkdir $(DEST)/doc
+	cp $(DOCFILES) $(DEST)/doc
+	find $(DEST)/doc -name '*.txt' -exec unix2dos '{}' ';'
 
 .PHONY: release-emucon
 RELEASE_EMUCON = $(RELEASE_DIR)/emucon
