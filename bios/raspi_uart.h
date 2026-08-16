@@ -18,6 +18,10 @@ BOOL raspi_uart0_can_write(void);
 void raspi_uart0_write_byte(UBYTE b);
 BOOL raspi_uart0_can_read(void);
 UBYTE raspi_uart0_read_byte(void);
+
+#if CONF_SERIAL_CONSOLE
+void raspi_uart0_poll_rx(void);
+#endif
 #endif
 
 
