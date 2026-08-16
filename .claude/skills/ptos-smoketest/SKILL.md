@@ -292,7 +292,32 @@ cat /tmp/qemu.log
     raspi, `CONF_SERIAL_CONSOLE` defaults on alongside the video desktop
     (`default y if !CONF_WITH_ATARI_VIDEO && !MACHINE_AMIGA`), so serial
     input there feeds the same console the video desktop uses, not a
-    separate EmuCON boot path.
+    separate EmuCON boot path. To smoke-test raspi serial input specifically,
+    build a throwaway CLI variant the same way `virt-arm-cli_defconfig`
+    derives from `virt-arm_defconfig`: copy `configs/rpi1_defconfig`, append
+    `CONF_WITH_AES=n`, then `CONFIG_= KCONFIG_CONFIG=.config python3 -m
+    defconfig --kconfig Kconfig <path>` (the plain `make <name>_defconfig`
+    target only works for files already under `configs/`; invoking
+    `defconfig` directly on an arbitrary path needs those two env vars set,
+    matching what `tools/kconfig.mk` exports, or `CONFIG_=` defaults to
+    kconfiglib's `CONFIG_` prefix and every line in the fragment is silently
+    ignored as "malformed"). This reaches `C:>` over `-serial` exactly like
+    the `-cli` targets. Confirmed working end-to-end (#190): a keystroke that
+    actually lands in `UART0_DR` is picked up by `raspi_uart0_poll_rx()` and
+    echoed at the EmuCON prompt — observed directly when a `help\r` sent too
+    early (during the boot-options banner, which also reads single
+    keystrokes) had two of its four characters "leak" through and echo once
+    EmuCON started, i.e. bytes delivered to the guest UART do reach the
+    console. Getting bytes reliably delivered *to* the guest UART from a
+    scripted host process is the unreliable part in a sandboxed container,
+    same as the caveat below for virt-arm-cli — see there. It reproduces
+    identically over `-serial chardev:...,socket,server=on` (not just a pty):
+    `strace` on the QEMU process shows `ppoll()` reporting the fd `POLLIN`
+    exactly once, right when the host side writes, but QEMU never calls
+    `read()` on it before the fd is masked out of the next `ppoll()`'s fd
+    set — so this is a QEMU/container chardev-servicing gap affecting every
+    serial backend in that environment, not something specific to ptys or to
+    the raspi driver.
   - **Verifying input interactively is unreliable in a sandboxed/CI
     shell.** `strace -f -e trace=read,poll,ppoll` on a spawned
     `qemu-system-arm -M virt ... -serial stdio` process, in at least one
@@ -302,10 +327,11 @@ cat /tmp/qemu.log
     poll set entirely. TX was unaffected (verified extensively: boot
     banner, EmuCON prompt, etc. all render correctly), and QEMU's own
     monitor chardev on the same spawned process consumed typed input
-    correctly in the same session — so this looks like a QEMU/host-pty
+    correctly in the same session — so this looks like a QEMU/host
     interaction gap specific to the guest-UART chardev path in that
-    container, not a general "no ptys here" limitation, and not something
-    the pTOS-side driver can work around. **Do not conclude the feature is
+    container (confirmed on both a pty and a `socket,server=on` chardev
+    while testing #190 on raspi, see above — not pty-specific), not
+    something the pTOS-side driver can work around. **Do not conclude the feature is
     broken from a failed automated keystroke test alone** — first confirm
     with `strace` (or by testing from a real interactive terminal) whether
     the environment is actually delivering bytes to QEMU's serial chardev
