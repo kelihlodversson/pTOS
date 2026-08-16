@@ -227,7 +227,7 @@ release-raspi-resources:
 	# CRLF line endings included -- unix2dos refuses those escape bytes as
 	# "binary", so it cannot do that part for us here.
 	tools/md2atari.py doc/readme-raspi.md readme_emutos.txt >$(DEST)/readme.txt
-	mkdir $(DEST)/doc
+	mkdir -p $(DEST)/doc
 	cp $(DOCFILES) $(DEST)/doc
 	find $(DEST)/doc -name '*.txt' -exec unix2dos '{}' ';'
 

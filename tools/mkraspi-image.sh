@@ -8,10 +8,10 @@
 # Raspberry Pi Imager or balenaEtcher gives a card that boots on real
 # hardware with no manual partitioning or formatting.
 #
-# Built entirely with mtools and sfdisk, without ever mounting or
-# loop-attaching anything: the FAT filesystem is assembled in a separate
-# file at 1:1 size with the partition, then dd'd into place at the
-# partition's offset in the disk image.
+# Built with mtools, dosfstools (mkfs.fat) and sfdisk, without ever
+# mounting or loop-attaching anything: the FAT filesystem is assembled in
+# a separate file at 1:1 size with the partition, then dd'd into place at
+# the partition's offset in the disk image.
 #
 # Usage: mkraspi-image.sh <source-dir> <output.img>
 
@@ -24,6 +24,11 @@ fi
 
 srcdir=$1
 output=$2
+
+if [ ! -d "$srcdir" ]; then
+    echo "$0: $srcdir: not a directory" >&2
+    exit 1
+fi
 
 # 1 MiB alignment, as any modern partitioning tool would use.
 sector_size=512

@@ -2,7 +2,7 @@
 
 This SD card image is suitable for the following hardware:
 - Raspberry Pi 1, Zero, A, A+, B, B+ and CM0
-- Raspberry Pi 2B+
+- Raspberry Pi 2B
 - Raspberry Pi 3, 3+ and CM3 (running in 32-bit mode)
 - Raspberry Pi 4 and 400
 
@@ -10,7 +10,7 @@ The firmware auto-detects the board and picks the matching image; all four
 are on the card, so the same card works across the whole lineup:
 
 kernel.img        - Pi 1, Zero, A, A+, B, B+ and CM0
-kernel7.img       - Pi 2B+
+kernel7.img       - Pi 2B
 kernel8-32.img    - Pi 3, 3+ and CM3
 kernel7l.img      - Pi 4 and 400
 
