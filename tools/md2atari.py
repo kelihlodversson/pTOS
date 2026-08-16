@@ -11,10 +11,10 @@
 
 The output is meant to be read by EmuCON's TYPE command, or anything else
 that feeds it through the BIOS conout() VT52-style interpreter documented
-in doc/bios.txt: '#'/'##' headings and '**bold**' spans become ESC-p ...
-ESC-q (reverse video on/off), the only styling VT52 has. Everything else
-passes through unchanged, deliberately: this covers what the pTOS readmes
-actually use, not the whole of Markdown.
+in doc/bios.txt: '#' through '######' headings and '**bold**' spans become
+ESC-p ... ESC-q (reverse video on/off), the only styling VT52 has.
+Everything else passes through unchanged, deliberately: this covers what
+the pTOS readmes actually use, not the whole of Markdown.
 
 Every line is written with a trailing CR LF, markdown or not: VT52's LF
 moves the cursor down without returning it to column 0 (ascii_cr() is a

@@ -49,6 +49,15 @@ if [ "$partition_mib" -lt 256 ]; then
     partition_mib=256
 fi
 
+# doc/fat16.txt: DOS FAT16 tops out at 65525 clusters of at most 32768
+# bytes each, ~2 GiB. Fail here with a clear reason instead of letting
+# mkfs.fat -F 16 reject a too-large request below with a less specific
+# "cluster count" error.
+if [ "$partition_mib" -gt 2000 ]; then
+    echo "$0: $srcdir is ${partition_mib} MiB, over FAT16's ~2 GiB limit (doc/fat16.txt)" >&2
+    exit 1
+fi
+
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
 
