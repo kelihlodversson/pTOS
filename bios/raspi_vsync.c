@@ -62,8 +62,11 @@
  * builds that implement fake_vsync_isr raise ARM_IRQ_SMI with one or
  * more of its DONE/TX/RX interrupt status bits (9-11) set, the same
  * bits the firmware-KMS vblank driver checks; any other state of this
- * register is not a firmware-vblank event.  Writing 0 clears every
- * status bit, which is how firmware-KMS acknowledges the interrupt.
+ * register is not a firmware-vblank event.  Writing 0 acknowledges the
+ * firmware vblank the same way firmware-KMS does; on real SMI traffic
+ * that would also reset/disable other aspects of the interface (the
+ * historical source of FKMS's conflicts with other SMI users), but
+ * pTOS has no other SMI user to conflict with.
  */
 #define SMI_BASE                (ARM_IO_BASE + 0x600000)
 #define SMI_CS                  (*(volatile ULONG*)(SMI_BASE + 0x00))
@@ -101,7 +104,7 @@ static void raspi_vsync_isr(void)
     if (!(status & SMI_CS_VSYNC_IRQ_MASK))
         return;
 
-    SMI_CS = 0;         /* acknowledge: clear the SMI status bits */
+    SMI_CS = 0;         /* acknowledge, the same way firmware-KMS does */
 
     last_vsync_hz200 = (ULONG)hz_200;
     vsync_healthy = TRUE;

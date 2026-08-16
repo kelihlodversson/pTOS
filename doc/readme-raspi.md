@@ -18,9 +18,11 @@ Also on the card are the files the Pi's GPU needs to get from power-on to
 loading one of the images above: bootcode.bin, start.elf, fixup.dat,
 start4.elf and fixup4.dat. They are Raspberry Pi's own, redistributed
 unmodified under the terms in LICENCE.broadcom, which travels with them.
-**No config.txt is needed**: the "-32" in kernel8-32.img is enough on its
-own to force 32-bit mode on the Pi 3, 3+ and CM3, which can otherwise also
-run 64-bit code.
+**No config.txt is needed to boot**: the "-32" in kernel8-32.img is enough
+on its own to force 32-bit mode on the Pi 3, 3+ and CM3, which can
+otherwise also run 64-bit code. A config.txt is included anyway, but only
+to opt in to the real vsync-driven VBL described below -- delete it (or
+just its one line) if you don't want that.
 
 ## Writing the card
 
@@ -57,18 +59,23 @@ The shipped Pi 1/2/3 kernels are built with `CONF_WITH_RASPI_VSYNC_IRQ`
 (on by default; see `make menuconfig`'s Video menu), which lets pTOS
 instead drive VBL from a real vsync interrupt when the firmware provides
 one. This is a runtime-detected capability: building it in changes nothing
-by itself. To actually get real-vsync-driven VBL, add to `config.txt`:
+by itself. To actually get real-vsync-driven VBL, `config.txt` needs:
 
 ```
 fake_vsync_isr=1
 ```
 
+This SD card image already ships a `config.txt` with that line set, so
+real-vsync-driven VBL is opted in to by default -- delete the file, or
+just that line, to opt back out. If you're installing from source or onto
+a card that doesn't have it, add the line yourself to get the same effect.
+
 `fake_vsync_isr` is a legacy, otherwise undocumented option -- it is not
 part of the officially documented `config.txt` option set, was historically
 used by RISC OS on the BCM2835/36/37, and may not work, or may need pairing
 with other options, on all firmware versions; it has not yet been verified
-against current firmware on real hardware. It is entirely optional: without
-it (including with no `config.txt` at all, the default described above),
+against current firmware on real hardware. It is entirely optional and
+harmless either way: without it (including with no `config.txt` at all),
 pTOS keeps faking VBL at 50 Hz exactly as before. pTOS only switches to
 real vsync once it has actually seen and validated a firmware-generated
 vblank interrupt; a firmware build that doesn't raise one, or a stray,

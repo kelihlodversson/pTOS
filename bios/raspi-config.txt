@@ -1,0 +1,11 @@
+# pTOS: opt in to the Raspberry Pi's legacy firmware vblank interrupt
+# (fake_vsync_isr), used opportunistically for real vsync-driven VBL
+# timing on Pi 1, 2 and 3 when the firmware actually provides it -- see
+# readme.txt / doc/readme-raspi.md and bios/raspi_vsync.c. This is an
+# undocumented, unofficial firmware facility that has not been verified
+# against current firmware on real hardware: pTOS only switches to real
+# vsync after validating a genuine firmware-vblank interrupt, and falls
+# back to its normal synthetic 50 Hz VBL if none ever arrives. Safe to
+# delete this file, or just this line, to opt back out; either way pTOS
+# boots and runs exactly the same.
+fake_vsync_isr=1
