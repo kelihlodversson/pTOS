@@ -132,6 +132,34 @@ rpi2                kernel7.img, for the Pi 2B+
 rpi3                kernel8-32.img, for the Pi 3, 3+ and CM3
 rpi4                kernel7l.img, for the Pi 4 and 400
 
+QEMU loads a kernel image directly and needs nothing else, but real
+Raspberry Pi hardware does: the GPU reads its own boot firmware
+(bootcode.bin, start*.elf, fixup*.dat) off the SD card before it ever gets
+to loading a kernel*.img. The four kernel images above are named so the
+firmware picks the right one and CPU mode for whichever board is plugged
+in -- including kernel8-32.img's "-32" forcing 32-bit mode on the Pi 3, 3+
+and CM3 even though those boards can also run 64-bit code -- so a single SD
+card built from all four boots the whole Pi 1-4 lineup and no config.txt is
+needed.
+
+Every tagged release (see "Continuous integration" below) attaches this
+combination -- the four kernel images plus the matching boot firmware,
+fetched by tools/fetch-raspi-firmware.sh from a pinned, checksum-verified
+commit of https://github.com/raspberrypi/firmware and redistributed under
+its LICENCE.broadcom, which is included alongside them -- in two forms:
+
+    ptos-raspi-<version>.zip       the loose files, to drop onto an SD
+                                    card that is already partitioned and
+                                    formatted
+    ptos-raspi-<version>.img.zip   a raw disk image (MBR partition table,
+                                    one FAT16 partition) that dd,
+                                    Raspberry Pi Imager or balenaEtcher can
+                                    write directly, with no manual
+                                    partitioning or formatting
+
+tools/mkraspi-image.sh builds the .img from a directory of files with
+mtools and sfdisk alone, without ever mounting or loop-attaching anything.
+
 ARM virt
 --------
 
