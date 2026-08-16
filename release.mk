@@ -208,6 +208,15 @@ release-floppy:
 	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_FLOPPY)).zip $(notdir $(RELEASE_FLOPPY))
 	rm -r $(RELEASE_FLOPPY)
 
+.PHONY: release-raspi-resources
+release-raspi-resources:
+	@if [ -z '$(DEST)' ]; then \
+	  echo 'DEST is not set; usage: make release-raspi-resources DEST=<archive-dir>' >&2; \
+	  exit 1; \
+	fi
+	$(call copy-resources,$(DEST))
+	$(call copy-docs,$(DEST),raspi)
+
 .PHONY: release-emucon
 RELEASE_EMUCON = $(RELEASE_DIR)/emucon
 release-emucon:

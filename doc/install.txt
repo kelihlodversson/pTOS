@@ -142,11 +142,12 @@ and CM3 even though those boards can also run 64-bit code -- so a single SD
 card built from all four boots the whole Pi 1-4 lineup and no config.txt is
 needed.
 
-This combination -- the four kernel images plus the matching boot firmware,
+This combination -- the four kernel images, the matching boot firmware
 fetched by tools/fetch-raspi-firmware.sh from a pinned, checksum-verified
 commit of https://github.com/raspberrypi/firmware and redistributed under
-its LICENCE.broadcom, which is included alongside them -- ships as two
-files:
+its LICENCE.broadcom, and the same optional emucurs.rsc/emuicon.rsc, doc/
+subset and readme.txt every other pTOS release archive carries (see
+"release-raspi-resources" in release.mk) -- ships as two files:
 
     ptos-raspi-<version>.zip       the loose files, to drop onto an SD
                                     card that is already partitioned and

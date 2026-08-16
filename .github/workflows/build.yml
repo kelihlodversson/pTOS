@@ -223,11 +223,13 @@ jobs:
           merge-multiple: true
           path: raspi-build
 
-      # mtools/dosfstools build the FAT16 partition and fdisk provides
-      # sfdisk for the MBR, all without ever mounting or loop-attaching
-      # anything -- see tools/mkraspi-image.sh.
+      # mtools/dosfstools build the FAT16 partition and fdisk provides sfdisk
+      # for the MBR, both without ever mounting or loop-attaching anything --
+      # see tools/mkraspi-image.sh.  dos2unix provides unix2dos, which "make
+      # release-raspi-resources" uses on the bundled text files, same as
+      # every other pTOS release archive.
       - name: Install SD card image tooling
-        run: sudo apt-get update && sudo apt-get install -y mtools dosfstools fdisk zip
+        run: sudo apt-get update && sudo apt-get install -y mtools dosfstools fdisk dos2unix zip
 
       - name: Fetch the Raspberry Pi boot firmware
         run: ./tools/fetch-raspi-firmware.sh sdcard/raspi-firmware
@@ -244,7 +246,11 @@ jobs:
           cp raspi-build/kernel*.img "sdcard/$archive"/
           cp sdcard/raspi-firmware/* "sdcard/$archive"/
           rm -r sdcard/raspi-firmware
-          cp readme.md doc/license.txt "sdcard/$archive"/
+
+          # The loadable mouse cursor and desktop icon resources, and a
+          # readme.txt plus a doc/ subset -- the same optional extras every
+          # other pTOS release archive carries, from release.mk.
+          make release-raspi-resources DEST="sdcard/$archive"
 
           ./tools/mkraspi-image.sh "sdcard/$archive" "sdcard/$archive.img"
 

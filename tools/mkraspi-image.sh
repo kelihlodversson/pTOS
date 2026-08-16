@@ -31,7 +31,9 @@ partition_start=2048
 
 total_bytes=0
 for f in "$srcdir"/*; do
-    size=$(stat -c%s "$f")
+    # du, not stat: a source entry may be a directory (e.g. doc/), whose
+    # recursive content size stat -c%s would not give.
+    size=$(du -sb "$f" | cut -f1)
     total_bytes=$((total_bytes + size))
 done
 
@@ -50,7 +52,7 @@ dd if=/dev/zero of="$fs_image" bs=1M count="$partition_mib" status=none
 mkfs.fat -F 16 -n PTOS "$fs_image" >/dev/null
 
 for f in "$srcdir"/*; do
-    mcopy -i "$fs_image" "$f" ::
+    mcopy -s -i "$fs_image" "$f" ::
 done
 mdir -i "$fs_image" ::
 
