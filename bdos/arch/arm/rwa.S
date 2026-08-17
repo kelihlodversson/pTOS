@@ -150,6 +150,13 @@ _termuser:
         .even
 
         .ds.w   1000
+        // AAPCS requires the stack to be 8-byte aligned at every public
+        // C function call boundary; .even here only guarantees 2 bytes
+        // (a leftover from the m68k original). GCC relies on the
+        // stronger guarantee and will happily emit alignment-checked
+        // NEON loads/stores (e.g. vld1.64 ... :64) for plain struct
+        // assignments, which hard-fault if this stack starts unaligned.
+        .balign 8
 fstrt:
         .ds.l   1
 
