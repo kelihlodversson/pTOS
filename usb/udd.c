@@ -83,7 +83,7 @@ udd_unregister(struct uddif *a)
         if (a == *list)
         {
             *list = a->next;
-            break;
+            return 0;
         }
         list = &((*list)->next);
     }
