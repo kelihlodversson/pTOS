@@ -1,4 +1,4 @@
-# EmuTOS - Raspberry Pi version
+# pTOS - Raspberry Pi version
 
 This SD card image is suitable for the following hardware:
 - Raspberry Pi 1, Zero, A, A+, B, B+ and CM0
