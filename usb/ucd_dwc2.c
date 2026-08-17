@@ -302,6 +302,16 @@ static void dwc_otg_core_host_init(struct dwc2_core_regs *regs)
                 CONFIG_DWC2_HOST_NPERIO_TX_FIFO_SIZE) <<
                 DWC2_FIFOSIZE_STARTADDR_OFFSET;
         writel(ptxfifosize, &regs->hptxfsiz);
+
+        KINFO(("dwc2: dfifo_depth=%lu requested rx=%u nptx=%u ptx=%u total=%u\n",
+            (readl(&regs->ghwcfg3) & DWC2_HWCFG3_DFIFO_DEPTH_MASK) >>
+                DWC2_HWCFG3_DFIFO_DEPTH_OFFSET,
+            CONFIG_DWC2_HOST_RX_FIFO_SIZE, CONFIG_DWC2_HOST_NPERIO_TX_FIFO_SIZE,
+            CONFIG_DWC2_HOST_PERIO_TX_FIFO_SIZE,
+            CONFIG_DWC2_HOST_RX_FIFO_SIZE + CONFIG_DWC2_HOST_NPERIO_TX_FIFO_SIZE +
+                CONFIG_DWC2_HOST_PERIO_TX_FIFO_SIZE));
+        KINFO(("dwc2: readback grxfsiz=%08lx gnptxfsiz=%08lx hptxfsiz=%08lx\n",
+            readl(&regs->grxfsiz), readl(&regs->gnptxfsiz), readl(&regs->hptxfsiz)));
     }
 #endif
 

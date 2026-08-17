@@ -282,6 +282,7 @@ long usb_hub_port_connect_change(struct usb_device *dev, long port, unsigned sho
 {
     struct usb_device *usb;
     long tries;
+    long devnum;
 
     /* Clear the connection change status */
     usb_clear_port_feature(dev, port + 1, USB_PORT_FEAT_C_CONNECTION);
@@ -330,12 +331,17 @@ long usb_hub_port_connect_change(struct usb_device *dev, long port, unsigned sho
         usb->portnr = port + 1;
         dev->children[port] = usb;
         usb->parent = dev;
+        /* usb_new_device() temporarily zeroes usb->devnum while
+         * negotiating the address, and some of its failure paths return
+         * without restoring it -- save the real index now so freeing the
+         * device below can't underflow into usb_dev[-1]. */
+        devnum = usb->devnum;
         /* Run it through the hoops (find a driver, etc) */
         if (usb_new_device(usb) == 0)
             return 1;
 
         /* Ensure device is cleared before the next try (if any). */
-        usb_free_device(usb->devnum);
+        usb_free_device(devnum);
         dev->children[port] = NULL;
         if (tries + 1 < USB_ENUM_TRIES)
             mdelay(USB_ENUM_RETRY_DELAY_MS);
