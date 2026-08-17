@@ -21,16 +21,18 @@
  *
  * This support is compiled in by default on Pi 1-3 (see
  * CONF_WITH_RASPI_VSYNC_IRQ in bios/Kconfig), but the firmware behaviour
- * it looks for is opt-in, unofficial config.txt behaviour the user adds
- * themselves (see doc/readme-raspi.md).  Nothing about VBL timing
- * changes until a real, validated firmware-vblank SMI is actually
- * observed: with no config.txt (the default) or firmware that doesn't
- * raise it, pTOS keeps faking VBL at 50 Hz exactly as before -- this is
- * a runtime-detected capability, not a boot-time assumption.  Whether
- * it never arrives at all, or it stops arriving after having worked,
- * VBL falls back to (and stays on) the existing timer-driven 50 Hz,
- * driven by raspi_vbl_fallback() below; it re-locks onto real vsync
- * automatically as soon as validated interrupts resume.
+ * it looks for is opt-in, unofficial config.txt behaviour -- already set
+ * on the release SD card image (bios/raspi-config.txt), but something a
+ * from-source build or a hand-written config.txt has to add explicitly
+ * (see doc/readme-raspi.md).  Nothing about VBL timing changes until a
+ * real, validated firmware-vblank SMI is actually observed: without the
+ * option set, or on firmware that doesn't raise it, pTOS keeps faking
+ * VBL at 50 Hz exactly as before -- this is a runtime-detected
+ * capability, not a boot-time assumption.  Whether it never arrives at
+ * all, or it stops arriving after having worked, VBL falls back to (and
+ * stays on) the existing timer-driven 50 Hz, driven by
+ * raspi_vbl_fallback() below; it re-locks onto real vsync automatically
+ * as soon as validated interrupts resume.
  *
  * Not used on Pi 4 (TARGET_RPI4): its interrupts aren't routed through
  * the legacy interrupt controller raspi_connect_irq() drives, and its

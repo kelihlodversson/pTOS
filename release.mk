@@ -223,10 +223,11 @@ release-raspi-resources:
 	# every #W slot with a non-empty path at boot, so this alone is what
 	# makes the desktop come up with a window already open on the drive.
 	cp desk/emudesk-raspi.inf $(DEST)/EMUDESK.INF
-	# Opts every shipped card in to the legacy fake_vsync_isr vblank
-	# interrupt CONF_WITH_RASPI_VSYNC_IRQ (bios/raspi_vsync.c) can use for
-	# real vsync-driven VBL on Pi 1/2/3 -- harmless where the firmware
-	# doesn't support it, see bios/raspi-config.txt and doc/readme-raspi.md.
+	# Opts every shipped Pi 1/2/3 card in to the legacy fake_vsync_isr
+	# vblank interrupt CONF_WITH_RASPI_VSYNC_IRQ (bios/raspi_vsync.c) can
+	# use for real vsync-driven VBL -- scoped off Pi 4 by the file itself,
+	# and harmless where the firmware doesn't support it either way, see
+	# bios/raspi-config.txt and doc/readme-raspi.md.
 	cp bios/raspi-config.txt $(DEST)/config.txt
 	# Like copy-docs, but readme.txt is rendered from Markdown with Atari
 	# VT52 escapes (tools/md2atari.py) instead of a plain doc/readme-*.txt,
