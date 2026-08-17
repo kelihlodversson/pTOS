@@ -8,4 +8,15 @@
 # back to its normal synthetic 50 Hz VBL if none ever arrives. Safe to
 # delete this file, or just this line, to opt back out; either way pTOS
 # boots and runs exactly the same.
+#
+# Pi 4 doesn't use this mechanism (its real vsync source is the Pixel
+# Valve instead, tracked separately in issue #206), so it's scoped out
+# below rather than left for firmware neither pTOS nor this feature has
+# any use for on that board to act on.
+[all]
 fake_vsync_isr=1
+
+[pi4]
+fake_vsync_isr=0
+
+[all]

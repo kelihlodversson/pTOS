@@ -89,22 +89,25 @@ static volatile BOOL vsync_healthy;
  * ARM_IRQ_SMI handler, connected via raspi_connect_irq().
  * raspi_connect_irq()/raspi_int_handler() only dispatch to this
  * handler -- they never touch the SMI peripheral itself -- so this is
- * the only place that validates and acknowledges the interrupt source.
- * A dispatched SMI interrupt whose status doesn't carry any of the
- * firmware-vblank bits is not treated as VBL, and is left unacknowledged
- * rather than guessed at.  Only once the vblank bits are seen does this
- * mark real vsync healthy and drive VBL directly; int_timerc()'s
- * every-4th-tick fake (routed through raspi_vbl_fallback() below) then
- * stays quiet as long as validated interrupts keep arriving on time.
+ * the only place that acknowledges the interrupt source.  ARM_IRQ_SMI
+ * is a level-triggered peripheral IRQ, so the status register is always
+ * cleared before this returns, whether or not it carries a
+ * firmware-vblank bit: leaving an unrecognized status unacknowledged
+ * would keep the line asserted and storm the CPU with the same
+ * interrupt forever.  Only once the vblank bits are actually seen in
+ * the captured status does this mark real vsync healthy and drive VBL
+ * directly; int_timerc()'s every-4th-tick fake (routed through
+ * raspi_vbl_fallback() below) then stays quiet as long as validated
+ * interrupts keep arriving on time.
  */
 static void raspi_vsync_isr(void)
 {
     ULONG status = SMI_CS;
 
+    SMI_CS = 0;         /* always acknowledge, the same way firmware-KMS does */
+
     if (!(status & SMI_CS_VSYNC_IRQ_MASK))
         return;
-
-    SMI_CS = 0;         /* acknowledge, the same way firmware-KMS does */
 
     last_vsync_hz200 = (ULONG)hz_200;
     vsync_healthy = TRUE;
