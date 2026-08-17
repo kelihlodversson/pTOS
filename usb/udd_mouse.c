@@ -1,3 +1,8 @@
+#include "config.h"
+#if CONF_DEBUG_USB_ASYNC
+#define ENABLE_KDEBUG   /* also trace mouse HID reports under this switch */
+#endif
+
 #include "usb_global.h"
 
 #include "usb.h"
@@ -129,6 +134,8 @@ static void mouse_report_complete(struct usb_async_int_msg *msg,
     mse_data.data[5] = 0;
     changed = (info != old_info) || delta_x || delta_y
         || ((actual_length >= 4) && (extra != mse_data.data[3]));
+    KDEBUG(("usb mouse report: info=%02x dx=%d dy=%d changed=%d\n",
+        info, delta_x, delta_y, changed));
     if (!changed)
         return;
 

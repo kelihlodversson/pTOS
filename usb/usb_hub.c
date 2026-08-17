@@ -643,10 +643,19 @@ usb_rh_wakeup(void)
     /* nothing */
 }
 
+/*
+ * Number of consecutive fully-quiet passes (no hub reporting a port
+ * change) required before the boot-time scan below gives up, and the
+ * delay between them.
+ */
+#define USB_ENUM_SETTLE_PASSES     3
+#define USB_ENUM_SETTLE_DELAY_MS   50
+
 void
 usb_hub_init(struct usb_device *dev)
 {
     long i,j,k = 0;
+    long settle = 0;
 
     cprintf("Scanning USB devices.... Please wait...\n");
 
@@ -668,8 +677,25 @@ again:
                         k = j+1;
                     }
                 }
+                settle = 0;
                 goto again;
             }
         }
+    }
+
+    /*
+     * A full pass found nothing new, but that doesn't necessarily mean
+     * enumeration is done: on a real host controller (unlike QEMU's dwc2
+     * model, which settles instantly) a device's connect signal can still
+     * be debouncing, and there is no periodic re-scan after this function
+     * returns -- see the comment in usb_hub_events() above. Give
+     * slow-to-settle devices a few more quiet passes before giving up, so
+     * one that finishes connecting a few tens of milliseconds behind its
+     * neighbours isn't permanently missed.
+     */
+    if (++settle < USB_ENUM_SETTLE_PASSES)
+    {
+        mdelay(USB_ENUM_SETTLE_DELAY_MS);
+        goto again;
     }
 }
