@@ -1,7 +1,4 @@
-#include "config.h"
-#if CONF_DEBUG_USB_ASYNC
-#define ENABLE_KDEBUG   /* also trace mouse HID reports under this switch */
-#endif
+/* #define ENABLE_KDEBUG */
 
 #include "usb_global.h"
 
