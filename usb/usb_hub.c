@@ -267,9 +267,21 @@ long hub_port_reset(struct usb_device *dev, long port)
 }
 
 
+/*
+ * Some devices -- notably wireless-mouse dongles -- aren't ready to answer
+ * the very first GET_DESCRIPTOR request right after reset: the control
+ * transfer comes back as a short/empty read even though the same device
+ * enumerates fine a beat later. Retry the whole reset+enumerate cycle a
+ * few times, with a short delay between attempts, before concluding the
+ * port is genuinely empty and disabling it.
+ */
+#define USB_ENUM_TRIES          3
+#define USB_ENUM_RETRY_DELAY_MS 100
+
 long usb_hub_port_connect_change(struct usb_device *dev, long port, unsigned short portstatus)
 {
     struct usb_device *usb;
+    long tries;
 
     /* Clear the connection change status */
     usb_clear_port_feature(dev, port + 1, USB_PORT_FEAT_C_CONNECTION);
@@ -285,46 +297,53 @@ long usb_hub_port_connect_change(struct usb_device *dev, long port, unsigned sho
         }
     }
 
-    /* Reset the port */
-    if (hub_port_reset(dev, port) < 0) {
-        KDEBUG(("cannot reset port %li!?\n", port + 1));
-        return -1;
-    }
-
-    /* Allocate a new device struct for it */
-    usb = usb_alloc_new_device(dev->controller);
-    if (!usb)
+    for (tries = 0; tries < USB_ENUM_TRIES; tries++)
     {
-        return -1;
-    }
+        /* Reset the port */
+        if (hub_port_reset(dev, port) < 0) {
+            KDEBUG(("cannot reset port %li!?\n", port + 1));
+            return -1;
+        }
 
-    switch (portstatus & USB_PORT_STAT_SPEED_MASK) {
-    case USB_PORT_STAT_SUPER_SPEED:
-        usb->speed = USB_SPEED_SUPER;
-        break;
-    case USB_PORT_STAT_HIGH_SPEED:
-        usb->speed = USB_SPEED_HIGH;
-        break;
-    case USB_PORT_STAT_LOW_SPEED:
-        usb->speed = USB_SPEED_LOW;
-        break;
-    default:
-        usb->speed = USB_SPEED_FULL;
-        break;
-    }
+        /* Allocate a new device struct for it */
+        usb = usb_alloc_new_device(dev->controller);
+        if (!usb)
+        {
+            return -1;
+        }
 
-    usb->portnr = port + 1;
-    dev->children[port] = usb;
-    usb->parent = dev;
-    /* Run it through the hoops (find a driver, etc) */
-    if (usb_new_device(usb)) {
-        /* Ensure device is cleared. */
+        switch (portstatus & USB_PORT_STAT_SPEED_MASK) {
+        case USB_PORT_STAT_SUPER_SPEED:
+            usb->speed = USB_SPEED_SUPER;
+            break;
+        case USB_PORT_STAT_HIGH_SPEED:
+            usb->speed = USB_SPEED_HIGH;
+            break;
+        case USB_PORT_STAT_LOW_SPEED:
+            usb->speed = USB_SPEED_LOW;
+            break;
+        default:
+            usb->speed = USB_SPEED_FULL;
+            break;
+        }
+
+        usb->portnr = port + 1;
+        dev->children[port] = usb;
+        usb->parent = dev;
+        /* Run it through the hoops (find a driver, etc) */
+        if (usb_new_device(usb) == 0)
+            return 1;
+
+        /* Ensure device is cleared before the next try (if any). */
         usb_free_device(usb->devnum);
-        /* Woops, disable the port */
         dev->children[port] = NULL;
-        KDEBUG(("hub: disabling port %ld\n", port + 1));
-        usb_clear_port_feature(dev, port + 1, USB_PORT_FEAT_ENABLE);
+        if (tries + 1 < USB_ENUM_TRIES)
+            mdelay(USB_ENUM_RETRY_DELAY_MS);
     }
+
+    /* Woops, disable the port */
+    KDEBUG(("hub: disabling port %ld\n", port + 1));
+    usb_clear_port_feature(dev, port + 1, USB_PORT_FEAT_ENABLE);
 
     return 1;
 }
