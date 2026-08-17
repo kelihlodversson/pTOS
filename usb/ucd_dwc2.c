@@ -819,6 +819,7 @@ static void dwc2_async_finish_success(struct dwc2_priv *priv,
 static void dwc2_async_finish_error(struct dwc2_priv *priv,
                                     struct dwc2_async_slot *slot)
 {
+    KINFO(("dwc2_async: finish_error generation=%lu\n", slot->generation));
     slot->error_pending = TRUE;
     dwc2_async_stop(priv, slot);
 }
@@ -1597,6 +1598,7 @@ static LONG dwc2_cancel_async_int_msg(struct dwc2_priv *priv,
     if (!slot)
         return EINVAL;
 
+    KINFO(("dwc2_async: explicit cancel generation=%lu\n", slot->generation));
     slot->cancelled = TRUE;
     dwc2_async_stop(priv, slot);
 
