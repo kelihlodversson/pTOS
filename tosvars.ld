@@ -34,8 +34,15 @@ _sysvars_start  = 0x400;
  * software depending on them, and Ssystem() (bdos/ssystem.c) now gives
  * ARM programs a documented way to reach the same values without a
  * fixed address at all, so on ARM these are ordinary global variables
- * instead -- see bios/arch/arm/tosvars.c and #219.
+ * instead (bios/arch/arm/tosvars.c and a few other files -- see
+ * #219). This whole block must stay guarded by #if ARCH_M68K, not
+ * just left unconditional: a plain "symbol = address;" assignment
+ * here silently wins over a same-named .bss definition from an ARM
+ * object file with no linker error or warning at all, so leaving any
+ * of these active for ARM re-aliases that variable straight back to
+ * this fixed m68k address instead of its real storage.
  */
+#if ARCH_M68K
 _etv_timer      = 0x400;        /* GEM event timer vector */
 _etv_critic     = 0x404;        /* GEM critical error handler */
 _etv_term       = 0x408;        /* GEM program termination vector */
@@ -128,6 +135,7 @@ _warm_magic     = 0x6fc;        /* set to WARM_MAGIC if next boot must not */
 #if CONF_WITH_68030_PMMU
 _pmmutree       = PMMUTREE_ADDRESS_68030;   /* for pmmu tree on 68030 */
 #endif
+#endif /* ARCH_M68K */
 
 /*
  * The sysvars region ends at 0x800.
