@@ -434,20 +434,19 @@ long osif(short *pw)
 restrt:
     fn = pw[0];
 
+#ifdef __arm__
     /*
      * Ssystem() (0x154) is far outside the funcs[] table above, and
      * unlike every other call handled through it, its arguments don't
      * follow the table's implicit stdio/handle conventions -- so it's
      * special-cased here instead of getting its own funcs[] slot.
+     * ARM only: real m68k TOS software already has Supexec() and direct
+     * memory access for this, and the smallest m68k ROM images (see
+     * release.mk) have no code size to spare for a second way to do it.
      */
     if (fn == GEMDOS_SSYSTEM)
-    {
-#ifdef __arm__
         return xssystem((WORD)pw[1], pw[2], pw[3]);
-#else
-        return xssystem((WORD)pw[1], *(LONG *)&pw[2], *(LONG *)&pw[4]);
 #endif
-    }
 
     if (fn > MAX_FNCALL)
         return EINVFN;
