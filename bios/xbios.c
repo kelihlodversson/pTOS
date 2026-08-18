@@ -38,7 +38,7 @@
 #include "vectors.h"
 #include "xbios.h"
 #if defined(__arm__)
-#include "arch/arm/biosargs.h"
+#include "biosargs.h"
 #endif
 
 #define DBG_XBIOS        0

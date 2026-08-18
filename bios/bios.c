@@ -39,7 +39,7 @@
 #include "biosmem.h"
 #include "aespub.h"
 #if defined(__arm__)
-#include "arch/arm/biosargs.h"
+#include "biosargs.h"
 #endif
 #include "ikbd.h"
 #include "mouse.h"

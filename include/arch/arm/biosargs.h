@@ -13,16 +13,24 @@
 #include "portab.h"
 
 /*
- * _biostrap/_xbiostrap (vectorsasm.S) call the vectored handler with at
- * most 4 real arguments in r0-r3 -- that's all _arm_dispatch_svc's callers
- * put in registers, and nothing marshals a 5th+ argument to the stack.
- * The handful of BIOS/XBIOS functions that need more than that (Rwabs/
- * Lrwabs, Floprd/Flopwr/Flopver, Flopfmt, Rsconf) take a pointer to one of
- * these structs as their single real argument instead, on ARM only.
+ * _biostrap/_xbiostrap (bios/arch/arm/vectorsasm.S) call the vectored
+ * handler with at most 4 real arguments in r0-r3 -- that's all
+ * _arm_dispatch_svc's callers put in registers, and nothing marshals a
+ * 5th+ argument to the stack. The handful of BIOS/XBIOS functions that
+ * need more than that (Rwabs/Lrwabs, Floprd/Flopwr/Flopver, Flopfmt,
+ * Rsconf) take a pointer to one of these structs as their single real
+ * argument instead, on ARM only.
  *
- * This is part of the trap ABI shared with libcmini's ARM osbind.h
+ * Used on both ends of that call: the ARM trampolines in bios/bios.c and
+ * bios/xbios.c (the callee, unpacking the struct) and the ARM branches of
+ * include/biosbind.h and include/xbiosbind.h's own bios_l_wlwwwl/
+ * xbios_w_llwwwww/xbios_w_llwwwwwlw/xbios_v_wwwwww (the caller, for
+ * pTOS-internal code that invokes BIOS/XBIOS via the trap rather than
+ * calling the handler directly).
+ *
+ * This is also part of the trap ABI shared with libcmini's ARM osbind.h
  * (include/mint/arch/arm/biosargs.h in the libcmini repo) -- keep the
- * field order and types in sync between the two.
+ * field order and types in sync across all three.
  */
 
 struct bios_lrwabs_args         /* Rwabs/Lrwabs -- BIOS function 0x04 */
