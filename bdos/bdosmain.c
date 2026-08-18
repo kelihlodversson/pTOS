@@ -33,6 +33,7 @@
 #include "string.h"
 #include "kprint.h"
 #include "dos.h"
+#include "ssystem.h"
 
 /*
 **  externals
@@ -432,6 +433,22 @@ long osif(short *pw)
 
 restrt:
     fn = pw[0];
+
+    /*
+     * Ssystem() (0x154) is far outside the funcs[] table above, and
+     * unlike every other call handled through it, its arguments don't
+     * follow the table's implicit stdio/handle conventions -- so it's
+     * special-cased here instead of getting its own funcs[] slot.
+     */
+    if (fn == GEMDOS_SSYSTEM)
+    {
+#ifdef __arm__
+        return xssystem((WORD)pw[1], pw[2], pw[3]);
+#else
+        return xssystem((WORD)pw[1], *(LONG *)&pw[2], *(LONG *)&pw[4]);
+#endif
+    }
+
     if (fn > MAX_FNCALL)
         return EINVFN;
 
