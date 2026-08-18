@@ -27,6 +27,7 @@
 #include "../bios/tosvars.h"
 #include "../bios/cookie.h"
 #include "../include/ahdi.h"
+#include "string.h"
 
 /* not in tosvars.h -- only bios/arch/arm/vectors.c otherwise uses it */
 extern volatile LONG vbclock;
@@ -166,29 +167,41 @@ static LONG ssystem_setcookie(LONG tag, LONG value)
 
 /*
  * ssystem_getval/ssystem_setval - S_GET[LWB]VAL/S_SET[LWB]VAL
+ *
+ * Several of the looked-up variables are pointers or function pointers,
+ * not LONG/WORD/BYTE objects, so this copies through memcpy() rather
+ * than dereferencing p through an unrelated scalar type -- the latter
+ * violates C's strict-aliasing/effective-type rules and can miscompile
+ * under optimization even though it happens to work today.
  */
 static LONG ssystem_getlval(LONG addr)
 {
     void *p = SVAL_LOOKUP(lval_table, addr);
+    LONG value;
     if (!p)
         return EINVFN;
-    return *(LONG *)p;
+    memcpy(&value, p, sizeof(value));
+    return value;
 }
 
 static LONG ssystem_getwval(LONG addr)
 {
     void *p = SVAL_LOOKUP(wval_table, addr);
+    WORD value;
     if (!p)
         return EINVFN;
-    return *(WORD *)p;
+    memcpy(&value, p, sizeof(value));
+    return value;
 }
 
 static LONG ssystem_getbval(LONG addr)
 {
     void *p = SVAL_LOOKUP(bval_table, addr);
+    BYTE value;
     if (!p)
         return EINVFN;
-    return *(BYTE *)p;
+    memcpy(&value, p, sizeof(value));
+    return value;
 }
 
 static LONG ssystem_setlval(LONG addr, LONG value)
@@ -196,25 +209,27 @@ static LONG ssystem_setlval(LONG addr, LONG value)
     void *p = SVAL_LOOKUP(lval_table, addr);
     if (!p)
         return EINVFN;
-    *(LONG *)p = value;
+    memcpy(p, &value, sizeof(value));
     return E_OK;
 }
 
 static LONG ssystem_setwval(LONG addr, LONG value)
 {
     void *p = SVAL_LOOKUP(wval_table, addr);
+    WORD wvalue = (WORD)value;
     if (!p)
         return EINVFN;
-    *(WORD *)p = (WORD)value;
+    memcpy(p, &wvalue, sizeof(wvalue));
     return E_OK;
 }
 
 static LONG ssystem_setbval(LONG addr, LONG value)
 {
     void *p = SVAL_LOOKUP(bval_table, addr);
+    BYTE bvalue = (BYTE)value;
     if (!p)
         return EINVFN;
-    *(BYTE *)p = (BYTE)value;
+    memcpy(p, &bvalue, sizeof(bvalue));
     return E_OK;
 }
 

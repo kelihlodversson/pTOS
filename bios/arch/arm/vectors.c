@@ -33,7 +33,9 @@
 // ==== References ===========================================================
 
 // TOS System variables
-volatile LONG vbclock; /* not in tosvars.h; only ARM (this file) uses it -- see arch/arm/tosvars.c */
+volatile LONG vbclock; /* not in tosvars.h -- defined here since this is its
+                         * only writer; also read by bdos/ssystem.c's
+                         * Ssystem(S_GETLVAL/S_SETLVAL) lookup table */
 extern void (*etv_timer)(int);
 extern const UWORD bios_ent;
 extern const UWORD xbios_ent;
