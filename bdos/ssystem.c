@@ -26,6 +26,10 @@
 #include "gemerror.h"
 #include "../bios/tosvars.h"
 #include "../bios/cookie.h"
+#include "../include/ahdi.h"
+
+/* not in tosvars.h -- only bios/arch/arm/vectors.c otherwise uses it */
+extern volatile LONG vbclock;
 
 /*
  * one lookup table per width, each mapping the documented TOS address
@@ -48,6 +52,7 @@ static const SVAR lval_table[] = {
     SVAR_ENTRY(0x44e, v_bas_ad),
     SVAR_ENTRY(0x45a, colorptr),
     SVAR_ENTRY(0x456, vblqueue),
+    SVAR_ENTRY(0x462, vbclock),
     SVAR_ENTRY(0x466, frclock),
     SVAR_ENTRY(0x46a, hdv_init),
     SVAR_ENTRY(0x472, hdv_bpb),
@@ -66,6 +71,7 @@ static const SVAR lval_table[] = {
     SVAR_ENTRY(0x50a, prt_vec),
     SVAR_ENTRY(0x50e, aux_stat),
     SVAR_ENTRY(0x512, aux_vec),
+    SVAR_ENTRY(0x516, pun_ptr),
     SVAR_ENTRY(0x5ac, bell_hook),
     SVAR_ENTRY(0x5b0, kcl_hook),
 };

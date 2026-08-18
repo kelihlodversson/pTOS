@@ -33,7 +33,7 @@
 // ==== References ===========================================================
 
 // TOS System variables
-extern volatile LONG vbclock;
+volatile LONG vbclock; /* not in tosvars.h; only ARM (this file) uses it -- see arch/arm/tosvars.c */
 extern void (*etv_timer)(int);
 extern const UWORD bios_ent;
 extern const UWORD xbios_ent;

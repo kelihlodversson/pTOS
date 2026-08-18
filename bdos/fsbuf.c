@@ -23,7 +23,13 @@
 #include "string.h"
 #include "kprint.h"
 
+#ifdef __arm__
+BCB *bufl[2];           /* buffer lists - two lists:  FAT and dir/data --
+                         * fixed address on m68k (tosvars.ld), ordinary
+                         * storage here (#219) */
+#else
 extern BCB *bufl[];     /* buffer lists - two lists:  FAT and dir/data */
+#endif
 
 #define NUMBUFS 2       /* buffers per list */
 

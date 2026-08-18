@@ -33,7 +33,7 @@ obj-$(ARCH_M68K) += aciavecs.o kprintasm.o linea.o natfeat.o natfeats.o \
 
 obj-$(ARCH_COLDFIRE) += coldfire.o coldfire2.o spi.o
 
-obj-$(ARCH_ARM) += vectorsasm.o aciaemu.o
+obj-$(ARCH_ARM) += vectorsasm.o aciaemu.o tosvars.o
 
 # The cache maintenance operations below do not exist on the ARM1176 used
 # by the first generation Raspberry Pi.
