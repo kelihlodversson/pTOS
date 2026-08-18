@@ -1049,6 +1049,95 @@ include local.mk
 endif
 
 #
+# Regression test harness
+#
+# The test harness is a standalone ELF (ARM) or TOS executable (m68k)
+# that runs under pTOS and exercises regression tests.  It is NOT
+# linked into the OS image; instead it is placed on a raw HD image
+# together with an emudesk.inf that autoruns it on boot.
+#
+
+TEST_DESTDIR = tests/destdata
+TEST_HD_SIZE = 4194304            # 4 MiB, must be power of two for QEMU
+
+ifdef CONF_WITH_REGRESSION_TESTS
+
+# Auto-discover test suites: each tests/<name>/<name>.c provides test_<name>()
+TEST_SUITES := $(sort $(patsubst tests/%/,%,$(dir $(wildcard tests/*/*.c))))
+TEST_SUITE_FUNCS = $(addprefix test_,$(TEST_SUITES))
+
+GEN_SRC += tests/run_tests.c
+
+tests/run_tests.c: $(wildcard tests/*/*.c) | obj
+	@echo '/* Auto-generated -- do not edit */' > $@
+	@for s in $(TEST_SUITES); do \
+	  echo "extern void test_$$s(void);" >> $@; \
+	done >> $@
+	@echo '' >> $@
+	@echo 'void ptest_run_tests(void)' >> $@
+	@echo '{' >> $@
+	@for s in $(TEST_SUITES); do \
+	  echo "    test_$$s();" >> $@; \
+	done >> $@
+	@echo '}' >> $@
+
+TEST_OBJ = obj/runtests.o obj/run_tests.o obj/testlib.o
+
+obj/runtests.o: tests/runtests.c | obj
+	$(CC) $(CFILE_FLAGS) -Itests $(DEPFLAGS) -c $< -o $@
+
+obj/run_tests.o: tests/run_tests.c | obj
+	$(CC) $(CFILE_FLAGS) -Itests $(DEPFLAGS) -c $< -o $@
+
+obj/testlib.o: tests/testlib.c | obj
+	$(CC) $(CFILE_FLAGS) -Itests $(DEPFLAGS) -c $< -o $@
+
+ifdef ARCH_ARM
+TEST_STARTUP = obj/teststart.o
+obj/teststart.o: tests/arch/arm/teststart.S | obj
+	$(CC) $(SFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
+else
+TEST_STARTUP = obj/minicrt.o
+endif
+
+# Each test suite object depends on its source and the generated run_tests.c
+define test-suite-rule
+obj/$(1).o: tests/$(1)/$(1).c tests/run_tests.c
+	$(CC) $(CFILE_FLAGS) $(DEPFLAGS) -Itests -c $$< -o $$@
+endef
+$(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
+
+TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
+
+# Link the test harness as runtests.tos.  Use --emit-relocs so the pTOS
+# ELF loader can relocate it; for m68k the default ld output format is
+# already TOS PRG.  Named .tos by convention regardless of format.
+runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) obj/miscasm.o
+	$(LD) -Wl,-q -Wl,-Ttext=0 -Wl,-e_start $+ $(LIBS) -o $@
+
+# Build the raw HD image: MBR + FAT16 partition, total size power of two.
+# tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
+# FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
+TEST_HD_FILES = runtests.tos tests/emudesk.inf
+
+test-hd.img: runtests.tos tests/emudesk.inf
+	@echo '  MKHD   $@'
+	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR)
+
+.PHONY: test-hd
+test-hd: test-hd.img
+
+TOCLEAN += tests/run_tests.c runtests.tos test-hd.img
+
+else # !CONF_WITH_REGRESSION_TESTS
+
+.PHONY: test-hd
+test-hd:
+	@echo 'Enable CONF_WITH_REGRESSION_TESTS first (make menuconfig)'
+
+endif
+
+#
 # Clean
 #
 

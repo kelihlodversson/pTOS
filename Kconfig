@@ -34,6 +34,7 @@ source "aes/Kconfig"
 source "desk/Kconfig"
 source "cli/Kconfig"
 source "usb/Kconfig"
+source "tests/Kconfig"
 
 endmenu
 

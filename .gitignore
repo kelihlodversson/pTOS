@@ -35,6 +35,9 @@
 /desk/desk_rsc.[ch]
 /desk/icons.[ch]
 /po/messages.pot
+/tests/run_tests.c
+/runtests.tos
+/test-hd.img
 
 # Host tools built by the Makefile
 /bug
