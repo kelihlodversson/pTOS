@@ -38,6 +38,9 @@
 #include "nls.h"
 #include "biosmem.h"
 #include "aespub.h"
+#if defined(__arm__)
+#include "arch/arm/biosargs.h"
+#endif
 #include "ikbd.h"
 #include "mouse.h"
 #include "midi.h"
@@ -1061,6 +1064,20 @@ LONG lrwabs(WORD r_w, UBYTE *adr, WORD numb, WORD first, WORD drive, LONG lfirst
     return protect_wlwwwl((PFLONG)hdv_rw, r_w, (LONG)adr, numb, first, drive, lfirst);
 }
 
+#if defined(__arm__)
+/*
+ * ARM's trap entry (_biostrap, vectorsasm.S) only delivers 4 real
+ * arguments in registers; lrwabs() needs 6, so it's called through the
+ * vec table via this trampoline instead, unpacking a struct pointer.
+ * See arch/arm/biosargs.h.
+ */
+static LONG bios_4_arm(struct bios_lrwabs_args *a)
+{
+    return lrwabs((WORD)a->r_w, (UBYTE *)a->adr, (WORD)a->numb,
+                  (WORD)a->first, (WORD)a->drive, a->lfirst);
+}
+#endif
+
 #if DBGBIOS
 static LONG bios_4(WORD r_w, UBYTE *adr, WORD numb, WORD first, WORD drive, LONG lfirst)
 {
@@ -1270,7 +1287,11 @@ const PFLONG bios_vecs[] = {
     VEC(bios_1, bconstat),
     VEC(bios_2, bconin),
     VEC(bios_3, bconout),
+#if defined(__arm__)
+    (PFLONG) bios_4_arm,
+#else
     VEC(bios_4, lrwabs),
+#endif
     VEC(bios_5, setexc),
     VEC(bios_6, tickcal),
     VEC(bios_7, getbpb),

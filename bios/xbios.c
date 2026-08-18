@@ -37,6 +37,9 @@
 #include "asm.h"
 #include "vectors.h"
 #include "xbios.h"
+#if defined(__arm__)
+#include "arch/arm/biosargs.h"
+#endif
 
 #define DBG_XBIOS        0
 
@@ -200,6 +203,19 @@ static LONG xbios_8(UBYTE *buf, LONG filler, WORD devno, WORD sectno,
 }
 #endif
 
+#if defined(__arm__)
+/*
+ * ARM's trap entry only delivers 4 real arguments in registers; floprd()
+ * needs 7, so it's called through the vec table via this trampoline
+ * instead, unpacking a struct pointer. See arch/arm/biosargs.h.
+ */
+static LONG xbios_8_arm(struct xbios_flop_io_args *a)
+{
+    return floprd((UBYTE *)a->buf, a->filler, (WORD)a->dev, (WORD)a->sect,
+                  (WORD)a->track, (WORD)a->side, (WORD)a->count);
+}
+#endif
+
 
 
 /*
@@ -220,6 +236,15 @@ static LONG xbios_9(const UBYTE *buf, LONG filler, WORD devno, WORD sectno,
 {
     kprintf("XBIOS: Flopwr()\n");
     return flopwr(buf, filler, devno, sectno, trackno, sideno, count);
+}
+#endif
+
+#if defined(__arm__)
+/* See xbios_8_arm above. */
+static LONG xbios_9_arm(struct xbios_flop_io_args *a)
+{
+    return flopwr((const UBYTE *)a->buf, a->filler, (WORD)a->dev, (WORD)a->sect,
+                  (WORD)a->track, (WORD)a->side, (WORD)a->count);
 }
 #endif
 
@@ -265,6 +290,20 @@ static LONG xbios_a(UBYTE *buf, WORD *skew, WORD devno, WORD spt,
     kprintf("XBIOS: flopfmt()\n");
     return flopfmt(buf, skew, devno, spt, trackno, sideno, interlv,
                    virgin, magic);
+}
+#endif
+
+#if defined(__arm__)
+/*
+ * ARM's trap entry only delivers 4 real arguments in registers; flopfmt()
+ * needs 9, so it's called through the vec table via this trampoline
+ * instead, unpacking a struct pointer. See arch/arm/biosargs.h.
+ */
+static LONG xbios_a_arm(struct xbios_flopfmt_args *a)
+{
+    return flopfmt((UBYTE *)a->buf, (WORD *)a->skew, (WORD)a->dev, (WORD)a->spt,
+                   (WORD)a->track, (WORD)a->side, (WORD)a->interlv,
+                   (ULONG)a->magic, (WORD)a->virgin);
 }
 #endif
 
@@ -371,6 +410,19 @@ static ULONG xbios_f(WORD speed, WORD flowctl, WORD ucr, WORD rsr, WORD tsr, WOR
 }
 #endif
 
+#if defined(__arm__)
+/*
+ * ARM's trap entry only delivers 4 real arguments in registers; rsconf()
+ * needs 6, so it's called through the vec table via this trampoline
+ * instead, unpacking a struct pointer. See arch/arm/biosargs.h.
+ */
+static ULONG xbios_f_arm(struct xbios_rsconf_args *a)
+{
+    return rsconf((WORD)a->baud, (WORD)a->ctrl, (WORD)a->ucr, (WORD)a->rsr,
+                  (WORD)a->tsr, (WORD)a->scr);
+}
+#endif
+
 
 
 /*
@@ -463,6 +515,15 @@ static LONG xbios_13(WORD *buf, LONG filler, WORD devno, WORD sectno,
 {
     kprintf("XBIOS: Flopver()\n");
     return flopver(buf, filler, devno, sectno, trackno, sideno, count);
+}
+#endif
+
+#if defined(__arm__)
+/* See xbios_8_arm above. */
+static LONG xbios_13_arm(struct xbios_flop_io_args *a)
+{
+    return flopver((WORD *)a->buf, a->filler, (WORD)a->dev, (WORD)a->sect,
+                   (WORD)a->track, (WORD)a->side, (WORD)a->count);
 }
 #endif
 
@@ -1093,9 +1154,15 @@ const PFLONG xbios_vecs[] = {
     VEC(xbios_5, setscreen),
     VEC(xbios_6, setpalette),
     VEC(xbios_7, setcolor),
+#if defined(__arm__)
+    (PFLONG) xbios_8_arm,
+    (PFLONG) xbios_9_arm,
+    (PFLONG) xbios_a_arm,
+#else
     VEC(xbios_8, floprd),
     VEC(xbios_9, flopwr),
     VEC(xbios_a, flopfmt),
+#endif
     xbios_unimpl,   /*  b used_by_bios */
     VEC(xbios_c, midiws),
 #if CONF_WITH_MFP
@@ -1104,11 +1171,19 @@ const PFLONG xbios_vecs[] = {
     xbios_unimpl,   /* d */
 #endif
     VEC(xbios_e, iorec),
+#if defined(__arm__)
+    (PFLONG) xbios_f_arm,
+#else
     VEC(xbios_f, rsconf),
+#endif
     VEC(xbios_10, keytbl),
     VEC(xbios_11, random),
     VEC(xbios_12, protobt),
+#if defined(__arm__)
+    (PFLONG) xbios_13_arm,
+#else
     VEC(xbios_13, flopver),
+#endif
     xbios_unimpl,   /* 14 scrdmp */
     VEC(xbios_15, cursconf),
     VEC(xbios_16, settime),
