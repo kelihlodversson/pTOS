@@ -24,15 +24,34 @@
 #define MAILBOX1_STATUS     (*(volatile ULONG*)(MAILBOX_BASE + 0x38))
 #define MAILBOX_STATUS_FULL     0x80000000
 
+/* Real VideoCore firmware always answers a mailbox request, including
+ * with an error for a tag it does not support, but an emulator can
+ * simply never reply to a request it does not implement (e.g. QEMU's
+ * bcm2835-property device silently drops the hardware-cursor property
+ * tags instead of returning an unsupported-tag response). Bound the
+ * wait so that gap does not hang the whole boot: 500 ticks (2.5s at
+ * 200Hz) matches the WAIT_TIMEOUT convention already used elsewhere
+ * (e.g. AES's wait_for_accs()) and is far longer than any real
+ * exchange takes. */
+#define MBOX_READ_TIMEOUT   500
+
 ULONG raspi_mbox_read(UBYTE channel)
 {
     ULONG data;
     UBYTE read_channel;
+    LONG deadline = hz_200 + MBOX_READ_TIMEOUT;
+
     while(1)
     {
         while(MAILBOX0_STATUS & MAILBOX_STATUS_EMPTY)
         {
-            // Loop until message is availabe
+            /* Loop until message is available or we give up waiting.
+             * 0 is safe as a "gave up" sentinel: raspi_prop_get_tags()
+             * only accepts a reply that matches the real, non-zero
+             * gpu_buffer_address it sent, so this always falls through
+             * to its existing failure path. */
+            if (hz_200 - deadline >= 0)
+                return 0;
         }
         data = MAILBOX0_READ;
         read_channel = data & 0xF;

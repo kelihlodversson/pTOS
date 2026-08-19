@@ -572,9 +572,16 @@ LONG elf_pgmld(FH h, PD *p)
     p->p_bbase = load_base + (info.file_end - info.link_base);
     p->p_blen  = (LONG)(info.mem_end - info.file_end);
 
-    /* zero the whole image first so bss, inter-segment gaps and the rest
-     * of the heap all start cleared, then read the file backed parts. */
-    bzero(load_base, (LONG)p->p_hitpa - (LONG)load_base);
+    /* Zero the loaded image first so bss and inter-segment gaps start
+     * cleared, then read the file backed parts over it. Only the
+     * program's own footprint (mem_end - link_base, already validated
+     * against tpalen above) needs clearing here -- not the whole TPA
+     * out to p_hitpa, which is however much free memory Pexec() granted
+     * the program and can be most or all of RAM. Zeroing that much
+     * needlessly, and slowly (each never-touched guest page can fault
+     * in fresh host memory under an emulator), looks indistinguishable
+     * from a hang for a program given a large default allocation. */
+    bzero(load_base, (LONG)(info.mem_end - info.link_base));
 
     if (u32_mul_overflow((ULONG)ehdr.e_phnum, (ULONG)ehdr.e_phentsize, &ph_table_size)
      || u32_add_overflow(ehdr.e_phoff, ph_table_size, &phoff))
