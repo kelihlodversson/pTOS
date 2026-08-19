@@ -24,6 +24,8 @@
  * match it after the switch's usual arithmetic promotion.
  */
 #define S_INQUIRE       ((WORD)0xffff)
+#define S_OSNAME        0x0000
+#define S_OSVERSION     0x0002
 #define S_GETCOOKIE     0x0008
 #define S_SETCOOKIE     0x0009
 #define S_GETLVAL       0x000a
@@ -32,6 +34,7 @@
 #define S_SETLVAL       0x000d
 #define S_SETWVAL       0x000e
 #define S_SETBVAL       0x000f
+#define S_DELCOOKIE     0x001a
 
 LONG xssystem(WORD mode, LONG arg1, LONG arg2);
 

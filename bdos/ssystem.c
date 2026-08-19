@@ -5,10 +5,11 @@
  * Ssystem() is the documented (MiNT) mechanism for a program to read or
  * write a handful of system variables and the cookie jar without poking
  * memory directly. pTOS implements S_INQUIRE (the mandatory discovery
- * probe -- see xssystem() below) plus the S_[GS]ET(COOKIE|[LWB]VAL)
- * subset -- see ssystem.h and issue #219 for the rationale, in
- * particular for ARM, where Supexec() (the usual way real TOS programs
- * would do this) isn't supported.
+ * probe -- see xssystem() below), S_OSNAME/S_OSVERSION, and the
+ * S_[GS]ET(COOKIE|[LWB]VAL) subset plus S_DELCOOKIE -- see ssystem.h
+ * and issue #219 for the rationale, in particular for ARM, where
+ * Supexec() (the usual way real TOS programs would do this) isn't
+ * supported.
  *
  * The *VAL modes never touch raw memory: the "address" argument is the
  * documented TOS address of the variable, looked up in one of three
@@ -116,7 +117,8 @@ static void *sval_lookup(const SVAR *table, int count, ULONG addr)
 
 
 /*
- * ssystem_getcookie/ssystem_setcookie - S_GETCOOKIE/S_SETCOOKIE
+ * ssystem_getcookie/ssystem_setcookie/ssystem_delcookie -
+ * S_GETCOOKIE/S_SETCOOKIE/S_DELCOOKIE
  *
  * only the plain by-tag lookup is supported (not the undocumented
  * slot-enumeration behaviour of the real ABI)
@@ -144,7 +146,7 @@ static LONG ssystem_getcookie(LONG tag, LONG arg2)
         }
     }
 
-    return -1;
+    return ERR;
 }
 
 static LONG ssystem_setcookie(LONG tag, LONG value)
@@ -172,6 +174,29 @@ static LONG ssystem_setcookie(LONG tag, LONG value)
     jar[1].value = capacity;
 
     return E_OK;
+}
+
+static LONG ssystem_delcookie(LONG tag)
+{
+    struct cookie *jar = (struct cookie *)p_cookies;
+    int i;
+
+    for (i = 0; jar[i].tag; i++)
+    {
+        if (jar[i].tag == tag)
+        {
+            /* shift every later entry (including the terminator, which
+             * carries the jar's capacity in .value) down by one slot */
+            do
+            {
+                jar[i] = jar[i + 1];
+                i++;
+            } while (jar[i].tag);
+            return E_OK;
+        }
+    }
+
+    return ERR;         /* tag not found -- matches ssystem_getcookie() */
 }
 
 
@@ -245,6 +270,31 @@ static LONG ssystem_setbval(LONG addr, LONG value)
 
 
 /*
+ * ssystem_osname/ssystem_osversion - S_OSNAME/S_OSVERSION
+ */
+static LONG ssystem_osname(void)
+{
+    /* four ASCII characters packed MSB-first, same convention as
+     * FreeMiNT's 'MiNT' (0x4d694e54) */
+    return ((LONG)'p' << 24) | ((LONG)'T' << 16) | ((LONG)'O' << 8) | 'S';
+}
+
+static LONG ssystem_osversion(void)
+{
+    /*
+     * major.minor.patch + release character, MSB first. pTOS has no
+     * numbered release yet -- report 0.0.0-alpha rather than
+     * repurposing GEMDOS_VERSION, which fakes a *real TOS's*
+     * compatibility number (Sversion()) and has nothing to do with
+     * pTOS's own identity.
+     */
+    LONG major = 0, minor = 0, patch = 0;
+    BYTE release = 'a';
+    return (major << 24) | (minor << 16) | (patch << 8) | (UBYTE)release;
+}
+
+
+/*
  * xssystem - implements GEMDOS Ssystem(), see ssystem.h
  */
 LONG xssystem(WORD mode, LONG arg1, LONG arg2)
@@ -259,10 +309,17 @@ LONG xssystem(WORD mode, LONG arg1, LONG arg2)
          * unhandled mode. */
         return E_OK;
 
+    case S_OSNAME:
+        return ssystem_osname();
+    case S_OSVERSION:
+        return ssystem_osversion();
+
     case S_GETCOOKIE:
         return ssystem_getcookie(arg1, arg2);
     case S_SETCOOKIE:
         return ssystem_setcookie(arg1, arg2);
+    case S_DELCOOKIE:
+        return ssystem_delcookie(arg1);
 
     case S_GETLVAL:
         return ssystem_getlval(arg1);
