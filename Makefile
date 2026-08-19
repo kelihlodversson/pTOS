@@ -1057,8 +1057,16 @@ endif
 # together with an emudesk.inf that autoruns it on boot.
 #
 
-TEST_DESTDIR = tests/destdata
+TEST_DESTDIR = tests/destdata/TESTS
 TEST_HD_SIZE = 4194304            # 4 MiB, must be power of two for QEMU
+
+# libcmini provides the C library, OS bindings (Fsfirst, Pterm, …) and
+# startup code (minicrt0) for the standalone test harness.
+LIBCMINI_DIR  = lib/libcmini
+LIBCMINI_INC  = $(LIBCMINI_DIR)/include
+LIBCMINI_OBJDIR = $(LIBCMINI_DIR)/build/./objs
+LIBCMINI_CRT0 = $(LIBCMINI_OBJDIR)/minicrt0.o
+LIBCMINI_LIB  = $(LIBCMINI_DIR)/build/./libcmini.a
 
 ifdef CONF_WITH_REGRESSION_TESTS
 
@@ -1084,36 +1092,49 @@ tests/run_tests.c: $(wildcard tests/*/*.c) | obj
 TEST_OBJ = obj/runtests.o obj/run_tests.o obj/testlib.o
 
 obj/runtests.o: tests/runtests.c | obj
-	$(CC) $(CFILE_FLAGS) -Itests $(DEPFLAGS) -c $< -o $@
+	$(CC) $(CFILE_FLAGS) -Itests -I$(LIBCMINI_INC) $(DEPFLAGS) -c $< -o $@
 
 obj/run_tests.o: tests/run_tests.c | obj
-	$(CC) $(CFILE_FLAGS) -Itests $(DEPFLAGS) -c $< -o $@
+	$(CC) $(CFILE_FLAGS) -Itests -I$(LIBCMINI_INC) $(DEPFLAGS) -c $< -o $@
 
 obj/testlib.o: tests/testlib.c | obj
-	$(CC) $(CFILE_FLAGS) -Itests $(DEPFLAGS) -c $< -o $@
+	$(CC) $(CFILE_FLAGS) -Itests -I$(LIBCMINI_INC) $(DEPFLAGS) -c $< -o $@
 
-ifdef ARCH_ARM
-TEST_STARTUP = obj/teststart.o
-obj/teststart.o: tests/arch/arm/teststart.S | obj
-	$(CC) $(SFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
-else
-TEST_STARTUP = obj/minicrt.o
-endif
+TEST_STARTUP = $(LIBCMINI_CRT0)
 
 # Each test suite object depends on its source and the generated run_tests.c
 define test-suite-rule
 obj/$(1).o: tests/$(1)/$(1).c tests/run_tests.c
-	$(CC) $(CFILE_FLAGS) $(DEPFLAGS) -Itests -c $$< -o $$@
+	$(CC) $(CFILE_FLAGS) $(DEPFLAGS) -Itests -I$(LIBCMINI_INC) -c $$< -o $$@
 endef
 $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 
 TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
 
+# Build libcmini from the submodule.  The defconfig is arch-specific;
+# for m68k we use mintelf_defconfig which produces ELF-compatible objects
+# that also work as a.out with --emit-relocs.
+ifdef ARCH_ARM
+LIBCMINI_DEFCONFIG = ptos_arm_defconfig
+LIBCMINI_ARCH_CFLAGS = -mfloat-abi=hard -mfpu=vfp -fleading-underscore
+else
+LIBCMINI_DEFCONFIG = mintelf_defconfig
+LIBCMINI_ARCH_CFLAGS = -fleading-underscore
+endif
+
+$(LIBCMINI_LIB): $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj
+	@echo '  LIBCMINI'
+	@$(MAKE) -C $(LIBCMINI_DIR) distclean 2>/dev/null || true
+	@$(MAKE) -C $(LIBCMINI_DIR) $(LIBCMINI_DEFCONFIG)
+	@$(MAKE) -C $(LIBCMINI_DIR) ARCH_CFLAGS="$(LIBCMINI_ARCH_CFLAGS)"
+
+$(LIBCMINI_CRT0): $(LIBCMINI_LIB)
+
 # Link the test harness as runtests.tos.  Use --emit-relocs so the pTOS
 # ELF loader can relocate it; for m68k the default ld output format is
 # already TOS PRG.  Named .tos by convention regardless of format.
-runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) obj/miscasm.o
-	$(LD) -Wl,-q -Wl,-Ttext=0 -Wl,-e_start $+ $(LIBS) -o $@
+runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
+	$(LD) -Wl,-q -Wl,-Ttext=0 -Wl,-e__start $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
 
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
@@ -1128,6 +1149,11 @@ test-hd.img: runtests.tos tests/emudesk.inf
 test-hd: test-hd.img
 
 TOCLEAN += tests/run_tests.c runtests.tos test-hd.img
+TOCLEAN_POST += libcmini-clean
+
+.PHONY: libcmini-clean
+libcmini-clean:
+	-@$(MAKE) -C $(LIBCMINI_DIR) clean 2>/dev/null || true
 
 else # !CONF_WITH_REGRESSION_TESTS
 

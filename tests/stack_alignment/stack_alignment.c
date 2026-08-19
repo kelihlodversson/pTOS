@@ -15,11 +15,7 @@
  */
 
 #include "test.h"
-
-extern long trap1(int, ...);
-
-/* GEMDOS Fsfirst() - 0x4e */
-#define GEMDOS_Fsfirst  0x4e
+#include <mint/osbind.h>
 
 void test_stack_alignment(void)
 {
@@ -41,7 +37,7 @@ void test_stack_alignment(void)
      * exercise makofd(); otherwise Fsfirst returns ENOENT before
      * reaching the vulnerable code path.
      */
-    rc = trap1(GEMDOS_Fsfirst, "C:\\TESTS\\*.*", 0);
+    rc = Fsfirst("C:\\TESTS\\*.*", 0);
     ptest_assert_msg(rc == -33 || rc == 0,
                      "Fsfirst on subdirectory returned unexpected error");
 

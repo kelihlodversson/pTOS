@@ -8,25 +8,18 @@
  */
 
 #include "test.h"
-
-/* GEMDOS call wrapper, provided by util/miscasm.o */
-extern long trap1(int, ...);
-
-/* GEMDOS function numbers */
-#define GEMDOS_Cconws  0x09
-#define GEMDOS_Cconout 0x02
-#define GEMDOS_Pterm   0x4C
+#include <mint/osbind.h>
 
 /* Output a NUL-terminated string to the console */
 void conws(const char *s)
 {
-    trap1(GEMDOS_Cconws, s);
+    Cconws(s);
 }
 
 /* Output a single character to the console */
 static void conout(int ch)
 {
-    trap1(GEMDOS_Cconout, ch);
+    Cconout(ch);
 }
 
 /* Print a decimal number */

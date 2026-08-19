@@ -8,10 +8,7 @@
  */
 
 #include "test.h"
-
-extern long trap1(int, ...);
-
-#define GEMDOS_Pterm 0x4c
+#include <mint/osbind.h>
 
 extern void ptest_run_tests(void);
 
@@ -26,6 +23,6 @@ int main(void)
     else
         conws("\nAll tests passed.\n");
 
-    trap1(GEMDOS_Pterm, 0);
+    Pterm(0);
     return 0;
 }
