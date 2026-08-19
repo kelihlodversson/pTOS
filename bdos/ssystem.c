@@ -120,33 +120,68 @@ static void *sval_lookup(const SVAR *table, int count, ULONG addr)
  * ssystem_getcookie/ssystem_setcookie/ssystem_delcookie -
  * S_GETCOOKIE/S_SETCOOKIE/S_DELCOOKIE
  *
- * only the plain by-tag lookup is supported (not the undocumented
- * slot-enumeration behaviour of the real ABI)
+ * S_GETCOOKIE overloads arg1 three ways -- required for code that
+ * wants to enumerate every installed cookie, not just look one up by
+ * a tag it already knows:
+ *   - arg1 > 0xffff: a tag, look up its value (the common case)
+ *   - 1 <= arg1 <= 0xffff: a 1-based slot number, look up the tag
+ *     stored there -- ERR once past the jar's allocated capacity, so
+ *     a caller can enumerate by counting 1, 2, 3, ... until either a
+ *     zero tag (no more cookies) or ERR (ran off the end)
+ *   - arg1 == 0: look up the NULL cookie's value, i.e. the jar's
+ *     total allocated capacity (the terminator slot always carries
+ *     this in .value, wherever it currently sits)
  */
-static LONG ssystem_getcookie(LONG tag, LONG arg2)
+static LONG ssystem_getcookie(LONG arg1, LONG arg2)
 {
-    struct cookie *jar;
+    struct cookie *jar = (struct cookie *)p_cookies;
+    struct cookie *term;
+    LONG capacity, result;
 
-    for (jar = (struct cookie *)p_cookies; jar->tag; jar++)
+    if ((ULONG)arg1 > 0xffffUL)
     {
-        if (jar->tag == tag)
+        for (; jar->tag; jar++)
         {
-            /*
-             * with a destination pointer, the documented usage is
-             * Ssystem(S_GETCOOKIE, tag, &value) == E_OK -- returning
-             * the (possibly nonzero) cookie value here instead would
-             * look like failure to that idiom.
-             */
-            if (arg2)
+            if (jar->tag == arg1)
             {
-                *(LONG *)arg2 = jar->value;
-                return E_OK;
+                /*
+                 * with a destination pointer, the documented usage is
+                 * Ssystem(S_GETCOOKIE, tag, &value) == E_OK --
+                 * returning the (possibly nonzero) cookie value here
+                 * instead would look like failure to that idiom.
+                 */
+                if (arg2)
+                {
+                    *(LONG *)arg2 = jar->value;
+                    return E_OK;
+                }
+                return jar->value;
             }
-            return jar->value;
         }
+        return ERR;
     }
 
-    return ERR;
+    for (term = jar; term->tag; term++)
+        /* find the terminator */;
+    capacity = term->value;
+
+    if (arg1 == 0)
+    {
+        result = capacity;
+    }
+    else
+    {
+        if (arg1 > capacity)
+            return ERR;
+        result = jar[arg1 - 1].tag;
+    }
+
+    if (arg2)
+    {
+        *(LONG *)arg2 = result;
+        return E_OK;
+    }
+    return result;
 }
 
 static LONG ssystem_setcookie(LONG tag, LONG value)
