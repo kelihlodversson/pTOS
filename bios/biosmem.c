@@ -131,7 +131,12 @@ UBYTE *balloc_stram(ULONG size, BOOL top)
     return ret;
 }
 
+#ifdef __arm__
+MD themd;                       /* BIOS memory descriptor -- fixed address on
+                                  * m68k (tosvars.ld), ordinary storage here (#219) */
+#else
 extern MD themd;                /* BIOS memory descriptor */
+#endif
 
 void getmpb(MPB * mpb)
 {

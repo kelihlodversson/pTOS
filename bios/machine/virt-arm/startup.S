@@ -128,10 +128,13 @@ virt_arm_post_mmu:
     ldr r4, =hello_msg_virt
     bl  print_string
 
-    /* sysvars round-trip: _phystop is one of the fixed low sysvars
-     * addresses (see tosvars.ld); if the low MMU window is wired
-     * correctly this read/write pair works exactly like any other
-     * global variable. */
+    /* sysvars round-trip: _phystop is just an ordinary global on ARM
+     * now (bios/arch/arm/tosvars.c -- see kelihlodversson/pTOS#219), so
+     * this no longer proves anything specific to sysvars, but it's a
+     * convenient, already-linked address to sanity-check that the low
+     * MMU window actually maps virtual low addresses onto real RAM
+     * before anything else here relies on memory access working at
+     * all. */
     ldr r0, =_phystop
     ldr r1, =0x12345678
     str r1, [r0]
@@ -142,15 +145,26 @@ virt_arm_post_mmu:
     ldr r4, =sysvars_ok_msg
     bl  print_string
 
+    /* Clear the BSS segment now that virtual addressing is live. */
+    ldr r0, =__bss
+    ldr r1, =__ebss
+    mov r2, #0
+1:  cmp r0, r1
+    bge 2f
+    str r2, [r0], #4
+    b   1b
+2:
+
     /*
-     * The round-trip test above only proves the sysvars alias works; it
-     * leaves _phystop holding the test pattern instead of a real value.
-     * _phystop is not a scratch variable -- bios/biosmem.c's bmem_init()
-     * reads it directly ("memtop = phystop") to size the entire free-
-     * memory pool. Leaving it at 0x12345678 (~291MB) made every later
-     * allocation (including the TPA for the first launched process)
-     * wildly oversized, which is what actually produced the corrupt,
-     * out-of-range stack pointers that crashed GEMDOS process dispatch.
+     * _phystop lives in that BSS range now (bios/arch/arm/tosvars.c),
+     * so it must be set to its real value *after* clearing BSS, not
+     * before -- otherwise the clear loop above would immediately
+     * zero it back out. bios/biosmem.c's bmem_init() reads it
+     * directly ("memtop = phystop") to size the entire free-memory
+     * pool; leaving it at 0 (or the 0x12345678 test pattern, before
+     * this was reordered to run after the clear) produced corrupt,
+     * out-of-range stack pointers that crashed GEMDOS process
+     * dispatch.
      *
      * The real top of usable RAM is the top of the low MMU window built
      * by virt_mmu_bootstrap() (see the call above: 0x08000000 bytes,
@@ -165,16 +179,6 @@ virt_arm_post_mmu:
     ldr r0, =_phystop
     ldr r1, =0x07f00000
     str r1, [r0]
-
-    /* Clear the BSS segment now that virtual addressing is live. */
-    ldr r0, =__bss
-    ldr r1, =__ebss
-    mov r2, #0
-1:  cmp r0, r1
-    bge 2f
-    str r2, [r0], #4
-    b   1b
-2:
 
     /*
      * Now that BSS is cleared (arm_boot_regs lives there, like every
@@ -213,10 +217,10 @@ print_string:
     bx  lr
 
 /*
- * If the low MMU window is wrong, _phystop's alias doesn't actually reach
- * the fixed low sysvars addresses everything from here on depends on.
+ * If the low MMU window is wrong, ordinary memory access doesn't
+ * actually reach real RAM the way everything from here on depends on.
  * Continuing (BSS clear, _biosmain) would silently corrupt or misread
- * low memory instead of failing loudly, so halt here instead.
+ * memory instead of failing loudly, so halt here instead.
  */
 sysvars_check_failed:
     ldr r4, =sysvars_fail_msg
