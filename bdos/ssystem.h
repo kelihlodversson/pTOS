@@ -15,9 +15,15 @@
 
 /*
  * Ssystem() mode values, as documented for MiNT. Only the subset below
- * is implemented -- every other mode returns EINVFN. See
+ * is implemented (plus the mandatory S_INQUIRE discovery probe) --
+ * every other mode returns EINVFN. See
  * https://github.com/kelihlodversson/pTOS/issues/219.
+ *
+ * S_INQUIRE is -1, not 0xffff: mode arrives here as a signed WORD, so
+ * a case label of plain 0xffff (type int, value 65535) would never
+ * match it after the switch's usual arithmetic promotion.
  */
+#define S_INQUIRE       ((WORD)0xffff)
 #define S_GETCOOKIE     0x0008
 #define S_SETCOOKIE     0x0009
 #define S_GETLVAL       0x000a

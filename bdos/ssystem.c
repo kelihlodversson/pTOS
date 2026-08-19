@@ -4,7 +4,8 @@
  *
  * Ssystem() is the documented (MiNT) mechanism for a program to read or
  * write a handful of system variables and the cookie jar without poking
- * memory directly. pTOS implements only the S_[GS]ET(COOKIE|[LWB]VAL)
+ * memory directly. pTOS implements S_INQUIRE (the mandatory discovery
+ * probe -- see xssystem() below) plus the S_[GS]ET(COOKIE|[LWB]VAL)
  * subset -- see ssystem.h and issue #219 for the rationale, in
  * particular for ARM, where Supexec() (the usual way real TOS programs
  * would do this) isn't supported.
@@ -128,8 +129,17 @@ static LONG ssystem_getcookie(LONG tag, LONG arg2)
     {
         if (jar->tag == tag)
         {
+            /*
+             * with a destination pointer, the documented usage is
+             * Ssystem(S_GETCOOKIE, tag, &value) == E_OK -- returning
+             * the (possibly nonzero) cookie value here instead would
+             * look like failure to that idiom.
+             */
             if (arg2)
+            {
                 *(LONG *)arg2 = jar->value;
+                return E_OK;
+            }
             return jar->value;
         }
     }
@@ -187,7 +197,7 @@ static LONG ssystem_getlval(LONG addr)
 static LONG ssystem_getwval(LONG addr)
 {
     void *p = SVAL_LOOKUP(wval_table, addr);
-    WORD value;
+    UWORD value;    /* zero-extended into the LONG result, matching FreeMiNT */
     if (!p)
         return EINVFN;
     memcpy(&value, p, sizeof(value));
@@ -197,7 +207,7 @@ static LONG ssystem_getwval(LONG addr)
 static LONG ssystem_getbval(LONG addr)
 {
     void *p = SVAL_LOOKUP(bval_table, addr);
-    BYTE value;
+    UBYTE value;    /* zero-extended into the LONG result, matching FreeMiNT */
     if (!p)
         return EINVFN;
     memcpy(&value, p, sizeof(value));
@@ -241,6 +251,14 @@ LONG xssystem(WORD mode, LONG arg1, LONG arg2)
 {
     switch (mode)
     {
+    case S_INQUIRE:
+        /* the documented discovery probe: callers use this to decide
+         * whether to use Ssystem() at all before falling back to
+         * Supexec()/direct memory access -- which ARM doesn't have,
+         * so this must not fall through to EINVFN like every other
+         * unhandled mode. */
+        return E_OK;
+
     case S_GETCOOKIE:
         return ssystem_getcookie(arg1, arg2);
     case S_SETCOOKIE:
