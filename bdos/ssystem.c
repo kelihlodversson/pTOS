@@ -28,7 +28,7 @@
 #include "gemerror.h"
 #include "../bios/tosvars.h"
 #include "../bios/cookie.h"
-#include "../include/ahdi.h"
+#include "ahdi.h"
 #include "string.h"
 
 /* not in tosvars.h -- only bios/arch/arm/vectors.c otherwise uses it */
@@ -236,13 +236,33 @@ static LONG ssystem_delcookie(LONG tag)
 
 
 /*
- * ssystem_getval/ssystem_setval - S_GET[LWB]VAL/S_SET[LWB]VAL
+ * svar_copy - like memcpy(), but through volatile UBYTE * so the
+ * access can't be cached, reordered, or optimized away.
  *
- * Several of the looked-up variables are pointers or function pointers,
- * not LONG/WORD/BYTE objects, so this copies through memcpy() rather
- * than dereferencing p through an unrelated scalar type -- the latter
- * violates C's strict-aliasing/effective-type rules and can miscompile
- * under optimization even though it happens to work today.
+ * Several of the looked-up sysvars are pointers or function pointers,
+ * not LONG/WORD/BYTE objects, so this can't just dereference p through
+ * an unrelated scalar type -- that violates C's strict-aliasing/
+ * effective-type rules and can miscompile under optimization even
+ * though it happens to work today. A byte-at-a-time UBYTE access is
+ * always strict-aliasing-safe (any object's representation can be
+ * accessed through a character type). But several of these sysvars
+ * are also volatile (hz_200, frclock, vblsem, flock, vbclock, ...),
+ * updated from interrupt context, and memcpy()'s plain void*
+ * parameters silently drop that qualifier -- accessing through
+ * volatile UBYTE * keeps every individual byte access an observable
+ * side effect regardless of the pointed-to object's declared type.
+ */
+static void svar_copy(void *dst, const void *src, size_t n)
+{
+    volatile UBYTE *d = dst;
+    const volatile UBYTE *s = src;
+
+    while (n--)
+        *d++ = *s++;
+}
+
+/*
+ * ssystem_getval/ssystem_setval - S_GET[LWB]VAL/S_SET[LWB]VAL
  */
 static LONG ssystem_getlval(LONG addr)
 {
@@ -250,7 +270,7 @@ static LONG ssystem_getlval(LONG addr)
     LONG value;
     if (!p)
         return EINVFN;
-    memcpy(&value, p, sizeof(value));
+    svar_copy(&value, p, sizeof(value));
     return value;
 }
 
@@ -260,7 +280,7 @@ static LONG ssystem_getwval(LONG addr)
     UWORD value;    /* zero-extended into the LONG result, matching FreeMiNT */
     if (!p)
         return EINVFN;
-    memcpy(&value, p, sizeof(value));
+    svar_copy(&value, p, sizeof(value));
     return value;
 }
 
@@ -270,7 +290,7 @@ static LONG ssystem_getbval(LONG addr)
     UBYTE value;    /* zero-extended into the LONG result, matching FreeMiNT */
     if (!p)
         return EINVFN;
-    memcpy(&value, p, sizeof(value));
+    svar_copy(&value, p, sizeof(value));
     return value;
 }
 
@@ -279,7 +299,7 @@ static LONG ssystem_setlval(LONG addr, LONG value)
     void *p = SVAL_LOOKUP(lval_table, addr);
     if (!p)
         return EINVFN;
-    memcpy(p, &value, sizeof(value));
+    svar_copy(p, &value, sizeof(value));
     return E_OK;
 }
 
@@ -289,7 +309,7 @@ static LONG ssystem_setwval(LONG addr, LONG value)
     WORD wvalue = (WORD)value;
     if (!p)
         return EINVFN;
-    memcpy(p, &wvalue, sizeof(wvalue));
+    svar_copy(p, &wvalue, sizeof(wvalue));
     return E_OK;
 }
 
@@ -299,7 +319,7 @@ static LONG ssystem_setbval(LONG addr, LONG value)
     BYTE bvalue = (BYTE)value;
     if (!p)
         return EINVFN;
-    memcpy(p, &bvalue, sizeof(bvalue));
+    svar_copy(p, &bvalue, sizeof(bvalue));
     return E_OK;
 }
 
