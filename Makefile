@@ -1067,6 +1067,7 @@ LIBCMINI_INC  = $(LIBCMINI_DIR)/include
 LIBCMINI_OBJDIR = $(LIBCMINI_DIR)/build/./objs
 LIBCMINI_CRT0 = $(LIBCMINI_OBJDIR)/minicrt0.o
 LIBCMINI_LIB  = $(LIBCMINI_DIR)/build/./libcmini.a
+LIBCMINI_STAMP = $(LIBCMINI_DIR)/build/.ptos-config-stamp
 
 ifdef CONF_WITH_REGRESSION_TESTS
 
@@ -1089,52 +1090,108 @@ tests/run_tests.c: $(wildcard tests/*/*.c) | obj
 	done >> $@
 	@echo '}' >> $@
 
+# The test harness is userland code linked against libcmini, not the
+# kernel: it must NOT inherit CFILE_FLAGS, since that carries kernel-only
+# conventions (-fleading-underscore, -DELF_TOOLCHAIN, -mshort/-fsigned-char)
+# that are irrelevant -- or outright ABI-incompatible with libcmini's own
+# build -- for a normal ARM/m68k userland binary.  $(CPUFLAGS) is kept so
+# generated code targets the selected machine's CPU/FPU, matching what the
+# kernel itself is built for.
+TEST_CFLAGS = $(CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
+              $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC)
+
 TEST_OBJ = obj/runtests.o obj/run_tests.o obj/testlib.o
 
 obj/runtests.o: tests/runtests.c | obj
-	$(CC) $(CFILE_FLAGS) -Itests -I$(LIBCMINI_INC) $(DEPFLAGS) -c $< -o $@
+	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 obj/run_tests.o: tests/run_tests.c | obj
-	$(CC) $(CFILE_FLAGS) -Itests -I$(LIBCMINI_INC) $(DEPFLAGS) -c $< -o $@
+	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 obj/testlib.o: tests/testlib.c | obj
-	$(CC) $(CFILE_FLAGS) -Itests -I$(LIBCMINI_INC) $(DEPFLAGS) -c $< -o $@
+	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 TEST_STARTUP = $(LIBCMINI_CRT0)
 
 # Each test suite object depends on its source and the generated run_tests.c
 define test-suite-rule
 obj/$(1).o: tests/$(1)/$(1).c tests/run_tests.c
-	$(CC) $(CFILE_FLAGS) $(DEPFLAGS) -Itests -I$(LIBCMINI_INC) -c $$< -o $$@
+	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $$< -o $$@
 endef
 $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 
 TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
 
-# Build libcmini from the submodule.  The defconfig is arch-specific;
-# for m68k we use mintelf_defconfig which produces ELF-compatible objects
-# that also work as a.out with --emit-relocs.
+# Build libcmini from the submodule.  The defconfig is arch-specific; for
+# m68k we use mintelf_defconfig, which produces ELF-compatible objects
+# that also work as a.out with --emit-relocs.  ABI details that are
+# specific to pTOS (e.g. the ARM float ABI) live in libcmini's own
+# defconfig/build, not here: this Makefile only picks which defconfig to
+# load.
 ifdef ARCH_ARM
 LIBCMINI_DEFCONFIG = ptos_arm_defconfig
-LIBCMINI_ARCH_CFLAGS = -mfloat-abi=hard -mfpu=vfp -fleading-underscore
 else
 LIBCMINI_DEFCONFIG = mintelf_defconfig
-LIBCMINI_ARCH_CFLAGS = -fleading-underscore
 endif
 
-$(LIBCMINI_LIB): $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj
+# libcmini's build/ directory is a single flat path (build/./libcmini.a)
+# that isn't parameterized by architecture or defconfig, so switching
+# between e.g. ptos_arm_defconfig and mintelf_defconfig across two builds
+# would otherwise leave a stale libcmini.a from the *previous* arch sitting
+# at a path Make considers up to date -- Make's staleness check has no way
+# to know the desired configuration changed, since that's not expressed as
+# a file it tracks.
+#
+# LIBCMINI_STAMP makes that configuration state an explicit, trackable
+# file: it depends on the always-out-of-date FORCE target, so its recipe
+# runs on every invocation and actually compares the desired defconfig
+# against the one last applied, cleaning and reconfiguring only on a real
+# mismatch. The stamp file's mtime -- and therefore whether it forces
+# $(LIBCMINI_LIB) to rebuild -- only changes when that comparison finds a
+# real mismatch, not on every invocation.
+.PHONY: FORCE
+FORCE:
+
+$(LIBCMINI_STAMP): FORCE | obj
+	@mkdir -p $(dir $@)
+	@want='$(LIBCMINI_DEFCONFIG)'; \
+	have=$$(cat $@ 2>/dev/null || true); \
+	if [ "$$want" != "$$have" ]; then \
+	    echo "  LIBCMINI-CONFIG $$want"; \
+	    $(MAKE) -C $(LIBCMINI_DIR) clean; \
+	    $(MAKE) -C $(LIBCMINI_DIR) $$want; \
+	    echo "$$want" > $@; \
+	fi
+
+$(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj
 	@echo '  LIBCMINI'
-	@$(MAKE) -C $(LIBCMINI_DIR) distclean 2>/dev/null || true
-	@$(MAKE) -C $(LIBCMINI_DIR) $(LIBCMINI_DEFCONFIG)
-	@$(MAKE) -C $(LIBCMINI_DIR) ARCH_CFLAGS="$(LIBCMINI_ARCH_CFLAGS)"
+	@$(MAKE) -C $(LIBCMINI_DIR) libs startups
 
 $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 
-# Link the test harness as runtests.tos.  Use --emit-relocs so the pTOS
-# ELF loader can relocate it; for m68k the default ld output format is
-# already TOS PRG.  Named .tos by convention regardless of format.
+# Like TEST_CFLAGS, this must not reuse the kernel's $(LD) (= $(CC)
+# $(MULTILIBFLAGS) ...): on m68k, MULTILIBFLAGS carries -mshort, which
+# would make the link step pull in the -mshort multilib variant of
+# libgcc (via $(LIBS) = -lgcc below) while libcmini itself was built
+# against the toolchain's default, non -mshort multilib.
+TEST_LD = $(CC) $(CPUFLAGS) -nostartfiles -nostdlib
+
+# Link the test harness as runtests.tos.  On ARM this must stay a
+# relocatable ELF image the pTOS ELF loader can load at a fixed address
+# (--emit-relocs, -Ttext=0); m68k needs neither -- the mintelf toolchain's
+# default linker script already produces a loadable TOS PRG, and forcing
+# -Ttext=0 there leaves no room for the ELF program headers ("not enough
+# room for program headers, try linking with -N", and -N in turn needs a
+# linker script variant this toolchain doesn't ship). Named .tos by
+# convention regardless of format.
+ifdef ARCH_ARM
+TEST_LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
+else
+TEST_LDFLAGS = -Wl,-e_start
+endif
+
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
-	$(LD) -Wl,-q -Wl,-Ttext=0 -Wl,-e__start $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
 
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
@@ -1148,13 +1205,6 @@ test-hd.img: runtests.tos tests/emudesk.inf
 .PHONY: test-hd
 test-hd: test-hd.img
 
-TOCLEAN += tests/run_tests.c runtests.tos test-hd.img
-TOCLEAN_POST += libcmini-clean
-
-.PHONY: libcmini-clean
-libcmini-clean:
-	-@$(MAKE) -C $(LIBCMINI_DIR) clean 2>/dev/null || true
-
 else # !CONF_WITH_REGRESSION_TESTS
 
 .PHONY: test-hd
@@ -1163,6 +1213,19 @@ test-hd:
 
 endif
 
+# Unconditional, unlike the CONF_WITH_REGRESSION_TESTS block above: "clean"
+# and "distclean" are in UNCONFIGURED_GOALS, so obj/auto.conf is never
+# included for those goals and CONF_WITH_REGRESSION_TESTS reads as unset
+# regardless of .config -- anything gated on it here would silently never
+# run under "make clean", leaving runtests.tos/tests/run_tests.c and
+# lib/libcmini/build/ behind.
+TOCLEAN += tests/run_tests.c runtests.tos test-hd.img
+TOCLEAN_POST += libcmini-clean
+
+.PHONY: libcmini-clean
+libcmini-clean:
+	-@$(MAKE) -C $(LIBCMINI_DIR) clean 2>/dev/null || true
+
 #
 # Clean
 #
@@ -1170,7 +1233,7 @@ endif
 TOCLEAN += $(GEN_SRC)
 
 .PHONY: clean
-clean:
+clean: $(TOCLEAN_POST)
 	rm -f $(TOCLEAN)
 
 .PHONY: distclean

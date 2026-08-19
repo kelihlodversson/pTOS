@@ -308,13 +308,13 @@ kernel7.img`; the size restriction and pass signals are identical.
 
 ### Running the regression test suite (`make test-hd`)
 
-The regression test harness (`CONF_WITH_REGRESSION_TESTS`) builds a
-standalone TOS executable (`runtests.tos`) and packages it into a raw HD
-image (`test-hd.img`) with an MBR + FAT16 partition.  The image is
-attached to QEMU as an emulated SD card; the `emudesk.inf` autorun line
-(`#Z 00 C:\RUNTESTS.TOS@`) launches the harness, which runs every test
-suite in `tests/<name>/<name>.c` and prints results to the serial
-console via GEMDOS `Cconws`.
+The regression test harness (`CONF_WITH_REGRESSION_TESTS`) builds against
+libcmini (submodule at `lib/libcmini`), producing a standalone `runtests.tos`
+that is packaged into a raw HD image (`test-hd.img`, MBR + FAT16 via
+`tools/mkhdisk.sh`) together with `emudesk.inf`. The `emudesk.inf` autorun
+line (`#Z 00 C:\RUNTESTS.TOS@`) is meant to launch the harness on boot, which
+runs every test suite in `tests/<name>/<name>.c` and prints results via
+libcmini's `Cconws()`.
 
 Build the HD image (requires the normal kernel build first):
 
@@ -322,6 +322,20 @@ Build the HD image (requires the normal kernel build first):
 make rpi2_defconfig && make          # builds kernel7.img
 make test-hd                         # builds runtests.tos + test-hd.img
 ```
+
+**Known issue (#222): the `#Z` autorun hangs on ARM/QEMU.** Attaching
+`test-hd.img` (whose `emudesk.inf` has the `#Z` line) to QEMU hangs boot
+indefinitely right after `VDI video mode = ...`, with no crash and no
+`guest_errors` — isolated to the `#Z` autorun entry specifically (an empty
+disk, or the same `emudesk.inf` with the `#Z` line removed, both boot fine
+to `evnt_multi()`). The identical harness/`emudesk.inf` boots and runs
+correctly to a working desktop on **m68k under Hatari** (`--ide-master
+test-hd.img`), so this looks ARM-specific (likely in `sh_chgrf()`'s
+graphic/alpha mode switch or `dsptch()` around `aes/geminit.c:656-662`),
+not a general bug in the autorun mechanism. Until #222 is root-caused,
+verify the ARM harness by booting `test-hd.img` and launching
+`C:\RUNTESTS.TOS` manually from the desktop, or with a throwaway
+`emudesk.inf` that omits the `#Z` line.
 
 Run on QEMU (raspi2 used here; raspi1ap works identically with
 `-bios kernel.img`):
@@ -332,7 +346,8 @@ timeout 30 qemu-system-arm -M raspi2b -bios kernel7.img \
   -d guest_errors -serial stdio
 ```
 
-Pass signals on the serial console (in order):
+Pass signals on the serial console (in order; ARM: see the #222 caveat
+above for the autorun step specifically):
 
 | Output | Meaning |
 |---|---|
@@ -351,10 +366,28 @@ new bug, not a test assertion failure.
 
 The harness calls `Pterm(0)` when done; QEMU exits automatically.
 Use `timeout` to bound the run in case the harness hangs (e.g. a
-trap before reaching the summary).
+trap before reaching the summary, or the #222 autorun hang above).
 
 `test-hd.img` must be a power of two for QEMU's SD card model;
 `tools/mkhdisk.sh` enforces this (currently 4 MiB).
+
+On m68k (Hatari), attach the same image as an IDE disk instead of via
+QEMU's `-drive if=sd`:
+
+```sh
+make atari512_defconfig && make      # builds ptos512k.img
+make test-hd                         # builds runtests.tos + test-hd.img
+timeout 30 hatari --tos ptos512k.img --machine ste --memsize 4 --sound off \
+  --ide-master test-hd.img --avirecord --avi-vcodec png \
+  --avi-file /tmp/test-hd.avi --run-vbls 1200
+```
+
+Hatari has no serial-console passthrough for GEMDOS `Cconws()` output (that's
+ARM/raspi-specific, see `CONF_SERIAL_CONSOLE` above), so pass/fail text isn't
+capturable the way it is over QEMU's `-serial stdio`; use AVI frame analysis
+(see the Hatari section above) to confirm the desktop is reached afterward
+and that `C:\*.*` lists `TESTS`, `EMUDESK.INF`, and `RUNTESTS.TOS` — verified
+working end-to-end this way while fixing #216.
 
 `-device usb-mouse -device usb-kbd` is mandatory when validating USB HID
 input: without these devices, the class drivers register but neither a mouse

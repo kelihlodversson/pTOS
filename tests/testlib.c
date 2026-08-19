@@ -70,6 +70,7 @@ void ptest_assert_msg(int condition, const char *msg)
         current_failed = 1;
         conws("\n    FAIL: ");
         conws(msg);
+        conws("\n");
     }
 }
 
@@ -89,6 +90,7 @@ void ptest_fail(const char *msg)
     current_failed = 1;
     conws("\n    FAIL: ");
     conws(msg);
+    conws("\n");
     ptest_pass();
 }
 
