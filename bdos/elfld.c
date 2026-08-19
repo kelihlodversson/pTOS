@@ -354,13 +354,25 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
 /*
  * apply a single relocation to the 32-bit word at vaddr.
  *
- * Both relocation encodings are supported.  REL (used by ARM) keeps the
- * addend in the target word itself, so the fixup is simply "add the load
- * bias": the slot already holds the link-time value.  RELA (used by m68k)
- * carries an explicit r_addend field; the in-file slot may be zero or
- * partial, so the relocated value is always recomputed from scratch as
- * bias + addend (for RELATIVE the addend is the link-time target address;
- * for DIR32 it is the full symbol+addend value the linker folded in).
+ * DIR32 (R_ARM_ABS32 / R_68K_32) always keeps the resolved link-time
+ * absolute value in the target word itself, regardless of relocation
+ * encoding: "ld --emit-relocs" still writes that value into the slot for
+ * both REL (ARM) and RELA (m68k) output, so the fixup is simply "add the
+ * load bias" either way.  This was verified directly against m68k
+ * --emit-relocs output: e.g. a DIR32 slot referencing a symbol whose
+ * link-time value is 0xed0 holds exactly 0xed0 in the file, with
+ * r_addend left at 0 -- so recomputing from r_addend for RELA/DIR32
+ * (as this function used to do) discards the correct value and
+ * substitutes a wrong one, corrupting every absolute reference in an
+ * ET_EXEC binary loaded via RELA relocations.
+ *
+ * RELATIVE is different, but only under RELA: a position independent
+ * executable's RELATIVE slot may legitimately be left zero (that is the
+ * point of carrying the addend out-of-band), so it must be recomputed as
+ * bias + addend.  A REL-encoded RELATIVE relocation -- which is what ARM
+ * would emit for a PIE -- still keeps its addend in the slot exactly
+ * like DIR32, so it takes the same "add the bias" path as everything
+ * else.
  */
 static LONG elf_fixup(BYTE *load_base, const ELFINFO *info, LONG bias,
                       ULONG vaddr, UBYTE type, BOOL rela, ULONG addend)
@@ -389,17 +401,8 @@ static LONG elf_fixup(BYTE *load_base, const ELFINFO *info, LONG bias,
         return EPLFMT;
 
     /* unsigned arithmetic wraps modulo 2^32, so a negative bias applies
-     * correctly whether we add to the slot or recompute it outright.
-     *
-     * For RELA the addend lives in r_addend, not in the target slot:
-     *  - RELATIVE: the slot may be zero; recompute from scratch.
-     *  - DIR32: ld folds symbol+addend into the slot for ET_EXEC
-     *    (--emit-relocs); for a correctly-produced PIE the slot is the
-     *    addend itself.  In both cases the result is bias + addend, but
-     *    we read addend from r_addend rather than from *slot, so we
-     *    recompute here too.
-     */
-    if (rela)
+     * correctly whether we add to the slot or recompute it outright. */
+    if (rela && type == ELF_R_RELATIVE)
         *slot = (ULONG)bias + addend;
     else
         *slot += (ULONG)bias;
