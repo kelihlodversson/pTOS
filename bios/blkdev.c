@@ -37,6 +37,11 @@
 #include "biosmem.h"
 #include "xhdi.h"
 
+#ifdef __arm__
+PUN_INFO *pun_ptr;      /* fixed address on m68k (tosvars.ld), ordinary
+                         * storage here (#219); declared extern in ahdi.h */
+#endif
+
 
 /*
  * undefine the following to enable booting from hard disk.

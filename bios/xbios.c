@@ -37,6 +37,9 @@
 #include "asm.h"
 #include "vectors.h"
 #include "xbios.h"
+#if defined(__arm__)
+#include "biosargs.h"
+#endif
 
 #define DBG_XBIOS        0
 
@@ -200,6 +203,19 @@ static LONG xbios_8(UBYTE *buf, LONG filler, WORD devno, WORD sectno,
 }
 #endif
 
+#if defined(__arm__)
+/*
+ * ARM's trap entry only delivers 4 real arguments in registers; floprd()
+ * needs 7, so it's called through the vec table via this trampoline
+ * instead, unpacking a struct pointer. See arch/arm/biosargs.h.
+ */
+static LONG xbios_8_arm(struct xbios_flop_io_args *a)
+{
+    return floprd((UBYTE *)a->buf, a->filler, (WORD)a->dev, (WORD)a->sect,
+                  (WORD)a->track, (WORD)a->side, (WORD)a->count);
+}
+#endif
+
 
 
 /*
@@ -220,6 +236,15 @@ static LONG xbios_9(const UBYTE *buf, LONG filler, WORD devno, WORD sectno,
 {
     kprintf("XBIOS: Flopwr()\n");
     return flopwr(buf, filler, devno, sectno, trackno, sideno, count);
+}
+#endif
+
+#if defined(__arm__)
+/* See xbios_8_arm above. */
+static LONG xbios_9_arm(struct xbios_flop_io_args *a)
+{
+    return flopwr((const UBYTE *)a->buf, a->filler, (WORD)a->dev, (WORD)a->sect,
+                  (WORD)a->track, (WORD)a->side, (WORD)a->count);
 }
 #endif
 
@@ -265,6 +290,20 @@ static LONG xbios_a(UBYTE *buf, WORD *skew, WORD devno, WORD spt,
     kprintf("XBIOS: flopfmt()\n");
     return flopfmt(buf, skew, devno, spt, trackno, sideno, interlv,
                    virgin, magic);
+}
+#endif
+
+#if defined(__arm__)
+/*
+ * ARM's trap entry only delivers 4 real arguments in registers; flopfmt()
+ * needs 9, so it's called through the vec table via this trampoline
+ * instead, unpacking a struct pointer. See arch/arm/biosargs.h.
+ */
+static LONG xbios_a_arm(struct xbios_flopfmt_args *a)
+{
+    return flopfmt((UBYTE *)a->buf, (WORD *)a->skew, (WORD)a->dev, (WORD)a->spt,
+                   (WORD)a->track, (WORD)a->side, (WORD)a->interlv,
+                   (ULONG)a->magic, (WORD)a->virgin);
 }
 #endif
 
@@ -371,6 +410,19 @@ static ULONG xbios_f(WORD speed, WORD flowctl, WORD ucr, WORD rsr, WORD tsr, WOR
 }
 #endif
 
+#if defined(__arm__)
+/*
+ * ARM's trap entry only delivers 4 real arguments in registers; rsconf()
+ * needs 6, so it's called through the vec table via this trampoline
+ * instead, unpacking a struct pointer. See arch/arm/biosargs.h.
+ */
+static ULONG xbios_f_arm(struct xbios_rsconf_args *a)
+{
+    return rsconf((WORD)a->baud, (WORD)a->ctrl, (WORD)a->ucr, (WORD)a->rsr,
+                  (WORD)a->tsr, (WORD)a->scr);
+}
+#endif
+
 
 
 /*
@@ -463,6 +515,15 @@ static LONG xbios_13(WORD *buf, LONG filler, WORD devno, WORD sectno,
 {
     kprintf("XBIOS: Flopver()\n");
     return flopver(buf, filler, devno, sectno, trackno, sideno, count);
+}
+#endif
+
+#if defined(__arm__)
+/* See xbios_8_arm above. */
+static LONG xbios_13_arm(struct xbios_flop_io_args *a)
+{
+    return flopver((WORD *)a->buf, a->filler, (WORD)a->dev, (WORD)a->sect,
+                   (WORD)a->track, (WORD)a->side, (WORD)a->count);
 }
 #endif
 
@@ -733,30 +794,31 @@ static void xbios_25(void)
  * to hack hardware and protected locations without having to fiddle
  * with GEMDOS get/set supervisor mode call.
  *
- * On m68k, the normal version of supexec() is a tiny assembler
- * trampoline (see vectors.S) that jumps to the user's code instead
- * of calling it, so it adds no stack frame of its own. This matters
- * because there is no rule about how much stack the user's function
- * needs, and some callers (e.g. certain game loaders) run with very
- * little stack to spare.
+ * The normal version of supexec() is a tiny assembler trampoline (see
+ * vectors.S) that jumps to the user's code instead of calling it, so
+ * it adds no stack frame of its own. This matters because there is no
+ * rule about how much stack the user's function needs, and some
+ * callers (e.g. certain game loaders) run with very little stack to
+ * spare.
  *
  * The debug version lives here and is much uglier since it has to
  * protect itself against GCC possibly generating code to use registers
  * which might have been clobbered by the called user function. There
  * are no rules about this, so for safety, we assume it can clobber all
  * of them.
+ *
+ * m68k only: on ARM, Supexec() is unimplemented (returns EINVFN) --
+ * see the deprecation rationale in ssystem.h/#219. Programs on ARM
+ * needing to read or write system variables use Ssystem() instead.
  */
-#if DBG_XBIOS
+#if defined(__m68k__) && DBG_XBIOS
 static LONG xbios_26(PFLONG codeptr)
 {
-#if defined(__m68k__)
     register LONG retval __asm__("d0");
     register PFLONG func __asm__("a0") = codeptr;
-#endif
 
     kprintf("XBIOS: Supexec(%p)\n", codeptr);
 
-#if defined(__m68k__)
     /* a6 is saved/restored around the call instead of being listed as a
      * clobber: some m68k-atari-mintelf-gcc 13.3.0 builds ICE in
      * print_operand_address (RTL "final" pass) when a6 is clobbered by
@@ -776,10 +838,6 @@ static LONG xbios_26(PFLONG codeptr)
     );
 
     return retval;
-#else
-    /* On arm we assume the function follows the eabi and don't save any additional registers */
-    return codeptr();
-#endif
 }
 #endif
 
@@ -1063,12 +1121,6 @@ extern LONG xbios_unimpl(void);
 
 #if defined(__m68k__)
 extern LONG supexec(PFLONG);   /* implemented in vectors.S */
-#else
-/* On arm we assume the function follows the eabi and don't save any additional registers */
-static LONG supexec(PFLONG codeptr)
-{
-    return codeptr();
-}
 #endif
 
 
@@ -1093,9 +1145,15 @@ const PFLONG xbios_vecs[] = {
     VEC(xbios_5, setscreen),
     VEC(xbios_6, setpalette),
     VEC(xbios_7, setcolor),
+#if defined(__arm__)
+    (PFLONG) xbios_8_arm,
+    (PFLONG) xbios_9_arm,
+    (PFLONG) xbios_a_arm,
+#else
     VEC(xbios_8, floprd),
     VEC(xbios_9, flopwr),
     VEC(xbios_a, flopfmt),
+#endif
     xbios_unimpl,   /*  b used_by_bios */
     VEC(xbios_c, midiws),
 #if CONF_WITH_MFP
@@ -1104,11 +1162,19 @@ const PFLONG xbios_vecs[] = {
     xbios_unimpl,   /* d */
 #endif
     VEC(xbios_e, iorec),
+#if defined(__arm__)
+    (PFLONG) xbios_f_arm,
+#else
     VEC(xbios_f, rsconf),
+#endif
     VEC(xbios_10, keytbl),
     VEC(xbios_11, random),
     VEC(xbios_12, protobt),
+#if defined(__arm__)
+    (PFLONG) xbios_13_arm,
+#else
     VEC(xbios_13, flopver),
+#endif
     xbios_unimpl,   /* 14 scrdmp */
     VEC(xbios_15, cursconf),
     VEC(xbios_16, settime),
@@ -1136,7 +1202,11 @@ const PFLONG xbios_vecs[] = {
     VEC(xbios_23, kbrate),
     xbios_unimpl,   /* 24 prtblk */
     VEC(xbios_25, vsync),
+#if defined(__m68k__)
     VEC(xbios_26, supexec),
+#else
+    xbios_unimpl,   /* 26 supexec -- deprecated on ARM, use Ssystem() instead (#219) */
+#endif
     xbios_unimpl,   /* 27 puntaes */
     xbios_unimpl,   /* 28 */
     VEC(xbios_29, floprate),

@@ -33,7 +33,9 @@
 // ==== References ===========================================================
 
 // TOS System variables
-extern volatile LONG vbclock;
+volatile LONG vbclock; /* not in tosvars.h -- defined here since this is its
+                         * only writer; also read by bdos/ssystem.c's
+                         * Ssystem(S_GETLVAL/S_SETLVAL) lookup table */
 extern void (*etv_timer)(int);
 extern const UWORD bios_ent;
 extern const UWORD xbios_ent;
