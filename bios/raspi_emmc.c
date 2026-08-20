@@ -37,9 +37,7 @@
 //#define ENABLE_KDEBUG
 //#define EMMC_DEBUG
 //#define EMMC_DEBUG2
-
-// Write protect until read support is debugged
-#define EMMC_DEBUG_WP
+//#define EMMC_DEBUG_WP
 
 #include "config.h"
 #include "portab.h"
