@@ -1062,12 +1062,23 @@ TEST_HD_SIZE = 4194304            # 4 MiB, must be power of two for QEMU
 
 # libcmini provides the C library, OS bindings (Fsfirst, Pterm, …) and
 # startup code (minicrt0) for the standalone test harness.
+#
+# Its own Makefile defaults BUILDDIR to "build" inside itself, which would
+# leave build output sitting in the lib/libcmini submodule's working tree
+# (showing up as untracked content in its own git status). Every
+# "$(MAKE) -C $(LIBCMINI_DIR)" invocation below overrides BUILDDIR to an
+# absolute path under pTOS's own obj/ instead, so the submodule checkout
+# stays clean; $(abspath ...) is required since -C changes directory
+# before BUILDDIR is evaluated, so a relative path would resolve inside
+# lib/libcmini rather than against the pTOS tree.
 LIBCMINI_DIR  = lib/libcmini
 LIBCMINI_INC  = $(LIBCMINI_DIR)/include
-LIBCMINI_OBJDIR = $(LIBCMINI_DIR)/build/./objs
+LIBCMINI_BUILDDIR = $(abspath obj/libcmini-build)
+LIBCMINI_MAKE = $(MAKE) -C $(LIBCMINI_DIR) BUILDDIR=$(LIBCMINI_BUILDDIR)
+LIBCMINI_OBJDIR = $(LIBCMINI_BUILDDIR)/./objs
 LIBCMINI_CRT0 = $(LIBCMINI_OBJDIR)/minicrt0.o
-LIBCMINI_LIB  = $(LIBCMINI_DIR)/build/./libcmini.a
-LIBCMINI_STAMP = $(LIBCMINI_DIR)/build/.ptos-config-stamp
+LIBCMINI_LIB  = $(LIBCMINI_BUILDDIR)/./libcmini.a
+LIBCMINI_STAMP = $(LIBCMINI_BUILDDIR)/.ptos-config-stamp
 
 ifdef CONF_WITH_REGRESSION_TESTS
 
@@ -1179,14 +1190,14 @@ $(LIBCMINI_STAMP): FORCE | obj $(LIBCMINI_DIR)/Makefile
 	have=$$(cat $@ 2>/dev/null || true); \
 	if [ "$$want" != "$$have" ]; then \
 	    echo "  LIBCMINI-CONFIG $$want"; \
-	    $(MAKE) -C $(LIBCMINI_DIR) clean; \
-	    $(MAKE) -C $(LIBCMINI_DIR) $$want; \
+	    $(LIBCMINI_MAKE) clean; \
+	    $(LIBCMINI_MAKE) $$want; \
 	    echo "$$want" > $@; \
 	fi
 
 $(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj $(LIBCMINI_DIR)/Makefile
 	@echo '  LIBCMINI'
-	@$(MAKE) -C $(LIBCMINI_DIR) libs startups
+	@$(LIBCMINI_MAKE) libs startups
 
 $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 
@@ -1245,7 +1256,7 @@ TOCLEAN_POST += libcmini-clean
 
 .PHONY: libcmini-clean
 libcmini-clean:
-	-@$(MAKE) -C $(LIBCMINI_DIR) clean 2>/dev/null || true
+	-@$(LIBCMINI_MAKE) clean 2>/dev/null || true
 
 #
 # Clean
