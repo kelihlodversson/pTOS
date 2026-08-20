@@ -64,16 +64,19 @@ void ptest_begin(const char *name)
 
 void ptest_assert(int condition)
 {
-    if (!condition && !current_failed) {
+    if (!condition) {
         current_failed = 1;
     }
 }
 
 void ptest_assert_msg(int condition, const char *msg)
 {
-    if (!condition && !current_failed) {
+    if (!condition) {
         current_failed = 1;
-        current_fail_msg = msg;
+        /* Keep the first message: a plain ptest_assert() failing first
+         * must not suppress a later ptest_assert_msg()'s message. */
+        if (!current_fail_msg)
+            current_fail_msg = msg;
     }
 }
 
