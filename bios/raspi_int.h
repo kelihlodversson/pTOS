@@ -12,7 +12,7 @@
 
 #ifdef MACHINE_RPI
 
-#define CLOCKHZ                        1000000     // System timer runs at 1MHz
+#define CLOCKHZ                        1000000     /* System timer runs at 1MHz */
 
 void raspi_interrupt_init(void);
 void raspi_init_system_timer(void);

@@ -83,8 +83,16 @@ assertion failure.
 
 Each suite is a single C file at `tests/<name>/<name>.c` defining exactly
 one entry point, `void test_<name>(void)`. The Makefile auto-discovers
-every `tests/*/*.c` file and wires its `test_<name>()` into the generated
-`tests/run_tests.c` — nothing needs registering by hand.
+every `tests/*/` directory and wires the `test_<name>()` from its
+`<name>.c` into the generated `tests/run_tests.c` — nothing needs
+registering by hand.
+
+A suite's directory can hold other files besides `<name>.c` without them
+being treated as suites themselves. `tests/pie_load/`, for instance,
+also has `pie_probe.c`: a standalone payload `pie_load.c` launches via
+`Pexec()` to test the PIE ELF loader, built and linked separately from
+`runtests.tos` (see the Makefile's `pieprobe.tos` rule) rather than
+compiled in as a `test_<name>()` entry point.
 
 ```c
 #include "test.h"
