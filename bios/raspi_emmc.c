@@ -131,16 +131,16 @@
 #define EMMC_SPI_INT_SPT    (*(volatile ULONG*)(ARM_EMMC_BASE + 0xF0))
 #define EMMC_SLOTISR_VER    (*(volatile ULONG*)(ARM_EMMC_BASE + 0xFC))
 
-#define ARM_GPIO_BASE		(ARM_IO_BASE + 0x200000)
-#define ARM_GPIO_GPFSEL0	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x00))
-#define ARM_GPIO_GPFSEL1	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x04))
-#define ARM_GPIO_GPFSEL2	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x08))
-#define ARM_GPIO_GPFSEL3	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x0c))
-#define ARM_GPIO_GPFSEL4	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x10))
-#define ARM_GPIO_GPFSEL5	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x14))
-#define ARM_GPIO_GPPUD		(*(volatile ULONG*)(ARM_GPIO_BASE + 0x94))
-#define ARM_GPIO_GPPUDCLK0	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x98))
-#define ARM_GPIO_GPPUDCLK1	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x9c))
+#define ARM_GPIO_BASE       (ARM_IO_BASE + 0x200000)
+#define ARM_GPIO_GPFSEL0    (*(volatile ULONG*)(ARM_GPIO_BASE + 0x00))
+#define ARM_GPIO_GPFSEL1    (*(volatile ULONG*)(ARM_GPIO_BASE + 0x04))
+#define ARM_GPIO_GPFSEL2    (*(volatile ULONG*)(ARM_GPIO_BASE + 0x08))
+#define ARM_GPIO_GPFSEL3    (*(volatile ULONG*)(ARM_GPIO_BASE + 0x0c))
+#define ARM_GPIO_GPFSEL4    (*(volatile ULONG*)(ARM_GPIO_BASE + 0x10))
+#define ARM_GPIO_GPFSEL5    (*(volatile ULONG*)(ARM_GPIO_BASE + 0x14))
+#define ARM_GPIO_GPPUD      (*(volatile ULONG*)(ARM_GPIO_BASE + 0x94))
+#define ARM_GPIO_GPPUDCLK0  (*(volatile ULONG*)(ARM_GPIO_BASE + 0x98))
+#define ARM_GPIO_GPPUDCLK1  (*(volatile ULONG*)(ARM_GPIO_BASE + 0x9c))
 
 
 #define SD_CMD_INDEX(a)          ((a) << 24)
@@ -1063,6 +1063,7 @@ static void handle_interrupts(void)
 {
     ULONG irpts = EMMC_INTERRUPT;
     ULONG reset_mask = 0;
+    BOOL card_inserted = FALSE;
 
     if (irpts & SD_COMMAND_COMPLETE)
     {
@@ -1120,6 +1121,7 @@ static void handle_interrupts(void)
         KDEBUG(("card insertion detected\n"));
 #endif
         reset_mask |= SD_CARD_INSERTION;
+        card_inserted = TRUE;
     }
 
     if (irpts & SD_CARD_REMOVAL)
@@ -1149,6 +1151,33 @@ static void handle_interrupts(void)
     }
 
     EMMC_INTERRUPT = reset_mask;
+
+    /*
+     * card_init() is otherwise only called once, from raspi_emmc_init() at
+     * boot: without this, a single SD_CARD_REMOVAL interrupt latches
+     * card.card_removal permanently (nothing else ever clears it), so
+     * raspi_emmc_rw()/raspi_emmc_ioctl() short-circuit to E_CHNG/
+     * MEDIACHANGE forever, even after a new card is inserted. Re-running
+     * it here recovers as soon as the controller reports the new card,
+     * before anything above this driver even tries to use it again.
+     *
+     * Safe to call from here: the SD_CARD_INSERTION bit is already
+     * cleared in hardware by the EMMC_INTERRUPT write above, so
+     * card_init() -> card_reset()'s own issue_command() calls -- which
+     * each re-enter handle_interrupts() at the top of issue_command() --
+     * see a status register without that bit still pending, so this
+     * cannot recurse back into another card_init() call.
+     *
+     * card_init()/card_reset() never touch card.report_mediach -- set it
+     * explicitly here (regardless of whether card_init() succeeds) so a
+     * poll-driven Mediach() (as opposed to a failed read/write reaching
+     * E_CHNG) also notices the swap.
+     */
+    if (card_inserted)
+    {
+        card_init();
+        card.report_mediach = 1;
+    }
 }
 
 static BOOL issue_command(ULONG command, ULONG argument, int timeout)
