@@ -360,17 +360,27 @@ static LONG ssystem_osversion(void)
  * column/row index, i.e. one less than the actual width/height -- add 1
  * to report the usable count a caller like getwh()/getht() actually
  * wants.
+ *
+ * arg1 is the caller's struct console_dim*, arg2 its sizeof() -- only
+ * min(arg2, sizeof(our struct)) bytes are copied, so a caller's struct
+ * that's smaller (built against an older pTOS) or larger (built against
+ * a newer one than this kernel implements) than ours is both handled
+ * correctly; see ssystem.h.
  */
-static LONG ssystem_console_dim(LONG arg2)
+static LONG ssystem_console_dim(LONG arg1, LONG arg2)
 {
-    LONG dim;
+    struct console_dim dim;
+    LONG n;
 
-    if (!arg2)
+    if (!arg1 || arg2 <= 0)
         return EINVFN;
 
-    dim = ((LONG)(linea_vars.v_cel_my + 1) << 16) | (linea_vars.v_cel_mx + 1);
-    svar_copy((void *)arg2, &dim, sizeof(dim));
-    return E_OK;
+    dim.width = linea_vars.v_cel_mx + 1;
+    dim.height = linea_vars.v_cel_my + 1;
+
+    n = arg2 < (LONG)sizeof(dim) ? arg2 : (LONG)sizeof(dim);
+    svar_copy((void *)arg1, &dim, n);
+    return n;
 }
 
 
@@ -416,7 +426,7 @@ LONG xssystem(WORD mode, LONG arg1, LONG arg2)
         return ssystem_setbval(arg1, arg2);
 
     case S_CONSOLE_DIM:
-        return ssystem_console_dim(arg2);
+        return ssystem_console_dim(arg1, arg2);
 
     default:
         return EINVFN;

@@ -49,11 +49,24 @@
  * kernel's own address space -- not usable from a standalone userland
  * program.
  *
- * arg1 is unused (reserved, pass 0). arg2 is a LONG* the call writes the
- * dimensions to: width (columns) in the lower 16 bits, height (rows) in
- * the upper 16. Returns E_OK on success, or EINVFN if arg2 is NULL.
+ * arg1 is a struct console_dim*, arg2 is sizeof(*arg1) as the caller
+ * knows it -- not a fixed size, so the struct can grow in a later pTOS
+ * version without breaking callers built against an older one. Exactly
+ * min(arg2, sizeof(struct console_dim)) bytes are copied from the
+ * kernel's own struct into the caller's, so an old caller passing a
+ * smaller sizeof() only gets the fields that existed when it was built,
+ * and a caller built against a newer, larger struct than the running
+ * kernel implements only gets however many bytes that kernel actually
+ * has to give -- compare the return value against the caller's own
+ * sizeof() to tell which happened. Returns the number of bytes copied
+ * (>= 0), or EINVFN if arg1 is NULL or arg2 <= 0.
  */
 #define S_CONSOLE_DIM   ((WORD)0xfffe)
+
+struct console_dim {
+    UWORD width;    /* columns */
+    UWORD height;   /* rows */
+};
 
 LONG xssystem(WORD mode, LONG arg1, LONG arg2);
 

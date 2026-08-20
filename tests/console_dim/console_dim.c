@@ -27,33 +27,64 @@ void test_console_dim(void);
  */
 #define S_CONSOLE_DIM ((short)0xfffe)
 
+/* Mirrors bdos/ssystem.h's struct console_dim -- not shared via a header
+ * since this is userland/libcmini code, not kernel code. */
+struct console_dim {
+    unsigned short width;   /* columns */
+    unsigned short height;  /* rows */
+};
+
 void test_console_dim(void)
 {
-    long dim = -1;
+    struct console_dim dim;
+    struct {
+        struct console_dim base;
+        unsigned char future[4];       /* simulates a newer, larger caller struct */
+    } oversized;
     long rc;
-    unsigned short width, height;
 
     ptest_begin("console_dim (#235)");
 
-    rc = Ssystem(S_CONSOLE_DIM, 0, (long)&dim);
-    ptest_assert_msg(rc == 0, "Ssystem(S_CONSOLE_DIM) did not return E_OK");
+    /*
+     * Ssystem() itself is currently ARM-only (bdos/bdosmain.c's osif(),
+     * #ifdef __arm__) -- every mode, not just this one, returns EINVFN
+     * unconditionally on m68k. Unlike stack_alignment (ARM-only only in
+     * the sense that its bug never manifested elsewhere), this is an
+     * explicit "not implemented on this architecture" the harness
+     * should skip past rather than assert success against.
+     */
+    if (Ssystem(S_INQUIRE, 0, 0) != 0) {
+        ptest_pass();
+        return;
+    }
 
-    width = (unsigned short)(dim & 0xffff);
-    height = (unsigned short)((dim >> 16) & 0xffff);
+    rc = Ssystem(S_CONSOLE_DIM, (long)&dim, (long)sizeof(dim));
+    ptest_assert_msg(rc == (long)sizeof(dim),
+                     "Ssystem(S_CONSOLE_DIM) did not report the full struct written");
 
-    /* Generous bounds: real/emulated screens run from ST low-res
-     * (40x25) up to TT high-res in a small font (213x160-ish); anything
-     * outside this range means the wrong bits ended up in the wrong
-     * half of the LONG, not a real screen. */
-    ptest_assert_msg(width > 0 && width <= 1000,
+    /* Generous bounds: real/emulated screens run from ST low-res (40x25)
+     * up to TT high-res in a small font (213x160-ish); anything outside
+     * this range means garbage, not a real screen. */
+    ptest_assert_msg(dim.width > 0 && dim.width <= 1000,
                      "console width out of plausible range");
-    ptest_assert_msg(height > 0 && height <= 500,
+    ptest_assert_msg(dim.height > 0 && dim.height <= 500,
                      "console height out of plausible range");
 
-    /* A NULL destination pointer must be rejected, not crash. */
-    rc = Ssystem(S_CONSOLE_DIM, 0, 0L);
-    ptest_assert_msg(rc < 0, "Ssystem(S_CONSOLE_DIM) with a NULL pointer "
-                              "should fail, not succeed");
+    /* A caller struct larger than the kernel's own must not overrun --
+     * only sizeof(struct console_dim) bytes get written, and the return
+     * value says so rather than claiming the whole oversized buffer. */
+    rc = Ssystem(S_CONSOLE_DIM, (long)&oversized, (long)sizeof(oversized));
+    ptest_assert_msg(rc == (long)sizeof(struct console_dim),
+                     "Ssystem(S_CONSOLE_DIM) wrote more than it knows about");
+
+    /* A NULL pointer or non-positive size must be rejected, not crash. */
+    rc = Ssystem(S_CONSOLE_DIM, 0, (long)sizeof(dim));
+    ptest_assert_msg(rc < 0,
+                     "Ssystem(S_CONSOLE_DIM) with a NULL pointer should fail");
+
+    rc = Ssystem(S_CONSOLE_DIM, (long)&dim, 0);
+    ptest_assert_msg(rc < 0,
+                     "Ssystem(S_CONSOLE_DIM) with size 0 should fail");
 
     ptest_pass();
 }
