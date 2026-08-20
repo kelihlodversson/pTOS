@@ -17,6 +17,8 @@
 #include "test.h"
 #include <mint/osbind.h>
 
+void test_stack_alignment(void);
+
 void test_stack_alignment(void)
 {
     long rc;

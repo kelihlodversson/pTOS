@@ -1081,13 +1081,13 @@ tests/run_tests.c: $(wildcard tests/*/*.c) | obj
 	@echo '/* Auto-generated -- do not edit */' > $@
 	@for s in $(TEST_SUITES); do \
 	  echo "extern void test_$$s(void);" >> $@; \
-	done >> $@
+	done
 	@echo '' >> $@
 	@echo 'void ptest_run_tests(void)' >> $@
 	@echo '{' >> $@
 	@for s in $(TEST_SUITES); do \
 	  echo "    test_$$s();" >> $@; \
-	done >> $@
+	done
 	@echo '}' >> $@
 
 # The test harness is userland code linked against libcmini, not the

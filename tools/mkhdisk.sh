@@ -41,8 +41,8 @@ workdir=$(mktemp -d "${TMPDIR:-/tmp}/mkhdisk.XXXXXX")
 trap 'rm -rf "$workdir"' EXIT
 
 fs_image="$workdir/fs.img"
-dd if=/dev/zero of="$fs_image" bs=$sector_size count=$partition_sectors status=none
-mkfs.fat -F 16 -s 1 -n PTOS "$fs_image" >/dev/null 2>&1
+dd if=/dev/zero of="$fs_image" bs=$sector_size count=$partition_sectors
+mkfs.fat -F 16 -s 1 -n PTOS "$fs_image" >/dev/null
 
 for f in "$@"; do
     if [ -d "$f" ]; then
@@ -54,7 +54,7 @@ done
 
 # ---- write the disk image with MBR ----
 
-dd if=/dev/zero of="$output" bs=$sector_size count=$disk_sectors status=none
+dd if=/dev/zero of="$output" bs=$sector_size count=$disk_sectors
 
 # Build the 512-byte MBR sector: zeros everywhere except the partition
 # table entry at offset 446 and the boot signature at offset 510.
@@ -85,14 +85,14 @@ ps_xl=$((partition_sectors >> 24 & 0xFF))
 #   [8-11]  starting LBA: 2048 (0x800, LE)
 #   [12-15] number of sectors: $partition_sectors (32-bit LE)
 
-printf '\200\0\1\0'           | dd of="$output" bs=1 seek=446 conv=notrunc status=none
-printf '\16\376\377\377'     | dd of="$output" bs=1 seek=450 conv=notrunc status=none
-printf '\0\10\0\0'           | dd of="$output" bs=1 seek=454 conv=notrunc status=none
+printf '\200\0\1\0'           | dd of="$output" bs=1 seek=446 conv=notrunc
+printf '\16\376\377\377'     | dd of="$output" bs=1 seek=450 conv=notrunc
+printf '\0\10\0\0'           | dd of="$output" bs=1 seek=454 conv=notrunc
 printf '%b' "$(printf '\\%03o\\%03o\\%03o\\%03o' "$ps_lo" "$ps_md" "$ps_hi" "$ps_xl")" \
-                             | dd of="$output" bs=1 seek=458 conv=notrunc status=none
-printf '\125\252'             | dd of="$output" bs=1 seek=510 conv=notrunc status=none
+                             | dd of="$output" bs=1 seek=458 conv=notrunc
+printf '\125\252'             | dd of="$output" bs=1 seek=510 conv=notrunc
 
 # Embed the already-formatted partition at its offset in the disk image.
-dd if="$fs_image" of="$output" bs=$sector_size seek=$partition_start conv=notrunc status=none
+dd if="$fs_image" of="$output" bs=$sector_size seek=$partition_start conv=notrunc
 
 echo "Wrote $output ($((disk_sectors * sector_size / 1024 / 1024)) MiB)"
