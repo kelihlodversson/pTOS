@@ -512,21 +512,32 @@ static LONG elf_relocate(FH h, const Elf32_Ehdr *e, BYTE *load_base,
             continue;
 
         /*
-         * sh_info names the section these relocations apply to.  A section
-         * with no SHF_ALLOC flag (e.g. .debug_info) is never loaded, so its
-         * r_offset values are offsets within that section on disk, not
-         * load-time virtual addresses -- applying them through elf_fixup()
-         * would either reject a perfectly valid binary (a debug-section
-         * offset that happens to be misaligned) or, worse, silently
-         * corrupt the loaded image (one that happens to land 4-byte
-         * aligned inside [link_base, mem_end)). A non-stripped binary
-         * built with "ld --emit-relocs" carries these sections, so this is
-         * not a hypothetical: skip anything that isn't part of the loaded
+         * sh_info names the section these relocations apply to, but for
+         * dynamic relocations (.rel.dyn / .rela.dyn in a PIE, see the top
+         * of this file) sh_info is 0 -- they apply to the load image as a
+         * whole, not to one specific section -- and section index 0 is
+         * always the reserved SHT_NULL entry, never SHF_ALLOC. Skipping
+         * unconditionally on "target has no SHF_ALLOC" would therefore
+         * skip every dynamic relocation and silently under-relocate any
+         * ET_DYN binary. Only sh_info != 0 names a real target section
+         * whose SHF_ALLOC-ness is worth checking.
+         *
+         * For a genuine section reference, a section with no SHF_ALLOC
+         * flag (e.g. .debug_info) is never loaded, so its r_offset values
+         * are offsets within that section on disk, not load-time virtual
+         * addresses -- applying them through elf_fixup() would either
+         * reject a perfectly valid binary (a debug-section offset that
+         * happens to be misaligned) or, worse, silently corrupt the
+         * loaded image (one that happens to land 4-byte aligned inside
+         * [link_base, mem_end)). A non-stripped binary built with
+         * "ld --emit-relocs" carries these sections, so this is not a
+         * hypothetical: skip anything that isn't part of the loaded
          * image.
          */
         if (sh.sh_info >= (ULONG)e->e_shnum)
             return EPLFMT;
 
+        if (sh.sh_info != 0)
         {
             Elf32_Shdr target;
             ULONG target_off;
