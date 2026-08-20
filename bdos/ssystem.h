@@ -61,7 +61,9 @@
  * sizeof() to tell which happened. Returns the number of bytes copied
  * (>= 0), or EINVFN if arg1 is NULL or arg2 <= 0.
  *
- * arg2 == -1 is a separate query mode: arg1 is ignored (may be NULL,
+ * arg2 == -1 is not a separate Ssystem() mode -- it's still
+ * S_CONSOLE_DIM, just called with this one reserved size value instead
+ * of a real sizeof(). Called that way, arg1 is ignored (may be NULL,
  * nothing is written) and the call instead returns sizeof(struct
  * console_dim) as the running kernel implements it -- the largest
  * arg2 a real call could ever use productively. This lets a caller
