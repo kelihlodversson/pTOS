@@ -76,10 +76,12 @@ All tests passed.
 ```
 
 A failing test prints `FAIL` instead of `PASS`, followed by an indented
-`FAIL: <message>` detail line, and the harness exits via `Pterm(0)` with a
-return code equal to the number of failed tests. A Data Abort or
-`guest_errors` output *before* the summary line means the harness itself
-crashed — a real bug, not a test assertion failure.
+`FAIL: <message>` detail line, and the harness exits via
+`Pterm(<failure count>)` — 0 when every test passed, so a caller checking
+the return value (e.g. via `Pexec()`) can tell success from failure without
+parsing the printed text. A Data Abort or `guest_errors` output *before*
+the summary line means the harness itself crashed — a real bug, not a test
+assertion failure.
 
 ## Adding a test suite
 

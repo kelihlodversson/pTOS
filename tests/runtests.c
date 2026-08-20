@@ -12,15 +12,18 @@
 
 int main(void)
 {
+    int failures;
+
     conws("pTOS regression tests\r\n\r\n");
 
     ptest_run_tests();
 
-    if (ptest_summary())
+    failures = ptest_summary();
+    if (failures)
         conws("\r\nSome tests FAILED.\r\n");
     else
         conws("\r\nAll tests passed.\r\n");
 
-    Pterm(0);
-    return 0;
+    Pterm(failures);
+    return failures;
 }
