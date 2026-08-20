@@ -323,19 +323,17 @@ make rpi2_defconfig && make          # builds kernel7.img
 make test-hd                         # builds runtests.tos + test-hd.img
 ```
 
-**Known issue (#222): the `#Z` autorun hangs on ARM/QEMU.** Attaching
-`test-hd.img` (whose `emudesk.inf` has the `#Z` line) to QEMU hangs boot
-indefinitely right after `VDI video mode = ...`, with no crash and no
-`guest_errors` — isolated to the `#Z` autorun entry specifically (an empty
-disk, or the same `emudesk.inf` with the `#Z` line removed, both boot fine
-to `evnt_multi()`). The identical harness/`emudesk.inf` boots and runs
-correctly to a working desktop on **m68k under Hatari** (`--ide-master
-test-hd.img`), so this looks ARM-specific (likely in `sh_chgrf()`'s
-graphic/alpha mode switch or `dsptch()` around `aes/geminit.c:656-662`),
-not a general bug in the autorun mechanism. Until #222 is root-caused,
-verify the ARM harness by booting `test-hd.img` and launching
-`C:\RUNTESTS.TOS` manually from the desktop, or with a throwaway
-`emudesk.inf` that omits the `#Z` line.
+The `#Z` autorun used to hang indefinitely on ARM/QEMU right after `VDI
+video mode = ...` (issue #222) -- three separate bugs stacked on top of
+each other: two in the ELF loader (debug-section relocations misapplied
+as real addresses; absolute `movw`/`movt` loads never rebased, needing
+`-mword-relocations` in `TEST_CFLAGS`) and, once those were fixed enough
+for a program to actually run to completion, a `Setexc(0x100-0x102, ...)`
+bug in `bios.c` that read/wrote the wrong memory on ARM (that vecnum range
+is a fixed low-memory address on m68k but an ordinary global on ARM) --
+`Pterm()` calls it internally on every process exit, so nothing had ever
+survived to return from `RUNTESTS.TOS`. All three are fixed; `#Z` autorun
+now works normally on ARM.
 
 Run on QEMU (raspi2 used here; raspi1ap works identically with
 `-bios kernel.img`):
@@ -346,8 +344,7 @@ timeout 30 qemu-system-arm -M raspi2b -bios kernel7.img \
   -d guest_errors -serial stdio
 ```
 
-Pass signals on the serial console (in order; ARM: see the #222 caveat
-above for the autorun step specifically):
+Pass signals on the serial console, in order:
 
 | Output | Meaning |
 |---|---|
@@ -365,29 +362,31 @@ output before the summary means the harness itself crashed — likely a
 new bug, not a test assertion failure.
 
 The harness calls `Pterm(0)` when done; QEMU exits automatically.
-Use `timeout` to bound the run in case the harness hangs (e.g. a
-trap before reaching the summary, or the #222 autorun hang above).
+Use `timeout` to bound the run regardless (e.g. a trap before reaching
+the summary would otherwise hang the run indefinitely).
 
-`test-hd.img` must be a power of two for QEMU's SD card model;
-`tools/mkhdisk.sh` enforces this (currently 4 MiB).
+`test-hd.img` must be a power of two for QEMU's SD card model, and at
+least 4 MiB: `tools/mkhdisk.sh` enforces both (2 MiB technically passes
+the power-of-two check but leaves too little room for a FAT16 partition
+after the 1 MiB MBR offset, so `mkfs.fat` fails).
 
 On m68k (Hatari), attach the same image as an IDE disk instead of via
-QEMU's `-drive if=sd`:
+QEMU's `-drive if=sd`, and use `--conout 2` to capture the same PASS/FAIL
+text Hatari's own stdout would otherwise only show via the VT-52 terminal
+window -- far more reliable than AVI-frame analysis for reading text
+output:
 
 ```sh
 make atari512_defconfig && make      # builds ptos512k.img
 make test-hd                         # builds runtests.tos + test-hd.img
 timeout 30 hatari --tos ptos512k.img --machine ste --memsize 4 --sound off \
-  --ide-master test-hd.img --avirecord --avi-vcodec png \
-  --avi-file /tmp/test-hd.avi --run-vbls 1200
+  --acsi test-hd.img --conout 2 --run-vbls 1200
 ```
 
-Hatari has no serial-console passthrough for GEMDOS `Cconws()` output (that's
-ARM/raspi-specific, see `CONF_SERIAL_CONSOLE` above), so pass/fail text isn't
-capturable the way it is over QEMU's `-serial stdio`; use AVI frame analysis
-(see the Hatari section above) to confirm the desktop is reached afterward
-and that `C:\*.*` lists `TESTS`, `EMUDESK.INF`, and `RUNTESTS.TOS` — verified
-working end-to-end this way while fixing #216.
+The same pass signals table above applies to Hatari's `--conout 2` output.
+AVI-frame analysis (see the Hatari section above) is still useful to
+confirm the desktop is reached *afterward*, and that `C:\*.*` lists
+`TESTS`, `EMUDESK.INF`, and `RUNTESTS.TOS`.
 
 `-device usb-mouse -device usb-kbd` is mandatory when validating USB HID
 input: without these devices, the class drivers register but neither a mouse
