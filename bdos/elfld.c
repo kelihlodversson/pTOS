@@ -80,6 +80,7 @@
 #define PT_LOAD     1
 #define SHT_RELA    4
 #define SHT_REL     9
+#define SHF_ALLOC   0x2
 
 /* machine type and the "add the load bias to a 32-bit word" relocation
  * type for the architecture we are built for.  ELF_SLOT_ALIGN is the
@@ -499,12 +500,45 @@ static LONG elf_relocate(FH h, const Elf32_Ehdr *e, BYTE *load_base,
         if (r < 0L)
             return r;
 
+        if (sh.sh_type != SHT_REL && sh.sh_type != SHT_RELA)
+            continue;
+
+        /*
+         * sh_info names the section these relocations apply to.  A section
+         * with no SHF_ALLOC flag (e.g. .debug_info) is never loaded, so its
+         * r_offset values are offsets within that section on disk, not
+         * load-time virtual addresses -- applying them through elf_fixup()
+         * would either reject a perfectly valid binary (a debug-section
+         * offset that happens to be misaligned) or, worse, silently
+         * corrupt the loaded image (one that happens to land 4-byte
+         * aligned inside [link_base, mem_end)). A non-stripped binary
+         * built with "ld --emit-relocs" carries these sections, so this is
+         * not a hypothetical: skip anything that isn't part of the loaded
+         * image.
+         */
+        if (sh.sh_info >= (ULONG)e->e_shnum)
+            return EPLFMT;
+
+        {
+            Elf32_Shdr target;
+            ULONG target_off;
+
+            if (u32_mul_overflow(sh.sh_info, (ULONG)e->e_shentsize, &target_off)
+             || u32_add_overflow(e->e_shoff, target_off, &target_off))
+                return EPLFMT;
+
+            r = read_at(h, target_off, &target, (LONG)sizeof(target));
+            if (r < 0L)
+                return r;
+
+            if (!(target.sh_flags & SHF_ALLOC))
+                continue;
+        }
+
         if (sh.sh_type == SHT_REL)
             r = elf_relocate_section(h, &sh, FALSE, load_base, info, bias);
-        else if (sh.sh_type == SHT_RELA)
-            r = elf_relocate_section(h, &sh, TRUE, load_base, info, bias);
         else
-            continue;
+            r = elf_relocate_section(h, &sh, TRUE, load_base, info, bias);
 
         if (r < 0L)
             return r;

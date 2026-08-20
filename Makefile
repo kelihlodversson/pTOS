@@ -1097,8 +1097,18 @@ tests/run_tests.c: $(wildcard tests/*/*.c) | obj
 # build -- for a normal ARM/m68k userland binary.  $(CPUFLAGS) is kept so
 # generated code targets the selected machine's CPU/FPU, matching what the
 # kernel itself is built for.
+#
+# On ARM, -mword-relocations forces every absolute address load to go
+# through a plain R_ARM_ABS32 word (as elfld.c's own file comment assumes)
+# instead of the movw/movt immediate pairs GCC otherwise prefers -- those
+# encode the address split across two 16-bit relocations
+# (R_ARM_MOVW_ABS_NC / R_ARM_MOVT_ABS) that elfld.c's loader does not
+# rebase, so a program linked without this flag loads with unrelocated
+# absolute addresses baked into its code whenever it lands away from its
+# link address.
 TEST_CFLAGS = $(CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
-              $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC)
+              $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC) \
+              $(if $(ARCH_ARM),-mword-relocations)
 
 TEST_OBJ = obj/runtests.o obj/run_tests.o obj/testlib.o
 
