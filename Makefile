@@ -1161,7 +1161,18 @@ endif
 .PHONY: FORCE
 FORCE:
 
-$(LIBCMINI_STAMP): FORCE | obj
+# lib/libcmini is a git submodule: a plain "git clone" without
+# --recurse-submodules (or before "git submodule update --init") leaves
+# $(LIBCMINI_DIR) present but empty, and every rule below that invokes
+# "$(MAKE) -C $(LIBCMINI_DIR)" would then fail with a generic nested-make
+# error ("No rule to make target ...") that gives no hint what's actually
+# wrong. Gate on the submodule's own Makefile so the real problem is
+# reported once, up front, instead.
+$(LIBCMINI_DIR)/Makefile:
+	@echo "$@ not found -- run 'git submodule update --init' first" >&2
+	@exit 1
+
+$(LIBCMINI_STAMP): FORCE | obj $(LIBCMINI_DIR)/Makefile
 	@mkdir -p $(dir $@)
 	@want='$(LIBCMINI_DEFCONFIG)'; \
 	have=$$(cat $@ 2>/dev/null || true); \
@@ -1172,7 +1183,7 @@ $(LIBCMINI_STAMP): FORCE | obj
 	    echo "$$want" > $@; \
 	fi
 
-$(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj
+$(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj $(LIBCMINI_DIR)/Makefile
 	@echo '  LIBCMINI'
 	@$(MAKE) -C $(LIBCMINI_DIR) libs startups
 
