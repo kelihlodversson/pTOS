@@ -71,13 +71,37 @@ void test_console_dim(void)
                      "console height out of plausible range");
 
     /* A caller struct larger than the kernel's own must not overrun --
-     * only sizeof(struct console_dim) bytes get written, and the return
-     * value says so rather than claiming the whole oversized buffer. */
+     * only sizeof(struct console_dim) bytes get written. Fill the
+     * trailing bytes with a sentinel first: checking just the return
+     * value wouldn't catch a kernel that overwrites them but still
+     * reports the smaller count. */
+    {
+        unsigned i;
+        for (i = 0; i < sizeof(oversized.future); i++)
+            oversized.future[i] = 0xaa;
+    }
     rc = Ssystem(S_CONSOLE_DIM, (long)&oversized, (long)sizeof(oversized));
     ptest_assert_msg(rc == (long)sizeof(struct console_dim),
                      "Ssystem(S_CONSOLE_DIM) wrote more than it knows about");
+    {
+        unsigned i;
+        for (i = 0; i < sizeof(oversized.future); i++)
+            ptest_assert_msg(oversized.future[i] == 0xaa,
+                             "Ssystem(S_CONSOLE_DIM) overran into the "
+                             "caller's trailing bytes");
+    }
 
-    /* A NULL pointer or non-positive size must be rejected, not crash. */
+    /* size == -1 queries sizeof(struct console_dim) as the running
+     * kernel implements it, without writing anything -- arg1 is
+     * ignored, so NULL is fine here. This is how a caller discovers
+     * which struct version it's talking to up front. */
+    rc = Ssystem(S_CONSOLE_DIM, 0, -1L);
+    ptest_assert_msg(rc == (long)sizeof(struct console_dim),
+                     "Ssystem(S_CONSOLE_DIM) size query did not report "
+                     "sizeof(struct console_dim)");
+
+    /* A NULL pointer or non-positive size (other than the -1 query
+     * above) must be rejected, not crash. */
     rc = Ssystem(S_CONSOLE_DIM, 0, (long)sizeof(dim));
     ptest_assert_msg(rc < 0,
                      "Ssystem(S_CONSOLE_DIM) with a NULL pointer should fail");

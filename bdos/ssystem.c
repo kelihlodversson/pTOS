@@ -365,12 +365,16 @@ static LONG ssystem_osversion(void)
  * min(arg2, sizeof(our struct)) bytes are copied, so a caller's struct
  * that's smaller (built against an older pTOS) or larger (built against
  * a newer one than this kernel implements) than ours is both handled
- * correctly; see ssystem.h.
+ * correctly; see ssystem.h. arg2 == -1 queries sizeof(our struct)
+ * without writing anything (arg1 is ignored).
  */
 static LONG ssystem_console_dim(LONG arg1, LONG arg2)
 {
     struct console_dim dim;
     LONG n;
+
+    if (arg2 == -1)
+        return (LONG)sizeof(dim);
 
     if (!arg1 || arg2 <= 0)
         return EINVFN;
