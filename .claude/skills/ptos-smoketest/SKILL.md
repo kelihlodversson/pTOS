@@ -370,7 +370,7 @@ least 4 MiB: `tools/mkhdisk.sh` enforces both (2 MiB technically passes
 the power-of-two check but leaves too little room for a FAT16 partition
 after the 1 MiB MBR offset, so `mkfs.fat` fails).
 
-On m68k (Hatari), attach the same image as an IDE disk instead of via
+On m68k (Hatari), attach the same image as an ACSI disk instead of via
 QEMU's `-drive if=sd`, and use `--conout 2` to capture the same PASS/FAIL
 text Hatari's own stdout would otherwise only show via the VT-52 terminal
 window -- far more reliable than AVI-frame analysis for reading text

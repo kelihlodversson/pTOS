@@ -24,8 +24,8 @@ make test-hd
   [libcmini](https://github.com/KeliHlodversson/libcmini) (the `lib/libcmini`
   submodule), containing every enabled test suite.
 - `test-hd.img` — a raw disk image (MBR + FAT16, built by `tools/mkhdisk.sh`)
-  carrying `runtests.tos`, `tests/emudesk.inf`, and the contents of
-  `tests/destdata/` (see [Packaged test data](#packaged-test-data) below).
+  carrying `runtests.tos`, `tests/emudesk.inf`, and `tests/destdata/TESTS/`
+  (see [Packaged test data](#packaged-test-data) below).
 
 `lib/libcmini` is a git submodule. If it's missing, `make test-hd` fails
 with an actionable error — run `git submodule update --init` and retry.
@@ -47,7 +47,7 @@ qemu-system-arm -M raspi2b -bios kernel7.img \
   -d guest_errors -serial stdio
 ```
 
-On Hatari (m68k), attach it as an IDE disk and use `--conout 2` to capture
+On Hatari (m68k), attach it as an ACSI disk and use `--conout 2` to capture
 the console text (a VT-52 terminal channel) directly to Hatari's own
 stdout:
 
@@ -137,12 +137,13 @@ viewer already treats `\n` as a full line break).
 
 ## Packaged test data
 
-Files a test needs on disk at runtime go under `tests/destdata/`, mirroring
-the layout they should have on the built image's `C:` drive — e.g.
-`tests/destdata/TESTS/` ships as `C:\TESTS\` (used by `stack_alignment` to
-exercise `Fsfirst()` on a subdirectory). Add files there if a new suite
-needs fixtures; an empty directory needs a placeholder file (`.keep`) since
-git can't track empty directories.
+Files a test needs on disk at runtime go under `tests/destdata/TESTS/`,
+which `make test-hd` packages onto the image as `C:\TESTS\` (used by
+`stack_alignment` to exercise `Fsfirst()` on a subdirectory) — that one
+directory is what `TEST_DESTDIR` in the top-level Makefile currently
+points at, not all of `tests/destdata/`, so add fixture files there
+rather than in a sibling directory. An empty directory needs a
+placeholder file (`.keep`) since git can't track empty directories.
 
 ## Multiple suites
 
