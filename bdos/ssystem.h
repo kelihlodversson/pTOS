@@ -36,6 +36,47 @@
 #define S_SETBVAL       0x000f
 #define S_DELCOOKIE     0x001a
 
+/*
+ * S_CONSOLE_DIM - pTOS-only extension, NOT part of MiNT's Ssystem()
+ * protocol. Deliberately given a mode value outside the documented MiNT
+ * range (a negative WORD, the same idiom S_INQUIRE already uses) so it
+ * can never collide with a real MiNT mode.
+ *
+ * Returns the console's text-cell dimensions without Line-A: on m68k
+ * that's a genuine CPU trap, but it doesn't exist at all on ARM (see
+ * kelihlodversson/pTOS#235), where the only other way to read
+ * v_cel_mx/v_cel_my (bios/lineavars.h) is compiling straight into the
+ * kernel's own address space -- not usable from a standalone userland
+ * program.
+ *
+ * arg1 is a struct console_dim*, arg2 is sizeof(*arg1) as the caller
+ * knows it -- not a fixed size, so the struct can grow in a later pTOS
+ * version without breaking callers built against an older one. Exactly
+ * min(arg2, sizeof(struct console_dim)) bytes are copied from the
+ * kernel's own struct into the caller's, so an old caller passing a
+ * smaller sizeof() only gets the fields that existed when it was built,
+ * and a caller built against a newer, larger struct than the running
+ * kernel implements only gets however many bytes that kernel actually
+ * has to give -- compare the return value against the caller's own
+ * sizeof() to tell which happened. Returns the number of bytes copied
+ * (>= 0), or EINVFN if arg1 is NULL or arg2 <= 0.
+ *
+ * arg2 == -1 is not a separate Ssystem() mode -- it's still
+ * S_CONSOLE_DIM, just called with this one reserved size value instead
+ * of a real sizeof(). Called that way, arg1 is ignored (may be NULL,
+ * nothing is written) and the call instead returns sizeof(struct
+ * console_dim) as the running kernel implements it -- the largest
+ * arg2 a real call could ever use productively. This lets a caller
+ * discover which struct version it's talking to up front, instead of
+ * inferring it after the fact from a real call's return value.
+ */
+#define S_CONSOLE_DIM   ((WORD)0xfffe)
+
+struct console_dim {
+    UWORD width;    /* columns */
+    UWORD height;   /* rows */
+};
+
 LONG xssystem(WORD mode, LONG arg1, LONG arg2);
 
 #endif /* SSYSTEM_H */

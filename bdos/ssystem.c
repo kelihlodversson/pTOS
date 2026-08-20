@@ -11,6 +11,9 @@
  * Supexec() (the usual way real TOS programs would do this) isn't
  * supported.
  *
+ * S_CONSOLE_DIM is the one mode here that isn't part of that MiNT
+ * protocol -- see its own comment in ssystem.h and issue #235.
+ *
  * The *VAL modes never touch raw memory: the "address" argument is the
  * documented TOS address of the variable, looked up in one of three
  * width-specific tables that map it to wherever pTOS actually stores
@@ -28,6 +31,7 @@
 #include "gemerror.h"
 #include "../bios/tosvars.h"
 #include "../bios/cookie.h"
+#include "../bios/lineavars.h"
 #include "ahdi.h"
 #include "string.h"
 
@@ -350,6 +354,41 @@ static LONG ssystem_osversion(void)
 
 
 /*
+ * ssystem_console_dim - S_CONSOLE_DIM (pTOS extension, see ssystem.h)
+ *
+ * v_cel_mx/v_cel_my (bios/lineavars.h) hold the screen's last valid
+ * column/row index, i.e. one less than the actual width/height -- add 1
+ * to report the usable count a caller like getwh()/getht() actually
+ * wants.
+ *
+ * arg1 is the caller's struct console_dim*, arg2 its sizeof() -- only
+ * min(arg2, sizeof(our struct)) bytes are copied, so a caller's struct
+ * that's smaller (built against an older pTOS) or larger (built against
+ * a newer one than this kernel implements) than ours is both handled
+ * correctly; see ssystem.h. arg2 == -1 queries sizeof(our struct)
+ * without writing anything (arg1 is ignored).
+ */
+static LONG ssystem_console_dim(LONG arg1, LONG arg2)
+{
+    struct console_dim dim;
+    LONG n;
+
+    if (arg2 == -1)
+        return (LONG)sizeof(dim);
+
+    if (!arg1 || arg2 <= 0)
+        return EINVFN;
+
+    dim.width = linea_vars.v_cel_mx + 1;
+    dim.height = linea_vars.v_cel_my + 1;
+
+    n = arg2 < (LONG)sizeof(dim) ? arg2 : (LONG)sizeof(dim);
+    svar_copy((void *)arg1, &dim, n);
+    return n;
+}
+
+
+/*
  * xssystem - implements GEMDOS Ssystem(), see ssystem.h
  */
 LONG xssystem(WORD mode, LONG arg1, LONG arg2)
@@ -389,6 +428,9 @@ LONG xssystem(WORD mode, LONG arg1, LONG arg2)
         return ssystem_setwval(arg1, arg2);
     case S_SETBVAL:
         return ssystem_setbval(arg1, arg2);
+
+    case S_CONSOLE_DIM:
+        return ssystem_console_dim(arg1, arg2);
 
     default:
         return EINVFN;
