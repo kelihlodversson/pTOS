@@ -8,7 +8,6 @@
 #include "raspi_int.h"
 #include "raspi_mbox.h"
 #include "raspi_memory.h"
-#include "tosvars.h"
 #include "string.h"
 #include "kprint.h"
 #include "asm.h"
@@ -29,17 +28,25 @@
  * simply never reply to a request it does not implement (e.g. QEMU's
  * bcm2835-property device silently drops the hardware-cursor property
  * tags instead of returning an unsupported-tag response). Bound the
- * wait so that gap does not hang the whole boot: 500 ticks (2.5s at
- * 200Hz) matches the WAIT_TIMEOUT convention already used elsewhere
- * (e.g. AES's wait_for_accs()) and is far longer than any real
- * exchange takes. */
-#define MBOX_READ_TIMEOUT   500
+ * wait so that gap does not hang the whole boot.
+ *
+ * This has to be timed off the free-running system timer
+ * (raspi_get_ticks()), not hz_200: raspi_vcmem_init() -- called from
+ * startup.S before biosmain(), let alone mfp_init()'s
+ * raspi_init_system_timer() -- already makes a mailbox call of its own
+ * to size RAM, and hz_200 does not advance at all until the periodic
+ * timer interrupt raspi_init_system_timer() configures is running. A
+ * hz_200-based deadline can therefore never fire for that first call,
+ * silently reintroducing the exact hang this timeout exists to prevent.
+ * 2.5s matches the WAIT_TIMEOUT convention used elsewhere (e.g. AES's
+ * wait_for_accs()) and is far longer than any real exchange takes. */
+#define MBOX_READ_TIMEOUT_TICKS   (2500000UL)  /* 2.5s at CLOCKHZ (1MHz) */
 
 ULONG raspi_mbox_read(UBYTE channel)
 {
     ULONG data;
     UBYTE read_channel;
-    LONG timeout = hz_200 + MBOX_READ_TIMEOUT;
+    ULONG start = raspi_get_ticks();
 
     while(1)
     {
@@ -50,7 +57,7 @@ ULONG raspi_mbox_read(UBYTE channel)
              * only accepts a reply that matches the real, non-zero
              * gpu_buffer_address it sent, so this always falls through
              * to its existing failure path. */
-            if (hz_200 >= timeout)
+            if (raspi_get_ticks() - start >= MBOX_READ_TIMEOUT_TICKS)
                 return 0;
         }
         data = MAILBOX0_READ;

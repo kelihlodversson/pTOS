@@ -12,6 +12,8 @@
 
 #ifdef MACHINE_RPI
 
+#define CLOCKHZ                        1000000     // System timer runs at 1MHz
+
 void raspi_interrupt_init(void);
 void raspi_init_system_timer(void);
 
@@ -30,24 +32,24 @@ extern inline void raspi_delay_ms(ULONG ms)
 
 /*
  * The IRQ list is taken from Linux and is:
- *	Copyright (C) 2010 Broadcom
- *	Copyright (C) 2003 ARM Limited
- *	Copyright (C) 2000 Deep Blue Solutions Ltd.
- *	Licensed under GPL2
+ *      Copyright (C) 2010 Broadcom
+ *      Copyright (C) 2003 ARM Limited
+ *      Copyright (C) 2000 Deep Blue Solutions Ltd.
+ *      Licensed under GPL2
  * IRQs
  */
 #define ARM_IRQS_PER_REG        32
-#define ARM_IRQS_BASIC_REG	8
+#define ARM_IRQS_BASIC_REG      8
 #if defined(TARGET_RPI1) 
-#define ARM_IRQS_LOCAL_REG	0
+#define ARM_IRQS_LOCAL_REG      0
 #else
-#define ARM_IRQS_LOCAL_REG	12
+#define ARM_IRQS_LOCAL_REG      12
 #endif
 
 #define ARM_IRQ1_BASE           0
 #define ARM_IRQ2_BASE           (ARM_IRQ1_BASE + ARM_IRQS_PER_REG)
 #define ARM_IRQBASIC_BASE       (ARM_IRQ2_BASE + ARM_IRQS_PER_REG)
-#define ARM_IRQLOCAL_BASE	(ARM_IRQBASIC_BASE + ARM_IRQS_BASIC_REG)
+#define ARM_IRQLOCAL_BASE       (ARM_IRQBASIC_BASE + ARM_IRQS_BASIC_REG)
 
 #define ARM_IRQ_TIMER0          (ARM_IRQ1_BASE + 0)
 #define ARM_IRQ_TIMER1          (ARM_IRQ1_BASE + 1)
@@ -126,21 +128,21 @@ extern inline void raspi_delay_ms(ULONG ms)
 
 
 #if defined(TARGET_RPI2) || defined(TARGET_RPI3) || defined(TARGET_RPI4)
-#define ARM_IRQLOCAL0_CNTPS	(ARM_IRQLOCAL_BASE + 0)
-#define ARM_IRQLOCAL0_CNTPNS	(ARM_IRQLOCAL_BASE + 1)
-#define ARM_IRQLOCAL0_CNTHP	(ARM_IRQLOCAL_BASE + 2)
-#define ARM_IRQLOCAL0_CNTV	(ARM_IRQLOCAL_BASE + 3)
-#define ARM_IRQLOCAL0_MAILBOX0	(ARM_IRQLOCAL_BASE + 4)
-#define ARM_IRQLOCAL0_MAILBOX1	(ARM_IRQLOCAL_BASE + 5)
-#define ARM_IRQLOCAL0_MAILBOX2	(ARM_IRQLOCAL_BASE + 6)
-#define ARM_IRQLOCAL0_MAILBOX3	(ARM_IRQLOCAL_BASE + 7)
-#define ARM_IRQLOCAL0_GPU	(ARM_IRQLOCAL_BASE + 8)		// cascaded GPU interrupts
-#define ARM_IRQLOCAL0_PMU 	(ARM_IRQLOCAL_BASE + 9)
-#define ARM_IRQLOCAL0_AXI_IDLE	(ARM_IRQLOCAL_BASE + 10)	// on core 0 only
+#define ARM_IRQLOCAL0_CNTPS     (ARM_IRQLOCAL_BASE + 0)
+#define ARM_IRQLOCAL0_CNTPNS    (ARM_IRQLOCAL_BASE + 1)
+#define ARM_IRQLOCAL0_CNTHP     (ARM_IRQLOCAL_BASE + 2)
+#define ARM_IRQLOCAL0_CNTV      (ARM_IRQLOCAL_BASE + 3)
+#define ARM_IRQLOCAL0_MAILBOX0  (ARM_IRQLOCAL_BASE + 4)
+#define ARM_IRQLOCAL0_MAILBOX1  (ARM_IRQLOCAL_BASE + 5)
+#define ARM_IRQLOCAL0_MAILBOX2  (ARM_IRQLOCAL_BASE + 6)
+#define ARM_IRQLOCAL0_MAILBOX3  (ARM_IRQLOCAL_BASE + 7)
+#define ARM_IRQLOCAL0_GPU       (ARM_IRQLOCAL_BASE + 8)         // cascaded GPU interrupts
+#define ARM_IRQLOCAL0_PMU       (ARM_IRQLOCAL_BASE + 9)
+#define ARM_IRQLOCAL0_AXI_IDLE  (ARM_IRQLOCAL_BASE + 10)        // on core 0 only
 #define ARM_IRQLOCAL0_LOCALTIMER (ARM_IRQLOCAL_BASE + 11)
 #endif
 
-#define IRQ_LINES		(ARM_IRQS_PER_REG * 2 + ARM_IRQS_BASIC_REG + ARM_IRQS_LOCAL_REG)
+#define IRQ_LINES               (ARM_IRQS_PER_REG * 2 + ARM_IRQS_BASIC_REG + ARM_IRQS_LOCAL_REG)
 
 
 #endif /* MACHINE_RPI */
