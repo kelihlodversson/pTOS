@@ -10,8 +10,6 @@
 #include "test.h"
 #include <mint/osbind.h>
 
-extern void ptest_run_tests(void);
-
 int main(void)
 {
     conws("pTOS regression tests\n\n");

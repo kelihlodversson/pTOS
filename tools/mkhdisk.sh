@@ -37,7 +37,7 @@ disk_sectors=$((partition_start + partition_sectors))
 
 # ---- build the FAT16 filesystem image in a temp file ----
 
-workdir=$(mktemp -d)
+workdir=$(mktemp -d "${TMPDIR:-/tmp}/mkhdisk.XXXXXX")
 trap 'rm -rf "$workdir"' EXIT
 
 fs_image="$workdir/fs.img"

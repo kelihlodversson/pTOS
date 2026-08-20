@@ -39,7 +39,7 @@ ULONG raspi_mbox_read(UBYTE channel)
 {
     ULONG data;
     UBYTE read_channel;
-    LONG deadline = hz_200 + MBOX_READ_TIMEOUT;
+    LONG timeout = hz_200 + MBOX_READ_TIMEOUT;
 
     while(1)
     {
@@ -50,7 +50,7 @@ ULONG raspi_mbox_read(UBYTE channel)
              * only accepts a reply that matches the real, non-zero
              * gpu_buffer_address it sent, so this always falls through
              * to its existing failure path. */
-            if (hz_200 - deadline >= 0)
+            if (hz_200 >= timeout)
                 return 0;
         }
         data = MAILBOX0_READ;
@@ -73,58 +73,58 @@ void raspi_mbox_write(UBYTE channel, ULONG data)
 
 BOOL raspi_prop_get_tag(ULONG tag_id, void *tag, ULONG tag_size, ULONG request_param_size)
 {
-	prop_tag_t *tag_header = (prop_tag_t *) tag;
-	tag_header->tag_id = tag_id;
-	tag_header->value_buf_size = tag_size - sizeof (prop_tag_t);
-	tag_header->value_length = request_param_size & ~VALUE_LENGTH_RESPONSE;
+    prop_tag_t *tag_header = (prop_tag_t *) tag;
+    tag_header->tag_id = tag_id;
+    tag_header->value_buf_size = tag_size - sizeof (prop_tag_t);
+    tag_header->value_length = request_param_size & ~VALUE_LENGTH_RESPONSE;
 
     if (!raspi_prop_get_tags(tag, tag_size))
     {
         return FALSE;
     }
 
-	if (!(tag_header->value_length & VALUE_LENGTH_RESPONSE))
-	{
-		return FALSE;
-	}
+    if (!(tag_header->value_length & VALUE_LENGTH_RESPONSE))
+    {
+        return FALSE;
+    }
 
-	tag_header->value_length &= ~VALUE_LENGTH_RESPONSE;
-	if (tag_header->value_length == 0)
-	{
-		return FALSE;
-	}
+    tag_header->value_length &= ~VALUE_LENGTH_RESPONSE;
+    if (tag_header->value_length == 0)
+    {
+        return FALSE;
+    }
 
-	return TRUE;
+    return TRUE;
 }
 
 BOOL raspi_prop_get_tags(void *tags, ULONG tags_size)
 {
     prop_buffer_t* buffer = (prop_buffer_t*)raspi_get_coherent_buffer(COHERENT_TAG_MAILBOX);
-	ULONG buffer_size = sizeof (prop_buffer_t) + tags_size + sizeof (ULONG);
+    ULONG buffer_size = sizeof (prop_buffer_t) + tags_size + sizeof (ULONG);
     ULONG *end_tag = (ULONG *) (buffer->tags + tags_size);
     ULONG gpu_buffer_address = (GPU_MEM_BASE + (ULONG) buffer)>>4;
 
-	buffer->size = buffer_size;
-	buffer->status = CODE_REQUEST;
-	memcpy (buffer->tags, tags, tags_size);
-	*end_tag = PROPTAG_END;
+    buffer->size = buffer_size;
+    buffer->status = CODE_REQUEST;
+    memcpy (buffer->tags, tags, tags_size);
+    *end_tag = PROPTAG_END;
 
-	data_sync_barrier();
+    data_sync_barrier();
 
     raspi_mbox_write(MAILBOX_PROP_OUT, gpu_buffer_address);
-	if (raspi_mbox_read(MAILBOX_PROP_OUT) != gpu_buffer_address)
-	{
-		return FALSE;
-	}
+    if (raspi_mbox_read(MAILBOX_PROP_OUT) != gpu_buffer_address)
+    {
+        return FALSE;
+    }
 
-	data_mem_barrier();
+    data_mem_barrier();
 
-	if (buffer->status != CODE_RESPONSE_SUCCESS)
-	{
-		return FALSE;
-	}
+    if (buffer->status != CODE_RESPONSE_SUCCESS)
+    {
+        return FALSE;
+    }
 
-	memcpy (tags, buffer->tags, tags_size);
+    memcpy (tags, buffer->tags, tags_size);
 
-	return TRUE;
+    return TRUE;
 }

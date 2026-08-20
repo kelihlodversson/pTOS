@@ -346,7 +346,15 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
     hd->h01_blen = (LONG)(info.mem_end - info.file_end);
     hd->h01_slen = 0;
     hd->h01_res1 = 0;
-    hd->h01_flags = 0;      /* main RAM, clear the whole heap */
+    /*
+     * main RAM (no PF_TTRAMLOAD/PF_TTRAMMEM), and PF_FASTLOAD: elf_pgmld()
+     * only clears the program's own footprint (info.mem_end -
+     * info.link_base), not the whole TPA proc.c may have granted beyond
+     * it -- see the bzero() call there. That is exactly what PF_FASTLOAD
+     * documents for the PRG loader (kpgmld.c's pgmld01()), so this keeps
+     * the two loaders' declared and actual behavior consistent.
+     */
+    hd->h01_flags = PF_FASTLOAD;
     hd->h01_abs = 0;
 
     return 0;
