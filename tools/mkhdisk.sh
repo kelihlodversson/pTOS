@@ -24,9 +24,12 @@ output=$1
 size=$2
 shift 2
 
-# Sanity-check: size must be a power of two >= 2 MiB.
-if [ "$((size & (size - 1)))" -ne 0 ] || [ "$size" -lt 2097152 ]; then
-    echo "$0: $size: not a valid power of two (min 2 MiB)" >&2
+# Sanity-check: size must be a power of two >= 4 MiB. The 1 MiB partition
+# offset (see partition_start below) leaves too little room for a FAT16
+# partition below that -- mkfs.fat fails with "Not enough or too many
+# clusters for filesystem" at 2 MiB, the previous floor here.
+if [ "$((size & (size - 1)))" -ne 0 ] || [ "$size" -lt 4194304 ]; then
+    echo "$0: $size: not a valid power of two (min 4 MiB)" >&2
     exit 1
 fi
 
