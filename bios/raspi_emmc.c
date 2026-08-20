@@ -131,16 +131,16 @@
 #define EMMC_SPI_INT_SPT    (*(volatile ULONG*)(ARM_EMMC_BASE + 0xF0))
 #define EMMC_SLOTISR_VER    (*(volatile ULONG*)(ARM_EMMC_BASE + 0xFC))
 
-#define ARM_GPIO_BASE		(ARM_IO_BASE + 0x200000)
-#define ARM_GPIO_GPFSEL0	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x00))
-#define ARM_GPIO_GPFSEL1	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x04))
-#define ARM_GPIO_GPFSEL2	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x08))
-#define ARM_GPIO_GPFSEL3	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x0c))
-#define ARM_GPIO_GPFSEL4	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x10))
-#define ARM_GPIO_GPFSEL5	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x14))
-#define ARM_GPIO_GPPUD		(*(volatile ULONG*)(ARM_GPIO_BASE + 0x94))
-#define ARM_GPIO_GPPUDCLK0	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x98))
-#define ARM_GPIO_GPPUDCLK1	(*(volatile ULONG*)(ARM_GPIO_BASE + 0x9c))
+#define ARM_GPIO_BASE       (ARM_IO_BASE + 0x200000)
+#define ARM_GPIO_GPFSEL0    (*(volatile ULONG*)(ARM_GPIO_BASE + 0x00))
+#define ARM_GPIO_GPFSEL1    (*(volatile ULONG*)(ARM_GPIO_BASE + 0x04))
+#define ARM_GPIO_GPFSEL2    (*(volatile ULONG*)(ARM_GPIO_BASE + 0x08))
+#define ARM_GPIO_GPFSEL3    (*(volatile ULONG*)(ARM_GPIO_BASE + 0x0c))
+#define ARM_GPIO_GPFSEL4    (*(volatile ULONG*)(ARM_GPIO_BASE + 0x10))
+#define ARM_GPIO_GPFSEL5    (*(volatile ULONG*)(ARM_GPIO_BASE + 0x14))
+#define ARM_GPIO_GPPUD      (*(volatile ULONG*)(ARM_GPIO_BASE + 0x94))
+#define ARM_GPIO_GPPUDCLK0  (*(volatile ULONG*)(ARM_GPIO_BASE + 0x98))
+#define ARM_GPIO_GPPUDCLK1  (*(volatile ULONG*)(ARM_GPIO_BASE + 0x9c))
 
 
 #define SD_CMD_INDEX(a)          ((a) << 24)
@@ -516,6 +516,7 @@ struct cardinfo
     ULONG base_clock;
 
     int report_mediach;
+    int needs_reinit;
 };
 
 static struct cardinfo card;
@@ -1063,6 +1064,7 @@ static void handle_interrupts(void)
 {
     ULONG irpts = EMMC_INTERRUPT;
     ULONG reset_mask = 0;
+    BOOL card_inserted = FALSE;
 
     if (irpts & SD_COMMAND_COMPLETE)
     {
@@ -1120,6 +1122,7 @@ static void handle_interrupts(void)
         KDEBUG(("card insertion detected\n"));
 #endif
         reset_mask |= SD_CARD_INSERTION;
+        card_inserted = TRUE;
     }
 
     if (irpts & SD_CARD_REMOVAL)
@@ -1149,6 +1152,23 @@ static void handle_interrupts(void)
     }
 
     EMMC_INTERRUPT = reset_mask;
+
+    /*
+     * Just latch the event here -- do NOT call card_init() from this
+     * function. handle_interrupts() runs at the top of issue_command(),
+     * which do_data_command() calls *after* already setting
+     * card.buf/card.blocks_to_transfer for an in-flight, possibly
+     * multi-block transfer; card_reset() (via card_init()) zeroes those
+     * same fields as part of its state reset. Calling it here would
+     * therefore silently corrupt an already-in-progress transfer's state
+     * even on a single, correctly-detected insertion event -- not just on
+     * some theoretical re-entrant loop. ensure_data_mode() -- the one
+     * choke point both raspi_emmc_rw() (via do_rw()) and
+     * raspi_emmc_ioctl() already call before touching any transfer state
+     * -- is where it's actually safe to run it.
+     */
+    if (card_inserted)
+        card.needs_reinit = 1;
 }
 
 static BOOL issue_command(ULONG command, ULONG argument, int timeout)
@@ -1867,6 +1887,51 @@ static int card_init(void)
 
 static int ensure_data_mode(void)
 {
+    /*
+     * card_init() is otherwise only called once, from raspi_emmc_init()
+     * at boot: without this, a single SD_CARD_REMOVAL interrupt latches
+     * card.card_removal permanently (nothing else ever clears it -- see
+     * handle_interrupts()), so raspi_emmc_rw() keeps failing (EREADF/
+     * EWRITF) and raspi_emmc_ioctl() keeps returning E_CHNG/MEDIACHANGE
+     * forever, even after a new card is inserted. Do the actual reinit
+     * here rather than from handle_interrupts() itself: this is the one
+     * choke point both raspi_emmc_rw() (via do_rw()) and
+     * raspi_emmc_ioctl() already call before touching any transfer
+     * state, so a reinit here can't zero out
+     * card.buf/card.blocks_to_transfer out from under an in-flight
+     * multi-block transfer the way calling it from inside
+     * handle_interrupts() could.
+     *
+     * Drain any pending interrupt status first: without this, a
+     * SD_CARD_INSERTION that arrived since the last issue_command() call
+     * wouldn't be observed (and card.needs_reinit set) until the
+     * issue_command(SEND_STATUS...) call below runs handle_interrupts()
+     * itself -- too late to avoid that same call also seeing the
+     * still-set card.card_removal and aborting, failing this attempt
+     * once before the next one recovers. Handling it up front lets a
+     * fresh insertion recover within this same call instead.
+     */
+    handle_interrupts();
+
+    if (card.needs_reinit)
+    {
+        /*
+         * Only clear the flag once card_init() actually succeeds: on a
+         * transient failure (e.g. hardware not ready yet), leaving it
+         * set means the next call retries the reinit instead of being
+         * permanently stuck never attempting it again.
+         */
+        if (card_init() != 0)
+            return -1;
+        card.needs_reinit = 0;
+        /*
+         * card_init()/card_reset() never touch card.report_mediach --
+         * set it explicitly here so a poll-driven Mediach() (as opposed
+         * to a failed read/write reaching E_CHNG) also notices the swap.
+         */
+        card.report_mediach = 1;
+    }
+
     if (card.card_rca == 0)
     {
         // Try again to initialise the card
