@@ -17,7 +17,6 @@
 
 #include "test.h"
 #include <mint/osbind.h>
-#include <mint/ostruct.h>
 
 void test_pie_load(void);
 
