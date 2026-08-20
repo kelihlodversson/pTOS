@@ -51,10 +51,12 @@ static void print_num(long n)
 static int total_tests;
 static int failed_tests;
 static int current_failed;
+static const char *current_fail_msg;
 
 void ptest_begin(const char *name)
 {
     current_failed = 0;
+    current_fail_msg = 0;
     conws("  ");
     conws(name);
     conws("... ");
@@ -71,12 +73,16 @@ void ptest_assert_msg(int condition, const char *msg)
 {
     if (!condition && !current_failed) {
         current_failed = 1;
-        conws("\n    FAIL: ");
-        conws(msg);
-        conws("\n");
+        current_fail_msg = msg;
     }
 }
 
+/*
+ * PASS/FAIL is printed here, completing the "  <name>... " line from
+ * ptest_begin() with a single result word, so any failure detail
+ * (deferred from ptest_assert_msg()/ptest_fail()) can only follow on
+ * its own indented line afterward instead of splitting that line apart.
+ */
 void ptest_pass(void)
 {
     total_tests++;
@@ -85,15 +91,18 @@ void ptest_pass(void)
     } else {
         failed_tests++;
         conws("FAIL\n");
+        if (current_fail_msg) {
+            conws("    FAIL: ");
+            conws(current_fail_msg);
+            conws("\n");
+        }
     }
 }
 
 void ptest_fail(const char *msg)
 {
     current_failed = 1;
-    conws("\n    FAIL: ");
-    conws(msg);
-    conws("\n");
+    current_fail_msg = msg;
     ptest_pass();
 }
 
