@@ -1085,6 +1085,15 @@ ifdef CONF_WITH_REGRESSION_TESTS
 # Auto-discover test suites: each tests/<name>/<name>.c provides test_<name>()
 TEST_SUITES := $(sort $(patsubst tests/%/,%,$(dir $(wildcard tests/*/*.c))))
 
+# pie_load launches a separate PIE executable (pie_probe.c, built below)
+# via Pexec() to exercise the ELF loader's ET_DYN support, which only
+# exists when CONF_WITH_ELF_LOADER is enabled -- without it, Pexec()
+# can't recognize that executable's format at all, so the suite would
+# just fail on an unsupported configuration instead of testing anything.
+ifndef CONF_WITH_ELF_LOADER
+TEST_SUITES := $(filter-out pie_load,$(TEST_SUITES))
+endif
+
 GEN_SRC += tests/run_tests.c
 
 tests/run_tests.c: $(wildcard tests/*/*.c) | obj
@@ -1225,12 +1234,31 @@ endif
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
 
+ifdef CONF_WITH_ELF_LOADER
+# pieprobe.tos: the pie_load suite's payload (see tests/pie_load/pie_probe.c).
+# Linked -pie --no-dynamic-linker instead of runtests.tos's --emit-relocs,
+# so loading it exercises elf_pgmld()'s *other* relocation path (ET_DYN's
+# .rel.dyn/.rela.dyn, as opposed to a fixed ET_EXEC's retained REL/RELA
+# sections) -- the two are handled by different code in bdos/elfld.c.
+obj/pie_probe.o: tests/pie_load/pie_probe.c | obj
+	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+TEST_PIE_LDFLAGS = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start
+
+pieprobe.tos: $(TEST_STARTUP) obj/pie_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_PIE_LDFLAGS) $(TEST_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+
+TEST_PIE_FILES = pieprobe.tos
+else
+TEST_PIE_FILES =
+endif
+
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
-TEST_HD_FILES = runtests.tos tests/emudesk.inf
+TEST_HD_FILES = runtests.tos tests/emudesk.inf $(TEST_PIE_FILES)
 
-test-hd.img: runtests.tos tests/emudesk.inf $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR)
 
@@ -1251,7 +1279,7 @@ endif
 # regardless of .config -- anything gated on it here would silently never
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
-TOCLEAN += tests/run_tests.c runtests.tos test-hd.img
+TOCLEAN += tests/run_tests.c runtests.tos pieprobe.tos test-hd.img
 TOCLEAN_POST += libcmini-clean
 
 .PHONY: libcmini-clean
