@@ -1096,7 +1096,13 @@ endif
 
 GEN_SRC += tests/run_tests.c
 
-tests/run_tests.c: $(wildcard tests/*/*.c) | obj
+# Also depends on $(AUTOCONF_H): TEST_SUITES (and therefore this file's
+# content, e.g. whether pie_load is registered) is filtered by
+# CONF_WITH_ELF_LOADER above, but none of that is expressed as a
+# dependency on the wildcarded sources alone -- switching config without
+# regenerating this file would leave it calling test_pie_load() on a
+# build where pie_load was just filtered out (or vice versa).
+tests/run_tests.c: $(wildcard tests/*/*.c) $(AUTOCONF_H) | obj
 	@echo '/* Auto-generated -- do not edit */' > $@
 	@echo '#include "test.h"' >> $@
 	@for s in $(TEST_SUITES); do \
@@ -1132,20 +1138,31 @@ TEST_CFLAGS = $(CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
 
 TEST_OBJ = obj/runtests.o obj/run_tests.o obj/testlib.o
 
-obj/runtests.o: tests/runtests.c | obj
+# Test objects are userland code (see TEST_CFLAGS above) and never
+# #include "config.h", so unlike the kernel's own objects they get no
+# automatic dependency on $(AUTOCONF_H) via -MMD's generated .d files.
+# Without an explicit dependency here, switching architecture/config
+# (e.g. rpi2 -> atari512) and rebuilding without an intervening "make
+# clean" would silently relink stale objects from the previous arch --
+# reproduced directly: a leftover ARM obj/runtests.o fed to the m68k
+# linker failed with "relocations in generic ELF (EM: 40)". Depending on
+# $(AUTOCONF_H), which is regenerated whenever .config changes, gives
+# every test object the same config-triggered staleness the kernel's
+# objects get for free.
+obj/runtests.o: tests/runtests.c $(AUTOCONF_H) | obj
 	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
-obj/run_tests.o: tests/run_tests.c | obj
+obj/run_tests.o: tests/run_tests.c $(AUTOCONF_H) | obj
 	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
-obj/testlib.o: tests/testlib.c | obj
+obj/testlib.o: tests/testlib.c $(AUTOCONF_H) | obj
 	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 TEST_STARTUP = $(LIBCMINI_CRT0)
 
 # Each test suite object depends on its source and the generated run_tests.c
 define test-suite-rule
-obj/$(1).o: tests/$(1)/$(1).c tests/run_tests.c | obj
+obj/$(1).o: tests/$(1)/$(1).c tests/run_tests.c $(AUTOCONF_H) | obj
 	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $$< -o $$@
 endef
 $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
@@ -1240,7 +1257,7 @@ ifdef CONF_WITH_ELF_LOADER
 # so loading it exercises elf_pgmld()'s *other* relocation path (ET_DYN's
 # .rel.dyn/.rela.dyn, as opposed to a fixed ET_EXEC's retained REL/RELA
 # sections) -- the two are handled by different code in bdos/elfld.c.
-obj/pie_probe.o: tests/pie_load/pie_probe.c | obj
+obj/pie_probe.o: tests/pie_load/pie_probe.c $(AUTOCONF_H) | obj
 	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 TEST_PIE_LDFLAGS = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start
