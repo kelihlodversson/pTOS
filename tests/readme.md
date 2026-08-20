@@ -7,13 +7,9 @@ on m68k and ARM.
 
 ## Enabling and building
 
-The harness is off by default. Turn it on with `make menuconfig`, under
-**Debugging → Regression tests → Include built-in regression tests**
-(`CONF_WITH_REGRESSION_TESTS`), or by editing `.config` directly:
-
-```sh
-sed -i 's/# CONF_WITH_REGRESSION_TESTS is not set/CONF_WITH_REGRESSION_TESTS=y/' .config
-```
+The harness is off by default. Turn it on with `make menuconfig` (or
+`make guiconfig` for a graphical window), under **Debugging → Regression
+tests → Include built-in regression tests** (`CONF_WITH_REGRESSION_TESTS`).
 
 Build the kernel as usual, then build the test image:
 
