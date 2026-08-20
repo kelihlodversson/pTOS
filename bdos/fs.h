@@ -133,7 +133,7 @@ typedef struct
     DOSTIME o_td;       /* creation time/date: little-endian!   */
     CLNO  o_strtcl;     /* starting cluster number              */
     long  o_fileln;     /* length of file in bytes              */
-} DFD;
+} OPT_PACKED DFD;
 
 
 /*
