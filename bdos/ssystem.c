@@ -11,6 +11,9 @@
  * Supexec() (the usual way real TOS programs would do this) isn't
  * supported.
  *
+ * S_CONSOLE_DIM is the one mode here that isn't part of that MiNT
+ * protocol -- see its own comment in ssystem.h and issue #235.
+ *
  * The *VAL modes never touch raw memory: the "address" argument is the
  * documented TOS address of the variable, looked up in one of three
  * width-specific tables that map it to wherever pTOS actually stores
@@ -28,6 +31,7 @@
 #include "gemerror.h"
 #include "../bios/tosvars.h"
 #include "../bios/cookie.h"
+#include "../bios/lineavars.h"
 #include "ahdi.h"
 #include "string.h"
 
@@ -350,6 +354,27 @@ static LONG ssystem_osversion(void)
 
 
 /*
+ * ssystem_console_dim - S_CONSOLE_DIM (pTOS extension, see ssystem.h)
+ *
+ * v_cel_mx/v_cel_my (bios/lineavars.h) hold the screen's last valid
+ * column/row index, i.e. one less than the actual width/height -- add 1
+ * to report the usable count a caller like getwh()/getht() actually
+ * wants.
+ */
+static LONG ssystem_console_dim(LONG arg2)
+{
+    LONG dim;
+
+    if (!arg2)
+        return EINVFN;
+
+    dim = ((LONG)(linea_vars.v_cel_my + 1) << 16) | (linea_vars.v_cel_mx + 1);
+    svar_copy((void *)arg2, &dim, sizeof(dim));
+    return E_OK;
+}
+
+
+/*
  * xssystem - implements GEMDOS Ssystem(), see ssystem.h
  */
 LONG xssystem(WORD mode, LONG arg1, LONG arg2)
@@ -389,6 +414,9 @@ LONG xssystem(WORD mode, LONG arg1, LONG arg2)
         return ssystem_setwval(arg1, arg2);
     case S_SETBVAL:
         return ssystem_setbval(arg1, arg2);
+
+    case S_CONSOLE_DIM:
+        return ssystem_console_dim(arg2);
 
     default:
         return EINVFN;
