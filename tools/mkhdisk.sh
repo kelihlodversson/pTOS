@@ -88,12 +88,12 @@ ps_xl=$((partition_sectors >> 24 & 0xFF))
 #   [8-11]  starting LBA: 2048 (0x800, LE)
 #   [12-15] number of sectors: $partition_sectors (32-bit LE)
 
-printf '\200\0\1\0'           | dd of="$output" bs=1 seek=446 conv=notrunc
-printf '\16\376\377\377'     | dd of="$output" bs=1 seek=450 conv=notrunc
-printf '\0\10\0\0'           | dd of="$output" bs=1 seek=454 conv=notrunc
+printf '\200\000\001\000'    | dd of="$output" bs=1 seek=446 conv=notrunc
+printf '\016\376\377\377'    | dd of="$output" bs=1 seek=450 conv=notrunc
+printf '\000\010\000\000'    | dd of="$output" bs=1 seek=454 conv=notrunc
 printf '%b' "$(printf '\\%03o\\%03o\\%03o\\%03o' "$ps_lo" "$ps_md" "$ps_hi" "$ps_xl")" \
                              | dd of="$output" bs=1 seek=458 conv=notrunc
-printf '\125\252'             | dd of="$output" bs=1 seek=510 conv=notrunc
+printf '\125\252'            | dd of="$output" bs=1 seek=510 conv=notrunc
 
 # Embed the already-formatted partition at its offset in the disk image.
 dd if="$fs_image" of="$output" bs=$sector_size seek=$partition_start conv=notrunc
