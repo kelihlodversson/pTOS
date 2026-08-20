@@ -1213,6 +1213,16 @@ endif
 # mismatch. The stamp file's mtime -- and therefore whether it forces
 # $(LIBCMINI_LIB) to rebuild -- only changes when that comparison finds a
 # real mismatch, not on every invocation.
+#
+# The comparison is against the defconfig *file's content*, not just its
+# name: comparing names alone would miss a defconfig whose content changed
+# underneath an unchanged selection (e.g. a submodule bump that edits
+# configs/ptos_arm_defconfig without touching any sources/*.c or
+# sources/arch/$(ARCH)/*.S -- $(LIBCMINI_LIB)'s own prerequisites, so
+# nothing else would notice either). Reproduced directly: with the name
+# comparison alone, editing that file's content and rebuilding without
+# touching LIBCMINI_DEFCONFIG left lib/libcmini/.config -- and therefore
+# libcmini.a -- silently built from the stale content.
 .PHONY: FORCE
 FORCE:
 
@@ -1229,13 +1239,13 @@ $(LIBCMINI_DIR)/Makefile:
 
 $(LIBCMINI_STAMP): FORCE | obj $(LIBCMINI_DIR)/Makefile
 	@mkdir -p $(dir $@)
-	@want='$(LIBCMINI_DEFCONFIG)'; \
+	@want="$(LIBCMINI_DEFCONFIG):$$(cat $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG))"; \
 	have=$$(cat $@ 2>/dev/null || true); \
 	if [ "$$want" != "$$have" ]; then \
-	    echo "  LIBCMINI-CONFIG $$want"; \
+	    echo "  LIBCMINI-CONFIG $(LIBCMINI_DEFCONFIG)"; \
 	    $(LIBCMINI_MAKE) clean; \
-	    $(LIBCMINI_MAKE) $$want; \
-	    echo "$$want" > $@; \
+	    $(LIBCMINI_MAKE) $(LIBCMINI_DEFCONFIG); \
+	    printf '%s' "$$want" > $@; \
 	fi
 
 $(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj $(LIBCMINI_DIR)/Makefile
