@@ -96,6 +96,20 @@ ULONG n;
     return 0;
 }
 
+#ifdef STANDALONE_CONSOLE
+/*
+ * libcmini's own crt0/minicrt0 provides _start and expects a normal
+ * main(); this replaces cmdasm.S's removed _coma_start, which did the
+ * same "run cmdmain(), then Pterm(0) regardless of its return value"
+ * unconditionally.
+ */
+int main(void)
+{
+    cmdmain();
+    return 0;
+}
+#endif
+
 PRIVATE WORD execute(WORD argc,char **argv,char *redir)
 {
 FUNC *func;
