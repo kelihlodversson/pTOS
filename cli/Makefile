@@ -53,10 +53,15 @@ all: default
 OBJECTS = cmdasm.o cmdmain.o cmdedit.o cmdexec.o cmdint.o cmdparse.o cmdutil.o version.o
 HEADERS = cmd.h
 
-%.o: %.c $(HEADERS)
+# Order-only on $(LIBCMINI_DIR)/Makefile: the .c/.S sources #include
+# libcmini headers (via cmd.h), so without this, an uninitialized submodule
+# fails compilation with a raw "No such file" from the compiler instead of
+# the friendly message below -- e.g. under "make -j", where object
+# compilation can otherwise race ahead of the libcmini bootstrap chain.
+%.o: %.c $(HEADERS) | $(LIBCMINI_DIR)/Makefile
 	$(CC) $(CFLAGS) -c $< -o $@
 
-%.o: %.S $(HEADERS)
+%.o: %.S $(HEADERS) | $(LIBCMINI_DIR)/Makefile
 	$(CC) $(CFLAGS) -c $< -o $@
 
 .PRECIOUS: $(TARGET) $(OBJECTS)
