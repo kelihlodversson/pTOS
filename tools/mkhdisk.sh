@@ -24,12 +24,15 @@ output=$1
 size=$2
 shift 2
 
-# Sanity-check: size must be a power of two >= 4 MiB. The 1 MiB partition
-# offset (see partition_start below) leaves too little room for a FAT16
-# partition below that -- mkfs.fat fails with "Not enough or too many
-# clusters for filesystem" at 2 MiB, the previous floor here.
-if [ "$((size & (size - 1)))" -ne 0 ] || [ "$size" -lt 4194304 ]; then
-    echo "$0: $size: not a valid power of two (min 4 MiB)" >&2
+# Sanity-check: size must be a power of two, 4 MiB..32 MiB. The 1 MiB
+# partition offset (see partition_start below) leaves too little room for
+# a FAT16 partition below 4 MiB -- mkfs.fat fails with "Not enough or too
+# many clusters for filesystem" at 2 MiB, the previous floor here. Above
+# 32 MiB, the fixed 512-byte cluster size below (mkfs.fat -s 1, needed to
+# keep small images formattable) exceeds FAT16's cluster-count limit and
+# the same mkfs.fat error reappears at the other end.
+if [ "$((size & (size - 1)))" -ne 0 ] || [ "$size" -lt 4194304 ] || [ "$size" -gt 33554432 ]; then
+    echo "$0: $size: not a valid power of two (4 MiB..32 MiB)" >&2
     exit 1
 fi
 
