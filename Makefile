@@ -1073,7 +1073,6 @@ ifdef CONF_WITH_REGRESSION_TESTS
 
 # Auto-discover test suites: each tests/<name>/<name>.c provides test_<name>()
 TEST_SUITES := $(sort $(patsubst tests/%/,%,$(dir $(wildcard tests/*/*.c))))
-TEST_SUITE_FUNCS = $(addprefix test_,$(TEST_SUITES))
 
 GEN_SRC += tests/run_tests.c
 
