@@ -1230,7 +1230,7 @@ runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
 TEST_HD_FILES = runtests.tos tests/emudesk.inf
 
-test-hd.img: runtests.tos tests/emudesk.inf
+test-hd.img: runtests.tos tests/emudesk.inf $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR)
 
