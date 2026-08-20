@@ -211,8 +211,14 @@ CSTANDARD = -std=gnu90
 # data during boot with a sufficiently long string (issue #223).  Disabling
 # the pass (rather than -fno-builtin, which also drops inlining the 192/256
 # KB ROM budgets depend on) removes the substitution without the code-size
-# cost.
-OTHERFLAGS = -fomit-frame-pointer -fno-common -fno-tree-loop-distribute-patterns
+# cost.  -fno-builtin-strlen is added too, belt-and-suspenders: it targets a
+# different GCC mechanism (explicit-call recognition rather than loop-body
+# rewriting) and is confirmed *not* sufficient by itself against this
+# specific rewrite (disassembly still showed a self-call with only this
+# flag set), but costs nothing to keep alongside the pass-disabling flag in
+# case a future compiler version narrows what the pass flag covers.
+OTHERFLAGS = -fomit-frame-pointer -fno-common \
+             -fno-tree-loop-distribute-patterns -fno-builtin-strlen
 DEBUGFLAGS = $(if $(DEBUG_INFO),-g)
 
 WARNFLAGS = -Wall -Wundef -Wmissing-prototypes -Wstrict-prototypes
