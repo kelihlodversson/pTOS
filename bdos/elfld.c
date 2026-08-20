@@ -80,6 +80,7 @@
 #define PT_LOAD     1
 #define SHT_RELA    4
 #define SHT_REL     9
+#define SHF_ALLOC   0x2
 
 /* machine type and the "add the load bias to a 32-bit word" relocation
  * type for the architecture we are built for.  ELF_SLOT_ALIGN is the
@@ -345,7 +346,15 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
     hd->h01_blen = (LONG)(info.mem_end - info.file_end);
     hd->h01_slen = 0;
     hd->h01_res1 = 0;
-    hd->h01_flags = 0;      /* main RAM, clear the whole heap */
+    /*
+     * main RAM (no PF_TTRAMLOAD/PF_TTRAMMEM), and PF_FASTLOAD: elf_pgmld()
+     * only clears the program's own footprint (info.mem_end -
+     * info.link_base), not the whole TPA proc.c may have granted beyond
+     * it -- see the bzero() call there. That is exactly what PF_FASTLOAD
+     * documents for the PRG loader (kpgmld.c's pgmld01()), so this keeps
+     * the two loaders' declared and actual behavior consistent.
+     */
+    hd->h01_flags = PF_FASTLOAD;
     hd->h01_abs = 0;
 
     return 0;
@@ -354,13 +363,25 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
 /*
  * apply a single relocation to the 32-bit word at vaddr.
  *
- * Both relocation encodings are supported.  REL (used by ARM) keeps the
- * addend in the target word itself, so the fixup is simply "add the load
- * bias": the slot already holds the link-time value.  RELA (used by m68k)
- * carries an explicit r_addend field; the in-file slot may be zero or
- * partial, so the relocated value is always recomputed from scratch as
- * bias + addend (for RELATIVE the addend is the link-time target address;
- * for DIR32 it is the full symbol+addend value the linker folded in).
+ * DIR32 (R_ARM_ABS32 / R_68K_32) always keeps the resolved link-time
+ * absolute value in the target word itself, regardless of relocation
+ * encoding: "ld --emit-relocs" still writes that value into the slot for
+ * both REL (ARM) and RELA (m68k) output, so the fixup is simply "add the
+ * load bias" either way.  This was verified directly against m68k
+ * --emit-relocs output: e.g. a DIR32 slot referencing a symbol whose
+ * link-time value is 0xed0 holds exactly 0xed0 in the file, with
+ * r_addend left at 0 -- so recomputing from r_addend for RELA/DIR32
+ * (as this function used to do) discards the correct value and
+ * substitutes a wrong one, corrupting every absolute reference in an
+ * ET_EXEC binary loaded via RELA relocations.
+ *
+ * RELATIVE is different, but only under RELA: a position independent
+ * executable's RELATIVE slot may legitimately be left zero (that is the
+ * point of carrying the addend out-of-band), so it must be recomputed as
+ * bias + addend.  A REL-encoded RELATIVE relocation -- which is what ARM
+ * would emit for a PIE -- still keeps its addend in the slot exactly
+ * like DIR32, so it takes the same "add the bias" path as everything
+ * else.
  */
 static LONG elf_fixup(BYTE *load_base, const ELFINFO *info, LONG bias,
                       ULONG vaddr, UBYTE type, BOOL rela, ULONG addend)
@@ -389,17 +410,8 @@ static LONG elf_fixup(BYTE *load_base, const ELFINFO *info, LONG bias,
         return EPLFMT;
 
     /* unsigned arithmetic wraps modulo 2^32, so a negative bias applies
-     * correctly whether we add to the slot or recompute it outright.
-     *
-     * For RELA the addend lives in r_addend, not in the target slot:
-     *  - RELATIVE: the slot may be zero; recompute from scratch.
-     *  - DIR32: ld folds symbol+addend into the slot for ET_EXEC
-     *    (--emit-relocs); for a correctly-produced PIE the slot is the
-     *    addend itself.  In both cases the result is bias + addend, but
-     *    we read addend from r_addend rather than from *slot, so we
-     *    recompute here too.
-     */
-    if (rela)
+     * correctly whether we add to the slot or recompute it outright. */
+    if (rela && type == ELF_R_RELATIVE)
         *slot = (ULONG)bias + addend;
     else
         *slot += (ULONG)bias;
@@ -496,12 +508,56 @@ static LONG elf_relocate(FH h, const Elf32_Ehdr *e, BYTE *load_base,
         if (r < 0L)
             return r;
 
+        if (sh.sh_type != SHT_REL && sh.sh_type != SHT_RELA)
+            continue;
+
+        /*
+         * sh_info names the section these relocations apply to, but for
+         * dynamic relocations (.rel.dyn / .rela.dyn in a PIE, see the top
+         * of this file) sh_info is 0 -- they apply to the load image as a
+         * whole, not to one specific section -- and section index 0 is
+         * always the reserved SHT_NULL entry, never SHF_ALLOC. Skipping
+         * unconditionally on "target has no SHF_ALLOC" would therefore
+         * skip every dynamic relocation and silently under-relocate any
+         * ET_DYN binary. Only sh_info != 0 names a real target section
+         * whose SHF_ALLOC-ness is worth checking.
+         *
+         * For a genuine section reference, a section with no SHF_ALLOC
+         * flag (e.g. .debug_info) is never loaded, so its r_offset values
+         * are offsets within that section on disk, not load-time virtual
+         * addresses -- applying them through elf_fixup() would either
+         * reject a perfectly valid binary (a debug-section offset that
+         * happens to be misaligned) or, worse, silently corrupt the
+         * loaded image (one that happens to land 4-byte aligned inside
+         * [link_base, mem_end)). A non-stripped binary built with
+         * "ld --emit-relocs" carries these sections, so this is not a
+         * hypothetical: skip anything that isn't part of the loaded
+         * image.
+         */
+        if (sh.sh_info >= (ULONG)e->e_shnum)
+            return EPLFMT;
+
+        if (sh.sh_info != 0)
+        {
+            Elf32_Shdr target;
+            ULONG target_off;
+
+            if (u32_mul_overflow(sh.sh_info, (ULONG)e->e_shentsize, &target_off)
+             || u32_add_overflow(e->e_shoff, target_off, &target_off))
+                return EPLFMT;
+
+            r = read_at(h, target_off, &target, (LONG)sizeof(target));
+            if (r < 0L)
+                return r;
+
+            if (!(target.sh_flags & SHF_ALLOC))
+                continue;
+        }
+
         if (sh.sh_type == SHT_REL)
             r = elf_relocate_section(h, &sh, FALSE, load_base, info, bias);
-        else if (sh.sh_type == SHT_RELA)
-            r = elf_relocate_section(h, &sh, TRUE, load_base, info, bias);
         else
-            continue;
+            r = elf_relocate_section(h, &sh, TRUE, load_base, info, bias);
 
         if (r < 0L)
             return r;
@@ -569,9 +625,16 @@ LONG elf_pgmld(FH h, PD *p)
     p->p_bbase = load_base + (info.file_end - info.link_base);
     p->p_blen  = (LONG)(info.mem_end - info.file_end);
 
-    /* zero the whole image first so bss, inter-segment gaps and the rest
-     * of the heap all start cleared, then read the file backed parts. */
-    bzero(load_base, (LONG)p->p_hitpa - (LONG)load_base);
+    /* Zero the loaded image first so bss and inter-segment gaps start
+     * cleared, then read the file backed parts over it. Only the
+     * program's own footprint (mem_end - link_base, already validated
+     * against tpalen above) needs clearing here -- not the whole TPA
+     * out to p_hitpa, which is however much free memory Pexec() granted
+     * the program and can be most or all of RAM. Zeroing that much
+     * needlessly, and slowly (each never-touched guest page can fault
+     * in fresh host memory under an emulator), looks indistinguishable
+     * from a hang for a program given a large default allocation. */
+    bzero(load_base, (LONG)(info.mem_end - info.link_base));
 
     if (u32_mul_overflow((ULONG)ehdr.e_phnum, (ULONG)ehdr.e_phentsize, &ph_table_size)
      || u32_add_overflow(ehdr.e_phoff, ph_table_size, &phoff))

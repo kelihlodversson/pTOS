@@ -1101,7 +1101,42 @@ static LONG bios_4(WORD r_w, UBYTE *adr, WORD numb, WORD first, WORD drive, LONG
 LONG setexc(WORD num, LONG vector)
 {
     LONG oldvector;
-    LONG *addr = (LONG *) (4L * num);
+    LONG *addr;
+
+    /*
+     * vecnum 0x100-0x102 (etv_timer/etv_critic/etv_term) are not raw CPU
+     * exception vectors: TOS documents them as living at fixed low-memory
+     * addresses 0x400/0x404/0x408 -- exactly "4 * num" below -- which is
+     * why the generic pointer arithmetic works for ARCH_M68K, where
+     * tosvars.ld places the real etv_* variables at those addresses. On
+     * ARM those fixed addresses were never kept (see tosvars.ld and issue
+     * #219): etv_timer/etv_critic/etv_term are ordinary globals wherever
+     * the linker puts them, so poking "4 * num" reads and writes
+     * unrelated low memory instead of them. Route these three through the
+     * real variables directly -- on m68k this reads back exactly the same
+     * value the pointer arithmetic would, since that is where the linker
+     * put them, so this needs no arch guard.
+     */
+    switch (num)
+    {
+    case 0x100:
+        oldvector = (LONG)etv_timer;
+        if (vector != -1)
+            etv_timer = (void(*)(int))vector;
+        return oldvector;
+    case 0x101:
+        oldvector = (LONG)etv_critic;
+        if (vector != -1)
+            etv_critic = (LONG(*)(WORD,WORD))vector;
+        return oldvector;
+    case 0x102:
+        oldvector = (LONG)etv_term;
+        if (vector != -1)
+            etv_term = (void(*)(void))vector;
+        return oldvector;
+    }
+
+    addr = (LONG *) (4L * num);
     oldvector = *addr;
 
     if(vector != -1) {

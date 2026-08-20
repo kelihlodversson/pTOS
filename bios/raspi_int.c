@@ -17,7 +17,6 @@
 #include "raspi_uart.h"
 
 #define HZ                                200      // ticks per second
-#define CLOCKHZ                        1000000     // Sytem timer runs at 1MHz
 
 typedef struct {
         volatile ULONG irq_basic_pending;

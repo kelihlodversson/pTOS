@@ -156,6 +156,22 @@ Install `kconfiglib` with:
 pip3 install kconfiglib
 ```
 
+## Running the regression tests
+
+A small built-in regression test suite runs the same way across every
+target. Enable it, build the test image, and boot it:
+
+```sh
+make menuconfig   # Debugging -> Regression tests -> Include built-in regression tests
+make
+make test-hd      # builds runtests.tos + test-hd.img
+```
+
+Attach `test-hd.img` to QEMU or Hatari alongside the normal kernel image and
+it autoruns on boot, printing PASS/FAIL per test and a summary. See
+[`tests/readme.md`](tests/readme.md) for emulator invocations, how to read
+the output, and how to add a new test suite.
+
 ## Running QEMU ARM virt
 
 Build the target:
@@ -356,7 +372,7 @@ Planned work includes:
 
 The build matrix checks whether configurations compile, but compilation alone does not prove that they boot.
 
-A short QEMU smoke-boot test should eventually verify that key virtual targets:
+A [regression test harness](tests/readme.md) now runs behavioral checks under an emulator (`make test-hd`), but CI does not yet build and boot it automatically as part of the matrix. Wiring that in is the remaining piece: a short QEMU smoke-boot test should eventually verify that key virtual targets:
 
 - reach a known boot milestone;
 - do not panic;

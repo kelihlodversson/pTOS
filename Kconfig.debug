@@ -7,7 +7,7 @@
 # option any later version.  See doc/license.txt for details.
 #
 
-menu "Startup screen and debugging"
+menu "Startup screen"
 
 config FULL_INITINFO
 	bool "Full welcome screen"
@@ -35,6 +35,10 @@ config INITINFO_DURATION
 	  hardware it can take several seconds for the monitor to recover
 	  from stand-by mode, so a longer duration is wise.  If set to 0,
 	  the welcome screen is never displayed.
+
+endmenu
+
+menu "Debugging"
 
 choice
 	prompt "Debug output channel"
@@ -119,5 +123,7 @@ config CONF_DEBUG_DESK_STACK
 	bool "Monitor the desktop stack usage"
 	depends on CONF_WITH_AES
 	default n
+
+source "tests/Kconfig"
 
 endmenu
