@@ -201,7 +201,24 @@ endif
 # EmuTOS requires C90 with some GNU extensions.
 CSTANDARD = -std=gnu90
 
-OTHERFLAGS = -fomit-frame-pointer -fno-common
+# GCC's tree-loop-distribute-patterns pass (on by default at -O2+) pattern
+# matches simple counted loops against memcpy/memset/strlen-shaped idioms
+# and rewrites the loop body as a call to that library function by name.
+# util/string.c's strlen() is exactly such a loop, so GCC rewrote its own
+# body into a call back to the symbol "strlen" -- i.e. itself -- making it
+# recursive to a depth proportional to the string length instead of the
+# loop actually written.  On ARM this overran the stack into adjacent BSS
+# data during boot with a sufficiently long string (issue #223).  Disabling
+# the pass (rather than -fno-builtin, which also drops inlining the 192/256
+# KB ROM budgets depend on) removes the substitution without the code-size
+# cost.  -fno-builtin-strlen is added too, belt-and-suspenders: it targets a
+# different GCC mechanism (explicit-call recognition rather than loop-body
+# rewriting) and is confirmed *not* sufficient by itself against this
+# specific rewrite (disassembly still showed a self-call with only this
+# flag set), but costs nothing to keep alongside the pass-disabling flag in
+# case a future compiler version narrows what the pass flag covers.
+OTHERFLAGS = -fomit-frame-pointer -fno-common \
+             -fno-tree-loop-distribute-patterns -fno-builtin-strlen
 DEBUGFLAGS = $(if $(DEBUG_INFO),-g)
 
 WARNFLAGS = -Wall -Wundef -Wmissing-prototypes -Wstrict-prototypes

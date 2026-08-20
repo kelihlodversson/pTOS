@@ -27,7 +27,7 @@
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"        /* PFSCOOKIE is embedded by value in FTAB below */
 #endif
-#ifdef MACHINE_RPI
+#if ARCH_ARM
 #   define OPT_PACKED  __attribute__((packed))
 #else
 #   define OPT_PACKED
@@ -133,7 +133,7 @@ typedef struct
     DOSTIME o_td;       /* creation time/date: little-endian!   */
     CLNO  o_strtcl;     /* starting cluster number              */
     long  o_fileln;     /* length of file in bytes              */
-} DFD;
+} OPT_PACKED DFD;
 
 
 /*
