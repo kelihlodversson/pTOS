@@ -37,12 +37,6 @@
 
 extern LONG drvrem;                 /* bitmap of removable media drives */
 
-#ifdef MACHINE_RPI
-#   define OPT_PACKED  __attribute__((packed))
-#else
-#   define OPT_PACKED
-#endif
-
 #if BYTE_ORDER == BIG_ENDIAN
 #   define BOOTSIG_MAGIC 0x55aa
 #else
