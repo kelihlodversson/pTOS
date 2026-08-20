@@ -34,7 +34,12 @@ LIBCMINI_LIB      = $(LIBCMINI_BUILDDIR)/./libcmini.a
 # toolchain's default (non -mshort) multilib, so this program has to match
 # it or every call across the boundary into libcmini (strlen(), Bconin(),
 # ...) would use a mismatched calling convention for plain int.
-CPPFLAGS = -I../include -I$(LIBCMINI_INC) -DUSE_STATIC_INLINES=0 -DSTANDALONE_CONSOLE
+#
+# LIBCMINI_INC first: ../include carries pTOS's own string.h (needed only
+# for the couple of headers libcmini doesn't have, e.g. version.h,
+# scancode.h), which would otherwise shadow libcmini's <string.h> since
+# both provide one.
+CPPFLAGS = -I$(LIBCMINI_INC) -I../include -DUSE_STATIC_INLINES=0 -DSTANDALONE_CONSOLE
 # --register-prefix-optional: cmdasm.S (and libcmini's own m68k asm) write
 # bare register names (a0, d0, sp), which mintelf's assembler otherwise
 # rejects without a leading %.
