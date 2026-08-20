@@ -516,6 +516,7 @@ struct cardinfo
     ULONG base_clock;
 
     int report_mediach;
+    int needs_reinit;
 };
 
 static struct cardinfo card;
@@ -1153,31 +1154,21 @@ static void handle_interrupts(void)
     EMMC_INTERRUPT = reset_mask;
 
     /*
-     * card_init() is otherwise only called once, from raspi_emmc_init() at
-     * boot: without this, a single SD_CARD_REMOVAL interrupt latches
-     * card.card_removal permanently (nothing else ever clears it), so
-     * raspi_emmc_rw()/raspi_emmc_ioctl() short-circuit to E_CHNG/
-     * MEDIACHANGE forever, even after a new card is inserted. Re-running
-     * it here recovers as soon as the controller reports the new card,
-     * before anything above this driver even tries to use it again.
-     *
-     * Safe to call from here: the SD_CARD_INSERTION bit is already
-     * cleared in hardware by the EMMC_INTERRUPT write above, so
-     * card_init() -> card_reset()'s own issue_command() calls -- which
-     * each re-enter handle_interrupts() at the top of issue_command() --
-     * see a status register without that bit still pending, so this
-     * cannot recurse back into another card_init() call.
-     *
-     * card_init()/card_reset() never touch card.report_mediach -- set it
-     * explicitly here (regardless of whether card_init() succeeds) so a
-     * poll-driven Mediach() (as opposed to a failed read/write reaching
-     * E_CHNG) also notices the swap.
+     * Just latch the event here -- do NOT call card_init() from this
+     * function. handle_interrupts() runs at the top of issue_command(),
+     * which do_data_command() calls *after* already setting
+     * card.buf/card.blocks_to_transfer for an in-flight, possibly
+     * multi-block transfer; card_reset() (via card_init()) zeroes those
+     * same fields as part of its state reset. Calling it here would
+     * therefore silently corrupt an already-in-progress transfer's state
+     * even on a single, correctly-detected insertion event -- not just on
+     * some theoretical re-entrant loop. ensure_data_mode() -- the one
+     * choke point both raspi_emmc_rw() (via do_rw()) and
+     * raspi_emmc_ioctl() already call before touching any transfer state
+     * -- is where it's actually safe to run it.
      */
     if (card_inserted)
-    {
-        card_init();
-        card.report_mediach = 1;
-    }
+        card.needs_reinit = 1;
 }
 
 static BOOL issue_command(ULONG command, ULONG argument, int timeout)
@@ -1896,6 +1887,32 @@ static int card_init(void)
 
 static int ensure_data_mode(void)
 {
+    /*
+     * card_init() is otherwise only called once, from raspi_emmc_init()
+     * at boot: without this, a single SD_CARD_REMOVAL interrupt latches
+     * card.card_removal permanently (nothing else ever clears it -- see
+     * handle_interrupts()), so raspi_emmc_rw()/raspi_emmc_ioctl()
+     * short-circuit to E_CHNG/MEDIACHANGE forever, even after a new card
+     * is inserted. Do the actual reinit here rather than from
+     * handle_interrupts() itself: this is the one choke point both
+     * raspi_emmc_rw() (via do_rw()) and raspi_emmc_ioctl() already call
+     * before touching any transfer state, so a reinit here can't zero
+     * out card.buf/card.blocks_to_transfer out from under an in-flight
+     * multi-block transfer the way calling it from inside
+     * handle_interrupts() could.
+     *
+     * card_init()/card_reset() never touch card.report_mediach -- set it
+     * explicitly here on success, so a poll-driven Mediach() (as opposed
+     * to a failed read/write reaching E_CHNG) also notices the swap.
+     */
+    if (card.needs_reinit)
+    {
+        card.needs_reinit = 0;
+        if (card_init() != 0)
+            return -1;
+        card.report_mediach = 1;
+    }
+
     if (card.card_rca == 0)
     {
         // Try again to initialise the card
