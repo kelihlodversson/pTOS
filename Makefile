@@ -201,7 +201,7 @@ endif
 # EmuTOS requires C90 with some GNU extensions.
 CSTANDARD = -std=gnu90
 
-OTHERFLAGS = -fomit-frame-pointer -fno-common
+OTHERFLAGS = -fomit-frame-pointer -fno-common -fno-builtin
 DEBUGFLAGS = $(if $(DEBUG_INFO),-g)
 
 WARNFLAGS = -Wall -Wundef -Wmissing-prototypes -Wstrict-prototypes
