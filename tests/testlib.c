@@ -87,14 +87,14 @@ void ptest_pass(void)
 {
     total_tests++;
     if (!current_failed) {
-        conws("PASS\n");
+        conws("PASS\r\n");
     } else {
         failed_tests++;
-        conws("FAIL\n");
+        conws("FAIL\r\n");
         if (current_fail_msg) {
             conws("    FAIL: ");
             conws(current_fail_msg);
-            conws("\n");
+            conws("\r\n");
         }
     }
 }
@@ -113,12 +113,12 @@ int ptest_failures(void)
 
 int ptest_summary(void)
 {
-    conws("\n--- Summary: ");
+    conws("\r\n--- Summary: ");
     print_num(total_tests - failed_tests);
     conws(" passed, ");
     print_num(failed_tests);
     conws(" failed, ");
     print_num(total_tests);
-    conws(" total ---\n");
+    conws(" total ---\r\n");
     return failed_tests;
 }
