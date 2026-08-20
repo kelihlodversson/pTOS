@@ -1078,6 +1078,7 @@ GEN_SRC += tests/run_tests.c
 
 tests/run_tests.c: $(wildcard tests/*/*.c) | obj
 	@echo '/* Auto-generated -- do not edit */' > $@
+	@echo '#include "test.h"' >> $@
 	@for s in $(TEST_SUITES); do \
 	  echo "extern void test_$$s(void);" >> $@; \
 	done
@@ -1124,7 +1125,7 @@ TEST_STARTUP = $(LIBCMINI_CRT0)
 
 # Each test suite object depends on its source and the generated run_tests.c
 define test-suite-rule
-obj/$(1).o: tests/$(1)/$(1).c tests/run_tests.c
+obj/$(1).o: tests/$(1)/$(1).c tests/run_tests.c | obj
 	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $$< -o $$@
 endef
 $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
