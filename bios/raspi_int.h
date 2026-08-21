@@ -12,6 +12,10 @@
 
 #ifdef MACHINE_RPI
 
+#ifdef TARGET_RPI4
+#include "raspi_gic.h"
+#endif
+
 #define CLOCKHZ                        1000000     /* System timer runs at 1MHz */
 
 void raspi_interrupt_init(void);

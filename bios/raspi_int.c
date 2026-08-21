@@ -92,6 +92,8 @@ typedef struct {
 
 #define ARM_IRQ_MASK(irq) (1 << ((irq) & (ARM_IRQS_PER_REG-1)))
 
+#if !defined(TARGET_RPI4)
+
 static PFVOID raspi_irq_handlers[IRQ_LINES];
 
 static inline void enable_irq(int num)
@@ -129,6 +131,8 @@ static inline void disable_irq(int num)
 #endif
     }
 }
+
+#endif /* !TARGET_RPI4 */
 
 void raspi_timer3_handler(void)
 {
@@ -174,11 +178,15 @@ void raspi_timer3_handler(void)
 
 void raspi_interrupt_init(void)
 {
+#if defined(TARGET_RPI4)
+    raspi_gic_init();
+#else
     // peripheral_begin();
     ARM_IC.fiq_control          = 0;
     ARM_IC.disable_irqs_1       = (ULONG) -1;
     ARM_IC.disable_irqs_2       = (ULONG) -1;
     ARM_IC.disable_basic_irqs   = (ULONG) -1;
+#endif
 }
 
 
@@ -250,6 +258,9 @@ void raspi_delay_us(ULONG us)
 
 PFVOID raspi_connect_irq(int irq, PFVOID handler)
 {
+#if defined(TARGET_RPI4)
+    return raspi_gic_connect_irq(irq, handler);
+#else
     PFVOID old_handler = raspi_irq_handlers[irq];
     raspi_irq_handlers[irq] = handler;
 
@@ -261,11 +272,15 @@ PFVOID raspi_connect_irq(int irq, PFVOID handler)
     // peripheral_end();
 
     return old_handler;
+#endif
 }
 
 
 void raspi_int_handler(void)
 {
+#if defined(TARGET_RPI4)
+    raspi_gic_handle_irq();
+#else
     int reg, irq;
     ULONG curr;
 #ifndef TARGET_RPI1
@@ -318,4 +333,5 @@ void raspi_int_handler(void)
             irq++;
         }
     }
+#endif
 }
