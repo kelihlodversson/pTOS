@@ -13,7 +13,7 @@ The synchronized locale set is:
 `ca`, `cs`, `de`, `es`, `fi`, `fr`, `gr`, `hu`, `it`, `nl`, `pl`, `ro`, `ru`,
 and `tr`.
 
-This restores the seven locales currently excluded by pTOS: Catalan,
+This restores the six locales currently excluded by pTOS: Catalan,
 Hungarian, Dutch, Polish, Romanian, and Turkish.  Their upstream character-set
 definitions are restored in `po/LINGUAS` with the existing eight locales.
 
