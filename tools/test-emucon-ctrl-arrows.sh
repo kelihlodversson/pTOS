@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 
+if ! command -v rg >/dev/null 2>&1; then
+    echo 'tools/test-emucon-ctrl-arrows.sh requires ripgrep (rg)'
+    exit 1
+fi
+
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 rg -q '^#define CTRL_ARROW_LEFT[[:space:]]+0x7300$' "$repo_root/include/scancode.h"

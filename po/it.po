@@ -1215,7 +1215,7 @@ msgstr "freccia sin./dr. = carattere prec./seg."
 
 #: cli/cmdint.c:135
 msgid "control-left/right arrow = previous/next word"
-msgstr "control-sin./freccia dr. = parola precedente/seguente"
+msgstr "control-freccia sin./dr. = parola precedente/seguente"
 
 #: cli/cmdint.c:239
 msgid "invalid mode argument"

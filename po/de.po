@@ -1228,7 +1228,7 @@ msgstr "Pfeil links/rechts = vorhergehendes/nächstes Zeichen"
 
 #: cli/cmdint.c:135
 msgid "control-left/right arrow = previous/next word"
-msgstr "Strg-Pfeil links/rechts = vorherigesgehendes/nächstes Wort"
+msgstr "Strg-Pfeil links/rechts = vorhergehendes/nächstes Wort"
 
 #: cli/cmdint.c:239
 msgid "invalid mode argument"
