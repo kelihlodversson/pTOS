@@ -30,6 +30,7 @@
 
 #ifdef STANDALONE_CONSOLE
 
+#include <stddef.h>             /* offsetof() */
 #include <mint/mintbind.h>     /* Ssystem() */
 
 /*
@@ -57,20 +58,30 @@ struct console_dim {
  * Callers add 1 to each half to obtain the actual dimensions -- matches
  * the m68k/ROM-ARM implementations' convention, both of which pack the
  * same "last valid index" values straight out of v_cel_mx/v_cel_my.
+ *
+ * Only requires enough bytes back to cover width/height, not the whole
+ * (possibly larger) struct console_dim this file was built against: the
+ * struct's size-versioned truncation contract (bdos/ssystem.h) means a
+ * standalone binary can outlive the exact kernel it was built against,
+ * and an older kernel that only ever implemented width/height (pre-
+ * #238/#239) would otherwise get treated as a failure here even though
+ * it filled in everything this function actually reads.
+ *
  * Ssystem() is unconditionally available on ARM (bdos/bdosmain.c's
- * osif(), #ifdef __arm__), so a failed call here means something is
- * genuinely wrong; fall back to 0 (screen_cols = screen_rows = 1 in
- * cmdmain.c) rather than returning garbage. Also guard against a
- * width/height of 0 specifically: subtracting 1 from either would
- * underflow to 0xffff, and cmdmain.c's screen_cols/linesize computation
- * (which adds 1 back) would then wrap to a huge UWORD instead of
- * failing safely.
+ * osif(), #ifdef __arm__), so returning too few bytes even for that
+ * means something is genuinely wrong; fall back to 0 (screen_cols =
+ * screen_rows = 1 in cmdmain.c) rather than returning garbage. Also
+ * guard against a width/height of 0 specifically: subtracting 1 from
+ * either would underflow to 0xffff, and cmdmain.c's screen_cols/
+ * linesize computation (which adds 1 back) would then wrap to a huge
+ * UWORD instead of failing safely.
  */
 ULONG getwh(void)
 {
     struct console_dim dim;
+    LONG needed = offsetof(struct console_dim,height) + sizeof(dim.height);
 
-    if (Ssystem(S_CONSOLE_DIM,(long)&dim,(long)sizeof(dim)) != (long)sizeof(dim))
+    if (Ssystem(S_CONSOLE_DIM,(long)&dim,(long)sizeof(dim)) < needed)
         return 0;
     if (!dim.width || !dim.height)
         return 0;
