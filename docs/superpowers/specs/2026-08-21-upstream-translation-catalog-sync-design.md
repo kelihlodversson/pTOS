@@ -30,6 +30,18 @@ Upstream-only entries become obsolete and do not enter the generated table.
 pTOS-only entries remain explicit untranslated entries and are resolved during
 the synchronization so the generator has no untranslated-entry warnings.
 
+## Feature-Gap Tracking
+
+Classify upstream-only catalog entries by the source feature that introduced
+them.  Use their source references and upstream history to distinguish a
+feature gap from an entry made obsolete by a pTOS-specific replacement.  Create
+one GitHub issue for each distinct unported upstream feature and attach it as a
+sub-issue of issue #240.  Each issue records the relevant upstream commit(s),
+affected source area, and representative untranslated `msgid` values.
+
+The catalog-sync change only creates this backlog.  It must not import the
+identified feature code or add translations for strings that pTOS does not use.
+
 ## Verification
 
 Use Homebrew GNU Make (`gmake`), because the system GNU Make 3.81 cannot build
