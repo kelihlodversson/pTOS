@@ -28,14 +28,31 @@ awk '
     }
 ' "$startup"
 
-invalidate_line=$(grep -n 'invalidate_data_cache_all();' "$memory" | cut -d: -f1)
+handoff_line=$(awk '
+    /^static void init_mmu\(ULONG memory_size\)/ { in_init_mmu = 1 }
+    in_init_mmu && /flush_data_cache_all\(\);/ { print NR; exit }
+' "$memory")
 descriptor_line=$(grep -n 'entry->Value10 = 2;' "$memory" | cut -d: -f1)
 flush_line=$(grep -n 'flush_data_cache_all();' "$memory" | cut -d: -f1 | awk 'END { print }')
 mmu_line=$(grep -n 'mcr p15, 0, %0, c1, c0,  0' "$memory" | tail -n 1 | cut -d: -f1)
 
-test "$invalidate_line" -lt "$descriptor_line"
+test "$handoff_line" -lt "$descriptor_line"
 test "$descriptor_line" -lt "$flush_line"
 test "$flush_line" -lt "$mmu_line"
+
+grep -q '^#if CONF_WITH_RASPI_UART0' "$startup"
+grep -q '^#define EARLY_UART0_BASE.*0x20201000' "$startup"
+grep -q '^#define EARLY_UART0_BASE.*0x3f201000' "$startup"
+grep -q '^#define EARLY_UART0_BASE.*0xfe201000' "$startup"
+
+entry_marker=$(grep -n 'mov r0, #0x45.*entry' "$startup" | cut -d: -f1)
+mmu_marker=$(grep -n 'mov r0, #0x4d.*MMU' "$startup" | cut -d: -f1)
+return_marker=$(grep -n 'mov r0, #0x52.*return' "$startup" | cut -d: -f1)
+mmu_call=$(grep -n 'bl     _raspi_vcmem_init' "$startup" | cut -d: -f1)
+
+test "$entry_marker" -lt "$mmu_marker"
+test "$mmu_marker" -lt "$mmu_call"
+test "$mmu_call" -lt "$return_marker"
 
 grep -q '^#define RASPI_GIC_DIST_BASE 0xff841000UL' "$gic"
 grep -q '^#define RASPI_GIC_CPU_BASE  0xff842000UL' "$gic"

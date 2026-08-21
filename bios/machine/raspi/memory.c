@@ -171,7 +171,10 @@ void raspi_vcmem_init(void)
 static void init_mmu(ULONG memory_size)
 {
     unsigned i;
-    invalidate_data_cache_all();
+
+    /* C has already written the stack and globals; do not discard them if
+     * the firmware entered with D-cache enabled. */
+    flush_data_cache_all();
 
     for (i = 0; i < PAGE_TABLE0_ENTRIES; i++)
     {
