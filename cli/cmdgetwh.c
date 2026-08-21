@@ -57,16 +57,18 @@ struct console_dim {
  * rc_cached caches Ssystem()'s return value alongside it, since both
  * functions need to know how many bytes actually came back, not just
  * the struct contents -- see getwh()'s "needed" comment below. -1 marks
- * "not fetched yet": Ssystem() itself can never return a negative value
- * that low (GEMDOS error codes bottom out around -32, e.g. EINVFN), so
- * there's no ambiguity between "not fetched" and a real error.
+ * "not fetched yet"; checked with an exact match, not "< 0", so a real
+ * error is cached too (and stops retrying) instead of only a successful
+ * fetch being remembered. Ssystem() itself never returns exactly -1 for
+ * this mode (ssystem_console_dim() only ever returns a byte count >= 0
+ * or EINVFN = -32), so there's no ambiguity with "not fetched yet".
  */
 static struct console_dim dim_cached;
 static LONG rc_cached = -1;
 
 static LONG get_console_dim(void)
 {
-    if (rc_cached < 0)
+    if (rc_cached == -1)
         rc_cached = Ssystem(S_CONSOLE_DIM,(long)&dim_cached,(long)sizeof(dim_cached));
 
     return rc_cached;

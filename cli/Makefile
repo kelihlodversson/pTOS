@@ -62,7 +62,7 @@ LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
 # ARM at all) -- cmdgetwh.c's STANDALONE_CONSOLE branch provides
 # getwh()/getht() instead, via Ssystem(S_CONSOLE_DIM, ...).
 OBJECTS = cmdmain.o cmdedit.o cmdexec.o cmdint.o cmdparse.o cmdutil.o cmdgetwh.o version.o
-else
+else ifeq ($(ARCH),m68k)
 CC = m68k-atari-mintelf-gcc
 LIBCMINI_DEFCONFIG = mintelf_defconfig
 # Must not add -mshort: libcmini's own mintelf_defconfig build uses the
@@ -72,6 +72,12 @@ LIBCMINI_DEFCONFIG = mintelf_defconfig
 ARCH_CFLAGS = -Wa,--register-prefix-optional
 LDFLAGS = -s
 OBJECTS = cmdasm.o cmdmain.o cmdedit.o cmdexec.o cmdint.o cmdparse.o cmdutil.o version.o
+else
+# Falling through to m68k on a typo'd ARCH (e.g. "am") would still build
+# something, just silently the wrong thing -- into its own
+# libcmini-build-$(ARCH) directory, so it wouldn't even collide with a
+# real build to make the mistake obvious.
+$(error ARCH must be 'arm' or 'm68k', not '$(ARCH)')
 endif
 
 # LIBCMINI_INC first: ../include carries pTOS's own string.h (needed only
