@@ -50,6 +50,29 @@ struct console_dim {
 };
 
 /*
+ * Console dimensions can't change for the lifetime of this process (there
+ * is no resize event on a TOS console), so getwh() and getht() share one
+ * Ssystem(S_CONSOLE_DIM) round trip instead of each making their own.
+ * dim_cached is filled in by the first call to either function;
+ * rc_cached caches Ssystem()'s return value alongside it, since both
+ * functions need to know how many bytes actually came back, not just
+ * the struct contents -- see getwh()'s "needed" comment below. -1 marks
+ * "not fetched yet": Ssystem() itself can never return a negative value
+ * that low (GEMDOS error codes bottom out around -32, e.g. EINVFN), so
+ * there's no ambiguity between "not fetched" and a real error.
+ */
+static struct console_dim dim_cached;
+static LONG rc_cached = -1;
+
+static LONG get_console_dim(void)
+{
+    if (rc_cached < 0)
+        rc_cached = Ssystem(S_CONSOLE_DIM,(long)&dim_cached,(long)sizeof(dim_cached));
+
+    return rc_cached;
+}
+
+/*
  * getwh - return columns and rows packed into a ULONG
  *
  * high word: columns - 1
@@ -78,36 +101,36 @@ struct console_dim {
  */
 ULONG getwh(void)
 {
-    struct console_dim dim;
-    LONG needed = offsetof(struct console_dim,height) + sizeof(dim.height);
+    LONG needed = offsetof(struct console_dim,height) + sizeof(dim_cached.height);
 
-    if (Ssystem(S_CONSOLE_DIM,(long)&dim,(long)sizeof(dim)) < needed)
+    if (get_console_dim() < needed)
         return 0;
-    if (!dim.width || !dim.height)
+    if (!dim_cached.width || !dim_cached.height)
         return 0;
 
-    return ((ULONG)(UWORD)(dim.width-1) << 16) | (UWORD)(dim.height-1);
+    return ((ULONG)(UWORD)(dim_cached.width-1) << 16) | (UWORD)(dim_cached.height-1);
 }
 
 /*
  * getht - return the cell height in pixels
  *
- * Same Ssystem() call as getwh(), just reading a different field --
- * see bdos/ssystem.h's struct console_dim. Falls back to 8 (pTOS's
- * default font height, see bios/font.c's 8x8/8x16 choices) on the same
- * "genuinely wrong" failure case getwh() guards against, since the
- * only caller (cmdint.c's "MODE CON" status display) just reports this
- * value rather than computing with it -- a plausible fallback is fine
- * where getwh()'s 0 fallback wouldn't be.
+ * Same cached Ssystem() result as getwh(), just reading a different
+ * field -- see bdos/ssystem.h's struct console_dim. Unlike getwh(),
+ * needs the full current struct (cell_height is its last field), so
+ * this still checks for an exact sizeof() match rather than getwh()'s
+ * looser threshold. Falls back to 8 (pTOS's default font height, see
+ * bios/font.c's 8x8/8x16 choices) on the same "genuinely wrong" failure
+ * case getwh() guards against, since the only caller (cmdint.c's "MODE
+ * CON" status display) just reports this value rather than computing
+ * with it -- a plausible fallback is fine where getwh()'s 0 fallback
+ * wouldn't be.
  */
 WORD getht(void)
 {
-    struct console_dim dim;
-
-    if (Ssystem(S_CONSOLE_DIM,(long)&dim,(long)sizeof(dim)) != (long)sizeof(dim))
+    if (get_console_dim() != (long)sizeof(dim_cached))
         return 8;
 
-    return (WORD)dim.cell_height;
+    return (WORD)dim_cached.cell_height;
 }
 
 #else /* ROM build: read the kernel's own linea_vars directly */
