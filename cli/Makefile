@@ -118,8 +118,13 @@ $(LIBCMINI_DIR)/Makefile:
 	@exit 1
 
 # Configure once per ARCH; "make clean" removes both libcmini-build-*
-# directories to force a fresh configure+build.
-$(LIBCMINI_BUILDDIR)/.config: | $(LIBCMINI_DIR)/Makefile
+# directories to force a fresh configure+build. A real (not order-only)
+# prerequisite on the defconfig file itself: without it, a submodule
+# bump that changes configs/$(LIBCMINI_DEFCONFIG)'s content -- without
+# touching any source file -- would leave an already-built .config/
+# libcmini.a looking up to date to Make, silently linking emucon2.tos
+# against a stale libcmini configuration.
+$(LIBCMINI_BUILDDIR)/.config: $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG) | $(LIBCMINI_DIR)/Makefile
 	@$(LIBCMINI_MAKE) $(LIBCMINI_DEFCONFIG)
 
 $(LIBCMINI_LIB): $(LIBCMINI_BUILDDIR)/.config $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S)

@@ -58,13 +58,19 @@ struct console_dim {
  * Ssystem() is unconditionally available on ARM (bdos/bdosmain.c's
  * osif(), #ifdef __arm__), so a failed call here means something is
  * genuinely wrong; fall back to 0 (screen_cols = screen_rows = 1 in
- * cmdmain.c) rather than returning garbage.
+ * cmdmain.c) rather than returning garbage. Also guard against a
+ * width/height of 0 specifically: subtracting 1 from either would
+ * underflow to 0xffff, and cmdmain.c's screen_cols/linesize computation
+ * (which adds 1 back) would then wrap to a huge UWORD instead of
+ * failing safely.
  */
 ULONG getwh(void)
 {
     struct console_dim dim;
 
     if (Ssystem(S_CONSOLE_DIM,(long)&dim,(long)sizeof(dim)) != (long)sizeof(dim))
+        return 0;
+    if (!dim.width || !dim.height)
         return 0;
 
     return ((ULONG)(UWORD)(dim.width-1) << 16) | (UWORD)(dim.height-1);
