@@ -358,8 +358,11 @@ static LONG ssystem_osversion(void)
  *
  * v_cel_mx/v_cel_my (bios/lineavars.h) hold the screen's last valid
  * column/row index, i.e. one less than the actual width/height -- add 1
- * to report the usable count a caller like getwh()/getht() actually
- * wants.
+ * to report the usable count a caller like getwh() actually wants.
+ * v_cel_ht is already the cell height itself (in pixels), not an index,
+ * so it's copied as is. There's no v_cel_wd to match it: cell width is
+ * a fixed 8 pixels everywhere pTOS runs (see v_cel_ht's own comment in
+ * bios/lineavars.h), not a stored variable.
  *
  * arg1 is the caller's struct console_dim*, arg2 its sizeof() -- only
  * min(arg2, sizeof(our struct)) bytes are copied, so a caller's struct
@@ -381,6 +384,8 @@ static LONG ssystem_console_dim(LONG arg1, LONG arg2)
 
     dim.width = linea_vars.v_cel_mx + 1;
     dim.height = linea_vars.v_cel_my + 1;
+    dim.cell_width = 8;
+    dim.cell_height = linea_vars.v_cel_ht;
 
     n = arg2 < (LONG)sizeof(dim) ? arg2 : (LONG)sizeof(dim);
     svar_copy((void *)arg1, &dim, n);

@@ -73,8 +73,11 @@
 #define S_CONSOLE_DIM   ((WORD)0xfffe)
 
 struct console_dim {
-    UWORD width;    /* columns */
-    UWORD height;   /* rows */
+    UWORD width;        /* columns */
+    UWORD height;       /* rows */
+    UWORD cell_width;   /* font cell width, in pixels -- always 8 (see
+                          * bios/lineavars.h's v_cel_ht comment) */
+    UWORD cell_height;  /* font cell height, in pixels (v_cel_ht) */
 };
 
 LONG xssystem(WORD mode, LONG arg1, LONG arg2);
