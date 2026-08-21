@@ -13,6 +13,10 @@
  #include "config.h"
  #include <nls.h>
  #include <portab.h>
+ /* the ROM build shares cli/ across every machine, so gate resolution
+    switching on the Atari video hardware actually configured in */
+ #define CLI_WITH_RESOLUTION    CONF_WITH_ATARI_VIDEO
+ #define CLI_WITH_TT_RESOLUTION CONF_WITH_TT_SHIFTER
 #else
  #define _(a) a
  #define N_(a) a
@@ -28,6 +32,9 @@
  #define HIWORD(x) ((UWORD)((ULONG)(x) >> 16))
  #define LOBYTE(x) ((UBYTE)(UWORD)(x))
  #define HIBYTE(x) ((UBYTE)((UWORD)(x) >> 8))
+ /* the standalone tool only ever targets real Atari hardware */
+ #define CLI_WITH_RESOLUTION    1
+ #define CLI_WITH_TT_RESOLUTION 1
 #endif
 
 
@@ -55,6 +62,7 @@ extern LONG jmp_xbios(WORD, ...);
 #define jmp_gemdos_wppp(a,b,c,d,e)  jmp_gemdos((WORD)(a),(WORD)(b),(void *)(c),(void *)(d),(void *)(e))
 #define jmp_bios_w(a,b)         jmp_bios((WORD)(a),(WORD)(b))
 #define jmp_bios_ww(a,b,c)      jmp_bios((WORD)(a),(WORD)(b),(WORD)(c))
+#define jmp_xbios_v(a)          jmp_xbios((WORD)(a))
 #define jmp_xbios_l(a,b)        jmp_xbios((WORD)(a),(LONG)(b))
 #define jmp_xbios_llww(a,b,c,d,e)   jmp_xbios((WORD)a,(LONG)b,(LONG)c,(WORD)d,(WORD)e)
 #define jmp_xbios_ww(a,b,c)     jmp_xbios((WORD)(a),(WORD)(b),(WORD)(c))
@@ -123,6 +131,7 @@ static __inline__ long cli_supexec_(long a)
 
 #ifdef STANDALONE_CONSOLE
 /* ROM build gets these from xbiosbind.h included above */
+#define Getrez()            jmp_xbios_v(0x04)
 #define Setscreen(a,b,c,d)  jmp_xbios_llww(0x05,a,b,c,d)
 #define Cursconf(a,b)       jmp_xbios_ww(0x15,a,b)
 #define Kbrate(a,b)         jmp_xbios_ww(0x23,a,b)
@@ -158,6 +167,20 @@ static __inline__ long cli_supexec_(long a)
 
 #define DEFAULT_DT_SEPARATOR    '/'
 #define DEFAULT_DT_FORMAT   ((_IDT_12H<<12) + (_IDT_YMD<<8) + DEFAULT_DT_SEPARATOR)
+
+/*
+ * video stuff
+ */
+#define _VDO_COOKIE     0x5f56444fL     /* '_VDO' */
+#define _VDO_ST         0x00000000L     /* ST */
+#define _VDO_TT         0x00020000L     /* TT */
+#define _VDO_VIDEL      0x00030000L     /* Falcon videl */
+#define ST_LOW          0               /* from Getrez() */
+#define ST_MEDIUM       1
+#define ST_HIGH         2
+#define TT_MEDIUM       4
+#define TT_HIGH         6
+#define TT_LOW          7
 
 /*
  *  typedefs
@@ -198,6 +221,7 @@ typedef LONG FUNC(WORD argc,char **argv);
 #define CMDLINE_LENGTH  -103
 #define DIR_NOT_EMPTY   -104        /* translated from EACCDN for folders */
 #define CANT_DELETE     -105        /* translated from EACCDN for files */
+#define CHANGE_RES      -125        /* returned by mode command */
 #define INVALID_PARAM   -126        /* for builtin commands */
 #define WRONG_NUM_ARGS  -127        /* for builtin commands */
 
@@ -230,18 +254,21 @@ extern WORD linewrap;
 extern DTA *dta;
 extern LONG redir_handle;
 extern char user_path[MAXPATHLEN];     /* from PATH command */
+extern WORD current_res, requested_res;
 
 /*
  *  function prototypes
  */
 /* cmdmain.c */
 void outlong(ULONG n,WORD width,char filler);
+int valid_res(WORD res);
 
 /* cmdedit.c */
 WORD init_cmdedit(void);
 void insert_char(char *line,WORD pos,WORD len,char c);
 WORD read_line(char *line);
 void save_history(const char *line);
+void term_cmdedit(void);
 
 /* cmdexec.c */
 LONG exec_program(WORD argc,char **argv,char *redir_name);
