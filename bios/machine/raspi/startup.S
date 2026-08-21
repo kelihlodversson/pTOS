@@ -12,7 +12,11 @@
 #include "asmdefs.h"
 #include "header.h"
 
+#if defined(TARGET_RPI4)
+#define CORE0_MBOX3_SET             0xff80008C
+#else
 #define CORE0_MBOX3_SET             0x4000008C
+#endif
 // ==== Definitions ==========================================================
 
         .globl  _os_entry
@@ -194,6 +198,7 @@ _core0:
     // Get mailbox for core 3
     ldr r0, = CORE0_MBOX3_SET + 0x30
     str r1, [r0]
+    dsb
 #endif
 
     /* Note that we set all the stack pointers to point to the same place,
