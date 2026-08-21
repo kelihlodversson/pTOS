@@ -42,8 +42,10 @@
  */
 #define S_CONSOLE_DIM ((short)0xfffe)
 struct console_dim {
-    UWORD width;    /* columns */
-    UWORD height;   /* rows */
+    UWORD width;        /* columns */
+    UWORD height;       /* rows */
+    UWORD cell_width;   /* font cell width, in pixels -- always 8 */
+    UWORD cell_height;  /* font cell height, in pixels */
 };
 
 /*
@@ -79,17 +81,22 @@ ULONG getwh(void)
 /*
  * getht - return the cell height in pixels
  *
- * No portable accessor for this exists yet -- S_CONSOLE_DIM only
- * covers the text-cell width/height getwh() needs (screen_cols/
- * screen_rows in cmdmain.c), not the font's pixel height (v_cel_ht).
- * The only caller (cmdint.c's "MODE CON" status display) just reports
- * this value, never computes with it, so a fixed fallback is a
- * reasonable stopgap: 8 matches pTOS's default font height (see
- * bios/font.c's 8x8/8x16 choices) rather than an arbitrary number.
+ * Same Ssystem() call as getwh(), just reading a different field --
+ * see bdos/ssystem.h's struct console_dim. Falls back to 8 (pTOS's
+ * default font height, see bios/font.c's 8x8/8x16 choices) on the same
+ * "genuinely wrong" failure case getwh() guards against, since the
+ * only caller (cmdint.c's "MODE CON" status display) just reports this
+ * value rather than computing with it -- a plausible fallback is fine
+ * where getwh()'s 0 fallback wouldn't be.
  */
 WORD getht(void)
 {
-    return 8;
+    struct console_dim dim;
+
+    if (Ssystem(S_CONSOLE_DIM,(long)&dim,(long)sizeof(dim)) != (long)sizeof(dim))
+        return 8;
+
+    return (WORD)dim.cell_height;
 }
 
 #else /* ROM build: read the kernel's own linea_vars directly */
