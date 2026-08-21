@@ -6,7 +6,7 @@ if ! command -v rg >/dev/null 2>&1; then
     exit 1
 fi
 
-repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+repo_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 
 require_file()
 {
