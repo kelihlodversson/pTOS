@@ -109,6 +109,7 @@ ULONG n;
                 continue;
             rc = execute(argc,arglist,redir_name);
             if (rc < 0) {       /* exit EmuCON */
+                term_cmdedit();
                 change_res(original_res);
                 return 0;
             }
