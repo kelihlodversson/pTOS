@@ -32,9 +32,9 @@ require_absent()
     fi
 }
 
-require_file '^#define CTRL_ARROW_LEFT[[:space:]]+0x7300$' \
+require_file '^#define CTRL_ARROW_LEFT[[:space:]]+0x7300([[:space:]]|/\*|//|$)' \
     "$repo_root/include/scancode.h" 'Ctrl-left scan code'
-require_file '^#define CTRL_ARROW_RIGHT[[:space:]]+0x7400$' \
+require_file '^#define CTRL_ARROW_RIGHT[[:space:]]+0x7400([[:space:]]|/\*|//|$)' \
     "$repo_root/include/scancode.h" 'Ctrl-right scan code'
 require_multiline 'case CTRL_ARROW_LEFT:[\s\S]*word = 1;[\s\S]*case ARROW_LEFT:' \
     "$repo_root/cli/cmdedit.c" 'Ctrl-left word movement'
