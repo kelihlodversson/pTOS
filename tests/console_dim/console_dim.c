@@ -32,6 +32,7 @@ void test_console_dim(void);
 struct console_dim {
     unsigned short width;        /* columns */
     unsigned short height;       /* rows */
+    unsigned short cell_width;   /* font cell width, in pixels -- always 8 */
     unsigned short cell_height;  /* font cell height, in pixels */
 };
 
@@ -70,6 +71,10 @@ void test_console_dim(void)
                      "console width out of plausible range");
     ptest_assert_msg(dim.height > 0 && dim.height <= 500,
                      "console height out of plausible range");
+    /* Cell width is a fixed pTOS-wide constant, not derived from
+     * anything variable -- an exact match is the right check. */
+    ptest_assert_msg(dim.cell_width == 8,
+                     "console cell width was not the expected 8");
     /* pTOS fonts are 6x6, 8x8 or 8x16 (bios/font.c) -- generous bounds
      * around that rather than an exact match, in case a future font is
      * added. */
