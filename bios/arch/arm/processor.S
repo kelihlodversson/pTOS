@@ -123,8 +123,8 @@ _invalidate_data_cache_all:
 		mcr p15, 0, ip, c7, c10, 4
         bx lr
 
-.global _clean_data_cache
-_clean_data_cache:
+.global _flush_data_cache_all
+_flush_data_cache_all:
         mov ip, #0
         mcr p15, 0, ip, c7, c10, 0
 		mcr p15, 0, ip, c7, c10, 4
