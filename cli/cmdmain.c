@@ -30,6 +30,7 @@
 LONG idt_value;
 UWORD screen_cols, screen_rows;
 UWORD linesize;
+WORD current_res, requested_res;
 WORD linewrap;
 DTA *dta;
 char user_path[MAXPATHLEN];
@@ -41,10 +42,13 @@ LONG redir_handle;
 LOCAL char input_line[MAX_LINE_SIZE];
 LOCAL char *arglist[MAX_ARGS];
 LOCAL char redir_name[MAXPATHLEN];
+LOCAL WORD original_res;
+LOCAL LONG vdo_value;
 
 /*
  *  function prototypes
  */
+PRIVATE void change_res(WORD res);
 PRIVATE void close_redir(void);
 PRIVATE void create_redir(const char *name);
 PRIVATE WORD execute(WORD argc,char **argv,char *redir);
@@ -69,33 +73,61 @@ ULONG n;
     if (getcookie(_IDT_COOKIE,&idt_value) == 0)
         idt_value = DEFAULT_DT_FORMAT;      /* if not found, make sure it's initialised properly */
 
-    n = getwh();                            /* get max cell number for x and y */
-    screen_cols = HIWORD(n) + 1;
-    screen_rows = LOWORD(n) + 1;
-    linesize = screen_cols + 1 - 3;         /* allow for trailing NUL and prompt */
+    if (getcookie(_VDO_COOKIE,&vdo_value) == 0)
+        vdo_value = _VDO_ST;
+#if CLI_WITH_RESOLUTION
+#if CLI_WITH_TT_RESOLUTION
+    original_res = (vdo_value < _VDO_VIDEL) ? Getrez() : -1;
+#else
+    original_res = (vdo_value < _VDO_TT) ? Getrez() : -1;
+#endif
+#else
+    original_res = -1;
+#endif
 
     linewrap = 0;
     dta = (DTA *)Fgetdta();
     redir_handle = -1L;
-
-    if (init_cmdedit() < 0)
-        messagenl(_("warning: no history buffers"));
+    current_res = original_res;
 
     while(1) {
-        rc = read_line(input_line);
-        save_history(input_line);
-        if (rc < 0)         /* user cancelled line */
-            continue;
-        argc = parse_line(input_line,arglist,redir_name);
-        if (argc < 0)       /* parse error */
-            continue;
-        if (execute(argc,arglist,redir_name) < 0)
-            break;
+        n = getwh();                            /* get max cell number for x and y */
+        screen_cols = HIWORD(n) + 1;
+        screen_rows = LOWORD(n) + 1;
+        linesize = screen_cols + 1 - 3;         /* allow for trailing NUL and prompt */
+
+        if (init_cmdedit() < 0)
+            messagenl(_("warning: no history buffers"));
+
+        do {
+            rc = read_line(input_line);
+            save_history(input_line);
+            if (rc < 0)         /* user cancelled line */
+                continue;
+            argc = parse_line(input_line,arglist,redir_name);
+            if (argc < 0)       /* parse error */
+                continue;
+            rc = execute(argc,arglist,redir_name);
+            if (rc < 0) {       /* exit EmuCON */
+                change_res(original_res);
+                return 0;
+            }
+        } while (rc <= 0);      /* until resolution change requested */
+
+        term_cmdedit();     /* cleanup before re-initialising for new resolution */
+        change_res(requested_res);
     }
 
     return 0;
 }
 
+/*
+ * execute a builtin command or external program
+ *
+ * returns: -1  EmuCON should exit
+ *          0   normal
+ *          +1  EmuCON should change resolution
+ */
 PRIVATE WORD execute(WORD argc,char **argv,char *redir)
 {
 FUNC *func;
@@ -115,10 +147,61 @@ LONG rc;
         strip_quotes(argc,argv);
         rc = func(argc,argv);
         close_redir();
+        if (rc == CHANGE_RES)
+            return 1;
     }
     else rc = exec_program(argc,argv,redir);
 
     errmsg(rc);
+
+    return 0;
+}
+
+/*
+ *  change video resolution - assumes new resolution has been validated
+ */
+PRIVATE void change_res(WORD res)
+{
+#if CLI_WITH_RESOLUTION
+    if (res == current_res)
+        return;
+
+    Setscreen(-1L,-1L,res,0);
+    Setscreen(-1L,-1L,0xc000|res,0);    /* init palette regs */
+    enable_cursor();
+    current_res = res;
+#endif
+}
+
+/*
+ *  validate a requested video resolution
+ */
+int valid_res(WORD res)
+{
+#if CLI_WITH_RESOLUTION
+    if (vdo_value == _VDO_VIDEL)    /* can't change Falcon resolutions */
+        return 0;
+
+    if (current_res == TT_HIGH)     /* can't change from TT high */
+        return 0;
+
+    if ((current_res == ST_HIGH) && (vdo_value != _VDO_TT))
+        return 0;                   /* only TTs can change from ST high */
+
+    switch (res) {
+#if CLI_WITH_TT_RESOLUTION
+    case TT_LOW:
+    case TT_MEDIUM:
+    case ST_HIGH:
+        if (vdo_value != _VDO_TT)
+            return 0;
+        /* fall through */
+#endif
+    case ST_LOW:
+    case ST_MEDIUM:
+        return 1;
+    }
+#endif  /* CLI_WITH_RESOLUTION */
 
     return 0;
 }
