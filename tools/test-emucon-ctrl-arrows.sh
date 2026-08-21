@@ -40,6 +40,10 @@ require_multiline 'case CTRL_ARROW_LEFT:[\s\S]*word = 1;[\s\S]*case ARROW_LEFT:'
     "$repo_root/cli/cmdedit.c" 'Ctrl-left word movement'
 require_multiline 'case CTRL_ARROW_RIGHT:[\s\S]*word = 1;[\s\S]*case ARROW_RIGHT:' \
     "$repo_root/cli/cmdedit.c" 'Ctrl-right word movement'
+require_multiline 'case CTRL_ARROW_LEFT:[\s\S]*word = 1;[\s\S]*FALLTHROUGH;[\s\S]*case ARROW_LEFT:' \
+    "$repo_root/cli/cmdedit.c" 'Ctrl-left intentional fallthrough'
+require_multiline 'case CTRL_ARROW_RIGHT:[\s\S]*word = 1;[\s\S]*FALLTHROUGH;[\s\S]*case ARROW_RIGHT:' \
+    "$repo_root/cli/cmdedit.c" 'Ctrl-right intentional fallthrough'
 require_absent 'case SHIFT_ARROW_LEFT:|case SHIFT_ARROW_RIGHT:' \
     "$repo_root/cli/cmdedit.c" 'Shift-arrow word movement'
 require_file 'control-left/right arrow = previous/next word' \
