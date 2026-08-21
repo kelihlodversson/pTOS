@@ -3,6 +3,7 @@ set -eu
 
 startup=bios/machine/raspi/startup.S
 memory=bios/machine/raspi/memory.c
+virt_mmu=bios/machine/virt-arm/virt_mmu.c
 gic=bios/machine/raspi/raspi_gic.c
 interrupts=bios/raspi_int.c
 build=bios/build.mk
@@ -39,6 +40,12 @@ mmu_line=$(grep -n 'mcr p15, 0, %0, c1, c0,  0' "$memory" | tail -n 1 | cut -d: 
 test "$handoff_line" -lt "$descriptor_line"
 test "$descriptor_line" -lt "$flush_line"
 test "$flush_line" -lt "$mmu_line"
+
+virt_first_cache_call=$(awk '
+    /^void virt_mmu_bootstrap\(/ { in_bootstrap = 1 }
+    in_bootstrap && /cache_all\(\);/ { print; exit }
+' "$virt_mmu")
+test "$virt_first_cache_call" = '    flush_data_cache_all();'
 
 grep -q '^#if CONF_WITH_RASPI_UART0' "$startup"
 grep -q '^#define EARLY_UART0_BASE.*0x20201000' "$startup"

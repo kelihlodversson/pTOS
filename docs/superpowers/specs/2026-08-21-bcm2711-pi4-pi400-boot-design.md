@@ -43,7 +43,8 @@ failure without relying on the framebuffer.
 
 `init_mmu()` needs two distinct cache operations:
 
-- Before constructing the table, invalidate stale firmware cache state.
+- Before constructing the table, clean and invalidate inherited cache state so
+  dirty startup stack and global writes reach RAM.
 - After constructing the table and before loading TTBR/enabling SCTLR.M,
   clean the table writes to the point of coherency, then invalidate the TLB
   and execute DSB/ISB barriers.

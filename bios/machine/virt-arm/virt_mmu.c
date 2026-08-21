@@ -42,7 +42,7 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
     if (ram_window_sections > max_window_sections)
         ram_window_sections = max_window_sections;
 
-    invalidate_data_cache_all();
+    flush_data_cache_all();
 
     for (i = 0; i < PAGE_TABLE_ENTRIES; i++)
     {
