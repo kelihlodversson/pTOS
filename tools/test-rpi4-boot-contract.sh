@@ -81,3 +81,63 @@ awk '
         exit !(rpi4 && !other)
     }
 ' "$build"
+
+grep -q 'raspi_gic_connect_irq(30, raspi_timer3_handler);' "$interrupts"
+
+awk '
+    /^void raspi_init_system_timer\(void\)/ {
+        timer_init = 1
+        next
+    }
+    timer_init && /^#if defined\(TARGET_RPI4\)/ {
+        rpi4 = 1
+        next
+    }
+    timer_init && rpi4 && /^#else/ {
+        rpi4 = 0
+        legacy = 1
+        next
+    }
+    timer_init && rpi4 && /cntfrq/ {
+        cntfrq = 1
+    }
+    timer_init && rpi4 && /cntp_cval/ {
+        cntp_cval = 1
+    }
+    timer_init && rpi4 && /CNTP_CTL/ {
+        cntp_ctl = 1
+    }
+    timer_init && rpi4 && /flush_prefetch_buffer\(\)/ {
+        isb = 1
+    }
+    timer_init && rpi4 && /ARM_SYSTIMER.compare\[3\]/ {
+        rpi4_systimer = 1
+    }
+    timer_init && legacy && /ARM_SYSTIMER.compare\[3\]/ {
+        legacy_systimer = 1
+    }
+    END {
+        exit !(cntfrq && cntp_cval && cntp_ctl && isb \
+            && !rpi4_systimer && legacy_systimer)
+    }
+' "$interrupts"
+
+awk '
+    /^void raspi_timer3_handler\(void\)/ {
+        timer_handler = 1
+        next
+    }
+    timer_handler && /^#if defined\(TARGET_RPI4\)/ {
+        rpi4 = 1
+        next
+    }
+    timer_handler && rpi4 && /^#else/ {
+        rpi4 = 0
+    }
+    timer_handler && rpi4 && /cntp_cval/ {
+        cntp_cval = 1
+    }
+    END {
+        exit !cntp_cval
+    }
+' "$interrupts"

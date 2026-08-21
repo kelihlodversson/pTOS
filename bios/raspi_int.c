@@ -92,6 +92,12 @@ typedef struct {
 
 #define ARM_IRQ_MASK(irq) (1 << ((irq) & (ARM_IRQS_PER_REG-1)))
 
+#if defined(TARGET_RPI4)
+
+static ULONG ticks_per_hz;
+
+#endif
+
 #if !defined(TARGET_RPI4)
 
 static PFVOID raspi_irq_handlers[IRQ_LINES];
@@ -136,7 +142,12 @@ static inline void disable_irq(int num)
 
 void raspi_timer3_handler(void)
 {
+#if defined(TARGET_RPI4)
+    ULONG cntp_cval_low, cntp_cval_high;
+    UQUAD cntp_cval;
+#else
     ULONG compare;
+#endif
 
 #if CONF_SERIAL_CONSOLE && CONF_WITH_RASPI_UART0
     raspi_uart0_poll_rx();
@@ -144,21 +155,13 @@ void raspi_timer3_handler(void)
 
     vector_5ms();
 
-#if CPU_ARMV7
-    if (raspi_board.timer_kind == RASPI_TIMER_GENERIC)
-    {
-        ULONG cntp_cval_low, cntp_cval_high;
-        UQUAD cntp_cval;
-
-        asm volatile ("mrrc p15, 2, %0, %1, c14" : "=r" (cntp_cval_low),
-                                                   "=r" (cntp_cval_high));
-        cntp_cval = ((UQUAD) cntp_cval_high << 32 | cntp_cval_low) + CLOCKHZ / HZ;
-        asm volatile ("mcrr p15, 2, %0, %1, c14" :: "r" (cntp_cval & 0xffffffffU),
-                                                    "r" (cntp_cval >> 32));
-        return;
-    }
-#endif
-
+#if defined(TARGET_RPI4)
+    asm volatile ("mrrc p15, 2, %0, %1, c14" : "=r" (cntp_cval_low),
+                                               "=r" (cntp_cval_high));
+    cntp_cval = ((UQUAD) cntp_cval_high << 32 | cntp_cval_low) + ticks_per_hz;
+    asm volatile ("mcrr p15, 2, %0, %1, c14" :: "r" (cntp_cval & 0xffffffffU),
+                                                "r" (cntp_cval >> 32));
+#else
     peripheral_begin();
     compare = ARM_SYSTIMER.compare[3] + CLOCKHZ / HZ;
     ARM_SYSTIMER.compare[3] = compare;
@@ -170,6 +173,7 @@ void raspi_timer3_handler(void)
     }
     ARM_SYSTIMER.control = (1 << 3);
     peripheral_end();
+#endif
 }
 
 // int_timerc(), the Timer C interrupt handler this machine's tick drives
@@ -192,6 +196,24 @@ void raspi_interrupt_init(void)
 
 void raspi_init_system_timer(void)
 {
+#if defined(TARGET_RPI4)
+    ULONG cntpct_low, cntpct_high;
+    ULONG cntfrq;
+    UQUAD cntp_cval;
+
+    asm volatile ("mrc p15, 0, %0, c14, c0, 0" : "=r" (cntfrq)); /* CNTFRQ */
+    ticks_per_hz = cntfrq / HZ;
+
+    raspi_gic_connect_irq(30, raspi_timer3_handler);
+
+    asm volatile ("mrrc p15, 0, %0, %1, c14" : "=r" (cntpct_low),
+                                               "=r" (cntpct_high));
+    cntp_cval = ((UQUAD) cntpct_high << 32 | cntpct_low) + ticks_per_hz;
+    asm volatile ("mcrr p15, 2, %0, %1, c14" :: "r" (cntp_cval & 0xffffffffU),
+                                                "r" (cntp_cval >> 32)); /* CNTP_CVAL */
+    asm volatile ("mcr p15, 0, %0, c14, c2, 1" :: "r" (1)); /* CNTP_CTL: ENABLE */
+    flush_prefetch_buffer();
+#else
 #if CPU_ARMV7
     if (raspi_board.timer_kind == RASPI_TIMER_GENERIC)
     {
@@ -231,6 +253,7 @@ void raspi_init_system_timer(void)
 
     // Set up timer 3 interrupt to emulate the ST 200Hz timer
     raspi_connect_irq (raspi_board.timer_irq, raspi_timer3_handler);
+#endif
 }
 
 ULONG raspi_get_ticks(void)
