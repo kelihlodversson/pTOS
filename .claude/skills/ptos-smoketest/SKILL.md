@@ -407,6 +407,26 @@ Useful flags: `-S -s` (remote gdb), `-serial file:path.log` (capture console),
 `-monitor stdio` + `sendkey a` (keyboard injection), `-display none`
 (headless CI).
 
+### virt-arm regression disk
+
+QEMU's `virt` machine has no SD controller, so `-drive
+file=test-hd.img,format=raw,if=sd` is invalid for `virt-arm`. pTOS supports
+the machine's virtio-MMIO block device; attach the regression disk as
+virtio-blk instead:
+
+```sh
+qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 \
+  -kernel virt-arm.elf \
+  -global virtio-mmio.force-legacy=false \
+  -drive file=test-hd.img,if=none,format=raw,id=hd0 \
+  -device virtio-blk-device,drive=hd0 \
+  -d guest_errors -display none -serial stdio -no-reboot
+```
+
+The expected pass signal is the normal `All tests passed.` summary. The
+harness exits through `Pterm(0)` when complete; use a host timeout when
+running unattended.
+
 ### Standard smoke pattern and pass signals
 
 ```sh

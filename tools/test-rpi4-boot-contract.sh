@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 
+cd "$(dirname "$0")/.."
+
 startup=bios/machine/raspi/startup.S
 memory=bios/machine/raspi/memory.c
 virt_mmu=bios/machine/virt-arm/virt_mmu.c
