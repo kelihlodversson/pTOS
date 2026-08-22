@@ -76,6 +76,16 @@ config CONF_WITH_BOTTOMTOTOP
 	help
 	  Top the bottom window, as on Atari TOS 2/3/4.
 
+config CONF_WITH_PRINTER_ICON
+	bool "Printer icon"
+	default n if TARGET_192
+	default y
+	help
+	  Support a printer icon on the desktop: info/rename it like the
+	  trash can, and install it (or remove it) via the "Install
+	  application" dialog's printer button, as on Atari TOS 2/3/4.
+	  Dragging a document onto it is not yet implemented.
+
 config CONF_WITH_EASTER_EGG
 	bool "EmuDesk easter egg"
 	default y
