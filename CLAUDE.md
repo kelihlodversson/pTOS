@@ -145,13 +145,38 @@ same object.
   The codebase overwhelmingly uses `/* */` comments; match the file you are in.
 - 4 spaces, never a hard tab, in `.c`, `.h` and `.S`. Run `make gitready`
   before committing.
-- **`int` is 16 bits on m68k** (`-mshort`) and 32 bits on ARM. Use the
-  `portab.h` types — `WORD`, `LONG`, `UBYTE`, `UWORD`, `ULONG`, `BOOL` — and
-  suffix constants that must survive on m68k (`132 * 1000UL`).
+- **`int` is 16 bits on m68k** (`-mshort`) and 32 bits on ARM. Suffix
+  constants that must survive on m68k (`132 * 1000UL`). For inherited/ABI-
+  facing code, use the traditional `portab.h` types — `WORD`, `LONG`,
+  `UBYTE`, `UWORD`, `ULONG`, `BOOL`; for new architecture-neutral
+  infrastructure, follow Type naming below instead.
 - Assembler: leading underscore on symbols callable from C, CDECL conventions,
   68000-only instructions, `movem.l` never `movem.w`.
 - Trace with `KDEBUG(("..."))` / `KINFO(())` from `include/kprint.h`, not with
   a private printf.
+
+### Type naming
+
+- Reserve `_t`-suffixed names for types the C implementation or a system
+  header provides — `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t`,
+  `uintptr_t`, `intptr_t`, `size_t`, and the like. Do not introduce new
+  project-defined typedefs ending in `_t`; someone reading `_t` should be able
+  to assume it did not come from this tree.
+- Name new pTOS-defined semantic typedefs with a `_type` suffix instead, e.g.
+  `typedef uintptr_t virt_addr_type;` or `typedef uint32_t mmu_attr_type;`.
+  Don't add a `ptos_` prefix merely for branding — only reach for one if a
+  real name collision requires it.
+- In new, architecture-neutral infrastructure, prefer the standard fixed-width
+  and pointer-width C types (`uint32_t`, `uintptr_t`, `size_t`, ...) over the
+  inherited all-caps aliases (`ULONG`, `UQUAD`, ...) when the only thing being
+  expressed is integer or pointer width.
+- Leave `BYTE`, `WORD`, `LONG`, `UBYTE`, `UWORD`, `ULONG`, `QUAD` and `UQUAD`
+  exactly as they are in existing code — do not mechanically convert them.
+  They stay the right choice where the code is inherited from EmuTOS (converting
+  it just creates upstream/cherry-pick noise), where the name expresses a
+  TOS/GEM ABI concept rather than a plain integer width, or where the type is
+  part of a public ABI-facing structure or interface with no separate reason
+  to touch it.
 
 ## Documentation
 
