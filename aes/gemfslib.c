@@ -560,7 +560,10 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
             break;
     }
     if (!ad_fsnames)
+    {
+        fm_show(ALFSMEM, NULL, 1);
         return FALSE;
+    }
 
     g_fslist = (LONG *)(ad_fsnames+nm_files*LEN_FSNAME);
 
