@@ -43,6 +43,8 @@
 #define DRIVE_OFFSET FS1STDRV
 
 #define LEN_FSNAME (LEN_ZFNAME+1)   /* includes leading flag byte & trailing nul */
+#define LEN_FSPATH  (LEN_ZPATH+4)   /* at least 3 bytes longer than max path */
+#define LEN_FSWORK  (2*LEN_FSPATH+LEN_FSNAME)  /* total workarea length in fs_input() */
 
                             /* max number of files/directory that we can handle */
 #define MAX_NM_FILES 1600L          /*  ... if we have enough memory */
@@ -527,12 +529,11 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
     WORD dclkret, cont, newlist, newsel, newdrive;
     BYTE *pstr;
     GRECT pt;
-    BYTE locstr[LEN_ZPATH+4], locold[LEN_ZPATH+4];  /* at least 3 bytes longer than 'mask' */
+    BYTE *locstr, *locold, *selname;
     /* static: the FTITLE object's te_ptext is pointed directly at mask
      * (see below) and that pointer can outlive this call, e.g. if the
      * resource tree is redrawn without another fs_input() call first */
     static BYTE mask[LEN_ZPATH+1];
-    BYTE selname[LEN_FSNAME];
     OBJECT *obj;
     TEDINFO *tedinfo;
 
@@ -550,12 +551,13 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
         *pipath += dos_gdrv();
     }
 
-    /* get memory for the filename buffer
-     *  & for the array that points to it
+    /* get memory for the filename buffer & for the array that points to
+     * it, plus the locstr/locold/selname workareas (this also saves
+     * stack space and happily reduces code size)
      */
     for (nm_files = MAX_NM_FILES; nm_files >= MIN_NM_FILES; nm_files /= 2)
     {
-        ad_fsnames = dos_alloc_anyram(nm_files*(LEN_FSNAME+sizeof(BYTE *)));
+        ad_fsnames = dos_alloc_anyram(nm_files*(LEN_FSNAME+sizeof(LONG))+LEN_FSWORK);
         if (ad_fsnames)
             break;
     }
@@ -566,6 +568,9 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
     }
 
     g_fslist = (LONG *)(ad_fsnames+nm_files*LEN_FSNAME);
+    locstr = (BYTE *)(g_fslist+nm_files);
+    locold = locstr + LEN_FSPATH;
+    selname = locold + LEN_FSPATH;
 
     strcpy(locstr, pipath);
     strcpy(locold,locstr);
@@ -620,13 +625,11 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
         if (newlist)
         {
             fs_sel(sel, NORMAL);
-            if ((touchob == FSOK) || (touchob == FSCANCEL))
-                ob_change(tree, touchob, NORMAL, TRUE);
             inf_sset(tree, FSDIRECT, locstr);
             pstr = fs_pspec(locstr, NULL);
             strcpy(pstr, mask);
             curr = 0;
-            sel = touchob = 0;
+            sel = 0;
             newlist = FALSE;
             if (!fs_newdir(locstr, mask, tree, &count)) /* error reading dir */
             {
@@ -644,7 +647,6 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
                 else
                 {
                     sprintf(locstr,"%c:\\%s",'A'+dos_gdrv(),mask);
-                    strcpy(locold,locstr);
                 }
             }
             strcpy(locold,locstr);
