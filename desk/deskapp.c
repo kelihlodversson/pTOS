@@ -745,7 +745,7 @@ void app_start(void)
 
 #if CONF_WITH_PRINTER_ICON
         /* add Printer icon, if room */
-        if (trash_x == 0)       /* trash at left of bottom row */
+        if ((trash_x == 0) && (xcnt > 1))   /* trash at left, room to its right */
         {
             int print_x = xcnt - 1;
             rsrc_gaddr_rom(R_STRING, STPRINT, (void **)&text);
