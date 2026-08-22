@@ -1220,8 +1220,8 @@ msgid "left/right arrow = previous/next character"
 msgstr "flecha izquierda/derecha = carácter anterior/siguiente"
 
 #: cli/cmdint.c:135
-msgid "shift-left/right arrow = previous/next word"
-msgstr "Mayúsculas-flecha izquierda/derecha = palabra anterior/siguiente"
+msgid "control-left/right arrow = previous/next word"
+msgstr "flecha izquierda/derecha+control = palabra anterior/siguiente"
 
 #: cli/cmdint.c:239
 msgid "invalid mode argument"

@@ -12,7 +12,23 @@
 #include "asmdefs.h"
 #include "header.h"
 
+#if defined(TARGET_RPI4)
+#define CORE0_MBOX3_SET             0xff80008C
+#else
 #define CORE0_MBOX3_SET             0x4000008C
+#endif
+
+#if CONF_WITH_RASPI_UART0
+#if defined(TARGET_RPI1)
+#define EARLY_UART0_BASE             0x20201000
+#elif defined(TARGET_RPI4)
+#define EARLY_UART0_BASE             0xfe201000
+#else
+#define EARLY_UART0_BASE             0x3f201000
+#endif
+#define EARLY_UART0_DR               (EARLY_UART0_BASE + 0x00)
+#define EARLY_UART0_FR               (EARLY_UART0_BASE + 0x18)
+#endif
 // ==== Definitions ==========================================================
 
         .globl  _os_entry
@@ -139,6 +155,11 @@ _main:
     stmia r3, {r0-r2}
 1:
 
+#if CONF_WITH_RASPI_UART0
+    mov r0, #0x45                   /* E: entry */
+    bl  early_uart_putc
+#endif
+
 #ifndef TARGET_RPI1
     ldr r1, =_start_in_hyp
     mov r2, #0
@@ -194,6 +215,7 @@ _core0:
     // Get mailbox for core 3
     ldr r0, = CORE0_MBOX3_SET + 0x30
     str r1, [r0]
+    dsb
 #endif
 
     /* Note that we set all the stack pointers to point to the same place,
@@ -239,7 +261,16 @@ _core0:
  * memory configuration
  */
 
+#if CONF_WITH_RASPI_UART0
+    mov r0, #0x4d                   /* M: immediately before MMU */
+    bl  early_uart_putc
+#endif
     bl     _raspi_vcmem_init         // ask the video core for the memory configuration (needs sp)
+
+#if CONF_WITH_RASPI_UART0
+    mov r0, #0x52                   /* R: MMU return */
+    bl  early_uart_putc
+#endif
 
 /*
  * From now, the stack is allowed, and C code can be used.
@@ -247,6 +278,19 @@ _core0:
  */
 
     b     _biosmain
+
+#if CONF_WITH_RASPI_UART0
+/* The firmware has already selected and initialized the PL011.  Do not wait
+ * for a full FIFO here: a diagnostic marker must never stop early boot. */
+early_uart_putc:
+    ldr r1, =EARLY_UART0_FR
+    ldr r2, [r1]
+    tst r2, #0x20                   /* TXFF */
+    bxne lr
+    ldr r1, =EARLY_UART0_DR
+    str r0, [r1]
+    bx lr
+#endif
 
 /* Exit from HYP mode if the boot loader started there */
 #ifndef TARGET_RPI1

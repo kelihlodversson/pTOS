@@ -1222,8 +1222,8 @@ msgid "left/right arrow = previous/next character"
 msgstr "стрелка влево/вправо = предыдущий/следующий символ"
 
 #: cli/cmdint.c:135
-msgid "shift-left/right arrow = previous/next word"
-msgstr "shift-стрелка влево/вправо = предыдущее/следующее слово"
+msgid "control-left/right arrow = previous/next word"
+msgstr "control-стрелка влево/вправо = предыдущее/следующее слово"
 
 #: cli/cmdint.c:239
 msgid "invalid mode argument"

@@ -1225,8 +1225,8 @@ msgid "left/right arrow = previous/next character"
 msgstr "flèche gauche/droit = caractère précédent/suivant"
 
 #: cli/cmdint.c:135
-msgid "shift-left/right arrow = previous/next word"
-msgstr "shift-flèche gauche/droit = mot précédent/suivant"
+msgid "control-left/right arrow = previous/next word"
+msgstr "control-flèche gauche/droite = mot précédent/suivant"
 
 #: cli/cmdint.c:239
 msgid "invalid mode argument"

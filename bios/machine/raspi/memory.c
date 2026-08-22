@@ -93,7 +93,7 @@ void raspi_mmu_protect_range(ULONG start, ULONG end)
      * write; without cleaning them out, the MMU's table walk can still see
      * the old (writable) descriptor in RAM and the protection would not
      * reliably take effect. */
-    clean_data_cache();
+    flush_data_cache_all();
     asm volatile ("mcr p15, 0, %0, c8, c7, 0" : : "r" (0));   /* invalidate unified TLB */
     data_sync_barrier();
     flush_prefetch_buffer();
@@ -171,7 +171,10 @@ void raspi_vcmem_init(void)
 static void init_mmu(ULONG memory_size)
 {
     unsigned i;
-    clean_data_cache ();
+
+    /* C has already written the stack and globals; do not discard them if
+     * the firmware entered with D-cache enabled. */
+    flush_data_cache_all();
 
     for (i = 0; i < PAGE_TABLE0_ENTRIES; i++)
     {
@@ -264,7 +267,7 @@ static void init_mmu(ULONG memory_size)
     }
 #endif /* CONF_WITH_MMU_TEXT_PROTECT */
 
-    clean_data_cache ();
+    flush_data_cache_all();
 
     ULONG aux_control;
     asm volatile ("mrc p15, 0, %0, c1, c0,  1" : "=r" (aux_control));
@@ -290,10 +293,6 @@ static void init_mmu(ULONG memory_size)
     // set Domain Access Control register (Domain 0 and 1 to client)
     asm volatile ("mcr p15, 0, %0, c3, c0,  0" : : "r" (  DOMAIN_CLIENT << 0
                                                         | DOMAIN_CLIENT << 2));
-
-#ifndef TARGET_RPI1
-    flush_data_cache_all();
-#endif
 
     // required if MMU was previously enabled and not properly reset
     invalidate_instruction_cache(0, memory_size);

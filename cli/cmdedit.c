@@ -144,6 +144,17 @@ WORD i;
 }
 
 /*
+ *  cleanup command editing globals
+ */
+void term_cmdedit(void)
+{
+    if (history_num >= 0)
+        Mfree(history_line[0]);
+
+    history_num = -1;       /* history not available */
+}
+
+/*
  *  save a line in the history
  */
 void save_history(const char *line)
@@ -165,7 +176,7 @@ PRIVATE WORD edit_line(char *line,WORD *pos,WORD *len,WORD scancode,WORD prevcod
 char buffer[MAXPATHLEN];
 char *start, *p, *q;
 LONG rc;
-WORD n, shift = 0;
+WORD n, word = 0;
 
     switch(scancode) {
     case ARROW_UP:
@@ -180,22 +191,24 @@ WORD n, shift = 0;
             *pos = *len = next_history(line);
         }
         break;
-    case SHIFT_ARROW_LEFT:
-        shift = 1;
+    case CTRL_ARROW_LEFT:
+        word = 1;
+        FALLTHROUGH;
     case ARROW_LEFT:
         if (*pos > 0) {
-            n = shift ? previous_word_count(line,*pos) : 1;
+            n = word ? previous_word_count(line,*pos) : 1;
             while (n-- > 0) {
                 (*pos)--;
                 cursor_left();
             }
         }
         break;
-    case SHIFT_ARROW_RIGHT:
-        shift = 1;
+    case CTRL_ARROW_RIGHT:
+        word = 1;
+        FALLTHROUGH;
     case ARROW_RIGHT:
         if (*pos < *len) {
-            n = shift ? next_word_count(line,*pos,*len) : 1;
+            n = word ? next_word_count(line,*pos,*len) : 1;
             while (n-- > 0) {
                 (*pos)++;
                 cursor_right();
