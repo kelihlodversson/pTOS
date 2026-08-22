@@ -35,6 +35,8 @@
  /* the standalone tool only ever targets real Atari hardware */
  #define CLI_WITH_RESOLUTION    1
  #define CLI_WITH_TT_RESOLUTION 1
+ /* normally from portab.h, which this build doesn't include */
+ #define FALLTHROUGH do { } while (0)
 #endif
 
 
