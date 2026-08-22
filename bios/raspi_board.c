@@ -73,9 +73,9 @@ static const raspi_board_t this_board =
      * so the tick comes from the ARM generic timer instead.
      */
     RASPI_TIMER_GENERIC,
-    ARM_IRQLOCAL0_CNTPNS,
-    54000000UL,
-    39768216UL,
+    0,                          /* PPI 30 is connected directly to the GIC */
+    0,                          /* CNTFRQ supplies the counter frequency */
+    0,                          /* BCM2711 has no usable local prescaler */
 #else
 #error No description for the configured Raspberry Pi model
 #endif

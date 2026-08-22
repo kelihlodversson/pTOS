@@ -25,7 +25,7 @@ static void v7_dcache_clean_inval_range(uint32_t start, uint32_t stop, uint32_t 
 static void v7_dcache_inval_range(uint32_t start, uint32_t stop, uint32_t line_len);
 static void v7_dcache_maint_range(uint32_t start, uint32_t stop, uint32_t range_op);
 static void v7_inval_tlb(void);
-void clean_data_cache(void);
+void invalidate_data_cache_all(void);
 void flush_data_cache_all(void);
 
 void v7_outer_cache_enable(void);
@@ -114,7 +114,7 @@ static void v7_inval_tlb(void)
         instruction_sync_barrier();
 }
 
-void clean_data_cache(void)
+void invalidate_data_cache_all(void)
 {
         v7_invalidate_dcache_all();
         v7_outer_cache_inval_all();
@@ -171,7 +171,7 @@ void invalidate_data_cache(void *start, long size)
 void arm_init_before_mmu(void)
 {
         v7_outer_cache_enable();
-        clean_data_cache();
+        invalidate_data_cache_all();
         v7_inval_tlb();
 }
 
