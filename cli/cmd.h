@@ -32,9 +32,19 @@
  #define HIWORD(x) ((UWORD)((ULONG)(x) >> 16))
  #define LOBYTE(x) ((UBYTE)(UWORD)(x))
  #define HIBYTE(x) ((UBYTE)((UWORD)(x) >> 8))
- /* the standalone tool only ever targets real Atari hardware */
- #define CLI_WITH_RESOLUTION    1
- #define CLI_WITH_TT_RESOLUTION 1
+ /* the m68k standalone build only ever targets real Atari hardware;
+    the ARM standalone build only ever targets pTOS's own raspi/virt-arm
+    ports, which have no Atari-style video hardware to switch resolution
+    on -- Getrez()/Setscreen() are a no-op there (see bios/screen.c's
+    CONF_WITH_ATARI_VIDEO fallback), so exposing MODE's resolution
+    switching would just look broken rather than doing anything real */
+ #ifdef __arm__
+  #define CLI_WITH_RESOLUTION    0
+  #define CLI_WITH_TT_RESOLUTION 0
+ #else
+  #define CLI_WITH_RESOLUTION    1
+  #define CLI_WITH_TT_RESOLUTION 1
+ #endif
  /* normally from portab.h, which this build doesn't include */
  #define FALLTHROUGH do { } while (0)
 #endif
@@ -43,31 +53,26 @@
 /*
  * system calls
  *
- * The standalone build (emucon2.tos) keeps its own private trap wrappers
- * from cmdasm.S.  The ROM build uses the shared portable dispatchers that
- * already work on both m68k and ARM.
+ * The standalone build (emucon2.tos) is linked against libcmini, whose
+ * <mint/osbind.h> already provides every GEMDOS/BIOS/XBIOS call below
+ * under these exact names -- no local trap wrappers needed. The ROM
+ * build uses the shared portable dispatchers that already work on both
+ * m68k and ARM.
  */
 #ifdef STANDALONE_CONSOLE
-extern LONG jmp_gemdos(WORD, ...);
-extern LONG jmp_bios(WORD, ...);
-extern LONG jmp_xbios(WORD, ...);
+#include <mint/osbind.h>
+#include <string.h>     /* strlen(), strcpy(), memcpy(), memset(), strncasecmp() */
+#include <ctype.h>      /* toupper() */
 
-#define jmp_gemdos_v(a)         jmp_gemdos((WORD)(a))
-#define jmp_gemdos_w(a,b)       jmp_gemdos((WORD)(a),(WORD)(b))
-#define jmp_gemdos_l(a,b)       jmp_gemdos((WORD)(a),(LONG)(b))
-#define jmp_gemdos_p(a,b)       jmp_gemdos((WORD)(a),(void*)(b))
-#define jmp_gemdos_ww(a,b,c)    jmp_gemdos((WORD)(a),(WORD)(b),(WORD)(c))
-#define jmp_gemdos_pw(a,b,c)    jmp_gemdos((WORD)(a),(void *)(b),(WORD)(c))
-#define jmp_gemdos_wlp(a,b,c,d) jmp_gemdos((WORD)(a),(WORD)(b),(LONG)(c),(void *)(d))
-#define jmp_gemdos_wpp(a,b,c,d) jmp_gemdos((WORD)(a),(WORD)(b),(void *)(c),(void *)(d))
-#define jmp_gemdos_pww(a,b,c,d) jmp_gemdos((WORD)(a),(void *)(b),(WORD)(c),(WORD)(d))
-#define jmp_gemdos_wppp(a,b,c,d,e)  jmp_gemdos((WORD)(a),(WORD)(b),(void *)(c),(void *)(d),(void *)(e))
-#define jmp_bios_w(a,b)         jmp_bios((WORD)(a),(WORD)(b))
-#define jmp_bios_ww(a,b,c)      jmp_bios((WORD)(a),(WORD)(b),(WORD)(c))
-#define jmp_xbios_v(a)          jmp_xbios((WORD)(a))
-#define jmp_xbios_l(a,b)        jmp_xbios((WORD)(a),(LONG)(b))
-#define jmp_xbios_llww(a,b,c,d,e)   jmp_xbios((WORD)a,(LONG)b,(LONG)c,(WORD)d,(WORD)e)
-#define jmp_xbios_ww(a,b,c)     jmp_xbios((WORD)(a),(WORD)(b),(WORD)(c))
+/* EmuTOS/pTOS extends the standard 3-argument XBIOS Setscreen (opcode 5)
+ * with a 4th word argument that sets the font height in the same call
+ * (see xbios_v_llww() in include/xbiosbind.h, used by the ROM build
+ * below); libcmini's <mint/osbind.h> only knows the standard,
+ * 3-argument form. */
+#undef Setscreen
+#define Setscreen(lscrn,pscrn,rez,height) \
+    ((void)trap_14_wllww((short)(0x05),(long)(lscrn),(long)(pscrn), \
+                          (short)(rez),(short)(height)))
 
 #else /* ROM build: use the shared portable trap dispatchers */
 #include "asm.h"        /* trap1(), trap1_pexec() */
@@ -97,8 +102,6 @@ static __inline__ long cli_supexec_(long a)
 #define jmp_gemdos_wppp(a,b,c,d,e) \
     trap1_pexec((short)(b),(const char *)(c),(const void *)(d),(const char *)(e))
 
-#endif /* STANDALONE_CONSOLE */
-
 #define Dsetdrv(a)          jmp_gemdos_w(0x0e,a)
 #define Dgetdrv()           jmp_gemdos_v(0x19)
 #define Fgetdta()           jmp_gemdos_v(0x2f)
@@ -124,21 +127,7 @@ static __inline__ long cli_supexec_(long a)
 #define Fsnext()            jmp_gemdos_v(0x4f)
 #define Frename(a,b,c)      jmp_gemdos_wpp(0x56,a,b,c)
 
-#ifdef STANDALONE_CONSOLE
-/* ROM build gets these from biosbind.h included above */
-#define Bconstat(a)         jmp_bios_w(0x01,a)
-#define Bconin(a)           jmp_bios_w(0x02,a)
-#define Bconout(a,b)        jmp_bios_ww(0x03,a,b)
-#endif
-
-#ifdef STANDALONE_CONSOLE
-/* ROM build gets these from xbiosbind.h included above */
-#define Getrez()            jmp_xbios_v(0x04)
-#define Setscreen(a,b,c,d)  jmp_xbios_llww(0x05,a,b,c,d)
-#define Cursconf(a,b)       jmp_xbios_ww(0x15,a,b)
-#define Kbrate(a,b)         jmp_xbios_ww(0x23,a,b)
-#define Supexec(a)          jmp_xbios_l(0x26,a)
-#endif
+#endif /* STANDALONE_CONSOLE */
 
 
 /*

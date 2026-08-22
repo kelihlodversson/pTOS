@@ -417,70 +417,9 @@ COOKIE *jar, *c;
     return 0;
 }
 
-#ifdef STANDALONE_CONSOLE
-size_t strlen(const char *s)
-{
-int n;
-
-    for (n = 0; *s; s++, n++)
-        ;
-
-    return n;
-}
-
-char *strcpy(char *dest,const char *src)
-{
-char *p = dest;
-
-    for (p = dest; *src; )
-        *p++ = *src++;
-    *p = '\0';
-
-    return dest;
-}
-
-void *memcpy(void *dest, const void *src, size_t n)
-{
-unsigned char *d = (unsigned char *)dest;
-const unsigned char *s = (const unsigned char *)src;
-
-    while (n--)
-        *d++ = *s++;
-
-    return dest;
-}
-
-void *memset(void *dest, int value, size_t n)
-{
-unsigned char *d = (unsigned char *)dest;
-
-    while (n--)
-        *d++ = (unsigned char)value;
-
-    return dest;
-}
-
-int toupper(int c)
-{
-    if(c>='a' && c<='z')
-        return(c-'a'+'A');
-    else
-        return(c);
-}
-
-int strncasecmp(const char *a, const char *b, size_t n)
-{
-    unsigned char s1, s2;
-
-    while(n-- > 0) {
-        s1 = toupper((unsigned char)*a++);
-        s2 = toupper((unsigned char)*b++);
-        if (s1 != s2)
-            return s1 - s2;
-        if (s1 == '\0')
-            break;
-    }
-
-    return 0;
-}
-#endif
+/*
+ * strlen()/strcpy()/memcpy()/memset()/toupper()/strncasecmp() used to be
+ * hand-rolled here (needed only because the standalone build was
+ * -nostdlib); the standalone build now links against libcmini, whose
+ * <string.h>/<ctype.h> (included by cmd.h) provide all of them.
+ */

@@ -182,7 +182,11 @@ jobs:
     name: Release archives
     runs-on: ubuntu-22.04
     steps:
+      # release-emucon (part of "make release") builds against the
+      # lib/libcmini submodule.
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - uses: ./.github/actions/setup-toolchain
         with:
