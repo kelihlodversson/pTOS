@@ -557,7 +557,7 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
      */
     for (nm_files = MAX_NM_FILES; nm_files >= MIN_NM_FILES; nm_files /= 2)
     {
-        ad_fsnames = dos_alloc_anyram(nm_files*(LEN_FSNAME+sizeof(BYTE *))+LEN_FSWORK);
+        ad_fsnames = dos_alloc_anyram(nm_files*(LEN_FSNAME+sizeof(LONG))+LEN_FSWORK);
         if (ad_fsnames)
             break;
     }
