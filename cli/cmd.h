@@ -32,9 +32,19 @@
  #define HIWORD(x) ((UWORD)((ULONG)(x) >> 16))
  #define LOBYTE(x) ((UBYTE)(UWORD)(x))
  #define HIBYTE(x) ((UBYTE)((UWORD)(x) >> 8))
- /* the standalone tool only ever targets real Atari hardware */
- #define CLI_WITH_RESOLUTION    1
- #define CLI_WITH_TT_RESOLUTION 1
+ /* the m68k standalone build only ever targets real Atari hardware;
+    the ARM standalone build only ever targets pTOS's own raspi/virt-arm
+    ports, which have no Atari-style video hardware to switch resolution
+    on -- Getrez()/Setscreen() are a no-op there (see bios/screen.c's
+    CONF_WITH_ATARI_VIDEO fallback), so exposing MODE's resolution
+    switching would just look broken rather than doing anything real */
+ #ifdef __arm__
+  #define CLI_WITH_RESOLUTION    0
+  #define CLI_WITH_TT_RESOLUTION 0
+ #else
+  #define CLI_WITH_RESOLUTION    1
+  #define CLI_WITH_TT_RESOLUTION 1
+ #endif
  /* normally from portab.h, which this build doesn't include */
  #define FALLTHROUGH do { } while (0)
 #endif
