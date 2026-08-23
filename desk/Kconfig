@@ -78,7 +78,7 @@ config CONF_WITH_BOTTOMTOTOP
 
 config CONF_WITH_SIZE_TO_FIT
 	bool "'Size to fit' desktop menu item"
-	default n if TARGET_192
+	default n if TARGET_192 || TARGET_256
 	default y
 	help
 	  Control whether a window's width determines the number of columns
