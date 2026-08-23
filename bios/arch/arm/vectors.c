@@ -108,6 +108,12 @@ void int_vbl(void)
     vblsem++; // release vbl semaphore (TODO: non-atomic)
 }
 
+// VBL source seam, declared in vectors.h.  Defaults to int_vbl(), so
+// machines with no real vsync source (virt-arm) are unaffected; raspi
+// points it at raspi_vbl_fallback() (bios/raspi_vsync.c) when
+// CONF_WITH_RASPI_VSYNC_IRQ is on.
+void (*timer_vbl_hook)(void) = int_vbl;
+
 // ==== Timer C interrupt handler ============================================
 // Machine-independent: every ARM machine's periodic tick (raspi's system /
 // generic timer, virt's generic timer) ends up here through vector_5ms.
@@ -121,8 +127,9 @@ void int_timerc(void)
 #       if CONF_WITH_YM2149
             sndirq();   // dosound support
 #       endif
-        // Fake vbl interrupt every 4 timer_c calls (50Hz)
-        int_vbl();
+        // Fake vbl interrupt every 4 timer_c calls (50Hz), unless the
+        // hook has been pointed at a real vsync source's fallback.
+        timer_vbl_hook();
     }
 }
 

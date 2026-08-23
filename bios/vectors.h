@@ -93,6 +93,17 @@ extern WORD trap_save_area[];
 extern void (*vector_5ms)(void);              /* 200 Hz system timer */
 #endif
 
+/*
+ * VBL source seam for the machine-independent ARM int_timerc()
+ * (bios/arch/arm/vectors.c): normally int_vbl() itself, faked off the
+ * every-4th-tick 50 Hz as before, but a machine with a real vsync
+ * interrupt can point this at its own handler instead, so it drives
+ * VBL and int_timerc()'s fake becomes a fallback.  Only ARM machines
+ * define and use this; m68k's int_timerc (bios/arch/m68k/vectors.S)
+ * always calls int_vbl() directly.
+ */
+extern void (*timer_vbl_hook)(void);
+
 /* protect d2/a2 when calling external user-supplied code */
 #ifdef __m68k__
 LONG protect_v(LONG (*func)(void));
