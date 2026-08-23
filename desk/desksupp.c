@@ -1066,6 +1066,11 @@ WORD do_open(WORD curr)
     case AT_ISTRSH:
         fun_alert(1, STNOOPEN);
         break;
+#if CONF_WITH_PRINTER_ICON
+    case AT_ISPRNT:
+        fun_alert_merge(1, STPRINFO, pa->a_pappl);
+        break;
+#endif
     }
 
     return FALSE;
@@ -1138,6 +1143,11 @@ WORD do_info(WORD curr)
     case AT_ISTRSH:
         fun_alert(1, STTRINFO);
         break;
+#if CONF_WITH_PRINTER_ICON
+    case AT_ISPRNT:
+        fun_alert_merge(1, STPRINFO, pa->a_pappl);
+        break;
+#endif
     }
 
     return ret;

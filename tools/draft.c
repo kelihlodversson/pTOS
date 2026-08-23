@@ -305,6 +305,10 @@ char *exclude_items[] =
 #if !CONF_WITH_SELECTALL
     "SLCTITEM",
 #endif
+#if !CONF_WITH_PRINTER_ICON
+    "STPRINT",
+    "STPRINFO",
+#endif
 #if !CONF_WITH_BACKGROUNDS
     "BACKGRND",
     "SEP_VW1",

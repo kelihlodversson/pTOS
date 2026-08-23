@@ -334,6 +334,12 @@ static BYTE *app_parse(BYTE *pcurr, ANODE *pa)
         pa->a_flags = AF_ISDESK;
         break;
 #endif
+#if CONF_WITH_PRINTER_ICON
+    case 'O':                           /* Printer */
+        pa->a_type  = AT_ISPRNT;
+        pa->a_flags = AF_ISDESK;
+        break;
+#endif
     }
     pcurr++;
 
@@ -734,8 +740,19 @@ void app_start(void)
         if (drive_y >= trash_y) /* if the last drive icon overflows over */
             trash_x = xcnt-1;   /*  the trash row, force trash to right  */
         rsrc_gaddr_rom(R_STRING, STTRASH, (void **)&text);
-        sprintf(gl_afile + x, "#T %02X %02X 03 FF   %s@ @\r\n",
+        x += sprintf(gl_afile + x, "#T %02X %02X 03 FF   %s@ @\r\n",
                 trash_x, trash_y, text);
+
+#if CONF_WITH_PRINTER_ICON
+        /* add Printer icon, if room */
+        if ((trash_x == 0) && (xcnt > 1))   /* trash at left, room to its right */
+        {
+            int print_x = xcnt - 1;
+            rsrc_gaddr_rom(R_STRING, STPRINT, (void **)&text);
+            x += sprintf(gl_afile + x, "#O %02X %02X %02X FF   %s@ @\r\n",
+                    print_x, trash_y, IG_PRINT, text);
+        }
+#endif
         G.g_afsize = strlen(gl_afile);
     }
 
@@ -769,6 +786,9 @@ void app_start(void)
 #if CONF_WITH_DESKTOP_SHORTCUTS
         case 'X':                       /* File shortcut on desktop */
         case 'V':                       /* Directory shortcut on desktop */
+#endif
+#if CONF_WITH_PRINTER_ICON
+        case 'O':                       /* Printer */
 #endif
             pa = app_alloc();
             if (!pa)                    /* paranoia */
@@ -1107,6 +1127,11 @@ void app_save(WORD todisk)
         case AT_ISTRSH:     /* Trash */
             type = 'T';
             break;
+#if CONF_WITH_PRINTER_ICON
+        case AT_ISPRNT:     /* Printer */
+            type = 'O';
+            break;
+#endif
         default:
             type = ' ';
         }

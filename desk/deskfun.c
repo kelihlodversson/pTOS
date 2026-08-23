@@ -1275,7 +1275,11 @@ static void fun_desk2win(WORD wh, WORD dobj, WORD keystate)
     while ((sobj = win_isel(G.g_screen, DROOT, sobj)))
     {
         an_src = i_find(0, sobj, NULL, NULL);
-        if (an_src && (an_src->a_type == AT_ISTRSH))
+        if (an_src && ((an_src->a_type == AT_ISTRSH)
+#if CONF_WITH_PRINTER_ICON
+            || (an_src->a_type == AT_ISPRNT)
+#endif
+            ))
         {
             fun_alert(1, STNODRA2);
             continue;
@@ -1303,7 +1307,11 @@ static void fun_desk2desk(WORD dobj, WORD keystate)
         source = i_find(0, sobj, NULL, NULL);
         if (!source || (source == target))
             continue;
-        if (source->a_type == AT_ISTRSH)
+        if ((source->a_type == AT_ISTRSH)
+#if CONF_WITH_PRINTER_ICON
+            || (source->a_type == AT_ISPRNT)
+#endif
+            )
         {
             fun_alert(1, STNOSTAK);
             continue;
