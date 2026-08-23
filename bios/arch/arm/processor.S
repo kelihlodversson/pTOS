@@ -76,12 +76,6 @@ _instruction_cache_kludge:
  * It is not worth the trouble for EmuTOS right now.
  */
 
-.globl  _invalidate_instruction_cache
-_invalidate_instruction_cache:
-        mov ip, #0
-        mcr p15, 0, ip, c7, c5,  0
-        bx lr
-
 .globl _flush_prefetch_buffer
 _flush_prefetch_buffer:
 #ifdef TARGET_RPI1
@@ -100,6 +94,34 @@ _flush_branch_target_cache:
 
 
 #ifdef TARGET_RPI1
+
+.globl  _invalidate_instruction_cache
+_invalidate_instruction_cache:
+        /*
+         * r0 = start
+         * r1 = length
+         *
+         * Newly generated/loaded instructions may still only
+         * exist in dirty D-cache lines.  Clean them to memory
+         * before invalidating the I-cache.
+         */
+
+        push    {r4, lr}        @ preserve 8-byte stack alignment
+
+        bl      _flush_data_cache
+
+        /*
+         * flush_data_cache() ends with a DSB.
+         * Now invalidate the complete instruction cache.
+         */
+        mov     ip, #0
+        mcr     p15, 0, ip, c7, c5, 0
+
+        dsb
+        isb
+
+        pop     {r4, pc}
+
 /*
  * void flush_data_cache(void *start, long length)
  *
