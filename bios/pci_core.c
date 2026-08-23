@@ -5,6 +5,8 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+/* #define ENABLE_KDEBUG */
+
 #include "config.h"
 
 #if CONF_WITH_PCI
@@ -153,6 +155,7 @@ static LONG pci_write_config_raw(pci_device_t *device, UWORD reg, UWORD size, UL
 static void pci_scan_bus(UBYTE bus)
 {
     UBYTE dev;
+    KDEBUG(("pci: scan bus %u\n", bus));
 
     if (bus >= PCI_MAX_BUSES)
         return;
@@ -160,8 +163,13 @@ static void pci_scan_bus(UBYTE bus)
         return;
 
     pci_bus_scanned[bus] = TRUE;
-    for (dev = 0; dev < PCI_DEVICES_PER_BUS; dev++)
+    for (dev = 0; dev < PCI_DEVICES_PER_BUS; dev++) {
+        KDEBUG(("pci: probe %u:%u.0\n", bus, dev));
         pci_scan_device(bus, dev);
+        KDEBUG(("pci: probe %u:%u.0 done\n", bus, dev));
+    }
+
+    KDEBUG(("pci: scan bus %u done\n", bus));
 }
 
 static void pci_scan_device(UBYTE bus, UBYTE dev)
@@ -249,6 +257,9 @@ static pci_device_t *pci_add_function(UBYTE bus, UBYTE dev, UBYTE func)
     ULONG progif;
     pci_device_t *device;
 
+    KDEBUG(("pci: add %u:%u.%u\n", bus, dev, func));
+
+
     if (pci_device_count >= PCI_MAX_DEVICES) {
         if (!pci_table_full_reported) {
             KINFO(("pci: device table full\n"));
@@ -291,7 +302,16 @@ static pci_device_t *pci_add_function(UBYTE bus, UBYTE dev, UBYTE func)
         value = 0UL;
     device->interrupt_pin = (UBYTE)value;
 
+    KDEBUG(("pci: %u:%u.%u class %06lx hdr %02x\n",
+       bus, dev, func,
+       device->classcode,
+       device->header_type));
+
+    KDEBUG(("pci: decode BARs %u:%u.%u\n", bus, dev, func));
+
     pci_decode_bars(device);
+
+    KDEBUG(("pci: BARs done %u:%u.%u\n", bus, dev, func));
 
     device->callback = 0;
     device->used = 0;
