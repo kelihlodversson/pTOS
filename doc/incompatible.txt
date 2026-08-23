@@ -252,6 +252,12 @@ in an undocumented way, which crashes on EmuTOS. If that is patched,
 crash happens on next private function which Cubase tries to search
 for.
 
+Workaround:
+"CUBPTCH: unified Cubase / Score / Audio patcher (v2)", a third-party
+patching utility, can be used to apply the "Clean OS interface / EmuTOS
+support" patch. This makes the Cubase versions that are supported by
+the utility fully functional under EmuTOS.
+
 
 Program: Flexdisk 1.7
 ---------------------
