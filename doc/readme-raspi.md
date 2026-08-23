@@ -18,13 +18,10 @@ Also on the card are the files the Pi's GPU needs to get from power-on to
 loading one of the images above: bootcode.bin, start.elf, fixup.dat,
 start4.elf and fixup4.dat. They are Raspberry Pi's own, redistributed
 unmodified under the terms in LICENCE.broadcom, which travels with them.
-`config.txt` selects 32-bit execution mode on Raspberry Pi 4/400. This is 
-required because current Pi 4 firmware defaults to 64-bit mode; with 
-arm_64bit=0 and explicitly selects kernel7l.img. 
-Other supported Raspberry Pi models continue to use the firmware's normal 
-automatic kernel selection. The `config.txt` can also be used to opt in to 
-the real vsync-driven VBL described below -- remove that if you don't 
-want that.
+
+config.txt is required on Raspberry Pi 4/400 to force 32-bit execution, because current Pi 4 firmware may default to 64-bit mode. It sets `arm_64bit=0` and explicitly selects `kernel=kernel7l.img`.
+
+Other supported Raspberry Pi models continue to use the firmware's normal automatic kernel selection. `config.txt` can also be used to opt in to the real vsync-driven VBL described below -- remove the `fake_vsync_isr` setting if you don't want that.
 
 ## Writing the card
 
