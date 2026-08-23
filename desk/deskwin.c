@@ -582,7 +582,11 @@ static void win_blt(WNODE *pw, BOOL horizontal, WORD newcv)
         /* blt as much as we can, adjust clip & draw the rest */
         if ((revblt = (delcv < 0)) != 0)
             delcv = -delcv;
+#if CONF_WITH_SIZE_TO_FIT
+        if ((horizontal ? pw->w_pncol : pw->w_pnrow) > delcv)
+#else
         if (pw->w_pnrow > delcv)
+#endif
         {
             /* see how much there is, pretend blt up */
 #if CONF_WITH_SIZE_TO_FIT
