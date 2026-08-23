@@ -908,18 +908,94 @@ BOOL inf_backgrounds(void)
 
 #if CONF_WITH_DESKTOP_CONFIG
 /*
+ *  get ptrs to all ANODEs with associated function keys
+ */
+static void get_all_funkeys(ANODE **retptr)
+{
+    ANODE *pa;
+    int i;
+
+    /* initialise pointers in return array */
+    for (i = 0; i < NUM_FUNKEYS; i++)
+        retptr[i] = NULL;
+
+    /* update return pointers for any function keys found */
+    for (pa = G.g_ahead; pa; pa = pa->a_next)
+    {
+        i = pa->a_funkey - FIRST_FUNKEY;
+        if ((i >= 0) && (i < NUM_FUNKEYS))
+            retptr[i] = pa;
+    }
+}
+
+
+/* variables for managing function key path text scrolling */
+static WORD textpos, maxpos;
+
+
+/*
+ *  scroll function key pathname text in desktop configuration dialog
+ *
+ *  returns TRUE iff displayed text has changed
+ */
+static BOOL scroll_conf_funkeys(OBJECT *tree, ANODE *pa, WORD amount)
+{
+    WORD newpos = textpos + amount;
+
+    /*
+     * note: if there are no function keys assigned, textpos and
+     * maxpos will be zero, so newpos will either be -1 or +1 after
+     * an attempted scroll, and we will return FALSE immediately
+     */
+    if ((newpos < 0) || (newpos > maxpos))
+        return FALSE;
+
+    textpos = newpos;
+    inf_sset(tree, DCFUNPTH, pa->a_pappl+textpos);
+
+    return TRUE;
+}
+
+
+/*
+ *  initialise desktop configuration dialog with function key info
+ */
+static void init_conf_funkeys(OBJECT *tree, ANODE *pa)
+{
+    OBJECT  *obj;
+    TEDINFO *ted;
+    BYTE fkey[8];   /* generous size to silence -Wformat-overflow; a_funkey is
+                     * a BYTE and GCC can't prove "%2d" fits it in 2 digits */
+
+    sprintf(fkey, "%2d", pa->a_funkey);
+    inf_sset(tree, DCFUNNUM, fkey);
+
+    /* set up scrollable text */
+    obj = tree + DCFUNPTH;
+    ted = obj->ob_spec.tedinfo;
+    maxpos = strlen(pa->a_pappl) - ted->te_txtlen + 1;
+    if (maxpos < 0)
+        maxpos = 0;
+    textpos = 0;
+    scroll_conf_funkeys(tree, pa, 0);
+}
+
+
+/*
  *      Handle desktop configuration dialog
  */
 void inf_conf(void)
 {
     OBJECT *tree = G.a_trees[ADDESKCF];
-    WORD button;
-    /* worst case is two "-2147483648 KB" values (LONG range; longest "KB"
-     * translation in po/*.po is 3 bytes) joined by " + ", 34 bytes with
+    ANODE *pa[NUM_FUNKEYS];
+    WORD exitobj, redraw, current_funkey, i;
+    /* worst case is two "-2147483648KB" values (LONG range; longest "KB"
+     * translation in po/*.po is 3 bytes) joined by " + ", 32 bytes with
      * the terminating NUL -- sized well above that since there's no
      * snprintf() in this freestanding build to bound the sprintf()s below */
     BYTE str[64];
     WORD n;
+    BOOL done = FALSE;
 
     /* first, deselect all objects */
     deselect_all(tree);
@@ -938,21 +1014,83 @@ void inf_conf(void)
     /* set up available memory line */
     {
         LONG altram = dos_avail_altram();
-        n = sprintf(str, "%ld %s", dos_avail_stram()/1024L, _("KB"));
+        n = sprintf(str, "%ld%s", dos_avail_stram()/1024L, _("KB"));
         if (altram > 0)
-            n += sprintf(str+n, " + %ld %s", altram/1024L, _("KB"));
+            n += sprintf(str+n, " + %ld%s", altram/1024L, _("KB"));
     }
     inf_sset(tree, DCFREMEM, str);
 
-    /* allow user to select preferences */
-    inf_show(tree, ROOT);
-    button = inf_what(tree, DCOK, DC_CNCL);
+    /*
+     * function key setup
+     */
+    /* get anode ptrs for all anodes with function keys */
+    get_all_funkeys(pa);
 
-    if (button)
+    /* initialise scrolling variables */
+    textpos = maxpos = 0;
+
+    /* find lowest function key */
+    for (current_funkey = 0; current_funkey < NUM_FUNKEYS; current_funkey++)
+        if (pa[current_funkey])
+            break;
+    if (current_funkey < NUM_FUNKEYS)
+        init_conf_funkeys(tree, pa[current_funkey]);
+    else
+        current_funkey = 0;     /* ensure legal value for array index */
+
+    /* interact with user */
+    start_dialog(tree);
+    while(1)
     {
-        G.g_appdir = inf_which(tree, DCDEFAPP, 2);
-        G.g_fullpath = inf_which(tree, DCPMFULL, 2);
+        redraw = -1;            /* by default, no redraw */
+        exitobj = form_do(tree, ROOT) & 0x7fff;
+        switch(exitobj)
+        {
+        case DCFUNPRV:          /* previous function key assignment */
+            for (i = current_funkey-1; i >= 0; i--)     /* look for next lower */
+                if (pa[i])
+                    break;
+            if (i >= 0)             /* found one */
+            {
+                current_funkey = i;
+                init_conf_funkeys(tree, pa[current_funkey]);
+                redraw = DCFUNBOX;
+            }
+            break;
+        case DCFUNNXT:          /* next function key assignment */
+            for (i = current_funkey+1; i < NUM_FUNKEYS; i++)    /* look for next higher */
+                if (pa[i])
+                    break;
+            if (i < NUM_FUNKEYS)    /* found one */
+            {
+                current_funkey = i;
+                init_conf_funkeys(tree, pa[current_funkey]);
+                redraw = DCFUNBOX;
+            }
+            break;
+        case DCFUNLT:           /* handle scroll left */
+            if (scroll_conf_funkeys(tree, pa[current_funkey], -1))
+                redraw = DCFUNPTH;
+            break;
+        case DCFUNRT:           /* handle scroll right */
+            if (scroll_conf_funkeys(tree, pa[current_funkey], +1))
+                redraw = DCFUNPTH;
+            break;
+        case DCOK:
+            G.g_appdir = inf_which(tree, DCDEFAPP, 2);
+            G.g_fullpath = inf_which(tree, DCPMFULL, 2);
+            FALLTHROUGH;
+        case DC_CNCL:
+            done = TRUE;
+            break;
+        }
+        tree[exitobj].ob_state &= ~SELECTED;
+        if (done)
+            break;
+        if (redraw >= 0)
+            draw_fld(tree, redraw);
     }
+    end_dialog(tree);
 }
 #endif
 
