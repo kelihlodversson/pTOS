@@ -146,6 +146,9 @@ void detect_dmasound(void)
         /* Warning: The Falcon registers below GPx do not exist on STe/TT
          * but they don't cause a bus error. */
         has_falcon_dmasound = check_read_byte((long)&DMASOUND->gpx_data_port);
+
+        /* Stop all sound */
+        DMASOUND->control = 0;
     }
     KDEBUG(("has_falcon_dmasound = %d\n", has_falcon_dmasound));
 
@@ -286,7 +289,7 @@ static LONG sndcmd_falcon(WORD mode, WORD data)
        {
            data = data & 0xf0;
            val = (val & 0x0f) | data;
-           DMASOUND->channel_attenuation = val;
+           DMASOUND->channel_amplification = val;
        }
        return val & 0x0f0;
      case 3:                /* RTGAIN */
@@ -295,7 +298,7 @@ static LONG sndcmd_falcon(WORD mode, WORD data)
        {
            data = (data & 0xf0) >> 4;
            val = (val & 0xf0) | data;
-           DMASOUND->channel_attenuation = val;
+           DMASOUND->channel_amplification = val;
        }
        return (val & 0x0f) << 4;
      case 4:                /* ADDERIN */
@@ -559,6 +562,9 @@ LONG gpio(UWORD mode, UWORD data)
 {
     if (!SOUND_IS_AVAILABLE)
         return 0x8a;    /* unimplemented xbios call: return function # */
+
+    if (!has_falcon_dmasound)
+        return EBADRQ;
 
     switch (mode)
     {
