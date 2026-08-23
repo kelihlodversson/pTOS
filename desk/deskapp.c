@@ -112,6 +112,9 @@
     /* these apply when launching an application that is not an 'installed application' */
 #define INF_E5_APPDIR   0x40    /* 1 => set current dir to app's dir (else to top window dir) */
 #define INF_E5_ISFULL   0x20    /* 1 => pass full path in args (else filename only) */
+#if CONF_WITH_SIZE_TO_FIT
+#define INF_E5_NOSIZE   0x10    /* 1 => disable 'size to fit' for windows */
+#endif
 #if CONF_WITH_CACHE_CONTROL
 #define INF_E5_NOCACHE  0x08    /* 1 => disable cache */
 #endif
@@ -808,7 +811,7 @@ void app_start(void)
             if (wincnt < NUM_WNODES)
             {
                 pws = &G.g_cnxsave.cs_wnode[wincnt];
-                pcurr = scan_2(pcurr, &dummy);
+                pcurr = scan_2(pcurr, &pws->hsl_save);
                 pcurr = scan_2(pcurr, &pws->vsl_save);
 /* BugFix       */
                 pcurr = scan_2(pcurr, &pws->x_save);
@@ -861,6 +864,9 @@ void app_start(void)
 #if CONF_WITH_DESKTOP_CONFIG
             G.g_cnxsave.cs_appdir = ((envr & INF_E5_APPDIR) != 0);
             G.g_cnxsave.cs_fullpath = ((envr & INF_E5_ISFULL) != 0);
+#endif
+#if CONF_WITH_SIZE_TO_FIT
+            G.g_cnxsave.cs_sizefit = ((envr & INF_E5_NOSIZE) == 0);
 #endif
 #if CONF_WITH_CACHE_CONTROL
             G.g_cnxsave.cs_cache = ((envr & INF_E5_NOCACHE) == 0);
@@ -1058,6 +1064,9 @@ void app_save(WORD todisk)
     env5 |= G.g_cnxsave.cs_appdir ? INF_E5_APPDIR : 0;
     env5 |= G.g_cnxsave.cs_fullpath ? INF_E5_ISFULL : 0;
 #endif
+#if CONF_WITH_SIZE_TO_FIT
+    env5 |= (G.g_cnxsave.cs_sizefit) ? 0 : INF_E5_NOSIZE;
+#endif
 #if CONF_WITH_CACHE_CONTROL
     env5 |= (G.g_cnxsave.cs_cache) ? 0 : INF_E5_NOCACHE;
 #endif
@@ -1078,7 +1087,7 @@ void app_save(WORD todisk)
         pws = &G.g_cnxsave.cs_wnode[i];
         ptmp = pws->pth_save;
         pcurr += sprintf(pcurr,"#W %02X %02X %02X %02X %02X %02X %02X",
-                        0,pws->vsl_save,pws->x_save/gl_wchar,
+                        pws->hsl_save,pws->vsl_save,pws->x_save/gl_wchar,
                         pws->y_save/gl_hchar,pws->w_save/gl_wchar,
                         pws->h_save/gl_hchar,0);
         pcurr += sprintf(pcurr," %s@\r\n",(*ptmp!='@')?ptmp:"");

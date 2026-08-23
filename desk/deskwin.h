@@ -64,9 +64,11 @@ struct _windnode
         WORD            w_root;                 /* pseudo root ob. in   */
                                                 /*   gl_screen for this */
                                                 /*   windows objects    */
+        WORD            w_cvcol;                /* current virt. col (iff not size-to-fit) */
         WORD            w_cvrow;                /* current virt. row    */
         WORD            w_pncol;                /* physical # of cols   */
         WORD            w_pnrow;                /* physical # of rows   */
+        WORD            w_vncol;                /* virtual # of cols (iff not size-to-fit) */
         WORD            w_vnrow;                /* virtual # of rows    */
         PNODE           w_pnode;                /* now embedded         */
         BYTE            w_name[LEN_ZPATH+2];    /* allow for leading & trailing spaces */
@@ -95,7 +97,7 @@ void win_bldview(WNODE *pwin, WORD x, WORD y, WORD w, WORD h);
 #if CONF_WITH_SEARCH
 void win_dispfile(WNODE *pw, WORD n);
 #endif
-void win_slide(WORD wh, WORD sl_value);
+void win_slide(WORD wh, BOOL horizontal, WORD sl_value);
 void win_arrow(WORD wh, WORD arrow_type);
 void win_srtall(void);
 void win_bdall(void);
