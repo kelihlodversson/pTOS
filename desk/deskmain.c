@@ -79,6 +79,13 @@ typedef struct {
 
 
 /*
+ * the following will always be true unless unlikely changes occur
+ * in the desk menu
+ */
+#define ITEM_ROOT       (ABOUITEM-1)
+
+
+/*
  * flags for communication between do_viewmenu(), desk_all()
  */
 #define VIEW_HAS_CHANGED    0x0001
@@ -357,6 +364,8 @@ static const WORD  dura[]=
  */
 #define MAXLEN_SEPARATOR    40
 static char separator[MAXLEN_SEPARATOR+1];
+
+static char *desk_rs_strings;   /* see copy_menu_items() */
 
 static int can_change_resolution;
 static int blitter_is_present;
@@ -1783,6 +1792,79 @@ void install_shortcuts(void)
 
 
 /*
+ *  copy menu item strings to RAM
+ *
+ *  menu item text lives in the compiled-in (read-only, on ROM-resident
+ *  targets) resource by default; install_shortcuts() must be able to
+ *  write the shortcut suffix into it, so every item gets copied into a
+ *  freshly-allocated RAM buffer here, padded with spaces to the widest
+ *  item in its dropdown (this also does the width computation that
+ *  adjust_menu() below would otherwise redo per-dropdown, now over the
+ *  padded, RAM-resident copies)
+ */
+static WORD copy_menu_items(void)
+{
+    OBJECT *tree = desk_rs_trees[ADMENU];
+    WORD dropdowns, item_root, item;
+    WORD count, width, max_width, size = 0;
+    char *p, *q;
+
+    dropdowns = tree->ob_tail;
+
+    /* calculate the amount of memory required */
+    for (item_root = tree[ITEM_ROOT].ob_next; item_root != dropdowns;
+                                                    item_root = tree[item_root].ob_next)
+    {
+        count = 0;
+        max_width = 0;
+        for (item = tree[item_root].ob_head; item != item_root; item = tree[item].ob_next)
+        {
+            q = tree[item].ob_spec.free_string;
+            if (*q != '-')          /* not a separator */
+            {
+                count++;
+                width = strlen(q);
+                if (width > max_width)
+                    max_width = width;
+            }
+        }
+        max_width += 1 + SHORTCUT_SIZE;
+        tree[item_root].ob_width = max_width;   /* remember for this menu */
+        size += count * max_width;
+    }
+
+    /* allocate space for strings */
+    desk_rs_strings = dos_alloc_anyram(size);
+    if (!desk_rs_strings)
+        return -1;
+
+    /* copy strings to RAM, padding with spaces & adjusting object pointers */
+    p = desk_rs_strings;
+    for (item_root = tree[ITEM_ROOT].ob_next; item_root != dropdowns;
+                                                    item_root = tree[item_root].ob_next)
+    {
+        width = tree[item_root].ob_width;
+        for (item = tree[item_root].ob_head; item != item_root; item = tree[item].ob_next)
+        {
+            q = tree[item].ob_spec.free_string;
+            if (*q != '-')      /* not a separator */
+            {
+                strcpy(p, q);   /* copy string, pad with spaces */
+                for (q = p+strlen(p); q < p+width-1; )
+                    *q++ = ' ';
+                *q++ = '\0';
+                tree[item].ob_spec.free_string = p;
+                p = q;
+            }
+            tree[item].ob_width = width;    /* width-adjust all items */
+        }
+    }
+
+    return 0;
+}
+
+
+/*
  *  translate and fixup desktop objects
  */
 static void desk_xlate_fix(void)
@@ -1795,6 +1877,13 @@ static void desk_xlate_fix(void)
 
     /* translate strings in objects */
     xlate_obj_array(desk_rs_obj, RS_NOBS);
+
+    /* copy menu item strings to RAM so install_shortcuts() can mutate them */
+    if (copy_menu_items() < 0)
+    {
+        KDEBUG(("insufficient memory for menu item strings\n"));
+        nomem_alert();          /* infinite loop */
+    }
 
     /* insert the version number */
     objversion->ob_spec.free_string = CONST_CAST(char *, version);
