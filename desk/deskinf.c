@@ -1089,8 +1089,8 @@ void inf_conf(void)
     ANODE *pa[NUM_FUNKEYS];
     WORD exitobj, redraw, current_funkey, current_shortcut, i;
     /* worst case is two "-2147483648KB" values (LONG range; longest "KB"
-     * translation in po/*.po is 3 bytes) joined by " + ", 32 bytes with
-     * the terminating NUL -- sized well above that since there's no
+     * translation in the po files is 3 bytes) joined by " + ", 32 bytes
+     * with the terminating NUL -- sized well above that since there's no
      * snprintf() in this freestanding build to bound the sprintf()s below */
     BYTE str[64];
     WORD n;
