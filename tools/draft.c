@@ -330,7 +330,6 @@ char *exclude_items[] =
 #if !CONF_WITH_DESKTOP_CONFIG
     "CONFITEM",
     "ADDESKCF",
-    "STDUPCUT",
 #endif
 #if !CONF_WITH_DESKTOP_SHORTCUTS
     "STLOCATE",

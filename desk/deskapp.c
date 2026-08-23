@@ -882,17 +882,6 @@ void app_start(void)
             }
             break;
 #endif
-#if CONF_WITH_DESKTOP_CONFIG
-        case 'K':                       /* menu item shortcuts */
-            pcurr++;
-            for (i = 0; i < NUM_SHORTCUTS; i++)
-            {
-                WORD temp;
-                pcurr = scan_2(pcurr, &temp);
-                menu_shortcuts[i] = (UBYTE)temp;
-            }
-            break;
-#endif
         }
     }
 
@@ -1090,16 +1079,6 @@ void app_save(WORD todisk)
                     G.g_patcol[0].desktop,G.g_patcol[0].window,
                     G.g_patcol[1].desktop,G.g_patcol[1].window,
                     G.g_patcol[2].desktop,G.g_patcol[2].window);
-#endif
-
-#if CONF_WITH_DESKTOP_CONFIG
-    /* save menu item shortcuts */
-    *pcurr++ = '#';
-    *pcurr++ = 'K';
-    for (i = 0; i < NUM_SHORTCUTS; i++)
-        pcurr += sprintf(pcurr," %02X", menu_shortcuts[i]);
-    *pcurr++ = '\r';
-    *pcurr++ = '\n';
 #endif
 
     /* save windows */
