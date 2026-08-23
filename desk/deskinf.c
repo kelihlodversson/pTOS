@@ -28,6 +28,7 @@
 #include "gemdos.h"
 #include "optimopt.h"
 #include "optimize.h"
+#include "nls.h"
 
 #include "deskbind.h"
 #include "deskglob.h"
@@ -913,6 +914,12 @@ void inf_conf(void)
 {
     OBJECT *tree = G.a_trees[ADDESKCF];
     WORD button;
+    /* worst case is two "-2147483648 KB" values (LONG range; longest "KB"
+     * translation in po/*.po is 3 bytes) joined by " + ", 34 bytes with
+     * the terminating NUL -- sized well above that since there's no
+     * snprintf() in this freestanding build to bound the sprintf()s below */
+    BYTE str[64];
+    WORD n;
 
     /* first, deselect all objects */
     deselect_all(tree);
@@ -927,6 +934,15 @@ void inf_conf(void)
         tree[DCPMFULL].ob_state |= SELECTED;
     else
         tree[DCPMFILE].ob_state |= SELECTED;
+
+    /* set up available memory line */
+    {
+        LONG altram = dos_avail_altram();
+        n = sprintf(str, "%ld %s", dos_avail_stram()/1024L, _("KB"));
+        if (altram > 0)
+            n += sprintf(str+n, " + %ld %s", altram/1024L, _("KB"));
+    }
+    inf_sset(tree, DCFREMEM, str);
 
     /* allow user to select preferences */
     inf_show(tree, ROOT);
