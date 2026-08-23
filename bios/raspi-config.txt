@@ -18,5 +18,7 @@ fake_vsync_isr=1
 
 [pi4]
 fake_vsync_isr=0
+arm_64bit=0
+kernel=kernel7l.img
 
 [all]
