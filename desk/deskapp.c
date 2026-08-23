@@ -749,7 +749,7 @@ void app_start(void)
         {
             int print_x = xcnt - 1;
             rsrc_gaddr_rom(R_STRING, STPRINT, (void **)&text);
-            sprintf(gl_afile + x, "#O %02X %02X %02X FF   %s@ @\r\n",
+            x += sprintf(gl_afile + x, "#O %02X %02X %02X FF   %s@ @\r\n",
                     print_x, trash_y, IG_PRINT, text);
         }
 #endif
