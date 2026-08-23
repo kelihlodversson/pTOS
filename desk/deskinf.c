@@ -908,12 +908,111 @@ BOOL inf_backgrounds(void)
 
 #if CONF_WITH_DESKTOP_CONFIG
 /*
+ *  initialise desktop configuration dialog with shortcut info
+ */
+static void init_conf_shortcuts(OBJECT *tree, WORD shortcut_num)
+{
+    OBJECT *obj, *menu = G.a_trees[ADMENU];
+    BYTE key[2];
+    BYTE work[32];      /* comfortably covers DCMNUTXT's 30-char field */
+    WORD len;
+
+    /* insert current shortcut (if it exists) */
+    key[0] = menu_shortcuts[shortcut_num];
+    if (!key[0])
+        key[0] = ' ';
+    key[1] = '\0';
+    inf_sset(tree, DCMNUKEY, key);
+
+    /* insert menu item text, without shortcut & with enough spaces to fill text field */
+    obj = menu + shortcut_mapping[shortcut_num];
+    strcpy(work, obj->ob_spec.free_string+2);
+    len = strlen(work) - SHORTCUT_SIZE;
+    memset(work+len, ' ', sizeof(work)-len-1);
+    work[sizeof(work)-1] = '\0';
+    inf_sset(tree, DCMNUTXT, work);
+}
+
+
+/*
+ *  copy the shortcut key from the resource to the shortcuts array
+ *
+ *  we check for a duplicate; if found, we issue an alert, giving the
+ *  user the choice of making the change (and zeroing out the duplicate
+ *  occurrence), or cancelling
+ */
+static void save_shortcut(OBJECT *tree, WORD n)
+{
+    BYTE key[2];
+    WORD i;
+
+    inf_sget(tree, DCMNUKEY, key);
+
+    if ((key[0] >= 'A') && (key[0] <= 'Z'))
+    {
+        for (i = 0; i < NUM_SHORTCUTS; i++)
+        {
+            if (i == n)     /* ignore ourselves */
+                continue;
+            if (menu_shortcuts[i] == key[0])    /* duplicate shortcut */
+            {
+                if (fun_alert(2, STDUPCUT) != 1)    /* user cancelled */
+                    return;
+                menu_shortcuts[i] = 0x00;
+                break;
+            }
+        }
+    }
+    else
+    {
+        key[0] = 0x00;
+    }
+
+    menu_shortcuts[n] = key[0];
+}
+
+
+/*
+ *  recover menu shortcuts
+ *
+ *  this rebuilds the shortcut array from the current contents of the
+ *  menu items
+ */
+static void recover_shortcuts(void)
+{
+    OBJECT *obj, *tree = G.a_trees[ADMENU];
+    BYTE *p, c;
+    WORD i, n;
+
+    for (i = 0; i < NUM_SHORTCUTS; i++)
+    {
+        n = shortcut_mapping[i];
+        /*
+         * check if menu item exists for this shortcut position; if not,
+         * we must clear any associated shortcut to ensure that the
+         * shortcut array matches the displayed menu items
+         */
+        c = 0x00;       /* default value to enter */
+        if (n)          /* there is an associated menu item */
+        {
+            obj = tree + n;
+            p = obj->ob_spec.free_string + (obj->ob_width+CHAR_WIDTH-1)/CHAR_WIDTH - SHORTCUT_SIZE;
+            if (*p == '^')      /* there is a shortcut */
+                c = *(p+1);     /* so get it */
+        }
+        menu_shortcuts[i] = c;  /* update array */
+    }
+}
+
+
+/*
  *      Handle desktop configuration dialog
  */
 void inf_conf(void)
 {
     OBJECT *tree = G.a_trees[ADDESKCF];
-    WORD button;
+    WORD exitobj, redraw, current_shortcut, i;
+    BOOL done = FALSE;
     /* worst case is two "-2147483648 KB" values (LONG range; longest "KB"
      * translation in po/*.po is 3 bytes) joined by " + ", 34 bytes with
      * the terminating NUL -- sized well above that since there's no
@@ -944,15 +1043,77 @@ void inf_conf(void)
     }
     inf_sset(tree, DCFREMEM, str);
 
-    /* allow user to select preferences */
-    inf_show(tree, ROOT);
-    button = inf_what(tree, DCOK, DC_CNCL);
+    /*
+     * menu shortcut setup
+     */
+    /* find lowest available menu item */
+    for (current_shortcut = 0; current_shortcut < NUM_SHORTCUTS; current_shortcut++)
+        if (shortcut_mapping[current_shortcut])
+            break;
+    if (current_shortcut < NUM_SHORTCUTS)
+        init_conf_shortcuts(tree, current_shortcut);
+    else
+        current_shortcut = 0;   /* "can't happen" */
 
-    if (button)
+    /* interact with user */
+    start_dialog(tree);
+    while(1)
     {
-        G.g_appdir = inf_which(tree, DCDEFAPP, 2);
-        G.g_fullpath = inf_which(tree, DCPMFULL, 2);
+        redraw = -1;            /* by default, no redraw */
+        exitobj = form_do(tree, ROOT) & 0x7fff;
+        switch(exitobj)
+        {
+        case DCMNUPRV:          /* previous menu item assignment */
+            save_shortcut(tree, current_shortcut);
+            for (i = current_shortcut-1; i >= 0; i--)   /* look for next lower */
+                if (shortcut_mapping[i])
+                    break;
+            if (i >= 0)             /* found one */
+            {
+                current_shortcut = i;
+                init_conf_shortcuts(tree, current_shortcut);
+                redraw = DCMNUBOX;
+            }
+            break;
+        case DCMNUNXT:          /* next menu item assignment */
+            save_shortcut(tree, current_shortcut);
+            for (i = current_shortcut+1; i < NUM_SHORTCUTS; i++)    /* look for next higher */
+                if (shortcut_mapping[i])
+                    break;
+            if (i < NUM_SHORTCUTS)  /* found one */
+            {
+                current_shortcut = i;
+                init_conf_shortcuts(tree, current_shortcut);
+                redraw = DCMNUBOX;
+            }
+            break;
+        case DCMNUCLR:          /* clear out all shortcuts */
+            memset(menu_shortcuts, 0x00, NUM_SHORTCUTS);
+            inf_sset(tree, DCMNUKEY, "");
+            redraw = DCMNUBOX;
+            break;
+        case DCOK:
+            save_shortcut(tree, current_shortcut);
+            G.g_appdir = inf_which(tree, DCDEFAPP, 2);
+            G.g_fullpath = inf_which(tree, DCPMFULL, 2);
+            FALLTHROUGH;
+        case DC_CNCL:
+            done = TRUE;
+            break;
+        }
+        tree[exitobj].ob_state &= ~SELECTED;
+        if (done)
+            break;
+        if (redraw >= 0)
+            draw_fld(tree, redraw);
     }
+
+    if (exitobj == DCOK)
+        install_shortcuts();   /* copy array to resource */
+    else
+        recover_shortcuts();   /* copy resource to array */
+
+    end_dialog(tree);
 }
 #endif
 
