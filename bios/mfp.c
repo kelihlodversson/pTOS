@@ -21,6 +21,7 @@
 #include "vectors.h"
 #include "coldfire.h"
 #include "raspi_int.h"
+#include "raspi_vsync.h"
 
 #if CONF_WITH_MFP || CONF_WITH_TT_MFP
 
@@ -200,6 +201,9 @@ void init_system_timer(void)
     coldfire_init_system_timer();
 #elif CONF_RASPI_TIMER_C
     raspi_init_system_timer();
+#if CONF_WITH_RASPI_VSYNC_IRQ
+    raspi_vsync_init();
+#endif
 #elif CONF_WITH_MFP
     /* Timer C: ctrl = divide 64, data = 192 */
     xbtimer(2, 0x50, 192, (LONG)int_timerc);
