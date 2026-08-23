@@ -28,6 +28,7 @@
 #include "gemdos.h"
 #include "optimopt.h"
 #include "optimize.h"
+#include "nls.h"
 
 #include "deskbind.h"
 #include "deskglob.h"
@@ -913,6 +914,8 @@ void inf_conf(void)
 {
     OBJECT *tree = G.a_trees[ADDESKCF];
     WORD button;
+    BYTE str[40];
+    WORD n;
 
     /* first, deselect all objects */
     deselect_all(tree);
@@ -927,6 +930,19 @@ void inf_conf(void)
         tree[DCPMFULL].ob_state |= SELECTED;
     else
         tree[DCPMFILE].ob_state |= SELECTED;
+
+    /* set up available memory line */
+    n = sprintf(str, "%ld %s", dos_avail_stram()/1024L, _("KB"));
+#if CONF_WITH_ALT_RAM
+    {
+        LONG altram = dos_avail_altram();
+        if (altram > 0)
+            n += sprintf(str+n, " + %ld %s", altram/1024L, _("KB"));
+    }
+#else
+    MAYBE_UNUSED(n);
+#endif
+    inf_sset(tree, DCFREMEM, str);
 
     /* allow user to select preferences */
     inf_show(tree, ROOT);
