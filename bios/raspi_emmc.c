@@ -531,10 +531,26 @@ void raspi_act_led_off(void)
     // TODO
 }
 
+#ifdef TARGET_RPI4
+#define RPI4_SD_ROUTE_REG \
+    (*(volatile ULONG *)(ARM_IO_BASE + 0x2000d0UL))
+
+static void raspi4_route_sd_to_legacy_emmc(void)
+{
+    ULONG value;
+
+    value = RPI4_SD_ROUTE_REG;
+    value |= (1UL << 1);
+    RPI4_SD_ROUTE_REG = value;
+}
+#endif
 
 void raspi_emmc_init(void)
 {
     peripheral_begin();
+#ifdef TARGET_RPI4
+    raspi4_route_sd_to_legacy_emmc();
+#endif
 
     if (card_init() != 0)
     {

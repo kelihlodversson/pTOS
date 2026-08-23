@@ -193,9 +193,22 @@ static volatile UBYTE *raspi_pci_config_ptr(UBYTE bus, UBYTE dev, UBYTE func, UW
 {
     ULONG index;
 
+    /*
+     * BCM2711 topology:
+     *
+     * bus 0: root complex, device 0 only
+     * bus 1: immediate downstream device, device 0 only
+     *
+     * Accessing other device numbers on either bus is invalid and may
+     * provoke bad controller behaviour rather than returning 0xffff.
+     */
+    if ((bus < 2U) && (dev != 0U))
+        return 0;
+
     if (bus == 0U) {
-        if ((dev != 0U) || (func != 0U))
+        if (func != 0U)
             return 0;
+
         return raspi_pci_reg_ptr(PCI_ECAM_REG(reg));
     }
 

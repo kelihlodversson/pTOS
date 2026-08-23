@@ -66,6 +66,8 @@ _processor_init:
  .globl  _instruction_cache_kludge
 _instruction_cache_kludge:
         bx lr
+
+#ifdef TARGET_RPI1
 /*
  * void invalidate_instruction_cache(void *start, long length)
  * First, the data cache is flushed to push changes into the RAM.
@@ -81,6 +83,7 @@ _invalidate_instruction_cache:
         mov ip, #0
         mcr p15, 0, ip, c7, c5,  0
         bx lr
+#endif
 
 .globl _flush_prefetch_buffer
 _flush_prefetch_buffer:
