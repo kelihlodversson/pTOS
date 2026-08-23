@@ -64,11 +64,13 @@ struct _windnode
         WORD            w_root;                 /* pseudo root ob. in   */
                                                 /*   gl_screen for this */
                                                 /*   windows objects    */
-        WORD            w_cvcol;                /* current virt. col (iff not size-to-fit) */
+        WORD            w_cvcol;                /* current virt. col; always 0 when */
+                                                /*   size-to-fit (no horiz. scroll) */
         WORD            w_cvrow;                /* current virt. row    */
         WORD            w_pncol;                /* physical # of cols   */
         WORD            w_pnrow;                /* physical # of rows   */
-        WORD            w_vncol;                /* virtual # of cols (iff not size-to-fit) */
+        WORD            w_vncol;                /* virtual # of cols; always == w_pncol */
+                                                /*   when size-to-fit (no horiz. scroll) */
         WORD            w_vnrow;                /* virtual # of rows    */
         PNODE           w_pnode;                /* now embedded         */
         BYTE            w_name[LEN_ZPATH+2];    /* allow for leading & trailing spaces */

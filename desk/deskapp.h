@@ -106,7 +106,7 @@ typedef struct
     WORD y_save;
     WORD w_save;
     WORD h_save;
-    WORD hsl_save;               /* horizontal slider position */
+    WORD hsl_save;               /* horizontal scroll position (w_cvcol) */
     WORD vsl_save;              /* vertical slider position */
     BYTE pth_save[LEN_ZPATH];
 } WSAVE;
