@@ -752,7 +752,8 @@ void win_arrow(WORD wh, WORD arrow_type)
         break;
 #endif
     default:
-        return;     /* ignore WA_LFPAGE, WA_RTPAGE, WA_LFLINE, WA_RTLINE */
+        return;     /* ignore anything else (e.g. WA_LFPAGE et al with */
+                    /* CONF_WITH_SIZE_TO_FIT off, or an unknown type)  */
     }
     win_blt(pw, horizontal, newcv);
 }
