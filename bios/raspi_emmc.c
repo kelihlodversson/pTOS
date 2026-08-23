@@ -548,10 +548,9 @@ static void raspi4_route_sd_to_legacy_emmc(void)
 void raspi_emmc_init(void)
 {
     peripheral_begin();
-    #ifdef TARGET_RPI4
+#ifdef TARGET_RPI4
     raspi4_route_sd_to_legacy_emmc();
-    #endif
-
+#endif
 
     if (card_init() != 0)
     {
