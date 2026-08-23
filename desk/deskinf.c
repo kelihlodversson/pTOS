@@ -932,16 +932,12 @@ void inf_conf(void)
         tree[DCPMFILE].ob_state |= SELECTED;
 
     /* set up available memory line */
-    n = sprintf(str, "%ld %s", dos_avail_stram()/1024L, _("KB"));
-#if CONF_WITH_ALT_RAM
     {
         LONG altram = dos_avail_altram();
+        n = sprintf(str, "%ld %s", dos_avail_stram()/1024L, _("KB"));
         if (altram > 0)
             n += sprintf(str+n, " + %ld %s", altram/1024L, _("KB"));
     }
-#else
-    MAYBE_UNUSED(n);
-#endif
     inf_sset(tree, DCFREMEM, str);
 
     /* allow user to select preferences */
