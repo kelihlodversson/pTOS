@@ -309,9 +309,14 @@ char *exclude_items[] =
     "STPRINT",
     "STPRINFO",
 #endif
+                                /* configurable items under 'View' */
+#if !CONF_WITH_SIZE_TO_FIT
+    "FITITEM",
+    "SEP_VW1",
+#endif
 #if !CONF_WITH_BACKGROUNDS
     "BACKGRND",
-    "SEP_VW1",
+    "SEP_VW2",
     "ADBKGND",
 #endif
 #if !CONF_WITH_BLITTER

@@ -76,6 +76,16 @@ config CONF_WITH_BOTTOMTOTOP
 	help
 	  Top the bottom window, as on Atari TOS 2/3/4.
 
+config CONF_WITH_SIZE_TO_FIT
+	bool "'Size to fit' desktop menu item"
+	default n if TARGET_192 || TARGET_256
+	default y
+	help
+	  Control whether a window's width determines the number of columns
+	  of files displayed (the only behaviour without this option), or
+	  whether a window is a scrollable view onto the full width of the
+	  desktop, as on Atari TOS 2/3/4.
+
 config CONF_WITH_PRINTER_ICON
 	bool "Printer icon"
 	default n if TARGET_192

@@ -106,6 +106,7 @@ typedef struct
     WORD y_save;
     WORD w_save;
     WORD h_save;
+    WORD hsl_save;               /* horizontal scroll position (w_cvcol) */
     WORD vsl_save;              /* vertical slider position */
     BYTE pth_save[LEN_ZPATH];
 } WSAVE;
@@ -121,6 +122,9 @@ typedef struct
 {
     BYTE cs_sort;               /* Sort mode */
     BYTE cs_view;               /* Show files as icons or text */
+#if CONF_WITH_SIZE_TO_FIT
+    BYTE cs_sizefit;            /* Size windows to fit (boolean) */
+#endif
     BYTE cs_confcpy;            /* Confirm copies */
     BYTE cs_confdel;            /* Confirm deletes */
     BYTE cs_confovwr;           /* Confirm overwrite */
