@@ -325,8 +325,18 @@ static void win_ocalc(WNODE *pwin, WORD wfit, WORD hfit, FNODE **ppstart)
         pwin->w_vncol = min(cnt, G.g_icols);
         pwin->w_vnrow = (cnt + G.g_icols - 1) / G.g_icols;
     }
-    if (pwin->w_vncol < 1)
-        pwin->w_vncol = 1;
+    /*
+     * w_vncol must never be less than wfit (the window's physical column
+     * count, set into w_pncol below): unlike rows, where w_pnrow is
+     * derived from w_vnrow via min(), w_pncol is set independently of
+     * w_vncol, so a window wider than its (possibly small) file count
+     * needs -- e.g. very few files with size-to-fit off -- would
+     * otherwise make w_vncol - w_pncol negative, driving w_cvcol
+     * negative in win_delta()/win_blt() and the start-file index
+     * negative in win_ocalc() below.
+     */
+    if (pwin->w_vncol < wfit)
+        pwin->w_vncol = wfit;
 #else
     pwin->w_vnrow = (cnt + wfit - 1) / wfit;
 #endif
