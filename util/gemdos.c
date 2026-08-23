@@ -308,7 +308,7 @@ LONG dos_avail_altram(void)
 #if CONF_WITH_ALT_RAM
     return gemdos(X_MXALLOC,-1L,MX_TTRAM);
 #else
-    return 0;
+    return 0L;
 #endif
 }
 
