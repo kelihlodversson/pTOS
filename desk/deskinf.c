@@ -914,7 +914,11 @@ void inf_conf(void)
 {
     OBJECT *tree = G.a_trees[ADDESKCF];
     WORD button;
-    BYTE str[40];
+    /* worst case is two "-2147483648 KB" values (LONG range; longest "KB"
+     * translation in po/*.po is 3 bytes) joined by " + ", 34 bytes with
+     * the terminating NUL -- sized well above that since there's no
+     * snprintf() in this freestanding build to bound the sprintf()s below */
+    BYTE str[64];
     WORD n;
 
     /* first, deselect all objects */
