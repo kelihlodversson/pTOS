@@ -11,6 +11,7 @@
 
 #include "emutos.h"
 #include "asm.h"
+#include "endian.h"
 #include "intmath.h"
 #include "string.h"
 #include "aesext.h"
@@ -465,7 +466,7 @@ static void trnsfont(void)
 
     cnt = (linea_vars.FWIDTH * linea_vars.DELY) / sizeof(*addr);
     for (i = 0, addr = (UWORD *)linea_vars.FBASE; i < cnt; i++, addr++)
-        swpw(*addr);
+        *addr = bswap16(*addr);
 }
 #endif
 

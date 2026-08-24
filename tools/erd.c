@@ -2282,6 +2282,7 @@ PRIVATE int write_c_epilogue(FILE *fp)
     fprintf(fp,"void gem_rsc_fixit(void)\n");
     fprintf(fp,"{\n");
     fprintf(fp,"    int i;\n");
+    fprintf(fp,"    OBJECT *tree, *p;\n\n");
     fprintf(fp,"    for(i = 0; i < RS_NOBS; i++)\n");
     fprintf(fp,"        rs_obfix(%srs_obj, i);\n\n",prefix);
     fprintf(fp,"    /*\n");

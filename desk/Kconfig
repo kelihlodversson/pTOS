@@ -50,6 +50,15 @@ config CONF_WITH_READ_INF
 	  desktop's configuration via a "Read .INF file" menu item, without
 	  restarting the desktop.
 
+config CONF_WITH_VIEWER_SUPPORT
+	bool "Default document viewer"
+	default n if TARGET_192
+	default y
+	help
+	  Allow an application to be marked as the default viewer (as on
+	  Atari TOS 4), used to display document files that have no
+	  installed application of their own.
+
 config CONF_WITH_FORMAT
 	bool "Floppy formatting"
 	depends on CONF_ATARI_HARDWARE

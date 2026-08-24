@@ -90,6 +90,33 @@ config CONF_WITH_VDI_EXTENSIONS
 	default n if TARGET_192 || TARGET_CART
 	default y
 
+config CONF_WITH_GDOS
+	bool "GDOS-aware text output"
+	default y
+	help
+	  Generate code within vst_load_fonts() and vst_unload_fonts() to
+	  recognise when GDOS is present and behave accordingly.
+
+config CONF_WITH_VDI_16BIT
+	bool "16-bit truecolor VDI support"
+	depends on CONF_WITH_VIDEL
+	default y
+	help
+	  VDI support for the Falcon's Videl 16-bit (32768/65536 colour)
+	  screen modes.
+
+config CONF_WITH_VDI_TEXT_SPEEDUP
+	bool "VDI text output speedup"
+	default y
+	help
+	  Improve some VDI text output cases for legibility/performance.
+
+config CONF_WITH_VDI_VERTLINE
+	bool "VDI vertical line drawing speedup"
+	default y
+	help
+	  Improve VDI vertical line drawing performance.
+
 config CONF_RASPI_MOUSE_CURSOR
 	bool "Use the Raspberry Pi hardware mouse cursor"
 	depends on MACHINE_RPI

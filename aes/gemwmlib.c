@@ -622,9 +622,9 @@ void w_bldactive(WORD w_handle)
         w_setcolor(pw, W_SIZER, istop);
         w_adjust(W_DATA, W_SIZER, corner_x, corner_y, gl_wbox, gl_hbox);
         /* we only display the sizer indicator if we're really a SIZER */
-        W_ACTIVE[W_SIZER].ob_spec &= 0x00ffffffL;   /* remove gadget char */
+        W_ACTIVE[W_SIZER].ob_spec.index &= 0x00ffffffL;   /* remove gadget char */
         if (kind & SIZER)
-            W_ACTIVE[W_SIZER].ob_spec |= 0x06000000L;
+            W_ACTIVE[W_SIZER].ob_spec.index |= 0x06000000L;
     }
 }
 #else

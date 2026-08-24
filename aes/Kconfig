@@ -55,6 +55,21 @@ config CONF_WITH_WINDOW_COLOURS
 	default n if TARGET_192
 	default y
 
+config CONF_WITH_GRAF_MOUSE_EXTENSION
+	bool "AES graf_mouse() extensions"
+	default n if TARGET_192
+	default y
+	help
+	  Extended graf_mouse() cursor forms, as introduced on Atari TOS 4.
+
+config CONF_WITH_3D_OBJECTS
+	bool "3D object rendering"
+	default n if TARGET_192
+	default y
+	help
+	  Render 3D-style indicators, activators and backgrounds for AES
+	  objects, as on Atari TOS 4 / Falcon.
+
 config CONF_WITH_LOADABLE_CURSORS
 	bool "Loadable mouse cursors"
 	default y

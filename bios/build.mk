@@ -31,6 +31,10 @@ obj-y += endrom.o
 # backend is runtime-selectable -- see vdi/build.mk.
 obj-$(CONF_WITH_VDI_BACKEND_DISPATCH) += screen_mode.o
 
+obj-$(CONF_WITH_SCSI_DRIVER) += scsidriv.o
+obj-$(CONF_WITH_DSP) += dsp.o dsp2.o
+obj-$(CONF_WITH_VAMPIRE_SPI) += spi_vamp.o
+
 obj-$(ARCH_M68K) += aciavecs.o kprintasm.o linea.o natfeat.o natfeats.o \
 	 pmmu030.o 68040_pmmu.o amiga.o amiga2.o aros.o aros2.o delayasm.o \
 	 nova.o
