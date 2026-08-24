@@ -144,6 +144,10 @@ struct aespd                /* process descriptor */
             WORD wh;            /* window handle of applicable window */
         }       p_msg;
 
+#if CONF_WITH_GRAF_MOUSE_EXTENSION
+        MFORM   p_mouse;        /* used by graf_mouse(SAVE,RESTORE) */
+#endif
+
         BYTE    *p_qaddr;       /* */
         WORD    p_qindex;       /* */
         BYTE    p_queue[QUEUE_SIZE];   /* */

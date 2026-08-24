@@ -420,6 +420,10 @@ WORD gr_slidebox(OBJECT *tree, WORD parent, WORD obj, WORD isvert)
  */
 void gr_mouse(WORD mode, MFORM *maddr)
 {
+#if CONF_WITH_GRAF_MOUSE_EXTENSION
+    MFORM temp;
+#endif
+
     switch(mode)
     {
     default:
@@ -438,6 +442,21 @@ void gr_mouse(WORD mode, MFORM *maddr)
     case M_ON:
         gsx_mon();
         break;
+#if CONF_WITH_GRAF_MOUSE_EXTENSION
+    case M_SAVE:
+        rlr->p_mouse = gl_mouse;
+        break;
+    case M_RESTORE:
+        maddr = &rlr->p_mouse;
+        gsx_mfset(maddr);
+        break;
+    case M_PREVIOUS:
+        /* we must use a temp because gsx_mfset() updates gl_prevmouse */
+        temp = gl_prevmouse;
+        maddr = &temp;
+        gsx_mfset(maddr);
+        break;
+#endif
     }
 }
 
