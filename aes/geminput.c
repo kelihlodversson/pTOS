@@ -34,6 +34,7 @@
 #include "gemdisp.h"
 #include "gemgsxif.h"
 #include "rectfunc.h"
+#include "asm.h"
 
 
 #if CONF_WITH_EXTENDED_MOUSE
