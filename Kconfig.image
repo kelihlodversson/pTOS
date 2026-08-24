@@ -14,7 +14,7 @@ choice
 	default TARGET_RPI_KERNEL if MACHINE_RPI
 	default TARGET_AMIGA_ROM if MACHINE_AMIGA
 	default TARGET_SREC if ARCH_COLDFIRE
-	default TARGET_512 if MACHINE_ARANYM
+	default TARGET_1024 if MACHINE_ARANYM
 	default TARGET_VIRT_M68K_KERNEL if MACHINE_VIRT_M68K
 	default TARGET_256
 	help
@@ -40,8 +40,21 @@ config TARGET_512
 	bool "Atari ROM image, 512 KB"
 	depends on CONF_ATARI_HARDWARE && !ARCH_COLDFIRE
 	help
-	  A 512 KB ROM image, mapped at 0x00e00000.  This is the full
-	  featured image, suitable for the TT, the Falcon and ARAnyM.
+	  A 512 KB ROM image, mapped at 0x00e00000, for the TT and the
+	  Falcon.  Matches upstream EmuTOS's own 512 KB target: single
+	  country/language (see BUILD_UNIQUE_COUNTRY), since the full
+	  multi-language catalog no longer fits alongside the current
+	  feature set.  See TARGET_1024 for a full-featured, multi-language
+	  image.
+
+config TARGET_1024
+	bool "Atari ROM image, 1024 KB"
+	depends on CONF_ATARI_HARDWARE && !ARCH_COLDFIRE
+	help
+	  A 1024 KB ROM image, mapped at 0x00e00000.  This is the full
+	  featured, multi-language image -- matches upstream EmuTOS's own
+	  1024 KB target, intended for Hatari, ARAnyM and other emulators
+	  rather than real ROM hardware.
 
 config TARGET_CART
 	bool "Atari diagnostic cartridge image, 128 KB"

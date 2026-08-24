@@ -312,7 +312,7 @@ GEN_SRC =
 # IMAGE_NAME option overrides it.
 #
 
-ROM_IMAGE := $(if $(TARGET_192)$(TARGET_256)$(TARGET_512)$(TARGET_CART),y)
+ROM_IMAGE := $(if $(TARGET_192)$(TARGET_256)$(TARGET_512)$(TARGET_1024)$(TARGET_CART),y)
 
 ifdef TARGET_192
 ROMSIZE = 192
@@ -327,6 +327,13 @@ endif
 ifdef TARGET_512
 ROMSIZE = 512
 image-default = ptos512k.img
+# The symbol file is useful when debugging this image under Hatari.
+image-extra = $(basename $(IMAGE)).sym
+MEMBOT_REFERENCE = TOS404
+endif
+ifdef TARGET_1024
+ROMSIZE = 1024
+image-default = ptos1024k.img
 # The symbol file is useful when debugging this image under Hatari.
 image-extra = $(basename $(IMAGE)).sym
 MEMBOT_REFERENCE = TOS404

@@ -702,6 +702,7 @@ config CONF_WITH_SFP004
 config CONF_WITH_DSP
 	bool "Falcon DSP support"
 	depends on CONF_WITH_VIDEL
+	default n if MACHINE_FIREBEE
 	default y
 	help
 	  Support for the Falcon's Motorola 56001 DSP, detected and used by
