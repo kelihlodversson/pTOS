@@ -442,18 +442,6 @@ static void display_free_stack(void)
 #endif
 
 
-#if CONF_WITH_CACHE_CONTROL
-/*
- * Routine to set cache on/off: must be Supexec'd because the set_cache()
- * function must run in supervisor state
- */
-static void desktop_set_cache(void)
-{
-    set_cache(G.g_cache);
-}
-#endif
-
-
 /*
  *  Routine to update all of the desktop windows
  */
