@@ -53,6 +53,13 @@
 /*
  * function prototypes
  */
+static WORD incr_tail(IOREC *iorec);
+#if (!CONF_WITH_COLDFIRE_RS232 && CONF_WITH_MFP_RS232 && !RS232_DEBUG_PRINT) || CONF_WITH_TT_MFP || CONF_WITH_SCC
+static void put_iorecbuf(IOREC *out, WORD b);
+#endif
+static LONG bconstat_iorec(EXT_IOREC *iorec);
+static LONG bconin_iorec(EXT_IOREC *iorec);
+
 #if BCONMAP_AVAILABLE
 static ULONG rsconf_dummy(WORD baud, WORD ctrl, WORD ucr, WORD rsr, WORD tsr, WORD scr);
 static void init_bconmap(void);
