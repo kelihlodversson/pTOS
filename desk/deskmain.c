@@ -766,6 +766,12 @@ static WORD do_filemenu(WORD item)
         break;
 #endif
 
+#if CONF_WITH_EJECT
+    case EJCTITEM:
+        flop_eject();
+        break;
+#endif
+
 #if CONF_WITH_CLI != 0
     case CLIITEM:                         /* Start EmuCON */
         G.g_work[1] = '\0';
