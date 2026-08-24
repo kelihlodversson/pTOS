@@ -18,6 +18,7 @@
 #include "endian.h"
 #include "virtio.h"
 #include "virtio_input.h"
+#include "bios.h"
 #include "ikbd.h"
 #include "tosvars.h"
 #include "virtio_input_keytbl.h"
