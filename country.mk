@@ -42,7 +42,7 @@ i18n_gr_idt  = IDT_24H | IDT_DDMMYY | '/'
 
 i18n_es_lang = es
 i18n_es_keyb = US
-i18n_es_cset = L9
+i18n_es_cset = ST
 i18n_es_idt  = IDT_24H | IDT_DDMMYY | '/'
 
 i18n_fi_lang = fi
