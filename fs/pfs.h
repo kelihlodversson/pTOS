@@ -15,7 +15,7 @@
 #define PFS_H
 
 #include "portab.h"
-#include "pd.h"         /* for PD, used by pfs_proc_exit() below */
+#include "bdosdefs.h"   /* for PD, used by pfs_proc_exit() below */
 
 struct pfs_ops;
 

@@ -1,6 +1,8 @@
 /*
+*       gemsuper.c - AES function call handler
+*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2024 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -15,15 +17,14 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
-#include "kprint.h"
+#include "emutos.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesdefs.h"
+#include "aesext.h"
+#include "aesvars.h"
 #include "obdefs.h"
 #include "intmath.h"
 #include "gemlib.h"
-#include "crysbind.h"
 #include "gem_rsc.h"
 
 #include "gemsuper.h"
@@ -31,13 +32,13 @@
 #include "gemaplib.h"
 #include "geminit.h"
 #include "gemevlib.h"
+#include "gemmnext.h"
 #include "gemmnlib.h"
 #include "gemoblib.h"
 #include "gemobed.h"
 #include "gemfmlib.h"
 #include "gemfslib.h"
 #include "gemgrlib.h"
-#include "gemgraf.h"
 #include "gemgsxif.h"
 #include "gemsclib.h"
 #include "gemwmlib.h"
@@ -46,17 +47,11 @@
 #include "gemfmalt.h"
 #include "gemasm.h"
 #include "gemctrl.h"
-#include "gemdosif.h"
 
 #include "string.h"
 
-#if CONF_SERIAL_CONSOLE
-#define ENABLE_KDEBUG
-#endif
 
-extern WORD super(WORD cx, AESPB *pcrys_blk);   /* called only from gemdosif.S */
-
-GLOBAL WORD     gl_mnclick;
+LONG super(WORD cx, AESPB *pcrys_blk);  /* called only from gemdosif.S */
 
 static void     *ad_rso;
 
@@ -105,11 +100,11 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
         break;
     case APPL_READ:
     case APPL_WRITE:
-        ap_rdwr(opcode == APPL_READ ? MU_MESAG : MU_SDMSG,
+        ret = ap_rdwr(opcode == APPL_READ ? MU_MESAG : MU_SDMSG,
                 fpdnm(NULL, AP_RWID), AP_LENGTH, (WORD *)AP_PBUFF);
         break;
     case APPL_FIND:
-        ret = ap_find((BYTE *)AP_PNAME);
+        ret = ap_find((char *)AP_PNAME);
         break;
     case APPL_TPLAY:
         ap_tplay((EVNTREC *)AP_TBUFFER, AP_TLENGTH, AP_TSCALE);
@@ -135,7 +130,7 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
         ret = ev_button(B_CLICKS, B_MASK, B_STATE, &EV_MX);
         break;
     case EVNT_MOUSE:
-        ret = ev_mouse((MOBLK *)&MO_FLAGS, &EV_MX);
+        ev_mouse((MOBLK *)&MO_FLAGS, &EV_MX);
         break;
     case EVNT_MESAG:
         aestrace("evnt_mesag()");
@@ -154,8 +149,14 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
         if (MU_FLAGS & MU_TIMER)
             count = MAKE_ULONG(MT_HICOUNT, MT_LOCOUNT);
         buparm = combine_cms(MB_CLICKS,MB_MASK,MB_STATE);
+#if CONF_WITH_MENU_EXTENSION
+        ret = ev_multi((MU_FLAGS & MU_TOSVALID),
+                        (MOBLK *)&MMO1_FLAGS, (MOBLK *)&MMO2_FLAGS, NULL,
+                        count, buparm, (WORD *)MME_PBUFF, &EV_MX);
+#else
         ret = ev_multi(MU_FLAGS, (MOBLK *)&MMO1_FLAGS, (MOBLK *)&MMO2_FLAGS,
                         count, buparm, (WORD *)MME_PBUFF, &EV_MX);
+#endif
         if ((ret & MU_MESAG) && (*(WORD *)MME_PBUFF == AC_CLOSE))
             rlr->p_flags |= AP_ACCLOSE;
         break;
@@ -168,44 +169,36 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
         mn_bar((OBJECT *)MM_ITREE, SHOW_IT);
         break;
     case MENU_ICHECK:
-        do_chg((OBJECT *)MM_ITREE, ITEM_NUM, CHECKED, CHECK_IT, FALSE, FALSE);
+        ret = do_chg((OBJECT *)MM_ITREE, ITEM_NUM, CHECKED, CHECK_IT, FALSE, FALSE);
         break;
     case MENU_IENABLE:
-        do_chg((OBJECT *)MM_ITREE, (ITEM_NUM & 0x7fff), DISABLED,
+        ret = do_chg((OBJECT *)MM_ITREE, (ITEM_NUM & 0x7fff), DISABLED,
                 !ENABLE_IT, ((ITEM_NUM & 0x8000) != 0x0), FALSE);
         break;
     case MENU_TNORMAL:
-        do_chg((OBJECT *)MM_ITREE, TITLE_NUM, SELECTED, !NORMAL_IT, TRUE, TRUE);
+        ret = do_chg((OBJECT *)MM_ITREE, TITLE_NUM, SELECTED, !NORMAL_IT, TRUE, TRUE);
         break;
     case MENU_TEXT:
         tree = (OBJECT *)MM_ITREE;
         strcpy(tree[ITEM_NUM].ob_spec.free_string,(char *)MM_PTEXT);
         break;
     case MENU_REGISTER:
-        ret = mn_register(MM_PID, (BYTE *)MM_PSTR);
+        ret = mn_register(MM_PID, (char *)MM_PSTR);
         break;
-    case MENU_UNREGISTER:
-#if CONF_WITH_PCGEM
-        /* distinguish between menu_unregister() and menu_popup() */
-        if (IN_LEN == 1)
-            mn_unregister( MM_MID );
-        else
+#if CONF_WITH_MENU_EXTENSION
+    case MENU_POPUP:
+        ret = mn_popup((MENU *)MPOP_IN, MPOP_XPOS, MPOP_YPOS, (MENU *)MPOP_OUT);
+        break;
+    case MENU_ATTACH:
+        ret = mn_attach(MPOP_FLAG, (OBJECT *)MPOP_IN, MPOP_ITEM, (MENU *)MPOP_OUT);
+        break;
+    case MENU_ISTART:
+        ret = mn_istart(MPOP_FLAG, (OBJECT *)MPOP_IN, MPOP_ITEM, MPOP_ITEM2);
+        break;
+    case MENU_SETTINGS:
+        mn_settings(MPOP_FLAG, (MN_SET *)MPOP_SET);
+        break;
 #endif
-            unsupported = TRUE;
-        break;
-    case MENU_CLICK:
-        /* distinguish between menu_click() and menu_attach() */
-        /*
-         * although menu_click() is PC-GEM only, it's always
-         * enabled because the desktop uses it.
-         */
-        if (IN_LEN == 2) {
-            if (MN_SETIT)
-                gl_mnclick = MN_CLICK;
-            ret = gl_mnclick;
-        } else
-            unsupported = TRUE;
-        break;
 
     /* Object Manager */
     case OBJC_ADD:
@@ -225,7 +218,7 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
         ob_offset((OBJECT *)OB_TREE, OB_OBJ, &OB_XOFF, &OB_YOFF);
         break;
     case OBJC_ORDER:
-        ob_order((OBJECT *)OB_TREE, OB_OBJ, OB_NEWPOS);
+        ret = ob_order((OBJECT *)OB_TREE, OB_OBJ, OB_NEWPOS);
         break;
     case OBJC_EDIT:
         gsx_sclip(&gl_rfull);
@@ -236,6 +229,11 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
         gsx_sclip((GRECT *)&OB_XCLIP);
         ob_change((OBJECT *)OB_TREE, OB_DRAWOB, OB_NEWSTATE, OB_REDRAW);
         break;
+#if CONF_WITH_3D_OBJECTS
+    case OBJC_SYSVAR:
+        ret = ob_sysvar(OB_MODE, OB_WHICH, OB_I1, OB_I2, &OB_O1, &OB_O2);
+        break;
+#endif
 
     /* Form Manager */
     case FORM_DO:
@@ -245,7 +243,7 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
         ret = fm_dial(FM_TYPE, (GRECT *)&FM_IX, (GRECT *)&FM_X);
         break;
     case FORM_ALERT:
-        ret = fm_alert(FM_DEFBUT, (BYTE *)FM_ASTRING);
+        ret = fm_alert(FM_DEFBUT, (char *)FM_ASTRING);
         break;
     case FORM_ERROR:
         ret = fm_error(FM_ERRNUM);
@@ -296,9 +294,9 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
     case GRAF_MOUSE:
         if (gl_ctmown)          /* if the ctlmgr owns the mouse, */
         {                       /* give up control (temporarily) */
-            ct_mouse(FALSE);
+            ct_mouse(FALSE);    /* sets gl_ctmown = FALSE as byproduct */
             gr_mouse(GR_MNUMBER, (MFORM *)GR_MADDR);
-            ct_mouse(TRUE);
+            ct_mouse(TRUE);     /* restores gl_ctmown = TRUE as byproduct */
         }
         else
             gr_mouse(GR_MNUMBER, (MFORM *)GR_MADDR);
@@ -309,10 +307,10 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
 
     /* Scrap Manager */
     case SCRP_READ:
-        ret = sc_read((BYTE*)SC_PATH);
+        ret = sc_read((char *)SC_PATH);
         break;
     case SCRP_WRITE:
-        ret = sc_write((const BYTE*)SC_PATH);
+        ret = sc_write((const char *)SC_PATH);
         break;
 #if CONF_WITH_PCGEM
     case SCRP_CLEAR:
@@ -322,10 +320,10 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
 
     /* File Selector Manager */
     case FSEL_INPUT:
-        ret = fs_input((BYTE*)FS_IPATH, (BYTE*)FS_ISEL, &FS_BUTTON, NULL);
+        ret = fs_input((char *)FS_IPATH, (char *)FS_ISEL, &FS_BUTTON, NULL);
         break;
     case FSEL_EXINPUT:
-        ret = fs_input((BYTE*)FS_IPATH, (BYTE*)FS_ISEL, &FS_BUTTON, (BYTE *)FS_ILABEL);
+        ret = fs_input((char *)FS_IPATH, (char *)FS_ISEL, &FS_BUTTON, (char *)FS_TITLE);
         break;
 
     /* Window Manager */
@@ -333,19 +331,19 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
         ret = wm_create(WM_KIND, (GRECT *)&WM_WX);
         break;
     case WIND_OPEN:
-        wm_open(WM_HANDLE, (GRECT *)&WM_WX);
+        ret = wm_open(WM_HANDLE, (GRECT *)&WM_WX);
         break;
     case WIND_CLOSE:
-        wm_close(WM_HANDLE);
+        ret = wm_close(WM_HANDLE);
         break;
     case WIND_DELETE:
-        wm_delete(WM_HANDLE);
+        ret = wm_delete(WM_HANDLE);
         break;
     case WIND_GET:
-        wm_get(WM_HANDLE, WM_WFIELD, &WM_OX);
+        ret = wm_get(WM_HANDLE, WM_WFIELD, &WM_OX, &WM_IX);
         break;
     case WIND_SET:
-        wm_set(WM_HANDLE, WM_WFIELD, &WM_IX);
+        ret = wm_set(WM_HANDLE, WM_WFIELD, &WM_IX);
         break;
     case WIND_FIND:
         ret = wm_find(WM_MX, WM_MY);
@@ -363,7 +361,7 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
 
     /* Resource Manager */
     case RSRC_LOAD:
-        ret = rs_load(pglobal, (BYTE *)RS_PFNAME);
+        ret = rs_load(pglobal, (char *)RS_PFNAME);
         break;
     case RSRC_FREE:
         ret = rs_free(pglobal);
@@ -380,10 +378,10 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
 
     /* Shell Manager */
     case SHEL_READ:
-        sh_read((BYTE*)SH_PCMD, (BYTE*)SH_PTAIL);
+        sh_read((char *)SH_PCMD, (char *)SH_PTAIL);
         break;
     case SHEL_WRITE:
-        ret = sh_write(SH_DOEX, SH_ISGR, SH_ISCR, (const BYTE*)SH_PCMD, (const BYTE*)SH_PTAIL);
+        ret = sh_write(SH_DOEX, SH_ISGR, SH_ISCR, (const char *)SH_PCMD, (const char *)SH_PTAIL);
         break;
     case SHEL_GET:
         sh_get((void*)SH_PBUFFER, SH_LEN);
@@ -392,17 +390,17 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
         sh_put((const void *)SH_PDATA, SH_LEN);
         break;
     case SHEL_FIND:
-        ret = sh_find((BYTE*)SH_PATH);
+        ret = sh_find((char *)SH_PATH);
         break;
     case SHEL_ENVRN:
-        sh_envrn((BYTE**)SH_PATH, (const BYTE*)SH_SRCH);
+        sh_envrn((char **)SH_PATH, (const char *)SH_SRCH);
         break;
 #if CONF_WITH_PCGEM
     case SHEL_RDEF:
-        sh_rdef((BYTE*)SH_LPCMD, (BYTE*)SH_LPDIR);
+        sh_rdef((char *)SH_LPCMD, (char *)SH_LPDIR);
         break;
     case SHEL_WDEF:
-        sh_wdef((const BYTE*)SH_LPCMD, (const BYTE*)SH_LPDIR);
+        sh_wdef((const char *)SH_LPCMD, (const char *)SH_LPDIR);
         break;
 #endif
     default:
@@ -440,7 +438,7 @@ static void xif(AESPB *pcrys_blk)
     if (AIN_LEN)
         memcpy(addr_in, pcrys_blk->addrin, min(AIN_LEN,AI_SIZE)*sizeof(LONG));
 
-    int_out[0] = crysbind(OP_CODE, (AESGLOBAL *)pcrys_blk->global, control, int_in, int_out,
+    RET_CODE = crysbind(OP_CODE, (AESGLOBAL *)pcrys_blk->global, control, int_in, int_out,
                                 addr_in);
 
     if (OUT_LEN)
@@ -451,16 +449,15 @@ static void xif(AESPB *pcrys_blk)
 
 
 /*
- *  Supervisor entry point.  Stack frame must be exactly like
- *  this if supret is to work.
+ *  Supervisor entry point, called from gemdosif.S
  */
-WORD super(WORD cx, AESPB *pcrys_blk)
+LONG super(WORD cx, AESPB *pcrys_blk)
 {
     switch(cx)
     {
     case 200:
         xif(pcrys_blk);
-        /* drop thru */
+        FALLTHROUGH;
     case 201:           /* undocumented TOS feature */
         dsptch();
     }
@@ -470,6 +467,9 @@ WORD super(WORD cx, AESPB *pcrys_blk)
 
 
 #if CONF_DEBUG_AES_STACK
+
+void trapaes_debug_enter(void); /* called from gemdosif.S */
+void trapaes_debug_exit(void);
 
 #define MARKER_BYTE 0xaa
 

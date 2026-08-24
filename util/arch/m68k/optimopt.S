@@ -1,7 +1,7 @@
 /*
  * optimopt.S - misc. optimised assembler routines
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2020 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -17,7 +17,7 @@
         .globl  _expand_string
 
 /*
- * char *scasb(char *str, char c)
+ * const char *scasb(const char *str, char c)
  * returns the pointer to the first occurrence of char c in string str,
  * or the pointer to the ending '\0' of this string.
  * (see also strchr, which returns NULL instead when the char is not found)
@@ -38,7 +38,7 @@ scasb_end:
         rts
 
 /*
- *  WORD expand_string(WORD *dest,const UBYTE *src)
+ *  WORD expand_string(WORD *dest,const char *src)
  *
  *  expand an unsigned byte string to an array of words, returning the
  *  length of the source string.  note that this code is optimised for

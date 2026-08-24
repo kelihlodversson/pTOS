@@ -1,6 +1,6 @@
 #include "config.h"
 #include "portab.h"
-#include "../bios/lineavars.h"
+#include "lineavars.h"
 
 #define _ASMDEFINE(sym, val) asm volatile ("\n#define LINEA_" #sym " _linea_vars+%c0 \n" : : "i" (val))
 #define LA(m) _ASMDEFINE(m, offsetof(struct _lineavars, m))

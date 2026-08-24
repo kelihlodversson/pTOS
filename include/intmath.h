@@ -1,7 +1,7 @@
 /*
  * intmath.h - misc integer math routines
  *
- * Copyright (C) 2002-2016 The EmuTOS development team
+ * Copyright (C) 2002-2020 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -11,21 +11,25 @@ ULONG Isqrt(ULONG x);
 
 /*
  *  min(): return minimum of two values
+ *  Implemented as a macro to allow any type
  */
-static __inline__
-WORD min(WORD a, WORD b)
-{
-    return (a < b) ? a : b;
-}
+#define min(a,b) \
+({ \
+    __typeof__(a) _a = (a); /* Copy to avoid double evaluation */ \
+    __typeof__(b) _b = (b); /* Copy to avoid double evaluation */ \
+    _a <= _b ? _a : _b; \
+})
 
 /*
  *  max(): return maximum of two values
+ *  Implemented as a macro to allow any type
  */
-static __inline__
-WORD max(WORD a, WORD b)
-{
-    return (a > b) ? a : b;
-}
+#define max(a,b) \
+({ \
+    __typeof__(a) _a = (a); /* Copy to avoid double evaluation */ \
+    __typeof__(b) _b = (b); /* Copy to avoid double evaluation */ \
+    _a >= _b ? _a : _b; \
+})
 
 /*
  * mul_div - signed integer multiply and divide
@@ -57,5 +61,76 @@ static __inline__ WORD mul_div(WORD m1, WORD m2, WORD d1)
     );
 
     return m1;
+#endif
+}
+
+/*
+ * umul_shift - unsigned integer multiply and divide-via-shift, with rounding
+ *
+ * returns (m1 * m2 + 32768) / 65536
+ *
+ * while the operands are UWORD, the intermediate result is ULONG.
+ *
+ * WARNING: the technique used presupposes that the absolute
+ * value of the intermediate result is < 2**31.
+ */
+static __inline__ UWORD umul_shift(UWORD m1, UWORD m2)
+{
+#ifdef __arm__
+    return (UWORD)(((ULONG)m1 * (ULONG)m2 + 32768UL) >> 16);
+#else
+    __asm__ (
+      "mulu %1,%0\n\t"
+      "addi.l #32768,%0\n\t"
+      "swap %0"
+    : "+d"(m1)
+    : "idm"(m2)
+    );
+
+    return m1;
+#endif
+}
+
+/*
+ * muls - signed integer multiply
+ *
+ * multiply two signed shorts, returning a signed long
+ */
+static __inline__ LONG muls(WORD m1, WORD m2)
+{
+#ifdef __arm__
+    return (LONG)m1 * (LONG)m2;
+#else
+    LONG ret;
+
+    __asm__ (
+      "muls %2,%0"
+    : "=d"(ret)
+    : "%0"(m1), "idm"(m2)
+    );
+
+    return ret;
+#endif
+}
+
+/*
+ * divu - unsigned integer divide
+ *
+ * divide an unsigned long by an unsigned short, returning an unsigned short
+ * (assumes that the result will always fit in an unsigned short)
+ */
+static __inline__ UWORD divu(ULONG d1, UWORD d2)
+{
+#ifdef __arm__
+    return (UWORD)(d1 / d2);
+#else
+    __asm__ (
+      "divu %1,%0"
+    : "+d"(d1)
+    : "idm"(d2)
+    : "cc"
+    );
+
+    return (UWORD)d1;
 #endif
 }

@@ -1,7 +1,7 @@
 /*
  *  initinfo.c - Info screen at startup
  *
- * Copyright (C) 2001-2017 by Authors:
+ * Copyright (C) 2001-2022 by Authors:
  *
  * Authors:
  *  MAD     Martin Doering
@@ -19,10 +19,9 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
-#include "kprint.h"
+#include "emutos.h"
 #include "nls.h"
+#include "bios.h"
 #include "ikbd.h"
 #include "asm.h"
 #include "string.h"
@@ -38,18 +37,16 @@
 
 #include "initinfo.h"
 #include "conout.h"
-
-#ifdef ENABLE_KDEBUG
+#include "../bdos/bdosstub.h"
 #include "lineavars.h"
-#endif
 
 /* Screen width, in characters, as signed value */
 #define SCREEN_WIDTH ((WORD)linea_vars.v_cel_mx + 1)
 
 #if FULL_INITINFO
 
-
-/*==== Defines ============================================================*/
+#define ESC_ASCII   0x1b
+#define DEL_ASCII   0x7f
 
 #define INFO_LENGTH 40      /* width of info lines (must fit in low-rez) */
 #define LOGO_LENGTH 23      /* must equal length of strings in pTOS logo */
@@ -197,10 +194,26 @@ static void cprint_asctime(void)
 {
     int years, months, days;
     int hours, minutes, seconds;
-    ULONG system_time = Gettime(); /* Use the trap interface as a workaround
-                                      to wrong Steem IKBD date after 16:00 */
+    BOOL bad_clock = FALSE;
+    ULONG system_time = Gettime();
+
     seconds = (system_time & 0x1F) * 2;
     system_time >>= 5;
+
+    /*
+     * if the system time is not later than the default date/time, it is
+     * invalid (the default date/time is 00:00 on the build date).
+     *
+     * note: if we do not have an RTC and are therefore using the IKBD
+     * clock, and if we found it to be invalid (see clock_init() in
+     * clock.c), we will have set the clock to the default date/time.
+     * it could now be a second or two later, so if we included seconds
+     * when comparing the clock to the default date/time, we would not
+     * detect a bad clock.  therefore we ignore the seconds.
+     */
+    if (system_time <= (DEFAULT_DATETIME>>5))
+        bad_clock = TRUE;
+
     minutes = system_time & 0x3F;
     system_time >>= 6;
     hours = system_time & 0x1F;
@@ -210,7 +223,15 @@ static void cprint_asctime(void)
     months = (system_time & 0x0F);
     system_time >>= 4;
     years = (system_time & 0x7F) + 1980;
+
+    /*
+     * if the date/time is invalid, show it in inverse video
+     */
+    if (bad_clock)
+        cprintf("\033p");
     cprintf("%04d/%02d/%02d %02d:%02d:%02d", years, months, days, hours, minutes, seconds);
+    if (bad_clock)
+        cprintf("\033q");
 }
 
 /*
@@ -277,7 +298,7 @@ WORD initinfo(ULONG *pshiftbits)
     int actual_initinfo_height;
 #endif
     int i;
-    WORD olddev = -1, dev = bootdev;
+    WORD olddev, dev = bootdev;
     long stramsize = (long)phystop;
 #if CONF_WITH_ALT_RAM
     long altramsize = total_alt_ram();
@@ -285,15 +306,15 @@ WORD initinfo(ULONG *pshiftbits)
     LONG hdd_available = blkdev_avail(HARDDISK_BOOTDEV);
     ULONG shiftbits;
 
+    /* clear startup message */
+    cprintf("\033E");
+
     /*
      * If additional info lines are going to be printed in specific cases,
      * then initinfo_height must be adjusted in the same way here.
      */
 #if CONF_WITH_CLI
     initinfo_height += 1;
-#endif
-#if CONF_WITH_AROS
-    initinfo_height += 3;
 #endif
 #if CONF_WITH_ALT_RAM
     if (altramsize > 0)
@@ -340,7 +361,6 @@ WORD initinfo(ULONG *pshiftbits)
     pair_end();
 
     pair_start(_("Machine")); cprintf(machine_name()); pair_end();
-/*  pair_start(_("MMU available")); cprintf(_("No")); pair_end(); */
     pair_start("ST-RAM"); cprintf_bytesize(stramsize); pair_end();
 
 #if CONF_WITH_ALT_RAM
@@ -365,11 +385,6 @@ WORD initinfo(ULONG *pshiftbits)
 #if CONF_WITH_CLI
     display_message(_("Press <Esc> to run an early console"));
 #endif
-#if CONF_WITH_AROS
-    cprintf("\r\n");
-    display_inverse("This binary mixes GPL and AROS APL code,",1);
-    display_inverse("redistribution is forbidden.",1);
-#endif
     cprintf("\r\n");
 
     /* centre 'hold shift' message in all languages */
@@ -389,6 +404,10 @@ WORD initinfo(ULONG *pshiftbits)
      * pause for a short while, or longer if:
      *  . a Shift key is held down, or
      *  . the user selects an alternate boot drive
+     *
+     * if the user reboots using Ctrl+Alt+Shift+Delete,
+     * and keeps the keys pressed for too long, we might see a
+     * spurious Del key press, and ignore it.
      */
     while (1)
     {
@@ -466,7 +485,7 @@ WORD initinfo(ULONG *pshiftbits)
 
 WORD initinfo(ULONG *pshiftbits)
 {
-    cprintf("pTOS Version %s\r\n", version);
+    /* we already displayed a startup message */
 
     *pshiftbits = kbshift(-1);
     return bootdev;
@@ -474,3 +493,9 @@ WORD initinfo(ULONG *pshiftbits)
 
 
 #endif   /* FULL_INITINFO */
+
+
+void display_startup_msg(void)
+{
+    cprintf("pTOS Version %s\r\n", version);
+}

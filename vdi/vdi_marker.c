@@ -1,20 +1,17 @@
 /*
- * vdi_marker.c - Marker
+ * vdi_marker.c - routines to handle Marker functions
  *
  * Copyright 1982 by Digital Research Inc.  All rights reserved.
  * Copyright 1999 by Caldera, Inc. and Authors:
- * Copyright 2002-2016 by The EmuTOS development team
+ * Copyright 2002-2024 by The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-
-
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "vdi_defs.h"
-#include "../bios/lineavars.h"
+#include "lineavars.h"
 
 
 
@@ -61,11 +58,12 @@ void vdi_vsm_height(Vwk * vwk)
  */
 void vdi_vsm_type(Vwk * vwk)
 {
-    WORD i;
+    WORD mk;
 
-    i = INTIN[0] - 1;
-    i = ((i >= MAX_MARK_INDEX) || (i < 0)) ? 2 : i;
-    INTOUT[0] = (vwk->mark_index = i) + 1;
+    mk = ((INTIN[0]<MIN_MARK_STYLE) || (INTIN[0]>MAX_MARK_STYLE)) ? DEF_MARK_STYLE : INTIN[0];
+
+    vwk->mark_index = mk - 1;
+    INTOUT[0] = mk;
     CONTRL->nintout = 1;
 }
 
@@ -78,8 +76,7 @@ void vdi_vsm_color(Vwk * vwk)
 {
     WORD i;
 
-    i = INTIN[0];
-    i = ((i >= linea_vars.DEV_TAB[13]) || (i < 0)) ? 1 : i;
+    i = validate_color_index(INTIN[0]);
     INTOUT[0] = i;
     vwk->mark_color = MAP_COL[i];
     CONTRL->nintout = 1;
@@ -116,8 +113,8 @@ void vdi_v_pmarker(Vwk * vwk)
     vwk->line_index = 0;
     vwk->line_color = vwk->mark_color;
     vwk->line_width = 1;
-    vwk->line_beg = 0;
-    vwk->line_end = 0;
+    vwk->line_beg = SQUARED;
+    vwk->line_end = SQUARED;
     vwk->clip = 1;
 
     scale = vwk->mark_scale;

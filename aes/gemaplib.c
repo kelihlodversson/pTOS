@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2024 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -16,13 +16,12 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesdefs.h"
+#include "aesvars.h"
 #include "obdefs.h"
 #include "gemlib.h"
-#include "gem_rsc.h"
 
 #include "geminit.h"
 #include "gempd.h"
@@ -35,11 +34,10 @@
 #include "gemdosif.h"
 #include "gemasm.h"
 #include "gemdisp.h"
-#include "gemsclib.h"
-#include "gemrslib.h"
 #include "gemaplib.h"
 #include "gsx2.h"
 #include "funcdef.h"
+#include "intmath.h"
 #include "string.h"
 #include "asm.h"
 
@@ -56,14 +54,8 @@ FPD      *gl_rbuf;
 WORD ap_init(void)
 {
     WORD    pid;
-    char    scdir[32];
 
     pid = rlr->p_pid;
-
-    strcpy(scdir, SCRAP_DIR_NAME);
-
-    scdir[0] = gl_logdrv;           /* set drive letter     */
-    sc_write(scdir);
 
     rlr->p_flags |= AP_OPEN;        /* appl_init() done */
 
@@ -86,7 +78,7 @@ WORD ap_rdwr(WORD code, AESPD *p, WORD length, WORD *pbuff)
     {
         memcpy(pbuff, p->p_qaddr, p->p_qindex);
         p->p_qindex = 0;
-        return 0;
+        return 1;       /* non-zero means it worked */
     }
 
     m.qpb_ppd = p;
@@ -100,9 +92,16 @@ WORD ap_rdwr(WORD code, AESPD *p, WORD length, WORD *pbuff)
 /*
  *  APplication FIND
  */
-WORD ap_find(BYTE *pname)
+WORD ap_find(char *pname)
 {
     AESPD  *p;
+
+    /*
+     * explicitly disallow a NULL filename pointer, since this has
+     * a special meaning for fpdnm()
+     */
+    if (!pname)
+        return -1;
 
     p = fpdnm(pname, 0);
     return p ? p->p_pid : -1;
@@ -133,7 +132,7 @@ void ap_tplay(const EVNTREC *pbuff,WORD length,WORD scale)
         /* convert to form suitable for forkq */
         switch(pbuff->ap_event) {
         case TCHNG:
-            ev_timer((f.f_data*100L)/scale);
+            ev_timer(divu(f.f_data*100L, scale));
             break;
         case BCHNG:
             f.f_code = bchange;
@@ -145,10 +144,10 @@ void ap_tplay(const EVNTREC *pbuff,WORD length,WORD scale)
                  * disconnect cursor drawing & movement routines
                  */
                 i_ptr(justretf);
-                gsx_ncode(CUR_VECX, 0, 0);
+                gsx_0code(CUR_VECX);
                 m_lptr2(drwaddr);  /* old address will be used by drawrat() */
                 i_ptr(justretf);
-                gsx_ncode(MOT_VECX, 0, 0);
+                gsx_0code(MOT_VECX);
                 m_lptr2(mot_vecx_save);
             }
             f.f_code = mchange;
@@ -159,7 +158,11 @@ void ap_tplay(const EVNTREC *pbuff,WORD length,WORD scale)
         }
 
         if (f.f_code)   /* if valid, add to queue */
+        {
+            disable_interrupts();
             forkq(f.f_code,f.f_data);
+            enable_interrupts();
+        }
 
         dsptch();       /* let someone run */
     }
@@ -172,9 +175,9 @@ void ap_tplay(const EVNTREC *pbuff,WORD length,WORD scale)
         drawrat(xrat, yrat);
         gsx_setmousexy(xrat, yrat);     /* no jumping cursors, please */
         i_ptr(drwaddr);                 /* restore vectors */
-        gsx_ncode(CUR_VECX, 0, 0);
+        gsx_0code(CUR_VECX);
         i_ptr(mot_vecx_save);
-        gsx_ncode(MOT_VECX, 0, 0);
+        gsx_0code(MOT_VECX);
     }
 
     gl_play = FALSE;
@@ -248,11 +251,10 @@ WORD ap_trecd(EVNTREC *pbuff,WORD length)
 void ap_exit(void)
 {
     wm_update(BEG_UPDATE);
-    mn_clsda();
+    mn_cleanup();
     wait_for_accs(AP_ACCLOSE);  /* block until all DAs have seen AC_CLOSE */
     if (rlr->p_qindex)
         ap_rdwr(MU_MESAG, rlr, rlr->p_qindex, (WORD *)D.g_valstr);
-    set_mouse_to_arrow();
     wm_update(END_UPDATE);
     all_run();
     rlr->p_flags &= ~AP_OPEN;   /* say appl_exit() is done */

@@ -1,14 +1,14 @@
 /*
  * fnt_st_6x6.c - 6x6 font for Atari ST encoding
  *
- * Copyright (C) 2001-2015 The EmuTOS development team
+ * Copyright (C) 2001-2021 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
+#include "bios.h"
 #include "fonthdr.h"
 
 extern const UWORD off_6x6_table[];
@@ -92,7 +92,7 @@ static const UBYTE dat_table[] =
 const Fonthead fnt_st_6x6 = {
     1,                  /*   WORD font_id       */
     8,                  /*   WORD point         */
-    "6x6 system font",  /*   BYTE name[32]      */
+    "6x6 system font",  /*   char name[32]      */
     0,                  /*   UWORD first_ade    */
     255,                /*   UWORD last_ade     */
     4,                  /*   UWORD top          */
@@ -116,5 +116,6 @@ const Fonthead fnt_st_6x6 = {
     192,                /*   UWORD form_width   */
     6,                  /*   UWORD form_height  */
 
-    0                   /*   Fonthead * next_font    */
+    0,                  /*   Fonthead * next_font    */
+    0                   /*   reserved by Atari  */
 };

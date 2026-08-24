@@ -1,7 +1,7 @@
 /*
  * delay.h - header for delay.c
  *
- * Copyright (C) 2013 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -12,8 +12,6 @@
 
 #ifndef _DELAY_H
 #define _DELAY_H
-
-#include "portab.h"
 
 /*
  * this is the value to pass to the inline function delay_loop()

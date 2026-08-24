@@ -15,7 +15,8 @@
 #include "struct.h"
 #include "basepage.h"
 #include "../../../bios/vectors.h"
-#include "../../../bios/tosvars.h"
+#include "../../../bios/bios.h"
+#include "tosvars.h"
 #include "gemdosif.h"
 #include "gemfmlib.h"
 #include "biosbind.h"
@@ -52,7 +53,7 @@ const WORD err_tbl[17] = {
 
 void retake(void)
 {
-    VEC_AES = aestrap;
+    VEC_GEM = aestrap;
     Setexc(0x0101, (long)criterr_handler);
 }
 
@@ -127,13 +128,13 @@ PFVOID savetrap2;
 
 void unset_aestrap(void)
 {
-    VEC_AES = savetrap2;
+    VEC_GEM = savetrap2;
 }
 
 void set_aestrap(void)
 {
-    savetrap2 = VEC_AES;
-    VEC_AES = aestrap;
+    savetrap2 = VEC_GEM;
+    VEC_GEM = aestrap;
 }
 
 /*
@@ -143,7 +144,7 @@ void set_aestrap(void)
 */
 BOOL aestrap_intercepted(void)
 {
-    return ((LONG)VEC_AES) < os_beg || ((LONG)VEC_AES) >= ((LONG)_etext);
+    return ((LONG)VEC_GEM) < os_beg || ((LONG)VEC_GEM) >= ((LONG)_etext);
 }
 #if 0
 

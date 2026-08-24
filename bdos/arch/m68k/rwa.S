@@ -3,7 +3,7 @@
  *
  * Copyright (C) 1999 by Caldera Inc.
  * Copyright (C) 1985, 2001 by Authors (see below)
- * Copyright (C) 2017 The EmuTOS development team
+ * Copyright (C) 2017-2019 The EmuTOS development team
  *
  * Authors:
  *  EWF  Eric W. Fleischman
@@ -15,8 +15,6 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-
-
 
 //============================================================================
 //
@@ -124,7 +122,6 @@
         .globl  _termuser
         .globl  _gouser
         .globl  _enter
-        .globl  _old_trap2
         .globl  _bdos_trap2
 
 // ==== References ===========================================================
@@ -133,11 +130,16 @@
         .extern _xterm
         .extern _run
         .extern _longframe              // If not 0, use long stack frames
+        .extern _old_trap2
 
 //==== bdos_trap2 - trap 2 entry point =======================================
 //
-// This minimal interface connects the entry point for a system where the AES
-// and VDI are already in memory.
+// This is installed over the existing trap #2 interrupt handler, which in
+// EmuTOS and Atari TOS is the VDI handler.
+//
+// Note that after this is installed, calling trap #2 with d0.w=0 is the same
+// as issuing a Pterm0().  This provides compatibility with an undocumented
+// feature of Atari TOS, apparently a relic of CP/M 68K.
 //
 
 _bdos_trap2:
@@ -151,18 +153,6 @@ oterm:  move.l  #fstrt,sp
         clr     -(sp)
         jsr     _xterm
         rte
-
-
-        .bss
-        .even
-
-
-_old_trap2:
-        .ds.l   1                       // old TRAP #2 handler
-
-        .text
-
-
 
 //==== _enter - Front end of TRAP #1 handler =================================
 
@@ -239,8 +229,6 @@ callos: move.l  a0,-(sp)        // push parm pointer
 
 //...fall into gouser....
 
-
-
 //==== _gouser ===============================================================
 
 _gouser:
@@ -311,10 +299,6 @@ xu_0:
         move.l  a0,sp           // set new SSP
 
         jra     fix_rte
-
-
-
-
 
 // supervisor mode gemdos(20) entry point
 
@@ -394,8 +378,6 @@ ft_cf_nofiller:
 #endif
 ft_exit:
         rts
-
-
 
 //==== fix_rte - re-build exception stack frame for current processor ========
 

@@ -1,7 +1,7 @@
 /*
  * EmuCON2 utility routines
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2024 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -10,7 +10,9 @@
  * option any later version.  See doc/license.txt for details.
  */
 #include "cmd.h"
-#include <string.h>
+#include "string.h"
+#include <stdarg.h>
+#include "doprintf.h"
 
 typedef struct {
     long cookie;
@@ -52,7 +54,7 @@ void messagenl(const char *msg)
  */
 void errmsg(LONG rc)
 {
-char buf[20];
+char buf[32];   /* must hold translated "error code %ld" (%ld can be 11 chars) */
 const char *p;
 
     switch(rc) {
@@ -80,7 +82,7 @@ const char *p;
     case USER_BREAK:
         p = _("interrupted");
         break;
-    case INVALID_PATH:
+    case NOT_DIRECTORY:
         p = _("invalid path");
         break;
     case DISK_FULL:
@@ -102,14 +104,8 @@ const char *p;
         p = _("wrong number of arguments");
         break;
     default:
-        message(_("error code "));
-        if (rc < 0) {
-            conout('-');
-            rc = -rc;
-        }
-        convulong(buf,rc,10,' ');
-        for (p = buf; *p == ' '; p++)
-            ;
+        p = buf;
+        sprintf(buf,_("error code %ld"),rc);
         break;
     }
     messagenl(p);
@@ -186,28 +182,6 @@ char *p = buf + width;
         *p-- = filler;
 }
 
-PRIVATE char *conv2(char *p,WORD n)
-{
-WORD tens;
-
-    tens = n / 10;
-    *p++ = '0' + tens;
-    *p++ = '0' + (n - tens * 10);
-
-    return p;
-}
-
-PRIVATE char *conv4(char *p,WORD n)
-{
-WORD hundreds;
-
-    hundreds = n / 100;
-    p = conv2(p,hundreds);
-    p = conv2(p,n-hundreds*100);
-
-    return p;
-}
-
 /*
  *  decode_date_time - generate string with date/time in format derived from _IDT cookie
  *
@@ -217,7 +191,7 @@ WORD decode_date_time(char *s,UWORD date,UWORD time)
 {
 WORD year, month, day, hour, minute, second;
 char *p = s;
-char ampm;
+char *ampm;
 unsigned char date_sep;
 
     date_sep = LOBYTE(idt_value);           /* date separator */
@@ -230,36 +204,18 @@ unsigned char date_sep;
 
     switch(HIBYTE(idt_value)&0x03) {
     case _IDT_MDY:
-        p = conv2(p,month);
-        *p++ = date_sep;
-        p = conv2(p,day);
-        *p++ = date_sep;
-        p = conv4(p,year);
+        p += sprintf(p,"%02d%c%02d%c%04d",month,date_sep,day,date_sep,year);
         break;
     case _IDT_DMY:
-        p = conv2(p,day);
-        *p++ = date_sep;
-        p = conv2(p,month);
-        *p++ = date_sep;
-        p = conv4(p,year);
+        p += sprintf(p,"%02d%c%02d%c%04d",day,date_sep,month,date_sep,year);
         break;
     case _IDT_YDM:
-        p = conv4(p,year);
-        *p++ = date_sep;
-        p = conv2(p,day);
-        *p++ = date_sep;
-        p = conv2(p,month);
+        p += sprintf(p,"%04d%c%02d%c%02d",year,date_sep,day,date_sep,month);
         break;
     default:                        /* i.e. _IDT_YMD or some kind of bug ... */
-        p = conv4(p,year);
-        *p++ = date_sep;
-        p = conv2(p,month);
-        *p++ = date_sep;
-        p = conv2(p,day);
+        p += sprintf(p,"%04d%c%02d%c%02d",year,date_sep,month,date_sep,day);
         break;
     }
-    *p++ = ' ';
-    *p++ = ' ';
 
     hour = time >> 11;
     minute = (time>>5) & 0x3f;
@@ -268,31 +224,18 @@ unsigned char date_sep;
     switch((idt_value>>12)&0x01) {
     case _IDT_12H:
         if (hour < 12)              /* figure out am/pm */
-            ampm = 'a';
-        else ampm = 'p';
+            ampm = "am";
+        else ampm = "pm";
         if (hour > 12)              /* figure out noon/midnight */
             hour -= 12;
         else if (hour == 0)
             hour = 12;
-        p = conv2(p,hour);
-        *p++ = ':';
-        p = conv2(p,minute);
-        *p++ = ':';
-        p = conv2(p,second);
-        *p++ = ampm;
-        *p++ = 'm';
         break;
     default:                        /* i.e. _IDT_24H or some kind of bug ... */
-        p = conv2(p,hour);
-        *p++ = ':';
-        p = conv2(p,minute);
-        *p++ = ':';
-        p = conv2(p,second);
-        *p++ = ' ';
-        *p++ = ' ';
+        ampm = "  ";
         break;
     }
-    *p = '\0';
+    p += sprintf(p,"  %02d:%02d:%02d%s  ",hour,minute,second,ampm);
 
     return p - s;
 }
@@ -314,7 +257,7 @@ char *q = dest;
      *  look for start of next component
      */
     for (p = *pp; *p; p++)
-        if (*p != ';')
+        if ((*p != ';') && (*p != ','))
             break;
     if (!*p) {          /* end of buffer */
         *pp = p;
@@ -322,7 +265,7 @@ char *q = dest;
     }
 
     while(*p) {
-        if (*p == ';')
+        if ((*p == ';') || (*p == ','))
             break;
         *q++ = *p++;
     }

@@ -1,7 +1,7 @@
 /*
  * acsi.h - Atari Computer System Interface (ACSI) support
  *
- * Copyright (C) 2002-2016 The EmuTOS development team
+ * Copyright (C) 2002-2024 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -13,13 +13,28 @@
 #ifndef ACSI_H
 #define ACSI_H
 
-#include "portab.h"
-
 #if CONF_WITH_ACSI
 
+/*
+ * structure passed to send_command()
+ */
+typedef struct
+{
+    UBYTE *cdbptr;                  /* command address */
+    WORD cdblen;                    /* command length */
+    UBYTE *bufptr;                  /* buffer address */
+    LONG buflen;                    /* buffer length */
+    LONG timeout;                   /* in ticks */
+    UBYTE rw;                       /* RW_READ or RW_WRITE */
+} ACSICMD;
+
+
+BOOL detect_acsi(void);
 void acsi_init(void);
 LONG acsi_ioctl(UWORD drv, UWORD ctrl, void *arg);
+LONG acsi_request_sense(WORD dev, UBYTE *buffer);
 LONG acsi_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev);
+int send_command(WORD dev,ACSICMD *cmd);
 
 #endif /* CONF_WITH_ACSI */
 

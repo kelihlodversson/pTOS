@@ -1,7 +1,7 @@
 /*
  * gemasm.S - assembler part of GEM
  *
- * Copyright 2002-2017, The EmuTOS development team
+ * Copyright 2002-2020, The EmuTOS development team
  *           1999, Caldera Thin Clients, Inc.
  *           1987, Digital Research Inc.
  *
@@ -22,8 +22,21 @@
         .extern _indisp
         .extern _disp
 
-        .text
+/*
+ * The amount of space that gotopgm() reserves at the top of the stack
+ * (see the comments at gotopgm() for more details).  At the time of
+ * writing (may 2020), this is just the maximum size of the exception
+ * stack frame for a trap instruction (8 bytes).  However we need to add
+ * 2 bytes for ColdFire processors, to allow for possible auto-alignment
+ * of the stack to a 4-byte boundary.
+ */
+#ifdef __mcoldfire__
+#define STACKRESERVE    10
+#else
+#define STACKRESERVE    8
+#endif
 
+        .text
 
 /*
  * psetup(PD *p, PFVOID codevalue)
@@ -32,7 +45,6 @@
  * will start this process executing".
  * That RTS will occur at the end of switchto()
  */
-
 _psetup:
 #ifdef __mcoldfire__
         move.w  sr,d0
@@ -43,7 +55,7 @@ _psetup:
         move    sr,savesr2
         ori     #0x0700,sr
 #endif
-        movea.l 4(sp),a0        // PD *
+        movea.l 4(sp),a0        // AESPD *
         move.l  8(sp),d0        // New process entry point
         movea.l PD_UDA(a0),a0
         movea.l UDA_SPSUPER(a0),a1
@@ -57,7 +69,6 @@ _psetup:
 #endif
         rts
 
-
 /*
  * gotopgm(void)
  * launches the top of rlr list
@@ -69,7 +80,6 @@ _psetup:
  * address of the basepage. The value of the other registers is not
  * important.
  */
-
 _gotopgm:
         // get the basepage for the top of rlr
         movea.l _rlr,a0
@@ -88,16 +98,14 @@ _gotopgm:
         // We must fix rlr->p_uda->u_spsuper here to ensure this will
         // not happen. We have to estimate the amount of data stored
         // on this stack when the stack switch occurs in the trap.
-        // Currently, there is only the trap stack frame, which is CPU
-        // dependent and may be 6 or 8 bytes. Thus 8 bytes of additional
-        // room will be enough in all cases.
+        // This is the value STACKRESERVE defined above.
         // You must keep an eye on the trap #2 prologue for AES.
         // It is located in gemdosif.S, label "trapaes".
         // If some additional data is pushed on the stack before
-        // the stack switch, you must add the equivalent room here.
+        // the stack switch, you must increase STACKRESERVE.
 
         move.l  sp,d0   // Current stack
-        subq.l  #8,d0   // Room for the trap stack frame or more
+        subi.l  #STACKRESERVE,d0        // Room for the trap stack frame or more
         move.l  d0,UDA_SPSUPER(a2)      // Will be the stack on next trap
 
 #ifdef __mcoldfire__
@@ -110,7 +118,6 @@ _gotopgm:
         move.l  P_TBASE(a0),a1          // Start of the TEXT segment
         jmp     (a1)
 
-
 /*
  * dsptch() is a machine (& compiler) dependent routine which:
  *      1) saves any flags that will be trashed
@@ -119,7 +126,6 @@ _gotopgm:
  *              save machine state,
  *              jump to disp
  */
-
 _dsptch:
         tst.b   _indisp
         jeq     savestate
@@ -143,7 +149,7 @@ savestate:
 #endif
 
         move.l  a6,-(sp)        // Temporary backup
-        movea.l _rlr,a6         // Get pointer to rlr PD structure
+        movea.l _rlr,a6         // Get pointer to rlr AESPD structure
         movea.l PD_UDA(a6),a6   // Get pointer to UDA structure
         move.l  (sp)+,UDA_REG_A6(a6)    // Save old a6 in UDA struct
         movem.l d0-a5,UDA_REGS(a6)      // Save registers d0-a5 in UDA struct
@@ -159,7 +165,6 @@ savestate:
         move    savesr0,sr
 #endif
         jmp     _disp
-
 
 _switchto:
 #ifdef __mcoldfire__
@@ -187,7 +192,6 @@ _switchto:
         move.w  savesr0,sr
 #endif
         rts                     // Switch to the next process now !
-
 
         .bss
 

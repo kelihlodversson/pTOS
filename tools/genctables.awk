@@ -77,7 +77,11 @@ END {
     }
     print ""
 
-    print "#if CONF_MULTILANG"
+    print "/*"
+    print " * countries[] is needed even in single-country (non-multilang)"
+    print " * builds: get_kbd_index() looks up the keyboard layout for the"
+    print " * country selected via the _AKP cookie, unconditionally."
+    print " */"
     print "static const struct country_record countries[] = {"
     for(i = 1 ; i <= ncountries ; i++) {
         country = countries[i]
@@ -85,8 +89,7 @@ END {
             "KEYB_" keybs[country] ", CHARSET_" csets[country] ", " \
             idts[country] "},"
     }
-    print "};"
-    print "#endif\n\n"
+    print "};\n\n"
 
     for(keyb in needkeybs) {
         print "#if CONF_MULTILANG || CONF_KEYB == KEYB_" keyb

@@ -1,7 +1,7 @@
 /*
  * EmuCON2: execute external programs
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2022 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -10,7 +10,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 #include "cmd.h"
-#include <string.h>
+#include "string.h"
 
 static UWORD old_stdout;
 
@@ -33,7 +33,7 @@ char cmdline[CMDLINELEN];
 LONG rc;
 
     if (has_wildcard(argv[0]))
-        return INVALID_PATH;
+        return EPTHNF;
 
     if (build_cmdline(cmdline,argc,argv) < 0)
         return CMDLINE_LENGTH;
@@ -67,8 +67,8 @@ const char *q;
 
     for (p = path; *p; p++)
         ;
-    if (*(p-1) != '\\')
-        *p++ = '\\';
+    if (*(p-1) != PATHSEP)
+        *p++ = PATHSEP;
 
     for (q = name; *q; )
         *p++ = *q++;
@@ -142,8 +142,8 @@ LONG rc;
         case '.':
             dot = p;
             break;
-        case '\\':
-        case ':':
+        case PATHSEP:
+        case DRIVESEP:
             dot = NULL;
             break;
         }
@@ -212,8 +212,10 @@ LONG rc;
     redir_handle = rc;
     old_stdout = Fdup(1);           /* remember current stdout */
     rc = Fforce(1,redir_handle);    /* redirect it */
-    if (rc < 0L)
+    if (rc < 0L) {
+        restore_stdout(redir);      /* undo the redirection */
         return rc;
+    }
 
     return 0;
 }
@@ -228,4 +230,5 @@ PRIVATE void restore_stdout(char *redir)
     Fclose(redir_handle);           /*  & original */
 
     redir[0] = '\0';                /* end redirection */
+    redir_handle = -1L;
 }

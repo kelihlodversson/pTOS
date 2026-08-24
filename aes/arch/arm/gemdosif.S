@@ -155,7 +155,7 @@ _far_mcha:
         pop_privstack
         bx      lr
 
-#if CONF_WITH_VDI_EXTENSIONS
+#if CONF_WITH_EXTENDED_MOUSE
 /* AES mouse wheel handler called by the VDI */
 _aes_wheel:
         push_privstack gstack
@@ -166,7 +166,7 @@ _aes_wheel:
         pop     {r0-r3,lr}
         pop_privstack
         bx      lr
-#endif /* CONF_WITH_VDI_EXTENSIONS */
+#endif /* CONF_WITH_EXTENDED_MOUSE */
 
 
 /*

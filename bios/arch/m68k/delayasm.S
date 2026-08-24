@@ -1,10 +1,11 @@
 /*
  * delayasm.S - assembler functions for delay calibration
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2022 The EmuTOS development team
  *
  * Authors:
  *  RFB   Roger Burrows
+ *        Christian Zietz
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -21,7 +22,6 @@
 #define MFP_IMRB    MFP_REGS+20
 #define MFP_TCDCR   MFP_REGS+28
 #define MFP_TDDR    MFP_REGS+36
-
 
         .text
 //
@@ -41,7 +41,7 @@ _run_calibration:
 
         lea     MFP_TDDR,a0         //a0 -> TimerD data
         clr.b   (a0)                //set count = 256
-        move.l  TIMERD_VEC,d1       //save old TimerD vector in d1
+        move.l  TIMERD_VEC,a1       //save old TimerD vector in a1
         lea     handle_timer,a0
         move.l  a0,TIMERD_VEC       //set up new TimerD vector
         lea     MFP_IERB,a0
@@ -66,6 +66,14 @@ cal_loop:                           //just like asm.h inline function
         move.l  intcount,d0         //d0 = interrupt count
         move.l  d0,intsave          //save it
 
+        move    sr,d1
+        move    #0x2700,sr          //disable interrupts to avoid spurious irq
+
+        lea     MFP_IERB,a0
+        bclr.b  #4,(a0)             //reset interrupt enable bit
+        lea     MFP_IMRB,a0
+        bclr.b  #4,(a0)             //reset interrupt mask bit
+
         lea     MFP_TCDCR,a0        //a0 -> Timer C/D control reg
 #ifdef __mcoldfire__
         move.b  (a0),d0
@@ -75,7 +83,9 @@ cal_loop:                           //just like asm.h inline function
         andi.b  #0xf0,(a0)          //stop TimerD
 #endif
 
-        move.l  d1,TIMERD_VEC       //restore TimerD vector
+        move    d1,sr               //restore interrupt mask
+
+        move.l  a1,TIMERD_VEC       //restore TimerD vector
         move.l  intsave,d0          //return interrupt count
         rts
 
@@ -89,7 +99,7 @@ cal_loop:                           //just like asm.h inline function
 // --------------------
 //   68000 at 8MHz
 //       an interrupt occurs every 8000000/960 = 8333 cycles.
-//       the overhead is 116/3333, approx 1.4%
+//       the overhead is 112/8333, approx 1.4%
 //   other systems are even less, so we ignore
 //
 handle_timer:                   //68000:
@@ -98,13 +108,13 @@ handle_timer:                   //68000:
 #ifdef __mcoldfire__
         move.l  a0,-(sp)
         lea     MFP_ISRB,a0
-        bclr.b  #4,(a0)
+        move.b  #0xef,(a0)
         movea.l (sp)+,a0
 #else
-        bclr.b  #4,MFP_ISRB       //12+12 = 24
+        move.b  #0xef,MFP_ISRB    //20
 #endif
         rte                       //20
-                                //total 116
+                                //total 112
         .bss
 intcount: .ds.l 1
 intsave:  .ds.l 1

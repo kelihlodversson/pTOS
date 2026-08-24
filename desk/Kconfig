@@ -41,6 +41,15 @@ config CONF_WITH_DESKTOP_CONFIG
 	default n if TARGET_192
 	default y
 
+config CONF_WITH_READ_INF
+	bool "Read .INF file"
+	default n if TARGET_192
+	default y
+	help
+	  Allow the user to merge an EMUDESK.INF file into the running
+	  desktop's configuration via a "Read .INF file" menu item, without
+	  restarting the desktop.
+
 config CONF_WITH_FORMAT
 	bool "Floppy formatting"
 	depends on CONF_ATARI_HARDWARE

@@ -1,7 +1,7 @@
 /*
  * vdi_textblit.c - the text_blt() mainline code
  *
- * Copyright (C) 2017-2019 The EmuTOS development team
+ * Copyright (C) 2017-2025 The EmuTOS development team
  *
  * Authors:
  *  RFB   Roger Burrows
@@ -12,17 +12,20 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
+#include "asm.h"
 #include "intmath.h"
 #include "asm.h"
 
-#include "../bios/tosvars.h"
+#include "tosvars.h"
 #include "vdi_defs.h"
 #include "vdi_textblit.h"
 #include "vdi_backend.h"
-#include "../bios/lineavars.h"
 #include "kprint.h"
+#include "vdistub.h"
+#include "lineavars.h"
+#include "vdi_inline.h"
+#include "biosext.h"
 
 
 /*
@@ -35,11 +38,14 @@
 const WORD scrtsiz = SCRATCHBUF_OFFSET;
 WORD deftxbuf[SCRATCHBUF_SIZE/sizeof(WORD)];
 
+/*
+ * the following table maps a 4-bit sequence to its reverse
+ */
 
 /*
  * the following table maps a 4-bit sequence to its reverse
  */
-const static UBYTE reverse_nybble[] =
+static UBYTE reverse_nybble[] =
 /*  0000  0001  0010  0011  0100  0101  0110  0111  */
 {   0x00, 0x08, 0x04, 0x0c, 0x02, 0x0a, 0x06, 0x0e,
 /*  1000  1001  1010  1011  1100  1101  1110  1111  */
@@ -364,8 +370,6 @@ static void pre_blit(LOCALVARS *vars)
         }
     }
 
-    /* label no_clear: */
-
     dst += size;                     /* start at the bottom */
     vars->WRT_MODE = 0;
     vars->forecol = 1;
@@ -529,7 +533,7 @@ static __inline__ UWORD *shift_and_update(UWORD *dst, UWORD *dstbit, UWORD *out)
 
 
 /*
- * scaleup: increase width of character (SCALDIR is 1)
+ * scaleup: increase width of character (linea_vars.SCALDIR is 1)
  */
 static void scaleup(LOCALVARS *vars, UWORD *src, UWORD *dst)
 {
@@ -580,7 +584,7 @@ static void scaleup(LOCALVARS *vars, UWORD *src, UWORD *dst)
 
 
 /*
- * scaledown: decrease width of character (SCALDIR is 0)
+ * scaledown: decrease width of character (linea_vars.SCALDIR is 0)
  */
 static void scaledown(LOCALVARS *vars, UWORD *src, UWORD *dst)
 {
@@ -698,8 +702,454 @@ void scale(LOCALVARS *vars)
 }
 
 
+
+
+#if CONF_WITH_VDI_TEXT_SPEEDUP
+#if CONF_WITH_VDI_16BIT
 /*
- * output a block to the screen
+ * output a character string directly to the 16-bit screen
+ *
+ * see direct_screen_blit() for details of usage
+ */
+static void direct_screen_blit16(WORD count, WORD *str)
+{
+    WORD fgcol, bgcol, height, mode, n;
+    WORD src_width, dst_width;
+    UBYTE mask;
+    UBYTE *src, *p;
+    UWORD *dst, *save_dst, *q, *palette;
+
+    height = linea_vars.DELY;
+    mode = linea_vars.WRT_MODE;
+    src_width = linea_vars.FWIDTH;
+    dst_width = linea_vars.v_lin_wr / sizeof(UWORD);
+
+    palette = linea_vars.CUR_WORK->ext->palette;
+    fgcol = palette[linea_vars.TEXTFG];
+    bgcol = palette[0];
+
+    dst = get_start_addr16(linea_vars.DESTX, linea_vars.DESTY);
+
+    for ( ; count > 0; count--)
+    {
+        src = (UBYTE *)linea_vars.FBASE + *str++;
+        save_dst = dst;
+
+        switch(mode) {
+        default:    /* WM_REPLACE */
+            for (n = height, p = src; n > 0; n--)
+            {
+                for (mask = 0x80, q = dst; mask; mask >>= 1)
+                {
+                    *q++ = (*p & mask) ? fgcol : bgcol;
+                }
+                p += src_width;
+                dst += dst_width;
+            }
+            break;
+        case WM_TRANS:
+            for (n = height, p = src; n > 0; n--)
+            {
+                for (mask = 0x80, q = dst; mask; mask >>= 1)
+                {
+                    if (*p & mask)
+                        *q = fgcol;
+                    q++;
+                }
+                p += src_width;
+                dst += dst_width;
+            }
+            break;
+        case WM_XOR:
+            for (n = height, p = src; n > 0; n--)
+            {
+                for (mask = 0x80, q = dst; mask; mask >>= 1)
+                {
+                    if (*p & mask)
+                        *q = ~*q;
+                    q++;
+                }
+                p += src_width;
+                dst += dst_width;
+            }
+            break;
+        case WM_ERASE:
+            for (n = height, p = src; n > 0; n--)
+            {
+                for (mask = 0x80, q = dst; mask; mask >>= 1)
+                {
+                    /*
+                     * note: here we differ from TOS 4.04 which seems to
+                     * behave as though the assignment below was "*q = bgcol;".
+                     * the TOS4.04 behaviour is a bug IMO.
+                     */
+                    if (!(*p & mask))
+                        *q = fgcol;
+                    q++;
+                }
+                p += src_width;
+                dst += dst_width;
+            }
+            break;
+        }
+
+        dst = save_dst + 8;
+    }
+}
+#endif
+
+
+/*
+ * output a character string directly to the screen
+ *
+ * this is used for the special (but common) case of a string with no
+ * special effects, no rotation, no justification, left-alignment,
+ * byte-aligned output, using a monospaced font with a cell width of 8
+ *
+ * note: like Atari TOS, we assume that the font contains the full
+ * character set, i.e. first_ade==0, last_ade==255
+ */
+void direct_screen_blit(WORD count, WORD *str)
+{
+    WORD forecol, height, mode, n, planes;
+    WORD src_width, dst_width;
+    UBYTE *src, *dst, *save_dst;
+
+    height = linea_vars.DELY;
+    mode = linea_vars.WRT_MODE;
+    src_width = linea_vars.FWIDTH;
+    dst_width = linea_vars.v_lin_wr;
+
+#if CONF_WITH_VDI_16BIT
+    if (TRUECOLOR_MODE)
+    {
+        direct_screen_blit16(count, str);
+        return;
+    }
+#endif
+
+    dst = (UBYTE *)get_start_addr(linea_vars.DESTX, linea_vars.DESTY);
+    if (linea_vars.DESTX & 0x0008)
+        dst++;
+
+    for ( ; count > 0; count--)
+    {
+        src = (UBYTE *)linea_vars.FBASE + *str++;
+        save_dst = dst;
+        forecol = linea_vars.TEXTFG;
+        for (planes = linea_vars.v_planes; planes > 0; planes--)
+        {
+            UBYTE *p, *q;
+
+            switch(mode) {
+            default:    /* WM_REPLACE */
+                if (forecol & 1)
+                {
+                    for (n = height, p = src, q = dst; n > 0; n--)
+                    {
+                        *q = *p;
+                        p += src_width;
+                        q += dst_width;
+                    }
+                }
+                else
+                {
+                    for (n = height, q = dst; n > 0; n--)
+                    {
+                        *q = 0;
+                        q += dst_width;
+                    }
+                }
+                break;
+            case WM_TRANS:
+                if (forecol & 1)
+                {
+                    for (n = height, p = src, q = dst; n > 0; n--)
+                    {
+                        *q |= *p;
+                        p += src_width;
+                        q += dst_width;
+                    }
+                }
+                else
+                {
+                    for (n = height, p = src, q = dst; n > 0; n--)
+                    {
+                        *q &= ~*p;
+                        p += src_width;
+                        q += dst_width;
+                    }
+                }
+                break;
+            case WM_XOR:
+                for (n = height, p = src, q = dst; n > 0; n--)
+                {
+                    *q ^= *p;
+                    p += src_width;
+                    q += dst_width;
+                }
+                break;
+            case WM_ERASE:
+                if (forecol & 1)
+                {
+                    for (n = height, p = src, q = dst; n > 0; n--)
+                    {
+                        *q |= ~*p;
+                        p += src_width;
+                        q += dst_width;
+                    }
+                }
+                else
+                {
+                    for (n = height, p = src, q = dst; n > 0; n--)
+                    {
+                        *q &= *p;
+                        p += src_width;
+                        q += dst_width;
+                    }
+                }
+                break;
+            }
+            dst += sizeof(WORD);    /* next plane */
+            forecol >>= 1;
+        }
+        dst = save_dst + 1;
+        if (!IS_ODD_POINTER(dst))   /* must go to next screen word */
+        {
+            dst += (linea_vars.v_planes-1)*sizeof(WORD);
+        }
+    }
+}
+#endif
+
+
+#if CONF_WITH_VDI_16BIT
+/*
+ * output a glyph to the 16-bit screen
+ */
+static void screen_blit16(LOCALVARS *vars)
+{
+    UWORD *palette, *p, *q;
+    UBYTE *src, *dst;
+    WORD fgcol, bgcol, h, w, skew, skew_start;
+    UWORD src_mask, mask, skew_mask;
+
+    /*
+     * set skew-related values
+     *
+     * NOTE: we can't test for skewed text using vars->STYLE, since
+     * pre_blit() clears F_SKEW and F_THICKEN after it has processed them.
+     */
+    skew = linea_vars.LOFF + linea_vars.ROFF;
+    skew_mask = (UWORD)vars->skew_msk;
+    skew_start = vars->height;
+
+    /*
+     * the following adjustments are for skewed+outlined text, and make
+     * the output almost the same as produced by TOS4.
+     *
+     * 1. since the source of skewed and/or outlined text must be an
+     *    intermediate buffer, linea_vars.SOURCEX *must* be 0, and we force that.
+     *    NOTE: in versions of TOS prior to TOS4 (& in TOS4 non-TC
+     *    resolutions), this adjustment is not made.  As a result, text
+     *    output is typically clipped.
+     *
+     * 2. a negative value for the nominal destination position is OK,
+     *    because outlining has adjusted the starting position of characters
+     *    leftwards.  however, such values are prohibited by do_clip(),
+     *    which adjusts var->DESTX.  we adjust it back here ...
+     *    NOTE: this situation can only happen at the beginning of a
+     *    screen line.
+     *
+     * 3. for bigger fonts, skewing must not start at the bottom of the
+     *    buffer, otherwise parts of the outline are clipped too agressively.
+     *    at the moment, this fix is a bit of a kludge, though it works well
+     *    enough.
+     */
+    if (skew && (vars->STYLE&F_OUTLINE))
+    {
+        if (linea_vars.SOURCEX)
+        {
+            KDEBUG(("linea_vars.SOURCEX (was %d) forced to zero for intermediate buffer\n",linea_vars.SOURCEX));
+            linea_vars.SOURCEX = 0;
+            vars->tsdad = 0;    /* this was set from linea_vars.SOURCEX in screen_blit() */
+        }
+
+        if (linea_vars.DESTX < 0)
+        {
+            KDEBUG(("vars->DESTX (was %d) set to DESTX (%d)\n",vars->DESTX,linea_vars.DESTX));
+            vars->DESTX = linea_vars.DESTX;
+        }
+        if (vars->height > 8)       /* not a 6-point font */
+            skew_start -= OUTLINE_THICKNESS;
+    }
+
+    /*
+     * set up source stuff
+     */
+    src = vars->sform;
+    src_mask = 0x8000 >> vars->tsdad;
+
+    /*
+     * set up destination stuff
+     */
+    vars->dform = v_bas_ad;
+    vars->dform += vars->DESTX * sizeof(WORD);      /* add x coordinate part of addr */
+    vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)linea_vars.v_lin_wr; /* add y coordinate part of addr */
+    vars->d_next = -linea_vars.v_lin_wr;
+    dst = vars->dform;
+
+    /*
+     * set up colours
+     */
+    palette = linea_vars.CUR_WORK->ext->palette;
+    fgcol = palette[vars->forecol];
+    bgcol = palette[0];
+
+    switch(vars->WRT_MODE) {
+    /*
+     * when called via lineA, modes 4-19 (corresponding to BitBlt modes 0-15)
+     * are theoretically possible.  however, at this time we do not support them.
+     */
+    default:    /* WM_REPLACE */
+        for (h = vars->height; h > 0; h--, src += vars->s_next, dst += vars->d_next)
+        {
+            p = (UWORD *)src;
+            q = (UWORD *)dst;
+            for (w = vars->width, mask = src_mask; w > 0; w--)
+            {
+                *q++ = (*p & mask) ? fgcol : bgcol;
+                rorw1(mask);
+                if (mask == 0x8000)
+                    p++;
+            }
+            /*
+             * special handling for skewed text: since the character cells
+             * are effectively slanted, we must shift the starting position
+             * of a cell rightwards as we go up the character.
+             */
+            if (skew && (h <= skew_start))  /* OK to shift box for skewed text? */
+            {
+                rolw1(skew_mask);
+                if (skew_mask & 0x8000)
+                {
+                    rorw1(src_mask);
+                    if (src_mask == 0x8000)
+                        src++;
+                    dst += sizeof(UWORD);
+                }
+            }
+        }
+        break;
+    case WM_TRANS:
+        for (h = vars->height; h > 0; h--, src += vars->s_next, dst += vars->d_next)
+        {
+            p = (UWORD *)src;
+            q = (UWORD *)dst;
+            for (w = vars->width, mask = src_mask; w > 0; w--)
+            {
+                if (*p & mask)
+                    *q = fgcol;
+                q++;
+                rorw1(mask);
+                if (mask == 0x8000)
+                    p++;
+            }
+            /*
+             * see comments for WM_REPLACE (above) for an explanation of
+             * the following
+             */
+            if (skew && (h <= skew_start))  /* OK to shift box for skewed text? */
+            {
+                rolw1(skew_mask);
+                if (skew_mask & 0x8000)
+                {
+                    rorw1(src_mask);
+                    if (src_mask == 0x8000)
+                        src++;
+                    dst += sizeof(UWORD);
+                }
+            }
+        }
+        break;
+    case WM_XOR:
+        for (h = vars->height; h > 0; h--, src += vars->s_next, dst += vars->d_next)
+        {
+            p = (UWORD *)src;
+            q = (UWORD *)dst;
+            for (w = vars->width, mask = src_mask; w > 0; w--)
+            {
+                if (*p & mask)
+                    *q = ~*q;
+                q++;
+                rorw1(mask);
+                if (mask == 0x8000)
+                    p++;
+            }
+            /*
+             * see comments for WM_REPLACE (above) for an explanation of
+             * the following
+             */
+            if (skew && (h <= skew_start))  /* OK to shift box for skewed text? */
+            {
+                rolw1(skew_mask);
+                if (skew_mask & 0x8000)
+                {
+                    rorw1(src_mask);
+                    if (src_mask == 0x8000)
+                        src++;
+                    dst += sizeof(UWORD);
+                }
+            }
+        }
+        break;
+    case WM_ERASE:
+        for (h = vars->height; h > 0; h--, src += vars->s_next, dst += vars->d_next)
+        {
+            p = (UWORD *)src;
+            q = (UWORD *)dst;
+            for (w = vars->width, mask = src_mask; w > 0; w--)
+            {
+                /*
+                 * behaviour here differs from TOS 4.04 - for further info,
+                 * see the comments in direct_screen_blit16()
+                 */
+                if (!(*p & mask))
+                    *q = fgcol;
+                q++;
+                rorw1(mask);
+                if (mask == 0x8000)
+                    p++;
+            }
+            /*
+             * see comments for WM_REPLACE (above) for an explanation of
+             * the following
+             */
+            if (skew && (h <= skew_start))  /* OK to shift box for skewed text? */
+            {
+                rolw1(skew_mask);
+                if (skew_mask & 0x8000)
+                {
+                    rorw1(src_mask);
+                    if (src_mask == 0x8000)
+                        src++;
+                    dst += sizeof(UWORD);
+                }
+            }
+        }
+        break;
+    }
+}
+#endif
+
+
+/*
+ * output a glyph to the screen
+ *
+ * this is called each time a character is output to the screen, unless
+ * CONF_WITH_VDI_TEXT_SPEEDUP is configured, and the string to be output
+ * has no special features, in which case direct_screen_blit() is used
+ * to output a whole string at once.
  */
 static void screen_blit(LOCALVARS *vars)
 {
@@ -744,6 +1194,11 @@ static void screen_blit(LOCALVARS *vars)
  */
 void planar_text_blit(LOCALVARS *vars)
 {
+    /*
+     * note that the casts below allow the compiler to generate a mulu
+     * instruction rather than calling _mulsi3(): this by itself speeds
+     * up plain text output by about 3% ...
+     */
     vars->tddad = vars->DESTX & 0x000f;
     vars->dform = v_bas_ad;
     vars->dform += (vars->DESTX&0xfff0)>>shift_offset[linea_vars.v_planes];
@@ -755,7 +1210,7 @@ void planar_text_blit(LOCALVARS *vars)
 
 
 /*
- * resize characters for lineA
+ * resize characters for line-A
  *
  * this is similar to act_siz(), but note that act_siz() always starts
  * with the same value in the accumulator, while here the initial value
@@ -770,8 +1225,8 @@ void planar_text_blit(LOCALVARS *vars)
  *  size        value to scale
  *
  * used variables:
- *  DDAINC      DDA increment passed externally
- *  SCALDIR     0 if scale down, 1 if enlarge
+ *  linea_vars.DDAINC      DDA increment passed externally
+ *  linea_vars.SCALDIR     0 if scale down, 1 if enlarge
  *
  * exit:
  *  new size

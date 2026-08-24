@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2022 The EmuTOS development team
 
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -17,61 +17,13 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
+#include "intmath.h"
 #include "obdefs.h"
 #include "optimize.h"
 
 #include "string.h"
 #include "xbiosbind.h"
-
-
-/*
- *  sound() - an internal routine used by the AES and desktop
- *
- *  This routine has two functions:
- *  1. play a sound (iff isfreq==TRUE)
- *      'freq' is the frequency in Hz; must be > 0
- *      'dura' is the duration in ~250msec units: must be < 32
- *  2. enable/disable sound playing by this function (iff isfreq==FALSE)
- *      'freq' is the control:
- *          -1 => do nothing
- *           0 => enable
- *           otherwise disable
- *      'dura' is not used
- *
- *  in both cases, the function returns the current disabled state, as
- *  set previously (0 => enabled, otherwise disabled)
- */
-WORD sound(WORD isfreq, WORD freq, WORD dura)
-{
-    static UBYTE snddat[16];
-    static WORD disabled;
-
-    if (isfreq)     /* Play a sound? */
-    {
-        if (disabled)
-            return 1;
-
-        snddat[0] = 0;  snddat[1] = (125000L / freq);       /* channel A pitch lo */
-        snddat[2] = 1;  snddat[3] = (125000L / freq) >> 8;  /* channel A pitch hi */
-        snddat[4] = 7;  snddat[5] = 0xFE;
-        snddat[6] = 8;  snddat[7] = 0x10;                   /* amplitude: envelop */
-        snddat[8] = 11;  snddat[9] = 0;                     /* envelope lo */
-        snddat[10] = 12;  snddat[11] = dura * 8;            /* envelope hi */
-        snddat[12] = 13;  snddat[13] = 9;                   /* envelope type */
-        snddat[14] = 0xFF;  snddat[15] = 0;
-
-        Dosound((LONG)snddat);
-    }
-    else            /* else enable/disable sound */
-    {
-        if (freq != -1)
-            disabled = freq;
-    }
-
-    return disabled;
-}
 
 
 /*
@@ -88,9 +40,10 @@ WORD sound(WORD isfreq, WORD freq, WORD dura)
  *      . 'TEST.A.B.C' is converted to 'TEST    A.B'
  *      . 'TESTTESTTEST' is converted to 'TESTTEST'
  */
-void fmt_str(BYTE *instr,BYTE *outstr)
+void fmt_str(const char *instr, char *outstr)
 {
-    BYTE *p, *q;
+    const char *p;
+    char *q;
 
     /* copy up to 8 bytes before the (first) dot (we eat excess bytes) */
     for (p = instr, q = outstr; *p; p++)
@@ -121,9 +74,10 @@ void fmt_str(BYTE *instr,BYTE *outstr)
  *  Does the reverse of fmt_str() above.  For example,
  *      'SAMPLE  PRG' is converted to 'SAMPLE.PRG'.
  */
-void unfmt_str(BYTE *instr, BYTE *outstr)
+void unfmt_str(const char *instr, char *outstr)
 {
-    BYTE    *pstr, temp;
+    const char *pstr;
+    char temp;
 
     pstr = instr;
     while(*pstr && ((pstr - instr) < 8))
@@ -146,9 +100,9 @@ void unfmt_str(BYTE *instr, BYTE *outstr)
  *  Copies the specified string to the te_ptext field of the TEDINFO
  *  structure for (tree,object), truncating if necessary to fit
  */
-void inf_sset(OBJECT *tree, WORD obj, BYTE *pstr)
+void inf_sset(OBJECT *tree, WORD obj, const char *pstr)
 {
-    BYTE    *text;
+    char    *text;
     TEDINFO *ted;
     OBJECT  *objptr = tree + obj;
 
@@ -162,7 +116,7 @@ void inf_sset(OBJECT *tree, WORD obj, BYTE *pstr)
  *  Copies the te_ptext field of the TEDINFO structure for (tree,object)
  *  to the specified string
  */
-void inf_sget(OBJECT *tree, WORD obj, BYTE *pstr)
+void inf_sget(OBJECT *tree, WORD obj, char *pstr)
 {
     TEDINFO *ted;
     OBJECT  *objptr = tree + obj;
@@ -174,7 +128,7 @@ void inf_sget(OBJECT *tree, WORD obj, BYTE *pstr)
 
 /*
  *  Examines 'numobj' objects in 'tree', starting at 'baseobj', looking
- *  for a SELECTED onject.  Returns the relative number of the first
+ *  for a SELECTED object.  Returns the relative number of the first
  *  SELECTED object, or -1 if none of the objects is selected.
  */
 WORD inf_gindex(OBJECT *tree, WORD baseobj, WORD numobj)
@@ -193,10 +147,14 @@ WORD inf_gindex(OBJECT *tree, WORD baseobj, WORD numobj)
 
 
 /*
- *  Return 0 if cancel was selected, 1 if okay was selected, -1 if
- *  nothing was selected
+ *  Return 1 if the 'ok' object was selected, 0 if the 'ok'+1 object was
+ *  selected, -1 otherwise.  As a side effect, when returning 0 or 1,
+ *  the corresponding button is deselected.
+ *
+ *  Usage: generally this is expected to be used with a dialog where the
+ *  OK button is immediately followed by the Cancel button
  */
-WORD inf_what(OBJECT *tree, WORD ok, WORD cncl)
+WORD inf_what(OBJECT *tree, WORD ok)
 {
     WORD    field;
     OBJECT  *objptr;
@@ -220,7 +178,7 @@ WORD inf_what(OBJECT *tree, WORD ok, WORD cncl)
  *  Validation of input has been given up in order to minimize the size of the
  *  generated code enough to making inlining it result in smaller total code size.
  */
-static UBYTE hex_dig(BYTE achar)
+static UBYTE hex_dig(char achar)
 {
     if (achar >= 'A')
         achar += 9;
@@ -230,16 +188,18 @@ static UBYTE hex_dig(BYTE achar)
 
 
 /*
- *  Starting at the specified position within a string, skip over any
- *  leading spaces.  If the next non-space byte is '\r', stop scanning,
- *  set the scanned value to zero, and return a pointer to the '\r'.
+ *  Convert a 2-digit hex character string to a WORD value
  *
- *  Otherwise, convert the next two characters (assumed to be hex digits)
- *  into a value N.  If N is 0xff, set the scanned value to -1; otherwise
- *  set the scanned value to N.  In either case, return a pointer to the
- *  byte immediately following the two hex characters.
+ *  Leading spaces are skipped and the next character is examined.  If
+ *  it is a '\r', a value of 0 is returned.  Otherwise the next two
+ *  characters (assumed to be hex digits) are returned as a WORD value.
+ *  As a special case, a string of 0xff is converted to -1 (for
+ *  reference, this is used in the assignment of a_aicon/a_dicon).
+ *
+ *  The returned pointer points to the '\r' or after the hex digits,
+ *  as applicable.
  */
-BYTE *scan_2(BYTE *pcurr, WORD *pwd)
+char *scan_2(char *pcurr, WORD *pwd)
 {
     WORD temp = 0;
 
@@ -260,12 +220,28 @@ BYTE *scan_2(BYTE *pcurr, WORD *pwd)
 
 
 /*
+ * return pointer to start of last segment of path
+ * (assumed to be the filename)
+ */
+char *filename_start(char *path)
+{
+    char *start = path;
+
+    while (*path)
+        if (*path++ == PATHSEP)
+            start = path;
+
+    return start;
+}
+
+
+/*
  *  Routine to see if the test filename matches a standard TOS
  *  wildcard string.  For example:
  *      pattern = "*.BAT"
  *      filename = "MYFILE.BAT"
  */
-WORD wildcmp(char *pattern,char *filename)
+WORD wildcmp(const char *pattern,const char *filename)
 {
 WORD i;
 
@@ -298,28 +274,4 @@ WORD i;
     }
 
     return (*pattern == *filename);
-}
-
-
-/*
- *  Inserts character 'chr' into the string pointed to 'str', at
- *  position 'pos' (positions are relative to the start of the
- *  string; inserting at position 0 means inserting at the start
- *  of the string).  'tot_len' gives the maximum length the string
- *  can grow to; if necessary, the string will be truncated after
- *  inserting the character.
- */
-void ins_char(BYTE *str, WORD pos, BYTE chr, WORD tot_len)
-{
-    WORD ii, len;
-
-    len = strlen(str);
-
-    for (ii = len; ii > pos; ii--)
-        str[ii] = str[ii-1];
-    str[ii] = chr;
-    if (len+1 < tot_len)
-        str[len+1] = '\0';
-    else
-        str[tot_len-1] = '\0';
 }

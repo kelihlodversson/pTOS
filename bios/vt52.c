@@ -1,8 +1,8 @@
 /*
- * console.c - vt52 like screen handling routines
+ * vt52.c - vt52 like screen handling routines
  *
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2021 The EmuTOS development team
  * Copyright (C) 2004 Martin Doering
  *
  * Authors:
@@ -11,8 +11,8 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-#include "config.h"
-#include "portab.h"
+
+#include "emutos.h"
 #include "lineavars.h"
 #include "font.h"
 #include "tosvars.h"            /* for save_row */
@@ -80,7 +80,6 @@ void blink(void);
 
 void (*con_state)(WORD);        /* state of conout state machine */
 
-
 /* jumptable for ESC + uppercase character */
 static void (* const am_tab[])(void) = {
     cursor_up,          /* Cursor Up */
@@ -141,8 +140,7 @@ static void (* const cntl_tab[])(void) = {
 /*
  * cputc - console output
  */
-void
-cputc(WORD ch)
+void cputc(WORD ch)
 {
 #if CONF_SERIAL_CONSOLE && !CONF_SERIAL_CONSOLE_ANSI
     /* When no translation needs to be performed, output the character
@@ -166,8 +164,7 @@ cputc(WORD ch)
 /*
  * normal_ascii - state is normal output
  */
-static void
-normal_ascii(WORD ch)
+static void normal_ascii(WORD ch)
 {
     /* If the character is printable ascii, go print it */
     if ( ch >= ' ' ) {
@@ -194,7 +191,7 @@ normal_ascii(WORD ch)
         con_state = esc_ch1;    /* set constate to handle esc codes */
     }
 
-    /* Other control haracters */
+    /* Other control characters */
     else if ( ch >= 7 && ch <= 13 ) {
 #if CONF_SERIAL_CONSOLE_ANSI
         bconout(1, ch);
@@ -205,8 +202,7 @@ normal_ascii(WORD ch)
 }
 
 
-static void
-nop(void)
+static void nop(void)
 {
     return;
 }
@@ -215,8 +211,8 @@ nop(void)
 /*
  * do_bell - Ring the bell (in sound.c)
  */
-static void
-do_bell(void) {
+static void do_bell(void)
+{
     if (conterm & 4) {
         bell();
     }
@@ -226,8 +222,7 @@ do_bell(void) {
 /*
  * do_backspace - Same as Cursor Left
  */
-static void
-do_backspace (void)
+static void do_backspace(void)
 {
     cursor_left_impl();
 }
@@ -236,8 +231,8 @@ do_backspace (void)
 /*
  * do_tab - calculate the tabulator values
  */
-static void
-do_tab(void) {
+static void do_tab(void)
+{
     move_cursor((linea_vars.v_cur_cx & 0xfff8) + 8, linea_vars.v_cur_cy);
 }
 
@@ -245,15 +240,14 @@ do_tab(void) {
 /*
  * esc_ch1 - state is: handle first character of an escape sequence
  */
-static void
-esc_ch1 (WORD ch)
+static void esc_ch1(WORD ch)
 {
     con_state = normal_ascii;           /* default state is normal ascii */
 
     if ( (ch >= 'A') && (ch <= 'M') ) {     /* handle the range A-M */
         (*am_tab[ch-'A'])();
     }
-    else if ( (ch >= 'b') && (ch <= 'w') ) {/* handle b-w */    
+    else if ( (ch >= 'b') && (ch <= 'w') ) {/* handle b-w */
         (*bw_tab[ch-'b'])();
     }
     else if ( ch == 'Y' ) {                 /* direct cursor addressing, need more chars */
@@ -265,8 +259,7 @@ esc_ch1 (WORD ch)
 /*
  * get_row - state is: calculate row from character
  */
-static void
-get_row (WORD ch)
+static void get_row(WORD ch)
 {
     save_row = ch - POSITION_BIAS;      /* Remove space bias */
     con_state = get_column;
@@ -274,15 +267,21 @@ get_row (WORD ch)
 
 
 /*
- * get_row - state is: calculate column from character
+ * get_column - state is: calculate column from character
  */
-static void
-get_column (WORD ch)
+static void get_column(WORD ch)
 {
     int row, col;
+    char ansi[20];
+
+    MAYBE_UNUSED(ansi);
 
     col = ch - POSITION_BIAS;           /* Remove space bias */
     row = save_row;
+#if CONF_SERIAL_CONSOLE_ANSI
+    sprintf(ansi, "\033[%d;%dH", row + 1, col + 1);
+    bconout_str(1, ansi);
+#endif
     move_cursor(col,row);
     con_state = normal_ascii;           /* Next char is not special */
 }
@@ -291,8 +290,7 @@ get_column (WORD ch)
 /*
  * get_fg_col - state is: get foreground color
  */
-static void
-get_fg_col (WORD ch)
+static void get_fg_col(WORD ch)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     char ansi[10];
@@ -309,8 +307,7 @@ get_fg_col (WORD ch)
 /*
  * get_bg_col - state is: get background color
  */
-static void
-get_bg_col (WORD ch)
+static void get_bg_col(WORD ch)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     char ansi[10];
@@ -324,15 +321,13 @@ get_bg_col (WORD ch)
 }
 
 
-static void
-set_fg(void)
+static void set_fg(void)
 {
     con_state = get_fg_col;             /* Next char is the FG color */
 }
 
 
-static void
-set_bg(void)
+static void set_bg(void)
 {
     con_state = get_bg_col;             /* Next char is the BG color */
 }
@@ -341,8 +336,7 @@ set_bg(void)
 /*
  * clear_and_home - Clear Screen and Home Cursor
  */
-static void
-clear_and_home(void)
+static void clear_and_home(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
 # if SERIAL_CONSOLE_HONOR_HOME
@@ -363,8 +357,7 @@ clear_and_home(void)
 /*
  * cursor_up - Alpha Cursor Up
  */
-static void
-cursor_up (void)
+static void cursor_up(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     bconout_str(1, "\033[A");
@@ -378,8 +371,7 @@ cursor_up (void)
 /*
  * cursor_down_impl - Used by Cursor Down and LF
  */
-static void
-cursor_down_impl (void)
+static void cursor_down_impl(void)
 {
     if ( linea_vars.v_cur_cy != linea_vars.v_cel_my)
         move_cursor(linea_vars.v_cur_cx, linea_vars.v_cur_cy + 1);
@@ -389,8 +381,7 @@ cursor_down_impl (void)
 /*
  * cursor_down - Alpha Cursor Down
  */
-static void
-cursor_down (void)
+static void cursor_down(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     bconout_str(1, "\033[B");
@@ -403,8 +394,7 @@ cursor_down (void)
 /*
  * cursor_right - Alpha Cursor Right
  */
-static void
-cursor_right (void)
+static void cursor_right(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     bconout_str(1, "\033[C");
@@ -418,8 +408,7 @@ cursor_right (void)
 /*
  * cursor_left_impl - Used by Cursor Left and Backspace
  */
-static void
-cursor_left_impl (void)
+static void cursor_left_impl(void)
 {
     if ( linea_vars.v_cur_cx )
         move_cursor(linea_vars.v_cur_cx - 1, linea_vars.v_cur_cy);
@@ -429,8 +418,7 @@ cursor_left_impl (void)
 /*
  * cursor_left - Alpha Cursor Left
  */
-static void
-cursor_left (void)
+static void cursor_left(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     bconout_str(1, "\033[D");
@@ -443,8 +431,7 @@ cursor_left (void)
 /*
  * cursor_home - Home Alpha Cursor
  */
-static void
-cursor_home (void)
+static void cursor_home(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
 # if SERIAL_CONSOLE_HONOR_HOME
@@ -462,8 +449,7 @@ cursor_home (void)
 /*
  * erase_to_eos - Erase to End of Screen
  */
-static void
-erase_to_eos (void)
+static void erase_to_eos(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     bconout_str(1, "\033[J");
@@ -483,8 +469,7 @@ erase_to_eos (void)
 /*
  * erase_to_eol_impl - Erase to End of Line (implementation)
  */
-static void
-erase_to_eol_impl (void)
+static void erase_to_eol_impl(void)
 {
     BOOL wrap = linea_vars.v_stat_0 & M_CEOL;      /* save line wrap status */
     WORD s_cur_x, s_cur_y;
@@ -519,8 +504,7 @@ erase_to_eol_impl (void)
 /*
  * erase_to_eol - Erase to End of Line
  */
-static void
-erase_to_eol (void)
+static void erase_to_eol(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     bconout_str(1, "\033[K");
@@ -533,8 +517,7 @@ erase_to_eol (void)
 /*
  * reverse_video_on - Reverse Video On
  */
-static void
-reverse_video_on (void)
+static void reverse_video_on(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     bconout_str(1, "\033[7m");
@@ -547,8 +530,7 @@ reverse_video_on (void)
 /*
  * reverse_video_off - Reverse Video Off
  */
-static void
-reverse_video_off (void)
+static void reverse_video_off(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     bconout_str(1, "\033[27m");
@@ -561,8 +543,7 @@ reverse_video_off (void)
 /*
  * reverse_linefeed - Reverse Index
  */
-static void
-reverse_linefeed (void)
+static void reverse_linefeed(void)
 {
     /* if not at top of screen */
     if ( linea_vars.v_cur_cy ) {
@@ -579,9 +560,11 @@ reverse_linefeed (void)
 /*
  * insert_line - Insert Line
  */
-static void
-insert_line (void)
+static void insert_line(void)
 {
+#if CONF_SERIAL_CONSOLE_ANSI
+    bconout_str(1, "\033[L");
+#endif
     cursor_off();               /* hide cursor */
     scroll_down(linea_vars.v_cur_cy);      /* scroll down 1 line & blank current line */
     move_cursor(0, linea_vars.v_cur_cy);   /* move cursor to beginning of line */
@@ -592,9 +575,11 @@ insert_line (void)
 /*
  * delete_line - Delete Line
  */
-static void
-delete_line (void)
+static void delete_line(void)
 {
+#if CONF_SERIAL_CONSOLE_ANSI
+    bconout_str(1, "\033[M");
+#endif
     cursor_off();               /* hide cursor */
     scroll_up(linea_vars.v_cur_cy);        /* scroll up 1 line & blank bottom line */
     move_cursor(0, linea_vars.v_cur_cy);   /* move cursor to beginning of line */
@@ -605,8 +590,7 @@ delete_line (void)
 /*
  * erase_from_home - Erase from Beginning of Page to cursor
  */
-static void
-erase_from_home (void)
+static void erase_from_home(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     bconout_str(1, "\033[1J");
@@ -626,8 +610,7 @@ erase_from_home (void)
 /*
  * do_cnt_esce - Enable Cursor
  */
-static void
-do_cnt_esce (void)
+static void do_cnt_esce(void)
 {
     invert_cell(linea_vars.v_cur_cx, linea_vars.v_cur_cy);        /* complement cursor */
     linea_vars.v_stat_0 |= M_CVIS;                     /* set visibility bit */
@@ -645,8 +628,7 @@ do_cnt_esce (void)
 /*
  * cursor_on - Enable Cursor forced
  */
-static void
-cursor_on(void)
+static void cursor_on(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     /* Disabled because function used from internal VT52 implementation */
@@ -665,8 +647,7 @@ cursor_on(void)
 /*
  * cursor_on_cnt - Enable Cursor (counted depth)
  */
-static void
-cursor_on_cnt(void)
+static void cursor_on_cnt(void)
 {
     /* if disable count is zero (cursor still shown) then return */
     if ( !linea_vars.disab_cnt )
@@ -681,8 +662,7 @@ cursor_on_cnt(void)
 /*
  * cursor_off - Disable Cursor
  */
-static void
-cursor_off (void)
+static void cursor_off(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     /* Disabled because function used from internal VT52 implementation */
@@ -712,8 +692,7 @@ cursor_off (void)
 /*
  * save_cursor_pos - Save Cursor Position
  */
-static void
-save_cursor_pos (void)
+static void save_cursor_pos(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     /* Disabled because function used from internal VT52 implementation */
@@ -731,8 +710,7 @@ save_cursor_pos (void)
 /*
  * restore_cursor_pos - Restore Cursor Position
  */
-static void
-restore_cursor_pos (void)
+static void restore_cursor_pos(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     /* Disabled because function used from internal VT52 implementation */
@@ -753,8 +731,7 @@ restore_cursor_pos (void)
  *
  * upper left coords. (0,y), lower right coords. (max,y)
  */
-static void
-erase_line (void)
+static void erase_line(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     bconout_str(1, "\033[2K\033[1G");
@@ -773,8 +750,7 @@ erase_line (void)
  * upper left coords. (0,y)
  * lower right coords. (x,y)
  */
-static void
-erase_from_bol_impl (void)
+static void erase_from_bol_impl(void)
 {
     WORD s_cur_x, s_cur_y;
 
@@ -807,8 +783,7 @@ erase_from_bol_impl (void)
  * upper left coords. (0,y)
  * lower right coords. (x,y)
  */
-static void
-erase_from_bol (void)
+static void erase_from_bol(void)
 {
 #if CONF_SERIAL_CONSOLE_ANSI
     bconout_str(1, "\033[1K");
@@ -821,9 +796,11 @@ erase_from_bol (void)
 /*
  * line_wrap_on() - Wrap at End of Line
  */
-static void
-line_wrap_on(void)
+static void line_wrap_on(void)
 {
+#if CONF_SERIAL_CONSOLE_ANSI
+    bconout_str(1, "\033[7h");
+#endif
     linea_vars.v_stat_0 |= M_CEOL;    /* set the eol handling bit */
 }
 
@@ -831,9 +808,11 @@ line_wrap_on(void)
 /*
  * line_wrap_off - Discard at End of Line
  */
-static void
-line_wrap_off(void)
+static void line_wrap_off(void)
 {
+#if CONF_SERIAL_CONSOLE_ANSI
+    bconout_str(1, "\033[7l");
+#endif
     linea_vars.v_stat_0 &= ~M_CEOL;    /* clear the eol handling bit */
 }
 
@@ -841,8 +820,7 @@ line_wrap_off(void)
 /*
  * ascii_cr - carriage return
  */
-static void
-ascii_cr (void)
+static void ascii_cr(void)
 {
     /* beginning of current line */
     move_cursor(0, linea_vars.v_cur_cy);
@@ -852,8 +830,7 @@ ascii_cr (void)
 /*
  * ascii_lf - line feed
  */
-static void
-ascii_lf (void)
+static void ascii_lf(void)
 {
     /* at bottom of screen? */
     if ( linea_vars.v_cur_cy != linea_vars.v_cel_my )
@@ -871,8 +848,7 @@ ascii_lf (void)
  *
  * This routine may trash registers, when called from assembler!
  */
-void
-blink (void)
+void blink(void)
 {
     /* test visibility/semaphore bit */
     if (!(linea_vars.v_stat_0 & M_CVIS) )
@@ -916,12 +892,11 @@ blink (void)
  *   M_CFLASH - cursor flash on
  *   M_CVIS   - cursor visibility on
  */
-WORD
-cursconf(WORD function, WORD operand)
+WORD cursconf(WORD function, WORD operand)
 {
     switch (function) {
     case 0:
-        cursor_off();                   /* set cursor unvisible */
+        cursor_off();                   /* set cursor non-visible */
         break;
     case 1:
         cursor_on();                    /* set cursor visible */
@@ -933,7 +908,7 @@ cursconf(WORD function, WORD operand)
         linea_vars.v_stat_0 |= M_CFLASH;           /* set cursor flash bit */
         break;
     case 4:
-        linea_vars.v_period = operand;  /* set cursor flash interval */
+        linea_vars.v_period = LOBYTE(operand);  /* set cursor flash interval */
         break;
     case 5:
         return(linea_vars.v_period);    /* set cursor flash interval */
@@ -943,11 +918,13 @@ cursconf(WORD function, WORD operand)
 
 
 /*
- * con_state_init - initialize the conout state machine
+ * vt52_init - initialize the conout state machine
  */
-void
-vt52_init(void)
+void vt52_init(void)
 {
+    /* set font-related lineA variables */
+    font_set_default();
+
     /* Initial cursor settings */
     linea_vars.v_cur_cx = 0;            /* cursor to column 0, row 0 */
     linea_vars.v_cur_cy = 0;

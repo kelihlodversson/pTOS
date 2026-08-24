@@ -14,7 +14,7 @@
 #include "portab.h"
 
 #include "asm.h"
-#include "../bios/lineavars.h"
+#include "lineavars.h"
 #include "vdi_defs.h"
 #include "vdi_textblit.h"
 #include "kprint.h"

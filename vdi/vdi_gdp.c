@@ -3,175 +3,211 @@
  *
  * Copyright 1982 by Digital Research Inc.  All rights reserved.
  * Copyright 1999 by Caldera, Inc. and Authors:
- * Copyright 2002-2017 by The EmuTOS development team
+ * Copyright 2002-2022 by The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-
-
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "intmath.h"
+#include "aesext.h"
 #include "vdi_defs.h"
-#include "../bios/lineavars.h"
+#include "lineavars.h"
 
 
+/*
+ * the number of points used to describe the corners of a rounded
+ * rectangle.  this should be 5 for TOS visual compatibility.
+ */
+#define CORNER_POINTS   5
+#define RBOX_POINTS     (4*CORNER_POINTS+1)     /* for polyline()/wideline() */
+#define RFBOX_POINTS    (4*CORNER_POINTS)       /* for polygon() */
 
 /* Definitions for sine and cosine */
 #define    HALFPI    900
 #define    PI        1800
 #define    TWOPI     3600
 
-/* local GDP variables */
+/*
+ * the maximum value (in tenths of a degree) that can be looked up
+ * in sin_tbl[] below
+ */
+#define MAX_TABLE_ANGLE 896
+#define SINE_TABLE_SIZE ((MAX_TABLE_ANGLE/8)+1)
+
+/*
+ * local GDP variables
+ *
+ * these are used to pass values to clc_arc(), clc_nsteps(), and clc_pts()
+ */
 static WORD beg_ang, del_ang, end_ang;
 static WORD xc, xrad, yc, yrad;
 
-/* Prototypes local to this module */
-static void gdp_rbox(Vwk * vwk);
-static void gdp_arc(Vwk * vwk);
-static int  clc_nsteps(void);
-static void gdp_ell(Vwk * vwk);
-static void clc_arc(Vwk * vwk, int steps);
 
-
-
-/* Sines of angles 0 - 90 degrees normalized between 0-32767. */
-static const WORD sin_tbl[92] = {
-        0,   572,  1144,  1715,  2286,  2856,  3425,  3993,
-     4560,  5126,  5690,  6252,  6813,  7371,  7927,  8481,
-     9032,  9580, 10126, 10668, 11207, 11743, 12275, 12803,
-    13328, 13848, 14364, 14876, 15383, 15886, 16383, 16876,
-    17364, 17846, 18323, 18794, 19260, 19720, 20173, 20621,
-    21062, 21497, 21925, 22347, 22762, 23170, 23571, 23964,
-    24351, 24730, 25101, 25465, 25821, 26169, 26509, 26841,
-    27165, 27481, 27788, 28087, 28377, 28659, 28932, 29196,
-    29451, 29697, 29934, 30162, 30381, 30591, 30791, 30982,
-    31163, 31335, 31498, 31650, 31794, 31927, 32051, 32165,
-    32269, 32364, 32448, 32523, 32587, 32642, 32687, 32722,
-    32747, 32762, 32767, 32767
+/*
+ * Sines of angles 0-90 degrees in 0.8 degree steps, normalized to 0-65536
+ *
+ * NOTE: because of the construction of this table, there is no entry for
+ * exactly 90 degrees (the final entry is for 89.6 degrees).  We take
+ * advantage of this to scale to a maximum value which we cannot actually
+ * return.  We special-case the maximum value in clc_pts() which is the
+ * only place where we use this table.
+ */
+static const UWORD sin_tbl[SINE_TABLE_SIZE] = {
+     0,   915,  1830,  2744,  3658,  4572,  5484,  6395,
+  7305,  8214,  9121, 10026, 10929, 11831, 12729, 13626,
+ 14519, 15410, 16298, 17183, 18064, 18942, 19816, 20686,
+ 21553, 22415, 23272, 24125, 24974, 25817, 26656, 27489,
+ 28317, 29140, 29956, 30767, 31572, 32371, 33163, 33949,
+ 34729, 35501, 36267, 37026, 37777, 38521, 39258, 39986,
+ 40708, 41421, 42126, 42823, 43511, 44191, 44862, 45525,
+ 46179, 46824, 47459, 48086, 48703, 49310, 49908, 50496,
+ 51075, 51643, 52201, 52750, 53287, 53815, 54332, 54838,
+ 55334, 55819, 56293, 56756, 57208, 57649, 58078, 58497,
+ 58903, 59299, 59683, 60055, 60415, 60764, 61101, 61426,
+ 61739, 62040, 62328, 62605, 62870, 63122, 63362, 63589,
+ 63804, 64007, 64197, 64375, 64540, 64693, 64833, 64960,
+ 65075, 65177, 65266, 65343, 65407, 65458, 65496, 65522,
+ 65534
 };
 
 
+/* precalculated sine/cosine values used in gdp_rbox()
+ * NOTE: these are scaled to a max value of 32767!
+ */
+#define Isin225     12539
+#define Isin450     23170
+#define Isin675     30273
+#define Icos225     Isin675
+#define Icos450     Isin450
+#define Icos675     Isin225
+
 
 /*
- * ISin - Returns integer sin between -32767 - 32767.
+ * Isin - Returns integer sine between 0 and 32767
  *
- * Uses integer lookup table sintable^[]. Expects angle in tenths of
- * degree 0 - 32767; angles >3599 will be normalised to 0-3599.
- * Assumes positive angles only.
+ * Input is the angle in tenths of a degree, 0 to 900
  */
-static WORD Isin(WORD angle)
+static UWORD Isin(WORD angle)
 {
-    WORD index, remainder, tmpsin;      /* holder for sin. */
-    WORD quadrant;              /* 0-3 = 1st, 2nd, 3rd, 4th.        */
+    UWORD index, remainder, tmpsin;
 
-    while (angle >= TWOPI)      /* normalise angle to 0-3599 inclusive */
-        angle -= TWOPI;
-    quadrant = angle / HALFPI;
-    switch(quadrant) {          /* quadrant MUST be 0-3 */
-    case 0:
-        break;
-
-    case 1:
-        angle = PI - angle;
-        break;
-
-    case 2:
-        angle -= PI;
-        break;
-
-    case 3:
-        angle = TWOPI - angle;
-        break;
-    }
-    index = angle / 10;
-    remainder = angle % 10;
+    index = angle >> 3;
+    remainder = angle & 7;
     tmpsin = sin_tbl[index];
+
     if (remainder != 0)         /* add interpolation. */
-        tmpsin += ((sin_tbl[index + 1] - tmpsin) * remainder) / 10;
-    if (quadrant > 1)
-        tmpsin = -tmpsin;
-    return (tmpsin);
+        tmpsin += ((sin_tbl[index + 1] - tmpsin) * remainder) >> 3;
+
+    return tmpsin;
 }
 
 
 
 /*
- * Icos - Return integer cos between -32767 and 32767.
+ * Icos - Return integer cosine between 0 and 32767
+ *
+ * Input is the angle in tenths of a degree, 0 to 900
  */
-static WORD Icos(WORD angle)
+static UWORD Icos(UWORD angle)
 {
-    if (angle >= TWOPI)         /* partial normalisation to prevent */
-        angle -= TWOPI;         /*  possible arithmetic overflow    */
-    angle = angle + HALFPI;
-
-    return Isin(angle);         /* Isin() will fully normalise */
+    return Isin(HALFPI-angle);
 }
 
 
 
 /*
- * clc_pts - calculates
+ * clc_pts - calculates and saves an endpoint position (in raster
+ *           coordinates), based on the input angle and xc/yc/xrad/yrad
  */
-
-static void clc_pts(WORD j, WORD angle)
+#define X_NEGATIVE 0x02     /* values in 'negative' flag below */
+#define Y_NEGATIVE 0x01
+static void clc_pts(Point *point, WORD angle)
 {
-    WORD k;
-    WORD *pointer;
+    WORD xdiff, ydiff;
+    WORD negative = Y_NEGATIVE;     /* default for first quadrant */
 
-    pointer = PTSIN;
-    k = mul_div(Icos(angle), xrad, 32767) + xc;
-    *(pointer + j) = k;
-    k = yc - mul_div(Isin(angle), yrad, 32767);        /* FOR RASTER CORDS. */
-    *(pointer + j + 1) = k;
+    while (angle >= TWOPI)          /* normalise angle to 0-3599 inclusive */
+        angle -= TWOPI;
+
+    if (angle > 3*HALFPI) {         /* fourth quadrant */
+        angle = TWOPI - angle;
+        negative = 0;
+    } else if (angle > PI) {        /* third quadrant */
+        angle -= PI;
+        negative = X_NEGATIVE;
+    } else if (angle > HALFPI) {    /* second quadrant */
+        angle = PI - angle;
+        negative = X_NEGATIVE|Y_NEGATIVE;
+    }
+
+    /* handle the values not handled by the table */
+    if (angle > MAX_TABLE_ANGLE)
+    {
+        xdiff = 0;
+        ydiff = yrad;
+    }
+    else if (angle < HALFPI-MAX_TABLE_ANGLE)
+    {
+        xdiff = xrad;
+        ydiff = 0;
+    }
+    else
+    {
+        xdiff = umul_shift(Icos(angle), xrad);
+        ydiff = umul_shift(Isin(angle), yrad);
+    }
+
+    if (negative & X_NEGATIVE)
+        xdiff = -xdiff;
+
+    if (negative & Y_NEGATIVE)
+        ydiff = -ydiff;
+
+    point->x = xc + xdiff;
+    point->y = yc + ydiff;
 }
 
 
 
 /*
- * clc_arc - calculates
+ * clc_arc - calculates the positions of all the points necessary to draw
+ *           a circular/elliptical arc (or a circle/ellipse), and draws it
  */
-
 static void clc_arc(Vwk * vwk, int steps)
 {
-    WORD i, j, start, angle;
+    WORD i, start, angle;
     Point * point;
 
-    if (vwk->clip) {
-        if (((xc + xrad) < vwk->xmn_clip) || ((xc - xrad) > vwk->xmx_clip) ||
-            ((yc + yrad) < vwk->ymn_clip) || ((yc - yrad) > vwk->ymx_clip))
-            return;
-    }
+    point = (Point *)PTSIN;
     start = beg_ang;
-    j = 0;
-    clc_pts(j, beg_ang);
+    clc_pts(point++, start);
     for (i = 1; i < steps; i++) {
-        j += 2;
         angle = mul_div(del_ang, i, steps) + start;
-        clc_pts(j, angle);
+        clc_pts(point, angle);
+        if (*(LONG *)point != *(LONG *)(point-1))   /* ignore duplicates */
+            point++;
     }
-    j += 2;
-    clc_pts(j, end_ang);
+    clc_pts(point++, end_ang);
+    steps = point - (Point *)PTSIN; /* number of points, not number of steps */
 
-    point = (Point*)PTSIN;
-
-    /* If pie wedge draw to center and then close. */
-    if ((CONTRL->subcode == 3) || (CONTRL->subcode == 7)) {
-        /* pie wedge */
-        Point * endpoint;
-
+    /*
+     * If pie wedge, draw to center
+     * (when 'polygon' runs, it always connects the first point to the last)
+     */
+    if ((CONTRL->subcode == 3) || (CONTRL->subcode == 7)) { /* v_pieslice()/v_ellpie() */
+        point->x = xc;
+        point->y = yc;
         steps++;
-        endpoint = point + steps;
-        endpoint->x = xc;
-        endpoint->y = yc;
     }
-    steps++;                 /* since loop in Clc_arc starts at 0 */
 
-    /* If arc or circle, do nothing because loop should close circle. */
+    point = (Point *)PTSIN;
+    /*
+     * If arc or ellarc, we draw a line;
+     * otherwise (pieslice, circle, ellipse, ellpie), we draw a polygon
+     */
     if ((CONTRL->subcode == 2) || (CONTRL->subcode == 6)) { /* v_arc() or v_ellarc() */
-        /* open arc */
         if (vwk->line_width == 1) {
             set_LN_MASK(vwk);
             polyline(vwk, point, steps, vwk->line_color);
@@ -188,24 +224,218 @@ static void clc_arc(Vwk * vwk, int steps)
 
 
 /*
+ * gdp_rbox - implements v_rbox(), v_rfbox()
+ */
+static void gdp_rbox(Vwk *vwk)
+{
+    WORD i, xcentre, ycentre, xradius, yradius;
+    WORD x1, y1, x2, y2;
+    WORD xoff[CORNER_POINTS], yoff[CORNER_POINTS];
+    WORD *p, *xp, *yp;
+    Line * line = (Line*)PTSIN;
+
+    /*
+     * set (x1,y1) to LL corner of box, (x2,y2) to UR corner of box
+     */
+    arb_line(line);
+    x1 = line->x1;
+    y1 = line->y1;
+    x2 = line->x2;
+    y2 = line->y2;
+
+    /*
+     * calculate x & y radii:
+     * . the x radius is nominally 1/64th of the screen width
+     * . because the corners are nominally quadrants of a circle, we
+     *   scale the y radius according to pixel dimensions
+     * . we clamp both radii to a maximum of half the length of the
+     *   corresponding box side
+     */
+    xradius = min(xres>>6,(x2-x1)/2);
+    yradius = min(mul_div(xradius,xsize,ysize),(y1-y2)/2);
+
+    /*
+     * for each corner we generate 5 points.  the following calculates
+     * the unsigned offset of those points from the centre of the
+     * 'circle', one quarter of which is drawn at each box corner.
+     */
+    xoff[0] = 0;
+    xoff[1] = mul_div(Icos675, xradius, 32767);
+    xoff[2] = mul_div(Icos450, xradius, 32767);
+    xoff[3] = mul_div(Icos225, xradius, 32767);
+    xoff[4] = xradius;
+    yoff[0] = yradius;
+    yoff[1] = mul_div(Isin675, yradius, 32767);
+    yoff[2] = mul_div(Isin450, yradius, 32767);
+    yoff[3] = mul_div(Isin225, yradius, 32767);
+    yoff[4] = 0;
+
+    /*
+     * now we fill in PTSIN, starting with the UR corner of the box
+     *
+     * we first calculate the centre of the circle used for the quadrant
+     * and then add in the offset (appropriately signed)
+     */
+    p = PTSIN;
+
+    xcentre = x2 - xradius;
+    ycentre = y2 + yradius;
+    xp = xoff;
+    yp = yoff;
+    for (i = 0; i < CORNER_POINTS; i++) {
+        *p++ = xcentre + *xp++;
+        *p++ = ycentre - *yp++;
+    }
+
+    /*
+     * handle LR corner: note that the offset sequence is reversed
+     *
+     * xcentre, xp and yp are already set correctly
+     */
+    ycentre = y1 - yradius;
+    for (i = 0; i < CORNER_POINTS; i++) {
+        *p++ = xcentre + *--xp;
+        *p++ = ycentre + *--yp;
+    }
+
+    /*
+     * handle LL corner
+     *
+     * ycentre, xp and yp are already set correctly
+     */
+    xcentre = x1 + xradius;
+    for (i = 0; i < CORNER_POINTS; i++) {
+        *p++ = xcentre - *xp++;
+        *p++ = ycentre + *yp++;
+    }
+
+    /*
+     * handle UL corner: the offset sequence is reversed here too
+     *
+     * xcentre, xp and yp are already set correctly
+     */
+    ycentre = y2 + yradius;
+    for (i = 0; i < CORNER_POINTS; i++) {
+        *p++ = xcentre - *--xp;
+        *p++ = ycentre - *--yp;
+    }
+
+    if (CONTRL->subcode == 8) {       /* v_rbox() */
+        set_LN_MASK(vwk);
+
+        /* join up the polyline */
+        *p++ = PTSIN[0];
+        *p = PTSIN[1];
+
+        if (vwk->line_width == 1) {
+            polyline(vwk, (Point*)PTSIN, RBOX_POINTS, vwk->line_color);
+        } else
+            wideline(vwk, (Point*)PTSIN, RBOX_POINTS);
+    } else {                    /* v_rfbox() */
+        /* polygon() will join up the first & last points itself */
+        polygon(vwk, (Point*)PTSIN, RFBOX_POINTS);
+    }
+}
+
+
+
+/*
+ * clc_nsteps - calculates the number of line segments ('steps') to draw
+ *              for a circle/ellipse, based on the larger of xrad/yrad,
+ *              and clamped to a range of MIN_ARC_CT -> MAX_ARC_CT
+ */
+static int clc_nsteps(void)
+{
+    int steps;
+
+    if (xrad > yrad)
+        steps = xrad;
+    else
+        steps = yrad;
+    steps >>= 2;
+
+    if (steps < MIN_ARC_CT)
+        steps = MIN_ARC_CT;
+    else if (steps > MAX_ARC_CT)
+        steps = MAX_ARC_CT;
+
+    return steps;
+}
+
+
+
+/*
+ * gdp_curve: handles all circle/ellipse GDP functions:
+ *  v_arc(), v_pieslice(), v_circle(), v_ellipse(), v_ellarc(), v_ellpie()
+ */
+static void gdp_curve(Vwk *vwk)
+{
+    WORD steps;
+
+    xc = PTSIN[0];
+    yc = PTSIN[1];
+
+    if (CONTRL->subcode <= 4) {   /* v_arc(), v_pieslice(), v_circle() */
+        xrad = (CONTRL->subcode == 4) ? PTSIN[4] : PTSIN[6];
+        yrad = mul_div(xrad, xsize, ysize);
+    } else {                /* v_ellipse(), v_ellarc(), v_ellpie() */
+        xrad = PTSIN[2];
+        yrad = PTSIN[3];
+    }
+
+    /*
+     * Atari TOS handles negative radii more-or-less the same as
+     * positive ones; we explicitly treat them the same.
+     */
+    if (xrad < 0)
+        xrad = -xrad;
+    if (yrad < 0)
+        yrad = -yrad;
+
+    /*
+     * we can quit now if clipping excludes the entire curve
+     */
+    if (vwk->clip) {
+        if (((xc + xrad) < vwk->xmn_clip) || ((xc - xrad) > vwk->xmx_clip) ||
+            ((yc + yrad) < vwk->ymn_clip) || ((yc - yrad) > vwk->ymx_clip))
+            return;
+    }
+
+    if ((CONTRL->subcode == 4) || (CONTRL->subcode == 5)) { /* v_circle(), v_ellipse() */
+        beg_ang = 0;
+        end_ang = TWOPI;
+    } else {
+        beg_ang = INTIN[0];
+        end_ang = INTIN[1];
+    }
+
+    del_ang = end_ang - beg_ang;
+    if (del_ang < 0)
+        del_ang += TWOPI;
+
+    steps = clc_nsteps();
+
+    clc_arc(vwk, steps);
+}
+
+
+
+/*
  * vdi_v_gdp - Major opcode for graphics device primitives
  */
-
 void vdi_v_gdp(Vwk * vwk)
 {
-    WORD i, ltmp_end, rtmp_end;
+    WORD save_beg, save_end;
     WORD *xy;
 
-    i = CONTRL->subcode;
     xy = PTSIN;
 
-    switch (i) {
+    switch(CONTRL->subcode) {
     case 1:         /* GDP BAR - converted to alpha 2 RJG 12-1-84 */
         vdi_vr_recfl(vwk);
         if (vwk->fill_per == TRUE) {
             linea_vars.LN_MASK = 0xffff;
 
-            xy = PTSIN;
             xy[5] = xy[7] = xy[3];
             xy[3] = xy[9] = xy[1];
             xy[4] = xy[2];
@@ -215,48 +445,23 @@ void vdi_v_gdp(Vwk * vwk)
         }
         break;
 
-    case 2:         /* GDP ARC */
-    case 3:         /* GDP PIE */
-        gdp_arc(vwk);
-        break;
-
-    case 4:         /* GDP CIRCLE */
-        xc = xy[0];
-        yc = xy[1];
-        xrad = xy[4];
-        yrad = mul_div(xrad, xsize, ysize);
-        del_ang = TWOPI;
-        beg_ang = 0;
-        end_ang = TWOPI;
-        clc_arc(vwk, clc_nsteps(/*vwk*/));
-        break;
-
-    case 5:         /* GDP ELLIPSE */
-        xc = xy[0];
-        yc = xy[1];
-        xrad = xy[2];
-        yrad = xy[3];
-        if (vwk->xfm_mode < 2)
-            yrad = yres - yrad;
-        del_ang = TWOPI;
-        beg_ang = 0;
-        end_ang = 0;
-        clc_arc(vwk, clc_nsteps(/*vwk*/));
-        break;
-
-    case 6:         /* GDP ELLIPTICAL ARC */
-    case 7:         /* GDP ELLIPTICAL PIE */
-        gdp_ell(vwk);
+    case 2:         /* GDP Arc */
+    case 3:         /* GDP Pieslice */
+    case 4:         /* GDP Circle */
+    case 5:         /* GDP Ellipse */
+    case 6:         /* GDP Elliptical Arc */
+    case 7:         /* GDP Elliptical Pieslice */
+        gdp_curve(vwk);
         break;
 
     case 8:         /* GDP Rounded Box */
-        ltmp_end = vwk->line_beg;
+        save_beg = vwk->line_beg;
+        save_end = vwk->line_end;
         vwk->line_beg = SQUARED;
-        rtmp_end = vwk->line_end;
         vwk->line_end = SQUARED;
         gdp_rbox(vwk);
-        vwk->line_beg = ltmp_end;
-        vwk->line_end = rtmp_end;
+        vwk->line_beg = save_beg;
+        vwk->line_end = save_end;
         break;
 
     case 9:         /* GDP Rounded Filled Box */
@@ -272,181 +477,4 @@ void vdi_v_gdp(Vwk * vwk)
         break;
 #endif
     }
-}
-
-
-
-/*
- * gdp_rbox - draws an rbox
- */
-
-static void gdp_rbox(Vwk * vwk)
-{
-    WORD i, j;
-    WORD x1,y1,x2,y2;
-    WORD rdeltax, rdeltay;
-    WORD *pointer;
-    Line * line = (Line*)PTSIN;
-
-    arb_line(line);
-    x1 = line->x1;
-    y1 = line->y1;
-    x2 = line->x2;
-    y2 = line->y2;
-
-    rdeltax = (x2 - x1) / 2;
-    rdeltay = (y1 - y2) / 2;
-
-    xrad = xres >> 6;
-    if (xrad > rdeltax)
-        xrad = rdeltax;
-
-    yrad = mul_div(xrad, xsize, ysize);
-    if (yrad > rdeltay)
-        yrad = rdeltay;
-
-    pointer = PTSIN;
-    *pointer++ = 0;
-    *pointer++ = yrad;
-    *pointer++ = mul_div(Icos(675), xrad, 32767);
-    *pointer++ = mul_div(Isin(675), yrad, 32767);
-    *pointer++ = mul_div(Icos(450), xrad, 32767);
-    *pointer++ = mul_div(Isin(450), yrad, 32767);
-    *pointer++ = mul_div(Icos(225), xrad, 32767);
-    *pointer++ = mul_div(Isin(225), yrad, 32767);
-    *pointer++ = xrad;
-    *pointer = 0;
-
-    pointer = PTSIN;
-    xc = x2 - xrad;
-    yc = y1 - yrad;
-    j = 10;
-    for (i = 9; i >= 0; i--) {
-        *(pointer + j + 1) = yc + *(pointer + i--);
-        *(pointer + j) = xc + *(pointer + i);
-        j += 2;
-    }
-    xc = x1 + xrad;
-    j = 20;
-    for (i = 0; i < 10; i++) {
-        *(pointer + j++) = xc - *(pointer + i++);
-        *(pointer + j++) = yc + *(pointer + i);
-    }
-    yc = y2 + yrad;
-    j = 30;
-    for (i = 9; i >= 0; i--) {
-        *(pointer + j + 1) = yc - *(pointer + i--);
-        *(pointer + j) = xc - *(pointer + i);
-        j += 2;
-    }
-    xc = x2 - xrad;
-    j = 0;
-    for (i = 0; i < 10; i++) {
-        *(pointer + j++) = xc + *(pointer + i++);
-        *(pointer + j++) = yc - *(pointer + i);
-    }
-    *(pointer + 40) = *pointer;
-    *(pointer + 41) = *(pointer + 1);
-
-    if (CONTRL->subcode == 8) {       /* v_rbox() */
-        set_LN_MASK(vwk);
-
-        if (vwk->line_width == 1) {
-            polyline(vwk, (Point*)PTSIN, 21, vwk->line_color);
-        } else
-            wideline(vwk, (Point*)PTSIN, 21);
-    } else {
-        polygon(vwk, (Point*)PTSIN, 21);
-    }
-
-    return;
-}
-
-
-
-/*
- * gdp_arc - draw an arc
- */
-
-static void gdp_arc(Vwk * vwk)
-{
-    WORD *pointer;
-    int steps;
-
-    pointer = INTIN;
-
-    beg_ang = *pointer++;
-    end_ang = *pointer;
-    del_ang = end_ang - beg_ang;
-    if (del_ang < 0)
-        del_ang += TWOPI;
-
-    pointer = PTSIN;
-    xrad = *(pointer + 6);
-    yrad = mul_div(xrad, xsize, ysize);
-    steps = clc_nsteps(/*vwk*/);
-    steps = mul_div(del_ang, steps, TWOPI);
-    if (steps == 0)
-        steps = 1;      /* always draw something! */
-    xc = *pointer++;
-    yc = *pointer;
-    clc_arc(vwk, steps);
-    return;
-}
-
-
-
-/*
- * clc_nsteps - calculates
- */
-
-static int clc_nsteps(void)
-{
-    int steps;
-
-    if (xrad > yrad)
-        steps = xrad;
-    else
-        steps = yrad;
-    steps = steps >> 2;
-    if (steps < 16)
-        steps = 16;
-    else {
-        if (steps > MAX_ARC_CT)
-            steps = MAX_ARC_CT;
-    }
-    return steps;
-}
-
-
-
-/*
- * gdp_ell - draws an ell
- */
-
-static void gdp_ell(Vwk * vwk)
-{
-    WORD *pointer;
-    int steps;
-
-    pointer = INTIN;
-    beg_ang = *pointer++;
-    end_ang = *pointer;
-    del_ang = end_ang - beg_ang;
-    if (del_ang < 0)
-        del_ang += TWOPI;
-
-    pointer = PTSIN;
-    xc = *pointer++;
-    yc = *pointer++;
-    xrad = *pointer++;
-    yrad = *pointer;
-    if (vwk->xfm_mode < 2)
-        yrad = yres - yrad;
-    steps = clc_nsteps(/*vwk*/);
-    steps = mul_div(del_ang, steps, TWOPI);
-    if (steps == 0)
-        steps = 1;      /* always draw something! */
-    clc_arc(vwk, steps);
-    return;
 }

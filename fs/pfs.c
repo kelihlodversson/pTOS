@@ -18,7 +18,7 @@
 #include "biosbind.h"
 #include "string.h"
 #include "kprint.h"
-#include "../bios/tosvars.h"    /* for drvbits, same convention as
+#include "tosvars.h"    /* for drvbits, same convention as
                                  * bdos/proc.c and bdos/umem.c */
 
 /* ------------------------------------------------------------------ */

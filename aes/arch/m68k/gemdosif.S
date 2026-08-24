@@ -1,7 +1,7 @@
 /*
  * gemdosif.S - Assembler part of the GEMDOS interface
  *
- * Copyright 2002-2017, The EmuTOS development team
+ * Copyright 2002-2021, The EmuTOS development team
  *           1999, Caldera Thin Clients, Inc.
  *           1987, Digital Research Inc.
  *
@@ -12,19 +12,28 @@
 #include "asmdefs.h"
 #include "asmstruct.h"
 
+/*
+ * sizes (in words) of the stacks used by:
+ *  (1) the far_bcha/far_mcha/aes_wheel functions
+ *  (2) the tikcod function
+ *
+ * as of july/2019, the observed stack usage is about 24 words for
+ * the mouse stack and 12 words for the tick stack
+ */
+#define MOUSE_STACK_SIZE    48
+#define TICK_STACK_SIZE     36
         .globl  _giveerr
         .globl  _takeerr
         .globl  _retake
-        .globl  _justretf
         .globl  _unset_aestrap
         .globl  _set_aestrap
-        .globl  _aestrap_intercepted
         .globl  _far_mcha
+#if CONF_WITH_EXTENDED_MOUSE
         .globl  _aes_wheel
+#endif
         .globl  _far_bcha
         .globl  _drawrat
 
-        .globl  _tikaddr
         .globl  _tiksav
         .globl  _CMP_TICK
         .globl  _NUM_TICK
@@ -42,10 +51,12 @@
         .extern _b_click
         .extern _mchange
         .extern _forkq
+#if CONF_WITH_EXTENDED_MOUSE
         .extern _wheel_change
+#endif
         .extern _tchange
         .extern _b_delay
-        .extern _os_beg
+        .extern __etext
 
 
 /*
@@ -182,25 +193,14 @@ no_retry:
 #endif
         rts
 
-
-
-
 // **** Trap entry: ****
 _aestrap:
-        tst.w   d0
-        jeq     _back
         cmpi.w  #0xC8,d0
         jeq     trapaes
         cmpi.w  #0xC9,d0
         jeq     trapaes
         move.l  savetrap2,-(sp)
         rts
-
-_back:
-        clr.w   -(sp)
-        move.w  #0x4C,-(sp)             // Pterm
-        trap    #1
-
 
 trapaes:
 #if CONF_DEBUG_AES_STACK
@@ -223,7 +223,6 @@ trapaes:
 
         movea.l _rlr,a6
         movea.l PD_UDA(a6),a6
-        move.w  #1,UDA_INSUPER(a6)
         move.l  a0,UDA_SPUSER(a6)
         move.l  sp,UDA_OLDSPSUPER(a6)
         movea.l UDA_SPSUPER(a6),sp
@@ -234,12 +233,10 @@ trapaes:
         jsr     _super                  // jump to supervisor entry point
         addq.l  #6,sp                   // restore stack pointer
 
-supret:                                 // return from gementry
         jbsr    _disable_interrupts     // mask out interrupts
 
         movea.l _rlr,a0
         movea.l PD_UDA(a0),a0
-        clr.w   UDA_INSUPER(a0)
         move.l  sp,UDA_SPSUPER(a0)
         movea.l UDA_OLDSPSUPER(a0),sp
         movea.l UDA_SPUSER(a0),a0
@@ -262,8 +259,6 @@ supret:                                 // return from gementry
 #endif
         rte
 
-
-
 _unset_aestrap:
 #ifdef __mcoldfire__
         lea     0x88,a0
@@ -282,24 +277,6 @@ _set_aestrap:
         move.l  #_aestrap,0x88
 #endif
         rts
-
-/*
- * determine if trap #2 has been intercepted by someone else (e.g. NVDI)
- *
- * return 1 if intercepted, else 0
- */
-_aestrap_intercepted:
-        moveq   #1,d0           // assume it's intercepted
-        movea.l 0x88,a0
-        cmpa.l  _os_beg,a0
-        jcs     done
-        cmpa.l  #__etext,a0
-        jcc     done
-        moveq   #0,d0
-done:
-        rts
-
-
 
 _far_bcha:
         move.l  sp,gstksave
@@ -346,7 +323,7 @@ _far_mcha:
         movea.l gstksave,sp
         rts
 
-#if CONF_WITH_VDI_EXTENSIONS
+#if CONF_WITH_EXTENDED_MOUSE
 /* AES mouse wheel handler called by the VDI */
 _aes_wheel:
         move.l  sp,gstksave
@@ -371,8 +348,7 @@ _aes_wheel:
 #endif
         movea.l gstksave,sp
         rts
-#endif
-
+#endif /* CONF_WITH_EXTENDED_MOUSE */
 
 /*
 ;
@@ -385,11 +361,6 @@ _drawrat:
         move.l  _drwaddr,-(sp)
         rts                     // Jump to vector stored in _drwaddr
 
-
-_justretf:
-        rts
-
-
 _tikcod:
         move.l  sp,tstksave
         lea     tstack,sp
@@ -399,10 +370,14 @@ _tikcod:
         subq.l  #1,_CMP_TICK
         jne     L2234
 
-        move.l  _NUM_TICK,-(sp)
+        move.l  _NUM_TICK,-(sp) // try to create an entry in the fork ring
         move.l  #_tchange,-(sp)
         jsr     _forkq
         addq.l  #8,sp
+        tst.w   d0              // did it work?
+        jeq     L2234
+        addq.l  #1,_CMP_TICK    // no, reset so that we try again on the next tick
+
 L2234:
         move.w  #1,-(sp)
         jsr     _b_delay
@@ -410,8 +385,6 @@ L2234:
         movea.l tstksave,sp
         move.l  _tiksav,-(sp)
         rts                     // Jump to vector stored in _tiksav
-
-
 
 SECTION_RODATA
 
@@ -443,8 +416,6 @@ savetrap2:
 _drwaddr:
         .ds.l    1
 
-_tikaddr:
-        .ds.l    1
 gstksave:
         .ds.l    1
 
@@ -479,9 +450,10 @@ criterr_stack:
 /*
  * miscellaneous stacks
  */
-        .ds.b    0x80
+
+        .ds.w    MOUSE_STACK_SIZE
 gstack:                         // gsx stack for mouse
 
-        .ds.b    0x80
+        .ds.b    TICK_STACK_SIZE
 tstack:                         // tick stack
         .ds.l    1

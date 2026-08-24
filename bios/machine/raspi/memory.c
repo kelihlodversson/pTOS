@@ -26,6 +26,7 @@
 #include "string.h"
 #include "biosext.h"
 #include "kprint.h"
+#include "bios.h"
 
 #define MEGABYTE    0x100000
 #ifdef TARGET_RPI1

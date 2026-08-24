@@ -2,7 +2,7 @@
  * pghdr.h - header file for program loaders, 'size' pgms, etc.
  *
  * Copyright (C) 2001 Lineo, Inc.
- * Copyright (C) 2015-2017 The EmuTOS development team
+ * Copyright (C) 2015-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -34,11 +34,11 @@ typedef struct
 typedef struct
 {
         LONG    pi_tpalen ;             /*  length of tpa area          */
-        BYTE    *pi_tbase ;             /*  start addr of text seg      */
+        UBYTE   *pi_tbase ;             /*  start addr of text seg      */
         LONG    pi_tlen ;               /*  length of text seg          */
-        BYTE    *pi_dbase ;             /*  start addr of data seg      */
+        UBYTE   *pi_dbase ;             /*  start addr of data seg      */
         LONG    pi_dlen ;               /*  length of data seg          */
-        BYTE    *pi_bbase ;             /*  start addr of bss  seg      */
+        UBYTE   *pi_bbase ;             /*  start addr of bss  seg      */
         LONG    pi_blen ;               /*  length of bss  seg          */
         LONG    pi_slen ;               /*  length of symbol table      */
 } PGMINFO;

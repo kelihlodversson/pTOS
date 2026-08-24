@@ -21,6 +21,7 @@
 #include "ikbd.h"
 #include "iorec.h"
 #include "vectors.h"
+#include "vt52.h"
 #include "kprint.h"
 #include "asm.h"
 #include "xbios.h"
@@ -64,10 +65,11 @@ void init_exc_vec(void)
     }
 }
 
-void init_user_vec(void)
+void init_user_vec(UWORD first_boot)
 {
     volatile ULONG* vector_addr = (ULONG*)0x100;
     int i;
+    MAYBE_UNUSED(first_boot);
     for(i=0; i<192; i++)
     {
         *(vector_addr++) = (ULONG)any_vec;

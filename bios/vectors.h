@@ -1,7 +1,7 @@
 /*
  * vectors.h - exception vectors, interrupt routines and system hooks
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2025 The EmuTOS development team
  *
  * Authors:
  *  LVL     Laurent Vogel
@@ -13,32 +13,32 @@
 #ifndef VECTORS_H
 #define VECTORS_H
 
-#include "portab.h"
-
 /* initialize default exception vectors */
 
-extern void init_exc_vec(void);
-extern void init_user_vec(void);
+void init_exc_vec(void);
+void init_user_vec(UWORD first_boot);
 
 /* initialise acia vectors */
 
-extern void init_acia_vecs(void);
+void init_acia_vecs(void);
 
 /* some exception vectors */
 
 #if CONF_WITH_ATARI_VIDEO
-extern void int_hbl(void);
+void int_hbl(void);
 #endif
-extern void int_vbl(void);
-extern void int_linea(void);
-extern void int_timerc(void);
+void int_vbl(void);
+void int_linea(void);
+void int_timerc(void);
 
-extern void gemtrap(void);
-extern void biostrap(void);
-extern void xbiostrap(void);
+void biostrap(void);
+void xbiostrap(void);
+#ifndef __m68k__
+void gemtrap(void);    /* ARM's own VDI trap dispatcher, bios/arch/arm/vectorsasm.S */
+#endif
 
-extern void just_rte(void);
-extern void just_rts(void);
+void just_rte(void);
+void just_rts(void);
 
 #if CONF_WITH_BUS_ERROR
 long check_read_byte(long);
@@ -46,10 +46,10 @@ long check_read_byte(long);
 
 
 /* */
-extern LONG default_etv_critic(WORD err,WORD dev);
-extern void int_illegal(void);
-extern void int_priv(void);
-extern void int_unimpint(void);
+LONG default_etv_critic(WORD err,WORD dev);
+void int_illegal(void);
+void int_priv(void);
+void int_unimpint(void);
 
 #ifdef __arm__
 #define trap_save_area 0 /* not used on arm */
@@ -78,13 +78,26 @@ extern WORD trap_save_area[];
 /* MFP interrupt vectors */
 #define VEC_MFP6   (*(volatile PFVOID*)0x118) /* MFP level 6 interrupt vector */
 
+#if CONF_WITH_SCC
+/* SCC interrupt vectors, default addresses */
+#define VEC_SCCB_TBE (*(volatile PFVOID*)0x180) /* Channel B, transmit buffer empty */
+#define VEC_SCCB_EXT (*(volatile PFVOID*)0x188) /* Channel B, external status change */
+#define VEC_SCCB_RXA (*(volatile PFVOID*)0x190) /* Channel B, receive character available */
+#define VEC_SCCB_SRC (*(volatile PFVOID*)0x198) /* Channel B, special receive condition */
+
+#define VEC_SCCA_TBE (*(volatile PFVOID*)0x1a0) /* Channel A, transmit buffer empty */
+#define VEC_SCCA_EXT (*(volatile PFVOID*)0x1a8) /* Channel A, external status change */
+#define VEC_SCCA_RXA (*(volatile PFVOID*)0x1b0) /* Channel A, receive character available */
+#define VEC_SCCA_SRC (*(volatile PFVOID*)0x1b8) /* Channel A, special receive condition */
+#endif
+
 /* Atari hardware interrupt mapping */
 #define VEC_HBL     VEC_LEVEL2                /* HBL interrupt vector */
 #define VEC_VBL     VEC_LEVEL4                /* VBL interrupt vector */
 #define VEC_ACIA    VEC_MFP6                  /* Keyboard/MIDI interrupt vector */
 
 /* OS exception mapping */
-#define VEC_AES     VEC_TRAP2                 /* AES trap exception vector */
+#define VEC_GEM     VEC_TRAP2                 /* GEM trap exception vector */
 #define VEC_BIOS    VEC_TRAP13                /* BIOS trap exception vector */
 #define VEC_XBIOS   VEC_TRAP14                /* XBIOS trap exception vector */
 
@@ -130,6 +143,26 @@ static inline LONG protect_wlwwwl(LONG (*func)(void), WORD a, LONG b, WORD c, WO
 {
     return ((LONG (*)(WORD, LONG, WORD, WORD, WORD, LONG))func)(a,b,c,d,e,f);
 }
+#endif
+
+/* interrupt handlers in vectors.S */
+#if CONF_WITH_MFP_RS232
+void mfp_rs232_rx_interrupt(void);
+void mfp_rs232_tx_interrupt(void);
+#endif
+
+#if CONF_WITH_TT_MFP
+void mfp_tt_rx_interrupt(void);
+void mfp_tt_tx_interrupt(void);
+#endif
+
+#if CONF_WITH_SCC
+void scca_rx_interrupt(void);
+void scca_tx_interrupt(void);
+void scca_es_interrupt(void);
+void sccb_rx_interrupt(void);
+void sccb_tx_interrupt(void);
+void sccb_es_interrupt(void);
 #endif
 
 #endif /* VECTORS_H */

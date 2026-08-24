@@ -5,7 +5,7 @@
  * scancodes: those scancodes which do not change, regardless of
  * language.  These were previously defined in many places.
  *
- * Copyright (C) 2016 The EmuTOS development team
+ * Copyright (C) 2016-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -37,6 +37,9 @@
 #define SHIFT_ARROW_DOWN    0x5032
 #define SHIFT_ARROW_LEFT    0x4b34
 #define SHIFT_ARROW_RIGHT   0x4d36
+#define CTRL_ARROW_LEFT     0x7300
+#define CTRL_ARROW_RIGHT    0x7400
+
 #define CTRL_ARROW_LEFT     0x7300
 #define CTRL_ARROW_RIGHT    0x7400
 

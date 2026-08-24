@@ -1,7 +1,7 @@
 /*
  * bootparams.c - ramtos boot parameters
  *
- * Copyright (C) 2017 The EmuTOS development team
+ * Copyright (C) 2019 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -10,8 +10,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "bootparams.h"
 
 #if EMUTOS_LIVES_IN_RAM

@@ -1,7 +1,7 @@
 /*
  * asm.h - Assembler help routines
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2022 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -11,8 +11,9 @@
  */
 
 /*
- * This file contains utility routines (macros) to
- * perform functions not directly available from C.
+ * This file contains two types of item:
+ * . function prototypes for functions in miscasm.S
+ * . macros/inline functions to perform functions not directly available from C
  *
  * available macros:
  *
@@ -32,30 +33,58 @@
 #ifndef ASM_H
 #define ASM_H
 
-/*
- * values of 'mode' for Pexec()
- *
- * these were moved here because of the definition of trap1_pexec() below
- */
-#define PE_LOADGO     0
-#define PE_LOAD       3
-#define PE_GO         4
-#define PE_BASEPAGE   5
-#define PE_GOTHENFREE 6
-#define PE_BASEPAGEFLAGS 7
-#define PE_RELOCATE   50    /* required for NatFeats support only, not in Atari TOS */
-
-/* OS entry points implemented in util/miscasm.S */
-extern long trap1(int, ...);
-extern long trap1_pexec(short mode, const char * path,
-  const void * tail, const char * env);
+/* External function doing nothing */
+extern void just_rts(void);
 
 /* Wrapper around the STOP instruction. This preserves SR. */
 extern void stop_until_interrupt(void);
 
+/* perform WORD multiply/divide with rounding */
+WORD mul_div_round(WORD mult1, WORD mult2, WORD divisor);
+
+/* protect d2/a2 when calling external user-supplied code */
+LONG protect_v(LONG (*func)(void));
+LONG protect_w(LONG (*func)(WORD), WORD);
+LONG protect_ww(LONG (*func)(void), WORD, WORD);
+LONG protect_wlwwwl(LONG (*func)(void), WORD, LONG, WORD, WORD, WORD, LONG);
+
 /*
- * WORD swpw(WORD val);
- *   swap endianess of val, 16 bits only.
+ * Push/Pop registers from stack, with ColdFire support.
+ * This is intended to be used inside inline assembly.
+ * Borrowed from MiNTLib:
+ * https://github.com/freemint/mintlib/blob/master/include/compiler.h
+ */
+#ifdef __mcoldfire__
+
+#define PUSH_SP(regs,size)              \
+    "lea     -" #size "(sp),sp\n\t"     \
+    "movem.l " regs ",(sp)\n\t"
+
+#define POP_SP(regs,size)               \
+    "movem.l (sp)," regs "\n\t"         \
+    "lea     " #size "(sp),sp\n\t"
+
+#else
+
+#define PUSH_SP(regs,size)              \
+    "movem.l " regs ",-(sp)\n\t"
+
+#define POP_SP(regs,size)               \
+    "movem.l (sp)+," regs "\n\t"
+
+#endif
+
+/*
+ * Important note for the macros below:
+ * Source: https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html#InputOperands
+ * Do not modify the contents of input-only operands (except for inputs tied to
+ * outputs). The compiler assumes that on exit from the asm statement these
+ * operands contain the same values as they had before executing the statement.
+ */
+
+/*
+ * Pseudo-prototype for macro: void swpw(byref WORD val);
+ *   swap endianness of val, 16 bits only.
  */
 
 #ifdef __mcoldfire__
@@ -82,8 +111,53 @@ extern void stop_until_interrupt(void);
   )
 #endif
 
+/* Copy and swap an UWORD from *src to *dest */
+static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
+{
+    const UBYTE_ALIAS* s = (const UBYTE_ALIAS*)src;
+    UBYTE_ALIAS* d = (UBYTE_ALIAS*)dest;
+
+    d[0] = s[1];
+    d[1] = s[0];
+}
+
 /*
- * WORD swpw2(ULONG val);
+ * Pseudo-prototype for macro: void swpl(byref LONG val);
+ *   swap endianness of val, 32 bits only.
+ *   e.g. ABCD => DCBA
+ */
+
+#ifdef __mcoldfire__
+#define swpl(a)                           \
+  __extension__                           \
+  ({long _tmp;                            \
+    __asm__ volatile                      \
+    ("move.b  (%1),%0\n\t"                \
+     "move.b  3(%1),(%1)\n\t"             \
+     "move.b  %0,3(%1)\n\t"               \
+     "move.b  1(%1),%0\n\t"               \
+     "move.b  2(%1),1(%1)\n\t"            \
+     "move.b  %0,2(%1)"                   \
+    : "=d"(_tmp)      /* outputs */       \
+    : "a"(&a)        /* inputs  */        \
+    : "cc", "memory" /* clobbered */      \
+    );                                    \
+  })
+#else
+#define swpl(a)                           \
+  __asm__ volatile                        \
+  ("ror   #8,%0\n\t"                      \
+   "swap  %0\n\t"                         \
+   "ror   #8,%0"                          \
+  : "=d"(a)          /* outputs */        \
+  : "0"(a)           /* inputs  */        \
+  : "cc"             /* clobbered */      \
+  )
+#endif
+
+
+/*
+ * Pseudo-prototype for macro: void swpw2(byref ULONG val);
  *   swap endianness of val, treated as two 16-bit words.
  *   e.g. ABCD => BADC
  */
@@ -119,7 +193,7 @@ extern void stop_until_interrupt(void);
 
 
 /*
- * rolw1(WORD x);
+ * Pseudo-prototype for macro: void rolw1(byref WORD x);
  *  rotates x leftwards by 1 bit
  */
 #ifndef __mcoldfire__
@@ -136,7 +210,7 @@ extern void stop_until_interrupt(void);
 
 
 /*
- * rorw1(WORD x);
+ * Pseudo-prototype for macro: void rorw1(byref WORD x);
  *  rotates x rightwards by 1 bit
  */
 #ifndef __mcoldfire__
@@ -182,6 +256,40 @@ extern void stop_until_interrupt(void);
     )
 #else
 #define rorl(x,n)   ((x)=(((x)<<(32-(n)))|((x)>>(n))))
+#endif
+
+
+/*
+ * Pseudo-prototype for macro: void roll(byref ULONG x, WORD count);
+ *  rotates x leftwards by count bits
+ */
+#ifdef __mcoldfire__
+#define roll(x,n)    x=(x>>(32-(n)))|(x<<(n))
+#else
+#define roll(x,n)                   \
+    __asm__ volatile                \
+    ("rol.l %2,%1"                  \
+    : "=d"(x)       /* outputs */   \
+    : "0"(x),"I"(n) /* inputs */    \
+    : "cc"          /* clobbered */ \
+    )
+#endif
+
+
+/*
+ * Pseudo-prototype for macro: void rorl(byref ULONG x, WORD count);
+ *  rotates x rightwards by count bits
+ */
+#ifdef __mcoldfire__
+#define rorl(x,n)    x=(x<<(32-(n)))|(x>>(n))
+#else
+#define rorl(x,n)                   \
+    __asm__ volatile                \
+    ("ror.l %2,%1"                  \
+    : "=d"(x)       /* outputs */   \
+    : "0"(x),"I"(n) /* inputs */    \
+    : "cc"          /* clobbered */ \
+    )
 #endif
 
 
@@ -242,17 +350,19 @@ __extension__                             \
 #define regsafe_call(addr)                         \
 __extension__                                      \
 ({__asm__ volatile ("lea     -60(sp),sp\n\t"       \
-                    "movem.l d0-d7/a0-a6,(sp)");   \
-  ((void (*)(void))addr)();                        \
-  __asm__ volatile ("movem.l (sp),d0-d7/a0-a6\n\t" \
-                    "lea     60(sp),sp");          \
+                    "movem.l d0-d7/a0-a6,(sp)\n\t" \
+                    "jsr (%0)\n\t"                 \
+                    "movem.l (sp),d0-d7/a0-a6\n\t" \
+                    "lea     60(sp),sp"            \
+                    : : "a"(addr): "memory");      \
 })
 #else
 #define regsafe_call(addr)                         \
 __extension__                                      \
-({__asm__ volatile ("movem.l d0-d7/a0-a6,-(sp)");  \
-  ((void (*)(void))addr)();                        \
-  __asm__ volatile ("movem.l (sp)+,d0-d7/a0-a6");  \
+({__asm__ volatile ("movem.l d0-d7/a0-a6,-(sp)\n\t"\
+                    "jsr (%0)\n\t"                 \
+                    "movem.l (sp)+,d0-d7/a0-a6"    \
+                    : : "a"(addr): "memory");      \
 })
 #endif
 
@@ -267,8 +377,8 @@ __extension__                                      \
     ("0:\n\t"                               \
      "subq.l #1,%0\n\t"                     \
      "jpl    0b"                            \
-    :                   /* outputs */       \
-    : "d"(_count)       /* inputs  */       \
+    : "=d"(_count)      /* outputs */       \
+    : "0"(_count)       /* inputs  */       \
     : "cc", "memory"    /* clobbered */     \
     );                                      \
   })

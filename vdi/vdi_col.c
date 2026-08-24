@@ -1,22 +1,19 @@
 /*
  * vdi_col.c - VDI color palette functions and tables.
  *
- * Copyright (C) 2005-2016 The EmuTOS development team
+ * Copyright (C) 2005-2025 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "intmath.h"
 #include "vdi_defs.h"
 #include "string.h"
-#include "../bios/machine.h"
+#include "has.h"
 #include "xbiosbind.h"
-#include "vdi_col.h"
-#include "../bios/lineavars.h"
-#include "../bios/screen.h"
+#include "lineavars.h"
 #include "vdi_backend.h"
 
 #define EXTENDED_PALETTE (CONF_WITH_VIDEL || CONF_WITH_TT_SHIFTER || defined(MACHINE_RPI) \
@@ -32,6 +29,11 @@
 WORD MAP_COL[MAXCOLOURS];       /* maps vdi pen -> hardware register */
 WORD REV_MAP_COL[MAXCOLOURS];   /* maps hardware register -> vdi pen */
 
+/* req_col2 contains the VDI color palette entries 16 - 255 for vq_color().
+ * (REQ_COL, in linea_vars, contains entries 0-15.)
+ */
+static WORD req_col2[240][3];
+
 static const WORD MAP_COL_ROM[] =
     { 0, 15, 1, 2, 4, 6, 3, 5, 7, 8, 9, 10, 12, 14, 11, 13 };
 
@@ -40,13 +42,6 @@ static const WORD MAP_COL_ROM[] =
  */
 #define STE_MONO_FUDGE_FACTOR   0x43
 #define ST_MONO_FUDGE_FACTOR    0x8e
-
-#if EXTENDED_PALETTE
-/* req_col2 contains the VDI color palette entries 16 - 255 for vq_color().
- * To stay compatible with the line-a variables, only entries > 16 are
- * stored in this array, the first 16 entries are stored in REQ_COL */
-static WORD req_col2[240][3];
-#endif
 
 /* Initial color palettes */
 static const WORD st_palette[16][3] =
@@ -329,7 +324,7 @@ static void set_tt_color(WORD colnum, WORD *rgb)
     tt_shifter = EgetShift();
     rez = (tt_shifter>>8) & 0x07;
     bank = tt_shifter & 0x000f;
-    mask = linea_vars.DEV_TAB[13] - 1;
+    mask = numcolors - 1;
 
     switch(rez) {
     case ST_LOW:
@@ -427,7 +422,7 @@ static void query_tt_color(WORD colnum,WORD *retval)
     tt_shifter = EgetShift();
     rez = (tt_shifter>>8) & 0x07;
     bank = tt_shifter & 0x000f;
-    mask = linea_vars.DEV_TAB[13] - 1;
+    mask = numcolors - 1;
 
     switch(rez) {
     case ST_LOW:
@@ -470,14 +465,14 @@ static void query_tt_color(WORD colnum,WORD *retval)
 /* Create videl colour value from VDI colour */
 static LONG vdi2videl(WORD col)
 {
-    return ((LONG)col * 255 + 500) / 1000;              /* scale 1000 -> 255 */
+    return divu((ULONG)col*255+500, 1000);      /* scale 1000 -> 255 */
 }
 
 
 /* Create VDI colour value from videl colour */
 static WORD videl2vdi(LONG col)
 {
-    return (WORD)(((col & 0xff) * 1000 + 128) / 255);   /* scale 255 -> 1000 */
+    return divu((col&0xff)*1000+128, 255);      /* scale 255 -> 1000 */
 }
 #endif
 
@@ -589,7 +584,10 @@ void planar_get_tt_color(const Vwk *vwk, WORD pen, WORD *rgb)
 void planar_set_ste_color(Vwk *vwk, WORD pen, WORD *rgb)
 {
     WORD r, g, b;
-    WORD hwreg = MAP_COL[pen];
+    WORD hwreg;
+
+    /* get hardware register, clamped according to number of planes */
+    hwreg = MAP_COL[pen] & (numcolors-1);
 
     (void)vwk;
     r = rgb[0];
@@ -834,6 +832,73 @@ static void screen_get_color(const Vwk *vwk, WORD pen, WORD *rgb)
 }
 
 
+#if CONF_WITH_VDI_16BIT
+/* Create 5-bit colour value from VDI colour */
+static UWORD vdi2fivebits(WORD col)
+{
+    return divu((ULONG)col*31+500, 1000);   /* scale 1000 -> 31 */
+}
+
+
+/*
+ * Set an entry in the Vwk pseudo-palette
+ *
+ * Input is VDI-style: colnum is VDI pen#, rgb[] entries are 0-1000
+ *
+ * Note: as in TOS4, the VDI never sets the least-significant bit of green.
+ */
+void set_color16(Vwk *vwk, WORD colnum, WORD *rgb)
+{
+    UWORD r, g, b;
+    WORD palnum;
+
+    /* get palette number */
+    palnum = MAP_COL[colnum];
+
+    r = vdi2fivebits(rgb[0]);
+    g = vdi2fivebits(rgb[1]);
+    b = vdi2fivebits(rgb[2]);
+
+    vwk->ext->palette[palnum] = (r << 11) | (g << 6) | b;
+}
+
+
+/*
+ * vs_color16 - set color index table for 16-bit
+ */
+static void vs_color16(Vwk *vwk)
+{
+    WORD colnum, i;
+    WORD *intin, rgb[3], *rgbptr;
+
+    colnum = INTIN[0];
+
+    /* Check for valid color index */
+    if (colnum < 0 || colnum >= numcolors)
+    {
+        /* It was out of range */
+        return;
+    }
+
+    /*
+     * Copy raw values to the "requested colour" array, then clamp
+     * them to 0-1000 before calling set_color16()
+     */
+    for (i = 0, intin = INTIN+1, rgbptr = rgb; i < 3; i++, intin++, rgbptr++)
+    {
+        vwk->ext->req_col[colnum][i] = *intin;
+        if (*intin > 1000)
+            *rgbptr = 1000;
+        else if (*intin < 0)
+            *rgbptr = 0;
+        else *rgbptr = *intin;
+    }
+
+    set_color16(vwk, colnum, rgb);
+}
+#endif
+
+
 /*
  * vdi_vs_color - set color index table
  */
@@ -842,10 +907,18 @@ void vdi_vs_color(Vwk *vwk)
     WORD colnum, i;
     WORD *intin, rgb[3], *rgbptr;
 
+#if CONF_WITH_VDI_16BIT
+    if (TRUECOLOR_MODE)
+    {
+        vs_color16(vwk);
+        return;
+    }
+#endif
+
     colnum = INTIN[0];
 
     /* Check for valid color index */
-    if (colnum < 0 || colnum >= linea_vars.DEV_TAB[13])
+    if (colnum < 0 || colnum >= numcolors)
     {
         /* It was out of range */
         return;
@@ -965,7 +1038,7 @@ void init_colors(void)
 
     /* set up vdi pen -> hardware colour register mapping */
     memcpy(MAP_COL, MAP_COL_ROM, sizeof(MAP_COL_ROM));
-    MAP_COL[1] = linea_vars.DEV_TAB[13] - 1;   /* pen 1 varies according to # colours available */
+    MAP_COL[1] = numcolors - 1; /* pen 1 varies according to # of colours available */
 
 #if EXTENDED_PALETTE
     for (i = 16; i < MAXCOLOURS-1; i++)
@@ -974,7 +1047,7 @@ void init_colors(void)
 #endif
 
     /* set up reverse mapping (hardware colour register -> vdi pen) */
-    for (i = 0; i < linea_vars.DEV_TAB[13]; i++)
+    for (i = 0; i < numcolors; i++)
         REV_MAP_COL[MAP_COL[i]] = i;
 
     /*
@@ -996,6 +1069,7 @@ void init_colors(void)
      * planar_set_*_color() (see above), so passing NULL here is safe as
      * long as the active backend actually is planar.
      */
+    for (i = 0; i < numcolors; i++)
     {
 #if CONF_WITH_VDI_BACKEND_DISPATCH
         /*
@@ -1074,6 +1148,46 @@ void init_colors(void)
 }
 
 
+#if CONF_WITH_VDI_16BIT
+/* Create VDI colour value from 5-bit colour */
+static WORD fivebits2vdi(UWORD col)
+{
+    return divu((col&0x1f)*1000+16, 31);    /* scale 31 -> 1000 */
+}
+
+
+/*
+ * vq_color16 - query color index table for 16-bit
+ */
+static void vq_color16(Vwk *vwk)
+{
+    VwkExt *ext = vwk->ext;
+    WORD colnum, palnum;
+    UWORD rgb;
+
+    colnum = INTIN[0];
+
+    if (INTIN[1] == 0)  /* return last-requested value */
+    {
+        INTOUT[1] = ext->req_col[colnum][0];
+        INTOUT[2] = ext->req_col[colnum][1];
+        INTOUT[3] = ext->req_col[colnum][2];
+        return;
+    }
+
+    /*
+     * return actual current value
+     */
+    palnum = MAP_COL[colnum] & (numcolors-1);
+    rgb = ext->palette[palnum];
+
+    INTOUT[1] = fivebits2vdi(rgb >> 11);
+    INTOUT[2] = fivebits2vdi(rgb >> 6);
+    INTOUT[3] = fivebits2vdi(rgb);
+}
+#endif
+
+
 /*
  * vdi_vq_color - query color index table
  */
@@ -1087,13 +1201,21 @@ void vdi_vq_color(Vwk *vwk)
     CONTRL->nintout = 4;
 
     /* Check for valid color index */
-    if (colnum < 0 || colnum >= linea_vars.DEV_TAB[13])
+    if (colnum < 0 || colnum >= numcolors)
     {
         /* It was out of range */
         INTOUT[0] = -1;
         return;
     }
     INTOUT[0] = colnum;
+
+#if CONF_WITH_VDI_16BIT
+    if (TRUECOLOR_MODE)
+    {
+        vq_color16(vwk);
+        return;
+    }
+#endif
 
 #if CONF_WITH_TT_SHIFTER
     colnum = hw_adjust_colnum(colnum);  /* handles palette bank issues (issue #173) */

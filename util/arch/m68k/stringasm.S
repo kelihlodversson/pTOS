@@ -1,7 +1,7 @@
 /*
  * stringasm.S - simple implementation of <string.h>-like routines
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2020 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -16,8 +16,8 @@
         .globl  _strchr
 
 /*
- * WORD strlencpy(char *dest, const char *src)
- * as strcpy but returns the length ot the string instead.
+ * WORD strlencpy(char *RESTRICT dest, const char *RESTRICT src)
+ * as strcpy but returns the length of the string instead.
  */
 
 _strlencpy:

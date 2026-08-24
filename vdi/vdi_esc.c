@@ -1,7 +1,7 @@
 /*
  * vdi_esc.c - GSX escapes for the VDI screen driver
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2024 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -9,17 +9,38 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "vdi_defs.h"
-#include "../bios/lineavars.h"
+#include "lineavars.h"
 #include "asm.h"
-#include "kprint.h"
+#include "bdosbind.h"
+#include "biosbind.h"
+#include "xbiosbind.h"
 
 
 /* Local Constants */
 
 #define ldri_escape             19      /* last DRI escape = 19. */
+
+
+/*
+ * do console raw i/o
+ */
+static LONG crawio(WORD ch)
+{
+    return Crawio(ch);
+}
+
+
+/*
+ * write string to console
+ * use BIOS, not GEMDOS, to be uninterruptible by Ctrl+C
+ */
+static void bios_conws(char *string)
+{
+    while(*string)
+        Bconout(2, *string++);
+}
 
 
 /*
@@ -48,21 +69,30 @@ static void escfn1(Vwk * vwk)
 
 /*
  * escfn2: v_exit_cur() - exit alpha mode and enter graphics mode
+ *
+ * note: if the last thing a program does before entering graphics mode
+ * is to write an Esc to the console, the first character of the sequence
+ * below will be eaten (and ignored).  concretely, this is most likely
+ * to happen when a .TOS/.TTP program exits to the desktop.
+ *
+ * to circumvent this, we send a harmless escape sequence before we hide
+ * the alpha cursor.
  */
 static void escfn2(Vwk * vwk)
 {
-    trap1(X_CCONWS, "\033f\033E");  /* hide alpha cursor */
-    vdi_v_clrwk(vwk);
+    bios_conws("\033H\033f\033E");  /* home, hide alpha cursor, then clear-and-home */
 }
 
 
 /*
  * escfn3: v_enter_cur() - enter alpha mode and exit graphics mode
+ *
+ * note: we send a CR to reset the BDOS column counter (important for
+ * tab expansion)
  */
 static void escfn3(Vwk * vwk)
 {
-    vdi_v_clrwk(vwk);
-    trap1(X_CCONWS, "\033E\033e");  /* show alpha cursor */
+    bios_conws("\033E\033e\015");   /* clear-and-home, then show alpha cursor */
 }
 
 
@@ -71,7 +101,7 @@ static void escfn3(Vwk * vwk)
  */
 static void escfn4(Vwk * vwk)
 {
-    trap1(X_CCONWS, "\033A");
+    bios_conws("\033A");
 }
 
 
@@ -80,7 +110,7 @@ static void escfn4(Vwk * vwk)
  */
 static void escfn5(Vwk * vwk)
 {
-    trap1(X_CCONWS, "\033B");
+    bios_conws("\033B");
 }
 
 
@@ -89,7 +119,7 @@ static void escfn5(Vwk * vwk)
  */
 static void escfn6(Vwk * vwk)
 {
-    trap1(X_CCONWS, "\033C");
+    bios_conws("\033C");
 }
 
 
@@ -98,7 +128,7 @@ static void escfn6(Vwk * vwk)
  */
 static void escfn7(Vwk * vwk)
 {
-    trap1(X_CCONWS, "\033D");
+    bios_conws("\033D");
 }
 
 
@@ -107,7 +137,7 @@ static void escfn7(Vwk * vwk)
  */
 static void escfn8(Vwk * vwk)
 {
-    trap1(X_CCONWS, "\033H");
+    bios_conws("\033H");
 }
 
 
@@ -116,7 +146,7 @@ static void escfn8(Vwk * vwk)
  */
 static void escfn9(Vwk * vwk)
 {
-    trap1(X_CCONWS, "\033J");
+    bios_conws("\033J");
 }
 
 
@@ -125,7 +155,7 @@ static void escfn9(Vwk * vwk)
  */
 static void escfn10(Vwk * vwk)
 {
-    trap1(X_CCONWS, "\033K");
+    bios_conws("\033K");
 }
 
 
@@ -149,7 +179,7 @@ static void escfn11(Vwk * vwk)
     out[2] = 0x20 + INTIN[0] - 1;   /* zero-based */
     out[3] = 0x20 + INTIN[1] - 1;
     out[4] = '\0';
-    trap1(X_CCONWS, out);
+    bios_conws(out);
 }
 
 
@@ -172,7 +202,7 @@ static void escfn12(Vwk * vwk)
     chr = INTIN;                /* address of the character array */
 
     while (cnt--) {
-        trap1(X_CRAWIO, *chr++);/* raw i/o to standard input/output */
+        crawio(*chr++);         /* raw i/o to standard input/output */
     }
 }
 
@@ -182,7 +212,7 @@ static void escfn12(Vwk * vwk)
  */
 static void escfn13(Vwk * vwk)
 {
-    trap1(X_CCONWS, "\033p");   /* enter reverse video */
+    bios_conws("\033p");        /* enter reverse video */
 }
 
 
@@ -191,7 +221,7 @@ static void escfn13(Vwk * vwk)
  */
 static void escfn14(Vwk * vwk)
 {
-    trap1(X_CCONWS, "\033q");   /* enter normal video */
+    bios_conws("\033q");        /* enter normal video */
 }
 
 
@@ -225,10 +255,11 @@ static void escfn16(Vwk * vwk)
 /*
  * escfn17: v_hardcopy() - output screen to printer
  *
- * This function is currently just a stub.
+ * we call the standard xbios screen dump
  */
 static void escfn17(Vwk * vwk)
 {
+    Scrdmp();
 }
 
 

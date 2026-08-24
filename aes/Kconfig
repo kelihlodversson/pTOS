@@ -42,6 +42,19 @@ config CONF_WITH_PCGEM
 	default n if TARGET_192
 	default y
 
+config CONF_WITH_MENU_EXTENSION
+	bool "AES 3.30 menu library extensions"
+	default n if TARGET_192
+	default y
+	help
+	  Minimal support for the AES 3.30 menu library functions
+	  menu_popup(), menu_attach(), menu_istart() and menu_settings().
+
+config CONF_WITH_WINDOW_COLOURS
+	bool "Configurable window title/border colours"
+	default n if TARGET_192
+	default y
+
 config CONF_WITH_LOADABLE_CURSORS
 	bool "Loadable mouse cursors"
 	default y

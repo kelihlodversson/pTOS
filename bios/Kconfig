@@ -125,6 +125,15 @@ config CONF_WITH_SCSI
 	help
 	  Support for the NCR5380 SCSI interface of the TT and the Falcon.
 
+config CONF_WITH_1FAT_SUPPORT
+	bool "Single-FAT disk support"
+	default y
+	help
+	  Support for FAT-format disks with only a single FAT (File
+	  Allocation Table) instead of the usual two.  Disabling this
+	  saves a small amount of code and assumes every disk has two
+	  FATs, like Atari TOS does.
+
 config CONF_WITH_IDE
 	bool "IDE support"
 	default n if TARGET_192 || TARGET_CART || MACHINE_RPI

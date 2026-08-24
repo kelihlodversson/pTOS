@@ -3,28 +3,30 @@
  *
  * Copyright 1982 by Digital Research Inc.  All rights reserved.
  * Copyright 1999 by Caldera, Inc. and Authors:
- * Copyright 2002-2017 by The EmuTOS development team
+ * Copyright 2002-2025 by The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-
-
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "asm.h"
+#include "intmath.h"
 #include "biosbind.h"
 #include "xbiosbind.h"
-#include "aespub.h"
 #include "obdefs.h"
-#include "gsxdefs.h"
+#include "aesdefs.h"
+#include "aesext.h"
 #include "vdi_defs.h"
-#include "../bios/tosvars.h"
-#include "../bios/lineavars.h"
-#include "kprint.h"
-#include "asm.h"
 #include "mform.h"
+#include "vdistub.h"
+#include "tosvars.h"
+#include "biosext.h"
+#include "lineavars.h"
+#include "vdi_inline.h"
+#if CONF_WITH_AES
+#include "../aes/aesstub.h"
+#endif
 
 #ifdef MACHINE_RPI
 #   include "raspi_mouse.h"
@@ -33,16 +35,21 @@
 #   include "vdi_backend.h"
 #endif
 
+#define MOUSE_WIDTH     16      /* in pixels */
+#define MOUSE_HEIGHT    16
+
 /* prototypes */
-static void cur_display(Mcdb *sprite, MCS *savebuf, WORD x, WORD y);
-static void cur_replace(MCS *savebuf);
 static void vb_draw(void);             /* user button vector */
 
+#if CONF_WITH_EXTENDED_MOUSE
+void wheel_int(void);           /* wheel interrupt routine */
+void call_user_but(WORD status);/* call user_but from C */
+void call_user_wheel(WORD wheel_number, WORD wheel_amount); /* call user_wheel from C */
 
-/* FIXME: should go to linea variables */
-void (*user_wheel)(WORD wheel_number, WORD wheel_amount);   /* user provided mouse wheel vector */
-void (*old_statvec)(UBYTE *);             /* original IKBD status packet routine */
-
+/* pointers to callbacks called from vdi_asm.S */
+PFVOID user_wheel;  /* user mouse wheel vector provided by vdi_vex_wheelv() */
+PFVOID old_statvec; /* original IKBD status packet routine */
+#endif
 
 #if !CONF_WITH_AES
 /* Default Mouse Cursor Definition */
@@ -91,24 +98,6 @@ static const MFORM arrow_mform = {
 #endif
 
 
-/*
- * do_nothing - doesn't do much  :-)
- */
-
-static void do_nothing_v(void)
-{
-}
-static void do_nothing_i(WORD a)
-{
-    UNUSED(a);
-}
-static void do_nothing_ii(WORD a, WORD b)
-{
-    UNUSED(a);
-    UNUSED(b);
-}
-
-
 
 /*
  * dis_cur - Displays the mouse cursor if the number of hide
@@ -122,7 +111,6 @@ static void do_nothing_ii(WORD a, WORD b)
  *      hide_cnt = hide_cnt - 1
  *      draw_flag = 0
  */
-
 static void dis_cur(void)
 {
     linea_vars.mouse_flag += 1;            /* disable mouse redrawing */
@@ -151,7 +139,6 @@ static void dis_cur(void)
  *    hide_cnt = hide_cnt + 1
  *    draw_flag = 0
  */
-
 static void hide_cur(void)
 {
     linea_vars.mouse_flag += 1;            /* disable mouse redrawing */
@@ -194,7 +181,6 @@ static void hide_cur(void)
  * 6 - 0x40 Right mouse button status flag (0=hasn't changed)
  * 7 - 0x80 Left mouse button status flag  (0=hasn't changed)
  */
-
 static WORD gloc_key(void)
 {
     WORD retval = 0;
@@ -247,7 +233,7 @@ static WORD gloc_key(void)
  *    positions are the current positions, and the terminating character
  *    is the ASCII key pressed, or 0x20 for the left mouse button / 0x21
  *    for the right.
- *    As a consequence, pressing the space key twice is indistingishable
+ *    As a consequence, pressing the space key twice is indistinguishable
  *    from pressing/releasing the left mouse button, and likewise for
  *    the exclamation mark and the right mouse button.
  *
@@ -263,7 +249,7 @@ static WORD gloc_key(void)
  *    . if a mouse button is pressed or released, the terminating
  *      character is 0x20 for the left button, 0x21 for the right
  *      button, and CONTRL[4] is set to 1
- *    . the output mouse psitions are always set to the same as the
+ *    . the output mouse positions are always set to the same as the
  *      input
  *
  * Differences from official Atari documentation
@@ -338,27 +324,13 @@ void vdi_v_hide_c(Vwk * vwk)
  */
 void vdi_vq_mouse(Vwk * vwk)
 {
+    disable_interrupts();
+
     INTOUT[0] = linea_vars.MOUSE_BT;
-
-    CONTRL->nintout = 1;
-    CONTRL->nptsout = 1;
-
     PTSOUT[0] = linea_vars.GCURX;
     PTSOUT[1] = linea_vars.GCURY;
-}
 
-
-
-/*
- * VALUATOR_INPUT: implements vrq_valuator()/vsm_valuator()
- *
- * These functions return the status of the logical 'valuator' device.
- * The "GEM Programmer's Guide: VDI" indicates that these functions
- * are not required, and both Atari TOS and EmuTOS (using the original
- * imported DRI source) implement them as dummy functions.
-*/
-void vdi_v_valuator(Vwk * vwk)
-{
+    enable_interrupts();
 }
 
 
@@ -508,7 +480,7 @@ void vdi_vex_curv(Vwk * vwk)
 
 
 
-#if CONF_WITH_VDI_EXTENSIONS
+#if CONF_WITH_EXTENDED_MOUSE
 /*
  * vdi_vex_wheelv: a Milan VDI extension
  *
@@ -552,18 +524,12 @@ static void set_mouse_form(const MFORM *src, Mcdb *dst)
     /* save y-offset of mouse hot spot */
     dst->yhot = src->mf_yhot & 0x000f;
 
-    /* is background color index too high? */
-    col = src->mf_bg;
-    if (col >= linea_vars.DEV_TAB[13]) {
-        col = 1;               /* yes - default to 1 */
-    }
+    /* check/fix background color index */
+    col = validate_color_index(src->mf_bg);
     dst->bg_col = MAP_COL[col];
 
-    /* is foreground color index too high? */
-    col = src->mf_fg;
-    if (col >= linea_vars.DEV_TAB[13]) {
-        col = 1;               /* yes - default to 1 */
-    }
+    /* check/fix foreground color index */
+    col = validate_color_index(src->mf_fg);
     dst->fg_col = MAP_COL[col];
 
     /*
@@ -611,10 +577,12 @@ void vdi_vsc_form(Vwk * vwk)
 }
 
 
+
+#if CONF_WITH_EXTENDED_MOUSE
+
 /*
  * vdi_mousex_handler - Handle additional mouse buttons
  */
-
 static void vdi_mousex_handler (WORD scancode)
 {
     WORD old_buttons = linea_vars.MOUSE_BT;
@@ -645,6 +613,8 @@ static void vdi_mousex_handler (WORD scancode)
         call_user_wheel(1, 1);
 }
 
+#endif /* CONF_WITH_EXTENDED_MOUSE */
+
 
 
 /*
@@ -653,15 +623,13 @@ static void vdi_mousex_handler (WORD scancode)
  * entry:          none
  * exit:           none
  */
-
 void vdimouse_init(void)
 {
-    struct kbdvecs *kbd_vectors;
     static const struct {
-        BYTE topmode;
-        BYTE buttons;
-        BYTE xparam;
-        BYTE yparam;
+        UBYTE topmode;
+        UBYTE buttons;
+        UBYTE xparam;
+        UBYTE yparam;
     } mouse_params = {0, 0, 1, 1};
 
     /* Input must be initialized here and not in init_wk */
@@ -675,10 +643,12 @@ void vdimouse_init(void)
     linea_vars.GCURX = linea_vars.DEV_TAB[0] / 2;     /* initialize the mouse to center */
     linea_vars.GCURY = linea_vars.DEV_TAB[1] / 2;
 
-    linea_vars.user_but = do_nothing_i;
-    linea_vars.user_mot = do_nothing_v;
+    linea_vars.user_but = (void(*)(WORD))just_rts;
+    linea_vars.user_mot = just_rts;
     linea_vars.user_cur = mov_cur;         /* initialize user_cur vector */
-    user_wheel = do_nothing_ii;
+#if CONF_WITH_EXTENDED_MOUSE
+    user_wheel = just_rts;
+#endif
 
     /* Move in the default mouse form (presently the arrow) */
     set_mouse_form(default_mform(), &linea_vars.mouse_cdb);
@@ -690,16 +660,19 @@ void vdimouse_init(void)
     linea_vars.newx = 0;        /* set cursor x-coordinate to 0 */
     linea_vars.newy = 0;        /* set cursor y-coordinate to 0 */
 
-    /* vblqueue points to start of vbl_list[] */
-    *vblqueue = (LONG)vb_draw;   /* set GEM VBL-routine to vbl_list[0] */
+    vblqueue[0] = vb_draw;      /* set GEM VBL-routine to the first VBL slot */
 
     /* Initialize mouse via XBIOS in relative mode */
     Initmous(1, &mouse_params, mouse_int);
 
-    kbd_vectors = (struct kbdvecs *)Kbdvbase();
-    old_statvec = kbd_vectors->statvec;
-    kbd_vectors->statvec = wheel_int;
-    mousexvec = vdi_mousex_handler;
+#if CONF_WITH_EXTENDED_MOUSE
+    {
+        struct kbdvecs *kbd_vectors = (struct kbdvecs *)Kbdvbase();
+        old_statvec = kbd_vectors->statvec;
+        kbd_vectors->statvec = wheel_int;
+        mousexvec = vdi_mousex_handler;
+    }
+#endif
 }
 
 
@@ -707,25 +680,26 @@ void vdimouse_init(void)
 /*
  * vdimouse_exit - deinitialize/disable mouse
  */
-
 void vdimouse_exit(void)
 {
-    LONG * pointer;             /* help for storing LONGs in INTIN */
-    struct kbdvecs *kbd_vectors;
+    linea_vars.user_but = (void(*)(WORD))just_rts;
+    linea_vars.user_mot = just_rts;
+    linea_vars.user_cur = (void(*)(WORD,WORD))just_rts;
+#if CONF_WITH_EXTENDED_MOUSE
+    user_wheel = just_rts;
+#endif
 
-    linea_vars.user_but = do_nothing_i;
-    linea_vars.user_mot = do_nothing_v;
-    linea_vars.user_cur = do_nothing_ii;
-    user_wheel = do_nothing_ii;
-
-    pointer = vblqueue;         /* vblqueue points to start of vbl_list[] */
-    *pointer = (LONG)vb_draw;   /* set GEM VBL-routine to vbl_list[0] */
+    vblqueue[0] = vb_draw;      /* set GEM VBL-routine to the first VBL slot */
 
     /* disable mouse via XBIOS */
     Initmous(0, 0, 0);
 
-    kbd_vectors = (struct kbdvecs *)Kbdvbase();
-    kbd_vectors->statvec = old_statvec;
+#if CONF_WITH_EXTENDED_MOUSE
+    {
+        struct kbdvecs *kbd_vectors = (struct kbdvecs *)Kbdvbase();
+        kbd_vectors->statvec = old_statvec;
+    }
+#endif
 }
 
 
@@ -740,7 +714,8 @@ void vdimouse_exit(void)
  *         draw_flag - signals need to redraw cursor
  *         newx - new cursor x-coordinate
  *         newy - new cursor y-coordinate
- *         mouse_flag - cursor hide/show flag
+ *         mouse_flag - mouse cursor is being modified
+ *         HIDE_CNT - mouse cursor hide/show indicator
  *
  *      Outputs:
  *         draw_flag is cleared
@@ -763,8 +738,91 @@ static void vb_draw(void)
         }
     } else
         enable_interrupts();
-
 }
+
+
+
+#if CONF_WITH_VDI_16BIT
+/*
+ * cur_display16() - blits mouse "cursor" to 16-bit screen
+ *
+ * see cur_display() for more info
+ */
+static void cur_display16(Mcdb *sprite, MCS *mcs, WORD x, WORD y)
+{
+    UWORD *mask_start, *dst, *save, *palette;
+    UWORD bgcol, fgcol, bgmask, fgmask;
+    WORD dst_inc, i, rows, shift, width;
+
+    /*
+     * get adjusted coordinates of mouse destination
+     */
+    x -= sprite->xhot;
+    y -= sprite->yhot;
+
+    /*
+     * figure out height, width, and where to start in mask
+     */
+    mask_start = sprite->maskdata;
+    if (y < 0) {
+        rows = y + MOUSE_HEIGHT;
+        mask_start -= y * sizeof(UWORD);
+        y = 0;
+    } else if (y > (yres + 1 - MOUSE_HEIGHT)) {
+        rows = yres + 1 - y;
+    } else {
+        rows = MOUSE_HEIGHT;
+    }
+
+    shift = 0;
+    if (x < 0) {
+        width = x + MOUSE_WIDTH;
+        shift = -x;
+        x = 0;
+    } else if (x > (xres + 1 - MOUSE_WIDTH)) {
+        width = xres + 1 - x;
+    } else {
+        width = MOUSE_WIDTH;
+    }
+
+    /*
+     * get destination pointer & increment
+     */
+    dst = get_start_addr16(x, y);
+    dst_inc = linea_vars.v_lin_wr/sizeof(UWORD) - width;
+
+    save = (UWORD *)mcs->area;
+
+    /*
+     *  Store values required by cur_replace()
+     */
+    mcs->len = rows;            /* number of cursor rows */
+    mcs->addr = dst;            /* save area: origin of material */
+    mcs->stat |= MCS_VALID;     /* flag the buffer as being loaded */
+    mcs->width = width;         /* number of cursor columns */
+
+    /*
+     * update screen, saving old contents
+     */
+    palette = linea_vars.CUR_WORK->ext->palette;
+    bgcol = palette[sprite->bg_col];
+    fgcol = palette[sprite->fg_col];
+    while (rows-- > 0) {
+        bgmask = *mask_start++;     /* set up bg mask */
+        bgmask <<= shift;
+        fgmask = *mask_start++;     /* set up fg mask */
+        fgmask <<= shift;
+        for (i = 0; i < width; i++, dst++, bgmask<<=1, fgmask<<=1) {
+            *save++ = *dst;
+            if (fgmask & 0x8000)
+                *dst = fgcol;
+            else if (bgmask & 0x8000)
+                *dst = bgcol;
+        }
+        dst += dst_inc;
+    }
+}
+#endif
 
 
 
@@ -856,6 +914,8 @@ static void cur_display_clip(WORD op,Mcdb *sprite,MCS *mcs,UWORD *mask_start,UWO
 #endif
 
 
+
+
 /*
  * cur_display() - blits a "cursor" to the destination
  *
@@ -872,7 +932,6 @@ static void cur_display_clip(WORD op,Mcdb *sprite,MCS *mcs,UWORD *mask_start,UWO
  * is subject to left or right clipping, however, then it must lie
  * within one screen word (per plane), so we only save 32 bytes/plane.
  */
-
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
 /* The mcs struct is not big enough for a packed truecolor cursor (2 or 4
  * bytes/pixel).  Also serves as the software cursor's fallback save area
@@ -937,7 +996,7 @@ static ULONG *cursor_save_draw(UBYTE *addr8, ULONG *save, UWORD *data,
 }
 #endif
 
-static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
+void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
 {
 #ifdef MACHINE_RPI
 #if CONF_RASPI_MOUSE_CURSOR
@@ -1029,6 +1088,16 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
         UWORD shft, cdb_fg, cdb_bg;
         UWORD cdb_mask;             /* for checking cdb_bg/cdb_fg */
         ULONG *save;
+
+#if CONF_WITH_VDI_16BIT
+        /*
+         * handle 16-bit VDI in separate function
+         */
+        if (TRUECOLOR_MODE) {
+            cur_display16(sprite, mcs, x, y);
+            return;
+        }
+#endif
 
         x -= sprite->xhot;          /* x = left side of destination block */
         y -= sprite->yhot;          /* y = top of destination block */
@@ -1162,6 +1231,36 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
 }
 
 
+
+#if CONF_WITH_VDI_16BIT
+/*
+ * cur_replace16 - replace cursor with saved data (for 16-bit screens)
+ *
+ * see cur_replace for more details
+ */
+static void cur_replace16(MCS *mcs)
+{
+    UWORD *addr, *dst, *src;
+    UWORD row, col;
+
+    if (!(mcs->stat & MCS_VALID))   /* does save area contain valid data ? */
+        return;
+    mcs->stat &= ~MCS_VALID;        /* yes but (like TOS) don't allow reuse */
+
+    addr = mcs->addr;               /* starting screen address */
+    src = (UWORD *)mcs->area;
+
+    for (row = mcs->len, dst = addr; row > 0; row--, dst = addr) {
+        for (col = mcs->width; col > 0; col--) {
+            *dst++ = *src++;
+        }
+        addr += linea_vars.v_lin_wr >> 1;
+    }
+}
+#endif
+
+
+
 /*
  * cur_replace - replace cursor with data in save area
  *
@@ -1173,7 +1272,7 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
  *      v_planes    number of planes in destination
  *      v_lin_wr    line wrap (byte width of form)
  */
-static void cur_replace (MCS *mcs)
+void cur_replace (MCS *mcs)
 {
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
     if (vdi_screen_is_truecolor())
@@ -1213,6 +1312,16 @@ static void cur_replace (MCS *mcs)
     UWORD *addr, *src, *dst;
     const WORD inc = linea_vars.v_planes;      /* # words to next word in same plane */
     const WORD dst_inc = linea_vars.v_lin_wr >> 1; /* # words in a scan line */
+
+#if CONF_WITH_VDI_16BIT
+    /*
+     * handle 16-bit VDI in separate function
+     */
+    if (TRUECOLOR_MODE) {
+        cur_replace16(mcs);
+        return;
+    }
+#endif
 
     if (!(mcs->stat & MCS_VALID))   /* does save area contain valid data ? */
         return;
@@ -1255,21 +1364,6 @@ static void cur_replace (MCS *mcs)
 }
 
 /* line-A support */
-
-/* set by linea.S */
-WORD sprite_x, sprite_y;
-Mcdb *sprite_def;
-MCS *sprite_sav;
-
-void draw_sprite(void)
-{
-    cur_display(sprite_def, sprite_sav, sprite_x, sprite_y);
-}
-
-void undraw_sprite(void)
-{
-    cur_replace(sprite_sav);
-}
 
 void linea_show_mouse(void)
 {

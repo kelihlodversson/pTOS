@@ -1,7 +1,7 @@
 /*
  * dmasound.c - STe/TT/Falcon DMA sound routines
  *
- * Copyright (C) 2011-2017 The EmuTOS development team
+ * Copyright (C) 2011-2024 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -13,13 +13,10 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "dmasound.h"
 #include "vectors.h"
-#include "kprint.h"
 #include "gemerror.h"
-#include "delay.h"
 #include "asm.h"
 #include "machine.h"
 
@@ -28,54 +25,54 @@
 struct dmasound
 {
     /* STe/TT DMA registers */
-    UBYTE interrupt; /* Buffer interrupts */
-    UBYTE control; /* DMA Control Register */
+    UBYTE interrupt;            /* Buffer interrupts */
+    UBYTE control;              /* DMA Control Register */
     UBYTE filler02;
-    UBYTE frame_start_high; /* Frame start address (high byte) */
+    UBYTE frame_start_high;     /* Frame start address (high byte) */
     UBYTE filler04;
-    UBYTE frame_start_mid; /* Frame start address (mid byte) */
+    UBYTE frame_start_mid;      /* Frame start address (mid byte) */
     UBYTE filler06;
-    UBYTE frame_start_low; /* Frame start address (low byte) */
+    UBYTE frame_start_low;      /* Frame start address (low byte) */
     UBYTE filler08;
-    UBYTE frame_counter_high; /* Frame address counter (high byte) */
+    UBYTE frame_counter_high;   /* Frame address counter (high byte) */
     UBYTE filler0a;
-    UBYTE frame_counter_mid; /* Frame address counter (mid byte) */
+    UBYTE frame_counter_mid;    /* Frame address counter (mid byte) */
     UBYTE filler0c;
-    UBYTE frame_counter_low; /* Frame address counter (low byte) */
+    UBYTE frame_counter_low;    /* Frame address counter (low byte) */
     UBYTE filler0e;
-    UBYTE frame_end_high; /* Frame end address (high byte) */
+    UBYTE frame_end_high;       /* Frame end address (high byte) */
     UBYTE filler10;
-    UBYTE frame_end_mid; /* Frame end address (mid byte) */
+    UBYTE frame_end_mid;        /* Frame end address (mid byte) */
     UBYTE filler12;
-    UBYTE frame_end_low; /* Frame end address (low byte) */
+    UBYTE frame_end_low;        /* Frame end address (low byte) */
     UBYTE filler14[12];
-    UBYTE track_control; /* DMA Track Control */
-    UBYTE mode_control; /* Sound mode control */
+    UBYTE track_control;        /* DMA Track Control */
+    UBYTE mode_control;         /* Sound mode control */
     /* STe/TT Microwire interface registers */
-    UWORD microwire_data; /* Microwire data register */
-    UWORD microwire_mask; /* Microwire mask register */
+    UWORD microwire_data;       /* Microwire data register */
+    UWORD microwire_mask;       /* Microwire mask register */
     UBYTE filler26[10];
     /* Falcon DMA registers */
-    UWORD crossbar_src; /* Crossbar Source Controller */
-    UWORD crossbar_dest; /* Crossbar Destination Controller */
-    UBYTE freq_ext; /* Frequency Divider External Clock */
-    UBYTE freq_int; /* Frequency Divider Internal Sync */
-    UBYTE record_tracks; /* Record Tracks Select */
-    UBYTE codec_16bit_source; /* CODEC Input Source from 16bit adder */
-    UBYTE codec_adc_source; /* CODEC ADC-Input for L+R Channel */
-    UBYTE channel_amplification; /* Channel amplification */
-    UWORD channel_attenuation; /* Channel attenuation */
-    UWORD codec_status; /* CODEC-Status */
+    UWORD crossbar_src;         /* Crossbar Source Controller */
+    UWORD crossbar_dest;        /* Crossbar Destination Controller */
+    UBYTE freq_ext;             /* Frequency Divider External Clock */
+    UBYTE freq_int;             /* Frequency Divider Internal Sync */
+    UBYTE record_tracks;        /* Record Tracks Select */
+    UBYTE codec_16bit_source;   /* CODEC Input Source from 16bit adder */
+    UBYTE codec_adc_source;     /* CODEC ADC-Input for L+R Channel */
+    UBYTE channel_amplification;/* Channel amplification */
+    UWORD channel_attenuation;  /* Channel attenuation */
+    UWORD codec_status;         /* CODEC-Status */
     UBYTE filler3e[3];
-    UBYTE gpx_data_direction; /* GPx Data Direction */
+    UBYTE gpx_data_direction;   /* GPx Data Direction */
     UBYTE filler42;
-    UBYTE gpx_data_port; /* GPx Data Port */
+    UBYTE gpx_data_port;        /* GPx Data Port */
 };
 
 #define DMASOUND ((volatile struct dmasound*)0xffff8900)
 
 /* Generic Microwire macros */
-#define MICROWIRE_MASK              0x07ff
+#define MICROWIRE_MASK              0x0ffe
 #define MICROWIRE_ADDRESS(x)        ((x) << 9)
 #define MICROWIRE_COMMAND(a,c)      (MICROWIRE_ADDRESS(a) | (c))
 
@@ -111,12 +108,6 @@ struct dmasound
 /* LMC1992 parameter for Fader functions */
 #define LMC1992_FADER(x)    (((x) + 40) / 2)    /* Range from -40 to 0 dB */
 
-/*
- * LMC1992 minimum delay before checking mask during write_microwire()
- */
-#define LMC1992_DELAY()     delay_loop(loopcount_mw)
-static ULONG loopcount_mw;
-
 static int sound_locked;
 
 int has_dmasound;
@@ -140,9 +131,9 @@ void detect_dmasound(void)
     has_dmasound = check_read_byte((long)&DMASOUND->control);
     KDEBUG(("has_dmasound = %d\n", has_dmasound));
 
-    /* Then detect advanced Falcon DMA sound */
     if (has_dmasound)
     {
+        /* Then detect advanced Falcon DMA sound */
         /* Warning: The Falcon registers below GPx do not exist on STe/TT
          * but they don't cause a bus error. */
         has_falcon_dmasound = check_read_byte((long)&DMASOUND->gpx_data_port);
@@ -160,30 +151,23 @@ void detect_dmasound(void)
 
 static void write_microwire(UWORD data)
 {
-    LMC1992_DELAY();
+    /*
+     * Use LSB as 'stop' bit. It is not shifted out because of MICROWIRE_MASK.
+     */
+    DMASOUND->microwire_data = (data<<1) | 1;
 
-    /* Wait for previous data transfer to finish */
-    while (DMASOUND->microwire_mask != MICROWIRE_MASK)
-        ;
-
-    DMASOUND->microwire_data = data;
+    /*
+     * Wait for data transfer to finish: since the LSB is always 1, the data
+     * register can only become 0 after everything has been shifted out.
+     */
+    while (DMASOUND->microwire_data != 0)
+        /* wait */ ;
 }
 
 static void lmc1992_init(void)
 {
     if (!has_microwire)
         return;
-
-    /*
-     * According to Atari documentation, it takes approximately 16
-     * microseconds to send the data (16 bits including don't cares),
-     * so the time to shift the mask/data by 1 bit is approximately
-     * 1 microsecond.  Therefore we need to delay at least this much
-     * before checking to see if the shift is complete.
-     * Note that delay values at LMC1992 initialisation time are not yet
-     * calibrated.  So, for safety, we set the delay to 2 microseconds.
-     */
-    loopcount_mw = loopcount_1_msec * 2 / 1000; /* 2 microseconds */
 
     DMASOUND->microwire_mask = MICROWIRE_MASK;
 
@@ -543,14 +527,14 @@ LONG dsptristate(WORD dspxmit, WORD dsprec)
         return EBADRQ;
 
     if (dspxmit)
-        DMASOUND->crossbar_src |= 0x80;
+        DMASOUND->crossbar_src |= 0x0080;
     else
-        DMASOUND->crossbar_src &= 0x7f;
+        DMASOUND->crossbar_src &= ~0x0080;
 
     if (dsprec)
-        DMASOUND->crossbar_dest |= 0x80;
+        DMASOUND->crossbar_dest |= 0x0080;
     else
-        DMASOUND->crossbar_dest &= 0x7f;
+        DMASOUND->crossbar_dest &= ~0x0080;
 
     return 0;
 }
@@ -585,56 +569,121 @@ LONG gpio(UWORD mode, UWORD data)
 
 /**
  * Devconnect for Falcon hardware
+ *
+ * NOTE: the TOS 4.04 implementation of Devconnect() has a few problems:
+ * 1. there is little error checking:
+ *      . only 'source' is validated,
+ *      . 'clk' is assumed to be 0-2
+ *      . 'prescale' is assumed to be < 256
+ *      . 'protocol' is assumed to be 1 if not 0
+ * 2. the return code is ill-defined:
+ *      . zero is returned if 'source' is invalid
+ *      . garbage (which could include zero) is returned otherwise
+ * 3. if an external clock is specified, the output crossbar_dest
+ *    register will apparently be set to garbage.
+ *
+ * The current code only returns zero for invalid 'source'; otherwise
+ * it returns 1.  And it does not put garbage in crossbar_dest if an
+ * external clock is specified.  However, I do not know if crossbar_dest
+ * is set correctly, having no way of testing this.
  */
-static LONG devconnect_falcon(WORD source, WORD dest, WORD clk,
-                              WORD prescale, WORD protocol)
+static LONG devconnect_falcon(WORD source, WORD dest, WORD clk, WORD prescale, WORD protocol)
 {
     UWORD data;
-    int i, val;
-    int ret = 0;
 
-    protocol &= 1;
-    source &= 3;
-
-    if (source == 3 && clk > 1) {
-        clk = 0;
-        ret = EBADRQ;
-    }
-
+    /*
+     * handle source specification
+     */
     data = DMASOUND->crossbar_src;
-    data &= ~(0xf << (source*4));   /* Mask old settings */
-    val = ((clk&3)<<1) | protocol;
-    if (source == 3)
-        val &= 0xE;
-    data |= val << (source*4);
-    if ((dest & 0xD) != 0 && protocol == 0)
-        data |= 0x8;
+    switch (source)
+    {
+     case 0:    /* DMA playback */
+        data = (data & 0xfff0) | (clk << 1);    /* insert clock */
+        if (protocol)
+            data |= 0x0001;
+        else
+        {
+            data &= ~0x0001;
+            if (dest & 0x0002)      /* DSP receive? */
+                data &= ~0x0008;
+            else
+                data |= 0x0008;
+        }
+        break;
+     case 1:    /* DSP transmit */
+        data = (data & 0xff8f) | (clk << 5);    /* do not touch bit 7 (DSP) */
+        if (protocol)
+            data |= 0x0010;
+        else
+            data &= ~0x0010;
+        break;
+     case 2:    /* external input */
+        data = (data & 0xf0ff) | (clk << 9);
+        if (protocol)
+            data |= 0x0100;
+        else
+            data &= ~0x0100;
+        break;
+     case 3:    /* microphone / PSG */
+        data = (data & 0x0fff);
+        if (clk & 1)                /* i.e. external clock */
+            data |= 0x6000;
+        break;
+     default:
+        return 0;       /* TOS 4.04 does this */
+    }
     DMASOUND->crossbar_src = data;
 
+    /*
+     * handle destination(s)
+     */
     data = DMASOUND->crossbar_dest;
-    for (i = 0; i < 4; i++)
+    if (dest & 0x0001)  /* DMA record */
     {
-        if ((dest & (1 << i)) != 0)
+        data = (data & 0xfff0) | (source << 1);
+        if (protocol)
+            data |= 0x0001;
+        else
         {
-            data &= ~(0xf << (i*4));   /* Mask old settings */
-            val = ((source << 1)| protocol);
-            if (i == 3)
-                val &= 0xE;
-            if (source != 1 && i == 0 && protocol == 0)
-                val |= 0x8;
-            data |= val << (i*4);
+            data &= ~0x0001;
+            if (source == 1)        /* DSP transmit */
+                data &= ~0x0008;
+            else
+                data |= 0x0008;
         }
+    }
+    if (dest & 0x0002)  /* DSP receive */
+    {
+        data = (data & 0xff8f) | (source << 5); /* do not touch bit 7 (DSP) */
+        if (protocol)
+            data |= 0x0010;
+        else
+            data &= ~0x0010;
+    }
+    if (dest & 0x0004)  /* external output */
+    {
+        data = (data & 0xf0ff) | (source << 9);
+        if (protocol)
+            data |= 0x0100;
+        else
+            data &= ~0x0100;
+    }
+    if (dest & 0x0008)  /* DAC */
+    {
+        data = (data & 0x0fff) | (source << 13);
     }
     DMASOUND->crossbar_dest = data;
 
-    if (clk == 1)
+    /*
+     * finally, handle clock
+     */
+    if (clk & 1)        /* external clock */
         DMASOUND->freq_ext = prescale;
-    else
+    else                /* internal clock */
         DMASOUND->freq_int = prescale;
 
-    return ret;
+    return 1;
 }
-
 
 /**
  * Provide STE/TT compatible frequency setting
@@ -680,7 +729,25 @@ LONG devconnect(WORD source, WORD dest, WORD clk, WORD prescale, WORD protocol)
     return devconnect_ste(source, dest, clk, prescale, protocol);
 }
 
-
+/**
+ * Get sound status or reset sound system
+ *
+ * To reset the sound system, we toggle bit3 of the byte at $ff8937
+ * (codec_16bit_source).  This zeroes the following fields:
+ *      $ff8920     track_control
+ *      $ff8921     mode_control
+ *      $ff8930-31  crossbar_src
+ *      $ff8932-33  crossbar_dest
+ *      $ff8934     freq_ext
+ *      $ff8935     freq_int
+ *      $ff8936     record_tracks
+ *      $ff8937     codec_16bit_source (except bit 3 which we zero ourselves :-))
+ *      $ff8938     codec_adc_source
+ *      $ff8939     channel_amplification
+ *      $ff893a-3b  channel_attenuation
+ * in addition:
+ *      $ff893c-3d  codec_status is set to $003f
+ */
 LONG sndstatus(WORD reset)
 {
     if (!SOUND_IS_AVAILABLE)

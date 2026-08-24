@@ -1,7 +1,7 @@
 /*
  * sound.c - PSG sound routines
  *
- * Copyright (C) 2001-2016 The EmuTOS development team
+ * Copyright (C) 2001-2020 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -10,8 +10,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "sound.h"
 #include "psg.h"
 #include "tosvars.h"
@@ -47,9 +46,9 @@ static void do_keyclick(void);
 
 /* data used by dosound: */
 
-static BYTE *sndtable;    /* 0xE44 */
-static UBYTE snddelay;    /* 0xE48 */
-static UBYTE sndtmp;      /* 0xE49 */
+static const UBYTE *sndtable;
+static UBYTE snddelay;
+static UBYTE sndtmp;
 
 /*
  * Bit 7 of PSG port A was unused on the original ST, but has
@@ -143,18 +142,18 @@ void offgibit(WORD data)
 #endif
 }
 
-LONG dosound(LONG table)
+LONG dosound(const UBYTE *table)
 {
 #if CONF_WITH_YM2149
-    LONG oldtable = (LONG) sndtable;
+    const UBYTE *oldtable = sndtable;
 
-    if (table >= 0)
+    if ((LONG)table >= 0)
     {
-        sndtable = (BYTE *) table;
+        sndtable = table;
         snddelay = 0;
     }
 
-    return oldtable;
+    return (LONG)oldtable;
 #else
     return 0;
 #endif
@@ -163,11 +162,11 @@ LONG dosound(LONG table)
 #if CONF_WITH_YM2149
 void sndirq(void)
 {
-    BYTE *code;
-    BYTE instr;
+    const UBYTE *code;
+    UBYTE instr, data;
 
     code = sndtable;
-    if (code == 0)
+    if (code == NULL)
         return;
 
     if (snddelay)
@@ -176,39 +175,38 @@ void sndirq(void)
         return;
     }
 
-    while((instr = *code++) >= 0)
+    while((instr = *code++) <= 0x80)
     {
+        data = *code++;
+        if (instr == 0x80)
+        {
+            sndtmp = data;          /* starting register value for 0x81 command */
+            continue;
+        }
+        /* other values are assumed to be PSG register numbers (0-15) */
         PSG->control = instr;
         if (instr == PSG_MULTI)
         {
             UBYTE tmp = PSG->control;
-            PSG->data = (tmp & PSG_PORT_MASK) | (*code++ & PSG_MIXER_MASK);
+            PSG->data = (tmp & PSG_PORT_MASK) | (data & PSG_MIXER_MASK);
         } else {
-            PSG->data = *code++;
+            PSG->data = data;
         }
     }
 
-    switch((UBYTE)instr)
+    if (instr == 0x81)
     {
-    case 0x80:
-        sndtmp = *code++;
-        break;
-    case 0x81:
-        PSG->control = *code++;
-        sndtmp += *code++;
-        PSG->data = sndtmp;
-        if (sndtmp != *code++)
-        {
-            code -= 4;
-        }
-        break;
-    default:
-        /* break; ??? */
-    case 0xff:
+        PSG->control = *code++;     /* register number */
+        sndtmp += *code++;          /* increment register value */
+        PSG->data = sndtmp;         /*  & send to register      */
+        if (sndtmp != *code++)      /* if current value != ending value, */
+            code -= 4;              /*  rewind to run again next time    */
+    }
+    else                    /* all remaining commands (> 0x81) just set the delay */
+    {
         snddelay = *code++;
         if (snddelay == 0)
-            code = 0;
-        break;
+            code = NULL;        /* end play */
     }
 
     sndtable = code;
@@ -258,13 +256,13 @@ void bell(void)
 static void do_bell(void)
 {
 #if CONF_WITH_YM2149
-    dosound((LONG) bellsnd);
+    dosound(bellsnd);
 #endif
 }
 
 static void do_keyclick(void)
 {
 #if CONF_WITH_YM2149
-    dosound((LONG) keyclicksnd);
+    dosound(keyclicksnd);
 #endif
 }

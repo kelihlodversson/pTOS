@@ -4,7 +4,7 @@
  * This file was created to support desktop resolution changes
  * for the TT and Falcon.
  *
- * Copyright (C) 2012-2017 The EmuTOS development team
+ * Copyright (C) 2012-2025 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -15,11 +15,8 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
-
+#include "emutos.h"
 #include "aesbind.h"
-#include "gembind.h"
 #include "obdefs.h"
 #include "optimize.h"
 
@@ -33,13 +30,13 @@
 #include "deskinf.h"
 #include "deskfun.h"
 #include "deskrez.h"
+#include "desksupp.h"
 
+#include "bdosbind.h"
 #include "xbiosbind.h"
-#include "../bios/machine.h"    /* for has_videl etc */
-#include "../bios/screen.h"
-#include "../bios/videl.h"
-#include "../bios/amiga.h"
-#include "kprint.h"
+#include "has.h"                /* for has_videl etc */
+#include "biosdefs.h"
+#include "biosext.h"
 
 
 #if CONF_WITH_TT_SHIFTER
@@ -60,27 +57,30 @@ static const WORD ttrez_from_button[NUM_TT_BUTTONS] =
  * note: these correspond to the VGA videomode settings; the
  * VIDEL_VERTICAL bit is inverted for RGB mode (see the code)
  */
-#define NUM_FALCON_BUTTONS  19
-static const WORD falconmode_from_button[NUM_FALCON_BUTTONS] =
-    { VIDEL_80COL|VIDEL_1BPP,                       /* 640x480x2 */
-      VIDEL_80COL|VIDEL_2BPP,                       /* 640x480x4 */
-      VIDEL_80COL|VIDEL_4BPP,                       /* 640x480x16 */
-      VIDEL_80COL|VIDEL_8BPP,                       /* 640x480x256 */
-      VIDEL_VERTICAL|VIDEL_80COL|VIDEL_1BPP,        /* 640x240x2 */
-      VIDEL_VERTICAL|VIDEL_80COL|VIDEL_2BPP,        /* 640x240x4 */
-      VIDEL_VERTICAL|VIDEL_80COL|VIDEL_4BPP,        /* 640x240x16 */
-      VIDEL_VERTICAL|VIDEL_80COL|VIDEL_8BPP,        /* 640x240x256 */
-      VIDEL_2BPP,                                   /* 320x480x4 */
-      VIDEL_4BPP,                                   /* 320x480x16 */
-      VIDEL_8BPP,                                   /* 320x480x256 */
-      VIDEL_TRUECOLOR,                              /* 320x480x65536 */
-      VIDEL_VERTICAL|VIDEL_2BPP,                    /* 320x240x4 */
-      VIDEL_VERTICAL|VIDEL_4BPP,                    /* 320x240x16 */
-      VIDEL_VERTICAL|VIDEL_8BPP,                    /* 320x240x256 */
-      VIDEL_VERTICAL|VIDEL_TRUECOLOR,               /* 320x240x65536 */
+static const WORD falconmode_from_button[] =        /*     VGA           RGB     */
+    { VIDEL_80COL|VIDEL_1BPP,                       /* 640x480x2     640x400x2   */
+      VIDEL_80COL|VIDEL_2BPP,                       /* 640x480x4     640x400x4   */
+      VIDEL_80COL|VIDEL_4BPP,                       /* 640x480x16    640x400x16  */
+      VIDEL_80COL|VIDEL_8BPP,                       /* 640x480x256   640x400x256 */
+      VIDEL_80COL|VIDEL_TRUECOLOR,                  /*     n/a       640x400x64K */
+      VIDEL_VERTICAL|VIDEL_80COL|VIDEL_1BPP,        /* 640x240x2     640x200x2   */
+      VIDEL_VERTICAL|VIDEL_80COL|VIDEL_2BPP,        /* 640x240x4     640x200x4   */
+      VIDEL_VERTICAL|VIDEL_80COL|VIDEL_4BPP,        /* 640x240x16    640x200x16  */
+      VIDEL_VERTICAL|VIDEL_80COL|VIDEL_8BPP,        /* 640x240x256   640x200x256 */
+      VIDEL_VERTICAL|VIDEL_80COL|VIDEL_TRUECOLOR,   /*     n/a       640x200x64K */
+      VIDEL_2BPP,                                   /* 320x480x4     320x400x4   */
+      VIDEL_4BPP,                                   /* 320x480x16    320x400x16  */
+      VIDEL_8BPP,                                   /* 320x480x256   320x400x256 */
+      VIDEL_TRUECOLOR,                              /* 320x480x64K   320x400x64K */
+      VIDEL_VERTICAL|VIDEL_2BPP,                    /* 320x240x4     320x200x4   */
+      VIDEL_VERTICAL|VIDEL_4BPP,                    /* 320x240x16    320x200x16  */
+      VIDEL_VERTICAL|VIDEL_8BPP,                    /* 320x240x256   320x200x256 */
+      VIDEL_VERTICAL|VIDEL_TRUECOLOR,               /* 320x240x64K   320x200x64K */
       VIDEL_COMPAT|VIDEL_80COL|VIDEL_1BPP,                  /* ST High */
       VIDEL_COMPAT|VIDEL_VERTICAL|VIDEL_80COL|VIDEL_2BPP,   /* ST Medium */
       VIDEL_COMPAT|VIDEL_VERTICAL|VIDEL_4BPP };             /* ST Low */
+
+#define NUM_FALCON_BUTTONS ARRAY_SIZE(falconmode_from_button)
 
 #endif /* CONF_WITH_VIDEL */
 
@@ -118,7 +118,7 @@ WORD oldres;
     selected = i;
 
     /* set up dialog & display */
-    tree = G.a_trees[ADTTREZ];
+    tree = desk_rs_trees[ADTTREZ];
     for (i = 0, obj = tree+TTREZSTL; i < NUM_TT_BUTTONS; i++, obj++) {
         if (i == selected)
             obj->ob_state |= SELECTED;
@@ -127,7 +127,7 @@ WORD oldres;
 
     inf_show(tree,ROOT);
 
-    if (inf_what(tree,TTREZOK,TTREZCAN) == 0)
+    if (inf_what(tree,TTREZOK) == 0)
         return 0;
 
     /* look for button with SELECTED state */
@@ -154,6 +154,7 @@ static int change_falcon_rez(WORD *newres,WORD *newmode)
 OBJECT *tree, *obj;
 int i, selected;
 WORD oldmode, oldbase, oldoptions;
+WORD mode, monitor;
 
     oldmode = VsetMode(-1);
     oldbase = oldmode & (VIDEL_VERTICAL|VIDEL_COMPAT|VIDEL_80COL|VIDEL_BPPMASK);
@@ -166,22 +167,37 @@ WORD oldmode, oldbase, oldoptions;
             break;
     selected = i;
 
-    /* set up dialog & display */
-    tree = G.a_trees[ADFALREZ];
+    /* remember monitor type */
+    monitor = VgetMonitor();
 
-    if (VgetMonitor() != MON_VGA) { /* fix up rez descriptions if not VGA */
+    /* set up dialog & display */
+    tree = desk_rs_trees[ADFALREZ];
+
+    if (monitor != MON_VGA) {       /* fix up rez descriptions if not VGA */
         for (i = 0, obj = tree+FREZNAME; i < 4; i++, obj++)
-            rsrc_gaddr_rom(R_STRING,STREZ1+i,(void **)&obj->ob_spec);
+            obj->ob_spec = (LONG) desktop_str_addr(STREZ1+i);
     }
 
-    /* FIXME: change the next 2 lines when we have TrueColor support in VDI */
+    /*
+     * if we're not compiling with 16-bit support in the VDI,
+     * hide the Truecolor header text
+     */
+#if !CONF_WITH_VDI_16BIT
     obj = tree + FREZTEXT;          /* this hides the "TC" header text */
     obj->ob_flags |= HIDETREE;
+#endif
 
     for (i = 0, obj = tree+FREZLIST; i < NUM_FALCON_BUTTONS; i++, obj++) {
-        /* FIXME: change the next 2 lines when we have TrueColor support in VDI */
-        if ((falconmode_from_button[i]&VIDEL_BPPMASK) > VIDEL_8BPP)
+        mode = falconmode_from_button[i];
+        if ((mode&VIDEL_BPPMASK) > VIDEL_8BPP) {
+            /* hide unsupported TC modes for VGA monitors */
+            if ((monitor == MON_VGA) && (mode&VIDEL_80COL))
+                obj->ob_flags |= HIDETREE;
+            /* hide all TC modes if we're not compiling with 16-bit VDI */
+#if !CONF_WITH_VDI_16BIT
             obj->ob_flags |= HIDETREE;
+#endif
+        }
         if (i == selected)
             obj->ob_state |= SELECTED;
         else obj->ob_state &= ~SELECTED;
@@ -189,7 +205,7 @@ WORD oldmode, oldbase, oldoptions;
 
     inf_show(tree,ROOT);
 
-    if (inf_what(tree,FREZOK,FREZCAN) == 0)
+    if (inf_what(tree,FREZOK) == 0)
         return 0;
 
     /* look for button with SELECTED state */
@@ -199,10 +215,17 @@ WORD oldmode, oldbase, oldoptions;
     if (i == selected)          /* no change */
         return 0;
 
-    *newres = FALCON_REZ;
-    *newmode = falconmode_from_button[i] | oldoptions;
+    mode = falconmode_from_button[i] | oldoptions;
     if (!(oldoptions&VIDEL_VGA))    /* if RGB mode, */
-        *newmode ^= VIDEL_VERTICAL; /* invert the bit returned */
+        mode ^= VIDEL_VERTICAL;     /* invert the bit returned */
+
+    if (Srealloc(-1L) < VgetSize(mode)) {
+        malloc_fail_alert();
+        return 0;
+    }
+
+    *newres = FALCON_REZ;
+    *newmode = mode;
 
     return 1;
 }
@@ -244,9 +267,17 @@ WORD oldmode;
     selected = i;
 
     /* set up dialog & display */
-    tree = G.a_trees[ADAMIREZ];
+    tree = desk_rs_trees[ADAMIREZ];
 
     for (i = 0, obj = tree+AMIREZ0; i < NUM_AMIGA_BUTTONS; i++, obj++) {
+        WORD mode = amigamode_from_button[i];
+        if (mode == -1) /* separator */
+            continue;
+
+        /* disable PAL modes on NTSC */
+        if (amiga_is_ntsc && (mode & VIDEL_PAL))
+            obj->ob_state |= DISABLED;
+
         if (i == selected)
             obj->ob_state |= SELECTED;
         else obj->ob_state &= ~SELECTED;
@@ -254,7 +285,7 @@ WORD oldmode;
 
     inf_show(tree,ROOT);
 
-    if (inf_what(tree,AMREZOK,AMREZCAN) == 0)
+    if (inf_what(tree,AMREZOK) == 0)
         return 0;
 
     /* look for button with SELECTED state */

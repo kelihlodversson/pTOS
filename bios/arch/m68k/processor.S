@@ -1,7 +1,7 @@
 /*
  * processor.S - Detect and set CPU and FPU type
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2025 The EmuTOS development team
  * Copyright (C) 1999, 2002 by Authors
  *
  * Authors:
@@ -15,10 +15,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-
 #include "asmdefs.h"
-
-
 
 /* References */
 
@@ -36,11 +33,17 @@
 #if CONF_WITH_APOLLO_68080
         .globl  _is_apollo_68080
 #endif
+#if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
+        .globl  _cache_exists
+        .globl  _set_cache
+        .globl  _get_cache
+#endif
 
         .extern _longframe              // If not 0, use long stack frames
         .extern _setup_68030_pmmu
-
-
+#if CONF_WITH_68030_PMMU
+        .extern _pmmutree
+#endif
 
         .text
 
@@ -102,22 +105,19 @@ _detect_cpu:
         moveq   #30,d0          // no fault -> this is a 68030
         jra     exit
 
-// 68040 or 68060
+// 68040 or 68060 (or Apollo 68080)
 
 x040:   moveq   #40,d0          // assume 68040
         MOVEC_PCR_D1            // attempt to access the PCR
+        moveq   #60,d0          // no fault, assume 68060
 
 #if CONF_WITH_APOLLO_68080
-        moveq   #60,d0          // assume 68060
         ADDIWL_0_A0             // check for addiw.l instruction
-
 // Apollo 68080
-        moveq   #40,d0          // force 68040 detection
+        moveq   #40,d0          // no fault, force 68040 detection
         move.w  #1,_is_apollo_68080
-        jra     exit
 #endif
-x060:
-        moveq   #60,d0          // no fault -> this is 68060
+
 exit:
         move.l  a3,(0xf4).w     // restore stuff and exit
         move.l  a2,(0x2c).w
@@ -129,8 +129,6 @@ exit:
         moveq   #0,d0           // say it's a 68000
 #endif /* CONF_WITH_ADVANCED_CPU */
         rts
-
-
 
 /*
  * _detect_fpu - FPU type detection, experimental (draco@atari.org).
@@ -154,18 +152,17 @@ exit:
  *
  * The detection algorithm goes as follows:
  *
- * - FNOP is executed. If a Line-F exception follows, then there's no FPU
+ * - FRESTORE is executed. If a Line-F exception follows, then there's no FPU
  *   in coprocessor mode. If the CPU is >= 68020, no FPU is assumed.
- * - if FNOP doesn't take an exception, an FPU attached in coprocessor mode
- *   is present. Then if 68040 or 68060 CPU was detected previously, an
- *   appropriate FPU type is assumed. Otherwise the stackframe is checked
- *   for magic value indicating 68882 and if it is different, a 68881 is
- *   assumed.
+ * - If FRESTORE doesn't take an exception, an FPU attached in coprocessor
+ *   mode is present, that has been reset by FRESTORE. Then if 68040 or 68060
+ *   CPU was detected previously, an appropriate FPU type is assumed.
+ *   Otherwise the stackframe is checked for magic value indicating 68882 and
+ *   if it is different, a 68881 is assumed.
  *
  * I am very interested if this will really work on everything =)
  * On a 68030/68882 tandem it does.
  */
-
 _detect_fpu:
 #if CONF_WITH_ADVANCED_CPU
         movem.l d2/a2,-(sp)
@@ -197,8 +194,7 @@ _detect_fpu:
         bclr    #0x01,d2
         MOVEC_D2_PCR            // clear DFP (the disable-FPU bit)
 
-no60:   FNOP
-        clr.l   -(sp)           // push NULL frame
+no60:   clr.l   -(sp)           // push NULL frame
         clr.l   -(sp)           // extra longs for 68060
         clr.l   -(sp)
         FRESTORE_SP_PLUS        // frestore (sp)+   reset FPU into NULL state
@@ -253,16 +249,11 @@ nosfp:  move.l  a1,(0x08).w     // restore bus error
 
 #endif /* __mcoldfire__ */
 
-
-
 /*
  * void processor_init(void) - sets mcpu and fputype.
  */
-
 _processor_init:
-#ifdef __mcoldfire__
-        // On ColdFire, the caches are enabled by the pre-OS
-#else
+#ifndef __mcoldfire__           // On ColdFire, the caches are enabled by the pre-OS
         jbsr    _detect_cpu
         swap    d0
         move.w  d0,_mcpu_subtype    // save processor subtype
@@ -272,12 +263,19 @@ _processor_init:
 #if CONF_WITH_ADVANCED_CPU
         jeq     m68000
 
-
         move.w  #1,_longframe.w // this is a 68010 or later
 m68000:
         jbsr    _detect_fpu
         move.l  d0,_fputype
 
+        cmpi.b  #20,_mcpu+3
+        jne     pi_chk030
+
+// We're running on a 68020
+        move.l  #0x00000009,d0  // clear & enable cache
+        jra     init_cacr
+
+pi_chk030:
         cmpi.b  #30,_mcpu+3
         jne     pi_chk040
 
@@ -288,32 +286,29 @@ m68000:
 // User would like a PMMU tree, so see if it's possible
 
         tst.w   _mcpu_subtype   // check for full 68030
-        jeq     m68030
-
-// On a 68ec030, we enable just the instruction cache, since we can't
-// set up a proper PMMU tree to avoid caching the I/O address area
-
-        move.l  #0x00000011,d0  // set IBE and EI only
-        jra     init_cacr
+        jne     m68ec030
 
 // On a full 68030, if a PMMU tree is wanted, we must set it up before
 // enabling the data cache.  The PMMU tree will ensure that caching is
 // inhibited for access to i/o addresses.
 
-m68030:
         jsr     _setup_68030_pmmu
         PMOVE_TO_CRP(root_pointer_descriptor)   // tell system where tree is
         PMOVE_TO_TC(init_tc)        // enable PMMU
         PMOVE_TO_TTR0(init_ttr0)    // override PMMU tree for accesses to
         PMOVE_TO_TTR1(init_ttr1)    //   0x01000000-0xfeffffff (see below for details)
-        move.l  #0x00003111,d0  // we set WA, DBE, ED, IBE and EI
-#else
+        move.l  #0x00003919,d0      // we set WA, DBE, CD/ED, IBE and CI/EI
+        jra     init_cacr
 
-// A PMMU tree isn't wanted, so we avoid caching problems by only
-// enabling the instruction cache.
+m68ec030:
 
-        move.l  #0x00000011,d0  // we set IBE and EI only
 #endif
+
+// If user doesn't want a PMMU tree, or we're on a 68ec030, we enable
+// just the instruction cache, since we can't set up a proper PMMU
+// tree to avoid caching the I/O address area
+
+        move.l  #0x00000019,d0  // set IBE and CI/EI only
 
 init_cacr:
 #if CONF_WITH_CACHE_CONTROL
@@ -326,7 +321,7 @@ pi_chk040:
         move.l  #0x80008000,d1  // set 040 CACR value: DE and IE
         cmpi.b  #40,_mcpu+3
         jeq     m68040
-        move.l  #0x80808000,d1  // set 060 CACR value: EDC, EBC and EIC
+        move.l  #0x80c08000,d1  // set 060 CACR value: EDC, EBC/CABC and EIC
         cmpi.b  #60,_mcpu+3
         jeq     m68060
         jra     pi_done
@@ -368,19 +363,20 @@ m68060:
         CINVA_BC                // invalidate the caches
         nop
         move.l  d1,d0           // recover the enable value
-#if CONF_WITH_CACHE_CONTROL
+        jra     init_cacr
+#if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
         move.l  d0,cacr_enable  // save value to use when enabling caches
 #endif
-        MOVEC_D0_CACR           // enable the caches
-
-#endif /* __mcoldfire__ */
+        MOVEC_D0_CACR
 
 pi_done:
 #endif /* CONF_WITH_ADVANCED_CPU */
+
+#endif /* not __mcoldfire__ */
         rts
 
 /*
- * void instruction_cache_kludge(void *start, long length)
+ * void instruction_cache_kludge(void *start, long size)
  *
  * TOS compatibility: invalidate the instruction cache
  *
@@ -391,23 +387,25 @@ pi_done:
  * we don't do that on ColdFire, because ColdFire executables are brand new
  * and supposed to be aware of cache issues.
  */
-
 _instruction_cache_kludge:
 #ifdef __mcoldfire__
         rts
 #endif
 //
-// for 680x0, we drop into invalidate_instruction_cache
+// for 680x0, we fall through invalidate_instruction_cache
 //
 
 /*
- * void invalidate_instruction_cache(void *start, long length)
+ * void invalidate_instruction_cache(void *start, long size)
  * First, the data cache is flushed to push changes into the RAM.
  * Then the instruction cache is invalidated for the specified zone.
  *
- * We're lazy here and invalidate all the cache. A real implementation
- * would invalidate only the needed pages using several cinvp ic,(a0).
- * It is not worth the trouble for EmuTOS right now.
+ * We're cautious here and invalidate all the cache. Since not all systems
+ * map all memory 1:1, being more precise would require either knowing the
+ * physical address of line(s) to be cleaned/invalidated, or performing address
+ * translation on the range.
+ * This quickly becomes more expensive than just cleaning the caches and paying
+ * the cost to repopulate them later.
  */
 
 _invalidate_instruction_cache:
@@ -416,8 +414,12 @@ _invalidate_instruction_cache:
         jra     cpushl_loop
 #else
 #if CONF_WITH_ADVANCED_CPU
+        cmpi.b  #20,_mcpu+3
+        jeq     ii_020or030
         cmpi.b  #30,_mcpu+3
         jne     ii_not30
+
+ii_020or030:
         MOVEC_CACR_D0                   // get current cacr
         ori.b   #0x08,d0                // set the CI bit
         MOVEC_D0_CACR                   // clear the whole i-cache
@@ -430,8 +432,12 @@ ii_not30:
         jne     ii_done
 
 ii_inval:
+        // If the 040/060 MMU is enabled, or the DTTs have been configured
+        // for copyback mode, there may be dirty lines in the data cache
+        // containing instructions, so we need to flush the data cache as well
+        // as invalidating the instruction cache.
         nop
-        CINVA_IC                // invalidate the instruction cache
+        CPUSHA_BC
         nop
 ii_done:
 #endif /* CONF_WITH_ADVANCED_CPU */
@@ -439,7 +445,7 @@ ii_done:
 #endif
 
 /*
- * void flush_data_cache(void *start, long length)
+ * void flush_data_cache(void *start, long size)
  *
  * flush data cache before writing data with DMA
  *
@@ -449,27 +455,31 @@ ii_done:
  *   copyback:
  *     we must push the data cache (the backing memory may be stale)
  */
-
 _flush_data_cache:
 #ifdef __mcoldfire__
         lea     cpushl_dc,a1    // flush/invalidate data cache
         jra     cpushl_loop
 #else
 #if CONF_WITH_ADVANCED_CPU
-//
-// 68030 data caches are always write-through, so no action is necessary
-//
-// 68040/68060 data caches are either write-through or copyback, depending
-// on how the system is set up.  at this time, the data TTRs are set up so
-// that the cache is write-through, so no action is necessary here either.
-//
+
+        // 68020 has no data cache, 68030 data cache is always write-through,
+        // in either case no action is necessary.
+        cmpi.b  #40,_mcpu+3
+        jmi     fd_no_dirty
+
+        // 68040/68060 data caches are either write-through or copyback
+        // depending on how the DTTs / MMU are set up, so we need to push them
+        // here.
+        nop
+        CPUSHA_DC
+        nop
+fd_no_dirty:
 #endif
         rts
 #endif
 
-
 /*
- * void invalidate_data_cache(void *start, long length)
+ * void invalidate_data_cache(void *start, long size)
  *
  * invalidate data cache after data has been read with DMA
  *
@@ -479,7 +489,7 @@ _flush_data_cache:
 _invalidate_data_cache:
 #ifdef __mcoldfire__
         lea     cpushl_dc,a1    // flush/invalidate data cache
-        // drop into cpushl_loop
+        // fall through cpushl_loop
 #else
 #if CONF_WITH_ADVANCED_CPU
         cmpi.b  #30,_mcpu+3
@@ -495,8 +505,12 @@ ic_not30:
         jne     ic_done
 
 ic_inval:
+        // We can't simply invalidate the data cache, as there may
+        // be dirty lines resident, so we need to push those out.
+        // Note: this requires that the 060's CACR.DPI bit is not set
+        //       in order for lines to be invalidated.
         nop
-        CINVA_DC                // invalidate the data cache
+        CPUSHA_DC
         nop
 ic_done:
 #endif /* CONF_WITH_ADVANCED_CPU */
@@ -558,7 +572,67 @@ cpushl_dc:
 cpushl_bc:
         cpushl  bc,(a0)         // both caches
         rts
+#endif
 
+
+#if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
+/*
+ * C A C H E   C O N T R O L   F O R   E M U D E S K
+ * ... also used by Nova graphics card code on the Falcon
+ *
+ * WORD cache_exists(void);
+ *  returns 1 if processor has cache, 0 otherwise
+ *
+ * void set_cache(WORD enable);
+ *  sets cache state: if 'enable' is zero, disables, otherwise enables
+ *
+ * WORD get_cache(void);
+ *  returns 0 if the cache is fully disabled or not present, != 0 otherwise
+ */
+_cache_exists:
+        moveq.l #0,d0               // assume 68000, 68010
+        cmpi.b  #20,_mcpu+3
+        jmi     ce_exit
+        moveq.l #1,d0
+ce_exit:
+        rts
+
+_set_cache:
+        jbsr    _cache_exists
+        tst.w   d0
+        jeq     sc_exit             // no cache, do nothing
+        moveq.l #0,d0               // assume disable
+        tst.w   4(sp)
+        jne     sc_enable           // no, enable
+        cmpi.b  #40,_mcpu+3         // possible dirty data in cache?
+        jmi     sc_cacr             // no, go do it
+        nop
+        CPUSHA_DC                   // 040/060: yes, clean the data cache first
+        nop
+        jra     sc_cacr             // now go do it
+sc_enable:
+        move.l  cacr_enable,d0      // enabling: set processor-appropriate value
+        cmpi.b  #40,_mcpu+3         // 040/060 ?
+        jmi     sc_cacr             // no, just go set cacr
+        nop
+        CINVA_BC                    // 040/060: invalidate the caches first
+        nop
+sc_cacr:
+        MOVEC_D0_CACR
+sc_exit:
+        rts
+
+_get_cache:
+        jbsr    _cache_exists
+        tst.w   d0
+        jeq     gc_exit             // no cache, do nothing
+
+        MOVEC_CACR_D0
+        and.l   cacr_enable,d0      // AND with processor-dependent mask, and treat...
+        sne     d0                  // cache as enabled if any of the mask bits are set
+        ext.w   d0
+gc_exit:
+        rts
 #endif
 
 
@@ -636,7 +710,6 @@ cacr_enable:    .ds.l   1
 _is_apollo_68080:   .ds.w   1
 #endif
 
-
-// ===========================================================================
-// ==== End ==================================================================
-// ===========================================================================
+#if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
+cacr_enable:    .ds.l   1
+#endif

@@ -22,9 +22,11 @@
 #define PD_p_tlen       0x0c
 #define PD_p_dlen       0x14
 #define PD_p_blen       0x1c
+#define PD_p_env        0x2c
 #define SIZEOF_PD       0x100
 
         .globl  _coma_start
+        .globl  _environment
         .extern _cmdmain
 
         .text
@@ -34,6 +36,12 @@ _coma_start:
 
         // Set our temporary user stack.
         ldr     sp, =comaustack
+
+        // Save the environment string pointer from the basepage, before
+        // r0 gets reused below for the Mshrink() call.
+        ldr     r1, [r0, #PD_p_env]
+        ldr     r2, =_environment
+        str     r1, [r2]
 
         // Mshrink to the needed size for TEXT+DATA+BSS plus 256 bytes.
         ldr     r3, [r0, #PD_p_tlen]
@@ -53,6 +61,9 @@ _coma_start:
         svc     1
 
         .bss
+
+_environment: // Environment string, from the BASEPAGE
+        .space  4
 
         // Space for the stack:
         .align 4

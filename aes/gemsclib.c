@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2016 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -17,40 +17,31 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "struct.h"
-#include "basepage.h"
 #include "obdefs.h"
 #include "gemlib.h"
-#include "dos.h"
-#include "gem_rsc.h"
 
-#include "gemrslib.h"
 #include "gemdos.h"
 #include "geminit.h"
-#include "gemshlib.h"
 #include "gemsclib.h"
 
 #include "string.h"
 
 /************************************************************************/
 /*                                                                      */
-/* sc_read() -- get info about current scrap directory                  */
+/* sc_read() -- get the current scrap directory                         */
 /*                                                                      */
-/*      copies the current scrap directory path to the passed-in        */
-/*      address and returns TRUE if a valid path has already been set.  */
+/*  for compatibility with Atari TOS, no longer checks if a non-empty   */
+/*  path already exists, always returns TRUE.                           */
 /*                                                                      */
 /************************************************************************/
 
-WORD sc_read(BYTE *pscrap)
+WORD sc_read(char *pscrap)
 {
-    WORD    len;
+    strcpy(pscrap, D.g_scrap);
 
-    /* current scrap directory */
-    len = strlencpy(pscrap, D.g_scrap);
-    strcpy(pscrap+len, "\\");      /* cat on backslash  */
-    return( len != 0 );
+    return TRUE;
 }
 
 
@@ -58,20 +49,16 @@ WORD sc_read(BYTE *pscrap)
 /*                                                                      */
 /* sc_write() -- sets the current scrap directory                       */
 /*                                                                      */
-/*      pscrap must be the long address of a valid path.  Returns       */
-/*      TRUE if no error occurs in validating the path name.            */
+/*  for compatibility with Atari TOS, no longer validates the           */
+/*  supplied directory path, always returns TRUE.                       */
 /*                                                                      */
 /************************************************************************/
 
-WORD sc_write(const BYTE *pscrap)
+WORD sc_write(const char *pscrap)
 {
-    WORD    len;
+    strcpy(D.g_scrap, pscrap);
 
-    len = strlencpy(D.g_scrap, pscrap);     /* new scrap directory  */
-    if (D.g_scrap[--len] == '\\')           /* remove backslash     */
-      D.g_scrap[len] = '\0';
-    dos_sdta(&D.g_dta);                     /* use our dta          */
-    return !dos_sfirst(D.g_scrap, F_SUBDIR);/* make sure path ok    */
+    return TRUE;
 }
 
 #if CONF_WITH_PCGEM
@@ -86,9 +73,10 @@ WORD sc_write(const BYTE *pscrap)
 
 WORD sc_clear(void)
 {
-    BYTE    *ptmp;
+    char    *ptmp;
+    DTA     *save_dta;
     WORD    ret;
-    const char *scrapmask = "\\SCRAP.*";
+    const char *scrapmask = "SCRAP.*";
 
     if (D.g_scrap[0] == '\0')
       return FALSE;
@@ -99,9 +87,10 @@ WORD sc_clear(void)
 
     strcpy(ptmp, scrapmask);                /* Add mask */
 
+    save_dta = dos_gdta();                  /* save current DTA */
     dos_sdta(&D.g_dta);                     /* make sure dta ok */
 
-    ret = dos_sfirst(D.g_scrap, F_SUBDIR);
+    ret = dos_sfirst(D.g_scrap, FA_SUBDIR);
     while(ret == 0)
     {
         strcpy(ptmp + 1, D.g_dta.d_fname);  /* Add file name */
@@ -111,6 +100,8 @@ WORD sc_clear(void)
     }
 
     *ptmp = '\0';                           /* keep just path name */
+
+    dos_sdta(save_dta);                     /* restore old DTA */
 
     return(TRUE);
 }

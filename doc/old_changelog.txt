@@ -2044,7 +2044,7 @@ Start... early ages
 2008-01-05
 - bios/screen.c: Since we only support VGA resolutions by now, toggle the
   double-scan bit in vsetmode when a RGB mode is requested. (THH)
-- include/asm.h util/miscasm.S: Changed macros for swapping the endianess of
+- include/asm.h util/miscasm.S: Changed macros for swapping the endianness of
   a variable to use inline assembler - that's faster and less code. (THH)
 
 2008-01-06
@@ -6001,7 +6001,7 @@ Start... early ages
   like TOS to make room for accessory menu items. (VRI)
 
 2015-02-19
-- bios/ide.c: Limit IDE interfaces to 1 for non-Firebee hardware, to avoid
+- bios/ide.c: Limit IDE interfaces to 1 for non-FireBee hardware, to avoid
   detecting non-existent interfaces due to incomplete hardware address
   decoding. (RFB)
 

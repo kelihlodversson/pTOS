@@ -2,7 +2,7 @@
  * portab.h - Definitions for writing portable C
  *
  * Copyright (C) 2001 Lineo, Inc
- *               2001-2017 The EmuTOS development team
+ *               2001-2025 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -37,6 +37,24 @@
 #define NORETURN
 #endif
 
+#ifdef __GNUC__
+#define PRINTF_STYLE __attribute__ ((format (printf, 1, 2)))
+#else
+#define PRINTF_STYLE
+#endif
+
+#ifdef __GNUC__
+#define SPRINTF_STYLE __attribute__ ((format (printf, 2, 3)))
+#else
+#define SPRINTF_STYLE
+#endif
+
+#ifdef __GNUC__
+#define PACKED __attribute__ ((packed))
+#else
+#define PACKED
+#endif
+
 /* Convenience macros to test the versions of glibc and gcc.
    Use them like this:
    #if __GNUC_PREREQ (2,8)
@@ -61,9 +79,21 @@
 
 #undef AND_MEMORY
 #if __GNUC_PREREQ(2, 6)
-#define AND_MEMORY , "memory"
+#define CLOBBER_MEMORY "memory"     /* When memory is the only clobber */
+#define AND_MEMORY , CLOBBER_MEMORY /* When memory is the last clobber */
 #else
+#define CLOBBER_MEMORY
 #define AND_MEMORY
+#endif
+
+/*
+ * Restricted pointer parameters are advertised to never overlap.
+ * https://en.wikipedia.org/wiki/Restrict
+ */
+#if __GNUC_PREREQ(4, 5)
+#define RESTRICT __restrict__
+#else
+#define RESTRICT
 #endif
 
 /*
@@ -80,6 +110,7 @@
 #define GLOBAL                                  /* Global variable         */
 #define UNUSED(x)       (void)(x)               /* Unused variable         */
 #define MAYBE_UNUSED(x) UNUSED(x)               /* Maybe unused variable   */
+#define FORCE_READ(x)   UNUSED(x)     /* Read a volatile hardware register */
 
 /*
  *  Types
@@ -87,6 +118,7 @@
 
 typedef int             BOOL;                   /*  boolean, TRUE or FALSE */
 typedef char            BYTE;                   /*  Signed byte         */
+typedef char            SBYTE;                  /*  Signed byte (old-style name) */
 typedef int16_t         WORD;                   /*  signed 16 bit word  */
 typedef int32_t         LONG;                   /*  signed 32 bit word  */
 typedef int64_t         QUAD;                   /*  signed 64 bit word*/
@@ -101,6 +133,9 @@ typedef LONG (*PFLONG)(void);
 /* pointer to function returning VOID */
 typedef void (*PFVOID)(void);
 
+/* BDOS program entry point */
+typedef void PRG_ENTRY(void) /* NORETURN */;
+
 /*
  *  Macros
  */
@@ -113,22 +148,23 @@ typedef void (*PFVOID)(void);
 #define HIBYTE(x) ((UBYTE)((UWORD)(x) >> 8))
 #define IS_ODD(x) ((x) & 1)
 #define IS_ODD_POINTER(x) IS_ODD((ULONG)(x))
+#define IS_32BIT_POINTER(x) ((ULONG)(x) & 0xff000000)
 
 /*
  * The following ARRAY_SIZE() macro is taken from Linux kernel sources.
  *
  * Inspired from this page:
- * http://stackoverflow.com/questions/4415530/equivalents-to-msvcs-countof-in-other-compilers
+ * https://stackoverflow.com/questions/4415530/equivalents-to-msvcs-countof-in-other-compilers
  */
 
 /*
  * Force a compilation error if condition is true, but also produce a
  * result (of value 0 and type size_t), so the expression can be used
- * e.g. in a structure initializer (or where-ever else comma expressions
+ * e.g. in a structure initializer (or wherever else comma expressions
  * aren't permitted).
  *
  * Explanations there:
- * http://stackoverflow.com/questions/9229601/what-is-in-c-code
+ * https://stackoverflow.com/questions/9229601/what-is-in-c-code
  *
  * Note that the name of this macro is misleading:
  * it actually produces a compilation bug when the parameter is *not zero*
@@ -152,7 +188,7 @@ typedef void (*PFVOID)(void);
 
 /* Lightweight cast to only remove const and volatile qualifiers from a pointer.
  * This is similar to the C++ const_cast<> operator.
- * It is usefull to call a function with const data while the parameter
+ * It is useful to call a function with const data while the parameter
  * is not properly marked as const (usually because the constness depends
  * on other parameters).
  * A better implementation may add safer type checking.
@@ -177,12 +213,12 @@ typedef void (*PFVOID)(void);
 #endif
 
 typedef UBYTE UBYTE_ALIAS MAY_ALIAS;
-typedef BYTE BYTE_ALIAS MAY_ALIAS;
 typedef UWORD UWORD_ALIAS MAY_ALIAS;
 typedef WORD WORD_ALIAS MAY_ALIAS;
 typedef ULONG ULONG_ALIAS MAY_ALIAS;
 typedef LONG LONG_ALIAS MAY_ALIAS;
-typedef BYTE *BYTEPTR_ALIAS MAY_ALIAS;
+
+#define ULONG_AT(p) (*(ULONG_ALIAS *)(p)) /* ULONG pointed by p, regardless of pointer type */
 
 /*
  * GCC 7 needs special care to avoid warning when using switch/case fallthrough:
@@ -191,7 +227,7 @@ typedef BYTE *BYTEPTR_ALIAS MAY_ALIAS;
  * the case when compiling with -Wextra (a.k.a -W).
  *
  * See documentation of -Wimplicit-fallthrough
- * https://gcc.gnu.org/onlinedocs/gcc-7.1.0/gcc/Warning-Options.html#index-Wimplicit-fallthrough
+ * https://gcc.gnu.org/onlinedocs/gcc-7.4.0/gcc/Warning-Options.html#index-Wimplicit-fallthrough
  * https://developers.redhat.com/blog/2017/03/10/wimplicit-fallthrough-in-gcc-7/
  *
  * Special comments such as -fallthrough can be put just before a switch label
@@ -203,6 +239,27 @@ typedef BYTE *BYTEPTR_ALIAS MAY_ALIAS;
 # define FALLTHROUGH __attribute__ ((fallthrough))
 #else
 # define FALLTHROUGH NULL_FUNCTION()
+#endif
+
+/*
+ * See:
+ * - https://gcc.gnu.org/onlinedocs/gcc-4.4.0/gcc/Function-Specific-Option-Pragmas.html
+ *
+ * NOTE:
+ * - Later GCC manual states:
+ *     Optimize attribute should be used for debugging purposes only.
+ *     It is not suitable in production code.
+ */
+#if __GNUC_PREREQ(4, 4)
+/* potentially reduce function size (and perf) for -O2 (256k / 512k) builds */
+# define OPTIMIZE_SMALL __attribute__ ((optimize("Os")))
+/* potentially increase function perf (and size) for -Os (192k) build */
+# define OPTIMIZE_O2 __attribute__ ((optimize("O2")))
+# define OPTIMIZE_O3 __attribute__ ((optimize("O3")))
+#else
+# define OPTIMIZE_SMALL
+# define OPTIMIZE_O2
+# define OPTIMIZE_O3
 #endif
 
 #endif /* PORTAB_H */

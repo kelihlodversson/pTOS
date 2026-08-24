@@ -5,7 +5,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2022 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -20,9 +20,9 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "obdefs.h"
+#include "aesdefs.h"
 #include "gembind.h"
 #include "aesbind.h"
 #include "kprint.h"
@@ -184,7 +184,7 @@ WORD appl_read(WORD rwid, WORD length, void *pbuff)
 */
 
 /* unused
-WORD appl_find(const BYTE *pname)
+WORD appl_find(const char *pname)
 {
     AP_PNAME = (LONG)pname;
     return gem_if(AES_CTRL_CODE(APPL_FIND, 0, 1, 1));
@@ -277,7 +277,7 @@ WORD evnt_multi(UWORD flags, UWORD bclk, UWORD bmsk, UWORD bst,
                 UWORD m1flags, UWORD m1x, UWORD m1y, UWORD m1w, UWORD m1h,
                 UWORD m2flags, UWORD m2x, UWORD m2y, UWORD m2w, UWORD m2h,
                 WORD *mepbuff, UWORD tlc, UWORD thc, UWORD *pmx, UWORD *pmy,
-                UWORD *pmb, UWORD *pks, UWORD *pkr, UWORD *pbr )
+                UWORD *pmb, UWORD *pks, UWORD *pkr, UWORD *pbr)
 {
     MU_FLAGS = flags;
 
@@ -363,7 +363,7 @@ WORD menu_tnormal(OBJECT *tree, WORD titlenum, WORD normalit)
 
 
 /* unused
-WORD menu_text(OBJECT *tree, WORD inum, const BYTE *ptext)
+WORD menu_text(OBJECT *tree, WORD inum, const char *ptext)
 {
     MM_ITREE = (LONG)tree;
     ITEM_NUM = inum;
@@ -374,30 +374,13 @@ WORD menu_text(OBJECT *tree, WORD inum, const BYTE *ptext)
 
 
 /* unused
-WORD menu_register(WORD pid, const BYTE *pstr)
+WORD menu_register(WORD pid, const char *pstr)
 {
     MM_PID = pid;
     MM_PSTR = (LONG)pstr;
     return gem_if(AES_CTRL_CODE(MENU_REGISTER, 1, 1, 1));
 }
 */
-
-
-/* unused
-WORD menu_unregister(WORD mid)
-{
-    MM_MID = mid;
-    return gem_if(AES_CTRL_CODE(MENU_UNREGISTER, 1, 1, 0));
-}
-*/
-
-
-WORD menu_click(WORD click, WORD setit)
-{
-    MN_CLICK = click;
-    MN_SETIT = setit;
-    return gem_if(AES_CTRL_CODE(MENU_CLICK, 2, 1, 0));
-}
 
 
 /*
@@ -527,7 +510,7 @@ WORD form_dial(WORD dtype, WORD ix, WORD iy, WORD iw, WORD ih,
 }
 
 
-WORD form_alert(WORD defbut, const BYTE *astring)
+WORD form_alert(WORD defbut, const char *astring)
 {
     FM_DEFBUT = defbut;
     FM_ASTRING = (LONG)astring;
@@ -535,11 +518,17 @@ WORD form_alert(WORD defbut, const BYTE *astring)
 }
 
 
+#if CONF_WITH_SHOW_FILE || CONF_WITH_PRINTER_ICON
+/*
+ * save some space in the 192K ROMs, since this AES call
+ * is (currently) only used by 'Show file' & the printer icon handler
+ */
 WORD form_error(WORD errnum)
 {
     FM_ERRNUM = errnum;
-    return gem_if(AES_CTRL_CODE(FORM_ERROR, 1, 1, 0));
+    return gem_if(AES_CTRL_CODE(FORM_ERROR, 1, 0, 0));
 }
+#endif
 
 
 WORD form_center(OBJECT *tree, WORD *pcx, WORD *pcy, WORD *pcw, WORD *pch)
@@ -634,32 +623,30 @@ WORD graf_mbox(WORD w, WORD h, WORD srcx, WORD srcy, WORD dstx, WORD dsty)
 */
 
 
-WORD graf_growbox(WORD orgx, WORD orgy, WORD orgw, WORD orgh,
-                  WORD x, WORD y, WORD w, WORD h)
+WORD graf_growbox_grect(GRECT *from, GRECT *to)
 {
-    GR_I1 = orgx;
-    GR_I2 = orgy;
-    GR_I3 = orgw;
-    GR_I4 = orgh;
-    GR_I5 = x;
-    GR_I6 = y;
-    GR_I7 = w;
-    GR_I8 = h;
+    GR_I1 = from->g_x;
+    GR_I2 = from->g_y;
+    GR_I3 = from->g_w;
+    GR_I4 = from->g_h;
+    GR_I5 = to->g_x;
+    GR_I6 = to->g_y;
+    GR_I7 = to->g_w;
+    GR_I8 = to->g_h;
     return gem_if(AES_CTRL_CODE(GRAF_GROWBOX, 8, 1, 0));
 }
 
 
-WORD graf_shrinkbox(WORD orgx, WORD orgy, WORD orgw, WORD orgh,
-                    WORD x, WORD y, WORD w, WORD h)
+WORD graf_shrinkbox_grect(GRECT *from, GRECT *to)
 {
-    GR_I1 = orgx;
-    GR_I2 = orgy;
-    GR_I3 = orgw;
-    GR_I4 = orgh;
-    GR_I5 = x;
-    GR_I6 = y;
-    GR_I7 = w;
-    GR_I8 = h;
+    GR_I1 = from->g_x;
+    GR_I2 = from->g_y;
+    GR_I3 = from->g_w;
+    GR_I4 = from->g_h;
+    GR_I5 = to->g_x;
+    GR_I6 = to->g_y;
+    GR_I7 = to->g_w;
+    GR_I8 = to->g_h;
     return gem_if(AES_CTRL_CODE(GRAF_SHRINKBOX, 8, 1, 0));
 }
 
@@ -719,13 +706,13 @@ void graf_mkstate(WORD *pmx, WORD *pmy, WORD *pmstate, WORD *pkstate)
  *  Scrap Manager
  */
 /* unused
-WORD scrp_read(BYTE *pscrap)
+WORD scrp_read(char *pscrap)
 {
     SC_PATH = (LONG)pscrap;
     return gem_if(AES_CTRL_CODE(SCRP_READ, 0, 1, 1));
 }
 
-WORD scrp_write(const BYTE *pscrap)
+WORD scrp_write(const char *pscrap)
 {
     SC_PATH = (LONG)pscrap;
     return gem_if(AES_CTRL_CODE(SCRP_WRITE, 0, 1, 1));
@@ -737,7 +724,7 @@ WORD scrp_write(const BYTE *pscrap)
  *  File Selector Manager
  */
 /* unused
-WORD fsel_input(BYTE *pipath, BYTE *pisel, WORD *pbutton)
+WORD fsel_input(char *pipath, char *pisel, WORD *pbutton)
 {
     FS_IPATH = (LONG)pipath;
     FS_ISEL = (LONG)pisel;
@@ -748,8 +735,8 @@ WORD fsel_input(BYTE *pipath, BYTE *pisel, WORD *pbutton)
 */
 
 
-#if CONF_WITH_DESKTOP_SHORTCUTS
-WORD fsel_exinput(BYTE *pipath, BYTE *pisel, WORD *pbutton, const BYTE *title)
+#if CONF_WITH_DESKTOP_SHORTCUTS || CONF_WITH_READ_INF
+WORD fsel_exinput(char *pipath, char *pisel, WORD *pbutton, const char *title)
 {
     FS_IPATH = (LONG)pipath;
     FS_ISEL = (LONG)pisel;
@@ -764,24 +751,24 @@ WORD fsel_exinput(BYTE *pipath, BYTE *pisel, WORD *pbutton, const BYTE *title)
 /*
  *  Window Manager
  */
-WORD wind_create(UWORD kind, WORD wx, WORD wy, WORD ww, WORD wh)
+WORD wind_create_grect(UWORD kind, GRECT *gr)
 {
     WM_KIND = kind;
-    WM_WX = wx;
-    WM_WY = wy;
-    WM_WW = ww;
-    WM_WH = wh;
+    WM_WX = gr->g_x;
+    WM_WY = gr->g_y;
+    WM_WW = gr->g_w;
+    WM_WH = gr->g_h;
     return gem_if(AES_CTRL_CODE(WIND_CREATE, 5, 1, 0));
 }
 
 
-WORD wind_open(WORD handle, WORD wx, WORD wy, WORD ww, WORD wh)
+WORD wind_open_grect(WORD handle, GRECT *gr)
 {
     WM_HANDLE = handle;
-    WM_WX = wx;
-    WM_WY = wy;
-    WM_WW = ww;
-    WM_WH = wh;
+    WM_WX = gr->g_x;
+    WM_WY = gr->g_y;
+    WM_WW = gr->g_w;
+    WM_WH = gr->g_h;
     return gem_if(AES_CTRL_CODE(WIND_OPEN, 5, 1, 0));
 }
 
@@ -868,34 +855,35 @@ WORD wind_update(WORD beg_update)
 }
 
 
-WORD wind_calc(WORD wctype, UWORD kind, WORD x, WORD y, WORD w, WORD h,
-               WORD *px, WORD *py, WORD *pw, WORD *ph)
+WORD wind_calc_grect(WORD wctype, UWORD kind, GRECT *in, GRECT *out)
 {
     WM_WCTYPE = wctype;
     WM_WCKIND = kind;
-    WM_WCIX = x;
-    WM_WCIY = y;
-    WM_WCIW = w;
-    WM_WCIH = h;
+    WM_WCIX = in->g_x;
+    WM_WCIY = in->g_y;
+    WM_WCIW = in->g_w;
+    WM_WCIH = in->g_h;
     gem_if(AES_CTRL_CODE(WIND_CALC, 6, 5, 0));
-    *px = WM_WCOX;
-    *py = WM_WCOY;
-    *pw = WM_WCOW;
-    *ph = WM_WCOH;
+    out->g_x = WM_WCOX;
+    out->g_y = WM_WCOY;
+    out->g_w = WM_WCOW;
+    out->g_h = WM_WCOH;
     return (WORD)RET_CODE;
 }
 
-/* unused
+
+#if CONF_WITH_READ_INF
 WORD wind_new(void)
 {
     return gem_if(AES_CTRL_CODE(WIND_NEW, 0, 1, 0));
 }
-*/
+#endif
+
 
 /*
  *  Resource Manager
  */
-WORD rsrc_load(const BYTE *rsname)
+WORD rsrc_load(const char *rsname)
 {
     RS_PFNAME = (LONG)rsname;
     return gem_if(AES_CTRL_CODE(RSRC_LOAD, 0, 1, 1));
@@ -955,7 +943,7 @@ WORD rsrc_rcfix(RSHDR *hdr)
  *  Shell Manager
  */
 /* unused
-WORD shel_read(BYTE *pcmd, BYTE *ptail)
+WORD shel_read(char *pcmd, char *ptail)
 {
     SH_PCMD = (LONG)pcmd;
     SH_PTAIL = (LONG)ptail;
@@ -964,7 +952,7 @@ WORD shel_read(BYTE *pcmd, BYTE *ptail)
 */
 
 
-WORD shel_write(WORD doex, WORD isgr, WORD iscr, BYTE *pcmd, BYTE *ptail)
+WORD shel_write(WORD doex, WORD isgr, WORD iscr, char *pcmd, char *ptail)
 {
     SH_DOEX = doex;
     SH_ISGR = isgr;
@@ -992,7 +980,7 @@ WORD shel_put(const void *pdata, WORD len)
 
 
 /* unused
-WORD shel_find(BYTE *ppath)
+WORD shel_find(char *ppath)
 {
     SH_PATH = (LONG)ppath;
     return gem_if(AES_CTRL_CODE(SHEL_FIND, 0, 1, 1));
@@ -1001,7 +989,7 @@ WORD shel_find(BYTE *ppath)
 
 
 /* unused
-WORD shel_envrn(BYTE *ppath, const BYTE *psrch)
+WORD shel_envrn(char *ppath, const char *psrch)
 {
     SH_PATH = (LONG)ppath;
     SH_SRCH = (LONG)psrch;
@@ -1011,7 +999,7 @@ WORD shel_envrn(BYTE *ppath, const BYTE *psrch)
 
 
 /* unused
-WORD shel_rdef(BYTE *lpcmd, BYTE *lpdir)
+WORD shel_rdef(char *lpcmd, char *lpdir)
 {
     SH_LPCMD = (LONG)lpcmd;
     SH_LPDIR = (LONG)lpdir;
@@ -1019,11 +1007,11 @@ WORD shel_rdef(BYTE *lpcmd, BYTE *lpdir)
 }
 */
 
-/* unused
-WORD shel_wdef(BYTE *lpcmd, BYTE *lpdir)
+#if CONF_WITH_CLI
+WORD shel_wdef(char *lpcmd, char *lpdir)
 {
     SH_LPCMD = (LONG)lpcmd;
     SH_LPDIR = (LONG)lpdir;
     return gem_if(AES_CTRL_CODE(SHEL_WDEF, 0, 1, 2));
 }
-*/
+#endif

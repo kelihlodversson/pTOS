@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2024 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -19,21 +19,20 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "string.h"
 #include "obdefs.h"
 #include "rectfunc.h"
 #include "gsxdefs.h"
 #include "gemdos.h"
 
+#include "aesdefs.h"
+#include "aesext.h"
 #include "deskbind.h"
 #include "deskglob.h"
 #include "deskapp.h"
 #include "deskfpd.h"
 #include "deskwin.h"
-#include "dos.h"
-#include "gembind.h"
 #include "intmath.h"
 #include "aesbind.h"
 #include "deskobj.h"
@@ -42,12 +41,9 @@
 #include "deskrsrc.h"
 #include "deskmain.h"
 #include "deskinf.h"
-#include "kprint.h"
 
 
 #define SPACE 0x20
-
-#define HOTCLOSE 0x1000
 
 #define WINDOW_STYLE (NAME | CLOSER | MOVER | FULLER | INFO | SIZER | \
                       UPARROW | DNARROW | VSLIDE | LFARROW | RTARROW | HSLIDE)
@@ -64,14 +60,9 @@
 #define INITIAL_ICON_STATE  WHITEBAK
 #endif
 
-static WNODE *windows;
-
-void win_view(WORD vtype, WORD isort)
+void win_view(void)
 {
-    G.g_iview = vtype;
-    G.g_isort = isort;
-
-    switch(vtype)
+    switch(G.g_iview)
     {
     case V_TEXT:
         G.g_iwext = LEN_FNODE * gl_wchar;
@@ -80,30 +71,29 @@ void win_view(WORD vtype, WORD isort)
          * G.g_iwint defines the width of window space in front of
          * each text line.  this must be greater than zero to allow
          * for multiple item selection by "rubber-banding"
+         *
+         * note: the '-1' aligns the text on a byte boundary, allowing
+         * the fast text output routine to be used if other conditions
+         * are met (low-rez windows can rarely take advantage of this).
          */
-        G.g_iwint = USE_WIDE_FORMAT() ? 2*gl_wchar+4 : gl_wchar+4;
+        G.g_iwint = 2*gl_wchar - 1;
         G.g_ihint = 2;
-        G.g_num = G.g_nmtext;
-        G.g_pxy = G.g_xytext;
         break;
     case V_ICON:
         G.g_iwext = G.g_wicon;
         G.g_ihext = G.g_hicon;
         G.g_iwint = MIN_WINT;
         G.g_ihint = MIN_HINT;
-        G.g_num = G.g_nmicon;
-        G.g_pxy = G.g_xyicon;
         break;
     }
     G.g_iwspc = G.g_iwext + G.g_iwint;
     G.g_ihspc = G.g_ihext + G.g_ihint;
 #if CONF_WITH_SIZE_TO_FIT
     {
-    WORD width, dummy;
+    GRECT t;
 
-    wind_calc(1, WINDOW_STYLE, G.g_xdesk, G.g_ydesk, G.g_wdesk, G.g_hdesk,
-                &dummy, &dummy, &width, &dummy);
-    G.g_icols = max(1, width / G.g_iwspc);
+    wind_calc_grect(1, WINDOW_STYLE, &G.g_desk, &t);
+    G.g_icols = max(1, t.g_w / G.g_iwspc);
     }
 #endif
 }
@@ -117,20 +107,23 @@ int win_start(void)
     WNODE *pw;
     WORD i;
 
+    G.g_iview = START_VIEW;
+    G.g_isort = START_SORT;
 #if CONF_WITH_SIZE_TO_FIT
     G.g_ifit = TRUE;
 #endif
-    win_view(START_VIEW, START_SORT);
+
+    win_view();         /* uses G.g_iview */
     obj_init();         /* must be called *after* win_view(), because it uses */
                         /*  G.g_iwspc/G.g_ihspc which are set by win_view()   */
 
     G.g_wdesktop.w_flags = WN_DESKTOP;  /* mark as special pseudo-window */
 
-    windows = dos_alloc_anyram(NUM_WNODES*sizeof(WNODE));
-    if (!windows)
+    G.g_wfirst = G.g_wlist = dos_alloc_anyram(NUM_WNODES*sizeof(WNODE));
+    if (!G.g_wlist)
         return -1;
 
-    for (i = 0, G.g_wfirst = pw = windows; i < NUM_WNODES; i++, pw++)
+    for (i = 0, pw = G.g_wlist; i < NUM_WNODES; i++, pw++)
     {
         pw->w_next = pw + 1;
         pw->w_id = 0;
@@ -153,7 +146,7 @@ void win_free(WNODE *thewin)
     G.g_wcnt--;
     thewin->w_id = 0;
     objc_order(G.g_screen, thewin->w_root, 1);
-    obj_wfree( thewin->w_root, 0, 0, 0, 0 );
+    obj_wfree(thewin->w_root, 0, 0, 0, 0);
 }
 
 
@@ -169,24 +162,23 @@ WNODE *win_alloc(WORD obid)
     if (G.g_wcnt == NUM_WNODES)
         return ((WNODE *) NULL);
 
-    pt = (GRECT *) &G.g_cnxsave.cs_wnode[G.g_wcnt].x_save;
+    pt = (GRECT *) &G.g_cnxsave->cs_wnode[G.g_wcnt].x_save;
 
     wob = obj_walloc(pt->g_x, pt->g_y, pt->g_w, pt->g_h);
     if (wob)
     {
         G.g_wcnt++;
-        pw = &windows[wob-2];
+        pw = &G.g_wlist[wob-2];
         pw->w_flags = 0x0;
-        pw->w_obid = obid;    /* if -ve, the complement of the drive letter */
+        pw->w_obid = obid;  /* if -ve, the complement of the drive letter */
         pw->w_root = wob;
         pw->w_cvcol = 0;
         pw->w_cvrow = 0x0;
-        pw->w_pncol = (pt->g_w  - gl_wchar) / G.g_iwspc;
+        pw->w_pncol = (pt->g_w - gl_wchar) / G.g_iwspc;
         pw->w_pnrow = (pt->g_h - gl_hchar) / G.g_ihspc;
         pw->w_vncol = 0;
         pw->w_vnrow = 0x0;
-        pw->w_id = wind_create(WINDOW_STYLE, G.g_xdesk, G.g_ydesk,
-                                 G.g_wdesk, G.g_hdesk);
+        pw->w_id = wind_create_grect(WINDOW_STYLE, &G.g_desk);
         if (pw->w_id != -1)
         {
             return pw;
@@ -207,7 +199,7 @@ WNODE *win_find(WORD wh)
 {
     WNODE *pw;
 
-    if (wh == 0)            /* the desktop */
+    if (wh == DESKWH)       /* the desktop */
         return &G.g_wdesktop;
 
     for (pw = G.g_wfirst; pw; pw = pw->w_next)
@@ -277,15 +269,27 @@ WNODE *win_ontop(void)
 
     wob = G.g_screen[ROOT].ob_tail;
     if (G.g_screen[wob].ob_width && G.g_screen[wob].ob_height)
-        return &windows[wob-2];
+        return &G.g_wlist[wob-2];
     else
         return NULL;
 }
 
 
 /*
+ *  Return count of open windows
+ */
+WORD win_count(void)
+{
+    return G.g_wcnt;
+}
+
+
+/*
  *  Calculate a bunch of parameters related to how many file objects
  *  will fit in a window
+ *
+ *  wfit/hfit are the number of items that will fit in the current window,
+ *  horizontally (wfit) and vertically (hfit)
  */
 static void win_ocalc(WNODE *pwin, WORD wfit, WORD hfit, FNODE **ppstart)
 {
@@ -386,8 +390,8 @@ static void win_ocalc(WNODE *pwin, WORD wfit, WORD hfit, FNODE **ppstart)
  */
 static void win_icalc(FNODE *pfnode, WNODE *pwin)
 {
-    pfnode->f_pa = app_afind_by_name((pfnode->f_attr&F_SUBDIR) ? AT_ISFOLD : AT_ISFILE,
-                        AF_ISDESK, pwin->w_pnode.p_spec, pfnode->f_name, &pfnode->f_isap);
+    pfnode->f_pa = app_afind_by_name((pfnode->f_attr&FA_SUBDIR) ? AT_ISFOLD : AT_ISFILE,
+            AF_ISDESK|AF_VIEWER, pwin->w_pnode.p_spec, pfnode->f_name, &pfnode->f_isap);
 }
 
 
@@ -396,7 +400,7 @@ static void win_icalc(FNODE *pfnode, WNODE *pwin)
  *  viewable in a window.  Next adjust root of tree to take into
  *  account the current view of the window.
  */
-void win_bldview(WNODE *pwin, WORD x, WORD y, WORD w, WORD h)
+void win_bldview(WNODE *pwin, GRECT *r)
 {
     FNODE *pstart;
     ANODE *anode;
@@ -405,6 +409,11 @@ void win_bldview(WNODE *pwin, WORD x, WORD y, WORD w, WORD h)
     WORD  o_wfit, o_hfit;       /* object grid */
     WORD  i_index;
     WORD  xoff, yoff, wh, sl_size, sl_value;
+    WORD  x, y, w, h;
+
+    MAYBE_UNUSED(skipcnt);
+
+    r_get(r, &x, &y, &w, &h);
 
     MAYBE_UNUSED(skipcnt);
 
@@ -442,16 +451,19 @@ void win_bldview(WNODE *pwin, WORD x, WORD y, WORD w, WORD h)
 
         /* remember it          */
         pstart->f_obid = obid;
+        si = &G.g_screeninfo[obid];
+        si->fnptr = pstart;
 
         /* build object */
         obj = &G.g_screen[obid];
         obj->ob_state = INITIAL_ICON_STATE;
+        if (pstart->f_selected)
+            obj->ob_state |= SELECTED;
         obj->ob_flags = 0x00;
-        si = &G.g_screeninfo[obid];
         switch(G.g_iview)
         {
         case V_TEXT:
-            ub = &si->udef;
+            ub = &si->u.udef;
             obj->ob_type = G_USERDEF;
             obj->ob_spec.userblk = ub;
             ub->ub_code = dr_code;
@@ -459,7 +471,7 @@ void win_bldview(WNODE *pwin, WORD x, WORD y, WORD w, WORD h)
             win_icalc(pstart, pwin);
             break;
         case V_ICON:
-            ib = &si->icon.block;
+            ib = &si->u.icon.block;
             obj->ob_type = G_ICON;
             win_icalc(pstart, pwin);
             anode = pstart->f_pa;
@@ -468,12 +480,12 @@ void win_bldview(WNODE *pwin, WORD x, WORD y, WORD w, WORD h)
             else
             {
                 KDEBUG(("win_bldview(): NULL anode, using defaults\n"));
-                if (pstart->f_attr&F_SUBDIR)
+                if (pstart->f_attr&FA_SUBDIR)
                     i_index = IG_FOLDER;
                 else
                     i_index = (pstart->f_isap) ? IG_APPL : IG_DOCU;
             }
-            si->icon.index = i_index;
+            si->u.icon.index = i_index;
             obj->ob_spec.iconblk = ib;
             memcpy(ib, &G.g_iblist[i_index], sizeof(ICONBLK));
             ib->ib_ptext = pstart->f_name;
@@ -573,10 +585,12 @@ static void win_blt(WNODE *pw, BOOL horizontal, WORD newcv)
     }
 
     wind_get_grect(pw->w_id, WF_WXYWH, &c);
-    win_bldview(pw, c.g_x, c.g_y, c.g_w, c.g_h);
+    win_bldview(pw, &c);
 
     /* see if any part is off the screen */
     wind_get_grect(pw->w_id, WF_FIRSTXYWH, &t);
+    rc_intersect(&gl_rfull, &t);
+
     if (rc_equal(&c, &t))
     {
         /* blt as much as we can, adjust clip & draw the rest */
@@ -617,8 +631,7 @@ static void win_blt(WNODE *pw, BOOL horizontal, WORD newcv)
                 dy = tmp;
             }
             gsx_sclip(&c);
-            bb_screen(S_ONLY, sx+c.g_x, sy+c.g_y, dx+c.g_x, dy+c.g_y,
-                        wblt, hblt);
+            bb_screen(sx+c.g_x, sy+c.g_y, dx+c.g_x, dy+c.g_y, wblt, hblt);
 #if CONF_WITH_SIZE_TO_FIT
             if (horizontal)
             {
@@ -636,7 +649,7 @@ static void win_blt(WNODE *pw, BOOL horizontal, WORD newcv)
         }
     }
 
-    do_wredraw(pw->w_id, c.g_x, c.g_y, c.g_w, c.g_h);
+    do_wredraw(pw->w_id, &c);
 }
 
 
@@ -648,6 +661,7 @@ static void win_blt(WNODE *pw, BOOL horizontal, WORD newcv)
  */
 void win_dispfile(WNODE *pw, WORD file)
 {
+    GRECT gr;
     WORD col, delcv;
 
     if (pw->w_pncol < 1)   /* defensive: shouldn't happen, see win_ocalc() */
@@ -674,13 +688,9 @@ void win_dispfile(WNODE *pw, WORD file)
     pw->w_cvcol = 0;
 #endif
 
-    {
-    GRECT gr;
-
     wind_get_grect(pw->w_id, WF_WXYWH, &gr);
-    win_bldview(pw, gr.g_x, gr.g_y, gr.g_w, gr.g_h);
-    do_wredraw(pw->w_id, gr.g_x, gr.g_y, gr.g_w, gr.g_h);
-    }
+    win_bldview(pw, &gr);
+    do_wredraw(pw->w_id, &gr);
 }
 #endif
 
@@ -804,7 +814,7 @@ void win_bdall(void)
         if (pw->w_id != 0)
         {
             wind_get_grect(pw->w_id, WF_WXYWH, &clip);
-            win_bldview(pw, clip.g_x, clip.g_y, clip.g_w, clip.g_h);
+            win_bldview(pw, &clip);
         }
     }
 }
@@ -821,7 +831,7 @@ void win_shwall(void)
 
     for (pw = G.g_wfirst; pw; pw = pw->w_next)
     {
-        if ((wh=pw->w_id) != 0)     /* yes, assignment! */
+        if ((wh=pw->w_id) != DESKWH)    /* yes, assignment! */
         {
             wind_get_grect(wh, WF_WXYWH, &clip);
             fun_msg(WM_REDRAW, wh, clip.g_x, clip.g_y, clip.g_w, clip.g_h);
@@ -842,7 +852,7 @@ WORD win_isel(OBJECT olist[], WORD root, WORD curr)
 
     while(curr > root)
     {
-        if ( olist[curr].ob_state & SELECTED )
+        if (olist[curr].ob_state & SELECTED)
             return curr;
         curr = olist[curr].ob_next;
     }
@@ -852,12 +862,12 @@ WORD win_isel(OBJECT olist[], WORD root, WORD curr)
 
 
 /*
- *  Set the name and information lines of a particular window
+ *  Update the name line for a window
  */
 void win_sname(WNODE *pw)
 {
-    BYTE *psrc;
-    BYTE *pdst;
+    char *psrc;
+    char *pdst;
 
     psrc = pw->w_pnode.p_spec;
     pdst = pw->w_name;
@@ -870,14 +880,48 @@ void win_sname(WNODE *pw)
 }
 
 
-/* Added for DESKTOP v1.2 */
-void win_sinfo(WNODE *pwin)
+/*
+ * Set the info line for a window
+ *
+ * Optionally, count selected items
+ */
+void win_sinfo(WNODE *pwin, BOOL check_selected)
 {
     PNODE *pn;
+    FNODE *fn;
+    char *alert;
+    WORD i, select_count = 0;
+    LONG select_size = 0L;
 
     pn = &pwin->w_pnode;
-    rsrc_gaddr_rom(R_STRING, STINFOST, (void **)&G.a_alert);
-    strlencpy(G.g_1text, G.a_alert);
 
-    sprintf(pwin->w_info, G.g_1text, pn->p_size, pn->p_count);
+    if (check_selected)
+    {
+        /* count selected FNODEs */
+        for (i = 0, fn = pn->p_fbase; i < pn->p_count; i++, fn++)
+        {
+            if (fn->f_selected)
+            {
+                select_count++;
+                select_size += fn->f_size;
+            }
+        }
+    }
+
+    /*
+     * choose the appropriate string
+     */
+    if (select_count)
+    {
+        alert = desktop_str_addr(STINFST2);
+    }
+    else
+    {
+        alert = desktop_str_addr(STINFOST);
+        select_count = pn->p_count;     /* so we can use common code below */
+        select_size = pn->p_size;
+    }
+
+    sprintf(pwin->w_info, alert, select_size, select_count);
+    wind_set(pwin->w_id, WF_INFO, pwin->w_info, 0, 0);
 }

@@ -2,7 +2,7 @@
  * conout.h - lowlevel color model dependent screen handling routines
  *
  *
- * Copyright (C) 2004-2016 by Authors:
+ * Copyright (C) 2004-2019 by Authors:
  *
  * Authors:
  *  MAD     Martin Doering
@@ -35,5 +35,5 @@ void ascii_out(int);
 void move_cursor(int, int);
 void blank_out (int, int, int, int);
 void invert_cell(int, int);
-void scroll_up(int);
-void scroll_down(int);
+void scroll_up(UWORD top_line);
+void scroll_down(UWORD start_line);

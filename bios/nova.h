@@ -1,10 +1,10 @@
 /*
- * nova.h - Nova graphic card routines
+ * nova.h - Nova/Vofa/Wittich adapter graphics card routines
  *
- * Copyright (C) 2018 The EmuTOS development team
+ * Copyright (C) 2018-2025 The EmuTOS development team
  *
  * Authors:
- * Christian Zietz 
+ * Christian Zietz
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -14,9 +14,9 @@
 #define NOVA_H
 
 #if CONF_WITH_NOVA
-extern int has_nova;
 void detect_nova(void);
-int init_nova(void);
+BOOL init_nova(void);
+UBYTE* get_novamembase(void);
 #endif
 
 #endif

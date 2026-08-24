@@ -2,7 +2,7 @@
  * fshand.c - file handle routines for the file system
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2014-2016 The EmuTOS development team
+ *               2014-2019 The EmuTOS development team
  *
  * Authors:
  *  SCC   Steve C. Cavender
@@ -13,11 +13,10 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "fs.h"
 #include "gemerror.h"
-#include "kprint.h"
+#include "bdosstub.h"
 
 /*
  * xforce - 0x46, force a std handle to a non-std handle

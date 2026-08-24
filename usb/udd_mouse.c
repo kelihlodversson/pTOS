@@ -4,6 +4,7 @@
 
 #include "usb.h"
 #include "usb_api.h"
+#include "bios.h"               /* for kbdvecs */
 #include "ikbd.h"               /* for call_mousevec() */
 #include "tosvars.h"            /* for mousexvec() */
 

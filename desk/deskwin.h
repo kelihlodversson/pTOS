@@ -2,7 +2,7 @@
 /*      changed NUM_WOBS from 128 to 300        11/19/87        mdf     */
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2022 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -27,7 +27,7 @@
  * actually requires about 50 bytes, so 400 pixels should be enough,
  * but for now we stick with standard Atari resolutions
  */
-#define USE_WIDE_FORMAT()   (G.g_wdesk >= 640)
+#define USE_WIDE_FORMAT()   (G.g_desk.g_w >= 640)
 
 /*
  * total length of highlighted text for selected files in
@@ -59,7 +59,7 @@ struct _windnode
 {
         WNODE           *w_next;            /* -> next 'highest' window */
         UWORD           w_flags;                /* see above */
-        WORD            w_id;                   /* window handle id #   */
+        WORD            w_id;                   /* AES window handle (0 => not in use) */
         WORD            w_obid;                 /* desktop object id    */
         WORD            w_root;                 /* pseudo root ob. in   */
                                                 /*   gl_screen for this */
@@ -73,19 +73,19 @@ struct _windnode
                                                 /*   when size-to-fit (no horiz. scroll) */
         WORD            w_vnrow;                /* virtual # of rows    */
         PNODE           w_pnode;                /* now embedded         */
-        BYTE            w_name[LEN_ZPATH+2];    /* allow for leading & trailing spaces */
+        char            w_name[LEN_ZPATH+2];    /* allow for leading & trailing spaces */
 /*
  * the following array must be large enough to hold the sprintf-formatted
- * output of the longest translated version of the STINFOST resource item.
- * as of december 2014, this is 51 bytes for the Greek-language version.
+ * output of the longest translated version of the STINFOST/STINFST2 resource item.
+ * as of august 2020, this is 68 bytes for the Greek-language version of STINFST2.
  */
-        BYTE            w_info[60];
+        char            w_info[72];
 };
 
 
 
 /* Prototypes: */
-void win_view(WORD vtype, WORD isort);
+void win_view(void);
 int win_start(void);
 void win_free(WNODE *thewin);
 WNODE *win_alloc(WORD obid);
@@ -95,10 +95,7 @@ void win_top(WNODE *thewin);
 WNODE *win_onbottom(void);
 #endif
 WNODE *win_ontop(void);
-void win_bldview(WNODE *pwin, WORD x, WORD y, WORD w, WORD h);
-#if CONF_WITH_SEARCH
-void win_dispfile(WNODE *pw, WORD n);
-#endif
+void win_bldview(WNODE *pwin, GRECT *r);
 void win_slide(WORD wh, BOOL horizontal, WORD sl_value);
 void win_arrow(WORD wh, WORD arrow_type);
 void win_srtall(void);
@@ -106,6 +103,15 @@ void win_bdall(void);
 void win_shwall(void);
 WORD win_isel(OBJECT olist[], WORD root, WORD curr);
 void win_sname(WNODE *pw);
-void win_sinfo(WNODE *pwin);
+void win_sinfo(WNODE *pwin, BOOL check_selected);
+WORD win_count(void);
+
+#if CONF_WITH_SEARCH
+void win_dispfile(WNODE *pw, WORD file);
+#endif
+
+#if CONF_WITH_BOTTOMTOTOP
+WNODE *win_onbottom(void);
+#endif
 
 #endif  /* _DESKWIN_H */

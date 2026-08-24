@@ -1,7 +1,7 @@
 /*
  * memory.h - Memory functions
  *
- * Copyright (C) 2016-2017 The EmuTOS development team
+ * Copyright (C) 2016-2022 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -35,8 +35,6 @@
 
 #ifndef ASM_SOURCE
 
-#include "portab.h"
-
 void ttram_detect(void);
 
 #if CONF_WITH_ALT_RAM
@@ -44,6 +42,12 @@ void ttram_detect(void);
 void altram_init(void);
 
 #endif /* CONF_WITH_ALT_RAM */
+
+#if CONF_WITH_MEMORY_TEST
+BOOL memory_test(void);
+BOOL memtest_verify(ULONG *start, ULONG value, LONG length);    /* in memory.S */
+BOOL memtest_rotate_verify(ULONG *start, LONG length);          /* in memory.S */
+#endif
 
 /* These flags will be set up early by meminit() */
 extern UBYTE meminit_flags;

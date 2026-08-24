@@ -1,7 +1,7 @@
 /*
  * aciavecs.S - exception handling for ikbd/midi acias.
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2022 The EmuTOS development team
  *
  * Authors:
  *  LVL  Laurent Vogel
@@ -29,8 +29,8 @@
 // } KBDVECS;
 //
 //- midivec is called with the received data byte in d0.
-//- If an overflow error occurred on either ACIA, vkbderr or vmiderr
-//  will be called, as appropriate by midisys or ikbdsys with the
+//- If an overrun error occurred on either ACIA, vkbderr or vmiderr
+//  will be called (by ikbdsys or midisys as appropriate) with the
 //  contents of the ACIA data register in d0.
 //- statvec, mousevec, clockvec, and joyvec all are called with
 //  the address of the packet in register a0.
@@ -50,7 +50,7 @@
 // };
 //
 //- kbdvec (undocumented feature of TOS >= 2.0) is called with the
-//  received data byte in d0.
+//  received data byte in d0, and a pointer to the ikbd iorec in a0.
 //- The ikbdstate description in the Compendium is wrong. It should read:
 //  "When the ikbdstate variable is non-zero, it means that a packet is
 //  currently being retrieved. In that case, kbdlength represents the number
@@ -58,40 +58,37 @@
 
 /* Known differences between this and Atari TOS:
  *
- * a) Although this doesn't appear to be documented, TOS sets up the
- * following registers before entering vectors ikbdsys and midisys:
- *   a0: address of the iorec structure
- *   a1: address of the ACIA control register
- *   a2: address of the error routine (vkbderr or vmiderr)
- *   d2: value of the ACIA status register
- * Currently EmuTOS does not setup these registers.
- *
- * b) In EmuTOS the same buffer kbdbuf is used to accumulate the various IKBD
- * packets, whereas TOS uses five different buffers:
- *   statvec, mousevec (absolute), mousevec (relative), clockvec, joyvec.
- *
- * c) EmuTOS currently does not check errors at all. Atari TOS checks the
- * following errors:
- *  - if an interrupt request was received and no full byte is ready to be
- *    read, then TOS jumps to the error vector;
- *  - if a byte was read but an overrun occurred, then after having
- *    correctly processed the received byte, TOS reads the data register
- *    again, then jumps to the error vector.
+ * Buffer usage: both EmuTOS and Atari TOS use a separate buffer for
+ * joystick reports.  However EmuTOS uses kbdbuf to accumulate all other
+ * IKBD packets, whereas Atari TOS uses four different buffers:
+ *  . kbdbuf (for response 0xf6)
+ *  . mousebuf (for response 0xf7)
+ *  . relmousebuf (for response 0xf8-0xfb)
+ *  . clockbuf (for response 0xfc)
  */
 
 #include "asmdefs.h"
 
-        .globl  _init_acia_vecs
-        .globl  _int_acia
+        .extern _clockvec
+        .extern _memmove
+        .extern _mfpint
+        .extern _kbd_int
+        .extern _amiga_init_keyboard_interrupt
 
+        .globl  _init_acia_vecs
+#if CONF_WITH_IKBD_ACIA || CONF_WITH_MIDI_ACIA
+        .globl  _int_acia
+#endif
+
+#if CONF_WITH_EXTENDED_MOUSE
         .globl  _mousexvec
+#endif
         .globl  _kbdvecs
 
         .globl  _ikbdiorec
         .globl  _midiiorec
 
         .globl  _call_mousevec
-
 
         .bss
 
@@ -103,7 +100,6 @@
 
 ikbdibufbuf:    .ds.b   ikbd_bufsize
 midiibufbuf:    .ds.b   midi_bufsize
-
 
 // ==== IORECS =============================================================
 // Table of input-output records for kbd in, midi in
@@ -123,12 +119,13 @@ midiibuftl:     .ds.w   1
 midiibuflo:     .ds.w   1
 midiibufhi:     .ds.w   1
 
-
 // ==== KBDVBASE =============================================================
 // This is now the table of routines for managing midi and keyboard data
 // in packets from IKBD (shown by a0 and 4(sp))
 
+#if CONF_WITH_EXTENDED_MOUSE
 _mousexvec:     .ds.l   1       // mouse-routine for additional buttons
+#endif
 kbdvec:         .ds.l   1       // must be right before _kbdvecs
 _kbdvecs:
 midivec:        .ds.l   1       // MIDI input
@@ -144,15 +141,15 @@ ikbdstate:      .ds.b   1       // action to take upon packet completion
 kbdlength:      .ds.b   1       // number of bytes remaining in current packet
         .even
 
-
-
         .text
 
 _init_acia_vecs:
         // initialize the kbdvecs structure
-        lea     _just_rts,a0            // dummy vector
+        lea     just_rts,a0             // dummy vector
         lea     _kbdvecs,a1
+#if CONF_WITH_EXTENDED_MOUSE
         move.l  a0,_mousexvec-_kbdvecs(a1)
+#endif
 #ifdef __mcoldfire__
         move.l  #_kbdvec,d0
         move.l  d0,kbdvec-_kbdvecs(a1)
@@ -176,6 +173,8 @@ _init_acia_vecs:
 #else
         move.l  #_clockvec,clockvec-_kbdvecs(a1)     // in bios/clock.c
 #endif
+#else
+        move.l  a0,clockvec-_kbdvecs(a1)
 #endif /* CONF_WITH_IKBD_CLOCK */
         move.l  a0,joyvec-_kbdvecs(a1)
 #if CONF_WITH_MIDI_ACIA
@@ -272,7 +271,7 @@ int_acia_loop:
         lea     0xfffffa00.w,a1
         btst.b  #4,0x1(a1)                // while still interrupting
         jeq     int_acia_loop
-        bclr.b  #6,0x11(a1)               // clear in service bit
+        move.b  #0xbf,0x11(a1)            // clear in service bit
 
         // restore scratch regs
 #ifdef __mcoldfire__
@@ -296,10 +295,18 @@ int_acia_loop:
 _midisys:
         move.b  midi_acia_stat,d0
         jpl     midirts                 // not interrupting
-        // TODO (?): check errors (buffer full ?)
+        btst    #0,d0
+        jeq     midirts                 // no data there anyway
+        move.w  d0,-(sp)                // save status byte across midivec call
         move.b  midi_acia_data,d0
         move.l  midivec,a0
-        jmp     (a0)                    // stack is clean: no need to jsr.
+        jsr     (a0)                    // call midivec
+        move.w  (sp)+,d0                // d0 = status byte
+        btst    #5,d0                   // receiver overrun ?
+        jeq     midirts                 // no, done
+        move.b  midi_acia_data,d0       // get data byte again
+        move.l  vmiderr,a0
+        jsr     (a0)                    // call vmiderr
 midirts:
         rts
 
@@ -376,14 +383,25 @@ _ikbdsys:
         moveq   #0,d0
         move.b  ikbd_acia_stat,d1
         move.b  d1,d0
-        jpl     just_rts                // not interrupting
-        // TODO (?): check errors (buffer full ?)
+        jpl     ikbdrts                 // not interrupting
+        btst    #0,d0
+        jeq     ikbdrts                 // no data there anyway
+        move.w  d0,-(sp)                // save status byte across ikbdraw call
         move.b  ikbd_acia_data,d0
-        // Fall into ikbdraw
+        jsr     ikbdraw
+        move.w  (sp)+,d0                // d0 = status byte
+        btst    #5,d0                   // receiver overrun ?
+        jeq     ikbdrts                 // no, done
+        move.b  ikbd_acia_data,d0       // get data byte again
+        move.l  vkbderr,a0
+        jsr     (a0)                    // call vkbderr
+ikbdrts:
+        rts
+
 #endif /* CONF_WITH_IKBD_ACIA */
 
 // Process a raw byte received from IKBD protocol.
-// This routine is hardware independant.
+// This routine is hardware independent.
 // The byte to process is in d0.l
         .globl  ikbdraw
 ikbdraw:
@@ -391,8 +409,9 @@ ikbdraw:
         jne     in_packet       // ikbdstate != 0 => go and add to the packet
         cmp.w   #0xf6,d0        // is byte a packet header?
         jcc     begin_packet    // byte >= 0xf6 => go begin receiving a packet
-        move.l  kbdvec,a0       // ordinary key byte in d0. jump in vector
-        jmp     (a0)            // stack is clean: no need to jsr.
+        lea     _ikbdiorec,a0   // set args for kbdvec: a0->iorec (d0=ikbd byte)
+        move.l  kbdvec,-(sp)    // push vector onto stack
+        rts                     // and go there (stack is clean, no need to jsr)
 
 begin_packet:
         move.b  d0,kbdbuf       // put the byte at beginning of the buffer
@@ -425,15 +444,15 @@ in_packet:
         lea     kbdbuf,a0
 #ifdef __mcoldfire__
         move.b  d0,0(a0,d1.l)
-        moveq   #0,d0
-        move.b  kbdlength,d0
-        subq.l  #1,d0
-        move.b  d0,kbdlength
+        moveq   #0,d1           // preserve d0 by using d1 as work reg
+        move.b  kbdlength,d1
+        subq.l  #1,d1
+        move.b  d1,kbdlength
         jeq     got_packet
-        moveq   #0,d0
-        move.w  kbdindex,d0
-        addq.l  #1,d0
-        move.w  d0,kbdindex
+        moveq   #0,d1
+        move.w  kbdindex,d1
+        addq.l  #1,d1
+        move.w  d1,kbdindex
 #else
         move.b  d0,0(a0,d1.w)
         sub.b   #1,kbdlength
@@ -442,27 +461,23 @@ in_packet:
 #endif
         rts
 
-// now I've got a full packet in buffer kbdbuf.
+// now I've got a full packet in buffer kbdbuf, and d0.b is the last byte received
 got_packet:
-        moveq.l #0,d0
-        move.b  ikbdstate,d0
+        moveq.l #0,d1           // preserve d0 by using d1 as work reg
+        move.b  ikbdstate,d1
 #ifdef __mcoldfire__
-        asl.l   #2,d0
+        asl.l   #2,d1
 #else
-        asl.w   #2,d0
+        asl.w   #2,d1
 #endif
-        move.l  action_table-4(pc,d0),a1
+        move.l  action_table-4(pc,d1),a1
         lea     kbdbuf,a0
         jmp     (a1)
 action_table:
         .dc.l   kbd_status      // 1
         .dc.l   kbd_abs_mouse   // 2
         .dc.l   kbd_rel_mouse   // 3
-#ifdef CONF_WITH_IKBD_CLOCK
         .dc.l   kbd_clock       // 4
-#else
-        .dc.l   0               // 4
-#endif
         .dc.l   kbd_joys        // 5
         .dc.l   kbd_joy0        // 6
         .dc.l   kbd_joy1        // 7
@@ -475,34 +490,37 @@ kbd_abs_mouse:
 kbd_rel_mouse:
         move.l  mousevec,a1
         jra     kbd_jump_vec
-#ifdef CONF_WITH_IKBD_CLOCK
 kbd_clock:
         addq.l  #1,a0
         move.l  clockvec,a1
         jra     kbd_jump_vec
-#endif
 
-// Joystick support is special. The buffer passed to routine joyvec
-// will, in all cases, contain (package header, joystick 0, joystick 1)
-// so for each kind of package we copy this info into a separate joybuf.
+//
+// Joystick support is special, and requires a separate joybuf.
+//
+// IKBD packet 0xFD (the response to command 0x16) is treated the same as
+// most packets: the buffer passed to the joyvec function just contains
+// the data (joystick 0, joystick 1).
+//
+// However, for IKBD packets 0xFE and 0xFF, the buffer will contain
+// (package header, joystick 0, joystick 1).
+//
+// For TOS compatibility (true up to at least TOS 3.06), we support the
+// following undocumented feature: on entry to the 'joyvec' routine,
+// d0.b contains the last data byte received.
+//
 
 kbd_joys:
-        lea     joybuf,a1
-        move.b  (a0)+,(a1)+
-        move.b  (a0)+,(a1)+
-        move.b  (a0),(a1)
-        subq.l  #2,a1
-        jra     joy_next
+        addq.l  #1,a0           // 0xfd packet: point after src header
 kbd_joy0:
-        lea     joybuf,a1
-        move.b  (a0)+,(a1)
-        move.b  (a0),1(a1)
+        moveq.l #1,d1           // 0xfd, 0xfe: dest offset for second byte
         jra     joy_next
 kbd_joy1:
+        moveq.l #2,d1           // 0xff packet: dest offset for second byte
+joy_next:
         lea     joybuf,a1
         move.b  (a0)+,(a1)
-        move.b  (a0),2(a1)
-joy_next:
+        move.b  (a0),(a1,d1)
         move.l  a1,a0
         move.l  joyvec,a1
 
@@ -535,7 +553,7 @@ _call_mousevec:
 #endif
         rts
 
-#if CONF_WITH_FLEXCAN || CONF_SERIAL_IKBD
+#if CONF_WITH_FLEXCAN || CONF_SERIAL_IKBD || defined(MACHINE_LISA)
 
 /******************************************************************************/
 /* Call ikbdraw from C                                                        */
@@ -547,7 +565,7 @@ _call_ikbdraw:
         move.b  5(sp),d0                // raw IKBD byte
         jra     ikbdraw
 
-#endif /* CONF_WITH_FLEXCAN || CONF_SERIAL_IKBD */
+#endif /* CONF_WITH_FLEXCAN || CONF_SERIAL_IKBD || defined(MACHINE_LISA) */
 
 #ifdef MACHINE_AMIGA
 

@@ -1,7 +1,7 @@
 /*
  * natfeat.S - EmuTOS NatFeat detection routine
  *
- * Copyright (C) 2001-2017 by the EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  PES   Petr Stehlik
@@ -10,17 +10,17 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-
-
 #include "asmdefs.h"
-
 
 // ==== References ===========================================================
 
-
+#if DETECT_NATIVE_FEATURES
         .globl  _detect_native_features
         .globl  _natfeat_cookie
+#endif
+#if CONF_WITH_XHDI
         .globl  _xhdi_vec
+#endif
         .extern _xhdi_handler
 
         .equ vec_illegal, 0x10       // illegal exception vector

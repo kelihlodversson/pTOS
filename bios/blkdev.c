@@ -1,7 +1,7 @@
 /*
  * blkdev.c - BIOS block device functions
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2026 The EmuTOS development team
  *
  * Authors:
  *  MAD     Martin Doering
@@ -13,17 +13,15 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "string.h"
 #include "endian.h"
 #include "gemerror.h"
-#include "kprint.h"
 #include "asm.h"
 #include "tosvars.h"
 #include "ahdi.h"
-#include "mfp.h"
 #include "floppy.h"
+#include "machine.h"
 #include "disk.h"
 #include "ikbd.h"
 #include "blkdev.h"
@@ -33,22 +31,17 @@
 #include "ide.h"
 #include "sd.h"
 #include "virtio_blk.h"
+#include "scsidriv.h"
 #include "biosext.h"
 #include "biosmem.h"
 #include "xhdi.h"
+#include "intmath.h"
 
 #ifdef __arm__
 PUN_INFO *pun_ptr;      /* fixed address on m68k (tosvars.ld), ordinary
                          * storage here (#219); declared extern in ahdi.h */
 #endif
 
-
-/*
- * undefine the following to enable booting from hard disk.
- * note that this is experimental and, as of march 2015,
- * will cause a crash if used with hard disk drivers ...
- */
-#define DISABLE_HD_BOOT
 
 /*
  * Global variables
@@ -120,7 +113,9 @@ void blkdev_init(void)
 #if CONF_WITH_BOOT_SECTOR
     hdv_boot    = blkdev_hdv_boot;
 #endif
-    hdv_init    = 0;    /* blkdev_hdv_init; */
+    /* On TOS hdv_init points to the floppy detection and setup routine. */
+    /* EmuTOS does not use hdv_init, but initializes it for compatibility. */
+    hdv_init    = flop_hdv_init;
 
     /* setup general block device vectors */
     hdv_bpb     = blkdev_getbpb;
@@ -131,36 +126,50 @@ void blkdev_init(void)
     blkdev_hdv_init();
 }
 
-/* currently the only valid information in the PUN_INFO is the max_sect_siz */
-/* which is exactly what FreeMiNT was missing and was complaining about... */
+/*
+ * set up an AHDI-compatible PUN_INFO structure
+ */
 static void pun_info_setup(void)
 {
-    int i;
-    BPB *bpb;
+    int i, physdev, old_physdev;
+    BLKDEV *dev;
     LONG max_size;
 
-    /* set PUN_INFO */
-    pun_info.puns = BLKDEVNUM;
+    /*
+     * initialize empty PUN_INFO
+     */
+    pun_info.puns = 0;
     pun_info.max_sect_siz = MAX_LOGSEC_SIZE;    /* temporarily, for blkdev_getbpb() */
+    for (i = 0; i < PUN_MAXUNITS; i++)
+    {
+        pun_info.pun[i] = 0xff;
+        pun_info.partition_start[i] = 0;
+        pun_info.reserved[i] = 0;
+    }
 
-    /* floppy A: */
-    pun_info.pun[0] = 0;    /* FIXME */
-    pun_info.partition_start[0] = 0;
-
-    /* floppy B: */
-    pun_info.pun[1] = 0;    /* FIXME */
-    pun_info.partition_start[1] = 0;
-
-    /* disks C: - P: */
-    for(i = 2, max_size = SECTOR_SIZE; i < 16; i++) {
-        pun_info.pun[i] = 0;    /* FIXME */
-        pun_info.partition_start[i] = 0;    /* FIXME */
-
-        bpb = (BPB *)blkdev_getbpb(i);
-        if (!bpb)
-            continue;
-        if (bpb->recsiz > max_size) {
-            max_size = bpb->recsiz;
+    /*
+     * fill in PUN_INFO, using data from blkdev[]
+     */
+    old_physdev = -1;
+    max_size = SECTOR_SIZE;     /* used for determining actual max logsec size */
+    for (dev = blkdev, i = NUMFLOPPIES; dev < blkdev+BLKDEVNUM; dev++)
+    {
+        physdev = dev->unit - NUMFLOPPIES;
+        if ((dev->flags & DEVICE_VALID) && (physdev >= 0))
+        {
+            if (physdev != old_physdev)
+            {
+                pun_info.puns++;        /* count physical devices */
+                old_physdev = physdev;
+            }
+            blkdev_getbpb(i);           /* force boot sector scan & BPB rebuild */
+            pun_info.pun[i] = physdev;
+            pun_info.partition_start[i] = dev->start;
+            if (dev->flags & GETBPB_ALLOWED)
+                if (dev->bpb.recsiz > max_size)
+                    max_size = dev->bpb.recsiz;
+            if (++i >= PUN_MAXUNITS)    /* cannot store info for devices > P: */
+                break;
         }
     }
 
@@ -171,7 +180,7 @@ static void pun_info_setup(void)
 
     pun_ptr = &pun_info;
 
-    KDEBUG(("PUN INFO: max sector size = %d\n",pun_info.max_sect_siz));
+    KDEBUG(("PUN INFO: max sector size = %u\n",pun_info.max_sect_siz));
 }
 
 /*
@@ -192,6 +201,10 @@ static void blkdev_hdv_init(void)
      * do bus initialisation, such as setting delay values
      */
     bus_init();
+
+#if CONF_WITH_SCSI_DRIVER
+    scsidriv_init();    /* detect all devices */
+#endif
 
     disk_init_all();    /* Detect hard disk partitions */
 
@@ -254,10 +267,13 @@ LONG blkdev_boot(void)
     if (bootflags & BOOTFLAG_SKIP_AUTO_ACC)
         return 0;
 
-#ifdef DISABLE_HD_BOOT
-    if (bootdev >= NUMFLOPPIES) /* don't attempt to boot from hard disk */
+    /*
+     * don't attempt to boot the boot sector from hard disk,
+     * hard disk booting (if applicable) is handled by
+     * disk_try_dmaboot().
+     */
+    if (bootdev >= NUMFLOPPIES)
         return 0;
-#endif
 
     /*
      * execute the bootsector code (if present)
@@ -394,7 +410,7 @@ int add_partition(UWORD unit, LONG *devices_available, char id[], ULONG start, U
     b->unit  = unit;
 
     /* flag partitions that support GetBPB() */
-    if (getbpb_allowed(id))
+    if (getbpb_allowed(b->id))
         b->flags |= GETBPB_ALLOWED;
 
     /* make just GEM/BGM partitions visible to applications */
@@ -418,7 +434,7 @@ int add_partition(UWORD unit, LONG *devices_available, char id[], ULONG start, U
 
 static LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LONG lrecnr)
 {
-    int retries = RWABS_RETRIES;
+    int retry_count, retries;
     int unit = dev;
     LONG lcount = cnt;
     LONG retval;
@@ -429,11 +445,21 @@ static LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LO
     KDEBUG(("rwabs(rw=%d, buf=%p, count=%ld, recnr=%u, dev=%d, lrecnr=%ld)\n",
             rw,buf,lcount,recnr,dev,lrecnr));
 
+    /*
+     * handle special undocumented feature in the floppy-only Rwabs() handler
+     * installed by TOS: if the buffer pointer is NULL, the value in 'count'
+     * is set as the current mediachange status (expected to be 0-2).
+     * this feature is used by FastCopy III (and probably others).
+     */
+    if ((dev < NUMFLOPPIES) && (buf == NULL)) {
+        blkdev[dev].mediachange = cnt;
+        return 0L;
+    }
+
     if (recnr != -1)            /* if long offset not used */
         lrecnr = (UWORD)recnr;  /* recnr as unsigned to enable 16-bit recn */
 
-    if (rw & RW_NORETRIES)
-        retries = 1;
+    retry_count = (rw & RW_NORETRIES) ? 1 : RWABS_RETRIES;
 
     /*
      * are we accessing a physical unit or a logical device?
@@ -479,6 +505,9 @@ static LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LO
                 return E_CHNG;
             }
         }
+
+        /* In logical mode RW_NOBYTESWAP is not supported. */
+        rw &= ~RW_NOBYTESWAP;
     }
     else {                              /* physical */
         if (unit < 0 || unit >= UNITSNUM || !units[unit].valid)
@@ -510,6 +539,7 @@ static LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LO
         /* split the transfer to 15-bit count blocks (lowlevel functions take WORD count) */
         WORD scount = (lcount > CNTMAX) ? CNTMAX : lcount;
         do {        /* outer loop retries if critical event handler says we should */
+            retries = retry_count;
             do {    /* inner loop automatically retries */
                 retval = (unit<NUMFLOPPIES) ? floppy_rw(rw, buf, scount, lrecnr, geo->spt, geo->sides, unit)
                                             : disk_rw(unit, (rw & ~RW_NOTRANSLATE), lrecnr, scount, buf);
@@ -521,7 +551,7 @@ static LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LO
         } while(retval == CRITIC_RETRY_REQUEST);
         if (retval < 0)     /* error, retries exhausted */
             break;
-        buf += scount << psshift;
+        buf += (ULONG)scount << psshift;
         lrecnr += scount;
         lcount -= scount;
     } while(lcount > 0);
@@ -570,15 +600,18 @@ LONG blkdev_getbpb(WORD dev)
     BLKDEV *bdev = blkdev + dev;
     struct bs *b;
     struct fat16_bs *b16;
-    ULONG tmp;
+    ULONG tmp, clsizb;
     LONG ret;
     UWORD reserved, recsiz;
-    int unit;
+    int n, unit;
 
     KDEBUG(("blkdev_getbpb(%d)\n",dev));
 
     if ((dev < 0 ) || (dev >= BLKDEVNUM) || !(bdev->flags&DEVICE_VALID))
+    {
+        KDEBUG(("device is invalid\n"));
         return 0L;  /* unknown device */
+    }
 
     unit = bdev->unit;
 
@@ -606,41 +639,86 @@ LONG blkdev_getbpb(WORD dev)
 
     /* check if this device supports GetBPB() */
     if (!(bdev->flags & GETBPB_ALLOWED))
+    {
+        KDEBUG(("device does not support Getbpb()\n"));
         return 0L;              /* no can do */
+    }
 
-    /* now we can read the bootsector using the physical mode */
+    /*
+     * now we can read the bootsector using the physical mode.  for
+     * floppies, we read additional sectors so that we can compute
+     * checksums later on
+     */
+    n = (unit < NUMFLOPPIES) ? CHKSUM_SECTORS : 1;
     do {
         ret = blkdev_rwabs(RW_READ | RW_NOMEDIACH | RW_NOTRANSLATE,
-                           dskbufp, 1, -1, unit, bdev->start);
+                           dskbufp, n, -1, unit, bdev->start);
         if (ret < 0L)
             ret = call_etv_critic((WORD)ret,dev);
     } while(ret == CRITIC_RETRY_REQUEST);
 
     if (ret < 0L)
+    {
+        KDEBUG(("can't read boot sector\n"));
         return 0L;  /* error */
+    }
 
     b = (struct bs *)dskbufp;
     b16 = (struct fat16_bs *)dskbufp;
 
-    if (b->spc == 0)
-        return 0L;
-
     /* don't login a disk if the logical sector size is too large */
     recsiz = getiword(b->bps);
     if (recsiz > pun_info.max_sect_siz)
+    {
+        KDEBUG(("recsiz %u is too large (max recsiz = %u)\n",
+                recsiz,pun_info.max_sect_siz));
         return 0L;
+    }
+
+    /* don't login a disk if the cluster size (in bytes) is invalid */
+    clsizb = (ULONG)b->spc * recsiz;
+    if ((clsizb == 0UL) || (clsizb > MAX_CLUSTER_SIZE))
+    {
+        KDEBUG(("invalid cluster size (%lu bytes): spc=%u, recsiz=%u\n",
+                clsizb,b->spc,recsiz));
+        return 0L;
+    }
+
+    /*
+     * don't login a disk if the number of FATs is unsupported,
+     * but for compatibility with TOS accept "zero" and then assume 2 FATs
+     */
+    if (b->fat == 0)
+    {
+        b->fat = 2;
+    }
+    if ((b->fat < MIN_FATS) || (b->fat > MAX_FATS))
+    {
+        KDEBUG(("invalid FAT count %u\n",b->fat));
+        return 0L;
+    }
 
     KDEBUG(("bootsector[dev=%d] = {\n  ...\n  res = %d;\n  hid = %d;\n}\n",
             dev,getiword(b->res),getiword(b->hid)));
 
     bdev->bpb.recsiz = recsiz;
     bdev->bpb.clsiz = b->spc;
-    bdev->bpb.clsizb = bdev->bpb.clsiz * bdev->bpb.recsiz;
-    tmp = getiword(b->dir);
+    bdev->bpb.clsizb = clsizb;
+
+    /*
+     * determine the number of root directory sectors
+     *
+     * if the space required for the specified number of root directory
+     * entries is not an exact number of logical sectors, we round up
+     */
+    tmp = getiword(b->dir);     /* root dir entries */
     if (bdev->bpb.recsiz != 0)
-        bdev->bpb.rdlen = (tmp * 32) / bdev->bpb.recsiz;
+        bdev->bpb.rdlen = divu((tmp*32)+(bdev->bpb.recsiz-1),bdev->bpb.recsiz);
     else
         bdev->bpb.rdlen = 0;
+    if (tmp*32 != bdev->bpb.rdlen*bdev->bpb.recsiz)
+        KDEBUG(("root directory length has been rounded up\n"));
+
     bdev->bpb.fsiz = getiword(b->spf);
 
     /* the structure of the logical disk is assumed to be:
@@ -653,19 +731,40 @@ LONG blkdev_getbpb(WORD dev)
     reserved = getiword(b->res);
     if (reserved == 0)      /* should not happen */
         reserved = 1;       /* but if it does, Atari TOS assumes this */
-    bdev->bpb.fatrec = reserved + bdev->bpb.fsiz;
+    bdev->bpb.fatrec = reserved;
+    /*
+     * with 2 FATs, use 2nd FAT by default.
+     * The code that flushes the FATs also assumes this.
+     * When support for single FAT is disabled, assume 2 FATs like Atari TOS.
+     */
+    if (!CONF_WITH_1FAT_SUPPORT || (b->fat >= 2))
+        bdev->bpb.fatrec += bdev->bpb.fsiz;
     bdev->bpb.datrec = bdev->bpb.fatrec + bdev->bpb.fsiz + bdev->bpb.rdlen;
 
     /*
      * determine number of clusters
      */
     tmp = getiword(b->sec);
-    /* handle DOS-style disks (512-byte logical sectors) >= 32MB */
-    if (tmp == 0L)
+    /*
+     * a value of zero for total sectors should mean that we have a DOS-style
+     * disk (512-byte logical sectors) >= 32MB, but it can also be due to an
+     * invalid boot sector.  Atari TOS accepts a zero value & logs in the disk
+     * (ending up with a negative value for number of clusters in the BPB).
+     *
+     * in the general case, EmuTOS must assume that zeros in b->sec means
+     * that b->sec2 contains a valid value.  however, for floppies we can
+     * assume that it's an invalid boot sector.  in this case, we arrange
+     * to set a cluster count of zero.
+     */
+    if ((tmp == 0UL) && (unit >= NUMFLOPPIES))
         tmp = MAKE_ULONG(getiword(b16->sec2+2), getiword(b16->sec2));
-    tmp = (tmp - bdev->bpb.datrec) / b->spc;
-    if (tmp > MAX_FAT16_CLUSTERS)           /* FAT32 - unsupported */
+    if (tmp < bdev->bpb.datrec)
+        tmp = 0UL;
+    else
+        tmp = (tmp - bdev->bpb.datrec) / b->spc;
+    if ((tmp > MAX_FAT16_CLUSTERS) || (bdev->bpb.fsiz == 0))
     {
+        /* FAT32 - unsupported */
         KINFO(("Disk %c: is inaccessible (FAT32)\n",dev+'A'));
         bdev->bpb.recsiz = 0;               /* mark it for XHDI */
         return 0L;
@@ -677,9 +776,13 @@ LONG blkdev_getbpb(WORD dev)
      * the FAT format, after all), FAT type should be determined on the
      * basis of cluster count and nothing else
      */
+    bdev->bpb.b_flags = 0;         /* FAT12 */
     if (bdev->bpb.numcl > MAX_FAT12_CLUSTERS)
-        bdev->bpb.b_flags = B_16;       /* FAT16 */
-    else bdev->bpb.b_flags = 0;         /* FAT12 */
+        bdev->bpb.b_flags |= B_16;      /* FAT16 */
+#if CONF_WITH_1FAT_SUPPORT
+    if (b->fat < 2)
+        bdev->bpb.b_flags |= B_1FAT;
+#endif
 
     /* additional geometry info */
     bdev->geometry.sides = getiword(b->sides);
@@ -687,7 +790,11 @@ LONG blkdev_getbpb(WORD dev)
     memcpy(bdev->serial,b->serial,3);
     memcpy(bdev->serial2,b16->serial2,4);
 
-    KDEBUG(("bpb[dev=%d] = {\n  recsiz = %d;\n  clsiz  = %d;\n",
+    /* store checksums iff floppy drive */
+    if (unit < NUMFLOPPIES)
+        flop_checksum(unit, dskbufp);
+
+    KDEBUG(("bpb[dev=%d] = {\n  recsiz = %u;\n  clsiz  = %d;\n",
             dev,bdev->bpb.recsiz,bdev->bpb.clsiz));
     KDEBUG(("  clsizb = %u;\n  rdlen  = %d;\n  fsiz   = %d;\n",
             bdev->bpb.clsizb,bdev->bpb.rdlen,bdev->bpb.fsiz));
@@ -764,7 +871,7 @@ LONG blkdev_drvmap(void)
 
 
 /*
- * blkdev_avail - Read drive bitmapCheck drive availability
+ * blkdev_avail - Check drive availability
  *
  * Returns 0, if drive not available
  */

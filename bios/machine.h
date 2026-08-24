@@ -1,7 +1,7 @@
 /*
  * machine.h - declarations about the machine type and capabilities
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2024 The EmuTOS development team
  *
  * Authors:
  *  LVL     Laurent Vogel
@@ -16,7 +16,7 @@
 #include "memory.h"
 
 /*
- * hardware registers
+ * hardware registers (and some bit definitions)
  */
 #define FALCON_BUS_CTL      0xffff8007UL
 #define FALCON_HHT          0xffff8282UL
@@ -24,26 +24,50 @@
 #define BLITTER_CONFIG1     0xffff8a3cUL
 #define SCC_BASE            0xffff8c80UL
 #define SYS_INT_MASK        0xffff8e01UL
+#define SYS_INT_VSYNC           (1<<4)
+#define SYS_INT_HSYNC           (1<<2)
 #define SCU_GPR1            0xffff8e09UL
 #define VME_INT_MASK        0xffff8e0dUL
+#define VME_INT_MFP             (1<<6)
+#define VME_INT_SCC             (1<<5)
 #define DIP_SWITCHES        0xffff9200UL
 #define MONSTER_REG         0xfffffe00UL
+
+/*
+ * standard bus numbers
+ */
+#define ACSI_BUS            0
+#define SCSI_BUS            1
+#define IDE_BUS             2
+#define SDMMC_BUS           3
+
+#if CONF_WITH_SDMMC
+# define MAX_BUS            SDMMC_BUS
+#elif CONF_WITH_IDE
+# define MAX_BUS            IDE_BUS
+#elif CONF_WITH_SCSI
+# define MAX_BUS            SCSI_BUS
+#else
+# define MAX_BUS            ACSI_BUS
+#endif
+
+extern ULONG detected_busses;
 
 /*
  * some useful cookies.
  */
 
-extern long cookie_mch;
-extern long cookie_vdo;
+extern ULONG cookie_mch;
+extern ULONG cookie_vdo;
+extern ULONG cookie_snd;
 #if CONF_WITH_FDC
-extern long cookie_fdc;
+extern ULONG cookie_fdc;
 #endif
-extern long cookie_snd;
 #if CONF_WITH_DIP_SWITCHES
-extern long cookie_swi;
+extern ULONG cookie_swi;
 #endif
-extern long cookie_idt;
-extern long cookie_akp;
+extern ULONG cookie_akp;
+extern ULONG cookie_idt;
 
 /*
  * these are != 0 if the feature is present
@@ -58,139 +82,18 @@ extern long cookie_akp;
 #define FIRST_BOOT (meminit_flags & MEMINIT_FIRST_BOOT)
 #endif
 
-#if CONF_WITH_FALCON_MMU
-# define HAS_FALCON_MMU (meminit_flags & MEMINIT_FALCON_MMU)
-#else
-# define HAS_FALCON_MMU 0
-#endif
-
-#if CONF_WITH_TT_MMU
-# define HAS_TT_MMU (meminit_flags & MEMINIT_TT_MMU)
-#else
-# define HAS_TT_MMU 0
-#endif
-
-#if CONF_WITH_ARANYM
-extern int is_aranym;
-  #define IS_ARANYM is_aranym
-#else
-  #define IS_ARANYM 0
-#endif
-
-#if CONF_WITH_STE_SHIFTER
-extern int has_ste_shifter;
-  #define HAS_STE_SHIFTER has_ste_shifter
-#else
-  #define HAS_STE_SHIFTER 0
-#endif
-
-#if CONF_WITH_TT_SHIFTER
-extern int has_tt_shifter;
-  #define HAS_TT_SHIFTER has_tt_shifter
-#else
-  #define HAS_TT_SHIFTER 0
-#endif
-
-#if CONF_WITH_VIDEL
-extern int has_videl;
-  #define HAS_VIDEL has_videl
-#else
-  #define HAS_VIDEL 0
-#endif
-
-#if CONF_WITH_TT_MFP
-extern int has_tt_mfp;
-  #define HAS_TT_MFP has_tt_mfp
-#else
-  #define HAS_TT_MFP 0
-#endif
-
-#if CONF_WITH_SCC
-extern int has_scc;
-#endif
-
-#if CONF_WITH_VME
-extern int has_vme;
-  #define HAS_VME has_vme
-#else
-  #define HAS_VME 0
-#endif
-
-#if CONF_WITH_MONSTER
-extern int has_monster;
-extern int has_monster_rtc;
-  #define HAS_MONSTER_RTC has_monster_rtc
-#else
-  #define HAS_MONSTER_RTC 0
-#endif
-
-#if CONF_WITH_ICDRTC
-extern int has_icdrtc;    /* in clock.c */
-  #define HAS_ICDRTC has_icdrtc
-#else
-  #define HAS_ICDRTC 0
-#endif
-
-#if CONF_WITH_MEGARTC
-extern int has_megartc;   /* in clock.c */
-  #define HAS_MEGARTC has_megartc
-#else
-  #define HAS_MEGARTC 0
-#endif
-
-#if CONF_WITH_NVRAM
-extern int has_nvram;     /* in nvram.c */
-  #define HAS_NVRAM has_nvram
-#else
-  #define HAS_NVRAM 0
-#endif
-
-/* convenience macro: TRUE iff any kind of real time clock */
-#define HAS_RTC (HAS_NVRAM || HAS_MEGARTC || HAS_ICDRTC || HAS_MONSTER_RTC)
-
-#if CONF_WITH_BLITTER
-extern int has_blitter;
-extern int blitter_is_enabled;
-  #define HAS_BLITTER has_blitter
-#else
-  #define HAS_BLITTER 0
-#endif
-
-#if CONF_WITH_DMASOUND
-extern int has_dmasound;  /* in dmasound.c */
-extern int has_microwire; /* in dmasound.c */
-extern int has_falcon_dmasound; /* in dmasound.c */
-  #define HAS_DMASOUND has_dmasound
-  #define HAS_MICROWIRE has_microwire
-  #define HAS_FALCON_DMASOUND has_falcon_dmasound
-#else
-  #define HAS_DMASOUND 0
-  #define HAS_MICROWIRE 0
-  #define HAS_FALCON_DMASOUND 0
-#endif
-
-#if CONF_WITH_DIP_SWITCHES
-extern int has_dip_switches;
-  #define HAS_DIP_SWITCHES has_dip_switches
-#else
-  #define HAS_DIP_SWITCHES 0
-#endif
-
-extern int has_modectl;
-
 /*
  * functions
  */
 
 /* address bus width */
-#if defined(__mcoldfire__)
-  #define IS_BUS32 1
-#elif CONF_WITH_ADVANCED_CPU
+#if CONF_WITH_ADVANCED_CPU
 BOOL detect_32bit_address_bus(void);
-extern UBYTE is_bus32;
-  #define IS_BUS32 is_bus32
-#else
-  #define IS_BUS32 0
+#endif
+
+/* XHDI vector table */
+#if CONF_WITH_XHDI
+long xhdi_vec(UWORD opcode, ...);   /* In bios/natfeat.S */
 #endif
 
 /* detect the available hardware */

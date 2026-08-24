@@ -1,7 +1,7 @@
 /*
  * spi.h - header for SPI functions used by SD/MMC driver
  *
- * Copyright (C) 2013-2014 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB   Roger Burrows
@@ -11,8 +11,6 @@
  */
 #ifndef _SPI_H
 #define _SPI_H
-
-#include <portab.h>
 
 void spi_clock_ident(void);
 void spi_clock_mmc(void);
