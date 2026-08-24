@@ -1677,3 +1677,19 @@ msgstr "numero errato di argomenti"
 msgid "error code %ld"
 msgstr "codice errore %ld"
 
+#: bios/initinfo.c
+msgid "pTOS Version"
+msgstr "Versione pTOS"
+
+#: cli/cmdint.c
+msgid "delay/rate for the keyboard;"
+msgstr "ritardo/velocità della tastiera;"
+
+#: cli/cmdint.c
+msgid "line height (8,16) for the display"
+msgstr "altezza riga (8,16) per il display"
+
+#: cli/cmdint.c
+msgid "  Line height:    "
+msgstr "  Altezza riga:  "
+

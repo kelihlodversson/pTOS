@@ -1681,3 +1681,19 @@ msgstr "numãr greºit de argumente"
 msgid "error code %ld"
 msgstr "cod de eroare %ld"
 
+#: bios/initinfo.c
+msgid "pTOS Version"
+msgstr "Versiune pTOS"
+
+#: cli/cmdint.c
+msgid "delay/rate for the keyboard;"
+msgstr "întârziere/vitezã pentru tastaturã;"
+
+#: cli/cmdint.c
+msgid "line height (8,16) for the display"
+msgstr "înãlþime de linie (8,16) pentru afiºaj"
+
+#: cli/cmdint.c
+msgid "  Line height:    "
+msgstr "  Înãlþ. linie:  "
+

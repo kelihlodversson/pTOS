@@ -1677,3 +1677,19 @@ msgstr "z³a ilo¶æ argumentów"
 msgid "error code %ld"
 msgstr "kod b³êdu %ld"
 
+#: bios/initinfo.c
+msgid "pTOS Version"
+msgstr "Wersja pTOS"
+
+#: cli/cmdint.c
+msgid "delay/rate for the keyboard;"
+msgstr "opó¼nienie/szybko¶æ klawiatury;"
+
+#: cli/cmdint.c
+msgid "line height (8,16) for the display"
+msgstr "wysoko¶æ linii (8,16) dla ekranu"
+
+#: cli/cmdint.c
+msgid "  Line height:    "
+msgstr "  Wys. linii:    "
+

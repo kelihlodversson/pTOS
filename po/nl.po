@@ -1671,3 +1671,19 @@ msgstr "verkeerd aantal argumenten"
 msgid "error code %ld"
 msgstr "fout code %ld"
 
+#: bios/initinfo.c
+msgid "pTOS Version"
+msgstr "pTOS-versie"
+
+#: cli/cmdint.c
+msgid "delay/rate for the keyboard;"
+msgstr "vertraging/snelheid voor het toetsenbord;"
+
+#: cli/cmdint.c
+msgid "line height (8,16) for the display"
+msgstr "regelhoogte (8,16) voor het scherm"
+
+#: cli/cmdint.c
+msgid "  Line height:    "
+msgstr "  Regelhoogte:   "
+

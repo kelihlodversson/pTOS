@@ -1671,3 +1671,19 @@ msgstr "wrong number of arguments"
 msgid "error code %ld"
 msgstr "error code %ld"
 
+#: bios/initinfo.c
+msgid "pTOS Version"
+msgstr "pTOS-versio"
+
+#: cli/cmdint.c
+msgid "delay/rate for the keyboard;"
+msgstr "näppäimistön viive/toistonopeus;"
+
+#: cli/cmdint.c
+msgid "line height (8,16) for the display"
+msgstr "näytön rivikorkeus (8,16)"
+
+#: cli/cmdint.c
+msgid "  Line height:    "
+msgstr "  Rivikorkeus:   "
+

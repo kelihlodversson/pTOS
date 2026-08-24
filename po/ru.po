@@ -1683,3 +1683,19 @@ msgstr "неверное количество аргументов"
 msgid "error code %ld"
 msgstr "код ошибки %ld"
 
+#: bios/initinfo.c
+msgid "pTOS Version"
+msgstr "Версия pTOS"
+
+#: cli/cmdint.c
+msgid "delay/rate for the keyboard;"
+msgstr "задержка/скорость повторного ввода клавиатуры;"
+
+#: cli/cmdint.c
+msgid "line height (8,16) for the display"
+msgstr "высота строки (8,16) для экрана"
+
+#: cli/cmdint.c
+msgid "  Line height:    "
+msgstr "  Высота строки:"
+

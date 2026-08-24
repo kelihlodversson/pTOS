@@ -1692,3 +1692,19 @@ msgstr "wrong number of arguments"
 msgid "error code %ld"
 msgstr "error code %ld"
 
+#: bios/initinfo.c
+msgid "pTOS Version"
+msgstr "ë¡›¦©ž pTOS"
+
+#: cli/cmdint.c
+msgid "delay/rate for the keyboard;"
+msgstr "¡˜Ÿ¬©«â¨ž©ž/«˜®ç«ž«˜ §¢ž¡«¨¦¢¦šå¦¬;"
+
+#: cli/cmdint.c
+msgid "line height (8,16) for the display"
+msgstr "ç¯¦ª š¨˜££ãª (8,16) š ˜ «ž¤ ¦Ÿæ¤ž"
+
+#: cli/cmdint.c
+msgid "  Line height:    "
+msgstr "  ï¯¦ª š¨˜££ãª:  "
+

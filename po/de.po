@@ -1684,3 +1684,19 @@ msgstr "Falsche Zahl von Parametern"
 msgid "error code %ld"
 msgstr "Fehlercode %ld"
 
+#: bios/initinfo.c
+msgid "pTOS Version"
+msgstr "pTOS-Version"
+
+#: cli/cmdint.c
+msgid "delay/rate for the keyboard;"
+msgstr "Verzögerung/Rate für die Tastatur;"
+
+#: cli/cmdint.c
+msgid "line height (8,16) for the display"
+msgstr "Zeilenhöhe (8,16) für die Anzeige"
+
+#: cli/cmdint.c
+msgid "  Line height:    "
+msgstr "  Zeilenhöhe:    "
+

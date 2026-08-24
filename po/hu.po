@@ -1665,3 +1665,19 @@ msgstr "paraméterek száma nem megfelelõ"
 msgid "error code %ld"
 msgstr "%ld hibakód"
 
+#: bios/initinfo.c
+msgid "pTOS Version"
+msgstr "pTOS verzió"
+
+#: cli/cmdint.c
+msgid "delay/rate for the keyboard;"
+msgstr "billentyûzet késleltetése/ismétlési sebessége;"
+
+#: cli/cmdint.c
+msgid "line height (8,16) for the display"
+msgstr "sormagasság (8,16) a kijelzõhöz"
+
+#: cli/cmdint.c
+msgid "  Line height:    "
+msgstr "  Sormagasság:   "
+

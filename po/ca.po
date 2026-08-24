@@ -1676,3 +1676,19 @@ msgstr "nombre incorrecte d'arguments"
 msgid "error code %ld"
 msgstr "codi d'error %ld"
 
+#: bios/initinfo.c
+msgid "pTOS Version"
+msgstr "Versió de pTOS"
+
+#: cli/cmdint.c
+msgid "delay/rate for the keyboard;"
+msgstr "retard/velocitat del teclat;"
+
+#: cli/cmdint.c
+msgid "line height (8,16) for the display"
+msgstr "alçada de línia (8,16) per a la pantalla"
+
+#: cli/cmdint.c
+msgid "  Line height:    "
+msgstr "  Alçada línia:  "
+

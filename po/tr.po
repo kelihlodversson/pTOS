@@ -1667,3 +1667,19 @@ msgstr "yanlýþ parametre adedi"
 msgid "error code %ld"
 msgstr "hata kodu %ld"
 
+#: bios/initinfo.c
+msgid "pTOS Version"
+msgstr "pTOS Sürümü"
+
+#: cli/cmdint.c
+msgid "delay/rate for the keyboard;"
+msgstr "klavye gecikmesi/hýzý;"
+
+#: cli/cmdint.c
+msgid "line height (8,16) for the display"
+msgstr "ekran için satýr yüksekliði (8,16)"
+
+#: cli/cmdint.c
+msgid "  Line height:    "
+msgstr "  Satýr yük.:    "
+

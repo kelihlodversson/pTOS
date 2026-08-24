@@ -1683,3 +1683,19 @@ msgstr "número de argumentos inválido"
 msgid "error code %ld"
 msgstr "código de error %ld"
 
+#: bios/initinfo.c
+msgid "pTOS Version"
+msgstr "Versión de pTOS"
+
+#: cli/cmdint.c
+msgid "delay/rate for the keyboard;"
+msgstr "retardo/velocidad del teclado;"
+
+#: cli/cmdint.c
+msgid "line height (8,16) for the display"
+msgstr "altura de línea (8,16) para la pantalla"
+
+#: cli/cmdint.c
+msgid "  Line height:    "
+msgstr "  Altura línea:  "
+
