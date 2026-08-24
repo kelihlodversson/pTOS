@@ -30,6 +30,7 @@
 
         .globl  _main
         .globl  _os_header
+        .globl  _osxhbootdelay
         .globl  _os_beg
         .globl  _os_magic
         .globl  _os_date
@@ -76,6 +77,8 @@ os_run:
         .dc.l   _run
 os_dummy:
         .ascii  "ETOS"
+_osxhbootdelay:
+        .dc.b   0           // no cold-boot delay on this board
 
 /*
  * Entry point. QEMU's m68k 'virt' machine resets with SP = 0 and PC = the
