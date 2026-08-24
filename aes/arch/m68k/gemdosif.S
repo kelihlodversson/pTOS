@@ -33,6 +33,8 @@
 #endif
         .globl  _far_bcha
         .globl  _drawrat
+        .globl  _justretf
+        .globl  _aestrap_intercepted
 
         .globl  _tiksav
         .globl  _CMP_TICK
@@ -57,6 +59,7 @@
         .extern _tchange
         .extern _b_delay
         .extern __etext
+        .extern _os_beg
 
 
 /*
@@ -360,6 +363,28 @@ _drawrat:
         move.w  6(sp),d1
         move.l  _drwaddr,-(sp)
         rts                     // Jump to vector stored in _drwaddr
+
+
+_justretf:
+        rts
+
+
+/*
+ * determine if trap #2 has been intercepted by someone else (e.g. NVDI)
+ *
+ * return 1 if intercepted, else 0
+ */
+_aestrap_intercepted:
+        moveq   #1,d0           // assume it's intercepted
+        movea.l 0x88,a0
+        cmpa.l  _os_beg,a0
+        jcs     aestrap_done
+        cmpa.l  #__etext,a0
+        jcc     aestrap_done
+        moveq   #0,d0
+aestrap_done:
+        rts
+
 
 _tikcod:
         move.l  sp,tstksave
