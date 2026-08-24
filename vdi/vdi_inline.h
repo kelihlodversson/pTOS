@@ -13,7 +13,7 @@
 #if CONF_WITH_VDI_16BIT
 static __inline__ UWORD *get_start_addr16(const WORD x, const WORD y)
 {
-    return (UWORD *)(v_bas_ad + (x * sizeof(WORD)) + muls(y, v_lin_wr));
+    return (UWORD *)(v_bas_ad + (x * sizeof(WORD)) + muls(y, linea_vars.v_lin_wr));
 }
 #endif
 
