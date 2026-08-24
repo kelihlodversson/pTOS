@@ -40,9 +40,6 @@
 #define CTRL_ARROW_LEFT     0x7300
 #define CTRL_ARROW_RIGHT    0x7400
 
-#define CTRL_ARROW_LEFT     0x7300
-#define CTRL_ARROW_RIGHT    0x7400
-
 /*
  * function keys
  */
