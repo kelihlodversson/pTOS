@@ -10,6 +10,11 @@
 #ifndef _VDI_INLINE_H
 #define _VDI_INLINE_H
 
+#include "portab.h"
+#include "tosvars.h"
+#include "lineavars.h"
+#include "intmath.h"
+
 #if CONF_WITH_VDI_16BIT
 static __inline__ UWORD *get_start_addr16(const WORD x, const WORD y)
 {

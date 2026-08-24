@@ -7,6 +7,9 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+#ifndef INTMATH_H
+#define INTMATH_H
+
 ULONG Isqrt(ULONG x);
 
 /*
@@ -134,3 +137,5 @@ static __inline__ UWORD divu(ULONG d1, UWORD d2)
     return (UWORD)d1;
 #endif
 }
+
+#endif /* INTMATH_H */
