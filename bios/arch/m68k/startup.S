@@ -8,7 +8,7 @@
  */
 
 #include "asmdefs.h"
-#include "../obj/header.h"
+#include "header.h"
 
 // ==== Defines ==============================================================
 
