@@ -42,13 +42,13 @@
 static void vb_draw(void);             /* user button vector */
 
 #if CONF_WITH_EXTENDED_MOUSE
-void wheel_int(void);           /* wheel interrupt routine */
-void call_user_but(WORD status);/* call user_but from C */
-void call_user_wheel(WORD wheel_number, WORD wheel_amount); /* call user_wheel from C */
+/* wheel_int() is declared in vdi_defs.h (implemented in vdi_asm.S) */
+static void call_user_but(WORD status);/* call user_but from C */
+static void call_user_wheel(WORD wheel_number, WORD wheel_amount); /* call user_wheel from C */
 
 /* pointers to callbacks called from vdi_asm.S */
-PFVOID user_wheel;  /* user mouse wheel vector provided by vdi_vex_wheelv() */
-PFVOID old_statvec; /* original IKBD status packet routine */
+void (*user_wheel)(WORD wheel_number, WORD wheel_amount);   /* user mouse wheel vector provided by vdi_vex_wheelv() */
+void (*old_statvec)(UBYTE *); /* original IKBD status packet routine */
 #endif
 
 #if !CONF_WITH_AES
