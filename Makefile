@@ -912,7 +912,7 @@ endif
 # We don't generate this automatically, because it might be processed by
 # the wrong compiler when a non-m68k machine is configured.
 #
-include/arch/m68k/lineaasm.h: vdi/gen_asm_defines.c bios/lineavars.h
+include/arch/m68k/lineaasm.h: vdi/gen_asm_defines.c include/lineavars.h
 	@echo "warning: $@ is out of date" >&2
 	@echo "run \"$(CC) $(CFILE_FLAGS) -S $< -o - | grep '^#define' > $@\" to regenerate it" >&2
 
