@@ -57,14 +57,14 @@ config CONF_WITH_WINDOW_COLOURS
 
 config CONF_WITH_GRAF_MOUSE_EXTENSION
 	bool "AES graf_mouse() extensions"
-	default n if TARGET_192
+	default n if TARGET_192 || TARGET_256 || TARGET_512
 	default y
 	help
 	  Extended graf_mouse() cursor forms, as introduced on Atari TOS 4.
 
 config CONF_WITH_3D_OBJECTS
 	bool "3D object rendering"
-	default n if TARGET_192
+	default n if TARGET_192 || TARGET_256 || TARGET_512
 	default y
 	help
 	  Render 3D-style indicators, activators and backgrounds for AES
@@ -72,7 +72,7 @@ config CONF_WITH_3D_OBJECTS
 
 config CONF_WITH_EXTENDED_OBJECTS
 	bool "MagiC-style extended object types"
-	default n if TARGET_192
+	default n if TARGET_192 || TARGET_256 || TARGET_512
 	default y
 	help
 	  AES support for a number of MagiC-style object type extensions,

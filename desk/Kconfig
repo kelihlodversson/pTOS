@@ -18,7 +18,7 @@ config CONF_WITH_WINDOW_ICONS
 config CONF_WITH_ALT_DESKTOP_GRAPHICS
 	bool "Alternate desktop graphic elements"
 	depends on CONF_WITH_EXTENDED_OBJECTS
-	default n if TARGET_192
+	default n if TARGET_192 || TARGET_256 || TARGET_512
 	default y
 	help
 	  Replace Atari-style desktop graphic elements with alternate
@@ -62,7 +62,7 @@ config CONF_WITH_READ_INF
 
 config CONF_WITH_VIEWER_SUPPORT
 	bool "Default document viewer"
-	default n if TARGET_192
+	default n if TARGET_192 || TARGET_256 || TARGET_512
 	default y
 	help
 	  Allow an application to be marked as the default viewer (as on
