@@ -175,7 +175,7 @@ WORD mode, monitor;
 
     if (monitor != MON_VGA) {       /* fix up rez descriptions if not VGA */
         for (i = 0, obj = tree+FREZNAME; i < 4; i++, obj++)
-            obj->ob_spec = (LONG) desktop_str_addr(STREZ1+i);
+            obj->ob_spec.free_string = desktop_str_addr(STREZ1+i);
     }
 
     /*
