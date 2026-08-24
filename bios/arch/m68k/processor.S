@@ -26,17 +26,13 @@
         .globl  _invalidate_data_cache
         .globl  _mcpu
         .globl  _fputype
-#if CONF_WITH_CACHE_CONTROL
-        .globl  _cache_exists
-        .globl  _set_cache
-#endif
-#if CONF_WITH_APOLLO_68080
-        .globl  _is_apollo_68080
-#endif
 #if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
         .globl  _cache_exists
         .globl  _set_cache
         .globl  _get_cache
+#endif
+#if CONF_WITH_APOLLO_68080
+        .globl  _is_apollo_68080
 #endif
 
         .extern _longframe              // If not 0, use long stack frames
@@ -311,7 +307,7 @@ m68ec030:
         move.l  #0x00000019,d0  // set IBE and CI/EI only
 
 init_cacr:
-#if CONF_WITH_CACHE_CONTROL
+#if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
         move.l  d0,cacr_enable  // save value to use when enabling caches
 #endif
         MOVEC_D0_CACR
@@ -364,10 +360,6 @@ m68060:
         nop
         move.l  d1,d0           // recover the enable value
         jra     init_cacr
-#if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
-        move.l  d0,cacr_enable  // save value to use when enabling caches
-#endif
-        MOVEC_D0_CACR
 
 pi_done:
 #endif /* CONF_WITH_ADVANCED_CPU */
@@ -581,7 +573,10 @@ cpushl_bc:
  * ... also used by Nova graphics card code on the Falcon
  *
  * WORD cache_exists(void);
- *  returns 1 if processor has cache, 0 otherwise
+ *  returns 1 if this file's cache control (below) supports the current
+ *  processor, 0 otherwise. Note this is narrower than "has a cache": a
+ *  bare 68020 does have one, but _processor_init() above never sets up
+ *  cacr_enable for it, so it's excluded here too.
  *
  * void set_cache(WORD enable);
  *  sets cache state: if 'enable' is zero, disables, otherwise enables
@@ -590,8 +585,8 @@ cpushl_bc:
  *  returns 0 if the cache is fully disabled or not present, != 0 otherwise
  */
 _cache_exists:
-        moveq.l #0,d0               // assume 68000, 68010
-        cmpi.b  #20,_mcpu+3
+        moveq.l #0,d0               // assume 68000/68010/68020: _processor_init()
+        cmpi.b  #30,_mcpu+3         // only sets up cacr_enable for 68030 and up
         jmi     ce_exit
         moveq.l #1,d0
 ce_exit:
@@ -635,47 +630,6 @@ gc_exit:
         rts
 #endif
 
-
-#if CONF_WITH_CACHE_CONTROL
-/*
- * C A C H E   C O N T R O L   F O R   E M U D E S K
- *
- * WORD cache_exists(void);
- *  returns 1 if this file's cache control (below) supports the current
- *  processor, 0 otherwise. Note this is narrower than "has a cache": a
- *  bare 68020 does have one, but _processor_init() above never sets up
- *  cacr_enable for it, so it's excluded here too.
- *
- * void set_cache(WORD enable);
- *  sets cache state: if 'enable' is zero, disables, otherwise enables
- */
-_cache_exists:
-        moveq.l #0,d0               // assume 68000/68010/68020: _processor_init()
-        cmpi.b  #30,_mcpu+3         // only sets up cacr_enable for 68030 and up
-        jmi     ce_exit
-        moveq.l #1,d0
-ce_exit:
-        rts
-
-_set_cache:
-        jbsr    _cache_exists
-        tst.w   d0
-        jeq     sc_exit             // no cache, do nothing
-        moveq.l #0,d0               // assume disable
-        tst.w   4(sp)
-        jeq     sc_cacr             // it is, go do it
-        move.l  cacr_enable,d0      // enabling: set processor-appropriate value
-        cmpi.b  #40,_mcpu+3         // 040/060 ?
-        jmi     sc_cacr             // no, just go set cacr
-        nop
-        CINVA_BC                    // 040/060: invalidate the caches first
-        nop
-sc_cacr:
-        MOVEC_D0_CACR
-sc_exit:
-        rts
-#endif
-
         SECTION_RODATA
 
 #if CONF_WITH_68030_PMMU
@@ -702,14 +656,10 @@ _fputype:       .ds.l   1
 temp:           .ds.l   1
 #endif
 
-#if CONF_WITH_CACHE_CONTROL
+#if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
 cacr_enable:    .ds.l   1
 #endif
 
 #if CONF_WITH_APOLLO_68080
 _is_apollo_68080:   .ds.w   1
-#endif
-
-#if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
-cacr_enable:    .ds.l   1
 #endif
