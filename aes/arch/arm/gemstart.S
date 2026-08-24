@@ -28,7 +28,7 @@
         .extern _ad_envrn
         .extern _size_of_theglo
         .extern _D
-        .extern _bzero
+        .extern _bzero_nobuiltin
         .extern _justretf
         .extern _drwaddr
         .extern _tikcod
@@ -97,7 +97,7 @@ aes_restart:
         // clear the 'global memory' zone
         ldr     r1, =SIZEOF_THEGLO
         ldr     r0, =_D         // address
-        bl      _bzero          // clear it
+        bl      _bzero_nobuiltin          // clear it
 
         // _drwaddr ??? set to just_rts
         ldr     r0, =_justretf

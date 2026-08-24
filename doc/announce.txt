@@ -3,7 +3,7 @@ Dear Atari Community!
 
 We are happy to announce a new public release of EmuTOS:
 
-EmuTOS 0.9.9.1 -- December 14, 2017
+EmuTOS 1.4 -- June 7, 2025
 
 
 
@@ -42,21 +42,22 @@ EmuTOS is basically made up of the following:
 - EmuCON2, the command-line interpreter
 
 The BIOS and XBIOS code is our own development. It is written from
-scratch and implements all relevant TOS 1.0 Bios & XBIOS functionality,
+scratch and implements all relevant TOS 3 BIOS & XBIOS functionality,
 and a bit more, e.g. hard disk access. See doc/status.txt for details.
 
 The GEMDOS part is based on Digital Research's GEMDOS sources, which were
 made available under GPL license in 1999 by Caldera.
 
 The graphical parts like VDI and AES are now more or less fully
-implemented up to TOS v1.04 level. They work in all the graphics modes
-of the original Atari ST, with some extensions. For example, systems with
-VIDEL support 256 colours and 640x480 screen resolution. Some emulators
-can patch EmuTOS to work with much bigger screen resolutions.
+implemented up to TOS v3.06 level. They work in all the graphics modes
+of the original Atari ST(e) and TT, with some extensions. For example,
+systems with VIDEL support 256 colours and 640x480 screen resolution.
+Some emulators can patch EmuTOS to work with much bigger screen resolutions.
 
-The desktop is now almost as nice as the one in TOS 2 or higher (although
-there is still work to be done). Of course you are always free to use a
-more advanced desktop replacement like TeraDesk.
+The desktop is now pretty much the same as the one in TOS 2 or higher
+(although it is not fully implemented in the 192K ROMs for space reasons).
+Of course you are always free to use a more advanced desktop replacement
+like TeraDesk.
 
 EmuCON2 is a basic but useful command-line interpreter, written from scratch
 by Roger Burrows in 2013 to replace the original CLI.
@@ -67,11 +68,11 @@ an alternative to MiNT, but it's the only free base OS to boot MiNT.
 
 
 
-EMULATION AND FUTURE PLATFORM
+EMULATION AND FUTURE PLATFORMS
 
-EmuTOS and MiNT cooperate well. Both can utilize Native Features
+EmuTOS and MiNT cooperate well. Both can utilize the Native Features
 (NatFeats) interface for emulators:
-    http://wiki.aranym.org/natfeats/proposal
+    https://github.com/aranym/aranym/wiki/natfeats-about
 
 EmuTOS uses this new standard interface for all the relevant native
 functions supported by an emulator on which it's running. This interface
@@ -93,42 +94,51 @@ Making EmuTOS run natively on a new hardware platform is more or less just
 a question of driver support for EmuTOS. The same for MiNT, if you'd like
 to have it running on top of EmuTOS.
 
-This is the currently supported Atari hardware:
-
-- CPU support for M68000, M68010, M68020, M68030, M68040, M68060,
-                  ColdFire V4e, and Apollo 68080
+This is the currently supported original Atari hardware:
+- CPU support for M68000, M68030
 - FPU detection
 - 68030 MMU and cache
-- Memory controller (both ST and Falcon)
+- Memory controller (ST, TT, and Falcon)
 - TT-RAM
-- Monitor type detection (mono, RGB or VGA)
+- Monitor type detection (mono, RGB, or VGA)
 - DMA controller
 - WD 1772 / AJAX Floppy disk controller
 - MFP, MFP #2
+- SCC
 - PSG
 - ST shifter
 - STe shifter
 - TT shifter
 - VIDEL
 - ACIAs, IKBD protocol, mouse
-- MegaST Real-Time Clock (set clock not tested)
-- ICD AdSCSI Plus ST Real-Time Clock
+- MegaST(e) Real-Time Clock
 - NVRAM (including RTC)
 - Blitter
 - Microwire
-- SCC
 - IDE
+- SCSI
 - ACSI
+- DSP
+
+EmuTOS also supports the following Atari-compatible hardware:
+- CPU support for M68010, M68020, M68040, M68060, ColdFire V4e, and Apollo 68080
+- ICD AdSCSI Plus ST Real-Time Clock
+- UltraSatan Real-Time Clock
+- MonSTer expansion card
+- Magnum ST/STe expansion cards
+- Storm ST expansion card (RAM and RTC)
+- Nova/ET4000 and Nova/Mach32 graphics cards
+- Volksfarben/ET4000 graphics card
+- Wittich Imagine for the MegaST/ET4000 graphics card
+- CrazyDots VME graphics card
 - SD/MMC
 - The Native Features interface to some degree
 
-Currently unsupported hardware features:
-- DSP
-- SCSI
-
 EmuTOS is also available on some non-Atari hardware:
 - Amiga (floppy or ROM for any Amiga, including MapROM support)
+- Apple Lisa (experimental - no binaries provided yet)
 - ColdFire Evaluation Boards (M5484LITE, M5485EVB)
+- Vampire v4 standalone board
 
 
 
@@ -136,19 +146,19 @@ AVAILABILITY
 
 The EmuTOS home page is:
 
-    http://emutos.sourceforge.net/
+    https://emutos.sourceforge.io/
 
 The project home is on SourceForge:
 
-    http://sourceforge.net/projects/emutos/
+    https://sourceforge.net/projects/emutos/
 
 The latest releases can be downloaded from:
 
-    http://sourceforge.net/projects/emutos/files/emutos/
+    https://sourceforge.net/projects/emutos/files/emutos/
 
 Development snapshots allow you to test the current development progress:
 
-    http://sourceforge.net/projects/emutos/files/snapshots/
+    https://sourceforge.net/projects/emutos/files/snapshots/
 
 The latest sources are always available on GitHub:
 
@@ -157,7 +167,7 @@ The latest sources are always available on GitHub:
 If you are just curious or would like to help us develop this nice little
 OS, you are invited to subscribe to our mailing list for developers at:
 
-    https://lists.sourceforge.net/lists/listinfo/emutos-devel
+    https://sourceforge.net/projects/emutos/lists/emutos-devel
 
 
 We hope that you like EmuTOS. If you have any suggestions or comments, we
@@ -168,4 +178,4 @@ The EmuTOS development team.
 
 -- 
 Originally written by Martin Doering
-http://emutos.sourceforge.net/
+https://emutos.sourceforge.io/

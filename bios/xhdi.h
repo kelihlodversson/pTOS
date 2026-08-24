@@ -1,7 +1,7 @@
 /*
- * EmuTOS bios
+ * xhdi.h - header file for XHDI defines
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2026 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -54,17 +54,12 @@
 #define DRIVER_NAME_MAXLENGTH       17
 #define DRIVER_COMPANY              "EmuTOS Team"
 #define DRIVER_COMPANY_MAXLENGTH    17
-#define DRIVER_VERSION              "1"
+#define DRIVER_VERSION              "2"
 #define DRIVER_VERSION_MAXLENGTH    7
 #define MAX_IPL                     5 /* 5 for drivers which use _hz_200 for timing loops */
 
 #if CONF_WITH_XHDI
 
-#include "portab.h"
-
-extern long xhdi_vec(UWORD opcode, ...); /* In bios/natfeat.S */
-
-void create_XHDI_cookie(void);
 void init_XHDI_drvmap(void);
 long xhdi_handler(UWORD *stack);
 

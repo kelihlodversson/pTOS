@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2021 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -19,15 +19,12 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-
-#include "portab.h"
+#include "emutos.h"
 #include "gemdisp.h"
 #include "string.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesvars.h"
 #include "obdefs.h"
-#include "gemlib.h"
 
 #include "geminput.h"
 #include "gempd.h"
@@ -38,7 +35,6 @@
 #include "gemasm.h"
 #include "optimize.h"
 #include "gemdosif.h"
-#include "kprint.h"
 
 #include "asm.h"
 
@@ -46,15 +42,16 @@
 #define KEYSTOP 0x2b1c0000L             /* control-backslash */
 
 
-/* forkq puts a fork block with a routine in the fork ring      */
-
-void forkq(FCODE fcode, LONG fdata)
+/*
+ * forkq(): put an FPD (containing a function address and a parameter) into the fork ring
+ *
+ * this is expected to be called with interrupts disabled
+ *
+ * returns -ve value iff it fails (the fork ring is full)
+ */
+WORD forkq(FCODE fcode, LONG fdata)
 {
     FPD *f;
-
-    /* q a fork process, enter with ints OFF */
-    if (fpcnt == 0)
-        fpt = fph = 0;
 
     if (fpcnt < NFORKS)
     {
@@ -66,7 +63,11 @@ void forkq(FCODE fcode, LONG fdata)
         f->f_data = fdata;
 
         fpcnt++;
+        return 0;   /* forkq() succeeded */
     }
+
+    KDEBUG(("forkq() failed: fcode=%p, fdata=0x%08lx\n",fcode,fdata));
+    return -1;      /* forkq() failed */
 }
 
 
@@ -92,6 +93,11 @@ static void mwait_act(AESPD *p)
 }
 
 
+/*
+ * forker(): remove all FPDs from the fork ring, calling the specified function each time
+ *
+ * this also handles event recording for the AES function appl_trecd()
+ */
 void forker(void)
 {
     FPD *f;
@@ -210,7 +216,7 @@ static void schedule(void)
 /*                                                                      */
 /************************************************************************/
 
-extern void disp(void); /* called only from aes/gemasm.S */
+void disp(void); /* called only from aes/gemasm.S */
 
 void disp(void)
 {
@@ -219,7 +225,7 @@ void disp(void)
     /* take the process p off the ready list root */
     p = rlr;
     rlr = p->p_link;
-    KDEBUG(("disp() to \"%8s\"\n", rlr->p_name));
+    KDEBUG(("disp() to \"%8.8s\"\n", rlr->p_name));
 
     /* based on the state of the process p, do something */
     if (p->p_stat & WAITIN)

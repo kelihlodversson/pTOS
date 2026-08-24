@@ -1,7 +1,7 @@
 /*
  * sd.c - SD/MMC card routines
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2021 The EmuTOS development team
  *
  * Authors:
  *  RFB   Roger Burrows
@@ -12,21 +12,17 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
-
+#include "emutos.h"
 #include "disk.h"
 #include "asm.h"
 #include "blkdev.h"
 #include "delay.h"
 #include "gemerror.h"
-#include "mfp.h"
 #include "sd.h"
 #include "spi.h"
 #include "string.h"
 #include "tosvars.h"
-
-#include "kprint.h"
+#include "coldfire.h"
 
 #if CONF_WITH_SDMMC
 
@@ -220,6 +216,12 @@ LONG rc = 0;
 ULONG *info = arg;
 UBYTE cardreg[16];
 
+#ifdef __mcoldfire__
+    /* FIXME: Add and use HAS_SDMMC instead */
+    if (cf_spi_chip_select == MCF_VALUE_UNKNOWN)
+        return EUNDEV;
+#endif
+
     if (drv)
         return EUNDEV;
 
@@ -294,6 +296,12 @@ int rc = ERR;
 static LONG sd_check(UWORD drv)
 {
 int i, rc;
+
+#ifdef __mcoldfire__
+    /* FIXME: Add and use HAS_SDMMC instead */
+    if (cf_spi_chip_select == MCF_VALUE_UNKNOWN)
+        return EUNDEV;
+#endif
 
     if (drv)
         return EUNDEV;

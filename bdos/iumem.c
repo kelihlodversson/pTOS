@@ -2,7 +2,7 @@
  * iumem.c - internal user memory management routines
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2013-2017 The EmuTOS development team
+ *               2013-2024 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -12,11 +12,10 @@
 /* #define ENABLE_KDEBUG */
 
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "fs.h"
 #include "mem.h"
-#include "kprint.h"
+#include "bdosstub.h"
 
 
 /*
@@ -83,10 +82,13 @@ MD *ffit(long amount, MPB *mp)
         KDEBUG(("Malloc(%lu) from ST-RAM\n", amount));
 
     /*
-     * round the size up to a multiple of 4 bytes to keep alignment;
+     * round the size up to a multiple of 2 or 4 bytes to keep alignment;
      * alignment on long boundaries is faster in FastRAM
      */
-    amount = (amount + 3) & ~3;
+    if (mp == &pmd)
+        amount = (amount + malloc_align_stram) & ~malloc_align_stram;
+    else
+        amount = (amount + MALLOC_ALIGN_ALTRAM) & ~MALLOC_ALIGN_ALTRAM;
 
     /*
      * look for first free space that's large enough

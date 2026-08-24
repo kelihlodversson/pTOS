@@ -1,0 +1,8 @@
+# 1024 KB Atari ROM image, for the TT and the Falcon under Hatari (or
+# other emulators without a fixed physical ROM size). The full-featured,
+# multi-language image -- this is what atari512_defconfig used to be
+# before upstream's own feature set outgrew 512 KB; see TARGET_512 for
+# the leaner, single-country image matching upstream's actual ROM target.
+TARGET_1024=y
+# The multi-language image supports every country at run time.
+# BUILD_UNIQUE_COUNTRY is not set

@@ -57,6 +57,7 @@
 #include "time.h"
 #include "console.h"
 #include "kprint.h"
+#include "bdosstub.h"
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
 #endif
@@ -84,7 +85,7 @@ static void sftdel(FTAB *sftp);
  *
  *  Error returns   EPTHNF, EACCDN, ENHNDL
  */
-long xcreat(char *name, char attr)
+long xcreat(char *name, UBYTE attr)
 {
     int a = attr & ~FA_SUBDIR;
 #if CONF_WITH_PLUGGABLE_FS

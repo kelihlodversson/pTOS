@@ -1,7 +1,7 @@
 /*
  * screen.h - low-level screen routines
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2022 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -20,7 +20,7 @@
 
 #define ST_VRAM_SIZE        32000UL
 #define TT_VRAM_SIZE        153600UL
-#define FALCON_VRAM_SIZE    307200UL
+#define FALCON_VRAM_SIZE    368640UL    /* 768x480x256 (including overscan) */
 
 #if CONF_WITH_ATARI_VIDEO
 
@@ -35,16 +35,16 @@
 #define SPSHIFT             0xffff8266L
 
 #define TT_SHIFTER_BITMASK  0x970f      /* valid bits in TT_SHIFTER */
-#define TT_HYPER_MONO       0x1000          /* bit usage */
+
+#define STE_LINE_OFFSET     0xffff820fL /* additional registers in STe */
+#define STE_HORZ_SCROLL     0xffff8265L
 
 #define ST_PALETTE_REGS     0xffff8240L
 #define FALCON_PALETTE_REGS 0xffff9800L
 
 #define TT_PALETTE_BITMASK  0x0fff      /* valid bits in TT_PALETTE_REGS */
 
-#define TT_DUOCHROME_INVERT 0x0002      /* inversion bit in TT h/w palette reg 0 */
-
-/* hardware dependant xbios routines */
+/* hardware-dependent xbios routines */
 
 WORD esetshift(WORD mode);
 WORD egetshift(void);
@@ -55,7 +55,7 @@ WORD egetpalette(WORD index,WORD count,UWORD *rgb);
 WORD esetgray(WORD mode);
 WORD esetsmear(WORD mode);
 
-/* pallette color definitions */
+/* palette color definitions */
 
 #define RGB_BLACK     0x0000            /* ST(e) palette */
 #define RGB_BLUE      0x000f
@@ -74,7 +74,7 @@ WORD esetsmear(WORD mode);
 #define RGB_LTYELLOW  0x0ff3
 #define RGB_WHITE     0x0fff
 
-#define TTRGB_BLACK     0x0000          /* TT Palette */
+#define TTRGB_BLACK     0x0000          /* TT palette */
 #define TTRGB_BLUE      0x000f
 #define TTRGB_GREEN     0x00f0
 #define TTRGB_CYAN      0x00ff
@@ -91,34 +91,12 @@ WORD esetsmear(WORD mode);
 #define TTRGB_LTYELLOW  0x0ff9
 #define TTRGB_WHITE     0x0fff
 
-/* TT resolutions */
-#define TT_HIGH        6
-#define TT_MEDIUM      4
-#define TT_LOW         7
-
 #endif /* CONF_WITH_ATARI_VIDEO */
 
-/* ST(e) resolutions */
-#define ST_HIGH        2
-#define ST_MEDIUM      1
-#define ST_LOW         0
-#define FALCON_REZ     3    /* used as a Falcon indicator */
-
-/* monitor types (from VgetMonitor()) */
-#define MON_MONO       0    /* ST monochrome */
-#define MON_COLOR      1    /* ST colour */
-#define MON_VGA        2    /* VGA */
-#define MON_TV         3    /* TV via RF modulator */
-
-/* misc routines */
-WORD check_moderez(WORD moderez);
-void initialise_palette_registers(WORD rez,WORD mode);
-
-/* determine monitor type, ... */
-void screen_init(void);
+/* set screen address, mode, ... */
+void screen_init_address(void);
+void screen_init_mode(void);
 void set_rez_hacked(void);
-int rez_changeable(void);
-WORD get_monitor_type(void);
 void screen_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez);
 void screen_get_current_mode_desc(SCREEN_MODE_DESC *desc);
 #if CONF_WITH_VDI_TRUECOLOR32_TEST
@@ -130,10 +108,11 @@ void get_pixel_size(WORD *width,WORD *height);
 
 /* hardware independant xbios routines */
 
+/* hardware-independent xbios routines */
 const UBYTE *physbase(void);
 UBYTE *logbase(void);
 WORD getrez(void);
-void setscreen(UBYTE *logLoc, const UBYTE *physLoc, WORD rez, WORD videlmode);
+WORD setscreen(UBYTE *logLoc, const UBYTE *physLoc, WORD rez, WORD videlmode);
 void setpalette(const UWORD *palettePtr);
 WORD setcolor(WORD colorNum, WORD color);
 void vsync(void);

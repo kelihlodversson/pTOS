@@ -1,7 +1,7 @@
 /*
  * EmuCON2 builtin commands
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2024 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -10,7 +10,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 #include "cmd.h"
-#include <string.h>
+#include "string.h"
 
 typedef struct {
     const char *name;
@@ -40,7 +40,6 @@ PRIVATE void outputnl(const char *s);
 PRIVATE LONG outputbuf(const char *s,LONG len,WORD paging);
 PRIVATE LONG output_files(WORD argc,char **argv,WORD paging);
 PRIVATE void padname(char *buf,const char *name);
-PRIVATE LONG pathout(void);
 PRIVATE void show_line(const char *title,ULONG n);
 PRIVATE WORD user_break(void);
 PRIVATE WORD user_input(WORD c);
@@ -181,16 +180,8 @@ const COMMAND *p;
      *  handle drive change
      */
     if ((argc == 1) && (strlen(argv[0]) == 2))
-        if (argv[0][1] == ':')
+        if (argv[0][1] == DRIVESEP)
             return run_setdrv;
-
-    /*
-     *  allow -h with any command to provide help
-     */
-    if ((argc == 2) && strequal(argv[1],"-h")) {
-        argv[1] = argv[0];
-        argv[0] = "help";
-    }
 
     /*
      *  scan command table
@@ -201,6 +192,17 @@ const COMMAND *p;
         if (p->synonym)
             if (strequal(argv[0],p->synonym))
                 break;
+    }
+    if (!p->func)
+        return NULL;
+
+    /*
+     *  builtin command: allow -h to provide help
+     */
+    if ((argc == 2) && strequal(argv[1],"-h")) {
+        argv[1] = argv[0];
+        argv[0] = "help";
+        return run_help;
     }
 
     argc--;
@@ -217,10 +219,50 @@ PRIVATE LONG run_cat(WORD argc,char **argv)
 
 PRIVATE LONG run_cd(WORD argc,char **argv)
 {
-    if (argc == 1)
-        return pathout();
+char path[MAXPATHLEN];
+LONG rc;
+char *p;
+WORD current_drive, temp_drive;
 
-    return Dsetpath(argv[1]);
+    if (argc == 1) {                /* just output current path */
+        rc = get_path(path,0);
+        outputnl(path);
+        return rc;
+    }
+
+    /*
+     * we may be running under a BDOS that mishandles path specifications
+     * containing a drive letter (e.g. when running as standalone EmuCON
+     * under TOS 1/2/3, or when referencing a 'GEMDOS emulation' drive
+     * under an emulator).  therefore we temporarily switch to the
+     * specified drive before calling Dsetpath().
+     */
+    current_drive = Dgetdrv();      /* remember current drive */
+
+    /*
+     * if path contains drive letter, validate it
+     *
+     * if the path is just the drive letter, display the current path
+     * for that drive; else attempt to change the path on that drive
+     */
+    p = argv[1];
+    if (*(p+1) == DRIVESEP) {
+        if (!is_valid_drive(*p))
+            return EDRIVE;
+        temp_drive = (*p|0x20) - 'a';
+        if (*(p+2) == '\0') {       /* cd x: */
+            rc = get_path(path,temp_drive+1);
+            outputnl(path);
+            return rc;
+        }
+        Dsetdrv(temp_drive);
+        p += 2;                     /* point past drive letter */
+    }
+
+    rc = Dsetpath(p);
+    Dsetdrv(current_drive);
+
+    return rc;
 }
 
 PRIVATE LONG run_chmod(WORD argc,char **argv)
@@ -289,7 +331,7 @@ const char * const *s;
     if (argc == 1) {
         outputnl(_("Builtin commands:"));
         for (p = cmdtable; p->func; p++) {
-            output("    ");
+            output("  ");
             if (p->synonym) {
                 output(p->name);
                 output("/");
@@ -301,7 +343,7 @@ const char * const *s;
 
     if (strequal(argv[1],"edit")) {
         for (s = &help_edit[0]; *s; s++) {
-            output("    ");
+            output("  ");
             outputnl(gettext(*s));
         }
         return 0L;
@@ -454,9 +496,7 @@ PRIVATE LONG run_mv(WORD argc,char **argv)
 
 PRIVATE LONG run_path(WORD argc,char **argv)
 {
-char temp[MAXPATHLEN];
 const char *p;
-LONG rc = 0L;
 
     if (argc == 1) {
         p = user_path;
@@ -464,35 +504,22 @@ LONG rc = 0L;
             p = _("(empty)");
         message(" ");
         messagenl(p);
-        return 0L;
-    }
-
-    for (p = argv[1]; *p; ) {
-        if (!get_path_component(&p,temp))
-            break;
-        rc = check_path_component(temp);
-        if (rc < 0L)
-            break;
-    }
-
-    if (rc == 0L) {
-        strcpy(user_path,argv[1]);
     } else {
-        message(" ");
-        message(temp);
-        message(" ");
+        strcpy(user_path,argv[1]);
     }
 
-    return rc;
+    return 0L;
 }
 
 PRIVATE LONG run_pwd(WORD argc,char **argv)
 {
-char buf[] = "X:";
+char buf[MAXPATHLEN];
+LONG rc;
 
-    buf[0] = Dgetdrv() + 'A';
-    output(buf);
-    return pathout();
+    rc = get_path(buf,0);
+    outputnl(buf);
+
+    return rc;
 }
 
 PRIVATE LONG run_ren(WORD argc,char **argv)
@@ -593,7 +620,7 @@ char id[] = "X:";
         show_line(_("  Free clusters:  "),info[0]);
         show_line(_("  Sectors/cluster:"),info[3]);
         show_line(_("  Bytes/sector:   "),info[2]);
-    }
+    } else rc = EDRIVE;
 
     return rc;
 }
@@ -687,13 +714,100 @@ char *iobuf, *p;
     return rc;
 }
 
+/*
+ *  extract next dirname from input path (includes any terminating separator)
+ *
+ *  returns pointer to next starting point in input path
+ */
+PRIVATE char *next_dir(char *out,char *in)
+{
+    while(*in) {
+        *out++ = *in++;
+        if (*(in-1) == PATHSEP)
+            break;
+    }
+    *out = '\0';
+
+    return in;
+}
+
+/*
+ *  back up one level of directory in an (assumed) absolute path
+ *
+ *  returns pointer to char following the path separator at the end of
+ *  the next higher level
+ */
+PRIVATE char *prev_dir(char *p)
+{
+    /* don't backup past root! */
+    if (*--p == PATHSEP)
+        if (*(p-1) == DRIVESEP)
+            return p+1;
+
+    while(*--p != PATHSEP)
+        ;
+
+    return p+1;
+}
+
+/*
+ *  convert name to absolute path
+ */
+PRIVATE LONG make_absolute(char *out,char *in)
+{
+char *p, *q, temp[MAXPATHLEN];
+LONG rc = 0L;
+
+    p = in;
+    q = out;
+
+    /* set up initial drive letter and drive separator */
+    if (*(p+1) == DRIVESEP) {
+        *q++ = toupper(*p);
+        p += 2;
+    } else {
+        *q++ = Dgetdrv() + 'A';
+    }
+    *q++ = DRIVESEP;
+
+    /* insert current path if specified path is relative */
+    if (*p != PATHSEP) {
+        if (Dgetpath(temp,out[0]-'A'+1) != 0)   /* e.g. invalid drive */
+            temp[0] = '\0';
+        strcpy(q,temp);
+        q += strlen(q);
+    } else p++;
+    *q++ = PATHSEP;
+
+    /* copy dirnames one at a time, with special processing for . and .. */
+    while(*p) {
+        p = next_dir(temp,p);
+        if (temp[0] == '.') {
+            if ((temp[1] == PATHSEP) || (temp[1] == '\0'))  /* got '.':       */
+                continue;                                   /*  nothing to do */
+            if ((temp[1] == '.')
+             && ((temp[2] == PATHSEP) || (temp[2] == '\0'))) {  /* got '..':         */
+                q = prev_dir(q);                            /* move up one level */
+                continue;
+            }
+            rc = EPTHNF;
+            break;
+        }
+        strcpy(q,temp);
+        q += strlen(q);
+    }
+
+    *q = '\0';
+
+    return rc;
+}
 
 /*
  *  copy_move
  */
 PRIVATE LONG copy_move(WORD argc,char **argv,WORD delete)
 {
-char inname[MAXPATHLEN], outname[MAXPATHLEN];
+char inname[MAXPATHLEN], outname[MAXPATHLEN], fullname[MAXPATHLEN];
 char *inptr, *outptr;
 WORD in, out, output_is_dir = 0;
 char *iobuf;
@@ -709,25 +823,33 @@ LONG bufsize, n, rc;
     /*
      * determine if target is a valid directory
      */
-    rc = check_path_component(outname);
+    rc = make_absolute(fullname,outname);   /* convert to absolute path */
     if (rc == 0L)
+        rc = check_path_component(fullname);
+    if (rc == 0L)                           /* it's an existing directory */
         output_is_dir = 1;
+    else if ((rc == NOT_DIRECTORY) || (rc == EFILNF))   /* it's a file or non-existent */
+        rc = 0L;
 
     /*
-     * if invalid drive OR (multiple input files and output isn't a directory),
+     * if error detected OR (multiple input files and output isn't a directory),
      * it's an error
      */
-    if ((rc == EDRIVE)
+    if ((rc < 0L)
      || ((n > 1) && !output_is_dir)) {
         message(outname);
         messagenl(_(" is not a directory"));
         return 0;           /* because we already issued a message */
     }
 
+    /*
+     * for the remainder of processing, we use the converted output name
+     */
+    outptr = extract_path(outname,fullname);
     if (output_is_dir) {
         outptr += strlen(outptr);
-        if ((*(outptr-1) != '\\') && (*(outptr-1) != ':'))
-            *outptr++ = '\\';
+        if ((*(outptr-1) != PATHSEP) && (*(outptr-1) != DRIVESEP))
+            *outptr++ = PATHSEP;
         *outptr = '\0';
     }
 
@@ -792,6 +914,10 @@ LONG bufsize, n, rc;
         Fclose(in);
         Fclose(out);
 
+        /* if the copy failed, delete the output to avoid an incomplete file */
+        if (rc < 0L)
+            Fdelete(outname);
+
         if (delete && (rc == 0L)) { /* don't delete unless copy successful */
             message(_(" ... deleting "));
             message(inptr);
@@ -814,20 +940,26 @@ LONG bufsize, n, rc;
 }
 
 /*
- *  output current path
+ *  get specified drive's current path (including drive letter) into buffer
+ *
+ *  Note: drive is specified as for Dgetpath(): for current drive,
+ *  use 0, otherwise use the drive number + 1
+ *
+ *  returns error code from Dgetpath()
  */
-PRIVATE LONG pathout(void)
+LONG get_path(char *buf,WORD drive)
 {
 LONG rc;
-char buf[MAXPATHLEN];
+char *p = buf;
 
-    rc = Dgetpath(buf,0);
-    if (rc == 0L) {
-        if (!buf[0]) {
-            buf[0] = '\\';
-            buf[1] = '\0';
-        }
-        outputnl(buf);
+    *p++ = 'A' + (drive ? drive-1 : Dgetdrv());
+    *p++ = DRIVESEP;
+    *p = '\0';
+
+    rc = Dgetpath(p,drive);
+    if (!*p) {          /* the root */
+        *p++ = PATHSEP;
+        *p = '\0';
     }
 
     return rc;
@@ -844,7 +976,7 @@ const char *p;
 char *q, *sep = dest;
 
     for (p = src, q = dest; *p; ) {
-        if ((*p == '\\') || (*p == ':'))
+        if ((*p == PATHSEP) || (*p == DRIVESEP))
             sep = q + 1;
         *q++ = *p++;
     }
@@ -866,7 +998,7 @@ const char * const *s;
     outputnl(p->help[0]);
 
     for (s = &p->help[1]; *s; s++) {
-        output("    ");
+        output("  ");
         outputnl(gettext(*s));
     }
 }
@@ -927,22 +1059,22 @@ WORD drive;
         strcpy(filespec,"*.*");
     for (p = filespec; *p; p++)
         ;
-    if (*(p-1) == ':') {        /* add current path for drive */
+    if (*(p-1) == DRIVESEP) {   /* add current path for drive */
         drive = (*(p-2) | 0x20) - 'a';
         Dgetpath(p,drive+1);
         for ( ; *p; p++)
             ;
-        *p++ = '\\';
+        *p++ = PATHSEP;
         *p = '\0';
     }
-    if (*(p-1) == '\\') {
+    if (*(p-1) == PATHSEP) {
         strcpy(p,"*.*");
         p += 3;
     }
 
     strupper(filespec);
 
-    for (q = p; (*q != '\\') && (q >= filespec); q--)
+    for (q = p; (*q != PATHSEP) && (q >= filespec); q--)
         if (*q == '*')  /* wildcard, no more tweaks */
             return;
 
@@ -970,19 +1102,16 @@ WORD i;
 
 PRIVATE void display_dta_detail(void)
 {
-char buf[30], *p;
+char buf[80], *p = buf;
 
-    padname(buf,dta->d_fname);
-    output(buf);
-    decode_date_time(buf,dta->d_date,dta->d_time);
-    output(buf);
+    p += sprintf(buf,"%-13.13s",dta->d_fname);
+    p += decode_date_time(p,dta->d_date,dta->d_time);
 
-    p = buf;
-    memset(p,' ',7);
     if (dta->d_attrib & 0x10) {
-        strcpy(p+2,"<dir>");
+        strcpy(p,"<dir>");
     } else {
-        p += 3;
+        sprintf(p,"%15lu",dta->d_length);
+        p++;
         if (dta->d_attrib & 0x01)
             *p++= 'r';
         if (dta->d_attrib & 0x02)
@@ -991,7 +1120,6 @@ char buf[30], *p;
             *p = 's';
         if (!(dta->d_attrib & 0x07))
             *p = '-';
-        convulong(buf+7,dta->d_length,10,' ');
     }
     outputnl(buf);
 }
@@ -1009,6 +1137,13 @@ WORD drive_number;
     return (drvbits & (1L << drive_number)) ? 1 : 0;
 }
 
+/*
+ *  checks a pathname
+ *
+ *  returns 0 if it specifies a directory
+ *          NOT_DIRECTORY if it specifies a file
+ *          else a negative error code
+ */
 PRIVATE LONG check_path_component(char *component)
 {
 char *p;
@@ -1019,11 +1154,11 @@ LONG rc;
      * if drive specified, validate it and check
      * for "X:" and "X:\" directory specifications
      */
-    if (component[1] == ':') {
+    if (component[1] == DRIVESEP) {
         if (!is_valid_drive(*component))
             return EDRIVE;
         p = component + 2;
-        if (*p == '\\')
+        if (*p == PATHSEP)
             p++;
         if (!*p)              /* X: and X:\ are valid directories */
             return 0L;
@@ -1031,10 +1166,10 @@ LONG rc;
 
     for (p = component; *p; p++) {      /* scan thru string */
         if ((*p == '?') || (*p == '*'))
-            return INVALID_PATH;
+            return EPTHNF;
     }
 
-    if (*(p-1) == '\\')
+    if (*(p-1) == PATHSEP)
         fixup = 1;
     else fixup = 0;
 
@@ -1042,13 +1177,11 @@ LONG rc;
         *--p = '\0';
 
     rc = Fsfirst(component,0x17);
-    if (rc < 0L)
-        rc = INVALID_PATH;
-    else if ((rc == 0L) && ((dta->d_attrib&0x10) != 0x10))
-        rc = INVALID_PATH;
+    if ((rc == 0L) && ((dta->d_attrib&0x10) != 0x10))
+        rc = NOT_DIRECTORY;     /* a file, not a directory */
 
     if (fixup)
-        *p = '\\';
+        *p = PATHSEP;
 
     return rc;
 }
@@ -1066,10 +1199,9 @@ char c;
 
 PRIVATE void show_line(const char *title,ULONG n)
 {
-char buf[20];
+char buf[80];
 
-    output(title);
-    convulong(buf,n,10,' ');
+    sprintf(buf,"%s%10lu",title,n);
     outputnl(buf);
 }
 

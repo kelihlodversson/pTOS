@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2020 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -16,25 +16,37 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "struct.h"
-#include "basepage.h"
 #include "obdefs.h"
+#include "aesext.h"
 #include "intmath.h"
 #include "gemlib.h"
-#include "gem_rsc.h"
 
 #include "gemoblib.h"
 #include "gemgraf.h"
 #include "geminit.h"
-#include "gemrslib.h"
-#include "optimize.h"
-#include "optimopt.h"
+#include "gemobjop.h"
 #include "gemobed.h"
 
 #include "string.h"
 #include "scancode.h"
+
+
+/*
+ * validation strings used in check()
+ *
+ * note that most documentation on this is incorrect.  the following
+ * strings agree with TOS 2/3/4 actual usage.
+ */
+#define VALIDATE_N "0..9A..Z \x80\x8e\x8f\x90\x92\x99\x9a\x9e\xa5\xb5\xb6\xb7\xb8\xc2..\xdc"
+#define VALIDATE_A (VALIDATE_N+4)               /* 0..9 are omitted */
+#define VALIDATE_n "0..9a..zA..Z \x80..\xff"
+#define VALIDATE_a (VALIDATE_n+4)               /* 0..9 are omitted */
+#define VALIDATE_F ":?*a..zA..Z0..9_\x80..\xff"
+#define VALIDATE_f (VALIDATE_F+3)               /* :?* are omitted */
+#define VALIDATE_P ".?*a..zA..Z0..9_\\:\x80..\xff"
+#define VALIDATE_p (VALIDATE_P+3)               /* .?* are omitted */
 
 
 static TEDINFO  edblk;
@@ -55,24 +67,66 @@ static void ob_getsp(OBJECT *tree, WORD obj, TEDINFO *pted)
 void ob_center(OBJECT *tree, GRECT *pt)
 {
     WORD    xd, yd, wd, hd;
-    OBJECT  *root = tree;
+    LONG spec;
+    WORD dummy;
+    GRECT t;
+    WORD th;
 
-    wd = root->ob_width;
-    hd = root->ob_height;
+    wd = tree->ob_width;
+    hd = tree->ob_height;
     xd = (gl_width - wd) / 2;
     yd = gl_hbox + ((gl_height - gl_hbox - hd) / 2);
-    root->ob_x = xd;
-    root->ob_y = yd;
+    tree->ob_x = xd;
+    tree->ob_y = yd;
 
-    /* account for outline or shadow */
-    if (root->ob_state & (OUTLINED|SHADOWED))
+    /* account for outline */
+    if (tree->ob_state & OUTLINED)
     {
         xd -= 3;
+        if (xd < 0)     /* don't move object offscreen */
+            xd = 0;
         yd -= 3;
+        if (yd < 0)     /* don't move object offscreen */
+            yd = 0;
         wd += 6;
         hd += 6;
     }
+
+    /* account for shadow */
+    if (tree->ob_state & SHADOWED)
+    {
+        ob_sst(tree, ROOT, &spec, &dummy, &dummy, &dummy, &t, &th);
+        if (th < 0)
+            th = -th;
+        th += th;
+        wd += th;
+        hd += th;
+    }
     r_set(pt, xd, yd, wd, hd);
+}
+
+
+/*
+ *  Inserts character 'chr' into the string pointed to 'str', at
+ *  position 'pos' (positions are relative to the start of the
+ *  string; inserting at position 0 means inserting at the start
+ *  of the string).  'tot_len' gives the maximum length the string
+ *  can grow to; if necessary, the string will be truncated after
+ *  inserting the character.
+ */
+void ins_char(char *str, WORD pos, char chr, WORD tot_len)
+{
+    WORD ii, len;
+
+    len = strlen(str);
+
+    for (ii = len; ii > pos; ii--)
+        str[ii] = str[ii-1];
+    str[ii] = chr;
+    if (len+1 < tot_len)
+        str[len+1] = '\0';
+    else
+        str[tot_len-1] = '\0';
 }
 
 
@@ -84,7 +138,7 @@ void ob_center(OBJECT *tree, GRECT *pt)
  *  the cursor will jump to the first raw string underscore after
  *  that character.
  */
-static WORD scan_to_end(BYTE *pstr, WORD idx, BYTE chr)
+static WORD scan_to_end(char *pstr, WORD idx, char chr)
 {
     while(*pstr && (*pstr != chr))
     {
@@ -101,7 +155,7 @@ static WORD scan_to_end(BYTE *pstr, WORD idx, BYTE chr)
  *  for the position that was input (in raw string relative numbers).
  *  The returned position will always be right before an '_'.
  */
-static WORD find_pos(BYTE *str, WORD pos)
+static WORD find_pos(char *str, WORD pos)
 {
     WORD i;
 
@@ -171,9 +225,9 @@ static void curfld(OBJECT *tree, WORD obj, WORD new_pos, WORD dist)
  *  The character ranges are stored as enumerated characters (xyz) or
  *  ranges (x..z)
  */
-static WORD instr(BYTE chr, BYTE *str)
+static WORD instr(char chr, char *str)
 {
-    BYTE test1, test2;
+    char test1, test2;
 
     while(*str)
     {
@@ -195,49 +249,49 @@ static WORD instr(BYTE chr, BYTE *str)
  *  Routine to verify that the character matches the validation
  *  string.  If necessary, upshift it.
  */
-static WORD check(BYTE *in_char, BYTE valchar)
+static WORD check(char *in_char, char valchar)
 {
     WORD upcase;
-    BYTE *rstr;
+    char *rstr;
 
     upcase = TRUE;
     rstr = NULL;
     switch(valchar)
     {
-    case '9':           /* 0..9                 */
+    case '9':           /* 0..9 */
         rstr = "0..9";
         upcase = FALSE;
         break;
-    case 'A':           /* A..Z, <space>        */
-        rstr = "a..zA..Z ";
+    case 'A':           /* A..Z, <SPACE>, uppercase non-Roman */
+        rstr = VALIDATE_A;
         break;
-    case 'N':           /* 0..9, A..Z, <SPACE>  */
-        rstr = "a..zA..Z0..9 ";
+    case 'N':           /* 0..9, A..Z, <SPACE>, uppercase non-Roman */
+        rstr = VALIDATE_N;
         break;
-    case 'P':           /* DOS pathname + '\', '?', '*', ':','.',','*/
-        rstr = "a..zA..Z0..9 $#&@!%()-{}'`_^~\\?*:.,";
+    case 'a':           /* a..z, A..Z, <SPACE>, 0x80..0xff */
+        rstr = VALIDATE_a;
+        upcase = FALSE;
         break;
-    case 'p':           /* DOS pathname + '\` + ':'     */
-        rstr = "a..zA..Z0..9 $#&@!%()-{}'`_^~\\:";
+    case 'n':           /* 0..9, a..z, A..Z, <SPACE>, 0x80..0xff */
+        rstr = VALIDATE_n;
+        upcase = FALSE;
         break;
-    case 'F':           /* DOS filename + ':', '?' + '*' */
-        rstr = "a..zA..Z0..9 $#&@!%()-{}'`_^~:?*";
+    case 'F':           /* ':', '?', '*' + DOS filename */
+        rstr = VALIDATE_F;
         break;
     case 'f':           /* DOS filename */
-        rstr = "a..zA..Z0..9 $#&@!%()-{}'`_^~";
+        rstr = VALIDATE_f;
         break;
-    case 'a':           /* a..z, A..Z, <SPACE>  */
-        rstr = "a..zA..Z ";
-        upcase = FALSE;
+    case 'P':           /* '.', '?', '*' + DOS pathname */
+        rstr = VALIDATE_P;
         break;
-    case 'n':           /* 0..9, a..z, A..Z, <SPACE> */
-        rstr = "a..zA..Z0..9 ";
-        upcase = FALSE;
+    case 'p':           /* DOS pathname */
+        rstr = VALIDATE_p;
         break;
-    case 'x':           /* anything, but upcase */
-        *in_char = toupper(*in_char);
+    case 'X':           /* anything */
         return TRUE;
-    case 'X':           /* anything             */
+    case 'x':           /* anything, but change lowercase to uppercase */
+        *in_char = toupper(*in_char);
         return TRUE;
     }
 
@@ -283,7 +337,7 @@ WORD ob_edit(OBJECT *tree, WORD obj, WORD in_char, WORD *idx, WORD kind)
     WORD    pos, len;
     WORD    ii, no_redraw, start, finish, nstart, nfinish;
     WORD    dist, tmp_back, cur_pos;
-    BYTE    bin_char;
+    char    bin_char;
 
     if ((kind == EDSTART) || (obj <= 0))
         return TRUE;

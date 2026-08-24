@@ -3,52 +3,48 @@
  *
  * Copyright 1982 by Digital Research Inc.  All rights reserved.
  * Copyright 1999 by Caldera, Inc. and Authors:
- * Copyright 2002-2017 The EmuTOS development team
+ * Copyright 2002-2025 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-
-
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
+#include "asm.h"
+#include "intmath.h"
+#include "aesext.h"
 #include "vdi_defs.h"
 #include "vdi_backend.h"
-#include "kprint.h"
-#include "../bios/tosvars.h"
-#include "../bios/lineavars.h"
+#include "vdistub.h"
+#include "tosvars.h"
+#include "lineavars.h"
+#include "vdi_inline.h"
 
-#define EMPTY   0xffff
-#define NOT_FOUND -1
-#define DOWN_FLAG 0x8000
-#define QSIZE 200
+extern Vwk phys_work;           /* attribute area for physical workstation */
 
+#define OVERLAY_BIT 0x0020      /* for 16-bit resolutions */
 
-
-#define ABS(v) (v & 0x7FFF)
-
-
-
-/* prototypes */
-static void crunch_queue(void);
-static BOOL clipbox(const VwkClip * clip, Rect * rect);
-
-
+/* special values used in y member of SEGMENT */
+#define EMPTY       0xffff          /* this entry is unused */
+#define DOWN_FLAG   0x8000
+#define ABS(v)      ((v) & 0x7FFF)  /* strips DOWN_FLAG if present */
 
 /* Global variables */
-static UWORD search_color;       /* the color of the border      */
+static UWORD search_color;      /* selected colour for contourfill() */
+static BOOL seed_type;          /* 1 => fill until selected colour is NOT found */
+                                /* 0 => fill until selected colour is found */
 
+/* the following point to segments within vdishare.queue[] (see below) */
+static SEGMENT *qbottom;        /* the bottom of the queue      */
+static SEGMENT *qtop;           /* the last segment in use +1   */
+static SEGMENT *qptr;           /* points to the active point   */
 
-/* some kind of stack for the segments to fill */
-static UWORD queue[QSIZE];      /* storage for the seed points  */
-static WORD qbottom;            /* the bottom of the queue (zero)   */
-static WORD qtop;               /* points to seed +3            */
-static WORD qptr;               /* points to the active point   */
-static WORD qtmp;
-static WORD qhole;              /* an empty space in the queue */
+/*
+ * a shared area for the VDI
+ */
+VDISHARE vdishare;
 
 
 /* the storage for the used defined fill pattern */
@@ -179,11 +175,9 @@ void vdi_vsf_interior(Vwk * vwk)
 {
     WORD fs;
 
-    CONTRL->nintout = 1;
-    fs = *INTIN;
-    if ((fs > MX_FIL_STYLE) || (fs < 0))
-        fs = 0;
-    *INTOUT = vwk->fill_style = fs;
+    fs = ((INTIN[0]<MIN_FILL_STYLE) || (INTIN[0]>MAX_FILL_STYLE)) ? DEF_FILL_STYLE : INTIN[0];
+
+    INTOUT[0] = vwk->fill_style = fs;
     st_fl_ptr(vwk);
 }
 
@@ -194,17 +188,16 @@ void vdi_vsf_style(Vwk * vwk)
 {
     WORD fi;
 
-    CONTRL->nintout = 1;
-    fi = *INTIN;
+    fi = INTIN[0];
 
-    if (vwk->fill_style == 2) {
-        if ((fi > MX_FIL_PAT_INDEX) || (fi < 1))
-            fi = 1;
+    if (vwk->fill_style == FIS_PATTERN) {
+        if ((fi > MAX_FILL_PATTERN) || (fi < MIN_FILL_PATTERN))
+            fi = DEF_FILL_PATTERN;
     } else {
-        if ((fi > MX_FIL_HAT_INDEX) || (fi < 1))
-            fi = 1;
+        if ((fi > MAX_FILL_HATCH) || (fi < MIN_FILL_HATCH))
+            fi = DEF_FILL_HATCH;
     }
-    vwk->fill_index = (*INTOUT = fi) - 1;
+    vwk->fill_index = (INTOUT[0] = fi) - 1;
     st_fl_ptr(vwk);
 }
 
@@ -215,12 +208,9 @@ void vdi_vsf_color(Vwk * vwk)
 {
     WORD fc;
 
-    CONTRL->nintout = 1;
-    fc = *INTIN;
-    if ((fc >= linea_vars.DEV_TAB[13]) || (fc < 0))
-        fc = 1;
+    fc = validate_color_index(INTIN[0]);
 
-    *INTOUT = fc;
+    INTOUT[0] = fc;
     vwk->fill_color = MAP_COL[fc];
 }
 
@@ -229,19 +219,73 @@ void vdi_vsf_color(Vwk * vwk)
 /* ST_FILLPERIMETER: */
 void vdi_vsf_perimeter(Vwk * vwk)
 {
-    WORD *int_out;
-
-    int_out = INTOUT;
-
-    if (*INTIN == 0) {
-        *int_out = 0;
+    if (INTIN[0] == 0) {
+        INTOUT[0] = 0;
         vwk->fill_per = FALSE;
     } else {
-        *(int_out) = 1;
+        INTOUT[0] = 1;
         vwk->fill_per = TRUE;
     }
-    CONTRL->nintout = 1;
 }
+
+
+
+/*
+ * clipbox - Just clips and copies the inputs for use by "rectfill"
+ *
+ * input:
+ *     clip->xmn_clip = x clipping minimum.
+ *         ->xmx_clip = x clipping maximum.
+ *         ->ymn_clip = y clipping minimum.
+ *         ->ymx_clip = y clipping maximum.
+ *     rect->x1       = x coord of upper left corner.
+ *         ->y1       = y coord of upper left corner.
+ *         ->x2       = x coord of lower right corner.
+ *         ->y2       = y coord of lower right corner.
+ *
+ * output:
+ *     FALSE -> everything clipped
+ *     rect->x1 = x coord of upper left corner.
+ *         ->y1 = y coord of upper left corner.
+ *         ->x2 = x coord of lower right corner.
+ *         ->y2 = y coord of lower right corner.
+ */
+static BOOL clipbox(const VwkClip *clip, Rect *rect)
+{
+    WORD x1, y1, x2, y2;
+
+    x1 = rect->x1;
+    y1 = rect->y1;
+    x2 = rect->x2;
+    y2 = rect->y2;
+
+    /* clip x coordinates */
+    if (x1 < clip->xmn_clip) {
+        if (x2 < clip->xmn_clip)
+            return FALSE;           /* clipped box is null */
+        rect->x1 = clip->xmn_clip;
+    }
+    if (x2 > clip->xmx_clip) {
+        if (x1 > clip->xmx_clip)
+            return FALSE;           /* clipped box is null */
+        rect->x2 = clip->xmx_clip;
+    }
+
+    /* clip y coordinates */
+    if (y1 < clip->ymn_clip) {
+        if (y2 < clip->ymn_clip)
+            return FALSE;           /* clipped box is null */
+        rect->y1 = clip->ymn_clip;
+    }
+    if (y2 > clip->ymx_clip) {
+        if (y1 > clip->ymx_clip)
+            return FALSE;           /* clipped box is null */
+        rect->y2 = clip->ymx_clip;
+    }
+
+    return TRUE;
+}
+
 
 
 /*
@@ -285,8 +329,6 @@ void vdi_vqf_attributes(Vwk * vwk)
     *pointer++ = vwk->fill_index + 1;
     *pointer++ = vwk->wrt_mode + 1;
     *pointer = vwk->fill_per;
-
-    CONTRL->nintout = 5;
 }
 
 
@@ -294,7 +336,6 @@ void vdi_vqf_attributes(Vwk * vwk)
 /*
  * st_fl_ptr - set fill pattern?
  */
-
 void
 st_fl_ptr(Vwk * vwk)
 {
@@ -304,15 +345,15 @@ st_fl_ptr(Vwk * vwk)
     fi = vwk->fill_index;
     pm = 0;
     switch (vwk->fill_style) {
-    case 0:
+    case FIS_HOLLOW:
         pp = &HOLLOW;
         break;
 
-    case 1:
+    case FIS_SOLID:
         pp = &SOLID;
         break;
 
-    case 2:
+    case FIS_PATTERN:
         if (fi < 8) {
             pm = DITHRMSK;
             pp = &DITHER[fi * (pm + 1)];
@@ -321,7 +362,7 @@ st_fl_ptr(Vwk * vwk)
             pp = &OEMPAT[(fi - 8) * (pm + 1)];
         }
         break;
-    case 3:
+    case FIS_HATCH:
         if (fi < 6) {
             pm = HAT_0_MSK;
             pp = &HATCH0[fi * (pm + 1)];
@@ -330,7 +371,7 @@ st_fl_ptr(Vwk * vwk)
             pp = &HATCH1[(fi - 6) * (pm + 1)];
         }
         break;
-    case 4:
+    case FIS_USER:
         pm = 0x000f;
         pp = (UWORD *)&vwk->ud_patrn[0];
         break;
@@ -350,7 +391,6 @@ st_fl_ptr(Vwk * vwk)
  *     buf   - ptr to start of array.
  *     count - number of words in array.
  */
-
 static void
 bub_sort (WORD * buf, WORD count)
 {
@@ -375,8 +415,9 @@ bub_sort (WORD * buf, WORD count)
  *
  * (Sutherland and Hodgman Polygon Clipping Algorithm)
  *
- * For each non-horizontal scanline crossing poly, do:
- *   - find intersection points of scan line with poly edges.
+ * For each scan line:
+ *  For each non-horizontal scanline crossing poly, do:
+ *   - Find intersection points of scan line with poly edges
  *   - Sort intersections left to right
  *   - Draw pixels between each pair of points (x coords) on the scan line
  */
@@ -390,112 +431,115 @@ bub_sort (WORD * buf, WORD count)
  * DRI code, when clc_flit() was written in assembler; the buffer
  * was moved to the stack when clc_flit() was re-implemented in C.
  */
-#define MAX_INTERSECTIONS   256
-static WORD fill_buffer[MAX_INTERSECTIONS];
 
-void
-clc_flit (const VwkAttrib * attr, const VwkClip * clipper, const Point * point, WORD y, int vectors)
+void clc_flit(const VwkAttrib *attr, const VwkClip *clipper, const Point *point, WORD vectors, WORD start, WORD end)
 {
-//    WORD fill_buffer[256];      /* must be 256 words or it will fail */
     WORD * bufptr;              /* point to array of x-values. */
     int intersections;          /* count of intersections */
     int i;
+    WORD y;                     /* current scan line */
 
-    /* Initialize the pointers and counters. */
-    intersections = 0;  /* reset counter */
-    bufptr = fill_buffer;
+    for (y = start; y > end; y--) {
+        /* Initialize the pointers and counters. */
+        intersections = 0;  /* reset counter */
+        bufptr = vdishare.main.fill_buffer;
 
-    /* find intersection points of scan line with poly edges. */
-    for (i = vectors - 1; i >= 0; i--) {
-        WORD x1, x2, y1, y2, dy;
+        /* find intersection points of scan line with poly edges. */
+        for (i = 0; i < vectors; i++) {
+            WORD y1, y2, dy;
 
-        x1 = point->x;          /* fetch x-value of 1st endpoint. */
-        y1 = point->y;          /* fetch y-value of 1st endpoint. */
-        point++;
-        x2 = point->x;          /* fetch x-value of 2nd endpoint. */
-        y2 = point->y;          /* fetch y-value of 2nd endpoint. */
+            y1 = point[i].y;        /* fetch y-value of 1st endpoint. */
+            y2 = point[i+1].y;      /* fetch y-value of 2nd endpoint. */
 
-        /* if the current vector is horizontal, ignore it. */
-        dy = y2 - y1;
-        if ( dy ) {
-            LONG dy1, dy2;
+            /* if the current vector is horizontal, ignore it. */
+            dy = y2 - y1;
+            if (dy) {
+                WORD dy1, dy2;
 
-            /* fetch scan-line y. */
-            dy1 = y - y1;       /* d4 - delta y1. */
-            dy2 = y - y2;       /* d3 - delta y2. */
+                /* fetch scan-line y. */
+                dy1 = y - y1;       /* d4 - delta y1. */
+                dy2 = y - y2;       /* d3 - delta y2. */
 
-            /*
-             * Determine whether the current vector intersects with the scan
-             * line we wish to draw.  This test is performed by computing the
-             * y-deltas of the two endpoints from the scan line.
-             * If both deltas have the same sign, then the line does
-             * not intersect and can be ignored.  The origin for this
-             * test is found in Newman and Sproull.
-             */
-            if ((dy1 < 0) != (dy2 < 0)) {
-                int dx = (x2 - x1) << 1;    /* so we can round by adding 1 below */
-                if (intersections >= MAX_INTERSECTIONS)
-                    break;
-                intersections++;
-                /* fill edge buffer with x-values */
-                if ( dx < 0 ) {
-                    *bufptr++ = ((dy2 * dx / dy + 1) >> 1) + x2;
-                }
-                else {
-                    *bufptr++ = ((dy1 * dx / dy + 1) >> 1) + x1;
+                /*
+                 * Determine whether the current vector intersects with the scan
+                 * line we wish to draw.  This test is performed by computing the
+                 * y-deltas of the two endpoints from the scan line.
+                 * If both deltas have the same sign, then the line does
+                 * not intersect and can be ignored.  The origin for this
+                 * test is found in Newman and Sproull.
+                 */
+                if ((dy1^dy2) < 0) {
+                    int dx;
+                    WORD x1, x2;
+                    x1 = point[i].x;        /* fetch x-value of 1st endpoint. */
+                    x2 = point[i+1].x;      /* fetch x-value of 2nd endpoint. */
+                    dx = (x2 - x1) << 1;    /* so we can round by adding 1 below */
+                    if (intersections >= MAX_VERTICES)
+                        break;
+                    intersections++;
+                    /* fill edge buffer with x-values */
+                    if (dx < 0) {
+                        /* does ((dy2 * dx / dy + 1) >> 1) + x2; */
+                        *bufptr++ = ((mul_div(dy2, dx, dy) + 1) >> 1) + x2;
+                    }
+                    else {
+                        /* does ((dy1 * dx / dy + 1) >> 1) + x1; */
+                        *bufptr++ = ((mul_div(dy1, dx, dy) + 1) >> 1) + x1;
+                    }
                 }
             }
         }
-    }
 
-    /*
-     * All of the points of intersection have now been found.  If there
-     * were none then there is nothing more to do.  Otherwise, sort the
-     * list of points of intersection in ascending order.
-     * (The list contains only the x-coordinates of the points.)
-     */
-
-    /* anything to do? */
-    if (intersections == 0)
-        return;
-
-    /* bubblesort the intersections, if it makes sense */
-    if ( intersections > 1 )
-        bub_sort(fill_buffer, intersections);
-
-    /*
-     * Testing under Atari TOS shows that the fill area always *includes*
-     * the left & right perimeter (for those functions that allow the
-     * perimeter to be drawn separately, it is drawn on top of the edge
-     * pixels).  We now conform to Atari TOS.
-     */
-
-    if (attr->clip) {
         /*
-         * Clipping is in force.  Clip the endpoints of the line segment
-         * to the left and right sides of the clipping rectangle.
+         * All of the points of intersection have now been found.  If there
+         * were none (or one, which I think is impossible), then there is
+         * nothing more to do.  Otherwise, sort the list of points of
+         * intersection in ascending order.
+         * (The list contains only the x-coordinates of the points.)
+         */
+        if (intersections < 2)
+            continue;
+
+        /*
+         * Sort the intersections.  There are almost always exactly 2, except
+         * for weird shapes (if this wasn't true, bubble sort would be a bad
+         * choice).
+         */
+        bub_sort(vdishare.main.fill_buffer, intersections);
+
+        /*
+         * Testing under Atari TOS shows that the fill area always *includes*
+         * the left & right perimeter (for those functions that allow the
+         * perimeter to be drawn separately, it is drawn on top of the edge
+         * pixels).  We now conform to Atari TOS.
          */
 
-        /* loop through buffered points */
-        WORD * ptr = fill_buffer;
-        for (i = intersections / 2 - 1; i >= 0; i--) {
+        /*
+         * Loop through points, calling draw_rect_common() for each pair
+         */
+        bufptr = vdishare.main.fill_buffer;
+        i = intersections / 2;
+        while(i--) {
             WORD x1, x2;
             Rect rect;
 
             /* grab a pair of endpoints */
-            x1 = *ptr++;
-            x2 = *ptr++;
+            x1 = *bufptr++;
+            x2 = *bufptr++;
 
-            if ( x1 < clipper->xmn_clip ) {
-                if ( x2 < clipper->xmn_clip )
-                    continue;           /* entire segment clipped left */
-                x1 = clipper->xmn_clip; /* clip left end of line */
-            }
+            /* handle clipping */
+            if (attr->clip) {
+                if (x1 < clipper->xmn_clip) {
+                    if (x2 < clipper->xmn_clip)
+                        continue;           /* entire segment clipped left */
+                    x1 = clipper->xmn_clip; /* clip left end of line */
+                }
 
-            if ( x2 > clipper->xmx_clip ) {
-                if ( x1 > clipper->xmx_clip )
-                    continue;           /* entire segment clippped */
-                x2 = clipper->xmx_clip; /* clip right end of line */
+                if (x2 > clipper->xmx_clip) {
+                    if (x1 > clipper->xmx_clip)
+                        continue;           /* entire segment clipped right */
+                    x2 = clipper->xmx_clip; /* clip right end of line */
+                }
             }
             rect.x1 = x1;
             rect.y1 = y;
@@ -506,35 +550,17 @@ clc_flit (const VwkAttrib * attr, const VwkClip * clipper, const Point * point, 
             draw_rect_common(attr, &rect);
         }
     }
-    else {
-        /* Clipping is not in force.  Draw from point to point. */
-
-        /* loop through buffered points */
-        WORD * ptr = fill_buffer;
-        for (i = intersections / 2 - 1; i >= 0; i--) {
-            Rect rect;
-
-            /* grab a pair of endpoints */
-            rect.x1 = *ptr++;
-            rect.y1 = y;
-            rect.x2 = *ptr++;
-            rect.y2 = y;
-
-            /* rectangle fill routine draws horizontal line */
-            draw_rect_common(attr, &rect);
-        }
-    }
 }
+
 
 
 /*
  * polygon - draw a filled polygon
  */
-
 void
 polygon(Vwk * vwk, Point * ptsin, int count)
 {
-    WORD i, k, y;
+    WORD i, k;
     WORD fill_maxy, fill_miny;
     Point * point, * ptsget, * ptsput;
     const VwkClip *clipper;
@@ -559,19 +585,13 @@ polygon(Vwk * vwk, Point * ptsin, int count)
     /* cast structure needed by clc_flit */
     clipper = VDI_CLIP(vwk);
     if (vwk->clip) {
-        if (fill_miny < clipper->ymn_clip) {
-            if (fill_maxy >= clipper->ymn_clip) {
-                /* polygon starts before clip */
-                fill_miny = clipper->ymn_clip - 1;       /* polygon partial overlap */
-            } else
-                return;         /* polygon entirely before clip */
-        }
-        if (fill_maxy > clipper->ymx_clip) {
-            if (fill_miny <= clipper->ymx_clip)  /* polygon ends after clip */
-                fill_maxy = clipper->ymx_clip;   /* polygon partial overlap */
-            else
-                return;         /* polygon entirely after clip */
-        }
+        if ((fill_maxy < clipper->ymn_clip)     /* polygon entirely before clip */
+         || (fill_miny > clipper->ymx_clip))    /* polygon entirely after clip */
+            return;
+        if (fill_miny < clipper->ymn_clip)
+            fill_miny = clipper->ymn_clip - 1;  /* polygon partial overlap */
+        if (fill_maxy > clipper->ymx_clip)
+            fill_maxy = clipper->ymx_clip;      /* polygon partial overlap */
     }
 
     /* close the polygon, connect last and first point */
@@ -584,9 +604,8 @@ polygon(Vwk * vwk, Point * ptsin, int count)
     Vwk2Attrib(vwk, &attr, vwk->fill_color);
 
     /* really draw it */
-    for (y = fill_maxy; y > fill_miny; y--) {
-        clc_flit(&attr, clipper, ptsin, y, count);
-    }
+    clc_flit(&attr, clipper, ptsin, count, fill_maxy, fill_miny);
+
     if (vwk->fill_per == TRUE) {
         linea_vars.LN_MASK = 0xffff;
         polyline(vwk, ptsin, count+1, vwk->fill_color);
@@ -603,76 +622,15 @@ void vdi_v_fillarea(Vwk * vwk)
     Point * point = (Point*)PTSIN;
     int count = CONTRL->nptsin;
 
-#if 0
 #if HAVE_BEZIER
     /* check, if we want to draw a filled bezier curve */
     if (CONTRL->subcode == 13 && vwk->bez_qual )
         v_bez_fill(vwk, point, count);
     else
 #endif
-#endif
         polygon(vwk, point, count);
 }
 
-
-
-/*
- * clipbox - Just clips and copies the inputs for use by "rectfill"
- *
- * input:
- *     clip->xmn_clip = x clipping minimum.
- *         ->xmx_clip = x clipping maximum.
- *         ->ymn_clip = y clipping minimum.
- *         ->ymx_clip = y clipping maximum.
- *     rect->x1       = x coord of upper left corner.
- *         ->y1       = y coord of upper left corner.
- *         ->x2       = x coord of lower right corner.
- *         ->y2       = y coord of lower right corner.
- *
- * output:
- *     FALSE -> everything clipped
- *     rect->x1 = x coord of upper left corner.
- *         ->y1 = y coord of upper left corner.
- *         ->x2 = x coord of lower right corner.
- *         ->y2 = y coord of lower right corner.
- */
-
-static BOOL
-clipbox(const VwkClip * clip, Rect * rect)
-{
-    WORD x1, y1, x2, y2;
-
-    x1 = rect->x1;
-    y1 = rect->y1;
-    x2 = rect->x2;
-    y2 = rect->y2;
-
-    /* clip x coordinates */
-    if (x1 < clip->xmn_clip) {
-        if (x2 < clip->xmn_clip)
-            return FALSE;           /* clipped box is null */
-        rect->x1 = clip->xmn_clip;
-    }
-    if (x2 > clip->xmx_clip) {
-        if (x1 > clip->xmx_clip)
-            return FALSE;           /* clipped box is null */
-        rect->x2 = clip->xmx_clip;
-    }
-
-    /* clip y coordinates */
-    if (y1 < clip->ymn_clip) {
-        if (y2 < clip->ymn_clip)
-            return FALSE;           /* clipped box is null */
-        rect->y1 = clip->ymn_clip;
-    }
-    if (y2 > clip->ymx_clip) {
-        if (y1 > clip->ymx_clip)
-            return FALSE;           /* clipped box is null */
-        rect->y2 = clip->ymx_clip;
-    }
-
-    return TRUE;
-}
 
 
 /*
@@ -705,16 +663,20 @@ get_color (UWORD mask, UWORD * addr)
     return color;       /* this is the color we are searching for */
 }
 
+
+
 /*
- * pixelread - gets a pixel's color index value
+ * pixelread - gets a pixel's colour
+ *
+ * For palette-based resolutions, this returns the colour index; for
+ * Truecolor resolutions, this returns the 16-bit RGB colour.
  *
  * input:
  *     PTSIN(0) = x coordinate.
  *     PTSIN(1) = y coordinate.
  * output:
- *     pixel value
+ *     pixel colour
  */
-
 static UWORD
 pixelread(const WORD x, const WORD y)
 {
@@ -739,12 +701,98 @@ UWORD planar_get_pixel(WORD x, WORD y)
     UWORD *addr;
     UWORD mask;
 
+#if CONF_WITH_VDI_16BIT
+    if (TRUECOLOR_MODE)
+    {
+        addr = get_start_addr16(x, y);
+        return *addr;                   /* just return the data at the address */
+    }
+#endif
+
     addr = planar_get_start_addr(x, y);
     addr += linea_vars.v_planes;            /* start at highest-order bit_plane */
     mask = 0x8000 >> (x&0xf);               /* initial bit position in WORD */
 
     return get_color(mask, addr);           /* return the composed color value */
 }
+
+#if CONF_WITH_VDI_16BIT
+/*
+ * search_to_right16() - Truecolor version of search_to_right()
+ */
+static UWORD search_to_right16(const VwkClip *clip, WORD x, const UWORD search_col, UWORD *addr)
+{
+    UWORD pixel, search;
+
+    search = search_col & ~OVERLAY_BIT; /* ignore overlay bit in search colour */
+
+    /*
+     * scan upwards until pixel of different colour found
+     */
+    for ( ; x <= clip->xmx_clip; x++)
+    {
+        pixel = *addr++ & ~OVERLAY_BIT; /* ignore overlay bit on screen */
+        if (pixel != search)
+            break;
+    }
+
+    return x - 1;
+}
+
+
+
+/*
+ * search_to_left16() - Truecolor version of search_to_left()
+ */
+static UWORD search_to_left16(const VwkClip *clip, WORD x, const UWORD search_col, UWORD *addr)
+{
+    UWORD pixel, search;
+
+    search = search_col & ~OVERLAY_BIT; /* ignore overlay bit in search colour */
+
+    /*
+     * scan downwards until pixel of different colour found
+     */
+    for ( ; x >= clip->xmn_clip; x--)
+    {
+        pixel = *addr-- & ~OVERLAY_BIT; /* ignore overlay bit on screen */
+        if (pixel != search)
+            break;
+    }
+
+    return x + 1;
+}
+
+
+
+/*
+ * end_pts16() - Truecolor version of end_pts()
+ */
+static WORD end_pts16(const VwkClip *clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout)
+{
+    UWORD color;
+    UWORD *addr;
+
+    /*
+     * convert x,y to start address and get colour
+     */
+    addr = get_start_addr16(x, y);
+    color = *addr & ~OVERLAY_BIT;    /* ignore overlay bit on screen */
+
+    /*
+     * get left and right end
+     */
+    *xrightout = search_to_right16(clip, x, color, addr);
+    *xleftout = search_to_left16(clip, x, color, addr);
+
+    if (color != search_color)
+        return seed_type ^ 1;   /* return segment not of search color */
+
+    return seed_type ^ 0;       /* return segment is of search color */
+}
+#endif
+
+
 
 /*
  * planar_search_right/planar_search_left - scan a horizontal run of
@@ -765,7 +813,7 @@ planar_search_right(const VwkClip * clip, WORD x, WORD y, UWORD search_col)
         UWORD color;
 
         /* need to jump over interleaved bit_plane? */
-        mask = mask >> 1 | mask << 15;  /* roll right */
+        rorw1(mask);    /* rotate right */
         if ( mask & 0x8000 )
             addr += linea_vars.v_planes;
 
@@ -790,7 +838,7 @@ planar_search_left(const VwkClip * clip, WORD x, WORD y, UWORD search_col)
         UWORD color;
 
         /* need to jump over interleaved bit_plane? */
-        mask = mask >> 15 | mask << 1;  /* roll left */
+        rolw1(mask);    /* rotate left */
         if ( mask & 0x0001 )
             addr -= linea_vars.v_planes;
 
@@ -804,26 +852,24 @@ planar_search_left(const VwkClip * clip, WORD x, WORD y, UWORD search_col)
     return x + 1;       /* output x coord + 1 to endxleft. */
 }
 
+
+
 /*
  * end_pts - find the endpoints of a section of solid color
- *           (for the _seed_fill routine.)
+ *           (for the contourfill() routine.)
  *
- * input:  4(sp) = xstart.
- *         6(sp) = ystart.
- *         8(sp) = ptr to endxleft.
- *         C(sp) = ptr to endxright.
+ * input:   clip        ptr to clipping rectangle
+ *          x           starting x value
+ *          y           y coordinate of line
  *
- * output: endxleft  := left endpoint of solid color.
- *         endxright := right endpoint of solid color.
- *         d0        := success flag.
- *             0 => no endpoints or xstart on edge.
- *             1 => endpoints found.
- *         seed_type  indicates the type of fill
+ * output:  xleftout    ptr to variable to receive leftmost point of this colour
+ *          xrightout   ptr to variable to receive rightmost point of this colour
+ *
+ * returns success flag:
+ *          0 => no endpoints or starting x value on edge
+ *          1 => endpoints found
  */
-
-static WORD
-end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
-        BOOL seed_type)
+static WORD end_pts(const VwkClip *clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout)
 {
     UWORD color;
 
@@ -856,6 +902,13 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
     *xrightout = truecolor_search_right(clip, x, y, color);
     *xleftout = truecolor_search_left(clip, x, y, color);
 #else
+#if CONF_WITH_VDI_16BIT
+    if (TRUECOLOR_MODE)
+    {
+        return end_pts16(clip, x, y, xleftout, xrightout);
+    }
+#endif
+
     /*
      * Planar-only build: call the planar primitives directly (see the
      * comment on get_start_addr() in vdi_misc.c).
@@ -872,11 +925,81 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
     return seed_type ^ 0;       /* return segment is of search color */
 }
 
-/* Prototypes local to this module */
-static WORD
-get_seed(const VwkAttrib * attr, const VwkClip * clip,
-         WORD xin, WORD yin, WORD *xleftout, WORD *xrightout,
-         BOOL seed_type);
+
+
+/*
+ * crunch_queue - move qtop down to remove unused seeds
+ */
+static void crunch_queue(void)
+{
+    while (((qtop-1)->y == EMPTY) && (qtop > qbottom))
+        qtop--;
+    if (qptr >= qtop)
+        qptr = qbottom;
+}
+
+
+
+/*
+ * get_seed - put seeds into Q, if (xin,yin) is not of search_color
+ */
+static WORD get_seed(const VwkAttrib *attr, const VwkClip *clip,
+                        WORD xin, WORD yin, WORD *xleftout, WORD *xrightout)
+{
+    SEGMENT *qhole;         /* an empty space in the queue */
+    SEGMENT *qtmp;
+
+    if (end_pts(clip, xin, ABS(yin), xleftout, xrightout)) {
+        /* false if of search_color */
+        for (qtmp = qbottom, qhole = NULL; qtmp < qtop; qtmp++) {
+            /* skip holes, remembering the first hole we find */
+            if (qtmp->y == EMPTY)
+            {
+                if (qhole == NULL)
+                    qhole = qtmp;
+                continue;
+            }
+            /* see, if we ran into another seed */
+            if ( ((qtmp->y ^ DOWN_FLAG) == yin) && (qtmp->xleft == *xleftout) )
+            {
+                /* we ran into another seed so remove it and fill the line */
+                Rect rect;
+
+                rect.x1 = *xleftout;
+                rect.y1 = ABS(yin);
+                rect.x2 = *xrightout;
+                rect.y2 = ABS(yin);
+
+                /* rectangle fill routine draws horizontal line */
+                draw_rect_common(attr, &rect);
+
+                qtmp->y = EMPTY;
+                if ((qtmp+1) == qtop)
+                    crunch_queue();
+                return 0;
+            }
+        }
+
+        /*
+         * there were no holes, so raise qtop if we can
+         */
+        if (qhole == NULL) {
+            if (++qtop > vdishare.queue+QSIZE) { /* can't raise qtop ... */
+                KDEBUG(("contourfill(): queue overflow\n"));
+                return -1;      /* error */
+            }
+        } else
+            qtmp = qhole;
+
+        qtmp->y = yin;      /* put the y and endpoints in the Q */
+        qtmp->xleft = *xleftout;
+        qtmp->xright = *xrightout;
+        return 1;           /* we put a seed in the Q */
+    }
+
+    return 0;           /* we didn't put a seed in the Q */
+}
+
 
 
 /* common function for line-A linea_fill() and VDI d_countourfill() */
@@ -890,11 +1013,9 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
     WORD xleft;                 /* temporary endpoints          */
     WORD xright;                /* */
     WORD direction;             /* is next scan line up or down */
-    BOOL notdone;               /* does seedpoint==search_color */
     WORD gotseed;               /* 1 => seed was put in the Q */
-                                 /* 0 => no seed was put in the Q */
-                                 /* -1 => queue overflowed */
-    BOOL seed_type;             /* indicates the type of fill */
+                                /* 0 => no seed was put in the Q */
+                                /* -1 => queue overflowed */
 
     xleft = PTSIN[0];
     oldy = PTSIN[1];
@@ -910,7 +1031,7 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
         seed_type = 1;
     } else {
         /* Range check the color and convert the index to a pixel value */
-        if (search_color >= linea_vars.DEV_TAB[13])
+        if (search_color >= numcolors)
             return;
 
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
@@ -933,6 +1054,15 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
             search_color = MAP_COL[search_color];
         } else
 #endif
+#if CONF_WITH_VDI_16BIT
+        if (TRUECOLOR_MODE)
+        {
+            search_color = MAP_COL[search_color];
+            /* convert search_color to 16-bit pixel value */
+            search_color = phys_work.ext->palette[search_color];
+        }
+        else
+#endif
         {
             const WORD plane_mask[] = { 1, 3, 7, 15 };
 
@@ -951,175 +1081,138 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
     /* Initialize the line drawing parameters */
     linea_vars.LSTLIN = FALSE;
 
-    notdone = end_pts(clip, xleft, oldy, &oldxleft, &oldxright, seed_type);
+    /* check if anything to do */
+    if (!end_pts(clip, xleft, oldy, &oldxleft, &oldxright))
+        return;
 
-    qptr = qbottom = 0;
-    qtop = 3;                   /* one above highest seed point */
-    queue[0] = (oldy | DOWN_FLAG);
-    queue[1] = oldxleft;
-    queue[2] = oldxright;           /* stuff a point going down into the Q */
+    /*
+     * from this point on we must NOT access PTSIN[], since the area
+     * is overwritten by the queue of seeds!
+     */
+    qptr = qbottom = vdishare.queue;
+    qptr->y = (oldy | DOWN_FLAG);   /* stuff a point going down into the Q */
+    qptr->xleft = oldxleft;
+    qptr->xright = oldxright;
+    qtop = qptr + 1;                /* one above highest seed point */
 
-    if (notdone) {
-        /* couldn't get point out of Q or draw it */
-        while (1) {
-            Rect rect;
+    while (1) {
+        Rect rect;
 
-            direction = (oldy & DOWN_FLAG) ? 1 : -1;
-            gotseed = get_seed(attr, clip, oldxleft, (oldy + direction),
-                               &newxleft, &newxright, seed_type);
-            if (gotseed < 0)
-                return;         /* error, quit */
+        direction = (oldy & DOWN_FLAG) ? 1 : -1;
+        gotseed = get_seed(attr, clip, oldxleft, oldy+direction, &newxleft, &newxright);
+        if (gotseed < 0)
+            return;         /* error, quit */
 
-            if ((newxleft < (oldxleft - 1)) && gotseed) {
-                xleft = oldxleft;
-                while (xleft > newxleft) {
-                    --xleft;
-                    if (get_seed(attr, clip, xleft, oldy ^ DOWN_FLAG,
-                             &xleft, &xright, seed_type) < 0)
-                        return; /* error, quit */
-                }
+        if ((newxleft < (oldxleft - 1)) && gotseed) {
+            xleft = oldxleft;
+            while (xleft > newxleft) {
+                --xleft;
+                if (get_seed(attr, clip, xleft, oldy^DOWN_FLAG, &xleft, &xright) < 0)
+                    return; /* error, quit */
             }
-            while (newxright < oldxright) {
-                ++newxright;
-                gotseed = get_seed(attr, clip, newxright, oldy + direction,
-                                   &xleft, &newxright, seed_type);
-                if (gotseed < 0)
-                    return;     /* error, quit */
-            }
-            if ((newxright > (oldxright + 1)) && gotseed) {
-                xright = oldxright;
-                while (xright < newxright) {
-                    ++xright;
-                    if (get_seed(attr, clip, xright, oldy ^ DOWN_FLAG,
-                             &xleft, &xright, seed_type) < 0)
-                        return; /* error, quit */
-                }
-            }
-
-            /* Eventually jump out here */
-            if (qtop == qbottom)
-                break;
-
-            while (queue[qptr] == EMPTY) {
-                qptr += 3;
-                if (qptr == qtop)
-                    qptr = qbottom;
-            }
-
-            oldy = queue[qptr];
-            queue[qptr++] = EMPTY;
-            oldxleft = queue[qptr++];
-            oldxright = queue[qptr++];
-            if (qptr == qtop)
-                crunch_queue();
-
-            rect.x1 = oldxleft;
-            rect.y1 = ABS(oldy);
-            rect.x2 = oldxright;
-            rect.y2 = ABS(oldy);
-
-            /* rectangle fill routine draws horizontal line */
-            draw_rect_common(attr, &rect);
         }
+        while (newxright < oldxright) {
+            ++newxright;
+            gotseed = get_seed(attr, clip, newxright, oldy+direction, &xleft, &newxright);
+            if (gotseed < 0)
+                return;     /* error, quit */
+        }
+        if ((newxright > (oldxright + 1)) && gotseed) {
+            xright = oldxright;
+            while (xright < newxright) {
+                ++xright;
+                if (get_seed(attr, clip, xright, oldy^DOWN_FLAG, &xleft, &xright) < 0)
+                    return; /* error, quit */
+            }
+        }
+
+        /* Eventually jump out here */
+        if (qtop == qbottom)
+            break;
+
+        while (qptr->y == EMPTY) {
+            qptr++;
+            if (qptr == qtop)
+                qptr = qbottom;
+        }
+
+        oldy = qptr->y;
+        oldxleft = qptr->xleft;
+        oldxright = qptr->xright;
+        qptr->y = EMPTY;
+        if (++qptr == qtop)
+            crunch_queue();
+
+        rect.x1 = oldxleft;
+        rect.y1 = ABS(oldy);
+        rect.x2 = oldxright;
+        rect.y2 = ABS(oldy);
+
+        /* rectangle fill routine draws horizontal line */
+        draw_rect_common(attr, &rect);
+
+        /* after every line, check for early abort */
+        if ((*linea_vars.FILL_ABORT)())
+            break;
     }
 }                               /* end of fill() */
 
-/*
- * crunch_queue - move qtop down to remove unused seeds
- */
-static void
-crunch_queue(void)
-{
-    while ((queue[qtop - 3] == EMPTY) && (qtop > qbottom))
-        qtop -= 3;
-    if (qptr >= qtop)
-        qptr = qbottom;
-}
+
 
 /*
- * get_seed - put seeds into Q, if (xin,yin) is not of search_color
+ * no_abort
+ *
+ * the VDI routine v_contourfill() calls the line-A routine contourfill()
+ * to do its work.  contourfill() calls the routine pointed to by SEEDABORT
+ * on a regular basis to determine whether to prematurely abort the fill.
+ * we initialise SEEDABORT to point to the routine below, which never
+ * requests an early abort.
  */
-static WORD
-get_seed(const VwkAttrib * attr, const VwkClip * clip,
-         WORD xin, WORD yin, WORD *xleftout, WORD *xrightout,
-         BOOL seed_type)
+static WORD no_abort(void)
 {
-    if (end_pts(clip, xin, ABS(yin), xleftout, xrightout, seed_type)) {
-        /* false if of search_color */
-        for (qtmp = qbottom, qhole = NOT_FOUND; qtmp < qtop; qtmp += 3) {
-            /* see, if we ran into another seed */
-            if ( ((queue[qtmp] ^ DOWN_FLAG) == yin) && (queue[qtmp] != EMPTY) &&
-                (queue[qtmp + 1] == *xleftout) )
-
-            {
-                /* we ran into another seed so remove it and fill the line */
-                Rect rect;
-
-                rect.x1 = *xleftout;
-                rect.y1 = ABS(yin);
-                rect.x2 = *xrightout;
-                rect.y2 = ABS(yin);
-
-                /* rectangle fill routine draws horizontal line */
-                draw_rect_common(attr, &rect);
-
-                queue[qtmp] = EMPTY;
-                if ((qtmp + 3) == qtop)
-                    crunch_queue();
-                return 0;
-            }
-            if ((queue[qtmp] == EMPTY) && (qhole == NOT_FOUND))
-                qhole = qtmp;
-        }
-
-        if (qhole == NOT_FOUND) {
-            if ((qtop += 3) > QSIZE) {  /* can't raise qtop ... */
-                KDEBUG(("contourfill(): queue overflow\n"));
-                return -1;      /* error */
-            }
-        } else
-            qtmp = qhole;
-
-        queue[qtmp++] = yin;    /* put the y and endpoints in the Q */
-        queue[qtmp++] = *xleftout;
-        queue[qtmp] = *xrightout;
-        return 1;             /* we put a seed in the Q */
-    }
-
-    return 0;           /* we didn't put a seed in the Q */
+    return 0;
 }
+
 
 
 /* VDI version */
 void vdi_v_contourfill(Vwk * vwk)
 {
     VwkAttrib attr;
+
+    linea_vars.FILL_ABORT = no_abort;
     Vwk2Attrib(vwk, &attr, vwk->fill_color);
     contourfill(&attr, VDI_CLIP(vwk));
 }
 
 
+
 void vdi_v_get_pixel(Vwk * vwk)
 {
     WORD pel;
-    WORD *int_out;
     const WORD x = PTSIN[0];       /* fetch x coord. */
     const WORD y = PTSIN[1];       /* fetch y coord. */
 
     /* Get the requested pixel */
     pel = (WORD)pixelread(x,y);
 
-    int_out = INTOUT;
-    *int_out++ = pel;
+#if CONF_WITH_VDI_16BIT
+    if (TRUECOLOR_MODE)
+    {
+        INTOUT[0] = 0;
+        INTOUT[1] = pel;
+        return;
+    }
+#endif
 
-    *int_out = REV_MAP_COL[pel];
-    CONTRL->nintout = 2;
+    INTOUT[0] = pel;
+    INTOUT[1] = REV_MAP_COL[pel];
 }
 
 
 
 /*
- * get_pix - gets a pixel (just for linea!)
+ * get_pix - gets a pixel (just for line-A)
  *
  * input:
  *     PTSIN(0) = x coordinate.
@@ -1134,8 +1227,22 @@ get_pix(void)
     return pixelread(PTSIN[0], PTSIN[1]);
 }
 
+
+
 /*
- * put_pix - plot a pixel (just for linea!)
+ * put_pix - plot a pixel (just for line-A)
+ *
+ * NOTE: this does not work for Truecolor modes in TOS4 due to a bug.
+ * Register a4 is used to reference the lineA pointer table, but has
+ * never been set; the code should be using a1 instead.  So we can
+ * safely assume that no existing program is expecting this to work.
+ *
+ * However, because EmuTOS aims to be better than TOS, a functioning
+ * Truecolor mode has been implemented.  The EmuTOS Truecolor code
+ * is based on what TOS4 apparently intends to do, i.e. just stores
+ * the word passed in INTIN[0] as-is.  This also meshes with the
+ * operation of linea2 in TOS4 Truecolor modes, which just retrieves
+ * the word at the specified address.
  *
  * input:
  *     INTIN(0) = pixel value.
@@ -1149,6 +1256,20 @@ put_pix(void)
     const WORD x = PTSIN[0];
     const WORD y = PTSIN[1];
     UWORD color;
+
+#if CONF_WITH_VDI_16BIT
+    if (TRUECOLOR_MODE)
+    {
+        /*
+         * convert x,y to start address & validate
+         */
+        addr = get_start_addr16(x, y);
+        if (addr < (UWORD*)v_bas_ad || addr >= get_start_addr16(linea_vars.V_REZ_HZ, linea_vars.V_REZ_VT))
+            return;
+        *addr = INTIN[0];   /* store 16-bit Truecolor value */
+        return;
+    }
+#endif
 
     /* convert x,y to start address */
     addr = get_start_addr(x, y);
@@ -1199,5 +1320,6 @@ void planar_put_pixel(WORD x, WORD y, UWORD color)
             *addr++ |= mask;
         else
             *addr++ &= ~mask;
+        color >>= 1;
     }
 }

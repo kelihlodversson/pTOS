@@ -1,9 +1,9 @@
 /*
- * deskconf.h - desktop configuration header
+ * deskconf.h - EmuDesk's configuration header
  *
  * This file provides a place to centralise the desktop configuration.
  *
- * Copyright (C) 2011-2017 The EmuTOS development team
+ * Copyright (C) 2011-2020 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -32,8 +32,15 @@
 #define WOBS_START  (NUM_WNODES+2)  /* first desktop item object within g_screen[] */
 #define MIN_WOBS    128             /* minimum number of desktop item objects */
 
-#define MAX_OBS     60              /* max number of objects that can be dragged */
-
-#define MAX_LEVEL   8               /* max directory depth supported by the desktop */
+/*
+ * the following specifies the maximum number of directory levels supported
+ * for a copy/move/count/delete operation; if lower levels are found to exist,
+ * the operation will be terminated with a form alert (STFO8DEE).  levels are
+ * counted from the top level of the source tree.  note that this does NOT
+ * restrict the number of directory levels that may exist in a file system.
+ *
+ * this number is arbitrary, but is the same as Atari TOS uses.
+ */
+#define MAX_LEVEL   12              /* max number of directory levels */
 
 #endif  /* _DESKCONF_H */

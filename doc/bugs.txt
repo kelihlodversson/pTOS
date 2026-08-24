@@ -1,51 +1,35 @@
-AES/VDI/Line-A bugs:
-- The right side of outline characters are clipped e.g. in "LaserChess",
-  "Diamond miner" & "Minigolf" games, and in vditext tester:
-  http://sourceforge.net/mailarchive/message.php?msg_id=29276993
-  This is due to a bug somewhere in the ugly text_blt() assembler
-  function in vdi_tblit.S.
-- In "MathMaze" and "The Ultimate Minesweeper", game win and score
-  dialogs leave left/bottom outline on screen when they close.
-
-Desktop bugs:
-- Sometimes, if ^C is pressed during a "Show file" operation, the menu
-  may subsequently refuse to drop down, and a reboot is required to
-  fix the situation.  This will be fixed in the next release.
-
 Video problems:
-- Omega's XiTec presentations "swing.prg" throws privilege exception
-  on exit.  Both TOS v3 & EmuTOS survive that OK, but in EmuTOS both
-  screen and mouse acceleration are messed up: EmuTOS exception restore
-  is missing videomode & mouse reset.
 
 Atari Falcon / TOS v4 compatibility bugs:
-- Escape Paint icons don't show in image operations window and their
-  place in toolbar window is inverted on mouse click.
-- Falcon FalcAMP button icons aren't visible as EmuTOS doesn't support
-  new style RSC files with CICONs.
+  When running some versions of Hatari (including 2.3.0) in Falcon
+  emulation mode with NatFeats support disabled, you may see the
+  following message (or similar) on the Hatari console when EmuTOS
+  switches to monochrome mode:
+    WARN : Strange screen size 160x400 -> aspect corrected by 4x1!
+  This is because of the method that EmuTOS uses to bypass a potential
+  Falcon hardware problem (see the relevant code in bios/videl.c), which
+  puts the screen into a nonstandard resolution for one frame.  This
+  method works without problems on real Falcons, and the message may
+  safely be ignored when running under Hatari.  Note: you will not see
+  this message if NatFeats is enabled, because EmuTOS then knows that
+  it is running under an emulator and will not attempt to bypass the
+  Falcon hardware bug.
 
 Problems that also occur in Atari TOS:
-- VDI: when drawing a wide polyline with squared ends and more than one
++ BIOS: Startup time can be slow on a floppy-only system.  You can speed
+  things up by ensuring that you have a formatted floppy diskette in
+  drive A at boot time.  Boot time will be further reduced if the root
+  directory of the diskette contains as few files as possible, and there
+  are no "deleted file" entries in it.  This can be achieved by freshly
+  formatting the diskette and then copying any desired files to it.
++ VDI: when drawing a wide polyline with squared ends and more than one
   segment, if the width of the line is greater than twice the length of
   an ending segment, the end will have a bump rather than being square.
   This is because wideline segments are joined by using filled circles
   whose radius is half the width of the line: the bump is a protruding
   part of the circle that joins the end segment to the previous one.
++ RAM: Cold boot may not be properly detected on some configurations. This
+  may happen if the computer has been switched off and on too quickly.
+  In that case, the welcome screen is not displayed.
 
 Links to programs listed above:
-- Escape Paint:
-  http://www.pouet.net/prod.php?which=25328
-- FalcAMP:
-  http://deunstg.free.fr/sct1/falcamp/
-- Japlish:
-  http://www.ntrautanen.fi/marko/arkisto.atari.org/sivut/menu_pelit.htm
-- Minigolf (GFA):
-  http://eerott.mbnet.fi/hatari/sources/minigolf.zip
-- Swing:
-  http://www.pouet.net/prod.php?which=52370
-- The Ultimate Minesweeper:
-  http://www.pouet.net/prod.php?which=28904
-- VDI line/text tester:
-  http://eerott.mbnet.fi/hatari/programs.shtml#vditest
-
-(Links missing to: mathmaze, laserchess, diamondminer.)

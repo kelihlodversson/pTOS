@@ -133,6 +133,7 @@
 #include "string.h"
 #include "kprint.h"
 #include "fatfs.h"
+#include "bdosstub.h"
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
 #endif
@@ -208,7 +209,7 @@ long xrmdir(char *p)
  *                  EPTHNF
  *                  EFILNF
  */
-long xchmod(char *p, int wrt, char mod)
+long xchmod(char *p, int wrt, UBYTE mod)
 {
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_chmod(p, wrt, mod);

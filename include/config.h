@@ -104,6 +104,22 @@
 #define MAXPATHLEN (LEN_ZPATH+LEN_ZFNAME+1) /* convenient shorthand */
 
 /*
+ * maximum number of coordinates the VDI will accept for a single
+ * polyline/polygon/fill call, i.e. up to MAX_VERTICES coordinates
+ * (MAX_VERTICES/2 points)
+ */
+#ifndef MAX_VERTICES
+# define MAX_VERTICES 1024
+#endif
+
+/*
+ * maximum number of VDI workstations (physical + virtual) open at once
+ */
+#ifndef NUM_VDI_HANDLES
+# define NUM_VDI_HANDLES 128
+#endif
+
+/*
  * Maximum coordinate supported (must fit in WORD)
  */
 #define MAX_COORDINATE  (10000)         /* arbitrary, could be 32767 */

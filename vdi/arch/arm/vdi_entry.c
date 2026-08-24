@@ -15,7 +15,7 @@
 #include "portab.h"
 #include "intmath.h"
 #include "vdi_defs.h"
-#include "../bios/lineavars.h"
+#include "lineavars.h"
 #include "string.h"
 #include "kprint.h"
 

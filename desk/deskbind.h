@@ -3,7 +3,7 @@
 /*      for 2.3                 9/25/87                 mdf             */
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2024 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -21,14 +21,26 @@
 
 #include "deskconf.h"
 #include "desk_rsc.h"           /* for RS_NTREE */
-#include "dta.h"
+#include "bdosdefs.h"
 #include "deskapp.h"
 #include "deskfpd.h"
 #include "deskwin.h"
+#include "aesext.h"
+
+#define DESKWH  0               /* the desktop's window handle */
 
 #define ARROW   0
 #define HGLASS  2
 #define FLATHAND 4
+
+#define ALLFILES    (FA_SUBDIR|FA_SYSTEM|FA_HIDDEN)
+
+/*
+ * attributes used to select files/folders for desktop window display.
+ * used by pn_active() when building the list of FNODEs to display, and
+ * by search_recursive() when searching for matching FNODEs.
+ */
+#define DISPATTR    FA_SUBDIR
 
 
 /*
@@ -66,6 +78,10 @@
  *  G_USERDEF   Used for text display in a desktop window.
  *              Needs a USERBLK.
  *
+ * It is also convenient to store a pointer to the FNODE of the file that
+ * the screen object represents, so that we can mark a file/folder as
+ * selected when we select the object.
+ *
  * The following typedefs allow us to conveniently use a single array
  * for the additional data, thus saving some RAM space over the previous
  * approach.
@@ -76,10 +92,13 @@ typedef struct
     ICONBLK block;      /* the ICONBLK for this object */
 } ICONINFO;
 
-typedef union
+typedef struct
 {
-    ICONINFO icon;      /* relevant when the corresponding object is a G_ICON */
-    USERBLK udef;       /* relevant when the corresponding object is a G_USERDEF */
+    FNODE *fnptr;       /* ptr to FNODE corresponding to screen object (if applicable) */
+    union {
+        ICONINFO icon;  /* relevant when the corresponding object is a G_ICON */
+        USERBLK udef;   /* relevant when the corresponding object is a G_USERDEF */
+    } u;
 } SCREENINFO;
 
 
@@ -99,21 +118,28 @@ typedef struct
 
 
 /*
+ * the number of points required for outlining an item when dragging it
+ */
+#define NUM_ICON_POINTS 9   /* item is an icon (on desktop or in window) */
+#define NUM_TEXT_POINTS 5   /* item is text (in window) */
+
+
+/*
  * The desktop global data area
  */
 typedef struct
 {
 /*GLOBAL*/ WORD         g_stdrv;                /* start drive */
 
-/*GLOBAL*/ DTA          g_wdta;
+/*GLOBAL*/ DTA          g_wdta;                 /* general use DTA */
 
+                                            /* desktop window management: */
 /*GLOBAL*/ WNODE        g_wdesktop;             /* the desktop pseudo-window */
-/*GLOBAL*/ WNODE        *g_wfirst;
-/*GLOBAL*/ WORD         g_wcnt;
+/*GLOBAL*/ WNODE        *g_wlist;               /* ptr to array of WNODEs */
+/*GLOBAL*/ WNODE        *g_wfirst;              /* current top window     */
+/*GLOBAL*/ WORD         g_wcnt;                 /* # WNODEs currently allocated */
 
                                             /* view-related parms:      */
-/*GLOBAL*/ WORD         g_num;                  /* number of points     */
-/*GLOBAL*/ WORD         *g_pxy;                 /* outline pts to drag  */
 /*GLOBAL*/ WORD         g_iview;                /* current view type (V_ICON/V_TEXT) */
 /*GLOBAL*/ WORD         g_iwext;                /* w,h of extent of a   */
 /*GLOBAL*/ WORD         g_ihext;                /*   single item        */
@@ -133,30 +159,15 @@ typedef struct
                                                 /*   directory tree     */
                                                 /*   traversal          */
 /*GLOBAL*/ DTA          g_dtastk[MAX_LEVEL];
-/*GLOBAL*/ LONG         g_nfiles;
-/*GLOBAL*/ LONG         g_ndirs;
-/*GLOBAL*/ LONG         g_size;
 
-/*GLOBAL*/ WORD         g_xyobpts[MAX_OBS * 2];
+                                            /* for recursive counts in a given path: */
+/*GLOBAL*/ LONG         g_nfiles;               /* files */
+/*GLOBAL*/ LONG         g_ndirs;                /* folders */
+/*GLOBAL*/ LONG         g_size;                 /* total filesize */
 
-/*GLOBAL*/ WORD         g_rmsg[8];
+/*GLOBAL*/ WORD         g_rmsg[8];              /* general AES message area */
 
-/*GLOBAL*/ WORD         g_xdesk;
-/*GLOBAL*/ WORD         g_ydesk;
-/*GLOBAL*/ WORD         g_wdesk;
-/*GLOBAL*/ WORD         g_hdesk;
-
-/*GLOBAL*/ WORD         g_xfull;
-/*GLOBAL*/ WORD         g_yfull;
-/*GLOBAL*/ WORD         g_wfull;
-/*GLOBAL*/ WORD         g_hfull;
-
-/*GLOBAL*/ BYTE         g_cmd[128];
-/*GLOBAL*/ BYTE         g_tail[128];
-
-/*GLOBAL*/ BYTE         *a_alert;
-
-/*GLOBAL*/ OBJECT       *a_trees[RS_NTREE];     /* ptrs to dialog trees */
+/*GLOBAL*/ GRECT        g_desk;                 /* desktop work area coordinates */
 
 /*GLOBAL*/ WORD         g_croot;                /* current pseudo root  */
 
@@ -178,21 +189,20 @@ typedef struct
 /*GLOBAL*/ BYTE         g_appdir;               /* default dir is application dir */
 /*GLOBAL*/ BYTE         g_fullpath;             /* use full path for parameter */
 
-/*GLOBAL*/ BYTE         g_1text[256];
+/*GLOBAL*/ LONG         g_idt;                  /* value from _IDT cookie */
 
-/*GLOBAL*/ WORD         g_icw;
-/*GLOBAL*/ WORD         g_ich;
-/*GLOBAL*/ WORD         g_nmicon;               /* number of points in g_xyicon[] */
-/*GLOBAL*/ WORD         g_nmtext;               /* number of points in g_xytext[] */
-/*GLOBAL*/ WORD         g_xyicon[18];           /* outline for dragging file as icon */
-/*GLOBAL*/ WORD         g_xytext[10];           /* outline for dragging file as text */
+/*GLOBAL*/ char         g_work[256];            /* general text work area */
 
-/*GLOBAL*/ WORD         g_wicon;
-/*GLOBAL*/ WORD         g_hicon;
+                                            /* icon-related globals: */
+/*GLOBAL*/ WORD         g_icw;                  /* width (pixels, incl spacing)  */
+/*GLOBAL*/ WORD         g_ich;                  /* height (pixels, incl spacing) */
+/*GLOBAL*/ Point        g_xyicon[NUM_ICON_POINTS];  /* outline for dragging file as icon */
+/*GLOBAL*/ Point        g_xytext[NUM_TEXT_POINTS];  /* outline for dragging file as text */
+/*GLOBAL*/ WORD         g_wicon;                /* width (pixels, excl spacing)  */
+/*GLOBAL*/ WORD         g_hicon;                /* height (pixels, excl spacing) */
 
-/*GLOBAL*/ LONG         g_afsize;
-
-/*GLOBAL*/ BYTE         *g_pbuff;               /* pointer to text buffer used by ANODEs */
+                                            /* ANODE-related variables */
+/*GLOBAL*/ char         *g_atext;               /* ptr to text buffer */
 /*GLOBAL*/ ANODE        *g_alist;               /* pointer to ANODE array */
 /*GLOBAL*/ ANODE        *g_aavail;              /* pointer to chain of free ANODEs */
 /*GLOBAL*/ ANODE        *g_ahead;               /* pointer to chain of allocated ANODEs */
@@ -200,7 +210,11 @@ typedef struct
 /*GLOBAL*/ WORD         g_numiblks;             /* number of icon blocks */
 /*GLOBAL*/ ICONBLK      *g_iblist;              /* ptr to array of icon blocks */
 
-/*GLOBAL*/ CSAVE        g_cnxsave;
+/* This points to the desktop context save area, which is a staging
+ * area between the current desktop preferences (see above) and the
+ * EMUDESK.INF file.
+ */
+        CSAVE           *g_cnxsave;             /* ptr to context save area */
 
 #if CONF_WITH_BACKGROUNDS
 /* Default pattern/colour for desktop/windows:

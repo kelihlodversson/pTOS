@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*       Copyright (C) 2002-2017 The EmuTOS development team
+*       Copyright (C) 2002-2021 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -19,19 +19,18 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 
 #include "aesbind.h"
-#include "gembind.h"
 #include "deskrsrc.h"
-#include "kprint.h"
+#include "desk_rsc.h"
+#include "nls.h"
 
 
-BYTE *ini_str(WORD stnum)
+/*
+ * return pointer to the specified EmuDesk string
+ */
+char *desktop_str_addr(WORD stnum)
 {
-    BYTE *str;
-
-    rsrc_gaddr_rom(R_STRING, stnum, (void **)&str);
-    return str;
+    return (char *)gettext(desk_rs_fstr[stnum]);
 }

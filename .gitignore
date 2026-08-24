@@ -8,7 +8,6 @@
 /dep/
 *.tr.c
 *_preprocessed.*
-/*.dsm
 /*.prg
 /*.st
 /*.exe
@@ -18,6 +17,7 @@
 /*.sym
 /*.img
 /*.rom
+/*.dc42
 /*.map
 /*.elf
 /dsm.txt
@@ -49,6 +49,9 @@
 /mrd
 /mkflop
 /mkheader
+/localise
+/localise1.tmp
+/localise2.tmp
 /mkrom
 /tos-lang-change
 /temp.rsc
@@ -67,3 +70,4 @@ __pycache__/
 # Subagent-driven-development scratch workspace (ledgers, briefs, reports)
 /.superpowers/
 /task-*-report.md
+/tests/*/*.tos

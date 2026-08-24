@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2016 The EmuTOS development team
+*                 2002-2022 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -16,18 +16,14 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesvars.h"
 #include "obdefs.h"
 #include "gemlib.h"
 
-#include "gemdosif.h"
 #include "geminit.h"
 #include "gemasm.h"
-#include "optimize.h"
-#include "optimopt.h"
 #include "gempd.h"
 
 #include "string.h"
@@ -39,7 +35,7 @@ AESPD *pd_index(WORD i)
 }
 
 /* returns the AESPD for the given name, or if pname is NULL for the given pid */
-AESPD *fpdnm(BYTE *pname, UWORD pid)
+AESPD *fpdnm(char *pname, UWORD pid)
 {
     WORD    i;
     AESPD   *p;
@@ -69,9 +65,6 @@ static AESPD *getpd(void)
     p = pd_index(curpid);
     p->p_pid = curpid++;
 
-    /* was: setdsss(p->p_uda); */
-    p->p_uda->u_insuper = 1;
-
     /* return the pd we got */
     return p;
 }
@@ -81,7 +74,7 @@ static AESPD *getpd(void)
  * name an AESPD from the 8 first chars of the given string, stopping at the first
  * '.' (remove the file extension)
  */
-void p_nameit(AESPD *p, BYTE *pname)
+void p_nameit(AESPD *p, char *pname)
 {
     char *s, *d;
     int i;
@@ -94,27 +87,27 @@ void p_nameit(AESPD *p, BYTE *pname)
 
 
 /* set the application directory of an AESPD */
-void p_setappdir(AESPD *pd, BYTE *pfilespec)
+void p_setappdir(AESPD *pd, char *pfilespec)
 {
-    BYTE *p;
-    BYTE *plast;
-    BYTE *pdest;
+    char *p;
+    char *plast;
+    char *pdest;
 
-    /* find the position *after* the last backslash */
-    for (p = plast = pfilespec; *p; )   /* assume no backslash */
+    /* find the position *after* the last path separator */
+    for (p = plast = pfilespec; *p; )   /* assume no path separator */
     {
-        if (*p++ == '\\')
-            plast = p;          /* after backslash ... */
+        if (*p++ == PATHSEP)
+            plast = p;          /* after path separator ... */
     }
 
-    /* copy the directory name including the final backslash */
+    /* copy the directory name including the final path separator */
     for (pdest = pd->p_appdir, p = pfilespec; p < plast; )
         *pdest++ = *p++;
     *pdest = '\0';
 }
 
 
-AESPD *pstart(PFVOID pcode, BYTE *pfilespec, LONG ldaddr)
+AESPD *pstart(PFVOID pcode, char *pfilespec, LONG ldaddr)
 {
     AESPD *px;
 

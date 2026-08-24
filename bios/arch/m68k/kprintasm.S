@@ -1,7 +1,7 @@
 /*
  *  kprintasm.S - Native print asm routines
  *
- * Copyright (C) 2002-2016 The EmuTOS development team:
+ * Copyright (C) 2002-2019 The EmuTOS development team:
  *
  * Authors:
  *  LVL  Laurent Vogel
@@ -68,7 +68,6 @@ fail_stonx:
 msg_empty:
         .ascii  "\0"
         .even
-
 
 // ==== STonX - Native print routine for debugging ====================
 _printout_stonx:

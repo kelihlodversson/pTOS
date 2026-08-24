@@ -1,7 +1,7 @@
 /*
  * EmuCON2 header
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2022 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -13,11 +13,21 @@
  #include "config.h"
  #include <nls.h>
  #include <portab.h>
+ #include <sysconf.h>
  /* the ROM build shares cli/ across every machine, so gate resolution
     switching on the Atari video hardware actually configured in */
  #define CLI_WITH_RESOLUTION    CONF_WITH_ATARI_VIDEO
  #define CLI_WITH_TT_RESOLUTION CONF_WITH_TT_SHIFTER
 #else
+ /* config.h */
+ #define CONF_ATARI_HARDWARE    1
+ #define CONF_WITH_TT_SHIFTER   1
+ #define MAXPATHLEN      256
+ #define BLKDEVNUM       26
+ /* sysconf.h */
+ #define DRIVESEP       ':'
+ #define PATHSEP        '\\'
+ /* nls.h */
  #define _(a) a
  #define N_(a) a
  #define gettext(a) a
@@ -32,6 +42,9 @@
  #define HIWORD(x) ((UWORD)((ULONG)(x) >> 16))
  #define LOBYTE(x) ((UBYTE)(UWORD)(x))
  #define HIBYTE(x) ((UBYTE)((UWORD)(x) >> 8))
+ #define TRUE    (1)
+ #define FALSE   (0)
+ #define RESTRICT __restrict__
  /* the m68k standalone build only ever targets real Atari hardware;
     the ARM standalone build only ever targets pTOS's own raspi/virt-arm
     ports, which have no Atari-style video hardware to switch resolution
@@ -138,7 +151,7 @@ static __inline__ long cli_supexec_(long a)
 
 #define IOBUFSIZE       16384L  /* buffer size */
 
-#define MAX_LINE_SIZE   200     /* must be greater than the largest screen width */
+#define MAX_LINE_SIZE   200L    /* must be greater than the largest screen width */
 #define HISTORY_SIZE    10      /* number of lines of history */
 #define MAX_ARGS        30      /* maximum number of args we can parse */
 
@@ -172,6 +185,7 @@ static __inline__ long cli_supexec_(long a)
 #define TT_MEDIUM       4
 #define TT_HIGH         6
 #define TT_LOW          7
+#define BLACK           0x0000          /* for Setcolor() */
 
 /*
  *  typedefs
@@ -207,7 +221,7 @@ typedef LONG FUNC(WORD argc,char **argv);
 #define ENMFIL          -49
                                 /* additional emucon-only error codes */
 #define USER_BREAK      -100        /* user interrupted long output */
-#define INVALID_PATH    -101        /* invalid component for PATH command */
+#define NOT_DIRECTORY   -101        /* path points to a file */
 #define DISK_FULL       -102
 #define CMDLINE_LENGTH  -103
 #define DIR_NOT_EMPTY   -104        /* translated from EACCDN for folders */
@@ -230,7 +244,7 @@ typedef LONG FUNC(WORD argc,char **argv);
 #define enable_cursor() escape('e')
 #define conin()         Bconin(2)
 #define constat()       Bconstat(2)
-#define conout(c)       Bconout(2,c)
+#define conout(c)       Bconout(2,(unsigned char)(c))
 
 #define LOOKUP_EXIT     (FUNC *)-1L     /* special return values from lookup_builtin() */
 #define LOOKUP_ARGS     (FUNC *)-2L
@@ -240,22 +254,25 @@ typedef LONG FUNC(WORD argc,char **argv);
  */
 extern LONG idt_value;
 extern UWORD screen_cols, screen_rows;
-extern UWORD linesize;
+extern WORD current_res, requested_res;
 extern WORD linewrap;
+extern WORD nflops_copy;
 extern DTA *dta;
 extern LONG redir_handle;
 extern char user_path[MAXPATHLEN];     /* from PATH command */
 extern WORD current_res, requested_res;
+extern char *environment;              /* from cmdasm.S, or cmdmain.c's
+                                           main() for STANDALONE_CONSOLE */
 
 /*
  *  function prototypes
  */
 /* cmdmain.c */
-void outlong(ULONG n,WORD width,char filler);
 int valid_res(WORD res);
 
 /* cmdedit.c */
 WORD init_cmdedit(void);
+void init_screen(void);
 void insert_char(char *line,WORD pos,WORD len,char c);
 WORD read_line(char *line);
 void save_history(const char *line);
@@ -265,13 +282,13 @@ void term_cmdedit(void);
 LONG exec_program(WORD argc,char **argv,char *redir_name);
 
 /* cmdint.c */
+LONG get_path(char *buf,WORD drive);
 LONG (*lookup_builtin(WORD argc,char **argv))(WORD,char **);
 
 /* cmdparse.c */
 WORD parse_line(char *line,char **argv,char *redir_name);
 
 /* cmdutil.c */
-void convulong(char *buf,ULONG n,WORD width,char filler);
 WORD decode_date_time(char *s,UWORD date,UWORD time);
 void errmsg(LONG rc);
 void escape(char c);

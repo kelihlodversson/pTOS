@@ -1,14 +1,14 @@
 /*
  * fnt_off_6x6.c - font offsets for 6x6 fonts
  *
- * Copyright (C) 2018 The EmuTOS development team
+ * Copyright (C) 2018-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
+#include "bios.h"
 #include "fonthdr.h"
 
 const UWORD off_6x6_table[] =

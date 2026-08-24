@@ -1,7 +1,7 @@
 /*
  * processor.h - declarations for processor type check
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2024 The EmuTOS development team
  *
  * Authors:
  *  MAD     Martin Doering
@@ -29,10 +29,6 @@
  *      . in Pexec() when a program is loaded.
  * 2. Instruction cache is enabled (by the preboot).  It is flushed/
  *    invalidated in Pexec() after a program is loaded.
- * 3. The processor speed must be defined in SDCLK_FREQUENCY_MHZ.  This
- *    is used to derive a value that is used for timing short delays via
- *    a small instruction-looping routine.  See delay.c.
- *
  *
  * Non-ColdFire processors
  * =======================
@@ -104,6 +100,9 @@ extern WORD longframe;
 
 #if CONF_WITH_APOLLO_68080
 extern BOOL is_apollo_68080;
+  #define IS_APOLLO_68080 is_apollo_68080
+#else
+  #define IS_APOLLO_68080 0
 #endif
 
 #if defined(__arm__) || defined(__aarch64__)

@@ -2,7 +2,7 @@
  * time.c - GEMDOS time and date functions
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2017 The EmuTOS development team
+ *               2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -40,12 +40,12 @@ NAMES
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
+#include "emutos.h"
 #include "time.h"
-#include "portab.h"
 #include "gemerror.h"
 #include "xbiosbind.h"
-#include "kprint.h"
+#include "bdosstub.h"
+#include "tosvars.h"
 
 /*
  * globals: current time and date
@@ -78,17 +78,14 @@ UWORD current_time, current_date;
  * I didn't put it in a header because only this file is interested.
  */
 
-/* the address of the vector in TOS vars */
-extern void (*etv_timer)(int);
-
 /*
  * private declarations
  */
 
 static void tikfrk(int n);
 
-static const BYTE nday_norm[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-static const BYTE nday_leap[] = {0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+static const UBYTE nday_norm[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+static const UBYTE nday_leap[] = {0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
 /* static long uptime; */
 
@@ -111,7 +108,7 @@ long xgetdate(void)
 long xsetdate(UWORD d)
 {
     UWORD curmo, day;
-    const BYTE *nday = IS_A_LEAP_YEAR(d) ? nday_leap : nday_norm;
+    const UBYTE *nday = IS_A_LEAP_YEAR(d) ? nday_leap : nday_norm;
 
     curmo = (d & MTH_BM) >> MTH_SHIFT;
     day = d & DAY_BM;
@@ -145,8 +142,8 @@ long xgettime(void)
 long xsettime(UWORD t)
 {
     if (((t & SEC_BM) >= 30)                /* 30 "double-seconds" per minute */
-     || ((t & MIN_BM) >= (60 << MIN_SHIFT)) /* 60 minutes per hour */
-     || ((t & HRS_BM) >= (24 << HRS_SHIFT)))/* 24 hours per day */
+     || ((t & MIN_BM) >= (60U << MIN_SHIFT))    /* 60 minutes per hour */
+     || ((t & HRS_BM) >= (24U << HRS_SHIFT)))   /* 24 hours per day */
         return ERR;
 
     /* tell bios about new time: it will update current_time for us */
@@ -178,7 +175,7 @@ void time_init(void)
 static void tikfrk(int n)
 {
     int curmo, newday;
-    const BYTE *nday;
+    const UBYTE *nday;
 
 /*  uptime += n; */
 
@@ -196,15 +193,15 @@ static void tikfrk(int n)
     /* handle minute rollover */
 
     current_time &= ~SEC_BM;
-    current_time += (1 << MIN_SHIFT);
-    if ((current_time & MIN_BM) != (60 << MIN_SHIFT))
+    current_time += (1U << MIN_SHIFT);
+    if ((current_time & MIN_BM) != (60U << MIN_SHIFT))
         return;
 
     /* handle hour rollover */
 
     current_time &= ~MIN_BM;
-    current_time += (1 << HRS_SHIFT);
-    if ((current_time & HRS_BM) != (24 << HRS_SHIFT))
+    current_time += (1U << HRS_SHIFT);
+    if ((current_time & HRS_BM) != (24U << HRS_SHIFT))
         return;
 
     /* handle day rollover */
@@ -223,11 +220,11 @@ static void tikfrk(int n)
     /* handle month rollover */
 
     current_date &= ~DAY_BM;
-    current_date += (1 << MTH_SHIFT) + 1;
-    if ((current_date & MTH_BM) <= (12 << MTH_SHIFT))
+    current_date += (1U << MTH_SHIFT) + 1;
+    if ((current_date & MTH_BM) <= (12U << MTH_SHIFT))
         return;
 
     /* handle year rollover */
     current_date &= YRS_BM;
-    current_date += (1 << YRS_SHIFT) + (1 << MTH_SHIFT) + 1;
+    current_date += (1U << YRS_SHIFT) + (1U << MTH_SHIFT) + 1U;
 }

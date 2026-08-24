@@ -1,7 +1,7 @@
 /*
  * EmuCON2 command history handling
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2024 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -10,14 +10,17 @@
  * option any later version.  See doc/license.txt for details.
  */
 #include "cmd.h"
-#include <scancode.h>
-#include <string.h>
+#include "scancode.h"
+#include "string.h"
 
 /*
  *  local to this set of functions
  */
+LOCAL WORD linesize;
 LOCAL WORD history_num;
 LOCAL char *history_line[HISTORY_SIZE];
+LOCAL char *insert;     /* saves insertion point for tab completion */
+LOCAL char fsfbuf[MAXPATHLEN];  /* saves Fsfirst() string for tab completion */
 
 /*
  *  function prototypes
@@ -27,6 +30,7 @@ PRIVATE WORD edit_line(char *line,WORD *pos,WORD *len,WORD scancode,WORD prevcod
 PRIVATE void erase_line(char *start,WORD len);
 PRIVATE LONG getfirstnondot(const char *buffer,WORD executable_only);
 PRIVATE LONG getnextfile(WORD executable_only);
+PRIVATE char *insertion_point(char *start);
 PRIVATE WORD next_history(char *line);
 PRIVATE WORD next_word_count(const char *line,WORD pos,WORD len);
 PRIVATE WORD previous_history(char *line);
@@ -41,12 +45,13 @@ char c;
 UWORD save_history_num;
 WORD scancode, prevcode = 0;
 WORD pos = 0, len = 0;
-char prompt[] = "X:>";
+char prompt[MAXPATHLEN];
 
     save_history_num = history_num;     /* so that edit_line() can play with it */
 
-    prompt[0] = Dgetdrv() + 'A';
+    get_path(prompt,0);
     message(prompt);
+    message(">");
     while(1) {
         charcode = conin();
         scancode = ((charcode >> 8) | charcode) & 0xffff;
@@ -120,6 +125,21 @@ char *p;
 }
 
 /*
+ * initialise variables related to current screen size
+ */
+void init_screen(void)
+{
+ULONG n;
+
+    n = getwh();                    /* get max cell number for x and y */
+    screen_cols = HIWORD(n) + 1;
+    screen_rows = LOWORD(n) + 1;
+    linesize = screen_cols + 1 - 3; /* allow for trailing NUL and prompt */
+    if (linesize > MAX_LINE_SIZE)
+        linesize = MAX_LINE_SIZE;
+}
+
+/*
  *  initialise command editing globals
  */
 WORD init_cmdedit(void)
@@ -129,11 +149,11 @@ WORD i;
 
     history_num = -1;       /* means history not available */
 
-    p = (char *)Malloc(linesize*HISTORY_SIZE);
+    p = (char *)Malloc(MAX_LINE_SIZE*HISTORY_SIZE);
     if (!p)
         return -1;
 
-    for (i = 0; i < HISTORY_SIZE; i++, p += linesize) {
+    for (i = 0; i < HISTORY_SIZE; i++, p += MAX_LINE_SIZE) {
         history_line[i] = p;
         *p = '\0';
     }
@@ -156,14 +176,26 @@ void term_cmdedit(void)
 
 /*
  *  save a line in the history
+ *  skip whitespace at start, and empty or duplicate lines
  */
 void save_history(const char *line)
 {
+    WORD old;
     if (history_num < 0)
         return;
 
-    strcpy(history_line[history_num],line);
+    while (*line == ' ')
+        line++;
+    if (!*line)
+        return;
 
+    old = history_num - 1;
+    if (old < 0)
+        old = HISTORY_SIZE - 1;
+    if (strncasecmp(history_line[old],line,MAX_LINE_SIZE) == 0)
+        return;
+
+    strcpy(history_line[history_num],line);
     if (++history_num >= HISTORY_SIZE)
         history_num = 0;
 }
@@ -173,7 +205,6 @@ void save_history(const char *line)
  */
 PRIVATE WORD edit_line(char *line,WORD *pos,WORD *len,WORD scancode,WORD prevcode)
 {
-char buffer[MAXPATHLEN];
 char *start, *p, *q;
 LONG rc;
 WORD n, word = 0;
@@ -229,26 +260,28 @@ WORD n, word = 0;
         }
         break;
     case TAB:           /* tab completion */
+        line[*pos] = '\0';  /* terminate line so we don't see residual data */
         start = start_of_current_word(line,*pos);
-        if (start+sizeof(dta->d_fname)-line >= linesize)
+        if (prevcode != TAB)
+            insert = insertion_point(start);    /* where we insert the names */
+        if (insert+sizeof(dta->d_fname)-line >= linesize)
             break;
         if (prevcode == TAB) {
             rc = getnextfile(start==line);
-            if (rc < 0L) {              /* assume no more files */
-                rc = getfirstnondot(buffer,start==line);
-            }
         } else {
-            for (p = start, q = buffer; p < line+*pos; )
+            for (p = start, q = fsfbuf; p < line+*pos; )
                 *q++ = *p++;
             *q++ = '*';
             *q++ = '.';
             *q++ = '*';
             *q = '\0';
-            rc = getfirstnondot(buffer,start==line);
+            rc = -1L;       /* force getfirstnondot() */
         }
+        if (rc < 0L)        /* no more files */
+            rc = getfirstnondot(fsfbuf,start==line);
         if (rc == 0L) {
-            erase_line(start,*pos-(start-line));
-            for (q = start, p = dta->d_fname; *p; ) {
+            erase_line(insert,*pos-(insert-line));
+            for (q = insert, p = dta->d_fname; *p; ) {
                 conout(*p);
                 *q++ = *p++;
             }
@@ -268,6 +301,10 @@ WORD n, word = 0;
  *
  *  handles backspace or delete
  */
+#ifdef STANDALONE_CONSOLE
+/* Avoid implementation using memmove(), as it isn't available */
+__attribute__((optimize("no-tree-loop-distribute-patterns")))
+#endif
 PRIVATE void delete_char(char *line,WORD pos,WORD len,WORD backspace)
 {
 char *p;
@@ -361,6 +398,21 @@ char *p;
 }
 
 /*
+ *  return pointer to insertion point for tab completion
+ */
+PRIVATE char *insertion_point(char *start)
+{
+char *p, *ins = NULL;
+
+    for (p = ins = start; *p; p++) {
+        if ((*p == DRIVESEP) || (*p == PATHSEP))
+            ins = p+1;
+    }
+
+    return ins;
+}
+
+/*
  *  return the number of characters to the start of the
  *  next word
  */
@@ -408,8 +460,6 @@ PRIVATE LONG getfirstnondot(const char *buffer,WORD executable_only)
 LONG rc;
 
     for (rc = Fsfirst(buffer,0x17); !rc; rc=Fsnext()) {
-        if (rc < 0L)
-            break;
         if (dta->d_fname[0] == '.') /* ignore . & .. */
             continue;
         if (!executable_only)

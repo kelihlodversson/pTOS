@@ -3,20 +3,17 @@
  *
  * Copyright 1982 by Digital Research Inc.  All rights reserved.
  * Copyright 1999 by Caldera, Inc. and Authors:
- * Copyright 2002-2017 by The EmuTOS development team
+ * Copyright 2002-2021 by The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-
-
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "biosbind.h"
 #include "xbiosbind.h"
 #include "vdi_defs.h"
-#include "../bios/lineavars.h"
+#include "lineavars.h"
 
 
 static WORD gchc_key(void);
@@ -190,7 +187,6 @@ void vdi_vqin_mode(Vwk * vwk)
  *
  * returns:   CTL/SHIFT/ALT status
  */
-
 static WORD gshift_s(void)
 {
     return (Kbshift(-1) & 0x000f);
@@ -205,7 +201,6 @@ static WORD gshift_s(void)
  *            1    choice value
  *            2    button pressed
  */
-
 static WORD gchc_key(void)
 {
     linea_vars.TERM_CH = 1;                /* 16 bit char info */

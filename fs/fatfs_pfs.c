@@ -23,6 +23,7 @@
 #include "mem.h"
 #include "endian.h"
 #include "time.h"
+#include "../bdos/bdosstub.h"
 
 #define ROOT_PSEUDO_CLUSTER 1
 

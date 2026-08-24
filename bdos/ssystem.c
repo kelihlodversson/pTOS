@@ -29,9 +29,9 @@
 #include "portab.h"
 #include "ssystem.h"
 #include "gemerror.h"
-#include "../bios/tosvars.h"
-#include "../bios/cookie.h"
-#include "../bios/lineavars.h"
+#include "tosvars.h"
+#include "cookie.h"
+#include "lineavars.h"
 #include "ahdi.h"
 #include "string.h"
 

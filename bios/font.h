@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2001 Lineo, Inc.
  * Copyright (C) 2004 by Authors (see below)
- * Copyright (C) 2015-2017 The EmuTOS development team
+ * Copyright (C) 2015-2020 The EmuTOS development team
  *
  * Authors:
  *  MAD     Martin Doering
@@ -15,12 +15,11 @@
 #ifndef FONT_H
 #define FONT_H
 
-#include "portab.h"
 #include "fonthdr.h"
 
 /* prototypes */
 
 void font_init(void);           /* initialize BIOS font ring */
-void font_set_default(WORD cellheight); /* choose the default font */
+void font_set_default(void);    /* choose the default font */
 
 #endif /* FONT_H */

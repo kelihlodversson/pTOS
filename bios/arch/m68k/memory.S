@@ -1,7 +1,7 @@
 /*
  * memory.S - memory initialization
  *
- * Copyright (C) 2001-2017 by Authors:
+ * Copyright (C) 2001-2025 by Authors:
  *
  * Authors:
  *  MAD  Martin Doering
@@ -29,10 +29,14 @@
         .extern memdone       // return to, after memory config is done
         .extern _warm_magic
         .extern _stktop
+        .extern _meminit_flags
+        .extern amiga_memconf
 
         // functions for detecting hardware
         .extern _check_read_byte
-        .extern _bzero
+        .extern _bzero_nobuiltin
+        .extern _flush_data_cache
+        .extern _invalidate_data_cache
 
         // ST-RAM settings
         .extern memctrl
@@ -167,7 +171,7 @@ memchk:
 memory_reused:
 #if CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
         // If _warm_magic == WARM_MAGIC, this is explicitly not a first boot
-        lea     _warm_magic, a0
+        lea     _warm_magic.w, a0
         move.l  #0x5741524D, d1         // WARM_MAGIC
         cmp.l   (a0), d1
         jeq     .warm_magic_done        // Indeed, this is not a first boot
@@ -330,12 +334,7 @@ after_tt_memconf:
  * the memory bus are floating and may present the good pattern value.
  * That's why a 200 bytes pattern test are used in the TOS 1.6 ROM to avoid this issue.
  */
-#ifdef __mcoldfire__
-        lea     0xffff8001.w,a0
-        move.b  #0xa,(a0)               // set hw to 2 banks by 2 mb (reg 0xffff8001 - memorycontroller)
-#else
         move.b  #0xa,0xffff8001.w       // set hw to 2 banks by 2 mb (reg 0xffff8001 - memorycontroller)
-#endif
 
 /* init the test pattern in bank 0 and 1 */
         movea.w #0x000008,a0            // bank 0
@@ -344,11 +343,7 @@ after_tt_memconf:
 init_pattern_loop:
         move.w  d0,(a0)+                // bank 0
         move.w  d0,(a1)+                // bank 1
-#ifdef __mcoldfire__
-        add.l   #0xfa54,d0              // next pattern data
-#else
         add.w   #0xfa54,d0              // next pattern data
-#endif
         cmpa.l  #0x200,a0               // 200 word done?
         jne     init_pattern_loop
 
@@ -366,11 +361,7 @@ init_pattern_loop:
 
         /* test the presence of a 128k bank config */
 test_128k:
-#ifdef __mcoldfire__
-        lsr.l   #2,d6                   // switch bank in configuration byte
-#else
         lsr.w   #2,d6                   // switch bank in configuration byte
-#endif
         move.l  #0x20000,d4             // 128 KB bank memory size
         movea.l #0x40008,a0             // 128k test for STE
         lea     test_128k_ST,a5         // return point of test pattern
@@ -413,18 +404,10 @@ last_return:
         jne     bank_test_end           // Pattern not found!  -> D6=0x0 - NO RAM
         move.l  #0x200000,d4            // Pattern found!      -> D6=0x6 - 2m
 
-#ifdef __mcoldfire__
-        addq.l  #4,d6
-#else
         addq.w  #4,d6
-#endif
 
 bank_test_end_512k:
-#ifdef __mcoldfire__
-        addq.l  #4,d6
-#else
         addq.w  #4,d6
-#endif
 
 bank_test_end:
         add.l   d4,d5                   // compute total memory size
@@ -452,11 +435,7 @@ check_test_pattern:
 check_test_pattern_loop:
         cmp.w   (a0)+,d0                // is the data valid ?
         jne     end_check_test_pattern
-#ifdef __mcoldfire__
-        add.l   #0xfa54,d0              // next pattern word to test
-#else
         add.w   #0xfa54,d0              // next pattern word to test
-#endif
         cmpa.l  a0,a1                   // at the end of the pattern ?
         jne     check_test_pattern_loop
 end_check_test_pattern:
@@ -495,7 +474,7 @@ mem_sanity_loop:
         move.l  d0,(a0)                 // Write to memory
         cmp.l   (a0),d0                 // Was memory really writable?
         jeq     mem_sanity_done
-        lsr.l   #1,d5                   // Decrease memory size
+        sub.l   #512*1024,d5            // Decrease memory size
         jra     mem_sanity_loop
 mem_sanity_done:
         jra     memconf_done
@@ -606,7 +585,7 @@ stram_detected:
 #endif
 
 #if CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
-        lea     _warm_magic, a0
+        lea     _warm_magic.w, a0
         move.l  #0x5741524D, d1         // WARM_MAGIC
         move.l  d1, (a0)                // Next boot will not be a first boot
 #endif
@@ -629,6 +608,11 @@ any_boot:
         move.l  #__ebss, a1
         jbsr    call_bzero_a0_a1
 
+        // Also clear the variables located in the .low_stram section.
+        move.l  #__low_stram_start, a0
+        move.l  #__low_stram_end, a1
+        jbsr    call_bzero_a0_a1
+
         // Save the meminit_flags into BSS
         move.b  d7, _meminit_flags
 
@@ -643,7 +627,7 @@ call_bzero_a0_a1:
         sub.l   a0,a1
         move.l  a1,-(sp)    // size
         move.l  a0,-(sp)    // start
-        jsr     _bzero
+        jsr     _bzero_nobuiltin
         addq.l  #8,sp
         rts
 
@@ -655,47 +639,123 @@ call_bzero_a0_a1:
 // Clobbers:
 //   - Exception Vectors
 _detect_32bit_address_bus:
-        move.l  a2,-(sp)                // Save registers
-        move.l  sp,a1                   // Save sp before exception
+        movem.l d2/a2-a4,-(sp)          // Save registers
+        move.l  sp,a2                   // Save sp before exception
         move.l  #bus_detected,0x08      // Bus Error will just return
-        moveq   #1,d0                   // Assume 32-bit by default
 
-        lea     0x0000000c.w,a0         // Test address is Address Error vector
-        lea     0x0100000c,a2           // 32-bit mirror address
+        lea     0x0000000c.w,a3         // Test address is Address Error vector
+        lea     0x0100000c,a4           // 32-bit mirror address
 
-        move.l  #0x12345678,d1          // First test value
-        move.l  d1,(a0)                 // Write test value to 24-bit address
-        jbsr    .sync_data_cache        // Mandatory if data cache is enabled
+        move.l  #0x12345678,d2          // First test value
+        move.l  d2,(a3)                 // Write test value to 24-bit address
+        jbsr    sync_data_cache         // Mandatory if data cache is enabled
         // If we are on Atari hardware with 32-bit address bus but without
         // TT-RAM, then the instruction below will cause a Bus Error.
-        cmp.l   (a2),d1                 // Did value appear on 32-bit mirror?
+        cmp.l   (a4),d2                 // Did value appear on 32-bit mirror?
         jne     bus_detected            // No, we are on 32-bit bus
 
         // Test again in case where the mirror already had the test value
-        not.l   d1                      // Second test value
-        move.l  d1,(a0)                 // Write test value to 24-bit address
-        jbsr    .sync_data_cache        // Mandatory if data cache is enabled
-        cmp.l   (a2),d1                 // Did value appear on 32-bit mirror?
+        not.l   d2                      // Second test value
+        move.l  d2,(a3)                 // Write test value to 24-bit address
+        jbsr    sync_data_cache         // Mandatory if data cache is enabled
+        cmp.l   (a4),d2                 // Did value appear on 32-bit mirror?
         jne     bus_detected            // No, we have a 32-bit address bus
 
         moveq   #0,d0                   // Yes, we have a 24-bit address bus
+        jra     end_detect_bus
 
 bus_detected:
-        move.l  a1,sp                   // Restore sp in case of exception
-        move.l  (sp)+,a2                // Restore registers
+        moveq   #1,d0                   // We have a 32-bit by address bus
+
+end_detect_bus:
+        move.l  a2,sp                   // Restore sp in case of exception
+        movem.l (sp)+,d2/a2-a4          // Restore registers
         rts
 
-.sync_data_cache:
+sync_data_cache:
         pea     4.w                     // Size of test value
-        move.l  a0,-(sp)                // Test address
+        move.l  a3,-(sp)                // Test address
         jbsr    _flush_data_cache       // Push to RAM
         addq.l  #8,sp
 
         pea     4.w                     // Size of test value
-        move.l  a2,-(sp)                // Mirror address
+        move.l  a4,-(sp)                // Mirror address
         jbsr    _invalidate_data_cache  // Remove value from cache
         addq.l  #8,sp
 
+        rts
+
+#endif
+
+#if CONF_WITH_MEMORY_TEST
+
+// ===========================================================================
+// ==== utility functions for memory test ====================================
+// ===========================================================================
+
+        .globl  _memtest_verify
+        .globl  _memtest_rotate_verify
+
+//
+// BOOL memtest_verify(ULONG *start, ULONG value, LONG length)
+//
+_memtest_verify:
+        movea.l 4(sp),a0                // a0-> start
+        move.l  8(sp),d0                // d0 = value to check
+        move.l  12(sp),d1               // d1 = length (bytes)
+        lsr.l   #2,d1                   // d1 = length (longs)
+        subq.l  #1,d1                   // for dbne
+vloop:
+        cmp.l   (a0)+,d0                // ok?
+#ifdef __mcoldfire__
+        jne     verror                  // no, branch to error
+        subq.l  #1,d1
+        jpl     vloop
+#else
+        dbne    d1,vloop
+        jne     verror
+        subi.l  #0x10000,d1             // handle long value for count
+        jhi     vloop
+#endif
+        moveq   #1,d0                   // all ok, return TRUE
+        rts
+verror:
+        moveq   #0,d0                   // error, return FALSE
+        rts
+
+//
+// BOOL memtest_rotate_verify(ULONG *start, LONG length)
+//
+_memtest_rotate_verify:
+        movea.l 4(sp),a0                // a0-> start
+        moveq.l #1,d0                   // d0 = value to store
+        move.l  8(sp),d1                // d1 = length (bytes)
+        lsr.l   #2,d1                   // d1 = length (longs)
+        subq.l  #1,d1                   // for dbne
+rloop:
+#ifdef __mcoldfire__
+        lsl.l   #1,d0                   // rotate bit
+        jcc     rnocarry
+        moveq   #1,d0
+rnocarry:
+#else
+        rol.l   #1,d0
+#endif
+        cmp.l   (a0)+,d0                // store
+#ifdef __mcoldfire__
+        jne     rerror
+        subq.l  #1,d1
+        jpl     rloop
+#else
+        dbne    d1,rloop
+        jne     rerror
+        subi.l  #0x10000,d1             // handle long value for count
+        jhi     rloop
+#endif
+        moveq   #1,d0                   // all ok, return TRUE
+        rts
+rerror:
+        moveq   #0,d0                   // error, return FALSE
         rts
 
 #endif

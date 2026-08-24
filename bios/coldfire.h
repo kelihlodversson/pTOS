@@ -1,7 +1,7 @@
 /*
  * coldfire.h - ColdFire specific functions
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2024 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -20,8 +20,6 @@ void coldfire_early_init(void);
 #if CONF_WITH_COLDFIRE_RS232
 BOOL coldfire_rs232_can_write(void);
 void coldfire_rs232_write_byte(UBYTE b);
-BOOL coldfire_rs232_can_read(void);
-UBYTE coldfire_rs232_read_byte(void);
 #endif
 
 #if CONF_COLDFIRE_TIMER_C
@@ -42,11 +40,10 @@ void firebee_pic_write_byte(UBYTE b);
 void firebee_shutdown(void);
 #endif /* MACHINE_FIREBEE */
 
-#if CONF_SERIAL_CONSOLE
 void coldfire_rs232_enable_interrupt(void);
+void coldfire_rs232_disable_interrupt(void);
 void coldfire_rs232_interrupt_handler(void);
 void coldfire_int_35(void); /* In coldfire2.S */
-#endif /* CONF_SERIAL_CONSOLE */
 
 /*
  *  Structure pointed by the '_MCF' cookie's value
@@ -98,19 +95,22 @@ void coldfire_int_35(void); /* In coldfire2.S */
 #define MCF_VALUE_UNKNOWN     -1
 
 typedef struct {
-    BYTE magic[3];            /* Magic number 0x4d4346 (MCF), identifies this struct */
+    char magic[3];            /* Magic number 0x4d4346 (MCF), identifies this struct */
 #define COOKIE_MCF_VERSION    1
     UBYTE version;            /* This struct version */
-    BYTE device_name[16];     /* Device identification number, null terminated */
-    BYTE core;                /* ColdFire core version number */
-    BYTE revision;            /* Processor revision number */
+    char device_name[16];     /* Device identification number, null terminated */
+    UBYTE core;               /* ColdFire core version number */
+    UBYTE revision;           /* Processor revision number */
     ULONG units;              /* Bit mask. b0: MAC, b1: DIV, b2: EMAC, b3: FPU, b4: MMU */
-    BYTE isa;                 /* Instruction-Set Architecture (ISA) revision level */
-    BYTE debug;               /* Debug module revision */
+    UBYTE isa;                /* Instruction-Set Architecture (ISA) revision level */
+    UBYTE debug;              /* Debug module revision */
     WORD sysbus_frequency;    /* System bus frequency in Mhz */
 } MCF_COOKIE;
 
 extern MCF_COOKIE cookie_mcf;
+
+/* MCF_DSPI_DTFR value for SPI chip select. */
+extern ULONG cf_spi_chip_select;
 
 void setvalue_mcf(void);
 

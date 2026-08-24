@@ -1,7 +1,7 @@
 /*
  * emutos.ld - Custom linker script for EmuTOS ROM
  *
- * Copyright (C) 2016-2017 The EmuTOS development team
+ * Copyright (C) 2016-2024 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -41,24 +41,32 @@ OUTPUT_FORMAT(elf32-m68k)
 ENTRY(_os_entry)
 #endif
 
-/* The ROM address depends on the target */
-#if defined (MACHINE_AMIGA)
+#if !EMUTOS_LIVES_IN_RAM || defined (MACHINE_RPI)
+/* The ROM address depends on the target.  MACHINE_RPI needs this even
+ * though EMUTOS_LIVES_IN_RAM is set for it: unlike EmuTOS's other
+ * RAM-resident targets, its .text is still placed at a fixed address
+ * (the ARM kernel load address) rather than following REGION_RAM. */
+#if defined(MACHINE_AMIGA)
 # define ROM_ORIGIN 0x00fc0000
 #elif defined (MACHINE_RPI)
 # define ROM_ORIGIN 0x00008000
 #elif defined (TARGET_CART)
 # define ROM_ORIGIN 0x00fa0000
-#elif defined (TARGET_192)
+#elif defined(TARGET_192)
 # define ROM_ORIGIN 0x00fc0000
 #else
 # define ROM_ORIGIN 0x00e00000
 #endif
+#endif /* !EMUTOS_LIVES_IN_RAM || MACHINE_RPI */
 
+#if !EMUTOS_LIVES_IN_RAM
 /* Always assume there is a lot of ROM space, so the link will always succeed.
  * Then our padding tool will eventually report an overflow, with a better
  * diagnostic message than the linker.
  */
 #define ROM_LENGTH 1M /* Maximum size before I/O area */
+
+#endif /* !EMUTOS_LIVES_IN_RAM */
 
 /* Memory regions of a typical Atari computer.
  * Only start addresses matter. Lengths just need to be large enough.
@@ -66,27 +74,28 @@ ENTRY(_os_entry)
 MEMORY
 {
     stram : ORIGIN = 0x00000000, LENGTH = 14M
+#if !EMUTOS_LIVES_IN_RAM
     rom : ORIGIN = ROM_ORIGIN, LENGTH = ROM_LENGTH
-#ifdef STATIC_ALT_RAM_ADDRESS
+#endif
+#if CONF_WITH_STATIC_ALT_RAM
     altram : ORIGIN = STATIC_ALT_RAM_ADDRESS, LENGTH = 1M
 #endif
 }
 
 /* Region used as read/write memory */
 #if CONF_WITH_STATIC_ALT_RAM
-# define REGION_RAM altram
+REGION_ALIAS("REGION_RAM", altram)
 #else
-# define REGION_RAM stram
+REGION_ALIAS("REGION_RAM", stram)
 #endif
 
 /* Regions used by EmuTOS sections */
 #if EMUTOS_LIVES_IN_RAM
-# define REGION_READ_ONLY   REGION_RAM
-# define REGION_READ_WRITE  REGION_RAM
+REGION_ALIAS("REGION_READ_ONLY", REGION_RAM)
 #else
-# define REGION_READ_ONLY   rom
-# define REGION_READ_WRITE  REGION_RAM
+REGION_ALIAS("REGION_READ_ONLY", rom)
 #endif
+REGION_ALIAS("REGION_READ_WRITE", REGION_RAM)
 
 /* On the QEMU ARM 'virt' machine, RAM starts at physical 0x40000000, but
  * the image is still linked (VMA) at the same low addresses as every
@@ -155,36 +164,58 @@ SECTIONS
         _stktop = .;
     } >REGION_READ_WRITE
 #endif
+    /* SUBALIGN doesn't just bound the gap between input sections here --
+     * per the ld manual it *overrides* each input section's own requested
+     * alignment, "whether larger or smaller". SUBALIGN(2) is deliberate
+     * for m68k (packs the ROM tightly; m68k tolerates the reduced
+     * alignment), but on ARM it silently downgrades any object that needs
+     * more than that -- ordinary 4-byte-aligned code and pointers, or a
+     * few larger asks like the raspi MMU code's 1KB-aligned coarse page
+     * table -- producing undefined-instruction traps (.text) or alignment
+     * data aborts (.data/.bss) wherever an object lands short of the
+     * alignment it actually needs. Omitting SUBALIGN restores the default
+     * behavior of honoring each input section's own alignment, which is
+     * what ARM needs; m68k keeps its explicit override.
+     */
+#if ARCH_ARM
+# define MIN_SUBALIGN
+#else
+# define MIN_SUBALIGN SUBALIGN(2)
+#endif
+
     /* This section is located as low as possible in ST-RAM,
-     * but after evental BIOS stack.
+     * but after eventual BIOS stack.
      * Variables requiring very low addresses, while being accessible
      * from user mode, can be put here.
-     * Warning: this area is not cleared at startup.
      */
-    .low_stram : LMA_AT(.low_stram)
+    .low_stram : LMA_AT(.low_stram) MIN_SUBALIGN
     {
         __low_stram_start = .;
         obj/lowstram.o(.bss COMMON)
         __low_stram_end = .;
         ASSERT(ABSOLUTE(_shifty) < 0x8000, "error: bad _shifty address");
         ASSERT((ABSOLUTE(_dskbuf) & 3) == 0, "error: bad _dskbuf alignment");
+        ASSERT(ABSOLUTE(__low_stram_end) <= 0x8000, "error: .low_stram section extends beyond 32k");
     } >stram
 
     /* The TEXT segment contains EmuTOS executable code and read-only data.
      * It is always read-only, so it can safely live in ROM.
      */
 #if defined (MACHINE_RPI)
-     .text ROM_ORIGIN :
+     .text ROM_ORIGIN : MIN_SUBALIGN
 #else
-     .text : LMA_AT(.text)
+     .text : LMA_AT(.text) MIN_SUBALIGN
 #endif
     {
         CREATE_OBJECT_SYMBOLS
         __text = .;
-        *(.text)
-        *(.rodata .rodata.*) /* Only present in ELF objects */
+        *(.text .rodata .rodata.*)
+        /* Note: .rodata sections are only present in ELF objects.
+         * We mix .text and .rodata to keep critical parts (such as BIOS
+         * and fonts) at the beginning of the ROM.
+         */
         __etext = .;
-    } >REGION_READ_ONLY
+    } >REGION_READ_ONLY =0x4afc
 
     /* FIXME: Our DATA segment is currently read-only.
      * It currently lives in the ROM, just after the TEXT segment.
@@ -192,7 +223,7 @@ SECTIONS
      * Since a read-only DATA segment is useless, we try to keep it empty by
      * making all initialized variables const, so they go to the TEXT segment.
      */
-    .data : LMA_AT(.data)
+    .data : LMA_AT(.data) MIN_SUBALIGN
     {
         __data = .;
         *(.data)
@@ -202,7 +233,7 @@ SECTIONS
     /* The BSS segment contains uninitialized global variables.
      * It will be cleared by the startup code.
      */
-    .bss : LMA_AT(.bss)
+    .bss : LMA_AT(.bss) MIN_SUBALIGN
     {
         __bss = .;
         *(.bss COMMON)
@@ -232,9 +263,10 @@ SECTIONS
 
     /* This section is always the last one stored in ST-RAM.
      * It is usually empty, just used to calculate the last address
-     * of ST-RAM statically used by EmuTOS.
+     * of ST-RAM statically used by EmuTOS. If needed, the address
+     * is rounded up to the next multiple of four.
      */
-    .laststram : LMA_AT(.laststram)
+    .laststram : LMA_AT(.laststram) ALIGN(4)
     {
         __end_os_stram = .;
     } >stram

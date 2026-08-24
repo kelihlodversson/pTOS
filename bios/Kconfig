@@ -25,6 +25,24 @@ config CONF_WITH_ALT_RAM
 	  Support RAM outside of the 14 MB ST-RAM area, made available to
 	  applications through Maddalt()/Mxalloc().
 
+config CONF_WITH_MAGNUM
+	bool "Magnum Alt-RAM board support"
+	depends on CONF_ATARI_HARDWARE
+	default n if MACHINE_ARANYM || MACHINE_FIREBEE || TARGET_192
+	default y
+	help
+	  Detect a Magnum Alt-RAM expansion board and add its memory via
+	  Maddalt(), as for other Alt-RAM sources (see CONF_WITH_ALT_RAM).
+	  Detection is a runtime probe, so it is safe to leave enabled on
+	  hardware/emulators that lack the board.
+
+config CONF_WITH_MEMORY_TEST
+	bool "Memory test on cold boot"
+	default n
+	help
+	  Run a RAM test during a cold boot and report any faulty memory
+	  found.  Adds to boot time, so it is off by default.
+
 config CONF_WITH_TTRAM
 	bool "TT-RAM detection"
 	depends on CONF_WITH_ALT_RAM && !ARCH_ARM
@@ -80,18 +98,19 @@ config CONF_WITH_FRB
 config CONF_WITH_ST_MMU
 	bool "ST MMU support"
 	depends on CONF_ATARI_HARDWARE
+	default n if MACHINE_FIREBEE
 	default y
 
 config CONF_WITH_TT_MMU
 	bool "TT MMU support"
 	depends on CONF_ATARI_HARDWARE
-	default n if TARGET_192 || TARGET_CART || MACHINE_FIREBEE
+	default n if TARGET_192 || TARGET_256 || TARGET_CART || MACHINE_FIREBEE
 	default y
 
 config CONF_WITH_FALCON_MMU
 	bool "Falcon MMU support"
 	depends on CONF_ATARI_HARDWARE
-	default n if TARGET_192 || TARGET_CART
+	default n if TARGET_192 || TARGET_256 || TARGET_CART
 	default y
 
 config CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
@@ -124,6 +143,50 @@ config CONF_WITH_SCSI
 	default y
 	help
 	  Support for the NCR5380 SCSI interface of the TT and the Falcon.
+
+config CONF_WITH_EXTERNAL_DISK_DRIVER
+	bool "Deactivate built-in disk drivers for an external driver"
+	default n
+	help
+	  Deactivate EmuTOS's own ACSI/IDE/SCSI partition scanning and the
+	  built-in XHDI/SCSI Driver interfaces, for use with an external
+	  disk driver loaded from disk instead.  Mutually exclusive with
+	  CONF_WITH_SCSI_DRIVER; leave off unless you have such a driver.
+
+config CONF_WITH_SCSI_DRIVER
+	bool "SCSI Driver (XHDI) interface"
+	depends on !CONF_WITH_EXTERNAL_DISK_DRIVER
+	default n if TARGET_192
+	default y
+	help
+	  Provide the XHDI "SCSI Driver" interface, giving applications
+	  generic SCSI/ATAPI command pass-through to the ACSI/IDE/SCSI
+	  block devices.
+
+config CONF_WITH_GPT_SUPPORT
+	bool "GPT (GUID Partition Table) support"
+	default y
+	help
+	  Recognise GPT-partitioned hard disks in addition to the classic
+	  MBR/AHDI partition tables.
+
+config CONF_WITH_VAMPIRE_SPI
+	bool "Vampire (SAGA core) SD/MMC SPI support"
+	depends on MACHINE_AMIGA
+	default y if MACHINE_AMIGA
+	default n
+	help
+	  SD/MMC card support over the SPI interface of the Apollo Vampire
+	  accelerator's SAGA core.
+
+config CONF_WITH_1FAT_SUPPORT
+	bool "Single-FAT disk support"
+	default y
+	help
+	  Support for FAT-format disks with only a single FAT (File
+	  Allocation Table) instead of the usual two.  Disabling this
+	  saves a small amount of code and assumes every disk has two
+	  FATs, like Atari TOS does.
 
 config CONF_WITH_IDE
 	bool "IDE support"
@@ -246,6 +309,11 @@ config CONF_WITH_FDC
 	depends on CONF_ATARI_HARDWARE && CONF_WITH_MFP && CONF_WITH_YM2149
 	default y
 
+config CONF_WITH_EJECT
+	bool "Automatic floppy eject"
+	depends on CONF_WITH_FDC
+	default n
+
 config CONF_WITH_XHDI
 	bool "XHDI support"
 	default n if TARGET_192 || TARGET_CART || MACHINE_RPI
@@ -321,7 +389,7 @@ config CONF_WITH_MFP_RS232
 config CONF_WITH_TT_MFP
 	bool "TT MFP support"
 	depends on CONF_ATARI_HARDWARE
-	default n if TARGET_192 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
+	default n if TARGET_192 || TARGET_256 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
 	default y
 
 config CONF_WITH_SCC
@@ -378,6 +446,15 @@ config CONF_WITH_IKBD_ACIA
 	help
 	  The Intelligent Keyboard controller is attached to an ACIA 6850 on
 	  every Atari machine.
+
+config CONF_WITH_EXTENDED_MOUSE
+	bool "Extended IKBD mouse packet support"
+	depends on CONF_WITH_IKBD_ACIA
+	default n if TARGET_192
+	default y
+	help
+	  Support the IKBD's extended mouse packet mode, giving finer mouse
+	  resolution and pressure-sensitive-tablet style Z axis support.
 
 config CONF_SERIAL_IKBD
 	bool "IKBD devices on the serial port"
@@ -446,13 +523,13 @@ config CONF_WITH_STE_SHIFTER
 config CONF_WITH_TT_SHIFTER
 	bool "TT Shifter support"
 	depends on CONF_WITH_ATARI_VIDEO
-	default n if TARGET_192 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
+	default n if TARGET_192 || TARGET_256 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
 	default y
 
 config CONF_WITH_VIDEL
 	bool "Falcon Videl support"
 	depends on CONF_WITH_ATARI_VIDEO
-	default n if TARGET_192 || TARGET_CART
+	default n if TARGET_192 || TARGET_256 || TARGET_CART
 	default y
 
 config CONF_WITH_BLITTER
@@ -558,8 +635,17 @@ config CONF_WITH_ICDRTC
 config CONF_WITH_NVRAM
 	bool "NVRAM support"
 	depends on CONF_ATARI_HARDWARE
-	default n if TARGET_192 || TARGET_CART
+	default n if TARGET_192 || TARGET_256 || TARGET_CART
 	default y
+
+config CONF_WITH_ULTRASATAN_CLOCK
+	bool "UltraSatan real-time clock support"
+	depends on CONF_WITH_ACSI
+	default n if TARGET_192
+	default y
+	help
+	  Support for the real-time clock on the UltraSatan ACSI hard disk
+	  interface.  Useless on the FireBee, which has its own NVRAM clock.
 
 config CONF_WITH_BOOTARGS_LANG
 	bool "Boot command line language/keyboard override"
@@ -615,6 +701,15 @@ config CONF_WITH_SFP004
 	depends on CONF_ATARI_HARDWARE
 	default n if MACHINE_ARANYM || MACHINE_FIREBEE
 	default y
+
+config CONF_WITH_DSP
+	bool "Falcon DSP support"
+	depends on CONF_WITH_VIDEL
+	default n if MACHINE_FIREBEE
+	default y
+	help
+	  Support for the Falcon's Motorola 56001 DSP, detected and used by
+	  Xbios DSP calls.
 
 config CONF_WITH_BIOS_EXTENSIONS
 	bool "BIOS extension functions"

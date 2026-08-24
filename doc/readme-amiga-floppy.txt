@@ -6,8 +6,6 @@ ptos.adf - English Amiga boot floppy
 ptos-vampire.adf - Same floppy, optimized for Vampire V2 accelerators
 
 The following optional files are also supplied:
-emucurs.rsc - modifiable mouse cursors for the AES/desktop
-emucurs.def - definition file for the above
 emuicon.rsc - contains additional icons for the desktop
 emuicon.def - definition file for the above
 
@@ -25,22 +23,22 @@ To be clear:
 - Atari programs using the hardware (games, demos...) will not work
 
 AmigaOS is only used to load EmuTOS into RAM. Then EmuTOS completely takes
-over the machine, and AmigaOS is no more available until reboot.
+over the machine, and AmigaOS is no longer available until reboot.
 
-Unlike the Amiga EmuTOS ROM, these floppies are full-featured by default.
-They are the easiest way to test EmuTOS on real hardware.
+These floppies are the easiest way to test EmuTOS on real hardware.
 Floppy emulators such as HxC and Gotek are supported, and even recommended.
 
 Supported Amiga hardware features:
 - Any CPU from 68000 to 68060, including Apollo 68080
 - Chip RAM
-- FastRAM
-- Monochrome, interlaced 640x400 video mode
+- All kinds of Fast RAM
+- Monochrome video modes up to 640x512 interlaced
 - Keyboard
 - Mouse
-- A600/A1200 IDE interface
+- A600/A1200 IDE interface (including Vampire)
 - Battery backed up clock (MSM6242B and RF5C01A)
 - Floppy drives
+- Vampire V2/V4 SD Card
 
 Supported Atari features:
 - ST-RAM
@@ -49,11 +47,13 @@ Supported Atari features:
 - Mouse
 - IDE hard disk (with EmuTOS internal driver)
 - XBIOS hardware clock
+- Alt-RAM
 - ST floppy disks (only 9 sectors, 720 KB, read-only)
 
 Unsupported Atari features:
 - Color video modes
 - Sound
+- Serial and Parallel ports
 
 Special features of ptos-vampire.adf:
 - Optimized for 68040 (best option for Apollo 68080)

@@ -1,7 +1,7 @@
 /*
  * gemgsxif.c - AES's interface to VDI (gsx)
  *
- * Copyright 2002-2017 The EmuTOS development team
+ * Copyright 2002-2024 The EmuTOS development team
  *           1999, Caldera Thin Clients, Inc.
  *           1987, Digital Research Inc.
  *
@@ -14,47 +14,26 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "string.h"
-#include "dos.h"
 #include "obdefs.h"
-#include "gsxdefs.h"
+#include "aesext.h"
 #include "funcdef.h"
 
 #include "gemdos.h"
-#include "gemrslib.h"
-#include "gemgraf.h"
 #include "geminput.h"
 #include "gemdosif.h"
 #include "gsx2.h"
 #include "geminit.h"
 #include "gemctrl.h"
 #include "gemgsxif.h"
-#include "kprint.h"
+#include "xbiosbind.h"
+#include "has.h"        /* for blitter-related items */
+#include "biosdefs.h"   /* for FALCON_REZ */
+#include "biosext.h"
+#include "asm.h"
 
-/*
- * Calls used in Crystal:
- *
- * g_vsf_interior();
- * vr_recfl();
- * vst_height();
- * g_vsl_type();
- * g_vsl_udsty();
- * g_vsl_width();
- * g_v_pline();
- * vst_clip();
- * vex_butv();
- * vex_motv();
- * vex_curv();
- * vex_timv();
- * vr_cpyfm();
- * g_v_opnwk();
- * v_clswk();
- * vq_extnd();
- * v_clsvwk( handle )
- * v_opnvwk( pwork_in, phandle, pwork_out )
- */
+#include "cookie.h"
 
 /*
  * calculate memory size to buffer a display area, given its
@@ -102,11 +81,11 @@ static FDB   gl_tmp;
 static PFVOID old_mcode;
 static PFVOID old_bcode;
 static LONG  gl_mlen;
-static WORD  gl_graphic;
+static BOOL  gl_graphic;
 
 
 /* Some local Prototypes: */
-static void  g_v_opnwk(WORD *pwork_in, WORD *phandle, WS *pwork_out );
+static void v_opnwk(WORD *pwork_in, WORD *phandle, WS *pwork_out);
 
 
 /*
@@ -118,7 +97,7 @@ static void  g_v_opnwk(WORD *pwork_in, WORD *phandle, WS *pwork_out );
  */
 static ULONG gsx_mcalc(void)
 {
-    gsx_fix(&gl_tmp, NULL, 0, 0);           /* store screen info    */
+    gsx_fix_screen(&gl_tmp);            /* store screen info    */
     gl_mlen = (LONG)MENU_BUFFER_SIZE * gl_wchar * gl_hchar * gl_nplanes / 8;
 
     return(gl_mlen);
@@ -151,13 +130,20 @@ void gsx_mret(LONG *pmaddr, LONG *pmlen)
 
 
 
-void gsx_ncode(WORD code, WORD n, WORD m)
+static void gsx_ncode(WORD code, WORD n, WORD m)
 {
     contrl.code = code;
     contrl.nptsin = n;
     contrl.nintin = m;
     contrl.handle = gl_handle;
     gsx2();
+}
+
+
+
+void gsx_0code(WORD code)
+{
+    gsx_ncode(code, 0, 0);
 }
 
 
@@ -170,14 +156,33 @@ void gsx_1code(WORD code, WORD value)
 
 
 
+static WORD screen_rez(void)
+{
+    if (HAS_VIDEL)
+        return FALCON_REZ;
+
+    return Getrez();
+}
+
+
+
 static void gsx_wsopen(void)
 {
-    WORD  i;
+    WORD  i, *p = intin;
 
-    for(i=0; i<10; i++)
-        intin[i] = 1;
-    intin[10] = 2;                  /* device coordinate space */
-    g_v_opnwk(intin, &gl_handle, &gl_ws);
+    /*
+     * set up intin[]: the screen rez (+2) goes into intin[0]
+     *
+     * but there are (undocumented) complications for the Falcon:
+     * we need to use the special pseudo-screen rez, and put the actual
+     * videl mode into intout[45] (!).
+     */
+    *p++ = screen_rez() + 2;
+    for (i = 1; i < 10; i++)
+        *p++ = 1;
+    *p = 2;                         /* device coordinate space */
+    gl_ws.ws_pts0 = VsetMode(-1);   /* will be intout[45] ... harmless if not a Falcon */
+    v_opnwk(intin, &gl_handle, &gl_ws);
     gl_graphic = TRUE;
 }
 
@@ -185,14 +190,14 @@ static void gsx_wsopen(void)
 
 void gsx_wsclose(void)
 {
-    gsx_ncode(CLOSE_WORKSTATION, 0, 0);
+    gsx_0code(CLOSE_WORKSTATION);
 }
 
 
 
 void gsx_wsclear(void)
 {
-    gsx_ncode(CLEAR_WORKSTATION, 0, 0);
+    gsx_0code(CLEAR_WORKSTATION);
 }
 
 
@@ -210,6 +215,7 @@ void ratexit(void)
 }
 
 
+
 static void gsx_setmb(PFVOID boff, PFVOID moff, PFVOID *pdrwaddr)
 {
     i_ptr( boff );
@@ -221,7 +227,7 @@ static void gsx_setmb(PFVOID boff, PFVOID moff, PFVOID *pdrwaddr)
     m_lptr2( old_mcode );
 
 /* not used in Atari GEM:
-    i_ptr( justretf );
+    i_ptr( just_rts );
     gsx_ncode(CUR_VECX, 0, 0);
     m_lptr2( *pdrwaddr );
 */
@@ -232,10 +238,10 @@ static void gsx_setmb(PFVOID boff, PFVOID moff, PFVOID *pdrwaddr)
 static void gsx_resetmb(void)
 {
     i_ptr( (void*)old_bcode );
-    gsx_ncode(BUT_VECX, 0, 0);
+    gsx_0code(BUT_VECX);
 
     i_ptr( (void*)old_mcode );
-    gsx_ncode(MOT_VECX, 0, 0);
+    gsx_0code(MOT_VECX);
 
 /* not used in Atari GEM:
     i_ptr( (void*)drwaddr );
@@ -243,18 +249,31 @@ static void gsx_resetmb(void)
 */
 }
 
+#if CONF_WITH_EXTENDED_MOUSE
 
+/*
+ * determine if trap #2 has been intercepted by someone else (e.g. NVDI)
+ *
+ * return 1 if intercepted, else 0
+ */
+static BOOL aestrap_intercepted(void)
+{
+    void *trap2_handler = (void *)ULONG_AT(0x88);
+    return (!is_text_pointer(trap2_handler)) || nvdi_cookie_present();
+}
+
+#endif /* CONF_WITH_EXTENDED_MOUSE */
 
 void gsx_init(void)
 {
     gsx_wsopen();
     gsx_start();
     gsx_setmb(far_bcha, far_mcha, &drwaddr);
-    gsx_ncode(MOUSE_ST, 0, 0);
+    gsx_0code(MOUSE_STATE);
     xrat = ptsout[0];
     yrat = ptsout[1];
 
-#if CONF_WITH_VDI_EXTENSIONS
+#if CONF_WITH_EXTENDED_MOUSE
     /*
      * if NVDI3 has been installed, it will see the following VDI call.
      * since it doesn't understand vex_wheelv() (which is a Milan extension),
@@ -276,7 +295,7 @@ void gsx_init(void)
 
 
 
-void gsx_graphic(WORD tographic)
+void gsx_graphic(BOOL tographic)
 {
     if (gl_graphic != tographic)
     {
@@ -298,11 +317,15 @@ void gsx_graphic(WORD tographic)
 
 
 
-static void bb_set(WORD sx, WORD sy, WORD sw, WORD sh, WORD *pts1, WORD *pts2,
-                   FDB *pfd, FDB *psrc, FDB *pdst)
+static void bb_set(BOOL save, GRECT *r)
 {
-    WORD            oldsx;
+    FDB *psrc, *pdst;
+    WORD pxyarray[8], *pts1, *pts2;
+    WORD sx, sy, sw, sh, oldsx;
     LONG            size;
+
+    /* extract x/y/w/h from GRECT */
+    r_get(r, &sx, &sy, &sw, &sh);
 
     /* get on word boundary */
     oldsx = sx;
@@ -312,17 +335,34 @@ static void bb_set(WORD sx, WORD sy, WORD sw, WORD sh, WORD *pts1, WORD *pts2,
 
     if (size > gl_mlen) {       /* buffer too small */
         /* adjust height to fit buffer: this will leave droppings! */
-        sh = gl_mlen * sh / size;
+        sh = (ULONG)gl_mlen * sh / size;
 
         /* issue warning message for backup only, not for subsequent restore */
-        if (pdst == &gl_tmp)
+        if (save)
             KINFO(("Menu/alert buffer too small: need at least %ld bytes\n",size));
     }
 
+    gsx_fix_screen(&gl_src);
+    /* gl_tmp.fd_addr was set by gsx_malloc() */
     gl_tmp.fd_stand = TRUE;
     gl_tmp.fd_wdwidth = sw / 16;
     gl_tmp.fd_w = sw;
     gl_tmp.fd_h = sh;
+
+    if (save)
+    {
+        psrc = &gl_src;
+        pdst = &gl_tmp;
+        pts1 = pxyarray;
+        pts2 = pxyarray + 4;
+    }
+    else
+    {
+        psrc = &gl_tmp;         /* invert FDBs & coordinates */
+        pdst = &gl_src;
+        pts1 = pxyarray + 4;
+        pts2 = pxyarray;
+    }
 
     gsx_moff();
     pts1[0] = sx;
@@ -334,8 +374,7 @@ static void bb_set(WORD sx, WORD sy, WORD sw, WORD sh, WORD *pts1, WORD *pts2,
     pts2[2] = sw - 1;
     pts2[3] = sh - 1 ;
 
-    gsx_fix(pfd, NULL, 0, 0);
-    vro_cpyfm(S_ONLY, ptsin, psrc, pdst);
+    vro_cpyfm(S_ONLY, pxyarray, psrc, pdst);
     gsx_mon();
 }
 
@@ -343,16 +382,14 @@ static void bb_set(WORD sx, WORD sy, WORD sw, WORD sh, WORD *pts1, WORD *pts2,
 
 void bb_save(GRECT *ps)
 {
-    bb_set(ps->g_x, ps->g_y, ps->g_w, ps->g_h, &ptsin[0], &ptsin[4],
-           &gl_src, &gl_src, &gl_tmp);
+    bb_set(TRUE, ps);
 }
 
 
 
 void bb_restore(GRECT *pr)
 {
-    bb_set(pr->g_x, pr->g_y, pr->g_w, pr->g_h, &ptsin[4], &ptsin[0],
-           &gl_dst, &gl_tmp, &gl_dst);
+    bb_set(FALSE, pr);
 }
 
 
@@ -371,9 +408,14 @@ void gsx_mfset(const MFORM *pmfnew)
 {
     gsx_moff();
     if (!gl_ctmown)
+    {
+#if CONF_WITH_GRAF_MOUSE_EXTENSION
+        gl_prevmouse = gl_mouse;
+#endif
         gl_mouse = *pmfnew;
+    }
     memcpy(intin, (void *)pmfnew, sizeof(MFORM));
-    gsx_ncode(ST_CUR_FORM, 0, sizeof(MFORM)/sizeof(WORD));
+    gsx_ncode(SET_CUR_FORM, 0, sizeof(MFORM)/sizeof(WORD));
     gsx_mon();
 }
 
@@ -389,7 +431,7 @@ void gsx_mxmy(WORD *pmx, WORD *pmy)
 
 WORD gsx_kstate(void)
 {
-    gsx_ncode(KEY_SHST, 0, 0);
+    gsx_0code(KEY_STATE);
     return(intout[0]);
 }
 
@@ -398,7 +440,7 @@ WORD gsx_kstate(void)
 void gsx_moff(void)
 {
     if (!gl_moff)
-        gsx_ncode(HIDE_CUR, 0, 0);
+        gsx_0code(HIDE_CUR);
 
     gl_moff++;
 }
@@ -458,9 +500,56 @@ WORD gsx_nplanes(void)
     return intout[4];
 }
 
-/* This function was formerly just called v_opnwk, but there was a
-   conflict with the VDI then, so I renamed it to g_v_opnwk  - Thomas */
-static void g_v_opnwk(WORD *pwork_in, WORD *phandle, WS *pwork_out )
+
+/* Get text size info */
+void gsx_textsize(WORD *charw, WORD *charh, WORD *cellw, WORD *cellh)
+{
+    gsx_0code(INQ_TEXT_ATTRIBUTES);
+    *charw = ptsout[0];
+    *charh = ptsout[1];
+    *cellw = ptsout[2];
+    *cellh = ptsout[3];
+}
+
+
+/*
+ *  Routine to set the FDB to correspond to the current screen
+ */
+void gsx_fix_screen(FDB *pfd)
+{
+    pfd->fd_addr = NULL;
+    pfd->fd_w = gl_ws.ws_xres + 1;
+    pfd->fd_h = gl_ws.ws_yres + 1;
+    pfd->fd_wdwidth = pfd->fd_w / 16;
+    pfd->fd_stand = FALSE;
+    pfd->fd_nplanes = gl_nplanes;
+}
+
+
+/*
+ *  Routine to fix up the MFDB of a particular raster form
+ */
+void gsx_fix(FDB *pfd, void *theaddr, WORD wb, WORD h)
+{
+    if (theaddr == NULL)
+    {
+        gsx_fix_screen(pfd);
+        return;
+    }
+
+    pfd->fd_addr = theaddr;
+    pfd->fd_w = wb * 8;
+    pfd->fd_h = h;
+    pfd->fd_wdwidth = wb / 2;
+    pfd->fd_stand = FALSE;
+    pfd->fd_nplanes = 1;
+}
+
+
+/*
+ *  Routine to issue v_opnwk()
+ */
+static void v_opnwk(WORD *pwork_in, WORD *phandle, WS *pwork_out)
 {
     WORD            *ptsptr;
 
@@ -478,10 +567,10 @@ static void g_v_opnwk(WORD *pwork_in, WORD *phandle, WS *pwork_out )
 }
 
 
-
-/* This function was formerly just called v_pline, but there was a
- conflict with the VDI then, so I renamed it to g_v_pline  - Thomas */
-void g_v_pline(WORD  count, WORD *pxyarray )
+/*
+ *  Routine to issue v_pline()
+ */
+void v_pline(WORD count, WORD *pxyarray)
 {
     i_ptsin( pxyarray );
     gsx_ncode(POLYLINE, count, 0);
@@ -489,15 +578,11 @@ void g_v_pline(WORD  count, WORD *pxyarray )
 }
 
 
-
-void vst_clip(WORD clip_flag, WORD *pxyarray )
+void vs_clip(WORD clip_flag, WORD *pxyarray )
 {
-    WORD            value;
-
-    value = ( clip_flag != 0 ) ? 2 : 0;
     i_ptsin( pxyarray );
     intin[0] = clip_flag;
-    gsx_ncode(TEXT_CLIP, value, 1);
+    gsx_ncode(TEXT_CLIP, 2, 1);
     i_ptsin(ptsin);
 }
 
@@ -507,7 +592,7 @@ void vst_height(WORD height, WORD *pchr_width, WORD *pchr_height,
 {
     ptsin[0] = 0;
     ptsin[1] = height;
-    gsx_ncode(CHAR_HEIGHT, 1, 0);
+    gsx_ncode(SET_CHAR_HEIGHT, 1, 0);
     *pchr_width = ptsout[0];
     *pchr_height = ptsout[1];
     *pcell_width = ptsout[2];
@@ -516,11 +601,10 @@ void vst_height(WORD height, WORD *pchr_width, WORD *pchr_height,
 
 
 
-void vr_recfl(WORD *pxyarray, FDB *pdesMFDB)
+void vr_recfl(WORD *pxyarray)
 {
-    i_ptr( pdesMFDB );
     i_ptsin( pxyarray );
-    gsx_ncode(FILL_RECTANGLE, 2, 1);
+    gsx_ncode(FILL_RECTANGLE, 2, 0);
     i_ptsin( ptsin );
 }
 
@@ -532,7 +616,7 @@ void vro_cpyfm(WORD wr_mode, WORD *pxyarray, FDB *psrcMFDB, FDB *pdesMFDB )
     i_ptr( psrcMFDB );
     i_ptr2( pdesMFDB );
     i_ptsin( pxyarray );
-    gsx_ncode(COPY_RASTER_FORM, 4, 1);
+    gsx_ncode(COPY_RASTER_OPAQUE, 4, 1);
     i_ptsin( ptsin );
 }
 
@@ -547,7 +631,7 @@ void vrt_cpyfm(WORD wr_mode, WORD *pxyarray, FDB *psrcMFDB, FDB *pdesMFDB,
     i_ptr( psrcMFDB );
     i_ptr2( pdesMFDB );
     i_ptsin( pxyarray );
-    gsx_ncode(TRAN_RASTER_FORM, 4, 3);
+    gsx_ncode(COPY_RASTER_TRANS, 4, 3);
     i_ptsin( ptsin );
 }
 
@@ -558,25 +642,24 @@ void vrn_trnfm(FDB *psrcMFDB, FDB *pdesMFDB)
     i_ptr( psrcMFDB );
     i_ptr2( pdesMFDB );
 
-    gsx_ncode(TRANSFORM_FORM, 0, 0);
+    gsx_0code(TRANSFORM_FORM);
 }
 
 
 
 /*
- * This function was formerly just called vsl_width, but there was a
- * conflict with the VDI then, so I renamed it to g_vsl_width  - Thomas
+ *  Routine to call vsl_width()
  */
-void g_vsl_width(WORD width)
+void vsl_width(WORD width)
 {
     ptsin[0] = width;
     ptsin[1] = 0;
-    gsx_ncode(S_LINE_WIDTH, 1, 0);
+    gsx_ncode(SET_LINE_WIDTH, 1, 0);
 }
 
 
 
-#if CONF_WITH_VDI_EXTENSIONS
+#if CONF_WITH_EXTENDED_MOUSE
 void vex_wheelv(PFVOID new, PFVOID *old)
 {
     i_ptr(new);

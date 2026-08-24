@@ -1,7 +1,7 @@
 /*
  * lineainit.c - linea graphics initialization
  *
- * Copyright (C) 2001-2017 by Authors:
+ * Copyright (C) 2001-2024 by Authors:
  *
  * Authors:
  *  MAD  Martin Doering
@@ -10,9 +10,10 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
+/* #define ENABLE_KDEBUG */
+
+#include "emutos.h"
 #include "lineavars.h"
-#include "kprint.h"
 #include "screen.h"
 #include "screen_mode.h"
 
@@ -28,7 +29,7 @@ const BYTE shift_offset[9] = {0, 3, 2, 0, 1, 0, 0, 0, 0};
 /*
  * mouse cursor save areas
  */
-static MCS ext_mouse_cursor_save;   /* use for v_planes > 4 */
+MCS ext_mouse_cursor_save;   /* use for v_planes > 4 */
 
 MCS *mcs_ptr;   /* ptr to current mouse cursor save area, based on v_planes */
 struct _lineavars linea_vars;
@@ -36,7 +37,6 @@ struct _lineavars linea_vars;
 /*
  * linea_init - init linea variables
  */
-
 void linea_init(void)
 {
     SCREEN_MODE_DESC desc;

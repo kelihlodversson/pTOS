@@ -1,7 +1,7 @@
 /*
  * coldfire2.S - ColdFire specific assembler functions
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2021 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -94,7 +94,6 @@ coldfire_int_61_ack:
         rte
 #endif
 
-#if CONF_SERIAL_CONSOLE
 /* PSC0 interrupt (ColdFire RS-232 port) */
         .globl _coldfire_int_35
 _coldfire_int_35:
@@ -106,7 +105,6 @@ _coldfire_int_35:
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
         rte
-#endif
 
 #if CONF_WITH_FLEXCAN
 /* FlexCAN message buffer interrupt (Eiffel IKBD) */

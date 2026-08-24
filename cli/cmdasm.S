@@ -1,7 +1,7 @@
 /*
  * EmuCON2 assembler routines
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2021 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -41,6 +41,7 @@
  */
         .globl  _coma_start
         .globl  _jmp_gemdos,_jmp_bios,_jmp_xbios
+        .globl  _environment
         .extern _cmdmain
 
 _coma_start:
@@ -56,6 +57,13 @@ _coma_start:
         move.w  #74,-(sp)
         trap    #1
         lea     12(sp),sp
+
+#ifdef __mcoldfire__
+        move.l 44(a5),d0
+        move.l  d0,_environment
+#else
+        move.l 44(a5),_environment
+#endif
 
         jsr     _cmdmain
 
@@ -120,8 +128,9 @@ _jmp_xbios:
         move.l  ret_addr,-(sp)
         rts
 
-
         .bss
+_environment: // Environment string, from the BASEPAGE
+        .ds.l   1
 ret_addr:
         .ds.l   1
 save_a2:

@@ -1,7 +1,7 @@
 /*
  * pmmu030.c - initialisation for 68030 PMMU
  *
- * Copyright (C) 2013-2015 The EmuTOS development team
+ * Copyright (C) 2013-2022 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -9,8 +9,8 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-#include "config.h"
-#include "portab.h"
+
+#include "emutos.h"
 #include "string.h"
 
 /*
@@ -32,12 +32,14 @@ struct pmmutable
 #define PMMU_FLAGS_CI   0x40        /* cache inhibit (page descriptors only) */
 
 
-#define mmutable_ram (*(struct pmmutable *)PMMUTREE_ADDRESS_68030)
+extern struct pmmutable pmmutree;   /* in low protected ST-RAM */
 
 /*
  * some macros useful for table creation
+ * Note: '+' must be used instead of '|' below to keep the expression constant,
+ * so it can be used in static initializers.
  */
-#define PMMU_SF_TABLE(table)    ( ((LONG)&mmutable_ram.table[0]) | PMMU_FLAGS_TD )
+#define PMMU_SF_TABLE(table)    ( ((LONG)pmmutree.table) + PMMU_FLAGS_TD )
 #define PMMU_SF_PAGE(addr)      ( ((LONG)(addr)) | PMMU_FLAGS_PD )
 #define PMMU_SF_PAGE_CI(addr)   ( ((LONG)(addr)) | PMMU_FLAGS_CI | PMMU_FLAGS_PD )
 
@@ -123,7 +125,7 @@ static const struct pmmutable mmutable_rom =
      * note that this table maps both 0x00000000-0x00ffffff and 0xff000000-0xffffffff
      * to the same physical address range (0x00000000-0x00ffffff)
      */
-    { PMMU_SF_PAGE(0x00000000),     /* map 0x??000000-0x??efffff (// = 00 or ff) to */
+    { PMMU_SF_PAGE(0x00000000),     /* map 0x??000000-0x??efffff (?? = 00 or ff) to */
       PMMU_SF_PAGE(0x00100000),     /*   0x00000000-0x00efffff, allow caching       */
       PMMU_SF_PAGE(0x00200000),
       PMMU_SF_PAGE(0x00300000),
@@ -143,10 +145,10 @@ static const struct pmmutable mmutable_rom =
     }
 };
 
-extern void setup_68030_pmmu(void); /* called only from processor.S */
+void setup_68030_pmmu(void);    /* called only from processor.S */
 
 void setup_68030_pmmu(void)
 {
-    memcpy(&mmutable_ram, &mmutable_rom, sizeof mmutable_rom);
+    memcpy(&pmmutree, &mmutable_rom, sizeof mmutable_rom);
 }
 #endif /* CONF_WITH_68030_PMMU */

@@ -1,22 +1,22 @@
 /*
- * bezier.c - Fast Bézier approximation using four control points.
+ * vdi_bezier.c - implementation of Bézier functions for EmuTOS VDI
+ *
+ * These use a fast Bézier approximation using four control points.
+ * Note: At this time (August 2020), all Bézier functions are disabled;
+ * none have been tested recently.
  *
  * Copyright 1998-2002, Trevor Blight
- * Copyright 2004-2016 The EmuTOS development team
+ * Copyright 2004-2020 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-
-
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "vdi_defs.h"
 #include "biosbind.h"
 #include "asm.h"        /* for malloc */
-/* #include "kprint.h" */
-
+#include "aesext.h"
 
 #if HAVE_BEZIER
 
@@ -126,7 +126,7 @@ gen_segs(WORD *const array, WORD *px, const int bez_qual,
 
         if (labs( (x0 >> 1) + (d1x >> (qd + 1)) ) >= 0x3ffffffeL) {
             /** halve scale to avoid overflow **/
-            x0 = x0 >> 1;
+            x0 >>= 1;
             q--;
             qd++;
             /* assert( labs(x0+(d1x>>qd)) >= 0x40000000L ); */
@@ -225,7 +225,6 @@ draw_segs(Vwk * vwk, WORD nr_vertices, Point * point, WORD mode)
  * If you are not using the C library, but directly programming the VDI
  * interface, you need to do the byte swapping yourself.
  */
-
 void
 v_bez(Vwk * vwk, Point * ptsget, int nr_ptsin)
 {
@@ -237,7 +236,7 @@ v_bez(Vwk * vwk, Point * ptsget, int nr_ptsin)
     WORD total_vertices = nr_ptsin;
     WORD total_jumps = 0;
     UWORD vertices_per_bez;
-    Point ptsbuf[MAX_PTSIN];
+    Point ptsbuf[MAX_VERTICES];
     /* Point * ptsget = (Point*)PTSIN; */
     Point * ptsput = ptsbuf;
 
@@ -340,7 +339,7 @@ v_bez_fill(Vwk * vwk, Point * ptsget, int nr_ptsin)
     WORD total_jumps = 0;
     UWORD vertices_per_bez;
     WORD output_vertices = 0;
-    Point ptsbuf[MAX_PTSIN];
+    Point ptsbuf[MAX_VERTICES];
     /* Point * ptsget = (Point*)PTSIN; */
     Point * ptsput = ptsbuf;
 
@@ -446,7 +445,7 @@ v_bez_fill(Vwk * vwk, Point * ptsget, int nr_ptsin)
     WORD vertices_per_bez;
     WORD i, i0;
     WORD output_vertices = 0;
-    Point ptsbuf[MAX_PTSIN];
+    Point ptsbuf[MAX_VERTICES];
     /* Point * ptsget = (Point*)PTSIN; */
     Point * ptsget0 = ptsget;
     Point * ptsput = ptsbuf;
@@ -581,7 +580,6 @@ v_bez_fill(Vwk * vwk, Point * ptsget, int nr_ptsin)
  * bezier functions. We do not support the use of this function to
  * enable or disable bezier curves.
  */
-
 void
 v_bez_control(Vwk * vwk)
 {

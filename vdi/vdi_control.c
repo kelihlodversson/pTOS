@@ -3,29 +3,50 @@
  *
  * Copyright 1982 by Digital Research Inc.  All rights reserved.
  * Copyright 1999 by Caldera, Inc.
- * Copyright 2002-2017 The EmuTOS development team.
+ * Copyright 2002-2025 The EmuTOS development team.
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-
-
-#include "config.h"
-#include "portab.h"
-#include "../bios/lineavars.h"
+#include "emutos.h"
+#include "lineavars.h"
 #include "vdi_defs.h"
 /* #define ENABLE_KDEBUG */
 #include "kprint.h"
 #include "biosbind.h"
-#include "../bios/screen.h"
+#include "xbiosbind.h"
+#include "biosext.h"
 #include "asm.h"
 #include "string.h"
 #include "vdi_backend.h"
+#include "has.h"
+#include "intmath.h"
+#include "bdosbind.h"
+#include "tosvars.h"
+
+#define FIRST_VDI_HANDLE    1
+#define LAST_VDI_HANDLE     (FIRST_VDI_HANDLE+NUM_VDI_HANDLES-1)
+#define VDI_PHYS_HANDLE     FIRST_VDI_HANDLE
 
 
-static Vwk virt_work;          /* attribute areas for workstations */
+/*
+ * Mxalloc() mode used when allocating the virtual workstation.  This
+ * is only significant when running under FreeMiNT, since EmuTOS ignores
+ * these bits of the mode field.
+ */
+#define MX_SUPER            (3<<4)
 
+
+/*
+ * entry n in the following array points to the Vwk corresponding to
+ * VDI handle n.  entry 0 is unused.
+ */
+static Vwk *vwk_ptr[NUM_VDI_HANDLES+1];
+extern Vwk phys_work;       /* attribute area for physical workstation */
+#if CONF_WITH_VDI_16BIT
+static VwkExt phys_work_ext;
+#endif
 
 /*
  * template for SIZ_TAB - Returns text, line and marker sizes in device
@@ -38,7 +59,7 @@ static const WORD SIZ_TAB_rom[12] = {
     7,                          /* 3    max char height         */
     1,                          /* 4    min line width          */
     0,                          /* 5    reserved 0          */
-    MX_LN_WIDTH,                /* 6    max line width          */
+    MAX_LINE_WIDTH,             /* 6    max line width          */
     0,                          /* 7    reserved 0          */
     15,                         /* 8    min marker width        */
     11,                         /* 9    min marker height       */
@@ -50,7 +71,7 @@ static const WORD SIZ_TAB_rom[12] = {
 
 /* Here's the template INQ_TAB, see lineavars.S for the normal INQ_TAB */
 static const WORD INQ_TAB_rom[45] = {
-    1,                  /* 0  - type of alpha/graphic controllers */
+    4,                  /* 0  - type of alpha/graphic controllers */
     1,                  /* 1  - number of background colors  */
     0x1F,               /* 2  - text styles supported        */
     0,                  /* 3  - scale rasters = false        */
@@ -64,7 +85,7 @@ static const WORD INQ_TAB_rom[45] = {
     1,                  /* 11 - text alignment flag      */
     0,                  /* 12 - Inking capability        */
     0,                  /* 13 - rubber banding           */
-    256,                /* 14 - maximum vertices (must agree with vdi_asm.s) */
+    MAX_VERTICES,       /* 14 - maximum vertices         */
     -1,                 /* 15 - maximum intin            */
     1,                  /* 16 - number of buttons on MOUSE   */
     0,                  /* 17 - styles for wide lines            */
@@ -91,10 +112,10 @@ static const WORD INQ_TAB_rom[45] = {
     0,                  /* 37 -  */
     0,                  /* 38 -  */
     0,                  /* 39 -  */
-    0,                  /* 40 - not imprintable left border in pixels (printers/plotters) */
-    0,                  /* 41 - not imprintable upper border in pixels (printers/plotters) */
-    0,                  /* 42 - not imprintable right border in pixels (printers/plotters) */
-    0,                  /* 43 - not imprintable lower border in pixels (printers/plotters) */
+    0,                  /* 40 - unprintable left border in pixels (printers/plotters) */
+    0,                  /* 41 - unprintable upper border in pixels (printers/plotters) */
+    0,                  /* 42 - unprintable right border in pixels (printers/plotters) */
+    0,                  /* 43 - unprintable lower border in pixels (printers/plotters) */
     0                   /* 44 - page size (printers etc.) */
 };
 
@@ -107,14 +128,14 @@ static const WORD DEV_TAB_rom[45] = {
     0,                          /* 2    device precision 0=exact,1=not exact */
     372,                        /* 3    width of pixel           */
     372,                        /* 4    height of pixel          */
-    1,                          /* 5    character sizes          */
-    MX_LN_STYLE,                /* 6    linestyles               */
+    3,                          /* 5    number of text font heights */
+    MAX_LINE_STYLE,             /* 6    linestyles               */
     0,                          /* 7    linewidth                */
     6,                          /* 8    marker types             */
     8,                          /* 9    marker size              */
     1,                          /* 10   text font                */
-    MX_FIL_PAT_INDEX,           /* 11   area patterns             */
-    MX_FIL_HAT_INDEX,           /* 12   crosshatch patterns       */
+    MAX_FILL_PATTERN,           /* 11   area patterns             */
+    MAX_FILL_HATCH,             /* 12   crosshatch patterns       */
     2,                          /* 13   colors at one time       */
     10,                         /* 14   number of GDP's          */
     1,                          /* 15   GDP bar                  */
@@ -141,7 +162,7 @@ static const WORD DEV_TAB_rom[45] = {
     1,                          /* 36   Text Rotation            */
     1,                          /* 37   Polygonfill              */
     0,                          /* 38   Cell Array               */
-    2,                          /* 39   Pallette size            */
+    2,                          /* 39   Palette size             */
     2,                          /* 40   # of locator devices 1 = mouse */
     1,                          /* 41   # of valuator devices    */
     1,                          /* 42   # of choice devices      */
@@ -153,22 +174,63 @@ static const WORD DEV_TAB_rom[45] = {
 
 Vwk * get_vwk_by_handle(WORD handle)
 {
-    Vwk * vwk = &virt_work;
+    if ((handle < FIRST_VDI_HANDLE) || (handle > LAST_VDI_HANDLE))
+        return NULL;
 
-    /* Find the attribute area which matches the handle */
-    do {
-        if (handle == vwk->handle)
-            return vwk;
-    } while ((vwk = vwk->next_work));
+    return vwk_ptr[handle];
+}
 
-    return NULL;
+
+
+/*
+ * update resolution-dependent VDI/lineA variables
+ *
+ * this function assumes that v_planes, V_REZ_HZ, V_REZ_VT are already set
+ */
+void update_rez_dependent(void)
+{
+    linea_vars.BYTES_LIN = linea_vars.v_lin_wr = linea_vars.V_REZ_HZ / 8 * linea_vars.v_planes;
+
+#if EXTENDED_PALETTE
+    mcs_ptr = (linea_vars.v_planes <= 4) ? (MCS *)&linea_vars.mouse_cursor_save : &ext_mouse_cursor_save;
+#else
+    mcs_ptr = (MCS *)&linea_vars.mouse_cursor_save;
+#endif
+
+    linea_vars.DEV_TAB[0] = linea_vars.V_REZ_HZ - 1;
+    linea_vars.DEV_TAB[1] = linea_vars.V_REZ_VT - 1;
+    get_pixel_size(&linea_vars.DEV_TAB[3],&linea_vars.DEV_TAB[4]);
+    linea_vars.DEV_TAB[13] = (linea_vars.v_planes<8) ? (1 << linea_vars.v_planes) : 256;
+    linea_vars.DEV_TAB[35] = (linea_vars.v_planes==1) ? 0 : 1;
+    linea_vars.DEV_TAB[39] = get_palette();    /* some versions of COLOR.CPX care about this */
+
+    linea_vars.INQ_TAB[4] = linea_vars.v_planes;
+    if ((linea_vars.v_planes == 16) || (get_monitor_type() == MON_MONO))
+        linea_vars.INQ_TAB[5] = 0;
+    else linea_vars.INQ_TAB[5] = 1;
+}
+
+
+
+/*
+ * validate colour index
+ *
+ * checks the supplied colour index and, if valid, returns it;
+ * otherwise returns 1 (which by default maps to black)
+ */
+WORD validate_color_index(WORD colnum)
+{
+    if ((colnum < 0) || (colnum >= numcolors))
+        return 1;
+
+    return colnum;
 }
 
 
 
 Vwk * vdi_physical_vwk(void)
 {
-    return &virt_work;
+    return &phys_work;
 }
 
 
@@ -176,23 +238,14 @@ Vwk * vdi_physical_vwk(void)
 /* Set Clip Region */
 void vdi_vs_clip(Vwk * vwk)
 {
-    vwk->clip = *INTIN;
+    vwk->clip = INTIN[0];
     if (vwk->clip) {
-        WORD rtemp;
         Rect * rect = (Rect*)PTSIN;
         arb_corner(rect);
-
-        rtemp = rect->x1;
-        vwk->xmn_clip = (rtemp < 0) ? 0 : rtemp;
-
-        rtemp = rect->y1;
-        vwk->ymn_clip = (rtemp < 0) ? 0 : rtemp;
-
-        rtemp = rect->x2;
-        vwk->xmx_clip = (rtemp > xres) ? xres : rtemp;
-
-        rtemp = rect->y2;
-        vwk->ymx_clip = (rtemp > yres) ? yres : rtemp;
+        vwk->xmn_clip = max(0, rect->x1);
+        vwk->ymn_clip = max(0, rect->y1);
+        vwk->xmx_clip = min(xres, rect->x2);
+        vwk->ymx_clip = min(yres, rect->y2);
     } else {
         vwk->xmn_clip = 0;
         vwk->ymn_clip = 0;
@@ -209,11 +262,10 @@ void vdi_vswr_mode(Vwk * vwk)
     WORD wm;
 
     CONTRL->nintout = 1;
-    wm = INTIN[0] - 1;
-    if ((wm > MAX_MODE) | (wm < 0))
-        wm = 0;
+    wm = ((INTIN[0]<MIN_WRT_MODE) || (INTIN[0]>MAX_WRT_MODE)) ? DEF_WRT_MODE : INTIN[0];
 
-    INTOUT[0] = (vwk->wrt_mode = wm) + 1;
+    INTOUT[0] = wm;
+    vwk->wrt_mode = wm - 1;
 }
 
 
@@ -222,69 +274,64 @@ static void init_wk(Vwk * vwk)
 {
     WORD l;
     WORD *pointer;
-    VDICONTROL *pb;
     const WORD *src_ptr;
 
     pointer = INTIN;
     pointer++;
 
     l = *pointer++;             /* INTIN[1] */
-    vwk->line_index = ((l > MX_LN_STYLE) || (l < 0)) ? 0 : l - 1;
+    if ((l > MAX_LINE_STYLE) || (l < MIN_LINE_STYLE))
+        l = DEF_LINE_STYLE;
+    vwk->line_index = l - 1;
 
-    l = *pointer++;             /* INTIN[2] */
-    if ((l >= linea_vars.DEV_TAB[13]) || (l < 0))
-        l = 1;
+    l = validate_color_index(*pointer++);   /* INTIN[2] */
     vwk->line_color = MAP_COL[l];
 
-    l = *pointer++ - 1;         /* INTIN[3] */
-    vwk->mark_index = ((l >= MAX_MARK_INDEX) || (l < 0)) ? 2 : l;
+    l = *pointer++;             /* INTIN[3] */
+    if ((l > MAX_MARK_STYLE) || (l < MIN_MARK_STYLE))
+        l = DEF_MARK_STYLE;
+    vwk->mark_index = l - 1;
 
-    l = *pointer++;             /* INTIN[4] */
-    if ((l >= linea_vars.DEV_TAB[13]) || (l < 0))
-        l = 1;
+    l = validate_color_index(*pointer++);   /* INTIN[4] */
     vwk->mark_color = MAP_COL[l];
 
     /* You always get the default font */
     pointer++;                  /* INTIN[5] */
 
-    l = *pointer++;             /* INTIN[6] */
-    if ((l >= linea_vars.DEV_TAB[13]) || (l < 0))
-        l = 1;
+    l = validate_color_index(*pointer++);   /* INTIN[6] */
     vwk->text_color = MAP_COL[l];
 
     vwk->mark_height = DEF_MKHT;
     vwk->mark_scale = 1;
 
     l = *pointer++;             /* INTIN[7] */
-    vwk->fill_style = ((l > MX_FIL_STYLE) || (l < 0)) ? 0 : l;
+    vwk->fill_style = ((l > MAX_FILL_STYLE) || (l < MIN_FILL_STYLE)) ? DEF_FILL_STYLE : l;
 
     l = *pointer++;             /* INTIN[8] */
-    if (vwk->fill_style == 2)
-        l = ((l > MX_FIL_PAT_INDEX) || (l < 1)) ? 1 : l;
+    if (vwk->fill_style == FIS_PATTERN)
+        l = ((l > MAX_FILL_PATTERN) || (l < MIN_FILL_PATTERN)) ? DEF_FILL_PATTERN : l;
     else
-        l = ((l > MX_FIL_HAT_INDEX) || (l < 1)) ? 1 : l;
+        l = ((l > MAX_FILL_HATCH) || (l < MIN_FILL_HATCH)) ? DEF_FILL_HATCH : l;
     vwk->fill_index = l;
 
-    l = *pointer++;             /* INTIN[9] */
-    if ((l >= linea_vars.DEV_TAB[13]) || (l < 0))
-        l = 1;
+    l = validate_color_index(*pointer++);   /* INTIN[9] */
     vwk->fill_color = MAP_COL[l];
 
     vwk->xfm_mode = *pointer;      /* INTIN[10] */
 
     st_fl_ptr(vwk);                /* set the fill pattern as requested */
 
-    vwk->wrt_mode = 0;     /* default is replace mode */
+    vwk->wrt_mode = WM_REPLACE;    /* default is replace mode */
     vwk->line_width = DEF_LWID;
-    vwk->line_beg = 0;     /* default to squared ends */
-    vwk->line_end = 0;
+    vwk->line_beg = SQUARED;       /* default to squared ends */
+    vwk->line_end = SQUARED;
 
     vwk->fill_per = TRUE;
 
     vwk->xmn_clip = 0;
     vwk->ymn_clip = 0;
-    vwk->xmx_clip = linea_vars.DEV_TAB[0];
-    vwk->ymx_clip = linea_vars.DEV_TAB[1];
+    vwk->xmx_clip = xres;
+    vwk->ymx_clip = yres;
     vwk->clip = FALSE;
 
     text_init2(vwk);
@@ -302,9 +349,6 @@ static void init_wk(Vwk * vwk)
     vdi_truecolor_init_palette(vwk);
 #endif
 
-    pb = CONTRL;
-    pb->nptsout = 6;
-    pb->nintout = 45;
 
     pointer = INTOUT;
     src_ptr = linea_vars.DEV_TAB;
@@ -316,6 +360,18 @@ static void init_wk(Vwk * vwk)
     for (l = 0; l < 12; l++)
         *pointer++ = *src_ptr++;
 
+#if CONF_WITH_VDI_16BIT
+    /* set up virtual palette stuff if we're not using a real one */
+    if (TRUECOLOR_MODE) {
+        memcpy(vwk->ext->req_col, linea_vars.REQ_COL, sizeof(linea_vars.REQ_COL));
+        memcpy(vwk->ext->req_col+16, req_col2, sizeof(req_col2));
+        /* convert requested colour values to pseudo-palette */
+        for (l = 0; l < 255; l++)
+            set_color16(vwk, l, vwk->ext->req_col[l]);
+    }
+#endif
+
+#if HAVE_BEZIER
     /* setup initial bezier values */
     vwk->bez_qual = 7;
 #if 0
@@ -325,8 +381,34 @@ static void init_wk(Vwk * vwk)
     vwk->bezier.depth.min = 2;
     vwk->bezier.depth.max = 7;
 #endif
+#endif
+
+    vwk->next_work = NULL;  /* neatness */
 
     flip_y = 1;
+}
+
+
+
+/*
+ * build a chain of Vwks
+ *
+ * this links all of the currently allocated Vwks together, as in
+ * Atari TOS.  some programs may depend on this.
+ */
+static void build_vwk_chain(void)
+{
+    Vwk *prev, **vwk;
+    WORD handle;
+
+    prev = &phys_work;
+    for (handle = VDI_PHYS_HANDLE+1, vwk = vwk_ptr+handle; handle <= LAST_VDI_HANDLE; handle++, vwk++) {
+        if (*vwk) {
+            prev->next_work = *vwk;
+            prev = *vwk;
+        }
+    }
+    prev->next_work = NULL;
 }
 
 
@@ -334,50 +416,72 @@ static void init_wk(Vwk * vwk)
 void vdi_v_opnvwk(Vwk * vwk)
 {
     WORD handle;
-    Vwk *work_ptr;
+    LONG size;
+    Vwk **p;
 
-    /* Allocate the memory for a virtual workstation using Mxalloc with the flag
-     * for a global allocation. This becomes important when running MiNT
-     * on a CPU with memory protection.
+    /*
+     * ensure that CUR_WORK always points to a valid workstation
+     * even if v_opnvwk() exits early.
      */
-    vwk = (Vwk *)trap1(X_MXALLOC, (LONG)(sizeof(Vwk)), (WORD)(X_MXGLOBAL));
+    linea_vars.CUR_WORK = &phys_work;
+
+    /* First find a free handle */
+    for (handle = VDI_PHYS_HANDLE+1, p = vwk_ptr+handle; handle <= LAST_VDI_HANDLE; handle++, p++) {
+        if (!*p) {
+            break;
+        }
+    }
+    if (handle > LAST_VDI_HANDLE) { /* No handle available, exit */
+        CONTRL->handle = 0;
+        return;
+    }
+
+    /*
+     * Allocate the memory for a virtual workstation
+     *
+     * The virtual workstations for all programs are chained together by
+     * build_vwk_chain(), because some programs (notably Warp9) expect this.
+     * To avoid problems when running FreeMiNT with memory protection, we
+     * must allocate the virtual workstations in supervisor-accessible memory.
+     */
+    size = sizeof(Vwk);
+#if CONF_WITH_VDI_16BIT
+    if (TRUECOLOR_MODE)
+        size += sizeof(VwkExt); /* for simplicity, allocate them together */
+#endif
+    vwk = (Vwk *)Mxalloc(size, MX_SUPER);
     if (vwk == NULL) {
         CONTRL->handle = 0;  /* No memory available, exit */
         return;
     }
 
-    /* Now find a free handle (start with 2, since 1 is the handle of the physical station) */
-    handle = 2;
-    work_ptr = &virt_work;
-    while (work_ptr->next_work != NULL && handle == work_ptr->next_work->handle) {
-        handle++;
-        work_ptr = work_ptr->next_work;
-    }
+#if CONF_WITH_VDI_16BIT
+    vwk->ext = NULL;
+    if (TRUECOLOR_MODE)
+        vwk->ext = (VwkExt *)(vwk + 1); /* immediately follows Vwk */
+#endif
 
-    /* Empty slot found, insert the workstation here */
-    vwk->next_work = work_ptr->next_work;
-    work_ptr->next_work = vwk;
-
+    vwk_ptr[handle] = vwk;
     vwk->handle = CONTRL->handle = handle;
     init_wk(vwk);
+    build_vwk_chain();
     linea_vars.CUR_WORK = vwk;
 }
 
 void vdi_v_clsvwk(Vwk * vwk)
 {
-    Vwk *work_ptr;
     WORD handle;
 
-    /* vwk points to workstation to deallocate, find who points to me */
+    /* vwk points to workstation to deallocate */
     handle = vwk->handle;
-    if (handle == 1)            /* Can't close physical this way */
+    if (handle == VDI_PHYS_HANDLE)  /* can't close physical this way */
+        return;
+    if (!vwk_ptr[handle])           /* workstation is already closed */
         return;
 
-    for (work_ptr = &virt_work; handle != work_ptr->next_work->handle;
-         work_ptr = work_ptr->next_work);
+    vwk_ptr[handle] = NULL;         /* close it */
 
-    work_ptr->next_work = vwk->next_work;
-    linea_vars.CUR_WORK = work_ptr;
+    build_vwk_chain();              /* rebuild chain */
 
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
     /*
@@ -398,7 +502,20 @@ void vdi_v_clsvwk(Vwk * vwk)
         vdi_backend_set_active_vwk(vdi_physical_vwk());
 #endif
 
-    trap1(X_MFREE, vwk);
+    /*
+     * When we close a virtual workstation, Atari TOS and previous versions
+     * of EmuTOS update CUR_WORK (line-A's idea of the current workstation)
+     * to point to the precursor of the closed workstation.  This is a bit
+     * arbitrary, especially as the workstation being closed isn't necessarily
+     * what line-A thinks is the current one.
+     *
+     * What we must do as a minimum is ensure that CUR_WORK points to a
+     * valid open workstation.  The following does that by pointing it to
+     * the physical workstation.  That's what NVDI appears to do too.
+     */
+    linea_vars.CUR_WORK = &phys_work;
+
+    Mfree(vwk);
 }
 
 
@@ -407,6 +524,34 @@ void vdi_v_clsvwk(Vwk * vwk)
 void vdi_v_opnwk(Vwk * vwk)
 {
     int i;
+    Vwk **p;
+    WORD newrez;
+
+    /*
+     * Programs can request a video mode switch by passing the desired
+     * mode + 2 in INTIN[0].
+     */
+    newrez = INTIN[0] - 2;
+    if (
+        (newrez == ST_LOW) || (newrez == ST_MEDIUM) || (newrez == ST_HIGH)
+#if CONF_WITH_TT_SHIFTER
+        || (newrez == TT_LOW) || (newrez == TT_MEDIUM)
+#endif
+       ) {
+        if (newrez != Getrez()) {
+            Setscreen(-1L, -1L, newrez, 0);
+        }
+    }
+#if CONF_WITH_VIDEL
+    if (newrez == FALCON_REZ) {
+        /* Atari TOS 4 uses INTOUT (sic!) to pass new Videl mode. */
+        WORD newvidel = INTOUT[45];
+        WORD curvidel = VsetMode(-1);
+        if (curvidel != newvidel) {
+            Setscreen(0L, 0L, newrez, newvidel);
+        }
+    }
+#endif
 
     /* We need to copy some initial table data from the ROM */
     for (i = 0; i < 12; i++) {
@@ -418,29 +563,15 @@ void vdi_v_opnwk(Vwk * vwk)
         linea_vars.INQ_TAB[i] = INQ_TAB_rom[i];
     }
 
-    /* Copy data from linea variables */
-    linea_vars.DEV_TAB[0] = linea_vars.V_REZ_HZ-1;
-    linea_vars.DEV_TAB[1] = linea_vars.V_REZ_VT-1;
-    linea_vars.INQ_TAB[4] = linea_vars.v_planes;
+    /* update resolution-dependent values */
+    update_rez_dependent();
 
-    /* get pixel sizes for use by routines in vdi_gdp.c & vdi_line.c */
-    get_pixel_size(&xsize,&ysize);
-
-    /* Indicate whether LUT is supported */
-    if ((linea_vars.INQ_TAB[4] == 16) || (linea_vars.INQ_TAB[4] == 32)
-        || (get_monitor_type() == MON_MONO))
-        linea_vars.INQ_TAB[5] = 0;
-    else linea_vars.INQ_TAB[5] = 1;
-
-    /* Calculate colors allowed at one time */
-    if (linea_vars.INQ_TAB[4] < 8)
-        linea_vars.DEV_TAB[13] = 2<<(linea_vars.v_planes-1);
-    else
-        linea_vars.DEV_TAB[13] = 256;
-
-    vwk = &virt_work;
-    CONTRL->handle = vwk->handle = 1;
-    vwk->next_work = NULL;
+    /* initialize the vwk pointer array */
+    vwk = &phys_work;
+    vwk_ptr[VDI_PHYS_HANDLE] = vwk;
+    CONTRL->handle = vwk->handle = VDI_PHYS_HANDLE;
+    for (i = VDI_PHYS_HANDLE+1, p = vwk_ptr+i; i <= LAST_VDI_HANDLE; i++)
+        *p++ = NULL;
 
 #if CONF_WITH_VDI_BACKEND_DISPATCH
     /*
@@ -461,11 +592,20 @@ void vdi_v_opnwk(Vwk * vwk)
 
     text_init();                /* initialize the SIZ_TAB info */
 
+#if CONF_WITH_VDI_16BIT
+    vwk->ext = NULL;
+    if (TRUECOLOR_MODE)
+        vwk->ext = &phys_work_ext;  /* workstation extension */
+#endif
+
     init_wk(vwk);
 
     timer_init();
     vdimouse_init();            /* initialize mouse */
     esc_init(vwk);              /* enter graphics mode */
+
+    /* Just like TOS 2.06, make the physical workstation the current workstation for Line-A. */
+    linea_vars.CUR_WORK = vwk;
 }
 
 
@@ -473,15 +613,17 @@ void vdi_v_opnwk(Vwk * vwk)
 /* CLOSE_WORKSTATION: */
 void vdi_v_clswk(Vwk * vwk)
 {
-    Vwk *next_work;
+    WORD handle;
+    Vwk **p;
 
-    if (virt_work.next_work != NULL) {      /* Are there VWs to close */
-        vwk = virt_work.next_work;
-        do {
-            next_work = vwk->next_work;
-            trap1(X_MFREE, vwk);
-        } while ((vwk = next_work));
+    /* close all open virtual workstations */
+    for (handle = VDI_PHYS_HANDLE+1, p = vwk_ptr+handle; handle <= LAST_VDI_HANDLE; handle++, p++) {
+        if (*p) {
+            Mfree(*p);
+            *p = NULL;
+        }
     }
+    linea_vars.CUR_WORK = vwk_ptr[VDI_PHYS_HANDLE];
 
     timer_exit();
     vdimouse_exit();                    /* deinitialize mouse */
@@ -495,7 +637,6 @@ void vdi_v_clswk(Vwk * vwk)
  *
  * Screen is cleared from the base address v_bas_ad.
  */
-
 void vdi_v_clrwk(Vwk * vwk)
 {
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
@@ -527,12 +668,23 @@ void vdi_v_clrwk(Vwk * vwk)
     draw_rect_common(&attr, &rect);
 #else
     ULONG size;
+    UBYTE fill;
 
     /* Calculate screen size */
     size = (ULONG)linea_vars.v_lin_wr * linea_vars.V_REZ_VT;
 
     /* clear the screen */
-    memset(v_bas_ad, 0, size);
+#if CONF_WITH_VDI_16BIT
+    if (TRUECOLOR_MODE)
+    {
+        fill = 0xff;
+    }
+    else
+#endif
+    {
+        fill = 0x00;
+    }
+    memset(v_bas_ad, fill, size);
 #endif
 }
 
@@ -545,9 +697,6 @@ void vdi_vq_extnd(Vwk * vwk)
 {
     WORD i;
     WORD *dst, *src;
-
-    CONTRL->nptsout = 6;
-    CONTRL->nintout = 45;
 
     flip_y = 1;
     dst = PTSOUT;
@@ -579,7 +728,6 @@ void vdi_vq_extnd(Vwk * vwk)
 }
 
 
-
 /*
  * vdi_v_nop - dummy
  */
@@ -593,7 +741,7 @@ void vdi_v_nop(Vwk * vwk)
 const vdi_backend_ops *vdi_screen_backend(void)
 {
     /*
-     * virt_work.backend is BSS-zero (NULL) until vdi_v_opnwk() runs,
+     * phys_work.backend is BSS-zero (NULL) until vdi_v_opnwk() runs,
      * but Line-A (bios/arch/m68k/linea.S) dispatches straight to the
      * put_pix/get_pix/line/rect/fill routines below, and is reachable
      * from AUTO-folder programs and other pre-AES code paths long
@@ -607,11 +755,11 @@ const vdi_backend_ops *vdi_screen_backend(void)
      * renderer's primitives directly instead (see vdi_misc.c/vdi_fill.c/
      * vdi_line.c) and this function has no caller.
      */
-    if (!virt_work.backend)
+    if (!phys_work.backend)
     {
-        screen_get_current_mode_desc(&virt_work.mode);
-        virt_work.backend = vdi_backend_select(&virt_work.mode);
+        screen_get_current_mode_desc(&phys_work.mode);
+        phys_work.backend = vdi_backend_select(&phys_work.mode);
     }
-    return virt_work.backend;
+    return phys_work.backend;
 }
 #endif

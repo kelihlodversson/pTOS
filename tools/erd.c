@@ -1,7 +1,7 @@
 /*
  *  erd: the EmuTOS Resource Decompiler
  *
- *  Copyright 2012-2018 Roger Burrows
+ *  Copyright 2012-2024 Roger Burrows
  *
  *  This program is licensed under the GNU General Public License.
  *  Please see LICENSE.TXT for details.
@@ -184,7 +184,7 @@
  *
  *  v5.2    roger burrows, november/2017
  *          . EmuDesk now builds the menu separator lines dynamically, so
- *            (a) we no longer need to mark them as translateable, and
+ *            (a) we no longer need to mark them as translatable, and
  *            (b) we can truncate them to one byte to save ROM space
  *
  *  v5.3    roger burrows, december/2017
@@ -512,8 +512,9 @@ LOCAL SHARED_ENTRY shared[] = {
     { "Yes", SHRT_MAX },
     { "No", SHRT_MAX },
     { "Skip", SHRT_MAX },
-    { "Number of files: _____", SHRT_MAX },
-    { "Number of folders: _____", SHRT_MAX }
+    { "Name: ________.___", SHRT_MAX },
+    { "Number of files:         _____", SHRT_MAX },
+    { "Number of folders:         _____", SHRT_MAX }
 };
 LOCAL int num_shared = ARRAY_SIZE(shared);
 
@@ -522,7 +523,7 @@ LOCAL int num_shared = ARRAY_SIZE(shared);
  */
 LOCAL NOTRANS_ENTRY notrans[] = {
     { 0, 0, "- EmuTOS -" },
-    { 0, 0, "http://" },
+    { 0, 0, "https://" },
     { 0, 0, "640 x " },
     { 0, 0, "640x" },
     { 0, 0, "320 x " },
@@ -536,7 +537,8 @@ LOCAL NOTRANS_ENTRY notrans[] = {
     { 1, 0, "pm" },
     { 1, 0, "Amiga" },
     { 1, 0, "Falcon" },
-    { 1, 0, "ST" }
+    { 1, 0, "ST" },
+    { 1, 0, "F__" }
 };
 LOCAL int num_notrans = ARRAY_SIZE(notrans);
 #endif
@@ -566,6 +568,10 @@ LOCAL NOTRANS_ENTRY notrans[] = {
     { 0, 0, "xF" },
 };
 LOCAL int num_notrans = ARRAY_SIZE(notrans);
+
+/* Constants for alerts */
+#define MAX_LINENUM 5
+#define MAX_BUTNUM  3
 #endif
 
 
@@ -574,7 +580,7 @@ LOCAL int num_notrans = ARRAY_SIZE(notrans);
  *  conditional wrapping control
  */
 LOCAL const CONDITIONAL frstr_cond = { "?", "#error Code generation error" };  /* no match, error if it does ... */
-LOCAL const CONDITIONAL other_cond = { "APPS", "#if 0" };
+LOCAL const CONDITIONAL other_cond = { "OTHER", "#if 0" };
 
 /*
  *  table of complete strings that will have a shared data item
@@ -619,7 +625,7 @@ LOCAL int num_notrans = 0;
 /*
  *  other globals
  */
-LOCAL const char *copyright = PROGRAM_NAME " " VERSION " copyright (C) 2012-2018 by Roger Burrows\n"
+LOCAL const char *copyright = PROGRAM_NAME " " VERSION " copyright (C) 2012-2019 by Roger Burrows\n"
 "This program is licensed under the GNU General Public License.\n"
 "Please see LICENSE.TXT for details.\n";
 
@@ -643,6 +649,8 @@ MY_RSHDR rsh;                           /* converted RSC header */
 DEF_ENTRY *def = NULL;                  /* table of #defines from HRD/DEF/RSD/DFN */
 LOCAL int num_defs = 0;                 /* entries in def */
 LOCAL int first_freestr = -1;           /* # of entry in def[] corresponding to first free string */
+
+LOCAL unsigned long te_ptext_len;       /* size of all te_ptext antries */
 
 /*
  *  arrays used to figure out conditional wrapping stuff
@@ -753,6 +761,7 @@ PRIVATE int getlen(int *length,char *s);
 PRIVATE short get_short(SHORT *p);
 PRIVATE unsigned short get_ushort(USHORT *p);
 PRIVATE unsigned long get_offset(OFFSET *p);
+PRIVATE void set_offset(OFFSET *p, unsigned long offset);
 PRIVATE int init_all_status(MY_RSHDR *hdr);
 PRIVATE void init_notrans(int n);
 PRIVATE int init_status(char **array,int entries);
@@ -780,6 +789,8 @@ PRIVATE int write_c_file(char *name,char *ext);
 PRIVATE int write_data(FILE *fp,int words,USHORT *data);
 PRIVATE int write_freestr(FILE *fp);
 PRIVATE int write_general_prologue(FILE *fp,char *name,char *ext);
+PRIVATE int write_include_guard_top(FILE *fp,const char *define);
+PRIVATE int write_include_guard_bottom(FILE *fp,const char *define);
 PRIVATE int write_h_file(char *name,char *ext);
 PRIVATE int write_h_define(FILE *fp);
 PRIVATE int write_h_extern(FILE *fp);
@@ -791,6 +802,7 @@ PRIVATE int write_obspec(FILE *fp,OBJECT *obj);
 PRIVATE int write_shared(FILE *fp);
 PRIVATE int write_tedinfo(FILE *fp);
 PRIVATE int write_tree(FILE *fp);
+PRIVATE char *my_strupr(char *string);
 
 
 
@@ -1376,6 +1388,7 @@ PRIVATE int write_h_file(char *name,char *ext)
 {
 FILE *fp;
 char *basename;
+char guard_define[MAX_STRLEN];
 
     fp = openfile(name,ext,"w");
     if (!fp)
@@ -1385,11 +1398,17 @@ char *basename;
     if (!basename)
         basename = name;
     else basename++;
+    sprintf(guard_define, "%s_H", basename);
+    my_strupr(guard_define);
     if (write_general_prologue(fp,basename,"h"))
+        return -1;
+    if (write_include_guard_top(fp,guard_define))
         return -1;
     if (write_h_define(fp))
         return -1;
     if (write_h_extern(fp))
+        return -1;
+    if (write_include_guard_bottom(fp,guard_define))
         return -1;
 
     fclose(fp);
@@ -1423,6 +1442,29 @@ time_t now;
     fprintf(fp," * This software is licenced under the GNU General Public License.\n");
     fprintf(fp," * Please see LICENSE.TXT for further information.\n");
     fprintf(fp," */\n");
+
+    return ferror(fp) ? -1 : 0;
+}
+
+/*
+ *  this creates the start of the include guard at the top of the include file
+ */
+PRIVATE int write_include_guard_top(FILE *fp,const char *define)
+{
+    fprintf(fp,"\n");
+    fprintf(fp,"#ifndef %s\n", define);
+    fprintf(fp,"#define %s\n", define);
+
+    return ferror(fp) ? -1 : 0;
+}
+
+/*
+ *  this creates the end of the include guard at the bottom of the include file
+ */
+PRIVATE int write_include_guard_bottom(FILE *fp,const char *define)
+{
+    fprintf(fp,"\n");
+    fprintf(fp,"#endif /* %s */\n", define);
 
     return ferror(fp) ? -1 : 0;
 }
@@ -1466,6 +1508,13 @@ short old_tree = -1;
     if (!first_time)
         fprintf(fp,"#endif\n");
     fprintf(fp,"\n");
+
+#ifdef ICON_RSC
+    /*
+     * define the number of builtin icon blocks found in "icons.rsc"
+     */
+    fprintf (fp,"#define BUILTIN_IBLKS   %d\n",conditional_iconblk_start);
+#endif
 
     /*
      * then alerts & free strings
@@ -1531,9 +1580,9 @@ short old_tree = -1;
     fprintf(fp,"/*\n");
     fprintf(fp," * parameters for form_alert()\n");
     fprintf(fp," */\n");
-    fprintf(fp,"#define MAX_LINENUM     5\n");
+    fprintf(fp,"#define MAX_LINENUM     %d\n", MAX_LINENUM);
     fprintf(fp,"#define MAX_LINELEN     40\n");
-    fprintf(fp,"#define MAX_BUTNUM      3\n");
+    fprintf(fp,"#define MAX_BUTNUM      %d\n", MAX_BUTNUM);
     fprintf(fp,"#define MAX_BUTLEN      20\n\n\n");
 #endif
 
@@ -1585,19 +1634,18 @@ PRIVATE int write_h_extern(FILE *fp)
  */
 PRIVATE int write_include(FILE *fp,char *name)
 {
-    fprintf(fp,"#include \"config.h\"\n");
+    fprintf(fp,"#include \"emutos.h\"\n");
     fprintf(fp,"#include \"string.h\"\n");
-    fprintf(fp,"#include \"portab.h\"\n");
     fprintf(fp,"#include \"obdefs.h\"\n");
 #ifdef DESK_RSC
     fprintf(fp,"#include \"gemdos.h\"\n");
 #endif
 #ifdef GEM_RSC
-    fprintf(fp,"#include \"../desk/deskmain.h\"\n");
+    fprintf(fp,"#include \"aesext.h\"\n");
     fprintf(fp,"#include \"gemrslib.h\"\n");
 #endif
 #ifdef MFORM_RSC
-    fprintf(fp,"#include \"gsxdefs.h\"\n");
+    fprintf(fp,"#include \"aesdefs.h\"\n");
 #endif
     fprintf(fp,"#include \"%s.h\"\n",name);
     fprintf(fp,"#include \"nls.h\"\n\n");
@@ -1663,9 +1711,13 @@ int i, nted;
 TEDINFO *ted;
 char temp[MAX_STRLEN], temp2[MAX_STRLEN];
 char *base = (char *)rschdr, *p;
+unsigned long offset;
 
     if (rsh.nted == 0)      /* don't generate TEDINFO stuff if not needed */
         return 0;
+
+    if (te_ptext_len != 0)
+        fprintf(fp,"static char %srs_te_text[%lu];\n\n",prefix,te_ptext_len);
 
     fprintf(fp,"TEDINFO %srs_tedinfo[RS_NTED];\n\n",prefix);
 
@@ -1674,11 +1726,15 @@ char *base = (char *)rschdr, *p;
     for (i = 0, ted = (TEDINFO *)(base+rsh.tedinfo); i < nted; i++, ted++) {
         if (i == conditional_tedinfo_start)
             fprintf(fp,"%s\n",other_cond.string);
-        fprintf(fp,"    {0L,\n");
+        offset = get_offset(&ted->te_ptext);
+        if (offset == 0xffffffffUL)
+            fprintf(fp,"    {0L,\n");
+        else
+            fprintf(fp,"    {&%srs_te_text[%lu],\n",prefix,offset);
         p = base + get_offset(&ted->te_ptmplt);
         if (isshared(p)) {
             fixshared(temp,p);
-            fprintf(fp,"     (BYTE *) rs_str_%s,\n",temp);
+            fprintf(fp,"     (char *) rs_str_%s,\n",temp);
         } else if (copycheck(temp,p,get_short(&ted->te_tmplen)) == 0)
             fprintf(fp,"     \"%s\",\n",temp);
         else fprintf(fp,"     %s\"%s\"),\n",NLS,temp);
@@ -1686,7 +1742,7 @@ char *base = (char *)rschdr, *p;
         shrink_valid(temp,p);
         if (isshared(temp)) {
             fixshared(temp2,temp);
-            fprintf(fp,"     (BYTE *) rs_str_%s,\n",temp2);
+            fprintf(fp,"     (char *) rs_str_%s,\n",temp2);
         } else fprintf(fp,"     \"%s\",\n",temp);
         sprintf(temp,"     %s, %d, %s, %d, %d, %d, %d, %d}%s",
                 decode_font(get_short(&ted->te_font)),get_short(&ted->te_fontid),
@@ -1971,6 +2027,14 @@ DEF_ENTRY *d;
 char temp[MAX_STRLEN];
 const char *p;
 char *base = (char *)rschdr;
+#ifdef GEM_RSC
+int in_dialert = 0;
+int found_dialert = 0;
+int found_msgoff = 0;
+int found_butoff = 0;
+int msgoff = 0;
+int butoff = 0;
+#endif
 
     if (!generate_objects)
         return 0;
@@ -1979,6 +2043,12 @@ char *base = (char *)rschdr;
     fprintf(fp,"OBJECT * %srs_obj;\n\n",prefix);
 #else
     fprintf(fp,"OBJECT %srs_obj[RS_NOBS];\n\n",prefix);
+#endif
+
+#ifdef GEM_RSC
+    fprintf(fp,"/* Strings for the alert box */\n");
+    fprintf(fp,"static char msg_str[MAX_LINENUM][MAX_LINELEN+1];\n");
+    fprintf(fp,"static char msg_but[MAX_BUTNUM][MAX_BUTLEN+1];\n\n");
 #endif
 
     fprintf(fp,"static const OBJECT %srs_obj_rom[] = {\n",prefix);
@@ -1999,7 +2069,17 @@ char *base = (char *)rschdr;
                     }
                 }
                 fprintf(fp,"#define TR%d %d\n",tree,i);
-                fprintf(fp,"/* TREE %d */\n\n",tree);
+                fprintf(fp,"/* TREE %d */",tree);
+                if (d)
+                    fprintf(fp,"  /* %s */",d->name);
+                fprintf(fp,"\n\n");
+#ifdef GEM_RSC
+                if (in_dialert && (!found_msgoff || !found_butoff)) {
+                    error("MSGOFF or BUTOFF not found", inrsc);
+                }
+                in_dialert = d && strcmp(d->name, "DIALERT") == 0;
+                found_dialert |= in_dialert;
+#endif
                 tree++;
                 j = 0;                              /* relative object number */
             }
@@ -2019,6 +2099,24 @@ char *base = (char *)rschdr;
         fprintf(fp,"\n");
         fprintf(fp,"     %s,\n",decode_flags(get_ushort(&obj->ob_flags)));
         fprintf(fp,"     %s,\n",decode_state(get_ushort(&obj->ob_state)));
+#ifdef GEM_RSC
+        if (in_dialert && d && strcmp(d->name, "MSGOFF") == 0) {
+            msgoff = MAX_LINENUM;
+            found_msgoff = 1;
+        }
+        if (in_dialert && d && strcmp(d->name, "BUTOFF") == 0) {
+            butoff = MAX_BUTNUM;
+            found_butoff = 1;
+        }
+        if (msgoff) {
+            fprintf(fp,"     (LONG) &msg_str[%d],\n",MAX_LINENUM-msgoff);
+            msgoff--;
+        } else if (butoff)
+        {
+            fprintf(fp,"     (LONG) &msg_but[%d],\n",MAX_BUTNUM-butoff);
+            butoff--;
+        } else
+#endif
         write_obspec(fp,obj);
         fprintf(fp,"     %d, %d, %d, %d},\n\n",
                 get_short(&obj->ob_x),get_short(&obj->ob_y),
@@ -2029,6 +2127,10 @@ char *base = (char *)rschdr;
 
     fprintf(fp,"};\n\n\n");
 
+#ifdef GEM_RSC
+    if (!found_dialert)
+        error("DIALERT not found", inrsc);
+#endif
     return ferror(fp) ? -1 : 0;
 }
 
@@ -2156,14 +2258,14 @@ PRIVATE int write_c_epilogue(FILE *fp)
     fprintf(fp,"    /* set up the tree pointers */\n");
     fprintf(fp,"    for (i = 0; i < RS_NTREE; i++)\n");
     fprintf(fp,"        desk_rs_trees[i] = &desk_rs_obj[treestart[i]];\n\n");
+    if (te_ptext_len != 0) {
+        fprintf(fp,"    /* zero TEDINFO te_ptext strings */\n");
+        fprintf(fp,"    bzero(%srs_te_text, sizeof(%srs_te_text));\n",prefix,prefix);
+    }
     fprintf(fp,"    return 0;\n");
     fprintf(fp,"}\n\n");
 #endif
 #ifdef GEM_RSC
-    fprintf(fp,"/* Strings for the alert box */\n");
-    fprintf(fp,"static char msg_str[MAX_LINENUM][MAX_LINELEN+1];\n");
-    fprintf(fp,"static char msg_but[MAX_BUTNUM][MAX_BUTLEN+1];\n\n");
-
     fprintf(fp,"void gem_rsc_init(void)\n");
     fprintf(fp,"{\n");
     fprintf(fp,"    /* Copy data from ROM to RAM: */\n");
@@ -2171,12 +2273,10 @@ PRIVATE int write_c_epilogue(FILE *fp)
     fprintf(fp,"    memcpy(%srs_tedinfo, %srs_tedinfo_rom, RS_NTED*sizeof(TEDINFO));\n\n",prefix,prefix);
     fprintf(fp,"    /* translate strings in objects */\n");
     fprintf(fp,"    xlate_obj_array(%srs_obj, RS_NOBS);\n\n",prefix);
-    fprintf(fp,"    /* fix TEDINFO strings */\n");
-    fprintf(fp,"    fix_tedinfo(%srs_tedinfo, RS_NTED);\n\n",prefix);
-    fprintf(fp,"    /* The first three TEDINFOs don't use a '@' as first character: */\n");
-    fprintf(fp,"    *rs_tedinfo[0].te_ptext = '_';\n");
-    fprintf(fp,"    *rs_tedinfo[1].te_ptext = '_';\n");
-    fprintf(fp,"    *rs_tedinfo[2].te_ptext = 0;\n");
+    if (te_ptext_len != 0) {
+        fprintf(fp,"    /* zero TEDINFO te_ptext strings */\n");
+        fprintf(fp,"    bzero(%srs_te_text, sizeof(%srs_te_text));\n",prefix,prefix);
+    }
     fprintf(fp,"}\n\n\n");
 
     fprintf(fp,"void gem_rsc_fixit(void)\n");
@@ -2544,6 +2644,18 @@ char *base = (char *)rschdr;
         break;
     case G_TEXT:
     case G_BOXTEXT:
+#ifdef DESK_RSC
+        /*
+         * te_ptext will be pointed to a zeroed BSS location later, so
+         * we cannot use these object types.
+         * There are only two exceptions: the DTNAME and FTITLE
+         * objects in the AES resource.
+         */
+        error("TEXT/BOXTEXT objects not allowed in EmuDesk resource",inrsc);
+#endif
+        fprintf(fp,"&%srs_tedinfo[%ld],\n",prefix,
+            (get_offset(&obj->ob_spec)-rsh.tedinfo)/sizeof(TEDINFO));
+        break;
     case G_FTEXT:
     case G_FBOXTEXT:
         fprintf(fp,"{ (LONG)&%srs_tedinfo[%ld] },\n",prefix,
@@ -2822,6 +2934,21 @@ SHARED_ENTRY *e;
 
 /*****  miscellaneous support routines  *****/
 
+/*  Counts the occurrences of c in str */
+static int count_chars(const char *str, char c)
+{
+    int count;
+
+    count = 0;
+    while(*str)
+    {
+        if (*str++ == c)
+            count++;
+    }
+
+    return count;
+}
+
 /*
  *  mark objects as conditional if appropriate:
  *   1. determine which shared objects are conditional
@@ -2837,6 +2964,7 @@ SHARED_ENTRY *e;
 char temp[MAX_STRLEN];
 char *base = (char *)rschdr;
 char *obj_base, *p;
+int type;
 
     /*
      *  examine all the objects from the start of the table to
@@ -2852,7 +2980,8 @@ char *obj_base, *p;
      */
     obj_base = base + rsh.object;
     for (obj = (OBJECT *)obj_base, n = 0; obj < (OBJECT *)obj_base+conditional_object_start; obj++, n++) {
-        switch(get_ushort(&obj->ob_type)&0xff) {
+        type = get_ushort(&obj->ob_type)&0xff;
+        switch(type) {
         case G_STRING:
         case G_BUTTON:
         case G_TITLE:
@@ -2877,6 +3006,17 @@ char *obj_base, *p;
             if ((e=isshared(temp))) {
                 if (n < e->objnum)
                     e->objnum = n;
+            }
+            if (type == G_FTEXT || type == G_FBOXTEXT) {
+                int len;
+                p = base + get_offset(&ted->te_ptmplt);
+                len = count_chars(p, '_');
+                if (len + 1 != get_short(&ted->te_txtlen))
+                    fprintf(stderr, "warning: te_txtlen %d does not match number of '_' in object #%d\n", get_short(&ted->te_txtlen), n);
+                set_offset(&ted->te_ptext, te_ptext_len);
+                te_ptext_len += get_short(&ted->te_txtlen);
+            } else {
+                set_offset(&ted->te_ptext, 0xffffffffUL);
             }
             break;
         }
@@ -3027,7 +3167,21 @@ PRIVATE unsigned short get_ushort(USHORT *p)
  */
 PRIVATE unsigned long get_offset(OFFSET *p)
 {
-    return (p->b1<<24) | (p->b2<<16) | (p->b3<<8) | p->b4;
+    return ((unsigned long)p->b1<<24) | (p->b2<<16) | (p->b3<<8) | p->b4;
+}
+
+/*
+ *  convert unsigned long to big-endian offset
+ */
+PRIVATE void set_offset(OFFSET *p, unsigned long offset)
+{
+    p->b4 = offset;
+    offset >>= 8;
+    p->b3 = offset;
+    offset >>= 8;
+    p->b2 = offset;
+    offset >>= 8;
+    p->b1 = offset;
 }
 
 /*
@@ -3072,4 +3226,19 @@ PRIVATE void usage(char *s)
     fprintf(stderr,"usage: %s [-d] [-n] [-p<prefix>] [-v] <rsc_file> <c_file>\n",PROGRAM_NAME);
 
     exit(2);
+}
+
+/*
+ *  convert a string to uppercase
+ */
+PRIVATE char *my_strupr(char *string)
+{
+char *p = string;
+
+    while (*p) {
+        *p = toupper(*p);
+        p++;
+    }
+
+    return string;
 }

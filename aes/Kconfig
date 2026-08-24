@@ -42,6 +42,42 @@ config CONF_WITH_PCGEM
 	default n if TARGET_192
 	default y
 
+config CONF_WITH_MENU_EXTENSION
+	bool "AES 3.30 menu library extensions"
+	default n if TARGET_192 || TARGET_256
+	default y
+	help
+	  Minimal support for the AES 3.30 menu library functions
+	  menu_popup(), menu_attach(), menu_istart() and menu_settings().
+
+config CONF_WITH_WINDOW_COLOURS
+	bool "Configurable window title/border colours"
+	default n if TARGET_192
+	default y
+
+config CONF_WITH_GRAF_MOUSE_EXTENSION
+	bool "AES graf_mouse() extensions"
+	default n if TARGET_192 || TARGET_256 || TARGET_512
+	default y
+	help
+	  Extended graf_mouse() cursor forms, as introduced on Atari TOS 4.
+
+config CONF_WITH_3D_OBJECTS
+	bool "3D object rendering"
+	default n if TARGET_192 || TARGET_256 || TARGET_512
+	default y
+	help
+	  Render 3D-style indicators, activators and backgrounds for AES
+	  objects, as on Atari TOS 4 / Falcon.
+
+config CONF_WITH_EXTENDED_OBJECTS
+	bool "MagiC-style extended object types"
+	default n if TARGET_192 || TARGET_256 || TARGET_512
+	default y
+	help
+	  AES support for a number of MagiC-style object type extensions,
+	  such as underlined G_STRING titles.
+
 config CONF_WITH_LOADABLE_CURSORS
 	bool "Loadable mouse cursors"
 	default y
@@ -85,6 +121,7 @@ config CONF_WITH_PORTABLE_RSC_LOAD
 
 config CONF_WITH_NICELINES
 	bool "Menu nicelines"
+	default n if TARGET_192
 	default y
 	help
 	  Draw menu separator lines with the VDI instead of rendering the

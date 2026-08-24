@@ -2,45 +2,43 @@
  * gemfslib.c - the file selector
  *
  * Copyright 1999, Caldera Thin Clients, Inc.
- *           2002-2017 The EmuTOS development team
+ *           2002-2022 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-#include "config.h"
-#include "portab.h"
+
+#include "emutos.h"
 #include "struct.h"
 #include "obdefs.h"
-#include "dos.h"
-#include "../bios/tosvars.h"
+#include "tosvars.h"
+#include "aesdefs.h"
+#include "aesext.h"
 #include "gemlib.h"
 #include "gem_rsc.h"
 
 #include "gemdos.h"
 #include "gemoblib.h"
-#include "gemgraf.h"
 #include "gemfmlib.h"
 #include "gemgsxif.h"
 #include "gemgrlib.h"
 #include "geminit.h"
-#include "gemsuper.h"
-#include "gemshlib.h"
 #include "gemfslib.h"
 #include "gemrslib.h"
-#include "gsx2.h"
 #include "optimize.h"
-#include "optimopt.h"
 #include "rectfunc.h"
 #include "gemerror.h"
 #include "gemobed.h"
-
 #include "string.h"
 #include "intmath.h"
+#include "asm.h"
+#include "miscutil.h"
 
 #define NM_NAMES (F9NAME-F1NAME+1)
 #define NAME_OFFSET F1NAME
 #define NM_DRIVES (FSLSTDRV-FS1STDRV+1)
 #define DRIVE_OFFSET FS1STDRV
+#define DRIVE_ROWS   9              /* (3 columns of buttons for the standard 26 drives) */
 
 #define LEN_FSNAME (LEN_ZFNAME+1)   /* includes leading flag byte & trailing nul */
 #define LEN_FSPATH  (LEN_ZPATH+4)   /* at least 3 bytes longer than max path */
@@ -53,9 +51,9 @@
 
 static GRECT gl_rfs;
 
-static const BYTE gl_fsobj[4] = {FTITLE, FILEBOX, SCRLBAR, 0x0};
+static const char gl_fsobj[4] = {FTITLE, FILEBOX, SCRLBAR, 0x0};
 
-static BYTE *ad_fsnames;    /* holds filenames in currently-displayed directory */
+static char *ad_fsnames;    /* holds filenames in currently-displayed directory */
 static LONG *g_fslist;      /* offsets of filenames within ad_fsnames */
 static LONG nm_files;       /* total number of slots in g_fslist[] */
 
@@ -65,6 +63,100 @@ static LONG nm_files;       /* total number of slots in g_fslist[] */
  */
 void fs_start(void)
 {
+#if CONF_WITH_3D_OBJECTS
+    OBJECT *obj, *tree = rs_trees[FSELECTR];
+    TEDINFO *ted;
+    WORD i, row;
+
+    /*
+     * adjust the positions and/or dimensions of all the objects within
+     * FILEAREA (the IBOX that contains the closer, title, scroll bar,
+     * and filenames), plus FILEAREA itself
+     *
+     * at the same time, we set any 3D object bits required
+     */
+    tree[FCLSBOX].ob_flags |= FL3DACT;
+    tree[FCLSBOX].ob_x += ADJ3DSTD;
+    tree[FCLSBOX].ob_y += ADJ3DSTD;
+
+    tree[FTITLE].ob_flags |= FL3DBAK;
+    tree[FTITLE].ob_x += 2*ADJ3DSTD-1;
+    tree[FTITLE].ob_height += 2*ADJ3DSTD;
+    /* use pattern 4, just like TOS4 */
+    ted = tree[FTITLE].ob_spec.tedinfo;
+    ted->te_color = (ted->te_color & 0xff8f) | (IP_4PATT<<4);
+
+    tree[FILEBOX].ob_y += 3*ADJ3DSTD-1;
+    tree[FILEBOX].ob_width += ADJ3DSTD;
+
+    tree[SCRLBAR].ob_x += 2*ADJ3DSTD-1;
+    tree[SCRLBAR].ob_y += 3*ADJ3DSTD-1;
+
+    tree[FUPAROW].ob_flags |= FL3DACT;
+    tree[FUPAROW].ob_x += ADJ3DSTD;
+    tree[FUPAROW].ob_y += ADJ3DSTD;
+    tree[FUPAROW].ob_width -= 2*ADJ3DSTD;
+
+    tree[FSVSLID].ob_y += 3*ADJ3DSTD;
+    tree[FSVSLID].ob_height -= 6*ADJ3DSTD;
+
+    /* use pattern 4, just like TOS4 */
+    tree[FSVSLID].ob_spec.index = (tree[FSVSLID].ob_spec.index & 0xffffff8fL) | (IP_4PATT<<4);
+
+    /* we only adjust x/w of FSVELEV here, because y/h are set dynamically */
+    tree[FSVELEV].ob_flags |= FL3DACT;
+    tree[FSVELEV].ob_x += ADJ3DSTD;
+    tree[FSVELEV].ob_width -= 2*ADJ3DSTD;
+
+    tree[FDNAROW].ob_flags |= FL3DACT;
+    tree[FDNAROW].ob_x += ADJ3DSTD;
+    tree[FDNAROW].ob_y -= ADJ3DSTD;
+    tree[FDNAROW].ob_width -= 2*ADJ3DSTD;
+
+    tree[FILEAREA].ob_y -= 6;       /* squeeze things together vertically */
+    tree[FILEAREA].ob_width += 2*ADJ3DSTD - 1;
+    tree[FILEAREA].ob_height += 3*ADJ3DSTD - 1;
+
+    /*
+     * adjust the position of all the drive-letter boxes, plus FSDRIVES
+     * (the IBOX that includes them)
+     *
+     * at the same time we mark them as 3D indicators
+     */
+    for (i = 0, obj = tree+DRIVE_OFFSET, row = 0; i < NM_DRIVES; i++, obj++, row++)
+    {
+        if (row >= DRIVE_ROWS)
+            row = 0;
+        obj->ob_flags |= FL3DIND;
+        obj->ob_x += 2*ADJ3DSTD;
+        obj->ob_y += 2*ADJ3DSTD + row*(3*ADJ3DSTD-1);
+    }
+
+    tree[FSDRIVES].ob_height += 2*ADJ3DSTD + DRIVE_ROWS*(3*ADJ3DSTD-1);
+    tree[FSDRIVES].ob_width += 4*ADJ3DSTD;
+
+    /*
+     * finally, handle the remaining objects that have ROOT as a parent, plus ROOT
+     *
+     * FSOK/FSCANCEL must move left to avoid interfering with FSDRIVES in lower resolutions
+     */
+    tree[FSDIRECT].ob_flags |= FL3DBAK;
+    tree[FSSELECT].ob_flags |= FL3DBAK;
+    tree[FSDRVTXT].ob_flags |= FL3DBAK;
+
+    tree[FSOK].ob_flags |= FL3DACT;
+    tree[FSOK].ob_x = tree[FILEAREA].ob_x;
+    tree[FSOK].ob_y += ADJ3DSTD;
+
+    tree[FSCANCEL].ob_flags |= FL3DACT;
+    tree[FSCANCEL].ob_x = tree[FILEAREA].ob_x + tree[FILEAREA].ob_width - tree[FSCANCEL].ob_width;
+    tree[FSCANCEL].ob_y = tree[FSOK].ob_y;
+
+    tree[ROOT].ob_flags |= FL3DBAK;
+    tree[ROOT].ob_height += 2*ADJ3DSTD;
+
+    ob_center(tree, &gl_rfs);
+#else
     OBJECT *tree = rs_trees[FSELECTR];
     WORD diff;
 
@@ -82,6 +174,7 @@ void fs_start(void)
     tree[FDNAROW].ob_width = gl_wbox;
     tree[FSVSLID].ob_width = gl_wbox;
     tree[FSVELEV].ob_width = gl_wbox;
+#endif
 }
 
 
@@ -99,32 +192,32 @@ static void centre_title(OBJECT *tree,WORD objnum)
 
 /*
  *  Routine to back off the end of a path string, stopping at either
- *  the first backslash or at the colon preceding the drive specifier.
+ *  the first path separator or at the colon preceding the drive specifier.
  *  The second argument specifies the end of the string; if NULL, the
  *  end is determined via strlen().  If the scan is stopped by a colon,
- *  the routine inserts a backslash in the string immediately following
+ *  the routine inserts a path separator in the string immediately following
  *  the colon.
  *
  *  Returns a pointer to the beginning of the string (if no colon or
- *  backslash found), or to the last backslash.
+ *  backslash found), or to the last path separator.
  */
-static BYTE *fs_back(BYTE *pstr, BYTE *pend)
+static char *fs_back(char *pstr, char *pend)
 {
-    BYTE *p;
+    char *p;
 
     if (!pend)
         pend = pstr + strlen(pstr);
 
-    /* back off to last backslash (or colon) */
+    /* back off to last path separator (or colon) */
     for (p = pend; p != pstr; p--)
     {
-        if (*p == '\\')
+        if (*p == PATHSEP)
             break;
-        if (*p == ':')
+        if (*p == DRIVESEP)
         {
             if (p == pstr+1)    /* X: at the start of the string */
             {
-                ins_char(++p,0,'\\',LEN_ZPATH-3);
+                ins_char(++p,0,PATHSEP,LEN_ZPATH-3);
                 break;
             }
         }
@@ -138,10 +231,10 @@ static BYTE *fs_back(BYTE *pstr, BYTE *pend)
  *  Routine to back up a path and return the pointer to the beginning
  *  of the file specification part
  */
-static BYTE *fs_pspec(BYTE *pstr, BYTE *pend)
+static char *fs_pspec(char *pstr, char *pend)
 {
     pend = fs_back(pstr, pend);
-    if (*pend == '\\')
+    if (*pend == PATHSEP)
         pend++;
 
     return pend;
@@ -152,7 +245,7 @@ static BYTE *fs_pspec(BYTE *pstr, BYTE *pend)
  *  Routine to compare files based on name
  *  Note: folders always sort lowest because the first character is \007
  */
-static WORD fs_comp(BYTE *name1, BYTE *name2)
+static WORD fs_comp(char *name1, char *name2)
 {
     return strcmp(name1, name2);
 }
@@ -163,7 +256,7 @@ static LONG fs_add(WORD thefile, LONG fs_index)
     WORD len;
 
     g_fslist[thefile] = fs_index;
-    ad_fsnames[fs_index++] = (D.g_dta.d_attrib & F_SUBDIR) ? 0x07 : ' ';
+    ad_fsnames[fs_index++] = (D.g_dta.d_attrib & FA_SUBDIR) ? 0x07 : ' ';
     len = strlencpy(ad_fsnames+fs_index,D.g_dta.d_fname);
     fs_index += len + 1;
     return fs_index;
@@ -177,12 +270,12 @@ static LONG fs_add(WORD thefile, LONG fs_index)
  *
  *  Returns FALSE iff error occurred
  */
-static WORD fs_active(BYTE *ppath, BYTE *pspec, WORD *pcount)
+static WORD fs_active(char *ppath, char *pspec, WORD *pcount)
 {
     WORD ret;
     LONG thefile, fs_index, temp;
     WORD i, j, gap;
-    BYTE *fname, allpath[LEN_ZPATH+1];
+    char *fname, allpath[LEN_ZPATH+1];
     DTA *user_dta;
 
     set_mouse_to_hourglass();
@@ -192,32 +285,30 @@ static WORD fs_active(BYTE *ppath, BYTE *pspec, WORD *pcount)
 
     strcpy(allpath, ppath);         /* 'allpath' gets all files */
     fname = fs_pspec(allpath,NULL);
-    strcpy(fname,"*.*");
+    set_all_files(fname);
 
     user_dta = dos_gdta();          /* remember user's DTA */
     dos_sdta(&D.g_dta);
-    ret = dos_sfirst(allpath, F_SUBDIR);
+    ret = dos_sfirst(allpath, FA_SUBDIR);
 
-    while (ret == 0)
+    /*
+     * like Atari TOS, we silently ignore any filenames that we don't
+     * have room for.  this should be an extremely rare occurrence.
+     */
+    while((ret == 0) && (thefile < nm_files))
     {
         /* if it is a real file or directory then save it and set
          * the first byte to tell which
          */
         if (D.g_dta.d_fname[0] != '.')
         {
-            if ((D.g_dta.d_attrib & F_SUBDIR) || (wildcmp(pspec, D.g_dta.d_fname)))
+            if ((D.g_dta.d_attrib & FA_SUBDIR) || (wildcmp(pspec, D.g_dta.d_fname)))
             {
                 fs_index = fs_add(thefile, fs_index);
                 thefile++;
             }
         }
         ret = dos_snext();
-
-        if (thefile >= nm_files)    /* too many files */
-        {
-            sound(TRUE, 660, 4);
-            break;
-        }
     }
 
     *pcount = thefile;
@@ -278,7 +369,7 @@ static void fs_format(OBJECT *tree, WORD currtop, WORD count)
 {
     WORD i, cnt;
     WORD y, h, th;
-    BYTE   *p, name[LEN_FSNAME];
+    char   *p, name[LEN_FSNAME];
     OBJECT *obj, *treeptr = tree;
 
     /* build in real text strings */
@@ -307,10 +398,14 @@ static void fs_format(OBJECT *tree, WORD currtop, WORD count)
     th = h = obj->ob_height;
     if (count > NM_NAMES)
     {
-        h = mul_div(NM_NAMES, h, count);
+        h = mul_div_round(NM_NAMES, h, count);
         h = max(gl_hbox, h);            /* min size elevator */
-        y = mul_div(currtop, th-h, count-NM_NAMES);
+        y = mul_div_round(currtop, th-h, count-NM_NAMES);
     }
+#if CONF_WITH_3D_OBJECTS
+    y += ADJ3DSTD;
+    h -= 2 * ADJ3DSTD;      /* we assume that 2*ADJ3DSTD < gl_hbox */
+#endif
     obj = treeptr + FSVELEV;
     obj->ob_y = y;
     obj->ob_height = h;
@@ -368,8 +463,7 @@ static WORD fs_nscroll(OBJECT *tree, WORD *psel, WORD curr, WORD count,
                 sy = r[0].g_y;
             }
 
-            bb_screen(S_ONLY, r[0].g_x, sy, r[0].g_x, dy, r[0].g_w,
-                                r[0].g_h * (NM_NAMES - diffcurr) );
+            bb_screen(r[0].g_x, sy, r[0].g_x, dy, r[0].g_w, r[0].g_h * (NM_NAMES - diffcurr) );
             if (!neg)
                 r[0].g_y += r[0].g_h * (NM_NAMES - diffcurr);
         }
@@ -395,9 +489,9 @@ static WORD fs_nscroll(OBJECT *tree, WORD *psel, WORD curr, WORD count,
  *
  *  Returns FALSE iff error occurred
  */
-static WORD fs_newdir(BYTE *fpath, BYTE *pspec, OBJECT *tree, WORD *pcount)
+static WORD fs_newdir(char *fpath, char *pspec, OBJECT *tree, WORD *pcount)
 {
-    const BYTE *ptmp;
+    const char *ptmp;
     OBJECT *obj;
     TEDINFO *tedinfo;
 
@@ -432,13 +526,13 @@ static WORD fs_newdir(BYTE *fpath, BYTE *pspec, OBJECT *tree, WORD *pcount)
  *  (so path_changed() can detect a change properly).  therefore we allow
  *  up to LEN_ZPATH bytes.
  */
-static void set_mask(BYTE *mask,BYTE *path)
+static void set_mask(char *mask, char *path)
 {
-    BYTE *pend;
+    char *pend;
 
     pend = fs_pspec(path, NULL);
     if (!*pend)                 /* if there's no mask, add one */
-        strcpy(pend, "*.*");
+        set_all_files(pend);
     strlcpy(mask, pend, LEN_ZPATH);
 }
 
@@ -452,6 +546,9 @@ static void select_drive(OBJECT *treeaddr, WORD drive, WORD redraw)
 {
     WORD i, olddrive = -1;
     OBJECT *obj, *start = treeaddr+DRIVE_OFFSET;
+
+    if ((drive < 0) || (drive >= NM_DRIVES))    /* invalid, don't change selected */
+        return;
 
     for (i = 0, obj = start; i < NM_DRIVES; i++, obj++)
     {
@@ -497,14 +594,11 @@ static WORD path_changed(char *path)
  */
 static WORD get_drive(char *path)
 {
-    char c;
+    WORD drive;
 
-    if (path[1] == ':')     /* drive letter is present */
-    {
-        c = toupper(path[0]);
-        if ((c >= 'A') && (c <= 'Z'))
-            return c - 'A';
-    }
+    drive = extract_drive_number(path);
+    if (drive >= 0)
+        return drive;
 
     return dos_gdrv();
 }
@@ -512,21 +606,21 @@ static WORD get_drive(char *path)
 
 /*
  *  File Selector input routine that takes control of the mouse
- *  and keyboard, searchs and sort the directory, draws the file
+ *  and keyboard, searches and sorts the directory, draws the file
  *  selector, interacts with the user to determine a selection
  *  or change of path, and returns to the application with
  *  the selected path, filename, and exit button.
  */
-WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
+WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
 {
+    BOOL cont, newlist, newsel, newdrive;
+    WORD drive, dclkret, error;
     WORD touchob, value, fnum;
     WORD curr, count, sel;
     WORD mx, my;
     OBJECT *tree;
     ULONG bitmask;
     BYTE *ad_fpath, *ad_fname;
-    WORD drive;
-    WORD dclkret, cont, newlist, newsel, newdrive;
     BYTE *pstr;
     GRECT pt;
     BYTE *locstr, *locold, *selname;
@@ -540,7 +634,7 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
     curr = 0;
     count = 0;
 
-    /* get out quick if path is nullptr or if pts to null. */
+    /* get out quick if path is nullptr */
     if (pipath == NULL)
         return FALSE;
 
@@ -617,6 +711,7 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
     sel = 0;
     newsel = newdrive = FALSE;
     cont = newlist = TRUE;
+    error = 0;      /* consecutive error count */
     while(cont)
     {
         touchob = (newlist) ? 0x0 : fm_do(tree, FSSELECT);
@@ -631,23 +726,30 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
             curr = 0;
             sel = 0;
             newlist = FALSE;
-            if (!fs_newdir(locstr, mask, tree, &count)) /* error reading dir */
-            {
+            if (fs_newdir(locstr, mask, tree, &count))  /* ok reading dir */
+                error = 0;
+            else ++error;
+            if (error == 1)     /* only retry once; this avoids continual retries */
+            {                   /* due to e.g. missing/unformatted floppy disk    */
                 /*
-                 * if path was changed, reset it; otherwise initial
-                 * path was was wrong, so set it to the root of the
-                 * current drive.  retry in either case.
+                 * if we have an error & the path was changed, reset it;
+                 * otherwise the initial path must have been wrong, so set it
+                 * to the root of the current drive.  retry in either case.
                  */
                 newlist = TRUE;                     /* make it retry */
                 if (strcmp(locstr,locold) != 0)     /* path was changed */
                 {                                   /* so try to recover */
                     strcpy(locstr,locold);
-                    select_drive(tree,get_drive(locstr),TRUE);
                 }
                 else
                 {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpragmas"
+#pragma GCC diagnostic ignored "-Wrestrict"
                     sprintf(locstr,"%c:\\%s",'A'+dos_gdrv(),mask);
+#pragma GCC diagnostic pop
                 }
+                select_drive(tree,get_drive(locstr),TRUE);
             }
             strcpy(locold,locstr);
         }
@@ -662,6 +764,7 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
                 ob_change(tree,FSOK,NORMAL,TRUE);/* (so deselect the button) */
                 break;
             }
+            FALLTHROUGH;
         case FSCANCEL:
             cont = FALSE;
             break;
@@ -681,12 +784,12 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
                 value = NM_NAMES;
                 break;
             }
-            /* drop through */
+            FALLTHROUGH;
         case FSVELEV:
             fm_own(TRUE);
             value = gr_slidebox(tree, FSVSLID, FSVELEV, TRUE);
             fm_own(FALSE);
-            value = curr - mul_div(value, count-NM_NAMES, 1000);
+            value = curr - mul_div_round(value, count-NM_NAMES, 1000);
             if (value >= 0)
                 touchob = FUPAROW;
             else
@@ -727,7 +830,7 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
                 pstr = fs_pspec(locstr, NULL);
                 unfmt_str(selname+1, pstr);
                 pstr += strlen(pstr);
-                *pstr++ = '\\';
+                *pstr++ = PATHSEP;
                 strcpy(pstr, mask);
                 newlist = TRUE;
             }
@@ -736,7 +839,7 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
             pstr = fs_back(locstr, NULL);
             if (pstr == locstr)             /* we have a locstr like '*.*',  */
                 break;                      /*  so do nothing, just like TOS */
-            if (*--pstr == ':')             /* at root of drive, */
+            if (*--pstr == DRIVESEP)        /* at root of drive, */
                 break;                      /*  so nothing to do */
             pstr = fs_pspec(locstr, pstr);  /* back up past folder */
             strcpy(pstr, mask);
@@ -753,10 +856,18 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
             obj = tree + touchob;
             if (obj->ob_state & DISABLED)           /* non-existent drive */
                 break;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpragmas"
+#pragma GCC diagnostic ignored "-Wrestrict"
             sprintf(locstr,"%c:\\%s",'A'+drive,mask);
+#pragma GCC diagnostic pop
             newdrive = TRUE;
             break;
         }
+
+        /* exit immediately if cancel */
+        if (touchob == FSCANCEL)
+            break;
 
         if (!newlist && !newdrive && path_changed(locstr))  /* path changed manually */
         {
@@ -778,8 +889,11 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
         {
             inf_sset(tree, FSDIRECT, locstr);
             set_mask(mask, locstr);             /* set mask */
-            selname[1] = '\0';                  /* selected is empty */
-            newsel = TRUE;
+            if (!error)                         /* if newlist is NOT due to an error, */
+            {
+                selname[1] = '\0';              /* clear out the selection            */
+                newsel = TRUE;
+            }
         }
 
         if (newsel)
@@ -804,7 +918,7 @@ WORD fs_input(BYTE *pipath, BYTE *pisel, WORD *pbutton, BYTE *pilabel)
     fm_dial(FMD_FINISH, &gl_rcenter, &gl_rfs);
 
     /* return exit button */
-    *pbutton = inf_what(tree, FSOK, FSCANCEL);
+    *pbutton = inf_what(tree, FSOK);
     dos_free(ad_fsnames);
 
     return TRUE;

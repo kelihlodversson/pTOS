@@ -1,7 +1,7 @@
 /*
  * memset.S - a quick memset/bzero for 68000/ColdFire
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL  Laurent Vogel
@@ -17,17 +17,19 @@
 
 #include "asmdefs.h"
 
-
 // ==== Definitions ==========================================================
 
         .globl  _memset
-        .globl  _bzero
+        .globl  _bzero_nobuiltin
 
         .text
 //
-// void bzero(void *address, unsigned long size)
+// void bzero_nobuiltin(void *address, unsigned long size)
 //
-_bzero:
+// the obscure name is to circumvent GCC converting a call to bzero()
+// to a call to memset()
+//
+_bzero_nobuiltin:
         move.l   4(sp),a0
         move.l   8(sp),d0
         move.l   d7,-(sp)

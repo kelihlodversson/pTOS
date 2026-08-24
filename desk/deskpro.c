@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2021 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -19,33 +19,28 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include <string.h>
+#include "emutos.h"
+#include "string.h"
 
-#include "portab.h"
+#include "aesdefs.h"
 #include "obdefs.h"
-#include "gemdos.h"
 
 #include "deskbind.h"
 #include "deskglob.h"
-#include "deskapp.h"
-#include "deskfpd.h"
-#include "deskwin.h"
 #include "aesbind.h"
 #include "desksupp.h"
 #include "deskpro.h"
-#include "kprint.h"
 
 
-static WORD pro_exec(WORD isgraf, WORD isover, BYTE *pcmd, BYTE *ptail)
+static WORD pro_exec(WORD isgraf, WORD isover, char *pcmd, char *ptail)
 {
     WORD ret;
 
-    graf_mouse(HGLASS, NULL);
+    desk_busy_on();
 
-    ret = shel_write(1, isgraf, isover, pcmd, ptail);
+    ret = shel_write(SHW_EXEC, isgraf, isover, pcmd, ptail);
     if (!ret)
-        graf_mouse(ARROW, NULL);
+        desk_busy_off();
     return ret;
 }
 
@@ -54,27 +49,16 @@ static WORD pro_exec(WORD isgraf, WORD isover, BYTE *pcmd, BYTE *ptail)
  * run a program via shel_write()
  * optionally, deselect the current icon & zoom to desktop size
  */
-WORD pro_run(WORD isgraf, WORD isover, WORD wh, WORD curr)
+WORD pro_run(WORD isgraf, char *cmd, char *tail, WORD wh, WORD curr)
 {
     WORD ret, len;
 
-    G.g_tail[0] = len = strlen(&G.g_tail[1]);
-    G.g_tail[len+2] = 0x0D;     /* follows the nul byte, just like Atari TOS */
-    ret = pro_exec(isgraf, isover, G.g_cmd, G.g_tail);
+    tail[0] = len = strlen(tail+1);
+    tail[len+2] = 0x0D;     /* follows the nul byte, just like Atari TOS */
+    ret = pro_exec(isgraf, 1, cmd, tail);
 
     if (wh != -1)
-        do_wopen(FALSE, wh, curr, G.g_xdesk, G.g_ydesk, G.g_wdesk, G.g_hdesk);
+        do_wopen(FALSE, wh, curr, &G.g_desk);
 
     return ret;
 }
-
-
-#if CONF_WITH_SHUTDOWN
-WORD pro_exit(BYTE *pcmd, BYTE *ptail)
-{
-    WORD ret;
-
-    ret = shel_write(0, FALSE, 1, pcmd, ptail);
-    return ret;
-}
-#endif

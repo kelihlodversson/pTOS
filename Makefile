@@ -312,7 +312,7 @@ GEN_SRC =
 # IMAGE_NAME option overrides it.
 #
 
-ROM_IMAGE := $(if $(TARGET_192)$(TARGET_256)$(TARGET_512)$(TARGET_CART),y)
+ROM_IMAGE := $(if $(TARGET_192)$(TARGET_256)$(TARGET_512)$(TARGET_1024)$(TARGET_CART),y)
 
 ifdef TARGET_192
 ROMSIZE = 192
@@ -327,6 +327,13 @@ endif
 ifdef TARGET_512
 ROMSIZE = 512
 image-default = ptos512k.img
+# The symbol file is useful when debugging this image under Hatari.
+image-extra = $(basename $(IMAGE)).sym
+MEMBOT_REFERENCE = TOS404
+endif
+ifdef TARGET_1024
+ROMSIZE = 1024
+image-default = ptos1024k.img
 # The symbol file is useful when debugging this image under Hatari.
 image-extra = $(basename $(IMAGE)).sym
 MEMBOT_REFERENCE = TOS404
@@ -631,8 +638,8 @@ mrd: tools/erd.c
 	$(NATIVECC) -DMFORM_RSC $< -o $@
 
 # draft reads the configuration to know whether EmuCON is included.
-draft: tools/draft.c $(AUTOCONF_H)
-	$(NATIVECC) -Iobj $< -o $@
+draft: tools/draft.c tools/draftexc.c $(AUTOCONF_H)
+	$(NATIVECC) -Iobj $(filter %.c,$^) -o $@
 
 # User tool, not needed to build EmuTOS
 tos-lang-change: tools/tos-lang-change.c
@@ -839,8 +846,8 @@ bios/ctables.h: country.mk tools/genctables.awk
 
 GEN_SRC += bios/header.h
 
-bios/header.h: tools/mkheader.awk obj/country
-	awk -f tools/mkheader.awk $(COUNTRY) > $@
+bios/header.h: tools/mkheader.awk obj/country version.mk
+	awk -f tools/mkheader.awk $(COUNTRY) $(MAJOR_VERSION) $(MINOR_VERSION) $(FIX_VERSION) $(UNOFFICIAL) > $@
 
 #
 # Version string
@@ -905,7 +912,7 @@ endif
 # We don't generate this automatically, because it might be processed by
 # the wrong compiler when a non-m68k machine is configured.
 #
-include/arch/m68k/lineaasm.h: vdi/gen_asm_defines.c bios/lineavars.h
+include/arch/m68k/lineaasm.h: vdi/gen_asm_defines.c include/lineavars.h
 	@echo "warning: $@ is out of date" >&2
 	@echo "run \"$(CC) $(CFILE_FLAGS) -S $< -o - | grep '^#define' > $@\" to regenerate it" >&2
 
@@ -1099,8 +1106,13 @@ LIBCMINI_STAMP = $(LIBCMINI_BUILDDIR)/.ptos-config-stamp
 
 ifdef CONF_WITH_REGRESSION_TESTS
 
-# Auto-discover test suites: each tests/<name>/<name>.c provides test_<name>()
-TEST_SUITES := $(sort $(patsubst tests/%/,%,$(dir $(wildcard tests/*/*.c))))
+# Auto-discover test suites: each tests/<name>/<name>.c provides test_<name>().
+# tests/*/ also holds a few older, standalone Hatari-driven tests (e.g.
+# cookies/, bioscon/) whose source file doesn't match their directory name
+# and which aren't wired into this libcmini-based harness -- filter to
+# directories that actually have a tests/<name>/<name>.c, not just any .c.
+TEST_SUITES := $(sort $(foreach d,$(patsubst tests/%/,%,$(wildcard tests/*/)),\
+                 $(if $(wildcard tests/$(d)/$(d).c),$(d))))
 
 # pie_load launches a separate PIE executable (pie_probe.c, built below)
 # via Pexec() to exercise the ELF loader's ET_DYN support, which only

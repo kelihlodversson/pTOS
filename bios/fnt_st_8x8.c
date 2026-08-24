@@ -1,14 +1,14 @@
 /*
  * fnt_st_8x8.c - 8x8 font for Atari ST encoding
  *
- * Copyright (C) 2001-2015 The EmuTOS development team
+ * Copyright (C) 2001-2021 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
+#include "bios.h"
 #include "fonthdr.h"
 
 extern const UWORD off_8x8_table[];
@@ -148,7 +148,7 @@ static const UBYTE dat_table[] =
 const Fonthead fnt_st_8x8 = {
     1,  /* WORD font_id */
     9,  /* WORD point */
-    "8x8 system font",  /*   BYTE name[32]      */
+    "8x8 system font",  /*   char name[32]      */
     0,  /* WORD first_ade */
     255,  /* WORD last_ade */
     6,  /* UWORD top */
@@ -170,5 +170,6 @@ const Fonthead fnt_st_8x8 = {
     dat_table,           /*   UWORD *dat_table   */
     256,  /* UWORD form_width */
     8,  /* UWORD form_height */
-    0   /* Fonthead * next_font */
+    0,  /* Fonthead * next_font */
+    0                   /*   reserved by Atari  */
 };

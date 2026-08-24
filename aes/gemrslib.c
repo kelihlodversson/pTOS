@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2025 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -16,26 +16,25 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "struct.h"
-#include "basepage.h"
 #include "obdefs.h"
-#include "rsdefs.h"
-#include "gemlib.h"
+#include "aesdefs.h"
+#include "aesext.h"
 #include "gem_rsc.h"
 
 #include "gemdos.h"
 #include "gemshlib.h"
 #include "gemgraf.h"
-#include "geminit.h"
 #include "gemrslib.h"
 #include "gemgsxif.h"
 #include "rsload.h"
 #include "endian.h"
 
+#include "intmath.h"
 #include "string.h"
 #include "nls.h"
+#include "../vdi/vdi_defs.h"    /* for phys_work stuff */
 
 /*
  * defines & typedefs
@@ -43,13 +42,15 @@
 
 
 
+#if CONF_WITH_VDI_16BIT
+extern Vwk phys_work;           /* attribute area for physical workstation */
+#endif
 
 /*******  LOCALS  **********************/
 
 RSHDR   *rs_hdr;
 AESGLOBAL *rs_global;
 static char    tmprsfname[128];
-static char    free_str[256];   /* must be long enough for longest freestring in gem.rsc */
 
 /*
  *  Fix up a character position, from offset,row/col to a pixel value.
@@ -61,8 +62,8 @@ static void fix_chpos(WORD *pfix, WORD offset)
     WORD cpos;
 
     cpos = *pfix;
-    coffset = (cpos >> 8) & 0x00ff;
-    cpos &= 0x00ff;
+    coffset = HIBYTE(cpos);
+    cpos = LOBYTE(cpos);
 
     switch(offset)
     {
@@ -282,6 +283,44 @@ static void transform_cicon(WORD *src, WORD *dest, WORD w, WORD h, WORD planes)
     gl_dst.fd_nplanes = planes;
 
     vrn_trnfm(&gl_src, &gl_dst);
+
+#if CONF_WITH_VDI_16BIT
+    /*
+     * for Truecolor, we now have the VDI colour code (0-255) in each
+     * word/pixel.  however, the value is reversed: the least significant
+     * bit is bit 15 and the most significant is bit 8.  we reverse it
+     * manually, then use the value of 0-255 to look up the corresponding
+     * pixel value in the palette associated with the physical workstation.
+     *
+     * NOTE: it might be faster to reverse the value by using a lookup
+     * table, but we leave this as a possible future optimisation.
+     */
+    if (planes > 8)
+    {
+        WORD *p, i, n;
+        for (i = w*h, p = dest; i > 0; i--, p++)
+        {
+            n = 0;              /* index into palette array */
+            if (*p&0x8000)
+                n |= 0x0001;
+            if (*p&0x4000)
+                n |= 0x0002;
+            if (*p&0x2000)
+                n |= 0x0004;
+            if (*p&0x1000)
+                n |= 0x0008;
+            if (*p&0x0800)
+                n |= 0x0010;
+            if (*p&0x0400)
+                n |= 0x0020;
+            if (*p&0x0200)
+                n |= 0x0040;
+            if (*p&0x0100)
+                n |= 0x0080;
+            *p = phys_work.ext->palette[n];
+        }
+    }
+#endif
 }
 
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
@@ -623,7 +662,7 @@ void rs_fixit(AESGLOBAL *pglobal)
 /*
  *  rs_load: the rsrc_load() implementation
  */
-WORD rs_load(AESGLOBAL *pglobal, BYTE *rsfname)
+WORD rs_load(AESGLOBAL *pglobal, char *rsfname)
 {
     LONG  dosrc;
     WORD  ret;
@@ -636,7 +675,7 @@ WORD rs_load(AESGLOBAL *pglobal, BYTE *rsfname)
     if (!sh_find(tmprsfname))
         return FALSE;
 
-    dosrc = dos_open((BYTE *)tmprsfname,0); /* mode 0: read only */
+    dosrc = dos_open(tmprsfname,0); /* mode 0: read only */
     if (dosrc < 0L)
         return FALSE;
     fd = (UWORD)dosrc;
@@ -651,8 +690,49 @@ WORD rs_load(AESGLOBAL *pglobal, BYTE *rsfname)
 
 
 /* Get a string from the GEM-RSC */
-BYTE *rs_str(UWORD stnum)
+char *rs_str(UWORD stnum)
 {
-    strcpy(free_str, gettext(rs_fstr[stnum]));
-    return free_str;
+    return (char *)gettext(rs_fstr[stnum]);
+}
+
+/*
+ *  The xlate_obj_array() function below is used by
+ *  the generated GEM rsc code in aes/gem_rsc.c, and by the desktop
+ */
+
+/* Translates the strings in an OBJECT array */
+void xlate_obj_array(OBJECT *obj_array, int nobj)
+{
+    OBJECT *obj;
+    char **str;
+
+    for (obj = obj_array; --nobj >= 0; obj++) {
+        switch(obj->ob_type)
+        {
+#if 0
+        /*
+         * at the moment, there are no G_TEXT or G_BOXTEXT items in the
+         * EmuTOS resources.  note that, if they are added, erd will have
+         * to be updated too.
+         */
+        case G_TEXT:
+        case G_BOXTEXT:
+            str = &obj->ob_spec.tedinfo->te_ptext;
+            *str = (char *)gettext(*str);
+            break;
+#endif
+        case G_FTEXT:
+        case G_FBOXTEXT:
+            str = &obj->ob_spec.tedinfo->te_ptmplt;
+            *str = (char *)gettext(*str);
+            break;
+        case G_STRING:
+        case G_BUTTON:
+        case G_TITLE:
+            obj->ob_spec.free_string = (char *)gettext(obj->ob_spec.free_string);
+            break;
+        default:
+            break;
+        }
+    }
 }

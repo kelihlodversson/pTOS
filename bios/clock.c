@@ -1,7 +1,7 @@
 /*
  * clock.c - BIOS time and date routines
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2022 The EmuTOS development team
  *
  * Authors:
  *  MAD   Martin Doering
@@ -15,9 +15,7 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
-#include "kprint.h"
+#include "emutos.h"
 #include "clock.h"
 #include "ikbd.h"
 #include "mfp.h"
@@ -26,18 +24,70 @@
 #include "vectors.h"
 #include "nvram.h"
 #include "machine.h"
+#include "has.h"
 #include "cookie.h"
 #include "asm.h"
 #include "dma.h"
 #include "delay.h"
-#ifdef MACHINE_AMIGA
+#include "bios.h"
+#include "../bdos/bdosstub.h"
 #include "amiga.h"
+#include "lisa.h"
+#include "disk.h"
+#include "acsi.h"
+
+#if (CONF_WITH_MONSTER || CONF_WITH_IKBD_CLOCK)
+static UBYTE int2bcd(UWORD a)
+{
+    return (a % 10) + ((a / 10) << 4);
+}
+
+static UWORD bcd2int(UBYTE a)
+{
+    return (a & 0xf) + ((a >> 4) * 10);
+}
 #endif
 
-/* Date/Time to use when the hardware clock is not set.
- * We use the OS creation date at 00:00:00
+#if (CONF_WITH_ICDRTC || CONF_WITH_MONSTER || CONF_WITH_MEGARTC || CONF_WITH_NVRAM || CONF_WITH_IKBD_CLOCK || CONF_WITH_ULTRASATAN_CLOCK)
+/*
+ * structures used by extract_date(), extract_time()
  */
-#define DEFAULT_DATETIME MAKE_ULONG(os_dosdate, 0)
+struct ymd
+{
+    UWORD year;
+    UWORD month;
+    UWORD day;
+};
+
+struct hms
+{
+    UWORD hour;
+    UWORD minute;
+    UWORD second;
+};
+
+/*
+ * extract year/month/day from GEMDOS-style date
+ *
+ * note: extracted year is raw, i.e. relative to 1980
+ */
+static void extract_date(struct ymd *out, UWORD date)
+{
+    out->year = date >> 9;
+    out->month = (date >> 5) & 0x0f;
+    out->day = date & 0x1f;
+}
+
+/*
+ * extract hour/minute/second from GEMDOS-style time
+ */
+static void extract_time(struct hms *out, UWORD time)
+{
+    out->hour = time >> 11;
+    out->minute = (time >> 5) & 0x3f;
+    out->second = (time << 1) & 0x3f;
+}
+#endif
 
 #if CONF_WITH_ICDRTC
 
@@ -203,21 +253,19 @@ static void icdsetregs(struct icdclkreg *clkregs)
 
 static void icdsettime(struct icdclkreg *clkregs,UWORD time)
 {
-    UWORD hr, min, sec;
+    struct hms tm;
 
-    hr = (time >> 11) & 0x1f;
-    min = (time >> 5) & 0x3f;
-    sec = (time & 0x1f) << 1;
+    extract_time(&tm, time);
 
     /*
      * we must set the '24-hour clock' indicator in the tens-of-hours register
      */
-    clkregs->sec_l = sec % 10;
-    clkregs->sec_h = sec / 10;
-    clkregs->min_l = min % 10;
-    clkregs->min_h = min / 10;
-    clkregs->hour_l = hr % 10;
-    clkregs->hour_h = (hr / 10) | ICDRTC_24;
+    clkregs->sec_l = tm.second % 10;
+    clkregs->sec_h = tm.second / 10;
+    clkregs->min_l = tm.minute % 10;
+    clkregs->min_h = tm.minute / 10;
+    clkregs->hour_l = tm.hour % 10;
+    clkregs->hour_h = (tm.hour / 10) | ICDRTC_24;
 
     KDEBUG(("icdsettime() %x%x:%x%x:%x%x\n", clkregs->hour_h, clkregs->hour_l,
             clkregs->min_h, clkregs->min_l, clkregs->sec_h, clkregs->sec_l));
@@ -243,7 +291,7 @@ static UWORD icdgettime(struct icdclkreg *clkregs)
 
 static void icdsetdate(struct icdclkreg *clkregs,UWORD date)
 {
-    UWORD year, month, day;
+    struct ymd dt;
 
     /*
      * The ICD RTC stores the year as the offset from 1900; thus we need
@@ -254,16 +302,16 @@ static void icdsetdate(struct icdclkreg *clkregs,UWORD date)
      * it appears to use the year value, i.e. if the year is divisible by
      * 4, then it is assumed to be a leap year.
      */
-    year = (date >> 9) + 80;
-    month = (date >> 5) & 0x0f;
-    day = date & 0x1f;
+    extract_date(&dt, date);
 
-    clkregs->day_l = day % 10;
-    clkregs->day_h = (day / 10);
-    clkregs->mon_l = month % 10;
-    clkregs->mon_h = month / 10;
-    clkregs->year_l = year % 10;
-    clkregs->year_h = year / 10;
+    dt.year += 80;
+
+    clkregs->day_l = dt.day % 10;
+    clkregs->day_h = dt.day / 10;
+    clkregs->mon_l = dt.month % 10;
+    clkregs->mon_h = dt.month / 10;
+    clkregs->year_l = dt.year % 10;
+    clkregs->year_h = dt.year / 10;
 
     KDEBUG(("icdsetdate() %x%x/%x%x/%x%x\n", clkregs->year_h, clkregs->year_l,
             clkregs->mon_h, clkregs->mon_l, clkregs->day_h, clkregs->day_l));
@@ -423,26 +471,16 @@ static UBYTE read_ds1307(UBYTE address)
 
 /*==== MonSTer RTC high-level functions ====================================*/
 
-static UBYTE bcdToDec(UBYTE val)
-{
-    return (val/16*10) + (val%16);
-}
-
-static UBYTE decToBcd(UBYTE val)
-{
-    return (val/10*16) + (val%10);
-}
-
 static ULONG monstergetdt(void)
 {
     ULONG t = 0;
-    t  = (ULONG)(bcdToDec((read_ds1307(0) & 0x7f)/2));   /* Seconds */
-    t |= (ULONG)(bcdToDec(read_ds1307(1))) << 5;         /* Minute */
-    t |= (ULONG)(bcdToDec(read_ds1307(2) & 0x3f)) << 11; /* Hour */
+    t  = (ULONG)(bcd2int((read_ds1307(0) & 0x7f)/2));   /* Seconds */
+    t |= (ULONG)(bcd2int(read_ds1307(1))) << 5;         /* Minute */
+    t |= (ULONG)(bcd2int(read_ds1307(2) & 0x3f)) << 11; /* Hour */
 
-    t |= (ULONG)(bcdToDec(read_ds1307(4))) << 16;        /* Day of month */
-    t |= (ULONG)(bcdToDec(read_ds1307(5))) << 21;        /* Month */
-    t |= (ULONG)(bcdToDec(read_ds1307(6)) + 20) << 25;   /* Year */
+    t |= (ULONG)(bcd2int(read_ds1307(4))) << 16;        /* Day of month */
+    t |= (ULONG)(bcd2int(read_ds1307(5))) << 21;        /* Month */
+    t |= (ULONG)(bcd2int(read_ds1307(6)) + 20) << 25;   /* Year */
 
     KDEBUG(("monstergetdt = 0x%lx\n", t));
 
@@ -451,13 +489,20 @@ static ULONG monstergetdt(void)
 
 static void monstersetdt(ULONG time)
 {
-    write_ds1307(0, decToBcd((time & 0x1f)*2));     /* Seconds */
-    write_ds1307(1, decToBcd((time >> 5) & 0x3f));  /* Minute */
-    write_ds1307(2, decToBcd((time >> 11) & 0x1f)); /* Hour */
+    struct hms tm;
+    struct ymd dt;
 
-    write_ds1307(4, decToBcd((time >> 16) & 0x1f)); /* Day of month */
-    write_ds1307(5, decToBcd((time >> 21) & 0x0f)); /* Month */
-    write_ds1307(6, decToBcd((time >> 25) - 20));   /* Year */
+    extract_time(&tm, LOWORD(time));
+    extract_date(&dt, HIWORD(time));
+    dt.year = (dt.year + 1980) % 100;
+
+    write_ds1307(0, int2bcd(tm.second));    /* Seconds */
+    write_ds1307(1, int2bcd(tm.minute));    /* Minute */
+    write_ds1307(2, int2bcd(tm.hour));      /* Hour */
+
+    write_ds1307(4, int2bcd(dt.day));       /* Day of month */
+    write_ds1307(5, int2bcd(dt.month));     /* Month */
+    write_ds1307(6, int2bcd(dt.year));      /* Year */
 
     KDEBUG(("monstersetdt(0x%lx)\n", time));
 }
@@ -469,12 +514,15 @@ void detect_monster_rtc(void)
     /*
      * Check if there's a DS1307-compatible RTC connected.
      * If there isn't, any attempts to read from it will
-     * return all zeros. So we try to read the DAY register.
-     * If it's zero, there's either no RTC or it's not
+     * return either all zeros or all ones depending on the
+     * exact HW setup. So we try to read the DAY register.
+     * If it's 0 or 0xff, there's either no RTC or it's not
      * initialized. So we try to write to the DAY register
-     * and read back it's value. If still zero, then no
-     * RTC is present.
+     * and read back its value. If it is still 0 or 0xff,
+     * then no RTC is present.
      */
+
+    UBYTE dayreg;
 
     /* Initialize I2C delay. */
     delay5us = loopcount_1_msec / 200;
@@ -482,11 +530,13 @@ void detect_monster_rtc(void)
     /* Detect presence of RTC. */
     has_monster_rtc = TRUE;
 
-    if (read_ds1307(4) == 0)
+    dayreg = read_ds1307(4);
+    if ((dayreg == 0) || (dayreg == 0xff))
     {
         write_ds1307(4, 1);
 
-        if (read_ds1307(4) == 0)
+        dayreg = read_ds1307(4);
+        if ((dayreg == 0) || (dayreg == 0xff))
             has_monster_rtc = FALSE;
         else
             /* RTC present, but not initialized. */
@@ -689,12 +739,16 @@ static void msetregs(struct myclkreg *clkregs)
 
 static void mdosettime(struct myclkreg *clkregs,UWORD time)
 {
-    clkregs->sec_l = ((time & 0x1f) << 1) % 10;
-    clkregs->sec_h = ((time & 0x1f) << 1) / 10;
-    clkregs->min_l = ((time >> 5) & 0x3f) % 10;
-    clkregs->min_h = ((time >> 5) & 0x3f) / 10;
-    clkregs->hour_l = ((time >> 11) & 0x1f) % 10;
-    clkregs->hour_h = ((time >> 11) & 0x1f) / 10;
+    struct hms tm;
+
+    extract_time(&tm, time);
+
+    clkregs->sec_l = tm.second % 10;
+    clkregs->sec_h = tm.second / 10;
+    clkregs->min_l = tm.minute % 10;
+    clkregs->min_h = tm.minute / 10;
+    clkregs->hour_l = tm.hour % 10;
+    clkregs->hour_h = tm.hour / 10;
 
     KDEBUG(("mdosettime() %x%x:%x%x:%x%x\n", clkregs->hour_h, clkregs->hour_l,
             clkregs->min_h, clkregs->min_l, clkregs->sec_h, clkregs->sec_l));
@@ -716,12 +770,16 @@ static UWORD mdogettime(struct myclkreg *clkregs)
 
 static void mdosetdate(struct myclkreg *clkregs,UWORD date)
 {
-    clkregs->day_l = (date & 0x1F) % 10;
-    clkregs->day_h = (date & 0x1F) / 10;
-    clkregs->mon_l = ((date >> 5) & 0xF) % 10;
-    clkregs->mon_h = ((date >> 5) & 0xF) / 10;
-    clkregs->year_l = (date >> 9) % 10;
-    clkregs->year_h = (date >> 9) / 10;
+    struct ymd dt;
+
+    extract_date(&dt, date);
+
+    clkregs->day_l = dt.day % 10;
+    clkregs->day_h = dt.day / 10;
+    clkregs->mon_l = dt.month % 10;
+    clkregs->mon_h = dt.month / 10;
+    clkregs->year_l = dt.year % 10;
+    clkregs->year_h = dt.year / 10;
 
     KDEBUG(("mdosetdate() %x%x/%x%x/%x%x\n", clkregs->year_h, clkregs->year_l,
             clkregs->mon_h, clkregs->mon_l, clkregs->day_h, clkregs->day_l));
@@ -765,6 +823,8 @@ static void msetdt(ULONG dt)
     msetregs(&clkregs);
 }
 
+#undef clk
+
 #endif /* CONF_WITH_MEGARTC */
 
 #if CONF_WITH_NVRAM
@@ -775,11 +835,9 @@ static void msetdt(ULONG dt)
  * The MC146818 was used as the RTC and NVRAM in TT and Falcon.
  * You can find a header file in /usr/src/linux/include/linux/mc146818rtc.h
  * Proper implementation of RTC functions is in linux/arch/m68k/atari/time.c.
- * The code below is just my quick hack. It works but it could not be used
- * for updating real RTC because it doesn't handle the control registers
- * and also doesn't provide proper timing (32kHz device needs proper timing).
- * Reading of RTC should be OK on real machines.
- * (PES)
+ *
+ * The following code is based on a review of the above sources together
+ * with disassemblies of TT and Falcon TOS.
  */
 #define NVRAM_RTC_SECONDS 0
 #define NVRAM_RTC_MINUTES 2
@@ -787,77 +845,102 @@ static void msetdt(ULONG dt)
 #define NVRAM_RTC_DAYS    7
 #define NVRAM_RTC_MONTHS  8
 #define NVRAM_RTC_YEARS   9
+#define NVRAM_RTC_REG_A   10
+#define NVRAM_RTC_REG_B   11
+#define NVRAM_RTC_REG_C   12
+#define NVRAM_RTC_REG_D   13
+
+/*
+ * Internal structure for holding values from RTC.
+ */
+struct clkreg {
+    UBYTE years, months, days;
+    UBYTE hours, minutes, seconds;
+};
 
 /* Offset to be added to the NVRAM RTC year to get the actual year.
  * Beware, this value depends on the ROM OS version.
  * See clock_init() for details. */
 static int nvram_rtc_year_offset;
 
-static void ndosettime(UWORD time)
+static WORD nvram_getregs(struct clkreg *clk)
 {
-    int seconds = (time & 0x1f) << 1;
-    int minutes = (time >> 5) & 0x3f;
-    int hours = (time >> 11) & 0x1f;
+    WORD old_sr;
 
-    KDEBUG(("ndosettime() %02d:%02d:%02d\n", hours, minutes, seconds));
+    if ((get_nvram_rtc(NVRAM_RTC_REG_D) & 0x80) == 0)   /* VRT==0 => invalid date/time */
+        return -1;
 
-    set_nvram_rtc(NVRAM_RTC_SECONDS, seconds);
-    set_nvram_rtc(NVRAM_RTC_MINUTES, minutes);
-    set_nvram_rtc(NVRAM_RTC_HOURS, hours);
+    old_sr = set_sr(0x2700);                        /* prevent interrupts */
+
+    while(get_nvram_rtc(NVRAM_RTC_REG_A) & 0x80)    /* wait for UIP == 0 */
+        ;
+
+    clk->seconds = get_nvram_rtc(NVRAM_RTC_SECONDS);
+    clk->minutes = get_nvram_rtc(NVRAM_RTC_MINUTES);
+    clk->hours = get_nvram_rtc(NVRAM_RTC_HOURS);
+    clk->days = get_nvram_rtc(NVRAM_RTC_DAYS);
+    clk->months = get_nvram_rtc(NVRAM_RTC_MONTHS);
+    clk->years = get_nvram_rtc(NVRAM_RTC_YEARS);
+
+    set_sr(old_sr);
+
+    KDEBUG(("nvram_getregs(): %02d/%02d/%02d  %02d:%02d:%02d\n",
+            clk->years, clk->months, clk->days, clk->hours, clk->minutes, clk->seconds));
+
+    return 0;
 }
 
-static UWORD ndogettime(void)
+static void nvram_setregs(struct clkreg *clk)
 {
-    UWORD seconds = get_nvram_rtc(NVRAM_RTC_SECONDS);
-    UWORD minutes = get_nvram_rtc(NVRAM_RTC_MINUTES);
-    UWORD hours = get_nvram_rtc(NVRAM_RTC_HOURS);
-    UWORD time;
+    KDEBUG(("nvram_setregs(): %02d/%02d/%02d  %02d:%02d:%02d\n",
+            clk->years, clk->months, clk->days, clk->hours, clk->minutes, clk->seconds));
 
-    KDEBUG(("ndogettime() %02d:%02d:%02d\n", hours, minutes, seconds));
-
-    time = (seconds >> 1) | (minutes << 5) | (hours << 11);
-
-    return time;
-}
-
-static void ndosetdate(UWORD date)
-{
-    int days = date & 0x1f;
-    int months = (date >> 5) & 0xf;
-    int years = (date >> 9) - nvram_rtc_year_offset;
-
-    KDEBUG(("ndosetdate() %02d/%02d/%02d\n", years, months, days));
-
-    set_nvram_rtc(NVRAM_RTC_DAYS, days);
-    set_nvram_rtc(NVRAM_RTC_MONTHS, months);
-    set_nvram_rtc(NVRAM_RTC_YEARS, years);
-}
-
-static UWORD ndogetdate(void)
-{
-    UWORD days = get_nvram_rtc(NVRAM_RTC_DAYS);
-    UWORD months = get_nvram_rtc(NVRAM_RTC_MONTHS);
-    UWORD years = get_nvram_rtc(NVRAM_RTC_YEARS);
-    UWORD date;
-
-    KDEBUG(("ndogetdate() %02d/%02d/%02d\n", years, months, days));
-
-    date = (days & 0x1f) | ((months & 0xf) << 5) | ((years + nvram_rtc_year_offset) << 9);
-
-    return date;
+    set_nvram_rtc(NVRAM_RTC_REG_B, 0x80);   /* prevent updates, abort any in progress */
+    set_nvram_rtc(NVRAM_RTC_REG_A, 0x2A);   /* select 32768Hz frequency */
+    set_nvram_rtc(NVRAM_RTC_REG_B, 0x86);   /* select binary encoding, 24-hour clock */
+    set_nvram_rtc(NVRAM_RTC_YEARS, clk->years);
+    set_nvram_rtc(NVRAM_RTC_MONTHS, clk->months);
+    set_nvram_rtc(NVRAM_RTC_DAYS, clk->days);
+    set_nvram_rtc(NVRAM_RTC_HOURS, clk->hours);
+    set_nvram_rtc(NVRAM_RTC_MINUTES, clk->minutes);
+    set_nvram_rtc(NVRAM_RTC_SECONDS, clk->seconds);
+    set_nvram_rtc(NVRAM_RTC_REG_B, 0x06);   /* allow updates */
 }
 
 /*==== NVRAM RTC high-level functions ======================================*/
 
 static ULONG ngetdt(void)
 {
-    return MAKE_ULONG(ndogetdate(), ndogettime());
+    struct clkreg clk;
+    UWORD date, time;
+
+    if (nvram_getregs(&clk) < 0)
+        return 0UL;
+
+    date = (((clk.years+nvram_rtc_year_offset) & 0x7f) << 9)
+            | ((clk.months & 0xf) << 5) | (clk.days & 0x1f);
+    time = (clk.hours << 11) | (clk.minutes << 5) | (clk.seconds >> 1);
+
+    return MAKE_ULONG(date, time);
 }
 
 static void nsetdt(ULONG dt)
 {
-    ndosetdate(dt >> 16);
-    ndosettime(dt);
+    struct clkreg clk;
+    struct ymd date;
+    struct hms time;
+
+    extract_date(&date, HIWORD(dt));
+    clk.years = date.year - nvram_rtc_year_offset;
+    clk.months = date.month;
+    clk.days = date.day;
+
+    extract_time(&time, LOWORD(dt));
+    clk.hours = time.hour;
+    clk.minutes = time.minute;
+    clk.seconds = time.second;
+
+    nvram_setregs(&clk);
 }
 
 #endif /* CONF_WITH_NVRAM */
@@ -889,16 +972,6 @@ void clockvec(UBYTE *buf)
 
     memmove(b, buf, 6);
     iclk_ready = 1;
-}
-
-static UBYTE int2bcd(UWORD a)
-{
-    return (a % 10) + ((a / 10) << 4);
-}
-
-static UWORD bcd2int(UBYTE a)
-{
-    return (a & 0xf) + ((a >> 4) * 10);
 }
 
 /*==== Ikbd clock internal functions ======================================*/
@@ -956,20 +1029,27 @@ static UWORD idogettime(void)
 
 static void idosettime(UWORD time)
 {
-    iclkbuf.sec = int2bcd((time << 1) & 0x3f);
-    iclkbuf.min = int2bcd((time >> 5) & 0x3f);
-    iclkbuf.hour = int2bcd((time >> 11) & 0x1f);
+    struct hms tm;
+
+    extract_time(&tm, time);
+
+    iclkbuf.sec = int2bcd(tm.second);
+    iclkbuf.min = int2bcd(tm.minute);
+    iclkbuf.hour = int2bcd(tm.hour);
 
     KDEBUG(("idosettime() %02x:%02x:%02x\n", iclkbuf.hour, iclkbuf.min, iclkbuf.sec));
 }
 
 static void idosetdate(UWORD date)
 {
-    UWORD year = 1980 + ((date >> 9) & 0x7f);
+    struct ymd dt;
 
-    iclkbuf.year = int2bcd(year % 100);
-    iclkbuf.month = int2bcd((date >> 5) & 0xf);
-    iclkbuf.day = int2bcd(date & 0x1f);
+    extract_date(&dt, date);
+    dt.year = (dt.year + 1980) % 100;
+
+    iclkbuf.year = int2bcd(dt.year);
+    iclkbuf.month = int2bcd(dt.month);
+    iclkbuf.day = int2bcd(dt.day);
 
     KDEBUG(("idosetdate() %02x/%02x/%02x\n", iclkbuf.year, iclkbuf.month, iclkbuf.day));
 }
@@ -992,6 +1072,66 @@ static void isetdt(ULONG dt)
 }
 
 #endif /* CONF_WITH_IKBD_CLOCK */
+
+#if CONF_WITH_ULTRASATAN_CLOCK /* CONF_WITH_ULTRASATAN_CLOCK */
+
+static ULONG ultrasatan_getdt(void)
+{
+    UBYTE hour, minute, second, day, month;
+    UWORD year, date, time;
+
+    int ret;
+    ret = acsi_ioctl(ultrasatan_id,ULTRASATAN_GET_CLOCK,NULL);
+
+    /* check return status and format */
+    if (ret != 0 || memcmp(dskbufp,"RTC",3) != 0)
+        return 0;
+
+    year = (UWORD)dskbufp[3];
+    month = dskbufp[4];
+    day = dskbufp[5];
+    hour = dskbufp[6];
+    minute = dskbufp[7];
+    second = dskbufp[8];
+
+    KDEBUG(("ultrasatan_getdt(): read clock value %02d-%02d-%02d %02d:%02d:%02d\n", year, month, day, hour, minute, second));
+
+    date = (year + 20) << 9 | (month & 0xf) << 5 | (day & 0x1f);
+    time = (hour << 11) | (minute << 5) | (second >> 1);
+
+    return MAKE_ULONG(date, time);
+}
+
+static ULONG ultrasatan_setdt(ULONG dt)
+{
+    struct ymd date;
+    struct hms time;
+    int ret;
+
+    extract_date(&date, HIWORD(dt));
+    extract_time(&time, LOWORD(dt));
+
+    KDEBUG(("ultrasatan_setdt(): new date/time %02d-%02d-%02d %02d:%02d:%02d\n", date.year - 20, date.month, date.day, time.hour, time.minute, time.second));
+
+    dskbufp[0] = 'R';
+    dskbufp[1] = 'T';
+    dskbufp[2] = 'C';
+
+    dskbufp[3] = (UBYTE)(date.year - 20);
+    dskbufp[4] = date.month;
+    dskbufp[5] = date.day;
+    dskbufp[6] = time.hour;
+    dskbufp[7] = time.minute;
+    dskbufp[8] = time.second;
+
+    KDEBUG(("ultrasatan_setdt(): setting clock\n"));
+
+    ret = acsi_ioctl(ultrasatan_id,ULTRASATAN_SET_CLOCK,NULL);
+
+    return ret;
+}
+
+#endif /* CONF_WITH_ULTRASATAN_CLOCK */
 
 /* internal init */
 
@@ -1062,18 +1202,18 @@ void clock_init(void)
 #if CONF_WITH_IKBD_CLOCK
     else
     {
-        /* The IKBD clock is lost at power off, and has bogus values at
-         * power on.  So initialize it to the default date/time at startup.
+        /*
+         * The IKBD clock powers up with zeros in the month & day
+         * fields.  If we find that, we initialize it to the default
+         * date/time, just like Atari TOS does.
          */
-        if (FIRST_BOOT)
+        if ((igetdt() & 0x01ff0000L) == 0L)
             isetdt(DEFAULT_DATETIME);
     }
 #endif /* CONF_WITH_IKBD_CLOCK */
 }
 
 /* xbios functions */
-
-extern UWORD current_time, current_date; /* From bdos/time.c */
 
 void settime(LONG time)
 {
@@ -1109,6 +1249,12 @@ void settime(LONG time)
         icdsetdt(time);
     }
 #endif  /* CONF_WITH_ICDRTC */
+#if CONF_WITH_ULTRASATAN_CLOCK
+    else if (has_ultrasatan_clock)
+    {
+        ultrasatan_setdt(time);
+    }
+#endif /* CONF_WITH_ULTRASATAN_CLOCK */
     else
     {
 #if CONF_WITH_IKBD_CLOCK
@@ -1129,6 +1275,12 @@ LONG gettime(void)
         return amiga_getdt();
     }
 #endif /* MACHINE_AMIGA */
+#ifdef MACHINE_LISA
+    else if (TRUE)
+    {
+        return lisa_getdt();
+    }
+#endif /* MACHINE_LISA */
 #if CONF_WITH_NVRAM
     else if (has_nvram)
     {
@@ -1153,6 +1305,12 @@ LONG gettime(void)
         return icdgetdt();
     }
 #endif  /* CONF_WITH_ICDRTC */
+#if CONF_WITH_ULTRASATAN_CLOCK
+    else if (has_ultrasatan_clock)
+    {
+        return ultrasatan_getdt();
+    }
+#endif /* CONF_WITH_ULTRASATAN_CLOCK */
     else
     {
 #if CONF_WITH_IKBD_CLOCK

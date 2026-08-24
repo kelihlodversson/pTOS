@@ -1,21 +1,33 @@
 #
-# this file contains the name of languages that will
-# be generated in file langs.c by bug make.
-# each line should be of the form
+# po/LINGUAS - languages file for 'bug'
 #
-#   xy charset
+# This file contains a mapping of languages to character sets.
 #
-# where xy is a lowercase two-letter language name,
-# and charset is the name of the destination charset
+# For multi-language flavours of EmuTOS, the translations for
+# all languages listed here will be included in langs.c by
+# 'bug make'.
 #
-
-fr atarist
+# For single-language flavours of EmuTOS, 'bug translate' will
+# use this file to determine the appropriate character set.
+#
+# Each line consists of a two-character language specification
+# followed by the destination character set.
+#
 de atarist
-fi atarist
+fr atarist
+es atarist
 it atarist
-cs latin2
-es latin9
+fi atarist
+nl atarist
+ca atarist
+
+cs cp895
+hu latin2
+pl latin2
+ro latin2
+
+ru russian-atarist
 
 gr cp737
 
-ru russian-atarist
+tr cp1254

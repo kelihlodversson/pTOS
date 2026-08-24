@@ -5,6 +5,8 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+#define ENABLE_KDEBUG
+
 #include "usb_global.h"
 #include "usb.h"
 #include "usb_api.h"
@@ -98,6 +100,7 @@ static long xhci_ioctl(struct ucdif *u, short cmd, long arg)
 
 void xhci_init(void)
 {
+    KDEBUG(("xhci_init\n"));
     if (ucd_register(&xhci_uif, &root_hub_dev)) {
         KINFO(("xhci_init(): ucd register failed!\n"));
         return;

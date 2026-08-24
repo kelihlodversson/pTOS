@@ -1,7 +1,7 @@
 /*
  * coldfire.c - ColdFire specific functions
  *
- * Copyright (C) 2013-2016 The EmuTOS development team
+ * Copyright (C) 2013-2024 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -17,16 +17,14 @@
 /* #define ENABLE_KDEBUG */
 #define DEBUG_FLEXCAN 0
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "coldfire.h"
 #include "coldpriv.h"
-#include "tosvars.h"
 #include "ikbd.h"
 #include "string.h"
-#include "kprint.h"
 #include "delay.h"
 #include "asm.h"
+#include "serport.h"
 
 #if DEBUG_FLEXCAN
 static void flexcan_dump_registers(void);
@@ -37,7 +35,12 @@ void coldfire_early_init(void)
 #if defined(MACHINE_M548X) && CONF_WITH_IDE && !CONF_WITH_BAS_MEMORY_MAP
     m548x_init_cpld();
 #endif
+    coldfire_rs232_disable_interrupt();
 }
+
+MCF_COOKIE cookie_mcf;
+
+ULONG cf_spi_chip_select;
 
 #if CONF_WITH_COLDFIRE_RS232
 
@@ -58,24 +61,6 @@ void coldfire_rs232_write_byte(UBYTE b)
 
     /* Send the byte */
     MCF_UART_UTB(RS232_UART_PORT) = (UBYTE)b;
-}
-
-BOOL coldfire_rs232_can_read(void)
-{
-    /* Wait until a byte is received */
-    return MCF_UART_USR(RS232_UART_PORT) & MCF_UART_USR_RXRDY;
-}
-
-UBYTE coldfire_rs232_read_byte(void)
-{
-    /* Wait until character has been received */
-    while (!coldfire_rs232_can_read())
-    {
-        /* Wait */
-    }
-
-    /* Read the received byte */
-    return MCF_UART_URB(RS232_UART_PORT);
 }
 
 #endif /* CONF_WITH_COLDFIRE_RS232 */
@@ -128,6 +113,12 @@ const char* m548x_machine_name(void)
 
         case MCF_SIU_JTAGID_MCF5485:
             return "M5485EVB";
+
+        case MCF_SIU_JTAGID_MCF5474:
+            return "M5474LITE";
+
+        case MCF_SIU_JTAGID_MCF5475:
+            return "M5475EVB";
 
         default:
             return "M548????";
@@ -182,8 +173,6 @@ void firebee_shutdown(void)
 
 #endif /* MACHINE_FIREBEE */
 
-#if CONF_SERIAL_CONSOLE
-
 void coldfire_rs232_enable_interrupt(void)
 {
     /* We assume that the RS-232 port has already been configured.
@@ -206,31 +195,52 @@ void coldfire_rs232_enable_interrupt(void)
     MCF_INTC_IMRH &= ~MCF_INTC_IMRH_INT_MASK35;
 }
 
+void coldfire_rs232_disable_interrupt(void)
+{
+    WORD old_sr;
+
+    /* Mask all interrupt sources within the PSC */
+    MCF_PSC0_PSCIMR = 0;
+
+    /*
+     * Mask the reception of the interrupt.
+     * Note that according to the MCF547x Reference Manual masking
+     * an interrupt should always be done while the IPL is higher
+     * than the level configured for the respective interrupt.
+     */
+    old_sr = set_sr(0x2700);
+    MCF_INTC_IMRH |= MCF_INTC_IMRH_INT_MASK35;
+    set_sr(old_sr);
+}
+
+
 /* Called from assembler routine coldfire_int_35 */
 void coldfire_rs232_interrupt_handler(void)
 {
-    UBYTE ascii;
+    UBYTE data;
 
     /* While there are pending bytes */
     while (MCF_UART_USR(RS232_UART_PORT) & MCF_UART_USR_RXRDY)
     {
-        /* Read the ASCII character */
-        ascii = MCF_UART_URB(RS232_UART_PORT);
+        /* Read the data byte */
+        data = MCF_UART_URB(RS232_UART_PORT);
 
+#if CONF_SERIAL_CONSOLE && !CONF_SERIAL_CONSOLE_POLLING_MODE
         /* And append a new IOREC value into the IKBD buffer */
-        push_ascii_ikbdiorec(ascii);
+        push_ascii_ikbdiorec(data);
 
 #if DEBUG_FLEXCAN
         /* Dump FlexCAN registers when Return is typed on the serial console */
-        if (ascii == '\r')
+        if (data == '\r')
             flexcan_dump_registers();
 #endif
+
+#else
+        /* And append a new IOREC value into the serial buffer */
+        push_serial_iorec(data);
+#endif /* CONF_SERIAL_CONSOLE */
     }
 }
-
-#endif /* CONF_SERIAL_CONSOLE */
-
-MCF_COOKIE cookie_mcf;
 
 void setvalue_mcf(void)
 {
@@ -247,6 +257,7 @@ void setvalue_mcf(void)
 #ifdef MACHINE_FIREBEE
     strcpy(cookie_mcf.device_name, "MCF5474");
     cookie_mcf.sysbus_frequency = 132;
+    cf_spi_chip_select = MCF_DSPI_DTFR_CS5;
 #else
     switch (MCF_SIU_JTAGID & MCF_SIU_JTAGID_PROCESSOR)
     {
@@ -254,15 +265,31 @@ void setvalue_mcf(void)
             strcpy(cookie_mcf.device_name, "MCF5484");
             /* If a MCF5484 we guess it is a LITE board */
             cookie_mcf.sysbus_frequency = 100;
+            cf_spi_chip_select = MCF_VALUE_UNKNOWN;
             break;
         case MCF_SIU_JTAGID_MCF5485:
             strcpy(cookie_mcf.device_name, "MCF5485");
             /* If a MCF5485 we guess it is a EVB board */
             cookie_mcf.sysbus_frequency = 133;
+            cf_spi_chip_select = MCF_DSPI_DTFR_CS2;
+            break;
+        case MCF_SIU_JTAGID_MCF5474:
+            strcpy(cookie_mcf.device_name, "MCF5474");
+            /* If a MCF5474 we guess it is a LITE board */
+            cookie_mcf.sysbus_frequency = 100;
+            cf_spi_chip_select = MCF_VALUE_UNKNOWN;
+            break;
+        case MCF_SIU_JTAGID_MCF5475:
+            strcpy(cookie_mcf.device_name, "MCF5475");
+            /* If a MCF5475 we guess it is a EVB board */
+            cookie_mcf.sysbus_frequency = 133;
+            cf_spi_chip_select = MCF_DSPI_DTFR_CS2;
             break;
         default:
             strcpy(cookie_mcf.device_name, "UNKNOWN");
-            cookie_mcf.sysbus_frequency = MCF_VALUE_UNKNOWN;
+            cookie_mcf.sysbus_frequency = 100;
+            cf_spi_chip_select = MCF_VALUE_UNKNOWN;
+            KDEBUG(("Unknown ColdFire processor. Defaulting SDCLK to 100 MHz.\n"));
             break;
     }
 #endif
@@ -438,7 +465,7 @@ void coldfire_flexcan_message_buffer_interrupt(void)
 
         /* Unlock the message buffer.
          * This is achieved by reading the free-running timer. */
-        UNUSED(MCF_CAN_TIMER1);
+        FORCE_READ(MCF_CAN_TIMER1);
 
         /* Clear the interrupt */
         MCF_CAN_IFLAG1 = MCF_CAN_IFLAG_BUF15I;

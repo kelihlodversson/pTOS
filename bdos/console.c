@@ -2,7 +2,7 @@
  * console.c - GEMDOS console system
  *
  * Copyright (C) 2001 Lineo, Inc.
- * Copyright (C) 2016-2017 The EmuTOS development team
+ * Copyright (C) 2016-2019 The EmuTOS development team
  *
  * Authors:
  *  JSL   Jason S. Loveman
@@ -17,13 +17,12 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "fs.h"
 #include "proc.h"
 #include "console.h"
 #include "biosbind.h"
-#include "kprint.h"
+#include "bdosstub.h"
 
 /*
  * The following structure is used for the typeahead buffer
@@ -31,23 +30,34 @@
 typedef struct {
     WORD add;                   /* index of add position */
     WORD remove;                /* index of remove position */
-    WORD glbcolumn;             /* current screen column (zero-based) */
     LONG glbkbchar[KBBUFSZ];    /* the actual typeahead buffer */
 } TYPEAHEAD;
 
 
 /*
- * the actual typeahead buffers
+ * the actual typeahead buffer structures & pointers to them
+ *
+ * [0] is used for prn, [1] for aux, and [2] for con
+ * since a typeahead buffer for prn is nonsense, we only
+ * need 2 structures
+ */
+static TYPEAHEAD aux_typeahead;
+static TYPEAHEAD con_typeahead;
+static TYPEAHEAD *buffer[3];
+
+
+/*
+ * array for keeping track of screen column (used for tabbing)
  *
  * [0] is used for prn, [1] for aux, and [2] for con
  */
-static TYPEAHEAD buffer[3];
+static WORD glbcolumn[3];
 
 
 /*
  * default standard handles
  */
-static const BYTE default_handle[NUMSTD] =
+static const SBYTE default_handle[NUMSTD] =
 {
     H_Console,      /* stdin  = con: */
     H_Console,      /* stdout = con: */
@@ -96,22 +106,30 @@ static int backsp(int h, char *cbuf, int retlen, int col);
  */
 void stdhdl_init(void)
 {
-    TYPEAHEAD *bufptr;
     WORD i;
 
     for (i = 0; i < NUMSTD; i++)
         run->p_uft[i] = default_handle[i];
 
-    /* initialise typeahead buffer values */
-    for (i = 0, bufptr = buffer; i < 3; i++, bufptr++)
-        bufptr->add = bufptr->remove = 0;
+    /* initialise typeahead pointers */
+    buffer[0] = NULL;       /* prn */
+    buffer[1] = &aux_typeahead;
+    buffer[2] = &con_typeahead;
+
+    /* initialise typeahead buffer & screen column values */
+    for (i = 0; i < 3; i++)
+    {
+        if (buffer[i])
+            buffer[i]->add = buffer[i]->remove = 0;
+        glbcolumn[i] = 0;
+    }
 }
 
 
 /*
  * return default handle for given standard handle
  */
-BYTE get_default_handle(int stdh)
+SBYTE get_default_handle(int stdh)
 {
     return default_handle[stdh];
 }
@@ -126,10 +144,10 @@ static long constat(int h)
 {
     TYPEAHEAD *bufptr;
 
-    if (h > 2)
+    if ((h < 1) || (h > 2))
         return 0;
 
-    bufptr = &buffer[h];
+    bufptr = buffer[h];
 
     return (bufptr->add > bufptr->remove) ? -1L : Bconstat(h);
 }
@@ -194,33 +212,32 @@ static void conbrk(int h)
     stop = 0;
     if (Bconstat(h))
     {
-        bufptr = &buffer[h];
+        bufptr = buffer[h];
         do
         {
             c = LOBYTE(ch = Bconin(h));
-            if (c == ctrlc)
-            {
+            switch(c) {
+            case ctrlc:
                 /* comments for the following used to say: "flush BDOS
                  * & BIOS buffers", but that wasn't (& isn't) true */
                 buflush(bufptr);    /* flush BDOS buffer */
                 terminate();
-            }
-
-            if (c == ctrls)
+                break;
+            case ctrls:
                 stop = 1;
-            else if (c == ctrlq)
+                break;
+            case ctrlq:
                 stop = 0;
-            else if (c == ctrlx)
-            {
+                break;
+            case ctrlx:
                 buflush(bufptr);
-                bufptr->glbkbchar[bufptr->add++ & KBBUFMASK] = ch;
-            }
-            else
-            {
+                FALLTHROUGH;
+            default:
                 if (bufptr->add < bufptr->remove + KBBUFSZ)
                     bufptr->glbkbchar[bufptr->add++ & KBBUFMASK] = ch;
                 else
                     Bconout(h, 7);
+                break;
             }
         } while (stop);
     }
@@ -245,16 +262,14 @@ static void buflush(TYPEAHEAD *bufptr)
  */
 static void conout(int h, int ch)
 {
-    TYPEAHEAD *bufptr = &buffer[h];
-
     conbrk(h);                  /* check for control-s break */
     Bconout(h,ch);              /* output character to console */
-    if (ch >= ' ')
-        bufptr->glbcolumn++;    /* keep track of screen column */
+    if ((unsigned char)ch >= ' ')
+        glbcolumn[h]++;         /* keep track of screen column */
     else if (ch == cr)
-        bufptr->glbcolumn = 0;
+        glbcolumn[h] = 0;
     else if (ch == bs)
-        bufptr->glbcolumn--;
+        glbcolumn[h]--;
 }
 
 
@@ -276,15 +291,12 @@ long xconout(int ch)
  */
 void tabout(int h, int ch)
 {
-    TYPEAHEAD *bufptr;
-
     if (ch == tab)
     {
-        bufptr = &buffer[h];
         do
         {
             conout(h,' ');
-        } while (bufptr->glbcolumn & 7);
+        } while (glbcolumn[h] & 7);
     }
     else
         conout(h,ch);
@@ -338,15 +350,19 @@ long xprtout(int ch)
  */
 static long getch(int h)
 {
-    TYPEAHEAD *bufptr = &buffer[h];
+    TYPEAHEAD *bufptr;
     long temp;
 
-    if (bufptr->add > bufptr->remove)
+    if ((h >= 1) && (h <= 2))
     {
-        temp = bufptr->glbkbchar[bufptr->remove++ & KBBUFMASK];
-        if (bufptr->add == bufptr->remove)
-            buflush(bufptr);
-        return temp;
+        bufptr = buffer[h];
+        if (bufptr->add > bufptr->remove)
+        {
+            temp = bufptr->glbkbchar[bufptr->remove++ & KBBUFMASK];
+            if (bufptr->add == bufptr->remove)
+                buflush(bufptr);
+            return temp;
+        }
     }
 
     return Bconin(h);
@@ -477,7 +493,6 @@ static void newline(int h, int startcol)
 /* col is the starting console column */
 static int backsp(int h, char *cbuf, int retlen, int col)
 {
-    TYPEAHEAD *bufptr = &buffer[h];
     char ch;                    /* current character */
     int  i;
     char *p;                    /* character pointer */
@@ -499,7 +514,7 @@ static int backsp(int h, char *cbuf, int retlen, int col)
         else
             col += 1;
     }
-    while (bufptr->glbcolumn > col)
+    while (glbcolumn[h] > col)
     {
         conout(h,bs);           /* backspace until we get to proper column */
         conout(h,' ');
@@ -524,11 +539,10 @@ void xconrs(char *p)
 /* h is special handle denoting device number */
 int cgets(int h, int maxlen, char *buf)
 {
-    TYPEAHEAD *bufptr = &buffer[h];
     char ch;
     int i, stcol, retlen;
 
-    stcol = bufptr->glbcolumn;      /* set up starting column */
+    stcol = glbcolumn[h];       /* set up starting column */
     for (retlen = 0; retlen < maxlen; )
     {
         switch(ch = getch(h))

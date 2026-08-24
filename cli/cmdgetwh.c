@@ -137,7 +137,7 @@ WORD getht(void)
 
 #else /* ROM build: read the kernel's own linea_vars directly */
 
-#include "../bios/lineavars.h"
+#include "lineavars.h"
 
 ULONG getwh(void)
 {

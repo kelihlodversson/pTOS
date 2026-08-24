@@ -1,7 +1,7 @@
 /*
  * xbiosbind.h - Bindings for XBIOS access
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2022 The EmuTOS development team
  *
  * Authors:
  *  MAD   Martin Doering
@@ -57,13 +57,14 @@
 #define Kbrate(a,b) xbios_w_ww(35,a,b)
 #define Prtblk() xbios_v_v(36)
 #define Vsync() xbios_v_v(37)
-#define Supexec(a) xbios_v_l(38,a)  /* void ??? */
+#define Supexec(a) xbios_l_l(38,a)
 #define Puntaes() xbios_v_v(39)
 #define Blitmode(a) xbios_w_w(64, a)
 #define EgetShift() xbios_w_v(81)
 #define EsetColor(a,b) xbios_w_ww(83,a,b)
 #define VsetMode(a) xbios_w_w(88,a)
 #define VgetMonitor() xbios_w_v(89)
+#define VgetSize(a) xbios_l_w(91,a)
 #define VsetRGB(a,b,c) xbios_v_wwl(93,a,b,c)
 #define VgetRGB(a,b,c) xbios_v_wwl(94,a,b,c)
 
@@ -600,6 +601,34 @@ static __inline__ long xbios_l_w(int op, short a)
         "move.w  %1,-(sp)\n\t"
         "trap    #14\n\t"
         "addq.l  #4,sp"
+         : "=r"(retval)
+         : "nr"(op), "nr"(a)
+         : "d1", "d2", "a0", "a1", "a2", "memory", "cc"
+        );
+    return retval;
+#endif
+}
+
+static __inline__ long xbios_l_l(int op, long a)
+{
+#ifdef __arm__
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
+    __asm__ volatile (
+        "svc 14"
+        : "=r"(_r0)
+        : "r"(_r0), "r"(_r1)
+        : "r2", "r3", "r12", "lr",  "memory", "cc"
+    );
+    return _r0;
+#else
+    register long retval __asm__("d0");
+
+    __asm__ volatile (
+        "move.l  %2,-(sp)\n\t"
+        "move.w  %1,-(sp)\n\t"
+        "trap    #14\n\t"
+        "addq.l  #6,sp"
          : "=r"(retval)
          : "nr"(op), "nr"(a)
          : "d1", "d2", "a0", "a1", "a2", "memory", "cc"

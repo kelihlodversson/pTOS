@@ -5,6 +5,7 @@
  */
 
 #include "usb_global.h"
+#include "intmath.h"
 #include "usb.h"
 #include "usb_api.h"
 #include "usb_io.h"

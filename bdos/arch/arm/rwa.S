@@ -19,13 +19,13 @@
         .globl  _termuser
         .globl  _gouser
         .globl  _enter
-        .globl  _old_trap2
         .globl  _bdos_trap2
 
 // ==== References ===========================================================
 
         .extern _osif
         .extern _run
+        .extern _old_trap2
 
 //==== bdos_trap2 - trap 2 entry point =======================================
 //
@@ -42,15 +42,6 @@ _bdos_trap2:
 do_xterm:
         mov     r7, #0x4c
         b       1f
-
-        .bss
-        .even
-
-
-_old_trap2:
-        .ds.l   1                       // old TRAP #2 handler
-
-        .text
 
 
 

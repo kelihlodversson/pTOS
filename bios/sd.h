@@ -1,7 +1,7 @@
 /*
  * sd.h - header for SD/MMC card routines
  *
- * Copyright (C) 2013-2016 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB   Roger Burrows
@@ -11,8 +11,6 @@
  */
 #ifndef _SD_H
 #define _SD_H
-
-#include <portab.h>
 
 #if CONF_WITH_SDMMC
 

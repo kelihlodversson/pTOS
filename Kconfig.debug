@@ -11,6 +11,7 @@ menu "Startup screen"
 
 config FULL_INITINFO
 	bool "Full welcome screen"
+	default n if TARGET_192
 	default y
 	help
 	  Say n to display the EmuTOS version as a single line of text

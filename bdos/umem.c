@@ -2,7 +2,7 @@
  * umem.c - user memory management interface routines
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2017 The EmuTOS development team
+ *               2002-2022 The EmuTOS development team
  *
  * Authors:
  *  KTB   Karl T. Braun (kral)
@@ -13,19 +13,20 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-
 /* #define ENABLE_KDEBUG */
 
-
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
+#include "bdosdefs.h"
 #include "fs.h"
 #include "mem.h"
 #include "gemerror.h"
 #include "biosbind.h"
+#include "biosext.h"
 #include "xbiosbind.h"
-#include "kprint.h"
-#include "../bios/tosvars.h"
+#include "bdosstub.h"
+#include "cookie.h"
+#include "string.h"
+#include "has.h"        /* for has_videl */
 
 
 /*
@@ -36,7 +37,7 @@ MPB pmd;
 MPB pmdalt;
 int has_alt_ram;
 #endif
-
+ULONG malloc_align_stram;
 
 /* internal variables */
 
@@ -97,13 +98,13 @@ static void dump_mem_map(void)
  */
 static MPB *find_mpb(void *addr)
 {
-    if (((UBYTE *)addr >= start_stram) && ((UBYTE *)addr < end_stram)) {
+    if (((UBYTE *)addr >= start_stram) && ((UBYTE *)addr < end_stram))
         return &pmd;
+
 #if CONF_WITH_ALT_RAM
-    } else if (has_alt_ram) {
+    if (has_alt_ram)
         return &pmdalt;
 #endif
-    }
 
     return NULL;
 }
@@ -115,8 +116,6 @@ static MPB *find_mpb(void *addr)
 void *xmalloc(long amount)
 {
     void *rc;
-
-    assert(run != NULL);
 
     if (run->p_flags & PF_TTRAMMEM) {
         /* allocate TT RAM, or ST RAM if not enough TT RAM */
@@ -195,10 +194,13 @@ long xsetblk(int n, void *blk, long len)
         return EIMBA;
 
     /*
-     * Round the size to a multiple of 4 bytes to keep alignment.
+     * Round the size up to a multiple of 2 or 4 bytes to keep alignment.
      * Alignment on long boundaries is faster in FastRAM.
      */
-    len = (len + 3) & ~3;
+    if (mpb == &pmd)
+        len = (len + malloc_align_stram) & ~malloc_align_stram;
+    else
+        len = (len + MALLOC_ALIGN_ALTRAM) & ~MALLOC_ALIGN_ALTRAM;
 
     KDEBUG(("BDOS Mshrink: new length=%ld\n",len));
 
@@ -332,32 +334,102 @@ ret:
     return ret_value;
 }
 
+#if CONF_WITH_VIDEL
 /*
  *  srealloc - Function 0x15 (Srealloc)
  *
- *  This function (undocumented by Atari) was introduced in Falcon TOS.
+ *  This system call (undocumented by Atari) was introduced in Falcon TOS.
  *  It has two functions:
  *  'len' < 0:  returns the maximum amount of memory that could be used
  *              for the screen; on standard Atari systems, this is the
- *              largest chunk of free memory in ST RAM
- *  'len' >= 0: allocate a block of memory of size 'len' for the screen
- *              and returns a pointer to it; the memory will be owned by
- *              the boot process
+ *              current size of video ram plus the size of the free memory
+ *              (if any) immediately below the current video ram.
+ *  'len' >= 0: allocates a block of memory of size 'len' for the screen
+ *              and returns a pointer to it; the memory is not part of the
+ *              normal GEMDOS memory pool.  returns NULL if the memory
+ *              cannot be allocated.
  *
- *  at this time, this implementation is provided for compatibility
- *  purposes only, since we always allocate enough memory for any type
- *  of screen during the boot process.
+ *  note:
+ *    . the actual amount of memory allocated (by EmuTOS and TOS4) is 256
+ *      bytes more than specified, for compatibility with screen memory
+ *      allocation in other versions of TOS.
  */
-extern UBYTE *v_bas_ad;
+#define FREESPACE_KLUDGE    256     /* see code below */
 void *srealloc(long amount)
 {
-    if (amount < 0L)
-        return xmxalloc(-1L, MX_STRAM);
+    MD *md, *last;
+    LONG available;
+    BOOL realloc;   /* TRUE iff reallocation is possible */
 
-    return (void *)Physbase();
+    if (!has_videl)
+        return (void *)EINVFN;
+
+    if (video_ram_size == 0)    /* unspecified */
+        return NULL;
+
+    /*
+     * first, calculate available video ram size
+     */
+
+    /* find last free memory segment */
+    for (md = last = pmd.mp_mfl; md; last = md, md = md->m_link)
+        ;
+    if (!last)                  /* "can't happen" */
+        return NULL;
+
+    /*
+     * if free memory is contiguous with existing video ram, we can mess
+     * (carefully) with the last free space MD.  in the very unlikely
+     * event that we used up all the free space defined by the MD, we'd
+     * have to free up the MD itself which would be messy.  the following
+     * calculation of 'available' ensures that the MD will always have at
+     * least FREESPACE_KLUDGE bytes of memory left.
+     */
+    if (last->m_start + last->m_length == video_ram_addr) {
+        available = last->m_length + video_ram_size - EXTRA_VRAM_SIZE - FREESPACE_KLUDGE;
+        realloc = TRUE;
+    } else {
+        available = video_ram_size - EXTRA_VRAM_SIZE;
+        if (available < 0)
+            available = 0;
+        realloc = FALSE;    /* not contiguous, forbid reallocation */
+    }
+
+    /* if just a request for size, return it now */
+    if (amount < 0L)
+        return (void *)available;
+
+    /*
+     * else handle request for reallocation
+     */
+    if (!realloc)               /* can't reallocate */
+        return NULL;
+
+    /* round request up to next 256 bytes, then add extra, just like TOS */
+    amount = (amount + 255UL) & ~255UL;
+    amount += EXTRA_VRAM_SIZE;
+    if (amount > available)
+        return NULL;
+
+    /* update length in MD, plus saved video ram info */
+    last->m_length = last->m_length + video_ram_size - amount;
+    video_ram_size = amount;
+    video_ram_addr = last->m_start + last->m_length;
+
+    /* finally, clear video ram */
+    bzero(video_ram_addr, video_ram_size);
+
+    return (void *)video_ram_addr;
 }
+#endif
 
 #if CONF_WITH_ALT_RAM
+
+#if CONF_WITH_STATIC_ALT_RAM
+/* Static Alt-RAM is the area used by static data (BSS and maybe TEXT) */
+extern UBYTE _static_altram_start[];
+extern UBYTE _static_altram_end[];
+#endif /* CONF_WITH_STATIC_ALT_RAM */
 
 /*
  * Maddalt() informs GEMDOS of the existence of additional 'alternative'
@@ -396,9 +468,15 @@ long xmaddalt(UBYTE *start, LONG size)
      || (start < end_stram))
         return -1;
 
-    /* if the new block is just after a free one, just extend it */
+    /* try to merge blocks */
     for (p = pmdalt.mp_mfl; p; p = p->m_link) {
         if (p->m_start + p->m_length == start) {
+            /* new block is just after a free one, extend it at end */
+            p->m_length += size;
+            return 0;
+        } else if (start + size == p->m_start) {
+            /* new block is just before a free one, extend it at beginning */
+            p->m_start -= size;
             p->m_length += size;
             return 0;
         }
@@ -470,6 +548,9 @@ long total_alt_ram(void)
  */
 void umem_init(void)
 {
+    ULONG cookie_mch;
+    MAYBE_UNUSED(cookie_mch);
+
     /* get the MPB */
     Getmpb((long)&pmd);
 
@@ -481,6 +562,32 @@ void umem_init(void)
 #if CONF_WITH_ALT_RAM
     /* there is no known alternative RAM initially */
     has_alt_ram = 0;
+#endif
+
+#ifdef __m68k__
+    /*
+     * Atari TOS 1 - 3 aligns memory requested from ST-RAM on multiples of
+     * two bytes, whereas Atari TOS 4 aligns on multiples of four bytes.
+     * As programs might (implicitly) rely on this detail, EmuTOS bases
+     * its alignment on the type of machine it is running on. Note:
+     * Alt-RAM memory blocks are always aligned on multiples of 4 bytes.
+     */
+#if CONF_WITH_VIDEL
+    if (cookie_get(COOKIE_MCH, &cookie_mch) && (cookie_mch == MCH_FALCON)) {
+        malloc_align_stram = 3; /* 4 byte alignment */
+    } else
+#endif
+    {
+        malloc_align_stram = 1; /* 2 byte alignment */
+    }
+#else
+    /*
+     * ARM has no legacy TOS1-3 2-byte-alignment expectation to emulate,
+     * and unlike m68k, its compiler-generated code (e.g. STRD/LDRD for
+     * adjacent pointer-sized struct fields) requires natural 4-byte
+     * alignment of ST-RAM allocations to avoid alignment faults.
+     */
+    malloc_align_stram = 3; /* 4 byte alignment */
 #endif
 }
 

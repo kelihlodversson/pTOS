@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2021 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -18,8 +18,7 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "string.h"
 #include "obdefs.h"
 #include "gsxdefs.h"
@@ -32,8 +31,6 @@
 #include "deskwin.h"
 #include "aesbind.h"
 #include "deskobj.h"
-#include "gembind.h"
-#include "kprint.h"
 
 
 static const OBJECT gl_sampob[2] =
@@ -54,7 +51,7 @@ static const OBJECT gl_sampob[2] =
 static WORD sob_malloc(void)
 {
     LONG mem, limit, num_obs;
-    BYTE *p;
+    char *p;
 
     /* We need to calculate how many objects can be displayed in a
      * maximum-sized window.  Because icons take less display space,
@@ -70,7 +67,7 @@ static WORD sob_malloc(void)
      * for the scroll-bar width, and gl_hchar as a proxy for the title
      * bar/info line height.  Rounding down takes care of the rest :-).
      */
-    num_obs = (NUM_WNODES+1) * ((G.g_wdesk-gl_wchar)/G.g_iwspc) * ((G.g_hdesk-gl_hchar)/G.g_ihspc);
+    num_obs = (NUM_WNODES+1) * ((G.g_desk.g_w-gl_wchar)/G.g_iwspc) * ((G.g_desk.g_h-gl_hchar)/G.g_ihspc);
 
     /* In case we're memory-constrained, we limit ourselves to 5% of
      * available memory, or MIN_WOBS, whichever is greater.  In practice,
@@ -104,6 +101,8 @@ static WORD sob_malloc(void)
  *  Initialize all objects in the G.g_screen[] array
  *
  *  . every non-item object is initialized by setting the links to NIL
+ *    (for safety, we also initialize fnptr in the corresponding members
+ *    of the G.g_screeninfo[] array)
  *  . all item objects are chained from g_screenfree
  *  . the root object is initialized as a G_IBOX object covering the
  *    entire screen
@@ -115,16 +114,18 @@ void obj_init(void)
 {
     WORD ii, num_sobs;
     OBJECT *obj;
+    SCREENINFO *info;
 
     num_sobs = sob_malloc();
     KDEBUG(("obj_init(): allocated %d screen objects\n",num_sobs));
 
     /* initialize non-item objects */
-    for (ii = 0, obj = G.g_screen; ii < WOBS_START; ii++, obj++)
+    for (ii = 0, obj = G.g_screen, info = G.g_screeninfo; ii < WOBS_START; ii++, obj++, info++)
     {
         obj->ob_head = NIL;
         obj->ob_next = NIL;
         obj->ob_tail = NIL;
+        info->fnptr = NULL;
     }
 
     /* put all item objects on the free chain */
@@ -252,7 +253,7 @@ WORD obj_get_obid(WORD drive)
     for (objnum = G.g_screen[DROOT].ob_head; objnum >= 0; objnum = G.g_screen[objnum].ob_next)
     {
         if (G.g_screen[objnum].ob_type == G_ICON)
-            if (LOBYTE(G.g_screeninfo[objnum].icon.block.ib_char) == drive)
+            if (LOBYTE(G.g_screeninfo[objnum].u.icon.block.ib_char) == drive)
                 return objnum;
     }
 

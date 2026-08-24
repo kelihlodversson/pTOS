@@ -1,7 +1,7 @@
 /*
  * parport.h - limited parallel port support
  *
- * Copyright (C) 2002 The EmuTOS development team
+ * Copyright (C) 2002-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -10,11 +10,12 @@
  * option any later version.  See doc/licence.txt for details.
  */
 
-#include "portab.h"
-
-LONG bconstat0(void);
 LONG bconin0(void);
 LONG bcostat0(void);
 LONG bconout0(WORD dev, WORD c);
 
 void parport_init(void);
+
+#if CONF_WITH_PRINTER_PORT
+WORD setprt(WORD config);
+#endif

@@ -3,27 +3,18 @@
  *
  * Copyright (C) 1999 Caldera, Inc. and Authors:
  *               1984 Dave Staugas
- *               2002-2017 The EmuTOS development team
+ *               2002-2020 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-
-
 #include "asmdefs.h"
-#include "vdi_asm.h"
 #include "lineaasm.h"
-
-
-
 
 /* Conditionals for textblit */
 #define test0           0       /* if give program access to internal variables */
-#define test1           0       /* if using very large fonts (else, 8x16) */
 #define bytswap         0       /* if font words are byte swapped! */
-
-
 
 /////////////////////////////////////////////////////////////////////////
 //                                                                      //
@@ -72,9 +63,6 @@
 //                0 if scale down, 1 if enlarge                         //
 /////////////////////////////////////////////////////////////////////////
 
-
-
-
 /////////////////////////////////////////////////////////////////////////
 //  process:    The main process of textblt does the following:         //
 //                { load source word (a0.l)                             //
@@ -90,8 +78,6 @@
 //                 alteration of the destination outside the            //
 //                 fringes.                                             //
 /////////////////////////////////////////////////////////////////////////
-
-
 
 /////////////////////////////////////////////////////////
 //   Style equates..                                   //
@@ -114,24 +100,10 @@
         .globl  _normal_blit
 
 /////////////////////////////////////////////////////////
-//  Global routines referenced by this module.         //
-/////////////////////////////////////////////////////////
-
-
-/////////////////////////////////////////////////////////
 //  Global variables referenced.                       //
 /////////////////////////////////////////////////////////
 
         .extern _linea_vars
-
-
-/////////////////////////////////////////////////////////
-//  Hardware dependent variables referenced.           //
-/////////////////////////////////////////////////////////
-
-
-
-
 /////////////////////////////////////////////////////////////////////////
 //  _text_blt expects variables SCRTCHP & SCRPT2 to be                  //
 //           initialized as follows:                                    //
@@ -146,12 +118,6 @@
 //               even offset respectively                               //
 //   see vdi_defs.h (SCRATCHBUF_*) and vdi_text.c for the buffer layout //
 /////////////////////////////////////////////////////////////////////////
-
-
-
-
-
-
 /////////////////////////////////////////////////////////////////////////
 //      Local variables defined on the user stack.                      //
 // NOTE: labels follow storage directives for use with LINK instruction  //
@@ -159,8 +125,8 @@
 
         //.offset 0
 
-#define buffa   -2              //for clip & prerotate blt
-#define buffb   -4              //for rotate
+#define buffa   -2              //current text scratch buffer offset
+//#define buffb   -4              //for rotate (now unused)
 //#define buffc   -6              //for replicate (now unused)
 #define sform   -10             //start of source form
 #define dform   -14             //start of destination form
@@ -234,17 +200,17 @@
 #define DESTX   -104
 #define DELY    -106
 #define DESTY   -108
-#define CHUP    -110
+//#define CHUP    -110                  (now unused)
 
 ///////////////////////////////////////////////
 //  Working copies of the clipping variables //
 ///////////////////////////////////////////////
 
-#define CLIP    -112
-#define XMN_CLI -114
-#define YMN_CLI -116
-#define XMX_CLI -118
-#define YMX_CLI -120
+//#define CLIP    -112                  (now unused)
+//#define XMN_CLI -114                  (now unused)
+//#define YMN_CLI -116                  (now unused)
+//#define XMX_CLI -118                  (now unused)
+//#define YMX_CLI -120                  (now unused)
 
 //////////////////////////////////
 //  Temporary working variables //
@@ -252,7 +218,7 @@
 
 //#define tmp_style -122                (now unused)
 #define blt_flag  -124
-#define chup_flag -126
+//#define chup_flag -126                (now unused)
 #define ramlen    -126
 
         .text
@@ -271,7 +237,6 @@ _normal_blit:
         movem.l (sp)+,d2-d7/a2-a6       // restore saved registers
         rts
 
-
         SECTION_RODATA
 
 /*
@@ -280,7 +245,6 @@ _normal_blit:
  * The table has been compacted by taking the one's complement of the left
  * fringe table and combining it with the right fringe table.
  */
-
                 .even   // Mandatory in ELF section .rodata
 lf_tab:         .dc.w   0xFFFF          // origin for not left fringe lookup.
 rf_tab:         .dc.w   0x7FFF          // origin for right fringe lookup.
@@ -306,7 +270,6 @@ rf_tab:         .dc.w   0x7FFF          // origin for right fringe lookup.
  * These are accessed via an offset from 'toptable', allowing the use
  * of indexing mode for speed.
  */
-
 #define op0             4*0
 #define op1             4*1
 #define op2             4*2
@@ -1069,7 +1032,6 @@ twope:
 twopf:
         moveq.l #-1,d1                  //mode 15 - D' = 1
         jmp     (a3)
-
 
 /////////////////////////
 //    special effect THICKEN
