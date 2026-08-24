@@ -512,6 +512,17 @@ long ixread(OFD *p, long len, void *ubufr)
     long maxlen;
 
     /*
+     * a NULL ubufr means the caller (e.g. scan() in fsdir.c) wants a
+     * direct pointer into the directory buffer rather than a copy, to
+     * peek at the next 32-byte FCB without transferring any data.
+     * xrw() has no such special case, so route this through
+     * ixgetfcb(), which does exactly this and returns NULL at end of
+     * directory.
+     */
+    if (!ubufr)
+        return (long)ixgetfcb(p);
+
+    /*
      * we used to disallow reads from a file opened as write-only,
      * but this is not compatible with Atari TOS ...
      */
