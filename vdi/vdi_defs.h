@@ -312,11 +312,12 @@ typedef struct {
 
 /*
  * the following line-A variables contain the VDI color palette entries.
- * REQ_COL contains the first 16 entries; req_col2 contains entries
- * 16-255 (only applicable for 8-plane resolutions).  Note that the
- * location of req_col2 is not documented by Atari, but is derived from
- * disassembly of TOS ROMs, and source code for MagiC's VDI.
+ * REQ_COL (linea_vars.REQ_COL) contains the first 16 entries; req_col2
+ * contains entries 16-255 (only applicable for 8-plane resolutions).
+ * Note that the location of req_col2 is not documented by Atari, but is
+ * derived from disassembly of TOS ROMs, and source code for MagiC's VDI.
  */
+extern WORD req_col2[240][3];  /* defined in vdi_col.c */
 
 /* External definitions for internal use */
 extern WORD flip_y;             /* True if magnitudes being returned */

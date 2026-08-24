@@ -363,7 +363,7 @@ static void init_wk(Vwk * vwk)
 #if CONF_WITH_VDI_16BIT
     /* set up virtual palette stuff if we're not using a real one */
     if (TRUECOLOR_MODE) {
-        memcpy(vwk->ext->req_col, REQ_COL, sizeof(REQ_COL));
+        memcpy(vwk->ext->req_col, linea_vars.REQ_COL, sizeof(linea_vars.REQ_COL));
         memcpy(vwk->ext->req_col+16, req_col2, sizeof(req_col2));
         /* convert requested colour values to pseudo-palette */
         for (l = 0; l < 255; l++)

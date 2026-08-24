@@ -30,9 +30,10 @@ WORD MAP_COL[MAXCOLOURS];       /* maps vdi pen -> hardware register */
 WORD REV_MAP_COL[MAXCOLOURS];   /* maps hardware register -> vdi pen */
 
 /* req_col2 contains the VDI color palette entries 16 - 255 for vq_color().
- * (REQ_COL, in linea_vars, contains entries 0-15.)
+ * (REQ_COL, in linea_vars, contains entries 0-15.) Not static: declared
+ * extern in vdi_defs.h for vdi_control.c's init_wk().
  */
-static WORD req_col2[240][3];
+WORD req_col2[240][3];
 
 static const WORD MAP_COL_ROM[] =
     { 0, 15, 1, 2, 4, 6, 3, 5, 7, 8, 9, 10, 12, 14, 11, 13 };
