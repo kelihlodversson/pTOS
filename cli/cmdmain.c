@@ -57,7 +57,7 @@ PRIVATE void create_redir(const char *name);
 PRIVATE WORD execute(WORD argc,char **argv,char *redir);
 PRIVATE WORD get_nflops(void);
 PRIVATE void strip_quotes(int argc,char **argv);
-PRIVATE void getenv(char **ppath, const char *psrch);
+PRIVATE void find_envvar(char **ppath, const char *psrch);
 
 int cmdmain(void);      /* called only from cmdasm.S */
 
@@ -108,7 +108,7 @@ WORD argc, rc;
     {
         /* Setup path from the PATH environment variable */
         char *largv[2];
-        getenv(&largv[1],"PATH=");
+        find_envvar(&largv[1],"PATH=");
         if (largv[1]) {
             if (!largv[1][0])   /* skip NUL after PATH= */
                 largv[1]++;
@@ -249,7 +249,7 @@ int i;
  *  Note:  the implementation is the same as that of the AES sh_envrn
  *         which we can't use because EmuCON is not a GEM app.
  */
-PRIVATE void getenv(char **ppath, const char *psrch)
+PRIVATE void find_envvar(char **ppath, const char *psrch)
 {
     /* The implementation is the same as that of the AES sh_envrn */
     char *p;

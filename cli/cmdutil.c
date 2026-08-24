@@ -13,6 +13,11 @@
 #include "string.h"
 #include <stdarg.h>
 #include "doprintf.h"
+#ifdef STANDALONE_CONSOLE
+/* the ROM build's sprintf() comes from util/string.c; the standalone
+   build has no such thing and needs libcmini's real one instead */
+#include <stdio.h>
+#endif
 
 typedef struct {
     long cookie;

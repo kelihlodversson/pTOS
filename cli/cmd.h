@@ -42,6 +42,9 @@
  #define HIWORD(x) ((UWORD)((ULONG)(x) >> 16))
  #define LOBYTE(x) ((UBYTE)(UWORD)(x))
  #define HIBYTE(x) ((UBYTE)((UWORD)(x) >> 8))
+ #define TRUE    (1)
+ #define FALSE   (0)
+ #define RESTRICT __restrict__
  /* the m68k standalone build only ever targets real Atari hardware;
     the ARM standalone build only ever targets pTOS's own raspi/virt-arm
     ports, which have no Atari-style video hardware to switch resolution
@@ -58,8 +61,6 @@
  /* normally from portab.h, which this build doesn't include */
  #define FALLTHROUGH do { } while (0)
 #endif
-
-#include "portab.h"
 
 
 /*
