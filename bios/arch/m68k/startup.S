@@ -18,6 +18,7 @@
 // ==== Definitions ==========================================================
 
         .globl  _os_header
+        .globl  _os_beg       // base of OS, referenced by aes/arch/m68k/gemdosif.S
         .globl  _main         // OS entry point
 #if CONF_WITH_CARTRIDGE
         .globl  _run_cartridge_applications
@@ -85,7 +86,7 @@ reseth:
 // It is supposed to be used when os_magic does not point to a valid GEM_MUPB.
 // In EmuTOS, this never happens, so os_end and os_res1 below are never used.
 // Note that the first field here has a different meaning from gm_magic.
-os_beg:
+_os_beg:
     .dc.l   _os_header  // base of OS = _sysbase
 os_end:
     .dc.l   __endvdibss // end of VDI BSS
