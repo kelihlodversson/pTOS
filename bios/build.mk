@@ -39,7 +39,7 @@ obj-$(ARCH_M68K) += aciavecs.o kprintasm.o linea.o natfeat.o natfeats.o \
 	 pmmu030.o 68040_pmmu.o amiga.o amiga2.o aros.o aros2.o delayasm.o \
 	 nova.o
 
-obj-$(ARCH_COLDFIRE) += coldfire.o coldfire2.o spi.o
+obj-$(ARCH_COLDFIRE) += coldfire.o coldfire2.o spi_cf.o
 
 obj-$(ARCH_ARM) += vectorsasm.o aciaemu.o tosvars.o
 

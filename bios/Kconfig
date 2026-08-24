@@ -98,6 +98,7 @@ config CONF_WITH_FRB
 config CONF_WITH_ST_MMU
 	bool "ST MMU support"
 	depends on CONF_ATARI_HARDWARE
+	default n if MACHINE_FIREBEE
 	default y
 
 config CONF_WITH_TT_MMU

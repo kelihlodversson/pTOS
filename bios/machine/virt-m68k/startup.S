@@ -29,6 +29,7 @@
  */
 
         .globl  _main
+        .globl  _os_header
         .globl  _os_beg
         .globl  _os_magic
         .globl  _os_date
@@ -38,6 +39,7 @@
         .globl  _shifty
         .globl  _run
 
+_os_header:
 _os_entry:
         bra.s   _main       // os_entry, branch to _main
 os_version:

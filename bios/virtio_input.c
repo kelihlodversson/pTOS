@@ -176,8 +176,15 @@ static void virtio_input_handle_pointer(UWORD type, UWORD code, ULONG raw_value)
             break;
         case BTN_MIDDLE:
             /* No 3rd button bit in the relative-mouse packet; matches
-             * usb/udd_mouse.c's handling of its own 3rd button. */
+             * usb/udd_mouse.c's handling of its own 3rd button. mousexvec
+             * is only defined (bios/arch/m68k/aciavecs.S) when real IKBD
+             * ACIA hardware is present -- machines without it (e.g.
+             * virt-m68k) have no synthetic replacement the way ARM's
+             * aciaemu.c provides one unconditionally, so just drop the
+             * middle-click on those rather than fail to link. */
+#if CONF_WITH_EXTENDED_MOUSE
             mousexvec(value ? 0x37 : 0xb7);
+#endif
             break;
         default:
             break;
