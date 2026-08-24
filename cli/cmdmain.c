@@ -150,6 +150,12 @@ WORD argc, rc;
 }
 
 #ifdef STANDALONE_CONSOLE
+#include <mint/basepage.h>
+
+char *environment;      /* cmdasm.S's removed _coma_start used to set
+                            this from the basepage directly; libcmini's
+                            _base gives us the same basepage here */
+
 /*
  * libcmini's own crt0/minicrt0 provides _start and expects a normal
  * main(); this replaces cmdasm.S's removed _coma_start, which did the
@@ -158,6 +164,7 @@ WORD argc, rc;
  */
 int main(void)
 {
+    environment = _base->p_env;
     cmdmain();
     return 0;
 }

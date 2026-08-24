@@ -261,7 +261,8 @@ extern DTA *dta;
 extern LONG redir_handle;
 extern char user_path[MAXPATHLEN];     /* from PATH command */
 extern WORD current_res, requested_res;
-extern char *environment;              /* from cmdasm.S */
+extern char *environment;              /* from cmdasm.S, or cmdmain.c's
+                                           main() for STANDALONE_CONSOLE */
 
 /*
  *  function prototypes
