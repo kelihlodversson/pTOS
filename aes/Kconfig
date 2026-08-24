@@ -70,6 +70,14 @@ config CONF_WITH_3D_OBJECTS
 	  Render 3D-style indicators, activators and backgrounds for AES
 	  objects, as on Atari TOS 4 / Falcon.
 
+config CONF_WITH_EXTENDED_OBJECTS
+	bool "MagiC-style extended object types"
+	default n if TARGET_192
+	default y
+	help
+	  AES support for a number of MagiC-style object type extensions,
+	  such as underlined G_STRING titles.
+
 config CONF_WITH_LOADABLE_CURSORS
 	bool "Loadable mouse cursors"
 	default y

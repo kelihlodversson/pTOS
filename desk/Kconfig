@@ -15,6 +15,16 @@ config CONF_WITH_WINDOW_ICONS
 	default n if TARGET_192
 	default y
 
+config CONF_WITH_ALT_DESKTOP_GRAPHICS
+	bool "Alternate desktop graphic elements"
+	depends on CONF_WITH_EXTENDED_OBJECTS
+	default n if TARGET_192
+	default y
+	help
+	  Replace Atari-style desktop graphic elements with alternate
+	  versions, e.g. left-aligned and underlined dialog titles instead
+	  of the centered, unadorned Atari TOS style.
+
 config CONF_WITH_DESKTOP_SHORTCUTS
 	bool "Desktop shortcuts"
 	default n if TARGET_192

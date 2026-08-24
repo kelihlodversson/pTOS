@@ -1809,7 +1809,9 @@ static void align_objects(OBJECT *obj_array, int nobj)
  *  If object 1 of a tree is a G_STRING and its y position equals
  *  one character height, we assume it's the title.
  *
- *  Titles are centre-aligned without underlining, like Atari TOS.
+ *  If CONF_WITH_ALT_DESKTOP_GRAPHICS is specified, titles are left-aligned
+ *  & the ob_state is set up to generate an underline if the AES supports it.
+ *  Otherwise titles are centre-aligned without underlining, like Atari TOS.
  */
 void align_title(OBJECT *root)
 {
@@ -1819,10 +1821,16 @@ void align_title(OBJECT *root)
 
     if ((title->ob_type == G_STRING) && (title->ob_y == gl_hchar))
     {
+#if CONF_WITH_ALT_DESKTOP_GRAPHICS
+        title->ob_x = gl_wchar;
+        title->ob_width = root->ob_width - (gl_wchar * 2);
+        title->ob_state |= (0xFF00|WHITEBAK);
+#else
         WORD len = strlen(title->ob_spec.free_string) * gl_wchar;
         if (len > root->ob_width)
             len = root->ob_width;
         title->ob_x = (root->ob_width - len) / 2;
+#endif
     }
 }
 

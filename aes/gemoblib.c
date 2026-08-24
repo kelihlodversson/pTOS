@@ -849,6 +849,20 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
             {
                 gsx_tblt(IBM, tmpx, tmpy, len);
             }
+#if CONF_WITH_EXTENDED_OBJECTS
+            /*
+             * handle underlining for string objects
+             */
+            if ((obtype == G_STRING) && (state & WHITEBAK) && ((state&0xFF00) == 0xFF00))
+            {
+                gsx_attr(FALSE, MD_REPLACE, LBLACK);
+                gsx_cline(t.g_x, t.g_y+t.g_h+2, t.g_x+t.g_w, t.g_y+t.g_h+2);
+#if CONF_WITH_3D_OBJECTS
+                gsx_attr(FALSE, MD_REPLACE, WHITE);
+                gsx_cline(t.g_x, t.g_y+t.g_h+1, t.g_x+t.g_w, t.g_y+t.g_h+1);
+#endif
+            }
+#endif
         }
     }
 
