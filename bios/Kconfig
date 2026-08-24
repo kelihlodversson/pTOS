@@ -28,7 +28,7 @@ config CONF_WITH_ALT_RAM
 config CONF_WITH_MAGNUM
 	bool "Magnum Alt-RAM board support"
 	depends on CONF_ATARI_HARDWARE
-	default n if MACHINE_ARANYM || MACHINE_FIREBEE
+	default n if MACHINE_ARANYM || MACHINE_FIREBEE || TARGET_192
 	default y
 	help
 	  Detect a Magnum Alt-RAM expansion board and add its memory via
@@ -104,13 +104,13 @@ config CONF_WITH_ST_MMU
 config CONF_WITH_TT_MMU
 	bool "TT MMU support"
 	depends on CONF_ATARI_HARDWARE
-	default n if TARGET_192 || TARGET_CART || MACHINE_FIREBEE
+	default n if TARGET_192 || TARGET_256 || TARGET_CART || MACHINE_FIREBEE
 	default y
 
 config CONF_WITH_FALCON_MMU
 	bool "Falcon MMU support"
 	depends on CONF_ATARI_HARDWARE
-	default n if TARGET_192 || TARGET_CART
+	default n if TARGET_192 || TARGET_256 || TARGET_CART
 	default y
 
 config CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
@@ -156,6 +156,7 @@ config CONF_WITH_EXTERNAL_DISK_DRIVER
 config CONF_WITH_SCSI_DRIVER
 	bool "SCSI Driver (XHDI) interface"
 	depends on !CONF_WITH_EXTERNAL_DISK_DRIVER
+	default n if TARGET_192
 	default y
 	help
 	  Provide the XHDI "SCSI Driver" interface, giving applications
@@ -388,7 +389,7 @@ config CONF_WITH_MFP_RS232
 config CONF_WITH_TT_MFP
 	bool "TT MFP support"
 	depends on CONF_ATARI_HARDWARE
-	default n if TARGET_192 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
+	default n if TARGET_192 || TARGET_256 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
 	default y
 
 config CONF_WITH_SCC
@@ -521,13 +522,13 @@ config CONF_WITH_STE_SHIFTER
 config CONF_WITH_TT_SHIFTER
 	bool "TT Shifter support"
 	depends on CONF_WITH_ATARI_VIDEO
-	default n if TARGET_192 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
+	default n if TARGET_192 || TARGET_256 || TARGET_CART || MACHINE_ARANYM || MACHINE_FIREBEE
 	default y
 
 config CONF_WITH_VIDEL
 	bool "Falcon Videl support"
 	depends on CONF_WITH_ATARI_VIDEO
-	default n if TARGET_192 || TARGET_CART
+	default n if TARGET_192 || TARGET_256 || TARGET_CART
 	default y
 
 config CONF_WITH_BLITTER
@@ -633,12 +634,13 @@ config CONF_WITH_ICDRTC
 config CONF_WITH_NVRAM
 	bool "NVRAM support"
 	depends on CONF_ATARI_HARDWARE
-	default n if TARGET_192 || TARGET_CART
+	default n if TARGET_192 || TARGET_256 || TARGET_CART
 	default y
 
 config CONF_WITH_ULTRASATAN_CLOCK
 	bool "UltraSatan real-time clock support"
 	depends on CONF_WITH_ACSI
+	default n if TARGET_192
 	default y
 	help
 	  Support for the real-time clock on the UltraSatan ACSI hard disk

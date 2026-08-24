@@ -162,7 +162,7 @@ config CONF_WITH_ADVANCED_CPU
 config CONF_WITH_APOLLO_68080
 	bool "Support for the Apollo 68080 CPU"
 	depends on CONF_WITH_ADVANCED_CPU
-	default n if TARGET_192 || TARGET_CART || MACHINE_ARANYM
+	default n if TARGET_192 || TARGET_256 || TARGET_CART || MACHINE_ARANYM
 	default y
 	help
 	  Detect and use the Apollo 68080 soft core found on Vampire
@@ -272,6 +272,7 @@ config DETECT_NATIVE_FEATURES
 config CONF_WITH_ARANYM
 	bool "ARAnyM specific features and workarounds"
 	depends on DETECT_NATIVE_FEATURES
+	default n if TARGET_256
 	default y
 	help
 	  Enable workarounds for the parts of the Atari hardware that ARAnyM

@@ -44,7 +44,7 @@ config CONF_WITH_PCGEM
 
 config CONF_WITH_MENU_EXTENSION
 	bool "AES 3.30 menu library extensions"
-	default n if TARGET_192
+	default n if TARGET_192 || TARGET_256
 	default y
 	help
 	  Minimal support for the AES 3.30 menu library functions
@@ -121,6 +121,7 @@ config CONF_WITH_PORTABLE_RSC_LOAD
 
 config CONF_WITH_NICELINES
 	bool "Menu nicelines"
+	default n if TARGET_192
 	default y
 	help
 	  Draw menu separator lines with the VDI instead of rendering the
