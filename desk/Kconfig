@@ -126,6 +126,7 @@ config CONF_WITH_PRINTER_ICON
 
 config CONF_WITH_EASTER_EGG
 	bool "EmuDesk easter egg"
+	default n if TARGET_192
 	default y
 
 config CONF_WITH_VDI_CICON_TEST

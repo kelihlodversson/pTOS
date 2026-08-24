@@ -450,6 +450,7 @@ config CONF_WITH_IKBD_ACIA
 config CONF_WITH_EXTENDED_MOUSE
 	bool "Extended IKBD mouse packet support"
 	depends on CONF_WITH_IKBD_ACIA
+	default n if TARGET_192
 	default y
 	help
 	  Support the IKBD's extended mouse packet mode, giving finer mouse

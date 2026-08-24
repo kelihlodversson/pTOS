@@ -113,6 +113,7 @@ config CONF_WITH_VDI_TEXT_SPEEDUP
 
 config CONF_WITH_VDI_VERTLINE
 	bool "VDI vertical line drawing speedup"
+	default n if TARGET_192
 	default y
 	help
 	  Improve VDI vertical line drawing performance.
