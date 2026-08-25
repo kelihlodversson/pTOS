@@ -23,6 +23,7 @@
 #define SDMMC_BUS           3
 #define VIRTIO_BUS          4
 
+/* disk_init_all() probes every defined bus, including disabled drivers */
 #define DISK_MAX_BUS        VIRTIO_BUS
 #define DEVICES_PER_BUS     8
 
