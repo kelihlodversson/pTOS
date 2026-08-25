@@ -172,6 +172,8 @@ DEFINE_ALIGN_BUFFER(xhci_qword_t, xhci_dcbaa, XHCI_MAX_SLOTS_ENABLED + 1U, XHCI_
 DEFINE_ALIGN_BUFFER(xhci_trb_t, xhci_cmd_ring, XHCI_TRBS_PER_SEGMENT, XHCI_DMA_ALIGN);
 DEFINE_ALIGN_BUFFER(xhci_trb_t, xhci_event_ring, XHCI_TRBS_PER_SEGMENT, XHCI_DMA_ALIGN);
 DEFINE_ALIGN_BUFFER(xhci_erst_entry_t, xhci_erst, 1U, XHCI_DMA_ALIGN);
+DEFINE_ALIGN_BUFFER(xhci_qword_t, xhci_scratchpad_array, XHCI_MAX_SCRATCHPAD_BUFS, XHCI_DMA_ALIGN);
+DEFINE_ALIGN_BUFFER(UBYTE, xhci_scratchpad_bufs, XHCI_MAX_SCRATCHPAD_BUFS * XHCI_PAGE_SIZE, XHCI_DMA_ALIGN);
 
 /* CONFIG.MaxSlotsEn is capped at XHCI_MAX_SLOTS_ENABLED regardless of what
  * the hardware reports, so the statically-sized DCBAA/context tables never
@@ -275,6 +277,69 @@ static void xhci_init_event_ring(struct xhci_priv *priv)
     xhci_writeq(priv->rt_base, XHCI_RT_IR0_ERSTBA, (ULONG)xhci_erst);
 }
 
+/*
+ * HCSPARAMS2's Max Scratchpad Buffers field tells the driver how many
+ * page-sized buffers the controller needs for internal use; if nonzero,
+ * DCBAA[0] must point to an array of their addresses (xHCI spec 4.20,
+ * verified against U-Boot's xhci_scratchpad_alloc()). PAGESIZE's lowest
+ * set bit gives the actual page size as 4096 << bit_index -- this
+ * driver's static buffers are sized for exactly 4096, so any other
+ * reported page size is a clean failure rather than a silent
+ * mis-sized allocation.
+ */
+static BOOL xhci_init_scratchpad(struct xhci_priv *priv)
+{
+    ULONG hcs2;
+    ULONG num_sp;
+    ULONG page_size_bits;
+    ULONG page_size;
+    ULONG i;
+    ULONG addr;
+
+    hcs2 = xhci_readl(priv->cap_base, XHCI_CAP_HCSPARAMS2);
+    num_sp = XHCI_HCS2_MAX_SCRATCHPAD(hcs2);
+
+    if (num_sp == 0UL) {
+        return TRUE;
+    }
+    if (num_sp > (ULONG)XHCI_MAX_SCRATCHPAD_BUFS) {
+        KINFO(("xhci: %lu scratchpad buffers required, only %lu supported\n",
+               num_sp, (ULONG)XHCI_MAX_SCRATCHPAD_BUFS));
+        return FALSE;
+    }
+
+    page_size_bits = xhci_readl(priv->op_base, XHCI_OP_PAGESIZE) & 0xffffUL;
+    for (i = 0UL; i < 16UL; i++) {
+        if (page_size_bits & 1UL)
+            break;
+        page_size_bits >>= 1;
+    }
+    if (i == 16UL) {
+        KINFO(("xhci: PAGESIZE register reports no valid page size\n"));
+        return FALSE;
+    }
+    page_size = 4096UL << i;
+    if (page_size != XHCI_PAGE_SIZE) {
+        KINFO(("xhci: unsupported hardware page size %lu (only %lu supported)\n",
+               page_size, XHCI_PAGE_SIZE));
+        return FALSE;
+    }
+
+    for (i = 0UL; i < num_sp; i++) {
+        addr = (ULONG)(xhci_scratchpad_bufs + (i * XHCI_PAGE_SIZE));
+        xhci_scratchpad_array[i].lo = addr;
+        xhci_scratchpad_array[i].hi = 0UL;
+    }
+    flush_data_cache((void *)xhci_scratchpad_bufs, (long)(num_sp * XHCI_PAGE_SIZE));
+    flush_data_cache((void *)xhci_scratchpad_array, (long)(num_sp * sizeof(xhci_qword_t)));
+
+    xhci_dcbaa[0].lo = (ULONG)xhci_scratchpad_array;
+    xhci_dcbaa[0].hi = 0UL;
+    flush_data_cache((void *)&xhci_dcbaa[0], (long)sizeof(xhci_qword_t));
+
+    return TRUE;
+}
+
 static long xhci_lowlevel_init(struct xhci_priv *priv)
 {
     UBYTE caplength;
@@ -308,6 +373,10 @@ static long xhci_lowlevel_init(struct xhci_priv *priv)
     xhci_init_command_ring(priv);
     xhci_writeq(priv->op_base, XHCI_OP_DCBAAP, (ULONG)xhci_dcbaa);
     xhci_init_event_ring(priv);
+
+    if (!xhci_init_scratchpad(priv)) {
+        return EOPNOTSUPP;
+    }
 
     KINFO(("xhci: controller bring-up is not implemented yet\n"));
     return EOPNOTSUPP;
