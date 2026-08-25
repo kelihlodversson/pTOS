@@ -10,8 +10,8 @@
 #F FF 07 @ *.*@
 #N FF 07 @ *.*@
 #D FF 02 @ *.*@
-#Y 06 FF *.GTP@ @
-#G 06 FF *.APP@ @
-#G 06 FF *.PRG@ @
-#P 06 FF *.TTP@ @
-#F 06 FF *.TOS@ @
+#Y 06 FF *.GTP@ @ 000 @
+#G 06 FF *.APP@ @ 000 @
+#G 06 FF *.PRG@ @ 000 @
+#P 06 FF *.TTP@ @ 000 @
+#F 06 FF *.TOS@ @ 000 @

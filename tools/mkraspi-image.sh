@@ -80,7 +80,11 @@ dd if=/dev/zero of="$fs_image" bs=1M count="$partition_mib" status=none
 mkfs.fat -F 16 -n PTOS "$fs_image" >/dev/null
 
 for f in "$srcdir"/*; do
-    mcopy -s -i "$fs_image" "$f" ::
+    if [ "${f##*.}" = INF ]; then
+        mcopy -t -i "$fs_image" "$f" ::
+    else
+        mcopy -s -i "$fs_image" "$f" ::
+    fi
 done
 mdir -i "$fs_image" ::
 
