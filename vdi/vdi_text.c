@@ -16,6 +16,7 @@
 #include "string.h"
 #include "aesext.h"
 #include "vdi_defs.h"
+#include "vdi_backend.h"
 #include "vdistub.h"
 #include "lineavars.h"
 #include "biosext.h"
