@@ -158,7 +158,17 @@ void raspi_vcmem_init(void)
     init_tags.get_vc_memory.tag.value_length = 8;
     raspi_prop_get_tags(&init_tags, sizeof(init_tags));
 
-    raspi_top_of_ram = (init_tags.get_arm_memory.value1 + init_tags.get_arm_memory.value2);
+    /* arm_memory_base + arm_memory_size could in principle overflow 32
+     * bits; if it did, wrapping to a small value would make any
+     * downstream safety check against raspi_top_of_ram (e.g. the PCIe
+     * outbound window guard in raspi_pci.c) fail OPEN instead of
+     * closed. Clamp to the top of the address space instead, so such
+     * checks correctly see "RAM reaches the very top" and fail closed. */
+    if (init_tags.get_arm_memory.value2 > (0xffffffffUL - init_tags.get_arm_memory.value1)) {
+        raspi_top_of_ram = 0xffffffffUL;
+    } else {
+        raspi_top_of_ram = (init_tags.get_arm_memory.value1 + init_tags.get_arm_memory.value2);
+    }
 
     /* Reserve the topmost megabyte for page tables and cache coherent buffers */
     phystop = (UBYTE *)((raspi_top_of_ram - MEGABYTE) & ~(MEGABYTE-1));
