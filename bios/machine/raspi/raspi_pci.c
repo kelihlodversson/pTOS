@@ -95,26 +95,36 @@
  * generically by raspi_gic_handle_irq() -- there is nothing extra to
  * mask or ack at the PCIe RC itself.
  *
- * Only one PCI function may be hooked per INTx line: the RPi4 exposes a
- * single root port with one downstream device (the VL805 xHCI) and pTOS
- * does not yet enumerate PCI-PCI bridges/switches, so pin sharing between
- * sibling functions cannot occur today. A second hook_interrupt() call
- * for a pin already in use returns PCI_GENERAL_ERROR rather than chaining
- * handlers.
+ * A GIC SPI line may be shared: the RPi4 exposes a single root port, but
+ * a multi-function device sitting in that one slot can have several
+ * functions asserting the same INTx pin (interrupt-map-mask wildcards
+ * the device/function fields, matching on pin alone), and pTOS already
+ * enumerates every function of a device. Each line therefore fans out to
+ * up to RASPI_PCIE_INTX_MAX_SHARERS hooked handlers, called unconditionally
+ * on every event -- same as any shared level-triggered PCI INTx line, each
+ * driver is expected to check its own device and no-op if it is not the
+ * source. The GIC line is enabled while any sharer is hooked and disabled
+ * once the last one unhooks.
  */
 #define RASPI_PCIE_INTX_LINES  4U
+#define RASPI_PCIE_INTX_MAX_SHARERS 8U
 #define RASPI_PCIE_INTX_GIC_IRQ(pin) (175U + ((pin) - 1U))
 
 static struct {
     PCI_HANDLE handle;
     pci_interrupt_handler_t handler;
     void *param;
-} raspi_pci_intx_hooks[RASPI_PCIE_INTX_LINES];
+} raspi_pci_intx_hooks[RASPI_PCIE_INTX_LINES][RASPI_PCIE_INTX_MAX_SHARERS];
 
 static void raspi_pci_intx_dispatch(UWORD slot)
 {
-    if (raspi_pci_intx_hooks[slot].handler)
-        raspi_pci_intx_hooks[slot].handler(raspi_pci_intx_hooks[slot].param);
+    UWORD i;
+
+    for (i = 0; i < RASPI_PCIE_INTX_MAX_SHARERS; i++)
+    {
+        if (raspi_pci_intx_hooks[slot][i].handler)
+            raspi_pci_intx_hooks[slot][i].handler(raspi_pci_intx_hooks[slot][i].param);
+    }
 }
 
 static void raspi_pci_intx_isr_a(void) { raspi_pci_intx_dispatch(0); }
@@ -427,6 +437,7 @@ static LONG raspi_pci_hook_interrupt(PCI_HANDLE handle, UBYTE line, pci_interrup
 {
     UBYTE pin;
     UWORD slot;
+    UWORD i;
     LONG ret;
 
     (void)line;
@@ -438,12 +449,17 @@ static LONG raspi_pci_hook_interrupt(PCI_HANDLE handle, UBYTE line, pci_interrup
         return PCI_FUNC_NOT_SUPPORTED;
 
     slot = pin - 1U;
-    if (raspi_pci_intx_hooks[slot].handler)
+    for (i = 0; i < RASPI_PCIE_INTX_MAX_SHARERS; i++)
+    {
+        if (raspi_pci_intx_hooks[slot][i].handler == 0)
+            break;
+    }
+    if (i == RASPI_PCIE_INTX_MAX_SHARERS)
         return PCI_GENERAL_ERROR;
 
-    raspi_pci_intx_hooks[slot].handle = handle;
-    raspi_pci_intx_hooks[slot].handler = handler;
-    raspi_pci_intx_hooks[slot].param = param;
+    raspi_pci_intx_hooks[slot][i].handle = handle;
+    raspi_pci_intx_hooks[slot][i].handler = handler;
+    raspi_pci_intx_hooks[slot][i].param = param;
     raspi_gic_connect_irq(RASPI_PCIE_INTX_GIC_IRQ(pin), raspi_pci_intx_isr[slot]);
 
     return PCI_SUCCESSFUL;
@@ -453,6 +469,8 @@ static LONG raspi_pci_unhook_interrupt(PCI_HANDLE handle, UBYTE line)
 {
     UBYTE pin;
     UWORD slot;
+    UWORD i;
+    BOOL any_left;
     LONG ret;
 
     (void)line;
@@ -464,13 +482,29 @@ static LONG raspi_pci_unhook_interrupt(PCI_HANDLE handle, UBYTE line)
         return PCI_FUNC_NOT_SUPPORTED;
 
     slot = pin - 1U;
-    if (raspi_pci_intx_hooks[slot].handle != handle)
+    for (i = 0; i < RASPI_PCIE_INTX_MAX_SHARERS; i++)
+    {
+        if (raspi_pci_intx_hooks[slot][i].handle == handle)
+            break;
+    }
+    if (i == RASPI_PCIE_INTX_MAX_SHARERS)
         return PCI_BAD_HANDLE;
 
-    raspi_gic_connect_irq(RASPI_PCIE_INTX_GIC_IRQ(pin), 0);
-    raspi_pci_intx_hooks[slot].handle = PCI_HANDLE_NONE;
-    raspi_pci_intx_hooks[slot].handler = 0;
-    raspi_pci_intx_hooks[slot].param = 0;
+    raspi_pci_intx_hooks[slot][i].handle = PCI_HANDLE_NONE;
+    raspi_pci_intx_hooks[slot][i].handler = 0;
+    raspi_pci_intx_hooks[slot][i].param = 0;
+
+    any_left = FALSE;
+    for (i = 0; i < RASPI_PCIE_INTX_MAX_SHARERS; i++)
+    {
+        if (raspi_pci_intx_hooks[slot][i].handler)
+        {
+            any_left = TRUE;
+            break;
+        }
+    }
+    if (!any_left)
+        raspi_gic_connect_irq(RASPI_PCIE_INTX_GIC_IRQ(pin), 0);
 
     return PCI_SUCCESSFUL;
 }
