@@ -156,15 +156,29 @@ void raspi_vcmem_init(void)
     init_tags.get_vc_memory.tag.tag_id = PROPTAG_GET_VC_MEMORY;
     init_tags.get_vc_memory.tag.value_buf_size = 8;
     init_tags.get_vc_memory.tag.value_length = 8;
-    raspi_prop_get_tags(&init_tags, sizeof(init_tags));
-
-    /* arm_memory_base + arm_memory_size could in principle overflow 32
-     * bits; if it did, wrapping to a small value would make any
-     * downstream safety check against raspi_top_of_ram (e.g. the PCIe
-     * outbound window guard in raspi_pci.c) fail OPEN instead of
-     * closed. Clamp to the top of the address space instead, so such
-     * checks correctly see "RAM reaches the very top" and fail closed. */
-    if (init_tags.get_arm_memory.value2 > (0xffffffffUL - init_tags.get_arm_memory.value1)) {
+    /*
+     * If the mailbox call fails, it leaves init_tags (an uninitialized
+     * automatic struct) untouched -- its return value must be checked
+     * before trusting init_tags.get_arm_memory below, or raspi_top_of_ram
+     * would be derived from stack garbage. The general question of how
+     * this early in boot should recover from a failed memory query is
+     * pre-existing and out of scope here (this driver isn't in a
+     * position to distinguish "safe fallback size" from "keep going with
+     * nonsense" this early); what this stage must guarantee is narrower:
+     * raspi_top_of_ram must not end up being a small/plausible-looking
+     * value that would make the PCIe outbound window's safety check
+     * (raspi_pci.c) fail open. Same as the overflow case just below:
+     * clamp to the top of the address space so it fails closed.
+     */
+    if (!raspi_prop_get_tags(&init_tags, sizeof(init_tags))) {
+        raspi_top_of_ram = 0xffffffffUL;
+    } else if (init_tags.get_arm_memory.value2 > (0xffffffffUL - init_tags.get_arm_memory.value1)) {
+        /* arm_memory_base + arm_memory_size could in principle overflow 32
+         * bits; if it did, wrapping to a small value would make any
+         * downstream safety check against raspi_top_of_ram (e.g. the PCIe
+         * outbound window guard in raspi_pci.c) fail OPEN instead of
+         * closed. Clamp to the top of the address space instead, so such
+         * checks correctly see "RAM reaches the very top" and fail closed. */
         raspi_top_of_ram = 0xffffffffUL;
     } else {
         raspi_top_of_ram = (init_tags.get_arm_memory.value1 + init_tags.get_arm_memory.value2);
