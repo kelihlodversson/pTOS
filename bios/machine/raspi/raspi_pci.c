@@ -481,6 +481,7 @@ static LONG raspi_pci_unhook_interrupt(PCI_HANDLE handle, UBYTE line)
     UBYTE pin;
     UWORD slot;
     UWORD i;
+    UWORD j;
     BOOL any_left;
     LONG ret;
 
@@ -501,14 +502,16 @@ static LONG raspi_pci_unhook_interrupt(PCI_HANDLE handle, UBYTE line)
     if (i == RASPI_PCIE_INTX_MAX_SHARERS)
         return PCI_GENERAL_ERROR;
 
-    raspi_pci_intx_hooks[slot][i].handle = PCI_HANDLE_NONE;
-    raspi_pci_intx_hooks[slot][i].handler = 0;
-    raspi_pci_intx_hooks[slot][i].param = 0;
-
+    /*
+     * PCI INTx is level-triggered: if this is the last sharer, disable
+     * the GIC line before clearing its entry, not after, so a line
+     * asserted right at unhook time can never retrigger the ISR against
+     * an already-empty hook table.
+     */
     any_left = FALSE;
-    for (i = 0; i < RASPI_PCIE_INTX_MAX_SHARERS; i++)
+    for (j = 0; j < RASPI_PCIE_INTX_MAX_SHARERS; j++)
     {
-        if (raspi_pci_intx_hooks[slot][i].handler)
+        if ((j != i) && raspi_pci_intx_hooks[slot][j].handler)
         {
             any_left = TRUE;
             break;
@@ -516,6 +519,10 @@ static LONG raspi_pci_unhook_interrupt(PCI_HANDLE handle, UBYTE line)
     }
     if (!any_left)
         raspi_gic_connect_irq(RASPI_PCIE_INTX_GIC_IRQ(pin), 0);
+
+    raspi_pci_intx_hooks[slot][i].handle = PCI_HANDLE_NONE;
+    raspi_pci_intx_hooks[slot][i].handler = 0;
+    raspi_pci_intx_hooks[slot][i].param = 0;
 
     return PCI_SUCCESSFUL;
 }
