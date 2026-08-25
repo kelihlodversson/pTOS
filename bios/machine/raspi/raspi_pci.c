@@ -451,6 +451,11 @@ static LONG raspi_pci_hook_interrupt(PCI_HANDLE handle, UBYTE line, pci_interrup
     slot = pin - 1U;
     for (i = 0; i < RASPI_PCIE_INTX_MAX_SHARERS; i++)
     {
+        if (raspi_pci_intx_hooks[slot][i].handle == handle)
+            return PCI_GENERAL_ERROR;
+    }
+    for (i = 0; i < RASPI_PCIE_INTX_MAX_SHARERS; i++)
+    {
         if (raspi_pci_intx_hooks[slot][i].handler == 0)
             break;
     }
@@ -488,7 +493,7 @@ static LONG raspi_pci_unhook_interrupt(PCI_HANDLE handle, UBYTE line)
             break;
     }
     if (i == RASPI_PCIE_INTX_MAX_SHARERS)
-        return PCI_BAD_HANDLE;
+        return PCI_GENERAL_ERROR;
 
     raspi_pci_intx_hooks[slot][i].handle = PCI_HANDLE_NONE;
     raspi_pci_intx_hooks[slot][i].handler = 0;
