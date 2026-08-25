@@ -20,6 +20,7 @@
 #include "raspi_io.h"
 #include "raspi_mbox.h"
 #include "raspi_pci.h"
+#include "tosvars.h"
 
 #define RASPI_PCIE_REG_BASE             0xfd500000UL
 #define RASPI_PCIE_REG_SIZE             0x00009310UL
@@ -63,8 +64,21 @@
 #define PCIE_RGR1_SW_INIT_1_PERST_MASK  0x00000001UL
 #define RGR1_SW_INIT_1_INIT_GENERIC_MASK 0x00000002UL
 
-#define RASPI_PCIE_OUTBOUND_CPU_BASE_LO 0x00000000UL
-#define RASPI_PCIE_OUTBOUND_CPU_BASE_HI 0x00000006UL
+/*
+ * CPU-side physical base of the outbound (CPU -> PCIe) MMIO window.
+ * The BCM2711 root port's real hardware placement for this window is
+ * 0x6_00000000 -- above the 4 GiB boundary a 32-bit ARM address can
+ * express. This port has no LPAE support, so the window is relocated
+ * here to a fixed, 1 MB-aligned 32-bit address instead: 0xf9000000 to
+ * 0xfcffffff (RASPI_PCIE_MMIO_SIZE, 64 MiB), ending 5 MiB clear of
+ * RASPI_PCIE_REG_BASE (0xfd500000), the PCIe controller's own fixed
+ * register block. The whole 4 GiB space is already flat-identity-mapped
+ * by init_mmu() (bios/machine/raspi/memory.c), so this needs no new MMU
+ * work -- but it must not overlap real RAM. raspi_pci_init() verifies
+ * that against phystop before enabling this window; see
+ * raspi_pci_outbound_window_enabled below.
+ */
+#define RASPI_PCIE_OUTBOUND_CPU_BASE    0xf9000000UL
 #define RASPI_PCIE_INBOUND_SIZE         0x80000000UL
 #define RASPI_PCIE_INBOUND_SIZE_CODE    16U
 #define RASPI_PCIE_LINK_WAIT_LOOPS      20U
@@ -142,6 +156,7 @@ static const PFVOID raspi_pci_intx_isr[RASPI_PCIE_INTX_LINES] = {
 };
 
 static BOOL raspi_pci_link_ready;
+static BOOL raspi_pci_outbound_window_enabled;
 
 static volatile UBYTE *raspi_pci_reg_ptr(ULONG offset)
 {
@@ -222,16 +237,16 @@ static void raspi_pci_set_outbound_window(void)
     raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_LO, RASPI_PCIE_MMIO_BUS_BASE);
     raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_HI, 0UL);
 
-    cpu_mb = RASPI_PCIE_OUTBOUND_CPU_BASE_LO >> 20;
-    limit_mb = (RASPI_PCIE_OUTBOUND_CPU_BASE_LO + RASPI_PCIE_MMIO_SIZE - 1UL) >> 20;
+    cpu_mb = RASPI_PCIE_OUTBOUND_CPU_BASE >> 20;
+    limit_mb = (RASPI_PCIE_OUTBOUND_CPU_BASE + RASPI_PCIE_MMIO_SIZE - 1UL) >> 20;
 
     reg = raspi_pci_readl(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT);
     reg = raspi_pci_replace_bits(reg, cpu_mb, PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT_BASE_MASK);
     reg = raspi_pci_replace_bits(reg, limit_mb, PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT_LIMIT_MASK);
     raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT, reg);
 
-    raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_HI, RASPI_PCIE_OUTBOUND_CPU_BASE_HI);
-    raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_LIMIT_HI, RASPI_PCIE_OUTBOUND_CPU_BASE_HI);
+    raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_HI, 0UL);
+    raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_LIMIT_HI, 0UL);
 }
 
 static void raspi_pci_set_inbound_window(void)
@@ -329,7 +344,17 @@ static LONG raspi_pci_init(void)
     raspi_pci_writel(PCIE_MISC_MISC_CTRL, reg);
 
     raspi_pci_set_inbound_window();
-    raspi_pci_set_outbound_window();
+
+    raspi_pci_outbound_window_enabled = ((ULONG)phystop <= RASPI_PCIE_OUTBOUND_CPU_BASE);
+    if (raspi_pci_outbound_window_enabled) {
+        raspi_pci_set_outbound_window();
+    } else {
+        KINFO(("pci: detected RAM reaches the PCIe outbound MMIO window "
+               "(phystop=0x%lx >= 0x%lx); BAR/MMIO resource access will "
+               "be unavailable\n",
+               (ULONG)phystop, RASPI_PCIE_OUTBOUND_CPU_BASE));
+    }
+
     raspi_pci_set_root_bridge_class();
 
     reg = raspi_pci_readl(PCIE_RC_CFG_VENDOR_VENDOR_SPECIFIC_REG1);
@@ -418,11 +443,14 @@ static LONG raspi_pci_bus_to_phys(ULONG bus_address, BOOL io, ULONG *phys_addres
         return PCI_GENERAL_ERROR;
     if (io)
         return PCI_BAD_RESOURCE;
+    if (!raspi_pci_outbound_window_enabled)
+        return PCI_BACKEND_UNMAPPABLE;
     if ((bus_address < RASPI_PCIE_MMIO_BUS_BASE) ||
         (bus_address >= RASPI_PCIE_MMIO_BUS_BASE + RASPI_PCIE_MMIO_SIZE))
         return PCI_BAD_RESOURCE;
 
-    return PCI_BACKEND_UNMAPPABLE;
+    *phys_address = RASPI_PCIE_OUTBOUND_CPU_BASE + (bus_address - RASPI_PCIE_MMIO_BUS_BASE);
+    return PCI_SUCCESSFUL;
 }
 
 static LONG raspi_pci_phys_to_bus(ULONG phys_address, BOOL io, ULONG *bus_address)
