@@ -160,29 +160,30 @@ void raspi_vcmem_init(void)
      * If the mailbox call fails, it leaves init_tags (an uninitialized
      * automatic struct) untouched -- its return value must be checked
      * before trusting init_tags.get_arm_memory below, or raspi_top_of_ram
-     * would be derived from stack garbage. The general question of how
-     * this early in boot should recover from a failed memory query is
-     * pre-existing and out of scope here (this driver isn't in a
-     * position to distinguish "safe fallback size" from "keep going with
-     * nonsense" this early); what this stage must guarantee is narrower:
-     * raspi_top_of_ram must not end up being a small/plausible-looking
-     * value that would make the PCIe outbound window's safety check
-     * (raspi_pci.c) fail open. Same as the overflow case just below:
-     * clamp to the top of the address space so it fails closed.
+     * would be derived from stack garbage. Nor can arm_memory_base +
+     * arm_memory_size be trusted blindly: both are ULONG (32-bit), so
+     * the addition could in principle overflow and wrap to a small
+     * value.
+     *
+     * Either failure is unrecoverable here, not just for the PCIe
+     * outbound window's safety check (raspi_pci.c) that motivated
+     * adding this check in the first place: a bad raspi_top_of_ram also
+     * corrupts phystop below, which init_mmu() uses moments later to
+     * place the live MMU page table -- likely outside real RAM, into
+     * peripheral/MMIO space, corrupting hardware state and/or crashing
+     * in a much more confusing spot than here. panic() (already this
+     * file's convention for "unrecoverable, stop now" -- see
+     * raspi_mmu_protect_range() above) never returns, so nothing below
+     * this point ever runs on either failure path.
      */
     if (!raspi_prop_get_tags(&init_tags, sizeof(init_tags))) {
-        raspi_top_of_ram = 0xffffffffUL;
-    } else if (init_tags.get_arm_memory.value2 > (0xffffffffUL - init_tags.get_arm_memory.value1)) {
-        /* arm_memory_base + arm_memory_size could in principle overflow 32
-         * bits; if it did, wrapping to a small value would make any
-         * downstream safety check against raspi_top_of_ram (e.g. the PCIe
-         * outbound window guard in raspi_pci.c) fail OPEN instead of
-         * closed. Clamp to the top of the address space instead, so such
-         * checks correctly see "RAM reaches the very top" and fail closed. */
-        raspi_top_of_ram = 0xffffffffUL;
-    } else {
-        raspi_top_of_ram = (init_tags.get_arm_memory.value1 + init_tags.get_arm_memory.value2);
+        panic("raspi_vcmem_init: PROPTAG_GET_ARM_MEMORY mailbox query failed\n");
     }
+    if (init_tags.get_arm_memory.value2 > (0xffffffffUL - init_tags.get_arm_memory.value1)) {
+        panic("raspi_vcmem_init: reported ARM memory range overflows 32 bits (base=0x%lx size=0x%lx)\n",
+              init_tags.get_arm_memory.value1, init_tags.get_arm_memory.value2);
+    }
+    raspi_top_of_ram = (init_tags.get_arm_memory.value1 + init_tags.get_arm_memory.value2);
 
     /* Reserve the topmost megabyte for page tables and cache coherent buffers */
     phystop = (UBYTE *)((raspi_top_of_ram - MEGABYTE) & ~(MEGABYTE-1));
@@ -363,7 +364,7 @@ static void init_mmu(ULONG memory_size)
 // Cache maintenance operations for ARMv6
 //
 // NOTE: The following functions should hold all variables in CPU registers. Currently this will be
-//   ensured using maximum optimation (see bios/processor.h).
+//   ensured using maximum optimization (see bios/processor.h).
 //
 //   The following numbers can be determined (dynamically) using CTR.
 //   As long we use the ARM1176JZF-S implementation in the BCM2835 these static values will work:
