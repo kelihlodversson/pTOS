@@ -170,6 +170,8 @@ static BOOL xhci_hw_reset(struct xhci_priv *priv)
 
 DEFINE_ALIGN_BUFFER(xhci_qword_t, xhci_dcbaa, XHCI_MAX_SLOTS_ENABLED + 1U, XHCI_DMA_ALIGN);
 DEFINE_ALIGN_BUFFER(xhci_trb_t, xhci_cmd_ring, XHCI_TRBS_PER_SEGMENT, XHCI_DMA_ALIGN);
+DEFINE_ALIGN_BUFFER(xhci_trb_t, xhci_event_ring, XHCI_TRBS_PER_SEGMENT, XHCI_DMA_ALIGN);
+DEFINE_ALIGN_BUFFER(xhci_erst_entry_t, xhci_erst, 1U, XHCI_DMA_ALIGN);
 
 /* CONFIG.MaxSlotsEn is capped at XHCI_MAX_SLOTS_ENABLED regardless of what
  * the hardware reports, so the statically-sized DCBAA/context tables never
@@ -239,6 +241,40 @@ static void xhci_init_command_ring(struct xhci_priv *priv)
     xhci_writeq(priv->op_base, XHCI_OP_CRCR, addr | 1UL);
 }
 
+/*
+ * Single-segment Event Ring. Unlike the Command Ring, the Event Ring has
+ * no Link TRB -- the hardware walks segments through the ERST, not
+ * in-ring links (verified: U-Boot's xhci_ring_alloc() call for the event
+ * ring passes link_trbs=false). Write order matters: ERDP and ERSTSZ
+ * must be valid before ERSTBA is written, since writing ERSTBA arms the
+ * ring.
+ */
+static void xhci_init_event_ring(struct xhci_priv *priv)
+{
+    ULONG i;
+    ULONG addr;
+
+    for (i = 0UL; i < (ULONG)XHCI_TRBS_PER_SEGMENT; i++) {
+        xhci_event_ring[i].param_lo = 0UL;
+        xhci_event_ring[i].param_hi = 0UL;
+        xhci_event_ring[i].status = 0UL;
+        xhci_event_ring[i].control = 0UL;
+    }
+    flush_data_cache((void *)xhci_event_ring,
+                      (long)((ULONG)XHCI_TRBS_PER_SEGMENT * sizeof(xhci_trb_t)));
+
+    addr = (ULONG)xhci_event_ring;
+    xhci_erst[0].seg_addr_lo = addr;
+    xhci_erst[0].seg_addr_hi = 0UL;
+    xhci_erst[0].seg_size = (ULONG)XHCI_TRBS_PER_SEGMENT;
+    xhci_erst[0].rsvd = 0UL;
+    flush_data_cache((void *)xhci_erst, (long)sizeof(xhci_erst_entry_t));
+
+    xhci_writeq(priv->rt_base, XHCI_RT_IR0_ERDP, addr);
+    xhci_writel(priv->rt_base, XHCI_RT_IR0_ERSTSZ, 1UL);
+    xhci_writeq(priv->rt_base, XHCI_RT_IR0_ERSTBA, (ULONG)xhci_erst);
+}
+
 static long xhci_lowlevel_init(struct xhci_priv *priv)
 {
     UBYTE caplength;
@@ -271,6 +307,7 @@ static long xhci_lowlevel_init(struct xhci_priv *priv)
     xhci_init_dcbaa();
     xhci_init_command_ring(priv);
     xhci_writeq(priv->op_base, XHCI_OP_DCBAAP, (ULONG)xhci_dcbaa);
+    xhci_init_event_ring(priv);
 
     KINFO(("xhci: controller bring-up is not implemented yet\n"));
     return EOPNOTSUPP;
