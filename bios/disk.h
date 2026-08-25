@@ -23,10 +23,11 @@
 #define SDMMC_BUS           3
 #define VIRTIO_BUS          4
 
-#define MAX_BUS             VIRTIO_BUS
+/* disk_init_all() probes every defined bus, including disabled drivers */
+#define DISK_MAX_BUS        VIRTIO_BUS
 #define DEVICES_PER_BUS     8
 
-#define UNITSNUM            (NUMFLOPPIES+(DEVICES_PER_BUS*(MAX_BUS+1)))
+#define UNITSNUM            (NUMFLOPPIES+(DEVICES_PER_BUS*(DISK_MAX_BUS+1)))
 
 #define GET_BUS(major)          ((major)/DEVICES_PER_BUS)
 #define IS_ACSI_DEVICE(major)   (GET_BUS(major) == ACSI_BUS)
