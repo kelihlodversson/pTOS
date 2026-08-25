@@ -73,24 +73,19 @@ static long xhci_close(struct ucdif *u)
     return E_OK;
 }
 
-static volatile ULONG *xhci_reg32(volatile UBYTE *base, ULONG offset)
-{
-    return (volatile ULONG *)(base + offset);
-}
-
 static UBYTE xhci_readb(volatile UBYTE *base, ULONG offset)
 {
-    return *(base + offset);
+    return readb(base + offset);
 }
 
 static ULONG xhci_readl(volatile UBYTE *base, ULONG offset)
 {
-    return le2cpu32(*xhci_reg32(base, offset));
+    return le2cpu32(readl(base + offset));
 }
 
 static void xhci_writel(volatile UBYTE *base, ULONG offset, ULONG value)
 {
-    *xhci_reg32(base, offset) = cpu2le32(value);
+    writel(cpu2le32(value), base + offset);
 }
 
 /* 64-bit registers: write the low dword first, then the high dword --
@@ -440,16 +435,21 @@ static long xhci_lowlevel_init(struct xhci_priv *priv)
      * Once this returns E_OK, ucd_register() proceeds to allocate a root
      * hub device and call usb_new_device() -- which will fail at its
      * first control transfer (SUBMIT_CONTROL_MSG is still EOPNOTSUPP) and
-     * be torn down by usb/ucd.c's existing failure path. Two side effects
-     * of that stage-2-deferred failure are worth knowing about: (1)
-     * root_hub_dev (this file's static) is left pointing at the now-freed
-     * device, harmless today since nothing else reads it; (2) the
-     * controller stays in RUN state with nothing servicing its Event
-     * Ring, so Port Status Change Events will accumulate in the 64-entry
-     * ring until a later stage adds interrupt- or poll-driven service.
-     * Both are benign for this stage and match the design doc, but the
-     * next stage needs to account for them.
+     * be torn down by usb/ucd.c's existing failure path, without ever
+     * calling LOWLEVEL_STOP. root_hub_dev (this file's static) is left
+     * pointing at the now-freed device as a result -- harmless today
+     * since nothing else reads it, but worth knowing for a later stage.
+     * Separately, since nothing will halt this controller once that
+     * happens, halt it proactively here rather than leave it running
+     * with nothing servicing its Event Ring (Port Status Change Events
+     * would otherwise accumulate in the 64-entry ring indefinitely).
+     * xhci_hw_reset() already implements the correct stop + HCRST +
+     * CNR-wait sequence; its result is ignored since bring-up itself
+     * already succeeded by this point -- a failure to re-halt cleanly
+     * doesn't undo the fact that reset/start/port-trace all worked.
      */
+    (void)xhci_hw_reset(priv);
+
     return E_OK;
 }
 
