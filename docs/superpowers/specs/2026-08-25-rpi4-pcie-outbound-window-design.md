@@ -99,10 +99,11 @@ RASPI_PCIE_OUTBOUND_CPU_BASE = 0xf8000000UL
 This is 1 MB-aligned (required — the outbound window's base/limit fields
 are 1 MB-granular per the existing `raspi_pci_set_outbound_window()`
 logic) and, at `RASPI_PCIE_MMIO_SIZE` (64 MiB, unchanged) wide, spans
-`0xf8000000`–`0xfbffffff`, 21 MiB clear of `RASPI_PCIE_REG_BASE` and of
-the RPi4 peripheral aperture (`0xfe000000`) — more margin than the
-minimum needed, adopted during final review as cheap insurance against
-any undocumented fixed SoC decode between `phystop` and `RASPI_PCIE_REG_BASE`.
+`0xf8000000`–`0xfbffffff`, 21 MiB clear of `RASPI_PCIE_REG_BASE` and 32
+MiB clear of the RPi4 peripheral aperture (`0xfe000000`) — more margin
+than the minimum needed, adopted during final review as cheap insurance
+against any undocumented fixed SoC decode between `phystop` and
+`RASPI_PCIE_REG_BASE`.
 This CPU base is numerically identical to `RASPI_PCIE_MMIO_BUS_BASE` by
 coincidence, not by requirement.
 

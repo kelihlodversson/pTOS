@@ -71,9 +71,9 @@
  * here to a fixed, 1 MB-aligned 32-bit address instead: 0xf8000000 to
  * 0xfbffffff (RASPI_PCIE_MMIO_SIZE, 64 MiB), 21 MiB clear of
  * RASPI_PCIE_REG_BASE (0xfd500000), the PCIe controller's own fixed
- * register block, and of the RPi4 peripheral aperture (0xfe000000,
- * raspi_board.c) -- deliberately more margin than the minimum needed,
- * since the exact extent of any other fixed SoC decode in that range
+ * register block, and 32 MiB clear of the RPi4 peripheral aperture
+ * (0xfe000000, raspi_board.c) -- deliberately more margin than the
+ * minimum needed, since the exact extent of any other fixed SoC decode
  * isn't verified from this codebase alone. This CPU base is numerically
  * identical to RASPI_PCIE_MMIO_BUS_BASE by coincidence, not by
  * requirement -- don't simplify raspi_pci_bus_to_phys()'s subtraction
