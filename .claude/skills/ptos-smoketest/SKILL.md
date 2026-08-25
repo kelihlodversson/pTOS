@@ -308,13 +308,13 @@ kernel7.img`; the size restriction and pass signals are identical.
 
 ### Running the regression test suite (`make test-hd`)
 
-The regression test harness (`CONF_WITH_REGRESSION_TESTS`) builds against
-libcmini (submodule at `lib/libcmini`), producing a standalone `runtests.tos`
-that is packaged into a raw HD image (`test-hd.img`, MBR + FAT16 via
-`tools/mkhdisk.sh`) together with `emudesk.inf`. The `emudesk.inf` autorun
-line (`#Z 00 C:\RUNTESTS.TOS@`) is meant to launch the harness on boot, which
-runs every test suite in `tests/<name>/<name>.c` and prints results via
-libcmini's `Cconws()`.
+The regression test harness (`CONF_WITH_REGRESSION_TESTS`) is enabled by
+default. It builds against libcmini (submodule at `lib/libcmini`), producing a
+standalone `runtests.tos` that is packaged into a raw HD image (`test-hd.img`,
+MBR + FAT16 via `tools/mkhdisk.sh`) together with `emudesk.inf`. The
+`emudesk.inf` autorun line (`#Z 00 C:\RUNTESTS.TOS@`) is meant to launch the
+harness on boot, which runs every test suite in `tests/<name>/<name>.c` and
+prints results via libcmini's `Cconws()`.
 
 Build the HD image (requires the normal kernel build first):
 

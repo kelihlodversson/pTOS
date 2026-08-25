@@ -2,7 +2,7 @@ menu "Regression tests"
 
 config CONF_WITH_REGRESSION_TESTS
     bool "Include built-in regression tests"
-    default n
+    default y
     help
       Build the regression test harness into a separate HD image.
       When enabled, 'make test-hd' produces a raw disk image that
