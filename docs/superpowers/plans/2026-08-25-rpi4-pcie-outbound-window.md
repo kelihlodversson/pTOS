@@ -4,11 +4,27 @@
 
 **Goal:** Fix `bios/machine/raspi/raspi_pci.c` so `raspi_pci_bus_to_phys()` and `raspi_pci_phys_to_bus()` return real, correct address translations instead of unconditionally failing, unblocking `pci_get_resource()`/BAR mapping on real RPi4 hardware (concretely, `raspi_vl805_get_resources()`, part of #270).
 
-**Architecture:** Relocate the PCIe outbound window's CPU-side physical base from an unreachable >4GB address (`0x6_00000000`) to a fixed 32-bit address (`0xf9000000` as originally implemented by Task 1 below; relocated again to `0xf8000000` by a final-review fix commit for extra margin — see the design doc's Risks section), guarded by a boot-time check against detected RAM (`phystop`) rather than an unverified assumption. `raspi_pci_bus_to_phys()` becomes a real translation gated on that check having passed. `raspi_pci_phys_to_bus()` is a separate, independent fix — the inbound window it translates through (PCIe bus `0x0` → CPU physical `0x0`, 2 GiB) was already correct and 32-bit-reachable, so it just needs a real range check plus identity passthrough. No new files, no MMU changes (the whole 4GB space is already flat-identity-mapped).
+**Architecture:** Relocate the PCIe outbound window's CPU-side physical base from an unreachable >4GB address (`0x6_00000000`) to a fixed 32-bit address (`0xf9000000` as originally implemented by Task 1 below; relocated again to `0xf8000000` by a final-review fix commit for extra margin — see the design doc's Risks section), guarded by a boot-time check against detected RAM rather than an unverified assumption. `raspi_pci_bus_to_phys()` becomes a real translation gated on that check having passed. `raspi_pci_phys_to_bus()` is a separate, independent fix — the inbound window it translates through (PCIe bus `0x0` → CPU physical `0x0`, 2 GiB) was already correct and 32-bit-reachable, so it just needs a real range check plus identity passthrough. No new files, no MMU changes (the whole 4GB space is already flat-identity-mapped).
 
 **Tech Stack:** C90/GNU extensions (`-std=gnu90`), `portab.h` types, no libc, ARM cross-compiled freestanding OS.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-rpi4-pcie-outbound-window-design.md`
+
+> **Erratum, added after this plan's tasks were executed and reviewed:**
+> the code blocks below (this plan's original instructions to each
+> task's implementer) do not reflect the final shipped state in two
+> respects the design doc's Risks section covers in full: (1) the
+> outbound window's CPU base moved from `0xf9000000` to `0xf8000000`
+> during final review; (2) more importantly, the boot-time safety check
+> and its KINFO message compared against `phystop`, which Copilot's
+> automated PR review caught as a real bug — `phystop` is not the top of
+> detected RAM, and the check needed to compare against a new
+> `raspi_top_of_ram` global instead (see `bios/machine/raspi/memory.c`,
+> `raspi_memory.h`, and commit `da993847`). Do not copy the `phystop`-based
+> check or the dead `phys_address < RASPI_PCIE_DMA_BUS_BASE` comparison
+> (Task 2, also fixed after this plan was written) from the snippets
+> below as a reference for how this codebase's PCI address-translation
+> checks work — read the actual current `raspi_pci.c` instead.
 
 ## Global Constraints
 

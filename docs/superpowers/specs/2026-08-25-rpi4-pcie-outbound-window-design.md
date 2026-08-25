@@ -208,8 +208,16 @@ rediscover.
   outbound window is not enabled, and `bus_to_phys()` fails cleanly and
   consistently for every call rather than intermittently or by chance.
 - `bus_to_phys()`/`phys_to_bus()`'s existing input validation (null
-  output pointer, I/O-space rejection, out-of-window-range rejection) is
-  unchanged and still applies before any new logic runs.
+  output pointer, I/O-space rejection) is unchanged. In `bus_to_phys()`
+  specifically, the new `raspi_pci_outbound_window_enabled` check runs
+  *before* the pre-existing bus-address range check, not after — a
+  disabled window returns `PCI_BACKEND_UNMAPPABLE` immediately, even for
+  a `bus_address` that would otherwise be out of range (which would
+  return `PCI_BAD_RESOURCE`). The two failure codes are already
+  distinguishable by a caller that cares, so this ordering is
+  intentional, not an oversight, but it does mean "still applies before
+  any new logic runs" (as an earlier draft of this bullet claimed) is
+  not quite accurate for this function.
 - No panics — matching every prior design doc in this area, absent or
   misconfigured hardware (or, here, an unexpectedly large RAM
   configuration) must fail cleanly, not crash.
