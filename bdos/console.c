@@ -23,6 +23,7 @@
 #include "console.h"
 #include "biosbind.h"
 #include "bdosstub.h"
+#include "string.h"
 
 /*
  * The following structure is used for the typeahead buffer
@@ -107,6 +108,8 @@ static int backsp(int h, char *cbuf, int retlen, int col);
 void stdhdl_init(void)
 {
     WORD i;
+
+    bzero(sft, OPNFILES * sizeof(FTAB));
 
     for (i = 0; i < NUMSTD; i++)
         run->p_uft[i] = default_handle[i];
