@@ -8,8 +8,8 @@ on m68k and ARM.
 ## Building
 
 The harness is enabled by default (`CONF_WITH_REGRESSION_TESTS`). To omit it
-from a configuration, disable **Regression tests → Include built-in regression
-tests** in `make menuconfig` (or `make guiconfig`).
+from a configuration, disable **Debugging → Regression tests → Include
+built-in regression tests** in `make menuconfig` (or `make guiconfig`).
 
 Build the kernel as usual, then build the test image:
 
