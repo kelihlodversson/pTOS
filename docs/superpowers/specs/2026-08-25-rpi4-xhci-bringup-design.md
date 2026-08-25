@@ -196,8 +196,22 @@ Automated (all that's available without hardware):
 Manual, on real Raspberry Pi 4/400 hardware (required — QEMU has no VL805
 model):
 
-- Boot log shows VL805 discovery (already works today) followed by
-  reset/start succeeding with no timeout `KINFO` traces.
+- **Prerequisite, discovered during final review of this stage's
+  implementation:** `raspi_pci_bus_to_phys()`
+  (`bios/machine/raspi/raspi_pci.c`) unconditionally returns
+  `PCI_BACKEND_UNMAPPABLE` for any address, which makes
+  `pci_decode_bar()` (`bios/pci_core.c`) leave every BAR's resource
+  unpopulated. `raspi_vl805_get_resources()` therefore always fails at
+  its `pci_get_resource()` call today, logging `VL805/xHCI: PCI BAR0 is
+  not usable yet` — before any of this stage's bring-up code ever runs.
+  VL805 *device discovery* (`pci_find_classcode()`, config-space reads)
+  does work; BAR0-to-physical-address *resource* mapping does not. This
+  is pre-existing code this stage's tasks never touch; it needs to land
+  first (tracked as #276) before the checks below can produce anything
+  but that one failure line.
+- Once that prerequisite lands: boot log shows VL805 discovery and
+  resource mapping succeeding, followed by reset/start succeeding with no
+  timeout `KINFO` traces.
 - `KINFO` port trace shows the expected port count for VL805 and, with a
   device plugged into a port, that port's `PORTSC` shows `PORT_CONNECT`
   set with a plausible speed field (full/low/high/super).

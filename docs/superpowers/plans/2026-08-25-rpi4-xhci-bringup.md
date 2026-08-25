@@ -891,7 +891,21 @@ Part of #270."
 git push
 ```
 
-Then report to the project owner: build is green on rpi4/rpi2/virt-arm; ask them to boot the image on real Raspberry Pi 4/400 hardware and check the serial/KDEBUG log for:
+Then report to the project owner: build is green on rpi4/rpi2/virt-arm.
+
+**Known blocking prerequisite (found during this stage's final review, not
+introduced by this plan):** `raspi_pci_bus_to_phys()`
+(`bios/machine/raspi/raspi_pci.c`) unconditionally returns
+`PCI_BACKEND_UNMAPPABLE`, so `pci_decode_bar()` never populates a BAR's
+resource and `raspi_vl805_get_resources()` always fails at
+`pci_get_resource()` today, logging `VL805/xHCI: PCI BAR0 is not usable
+yet`. None of this stage's bring-up code can run on real hardware until
+that lands (tracked as #276). Check for that line first: if present,
+this is the known prerequisite gap, not a bug in this branch -- do not
+proceed to the checklist below until it's resolved.
+
+Once the prerequisite is resolved, ask the project owner to boot the image
+on real Raspberry Pi 4/400 hardware and check the serial/KDEBUG log for:
 - `xhci: controller reset complete`
 - `xhci: controller running`
 - `xhci: N root hub ports` followed by one `xhci: port K: connect=.. enabled=.. speed=..` line per port, with `connect=1` and a plausible `speed` (1-4) on any port that has a device plugged in.
