@@ -40,6 +40,15 @@
 ## File Structure
 
 - **Modify `bios/machine/raspi/raspi_pci.c`** only. No new files. Two independent slices: the outbound-window relocation + `bus_to_phys()` (interdependent — `bus_to_phys()` is meaningless without the relocated window and its safety flag), and `phys_to_bus()` (independent of the other two — the inbound window it uses was never broken).
+- **As originally written, this plan's scope stopped there.** A real bug
+  found after these two tasks were reviewed (see the erratum above and
+  the design doc's Risks section) required also modifying
+  `bios/machine/raspi/memory.c` (adds a `raspi_top_of_ram` global) and
+  `bios/machine/raspi/raspi_memory.h` (declares it `extern`).
+  `memory.c` is shared by every RPi target (RPi1/2/3/4), not just RPi4 —
+  its regression coverage needs `rpi1_defconfig`/`rpi2_defconfig`/`rpi3_defconfig`
+  builds, not only the `rpi2`/`virt-arm` pair this plan's tasks
+  originally scoped for `raspi_pci.c`-only changes.
 
 ## Interfaces
 
@@ -88,6 +97,11 @@ with:
  */
 #define RASPI_PCIE_OUTBOUND_CPU_BASE    0xf9000000UL
 ```
+
+> ⚠️ **Superseded — see the erratum near the top of this document.** The
+> final shipped code uses `0xf8000000` and checks `raspi_top_of_ram`,
+> not `phystop`. Do not copy the address or the `phystop` check from
+> this snippet.
 
 - [ ] **Step 2: Add the `raspi_pci_outbound_window_enabled` flag**
 
@@ -184,6 +198,12 @@ with:
 
     raspi_pci_set_root_bridge_class();
 ```
+
+> ⚠️ **Superseded — see the erratum near the top of this document.** The
+> final shipped check compares `raspi_top_of_ram` against
+> `RASPI_PCIE_OUTBOUND_CPU_BASE` (`0xf8000000`), not `phystop`, and the
+> KINFO message's `>=` should read `>` to match the actual branch
+> condition. Do not copy this snippet as written.
 
 Note: this only skips the outbound window. Config-space enumeration
 (`raspi_pci_config_ptr()`, used by `raspi_pci_read_config()`/`raspi_pci_write_config()`),
@@ -309,6 +329,12 @@ static LONG raspi_pci_phys_to_bus(ULONG phys_address, BOOL io, ULONG *bus_addres
     return PCI_SUCCESSFUL;
 }
 ```
+
+> ⚠️ **Superseded — see the erratum near the top of this document.** The
+> `phys_address < RASPI_PCIE_DMA_BUS_BASE` comparison above is dead code
+> (`RASPI_PCIE_DMA_BUS_BASE` is 0, `phys_address` is unsigned) and
+> triggers a real `-Wtype-limits` warning; the task's own fix round
+> removed it. Do not copy this snippet as written.
 
 This is independent of Task 1 and of the outbound-window safety check:
 the inbound window (`raspi_pci_set_inbound_window()`, unchanged by this

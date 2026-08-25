@@ -176,8 +176,10 @@ through is already correct and already 1:1 (`RASPI_PCIE_DMA_BUS_BASE = 0`,
 implementation is a straight range check plus identity passthrough:
 
 ```c
-if ((phys_address < RASPI_PCIE_DMA_BUS_BASE) ||
-    (phys_address >= RASPI_PCIE_DMA_BUS_BASE + RASPI_PCIE_INBOUND_SIZE))
+/* RASPI_PCIE_DMA_BUS_BASE is 0, so every unsigned phys_address is
+ * already >= it -- a lower-bound check would be dead code, which
+ * -Wtype-limits correctly flags. Only the upper bound can fail. */
+if (phys_address >= RASPI_PCIE_DMA_BUS_BASE + RASPI_PCIE_INBOUND_SIZE)
     return PCI_BAD_RESOURCE;
 
 *bus_address = phys_address;
@@ -194,9 +196,12 @@ Unchanged from the #57/#63 design docs except at the two points above.
 resource decoding, exactly as before — it now receives
 `PCI_SUCCESSFUL`/a real physical address instead of always failing, so
 `device->resources[bar]` gets populated and `pci_get_resource()` starts
-succeeding for the first time. Nothing calls `phys_to_bus()` yet in the
-current tree (a future DMA-buffer-address consumer, likely part of
-xHCI's later transfer stages in #270, will be the first real caller) —
+succeeding for the first time. `pci_self_check()`
+(`bios/pci_core.c:543`) already exercises `phys_to_bus()` indirectly
+through `pci_virt_to_bus()` (`bios/pci_core.c:945`) at boot, so this is
+not, strictly, an unexercised code path — but no *production* DMA
+consumer calls it yet (a future DMA-buffer-address consumer, likely
+part of xHCI's later transfer stages in #270, will be the first one) —
 implementing it now is still in scope per #276, since it's the other
 stub half of the same address-translation surface, and it costs nothing
 to keep correct now rather than leave broken for a future issue to
