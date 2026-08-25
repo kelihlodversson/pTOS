@@ -310,6 +310,22 @@ PCIe/VL805 model, same constraint as #270):
   `phystop`'s *name* and its use elsewhere in the codebase
   (`IS_STRAM_POINTER` in `bios/machine.h`) rather than reading its actual
   derivation in `raspi_vcmem_init()`.
+- **Two more real defects surfaced in the same Copilot review cycle**,
+  both in the new `raspi_top_of_ram` code path: (1) `raspi_prop_get_tags()`'s
+  return value was never checked, so a failed or timed-out firmware
+  mailbox query would leave `init_tags` as uninitialized stack garbage
+  and derive `raspi_top_of_ram` from it; (2) `arm_memory_base +
+  arm_memory_size` (both 32-bit) could in principle overflow and wrap
+  to a small value. Both are now handled by `panic()` (this file's
+  existing convention for "unrecoverable, stop now") rather than a
+  sentinel-and-continue approach — an earlier fix attempt used a
+  sentinel value that correctly made the PCIe safety check fail closed,
+  but that same sentinel still flowed into `phystop`/`init_mmu()`
+  moments later, likely placing the live MMU page table outside real
+  RAM and crashing far more confusingly than at the actual point of
+  failure. Neither failure path is new: the unchecked mailbox call
+  predates this branch entirely, and it took making `raspi_top_of_ram`
+  load-bearing for a safety guarantee to surface it.
 - This is the second RPi4 PCIe-adjacent design in this repository to
   need real-hardware validation with no emulator fallback (the first
   being #270 itself); both should ideally be validated in the same
