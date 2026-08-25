@@ -405,8 +405,13 @@ void xmfreblk(void *m)
  */
 void osmem_init(void)
 {
+    WORD i;
+
+    osmptr = 0;
     osmlen = LENOSM;
     mdbroot = NULL;
+    for (i = 0; i < MAXQUICK; i++)
+        root[i] = NULL;
     dbgfreblk = 0;
     dbggtosm = 0;
     dbggtblk = 0;
