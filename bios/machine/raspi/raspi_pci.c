@@ -76,6 +76,71 @@
 #define PCI_ECAM_OFFSET(bus, dev, func, reg) \
     (((ULONG)(bus) << 20) | ((ULONG)(dev) << 15) | ((ULONG)(func) << 12) | PCI_ECAM_REG(reg))
 
+/*
+ * BCM2711 PCIe INTx routing.
+ *
+ * Unlike the MSI path (PCIE_MSI_INTR2_BASE, unused here), the RC has no
+ * software INTx status/mask/ack register block: each of the four INTx
+ * pins is wired to its own dedicated GIC SPI, fixed by the SoC's
+ * interrupt-map (see Linux's arch/arm/boot/dts/broadcom/bcm2711.dtsi,
+ * the pcie0 node):
+ *
+ *   INTA -> GIC SPI 143   INTB -> GIC SPI 144
+ *   INTC -> GIC SPI 145   INTD -> GIC SPI 146
+ *
+ * raspi_gic_connect_irq() takes GICD interrupt IDs, which are SPI number
+ * + 32, so INTA..INTD are GIC IDs 175..178. Masking is the GIC's own
+ * GICD_ISENABLER/ICENABLER (done inside raspi_gic_connect_irq), and
+ * acknowledgement is the standard GICC_IAR/EOIR cycle already performed
+ * generically by raspi_gic_handle_irq() -- there is nothing extra to
+ * mask or ack at the PCIe RC itself.
+ *
+ * A GIC SPI line may be shared: interrupt-map-mask wildcards the
+ * device/function fields, matching on pin alone, so every function that
+ * asserts the same INTx pin lands on the same one of the four SPIs --
+ * whether they are functions of one multi-function device in the RPi4's
+ * single root port slot, or separate devices pci_core.c's bridge scan
+ * (pci_scan_bridge()/PCI_MAX_BUSES) enumerates behind a downstream
+ * switch. Each line therefore fans out to up to
+ * RASPI_PCIE_INTX_MAX_SHARERS hooked handlers, called unconditionally on
+ * every event -- same as any shared level-triggered PCI INTx line, each
+ * driver is expected to check its own device and no-op if it is not the
+ * source. The GIC line is enabled while any sharer is hooked and
+ * disabled before the last one is cleared.
+ */
+#define RASPI_PCIE_INTX_LINES  4U
+#define RASPI_PCIE_INTX_MAX_SHARERS 32U
+#define RASPI_PCIE_INTX_GIC_IRQ(pin) (175U + ((pin) - 1U))
+
+static struct {
+    PCI_HANDLE handle;
+    pci_interrupt_handler_t handler;
+    void *param;
+} raspi_pci_intx_hooks[RASPI_PCIE_INTX_LINES][RASPI_PCIE_INTX_MAX_SHARERS];
+
+static void raspi_pci_intx_dispatch(UWORD line_idx)
+{
+    UWORD i;
+
+    for (i = 0; i < RASPI_PCIE_INTX_MAX_SHARERS; i++)
+    {
+        if (raspi_pci_intx_hooks[line_idx][i].handler)
+            raspi_pci_intx_hooks[line_idx][i].handler(raspi_pci_intx_hooks[line_idx][i].param);
+    }
+}
+
+static void raspi_pci_intx_isr_a(void) { raspi_pci_intx_dispatch(0); }
+static void raspi_pci_intx_isr_b(void) { raspi_pci_intx_dispatch(1); }
+static void raspi_pci_intx_isr_c(void) { raspi_pci_intx_dispatch(2); }
+static void raspi_pci_intx_isr_d(void) { raspi_pci_intx_dispatch(3); }
+
+static const PFVOID raspi_pci_intx_isr[RASPI_PCIE_INTX_LINES] = {
+    raspi_pci_intx_isr_a,
+    raspi_pci_intx_isr_b,
+    raspi_pci_intx_isr_c,
+    raspi_pci_intx_isr_d
+};
+
 static BOOL raspi_pci_link_ready;
 
 static volatile UBYTE *raspi_pci_reg_ptr(ULONG offset)
@@ -372,18 +437,96 @@ static LONG raspi_pci_phys_to_bus(ULONG phys_address, BOOL io, ULONG *bus_addres
 
 static LONG raspi_pci_hook_interrupt(PCI_HANDLE handle, UBYTE line, pci_interrupt_handler_t handler, void *param)
 {
-    (void)handle;
+    UBYTE pin;
+    UWORD line_idx;
+    UWORD i;
+    LONG ret;
+
     (void)line;
-    (void)handler;
-    (void)param;
-    return PCI_FUNC_NOT_SUPPORTED;
+
+    ret = pci_read_config_byte(handle, PCI_CONFIG_INTERRUPT_PIN, &pin);
+    if (ret != PCI_SUCCESSFUL)
+        return ret;
+    if ((pin < 1U) || (pin > RASPI_PCIE_INTX_LINES))
+        return PCI_FUNC_NOT_SUPPORTED;
+
+    line_idx = pin - 1U;
+    for (i = 0; i < RASPI_PCIE_INTX_MAX_SHARERS; i++)
+    {
+        if (raspi_pci_intx_hooks[line_idx][i].handle == handle)
+            return PCI_GENERAL_ERROR;
+    }
+    for (i = 0; i < RASPI_PCIE_INTX_MAX_SHARERS; i++)
+    {
+        if (raspi_pci_intx_hooks[line_idx][i].handler == 0)
+            break;
+    }
+    if (i == RASPI_PCIE_INTX_MAX_SHARERS)
+        return PCI_GENERAL_ERROR;
+
+    /*
+     * handler is the field the ISR dispatcher gates on (see
+     * raspi_pci_intx_dispatch); write it last so a concurrent interrupt
+     * on an already-enabled shared line never observes a hooked entry
+     * with a stale param.
+     */
+    raspi_pci_intx_hooks[line_idx][i].handle = handle;
+    raspi_pci_intx_hooks[line_idx][i].param = param;
+    raspi_pci_intx_hooks[line_idx][i].handler = handler;
+    raspi_gic_connect_irq(RASPI_PCIE_INTX_GIC_IRQ(pin), raspi_pci_intx_isr[line_idx]);
+
+    return PCI_SUCCESSFUL;
 }
 
 static LONG raspi_pci_unhook_interrupt(PCI_HANDLE handle, UBYTE line)
 {
-    (void)handle;
+    UBYTE pin;
+    UWORD line_idx;
+    UWORD i;
+    UWORD j;
+    BOOL any_left;
+    LONG ret;
+
     (void)line;
-    return PCI_FUNC_NOT_SUPPORTED;
+
+    ret = pci_read_config_byte(handle, PCI_CONFIG_INTERRUPT_PIN, &pin);
+    if (ret != PCI_SUCCESSFUL)
+        return ret;
+    if ((pin < 1U) || (pin > RASPI_PCIE_INTX_LINES))
+        return PCI_FUNC_NOT_SUPPORTED;
+
+    line_idx = pin - 1U;
+    for (i = 0; i < RASPI_PCIE_INTX_MAX_SHARERS; i++)
+    {
+        if (raspi_pci_intx_hooks[line_idx][i].handle == handle)
+            break;
+    }
+    if (i == RASPI_PCIE_INTX_MAX_SHARERS)
+        return PCI_GENERAL_ERROR;
+
+    /*
+     * PCI INTx is level-triggered: if this is the last sharer, disable
+     * the GIC line before clearing its entry, not after, so a line
+     * asserted right at unhook time can never retrigger the ISR against
+     * an already-empty hook table.
+     */
+    any_left = FALSE;
+    for (j = 0; j < RASPI_PCIE_INTX_MAX_SHARERS; j++)
+    {
+        if ((j != i) && raspi_pci_intx_hooks[line_idx][j].handler)
+        {
+            any_left = TRUE;
+            break;
+        }
+    }
+    if (!any_left)
+        raspi_gic_connect_irq(RASPI_PCIE_INTX_GIC_IRQ(pin), 0);
+
+    raspi_pci_intx_hooks[line_idx][i].handle = PCI_HANDLE_NONE;
+    raspi_pci_intx_hooks[line_idx][i].handler = 0;
+    raspi_pci_intx_hooks[line_idx][i].param = 0;
+
+    return PCI_SUCCESSFUL;
 }
 
 static pci_backend_t raspi_pci_backend_ops = {
