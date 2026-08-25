@@ -215,16 +215,53 @@ PCIe/VL805 model, same constraint as #270):
   fix unblocks it: `xhci: MMIO 0x... size 0x... irq ...` should appear,
   followed by #270's own reset/start/port-trace sequence actually
   running for the first time.
+- **This alone is not sufficient evidence the fix is correct** — per the
+  Risks section above, `bus_to_phys()` could report success with a
+  physical address that doesn't actually reach the device if the
+  interconnect-routing assumption is wrong. The decisive check is that
+  `xhci_lowlevel_init()`'s subsequent reset sequence actually succeeds
+  (no `xhci: timed out waiting for ...` lines) and, ideally, that the
+  capability register values it reads (`CAPLENGTH`, `HCIVERSION` via
+  `HC_VERSION`) are neither all-zero nor all-ones — either of those would
+  mean the CPU access at the translated physical address reached nothing
+  real, not an actual xHCI controller.
 
 ## Risks
 
-- The chosen fixed address (`0xf9000000`) is a well-justified but
+- **The most significant unverified assumption in this design**: it
+  relies on the PCIe root complex's outbound ATU registers
+  (`PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT`/`BASE_HI`/`LIMIT_HI`) being
+  the actual mechanism that determines which CPU physical addresses the
+  SoC interconnect routes to the root complex — not merely local
+  bookkeeping inside an RC that can only ever be reached at its one true
+  hardware placement (`0x6_00000000`). This matches how CPU-side outbound
+  ATU windows work on essentially every PCIe root complex architecture
+  (DesignWare, Broadcom iProc/STB, Xilinx, and others), which is why this
+  design was chosen, but it is not independently confirmed against a
+  BCM2711 datasheet or real hardware from this repository alone. If the
+  assumption is wrong, the failure mode is silent: `bus_to_phys()` would
+  report `PCI_SUCCESSFUL` with a physical address that doesn't actually
+  reach the device (the SoC's fixed decode would route the CPU access
+  somewhere else — most plausibly back into RAM or an unrelated
+  peripheral — instead of to the root complex), which is a worse outcome
+  than the honest `PCI_BACKEND_UNMAPPABLE` this design replaces. The
+  Testing section's hardware checklist reads back an actual xHCI
+  capability register specifically to catch this failure mode loudly
+  rather than let it pass silently as a "successful" but wrong resource
+  mapping.
+- The chosen fixed address (`0xf8000000`) is a well-justified but
   ultimately unverified-until-boot guess about where real RPi4 hardware's
-  detected RAM tops out; the boot-time check is the actual safety
-  mechanism, not the address choice itself — if the check ever trips on
-  real hardware, that is expected, correct, diagnosable behavior, not a
-  bug to work around by moving the address further down without
-  re-examining why.
+  detected RAM tops out; the boot-time `phystop` check is the actual
+  safety mechanism against RAM overlap specifically, not the address
+  choice itself — if the check ever trips on real hardware, that is
+  expected, correct, diagnosable behavior, not a bug to work around by
+  moving the address further down without re-examining why. Note that
+  `phystop` excludes a reserved VideoCore memory block that sits above
+  it (per `raspi_vcmem_init()` in `bios/machine/raspi/memory.c`); on
+  BCM2711 that block is far below any candidate window address, so this
+  is not believed to matter in practice, but the check's actual coverage
+  is "ARM-visible RAM as reported by firmware," not "all of physical RAM"
+  in the most literal sense.
 - This is the second RPi4 PCIe-adjacent design in this repository to
   need real-hardware validation with no emulator fallback (the first
   being #270 itself); both should ideally be validated in the same

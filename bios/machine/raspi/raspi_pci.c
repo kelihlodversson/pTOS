@@ -29,7 +29,6 @@
 #define RASPI_PCIE_MMIO_SIZE            0x04000000UL
 
 #define RASPI_PCIE_DMA_BUS_BASE         0x00000000UL
-#define RASPI_PCIE_DMA_SIZE             0xc0000000UL
 
 #define PCIE_RC_CFG_PRIV1_ID_VAL3       0x043cUL
 #define PCIE_RC_CFG_PRIV1_ID_VAL3_CLASS_CODE_MASK 0x00ffffffUL
@@ -69,16 +68,43 @@
  * The BCM2711 root port's real hardware placement for this window is
  * 0x6_00000000 -- above the 4 GiB boundary a 32-bit ARM address can
  * express. This port has no LPAE support, so the window is relocated
- * here to a fixed, 1 MB-aligned 32-bit address instead: 0xf9000000 to
- * 0xfcffffff (RASPI_PCIE_MMIO_SIZE, 64 MiB), ending 5 MiB clear of
+ * here to a fixed, 1 MB-aligned 32-bit address instead: 0xf8000000 to
+ * 0xfbffffff (RASPI_PCIE_MMIO_SIZE, 64 MiB), 21 MiB clear of
  * RASPI_PCIE_REG_BASE (0xfd500000), the PCIe controller's own fixed
- * register block. The whole 4 GiB space is already flat-identity-mapped
- * by init_mmu() (bios/machine/raspi/memory.c), so this needs no new MMU
- * work -- but it must not overlap real RAM. raspi_pci_init() verifies
- * that against phystop before enabling this window; see
- * raspi_pci_outbound_window_enabled below.
+ * register block, and of the RPi4 peripheral aperture (0xfe000000,
+ * raspi_board.c) -- deliberately more margin than the minimum needed,
+ * since the exact extent of any other fixed SoC decode in that range
+ * isn't verified from this codebase alone. This CPU base is numerically
+ * identical to RASPI_PCIE_MMIO_BUS_BASE by coincidence, not by
+ * requirement -- don't simplify raspi_pci_bus_to_phys()'s subtraction
+ * away on the assumption that will always hold.
+ *
+ * The whole 4 GiB space is already flat-identity-mapped by init_mmu()
+ * (bios/machine/raspi/memory.c), so this needs no new MMU work -- but
+ * it must not overlap ARM-visible RAM as reported by firmware.
+ * raspi_pci_init() verifies that against phystop before enabling this
+ * window; see raspi_pci_outbound_window_enabled below. (phystop itself
+ * excludes a reserved VideoCore memory block that sits above it, per
+ * raspi_vcmem_init() in memory.c -- on BCM2711 that block is far below
+ * any candidate window address, so this is not believed to matter in
+ * practice, but is noted for precision.)
+ *
+ * This relocation assumes the SoC interconnect routes any CPU address
+ * this window's BASE_LIMIT/BASE_HI/LIMIT_HI registers claim through to
+ * the PCIe root complex -- i.e. that these registers are the actual
+ * routing mechanism, not merely local bookkeeping inside an RC that can
+ * only ever be reached at its real hardware placement. This matches how
+ * CPU-side outbound ATU windows work on essentially every PCIe root
+ * complex (DesignWare, Broadcom iProc/STB, Xilinx, ...), but is not
+ * independently confirmed against a BCM2711 datasheet or real hardware
+ * from this codebase alone. If it's wrong, the failure mode is silent
+ * (bus_to_phys() would report success with a physical address that
+ * doesn't actually reach the device) rather than the honest
+ * PCI_BACKEND_UNMAPPABLE this replaces -- see the design doc's Risks
+ * section and the hardware validation checklist, which reads back an
+ * actual xHCI capability register specifically to catch this.
  */
-#define RASPI_PCIE_OUTBOUND_CPU_BASE    0xf9000000UL
+#define RASPI_PCIE_OUTBOUND_CPU_BASE    0xf8000000UL
 #define RASPI_PCIE_INBOUND_SIZE         0x80000000UL
 #define RASPI_PCIE_INBOUND_SIZE_CODE    16U
 #define RASPI_PCIE_LINK_WAIT_LOOPS      20U
@@ -307,6 +333,7 @@ static LONG raspi_pci_init(void)
     UWORD i;
 
     raspi_pci_link_ready = FALSE;
+    raspi_pci_outbound_window_enabled = FALSE;
 
     power_state.value1 = DEVICE_ID_USB_HCD;
     power_state.value2 = POWER_STATE_ON | POWER_STATE_WAIT;
@@ -350,7 +377,7 @@ static LONG raspi_pci_init(void)
         raspi_pci_set_outbound_window();
     } else {
         KINFO(("pci: detected RAM reaches the PCIe outbound MMIO window "
-               "(phystop=0x%lx >= 0x%lx); BAR/MMIO resource access will "
+               "(phystop=0x%lx > 0x%lx); BAR/MMIO resource access will "
                "be unavailable\n",
                (ULONG)phystop, RASPI_PCIE_OUTBOUND_CPU_BASE));
     }
@@ -459,10 +486,9 @@ static LONG raspi_pci_phys_to_bus(ULONG phys_address, BOOL io, ULONG *bus_addres
         return PCI_GENERAL_ERROR;
     if (io)
         return PCI_BAD_RESOURCE;
-    /* RASPI_PCIE_DMA_BUS_BASE is 0 and phys_address is unsigned, so a
-     * lower-bound check would always be true (or, checked the other way,
-     * dead code -Wtype-limits correctly flags) -- only the upper bound
-     * can meaningfully fail. */
+    /* RASPI_PCIE_DMA_BUS_BASE is 0, so every unsigned phys_address is
+     * already >= it -- a lower-bound check would be dead code, which
+     * -Wtype-limits correctly flags. Only the upper bound can fail. */
     if (phys_address >= RASPI_PCIE_DMA_BUS_BASE + RASPI_PCIE_INBOUND_SIZE)
         return PCI_BAD_RESOURCE;
 
