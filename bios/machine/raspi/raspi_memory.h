@@ -1,5 +1,5 @@
 /*
- * raspi_screen.h Raspberry PI framebuffer support
+ * raspi_memory.h - Raspberry Pi memory setup (MMU, RAM detection)
  *
  * Copyright (C) 2013-2018 The EmuTOS development team
  *
