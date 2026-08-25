@@ -455,12 +455,19 @@ static LONG raspi_pci_bus_to_phys(ULONG bus_address, BOOL io, ULONG *phys_addres
 
 static LONG raspi_pci_phys_to_bus(ULONG phys_address, BOOL io, ULONG *bus_address)
 {
-    (void)phys_address;
     if (bus_address == 0)
         return PCI_GENERAL_ERROR;
     if (io)
         return PCI_BAD_RESOURCE;
-    return PCI_BAD_RESOURCE;
+    /* RASPI_PCIE_DMA_BUS_BASE is 0 and phys_address is unsigned, so a
+     * lower-bound check would always be true (or, checked the other way,
+     * dead code -Wtype-limits correctly flags) -- only the upper bound
+     * can meaningfully fail. */
+    if (phys_address >= RASPI_PCIE_DMA_BUS_BASE + RASPI_PCIE_INBOUND_SIZE)
+        return PCI_BAD_RESOURCE;
+
+    *bus_address = phys_address;
+    return PCI_SUCCESSFUL;
 }
 
 static LONG raspi_pci_hook_interrupt(PCI_HANDLE handle, UBYTE line, pci_interrupt_handler_t handler, void *param)
