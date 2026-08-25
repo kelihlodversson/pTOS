@@ -10,9 +10,11 @@
 #include "usb_global.h"
 #include "usb.h"
 #include "usb_api.h"
+#include "usb_io.h"
 #include "raspi_vl805.h"
 #include "raspi_int.h"
 #include "endian.h"
+#include "biosext.h"
 #include "ucd_xhci.h"
 #include "xhci_hw.h"
 
@@ -166,6 +168,77 @@ static BOOL xhci_hw_reset(struct xhci_priv *priv)
     return TRUE;
 }
 
+DEFINE_ALIGN_BUFFER(xhci_qword_t, xhci_dcbaa, XHCI_MAX_SLOTS_ENABLED + 1U, XHCI_DMA_ALIGN);
+DEFINE_ALIGN_BUFFER(xhci_trb_t, xhci_cmd_ring, XHCI_TRBS_PER_SEGMENT, XHCI_DMA_ALIGN);
+
+/* CONFIG.MaxSlotsEn is capped at XHCI_MAX_SLOTS_ENABLED regardless of what
+ * the hardware reports, so the statically-sized DCBAA/context tables never
+ * need to grow at runtime -- the spec permits enabling fewer slots than
+ * the hardware maximum. */
+static void xhci_configure_slots(struct xhci_priv *priv)
+{
+    ULONG hcs1;
+    ULONG hw_max_slots;
+
+    hcs1 = xhci_readl(priv->cap_base, XHCI_CAP_HCSPARAMS1);
+    hw_max_slots = XHCI_HCS1_MAX_SLOTS(hcs1);
+    priv->max_slots = (UWORD)hw_max_slots;
+    priv->slots_enabled = (hw_max_slots < (ULONG)XHCI_MAX_SLOTS_ENABLED)
+        ? (UWORD)hw_max_slots
+        : (UWORD)XHCI_MAX_SLOTS_ENABLED;
+
+    xhci_writel(priv->op_base, XHCI_OP_CONFIG, (ULONG)priv->slots_enabled);
+}
+
+static void xhci_init_dcbaa(void)
+{
+    ULONG i;
+
+    for (i = 0UL; i < (ULONG)(XHCI_MAX_SLOTS_ENABLED + 1U); i++) {
+        xhci_dcbaa[i].lo = 0UL;
+        xhci_dcbaa[i].hi = 0UL;
+    }
+    flush_data_cache((void *)xhci_dcbaa,
+                      (long)((ULONG)(XHCI_MAX_SLOTS_ENABLED + 1U) * sizeof(xhci_qword_t)));
+}
+
+/*
+ * Single-segment Command Ring, closed into a loop by a Link TRB. Per the
+ * xHCI spec (4.11.1.1, "All components of all Command and Transfer TRBs
+ * shall be initialized to 0") and verified against U-Boot's
+ * xhci_link_segments(): the Link TRB's own Cycle bit stays 0 at init --
+ * only its Type field and the Toggle Cycle control bit are set. The
+ * ring's initial producer cycle state (1) is written separately, into
+ * CRCR itself, not into any TRB.
+ */
+static void xhci_init_command_ring(struct xhci_priv *priv)
+{
+    ULONG i;
+    ULONG addr;
+    ULONG last;
+
+    last = (ULONG)(XHCI_TRBS_PER_SEGMENT - 1U);
+    for (i = 0UL; i < last; i++) {
+        xhci_cmd_ring[i].param_lo = 0UL;
+        xhci_cmd_ring[i].param_hi = 0UL;
+        xhci_cmd_ring[i].status = 0UL;
+        xhci_cmd_ring[i].control = 0UL;
+    }
+
+    addr = (ULONG)xhci_cmd_ring;
+    xhci_cmd_ring[last].param_lo = addr;
+    xhci_cmd_ring[last].param_hi = 0UL;
+    xhci_cmd_ring[last].status = 0UL;
+    xhci_cmd_ring[last].control = XHCI_TRB_TYPE(XHCI_TRB_TYPE_LINK) | XHCI_TRB_LINK_TOGGLE;
+
+    flush_data_cache((void *)xhci_cmd_ring, (long)((ULONG)XHCI_TRBS_PER_SEGMENT * sizeof(xhci_trb_t)));
+
+    /* CRCR low dword: 64-byte-aligned ring address with the initial Ring
+     * Cycle State (1) OR'd into the low bits the alignment guarantees
+     * are zero. */
+    xhci_writeq(priv->op_base, XHCI_OP_CRCR, addr | 1UL);
+}
+
 static long xhci_lowlevel_init(struct xhci_priv *priv)
 {
     UBYTE caplength;
@@ -193,6 +266,11 @@ static long xhci_lowlevel_init(struct xhci_priv *priv)
         return ETIMEDOUT;
     }
     KINFO(("xhci: controller reset complete\n"));
+
+    xhci_configure_slots(priv);
+    xhci_init_dcbaa();
+    xhci_init_command_ring(priv);
+    xhci_writeq(priv->op_base, XHCI_OP_DCBAAP, (ULONG)xhci_dcbaa);
 
     KINFO(("xhci: controller bring-up is not implemented yet\n"));
     return EOPNOTSUPP;
