@@ -340,6 +340,45 @@ static BOOL xhci_init_scratchpad(struct xhci_priv *priv)
     return TRUE;
 }
 
+static BOOL xhci_hw_start(struct xhci_priv *priv)
+{
+    ULONG cmd;
+
+    cmd = xhci_readl(priv->op_base, XHCI_OP_USBCMD);
+    cmd |= XHCI_CMD_RUN;
+    xhci_writel(priv->op_base, XHCI_OP_USBCMD, cmd);
+
+    return xhci_wait_clear(priv->op_base, XHCI_OP_USBSTS, XHCI_STS_HALT, XHCI_HALT_TIMEOUT_US);
+}
+
+static void xhci_trace_ports(struct xhci_priv *priv)
+{
+    ULONG hcs1;
+    ULONG hw_max_ports;
+    ULONG n;
+    ULONG port;
+    ULONG value;
+    ULONG speed;
+
+    hcs1 = xhci_readl(priv->cap_base, XHCI_CAP_HCSPARAMS1);
+    hw_max_ports = XHCI_HCS1_MAX_PORTS(hcs1);
+    priv->max_ports = (UWORD)hw_max_ports;
+
+    KINFO(("xhci: %lu root hub ports\n", hw_max_ports));
+
+    n = (hw_max_ports < (ULONG)XHCI_MAX_PORTS_TRACED) ? hw_max_ports : (ULONG)XHCI_MAX_PORTS_TRACED;
+
+    for (port = 0UL; port < n; port++) {
+        value = xhci_readl(priv->op_base, XHCI_OP_PORTSC(port));
+        speed = (value & XHCI_PORTSC_SPEED_MASK) >> XHCI_PORTSC_SPEED_SHIFT;
+        KINFO(("xhci: port %lu: connect=%lu enabled=%lu speed=%lu\n",
+               port + 1UL,
+               (value & XHCI_PORTSC_CCS) ? 1UL : 0UL,
+               (value & XHCI_PORTSC_PED) ? 1UL : 0UL,
+               speed));
+    }
+}
+
 static long xhci_lowlevel_init(struct xhci_priv *priv)
 {
     UBYTE caplength;
@@ -378,8 +417,18 @@ static long xhci_lowlevel_init(struct xhci_priv *priv)
         return EOPNOTSUPP;
     }
 
-    KINFO(("xhci: controller bring-up is not implemented yet\n"));
-    return EOPNOTSUPP;
+    xhci_writel(priv->op_base, XHCI_OP_DNCTRL, 0UL);
+
+    if (!xhci_hw_start(priv)) {
+        KINFO(("xhci: controller did not start\n"));
+        return ETIMEDOUT;
+    }
+    KINFO(("xhci: controller running\n"));
+
+    xhci_trace_ports(priv);
+
+    KINFO(("xhci: bring-up complete; transfer support is not implemented yet\n"));
+    return E_OK;
 }
 
 static long xhci_ioctl(struct ucdif *u, short cmd, long arg)
