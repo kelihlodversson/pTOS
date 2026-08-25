@@ -462,9 +462,15 @@ static LONG raspi_pci_hook_interrupt(PCI_HANDLE handle, UBYTE line, pci_interrup
     if (i == RASPI_PCIE_INTX_MAX_SHARERS)
         return PCI_GENERAL_ERROR;
 
+    /*
+     * handler is the field the ISR dispatcher gates on (see
+     * raspi_pci_intx_dispatch); write it last so a concurrent interrupt
+     * on an already-enabled shared line never observes a hooked entry
+     * with a stale param.
+     */
     raspi_pci_intx_hooks[slot][i].handle = handle;
-    raspi_pci_intx_hooks[slot][i].handler = handler;
     raspi_pci_intx_hooks[slot][i].param = param;
+    raspi_pci_intx_hooks[slot][i].handler = handler;
     raspi_gic_connect_irq(RASPI_PCIE_INTX_GIC_IRQ(pin), raspi_pci_intx_isr[slot]);
 
     return PCI_SUCCESSFUL;
