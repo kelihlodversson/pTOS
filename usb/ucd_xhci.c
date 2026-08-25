@@ -12,6 +12,11 @@
 #include "usb_api.h"
 #include "raspi_vl805.h"
 #include "ucd_xhci.h"
+#include "xhci_hw.h"
+
+typedef char xhci_trb_size_check[(sizeof(xhci_trb_t) == 16U) ? 1 : -1];
+typedef char xhci_qword_size_check[(sizeof(xhci_qword_t) == 8U) ? 1 : -1];
+typedef char xhci_erst_entry_size_check[(sizeof(xhci_erst_entry_t) == 16U) ? 1 : -1];
 
 struct xhci_priv {
     raspi_vl805_resources_t resources;
