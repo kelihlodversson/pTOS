@@ -5,11 +5,11 @@ plain C, run inside a real (emulated) pTOS boot, and are cross-compiled
 for every architecture pTOS targets — the same test source runs unmodified
 on m68k and ARM.
 
-## Enabling and building
+## Building
 
-The harness is off by default. Turn it on with `make menuconfig` (or
-`make guiconfig` for a graphical window), under **Debugging → Regression
-tests → Include built-in regression tests** (`CONF_WITH_REGRESSION_TESTS`).
+The harness is enabled by default (`CONF_WITH_REGRESSION_TESTS`). To omit it
+from a configuration, disable **Regression tests → Include built-in regression
+tests** in `make menuconfig` (or `make guiconfig`).
 
 Build the kernel as usual, then build the test image:
 
