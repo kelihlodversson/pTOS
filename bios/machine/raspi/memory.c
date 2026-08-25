@@ -108,6 +108,7 @@ extern char sysvars_end[];
 
 static UBYTE* coherent_buffer;
 struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR* raspi_page_table0;
+ULONG raspi_top_of_ram;
 
 UBYTE* raspi_get_coherent_buffer(int tag)
 {
@@ -157,10 +158,10 @@ void raspi_vcmem_init(void)
     init_tags.get_vc_memory.tag.value_length = 8;
     raspi_prop_get_tags(&init_tags, sizeof(init_tags));
 
-    ULONG top_of_ram = (init_tags.get_arm_memory.value1 + init_tags.get_arm_memory.value2);
+    raspi_top_of_ram = (init_tags.get_arm_memory.value1 + init_tags.get_arm_memory.value2);
 
     /* Reserve the topmost megabyte for page tables and cache coherent buffers */
-    phystop = (UBYTE *)((top_of_ram - MEGABYTE) & ~(MEGABYTE-1));
+    phystop = (UBYTE *)((raspi_top_of_ram - MEGABYTE) & ~(MEGABYTE-1));
 
     raspi_page_table0 = (struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR*)phystop;
     coherent_buffer = phystop + PAGE_TABLE0_SIZE;
@@ -338,32 +339,32 @@ static void init_mmu(ULONG memory_size)
 // Cache maintenance operations for ARMv6
 //
 // NOTE: The following functions should hold all variables in CPU registers. Currently this will be
-//	 ensured using maximum optimation (see bios/processor.h).
+//   ensured using maximum optimation (see bios/processor.h).
 //
-//	 The following numbers can be determined (dynamically) using CTR.
-//	 As long we use the ARM1176JZF-S implementation in the BCM2835 these static values will work:
+//   The following numbers can be determined (dynamically) using CTR.
+//   As long we use the ARM1176JZF-S implementation in the BCM2835 these static values will work:
 //
 
-#define DATA_CACHE_LINE_LENGTH		32
+#define DATA_CACHE_LINE_LENGTH  32
 
 void invalidate_data_cache (void *start, long length)
 {
-	length += DATA_CACHE_LINE_LENGTH;
+    length += DATA_CACHE_LINE_LENGTH;
 
-	while (1)
-	{
-		asm volatile ("mcr p15, 0, %0, c7, c14,  1" : : "r" ((ULONG)start) : "memory");
+    while (1)
+    {
+        asm volatile ("mcr p15, 0, %0, c7, c14,  1" : : "r" ((ULONG)start) : "memory");
 
-		if (length < DATA_CACHE_LINE_LENGTH)
-		{
-			break;
-		}
+        if (length < DATA_CACHE_LINE_LENGTH)
+        {
+            break;
+        }
 
-		start += DATA_CACHE_LINE_LENGTH;
-		length  -= DATA_CACHE_LINE_LENGTH;
-	}
+        start += DATA_CACHE_LINE_LENGTH;
+        length  -= DATA_CACHE_LINE_LENGTH;
+    }
 
-	data_sync_barrier ();
+    data_sync_barrier ();
 }
 #else
 // The RPI 2+ implementation is in cache_armv7.S

@@ -20,7 +20,7 @@
 #include "raspi_io.h"
 #include "raspi_mbox.h"
 #include "raspi_pci.h"
-#include "tosvars.h"
+#include "raspi_memory.h"
 
 #define RASPI_PCIE_REG_BASE             0xfd500000UL
 #define RASPI_PCIE_REG_SIZE             0x00009310UL
@@ -82,12 +82,21 @@
  * The whole 4 GiB space is already flat-identity-mapped by init_mmu()
  * (bios/machine/raspi/memory.c), so this needs no new MMU work -- but
  * it must not overlap ARM-visible RAM as reported by firmware.
- * raspi_pci_init() verifies that against phystop before enabling this
- * window; see raspi_pci_outbound_window_enabled below. (phystop itself
- * excludes a reserved VideoCore memory block that sits above it, per
- * raspi_vcmem_init() in memory.c -- on BCM2711 that block is far below
- * any candidate window address, so this is not believed to matter in
- * practice, but is noted for precision.)
+ * raspi_pci_init() verifies that against raspi_top_of_ram (the actual
+ * top of detected RAM, extern'd from memory.c via raspi_memory.h)
+ * before enabling this window; see raspi_pci_outbound_window_enabled
+ * below.
+ *
+ * Checking against phystop (include/tosvars.h) instead would be wrong:
+ * phystop is NOT the top of RAM, it is (raspi_top_of_ram - 1 MB)
+ * rounded down to an MB boundary -- the START of the topmost reserved
+ * megabyte where raspi_vcmem_init() (memory.c) places the live MMU
+ * page table (raspi_page_table0, the same memory the ARM TTBR
+ * registers point at) and the cache-coherent DMA buffer. A check
+ * against phystop alone can pass while that reserved megabyte -- live
+ * page-table memory the CPU actively reads on every access -- still
+ * overlaps this window, silently aliasing it behind PCIe MMIO. Caught
+ * by review before this was ever exercised on real hardware.
  *
  * This relocation assumes the SoC interconnect routes any CPU address
  * this window's BASE_LIMIT/BASE_HI/LIMIT_HI registers claim through to
@@ -372,14 +381,14 @@ static LONG raspi_pci_init(void)
 
     raspi_pci_set_inbound_window();
 
-    raspi_pci_outbound_window_enabled = ((ULONG)phystop <= RASPI_PCIE_OUTBOUND_CPU_BASE);
+    raspi_pci_outbound_window_enabled = (raspi_top_of_ram <= RASPI_PCIE_OUTBOUND_CPU_BASE);
     if (raspi_pci_outbound_window_enabled) {
         raspi_pci_set_outbound_window();
     } else {
         KINFO(("pci: detected RAM reaches the PCIe outbound MMIO window "
-               "(phystop=0x%lx > 0x%lx); BAR/MMIO resource access will "
+               "(top_of_ram=0x%lx > 0x%lx); BAR/MMIO resource access will "
                "be unavailable\n",
-               (ULONG)phystop, RASPI_PCIE_OUTBOUND_CPU_BASE));
+               raspi_top_of_ram, RASPI_PCIE_OUTBOUND_CPU_BASE));
     }
 
     raspi_pci_set_root_bridge_class();

@@ -102,7 +102,7 @@ logic) and, at `RASPI_PCIE_MMIO_SIZE` (64 MiB, unchanged) wide, spans
 `0xf8000000`–`0xfbffffff`, 21 MiB clear of `RASPI_PCIE_REG_BASE` and 32
 MiB clear of the RPi4 peripheral aperture (`0xfe000000`) — more margin
 than the minimum needed, adopted during final review as cheap insurance
-against any undocumented fixed SoC decode between `phystop` and
+against any undocumented fixed SoC decode between the top of RAM and
 `RASPI_PCIE_REG_BASE`.
 This CPU base is numerically identical to `RASPI_PCIE_MMIO_BUS_BASE` by
 coincidence, not by requirement.
@@ -117,13 +117,27 @@ the values fed into it change, with the HI fields now `0`.
 ### Boot-time safety check
 
 Before enabling the outbound window, verify that detected RAM does not
-reach into the chosen window: `(ULONG)phystop <= RASPI_PCIE_OUTBOUND_CPU_BASE`.
-`phystop` (`extern UBYTE *phystop;`, declared in `include/tosvars.h`,
-already globally accessible — no new plumbing needed) is computed by
-`raspi_vcmem_init()` (`bios/machine/raspi/memory.c`) from the VideoCore
-firmware's actual reported ARM-visible memory, so this check is against
-real detected RAM, not an assumption about typical RPi4 firmware
-behavior.
+reach into the chosen window: `raspi_top_of_ram <= RASPI_PCIE_OUTBOUND_CPU_BASE`.
+`raspi_top_of_ram` is a new `ULONG` global set by `raspi_vcmem_init()`
+(`bios/machine/raspi/memory.c`) from the firmware's actual reported
+ARM-visible memory (`PROPTAG_GET_ARM_MEMORY`), declared `extern` in
+`bios/machine/raspi/raspi_memory.h`.
+
+**This must check `raspi_top_of_ram`, not the pre-existing `phystop`
+(`include/tosvars.h`) — an error caught during Copilot's automated PR
+review, after the human-reviewed final whole-branch review had already
+approved a version of this design that used `phystop`.** `phystop` is
+not the top of RAM: `raspi_vcmem_init()` sets it to
+`(raspi_top_of_ram - 1 MB)` rounded down to an MB boundary, marking the
+*start* of the topmost reserved megabyte where it then places the live
+MMU page table (`raspi_page_table0` — the same memory the ARM TTBR
+registers point at) and the cache-coherent DMA buffer. A check against
+`phystop` alone can be satisfied (`phystop <= RASPI_PCIE_OUTBOUND_CPU_BASE`)
+while up to two megabytes of real, live RAM above it — including that
+page table — still overlaps the chosen window, silently aliasing
+actively-read MMU translation data behind PCIe MMIO. Checking against
+`raspi_top_of_ram` (the true upper bound of detected RAM, reservation
+included) avoids this entirely.
 
 If the check fails: skip *only* `raspi_pci_set_outbound_window()` and
 mark BAR/MMIO resource access unavailable (`raspi_pci_bus_to_phys()`
@@ -257,17 +271,32 @@ PCIe/VL805 model, same constraint as #270):
   mapping.
 - The chosen fixed address (`0xf8000000`) is a well-justified but
   ultimately unverified-until-boot guess about where real RPi4 hardware's
-  detected RAM tops out; the boot-time `phystop` check is the actual
-  safety mechanism against RAM overlap specifically, not the address
-  choice itself — if the check ever trips on real hardware, that is
-  expected, correct, diagnosable behavior, not a bug to work around by
-  moving the address further down without re-examining why. Note that
-  `phystop` excludes a reserved VideoCore memory block that sits above
-  it (per `raspi_vcmem_init()` in `bios/machine/raspi/memory.c`); on
-  BCM2711 that block is far below any candidate window address, so this
-  is not believed to matter in practice, but the check's actual coverage
-  is "ARM-visible RAM as reported by firmware," not "all of physical RAM"
-  in the most literal sense.
+  detected RAM tops out; the boot-time `raspi_top_of_ram` check is the
+  actual safety mechanism against RAM overlap specifically, not the
+  address choice itself — if the check ever trips on real hardware, that
+  is expected, correct, diagnosable behavior, not a bug to work around by
+  moving the address further down without re-examining why.
+- **A real bug, not just a documentation gap, was found and fixed during
+  Copilot's automated PR review**: an earlier version of this design
+  (already through the human-reviewed final whole-branch review) checked
+  `phystop` instead of `raspi_top_of_ram`. `phystop` is not the top of
+  RAM — `raspi_vcmem_init()` sets it to `(raspi_top_of_ram - 1 MB)`
+  rounded down to an MB boundary, marking the *start* of the topmost
+  reserved megabyte where it places the live MMU page table
+  (`raspi_page_table0`, the same memory the ARM TTBR registers point at)
+  and the cache-coherent DMA buffer. Checking `phystop` alone could pass
+  while up to two megabytes of real RAM above it — including that live
+  page table — still overlapped the chosen window, which would have
+  silently aliased actively-read MMU translation data behind PCIe MMIO
+  on any RPi4 whose detected RAM landed in that range. This is exactly
+  the class of subtle, hardware-only-reproducible bug this project's
+  review process (task review, final whole-branch review, and automated
+  PR review as a further backstop) exists to catch before it reaches
+  real hardware, and it demonstrates why: neither the task reviewer nor
+  the final whole-branch reviewer caught it, because both reasoned about
+  `phystop`'s *name* and its use elsewhere in the codebase
+  (`IS_STRAM_POINTER` in `bios/machine.h`) rather than reading its actual
+  derivation in `raspi_vcmem_init()`.
 - This is the second RPi4 PCIe-adjacent design in this repository to
   need real-hardware validation with no emulator fallback (the first
   being #270 itself); both should ideally be validated in the same
