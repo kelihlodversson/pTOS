@@ -173,7 +173,7 @@ DEFINE_ALIGN_BUFFER(xhci_trb_t, xhci_cmd_ring, XHCI_TRBS_PER_SEGMENT, XHCI_DMA_A
 DEFINE_ALIGN_BUFFER(xhci_trb_t, xhci_event_ring, XHCI_TRBS_PER_SEGMENT, XHCI_DMA_ALIGN);
 DEFINE_ALIGN_BUFFER(xhci_erst_entry_t, xhci_erst, 1U, XHCI_DMA_ALIGN);
 DEFINE_ALIGN_BUFFER(xhci_qword_t, xhci_scratchpad_array, XHCI_MAX_SCRATCHPAD_BUFS, XHCI_DMA_ALIGN);
-DEFINE_ALIGN_BUFFER(UBYTE, xhci_scratchpad_bufs, XHCI_MAX_SCRATCHPAD_BUFS * XHCI_PAGE_SIZE, XHCI_DMA_ALIGN);
+DEFINE_ALIGN_BUFFER(UBYTE, xhci_scratchpad_bufs, XHCI_MAX_SCRATCHPAD_BUFS * XHCI_PAGE_SIZE, XHCI_PAGE_SIZE);
 
 /* CONFIG.MaxSlotsEn is capped at XHCI_MAX_SLOTS_ENABLED regardless of what
  * the hardware reports, so the statically-sized DCBAA/context tables never
@@ -190,6 +190,8 @@ static void xhci_configure_slots(struct xhci_priv *priv)
     priv->slots_enabled = (hw_max_slots < (ULONG)XHCI_MAX_SLOTS_ENABLED)
         ? (UWORD)hw_max_slots
         : (UWORD)XHCI_MAX_SLOTS_ENABLED;
+
+    KINFO(("xhci: %lu slots available, %u enabled\n", hw_max_slots, priv->slots_enabled));
 
     xhci_writel(priv->op_base, XHCI_OP_CONFIG, (ULONG)priv->slots_enabled);
 }
@@ -325,6 +327,11 @@ static BOOL xhci_init_scratchpad(struct xhci_priv *priv)
         return FALSE;
     }
 
+    if (((ULONG)xhci_scratchpad_bufs & (XHCI_PAGE_SIZE - 1UL)) != 0UL) {
+        KINFO(("xhci: scratchpad buffer pool is not page-aligned\n"));
+        return FALSE;
+    }
+
     for (i = 0UL; i < num_sp; i++) {
         addr = (ULONG)(xhci_scratchpad_bufs + (i * XHCI_PAGE_SIZE));
         xhci_scratchpad_array[i].lo = addr;
@@ -428,6 +435,21 @@ static long xhci_lowlevel_init(struct xhci_priv *priv)
     xhci_trace_ports(priv);
 
     KINFO(("xhci: bring-up complete; transfer support is not implemented yet\n"));
+
+    /*
+     * Once this returns E_OK, ucd_register() proceeds to allocate a root
+     * hub device and call usb_new_device() -- which will fail at its
+     * first control transfer (SUBMIT_CONTROL_MSG is still EOPNOTSUPP) and
+     * be torn down by usb/ucd.c's existing failure path. Two side effects
+     * of that stage-2-deferred failure are worth knowing about: (1)
+     * root_hub_dev (this file's static) is left pointing at the now-freed
+     * device, harmless today since nothing else reads it; (2) the
+     * controller stays in RUN state with nothing servicing its Event
+     * Ring, so Port Status Change Events will accumulate in the 64-entry
+     * ring until a later stage adds interrupt- or poll-driven service.
+     * Both are benign for this stage and match the design doc, but the
+     * next stage needs to account for them.
+     */
     return E_OK;
 }
 
