@@ -1,7 +1,1 @@
 * text=auto eol=lf
-
-# EMUDESK.INF's CR characters are a significant field terminator to
-# pTOS's own parser (desk/deskapp.c scan_2()/scan_str()), not just a line
-# ending: normalizing them to LF silently breaks it. Keep them byte-exact.
-desk/emudesk-raspi.inf -text whitespace=cr-at-eol
-tests/emudesk.inf -text whitespace=cr-at-eol
