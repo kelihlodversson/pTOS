@@ -83,7 +83,7 @@ driver family already works.
 
 ## Components
 
-### Register layout (`usb/machine/raspi/xhci_hw.h`, new file)
+### Register layout (`usb/xhci_hw.h`, new file)
 
 Plain `portab.h`-typed structs/offsets, no bitfields (matching
 `raspi_pci.c`'s register-access style: explicit offset macros plus
@@ -191,7 +191,7 @@ Automated (all that's available without hardware):
 - `make rpi4_defconfig && make` — the new bring-up code compiles and links.
 - `make rpi2_defconfig && make` and `make virt-arm_defconfig && make` —
   regression: DWC2/virt-arm builds are unaffected (this stage touches only
-  `usb/ucd_xhci.c` and the new `usb/machine/raspi/xhci_hw.h`).
+  `usb/ucd_xhci.c` and the new `usb/xhci_hw.h`).
 
 Manual, on real Raspberry Pi 4/400 hardware (required — QEMU has no VL805
 model):
