@@ -128,8 +128,10 @@ static BOOL xhci_wait_set(volatile UBYTE *base, ULONG offset, ULONG mask, ULONG 
 /*
  * Reset sequence per xHCI spec section 4.2, verified against U-Boot's
  * xhci_reset(): halt if running, then reset, then wait for CNR to clear.
- * No doorbell or operational register other than USBSTS may be touched
- * before CNR clears.
+ * Besides USBCMD (to trigger and, via RESET, poll the reset itself) and
+ * USBSTS (to poll HALT/CNR), no doorbell or other operational register
+ * may be touched until CNR clears -- xhci_lowlevel_init() only starts
+ * programming DCBAAP/CRCR/CONFIG/etc. after this function returns TRUE.
  */
 static BOOL xhci_hw_reset(struct xhci_priv *priv)
 {
