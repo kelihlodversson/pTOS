@@ -159,11 +159,10 @@ pip3 install kconfiglib
 ## Running the regression tests
 
 A small built-in regression test suite runs the same way across every
-target. Enable it, build the test image, and boot it:
+target. It is enabled by default; build the test image and boot it:
 
 ```sh
-make menuconfig   # Debugging -> Regression tests -> Include built-in regression tests
-make
+make rpi2_defconfig && make   # or any other config
 make test-hd      # builds runtests.tos + test-hd.img
 ```
 
