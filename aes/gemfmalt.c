@@ -367,10 +367,6 @@ WORD fm_alert(WORD defbut, char *palstr)
         obj->ob_spec.bitblk = CONST_CAST(BITBLK *, &rs_bitblk[image]);
     }
 
-    /* convert to pixels    */
-    for (i = 0; i < NUM_ALOBJS; i++)
-        rs_obfix(tree, i);
-
     /* fix up icon, 32x32   */
     obj = tree + 1;
     obj->ob_type = G_IMAGE;
