@@ -51,7 +51,9 @@ dd if=/dev/zero of="$fs_image" bs=$sector_size count=$partition_sectors
 mkfs.fat -F 16 -s 1 -n PTOS "$fs_image" >/dev/null
 
 for f in "$@"; do
-    if [ -d "$f" ]; then
+    if [ "${f##*.}" = inf ]; then
+        mcopy -t -i "$fs_image" "$f" ::
+    elif [ -d "$f" ]; then
         mcopy -s -i "$fs_image" "$f" ::
     else
         mcopy -i "$fs_image" "$f" ::

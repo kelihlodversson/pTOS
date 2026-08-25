@@ -20,6 +20,7 @@
 #include "ahdi.h"
 #include "mem.h"
 #include "string.h"
+#include "biosext.h"
 #include "kprint.h"
 
 #ifdef __arm__
@@ -44,7 +45,7 @@ static void *create_chain(UBYTE *p,LONG n)
         if (i < NUMBUFS-1)                  /* chain to next */
             bcbptr->b_link = (BCB *)(p + n);
         bcbptr->b_bufdrv = -1;              /* mark as invalid */
-        bcbptr->b_bufr = p + sizeof(BCB);
+        bcbptr->b_bufr = (char *)p + sizeof(BCB);
     }
 
     return p;
@@ -238,5 +239,5 @@ UBYTE *getrec(RECNO recn, OFD *of, int wrtflg)
     if (wrtflg)
         b->b_dirty = 1;
 
-    return b->b_bufr;
+    return (UBYTE *)b->b_bufr;
 }
