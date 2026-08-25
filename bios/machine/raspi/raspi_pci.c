@@ -95,19 +95,21 @@
  * generically by raspi_gic_handle_irq() -- there is nothing extra to
  * mask or ack at the PCIe RC itself.
  *
- * A GIC SPI line may be shared: the RPi4 exposes a single root port, but
- * a multi-function device sitting in that one slot can have several
- * functions asserting the same INTx pin (interrupt-map-mask wildcards
- * the device/function fields, matching on pin alone), and pTOS already
- * enumerates every function of a device. Each line therefore fans out to
- * up to RASPI_PCIE_INTX_MAX_SHARERS hooked handlers, called unconditionally
- * on every event -- same as any shared level-triggered PCI INTx line, each
+ * A GIC SPI line may be shared: interrupt-map-mask wildcards the
+ * device/function fields, matching on pin alone, so every function that
+ * asserts the same INTx pin lands on the same one of the four SPIs --
+ * whether they are functions of one multi-function device in the RPi4's
+ * single root port slot, or separate devices pci_core.c's bridge scan
+ * (pci_scan_bridge()/PCI_MAX_BUSES) enumerates behind a downstream
+ * switch. Each line therefore fans out to up to
+ * RASPI_PCIE_INTX_MAX_SHARERS hooked handlers, called unconditionally on
+ * every event -- same as any shared level-triggered PCI INTx line, each
  * driver is expected to check its own device and no-op if it is not the
- * source. The GIC line is enabled while any sharer is hooked and disabled
- * once the last one unhooks.
+ * source. The GIC line is enabled while any sharer is hooked and
+ * disabled before the last one is cleared.
  */
 #define RASPI_PCIE_INTX_LINES  4U
-#define RASPI_PCIE_INTX_MAX_SHARERS 8U
+#define RASPI_PCIE_INTX_MAX_SHARERS 32U
 #define RASPI_PCIE_INTX_GIC_IRQ(pin) (175U + ((pin) - 1U))
 
 static struct {
