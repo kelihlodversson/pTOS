@@ -2386,7 +2386,7 @@ void abline(const Line *line, const WORD wrt_mode, UWORD color)
     /*
      * optimize drawing of vertical lines
      */
-    if (line->x1 == line->x2) {
+    if ((line->x1 == line->x2) && !vdi_screen_is_truecolor()) {
 #if CONF_WITH_VDI_16BIT
         if (TRUECOLOR_MODE)
         {

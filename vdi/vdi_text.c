@@ -16,6 +16,7 @@
 #include "string.h"
 #include "aesext.h"
 #include "vdi_defs.h"
+#include "vdi_backend.h"
 #include "vdistub.h"
 #include "lineavars.h"
 #include "biosext.h"
@@ -128,6 +129,12 @@ static BOOL ok_for_direct_blit(Vwk *vwk, WORD width, JUSTINFO *justified)
 {
     const Fonthead *fnt_ptr;
     WORD xmin, xmax, ymin, ymax;
+
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    /* The direct path below writes planar screen bytes, not packed pixels. */
+    if (vdi_truecolor_screen())
+        return FALSE;
+#endif
 
     if (vwk->style | vwk->chup | vwk->h_align)
         return FALSE;
