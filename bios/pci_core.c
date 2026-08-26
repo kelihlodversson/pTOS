@@ -378,21 +378,30 @@ static void pci_decode_bar(pci_device_t *device, UWORD bar)
 
     reg = PCI_CONFIG_BAR0 + (bar * 4U);
 
-    if (pci_read_config_raw(device, reg, 4, &original) != PCI_SUCCESSFUL)
+    if (pci_read_config_raw(device, reg, 4, &original) != PCI_SUCCESSFUL) {
+        KINFO(("pci: BAR%u could not be read\n", bar));
         return;
-    if (original == 0UL)
+    }
+    if (original == 0UL) {
+        KINFO(("pci: BAR%u reads back as 0 (unassigned)\n", bar));
         return;
+    }
 
-    if (pci_write_config_raw(device, reg, 4, 0xffffffffUL) != PCI_SUCCESSFUL)
+    if (pci_write_config_raw(device, reg, 4, 0xffffffffUL) != PCI_SUCCESSFUL) {
+        KINFO(("pci: BAR%u sizing write failed\n", bar));
         return;
+    }
     if (pci_read_config_raw(device, reg, 4, &mask) != PCI_SUCCESSFUL) {
         pci_write_config_raw(device, reg, 4, original);
+        KINFO(("pci: BAR%u sizing read-back failed\n", bar));
         return;
     }
     pci_write_config_raw(device, reg, 4, original);
 
-    if (mask == 0UL)
+    if (mask == 0UL) {
+        KINFO(("pci: BAR%u sizing mask is 0 (bar=0x%lx)\n", bar, original));
         return;
+    }
 
     io = (original & PCI_BAR_IO) != 0UL;
 
@@ -455,6 +464,9 @@ static void pci_decode_bar(pci_device_t *device, UWORD bar)
     resource->length = pci_bar_size(mask, io);
     resource->offset = phys_address - masked_address;
     resource->dmaoffset = 0UL;
+
+    KINFO(("pci: BAR%u decoded: bus 0x%lx -> phys 0x%lx, size 0x%lx\n",
+           bar, masked_address, phys_address, resource->length));
 }
 
 static ULONG pci_bar_size(ULONG mask, BOOL io)
