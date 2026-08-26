@@ -445,6 +445,12 @@ static void mark_bcbs_invalid(int drv)
 }
 
 
+#ifdef __arm__
+long osif(LONG *pw);
+#else
+long osif(short *pw);
+#endif
+
 /*
  *  osif - C implementation of trap #1. Called by _enter.
  */

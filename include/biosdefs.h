@@ -107,8 +107,8 @@ struct kbdvecs
     PFVOID midivec;     /* MIDI Input */
     PFVOID vkbderr;     /* IKBD Error */
     PFVOID vmiderr;     /* MIDI Error */
-    PFVOID statvec;     /* IKBD Status */
-    PFVOID mousevec;    /* IKBD Mouse */
+    void (*statvec)(UBYTE *);   /* IKBD Status */
+    void (*mousevec)(UBYTE *);  /* IKBD Mouse */
     PFVOID clockvec;    /* IKBD Clock */
     PFVOID joyvec;      /* IKBD Joystick */
     PFVOID midisys;     /* Main MIDI Vector */

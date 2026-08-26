@@ -721,7 +721,7 @@ FCB *dirinit(DND *dn)
     OFD *fd;            /*  ofd for this dir  */
     int num;
     RECNO i2;
-    char *s1;
+    UBYTE *s1;
     DMD *dm;
     FCB *f1;
 

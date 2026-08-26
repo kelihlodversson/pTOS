@@ -123,7 +123,6 @@ static struct vdi_jmptab const jmptb2[] = {
 void screen(void)
 {
     WORD opcode, handle;
-    WORD *contrl = CONTRL;
     const struct vdi_jmptab *jmptab;
     Vwk *vwk = NULL;
 

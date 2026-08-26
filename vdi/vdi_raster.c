@@ -15,6 +15,7 @@
 #include "vdi_defs.h"
 #include "vdi_raster.h"
 #include "vdi_backend.h"
+#include "vdistub.h"
 #include "blitter.h"
 #include "biosext.h"    /* for cache control routines */
 #include "lineavars.h"

@@ -36,6 +36,11 @@
 /* External function doing nothing */
 extern void just_rts(void);
 
+/* GEMDOS trap wrappers from miscasm.S */
+extern long trap1(int, ...);
+extern long trap1_pexec(short mode, const char *path, const char *tail,
+        const char *env);
+
 /* Wrapper around the STOP instruction. This preserves SR. */
 extern void stop_until_interrupt(void);
 
