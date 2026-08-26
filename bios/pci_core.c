@@ -57,6 +57,16 @@ static BOOL pci_bus_scanned[PCI_MAX_BUSES];
 static UBYTE pci_next_bus;
 static BOOL pci_table_full_reported;
 
+/*
+ * Bump allocator for memory BARs that firmware left unassigned (address
+ * field all zero, even though the BAR's own type/size fields are valid --
+ * seen on real Raspberry Pi 4 hardware for VL805's BAR0). Carves naturally
+ * aligned ranges out of the backend's advertised MMIO window, low to high;
+ * never reclaimed, since pci_init() resets it on every re-scan anyway.
+ */
+static ULONG pci_mmio_alloc_next;
+static ULONG pci_mmio_alloc_end;
+
 static pci_device_t *pci_device_from_handle(PCI_HANDLE handle);
 static LONG pci_check_reg(UWORD reg, UWORD size);
 static LONG pci_read_config_raw(pci_device_t *device, UWORD reg, UWORD size, ULONG *value);
@@ -442,6 +452,40 @@ static void pci_decode_bar(pci_device_t *device, UWORD bar)
         return;
     }
 
+    /*
+     * Real Raspberry Pi 4 firmware does not assign BAR addresses for
+     * downstream devices (confirmed on real hardware: VL805's BAR0 has
+     * valid type/size fields but an address of 0) -- this port has no
+     * separate PCI enumerator/BIOS to do it either, so pci_core.c must.
+     * Carve a naturally aligned range out of the backend's MMIO window
+     * and program it into the BAR ourselves.
+     */
+    if (!io && (masked_address == 0UL)) {
+        ULONG size;
+        ULONG aligned;
+
+        size = pci_bar_size(mask, io);
+        aligned = (pci_mmio_alloc_next + size - 1UL) & ~(size - 1UL);
+
+        if ((pci_mmio_alloc_end == 0UL) || (aligned < pci_mmio_alloc_next) ||
+            (aligned >= pci_mmio_alloc_end) || (size > pci_mmio_alloc_end - aligned)) {
+            KINFO(("pci: BAR%u is unassigned and needs 0x%lx bytes, but no "
+                   "MMIO space is available to allocate it from\n", bar, size));
+            return;
+        }
+
+        if (pci_write_config_raw(device, reg, 4,
+                                  (original & ~PCI_BAR_MEM_MASK) | aligned) != PCI_SUCCESSFUL) {
+            KINFO(("pci: BAR%u address assignment write failed\n", bar));
+            return;
+        }
+
+        KINFO(("pci: BAR%u was unassigned; allocated bus address 0x%lx (size 0x%lx)\n",
+               bar, aligned, size));
+        pci_mmio_alloc_next = aligned + size;
+        masked_address = aligned;
+    }
+
     if ((pci_backend != 0) && (pci_backend->bus_to_phys != 0)) {
         LONG bus_to_phys_ret;
 
@@ -480,6 +524,7 @@ static ULONG pci_bar_size(ULONG mask, BOOL io)
 LONG pci_init(void)
 {
     LONG ret;
+    pci_backend_windows_t windows;
 
     pci_device_count = 0;
     pci_table_full_reported = FALSE;
@@ -494,6 +539,15 @@ LONG pci_init(void)
     ret = pci_backend->init();
     if (ret != PCI_SUCCESSFUL)
         return ret;
+
+    pci_mmio_alloc_next = 0UL;
+    pci_mmio_alloc_end = 0UL;
+    if ((pci_backend->get_windows != 0) &&
+        (pci_backend->get_windows(&windows) == PCI_SUCCESSFUL) &&
+        (windows.mmio_size != 0UL)) {
+        pci_mmio_alloc_next = windows.mmio_base;
+        pci_mmio_alloc_end = windows.mmio_base + windows.mmio_size;
+    }
 
     pci_scan_bus(0);
     KINFO(("pci: %u device(s) found\n", pci_device_count));
