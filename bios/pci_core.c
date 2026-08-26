@@ -427,12 +427,21 @@ static void pci_decode_bar(pci_device_t *device, UWORD bar)
 
     masked_address = original & (io ? PCI_BAR_IO_MASK : PCI_BAR_MEM_MASK);
     mask &= io ? PCI_BAR_IO_MASK : PCI_BAR_MEM_MASK;
-    if (mask == 0UL)
+    if (mask == 0UL) {
+        KINFO(("pci: BAR%u size mask is 0 after masking flag bits (bar=0x%lx)\n",
+               bar, original));
         return;
+    }
 
     if ((pci_backend != 0) && (pci_backend->bus_to_phys != 0)) {
-        if (pci_backend->bus_to_phys(masked_address, io, &phys_address) != PCI_SUCCESSFUL)
+        LONG bus_to_phys_ret;
+
+        bus_to_phys_ret = pci_backend->bus_to_phys(masked_address, io, &phys_address);
+        if (bus_to_phys_ret != PCI_SUCCESSFUL) {
+            KINFO(("pci: BAR%u bus address 0x%lx (io=%d) could not be translated (%ld)\n",
+                   bar, masked_address, (int)io, bus_to_phys_ret));
             return;
+        }
     } else {
         phys_address = masked_address;
     }
