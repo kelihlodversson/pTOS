@@ -372,6 +372,7 @@ static void pci_decode_bar(pci_device_t *device, UWORD bar)
     ULONG mask;
     ULONG masked_address;
     ULONG phys_address;
+    ULONG bar_hi;
     BOOL io;
     pci_resource_t *resource;
 
@@ -394,6 +395,27 @@ static void pci_decode_bar(pci_device_t *device, UWORD bar)
         return;
 
     io = (original & PCI_BAR_IO) != 0UL;
+
+    /*
+     * A memory BAR whose type field says 64-bit has its real base
+     * address split across this register (low 32 bits) and the next
+     * one (high 32 bits) -- pci_decode_bars() already recognized the
+     * pair and arranged to skip re-decoding the high half as a second,
+     * separate BAR. This port has no LPAE and every pci_resource_t
+     * field is 32-bit, so a nonzero high dword is a genuinely
+     * unrepresentable address here, not just an inconvenience: leave
+     * the resource undecoded (length stays 0) rather than silently
+     * dropping the high bits and returning a wrong, truncated address.
+     */
+    if (!io && ((original & PCI_BAR_MEM_TYPE_MASK) == PCI_BAR_MEM_TYPE_64)) {
+        if (bar + 1U >= PCI_MAX_BARS)
+            return;
+        if (pci_read_config_raw(device, reg + 4U, 4, &bar_hi) != PCI_SUCCESSFUL)
+            return;
+        if (bar_hi != 0UL)
+            return;
+    }
+
     masked_address = original & (io ? PCI_BAR_IO_MASK : PCI_BAR_MEM_MASK);
     mask &= io ? PCI_BAR_IO_MASK : PCI_BAR_MEM_MASK;
     if (mask == 0UL)
