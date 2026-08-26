@@ -408,12 +408,21 @@ static void pci_decode_bar(pci_device_t *device, UWORD bar)
      * dropping the high bits and returning a wrong, truncated address.
      */
     if (!io && ((original & PCI_BAR_MEM_TYPE_MASK) == PCI_BAR_MEM_TYPE_64)) {
-        if (bar + 1U >= PCI_MAX_BARS)
+        if (bar + 1U >= PCI_MAX_BARS) {
+            KINFO(("pci: BAR%u is 64-bit but there is no BAR%u to hold the high dword\n",
+                   bar, bar + 1U));
             return;
-        if (pci_read_config_raw(device, reg + 4U, 4, &bar_hi) != PCI_SUCCESSFUL)
+        }
+        if (pci_read_config_raw(device, reg + 4U, 4, &bar_hi) != PCI_SUCCESSFUL) {
+            KINFO(("pci: BAR%u high dword could not be read\n", bar));
             return;
-        if (bar_hi != 0UL)
+        }
+        if (bar_hi != 0UL) {
+            KINFO(("pci: BAR%u is a 64-bit BAR with a nonzero high dword (0x%lx) -- "
+                   "address is above 4 GiB, unrepresentable on this 32-bit port\n",
+                   bar, bar_hi));
             return;
+        }
     }
 
     masked_address = original & (io ? PCI_BAR_IO_MASK : PCI_BAR_MEM_MASK);
