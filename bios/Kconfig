@@ -473,6 +473,15 @@ config CONF_SERIAL_CONSOLE
 	  port.  This is the only way to interact with a machine that has no
 	  supported video hardware.
 
+config CONF_SERIAL_CONSOLE_POLLING_MODE
+	bool "Poll serial console input"
+	depends on CONF_SERIAL_CONSOLE
+	default n
+	help
+	  Poll the serial port for console input instead of relying on an
+	  interrupt handler to feed the keyboard input buffer.  Interrupt mode
+	  is preferred when the serial driver supports it.
+
 config CONF_SERIAL_CONSOLE_ANSI
 	bool "The serial console understands ANSI escape sequences"
 	depends on CONF_SERIAL_CONSOLE

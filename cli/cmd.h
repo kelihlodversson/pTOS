@@ -113,7 +113,7 @@ static __inline__ long cli_supexec_(long a)
 #define jmp_gemdos_pww(a,b,c,d) trap1((int)(a),(void *)(b),(WORD)(c),(WORD)(d))
 /* Pexec needs the 5-argument form; trap1_pexec handles the extra argument */
 #define jmp_gemdos_wppp(a,b,c,d,e) \
-    trap1_pexec((short)(b),(const char *)(c),(const void *)(d),(const char *)(e))
+    trap1_pexec((short)(b),(const char *)(c),(const char *)(d),(const char *)(e))
 
 #define Dsetdrv(a)          jmp_gemdos_w(0x0e,a)
 #define Dgetdrv()           jmp_gemdos_v(0x19)
@@ -289,6 +289,7 @@ LONG (*lookup_builtin(WORD argc,char **argv))(WORD,char **);
 WORD parse_line(char *line,char **argv,char *redir_name);
 
 /* cmdutil.c */
+void convulong(char *buf,ULONG n,WORD width,char filler);
 WORD decode_date_time(char *s,UWORD date,UWORD time);
 void errmsg(LONG rc);
 void escape(char c);

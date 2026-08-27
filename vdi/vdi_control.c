@@ -727,16 +727,6 @@ void vdi_vq_extnd(Vwk * vwk)
         *dst++ = *src++;
 }
 
-
-/*
- * vdi_v_nop - dummy
- */
-void vdi_v_nop(Vwk * vwk)
-{
-    /* will never be implemented */
-}
-
-
 #if CONF_WITH_VDI_BACKEND_DISPATCH
 const vdi_backend_ops *vdi_screen_backend(void)
 {

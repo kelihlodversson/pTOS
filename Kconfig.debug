@@ -78,6 +78,12 @@ config DEBUG_PRINT_MIDI
 	bool "MIDI out"
 	depends on CONF_WITH_MIDI_ACIA
 
+config DEBUG_PRINT_CARTRIDGE
+	bool "Cartridge debug port"
+	depends on ARCH_M68K_CLASSIC
+	help
+	  Send debug output through the Atari cartridge ROM debug interface.
+
 endchoice
 
 #
@@ -106,6 +112,10 @@ config COLDFIRE_DEBUG_PRINT
 config MIDI_DEBUG_PRINT
 	bool
 	default y if DEBUG_PRINT_MIDI
+
+config CARTRIDGE_DEBUG_PRINT
+	bool
+	default y if DEBUG_PRINT_CARTRIDGE
 
 config CONF_WITH_ASSERT
 	bool "Enable the assert() function"

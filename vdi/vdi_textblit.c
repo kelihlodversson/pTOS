@@ -1170,6 +1170,14 @@ static void screen_blit(LOCALVARS *vars)
     vars->sform += offset;
     vars->s_next = -vars->s_next;   /* we draw from the bottom up */
 
+#if CONF_WITH_VDI_16BIT
+    if (TRUECOLOR_MODE)
+    {
+        screen_blit16(vars);
+        return;
+    }
+#endif
+
 #if CONF_WITH_VDI_BACKEND_DISPATCH
     {
         const vdi_backend_ops *backend = vdi_screen_backend();

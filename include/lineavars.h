@@ -111,13 +111,13 @@ struct _lineavars {
 
     /* note that this area is only used when v_planes <= 4 */
     struct {
-	    WORD save_len;              /* -330 height of saved form */
-    	UWORD *save_addr;           /* -328 screen addr of saved form */
-	    BYTE save_stat;             /* -324 save status */
-    	BYTE save_reserved;
-	    ULONG save_area[4*16];      /* -322 form save area */
-	} mouse_cursor_save;
-	
+        WORD save_len;              /* -330 height of saved form */
+        UWORD *save_addr;           /* -328 screen addr of saved form */
+        BYTE save_stat;             /* -324 save status */
+        BYTE save_reserved;
+        ULONG save_area[4*16];      /* -322 form save area */
+    } mouse_cursor_save;
+
     /* Timer vectors */
     void (*tim_addr)(int);             /* -66  timer interrupt vector */
     void (*tim_chain)(int);            /* -62  timer interrupt vector save */
@@ -203,7 +203,7 @@ struct _lineavars {
     WORD DESTY;                 /* upper left of destination on screen */
     WORD DELX;
     WORD DELY;                  /* width and height of character */
-    const UWORD *FBASE;         /* pointer to font data */
+    const UBYTE *FBASE;         /* pointer to font data */
     WORD FWIDTH;                /* width of font form (in bytes) */
     WORD STYLE;                 /* special effects */
     WORD LITEMASK;              /* special effects */

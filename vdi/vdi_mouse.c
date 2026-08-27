@@ -647,7 +647,7 @@ void vdimouse_init(void)
     linea_vars.user_mot = just_rts;
     linea_vars.user_cur = mov_cur;         /* initialize user_cur vector */
 #if CONF_WITH_EXTENDED_MOUSE
-    user_wheel = just_rts;
+    user_wheel = (void (*)(WORD, WORD))just_rts;
 #endif
 
     /* Move in the default mouse form (presently the arrow) */
@@ -686,7 +686,7 @@ void vdimouse_exit(void)
     linea_vars.user_mot = just_rts;
     linea_vars.user_cur = (void(*)(WORD,WORD))just_rts;
 #if CONF_WITH_EXTENDED_MOUSE
-    user_wheel = just_rts;
+    user_wheel = (void (*)(WORD, WORD))just_rts;
 #endif
 
     vblqueue[0] = vb_draw;      /* set GEM VBL-routine to the first VBL slot */
