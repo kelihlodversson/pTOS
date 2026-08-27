@@ -272,7 +272,7 @@ static LONG scsidriv_InOut(WORD write, SCSICmd *cmd)
     HandleEntry *h;
     LONG rc;
     int bus;
-#if CONF_WITH_ACSI
+#if CONF_WITH_ACSI || CONF_WITH_IDE
     LONG rc2;
     int dev;
 #endif
@@ -287,7 +287,7 @@ static LONG scsidriv_InOut(WORD write, SCSICmd *cmd)
         return PENDING_ERROR;
 
     bus = h->busdev >> 4;
-#if CONF_WITH_ACSI
+#if CONF_WITH_ACSI || CONF_WITH_IDE
     dev = h->busdev & 0x0f;
 #endif
 
