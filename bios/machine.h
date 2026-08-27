@@ -33,6 +33,11 @@
 #define DIP_SWITCHES        0xffff9200UL
 #define MONSTER_REG         0xfffffe00UL
 
+/*
+ * Block-device bus numbers belong in disk.h. When merging upstream changes
+ * that add them here, move the definitions to disk.h instead.
+ */
+
 extern ULONG detected_busses;
 
 /*
