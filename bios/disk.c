@@ -314,11 +314,24 @@ void disk_init_all(void)
 {
     /* scan disk majors in the following order */
     static const int majors[] =
-        {16, 18, 17, 19, 20, 22, 21, 23,    /* IDE primary/secondary */
+        {
+#if CONF_WITH_IDE
+         16, 18, 17, 19, 20, 22, 21, 23,    /* IDE primary/secondary */
+#endif
+#if CONF_WITH_SCSI
          8, 9, 10, 11, 12, 13, 14, 15,      /* SCSI */
+#endif
+#if CONF_WITH_ACSI
          0, 1, 2, 3, 4, 5, 6, 7,            /* ACSI */
+#endif
+#if CONF_WITH_SDMMC || CONF_WITH_RASPI_EMMC
          24, 25, 26, 27, 28, 29, 30, 31,    /* SD/MMC */
-         32, 33, 34, 35, 36, 37, 38, 39};   /* virtio-blk */
+#endif
+#if CONF_WITH_VIRTIO_BLK
+         32, 33, 34, 35, 36, 37, 38, 39,    /* virtio-blk */
+#endif
+         -1                                  /* terminates diskless builds */
+        };
     int i;
     LONG devices_available = 0L;
     LONG bitmask;
@@ -337,7 +350,7 @@ void disk_init_all(void)
         devices_available |= bitmask;
 
     /* scan for attached harddrives and their partitions */
-    for(i = 0; i < ARRAY_SIZE(majors); i++) {
+    for(i = 0; majors[i] >= 0; i++) {
         UWORD unit = NUMFLOPPIES + majors[i];
         disk_init_one(unit,&devices_available);
         if (!devices_available) {

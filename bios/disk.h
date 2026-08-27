@@ -13,6 +13,8 @@
 #ifndef DISK_H
 #define DISK_H
 
+#include "config.h"
+
 /* defines */
 
 #define NUMFLOPPIES     2   /* max number of floppies supported */
