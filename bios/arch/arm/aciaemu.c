@@ -134,9 +134,9 @@ void init_acia_vecs(void)
 
     kbdvecs.mousevec = _dummy_p;
     _kbdvec = kbdvec;
-    kbdvecs.midivec = midivec;
-    kbdvecs.vkbderr = _dummy_c;
-    kbdvecs.vmiderr = _dummy_c;
+    kbdvecs.midivec = (PFVOID)midivec;
+    kbdvecs.vkbderr = (PFVOID)_dummy_c;
+    kbdvecs.vmiderr = (PFVOID)_dummy_c;
     kbdvecs.statvec = _dummy_p;
     kbdvecs.mousevec = _dummy_p;
 

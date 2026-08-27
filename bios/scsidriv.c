@@ -270,8 +270,12 @@ static HandleEntry *get_handle_entry(SCSIHandle handle)
 static LONG scsidriv_InOut(WORD write, SCSICmd *cmd)
 {
     HandleEntry *h;
-    LONG rc, rc2;
-    int bus, dev;
+    LONG rc;
+    int bus;
+#if CONF_WITH_ACSI
+    LONG rc2;
+    int dev;
+#endif
 
     /* check for valid handle */
     h = get_handle_entry(cmd->handle);
@@ -283,7 +287,9 @@ static LONG scsidriv_InOut(WORD write, SCSICmd *cmd)
         return PENDING_ERROR;
 
     bus = h->busdev >> 4;
+#if CONF_WITH_ACSI
     dev = h->busdev & 0x0f;
+#endif
 
     if (cmd->xferlen > get_bus_maxlen(bus))
         return DATATOOLONG_ERROR;

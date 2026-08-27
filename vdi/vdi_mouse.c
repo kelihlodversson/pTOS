@@ -369,6 +369,7 @@ static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
 #endif
 
 #ifdef __arm__
+#if CONF_WITH_EXTENDED_MOUSE
 /*
  * Call the user_but vector from C
  */
@@ -386,6 +387,7 @@ static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
     void (*func)(WORD, WORD) = user_wheel; /* prototype not quite right: status passed in d0 */
     func(wheel_number, wheel_amount);
 }
+#endif
 
 /*
  * mov_cur - moves the mouse cursor to its new location

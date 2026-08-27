@@ -905,6 +905,7 @@ void screen_get_current_mode_desc(SCREEN_MODE_DESC *desc)
     MAYBE_UNUSED(planes);
     MAYBE_UNUSED(hz_rez);
     MAYBE_UNUSED(vt_rez);
+    MAYBE_UNUSED(planar_mode_desc);
 
 #if CONF_WITH_VDI_TRUECOLOR32_TEST
     virt_arm_get_current_mode_desc(desc);

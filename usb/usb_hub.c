@@ -687,7 +687,7 @@ again:
                 for (j = k; j < USB_MAX_DEVICE; j++)
                 {
                     struct usb_device *pdev = usb_get_dev_index (j);
-                    if (pdev && pdev->mf && pdev->prod)
+                    if (pdev)
                     {
                         cprintf("Found: %s %s\n", pdev->mf, pdev->prod);
                         k = j+1;
