@@ -17,17 +17,25 @@
 
 #define NUMFLOPPIES     2   /* max number of floppies supported */
 
-#define ACSI_BUS            0
-#define SCSI_BUS            1
-#define IDE_BUS             2
-#define SDMMC_BUS           3
-#define VIRTIO_BUS          4
+/*
+ * Bus numbers form part of the device-major ABI: major = bus * 8 + device.
+ * Keep their values fixed even if an intervening bus driver is disabled.
+ */
+enum bus_number {
+    ACSI_BUS = 0,
+    SCSI_BUS = 1,
+    IDE_BUS = 2,
+    SDMMC_BUS = 3,
+    VIRTIO_BUS = 4
+};
 
-/* disk_init_all() probes every defined bus, including disabled drivers */
-#define DISK_MAX_BUS        VIRTIO_BUS
+#define MAX_BUS             (CONF_WITH_VIRTIO_BLK ? VIRTIO_BUS : \
+                             (CONF_WITH_SDMMC || CONF_WITH_RASPI_EMMC) ? SDMMC_BUS : \
+                             CONF_WITH_IDE ? IDE_BUS : \
+                             CONF_WITH_SCSI ? SCSI_BUS : ACSI_BUS)
 #define DEVICES_PER_BUS     8
 
-#define UNITSNUM            (NUMFLOPPIES+(DEVICES_PER_BUS*(DISK_MAX_BUS+1)))
+#define UNITSNUM            (NUMFLOPPIES+(DEVICES_PER_BUS*(MAX_BUS+1)))
 
 #define GET_BUS(major)          ((major)/DEVICES_PER_BUS)
 #define IS_ACSI_DEVICE(major)   (GET_BUS(major) == ACSI_BUS)
