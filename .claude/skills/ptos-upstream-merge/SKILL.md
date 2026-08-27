@@ -133,10 +133,11 @@ independently grew the same enumeration for its own reasons, the merge can
 silently resolve to whichever side's version "won" the conflict — leaving
 either pTOS's addition dropped, or upstream's count/table sized for a
 smaller set than pTOS actually needs. Two known instances from this
-merge's lineage: a `MAX_BUS`-style bound that upstream sizes for its own
-known bus types (ACSI/SCSI/IDE/SDMMC) without accounting for pTOS's
-VirtIO addition, and an `EXTENDED_PALETTE`-shaped enum with the same shape
-of gap.
+merge's lineage: `MAX_BUS`, where upstream knows only ACSI/SCSI/IDE/SDMMC
+but pTOS adds VirtIO, and an `EXTENDED_PALETTE`-shaped enum with the same
+shape of gap. `bios/disk.h` now owns the fixed ABI bus-number enum and its
+final `MAX_BUS` member; preserve both when merging upstream changes to
+`bios/machine.h` or disk-driver bounds.
 
 This rarely produces a build error — both sides' definitions compile fine
 in isolation, and the merged value is *a* valid number, just not
