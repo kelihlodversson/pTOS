@@ -127,7 +127,22 @@ void mouse_int(UBYTE *buf)
             point.x = linea_vars.GCURX + delta_x;
             point.y = linea_vars.GCURY + delta_y;
             scrn_clip(&point);
-            user_mot(MAKE_ULONG(point.x,point.y));                   // call user to modify x,y
+            /* user_mot uses the m68k register convention: x in d0, y in d1
+             * on entry, and the (possibly modified) coordinates are returned
+             * in the same registers.  Map d0/d1 onto r0/r1 and read them back,
+             * since a plain C call would discard the modified values. */
+            {
+                register LONG mx asm("r0") = point.x;
+                register LONG my asm("r1") = point.y;
+                __asm__ __volatile__(
+                    " mov r12, %[func]\n"
+                    " blx r12\n"
+                    : "+r"(mx), "+r"(my)
+                    : [func] "r"(user_mot)
+                    : "r2", "r3", "r12", "lr", "cc", "memory");
+                point.x = mx;
+                point.y = my;
+            }
             scrn_clip(&point);
             linea_vars.GCURX = point.x;
             linea_vars.GCURY = point.y;
