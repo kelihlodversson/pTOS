@@ -26,13 +26,13 @@ enum bus_number {
     SCSI_BUS = 1,
     IDE_BUS = 2,
     SDMMC_BUS = 3,
-    VIRTIO_BUS = 4
+    VIRTIO_BUS = 4,
+    MAX_BUS = CONF_WITH_VIRTIO_BLK ? VIRTIO_BUS :
+              (CONF_WITH_SDMMC || CONF_WITH_RASPI_EMMC) ? SDMMC_BUS :
+              CONF_WITH_IDE ? IDE_BUS :
+              CONF_WITH_SCSI ? SCSI_BUS : ACSI_BUS
 };
 
-#define MAX_BUS             (CONF_WITH_VIRTIO_BLK ? VIRTIO_BUS : \
-                             (CONF_WITH_SDMMC || CONF_WITH_RASPI_EMMC) ? SDMMC_BUS : \
-                             CONF_WITH_IDE ? IDE_BUS : \
-                             CONF_WITH_SCSI ? SCSI_BUS : ACSI_BUS)
 #define DEVICES_PER_BUS     8
 
 #define UNITSNUM            (NUMFLOPPIES+(DEVICES_PER_BUS*(MAX_BUS+1)))
