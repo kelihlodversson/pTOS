@@ -123,7 +123,7 @@ struct _lineavars {
     void (*tim_chain)(int);            /* -62  timer interrupt vector save */
     void (*user_but)(WORD status);     /* -58  user button vector */
     void (*user_cur)(WORD x, WORD y);  /* -54  user cursor vector */
-    void (*user_mot)(void);            /* -50  user motion vector */
+    void (*user_mot)(LONG);            /* -50  user motion vector */
 
     /* VDI ESC variables */
     

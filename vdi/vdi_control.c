@@ -25,6 +25,8 @@
 #include "bdosbind.h"
 #include "tosvars.h"
 
+void screen_get_current_mode_desc(SCREEN_MODE_DESC *desc);
+
 #define FIRST_VDI_HANDLE    1
 #define LAST_VDI_HANDLE     (FIRST_VDI_HANDLE+NUM_VDI_HANDLES-1)
 #define VDI_PHYS_HANDLE     FIRST_VDI_HANDLE

@@ -73,7 +73,7 @@ WORD dumpflg;
  * is just an ordinary struct populated with the same build-time values
  * bios/arch/m68k/startup.S embeds in its own header.
  */
-const OSHEADER os_header = {
+OSHEADER os_header = {
     0,                                          /* os_entry (unused on ARM) */
     0,                                          /* os_version */
     just_rts,                                   /* reseth */

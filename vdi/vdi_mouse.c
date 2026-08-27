@@ -644,7 +644,7 @@ void vdimouse_init(void)
     linea_vars.GCURY = linea_vars.DEV_TAB[1] / 2;
 
     linea_vars.user_but = (void(*)(WORD))just_rts;
-    linea_vars.user_mot = just_rts;
+    linea_vars.user_mot = (void (*)(LONG))just_rts;
     linea_vars.user_cur = mov_cur;         /* initialize user_cur vector */
 #if CONF_WITH_EXTENDED_MOUSE
     user_wheel = (void (*)(WORD, WORD))just_rts;
@@ -683,7 +683,7 @@ void vdimouse_init(void)
 void vdimouse_exit(void)
 {
     linea_vars.user_but = (void(*)(WORD))just_rts;
-    linea_vars.user_mot = just_rts;
+    linea_vars.user_mot = (void (*)(LONG))just_rts;
     linea_vars.user_cur = (void(*)(WORD,WORD))just_rts;
 #if CONF_WITH_EXTENDED_MOUSE
     user_wheel = (void (*)(WORD, WORD))just_rts;

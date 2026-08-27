@@ -99,7 +99,7 @@ void mouse_int(UBYTE *buf)
     BYTE delta_x, delta_y;
     IntPoint point;
     void (*user_but)(WORD) = linea_vars.user_but;
-    void (*user_mot)(ULONG) = (void (*)(LONG))linea_vars.user_mot;
+    void (*user_mot)(LONG) = linea_vars.user_mot;
     void (*user_cur)(WORD,WORD) = linea_vars.user_cur;
 
     if(linea_vars.mouse_flag) // If we are in a show/hide operation
