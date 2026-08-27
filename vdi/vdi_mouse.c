@@ -411,6 +411,15 @@ void mov_cur(WORD new_x, WORD new_y)      /* user button vector */
     set_cpsr(cpsr);
 }
 
+/*
+ * default_user_mot - default user motion vector: pass the coordinates through
+ * unchanged, packed with x in the high word and y in the low word.
+ */
+static ULONG default_user_mot(WORD x, WORD y)
+{
+    return MAKE_ULONG(x, y);
+}
+
 #endif /* __arm__ */
 
 
@@ -646,7 +655,11 @@ void vdimouse_init(void)
     linea_vars.GCURY = linea_vars.DEV_TAB[1] / 2;
 
     linea_vars.user_but = (void(*)(WORD))just_rts;
+#ifdef __arm__
+    linea_vars.user_mot = default_user_mot;
+#else
     linea_vars.user_mot = (void (*)(LONG))just_rts;
+#endif
     linea_vars.user_cur = mov_cur;         /* initialize user_cur vector */
 #if CONF_WITH_EXTENDED_MOUSE
     user_wheel = (void (*)(WORD, WORD))just_rts;
@@ -685,7 +698,11 @@ void vdimouse_init(void)
 void vdimouse_exit(void)
 {
     linea_vars.user_but = (void(*)(WORD))just_rts;
+#ifdef __arm__
+    linea_vars.user_mot = default_user_mot;
+#else
     linea_vars.user_mot = (void (*)(LONG))just_rts;
+#endif
     linea_vars.user_cur = (void(*)(WORD,WORD))just_rts;
 #if CONF_WITH_EXTENDED_MOUSE
     user_wheel = (void (*)(WORD, WORD))just_rts;

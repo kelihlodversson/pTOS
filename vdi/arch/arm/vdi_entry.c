@@ -99,7 +99,6 @@ void mouse_int(UBYTE *buf)
     BYTE delta_x, delta_y;
     IntPoint point;
     void (*user_but)(WORD) = linea_vars.user_but;
-    void (*user_mot)(LONG) = linea_vars.user_mot;
     void (*user_cur)(WORD,WORD) = linea_vars.user_cur;
 
     if(linea_vars.mouse_flag) // If we are in a show/hide operation
@@ -127,21 +126,14 @@ void mouse_int(UBYTE *buf)
             point.x = linea_vars.GCURX + delta_x;
             point.y = linea_vars.GCURY + delta_y;
             scrn_clip(&point);
-            /* user_mot uses the m68k register convention: x in d0, y in d1
-             * on entry, and the (possibly modified) coordinates are returned
-             * in the same registers.  Map d0/d1 onto r0/r1 and read them back,
-             * since a plain C call would discard the modified values. */
+            /* user_mot takes the proposed x and y as arguments and returns
+             * the (possibly modified) coordinates packed into a ULONG with x
+             * in the high word and y in the low word, per the ARM AAPCS
+             * calling convention, so it can be implemented in plain C. */
             {
-                register LONG mx asm("r0") = point.x;
-                register LONG my asm("r1") = point.y;
-                __asm__ __volatile__(
-                    " mov r12, %[func]\n"
-                    " blx r12\n"
-                    : "+r"(mx), "+r"(my)
-                    : [func] "r"(user_mot)
-                    : "r2", "r3", "r12", "lr", "cc", "memory");
-                point.x = mx;
-                point.y = my;
+                ULONG result = linea_vars.user_mot((WORD)point.x, (WORD)point.y);
+                point.x = (LONG)(WORD)HIWORD(result);
+                point.y = (LONG)(WORD)LOWORD(result);
             }
             scrn_clip(&point);
             linea_vars.GCURX = point.x;
