@@ -2,7 +2,7 @@
  * miscasm_rpi.S - Some small helper functions in assembler
  *
  * Copyright (C) 2001 by following authors
- * Copyright (C) 2013 by The EmuTOS development team.
+ * Copyright (C) 2018-2026 The pTOS development team.
  *
  *
  * This file is distributed under the GPL, version 2 or at your

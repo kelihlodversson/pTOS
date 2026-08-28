@@ -1,7 +1,7 @@
 /*
  * cmdasm.S - assembler startup code of EmuCON
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2026 The pTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows

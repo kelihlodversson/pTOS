@@ -1,7 +1,7 @@
 /*
  * biosargs.h - argument-marshaling structs for wide-argument ARM BIOS/XBIOS calls
  *
- * Copyright (C) 2026 The EmuTOS development team
+ * Copyright (C) 2026 The pTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
