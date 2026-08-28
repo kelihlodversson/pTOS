@@ -383,7 +383,7 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
  * like DIR32, so it takes the same "add the bias" path as everything
  * else.
  */
-static LONG elf_fixup(BYTE *load_base, const ELFINFO *info, LONG bias,
+static LONG elf_fixup(UBYTE *load_base, const ELFINFO *info, LONG bias,
                       ULONG vaddr, UBYTE type, BOOL rela, ULONG addend)
 {
     ULONG *slot;
@@ -421,7 +421,7 @@ static LONG elf_fixup(BYTE *load_base, const ELFINFO *info, LONG bias,
 
 /* walk one SHT_REL / SHT_RELA section and relocate every entry in it */
 static LONG elf_relocate_section(FH h, const Elf32_Shdr *sh, BOOL rela,
-                                 BYTE *load_base, const ELFINFO *info,
+                                 UBYTE *load_base, const ELFINFO *info,
                                  LONG bias)
 {
     Elf32_Rela ent;     /* a RELA record is a REL record plus an addend */
@@ -473,7 +473,7 @@ static LONG elf_relocate_section(FH h, const Elf32_Shdr *sh, BOOL rela,
 }
 
 /* apply every relocation section retained by ld --emit-relocs */
-static LONG elf_relocate(FH h, const Elf32_Ehdr *e, BYTE *load_base,
+static LONG elf_relocate(FH h, const Elf32_Ehdr *e, UBYTE *load_base,
                          const ELFINFO *info, LONG bias)
 {
     Elf32_Shdr sh;
@@ -578,7 +578,7 @@ LONG elf_pgmld(FH h, PD *p)
     Elf32_Ehdr ehdr;
     Elf32_Phdr ph;
     ELFINFO info;
-    BYTE *load_base;
+    UBYTE *load_base;
     LONG bias;
     LONG tpalen;
     ULONG phoff;
@@ -604,7 +604,7 @@ LONG elf_pgmld(FH h, PD *p)
         return EPLFMT;
 
     /* the image is loaded at the first byte after the basepage */
-    load_base = (BYTE *)(p + 1);
+    load_base = (UBYTE *)(p + 1);
     /* compute the bias in unsigned then reinterpret as signed; this avoids
      * signed overflow UB when either operand has its high bit set, and the
      * relocation arithmetic downstream already relies on unsigned wrap. */

@@ -111,6 +111,7 @@ static LONG natfeats_inquire(UWORD unit, ULONG *blocksize, ULONG *deviceflags, c
 #endif
 static LONG internal_inquire(UWORD unit, ULONG *blocksize, ULONG *deviceflags, char *productname, UWORD stringlen);
 
+#if CONF_WITH_IDE || CONF_WITH_SCSI || CONF_WITH_ARANYM || CONF_WITH_ACSI || CONF_WITH_SDMMC
 /* scan disk majors in the following order */
 static const int majors[] =
 {
@@ -152,6 +153,7 @@ static void dmaboot(UWORD unit, void *bootcode)
     : : "r"(unit-NUMFLOPPIES), "a"(bootcode)
     : "d0","d1","d2","a0","a1","a2", "memory");
 }
+#endif
 
 /*
  * scan hard disks found in disk_init_all with no partitions, and execute
@@ -159,7 +161,8 @@ static void dmaboot(UWORD unit, void *bootcode)
  */
 void disk_try_dmaboot(void)
 {
-    int i;
+#if CONF_WITH_IDE || CONF_WITH_SCSI || CONF_WITH_ARANYM || CONF_WITH_ACSI || CONF_WITH_SDMMC
+    UWORD i;
     LONG rc;
 
     for(i = 0; i < ARRAY_SIZE(majors); i++) {
@@ -182,6 +185,7 @@ void disk_try_dmaboot(void)
             }
         }
     }
+#endif
 }
 
 /*

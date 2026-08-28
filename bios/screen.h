@@ -98,7 +98,6 @@ void screen_init_address(void);
 void screen_init_mode(void);
 void set_rez_hacked(void);
 void screen_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez);
-void screen_get_current_mode_desc(SCREEN_MODE_DESC *desc);
 #if CONF_WITH_VDI_TRUECOLOR32_TEST
 void virt_arm_screen_init(void);
 void virt_arm_get_current_mode_desc(SCREEN_MODE_DESC *desc);

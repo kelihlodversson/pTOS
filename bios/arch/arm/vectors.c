@@ -53,6 +53,11 @@ typedef struct {
 
 static void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far);
 
+volatile PFVOID *vector_address(ULONG address)
+{
+    return (volatile PFVOID *)address;
+}
+
 /* basically initialize the 62 exception vectors. */
 void init_exc_vec(void)
 {

@@ -10,6 +10,9 @@
  * option any later version.  See doc/license.txt for details.
  */
 #include "cmd.h"
+#ifdef __arm__
+#include "tosvars.h"
+#endif
 #include "string.h"
 #include <stdarg.h>
 #include "doprintf.h"
@@ -340,7 +343,11 @@ char c1, c2;
 
 PRIVATE LONG getjar(void)
 {
+#ifdef __arm__
+    return (LONG)p_cookies;
+#else
     return *(LONG *)0x5a0;
+#endif
 }
 
 /*

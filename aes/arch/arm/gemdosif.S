@@ -147,11 +147,14 @@ _far_bcha:
 
 _far_mcha:
         push_privstack gstack
-        push    {r0-r3,lr}
-        ldmfd   sp, {r1,r2} // shift arg 1 and 2 up by one
+        push    {r1-r4,lr}
+        mov     r4, r0, lsl #16     /* pack x (r0) into the high word */
+        orr     r4, r4, r1          /* r4 = (x << 16) | y  (fdata) */
         ldr     r0, =_mchange
-        bl      _forkq
-        pop     {r0-r3,lr}
+        mov     r1, r4              /* r1 = fdata */
+        bl      _forkq              /* forkq(_mchange, fdata) */
+        mov     r0, r4              /* return the unchanged packed coords */
+        pop     {r1-r4,lr}
         pop_privstack
         bx      lr
 

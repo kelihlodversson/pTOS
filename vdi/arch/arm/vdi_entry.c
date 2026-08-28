@@ -99,7 +99,6 @@ void mouse_int(UBYTE *buf)
     BYTE delta_x, delta_y;
     IntPoint point;
     void (*user_but)(WORD) = linea_vars.user_but;
-    void (*user_mot)(ULONG) = (void (*)(LONG))linea_vars.user_mot;
     void (*user_cur)(WORD,WORD) = linea_vars.user_cur;
 
     if(linea_vars.mouse_flag) // If we are in a show/hide operation
@@ -127,7 +126,15 @@ void mouse_int(UBYTE *buf)
             point.x = linea_vars.GCURX + delta_x;
             point.y = linea_vars.GCURY + delta_y;
             scrn_clip(&point);
-            user_mot(MAKE_ULONG(point.x,point.y));                   // call user to modify x,y
+            /* user_mot takes the proposed x and y as arguments and returns
+             * the (possibly modified) coordinates packed into a ULONG with x
+             * in the high word and y in the low word, per the ARM AAPCS
+             * calling convention, so it can be implemented in plain C. */
+            {
+                ULONG result = linea_vars.user_mot((WORD)point.x, (WORD)point.y);
+                point.x = (LONG)(WORD)HIWORD(result);
+                point.y = (LONG)(WORD)LOWORD(result);
+            }
             scrn_clip(&point);
             linea_vars.GCURX = point.x;
             linea_vars.GCURY = point.y;
