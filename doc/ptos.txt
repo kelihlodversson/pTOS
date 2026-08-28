@@ -1,0 +1,25 @@
+pTOS - Portable TOS
+===================
+
+pTOS is a portable, open-source TOS-compatible operating system derived from
+EmuTOS: https://github.com/emutos/emutos
+
+EmuTOS concentrates on compatibility with existing Atari hardware, compatible
+machines, and software.  pTOS uses that foundation to experiment with new
+features and architectures while retaining the familiar GEMDOS, BIOS/XBIOS,
+VDI, AES, and desktop environment.
+
+The work that brought EmuTOS to Amiga hardware and, especially, ColdFire-based
+boards demonstrated that TOS could be useful beyond its original hardware.
+That experience led to pTOS's goal of making the operating system portable to
+further architectures and machines.
+
+pTOS would not be possible without the substantial work of the EmuTOS
+contributors.  Their copyright notices and the project's history are retained
+in this source tree.  pTOS is independently maintained, however: bugs in pTOS
+are the responsibility of the pTOS team, not the EmuTOS development team.
+
+For the source, build instructions, supported configurations, and issue
+tracker, visit:
+
+https://github.com/kelihlodversson/pTOS

@@ -19,10 +19,9 @@
 # make" produces.
 #
 
-# This subset of the doc directory will be included in all the binary archives
-DOCFILES = doc/announce.txt doc/authors.txt doc/bugs.txt doc/changelog.txt \
-  doc/emudesk.txt doc/incompatible.txt doc/license.txt doc/status.txt \
-  doc/todo.txt doc/tools.txt doc/xhdi.txt
+# This subset of the doc directory will be included in all the binary archives.
+# Historical EmuTOS documents deliberately remain in the source tree only.
+DOCFILES = doc/ptos.txt doc/status.txt doc/license.txt
 
 # This subset of the extras directory will be included in all the binary archives
 # that have a desktop
@@ -49,11 +48,11 @@ cp aes/mform.def $(1)/emucurs.def && cp aes/mform.rsc $(1)/emucurs.rsc && \
 cp desk/icon.def $(1)/emuicon.def && cp desk/icon.rsc $(1)/emuicon.rsc
 endef
 
-# Assemble the documentation of an archive and convert it to DOS line endings.
-# The generic part is readme_emutos.txt, which is what upstream EmuTOS calls
-# readme.txt; here that name is taken by the archive being assembled.
+# Assemble the pTOS documentation of an archive and convert it to DOS line
+# endings.  Per-target EmuTOS release notes are historical records, not pTOS
+# release documentation.
 define copy-docs
-cat doc/readme-$(2).txt readme_emutos.txt >$(1)/readme.txt && mkdir $(1)/doc && \
+cp readme_ptos.txt $(1)/readme.txt && mkdir $(1)/doc && \
 cp $(DOCFILES) $(1)/doc && find $(1) -name '*.txt' -exec unix2dos '{}' ';'
 endef
 
@@ -70,6 +69,8 @@ RELEASE_SRC = ptos-src-$(VERSION)
 release-src:
 	mkdir $(RELEASE_DIR)/$(RELEASE_SRC)
 	cp -R $(filter-out . .. .git $(RELEASE_DIR), $(shell echo * .*)) $(RELEASE_DIR)/$(RELEASE_SRC)
+	# Historical EmuTOS records are retained in the repository, not releases.
+	rm -rf $(RELEASE_DIR)/$(RELEASE_SRC)/doc/emutos
 	find $(RELEASE_DIR)/$(RELEASE_SRC) -type d -exec chmod 755 '{}' ';'
 	find $(RELEASE_DIR)/$(RELEASE_SRC) -type f -exec chmod 644 '{}' ';'
 	find $(RELEASE_DIR)/$(RELEASE_SRC) -type f -name '*.sh' -exec chmod 755 '{}' ';'
@@ -237,7 +238,7 @@ release-raspi-resources:
 	# VT52 escapes (tools/md2atari.py) instead of a plain doc/readme-*.txt,
 	# CRLF line endings included -- unix2dos refuses those escape bytes as
 	# "binary", so it cannot do that part for us here.
-	$(PYTHON) tools/md2atari.py doc/readme-raspi.md readme_emutos.txt >$(DEST)/readme.txt
+	$(PYTHON) tools/md2atari.py doc/readme-raspi.md readme_ptos.txt >$(DEST)/readme.txt
 	mkdir -p $(DEST)/doc
 	cp $(DOCFILES) $(DEST)/doc
 	find $(DEST)/doc -name '*.txt' -exec unix2dos '{}' ';'
