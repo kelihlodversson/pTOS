@@ -16,6 +16,7 @@
 #include "vdi_defs.h"
 #include "vdi_backend.h"
 #include "kprint.h"
+#include "endian.h"
 
 /*
  * Default VDI palette, as packed 0x00BBGGRR values -- mirrors the full
@@ -113,8 +114,8 @@ static UWORD rgb565_from_prgb(ULONG prgb)
 
 static ULONG xrgb8888_from_prgb(ULONG prgb)
 {
-    return 0xff000000UL | ((prgb & 0x000000ffUL) << 16)
-           | (prgb & 0x0000ff00UL) | ((prgb & 0x00ff0000UL) >> 16);
+    return cpu2le32(0xff000000UL | ((prgb & 0x000000ffUL) << 16)
+                    | (prgb & 0x0000ff00UL) | ((prgb & 0x00ff0000UL) >> 16));
 }
 
 /*
@@ -371,7 +372,7 @@ void vdi_truecolor_set_color(Vwk *vwk, WORD index, WORD r, WORD g, WORD b)
          * (little-endian memory bytes B,G,R,X) */
         ULONG prgb = (ULONG)vdi_from_vdi8(b) | ((ULONG)vdi_from_vdi8(g) << 8)
                    | ((ULONG)vdi_from_vdi8(r) << 16);
-        vwk->tc_palette[index] = prgb | 0xff000000UL;
+        vwk->tc_palette[index] = cpu2le32(prgb | 0xff000000UL);
     } else {
         vwk->tc_palette[index] = rgb565_from_vdi(r, g, b);
     }
@@ -383,7 +384,7 @@ void vdi_truecolor_get_color(const Vwk *vwk, WORD index, WORD *r, WORD *g, WORD 
         index = 0;
 
     if (linea_vars.v_planes == 32) {
-        ULONG packed = vwk->tc_palette[index];
+        ULONG packed = le2cpu32(vwk->tc_palette[index]);
         *r = (WORD)(((LONG)((packed >> 16) & 0xffUL) * 1000 + 127) / 255);
         *g = (WORD)(((LONG)((packed >>  8) & 0xffUL) * 1000 + 127) / 255);
         *b = (WORD)(((LONG)(packed & 0xffUL) * 1000 + 127) / 255);

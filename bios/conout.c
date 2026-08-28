@@ -219,8 +219,8 @@ blank_out (int topx, int topy, int botx, int boty)
         return;
     }
 #endif
-#if CONF_WITH_VDI_TRUECOLOR32_TEST
-    /* The test framebuffer is packed pixels, not interleaved planes. The
+#if CONF_WITH_VIRTIO_GPU
+    /* The virtio framebuffer is packed pixels, not interleaved planes. The
      * serial console does not need a screen clear before VDI takes over. */
     UNUSED(topx);
     UNUSED(topy);
