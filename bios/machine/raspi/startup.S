@@ -418,8 +418,8 @@ _arm_dispatch_data_abort:
 
     sub    sp, #4*15
     stmia  sp, {r0-r14}^   /* store user registers r0-r14 (unbanked) */
-    mrc p15, 0, r2, c6, c0,  0  // FAR in r2
-    mrc p15, 0, r3, c5, c0,  0  // FSR in r3
+    mrc p15, 0, r2, c5, c0,  0  // FSR in r2
+    mrc p15, 0, r3, c6, c0,  0  // FAR in r3
 
 
     mov r0, #0x0c   // VEC_ADDRESS_ERROR
