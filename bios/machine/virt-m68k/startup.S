@@ -94,6 +94,7 @@ _osxhbootdelay:
  * hw/m68k/virt.c's BI_CPUTYPE handling), so there is no need for the
  * 68000-compatibility fallback the classic startup.S uses around MOVEC.
  */
+        .even
 _main:
         move.w  #0x2700,sr              // supervisor mode, interrupts masked
         moveq   #0,d0
