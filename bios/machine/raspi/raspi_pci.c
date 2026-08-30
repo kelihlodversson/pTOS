@@ -67,8 +67,8 @@
  * CPU-side physical base of the outbound (CPU -> PCIe) MMIO window.
  * The BCM2711 root port's real hardware placement for this window is
  * 0x6_00000000 -- above the 4 GiB boundary a 32-bit ARM address can
- * express. This port has no LPAE support, so the window is relocated
- * here to a fixed, 1 MB-aligned 32-bit address instead: 0xf8000000 to
+ * express. In the non-LPAE path the window is relocated here to a fixed,
+ * 1 MB-aligned 32-bit address instead: 0xf8000000 to
  * 0xfbffffff (RASPI_PCIE_MMIO_SIZE, 64 MiB), 21 MiB clear of
  * RASPI_PCIE_REG_BASE (0xfd500000), the PCIe controller's own fixed
  * register block, and 32 MiB clear of the RPi4 peripheral aperture
@@ -79,9 +79,9 @@
  * requirement -- don't simplify raspi_pci_bus_to_phys()'s subtraction
  * away on the assumption that will always hold.
  *
- * The whole 4 GiB space is already flat-identity-mapped by init_mmu()
- * (bios/machine/raspi/memory.c), so this needs no new MMU work -- but
- * it must not overlap ARM-visible RAM as reported by firmware.
+ * LPAE maps the real physical window at this same low virtual address;
+ * the non-LPAE path relies on the short-descriptor identity map. Neither
+ * mapping may overlap ARM-visible RAM as reported by firmware.
  * raspi_pci_init() verifies that against raspi_top_of_ram (the actual
  * top of detected RAM, extern'd from memory.c via raspi_memory.h)
  * before enabling this window; see raspi_pci_outbound_window_enabled

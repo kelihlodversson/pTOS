@@ -534,8 +534,8 @@ static void pci_decode_bar(pci_device_t *device, UWORD bar)
     resource->offset = phys_address - masked_address;
     resource->dmaoffset = 0UL;
 
-    KINFO(("pci: BAR%u decoded: bus 0x%lx -> CPU address 0x%lx, size 0x%lx\n",
-           bar, masked_address, phys_address, resource->length));
+    KDEBUG(("pci: BAR%u decoded: bus 0x%lx -> CPU address 0x%lx, size 0x%lx\n",
+            bar, masked_address, phys_address, resource->length));
 }
 
 static ULONG pci_bar_size(ULONG mask, BOOL io)

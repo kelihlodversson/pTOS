@@ -11,7 +11,9 @@
 #include "portab.h"
 #include "raspi_lpae.h"
 #include "raspi_mmu.h"
+#if CONF_WITH_RASPI_UART0
 #include "raspi_uart.h"
+#endif
 #include "processor.h"
 #include "asm.h"
 
@@ -71,7 +73,9 @@ void raspi_lpae_init_mmu(ULONG memory_size, ULONG table_base)
     l1 = (UQUAD *)table_base;
     l2 = (UQUAD *)(table_base + 0x1000UL);
 
+#if CONF_WITH_RASPI_UART0
     raspi_uart0_init();
+#endif
     invalidate_data_cache_all();
 
     for (i = 0; i < LPAE_L1_ENTRIES; i++) {
