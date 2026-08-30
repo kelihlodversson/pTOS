@@ -208,10 +208,10 @@ void raspi_init_system_timer(void)
     raspi_gic_connect_irq(30, raspi_timer3_handler);
 
     asm volatile ("mrrc p15, 0, %0, %1, c14" : "=r" (cntpct_low),
-                                               "=r" (cntpct_high));
+                                                "=r" (cntpct_high));
     cntp_cval = ((UQUAD) cntpct_high << 32 | cntpct_low) + ticks_per_hz;
     asm volatile ("mcrr p15, 2, %0, %1, c14" :: "r" (cntp_cval & 0xffffffffU),
-                                                "r" (cntp_cval >> 32)); /* CNTP_CVAL */
+                                                 "r" (cntp_cval >> 32)); /* CNTP_CVAL */
     asm volatile ("mcr p15, 0, %0, c14, c2, 1" :: "r" (1)); /* CNTP_CTL: ENABLE */
     flush_prefetch_buffer();
 #else

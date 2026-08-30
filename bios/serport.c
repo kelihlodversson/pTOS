@@ -1131,7 +1131,9 @@ void init_serport(void)
 #endif
 
 #if CONF_WITH_RASPI_UART0
+#if !CONF_WITH_ARM_LPAE
     raspi_uart0_init();
+#endif
 #endif
 #if CONF_WITH_VIRT_UART
     virt_uart0_init();

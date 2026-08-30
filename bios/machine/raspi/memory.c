@@ -19,6 +19,7 @@
 #include "raspi_int.h"
 #include "raspi_mbox.h"
 #include "raspi_mmu.h"
+#include "raspi_lpae.h"
 #include "raspi_memory.h"
 #include "tosvars.h"
 #include "asm.h"
@@ -51,7 +52,9 @@
 #define PAGE_TABLE0_ENTRIES    4096
 #define PAGE_TABLE0_SIZE       (PAGE_TABLE0_ENTRIES* sizeof(struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR))
 
+#if !CONF_WITH_ARM_LPAE
 static void init_mmu(ULONG memory_size);
+#endif
 
 #if CONF_WITH_MMU_TEXT_PROTECT
 /* page-granularity table covering section 0 (0x0-0xFFFFF), so ranges
@@ -107,7 +110,10 @@ extern char sysvars_start[];
 extern char sysvars_end[];
 
 static UBYTE* coherent_buffer;
+#if !CONF_WITH_ARM_LPAE
 struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR* raspi_page_table0;
+#endif
+ULONG raspi_top_of_ram;
 
 UBYTE* raspi_get_coherent_buffer(int tag)
 {
@@ -155,20 +161,63 @@ void raspi_vcmem_init(void)
     init_tags.get_vc_memory.tag.tag_id = PROPTAG_GET_VC_MEMORY;
     init_tags.get_vc_memory.tag.value_buf_size = 8;
     init_tags.get_vc_memory.tag.value_length = 8;
-    raspi_prop_get_tags(&init_tags, sizeof(init_tags));
+    /*
+     * If the mailbox call fails, it leaves init_tags (an uninitialized
+     * automatic struct) untouched -- its return value must be checked
+     * before trusting init_tags.get_arm_memory below, or raspi_top_of_ram
+     * would be derived from stack garbage. Nor can arm_memory_base +
+     * arm_memory_size be trusted blindly: both are ULONG (32-bit), so
+     * the addition could in principle overflow and wrap to a small
+     * value.
+     *
+     * Either failure is unrecoverable here, not just for the PCIe
+     * outbound window's safety check (raspi_pci.c) that motivated
+     * adding this check in the first place: a bad raspi_top_of_ram also
+     * corrupts phystop below, which init_mmu() uses moments later to
+     * place the live MMU page table -- likely outside real RAM, into
+     * peripheral/MMIO space, corrupting hardware state and/or crashing
+     * in a much more confusing spot than here. panic() (already this
+     * file's convention for "unrecoverable, stop now" -- see
+     * raspi_mmu_protect_range() above) never returns, so nothing below
+     * this point ever runs on either failure path.
+     */
+    if (!raspi_prop_get_tags(&init_tags, sizeof(init_tags))) {
+        panic("raspi_vcmem_init: PROPTAG_GET_ARM_MEMORY mailbox query failed\n");
+    }
+    if (init_tags.get_arm_memory.value2 > (0xffffffffUL - init_tags.get_arm_memory.value1)) {
+        panic("raspi_vcmem_init: reported ARM memory range overflows 32 bits (base=0x%lx size=0x%lx)\n",
+              init_tags.get_arm_memory.value1, init_tags.get_arm_memory.value2);
+    }
+    raspi_top_of_ram = (init_tags.get_arm_memory.value1 + init_tags.get_arm_memory.value2);
 
-    ULONG top_of_ram = (init_tags.get_arm_memory.value1 + init_tags.get_arm_memory.value2);
-
+    /*
+     * LPAE uses 2 MiB blocks.  Reserve an entire block for its page tables
+     * and non-cacheable VideoCore mailbox buffer.
+     */
+#if CONF_WITH_ARM_LPAE
+    phystop = (UBYTE *)((raspi_top_of_ram - 2 * MEGABYTE) &
+                         ~(2 * MEGABYTE - 1));
+#else
     /* Reserve the topmost megabyte for page tables and cache coherent buffers */
-    phystop = (UBYTE *)((top_of_ram - MEGABYTE) & ~(MEGABYTE-1));
+    phystop = (UBYTE *)((raspi_top_of_ram - MEGABYTE) & ~(MEGABYTE-1));
+#endif
 
+#if CONF_WITH_ARM_LPAE
+    coherent_buffer = phystop + RASPI_LPAE_TABLE_SIZE;
+#else
     raspi_page_table0 = (struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR*)phystop;
     coherent_buffer = phystop + PAGE_TABLE0_SIZE;
+#endif
 
     /* Now the bss has been cleared, we can enable the MMU and caches */
+#if CONF_WITH_ARM_LPAE
+    raspi_lpae_init_mmu((ULONG)phystop, (ULONG)phystop);
+#else
     init_mmu((ULONG)phystop);
+#endif
 }
 
+#if !CONF_WITH_ARM_LPAE
 static void init_mmu(ULONG memory_size)
 {
     unsigned i;
@@ -331,39 +380,39 @@ static void init_mmu(ULONG memory_size)
         (ULONG)_etext & ~(SMALL_PAGE_SIZE - 1));
 #endif /* CONF_WITH_MMU_TEXT_PROTECT */
 }
-
+#endif /* !CONF_WITH_ARM_LPAE */
 
 #ifdef TARGET_RPI1
 //
 // Cache maintenance operations for ARMv6
 //
 // NOTE: The following functions should hold all variables in CPU registers. Currently this will be
-//	 ensured using maximum optimation (see bios/processor.h).
+//   ensured using maximum optimization (see bios/processor.h).
 //
-//	 The following numbers can be determined (dynamically) using CTR.
-//	 As long we use the ARM1176JZF-S implementation in the BCM2835 these static values will work:
+//   The following numbers can be determined (dynamically) using CTR.
+//   As long we use the ARM1176JZF-S implementation in the BCM2835 these static values will work:
 //
 
-#define DATA_CACHE_LINE_LENGTH		32
+#define DATA_CACHE_LINE_LENGTH  32
 
 void invalidate_data_cache (void *start, long length)
 {
-	length += DATA_CACHE_LINE_LENGTH;
+    length += DATA_CACHE_LINE_LENGTH;
 
-	while (1)
-	{
-		asm volatile ("mcr p15, 0, %0, c7, c14,  1" : : "r" ((ULONG)start) : "memory");
+    while (1)
+    {
+        asm volatile ("mcr p15, 0, %0, c7, c14,  1" : : "r" ((ULONG)start) : "memory");
 
-		if (length < DATA_CACHE_LINE_LENGTH)
-		{
-			break;
-		}
+        if (length < DATA_CACHE_LINE_LENGTH)
+        {
+            break;
+        }
 
-		start += DATA_CACHE_LINE_LENGTH;
-		length  -= DATA_CACHE_LINE_LENGTH;
-	}
+        start += DATA_CACHE_LINE_LENGTH;
+        length  -= DATA_CACHE_LINE_LENGTH;
+    }
 
-	data_sync_barrier ();
+    data_sync_barrier ();
 }
 #else
 // The RPI 2+ implementation is in cache_armv7.S
