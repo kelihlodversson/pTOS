@@ -14,6 +14,9 @@
 void raspi_vcmem_init(void);
 UBYTE* raspi_get_coherent_buffer(int tag);
 #define COHERENT_TAG_MAILBOX 0
+/* The 8 KiB event-ring allocation consumes tags 1 and 2. */
+#define COHERENT_TAG_XHCI_EVENT_RING 1
+#define COHERENT_TAG_XHCI_ERST       3
 
 /* Top of ARM-visible RAM as reported by firmware, set by
  * raspi_vcmem_init(). Not the same as phystop (include/tosvars.h):

@@ -13,6 +13,7 @@
 #include "usb_io.h"
 #include "raspi_vl805.h"
 #include "raspi_int.h"
+#include "raspi_memory.h"
 #include "endian.h"
 #include "biosext.h"
 #include "ucd_xhci.h"
@@ -167,21 +168,22 @@ static BOOL xhci_hw_reset(struct xhci_priv *priv)
     return TRUE;
 }
 
-DEFINE_ALIGN_BUFFER(xhci_qword_t, xhci_dcbaa, XHCI_MAX_SLOTS_ENABLED + 1U, XHCI_DMA_ALIGN);
-DEFINE_ALIGN_BUFFER(xhci_trb_t, xhci_cmd_ring, XHCI_TRBS_PER_SEGMENT, XHCI_DMA_ALIGN);
-DEFINE_ALIGN_BUFFER(xhci_trb_t, xhci_event_ring, XHCI_TRBS_PER_SEGMENT, XHCI_DMA_ALIGN);
-DEFINE_ALIGN_BUFFER(xhci_erst_entry_t, xhci_erst, 1U, XHCI_DMA_ALIGN);
+DEFINE_ALIGN_BUFFER(xhci_qword_t, xhci_dcbaa, XHCI_MAX_DCBAA_SLOTS + 1U, XHCI_DMA_ALIGN);
+DEFINE_ALIGN_BUFFER(xhci_trb_t, xhci_cmd_ring,
+                    XHCI_TRBS_PER_SEGMENT + XHCI_TRB_GUARD_TRBS,
+                    XHCI_TRB_SEGMENT_ALIGN);
+static xhci_trb_t *xhci_event_ring;
+static xhci_erst_entry_t *xhci_erst;
 DEFINE_ALIGN_BUFFER(xhci_qword_t, xhci_scratchpad_array, XHCI_MAX_SCRATCHPAD_BUFS, XHCI_DMA_ALIGN);
 DEFINE_ALIGN_BUFFER(UBYTE, xhci_scratchpad_bufs, XHCI_MAX_SCRATCHPAD_BUFS * XHCI_PAGE_SIZE, XHCI_PAGE_SIZE);
 
-/* CONFIG.MaxSlotsEn is capped at XHCI_MAX_SLOTS_ENABLED regardless of what
- * the hardware reports, so the statically-sized DCBAA/context tables never
- * need to grow at runtime -- the spec permits enabling fewer slots than
- * the hardware maximum. */
+/* CONFIG.MaxSlotsEn is capped conservatively, but the DCBAA must still hold
+ * one entry per hardware slot plus entry zero. */
 static void xhci_configure_slots(struct xhci_priv *priv)
 {
     ULONG hcs1;
     ULONG hw_max_slots;
+    ULONG config;
 
     hcs1 = xhci_readl(priv->cap_base, XHCI_CAP_HCSPARAMS1);
     hw_max_slots = XHCI_HCS1_MAX_SLOTS(hcs1);
@@ -192,19 +194,22 @@ static void xhci_configure_slots(struct xhci_priv *priv)
 
     KINFO(("xhci: %lu slots available, %u enabled\n", hw_max_slots, priv->slots_enabled));
 
-    xhci_writel(priv->op_base, XHCI_OP_CONFIG, (ULONG)priv->slots_enabled);
+    config = xhci_readl(priv->op_base, XHCI_OP_CONFIG);
+    config &= ~XHCI_CONFIG_SLOTS_MASK;
+    config |= (ULONG)priv->slots_enabled;
+    xhci_writel(priv->op_base, XHCI_OP_CONFIG, config);
 }
 
 static void xhci_init_dcbaa(void)
 {
     ULONG i;
 
-    for (i = 0UL; i < (ULONG)(XHCI_MAX_SLOTS_ENABLED + 1U); i++) {
+    for (i = 0UL; i < (ULONG)(XHCI_MAX_DCBAA_SLOTS + 1U); i++) {
         xhci_dcbaa[i].lo = 0UL;
         xhci_dcbaa[i].hi = 0UL;
     }
     flush_data_cache((void *)xhci_dcbaa,
-                      (long)((ULONG)(XHCI_MAX_SLOTS_ENABLED + 1U) * sizeof(xhci_qword_t)));
+                      (long)((ULONG)(XHCI_MAX_DCBAA_SLOTS + 1U) * sizeof(xhci_qword_t)));
 }
 
 /*
@@ -223,7 +228,7 @@ static void xhci_init_command_ring(struct xhci_priv *priv)
     ULONG last;
 
     last = (ULONG)(XHCI_TRBS_PER_SEGMENT - 1U);
-    for (i = 0UL; i < last; i++) {
+    for (i = 0UL; i < (ULONG)(XHCI_TRBS_PER_SEGMENT + XHCI_TRB_GUARD_TRBS); i++) {
         xhci_cmd_ring[i].param_lo = 0UL;
         xhci_cmd_ring[i].param_hi = 0UL;
         xhci_cmd_ring[i].status = 0UL;
@@ -236,35 +241,39 @@ static void xhci_init_command_ring(struct xhci_priv *priv)
     xhci_cmd_ring[last].status = 0UL;
     xhci_cmd_ring[last].control = XHCI_TRB_TYPE(XHCI_TRB_TYPE_LINK) | XHCI_TRB_LINK_TOGGLE;
 
-    flush_data_cache((void *)xhci_cmd_ring, (long)((ULONG)XHCI_TRBS_PER_SEGMENT * sizeof(xhci_trb_t)));
+    flush_data_cache((void *)xhci_cmd_ring,
+                     (long)((ULONG)(XHCI_TRBS_PER_SEGMENT + XHCI_TRB_GUARD_TRBS) *
+                            sizeof(xhci_trb_t)));
 
-    /* CRCR low dword: 64-byte-aligned ring address with the initial Ring
-     * Cycle State (1) OR'd into the low bits the alignment guarantees
-     * are zero. */
-    xhci_writeq(priv->op_base, XHCI_OP_CRCR, addr | 1UL);
+    /* CRCR's other low bits report or request command stop/abort state;
+     * they must not be carried over from the controller's reset value. */
+    xhci_writeq(priv->op_base, XHCI_OP_CRCR, addr | XHCI_TRB_CYCLE);
 }
 
 /*
  * Single-segment Event Ring. Unlike the Command Ring, the Event Ring has
  * no Link TRB -- the hardware walks segments through the ERST, not
- * in-ring links (verified: U-Boot's xhci_ring_alloc() call for the event
- * ring passes link_trbs=false). Write order matters: ERDP and ERSTSZ
- * must be valid before ERSTBA is written, since writing ERSTBA arms the
- * ring.
+ * in-ring links.  VL805's established Circle implementation programs
+ * ERSTSZ, ERSTBA, then ERDP in that order.
  */
 static void xhci_init_event_ring(struct xhci_priv *priv)
 {
     ULONG i;
     ULONG addr;
+    ULONG erstsz;
 
-    for (i = 0UL; i < (ULONG)XHCI_TRBS_PER_SEGMENT; i++) {
+    xhci_event_ring = (xhci_trb_t *)raspi_get_coherent_buffer(COHERENT_TAG_XHCI_EVENT_RING);
+    xhci_erst = (xhci_erst_entry_t *)raspi_get_coherent_buffer(COHERENT_TAG_XHCI_ERST);
+
+    for (i = 0UL; i < (ULONG)(XHCI_TRBS_PER_SEGMENT + XHCI_TRB_GUARD_TRBS); i++) {
         xhci_event_ring[i].param_lo = 0UL;
         xhci_event_ring[i].param_hi = 0UL;
         xhci_event_ring[i].status = 0UL;
         xhci_event_ring[i].control = 0UL;
     }
     flush_data_cache((void *)xhci_event_ring,
-                      (long)((ULONG)XHCI_TRBS_PER_SEGMENT * sizeof(xhci_trb_t)));
+                     (long)((ULONG)(XHCI_TRBS_PER_SEGMENT + XHCI_TRB_GUARD_TRBS) *
+                            sizeof(xhci_trb_t)));
 
     addr = (ULONG)xhci_event_ring;
     xhci_erst[0].seg_addr_lo = addr;
@@ -273,9 +282,12 @@ static void xhci_init_event_ring(struct xhci_priv *priv)
     xhci_erst[0].rsvd = 0UL;
     flush_data_cache((void *)xhci_erst, (long)sizeof(xhci_erst_entry_t));
 
-    xhci_writeq(priv->rt_base, XHCI_RT_IR0_ERDP, addr);
-    xhci_writel(priv->rt_base, XHCI_RT_IR0_ERSTSZ, 1UL);
+    erstsz = xhci_readl(priv->rt_base, XHCI_RT_IR0_ERSTSZ);
+    erstsz &= ~XHCI_ERSTSZ_SIZE_MASK;
+    erstsz |= 1UL;
+    xhci_writel(priv->rt_base, XHCI_RT_IR0_ERSTSZ, erstsz);
     xhci_writeq(priv->rt_base, XHCI_RT_IR0_ERSTBA, (ULONG)xhci_erst);
+    xhci_writeq(priv->rt_base, XHCI_RT_IR0_ERDP, addr);
 }
 
 /*
@@ -349,25 +361,67 @@ static BOOL xhci_init_scratchpad(struct xhci_priv *priv)
 static BOOL xhci_hw_start(struct xhci_priv *priv)
 {
     ULONG cmd;
+    ULONG crcr_before_run;
+    ULONG usbsts_before_run;
 
+    crcr_before_run = xhci_readl(priv->op_base, XHCI_OP_CRCR);
+    usbsts_before_run = xhci_readl(priv->op_base, XHCI_OP_USBSTS);
     cmd = xhci_readl(priv->op_base, XHCI_OP_USBCMD);
     cmd |= XHCI_CMD_RUN;
     xhci_writel(priv->op_base, XHCI_OP_USBCMD, cmd);
 
     if (!xhci_wait_clear(priv->op_base, XHCI_OP_USBSTS, XHCI_STS_HALT,
                          XHCI_HALT_TIMEOUT_US)) {
-        KINFO(("xhci: start state USBCMD=%08lx USBSTS=%08lx "
-               "CRCR=%08lx:%08lx DCBAAP=%08lx:%08lx\n",
+        KINFO(("xhci: start state USBSTS-before=%08lx USBCMD=%08lx USBSTS=%08lx CONFIG=%08lx "
+               "CRCR-before=%08lx CRCR=%08lx:%08lx DCBAAP=%08lx:%08lx "
+               "ERSTSZ=%08lx ERSTBA=%08lx:%08lx ERDP=%08lx:%08lx\n",
+               usbsts_before_run,
                xhci_readl(priv->op_base, XHCI_OP_USBCMD),
                xhci_readl(priv->op_base, XHCI_OP_USBSTS),
+               xhci_readl(priv->op_base, XHCI_OP_CONFIG),
+               crcr_before_run,
                xhci_readl(priv->op_base, XHCI_OP_CRCR + 4UL),
                xhci_readl(priv->op_base, XHCI_OP_CRCR),
                xhci_readl(priv->op_base, XHCI_OP_DCBAAP + 4UL),
-               xhci_readl(priv->op_base, XHCI_OP_DCBAAP)));
+               xhci_readl(priv->op_base, XHCI_OP_DCBAAP),
+               xhci_readl(priv->rt_base, XHCI_RT_IR0_ERSTSZ),
+               xhci_readl(priv->rt_base, XHCI_RT_IR0_ERSTBA + 4UL),
+               xhci_readl(priv->rt_base, XHCI_RT_IR0_ERSTBA),
+               xhci_readl(priv->rt_base, XHCI_RT_IR0_ERDP + 4UL),
+               xhci_readl(priv->rt_base, XHCI_RT_IR0_ERDP)));
         return FALSE;
     }
 
     return TRUE;
+}
+
+static BOOL xhci_setup_has_host_error(struct xhci_priv *priv, const char *stage)
+{
+    ULONG status;
+
+    status = xhci_readl(priv->op_base, XHCI_OP_USBSTS);
+    if (status & XHCI_STS_HSE) {
+        KINFO(("xhci: Host System Error after %s: USBSTS=%08lx HCS2=%08lx PAGESIZE=%08lx "
+               "CONFIG=%08lx CRCR=%08lx:%08lx DCBAAP=%08lx:%08lx "
+               "ERSTSZ=%08lx ERSTBA=%08lx:%08lx ERDP=%08lx:%08lx\n",
+               stage,
+               status,
+               xhci_readl(priv->cap_base, XHCI_CAP_HCSPARAMS2),
+               xhci_readl(priv->op_base, XHCI_OP_PAGESIZE),
+               xhci_readl(priv->op_base, XHCI_OP_CONFIG),
+               xhci_readl(priv->op_base, XHCI_OP_CRCR + 4UL),
+               xhci_readl(priv->op_base, XHCI_OP_CRCR),
+               xhci_readl(priv->op_base, XHCI_OP_DCBAAP + 4UL),
+               xhci_readl(priv->op_base, XHCI_OP_DCBAAP),
+               xhci_readl(priv->rt_base, XHCI_RT_IR0_ERSTSZ),
+               xhci_readl(priv->rt_base, XHCI_RT_IR0_ERSTBA + 4UL),
+               xhci_readl(priv->rt_base, XHCI_RT_IR0_ERSTBA),
+               xhci_readl(priv->rt_base, XHCI_RT_IR0_ERDP + 4UL),
+               xhci_readl(priv->rt_base, XHCI_RT_IR0_ERDP)));
+        return TRUE;
+    }
+
+    return FALSE;
 }
 
 static void xhci_trace_ports(struct xhci_priv *priv)
@@ -433,15 +487,24 @@ static long xhci_lowlevel_init(struct xhci_priv *priv)
 
     xhci_configure_slots(priv);
     xhci_init_dcbaa();
-    xhci_init_command_ring(priv);
-    xhci_writeq(priv->op_base, XHCI_OP_DCBAAP, (ULONG)xhci_dcbaa);
-    xhci_init_event_ring(priv);
-
     if (!xhci_init_scratchpad(priv)) {
         return EOPNOTSUPP;
     }
+    if (xhci_setup_has_host_error(priv, "scratchpad setup"))
+        return EOPNOTSUPP;
+    xhci_init_command_ring(priv);
+    if (xhci_setup_has_host_error(priv, "CRCR setup"))
+        return EOPNOTSUPP;
+    xhci_writeq(priv->op_base, XHCI_OP_DCBAAP, (ULONG)xhci_dcbaa);
+    if (xhci_setup_has_host_error(priv, "DCBAAP setup"))
+        return EOPNOTSUPP;
+    xhci_init_event_ring(priv);
+    if (xhci_setup_has_host_error(priv, "event-ring setup"))
+        return EOPNOTSUPP;
 
     xhci_writel(priv->op_base, XHCI_OP_DNCTRL, 0UL);
+    if (xhci_setup_has_host_error(priv, "DNCTRL setup"))
+        return EOPNOTSUPP;
 
     if (!xhci_hw_start(priv)) {
         KINFO(("xhci: controller did not start\n"));
@@ -452,25 +515,6 @@ static long xhci_lowlevel_init(struct xhci_priv *priv)
     xhci_trace_ports(priv);
 
     KINFO(("xhci: bring-up complete; transfer support is not implemented yet\n"));
-
-    /*
-     * Once this returns E_OK, ucd_register() proceeds to allocate a root
-     * hub device and call usb_new_device() -- which will fail at its
-     * first control transfer (SUBMIT_CONTROL_MSG is still EOPNOTSUPP) and
-     * be torn down by usb/ucd.c's existing failure path, without ever
-     * calling LOWLEVEL_STOP. root_hub_dev (this file's static) is left
-     * pointing at the now-freed device as a result -- harmless today
-     * since nothing else reads it, but worth knowing for a later stage.
-     * Separately, since nothing will halt this controller once that
-     * happens, halt it proactively here rather than leave it running
-     * with nothing servicing its Event Ring (Port Status Change Events
-     * would otherwise accumulate in the 64-entry ring indefinitely).
-     * xhci_hw_reset() already implements the correct stop + HCRST +
-     * CNR-wait sequence; its result is ignored since bring-up itself
-     * already succeeded by this point -- a failure to re-halt cleanly
-     * doesn't undo the fact that reset/start/port-trace all worked.
-     */
-    (void)xhci_hw_reset(priv);
 
     return E_OK;
 }

@@ -34,8 +34,7 @@ static BOOL raspi_vl805_load_firmware(void)
         return FALSE;
     }
 
-    /* VideoCore may have to load and start the VL805 firmware blob.  The
-     * nominal 1 ms wait is marginal on real Pi 400 hardware. */
+    /* VideoCore may have to load and start the VL805 firmware blob. */
     raspi_delay_us(20000UL);
     return TRUE;
 }

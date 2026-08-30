@@ -52,7 +52,9 @@
 #define PAGE_TABLE0_ENTRIES    4096
 #define PAGE_TABLE0_SIZE       (PAGE_TABLE0_ENTRIES* sizeof(struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR))
 
+#if !CONF_WITH_ARM_LPAE
 static void init_mmu(ULONG memory_size);
+#endif
 
 #if CONF_WITH_MMU_TEXT_PROTECT
 /* page-granularity table covering section 0 (0x0-0xFFFFF), so ranges
@@ -108,7 +110,9 @@ extern char sysvars_start[];
 extern char sysvars_end[];
 
 static UBYTE* coherent_buffer;
+#if !CONF_WITH_ARM_LPAE
 struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR* raspi_page_table0;
+#endif
 ULONG raspi_top_of_ram;
 
 UBYTE* raspi_get_coherent_buffer(int tag)
@@ -213,6 +217,7 @@ void raspi_vcmem_init(void)
 #endif
 }
 
+#if !CONF_WITH_ARM_LPAE
 static void init_mmu(ULONG memory_size)
 {
     unsigned i;
@@ -375,7 +380,7 @@ static void init_mmu(ULONG memory_size)
         (ULONG)_etext & ~(SMALL_PAGE_SIZE - 1));
 #endif /* CONF_WITH_MMU_TEXT_PROTECT */
 }
-
+#endif /* !CONF_WITH_ARM_LPAE */
 
 #ifdef TARGET_RPI1
 //

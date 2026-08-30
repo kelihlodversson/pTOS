@@ -92,7 +92,13 @@ claimed to make VL805 MMIO usable on real RPi4 hardware.
    occur on an invalid MMIO read.
 4. Run the existing regression image on Pi 400 after the xHCI probe.
 
-The hardware milestone was validated with three consecutive Pi 400 boots.
-Each boot brought up PCIe, allocated and decoded the VL805 BAR, reset and ran
-the xHCI controller, detected five root-hub ports, and reached the desktop.
-USB enumeration stops at the expected unimplemented xHCI transfer submission.
+The Pi 400 hardware test brought up PCIe, allocated and decoded the VL805
+BAR, reset and ran the xHCI controller, detected five root-hub ports, and
+reached the desktop. Intermittent xHCI Host System Errors during event-ring
+setup proved that cache flushes of ordinary BSS were insufficient for VL805's
+DMA. The Event Ring Segment Table and its 8 KiB event-ring allocation (the
+4 KiB logical segment plus VL805's 4 KiB overfetch guard) now occupy distinct
+slots in the non-cacheable coherent reservation. Eight consecutive cold boots
+then reached `xhci: controller running` without an HSE, including a six-boot
+series after removing temporary 1 ms setup delays. USB enumeration stops at
+the expected unimplemented xHCI transfer submission.

@@ -36,6 +36,7 @@
 #define XHCI_OP_CRCR      0x18U   /* 64-bit: lo at +0x18, hi at +0x1c */
 #define XHCI_OP_DCBAAP    0x30U   /* 64-bit: lo at +0x30, hi at +0x34 */
 #define XHCI_OP_CONFIG    0x38U   /* ULONG */
+#define XHCI_CONFIG_SLOTS_MASK 0x000000ffUL
 /* Port register sets start at +0x400, 16 bytes each; n is 0-based */
 #define XHCI_OP_PORTSC(n) (0x400U + (0x10U * (n)))
 
@@ -45,6 +46,7 @@
 
 /* USBSTS bits */
 #define XHCI_STS_HALT    0x00000001UL
+#define XHCI_STS_HSE     0x00000004UL
 #define XHCI_STS_CNR     0x00000800UL
 
 /* PORTSC bits (read-only status subset needed for bring-up tracing) */
@@ -59,6 +61,7 @@
 #define XHCI_RT_IR0_ERSTSZ  0x28U   /* ULONG */
 #define XHCI_RT_IR0_ERSTBA  0x30U   /* 64-bit: lo at +0x30, hi at +0x34 */
 #define XHCI_RT_IR0_ERDP    0x38U   /* 64-bit: lo at +0x38, hi at +0x3c */
+#define XHCI_ERSTSZ_SIZE_MASK 0x0000ffffUL
 
 /* TRB: 16 bytes, 4 dwords. control bit 0 = Cycle, bits 10-15 = Type. */
 typedef struct {
@@ -89,8 +92,14 @@ typedef struct {
     ULONG rsvd;
 } xhci_erst_entry_t;
 
-#define XHCI_TRBS_PER_SEGMENT    64U
+/* VL805 can prefetch beyond a ring segment.  Keep a zeroed, unlinked 4 KiB
+ * guard after each 4 KiB logical segment, as Linux's XHCI_TRB_OVERFETCH quirk
+ * does for this controller. */
+#define XHCI_TRBS_PER_SEGMENT    256U
+#define XHCI_TRB_GUARD_TRBS      256U
+#define XHCI_TRB_SEGMENT_ALIGN   8192U
 #define XHCI_MAX_SLOTS_ENABLED   8U
+#define XHCI_MAX_DCBAA_SLOTS     32U
 #define XHCI_MAX_PORTS_TRACED    8U
 #define XHCI_MAX_SCRATCHPAD_BUFS 31U
 #define XHCI_DMA_ALIGN           128U
