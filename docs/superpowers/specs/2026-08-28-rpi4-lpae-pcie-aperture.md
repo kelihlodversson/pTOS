@@ -17,7 +17,7 @@ separate virt-arm Device Tree, generic ioremap, or high-BAR work.
 
 ## Scope
 
-Add an opt-in RPi4 LPAE page-table path that maps:
+Add the mandatory RPi4 LPAE page-table path that maps:
 
 ```text
 virtual 0xf8000000..0xfbffffff -> physical 0x6_00000000..0x603ffffff
@@ -45,11 +45,10 @@ virtual addresses explicitly.
 
 ## Configuration
 
-`CONF_WITH_ARM_LPAE` is opt-in, requires `TARGET_RPI4` and
-`CONF_WITH_ARM_PMMU`, and is incompatible with the current
-short-descriptor-only `CONF_WITH_MMU_TEXT_PROTECT` implementation. The
-default RPi4 configuration remains unchanged; LPAE remains an explicit
-experimental configuration while the xHCI driver is incomplete.
+`CONF_WITH_ARM_LPAE` is selected automatically for `TARGET_RPI4` and selects
+`CONF_WITH_ARM_PMMU`. It is incompatible with the current
+short-descriptor-only `CONF_WITH_MMU_TEXT_PROTECT` implementation, which is
+therefore unavailable on RPi4. The single RPi4 configuration always uses LPAE.
 
 ## Tables And Attributes
 
