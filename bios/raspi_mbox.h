@@ -46,17 +46,17 @@ typedef struct {
     ULONG      value2;
 }   prop_tag_2u32_t;
 
-#define DEVICE_ID_SD_CARD	0
-#define DEVICE_ID_USB_HCD	3
-#define POWER_STATE_OFF		(0 << 0)
-#define POWER_STATE_ON		(1 << 0)
-#define POWER_STATE_WAIT	(1 << 1)
-#define POWER_STATE_NO_DEVICE	(1 << 1)	// in response
+#define DEVICE_ID_SD_CARD       0
+#define DEVICE_ID_USB_HCD       3
+#define POWER_STATE_OFF         (0 << 0)
+#define POWER_STATE_ON          (1 << 0)
+#define POWER_STATE_WAIT        (1 << 1)
+#define POWER_STATE_NO_DEVICE   (1 << 1)    // in response
 
-#define CLOCK_ID_EMMC		1
-#define CLOCK_ID_UART		2
-#define CLOCK_ID_ARM		3
-#define CLOCK_ID_CORE		4
+#define CLOCK_ID_EMMC           1
+#define CLOCK_ID_UART           2
+#define CLOCK_ID_ARM            3
+#define CLOCK_ID_CORE           4
 
 typedef struct
 {
@@ -123,6 +123,7 @@ typedef struct
 #define PROPTAG_GET_TURBO               0x00030009
 #define PROPTAG_GET_MAX_TEMPERATURE     0x0003000A
 #define PROPTAG_GET_EDID_BLOCK          0x00030020
+#define PROPTAG_NOTIFY_XHCI_RESET       0x00030058
 #define PROPTAG_SET_CLOCK_RATE          0x00038002
 #define PROPTAG_SET_TURBO               0x00038009
 #define PROPTAG_ALLOCATE_BUFFER         0x00040001

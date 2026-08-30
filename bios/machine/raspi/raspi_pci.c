@@ -113,7 +113,14 @@
  * section and the hardware validation checklist, which reads back an
  * actual xHCI capability register specifically to catch this.
  */
-#define RASPI_PCIE_OUTBOUND_CPU_BASE    0xf8000000UL
+#define RASPI_PCIE_OUTBOUND_VIRT_BASE   0xf8000000UL
+#if CONF_WITH_ARM_LPAE
+#define RASPI_PCIE_OUTBOUND_CPU_BASE_LO 0x00000000UL
+#define RASPI_PCIE_OUTBOUND_CPU_BASE_HI 0x00000006UL
+#else
+#define RASPI_PCIE_OUTBOUND_CPU_BASE_LO RASPI_PCIE_OUTBOUND_VIRT_BASE
+#define RASPI_PCIE_OUTBOUND_CPU_BASE_HI 0x00000000UL
+#endif
 #define RASPI_PCIE_INBOUND_SIZE         0x80000000UL
 #define RASPI_PCIE_INBOUND_SIZE_CODE    16U
 #define RASPI_PCIE_LINK_WAIT_LOOPS      20U
@@ -272,16 +279,17 @@ static void raspi_pci_set_outbound_window(void)
     raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_LO, RASPI_PCIE_MMIO_BUS_BASE);
     raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_HI, 0UL);
 
-    cpu_mb = RASPI_PCIE_OUTBOUND_CPU_BASE >> 20;
-    limit_mb = (RASPI_PCIE_OUTBOUND_CPU_BASE + RASPI_PCIE_MMIO_SIZE - 1UL) >> 20;
+    cpu_mb = RASPI_PCIE_OUTBOUND_CPU_BASE_LO >> 20;
+    limit_mb = (RASPI_PCIE_OUTBOUND_CPU_BASE_LO + RASPI_PCIE_MMIO_SIZE - 1UL) >> 20;
 
     reg = raspi_pci_readl(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT);
     reg = raspi_pci_replace_bits(reg, cpu_mb, PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT_BASE_MASK);
     reg = raspi_pci_replace_bits(reg, limit_mb, PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT_LIMIT_MASK);
     raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT, reg);
 
-    raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_HI, 0UL);
-    raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_LIMIT_HI, 0UL);
+    raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_HI, RASPI_PCIE_OUTBOUND_CPU_BASE_HI);
+    raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_LIMIT_HI, RASPI_PCIE_OUTBOUND_CPU_BASE_HI);
+
 }
 
 static void raspi_pci_set_inbound_window(void)
@@ -349,12 +357,10 @@ static LONG raspi_pci_init(void)
     if (!raspi_prop_get_tag(PROPTAG_SET_POWER_STATE, &power_state, sizeof power_state, sizeof(ULONG) * 2)) {
         KINFO(("pci: RPi4 USB power-state request failed\n"));
         return PCI_GENERAL_ERROR;
-    }
-    if (power_state.value2 & POWER_STATE_NO_DEVICE) {
+    } else if (power_state.value2 & POWER_STATE_NO_DEVICE) {
         KINFO(("pci: RPi4 USB power domain not found\n"));
         return PCI_DEVICE_NOT_FOUND;
-    }
-    if (!(power_state.value2 & POWER_STATE_ON)) {
+    } else if (!(power_state.value2 & POWER_STATE_ON)) {
         KINFO(("pci: RPi4 USB power domain did not power on\n"));
         return PCI_GENERAL_ERROR;
     }
@@ -381,14 +387,18 @@ static LONG raspi_pci_init(void)
 
     raspi_pci_set_inbound_window();
 
-    raspi_pci_outbound_window_enabled = (raspi_top_of_ram <= RASPI_PCIE_OUTBOUND_CPU_BASE);
+#if CONF_WITH_ARM_LPAE
+    raspi_pci_outbound_window_enabled = TRUE;
+#else
+    raspi_pci_outbound_window_enabled = (raspi_top_of_ram <= RASPI_PCIE_OUTBOUND_VIRT_BASE);
+#endif
     if (raspi_pci_outbound_window_enabled) {
         raspi_pci_set_outbound_window();
     } else {
         KINFO(("pci: detected RAM reaches the PCIe outbound MMIO window "
                "(top_of_ram=0x%lx > 0x%lx); BAR/MMIO resource access will "
                "be unavailable\n",
-               raspi_top_of_ram, RASPI_PCIE_OUTBOUND_CPU_BASE));
+               raspi_top_of_ram, RASPI_PCIE_OUTBOUND_VIRT_BASE));
     }
 
     raspi_pci_set_root_bridge_class();
@@ -399,6 +409,12 @@ static LONG raspi_pci_init(void)
     raspi_pci_writel(PCIE_RC_CFG_VENDOR_VENDOR_SPECIFIC_REG1, reg);
 
     raspi_pci_set_perst(FALSE);
+
+    /* PCIe CEM requires 100 ms from PERST# deassertion before software
+     * accesses endpoint configuration space.  Link-up can be reported much
+     * earlier, while the VL805 is not yet ready to accept BAR/MMIO accesses. */
+    raspi_delay_us(100000UL);
+
     for (i = 0; i < RASPI_PCIE_LINK_WAIT_LOOPS; i++) {
         raspi_delay_us(5000UL);
         if (raspi_pci_link_up()) {
@@ -485,7 +501,7 @@ static LONG raspi_pci_bus_to_phys(ULONG bus_address, BOOL io, ULONG *phys_addres
         (bus_address >= RASPI_PCIE_MMIO_BUS_BASE + RASPI_PCIE_MMIO_SIZE))
         return PCI_BAD_RESOURCE;
 
-    *phys_address = RASPI_PCIE_OUTBOUND_CPU_BASE + (bus_address - RASPI_PCIE_MMIO_BUS_BASE);
+    *phys_address = RASPI_PCIE_OUTBOUND_VIRT_BASE + (bus_address - RASPI_PCIE_MMIO_BUS_BASE);
     return PCI_SUCCESSFUL;
 }
 

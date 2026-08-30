@@ -19,6 +19,7 @@
 #include "raspi_int.h"
 #include "raspi_mbox.h"
 #include "raspi_mmu.h"
+#include "raspi_lpae.h"
 #include "raspi_memory.h"
 #include "tosvars.h"
 #include "asm.h"
@@ -185,14 +186,31 @@ void raspi_vcmem_init(void)
     }
     raspi_top_of_ram = (init_tags.get_arm_memory.value1 + init_tags.get_arm_memory.value2);
 
+    /*
+     * LPAE uses 2 MiB blocks.  Reserve an entire block for its page tables
+     * and non-cacheable VideoCore mailbox buffer.
+     */
+#if CONF_WITH_ARM_LPAE
+    phystop = (UBYTE *)((raspi_top_of_ram - 2 * MEGABYTE) &
+                         ~(2 * MEGABYTE - 1));
+#else
     /* Reserve the topmost megabyte for page tables and cache coherent buffers */
     phystop = (UBYTE *)((raspi_top_of_ram - MEGABYTE) & ~(MEGABYTE-1));
+#endif
 
+#if CONF_WITH_ARM_LPAE
+    coherent_buffer = phystop + RASPI_LPAE_TABLE_SIZE;
+#else
     raspi_page_table0 = (struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR*)phystop;
     coherent_buffer = phystop + PAGE_TABLE0_SIZE;
+#endif
 
     /* Now the bss has been cleared, we can enable the MMU and caches */
+#if CONF_WITH_ARM_LPAE
+    raspi_lpae_init_mmu((ULONG)phystop, (ULONG)phystop);
+#else
     init_mmu((ULONG)phystop);
+#endif
 }
 
 static void init_mmu(ULONG memory_size)

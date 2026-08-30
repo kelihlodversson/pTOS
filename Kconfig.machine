@@ -227,6 +227,20 @@ config CONF_WITH_MMU_TEXT_PROTECT
 	  need every byte of that page table's 1 KB back, or the kernel
 	  legitimately self-modifies code in the first megabyte.
 
+config CONF_WITH_ARM_LPAE
+	bool "Use ARMv7 LPAE for RPi4 high MMIO"
+	depends on TARGET_RPI4 && CONF_WITH_ARM_PMMU && !CONF_WITH_MMU_TEXT_PROTECT
+	default n
+	help
+	  Use ARMv7 Large Physical Address Extension page tables on Raspberry Pi 4.
+	  This keeps pTOS virtual addresses 32-bit while mapping the BCM2711 PCIe
+	  outbound aperture at physical address 0x6_00000000 into a low virtual
+	  address range. It has been validated on real Pi 400 hardware but remains
+	  opt-in while the xHCI driver is incomplete.
+
+	  The current kernel text-protection implementation uses ARM short
+	  descriptors, so disable it before enabling this option.
+
 config CONF_WITH_68030_PMMU
 	bool "Install a PMMU tree on 68030"
 	depends on CONF_WITH_ADVANCED_CPU && CONF_ATARI_HARDWARE

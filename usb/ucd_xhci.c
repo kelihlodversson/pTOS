@@ -153,7 +153,9 @@ static BOOL xhci_hw_reset(struct xhci_priv *priv)
     xhci_writel(priv->op_base, XHCI_OP_USBCMD, cmd);
 
     if (!xhci_wait_clear(priv->op_base, XHCI_OP_USBCMD, XHCI_CMD_RESET, XHCI_RESET_TIMEOUT_US)) {
-        KINFO(("xhci: timed out waiting for RESET to self-clear\n"));
+        KINFO(("xhci: timed out waiting for RESET to self-clear; USBCMD=%08lx USBSTS=%08lx\n",
+               xhci_readl(priv->op_base, XHCI_OP_USBCMD),
+               xhci_readl(priv->op_base, XHCI_OP_USBSTS)));
         return FALSE;
     }
 
@@ -352,7 +354,20 @@ static BOOL xhci_hw_start(struct xhci_priv *priv)
     cmd |= XHCI_CMD_RUN;
     xhci_writel(priv->op_base, XHCI_OP_USBCMD, cmd);
 
-    return xhci_wait_clear(priv->op_base, XHCI_OP_USBSTS, XHCI_STS_HALT, XHCI_HALT_TIMEOUT_US);
+    if (!xhci_wait_clear(priv->op_base, XHCI_OP_USBSTS, XHCI_STS_HALT,
+                         XHCI_HALT_TIMEOUT_US)) {
+        KINFO(("xhci: start state USBCMD=%08lx USBSTS=%08lx "
+               "CRCR=%08lx:%08lx DCBAAP=%08lx:%08lx\n",
+               xhci_readl(priv->op_base, XHCI_OP_USBCMD),
+               xhci_readl(priv->op_base, XHCI_OP_USBSTS),
+               xhci_readl(priv->op_base, XHCI_OP_CRCR + 4UL),
+               xhci_readl(priv->op_base, XHCI_OP_CRCR),
+               xhci_readl(priv->op_base, XHCI_OP_DCBAAP + 4UL),
+               xhci_readl(priv->op_base, XHCI_OP_DCBAAP)));
+        return FALSE;
+    }
+
+    return TRUE;
 }
 
 static void xhci_trace_ports(struct xhci_priv *priv)
@@ -401,6 +416,11 @@ static long xhci_lowlevel_init(struct xhci_priv *priv)
 
     priv->cap_base = (volatile UBYTE *)priv->resources.mmio_base;
     caplength = xhci_readb(priv->cap_base, XHCI_CAP_CAPLENGTH);
+    if ((caplength < XHCI_CAP_LENGTH_MIN) || ((caplength & 3U) != 0U)) {
+        KINFO(("xhci: invalid CAPLENGTH 0x%02x; MMIO read did not reach the controller\n",
+               caplength));
+        return EOPNOTSUPP;
+    }
     priv->op_base = priv->cap_base + caplength;
 
     rtsoff = xhci_readl(priv->cap_base, XHCI_CAP_RTSOFF) & ~0x1fUL;

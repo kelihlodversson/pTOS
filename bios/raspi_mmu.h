@@ -109,6 +109,7 @@ __attribute__((packed));
 #define ARM_CONTROL_L1_CACHE            (1 << 2)
 #define ARM_CONTROL_BRANCH_PREDICTION   (1 << 11)
 #define ARM_CONTROL_L1_INSTRUCTION_CACHE (1 << 12)
+#define ARM_CONTROL_WRITE_XN            (1UL << 19)
 #ifdef  TARGET_RPI1
 #define ARM_CONTROL_EXTENDED_PAGE_TABLE (1 << 23)
 #define ARM_CONTROL_UNALIGNED_PERMITTED (1 << 22)

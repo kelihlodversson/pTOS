@@ -1,0 +1,6 @@
+MACHINE_RPI=y
+TARGET_RPI4=y
+# CONF_WITH_MMU_TEXT_PROTECT is not set
+CONF_WITH_ARM_LPAE=y
+# The multi-language image supports every country at run time.
+# BUILD_UNIQUE_COUNTRY is not set

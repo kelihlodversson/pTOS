@@ -18,6 +18,7 @@
 #define XHCI_CAP_HCCPARAMS1  0x10U   /* ULONG */
 #define XHCI_CAP_DBOFF       0x14U   /* ULONG */
 #define XHCI_CAP_RTSOFF      0x18U   /* ULONG */
+#define XHCI_CAP_LENGTH_MIN  0x20U
 
 /* HCSPARAMS1 fields */
 #define XHCI_HCS1_MAX_SLOTS(p)   ((p) & 0xffUL)
@@ -91,7 +92,7 @@ typedef struct {
 #define XHCI_TRBS_PER_SEGMENT    64U
 #define XHCI_MAX_SLOTS_ENABLED   8U
 #define XHCI_MAX_PORTS_TRACED    8U
-#define XHCI_MAX_SCRATCHPAD_BUFS 8U
+#define XHCI_MAX_SCRATCHPAD_BUFS 31U
 #define XHCI_DMA_ALIGN           128U
 #define XHCI_PAGE_SIZE           4096UL
 

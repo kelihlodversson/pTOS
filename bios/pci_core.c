@@ -33,6 +33,9 @@
 #define PCI_BAR_MEM_PREFETCH    0x00000008UL
 #define PCI_BAR_IO_MASK         0xfffffffcUL
 #define PCI_BAR_MEM_MASK        0xfffffff0UL
+#define PCI_BRIDGE_MEMORY_BASE  0x20U
+#define PCI_BRIDGE_MEMORY_LIMIT 0x22U
+#define PCI_BRIDGE_MEMORY_MASK  0xfff0UL
 
 typedef struct {
     PCI_HANDLE handle;
@@ -66,6 +69,7 @@ static BOOL pci_table_full_reported;
  */
 static ULONG pci_mmio_alloc_next;
 static ULONG pci_mmio_alloc_end;
+static ULONG pci_mmio_window_base;
 
 static pci_device_t *pci_device_from_handle(PCI_HANDLE handle);
 static LONG pci_check_reg(UWORD reg, UWORD size);
@@ -232,6 +236,7 @@ static BOOL pci_is_pci_bridge(const pci_device_t *device)
 static void pci_scan_bridge(pci_device_t *device)
 {
     ULONG value;
+    ULONG memory_limit;
     UBYTE secondary;
     UBYTE subordinate;
 
@@ -254,6 +259,18 @@ static void pci_scan_bridge(pci_device_t *device)
         pci_write_config_raw(device, PCI_CONFIG_PRIMARY_BUS, 1, (ULONG)device->bus);
         pci_write_config_raw(device, PCI_CONFIG_SECONDARY_BUS, 1, (ULONG)secondary);
         pci_write_config_raw(device, PCI_CONFIG_SUBORDINATE_BUS, 1, (ULONG)subordinate);
+    }
+
+    if ((pci_mmio_alloc_end > pci_mmio_window_base) &&
+        (pci_mmio_alloc_end != 0UL)) {
+        memory_limit = pci_mmio_alloc_end - 1UL;
+        pci_write_config_raw(device, PCI_BRIDGE_MEMORY_BASE, 2,
+                             (pci_mmio_window_base >> 16) & PCI_BRIDGE_MEMORY_MASK);
+        pci_write_config_raw(device, PCI_BRIDGE_MEMORY_LIMIT, 2,
+                             (memory_limit >> 16) & PCI_BRIDGE_MEMORY_MASK);
+        if (pci_read_config_raw(device, PCI_CONFIG_COMMAND, 2, &value) == PCI_SUCCESSFUL)
+            pci_write_config_raw(device, PCI_CONFIG_COMMAND, 2,
+                                 value | PCI_COMMAND_MEMORY);
     }
 
     pci_scan_bus(secondary);
@@ -335,11 +352,14 @@ static void pci_decode_bars(pci_device_t *device)
     UWORD last;
     UWORD limit;
     ULONG original;
+    ULONG command;
     BOOL skip_next;
+    BOOL has_memory;
 
     memset(device->resources, 0, sizeof(device->resources));
 
     limit = pci_bar_limit(device);
+    has_memory = FALSE;
     for (bar = 0; bar < limit; bar++) {
         skip_next = FALSE;
         if (pci_read_config_raw(device, PCI_CONFIG_BAR0 + (bar * 4U), 4, &original) == PCI_SUCCESSFUL) {
@@ -349,8 +369,18 @@ static void pci_decode_bars(pci_device_t *device)
                 skip_next = TRUE;
         }
         pci_decode_bar(device, bar);
+        if ((device->resources[bar].length != 0UL) &&
+            ((device->resources[bar].flags & PCI_RESOURCE_IO) == 0U))
+            has_memory = TRUE;
         if (skip_next)
             bar++;
+    }
+
+    if (has_memory &&
+        (pci_read_config_raw(device, PCI_CONFIG_COMMAND, 2, &command) == PCI_SUCCESSFUL)) {
+        command |= PCI_COMMAND_MEMORY;
+        if (pci_write_config_raw(device, PCI_CONFIG_COMMAND, 2, command) != PCI_SUCCESSFUL)
+            KINFO(("pci: could not enable memory decoding\n"));
     }
 
     last = PCI_MAX_BARS;
@@ -392,11 +422,6 @@ static void pci_decode_bar(pci_device_t *device, UWORD bar)
         KINFO(("pci: BAR%u could not be read\n", bar));
         return;
     }
-    if (original == 0UL) {
-        KINFO(("pci: BAR%u reads back as 0 (unassigned)\n", bar));
-        return;
-    }
-
     if (pci_write_config_raw(device, reg, 4, 0xffffffffUL) != PCI_SUCCESSFUL) {
         KINFO(("pci: BAR%u sizing write failed\n", bar));
         return;
@@ -427,7 +452,7 @@ static void pci_decode_bar(pci_device_t *device, UWORD bar)
      * dropping the high bits and returning a wrong, truncated address.
      */
     if (!io && ((original & PCI_BAR_MEM_TYPE_MASK) == PCI_BAR_MEM_TYPE_64)) {
-        if (bar + 1U >= PCI_MAX_BARS) {
+        if (bar + 1U >= pci_bar_limit(device)) {
             KINFO(("pci: BAR%u is 64-bit but there is no BAR%u to hold the high dword\n",
                    bar, bar + 1U));
             return;
@@ -509,7 +534,7 @@ static void pci_decode_bar(pci_device_t *device, UWORD bar)
     resource->offset = phys_address - masked_address;
     resource->dmaoffset = 0UL;
 
-    KINFO(("pci: BAR%u decoded: bus 0x%lx -> phys 0x%lx, size 0x%lx\n",
+    KINFO(("pci: BAR%u decoded: bus 0x%lx -> CPU address 0x%lx, size 0x%lx\n",
            bar, masked_address, phys_address, resource->length));
 }
 
@@ -542,11 +567,13 @@ LONG pci_init(void)
 
     pci_mmio_alloc_next = 0UL;
     pci_mmio_alloc_end = 0UL;
+    pci_mmio_window_base = 0UL;
     if ((pci_backend->get_windows != 0) &&
         (pci_backend->get_windows(&windows) == PCI_SUCCESSFUL) &&
         (windows.mmio_size != 0UL)) {
         pci_mmio_alloc_next = windows.mmio_base;
         pci_mmio_alloc_end = windows.mmio_base + windows.mmio_size;
+        pci_mmio_window_base = windows.mmio_base;
     }
 
     pci_scan_bus(0);
