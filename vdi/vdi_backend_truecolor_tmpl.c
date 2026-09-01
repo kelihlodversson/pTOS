@@ -105,7 +105,7 @@ static void TC_SPARSE_UNUSED tc_fill_rect(const VwkAttrib *attr, const Rect *rec
         PIXEL *dst = (PIXEL *)row;
 
         for (x = rect->x1, i = 0; x <= rect->x2; x++, i++) {
-            BOOL set = (pattern & ((1<<15)>>(i & 15))) != 0;
+            BOOL set = (pattern & (0x8000U >> (i & 15))) != 0;
 
             switch (attr->wrt_mode) {
             case 3:                 /* erase (reverse transparent) mode */
