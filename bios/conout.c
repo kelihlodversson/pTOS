@@ -25,6 +25,7 @@
 #include "conout.h"
 #include "raspi_screen.h"
 #include "../vdi/vdi_defs.h"    /* for phys_work stuff */
+#include "gsxdefs.h"
 
 #define PLANE_OFFSET    2       /* interleaved planes */
 
@@ -46,6 +47,66 @@ static void neg_cell(UBYTE *cell);
 static UBYTE *cell_addr(UWORD x, UWORD y);
 static void cell_xfer(UBYTE *src, UBYTE *dst);
 static BOOL next_cell(void);
+
+static ULONG cell_wrap(void)
+{
+#if CONF_WITH_VIRTIO_GPU
+    if (TRUECOLOR_MODE)
+        return (ULONG)linea_vars.v_lin_wr * linea_vars.v_cel_ht;
+#endif
+    return linea_vars.v_cel_wr;
+}
+
+#if CONF_WITH_VIRTIO_GPU
+static ULONG console_pixel(WORD color)
+{
+    return vdi_truecolor_pixel_for_index(color);
+}
+
+static void blank_out32(int topx, int topy, int botx, int boty)
+{
+    ULONG *addr;
+    ULONG bgcol;
+    WORD i, j;
+    WORD offs, rows, width;
+
+    width = (botx - topx + 1) * 8;
+    offs = linea_vars.v_lin_wr / sizeof(ULONG) - width;
+    rows = (boty - topy + 1) * linea_vars.v_cel_ht;
+    bgcol = console_pixel(linea_vars.v_col_bg);
+    addr = (ULONG *)cell_addr(topx, topy);
+    for (i = 0; i < rows; i++) {
+        for (j = 0; j < width; j++)
+            *addr++ = bgcol;
+        addr += offs;
+    }
+}
+
+static void cell_xfer32(UBYTE *src, UBYTE *dst)
+{
+    ULONG fg, bg;
+    WORD fnt_wr, line_wr, i, mask;
+
+    if (linea_vars.v_stat_0 & M_REVID) {
+        fg = console_pixel(linea_vars.v_col_bg);
+        bg = console_pixel(linea_vars.v_col_fg);
+    } else {
+        fg = console_pixel(linea_vars.v_col_fg);
+        bg = console_pixel(linea_vars.v_col_bg);
+    }
+
+    fnt_wr = linea_vars.v_fnt_wr;
+    line_wr = linea_vars.v_lin_wr;
+    for (i = linea_vars.v_cel_ht; i--; ) {
+        ULONG *p;
+
+        for (mask = 0x80, p = (ULONG *)dst; mask; mask >>= 1)
+            *p++ = (*src & mask) ? fg : bg;
+        dst += line_wr;
+        src += fnt_wr;
+    }
+}
+#endif
 
 /*
  * char_addr - retrieve the address of the source cell
@@ -94,7 +155,7 @@ void
 ascii_out (int ch)
 {
     UBYTE * src, * dst;
-    ULONG cell_wr = linea_vars.v_cel_wr;
+    ULONG cell_wr = cell_wrap();
     BOOL visible;                       /* was the cursor visible? */
 
     src = char_addr(ch);                /* a0 -> get character source */
@@ -213,20 +274,19 @@ static void blank_out16(int topx, int topy, int botx, int boty)
 void
 blank_out (int topx, int topy, int botx, int boty)
 {
+#if CONF_WITH_VIRTIO_GPU
+    if (TRUECOLOR_MODE) {
+        blank_out32(topx, topy, botx, boty);
+        return;
+    }
+#endif
 #if CONF_WITH_VIDEL
     if (TRUECOLOR_MODE) {
         blank_out16(topx, topy, botx, boty);
         return;
     }
 #endif
-#if CONF_WITH_VDI_TRUECOLOR32_TEST
-    /* The test framebuffer is packed pixels, not interleaved planes. The
-     * serial console does not need a screen clear before VDI takes over. */
-    UNUSED(topx);
-    UNUSED(topy);
-    UNUSED(botx);
-    UNUSED(boty);
-#elif defined(MACHINE_RPI)
+#if defined(MACHINE_RPI)
     raspi_blank_out(topx, topy, botx, boty);
 #else
     UWORD color = linea_vars.v_col_bg;             /* bg color value */
@@ -326,6 +386,11 @@ static UBYTE *cell_addr(UWORD x, UWORD y)
     if (y > linea_vars.v_cel_my)
         y = linea_vars.v_cel_my;           /* clipped y */
 
+#if CONF_WITH_VIRTIO_GPU
+    if (TRUECOLOR_MODE)
+        disx = 8UL * (linea_vars.v_planes / 8) * x;
+    else
+#endif
 #if CONF_WITH_VIDEL
     if (TRUECOLOR_MODE) {       /* chunky pixels */
         disx = linea_vars.v_planes * x;
@@ -346,7 +411,7 @@ static UBYTE *cell_addr(UWORD x, UWORD y)
     }
 
     /* Y displacement = Y // cell conversion factor */
-    disy = (ULONG)linea_vars.v_cel_wr * y;
+    disy = cell_wrap() * y;
 
     /*
      * cell address = screen base address + Y displacement
@@ -439,6 +504,13 @@ static void cell_xfer(UBYTE *src, UBYTE *dst)
     UWORD bg;
     int fnt_wr, line_wr;
     int plane;
+
+#if CONF_WITH_VIRTIO_GPU
+    if (TRUECOLOR_MODE) {
+        cell_xfer32(src, dst);
+        return;
+    }
+#endif
 
 #if CONF_WITH_VIDEL
     if (TRUECOLOR_MODE) {
@@ -540,6 +612,19 @@ static void neg_cell(UBYTE *cell)
 
     linea_vars.v_stat_0 |= M_CRIT;                 /* start of critical section. */
 
+#if CONF_WITH_VIRTIO_GPU
+    if (TRUECOLOR_MODE) {
+        for (len = cell_len; len--; ) {
+            WORD i;
+            ULONG *addr;
+
+            for (i = 8, addr = (ULONG *)cell; i--; addr++)
+                *addr = ~*addr;
+            cell += lin_wr;
+        }
+    }
+    else
+#endif
 #if CONF_WITH_VIDEL
     if (TRUECOLOR_MODE) {               /* chunky pixels */
         for (len = cell_len; len--; ) {
@@ -601,6 +686,12 @@ static BOOL next_cell(void)
 #ifdef MACHINE_RPI
     linea_vars.v_cur_ad = raspi_cell_addr(linea_vars.v_cur_cx, linea_vars.v_cur_cy);
 #else
+#if CONF_WITH_VIRTIO_GPU
+    if (TRUECOLOR_MODE) {
+        linea_vars.v_cur_ad += 8 * (linea_vars.v_planes / 8);
+        return 0;
+    }
+#endif
 #if CONF_WITH_VIDEL
     if (TRUECOLOR_MODE) {               /* chunky pixels */
         linea_vars.v_cur_ad += 16;
@@ -733,7 +824,7 @@ void move_cursor(int x, int y)
 void scroll_up(UWORD top_line)
 {
     ULONG count;
-    ULONG cell_wr = linea_vars.v_cel_wr;
+    ULONG cell_wr = cell_wrap();
     UBYTE * src, * dst;
 
     /* screen base addr + cell y nbr * cell wrap */
@@ -761,7 +852,7 @@ void scroll_up(UWORD top_line)
 void scroll_down(UWORD start_line)
 {
     ULONG count;
-    ULONG cell_wr = linea_vars.v_cel_wr;
+    ULONG cell_wr = cell_wrap();
     UBYTE * src, * dst;
 
     /* screen base addr + offset of start line */

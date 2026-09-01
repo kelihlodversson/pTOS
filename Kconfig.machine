@@ -77,19 +77,6 @@ config MACHINE_VIRT_M68K
 
 endchoice
 
-config CONF_WITH_VDI_TRUECOLOR32_TEST
-	bool "Virt (ARM) XRGB8888 screen test hook"
-	depends on MACHINE_VIRT_ARM && CONF_WITH_VDI_BACKEND_TRUECOLOR32
-	default n
-	help
-	  Test hook for issue #91: makes the QEMU virt (ARM) machine report
-	  a 640x480 XRGB8888 mode descriptor backed by a guest-RAM
-	  framebuffer (bios/machine/virt-arm/virt_screen.c), so the 32bpp
-	  truecolor backend can be exercised under QEMU even though the
-	  machine has no display hardware. For verification only -- do not
-	  enable in production images. Issue #68's real ramfb driver will
-	  replace this buffer later.
-
 choice
 	prompt "Raspberry Pi model"
 	depends on MACHINE_RPI

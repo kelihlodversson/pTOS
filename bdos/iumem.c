@@ -36,6 +36,7 @@ MD *ffit(long amount, MPB *mp)
 {
     MD *p, *q, *p1;     /* free list is composed of MD's */
     LONG maxval;
+    ULONG alignment;
 
 #ifdef ENABLE_KDEBUG
     if (mp == &pmd)
@@ -69,10 +70,11 @@ MD *ffit(long amount, MPB *mp)
             if (q->m_length > maxval)
                 maxval = q->m_length;
 
-        if ((maxval & 3 ) != 0)
+        alignment = (mp == &pmd) ? malloc_align_stram : MALLOC_ALIGN_ALTRAM;
+        if (maxval & alignment)
         {
-            assert((maxval & 3 )== 0);
-            maxval &= ~3;
+            assert((maxval & alignment) == 0);
+            maxval &= ~alignment;
         }
         KDEBUG(("BDOS ffit: maxval=%ld\n",maxval));
         return (MD *)maxval;

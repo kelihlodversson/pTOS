@@ -964,6 +964,14 @@ setup_info (struct raster_t *raster, struct blit_frame * info)
         info->d_nxwd = dst->fd_nplanes * 2;
         info->d_nxln = dst->fd_wdwidth * info->d_nxwd;
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR
+        /* Match the opaque device-dependent source case above: an
+         * application-created packed MFDB holds whole pixels, not planes. */
+        if (vdi_screen_is_truecolor() && !raster->transparent && !dst->fd_stand) {
+            info->plane_ct = 1;
+            info->d_nxwd = packed_ppb;
+            info->d_nxln = dst->fd_w * packed_ppb;
+        }
+
         /* Mirror the source-side fd_stand case above, including the
          * fd_nplanes-matches-the-screen check that tells gl_tmp apart
          * from a genuine standard-format destination MFDB: bb_save()

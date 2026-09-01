@@ -98,10 +98,11 @@ void screen_init_address(void);
 void screen_init_mode(void);
 void set_rez_hacked(void);
 void screen_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez);
-#if CONF_WITH_VDI_TRUECOLOR32_TEST
-void virt_arm_screen_init(void);
-void virt_arm_get_current_mode_desc(SCREEN_MODE_DESC *desc);
-void virt_arm_screen_report(void);
+#if CONF_WITH_VIRTIO_GPU
+void virtio_gpu_init(void);
+BOOL virtio_gpu_present(void);
+void virtio_gpu_get_current_mode_desc(SCREEN_MODE_DESC *desc);
+void virtio_gpu_update(void);
 #endif
 void get_pixel_size(WORD *width,WORD *height);
 
