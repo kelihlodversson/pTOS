@@ -155,11 +155,6 @@ _main:
     stmia r3, {r0-r2}
 1:
 
-#if CONF_WITH_RASPI_UART0
-    mov r0, #0x45                   /* E: entry */
-    bl  early_uart_putc
-#endif
-
 #ifndef TARGET_RPI1
     ldr r1, =_start_in_hyp
     mov r2, #0
@@ -261,16 +256,7 @@ _core0:
  * memory configuration
  */
 
-#if CONF_WITH_RASPI_UART0
-    mov r0, #0x4d                   /* M: immediately before MMU */
-    bl  early_uart_putc
-#endif
     bl     _raspi_vcmem_init         // ask the video core for the memory configuration (needs sp)
-
-#if CONF_WITH_RASPI_UART0
-    mov r0, #0x52                   /* R: MMU return */
-    bl  early_uart_putc
-#endif
 
 /*
  * From now, the stack is allowed, and C code can be used.
@@ -278,19 +264,6 @@ _core0:
  */
 
     b     _biosmain
-
-#if CONF_WITH_RASPI_UART0
-/* The firmware has already selected and initialized the PL011.  Do not wait
- * for a full FIFO here: a diagnostic marker must never stop early boot. */
-early_uart_putc:
-    ldr r1, =EARLY_UART0_FR
-    ldr r2, [r1]
-    tst r2, #0x20                   /* TXFF */
-    bxne lr
-    ldr r1, =EARLY_UART0_DR
-    str r0, [r1]
-    bx lr
-#endif
 
 /* Exit from HYP mode if the boot loader started there */
 #ifndef TARGET_RPI1
@@ -418,8 +391,8 @@ _arm_dispatch_data_abort:
 
     sub    sp, #4*15
     stmia  sp, {r0-r14}^   /* store user registers r0-r14 (unbanked) */
-    mrc p15, 0, r2, c6, c0,  0  // FAR in r2
-    mrc p15, 0, r3, c5, c0,  0  // FSR in r3
+    mrc p15, 0, r2, c5, c0,  0  // FSR in r2
+    mrc p15, 0, r3, c6, c0,  0  // FAR in r3
 
 
     mov r0, #0x0c   // VEC_ADDRESS_ERROR

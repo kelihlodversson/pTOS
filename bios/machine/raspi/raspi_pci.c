@@ -20,6 +20,7 @@
 #include "raspi_io.h"
 #include "raspi_mbox.h"
 #include "raspi_pci.h"
+#include "raspi_memory.h"
 
 #define RASPI_PCIE_REG_BASE             0xfd500000UL
 #define RASPI_PCIE_REG_SIZE             0x00009310UL
@@ -28,7 +29,6 @@
 #define RASPI_PCIE_MMIO_SIZE            0x04000000UL
 
 #define RASPI_PCIE_DMA_BUS_BASE         0x00000000UL
-#define RASPI_PCIE_DMA_SIZE             0xc0000000UL
 
 #define PCIE_RC_CFG_PRIV1_ID_VAL3       0x043cUL
 #define PCIE_RC_CFG_PRIV1_ID_VAL3_CLASS_CODE_MASK 0x00ffffffUL
@@ -63,8 +63,64 @@
 #define PCIE_RGR1_SW_INIT_1_PERST_MASK  0x00000001UL
 #define RGR1_SW_INIT_1_INIT_GENERIC_MASK 0x00000002UL
 
+/*
+ * CPU-side physical base of the outbound (CPU -> PCIe) MMIO window.
+ * The BCM2711 root port's real hardware placement for this window is
+ * 0x6_00000000 -- above the 4 GiB boundary a 32-bit ARM address can
+ * express. In the non-LPAE path the window is relocated here to a fixed,
+ * 1 MB-aligned 32-bit address instead: 0xf8000000 to
+ * 0xfbffffff (RASPI_PCIE_MMIO_SIZE, 64 MiB), 21 MiB clear of
+ * RASPI_PCIE_REG_BASE (0xfd500000), the PCIe controller's own fixed
+ * register block, and 32 MiB clear of the RPi4 peripheral aperture
+ * (0xfe000000, raspi_board.c) -- deliberately more margin than the
+ * minimum needed, since the exact extent of any other fixed SoC decode
+ * isn't verified from this codebase alone. This CPU base is numerically
+ * identical to RASPI_PCIE_MMIO_BUS_BASE by coincidence, not by
+ * requirement -- don't simplify raspi_pci_bus_to_phys()'s subtraction
+ * away on the assumption that will always hold.
+ *
+ * LPAE maps the real physical window at this same low virtual address;
+ * the non-LPAE path relies on the short-descriptor identity map. Neither
+ * mapping may overlap ARM-visible RAM as reported by firmware.
+ * raspi_pci_init() verifies that against raspi_top_of_ram (the actual
+ * top of detected RAM, extern'd from memory.c via raspi_memory.h)
+ * before enabling this window; see raspi_pci_outbound_window_enabled
+ * below.
+ *
+ * Checking against phystop (include/tosvars.h) instead would be wrong:
+ * phystop is NOT the top of RAM, it is (raspi_top_of_ram - 1 MB)
+ * rounded down to an MB boundary -- the START of the topmost reserved
+ * megabyte where raspi_vcmem_init() (memory.c) places the live MMU
+ * page table (raspi_page_table0, the same memory the ARM TTBR
+ * registers point at) and the cache-coherent DMA buffer. A check
+ * against phystop alone can pass while that reserved megabyte -- live
+ * page-table memory the CPU actively reads on every access -- still
+ * overlaps this window, silently aliasing it behind PCIe MMIO. Caught
+ * by review before this was ever exercised on real hardware.
+ *
+ * This relocation assumes the SoC interconnect routes any CPU address
+ * this window's BASE_LIMIT/BASE_HI/LIMIT_HI registers claim through to
+ * the PCIe root complex -- i.e. that these registers are the actual
+ * routing mechanism, not merely local bookkeeping inside an RC that can
+ * only ever be reached at its real hardware placement. This matches how
+ * CPU-side outbound ATU windows work on essentially every PCIe root
+ * complex (DesignWare, Broadcom iProc/STB, Xilinx, ...), but is not
+ * independently confirmed against a BCM2711 datasheet or real hardware
+ * from this codebase alone. If it's wrong, the failure mode is silent
+ * (bus_to_phys() would report success with a physical address that
+ * doesn't actually reach the device) rather than the honest
+ * PCI_BACKEND_UNMAPPABLE this replaces -- see the design doc's Risks
+ * section and the hardware validation checklist, which reads back an
+ * actual xHCI capability register specifically to catch this.
+ */
+#define RASPI_PCIE_OUTBOUND_VIRT_BASE   0xf8000000UL
+#if CONF_WITH_ARM_LPAE
 #define RASPI_PCIE_OUTBOUND_CPU_BASE_LO 0x00000000UL
 #define RASPI_PCIE_OUTBOUND_CPU_BASE_HI 0x00000006UL
+#else
+#define RASPI_PCIE_OUTBOUND_CPU_BASE_LO RASPI_PCIE_OUTBOUND_VIRT_BASE
+#define RASPI_PCIE_OUTBOUND_CPU_BASE_HI 0x00000000UL
+#endif
 #define RASPI_PCIE_INBOUND_SIZE         0x80000000UL
 #define RASPI_PCIE_INBOUND_SIZE_CODE    16U
 #define RASPI_PCIE_LINK_WAIT_LOOPS      20U
@@ -142,6 +198,7 @@ static const PFVOID raspi_pci_intx_isr[RASPI_PCIE_INTX_LINES] = {
 };
 
 static BOOL raspi_pci_link_ready;
+static BOOL raspi_pci_outbound_window_enabled;
 
 static volatile UBYTE *raspi_pci_reg_ptr(ULONG offset)
 {
@@ -232,6 +289,7 @@ static void raspi_pci_set_outbound_window(void)
 
     raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_HI, RASPI_PCIE_OUTBOUND_CPU_BASE_HI);
     raspi_pci_writel(PCIE_MISC_CPU_2_PCIE_MEM_WIN0_LIMIT_HI, RASPI_PCIE_OUTBOUND_CPU_BASE_HI);
+
 }
 
 static void raspi_pci_set_inbound_window(void)
@@ -292,18 +350,17 @@ static LONG raspi_pci_init(void)
     UWORD i;
 
     raspi_pci_link_ready = FALSE;
+    raspi_pci_outbound_window_enabled = FALSE;
 
     power_state.value1 = DEVICE_ID_USB_HCD;
     power_state.value2 = POWER_STATE_ON | POWER_STATE_WAIT;
     if (!raspi_prop_get_tag(PROPTAG_SET_POWER_STATE, &power_state, sizeof power_state, sizeof(ULONG) * 2)) {
         KINFO(("pci: RPi4 USB power-state request failed\n"));
         return PCI_GENERAL_ERROR;
-    }
-    if (power_state.value2 & POWER_STATE_NO_DEVICE) {
+    } else if (power_state.value2 & POWER_STATE_NO_DEVICE) {
         KINFO(("pci: RPi4 USB power domain not found\n"));
         return PCI_DEVICE_NOT_FOUND;
-    }
-    if (!(power_state.value2 & POWER_STATE_ON)) {
+    } else if (!(power_state.value2 & POWER_STATE_ON)) {
         KINFO(("pci: RPi4 USB power domain did not power on\n"));
         return PCI_GENERAL_ERROR;
     }
@@ -329,7 +386,21 @@ static LONG raspi_pci_init(void)
     raspi_pci_writel(PCIE_MISC_MISC_CTRL, reg);
 
     raspi_pci_set_inbound_window();
-    raspi_pci_set_outbound_window();
+
+#if CONF_WITH_ARM_LPAE
+    raspi_pci_outbound_window_enabled = TRUE;
+#else
+    raspi_pci_outbound_window_enabled = (raspi_top_of_ram <= RASPI_PCIE_OUTBOUND_VIRT_BASE);
+#endif
+    if (raspi_pci_outbound_window_enabled) {
+        raspi_pci_set_outbound_window();
+    } else {
+        KINFO(("pci: detected RAM reaches the PCIe outbound MMIO window "
+               "(top_of_ram=0x%lx > 0x%lx); BAR/MMIO resource access will "
+               "be unavailable\n",
+               raspi_top_of_ram, RASPI_PCIE_OUTBOUND_VIRT_BASE));
+    }
+
     raspi_pci_set_root_bridge_class();
 
     reg = raspi_pci_readl(PCIE_RC_CFG_VENDOR_VENDOR_SPECIFIC_REG1);
@@ -338,6 +409,12 @@ static LONG raspi_pci_init(void)
     raspi_pci_writel(PCIE_RC_CFG_VENDOR_VENDOR_SPECIFIC_REG1, reg);
 
     raspi_pci_set_perst(FALSE);
+
+    /* PCIe CEM requires 100 ms from PERST# deassertion before software
+     * accesses endpoint configuration space.  Link-up can be reported much
+     * earlier, while the VL805 is not yet ready to accept BAR/MMIO accesses. */
+    raspi_delay_us(100000UL);
+
     for (i = 0; i < RASPI_PCIE_LINK_WAIT_LOOPS; i++) {
         raspi_delay_us(5000UL);
         if (raspi_pci_link_up()) {
@@ -418,21 +495,30 @@ static LONG raspi_pci_bus_to_phys(ULONG bus_address, BOOL io, ULONG *phys_addres
         return PCI_GENERAL_ERROR;
     if (io)
         return PCI_BAD_RESOURCE;
+    if (!raspi_pci_outbound_window_enabled)
+        return PCI_BACKEND_UNMAPPABLE;
     if ((bus_address < RASPI_PCIE_MMIO_BUS_BASE) ||
         (bus_address >= RASPI_PCIE_MMIO_BUS_BASE + RASPI_PCIE_MMIO_SIZE))
         return PCI_BAD_RESOURCE;
 
-    return PCI_BACKEND_UNMAPPABLE;
+    *phys_address = RASPI_PCIE_OUTBOUND_VIRT_BASE + (bus_address - RASPI_PCIE_MMIO_BUS_BASE);
+    return PCI_SUCCESSFUL;
 }
 
 static LONG raspi_pci_phys_to_bus(ULONG phys_address, BOOL io, ULONG *bus_address)
 {
-    (void)phys_address;
     if (bus_address == 0)
         return PCI_GENERAL_ERROR;
     if (io)
         return PCI_BAD_RESOURCE;
-    return PCI_BAD_RESOURCE;
+    /* RASPI_PCIE_DMA_BUS_BASE is 0, so every unsigned phys_address is
+     * already >= it -- a lower-bound check would be dead code, which
+     * -Wtype-limits correctly flags. Only the upper bound can fail. */
+    if (phys_address >= RASPI_PCIE_DMA_BUS_BASE + RASPI_PCIE_INBOUND_SIZE)
+        return PCI_BAD_RESOURCE;
+
+    *bus_address = phys_address;
+    return PCI_SUCCESSFUL;
 }
 
 static LONG raspi_pci_hook_interrupt(PCI_HANDLE handle, UBYTE line, pci_interrupt_handler_t handler, void *param)

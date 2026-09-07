@@ -14,18 +14,36 @@
 #include "portab.h"
 #include "kprint.h"
 #include "pci.h"
+#include "raspi_int.h"
+#include "raspi_mbox.h"
 #include "raspi_vl805.h"
 
 #define VL805_XHCI_CLASSCODE 0x0c0330UL
-#define VL805_BAR_IO 0x00000001UL
-#define VL805_BAR_MEM_TYPE_MASK 0x00000006UL
-#define VL805_BAR_MEM_TYPE_64 0x00000004UL
+#define VL805_PCI_BDF        0x00100000UL
+
+static BOOL raspi_vl805_load_firmware(void)
+{
+    prop_tag_1u32_t reset;
+
+    reset.tag.tag_id = PROPTAG_NOTIFY_XHCI_RESET;
+    reset.tag.value_buf_size = sizeof(ULONG);
+    reset.tag.value_length = sizeof(ULONG);
+    reset.value = VL805_PCI_BDF;
+    if (!raspi_prop_get_tags(&reset, sizeof(reset))) {
+        KINFO(("VL805/xHCI: firmware reset notification failed\n"));
+        return FALSE;
+    }
+
+    /* VideoCore may have to load and start the VL805 firmware blob. */
+    raspi_delay_us(20000UL);
+    return TRUE;
+}
 
 BOOL raspi_vl805_get_resources(raspi_vl805_resources_t *resources)
 {
     PCI_HANDLE handle;
     pci_resource_t resource;
-    ULONG bar0;
+    UWORD command;
     UBYTE irq;
     LONG ret;
 
@@ -41,18 +59,13 @@ BOOL raspi_vl805_get_resources(raspi_vl805_resources_t *resources)
         return FALSE;
     }
 
-    ret = pci_read_config_long(handle, PCI_CONFIG_BAR0, &bar0);
-    if (ret != PCI_SUCCESSFUL) {
-        KINFO(("VL805/xHCI: PCI BAR0 cannot be read (%ld)\n", ret));
-        return FALSE;
-    }
-
-    if (((bar0 & VL805_BAR_IO) == 0UL) &&
-        ((bar0 & VL805_BAR_MEM_TYPE_MASK) == VL805_BAR_MEM_TYPE_64)) {
-        KINFO(("VL805/xHCI: 64-bit PCI BAR0 is not supported yet\n"));
-        return FALSE;
-    }
-
+    /*
+     * VL805's BAR0 reports itself as 64-bit-capable, but its actual
+     * firmware-assigned address may well fit in 32 bits (high dword
+     * zero) -- pci_get_resource() (via pci_core.c's pci_decode_bar())
+     * already checks that and only succeeds when it does, so there is
+     * no separate BAR-type check to do here anymore.
+     */
     ret = pci_get_resource(handle, 0, &resource);
     if (ret != PCI_SUCCESSFUL) {
         KINFO(("VL805/xHCI: PCI BAR0 is not usable yet (%ld)\n", ret));
@@ -61,6 +74,23 @@ BOOL raspi_vl805_get_resources(raspi_vl805_resources_t *resources)
 
     if ((resource.flags & PCI_RESOURCE_IO) != 0U) {
         KINFO(("VL805/xHCI: PCI BAR0 is an I/O resource\n"));
+        return FALSE;
+    }
+
+    if (!raspi_vl805_load_firmware())
+        return FALSE;
+
+    command = 0U;
+    if (pci_read_config_word(handle, PCI_CONFIG_COMMAND, &command) != PCI_SUCCESSFUL)
+        return FALSE;
+    command |= PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER;
+    if (pci_write_config_word(handle, PCI_CONFIG_COMMAND, command) != PCI_SUCCESSFUL)
+        return FALSE;
+    if (pci_read_config_word(handle, PCI_CONFIG_COMMAND, &command) != PCI_SUCCESSFUL)
+        return FALSE;
+    if ((command & (PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER)) !=
+        (PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER)) {
+        KINFO(("VL805/xHCI: PCI memory or bus mastering did not enable\n"));
         return FALSE;
     }
 
