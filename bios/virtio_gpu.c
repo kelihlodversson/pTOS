@@ -148,7 +148,6 @@ void virtio_gpu_update(void)
         virtio_poll(&gpu_dev);
         if (!gpu_dev.done) return;
         gpu_in_flight = FALSE;
-        if (!gpu_flush_pending) return;
     }
     if (gpu_flush_pending) {
         gpu_header(&gpu_command.flush.hdr, VIRTIO_GPU_CMD_RESOURCE_FLUSH); gpu_rect(&gpu_command.flush.rect);
