@@ -530,6 +530,11 @@ static void bios_init(void)
             vbl_list[i] = NULL;
         }
     }
+#if CONF_WITH_VIRTIO_GPU
+    /* Slot zero belongs to the VDI mouse cursor.  The GPU update is polled
+     * and only submits when its preceding request completed. */
+    vbl_list[1] = virtio_gpu_update;
+#endif
 
     /*
      * Initialize the system 200 Hz timer (timer C on Atari hardware).
@@ -575,9 +580,6 @@ static void bios_init(void)
     KDEBUG(("init_serport()\n"));
     init_serport();
     boot_status |= RS232_AVAILABLE;     /* track progress */
-#if CONF_WITH_VDI_TRUECOLOR32_TEST
-    virt_arm_screen_report();
-#endif
 #if CONF_WITH_SCC
     if (has_scc)
         boot_status |= SCC_AVAILABLE;   /* track progress */

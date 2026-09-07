@@ -25,7 +25,7 @@ config CONF_WITH_VDI_BACKEND_PLANAR
 
 config CONF_WITH_VDI_BACKEND_TRUECOLOR
 	bool "Packed truecolor VDI backend" if !MACHINE_RPI
-	default y if MACHINE_RPI
+	default y if MACHINE_RPI || MACHINE_VIRT_ARM || MACHINE_VIRT_M68K
 	default n
 	help
 	  Build the packed-truecolor VDI backend (vdi_backend_truecolor.o),
@@ -41,7 +41,7 @@ config CONF_WITH_VDI_BACKEND_TRUECOLOR
 config CONF_WITH_VDI_BACKEND_TRUECOLOR32
 	bool "Packed 32bpp XRGB8888 truecolor VDI backend"
 	depends on CONF_WITH_VDI_BACKEND_TRUECOLOR && CONF_WITH_VDI_BACKEND_DISPATCH
-	default n
+	default y if MACHINE_VIRT_ARM || MACHINE_VIRT_M68K
 	help
 	  Build the XRGB8888 (32bpp) variant of the packed-truecolor VDI
 	  backend (vdi_backend_truecolor32.o), sharing its drawing code with

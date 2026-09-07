@@ -643,6 +643,9 @@ void screen_init_mode(void)
     raspi_screen_init();
     initialise_palette_registers(0,0);
 #endif /* CONF_WITH_ATARI_VIDEO */
+#if CONF_WITH_VIRTIO_GPU
+    virtio_gpu_init();
+#endif
     MAYBE_UNUSED(get_default_palmode);
 
 #ifdef MACHINE_AMIGA
@@ -659,9 +662,19 @@ void screen_init_mode(void)
 /* Initialize the video address (mode is already set) */
 void screen_init_address(void)
 {
-#if CONF_WITH_VDI_TRUECOLOR32_TEST
-    virt_arm_screen_init();
-    setphys(v_bas_ad);
+#if CONF_WITH_VIRTIO_GPU
+    if (virtio_gpu_present())
+        setphys(v_bas_ad);
+    else
+    {
+        ULONG vram_size;
+        UBYTE *screen_start;
+
+        vram_size = initial_vram_size();
+        screen_start = balloc_stram(vram_size, TRUE);
+        v_bas_ad = screen_start;
+        setphys(v_bas_ad);
+    }
 #elif defined(MACHINE_RPI)
     /* raspi_screen_init() itself now runs in screen_init_mode(), before
      * linea_init() -- see the comment there. */
@@ -907,8 +920,14 @@ void screen_get_current_mode_desc(SCREEN_MODE_DESC *desc)
     MAYBE_UNUSED(vt_rez);
     MAYBE_UNUSED(planar_mode_desc);
 
-#if CONF_WITH_VDI_TRUECOLOR32_TEST
-    virt_arm_get_current_mode_desc(desc);
+#if CONF_WITH_VIRTIO_GPU
+    if (virtio_gpu_present())
+        virtio_gpu_get_current_mode_desc(desc);
+    else
+    {
+        atari_get_current_mode_info(&planes, &hz_rez, &vt_rez);
+        planar_mode_desc(desc, planes, hz_rez, vt_rez);
+    }
 #elif defined(MACHINE_RPI)
     raspi_get_current_mode_desc(desc);
 #elif defined(MACHINE_AMIGA)

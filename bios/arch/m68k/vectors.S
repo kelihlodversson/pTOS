@@ -538,6 +538,12 @@ _int_timerc:
         jsr     _sndirq
 #endif
 
+#if CONF_WITH_VIRTIO_GPU
+        // virt-m68k has no hardware VBL source.  Run the VBL queue at 50 Hz
+        // from its 200 Hz Goldfish RTC tick so the virtio-gpu can flush frames.
+        jsr     _int_vbl
+#endif
+
         move.w  _timer_ms.w, -(sp)
         move.l  _etv_timer.w, a0
         jsr     (a0)                    // jump to etv_timer routine

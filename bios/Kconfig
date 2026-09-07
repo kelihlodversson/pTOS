@@ -229,6 +229,17 @@ config CONF_WITH_VIRTIO_BLK
 	  virtio-mmio transport. Devices appear as a new disk bus,
 	  partitioned the same way as ACSI/IDE/SD devices.
 
+config CONF_WITH_VIRTIO_GPU
+
+	bool "virtio-gpu 2D framebuffer driver"
+	depends on CONF_WITH_VIRTIO && CONF_WITH_VDI_BACKEND_TRUECOLOR32
+	default y
+	help
+	  Use a virtio-gpu-device's 2D resource as the XRGB8888 framebuffer on
+	  QEMU's virt-arm and virt-m68k machines.  The framebuffer remains in
+	  guest RAM; if no GPU device is present, the normal headless planar
+	  screen remains in use.
+
 config CONF_WITH_VIRTIO_INPUT
 	bool "virtio-input keyboard/mouse driver"
 	depends on CONF_WITH_VIRTIO
