@@ -13,7 +13,7 @@
 #include "asmdefs.h"
 
         .globl  C_SYM(ramtos)
-        .globl  _end_ramtos
+        .globl  C_SYM(end_ramtos)
 
         SECTION_RODATA
 
@@ -21,4 +21,4 @@
 C_SYM(ramtos):
         .incbin "emutos.img"
         .balign 4
-_end_ramtos:
+C_SYM(end_ramtos):

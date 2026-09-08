@@ -5,9 +5,9 @@ import re
 import sys
 
 
-GLOBAL_LABEL = re.compile(r"^\s*\.globl\s+([A-Za-z_][A-Za-z0-9_.]*)", re.M)
-LOCAL_LABEL = re.compile(r"^\s*\.local\s+([A-Za-z_][A-Za-z0-9_.]*)", re.M)
-TYPED_LABEL = re.compile(r"^\s*\.type\s+([A-Za-z_][A-Za-z0-9_.]*),", re.M)
+GLOBAL_LABEL = re.compile(r"^\s*\.globl\s+([A-Za-z_.][A-Za-z0-9_.]*)", re.M)
+LOCAL_LABEL = re.compile(r"^\s*\.local\s+([A-Za-z_.][A-Za-z0-9_.]*)", re.M)
+TYPED_LABEL = re.compile(r"^\s*\.type\s+([A-Za-z_.][A-Za-z0-9_.]*),", re.M)
 
 
 def main():

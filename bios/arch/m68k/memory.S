@@ -124,17 +124,17 @@ memchk:
         cmp.l   C_SYM(memvalid).w, d1          // magic in memvalid ?
         jne     memconf                 // no -> config memory
         move.l  #0x237698aa, d1
-        cmp.l   memval2.w, d1           // magic in memval2 ?
+        cmp.l   C_SYM(memval2).w, d1    // magic in memval2 ?
         jne     memconf                 // no -> config memory
         move.l  #0x5555aaaa, d1
-        cmp.l   memval3.w, d1           // magic in memval3 ?
+        cmp.l   C_SYM(memval3).w, d1    // magic in memval3 ?
         jne     memconf                 // no -> config memory
 #else
         cmp.l   #0x752019f3, C_SYM(memvalid).w // magic in memvalid ?
         jne     memconf                 // no -> config memory
-        cmp.l   #0x237698aa, memval2.w  // magic in memval2 ?
+        cmp.l   #0x237698aa, C_SYM(memval2).w // magic in memval2 ?
         jne     memconf                 // no -> config memory
-        cmp.l   #0x5555aaaa, memval3.w  // magic in memval3 ? (TOS >= 1.2)
+        cmp.l   #0x5555aaaa, C_SYM(memval3).w // magic in memval3 ? (TOS >= 1.2)
         jne     memconf                 // no -> config memory
 #endif // __mcoldfire__
 #endif // !EMUTOS_LIVES_IN_RAM
@@ -574,14 +574,14 @@ stram_detected:
 #ifdef __mcoldfire__
         lea     C_SYM(memvalid).w, a0
         move.l  #0x752019f3, (a0)       // set memvalid to ok
-        lea     memval2.w, a0
+        lea     C_SYM(memval2).w, a0
         move.l  #0x237698aa, (a0)       // set memval2 to ok
-        lea     memval3.w, a0
+        lea     C_SYM(memval3).w, a0
         move.l  #0x5555aaaa, (a0)       // set memval3 to ok
 #else
         move.l  #0x752019f3, C_SYM(memvalid).w // set memvalid to ok
-        move.l  #0x237698aa, memval2.w  // set memval2 to ok
-        move.l  #0x5555aaaa, memval3.w  // set memval3 to ok
+        move.l  #0x237698aa, C_SYM(memval2).w // set memval2 to ok
+        move.l  #0x5555aaaa, C_SYM(memval3).w // set memval3 to ok
 #endif
 
 #if CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
