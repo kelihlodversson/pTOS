@@ -506,13 +506,13 @@ mmu_done:
 
 resetvec:
 #ifdef __mcoldfire__
-       move.l   resvalid.w, d0
+        move.l   C_SYM(resvalid).w, d0
        cmpi.l   #0x31415926, d0         // Jump to resetvector?
 #else
-       cmpi.l   #0x31415926, resvalid.w // Jump to resetvector?
+        cmpi.l   #0x31415926, C_SYM(resvalid).w // Jump to resetvector?
 #endif
        jne      noreset                 // No --> noreset
-       move.l   resvector.w, d0         // Yes: old resvec to d0
+        move.l   C_SYM(resvector).w, d0  // Yes: old resvec to d0
        jeq      noreset                 // Address null? Yes --> noreset
        btst     #0, d0                  // Address odd ?
        jne      noreset                 // Yes --> noreset

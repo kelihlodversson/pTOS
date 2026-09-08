@@ -23,7 +23,10 @@ def main():
 
     # mintelf gas accepts GCC's private names only with a leading underscore.
     for label in sorted(locals, key=len, reverse=True):
-        symbol = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(label) + r"(?![A-Za-z0-9_])")
+        # A dot normally continues a symbol name, except for m68k operand
+        # size suffixes (for example, "symbol.w").
+        symbol = re.compile(r"(?<![A-Za-z0-9_.])" + re.escape(label)
+                            + r"(?![A-Za-z0-9_]|\.(?![bwl](?:\b)))")
         text = symbol.sub("_" + label, text)
 
     with open(sys.argv[2], "w", encoding="utf-8") as destination:

@@ -121,7 +121,7 @@ memchk:
         // EmuTOS lives in ROM, we must check if the RAM is valid
 #ifdef __mcoldfire__
         move.l  #0x752019f3, d1
-        cmp.l   memvalid.w, d1          // magic in memvalid ?
+        cmp.l   C_SYM(memvalid).w, d1          // magic in memvalid ?
         jne     memconf                 // no -> config memory
         move.l  #0x237698aa, d1
         cmp.l   memval2.w, d1           // magic in memval2 ?
@@ -130,7 +130,7 @@ memchk:
         cmp.l   memval3.w, d1           // magic in memval3 ?
         jne     memconf                 // no -> config memory
 #else
-        cmp.l   #0x752019f3, memvalid.w // magic in memvalid ?
+        cmp.l   #0x752019f3, C_SYM(memvalid).w // magic in memvalid ?
         jne     memconf                 // no -> config memory
         cmp.l   #0x237698aa, memval2.w  // magic in memval2 ?
         jne     memconf                 // no -> config memory
@@ -141,7 +141,7 @@ memchk:
 
         // The old RAM settings are valid, load them into registers.
         // They will stay in safe place in case we clear the sysvars.
-        move.b  memctrl.w, d6
+        move.b  C_SYM(memctrl).w, d6
         move.l  C_SYM(phystop).w, d5
 
 #if CONF_WITH_TTRAM
@@ -567,19 +567,19 @@ stram_detected:
         jbsr    call_bzero_a0_a1
 
         /* Store the ST-RAM parameters in the ST-RAM itself */
-        move.b  d6, memctrl.w           // set copy of hw memory config
+        move.b  d6, C_SYM(memctrl).w    // set copy of hw memory config
         move.l  d5, C_SYM(phystop).w          // highest address as phystop
 
         /* Make ST-RAM configuration valid */
 #ifdef __mcoldfire__
-        lea     memvalid.w, a0
+        lea     C_SYM(memvalid).w, a0
         move.l  #0x752019f3, (a0)       // set memvalid to ok
         lea     memval2.w, a0
         move.l  #0x237698aa, (a0)       // set memval2 to ok
         lea     memval3.w, a0
         move.l  #0x5555aaaa, (a0)       // set memval3 to ok
 #else
-        move.l  #0x752019f3, memvalid.w // set memvalid to ok
+        move.l  #0x752019f3, C_SYM(memvalid).w // set memvalid to ok
         move.l  #0x237698aa, memval2.w  // set memval2 to ok
         move.l  #0x5555aaaa, memval3.w  // set memval3 to ok
 #endif

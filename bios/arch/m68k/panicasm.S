@@ -112,13 +112,13 @@ C_SYM(warm_reset):
  * are really pushed to the RAM. Next OS may use different cache settings.
  */
 C_SYM(cold_reset):
-        clr.l   resvalid.w      // Don't allow jump to reset vector in startup.S
-        clr.l   resvector.w
+        clr.l   C_SYM(resvalid).w      // Don't allow jump to reset vector in startup.S
+        clr.l   C_SYM(resvector).w
 #if CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
         clr.l   C_SYM(warm_magic).w   // Next boot will be a first boot
 #endif
 #ifdef MACHINE_AMIGA
-        clr.l   memvalid.w      // Invalidate memvalid
+        clr.l   C_SYM(memvalid).w      // Invalidate memvalid
         jsr     C_SYM(flush_data_cache)
         move.l  0x00fc0004,a0   // Get the entry adress from offset 4 in the ROM
         reset                   // The entry usually points just after reset
@@ -129,7 +129,7 @@ C_SYM(cold_reset):
         move.l  0x00e00004,a0   // Get the entry adress from offset 4 in the ROM
         jmp     (a0)
 #elif CONF_ATARI_HARDWARE
-        clr.l   memvalid.w      // Invalidate memvalid
+        clr.l   C_SYM(memvalid).w      // Invalidate memvalid
         jsr     C_SYM(flush_data_cache)
         move.l  0x004,a0        // The 2 first longs are mapped to the ROM
         jmp     (a0)

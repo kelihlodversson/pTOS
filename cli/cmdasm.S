@@ -9,7 +9,12 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-#ifndef STANDALONE_CONSOLE
+#ifdef STANDALONE_CONSOLE
+/* The standalone build does not include the kernel configuration headers. */
+#define C_SYM1(prefix, name) prefix ## name
+#define C_SYM0(prefix, name) C_SYM1(prefix, name)
+#define C_SYM(name) C_SYM0(__USER_LABEL_PREFIX__, name)
+#else
 #include "asmdefs.h"
 #endif
 
