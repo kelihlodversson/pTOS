@@ -167,7 +167,20 @@ typedef struct
         long  (*lw)(long, short);
         long  (*lww)(long, short, short);
         long  (*wll)(short, long, long);
-        long  (*wlll)(short, long, long, long);
+        /*
+         * xexec(WORD, char*, char*, char*) is the sole WLLL-shaped
+         * function, and all three "L" slots are real pointers (path,
+         * tail, env) -- not scalar longs. Under the plain stack ABI
+         * that made no difference (every argument gets an identically
+         * positioned 4-byte stack slot regardless of type), but under
+         * -mfastcall pointer- and long-typed arguments go to different
+         * register classes (a0/a1 vs d1/d2), so calling through a
+         * long-typed union member here would send xexec's path/tail
+         * pointers to the wrong registers. Use void* to match its real
+         * signature; harmless on the plain ABI since void* and long
+         * share the same stack layout there.
+         */
+        long  (*wlll)(short, void*, void*, void*);
     } fncall;
     UBYTE stdio_typ;    /* Standard I/O channel (highest bit must be set, too) */
     UBYTE shape;        /* FSHAPE_* -- which fncall union member to use */
@@ -825,7 +838,7 @@ restrt:
             break;
 
         case FSHAPE_WLLL:
-            rc = (*f->fncall.wlll)(pw[1],PWLONG(2),PWLONG(4),PWLONG(6));
+            rc = (*f->fncall.wlll)(pw[1],(void*)PWLONG(2),(void*)PWLONG(4),(void*)PWLONG(6));
             break;
 
         default:
