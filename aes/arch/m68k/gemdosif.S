@@ -231,10 +231,20 @@ trapaes:
         movea.l UDA_SPSUPER(a6),sp
         jbsr    _enable_interrupts      // restore interrupt mask
 
+        /*
+         * Build the call frame GCC expects for super(WORD cx, AESPB*).
+         * With -mshort no longer used for the kernel m68k build (#300),
+         * GCC gives "cx" a full 4-byte stack slot instead of 2 (its
+         * value always lands in the low word of that slot regardless of
+         * sign, so a plain word push into the low half still works) --
+         * pushing it tightly packed as a bare word here, like the old
+         * -mshort ABI did, would misalign pcrys_blk by 2 bytes. See the
+         * identical fix in aes/arch/m68k/gemstart.S's _dos_exec.
+         */
         move.l  d1,-(sp)                // addr of parameter
-        move.w  d0,-(sp)                // 200 or 201
+        move.l  d0,-(sp)                // 200 or 201, in the low word
         jsr     _super                  // jump to supervisor entry point
-        addq.l  #6,sp                   // restore stack pointer
+        addq.l  #8,sp                   // restore stack pointer
 
         jbsr    _disable_interrupts     // mask out interrupts
 

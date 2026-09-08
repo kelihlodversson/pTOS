@@ -218,10 +218,25 @@ _dos_exec:
         jsr     _enable_interrupts
 
         movea.l d1,a1
-        move.l  14(a1),-(sp)            // Push parameters on the stack again...
-        move.l  10(a1),-(sp)
-        move.l  6(a1),-(sp)
-        move.w  4(a1),-(sp)
+        /*
+         * Re-push each parameter, tightly packed, to build the GEMDOS
+         * wire frame trap #1 expects. The offsets below read them back
+         * off *our own caller's* frame, i.e. how GCC laid out a call to
+         * dos_exec(WORD mode, const char*, const char*, const char*)
+         * -- and with -mshort no longer used for the kernel m68k build
+         * (#300), that caller-side frame is no longer tightly packed
+         * either: GCC now gives "mode" a full 4-byte slot instead of 2,
+         * shifting every offset below by 2 from what tight packing
+         * would give (14->16, 10->12, 6->8 for the three pointer args,
+         * 4->6 for mode's low word -- mode's value always lands in the
+         * low word of its 4-byte slot regardless of sign, so a plain
+         * word read still recovers it correctly). See the identical
+         * fix in util/arch/m68k/miscasm.S's trap1_pexec.
+         */
+        move.l  16(a1),-(sp)            // Push parameters on the stack again...
+        move.l  12(a1),-(sp)
+        move.l  8(a1),-(sp)
+        move.w  6(a1),-(sp)
         move.w  #0x4B,-(sp)
         trap    #1                      // ... and execute the Pexec call!
         lea     16(sp),sp
