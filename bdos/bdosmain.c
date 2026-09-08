@@ -200,6 +200,24 @@ typedef struct
         long  (*wlp)(short, long, void*);
         long  (*wpl)(short, void*, long);
         long  (*wpp)(short, void*, void*);
+        /*
+         * Same mismatch as above, but on the *return* side: xmalloc(),
+         * srealloc() and xmxalloc() all return void* (a block address),
+         * not a scalar long, even though their arguments are plain
+         * longs/words. Under -mfastcall a function's return value comes
+         * back in a0 when its own declared return type is a pointer, but
+         * in d0 when it is a scalar long/int -- unlike the plain stack
+         * ABI, where every GEMDOS return value is read from d0 regardless
+         * of C type. Calling through a long-returning union member (l,
+         * lw, ...) would read the stale d0 left over from whatever ffit()
+         * or shrinkit() last did internally, instead of the a0 the callee
+         * actually returned its result in. rl/rlw are the pointer-
+         * returning twins of l/lw, used only for the functions whose real
+         * C signature returns void* -- xtermres, the other LW-shaped
+         * function, genuinely returns a scalar long and still uses lw.
+         */
+        void  *(*rl)(long);
+        void  *(*rlw)(long, short);
     } fncall;
     UBYTE stdio_typ;    /* Standard I/O channel (highest bit must be set, too) */
     UBYTE shape;        /* FSHAPE_* -- which fncall union member to use */
@@ -211,7 +229,8 @@ enum {
     FSHAPE_V, FSHAPE_W, FSHAPE_L, FSHAPE_WW, FSHAPE_LL,
     FSHAPE_LW, FSHAPE_LWW, FSHAPE_WLLL,
     FSHAPE_P, FSHAPE_PL, FSHAPE_PW, FSHAPE_PWW,
-    FSHAPE_WLP, FSHAPE_WPL, FSHAPE_WPP
+    FSHAPE_WLP, FSHAPE_WPL, FSHAPE_WPP,
+    FSHAPE_RL, FSHAPE_RLW
 };
 #endif
 
@@ -287,7 +306,7 @@ static const FND funcs[] =
 #endif
 
 #if CONF_WITH_VIDEL
-    { F(srealloc),  0, W_N(1,L) },     /* 0x15 */
+    { F(srealloc),  0, W_N(1,RL) },    /* 0x15 */
 #else
     { NI, 0, 0 },               /* 0x15 */
 #endif
@@ -350,11 +369,11 @@ static const FND funcs[] =
     { F(xunlink),  0, W_N(1,P) },      /* 0x41 */
     { F(xlseek),   0x81, W_N(3,LWW) }, /* 0x42 */
     { F(xchmod),   0, W_N(3,PWW) },    /* 0x43 */
-    { F(xmxalloc), 0, W_N(2,LW) },     /* 0x44 */
+    { F(xmxalloc), 0, W_N(2,RLW) },    /* 0x44 */
     { F(xdup),     0, W_N(1,W) },      /* 0x45 */
     { F(xforce),   0, W_N(2,WW) },     /* 0x46 */
     { F(xgetdir),  0, W_N(2,PW) },     /* 0x47 */
-    { F(xmalloc),  0, W_N(1,L) },      /* 0x48 */
+    { F(xmalloc),  0, W_N(1,RL) },     /* 0x48 */
     { F(xmfree),   0, W_N(1,P) },      /* 0x49 */
     { F(xsetblk),  0, W_N(3,WPL) },    /* 0x4A */
     { F(xexec),    0, W_N(4,WLLL) },   /* 0x4B */
@@ -884,6 +903,14 @@ restrt:
 
         case FSHAPE_WPP:
             rc = (*f->fncall.wpp)(pw[1],(void*)PWLONG(2),(void*)PWLONG(4));
+            break;
+
+        case FSHAPE_RL:
+            rc = (long)(*f->fncall.rl)(PWLONG(1));
+            break;
+
+        case FSHAPE_RLW:
+            rc = (long)(*f->fncall.rlw)(PWLONG(1),pw[3]);
             break;
 
         default:
