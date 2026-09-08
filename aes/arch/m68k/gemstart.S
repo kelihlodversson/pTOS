@@ -97,11 +97,17 @@ aes_restart:
 #endif
 
         // clear the 'global memory' zone
+#if CONF_WITH_MFASTCALL
+        movea.l #_D,a0
+        move.l  #SIZEOF_THEGLO,d0 // size in bytes
+        jsr     _bzero_nobuiltin    // clear it
+#else
         move.l  #SIZEOF_THEGLO, -(sp) // size in bytes
         movea.l #_D,a0
         move.l  a0,-(sp)        // address
         jsr     _bzero_nobuiltin    // clear it
         addq.l  #8,sp
+#endif
 
         // _drwaddr ??? set to just_rts
         lea     _just_rts,a0

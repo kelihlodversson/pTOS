@@ -625,10 +625,15 @@ any_boot:
 // Clear memory from a0 to a1
 call_bzero_a0_a1:
         sub.l   a0,a1
+#if CONF_WITH_MFASTCALL
+        move.l  a1,d0       // size
+        jsr     _bzero_nobuiltin
+#else
         move.l  a1,-(sp)    // size
         move.l  a0,-(sp)    // start
         jsr     _bzero_nobuiltin
         addq.l  #8,sp
+#endif
         rts
 
 #if CONF_WITH_ADVANCED_CPU
