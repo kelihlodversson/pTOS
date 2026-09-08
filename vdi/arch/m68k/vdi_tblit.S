@@ -228,7 +228,30 @@
 /////////////////////////////////////////////////////////////////////////
 
 //  interface to 'norm_blt'
+//
+// void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst) has three
+// pointer arguments; under -mfastcall only the first two (vars, src) go
+// to address registers (a0, a1) -- the third (dst) is passed on the
+// stack, same as the plain ABI. Pop the real return address into d0 (a
+// data register survives the movem.l d2-d7/a2-a6 below untouched, since
+// it only saves/restores that set), then push vars/src above the
+// already-stacked dst so the unchanged body sees the same three-slot
+// cdecl frame it always has, and return through d0 manually since the
+// real return address no longer sits where a plain rts would find it.
+#if CONF_WITH_MFASTCALL
 _normal_blit:
+        move.l  (sp)+,d0                // d0 = real return address
+        move.l  a1,-(sp)                 // src
+        move.l  a0,-(sp)                 // vars
+        bsr     normal_blit_stackbody
+        lea     12(sp),sp               // drop vars/src/dst built above
+        movea.l d0,a0
+        jmp     (a0)
+
+normal_blit_stackbody:
+#else
+_normal_blit:
+#endif
         movem.l d2-d7/a2-a6,-(sp)       // save registers that GCC expects unchanged
         move.l  44+4(sp),a6             // load ptr to end of vars
         move.l  44+8(sp),a0             // a0 & a1 must also be set
