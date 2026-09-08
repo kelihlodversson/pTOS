@@ -36,13 +36,13 @@ _bzero_nobuiltin:
         moveq    #0,d7
         jra      memset
 //
-// void *memset(void *address, short c, unsigned long size)
+// void *memset(void *address, int c, unsigned long size)
 // fills with byte c, returns the given address.
 
 _memset:
         move.l   4(sp),a0
         move.l   d7,-(sp)
-        move.w   12(sp),d0
+        move.w   14(sp),d0      // low word of c (int, 4 bytes since #300)
         move.b   d0,d7
 #ifdef __mcoldfire__
         lsl.l    #8,d7
@@ -53,7 +53,7 @@ _memset:
         move.w   d7,d0
         swap     d7
         move.w   d0,d7
-        move.l   14(sp),d0
+        move.l   16(sp),d0      // size (4 bytes, right after the 4-byte c)
         jle      end
 
 // at this point, a0=block, d7=pattern, d0=size, (sp)=saved d7
