@@ -191,7 +191,16 @@ ifdef ARCH_ARM
 MULTILIBFLAGS = $(CPUFLAGS) -fsigned-char
 TOOLCHAIN_CFLAGS = -fleading-underscore -fno-reorder-functions -DELF_TOOLCHAIN
 else
-MULTILIBFLAGS = $(CPUFLAGS)
+# The kernel can never assume a real FPU is present -- processor.S detects
+# one at runtime, for userland's benefit, precisely because most m68k
+# targets this builds for don't have one. Every toolchain used here has
+# always defaulted to -msoft-float on its own, silently, so this was never
+# needed -- until Thorsten Otto's -mfastcall-patched GCC (Kconfig's
+# CONF_WITH_MFASTCALL help text), which defaults the other way once -m68020
+# or later is selected (-mhard-float/-m68881 enabled), freely emitting real
+# FPU instructions QEMU's -cpu m68020 (no FPU) can't execute. Pass it
+# explicitly so kernel codegen never depends on a toolchain's own default.
+MULTILIBFLAGS = $(CPUFLAGS) -msoft-float
 ifdef CONF_WITH_MFASTCALL
 MULTILIBFLAGS += -mfastcall
 endif
