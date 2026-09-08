@@ -122,6 +122,21 @@ buggy_jit_save_registers_before_bus_error:
  * On a warm boot, only the first 64 vectors are reinitialized.
  * This avoids overwriting crash dumps starting at address 0x380.
  */
+#if CONF_WITH_MFASTCALL
+_init_user_vec:
+        // under -mfastcall, the caller passes first_boot in d0 (not on the
+        // stack), and we need d0 free for the loop count below -- so decide
+        // the count into d1 first, then move it into d0 for the shared loop.
+        lea     user_vec, a0
+        lea     256, a1
+        moveq   #63, d1
+        tst.w   d0              // check FIRST_BOOT
+        jeq     set_uvec_fc
+        move.w  #191, d1
+set_uvec_fc:
+        move.l  d1, d0
+        jra     set_uvec
+#else
 _init_user_vec:
         lea     user_vec, a0
         lea     256, a1
@@ -129,6 +144,7 @@ _init_user_vec:
         tst.w   4(sp)           // check FIRST_BOOT
         jeq     set_uvec
         move.w  #191, d0
+#endif
 set_uvec:
         move.l  a0, (a1)+
 #ifdef __mcoldfire__
