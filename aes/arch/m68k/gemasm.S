@@ -55,9 +55,20 @@ _psetup:
         move    sr,savesr2
         ori     #0x0700,sr
 #endif
+        /*
+         * psetup(AESPD*, PFVOID) has two pointer arguments. Under
+         * -mfastcall they arrive in a0/a1 (p/codevalue), not on the
+         * stack -- unlike the plain stack ABI below, which is how this
+         * function read them before -mfastcall existed.
+         */
+#if CONF_WITH_MFASTCALL
+        move.l  a1,d0           // New process entry point
+        movea.l PD_UDA(a0),a0
+#else
         movea.l 4(sp),a0        // AESPD *
         move.l  8(sp),d0        // New process entry point
         movea.l PD_UDA(a0),a0
+#endif
         movea.l UDA_SPSUPER(a0),a1
         move.l  d0,-(a1)        // Push entry point on the process stack
         move.l  a1,UDA_SPSUPER(a0)
@@ -177,7 +188,16 @@ _switchto:
         ori     #0x0700,sr
 #endif
 
+        /*
+         * switchto(UDA *puda) has one pointer argument, which arrives
+         * in a0 under -mfastcall instead of on the stack (see the
+         * identical fix in this file's _psetup).
+         */
+#if CONF_WITH_MFASTCALL
+        movea.l a0,sp           // Use SP as pointer to UDA struct
+#else
         movea.l 4(sp),sp        // Use SP as pointer to UDA struct
+#endif
         movem.l UDA_REGS(sp),d0-a5
         movea.l UDA_SPUSER(sp),a6
         move.l  a6,usp
