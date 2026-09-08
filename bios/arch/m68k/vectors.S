@@ -1334,6 +1334,19 @@ bx_sp_ok:
         add.l   d1,d1           // indirection function table is 1 LW per
         add.l   d1,d1           // so multiply function number by 4
         add.l   d1,a0           // add to the base address of lookup table
+#if CONF_WITH_MFASTCALL
+        /*
+         * Under -mfastcall, a single-pointer-argument function like
+         * wrap_*(WORD *pw) takes that pointer in a0 -- which conflicts
+         * with using a0 as the jsr target register below, so load the
+         * handler address into a2 instead (free here: not part of the
+         * d3-d7/a3-a7 register-save set above), and put the argument
+         * pointer in a0.
+         */
+        move.l  (a0),a2         // a2 = the procedure's address
+        move.l  sp,a0           // a0 = pointer to the raw argument words
+        jsr     (a2)            // go do it and then come back
+#else
         move.l  (a0),a0         // get the procedures address
         /*
          * Pass a pointer to the raw, tightly-packed argument words as
@@ -1355,6 +1368,7 @@ bx_sp_ok:
         move.l  a1,-(sp)        // pass it as the callee's one argument
         jsr     (a0)            // go do it and then come back
         addq.l  #4,sp           // drop the pointer argument pushed above
+#endif
 
 bx_ret_exc:
         move.l  _savptr.w, a1

@@ -23,6 +23,40 @@
  */
         .globl  _trap1_pexec    // Reentrant Pexec call
 _trap1_pexec:
+#if CONF_WITH_MFASTCALL
+        /*
+         * Build the GEMDOS wire frame trap #1 expects (opcode, mode,
+         * path, tail, env). Under -mfastcall a call to
+         * trap1_pexec(WORD mode, const char*, const char*, const char*)
+         * arrives with mode in d0, path in a0, tail in a1, and only env
+         * (the 4th argument -- fastcall has just two address registers)
+         * spilled to the stack, at 4(sp) relative to our own entry sp.
+         * Read env into a scratch register (d1, otherwise unused by
+         * this signature) before the d2/a2 save below touches the
+         * stack and shifts that offset, then build the frame directly
+         * against sp so it stays contiguous for the trap.
+         */
+        move.l  4(sp),d1        // env, from the caller's stack-spilled 4th arg
+#ifdef __mcoldfire__
+        move.l  a2,-(sp)
+        move.l  d2,-(sp)
+#else
+        movem.l d2/a2,-(sp)
+#endif
+        move.l  d1,-(sp)        // env
+        move.l  a1,-(sp)        // tail
+        move.l  a0,-(sp)        // path
+        move.w  d0,-(sp)        // mode, low word
+        move.w  #0x4b,-(sp)
+        trap    #1              // Pexec
+        lea     16(sp),sp
+#ifdef __mcoldfire__
+        move.l  (sp)+,d2
+        move.l  (sp)+,a2
+#else
+        movem.l (sp)+,d2/a2
+#endif
+#else
 #ifdef __mcoldfire__
         move.l  a2,-(sp)
         move.l  d2,-(sp)
@@ -56,6 +90,7 @@ _trap1_pexec:
         move.l  (sp)+,a2
 #else
         movem.l (sp)+,d2/a2
+#endif
 #endif
         rts
 

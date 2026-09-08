@@ -164,6 +164,73 @@ _accdesk_start:
 // A wrapper around Pexec. We can't use the above function _gemdos for this
 // since _gemdos is not reentrant.
 //////////////////////////////////////////////////////////////////////////////
+#if CONF_WITH_MFASTCALL
+_dos_exec:
+        /*
+         * Under -mfastcall a call to
+         * dos_exec(WORD mode, const char*, const char*, const char*)
+         * arrives with mode in d0, pcspec in a0, pcmdln in a1, and only
+         * segenv (the 4th argument -- fastcall has just two address
+         * registers) spilled to the stack, at 4(sp) relative to our own
+         * entry sp. Unlike the non-fastcall path below, we can't defer
+         * reading these until after the disable/enable_interrupts calls
+         * further down: a jsr is free to clobber d0/a0/a1 like any
+         * caller-saved register, so save all four arguments to our own
+         * stack right now, before anything else touches it. Pushed in
+         * wire-frame order (mode, pcspec, pcmdln, segenv), they land
+         * contiguously and already read back with the exact same
+         * literal-offset trick as the tightly-packed re-push below --
+         * only the source (our own saved copy, not the caller's frame)
+         * differs.
+         */
+        move.l  4(sp),-(sp)             // segenv, from the caller's stack-spilled 4th arg
+        move.l  a1,-(sp)                // pcmdln
+        move.l  a0,-(sp)                // pcspec
+        move.w  d0,-(sp)                // mode, low word
+#ifdef __mcoldfire__
+        move.l  a2,-(sp)                // Save registers
+        move.l  d2,-(sp)
+#else
+        movem.l d2/a2,-(sp)             // Save registers
+#endif
+
+        // See the *** WARNING *** in the non-fastcall path below for why
+        // this stack adjustment exists. The saved-argument block above
+        // adds 14 bytes pushed before the reentrancy-guard snapshot
+        // taken here, which the constant below already accounts for.
+
+        jsr     _disable_interrupts
+        movea.l _rlr,a0
+        movea.l PD_UDA(a0),a0
+        move.l  UDA_SPSUPER(a0),-(sp)   // Save rlr->p_uda->u_spsuper
+        movea.l sp,a1
+        suba.l  #0x50,a1                // Adjust the stack (see above)
+        move.l  a1,UDA_SPSUPER(a0)
+        jsr     _enable_interrupts
+
+        move.l  22(sp),-(sp)            // Push parameters on the stack again...
+        move.l  22(sp),-(sp)
+        move.l  22(sp),-(sp)
+        move.w  24(sp),-(sp)
+        move.w  #0x4B,-(sp)
+        trap    #1                      // ... and execute the Pexec call!
+        lea     16(sp),sp
+
+        jsr     _disable_interrupts
+        movea.l _rlr,a0
+        movea.l PD_UDA(a0),a0
+        move.l  (sp)+,UDA_SPSUPER(a0)   // Restore rlr->p_uda->u_spsuper
+        jsr     _enable_interrupts
+
+#ifdef __mcoldfire__
+        move.l  (sp)+,d2
+        move.l  (sp)+,a2
+#else
+        movem.l (sp)+,d2/a2
+#endif
+        lea     14(sp),sp               // drop our saved mode/pcspec/pcmdln/segenv
+        rts
+#else
 _dos_exec:
         move.l  sp,d1
 #ifdef __mcoldfire__
@@ -254,6 +321,7 @@ _dos_exec:
         movem.l (sp)+,d2/a2
 #endif
         rts
+#endif
 
 .bss
 

@@ -192,9 +192,25 @@ MULTILIBFLAGS = $(CPUFLAGS) -fsigned-char
 TOOLCHAIN_CFLAGS = -fleading-underscore -fno-reorder-functions -DELF_TOOLCHAIN
 else
 MULTILIBFLAGS = $(CPUFLAGS)
+ifdef CONF_WITH_MFASTCALL
+MULTILIBFLAGS += -mfastcall
+endif
 ifdef BUILD_TOOLCHAIN_IS_ELF
 TOOLCHAIN_CFLAGS = -fleading-underscore -Wa,--register-prefix-optional \
                    -fno-reorder-functions -DELF_TOOLCHAIN
+endif
+endif
+
+# CONF_WITH_MFASTCALL selects -mfastcall above, but neither of the toolchains
+# offered in the "m68k toolchain" choice (Kconfig.machine) support it -- only
+# a patched GCC does (Thorsten Otto's fork, see the option's help text).  Fail
+# now with an actionable message instead of letting every compile fail later
+# with a generic "unrecognized command-line option '-mfastcall'".
+ifdef CONFIGURED
+ifdef CONF_WITH_MFASTCALL
+ifeq (,$(shell $(CC) -mfastcall -E - </dev/null >/dev/null 2>&1 && echo y))
+$(error $(CC) does not support -mfastcall. Install a patched toolchain (e.g. Thorsten Otto's m68k-atari-mint-gcc fork, https://tho-otto.m68k.eu/crossmint.php) and point CROSS_COMPILE at it, or disable CONF_WITH_MFASTCALL in "make menuconfig")
+endif
 endif
 endif
 
