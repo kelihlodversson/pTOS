@@ -8,12 +8,12 @@
 #include "asmdefs.h"
 #include "header.h"
 
-        .globl  _os_entry
-        .extern _stktop
-        .extern _biosmain
+        .globl  C_SYM(os_entry)
+        .extern C_SYM(stktop)
+        .extern C_SYM(biosmain)
         .extern __endvdibss
-        .extern _virt_mmu_bootstrap
-        .extern _phystop
+        .extern C_SYM(virt_mmu_bootstrap)
+        .extern C_SYM(phystop)
         .extern __bss
         .extern __ebss
 
@@ -24,60 +24,60 @@
  * that file for a field-by-field description.
  */
 
-        .globl  _main
-        .globl  _os_beg
-        .globl  _os_magic
-        .globl  _os_date
-        .globl  _os_conf
-        .globl  _os_dosdate
-        .globl  _root
-        .globl  _shifty
-        .globl  _run
+        .globl  C_SYM(main)
+        .globl  C_SYM(os_beg)
+        .globl  C_SYM(os_magic)
+        .globl  C_SYM(os_date)
+        .globl  C_SYM(os_conf)
+        .globl  C_SYM(os_dosdate)
+        .globl  C_SYM(root)
+        .globl  C_SYM(shifty)
+        .globl  C_SYM(run)
 
-_os_entry:
+C_SYM(os_entry):
 .p2align 5
 arm_vectors:
-    b   _main
-    b   _arm_dispatch_undef
-    b   _arm_dispatch_svc
-    b   _arm_dispatch_prefetch_abort
-    b   _arm_dispatch_data_abort
-    b   _arm_dispatch_undef
-    b   _arm_dispatch_irq
-    b   _arm_dispatch_fiq
+    b   C_SYM(main)
+    b   C_SYM(arm_dispatch_undef)
+    b   C_SYM(arm_dispatch_svc)
+    b   C_SYM(arm_dispatch_prefetch_abort)
+    b   C_SYM(arm_dispatch_data_abort)
+    b   C_SYM(arm_dispatch_undef)
+    b   C_SYM(arm_dispatch_irq)
+    b   C_SYM(arm_dispatch_fiq)
 
 os_version:
     .word   TOS_VERSION
 reseth:
-    .word   _main
-_os_beg:
-    .word   _os_entry
+    .word   C_SYM(main)
+C_SYM(os_beg):
+    .word   C_SYM(os_entry)
 os_end:
     .word   __endvdibss
 os_res1:
-    .word   _main
-_os_magic:
+    .word   C_SYM(main)
+C_SYM(os_magic):
 #if CONF_WITH_AES
-    .word   _ui_mupb
+    .word   C_SYM(ui_mupb)
 #else
     .word   0
 #endif
-_os_date:
+C_SYM(os_date):
     .word   OS_DATE
-_os_conf:
+C_SYM(os_conf):
 #if CONF_MULTILANG
     .word   OS_CONF_MULTILANG
 #else
     .word   (OS_COUNTRY << 1) + OS_PAL
 #endif
-_os_dosdate:
+C_SYM(os_dosdate):
     .word   OS_DOSDATE
 os_root:
-    .word   _root
+    .word   C_SYM(root)
 os_kbshift:
-    .word   _shifty
+    .word   C_SYM(shifty)
 os_run:
-    .word   _run
+    .word   C_SYM(run)
 os_dummy:
     .ascii  "CAMELTOS"
 
@@ -92,7 +92,7 @@ os_dummy:
  * then hands off to _biosmain.
  */
 .balign 4
-_main:
+C_SYM(main):
     /*
      * The boot loader hands us r0 = 0, r1 = the ARM Linux machine type
      * (or 0xffffffff for "use the device tree") and r2 = the address of
@@ -119,12 +119,12 @@ _main:
     /* MMU bring-up: literal physical constants only, no linked symbols */
     mov r0, #0x08000000     /* 128 MiB RAM window, matches -m 128 in the qemu invocation below */
     ldr r1, =0x47f00000     /* page table: fixed physical scratch address, top of a 128M RAM allocation */
-    bl  _virt_mmu_bootstrap
+    bl  C_SYM(virt_mmu_bootstrap)
 
     ldr pc, =virt_arm_post_mmu
 
 virt_arm_post_mmu:
-    ldr sp, =0x47ff0000     /* physical scratch stack, until the switch to _stktop below */
+    ldr sp, =0x47ff0000     /* physical scratch stack, until the switch to C_SYM(stktop) below */
     ldr r4, =hello_msg_virt
     bl  print_string
 
@@ -135,7 +135,7 @@ virt_arm_post_mmu:
      * MMU window actually maps virtual low addresses onto real RAM
      * before anything else here relies on memory access working at
      * all. */
-    ldr r0, =_phystop
+    ldr r0, =C_SYM(phystop)
     ldr r1, =0x12345678
     str r1, [r0]
     ldr r2, [r0]
@@ -176,7 +176,7 @@ virt_arm_post_mmu:
      * "reserve the last megabyte" convention bios/machine/raspi/memory.c
      * uses for the same reason.
      */
-    ldr r0, =_phystop
+    ldr r0, =C_SYM(phystop)
     ldr r1, =0x07f00000
     str r1, [r0]
 
@@ -186,7 +186,7 @@ virt_arm_post_mmu:
      * loader registers saved in r8-r10 above.  Mirrors
      * bios/machine/raspi/startup.S.
      */
-    ldr r3, =_arm_boot_regs
+    ldr r3, =C_SYM(arm_boot_regs)
     stmia r3, {r8-r10}
 
     /*
@@ -203,8 +203,8 @@ virt_arm_post_mmu:
     ldr r0, =arm_vectors
     mcr p15, 0, r0, c12, c0, 0
 
-    ldr sp, =_stktop
-    b   _biosmain
+    ldr sp, =C_SYM(stktop)
+    b   C_SYM(biosmain)
 
 print_string:
     push {r4, lr}
@@ -237,8 +237,8 @@ sysvars_fail_msg:
     .asciz "virt-arm: sysvars alias FAILED\r\n"
     .align 2
 
-    .globl _arm_dispatch_undef
-_arm_dispatch_undef:
+    .globl C_SYM(arm_dispatch_undef)
+C_SYM(arm_dispatch_undef):
     srsfd  sp!, #0x13
     cps    #0x13
     sub    sp, #4*15
@@ -259,8 +259,8 @@ _arm_dispatch_undef:
     ldmfd  sp, {r0-r14}^
     rfefd  sp!
 
-    .globl _arm_dispatch_svc
-_arm_dispatch_svc:
+    .globl C_SYM(arm_dispatch_svc)
+C_SYM(arm_dispatch_svc):
     // See the matching comment in bios/machine/raspi/startup.S: taking the
     // svc exception already masked IRQ (architectural), and unlike m68k
     // TRAP #n this would leave any handler that blocks waiting for an
@@ -273,8 +273,8 @@ _arm_dispatch_svc:
     ldr ip, [ip, #+0x80]
     bx  ip
 
-    .globl _arm_dispatch_prefetch_abort
-_arm_dispatch_prefetch_abort:
+    .globl C_SYM(arm_dispatch_prefetch_abort)
+C_SYM(arm_dispatch_prefetch_abort):
     sub    lr, lr, #4
     srsfd  sp!, #0x13
     cps    #0x13
@@ -290,8 +290,8 @@ _arm_dispatch_prefetch_abort:
     ldmfd  sp, {r0-r14}^
     rfefd  sp!
 
-    .globl _arm_dispatch_data_abort
-_arm_dispatch_data_abort:
+    .globl C_SYM(arm_dispatch_data_abort)
+C_SYM(arm_dispatch_data_abort):
     sub lr, lr, #8
     srsfd  sp!, #0x13
     cps    #0x13
@@ -307,19 +307,19 @@ _arm_dispatch_data_abort:
     ldmfd  sp, {r0-r14}^
     rfefd  sp!
 
-    .extern _virt_int_handler
-    .globl _arm_dispatch_irq
-_arm_dispatch_irq:
+    .extern C_SYM(virt_int_handler)
+    .globl C_SYM(arm_dispatch_irq)
+C_SYM(arm_dispatch_irq):
     sub    lr, lr, #4
     srsfd  sp!, #0x13
     cps    #0x13
     stmfd  sp!, {r0-r3, ip, lr}
-    bl     _virt_int_handler
+    bl     C_SYM(virt_int_handler)
     ldmfd  sp!, {r0-r3, ip, lr}
     rfefd  sp!
 
-    .globl _arm_dispatch_fiq
-_arm_dispatch_fiq:
+    .globl C_SYM(arm_dispatch_fiq)
+C_SYM(arm_dispatch_fiq):
     sub    lr, lr, #4
     srsfd  sp!, #0x13
     cps    #0x13
@@ -328,8 +328,8 @@ _arm_dispatch_fiq:
 /* bios/kprint.c's dopanic() reads this, unconditionally, on every machine
  * built with __arm__.  This machine never enters HYP mode (see the comment
  * at the top of _main), so it is always 0. */
-    .globl _start_in_hyp
-_start_in_hyp: .word 0
+    .globl C_SYM(start_in_hyp)
+C_SYM(start_in_hyp): .word 0
 
 /*
  * r0, r1 and r2 as saved near the top of _main.  This is BSS, so it is
@@ -340,5 +340,5 @@ _start_in_hyp: .word 0
  */
 .bss
 .balign 4
-.global _arm_boot_regs
-_arm_boot_regs: .ds.l 3
+.global C_SYM(arm_boot_regs)
+C_SYM(arm_boot_regs): .ds.l 3

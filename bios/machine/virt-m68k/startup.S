@@ -8,14 +8,14 @@
 #include "asmdefs.h"
 #include "header.h"
 
-        .globl  _os_entry
+        .globl  C_SYM(os_entry)
 
-        .extern _stktop
-        .extern _biosmain
+        .extern C_SYM(stktop)
+        .extern C_SYM(biosmain)
         .extern __endvdibss
         .extern __bss
         .extern __ebss
-        .extern _phystop
+        .extern C_SYM(phystop)
 
         .text
 
@@ -28,56 +28,56 @@
  * physical address 0 on this board.
  */
 
-        .globl  _main
-        .globl  _os_header
-        .globl  _osxhbootdelay
-        .globl  _os_beg
-        .globl  _os_magic
-        .globl  _os_date
-        .globl  _os_conf
-        .globl  _os_dosdate
-        .globl  _root
-        .globl  _shifty
-        .globl  _run
+        .globl  C_SYM(main)
+        .globl  C_SYM(os_header)
+        .globl  C_SYM(osxhbootdelay)
+        .globl  C_SYM(os_beg)
+        .globl  C_SYM(os_magic)
+        .globl  C_SYM(os_date)
+        .globl  C_SYM(os_conf)
+        .globl  C_SYM(os_dosdate)
+        .globl  C_SYM(root)
+        .globl  C_SYM(shifty)
+        .globl  C_SYM(run)
 
-_os_header:
-_os_entry:
-        bra.s   _main       // os_entry, branch to _main
+C_SYM(os_header):
+C_SYM(os_entry):
+        bra.s   C_SYM(main)       // os_entry, branch to _main
 os_version:
         .dc.w   TOS_VERSION // os_version, TOS version
 reseth:
-        .dc.l   _main       // reseth, pointer to reset handler
-_os_beg:
-        .dc.l   _os_entry   // os_beg, base of os = _sysbase
+        .dc.l   C_SYM(main)       // reseth, pointer to reset handler
+C_SYM(os_beg):
+        .dc.l   C_SYM(os_entry)   // os_beg, base of os = _sysbase
 os_end:
         .dc.l   __endvdibss // os_end, end of VDI BSS
 os_res1:
-        .dc.l   _main       // os_res1, reserved
-_os_magic:
+        .dc.l   C_SYM(main)       // os_res1, reserved
+C_SYM(os_magic):
 #if CONF_WITH_AES
-        .dc.l   _ui_mupb    // os_magic, pointer to GEM's MUPB
+        .dc.l   C_SYM(ui_mupb)    // os_magic, pointer to GEM's MUPB
 #else
         .dc.l   0           // os_magic, pointer to GEM's MUPB
 #endif
-_os_date:
+C_SYM(os_date):
         .dc.l   OS_DATE     // os_date, Date of system build
-_os_conf:
+C_SYM(os_conf):
 #if CONF_MULTILANG
         .dc.w   OS_CONF_MULTILANG
 #else
         .dc.w   (OS_COUNTRY << 1) + OS_PAL
 #endif
-_os_dosdate:
+C_SYM(os_dosdate):
         .dc.w   OS_DOSDATE
 os_root:
-        .dc.l   _root
+        .dc.l   C_SYM(root)
 os_kbshift:
-        .dc.l   _shifty
+        .dc.l   C_SYM(shifty)
 os_run:
-        .dc.l   _run
+        .dc.l   C_SYM(run)
 os_dummy:
         .ascii  "ETOS"
-_osxhbootdelay:
+C_SYM(osxhbootdelay):
         .dc.b   0           // no cold-boot delay on this board
 
 /*
@@ -95,9 +95,9 @@ _osxhbootdelay:
  * 68000-compatibility fallback the classic startup.S uses around MOVEC.
  */
         .even
-_main:
+C_SYM(main):
         move.w  #0x2700,sr              // supervisor mode, interrupts masked
-        lea     _stktop,sp              // initial supervisor stack (.stack section, tosvars.ld)
+        lea     C_SYM(stktop),sp              // initial supervisor stack (.stack section, tosvars.ld)
 
         // Clear .bss: unlike the classic Atari boot, there is no meminit
         // pass to do this for us here (that routine tests and clears
@@ -117,6 +117,6 @@ clear_bss_done:
         // parse for v1 (see the design doc). _phystop is a fixed-address
         // sysvar (tosvars.ld); bios/biosmem.c's bmem_init() reads it
         // directly to size the entire free-memory pool.
-        move.l  #0x08000000,_phystop
+        move.l  #0x08000000,C_SYM(phystop)
 
-        jmp     _biosmain
+        jmp     C_SYM(biosmain)

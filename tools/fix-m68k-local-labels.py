@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Make GCC's local m68k symbol names acceptable to mintelf gas."""
+
+import re
+import sys
+
+
+GLOBAL_LABEL = re.compile(r"^\s*\.globl\s+([A-Za-z_][A-Za-z0-9_.]*)", re.M)
+LOCAL_LABEL = re.compile(r"^\s*\.local\s+([A-Za-z_][A-Za-z0-9_.]*)", re.M)
+TYPED_LABEL = re.compile(r"^\s*\.type\s+([A-Za-z_][A-Za-z0-9_.]*),", re.M)
+
+
+def main():
+    if len(sys.argv) != 3:
+        sys.exit("usage: fix-m68k-local-labels.py INPUT OUTPUT")
+
+    with open(sys.argv[1], "r", encoding="utf-8") as source:
+        text = source.read()
+
+    globals = set(GLOBAL_LABEL.findall(text))
+    locals = set(LOCAL_LABEL.findall(text))
+    locals.update(label for label in TYPED_LABEL.findall(text) if label not in globals)
+
+    # mintelf gas accepts GCC's private names only with a leading underscore.
+    for label in sorted(locals, key=len, reverse=True):
+        symbol = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(label) + r"(?![A-Za-z0-9_])")
+        text = symbol.sub("_" + label, text)
+
+    with open(sys.argv[2], "w", encoding="utf-8") as destination:
+        destination.write(text)
+
+
+if __name__ == "__main__":
+    main()
