@@ -232,20 +232,24 @@
 // void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst) has three
 // pointer arguments; under -mfastcall only the first two (vars, src) go
 // to address registers (a0, a1) -- the third (dst) is passed on the
-// stack, same as the plain ABI. Pop the real return address into d0 (a
-// data register survives the movem.l d2-d7/a2-a6 below untouched, since
-// it only saves/restores that set), then push vars/src above the
-// already-stacked dst so the unchanged body sees the same three-slot
-// cdecl frame it always has, and return through d0 manually since the
-// real return address no longer sits where a plain rts would find it.
+// stack, same as the plain ABI. Pop the real return address into d7:
+// the body's own movem.l d2-d7/a2-a6 below saves d7 on entry and
+// restores it on exit, so d7 comes back unchanged even though norm_blt
+// freely clobbers it as scratch in between -- d0/d1/a0/a1 do NOT have
+// this property (norm_blt uses them directly, e.g. norm_blt's own
+// "movew d1,d0" in do_rot), so stashing the return address in one of
+// those would lose it. Push vars/src above the already-stacked dst so
+// the unchanged body sees the same three-slot cdecl frame it always
+// has, then return through d7 manually since the real return address
+// no longer sits where a plain rts would find it.
 #if CONF_WITH_MFASTCALL
 _normal_blit:
-        move.l  (sp)+,d0                // d0 = real return address
+        move.l  (sp)+,d7                // d7 = real return address
         move.l  a1,-(sp)                 // src
         move.l  a0,-(sp)                 // vars
         bsr     normal_blit_stackbody
         lea     12(sp),sp               // drop vars/src/dst built above
-        movea.l d0,a0
+        movea.l d7,a0
         jmp     (a0)
 
 normal_blit_stackbody:
