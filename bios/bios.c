@@ -111,7 +111,7 @@ extern void coma_start(void) NORETURN;  /* found in cli/cmdasm.S */
 #endif
 
 #if CONF_WITH_ALT_RAM
-extern long xmaddalt(UBYTE *start, long size); /* found in bdos/mem.h */
+extern long xmaddalt(UBYTE *start, LONG size); /* found in bdos/mem.h */
 #endif
 
 #if CONF_WITH_68040_PMMU
@@ -1512,14 +1512,57 @@ static LONG bios_b(WORD flag)
 #endif
 
 
+#ifndef __arm__
+/*
+ * wrap_*(): bios_vecs[] shims for m68k. vectors.S's biosxbios no
+ * longer jsr's straight into a bios_vecs[] entry with sp still
+ * pointing at the raw trap frame: with -mshort no longer used for the
+ * kernel m68k build (#300), the target's own GCC-compiled prologue
+ * would read each WORD-sized parameter from a 4-byte padded stack
+ * slot, which that tightly-packed frame does not provide (see the
+ * comment there). It instead calls one of these with a single pointer
+ * to the raw argument words -- always exactly 4 bytes, so never
+ * ambiguous -- and each shim reconstructs the real, correctly-typed
+ * arguments explicitly before calling the real function normally.
+ * Functions taking no arguments (tickcal, drvmap) need no shim: they
+ * never look at the extra pointer biosxbios unconditionally passes.
+ */
+#define PWLONG(pw, i) (*(LONG *)&(pw)[i])
+
+static LONG wrap_getmpb(WORD *pw)
+{
+    getmpb((MPB *)PWLONG(pw, 0));
+    return 0;
+}
+static LONG wrap_bconstat(WORD *pw) { return bconstat(pw[0]); }
+static LONG wrap_bconin(WORD *pw) { return bconin(pw[0]); }
+static LONG wrap_bconout(WORD *pw) { return bconout(pw[0], pw[1]); }
+static LONG wrap_lrwabs(WORD *pw)
+{
+    return lrwabs(pw[0], (UBYTE *)PWLONG(pw, 1), pw[3], pw[4], pw[5],
+                  PWLONG(pw, 6));
+}
+static LONG wrap_setexc(WORD *pw) { return setexc(pw[0], PWLONG(pw, 1)); }
+static LONG wrap_getbpb(WORD *pw) { return getbpb(pw[0]); }
+static LONG wrap_bcostat(WORD *pw) { return bcostat(pw[0]); }
+static LONG wrap_mediach(WORD *pw) { return mediach(pw[0]); }
+static LONG wrap_kbshift(WORD *pw) { return kbshift(pw[0]); }
+/* tickcal() and drvmap() take no arguments, so need no shim, but are
+ * given one trivial wrapper each anyway to keep VEC() below uniform. */
+static LONG wrap_tickcal(WORD *pw) { UNUSED(pw); return tickcal(); }
+static LONG wrap_drvmap(WORD *pw) { UNUSED(pw); return drvmap(); }
+#endif /* !__arm__ */
+
 /**
  * bios_vecs - the table of bios command vectors.
  */
 
 #if DBGBIOS
 #define VEC(wrapper, direct) (PFLONG) wrapper
-#else
+#elif defined(__arm__)
 #define VEC(wrapper, direct) (PFLONG) direct
+#else
+#define VEC(wrapper, direct) (PFLONG) wrap_##direct
 #endif
 
 const PFLONG bios_vecs[] = {

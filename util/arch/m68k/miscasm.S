@@ -15,36 +15,11 @@
 #include "asmdefs.h"
 
 /*
- * trap1 - trap 1 (GEMDOS) entry point
- */
-        .globl  _trap1
-_trap1:
-        move.l  (sp)+,t1spsav   // save return address
-#ifdef __mcoldfire__
-        move.l  d2,t1regsav
-        move.l  a2,t1regsav+4
-        trap    #1              // call bdos call
-        move.l  t1regsav,d2
-        move.l  t1regsav+4,a2
-#else
-        movem.l d2/a2,t1regsav
-        trap    #1              // call bdos call
-        movem.l t1regsav,d2/a2
-#endif
-        move.l  t1spsav,-(sp)   // restore return address
-        rts
-
-        .bss
-        .even
-t1spsav:
-        .ds.l   1       // Save space for _trap_1
-t1regsav:
-        .ds.l   2
-
-        .text
-
-/*
- *  GEMDOS Pexec() call. This version is reentrant unlike the trap1 function!
+ *  GEMDOS Pexec() call. Reentrant: unlike the variadic C trap1() this
+ *  used to sit alongside (removed for #300 -- GEMDOS calls on m68k now
+ *  go through the typed trap1_v()/trap1_w()/... macros in asm.h
+ *  instead), its arguments are explicitly typed, so it saves/restores
+ *  d2/a2 on the stack around the trap rather than in static storage.
  */
         .globl  _trap1_pexec    // Reentrant Pexec call
 _trap1_pexec:
@@ -54,10 +29,25 @@ _trap1_pexec:
 #else
         movem.l d2/a2,-(sp)
 #endif
-        move.l  22(sp),-(sp)    // Push parameter on the stack again for pexec
-        move.l  22(sp),-(sp)
-        move.l  22(sp),-(sp)
-        move.w  24(sp),-(sp)
+        /*
+         * Re-push each parameter, tightly packed, to build the GEMDOS
+         * wire frame trap #1 expects (opcode, mode, path, tail, env).
+         * The offsets below read them back off *our own caller's*
+         * frame, i.e. how GCC laid out a call to
+         * trap1_pexec(short mode, const char*, const char*, const char*)
+         * -- and with -mshort no longer used for the kernel m68k build
+         * (#300), that caller-side frame is no longer tightly packed
+         * either: GCC now gives "mode" a full 4-byte slot instead of 2,
+         * shifting every offset below by 2 from what tight packing
+         * would give (22->24 for the three pointer args, 24->26 for
+         * mode's low word -- mode's sign/zero-extended value always
+         * lands in the low word of its 4-byte slot regardless of
+         * sign, so a plain word read still recovers it correctly).
+         */
+        move.l  24(sp),-(sp)    // Push parameter on the stack again for pexec
+        move.l  24(sp),-(sp)
+        move.l  24(sp),-(sp)
+        move.w  26(sp),-(sp)
         move.w  #0x4b,-(sp)
         trap    #1              // Pexec
         lea     16(sp),sp

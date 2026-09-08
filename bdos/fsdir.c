@@ -237,7 +237,7 @@ long ixsfirst(char *name, WORD att, DTAINFO *addr)
     const char *s;              /*  M01.01.03                   */
     DND *dn;
     FCB *f;
-    long pos;
+    LONG pos;
 
     if (att != FA_VOL)
         att |= (FA_ARCHIVE|FA_RO);

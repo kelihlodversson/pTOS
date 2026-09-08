@@ -16,15 +16,15 @@
 
 #include "portab.h"
 
-long fat_open_path(char *name, int mod);
-long fat_creat_path(char *name, char attr);
-long fat_unlink_path(char *name);
-long fat_getfree_path(long *buf, int drv);
-long fat_mkdir_path(char *s);
-long fat_rmdir_path(char *p);
-long fat_chmod_path(char *p, int wrt, char mod);
-long fat_chdir_path(char *p);
-long fat_getdir_path(char *buf, int drv);
+LONG fat_open_path(char *name, int mod);
+LONG fat_creat_path(char *name, char attr);
+LONG fat_unlink_path(char *name);
+LONG fat_getfree_path(long *buf, int drv);
+LONG fat_mkdir_path(char *s);
+LONG fat_rmdir_path(char *p);
+LONG fat_chmod_path(char *p, int wrt, char mod);
+LONG fat_chdir_path(char *p);
+LONG fat_getdir_path(char *buf, int drv);
 LONG fat_sfirst_path(char *name, int att);
 LONG fat_snext_path(void);
 long fat_rename_path(char *p1, char *p2);

@@ -1335,7 +1335,26 @@ bx_sp_ok:
         add.l   d1,d1           // so multiply function number by 4
         add.l   d1,a0           // add to the base address of lookup table
         move.l  (a0),a0         // get the procedures address
+        /*
+         * Pass a pointer to the raw, tightly-packed argument words as
+         * the single argument, instead of jsr-ing straight in with sp
+         * still pointing at them: with -mshort no longer used for the
+         * kernel m68k build (#300), a normally-compiled C function's
+         * own prologue reads each WORD-sized parameter from a 4-byte,
+         * GCC-padded stack slot, which this tightly-packed trap frame
+         * does not provide. bios_vecs[]/xbios_vecs[] entries needing
+         * more than the function number now point at a wrap_*() shim
+         * (see bios.c/xbios.c) that takes this one pointer -- always
+         * exactly 4 bytes, so never ambiguous -- and explicitly
+         * reconstructs the real, correctly-typed arguments from it
+         * before calling the real function normally. A zero-argument
+         * function can still be called directly: it never looks at
+         * the extra pointer this unconditionally pushes.
+         */
+        move.l  sp,a1           // a1 = pointer to the raw argument words
+        move.l  a1,-(sp)        // pass it as the callee's one argument
         jsr     (a0)            // go do it and then come back
+        addq.l  #4,sp           // drop the pointer argument pushed above
 
 bx_ret_exc:
         move.l  _savptr.w, a1

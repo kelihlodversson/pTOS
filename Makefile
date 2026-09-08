@@ -191,7 +191,7 @@ ifdef ARCH_ARM
 MULTILIBFLAGS = $(CPUFLAGS) -fsigned-char
 TOOLCHAIN_CFLAGS = -fleading-underscore -fno-reorder-functions -DELF_TOOLCHAIN
 else
-MULTILIBFLAGS = $(CPUFLAGS) -mshort
+MULTILIBFLAGS = $(CPUFLAGS)
 ifdef BUILD_TOOLCHAIN_IS_ELF
 TOOLCHAIN_CFLAGS = -fleading-underscore -Wa,--register-prefix-optional \
                    -fno-reorder-functions -DELF_TOOLCHAIN
@@ -1147,7 +1147,7 @@ tests/run_tests.c: $(wildcard tests/*/*.c) $(AUTOCONF_H) | obj
 
 # The test harness is userland code linked against libcmini, not the
 # kernel: it must NOT inherit CFILE_FLAGS, since that carries kernel-only
-# conventions (-fleading-underscore, -DELF_TOOLCHAIN, -mshort/-fsigned-char)
+# conventions (-fleading-underscore, -DELF_TOOLCHAIN, ARM's -fsigned-char)
 # that are irrelevant -- or outright ABI-incompatible with libcmini's own
 # build -- for a normal ARM/m68k userland binary.  $(CPUFLAGS) is kept so
 # generated code targets the selected machine's CPU/FPU, matching what the
@@ -1267,10 +1267,10 @@ $(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBC
 $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 
 # Like TEST_CFLAGS, this must not reuse the kernel's $(LD) (= $(CC)
-# $(MULTILIBFLAGS) ...): on m68k, MULTILIBFLAGS carries -mshort, which
-# would make the link step pull in the -mshort multilib variant of
-# libgcc (via $(LIBS) = -lgcc below) while libcmini itself was built
-# against the toolchain's default, non -mshort multilib.
+# $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) ...): those carry kernel-only
+# conventions (-fleading-underscore, -DELF_TOOLCHAIN, ARM's -fsigned-char)
+# that are irrelevant -- or outright ABI-incompatible -- for linking a
+# normal ARM/m68k userland binary against libcmini.
 TEST_LD = $(CC) $(CPUFLAGS) -nostartfiles -nostdlib
 
 # Link the test harness as runtests.tos.  On ARM this must stay a
