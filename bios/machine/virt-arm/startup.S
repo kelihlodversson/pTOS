@@ -100,7 +100,7 @@ C_SYM(main):
      * Linux boot protocol -- see bios/machine/raspi/startup.S, which
      * does the same thing.  r0-r2 are needed for the MMU bring-up call
      * below and are not preserved across it, so stash them in
-     * callee-saved registers (AAPCS guarantees _virt_uart0_init() and
+     * callee-saved registers (AAPCS guarantees virt_uart0_init() and
      * _virt_mmu_bootstrap() leave r8-r10 alone) until BSS has been
      * cleared and arm_boot_regs can actually be written to.
      */
@@ -109,7 +109,7 @@ C_SYM(main):
     mov r10, r2
 
     ldr sp, =0x47ff0000
-    bl  _virt_uart0_init
+    bl  C_SYM(virt_uart0_init)
     adr r4, hello_msg_phys     /* PC-relative: correct at the physical PC we're
                                  * actually executing at pre-MMU, unlike
                                  * "ldr r4, =symbol" which loads the linked
@@ -211,7 +211,7 @@ print_string:
 1:  ldrb r0, [r4], #1
     cmp r0, #0
     beq 2f
-    bl  _virt_uart0_write_byte
+    bl  C_SYM(virt_uart0_write_byte)
     b   1b
 2:  pop {r4, lr}
     bx  lr

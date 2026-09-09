@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+#
+# fix-m68k-local-labels.py - Make GCC's local m68k symbol names acceptable
+#                            to mintelf gas
+#
+# Copyright (C) 2026 The pTOS development team.
+#
+# This file is distributed under the GPL, version 2 or at your option any
+# later version.  See doc/license.txt for details.
+#
 """Make GCC's local m68k symbol names acceptable to mintelf gas."""
 
 import re
