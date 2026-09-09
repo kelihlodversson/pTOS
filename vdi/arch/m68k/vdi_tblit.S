@@ -232,23 +232,27 @@
 // void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst) has three
 // pointer arguments; under -mfastcall only the first two (vars, src) go
 // to address registers (a0, a1) -- the third (dst) is passed on the
-// stack, same as the plain ABI. Pop the real return address into d7:
-// the body's own movem.l d2-d7/a2-a6 below saves d7 on entry and
-// restores it on exit, so d7 comes back unchanged even though norm_blt
-// freely clobbers it as scratch in between -- d0/d1/a0/a1 do NOT have
-// this property (norm_blt uses them directly, e.g. norm_blt's own
-// "movew d1,d0" in do_rot), so stashing the return address in one of
-// those would lose it. Push vars/src above the already-stacked dst so
-// the unchanged body sees the same three-slot cdecl frame it always
-// has, then return through d7 manually since the real return address
-// no longer sits where a plain rts would find it.
+// stack, same as the plain ABI. Like the plain ABI, the STACK argument
+// is caller-cleanup: our caller (compiled under -mfastcall) pushes dst
+// before the call and pops it itself afterwards, so this wrapper must
+// leave dst on the stack for it -- only drop the vars/src slots pushed
+// below, not dst. Pop the real return address into d7: the body's own
+// movem.l d2-d7/a2-a6 below saves d7 on entry and restores it on exit,
+// so d7 comes back unchanged even though norm_blt freely clobbers it as
+// scratch in between -- d0/d1/a0/a1 do NOT have this property (norm_blt
+// uses them directly, e.g. norm_blt's own "movew d1,d0" in do_rot), so
+// stashing the return address in one of those would lose it. Push
+// vars/src above the already-stacked dst so the unchanged body sees the
+// same three-slot cdecl frame it always has, then return through d7
+// manually since the real return address no longer sits where a plain
+// rts would find it.
 #if CONF_WITH_MFASTCALL
 _normal_blit:
         move.l  (sp)+,d7                // d7 = real return address
         move.l  a1,-(sp)                 // src
         move.l  a0,-(sp)                 // vars
         bsr     normal_blit_stackbody
-        lea     12(sp),sp               // drop vars/src/dst built above
+        lea     8(sp),sp                // drop vars/src pushed above; dst is our caller's to pop
         movea.l d7,a0
         jmp     (a0)
 
