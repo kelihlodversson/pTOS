@@ -1,7 +1,5 @@
 /*
- * memmove_c.c - simple c implementation of memove and memcpy
- *
- * Copyright (C) 2018-2026 The pTOS development team
+ * memmove.c - simple c implementation of memmove and memcpy
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.

@@ -1,5 +1,5 @@
 /*
- * miscasm_rpi.S - Some small helper functions in assembler
+ * miscasm.S - Some small helper functions in assembler
  *
  * Copyright (C) 2001 by following authors
  * Copyright (C) 2013-2022 by The EmuTOS development team.

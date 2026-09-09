@@ -1,5 +1,5 @@
 /*
- * setjmp_rpi.S - EmuTOS's own copy of an ANSI standard feature
+ * setjmp.S - EmuTOS's own copy of an ANSI standard feature
  *
  * Copyright (C) 2002-2018 The EmuTOS development team
  * Copyright (C) 2018-2026 The pTOS development team

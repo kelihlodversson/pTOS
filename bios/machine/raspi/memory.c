@@ -336,7 +336,7 @@ static void init_mmu(ULONG memory_size)
 // Cache maintenance operations for ARMv6
 //
 // NOTE: The following functions should hold all variables in CPU registers. Currently this will be
-//   ensured using maximum optimation (see bios/processor.h).
+//   ensured using maximum optimization (see bios/processor.h).
 //
 //   The following numbers can be determined (dynamically) using CTR.
 //   As long we use the ARM1176JZF-S implementation in the BCM2835 these static values will work:
