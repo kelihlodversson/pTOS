@@ -26,12 +26,13 @@ def main():
     with open(sys.argv[1], "r", encoding="utf-8") as source:
         text = source.read()
 
-    globals = set(GLOBAL_LABEL.findall(text))
-    locals = set(LOCAL_LABEL.findall(text))
-    locals.update(label for label in TYPED_LABEL.findall(text) if label not in globals)
+    global_labels = set(GLOBAL_LABEL.findall(text))
+    local_labels = set(LOCAL_LABEL.findall(text))
+    local_labels.update(label for label in TYPED_LABEL.findall(text)
+                        if label not in global_labels)
 
     # mintelf gas accepts GCC's private names only with a leading underscore.
-    for label in sorted(locals, key=len, reverse=True):
+    for label in sorted(local_labels, key=len, reverse=True):
         # A dot normally continues a symbol name, except for m68k operand
         # size suffixes (for example, "symbol.w").
         symbol = re.compile(r"(?<![A-Za-z0-9_.])" + re.escape(label)
