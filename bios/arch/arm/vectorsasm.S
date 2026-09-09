@@ -1,5 +1,5 @@
 /*
- * vectorsasm_arm.S - exception vectors
+ * vectorsasm.S - exception vectors
  * The ARM processor has a much leaner exception vector table.
  * In order to simplify porting of the OS (and eventually TSRs hooking into)
  * interrupts, we attempt to simulate the 68k setup by performing some initial

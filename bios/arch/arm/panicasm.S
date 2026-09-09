@@ -1,5 +1,5 @@
 /*
- * panicasm_arm.S - support routines for panic debug messages
+ * panicasm.S - support routines for panic debug messages
  *
  * Copyright (C) 2001-2022 The EmuTOS development team
  * Copyright (C) 2018-2026 The pTOS development team

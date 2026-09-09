@@ -1,5 +1,5 @@
 /*
- * aciavecs.S - exception handling for ikbd/midi acias.
+ * aciaemu.c - exception handling for ikbd/midi acias.
  *
  * Copyright (C) 2001-2017 The EmuTOS development team
  * Copyright (C) 2018-2026 The pTOS development team
