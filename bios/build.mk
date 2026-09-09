@@ -54,7 +54,6 @@ obj-$(CONF_WITH_USB_XHCI) += raspi_vl805.o
 obj-$(CONF_WITH_RASPI_VSYNC_IRQ) += raspi_vsync.o
 
 obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o virt_pic.o virt_timer.o
-obj-$(CONF_WITH_VDI_TRUECOLOR32_TEST) += virt_screen.o
 
 obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfish_rtc_isr.o goldfish_pic_isr.o
 
@@ -63,6 +62,8 @@ obj-$(CONF_WITH_PCI_VIRT_ECAM) += virt_pci.o
 obj-$(CONF_WITH_PCI_RPI4_BRCMSTB) += raspi_pci.o
 
 obj-$(CONF_WITH_VIRTIO_BLK) += virtio_blk.o
+
+obj-$(CONF_WITH_VIRTIO_GPU) += virtio_gpu.o
 
 obj-$(CONF_WITH_VIRTIO_INPUT) += virtio_input.o virtio_input_keytbl.o
 

@@ -10,6 +10,7 @@
 #include "ikbd.h"
 #include "string.h"
 #include "kprint.h"
+#include "biosext.h"
 #include "delay.h"
 #include "asm.h"
 #include "vectors.h"

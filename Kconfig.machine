@@ -77,19 +77,6 @@ config MACHINE_VIRT_M68K
 
 endchoice
 
-config CONF_WITH_VDI_TRUECOLOR32_TEST
-	bool "Virt (ARM) XRGB8888 screen test hook"
-	depends on MACHINE_VIRT_ARM && CONF_WITH_VDI_BACKEND_TRUECOLOR32
-	default n
-	help
-	  Test hook for issue #91: makes the QEMU virt (ARM) machine report
-	  a 640x480 XRGB8888 mode descriptor backed by a guest-RAM
-	  framebuffer (bios/machine/virt-arm/virt_screen.c), so the 32bpp
-	  truecolor backend can be exercised under QEMU even though the
-	  machine has no display hardware. For verification only -- do not
-	  enable in production images. Issue #68's real ramfb driver will
-	  replace this buffer later.
-
 choice
 	prompt "Raspberry Pi model"
 	depends on MACHINE_RPI
@@ -345,8 +332,7 @@ config BUILD_TOOLCHAIN_MINTELF
 	help
 	  Vincent Rivière's newer ELF based toolchain for MiNT, the default.
 	  Being an ELF toolchain it is built with the same flags as the bare
-	  m68k-elf one below: -fleading-underscore to match the hand written
-	  assembler, --register-prefix-optional to let it write d0 rather
+	  m68k-elf one below: --register-prefix-optional to let it write d0 rather
 	  than %d0, and -DELF_TOOLCHAIN for the parts of the sources and of
 	  emutos.ld that differ between a.out and ELF.
 
@@ -361,10 +347,8 @@ config BUILD_TOOLCHAIN_ELF
 
 endchoice
 
-# The two ELF toolchains need the same treatment.  Note that
-# -fleading-underscore and -DELF_TOOLCHAIN go together: emutos.ld defines
-# leading-underscore aliases for the libgcc helpers precisely because our
-# code is compiled with the former, and that block is guarded by the latter.
+# The two ELF toolchains need the same treatment.  -DELF_TOOLCHAIN selects
+# ELF-specific source and linker-script behavior.
 config BUILD_TOOLCHAIN_IS_ELF
 	bool
 	default y if BUILD_TOOLCHAIN_MINTELF || BUILD_TOOLCHAIN_ELF

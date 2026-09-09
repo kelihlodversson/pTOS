@@ -30,6 +30,7 @@
 #include "scsi.h"
 #include "ide.h"
 #include "sd.h"
+#include "raspi_emmc.h"
 #include "virtio_blk.h"
 #include "scsidriv.h"
 #include "biosext.h"

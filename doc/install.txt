@@ -29,8 +29,8 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
 
       Picking one selects both the compiler prefix and the flags it needs;
       there is nothing else to set.  The two ELF toolchains are built with
-      -fleading-underscore, --register-prefix-optional and -DELF_TOOLCHAIN,
-      which cross-mint does not want.
+       --register-prefix-optional and -DELF_TOOLCHAIN, which cross-mint does
+       not want.
 
       Other toolchains, such as the old one from SpareMiNT, may also work.
 

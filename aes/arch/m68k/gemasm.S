@@ -13,14 +13,14 @@
 #include "asmstruct.h"
 #include "asmpd.h"
 
-        .globl  _psetup
-        .globl  _gotopgm
-        .globl  _dsptch
-        .globl  _switchto
+        .globl  C_SYM(psetup)
+        .globl  C_SYM(gotopgm)
+        .globl  C_SYM(dsptch)
+        .globl  C_SYM(switchto)
 
-        .extern _rlr
-        .extern _indisp
-        .extern _disp
+        .extern C_SYM(rlr)
+        .extern C_SYM(indisp)
+        .extern C_SYM(disp)
 
 /*
  * The amount of space that gotopgm() reserves at the top of the stack
@@ -45,7 +45,7 @@
  * will start this process executing".
  * That RTS will occur at the end of switchto()
  */
-_psetup:
+C_SYM(psetup):
 #ifdef __mcoldfire__
         move.w  sr,d0
         move.w  d0,savesr2
@@ -80,9 +80,9 @@ _psetup:
  * address of the basepage. The value of the other registers is not
  * important.
  */
-_gotopgm:
+C_SYM(gotopgm):
         // get the basepage for the top of rlr
-        movea.l _rlr,a0
+        movea.l C_SYM(rlr),a0
         movea.l PD_UDA(a0),a2
         movea.l PD_LDADDR(a0),a0        // The basepage must stay in a0
 
@@ -126,30 +126,30 @@ _gotopgm:
  *              save machine state,
  *              jump to disp
  */
-_dsptch:
-        tst.b   _indisp
+C_SYM(dsptch):
+        tst.b   C_SYM(indisp)
         jeq     savestate
         rts
 
 savestate:
 #ifdef __mcoldfire__
-        move.b  _indisp,d0
+        move.b  C_SYM(indisp),d0
         addq.l  #1,d0
-        move.b  d0,_indisp
+        move.b  d0,C_SYM(indisp)
 
         move.w  sr,d0
         move.w  d0,savesr0
         ori.l   #0x0700,d0
         move.w  d0,sr
 #else
-        addq.b  #1,_indisp
+        addq.b  #1,C_SYM(indisp)
 
         move    sr,savesr0
         ori     #0x0700,sr
 #endif
 
         move.l  a6,-(sp)        // Temporary backup
-        movea.l _rlr,a6         // Get pointer to rlr AESPD structure
+        movea.l C_SYM(rlr),a6         // Get pointer to rlr AESPD structure
         movea.l PD_UDA(a6),a6   // Get pointer to UDA structure
         move.l  (sp)+,UDA_REG_A6(a6)    // Save old a6 in UDA struct
         movem.l d0-a5,UDA_REGS(a6)      // Save registers d0-a5 in UDA struct
@@ -164,9 +164,9 @@ savestate:
 #else
         move    savesr0,sr
 #endif
-        jmp     _disp
+        jmp     C_SYM(disp)
 
-_switchto:
+C_SYM(switchto):
 #ifdef __mcoldfire__
         move.w  sr,d0
         move.w  d0,savesr0
@@ -184,7 +184,7 @@ _switchto:
         movea.l UDA_REG_A6(sp),a6
         movea.l UDA_SPSUPER(sp),sp
 
-        clr.b   _indisp
+        clr.b   C_SYM(indisp)
 #ifdef __mcoldfire__
         move.w  savesr0,d0
         move.w  d0,sr

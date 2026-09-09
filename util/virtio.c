@@ -9,6 +9,19 @@
 #include "endian.h"
 #include "virtio.h"
 
+#if defined(MACHINE_VIRT_ARM)
+/* Kept here behind the discovery interface until #75 centralizes the map. */
+#define VIRTIO_MMIO_BASE    0x0a000000UL
+#define VIRTIO_MMIO_STRIDE  0x200UL
+#define VIRTIO_MMIO_COUNT   32
+#define VIRTIO_PHYS_OFFSET  0x40000000UL
+#elif defined(MACHINE_VIRT_M68K)
+#define VIRTIO_MMIO_BASE    0xff010000UL
+#define VIRTIO_MMIO_STRIDE  0x200UL
+#define VIRTIO_MMIO_COUNT   128
+#define VIRTIO_PHYS_OFFSET  0UL
+#endif
+
 #define VIRTIO_MAGIC  0x74726976UL   /* "virt" */
 
 #define VIRTIO_STATUS_ACKNOWLEDGE  0x01
@@ -108,6 +121,28 @@ BOOL virtio_probe(ULONG base, UWORD want_device_id, VIRTIO_DEV *dev)
     return TRUE;
 }
 
+BOOL virtio_find_device(UWORD want_device_id, WORD nth, VIRTIO_DEV *dev, WORD *slot)
+{
+    WORD current_slot;
+    ULONG base;
+
+    for (current_slot = 0; current_slot < VIRTIO_MMIO_COUNT; current_slot++)
+    {
+        base = VIRTIO_MMIO_BASE + (ULONG)current_slot * VIRTIO_MMIO_STRIDE;
+        if (!virtio_probe(base, want_device_id, dev))
+            continue;
+        if (nth--)
+            continue;
+
+        dev->phys_offset = VIRTIO_PHYS_OFFSET;
+        if (slot)
+            *slot = current_slot;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
 BOOL virtio_setup_queue(VIRTIO_DEV *dev)
 {
     volatile VIRTIO_MMIO_REGS *regs = (volatile VIRTIO_MMIO_REGS *)dev->base;
@@ -196,6 +231,31 @@ void virtio_handle_interrupt(VIRTIO_DEV *dev)
         dev->last_used_idx = le2cpu16(dev->used.idx);
         dev->done = TRUE;
     }
+}
+
+void virtio_poll(VIRTIO_DEV *dev)
+{
+    virtio_handle_interrupt(dev);
+}
+
+void virtio_flush_buffer(void *start, ULONG size)
+{
+#if ARCH_ARM
+    flush_data_cache(start, size);
+#else
+    UNUSED(start);
+    UNUSED(size);
+#endif
+}
+
+void virtio_invalidate_buffer(void *start, ULONG size)
+{
+#if ARCH_ARM
+    invalidate_data_cache(start, size);
+#else
+    UNUSED(start);
+    UNUSED(size);
+#endif
 }
 
 BOOL virtio_pop_used(VIRTIO_DEV *dev, ULONG *out_index, ULONG *out_len)

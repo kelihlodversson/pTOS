@@ -486,6 +486,11 @@ long usb_get_descriptor(struct usb_device *dev, unsigned char type,
 /**********************************************************************
  * gets len of configuration cfgno
  */
+long usb_get_configuration_len(struct usb_device *dev, long cfgno);
+long usb_select_config(struct usb_device *dev);
+long usb_setup_device(struct usb_device *dev, BOOL do_read,
+                      struct usb_device *parent);
+
 long usb_get_configuration_len(struct usb_device *dev, long cfgno)
 {
     long result;
@@ -500,7 +505,7 @@ long usb_get_configuration_len(struct usb_device *dev, long cfgno)
                 dev->status));
         else
             ALERT(("config descriptor too short " \
-                "(expected %i, got %i)\n", 9, result));
+                "(expected %i, got %ld)\n", 9, result));
         return -1;
     }
     return le2cpu16(config->wTotalLength);
@@ -912,11 +917,11 @@ static long get_descriptor_len(struct usb_device *dev, long len, long expect_len
     err = usb_get_descriptor(dev, USB_DT_DEVICE, 0, desc, len);
     if (err < expect_len) {
         if (err < 0) {
-            ALERT(("unable to get device descriptor (error=%d)\n",
+            ALERT(("unable to get device descriptor (error=%ld)\n",
                 err));
             return err;
         } else {
-            ALERT(("USB device descriptor short read (expected %i, got %i)\n",
+            ALERT(("USB device descriptor short read (expected %ld, got %ld)\n",
                 expect_len, err));
             return -1;
         }
@@ -1095,7 +1100,7 @@ long usb_select_config(struct usb_device *dev)
     err = usb_set_configuration(dev, dev->config.desc.bConfigurationValue);
     if (err < 0) {
         ALERT(("failed to set default configuration " \
-            "len %d, status %lX\n", dev->act_len, dev->status));
+            "len %ld, status %lX\n", dev->act_len, dev->status));
         return err;
     }
 

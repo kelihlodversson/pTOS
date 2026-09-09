@@ -189,11 +189,11 @@ NATIVECC = gcc -std=gnu90 -pedantic $(WARNFLAGS) -W -O
 
 ifdef ARCH_ARM
 MULTILIBFLAGS = $(CPUFLAGS) -fsigned-char
-TOOLCHAIN_CFLAGS = -fleading-underscore -fno-reorder-functions -DELF_TOOLCHAIN
+TOOLCHAIN_CFLAGS = -fno-reorder-functions -DELF_TOOLCHAIN
 else
 MULTILIBFLAGS = $(CPUFLAGS) -mshort
 ifdef BUILD_TOOLCHAIN_IS_ELF
-TOOLCHAIN_CFLAGS = -fleading-underscore -Wa,--register-prefix-optional \
+TOOLCHAIN_CFLAGS = -Wa,--register-prefix-optional \
                    -fno-reorder-functions -DELF_TOOLCHAIN
 endif
 endif
@@ -879,8 +879,23 @@ obj/version.c: obj/version2.c
 obj:
 	@mkdir -p obj
 
+ifdef ARCH_M68K
+ifdef BUILD_TOOLCHAIN_IS_ELF
+M68K_LOCAL_LABEL_FIX = tools/fix-m68k-local-labels.py
+
+obj/%.o : %.c $(M68K_LOCAL_LABEL_FIX) | obj
+	$(CC) $(CFILE_FLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -MT $@ -S $< -o $@.s
+	python3 $(M68K_LOCAL_LABEL_FIX) $@.s $@.fixed.s
+	$(CC) $(SFILE_FLAGS) -x assembler -c $@.fixed.s -o $@
+	rm -f $@.s $@.fixed.s
+else
 obj/%.o : %.c | obj
 	$(CC) $(CFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
+endif
+else
+obj/%.o : %.c | obj
+	$(CC) $(CFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
+endif
 
 obj/%.o : %.S | obj
 	$(CC) $(SFILE_FLAGS) $(DEPFLAGS) -c $< -o $@

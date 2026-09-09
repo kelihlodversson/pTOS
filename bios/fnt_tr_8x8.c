@@ -165,7 +165,7 @@ const Fonthead fnt_tr_8x8 = {
     F_STDFORM | F_MONOSPACE | F_DEFAULT,  /* UWORD flags        */
     0,                  /*   UBYTE *hor_table   */
     off_8x8_table,       /*   UWORD *off_table   */
-    dat_table,           /*   UWORD *dat_table   */
+    (const UBYTE *)dat_table, /* UBYTE *dat_table */
     256,  /* UWORD form_width */
     8,  /* UWORD form_height */
     0,  /* Fonthead * next_font */

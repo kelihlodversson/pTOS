@@ -132,7 +132,6 @@ static LONG dwc2_cancel_async_int_msg(struct dwc2_priv *priv,
                                       struct usb_async_int_msg *msg);
 
 /*--- Global variables ---*/
-static const char hcd_name[] = "dwc2";
 static char lname[] = "DWC2 USB driver\0";
 static struct usb_device *root_hub_dev = NULL;
 

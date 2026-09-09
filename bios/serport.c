@@ -58,7 +58,7 @@ static WORD incr_tail(IOREC *iorec);
 static void put_iorecbuf(IOREC *out, WORD b);
 #endif
 static LONG bconstat_iorec(EXT_IOREC *iorec);
-static LONG bconin_iorec(EXT_IOREC *iorec);
+static LONG __attribute__((unused)) bconin_iorec(EXT_IOREC *iorec);
 
 #if BCONMAP_AVAILABLE
 static ULONG rsconf_dummy(WORD baud, WORD ctrl, WORD ucr, WORD rsr, WORD tsr, WORD scr);

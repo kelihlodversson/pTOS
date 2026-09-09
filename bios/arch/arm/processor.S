@@ -33,10 +33,10 @@
  * void processor_init(void) - sets mcpu and fputype.
  */
 
- .globl  _processor_init
-_processor_init:
+ .globl  C_SYM(processor_init)
+C_SYM(processor_init):
     push {lr}
-    bl _detect_cpu
+    bl C_SYM(detect_cpu)
 
     // Initialize the VFP
     mrc p15, 0, ip, c1, c0, 2
@@ -71,8 +71,8 @@ _processor_init:
  * are brand new and supposed to be aware of cache issues.
  */
 
- .globl  _instruction_cache_kludge
-_instruction_cache_kludge:
+ .globl  C_SYM(instruction_cache_kludge)
+C_SYM(instruction_cache_kludge):
         bx lr
 
 #ifdef TARGET_RPI1
@@ -86,15 +86,15 @@ _instruction_cache_kludge:
  * It is not worth the trouble for EmuTOS right now.
  */
 
-.globl  _invalidate_instruction_cache
-_invalidate_instruction_cache:
+.globl  C_SYM(invalidate_instruction_cache)
+C_SYM(invalidate_instruction_cache):
         mov ip, #0
         mcr p15, 0, ip, c7, c5,  0
         bx lr
 #endif
 
-.globl _flush_prefetch_buffer
-_flush_prefetch_buffer:
+.globl C_SYM(flush_prefetch_buffer)
+C_SYM(flush_prefetch_buffer):
 #ifdef TARGET_RPI1
         mov ip, #0
         mcr p15, 0, ip, c7, c5,  4
@@ -103,8 +103,8 @@ _flush_prefetch_buffer:
 #endif
         bx lr
 
-.globl _flush_branch_target_cache
-_flush_branch_target_cache:
+.globl C_SYM(flush_branch_target_cache)
+C_SYM(flush_branch_target_cache):
         mov ip, #0
         mcr p15, 0, ip, c7, c5,  6
         bx lr
@@ -123,19 +123,19 @@ _flush_branch_target_cache:
  *     we must push the data cache (the backing memory may be stale)
  */
 
- .globl  _flush_data_cache
-_flush_data_cache:
+ .globl  C_SYM(flush_data_cache)
+C_SYM(flush_data_cache):
         bx lr   // Assuming write-through on arm
 
- .globl  _invalidate_data_cache_all
-_invalidate_data_cache_all:
+ .globl  C_SYM(invalidate_data_cache_all)
+C_SYM(invalidate_data_cache_all):
         mov ip, #0
         mcr p15, 0, ip, c7, c6, 0
         mcr p15, 0, ip, c7, c10, 4
         bx lr
 
-.global _flush_data_cache_all
-_flush_data_cache_all:
+.global C_SYM(flush_data_cache_all)
+C_SYM(flush_data_cache_all):
         mov ip, #0
         mcr p15, 0, ip, c7, c10, 0
         mcr p15, 0, ip, c7, c10, 4

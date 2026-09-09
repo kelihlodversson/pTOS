@@ -24,6 +24,7 @@
 #include "intmath.h"
 #include "bdosbind.h"
 #include "tosvars.h"
+#include "screen_mode.h"
 
 #define FIRST_VDI_HANDLE    1
 #define LAST_VDI_HANDLE     (FIRST_VDI_HANDLE+NUM_VDI_HANDLES-1)

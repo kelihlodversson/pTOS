@@ -27,7 +27,7 @@ extern Vwk phys_work;           /* attribute area for physical workstation */
 #define OVERLAY_BIT 0x0020      /* for 16-bit resolutions */
 
 /* special values used in y member of SEGMENT */
-#define EMPTY       0xffff          /* this entry is unused */
+#define EMPTY       ((WORD)-1)      /* this entry is unused */
 #define DOWN_FLAG   0x8000
 #define ABS(v)      ((v) & 0x7FFF)  /* strips DOWN_FLAG if present */
 

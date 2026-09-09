@@ -16,8 +16,8 @@
  * structure of jmp_buf:
  *   0: 11 callee-preserved registers.
  */
-        .globl  _setjmp
-        .globl  _longjmp
+        .globl  C_SYM(setjmp)
+        .globl  C_SYM(longjmp)
 
         .text
 
@@ -26,7 +26,7 @@
                  int setjmp (jmp_buf);
    -------------------------------------------------------------------- */
 .balign 4
-_setjmp:
+C_SYM(setjmp):
 
     /* Save all the callee-preserved registers into the jump buffer.  */
     stmia       a1, { v1-v7, fp, ip, sp, lr }
@@ -38,7 +38,7 @@ _setjmp:
 /* --------------------------------------------------------------------
         volatile void longjmp (jmp_buf, int);
    -------------------------------------------------------------------- */
-_longjmp:
+C_SYM(longjmp):
 
     mov         a3, a1
     /* Put the return value into the integer result register.

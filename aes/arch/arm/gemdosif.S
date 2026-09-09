@@ -12,43 +12,43 @@
 #include "asmdefs.h"
 #include "asmstruct.h"
 
-        .globl  _justretf
-        .globl  _unset_aestrap
-        .globl  _set_aestrap
-        .globl  _aestrap_intercepted
-        .globl  _far_mcha
-        .globl  _aes_wheel
-        .globl  _far_bcha
-        .globl  _drawrat
-        .globl  _aestrap
+        .globl  C_SYM(justretf)
+        .globl  C_SYM(unset_aestrap)
+        .globl  C_SYM(set_aestrap)
+        .globl  C_SYM(aestrap_intercepted)
+        .globl  C_SYM(far_mcha)
+        .globl  C_SYM(aes_wheel)
+        .globl  C_SYM(far_bcha)
+        .globl  C_SYM(drawrat)
+        .globl  C_SYM(aestrap)
 
-        .globl  _tikaddr
-        .globl  _tiksav
-        .globl  _CMP_TICK
-        .globl  _NUM_TICK
-        .globl  _drwaddr
-        .globl  _tikcod
+        .globl  C_SYM(tikaddr)
+        .globl  C_SYM(tiksav)
+        .globl  C_SYM(CMP_TICK)
+        .globl  C_SYM(NUM_TICK)
+        .globl  C_SYM(drwaddr)
+        .globl  C_SYM(tikcod)
 
-        .extern _eralert
-        .extern _rlr
-        .extern _super
-        .extern _b_click
-        .extern _mchange
-        .extern _forkq
-        .extern _wheel_change
-        .extern _tchange
-        .extern _b_delay
-        .extern _os_beg
+        .extern C_SYM(eralert)
+        .extern C_SYM(rlr)
+        .extern C_SYM(super)
+        .extern C_SYM(b_click)
+        .extern C_SYM(mchange)
+        .extern C_SYM(forkq)
+        .extern C_SYM(wheel_change)
+        .extern C_SYM(tchange)
+        .extern C_SYM(b_delay)
+        .extern C_SYM(os_beg)
 
-        .extern  _disable_interrupts
-        .extern  _enable_interrupts
-        .extern  _giveerr
-        .extern  _takeerr
-        .extern  _retake
-        .extern  _savetrap2
+        .extern  C_SYM(disable_interrupts)
+        .extern  C_SYM(enable_interrupts)
+        .extern  C_SYM(giveerr)
+        .extern  C_SYM(takeerr)
+        .extern  C_SYM(retake)
+        .extern  C_SYM(savetrap2)
 
 // **** Trap entry: ****
-_aestrap:
+C_SYM(aestrap):
         // opcode 0 means exit
         teq r0, #0
         beq _back
@@ -59,7 +59,7 @@ _aestrap:
         beq trapaes
 
         // Chain to old trap handler in case op codes don't match
-        ldr ip, =_savetrap2
+        ldr ip, =C_SYM(savetrap2)
         ldr ip, [ip]
         bx  ip
 
@@ -88,7 +88,7 @@ trapaes:
         cps #0x13
 
         // Save info on the current process
-        ldr     r6,     =_rlr
+        ldr     r6,     =C_SYM(rlr)
         ldr     r6,     [r6]
         ldr     r6,     [r6, PD_UDA]
         mov     r3,     #1
@@ -100,12 +100,12 @@ trapaes:
         ldr     sp,     [r6, UDA_SPSUPER]
 
         cpsie   if                      // Enable interrupts
-        blx     _super                  // Calling super (opcode and paramblock parameters are already in r0 and r1)
+        blx     C_SYM(super)                  // Calling super (opcode and paramblock parameters are already in r0 and r1)
         cpsid   if                      // mask out interrupts
 
         // Even though r6 is preserved across function calls, we have to reload
         // the value in case the contents of _rlr was changed.
-        ldr     r6,     =_rlr
+        ldr     r6,     =C_SYM(rlr)
         ldr     r6,     [r6]
         ldr     r6,     [r6, PD_UDA]
         mov     r3,     #0
@@ -137,32 +137,35 @@ trapaes:
 
 .text
 
-_far_bcha:
+C_SYM(far_bcha):
         push_privstack gstack
         push    {r0-r3,lr}
-        bl      _b_click
+        bl      C_SYM(b_click)
         pop     {r0-r3,lr}
         pop_privstack
         bx      lr
 
-_far_mcha:
+C_SYM(far_mcha):
         push_privstack gstack
-        push    {r0-r3,lr}
-        ldmfd   sp, {r1,r2} // shift arg 1 and 2 up by one
-        ldr     r0, =_mchange
-        bl      _forkq
-        pop     {r0-r3,lr}
+        push    {r1-r4,lr}
+        mov     r4, r0, lsl #16     /* pack x (r0) into the high word */
+        orr     r4, r4, r1          /* r4 = (x << 16) | y  (fdata) */
+        ldr     r0, =C_SYM(mchange)
+        mov     r1, r4              /* r1 = fdata */
+        bl      C_SYM(forkq)              /* forkq(C_SYM(mchange), fdata) */
+        mov     r0, r4              /* return the unchanged packed coords */
+        pop     {r1-r4,lr}
         pop_privstack
         bx      lr
 
 #if CONF_WITH_EXTENDED_MOUSE
 /* AES mouse wheel handler called by the VDI */
-_aes_wheel:
+C_SYM(aes_wheel):
         push_privstack gstack
         push    {r0-r3,lr}
         ldmfd   sp, {r1,r2} // shift arg 1 and 2 up by one
-        ldr     r0, =_wheel_change
-        bl      _forkq
+        ldr     r0, =C_SYM(wheel_change)
+        bl      C_SYM(forkq)
         pop     {r0-r3,lr}
         pop_privstack
         bx      lr
@@ -171,17 +174,17 @@ _aes_wheel:
 
 /*
 */
-_drawrat:
-        ldr     ip, =_drwaddr
+C_SYM(drawrat):
+        ldr     ip, =C_SYM(drwaddr)
         ldr     ip, [ip]
         bx      ip
 
 
-_justretf:
+C_SYM(justretf):
         bx      lr
 
 
-_tikcod:
+C_SYM(tikcod):
         push_privstack tstack
         // r5 is otherwise unused here -- included purely to pad this to a
         // multiple of 8 bytes (7 regs = 28, +4 from push_privstack's own
@@ -190,7 +193,7 @@ _tikcod:
         // AAPCS requires 8-byte sp alignment at any public interface such
         // as these calls.
         push    {r0-r5,lr}
-        ldr     r4, =_NUM_TICK
+        ldr     r4, =C_SYM(NUM_TICK)
         ldmia   r4, {r1,r2} // r1 <- *NUM_TICK; r2 <- *CMP_TICK
         teq     r2, #0      // if (*CMP_TICK != 0)
         beq     1f          // {
@@ -198,26 +201,26 @@ _tikcod:
         subs    r2, #1      //      *CMP_TICK --;
         stmia   r4, {r1,r2} //      save back to memory
         bne     1f          //      if (*CMP_TICK == 0) {
-        ldr     r0, =_tchange
-        bl      _forkq      //          forkq(tchange, *NUM_TICK);
+        ldr     r0, =C_SYM(tchange)
+        bl      C_SYM(forkq)      //          forkq(tchange, *NUM_TICK);
                             //      }
 1:                          // }
 
         mov     r0, #1
-        bl      _b_delay    // b_delay(1);
+        bl      C_SYM(b_delay)    // b_delay(1);
 
         pop     {r0-r5,lr}
         pop_privstack
 
-        b        _tiksav    // Chain to vector stored in _tiksav
+        b        C_SYM(tiksav)    // Chain to vector stored in _tiksav
 
 
 .bss
 
-_drwaddr:
+C_SYM(drwaddr):
         .ds.l    1
 
-_tikaddr:
+C_SYM(tikaddr):
         .ds.l    1
 gstksave:
         .ds.l    1
@@ -225,11 +228,11 @@ gstksave:
 tstksave:
         .ds.l    1
 
-_tiksav:
+C_SYM(tiksav):
         .ds.l    1
-_NUM_TICK:
+C_SYM(NUM_TICK):
         .ds.l    1
-_CMP_TICK:
+C_SYM(CMP_TICK):
         .ds.l    1
 
 /*

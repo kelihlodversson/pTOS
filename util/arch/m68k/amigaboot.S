@@ -184,7 +184,7 @@ endaltram:
         // FIXME: Detect CPU for proper cache management in _bootram
         move.l  ramtos_size(pc),-(sp)       // ramtos size
         move.l  a4,-(sp)                    // Temporary ramtos address
-        bsr     _bootram                    // Boot ramtos
+        bsr     C_SYM(bootram)              // Boot ramtos
 
         // We will never return here
 
