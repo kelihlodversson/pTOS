@@ -1,8 +1,6 @@
 /*
  * arm_boot.h - the boot loader registers as ARM startup code found them
  *
- * Copyright (C) 2026 The pTOS development team
- *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */

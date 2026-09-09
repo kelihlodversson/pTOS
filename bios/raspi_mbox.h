@@ -1,8 +1,6 @@
 /*
  * raspi_mbox.h mailbox interface for communicating with the raspberry pi mailbox
  *
- * Copyright (C) 2018-2026 The pTOS development team
- *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
@@ -46,17 +44,17 @@ typedef struct {
     ULONG      value2;
 }   prop_tag_2u32_t;
 
-#define DEVICE_ID_SD_CARD	0
-#define DEVICE_ID_USB_HCD	3
-#define POWER_STATE_OFF		(0 << 0)
-#define POWER_STATE_ON		(1 << 0)
-#define POWER_STATE_WAIT	(1 << 1)
-#define POWER_STATE_NO_DEVICE	(1 << 1)	// in response
+#define DEVICE_ID_SD_CARD 0
+#define DEVICE_ID_USB_HCD 3
+#define POWER_STATE_OFF (0 << 0)
+#define POWER_STATE_ON (1 << 0)
+#define POWER_STATE_WAIT (1 << 1)
+#define POWER_STATE_NO_DEVICE (1 << 1) // in response
 
-#define CLOCK_ID_EMMC		1
-#define CLOCK_ID_UART		2
-#define CLOCK_ID_ARM		3
-#define CLOCK_ID_CORE		4
+#define CLOCK_ID_EMMC 1
+#define CLOCK_ID_UART 2
+#define CLOCK_ID_ARM 3
+#define CLOCK_ID_CORE 4
 
 typedef struct
 {

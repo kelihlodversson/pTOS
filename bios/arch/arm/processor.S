@@ -1,8 +1,16 @@
 /*
  * processor_arm.S - Detect and set CPU and FPU type
  *
- * Copyright (C) 2018-2026 The pTOS development team
+ * Copyright (C) 2002-2025 The EmuTOS development team
  * Copyright (C) 1999, 2002 by Authors
+ * Copyright (C) 2018-2026 The pTOS development team
+ *
+ * Authors:
+ *      Jörg Westheide <joerg_westheide@su.maus.de>
+ *      Draco
+ * LVL  Laurent Vogel
+ * MAD  Martin Doering
+ *      Norman Feske
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -27,7 +35,7 @@
 
  .globl  _processor_init
 _processor_init:
-	push {lr}
+    push {lr}
     bl _detect_cpu
 
     // Initialize the VFP
@@ -45,10 +53,10 @@ _processor_init:
 
     mov ip, #1 << 30    // VFP_FPEXC_EN
     fmxr fpexc, ip
-    mov ip, #1 << 25    // VFP_FPSCR_DN	 default NaN mode
+    mov ip, #1 << 25    // VFP_FPSCR_DN  default NaN mode
     fmxr fpscr, ip
 
-	pop {pc}
+    pop {pc}
 
 /*
  * void instruction_cache_kludge(void *start, long length)
@@ -123,14 +131,14 @@ _flush_data_cache:
 _invalidate_data_cache_all:
         mov ip, #0
         mcr p15, 0, ip, c7, c6, 0
-		mcr p15, 0, ip, c7, c10, 4
+        mcr p15, 0, ip, c7, c10, 4
         bx lr
 
 .global _flush_data_cache_all
 _flush_data_cache_all:
         mov ip, #0
         mcr p15, 0, ip, c7, c10, 0
-		mcr p15, 0, ip, c7, c10, 4
+        mcr p15, 0, ip, c7, c10, 4
         bx lr
 #else
 // RPI2+ definition is in cache_armv7.c

@@ -1,7 +1,5 @@
 /*
- * raspi_screen.h Raspberry PI framebuffer support
- *
- * Copyright (C) 2018-2026 The pTOS development team
+ * memory.c - Raspberry Pi memory and MMU initialization
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -338,32 +336,32 @@ static void init_mmu(ULONG memory_size)
 // Cache maintenance operations for ARMv6
 //
 // NOTE: The following functions should hold all variables in CPU registers. Currently this will be
-//	 ensured using maximum optimation (see bios/processor.h).
+//   ensured using maximum optimation (see bios/processor.h).
 //
-//	 The following numbers can be determined (dynamically) using CTR.
-//	 As long we use the ARM1176JZF-S implementation in the BCM2835 these static values will work:
+//   The following numbers can be determined (dynamically) using CTR.
+//   As long we use the ARM1176JZF-S implementation in the BCM2835 these static values will work:
 //
 
-#define DATA_CACHE_LINE_LENGTH		32
+#define DATA_CACHE_LINE_LENGTH      32
 
 void invalidate_data_cache (void *start, long length)
 {
-	length += DATA_CACHE_LINE_LENGTH;
+    length += DATA_CACHE_LINE_LENGTH;
 
-	while (1)
-	{
-		asm volatile ("mcr p15, 0, %0, c7, c14,  1" : : "r" ((ULONG)start) : "memory");
+    while (1)
+    {
+        asm volatile ("mcr p15, 0, %0, c7, c14,  1" : : "r" ((ULONG)start) : "memory");
 
-		if (length < DATA_CACHE_LINE_LENGTH)
-		{
-			break;
-		}
+        if (length < DATA_CACHE_LINE_LENGTH)
+        {
+            break;
+        }
 
-		start += DATA_CACHE_LINE_LENGTH;
-		length  -= DATA_CACHE_LINE_LENGTH;
-	}
+        start += DATA_CACHE_LINE_LENGTH;
+        length  -= DATA_CACHE_LINE_LENGTH;
+    }
 
-	data_sync_barrier ();
+    data_sync_barrier ();
 }
 #else
 // The RPI 2+ implementation is in cache_armv7.S
