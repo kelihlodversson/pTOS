@@ -69,8 +69,6 @@ RELEASE_SRC = ptos-src-$(VERSION)
 release-src:
 	mkdir $(RELEASE_DIR)/$(RELEASE_SRC)
 	cp -R $(filter-out . .. .git $(RELEASE_DIR), $(shell echo * .*)) $(RELEASE_DIR)/$(RELEASE_SRC)
-	# Historical EmuTOS records are retained in the repository, not releases.
-	rm -rf $(RELEASE_DIR)/$(RELEASE_SRC)/doc/emutos
 	find $(RELEASE_DIR)/$(RELEASE_SRC) -type d -exec chmod 755 '{}' ';'
 	find $(RELEASE_DIR)/$(RELEASE_SRC) -type f -exec chmod 644 '{}' ';'
 	find $(RELEASE_DIR)/$(RELEASE_SRC) -type f -name '*.sh' -exec chmod 755 '{}' ';'
