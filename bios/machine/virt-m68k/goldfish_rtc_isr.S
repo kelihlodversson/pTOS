@@ -13,15 +13,15 @@
 
 #include "asmdefs.h"
 
-        .globl  _goldfish_rtc_isr
-        .extern _goldfish_rtc_service
-        .extern _vector_5ms
+        .globl  C_SYM(goldfish_rtc_isr)
+        .extern C_SYM(goldfish_rtc_service)
+        .extern C_SYM(vector_5ms)
 
         .text
 
-_goldfish_rtc_isr:
+C_SYM(goldfish_rtc_isr):
         movem.l d0-d1/a0-a1,-(sp)      // save the registers goldfish_rtc_service() clobbers
-        jsr     _goldfish_rtc_service  // ack + re-arm the device (bios/machine/virt-m68k/goldfish_rtc.c)
+        jsr     C_SYM(goldfish_rtc_service)  // ack + re-arm the device (bios/machine/virt-m68k/goldfish_rtc.c)
 
         // _vector_5ms is set to int_timerc (bios/arch/m68k/vectors.S) by
         // the shared bios/mfp.c: init_system_timer(), which runs later in
@@ -29,7 +29,7 @@ _goldfish_rtc_isr:
         // several ticks can legitimately arrive with it still NULL. Test
         // the sysvar directly (no register needed) so the saved d0-d1/a0-a1
         // stay untouched on the no-tick path below.
-        tst.l   _vector_5ms
+        tst.l   C_SYM(vector_5ms)
         jeq     no_tick
 
         // Tail-jump, not jsr/rts: int_timerc ends with its own RTE, which
@@ -49,7 +49,7 @@ _goldfish_rtc_isr:
         // 68020+ (see startup.S), so the frame is unconditionally the
         // 8-byte 68010+ format (SR, PC, format/vector word) -- format 0,
         // vector 0, so RTE treats it as the plain/no-extra-data case.
-        move.l  _vector_5ms,a0
+        move.l  C_SYM(vector_5ms),a0
         clr.w   -(sp)                   // format/vector word
         pea     restore(pc)             // synthetic "return PC"
         move.w  sr,-(sp)                // synthetic SR

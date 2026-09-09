@@ -13,7 +13,7 @@
 
 #include "asmdefs.h"
 
-        .globl  _run_calibration
+        .globl  C_SYM(run_calibration)
 
 #define TIMERD_VEC  0x110
 #define MFP_REGS    0xfffffa01
@@ -27,7 +27,7 @@
 //
 // calibrate using MFP TimerD
 //
-_run_calibration:
+C_SYM(run_calibration):
         clr.l   intcount            //initialise interrupt count
 
         lea     MFP_TCDCR,a0        //a0 -> Timer C/D control reg

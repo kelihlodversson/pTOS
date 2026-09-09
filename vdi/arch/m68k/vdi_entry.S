@@ -12,13 +12,13 @@
 #include "asmdefs.h"
 #include "lineaasm.h"
 
-        .extern _local_pb
-        .extern _CONTRL
-        .extern _flip_y
-        .extern _screen
-        .extern _vdishare               //see vdi_fill.c
+        .extern C_SYM(local_pb)
+        .extern C_SYM(CONTRL)
+        .extern C_SYM(flip_y)
+        .extern C_SYM(screen)
+        .extern C_SYM(vdishare)               //see vdi_fill.c
 
-#define lcl_ptsin _vdishare
+#define lcl_ptsin C_SYM(vdishare)
 
 /*
  * _vditrap - VDI trap dispatcher
@@ -30,11 +30,11 @@
  * Note that this function does not care about AES calls since the AES later
  * hooks into the trap-2 vector itself.
  */
-        .globl  _vditrap
-_vditrap:
+        .globl  C_SYM(vditrap)
+C_SYM(vditrap):
         cmp.w   #0x73,d0                // VDI call?
         jne     no_vdi
-        jsr     _GSX_ENTRY
+        jsr     C_SYM(GSX_ENTRY)
         rte
 
 no_vdi:
@@ -48,22 +48,22 @@ no_vdi:
         rte
 
 query:
-        move.l  #_GSX_ENTRY,d0          // Return address of VDI dispatcher
+        move.l  #C_SYM(GSX_ENTRY),d0          // Return address of VDI dispatcher
         rte
 
 /*
  * _GSX_ENTRY - front end of the GIOS for the screen driver
  */
 
-        .globl  _GSX_ENTRY
+        .globl  C_SYM(GSX_ENTRY)
 
 #define W_1        2            // byte offset to first element of an array
 
 
         .text
 
-        .globl  _GSX_ENTRY
-_GSX_ENTRY:
+        .globl  C_SYM(GSX_ENTRY)
+C_SYM(GSX_ENTRY):
 #ifdef __mcoldfire__
         lea     -56(sp),sp
         movem.l d1-d7/a0-a6,(sp)        //Save the callers registers
@@ -111,7 +111,7 @@ save_ptsin:
 
 no_ptsin:
 /* Call screen which contains all the C routines for the SCREEN DRIVER. */
-        jsr     _screen
+        jsr     C_SYM(screen)
 
 /* Restore user's CONTRL[1] element from the stack. */
         movea.l LA(local_pb+0),a0      // get address of user's CONTRL array
@@ -124,7 +124,7 @@ no_ptsin:
         movem.l (sp)+, d1-d7/a0-a6 // restore the caller's registers
 #endif
         moveq   #0,d0
-        move.w  _flip_y,d0      // set d0 to indicate magnitude/coordinate
+        move.w  C_SYM(flip_y),d0      // set d0 to indicate magnitude/coordinate
 
         rts
 
@@ -135,17 +135,17 @@ no_ptsin:
 
         /* Global variables declared here */
 
-        .globl  _mov_cur        // set's new x/y coordinates
-        .globl  _mouse_int      // mouse interrupt routine
+        .globl  C_SYM(mov_cur)        // set's new x/y coordinates
+        .globl  C_SYM(mouse_int)      // mouse interrupt routine
 #if CONF_WITH_EXTENDED_MOUSE
-        .globl  _wheel_int      // wheel interrupt routine
+        .globl  C_SYM(wheel_int)      // wheel interrupt routine
 #endif
 
         /* External variables used here */
 
 #if CONF_WITH_EXTENDED_MOUSE
-        .extern _user_wheel     // user wheel vector
-        .extern _old_statvec    // previous IKBD status packet vector
+        .extern C_SYM(user_wheel)     // user wheel vector
+        .extern C_SYM(old_statvec)    // previous IKBD status packet vector
 #endif
 
         .text
@@ -213,7 +213,7 @@ cl_done:
  * exit:        none
  * destroys:    nothing
  */
-_mouse_int:
+C_SYM(mouse_int):
         tst.b   LA(mouse_flag)  // If we are in a show/hide operation
         jne     ms_exit         // just exit.
 
@@ -376,7 +376,7 @@ ms_exit:
  * destroys:    nothing
  */
 
-_wheel_int:
+C_SYM(wheel_int):
 #ifdef __mcoldfire__
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)         // Save only necessary registers
@@ -437,7 +437,7 @@ wheel_check:
 #else
         movem.l d2-d7/a2-a6,-(sp)        // Save remaining register to be safe
 #endif
-        move.l  _user_wheel,a1
+        move.l  C_SYM(user_wheel),a1
         jsr     (a1)
 #ifdef __mcoldfire__
         movem.l (sp),d2-d7/a2-a6
@@ -461,7 +461,7 @@ wheel_exit:
 #else
         movem.l (sp)+,d0-d1/a0-a1
 #endif
-        move.l  _old_statvec,-(sp)       // Go to old IKBD status vector
+        move.l  C_SYM(old_statvec),-(sp)       // Go to old IKBD status vector
         rts
 
 wheel_ikbd_packet:
@@ -481,7 +481,7 @@ wheel_ikbd_packet:
  *
  * Registers Modified:     None
  */
-_mov_cur:
+C_SYM(mov_cur):
         tst.w   LA(HIDE_CNT)    // is the cursor hidden?
         jne     mov_cur1        // yes - don't draw it now
 

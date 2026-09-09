@@ -119,18 +119,18 @@
 
 // ==== Definitions ==========================================================
 
-        .globl  _termuser
-        .globl  _gouser
-        .globl  _enter
-        .globl  _bdos_trap2
+        .globl  C_SYM(termuser)
+        .globl  C_SYM(gouser)
+        .globl  C_SYM(enter)
+        .globl  C_SYM(bdos_trap2)
 
 // ==== References ===========================================================
 
-        .extern _osif
-        .extern _xterm
-        .extern _run
-        .extern _longframe              // If not 0, use long stack frames
-        .extern _old_trap2
+        .extern C_SYM(osif)
+        .extern C_SYM(xterm)
+        .extern C_SYM(run)
+        .extern C_SYM(longframe)              // If not 0, use long stack frames
+        .extern C_SYM(old_trap2)
 
 //==== bdos_trap2 - trap 2 entry point =======================================
 //
@@ -142,21 +142,21 @@
 // feature of Atari TOS, apparently a relic of CP/M 68K.
 //
 
-_bdos_trap2:
+C_SYM(bdos_trap2):
         tst.w   d0
         jeq     oterm
 
-        move.l  _old_trap2,-(sp)
+        move.l  C_SYM(old_trap2),-(sp)
         rts
 
 oterm:  move.l  #fstrt,sp
         clr     -(sp)
-        jsr     _xterm
+        jsr     C_SYM(xterm)
         rte
 
 //==== _enter - Front end of TRAP #1 handler =================================
 
-_enter:
+C_SYM(enter):
         jbsr    fix_trap
 
         btst.b  #5,(sp)         // are we in supervisor mode?
@@ -185,7 +185,7 @@ enter_sup:
 
 enter_2:
         move.l  a6,-(sp)        // save temporarily so we can use it
-        move.l  _run,a6         // a6 -> current basepage
+        move.l  C_SYM(run),a6         // a6 -> current basepage
         movem.l d0/a3-a5,P_REGSAVE(a6)
         move.l  (sp)+,P_A6SAVE(a6)  // save original a6
         move.w  (sp)+,d0        // status reg
@@ -224,15 +224,15 @@ systk:
         lea     50(sp),a0
         move.l  #fstrt,sp
 callos: move.l  a0,-(sp)        // push parm pointer
-        jsr     _osif
+        jsr     C_SYM(osif)
         addq.l  #4,sp
 
 //...fall into gouser....
 
 //==== _gouser ===============================================================
 
-_gouser:
-        move.l  _run,a5         // a5 -> current basepage
+C_SYM(gouser):
+        move.l  C_SYM(run),a5         // a5 -> current basepage
         move.l  d0,P_D0SAVE(a5)
 ggusr:  move.l  P_A7SAVE(a5),a6 // stack pointer (maybe usp, maybe ssp)
         move.l  (a6)+,a4        // other stack pointer
@@ -262,8 +262,8 @@ retsys: move.l  a6,sp
         // xterm [ 0x4C ] aren't correctly passed back to the parent.
         // this is entered from C code as termuser()
         // aug 2005, RCL
-_termuser:
-        move.l  _run,a5
+C_SYM(termuser):
+        move.l  C_SYM(run),a5
         jra     ggusr
 
         .bss
@@ -366,7 +366,7 @@ ft_cf_nofiller:
         move.w  (sp),2(sp)      // msw of return address of BSR
         addq.l  #2,sp           // discard the Format/Vector Word
 #else
-        tst.w   _longframe.w    // check processor type
+        tst.w   C_SYM(longframe).w    // check processor type
         jeq     ft_exit
 
         move.w  8(sp),10(sp)    // lsw of return address of TRAP
@@ -385,7 +385,7 @@ fix_rte:
 #ifdef __mcoldfire__
         move.w  #0x4084,-(sp)   // store a fake Format/Vector Word
 #else
-        tst.w   _longframe.w    // check processor type
+        tst.w   C_SYM(longframe).w    // check processor type
         jeq     fr_exit
 
         subq.l  #2,sp           // reserve a hole on top of the stack

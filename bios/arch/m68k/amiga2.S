@@ -14,14 +14,14 @@
 
 #ifdef MACHINE_AMIGA
 
-        .extern _amiga_rs232_rbf_interrupt
-        .extern _amiga_screen_width_in_bytes
-        .extern _amiga_screenbase
-        .extern _amiga_is_ntsc
-        .extern _int_vbl
-        .extern _kbdvecs
-        .extern _longframe
-        .extern _scancode_atari_from_amiga
+        .extern C_SYM(amiga_rs232_rbf_interrupt)
+        .extern C_SYM(amiga_screen_width_in_bytes)
+        .extern C_SYM(amiga_screenbase)
+        .extern C_SYM(amiga_is_ntsc)
+        .extern C_SYM(int_vbl)
+        .extern C_SYM(kbdvecs)
+        .extern C_SYM(longframe)
+        .extern C_SYM(scancode_atari_from_amiga)
 
 /******************************************************************************/
 /* Startup                                                                    */
@@ -99,9 +99,9 @@ exitcheck:
 /* Interrupt 2: Keyboard and 200 Hz timer                                     */
 /******************************************************************************/
 
-        .globl  _amiga_init_keyboard_interrupt
-_amiga_init_keyboard_interrupt:
-        move.l  #_amiga_int_2,0x68.w
+        .globl  C_SYM(amiga_init_keyboard_interrupt)
+C_SYM(amiga_init_keyboard_interrupt):
+        move.l  #C_SYM(amiga_int_2),0x68.w
 
         // Disable CIAA
         move.b  #0,0xbfee01             // CIAA control register A (serial)
@@ -110,7 +110,7 @@ _amiga_init_keyboard_interrupt:
         // CIAA Timer B: 200 Hz system timer, value = 3547 (PAL), 3580 (NTSC)
         move.b  #0x0d,0xbfe701
         move.b  #0xdb,0xbfe601
-        tst.w   _amiga_is_ntsc
+        tst.w   C_SYM(amiga_is_ntsc)
         jeq     is_pal
         move.b  #0xfc,0xbfe601
 is_pal:
@@ -127,8 +127,8 @@ is_pal:
 
 /* Interrupt 2 handler */
 
-        .globl  _amiga_int_2
-_amiga_int_2:
+        .globl  C_SYM(amiga_int_2)
+C_SYM(amiga_int_2):
         //move.w  #0x0f00,0xdff180        // Background color = red
         move    #0x2700,sr              // Original interrupt mask will be restored by RTE
         movem.l d0-d2/a0-a1,-(sp)
@@ -195,10 +195,10 @@ wait_kbd_ack:
         move.b  d0,d1
         andi.b  #0x80,d0
         andi.w  #0x007f,d1
-        lea     _scancode_atari_from_amiga,a0
+        lea     C_SYM(scancode_atari_from_amiga),a0
         or.b    0(a0,d1.w),d0
 
-        move.l  _kbdvecs-4,a0           // kbdvec
+        move.l  C_SYM(kbdvecs)-4,a0           // kbdvec
         jsr     (a0)
         rts
 
@@ -207,7 +207,7 @@ wait_kbd_ack:
 _amiga_int_ciaa_timer_b:
 // Call vector_5ms. The return address is already on the stack.
 // As it will return with RTE, we must setup a proper stack frame
-        tst.w   _longframe              // CPU > 68000, long stack frame?
+        tst.w   C_SYM(longframe)              // CPU > 68000, long stack frame?
         jeq     nolong
 
         subq.l  #2,sp                   // Make room for additional word
@@ -216,8 +216,8 @@ _amiga_int_ciaa_timer_b:
 nolong:
         move.w  sr,-(sp)                // Push SR
 
-        .extern _vector_5ms
-        move.l  _vector_5ms,a0
+        .extern C_SYM(vector_5ms)
+        move.l  C_SYM(vector_5ms),a0
         jmp     (a0)                    // Call the 200 Hz system timer
 
 /******************************************************************************/
@@ -226,15 +226,15 @@ nolong:
 
 /* Interrupt 5 handler */
 
-        .globl  _amiga_int_5
-_amiga_int_5:
+        .globl  C_SYM(amiga_int_5)
+C_SYM(amiga_int_5):
         movem.l d0-d1/a0-a1,-(sp)
 
         move.w  0xdff01e,d0             // INTREQR
         btst    #11,d0                  // RBF interrupt?
         jeq     amiga_int_5_end
 
-        jbsr    _amiga_rs232_rbf_interrupt
+        jbsr    C_SYM(amiga_rs232_rbf_interrupt)
 
         move.w  #0x0800,0xdff09c        // INTREQ = interrupt processed.
         move.w  #0x0800,0xdff09c        // twice for compatibility
@@ -247,35 +247,35 @@ amiga_int_5_end:
 /* VBL interrupt                                                              */
 /******************************************************************************/
 
-        .extern _copper_list
+        .extern C_SYM(copper_list)
 
-        .globl  _amiga_vbl
-_amiga_vbl:
+        .globl  C_SYM(amiga_vbl)
+C_SYM(amiga_vbl):
         movem.l d0-d1/a0-a1,-(sp)
 
         move.w  0xdff01e,d0             // INTREQR
         btst    #5,d0                   // VBL interrupt?
         jeq     amivblend
 
-        move.l  _amiga_screenbase,d0    // Video Base address
+        move.l  C_SYM(amiga_screenbase),d0    // Video Base address
 
         tst.w   0xdff004                // VPOSR: Test bit 15 = LOF bit
         jmi     setcopper               // LOF = 1, odd field: start at line 1
 
         moveq   #0,d1
-        move.w  _amiga_screen_width_in_bytes,d1
+        move.w  C_SYM(amiga_screen_width_in_bytes),d1
         add.l   d1,d0                   // LOF = 0, even field: start at line 2
 
 setcopper:
-        move.l  _copper_list,a0
+        move.l  C_SYM(copper_list),a0
         move.w  d0,10(a0)               // BPL1PTL
         swap    d0
         move.w  d0,6(a0)                // BPL1PTH
 
-        jbsr    _int_vbl                // Call the standard VBL handler
+        jbsr    C_SYM(int_vbl)                // Call the standard VBL handler
 
-        .extern _amiga_extra_vbl
-        jbsr    _amiga_extra_vbl        // Call extra VBL handler
+        .extern C_SYM(amiga_extra_vbl)
+        jbsr    C_SYM(amiga_extra_vbl)        // Call extra VBL handler
 
         move.w  #0x0020,0xdff09c        // INTREQ: Clear VBL interrupt
         move.w  #0x0020,0xdff09c        // Twice for compatibility

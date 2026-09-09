@@ -13,9 +13,9 @@
 
 
 
-        .globl  _fast_bit_blt
+        .globl  C_SYM(fast_bit_blt)
 
-        .extern _blit_info
+        .extern C_SYM(blit_info)
 
 // The following defines are offsets inside fringe code fragments
 // As a result this file cannot be converted to ColdFire using PortAsm.
@@ -794,7 +794,7 @@ f2op_15:
 // It emulates the link opcode by setting a6 to FRAME_LEN plus the passed
 // address.  That way the rest of the assembler stuff can stay as
 // it is for now - some of it is also used for text blitting.
-_fast_bit_blt:
+C_SYM(fast_bit_blt):
         // A wrapper, so save and set up registers
         movea.l 4(sp),a0                // a0 -> start of frame
         movem.l d2-d7/a2-a6,-(sp)
