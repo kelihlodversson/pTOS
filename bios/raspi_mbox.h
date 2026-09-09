@@ -49,7 +49,7 @@ typedef struct {
 #define POWER_STATE_OFF (0 << 0)
 #define POWER_STATE_ON (1 << 0)
 #define POWER_STATE_WAIT (1 << 1)
-#define POWER_STATE_NO_DEVICE (1 << 1) // in response
+#define POWER_STATE_NO_DEVICE (1 << 1) /* in response */
 
 #define CLOCK_ID_EMMC 1
 #define CLOCK_ID_UART 2
