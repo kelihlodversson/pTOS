@@ -33,7 +33,7 @@
         .extern C_SYM(stktop)
 
         // Memory
-        .extern C_SYM(meminit) // initialize the memory and its controller
+        .extern meminit        // initialize the memory and its controller
 
         // BIOS C part
         .extern C_SYM(biosmain)     // BIOS C entry point
