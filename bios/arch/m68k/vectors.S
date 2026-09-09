@@ -560,10 +560,21 @@ _int_timerc:
         jsr     _int_vbl
 #endif
 
+        // etv_timer is void(*)(int): under -mfastcall the one scalar
+        // argument goes in d0, sign-extended to a full LONG the way a
+        // C caller would promote a WORD to int -- not pushed on the
+        // stack as the plain ABI below does.
+#if CONF_WITH_MFASTCALL
+        move.w  _timer_ms.w, d0
+        ext.l   d0
+        move.l  _etv_timer.w, a0
+        jsr     (a0)                    // jump to etv_timer routine
+#else
         move.w  _timer_ms.w, -(sp)
         move.l  _etv_timer.w, a0
         jsr     (a0)                    // jump to etv_timer routine
         addq.l  #2, sp                  // correct stack
+#endif
 
 #ifdef __mcoldfire__
         // On ColdFire, d0 and a0 will be restored later
@@ -1427,10 +1438,23 @@ _xbios_unimpl:
 /*
  * Supexec() function handler
  * See xbios.c for more information.
+ *
+ * LONG supexec(PFLONG) is called as a plain C function, tail-jumping
+ * (not jsr) to the caller's codeptr so it adds no stack frame of its
+ * own. Under -mfastcall its one pointer argument arrives in a0
+ * already, not on the stack -- reading 4(a7) here overwrote that
+ * correct a0 with whatever the fastcall-compiled caller's own stack
+ * happened to hold (since nothing was pushed for this call), turning
+ * every supexec() call into a wild jump to an unrelated address.
  */
+#if CONF_WITH_MFASTCALL
+_supexec:
+        jmp     (a0)
+#else
 _supexec:
         movea.l 4(a7),a0
         jmp     (a0)
+#endif
 
 #if CONF_WITH_BUS_ERROR
 
