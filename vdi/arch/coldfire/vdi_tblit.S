@@ -56,8 +56,8 @@
 | 1 "vdi/lineaasm.h" 1
 | 17 "vdi/vdi_tblit.S" 2
 | 115 "vdi/vdi_tblit.S"
-|;;           .globl _normal_blit      | [19]
-    .globl  _normal_blit
+|;;           .globl C_SYM(normal_blit) | [19]
+    .globl  C_SYM(normal_blit)
 | 129 "vdi/vdi_tblit.S"
 |;;           .extern C_SYM(linea_vars) | [24]
     .extern C_SYM(linea_vars)
@@ -70,7 +70,7 @@
 
 
     .p2align 1,0
-_normal_blit:
+C_SYM(normal_blit):
 |;;   movem.l   d2-d7/a2-a6,-(sp)      | [47]
     lea      -44(%a7),%a7
     movem.l  %d2-%d7/%a2-%a6,(%a7)

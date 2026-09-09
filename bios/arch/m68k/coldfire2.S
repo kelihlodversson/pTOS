@@ -61,7 +61,7 @@ coldfire_startup:
 #endif
 
         pea     (a6)            // Return address
-        jmp     _coldfire_early_init
+        jmp     C_SYM(coldfire_early_init)
 
 #if CONF_COLDFIRE_TIMER_C
         .extern C_SYM(int_timerc)
@@ -100,7 +100,7 @@ C_SYM(coldfire_int_35):
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
 
-        jbsr    _coldfire_rs232_interrupt_handler
+        jbsr    C_SYM(coldfire_rs232_interrupt_handler)
 
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
@@ -113,7 +113,7 @@ C_SYM(coldfire_int_57):
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
 
-        jbsr    _coldfire_flexcan_message_buffer_interrupt
+        jbsr    C_SYM(coldfire_flexcan_message_buffer_interrupt)
 
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
