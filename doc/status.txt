@@ -19,8 +19,9 @@ Tested platforms
   Hatari Atari emulation   | tested | m68k Atari configurations
 
 Other configurations are maintained as portability targets and may be
-build-tested without equivalent runtime validation.  See configs/ for the
-available configurations and readme.md for current development work.
+build-tested without equivalent runtime validation.  See configs/ and
+readme.md in the source tree (https://github.com/kelihlodversson/pTOS) for
+the available configurations and current development work.
 
 Testing
 -------
@@ -33,7 +34,8 @@ Build a target with its defconfig, then build the regression-test disk
 
 Boot the image with test-hd.img attached in the appropriate emulator or on the
 target hardware.  The test program writes PASS/FAIL results to the console.
-The emulator commands and test-harness details are in tests/readme.md.
+The emulator commands and test-harness details are in tests/readme.md in the
+source tree (https://github.com/kelihlodversson/pTOS).
 
 The current runtime status is intentionally narrower than EmuTOS's historical
 compatibility matrix.  pTOS's purpose is to develop and validate portable

@@ -1,5 +1,5 @@
 /*
- * startup.S - EmuTOS startup module
+ * startup.S - Raspberry Pi startup module
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
