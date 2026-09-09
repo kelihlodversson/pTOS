@@ -1,5 +1,5 @@
 /*
- * vectors_arm.c - exception vectors
+ * vectors.c - exception vectors
  * The ARM processor has a much leaner exception vector table.
  * In order to simplify porting of the OS (and eventually TSRs hooking into)
  * interrupts, we attempt to simulate the 68k setup by performing some initial
@@ -7,6 +7,7 @@
  * handler from the same offsets as defined on the 68000.
  *
  * Copyright (C) 2001-2017 by the EmuTOS development team
+ * Copyright (C) 2018-2026 The pTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.

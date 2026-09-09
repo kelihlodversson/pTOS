@@ -24,7 +24,7 @@ this conversion for us here, because it refuses a file containing escape
 bytes as binary.
 
 Any file after the first is appended verbatim (CRLF aside, no markdown
-rendering) -- this is how readme_emutos.txt, the plain boilerplate every
+rendering) -- this is how readme_ptos.txt, the plain boilerplate every
 pTOS readme ends with, gets attached.
 """
 

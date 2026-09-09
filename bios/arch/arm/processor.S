@@ -1,8 +1,16 @@
 /*
- * processor_arm.S - Detect and set CPU and FPU type
+ * processor.S - Detect and set CPU and FPU type
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2025 The EmuTOS development team
  * Copyright (C) 1999, 2002 by Authors
+ * Copyright (C) 2018-2026 The pTOS development team
+ *
+ * Authors:
+ *      Jörg Westheide <joerg_westheide@su.maus.de>
+ *      Draco
+ * LVL  Laurent Vogel
+ * MAD  Martin Doering
+ *      Norman Feske
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.

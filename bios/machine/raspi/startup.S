@@ -1,7 +1,5 @@
 /*
- * startup.S - EmuTOS startup module
- *
- * Copyright (C) 2001-2017 by the EmuTOS development team
+ * startup.S - Raspberry Pi startup module
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
