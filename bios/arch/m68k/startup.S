@@ -28,12 +28,12 @@
 // ==== References ===========================================================
 
         // TOS System variables
-        .extern resvalid
-        .extern resvector
+        .extern C_SYM(resvalid)
+        .extern C_SYM(resvector)
         .extern C_SYM(stktop)
 
         // Memory
-        .extern meminit       // initialize the memory and its controller
+        .extern C_SYM(meminit) // initialize the memory and its controller
 
         // BIOS C part
         .extern C_SYM(biosmain)     // BIOS C entry point

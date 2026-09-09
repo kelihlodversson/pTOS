@@ -39,11 +39,11 @@
         .extern C_SYM(invalidate_data_cache)
 
         // ST-RAM settings
-        .extern memctrl
+        .extern C_SYM(memctrl)
         .extern C_SYM(phystop)
-        .extern memvalid
-        .extern memval2
-        .extern memval3
+        .extern C_SYM(memvalid)
+        .extern C_SYM(memval2)
+        .extern C_SYM(memval3)
 
         // TT-RAM settings
         .extern C_SYM(ramtop)

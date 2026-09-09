@@ -44,8 +44,8 @@
         .extern C_SYM(vblqueue)
         .extern C_SYM(swv_vec)
         .extern C_SYM(hz_200)
-        .extern etv_timer
-        .extern etv_critic
+        .extern C_SYM(etv_timer)
+        .extern C_SYM(etv_critic)
         .extern C_SYM(timer_ms)
         .extern C_SYM(v_bas_ad)
 

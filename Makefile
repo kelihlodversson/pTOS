@@ -883,7 +883,7 @@ ifdef ARCH_M68K
 ifdef BUILD_TOOLCHAIN_IS_ELF
 M68K_LOCAL_LABEL_FIX = tools/fix-m68k-local-labels.py
 
-obj/%.o : %.c | obj
+obj/%.o : %.c $(M68K_LOCAL_LABEL_FIX) | obj
 	$(CC) $(CFILE_FLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -MT $@ -S $< -o $@.s
 	python3 $(M68K_LOCAL_LABEL_FIX) $@.s $@.fixed.s
 	$(CC) $(SFILE_FLAGS) -x assembler -c $@.fixed.s -o $@

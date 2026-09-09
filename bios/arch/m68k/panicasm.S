@@ -22,9 +22,9 @@
         .extern C_SYM(dopanic)
         .extern C_SYM(flush_data_cache)
         .extern C_SYM(main)
-        .extern resvalid
-        .extern resvector
-        .extern memvalid
+        .extern C_SYM(resvalid)
+        .extern C_SYM(resvector)
+        .extern C_SYM(memvalid)
         .extern C_SYM(warm_magic)
 
         .globl  C_SYM(panic)

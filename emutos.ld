@@ -154,7 +154,7 @@ SECTIONS
     /* First section in static Alt-RAM */
     .first_altram :
     {
-        __static_altram_start = .;
+        C_SYM(_static_altram_start) = .;
     } >altram
 #endif
 
@@ -287,7 +287,7 @@ SECTIONS
     /* Last section in static Alt-RAM */
     .last_altram :
     {
-        __static_altram_end = .;
+        C_SYM(_static_altram_end) = .;
     } >altram
 #endif
 
