@@ -234,8 +234,40 @@ mdrminus:
 
 /*
  * LONG protect_v(LONG (*func)(void));
+ *
+ * These four wrappers weren't wired up for -mfastcall at all: their
+ * bodies unconditionally read every argument off a plain-ABI stack
+ * frame, but a -mfastcall caller passes func in a0 and the scalar
+ * arguments in d0/d1/d2, spilling only what doesn't fit to the stack
+ * (confirmed against this GCC fork's own -mfastcall codegen for these
+ * exact argument shapes). Left as-is, every argument read here would
+ * come from wherever the caller's own stack happened to have -- e.g.
+ * a stale value from an earlier call, which is not a hypothetical: this
+ * is what let a garbled "func" pointer through protect_wlwwwl's caller
+ * (bios.c's hard-disk read/write path, hdv_rw) into a wild jsr.
+ *
+ * Fix: under -mfastcall, build the exact same plain-ABI frame each
+ * body already expects (func/args at the same fixed offsets, one full
+ * 4-byte slot each, matching how a plain-ABI caller pads WORD args --
+ * verified against this compiler's own non-fastcall codegen for the
+ * same signatures) by pushing the incoming registers, then bsr into
+ * the unchanged body under a new label. Only pop what this wrapper
+ * itself pushed before returning: any argument that didn't fit in
+ * a0/d0/d1/d2 arrived spilled on our own caller's stack (caller-cleanup,
+ * same convention as this file's other -mfastcall fixes), and must be
+ * left there for the caller to pop after we return, not touched here.
  */
+#if CONF_WITH_MFASTCALL
 _protect_v:
+        move.l   a0,-(sp)                // func
+        bsr      protect_v_stackbody
+        lea      4(sp),sp                // drop func pushed above (no caller stack args)
+        rts
+
+protect_v_stackbody:
+#else
+_protect_v:
+#endif
         move.l   4(sp),a0
         move.l   a2,-(sp)
         move.l   d2,-(sp)
@@ -247,7 +279,19 @@ _protect_v:
 /*
  * LONG protect_w(LONG (*func)(WORD), WORD);
  */
+#if CONF_WITH_MFASTCALL
 _protect_w:
+        ext.l    d0                      // a, sign-extended to a full slot
+        move.l   d0,-(sp)                // a
+        move.l   a0,-(sp)                // func
+        bsr      protect_w_stackbody
+        lea      8(sp),sp                // drop func/a pushed above (no caller stack args)
+        rts
+
+protect_w_stackbody:
+#else
+_protect_w:
+#endif
         move.l   4(sp),a0
         move.w   8(sp),d0
         move.l   a2,-(sp)
@@ -262,7 +306,21 @@ _protect_w:
 /*
  * LONG protect_ww(LONG (*func)(WORD), WORD, WORD);
  */
+#if CONF_WITH_MFASTCALL
 _protect_ww:
+        ext.l    d1                      // b, sign-extended to a full slot
+        move.l   d1,-(sp)                // b
+        ext.l    d0                      // a, sign-extended to a full slot
+        move.l   d0,-(sp)                // a
+        move.l   a0,-(sp)                // func
+        bsr      protect_ww_stackbody
+        lea      12(sp),sp               // drop func/a/b pushed above (no caller stack args)
+        rts
+
+protect_ww_stackbody:
+#else
+_protect_ww:
+#endif
         move.l   4(sp),a0
         move.l   8(sp),d0
         move.l   a2,-(sp)
@@ -276,8 +334,34 @@ _protect_ww:
 
 /*
  * LONG protect_wlwwwl(LONG (*func)(), WORD, LONG, WORD, WORD, WORD, LONG);
+ *
+ * Only the first 3 scalar args (a, b, c) fit in d0/d1/d2 alongside func
+ * in a0; d, e and f spill to our caller's stack, each already sign-
+ * extended to a full 4-byte slot by the caller (same convention as
+ * every other -mfastcall stack-spill fix in this tree), at 4(sp)/8(sp)/
+ * 12(sp) relative to our own entry sp.
  */
+#if CONF_WITH_MFASTCALL
 _protect_wlwwwl:
+        move.l   12(sp),-(sp)            // f, copied from our caller's spilled arg
+        move.l   12(sp),-(sp)            // e, ditto (offset shifted by the f push above)
+        move.l   12(sp),-(sp)            // d, ditto (offset shifted twice now)
+        ext.l    d2                      // c, sign-extended to a full slot
+        move.l   d2,-(sp)                // c
+        move.l   d1,-(sp)                // b (already a full LONG)
+        ext.l    d0                      // a, sign-extended to a full slot
+        move.l   d0,-(sp)                // a
+        move.l   a0,-(sp)                // func
+        bsr      protect_wlwwwl_stackbody
+        lea      28(sp),sp               // drop func/a/b/c/d/e/f pushed above; the
+                                          // caller's own spilled d/e/f are untouched
+                                          // and remain its to pop
+        rts
+
+protect_wlwwwl_stackbody:
+#else
+_protect_wlwwwl:
+#endif
         movem.l  8(sp),d0-d1/a0-a1
         move.l   a2,-(sp)
         move.l   d2,-(sp)
