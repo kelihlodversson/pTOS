@@ -25,7 +25,8 @@ available configurations and readme.md for current development work.
 Testing
 -------
 
-Build a target with its defconfig, then build the regression-test disk:
+Build a target with its defconfig, then build the regression-test disk
+(CONF_WITH_REGRESSION_TESTS, on by default -- `make menuconfig` if it isn't):
 
     make rpi2_defconfig && make
     make test-hd
