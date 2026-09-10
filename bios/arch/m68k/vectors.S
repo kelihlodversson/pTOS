@@ -1470,10 +1470,16 @@ _check_read_byte:
         move.l  (8).w,a1
         lea     berr.w(pc),a0
         move.l  a0,(8).w
+#if CONF_WITH_MFASTCALL
+        // the single scalar argument arrives in d0, not on the stack --
+        // move it to a0 before the moveq below clobbers d0
+        movea.l d0,a0
+#else
+        move.l  4(sp),a0
+#endif
         moveq   #0,d0
         nop                                     // flush pipeline
 
-        move.l  4(sp),a0
         jbsr    buggy_jit_save_registers_before_bus_error
         tst.b   (a0)            // this may cause a Bus Error
         nop                                     // flush pipeline

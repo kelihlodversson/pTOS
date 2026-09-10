@@ -448,9 +448,15 @@ detect_extra_stram:
 
         lea     5*1024*1024-1,a0        // start at the end of 5 MB
 loop_extra_stram:
+#if CONF_WITH_MFASTCALL
+        move.l  a0,d0                   // single scalar arg goes in d0
+#else
         pea     (a0)
+#endif
         jsr     _check_read_byte        // test the last byte
+#if !CONF_WITH_MFASTCALL
         addq.l  #4,sp
+#endif
         tst.w   d0                      // readable ?
         jeq     detect_extra_stram_end  // no, stop here
 
