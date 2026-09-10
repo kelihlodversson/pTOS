@@ -16,6 +16,10 @@
 #ifndef BIOSBIND_H
 #define BIOSBIND_H
 
+#ifdef __arm__
+#include "biosargs.h"
+#endif
+
 #define Getmpb(a) bios_v_l(0x0,a)
 #define Bconstat(a) bios_w_w(0x1,a)
 #define Bconin(a) bios_l_w(0x2,a)
@@ -241,19 +245,28 @@ static __inline__ long
 bios_l_wlwwwl(int op, short a, long b, short c, short d, short e, long f)
 {
 #ifdef __arm__
+    /*
+     * lrwabs() needs 6 real arguments; _biostrap only delivers 4 in
+     * registers, so pass them via a bios_lrwabs_args struct instead
+     * (biosargs.h). See kelihlodversson/pTOS#217.
+     */
+    struct bios_lrwabs_args args;
     register long _r0 __asm__("r0")=(long)(op);
-    register long _r1 __asm__("r1")=(long)(a);
-    register long _r2 __asm__("r2")=(long)(b);
-    register long _r3 __asm__("r3")=(long)(c);
-    register long _r4 __asm__("r4")=(long)(d);
-    register long _r5 __asm__("r5")=(long)(e);
+    register long _r1 __asm__("r1");
+
+    args.r_w = a;
+    args.adr = (void *)b;
+    args.numb = c;
+    args.first = d;
+    args.drive = e;
+    args.lfirst = f;
+    _r1 = (long)&args;
+
     __asm__ volatile (
         "svc 13"
-        : "=r"(_r0),
-          /* r1-r3 are marked as output, as they are clobbered, but since they are used for input, we can't put them in the clobber list */
-          "=r"(_r1), "=r"(_r2), "=r"(_r3)
-        : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3), "r"(_r4), "r"(_r5)
-        : "r12", "lr",  "memory", "cc"
+        : "=r"(_r0)
+        : "r"(_r0), "r"(_r1)
+        : "r2", "r3", "r4", "r12", "lr",  "memory", "cc"
     );
     return _r0;
 #else

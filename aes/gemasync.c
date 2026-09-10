@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2024 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -15,22 +15,21 @@
 *       Copyright (C) 1987                      Digital Research Inc.
 *       -------------------------------------------------------------
 */
-
-#include "config.h"
-#include "portab.h"
+/* #define ENABLE_KDEBUG */
+#include "emutos.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesdefs.h"
+#include "aesvars.h"
 #include "obdefs.h"
-#include "gemlib.h"
 
 #include "geminput.h"
 #include "gemflag.h"
 #include "gemqueue.h"
-#include "optimopt.h"
 #include "gemasm.h"
 #include "gemasync.h"
 
 #include "string.h"
+#include "biosext.h"
 
 
 static void signal(EVB *e)
@@ -72,7 +71,7 @@ void azombie(EVB *e, UWORD ret)
     if (zlr)
         zlr->e_pred = e;
 
-    e->e_pred = (EVB *)(((BYTE *) &zlr) - offsetof(EVB, e_link));
+    e->e_pred = FAKE_EVB(&zlr);
     zlr = e;
     e->e_flag = COMPLETE;
     signal(e);
@@ -84,7 +83,7 @@ void evinsert(EVB *e, EVB **root)
     EVB *p, *q;
 
     /* insert event block on list */
-    q = (EVB *)((BYTE *) root - offsetof(EVB, e_link));
+    q = FAKE_EVB(root);
     p = *root;
     e->e_pred = q;
     q->e_link = e;
@@ -133,18 +132,16 @@ EVSPEC iasync(WORD afunc, LONG aparm)
     EVB *e;
 
     /* get an evb */
-    if ((e = eul) != 0)
-    {
-        eul = eul->e_nextp;
-        memset(e, 0, sizeof(EVB));
-    }
+    if ((e = eul) == NULL)
+        panic("no free EVBs available\n");
 
-    /* put in on list */
+    eul = e->e_nextp;
+    bzero(e, sizeof(EVB));
+
+    /* add to list of events being waited for */
     e->e_nextp = rlr->p_evlist;
     rlr->p_evlist = e;
     e->e_pd = rlr;
-    e->e_flag = 0;
-    e->e_pred = 0;
 
     /* update mask */
     e->e_mask = afunc;
@@ -159,6 +156,9 @@ EVSPEC iasync(WORD afunc, LONG aparm)
         break;
     case MU_M1:
     case MU_M2:
+#if CONF_WITH_MENU_EXTENSION
+    case MU_M3:
+#endif
         amouse(e,aparm);
         break;
     case MU_MESAG:
@@ -188,6 +188,13 @@ UWORD apret(EVSPEC mask)
     for (p = (q = (EVB *) &rlr->p_evlist) -> e_nextp; p; p = (q=p)->e_nextp)
         if (p->e_mask == mask)
             break;
+
+    /* paranoia, make sure there is an event */
+    if (!p)
+    {
+        KDEBUG(("Expected event %04x not found\n", mask));
+        return 0;
+    }
 
     /* found the event, remove it from the zombie list */
     p->e_pred->e_link = p->e_link;

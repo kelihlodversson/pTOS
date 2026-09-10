@@ -2,7 +2,7 @@
  * memmove.S - a fast memmove/memcpy for 68000/ColdFire
  *
  * Copyright (C) 2001 by Authors:
- * Copyright (C) 2013-2017 by The EmuTOS development team.
+ * Copyright (C) 2013-2020 by The EmuTOS development team.
  *
  * Authors:
  *  LVL  Laurent Vogel
@@ -15,7 +15,6 @@
  */
 
 #include "asmdefs.h"
-
 
 // This is taken from Minix 1.5 copy_68k.s fast copy routine.
 // extracted phys_copy() and converted to modern syntax,
@@ -52,8 +51,8 @@
 #define BREAKEVEN 12    // dividing line between simple & complicated
                         // versions of memcpy(): good for 68000 & 68030
 
-        .globl  _memmove
-        .globl  _memcpy
+        .globl  C_SYM(memmove)
+        .globl  C_SYM(memcpy)
 
         .text
 
@@ -63,19 +62,17 @@
 // if the two regions overlap. returns dst as passed.
 
 //
-// void * memcpy(void * dst, void * src, size_t length);
+// void * memcpy(void * RESTRICT dst, void * RESTRICT src, size_t length);
 // moves length bytes from src to dst. returns dst as passed.
 // the behaviour is undefined if the two regions overlap.
 
-
-
-_memcpy:
+C_SYM(memcpy):
 #ifndef __mcoldfire__
         move.l   8(sp),a0        // load source pointer
         move.l   4(sp),a1        // load destination pointer
         move.l   12(sp),d0       // get length
         cmpi.l   #BREAKEVEN,d0   // is it worth doing the complicated version?
-        jge      memmove         // yes, branch
+        jge      memmove_common  // yes, branch
         jra      sdecr
 sloop:
         move.b   (a0)+,(a1)+
@@ -84,10 +81,10 @@ sdecr:
         move.l   4(sp),d0        // return destination pointer
         rts
 #endif
-_memmove:
+C_SYM(memmove):
         move.l   8(sp),a0        // load source pointer
         move.l   4(sp),a1        // load destination pointer
-memmove:
+memmove_common:
         cmp.l    a1,a0
         jgt      memcopy         // if src > dst, copy will do fine.
         jeq      end             // if src == dst, nothing to do.

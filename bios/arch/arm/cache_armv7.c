@@ -25,8 +25,17 @@ static void v7_dcache_clean_inval_range(uint32_t start, uint32_t stop, uint32_t 
 static void v7_dcache_inval_range(uint32_t start, uint32_t stop, uint32_t line_len);
 static void v7_dcache_maint_range(uint32_t start, uint32_t stop, uint32_t range_op);
 static void v7_inval_tlb(void);
-void clean_data_cache(void);
+
+void arm_init_before_mmu(void);
+void invalidate_data_cache(void *start, long size);
+void invalidate_data_cache_all(void);
+void invalidate_dcache_range(unsigned long start, unsigned long stop);
+void invalidate_icache_all(void);
+void invalidate_instruction_cache(void *start, long size);
+void flush_data_cache(void *start, long size);
 void flush_data_cache_all(void);
+void flush_dcache_range(unsigned long start, unsigned long stop);
+void mmu_page_table_flush(unsigned long start, unsigned long stop);
 
 void v7_outer_cache_enable(void);
 void v7_outer_cache_disable(void);
@@ -114,7 +123,7 @@ static void v7_inval_tlb(void)
         instruction_sync_barrier();
 }
 
-void clean_data_cache(void)
+void invalidate_data_cache_all(void)
 {
         v7_invalidate_dcache_all();
         v7_outer_cache_inval_all();
@@ -171,7 +180,7 @@ void invalidate_data_cache(void *start, long size)
 void arm_init_before_mmu(void)
 {
         v7_outer_cache_enable();
-        clean_data_cache();
+        invalidate_data_cache_all();
         v7_inval_tlb();
 }
 
@@ -198,6 +207,12 @@ void invalidate_icache_all(void)
 
         /* ISB - make sure the instruction stream sees it */
         instruction_sync_barrier();
+}
+
+void invalidate_instruction_cache(void *start, long size)
+{
+    flush_data_cache(start, size);
+    invalidate_icache_all();
 }
 
 /*  Stub implementations for outer cache operations */

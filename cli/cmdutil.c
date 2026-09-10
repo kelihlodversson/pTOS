@@ -1,7 +1,7 @@
 /*
  * EmuCON2 utility routines
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2024 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -10,7 +10,17 @@
  * option any later version.  See doc/license.txt for details.
  */
 #include "cmd.h"
-#include <string.h>
+#ifdef __arm__
+#include "tosvars.h"
+#endif
+#include "string.h"
+#include <stdarg.h>
+#include "doprintf.h"
+#ifdef STANDALONE_CONSOLE
+/* the ROM build's sprintf() comes from util/string.c; the standalone
+   build has no such thing and needs libcmini's real one instead */
+#include <stdio.h>
+#endif
 
 typedef struct {
     long cookie;
@@ -52,7 +62,7 @@ void messagenl(const char *msg)
  */
 void errmsg(LONG rc)
 {
-char buf[20];
+char buf[32];   /* must hold translated "error code %ld" (%ld can be 11 chars) */
 const char *p;
 
     switch(rc) {
@@ -80,7 +90,7 @@ const char *p;
     case USER_BREAK:
         p = _("interrupted");
         break;
-    case INVALID_PATH:
+    case NOT_DIRECTORY:
         p = _("invalid path");
         break;
     case DISK_FULL:
@@ -102,14 +112,8 @@ const char *p;
         p = _("wrong number of arguments");
         break;
     default:
-        message(_("error code "));
-        if (rc < 0) {
-            conout('-');
-            rc = -rc;
-        }
-        convulong(buf,rc,10,' ');
-        for (p = buf; *p == ' '; p++)
-            ;
+        p = buf;
+        sprintf(buf,_("error code %ld"),rc);
         break;
     }
     messagenl(p);
@@ -186,28 +190,6 @@ char *p = buf + width;
         *p-- = filler;
 }
 
-PRIVATE char *conv2(char *p,WORD n)
-{
-WORD tens;
-
-    tens = n / 10;
-    *p++ = '0' + tens;
-    *p++ = '0' + (n - tens * 10);
-
-    return p;
-}
-
-PRIVATE char *conv4(char *p,WORD n)
-{
-WORD hundreds;
-
-    hundreds = n / 100;
-    p = conv2(p,hundreds);
-    p = conv2(p,n-hundreds*100);
-
-    return p;
-}
-
 /*
  *  decode_date_time - generate string with date/time in format derived from _IDT cookie
  *
@@ -217,7 +199,7 @@ WORD decode_date_time(char *s,UWORD date,UWORD time)
 {
 WORD year, month, day, hour, minute, second;
 char *p = s;
-char ampm;
+char *ampm;
 unsigned char date_sep;
 
     date_sep = LOBYTE(idt_value);           /* date separator */
@@ -230,36 +212,18 @@ unsigned char date_sep;
 
     switch(HIBYTE(idt_value)&0x03) {
     case _IDT_MDY:
-        p = conv2(p,month);
-        *p++ = date_sep;
-        p = conv2(p,day);
-        *p++ = date_sep;
-        p = conv4(p,year);
+        p += sprintf(p,"%02d%c%02d%c%04d",month,date_sep,day,date_sep,year);
         break;
     case _IDT_DMY:
-        p = conv2(p,day);
-        *p++ = date_sep;
-        p = conv2(p,month);
-        *p++ = date_sep;
-        p = conv4(p,year);
+        p += sprintf(p,"%02d%c%02d%c%04d",day,date_sep,month,date_sep,year);
         break;
     case _IDT_YDM:
-        p = conv4(p,year);
-        *p++ = date_sep;
-        p = conv2(p,day);
-        *p++ = date_sep;
-        p = conv2(p,month);
+        p += sprintf(p,"%04d%c%02d%c%02d",year,date_sep,day,date_sep,month);
         break;
     default:                        /* i.e. _IDT_YMD or some kind of bug ... */
-        p = conv4(p,year);
-        *p++ = date_sep;
-        p = conv2(p,month);
-        *p++ = date_sep;
-        p = conv2(p,day);
+        p += sprintf(p,"%04d%c%02d%c%02d",year,date_sep,month,date_sep,day);
         break;
     }
-    *p++ = ' ';
-    *p++ = ' ';
 
     hour = time >> 11;
     minute = (time>>5) & 0x3f;
@@ -268,31 +232,18 @@ unsigned char date_sep;
     switch((idt_value>>12)&0x01) {
     case _IDT_12H:
         if (hour < 12)              /* figure out am/pm */
-            ampm = 'a';
-        else ampm = 'p';
+            ampm = "am";
+        else ampm = "pm";
         if (hour > 12)              /* figure out noon/midnight */
             hour -= 12;
         else if (hour == 0)
             hour = 12;
-        p = conv2(p,hour);
-        *p++ = ':';
-        p = conv2(p,minute);
-        *p++ = ':';
-        p = conv2(p,second);
-        *p++ = ampm;
-        *p++ = 'm';
         break;
     default:                        /* i.e. _IDT_24H or some kind of bug ... */
-        p = conv2(p,hour);
-        *p++ = ':';
-        p = conv2(p,minute);
-        *p++ = ':';
-        p = conv2(p,second);
-        *p++ = ' ';
-        *p++ = ' ';
+        ampm = "  ";
         break;
     }
-    *p = '\0';
+    p += sprintf(p,"  %02d:%02d:%02d%s  ",hour,minute,second,ampm);
 
     return p - s;
 }
@@ -314,7 +265,7 @@ char *q = dest;
      *  look for start of next component
      */
     for (p = *pp; *p; p++)
-        if (*p != ';')
+        if ((*p != ';') && (*p != ','))
             break;
     if (!*p) {          /* end of buffer */
         *pp = p;
@@ -322,7 +273,7 @@ char *q = dest;
     }
 
     while(*p) {
-        if (*p == ';')
+        if ((*p == ';') || (*p == ','))
             break;
         *q++ = *p++;
     }
@@ -392,7 +343,11 @@ char c1, c2;
 
 PRIVATE LONG getjar(void)
 {
+#ifdef __arm__
+    return (LONG)p_cookies;
+#else
     return *(LONG *)0x5a0;
+#endif
 }
 
 /*
@@ -417,70 +372,9 @@ COOKIE *jar, *c;
     return 0;
 }
 
-#ifdef STANDALONE_CONSOLE
-size_t strlen(const char *s)
-{
-int n;
-
-    for (n = 0; *s; s++, n++)
-        ;
-
-    return n;
-}
-
-char *strcpy(char *dest,const char *src)
-{
-char *p = dest;
-
-    for (p = dest; *src; )
-        *p++ = *src++;
-    *p = '\0';
-
-    return dest;
-}
-
-void *memcpy(void *dest, const void *src, size_t n)
-{
-unsigned char *d = (unsigned char *)dest;
-const unsigned char *s = (const unsigned char *)src;
-
-    while (n--)
-        *d++ = *s++;
-
-    return dest;
-}
-
-void *memset(void *dest, int value, size_t n)
-{
-unsigned char *d = (unsigned char *)dest;
-
-    while (n--)
-        *d++ = (unsigned char)value;
-
-    return dest;
-}
-
-int toupper(int c)
-{
-    if(c>='a' && c<='z')
-        return(c-'a'+'A');
-    else
-        return(c);
-}
-
-int strncasecmp(const char *a, const char *b, size_t n)
-{
-    unsigned char s1, s2;
-
-    while(n-- > 0) {
-        s1 = toupper((unsigned char)*a++);
-        s2 = toupper((unsigned char)*b++);
-        if (s1 != s2)
-            return s1 - s2;
-        if (s1 == '\0')
-            break;
-    }
-
-    return 0;
-}
-#endif
+/*
+ * strlen()/strcpy()/memcpy()/memset()/toupper()/strncasecmp() used to be
+ * hand-rolled here (needed only because the standalone build was
+ * -nostdlib); the standalone build now links against libcmini, whose
+ * <string.h>/<ctype.h> (included by cmd.h) provide all of them.
+ */

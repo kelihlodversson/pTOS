@@ -43,7 +43,7 @@ void clfix(CLNO cl, CLNO link, DMD *dm)
     int spans;
     CLNO f, mask;
     LONG offset, recnum;
-    char *buf;
+    UBYTE *buf;
 
     offset = dm->m_16 ? (LONG)cl << 1 : ((LONG)cl + (cl >> 1));
     recnum = offset >> dm->m_rblog;
@@ -120,7 +120,7 @@ CLNO getrealcl(CLNO cl, DMD *dm)
 {
     CLNO f;
     LONG offset, recnum;
-    char *buf;
+    UBYTE *buf;
 
     offset = dm->m_16 ? (LONG)cl << 1 : ((LONG)cl + (cl >> 1));
     recnum = offset >> dm->m_rblog;
@@ -186,7 +186,7 @@ static CLNO findfree16(DMD *dm)
 {
     int recnum, offset;
     CLNO clnum;
-    char *buf;
+    UBYTE *buf;
 
     for (clnum = 2; clnum < dm->m_numcl+2; )
     {

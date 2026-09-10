@@ -2,7 +2,7 @@
  * minicrt.S - a minimal C Run Time startup.
  *
  * Copyright (C) 2001 by following authors
- * Copyright (C) 2013-2015 The EmuTOS development team.
+ * Copyright (C) 2013-2019 The EmuTOS development team.
  *
  * Authors:
  *  SCC     Steven C. Cavender
@@ -25,12 +25,11 @@
 #define MSHRINK 0x4A
 #define PTERM   0x4C
 
-
         .globl  _start
-        .globl  _exit
+        .globl  C_SYM(exit)
         .globl  ___main
 
-        .extern _main
+        .extern C_SYM(main)
 
         .text
 
@@ -59,10 +58,10 @@ _start:
         move.l  d0,-(sp)         // empty env
         move.l  d0,-(sp)         // empty argv
         move.w  d0,-(sp)         // argc = 0
-        jsr     _main
+        jsr     C_SYM(main)
         move.w  d0,-(sp)
 
-_exit:
+C_SYM(exit):
         move.w  #PTERM,-(sp)
         trap    #1
 

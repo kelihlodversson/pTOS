@@ -1,7 +1,7 @@
 /*
  * gemdosif.S - Assembler part of the GEMDOS interface
  *
- * Copyright 2002-2017, The EmuTOS development team
+ * Copyright 2002-2021, The EmuTOS development team
  *           1999, Caldera Thin Clients, Inc.
  *           1987, Digital Research Inc.
  *
@@ -12,40 +12,54 @@
 #include "asmdefs.h"
 #include "asmstruct.h"
 
-        .globl  _giveerr
-        .globl  _takeerr
-        .globl  _retake
-        .globl  _justretf
-        .globl  _unset_aestrap
-        .globl  _set_aestrap
-        .globl  _aestrap_intercepted
-        .globl  _far_mcha
-        .globl  _aes_wheel
-        .globl  _far_bcha
-        .globl  _drawrat
+/*
+ * sizes (in words) of the stacks used by:
+ *  (1) the far_bcha/far_mcha/aes_wheel functions
+ *  (2) the tikcod function
+ *
+ * as of july/2019, the observed stack usage is about 24 words for
+ * the mouse stack and 12 words for the tick stack
+ */
+#define MOUSE_STACK_SIZE    48
+#define TICK_STACK_SIZE     36
+        .globl  C_SYM(giveerr)
+        .globl  C_SYM(takeerr)
+        .globl  C_SYM(retake)
+        .globl  C_SYM(unset_aestrap)
+        .globl  C_SYM(set_aestrap)
+        .globl  C_SYM(far_mcha)
+#if CONF_WITH_EXTENDED_MOUSE
+        .globl  C_SYM(aes_wheel)
+#endif
+        .globl  C_SYM(far_bcha)
+        .globl  C_SYM(drawrat)
+        .globl  C_SYM(justretf)
+        .globl  C_SYM(aestrap_intercepted)
 
-        .globl  _tikaddr
-        .globl  _tiksav
-        .globl  _CMP_TICK
-        .globl  _NUM_TICK
-        .globl  _drwaddr
-        .globl  _tikcod
-        .globl  _enable_ceh
+        .globl  C_SYM(tiksav)
+        .globl  C_SYM(CMP_TICK)
+        .globl  C_SYM(NUM_TICK)
+        .globl  C_SYM(drwaddr)
+        .globl  C_SYM(tikcod)
+        .globl  C_SYM(enable_ceh)
 
 /* now defined by the BIOS, in bios/arch/m68k/intmask.S */
-        .extern _disable_interrupts
-        .extern _enable_interrupts
+        .extern C_SYM(disable_interrupts)
+        .extern C_SYM(enable_interrupts)
 
-        .extern _eralert
-        .extern _rlr
-        .extern _super
-        .extern _b_click
-        .extern _mchange
-        .extern _forkq
-        .extern _wheel_change
-        .extern _tchange
-        .extern _b_delay
-        .extern _os_beg
+        .extern C_SYM(eralert)
+        .extern C_SYM(rlr)
+        .extern C_SYM(super)
+        .extern C_SYM(b_click)
+        .extern C_SYM(mchange)
+        .extern C_SYM(forkq)
+#if CONF_WITH_EXTENDED_MOUSE
+        .extern C_SYM(wheel_change)
+#endif
+        .extern C_SYM(tchange)
+        .extern C_SYM(b_delay)
+        .extern __etext
+        .extern C_SYM(os_beg)
 
 
 /*
@@ -55,7 +69,7 @@
  * after a character mode application (which may have stepped on the
  * AES trap and/or the critical error vector)
  */
-_retake:
+C_SYM(retake):
 #ifdef __mcoldfire__
         lea     0x88,a0
         move.l  #_aestrap,(a0)
@@ -77,7 +91,7 @@ call_err:
  * called when leaving graphics mode, either to run a character-based
  * application, or during desktop shutdown
  */
-_giveerr:
+C_SYM(giveerr):
         move.l  save_etv_critic,d0
         jra     call_err
 
@@ -86,9 +100,9 @@ _giveerr:
  *
  * called during desktop startup, just before entering graphics mode
  */
-_takeerr:
+C_SYM(takeerr):
         moveq   #0,d0
-        move.w  d0,_enable_ceh      // initialise flag for _criterr_handler
+        move.w  d0,C_SYM(enable_ceh)      // initialise flag for _criterr_handler
         moveq   #-1,d0
         jbsr    call_err            // get current error vector
         move.l  d0,save_etv_critic  //  & save it locally
@@ -115,14 +129,14 @@ _takeerr:
  * which is set to non-zero just before the main loop in deskmain().
  */
 criterr_handler:
-        tst.w   _enable_ceh         // should we invoke form_alert?
+        tst.w   C_SYM(enable_ceh)         // should we invoke form_alert?
         jne     normal              // yes
         move.l  save_etv_critic,a0  // else go to old handler
         jmp     (a0)
 normal:
         move.w  4(sp),d0            // d0 = error code
         move.w  6(sp),d1            // d1 = drive number
-        movea.l _rlr,a0
+        movea.l C_SYM(rlr),a0
         movea.l PD_UDA(a0),a0       // a0 -> UDA
 #ifdef __mcoldfire__
         lea     UDA_SPSUPER(a0),a0
@@ -130,10 +144,10 @@ normal:
 #else
         move.l  UDA_SPSUPER(a0),save_spsuper
 #endif
-        jbsr    _disable_interrupts // stack switch must be atomic
+        jbsr    C_SYM(disable_interrupts) // stack switch must be atomic
         move.l  sp,save_spcriterr
         lea     criterr_stack,sp
-        jbsr    _enable_interrupts
+        jbsr    C_SYM(enable_interrupts)
 #ifdef __mcoldfire__
         lea     -36(sp),sp
         movem.l d3-d7/a3-a6,(sp)    // save regs on temp stack
@@ -156,7 +170,7 @@ alert_lookup:
         move.b  0(a0,a1.l),d0       // convert error code to alert number
         move.w  d1,-(sp)            // put drive on stack
         move.w  d0,-(sp)            // and alert number
-        jsr     _eralert            // issue alert
+        jsr     C_SYM(eralert)            // issue alert
         addq.l  #4,sp
         move.w  (sp)+,d1            // recover original error code
         ext.l   d1
@@ -172,7 +186,7 @@ no_retry:
         movem.l (sp)+,d3-d7/a3-a6   // restore regs from temp stack
 #endif
         movea.l save_spcriterr,sp   // recover old stack pointer
-        movea.l _rlr,a0
+        movea.l C_SYM(rlr),a0
         movea.l PD_UDA(a0),a0       // a0 -> UDA
 #ifdef __mcoldfire__
         lea     UDA_SPSUPER(a0),a0
@@ -182,25 +196,14 @@ no_retry:
 #endif
         rts
 
-
-
-
 // **** Trap entry: ****
 _aestrap:
-        tst.w   d0
-        jeq     _back
         cmpi.w  #0xC8,d0
         jeq     trapaes
         cmpi.w  #0xC9,d0
         jeq     trapaes
         move.l  savetrap2,-(sp)
         rts
-
-_back:
-        clr.w   -(sp)
-        move.w  #0x4C,-(sp)             // Pterm
-        trap    #1
-
 
 trapaes:
 #if CONF_DEBUG_AES_STACK
@@ -211,7 +214,7 @@ trapaes:
         lea     16(sp),sp
 #endif
 
-        jbsr    _disable_interrupts     // mask out interrupts
+        jbsr    C_SYM(disable_interrupts)     // mask out interrupts
         move.l  usp,a0
 #ifdef __mcoldfire__
         lea     -56(a0),a0
@@ -221,25 +224,22 @@ trapaes:
 #endif
         move.l  a0,usp
 
-        movea.l _rlr,a6
+        movea.l C_SYM(rlr),a6
         movea.l PD_UDA(a6),a6
-        move.w  #1,UDA_INSUPER(a6)
         move.l  a0,UDA_SPUSER(a6)
         move.l  sp,UDA_OLDSPSUPER(a6)
         movea.l UDA_SPSUPER(a6),sp
-        jbsr    _enable_interrupts      // restore interrupt mask
+        jbsr    C_SYM(enable_interrupts)      // restore interrupt mask
 
         move.l  d1,-(sp)                // addr of parameter
         move.w  d0,-(sp)                // 200 or 201
-        jsr     _super                  // jump to supervisor entry point
+        jsr     C_SYM(super)                  // jump to supervisor entry point
         addq.l  #6,sp                   // restore stack pointer
 
-supret:                                 // return from gementry
-        jbsr    _disable_interrupts     // mask out interrupts
+        jbsr    C_SYM(disable_interrupts)     // mask out interrupts
 
-        movea.l _rlr,a0
+        movea.l C_SYM(rlr),a0
         movea.l PD_UDA(a0),a0
-        clr.w   UDA_INSUPER(a0)
         move.l  sp,UDA_SPSUPER(a0)
         movea.l UDA_OLDSPSUPER(a0),sp
         movea.l UDA_SPUSER(a0),a0
@@ -251,7 +251,7 @@ supret:                                 // return from gementry
         movem.l (a0)+,d1-d7/a0-a6
 #endif
         move.l  a0,usp
-        jbsr    _enable_interrupts      // restore interrupt mask
+        jbsr    C_SYM(enable_interrupts)      // restore interrupt mask
 
 #if CONF_DEBUG_AES_STACK
         lea     -16(sp),sp
@@ -262,9 +262,7 @@ supret:                                 // return from gementry
 #endif
         rte
 
-
-
-_unset_aestrap:
+C_SYM(unset_aestrap):
 #ifdef __mcoldfire__
         lea     0x88,a0
         move.l  savetrap2,(a0)
@@ -272,7 +270,7 @@ _unset_aestrap:
         move.l  savetrap2,0x88
 #endif
         rts
-_set_aestrap:
+C_SYM(set_aestrap):
 #ifdef __mcoldfire__
         lea     0x88,a0
         move.l  (a0),savetrap2
@@ -283,25 +281,7 @@ _set_aestrap:
 #endif
         rts
 
-/*
- * determine if trap #2 has been intercepted by someone else (e.g. NVDI)
- *
- * return 1 if intercepted, else 0
- */
-_aestrap_intercepted:
-        moveq   #1,d0           // assume it's intercepted
-        movea.l 0x88,a0
-        cmpa.l  _os_beg,a0
-        jcs     done
-        cmpa.l  #__etext,a0
-        jcc     done
-        moveq   #0,d0
-done:
-        rts
-
-
-
-_far_bcha:
+C_SYM(far_bcha):
         move.l  sp,gstksave
         lea     gstack,sp
 #ifdef __mcoldfire__
@@ -311,7 +291,7 @@ _far_bcha:
         movem.l d0-d2/a0-a2,-(sp)
 #endif
         move.w  d0,-(sp)
-        jsr     _b_click
+        jsr     C_SYM(b_click)
         addq.l  #2,sp
 #ifdef __mcoldfire__
         movem.l (sp),d0-d2/a0-a2
@@ -322,7 +302,7 @@ _far_bcha:
         movea.l gstksave,sp
         rts
 
-_far_mcha:
+C_SYM(far_mcha):
         move.l  sp,gstksave
         lea     gstack,sp
 #ifdef __mcoldfire__
@@ -334,8 +314,8 @@ _far_mcha:
 
         move.w  d1,-(sp)
         move.w  d0,-(sp)
-        move.l  #_mchange,-(sp)
-        jsr     _forkq
+        move.l  #C_SYM(mchange),-(sp)
+        jsr     C_SYM(forkq)
         addq.l  #8,sp
 #ifdef __mcoldfire__
         movem.l (sp),d0-d2/a0-a2
@@ -346,9 +326,9 @@ _far_mcha:
         movea.l gstksave,sp
         rts
 
-#if CONF_WITH_VDI_EXTENSIONS
+#if CONF_WITH_EXTENDED_MOUSE
 /* AES mouse wheel handler called by the VDI */
-_aes_wheel:
+C_SYM(aes_wheel):
         move.l  sp,gstksave
         lea     gstack,sp
 #ifdef __mcoldfire__
@@ -360,8 +340,8 @@ _aes_wheel:
 
         move.w  d1,-(sp)
         move.w  d0,-(sp)
-        move.l  #_wheel_change,-(sp)
-        jsr     _forkq
+        move.l  #C_SYM(wheel_change),-(sp)
+        jsr     C_SYM(forkq)
         addq.l  #8,sp
 #ifdef __mcoldfire__
         movem.l (sp),d0-d2/a0-a2
@@ -371,47 +351,65 @@ _aes_wheel:
 #endif
         movea.l gstksave,sp
         rts
-#endif
-
+#endif /* CONF_WITH_EXTENDED_MOUSE */
 
 /*
 ;
 ;       drawrat(newx, newy)
 ;
 */
-_drawrat:
+C_SYM(drawrat):
         move.w  4(sp),d0
         move.w  6(sp),d1
-        move.l  _drwaddr,-(sp)
+        move.l  C_SYM(drwaddr),-(sp)
         rts                     // Jump to vector stored in _drwaddr
 
 
-_justretf:
+C_SYM(justretf):
         rts
 
 
-_tikcod:
+/*
+ * determine if trap #2 has been intercepted by someone else (e.g. NVDI)
+ *
+ * return 1 if intercepted, else 0
+ */
+C_SYM(aestrap_intercepted):
+        moveq   #1,d0           // assume it's intercepted
+        movea.l 0x88,a0
+        cmpa.l  C_SYM(os_beg),a0
+        jcs     aestrap_done
+        cmpa.l  #__etext,a0
+        jcc     aestrap_done
+        moveq   #0,d0
+aestrap_done:
+        rts
+
+
+C_SYM(tikcod):
         move.l  sp,tstksave
         lea     tstack,sp
-        tst.l   _CMP_TICK
+        tst.l   C_SYM(CMP_TICK)
         jeq     L2234
-        addq.l  #1,_NUM_TICK
-        subq.l  #1,_CMP_TICK
+        addq.l  #1,C_SYM(NUM_TICK)
+        subq.l  #1,C_SYM(CMP_TICK)
         jne     L2234
 
-        move.l  _NUM_TICK,-(sp)
-        move.l  #_tchange,-(sp)
-        jsr     _forkq
+        move.l  C_SYM(NUM_TICK),-(sp) // try to create an entry in the fork ring
+        move.l  #C_SYM(tchange),-(sp)
+        jsr     C_SYM(forkq)
         addq.l  #8,sp
+        tst.w   d0              // did it work?
+        jeq     L2234
+        addq.l  #1,C_SYM(CMP_TICK)    // no, reset so that we try again on the next tick
+
 L2234:
         move.w  #1,-(sp)
-        jsr     _b_delay
+        jsr     C_SYM(b_delay)
         addq.l  #2,sp
         movea.l tstksave,sp
-        move.l  _tiksav,-(sp)
+        move.l  C_SYM(tiksav),-(sp)
         rts                     // Jump to vector stored in _tiksav
-
-
 
 SECTION_RODATA
 
@@ -440,24 +438,22 @@ save_etv_critic:
 savetrap2:
         .ds.l    1
 
-_drwaddr:
+C_SYM(drwaddr):
         .ds.l    1
 
-_tikaddr:
-        .ds.l    1
 gstksave:
         .ds.l    1
 
 tstksave:
         .ds.l    1
 
-_tiksav:
+C_SYM(tiksav):
         .ds.l    1
-_NUM_TICK:
+C_SYM(NUM_TICK):
         .ds.l    1
-_CMP_TICK:
+C_SYM(CMP_TICK):
         .ds.l    1
-_enable_ceh:
+C_SYM(enable_ceh):
         .ds.w    1      // flag to enable gui critical error handler
 
 /*
@@ -479,9 +475,10 @@ criterr_stack:
 /*
  * miscellaneous stacks
  */
-        .ds.b    0x80
+
+        .ds.w    MOUSE_STACK_SIZE
 gstack:                         // gsx stack for mouse
 
-        .ds.b    0x80
+        .ds.b    TICK_STACK_SIZE
 tstack:                         // tick stack
         .ds.l    1

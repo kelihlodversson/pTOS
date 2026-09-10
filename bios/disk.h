@@ -1,7 +1,7 @@
 /*
  * disk.h - disk routines
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2024 The EmuTOS development team
  *
  * Authors:
  *  PES   Petr Stehlik
@@ -13,20 +13,28 @@
 #ifndef DISK_H
 #define DISK_H
 
-#include "portab.h"
+#include "config.h"
 
 /* defines */
 
-#define SECTOR_SIZE     512 /* standard for floppy, hard disk */
 #define NUMFLOPPIES     2   /* max number of floppies supported */
 
-#define ACSI_BUS            0
-#define SCSI_BUS            1
-#define IDE_BUS             2
-#define SDMMC_BUS           3
-#define VIRTIO_BUS          4
+/*
+ * Bus numbers form part of the device-major ABI: major = bus * 8 + device.
+ * Keep their values fixed even if an intervening bus driver is disabled.
+ */
+enum bus_number {
+    ACSI_BUS = 0,
+    SCSI_BUS = 1,
+    IDE_BUS = 2,
+    SDMMC_BUS = 3,
+    VIRTIO_BUS = 4,
+    MAX_BUS = CONF_WITH_VIRTIO_BLK ? VIRTIO_BUS :
+              (CONF_WITH_SDMMC || CONF_WITH_RASPI_EMMC) ? SDMMC_BUS :
+              CONF_WITH_IDE ? IDE_BUS :
+              CONF_WITH_SCSI ? SCSI_BUS : ACSI_BUS
+};
 
-#define MAX_BUS             VIRTIO_BUS
 #define DEVICES_PER_BUS     8
 
 #define UNITSNUM            (NUMFLOPPIES+(DEVICES_PER_BUS*(MAX_BUS+1)))
@@ -37,6 +45,8 @@
 #define IS_IDE_DEVICE(major)    (GET_BUS(major) == IDE_BUS)
 #define IS_SDMMC_DEVICE(major)  (GET_BUS(major) == SDMMC_BUS)
 #define IS_VIRTIO_DEVICE(major) (GET_BUS(major) == VIRTIO_BUS)
+
+#define GET_UNITNUM(bus,dev)    (NUMFLOPPIES+(DEVICES_PER_BUS*(bus))+dev)
 
 /*
  * commands used for internal xxx_ioctl() calls
@@ -49,6 +59,14 @@
                                 /* arg -> return data (max 40 chars)  */
 #define GET_MEDIACHANGE     30  /* return status as per Mediach() call*/
                                 /* arg is NULL                        */
+#define CHECK_DEVICE        40  /* determine if device exists         */
+                                /* (not necessarily a hard disk)      */
+
+#if CONF_WITH_ULTRASATAN_CLOCK
+#define ULTRASATAN_GET_FIRMWARE_VERSION 60
+#define ULTRASATAN_GET_CLOCK 61
+#define ULTRASATAN_SET_CLOCK 62
+#endif /* CONF_WITH_ULTRASATAN_CLOCK */
 
 /* read/write flags */
 #define RW_READ             0
@@ -58,6 +76,8 @@
 #define RW_NOMEDIACH        2
 #define RW_NORETRIES        4
 #define RW_NOTRANSLATE      8
+/* EmuTOS extension: Rwabs without byteswap on IDE */
+#define RW_NOBYTESWAP     128
 
 /*
  *  return codes
@@ -69,12 +89,12 @@
 #define MEDIAMAYCHANGE  1L              /*  media may have changed      */
 #define MEDIACHANGE     2L              /*  media def has changed       */
 
-/* physical unit (floppy/harddisk) identificator */
+/* physical unit (floppy/harddisk) identifier */
 struct _unit
 {
-    BYTE    valid;          /* unit valid */
+    UBYTE   valid;          /* unit valid */
 #if CONF_WITH_IDE
-    BYTE    byteswap;       /* unit is byteswapped */
+    UBYTE   byteswap;       /* unit is byteswapped */
 #endif
     ULONG   size;           /* number of physical sectors */
     WORD    psshift;        /* shift left amount to convert sectors to bytes */
@@ -93,6 +113,7 @@ extern UNIT units[];
 /* physical disk functions */
 
 #if CONF_WITH_XHDI
+BOOL disk_valid_major(UWORD major);
 LONG disk_inquire(UWORD unit, ULONG *blocksize, ULONG *deviceflags, char *productname, UWORD stringlen);
 #endif
 
@@ -101,13 +122,15 @@ LONG disk_rw(UWORD unit, UWORD rw, ULONG sector, UWORD count, UBYTE *buf);
 
 /* xbios functions */
 
-extern LONG DMAread(LONG sector, WORD count, UBYTE *buf, WORD major);
-extern LONG DMAwrite(LONG sector, WORD count, const UBYTE *buf, WORD major);
+LONG DMAread(LONG sector, WORD count, UBYTE *buf, WORD major);
+LONG DMAwrite(LONG sector, WORD count, const UBYTE *buf, WORD major);
 
 /* partition detection */
 
 void disk_init_all(void);
 LONG disk_mediach(UWORD unit);
 void disk_rescan(UWORD unit);
+
+void disk_try_dmaboot(void);
 
 #endif /* DISK_H */

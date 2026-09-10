@@ -35,34 +35,38 @@ extern struct usb_module_api usb_api;
 long
 udd_register(struct uddif *a)
 {
-	struct uddif *list = alluddifs;
-	long i;
+    struct uddif *list = alluddifs;
+    long i;
 
-	if (a->api_version != usb_api.api_version) {
-		cprintf("API Mismatch\n");
-		return -1;
-	}
+    if (a->api_version != usb_api.api_version) {
+        cprintf("API Mismatch\n");
+        return -1;
+    }
 
-	while (list)
-	{
-		if (!strncmp(a->name, list->name, UDD_NAMSIZ))
-		{
-			cprintf("Driver already installed\n");
-			return -1;
-		}
-		list = list->next;
-	}
+    while (list)
+    {
+        if (!strncmp(a->name, list->name, UDD_NAMSIZ))
+        {
+            cprintf("Driver already installed\n");
+            return -1;
+        }
+        list = list->next;
+    }
 
-	DEBUG(("udd_register: Registered device %s (%s)", a->name, a->lname));
+    DEBUG(("udd_register: Registered device %s (%s)", a->name, a->lname));
 
-	a->next = alluddifs;
-	alluddifs = a;
+    a->next = alluddifs;
+    alluddifs = a;
 
-	for (i = 0; i < USB_MAX_DEVICE; i++) {
-		usb_find_interface_driver(&usb_dev[i], 0);
-	}
+    for (i = 0; i < USB_MAX_DEVICE; i++) {
+        unsigned ifnum;
 
-	return 0;
+        for (ifnum = 0; ifnum < usb_dev[i].config.no_of_if; ifnum++) {
+            usb_find_interface_driver(&usb_dev[i], ifnum);
+        }
+    }
+
+    return 0;
 }
 
 /*
@@ -72,17 +76,17 @@ udd_register(struct uddif *a)
 long
 udd_unregister(struct uddif *a)
 {
-	struct uddif **list = &alluddifs;
+    struct uddif **list = &alluddifs;
 
-	while (*list)
-	{
-		if (a == *list)
-		{
-			*list = a->next;
-			break;
-		}
-		list = &((*list)->next);
-	}
+    while (*list)
+    {
+        if (a == *list)
+        {
+            *list = a->next;
+            return 0;
+        }
+        list = &((*list)->next);
+    }
 
-	return -1L;
+    return -1L;
 }

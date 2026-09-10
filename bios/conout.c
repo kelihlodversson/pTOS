@@ -3,7 +3,7 @@
  *
  *
  * Copyright (C) 2004 by Authors (see below)
- * Copyright (C) 2016 The EmuTOS development team
+ * Copyright (C) 2016-2025 The EmuTOS development team
  *
  * Authors:
  *  MAD     Martin Doering
@@ -12,32 +12,101 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+/*
+ * NOTE: the code currently assumes that the font width is 8 bits.
+ * If we ever add a 16x32 font, the code will need changing!
+ */
 
-
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "lineavars.h"
-#include "font.h"
 #include "tosvars.h"            /* for v_bas_ad */
 #include "sound.h"              /* for bell() */
 #include "string.h"
 #include "conout.h"
 #include "raspi_screen.h"
+#include "../vdi/vdi_defs.h"    /* for phys_work stuff */
+#include "gsxdefs.h"
 
+#define PLANE_OFFSET    2       /* interleaved planes */
 
-#define  plane_offset   2       /* interleaved planes */
+#if CONF_WITH_VIDEL
+static const UWORD falcon_default_palette[16] = {
+    0xffdf, 0xf800, 0x07c0, 0xffc0, 0x001f, 0xf81f, 0x07df, 0xbdd7,
+    0x8c51, 0xa800, 0x0540, 0xad40, 0x0015, 0xa815, 0x0555, 0x0000
+};
+#endif
 
-
+#if CONF_WITH_VDI_16BIT
+extern Vwk phys_work;           /* attribute area for physical workstation */
+#endif
 
 /*
  * internal prototypes
  */
-static void neg_cell(UBYTE *);
-static UBYTE * cell_addr(int, int);
-static void cell_xfer(UBYTE *, UBYTE *);
+static void neg_cell(UBYTE *cell);
+static UBYTE *cell_addr(UWORD x, UWORD y);
+static void cell_xfer(UBYTE *src, UBYTE *dst);
 static BOOL next_cell(void);
 
+static ULONG cell_wrap(void)
+{
+#if CONF_WITH_VIRTIO_GPU
+    if (TRUECOLOR_MODE)
+        return (ULONG)linea_vars.v_lin_wr * linea_vars.v_cel_ht;
+#endif
+    return linea_vars.v_cel_wr;
+}
 
+#if CONF_WITH_VIRTIO_GPU
+static ULONG console_pixel(WORD color)
+{
+    return vdi_truecolor_pixel_for_index(color);
+}
+
+static void blank_out32(int topx, int topy, int botx, int boty)
+{
+    ULONG *addr;
+    ULONG bgcol;
+    WORD i, j;
+    WORD offs, rows, width;
+
+    width = (botx - topx + 1) * 8;
+    offs = linea_vars.v_lin_wr / sizeof(ULONG) - width;
+    rows = (boty - topy + 1) * linea_vars.v_cel_ht;
+    bgcol = console_pixel(linea_vars.v_col_bg);
+    addr = (ULONG *)cell_addr(topx, topy);
+    for (i = 0; i < rows; i++) {
+        for (j = 0; j < width; j++)
+            *addr++ = bgcol;
+        addr += offs;
+    }
+}
+
+static void cell_xfer32(UBYTE *src, UBYTE *dst)
+{
+    ULONG fg, bg;
+    WORD fnt_wr, line_wr, i, mask;
+
+    if (linea_vars.v_stat_0 & M_REVID) {
+        fg = console_pixel(linea_vars.v_col_bg);
+        bg = console_pixel(linea_vars.v_col_fg);
+    } else {
+        fg = console_pixel(linea_vars.v_col_fg);
+        bg = console_pixel(linea_vars.v_col_bg);
+    }
+
+    fnt_wr = linea_vars.v_fnt_wr;
+    line_wr = linea_vars.v_lin_wr;
+    for (i = linea_vars.v_cel_ht; i--; ) {
+        ULONG *p;
+
+        for (mask = 0x80, p = (ULONG *)dst; mask; mask >>= 1)
+            *p++ = (*src & mask) ? fg : bg;
+        dst += line_wr;
+        src += fnt_wr;
+    }
+}
+#endif
 
 /*
  * char_addr - retrieve the address of the source cell
@@ -52,8 +121,7 @@ static BOOL next_cell(void);
  *   pointer to first byte of source cell if code was valid
  */
 
-static UBYTE *
-char_addr(WORD ch)
+static UBYTE *char_addr(WORD ch)
 {
     UWORD offs;
 
@@ -87,7 +155,7 @@ void
 ascii_out (int ch)
 {
     UBYTE * src, * dst;
-    ULONG cell_wr = linea_vars.v_cel_wr;
+    ULONG cell_wr = cell_wrap();
     BOOL visible;                       /* was the cursor visible? */
 
     src = char_addr(ch);                /* a0 -> get character source */
@@ -160,17 +228,65 @@ ascii_out (int ch)
  *   boty - bottom/right cell y position
  */
 
+#if CONF_WITH_VIDEL
+/*
+ * blank_out16 - blank_out() for Falcon 16-bit graphics
+ *
+ * see the header comments in blank_out() for more details
+ */
+static void blank_out16(int topx, int topy, int botx, int boty)
+{
+    UWORD *addr;
+    UWORD bgcol;
+    WORD i, j;
+    WORD offs, rows, width;
+
+    width = (botx - topx + 1) * 8;          /* in words */
+
+    /* calculate the offset from the end of row to next row start */
+    offs = linea_vars.v_lin_wr/sizeof(WORD) - width;   /* in words */
+
+    rows = (boty - topy + 1) * linea_vars.v_cel_ht;    /* in pixels */
+
+    /* set standard background colour */
+    bgcol = falcon_default_palette[linea_vars.v_col_bg & 0xf];
+
+#if CONF_WITH_VDI_16BIT
+    /*
+     * if we're already in 16-bit mode, we can get the pixel value of
+     * the background colour from the physical workstation's palette instead
+     */
+    if (phys_work.ext)
+        bgcol = phys_work.ext->palette[linea_vars.v_col_bg];
+#endif
+
+    addr = (UWORD *)cell_addr(topx, topy);  /* running pointer to screen */
+    for (i = 0; i < rows; i++) {
+        for (j = 0; j < width; j++) {
+            *addr++ = bgcol;
+        }
+        addr += offs;
+    }
+}
+#endif
+
+
 void
 blank_out (int topx, int topy, int botx, int boty)
 {
-#if CONF_WITH_VDI_TRUECOLOR32_TEST
-    /* The test framebuffer is packed pixels, not interleaved planes. The
-     * serial console does not need a screen clear before VDI takes over. */
-    UNUSED(topx);
-    UNUSED(topy);
-    UNUSED(botx);
-    UNUSED(boty);
-#elif defined(MACHINE_RPI)
+#if CONF_WITH_VIRTIO_GPU
+    if (TRUECOLOR_MODE) {
+        blank_out32(topx, topy, botx, boty);
+        return;
+    }
+#endif
+#if CONF_WITH_VIDEL
+    if (TRUECOLOR_MODE) {
+        blank_out16(topx, topy, botx, boty);
+        return;
+    }
+#endif
+#if defined(MACHINE_RPI)
     raspi_blank_out(topx, topy, botx, boty);
 #else
     UWORD color = linea_vars.v_col_bg;             /* bg color value */
@@ -246,46 +362,56 @@ blank_out (int topx, int topy, int botx, int boty)
 /*
  * cell_addr - convert cell X,Y to a screen address.
  *
- *
  * convert cell X,Y to a screen address. also clip cartesian coordinates
  * to the limits of the current screen.
  *
- * latest update:
+ * input:
+ *  x       cell X
+ *  y       cell Y
  *
- * 18-sep-84
- * in:
- *
- * d0.w      cell X
- * d1.w      cell Y
- *
- * out:
- * a1      points to first byte of cell
+ * returns pointer to first byte of cell
  */
 
-static UBYTE *
-cell_addr(int x, int y)
+static UBYTE *cell_addr(UWORD x, UWORD y)
 {
 #ifdef MACHINE_RPI
     return raspi_cell_addr(x,y);
 #else
-    ULONG cell_wr = linea_vars.v_cel_wr;
-    LONG disx, disy;
+    ULONG disx, disy;
 
     /* check bounds against screen limits */
-    if ( x >= linea_vars.v_cel_mx )
+    if (x > linea_vars.v_cel_mx)
         x = linea_vars.v_cel_mx;           /* clipped x */
 
-    if ( y >= linea_vars.v_cel_my )
+    if (y > linea_vars.v_cel_my)
         y = linea_vars.v_cel_my;           /* clipped y */
 
-    /* X displacement = even(X) * linea_vars.v_planes + Xmod2 */
-    disx = (LONG)linea_vars.v_planes * (x & ~1);
-    if ( IS_ODD(x) ) {          /* Xmod2 = 0 ? */
-        disx++;                 /* Xmod2 = 1 */
+#if CONF_WITH_VIRTIO_GPU
+    if (TRUECOLOR_MODE)
+        disx = 8UL * (linea_vars.v_planes / 8) * x;
+    else
+#endif
+#if CONF_WITH_VIDEL
+    if (TRUECOLOR_MODE) {       /* chunky pixels */
+        disx = linea_vars.v_planes * x;
+    }
+    else
+#endif
+    {
+        /*
+         * v_planes cannot be more than 8, so as long as there are no more
+         * than 4000 characters per line, the result will fit in a word ...
+         *
+         * X displacement = even(X) * v_planes + Xmod2
+         */
+        disx = linea_vars.v_planes * (x & ~1);
+        if (IS_ODD(x)) {        /* Xmod2 = 0 ? */
+            disx++;             /* Xmod2 = 1 */
+        }
     }
 
     /* Y displacement = Y // cell conversion factor */
-    disy = cell_wr * y;
+    disy = cell_wrap() * y;
 
     /*
      * cell address = screen base address + Y displacement
@@ -294,6 +420,60 @@ cell_addr(int x, int y)
     return v_bas_ad + disy + disx + linea_vars.v_cur_of;
 #endif
 }
+
+
+
+#if CONF_WITH_VIDEL
+/*
+ * cell_xfer16 - cell_xfer() for Falcon 16-bit graphics
+ *
+ * see the comments in cell_xfer() for more details
+ */
+static void cell_xfer16(UBYTE *src, UBYTE *dst)
+{
+    UWORD *p;
+    UWORD fg, fgcol;
+    UWORD bg, bgcol;
+    WORD fnt_wr, line_wr, i, mask;
+
+    MAYBE_UNUSED(fg);
+    MAYBE_UNUSED(bg);
+
+    fnt_wr = linea_vars.v_fnt_wr;
+    line_wr = linea_vars.v_lin_wr;
+
+    if (linea_vars.v_stat_0 & M_REVID) {   /* handle reversed foreground and background colours */
+        fg = linea_vars.v_col_bg;
+        bg = linea_vars.v_col_fg;
+    } else {
+        fg = linea_vars.v_col_fg;
+        bg = linea_vars.v_col_bg;
+    }
+
+    /*
+     * if we have 16-bit support in VDI and if the VDI workstation is initialized,
+     * we use its palette, otherwise, e.g. at boot, we use a default palette.
+     */
+#if CONF_WITH_VDI_16BIT
+    if (phys_work.ext) {
+        fgcol = phys_work.ext->palette[fg];
+        bgcol = phys_work.ext->palette[bg];
+    } else
+#endif
+    {
+        fgcol = falcon_default_palette[fg & 0xf];
+        bgcol = falcon_default_palette[bg & 0xf];
+    }
+
+    for (i = linea_vars.v_cel_ht; i--; ) {
+        for (mask = 0x80, p = (UWORD *)dst; mask; mask >>= 1) {
+            *p++ = (*src & mask) ? fgcol : bgcol;
+        }
+        dst += line_wr;
+        src += fnt_wr;
+    }
+}
+#endif
 
 
 
@@ -314,8 +494,7 @@ cell_addr(int x, int y)
  * a4      points to byte below this cell's bottom
  */
 
-static void
-cell_xfer(UBYTE * src, UBYTE * dst)
+static void cell_xfer(UBYTE *src, UBYTE *dst)
 {
 #ifdef MACHINE_RPI
     raspi_cell_xfer(src, dst);
@@ -326,6 +505,20 @@ cell_xfer(UBYTE * src, UBYTE * dst)
     int fnt_wr, line_wr;
     int plane;
 
+#if CONF_WITH_VIRTIO_GPU
+    if (TRUECOLOR_MODE) {
+        cell_xfer32(src, dst);
+        return;
+    }
+#endif
+
+#if CONF_WITH_VIDEL
+    if (TRUECOLOR_MODE) {
+        cell_xfer16(src, dst);
+        return;
+    }
+#endif
+
     fnt_wr = linea_vars.v_fnt_wr;
     line_wr = linea_vars.v_lin_wr;
 
@@ -333,6 +526,7 @@ cell_xfer(UBYTE * src, UBYTE * dst)
     if ( linea_vars.v_stat_0 & M_REVID ) {
         fg = linea_vars.v_col_bg;
         bg = linea_vars.v_col_fg;
+
     }
     else {
         fg = linea_vars.v_col_fg;
@@ -348,7 +542,7 @@ cell_xfer(UBYTE * src, UBYTE * dst)
         src = src_sav;                  /* reload src */
         dst = dst_sav;                  /* reload dst */
 
-        if ( bg & 0x0001 ) {
+        if (bg & 0x0001) {
             if (fg & 0x0001) {
                 /* back:1  fore:1  =>  all ones */
                 for (i = linea_vars.v_cel_ht; i--; ) {
@@ -367,7 +561,7 @@ cell_xfer(UBYTE * src, UBYTE * dst)
             }
         }
         else {
-            if ( fg & 0x0001 ) {
+            if (fg & 0x0001) {
                 /* back:0  fore:1  =>  direct substitution */
                 for (i = linea_vars.v_cel_ht; i--; ) {
                     *dst = *src;
@@ -386,9 +580,156 @@ cell_xfer(UBYTE * src, UBYTE * dst)
 
         bg >>= 1;                       /* next background color bit */
         fg >>= 1;                       /* next foreground color bit */
-        dst_sav += plane_offset;        /* top of block in next plane */
+        dst_sav += PLANE_OFFSET;        /* top of block in next plane */
     }
 #endif
+}
+
+
+
+/*
+ * neg_cell - negates
+ *
+ * This routine negates the contents of an arbitrarily-tall byte-wide cell
+ * composed of 1 to 8 Atari-style bit-planes, or of Falcon-style 16-bit
+ * graphics.
+ * Cursor display can be accomplished via this procedure.  Since a second
+ * negation restores the original cell condition, there is no need to save
+ * the contents beneath the cursor block.
+ *
+ * input:
+ *  cell    points to destination (1st plane, top of block)
+ */
+
+static void neg_cell(UBYTE *cell)
+{
+#ifdef MACHINE_RPI
+    raspi_neg_cell(cell);
+#else
+    int plane, len;
+    int cell_len = linea_vars.v_cel_ht;
+    int lin_wr = linea_vars.v_lin_wr;
+
+    linea_vars.v_stat_0 |= M_CRIT;                 /* start of critical section. */
+
+#if CONF_WITH_VIRTIO_GPU
+    if (TRUECOLOR_MODE) {
+        for (len = cell_len; len--; ) {
+            WORD i;
+            ULONG *addr;
+
+            for (i = 8, addr = (ULONG *)cell; i--; addr++)
+                *addr = ~*addr;
+            cell += lin_wr;
+        }
+    }
+    else
+#endif
+#if CONF_WITH_VIDEL
+    if (TRUECOLOR_MODE) {               /* chunky pixels */
+        for (len = cell_len; len--; ) {
+            WORD i;
+            UWORD *addr;
+            for (i = 8, addr = (UWORD *)cell; i--; addr++)
+                *addr = ~*addr;
+            cell += lin_wr;
+        }
+    }
+    else
+#endif
+    {
+        for (plane = linea_vars.v_planes; plane--; ) {
+            UBYTE * addr = cell;        /* top of current dest plane */
+
+            /* reset cell length counter */
+            for (len = cell_len; len--; ) {
+                *addr = ~*addr;
+                addr += lin_wr;
+            }
+            cell += PLANE_OFFSET;       /* a1 -> top of block in next plane */
+        }
+    }
+
+    linea_vars.v_stat_0 &= ~M_CRIT;                /* end of critical section. */
+#endif
+}
+
+
+
+/*
+ * next_cell - Return the next cell address.
+ *
+ * sets next cell address given the current position and screen constraints
+ *
+ * returns:
+ *     false - no wrap condition exists
+ *     true  - CR LF required (position has not been updated)
+ */
+
+static BOOL next_cell(void)
+{
+    /* check bounds against screen limits */
+    if ( linea_vars.v_cur_cx == linea_vars.v_cel_mx ) {               /* increment cell ptr */
+        if ( !( linea_vars.v_stat_0 & M_CEOL ) ) {
+            /* overwrite in effect */
+            return 0;                   /* no wrap condition exists */
+                                        /* don't change cell parameters */
+        }
+
+        /* call carriage return routine */
+        /* call line feed routine */
+        return 1;                       /* indicate that CR LF is required */
+    }
+
+    linea_vars.v_cur_cx += 1;           /* next cell to right */
+
+#ifdef MACHINE_RPI
+    linea_vars.v_cur_ad = raspi_cell_addr(linea_vars.v_cur_cx, linea_vars.v_cur_cy);
+#else
+#if CONF_WITH_VIRTIO_GPU
+    if (TRUECOLOR_MODE) {
+        linea_vars.v_cur_ad += 8 * (linea_vars.v_planes / 8);
+        return 0;
+    }
+#endif
+#if CONF_WITH_VIDEL
+    if (TRUECOLOR_MODE) {               /* chunky pixels */
+        linea_vars.v_cur_ad += 16;
+        return 0;
+    }
+#endif
+    /* if X is even, move to next word in the plane */
+    if ( IS_ODD(linea_vars.v_cur_cx) ) {
+        /* x is odd */
+        linea_vars.v_cur_ad += 1;       /* a1 -> new cell */
+        return 0;                       /* indicate no wrap needed */
+    }
+
+    /* new cell (1st plane), added offset to next word in plane */
+    linea_vars.v_cur_ad += (linea_vars.v_planes << 1) - 1;
+#endif
+    return 0;                           /* indicate no wrap needed */
+}
+
+
+
+/*
+ * invert_cell - negates the cells bits
+ *
+ * This routine negates the contents of an arbitrarily-tall byte-wide cell
+ * composed of an arbitrary number of (Atari-style) bit-planes.
+ *
+ * Wrapper for neg_cell().
+ *
+ * in:
+ * x - cell X coordinate
+ * y - cell Y coordinate
+ */
+
+void invert_cell(int x, int y)
+{
+    /* fetch x and y coords and invert cursor. */
+    neg_cell(cell_addr(x, y));
 }
 
 
@@ -404,8 +745,7 @@ cell_xfer(UBYTE * src, UBYTE * dst)
  * d1.w    new cell Y coordinate
  */
 
-void
-move_cursor(int x, int y)
+void move_cursor(int x, int y)
 {
     /* update cell position */
 
@@ -464,114 +804,6 @@ move_cursor(int x, int y)
 
 
 /*
- * neg_cell - negates
- *
- * This routine negates the contents of an arbitrarily-tall byte-wide cell
- * composed of an arbitrary number of (Atari-style) bit-planes.
- * Cursor display can be accomplished via this procedure.  Since a second
- * negation restores the original cell condition, there is no need to save
- * the contents beneath the cursor block.
- *
- * in:
- * a1.l      points to destination (1st plane, top of block)
- *
- * out:
- */
-
-static void
-neg_cell(UBYTE * cell)
-{
-#ifdef MACHINE_RPI
-    raspi_neg_cell(cell);
-#else
-    int plane, len;
-    int cell_len = linea_vars.v_cel_ht;
-
-    linea_vars.v_stat_0 |= M_CRIT;                 /* start of critical section. */
-
-    for (plane = linea_vars.v_planes; plane--; ) {
-        UBYTE * addr = cell;            /* top of current dest plane */
-
-        /* reset cell length counter */
-        for (len = cell_len; len--; ) {
-            *addr = ~*addr;
-            addr += linea_vars.v_lin_wr;
-        }
-        cell += plane_offset;           /* a1 -> top of block in next plane */
-    }
-    linea_vars.v_stat_0 &= ~M_CRIT;                /* end of critical section. */
-#endif
-}
-
-
-
-/*
- * invert_cell - negates the cells bits
- *
- * This routine negates the contents of an arbitrarily-tall byte-wide cell
- * composed of an arbitrary number of (Atari-style) bit-planes.
- *
- * Wrapper for neg_cell().
- *
- * in:
- * x - cell X coordinate
- * y - cell Y coordinate
- */
-
-void
-invert_cell(int x, int y)
-{
-    /* fetch x and y coords and invert cursor. */
-    neg_cell(cell_addr(x, y));
-}
-
-
-
-/*
- * next_cell - Return the next cell address.
- *
- * sets next cell address given the current position and screen constraints
- *
- * returns:
- *     false - no wrap condition exists
- *     true  - CR LF required (position has not been updated)
- */
-
-static BOOL next_cell(void)
-{
-    /* check bounds against screen limits */
-    if ( linea_vars.v_cur_cx == linea_vars.v_cel_mx ) {               /* increment cell ptr */
-        if ( !( linea_vars.v_stat_0 & M_CEOL ) ) {
-            /* overwrite in effect */
-            return 0;                   /* no wrap condition exists */
-                                        /* don't change cell parameters */
-        }
-
-        /* call carriage return routine */
-        /* call line feed routine */
-        return 1;                       /* indicate that CR LF is required */
-    }
-
-    linea_vars.v_cur_cx += 1;           /* next cell to right */
-
-#ifdef MACHINE_RPI
-    linea_vars.v_cur_ad = raspi_cell_addr(linea_vars.v_cur_cx, linea_vars.v_cur_cy);
-#else
-    /* if X is even, move to next word in the plane */
-    if ( IS_ODD(linea_vars.v_cur_cx) ) {
-        /* x is odd */
-        linea_vars.v_cur_ad += 1;       /* a1 -> new cell */
-        return 0;                       /* indicate no wrap needed */
-    }
-
-    /* new cell (1st plane), added offset to next word in plane */
-    linea_vars.v_cur_ad += (linea_vars.v_planes << 1) - 1;
-#endif
-    return 0;                           /* indicate no wrap needed */
-}
-
-
-/*
  * scroll_up - Scroll upwards
  *
  *
@@ -589,11 +821,10 @@ static BOOL next_cell(void)
  *   top_line - cell y of cell line to be used as top line in scroll
  */
 
-void
-scroll_up(int top_line)
+void scroll_up(UWORD top_line)
 {
     ULONG count;
-    ULONG cell_wr = linea_vars.v_cel_wr;
+    ULONG cell_wr = cell_wrap();
     UBYTE * src, * dst;
 
     /* screen base addr + cell y nbr * cell wrap */
@@ -618,11 +849,10 @@ scroll_up(int top_line)
  * scroll_down - Scroll (partially) downwards
  */
 
-void
-scroll_down(int start_line)
+void scroll_down(UWORD start_line)
 {
     ULONG count;
-    ULONG cell_wr = linea_vars.v_cel_wr;
+    ULONG cell_wr = cell_wrap();
     UBYTE * src, * dst;
 
     /* screen base addr + offset of start line */

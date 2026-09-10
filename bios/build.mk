@@ -16,24 +16,32 @@ obj-y += lowstram.o
 
 # The remaining BIOS objects can come in any order.
 obj-y += memory.o processor.o intmask.o vectors.o bios.o xbios.o acsi.o biosmem.o \
-	 blkdev.o chardev.o clock.o conout.o cookie.o country.o disk.o \
+	 blkdev.o chardev.o clock.o conout.o country.o disk.o \
 	 dma.o dmasound.o floppy.o font.o ide.o ikbd.o initinfo.o kprint.o \
 	 lineainit.o machine.o mfp.o midi.o mouse.o nvram.o panicasm.o \
 	 parport.o screen.o serport.o sound.o videl.o vt52.o xhdi.o delay.o \
 	 sd.o memory2.o bootparams.o bootargs.o scsi.o
+
+# ui_mupb's address must be greater than the exec_os contents (see the
+# comment in endrom.c), so this must stay last in bios/.
+obj-y += endrom.o
 
 # screen_mode_desc_valid() (screen_mode.c) has exactly one caller,
 # vdi_backend_select() (vdi/vdi_backend.c), which only exists when the VDI
 # backend is runtime-selectable -- see vdi/build.mk.
 obj-$(CONF_WITH_VDI_BACKEND_DISPATCH) += screen_mode.o
 
+obj-$(CONF_WITH_SCSI_DRIVER) += scsidriv.o
+obj-$(CONF_WITH_DSP) += dsp.o dsp2.o
+obj-$(CONF_WITH_VAMPIRE_SPI) += spi_vamp.o
+
 obj-$(ARCH_M68K) += aciavecs.o kprintasm.o linea.o natfeat.o natfeats.o \
 	 pmmu030.o 68040_pmmu.o amiga.o amiga2.o aros.o aros2.o delayasm.o \
 	 nova.o
 
-obj-$(ARCH_COLDFIRE) += coldfire.o coldfire2.o spi.o
+obj-$(ARCH_COLDFIRE) += coldfire.o coldfire2.o spi_cf.o
 
-obj-$(ARCH_ARM) += vectorsasm.o aciaemu.o
+obj-$(ARCH_ARM) += vectorsasm.o aciaemu.o tosvars.o
 
 # The cache maintenance operations below do not exist on the ARM1176 used
 # by the first generation Raspberry Pi.
@@ -41,10 +49,11 @@ obj-$(CPU_ARMV7) += cache_armv7.o cache_armv7_asm.o
 
 obj-$(MACHINE_RPI) += raspi_board.o raspi_uart.o raspi_int.o raspi_mbox.o \
 	 raspi_screen.o raspi_emmc.o
+obj-$(TARGET_RPI4) += raspi_gic.o
 obj-$(CONF_WITH_USB_XHCI) += raspi_vl805.o
+obj-$(CONF_WITH_RASPI_VSYNC_IRQ) += raspi_vsync.o
 
 obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o virt_pic.o virt_timer.o
-obj-$(CONF_WITH_VDI_TRUECOLOR32_TEST) += virt_screen.o
 
 obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfish_rtc_isr.o goldfish_pic_isr.o
 
@@ -53,6 +62,8 @@ obj-$(CONF_WITH_PCI_VIRT_ECAM) += virt_pci.o
 obj-$(CONF_WITH_PCI_RPI4_BRCMSTB) += raspi_pci.o
 
 obj-$(CONF_WITH_VIRTIO_BLK) += virtio_blk.o
+
+obj-$(CONF_WITH_VIRTIO_GPU) += virtio_gpu.o
 
 obj-$(CONF_WITH_VIRTIO_INPUT) += virtio_input.o virtio_input_keytbl.o
 

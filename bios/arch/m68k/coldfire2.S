@@ -1,7 +1,7 @@
 /*
  * coldfire2.S - ColdFire specific assembler functions
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2021 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -61,14 +61,14 @@ coldfire_startup:
 #endif
 
         pea     (a6)            // Return address
-        jmp     _coldfire_early_init
+        jmp     C_SYM(coldfire_early_init)
 
 #if CONF_COLDFIRE_TIMER_C
-        .extern _int_timerc
+        .extern C_SYM(int_timerc)
 
 /* GPT1 interrupt */
-        .globl _coldfire_int_61
-_coldfire_int_61:
+        .globl C_SYM(coldfire_int_61)
+C_SYM(coldfire_int_61):
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
 
@@ -79,8 +79,8 @@ _coldfire_int_61:
         move.w  d0,-(sp)                // SR
         move.w  #0x40B4,-(sp)           // Format/Vector word
 
-        .extern _vector_5ms
-        move.l  _vector_5ms,a0
+        .extern C_SYM(vector_5ms)
+        move.l  C_SYM(vector_5ms),a0
         jmp     (a0)                    // Call the 200 Hz system timer
 
 coldfire_int_61_ack:
@@ -94,28 +94,26 @@ coldfire_int_61_ack:
         rte
 #endif
 
-#if CONF_SERIAL_CONSOLE
 /* PSC0 interrupt (ColdFire RS-232 port) */
-        .globl _coldfire_int_35
-_coldfire_int_35:
+        .globl C_SYM(coldfire_int_35)
+C_SYM(coldfire_int_35):
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
 
-        jbsr    _coldfire_rs232_interrupt_handler
+        jbsr    C_SYM(coldfire_rs232_interrupt_handler)
 
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
         rte
-#endif
 
 #if CONF_WITH_FLEXCAN
 /* FlexCAN message buffer interrupt (Eiffel IKBD) */
-        .globl _coldfire_int_57
-_coldfire_int_57:
+        .globl C_SYM(coldfire_int_57)
+C_SYM(coldfire_int_57):
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
 
-        jbsr    _coldfire_flexcan_message_buffer_interrupt
+        jbsr    C_SYM(coldfire_flexcan_message_buffer_interrupt)
 
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp

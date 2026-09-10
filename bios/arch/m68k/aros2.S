@@ -21,8 +21,8 @@
 
 /* From arch/m68k-amiga/boot/rom_init.S ***************************************/
 
-    .globl _MemoryTest
-_MemoryTest:
+    .globl C_SYM(MemoryTest)
+C_SYM(MemoryTest):
     // In EmuTOS, we get the parameters from the stack
     move.l  %sp@(4),%a0     // address
     move.l  %sp@(8),%a1     // endAddress

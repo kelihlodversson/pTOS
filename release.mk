@@ -1,7 +1,7 @@
 #
 # release.mk - Makefile fragment for building releases
 #
-# Copyright (C) 2011-2017 The EmuTOS development team.
+# Copyright (C) 2011-2024 The EmuTOS development team.
 #
 # Authors:
 #  VRI      Vincent Rivière
@@ -19,10 +19,13 @@
 # make" produces.
 #
 
-# This subset of the doc directory will be included in all the binary archives
-DOCFILES = doc/announce.txt doc/authors.txt doc/bugs.txt doc/changelog.txt \
-  doc/emudesk.txt doc/incompatible.txt doc/license.txt doc/status.txt \
-  doc/todo.txt doc/xhdi.txt
+# This subset of the doc directory will be included in all the binary archives.
+# Historical EmuTOS documents deliberately remain in the source tree only.
+DOCFILES = doc/ptos.txt doc/status.txt doc/license.txt
+
+# This subset of the extras directory will be included in all the binary archives
+# that have a desktop
+EXTRAFILES = extras/*
 
 # The archives will be placed into this directory
 RELEASE_DIR = release-archives
@@ -45,11 +48,11 @@ cp aes/mform.def $(1)/emucurs.def && cp aes/mform.rsc $(1)/emucurs.rsc && \
 cp desk/icon.def $(1)/emuicon.def && cp desk/icon.rsc $(1)/emuicon.rsc
 endef
 
-# Assemble the documentation of an archive and convert it to DOS line endings.
-# The generic part is readme_emutos.txt, which is what upstream EmuTOS calls
-# readme.txt; here that name is taken by the archive being assembled.
+# Assemble the pTOS documentation of an archive and convert it to DOS line
+# endings.  Per-target EmuTOS release notes are historical records, not pTOS
+# release documentation.
 define copy-docs
-cat doc/readme-$(2).txt readme_emutos.txt >$(1)/readme.txt && mkdir $(1)/doc && \
+cp readme_ptos.txt $(1)/readme.txt && mkdir $(1)/doc && \
 cp $(DOCFILES) $(1)/doc && find $(1) -name '*.txt' -exec unix2dos '{}' ';'
 endef
 
@@ -207,6 +210,36 @@ release-floppy:
 	$(call copy-docs,$(RELEASE_FLOPPY),floppy)
 	cd $(RELEASE_DIR) && zip -9 -r $(notdir $(RELEASE_FLOPPY)).zip $(notdir $(RELEASE_FLOPPY))
 	rm -r $(RELEASE_FLOPPY)
+
+.PHONY: release-raspi-resources
+release-raspi-resources:
+	@if [ -z '$(DEST)' ]; then \
+	  echo 'DEST is not set; usage: make release-raspi-resources DEST=<archive-dir>' >&2; \
+	  exit 1; \
+	fi
+	mkdir -p $(DEST)
+	$(call copy-resources,$(DEST))
+	# desk/emudesk-raspi.inf: same #R/#E/#Q/#M/#T/file-type-association
+	# content deskapp.c's own built-in default generates (see
+	# desk_inf_data1/desk_inf_data2), except the first #W window slot
+	# has C:\*.* as its path instead of being empty -- deskmain.c opens
+	# every #W slot with a non-empty path at boot, so this alone is what
+	# makes the desktop come up with a window already open on the drive.
+	cp desk/emudesk-raspi.inf $(DEST)/EMUDESK.INF
+	# Opts every shipped Pi 1/2/3 card in to the legacy fake_vsync_isr
+	# vblank interrupt CONF_WITH_RASPI_VSYNC_IRQ (bios/raspi_vsync.c) can
+	# use for real vsync-driven VBL -- scoped off Pi 4 by the file itself,
+	# and harmless where the firmware doesn't support it either way, see
+	# bios/raspi-config.txt and doc/readme-raspi.md.
+	cp bios/raspi-config.txt $(DEST)/config.txt
+	# Like copy-docs, but readme.txt is rendered from Markdown with Atari
+	# VT52 escapes (tools/md2atari.py) instead of a plain doc/readme-*.txt,
+	# CRLF line endings included -- unix2dos refuses those escape bytes as
+	# "binary", so it cannot do that part for us here.
+	$(PYTHON) tools/md2atari.py doc/readme-raspi.md readme_ptos.txt >$(DEST)/readme.txt
+	mkdir -p $(DEST)/doc
+	cp $(DOCFILES) $(DEST)/doc
+	find $(DEST)/doc -name '*.txt' -exec unix2dos '{}' ';'
 
 .PHONY: release-emucon
 RELEASE_EMUCON = $(RELEASE_DIR)/emucon

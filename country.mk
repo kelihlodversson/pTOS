@@ -1,7 +1,7 @@
 #
-# country.mk - the country tables
+# country.mk - country-related items
 #
-# Copyright (C) 2002-2017 The EmuTOS development team
+# Copyright (C) 2002-2025 The EmuTOS development team
 #
 # This file is distributed under the GPL, version 2 or at your
 # option any later version.  See doc/license.txt for details.
@@ -42,7 +42,7 @@ i18n_gr_idt  = IDT_24H | IDT_DDMMYY | '/'
 
 i18n_es_lang = es
 i18n_es_keyb = US
-i18n_es_cset = L9
+i18n_es_cset = ST
 i18n_es_idt  = IDT_24H | IDT_DDMMYY | '/'
 
 i18n_fi_lang = fi
@@ -114,10 +114,11 @@ endif
 
 FONTOBJ_ST = fnt_st_6x6.o fnt_st_8x8.o fnt_st_8x16.o
 FONTOBJ_L2 = fnt_l2_6x6.o fnt_l2_8x8.o fnt_l2_8x16.o
-FONTOBJ_L9 = fnt_l9_6x6.o fnt_l9_8x8.o fnt_l9_8x16.o
 FONTOBJ_GR = fnt_gr_6x6.o fnt_gr_8x8.o fnt_gr_8x16.o
 FONTOBJ_RU = fnt_ru_6x6.o fnt_ru_8x8.o fnt_ru_8x16.o
-FONTOBJ_ALL = $(FONTOBJ_ST) $(FONTOBJ_L2) $(FONTOBJ_L9) $(FONTOBJ_GR) $(FONTOBJ_RU)
+FONTOBJ_TR = fnt_tr_6x6.o fnt_tr_8x8.o fnt_tr_8x16.o
+FONTOBJ_KM = fnt_km_6x6.o fnt_km_8x8.o fnt_km_8x16.o
+FONTOBJ_ALL = $(FONTOBJ_ST) $(FONTOBJ_L2) $(FONTOBJ_L9) $(FONTOBJ_GR) $(FONTOBJ_RU) $(FONTOBJ_TR) $(FONTOBJ_KM)
 FONTOBJ_COMMON = fnt_off_6x6.o fnt_off_8x8.o
 
 ifneq (,$(UNIQUE))

@@ -1,7 +1,7 @@
 /*
  * ikbd.h - Intelligent keyboard routines
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2021 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -13,7 +13,6 @@
 #ifndef IKBD_H
 #define IKBD_H
 
-#include "portab.h"
 #include "biosdefs.h"
 
 /*
@@ -25,7 +24,6 @@
  */
 
 #define MODE_SHIFT  (MODE_RSHIFT|MODE_LSHIFT)   /* shifted */
-#define MODE_SCA    (MODE_RSHIFT|MODE_LSHIFT|MODE_CTRL|MODE_ALT)
 
 #define HOTSWITCH_MODE (MODE_LSHIFT|MODE_ALT)
 
@@ -90,44 +88,50 @@ struct keytbl {
 /* Baud rate used by Atari keyboards */
 #define IKBD_BAUD 7812
 
+/*
+ * Date/Time to use when the hardware clock is not set.
+ * We use the OS creation date at 00:00:00
+ */
+#define DEFAULT_DATETIME MAKE_ULONG(os_header.os_dosdate, 0)
+
 /* initialise the ikbd */
-extern void kbd_init(void);
+void kbd_init(void);
 
 /* called by ikbdvec to handle key events */
-extern void kbd_int(UBYTE scancode);
+void kbd_int(UBYTE scancode);
 
 /* called by timer C int to handle key repeat */
-extern void kb_timerc_int(void);
+void kb_timerc_int(void);
 
 /* some bios functions */
-extern LONG bconstat2(void);
-extern LONG bconin2(void);
-extern LONG bcostat4(void);
-extern LONG bconout4(WORD dev, WORD c);
-extern LONG kbshift(WORD flag);
+LONG bconstat2(void);
+LONG bconin2(void);
+LONG bcostat4(void);
+LONG bconout4(WORD dev, WORD c);
+LONG kbshift(WORD flag);
 
 /* some xbios functions */
-extern LONG keytbl(const UBYTE* norm, const UBYTE* shft, const UBYTE* caps);
-extern WORD kbrate(WORD initial, WORD repeat);
-extern void bioskeys(void);
+LONG keytbl(const UBYTE* norm, const UBYTE* shft, const UBYTE* caps);
+WORD kbrate(WORD initial, WORD repeat);
+void bioskeys(void);
 
-extern void ikbdws(WORD cnt, const UBYTE *ptr);
-extern void ikbd_writeb(UBYTE b);
-extern void ikbd_writew(WORD w);
+void ikbdws(WORD cnt, const UBYTE *ptr);
+void ikbd_writeb(UBYTE b);
+void ikbd_writew(WORD w);
 
 #if CONF_SERIAL_CONSOLE
-extern void push_ascii_ikbdiorec(UBYTE ascii);
+void push_ascii_ikbdiorec(UBYTE ascii);
 #endif
 
 #ifdef __arm__
-#define call_mousevec kbdvecs.mousevec
+#define call_mousevec ((void (*)(SBYTE *))kbdvecs.mousevec)
 #else /*__arm__*/
 /* the following is in aciavecs.S */
-extern void call_mousevec(UBYTE *packet);
+void call_mousevec(SBYTE *packet);
 #ifdef MACHINE_AMIGA
-extern void call_joyvec(UBYTE *packet);
+void call_joyvec(UBYTE *packet);
 #endif
-#if CONF_WITH_FLEXCAN || CONF_SERIAL_IKBD
+#if CONF_WITH_FLEXCAN || CONF_SERIAL_IKBD || defined(MACHINE_LISA)
 void call_ikbdraw(UBYTE b);
 #endif
 #endif /*__arm__*/

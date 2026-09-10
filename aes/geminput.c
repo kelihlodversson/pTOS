@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2024 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -16,16 +16,13 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
-#include "string.h"
+#include "emutos.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesdefs.h"
+#include "aesvars.h"
 #include "obdefs.h"
-#include "gemlib.h"
 
 #include "geminput.h"
-#include "gemgraf.h"
 #include "gemdosif.h"
 #include "gemctrl.h"
 #include "gemmnlib.h"
@@ -37,13 +34,14 @@
 #include "gemdisp.h"
 #include "gemgsxif.h"
 #include "rectfunc.h"
-#include "kprint.h"
 #include "asm.h"
 
 
-extern void wheel_change(WORD wheel_number, WORD wheel_amount); /* called only from aes/gemdosif.S */
-extern void b_click(WORD state); /* called only from aes/gemdosif.S */
-extern void b_delay(WORD amnt);  /* called only from aes/gemdosif.S */
+#if CONF_WITH_EXTENDED_MOUSE
+void wheel_change(WORD wheel_number, WORD wheel_amount);    /* called only from aes/gemdosif.S */
+#endif
+void b_click(WORD state);   /* called only from aes/gemdosif.S */
+void b_delay(WORD amnt);    /* called only from aes/gemdosif.S */
 
 
 #define MB_DOWN 0x01
@@ -68,7 +66,8 @@ static WORD     gl_bpend;       /* number of pending events desiring */
                                 /*  more than a single click         */
 
 /* Prototypes: */
-static void post_mb(WORD ismouse, EVB *elist, WORD parm1, WORD parm2);
+static void post_button(AESPD *pd, WORD new, WORD numclicks);
+static void post_mouse(AESPD *pd, WORD x, WORD y);
 
 
 /*
@@ -156,17 +155,28 @@ void b_click(WORD state)
  */
 void b_delay(WORD amnt)
 {
+    WORD forkq_calls;
+
     /* see if we have a delay for mouse click in progress */
     if (gl_bdely)
     {
         /* see if decrementing delay cnt causes delay to be over */
         gl_bdely -= amnt;
+        if (gl_bdely < 0)
+            gl_bdely = 0;
         if (!gl_bdely)
         {
-            forkq(bchange, MAKE_ULONG(gl_bdesired, gl_bclick));
-            if (gl_bdesired != gl_btrue)
+            /*
+             * to avoid a 'button stuck down' problem, we must make sure
+             * that, if we are creating two button change FPDs, there is
+             * sufficient room for both of them
+             */
+            forkq_calls = (gl_bdesired==gl_btrue) ? 1 : 2;
+            if (fpcnt+forkq_calls <= NFORKS)
             {
-                forkq(bchange, MAKE_ULONG(gl_btrue, 1));
+                forkq(bchange, MAKE_ULONG(gl_bdesired, gl_bclick));
+                if (forkq_calls == 2)
+                    forkq(bchange, MAKE_ULONG(gl_btrue, 1));
             }
         }
     }
@@ -219,9 +229,9 @@ void set_mown(AESPD *mp)
          * pretend mouse moved to get the right form showing and
          * get the mouse event posted correctly
          */
-        post_mb(TRUE, gl_mowner->p_cda->c_msleep, xrat, yrat);
+        post_mouse(gl_mowner, xrat, yrat);
         /* post a button event in case the new owner was waiting */
-        post_mb(FALSE, gl_mowner->p_cda->c_bsleep, button, 1);
+        post_button(gl_mowner, button, 1);
     }
 }
 
@@ -300,19 +310,19 @@ void post_keybd(CDA *c, UWORD ch)
 
 
 /*
- *  Routine to give mouse to right owner based on position.  Called
+ *  Return ptr to AESPD that owns the mouse, based on position.  Called
  *  when button initially goes down, or when the mouse is moved with
  *  the mouse button down.
  */
-static void chkown(void)
+static AESPD *chkown(void)
 {
     WORD val;
 
     val = chk_ctrl(xrat, yrat);
     if (val == 1)
-        gl_mowner = gl_cowner;
-    else
-        gl_mowner = (val == -1) ? ctl_pd : D.w_win[0].w_owner;
+        return gl_cowner;
+
+    return (val == -1) ? ctl_pd : D.w_win[0].w_owner;
 }
 
 
@@ -323,7 +333,7 @@ void bchange(LONG fdata)
 
     /* see if this button event causes an ownership change to or from ctrlmgr */
     if (!gl_ctmown && (new == MB_DOWN) && (button == 0))
-        chkown();
+        gl_mowner = chkown();
 
     mtrans++;
     pr_button = button;
@@ -332,7 +342,7 @@ void bchange(LONG fdata)
     pr_yrat = yrat;
     button = new;
     mclick = clicks;
-    post_mb(FALSE, gl_mowner->p_cda->c_bsleep, button, clicks);
+    post_button(gl_mowner, button, clicks);
 }
 
 
@@ -378,11 +388,11 @@ void mchange(LONG fdata)
      */
     if ( (gl_mowner != ctl_pd) && (button == 0) && gl_mntree && (in_mrect(&gl_ctwait)) )
         gl_mowner = ctl_pd;
-    post_mb(TRUE, gl_mowner->p_cda->c_msleep, xrat, yrat);
+    post_mouse(gl_mowner, xrat, yrat);
 }
 
 
-#if CONF_WITH_VDI_EXTENSIONS
+#if CONF_WITH_EXTENDED_MOUSE
 void wheel_change(WORD wheel_number, WORD wheel_amount)
 {
     WORD wh;
@@ -409,8 +419,8 @@ void wheel_change(WORD wheel_number, WORD wheel_amount)
     wh = wm_find(xrat, yrat);
     ap_sendmsg(appl_msg, WM_ARROWED, D.w_win[wh].w_owner, wh, type, 0, 0, 0);
 */
-    (void)wh; /* silent warning */
-    (void)type; /* silent warning */
+    UNUSED(wh);
+    UNUSED(type);
 }
 #endif
 
@@ -429,36 +439,46 @@ static WORD inorout(EVB *e, WORD rx, WORD ry)
     return (mo.m_out != inside(rx, ry, &mo.m_gr));
 }
 
+
 /*
- *  Routine to walk the list of mouse or button events and remove
+ *  Routine to walk the list of mouse events and remove
  *  the ones that are satisfied
  */
-static void post_mb(WORD ismouse, EVB *elist, WORD parm1, WORD parm2)
+static void post_mouse(AESPD *pd, WORD x, WORD y)
+{
+    EVB     *e1, *e;
+
+    for (e = pd->p_cda->c_msleep; e; e = e1)
+    {
+        e1 = e->e_link;
+        if (inorout(e, x, y))
+            evremove(e, 0);
+    }
+}
+
+
+/*
+ *  Routine to walk the list of button events and remove
+ *  the ones that are satisfied
+ */
+static void post_button(AESPD *pd, WORD new, WORD numclicks)
 {
     EVB     *e1, *e;
     UWORD   clicks;
 
-    for (e = elist; e; e = e1)
+    for (e = pd->p_cda->c_bsleep; e; e = e1)
     {
         e1 = e->e_link;
-        if (ismouse)
+        if (downorup(new, e->e_parm))
         {
-            if (inorout(e, parm1, parm2))
-                evremove(e, 0);
-        }
-        else
-        {
-            if (downorup(parm1, e->e_parm))
-            {
-                /*
-                 * decrement counting semaphore if one of the multi-click
-                 * guys was satisfied
-                 */
-                clicks = LOBYTE((HIWORD(e->e_parm)));
-                if (clicks > 1)
-                    gl_bpend--;
-                evremove(e, (parm2 > clicks) ? clicks : parm2);
-            }
+            /*
+             * decrement counting semaphore if one of the multi-click
+             * guys was satisfied
+             */
+            clicks = LOBYTE((HIWORD(e->e_parm)));
+            if (clicks > 1)
+                gl_bpend--;
+            evremove(e, (numclicks > clicks) ? clicks : numclicks);
         }
     }
 }
@@ -502,7 +522,7 @@ void adelay(EVB *e, LONG c)
     }
 
     e->e_flag |= EVDELAY;
-    q = (EVB *) ((BYTE *) &dlr - offsetof(EVB, e_link));
+    q = FAKE_EVB(&dlr);
     for (p = dlr; p; p = (q = p) -> e_link)
     {
         if (c <= p->e_parm)
@@ -527,7 +547,7 @@ void abutton(EVB *e, LONG p)
 {
     WORD bclicks;
 
-    if ((rlr == gl_mowner) && downorup(button, p))
+    if (downorup(button, p))
     {
         azombie(e, 1);      /* 'nuff said */
     }
@@ -553,7 +573,7 @@ void amouse(EVB *e, LONG pmo)
     mob = *(MOBLK *)pmo;
 
     /* if already in (or out) of rectangle, signal immediately */
-    if ((rlr == gl_mowner) && in_mrect(&mob))
+    if (in_mrect(&mob))
         azombie(e, 0);
     else
     {

@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2021 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -19,8 +19,7 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "obdefs.h"
 #include "gemdos.h"
 #include "optimize.h"
@@ -34,30 +33,10 @@
 #include "deskfpd.h"
 #include "deskins.h"
 #include "deskwin.h"
-#include "dos.h"
 #include "deskrsrc.h"
+#include "desksupp.h"
 
 #include "string.h"
-#include "kprint.h"
-
-
-/*
- *  Find the file node that matches a particular object id
- */
-FNODE *fpd_ofind(FNODE *pf, WORD obj)
-{
-    if (obj < 0)    /* if object doesn't exist, */
-        return NULL;/* neither does file node.  */
-
-    while(pf)
-    {
-        if (pf->f_obid == obj)
-            return pf;
-        pf = pf->f_next;
-    }
-
-    return NULL;
-}
 
 
 /*
@@ -87,11 +66,11 @@ void pn_close(PNODE *thepath)
 /*
  *  Open a particular path
  */
-PNODE *pn_open(BYTE *pathname, WNODE *pw)
+PNODE *pn_open(char *pathname, WNODE *pw)
 {
     PNODE *thepath;
 
-    if (strlen(pathname) >= MAXPATHLEN)
+    if (strlen(pathname) >= LEN_ZPATH)
         return NULL;
 
     /*
@@ -104,7 +83,7 @@ PNODE *pn_open(BYTE *pathname, WNODE *pw)
     thepath = &pw->w_pnode;
     thepath->p_flist = NULL;    /* file list starts empty */
     strcpy(thepath->p_spec,pathname);
-    thepath->p_attr = F_SUBDIR;
+    thepath->p_attr = DISPATTR;
 
     return thepath;
 }
@@ -120,7 +99,7 @@ PNODE *pn_open(BYTE *pathname, WNODE *pw)
 static LONG pn_fcomp(FNODE *pf1, FNODE *pf2, WORD which)
 {
     LONG chk = 0L;
-    BYTE *ps1, *ps2;
+    char *ps1, *ps2;
 
     ps1 = pf1->f_name;
     ps2 = pf2->f_name;
@@ -160,8 +139,8 @@ static LONG pn_comp(FNODE *pf1, FNODE *pf2)
 {
     if (G.g_isort != S_NSRT)
     {
-        if ((pf1->f_attr ^ pf2->f_attr) & F_SUBDIR)
-            return (pf1->f_attr & F_SUBDIR) ? -1L : 1L;
+        if ((pf1->f_attr ^ pf2->f_attr) & FA_SUBDIR)
+            return (pf1->f_attr & FA_SUBDIR) ? -1L : 1L;
     }
 
     return pn_fcomp(pf1,pf2,G.g_isort);
@@ -187,7 +166,10 @@ FNODE *pn_sort(PNODE *pn)
      */
     ml_pfndx = dos_alloc_anyram(pn->p_count*sizeof(FNODE *));
     if (!ml_pfndx)              /* no space, can't sort */
+    {
+        malloc_fail_alert();
         return pn->p_flist;
+    }
 
     for (count = 0, pf = pn->p_flist; pf; pf = pf->f_next)
         ml_pfndx[count++] = pf;
@@ -236,31 +218,34 @@ FNODE *pn_sort(PNODE *pn)
  *  fun_file2any() when dragging a desktop icon representing a file/folder
  *
  *  returns 0   0 or more files found without error
+ *              NOTE: if insufficient memory is available, some files in
+ *              the specified pathnode will be silently excluded from the
+ *              filenode list.  our excuse is that Atari TOS does this too ...
  *          <0  error (other than EFILNF/ENMFIL) returned by dos_sfirst()/dos_snext()
  *              (e.g. when attempting to open a floppy drive with no disk)
  */
 WORD pn_active(PNODE *pn, BOOL include_folders)
 {
+    DTA *dtasave;
     FNODE *fn, *prev;
     LONG maxmem, maxcount, size = 0L;
     WORD count, ret;
 #if CONF_WITH_FILEMASK
-    BYTE search[MAXPATHLEN];
-    BYTE *match;
+    char search[MAXPATHLEN];
+    char *match;
 #endif
 
     fl_free(pn);                    /* free any existing filenodes */
 
-    maxmem = dos_avail_anyram();     /* allocate max possible memory */
-    if (maxmem < sizeof(FNODE))
-        return E_NOMEMORY;
-
-    pn->p_fbase = dos_alloc_anyram(maxmem);
+    maxmem = dos_avail_anyram();    /* allocate max possible memory */
     maxcount = maxmem / sizeof(FNODE);
+    if (maxcount)
+        pn->p_fbase = dos_alloc_anyram(maxmem);
 
     fn = pn->p_fbase;
     prev = (FNODE *)&pn->p_flist;   /* assumes fnode link is at start of fnode */
 
+    dtasave = dos_gdta();           /* so we can preserve it */
     dos_sdta(&G.g_wdta);
 
 #if CONF_WITH_FILEMASK
@@ -273,7 +258,7 @@ WORD pn_active(PNODE *pn, BOOL include_folders)
     match = filename_start(pn->p_spec); /* the match filespec is always unaltered */
     for (ret = dos_sfirst(search, pn->p_attr), count = 0; (ret == 0) && (count < maxcount); ret = dos_snext())
     {
-        if (G.g_wdta.d_attrib != F_SUBDIR)  /* skip *files* that don't match */
+        if (G.g_wdta.d_attrib != FA_SUBDIR) /* skip *files* that don't match */
             if (!wildcmp(match, G.g_wdta.d_fname))
                 continue;
 #else
@@ -294,8 +279,7 @@ WORD pn_active(PNODE *pn, BOOL include_folders)
 
     if (count == 0)
     {
-        dos_free(pn->p_fbase);
-        pn->p_fbase = NULL;
+        fl_free(pn);            /* free any existing filenodes */
     }
     else
     {
@@ -303,5 +287,65 @@ WORD pn_active(PNODE *pn, BOOL include_folders)
         pn->p_flist = pn_sort(pn);
     }
 
+    /* check if enough FNODEs were available */
+    if (count >= maxcount)
+        KDEBUG(("Not enough FNODEs for folder %s\n",pn->p_spec));
+
+    dos_sdta(dtasave);          /* restore original DTA for neatness */
+
     return ((ret==ENMFIL) || (ret==EFILNF)) ? 0 : ret;
+}
+
+
+/*
+ *  Clear the selection flag in all FNODES chained from the PNODE in the specified WNODE
+ */
+void pn_clear(WNODE *pw)
+{
+    FNODE *pf;
+
+    for (pf = pw->w_pnode.p_flist; pf; pf = pf->f_next)
+        pf->f_selected = FALSE;
+}
+
+
+/*
+ *  Return the FNODE associated with the first selected file in the PNODE
+ *  within the specified WNODE
+ *
+ *  returns NULL if no selected files
+ */
+FNODE *pn_selected(WNODE *pw)
+{
+    FNODE *pf;
+
+    for (pf = pw->w_pnode.p_flist; pf; pf = pf->f_next)
+        if (pf->f_selected)
+            break;
+
+    return pf;
+}
+
+
+/*
+ *  Count the number of selected FNODES and (of those) the number of
+ *  application FNODEs
+ */
+void pn_count(WNODE *pw, WORD *psel, WORD *papp)
+{
+    WORD sel = 0, app = 0;
+    FNODE *pf;
+
+    for (pf = pw->w_pnode.p_flist; pf; pf = pf->f_next)
+    {
+        if (pf->f_selected)
+        {
+            sel++;
+            if (pf->f_isap)
+                app++;
+        }
+    }
+
+    *psel = sel;
+    *papp = app;
 }

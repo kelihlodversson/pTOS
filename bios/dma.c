@@ -1,14 +1,13 @@
 /*
  * dma.c - DMA disk routines
  *
- * Copyright (C) 2011-2016 The EmuTOS development team
+ * Copyright (C) 2011-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "dma.h"
 
 void set_dma_addr(UBYTE *addr)

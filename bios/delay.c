@@ -4,7 +4,7 @@
  * note that the timings are quite imprecise (but conservative) unless
  * you are running on at least a 32MHz 68030 processor
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2024 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -12,12 +12,16 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-#include "config.h"
-#include "portab.h"
+
+/* #define ENABLE_KDEBUG */
+
+#include "emutos.h"
+#include "biosdefs.h"
 #include "mfp.h"
 #include "serport.h"
 #include "processor.h"
 #include "delay.h"
+#include "coldfire.h" /* For cookie jar info. */
 
 /*
  * initial 1 millisecond delay loop values
@@ -28,8 +32,6 @@
 #define LOOPS_68000         760     /* 68000 timing assumes 16MHz */
 
 #define CALIBRATION_TIME    100     /* target # millisecs to run calibration */
-
-#define TIMERD_INTNUM       4       /* for jdisint() etc */
 
 /*
  * global variables
@@ -74,6 +76,8 @@ void init_delay(void)
         }
     }
 #endif
+
+    KDEBUG(("init_delay loopcount_1_msec=%ld\n", loopcount_1_msec));
 }
 
 /*
@@ -93,7 +97,7 @@ void calibrate_delay(void)
     /*
      * disable interrupts then run the calibration
      */
-    jdisint(TIMERD_INTNUM);
+    jdisint(MFP_TIMERD);
     loopcount = CALIBRATION_TIME * loopcount_1_msec;
     intcount = run_calibration(loopcount);
 
@@ -101,8 +105,8 @@ void calibrate_delay(void)
      * disable interrupts then restore the RS232
      * serial port stuff (in case we're using it)
      */
-    jdisint(TIMERD_INTNUM);
-    rsconf1(B9600, 0, 0x88, 1, 1, 0);   /* just like init_serport() */
+    jdisint(MFP_TIMERD);
+    rsconf1(DEFAULT_BAUDRATE, 0, 0x88, 1, 1, 0);   /* just like init_serport() */
 
     /*
      * intcount is the number of interrupts that occur during 'loopcount'
@@ -113,5 +117,11 @@ void calibrate_delay(void)
      */
     if (intcount)       /* check for valid */
         loopcount_1_msec = (loopcount * 24) / (intcount * 25);
+#elif defined(__mcoldfire__)
+    loopcount_1_msec = (ULONG)cookie_mcf.sysbus_frequency * 1000;
+#else
+    KDEBUG(("Warning: loopcount_1_msec isn't calibrated.\n"));
 #endif
+
+    KDEBUG(("calibrate_delay loopcount_1_msec=%ld\n", loopcount_1_msec));
 }

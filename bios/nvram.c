@@ -1,7 +1,7 @@
 /*
  * nvram.c - Non-Volatile RAM access
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2020 The EmuTOS development team
  *
  * Authors:
  *  LVL     Laurent Vogel
@@ -12,14 +12,12 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "cookie.h"
 #include "machine.h"
 #include "vectors.h"
 #include "nvram.h"
 #include "biosmem.h"
-#include "kprint.h"
 
 #if CONF_WITH_NVRAM
 
@@ -46,7 +44,7 @@ const UBYTE nvram_init[] = { 0x00, 0x2f, 0x20, 0xff, 0xff, 0xff };
 int has_nvram;
 
 /*
- * detect_nvram - detect the nvram
+ * detect_nvram - detect the NVRAM
  */
 void detect_nvram(void)
 {
@@ -139,9 +137,9 @@ static void set_sum(UWORD sum)
     volatile UBYTE *data_reg = (volatile UBYTE *)NVRAM_DATA_REG;
 
     *addr_reg = NVRAM_START + NVRAM_CKSUM;
-    *data_reg = sum >> 8;
+    *data_reg = HIBYTE(sum);
     *addr_reg = NVRAM_START + NVRAM_CKSUM + 1;
-    *data_reg = sum;
+    *data_reg = LOBYTE(sum);
 }
 
 /*

@@ -1,7 +1,7 @@
 /*
  * xbiosbind.h - Bindings for XBIOS access
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2022 The EmuTOS development team
  *
  * Authors:
  *  MAD   Martin Doering
@@ -15,6 +15,10 @@
 
 #ifndef XBIOSBIND_H
 #define XBIOSBIND_H
+
+#ifdef __arm__
+#include "biosargs.h"
+#endif
 
 #define Initmous(a,b,c) xbios_v_wll(0,a,(long)(b),(long)(c))
 #define Ssbrk(a) xbios_l_w(1,a)
@@ -53,13 +57,14 @@
 #define Kbrate(a,b) xbios_w_ww(35,a,b)
 #define Prtblk() xbios_v_v(36)
 #define Vsync() xbios_v_v(37)
-#define Supexec(a) xbios_v_l(38,a)  /* void ??? */
+#define Supexec(a) xbios_l_l(38,a)
 #define Puntaes() xbios_v_v(39)
 #define Blitmode(a) xbios_w_w(64, a)
 #define EgetShift() xbios_w_v(81)
 #define EsetColor(a,b) xbios_w_ww(83,a,b)
 #define VsetMode(a) xbios_w_w(88,a)
 #define VgetMonitor() xbios_w_v(89)
+#define VgetSize(a) xbios_l_w(91,a)
 #define VsetRGB(a,b,c) xbios_v_wwl(93,a,b,c)
 #define VgetRGB(a,b,c) xbios_v_wwl(94,a,b,c)
 
@@ -234,18 +239,28 @@ static __inline__ void
 xbios_v_wwwwww(int op, short a, short b, short c, short d, short e, short f)
 {
 #ifdef __arm__
+    /*
+     * rsconf() needs 6 real arguments; _xbiostrap only delivers 4 in
+     * registers, so pass them via a xbios_rsconf_args struct instead
+     * (biosargs.h). See kelihlodversson/pTOS#217.
+     */
+    struct xbios_rsconf_args args;
     register long _r0 __asm__("r0")=(long)(op);
-    register long _r1 __asm__("r1")=(long)(a);
-    register long _r2 __asm__("r2")=(long)(b);
-    register long _r3 __asm__("r3")=(long)(c);
-    register long _r4 __asm__("r4")=(long)(d);
-    register long _r5 __asm__("r5")=(long)(e);
-    register long _r6 __asm__("r6")=(long)(f);
+    register long _r1 __asm__("r1");
+
+    args.baud = a;
+    args.ctrl = b;
+    args.ucr = c;
+    args.rsr = d;
+    args.tsr = e;
+    args.scr = f;
+    _r1 = (long)&args;
+
     __asm__ volatile (
         "svc 14"
         :
-        : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3), "r"(_r4), "r"(_r5), "r"(_r6)
-        : "r12", "lr",  "memory", "cc"
+        : "r"(_r0), "r"(_r1)
+        : "r2", "r3", "r4", "r12", "lr",  "memory", "cc"
     );
 #else
     __asm__ volatile (
@@ -436,19 +451,29 @@ static __inline__ short xbios_w_llwwwww(int op,
     long a, long b, short c, short d, short e, short f, short g)
 {
 #ifdef __arm__
+    /*
+     * floprd()/flopwr()/flopver() need 7 real arguments; _xbiostrap only
+     * delivers 4 in registers, so pass them via a xbios_flop_io_args
+     * struct instead (biosargs.h). See kelihlodversson/pTOS#217.
+     */
+    struct xbios_flop_io_args args;
     register long _r0 __asm__("r0")=(long)(op);
-    register long _r1 __asm__("r1")=(long)(a);
-    register long _r2 __asm__("r2")=(long)(b);
-    register long _r3 __asm__("r3")=(long)(c);
-    register long _r4 __asm__("r4")=(long)(d);
-    register long _r5 __asm__("r5")=(long)(e);
-    register long _r6 __asm__("r6")=(long)(f);
-    register long _r7 __asm__("r7")=(long)(g);
+    register long _r1 __asm__("r1");
+
+    args.buf = (void *)a;
+    args.filler = b;
+    args.dev = c;
+    args.sect = d;
+    args.track = e;
+    args.side = f;
+    args.count = g;
+    _r1 = (long)&args;
+
     __asm__ volatile (
         "svc 14"
         : "=r"(_r0)
-        : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3), "r"(_r4), "r"(_r5), "r"(_r6), "r"(_r7)
-        : "r12", "lr",  "memory", "cc"
+        : "r"(_r0), "r"(_r1)
+        : "r2", "r3", "r4", "r12", "lr",  "memory", "cc"
     );
     return _r0;
 #else
@@ -478,21 +503,31 @@ static __inline__ short xbios_w_llwwwwwlw(int op,
     long a, long b, short c, short d, short e, short f, short g, long h, short i)
 {
 #ifdef __arm__
+    /*
+     * flopfmt() needs 9 real arguments; _xbiostrap only delivers 4 in
+     * registers, so pass them via a xbios_flopfmt_args struct instead
+     * (biosargs.h). See kelihlodversson/pTOS#217.
+     */
+    struct xbios_flopfmt_args args;
     register long _r0 __asm__("r0")=(long)(op);
-    register long _r1 __asm__("r1")=(long)(a);
-    register long _r2 __asm__("r2")=(long)(b);
-    register long _r3 __asm__("r3")=(long)(c);
-    register long _r4 __asm__("r4")=(long)(d);
-    register long _r5 __asm__("r5")=(long)(e);
-    register long _r6 __asm__("r6")=(long)(f);
-    register long _r7 __asm__("r7")=(long)(g);
-    register long _r8 __asm__("r8")=(long)(h);
-    register long _r9 __asm__("r9")=(long)(i);
+    register long _r1 __asm__("r1");
+
+    args.buf = (void *)a;
+    args.skew = (void *)b;
+    args.dev = c;
+    args.spt = d;
+    args.track = e;
+    args.side = f;
+    args.interlv = g;
+    args.magic = h;
+    args.virgin = i;
+    _r1 = (long)&args;
+
     __asm__ volatile (
         "svc 14"
         : "=r"(_r0)
-        : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3), "r"(_r4), "r"(_r5), "r"(_r6), "r"(_r7), "r"(_r8), "r"(_r9)
-        : "r12", "lr",  "memory", "cc"
+        : "r"(_r0), "r"(_r1)
+        : "r2", "r3", "r4", "r12", "lr",  "memory", "cc"
     );
     return _r0;
 #else
@@ -566,6 +601,34 @@ static __inline__ long xbios_l_w(int op, short a)
         "move.w  %1,-(sp)\n\t"
         "trap    #14\n\t"
         "addq.l  #4,sp"
+         : "=r"(retval)
+         : "nr"(op), "nr"(a)
+         : "d1", "d2", "a0", "a1", "a2", "memory", "cc"
+        );
+    return retval;
+#endif
+}
+
+static __inline__ long xbios_l_l(int op, long a)
+{
+#ifdef __arm__
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1")=(long)(a);
+    __asm__ volatile (
+        "svc 14"
+        : "=r"(_r0)
+        : "r"(_r0), "r"(_r1)
+        : "r2", "r3", "r12", "lr",  "memory", "cc"
+    );
+    return _r0;
+#else
+    register long retval __asm__("d0");
+
+    __asm__ volatile (
+        "move.l  %2,-(sp)\n\t"
+        "move.w  %1,-(sp)\n\t"
+        "trap    #14\n\t"
+        "addq.l  #6,sp"
          : "=r"(retval)
          : "nr"(op), "nr"(a)
          : "d1", "d2", "a0", "a1", "a2", "memory", "cc"

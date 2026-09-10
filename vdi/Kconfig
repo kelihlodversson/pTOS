@@ -1,7 +1,7 @@
 #
 # vdi/Kconfig - VDI options
 #
-# Copyright (C) 2001-2017 The EmuTOS development team.
+# Copyright (C) 2025-2026 The pTOS development team.
 #
 # This file is distributed under the GPL, version 2 or at your
 # option any later version.  See doc/license.txt for details.
@@ -25,7 +25,7 @@ config CONF_WITH_VDI_BACKEND_PLANAR
 
 config CONF_WITH_VDI_BACKEND_TRUECOLOR
 	bool "Packed truecolor VDI backend" if !MACHINE_RPI
-	default y if MACHINE_RPI
+	default y if MACHINE_RPI || MACHINE_VIRT_ARM || MACHINE_VIRT_M68K
 	default n
 	help
 	  Build the packed-truecolor VDI backend (vdi_backend_truecolor.o),
@@ -41,7 +41,7 @@ config CONF_WITH_VDI_BACKEND_TRUECOLOR
 config CONF_WITH_VDI_BACKEND_TRUECOLOR32
 	bool "Packed 32bpp XRGB8888 truecolor VDI backend"
 	depends on CONF_WITH_VDI_BACKEND_TRUECOLOR && CONF_WITH_VDI_BACKEND_DISPATCH
-	default n
+	default y if MACHINE_VIRT_ARM || MACHINE_VIRT_M68K
 	help
 	  Build the XRGB8888 (32bpp) variant of the packed-truecolor VDI
 	  backend (vdi_backend_truecolor32.o), sharing its drawing code with
@@ -89,6 +89,34 @@ config CONF_WITH_VDI_EXTENSIONS
 	bool "VDI extension functions"
 	default n if TARGET_192 || TARGET_CART
 	default y
+
+config CONF_WITH_GDOS
+	bool "GDOS-aware text output"
+	default y
+	help
+	  Generate code within vst_load_fonts() and vst_unload_fonts() to
+	  recognise when GDOS is present and behave accordingly.
+
+config CONF_WITH_VDI_16BIT
+	bool "16-bit truecolor VDI support"
+	depends on CONF_WITH_VIDEL
+	default y
+	help
+	  VDI support for the Falcon's Videl 16-bit (32768/65536 colour)
+	  screen modes.
+
+config CONF_WITH_VDI_TEXT_SPEEDUP
+	bool "VDI text output speedup"
+	default y
+	help
+	  Improve some VDI text output cases for legibility/performance.
+
+config CONF_WITH_VDI_VERTLINE
+	bool "VDI vertical line drawing speedup"
+	default n if TARGET_192
+	default y
+	help
+	  Improve VDI vertical line drawing performance.
 
 config CONF_RASPI_MOUSE_CURSOR
 	bool "Use the Raspberry Pi hardware mouse cursor"

@@ -1525,7 +1525,7 @@ typedef volatile unsigned long vuint32;
 #define MCF_DSPI_DCTAR_PCSSCK_1CLK     (0x00000000)
 #define MCF_DSPI_DCTAR_PCSSCK_3CLK     (0x00400000)
 #define MCF_DSPI_DCTAR_PCSSCK_5CLK     (0x00800000)
-#define MCF_DSPI_DCTAR_PCSSCK_7CLK     (0x00A00000)
+#define MCF_DSPI_DCTAR_PCSSCK_7CLK     (0x00C00000)
 #define MCF_DSPI_DCTAR_PASC_1CLK       (0x00000000)
 #define MCF_DSPI_DCTAR_PASC_3CLK       (0x00100000)
 #define MCF_DSPI_DCTAR_PASC_5CLK       (0x00200000)
@@ -1533,7 +1533,7 @@ typedef volatile unsigned long vuint32;
 #define MCF_DSPI_DCTAR_PDT_1CLK        (0x00000000)
 #define MCF_DSPI_DCTAR_PDT_3CLK        (0x00040000)
 #define MCF_DSPI_DCTAR_PDT_5CLK        (0x00080000)
-#define MCF_DSPI_DCTAR_PDT_7CLK        (0x000A0000)
+#define MCF_DSPI_DCTAR_PDT_7CLK        (0x000C0000)
 #define MCF_DSPI_DCTAR_PBR_2CLK        (0x00000000)
 #define MCF_DSPI_DCTAR_PBR_3CLK        (0x00010000)
 #define MCF_DSPI_DCTAR_PBR_5CLK        (0x00020000)
@@ -2391,7 +2391,7 @@ typedef volatile unsigned long vuint32;
 #define MBOX_STD_ID            0x00 /* standard identifier */
 #define MBOX_EXT_ID            0x01 /* remote identifier */
 #define MBOX_TX                0x08 /* tx message box */
-#define MBOX_RX                0x00 /* rx messge box */
+#define MBOX_RX                0x00 /* rx message box */
 
 #define MBOX_CFG_IDE           0x08
 #define MBOX_CFG_RTR_EXT       0x01

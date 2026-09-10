@@ -1,7 +1,7 @@
 /*
  * EmuCON2 header
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2022 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -13,7 +13,21 @@
  #include "config.h"
  #include <nls.h>
  #include <portab.h>
+ #include <sysconf.h>
+ /* the ROM build shares cli/ across every machine, so gate resolution
+    switching on the Atari video hardware actually configured in */
+ #define CLI_WITH_RESOLUTION    CONF_WITH_ATARI_VIDEO
+ #define CLI_WITH_TT_RESOLUTION CONF_WITH_TT_SHIFTER
 #else
+ /* config.h */
+ #define CONF_ATARI_HARDWARE    1
+ #define CONF_WITH_TT_SHIFTER   1
+ #define MAXPATHLEN      256
+ #define BLKDEVNUM       26
+ /* sysconf.h */
+ #define DRIVESEP       ':'
+ #define PATHSEP        '\\'
+ /* nls.h */
  #define _(a) a
  #define N_(a) a
  #define gettext(a) a
@@ -28,36 +42,50 @@
  #define HIWORD(x) ((UWORD)((ULONG)(x) >> 16))
  #define LOBYTE(x) ((UBYTE)(UWORD)(x))
  #define HIBYTE(x) ((UBYTE)((UWORD)(x) >> 8))
+ #define TRUE    (1)
+ #define FALSE   (0)
+ #define RESTRICT __restrict__
+ /* the m68k standalone build only ever targets real Atari hardware;
+    the ARM standalone build only ever targets pTOS's own raspi/virt-arm
+    ports, which have no Atari-style video hardware to switch resolution
+    on -- Getrez()/Setscreen() are a no-op there (see bios/screen.c's
+    CONF_WITH_ATARI_VIDEO fallback), so exposing MODE's resolution
+    switching would just look broken rather than doing anything real */
+ #ifdef __arm__
+  #define CLI_WITH_RESOLUTION    0
+  #define CLI_WITH_TT_RESOLUTION 0
+ #else
+  #define CLI_WITH_RESOLUTION    1
+  #define CLI_WITH_TT_RESOLUTION 1
+ #endif
+ /* normally from portab.h, which this build doesn't include */
+ #define FALLTHROUGH do { } while (0)
 #endif
 
 
 /*
  * system calls
  *
- * The standalone build (emucon2.tos) keeps its own private trap wrappers
- * from cmdasm.S.  The ROM build uses the shared portable dispatchers that
- * already work on both m68k and ARM.
+ * The standalone build (emucon2.tos) is linked against libcmini, whose
+ * <mint/osbind.h> already provides every GEMDOS/BIOS/XBIOS call below
+ * under these exact names -- no local trap wrappers needed. The ROM
+ * build uses the shared portable dispatchers that already work on both
+ * m68k and ARM.
  */
 #ifdef STANDALONE_CONSOLE
-extern LONG jmp_gemdos(WORD, ...);
-extern LONG jmp_bios(WORD, ...);
-extern LONG jmp_xbios(WORD, ...);
+#include <mint/osbind.h>
+#include <string.h>     /* strlen(), strcpy(), memcpy(), memset(), strncasecmp() */
+#include <ctype.h>      /* toupper() */
 
-#define jmp_gemdos_v(a)         jmp_gemdos((WORD)(a))
-#define jmp_gemdos_w(a,b)       jmp_gemdos((WORD)(a),(WORD)(b))
-#define jmp_gemdos_l(a,b)       jmp_gemdos((WORD)(a),(LONG)(b))
-#define jmp_gemdos_p(a,b)       jmp_gemdos((WORD)(a),(void*)(b))
-#define jmp_gemdos_ww(a,b,c)    jmp_gemdos((WORD)(a),(WORD)(b),(WORD)(c))
-#define jmp_gemdos_pw(a,b,c)    jmp_gemdos((WORD)(a),(void *)(b),(WORD)(c))
-#define jmp_gemdos_wlp(a,b,c,d) jmp_gemdos((WORD)(a),(WORD)(b),(LONG)(c),(void *)(d))
-#define jmp_gemdos_wpp(a,b,c,d) jmp_gemdos((WORD)(a),(WORD)(b),(void *)(c),(void *)(d))
-#define jmp_gemdos_pww(a,b,c,d) jmp_gemdos((WORD)(a),(void *)(b),(WORD)(c),(WORD)(d))
-#define jmp_gemdos_wppp(a,b,c,d,e)  jmp_gemdos((WORD)(a),(WORD)(b),(void *)(c),(void *)(d),(void *)(e))
-#define jmp_bios_w(a,b)         jmp_bios((WORD)(a),(WORD)(b))
-#define jmp_bios_ww(a,b,c)      jmp_bios((WORD)(a),(WORD)(b),(WORD)(c))
-#define jmp_xbios_l(a,b)        jmp_xbios((WORD)(a),(LONG)(b))
-#define jmp_xbios_llww(a,b,c,d,e)   jmp_xbios((WORD)a,(LONG)b,(LONG)c,(WORD)d,(WORD)e)
-#define jmp_xbios_ww(a,b,c)     jmp_xbios((WORD)(a),(WORD)(b),(WORD)(c))
+/* EmuTOS/pTOS extends the standard 3-argument XBIOS Setscreen (opcode 5)
+ * with a 4th word argument that sets the font height in the same call
+ * (see xbios_v_llww() in include/xbiosbind.h, used by the ROM build
+ * below); libcmini's <mint/osbind.h> only knows the standard,
+ * 3-argument form. */
+#undef Setscreen
+#define Setscreen(lscrn,pscrn,rez,height) \
+    ((void)trap_14_wllww((short)(0x05),(long)(lscrn),(long)(pscrn), \
+                          (short)(rez),(short)(height)))
 
 #else /* ROM build: use the shared portable trap dispatchers */
 #include "asm.h"        /* trap1(), trap1_pexec() */
@@ -85,9 +113,7 @@ static __inline__ long cli_supexec_(long a)
 #define jmp_gemdos_pww(a,b,c,d) trap1((int)(a),(void *)(b),(WORD)(c),(WORD)(d))
 /* Pexec needs the 5-argument form; trap1_pexec handles the extra argument */
 #define jmp_gemdos_wppp(a,b,c,d,e) \
-    trap1_pexec((short)(b),(const char *)(c),(const void *)(d),(const char *)(e))
-
-#endif /* STANDALONE_CONSOLE */
+    trap1_pexec((short)(b),(const char *)(c),(const char *)(d),(const char *)(e))
 
 #define Dsetdrv(a)          jmp_gemdos_w(0x0e,a)
 #define Dgetdrv()           jmp_gemdos_v(0x19)
@@ -114,20 +140,7 @@ static __inline__ long cli_supexec_(long a)
 #define Fsnext()            jmp_gemdos_v(0x4f)
 #define Frename(a,b,c)      jmp_gemdos_wpp(0x56,a,b,c)
 
-#ifdef STANDALONE_CONSOLE
-/* ROM build gets these from biosbind.h included above */
-#define Bconstat(a)         jmp_bios_w(0x01,a)
-#define Bconin(a)           jmp_bios_w(0x02,a)
-#define Bconout(a,b)        jmp_bios_ww(0x03,a,b)
-#endif
-
-#ifdef STANDALONE_CONSOLE
-/* ROM build gets these from xbiosbind.h included above */
-#define Setscreen(a,b,c,d)  jmp_xbios_llww(0x05,a,b,c,d)
-#define Cursconf(a,b)       jmp_xbios_ww(0x15,a,b)
-#define Kbrate(a,b)         jmp_xbios_ww(0x23,a,b)
-#define Supexec(a)          jmp_xbios_l(0x26,a)
-#endif
+#endif /* STANDALONE_CONSOLE */
 
 
 /*
@@ -138,7 +151,7 @@ static __inline__ long cli_supexec_(long a)
 
 #define IOBUFSIZE       16384L  /* buffer size */
 
-#define MAX_LINE_SIZE   200     /* must be greater than the largest screen width */
+#define MAX_LINE_SIZE   200L    /* must be greater than the largest screen width */
 #define HISTORY_SIZE    10      /* number of lines of history */
 #define MAX_ARGS        30      /* maximum number of args we can parse */
 
@@ -158,6 +171,21 @@ static __inline__ long cli_supexec_(long a)
 
 #define DEFAULT_DT_SEPARATOR    '/'
 #define DEFAULT_DT_FORMAT   ((_IDT_12H<<12) + (_IDT_YMD<<8) + DEFAULT_DT_SEPARATOR)
+
+/*
+ * video stuff
+ */
+#define _VDO_COOKIE     0x5f56444fL     /* '_VDO' */
+#define _VDO_ST         0x00000000L     /* ST */
+#define _VDO_TT         0x00020000L     /* TT */
+#define _VDO_VIDEL      0x00030000L     /* Falcon videl */
+#define ST_LOW          0               /* from Getrez() */
+#define ST_MEDIUM       1
+#define ST_HIGH         2
+#define TT_MEDIUM       4
+#define TT_HIGH         6
+#define TT_LOW          7
+#define BLACK           0x0000          /* for Setcolor() */
 
 /*
  *  typedefs
@@ -193,11 +221,12 @@ typedef LONG FUNC(WORD argc,char **argv);
 #define ENMFIL          -49
                                 /* additional emucon-only error codes */
 #define USER_BREAK      -100        /* user interrupted long output */
-#define INVALID_PATH    -101        /* invalid component for PATH command */
+#define NOT_DIRECTORY   -101        /* path points to a file */
 #define DISK_FULL       -102
 #define CMDLINE_LENGTH  -103
 #define DIR_NOT_EMPTY   -104        /* translated from EACCDN for folders */
 #define CANT_DELETE     -105        /* translated from EACCDN for files */
+#define CHANGE_RES      -125        /* returned by mode command */
 #define INVALID_PARAM   -126        /* for builtin commands */
 #define WRONG_NUM_ARGS  -127        /* for builtin commands */
 
@@ -215,7 +244,7 @@ typedef LONG FUNC(WORD argc,char **argv);
 #define enable_cursor() escape('e')
 #define conin()         Bconin(2)
 #define constat()       Bconstat(2)
-#define conout(c)       Bconout(2,c)
+#define conout(c)       Bconout(2,(unsigned char)(c))
 
 #define LOOKUP_EXIT     (FUNC *)-1L     /* special return values from lookup_builtin() */
 #define LOOKUP_ARGS     (FUNC *)-2L
@@ -225,28 +254,35 @@ typedef LONG FUNC(WORD argc,char **argv);
  */
 extern LONG idt_value;
 extern UWORD screen_cols, screen_rows;
-extern UWORD linesize;
+extern WORD current_res, requested_res;
 extern WORD linewrap;
+extern WORD nflops_copy;
 extern DTA *dta;
 extern LONG redir_handle;
 extern char user_path[MAXPATHLEN];     /* from PATH command */
+extern WORD current_res, requested_res;
+extern char *environment;              /* from cmdasm.S, or cmdmain.c's
+                                           main() for STANDALONE_CONSOLE */
 
 /*
  *  function prototypes
  */
 /* cmdmain.c */
-void outlong(ULONG n,WORD width,char filler);
+int valid_res(WORD res);
 
 /* cmdedit.c */
 WORD init_cmdedit(void);
+void init_screen(void);
 void insert_char(char *line,WORD pos,WORD len,char c);
 WORD read_line(char *line);
 void save_history(const char *line);
+void term_cmdedit(void);
 
 /* cmdexec.c */
 LONG exec_program(WORD argc,char **argv,char *redir_name);
 
 /* cmdint.c */
+LONG get_path(char *buf,WORD drive);
 LONG (*lookup_builtin(WORD argc,char **argv))(WORD,char **);
 
 /* cmdparse.c */

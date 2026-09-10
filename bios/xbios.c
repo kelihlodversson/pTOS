@@ -1,7 +1,7 @@
 /*
  * xbios.c - C portion of XBIOS initialization and front end
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2022 The EmuTOS development team
  *
  * Authors:
  *  MAD     Martin Doering
@@ -12,23 +12,24 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-
-#include "config.h"
-#include "portab.h"
-#include "kprint.h"
+#include "emutos.h"
 #include "iorec.h"
 #include "tosvars.h"
+#include "bios.h"
 #include "lineavars.h"
 #include "vt52.h"
 #include "ikbd.h"
 #include "midi.h"
 #include "mfp.h"
+#include "parport.h"
 #include "serport.h"
 #include "machine.h"
+#include "has.h"
 #include "screen.h"
 #include "videl.h"
 #include "sound.h"
 #include "dmasound.h"
+#include "dsp.h"
 #include "floppy.h"
 #include "disk.h"
 #include "clock.h"
@@ -37,6 +38,9 @@
 #include "asm.h"
 #include "vectors.h"
 #include "xbios.h"
+#if defined(__arm__)
+#include "biosargs.h"
+#endif
 
 #define DBG_XBIOS        0
 
@@ -115,21 +119,35 @@ static WORD xbios_4(void)
 
 
 /*
- * xbios_5 - (setScreen) Set the screen locations
+ * xbios_5 - (Setscreen) Set the screen locations
  *
  * Set the logical screen location (logLoc), the physical screen location
- * (physLoc), and the physical screen resolution. Negative parameters are
- * ignored (making it possible, for instance, to set screen resolution without
- * changing anything else). When resolution is changed, the screen is cleared,
- * the cursor is homed, and the VT52 terminal emulator state is reset.
+ * (physLoc), and the physical screen resolution (rez).  To change videl
+ * mode on videl-capable systems, 'rez' is set to 3 and the mode (videlmode)
+ * is passed as an additional parameter.
+ *
+ * Setting a parameter to a negative value will cause it to be ignored
+ * (making it possible, for example, to set screen resolution without
+ * changing anything else).  In addition, on videl-capable systems, NULL
+ * values in both 'logLoc' and 'physLOC' will cause screen memory to be
+ * reallocated if possible.
+ *
+ * When resolution is changed, the screen is cleared, the cursor is homed,
+ * and the VT52 terminal emulator state is reset.
+ *
+ * NOTE: This function is everywhere documented to return void.  However,
+ * for TOS 4 compatibility, EmuTOS returns a WORD:
+ *      -1 if 'rez' is invalid or Srealloc() failed
+ *      else, for falcon resolutions, the previous videl mode
+ *      else 0
  */
 
 #if DBG_XBIOS
-static void xbios_5(UBYTE *logLoc, const UBYTE *physLoc, WORD rez, WORD videlmode)
+static WORD xbios_5(UBYTE *logLoc, const UBYTE *physLoc, WORD rez, WORD videlmode)
 {
     kprintf("XBIOS: SetScreen(log = %p, phys = %p, rez = 0x%04x)\n",
            logLoc, physLoc, rez);
-    setscreen(logLoc, physLoc, rez, videlmode);
+    return setscreen(logLoc, physLoc, rez, videlmode);
 }
 #endif
 
@@ -200,6 +218,19 @@ static LONG xbios_8(UBYTE *buf, LONG filler, WORD devno, WORD sectno,
 }
 #endif
 
+#if defined(__arm__)
+/*
+ * ARM's trap entry only delivers 4 real arguments in registers; floprd()
+ * needs 7, so it's called through the vec table via this trampoline
+ * instead, unpacking a struct pointer. See arch/arm/biosargs.h.
+ */
+static LONG xbios_8_arm(struct xbios_flop_io_args *a)
+{
+    return floprd((UBYTE *)a->buf, a->filler, (WORD)a->dev, (WORD)a->sect,
+                  (WORD)a->track, (WORD)a->side, (WORD)a->count);
+}
+#endif
+
 
 
 /*
@@ -220,6 +251,15 @@ static LONG xbios_9(const UBYTE *buf, LONG filler, WORD devno, WORD sectno,
 {
     kprintf("XBIOS: Flopwr()\n");
     return flopwr(buf, filler, devno, sectno, trackno, sideno, count);
+}
+#endif
+
+#if defined(__arm__)
+/* See xbios_8_arm above. */
+static LONG xbios_9_arm(struct xbios_flop_io_args *a)
+{
+    return flopwr((const UBYTE *)a->buf, a->filler, (WORD)a->dev, (WORD)a->sect,
+                  (WORD)a->track, (WORD)a->side, (WORD)a->count);
 }
 #endif
 
@@ -265,6 +305,20 @@ static LONG xbios_a(UBYTE *buf, WORD *skew, WORD devno, WORD spt,
     kprintf("XBIOS: flopfmt()\n");
     return flopfmt(buf, skew, devno, spt, trackno, sideno, interlv,
                    virgin, magic);
+}
+#endif
+
+#if defined(__arm__)
+/*
+ * ARM's trap entry only delivers 4 real arguments in registers; flopfmt()
+ * needs 9, so it's called through the vec table via this trampoline
+ * instead, unpacking a struct pointer. See arch/arm/biosargs.h.
+ */
+static LONG xbios_a_arm(struct xbios_flopfmt_args *a)
+{
+    return flopfmt((UBYTE *)a->buf, (WORD *)a->skew, (WORD)a->dev, (WORD)a->spt,
+                   (WORD)a->track, (WORD)a->side, (WORD)a->interlv,
+                   (ULONG)a->magic, (WORD)a->virgin);
 }
 #endif
 
@@ -371,6 +425,19 @@ static ULONG xbios_f(WORD speed, WORD flowctl, WORD ucr, WORD rsr, WORD tsr, WOR
 }
 #endif
 
+#if defined(__arm__)
+/*
+ * ARM's trap entry only delivers 4 real arguments in registers; rsconf()
+ * needs 6, so it's called through the vec table via this trampoline
+ * instead, unpacking a struct pointer. See arch/arm/biosargs.h.
+ */
+static ULONG xbios_f_arm(struct xbios_rsconf_args *a)
+{
+    return rsconf((WORD)a->baud, (WORD)a->ctrl, (WORD)a->ucr, (WORD)a->rsr,
+                  (WORD)a->tsr, (WORD)a->scr);
+}
+#endif
+
 
 
 /*
@@ -466,13 +533,34 @@ static LONG xbios_13(WORD *buf, LONG filler, WORD devno, WORD sectno,
 }
 #endif
 
+#if defined(__arm__)
+/* See xbios_8_arm above. */
+static LONG xbios_13_arm(struct xbios_flop_io_args *a)
+{
+    return flopver((WORD *)a->buf, a->filler, (WORD)a->dev, (WORD)a->sect,
+                   (WORD)a->track, (WORD)a->side, (WORD)a->count);
+}
+#endif
+
 
 
 /*
  * xbios_14 - (scrdmp) Dump screen to printer.
  */
 
-/* unimplemented */
+static void scrdmp(void)
+{
+    protect_v((PFLONG)dump_vec);
+    dumpflg = -1;       /* reset to allow future dumps ... */
+}
+
+#if DBG_XBIOS
+static void xbios_14(void)
+{
+    kprintf("XBIOS: scrdmp()\n");
+    scrdmp();
+}
+#endif
 
 
 
@@ -589,7 +677,7 @@ static void xbios_1b(WORD intno)
  */
 
 #if DBG_XBIOS
-static BYTE xbios_1c(BYTE data, WORD regno)
+static WORD xbios_1c(WORD data, WORD regno)
 {
     kprintf("XBIOS: Giaccess()\n");
     return giaccess(data, regno);
@@ -650,7 +738,7 @@ static void xbios_1f(WORD timer, WORD control, WORD data, LONG vec)
  */
 
 #if DBG_XBIOS
-static void xbios_20(LONG ptr)
+static void xbios_20(const UBYTE *ptr)
 {
     kprintf("XBIOS: Dosound()\n");
     dosound(ptr);
@@ -659,14 +747,26 @@ static void xbios_20(LONG ptr)
 
 
 
-/*
- * xbios_21 - (setprt) Set/get printer configuration byte.
- *
- * If 'config' is -1 ($FFFF) return the current printer configuration
- * byte. Otherwise set the byte and return its old value.
- */
+#if CONF_WITH_PRINTER_PORT
 
-/* unimplemented */
+/*
+ * xbios_21 - (setprt) Set/get the desktop printer configuration word.
+ *
+ * If 'config' is not -1 ($FFFF) set the word to the new value.  Note
+ * that only bit 4 (parallel or serial) is used by EmuTOS.
+ *
+ * Always returns the old value.
+ */
+#if DBG_XBIOS
+static WORD xbios_21(WORD config)
+{
+    kprintf("XBIOS: Setprt()\n");
+    return setprt(config);
+}
+#endif
+
+#endif  /* CONF_WITH_PRINTER_PORT */
+
 
 
 /*
@@ -733,30 +833,31 @@ static void xbios_25(void)
  * to hack hardware and protected locations without having to fiddle
  * with GEMDOS get/set supervisor mode call.
  *
- * On m68k, the normal version of supexec() is a tiny assembler
- * trampoline (see vectors.S) that jumps to the user's code instead
- * of calling it, so it adds no stack frame of its own. This matters
- * because there is no rule about how much stack the user's function
- * needs, and some callers (e.g. certain game loaders) run with very
- * little stack to spare.
+ * The normal version of supexec() is a tiny assembler trampoline (see
+ * vectors.S) that jumps to the user's code instead of calling it, so
+ * it adds no stack frame of its own. This matters because there is no
+ * rule about how much stack the user's function needs, and some
+ * callers (e.g. certain game loaders) run with very little stack to
+ * spare.
  *
  * The debug version lives here and is much uglier since it has to
  * protect itself against GCC possibly generating code to use registers
  * which might have been clobbered by the called user function. There
  * are no rules about this, so for safety, we assume it can clobber all
  * of them.
+ *
+ * m68k only: on ARM, Supexec() is unimplemented (returns EINVFN) --
+ * see the deprecation rationale in ssystem.h/#219. Programs on ARM
+ * needing to read or write system variables use Ssystem() instead.
  */
-#if DBG_XBIOS
+#if defined(__m68k__) && DBG_XBIOS
 static LONG xbios_26(PFLONG codeptr)
 {
-#if defined(__m68k__)
     register LONG retval __asm__("d0");
     register PFLONG func __asm__("a0") = codeptr;
-#endif
 
     kprintf("XBIOS: Supexec(%p)\n", codeptr);
 
-#if defined(__m68k__)
     /* a6 is saved/restored around the call instead of being listed as a
      * clobber: some m68k-atari-mintelf-gcc 13.3.0 builds ICE in
      * print_operand_address (RTL "final" pass) when a6 is clobbered by
@@ -776,10 +877,6 @@ static LONG xbios_26(PFLONG codeptr)
     );
 
     return retval;
-#else
-    /* On arm we assume the function follows the eabi and don't save any additional registers */
-    return codeptr();
-#endif
 }
 #endif
 
@@ -968,8 +1065,183 @@ static void xbios_5e(WORD index,WORD count,ULONG *rgb)
     kprintf("XBIOS: VgetRGB\n");
     vgetrgb(index,count,rgb);
 }
+static WORD xbios_5f(WORD mode)
+{
+    kprintf("XBIOS: VcheckMode\n");
+    /* aka vfixmode */
+    return vfixmode(mode);
+}
 #endif
 
+/*
+ * DSP
+ */
+#if DBG_XBIOS & CONF_WITH_DSP
+static void xbios_60(const UBYTE *send, LONG sendlen, char *rcv, LONG rcvlen)
+{
+    kprintf("XBIOS: Dsp_DoBlock\n");
+    dsp_doblock(send, sendlen, rcv, rcvlen);
+}
+static void xbios_61(const UBYTE *send, LONG sendlen, char *rcv, LONG rcvlen)
+{
+    kprintf("XBIOS: Dsp_BlkHandShake\n");
+    dsp_blkhandshake(send, sendlen, rcv, rcvlen);
+}
+static void xbios_62(LONG *send, LONG sendlen, LONG *rcv, LONG rcvlen)
+{
+    kprintf("XBIOS: Dsp_BlkUnpacked\n");
+    dsp_blkunpacked(send, sendlen, rcv, rcvlen);
+}
+static void xbios_63(char *data, LONG datalen, LONG numblocks, LONG *blocksdone)
+{
+    kprintf("XBIOS: Dsp_InStream\n");
+    dsp_instream(data, datalen, numblocks, blocksdone);
+}
+static void xbios_64(char *data, LONG datalen, LONG numblocks, LONG *blocksdone)
+{
+    kprintf("XBIOS: Dsp_OutStream\n");
+    dsp_outstream(data, datalen, numblocks, blocksdone);
+}
+static void xbios_65(char *send, char *rcv, LONG sendlen, LONG rcvlen, LONG numblocks, LONG *blocksdone)
+{
+    kprintf("XBIOS: Dsp_IOStream\n");
+    dsp_iostream(send, rcv, sendlen, rcvlen, numblocks, blocksdone);
+}
+static void xbios_66(WORD mask)
+{
+    kprintf("XBIOS: Dsp_RemoveInterrupts\n");
+    dsp_removeinterrupts(mask);
+}
+static WORD xbios_67(void)
+{
+    kprintf("XBIOS: Dsp_GetWordSize\n");
+    return dsp_getwordsize();
+}
+static WORD xbios_68(void)
+{
+    kprintf("XBIOS: Dsp_Lock\n");
+    return dsp_lock();
+}
+static void xbios_69(void)
+{
+    kprintf("XBIOS: Dsp_Unlock\n");
+    dsp_unlock();
+}
+static void xbios_6a(LONG *xavailable, LONG *yavailable)
+{
+    kprintf("XBIOS: Dsp_Available\n");
+    dsp_available(xavailable, yavailable);
+}
+static WORD xbios_6b(LONG xreserve, LONG yreserve)
+{
+    kprintf("XBIOS: Dsp_Reserve\n");
+    return dsp_reserve(xreserve, yreserve);
+}
+static WORD xbios_6c(char *filename, WORD ability, UBYTE *buffer)
+{
+    kprintf("XBIOS: Dsp_LoadProg\n");
+    return dsp_loadprog(filename, ability, buffer);
+}
+static void xbios_6d(const UBYTE *codeptr, LONG codesize, WORD ability)
+{
+    kprintf("XBIOS: Dsp_ExecProg\n");
+    dsp_execprog(codeptr, codesize, ability);
+}
+static void xbios_6e(const UBYTE *codeptr, LONG codesize, WORD ability)
+{
+    kprintf("XBIOS: Dsp_ExecBoot\n");
+    dsp_execboot(codeptr, codesize, ability);
+}
+static LONG xbios_6f(char *filename, char *outbuf)
+{
+    kprintf("XBIOS: Dsp_LodToBinary\n");
+    return dsp_lodtobinary(filename, outbuf);
+}
+static void xbios_70(WORD vector)
+{
+    kprintf("XBIOS: Dsp_TriggerHC\n");
+    dsp_triggerhc(vector);
+}
+static WORD xbios_71(void)
+{
+    kprintf("XBIOS: Dsp_RequestUniqueAbility\n");
+    return dsp_requestuniqueability();
+}
+static WORD xbios_72(void)
+{
+    kprintf("XBIOS: Dsp_GetProgAbility\n");
+    return dsp_getprogability();
+}
+static void xbios_73(void)
+{
+    kprintf("XBIOS: Dsp_FlushSubroutines\n");
+    dsp_flushsubroutines();
+}
+static WORD xbios_74(const UBYTE *codeptr, LONG size, WORD ability)
+{
+    kprintf("XBIOS: Dsp_LoadSubroutine\n");
+    return dsp_loadsubroutine(codeptr, size, ability);
+}
+static WORD xbios_75(WORD ability)
+{
+    kprintf("XBIOS: Dsp_InqSubrAbility\n");
+    return dsp_inqsubrability(ability);
+}
+static WORD xbios_76(WORD handle)
+{
+    kprintf("XBIOS: Dsp_RunSubroutine\n");
+    return dsp_runsubroutine(handle);
+}
+static WORD xbios_77(WORD flag)
+{
+    kprintf("XBIOS: Dsp_Hf0\n");
+    return dsp_hf0(flag);
+}
+static WORD xbios_78(WORD flag)
+{
+    kprintf("XBIOS: Dsp_Hf1\n");
+    return dsp_hf1(flag);
+}
+static WORD xbios_79(void)
+{
+    kprintf("XBIOS: Dsp_Hf2\n");
+    return dsp_hf2();
+}
+static WORD xbios_7a(void)
+{
+    kprintf("XBIOS: Dsp_Hf3\n");
+    return dsp_hf3();
+}
+static void xbios_7b(WORD *send, LONG sendlen, WORD *rcv, LONG rcvlen)
+{
+    kprintf("XBIOS: Dsp_BlkWords\n");
+    dsp_blkwords(send, sendlen, rcv, rcvlen);
+}
+static void xbios_7c(UBYTE *send, LONG sendlen, UBYTE *rcv, LONG rcvlen)
+{
+    kprintf("XBIOS: Dsp_BlkBytes\n");
+    dsp_blkbytes(send, sendlen, rcv, rcvlen);
+}
+static UBYTE xbios_7d(void)
+{
+    kprintf("XBIOS: Dsp_HStat\n");
+    return dsp_hstat();
+}
+static void xbios_7e(void (*receiver)(LONG data), LONG (*transmitter)(void))
+{
+    kprintf("XBIOS: Dsp_SetVectors\n");
+    dsp_setvectors(receiver, transmitter);
+}
+static void xbios_7f(LONG sendnum, LONG rcvnum, DSPBLOCK *sendinfo, DSPBLOCK *rcvinfo)
+{
+    kprintf("XBIOS: Dsp_MultBlocks\n");
+    dsp_multblocks(sendnum, rcvnum, sendinfo, rcvinfo);
+}
+#endif
+
+/*
+ * DMA sound
+ */
 #if DBG_XBIOS & CONF_WITH_DMASOUND
 static LONG xbios_80(void)
 {
@@ -1059,16 +1331,11 @@ LONG xbios_do_unimpl(WORD number)
     return number;
 }
 
-extern LONG xbios_unimpl(void);
+LONG xbios_unimpl(void);    /* defined in vectors.S */
+LONG supexec(PFLONG);       /* defined in vectors.S */
 
 #if defined(__m68k__)
 extern LONG supexec(PFLONG);   /* implemented in vectors.S */
-#else
-/* On arm we assume the function follows the eabi and don't save any additional registers */
-static LONG supexec(PFLONG codeptr)
-{
-    return codeptr();
-}
 #endif
 
 
@@ -1076,12 +1343,22 @@ static LONG supexec(PFLONG codeptr)
  * xbios_vecs - the table of xbios command vectors.
  */
 
-/* PFLONG defined in bios/vectors.h */
-
 #if DBG_XBIOS
 #define VEC(wrapper, direct) (PFLONG) wrapper
 #else
 #define VEC(wrapper, direct) (PFLONG) direct
+#endif
+
+#if CONF_WITH_DMASOUND
+# define LAST_ENTRY 0x8d
+#elif CONF_WITH_DSP
+# define LAST_ENTRY 0x7f
+#elif CONF_WITH_VIDEL
+# define LAST_ENTRY 0x5f
+#elif CONF_WITH_TT_SHIFTER
+# define LAST_ENTRY 0x57
+#else
+# define LAST_ENTRY 0x40
 #endif
 
 const PFLONG xbios_vecs[] = {
@@ -1093,9 +1370,15 @@ const PFLONG xbios_vecs[] = {
     VEC(xbios_5, setscreen),
     VEC(xbios_6, setpalette),
     VEC(xbios_7, setcolor),
+#if defined(__arm__)
+    (PFLONG) xbios_8_arm,
+    (PFLONG) xbios_9_arm,
+    (PFLONG) xbios_a_arm,
+#else
     VEC(xbios_8, floprd),
     VEC(xbios_9, flopwr),
     VEC(xbios_a, flopfmt),
+#endif
     xbios_unimpl,   /*  b used_by_bios */
     VEC(xbios_c, midiws),
 #if CONF_WITH_MFP
@@ -1104,12 +1387,20 @@ const PFLONG xbios_vecs[] = {
     xbios_unimpl,   /* d */
 #endif
     VEC(xbios_e, iorec),
+#if defined(__arm__)
+    (PFLONG) xbios_f_arm,
+#else
     VEC(xbios_f, rsconf),
+#endif
     VEC(xbios_10, keytbl),
     VEC(xbios_11, random),
     VEC(xbios_12, protobt),
+#if defined(__arm__)
+    (PFLONG) xbios_13_arm,
+#else
     VEC(xbios_13, flopver),
-    xbios_unimpl,   /* 14 scrdmp */
+#endif
+    VEC(xbios_14, scrdmp),
     VEC(xbios_15, cursconf),
     VEC(xbios_16, settime),
     VEC(xbios_17, gettime),
@@ -1131,12 +1422,20 @@ const PFLONG xbios_vecs[] = {
     xbios_unimpl,   /* 1f */
 #endif
     VEC(xbios_20, dosound),
-    xbios_unimpl,   /* 21 setprt */
+#if CONF_WITH_PRINTER_PORT
+    VEC(xbios_21, setprt),
+#else
+    xbios_unimpl,   /* 21 */
+#endif
     VEC(xbios_22, kbdvbase),
     VEC(xbios_23, kbrate),
     xbios_unimpl,   /* 24 prtblk */
     VEC(xbios_25, vsync),
+#if defined(__m68k__)
     VEC(xbios_26, supexec),
+#else
+    xbios_unimpl,   /* 26 supexec -- deprecated on ARM, use Ssystem() instead (#219) */
+#endif
     xbios_unimpl,   /* 27 puntaes */
     xbios_unimpl,   /* 28 */
     VEC(xbios_29, floprate),
@@ -1167,8 +1466,8 @@ const PFLONG xbios_vecs[] = {
     xbios_unimpl,   /* 3e */
     xbios_unimpl,   /* 3f */
     VEC(xbios_40, blitmode),  /* 40 */
-#if CONF_WITH_TT_SHIFTER || CONF_WITH_VIDEL || CONF_WITH_DMASOUND
-    /* These fillers are required if any of the features below are enabled */
+
+#if LAST_ENTRY > 0x40       /* must insert fillers */
     xbios_unimpl,   /* 41 */
     xbios_unimpl,   /* 42 */
     xbios_unimpl,   /* 43 */
@@ -1185,6 +1484,7 @@ const PFLONG xbios_vecs[] = {
     xbios_unimpl,   /* 4e */
     xbios_unimpl,   /* 4f */
 #endif
+
 #if CONF_WITH_TT_SHIFTER
     VEC(xbios_50, esetshift),   /* 50 */
     VEC(xbios_51, egetshift),   /* 51 */
@@ -1194,8 +1494,7 @@ const PFLONG xbios_vecs[] = {
     VEC(xbios_55, egetpalette), /* 55 */
     VEC(xbios_56, esetgray),    /* 56 */
     VEC(xbios_57, esetsmear),   /* 57 */
-#elif CONF_WITH_VIDEL || CONF_WITH_DMASOUND
-    /* These fillers are required if any of the features below are enabled */
+#elif LAST_ENTRY > 0x57     /* must insert fillers for TT shifter opcodes */
     xbios_unimpl,   /* 50 */
     xbios_unimpl,   /* 51 */
     xbios_unimpl,   /* 52 */
@@ -1204,7 +1503,8 @@ const PFLONG xbios_vecs[] = {
     xbios_unimpl,   /* 55 */
     xbios_unimpl,   /* 56 */
     xbios_unimpl,   /* 57 */
-#endif
+#endif  /* CONF_WITH_TT_SHIFTER */
+
 #if CONF_WITH_VIDEL
     VEC(xbios_58, vsetmode),   /* 58 */
     VEC(xbios_59, vmontype),   /* 59 */
@@ -1213,8 +1513,8 @@ const PFLONG xbios_vecs[] = {
     xbios_unimpl,   /* 5c */
     VEC(xbios_5d, vsetrgb),   /* 5d */
     VEC(xbios_5e, vgetrgb),   /* 5e */
-#elif CONF_WITH_DMASOUND
-    /* These fillers are required if any of the features below are enabled */
+    VEC(xbios_5f, vfixmode),  /* 5f */
+#elif LAST_ENTRY > 0x5f     /* must insert fillers for videl opcodes */
     xbios_unimpl,   /* 58 */
     xbios_unimpl,   /* 59 */
     xbios_unimpl,   /* 5a */
@@ -1222,9 +1522,43 @@ const PFLONG xbios_vecs[] = {
     xbios_unimpl,   /* 5c */
     xbios_unimpl,   /* 5d */
     xbios_unimpl,   /* 5e */
-#endif
-#if CONF_WITH_DMASOUND
     xbios_unimpl,   /* 5f */
+#endif  /* CONF_WITH_VIDEL */
+
+#if CONF_WITH_DSP
+    VEC(xbios_60, dsp_doblock),
+    VEC(xbios_61, dsp_blkhandshake),
+    VEC(xbios_62, dsp_blkunpacked),
+    VEC(xbios_63, dsp_instream),
+    VEC(xbios_64, dsp_outstream),
+    VEC(xbios_65, dsp_iostream),
+    VEC(xbios_66, dsp_removeinterrupts),
+    VEC(xbios_67, dsp_getwordsize),
+    VEC(xbios_68, dsp_lock),
+    VEC(xbios_69, dsp_unlock),
+    VEC(xbios_6a, dsp_available),
+    VEC(xbios_6b, dsp_reserve),
+    VEC(xbios_6c, dsp_loadprog),
+    VEC(xbios_6d, dsp_execprog),
+    VEC(xbios_6e, dsp_execboot),
+    VEC(xbios_6f, dsp_lodtobinary),
+    VEC(xbios_70, dsp_triggerhc),
+    VEC(xbios_71, dsp_requestuniqueability),
+    VEC(xbios_72, dsp_getprogability),
+    VEC(xbios_73, dsp_flushsubroutines),
+    VEC(xbios_74, dsp_loadsubroutine),
+    VEC(xbios_75, dsp_inqsubrability),
+    VEC(xbios_76, dsp_runsubroutine),
+    VEC(xbios_77, dsp_hf0),
+    VEC(xbios_78, dsp_hf1),
+    VEC(xbios_79, dsp_hf2),
+    VEC(xbios_7a, dsp_hf3),
+    VEC(xbios_7b, dsp_blkwords),
+    VEC(xbios_7c, dsp_blkbytes),
+    VEC(xbios_7d, dsp_hstat),
+    VEC(xbios_7e, dsp_setvectors),
+    VEC(xbios_7f, dsp_multblocks),
+#elif LAST_ENTRY > 0x7f     /* must insert fillers for DSP opcodes */
     xbios_unimpl,   /* 60 */
     xbios_unimpl,   /* 61 */
     xbios_unimpl,   /* 62 */
@@ -1257,6 +1591,9 @@ const PFLONG xbios_vecs[] = {
     xbios_unimpl,   /* 7d */
     xbios_unimpl,   /* 7e */
     xbios_unimpl,   /* 7f */
+#endif
+
+#if CONF_WITH_DMASOUND
     VEC(xbios_80, locksnd),     /* 80 */
     VEC(xbios_81, unlocksnd),   /* 81 */
     VEC(xbios_82, soundcmd),    /* 82 */

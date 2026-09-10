@@ -1,7 +1,7 @@
 /*
  * optimopt.S - misc. optimised assembler routines
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2020 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -13,18 +13,18 @@
 
 #include "asmdefs.h"
 
-        .globl  _scasb
-        .globl  _expand_string
+        .globl  C_SYM(scasb)
+        .globl  C_SYM(expand_string)
 
 /*
- * char *scasb(char *str, char c)
+ * const char *scasb(const char *str, char c)
  * returns the pointer to the first occurrence of char c in string str,
  * or the pointer to the ending '\0' of this string.
  * (see also strchr, which returns NULL instead when the char is not found)
  *
  */
 
-_scasb:
+C_SYM(scasb):
         move.l  4(sp),a0
         move.w  8(sp),d1
 scasb_loop:
@@ -38,7 +38,7 @@ scasb_end:
         rts
 
 /*
- *  WORD expand_string(WORD *dest,const UBYTE *src)
+ *  WORD expand_string(WORD *dest,const char *src)
  *
  *  expand an unsigned byte string to an array of words, returning the
  *  length of the source string.  note that this code is optimised for
@@ -46,7 +46,7 @@ scasb_end:
  *  byte too, but it is not included in the length value returned.
  */
 
-_expand_string:
+C_SYM(expand_string):
         movea.l 8(sp),a0        // a0 -> source
         movea.l 4(sp),a1        // a1 -> dest
         move.l  a0,d0           // remember source start

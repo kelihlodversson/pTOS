@@ -1,12 +1,12 @@
 /*
- * asmpd.h - assembler equivalents for structures in pd.h
+ * asmpd.h - assembler equivalents for BDOS PD struct
  *
  * This file exists to provide #defines for the offsets of fields
- * within structures defined within pd.h.  These #defines must be
+ * within the BDOS PD struct.  These #defines must be
  * manually kept in sync with the C language definitions, but this
  * should be easier than doing the same with hard-coded offset values.
  *
- * Copyright (C) 2016 The EmuTOS development team
+ * Copyright (C) 2016-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows

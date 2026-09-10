@@ -1,7 +1,7 @@
 /*
  * serport.h - header for serport.c
  *
- * Copyright (C) 2013 The EmuTOS development team
+ * Copyright (C) 2013-2022 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -13,7 +13,6 @@
 #ifndef _SERPORT_H
 #define _SERPORT_H
 
-#include "portab.h"
 #include "iorec.h"
 
 #define BCONMAP_AVAILABLE (CONF_WITH_SCC || CONF_WITH_TT_MFP)
@@ -40,6 +39,8 @@
 
 #define MIN_BAUDRATE_CODE   B19200
 #define MAX_BAUDRATE_CODE   B50
+
+#define DEFAULT_BAUDRATE    B9600
 
 /*
  * flow control codes
@@ -80,9 +81,24 @@ LONG bcostat1(void);
 LONG bconout1(WORD,WORD);
 ULONG rsconf1(WORD baud, WORD ctrl, WORD ucr, WORD rsr, WORD tsr, WORD scr);
 void init_serport(void);
+void push_serial_iorec(UBYTE data);
 
 #if CONF_WITH_SCC
+void scc_init(void);
 LONG bconoutB(WORD,WORD);
+void scc_rx_interrupt_handler(WORD portnum);
+void scc_tx_interrupt_handler(WORD portnum);
+void scc_es_interrupt_handler(WORD portnum);
+#endif
+
+#if CONF_WITH_MFP_RS232
+void mfp_rs232_rx_interrupt_handler(void);
+void mfp_rs232_tx_interrupt_handler(void);
+#endif
+
+#if CONF_WITH_TT_MFP
+void mfp_tt_rx_interrupt_handler(void);
+void mfp_tt_tx_interrupt_handler(void);
 #endif
 
 #if BCONMAP_AVAILABLE

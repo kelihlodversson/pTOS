@@ -1,7 +1,7 @@
 /*
- * keyb_ru.h - a keyboard layout definition
+ * keyb_ru.h - Russian keyboard layout definition
  *
- * Copyright (C) 2010-2017 The EmuTOS development team
+ * Copyright (C) 2010-2024 The EmuTOS development team
  *
  * Authors:
  *  Dima Sobolev
@@ -38,9 +38,9 @@ static const UBYTE keytbl_ru_shft[] = {
     '\"', 0xa1,    0,  '~',  'Z',  'X',  'C',  'V',
      'B',  'N',  'M',  '<',  '>',  '?',    0,    0,
        0,  ' ',    0,    0,    0,    0,    0,    0,
-       0,    0,    0,    0,    0,    0,    0,    0,
-       0,    0,  '-',    0,    0,    0,  '+',    0,
-       0,    0,    0, 0x7f,    0,    0,    0,    0,
+       0,    0,    0,    0,    0,    0,    0,  '7',
+     '8',    0,  '-',  '4',    0,  '6',  '+',    0,
+     '2',    0,  '0', 0x7f,    0,    0,    0,    0,
        0,    0,    0,    0,    0,    0,    0,    0,
      '|',    0,    0,  '(',  ')',  '/',  '*',  '7',
      '8',  '9',  '4',  '5',  '6',  '1',  '2',  '3',

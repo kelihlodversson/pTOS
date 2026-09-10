@@ -1,14 +1,14 @@
 /*
  * fnt_off_8x8.c - font offsets for 8x8 & 8x16 fonts
  *
- * Copyright (C) 2018 The EmuTOS development team
+ * Copyright (C) 2018-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
+#include "bios.h"
 #include "fonthdr.h"
 
 const UWORD off_8x8_table[] =
@@ -47,4 +47,3 @@ const UWORD off_8x8_table[] =
     0x07c0, 0x07c8, 0x07d0, 0x07d8, 0x07e0, 0x07e8, 0x07f0, 0x07f8,
     0x0800
 };
-

@@ -4,7 +4,7 @@
  * This file exists to centralise the definition of the font header,
  * which was previously defined in two different places.
  *
- * Copyright (C) 2015 The EmuTOS development team
+ * Copyright (C) 2015-2021 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -15,8 +15,6 @@
 
 #ifndef FONTHDR_H
 #define FONTHDR_H
-
-#include "portab.h"
 
 /* font header flags */
 
@@ -33,7 +31,7 @@ typedef struct font_head Fonthead;
 struct font_head {
     WORD font_id;
     WORD point;
-    BYTE name[FONT_NAME_LEN];
+    char name[FONT_NAME_LEN];
     UWORD first_ade;
     UWORD last_ade;
     UWORD top;
@@ -57,7 +55,8 @@ struct font_head {
     UWORD form_width;           /* width of raster in bytes */
     UWORD form_height;          /* height of raster in lines */
 
-    const Fonthead *next_font;  /* pointer to next font */
+    Fonthead *next_font;        /* pointer to next font */
+    UWORD reserved;             /* Atari-reserved flag */
 };
 
 #endif /* FONTHDR_H */

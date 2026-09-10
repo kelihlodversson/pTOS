@@ -1,7 +1,7 @@
 /*
  *  kprintasm.S - Native print asm routines
  *
- * Copyright (C) 2002-2016 The EmuTOS development team:
+ * Copyright (C) 2002-2019 The EmuTOS development team:
  *
  * Authors:
  *  LVL  Laurent Vogel
@@ -14,10 +14,10 @@
 
 #if STONX_NATIVE_PRINT
 
-        .globl  _stonx_kprintf_init
-        .globl  _printout_stonx
+        .globl  C_SYM(stonx_kprintf_init)
+        .globl  C_SYM(printout_stonx)
 
-        .extern _stonx_kprintf_available
+        .extern C_SYM(stonx_kprintf_available)
 
 // ===========================================================================
 // ==== TEXT segment =========================================================
@@ -46,7 +46,7 @@
         .equ vec_illegal, 0x10       // illegal exception vector
         .equ vec_linea, 0x28         // LineA exception vector
 
-_stonx_kprintf_init:
+C_SYM(stonx_kprintf_init):
         // first, try STonX
         move.l  vec_linea,a0
         move.l  sp,a1
@@ -57,21 +57,20 @@ _stonx_kprintf_init:
         .dc.l   0
         move.l  a1,sp
         move.l  a0,vec_linea
-        move.w  #1,_stonx_kprintf_available
+        move.w  #1,C_SYM(stonx_kprintf_available)
         rts
 fail_stonx:
         move.l  a1,sp
         move.l  a0,vec_linea
-        clr.w   _stonx_kprintf_available
+        clr.w   C_SYM(stonx_kprintf_available)
         rts
 
 msg_empty:
         .ascii  "\0"
         .even
 
-
 // ==== STonX - Native print routine for debugging ====================
-_printout_stonx:
+C_SYM(printout_stonx):
         .dc.w   0xa0ff     // Jump to native execution
         .dc.l   0          // Printing subroutine
         rts

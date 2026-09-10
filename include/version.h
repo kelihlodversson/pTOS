@@ -1,7 +1,7 @@
 /*
  * version.h - the EmuTOS version string
  *
- * Copyright (C) 2003-2015 The EmuTOS development team
+ * Copyright (C) 2003-2020 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -11,9 +11,10 @@
  */
 
 /*
- * this version string will be printed by initinfo and the about
- * dialog in the desktop (the actual string is generated from
- * the Makefile so it is guaranteed to be accurate).
+ * this version string will be printed by initinfo and the About
+ * dialog in the desktop.  it is also pointed to by EmuTOS's
+ * extended OS header.  The actual string is generated from
+ * the Makefile so it is guaranteed to be accurate.
  */
 
 extern const char version[];

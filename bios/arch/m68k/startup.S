@@ -1,46 +1,53 @@
 /*
  * startup.S - EmuTOS startup module
  *
- * Copyright (C) 2001-2017 by the EmuTOS development team
+ * Copyright (C) 2001-2025 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-
-
 #include "asmdefs.h"
 #include "header.h"
 
-
 // ==== Defines ==============================================================
 
-        .equ    cart_base, 0x00fa0000 // Base of ROM port cartridge
+        .equ    cart_base, 0x00fa0000  // Base of ROM port cartridge
+        .equ    cart_magic, 0xfa52235f // diagnostic cartridge magic number
 
 // ==== Definitions ==========================================================
 
-        .globl  _os_entry
+        .globl  C_SYM(os_header)
+        .globl  C_SYM(os_beg)       // base of OS, referenced by aes/arch/m68k/gemdosif.S
+        .globl  C_SYM(main)         // OS entry point
 #if CONF_WITH_CARTRIDGE
-        .globl  _run_cartridge_applications
+        .globl  C_SYM(run_cartridge_applications)
 #endif
+        .globl  C_SYM(osxhbootdelay)
 
 // ==== References ===========================================================
 
         // TOS System variables
-        .extern resvalid
-        .extern resvector
-        .extern _stktop
+        .extern C_SYM(resvalid)
+        .extern C_SYM(resvector)
+        .extern C_SYM(stktop)
 
         // Memory
-        .extern meminit       // initialize the memory and its controller
+        .extern meminit        // initialize the memory and its controller
 
         // BIOS C part
-        .extern _biosmain     // BIOS C entry point
+        .extern C_SYM(biosmain)     // BIOS C entry point
 
         // Overall memory map
         .extern __etext       // end of text section
         .extern __edata       // end of data section
         .extern __endvdibss   // end of VDI BSS
+
+        .extern C_SYM(root)
+        .extern C_SYM(shifty)
+        .extern C_SYM(run)
+        .extern C_SYM(ui_mupb)
+        .extern amiga_startup
 
 // ===========================================================================
 // ==== TEXT segment (TOS image) =============================================b
@@ -48,23 +55,8 @@
 
         .text
 
-
-/*
- * OSHEADER
- */
-
-        .globl  _main           // OS entry point
-        .globl  _os_beg
-        .globl  _os_magic
-        .globl  _os_date
-        .globl  _os_conf
-        .globl  _os_dosdate
-        .globl  _root
-        .globl  _shifty
-        .globl  _run
-
 #if DIAGNOSTIC_CARTRIDGE
-    .dc.l   0xfa52235f  // diagnostic cartridge magic number
+    .dc.l   cart_magic
 #endif
 
 #if defined(MACHINE_AMIGA) && !EMUTOS_LIVES_IN_RAM
@@ -76,24 +68,33 @@
     .org    0xd0
     reset
 amiga_main:
-    // drop into _os_entry
+    // fall through os_entry
 #endif
 
-_os_entry:
-    bra.s   _main       // os_entry, branch to _main
+/*
+ * OSHEADER
+ */
+
+C_SYM(os_header):
+os_entry:
+    bra.s   C_SYM(main)       // branch to _main
 os_version:
-    .dc.w   TOS_VERSION // os_version, TOS version
+    .dc.w   TOS_VERSION // TOS version
 reseth:
-    .dc.l   _main       // reseth, pointer to reset handler
-_os_beg:
-    .dc.l   _os_entry   // os_beg, base of os = _sysbase
+    .dc.l   C_SYM(main)       // pointer to reset handler
+// The 3-long structure here is actually the default GEM_MUPB.
+// It is supposed to be used when os_magic does not point to a valid GEM_MUPB.
+// In EmuTOS, this never happens, so os_end and os_res1 below are never used.
+// Note that the first field here has a different meaning from gm_magic.
+C_SYM(os_beg):
+    .dc.l   C_SYM(os_header)  // base of OS = _sysbase
 os_end:
-    .dc.l   __endvdibss // os_end, end of VDI BSS
+    .dc.l   __endvdibss // end of VDI BSS
 os_res1:
-    .dc.l   _main       // os_res1, reserved
+    .dc.l   C_SYM(main)       // os_res1, reserved
 _os_magic:
 #if CONF_WITH_AES
-    .dc.l   _ui_mupb    // os_magic, pointer to GEM's MUPB
+    .dc.l   C_SYM(ui_mupb)    // os_magic, pointer to GEM's MUPB
 #else
     .dc.l   0           // os_magic, pointer to GEM's MUPB
 #endif
@@ -105,19 +106,219 @@ _os_conf:               // Flag for PAL version + country
 #else
     .dc.w   (OS_COUNTRY << 1) + OS_PAL
 #endif
-_os_dosdate:
-    .dc.w   OS_DOSDATE  // os_date, Date of system build in GEMDOS format
+os_dosdate:
+    .dc.w   OS_DOSDATE  // Date of system build in GEMDOS format
 os_root:
-    .dc.l   _root       // Pointer to the GEMDOS mem pool
+    .dc.l   C_SYM(root)       // Pointer to the GEMDOS mem pool
 os_kbshift:
-    .dc.l   _shifty     // Pointer to the keyboard shift keys states
+    .dc.l   C_SYM(shifty)     // Pointer to the keyboard shift keys states
 os_run:
-    .dc.l   _run        // Pointer to a pointer to the actual basepage
+    .dc.l   C_SYM(run)        // Pointer to a pointer to the actual basepage
 os_dummy:
     .ascii  "ETOS"      // _main should start at offset 0x30, shouldn't it?
 
+C_SYM(main):
+        bra.w   _realmain   // MUST be 4 bytes long
 
+/*
+ * Feature flags in extended OS header (see below)
+ *
+ *  Bit #       Usage
+ *    0         EmuTOS will pass the address of the lineA variables via NatFeats
+ *   1-31       (currently reserved)
+ */
+#if DETECT_NATIVE_FEATURES
+# define OSXH_LINEA     (1<<0)
+#else
+# define OSXH_LINEA     0
+#endif
+#define OSXH_FEATURES   (OSXH_LINEA)
 
+/*
+ *  Machine flags in extended OS header
+ *
+ *  Bit #       Supported machines
+ *    0         ST / MegaST
+ *    1         STe / MegaSTe
+ *    2         TT
+ *    3         Falcon
+ *    4         FireBee
+ *    5         M548X evaluation boards
+ *    6         Amiga
+ *    7         (currently reserved)
+ *    8         ARAnyM
+ *   9-15       (currently reserved)
+ */
+#if defined(MACHINE_ARANYM)
+# define OSXH_ST        0
+# define OSXH_STE       0
+# define OSXH_TT        0
+# define OSXH_FALCON    0
+# define OSXH_FIREBEE   0
+# define OSXH_M548X     0
+# define OSXH_AMIGA     0
+# define OSXH_ARANYM    (1<<8)
+#elif defined(MACHINE_AMIGA)
+# define OSXH_ST        0
+# define OSXH_STE       0
+# define OSXH_TT        0
+# define OSXH_FALCON    0
+# define OSXH_FIREBEE   0
+# define OSXH_M548X     0
+# define OSXH_AMIGA     (1<<6)
+# define OSXH_ARANYM    0
+#elif defined(MACHINE_M548X)
+# define OSXH_ST        0
+# define OSXH_STE       0
+# define OSXH_TT        0
+# define OSXH_FALCON    0
+# define OSXH_FIREBEE   0
+# define OSXH_M548X     (1<<5)
+# define OSXH_AMIGA     0
+# define OSXH_ARANYM    0
+#elif defined(MACHINE_FIREBEE)
+# define OSXH_ST        0
+# define OSXH_STE       0
+# define OSXH_TT        0
+# define OSXH_FALCON    0
+# define OSXH_FIREBEE   (1<<4)
+# define OSXH_M548X     0
+# define OSXH_AMIGA     0
+# define OSXH_ARANYM    0
+#else
+# define OSXH_FIREBEE   0
+# define OSXH_M548X     0
+# define OSXH_AMIGA     0
+# ifndef __mcoldfire__
+#  define OSXH_ST       (1<<0)
+# else
+#  define OSXH_ST       0
+# endif
+# if CONF_WITH_STE_SHIFTER
+#  define OSXH_STE      (1<<1)
+# else
+#  define OSXH_STE      0
+# endif
+# if CONF_WITH_TT_SHIFTER
+#  define OSXH_TT       (1<<2)
+# else
+#  define OSXH_TT       0
+# endif
+# if CONF_WITH_VIDEL
+#  define OSXH_FALCON   (1<<3)
+# else
+#  define OSXH_FALCON   0
+# endif
+# if CONF_WITH_ARANYM
+#  define OSXH_ARANYM   (1<<8)
+# else
+#  define OSXH_ARANYM   0
+# endif
+#endif
+#define OSXH_MACHINES   (OSXH_ST+OSXH_STE+OSXH_TT+OSXH_FALCON+OSXH_FIREBEE+OSXH_M548X+OSXH_ARANYM+OSXH_AMIGA)
+
+/*
+ *  Processor flags in extended OS header
+ *
+ *  Bit #       Supported processors
+ *    0         68000
+ *    1         68010
+ *    2         68020
+ *    3         68030
+ *    4         68040
+ *    5         68060
+ *    6         68080
+ *    7         (currently reserved)
+ *    8         ColdFire V4e
+ *   9-15       (currently reserved)
+ */
+#if defined(MACHINE_ARANYM)
+# define OSXH_68000     0
+# define OSXH_68010     0
+# define OSXH_68020     0
+# define OSXH_68030     0
+# define OSXH_68040     (1<<4)
+# define OSXH_68060     0
+# define OSXH_68080     0
+# define OSXH_COLDFIRE  0
+#elif defined(MACHINE_M548X)
+# define OSXH_68000     0
+# define OSXH_68010     0
+# define OSXH_68020     0
+# define OSXH_68030     0
+# define OSXH_68040     0
+# define OSXH_68060     0
+# define OSXH_68080     0
+# define OSXH_COLDFIRE  (1<<8)
+#elif defined(MACHINE_FIREBEE)
+# define OSXH_68000     0
+# define OSXH_68010     0
+# define OSXH_68020     0
+# define OSXH_68030     0
+# define OSXH_68040     0
+# define OSXH_68060     0
+# define OSXH_68080     0
+# define OSXH_COLDFIRE  (1<<8)
+#else
+# define OSXH_COLDFIRE  0
+# ifndef __mcoldfire__
+#  define OSXH_68000    (1<<0)
+# else
+#  define OSXH_68000    0
+# endif
+# if CONF_WITH_ADVANCED_CPU
+#  define OSXH_68010    (1<<1)
+#  define OSXH_68020    (1<<2)
+#  define OSXH_68030    (1<<3)
+#  define OSXH_68040    (1<<4)
+#  define OSXH_68060    (1<<5)
+# else
+#  define OSXH_68010    0
+#  define OSXH_68020    0
+#  define OSXH_68030    0
+#  define OSXH_68040    0
+#  define OSXH_68060    0
+# endif
+# if CONF_WITH_APOLLO_68080
+#  define OSXH_68080    (1<<6)
+# else
+#  define OSXH_68080    0
+# endif
+#endif
+#define OSXH_PROCESSORS (OSXH_68000+OSXH_68010+OSXH_68020+OSXH_68030+OSXH_68040+OSXH_68060+OSXH_68080+OSXH_COLDFIRE)
+
+/*
+ * Default cold-boot delay. Can be modified by users to allow
+ * harddisks to become ready. 0 means no delay.
+ */
+#define OSXH_BOOTDELAY  (0)
+
+/*
+ * Extended OS header
+ *
+ * This is an EmuTOS extension, present from EmuTOS version 1.0 on.  You
+ * may check for its presence by checking the first 4 bytes which contain
+ * the magic number 'OSXH'.
+ *
+ * To avoid problems with programs that branch directly to _main, rather
+ * than using the branch instruction at the beginning of the TOS os_header,
+ * there is a 4-byte branch instruction at _main which branches past the
+ * extended header.  This means, for example, that the extended OS header
+ * begins at 0xfc0034 in the 192K ROMS, and at 0xe00034 in the 256K and
+ * 512K ROMs.
+ */
+osxh:
+    .ascii  "OSXH"                      // magic number
+    .dc.l   osxhend-osxh                // length
+    .dc.b   MAJOR_VERSION,MINOR_VERSION,FIX_VERSION,UNOFFICIAL  // binary version
+    .dc.l   C_SYM(version)-C_SYM(os_header)   // offset to version string
+    .dc.l   OSXH_FEATURES               // feature flags
+    .dc.w   OSXH_MACHINES               // machine flags
+    .dc.w   OSXH_PROCESSORS             // processor flags
+C_SYM(osxhbootdelay):
+    .dc.b   OSXH_BOOTDELAY              // cold-boot delay
+osxhend:
+    .even                               // for alignment
 
 /*
  * Get in supervisor mode and reset all Hardware
@@ -136,7 +337,7 @@ os_dummy:
  *    instruction must be legal so the trap won't get taken ...
  */
 
-_main:
+_realmain:
         // disable the interrupts
         // this is useless on cold boot,
         // but it matters for software reset
@@ -177,17 +378,9 @@ amiga_startup_ret:
         // 0x5 is a valid value for the ST and the TT, the correct configuration
         // will be found and applied in memory.S. On the Falcon this is a dummy
         // register, so we can write to it as well without consequences.
-#ifdef __mcoldfire__
-        move.b  0xffff8001.w, d0
-        cmpi.b  #0xc, d0
-        blt.s   valid_st_mmu_config
-        move.b  #0x5, d0
-        move.b  d0, 0xffff8001.w
-#else
         cmpi.b  #0xc, 0xffff8001.w
         blt.s   valid_st_mmu_config
         move.b  #0x5, 0xffff8001.w
-#endif
 
 valid_st_mmu_config:
 #endif
@@ -206,9 +399,12 @@ valid_st_mmu_config:
         // to store any data.
         // We take this opportunity to set the stack pointer to the
         // address which will become our BIOS stack after memconf.
-        lea     _stktop,sp
+        lea     C_SYM(stktop),sp
 
-#ifndef __mcoldfire__
+// Note: LisaEm doesn't properly implement movec/pmove illegal instructions,
+// so we just avoid them on MACHINE_LISA.
+
+#if !defined(__mcoldfire__) && !defined(MACHINE_LISA)
         // first, reset the VBR
         // it may have been modified before emutos-ram or soft reset
         move.l  #vbr_ok,16     // must be 68000 if we get illegal instrn error
@@ -254,11 +450,18 @@ coldfire_startup_ret:
 
 #ifdef __mcoldfire__
         move.l  cart_base, d0
-        cmp.l   #0xfa52235f, d0         // magic - is cartridge present?
+        cmp.l   #cart_magic, d0         // magic - is cartridge present?
 #else
-        cmp.l   #0xfa52235f, cart_base  // magic - is cartridge present?
+        cmp.l   #cart_magic, cart_base  // magic - is cartridge present?
 #endif
         jne     nodiag                  // no -> go on
+
+#if EMUTOS_LIVES_IN_RAM
+        move.l  cart_base+0x30, d0
+        cmp.l   #0x45544f53, d0         // 'ETOS' - is this an EmuTOS cartridge?
+        jeq     nodiag                  // -> don't boot it from a RAM version
+#endif
+
         lea     nodiag(pc), a6          // save return address
         jmp     cart_base+4             // execute diagnostic cartridge
 nodiag:
@@ -267,7 +470,7 @@ nodiag:
 /*
  * disable the instruction/data caches
  */
-#ifndef __mcoldfire__
+#if !defined(__mcoldfire__) && !defined(MACHINE_LISA)
         move.l  #cache_done,0x10   // must be 68000 if we get illegal instrn error
         move.l  #0x00000808,d0     // clear & disable instruction/data caches on
         MOVEC_D0_CACR              //  68020-60 (even though bit usage differs!)
@@ -277,12 +480,13 @@ cache_done:
 /*
  * disable the MMU
  */
-#ifndef __mcoldfire__
+#if !defined(__mcoldfire__) && !defined(MACHINE_LISA)
         move.l  #not_68030,0x2c    // PMOVE is lineF on non-68030 systems
-        PMOVE_TO_TTR0(zero)        // first we initialise the TTRs (ACRs on a 68ec030)
-        PMOVE_TO_TTR1(zero)
-        move.l  #mmu_done,0x2c     // since PMOVE_TO_TC doesn't exist on a 68ec030,
-        PMOVE_TO_TC(zero)          //  we're done if we get a lineF exception ...
+        lea     zero,a0
+        PMOVE_A0_TTR0              // first we initialise the TTRs (ACRs on a 68ec030)
+        PMOVE_A0_TTR1
+        move.l  #mmu_done,0x2c     // since PMOVE (A0),TC doesn't exist on a 68ec030,
+        PMOVE_A0_TC                //  we're done if we get a lineF exception ...
         jra     mmu_done
 not_68030:
         move.l  #mmu_done,0x10     // if a MOVEC causes an exception, we're done
@@ -302,13 +506,13 @@ mmu_done:
 
 resetvec:
 #ifdef __mcoldfire__
-       move.l   resvalid.w, d0
+        move.l   C_SYM(resvalid).w, d0
        cmpi.l   #0x31415926, d0         // Jump to resetvector?
 #else
-       cmpi.l   #0x31415926, resvalid.w // Jump to resetvector?
+        cmpi.l   #0x31415926, C_SYM(resvalid).w // Jump to resetvector?
 #endif
        jne      noreset                 // No --> noreset
-       move.l   resvector.w, d0         // Yes: old resvec to d0
+        move.l   C_SYM(resvector).w, d0  // Yes: old resvec to d0
        jeq      noreset                 // Address null? Yes --> noreset
        btst     #0, d0                  // Address odd ?
        jne      noreset                 // Yes --> noreset
@@ -320,7 +524,6 @@ resetvec:
        jmp      (a0)                    // jump to resvec
 noreset:
 
-
 /*
  * memory configuration
  */
@@ -329,14 +532,12 @@ noreset:
         jmp     meminit         // do/test memory config and clear it (needs sp)
 memdone:
 
-
 /*
  * From now, the stack is allowed, and C code can be used.
  * The BIOS startup goes on in bios.c
  */
 
-        jmp     _biosmain
-
+        jmp     C_SYM(biosmain)
 
 #if CONF_WITH_CARTRIDGE
 /*
@@ -346,7 +547,7 @@ memdone:
  *
  * typebit: application type bit number which must be set to 1 to match
  */
-_run_cartridge_applications:
+C_SYM(run_cartridge_applications):
         move.w  4(sp),d0                // application bit number
         lea     cart_base, a0
 #ifdef __mcoldfire__

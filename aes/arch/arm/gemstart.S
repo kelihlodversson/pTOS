@@ -18,35 +18,35 @@
 #include "asmdefs.h"
 #include "asmstruct.h"
 
-        .globl  _ui_start
-        .globl  _accdesk_start
-        .globl  _gemdos
-        .globl  _dos_exec
-        .globl  _ui_mupb
+        .globl  C_SYM(ui_start)
+        .globl  C_SYM(accdesk_start)
+        .globl  C_SYM(gemdos)
+        .globl  C_SYM(dos_exec)
+        .globl  C_SYM(ui_mupb)
 
-        .extern _ad_stail
-        .extern _ad_envrn
-        .extern _size_of_theglo
-        .extern _D
-        .extern _bzero
-        .extern _justretf
-        .extern _drwaddr
-        .extern _tikcod
-        .extern _tikaddr
-        .extern _init_p0_stkptr
-        .extern _gem_main
-        .extern _gl_changerez
-        .extern _run_accs_and_desktop
-        .extern _disable_interrupts
-        .extern _rlr
-        .extern _enable_interrupts
+        .extern C_SYM(ad_stail)
+        .extern C_SYM(ad_envrn)
+        .extern C_SYM(size_of_theglo)
+        .extern C_SYM(D)
+        .extern C_SYM(bzero_nobuiltin)
+        .extern C_SYM(justretf)
+        .extern C_SYM(drwaddr)
+        .extern C_SYM(tikcod)
+        .extern C_SYM(tikaddr)
+        .extern C_SYM(init_p0_stkptr)
+        .extern C_SYM(gem_main)
+        .extern C_SYM(gl_changerez)
+        .extern C_SYM(run_accs_and_desktop)
+        .extern C_SYM(disable_interrupts)
+        .extern C_SYM(rlr)
+        .extern C_SYM(enable_interrupts)
 
         .text
 
 //////////////////////////////////////////////////////////////////////////////
 // AES start-up code
 //////////////////////////////////////////////////////////////////////////////
-_ui_start:
+C_SYM(ui_start):
         // our basepage address is in r0. Copy it to r11 so it won't get clobbered by other calls below
         mov     r11, r0
 
@@ -54,7 +54,7 @@ _ui_start:
         ldr     sp, =gemusp
 
         // ad_stail is the address to the cmdline buffer in our basepage
-        ldr     ip, =_ad_stail
+        ldr     ip, =C_SYM(ad_stail)
         add     r2, r11, #0x80
         str     r2, [ip]
 
@@ -91,29 +91,29 @@ aes_restart:
         ldr     ip, =save_ad_envrn
         ldr     r0, [ip]
 
-        ldr     ip, =_ad_envrn
+        ldr     ip, =C_SYM(ad_envrn)
         str     r0, [ip]
 
         // clear the 'global memory' zone
         ldr     r1, =SIZEOF_THEGLO
-        ldr     r0, =_D         // address
-        bl      _bzero          // clear it
+        ldr     r0, =C_SYM(D)         // address
+        bl      C_SYM(bzero_nobuiltin)          // clear it
 
         // _drwaddr ??? set to just_rts
-        ldr     r0, =_justretf
-        ldr     ip, =_drwaddr
+        ldr     r0, =C_SYM(justretf)
+        ldr     ip, =C_SYM(drwaddr)
         str     r0, [ip]
 
         // _tikaddr ??? set to tikcod
-        ldr     r0, =_tikcod
-        ldr     ip, =_tikaddr
+        ldr     r0, =C_SYM(tikcod)
+        ldr     ip, =C_SYM(tikaddr)
         str     r0, [ip]
 
         // call C routine to init the SSP in the UDA & return its offset from _D
         // KH: Odd choice to return the offset, since we add the base to it immediately
-        bl      _init_p0_stkptr
+        bl      C_SYM(init_p0_stkptr)
 
-        ldr     sp, =_D // D is a badly named global variable containing all the global gem vars
+        ldr     sp, =C_SYM(D) // D is a badly named global variable containing all the global gem vars
         add     sp, sp, r0
 
         // Enforce AAPCS's 8-byte stack alignment before entering C: see the
@@ -122,10 +122,10 @@ aes_restart:
         bic     sp, sp, #7
 
         // go in C
-        bl      _gem_main
+        bl      C_SYM(gem_main)
 
         // Check for resolution change - if so start over again
-        ldr     ip, =_gl_changerez
+        ldr     ip, =C_SYM(gl_changerez)
         ldrh    r0, [ip]
         teq     r0, #0
         bne     aes_restart
@@ -144,10 +144,10 @@ aes_restart:
 //////////////////////////////////////////////////////////////////////////////
 // Run accessories and desktop
 //////////////////////////////////////////////////////////////////////////////
-_accdesk_start:
+C_SYM(accdesk_start):
         // basepage address is in r0. Copy it to r11 so it won't get clobbered by other calls below
         mov     r11, r0
-        ldr     sp, =_D
+        ldr     sp, =C_SYM(D)
         ldr     sp, [sp, UDA_SPSUPER]   // use AES process 0 stack
 
         // u_spsuper is not guaranteed to still be 8-byte aligned here: _dos_exec
@@ -176,7 +176,7 @@ _accdesk_start:
         mov     r0, #0x20           // Super(0)
         svc     1
 
-        bl      _run_accs_and_desktop
+        bl      C_SYM(run_accs_and_desktop)
 
         // Pterm0()
         mov     r0, #0
@@ -186,7 +186,7 @@ _accdesk_start:
 //////////////////////////////////////////////////////////////////////////////
 // Execute a GEMDOS call (see gemdos.c). // TODO: inline this
 //////////////////////////////////////////////////////////////////////////////
-_gemdos:
+C_SYM(gemdos):
         push    {r4, lr}
         ldr     r4, [sp, #+2*4]
 
@@ -198,7 +198,7 @@ _gemdos:
 // A wrapper around Pexec. We can't use the above function _gemdos for this
 // since _gemdos is not reentrant.
 //////////////////////////////////////////////////////////////////////////////
-_dos_exec:
+C_SYM(dos_exec):
 
         // *** WARNING ***
         // We are here on the private supervisor stack of the AES process 0.
@@ -237,9 +237,9 @@ _dos_exec:
         // UDA_SPSUPER and the result from Pexec on the stack.
         // Only r4, r7 and the return adress is actually preserved.
         push   {r0-r4, r5-r6, r7, lr}
-        bl     _disable_interrupts
+        bl     C_SYM(disable_interrupts)
 
-        ldr     r7, =_rlr
+        ldr     r7, =C_SYM(rlr)
         ldr     r7, [r7]
         ldr     r7, [r7, PD_UDA]
         ldr     ip, [r7, UDA_SPSUPER]
@@ -260,7 +260,7 @@ _dos_exec:
         bic     ip, ip, #7
         str     ip, [r7, UDA_SPSUPER]
 
-        bl      _enable_interrupts
+        bl      C_SYM(enable_interrupts)
 
         // refetch parameter registers (shifted up by one)
         pop     {r1-r4}
@@ -268,15 +268,15 @@ _dos_exec:
         svc     1                      // ... and execute the Pexec call!
         ldr     r4, [sp], #4
         str     r0, [sp,  #4]          // save the result from being stomped on
-        bl      _disable_interrupts
+        bl      C_SYM(disable_interrupts)
 
-        ldr     r7, =_rlr
+        ldr     r7, =C_SYM(rlr)
         ldr     r7, [r7]
         ldr     r7, [r7, PD_UDA]
         ldr     ip, [sp], #4           // read back the old value for UDA_SPSUPER now at the top of the stack
         str     ip, [r7, UDA_SPSUPER]  // Restore rlr->p_uda->u_spsuper
 
-        bl      _enable_interrupts
+        bl      C_SYM(enable_interrupts)
         pop     {r0, r7, pc}
 
 .bss

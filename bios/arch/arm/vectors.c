@@ -1,5 +1,5 @@
 /*
- * vectors_arm.c - exception vectors
+ * vectors.c - exception vectors
  * The ARM processor has a much leaner exception vector table.
  * In order to simplify porting of the OS (and eventually TSRs hooking into)
  * interrupts, we attempt to simulate the 68k setup by performing some initial
@@ -7,6 +7,7 @@
  * handler from the same offsets as defined on the 68000.
  *
  * Copyright (C) 2001-2017 by the EmuTOS development team
+ * Copyright (C) 2018-2026 The pTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -21,6 +22,7 @@
 #include "ikbd.h"
 #include "iorec.h"
 #include "vectors.h"
+#include "vt52.h"
 #include "kprint.h"
 #include "asm.h"
 #include "xbios.h"
@@ -33,7 +35,9 @@
 // ==== References ===========================================================
 
 // TOS System variables
-extern volatile LONG vbclock;
+volatile LONG vbclock; /* not in tosvars.h -- defined here since this is its
+                         * only writer; also read by bdos/ssystem.c's
+                         * Ssystem(S_GETLVAL/S_SETLVAL) lookup table */
 extern void (*etv_timer)(int);
 extern const UWORD bios_ent;
 extern const UWORD xbios_ent;
@@ -50,6 +54,11 @@ typedef struct {
 
 static void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far);
 
+volatile PFVOID *vector_address(ULONG address)
+{
+    return (volatile PFVOID *)address;
+}
+
 /* basically initialize the 62 exception vectors. */
 void init_exc_vec(void)
 {
@@ -62,10 +71,11 @@ void init_exc_vec(void)
     }
 }
 
-void init_user_vec(void)
+void init_user_vec(UWORD first_boot)
 {
     volatile ULONG* vector_addr = (ULONG*)0x100;
     int i;
+    MAYBE_UNUSED(first_boot);
     for(i=0; i<192; i++)
     {
         *(vector_addr++) = (ULONG)any_vec;
@@ -106,6 +116,12 @@ void int_vbl(void)
     vblsem++; // release vbl semaphore (TODO: non-atomic)
 }
 
+// VBL source seam, declared in vectors.h.  Defaults to int_vbl(), so
+// machines with no real vsync source (virt-arm) are unaffected; raspi
+// points it at raspi_vbl_fallback() (bios/raspi_vsync.c) when
+// CONF_WITH_RASPI_VSYNC_IRQ is on.
+void (*timer_vbl_hook)(void) = int_vbl;
+
 // ==== Timer C interrupt handler ============================================
 // Machine-independent: every ARM machine's periodic tick (raspi's system /
 // generic timer, virt's generic timer) ends up here through vector_5ms.
@@ -119,8 +135,9 @@ void int_timerc(void)
 #       if CONF_WITH_YM2149
             sndirq();   // dosound support
 #       endif
-        // Fake vbl interrupt every 4 timer_c calls (50Hz)
-        int_vbl();
+        // Fake vbl interrupt every 4 timer_c calls (50Hz), unless the
+        // hook has been pointed at a real vsync source's fallback.
+        timer_vbl_hook();
     }
 }
 

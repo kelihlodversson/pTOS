@@ -1,7 +1,7 @@
 /*
- * EmuTOS AES: functions and variables implemened in gemdosif.S
+ * gemdosif.h - EmuTOS AES functions and variables implemented in gemdosif.S
  *
- * Copyright (C) 2002-2016 The EmuTOS development team
+ * Copyright (C) 2002-2020 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -13,7 +13,6 @@
 
 extern PFVOID   drwaddr;
 
-extern void *   tikaddr;
 extern void *   tiksav;
 
 extern LONG     NUM_TICK;                       /* number of ticks      */
@@ -29,12 +28,14 @@ extern LONG     CMP_TICK;                       /* indicates to tick    */
 
 extern void far_bcha(void);
 extern void far_mcha(void);
+#if CONF_WITH_EXTENDED_MOUSE
 extern void aes_wheel(void);
+#endif
 extern void justretf(void);
+extern void tikcod(void);
 
 extern void unset_aestrap(void);
 extern void set_aestrap(void);
-extern BOOL aestrap_intercepted(void);
 
 extern void takeerr(void);
 extern void giveerr(void);

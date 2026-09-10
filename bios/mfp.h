@@ -2,7 +2,7 @@
  *  mfp.h - header file for MFP defines
  *
  * Copyright (C) 2001 Martin Doering
- * Copyright (C) 2001-2016 The EmuTOS development team
+ * Copyright (C) 2001-2022 The EmuTOS development team
  *
  * Authors:
  *  MAD     Martin Doering
@@ -14,11 +14,6 @@
 
 #ifndef MFP_H
 #define MFP_H
-
-#include "portab.h"
-
-#define CLOCKS_PER_SEC  200UL
-
 
 #if CONF_WITH_MFP || CONF_WITH_TT_MFP
 
@@ -64,7 +59,7 @@ typedef struct
         UBYTE   dum19;
         volatile UBYTE  tddr;   /* timer D data register             */
         UBYTE   dum20;
-        volatile UBYTE  scr;    /* syncronous character register     */
+        volatile UBYTE  scr;    /* synchronous character register    */
         UBYTE   dum21;
         volatile UBYTE  ucr;    /* USART control register            */
         UBYTE   dum22;
@@ -83,6 +78,7 @@ typedef struct
 #define TT_MFP_BASE     ((MFP *)(0xfffffa80L))
 
 void tt_mfp_init(void);
+void tt_mfpint(WORD num, LONG vector);
 
 #endif
 

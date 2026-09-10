@@ -1,7 +1,5 @@
 /*
- * raspi_screen.h Raspberry PI framebuffer support
- *
- * Copyright (C) 2013-2018 The EmuTOS development team
+ * memory.c - Raspberry Pi memory and MMU initialization
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -26,6 +24,7 @@
 #include "string.h"
 #include "biosext.h"
 #include "kprint.h"
+#include "bios.h"
 
 #define MEGABYTE    0x100000
 #ifdef TARGET_RPI1
@@ -93,7 +92,7 @@ void raspi_mmu_protect_range(ULONG start, ULONG end)
      * write; without cleaning them out, the MMU's table walk can still see
      * the old (writable) descriptor in RAM and the protection would not
      * reliably take effect. */
-    clean_data_cache();
+    flush_data_cache_all();
     asm volatile ("mcr p15, 0, %0, c8, c7, 0" : : "r" (0));   /* invalidate unified TLB */
     data_sync_barrier();
     flush_prefetch_buffer();
@@ -171,7 +170,10 @@ void raspi_vcmem_init(void)
 static void init_mmu(ULONG memory_size)
 {
     unsigned i;
-    clean_data_cache ();
+
+    /* C has already written the stack and globals; do not discard them if
+     * the firmware entered with D-cache enabled. */
+    flush_data_cache_all();
 
     for (i = 0; i < PAGE_TABLE0_ENTRIES; i++)
     {
@@ -264,7 +266,7 @@ static void init_mmu(ULONG memory_size)
     }
 #endif /* CONF_WITH_MMU_TEXT_PROTECT */
 
-    clean_data_cache ();
+    flush_data_cache_all();
 
     ULONG aux_control;
     asm volatile ("mrc p15, 0, %0, c1, c0,  1" : "=r" (aux_control));
@@ -290,10 +292,6 @@ static void init_mmu(ULONG memory_size)
     // set Domain Access Control register (Domain 0 and 1 to client)
     asm volatile ("mcr p15, 0, %0, c3, c0,  0" : : "r" (  DOMAIN_CLIENT << 0
                                                         | DOMAIN_CLIENT << 2));
-
-#ifndef TARGET_RPI1
-    flush_data_cache_all();
-#endif
 
     // required if MMU was previously enabled and not properly reset
     invalidate_instruction_cache(0, memory_size);
@@ -338,32 +336,32 @@ static void init_mmu(ULONG memory_size)
 // Cache maintenance operations for ARMv6
 //
 // NOTE: The following functions should hold all variables in CPU registers. Currently this will be
-//	 ensured using maximum optimation (see bios/processor.h).
+//   ensured using maximum optimization (see bios/processor.h).
 //
-//	 The following numbers can be determined (dynamically) using CTR.
-//	 As long we use the ARM1176JZF-S implementation in the BCM2835 these static values will work:
+//   The following numbers can be determined (dynamically) using CTR.
+//   As long we use the ARM1176JZF-S implementation in the BCM2835 these static values will work:
 //
 
-#define DATA_CACHE_LINE_LENGTH		32
+#define DATA_CACHE_LINE_LENGTH      32
 
 void invalidate_data_cache (void *start, long length)
 {
-	length += DATA_CACHE_LINE_LENGTH;
+    length += DATA_CACHE_LINE_LENGTH;
 
-	while (1)
-	{
-		asm volatile ("mcr p15, 0, %0, c7, c14,  1" : : "r" ((ULONG)start) : "memory");
+    while (1)
+    {
+        asm volatile ("mcr p15, 0, %0, c7, c14,  1" : : "r" ((ULONG)start) : "memory");
 
-		if (length < DATA_CACHE_LINE_LENGTH)
-		{
-			break;
-		}
+        if (length < DATA_CACHE_LINE_LENGTH)
+        {
+            break;
+        }
 
-		start += DATA_CACHE_LINE_LENGTH;
-		length  -= DATA_CACHE_LINE_LENGTH;
-	}
+        start += DATA_CACHE_LINE_LENGTH;
+        length  -= DATA_CACHE_LINE_LENGTH;
+    }
 
-	data_sync_barrier ();
+    data_sync_barrier ();
 }
 #else
 // The RPI 2+ implementation is in cache_armv7.S

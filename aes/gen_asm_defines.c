@@ -4,7 +4,6 @@
 #include "basepage.h"
 #include "obdefs.h"
 #include "gemlib.h"
-#include "pd.h"
 #define _ASMDEFINE(sym, val) asm volatile ("\n#define " #sym " %c0 \n" : : "i" (val))
 #define ASMOFFSET(s, m) _ASMDEFINE(s##_##m, offsetof(s, m));
 #define ASMSIZE(s) _ASMDEFINE(SIZEOF_##s, sizeof(s));
@@ -16,13 +15,6 @@ void foo(void) {
 	ASMOFFSET(AESPROCESS, a_cda);
 	ASMOFFSET(AESPROCESS, a_evb);
 	ASMSIZE(AESPROCESS);
-	ASMOFFSET(SHELL, sh_doexec);
-	ASMOFFSET(SHELL, sh_dodef);
-	ASMOFFSET(SHELL, sh_isdef);
-	ASMOFFSET(SHELL, sh_isgem);
-	ASMOFFSET(SHELL, sh_desk);
-	ASMOFFSET(SHELL, sh_cdir);
-	ASMSIZE(SHELL);
 	ASMOFFSET(THEGLO, g_int);
 	ASMOFFSET(THEGLO, g_scrap);
 	ASMOFFSET(THEGLO, s_cdir);

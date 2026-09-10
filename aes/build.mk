@@ -12,3 +12,4 @@ obj-y += gemaplib.o gemasync.o gemctrl.o gemdisp.o gemevlib.o gemflag.o \
 	 gemwmlib.o gemwrect.o gsx2.o gem_rsc.o mforms.o
 obj-$(CONF_WITH_LEGACY_RSC_LOAD) += rsload_legacy.o
 obj-$(CONF_WITH_PORTABLE_RSC_LOAD) += rsload_portable.o
+obj-$(CONF_WITH_MENU_EXTENSION) += gemmnext.o

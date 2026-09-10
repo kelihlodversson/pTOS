@@ -1,7 +1,7 @@
 /*
  * amiga.h - Amiga specific functions
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -50,8 +50,11 @@ extern UWORD *copper_list;
 extern int has_gayle;
 
 void amiga_machine_detect(void);
+const char *amiga_machine_name(void);
+void amiga_autoconfig(void);
 #if CONF_WITH_ALT_RAM
 void amiga_add_alt_ram(void);
+ULONG amiga_detect_ram(void *start, void *end, ULONG step);
 #endif
 ULONG amiga_initial_vram_size(void);
 void amiga_screen_init(void);
@@ -61,7 +64,6 @@ void amiga_setphys(const UBYTE *addr);
 const UBYTE *amiga_physbase(void);
 WORD amiga_setcolor(WORD colorNum, WORD color);
 void amiga_setrez(WORD rez, WORD videlmode);
-WORD amiga_vgetmode(void);
 void amiga_kbd_init(void);
 void amiga_ikbd_writeb(UBYTE b);
 void amiga_extra_vbl(void);
@@ -73,7 +75,7 @@ typedef ULONG uaelib_demux_t(ULONG fnum, ...);
 extern uaelib_demux_t* uaelib_demux;
 #define has_uaelib (uaelib_demux != NULL)
 
-void amiga_uaelib_init(void);
+void amiga_uae_init(void);
 void kprintf_outc_uae(int c);
 #endif
 

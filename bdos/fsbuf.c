@@ -2,7 +2,7 @@
  * fsbuf.c - buffer mgmt for file system
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2017 The EmuTOS development team
+ *               2002-2022 The EmuTOS development team
  *
  * Authors:
  *  SCC   Steve C. Cavender
@@ -13,33 +13,39 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "fs.h"
 #include "gemerror.h"
 #include "biosbind.h"
 #include "ahdi.h"
 #include "mem.h"
 #include "string.h"
+#include "biosext.h"
 #include "kprint.h"
 
+#ifdef __arm__
+BCB *bufl[2];           /* buffer lists - two lists:  FAT and dir/data --
+                         * fixed address on m68k (tosvars.ld), ordinary
+                         * storage here (#219) */
+#else
 extern BCB *bufl[];     /* buffer lists - two lists:  FAT and dir/data */
+#endif
 
 #define NUMBUFS 2       /* buffers per list */
 
 /* creates a chain of BCBs and corresponding buffers */
-static void *create_chain(char *p,LONG n)
+static void *create_chain(UBYTE *p,LONG n)
 {
     BCB *bcbptr;
     WORD i;
 
     for (i = 0; i < NUMBUFS; i++, p += n) {
         bcbptr = (BCB *)p;
-        memset(bcbptr,0x00,sizeof(BCB));
+        bzero(bcbptr,sizeof(BCB));
         if (i < NUMBUFS-1)                  /* chain to next */
             bcbptr->b_link = (BCB *)(p + n);
         bcbptr->b_bufdrv = -1;              /* mark as invalid */
-        bcbptr->b_bufr = p + sizeof(BCB);
+        bcbptr->b_bufr = (char *)p + sizeof(BCB);
     }
 
     return p;
@@ -47,14 +53,21 @@ static void *create_chain(char *p,LONG n)
 
 /*
  * bufl_init - BDOS buffer list initialization
+ *
+ * this must be called before memory is initialised, because we use
+ * balloc_stram().  we use balloc_stram() because we must not use
+ * Malloc() until after we have finished booting.  this is because TOS
+ * doesn't, and some programs that are direct-booted from a disk may
+ * therefore assume that all memory from membot upwards is available
+ * (I'm looking at you, Dungeon Master).
  */
 void bufl_init(void)
 {
-    char *p;
+    UBYTE *p;
     LONG n;
 
     n = sizeof(BCB) + pun_ptr->max_sect_siz;
-    p = xmalloc(2L*NUMBUFS*n);
+    p = balloc_stram(2L*NUMBUFS*n, FALSE);
     if (!p)
         panic("bufl_init(%ld): no memory\n",2L*NUMBUFS*n);
 
@@ -91,7 +104,7 @@ void flush(BCB *b)
 
     /* flush to both fats */
 
-    if (n == BT_FAT) {
+    if (n == BT_FAT && !dm->m_1fat) {
         longjmp_rwabs(1, (long)b->b_bufr, 1,
                       b->b_bufrec+dm->m_recoff[BT_FAT]-dm->m_fsiz, d);
     }
@@ -122,7 +135,7 @@ BCB *getbcb(DMD *dmd,WORD buftype,RECNO recnum)
      *          the last (least recently) used buffer.
      */
 
-    for (b = *(q = phdr); b; b = *(q = &b->b_link))
+    for (b = *(q = phdr); b; b = *(q = (BCB **)(void *)b))
     {
         if ((b->b_bufdrv == dmd->m_drvnum) && (b->b_buftyp == buftype) && (b->b_bufrec == recnum))
             break;
@@ -146,7 +159,7 @@ BCB *getbcb(DMD *dmd,WORD buftype,RECNO recnum)
          * is the least recently used.
          */
 
-doio:   for (p = *(q = phdr); p->b_link; p = *(q = &p->b_link))
+doio:   for (p = *(q = phdr); p->b_link; p = *(q = (BCB **)(void *)p))
             if (b == p)
                 break;
         b = p;
@@ -201,7 +214,7 @@ doio:   for (p = *(q = phdr); p->b_link; p = *(q = &p->b_link))
 /*
  * getrec - return the ptr to the buffer containing the desired record
  */
-char *getrec(RECNO recn, OFD *of, int wrtflg)
+UBYTE *getrec(RECNO recn, OFD *of, int wrtflg)
 {
     DMD *dm = of->o_dmd;
     BCB *b;
@@ -226,5 +239,5 @@ char *getrec(RECNO recn, OFD *of, int wrtflg)
     if (wrtflg)
         b->b_dirty = 1;
 
-    return b->b_bufr;
+    return (UBYTE *)b->b_bufr;
 }

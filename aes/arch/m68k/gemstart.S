@@ -2,7 +2,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2020 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -18,35 +18,32 @@
 #include "asmdefs.h"
 #include "asmstruct.h"
 
-        .globl  _ui_start
-        .globl  _accdesk_start
-        .globl  _gemdos
-        .globl  _dos_exec
-        .globl  _ui_mupb
+        .globl  C_SYM(ui_start)
+        .globl  C_SYM(accdesk_start)
+        .globl  C_SYM(dos_exec)
 
-        .extern _ad_stail
-        .extern _ad_envrn
-        .extern _size_theglo
-        .extern _D
-        .extern _bzero
-        .extern _justretf
-        .extern _drwaddr
-        .extern _tikcod
-        .extern _tikaddr
-        .extern _init_p0_stkptr
-        .extern _gem_main
-        .extern _gl_changerez
-        .extern _run_accs_and_desktop
-        .extern _disable_interrupts
-        .extern _rlr
-        .extern _enable_interrupts
+        .extern C_SYM(ad_stail)
+        .extern C_SYM(ad_envrn)
+        .extern C_SYM(size_theglo)
+        .extern C_SYM(D)
+        .extern C_SYM(bzero_nobuiltin)
+        .extern C_SYM(just_rts)
+        .extern C_SYM(drwaddr)
+        .extern C_SYM(tikcod)
+        .extern C_SYM(init_p0_stkptr)
+        .extern C_SYM(gem_main)
+        .extern C_SYM(gl_changerez)
+        .extern C_SYM(run_accs_and_desktop)
+        .extern C_SYM(disable_interrupts)
+        .extern C_SYM(rlr)
+        .extern C_SYM(enable_interrupts)
 
         .text
 
 //////////////////////////////////////////////////////////////////////////////
 // AES start-up code
 //////////////////////////////////////////////////////////////////////////////
-_ui_start:
+C_SYM(ui_start):
         // obtain our basepage address
         movea.l sp,a5
         movea.l 4(a5),a5
@@ -57,7 +54,7 @@ _ui_start:
         // ad_stail is the address to the cmdline buffer in our basepage
         move.l  a5,d0
         add.l   #0x80,d0
-        move.l  d0,_ad_stail
+        move.l  d0,C_SYM(ad_stail)
 
         // mshrink to the needed size for TEXT+DATA+BSS plus 256 bytes.
         move.l  0xC(a5),d0
@@ -94,37 +91,33 @@ aes_restart:
         // restore original environment pointer
 #ifdef __mcoldfire__
         move.l  save_ad_envrn,d0
-        move.l  d0,_ad_envrn
+        move.l  d0,C_SYM(ad_envrn)
 #else
-        move.l  save_ad_envrn,_ad_envrn
+        move.l  save_ad_envrn,C_SYM(ad_envrn)
 #endif
 
         // clear the 'global memory' zone
         move.l  #SIZEOF_THEGLO, -(sp) // size in bytes
-        movea.l #_D,a0
+        movea.l #C_SYM(D),a0
         move.l  a0,-(sp)        // address
-        jsr     _bzero          // clear it
+        jsr     C_SYM(bzero_nobuiltin)    // clear it
         addq.l  #8,sp
 
         // _drwaddr ??? set to just_rts
-        lea     _justretf,a0
-        move.l  a0,_drwaddr
-
-        // _tikaddr ??? set to tikcod
-        lea     _tikcod,a0
-        move.l  a0,_tikaddr
+        lea     C_SYM(just_rts),a0
+        move.l  a0,C_SYM(drwaddr)
 
         // call C routine to init the SSP in the UDA & return its offset
-        jsr     _init_p0_stkptr
-        movea.l #_D,a6
+        jsr     C_SYM(init_p0_stkptr)
+        movea.l #C_SYM(D),a6
         adda.l  d0,a6
         movea.l a6,sp
 
         // go in C
-        jsr     _gem_main
+        jsr     C_SYM(gem_main)
 
         // Check for resolution change - if so start over again
-        move.w  _gl_changerez,d0
+        move.w  C_SYM(gl_changerez),d0
         tst.w   d0
         jne     aes_restart
 
@@ -138,13 +131,12 @@ aes_restart:
         clr.w   -(sp)
         trap    #1
 
-
 //////////////////////////////////////////////////////////////////////////////
 // Run accessories and desktop
 //////////////////////////////////////////////////////////////////////////////
-_accdesk_start:
+C_SYM(accdesk_start):
         move.l  4(sp),a5                // a5 -> basepage
-        movea.l #_D,a0
+        movea.l #C_SYM(D),a0
         move.l  UDA_SPSUPER(a0),sp      // use AES process 0 stack
         move.l  12(a5),d0               // calc memory required
         add.l   20(a5),d0
@@ -163,40 +155,16 @@ _accdesk_start:
         trap    #1
         addq.l  #6,sp
 
-        jsr     _run_accs_and_desktop
+        jsr     C_SYM(run_accs_and_desktop)
 
         clr.w   -(sp)                   // Pterm0()
         trap    #1
-
-
-//////////////////////////////////////////////////////////////////////////////
-// Execute a GEMDOS call (see gemdos.c).
-//////////////////////////////////////////////////////////////////////////////
-_gemdos:
-        move.l  (SP)+,saveretaddr
-#ifdef __mcoldfire__
-        move.l  d2,saveregs
-        move.l  a2,saveregs+4
-#else
-        movem.l d2/a2,saveregs
-#endif
-
-        trap    #1
-#ifdef __mcoldfire__
-        move.l  saveregs,d2
-        move.l  saveregs+4,a2
-#else
-        movem.l saveregs,d2/a2
-#endif
-        move.l  saveretaddr,-(SP)
-        rts
-
 
 //////////////////////////////////////////////////////////////////////////////
 // A wrapper around Pexec. We can't use the above function _gemdos for this
 // since _gemdos is not reentrant.
 //////////////////////////////////////////////////////////////////////////////
-_dos_exec:
+C_SYM(dos_exec):
         move.l  sp,d1
 #ifdef __mcoldfire__
         move.l  a2,-(sp)                // Save registers
@@ -229,21 +197,25 @@ _dos_exec:
         //   - the trap #1 stack frame (0 byte, popped by trap #1 prologue)
         //   - the backup of registers in the trap #1 prologue (50 bytes)
         // Currently, this sums to 66 bytes. The stack has to be adjusted
-        // by this value, or more.
+        // by this value, or more (also see *NOTE* below).
         // You must keep an eye on the trap #1 prologue for GEMDOS,
         // when entering in supervisor mode and calling a function
         // other than 0x20. It is located in bdos/rwa.S, label "systk".
         // If some additional data is pushed on the stack before
         // the stack switch, you must add the equivalent room here.
+        //
+        // *NOTE* on an exception, ColdFire auto-aligns the stack pointer
+        // to a multiple of 4 bytes; so, for safety, you should increase
+        // the minimum adjustment by two bytes on ColdFire systems.
 
-        jsr     _disable_interrupts
-        movea.l _rlr,a0
+        jsr     C_SYM(disable_interrupts)
+        movea.l C_SYM(rlr),a0
         movea.l PD_UDA(a0),a0
         move.l  UDA_SPSUPER(a0),-(sp)   // Save rlr->p_uda->u_spsuper
         movea.l sp,a1
         suba.l  #0x50,a1                // Adjust the stack (see above)
         move.l  a1,UDA_SPSUPER(a0)
-        jsr     _enable_interrupts
+        jsr     C_SYM(enable_interrupts)
 
         movea.l d1,a1
         move.l  14(a1),-(sp)            // Push parameters on the stack again...
@@ -254,11 +226,11 @@ _dos_exec:
         trap    #1                      // ... and execute the Pexec call!
         lea     16(sp),sp
 
-        jsr     _disable_interrupts
-        movea.l _rlr,a0
+        jsr     C_SYM(disable_interrupts)
+        movea.l C_SYM(rlr),a0
         movea.l PD_UDA(a0),a0
         move.l  (sp)+,UDA_SPSUPER(a0)   // Restore rlr->p_uda->u_spsuper
-        jsr     _enable_interrupts
+        jsr     C_SYM(enable_interrupts)
 
 #ifdef __mcoldfire__
         move.l  (sp)+,d2
@@ -270,23 +242,12 @@ _dos_exec:
 
 .bss
 
-
 old_gem_ssp:
         .ds.l   1
-
-
-
-saveretaddr:
-        .ds.l   1
-
 
 // Space for the user stack:
         .ds.b   256
 gemusp:
-
-
-saveregs:
-        .ds.l   2
 
 // pointer to original environment, restored on AES restart
 save_ad_envrn:

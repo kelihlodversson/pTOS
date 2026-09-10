@@ -11,6 +11,7 @@
 #error This file must only be compiled for Raspberry Pi 4 targets
 #endif
 
+#include "portab.h"
 #include "kprint.h"
 #include "pci.h"
 #include "raspi_vl805.h"

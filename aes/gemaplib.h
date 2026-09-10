@@ -1,7 +1,7 @@
 /*
- * EmuTOS AES
+ * gemaplib.h - header for EmuTOS AES Application Services Library functions
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2020 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -34,7 +34,7 @@ extern FPD      *gl_rbuf;
 
 WORD ap_init(void);
 WORD ap_rdwr(WORD code, AESPD *p, WORD length, WORD *pbuff);
-WORD ap_find(BYTE *pname);
+WORD ap_find(char *pname);
 void ap_tplay(const EVNTREC *pbuff, WORD length, WORD scale);
 WORD ap_trecd(EVNTREC *pbuff, WORD length);
 void ap_exit(void);

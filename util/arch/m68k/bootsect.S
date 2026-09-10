@@ -23,12 +23,15 @@
 #include "../obj/ramtos.h"
 #endif
 
-        .extern _bootram
+        .extern C_SYM(bootram)
 
 #define BOOTDEV 0x446
 
 #define RWABS 4
 #define GETBPB 7
+
+#define CCONWS 9
+#define MALLOC 0x48
 
         .text
 
@@ -68,6 +71,7 @@ start:
          * then only a minimal subset of BIOS/XBIOS functions are available
          * and there is no GEMDOS at all.
          * In this case, we must guess a safe address to load ramtos.
+         * Also, we must then skip displaying the "Loading EmuTOS" message.
          */
 
         move.l  0x44e,a4        // _v_bas_ad: logical screen pointer
@@ -83,7 +87,7 @@ malloc:
         /* Malloc() ramtos buffer */
 
         move.l  d3,-(sp)
-        move.w  #0x48,-(sp)     // Malloc()
+        move.w  #MALLOC,-(sp)
         trap    #1
         addq.l  #6,sp
 
@@ -91,6 +95,12 @@ malloc:
         jeq     fail
 
         move.l  d0,a4           // temporary ramtos buffer
+
+        /* display a message to the user */
+        pea     msg(pc)
+        move.w  #CCONWS,-(sp)
+        trap    #1
+        addq.l  #6,sp
 
 read:
         /* getbpb before rwabs */
@@ -138,7 +148,10 @@ cpudone:
         move.l  d0,-(sp)        // cpu
         move.l  d3,-(sp)        // size
         move.l  a4,-(sp)        // src
-        bsr     _bootram
+        bsr     C_SYM(bootram)
 
 fail:
         rts
+
+msg:
+        .asciz "Loading EmuTOS..."

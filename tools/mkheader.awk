@@ -1,7 +1,7 @@
 #
 # mkheader.awk - generate definitions for the TOS header
 #
-# Copyright (C) 2003-2017 The EmuTOS development team
+# Copyright (C) 2003-2020 The EmuTOS development team
 #
 # Authors:
 #  LVL     Laurent Vogel
@@ -26,14 +26,22 @@ BEGIN {
     today = year "-" month "-" day
 
     # check parameters
-    if (ARGC != 2 || ! match(ARGV[1], /^[a-z][a-z]$/)) {
+    if (ARGC != 6 || ! match(ARGV[1], /^[a-z][a-z]$/)) {
         print ARGC ARGV[0] ARGV[1]
-        print "usage: mkheader xx"
+        print "usage: mkheader xx major minor fix unofficial"
         print "where xx is a lowercase two-char country name"
+        print "      major is the major version number"
+        print "      minor is the minor version number"
+        print "      fix is the fix version number"
+        print "      unofficial indicates an unofficial release"
         exit (1)
     }
     country = ARGV[1]
     uccountry = toupper(country)
+    major = ARGV[2]
+    minor = ARGV[3]
+    fix = ARGV[4]
+    unofficial = ARGV[5]
 
     print "/*"
     print " * header.h - definitions for the TOS header"
@@ -71,6 +79,12 @@ BEGIN {
         print "#define OS_PAL 0\n"
     else
         print "#define OS_PAL 1\n"
+
+    print "/* the components of the internal version number */"
+    print "#define MAJOR_VERSION " major "\n"
+    print "#define MINOR_VERSION " minor "\n"
+    print "#define FIX_VERSION " fix "\n"
+    print "#define UNOFFICIAL " unofficial "\n"
 
     print "#endif /* HEADER_H */"
 }

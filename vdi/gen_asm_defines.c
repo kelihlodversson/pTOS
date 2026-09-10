@@ -1,14 +1,15 @@
 #include "config.h"
 #include "portab.h"
-#include "../bios/lineavars.h"
+#include "lineavars.h"
 
-#define _ASMDEFINE(sym, val) asm volatile ("\n#define LINEA_" #sym " _linea_vars+%c0 \n" : : "i" (val))
+#define _ASMDEFINE(sym, val) asm volatile ("\n#define LINEA_" #sym " C_SYM(linea_vars)+%c0\n" : : "i" (val))
 #define LA(m) _ASMDEFINE(m, offsetof(struct _lineavars, m))
 
 void foo(void);
-void foo(void) {
-	asm volatile ("\n#define LA(val) LINEA_##val\n" : :);
-	LA(mouse_cdb);
+void foo(void)
+{
+    asm volatile ("\n#define LA(val) LINEA_##val\n" : :);
+    LA(mouse_cdb);
     LA(INQ_TAB);
     LA(DEV_TAB);
 
@@ -18,7 +19,7 @@ void foo(void) {
     LA(MOUSE_BT);
 
     LA(REQ_COL);
-    
+
     LA(SIZ_TAB);
 
     LA(TERM_CH);
@@ -27,11 +28,11 @@ void foo(void) {
     LA(def_font);
     LA(font_ring);
     LA(font_count);
-    
+
     LA(line_cw);
     LA(loc_mode);
     LA(num_qc_lines);
-    
+
     LA(str_mode);
     LA(val_mode);
 
@@ -129,4 +130,3 @@ void foo(void) {
     LA(COPYTRAN);
     LA(FILL_ABORT);
 }
-

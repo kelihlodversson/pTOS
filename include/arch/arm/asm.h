@@ -2,6 +2,7 @@
  * asm.h - Assembler help routines
  *
  * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2018-2026 The pTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -48,7 +49,22 @@
 /* OS entry points implemented in util/miscasm.S */
 extern long trap1(int, ...);
 extern long trap1_pexec(short mode, const char * path,
-  const void * tail, const char * env);
+  const char * tail, const char * env);
+
+/* External function doing nothing */
+extern void just_rts(void);
+
+/*
+ * WORD mul_div_round(WORD mult1, WORD mult2, WORD divisor);
+ *   returns (mult1 * mult2 / divisor), rounded away from zero
+ */
+static __inline__ WORD mul_div_round(WORD mult1, WORD mult2, WORD divisor)
+{
+    LONG n = (LONG)mult1 * mult2 * 2;
+    LONG q = n / divisor;
+
+    return (WORD)((q >= 0) ? (q + 1) / 2 : (q - 1) / 2);
+}
 
 /* Wrapper around the STOP instruction. This preserves SR. */
 static inline void stop_until_interrupt(void)

@@ -42,7 +42,7 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
     if (ram_window_sections > max_window_sections)
         ram_window_sections = max_window_sections;
 
-    clean_data_cache();
+    flush_data_cache_all();
 
     for (i = 0; i < PAGE_TABLE_ENTRIES; i++)
     {
@@ -98,7 +98,7 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
         }
     }
 
-    clean_data_cache();
+    flush_data_cache_all();
 
     asm volatile ("mrc p15, 0, %0, c1, c0,  1" : "=r" (aux_control));
     aux_control |= ARM_AUX_CONTROL_SMP;
@@ -109,7 +109,6 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
     asm volatile ("mcr p15, 0, %0, c2, c0,  1" : : "r" ((ULONG)table | TTBR_MODE));
     asm volatile ("mcr p15, 0, %0, c3, c0,  0" : : "r" (DOMAIN_CLIENT << 0));
 
-    flush_data_cache_all();
     flush_branch_target_cache();
     asm volatile ("mcr p15, 0, %0, c8, c7,  0" : : "r" (0));  /* invalidate unified TLB */
     data_sync_barrier();

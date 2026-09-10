@@ -1,7 +1,7 @@
 /*
  * country.c - _AKP, _IDT and country-dependent configuration
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2022 The EmuTOS development team
  *
  * Authors:
  *  LVL     Laurent Vogel
@@ -14,21 +14,19 @@
  * read doc/country.txt for information about country-related issues.
  */
 
-#include "config.h"
-#include "portab.h"
-#include "cookie.h"
+#include "emutos.h"
+#include "biosdefs.h"
 #include "country.h"
 #include "nvram.h"
 #include "tosvars.h"
 #include "header.h"
 #include "bootargs.h"
+#include "bios.h"
 
 /*
  * country tables - we define the data structures here, then include the
  * actual tables. The code reading these tables is below.
  */
-
-#if CONF_MULTILANG
 
 struct country_record {
     int country;            /* country code */
@@ -37,8 +35,6 @@ struct country_record {
     int charset;            /* charset code */
     int idt;                /* international date and time */
 };
-
-#endif
 
 struct charset_fonts {
     const Fonthead *f6x6;
@@ -59,13 +55,13 @@ struct charset_fonts {
  *
  */
 
-long cookie_idt;
-long cookie_akp;
+ULONG cookie_idt;
+ULONG cookie_akp;
 
 /* Get the default country code according to OS header. */
 static int get_default_country(void)
 {
-    if (os_conf == OS_CONF_MULTILANG)
+    if (os_header.os_conf == OS_CONF_MULTILANG)
     {
         /* No country specified in OS header.
          * Default to the value of the COUNTRY Makefile variable. */
@@ -74,11 +70,9 @@ static int get_default_country(void)
     else
     {
         /* Default to the country specified in OS header */
-        return os_conf >> 1;
+        return os_header.os_conf >> 1;
     }
 }
-
-#if CONF_MULTILANG
 
 static const struct country_record *get_country_record(int country_code)
 {
@@ -100,12 +94,6 @@ static const struct country_record *get_country_record(int country_code)
     return &countries[default_country_index];
 }
 
-/* Get the country code used for display: fonts and language */
-static int get_current_country_display(void)
-{
-    return HIBYTE(cookie_akp);
-}
-
 /* Get the country code used for input: keyboard layout */
 static int get_current_country_input(void)
 {
@@ -117,6 +105,14 @@ static int get_kbd_index(void)
     int country_code = get_current_country_input();
     const struct country_record *cr = get_country_record(country_code);
     return cr->keyboard;
+}
+
+#if CONF_MULTILANG
+
+/* Get the country code used for display: fonts and language */
+static int get_current_country_display(void)
+{
+    return HIBYTE(cookie_akp);
 }
 
 const char *get_lang_name(void)
@@ -152,7 +148,7 @@ void detect_akp(void)
     int country = get_default_country();
     int keyboard = country;
 
-#if CONF_WITH_NVRAM && CONF_MULTILANG
+#if CONF_WITH_NVRAM
     {
         UBYTE buf[2];
         int err;
@@ -161,7 +157,9 @@ void detect_akp(void)
         if (err == 0)
         {
             /* Override with the NVRAM settings */
+#if CONF_MULTILANG
             country = buf[0];
+#endif
             keyboard = buf[1];
         }
     }
@@ -215,17 +213,14 @@ void detect_idt(void)
 const struct keytbl *get_keytbl(void)
 {
     int j;
-#if CONF_MULTILANG
+
     j = get_kbd_index();
-#else
-    /* use the unique keyboard anyway */
-    j = 0;
-#endif
+
     return keytables[j];
 }
 
 /*
- * get_fonts - initialize country dependant font tables
+ * get_fonts - initialize country-dependent font tables
  */
 
 void get_fonts(const Fonthead **f6x6,

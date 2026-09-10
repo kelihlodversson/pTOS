@@ -1,7 +1,7 @@
 /*
  * stringasm.S - simple implementation of <string.h>-like routines
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2020 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -12,15 +12,15 @@
 
 #include "asmdefs.h"
 
-        .globl  _strlencpy
-        .globl  _strchr
+        .globl  C_SYM(strlencpy)
+        .globl  C_SYM(strchr)
 
 /*
- * WORD strlencpy(char *dest, const char *src)
- * as strcpy but returns the length ot the string instead.
+ * WORD strlencpy(char *RESTRICT dest, const char *RESTRICT src)
+ * as strcpy but returns the length of the string instead.
  */
 
-_strlencpy:
+C_SYM(strlencpy):
         movea.l 8(sp),a0
         movea.l 4(sp),a1
         moveq   #0,d0
@@ -45,7 +45,7 @@ lstcpy_loop:
  * returns a pointer to the first occurrence of char c in string s, or NULL.
  */
 
-_strchr:
+C_SYM(strchr):
         move.l  4(sp),a0
         move.w  8(sp),d1
 strchr_loop:

@@ -49,4 +49,10 @@ typedef struct {
  */
 BOOL screen_mode_desc_valid(const SCREEN_MODE_DESC *desc);
 
+/*
+ * Called by the VDI to query the current screen mode before initializing a
+ * workstation's mode descriptor.  Implemented by the BIOS (screen.c).
+ */
+void screen_get_current_mode_desc(SCREEN_MODE_DESC *desc);
+
 #endif /* SCREEN_MODE_H */

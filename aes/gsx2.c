@@ -1,7 +1,7 @@
 /*
  * gsx2.c - VDI (GSX) bindings
  *
- * Copyright (C) 2014 The EmuTOS development team
+ * Copyright (C) 2014-2019 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -10,7 +10,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
+#include "emutos.h"
 #include "gsx2.h"
 #include "obdefs.h"
 #include "gsxdefs.h"

@@ -1,8 +1,6 @@
 /*
  * raspi_uart.h Access to the raspberry pi UART port
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
- *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
@@ -18,6 +16,10 @@ BOOL raspi_uart0_can_write(void);
 void raspi_uart0_write_byte(UBYTE b);
 BOOL raspi_uart0_can_read(void);
 UBYTE raspi_uart0_read_byte(void);
+
+#if CONF_SERIAL_CONSOLE
+void raspi_uart0_poll_rx(void);
+#endif
 #endif
 
 

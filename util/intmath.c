@@ -1,50 +1,44 @@
 /*
  * intmath.c - implementation of integer mathematical functions
  *
- * Copyright (C) 2002-2016 The EmuTOS development team
+ * Copyright (C) 2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-
-
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "intmath.h"
 
 
 /*
  * Integer squareroot
- *  y=Isqrt(x) is equivalent to: y = (ULONG)(sqrtl( (long double)x ) + 0.5);
+ *  y=Isqrt(a) is equivalent to: y = (ULONG) (sqrtl( (double) a ) + 0.5);
  */
-
-ULONG Isqrt(ULONG x)
+ULONG Isqrt(ULONG a)
 {
-    ULONG s1, s2;
+    ULONG x, y;
 
-    if (x < 2)
-        return x;
+    if (!a)
+        return 0;   /* sqrt(0) = 0 */
 
-    s1 = x--; /* This algorithm converges to (x+LSB)^1/2. Thus decrement x */
-    s2 = 2;
-    do {
-        s1 /= 2;
-        s2 *= 2;
-    } while (s1 > s2);
+    x = --a;        /* This algorithm converges to (a + a_LSB)^1/2. Thus decrement a. */
+    y = 8;
 
-    s1 = s2 = (s1 + (s2 / 2)) / 2;
-    if (!((s1 &= ~7) & ~63))
-        s1 = s2; /* Improve first estimate further */
+    while(x > y)    /* Iterate for first estimate */
+    {
+        x /= 2;
+        y *= 2;
+    }
 
-    s2 = (1 + x/s1 + s1) / 2;
-    if (s1 == s2) /* First iteration */
-        return s2;
+    y = (2 + x + y/2) / 4;  /* y = First estimate */
 
-    do {
-        s1 = s2;
-        s2 = (1 + x/s1 + s1) / 2;
-    } while (s1 > s2);
+    /* Positive bias rounded Newton-Raphson square root iterator */
+    while(x != y)
+    {
+        x = y;
+        y = (1 + a/y + y) / 2;
+    }
 
-    return s2;
+    return y;
 }

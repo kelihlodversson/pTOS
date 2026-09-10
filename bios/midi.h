@@ -1,7 +1,7 @@
 /*
- * midi.c - MIDI routines
+ * midi.h - header for MIDI routines
  *
- * Copyright (C) 2001 The EmuTOS development team
+ * Copyright (C) 2001-2024 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -13,18 +13,16 @@
 #ifndef MIDI_H
 #define MIDI_H
 
-#include "portab.h"
-
 /* initialise the MIDI ACIA */
-extern void midi_init(void);
+void midi_init(void);
 
 /* some bios functions */
-extern LONG bconstat3(void);
-extern LONG bconin3(void);
-extern LONG bcostat3(void);
-extern LONG bconout3(WORD dev, WORD c);
+LONG bconstat3(void);
+LONG bconin3(void);
+LONG bcostat3(void);
+LONG bconout3(WORD dev, WORD c);
 
 /* some xbios functions */
-extern void midiws(WORD cnt, const UBYTE *ptr);
+void midiws(WORD cnt, const UBYTE *ptr);
 
 #endif /* MIDI_H */

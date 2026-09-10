@@ -2,7 +2,7 @@
  * bdosmain.c - GEMDOS main function dispatcher
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2017 The EmuTOS development team
+ *               2002-2024 The EmuTOS development team
  *
  * Authors:
  *  EWF  Eric W. Fleischman
@@ -20,8 +20,7 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "fs.h"
 #include "biosdefs.h"
 #include "mem.h"
@@ -32,7 +31,9 @@
 #include "biosbind.h"
 #include "string.h"
 #include "kprint.h"
-#include "dos.h"
+#include "ssystem.h"
+#include "bdosstub.h"
+#include "tosvars.h"
 
 /*
 **  externals
@@ -42,9 +43,9 @@
  * in rwa.S
  */
 
-extern void enter(void);
-extern void bdos_trap2(void);
-extern void (*old_trap2)(void);
+void enter(void);       /* defined in rwa.S */
+void bdos_trap2(void);  /* defined in rwa.S */
+PFVOID old_trap2; /* Old trap #2 handler, also used by rwa.S */
 
 /*
  *  prototypes / forward declarations
@@ -78,6 +79,9 @@ static long xgetver(void);
  */
 static PD initial_basepage;
 
+/* initial environment string */
+static const char double_nul[2] __attribute__ ((aligned (2))) = { 0, 0 };
+
 
 /*
  * SPECNAME - special name descriptor
@@ -86,7 +90,7 @@ static PD initial_basepage;
  * name with the corresponding handle
  */
 typedef struct {
-    BYTE *name;
+    char *name;
     long handle;
 } SPECNAME;
 
@@ -212,7 +216,13 @@ static const FND funcs[] =
 #else
     { NI, 0, 0 },               /* 0x14 */
 #endif
+
+#if CONF_WITH_VIDEL
     { F(srealloc),  0, W_N(2,1) },     /* 0x15 */
+#else
+    { NI, 0, 0 },               /* 0x15 */
+#endif
+
     { NI, 0, 0 },
     { NI, 0, 0 },
     { NI, 0, 0 },
@@ -334,7 +344,9 @@ void osinit_before_xmaddalt(void)
      * intercept TRAP #2 only for xterm(), keeping the old value
      * so that our trap handler can call the old one
      */
-    old_trap2 = (void(*)(void)) Setexc(0x22, (long)bdos_trap2);
+    old_trap2 = (PFVOID) Setexc(0x22, (long)bdos_trap2);
+
+    bufl_init();    /* initialize BDOS buffer list */
 
     osmem_init();
     umem_init();
@@ -347,8 +359,7 @@ void osinit_after_xmaddalt(void)
     /* Set up initial process. Required by Malloc() */
     run = &initial_basepage;
     run->p_flags = PF_STANDARD;
-
-    bufl_init();    /* initialize BDOS buffer list, now Malloc is available */
+    run->p_env = CONST_CAST(char *,double_nul);
 
     time_init();
 
@@ -389,7 +400,10 @@ static void freetree(DND *d)
 
 
 /*
- *  offree -
+ *  offree - free up all handles associated with the specified DMD
+ *
+ *  this is used when media change is detected on a device, in order
+ *  to cause subsequent I/Os to that device for those handles to fail
  */
 static void offree(DMD *d)
 {
@@ -403,8 +417,8 @@ static void offree(DMD *d)
             if (f->o_dmd == d)
             {
                 xmfreblk(f);
-                sft[i].f_ofd = 0;
-                sft[i].f_own = 0;
+                sft[i].f_ofd = NULL;
+                sft[i].f_own = NULL;
                 sft[i].f_use = 0;
             }
         }
@@ -413,7 +427,32 @@ static void offree(DMD *d)
 
 
 /*
- *  osif -
+ * mark_bcbs_invalid - mark the BCBs for the specified drive as invalid
+ */
+static void mark_bcbs_invalid(int drv)
+{
+    BCB *bx;
+    int i;
+
+    for (i = 0; i < 2; i++)
+    {
+        for (bx = bufl[i]; bx; bx = bx->b_link)
+        {
+            if (bx->b_bufdrv == drv)
+                bx->b_bufdrv = -1;
+        }
+    }
+}
+
+
+#ifdef __arm__
+long osif(LONG *pw);
+#else
+long osif(short *pw);
+#endif
+
+/*
+ *  osif - C implementation of trap #1. Called by _enter.
  */
 #ifdef __arm__
 long osif(LONG *pw)
@@ -423,7 +462,7 @@ long osif(short *pw)
 {
     char **pb, *pb2, *p, ctmp;
     BPB *b;
-    BCB *bx;
+    DMD *dmd;
     DND *dn;
     int typ, h, i, fn;
     int num, max;
@@ -432,6 +471,21 @@ long osif(short *pw)
 
 restrt:
     fn = pw[0];
+
+#ifdef __arm__
+    /*
+     * Ssystem() (0x154) is far outside the funcs[] table above, and
+     * unlike every other call handled through it, its arguments don't
+     * follow the table's implicit stdio/handle conventions -- so it's
+     * special-cased here instead of getting its own funcs[] slot.
+     * ARM only: real m68k TOS software already has Supexec() and direct
+     * memory access for this, and the smallest m68k ROM images (see
+     * release.mk) have no code size to spare for a second way to do it.
+     */
+    if (fn == GEMDOS_SSYSTEM)
+        return xssystem((WORD)pw[1], pw[2], pw[3]);
+#endif
+
     if (fn > MAX_FNCALL)
         return EINVFN;
 
@@ -447,31 +501,30 @@ restrt:
         if (rc == E_CHNG)
         {
             /* first, out with the old stuff */
-            dn = drvtbl[errdrv]->m_dtl;
-            offree(drvtbl[errdrv]);
-            xmfreblk(drvtbl[errdrv]);
-            drvtbl[errdrv] = 0;
+            dmd = drvtbl[errdrv];
+            dn = dmd->m_dtl;
+            offree(dmd);
+            xmfreblk(dmd);
+            drvtbl[errdrv] = NULL;
 
             if (dn)
                 freetree(dn);
 
-            for (i = 0; i < 2; i++)
-                for (bx = bufl[i]; bx; bx = bx->b_link)
-                    if (bx->b_bufdrv == errdrv)
-                        bx->b_bufdrv = -1;
+            mark_bcbs_invalid(errdrv);
 
             /* then, in with the new */
             b = (BPB *)Getbpb(errdrv);
-            if ((long)b <= 0)
+            if (!b)
             {
                 drvsel &= ~(1L<<errdrv);
-                if (b)
-                    return (long)b;
                 return rc;
             }
 
             if (log_media(b,errdrv))
+            {
+                drvsel &= ~(1L<<errdrv);
                 return ENSMEM;
+            }
 
             rwerr = 0;
             errdrv = 0;
@@ -479,11 +532,8 @@ restrt:
         }
 
         /* else handle as hard error on disk for now */
+        mark_bcbs_invalid(errdrv);
 
-        for (i = 0; i < 2; i++)
-            for (bx = bufl[i]; bx; bx = bx->b_link)
-                if (bx->b_bufdrv == errdrv)
-                    bx->b_bufdrv = -1;
         return rc;
     }
 
@@ -500,6 +550,7 @@ restrt:
             case 6:                 /* Crawio() */
                 if (pw[1] != 0xFF)
                     goto rawout;
+                FALLTHROUGH;
             case 1:                 /* Cconin() */
             case 3:                 /* Cauxin() */
             case 7:                 /* Crawcin() */
@@ -550,7 +601,7 @@ restrt:
             case 18:                /* Cauxis() */
                 if (eof(h))
                     return 0L;
-                /* drop through */
+                FALLTHROUGH;
 
             case 16:                /* Cconos() */
             case 17:                /* Cprnos() */

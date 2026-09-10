@@ -1,6 +1,6 @@
 ---
 name: ptos-smoketest
-description: Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS) image boots under an emulator. Covers Hatari for m68k Atari targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi1 (QEMU machine `raspi1ap`), raspi2 (QEMU machine `raspi2b`), virt-arm and virt-m68k machines. Use when asked to boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung boot, or when you need emulator invocations, --run-vbls/--avirecord/--trace flags, the Hatari debugger gotchas (spurious breakpoints, echo crash), the Falcon IDE 31s boot wait, or the floppy motor/deselection timeouts (motor on/off 1.5-3s + deselect 5s = ~20s STE baseline).
+description: Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS) image boots under an emulator. Covers Hatari for m68k Atari targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi1 (QEMU machine `raspi1ap`), raspi2 (QEMU machine `raspi2b`), virt-arm and virt-m68k machines, plus testing the flashable Raspberry Pi SD card disk image (`tools/mkraspi-image.sh`) by attaching it to QEMU as a raw `-drive if=sd`. Also covers running the regression test suite (`make test-hd`) on QEMU with the test HD image as an SD card and reading pass/fail output from the serial console. Use when asked to boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung boot, verify the SD card image's MBR/FAT16 partition is readable by pTOS's own eMMC driver, run regression tests under QEMU, or when you need emulator invocations, --run-vbls/--avirecord/--trace flags, the Hatari debugger gotchas (spurious breakpoints, echo crash), the Falcon IDE 31s boot wait, the floppy motor/deselection timeouts (motor on/off 1.5-3s + deselect 5s = ~20s STE baseline), or QEMU's power-of-2 SD card image size requirement.
 ---
 
 # pTOS Smoke Testing
@@ -24,6 +24,7 @@ the pTOS tree). Relevant outputs:
 | `virt-m68k_defconfig` | qemu-system-m68k | `virt-m68k.elf` | `-M virt -cpu m68020` (headless) |
 | `virt-arm-cli_defconfig` | qemu-system-arm | `virt-arm.elf` | same as `virt-arm_defconfig`, but boots to EmuCON, not the desktop |
 | `virt-m68k-cli_defconfig` | qemu-system-m68k | `virt-m68k.elf` | same as `virt-m68k_defconfig`, but boots to EmuCON, not the desktop |
+| `test-hd` (any config) | qemu-system-arm | `test-hd.img` (SD card) | `-drive file=test-hd.img,format=raw,if=sd` with any `-bios`/`-kernel` |
 
 Atari configs build with the default mintelf toolchain (`m68k-atari-mintelf-`)
 and produce symbols in `ptos512k.sym` (load in the Hatari debugger with
@@ -257,11 +258,141 @@ discover:
 - If pTOS ever grows an AArch64 port (producing a `kernel8.img`), *that*
   build could target `-M raspi3b`/`raspi4b` — but that doesn't exist today.
 
+### Testing the flashable SD card image (`-drive if=sd`)
+
+`tools/mkraspi-image.sh` (see `doc/install.txt`) builds a raw MBR + FAT16
+disk image bundling the boot firmware and the `kernel*.img` builds for a
+real SD card. Attaching it to QEMU as the emulated SD card — instead of
+just `-bios`/`-kernel` — tests pTOS's own `bios/raspi_emmc.c` driver and
+MBR parser against the actual artifact, not just that `mtools` can read it
+back:
+
+```sh
+make rpi1_defconfig && make
+./tools/fetch-raspi-firmware.sh /tmp/sdcard
+cp kernel.img /tmp/sdcard/
+make release-raspi-resources DEST=/tmp/sdcard
+./tools/mkraspi-image.sh /tmp/sdcard /tmp/ptos-raspi.img
+
+# QEMU's SD card model requires a power-of-2 image size ("SD card size has
+# to be a power of 2, e.g. 64 MiB") -- mkraspi-image.sh's output is not
+# (real hardware has no such restriction; this is a QEMU-only quirk).
+# Resize a scratch copy UP for the test, never the real release artifact:
+# mkraspi-image.sh's 256 MiB FAT16 floor plus the 1 MiB MBR gap means the
+# image is already >256 MiB, so resizing *down* to 64M would truncate and
+# corrupt the partition instead of just padding it. 512M is the next
+# power of 2 above that.
+cp /tmp/ptos-raspi.img /tmp/ptos-raspi-qemu.img
+qemu-img resize -f raw /tmp/ptos-raspi-qemu.img 512M
+
+qemu-system-arm -M raspi1ap -bios kernel.img \
+  -drive file=/tmp/ptos-raspi-qemu.img,format=raw,if=sd \
+  -d guest_errors -serial stdio
+```
+
+`-bios`/`-kernel` is still required even with the disk attached: QEMU does
+not emulate the GPU/`start.elf` boot ROM, so it never reads `kernel*.img`
+off the disk image itself — only pTOS, once running, reads the disk.
+
+Pass signals (verified on rpi1):
+- `Found a valid version 2.00 SD card` — `bios/raspi_emmc.c` initialized
+  the attached image as a real SD card.
+- `fda: MBR at 0 $0e` — pTOS's own MBR parser read the partition table
+  `mkraspi-image.sh` wrote and recognized type `$0e` (FAT16 LBA).
+- `GEMDOS drives: C` on the boot banner — the FAT16 partition mounted.
+- Boot proceeds to `AES: EMUDESK: evnt_multi()` with zero `guest_errors`,
+  same as a plain `-bios`-only boot.
+
+`raspi2b` takes the same `-drive ...,if=sd` treatment with `-bios
+kernel7.img`; the size restriction and pass signals are identical.
+
+### Running the regression test suite (`make test-hd`)
+
+The regression test harness (`CONF_WITH_REGRESSION_TESTS`) is enabled by
+default. It builds against libcmini (submodule at `lib/libcmini`), producing a
+standalone `runtests.tos` that is packaged into a raw HD image (`test-hd.img`,
+MBR + FAT16 via `tools/mkhdisk.sh`) together with `emudesk.inf`. The
+`emudesk.inf` autorun line (`#Z 00 C:\RUNTESTS.TOS@`) is meant to launch the
+harness on boot, which runs every test suite in `tests/<name>/<name>.c` and
+prints results via libcmini's `Cconws()`.
+
+Build the HD image (requires the normal kernel build first):
+
+```sh
+make rpi2_defconfig && make          # builds kernel7.img
+make test-hd                         # builds runtests.tos + test-hd.img
+```
+
+The `#Z` autorun used to hang indefinitely on ARM/QEMU right after `VDI
+video mode = ...` (issue #222) -- three separate bugs stacked on top of
+each other: two in the ELF loader (debug-section relocations misapplied
+as real addresses; absolute `movw`/`movt` loads never rebased, needing
+`-mword-relocations` in `TEST_CFLAGS`) and, once those were fixed enough
+for a program to actually run to completion, a `Setexc(0x100-0x102, ...)`
+bug in `bios.c` that read/wrote the wrong memory on ARM (that vecnum range
+is a fixed low-memory address on m68k but an ordinary global on ARM) --
+`Pterm()` calls it internally on every process exit, so nothing had ever
+survived to return from `RUNTESTS.TOS`. All three are fixed; `#Z` autorun
+now works normally on ARM.
+
+Run on QEMU (raspi2 used here; raspi1ap works identically with
+`-bios kernel.img`):
+
+```sh
+timeout 30 qemu-system-arm -M raspi2b -bios kernel7.img \
+  -drive file=test-hd.img,format=raw,if=sd \
+  -d guest_errors -serial stdio
+```
+
+Pass signals on the serial console, in order:
+
+| Output | Meaning |
+|---|---|
+| `Found a valid version 2.00 SD card` | eMMC driver initialized the attached image |
+| `fda: MBR at 0 $0e` | MBR parser recognized the FAT16 partition |
+| `GEMDOS drives: C` | FAT16 partition mounted as C: |
+| `pTOS regression tests` | Harness started |
+| `  stack_alignment (#214)... PASS` | Individual test result |
+| `--- Summary: N passed, N failed, N total ---` | All suites finished |
+| `All tests passed.` | Final verdict (exit code 0 from `Pterm`) |
+
+A test failure prints `FAIL` instead of `PASS` on the affected line
+and `Some tests FAILED.` at the end.  A Data Abort or `guest_errors`
+output before the summary means the harness itself crashed — likely a
+new bug, not a test assertion failure.
+
+The harness calls `Pterm(0)` when done; QEMU exits automatically.
+Use `timeout` to bound the run regardless (e.g. a trap before reaching
+the summary would otherwise hang the run indefinitely).
+
+`test-hd.img` must be a power of two for QEMU's SD card model, and at
+least 4 MiB: `tools/mkhdisk.sh` enforces both (2 MiB technically passes
+the power-of-two check but leaves too little room for a FAT16 partition
+after the 1 MiB MBR offset, so `mkfs.fat` fails).
+
+On m68k (Hatari), attach the same image as an ACSI disk instead of via
+QEMU's `-drive if=sd`, and use `--conout 2` to capture the same PASS/FAIL
+text Hatari's own stdout would otherwise only show via the VT-52 terminal
+window -- far more reliable than AVI-frame analysis for reading text
+output:
+
+```sh
+make atari512_defconfig && make      # builds ptos512k.img
+make test-hd                         # builds runtests.tos + test-hd.img
+timeout 30 hatari --tos ptos512k.img --machine ste --memsize 4 --sound off \
+  --acsi test-hd.img --conout 2 --run-vbls 1200
+```
+
+The same pass signals table above applies to Hatari's `--conout 2` output.
+AVI-frame analysis (see the Hatari section above) is still useful to
+confirm the desktop is reached *afterward*, and that `C:\*.*` lists
+`TESTS`, `EMUDESK.INF`, and `RUNTESTS.TOS`.
+
 `-device usb-mouse -device usb-kbd` is mandatory when validating USB HID
 input: without these devices, the class drivers register but neither a mouse
 nor keyboard is enumerated.
 
-Device variants (both virt ports; `force-legacy=false` is required on QEMU
+### Device variants (both virt ports; `force-legacy=false` is required on QEMU
 versions that default virtio-mmio to legacy v1):
 
 ```sh
@@ -275,6 +406,26 @@ versions that default virtio-mmio to legacy v1):
 Useful flags: `-S -s` (remote gdb), `-serial file:path.log` (capture console),
 `-monitor stdio` + `sendkey a` (keyboard injection), `-display none`
 (headless CI).
+
+### virt-arm regression disk
+
+QEMU's `virt` machine has no SD controller, so `-drive
+file=test-hd.img,format=raw,if=sd` is invalid for `virt-arm`. pTOS supports
+the machine's virtio-MMIO block device; attach the regression disk as
+virtio-blk instead:
+
+```sh
+qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 \
+  -kernel virt-arm.elf \
+  -global virtio-mmio.force-legacy=false \
+  -drive file=test-hd.img,if=none,format=raw,id=hd0 \
+  -device virtio-blk-device,drive=hd0 \
+  -d guest_errors -display none -serial stdio -no-reboot
+```
+
+The expected pass signal is the normal `All tests passed.` summary. The
+harness exits through `Pterm(0)` when complete; use a host timeout when
+running unattended.
 
 ### Standard smoke pattern and pass signals
 
@@ -324,6 +475,38 @@ cat /tmp/qemu.log
     (`coldfire_rs232_enable_interrupt()`). This also fixed a real pre-existing
     bug: virt-arm's PL011 init never set `LCRH.FEN`, so the UART never
     actually ran in FIFO mode despite the code comment claiming it did.
+    raspi1/raspi2 (below) use the same PL011 and the same polling pattern
+    via `raspi_uart0_poll_rx()` from `raspi_timer3_handler()` (#190), even
+    though there is no `rpi*-cli` config to boot straight to EmuCON — on
+    raspi, `CONF_SERIAL_CONSOLE` defaults on alongside the video desktop
+    (`default y if !CONF_WITH_ATARI_VIDEO && !MACHINE_AMIGA`), so serial
+    input there feeds the same console the video desktop uses, not a
+    separate EmuCON boot path. To smoke-test raspi serial input specifically,
+    build a throwaway CLI variant the same way `virt-arm-cli_defconfig`
+    derives from `virt-arm_defconfig`: copy `configs/rpi1_defconfig`, append
+    `CONF_WITH_AES=n`, then `CONFIG_= KCONFIG_CONFIG=.config python3 -m
+    defconfig --kconfig Kconfig <path>` (the plain `make <name>_defconfig`
+    target only works for files already under `configs/`; invoking
+    `defconfig` directly on an arbitrary path needs those two env vars set,
+    matching what `tools/kconfig.mk` exports, or `CONFIG_=` defaults to
+    kconfiglib's `CONFIG_` prefix and every line in the fragment is silently
+    ignored as "malformed"). This reaches `C:>` over `-serial` exactly like
+    the `-cli` targets. Confirmed working end-to-end (#190): a keystroke that
+    actually lands in `UART0_DR` is picked up by `raspi_uart0_poll_rx()` and
+    echoed at the EmuCON prompt — observed directly when a `help\r` sent too
+    early (during the boot-options banner, which also reads single
+    keystrokes) had two of its four characters "leak" through and echo once
+    EmuCON started, i.e. bytes delivered to the guest UART do reach the
+    console. Getting bytes reliably delivered *to* the guest UART from a
+    scripted host process is the unreliable part in a sandboxed container,
+    same as the caveat below for virt-arm-cli — see there. It reproduces
+    identically over `-serial chardev:...,socket,server=on` (not just a pty):
+    `strace` on the QEMU process shows `ppoll()` reporting the fd `POLLIN`
+    exactly once, right when the host side writes, but QEMU never calls
+    `read()` on it before the fd is masked out of the next `ppoll()`'s fd
+    set — so this is a QEMU/container chardev-servicing gap affecting every
+    serial backend in that environment, not something specific to ptys or to
+    the raspi driver.
   - **Verifying input interactively is unreliable in a sandboxed/CI
     shell.** `strace -f -e trace=read,poll,ppoll` on a spawned
     `qemu-system-arm -M virt ... -serial stdio` process, in at least one
@@ -333,10 +516,11 @@ cat /tmp/qemu.log
     poll set entirely. TX was unaffected (verified extensively: boot
     banner, EmuCON prompt, etc. all render correctly), and QEMU's own
     monitor chardev on the same spawned process consumed typed input
-    correctly in the same session — so this looks like a QEMU/host-pty
+    correctly in the same session — so this looks like a QEMU/host
     interaction gap specific to the guest-UART chardev path in that
-    container, not a general "no ptys here" limitation, and not something
-    the pTOS-side driver can work around. **Do not conclude the feature is
+    container (confirmed on both a pty and a `socket,server=on` chardev
+    while testing #190 on raspi, see above — not pty-specific), not
+    something the pTOS-side driver can work around. **Do not conclude the feature is
     broken from a failed automated keystroke test alone** — first confirm
     with `strace` (or by testing from a real interactive terminal) whether
     the environment is actually delivering bytes to QEMU's serial chardev
@@ -358,3 +542,5 @@ cat /tmp/qemu.log
 | Testing `ptoscart.img` as the `--tos` image | It is a cartridge, not a TOS: pass it via `--cartridge` and supply a real Atari TOS ROM with `--tos` (pTOS ROMs have cartridge detection compiled out) |
 | Expecting a desktop from `ptoscart.img` | The 128 KB cartridge excludes the AES/desktop; pass signal is the rendered diagnostic text screen, not the checkerboard |
 | A scripted keystroke at the `virt-arm-cli`/`virt-m68k-cli` EmuCON prompt over `-serial stdio` gets no response | Input is implemented (polled from the 200 Hz tick), but some sandboxed shells never deliver the bytes to QEMU's serial chardev at all (`ppoll()` sees stdin `POLLIN` but QEMU never `read()`s it) — confirm with `strace` before assuming the driver is broken; reaching the `A:>` prompt alone is still a valid automated pass signal either way |
+| `qemu-system-arm ... -drive file=ptos-raspi.img,format=raw,if=sd` fails with "SD card size has to be a power of 2" | `mkraspi-image.sh`'s output isn't power-of-2 sized (real hardware doesn't care) — `qemu-img resize -f raw <scratch-copy> 512M` a copy for the test, never the real release artifact; resizing *down* (e.g. to 64M) truncates and corrupts the partition instead of padding it |
+| Attaching the SD card image via `-drive if=sd` without also passing `-bios`/`-kernel` | QEMU doesn't emulate the GPU/`start.elf` boot ROM, so it never reads `kernel*.img` off the disk itself — pass both: `-bios kernel.img -drive file=...,if=sd` |

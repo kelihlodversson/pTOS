@@ -1,7 +1,7 @@
 /*
  * midi.c - MIDI routines
  *
- * Copyright (C) 2001-2016 Martin Doering
+ * Copyright (C) 2001-2019 Martin Doering
  *
  * Authors:
  *  MAD   Martin Doering
@@ -11,10 +11,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-
-#include "config.h"
-#include "portab.h"
-#include "kprint.h"
+#include "emutos.h"
 #include "acia.h"
 #include "iorec.h"
 #include "asm.h"

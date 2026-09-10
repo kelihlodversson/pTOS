@@ -1,7 +1,7 @@
 /*
  * floppy.c - floppy routines
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2025 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -12,8 +12,7 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "gemerror.h"
 #include "floppy.h"
 #include "disk.h"
@@ -24,16 +23,16 @@
 #include "asm.h"
 #include "tosvars.h"
 #include "machine.h"
+#include "has.h"
 #include "blkdev.h"
 #include "string.h"
-#include "kprint.h"
 #include "xbiosbind.h"  /* Random() */
 #include "delay.h"
-#include "processor.h"
+#include "biosext.h"    /* for cache control routines */
 #include "cookie.h"
-#ifdef MACHINE_AMIGA
+#include "intmath.h"
 #include "amiga.h"
-#endif
+#include "lisa.h"
 
 
 /*==== Introduction =======================================================*/
@@ -87,10 +86,10 @@
 struct flop_info {
     WORD rate;          /* rate selected via Floprate() */
     WORD actual_rate;   /* value to send to 1772 controller */
-    BYTE drive_type;
+    UBYTE drive_type;
 #define DD_DRIVE    0x00
 #define HD_DRIVE    0x01
-    BYTE cur_density;
+    UBYTE cur_density;
 #define DENSITY_DD  0x00
 #define DENSITY_HD  0x03
 #if CONF_WITH_FDC
@@ -98,6 +97,7 @@ struct flop_info {
     UBYTE wpstatus;     /* current write protect status */
     UBYTE wplatch;      /* latched copy of wpstatus */
 #endif
+    UWORD chksum[CHKSUM_SECTORS];   /* for media change detection */
 };
 
 /*
@@ -106,9 +106,6 @@ struct flop_info {
 #define IO_RETRIES  2   /* actually the total number of tries */
 
 /*==== Internal prototypes ==============================================*/
-
-/* set intel words */
-static void setiword(UBYTE *addr, UWORD value);
 
 /* floppy read/write */
 static WORD flopio(UBYTE *buf, WORD rw, WORD dev,
@@ -160,7 +157,7 @@ static void dummy_seek(void);
 #define DESELECT_TIMEOUT (5*CLOCKS_PER_SEC)     /* 5.0 seconds */
 
 /* access to dma and fdc registers */
-static WORD decode_error(void);
+static WORD decode_error(WORD writeflag);
 static WORD get_dma_status(void);
 static WORD get_fdc_reg(WORD reg);
 static void set_fdc_reg(WORD reg, WORD value);
@@ -182,8 +179,10 @@ static void fdc_start_dma_write(WORD count);
  * the following delay is used between toggling dma out.  in Atari TOS 3
  * & TOS 4, the delay is provided by an instruction sequence which takes
  * about 5usec on a Falcon.  EmuTOS uses 5usec (see flop_hdv_init()).
+ * the same delay is also used before checking the FDC interrupt signal.
  */
 #define toggle_delay() delay_loop(loopcount_toggle)
+#define irq_delay() delay_loop(loopcount_toggle)
 
 
 /*==== Internal floppy status =============================================*/
@@ -320,6 +319,8 @@ void flop_hdv_init(void)
     nflops = 0;
 #ifdef MACHINE_AMIGA
     amiga_floppy_init();
+#elif defined(MACHINE_LISA)
+    lisa_floppy_init();
 #endif
     flop_init(0);
     flop_init(1);
@@ -376,7 +377,7 @@ static void flop_add_drive(WORD dev)
     b->mediachange = MEDIACHANGE;
     b->start = 0;
     b->size = 0;                /* unknown size */
-    b->geometry.sides = 2;      /* default geometry of 3.5" DD */
+    b->geometry.sides = 1;      /* default geometry of 3.5" 1S DD */
     b->geometry.spt = 9;
     b->unit = dev;
     b->bpb.recsiz = SECTOR_SIZE;
@@ -403,10 +404,22 @@ static void flop_detect_drive(WORD dev)
     return;
 #endif
 
+#ifdef MACHINE_LISA
+    if (lisa_flop_detect_drive(dev)) {
+        flop_add_drive(dev);
+        units[dev].last_access = hz_200;
+    }
+    return;
+#endif
+
 #if CONF_WITH_FDC
     floplock(dev);
 
     select(dev, 0);
+
+    set_fdc_reg(FDC_CS,FDC_IRUPT);  /* Force Interrupt */
+    fdc_delay();                    /* allow it to complete */
+
     if (flopcmd(FDC_RESTORE | FDC_HBIT | finfo[dev].actual_rate) < 0) {
         KDEBUG(("flop_detect_drive(%d) timeout\n",dev));
     } else {
@@ -423,6 +436,17 @@ static void flop_detect_drive(WORD dev)
 #endif
 }
 
+/*
+ * flop_checksum - calculate & store floppy checksums
+ */
+void flop_checksum(int floppy, UBYTE *buf)
+{
+    struct flop_info *fi = &finfo[floppy];
+    int i;
+
+    for (i = 0; i < CHKSUM_SECTORS; i++, buf += SECTOR_SIZE)
+        fi->chksum[i] = compute_cksum((const UWORD *)buf);
+}
 
 /*
  * flop_mediach - return mediachange status for floppy
@@ -430,17 +454,22 @@ static void flop_detect_drive(WORD dev)
 LONG flop_mediach(WORD dev)
 {
     struct fat16_bs *bootsec = (struct fat16_bs *) dskbufp;
-    int unit;
+    struct flop_info *fi;
+    UBYTE *p;
+    int i, unit;
 
     KDEBUG(("flop_mediach(%d)\n",dev));
 
 #ifdef MACHINE_AMIGA
     return amiga_flop_mediach(dev);
+#elif defined(MACHINE_LISA)
+    return lisa_flop_mediach(dev);
 #endif
+
+    fi = &finfo[dev];
 
 #if CONF_WITH_FDC
     {
-    struct flop_info *fi = &finfo[dev];
 
     /*
      * if the latch has not been set since we reset it last time, status
@@ -482,11 +511,11 @@ LONG flop_mediach(WORD dev)
     /*
      * the current status was set, as was the latch.  we might have
      * inserted a WP diskette in an empty drive, or removed a WP diskette
-     * from a drive, or even replaced one WP diskette by another.  we
-     * attempt to read the boot sector to check the diskette serial number
+     * from a drive, or even replaced one WP diskette by another.  in order
+     * to detect a diskette change, we must now read the boot sector & FAT1.
      */
-    if (flopio((UBYTE *)bootsec,RW_READ,dev,1,0,0,1) != 0) {
-        KDEBUG(("flop_mediach(): can't read boot sector => media change\n"));
+    if (flopio((UBYTE *)bootsec,RW_READ,dev,1,0,0,CHKSUM_SECTORS) != 0) {
+        KDEBUG(("flop_mediach(): can't read starting sectors => media change\n"));
         return MEDIACHANGE;
     }
 
@@ -494,6 +523,9 @@ LONG flop_mediach(WORD dev)
             bootsec->serial[0],bootsec->serial[1],bootsec->serial[2],
             bootsec->serial2[0],bootsec->serial2[1],bootsec->serial2[2],bootsec->serial2[3]));
 
+    /*
+     * we first check the serial numbers in the boot sector for a change
+     */
     if (memcmp(bootsec->serial,blkdev[dev].serial,3)
      || memcmp(bootsec->serial2,blkdev[dev].serial2,4)) {
         KDEBUG(("flop_mediach(): serial number change => media change\n"));
@@ -503,11 +535,20 @@ LONG flop_mediach(WORD dev)
     /*
      * the serial number has not changed, but there could be two diskettes
      * with the same serial number, or the diskette could have been ejected,
-     * modified on another system, and replaced.  so we have to say "maybe".
+     * modified on another system, and replaced.  so we checksum each of
+     * the read sectors and compare against stored values to distinguish
+     * changed/unchanged.
      */
-    KDEBUG(("flop_mediach(): serial number unchanged => maybe media change\n"));
+    for (i = 0, p = dskbufp; i < CHKSUM_SECTORS; i++, p += SECTOR_SIZE) {
+        if (compute_cksum((const UWORD *)p) != fi->chksum[i]) {
+            KDEBUG(("flop_mediach(): checksum changed => media change\n"));
+            return MEDIACHANGE;
+        }
+    }
 
-    return MEDIAMAYCHANGE;
+    KDEBUG(("flop_mediach(): checksums unchanged => no media change\n"));
+
+    return MEDIANOCHANGE;
 }
 
 
@@ -530,11 +571,11 @@ LONG floppy_rw(WORD rw, UBYTE *buf, WORD cnt, LONG recnr, WORD spt,
      *  2. 0 or more entire track/sides
      *  3. the sectors from the start of the last track/side to the ending sector
      */
-    start_trkside = recnr / spt;
+    start_trkside = divu(recnr,spt);
     start_relsec = recnr - (spt * start_trkside);   /* zero-based sector number */
 
     recnr += cnt - 1;
-    end_trkside = recnr / spt;
+    end_trkside = divu(recnr,spt);
     end_relsec = recnr - (spt * end_trkside);
 
     KDEBUG(("floppy_rw(): start=%d/%d, end=%d/%d\n",
@@ -601,6 +642,17 @@ LONG floppy_rw(WORD rw, UBYTE *buf, WORD cnt, LONG recnr, WORD spt,
     return 0;
 }
 
+#if CONF_WITH_EJECT
+
+void flop_eject(void)
+{
+#ifdef MACHINE_LISA
+    lisa_flop_eject();
+#endif
+}
+
+#endif /* CONF_WITH_EJECT */
+
 /*==== boot-sector: protobt =======================================*/
 /*
  * note that (as in Falcon or TT TOS) you are allowed to create
@@ -608,26 +660,30 @@ LONG floppy_rw(WORD rw, UBYTE *buf, WORD cnt, LONG recnr, WORD spt,
  */
 
 struct _protobt {
-    WORD bps;
+    UBYTE bps[2];
     UBYTE spc;
-    WORD res;
+    UBYTE res[2];
     UBYTE fat;
-    WORD dir;
-    WORD sec;
+    UBYTE dir[2];
+    UBYTE sec[2];
     UBYTE media;
-    WORD spf;
-    WORD spt;
-    WORD sides;
-    WORD hid;
-};
+    UBYTE spf[2];
+    UBYTE spt[2];
+    UBYTE sides[2];
+    UBYTE hid[2];
+} PACKED ;
 
 static const struct _protobt protobt_data[] = {
-    { SECTOR_SIZE, 1, 1, 2,  64,  360, 0xfc, 2, 9, 1, 0 },
-    { SECTOR_SIZE, 2, 1, 2, 112,  720, 0xfd, 2, 9, 2, 0 },
-    { SECTOR_SIZE, 2, 1, 2, 112,  720, 0xf9, 5, 9, 1, 0 },
-    { SECTOR_SIZE, 2, 1, 2, 112, 1440, 0xf9, 5, 9, 2, 0 },
-    { SECTOR_SIZE, 2, 1, 2, 224, 2880, 0xf0, 5, 18, 2, 0 }, /* for HD floppy */
-    { SECTOR_SIZE, 2, 1, 2, 224, 5760, 0xf0, 10, 36, 2, 0 } /* for ED floppy */
+/* encode a little-endian 16bit word */
+#define LEW(x) { (x) & 0xff, (x) / 0x100 }
+    { LEW(SECTOR_SIZE), 1, LEW(1), 2, LEW( 64), LEW( 360), 0xfc, LEW( 2), LEW( 9), LEW(1), LEW(0) },
+    { LEW(SECTOR_SIZE), 2, LEW(1), 2, LEW(112), LEW( 720), 0xfd, LEW( 2), LEW( 9), LEW(2), LEW(0) },
+    { LEW(SECTOR_SIZE), 2, LEW(1), 2, LEW(112), LEW( 720), 0xf9, LEW( 5), LEW( 9), LEW(1), LEW(0) },
+    { LEW(SECTOR_SIZE), 2, LEW(1), 2, LEW(112), LEW(1440), 0xf9, LEW( 5), LEW( 9), LEW(2), LEW(0) },
+    { LEW(SECTOR_SIZE), 2, LEW(1), 2, LEW(224), LEW(2880), 0xf0, LEW( 5), LEW(18), LEW(2), LEW(0) }, /* for HD floppy */
+    { LEW(SECTOR_SIZE), 2, LEW(1), 2, LEW(224), LEW(5760), 0xf0, LEW(10), LEW(36), LEW(2), LEW(0) }, /* for ED floppy */
+    { LEW(SECTOR_SIZE), 2, LEW(1), 2, LEW(112), LEW(1600), 0xf9, LEW( 5), LEW(10), LEW(2), LEW(0) }  /* for 800K floppy */
+#undef LEW
 };
 #define NUM_PROTOBT_ENTRIES ARRAY_SIZE(protobt_data)
 
@@ -648,19 +704,12 @@ void protobt(UBYTE *buf, LONG serial, WORD type, WORD exec)
     }
 
     if (type >= 0 && type < NUM_PROTOBT_ENTRIES) {
-        const struct _protobt *bt = &protobt_data[type];
+        const UBYTE *bt = &protobt_data[type].bps[0];
+        UBYTE *dst = &b->bps[0];
+        unsigned int i;
 
-        setiword(b->bps, bt->bps);
-        b->spc = bt->spc;
-        setiword(b->res, bt->res);
-        b->fat = bt->fat;
-        setiword(b->dir, bt->dir);
-        setiword(b->sec, bt->sec);
-        b->media = bt->media;
-        setiword(b->spf, bt->spf);
-        setiword(b->spt, bt->spt);
-        setiword(b->sides, bt->sides);
-        setiword(b->hid, bt->hid);
+        for (i = 0; i < sizeof(struct _protobt); i++)
+            *dst++ = *bt++;
     }
 
     /*
@@ -686,14 +735,6 @@ void protobt(UBYTE *buf, LONG serial, WORD type, WORD exec)
         b->cksum[1]++;
 }
 
-
-/*==== boot-sector utilities ==============================================*/
-
-static void setiword(UBYTE *addr, UWORD value)
-{
-    addr[0] = value;
-    addr[1] = value >> 8;
-}
 
 /*==== xbios floprd, flopwr ===============================================*/
 
@@ -814,7 +855,7 @@ LONG flopver(WORD *buf, LONG filler, WORD dev,
     density_ok = (finfo[dev].drive_type==DD_DRIVE) ? TRUE : FALSE;
 
     for (i = 0; i < count; i++, sect++) {
-        for (retry = 0; retry < IO_RETRIES; retry++) {
+        for (retry = 0; retry < IO_RETRIES; ) {
             set_fdc_reg(FDC_SR, sect);
             set_dma_addr(diskbuf);
             fdc_start_dma_read(1);
@@ -822,15 +863,16 @@ LONG flopver(WORD *buf, LONG filler, WORD dev,
                 err = EDRVNR;           /* drive not ready */
                 break;                  /* no retry */
             }
-            err = decode_error();
+            err = decode_error(0);
             if (err == 0)
                 break;
             if ((err == ESECNF) && !density_ok) {   /* density _may_ be wrong */
                 switch_density(dev);
                 density_ok = TRUE;
-                retry = 0;              /* allow retries after density switch */
-                err = 0;
+                retry = 0;              /* reset retry count after density switch */
+                continue;
             }
+            retry++;
         }
         if (err) {
             *bad++ = sect ? sect : -1;
@@ -859,7 +901,7 @@ LONG flopfmt(UBYTE *buf, WORD *skew, WORD dev, WORD spt,
 {
     int i, j;
     WORD density, track_size, leader, offset;
-    BYTE b1, b2;
+    UBYTE b1, b2;
     UBYTE *s;
     LONG used, err;
 
@@ -871,23 +913,15 @@ LONG flopfmt(UBYTE *buf, WORD *skew, WORD dev, WORD spt,
     if (magic != 0x87654321UL)
         return EBADSF;          /* just like TOS4 */
 
-    density = DENSITY_DD;       /* default density */
-    switch(finfo[dev].drive_type) {
-    case HD_DRIVE:
-        if ((spt >= 13) && (spt <= 20)) {
-            density = DENSITY_HD;
-            track_size = TRACK_SIZE_HD;
-            leader = LEADER_HD;
-            break;
-        }
-        /* else drop thru */
-    case DD_DRIVE:
-        if ((spt >= 1) && (spt <= 10)) {
-            track_size = TRACK_SIZE_DD;
-            leader = LEADER_DD;
-            break;
-        }
-    default:
+    if ((spt >= 13) && (spt <= 20)) {
+        density = DENSITY_HD;
+        track_size = TRACK_SIZE_HD;
+        leader = LEADER_HD;
+    } else if ((spt >= 1) && (spt <= 10)) {
+        density = DENSITY_DD;
+        track_size = TRACK_SIZE_DD;
+        leader = LEADER_DD;
+    } else {
         return EBADSF;          /* consistent, at least :-) */
     }
 
@@ -921,8 +955,8 @@ LONG flopfmt(UBYTE *buf, WORD *skew, WORD dev, WORD spt,
      * record ::= GAP2 index GAP3 data GAP4
      */
 
-    b1 = virgin >> 8;
-    b2 = virgin;
+    b1 = HIBYTE(virgin);
+    b2 = LOBYTE(virgin);
 
     /* GAP1 + GAP2(part1) : 60/120 bytes 0x4E */
     APPEND(0x4E, leader);
@@ -1055,6 +1089,9 @@ static WORD flopio(UBYTE *userbuf, WORD rw, WORD dev,
 #ifdef MACHINE_AMIGA
     err = amiga_floprw(userbuf, rw, dev, sect, track, side, count);
     units[dev].last_access = hz_200;
+#elif defined(MACHINE_LISA)
+    err = lisa_floprw(userbuf, rw, dev, sect, track, side, count);
+    units[dev].last_access = hz_200;
 #elif CONF_WITH_FDC
     floplock(dev);
 
@@ -1087,7 +1124,7 @@ static WORD flopio(UBYTE *userbuf, WORD rw, WORD dev,
      * we can do it just once for efficiency.
      */
     if (rw && !tmpbuf)
-        flush_data_cache(userbuf, (LONG)count * SECTOR_SIZE);
+        flush_data_cache(userbuf, count * SECTOR_SIZE);
 
     while(count--) {
         iobufptr = tmpbuf ? tmpbuf : userbuf;
@@ -1096,7 +1133,7 @@ static WORD flopio(UBYTE *userbuf, WORD rw, WORD dev,
             flush_data_cache(tmpbuf, SECTOR_SIZE);
         }
 
-        for (retry = 0; retry < IO_RETRIES; retry++) {
+        for (retry = 0; retry < IO_RETRIES; ) {
             set_fdc_reg(FDC_SR, sect);
             set_dma_addr(iobufptr);
             if (rw == RW_READ) {
@@ -1110,15 +1147,16 @@ static WORD flopio(UBYTE *userbuf, WORD rw, WORD dev,
                 err = EDRVNR;           /* drive not ready */
                 break;                  /* no retry */
             }
-            err = decode_error();
+            err = decode_error(rw);
             if ((err == 0) || (err == EWRPRO))
                 break;
             if ((err == ESECNF) && !density_ok) {   /* density _may_ be wrong */
                 switch_density(dev);
                 density_ok = TRUE;
-                retry = 0;              /* allow retries after density switch */
-                err = 0;
+                retry = 0;              /* reset retry count after density switch */
+                continue;
             }
+            retry++;
         }
         /* If there was an error, don't read any more sectors */
         if (err)
@@ -1205,7 +1243,7 @@ static WORD flopwtrack(UBYTE *userbuf, WORD dev, WORD track, WORD side, WORD tra
     if (flopcmd(FDC_WRITETR) < 0) {     /* timeout: */
         err = EDRVNR;                   /* drive not ready */
     } else {
-        err = decode_error();
+        err = decode_error(1);
     }
 
     flopunlk();
@@ -1510,6 +1548,9 @@ static WORD flopcmd(WORD cmd)
     }
     set_fdc_reg(reg, cmd);
 
+    /* give the FDC some time to update its interrupt line */
+    irq_delay();
+
     if (timeout_gpip(timeout)) {
         set_fdc_reg(FDC_CS,FDC_IRUPT);  /* Force Interrupt */
         fdc_delay();                    /* allow it to complete */
@@ -1522,7 +1563,7 @@ static WORD flopcmd(WORD cmd)
 /*
  * decode DMA/FDC error status
  */
-static WORD decode_error(void)
+static WORD decode_error(WORD writeflag)
 {
     WORD status;
 
@@ -1533,7 +1574,7 @@ static WORD decode_error(void)
     status = get_fdc_reg(FDC_CS);
     if (status & FDC_RNF)       /* can be symptom of wrong density */
         return ESECNF;
-    if (status & FDC_WRI_PRO)
+    if (writeflag && (status & FDC_WRI_PRO))
         return EWRPRO;          /* write protect */
     if (status & FDC_CRCERR)
         return E_CRC;           /* CRC error */

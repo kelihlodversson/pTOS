@@ -2,8 +2,6 @@
  * bootargs.c - country/keyboard override parsed from the ARM boot
  * command line
  *
- * Copyright (C) 2026 The EmuTOS development team
- *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
@@ -109,7 +107,7 @@ static ULONG fdt32_to_cpu(ULONG v)
  * command line string, or NULL if there is none. */
 static const char *fdt_find_bootargs(const struct fdt_header *fdt)
 {
-    const UBYTE *cur, *end, *strings_base, *strings_end;
+    const UBYTE *cur, *end, *strings_base;
     ULONG totalsize, off_struct, off_strings, size_strings;
 
     if (fdt32_to_cpu(fdt->magic) != FDT_MAGIC)
@@ -126,7 +124,6 @@ static const char *fdt_find_bootargs(const struct fdt_header *fdt)
     end = (const UBYTE *)fdt + totalsize;
     cur = (const UBYTE *)fdt + off_struct;
     strings_base = (const UBYTE *)fdt + off_strings;
-    strings_end = strings_base + size_strings;
 
     while (cur + 4 <= end)
     {

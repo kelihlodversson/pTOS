@@ -3,7 +3,7 @@
 #
 
 obj-y += doprintf.o intmath.o langs.o memmove.o string.o miscasm.o nls.o \
-	 setjmp.o
+	 setjmp.o cookie.o miscutil.o
 
 obj-$(CONF_WITH_VIRTIO) += virtio.o
 

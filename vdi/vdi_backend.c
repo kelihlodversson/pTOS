@@ -9,8 +9,8 @@
 #include "portab.h"
 #include "vdi_defs.h"
 #include "vdi_backend.h"
-#include "../bios/tosvars.h"    /* v_bas_ad */
-#include "../bios/lineavars.h"  /* linea_vars */
+#include "tosvars.h"    /* v_bas_ad */
+#include "lineavars.h"  /* linea_vars */
 #include "asm.h"                /* rolw1/rorw1 */
 #include "kprint.h"             /* KDEBUG */
 #include "string.h"             /* memcpy */

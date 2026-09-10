@@ -1,7 +1,7 @@
 /*
- * EmuTOS AES
+ * gemrslib.h - header for EmuTOS AES Resource Library functions
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2020 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -29,7 +29,7 @@ typedef struct aesglobal {
 } AESGLOBAL;
 
 void rs_obfix(OBJECT *tree, WORD curob);
-BYTE *rs_str(UWORD stnum);
+char *rs_str(UWORD stnum);
 WORD rs_free(AESGLOBAL *pglobal);
 WORD rs_gaddr(AESGLOBAL *pglobal, UWORD rtype, UWORD rindex, void **rsaddr);
 WORD rs_saddr(AESGLOBAL *pglobal, UWORD rtype, UWORD rindex, void *rsaddr);

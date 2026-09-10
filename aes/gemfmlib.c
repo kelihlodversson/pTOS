@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2022 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -16,14 +16,15 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "string.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesdefs.h"
+#include "aesext.h"
+#include "aesvars.h"
 #include "obdefs.h"
-#include "gemlib.h"
 #include "gem_rsc.h"
+#include "biosbind.h"
 
 #include "gemwmlib.h"
 #include "gemrslib.h"
@@ -33,14 +34,12 @@
 #include "gemobjop.h"
 #include "gemgrlib.h"
 #include "gemevlib.h"
-#include "gemgraf.h"
 #include "gemobed.h"
 #include "optimize.h"
 #include "gemfmalt.h"
 #include "geminit.h"
 #include "gemmnlib.h"
 #include "gemfmlib.h"
-#include "gemgsxif.h"
 #include "scancode.h"
 
 
@@ -57,7 +56,7 @@ WORD     ml_ocnt;    /* Needs to be 0 initially! */
 static OBJECT   *ml_mnhold;
 static GRECT    ml_ctrl;
 static AESPD    *ml_pmown;
-static BYTE     alert_str[256]; /* must be long enough for longest alert in gem.rsc */
+static char     alert_str[256]; /* must be long enough for longest alert in gem.rsc */
 
 /*
  * The following arrays are used by eralert() to generate values to
@@ -124,7 +123,7 @@ static WORD find_obj(OBJECT *tree, WORD start_obj, WORD which)
     {
     case BACKWARD:
         inc = -1;
-        /* fall thru */
+        FALLTHROUGH;
     case FORWARD:
         obj = start_obj + inc;
         break;
@@ -204,7 +203,7 @@ WORD fm_button(OBJECT *tree, WORD new_obj, WORD clks, WORD *pnew_obj)
     WORD    tobj;
     WORD    orword;
     WORD    parent, state, flags;
-    WORD    cont, junk, tstate, tflags;
+    WORD    cont, tstate, tflags;
     WORD    rets[6];
     OBJECT  *objptr;
 
@@ -228,7 +227,7 @@ WORD fm_button(OBJECT *tree, WORD new_obj, WORD clks, WORD *pnew_obj)
         if (flags & RBUTTON)
         {
             /* check siblings to find and turn off the old RBUTTON */
-            parent = get_par(tree, new_obj, &junk);
+            parent = get_par(tree, new_obj);
             objptr = tree + parent;
             tobj = objptr->ob_head;
             while (tobj != parent)
@@ -262,8 +261,7 @@ WORD fm_button(OBJECT *tree, WORD new_obj, WORD clks, WORD *pnew_obj)
         cont = FALSE;
 
     /* handle click on another editable field */
-    if (cont &&
-        ((flags & HIDETREE) || (state & DISABLED) || !(flags & EDITABLE)))
+    if (cont && !(flags & EDITABLE))
         new_obj = 0;
 
     *pnew_obj = new_obj | orword;
@@ -310,8 +308,13 @@ WORD fm_do(OBJECT *tree, WORD start_fld)
             ob_edit(tree, edit_obj, 0, &idx, EDINIT);
         }
         /* wait for mouse or key */
+#if CONF_WITH_MENU_EXTENSION
+        which = ev_multi(MU_KEYBD | MU_BUTTON, NULL, NULL, NULL,
+                         0x0L, 0x0002ff01L, NULL, rets);
+#else
         which = ev_multi(MU_KEYBD | MU_BUTTON, NULL, NULL,
                          0x0L, 0x0002ff01L, NULL, rets);
+#endif
 
         /* handle keyboard event */
         if (which & MU_KEYBD)
@@ -327,7 +330,7 @@ WORD fm_do(OBJECT *tree, WORD start_fld)
             next_obj = ob_find(tree, ROOT, MAX_DEPTH, rets[0], rets[1]);
             if (next_obj == NIL)
             {
-                sound(TRUE, 440, 2);
+                Bconout(2, 0x07);   /* bell sound */
                 next_obj = 0;
             }
             else
@@ -385,7 +388,7 @@ WORD fm_dial(WORD fmd_type, GRECT *pi, GRECT *pt)
  */
 WORD fm_show(WORD string, WORD *pwd, WORD level)
 {
-    BYTE    *ad_alert;
+    char *ad_alert;
 
     ad_alert = rs_str(string);
     if (pwd)

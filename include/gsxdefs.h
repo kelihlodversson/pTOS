@@ -2,7 +2,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*       Copyright (C) 2002-2017 The EmuTOS development team
+*       Copyright (C) 2002-2022 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -79,28 +79,22 @@ typedef struct fdbstr
 } FDB;
 
 
-extern WORD     gl_width;
-extern WORD     gl_height;
+extern WORD     gl_width;       /* screen width */
+extern WORD     gl_height;      /* screen height */
 
-extern WORD     gl_wchar;
-extern WORD     gl_hchar;
+extern WORD     gl_wchar;       /* width of character cell (normal font) */
+extern WORD     gl_hchar;       /* height of character cell (normal font) */
 
-extern WORD     gl_wschar;
-extern WORD     gl_hschar;
+extern WORD     gl_wschar;      /* width of character cell (small font) */
+extern WORD     gl_hschar;      /* height of character cell (small font) */
 
-extern WORD     gl_wptschar;
-extern WORD     gl_hptschar;
+extern WORD     gl_wbox;        /* box width */
+extern WORD     gl_hbox;        /* box height */
 
-extern WORD     gl_wbox;
-extern WORD     gl_hbox;
+extern GRECT    gl_clip;        /* global clipping rectangle */
 
-extern WORD     gl_xclip;
-extern WORD     gl_yclip;
-extern WORD     gl_wclip;
-extern WORD     gl_hclip;
-
-extern WORD     gl_nplanes;
-extern WORD     gl_handle;
+extern WORD     gl_nplanes;     /* number of bit planes */
+extern WORD     gl_handle;      /* physical workstation handle */
 
 extern FDB      gl_src;
 extern FDB      gl_dst;
@@ -110,29 +104,11 @@ extern VDICONTROL contrl;
 extern WORD     intin[128];
 extern WORD     ptsin[20];
 
-extern WORD     gl_mode;
-extern WORD     gl_tcolor;
-extern WORD     gl_lcolor;
-extern WORD     gl_fis;
-extern WORD     gl_patt;
-extern WORD     gl_font;
-
-extern GRECT    gl_rscreen;
-extern GRECT    gl_rfull;
-extern GRECT    gl_rzero;
-extern GRECT    gl_rcenter;
-extern GRECT    gl_rmenu;
-
-void gsx_gclip(GRECT *pt);
-void gsx_sclip(const GRECT *pt);
-void gsx_pline(WORD offx, WORD offy, WORD cnt, const WORD *pts);
-void gsx_attr(UWORD text, UWORD mode, UWORD color);
-void gsx_fix(FDB *pfd, void *theaddr, WORD wb, WORD h);
-void bb_screen(WORD scrule, WORD scsx, WORD scsy, WORD scdx, WORD scdy, WORD scw, WORD sch);
-void gsx_trans(void *saddr, UWORD swb, void *daddr, UWORD dwb, UWORD h);
-void gsx_start(void);
-void gsx_tblt(WORD tb_f, WORD x, WORD y, WORD tb_nc);
-void bb_fill(WORD mode, WORD fis, WORD patt, WORD hx, WORD hy, WORD hw, WORD hh);
+extern GRECT    gl_rscreen;     /* the entire screen */
+extern GRECT    gl_rfull;       /* the screen except the menu bar */
+extern GRECT    gl_rzero;       /* 0,0,0,0 */
+extern GRECT    gl_rcenter;     /* a box centered in the 'gl_rfull' area */
+extern GRECT    gl_rmenu;       /* the menu bar */
 
 /*
  * Backend-owned screen queries for the packed-truecolor backend.  The

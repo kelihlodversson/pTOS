@@ -1,7 +1,7 @@
 /*
  * parport.c - limited parallel port support
  *
- * Copyright (C) 2002-2016 The EmuTOS development team
+ * Copyright (C) 2002-2021 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -10,8 +10,7 @@
  * option any later version.  See doc/licence.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "parport.h"
 #if CONF_WITH_PRINTER_PORT
 #include "asm.h"
@@ -19,31 +18,105 @@
 #include "sound.h"
 #include "mfp.h"
 #include "psg.h"
+#include "ikbd.h"
+#include "tosvars.h"
 #endif
 
 /*
  * known differences with respect to the original TOS:
- * - Setprt() not implemented. One cannot access the serial port through
- *   the device 0 BIOS functions.
- * - printer configuration and hardcopy not done
+ * - printer hardcopy is not done
  * - no input
- * - no 30 seconds delay for printer output.
  */
 
 #if CONF_WITH_PRINTER_PORT
 /* timing stuff */
 #define DELAY_1US       delay_loop(delay1us)
 static ULONG delay1us;
+
+static WORD printer_config;
+
+/* timeout stuff */
+#define CTL_C           ('C'-0x40)
+#define SHORT_TIMEOUT   (5 * CLOCKS_PER_SEC)
+#define LONG_TIMEOUT    (30 * CLOCKS_PER_SEC)
+static ULONG last_timeout;
+#endif
+
+#if CONF_WITH_PRINTER_PORT
+/*
+ * implements xbios_21 - Set/get the desktop printer configuration word
+ */
+WORD setprt(WORD config)
+{
+    WORD old_config = printer_config;
+
+    if (config != -1)
+        printer_config = config;
+
+    return old_config;
+}
+
+/*
+ * do parallel port output
+ */
+static LONG prnout(WORD c)
+{
+    WORD old_sr;
+    WORD a;
+
+    /* disable interrupts */
+    old_sr = set_sr(0x2700);
+
+    /* read PSG multi-function register */
+    a = giaccess(0, PSG_MULTI | GIACCESS_READ);
+
+    /* set port B to output mode */
+    a |= PSG_PORTB_OUTPUT;
+
+    /* write new value in register */
+    giaccess(a, PSG_MULTI | GIACCESS_WRITE);
+
+    /* write char in port B */
+    giaccess(c, PSG_PORT_B | GIACCESS_WRITE);
+
+    /*
+     * according to the Centronics spec, we must leave valid data on
+     * the lines for at least 500ns before pulsing the strobe line,
+     * so we leave it for 1 microsecond
+     */
+    DELAY_1US;
+
+    /*
+     * according to the spec, the strobe line must be pulsed low
+     * for a minimum of 500ns, so we do it for 1 microsecond
+     */
+    offgibit(~GI_STROBE);
+    DELAY_1US;
+    ongibit(GI_STROBE);
+
+    /*
+     * at this point, we should wait for ACK to go low, but
+     * most drivers don't bother
+     */
+
+    /* restore sr */
+    set_sr(old_sr);
+    return 1L;
+}
 #endif
 
 void parport_init(void)
 {
 #if CONF_WITH_PRINTER_PORT
     /* set Strobe high */
-    ongibit(0x20);
+    ongibit(GI_STROBE);
 
     /* initialize delay */
     delay1us = loopcount_1_msec / 1000;
+
+    /* initialize other printer variables */
+    printer_config = 0;     /* Setprt() default: output via parallel port */
+    last_timeout = 0UL;     /* parallel port: ticks value at last timeout */
 #endif
 }
 
@@ -70,50 +143,30 @@ LONG bcostat0(void)
 
 LONG bconout0(WORD dev, WORD c)
 {
-    if(bcostat0()) {
 #if CONF_WITH_PRINTER_PORT
-        WORD old_sr;
-        WORD a;
+    ULONG now = hz_200;
 
-        /* disable interrupts */
-        old_sr = set_sr(0x2700);
-        /* read PSG multi-function register */
-        a = giaccess(0, PSG_MULTI | GIACCESS_READ);
-        /* set port B to output mode */
-        a |= PSG_PORTB_OUTPUT;
-        /* write new value in register */
-        giaccess(a, PSG_MULTI | GIACCESS_WRITE);
-        /* write char in port B */
-        giaccess(c, PSG_PORT_B | GIACCESS_WRITE);
-
-        /*
-         * according to the Centronics spec, we must leave valid data on
-         * the lines for at least 500ns before pulsing the strobe line,
-         * so we leave it for 1 microsecond
-         */
-        DELAY_1US;
-
-        /*
-         * according to the spec, the strobe line must be pulsed low
-         * for a minimum of 500ns, so we do it for 1 microsecond
-         */
-        offgibit(~0x20);
-        DELAY_1US;
-        ongibit(0x20);
-
-        /*
-         * at this point, we should wait for ACK to go low, but
-         * most drivers don't bother
-         */
-
-        /* restore sr */
-        set_sr(old_sr);
-        return 1L;
-#endif
-    } else {
-        /* Atari TOS waits until the printer is available...
-         * We simply cancel here.
-         */
+    /*
+     * if we didn't time out 'recently', we check if the port is available,
+     * allowing a long timeout; otherwise we just time out immediately.
+     * this is how Atari TOS does things.  however, waiting for the long
+     * timeout because we accidentally tried to use the printer port is
+     * extremely painful, so EmuTOS allows a quick out via ctrl-C.
+     */
+    if ((last_timeout == 0UL)                   /* first time through? */
+     || (now >= (last_timeout+SHORT_TIMEOUT)))
+    {
+        while(hz_200 < (now+LONG_TIMEOUT))
+        {
+            if (bcostat0())
+                return prnout(c);
+            if (bconstat2())
+                if ((bconin2() & 0xff) == CTL_C)
+                    break;
+        }
     }
+
+    last_timeout = hz_200;
+#endif
     return 0L;
 }

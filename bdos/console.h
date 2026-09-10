@@ -1,7 +1,7 @@
 /*
  * console.h - console header
  *
- * Copyright (C) 2001-2016 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -38,7 +38,7 @@
 
 
 void stdhdl_init(void);
-BYTE get_default_handle(int stdh);
+SBYTE get_default_handle(int stdh);
 
 long xconstat(void);
 long xconostat(void);

@@ -62,7 +62,7 @@
  */
 #if CONF_WITH_UAE || DETECT_NATIVE_FEATURES || STONX_NATIVE_PRINT \
     || CONSOLE_DEBUG_PRINT || RS232_DEBUG_PRINT || SCC_DEBUG_PRINT \
-    || COLDFIRE_DEBUG_PRINT || MIDI_DEBUG_PRINT
+    || COLDFIRE_DEBUG_PRINT || MIDI_DEBUG_PRINT || CARTRIDGE_DEBUG_PRINT
 # define HAS_KPRINTF 1
 #else
 # define HAS_KPRINTF 0
@@ -102,6 +102,22 @@
 #define LEN_ZNODE 8                     /* max node length */
 #define LEN_ZEXT 3                      /* max extension length */
 #define MAXPATHLEN (LEN_ZPATH+LEN_ZFNAME+1) /* convenient shorthand */
+
+/*
+ * maximum number of coordinates the VDI will accept for a single
+ * polyline/polygon/fill call, i.e. up to MAX_VERTICES coordinates
+ * (MAX_VERTICES/2 points)
+ */
+#ifndef MAX_VERTICES
+# define MAX_VERTICES 1024
+#endif
+
+/*
+ * maximum number of VDI workstations (physical + virtual) open at once
+ */
+#ifndef NUM_VDI_HANDLES
+# define NUM_VDI_HANDLES 128
+#endif
 
 /*
  * Maximum coordinate supported (must fit in WORD)

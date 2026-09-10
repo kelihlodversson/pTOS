@@ -1,4 +1,6 @@
 # 512 KB Atari ROM image, for the TT and the Falcon
 TARGET_512=y
-# The multi-language image supports every country at run time.
-# BUILD_UNIQUE_COUNTRY is not set
+# Single-country, matching upstream's own 512/256/192 targets (UNIQUE=
+# $(COUNTRY) in their Makefile) -- the multi-language image no longer
+# fits in 512K alongside upstream's current feature set.
+BUILD_UNIQUE_COUNTRY=y

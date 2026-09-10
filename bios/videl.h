@@ -1,7 +1,7 @@
 /*
- * screen.h - low-level screen routines
+ * videl.h - header for VIDEL support
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2024 The EmuTOS development team
  *
  * Authors:
  *  PES   Petr Stehlik
@@ -14,27 +14,15 @@
 #ifndef VIDEL_H
 #define VIDEL_H
 
-/* bit settings for Falcon videomodes */
-#define VIDEL_VALID    0x01ff           /* the only bits allowed in a videomode */
-#define VIDEL_VERTICAL 0x0100           /* if set, use interlace (TV), double line (VGA) */
-#define VIDEL_COMPAT   0x0080           /* ST-compatible if set */
-#define VIDEL_OVERSCAN 0x0040           /* overscan if set (not used with VGA) */
-#define VIDEL_PAL      0x0020           /* PAL if set; otherwise NTSC */
-#define VIDEL_VGA      0x0010           /* VGA if set; otherwise TV */
-#define VIDEL_80COL    0x0008           /* 80-column mode if set; otherwise 40 */
-#define VIDEL_BPPMASK  0x0007           /* mask for bits/pixel encoding */
-#define VIDEL_1BPP          0               /* 2 colours */
-#define VIDEL_2BPP          1               /* 4 colours */
-#define VIDEL_4BPP          2               /* 16 colours */
-#define VIDEL_8BPP          3               /* 256 colours */
-#define VIDEL_TRUECOLOR     4               /* 65536 colours */
-
 #if CONF_WITH_VIDEL
 
-#include "portab.h"
-#include "tosvars.h"
+/* Falcon video shift register */
+#define SPSHIFT         0xffff8266L
 
-#define SPSHIFT             0xffff8266L
+/* some bit usage in SPSHIFT */
+#define SPS_2COLOR      0x0400          /* 1 bitplane (mono) */
+#define SPS_HICOLOR     0x0100          /* 16-bit colour */
+#define SPS_256COLOR    0x0010          /* 8 bitplanes */
 
 #define FRGB_BLACK     0x00000000       /* Falcon palette */
 #define FRGB_BLUE      0x000000ff
@@ -54,16 +42,21 @@
 #define FRGB_WHITE     0xffff00ff
 
 /* test for VDI support of videomode */
+#if CONF_WITH_VDI_16BIT
+#define VALID_VDI_BPP(mode) ((mode&VIDEL_BPPMASK)<=VIDEL_TRUECOLOR)
+#else
 #define VALID_VDI_BPP(mode) ((mode&VIDEL_BPPMASK)<=VIDEL_8BPP)
+#endif
 
 /* selected Falcon videomodes */
-#define FALCON_ST_HIGH      (VIDEL_COMPAT|VIDEL_VGA|VIDEL_80COL|VIDEL_1BPP)
+#define FALCON_ST_HIGH      (VIDEL_COMPAT|VIDEL_80COL|VIDEL_1BPP)
+#define FALCON_ST_MEDIUM    (VIDEL_COMPAT|VIDEL_80COL|VIDEL_2BPP)
+#define FALCON_ST_LOW       (VIDEL_COMPAT|VIDEL_4BPP)
 
 #define FALCON_DEFAULT_BOOT (VIDEL_VERTICAL|VIDEL_80COL|VIDEL_4BPP) /* 640x480x16 colours, TV, NTSC */
 
 typedef struct {
     WORD vmode;         /* video mode (-1 => end marker) */
-    WORD monitor;       /* applicable monitors */
     UWORD hht;          /* H hold timer */
     UWORD hbb;          /* H border begin */
     UWORD hbe;          /* H border end */
@@ -79,7 +72,7 @@ typedef struct {
 } VMODE_ENTRY;
 
 void initialise_falcon_palette(WORD mode);
-const VMODE_ENTRY *lookup_videl_mode(WORD mode,WORD monitor);
+const VMODE_ENTRY *lookup_videl_mode(WORD mode);
 
 /* Public XBIOS functions */
 WORD vsetmode(WORD mode);
@@ -88,12 +81,12 @@ WORD vsetsync(WORD external);
 LONG vgetsize(WORD mode);
 WORD vsetrgb(WORD index,WORD count,const ULONG *rgb);
 WORD vgetrgb(WORD index,WORD count,ULONG *rgb);
+WORD vfixmode(WORD mode);
 
 /* misc routines */
-WORD get_videl_mode(void);
-WORD vfixmode(WORD mode);
 WORD videl_check_moderez(WORD moderez);
 void videl_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez);
+void videl_setrez(WORD rez, WORD videlmode);
 
 extern WORD current_video_mode;
 

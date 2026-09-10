@@ -2,7 +2,7 @@
  * proc.c - process management routines
  *
  * Copyright (C) 2001 Lineo, Inc. and Authors:
- *               2002-2017 The EmuTOS development team
+ *               2002-2022 The EmuTOS development team
  *
  *  KTB     Karl T. Braun (kral)
  *  MAD     Martin Doering
@@ -15,18 +15,19 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
+#include "bdosdefs.h"
 #include "fs.h"
 #include "mem.h"
 #include "proc.h"
 #include "gemerror.h"
 #include "biosbind.h"
 #include "string.h"
-#include "kprint.h"
 #include "biosext.h"
 #include "asm.h"
-#include "../bios/tosvars.h"
+#include "tosvars.h"
+#include "has.h"
+#include "../bios/vectors.h"
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
 #endif
@@ -79,7 +80,8 @@ static jmp_buf bakbuf;         /* longjmp buffer */
  * memory internal routines
  *
  * These violate the encapsulation of the memory internal structure.
- * Could perhaps better go in the memory part.
+ * Could perhaps better go into a memory module; however, moving them to
+ * e.g. iumem.c would cost about 40 bytes of ROM space in the 192K ROMs.
  */
 static void free_all_owned(PD *p, MPB *mpb);
 static void reserve_blocks(PD *pd, MPB *mpb);
@@ -127,10 +129,6 @@ static void ixterm(PD *r)
     WORD h;
     WORD i;
 
-    /* call process termination vector (last chance for user cleanup) */
-
-    etv_term();
-
     /* check the standard devices in both file tables  */
 
     for (i = 0; i < NUMSTD; i++)
@@ -168,7 +166,7 @@ static void ixterm(PD *r)
 
     free_all_owned(r, &pmd);
 #if CONF_WITH_ALT_RAM
-    if(has_alt_ram)
+    if (has_alt_ram)
         free_all_owned(r, &pmdalt);
 #endif
 }
@@ -242,7 +240,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #endif
     case PE_BASEPAGE:           /* just create a basepage */
         path = (char *) 0L;     /* (same as basepage+flags with flags set to zero) */
-        /* drop thru */
+        FALLTHROUGH;
     case PE_BASEPAGEFLAGS:      /* create a basepage, respecting the flags */
         hdrflags = (ULONG)path;
         env_ptr = alloc_env(hdrflags, env);
@@ -273,7 +271,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         p = (PD *) tail;
         set_owner(p, p);
         set_owner(p->p_env, p);
-        /* fall through */
+        FALLTHROUGH;
     case PE_GO:
         p = (PD *) tail;
         proc_go(p);
@@ -356,7 +354,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         longjmp(bakbuf, 1);
     }
 
-    /* now, load the rest of the program and perform relocation */
+    /* now, load the rest of the program, perform relocation, close the file */
     rc = kpgmld(cur_p, fh, &hdr);
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmld returned %ld (0x%lx)\n",rc,rc));
@@ -377,7 +375,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      * programs that jump into their DATA, BSS or HEAP are kindly invited
      * to do their cache management themselves.
      */
-    invalidate_instruction_cache(((char *)cur_p) + sizeof(PD), hdr.h01_tlen);
+    invalidate_instruction_cache(((UBYTE *)cur_p) + sizeof(PD), hdr.h01_tlen);
 
     if (flag != PE_LOAD)
         proc_go(cur_p);
@@ -394,8 +392,8 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
     bzero(p, sizeof(PD)) ;
 
     /* memory values */
-    p->p_lowtpa = (BYTE *)p;               /*  M01.01.06   */
-    p->p_hitpa  = (BYTE *)p  +  max;       /*  M01.01.06   */
+    p->p_lowtpa = (UBYTE *)p;              /*  M01.01.06   */
+    p->p_hitpa  = (UBYTE *)p  +  max;      /*  M01.01.06   */
 #if ARCH_ARM
     /*
      * p_hitpa becomes the actual initial user-mode sp of any process
@@ -408,7 +406,7 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
      * 4-byte alignment. Round down; losing at most 7 bytes of TPA is
      * harmless.
      */
-    p->p_hitpa = (BYTE *)((ULONG)p->p_hitpa & ~7UL);
+    p->p_hitpa = (UBYTE *)((ULONG)p->p_hitpa & ~7UL);
 #endif
     p->p_xdta = (DTA *) p->p_cmdlin;       /* default p_xdta is p_cmdlin */
     p->p_env = envptr;
@@ -658,16 +656,18 @@ void x0term(void)
 /*
  * xterm - (Pterm) terminate current process
  *
- * terminate the current process and transfer control to the colling
+ * terminate the current process and transfer control to the calling
  * process.  All files opened by the terminating process are closed.
  *
  * Function 0x4C        p_term
  */
 void xterm(UWORD rc)
 {
+    PFVOID userterm;
     PD *p = run;
 
-    (* (WORD(*)(void)) Setexc(0x102, (long)-1L))(); /*  call user term handler */
+    userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
+    protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
 
     run = run->p_parent;
     ixterm(p);

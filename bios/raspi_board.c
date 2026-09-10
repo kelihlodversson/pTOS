@@ -1,8 +1,6 @@
 /*
  * raspi_board.c - the board pTOS is running on
  *
- * Copyright (C) 2013-2018 The EmuTOS development team
- *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
@@ -73,9 +71,9 @@ static const raspi_board_t this_board =
      * so the tick comes from the ARM generic timer instead.
      */
     RASPI_TIMER_GENERIC,
-    ARM_IRQLOCAL0_CNTPNS,
-    54000000UL,
-    39768216UL,
+    0,                          /* PPI 30 is connected directly to the GIC */
+    0,                          /* CNTFRQ supplies the counter frequency */
+    0,                          /* BCM2711 has no usable local prescaler */
 #else
 #error No description for the configured Raspberry Pi model
 #endif

@@ -2,7 +2,7 @@
  * osmem.c - allocate/release os memory
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2016 The EmuTOS development team
+ *               2002-2019 The EmuTOS development team
  *
  * Authors:
  *  KTB   Karl T. Braun (kral)
@@ -23,12 +23,12 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "nls.h"
 #include "fs.h"
 #include "mem.h"
-#include "kprint.h"
+#include "bdosstub.h"
+#include "biosext.h"
 
 /*
  *  local constants
@@ -90,7 +90,6 @@ static WORD osmem[LENOSM];
  *  note: MAXQUICK used to be 20, but 5 (indexes 0-4) is now all we need,
  *  and we actually only use index 4 (all blocks are 64 bytes).
  */
-#define MAXQUICK    5
 WORD *root[MAXQUICK];
 
 static MDBLOCK *mdbroot;    /* root for partially-used MDBLOCKs */

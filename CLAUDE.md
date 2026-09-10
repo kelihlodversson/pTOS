@@ -57,6 +57,10 @@ them.
 `make clean` keeps `.config`; `make distclean` removes it too. Changing
 `.config` rebuilds everything, which is intended.
 
+Built-in regression tests are enabled by default. After building a configured
+kernel, `make test-hd` creates `runtests.tos` and `test-hd.img`; use the
+`ptos-smoketest` skill to run the image under an emulator.
+
 To smoke-test a build, use the `ptos-smoketest` skill
 (`.claude/skills/ptos-smoketest/SKILL.md`). It has the verified QEMU
 invocations for the raspi1 (QEMU machine `raspi1ap`), raspi2 (QEMU machine
@@ -183,5 +187,6 @@ same object.
 - `doc/install.txt` — the build system in full, and every configuration
 - `doc/coding.txt` — coding style
 - `doc/country.txt`, `doc/nls.txt` — countries, keyboard layouts, translations
-- `doc/status.txt`, `doc/bugs.txt` — what works and what does not
+- `doc/ptos.txt` — pTOS's purpose and relationship to EmuTOS
+- `doc/status.txt` — tested pTOS hardware and emulator targets
 - `readme.md` — what this fork is about and where it is going

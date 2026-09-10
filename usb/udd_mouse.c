@@ -1,9 +1,12 @@
+/* #define ENABLE_KDEBUG */
+
 #include "usb_global.h"
 
 #include "usb.h"
 #include "usb_api.h"
+#include "bios.h"               /* for kbdvecs */
 #include "ikbd.h"               /* for call_mousevec() */
-#include "tosvars.h"            /* for mousexvec() */
+#include "biosext.h"            /* for mousexvec() */
 
 /****************************************************************************/
 /*
@@ -22,7 +25,7 @@ extern void (*old_ikbd_int) (void);
  */
 extern void interrupt_ikbd (void);
 
-static UBYTE mouse_packet[6];
+static SBYTE mouse_packet[6];
 
 /*
  * END kernel interface
@@ -129,6 +132,8 @@ static void mouse_report_complete(struct usb_async_int_msg *msg,
     mse_data.data[5] = 0;
     changed = (info != old_info) || delta_x || delta_y
         || ((actual_length >= 4) && (extra != mse_data.data[3]));
+    KDEBUG(("usb mouse report: info=%02x dx=%d dy=%d changed=%d\n",
+        info, delta_x, delta_y, changed));
     if (!changed)
         return;
 
@@ -180,6 +185,7 @@ mouse_probe (struct usb_device *dev, unsigned int ifnum)
      */
     if (mse_data.pusb_dev)
     {
+        KDEBUG(("mouse_probe: reject, already have a mouse\n"));
         return -1;
     }
 
@@ -199,23 +205,31 @@ mouse_probe (struct usb_device *dev, unsigned int ifnum)
         return -1;
     }
 
+    KDEBUG(("mouse_probe: if=%u class=%u subclass=%u protocol=%u nep=%u\n",
+        ifnum, iface->desc.bInterfaceClass, iface->desc.bInterfaceSubClass,
+        iface->desc.bInterfaceProtocol, iface->desc.bNumEndpoints));
+
     if (iface->desc.bInterfaceClass != USB_CLASS_HID)
     {
+        KDEBUG(("mouse_probe: reject, not HID class\n"));
         return -1;
     }
 
     if (iface->desc.bInterfaceSubClass != USB_SUB_HID_BOOT)
     {
+        KDEBUG(("mouse_probe: reject, not boot subclass\n"));
         return -1;
     }
 
     if (iface->desc.bInterfaceProtocol != 2)
     {
+        KDEBUG(("mouse_probe: reject, protocol != mouse\n"));
         return -1;
     }
 
     if (iface->desc.bNumEndpoints != 1)
     {
+        KDEBUG(("mouse_probe: reject, wrong endpoint count\n"));
         return -1;
     }
 
@@ -234,6 +248,7 @@ mouse_probe (struct usb_device *dev, unsigned int ifnum)
     }
     else
     {
+        KDEBUG(("mouse_probe: reject, endpoint 0 not interrupt type\n"));
         return -1;
     }
 

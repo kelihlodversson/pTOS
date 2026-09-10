@@ -1,7 +1,7 @@
 /*
  * acia.h - ACIA 6850 related things
  *
- * Copyright (C) 2001 Martin Doering
+ * Copyright (C) 2001-2019 Martin Doering
  *
  * Authors:
  *  MAD   Martin Doering
@@ -12,8 +12,6 @@
 
 #ifndef ACIA_H
 #define ACIA_H
-
-#include        "portab.h"
 
 #if CONF_WITH_IKBD_ACIA || CONF_WITH_MIDI_ACIA
 

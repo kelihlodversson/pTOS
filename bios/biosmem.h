@@ -1,7 +1,7 @@
 /*
  *  biosmem.h - dumb bios-level memory management
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2020 The EmuTOS development team
  *
  * Authors:
  *  LVL    Laurent Vogel
@@ -13,22 +13,14 @@
 #ifndef BIOSMEM_H
 #define BIOSMEM_H
 
-#include "memdefs.h"
-#include "disk.h"
-
-/*
- * sizes of ST-RAM disk buffers
- */
-#define DSKBUF_SECS     2
-#define DSKBUF_SIZE     (DSKBUF_SECS * SECTOR_SIZE) /* pointed to by dskbufp */
-#define FRB_SIZE        (64 * 1024UL)       /* pointed to by _FRB cookie */
-#define FRB_SECS        (FRB_SIZE / SECTOR_SIZE)
+#include "bdosdefs.h"
+#include "biosdefs.h"
+#include "biosext.h"
 
 extern UBYTE dskbuf[DSKBUF_SIZE]; /* In ST-RAM */
 
 /* Prototypes */
 void bmem_init(void);
-UBYTE *balloc_stram(ULONG size, BOOL top);
 
 /* BIOS function */
 

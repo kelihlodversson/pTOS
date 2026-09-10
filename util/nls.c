@@ -1,7 +1,7 @@
 /*
  * nls.c - Native Language Support
  *
- * Copyright (C) 2001 The Emutos Development Team
+ * Copyright (C) 2001-2019 The EmuTOS Development Team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -10,9 +10,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
-
+#include "emutos.h"
 #include "nls.h"
 #include "langs.h"
 #include "string.h"

@@ -2,7 +2,7 @@
  * mem.h - header file for memory and process management routines
  *
  * Copyright (C) 2001 Lineo, Inc. and
- *               2002-2017 The EmuTOS development team
+ *               2002-2022 The EmuTOS development team
  *
  * Authors:
  *  LVL Laurent Vogel
@@ -14,20 +14,24 @@
 #ifndef MEM_H
 #define MEM_H
 
-#include "memdefs.h"
+#include "bdosdefs.h"
 
 
 /*
  *  externals
  */
 
-extern  FTAB    sft[];
 extern  MPB     pmd;    /* the mem pool for the main user ST ram */
 #if CONF_WITH_ALT_RAM
 extern  MPB     pmdalt;  /* the memory pool for the alternative ram (TT-RAM or other) */
-extern  int     has_alt_ram; /* 1 if alternative RAM has been declared to BDOS */
 #endif
 
+/*
+ * Alignment of malloc'ed memory.
+ * This value must be set to 2^n-1 to align on multiples of 2^n.
+ */
+extern  ULONG   malloc_align_stram;
+#define MALLOC_ALIGN_ALTRAM     3
 
 /*
  * in osmem.c
@@ -64,21 +68,11 @@ long xmfree(void *addr);
 long xsetblk(int n, void *blk, long len);
 /* mxalloc */
 void *xmxalloc(long amount, int mode);
+
+#if CONF_WITH_VIDEL
 /* srealloc */
 void *srealloc(long amount);
-
-/* supported values for Mxalloc mode: */
-#define MX_STRAM 0
-#define MX_TTRAM 1
-#define MX_PREFSTRAM 2
-#define MX_PREFTTRAM 3
-#define MX_MODEMASK  0x03   /* mask for supported mode bits */
-
-#if CONF_WITH_ALT_RAM
-/* declare additional memory */
-long xmaddalt(UBYTE *start, long size);
-long total_alt_ram(void);
-#endif /* CONF_WITH_ALT_RAM */
+#endif
 
 /* init user memory */
 void umem_init(void);

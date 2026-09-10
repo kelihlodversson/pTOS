@@ -1,7 +1,8 @@
 /*
- * aciavecs.S - exception handling for ikbd/midi acias.
+ * aciaemu.c - exception handling for ikbd/midi acias.
  *
  * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2018-2026 The pTOS development team
  *
  * Authors:
  *  LVL  Laurent Vogel
@@ -134,9 +135,9 @@ void init_acia_vecs(void)
 
     kbdvecs.mousevec = _dummy_p;
     _kbdvec = kbdvec;
-    kbdvecs.midivec = midivec;
-    kbdvecs.vkbderr = _dummy_c;
-    kbdvecs.vmiderr = _dummy_c;
+    kbdvecs.midivec = (PFVOID)midivec;
+    kbdvecs.vkbderr = (PFVOID)_dummy_c;
+    kbdvecs.vmiderr = (PFVOID)_dummy_c;
     kbdvecs.statvec = _dummy_p;
     kbdvecs.mousevec = _dummy_p;
 

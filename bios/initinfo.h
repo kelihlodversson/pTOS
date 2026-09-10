@@ -1,7 +1,7 @@
 /*
  * initinfo.h - Info screen at startup
  *
- * Copyright (C) 2001-2017 by Authors:
+ * Copyright (C) 2001-2021 by Authors:
  *
  * Authors:
  *  MAD     Martin Doering
@@ -18,5 +18,6 @@
 /*==== Prototypes =========================================================*/
 
 WORD initinfo(ULONG *pshiftbits);
+void display_startup_msg(void);
 
 #endif /* INITINFO_H */

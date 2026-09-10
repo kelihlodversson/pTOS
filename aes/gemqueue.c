@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2016 The EmuTOS development team
+*                 2002-2024 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -16,13 +16,11 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "string.h"
 #include "struct.h"
-#include "basepage.h"
 #include "obdefs.h"
-#include "gemlib.h"
+#include "aesdefs.h"
 
 #include "rectfunc.h"
 #include "gemasync.h"
@@ -38,7 +36,7 @@ static void doq(WORD donq, AESPD *p, QPB *m)
     n = m->qpb_cnt;
     if (donq)
     {
-        memcpy(p->p_qaddr+p->p_qindex, (BYTE *)m->qpb_buf, n);
+        memcpy(p->p_qaddr+p->p_qindex, (char *)m->qpb_buf, n);
         /*
          * if it's a redraw msg, try to find a matching msg and
          * union the redraw rectangles together
@@ -76,7 +74,7 @@ static void doq(WORD donq, AESPD *p, QPB *m)
     }
     else
     {
-        memcpy((BYTE *)m->qpb_buf, p->p_qaddr, n);
+        memcpy((char *)m->qpb_buf, p->p_qaddr, n);
         p->p_qindex -= n;
         if (p->p_qindex)
             memcpy(p->p_qaddr, p->p_qaddr+n, p->p_qindex);
@@ -106,7 +104,7 @@ void aqueue(WORD isqwrite, EVB *e, LONG lm)
     if (qready)
     {
         doq(isqwrite, p, m);
-        azombie(e, 0);
+        azombie(e, 1);          /* ap_rdwr() will return 1 => OK */ 
         if ((e = *ppe) != 0)    /* assignment ok */
         {
             e->e_flag |= NOCANCEL;
@@ -116,7 +114,7 @@ void aqueue(WORD isqwrite, EVB *e, LONG lm)
                 e->e_link->e_pred = e->e_pred;
 
             doq(!isqwrite, p, (QPB *)e->e_parm);
-            azombie(e, 0);
+            azombie(e, 1);
         }
     }
     else            /* "block" the event */

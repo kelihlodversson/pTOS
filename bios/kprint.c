@@ -1,7 +1,7 @@
 /*
  * kprint.c - our own printf variants (mostly for debug purposes)
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2025 The EmuTOS development team
  *
  * Authors:
  *  MAD     Martin Doering
@@ -11,12 +11,11 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-
-#include "config.h"
+#include "emutos.h"
+#include "bios.h"
+#include "biosext.h"
 #include <stdarg.h>
 #include "doprintf.h"
-#include "portab.h"
-#include "kprint.h"
 #include "nls.h"
 #include "lineavars.h"
 #include "vt52.h"
@@ -26,14 +25,14 @@
 #include "processor.h"
 #include "chardev.h"
 #include "serport.h"
-#include "pd.h"
 #include "coldfire.h"
 #include "asm.h"
 #include "vectors.h"
 #include "super.h"      /* for Super() and SuperToUser() */
-#ifdef MACHINE_AMIGA
+#include "../bdos/bdosstub.h"
+#include "ikbd.h"
+#include "midi.h"
 #include "amiga.h"
-#endif
 
 #define DISPLAY_INSTRUCTION_AT_PC   0   /* set to 1 for extra info from dopanic() */
 #define DISPLAY_STACK               0   /* set to 1 for extra info from dopanic() */
@@ -42,7 +41,7 @@
 
 /* external declarations from kprintasm.S */
 
-extern void printout_stonx(const char *str);
+void printout_stonx(const char *str);   /* defined in kprintasm.S */
 
 /* this variable is filled by stonx_kprintf_init() */
 int stonx_kprintf_available;
@@ -65,7 +64,7 @@ static int vcprintf(const char *fmt, va_list ap)
     return doprintf(cprintf_outc, fmt, ap);
 }
 
-int cprintf(const char *fmt, ...)
+int cprintf(const char *RESTRICT fmt, ...)
 {
     int n;
     va_list ap;
@@ -108,6 +107,18 @@ static void kprintf_outc_sccB(int c)
         bconoutB(1,'\r');
 
     bconoutB(1,c);
+}
+#endif
+
+#if CARTRIDGE_DEBUG_PRINT
+#define CARTRIDGE_ROM3 0xFB0000ul
+static void kprintf_outc_cartridge(int c)
+{
+    /*
+     * Force a read from the cartridge port encoding the character
+     * into address lines A8-A1.
+     */
+    (void)(*((volatile short*)(CARTRIDGE_ROM3 + ((c & 0xFF)<<1))));
 }
 #endif
 
@@ -209,6 +220,10 @@ static int vkprintf(const char *fmt, va_list ap)
     }
 #endif
 
+#if CARTRIDGE_DEBUG_PRINT
+    return doprintf(kprintf_outc_cartridge, fmt, ap);
+#endif
+
 #if CONF_WITH_UAE
     if (has_uaelib) {
         return doprintf(kprintf_outc_uae, fmt, ap);
@@ -235,7 +250,7 @@ static int vkprintf(const char *fmt, va_list ap)
 }
 
 
-int kprintf(const char *fmt, ...)
+int kprintf(const char *RESTRICT fmt, ...)
 {
     int n;
     va_list ap;
@@ -253,7 +268,7 @@ static int vkcprintf(const char *fmt, va_list ap)
   return vcprintf(fmt, ap);
 }
 
-int kcprintf(const char *fmt, ...)
+int kcprintf(const char *RESTRICT fmt, ...)
 {
     int n;
     va_list ap;
@@ -273,7 +288,6 @@ void doassert(const char *file, long line, const char *func, const char *text)
 }
 
 #endif /* CONF_WITH_ASSERT */
-
 
 /*==== dopanic - display information found in 0x380 and attempt to recover ======*/
 
@@ -616,8 +630,8 @@ void dopanic(const char *fmt, ...)
                  (ULONG)run);
         kcprintf("text=%08lx data=%08lx bss=%08lx\n",
                  (ULONG)run->p_tbase, (ULONG)run->p_dbase, (ULONG)run->p_bbase);
-        if (pc && ((BYTE *)pc >= run->p_tbase) && ((BYTE *)pc < (run->p_tbase + run->p_tlen)))
-            kcprintf("Crash at text+%08lx\n", (long)((BYTE *)pc - run->p_tbase));
+        if (pc && ((UBYTE *)pc >= run->p_tbase) && ((UBYTE *)pc < (run->p_tbase + run->p_tlen)))
+            kcprintf("Crash at text+%08lx\n", (long)((UBYTE *)pc - run->p_tbase));
     }
 
     /* allow interrupts so we get keypresses */

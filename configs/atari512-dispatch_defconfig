@@ -1,3 +1,5 @@
-TARGET_512=y
+# Multi-language + truecolor VDI backend dispatch coverage; needs
+# TARGET_1024 for the same reason atari1024_defconfig does (see there).
+TARGET_1024=y
 # BUILD_UNIQUE_COUNTRY is not set
 CONF_WITH_VDI_BACKEND_TRUECOLOR=y

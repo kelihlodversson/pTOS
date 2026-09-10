@@ -23,6 +23,7 @@
 #include "mem.h"
 #include "endian.h"
 #include "time.h"
+#include "../bdos/bdosstub.h"
 
 #define ROOT_PSEUDO_CLUSTER 1
 
@@ -76,7 +77,7 @@ static CLNO fat_countfree(DMD *dm)
 {
     int recnum, offset;
     CLNO free, clnum;
-    char *buf;
+    UBYTE *buf;
 
     for (clnum = 2, free = 0; clnum < dm->m_numcl+2; )
     {

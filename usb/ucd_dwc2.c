@@ -5,6 +5,7 @@
  */
 
 #include "usb_global.h"
+#include "intmath.h"
 #include "usb.h"
 #include "usb_api.h"
 #include "usb_io.h"
@@ -131,7 +132,6 @@ static LONG dwc2_cancel_async_int_msg(struct dwc2_priv *priv,
                                       struct usb_async_int_msg *msg);
 
 /*--- Global variables ---*/
-static const char hcd_name[] = "dwc2";
 static char lname[] = "DWC2 USB driver\0";
 static struct usb_device *root_hub_dev = NULL;
 
@@ -302,6 +302,16 @@ static void dwc_otg_core_host_init(struct dwc2_core_regs *regs)
                 CONFIG_DWC2_HOST_NPERIO_TX_FIFO_SIZE) <<
                 DWC2_FIFOSIZE_STARTADDR_OFFSET;
         writel(ptxfifosize, &regs->hptxfsiz);
+
+        KINFO(("dwc2: dfifo_depth=%lu requested rx=%u nptx=%u ptx=%u total=%u\n",
+            (readl(&regs->ghwcfg3) & DWC2_HWCFG3_DFIFO_DEPTH_MASK) >>
+                DWC2_HWCFG3_DFIFO_DEPTH_OFFSET,
+            CONFIG_DWC2_HOST_RX_FIFO_SIZE, CONFIG_DWC2_HOST_NPERIO_TX_FIFO_SIZE,
+            CONFIG_DWC2_HOST_PERIO_TX_FIFO_SIZE,
+            CONFIG_DWC2_HOST_RX_FIFO_SIZE + CONFIG_DWC2_HOST_NPERIO_TX_FIFO_SIZE +
+                CONFIG_DWC2_HOST_PERIO_TX_FIFO_SIZE));
+        KINFO(("dwc2: readback grxfsiz=%08lx gnptxfsiz=%08lx hptxfsiz=%08lx\n",
+            readl(&regs->grxfsiz), readl(&regs->gnptxfsiz), readl(&regs->hptxfsiz)));
     }
 #endif
 
@@ -819,6 +829,7 @@ static void dwc2_async_finish_success(struct dwc2_priv *priv,
 static void dwc2_async_finish_error(struct dwc2_priv *priv,
                                     struct dwc2_async_slot *slot)
 {
+    KINFO(("dwc2_async: finish_error generation=%lu\n", slot->generation));
     slot->error_pending = TRUE;
     dwc2_async_stop(priv, slot);
 }
@@ -1597,6 +1608,7 @@ static LONG dwc2_cancel_async_int_msg(struct dwc2_priv *priv,
     if (!slot)
         return EINVAL;
 
+    KINFO(("dwc2_async: explicit cancel generation=%lu\n", slot->generation));
     slot->cancelled = TRUE;
     dwc2_async_stop(priv, slot);
 

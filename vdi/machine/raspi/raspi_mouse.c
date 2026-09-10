@@ -1,8 +1,6 @@
 /*
  * raspi_mouse.c Raspberry PI hw mouse sprite support
  *
- * Copyright (C) 2013-2018 The EmuTOS development team
- *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
@@ -16,15 +14,14 @@
 #include "asm.h"
 #include "biosbind.h"
 #include "xbiosbind.h"
-#include "aespub.h"
 #include "obdefs.h"
 #include "gsxdefs.h"
 #include "vdi_defs.h"
 #include "raspi_io.h"
 #include "../bios/raspi_mbox.h"
 #include "../bios/raspi_screen.h"
-#include "../bios/tosvars.h"
-#include "../bios/lineavars.h"
+#include "tosvars.h"
+#include "lineavars.h"
 #include "kprint.h"
 #include "raspi_mouse.h"
 

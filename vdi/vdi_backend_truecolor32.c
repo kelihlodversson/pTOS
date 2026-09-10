@@ -17,11 +17,10 @@
 #include "config.h"
 #include "portab.h"
 #include "asm.h"
-#include "../bios/lineavars.h"
-#include "../bios/tosvars.h"
+#include "lineavars.h"
+#include "tosvars.h"
 #include "vdi_defs.h"
 #include "vdi_backend.h"
-#include "vdi_col.h"
 #include "kprint.h"
 
 #define PIXEL ULONG

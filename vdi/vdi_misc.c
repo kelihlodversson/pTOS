@@ -3,24 +3,21 @@
  *
  * Copyright 1982 by Digital Research Inc.  All rights reserved.
  * Copyright 1999 by Caldera, Inc. and Authors:
- * Copyright 2002-2017 The EmuTOS development team
+ * Copyright 2002-2021 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-
-
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "asm.h"
+#include "intmath.h"
 #include "biosbind.h"
-#include "../bios/tosvars.h"
+#include "tosvars.h"
 #include "vdi_defs.h"
 #include "vdi_backend.h"
-#include "../bios/lineavars.h"
-
-
+#include "lineavars.h"
+#include "biosext.h"
 
 static BOOL in_proc;                   /* flag, if we are still running */
 
@@ -79,7 +76,6 @@ void arb_line(Line * line)
  *
  * The etv_timer does point to this routine
  */
-
 static void tick_int(int u)
 {
     if (!in_proc) {
@@ -104,16 +100,12 @@ static void tick_int(int u)
  */
 void vdi_vex_timv(Vwk * vwk)
 {
-    //WORD old_sr;
-
     disable_interrupts();
-//    old_sr = set_sr(0x2700);
 
     CONTRL->ptr2 = linea_vars.tim_addr;
     linea_vars.tim_addr = CONTRL->ptr1;
 
     enable_interrupts();
-//    set_sr(old_sr);
 
     INTOUT[0] = (WORD)Tickcal();        /* ms between timer C calls */
     CONTRL->nintout = 1;
@@ -137,7 +129,6 @@ static void do_nothing_int(int u)
  *
  * initially set timer vector to dummy, save old vector
  */
-
 void timer_init(void)
 {
 //    WORD old_sr;
@@ -148,10 +139,8 @@ void timer_init(void)
     linea_vars.tim_addr = do_nothing_int;          /* tick points to rts */
 
     disable_interrupts();
-//    old_sr = set_sr(0x2700);            /* disable interrupts */
     linea_vars.tim_chain = (void(*)(int))          /* save old vector */
     Setexc(0x100, (long)tick_int);      /* set etv_timer to tick_int */
-    //set_sr(old_sr);                     /* enable interrupts */
     enable_interrupts();
 
 }
@@ -163,7 +152,6 @@ void timer_init(void)
  *
  * reactivate the old saved vector
  */
-
 void timer_exit(void)
 {
 //    WORD old_sr;
@@ -177,6 +165,17 @@ void timer_exit(void)
 
 
 
+/*
+ * get_start_addr - return memory address for column x, row y
+ *
+ * NOTE: the input x value may be negative (for example, this happens
+ * when handling a slanting wideline starting at pixel 0 of a row).  This
+ * value must be right-shifted to obtain an offset in bytes.
+ * According to the C standard, the result of right-shifting a negative
+ * value is implementation-defined.  GCC has the correct behaviour from
+ * our point of view: high-order bits are 1-filled, so the number remains
+ * negative.
+ */
 UWORD * get_start_addr(const WORD x, const WORD y)
 {
 #if CONF_WITH_VDI_BACKEND_DISPATCH

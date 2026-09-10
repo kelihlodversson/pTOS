@@ -32,7 +32,7 @@
 static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd);
 #endif
 #if CONF_WITH_PRG_LOADER || DETECT_NATIVE_FEATURES
-static LONG pgfix01(void *lastcp, LONG nrelbytes, PGMINFO *pi);
+static LONG pgfix01(UBYTE *lastcp, LONG nrelbytes, PGMINFO *pi);
 #endif
 
 /*
@@ -172,7 +172,7 @@ static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd)
     PGMINFO *pi;
     PD      *p;
     PGMINFO pinfo;
-    BYTE    *cp;
+    UBYTE   *cp;
     LONG    relst;
     LONG    flen;
     LONG    r;
@@ -190,7 +190,7 @@ static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd)
     pi->pi_blen = hd->h01_blen;
     pi->pi_slen = hd->h01_slen;
     pi->pi_tpalen = p->p_hitpa - p->p_lowtpa - sizeof(PD);
-    pi->pi_tbase = (char *) (p+1);      /*  1st byte after PD   */
+    pi->pi_tbase = (UBYTE *)(p+1);      /*  1st byte after PD   */
     pi->pi_bbase = pi->pi_tbase + flen;
     pi->pi_dbase = pi->pi_tbase + pi->pi_tlen;
 
@@ -305,7 +305,7 @@ static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd)
  */
 
 #if CONF_WITH_PRG_LOADER || DETECT_NATIVE_FEATURES
-static LONG pgfix01(void *lastcp, LONG nrelbytes, PGMINFO *pi)
+static LONG pgfix01(UBYTE *lastcp, LONG nrelbytes, PGMINFO *pi)
 {
     UBYTE *cp;              /*  code pointer                */
     UBYTE *rp;              /*  relocation info pointer     */
@@ -344,7 +344,7 @@ static LONG pgfix01(void *lastcp, LONG nrelbytes, PGMINFO *pi)
 #if DETECT_NATIVE_FEATURES
 LONG kpgm_relocate(PD *p, long length)
 {
-    BYTE    *cp;
+    UBYTE   *cp;
     LONG    *rp;
     LONG    flen;
     PGMINFO pinfo;
@@ -365,7 +365,7 @@ LONG kpgm_relocate(PD *p, long length)
     pi->pi_blen = hd->h01_blen;
     pi->pi_slen = hd->h01_slen;
     pi->pi_tpalen = p->p_hitpa - p->p_lowtpa - sizeof(PD);
-    pi->pi_tbase = (char *)(p+1);       /*  1st byte after PD   */
+    pi->pi_tbase = (UBYTE *)(p+1);      /*  1st byte after PD   */
     pi->pi_bbase = pi->pi_tbase + flen;
     pi->pi_dbase = pi->pi_tbase + pi->pi_tlen;
 

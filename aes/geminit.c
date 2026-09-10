@@ -6,7 +6,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2025 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -21,47 +21,41 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "obdefs.h"
 #include "struct.h"
-#include "basepage.h"
 #include "gemlib.h"
-#include "gsxdefs.h"
 #include "gem_rsc.h"
 #include "mforms.h"
-#include "dos.h"
 #include "xbiosbind.h"
-#include "../bios/screen.h"
-#include "../bios/videl.h"
-#include "biosbind.h"
+#include "has.h"
 #include "biosext.h"
+#include "miscutil.h"
+#include "tosvars.h"
 
-#include "crysbind.h"
 #include "gemgsxif.h"
 #include "gemdosif.h"
 #include "gemctrl.h"
 #include "gemshlib.h"
 #include "gempd.h"
-#include "gemdisp.h"
 #include "gemrslib.h"
 #include "gemdos.h"
-#include "gemgraf.h"
 #include "gemevlib.h"
 #include "gemwmlib.h"
 #include "gemfslib.h"
-#include "gemoblib.h"
 #include "gemsclib.h"
 #include "gemfmlib.h"
 #include "gemasm.h"
 #include "gemaplib.h"
-#include "gemsuper.h"
 #include "geminput.h"
+#include "gemmnext.h"
 #include "gemmnlib.h"
+#include "gemoblib.h"
 #include "geminit.h"
 #include "optimize.h"
-#include "optimopt.h"
-#include "aespub.h"
+#include "aesdefs.h"
+#include "aesext.h"
+#include "aesstub.h"
 
 #include "string.h"
 #include "biosdefs.h"
@@ -82,37 +76,62 @@ extern void gem_main(void); /* called only from gemstart.S */
 #define CURSOR_HEIGHT       37
 #endif
 
+/*
+ * for compatibility purposes, the following string is written to the
+ * start of the shell buffer during AES initialisation.  its purpose is
+ * to prevent crashes in certain control-panel-like desk accessories
+ * (including CTRL.ACC & EMULATOR.ACC) that were released before XCONTROL.
+ * these accessories use the area at the start of the shell buffer to save
+ * configuration data, and expect that the data returned by shel_get()
+ * will *always* contain a string starting with #a.
+ *
+ * in this section of the shell buffer, the #a line is used to store
+ * serial port settings.  for complete compatibility, this string could
+ * also contain #b, #c, and #d lines, although no accessories are known
+ * to require them.  the #b line is for printer settings, the #c line is
+ * for palette/mouse/keyboard settings, and the #d line is reserved.
+ *
+ * the maximum allowed length of this string is 128 bytes (excluding the
+ * terminating NUL byte).
+ */
+#define CP_SHELL_INIT   "#a000000\r\n"  /* initialisation string */
+
 #define INF_SIZE   300                  /* size of buffer used by sh_rdinf() */
                                         /*  for start of EMUDESK.INF file    */
 
 #define WAIT_TIMEOUT 500                /* see wait_for_accs() */
 
-static BYTE     infbuf[INF_SIZE+1];     /* used to read part of EMUDESK.INF */
-static BYTE     acc_name[NUM_ACCS][LEN_ZFNAME]; /* used by count_accs()/ldaccs() */
+typedef struct {                     /* used by count_accs()/ldaccs() */
+    LONG addr;                          /* DA load address */
+    char name[LEN_ZFNAME];              /* DA file name */
+} ACC;
+
+static ACC      acc[NUM_ACCS];
+static char     infbuf[INF_SIZE+1];     /* used to read part of EMUDESK.INF */
+
+#if CONF_WITH_BACKGROUNDS
+static BOOL     bgfound;                /* 'Q' line found in EMUDESK.INF? */
+static WORD     bg[3];                  /* desktop backgrounds (1, 2, >2 planes) */
+#endif
 
 /* Some global variables: */
-
-GLOBAL const GEM_MUPB ui_mupb =
-{
-    GEM_MUPB_MAGIC, /* Magic value identifying this structure */
-    _endgembss,     /* End of GEM BSS */
-    ui_start        /* AES entry point */
-};
 
 GLOBAL WORD     totpds;
 GLOBAL WORD     num_accs;
 
-GLOBAL BYTE     *ad_envrn;              /* initialized in GEMSTART      */
+GLOBAL char     *ad_envrn;              /* initialized in GEMSTART      */
 
 GLOBAL MFORM    *mouse_cursor[NUM_MOUSE_CURSORS];
 
 GLOBAL MFORM    gl_mouse;
-GLOBAL BYTE     gl_logdrv;
+#if CONF_WITH_GRAF_MOUSE_EXTENSION
+GLOBAL MFORM    gl_prevmouse;           /* previous AES  mouse form */
+#endif
 
 GLOBAL AESPD    *rlr, *drl, *nrl;
 GLOBAL EVB      *eul, *dlr, *zlr;
 
-GLOBAL BYTE     indisp;
+GLOBAL UBYTE    indisp;
 
 GLOBAL WORD     fpt, fph, fpcnt;                /* forkq tail, head,    */
                                                 /*   count              */
@@ -200,7 +219,7 @@ static void ev_init(EVB evblist[], WORD cnt)
  *  Also do all the initialization that is required.
  *      TODO - get rid of this.
  */
-static AESPD *iprocess(BYTE *pname, PFVOID routine)
+static AESPD *iprocess(char *pname, PFVOID routine)
 {
     ULONG ldaddr;
 
@@ -216,35 +235,38 @@ static AESPD *iprocess(BYTE *pname, PFVOID routine)
 
 
 /*
- *  Routine to load program file pointed at by pfilespec, then create a
- *  new process context for it.  This is used to load a desk accessory.
+ *  Routine to load program file pointed at by acc->name, then create a
+ *  new process context for it.  The load address is stored in acc->addr.
+ *
+ *  This is used to load a desk accessory.
  */
-static void sndcli(BYTE *pfilespec)
+static void load_one_acc(ACC *acc)
 {
     WORD    handle;
     WORD    err_ret;
-    LONG    ldaddr, ret;
+    LONG    ret;
 
-    KDEBUG(("sndcli(\"%s\")\n", (const char*)pfilespec));
+    KDEBUG(("load_one_acc(\"%s\")\n", (const char *)acc->name));
 
-    strcpy(D.s_cmd, pfilespec);
+    acc->addr = -1L;
+    strcpy(D.s_cmd, acc->name);
 
     ret = dos_open(D.s_cmd, ROPEN);
     if (ret >= 0L)
     {
         handle = (WORD)ret;
-        err_ret = pgmld(handle, D.s_cmd, (LONG **)&ldaddr);
+        err_ret = pgmld(handle, D.s_cmd, (LONG **)&acc->addr);
         dos_close(handle);
         /* create process to execute it */
         if (err_ret != -1)
-            pstart(gotopgm, pfilespec, ldaddr);
+            pstart(gotopgm, acc->name, acc->addr);
     }
 }
 
 
 /*
  *  Count up to a maximum of NUM_ACCS desk accessories, saving
- *  their names in acc_name[].
+ *  their names in acc[].name
  */
 static WORD count_accs(void)
 {
@@ -254,15 +276,15 @@ static WORD count_accs(void)
     if (bootflags & BOOTFLAG_SKIP_AUTO_ACC)
         return 0;
 
-    strcpy(D.g_work,"*.ACC");
+    strcpy(D.g_work,"\\*.ACC");
     dos_sdta(&D.g_dta);
 
     for (i = 0; i < NUM_ACCS; i++)
     {
-        rc = (i==0) ? dos_sfirst(D.g_work,F_RDONLY) : dos_snext();
+        rc = (i==0) ? dos_sfirst(D.g_work,FA_RO) : dos_snext();
         if (rc < 0)
             break;
-        strlcpy(acc_name[i],D.g_dta.d_fname,LEN_ZFNAME);
+        strlcpy(acc[i].name,D.g_dta.d_fname,LEN_ZFNAME);
     }
 
     return i;
@@ -270,32 +292,34 @@ static WORD count_accs(void)
 
 
 /*
- *  Load in the desk accessories specified by acc_name[]
+ *  Free memory occupied by the desk accessories specified by acc[]
+ *
+ *  Note that this is NOT required for correct functioning of EmuTOS,
+ *  since when the 'run_accs_and_desktop' process terminates, all
+ *  allocated memory is freed.  However, some DAs (I'm looking at you,
+ *  Chameleon) require explicit freeing of their memory to trigger
+ *  proper cleanup.
+ */
+static void free_accs(WORD n)
+{
+    WORD i;
+
+    for (i = 0; i < n; i++)
+        if (acc[i].addr >= 0L)
+            dos_free((void *)acc[i].addr);
+}
+
+
+/*
+ *  Load in the desk accessories specified by acc[]
  */
 static void load_accs(WORD n)
 {
     WORD i;
 
     for (i = 0; i < n; i++)
-        sndcli(acc_name[i]);
+        load_one_acc(&acc[i]);
 }
-
-
-static void sh_init(void)
-{
-    SHELL   *psh;
-    OBJECT *tree = rs_trees[DESKTOP];
-
-    /*
-     * set height of root DESKTOP object to screen height
-     */
-    tree[ROOT].ob_height = gl_rscreen.g_h;
-
-    /* set defaults */
-    psh = sh;
-    psh->sh_doexec = psh->sh_dodef = gl_shgem = psh->sh_isgem = TRUE;
-}
-
 
 /*
  *  Routine to read in the start of a file
@@ -303,47 +327,45 @@ static void sh_init(void)
  *  returns: >=0  number of bytes read
  *           < 0  error code from dos_open()/dos_read()
  */
-static LONG readfile(BYTE *filename, LONG count, BYTE *buf)
+static LONG readfile(char *filename, LONG count, char *buf)
 {
-    WORD    fh;
-    LONG    ret;
     char    tmpstr[MAX_LEN];
 
     strcpy(tmpstr, filename);
     tmpstr[0] += dos_gdrv();            /* set the drive letter */
 
-    ret = dos_open(tmpstr, ROPEN);
-    if (ret >= 0L)
-    {
-        fh = (WORD)ret;
-        ret = dos_read(fh, count, buf);
-        dos_close(fh);
-    }
-
-    return ret;
+    return dos_load_file(tmpstr, count, buf);
 }
 
 
 /*
  *  Part 1 of early emudesk.inf processing
  *
- *  This has one function: determine if we need to change resolutions
- *  (from #E).  If so, we set gl_changerez and gl_nextrez appropriately.
+ *  The main function is to determine (from #E) if we need to change
+ *  resolution.  If so, we set gl_changerez and gl_nextrez appropriately.
+ *
+ *  If CONF_WITH_BACKGOUNDS is specified, we also get the desktop background
+ *  colours (from #Q) & save them for use when initialising the desktop.
  */
 static void process_inf1(void)
 {
     WORD    env1, env2;
-    WORD    mode;
+    WORD    mode, i;
     char    *pcurr;
+    MAYBE_UNUSED(i);
 
     gl_changerez = 0;           /* assume no change */
+
+#if CONF_WITH_BACKGROUNDS
+    bgfound = FALSE;            /* assume 'Q' not found */
+#endif
 
     for (pcurr = infbuf; *pcurr; )
     {
         if ( *pcurr++ != '#' )
             continue;
-        if (*pcurr++ == 'E')            /* #E 3A 11 FF 02               */
-        {                               /* desktop environment          */
+        switch(*pcurr++) {
+        case 'E':               /* desktop environment, e.g. #E 3A 11 FF 02 */
             pcurr += 6;                 /* skip over non-video preferences */
             if (*pcurr == '\r')         /* no video info saved */
                 break;
@@ -364,6 +386,14 @@ static void process_inf1(void)
                 gl_changerez = 1;
                 gl_nextrez = (mode & 0x00ff) + 2;
             }
+            break;
+#if CONF_WITH_BACKGROUNDS
+        case 'Q':               /* background colour, e.g. #Q 41 40 42 40 43 40 */
+            for (i = 0; i < 3; i++)
+                pcurr = scan_2(pcurr, &bg[i]) + 3;  /* desktop background */
+            bgfound = TRUE;                         /* indicate bg[N] are valid */
+            break;
+#endif
         }
     }
 }
@@ -372,21 +402,22 @@ static void process_inf1(void)
 /*
  *  Part 2 of early emudesk.inf processing
  *
- *  This has two functions:
- *      1. Determine the auto-run program to be started (from #Z).
- *      2. Set the double-click speed (from #E).  This is done here
- *         in case we have an auto-run program.
+ *  The main function is to determine the auto-run program to be
+ *  started, from the #Z line.  We also set the double-click speed
+ *  and the blitter/cache status (if applicable), from the #E line.
  *
  *  Returns:
  *      TRUE if initial program is a GEM program (normal)
  *      FALSE if initial program is character-mode (only if an autorun
  *      entry exists, and it is for a character-mode program).
  */
-static BOOL process_inf2(void)
+static BOOL process_inf2(BOOL *isauto)
 {
     WORD    env, isgem = TRUE;
     char    *pcurr;
-    BYTE    tmp;
+    char    tmp;
+
+    *isauto = FALSE;                /* assume no autorun program */
 
     pcurr = infbuf;
     while (*pcurr)
@@ -394,15 +425,26 @@ static BOOL process_inf2(void)
         if ( *pcurr++ != '#' )
             continue;
         tmp = *pcurr;
-        if (tmp == 'E')             /* #E 3A 11                     */
+        if (tmp == 'E')             /* #E 3A 11 vv vv 00            */
         {                           /* desktop environment          */
             pcurr += 2;
-            scan_2(pcurr, &env);
+            pcurr = scan_2(pcurr, &env);
             ev_dclick(env & 0x07, TRUE);
+            pcurr = scan_2(pcurr, &env);    /* get desired blitter state */
+#if CONF_WITH_BLITTER
+            if (has_blitter)
+                Blitmode((env&0x80)?1:0);
+#endif
+#if CONF_WITH_CACHE_CONTROL
+            pcurr = scan_2(pcurr, &env);    /* skip over video bytes if present */
+            pcurr = scan_2(pcurr, &env);
+            scan_2(pcurr, &env);            /* get desired cache state */
+            set_cache((env&0x08)?0:1);
+#endif
         }
         else if (tmp == 'Z')        /* something like "#Z 01 C:\THING.APP@" */
         {
-            BYTE *tmpptr1, *tmpptr2;
+            char *tmpptr1, *tmpptr2;
             pcurr += 2;
             scan_2(pcurr, &isgem);  /* 00 => not GEM, otherwise GEM */
             pcurr += 3;
@@ -418,13 +460,14 @@ static BOOL process_inf2(void)
             {
                 /* run autorun program */
                 sh_wdef(tmpptr2, tmpptr1);
+                *isauto = TRUE;
             }
 
             ++pcurr;
         }
     }
 
-    return isgem ? TRUE : FALSE;
+    return (*isauto && !isgem) ? FALSE : TRUE;
 }
 
 
@@ -432,7 +475,7 @@ static BOOL process_inf2(void)
 /*
  *  Copy mouse cursors from buffered RSC file
  */
-static WORD load_mouse_cursors(BYTE *buf)
+static WORD load_mouse_cursors(char *buf)
 {
     RSHDR *hdr = (RSHDR *)buf;
     BITBLK *bb;
@@ -479,11 +522,16 @@ static void setup_mouse_cursors(void)
     WORD i;
 #if CONF_WITH_LOADABLE_CURSORS
     LONG rc;
-    BYTE *buf;
+    char *buf;
 #endif
 
     for (i = 0; i < NUM_MOUSE_CURSORS; i++)
         mouse_cursor[i] = (MFORM *)mform_rs_data[i];
+
+#if CONF_WITH_GRAF_MOUSE_EXTENSION
+    /* init mouse form so that first gsx_mfset() will populate gl_prevmouse */
+    gl_mouse = *(mouse_cursor[HOURGLASS]);
+#endif
 
 #if CONF_WITH_LOADABLE_CURSORS
     /* Do not load user cursors if Control was held on startup */
@@ -583,8 +631,22 @@ void wait_for_accs(WORD bitmask)
                 break;                  /* must go round again */
         }
     }
-    KDEBUG(("wait_for_accs(): %s took too long\n",pd->p_name));
+    KDEBUG(("wait_for_accs(): %8.8s took too long\n",pd->p_name));
 }
+
+
+#if CONF_WITH_BACKGROUNDS
+/*
+ *  Set AES desktop background pattern/colour
+ */
+void set_aes_background(UBYTE patcol)
+{
+    OBJECT *tree = rs_trees[DESKTOP];
+
+    tree[ROOT].ob_spec.index &= 0xffffff00L;
+    tree[ROOT].ob_spec.index |= patcol;
+}
+#endif
 
 
 /*
@@ -599,8 +661,10 @@ void wait_for_accs(WORD bitmask)
 void run_accs_and_desktop(void)
 {
     WORD i;
-    BOOL isgem;
+    BOOL isgem, isauto;
     BITBLK bi;
+    OBJECT *tree;
+    void *dummy;
 
     /* load gem resource and fix it up before we go */
     gem_rsc_init();
@@ -612,15 +676,27 @@ void run_accs_and_desktop(void)
     gl_bdely = 0x0;
     gl_bclick = 0x0;
 
-    gl_logdrv = dos_gdrv() + 'A';   /* boot directory       */
+    strcpy(D.g_scrap, SCRAP_DIR_NAME);
+    D.g_scrap[0] = dos_gdrv() + 'A';/* set up scrap dir path */
+
     gsx_init();                     /* do gsx open work station */
+
+#if CONF_WITH_MENU_EXTENSION
+    mnext_init();                   /* initialise menu library extension variables */
+#endif
+
+#if CONF_WITH_3D_OBJECTS
+    init_3d();                      /* initialise 3D-related variables */
+#endif
+
+    sh_put(CP_SHELL_INIT,sizeof(CP_SHELL_INIT)-1);  /* see description at top */
 
     load_accs(num_accs);            /* load up to 'num_accs' desk accessories */
 
     /* fix up icons */
     for (i = 0; i < 3; i++) {
         bi = rs_bitblk[NOTEBB+i];
-        gsx_trans(bi.bi_pdata, bi.bi_wb, bi.bi_pdata, bi.bi_wb, bi.bi_hl);
+        gsx_trans(bi.bi_pdata, bi.bi_wb, bi.bi_hl);
     }
 
     /* take the critical err handler int. */
@@ -642,7 +718,7 @@ void run_accs_and_desktop(void)
      * after the outer enable_interrupts() "restores" the already-masked sr
      * that the inner pair clobbered it with (issue #46).
      */
-    gl_ticktime = gsx_tick(tikaddr, &tiksav);
+    gl_ticktime = gsx_tick(&tikcod, &tiksav);
 
     /* set initial click rate: must do this after setting gl_ticktime */
     ev_dclick(3, TRUE);
@@ -650,32 +726,62 @@ void run_accs_and_desktop(void)
     /* fix up the GEM rsc file now that we have an open WS */
     gem_rsc_fixit();
 
+    /*
+     * set height of root DESKTOP object to screen height
+     */
+    tree = rs_trees[DESKTOP];
+    tree[ROOT].ob_height = gl_rscreen.g_h;
+
+#if CONF_WITH_BACKGROUNDS
+    /*
+     * set colour of root DESKTOP object: this affects the colour
+     * background when a program is launched
+     */
+    if (bgfound)        /* we found a 'Q' line */
+    {
+        WORD n = (gl_nplanes > 2) ? 2 : gl_nplanes-1;
+        set_aes_background(bg[n]&0xff);
+    }
+#endif
+
     wm_start();                     /* initialise window vars */
     fs_start();                     /* startup gem libs */
-    sh_curdir(D.s_cdir);            /* remember current desktop directory */
-    isgem = process_inf2();         /* process emudesk.inf part 2 */
+    build_root_path(D.s_cdir, 'A'+dos_gdrv());  /* root of current drive */
+    isgem = process_inf2(&isauto);  /* process emudesk.inf part 2 */
 
     dsptch();                       /* off we go !!! */
     wait_for_accs(AP_MESAG);        /* wait until DAs have initialised */
 
-    sh_init();                      /* init for shell loop */
-    sh_main(isgem);                 /* main shell loop */
+    sh_main(isauto, isgem);         /* main shell loop */
+
+    free_accs(num_accs);            /* free DA memory */
 
     /* give back the tick (see the comment above the first gsx_tick() call:
      * no disable_interrupts()/enable_interrupts() pair needed here either) */
-    gl_ticktime = gsx_tick(tiksav, &tiksav);
+    gl_ticktime = gsx_tick(tiksav, &dummy);
 
     /* close workstation    */
     gsx_wsclose();
 }
+
 
 void gem_main(void)
 {
     LONG    n;
     WORD    i;
 
+    /*
+     * turn off the text cursor now to prevent an irritating blinking
+     * cursor on a blank screen during resolution change.  this is most
+     * noticeable on a floppy-only system with no diskettes loaded.
+     */
+    dos_conws("\033f\033E");    /* cursor off, clear screen */
+
     /* read in first part of emudesk.inf */
-    n = readfile(INF_FILE_NAME, INF_SIZE, infbuf);
+    if (bootflags & BOOTFLAG_SKIP_AUTO_ACC)
+        n = 0;
+    else
+        n = readfile(INF_FILE_NAME, INF_SIZE, infbuf);
 
     if (n < 0L)
         n = 0L;
@@ -688,18 +794,19 @@ void gem_main(void)
         switch(gl_changerez) {
 #if CONF_WITH_ATARI_VIDEO
         case 1:                     /* ST(e) or TT display */
-            Setscreen(-1L,-1L,gl_nextrez-2,0);
-            initialise_palette_registers(gl_nextrez-2,0);
+            Setscreen(-1L, -1L, gl_nextrez-2, 0);
+            initialise_palette_registers(gl_nextrez-2, 0);
             break;
 #endif
 #if CONF_WITH_VIDEL || defined(MACHINE_AMIGA)
         case 2:                     /* Falcon display */
-            Setscreen(-1L, -1L, FALCON_REZ, gl_nextrez);
-            initialise_palette_registers(FALCON_REZ,gl_nextrez);
+            Setscreen(0L, 0L, FALCON_REZ, gl_nextrez);
+            /* note: no need to initialise the palette regs
+             * because Setscreen() has already done that */
             break;
 #endif
         }
-        gsx_wsclear();              /* avoid artefacts that may show briefly */
+        gsx_wsclear();              /* avoid artifacts that may show briefly */
         /*
          * resolution change always resets the default drive to the
          * boot device.  TOS3 issues a Dsetdrv() when this happens,
@@ -715,13 +822,13 @@ void gem_main(void)
 
     mn_init();                      /* initialise variables for menu_register() */
 
-    num_accs = count_accs();        /* puts ACC names in acc_name[] */
+    num_accs = count_accs();        /* puts ACC names in acc[].name */
 
     D.g_acc = NULL;
     if (num_accs)
         D.g_acc = dos_alloc_anyram(num_accs*sizeof(AESPROCESS));
     if (D.g_acc)
-        memset(D.g_acc,0x00,num_accs*sizeof(AESPROCESS));
+        bzero(D.g_acc,num_accs*sizeof(AESPROCESS));
     else num_accs = 0;
 
     totpds = num_accs + 2;

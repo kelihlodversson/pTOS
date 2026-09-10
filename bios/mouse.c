@@ -1,7 +1,7 @@
 /*
  * mouse.c - Mouse vector setting for XBIOS 0
  *
- * Copyright (C) 2001-2016 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  * Copyright (C) 1995-1998 Russell King <linux@arm.linux.org.uk>
  *
  * Authors:
@@ -17,15 +17,14 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
-#include "kprint.h"
-
+#include "emutos.h"
 #include "tosvars.h"
+#include "bios.h"
 #include "lineavars.h"
 #include "ikbd.h"
 #include "mouse.h"
 #include "vectors.h"
+#include "asm.h"
 
 
 
@@ -34,15 +33,14 @@ struct param rel_pblock;        /* mouse parameter block */
 
 
 /*
- * mouse_init - mouse initialization
+ * mouse initialization
  *
  */
 
 void Initmous(WORD type, struct param *param, void (*newvec)(UBYTE *))
 {
     long retval = -1;           /* ok, if it stays so... */
-    struct param *p =
-        (struct param*)param;   /* pointer to parameter block */
+    struct param *p = param;   /* pointer to parameter block */
 
     switch (type) {
 
