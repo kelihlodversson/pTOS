@@ -382,6 +382,32 @@ config CPUFLAGS
 	  Passed to the compiler and to the linker to select the instruction
 	  set of the generated code.
 
+config CONF_WITH_MFASTCALL
+	bool "Use the -mfastcall calling convention (m68k only)"
+	depends on ARCH_M68K
+	default n
+	help
+	  Build the whole kernel with GCC's -mfastcall calling convention
+	  (arguments passed in d0-d2/a0-a1/fp0-fp2 where possible) instead
+	  of the default, stack-based one.
+
+	  This requires a GCC build with -mfastcall support, which neither
+	  of Vincent Riviere's toolchains (the ones normally installed for
+	  this project, see the choice above) has. Thorsten Otto's fork
+	  (https://github.com/th-otto/m68k-atari-mint-gcc, prebuilt at
+	  https://tho-otto.m68k.eu/crossmint.php) does. The build fails
+	  with a clear error at compile time if the configured compiler
+	  does not support the flag, rather than accepting this option and
+	  failing later with an unrecognised-option error.
+
+	  GEMDOS/BIOS/XBIOS/AES trap entry points are unaffected either
+	  way: they always explicitly construct the fixed TOS wire-format
+	  stack frame, on any ABI, rather than inheriting the C calling
+	  convention.
+
+	  Independent of -mshort: both can be selected together where the
+	  toolchain supports both.
+
 choice
 	prompt "Optimization level"
 	default OPTIMIZE_SIZE if TARGET_192 || TARGET_256 || TARGET_CART || TARGET_PRG || TARGET_FLOPPY || TARGET_AMIGA_ROM || TARGET_AMIGA_KICKDISK || TARGET_AMIGA_FLOPPY

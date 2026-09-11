@@ -163,4 +163,7 @@ same object.
 - `doc/coding.txt` — coding style
 - `doc/country.txt`, `doc/nls.txt` — countries, keyboard layouts, translations
 - `doc/status.txt`, `doc/bugs.txt` — what works and what does not
+- `doc/debugging.txt` — interactive debugging under an emulator: hrdb (a
+  remote-debuggable Hatari fork) and QEMU+GDB for m68k, and when to reach for
+  each; see also the `ptos-smoketest` skill and `tools/rdb.py`
 - `readme.md` — what this fork is about and where it is going

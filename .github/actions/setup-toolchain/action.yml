@@ -15,6 +15,15 @@ inputs:
       Which cross toolchain to install: "m68k" for the Atari, Amiga and
       ColdFire targets, or "arm" for the Raspberry Pi ones.
     required: true
+  mfastcall:
+    description: >
+      "true" to additionally install Thorsten Otto's m68k-atari-mintelf
+      toolchain build ahead of the regular one on PATH, so that
+      CONF_WITH_MFASTCALL=y configs (which need -mfastcall support neither
+      of Vincent Riviere's toolchains has) can build. Ignored for arch:
+      arm. Defaults to "false", so existing jobs are unaffected.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -29,6 +38,14 @@ runs:
         m68k|arm) ;;
         *)
           echo "::error::unknown arch '${{ inputs.arch }}', expected 'm68k' or 'arm'"
+          exit 1
+          ;;
+        esac
+
+        case '${{ inputs.mfastcall }}' in
+        true|false) ;;
+        *)
+          echo "::error::mfastcall must be 'true' or 'false', got '${{ inputs.mfastcall }}'"
           exit 1
           ;;
         esac
@@ -62,6 +79,49 @@ runs:
         # packs each archive.  Both happen to be on the runner images already;
         # they are named here so that this action really is the whole list.
         sudo apt-get install -y cross-mint-essential cross-mintelf-essential dos2unix zip
+
+    # CONF_WITH_MFASTCALL needs a GCC built with -mfastcall support, which
+    # neither of Vincent Riviere's toolchains just installed above has (see
+    # Kconfig.machine's CONF_WITH_MFASTCALL help text). Thorsten Otto
+    # publishes a prebuilt m68k-atari-mintelf toolchain that does, at the
+    # same executable names (m68k-atari-mintelf-gcc, -as, -ld, ...) as
+    # Vincent Riviere's mintelf package above -- installed to its own
+    # directory and prepended to PATH here, it simply takes over those
+    # names for every later step in the job, no CROSS_COMPILE override
+    # needed. binutils is a separate download from GCC on that site; both
+    # extract a "usr/" tree, so unpacking them on top of each other merges
+    # into one complete toolchain.
+    #
+    # The download URLs are version- and build-date-stamped (Thorsten
+    # Otto's site keeps no "latest" alias), so a future toolchain update
+    # there needs this step's URLs and hashes bumped by hand; the sha256
+    # pin means a stale URL fails loudly here instead of silently building
+    # against whatever the site happens to serve.
+    - name: Install a -mfastcall capable m68k toolchain
+      if: inputs.arch == 'm68k' && inputs.mfastcall == 'true'
+      shell: bash
+      env:
+        GCC_URL: https://tho-otto.m68k.eu/download/mint/gcc-13.4.0-mintelf-20250702-bin-linux64.tar.xz
+        GCC_SHA256: 70ae7f69ec54484b805990ddef517af13fccc3744018dbca3cc0e61eec1c55b6
+        BINUTILS_URL: https://tho-otto.m68k.eu/download/mint/binutils-2.45-mintelf-20250812-bin-linux64.tar.xz
+        BINUTILS_SHA256: e37c22f84baaf8ffc890a11265d4369498f9bc4e68aaac21dcef887d3655f025
+      run: |
+        dest="$RUNNER_TEMP/th-otto-mintelf"
+        mkdir -p "$dest"
+
+        for spec in "$GCC_URL:$GCC_SHA256" "$BINUTILS_URL:$BINUTILS_SHA256"; do
+          url="${spec%:*}"
+          sha256="${spec##*:}"
+          archive="$RUNNER_TEMP/$(basename "$url")"
+
+          curl -sSL --fail --retry 3 -o "$archive" "$url"
+          echo "$sha256  $archive" | sha256sum -c -
+
+          tar -xJf "$archive" -C "$dest"
+          rm -f "$archive"
+        done
+
+        echo "$dest/usr/bin" >>"$GITHUB_PATH"
 
     # A plain bare metal arm-none-eabi toolchain is all the Raspberry Pi
     # targets need, and Ubuntu packages one.
@@ -105,7 +165,19 @@ runs:
         case '${{ inputs.arch }}' in
         m68k)
           first_line m68k-atari-mint-gcc --version
+          echo "m68k-atari-mintelf-gcc: $(command -v m68k-atari-mintelf-gcc)"
           first_line m68k-atari-mintelf-gcc --version
+
+          # Confirm the toolchain that just went first on PATH is the one
+          # actually running, rather than only finding out via a Kconfig
+          # capability-probe failure deep inside the real build.
+          if [ '${{ inputs.mfastcall }}' = 'true' ]; then
+            if ! echo 'void f(void){}' | m68k-atari-mintelf-gcc -mfastcall -x c -c - -o /dev/null 2>&1; then
+              echo "::error::m68k-atari-mintelf-gcc does not support -mfastcall"
+              exit 1
+            fi
+            echo "m68k-atari-mintelf-gcc supports -mfastcall"
+          fi
           ;;
         arm)  first_line arm-none-eabi-gcc --version ;;
         esac

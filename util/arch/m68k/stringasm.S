@@ -21,8 +21,18 @@
  */
 
 _strlencpy:
+        /*
+         * strlencpy(char *RESTRICT dest, const char *RESTRICT src) has two
+         * pointer arguments. Under -mfastcall they already arrive exactly
+         * where this code needs them -- dest in a0, src in a1 -- so no
+         * register setup is needed at all; only the plain stack ABI below
+         * needs to read them off the caller's frame (see the identical
+         * fix in aes/arch/m68k/gemasm.S's _psetup/_switchto).
+         */
+#if !CONF_WITH_MFASTCALL
         movea.l 8(sp),a0
         movea.l 4(sp),a1
+#endif
         moveq   #0,d0
 lstcpy_loop:
 #ifdef __mcoldfire__
@@ -46,8 +56,19 @@ lstcpy_loop:
  */
 
 _strchr:
+        /*
+         * strchr(const char *s, int c) takes one pointer argument and one
+         * int argument. Under -mfastcall s arrives in a0 (already where
+         * this code needs it -- no setup needed) and c arrives in d0, not
+         * on the stack; move it to d1, which is what the loop below reads
+         * (see the identical fix in this file's _strlencpy).
+         */
+#if CONF_WITH_MFASTCALL
+        move.l  d0,d1
+#else
         move.l  4(sp),a0
         move.w  8(sp),d1
+#endif
 strchr_loop:
         move.b  (a0)+,d0
         jeq     strchr_null

@@ -122,6 +122,21 @@ buggy_jit_save_registers_before_bus_error:
  * On a warm boot, only the first 64 vectors are reinitialized.
  * This avoids overwriting crash dumps starting at address 0x380.
  */
+#if CONF_WITH_MFASTCALL
+_init_user_vec:
+        // under -mfastcall, the caller passes first_boot in d0 (not on the
+        // stack), and we need d0 free for the loop count below -- so decide
+        // the count into d1 first, then move it into d0 for the shared loop.
+        lea     user_vec, a0
+        lea     256, a1
+        moveq   #63, d1
+        tst.w   d0              // check FIRST_BOOT
+        jeq     set_uvec_fc
+        move.w  #191, d1
+set_uvec_fc:
+        move.l  d1, d0
+        jra     set_uvec
+#else
 _init_user_vec:
         lea     user_vec, a0
         lea     256, a1
@@ -129,6 +144,7 @@ _init_user_vec:
         tst.w   4(sp)           // check FIRST_BOOT
         jeq     set_uvec
         move.w  #191, d0
+#endif
 set_uvec:
         move.l  a0, (a1)+
 #ifdef __mcoldfire__
@@ -544,10 +560,21 @@ _int_timerc:
         jsr     _int_vbl
 #endif
 
+        // etv_timer is void(*)(int): under -mfastcall the one scalar
+        // argument goes in d0, sign-extended to a full LONG the way a
+        // C caller would promote a WORD to int -- not pushed on the
+        // stack as the plain ABI below does.
+#if CONF_WITH_MFASTCALL
+        move.w  _timer_ms.w, d0
+        ext.l   d0
+        move.l  _etv_timer.w, a0
+        jsr     (a0)                    // jump to etv_timer routine
+#else
         move.w  _timer_ms.w, -(sp)
         move.l  _etv_timer.w, a0
         jsr     (a0)                    // jump to etv_timer routine
         addq.l  #2, sp                  // correct stack
+#endif
 
 #ifdef __mcoldfire__
         // On ColdFire, d0 and a0 will be restored later
@@ -1334,6 +1361,19 @@ bx_sp_ok:
         add.l   d1,d1           // indirection function table is 1 LW per
         add.l   d1,d1           // so multiply function number by 4
         add.l   d1,a0           // add to the base address of lookup table
+#if CONF_WITH_MFASTCALL
+        /*
+         * Under -mfastcall, a single-pointer-argument function like
+         * wrap_*(WORD *pw) takes that pointer in a0 -- which conflicts
+         * with using a0 as the jsr target register below, so load the
+         * handler address into a2 instead (free here: not part of the
+         * d3-d7/a3-a7 register-save set above), and put the argument
+         * pointer in a0.
+         */
+        move.l  (a0),a2         // a2 = the procedure's address
+        move.l  sp,a0           // a0 = pointer to the raw argument words
+        jsr     (a2)            // go do it and then come back
+#else
         move.l  (a0),a0         // get the procedures address
         /*
          * Pass a pointer to the raw, tightly-packed argument words as
@@ -1355,6 +1395,7 @@ bx_sp_ok:
         move.l  a1,-(sp)        // pass it as the callee's one argument
         jsr     (a0)            // go do it and then come back
         addq.l  #4,sp           // drop the pointer argument pushed above
+#endif
 
 bx_ret_exc:
         move.l  _savptr.w, a1
@@ -1397,10 +1438,23 @@ _xbios_unimpl:
 /*
  * Supexec() function handler
  * See xbios.c for more information.
+ *
+ * LONG supexec(PFLONG) is called as a plain C function, tail-jumping
+ * (not jsr) to the caller's codeptr so it adds no stack frame of its
+ * own. Under -mfastcall its one pointer argument arrives in a0
+ * already, not on the stack -- reading 4(a7) here overwrote that
+ * correct a0 with whatever the fastcall-compiled caller's own stack
+ * happened to hold (since nothing was pushed for this call), turning
+ * every supexec() call into a wild jump to an unrelated address.
  */
+#if CONF_WITH_MFASTCALL
+_supexec:
+        jmp     (a0)
+#else
 _supexec:
         movea.l 4(a7),a0
         jmp     (a0)
+#endif
 
 #if CONF_WITH_BUS_ERROR
 
@@ -1416,10 +1470,16 @@ _check_read_byte:
         move.l  (8).w,a1
         lea     berr.w(pc),a0
         move.l  a0,(8).w
+#if CONF_WITH_MFASTCALL
+        // the single scalar argument arrives in d0, not on the stack --
+        // move it to a0 before the moveq below clobbers d0
+        movea.l d0,a0
+#else
+        move.l  4(sp),a0
+#endif
         moveq   #0,d0
         nop                                     // flush pipeline
 
-        move.l  4(sp),a0
         jbsr    buggy_jit_save_registers_before_bus_error
         tst.b   (a0)            // this may cause a Bus Error
         nop                                     // flush pipeline

@@ -1,2 +1,7 @@
 # 192 KB Atari ROM image
 TARGET_192=y
+# Doesn't fit in 192K without -mfastcall's code-size savings; needs
+# Thorsten Otto's toolchain (see CONF_WITH_MFASTCALL's help), which CI's
+# setup-toolchain action installs automatically for any config that sets
+# this.
+CONF_WITH_MFASTCALL=y

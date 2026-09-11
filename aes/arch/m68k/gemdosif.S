@@ -231,6 +231,18 @@ trapaes:
         movea.l UDA_SPSUPER(a6),sp
         jbsr    _enable_interrupts      // restore interrupt mask
 
+#if CONF_WITH_MFASTCALL
+        /*
+         * Under -mfastcall, super(WORD cx, AESPB*) takes cx in d0 and
+         * pcrys_blk in a0. d0 already holds cx -- set at _aestrap's
+         * entry and untouched since; disable/enable_interrupts above
+         * are hand-written (bios/arch/m68k/intmask.S) and provably
+         * preserve every register but sr -- so only pcrys_blk needs to
+         * move from d1 into a0.
+         */
+        movea.l d1,a0                   // addr of parameter
+        jsr     _super                  // jump to supervisor entry point
+#else
         /*
          * Build the call frame GCC expects for super(WORD cx, AESPB*).
          * With -mshort no longer used for the kernel m68k build (#300),
@@ -245,6 +257,7 @@ trapaes:
         move.l  d0,-(sp)                // 200 or 201, in the low word
         jsr     _super                  // jump to supervisor entry point
         addq.l  #8,sp                   // restore stack pointer
+#endif
 
         jbsr    _disable_interrupts     // mask out interrupts
 

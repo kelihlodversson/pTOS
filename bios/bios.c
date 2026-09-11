@@ -371,6 +371,13 @@ static void bios_init(void)
     KDEBUG(("processor_init()\n"));
     processor_init();   /* Set CPU type, longframe and FPU type */
 
+#if CONF_DEBUG_FORCE_MC68000
+    /* see CONF_DEBUG_FORCE_MC68000's help */
+    mcpu = 0;
+    longframe = 0;
+    fputype = 0;
+#endif
+
 #if CONF_WITH_ADVANCED_CPU
     is_bus32 = (UBYTE)detect_32bit_address_bus();
 #endif
