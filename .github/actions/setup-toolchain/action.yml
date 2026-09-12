@@ -124,12 +124,17 @@ runs:
         # This tarball ships the compiler and binutils only -- no C
         # library -- so its own bundled sys-root has nothing but the
         # libstdc++ headers GCC's build packages alongside itself, not
-        # even <stdint.h>. A real, complete sys-root for this exact
-        # target triple already exists on disk, installed by
-        # cross-mintelf-essential above: reuse it instead of building
-        # one, since the two toolchains share the target's C ABI.
+        # even <stdint.h>. cross-mintelf-essential above already
+        # installed a complete one for this exact target triple, at
+        # /usr/m68k-atari-mintelf/include (Vincent Riviere's build uses
+        # a plain --prefix layout, not an RPM-style "sys-root" one, so
+        # there is no /usr/m68k-atari-mintelf/sys-root to symlink to
+        # wholesale) -- point this tarball's own sys-root/usr/include
+        # at that real one instead of building a new one, since the
+        # two toolchains share the target's C ABI.
         rm -rf "$dest/usr/m68k-atari-mintelf/sys-root"
-        ln -s /usr/m68k-atari-mintelf/sys-root "$dest/usr/m68k-atari-mintelf/sys-root"
+        mkdir -p "$dest/usr/m68k-atari-mintelf/sys-root/usr"
+        ln -s /usr/m68k-atari-mintelf/include "$dest/usr/m68k-atari-mintelf/sys-root/usr/include"
 
         echo "$dest/usr/bin" >>"$GITHUB_PATH"
 
