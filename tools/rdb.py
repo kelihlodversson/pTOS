@@ -144,7 +144,12 @@ class RDB:
                 break
             accum = 0
             for c in chunk:
-                accum = (accum << 6) | ((c - 32) & 0x3F)
+                if not 32 <= c <= 95:
+                    raise RuntimeError(
+                        f"mem: byte {c:#x} outside the server's 6-bit "
+                        f"alphabet (32-95) in {enc!r}"
+                    )
+                accum = (accum << 6) | (c - 32)
             out += bytes([(accum >> 16) & 0xFF, (accum >> 8) & 0xFF, accum & 0xFF])
         return bytes(out[:rcount]), raddr
 
