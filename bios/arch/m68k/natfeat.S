@@ -101,9 +101,20 @@ _xhdi_vec:
 #else
         movem.l d1/a0-a1,-(sp)
 #endif
+        /*
+         * xhdi_handler(UWORD *stack) is an ordinary internal C function
+         * taking one pointer argument: under -mfastcall that arrives in
+         * a0, not on the stack. a0's own original value was already
+         * saved above, so it's free to reuse here.
+         */
+#if CONF_WITH_MFASTCALL
+        lea     16(sp),a0
+        jsr     _xhdi_handler
+#else
         pea     16(sp)
         jsr     _xhdi_handler
         addq.l  #4,sp
+#endif
 #ifdef __mcoldfire__
         movem.l (sp),d1/a0-a1
         lea     12(sp),sp

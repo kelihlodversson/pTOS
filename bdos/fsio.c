@@ -322,7 +322,7 @@ long eof(int h)
  *      ixlseek()
  */
 
-long xlseek(long n, int h, int flg)
+long xlseek(long n, WORD h, WORD flg)
 {
     OFD *f;
 
@@ -441,7 +441,7 @@ long ixlseek(OFD *p,long n)
  *   bios()
  */
 
-long xread(int h, long len, void *ubufr)
+long xread(WORD h, long len, void *ubufr)
 {
     OFD *p;
     long ret;
@@ -548,7 +548,7 @@ long ixread(OFD *p, long len, void *ubufr)
  *   bios()
  */
 
-long xwrite(int h, long len, void *ubufr)
+long xwrite(WORD h, long len, void *ubufr)
 {
     OFD *p;
     long ret;

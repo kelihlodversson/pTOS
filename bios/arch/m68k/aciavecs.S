@@ -222,11 +222,25 @@ _init_acia_vecs:
 #endif
 
 #if CONF_WITH_IKBD_ACIA || CONF_WITH_MIDI_ACIA
-        // finally, setup the interrupt vector
-        pea     _int_acia
-        move.w  #6,-(sp)
+        /*
+         * mfpint(WORD num, LONG vector) is an ordinary internal C
+         * function. Under -mfastcall num/vector arrive in d0/d1 (vector
+         * is a plain LONG scalar, not a pointer type, so it goes in a
+         * data register like any other LONG argument -- same reasoning
+         * as protect_wlwwwl's LONG b above -- not in a0); without
+         * -mshort num's slot is a full 4 bytes now, not a tightly
+         * packed WORD.
+         */
+#if CONF_WITH_MFASTCALL
+        moveq   #6,d0
+        move.l  #_int_acia,d1
         jsr     _mfpint
-        addq.l  #6,sp
+#else
+        pea     _int_acia
+        move.l  #6,-(sp)
+        jsr     _mfpint
+        addq.l  #8,sp
+#endif
 #endif /* CONF_WITH_IKBD_ACIA || CONF_WITH_MIDI_ACIA */
 
 #ifdef MACHINE_AMIGA

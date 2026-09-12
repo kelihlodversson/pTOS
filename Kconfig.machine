@@ -384,12 +384,19 @@ config CPUFLAGS
 
 config CONF_WITH_MFASTCALL
 	bool "Use the -mfastcall calling convention (m68k only)"
-	depends on ARCH_M68K
+	depends on ARCH_M68K_CLASSIC
 	default n
 	help
 	  Build the whole kernel with GCC's -mfastcall calling convention
 	  (arguments passed in d0-d2/a0-a1/fp0-fp2 where possible) instead
 	  of the default, stack-based one.
+
+	  Restricted to ARCH_M68K_CLASSIC (excludes ColdFire): ColdFire's
+	  vdi_tblit.S is a generated file (see "make coldfire-sources" in
+	  the top-level Makefile), machine-translated from the classic m68k
+	  source by a proprietary tool this project can't run in CI, and
+	  its _normal_blit entry point has not been audited or hand-patched
+	  for -mfastcall's register-argument convention.
 
 	  This requires a GCC build with -mfastcall support, which neither
 	  of Vincent Riviere's toolchains (the ones normally installed for

@@ -94,10 +94,25 @@ no_ttram1:
 
                 add.l   #~msk_rootp_addr,d0     // padding
 
-                clr.w   -(sp)                   // FALSE
+                /*
+                 * balloc_stram(ULONG size, BOOL top) is an ordinary
+                 * internal C function returning UBYTE*. Under
+                 * -mfastcall size/top arrive in d0/d1 (size is already
+                 * in d0 from the computation above) and the pointer
+                 * return comes back in a0, not d0. Without -mshort,
+                 * BOOL is a full 32-bit int, so its plain-ABI slot is 4
+                 * bytes now, not 2.
+                 */
+#if CONF_WITH_MFASTCALL
+                moveq   #0,d1                   // FALSE
+                jsr     _balloc_stram
+                move.l  a0,d0                   // pointer return, for the math below
+#else
+                clr.l   -(sp)                   // FALSE
                 move.l  d0,-(sp)
                 jsr     _balloc_stram
-                addq.l  #6,sp
+                addq.l  #8,sp
+#endif
 
                 add.l   #~msk_rootp_addr,d0
                 and.l   #msk_rootp_addr,d0

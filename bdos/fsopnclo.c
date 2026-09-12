@@ -105,7 +105,7 @@ long xcreat(char *name, UBYTE attr)
  *
  *  +ve return      file handle
  */
-long xopen(char *name, int mod)
+long xopen(char *name, WORD mod)
 {
     int m = mod & VALID_FOPEN_BITS;
 #if CONF_WITH_PLUGGABLE_FS
@@ -287,7 +287,7 @@ static void sftdel(FTAB *sftp)
  *          operations inside the 'if' statement following the invocation
  *          of ixclose(), but I am leaving the flow of control intact.
  */
-long xclose(int h)
+long xclose(WORD h)
 {
     int h0;
     OFD *fd;

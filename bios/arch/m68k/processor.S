@@ -593,11 +593,26 @@ ce_exit:
         rts
 
 _set_cache:
+        /*
+         * set_cache(WORD enable) is an ordinary internal C function.
+         * Under -mfastcall enable arrives in d0, but d0 is about to be
+         * clobbered by the _cache_exists call below and then reused as
+         * a work register, so stash it in d1 (unused by _cache_exists)
+         * first. Without -mshort enable's slot is a full 4 bytes now,
+         * so its tested low word moved from 4(sp) to 6(sp).
+         */
+#if CONF_WITH_MFASTCALL
+        move.l  d0,d1
+#endif
         jbsr    _cache_exists
         tst.w   d0
         jeq     sc_exit             // no cache, do nothing
         moveq.l #0,d0               // assume disable
-        tst.w   4(sp)
+#if CONF_WITH_MFASTCALL
+        tst.w   d1
+#else
+        tst.w   6(sp)
+#endif
         jne     sc_enable           // no, enable
         cmpi.b  #40,_mcpu+3         // possible dirty data in cache?
         jmi     sc_cacr             // no, go do it
