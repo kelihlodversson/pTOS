@@ -48,6 +48,7 @@ SEP = b"\x01"
 class RDB:
     def __init__(self, host="127.0.0.1", port=56001, timeout=10):
         self.sock = socket.create_connection((host, port), timeout=timeout)
+        self.timeout = timeout  # restored after each call's own temporary timeout
         self.buf = b""
         # Drain the initial handshake + notifications (!connected, !config, !status, !symbols)
         self.notifications = []
@@ -75,7 +76,7 @@ class RDB:
                 if msg.startswith(b"!symbols"):
                     return
         finally:
-            self.sock.settimeout(10)
+            self.sock.settimeout(self.timeout)
 
     def send_cmd(self, cmd):
         """Send one command, return its reply (any '!' notifications seen
@@ -104,7 +105,8 @@ class RDB:
 
     def regs(self):
         p = self.parts(self.send_cmd("regs"))
-        assert p[0] == b"OK", p[:3]
+        if p[0] != b"OK":
+            raise RuntimeError(f"regs failed: {p[:3]!r}")
         d = {}
         i = 2  # p[1] is an empty field (send_key_value's own leading separator)
         while i + 1 < len(p):
@@ -117,7 +119,8 @@ class RDB:
         chars offset by 32 (a uuencode-like scheme), not base64/hex."""
         msg = self.send_cmd(f"mem {addr:x} {count:x}")
         p = msg.split(SEP, 3)
-        assert p[0] == b"OK", msg
+        if p[0] != b"OK":
+            raise RuntimeError(f"mem failed: {msg!r}")
         raddr = int(p[1], 16)
         rcount = int(p[2], 16)
         enc = p[3]
@@ -171,7 +174,7 @@ class RDB:
                 else:
                     self.notifications.append(msg)
         finally:
-            self.sock.settimeout(10)
+            self.sock.settimeout(self.timeout)
         raise TimeoutError("timed out waiting for stop")
 
 

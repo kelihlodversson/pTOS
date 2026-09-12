@@ -539,6 +539,20 @@ long osif(LONG *pw);
 long osif(short *pw);
 #endif
 
+#ifndef __arm__
+/*
+ * Reassembles a LONG from two big-endian WORDs by value, not by
+ * reinterpreting the WORD array's storage as a LONG: pw[i]/pw[i+1] are
+ * read as WORDs and combined arithmetically, so this never aliases a
+ * WORD lvalue through a LONG pointer (undefined behaviour under
+ * strict aliasing, however harmless it happens to be on this target).
+ */
+static ULONG pwlong(const WORD *pw, int i)
+{
+    return ((ULONG)(UWORD)pw[i] << 16) | (UWORD)pw[i + 1];
+}
+#endif
+
 /*
  *  osif - C implementation of trap #1. Called by _enter.
  */
@@ -836,13 +850,15 @@ restrt:
         }
 #else
         /*
-         * A LONG argument spans two consecutive words in pw[]; reading
-         * it as *(LONG*)&pw[i] reinterprets those two big-endian WORDs
-         * directly as the LONG GEMDOS packed there -- valid on m68k,
-         * which (unlike some other 32-bit targets) never faults on a
-         * word-aligned-but-not-longword-aligned long access.
+         * A LONG argument spans two consecutive words in pw[]; pwlong()
+         * reassembles it from those two big-endian WORDs by value
+         * (shift+or), not by reinterpreting pw's storage as a LONG --
+         * that would alias a WORD lvalue through a LONG pointer, which
+         * is undefined behaviour under strict aliasing even though
+         * m68k itself never faults on a word-aligned-but-not-longword-
+         * aligned access.
          */
-#define PWLONG(i) (*(LONG *)&pw[i])
+#define PWLONG(i) pwlong(pw, i)
         switch(f->shape)
         {
         case FSHAPE_V:

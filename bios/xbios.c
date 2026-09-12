@@ -1362,7 +1362,18 @@ extern LONG supexec(PFLONG);   /* implemented in vectors.S */
  * past 0x40 that still jsr straight into their real, typed function --
  * unfixed, same bug as the rest of this table before #300 raised it.
  */
-#define PWLONG(pw, i) (*(LONG *)&(pw)[i])
+/*
+ * Reassembles a LONG from two big-endian WORDs by value, not by
+ * reinterpreting the WORD array's storage as a LONG: pw[i]/pw[i+1] are
+ * read as WORDs and combined arithmetically, so this never aliases a
+ * WORD lvalue through a LONG pointer (undefined behaviour under
+ * strict aliasing, however harmless it happens to be on this target).
+ */
+static ULONG pwlong(const WORD *pw, int i)
+{
+    return ((ULONG)(UWORD)pw[i] << 16) | (UWORD)pw[i + 1];
+}
+#define PWLONG(pw, i) pwlong(pw, i)
 
 static LONG wrap_Initmous(WORD *pw)
 {

@@ -24,7 +24,7 @@ hrdb: a reliable remote debugger for Hatari
 ---------------------------------------------
 
 Stock Hatari (https://github.com/hatari/hatari) has no network-
-accessible debugger. A actively maintained fork,
+accessible debugger. An actively maintained fork,
 https://github.com/tattlemuss/hatari (branch `hrdb-main`), adds one:
 a TCP remote-debug protocol (`src/debug/remotedebug.c`) plus a Qt GUI
 called hrdb (`tools/hrdb/`) that talks to it. Project page:

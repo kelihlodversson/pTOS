@@ -90,12 +90,12 @@ _memcpy:
         move.l  a0,-(sp)         // dst
         bsr     memcpy_stackbody
         lea     12(sp),sp        // drop the frame built above
-        moveal  d0,a0            // pointer return goes in a0 under fastcall;
-                                  // the body below still only sets d0 (see
-                                  // its own "return destination pointer"
-                                  // comments -- that was correct for the
-                                  // pre-fastcall convention, and is now also
-                                  // needed by any non-fastcall caller left)
+        movea.l d0,a0            // pointer return goes in a0 under fastcall;
+                                 // the body below still only sets d0 (see
+                                 // its own "return destination pointer"
+                                 // comments -- that was correct for the
+                                 // pre-fastcall convention, and is now also
+                                 // needed by any non-fastcall caller left)
         rts
 
 _memmove:
@@ -104,7 +104,7 @@ _memmove:
         move.l  a0,-(sp)         // dst
         bsr     memmove_stackbody
         lea     12(sp),sp        // drop the frame built above
-        moveal  d0,a0            // see _memcpy above
+        movea.l d0,a0            // see _memcpy above
         rts
 
 memcpy_stackbody:

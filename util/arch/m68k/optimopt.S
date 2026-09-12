@@ -30,7 +30,7 @@ _scasb:
          * scalar argument. Under -mfastcall p arrives in a0 (already
          * where this code needs it) and b arrives in d0, not on the
          * stack; move it to d1, which is what the loop below reads (see
-         * the identical fix in this file's _strchr in stringasm.S).
+         * the identical fix in stringasm.S's _strchr).
          */
 #if CONF_WITH_MFASTCALL
         move.l  d0,d1
