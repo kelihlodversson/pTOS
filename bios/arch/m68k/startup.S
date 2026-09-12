@@ -548,7 +548,16 @@ memdone:
  * typebit: application type bit number which must be set to 1 to match
  */
 _run_cartridge_applications:
-        move.w  4(sp),d0                // application bit number
+        /*
+         * run_cartridge_applications(WORD typebit) is an ordinary
+         * internal C function: under -mfastcall typebit already arrives
+         * in d0, not on the stack; without -mshort the plain ABI now
+         * gives it a full 4-byte slot instead of a tightly packed WORD,
+         * so its low word moved from 4(sp) to 6(sp).
+         */
+#if !CONF_WITH_MFASTCALL
+        move.w  6(sp),d0                // application bit number
+#endif
         lea     cart_base, a0
 #ifdef __mcoldfire__
         move.l  #0xABCDEF42, d1

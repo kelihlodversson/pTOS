@@ -141,7 +141,12 @@ _init_user_vec:
         lea     user_vec, a0
         lea     256, a1
         moveq   #63, d0
-        tst.w   4(sp)           // check FIRST_BOOT
+        /*
+         * first_boot is a 32-bit UWORD-promoted int (no -mshort), so its
+         * stack slot is 4 bytes at 4(sp); the value tested below is its
+         * low word, which lives at 6(sp), not 4(sp).
+         */
+        tst.w   6(sp)           // check FIRST_BOOT
         jeq     set_uvec
         move.w  #191, d0
 #endif
@@ -560,21 +565,16 @@ _int_timerc:
         jsr     _int_vbl
 #endif
 
-        // etv_timer is void(*)(int): under -mfastcall the one scalar
-        // argument goes in d0, sign-extended to a full LONG the way a
-        // C caller would promote a WORD to int -- not pushed on the
-        // stack as the plain ABI below does.
-#if CONF_WITH_MFASTCALL
-        move.w  _timer_ms.w, d0
-        ext.l   d0
-        move.l  _etv_timer.w, a0
-        jsr     (a0)                    // jump to etv_timer routine
-#else
+        // etv_timer is a frozen, user-replaceable TOS vector (Setexc()
+        // case 0x100, bios.c): call it via the classic tightly-packed
+        // ABI always, regardless of CONF_WITH_MFASTCALL, same as every
+        // other protect_*-style vector call in this tree -- a program
+        // that installs its own handler here follows the documented TOS
+        // convention, not this kernel's own internal compile flags.
         move.w  _timer_ms.w, -(sp)
         move.l  _etv_timer.w, a0
         jsr     (a0)                    // jump to etv_timer routine
         addq.l  #2, sp                  // correct stack
-#endif
 
 #ifdef __mcoldfire__
         // On ColdFire, d0 and a0 will be restored later
@@ -838,7 +838,27 @@ _sccb_es_interrupt:
  *     code expects D2/A2 to be unchanged, so we must save/restore them.
  */
 _call_etv_critic:
-        move.l  4(sp),d0            // d0 is error code || device
+        /*
+         * call_etv_critic(WORD error, WORD device) takes two scalar args;
+         * under -mfastcall they arrive in d0/d1 (only the low word of
+         * each is defined) instead of tightly packed on the stack, and
+         * without -mshort the plain-ABI stack version gives each its own
+         * 4-byte slot instead of packing them into one. etv_critic itself
+         * is a frozen, user-replaceable TOS vector (Setexc() case 0x101),
+         * always invoked below via the classic tightly-packed ABI
+         * regardless of CONF_WITH_MFASTCALL (same convention as every
+         * protect_*-style vector call in this tree) -- so rebuild that
+         * one combined error:device LONG explicitly instead of reading
+         * it ready-made off the stack.
+         */
+#if CONF_WITH_MFASTCALL
+        swap    d0                  // error -> high word of d0
+        move.w  d1,d0               // device -> low word of d0
+#else
+        move.w  6(sp),d0            // error (low word of its slot)
+        swap    d0                  // -> high word of d0
+        move.w  10(sp),d0           // device (low word of its slot)
+#endif
         move.l  a2,-(sp)            // save regs
         move.l  d2,-(sp)
         move.l  d0,-(sp)            // error code || device to stack
@@ -1430,10 +1450,23 @@ _just_rte:
  * The requested BIOS/XBIOS function number is in d0.
  */
 _xbios_unimpl:
-       move.w   d0,-(sp)
-       jsr      _xbios_do_unimpl
-       addq.l   #2,sp
-       rts
+        /*
+         * xbios_do_unimpl(WORD number) is an ordinary internal C
+         * function: under -mfastcall its one scalar arg is expected in
+         * d0, which already holds the function number untouched from
+         * biosxbios above -- no push needed. Without -mshort the plain
+         * ABI now gives it a full 4-byte slot instead of a tightly
+         * packed WORD.
+         */
+#if CONF_WITH_MFASTCALL
+        jsr      _xbios_do_unimpl
+#else
+        ext.l    d0
+        move.l   d0,-(sp)
+        jsr      _xbios_do_unimpl
+        addq.l   #4,sp
+#endif
+        rts
 
 /*
  * Supexec() function handler

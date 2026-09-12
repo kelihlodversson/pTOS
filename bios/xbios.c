@@ -1354,13 +1354,11 @@ extern LONG supexec(PFLONG);   /* implemented in vectors.S */
  * zero-argument function needs no shim: it never looks at the extra
  * pointer biosxbios unconditionally passes.
  *
- * Only entries reachable with every CONF_WITH_* this table can be
- * built with off (LAST_ENTRY == 0x40 below) are covered so far. Any
- * config that turns on CONF_WITH_MFP, CONF_WITH_PRINTER_PORT,
- * CONF_WITH_NVRAM, CONF_WITH_TT_SHIFTER, CONF_WITH_VIDEL,
- * CONF_WITH_DSP or CONF_WITH_DMASOUND reaches xbios_vecs[] entries
- * past 0x40 that still jsr straight into their real, typed function --
- * unfixed, same bug as the rest of this table before #300 raised it.
+ * Every xbios_vecs[] entry is covered this way, including the ones
+ * past 0x40 that only exist when CONF_WITH_MFP, CONF_WITH_PRINTER_PORT,
+ * CONF_WITH_NVRAM, CONF_WITH_TT_SHIFTER, CONF_WITH_VIDEL, CONF_WITH_DSP
+ * or CONF_WITH_DMASOUND is on: each has its own wrap_*() below, guarded
+ * by the same CONF_WITH_* and selected through VEC() in the table.
  */
 #define PWLONG(pw, i) pwlong(pw, i)  /* pwlong(): asm.h */
 

@@ -196,12 +196,21 @@ draw_sprite:
                                   * wants them */
         jsr     _cur_display
 #else
-        move.w  d1,-(sp)        /* y coord of hotspot */
-        move.w  d0,-(sp)        /* x coord */
+        /*
+         * cur_display(Mcdb*, MCS*, WORD, WORD) is an ordinary internal
+         * function compiled under this kernel's own (post -mshort)
+         * plain-stack ABI, which gives each WORD arg a full 4-byte slot
+         * rather than packing them tightly -- sign-extend x/y before
+         * pushing, and clean up 16 bytes, not 12.
+         */
+        ext.l   d1              /* y coord of hotspot, sign-extended */
+        move.l  d1,-(sp)
+        ext.l   d0              /* x coord, sign-extended */
+        move.l  d0,-(sp)
         move.l  a2,-(sp)        /* save area ptr */
         move.l  a0,-(sp)        /* new sprite */
         jsr     _cur_display
-        lea     12(sp),sp
+        lea     16(sp),sp
 #endif
         rts
 

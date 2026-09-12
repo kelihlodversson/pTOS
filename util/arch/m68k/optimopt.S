@@ -35,8 +35,13 @@ _scasb:
 #if CONF_WITH_MFASTCALL
         move.l  d0,d1
 #else
+        /*
+         * b is a 32-bit int (no -mshort), so its stack slot is 4 bytes at
+         * 8(sp); the byte compared below is b's low byte, which lives in
+         * the low word of that slot, i.e. at 10(sp), not 8(sp).
+         */
         move.l  4(sp),a0
-        move.w  8(sp),d1
+        move.w  10(sp),d1
 #endif
 scasb_loop:
         move.b  (a0)+,d0

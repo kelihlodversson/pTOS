@@ -188,13 +188,31 @@ _just_rts:
  *  if you do not need rounding, use mul_div() from intmath.h instead!
  */
         .globl  _mul_div_round
+/*
+ * mul_div_round(WORD mult1, WORD mult2, WORD divisor) takes three scalar
+ * arguments and had no -mfastcall branch at all: under fastcall they
+ * arrive in d0/d1/d2 (only the low word of each is defined -- see this
+ * file's protect_w/_ww "sign-extended to a full slot" comments -- which
+ * is exactly what the word-sized ops below already read), not tightly
+ * packed on the stack. Its non-fastcall stack path was also stale: with
+ * -mshort no longer used for the kernel build (#300), each WORD argument
+ * now gets its own 4-byte slot instead of being packed 2 bytes apart, so
+ * mult1/mult2/divisor's low words moved from 4/6/8(sp) to 6/10/14(sp).
+ */
 _mul_div_round:
 #ifdef __mcoldfire__
+#if CONF_WITH_MFASTCALL
+        add.l   d1,d1           // d1 = mult2 * 2
+        muls.w  d0,d1           // d1 = mult1 * mult2 * 2
+        divs.w  d2,d1           // d1 = (mult1 * mult2 * 2) / divisor
+        move.l  d1,d0
+#else
         moveq.l #0,d0
-        move.w  6(sp),d0        // d0 = mult2
+        move.w  10(sp),d0       // d0 = mult2
         add.l   d0,d0           // d0 = mult2 * 2
-        muls.w  4(sp),d0        // d0 = mult1 * mult2 * 2
-        divs.w  8(sp),d0        // d0 = (mult1 * mult2 * 2) / divisor
+        muls.w  6(sp),d0        // d0 = mult1 * mult2 * 2
+        divs.w  14(sp),d0       // d0 = (mult1 * mult2 * 2) / divisor
+#endif
         ext.l   d0
         jmi     mdrminus
         addq.l  #1,d0           // d0 = (mult1 * mult2 * 2) / divisor + 1
@@ -205,10 +223,17 @@ mdrminus:
         asr.l   #1,d0           // d0 = ((mult1 * mult2 * 2) / divisor - 1) / 2
         rts
 #else
-        move.w  6(sp),d0        // d0 = mult2
+#if CONF_WITH_MFASTCALL
+        add.w   d1,d1           // d1 = mult2 * 2
+        muls.w  d0,d1           // d1 = mult1 * mult2 * 2
+        divs.w  d2,d1           // d1 = (mult1 * mult2 * 2) / divisor
+        move.w  d1,d0
+#else
+        move.w  10(sp),d0       // d0 = mult2
         add.w   d0,d0           // d0 = mult2 * 2
-        muls.w  4(sp),d0        // d0 = mult1 * mult2 * 2
-        divs.w  8(sp),d0        // d0 = (mult1 * mult2 * 2) / divisor
+        muls.w  6(sp),d0        // d0 = mult1 * mult2 * 2
+        divs.w  14(sp),d0       // d0 = (mult1 * mult2 * 2) / divisor
+#endif
         jmi     mdrminus
         addq.w  #1,d0           // d0 = (mult1 * mult2 * 2) / divisor + 1
         asr.w   #1,d0           // d0 = ((mult1 * mult2 * 2) / divisor + 1) / 2
@@ -293,7 +318,12 @@ protect_w_stackbody:
 _protect_w:
 #endif
         move.l   4(sp),a0
-        move.w   8(sp),d0
+        /*
+         * a's own slot is 4 bytes wide now (no -mshort), so its low word
+         * -- the value the jsr target's classic 2-byte-packed ABI below
+         * actually wants -- is at 10(sp), not 8(sp).
+         */
+        move.w   10(sp),d0
         move.l   a2,-(sp)
         move.l   d2,-(sp)
         move.w   d0,-(sp)
@@ -322,7 +352,17 @@ protect_ww_stackbody:
 _protect_ww:
 #endif
         move.l   4(sp),a0
-        move.l   8(sp),d0
+        /*
+         * a and b used to be two tightly packed WORDs sharing one 4-byte
+         * span at 8(sp), so a single move.l here could read both at once
+         * and re-push them unchanged for the jsr target's classic
+         * 2-byte-packed ABI below. Without -mshort each now has its own
+         * 4-byte slot, so that longword must be rebuilt explicitly from
+         * their low words (a's at 10(sp), b's at 14(sp)) instead.
+         */
+        move.w   10(sp),d0
+        swap     d0
+        move.w   14(sp),d0
         move.l   a2,-(sp)
         move.l   d2,-(sp)
         move.l   d0,-(sp)
@@ -362,16 +402,34 @@ protect_wlwwwl_stackbody:
 #else
 _protect_wlwwwl:
 #endif
-        movem.l  8(sp),d0-d1/a0-a1
+        /*
+         * a/c/d/e used to be four tightly packed WORDs and b/f two LONGs,
+         * all sharing one contiguous 16-byte span at 8(sp) -- movem could
+         * blit that whole span into d0-d1/a0-a1 and back out unchanged,
+         * since the source already matched the jsr target's classic
+         * 2-byte-packed ABI byte-for-byte. Without -mshort each WORD now
+         * has its own 4-byte slot, so that trick no longer produces the
+         * right bytes: rebuild the 16-byte classic frame explicitly from
+         * each argument's own slot (WORD args from their low word) and
+         * push it right-to-left, exactly as protect_w/_ww do above.
+         *
+         * The jsr target itself (e.g. bios.c's hdv_rw) is always called
+         * via this same classic ABI regardless of CONF_WITH_MFASTCALL,
+         * matching every other protect_* vector (bconin_vec, hdv_mediach,
+         * hdv_bpb, bell_hook, userterm, ...): these are frozen, user-
+         * replaceable TOS hardware vectors that a third-party driver can
+         * install into without ever knowing this kernel's own -mfastcall
+         * setting, so the call convention here can't depend on it either.
+         */
         move.l   a2,-(sp)
         move.l   d2,-(sp)
-#ifdef __mcoldfire__
-        lea      -16(sp),sp
-        movem.l  d0-d1/a0-a1,(sp)
-#else
-        movem.l  d0-d1/a0-a1,-(sp)
-#endif
-        move.l   28(sp),a0
+        move.l   36(sp),-(sp)   // f (full LONG, from its own slot)
+        move.w   38(sp),-(sp)   // e (low word of its slot)
+        move.w   36(sp),-(sp)   // d (low word of its slot)
+        move.w   34(sp),-(sp)   // c (low word of its slot)
+        move.l   30(sp),-(sp)   // b (full LONG, from its own slot)
+        move.w   32(sp),-(sp)   // a (low word of its slot)
+        move.l   28(sp),a0      // func
         jsr      (a0)
         lea      16(sp),sp
         move.l   (sp)+,d2

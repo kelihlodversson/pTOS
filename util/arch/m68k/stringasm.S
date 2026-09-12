@@ -66,8 +66,13 @@ _strchr:
 #if CONF_WITH_MFASTCALL
         move.l  d0,d1
 #else
+        /*
+         * c is a 32-bit int (no -mshort), so its stack slot is 4 bytes at
+         * 8(sp); the byte compared below is c's low byte, which lives in
+         * the low word of that slot, i.e. at 10(sp), not 8(sp).
+         */
         move.l  4(sp),a0
-        move.w  8(sp),d1
+        move.w  10(sp),d1
 #endif
 strchr_loop:
         move.b  (a0)+,d0
@@ -78,5 +83,13 @@ strchr_loop:
         move.l  a0,d0
         rts
 strchr_null:
+        /*
+         * a0 was left one past the NUL by the (a0)+ above, i.e. non-NULL;
+         * the match-found path below returns via a0 for free because
+         * subq.l operates on a0 itself, but this path must clear a0
+         * explicitly so a -mfastcall caller (pointer return in a0) also
+         * sees NULL, not a stale non-NULL address.
+         */
+        suba.l  a0,a0
         moveq.l #0,d0
         rts

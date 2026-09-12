@@ -1558,6 +1558,36 @@ static LONG wrap_kbshift(WORD *pw) { return kbshift(pw[0]); }
  * given one trivial wrapper each anyway to keep VEC() below uniform. */
 static LONG wrap_tickcal(WORD *pw) { UNUSED(pw); return tickcal(); }
 static LONG wrap_drvmap(WORD *pw) { UNUSED(pw); return drvmap(); }
+
+#if DBGBIOS
+/*
+ * DBGBIOS's bios_N() functions predate the wrap_*() shims above and used
+ * to be usable as bios_vecs[] entries directly: before -mshort was
+ * dropped for the kernel m68k build (#300), biosxbios jsr'd straight in
+ * with sp pointing at the trap frame, and a typed function's own
+ * GCC-compiled prologue happened to read its args from exactly the same
+ * tightly-packed offsets the frame provided. biosxbios now always passes
+ * one pointer to the raw argument words instead (see the wrap_*()
+ * comment above), which these typed functions were never updated to
+ * expect -- so give them the same pw[]-decoding treatment here.
+ */
+static LONG wrap_bios_0(WORD *pw) { bios_0((MPB *)PWLONG(pw, 0)); return 0; }
+static LONG wrap_bios_1(WORD *pw) { return bios_1(pw[0]); }
+static LONG wrap_bios_2(WORD *pw) { return bios_2(pw[0]); }
+static LONG wrap_bios_3(WORD *pw) { return bios_3(pw[0], pw[1]); }
+static LONG wrap_bios_4(WORD *pw)
+{
+    return bios_4(pw[0], (UBYTE *)PWLONG(pw, 1), pw[3], pw[4], pw[5],
+                  PWLONG(pw, 6));
+}
+static LONG wrap_bios_5(WORD *pw) { return bios_5(pw[0], PWLONG(pw, 1)); }
+static LONG wrap_bios_6(WORD *pw) { UNUSED(pw); return bios_6(); }
+static LONG wrap_bios_7(WORD *pw) { return bios_7(pw[0]); }
+static LONG wrap_bios_8(WORD *pw) { return bios_8(pw[0]); }
+static LONG wrap_bios_9(WORD *pw) { return bios_9(pw[0]); }
+static LONG wrap_bios_a(WORD *pw) { UNUSED(pw); return bios_a(); }
+static LONG wrap_bios_b(WORD *pw) { return bios_b(pw[0]); }
+#endif /* DBGBIOS */
 #endif /* !__arm__ */
 
 /**
@@ -1565,7 +1595,7 @@ static LONG wrap_drvmap(WORD *pw) { UNUSED(pw); return drvmap(); }
  */
 
 #if DBGBIOS
-#define VEC(wrapper, direct) (PFLONG) wrapper
+#define VEC(wrapper, direct) (PFLONG) wrap_##wrapper
 #elif defined(__arm__)
 #define VEC(wrapper, direct) (PFLONG) direct
 #else

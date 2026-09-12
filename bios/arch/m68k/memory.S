@@ -711,9 +711,17 @@ sync_data_cache:
 // BOOL memtest_verify(ULONG *start, ULONG value, LONG length)
 //
 _memtest_verify:
+        /*
+         * memtest_verify(ULONG *start, ULONG value, LONG length) had no
+         * -mfastcall branch: under fastcall, start/value/length already
+         * arrive in a0/d0/d1 -- exactly the registers the loop below
+         * reads -- so only the plain stack ABI needs to load them.
+         */
+#if !CONF_WITH_MFASTCALL
         movea.l 4(sp),a0                // a0-> start
         move.l  8(sp),d0                // d0 = value to check
         move.l  12(sp),d1               // d1 = length (bytes)
+#endif
         lsr.l   #2,d1                   // d1 = length (longs)
         subq.l  #1,d1                   // for dbne
 vloop:
@@ -738,9 +746,20 @@ verror:
 // BOOL memtest_rotate_verify(ULONG *start, LONG length)
 //
 _memtest_rotate_verify:
+        /*
+         * memtest_rotate_verify(ULONG *start, LONG length) had no
+         * -mfastcall branch either: under fastcall, start already
+         * arrives in a0, and length in d0 -- but d0 is about to become
+         * this loop's rotating value register below, so move length to
+         * d1 first, before it's overwritten.
+         */
+#if CONF_WITH_MFASTCALL
+        move.l  d0,d1                   // d1 = length (bytes)
+#else
         movea.l 4(sp),a0                // a0-> start
-        moveq.l #1,d0                   // d0 = value to store
         move.l  8(sp),d1                // d1 = length (bytes)
+#endif
+        moveq.l #1,d0                   // d0 = value to store
         lsr.l   #2,d1                   // d1 = length (longs)
         subq.l  #1,d1                   // for dbne
 rloop:

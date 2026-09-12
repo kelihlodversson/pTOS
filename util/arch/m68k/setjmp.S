@@ -57,7 +57,12 @@ _setjmp:
 
 _longjmp:
         move.l  4(sp),a0                // jmp_buf
-        move.w  8(sp),d0                // requested setjmp() return value
+        /*
+         * val is a 32-bit int (no -mshort), so its stack slot is 4 bytes
+         * at 8(sp); the value tested below is val's low word, which
+         * lives at 10(sp), not 8(sp).
+         */
+        move.w  10(sp),d0               // requested setjmp() return value
         jne     nonzero
         moveq   #1,d0                   // if was 0, force it to 1
 nonzero:

@@ -40,9 +40,9 @@ _goldfish_pic_isr1:
         moveq   #1,d0
         jsr     _goldfish_pic_dispatch
 #else
-        move.w  #1,-(sp)
+        move.l  #1,-(sp)
         jsr     _goldfish_pic_dispatch
-        addq.l  #2,sp
+        addq.l  #4,sp
 #endif
         movem.l (sp)+,d0-d1/a0-a1
         rte
@@ -53,9 +53,9 @@ _goldfish_pic_isr2:
         moveq   #2,d0
         jsr     _goldfish_pic_dispatch
 #else
-        move.w  #2,-(sp)
+        move.l  #2,-(sp)
         jsr     _goldfish_pic_dispatch
-        addq.l  #2,sp
+        addq.l  #4,sp
 #endif
         movem.l (sp)+,d0-d1/a0-a1
         rte
@@ -66,9 +66,9 @@ _goldfish_pic_isr3:
         moveq   #3,d0
         jsr     _goldfish_pic_dispatch
 #else
-        move.w  #3,-(sp)
+        move.l  #3,-(sp)
         jsr     _goldfish_pic_dispatch
-        addq.l  #2,sp
+        addq.l  #4,sp
 #endif
         movem.l (sp)+,d0-d1/a0-a1
         rte
@@ -79,9 +79,9 @@ _goldfish_pic_isr4:
         moveq   #4,d0
         jsr     _goldfish_pic_dispatch
 #else
-        move.w  #4,-(sp)
+        move.l  #4,-(sp)
         jsr     _goldfish_pic_dispatch
-        addq.l  #2,sp
+        addq.l  #4,sp
 #endif
         movem.l (sp)+,d0-d1/a0-a1
         rte

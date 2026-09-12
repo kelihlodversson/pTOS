@@ -377,10 +377,22 @@ joybuf: .ds.b   3
         .text
 
 _kbdvec:
-        move.w  d0,-(sp)
-        // call the C routine in ikbd.c to do the work.
+        /*
+         * kbd_int(UBYTE scancode) is an ordinary internal C function.
+         * _kbdvec is entered (per the KBDVECS convention documented
+         * above) with the byte already in d0, zero-extended by every
+         * caller (_ikbdsys, _call_ikbdraw) -- under -mfastcall that's
+         * exactly where kbd_int expects its one scalar arg, no push
+         * needed; without -mshort the plain ABI now wants a full 4-byte
+         * slot instead of a tightly packed WORD.
+         */
+#if CONF_WITH_MFASTCALL
         jsr     _kbd_int
-        addq.l  #2,sp
+#else
+        move.l  d0,-(sp)
+        jsr     _kbd_int
+        addq.l  #4,sp
+#endif
 just_rts:
         rts
 
@@ -543,7 +555,14 @@ kbd_jump_vec:
 /******************************************************************************/
 
 _call_mousevec:
+        /*
+         * call_mousevec(SBYTE *packet) is an ordinary internal C
+         * function called from various C files: under -mfastcall its
+         * one pointer arg arrives in a0 already, not on the stack.
+         */
+#if !CONF_WITH_MFASTCALL
         move.l  4(sp),a0
+#endif
         move.l  mousevec,a1
 #ifdef __mcoldfire__
         lea     -44(sp),sp
@@ -568,8 +587,20 @@ _call_mousevec:
 
         .globl  _call_ikbdraw
 _call_ikbdraw:
+        /*
+         * call_ikbdraw(UBYTE b) is an ordinary internal C function.
+         * ikbdraw's cmp.w #0xf6,d0 needs a clean, zero-extended byte in
+         * d0 -- under -mfastcall b arrives there already, but only the
+         * low byte is defined, so mask off the rest; without -mshort
+         * the plain ABI now gives b a full 4-byte slot (low byte at
+         * 7(sp)) instead of a 2-byte one.
+         */
+#if CONF_WITH_MFASTCALL
+        and.l   #0xff,d0
+#else
         moveq   #0,d0
-        move.b  5(sp),d0                // raw IKBD byte
+        move.b  7(sp),d0                // raw IKBD byte (low byte of its slot)
+#endif
         jra     ikbdraw
 
 #endif /* CONF_WITH_FLEXCAN || CONF_SERIAL_IKBD || defined(MACHINE_LISA) */
@@ -582,7 +613,14 @@ _call_ikbdraw:
 
         .globl  _call_joyvec
 _call_joyvec:
+        /*
+         * call_joyvec(UBYTE *packet) is an ordinary internal C function:
+         * under -mfastcall its one pointer arg arrives in a0 already,
+         * not on the stack.
+         */
+#if !CONF_WITH_MFASTCALL
         move.l  4(sp),a0
+#endif
         move.l  joyvec,a1
 #ifdef __mcoldfire__
         lea     -44(sp),sp

@@ -168,10 +168,24 @@ normal:
         movea.w d0,a0               // else a0 = lookup table index
 alert_lookup:
         move.b  0(a0,a1.l),d0       // convert error code to alert number
-        move.w  d1,-(sp)            // put drive on stack
-        move.w  d0,-(sp)            // and alert number
+        /*
+         * eralert(WORD n, WORD d) is an ordinary internal C function
+         * (aes/gemfmlib.c). Under -mfastcall n/d already sit in d0/d1,
+         * so no push is needed at all. Without -mshort the plain ABI
+         * gives each its own 4-byte slot instead of packing them
+         * tightly -- but as with the _super call frame above, each
+         * value always lands in the low word of its slot regardless of
+         * what's in the upper half, so a plain longword push of d0/d1
+         * still works, matching this file's existing convention.
+         */
+#if CONF_WITH_MFASTCALL
         jsr     _eralert            // issue alert
-        addq.l  #4,sp
+#else
+        move.l  d1,-(sp)            // put drive on stack
+        move.l  d0,-(sp)            // and alert number
+        jsr     _eralert            // issue alert
+        addq.l  #8,sp
+#endif
         move.w  (sp)+,d1            // recover original error code
         ext.l   d1
         tst.w   d0                  // did user say Cancel?
@@ -313,9 +327,19 @@ _far_bcha:
 #else
         movem.l d0-d2/a0-a2,-(sp)
 #endif
-        move.w  d0,-(sp)
+        /*
+         * b_click(WORD state) is an ordinary internal C function: under
+         * -mfastcall state already sits in d0, exactly where _far_bcha
+         * itself received it; without -mshort the plain ABI now wants a
+         * full 4-byte slot instead of a tightly packed WORD.
+         */
+#if CONF_WITH_MFASTCALL
         jsr     _b_click
-        addq.l  #2,sp
+#else
+        move.l  d0,-(sp)
+        jsr     _b_click
+        addq.l  #4,sp
+#endif
 #ifdef __mcoldfire__
         movem.l (sp),d0-d2/a0-a2
         lea     24(sp),sp
@@ -335,11 +359,25 @@ _far_mcha:
         movem.l d0-d2/a0-a2,-(sp)
 #endif
 
+        /*
+         * forkq(FCODE fcode, LONG fdata) is an ordinary internal C
+         * function: under -mfastcall fcode goes in a0 and fdata in d0,
+         * not on the stack. fdata is built the same way as the
+         * plain-ABI push below: d0's word (mouse state) in the high
+         * half, d1's word in the low half.
+         */
+#if CONF_WITH_MFASTCALL
+        swap    d0                      // state -> high word of d0
+        move.w  d1,d0                   // -> low word of d0
+        movea.l #_mchange,a0
+        jsr     _forkq
+#else
         move.w  d1,-(sp)
         move.w  d0,-(sp)
         move.l  #_mchange,-(sp)
         jsr     _forkq
         addq.l  #8,sp
+#endif
 #ifdef __mcoldfire__
         movem.l (sp),d0-d2/a0-a2
         lea     24(sp),sp
@@ -361,11 +399,22 @@ _aes_wheel:
         movem.l d0-d2/a0-a2,-(sp)
 #endif
 
+        /*
+         * forkq(FCODE fcode, LONG fdata): same -mfastcall register
+         * convention and fdata layout as _far_mcha above.
+         */
+#if CONF_WITH_MFASTCALL
+        swap    d0                      // wheel state -> high word of d0
+        move.w  d1,d0                   // -> low word of d0
+        movea.l #_wheel_change,a0
+        jsr     _forkq
+#else
         move.w  d1,-(sp)
         move.w  d0,-(sp)
         move.l  #_wheel_change,-(sp)
         jsr     _forkq
         addq.l  #8,sp
+#endif
 #ifdef __mcoldfire__
         movem.l (sp),d0-d2/a0-a2
         lea     24(sp),sp
@@ -382,8 +431,21 @@ _aes_wheel:
 ;
 */
 _drawrat:
-        move.w  4(sp),d0
-        move.w  6(sp),d1
+        /*
+         * drawrat(WORD newx, WORD newy) is an ordinary internal C
+         * function, but _drwaddr's target (VDI's own mouse-draw
+         * routine, installed via gsx_setmb()) expects newx/newy via the
+         * same fixed d0/d1 register convention as mousevec et al, not
+         * via C's own stack ABI -- this tail-jump adapts between the
+         * two. Under -mfastcall newx/newy already arrive in d0/d1,
+         * exactly where _drwaddr wants them; without -mshort the plain
+         * ABI now gives each its own 4-byte slot instead of packing
+         * them tightly.
+         */
+#if !CONF_WITH_MFASTCALL
+        move.w  6(sp),d0
+        move.w  10(sp),d1
+#endif
         move.l  _drwaddr,-(sp)
         rts                     // Jump to vector stored in _drwaddr
 
@@ -418,18 +480,42 @@ _tikcod:
         subq.l  #1,_CMP_TICK
         jne     L2234
 
+        /*
+         * forkq(FCODE fcode, LONG fdata) is an ordinary internal C
+         * function: under -mfastcall fcode goes in a0 and fdata in d0,
+         * not on the stack. Its WORD return (did it work?) stays in d0
+         * either way -- only scalar arguments move under -mfastcall,
+         * never a scalar return.
+         */
+#if CONF_WITH_MFASTCALL
+        movea.l #_tchange,a0
+        move.l  _NUM_TICK,d0    // try to create an entry in the fork ring
+        jsr     _forkq
+#else
         move.l  _NUM_TICK,-(sp) // try to create an entry in the fork ring
         move.l  #_tchange,-(sp)
         jsr     _forkq
         addq.l  #8,sp
+#endif
         tst.w   d0              // did it work?
         jeq     L2234
         addq.l  #1,_CMP_TICK    // no, reset so that we try again on the next tick
 
 L2234:
-        move.w  #1,-(sp)
+        /*
+         * b_delay(WORD amnt) is an ordinary internal C function: under
+         * -mfastcall amnt goes in d0, not on the stack; without
+         * -mshort the plain ABI now wants a full 4-byte slot instead of
+         * a tightly packed WORD.
+         */
+#if CONF_WITH_MFASTCALL
+        moveq   #1,d0
         jsr     _b_delay
-        addq.l  #2,sp
+#else
+        move.l  #1,-(sp)
+        jsr     _b_delay
+        addq.l  #4,sp
+#endif
         movea.l tstksave,sp
         move.l  _tiksav,-(sp)
         rts                     // Jump to vector stored in _tiksav
