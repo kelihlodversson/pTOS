@@ -49,18 +49,24 @@ class RDB:
     def __init__(self, host="127.0.0.1", port=56001, timeout=10):
         self.sock = socket.create_connection((host, port), timeout=timeout)
         self.timeout = timeout  # restored after each call's own temporary timeout
-        self.buf = b""
+        self.buf = bytearray()
+        self._scanned = 0  # buf[:_scanned] is known NUL-free; skip rescanning it
         # Drain the initial handshake + notifications (!connected, !config, !status, !symbols)
         self.notifications = []
         self._drain_notifications()
 
     def _read_msg(self):
-        while b"\x00" not in self.buf:
+        idx = self.buf.find(b"\x00", self._scanned)
+        while idx < 0:
+            self._scanned = len(self.buf)
             data = self.sock.recv(65536)
             if not data:
                 raise ConnectionError("socket closed")
-            self.buf += data
-        msg, self.buf = self.buf.split(b"\x00", 1)
+            self.buf += data  # bytearray += extends in place, unlike bytes +=
+            idx = self.buf.find(b"\x00", self._scanned)
+        msg = bytes(self.buf[:idx])
+        del self.buf[:idx + 1]
+        self._scanned = 0
         return msg
 
     def _drain_notifications(self, timeout=5):
@@ -75,6 +81,13 @@ class RDB:
                 self.notifications.append(msg)
                 if msg.startswith(b"!symbols"):
                     return
+        except socket.timeout:
+            raise RuntimeError(
+                "timed out waiting for the '!symbols' connect handshake "
+                f"(got so far: {self.notifications!r}) -- is this really "
+                "the hrdb-patched Hatari's remote-debug port, not stock "
+                "Hatari or something else entirely?"
+            ) from None
         finally:
             self.sock.settimeout(self.timeout)
 

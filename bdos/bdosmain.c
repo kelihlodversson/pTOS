@@ -21,6 +21,7 @@
 /* #define ENABLE_KDEBUG */
 
 #include "emutos.h"
+#include "asm.h"
 #include "fs.h"
 #include "biosdefs.h"
 #include "mem.h"
@@ -537,20 +538,6 @@ static void mark_bcbs_invalid(int drv)
 long osif(LONG *pw);
 #else
 long osif(short *pw);
-#endif
-
-#ifndef __arm__
-/*
- * Reassembles a LONG from two big-endian WORDs by value, not by
- * reinterpreting the WORD array's storage as a LONG: pw[i]/pw[i+1] are
- * read as WORDs and combined arithmetically, so this never aliases a
- * WORD lvalue through a LONG pointer (undefined behaviour under
- * strict aliasing, however harmless it happens to be on this target).
- */
-static ULONG pwlong(const WORD *pw, int i)
-{
-    return ((ULONG)(UWORD)pw[i] << 16) | (UWORD)pw[i + 1];
-}
 #endif
 
 /*

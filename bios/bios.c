@@ -1534,18 +1534,7 @@ static LONG bios_b(WORD flag)
  * Functions taking no arguments (tickcal, drvmap) need no shim: they
  * never look at the extra pointer biosxbios unconditionally passes.
  */
-/*
- * Reassembles a LONG from two big-endian WORDs by value, not by
- * reinterpreting the WORD array's storage as a LONG: pw[i]/pw[i+1] are
- * read as WORDs and combined arithmetically, so this never aliases a
- * WORD lvalue through a LONG pointer (undefined behaviour under
- * strict aliasing, however harmless it happens to be on this target).
- */
-static ULONG pwlong(const WORD *pw, int i)
-{
-    return ((ULONG)(UWORD)pw[i] << 16) | (UWORD)pw[i + 1];
-}
-#define PWLONG(pw, i) pwlong(pw, i)
+#define PWLONG(pw, i) pwlong(pw, i)  /* pwlong(): asm.h */
 
 static LONG wrap_getmpb(WORD *pw)
 {
