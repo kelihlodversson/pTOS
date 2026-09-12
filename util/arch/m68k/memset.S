@@ -66,6 +66,9 @@ _memset:
         move.l  a0,-(sp)         // address
         bsr     memset_stackbody
         lea     12(sp),sp        // drop the frame built above
+        movea.l d0,a0            // pointer return goes in a0 under fastcall;
+                                 // see memmove.S's _memcpy/_memmove for the
+                                 // same fixup and the full explanation
         rts
 
 memset_stackbody:

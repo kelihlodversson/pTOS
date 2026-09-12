@@ -236,24 +236,27 @@
 // is caller-cleanup: our caller (compiled under -mfastcall) pushes dst
 // before the call and pops it itself afterwards, so this wrapper must
 // leave dst on the stack for it -- only drop the vars/src slots pushed
-// below, not dst. Pop the real return address into d7: the body's own
-// movem.l d2-d7/a2-a6 below saves d7 on entry and restores it on exit,
-// so d7 comes back unchanged even though norm_blt freely clobbers it as
-// scratch in between -- d0/d1/a0/a1 do NOT have this property (norm_blt
-// uses them directly, e.g. norm_blt's own "movew d1,d0" in do_rot), so
-// stashing the return address in one of those would lose it. Push
-// vars/src above the already-stacked dst so the unchanged body sees the
-// same three-slot cdecl frame it always has, then return through d7
-// manually since the real return address no longer sits where a plain
-// rts would find it.
+// below, not dst.
+//
+// The real return address has to survive the "bsr normal_blit_stackbody"
+// call below (its own rts pops the bsr's own return address, not ours,
+// so we must jump back manually afterwards) -- but every register that
+// survives that bsr unchanged (d2-d7/a2-a6, preserved by the body's own
+// movem.l below) is exactly the set the *caller* of normal_blit() may
+// also have a live value in, and there is no register left over to
+// smuggle the return address through without clobbering one of those
+// and never restoring it. Stashing it in memory instead of a register
+// sidesteps this entirely: normal_blit() is never reentrant (VDI text
+// blitting is not called from interrupt context, nor recursively), so
+// one scratch longword is all this needs.
 #if CONF_WITH_MFASTCALL
 _normal_blit:
-        move.l  (sp)+,d7                // d7 = real return address
+        move.l  (sp)+,normal_blit_retaddr // stash the real return address
         move.l  a1,-(sp)                 // src
         move.l  a0,-(sp)                 // vars
         bsr     normal_blit_stackbody
         lea     8(sp),sp                // drop vars/src pushed above; dst is our caller's to pop
-        movea.l d7,a0
+        movea.l normal_blit_retaddr,a0
         jmp     (a0)
 
 normal_blit_stackbody:
@@ -267,6 +270,14 @@ _normal_blit:
         jbsr    norm_blt
         movem.l (sp)+,d2-d7/a2-a6       // restore saved registers
         rts
+
+#if CONF_WITH_MFASTCALL
+        .bss
+        .even
+normal_blit_retaddr:
+        .ds.l   1
+        .text
+#endif
 
         SECTION_RODATA
 

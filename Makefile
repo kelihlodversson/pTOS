@@ -217,7 +217,7 @@ endif
 # with a generic "unrecognized command-line option '-mfastcall'".
 ifdef CONFIGURED
 ifdef CONF_WITH_MFASTCALL
-ifeq (,$(shell $(CC) -mfastcall -E - </dev/null >/dev/null 2>&1 && echo y))
+ifeq (,$(shell $(CC) -x c -mfastcall -E - </dev/null >/dev/null 2>&1 && echo y))
 $(error $(CC) does not support -mfastcall. Install a patched toolchain (e.g. Thorsten Otto's m68k-atari-mint-gcc fork, https://tho-otto.m68k.eu/crossmint.php) and point CROSS_COMPILE at it, or disable CONF_WITH_MFASTCALL in "make menuconfig")
 endif
 endif

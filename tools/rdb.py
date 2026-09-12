@@ -119,7 +119,7 @@ class RDB:
         chars offset by 32 (a uuencode-like scheme), not base64/hex."""
         msg = self.send_cmd(f"mem {addr:x} {count:x}")
         p = msg.split(SEP, 3)
-        if p[0] != b"OK":
+        if len(p) < 4 or p[0] != b"OK":
             raise RuntimeError(f"mem failed: {msg!r}")
         raddr = int(p[1], 16)
         rcount = int(p[2], 16)
