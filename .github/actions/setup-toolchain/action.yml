@@ -121,6 +121,16 @@ runs:
           rm -f "$archive"
         done
 
+        # This tarball ships the compiler and binutils only -- no C
+        # library -- so its own bundled sys-root has nothing but the
+        # libstdc++ headers GCC's build packages alongside itself, not
+        # even <stdint.h>. A real, complete sys-root for this exact
+        # target triple already exists on disk, installed by
+        # cross-mintelf-essential above: reuse it instead of building
+        # one, since the two toolchains share the target's C ABI.
+        rm -rf "$dest/usr/m68k-atari-mintelf/sys-root"
+        ln -s /usr/m68k-atari-mintelf/sys-root "$dest/usr/m68k-atari-mintelf/sys-root"
+
         echo "$dest/usr/bin" >>"$GITHUB_PATH"
 
     # A plain bare metal arm-none-eabi toolchain is all the Raspberry Pi
