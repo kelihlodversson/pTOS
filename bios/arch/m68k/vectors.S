@@ -13,94 +13,94 @@
 
 // ==== Definitions ==========================================================
 
-        .globl  _init_exc_vec
-        .globl  _init_user_vec
+        .globl  C_SYM(init_exc_vec)
+        .globl  C_SYM(init_user_vec)
 
-        .globl  _biostrap       // call BIOS from C
-        .globl  _xbiostrap      // call XBIOS from C
-        .globl  _xbios_unimpl
-        .globl  _supexec
+        .globl  C_SYM(biostrap)       // call BIOS from C
+        .globl  C_SYM(xbiostrap)      // call XBIOS from C
+        .globl  C_SYM(xbios_unimpl)
+        .globl  C_SYM(supexec)
 
 #if CONF_WITH_BUS_ERROR
-        .globl  _check_read_byte
+        .globl  C_SYM(check_read_byte)
 #endif
-        .globl  _int_vbl
+        .globl  C_SYM(int_vbl)
 #if CONF_WITH_ATARI_VIDEO
-        .globl  _int_hbl
+        .globl  C_SYM(int_hbl)
 #endif
-        .globl  _int_timerc
-        .globl  _int_illegal
-        .globl  _int_priv
+        .globl  C_SYM(int_timerc)
+        .globl  C_SYM(int_illegal)
+        .globl  C_SYM(int_priv)
 #if CONF_WITH_ADVANCED_CPU
-        .globl  _int_unimpint
+        .globl  C_SYM(int_unimpint)
 #endif
-        .globl  _just_rte
-        .globl  _keyclick
-        .globl  _trap_save_area
+        .globl  C_SYM(just_rte)
+        .globl  C_SYM(keyclick)
+        .globl  C_SYM(trap_save_area)
 
-        .globl  _call_etv_critic
-        .globl  _default_etv_critic
+        .globl  C_SYM(call_etv_critic)
+        .globl  C_SYM(default_etv_critic)
 
 // ==== References ===========================================================
 
         // TOS System variables
-        .extern _longframe
-        .extern _vbclock
-        .extern _frclock
-        .extern _vblqueue
-        .extern _swv_vec
-        .extern _hz_200
-        .extern etv_timer
-        .extern etv_critic
-        .extern _timer_ms
-        .extern _v_bas_ad
+        .extern C_SYM(longframe)
+        .extern C_SYM(vbclock)
+        .extern C_SYM(frclock)
+        .extern C_SYM(vblqueue)
+        .extern C_SYM(swv_vec)
+        .extern C_SYM(hz_200)
+        .extern C_SYM(etv_timer)
+        .extern C_SYM(etv_critic)
+        .extern C_SYM(timer_ms)
+        .extern C_SYM(v_bas_ad)
 
-        .extern _detect_monitor_change  // screen.c
-        .extern _blink          // conout.c - console output
+        .extern C_SYM(detect_monitor_change)  // screen.c
+        .extern C_SYM(blink)          // conout.c - console output
 
 // Note: this scheme is designed to print the exception number
 // for vectors 2 to 63 even if working on a 32bit address bus.
 // LVL.
 
-        .extern _dopanic
+        .extern C_SYM(dopanic)
 
-        .extern _proc_lives
-        .extern _proc_dregs
-        .extern _proc_aregs
-        .extern _proc_enum
-        .extern _proc_usp
-        .extern _proc_stk
+        .extern C_SYM(proc_lives)
+        .extern C_SYM(proc_dregs)
+        .extern C_SYM(proc_aregs)
+        .extern C_SYM(proc_enum)
+        .extern C_SYM(proc_usp)
+        .extern C_SYM(proc_stk)
 
-        .extern _GSX_ENTRY
-        .extern _vblsem
-        .extern _colorptr
+        .extern C_SYM(GSX_ENTRY)
+        .extern C_SYM(vblsem)
+        .extern C_SYM(colorptr)
 #if CONF_WITH_VIDEL
-        .extern _falcon_shadow_count
+        .extern C_SYM(falcon_shadow_count)
 #endif
-        .extern _screenpt
-        .extern _has_videl
-        .extern _has_tt_shifter
-        .extern _has_ste_shifter
-        .extern _flopvbl
-        .extern _nvbls
-        .extern _timer_c_sieve
-        .extern _kb_timerc_int
-        .extern _sndirq
-        .extern _etv_timer
-        .extern _etv_critic
-        .extern _mcpu
-        .extern _bios_ent
-        .extern _bios_vecs
-        .extern _xbios_ent
-        .extern _xbios_vecs
-        .extern _savptr
-        .extern _xbios_do_unimpl
-        .extern _kcl_hook
+        .extern C_SYM(screenpt)
+        .extern C_SYM(has_videl)
+        .extern C_SYM(has_tt_shifter)
+        .extern C_SYM(has_ste_shifter)
+        .extern C_SYM(flopvbl)
+        .extern C_SYM(nvbls)
+        .extern C_SYM(timer_c_sieve)
+        .extern C_SYM(kb_timerc_int)
+        .extern C_SYM(sndirq)
+        .extern C_SYM(etv_timer)
+        .extern C_SYM(etv_critic)
+        .extern C_SYM(mcpu)
+        .extern C_SYM(bios_ent)
+        .extern C_SYM(bios_vecs)
+        .extern C_SYM(xbios_ent)
+        .extern C_SYM(xbios_vecs)
+        .extern C_SYM(savptr)
+        .extern C_SYM(xbios_do_unimpl)
+        .extern C_SYM(kcl_hook)
 
         .text
 
 /* basically initialize the 62 exception vectors. */
-_init_exc_vec:
+C_SYM(init_exc_vec):
         lea     deflt_vec_table, a0
         lea     8, a1
         move.l  #61, d0
@@ -123,7 +123,7 @@ buggy_jit_save_registers_before_bus_error:
  * This avoids overwriting crash dumps starting at address 0x380.
  */
 #if CONF_WITH_MFASTCALL
-_init_user_vec:
+C_SYM(init_user_vec):
         // under -mfastcall, the caller passes first_boot in d0 (not on the
         // stack), and we need d0 free for the loop count below -- so decide
         // the count into d1 first, then move it into d0 for the shared loop.
@@ -137,7 +137,7 @@ set_uvec_fc:
         move.l  d1, d0
         jra     set_uvec
 #else
-_init_user_vec:
+C_SYM(init_user_vec):
         lea     user_vec, a0
         lea     256, a1
         moveq   #63, d0
@@ -247,58 +247,58 @@ any_vec:
         move.w  #0x2700, sr
         // dump the registers, including USP
 #ifdef __mcoldfire__
-        move.l  a0,(_proc_dregs+32).w
-        lea     _proc_dregs.w,a0
+        move.l  a0,(C_SYM(proc_dregs)+32).w
+        lea     C_SYM(proc_dregs).w,a0
         movem.l d0-d7,(a0)
         movem.l a1-a6,36(a0)
 #else
-        movem.l d0-d7/a0-a6,_proc_dregs.w
+        movem.l d0-d7/a0-a6,C_SYM(proc_dregs).w
 #endif
         move.l  usp,a0
-        move.l  a0,_proc_usp.w
+        move.l  a0,C_SYM(proc_usp).w
         // compute and dump the exception number
         move.l  (sp)+,d0
         // dump the correct value for sp
-        move.l  sp,(_proc_aregs+28).w
+        move.l  sp,(C_SYM(proc_aregs)+28).w
         lea     deflt_vec_table(pc), a0
         sub.l   a0, d0
         lsr.l   #1, d0
         add.l   #1, d0
-        move.l  d0, _proc_enum.w
+        move.l  d0, C_SYM(proc_enum).w
 
 #if CONF_WITH_ADVANCED_CPU && !defined(__mcoldfire__)
         // D0 is 1 if the exception number could not be computed
         subq    #1, d0
         bne     dump_stack
         // exception vector offset is present on stack for 68010 and above
-        tst.w   _longframe
+        tst.w   C_SYM(longframe)
         beq     dump_stack
         move.w  6(sp), d0
         ext.l   d0
         andi.l  #0xfff, d0
         lsr.l   #2, d0
-        move.l  d0, _proc_enum.w
+        move.l  d0, C_SYM(proc_enum).w
 #endif /* CONF_WITH_ADVANCED_CPU && !defined(__mcoldfire__) */
 
 dump_stack:
         // dump 16 words from the stack
         movem.l (sp),d0-d7
 #ifdef __mcoldfire__
-        lea     _proc_stk.w,a0
+        lea     C_SYM(proc_stk).w,a0
         movem.l d0-d7,(a0)
         // magic value
-        lea     _proc_lives.w, a0
+        lea     C_SYM(proc_lives).w, a0
         move.l  #0x12345678, (a0)
 #else
-        movem.l d0-d7,_proc_stk.w
+        movem.l d0-d7,C_SYM(proc_stk).w
         // magic value
-        move.l  #0x12345678, _proc_lives.w
+        move.l  #0x12345678, C_SYM(proc_lives).w
 #endif
         // restore a sane stack
         // this stack must be large enough for dopanic(); as of
         // may 2015, this is about 460 bytes
         lea     panic_stack,sp
-        jmp     _dopanic
+        jmp     C_SYM(dopanic)
 
 #if CONF_WITH_ATARI_VIDEO
 
@@ -306,7 +306,7 @@ dump_stack:
  * Int 0x68 - HBL interrupt
  */
 
-_int_hbl:
+C_SYM(int_hbl):
 #ifdef __mcoldfire__
 // Beware: On ColdFire, the first word on the stack is the Format/Vector word,
 // and the user SR comes after. Furthermore, we need to backup the whole d0.l.
@@ -335,7 +335,7 @@ is_ipl:
 #endif /* CONF_WITH_ATARI_VIDEO */
 
 /*
- * _int_vbl - Int 0x70 - VBL interrupt
+ * int_vbl - Int 0x70 - VBL interrupt
  *
  * The sequence of events within the VBL interrupt handler
  * -------------------------------------------------------
@@ -347,16 +347,16 @@ is_ipl:
  * this change has any practical consequences.
  */
 
-_int_vbl:
-        addq.l  #1, _frclock.w          // increase num of happened ints
+C_SYM(int_vbl):
+        addq.l  #1, C_SYM(frclock).w          // increase num of happened ints
 #ifdef __mcoldfire__
         move.l  d0, -(sp)               // ColdFire specific
         moveq   #0, d0
-        move.w  _vblsem.w, d0
+        move.w  C_SYM(vblsem).w, d0
         subq.l  #1, d0
-        move.w  d0, _vblsem.w
+        move.w  d0, C_SYM(vblsem).w
 #else
-        subq.w  #1, _vblsem.w           // check VBL semaphore
+        subq.w  #1, C_SYM(vblsem).w           // check VBL semaphore
 #endif
         jmi     vbl_end                 // if VBL routine disabled -> end
 
@@ -366,14 +366,14 @@ _int_vbl:
 #else
         movem.l d0-d7/a0-a6, -(sp)      // save registers
 #endif
-        addq.l  #1, _vbclock.w          // count number of VBL interrupts
+        addq.l  #1, C_SYM(vbclock).w          // count number of VBL interrupts
 
 #if CONF_WITH_ATARI_VIDEO
-// check for monitor switching and jump to _swv_vec if necessary...
-        jsr     _detect_monitor_change
+// check for monitor switching and jump to swv_vec if necessary...
+        jsr     C_SYM(detect_monitor_change)
 #endif
 
-        jsr     _blink                  // blink cursor
+        jsr     C_SYM(blink)                  // blink cursor
 
 #if CONF_WITH_ATARI_VIDEO
 // the contents of colorptr indicate the palette processing required; since
@@ -385,10 +385,10 @@ _int_vbl:
 //  address with flag set    load 16 Falcon palette registers from address
 //     0 with flag set       load 256 Falcon palette registers from
 //                             _falcon_shadow_palette
-        move.l  _colorptr.w,d0
+        move.l  C_SYM(colorptr).w,d0
         jeq     vbl_no_palette
         // load new color palette
-        clr.l   _colorptr.w
+        clr.l   C_SYM(colorptr).w
         lea     0xffff8240.w,a1             // ST(e) hardware palette registers
         moveq   #7,d1                       // count/2 - 1 (we move longwords)
         bclr    #0,d0                       // test & clear Falcon indicator
@@ -396,7 +396,7 @@ _int_vbl:
         jeq     docopy                      // wasn't set, so update STe regs
         // load Falcon color palette
         lea     0xffff9800.w,a1             // Falcon palette registers
-        move.l  _falcon_shadow_count,d1     // get count
+        move.l  C_SYM(falcon_shadow_count),d1     // get count
         subq.l  #1,d1                       // for dbra
 docopy:
 #endif
@@ -412,9 +412,9 @@ vbl_palette_loop:
 vbl_no_palette:
 
         // set new video address
-        move.l  _screenpt.w,d0
+        move.l  C_SYM(screenpt).w,d0
         jeq     vbl_no_screenpt
-        move.l  d0,_v_bas_ad.w
+        move.l  d0,C_SYM(v_bas_ad).w
         // middle & high bytes of address are valid for all shifters
 #ifdef __mcoldfire__
         lsr.l   #8,d0
@@ -427,22 +427,22 @@ vbl_no_palette:
 #endif
         move.b  d0,0xffff8201.w
 #if CONF_WITH_VIDEL
-        tst.w   _has_videl
+        tst.w   C_SYM(has_videl)
         jne     set_video_low
 #endif
 #if CONF_WITH_TT_SHIFTER
-        tst.w   _has_tt_shifter
+        tst.w   C_SYM(has_tt_shifter)
         jne     set_video_low
 #endif
 #if CONF_WITH_STE_SHIFTER
-        tst.w   _has_ste_shifter
+        tst.w   C_SYM(has_ste_shifter)
         jne     set_video_low
 #endif
 #if CONF_WITH_VIDEL || CONF_WITH_TT_SHIFTER || CONF_WITH_STE_SHIFTER
         jra     st_shifter
 set_video_low:
         // this must be set *after* setting mid/hi bytes
-        move.l  _screenpt.w,d0              // recover low address byte
+        move.l  C_SYM(screenpt).w,d0              // recover low address byte
         move.b  d0,0xffff820d.w
 st_shifter:
 #endif
@@ -451,21 +451,21 @@ vbl_no_screenpt:
 
 #if CONF_WITH_FDC
         // flopvbl
-        jsr     _flopvbl
+        jsr     C_SYM(flopvbl)
 #endif
 
         // vblqueue
 #ifdef __mcoldfire__
         moveq   #0,d0
 #endif
-        move.w  _nvbls.w,d0
+        move.w  C_SYM(nvbls).w,d0
         jeq     vbl_no_queue
 #ifdef __mcoldfire__
         sub.l   #1,d0
 #else
         sub.w   #1,d0
 #endif
-        move.l  _vblqueue.w,a0
+        move.l  C_SYM(vblqueue).w,a0
 vbl_queue_loop:
         move.l  (a0)+,a1
         cmp.l   #0,a1
@@ -485,12 +485,12 @@ vbl_queue_next:
 vbl_no_queue:
 
         // screen hardcopy
-        tst.w   _dumpflg.w
+        tst.w   C_SYM(dumpflg).w
         jne     vbl_no_dump
-        move.l  _dump_vec.w,a0
+        move.l  C_SYM(dump_vec).w,a0
         jsr     (a0)
         moveq  #-1,d0
-        move.w  d0,_dumpflg.w
+        move.w  d0,C_SYM(dumpflg).w
 vbl_no_dump:
 
 #ifdef __mcoldfire__
@@ -502,12 +502,12 @@ vbl_no_dump:
 vbl_end:
 #ifdef __mcoldfire__
         moveq   #0,d0
-        move.w  _vblsem.w,d0
+        move.w  C_SYM(vblsem).w,d0
         addq.l  #1,d0
-        move.w  d0,_vblsem.w
+        move.w  d0,C_SYM(vblsem).w
         move.l  (sp)+,d0                // ColdFire specific
 #else
-        addq.w  #1,_vblsem.w
+        addq.w  #1,C_SYM(vblsem).w
 #endif
 
 #if CONF_WITH_ATARI_VIDEO
@@ -520,8 +520,8 @@ vbl_end:
 
 #define REAL_TIMER_C_HANDLER (CONF_WITH_MFP && !CONF_COLDFIRE_TIMER_C)
 
-_int_timerc:
-        addq.l  #1, _hz_200.w           // increment 200 Hz counter
+C_SYM(int_timerc):
+        addq.l  #1, C_SYM(hz_200).w           // increment 200 Hz counter
 
 #ifdef __mcoldfire__
         // Save early ColdFire registers
@@ -530,7 +530,7 @@ _int_timerc:
 #endif
 
 #ifdef __mcoldfire__
-        lea     _timer_c_sieve,a0
+        lea     C_SYM(timer_c_sieve),a0
         move.w  (a0),d0
         swap    d0
         move.w  (a0),d0
@@ -539,7 +539,7 @@ _int_timerc:
         move.w  d0,(a0)
         jpl     timerc_end
 #else
-        rol.w   _timer_c_sieve          // check for 4th call
+        rol.w   C_SYM(timer_c_sieve)          // check for 4th call
         jpl     timerc_end
 #endif
 
@@ -552,17 +552,17 @@ _int_timerc:
 #endif
 
         // repeat keys
-        jsr     _kb_timerc_int
+        jsr     C_SYM(kb_timerc_int)
 
 #if CONF_WITH_YM2149
         // dosound support
-        jsr     _sndirq
+        jsr     C_SYM(sndirq)
 #endif
 
 #if CONF_WITH_VIRTIO_GPU
         // virt-m68k has no hardware VBL source.  Run the VBL queue at 50 Hz
         // from its 200 Hz Goldfish RTC tick so the virtio-gpu can flush frames.
-        jsr     _int_vbl
+        jsr     C_SYM(int_vbl)
 #endif
 
         // etv_timer is a frozen, user-replaceable TOS vector (Setexc()
@@ -571,8 +571,8 @@ _int_timerc:
         // other protect_*-style vector call in this tree -- a program
         // that installs its own handler here follows the documented TOS
         // convention, not this kernel's own internal compile flags.
-        move.w  _timer_ms.w, -(sp)
-        move.l  _etv_timer.w, a0
+        move.w  C_SYM(timer_ms).w, -(sp)
+        move.l  C_SYM(etv_timer).w, a0
         jsr     (a0)                    // jump to etv_timer routine
         addq.l  #2, sp                  // correct stack
 
@@ -612,10 +612,10 @@ timerc_end:
 
 // ==== MFP USART interrupt handlers ============================================
 
-        .globl _mfp_rs232_rx_interrupt
-        .globl _mfp_rs232_tx_interrupt
+        .globl C_SYM(mfp_rs232_rx_interrupt)
+        .globl C_SYM(mfp_rs232_tx_interrupt)
 
-_mfp_rs232_rx_interrupt:
+C_SYM(mfp_rs232_rx_interrupt):
 #ifdef __mcoldfire__
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
@@ -623,7 +623,7 @@ _mfp_rs232_rx_interrupt:
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
-        jbsr    _mfp_rs232_rx_interrupt_handler
+        jbsr    C_SYM(mfp_rs232_rx_interrupt_handler)
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
@@ -632,7 +632,7 @@ _mfp_rs232_rx_interrupt:
 #endif
         rte
 
-_mfp_rs232_tx_interrupt:
+C_SYM(mfp_rs232_tx_interrupt):
 #ifdef __mcoldfire__
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
@@ -640,7 +640,7 @@ _mfp_rs232_tx_interrupt:
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
-        jbsr    _mfp_rs232_tx_interrupt_handler
+        jbsr    C_SYM(mfp_rs232_tx_interrupt_handler)
 
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
@@ -656,10 +656,10 @@ _mfp_rs232_tx_interrupt:
 
 // ==== TT MFP USART interrupt handlers ============================================
 
-        .globl _mfp_tt_rx_interrupt
-        .globl _mfp_tt_tx_interrupt
+        .globl C_SYM(mfp_tt_rx_interrupt)
+        .globl C_SYM(mfp_tt_tx_interrupt)
 
-_mfp_tt_rx_interrupt:
+C_SYM(mfp_tt_rx_interrupt):
 #ifdef __mcoldfire__
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
@@ -667,7 +667,7 @@ _mfp_tt_rx_interrupt:
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
-        jbsr    _mfp_tt_rx_interrupt_handler
+        jbsr    C_SYM(mfp_tt_rx_interrupt_handler)
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
@@ -676,7 +676,7 @@ _mfp_tt_rx_interrupt:
 #endif
         rte
 
-_mfp_tt_tx_interrupt:
+C_SYM(mfp_tt_tx_interrupt):
 #ifdef __mcoldfire__
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
@@ -684,7 +684,7 @@ _mfp_tt_tx_interrupt:
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
-        jbsr    _mfp_tt_tx_interrupt_handler
+        jbsr    C_SYM(mfp_tt_tx_interrupt_handler)
 
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
@@ -700,14 +700,14 @@ _mfp_tt_tx_interrupt:
 
 // ==== SCC interrupt handlers ============================================
 
-        .globl _scca_rx_interrupt
-        .globl _scca_tx_interrupt
-        .globl _scca_es_interrupt
-        .globl _sccb_rx_interrupt
-        .globl _sccb_tx_interrupt
-        .globl _sccb_es_interrupt
+        .globl C_SYM(scca_rx_interrupt)
+        .globl C_SYM(scca_tx_interrupt)
+        .globl C_SYM(scca_es_interrupt)
+        .globl C_SYM(sccb_rx_interrupt)
+        .globl C_SYM(sccb_tx_interrupt)
+        .globl C_SYM(sccb_es_interrupt)
 
-_scca_rx_interrupt:
+C_SYM(scca_rx_interrupt):
 #ifdef __mcoldfire__
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
@@ -716,7 +716,7 @@ _scca_rx_interrupt:
 #endif
 
         move.w  #0,-(sp)                // indicate port A
-        jbsr    _scc_rx_interrupt_handler
+        jbsr    C_SYM(scc_rx_interrupt_handler)
         lea     2(sp),sp
 
 #ifdef __mcoldfire__
@@ -727,7 +727,7 @@ _scca_rx_interrupt:
 #endif
         rte
 
-_scca_tx_interrupt:
+C_SYM(scca_tx_interrupt):
 #ifdef __mcoldfire__
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
@@ -736,7 +736,7 @@ _scca_tx_interrupt:
 #endif
 
         move.w  #0,-(sp)                // indicate port A
-        jbsr    _scc_tx_interrupt_handler
+        jbsr    C_SYM(scc_tx_interrupt_handler)
         lea     2(sp),sp
 
 #ifdef __mcoldfire__
@@ -747,7 +747,7 @@ _scca_tx_interrupt:
 #endif
         rte
 
-_scca_es_interrupt:
+C_SYM(scca_es_interrupt):
 #ifdef __mcoldfire__
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
@@ -756,7 +756,7 @@ _scca_es_interrupt:
 #endif
 
         move.w  #0,-(sp)                // indicate port A
-        jbsr    _scc_es_interrupt_handler
+        jbsr    C_SYM(scc_es_interrupt_handler)
         lea     2(sp),sp
 
 #ifdef __mcoldfire__
@@ -767,7 +767,7 @@ _scca_es_interrupt:
 #endif
         rte
 
-_sccb_rx_interrupt:
+C_SYM(sccb_rx_interrupt):
 #ifdef __mcoldfire__
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
@@ -776,7 +776,7 @@ _sccb_rx_interrupt:
 #endif
 
         move.w  #1,-(sp)                // indicate port B
-        jbsr    _scc_rx_interrupt_handler
+        jbsr    C_SYM(scc_rx_interrupt_handler)
         lea     2(sp),sp
 
 #ifdef __mcoldfire__
@@ -787,7 +787,7 @@ _sccb_rx_interrupt:
 #endif
         rte
 
-_sccb_tx_interrupt:
+C_SYM(sccb_tx_interrupt):
 #ifdef __mcoldfire__
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
@@ -796,7 +796,7 @@ _sccb_tx_interrupt:
 #endif
 
         move.w  #1,-(sp)                // indicate port B
-        jbsr    _scc_tx_interrupt_handler
+        jbsr    C_SYM(scc_tx_interrupt_handler)
         lea     2(sp),sp
 
 #ifdef __mcoldfire__
@@ -807,7 +807,7 @@ _sccb_tx_interrupt:
 #endif
         rte
 
-_sccb_es_interrupt:
+C_SYM(sccb_es_interrupt):
 #ifdef __mcoldfire__
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
@@ -816,7 +816,7 @@ _sccb_es_interrupt:
 #endif
 
         move.w  #1,-(sp)                // indicate port B
-        jbsr    _scc_es_interrupt_handler
+        jbsr    C_SYM(scc_es_interrupt_handler)
         lea     2(sp),sp
 
 #ifdef __mcoldfire__
@@ -837,7 +837,7 @@ _sccb_es_interrupt:
  *     The handler is allowed to modify D0-D2/A0-A2, but GCC-compiled
  *     code expects D2/A2 to be unchanged, so we must save/restore them.
  */
-_call_etv_critic:
+C_SYM(call_etv_critic):
         /*
          * call_etv_critic(WORD error, WORD device) takes two scalar args;
          * under -mfastcall they arrive in d0/d1 (only the low word of
@@ -863,7 +863,7 @@ _call_etv_critic:
         move.l  d2,-(sp)
         move.l  d0,-(sp)            // error code || device to stack
         moveq.l #-1,d0              // set default return code like TOS does
-        movea.l _etv_critic.w,a0
+        movea.l C_SYM(etv_critic).w,a0
         jsr     (a0)                // call handler
         addq.l  #4,sp               // fixup stack
         move.l  (sp)+,d2            // restore regs
@@ -873,7 +873,7 @@ _call_etv_critic:
  * (2) The default character-mode critical error handler
  *     Just returns the error code from the stack
  */
-_default_etv_critic:
+C_SYM(default_etv_critic):
         move.w  4(sp),d0            // get error code
         ext.l   d0
         rts
@@ -881,13 +881,13 @@ _default_etv_critic:
 #ifndef __mcoldfire__
 
 /*
- * _int_illegal - illegal instruction handler
+ * int_illegal - illegal instruction handler
  *
  * Convert an illegal 'MOVE CCR,...' to 'MOVE SR,...'
  * (see bios/processor.h for the full story)
  */
 
-_int_illegal:
+C_SYM(int_illegal):
         movem.l d0/a0,-(sp)             // saving d0 and a0 while we test
         movea.l 10(sp),a0               // the offending address
         move.w  (a0),d0                 // the offending instruction
@@ -904,12 +904,12 @@ ii_back:
         jra     illg_vec                // go directly to our panic handler
 
 /*
- * _int_priv - privileged instruction handler
+ * int_priv - privileged instruction handler
  *
  * Convert a privileged 'MOVE SR,...' to 'MOVE CCR,...'
  * (see bios/processor.h for the full story)
  */
-_int_priv:
+C_SYM(int_priv):
         movem.l d0/a0,-(sp)             // saving d0 and a0 while we test
         movea.l 10(sp),a0               // the offending address
         move.w  (a0),d0                 // the offending instruction
@@ -920,9 +920,9 @@ _int_priv:
         ori.w   #0x200,(a0)             // make it MOVE CCR,XX
 
 #if CONF_WITH_ADVANCED_CPU
-        cmpi.b  #20,_mcpu+3
+        cmpi.b  #20,C_SYM(mcpu)+3
         jeq     pi_020or030
-        cmpi.b  #30,_mcpu+3
+        cmpi.b  #30,C_SYM(mcpu)+3
         jne     pi_not30
 
 pi_020or030:
@@ -933,9 +933,9 @@ pi_020or030:
         jra     pi_next
 
 pi_not30:
-        cmpi.b  #40,_mcpu+3
+        cmpi.b  #40,C_SYM(mcpu)+3
         jeq     pi_inval
-        cmpi.b  #60,_mcpu+3
+        cmpi.b  #60,C_SYM(mcpu)+3
         jne     pi_next
 
         // on 68040 and 68060, push the whole dcache and invalidate the entire icache
@@ -961,7 +961,7 @@ pi_back:
 // ==== Trap 61 - unimplemented integer instruction entry point =============
 
 /*
- * _int_unimpint - unimplemented integer instruction handler
+ * int_unimpint - unimplemented integer instruction handler
  *
  * Only relevant for 68060s: certain instructions that were implemented
  * in earlier processors are no longer implemented, but raise this exception
@@ -1004,7 +1004,7 @@ pi_back:
 #define FSLW_WRITE  0x00A10001  /* Write, Byte access, Normal, User code, Software emulation */
 #define FSLW_READ   0x01210001  /* Read, Byte access, Normal, User code, Software emulation */
 
-_int_unimpint:
+C_SYM(int_unimpint):
         move.l  a0,-(sp)                    // save a0 temporarily
         move.l  6(sp),a0                    // a0 -> instruction causing interrupt
         btst.b  #0,(a0)                     // quick test for movep
@@ -1318,22 +1318,22 @@ mcp_ok:
 
 // ==== Trap 13 - BIOS entry point ==========================================
 
-_biostrap:
-        move.w  _bios_ent,d1
-        lea     _bios_vecs,a0
+C_SYM(biostrap):
+        move.w  C_SYM(bios_ent),d1
+        lea     C_SYM(bios_vecs),a0
         jra     biosxbios
 
 // ==== Trap 14 - XBIOS entry point =========================================
 
-_xbiostrap:
-        move.w  _xbios_ent,d1
-        lea     _xbios_vecs,a0
+C_SYM(xbiostrap):
+        move.w  C_SYM(xbios_ent),d1
+        lea     C_SYM(xbios_vecs),a0
 
 
 // ==== Trap 13+14 handler ==================================================
 
 biosxbios:
-        move.l  _savptr.w, a1
+        move.l  C_SYM(savptr).w, a1
 #ifdef __mcoldfire__
         move.w  (sp)+,d0        // Format/Vector Word
         andi.l  #0x3000,d0      // Keep the filler bits
@@ -1355,7 +1355,7 @@ bx_cf_nofiller:
         move.w  d0,-(a1)        // and save in save_area
         move.l  (sp)+,-(a1)     // save return address
 
-        tst.w   _longframe.w    // Check processor type
+        tst.w   C_SYM(longframe).w    // Check processor type
         jeq     bx_nolongframe  // ...when we support CPU >=68000
         move.w  (sp)+,-(a1)
 #endif
@@ -1367,7 +1367,7 @@ bx_nolongframe:
 #else
         movem.l d3-d7/a3-a7, -(a1)      // regs, including stack pointer
 #endif
-        move.l  a1, _savptr.w
+        move.l  a1, C_SYM(savptr).w
 
         btst    #13,d0          // were we in user mode?
         jne     bx_sp_ok        // yes, the sp already points to the arguments
@@ -1418,7 +1418,7 @@ bx_sp_ok:
 #endif
 
 bx_ret_exc:
-        move.l  _savptr.w, a1
+        move.l  C_SYM(savptr).w, a1
 #ifdef __mcoldfire__
         movem.l (a1), d3-d7/a3-a7       // Get regs back, including sp
         lea     40(a1), a1
@@ -1431,7 +1431,7 @@ bx_ret_exc:
         move.w  (a1)+,-(sp)     // sr
         move.w  #0x40B4,-(sp)   // store a fake Format/Vector Word
 #else
-        tst.w   _longframe.w    // Check longframe again: Is CPU >= 68000?
+        tst.w   C_SYM(longframe).w    // Check longframe again: Is CPU >= 68000?
         jeq     bx_nolong2
         move.w  (a1)+,-(sp)
 
@@ -1439,9 +1439,9 @@ bx_nolong2:
         move.l  (a1)+,-(sp)
         move.w  (a1)+,-(sp)
 #endif
-        move.l  a1, _savptr.w
+        move.l  a1, C_SYM(savptr).w
 // The RTE below is shared for other purposes.
-_just_rte:
+C_SYM(just_rte):
         rte                     // return with return value in D0
 
 /*
@@ -1449,7 +1449,7 @@ _just_rte:
  * These functions are called indirectly, ONLY from biosxbios.
  * The requested BIOS/XBIOS function number is in d0.
  */
-_xbios_unimpl:
+C_SYM(xbios_unimpl):
         /*
          * xbios_do_unimpl(WORD number) is an ordinary internal C
          * function: under -mfastcall its one scalar arg is expected in
@@ -1459,11 +1459,11 @@ _xbios_unimpl:
          * packed WORD.
          */
 #if CONF_WITH_MFASTCALL
-        jsr      _xbios_do_unimpl
+        jsr      C_SYM(xbios_do_unimpl)
 #else
         ext.l    d0
         move.l   d0,-(sp)
-        jsr      _xbios_do_unimpl
+        jsr      C_SYM(xbios_do_unimpl)
         addq.l   #4,sp
 #endif
         rts
@@ -1481,10 +1481,10 @@ _xbios_unimpl:
  * every supexec() call into a wild jump to an unrelated address.
  */
 #if CONF_WITH_MFASTCALL
-_supexec:
+C_SYM(supexec):
         jmp     (a0)
 #else
-_supexec:
+C_SYM(supexec):
         movea.l 4(a7),a0
         jmp     (a0)
 #endif
@@ -1498,7 +1498,7 @@ _supexec:
  * C call: int check_read_byte(long);
  * returns 0 if reading the address caused a bus error
  */
-_check_read_byte:
+C_SYM(check_read_byte):
         move.l  sp,d1
         move.l  (8).w,a1
         lea     berr.w(pc),a0
@@ -1545,11 +1545,11 @@ msgcrb:
 #endif /* CONF_WITH_BUS_ERROR */
 
 /* Compendium says that the scancode is supplied in register d0. */
-_keyclick:
+C_SYM(keyclick):
         move.w   4(sp),d0
         move.l   a2,-(sp)
         move.l   d2,-(sp)
-        move.l   _kcl_hook.w,a0
+        move.l   C_SYM(kcl_hook).w,a0
         jsr      (a0)
         move.l   (sp)+,d2
         move.l   (sp)+,a2
@@ -1566,4 +1566,4 @@ panic_stack:
 /* save area for trap13/14. */
 save_beg:       .ds.w   24*3    // d3-d7/a3-a7, sr, pc, vo = 24 words,
                                 // multiplied by 3 ("3 level deep reentrant")
-_trap_save_area:                     // End of Save storage
+C_SYM(trap_save_area):                     // End of Save storage

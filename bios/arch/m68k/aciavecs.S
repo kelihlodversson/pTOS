@@ -69,26 +69,26 @@
 
 #include "asmdefs.h"
 
-        .extern _clockvec
-        .extern _memmove
-        .extern _mfpint
-        .extern _kbd_int
-        .extern _amiga_init_keyboard_interrupt
+        .extern C_SYM(clockvec)
+        .extern C_SYM(memmove)
+        .extern C_SYM(mfpint)
+        .extern C_SYM(kbd_int)
+        .extern C_SYM(amiga_init_keyboard_interrupt)
 
-        .globl  _init_acia_vecs
+        .globl  C_SYM(init_acia_vecs)
 #if CONF_WITH_IKBD_ACIA || CONF_WITH_MIDI_ACIA
-        .globl  _int_acia
+        .globl  C_SYM(int_acia)
 #endif
 
 #if CONF_WITH_EXTENDED_MOUSE
-        .globl  _mousexvec
+        .globl  C_SYM(mousexvec)
 #endif
-        .globl  _kbdvecs
+        .globl  C_SYM(kbdvecs)
 
-        .globl  _ikbdiorec
-        .globl  _midiiorec
+        .globl  C_SYM(ikbdiorec)
+        .globl  C_SYM(midiiorec)
 
-        .globl  _call_mousevec
+        .globl  C_SYM(call_mousevec)
 
         .bss
 
@@ -104,14 +104,14 @@ midiibufbuf:    .ds.b   midi_bufsize
 // ==== IORECS =============================================================
 // Table of input-output records for kbd in, midi in
 
-_ikbdiorec:
+C_SYM(ikbdiorec):
 ikbdibuf:       .ds.l   1
 ikbdibufsz:     .ds.w   1
 ikbdibufhd:     .ds.w   1
 ikbdibuftl:     .ds.w   1
 ikbdibuflo:     .ds.w   1
 ikbdibufhi:     .ds.w   1
-_midiiorec:
+C_SYM(midiiorec):
 midiibuf:       .ds.l   1
 midiibufsz:     .ds.w   1
 midiibufhd:     .ds.w   1
@@ -124,10 +124,10 @@ midiibufhi:     .ds.w   1
 // in packets from IKBD (shown by a0 and 4(sp))
 
 #if CONF_WITH_EXTENDED_MOUSE
-_mousexvec:     .ds.l   1       // mouse-routine for additional buttons
+C_SYM(mousexvec):     .ds.l   1       // mouse-routine for additional buttons
 #endif
-kbdvec:         .ds.l   1       // must be right before _kbdvecs
-_kbdvecs:
+kbdvec:         .ds.l   1       // must be right before C_SYM(kbdvecs)
+C_SYM(kbdvecs):
 midivec:        .ds.l   1       // MIDI input
 vkbderr:        .ds.l   1       // keyboard error
 vmiderr:        .ds.l   1       // MIDI-Error
@@ -143,68 +143,68 @@ kbdlength:      .ds.b   1       // number of bytes remaining in current packet
 
         .text
 
-_init_acia_vecs:
+C_SYM(init_acia_vecs):
         // initialize the kbdvecs structure
         lea     just_rts,a0             // dummy vector
-        lea     _kbdvecs,a1
+        lea     C_SYM(kbdvecs),a1
 #if CONF_WITH_EXTENDED_MOUSE
-        move.l  a0,_mousexvec-_kbdvecs(a1)
+        move.l  a0,C_SYM(mousexvec)-C_SYM(kbdvecs)(a1)
 #endif
 #ifdef __mcoldfire__
         move.l  #_kbdvec,d0
-        move.l  d0,kbdvec-_kbdvecs(a1)
+        move.l  d0,kbdvec-C_SYM(kbdvecs)(a1)
 #else
-        move.l  #_kbdvec,kbdvec-_kbdvecs(a1)
+        move.l  #_kbdvec,kbdvec-C_SYM(kbdvecs)(a1)
 #endif
 #ifdef __mcoldfire__
         move.l  #_midivec,d0
-        move.l  d0,midivec-_kbdvecs(a1)
+        move.l  d0,midivec-C_SYM(kbdvecs)(a1)
 #else
-        move.l  #_midivec,midivec-_kbdvecs(a1)
+        move.l  #_midivec,midivec-C_SYM(kbdvecs)(a1)
 #endif
-        move.l  a0,vkbderr-_kbdvecs(a1)
-        move.l  a0,vmiderr-_kbdvecs(a1)
-        move.l  a0,statvec-_kbdvecs(a1)
-        move.l  a0,mousevec-_kbdvecs(a1)
+        move.l  a0,vkbderr-C_SYM(kbdvecs)(a1)
+        move.l  a0,vmiderr-C_SYM(kbdvecs)(a1)
+        move.l  a0,statvec-C_SYM(kbdvecs)(a1)
+        move.l  a0,mousevec-C_SYM(kbdvecs)(a1)
 #if CONF_WITH_IKBD_CLOCK
 #ifdef __mcoldfire__
-        move.l  #_clockvec,d0                        // in bios/clock.c
-        move.l  d0,clockvec-_kbdvecs(a1)
+        move.l  #C_SYM(clockvec),d0                        // in bios/clock.c
+        move.l  d0,clockvec-C_SYM(kbdvecs)(a1)
 #else
-        move.l  #_clockvec,clockvec-_kbdvecs(a1)     // in bios/clock.c
+        move.l  #C_SYM(clockvec),clockvec-C_SYM(kbdvecs)(a1)     // in bios/clock.c
 #endif
 #else
-        move.l  a0,clockvec-_kbdvecs(a1)
+        move.l  a0,clockvec-C_SYM(kbdvecs)(a1)
 #endif /* CONF_WITH_IKBD_CLOCK */
-        move.l  a0,joyvec-_kbdvecs(a1)
+        move.l  a0,joyvec-C_SYM(kbdvecs)(a1)
 #if CONF_WITH_MIDI_ACIA
 #ifdef __mcoldfire__
         move.l  #_midisys,d0
-        move.l  d0,midisys-_kbdvecs(a1)
+        move.l  d0,midisys-C_SYM(kbdvecs)(a1)
 #else
-        move.l  #_midisys,midisys-_kbdvecs(a1)
+        move.l  #_midisys,midisys-C_SYM(kbdvecs)(a1)
 #endif
 #endif /* CONF_WITH_MIDI_ACIA */
 #if CONF_WITH_IKBD_ACIA
 #ifdef __mcoldfire__
         move.l  #_ikbdsys,d0
-        move.l  d0,ikbdsys-_kbdvecs(a1)
+        move.l  d0,ikbdsys-C_SYM(kbdvecs)(a1)
 #else
-        move.l  #_ikbdsys,ikbdsys-_kbdvecs(a1)
+        move.l  #_ikbdsys,ikbdsys-C_SYM(kbdvecs)(a1)
 #endif
 #endif /* CONF_WITH_IKBD_ACIA */
 
         // initialize the iorecs
 #if CONF_WITH_MFASTCALL
-        lea     _ikbdiorec,a0
+        lea     C_SYM(ikbdiorec),a0
         lea     iorec_table,a1
         move.l  #iorec_table_end-iorec_table,d0
-        jsr     _memmove
+        jsr     C_SYM(memmove)
 #else
         pea     iorec_table_end-iorec_table
         pea     iorec_table
-        pea     _ikbdiorec
-        jsr     _memmove
+        pea     C_SYM(ikbdiorec)
+        jsr     C_SYM(memmove)
         lea     12(sp),sp
 #endif
 
@@ -233,18 +233,18 @@ _init_acia_vecs:
          */
 #if CONF_WITH_MFASTCALL
         moveq   #6,d0
-        move.l  #_int_acia,d1
-        jsr     _mfpint
+        move.l  #C_SYM(int_acia),d1
+        jsr     C_SYM(mfpint)
 #else
-        pea     _int_acia
+        pea     C_SYM(int_acia)
         move.l  #6,-(sp)
-        jsr     _mfpint
+        jsr     C_SYM(mfpint)
         addq.l  #8,sp
 #endif
 #endif /* CONF_WITH_IKBD_ACIA || CONF_WITH_MIDI_ACIA */
 
 #ifdef MACHINE_AMIGA
-        jsr     _amiga_init_keyboard_interrupt
+        jsr     C_SYM(amiga_init_keyboard_interrupt)
 #endif
         rts
 
@@ -267,7 +267,7 @@ iorec_table_end:
 // ==== Int 0x118 - midi/kbd interrupt routine ================
 //
 
-_int_acia:
+C_SYM(int_acia):
         // save scratch regs
         /* LVL: Strictly speaking there is no specification telling what
          * registers can be freely used by the vectors of the kbdvecs struct.
@@ -395,16 +395,16 @@ _kbdvec:
          * kbd_int(UBYTE scancode) is an ordinary internal C function.
          * _kbdvec is entered (per the KBDVECS convention documented
          * above) with the byte already in d0, zero-extended by every
-         * caller (_ikbdsys, _call_ikbdraw) -- under -mfastcall that's
+         * caller (_ikbdsys, call_ikbdraw()) -- under -mfastcall that's
          * exactly where kbd_int expects its one scalar arg, no push
          * needed; without -mshort the plain ABI now wants a full 4-byte
          * slot instead of a tightly packed WORD.
          */
 #if CONF_WITH_MFASTCALL
-        jsr     _kbd_int
+        jsr     C_SYM(kbd_int)
 #else
         move.l  d0,-(sp)
-        jsr     _kbd_int
+        jsr     C_SYM(kbd_int)
         addq.l  #4,sp
 #endif
 just_rts:
@@ -442,7 +442,7 @@ ikbdraw:
         jne     in_packet       // ikbdstate != 0 => go and add to the packet
         cmp.w   #0xf6,d0        // is byte a packet header?
         jcc     begin_packet    // byte >= 0xf6 => go begin receiving a packet
-        lea     _ikbdiorec,a0   // set args for kbdvec: a0->iorec (d0=ikbd byte)
+        lea     C_SYM(ikbdiorec),a0   // set args for kbdvec: a0->iorec (d0=ikbd byte)
         move.l  kbdvec,-(sp)    // push vector onto stack
         rts                     // and go there (stack is clean, no need to jsr)
 
@@ -568,7 +568,7 @@ kbd_jump_vec:
 /* Call mousevec from C                                                       */
 /******************************************************************************/
 
-_call_mousevec:
+C_SYM(call_mousevec):
         /*
          * call_mousevec(SBYTE *packet) is an ordinary internal C
          * function called from various C files: under -mfastcall its
@@ -599,8 +599,8 @@ _call_mousevec:
 /* Call ikbdraw from C                                                        */
 /******************************************************************************/
 
-        .globl  _call_ikbdraw
-_call_ikbdraw:
+        .globl  C_SYM(call_ikbdraw)
+C_SYM(call_ikbdraw):
         /*
          * call_ikbdraw(UBYTE b) is an ordinary internal C function.
          * ikbdraw's cmp.w #0xf6,d0 needs a clean, zero-extended byte in
@@ -625,8 +625,8 @@ _call_ikbdraw:
 /* Call joyvec from C                                                         */
 /******************************************************************************/
 
-        .globl  _call_joyvec
-_call_joyvec:
+        .globl  C_SYM(call_joyvec)
+C_SYM(call_joyvec):
         /*
          * call_joyvec(UBYTE *packet) is an ordinary internal C function:
          * under -mfastcall its one pointer arg arrives in a0 already,

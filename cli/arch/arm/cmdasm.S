@@ -1,7 +1,8 @@
 /*
  * cmdasm.S - assembler startup code of EmuCON
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2021 The EmuTOS development team
+ * Copyright (C) 2026 The pTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -25,13 +26,13 @@
 #define PD_p_env        0x2c
 #define SIZEOF_PD       0x100
 
-        .globl  _coma_start
-        .globl  _environment
-        .extern _cmdmain
+        .globl  C_SYM(coma_start)
+        .globl  C_SYM(environment)
+        .extern C_SYM(cmdmain)
 
         .text
 
-_coma_start:
+C_SYM(coma_start):
         // Our basepage address is in r0.
 
         // Set our temporary user stack.
@@ -40,7 +41,7 @@ _coma_start:
         // Save the environment string pointer from the basepage, before
         // r0 gets reused below for the Mshrink() call.
         ldr     r1, [r0, #PD_p_env]
-        ldr     r2, =_environment
+        ldr     r2, =C_SYM(environment)
         str     r1, [r2]
 
         // Mshrink to the needed size for TEXT+DATA+BSS plus 256 bytes.
@@ -55,14 +56,14 @@ _coma_start:
         mov     r0, #0x4a               // Mshrink(0, basepage, newsize)
         svc     1
 
-        bl      _cmdmain                // run the command interpreter
+        bl      C_SYM(cmdmain)                // run the command interpreter
 
         mov     r0, #0                  // Pterm0()
         svc     1
 
         .bss
 
-_environment: // Environment string, from the BASEPAGE
+C_SYM(environment): // Environment string, from the BASEPAGE
         .space  4
 
         // Space for the stack:

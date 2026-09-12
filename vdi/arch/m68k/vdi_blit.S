@@ -13,9 +13,9 @@
 
 
 
-        .globl  _fast_bit_blt
+        .globl  C_SYM(fast_bit_blt)
 
-        .extern _blit_info
+        .extern C_SYM(blit_info)
 
 // The following defines are offsets inside fringe code fragments
 // As a result this file cannot be converted to ColdFire using PortAsm.
@@ -789,7 +789,7 @@ f2op_15:
         jra     f2_drt          // %0x#@*!
 
 //
-// _fast_bit_blt - wrapper for bit_blt
+// C_SYM(fast_bit_blt) - wrapper for bit_blt
 //
 // It emulates the link opcode by setting a6 to FRAME_LEN plus the passed
 // address.  That way the rest of the assembler stuff can stay as
@@ -801,7 +801,7 @@ f2op_15:
 // technique used in memset.S/memmove.S, see the comment there for the
 // full correctness argument.
 #if CONF_WITH_MFASTCALL
-_fast_bit_blt:
+C_SYM(fast_bit_blt):
         move.l  a0,-(sp)                 // start of frame
         bsr     fast_bit_blt_stackbody
         lea     4(sp),sp                 // drop the frame built above
@@ -809,7 +809,7 @@ _fast_bit_blt:
 
 fast_bit_blt_stackbody:
 #else
-_fast_bit_blt:
+C_SYM(fast_bit_blt):
 #endif
         // A wrapper, so save and set up registers
         movea.l 4(sp),a0                // a0 -> start of frame

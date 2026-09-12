@@ -13,8 +13,8 @@
 
 #include "asmdefs.h"
 
-        .globl  _scasb
-        .globl  _expand_string
+        .globl  C_SYM(scasb)
+        .globl  C_SYM(expand_string)
 
 /*
  * const char *scasb(const char *str, char c)
@@ -24,13 +24,13 @@
  *
  */
 
-_scasb:
+C_SYM(scasb):
         /*
          * scasb(char *p, char b) takes one pointer argument and one
          * scalar argument. Under -mfastcall p arrives in a0 (already
          * where this code needs it) and b arrives in d0, not on the
          * stack; move it to d1, which is what the loop below reads (see
-         * the identical fix in stringasm.S's _strchr).
+         * the identical fix in stringasm.S's strchr()).
          */
 #if CONF_WITH_MFASTCALL
         move.l  d0,d1
@@ -62,7 +62,7 @@ scasb_end:
  *  byte too, but it is not included in the length value returned.
  */
 
-_expand_string:
+C_SYM(expand_string):
         /*
          * expand_string(WORD *dest, BYTE *src) takes two pointer
          * arguments. Under -mfastcall dest arrives in a0 and src in a1

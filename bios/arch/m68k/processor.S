@@ -19,26 +19,26 @@
 
 /* References */
 
-        .globl  _processor_init
-        .globl  _invalidate_instruction_cache
-        .globl  _instruction_cache_kludge
-        .globl  _flush_data_cache
-        .globl  _invalidate_data_cache
-        .globl  _mcpu
-        .globl  _fputype
+        .globl  C_SYM(processor_init)
+        .globl  C_SYM(invalidate_instruction_cache)
+        .globl  C_SYM(instruction_cache_kludge)
+        .globl  C_SYM(flush_data_cache)
+        .globl  C_SYM(invalidate_data_cache)
+        .globl  C_SYM(mcpu)
+        .globl  C_SYM(fputype)
 #if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
-        .globl  _cache_exists
-        .globl  _set_cache
-        .globl  _get_cache
+        .globl  C_SYM(cache_exists)
+        .globl  C_SYM(set_cache)
+        .globl  C_SYM(get_cache)
 #endif
 #if CONF_WITH_APOLLO_68080
-        .globl  _is_apollo_68080
+        .globl  C_SYM(is_apollo_68080)
 #endif
 
-        .extern _longframe              // If not 0, use long stack frames
-        .extern _setup_68030_pmmu
+        .extern C_SYM(longframe)              // If not 0, use long stack frames
+        .extern C_SYM(setup_68030_pmmu)
 #if CONF_WITH_68030_PMMU
-        .extern _pmmutree
+        .extern C_SYM(pmmutree)
 #endif
 
         .text
@@ -111,7 +111,7 @@ x040:   moveq   #40,d0          // assume 68040
         ADDIWL_0_A0             // check for addiw.l instruction
 // Apollo 68080
         moveq   #40,d0          // no fault, force 68040 detection
-        move.w  #1,_is_apollo_68080
+        move.w  #1,C_SYM(is_apollo_68080)
 #endif
 
 exit:
@@ -171,7 +171,7 @@ _detect_fpu:
         move.l  d1,(0x08).w
         nop                     // flush pipelines
 
-        move.l  _mcpu,d1        // check if 68000 or 68010
+        move.l  C_SYM(mcpu),d1        // check if 68000 or 68010
         cmpi.w  #20,d1
 #if CONF_WITH_SFP004
         jmi     sfp
@@ -248,23 +248,23 @@ nosfp:  move.l  a1,(0x08).w     // restore bus error
 /*
  * void processor_init(void) - sets mcpu and fputype.
  */
-_processor_init:
+C_SYM(processor_init):
 #ifndef __mcoldfire__           // On ColdFire, the caches are enabled by the pre-OS
         jbsr    _detect_cpu
         swap    d0
         move.w  d0,_mcpu_subtype    // save processor subtype
         clr.w   d0
         swap    d0
-        move.l  d0,_mcpu            // & type
+        move.l  d0,C_SYM(mcpu)            // & type
 #if CONF_WITH_ADVANCED_CPU
         jeq     m68000
 
-        move.w  #1,_longframe.w // this is a 68010 or later
+        move.w  #1,C_SYM(longframe).w // this is a 68010 or later
 m68000:
         jbsr    _detect_fpu
-        move.l  d0,_fputype
+        move.l  d0,C_SYM(fputype)
 
-        cmpi.b  #20,_mcpu+3
+        cmpi.b  #20,C_SYM(mcpu)+3
         jne     pi_chk030
 
 // We're running on a 68020
@@ -272,7 +272,7 @@ m68000:
         jra     init_cacr
 
 pi_chk030:
-        cmpi.b  #30,_mcpu+3
+        cmpi.b  #30,C_SYM(mcpu)+3
         jne     pi_chk040
 
 // We're running on a 68030 or a 68ec030
@@ -288,7 +288,7 @@ pi_chk030:
 // enabling the data cache.  The PMMU tree will ensure that caching is
 // inhibited for access to i/o addresses.
 
-        jsr     _setup_68030_pmmu
+        jsr     C_SYM(setup_68030_pmmu)
         PMOVE_TO_CRP(root_pointer_descriptor)   // tell system where tree is
         PMOVE_TO_TC(init_tc)        // enable PMMU
         PMOVE_TO_TTR0(init_ttr0)    // override PMMU tree for accesses to
@@ -315,10 +315,10 @@ init_cacr:
 
 pi_chk040:
         move.l  #0x80008000,d1  // set 040 CACR value: DE and IE
-        cmpi.b  #40,_mcpu+3
+        cmpi.b  #40,C_SYM(mcpu)+3
         jeq     m68040
         move.l  #0x80c08000,d1  // set 060 CACR value: EDC, EBC/CABC and EIC
-        cmpi.b  #60,_mcpu+3
+        cmpi.b  #60,C_SYM(mcpu)+3
         jeq     m68060
         jra     pi_done
 
@@ -379,7 +379,7 @@ pi_done:
  * we don't do that on ColdFire, because ColdFire executables are brand new
  * and supposed to be aware of cache issues.
  */
-_instruction_cache_kludge:
+C_SYM(instruction_cache_kludge):
 #ifdef __mcoldfire__
         rts
 #endif
@@ -400,15 +400,15 @@ _instruction_cache_kludge:
  * the cost to repopulate them later.
  */
 
-_invalidate_instruction_cache:
+C_SYM(invalidate_instruction_cache):
 #ifdef __mcoldfire__
         lea     cpushl_bc,a1    // flush/invalidate both caches
         jra     cpushl_loop
 #else
 #if CONF_WITH_ADVANCED_CPU
-        cmpi.b  #20,_mcpu+3
+        cmpi.b  #20,C_SYM(mcpu)+3
         jeq     ii_020or030
-        cmpi.b  #30,_mcpu+3
+        cmpi.b  #30,C_SYM(mcpu)+3
         jne     ii_not30
 
 ii_020or030:
@@ -418,9 +418,9 @@ ii_020or030:
         jra     ii_done
 
 ii_not30:
-        cmp.b   #40,_mcpu+3
+        cmp.b   #40,C_SYM(mcpu)+3
         jeq     ii_inval
-        cmpi.b  #60,_mcpu+3
+        cmpi.b  #60,C_SYM(mcpu)+3
         jne     ii_done
 
 ii_inval:
@@ -447,7 +447,7 @@ ii_done:
  *   copyback:
  *     we must push the data cache (the backing memory may be stale)
  */
-_flush_data_cache:
+C_SYM(flush_data_cache):
 #ifdef __mcoldfire__
         lea     cpushl_dc,a1    // flush/invalidate data cache
         jra     cpushl_loop
@@ -456,7 +456,7 @@ _flush_data_cache:
 
         // 68020 has no data cache, 68030 data cache is always write-through,
         // in either case no action is necessary.
-        cmpi.b  #40,_mcpu+3
+        cmpi.b  #40,C_SYM(mcpu)+3
         jmi     fd_no_dirty
 
         // 68040/68060 data caches are either write-through or copyback
@@ -478,22 +478,22 @@ fd_no_dirty:
  * for both modes of data cache (write_through and copyback),
  * the cache needs to be invalidated
  */
-_invalidate_data_cache:
+C_SYM(invalidate_data_cache):
 #ifdef __mcoldfire__
         lea     cpushl_dc,a1    // flush/invalidate data cache
         // fall through cpushl_loop
 #else
 #if CONF_WITH_ADVANCED_CPU
-        cmpi.b  #30,_mcpu+3
+        cmpi.b  #30,C_SYM(mcpu)+3
         jne     ic_not30
         MOVEC_CACR_D0                   // get current cacr
         ori.w   #0x0800,d0              // set CD bit
         MOVEC_D0_CACR                   // clear data cache
         jra     ic_done
 ic_not30:
-        cmpi.b  #40,_mcpu+3
+        cmpi.b  #40,C_SYM(mcpu)+3
         jeq     ic_inval
-        cmpi.b  #60,_mcpu+3
+        cmpi.b  #60,C_SYM(mcpu)+3
         jne     ic_done
 
 ic_inval:
@@ -575,7 +575,7 @@ cpushl_bc:
  * WORD cache_exists(void);
  *  returns 1 if this file's cache control (below) supports the current
  *  processor, 0 otherwise. Note this is narrower than "has a cache": a
- *  bare 68020 does have one, but _processor_init() above never sets up
+ *  bare 68020 does have one, but C_SYM(processor_init)() above never sets up
  *  cacr_enable for it, so it's excluded here too.
  *
  * void set_cache(WORD enable);
@@ -584,27 +584,27 @@ cpushl_bc:
  * WORD get_cache(void);
  *  returns 0 if the cache is fully disabled or not present, != 0 otherwise
  */
-_cache_exists:
-        moveq.l #0,d0               // assume 68000/68010/68020: _processor_init()
-        cmpi.b  #30,_mcpu+3         // only sets up cacr_enable for 68030 and up
+C_SYM(cache_exists):
+        moveq.l #0,d0               // assume 68000/68010/68020: C_SYM(processor_init)()
+        cmpi.b  #30,C_SYM(mcpu)+3         // only sets up cacr_enable for 68030 and up
         jmi     ce_exit
         moveq.l #1,d0
 ce_exit:
         rts
 
-_set_cache:
+C_SYM(set_cache):
         /*
          * set_cache(WORD enable) is an ordinary internal C function.
          * Under -mfastcall enable arrives in d0, but d0 is about to be
-         * clobbered by the _cache_exists call below and then reused as
-         * a work register, so stash it in d1 (unused by _cache_exists)
+         * clobbered by the C_SYM(cache_exists) call below and then reused as
+         * a work register, so stash it in d1 (unused by C_SYM(cache_exists))
          * first. Without -mshort enable's slot is a full 4 bytes now,
          * so its tested low word moved from 4(sp) to 6(sp).
          */
 #if CONF_WITH_MFASTCALL
         move.l  d0,d1
 #endif
-        jbsr    _cache_exists
+        jbsr    C_SYM(cache_exists)
         tst.w   d0
         jeq     sc_exit             // no cache, do nothing
         moveq.l #0,d0               // assume disable
@@ -614,7 +614,7 @@ _set_cache:
         tst.w   6(sp)
 #endif
         jne     sc_enable           // no, enable
-        cmpi.b  #40,_mcpu+3         // possible dirty data in cache?
+        cmpi.b  #40,C_SYM(mcpu)+3         // possible dirty data in cache?
         jmi     sc_cacr             // no, go do it
         nop
         CPUSHA_DC                   // 040/060: yes, clean the data cache first
@@ -622,7 +622,7 @@ _set_cache:
         jra     sc_cacr             // now go do it
 sc_enable:
         move.l  cacr_enable,d0      // enabling: set processor-appropriate value
-        cmpi.b  #40,_mcpu+3         // 040/060 ?
+        cmpi.b  #40,C_SYM(mcpu)+3         // 040/060 ?
         jmi     sc_cacr             // no, just go set cacr
         nop
         CINVA_BC                    // 040/060: invalidate the caches first
@@ -632,8 +632,8 @@ sc_cacr:
 sc_exit:
         rts
 
-_get_cache:
-        jbsr    _cache_exists
+C_SYM(get_cache):
+        jbsr    C_SYM(cache_exists)
         tst.w   d0
         jeq     gc_exit             // no cache, do nothing
 
@@ -650,7 +650,7 @@ gc_exit:
 #if CONF_WITH_68030_PMMU
         .even   // Mandatory in ELF section .rodata
 root_pointer_descriptor:
-        .dc.l   0x80000002,_pmmutree // lower limit 0, short format, table at '_pmmutree'
+        .dc.l   0x80000002,C_SYM(pmmutree) // lower limit 0, short format, table at 'C_SYM(pmmutree)'
 init_tc:
         .dc.l   0x80F04445          // enable, 32K pages, table indexes=4/4/4/5
 init_ttr0:                          // transparent translation is enabled for all FCs
@@ -665,9 +665,9 @@ init_ttr1:                          // transparent translation is enabled for al
         .even
 
 #ifndef __mcoldfire__
-_mcpu:          .ds.l   1
+C_SYM(mcpu):          .ds.l   1
 _mcpu_subtype:  .ds.w   1
-_fputype:       .ds.l   1
+C_SYM(fputype):       .ds.l   1
 temp:           .ds.l   1
 #endif
 
@@ -676,5 +676,5 @@ cacr_enable:    .ds.l   1
 #endif
 
 #if CONF_WITH_APOLLO_68080
-_is_apollo_68080:   .ds.w   1
+C_SYM(is_apollo_68080):   .ds.w   1
 #endif

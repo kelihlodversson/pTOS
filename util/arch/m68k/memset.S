@@ -19,8 +19,8 @@
 
 // ==== Definitions ==========================================================
 
-        .globl  _memset
-        .globl  _bzero_nobuiltin
+        .globl  C_SYM(memset)
+        .globl  C_SYM(bzero_nobuiltin)
 
         .text
 
@@ -39,7 +39,7 @@
 // to a call to memset()
 //
 #if CONF_WITH_MFASTCALL
-_bzero_nobuiltin:
+C_SYM(bzero_nobuiltin):
         move.l  d0,-(sp)         // size
         move.l  a0,-(sp)         // address
         bsr     bzero_stackbody
@@ -48,32 +48,32 @@ _bzero_nobuiltin:
 
 bzero_stackbody:
 #else
-_bzero_nobuiltin:
+C_SYM(bzero_nobuiltin):
 #endif
         move.l   4(sp),a0
         move.l   8(sp),d0
         move.l   d7,-(sp)
         moveq    #0,d7
-        jra      memset
+        jra      memset_common
 //
 // void *memset(void *address, int c, unsigned long size)
 // fills with byte c, returns the given address.
 
 #if CONF_WITH_MFASTCALL
-_memset:
+C_SYM(memset):
         move.l  d1,-(sp)         // size
         move.l  d0,-(sp)         // c
         move.l  a0,-(sp)         // address
         bsr     memset_stackbody
         lea     12(sp),sp        // drop the frame built above
         movea.l d0,a0            // pointer return goes in a0 under fastcall;
-                                 // see memmove.S's _memcpy/_memmove for the
+                                 // see memmove.S's memcpy()/memmove() for the
                                  // same fixup and the full explanation
         rts
 
 memset_stackbody:
 #else
-_memset:
+C_SYM(memset):
 #endif
         move.l   4(sp),a0
         move.l   d7,-(sp)
@@ -93,7 +93,7 @@ _memset:
 
 // at this point, a0=block, d7=pattern, d0=size, (sp)=saved d7
 // and we do not read the stack args any more.
-memset:
+memset_common:
         move.l   a0,d1
         btst     #0,d1
         jeq      even

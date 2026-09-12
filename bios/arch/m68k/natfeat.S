@@ -15,13 +15,13 @@
 // ==== References ===========================================================
 
 #if DETECT_NATIVE_FEATURES
-        .globl  _detect_native_features
-        .globl  _natfeat_cookie
+        .globl  C_SYM(detect_native_features)
+        .globl  C_SYM(natfeat_cookie)
 #endif
 #if CONF_WITH_XHDI
-        .globl  _xhdi_vec
+        .globl  C_SYM(xhdi_vec)
 #endif
-        .extern _xhdi_handler
+        .extern C_SYM(xhdi_handler)
 
         .equ vec_illegal, 0x10       // illegal exception vector
 
@@ -36,7 +36,7 @@
 /*
  * NatFeats test
  */
-_detect_native_features:
+C_SYM(detect_native_features):
         moveq   #0,d0               // assume no NatFeats available
         move.l  sp,a1
         move.l  vec_illegal,a0
@@ -70,7 +70,7 @@ nf_version_name:
 // ==== NatFeat cookie points here ===========================================
 // ===========================================================================
 
-_natfeat_cookie:
+C_SYM(natfeat_cookie):
         .dc.l   0x20021021              // NatFeat magic constant
         .dc.l   nfID
         .dc.l   nfCall
@@ -93,7 +93,7 @@ nfCall:
 // ===========================================================================
 
         .dc.l   0x27011992              // XHDI magic constant
-_xhdi_vec:
+C_SYM(xhdi_vec):
         // Important: The XHDI specification requires us to backup all the registers
 #ifdef __mcoldfire__
         lea     -12(sp),sp
@@ -109,10 +109,10 @@ _xhdi_vec:
          */
 #if CONF_WITH_MFASTCALL
         lea     16(sp),a0
-        jsr     _xhdi_handler
+        jsr     C_SYM(xhdi_handler)
 #else
         pea     16(sp)
-        jsr     _xhdi_handler
+        jsr     C_SYM(xhdi_handler)
         addq.l  #4,sp
 #endif
 #ifdef __mcoldfire__

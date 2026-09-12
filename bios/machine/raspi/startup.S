@@ -1,7 +1,5 @@
 /*
- * startup.S - EmuTOS startup module
- *
- * Copyright (C) 2001-2017 by the EmuTOS development team
+ * startup.S - Raspberry Pi startup module
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -31,17 +29,17 @@
 #endif
 // ==== Definitions ==========================================================
 
-        .globl  _os_entry
+        .globl  C_SYM(os_entry)
 
 // ==== References ===========================================================
 
         // TOS System variables
-        .extern _stktop
+        .extern C_SYM(stktop)
 #        // Memory
-        .extern _raspi_vcmem_init  // initialize the memory size and system variables
+        .extern C_SYM(raspi_vcmem_init)  // initialize the memory size and system variables
 
         // BIOS C part
-        .extern _biosmain     // BIOS C entry point
+        .extern C_SYM(biosmain)     // BIOS C entry point
 
         // Overall memory map
         .extern __endvdibss   // end of VDI BSS
@@ -60,64 +58,64 @@
  * OSHEADER
  */
 
-        .globl  _main           // OS entry point
-        .globl  _os_beg
-        .globl  _os_magic
-        .globl  _os_date
-        .globl  _os_conf
-        .globl  _os_dosdate
-        .globl  _root
-        .globl  _shifty
-        .globl  _run
+        .globl  C_SYM(main)           // OS entry point
+        .globl  C_SYM(os_beg)
+        .globl  C_SYM(os_magic)
+        .globl  C_SYM(os_date)
+        .globl  C_SYM(os_conf)
+        .globl  C_SYM(os_dosdate)
+        .globl  C_SYM(root)
+        .globl  C_SYM(shifty)
+        .globl  C_SYM(run)
 
 
 
 // Note that this difers from 68k TOS. We put the ARM exception vector table
 // here instead of version information.
-_os_entry:
+C_SYM(os_entry):
 .p2align 5 // The vector table needs to have all 5 lowest bits set to zero
 arm_vectors:
-    b   _main                   // os_entry, branch to _main
-    b   _arm_dispatch_undef
-    b   _arm_dispatch_svc
-    b   _arm_dispatch_prefetch_abort
-    b   _arm_dispatch_data_abort
-    b   _arm_dispatch_undef
-    b   _arm_dispatch_irq
-    b   _arm_dispatch_fiq
+    b   C_SYM(main)                   // os_entry, branch to _main
+    b   C_SYM(arm_dispatch_undef)
+    b   C_SYM(arm_dispatch_svc)
+    b   C_SYM(arm_dispatch_prefetch_abort)
+    b   C_SYM(arm_dispatch_data_abort)
+    b   C_SYM(arm_dispatch_undef)
+    b   C_SYM(arm_dispatch_irq)
+    b   C_SYM(arm_dispatch_fiq)
 
 os_version:
     .word   TOS_VERSION // os_version, TOS version
 reseth:
-    .word   _main       // reseth, pointer to reset handler
-_os_beg:
-    .word   _os_entry   // os_beg, base of os = _sysbase
+    .word   C_SYM(main)       // reseth, pointer to reset handler
+C_SYM(os_beg):
+    .word   C_SYM(os_entry)   // os_beg, base of os = _sysbase
 os_end:
     .word   __endvdibss // os_end, end of VDI BSS
 os_res1:
-    .word   _main       // os_res1, reserved
-_os_magic:
+    .word   C_SYM(main)       // os_res1, reserved
+C_SYM(os_magic):
 #if CONF_WITH_AES
-    .word   _ui_mupb    // os_magic, pointer to GEM's MUPB
+    .word   C_SYM(ui_mupb)    // os_magic, pointer to GEM's MUPB
 #else
     .word   0           // os_magic, pointer to GEM's MUPB
 #endif
-_os_date:
+C_SYM(os_date):
     .word   OS_DATE     // os_date, Date of system build
-_os_conf:               // Flag for PAL version + country
+C_SYM(os_conf):               // Flag for PAL version + country
 #if CONF_MULTILANG
     .word   OS_CONF_MULTILANG
 #else
     .word   (OS_COUNTRY << 1) + OS_PAL
 #endif
-_os_dosdate:
+C_SYM(os_dosdate):
     .word   OS_DOSDATE  // os_date, Date of system build in GEMDOS format
 os_root:
-    .word   _root       // Pointer to the GEMDOS mem pool
+    .word   C_SYM(root)       // Pointer to the GEMDOS mem pool
 os_kbshift:
-    .word   _shifty     // Pointer to the keyboard shift keys states
+    .word   C_SYM(shifty)     // Pointer to the keyboard shift keys states
 os_run:
-    .word   _run        // Pointer to a pointer to the actual basepage
+    .word   C_SYM(run)        // Pointer to a pointer to the actual basepage
 os_dummy:
     .ascii  "CAMELTOS"
 
@@ -127,10 +125,10 @@ os_dummy:
  *
  */
 
-.extern _raspi_screen_init
-.extern _raspi_screen_debug
+.extern C_SYM(raspi_screen_init)
+.extern C_SYM(raspi_screen_debug)
 .balign 4
-_main:
+C_SYM(main):
 
     /*
      * The boot loader hands us r0 = 0, r1 = the ARM Linux machine type and
@@ -151,7 +149,7 @@ _main:
     ands r3, r3, #3
     bne 1f
 #endif
-    ldr r3, =_arm_boot_regs
+    ldr r3, =C_SYM(arm_boot_regs)
     stmia r3, {r0-r2}
 1:
 
@@ -161,7 +159,7 @@ _main:
 #endif
 
 #ifndef TARGET_RPI1
-    ldr r1, =_start_in_hyp
+    ldr r1, =C_SYM(start_in_hyp)
     mov r2, #0
     str r2, [r1]
     bl  switch_from_hyp
@@ -221,15 +219,15 @@ _core0:
     /* Note that we set all the stack pointers to point to the same place,
       as we actually only use the user and supervisor stack pointer. */
     cps #0x11               /* set fiq mode */
-    ldr sp, =_stktop
+    ldr sp, =C_SYM(stktop)
     cps #0x12               /* set irq mode */
-    ldr sp, =_stktop
+    ldr sp, =C_SYM(stktop)
     cps #0x17               /* set abort mode */
-    ldr sp, =_stktop
+    ldr sp, =C_SYM(stktop)
     cps #0x1B               /* set "undefined" mode */
-    ldr sp, =_stktop
+    ldr sp, =C_SYM(stktop)
     cps #0x13               /* set supervisor mode */
-    ldr sp, =_stktop
+    ldr sp, =C_SYM(stktop)
 
     ldr r0, =arm_vectors
     mcr p15, 0, r0, c12, c0, 0      /* set VBAR to our table at the start of the os */
@@ -265,7 +263,7 @@ _core0:
     mov r0, #0x4d                   /* M: immediately before MMU */
     bl  early_uart_putc
 #endif
-    bl     _raspi_vcmem_init         // ask the video core for the memory configuration (needs sp)
+    bl     C_SYM(raspi_vcmem_init)         // ask the video core for the memory configuration (needs sp)
 
 #if CONF_WITH_RASPI_UART0
     mov r0, #0x52                   /* R: MMU return */
@@ -277,7 +275,7 @@ _core0:
  * The BIOS startup goes on in bios.c
  */
 
-    b     _biosmain
+    b     C_SYM(biosmain)
 
 #if CONF_WITH_RASPI_UART0
 /* The firmware has already selected and initialized the PL011.  Do not wait
@@ -309,7 +307,7 @@ switch_from_hyp:
     /* branch if not HYP mode */
     bne 1f
 
-    ldr r1, =_start_in_hyp
+    ldr r1, =C_SYM(start_in_hyp)
     mov r2, #1
     str r2, [r1]
 
@@ -343,8 +341,8 @@ _start_secondary:
 
 #endif
 
-    .globl _arm_dispatch_undef
-_arm_dispatch_undef:
+    .globl C_SYM(arm_dispatch_undef)
+C_SYM(arm_dispatch_undef):
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervisor stack */
     cps    #0x13           /* switch to supervisor mode */
 
@@ -370,8 +368,8 @@ _arm_dispatch_undef:
     ldmfd  sp, {r0-r14}^   /* restore user registers */
     rfefd  sp!             /* load pc and CPSR from stack */
 
-    .globl _arm_dispatch_svc
-_arm_dispatch_svc:
+    .globl C_SYM(arm_dispatch_svc)
+C_SYM(arm_dispatch_svc):
     // Taking the svc exception itself already masked IRQ (architectural,
     // not our choice). Unlike m68k TRAP #n, which never raised the
     // interrupt priority level, that means any handler below which blocks
@@ -388,8 +386,8 @@ _arm_dispatch_svc:
     ldr ip, [ip, #+0x80]   // load handler address at 80 + ip
     bx  ip                 // jump to it. It will use the registers as arguments.
 
-    .globl _arm_dispatch_prefetch_abort
-_arm_dispatch_prefetch_abort:
+    .globl C_SYM(arm_dispatch_prefetch_abort)
+C_SYM(arm_dispatch_prefetch_abort):
 
     sub    lr, lr, #4      /* lr: correct PC of aborted program */
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervisor stack */
@@ -410,8 +408,8 @@ _arm_dispatch_prefetch_abort:
     ldmfd  sp, {r0-r14}^   /* restore user registers */
     rfefd  sp!             /* load pc and CPSR from stack */
 
-    .globl _arm_dispatch_data_abort
-_arm_dispatch_data_abort:
+    .globl C_SYM(arm_dispatch_data_abort)
+C_SYM(arm_dispatch_data_abort):
     sub lr, lr, #8         /* lr: correct PC of aborted program */
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervisor stack */
     cps    #0x13           /* switch to supervisor mode */
@@ -431,20 +429,20 @@ _arm_dispatch_data_abort:
     ldmfd  sp, {r0-r14}^   /* restore user registers */
     rfefd  sp!             /* load pc and CPSR from stack */
 
-    .extern _raspi_int_handler
-    .globl _arm_dispatch_irq
-_arm_dispatch_irq:
+    .extern C_SYM(raspi_int_handler)
+    .globl C_SYM(arm_dispatch_irq)
+C_SYM(arm_dispatch_irq):
     sub    lr, lr, #4      /* lr: correct PC of aborted program */
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervisor stack */
     cps    #0x13           /* switch to supervisor mode */
     stmfd  sp!, {r0-r3, ip, lr} /* store registers not saved by the C handler (link register is important in case the interrupt interrupted while the processor was in SVC mode.)*/
-    bl     _raspi_int_handler
+    bl     C_SYM(raspi_int_handler)
     ldmfd  sp!, {r0-r3, ip, lr}
     rfefd  sp!             /* load pc and CPSR from stack */
 
 
-    .globl _arm_dispatch_fiq
-_arm_dispatch_fiq:
+    .globl C_SYM(arm_dispatch_fiq)
+C_SYM(arm_dispatch_fiq):
     sub    lr, lr, #4      /* lr: correct PC of aborted program */
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervisor stack */
     cps    #0x13           /* switch to supervisor mode */
@@ -480,8 +478,8 @@ _secure_monitor:
 #endif
 
 .bss
-.global _start_in_hyp
-_start_in_hyp: .ds.l 1
+.global C_SYM(start_in_hyp)
+C_SYM(start_in_hyp): .ds.l 1
 
 /*
  * r0, r1 and r2 as saved at the top of _main.  This is BSS, so like
@@ -489,5 +487,5 @@ _start_in_hyp: .ds.l 1
  * raspi_vcmem_init().  The layout matches arm_boot_regs_t in
  * include/arch/arm/arm_boot.h.
  */
-.global _arm_boot_regs
-_arm_boot_regs: .ds.l 3
+.global C_SYM(arm_boot_regs)
+C_SYM(arm_boot_regs): .ds.l 3

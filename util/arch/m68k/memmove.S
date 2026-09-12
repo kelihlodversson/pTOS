@@ -51,8 +51,8 @@
 #define BREAKEVEN 12    // dividing line between simple & complicated
                         // versions of memcpy(): good for 68000 & 68030
 
-        .globl  _memmove
-        .globl  _memcpy
+        .globl  C_SYM(memmove)
+        .globl  C_SYM(memcpy)
 
         .text
 
@@ -77,14 +77,14 @@
  * exact frame from the incoming registers and bsr into the unchanged body:
  * the frame this pushes (dst, src, length, in that order, right below the
  * bsr's own return address) is byte-for-byte what a cdecl caller would
- * have pushed before "jsr _memcpy", so the body needs no other change.
+ * have pushed before "jsr memcpy", so the body needs no other change.
  * Its own rts pops only the bsr's return address (matching plain cdecl
  * callee behaviour: the *caller* pops arguments, not the callee), landing
  * back here with the pushed frame still on the stack, in generic cdecl code
  * as much as a real caller's, so we drop it as generic cdecl code would.
  */
 #if CONF_WITH_MFASTCALL
-_memcpy:
+C_SYM(memcpy):
         move.l  d0,-(sp)         // length
         move.l  a1,-(sp)         // src
         move.l  a0,-(sp)         // dst
@@ -98,25 +98,25 @@ _memcpy:
                                  // needed by any non-fastcall caller left)
         rts
 
-_memmove:
+C_SYM(memmove):
         move.l  d0,-(sp)         // length
         move.l  a1,-(sp)         // src
         move.l  a0,-(sp)         // dst
         bsr     memmove_stackbody
         lea     12(sp),sp        // drop the frame built above
-        movea.l d0,a0            // see _memcpy above
+        movea.l d0,a0            // see memcpy() above
         rts
 
 memcpy_stackbody:
 #else
-_memcpy:
+C_SYM(memcpy):
 #endif
 #ifndef __mcoldfire__
         move.l   8(sp),a0        // load source pointer
         move.l   4(sp),a1        // load destination pointer
         move.l   12(sp),d0       // get length
         cmpi.l   #BREAKEVEN,d0   // is it worth doing the complicated version?
-        jge      memmove         // yes, branch
+        jge      memmove_common         // yes, branch
         jra      sdecr
 sloop:
         move.b   (a0)+,(a1)+
@@ -128,11 +128,11 @@ sdecr:
 #if CONF_WITH_MFASTCALL
 memmove_stackbody:
 #else
-_memmove:
+C_SYM(memmove):
 #endif
         move.l   8(sp),a0        // load source pointer
         move.l   4(sp),a1        // load destination pointer
-memmove:
+memmove_common:
         cmp.l    a1,a0
         jgt      memcopy         // if src > dst, copy will do fine.
         jeq      end             // if src == dst, nothing to do.

@@ -12,15 +12,15 @@
 
 #include "asmdefs.h"
 
-        .globl  _strlencpy
-        .globl  _strchr
+        .globl  C_SYM(strlencpy)
+        .globl  C_SYM(strchr)
 
 /*
  * WORD strlencpy(char *RESTRICT dest, const char *RESTRICT src)
  * as strcpy but returns the length of the string instead.
  */
 
-_strlencpy:
+C_SYM(strlencpy):
         /*
          * strlencpy(char *RESTRICT dest, const char *RESTRICT src) has two
          * pointer arguments. Under -mfastcall they already arrive exactly
@@ -55,13 +55,13 @@ lstcpy_loop:
  * returns a pointer to the first occurrence of char c in string s, or NULL.
  */
 
-_strchr:
+C_SYM(strchr):
         /*
          * strchr(const char *s, int c) takes one pointer argument and one
          * int argument. Under -mfastcall s arrives in a0 (already where
          * this code needs it -- no setup needed) and c arrives in d0, not
          * on the stack; move it to d1, which is what the loop below reads
-         * (see the identical fix in this file's _strlencpy).
+         * (see the identical fix in this file's strlencpy()).
          */
 #if CONF_WITH_MFASTCALL
         move.l  d0,d1

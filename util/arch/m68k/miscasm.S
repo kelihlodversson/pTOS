@@ -21,8 +21,8 @@
  *  instead), its arguments are explicitly typed, so it saves/restores
  *  d2/a2 on the stack around the trap rather than in static storage.
  */
-        .globl  _trap1_pexec    // Reentrant Pexec call
-_trap1_pexec:
+        .globl  C_SYM(trap1_pexec)    // Reentrant Pexec call
+C_SYM(trap1_pexec):
 #if CONF_WITH_MFASTCALL
         /*
          * Build the GEMDOS wire frame trap #1 expects (opcode, mode,
@@ -100,8 +100,8 @@ _trap1_pexec:
  * Stop the CPU until an interrupt occurs.
  * This may save some host CPU time on emulators (i.e. ARAnyM).
  */
-        .globl  _stop_until_interrupt
-_stop_until_interrupt:
+        .globl  C_SYM(stop_until_interrupt)
+C_SYM(stop_until_interrupt):
         move.w  sr,d0
         move.w  d0,d1           // Backup
 #ifdef __mcoldfire__
@@ -168,8 +168,8 @@ stop7:
 #endif /* USE_STOP_INSN_TO_FREE_HOST_CPU */
 
 // The RTS below is shared for other purposes.
-        .globl  _just_rts
-_just_rts:
+        .globl  C_SYM(just_rts)
+C_SYM(just_rts):
         rts
 
 /*
@@ -187,7 +187,7 @@ _just_rts:
  *
  *  if you do not need rounding, use mul_div() from intmath.h instead!
  */
-        .globl  _mul_div_round
+        .globl  C_SYM(mul_div_round)
 /*
  * mul_div_round(WORD mult1, WORD mult2, WORD divisor) takes three scalar
  * arguments and had no -mfastcall branch at all: under fastcall they
@@ -199,7 +199,7 @@ _just_rts:
  * now gets its own 4-byte slot instead of being packed 2 bytes apart, so
  * mult1/mult2/divisor's low words moved from 4/6/8(sp) to 6/10/14(sp).
  */
-_mul_div_round:
+C_SYM(mul_div_round):
 #ifdef __mcoldfire__
 #if CONF_WITH_MFASTCALL
         add.l   d1,d1           // d1 = mult2 * 2
@@ -252,10 +252,10 @@ mdrminus:
  * below provide the necessary assembler support.
  */
 
-        .globl   _protect_v
-        .globl   _protect_w
-        .globl   _protect_ww
-        .globl   _protect_wlwwwl
+        .globl   C_SYM(protect_v)
+        .globl   C_SYM(protect_w)
+        .globl   C_SYM(protect_ww)
+        .globl   C_SYM(protect_wlwwwl)
 
 /*
  * LONG protect_v(LONG (*func)(void));
@@ -283,7 +283,7 @@ mdrminus:
  * left there for the caller to pop after we return, not touched here.
  */
 #if CONF_WITH_MFASTCALL
-_protect_v:
+C_SYM(protect_v):
         move.l   a0,-(sp)                // func
         bsr      protect_v_stackbody
         lea      4(sp),sp                // drop func pushed above (no caller stack args)
@@ -291,7 +291,7 @@ _protect_v:
 
 protect_v_stackbody:
 #else
-_protect_v:
+C_SYM(protect_v):
 #endif
         move.l   4(sp),a0
         move.l   a2,-(sp)
@@ -305,7 +305,7 @@ _protect_v:
  * LONG protect_w(LONG (*func)(WORD), WORD);
  */
 #if CONF_WITH_MFASTCALL
-_protect_w:
+C_SYM(protect_w):
         ext.l    d0                      // a, sign-extended to a full slot
         move.l   d0,-(sp)                // a
         move.l   a0,-(sp)                // func
@@ -315,7 +315,7 @@ _protect_w:
 
 protect_w_stackbody:
 #else
-_protect_w:
+C_SYM(protect_w):
 #endif
         move.l   4(sp),a0
         /*
@@ -337,7 +337,7 @@ _protect_w:
  * LONG protect_ww(LONG (*func)(WORD), WORD, WORD);
  */
 #if CONF_WITH_MFASTCALL
-_protect_ww:
+C_SYM(protect_ww):
         ext.l    d1                      // b, sign-extended to a full slot
         move.l   d1,-(sp)                // b
         ext.l    d0                      // a, sign-extended to a full slot
@@ -349,7 +349,7 @@ _protect_ww:
 
 protect_ww_stackbody:
 #else
-_protect_ww:
+C_SYM(protect_ww):
 #endif
         move.l   4(sp),a0
         /*
@@ -382,7 +382,7 @@ _protect_ww:
  * 12(sp) relative to our own entry sp.
  */
 #if CONF_WITH_MFASTCALL
-_protect_wlwwwl:
+C_SYM(protect_wlwwwl):
         move.l   12(sp),-(sp)            // f, copied from our caller's spilled arg
         move.l   12(sp),-(sp)            // e, ditto (offset shifted by the f push above)
         move.l   12(sp),-(sp)            // d, ditto (offset shifted twice now)
@@ -400,7 +400,7 @@ _protect_wlwwwl:
 
 protect_wlwwwl_stackbody:
 #else
-_protect_wlwwwl:
+C_SYM(protect_wlwwwl):
 #endif
         /*
          * a/c/d/e used to be four tightly packed WORDs and b/f two LONGs,

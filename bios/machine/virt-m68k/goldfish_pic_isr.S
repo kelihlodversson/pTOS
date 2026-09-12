@@ -26,61 +26,61 @@
 
 #include "asmdefs.h"
 
-        .globl  _goldfish_pic_isr1
-        .globl  _goldfish_pic_isr2
-        .globl  _goldfish_pic_isr3
-        .globl  _goldfish_pic_isr4
-        .extern _goldfish_pic_dispatch
+        .globl  C_SYM(goldfish_pic_isr1)
+        .globl  C_SYM(goldfish_pic_isr2)
+        .globl  C_SYM(goldfish_pic_isr3)
+        .globl  C_SYM(goldfish_pic_isr4)
+        .extern C_SYM(goldfish_pic_dispatch)
 
         .text
 
-_goldfish_pic_isr1:
+C_SYM(goldfish_pic_isr1):
         movem.l d0-d1/a0-a1,-(sp)
 #if CONF_WITH_MFASTCALL
         moveq   #1,d0
-        jsr     _goldfish_pic_dispatch
+        jsr     C_SYM(goldfish_pic_dispatch)
 #else
         move.l  #1,-(sp)
-        jsr     _goldfish_pic_dispatch
+        jsr     C_SYM(goldfish_pic_dispatch)
         addq.l  #4,sp
 #endif
         movem.l (sp)+,d0-d1/a0-a1
         rte
 
-_goldfish_pic_isr2:
+C_SYM(goldfish_pic_isr2):
         movem.l d0-d1/a0-a1,-(sp)
 #if CONF_WITH_MFASTCALL
         moveq   #2,d0
-        jsr     _goldfish_pic_dispatch
+        jsr     C_SYM(goldfish_pic_dispatch)
 #else
         move.l  #2,-(sp)
-        jsr     _goldfish_pic_dispatch
+        jsr     C_SYM(goldfish_pic_dispatch)
         addq.l  #4,sp
 #endif
         movem.l (sp)+,d0-d1/a0-a1
         rte
 
-_goldfish_pic_isr3:
+C_SYM(goldfish_pic_isr3):
         movem.l d0-d1/a0-a1,-(sp)
 #if CONF_WITH_MFASTCALL
         moveq   #3,d0
-        jsr     _goldfish_pic_dispatch
+        jsr     C_SYM(goldfish_pic_dispatch)
 #else
         move.l  #3,-(sp)
-        jsr     _goldfish_pic_dispatch
+        jsr     C_SYM(goldfish_pic_dispatch)
         addq.l  #4,sp
 #endif
         movem.l (sp)+,d0-d1/a0-a1
         rte
 
-_goldfish_pic_isr4:
+C_SYM(goldfish_pic_isr4):
         movem.l d0-d1/a0-a1,-(sp)
 #if CONF_WITH_MFASTCALL
         moveq   #4,d0
-        jsr     _goldfish_pic_dispatch
+        jsr     C_SYM(goldfish_pic_dispatch)
 #else
         move.l  #4,-(sp)
-        jsr     _goldfish_pic_dispatch
+        jsr     C_SYM(goldfish_pic_dispatch)
         addq.l  #4,sp
 #endif
         movem.l (sp)+,d0-d1/a0-a1
