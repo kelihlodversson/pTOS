@@ -23,13 +23,18 @@
 C_SYM(strlencpy):
         /*
          * strlencpy(char *RESTRICT dest, const char *RESTRICT src) has two
-         * pointer arguments. Under -mfastcall they already arrive exactly
-         * where this code needs them -- dest in a0, src in a1 -- so no
-         * register setup is needed at all; only the plain stack ABI below
-         * needs to read them off the caller's frame (see the identical
-         * fix in aes/arch/m68k/gemasm.S's _psetup/_switchto).
+         * pointer arguments, but the loop below reads from a0 and writes
+         * to a1 -- i.e. it wants src in a0 and dest in a1, the *opposite*
+         * of the declared (dest, src) order. Under -mfastcall dest/src
+         * arrive in a0/a1 respectively (matching declaration order, not
+         * the loop's), so they need swapping; the plain stack ABI below
+         * already loads them in the order the loop wants (src from the
+         * second stack slot into a0, dest from the first into a1), so no
+         * swap is needed there.
          */
-#if !CONF_WITH_MFASTCALL
+#if CONF_WITH_MFASTCALL
+        exg     a0,a1
+#else
         movea.l 8(sp),a0
         movea.l 4(sp),a1
 #endif

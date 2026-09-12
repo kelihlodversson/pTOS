@@ -715,9 +715,21 @@ C_SYM(scca_rx_interrupt):
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
+        /*
+         * scc_rx_interrupt_handler(WORD portnum) is an ordinary internal
+         * C function; under -mfastcall portnum goes in d0 instead of on
+         * the stack. d0 was just saved above, so it's free to reuse here
+         * -- the restore below reloads its original pre-interrupt value
+         * from the stack regardless of what the callee left in it.
+         */
+#if CONF_WITH_MFASTCALL
+        moveq   #0,d0                   // indicate port A
+        jbsr    C_SYM(scc_rx_interrupt_handler)
+#else
         move.w  #0,-(sp)                // indicate port A
         jbsr    C_SYM(scc_rx_interrupt_handler)
         lea     2(sp),sp
+#endif
 
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
@@ -735,9 +747,14 @@ C_SYM(scca_tx_interrupt):
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
+#if CONF_WITH_MFASTCALL
+        moveq   #0,d0                   // indicate port A
+        jbsr    C_SYM(scc_tx_interrupt_handler)
+#else
         move.w  #0,-(sp)                // indicate port A
         jbsr    C_SYM(scc_tx_interrupt_handler)
         lea     2(sp),sp
+#endif
 
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
@@ -755,9 +772,14 @@ C_SYM(scca_es_interrupt):
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
+#if CONF_WITH_MFASTCALL
+        moveq   #0,d0                   // indicate port A
+        jbsr    C_SYM(scc_es_interrupt_handler)
+#else
         move.w  #0,-(sp)                // indicate port A
         jbsr    C_SYM(scc_es_interrupt_handler)
         lea     2(sp),sp
+#endif
 
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
@@ -775,9 +797,14 @@ C_SYM(sccb_rx_interrupt):
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
+#if CONF_WITH_MFASTCALL
+        moveq   #1,d0                   // indicate port B
+        jbsr    C_SYM(scc_rx_interrupt_handler)
+#else
         move.w  #1,-(sp)                // indicate port B
         jbsr    C_SYM(scc_rx_interrupt_handler)
         lea     2(sp),sp
+#endif
 
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
@@ -795,9 +822,14 @@ C_SYM(sccb_tx_interrupt):
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
+#if CONF_WITH_MFASTCALL
+        moveq   #1,d0                   // indicate port B
+        jbsr    C_SYM(scc_tx_interrupt_handler)
+#else
         move.w  #1,-(sp)                // indicate port B
         jbsr    C_SYM(scc_tx_interrupt_handler)
         lea     2(sp),sp
+#endif
 
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
@@ -815,9 +847,14 @@ C_SYM(sccb_es_interrupt):
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
+#if CONF_WITH_MFASTCALL
+        moveq   #1,d0                   // indicate port B
+        jbsr    C_SYM(scc_es_interrupt_handler)
+#else
         move.w  #1,-(sp)                // indicate port B
         jbsr    C_SYM(scc_es_interrupt_handler)
         lea     2(sp),sp
+#endif
 
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
@@ -1546,7 +1583,16 @@ msgcrb:
 
 /* Compendium says that the scancode is supplied in register d0. */
 C_SYM(keyclick):
-        move.w   4(sp),d0
+        /*
+         * keyclick(UBYTE scancode) is an ordinary internal C function.
+         * Under -mfastcall the caller already passes scancode in d0, so
+         * no read is needed; the plain ABI reads it from the caller's
+         * frame, now a full 4-byte slot (no -mshort), so the low word
+         * moved from 4(sp) to 6(sp).
+         */
+#if !CONF_WITH_MFASTCALL
+        move.w   6(sp),d0
+#endif
         move.l   a2,-(sp)
         move.l   d2,-(sp)
         move.l   C_SYM(kcl_hook).w,a0

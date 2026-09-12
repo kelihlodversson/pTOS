@@ -382,6 +382,7 @@ config CPUFLAGS
 config CONF_WITH_MFASTCALL
 	bool "Use the -mfastcall calling convention (m68k only)"
 	depends on ARCH_M68K_CLASSIC
+	depends on !TARGET_PRG && !TARGET_FLOPPY && !TARGET_AMIGA_FLOPPY
 	default n
 	help
 	  Build the whole kernel with GCC's -mfastcall calling convention
@@ -394,6 +395,16 @@ config CONF_WITH_MFASTCALL
 	  source by a proprietary tool this project can't run in CI, and
 	  its _normal_blit entry point has not been audited or hand-patched
 	  for -mfastcall's register-argument convention.
+
+	  Also excludes TARGET_PRG/TARGET_FLOPPY/TARGET_AMIGA_FLOPPY: these
+	  targets link util/arch/m68k/minicrt.S, bootram.S, bootsect.S and
+	  amigaboot.S, none of which have been audited for -mfastcall's
+	  register-argument convention (they all still read their C-callable
+	  entry points' arguments off the classic stack frame
+	  unconditionally). MULTILIBFLAGS -- and so this option -- is shared
+	  by every m68k object the build produces, kernel or utility alike,
+	  so there is no way to select it for just the ROM/floppy-payload
+	  image without it also reaching these RAM-loader entry points.
 
 	  This requires a GCC build with -mfastcall support, which neither
 	  of Vincent Riviere's toolchains (the ones normally installed for
