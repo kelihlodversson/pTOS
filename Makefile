@@ -629,13 +629,27 @@ endif
 #
 # Misc utilities, built on demand
 #
+# Unlike the kernel image itself, these are ordinary user programs whose
+# main() is invoked by util/arch/m68k/minicrt.S's startup code, which
+# still pushes argc/argv on the stack rather than the -mfastcall
+# register convention -- so, like TARGET_PRG/FLOPPY/AMIGA_FLOPPY (see
+# Kconfig.machine's CONF_WITH_MFASTCALL help text), these targets can't
+# be selected together with a MULTILIBFLAGS that includes -mfastcall.
+# They aren't config-gated the way those targets are (built on demand,
+# any time, regardless of the loaded .config), so the same restriction
+# is enforced here instead, at the point they're actually requested.
 
+ifdef CONF_WITH_MFASTCALL
+date.prg dumpkbd.prg:
+	$(error $@ cannot be built with CONF_WITH_MFASTCALL set: util/arch/m68k/minicrt.S's startup has not been audited for -mfastcall's register-argument convention. Disable CONF_WITH_MFASTCALL in "make menuconfig" first)
+else
 date.prg: obj/minicrt.o obj/doprintf.o obj/date.o
 	$(LD) $+ $(LIBS) -o $@ -s
 
 dumpkbd.prg: obj/minicrt.o obj/memmove.o obj/dumpkbd.o obj/doprintf.o \
 	     obj/string.o
 	$(LD) $+ $(LIBS) -o $@ -s
+endif
 
 #
 # Host tools
