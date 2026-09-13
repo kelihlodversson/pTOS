@@ -34,13 +34,20 @@
  * multi-byte field is read and written explicitly according to the
  * input's e_ident[EI_DATA].
  *
- * Usage: ptos-elf-pack [--strip-shdr] <input.elf> <output.elf>
+ * Usage: ptos-elf-pack [--strip-shdr] [--allow-no-relocations] \
+ *            <input.elf> <output.elf>
  *
  * --strip-shdr additionally clears e_shoff/e_shnum/e_shentsize/e_shstrndx
  * in the output, so a loader has no SHT_REL/SHT_RELA fallback to fall
  * back to if PT_PTOS_RELOC discovery ever regresses -- the section header
  * bytes themselves are left in the file (this tool does not yet reclaim
  * that space), just unreferenced.
+ *
+ * --allow-no-relocations lifts the default refusal to pack a fixed-base
+ * ET_EXEC with zero relocated slots, a shape indistinguishable here from
+ * one linked without the documented -q/--emit-relocs flag (see the check
+ * itself for why); pass it only once you have confirmed the input
+ * genuinely needs no load-time fixups.
  *
  * This is the first, minimal cut of the tool (see issue #309): it does
  * not yet strip the now-superseded relocation/symbol *data* it
@@ -105,6 +112,11 @@
 #define SHT_RELA        4UL
 #define SHT_REL         9UL
 #define SHT_RELR        19UL
+/* android's packed-dynamic-relocation format, predating the now-standard
+ * SHT_RELR above; still emitted by some lld/bionic configurations
+ * (linker flag --pack-dyn-relocs=android) */
+#define SHT_ANDROID_REL   0x60000001UL
+#define SHT_ANDROID_RELA  0x60000002UL
 #define SHF_ALLOC       0x2UL
 
 #define REL_SIZE        8
@@ -497,23 +509,29 @@ int main(int argc, char **argv)
     uint32_t new_data_off, padded_len, new_phdr_off;
     uint32_t new_phnum;
     int strip_shdr;
+    int allow_no_relocations;
     int argi;
 
     g_argv0 = argv[0] ? argv[0] : "ptos-elf-pack";
 
     strip_shdr = 0;
+    allow_no_relocations = 0;
     argi = 1;
     while (argi < argc && argv[argi][0] == '-')
     {
         if (strcmp(argv[argi], "--strip-shdr") == 0)
             strip_shdr = 1;
+        else if (strcmp(argv[argi], "--allow-no-relocations") == 0)
+            allow_no_relocations = 1;
         else
-            die("usage: %s [--strip-shdr] <input.elf> <output.elf>", g_argv0);
+            die("usage: %s [--strip-shdr] [--allow-no-relocations] "
+                "<input.elf> <output.elf>", g_argv0);
         argi++;
     }
 
     if (argc - argi != 2)
-        die("usage: %s [--strip-shdr] <input.elf> <output.elf>", g_argv0);
+        die("usage: %s [--strip-shdr] [--allow-no-relocations] "
+            "<input.elf> <output.elf>", g_argv0);
 
     in_path = argv[argi];
     out_path = argv[argi + 1];
@@ -674,6 +692,12 @@ int main(int argc, char **argv)
                 "without whatever produced packed/relative-only relocations "
                 "(e.g. a linker's --pack-dyn-relocs=relr) before packing",
                 in_path);
+        if (sh_type == SHT_ANDROID_REL || sh_type == SHT_ANDROID_RELA)
+            die("'%s' has an SHT_ANDROID_REL/SHT_ANDROID_RELA packed "
+                "relocation section; ptos-elf-pack only understands "
+                "SHT_REL/SHT_RELA -- relink without whatever produced "
+                "packed relocations (e.g. a linker's "
+                "--pack-dyn-relocs=android) before packing", in_path);
         if (sh_type != SHT_REL && sh_type != SHT_RELA)
             continue;
 
@@ -908,6 +932,27 @@ int main(int argc, char **argv)
                     in_path, (unsigned long)slots[dupidx].vaddr);
         }
     }
+
+    /* A fixed-base ET_EXEC with zero relocated slots is indistinguishable,
+     * from this tool's point of view, from one whose linker simply wasn't
+     * given the documented "-q"/"--emit-relocs" flag at all: both look
+     * identical here (no SHT_REL/SHT_RELA sections survive either way),
+     * but the latter needed fixups it never got a chance to retain --
+     * ptos-elf-pack would then emit a valid-looking empty .ptos.reloc
+     * stream over a binary that silently corrupts itself the moment it
+     * loads anywhere but its link address. This ambiguity does not apply
+     * to an ET_DYN (PIE): its position-independent code genuinely can
+     * need zero R_*_RELATIVE fixups (doc/elfload.txt), so an empty
+     * stream there is unremarkable. Require an explicit override for the
+     * (much rarer) genuine zero-relocation ET_EXEC instead of guessing. */
+    if (nslots == 0 && e_type == ET_EXEC && !allow_no_relocations)
+        die("'%s' is a fixed-base ET_EXEC with no relocations to pack; "
+            "this is indistinguishable from one linked without -q/"
+            "--emit-relocs (see doc/elfload.txt), which would silently "
+            "corrupt at load time if it actually needed any -- re-check "
+            "the link command, or pass --allow-no-relocations if this "
+            "binary genuinely stores no absolute address anywhere",
+            in_path);
 
     /* build the .ptos.reloc payload: 8 byte header + ULEB128 delta stream */
     payload.data = NULL;

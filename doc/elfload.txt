@@ -202,6 +202,15 @@ above:
 OS-specific type (0x60000001); this is expected and harmless for any tool
 that does not know about it.
 
+ptos-elf-pack refuses to pack a fixed-base ET_EXEC with zero relocated
+slots by default: that shape is indistinguishable, from the packed file
+alone, from one linked without "-q"/"--emit-relocs" in the first place --
+a mistake that would otherwise pack silently into a binary that corrupts
+itself the moment it loads anywhere but its link address. Pass
+`--allow-no-relocations` once you have confirmed the input genuinely
+needs no load-time fixups (a position-independent ET_DYN is exempt from
+this check, since it can legitimately need none).
+
 Known version 1 limitations
 ----------------------------
 
