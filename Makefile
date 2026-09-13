@@ -1143,6 +1143,22 @@ ifndef CONF_WITH_ELF_LOADER
 TEST_SUITES := $(filter-out pie_load,$(TEST_SUITES))
 endif
 
+# ptos_reloc_load launches a separate executable (reloc_probe.c, built
+# below) packed into the compact PT_PTOS_RELOC format via Pexec(), to
+# exercise bdos/elfld.c's elf_relocate_ptos() -- needs CONF_WITH_ELF_LOADER
+# for the same reason pie_load does, plus ARCH_ARM: the payload's own link
+# step below needs the same fixed-base "ld -q -Ttext=0" recipe
+# $(TEST_LDFLAGS) restricts to ARM a few lines down (the mintelf toolchain's
+# default m68k output is a PRG at that fixed a low address, not something
+# ptos-elf-pack's ELF parser accepts, and forcing an m68k ELF at -Ttext=0
+# hits its own "not enough room for program headers" toolchain limit).
+ifndef CONF_WITH_ELF_LOADER
+TEST_SUITES := $(filter-out ptos_reloc_load,$(TEST_SUITES))
+endif
+ifndef ARCH_ARM
+TEST_SUITES := $(filter-out ptos_reloc_load,$(TEST_SUITES))
+endif
+
 GEN_SRC += tests/run_tests.c
 
 # Also depends on $(AUTOCONF_H): TEST_SUITES (and therefore this file's
@@ -1329,12 +1345,39 @@ else
 TEST_PIE_FILES =
 endif
 
+ifdef CONF_WITH_ELF_LOADER
+ifdef ARCH_ARM
+# PTRELOC.TOS: the ptos_reloc_load suite's payload (see
+# tests/ptos_reloc_load/reloc_probe.c). Linked as a fixed-base ET_EXEC with
+# --emit-relocs -- the same starting point ptos-elf-pack documents in
+# doc/elfload.txt -- then repacked into the compact PT_PTOS_RELOC format,
+# so loading it exercises elf_pgmld()'s *other* relocation path (the one
+# #309 added) instead of pieprobe.tos's ET_DYN .rel.dyn/.rela.dyn one.
+obj/reloc_probe.o: tests/ptos_reloc_load/reloc_probe.c $(AUTOCONF_H) | obj
+	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+TEST_PTOS_RELOC_LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
+
+relocprobe-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+
+PTRELOC.TOS: relocprobe-unpacked.tos ptos-elf-pack
+	./ptos-elf-pack relocprobe-unpacked.tos $@
+
+TEST_PTOS_RELOC_FILES = PTRELOC.TOS
+else
+TEST_PTOS_RELOC_FILES =
+endif
+else
+TEST_PTOS_RELOC_FILES =
+endif
+
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
-TEST_HD_FILES = runtests.tos tests/emudesk.inf $(TEST_PIE_FILES)
+TEST_HD_FILES = runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_PTOS_RELOC_FILES)
 
-test-hd.img: runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_PTOS_RELOC_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR)
 
@@ -1355,7 +1398,8 @@ endif
 # regardless of .config -- anything gated on it here would silently never
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
-TOCLEAN += tests/run_tests.c runtests.tos pieprobe.tos test-hd.img
+TOCLEAN += tests/run_tests.c runtests.tos pieprobe.tos \
+           relocprobe-unpacked.tos PTRELOC.TOS test-hd.img
 TOCLEAN_POST += libcmini-clean
 
 .PHONY: libcmini-clean

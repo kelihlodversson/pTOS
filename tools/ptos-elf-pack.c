@@ -83,6 +83,7 @@
 #define PHDR_P_MEMSZ    20
 
 #define PT_LOAD         1UL
+#define PT_PHDR         6UL
 #define PT_PTOS_RELOC   0x60000001UL
 
 #define SHDR_SIZE       40
@@ -118,10 +119,16 @@ static const uint32_t arm_no_fixup_types[] = {
     28,  /* R_ARM_CALL */
     29,  /* R_ARM_JUMP24 */
     30,  /* R_ARM_THM_JUMP24 */
-    38,  /* R_ARM_TARGET1 */
     40,  /* R_ARM_V4BX -- seen from a plain "ld -q" ARM build in practice */
     42,  /* R_ARM_PREL31 */
     51,  /* R_ARM_THM_JUMP19 */
+    /* deliberately NOT R_ARM_TARGET1 (38): the ARM ELF ABI lets the linker
+     * resolve it as either R_ARM_ABS32- or R_ARM_REL32-like depending on
+     * --target1-abs/--target1-rel, so unlike every type above it is not
+     * unambiguously PC-relative -- an ABS32-resolved TARGET1 slot holds an
+     * absolute address and does need the load bias. Nothing in this file's
+     * verified build recipes has been seen to emit it; reject it rather
+     * than guess which mode produced it. */
 };
 
 static const uint32_t m68k_no_fixup_types[] = {
@@ -434,13 +441,20 @@ int main(int argc, char **argv)
 
     for (i = 0; i < e_phnum; i++)
     {
-        const unsigned char *ph = in + e_phoff + (uint32_t)i * e_phentsize;
+        const unsigned char *ph;
         uint32_t p_type, p_offset, p_vaddr, p_filesz;
 
         if ((uint64_t)e_phoff + (uint64_t)i * e_phentsize + PHDR_SIZE > in_size)
             die("'%s' has a truncated program header table", in_path);
+        ph = in + e_phoff + (uint32_t)i * e_phentsize;
 
         p_type = rd32(ph + PHDR_P_TYPE);
+        if (p_type == PT_PHDR)
+            die("'%s' has a PT_PHDR segment; packing would leave it "
+                "describing the old program header table instead of the "
+                "one this tool appends, which a standards-conforming "
+                "consumer other than bdos/elfld.c could read and misbehave "
+                "on -- unsupported by ptos-elf-pack", in_path);
         if (p_type != PT_LOAD)
             continue;
 
@@ -495,13 +509,14 @@ int main(int argc, char **argv)
 
     for (i = 0; i < e_shnum; i++)
     {
-        const unsigned char *sh = in + e_shoff + (uint32_t)i * e_shentsize;
+        const unsigned char *sh;
         uint32_t sh_type, sh_offset, sh_size, sh_info, sh_entsize;
         uint32_t entsize, structsize, count, j;
         int rela;
 
         if ((uint64_t)e_shoff + (uint64_t)i * e_shentsize + SHDR_SIZE > in_size)
             die("'%s' has a truncated section header table", in_path);
+        sh = in + e_shoff + (uint32_t)i * e_shentsize;
 
         sh_type = rd32(sh + SHDR_SH_TYPE);
         if (sh_type != SHT_REL && sh_type != SHT_RELA)
@@ -523,6 +538,8 @@ int main(int argc, char **argv)
             if (sh_info >= e_shnum)
                 die("'%s' has a relocation section naming an out of range "
                     "target section", in_path);
+            if ((uint64_t)e_shoff + (uint64_t)sh_info * e_shentsize + SHDR_SIZE > in_size)
+                die("'%s' has a truncated section header table", in_path);
 
             tsh = in + e_shoff + sh_info * e_shentsize;
             t_flags = rd32(tsh + SHDR_SH_FLAGS);
@@ -538,11 +555,12 @@ int main(int argc, char **argv)
         count = sh_size / entsize;
         for (j = 0; j < count; j++)
         {
-            const unsigned char *ent = in + sh_offset + j * entsize;
+            const unsigned char *ent;
             uint32_t r_offset, r_info, type, addend;
 
             if ((uint64_t)sh_offset + (uint64_t)j * entsize + structsize > in_size)
                 die("'%s' has a truncated relocation table", in_path);
+            ent = in + sh_offset + j * entsize;
 
             r_offset = rd32(ent + 0);
             r_info = rd32(ent + 4);
