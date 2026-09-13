@@ -213,6 +213,7 @@ WORD mul_div_round(WORD mult1, WORD mult2, WORD divisor);
 /* protect d2/a2 when calling external user-supplied code */
 LONG protect_v(LONG (*func)(void));
 LONG protect_w(LONG (*func)(WORD), WORD);
+LONG protect_l(LONG (*func)(LONG), LONG);
 LONG protect_ww(LONG (*func)(void), WORD, WORD);
 LONG protect_wlwwwl(LONG (*func)(void), WORD, LONG, WORD, WORD, WORD, LONG);
 

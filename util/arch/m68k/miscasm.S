@@ -254,6 +254,7 @@ mdrminus:
 
         .globl   C_SYM(protect_v)
         .globl   C_SYM(protect_w)
+        .globl   C_SYM(protect_l)
         .globl   C_SYM(protect_ww)
         .globl   C_SYM(protect_wlwwwl)
 
@@ -329,6 +330,37 @@ C_SYM(protect_w):
         move.w   d0,-(sp)
         jsr      (a0)
         addq.l   #2,sp
+        move.l   (sp)+,d2
+        move.l   (sp)+,a2
+        rts
+
+/*
+ * LONG protect_l(LONG (*func)(LONG), LONG);
+ *
+ * Same as protect_w, but for a callback whose single argument is
+ * already a full LONG (e.g. Dsp_SetVectors()' receiver, called with
+ * the DSP data word) -- no WORD/LONG slot-width mismatch to correct
+ * for, so no ext.l/narrowing is needed on either ABI's entry path.
+ */
+#if CONF_WITH_MFASTCALL
+C_SYM(protect_l):
+        move.l   d0,-(sp)                // a (already a full LONG in d0)
+        move.l   a0,-(sp)                // func
+        bsr      protect_l_stackbody
+        lea      8(sp),sp                // drop func/a pushed above (no caller stack args)
+        rts
+
+protect_l_stackbody:
+#else
+C_SYM(protect_l):
+#endif
+        move.l   4(sp),a0
+        move.l   8(sp),d0
+        move.l   a2,-(sp)
+        move.l   d2,-(sp)
+        move.l   d0,-(sp)
+        jsr      (a0)
+        addq.l   #4,sp
         move.l   (sp)+,d2
         move.l   (sp)+,a2
         rts

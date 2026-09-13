@@ -1310,6 +1310,15 @@ void dsp_setvectors(void (*receiver)(LONG data), LONG (*transmitter)(void))
 
 /*
  * dsp_sv_handler(): C portion of interrupt handler for Dsp_SetVectors()
+ *
+ * user_rcv/user_send are frozen, user-installed TOS callbacks (set via
+ * the Dsp_SetVectors() XBIOS call): call them via protect_l()/protect_v(),
+ * same as every other user-supplied vector in this tree (hdv_rw, hdv_bpb,
+ * bell_hook, ...) -- not as an ordinary compiled C call, which under
+ * CONF_WITH_MFASTCALL would pass user_rcv's LONG argument in d0 instead
+ * of the classic stacked argument a real external receiver expects, and
+ * which in any case doesn't preserve d2/a2 across the call the way the
+ * original TOS calling convention guarantees to user code.
  */
 void dsp_sv_handler(void)
 {
@@ -1318,12 +1327,12 @@ void dsp_sv_handler(void)
     if (DSP_RCV_READY && user_rcv)
     {
         data = DSPBASE->data.full;
-        user_rcv(data);
+        protect_l((LONG(*)(LONG))user_rcv, data);
     }
 
     if (DSP_SEND_READY && user_send)
     {
-        data = user_send();
+        data = protect_v(user_send);
         if (data)       /* user has something to send? */
             DSPBASE->data.full = data;
     }

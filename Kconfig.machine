@@ -420,9 +420,6 @@ config CONF_WITH_MFASTCALL
 	  stack frame, on any ABI, rather than inheriting the C calling
 	  convention.
 
-	  Independent of -mshort: both can be selected together where the
-	  toolchain supports both.
-
 choice
 	prompt "Optimization level"
 	default OPTIMIZE_SIZE if TARGET_192 || TARGET_256 || TARGET_CART || TARGET_PRG || TARGET_FLOPPY || TARGET_AMIGA_ROM || TARGET_AMIGA_KICKDISK || TARGET_AMIGA_FLOPPY
