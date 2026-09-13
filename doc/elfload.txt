@@ -183,10 +183,14 @@ image.
 When bdos/elfld.c finds a PT_PTOS_RELOC program header, it uses this stream
 and does not touch the section header table at all -- so a file built this
 way can have its section headers, .symtab and the original relocation
-sections removed and still load. ptos-elf-pack does not perform that
-removal itself yet; it only adds the new metadata. A file with no
-PT_PTOS_RELOC header falls back to the section-based relocation described
-above, so existing unpacked ELF binaries keep working unchanged.
+sections removed and still load. ptos-elf-pack's `--strip-shdr` flag
+clears e_shoff/e_shnum/e_shentsize/e_shstrndx so no SHT_REL/SHT_RELA
+fallback is reachable at all (the bytes themselves stay in the file --
+reclaiming that space is a later refinement, tracked under issue #308). A
+file with no PT_PTOS_RELOC header, or one packed without `--strip-shdr`
+whose section headers are still intact, falls back to the section-based
+relocation described above, so existing unpacked ELF binaries keep
+working unchanged.
 
 Producing a packed binary is one extra step after the existing recipes
 above:

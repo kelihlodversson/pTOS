@@ -34,12 +34,19 @@
  * multi-byte field is read and written explicitly according to the
  * input's e_ident[EI_DATA].
  *
- * Usage: ptos-elf-pack <input.elf> <output.elf>
+ * Usage: ptos-elf-pack [--strip-shdr] <input.elf> <output.elf>
+ *
+ * --strip-shdr additionally clears e_shoff/e_shnum/e_shentsize/e_shstrndx
+ * in the output, so a loader has no SHT_REL/SHT_RELA fallback to fall
+ * back to if PT_PTOS_RELOC discovery ever regresses -- the section header
+ * bytes themselves are left in the file (this tool does not yet reclaim
+ * that space), just unreferenced.
  *
  * This is the first, minimal cut of the tool (see issue #309): it does
- * not yet strip the now-superseded relocation/symbol data it supersedes,
- * or add a matching section header entry for the payload -- both are
- * left as later refinements, tracked under issue #308.
+ * not yet strip the now-superseded relocation/symbol *data* it
+ * supersedes (only --strip-shdr's own three header fields above), or add
+ * a matching section header entry for the payload -- both are left as
+ * later refinements, tracked under issue #308.
  */
 
 #include <stdio.h>
@@ -369,14 +376,27 @@ int main(int argc, char **argv)
     unsigned char hdrbuf[8];
     uint32_t new_data_off, padded_len, new_phdr_off;
     uint32_t new_phnum;
+    int strip_shdr;
+    int argi;
 
     g_argv0 = argv[0] ? argv[0] : "ptos-elf-pack";
 
-    if (argc != 3)
-        die("usage: %s <input.elf> <output.elf>", g_argv0);
+    strip_shdr = 0;
+    argi = 1;
+    while (argi < argc && argv[argi][0] == '-')
+    {
+        if (strcmp(argv[argi], "--strip-shdr") == 0)
+            strip_shdr = 1;
+        else
+            die("usage: %s [--strip-shdr] <input.elf> <output.elf>", g_argv0);
+        argi++;
+    }
 
-    in_path = argv[1];
-    out_path = argv[2];
+    if (argc - argi != 2)
+        die("usage: %s [--strip-shdr] <input.elf> <output.elf>", g_argv0);
+
+    in_path = argv[argi];
+    out_path = argv[argi + 1];
 
     in = read_file(in_path, &in_size_l);
     if (in_size_l < EHDR_SIZE)
@@ -673,6 +693,19 @@ int main(int argc, char **argv)
      * section header tables -- is untouched and stays individually valid */
     wr32(in + EHDR_E_PHOFF, new_phdr_off);
     wr16(in + EHDR_E_PHNUM, (uint16_t)new_phnum);
+
+    /* --strip-shdr: drop the pointer to the section header table (the
+     * bytes themselves stay in the file, just unreferenced) so a loader
+     * that finds no PT_PTOS_RELOC header has no SHT_REL/SHT_RELA fallback
+     * to silently succeed through instead -- proves the program-header
+     * path is what actually ran, not just that it's present */
+    if (strip_shdr)
+    {
+        wr32(in + EHDR_E_SHOFF, 0);
+        wr16(in + EHDR_E_SHNUM, 0);
+        wr16(in + EHDR_E_SHENTSIZE, 0);
+        wr16(in + EHDR_E_SHSTRNDX, 0);
+    }
 
     out = fopen(out_path, "wb");
     if (!out)

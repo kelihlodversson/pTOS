@@ -1146,16 +1146,14 @@ endif
 # ptos_reloc_load launches a separate executable (reloc_probe.c, built
 # below) packed into the compact PT_PTOS_RELOC format via Pexec(), to
 # exercise bdos/elfld.c's elf_relocate_ptos() -- needs CONF_WITH_ELF_LOADER
-# for the same reason pie_load does, plus ARCH_ARM: the payload's own link
-# step below needs the same fixed-base "ld -q -Ttext=0" recipe
-# $(TEST_LDFLAGS) restricts to ARM a few lines down (the mintelf toolchain's
-# default m68k output is a PRG at that fixed a low address, not something
-# ptos-elf-pack's ELF parser accepts, and forcing an m68k ELF at -Ttext=0
-# hits its own "not enough room for program headers" toolchain limit).
+# for the same reason pie_load does. Its payload is linked differently per
+# architecture (see TEST_PTOS_RELOC_LDFLAGS below): a fixed-base ET_EXEC on
+# ARM (REL-encoded R_ARM_ABS32/RELATIVE, value already in the slot), a PIE
+# ET_DYN on m68k (RELA-encoded R_68K_RELATIVE, value only in r_addend) --
+# so between the two configurations this suite exercises both of
+# elf_relocate_ptos()'s slot sources, including the addend-materialisation
+# ptos-elf-pack does at pack time for the RELA+RELATIVE case.
 ifndef CONF_WITH_ELF_LOADER
-TEST_SUITES := $(filter-out ptos_reloc_load,$(TEST_SUITES))
-endif
-ifndef ARCH_ARM
 TEST_SUITES := $(filter-out ptos_reloc_load,$(TEST_SUITES))
 endif
 
@@ -1346,28 +1344,34 @@ TEST_PIE_FILES =
 endif
 
 ifdef CONF_WITH_ELF_LOADER
-ifdef ARCH_ARM
 # PTRELOC.TOS: the ptos_reloc_load suite's payload (see
-# tests/ptos_reloc_load/reloc_probe.c). Linked as a fixed-base ET_EXEC with
-# --emit-relocs -- the same starting point ptos-elf-pack documents in
-# doc/elfload.txt -- then repacked into the compact PT_PTOS_RELOC format,
-# so loading it exercises elf_pgmld()'s *other* relocation path (the one
-# #309 added) instead of pieprobe.tos's ET_DYN .rel.dyn/.rela.dyn one.
+# tests/ptos_reloc_load/reloc_probe.c), repacked into the compact
+# PT_PTOS_RELOC format, so loading it exercises elf_pgmld()'s *other*
+# relocation path (the one #309 added) instead of pieprobe.tos's ET_DYN
+# .rel.dyn/.rela.dyn one. Linked differently per architecture so the two
+# together cover both of elf_relocate_ptos()'s slot sources: a fixed-base
+# ET_EXEC with --emit-relocs on ARM (REL-encoded, value already in the
+# slot), a PIE ET_DYN on m68k (RELA-encoded RELATIVE, value only in
+# r_addend -- exercising ptos-elf-pack's addend-materialisation step,
+# which the ARM link never touches).
 obj/reloc_probe.o: tests/ptos_reloc_load/reloc_probe.c $(AUTOCONF_H) | obj
 	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
+ifdef ARCH_ARM
 TEST_PTOS_RELOC_LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
+else
+TEST_PTOS_RELOC_LDFLAGS = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start
+endif
 
 relocprobe-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
 
+# --strip-shdr: no SHT_REL fallback must be reachable, so this test can
+# only pass by way of elf_relocate_ptos() actually working.
 PTRELOC.TOS: relocprobe-unpacked.tos ptos-elf-pack
-	./ptos-elf-pack relocprobe-unpacked.tos $@
+	./ptos-elf-pack --strip-shdr relocprobe-unpacked.tos $@
 
 TEST_PTOS_RELOC_FILES = PTRELOC.TOS
-else
-TEST_PTOS_RELOC_FILES =
-endif
 else
 TEST_PTOS_RELOC_FILES =
 endif
