@@ -123,12 +123,23 @@ static const uint32_t arm_no_fixup_types[] = {
     0,   /* R_ARM_NONE */
     1,   /* R_ARM_PC24 (deprecated) */
     3,   /* R_ARM_REL32 */
+    10,  /* R_ARM_THM_CALL */
     28,  /* R_ARM_CALL */
     29,  /* R_ARM_JUMP24 */
     30,  /* R_ARM_THM_JUMP24 */
     40,  /* R_ARM_V4BX -- seen from a plain "ld -q" ARM build in practice */
     42,  /* R_ARM_PREL31 */
     51,  /* R_ARM_THM_JUMP19 */
+    /* R_ARM_CALL/JUMP24/THM_CALL/THM_JUMP24/THM_JUMP19 have never actually
+     * been observed retained in this file's own testing -- this binutils
+     * version appears to fully resolve and drop ordinary same-image branch
+     * relocations under --emit-relocs rather than retaining them -- but
+     * they are unambiguously PC-relative call/branch types by the ARM ELF
+     * ABI's own definition (never an absolute value), so allowlisting them
+     * ahead of ever encountering one carries none of R_ARM_TARGET1's
+     * ambiguity below. A sufficiently large Thumb image (a long-range call
+     * needing a veneer) is the plausible case that would actually retain
+     * one of these. */
     /* deliberately NOT R_ARM_TARGET1 (38): the ARM ELF ABI lets the linker
      * resolve it as either R_ARM_ABS32- or R_ARM_REL32-like depending on
      * --target1-abs/--target1-rel, so unlike every type above it is not
@@ -599,6 +610,23 @@ int main(int argc, char **argv)
                     in_path, (unsigned long)type, (unsigned long)r_offset,
                     g_argv0);
             }
+
+            /* A DIR32 slot in an ET_DYN is not something the documented
+             * "-pie --no-dynamic-linker" recipe should ever produce: with
+             * no external symbols and no dynamic linker, the linker
+             * resolves every internal absolute reference to R_*_RELATIVE
+             * at link time (see doc/elfload.txt), so a DIR32 surviving
+             * into a PIE's own relocations would mean something this tool
+             * doesn't understand -- e.g. a real dynamic-symbol reference
+             * needing resolution this freestanding loader cannot perform
+             * -- produced it. Reject rather than apply the same "+= bias"
+             * op RELATIVE gets and risk silently mishandling it. */
+            if (type == dir32_type && e_type == ET_DYN)
+                die("'%s' is a PIE (ET_DYN) with a DIR32-type relocation at "
+                    "0x%08lx; only RELATIVE relocations are expected from "
+                    "the documented -pie --no-dynamic-linker recipe -- "
+                    "refusing to guess this one's semantics",
+                    in_path, (unsigned long)r_offset);
 
             /* RELA + RELATIVE is the one case whose slot may not already
              * hold the value to add the bias to (see doc/elfload.txt):
