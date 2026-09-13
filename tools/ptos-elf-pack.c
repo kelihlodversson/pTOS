@@ -98,15 +98,21 @@
 #define SHDR_SH_FLAGS   8
 #define SHDR_SH_OFFSET  16
 #define SHDR_SH_SIZE    20
+#define SHDR_SH_LINK    24
 #define SHDR_SH_INFO    28
 #define SHDR_SH_ENTSIZE 36
 
 #define SHT_RELA        4UL
 #define SHT_REL         9UL
+#define SHT_RELR        19UL
 #define SHF_ALLOC       0x2UL
 
 #define REL_SIZE        8
 #define RELA_SIZE       12
+
+#define SYM_SIZE        16
+#define SYM_ST_SHNDX    14
+#define SHN_ABS         0xfff1U
 
 #define PTOS_RELOC_MAGIC    0x50544c31UL
 #define PTOS_RELOC_VERSION  1
@@ -331,8 +337,18 @@ static unsigned char *read_file(const char *path, long *out_size)
 
 /* find the PT_LOAD segment containing vaddr and translate it to a file
  * offset; dies with a clear message if vaddr falls outside every
- * segment's file-backed part (e.g. inside .bss), which version 1 of the
- * compact format cannot represent (see doc/elfload.txt) */
+ * segment's file-backed part (e.g. inside .bss).
+ *
+ * This is a real, permanent limitation of the version 1 wire format, not
+ * just a missing byte to write into: a RELA+RELATIVE slot is represented
+ * by baking its resolved value (bias + addend) into the slot's own file
+ * bytes and then applying the *same* "+= bias" op every other listed slot
+ * gets. A .bss-resident slot has no file bytes at all -- the loader's
+ * zero-fill leaves 0 there -- so "0 += bias" would yield the wrong value
+ * (bias, not bias + addend); representing this correctly needs a second
+ * wire operation that carries its own addend, which version 1 does not
+ * have (see doc/elfload.txt). Rather than extend the format under review
+ * pressure, this is called out there as a known v1 boundary. */
 static uint32_t vaddr_to_file_offset(const SEGMENT *segs, size_t nsegs,
                                      uint32_t vaddr)
 {
@@ -349,7 +365,9 @@ static uint32_t vaddr_to_file_offset(const SEGMENT *segs, size_t nsegs,
     }
 
     die("relocation at 0x%08lx targets memory with no file backing "
-        "(likely .bss); unsupported by .ptos.reloc version 1",
+        "(likely .bss); a RELATIVE relocation there needs an addend-"
+        "carrying wire operation .ptos.reloc version 1 does not have -- "
+        "a known format limitation, not a bug (see doc/elfload.txt)",
         (unsigned long)vaddr);
     return 0; /* unreachable */
 }
@@ -541,8 +559,9 @@ int main(int argc, char **argv)
     for (i = 0; i < e_shnum; i++)
     {
         const unsigned char *sh;
-        uint32_t sh_type, sh_offset, sh_size, sh_info, sh_entsize;
+        uint32_t sh_type, sh_offset, sh_size, sh_link, sh_info, sh_entsize;
         uint32_t entsize, structsize, count, j;
+        uint32_t symtab_offset, symtab_size, symtab_entsize;
         int rela;
 
         if ((uint64_t)e_shoff + (uint64_t)i * e_shentsize + SHDR_SIZE > in_size)
@@ -550,14 +569,48 @@ int main(int argc, char **argv)
         sh = in + e_shoff + (uint32_t)i * e_shentsize;
 
         sh_type = rd32(sh + SHDR_SH_TYPE);
+        if (sh_type == SHT_RELR)
+            die("'%s' has an SHT_RELR compact relocation section; "
+                "ptos-elf-pack only understands SHT_REL/SHT_RELA -- relink "
+                "without whatever produced packed/relative-only relocations "
+                "(e.g. a linker's --pack-dyn-relocs=relr) before packing",
+                in_path);
         if (sh_type != SHT_REL && sh_type != SHT_RELA)
             continue;
 
         rela = (sh_type == SHT_RELA);
         sh_offset = rd32(sh + SHDR_SH_OFFSET);
         sh_size = rd32(sh + SHDR_SH_SIZE);
+        sh_link = rd32(sh + SHDR_SH_LINK);
         sh_info = rd32(sh + SHDR_SH_INFO);
         sh_entsize = rd32(sh + SHDR_SH_ENTSIZE);
+
+        /* resolve this relocation section's symbol table (sh_link) once,
+         * so the per-entry loop below can reject a PC-relative relocation
+         * against an SHN_ABS symbol (see the loop for why) without
+         * re-deriving this on every entry */
+        symtab_offset = 0;
+        symtab_size = 0;
+        symtab_entsize = SYM_SIZE;
+        if (sh_link != 0)
+        {
+            const unsigned char *symsh;
+
+            if (sh_link >= e_shnum)
+                die("'%s' has a relocation section naming an out of range "
+                    "symbol table", in_path);
+            if ((uint64_t)e_shoff + (uint64_t)sh_link * e_shentsize + SHDR_SIZE > in_size)
+                die("'%s' has a truncated section header table", in_path);
+
+            symsh = in + e_shoff + sh_link * e_shentsize;
+            symtab_offset = rd32(symsh + SHDR_SH_OFFSET);
+            symtab_size = rd32(symsh + SHDR_SH_SIZE);
+            symtab_entsize = rd32(symsh + SHDR_SH_ENTSIZE);
+            if (symtab_entsize == 0)
+                symtab_entsize = SYM_SIZE;
+            if (symtab_entsize != SYM_SIZE)
+                die("'%s' has a symbol table with an unexpected entry size", in_path);
+        }
 
         /* sh_info names the target section; 0 means "the whole image"
          * (used by .rel.dyn/.rela.dyn), matching bdos/elfld.c exactly */
@@ -601,7 +654,45 @@ int main(int argc, char **argv)
             if (type != dir32_type && type != relative_type)
             {
                 if (type_needs_no_fixup(e_machine, type))
+                {
+                    /* A PC-relative value (S + A - P) is invariant under a
+                     * uniform image shift only when its symbol S moves
+                     * with the image, i.e. is section-relative. An
+                     * SHN_ABS symbol (a fixed, linker-defined constant
+                     * that never moves) breaks that: shifting P without
+                     * shifting S changes the computed value, so this
+                     * would need a fixup this format has no way to apply,
+                     * not none at all. Look the symbol up and reject
+                     * rather than assume the common case. */
+                    uint32_t sym_index = r_info >> 8;
+
+                    if (sym_index != 0 && symtab_offset != 0)
+                    {
+                        uint32_t sym_off;
+                        uint16_t st_shndx;
+
+                        if (sym_index >= symtab_size / symtab_entsize)
+                            die("'%s' has a relocation naming an out of "
+                                "range symbol table entry", in_path);
+                        if ((uint64_t)symtab_offset + (uint64_t)sym_index * symtab_entsize + SYM_SIZE
+                            > in_size)
+                            die("'%s' has a truncated symbol table", in_path);
+
+                        sym_off = symtab_offset + sym_index * symtab_entsize;
+                        st_shndx = rd16(in + sym_off + SYM_ST_SHNDX);
+                        if (st_shndx == SHN_ABS)
+                            die("'%s' has a PC-relative relocation (type %lu) "
+                                "at 0x%08lx against an SHN_ABS symbol, which "
+                                "does not move with the image; a uniform load "
+                                "bias would silently corrupt it, and this "
+                                "format has no operation to fix it up "
+                                "correctly",
+                                in_path, (unsigned long)type,
+                                (unsigned long)r_offset);
+                    }
+
                     continue;   /* PC-relative etc: no load-time fixup needed */
+                }
 
                 die("'%s' has a relocation of unrecognised type %lu at "
                     "0x%08lx; not known to need no load-time fixup, refusing "

@@ -201,3 +201,20 @@ above:
 "readelf -l prog-packed.elf" shows the extra program header as an unknown
 OS-specific type (0x60000001); this is expected and harmless for any tool
 that does not know about it.
+
+Known version 1 limitations
+----------------------------
+
+A RELA-encoded RELATIVE relocation whose target lies in a PT_LOAD
+segment's zero-filled tail (i.e. in .bss, past its file-backed part) is
+rejected rather than packed. Every other slot version 1 lists is
+represented by baking its resolved value into the slot's own file bytes
+(see the RELA-addend-materialisation note above) and applying the same
+"add the load bias" operation uniformly; a .bss-resident slot has no file
+bytes to bake that value into; the loader's zero-fill leaves 0 there
+instead. Representing it correctly needs a second wire operation that
+carries its own addend explicitly, which the classic loader's own
+elf_fixup() already computes at runtime (bias + addend) but version 1 of
+this format has no encoding for. This is a real format boundary, not a
+bug: extending the format to cover it is left for a future version rather
+than done ad hoc.
