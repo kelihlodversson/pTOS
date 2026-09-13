@@ -28,7 +28,7 @@
 
 #if CONF_WITH_MFASTCALL
 /*
- * Under -mfastcall, setjmp(jmp_buf) and longjmp(jmp_buf, int) receive
+ * Under -mfastcall, setjmp(jmp_buf) and longjmp(jmp_buf, WORD) receive
  * their arguments in a0 and a0/d0 respectively -- no stack read needed,
  * unlike the plain stack-based ABI below.
  */
@@ -58,9 +58,13 @@ C_SYM(setjmp):
 C_SYM(longjmp):
         move.l  4(sp),a0                // jmp_buf
         /*
-         * val is a 32-bit int (no -mshort), so its stack slot is 4 bytes
-         * at 8(sp); the value tested below is val's low word, which
-         * lives at 10(sp), not 8(sp).
+         * val is declared WORD, not int -- still only 16 bits with
+         * -mshort gone -- but its *stack slot* is 4 bytes at 8(sp)
+         * regardless (that padding is the caller-side ABI convention
+         * once -mshort is removed, independent of the callee's own
+         * declared width; see the identical case in vectors.S's SCC
+         * interrupt handlers). The value tested below is val's low
+         * word, which lives at 10(sp), not 8(sp).
          */
         move.w  10(sp),d0               // requested setjmp() return value
         jne     nonzero

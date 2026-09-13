@@ -726,9 +726,9 @@ C_SYM(scca_rx_interrupt):
         moveq   #0,d0                   // indicate port A
         jbsr    C_SYM(scc_rx_interrupt_handler)
 #else
-        move.w  #0,-(sp)                // indicate port A
+        clr.l   -(sp)                   // indicate port A (full 4-byte slot, no -mshort)
         jbsr    C_SYM(scc_rx_interrupt_handler)
-        lea     2(sp),sp
+        lea     4(sp),sp
 #endif
 
 #ifdef __mcoldfire__
@@ -751,9 +751,9 @@ C_SYM(scca_tx_interrupt):
         moveq   #0,d0                   // indicate port A
         jbsr    C_SYM(scc_tx_interrupt_handler)
 #else
-        move.w  #0,-(sp)                // indicate port A
+        clr.l   -(sp)                   // indicate port A (full 4-byte slot, no -mshort)
         jbsr    C_SYM(scc_tx_interrupt_handler)
-        lea     2(sp),sp
+        lea     4(sp),sp
 #endif
 
 #ifdef __mcoldfire__
@@ -776,9 +776,9 @@ C_SYM(scca_es_interrupt):
         moveq   #0,d0                   // indicate port A
         jbsr    C_SYM(scc_es_interrupt_handler)
 #else
-        move.w  #0,-(sp)                // indicate port A
+        clr.l   -(sp)                   // indicate port A (full 4-byte slot, no -mshort)
         jbsr    C_SYM(scc_es_interrupt_handler)
-        lea     2(sp),sp
+        lea     4(sp),sp
 #endif
 
 #ifdef __mcoldfire__
@@ -801,9 +801,9 @@ C_SYM(sccb_rx_interrupt):
         moveq   #1,d0                   // indicate port B
         jbsr    C_SYM(scc_rx_interrupt_handler)
 #else
-        move.w  #1,-(sp)                // indicate port B
+        move.l  #1,-(sp)                // indicate port B (full 4-byte slot, no -mshort)
         jbsr    C_SYM(scc_rx_interrupt_handler)
-        lea     2(sp),sp
+        lea     4(sp),sp
 #endif
 
 #ifdef __mcoldfire__
@@ -826,9 +826,9 @@ C_SYM(sccb_tx_interrupt):
         moveq   #1,d0                   // indicate port B
         jbsr    C_SYM(scc_tx_interrupt_handler)
 #else
-        move.w  #1,-(sp)                // indicate port B
+        move.l  #1,-(sp)                // indicate port B (full 4-byte slot, no -mshort)
         jbsr    C_SYM(scc_tx_interrupt_handler)
-        lea     2(sp),sp
+        lea     4(sp),sp
 #endif
 
 #ifdef __mcoldfire__
@@ -851,9 +851,9 @@ C_SYM(sccb_es_interrupt):
         moveq   #1,d0                   // indicate port B
         jbsr    C_SYM(scc_es_interrupt_handler)
 #else
-        move.w  #1,-(sp)                // indicate port B
+        move.l  #1,-(sp)                // indicate port B (full 4-byte slot, no -mshort)
         jbsr    C_SYM(scc_es_interrupt_handler)
-        lea     2(sp),sp
+        lea     4(sp),sp
 #endif
 
 #ifdef __mcoldfire__
