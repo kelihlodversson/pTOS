@@ -616,8 +616,8 @@ dumpkbd.prg: obj/minicrt.o obj/memmove.o obj/dumpkbd.o obj/doprintf.o \
 # Host tools
 #
 
-TOCLEAN += bug draft erd grd ird mrd mkflop mkrom tos-lang-change \
-           temp.rsc temp.def
+TOCLEAN += bug draft erd grd ird mrd mkflop mkrom ptos-elf-pack \
+           tos-lang-change temp.rsc temp.def
 
 bug: tools/bug.c
 	$(NATIVECC) $< -o $@
@@ -626,6 +626,11 @@ mkrom: tools/mkrom.c
 	$(NATIVECC) $< -o $@
 
 mkflop: tools/mkflop.c
+	$(NATIVECC) $< -o $@
+
+# post-link tool packing an ELF's load relocations for bdos/elfld.c, see
+# doc/elfload.txt; not needed to build EmuTOS itself, built on demand
+ptos-elf-pack: tools/ptos-elf-pack.c
 	$(NATIVECC) $< -o $@
 
 erd: tools/erd.c
@@ -646,7 +651,7 @@ tos-lang-change: tools/tos-lang-change.c
 	$(NATIVECC) $< -o $@
 
 .PHONY: tools
-tools: bug draft erd grd ird mrd mkflop mkrom tos-lang-change
+tools: bug draft erd grd ird mrd mkflop mkrom ptos-elf-pack tos-lang-change
 
 #
 # NLS support

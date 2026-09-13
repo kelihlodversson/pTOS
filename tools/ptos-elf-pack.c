@@ -1,0 +1,615 @@
+/*
+ * ptos-elf-pack.c - pack an ELF binary's load relocations for bdos/elfld.c
+ *
+ * Copyright (C) 2026 The pTOS development team
+ *
+ * This file is distributed under the GPL, version 2 or at your
+ * option any later version.  See doc/license.txt for details.
+ *
+ * Reads a statically linked ARM or m68k ELF32 executable of either kind
+ * bdos/elfld.c already accepts -- a fixed base ET_EXEC linked with
+ * "ld --emit-relocs", or a position independent ET_DYN linked with
+ * "ld -pie --no-dynamic-linker" -- and rewrites it into the compact,
+ * architecture neutral relocation format documented in doc/elfload.txt:
+ * a ".ptos.reloc" payload (an 8 byte header plus a ULEB128 delta stream)
+ * referenced by a new PT_PTOS_RELOC program header, instead of the
+ * SHT_REL/SHT_RELA sections the input format above relies on.
+ *
+ * The rewrite only appends bytes: the input file's own content -- ELF
+ * header aside -- is copied through unchanged at the same offsets, so
+ * nothing that already worked stops working. Only two things change in
+ * the output:
+ *
+ *   - a handful of DIR32-equivalent slots (see pack_addend() below) get
+ *     their addend materialised into the file bytes at their p_offset,
+ *     which is what they need to hold for the compact format's single
+ *     "add the load bias" operation to be correct for every listed slot;
+ *   - the ELF header's e_phoff/e_phnum are repointed at a new program
+ *     header table (a copy of the original entries plus one new
+ *     PT_PTOS_RELOC entry), appended after the .ptos.reloc payload.
+ *
+ * This is a host build tool: it is compiled with the native ($(NATIVECC))
+ * compiler, not a target cross compiler, and never assumes the host's
+ * endianness or word size matches the ELF file it is processing -- every
+ * multi-byte field is read and written explicitly according to the
+ * input's e_ident[EI_DATA].
+ *
+ * Usage: ptos-elf-pack <input.elf> <output.elf>
+ *
+ * This is the first, minimal cut of the tool (see issue #309): it does
+ * not yet strip the now-superseded relocation/symbol data it supersedes,
+ * or add a matching section header entry for the payload -- both are
+ * left as later refinements, tracked under issue #308.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <stdarg.h>
+
+/* ELF32 constants and field byte offsets (System V ABI); kept as plain
+ * byte offsets rather than a packed struct so this tool never depends on
+ * the host compiler's struct layout or alignment rules. */
+#define EI_NIDENT       16
+#define EI_CLASS        4
+#define EI_DATA         5
+#define ELFCLASS32      1
+#define ELFDATA2LSB     1
+#define ELFDATA2MSB     2
+
+#define EHDR_SIZE       52
+#define EHDR_E_TYPE         16
+#define EHDR_E_MACHINE      18
+#define EHDR_E_ENTRY        24
+#define EHDR_E_PHOFF        28
+#define EHDR_E_SHOFF        32
+#define EHDR_E_PHENTSIZE    42
+#define EHDR_E_PHNUM        44
+#define EHDR_E_SHENTSIZE    46
+#define EHDR_E_SHNUM        48
+#define EHDR_E_SHSTRNDX     50
+
+#define ET_EXEC         2
+#define ET_DYN          3
+#define EM_68K          4
+#define EM_ARM          40
+
+#define PHDR_SIZE       32
+#define PHDR_P_TYPE     0
+#define PHDR_P_OFFSET   4
+#define PHDR_P_VADDR    8
+#define PHDR_P_FILESZ   16
+#define PHDR_P_MEMSZ    20
+
+#define PT_LOAD         1UL
+#define PT_PTOS_RELOC   0x60000001UL
+
+#define SHDR_SIZE       40
+#define SHDR_SH_TYPE    4
+#define SHDR_SH_FLAGS   8
+#define SHDR_SH_OFFSET  16
+#define SHDR_SH_SIZE    20
+#define SHDR_SH_INFO    28
+#define SHDR_SH_ENTSIZE 36
+
+#define SHT_RELA        4UL
+#define SHT_REL         9UL
+#define SHF_ALLOC       0x2UL
+
+#define REL_SIZE        8
+#define RELA_SIZE       12
+
+#define PTOS_RELOC_MAGIC    0x50544c31UL
+#define PTOS_RELOC_VERSION  1
+
+/* one input relocation this tool cares about, resolved to the load-time
+ * operation the compact format always applies: "*slot += load_bias" */
+typedef struct {
+    uint32_t vaddr;
+} SLOT;
+
+/* one input PT_LOAD segment's file<->memory mapping, needed to find the
+ * file byte a RELA/RELATIVE slot's addend must be materialised into */
+typedef struct {
+    uint32_t vaddr;
+    uint32_t offset;
+    uint32_t filesz;
+} SEGMENT;
+
+static const char *g_argv0;
+static int g_is_be;
+
+static void die(const char *fmt, ...)
+{
+    va_list ap;
+
+    fprintf(stderr, "%s: ", g_argv0);
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fprintf(stderr, "\n");
+    exit(1);
+}
+
+static uint32_t rd32(const unsigned char *p)
+{
+    if (g_is_be)
+        return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16)
+             | ((uint32_t)p[2] << 8)  |  (uint32_t)p[3];
+    return ((uint32_t)p[3] << 24) | ((uint32_t)p[2] << 16)
+         | ((uint32_t)p[1] << 8)  |  (uint32_t)p[0];
+}
+
+static uint16_t rd16(const unsigned char *p)
+{
+    if (g_is_be)
+        return (uint16_t)(((uint32_t)p[0] << 8) | (uint32_t)p[1]);
+    return (uint16_t)(((uint32_t)p[1] << 8) | (uint32_t)p[0]);
+}
+
+static void wr32(unsigned char *p, uint32_t v)
+{
+    if (g_is_be)
+    {
+        p[0] = (unsigned char)(v >> 24); p[1] = (unsigned char)(v >> 16);
+        p[2] = (unsigned char)(v >> 8);  p[3] = (unsigned char)v;
+    }
+    else
+    {
+        p[3] = (unsigned char)(v >> 24); p[2] = (unsigned char)(v >> 16);
+        p[1] = (unsigned char)(v >> 8);  p[0] = (unsigned char)v;
+    }
+}
+
+static void wr16(unsigned char *p, uint16_t v)
+{
+    if (g_is_be)
+    {
+        p[0] = (unsigned char)(v >> 8); p[1] = (unsigned char)v;
+    }
+    else
+    {
+        p[1] = (unsigned char)(v >> 8); p[0] = (unsigned char)v;
+    }
+}
+
+/* growable output buffer */
+typedef struct {
+    unsigned char *data;
+    size_t len;
+    size_t cap;
+} BUF;
+
+static void buf_reserve(BUF *b, size_t extra)
+{
+    if (b->len + extra <= b->cap)
+        return;
+
+    while (b->cap < b->len + extra)
+        b->cap = b->cap ? b->cap * 2 : 4096;
+
+    b->data = realloc(b->data, b->cap);
+    if (!b->data)
+        die("out of memory");
+}
+
+static void buf_append(BUF *b, const void *p, size_t n)
+{
+    buf_reserve(b, n);
+    memcpy(b->data + b->len, p, n);
+    b->len += n;
+}
+
+static void buf_append_u8(BUF *b, unsigned char v)
+{
+    buf_append(b, &v, 1);
+}
+
+static void buf_append_uleb128(BUF *b, uint32_t v)
+{
+    for (;;)
+    {
+        unsigned char byte = (unsigned char)(v & 0x7f);
+        v >>= 7;
+        if (v != 0)
+            buf_append_u8(b, (unsigned char)(byte | 0x80));
+        else
+        {
+            buf_append_u8(b, byte);
+            break;
+        }
+    }
+}
+
+/* read the whole input file into memory */
+static unsigned char *read_file(const char *path, long *out_size)
+{
+    FILE *f;
+    long size;
+    unsigned char *buf;
+
+    f = fopen(path, "rb");
+    if (!f)
+        die("cannot open '%s' for reading", path);
+
+    if (fseek(f, 0, SEEK_END) != 0)
+        die("cannot seek '%s'", path);
+    size = ftell(f);
+    if (size < 0)
+        die("cannot determine size of '%s'", path);
+    rewind(f);
+
+    buf = malloc((size_t)size ? (size_t)size : 1);
+    if (!buf)
+        die("out of memory reading '%s'", path);
+
+    if (size > 0 && fread(buf, 1, (size_t)size, f) != (size_t)size)
+        die("short read on '%s'", path);
+
+    fclose(f);
+    *out_size = size;
+    return buf;
+}
+
+/* find the PT_LOAD segment containing vaddr and translate it to a file
+ * offset; dies with a clear message if vaddr falls outside every
+ * segment's file-backed part (e.g. inside .bss), which version 1 of the
+ * compact format cannot represent (see doc/elfload.txt) */
+static uint32_t vaddr_to_file_offset(const SEGMENT *segs, size_t nsegs,
+                                     uint32_t vaddr)
+{
+    size_t i;
+
+    for (i = 0; i < nsegs; i++)
+    {
+        if (vaddr >= segs[i].vaddr && vaddr - segs[i].vaddr < segs[i].filesz)
+            return segs[i].offset + (vaddr - segs[i].vaddr);
+    }
+
+    die("relocation at 0x%08lx targets memory with no file backing "
+        "(likely .bss); unsupported by .ptos.reloc version 1",
+        (unsigned long)vaddr);
+    return 0; /* unreachable */
+}
+
+static int slot_cmp(const void *a, const void *b)
+{
+    uint32_t va = ((const SLOT *)a)->vaddr;
+    uint32_t vb = ((const SLOT *)b)->vaddr;
+    if (va < vb) return -1;
+    if (va > vb) return 1;
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    const char *in_path, *out_path;
+    unsigned char *in;
+    long in_size_l;
+    uint32_t in_size;
+    unsigned char e_ident_class, e_ident_data;
+    uint32_t e_type, e_machine;
+    uint32_t e_phoff, e_shoff, e_entry;
+    uint16_t e_phentsize, e_phnum, e_shentsize, e_shnum, e_shstrndx;
+    uint32_t dir32_type, relative_type;
+    SEGMENT *segs;
+    size_t nsegs, seg_cap;
+    SLOT *slots;
+    size_t nslots, slot_cap;
+    uint32_t link_base;
+    int have_link_base;
+    uint16_t i;
+    FILE *out;
+    BUF payload;
+    BUF newphdrs;
+    unsigned char hdrbuf[8];
+    uint32_t new_data_off, padded_len, new_phdr_off;
+    uint32_t new_phnum;
+
+    g_argv0 = argv[0] ? argv[0] : "ptos-elf-pack";
+
+    if (argc != 3)
+        die("usage: %s <input.elf> <output.elf>", g_argv0);
+
+    in_path = argv[1];
+    out_path = argv[2];
+
+    in = read_file(in_path, &in_size_l);
+    if (in_size_l < EHDR_SIZE)
+        die("'%s' is too small to be a valid ELF32 file", in_path);
+    in_size = (uint32_t)in_size_l;
+
+    if (in[0] != 0x7f || in[1] != 'E' || in[2] != 'L' || in[3] != 'F')
+        die("'%s' is not an ELF file", in_path);
+
+    e_ident_class = in[EI_CLASS];
+    e_ident_data = in[EI_DATA];
+    if (e_ident_class != ELFCLASS32)
+        die("'%s' is not ELF32", in_path);
+    if (e_ident_data != ELFDATA2LSB && e_ident_data != ELFDATA2MSB)
+        die("'%s' has an unrecognised ELF data encoding", in_path);
+    g_is_be = (e_ident_data == ELFDATA2MSB);
+
+    e_type = rd16(in + EHDR_E_TYPE);
+    e_machine = rd16(in + EHDR_E_MACHINE);
+    e_entry = rd32(in + EHDR_E_ENTRY);
+    e_phoff = rd32(in + EHDR_E_PHOFF);
+    e_shoff = rd32(in + EHDR_E_SHOFF);
+    e_phentsize = rd16(in + EHDR_E_PHENTSIZE);
+    e_phnum = rd16(in + EHDR_E_PHNUM);
+    e_shentsize = rd16(in + EHDR_E_SHENTSIZE);
+    e_shnum = rd16(in + EHDR_E_SHNUM);
+    e_shstrndx = rd16(in + EHDR_E_SHSTRNDX);
+    (void)e_entry;
+    (void)e_shstrndx;
+
+    if (e_type != ET_EXEC && e_type != ET_DYN)
+        die("'%s' is neither ET_EXEC nor ET_DYN", in_path);
+
+    if (e_machine == EM_ARM)
+    {
+        dir32_type = 2;     /* R_ARM_ABS32 */
+        relative_type = 23; /* R_ARM_RELATIVE */
+    }
+    else if (e_machine == EM_68K)
+    {
+        dir32_type = 1;     /* R_68K_32 */
+        relative_type = 22; /* R_68K_RELATIVE */
+    }
+    else
+        die("'%s' targets an unsupported machine (%u); only ARM and m68k "
+            "are known to bdos/elfld.c", in_path, (unsigned)e_machine);
+
+    if (e_phentsize != PHDR_SIZE)
+        die("'%s' has an unexpected program header size", in_path);
+    if (e_phnum == 0)
+        die("'%s' has no program headers", in_path);
+
+    /* scan PT_LOAD segments: needed both for vaddr_to_file_offset() below
+     * and, for informational purposes only, the image's link_base */
+    seg_cap = e_phnum;
+    segs = malloc(seg_cap * sizeof(*segs));
+    if (!segs)
+        die("out of memory");
+    nsegs = 0;
+    have_link_base = 0;
+    link_base = 0;
+
+    for (i = 0; i < e_phnum; i++)
+    {
+        const unsigned char *ph = in + e_phoff + (uint32_t)i * e_phentsize;
+        uint32_t p_type, p_offset, p_vaddr, p_filesz;
+
+        if ((uint64_t)e_phoff + (uint64_t)i * e_phentsize + PHDR_SIZE > in_size)
+            die("'%s' has a truncated program header table", in_path);
+
+        p_type = rd32(ph + PHDR_P_TYPE);
+        if (p_type != PT_LOAD)
+            continue;
+
+        p_offset = rd32(ph + PHDR_P_OFFSET);
+        p_vaddr = rd32(ph + PHDR_P_VADDR);
+        p_filesz = rd32(ph + PHDR_P_FILESZ);
+
+        if ((uint64_t)p_offset + p_filesz > in_size)
+            die("'%s' has a PT_LOAD segment reaching past end of file", in_path);
+
+        segs[nsegs].vaddr = p_vaddr;
+        segs[nsegs].offset = p_offset;
+        segs[nsegs].filesz = p_filesz;
+        nsegs++;
+
+        if (!have_link_base || p_vaddr < link_base)
+        {
+            link_base = p_vaddr;
+            have_link_base = 1;
+        }
+    }
+
+    if (!have_link_base)
+        die("'%s' has no PT_LOAD segments", in_path);
+
+    if (e_shoff == 0 || e_shnum == 0)
+        die("'%s' has no section headers to read relocations from -- "
+            "already packed, or stripped before packing?", in_path);
+    if (e_shentsize != SHDR_SIZE)
+        die("'%s' has an unexpected section header size", in_path);
+
+    /* copy the whole input file through unchanged; RELA/RELATIVE entries
+     * may still patch a few bytes of it below (pack_addend) */
+    {
+        BUF out_copy;
+        out_copy.data = malloc(in_size);
+        if (!out_copy.data)
+            die("out of memory");
+        memcpy(out_copy.data, in, in_size);
+        out_copy.len = in_size;
+        out_copy.cap = in_size;
+        free(in);
+        in = out_copy.data;
+        /* 'in' is now the mutable output copy; in_size unchanged */
+    }
+
+    slot_cap = 64;
+    nslots = 0;
+    slots = malloc(slot_cap * sizeof(*slots));
+    if (!slots)
+        die("out of memory");
+
+    for (i = 0; i < e_shnum; i++)
+    {
+        const unsigned char *sh = in + e_shoff + (uint32_t)i * e_shentsize;
+        uint32_t sh_type, sh_offset, sh_size, sh_info, sh_entsize;
+        uint32_t entsize, structsize, count, j;
+        int rela;
+
+        if ((uint64_t)e_shoff + (uint64_t)i * e_shentsize + SHDR_SIZE > in_size)
+            die("'%s' has a truncated section header table", in_path);
+
+        sh_type = rd32(sh + SHDR_SH_TYPE);
+        if (sh_type != SHT_REL && sh_type != SHT_RELA)
+            continue;
+
+        rela = (sh_type == SHT_RELA);
+        sh_offset = rd32(sh + SHDR_SH_OFFSET);
+        sh_size = rd32(sh + SHDR_SH_SIZE);
+        sh_info = rd32(sh + SHDR_SH_INFO);
+        sh_entsize = rd32(sh + SHDR_SH_ENTSIZE);
+
+        /* sh_info names the target section; 0 means "the whole image"
+         * (used by .rel.dyn/.rela.dyn), matching bdos/elfld.c exactly */
+        if (sh_info != 0)
+        {
+            const unsigned char *tsh;
+            uint32_t t_flags;
+
+            if (sh_info >= e_shnum)
+                die("'%s' has a relocation section naming an out of range "
+                    "target section", in_path);
+
+            tsh = in + e_shoff + sh_info * e_shentsize;
+            t_flags = rd32(tsh + SHDR_SH_FLAGS);
+            if (!(t_flags & SHF_ALLOC))
+                continue;
+        }
+
+        structsize = rela ? RELA_SIZE : REL_SIZE;
+        entsize = sh_entsize ? sh_entsize : structsize;
+        if (entsize != structsize || sh_size % entsize != 0)
+            die("'%s' has a malformed relocation section", in_path);
+
+        count = sh_size / entsize;
+        for (j = 0; j < count; j++)
+        {
+            const unsigned char *ent = in + sh_offset + j * entsize;
+            uint32_t r_offset, r_info, type, addend;
+
+            if ((uint64_t)sh_offset + (uint64_t)j * entsize + structsize > in_size)
+                die("'%s' has a truncated relocation table", in_path);
+
+            r_offset = rd32(ent + 0);
+            r_info = rd32(ent + 4);
+            type = r_info & 0xffUL;
+            addend = rela ? rd32(ent + 8) : 0;
+
+            if (type != dir32_type && type != relative_type)
+                continue;   /* PC-relative etc: no load-time fixup needed */
+
+            /* RELA + RELATIVE is the one case whose slot may not already
+             * hold the value to add the bias to (see doc/elfload.txt):
+             * materialise the addend into the file bytes now, so every
+             * slot this tool lists needs the exact same "+= bias" op */
+            if (rela && type == relative_type)
+            {
+                uint32_t file_off = vaddr_to_file_offset(segs, nsegs, r_offset);
+                wr32(in + file_off, addend);
+            }
+
+            if (nslots == slot_cap)
+            {
+                slot_cap *= 2;
+                slots = realloc(slots, slot_cap * sizeof(*slots));
+                if (!slots)
+                    die("out of memory");
+            }
+            slots[nslots].vaddr = r_offset;
+            nslots++;
+        }
+    }
+
+    if (nslots > 1)
+        qsort(slots, nslots, sizeof(*slots), slot_cmp);
+    {
+        size_t dupidx;
+        for (dupidx = 0; dupidx + 1 < nslots; dupidx++)
+        {
+            if (slots[dupidx].vaddr == slots[dupidx + 1].vaddr)
+                die("'%s' has two relocations targeting the same address "
+                    "(0x%08lx); unsupported by .ptos.reloc version 1",
+                    in_path, (unsigned long)slots[dupidx].vaddr);
+        }
+    }
+
+    /* build the .ptos.reloc payload: 8 byte header + ULEB128 delta stream */
+    payload.data = NULL;
+    payload.len = 0;
+    payload.cap = 0;
+
+    wr32(hdrbuf, PTOS_RELOC_MAGIC);
+    wr16(hdrbuf + 4, PTOS_RELOC_VERSION);
+    wr16(hdrbuf + 6, 0);
+    buf_append(&payload, hdrbuf, sizeof(hdrbuf));
+
+    {
+        uint32_t prev = link_base;
+        size_t k;
+        for (k = 0; k < nslots; k++)
+        {
+            buf_append_uleb128(&payload, slots[k].vaddr - prev);
+            prev = slots[k].vaddr;
+        }
+    }
+
+    new_data_off = in_size;
+    padded_len = (uint32_t)((payload.len + 3u) & ~3u);
+
+    /* build the new program header table: the original entries, verbatim,
+     * plus one new PT_PTOS_RELOC entry */
+    newphdrs.data = NULL;
+    newphdrs.len = 0;
+    newphdrs.cap = 0;
+    buf_append(&newphdrs, in + e_phoff, (size_t)e_phnum * e_phentsize);
+
+    {
+        unsigned char newph[PHDR_SIZE];
+        memset(newph, 0, sizeof(newph));
+        wr32(newph + PHDR_P_TYPE, (uint32_t)PT_PTOS_RELOC);
+        wr32(newph + PHDR_P_OFFSET, new_data_off);
+        wr32(newph + PHDR_P_VADDR, 0);
+        wr32(newph + 12 /* p_paddr */, 0);
+        wr32(newph + PHDR_P_FILESZ, (uint32_t)payload.len);
+        wr32(newph + PHDR_P_MEMSZ, 0);
+        wr32(newph + 24 /* p_flags */, 0);
+        wr32(newph + 28 /* p_align */, 4);
+        buf_append(&newphdrs, newph, sizeof(newph));
+    }
+
+    new_phdr_off = new_data_off + padded_len;
+    new_phnum = (uint32_t)e_phnum + 1;
+    if (new_phnum > 0xffffUL)
+        die("'%s' already has too many program headers to add one more",
+            in_path);
+
+    /* patch the (copied) ELF header in place: only e_phoff/e_phnum change,
+     * every other offset in the file -- including the original program and
+     * section header tables -- is untouched and stays individually valid */
+    wr32(in + EHDR_E_PHOFF, new_phdr_off);
+    wr16(in + EHDR_E_PHNUM, (uint16_t)new_phnum);
+
+    out = fopen(out_path, "wb");
+    if (!out)
+        die("cannot open '%s' for writing", out_path);
+
+    if (fwrite(in, 1, in_size, out) != in_size)
+        die("short write to '%s'", out_path);
+    if (fwrite(payload.data, 1, payload.len, out) != payload.len)
+        die("short write to '%s'", out_path);
+    if (padded_len > payload.len)
+    {
+        static const unsigned char zero[4] = { 0, 0, 0, 0 };
+        if (fwrite(zero, 1, padded_len - payload.len, out) != padded_len - payload.len)
+            die("short write to '%s'", out_path);
+    }
+    if (fwrite(newphdrs.data, 1, newphdrs.len, out) != newphdrs.len)
+        die("short write to '%s'", out_path);
+
+    if (fclose(out) != 0)
+        die("error closing '%s'", out_path);
+
+    fprintf(stderr, "%s: packed %lu relocation%s into '%s' (%lu bytes)\n",
+            g_argv0, (unsigned long)nslots, nslots == 1 ? "" : "s",
+            out_path, (unsigned long)(new_phdr_off + newphdrs.len));
+
+    return 0;
+}

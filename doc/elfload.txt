@@ -104,3 +104,90 @@ R_68K_32 / R_68K_RELATIVE in SHT_RELA sections; the loader handles those:
 
 Programs start executing at the ELF entry point (e_entry); the PT_LOAD
 segments are placed in the TPA and the rest of it, including .bss, is zeroed.
+
+
+Compact load relocations (.ptos.reloc / PT_PTOS_RELOC)
+-------------------------------------------------------
+
+The two forms above both make the loader depend on the ELF section header
+table: the retained SHT_REL/SHT_RELA sections from "ld --emit-relocs" carry
+far more than a load-time fixup needs (symbol/section tables meant only for
+linking, entries for sections that are never loaded, ...), and the binary
+can never be stripped of its section headers.
+
+pTOS also accepts a third, preferred form: a post-link tool (tools/
+ptos-elf-pack.c) reads either of the two forms above and rewrites it into an
+architecture-neutral, compact relocation stream, addressed through a
+pTOS-private program header instead of the section header table. This is
+the first piece of the larger native pTOS ABI work tracked by issue #308;
+this document covers only the relocation format, which stands on its own.
+
+The rewritten file is byte-identical to the input except for two additions
+appended after the original content -- nothing already present is moved or
+resized:
+
+  1. the ".ptos.reloc" payload: an 8 byte header followed by a ULEB128
+     delta stream (below);
+  2. a new program header table (a copy of the original entries plus one
+     new PT_PTOS_RELOC entry), which the rewritten ELF header now points at
+     via e_phoff/e_phnum.
+
+Because nothing already in the file moves, an unmodified ELF header,
+program headers and section headers stay individually valid; only e_phoff
+and e_phnum change, to point at the new table.
+
+PT_PTOS_RELOC's value is 0x60000001, inside the OS-specific range the ELF
+spec reserves (PT_LOOS..PT_HIOS, 0x60000000..0x6fffffff). Its p_offset/
+p_filesz locate the ".ptos.reloc" payload; p_vaddr/p_paddr/p_memsz are 0
+(the segment is metadata, not something to map into the process image).
+
+".ptos.reloc" payload layout, version 1:
+
+    offset  size  field
+    0       4     magic   (0x50544c31, native byte order, checked exactly)
+    4       2     version (1)
+    6       2     reserved (0; ignored by version 1 readers)
+    8       -     ULEB128 stream, one value per relocated slot
+
+Each ULEB128 value is a *delta*: the first is the distance from the image's
+link_base (the lowest p_vaddr of any PT_LOAD segment, as elsewhere in this
+document) to the first relocated slot; every value after that is the
+distance from the previous slot to the next one. Slots are therefore
+listed in strictly ascending address order, exactly like the classic PRG
+relocation table's fixup stream. The stream ends when it has consumed
+p_filesz - 8 bytes; there is no explicit terminator.
+
+Version 1 has exactly one relocation operation, applied to every slot the
+stream lists: a native ULONG at that address gets the program's load bias
+added to it --
+
+    *slot += actual_load_address - link_base
+
+identical to the DIR32 fixup described above. This covers everything the
+current loader relocates: for input relocations that already store the
+value to fix up directly in the slot (R_ARM_ABS32 / R_68K_32, and a REL-
+encoded R_ARM_RELATIVE / R_68K_RELATIVE), ptos-elf-pack lists the slot
+as-is; for a RELA-encoded RELATIVE relocation (m68k PIE), whose slot may
+legitimately be 0 in the file with the real value carried in r_addend
+instead, ptos-elf-pack first writes that addend into the slot's file bytes
+so every listed slot ends up needing the same "add the bias" operation.
+Relocation types the loader does not otherwise apply (PC-relative and
+similar) are never listed and need no entry.
+
+When bdos/elfld.c finds a PT_PTOS_RELOC program header, it uses this stream
+and does not touch the section header table at all -- so a file built this
+way can have its section headers, .symtab and the original relocation
+sections removed and still load. ptos-elf-pack does not perform that
+removal itself yet; it only adds the new metadata. A file with no
+PT_PTOS_RELOC header falls back to the section-based relocation described
+above, so existing unpacked ELF binaries keep working unchanged.
+
+Producing a packed binary is one extra step after the existing recipes
+above:
+
+    arm-none-eabi-ld -q -Ttext=0 -e _start prog.o -o prog.elf
+    ptos-elf-pack prog.elf prog-packed.elf
+
+"readelf -l prog-packed.elf" shows the extra program header as an unknown
+OS-specific type (0x60000001); this is expected and harmless for any tool
+that does not know about it.
