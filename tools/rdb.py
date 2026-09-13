@@ -55,6 +55,15 @@ class RDB:
         self.notifications = []
         self._drain_notifications()
 
+    def close(self):
+        self.sock.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
     def _read_msg(self):
         idx = self.buf.find(b"\x00", self._scanned)
         while idx < 0:
@@ -151,6 +160,11 @@ class RDB:
                     )
                 accum = (accum << 6) | (c - 32)
             out += bytes([(accum >> 16) & 0xFF, (accum >> 8) & 0xFF, accum & 0xFF])
+        if len(out) < rcount:
+            raise RuntimeError(
+                f"mem: truncated reply, decoded {len(out)} bytes but server "
+                f"reported rcount={rcount:#x} in {enc!r}"
+            )
         return bytes(out[:rcount]), raddr
 
     def bp(self, expr):
