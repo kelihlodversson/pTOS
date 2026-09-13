@@ -43,6 +43,16 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys);
  */
 ULONG virt_to_phys(void *va);
 
+/*
+ * Boot-time functional validation of the portable pMMU page-table
+ * maintenance abstraction (bios/mmu_walk.c), against the table
+ * virt_mmu_bootstrap() already built. See
+ * docs/superpowers/specs/2026-08-15-portable-pmmu-page-table-design.md's
+ * Testing And Validation section for the exact sequence. Only defined
+ * when CONF_DEBUG_MMU_MAINT_SELFTEST is set; panics on any failed check.
+ */
+void virt_mmu_selftest(void);
+
 #endif /* MACHINE_VIRT_ARM */
 
 #endif /* VIRT_MMU_H */

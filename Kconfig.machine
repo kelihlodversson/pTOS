@@ -200,9 +200,27 @@ config CONF_WITH_ARM_PMMU
 	  Install page tables and enable the MMU.  This is required to enable
 	  the data cache on ARM.
 
+# Whether the portable pMMU page-table maintenance abstraction (bios/mmu_walk.c
+# plus an architecture backend, e.g. bios/arch/arm/mmu_shortdesc.c) applies to
+# this target.  Derived, not user-selectable, like ARCH_ARM/CPU_ARMV7 above:
+# a target either has a backend for its page-table format or it doesn't, and
+# CONF_WITH_ARM_LPAE's opt-in long-descriptor bootstrap on TARGET_RPI4 (issue
+# #276) is a different, incompatible format this Phase 1 short-descriptor
+# backend cannot walk, so the two must never both be configured on at once.
+config CONF_WITH_MMU_MAINT
+	bool
+	default y if CONF_WITH_ARM_PMMU && (MACHINE_RPI || MACHINE_VIRT_ARM) && !CONF_WITH_ARM_LPAE
+
+# Always defined (0 or 1): widens phys_addr_type (include/mmu.h) to 64 bits.
+# Off for every target today; the future ARM32 LPAE/highmem backend (issue
+# #76) is what will turn this on.
+config CONF_MMU_PHYS_64
+	bool
+	default n
+
 config CONF_WITH_MMU_TEXT_PROTECT
 	bool "Write-protect the kernel text segment"
-	depends on MACHINE_RPI && CONF_WITH_ARM_PMMU
+	depends on MACHINE_RPI && CONF_WITH_ARM_PMMU && CONF_WITH_MMU_MAINT
 	default y
 	help
 	  Break out the first megabyte of RAM into a page table and mark

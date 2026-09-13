@@ -47,6 +47,10 @@ obj-$(ARCH_ARM) += vectorsasm.o aciaemu.o tosvars.o
 # by the first generation Raspberry Pi.
 obj-$(CPU_ARMV7) += cache_armv7.o cache_armv7_asm.o
 
+# Portable pMMU page-table maintenance abstraction (generic walker plus the
+# ARM32 short-descriptor backend, the only one that exists so far).
+obj-$(CONF_WITH_MMU_MAINT) += mmu_walk.o mmu_shortdesc.o
+
 obj-$(MACHINE_RPI) += raspi_board.o raspi_uart.o raspi_int.o raspi_mbox.o \
 	 raspi_screen.o raspi_emmc.o
 obj-$(TARGET_RPI4) += raspi_gic.o
@@ -54,6 +58,7 @@ obj-$(CONF_WITH_USB_XHCI) += raspi_vl805.o
 obj-$(CONF_WITH_RASPI_VSYNC_IRQ) += raspi_vsync.o
 
 obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o virt_pic.o virt_timer.o
+obj-$(CONF_DEBUG_MMU_MAINT_SELFTEST) += virt_mmu_selftest.o
 
 obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfish_rtc_isr.o goldfish_pic_isr.o
 
