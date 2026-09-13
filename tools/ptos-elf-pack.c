@@ -20,10 +20,11 @@
  * nothing that already worked stops working. Only two things change in
  * the output:
  *
- *   - a handful of DIR32-equivalent slots (see pack_addend() below) get
- *     their addend materialised into the file bytes at their p_offset,
- *     which is what they need to hold for the compact format's single
- *     "add the load bias" operation to be correct for every listed slot;
+ *   - a RELA RELATIVE slot (see main()'s relocation loop below) gets its
+ *     addend materialised into the file bytes at its p_offset when that
+ *     slot is file-backed, which is what it needs to hold for the compact
+ *     format's single "add the load bias" operation to be correct for
+ *     every listed slot;
  *   - the ELF header's e_phoff/e_phnum are repointed at a new program
  *     header table (a copy of the original entries plus one new
  *     PT_PTOS_RELOC entry), appended after the .ptos.reloc payload.
@@ -51,7 +52,7 @@
  *
  * This is the first, minimal cut of the tool (see issue #309): it does
  * not yet strip the now-superseded relocation/symbol *data* it
- * supersedes (only --strip-shdr's own three header fields above), or add
+ * supersedes (only --strip-shdr's own four header fields above), or add
  * a matching section header entry for the payload -- both are left as
  * later refinements, tracked under issue #308.
  */

@@ -40,6 +40,8 @@
 /pieprobe.tos
 /relocprobe-unpacked.tos
 /PTRELOC.TOS
+/relocprobe2-unpacked.tos
+/PTRELOC2.TOS
 /test-hd.img
 
 # Host tools built by the Makefile

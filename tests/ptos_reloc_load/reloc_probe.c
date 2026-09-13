@@ -8,13 +8,17 @@
  * format documented in doc/elfload.txt, so loading it exercises
  * bdos/elfld.c's elf_relocate_ptos() -- the new code path this test suite
  * covers, which pie_load's payload never reaches. The Makefile links this
- * source differently per architecture: a fixed-base ET_EXEC with "ld -q"
- * (--emit-relocs) on ARM, matching REL-encoded R_ARM_ABS32/RELATIVE whose
- * value is already in the slot; a PIE ET_DYN on m68k, matching RELA-encoded
- * R_68K_RELATIVE whose value is only in r_addend and must be materialised
- * into the slot by ptos-elf-pack at pack time -- so between the two
- * configurations this one source exercises both of elf_relocate_ptos()'s
- * slot sources.
+ * one object file twice, with different flags (TEST_PTOS_RELOC_LDFLAGS/
+ * TEST_PTOS_RELOC_LDFLAGS2), into PTRELOC.TOS and PTRELOC2.TOS: a
+ * fixed-base ET_EXEC with "ld -q" (--emit-relocs), whose DIR32 relocation
+ * (R_ARM_ABS32 on ARM, R_68K_32 on m68k) already has its value in the
+ * slot either way; and a PIE ET_DYN with "-pie --no-dynamic-linker",
+ * whose RELATIVE relocation's value is already in the slot under ARM's
+ * REL encoding but only in m68k's RELA r_addend field, needing
+ * materialisation into the slot by ptos-elf-pack at pack time. Between
+ * the two link shapes, on both architectures, this one source exercises
+ * every relocation type/encoding combination elf_relocate_ptos() and
+ * ptos-elf-pack support.
  *
  * A statically initialized pointer to another global forces the linker to
  * emit an absolute relocation: without one, this program would need no
