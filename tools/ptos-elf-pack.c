@@ -898,9 +898,19 @@ int main(int argc, char **argv)
      * their sum -- the packed file's total length -- is not itself
      * bounds-checked before being narrowed into new_phdr_off and written
      * into e_phoff (an ELF32 field). Check in 64 bits so a pathological
-     * combination cannot wrap into a bogus, unusably small offset. */
-    if ((uint64_t)new_data_off + padded_len + newphdrs.len > 0xffffffffUL)
-        die("'%s': packed output would exceed the 4 GiB ELF32 format",
+     * combination cannot wrap into a bogus, unusably small offset.
+     *
+     * The bound is the loader's, not the ELF32 format's: bdos/elfld.c's
+     * read_at() (used both for the PT_PTOS_RELOC payload's p_offset and
+     * for e_phoff itself) rejects any offset >= 0x80000000 outright,
+     * because it goes through xlseek()'s signed LONG. A packed file
+     * between 2 GiB and 4 GiB would satisfy the plain ELF32 4 GiB limit
+     * yet still be unloadable, so bound the whole appended region --
+     * every offset within it that the loader might read -- by 0x80000000
+     * instead of 0xffffffff. */
+    if ((uint64_t)new_data_off + padded_len + newphdrs.len > 0x80000000UL)
+        die("'%s': packed output would exceed the loader's 0x80000000 "
+            "signed-offset limit (bdos/elfld.c read_at())",
             in_path);
 
     new_phdr_off = new_data_off + padded_len;
