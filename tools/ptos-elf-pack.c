@@ -365,11 +365,39 @@ static uint32_t vaddr_to_file_offset(const SEGMENT *segs, size_t nsegs,
     }
 
     die("relocation at 0x%08lx targets memory with no file backing "
-        "(likely .bss); a RELATIVE relocation there needs an addend-"
-        "carrying wire operation .ptos.reloc version 1 does not have -- "
-        "a known format limitation, not a bug (see doc/elfload.txt)",
+        "(likely .bss); a slot there needs an addend-carrying wire "
+        "operation .ptos.reloc version 1 does not have -- a known format "
+        "limitation, not a bug (see doc/elfload.txt)",
         (unsigned long)vaddr);
     return 0; /* unreachable */
+}
+
+/* resolve a relocation's symbol (r_info's top 24 bits, per ELF32_R_SYM)
+ * against the section's linked symbol table and report whether it is
+ * SHN_ABS -- a fixed, linker-defined constant that does not move with
+ * the image. Symbol index 0 (STN_UNDEF) or no linked symbol table (a
+ * RELATIVE relocation's symbol field is conventionally unused) reads as
+ * "not absolute": nothing to reject. */
+static int reloc_symbol_is_abs(const char *in_path, uint32_t r_info,
+                               uint32_t symtab_offset, uint32_t symtab_size,
+                               uint32_t symtab_entsize, uint32_t in_size,
+                               const unsigned char *in)
+{
+    uint32_t sym_index = r_info >> 8;
+    uint32_t sym_off;
+
+    if (sym_index == 0 || symtab_offset == 0)
+        return 0;
+
+    if (sym_index >= symtab_size / symtab_entsize)
+        die("'%s' has a relocation naming an out of range symbol table "
+            "entry", in_path);
+    if ((uint64_t)symtab_offset + (uint64_t)sym_index * symtab_entsize + SYM_SIZE
+        > in_size)
+        die("'%s' has a truncated symbol table", in_path);
+
+    sym_off = symtab_offset + sym_index * symtab_entsize;
+    return rd16(in + sym_off + SYM_ST_SHNDX) == SHN_ABS;
 }
 
 static int slot_cmp(const void *a, const void *b)
@@ -430,6 +458,14 @@ int main(int argc, char **argv)
     in = read_file(in_path, &in_size_l);
     if (in_size_l < EHDR_SIZE)
         die("'%s' is too small to be a valid ELF32 file", in_path);
+    /* every offset from here on is a plain uint32_t (matching the ELF32
+     * field widths themselves), so an input too large to fit one would
+     * silently truncate rather than fail loudly; comparing as unsigned
+     * long is correct whether long is 32 or 64 bits (on a 32-bit host
+     * this can never trip, since a 32-bit long's range is already within
+     * uint32_t) */
+    if ((unsigned long)in_size_l > 0xffffffffUL)
+        die("'%s' is larger than the 4 GiB ELF32 format can address", in_path);
     in_size = (uint32_t)in_size_l;
 
     if (in[0] != 0x7f || in[1] != 'E' || in[2] != 'L' || in[3] != 'F')
@@ -664,32 +700,17 @@ int main(int argc, char **argv)
                      * would need a fixup this format has no way to apply,
                      * not none at all. Look the symbol up and reject
                      * rather than assume the common case. */
-                    uint32_t sym_index = r_info >> 8;
-
-                    if (sym_index != 0 && symtab_offset != 0)
-                    {
-                        uint32_t sym_off;
-                        uint16_t st_shndx;
-
-                        if (sym_index >= symtab_size / symtab_entsize)
-                            die("'%s' has a relocation naming an out of "
-                                "range symbol table entry", in_path);
-                        if ((uint64_t)symtab_offset + (uint64_t)sym_index * symtab_entsize + SYM_SIZE
-                            > in_size)
-                            die("'%s' has a truncated symbol table", in_path);
-
-                        sym_off = symtab_offset + sym_index * symtab_entsize;
-                        st_shndx = rd16(in + sym_off + SYM_ST_SHNDX);
-                        if (st_shndx == SHN_ABS)
-                            die("'%s' has a PC-relative relocation (type %lu) "
-                                "at 0x%08lx against an SHN_ABS symbol, which "
-                                "does not move with the image; a uniform load "
-                                "bias would silently corrupt it, and this "
-                                "format has no operation to fix it up "
-                                "correctly",
-                                in_path, (unsigned long)type,
-                                (unsigned long)r_offset);
-                    }
+                    if (reloc_symbol_is_abs(in_path, r_info, symtab_offset,
+                                            symtab_size, symtab_entsize,
+                                            in_size, in))
+                        die("'%s' has a PC-relative relocation (type %lu) "
+                            "at 0x%08lx against an SHN_ABS symbol, which "
+                            "does not move with the image; a uniform load "
+                            "bias would silently corrupt it, and this "
+                            "format has no operation to fix it up "
+                            "correctly",
+                            in_path, (unsigned long)type,
+                            (unsigned long)r_offset);
 
                     continue;   /* PC-relative etc: no load-time fixup needed */
                 }
@@ -701,6 +722,25 @@ int main(int argc, char **argv)
                     in_path, (unsigned long)type, (unsigned long)r_offset,
                     g_argv0);
             }
+
+            /* DIR32's resolved value (S + A) must not receive the load
+             * bias when S is a fixed SHN_ABS constant (e.g. a hardware
+             * register address defined via a linker script) that was
+             * never meant to move with the image -- this format's
+             * "+= bias" op cannot tell that case apart from an ordinary
+             * image-relative pointer. RELATIVE is exempt: by definition
+             * (and psABI convention) its value is always image-base +
+             * addend with no symbol involved, so it always needs the
+             * bias regardless of what r_info's unused symbol field
+             * happens to contain. */
+            if (type == dir32_type
+             && reloc_symbol_is_abs(in_path, r_info, symtab_offset,
+                                    symtab_size, symtab_entsize, in_size, in))
+                die("'%s' has a DIR32 relocation at 0x%08lx against an "
+                    "SHN_ABS symbol; its resolved value is a fixed constant "
+                    "that must not receive the load bias, which this "
+                    "format cannot represent",
+                    in_path, (unsigned long)r_offset);
 
             /* A DIR32 slot in an ET_DYN is not something the documented
              * "-pie --no-dynamic-linker" recipe should ever produce: with
@@ -719,14 +759,24 @@ int main(int argc, char **argv)
                     "refusing to guess this one's semantics",
                     in_path, (unsigned long)r_offset);
 
-            /* RELA + RELATIVE is the one case whose slot may not already
-             * hold the value to add the bias to (see doc/elfload.txt):
-             * materialise the addend into the file bytes now, so every
-             * slot this tool lists needs the exact same "+= bias" op */
-            if (rela && type == relative_type)
+            /* Every slot this tool lists must be file-backed: DIR32 and
+             * REL-encoded RELATIVE are supposed to already hold their
+             * resolved value in the file (that's the whole premise of
+             * "+= bias" needing no addend), which a compiler/linker can
+             * only arrange for a slot that actually has file bytes --
+             * .bss (SHT_NOBITS) never does, by definition, so this
+             * should be unreachable for those two, but a corrupted or
+             * hand-crafted input is checked here rather than trusted.
+             * RELA + RELATIVE is the one legitimate case whose slot may
+             * not already hold that value (see doc/elfload.txt): this
+             * also validates it is file-backed before materialising the
+             * addend into the file bytes, so every slot this tool lists
+             * ends up needing the exact same "+= bias" op. */
             {
                 uint32_t file_off = vaddr_to_file_offset(segs, nsegs, r_offset);
-                wr32(in + file_off, addend);
+
+                if (rela && type == relative_type)
+                    wr32(in + file_off, addend);
             }
 
             if (nslots == slot_cap)
@@ -800,6 +850,16 @@ int main(int argc, char **argv)
         wr32(newph + 28 /* p_align */, 1);
         buf_append(&newphdrs, newph, sizeof(newph));
     }
+
+    /* new_data_off/padded_len/newphdrs.len are all uint32_t/size_t
+     * values derived from an in_size already proven to fit uint32_t, but
+     * their sum -- the packed file's total length -- is not itself
+     * bounds-checked before being narrowed into new_phdr_off and written
+     * into e_phoff (an ELF32 field). Check in 64 bits so a pathological
+     * combination cannot wrap into a bogus, unusably small offset. */
+    if ((uint64_t)new_data_off + padded_len + newphdrs.len > 0xffffffffUL)
+        die("'%s': packed output would exceed the 4 GiB ELF32 format",
+            in_path);
 
     new_phdr_off = new_data_off + padded_len;
     new_phnum = (uint32_t)e_phnum + 1;
