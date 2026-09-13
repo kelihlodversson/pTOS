@@ -427,6 +427,33 @@ static int try_vaddr_to_file_offset(const SEGMENT *segs, size_t nsegs,
     return 0;
 }
 
+/* report whether the whole 4-byte slot at vaddr lies within the SAME
+ * covering segment's zero-filled tail (i.e. entirely at or past its
+ * p_filesz, and entirely within its p_memsz) -- the one case where a
+ * RELA+RELATIVE zero addend needs no write, since the loader's own
+ * zero-fill already provides exactly that value for every one of the 4
+ * bytes. A slot that straddles the file/zero-fill boundary (some bytes
+ * file-backed, some not) is deliberately NOT covered by this or by
+ * try_vaddr_to_file_offset() above: elf_pgmld() copies whatever those
+ * leading file bytes actually contain (not necessarily zero) and only
+ * zero-fills the rest, so neither "materialise into file bytes" nor
+ * "trust the zero-fill" is correct for it -- the caller must reject it
+ * outright rather than silently pick one and risk a corrupted value. */
+static int slot_fully_zero_filled(const SEGMENT *segs, size_t nsegs,
+                                  uint32_t vaddr)
+{
+    size_t i;
+
+    for (i = 0; i < nsegs; i++)
+    {
+        if (vaddr >= segs[i].vaddr
+         && (uint64_t)(vaddr - segs[i].vaddr) >= segs[i].filesz
+         && (uint64_t)(vaddr - segs[i].vaddr) + 4 <= segs[i].memsz)
+            return 1;
+    }
+    return 0;
+}
+
 static uint32_t vaddr_to_file_offset(const SEGMENT *segs, size_t nsegs,
                                      uint32_t vaddr)
 {
@@ -938,6 +965,16 @@ int main(int argc, char **argv)
 
                 if (try_vaddr_to_file_offset(segs, nsegs, r_offset, &file_off))
                     wr32(in + file_off, addend);
+                else if (!slot_fully_zero_filled(segs, nsegs, r_offset))
+                    die("'%s' has a RELA RELATIVE relocation at 0x%08lx "
+                        "whose 4-byte slot straddles the boundary between "
+                        "a segment's file-backed part and its zero-filled "
+                        "tail; the loader would copy whatever those "
+                        "leading bytes happen to contain rather than the "
+                        "authoritative addend, and this format has no "
+                        "operation to correct that -- relink so this slot "
+                        "does not cross a PT_LOAD's p_filesz boundary",
+                        in_path, (unsigned long)r_offset);
                 else if (addend != 0)
                     die("'%s' has a RELA RELATIVE relocation at 0x%08lx "
                         "with a nonzero addend (0x%08lx) targeting memory "
