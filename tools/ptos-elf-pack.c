@@ -112,7 +112,10 @@
 
 #define SYM_SIZE        16
 #define SYM_ST_SHNDX    14
+#define SHN_UNDEF       0U
+#define SHN_LORESERVE   0xff00U
 #define SHN_ABS         0xfff1U
+#define SHN_COMMON      0xfff2U
 
 #define PTOS_RELOC_MAGIC    0x50544c31UL
 #define PTOS_RELOC_VERSION  1
@@ -373,21 +376,32 @@ static uint32_t vaddr_to_file_offset(const SEGMENT *segs, size_t nsegs,
 }
 
 /* resolve a relocation's symbol (r_info's top 24 bits, per ELF32_R_SYM)
- * against the section's linked symbol table and report whether it is
- * SHN_ABS -- a fixed, linker-defined constant that does not move with
- * the image. Symbol index 0 (STN_UNDEF) or no linked symbol table (a
- * RELATIVE relocation's symbol field is conventionally unused) reads as
- * "not absolute": nothing to reject. */
-static int reloc_symbol_is_abs(const char *in_path, uint32_t r_info,
-                               uint32_t symtab_offset, uint32_t symtab_size,
-                               uint32_t symtab_entsize, uint32_t in_size,
-                               const unsigned char *in)
+ * against the section's linked symbol table and report whether it moves
+ * with the image -- i.e. resolves to an ordinary allocated section, so
+ * "+= bias" (DIR32) or "no fixup" (a PC-relative allowlist type) is
+ * actually correct for it. Anything else -- SHN_ABS (a fixed,
+ * linker-defined constant), SHN_UNDEF/SHN_COMMON (should not survive
+ * into a fully linked ET_EXEC/ET_DYN at all, but checked rather than
+ * trusted), any other reserved index, an out of range section index, or
+ * a valid section with no SHF_ALLOC (not part of the loaded image) --
+ * does not move the same way P does under a uniform load bias, so is
+ * reported as not load-relative. Symbol index 0 (STN_UNDEF as a
+ * relocation's *own* unused field, not a real symbol -- RELATIVE's
+ * symbol field is conventionally unused) or no linked symbol table reads
+ * as load-relative: nothing to reject. */
+static int reloc_symbol_is_load_relative(const char *in_path, uint32_t r_info,
+                                         uint32_t symtab_offset, uint32_t symtab_size,
+                                         uint32_t symtab_entsize, uint32_t in_size,
+                                         const unsigned char *in, uint32_t e_shoff,
+                                         uint16_t e_shnum, uint16_t e_shentsize)
 {
     uint32_t sym_index = r_info >> 8;
     uint32_t sym_off;
+    uint16_t st_shndx;
+    const unsigned char *sh;
 
     if (sym_index == 0 || symtab_offset == 0)
-        return 0;
+        return 1;
 
     if (sym_index >= symtab_size / symtab_entsize)
         die("'%s' has a relocation naming an out of range symbol table "
@@ -397,7 +411,18 @@ static int reloc_symbol_is_abs(const char *in_path, uint32_t r_info,
         die("'%s' has a truncated symbol table", in_path);
 
     sym_off = symtab_offset + sym_index * symtab_entsize;
-    return rd16(in + sym_off + SYM_ST_SHNDX) == SHN_ABS;
+    st_shndx = rd16(in + sym_off + SYM_ST_SHNDX);
+
+    if (st_shndx == SHN_UNDEF || st_shndx >= SHN_LORESERVE)
+        return 0;   /* SHN_ABS/SHN_COMMON/any other reserved index included */
+    if (st_shndx >= e_shnum)
+        return 0;   /* malformed: treat as unsafe rather than trust it */
+
+    if ((uint64_t)e_shoff + (uint64_t)st_shndx * e_shentsize + SHDR_SIZE > in_size)
+        die("'%s' has a truncated section header table", in_path);
+    sh = in + e_shoff + (uint32_t)st_shndx * e_shentsize;
+
+    return (rd32(sh + SHDR_SH_FLAGS) & SHF_ALLOC) != 0;
 }
 
 static int slot_cmp(const void *a, const void *b)
@@ -693,21 +718,24 @@ int main(int argc, char **argv)
                 {
                     /* A PC-relative value (S + A - P) is invariant under a
                      * uniform image shift only when its symbol S moves
-                     * with the image, i.e. is section-relative. An
-                     * SHN_ABS symbol (a fixed, linker-defined constant
-                     * that never moves) breaks that: shifting P without
-                     * shifting S changes the computed value, so this
-                     * would need a fixup this format has no way to apply,
-                     * not none at all. Look the symbol up and reject
-                     * rather than assume the common case. */
-                    if (reloc_symbol_is_abs(in_path, r_info, symtab_offset,
-                                            symtab_size, symtab_entsize,
-                                            in_size, in))
+                     * with the image, i.e. resolves to an ordinary
+                     * allocated section. Anything else (a fixed SHN_ABS
+                     * constant, an unresolved/common symbol, one in a
+                     * non-allocated section, ...) breaks that: shifting P
+                     * without shifting S changes the computed value, so
+                     * this would need a fixup this format has no way to
+                     * apply, not none at all. Look the symbol up and
+                     * reject rather than assume the common case. */
+                    if (!reloc_symbol_is_load_relative(in_path, r_info, symtab_offset,
+                                                       symtab_size, symtab_entsize,
+                                                       in_size, in, e_shoff, e_shnum,
+                                                       e_shentsize))
                         die("'%s' has a PC-relative relocation (type %lu) "
-                            "at 0x%08lx against an SHN_ABS symbol, which "
-                            "does not move with the image; a uniform load "
-                            "bias would silently corrupt it, and this "
-                            "format has no operation to fix it up "
+                            "at 0x%08lx against a symbol that does not "
+                            "move with the image (absolute, unresolved, "
+                            "or outside any loaded section); a uniform "
+                            "load bias would silently corrupt it, and "
+                            "this format has no operation to fix it up "
                             "correctly",
                             in_path, (unsigned long)type,
                             (unsigned long)r_offset);
@@ -724,22 +752,26 @@ int main(int argc, char **argv)
             }
 
             /* DIR32's resolved value (S + A) must not receive the load
-             * bias when S is a fixed SHN_ABS constant (e.g. a hardware
-             * register address defined via a linker script) that was
-             * never meant to move with the image -- this format's
-             * "+= bias" op cannot tell that case apart from an ordinary
-             * image-relative pointer. RELATIVE is exempt: by definition
-             * (and psABI convention) its value is always image-base +
-             * addend with no symbol involved, so it always needs the
-             * bias regardless of what r_info's unused symbol field
-             * happens to contain. */
+             * bias unless S moves with the image -- a fixed SHN_ABS
+             * constant (e.g. a hardware register address defined via a
+             * linker script), an unresolved/common symbol, or one in a
+             * non-allocated section all break that the same way -- and
+             * this format's "+= bias" op cannot tell those cases apart
+             * from an ordinary image-relative pointer. RELATIVE is
+             * exempt: by definition (and psABI convention) its value is
+             * always image-base + addend with no symbol involved, so it
+             * always needs the bias regardless of what r_info's unused
+             * symbol field happens to contain. */
             if (type == dir32_type
-             && reloc_symbol_is_abs(in_path, r_info, symtab_offset,
-                                    symtab_size, symtab_entsize, in_size, in))
-                die("'%s' has a DIR32 relocation at 0x%08lx against an "
-                    "SHN_ABS symbol; its resolved value is a fixed constant "
-                    "that must not receive the load bias, which this "
-                    "format cannot represent",
+             && !reloc_symbol_is_load_relative(in_path, r_info, symtab_offset,
+                                               symtab_size, symtab_entsize,
+                                               in_size, in, e_shoff, e_shnum,
+                                               e_shentsize))
+                die("'%s' has a DIR32 relocation at 0x%08lx against a "
+                    "symbol that does not move with the image (absolute, "
+                    "unresolved, or outside any loaded section); its "
+                    "resolved value must not receive the load bias, which "
+                    "this format cannot represent",
                     in_path, (unsigned long)r_offset);
 
             /* A DIR32 slot in an ET_DYN is not something the documented
@@ -759,24 +791,34 @@ int main(int argc, char **argv)
                     "refusing to guess this one's semantics",
                     in_path, (unsigned long)r_offset);
 
-            /* Every slot this tool lists must be file-backed: DIR32 and
-             * REL-encoded RELATIVE are supposed to already hold their
-             * resolved value in the file (that's the whole premise of
-             * "+= bias" needing no addend), which a compiler/linker can
-             * only arrange for a slot that actually has file bytes --
-             * .bss (SHT_NOBITS) never does, by definition, so this
-             * should be unreachable for those two, but a corrupted or
-             * hand-crafted input is checked here rather than trusted.
-             * RELA + RELATIVE is the one legitimate case whose slot may
-             * not already hold that value (see doc/elfload.txt): this
-             * also validates it is file-backed before materialising the
-             * addend into the file bytes, so every slot this tool lists
-             * ends up needing the exact same "+= bias" op. */
+            /* File-backing requirements differ by how a slot's value
+             * reaches the loader:
+             *
+             * - REL-encoded RELATIVE needs no check and no write at all.
+             *   Under REL there is no out-of-band addend field -- the
+             *   value is understood to already be in the slot -- so a
+             *   .bss-resident target (zero-filled, no file bytes) simply
+             *   means the encoded addend was 0, and "0 += bias" is
+             *   exactly correct. This is the case the previous version
+             *   of this check wrongly rejected.
+             * - RELA + RELATIVE only needs the addend materialised (and
+             *   therefore only needs file backing) when that addend is
+             *   nonzero; a zero addend already matches what zero-fill
+             *   provides, by the same reasoning as the REL case above.
+             * - DIR32 always needs file backing: its resolved value is
+             *   baked into the slot's own bytes at link time (see
+             *   doc/elfload.txt), which a compiler/linker can only
+             *   arrange for a slot that actually has file bytes -- a
+             *   literal-zero DIR32 target is never emitted against .bss
+             *   in practice (a null-valued pointer is constant-folded
+             *   away, never relocated), but a corrupted or hand-crafted
+             *   input is checked here rather than trusted. */
+            if (type == dir32_type)
+                vaddr_to_file_offset(segs, nsegs, r_offset);
+            else if (rela && type == relative_type && addend != 0)
             {
                 uint32_t file_off = vaddr_to_file_offset(segs, nsegs, r_offset);
-
-                if (rela && type == relative_type)
-                    wr32(in + file_off, addend);
+                wr32(in + file_off, addend);
             }
 
             if (nslots == slot_cap)
