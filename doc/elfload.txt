@@ -122,9 +122,8 @@ pTOS-private program header instead of the section header table. This is
 the first piece of the larger native pTOS ABI work tracked by issue #308;
 this document covers only the relocation format, which stands on its own.
 
-The rewritten file is byte-identical to the input except for two additions
-appended after the original content -- nothing already present is moved or
-resized:
+Nothing already in the file moves or resizes -- the rewrite is two additions
+appended after the original content:
 
   1. the ".ptos.reloc" payload: an 8 byte header followed by a ULEB128
      delta stream (below);
@@ -132,9 +131,12 @@ resized:
      new PT_PTOS_RELOC entry), which the rewritten ELF header now points at
      via e_phoff/e_phnum.
 
-Because nothing already in the file moves, an unmodified ELF header,
-program headers and section headers stay individually valid; only e_phoff
-and e_phnum change, to point at the new table.
+A RELA-encoded RELATIVE slot's own bytes are the one exception: as covered
+below, ptos-elf-pack overwrites that existing slot with its addend in
+place, so the file is not byte-identical to the input in that case -- only
+unmoved and unresized. An unmodified ELF header, program headers and
+section headers stay individually valid regardless; only e_phoff and
+e_phnum change, to point at the new table.
 
 PT_PTOS_RELOC's value is 0x60000001, inside the OS-specific range the ELF
 spec reserves (PT_LOOS..PT_HIOS, 0x60000000..0x6fffffff). Its p_offset/
@@ -172,7 +174,11 @@ legitimately be 0 in the file with the real value carried in r_addend
 instead, ptos-elf-pack first writes that addend into the slot's file bytes
 so every listed slot ends up needing the same "add the bias" operation.
 Relocation types the loader does not otherwise apply (PC-relative and
-similar) are never listed and need no entry.
+similar) are never listed and need no entry -- but only when ptos-elf-pack
+recognises the type as one of the ones known not to need a load-time fixup;
+an input relocation of any other, unrecognised type is a packaging error,
+not silently skipped, since guessing wrong would silently corrupt the
+image.
 
 When bdos/elfld.c finds a PT_PTOS_RELOC program header, it uses this stream
 and does not touch the section header table at all -- so a file built this

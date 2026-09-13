@@ -103,6 +103,58 @@
 #define PTOS_RELOC_MAGIC    0x50544c31UL
 #define PTOS_RELOC_VERSION  1
 
+/* Relocation types confirmed (either from the target's ELF psABI or by
+ * inspecting real "readelf -r" output from the documented build recipes in
+ * doc/elfload.txt) to need no load-time value fixup: PC-relative branches,
+ * link-time-resolved veneer markers, and the reserved "no relocation" type.
+ * Anything NOT in this list, and not the DIR32/RELATIVE type already
+ * handled explicitly, is unrecognised and must be rejected rather than
+ * silently skipped (see #309's acceptance criteria) -- skipping a type that
+ * actually needs a fixup would silently corrupt the packed image. */
+static const uint32_t arm_no_fixup_types[] = {
+    0,   /* R_ARM_NONE */
+    1,   /* R_ARM_PC24 (deprecated) */
+    3,   /* R_ARM_REL32 */
+    28,  /* R_ARM_CALL */
+    29,  /* R_ARM_JUMP24 */
+    30,  /* R_ARM_THM_JUMP24 */
+    38,  /* R_ARM_TARGET1 */
+    40,  /* R_ARM_V4BX -- seen from a plain "ld -q" ARM build in practice */
+    42,  /* R_ARM_PREL31 */
+    51,  /* R_ARM_THM_JUMP19 */
+};
+
+static const uint32_t m68k_no_fixup_types[] = {
+    0,  /* R_68K_NONE */
+    4,  /* R_68K_PC32 */
+    5,  /* R_68K_PC16 */
+    6,  /* R_68K_PC8 */
+};
+
+static int type_needs_no_fixup(uint32_t machine, uint32_t type)
+{
+    const uint32_t *list;
+    size_t count, i;
+
+    if (machine == EM_ARM)
+    {
+        list = arm_no_fixup_types;
+        count = sizeof(arm_no_fixup_types) / sizeof(arm_no_fixup_types[0]);
+    }
+    else
+    {
+        list = m68k_no_fixup_types;
+        count = sizeof(m68k_no_fixup_types) / sizeof(m68k_no_fixup_types[0]);
+    }
+
+    for (i = 0; i < count; i++)
+    {
+        if (list[i] == type)
+            return 1;
+    }
+    return 0;
+}
+
 /* one input relocation this tool cares about, resolved to the load-time
  * operation the compact format always applies: "*slot += load_bias" */
 typedef struct {
@@ -263,7 +315,11 @@ static uint32_t vaddr_to_file_offset(const SEGMENT *segs, size_t nsegs,
 
     for (i = 0; i < nsegs; i++)
     {
-        if (vaddr >= segs[i].vaddr && vaddr - segs[i].vaddr < segs[i].filesz)
+        /* the caller always writes a full 4-byte word at the returned
+         * offset, so all 4 bytes -- not just the first -- must be
+         * file-backed; checked in 64 bits so the addition can't wrap */
+        if (vaddr >= segs[i].vaddr
+         && (uint64_t)(vaddr - segs[i].vaddr) + 4 <= segs[i].filesz)
             return segs[i].offset + (vaddr - segs[i].vaddr);
     }
 
@@ -494,7 +550,17 @@ int main(int argc, char **argv)
             addend = rela ? rd32(ent + 8) : 0;
 
             if (type != dir32_type && type != relative_type)
-                continue;   /* PC-relative etc: no load-time fixup needed */
+            {
+                if (type_needs_no_fixup(e_machine, type))
+                    continue;   /* PC-relative etc: no load-time fixup needed */
+
+                die("'%s' has a relocation of unrecognised type %lu at "
+                    "0x%08lx; not known to need no load-time fixup, refusing "
+                    "to guess -- extend the allowlist in %s if it genuinely "
+                    "doesn't need one",
+                    in_path, (unsigned long)type, (unsigned long)r_offset,
+                    g_argv0);
+            }
 
             /* RELA + RELATIVE is the one case whose slot may not already
              * hold the value to add the bias to (see doc/elfload.txt):
@@ -571,7 +637,10 @@ int main(int argc, char **argv)
         wr32(newph + PHDR_P_FILESZ, (uint32_t)payload.len);
         wr32(newph + PHDR_P_MEMSZ, 0);
         wr32(newph + 24 /* p_flags */, 0);
-        wr32(newph + 28 /* p_align */, 4);
+        /* align 1: this segment is metadata only, never mapped, so there is
+         * no p_vaddr for p_offset to be congruent with -- p_align must not
+         * claim a stronger constraint than that */
+        wr32(newph + 28 /* p_align */, 1);
         buf_append(&newphdrs, newph, sizeof(newph));
     }
 

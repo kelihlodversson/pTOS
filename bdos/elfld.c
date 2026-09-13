@@ -643,6 +643,7 @@ static LONG elf_relocate_ptos(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
     ULONG vaddr;
     ULONG delta;
     LONG r;
+    BOOL first;
 
     if (bias == 0)
         return 0;   /* loaded at its link address: nothing to relocate */
@@ -662,12 +663,21 @@ static LONG elf_relocate_ptos(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
 
     pos = ph->p_offset + (ULONG)sizeof(PTOSRELOCHDR);
     vaddr = info->link_base;
+    first = TRUE;
 
     while (pos < limit)
     {
         r = ptos_reloc_read_uleb128(h, &pos, limit, &delta);
         if (r < 0L)
             return r;
+
+        /* the format requires strictly ascending slots (doc/elfload.txt):
+         * a zero delta past the first entry would reapply the fixup to the
+         * slot just relocated, doubling its bias instead of being the
+         * malformed stream it is */
+        if (delta == 0 && !first)
+            return EPLFMT;
+        first = FALSE;
 
         if (u32_add_overflow(vaddr, delta, &vaddr))
             return EPLFMT;
