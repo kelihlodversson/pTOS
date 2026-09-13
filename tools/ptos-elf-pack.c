@@ -189,6 +189,23 @@ static int type_needs_no_fixup(uint32_t machine, uint32_t type)
     return 0;
 }
 
+/* Of the no-fixup types above, the overwhelming majority genuinely name a
+ * symbol (a branch/call target), so their r_info's symbol field must be
+ * resolved and checked like any other -- an index of 0 there is a real
+ * STN_UNDEF, not a convention. Exactly two are the ABI-defined exception:
+ * R_ARM_NONE, whose whole record is a no-op regardless of any field, and
+ * R_ARM_V4BX, whose symbol table index the ARM ELF ABI requires to be
+ * zero -- it marks an interworking veneer's BX instruction rather than
+ * referencing a symbol at all (confirmed emitted this way, with symbol
+ * index 0, by a plain "ld -q" ARM build: see richtest_arm.elf in this
+ * tool's test history). R_68K_NONE is the same no-op case on m68k. */
+static int type_symbol_field_is_meaningless(uint32_t machine, uint32_t type)
+{
+    if (machine == EM_ARM)
+        return type == 0 /* R_ARM_NONE */ || type == 40 /* R_ARM_V4BX */;
+    return type == 0; /* R_68K_NONE */
+}
+
 /* one input relocation this tool cares about, resolved to the load-time
  * operation the compact format always applies: "*slot += load_bias" */
 typedef struct {
@@ -352,8 +369,8 @@ static unsigned char *read_file(const char *path, long *out_size)
  * wire operation that carries its own addend, which version 1 does not
  * have (see doc/elfload.txt). Rather than extend the format under review
  * pressure, this is called out there as a known v1 boundary. */
-static uint32_t vaddr_to_file_offset(const SEGMENT *segs, size_t nsegs,
-                                     uint32_t vaddr)
+static int try_vaddr_to_file_offset(const SEGMENT *segs, size_t nsegs,
+                                    uint32_t vaddr, uint32_t *out_offset)
 {
     size_t i;
 
@@ -364,8 +381,22 @@ static uint32_t vaddr_to_file_offset(const SEGMENT *segs, size_t nsegs,
          * file-backed; checked in 64 bits so the addition can't wrap */
         if (vaddr >= segs[i].vaddr
          && (uint64_t)(vaddr - segs[i].vaddr) + 4 <= segs[i].filesz)
-            return segs[i].offset + (vaddr - segs[i].vaddr);
+        {
+            *out_offset = segs[i].offset + (vaddr - segs[i].vaddr);
+            return 1;
+        }
     }
+
+    return 0;
+}
+
+static uint32_t vaddr_to_file_offset(const SEGMENT *segs, size_t nsegs,
+                                     uint32_t vaddr)
+{
+    uint32_t file_off;
+
+    if (try_vaddr_to_file_offset(segs, nsegs, vaddr, &file_off))
+        return file_off;
 
     die("relocation at 0x%08lx targets memory with no file backing "
         "(likely .bss); a slot there needs an addend-carrying wire "
@@ -385,10 +416,17 @@ static uint32_t vaddr_to_file_offset(const SEGMENT *segs, size_t nsegs,
  * trusted), any other reserved index, an out of range section index, or
  * a valid section with no SHF_ALLOC (not part of the loaded image) --
  * does not move the same way P does under a uniform load bias, so is
- * reported as not load-relative. Symbol index 0 (STN_UNDEF as a
- * relocation's *own* unused field, not a real symbol -- RELATIVE's
- * symbol field is conventionally unused) or no linked symbol table reads
- * as load-relative: nothing to reject. */
+ * reported as not load-relative.
+ *
+ * This function is never called for RELATIVE relocations (their symbol
+ * field is conventionally unused and exempted by the caller before
+ * reaching here); every relocation that does reach it -- DIR32 and the
+ * PC-relative no-fixup allowlist -- is expected to name a real symbol, so
+ * symbol index 0 (STN_UNDEF) here means exactly what it says: unresolved,
+ * not "field unused by convention". Likewise a relocation section with no
+ * linked symbol table at all cannot prove anything about a symbol it
+ * cannot look up. Both are therefore reported as not load-relative rather
+ * than assumed safe. */
 static int reloc_symbol_is_load_relative(const char *in_path, uint32_t r_info,
                                          uint32_t symtab_offset, uint32_t symtab_size,
                                          uint32_t symtab_entsize, uint32_t in_size,
@@ -401,7 +439,7 @@ static int reloc_symbol_is_load_relative(const char *in_path, uint32_t r_info,
     const unsigned char *sh;
 
     if (sym_index == 0 || symtab_offset == 0)
-        return 1;
+        return 0;
 
     if (sym_index >= symtab_size / symtab_entsize)
         die("'%s' has a relocation naming an out of range symbol table "
@@ -725,8 +763,13 @@ int main(int argc, char **argv)
                      * without shifting S changes the computed value, so
                      * this would need a fixup this format has no way to
                      * apply, not none at all. Look the symbol up and
-                     * reject rather than assume the common case. */
-                    if (!reloc_symbol_is_load_relative(in_path, r_info, symtab_offset,
+                     * reject rather than assume the common case -- except
+                     * for the couple of types whose symbol field the ABI
+                     * itself defines as meaningless (R_ARM_NONE/R_68K_NONE,
+                     * R_ARM_V4BX), which never named a symbol to check in
+                     * the first place. */
+                    if (!type_symbol_field_is_meaningless(e_machine, type)
+                     && !reloc_symbol_is_load_relative(in_path, r_info, symtab_offset,
                                                        symtab_size, symtab_entsize,
                                                        in_size, in, e_shoff, e_shnum,
                                                        e_shentsize))
@@ -799,12 +842,18 @@ int main(int argc, char **argv)
              *   value is understood to already be in the slot -- so a
              *   .bss-resident target (zero-filled, no file bytes) simply
              *   means the encoded addend was 0, and "0 += bias" is
-             *   exactly correct. This is the case the previous version
-             *   of this check wrongly rejected.
-             * - RELA + RELATIVE only needs the addend materialised (and
-             *   therefore only needs file backing) when that addend is
-             *   nonzero; a zero addend already matches what zero-fill
-             *   provides, by the same reasoning as the REL case above.
+             *   exactly correct.
+             * - RELA + RELATIVE's addend is authoritative regardless of
+             *   whether it is zero: unlike REL, the slot's own bytes are
+             *   not part of RELA semantics at all, so a file-backed slot
+             *   must always have the addend written into it -- even 0 --
+             *   rather than trusting whatever bytes happen to already be
+             *   there (they need not already be zero). Only when the slot
+             *   is genuinely .bss-resident (no file bytes to write into,
+             *   left zero-filled by the loader) does a zero addend need no
+             *   write, matching what zero-fill already provides; a nonzero
+             *   addend targeting .bss is the permanent v1 format
+             *   limitation documented in doc/elfload.txt.
              * - DIR32 always needs file backing: its resolved value is
              *   baked into the slot's own bytes at link time (see
              *   doc/elfload.txt), which a compiler/linker can only
@@ -815,10 +864,24 @@ int main(int argc, char **argv)
              *   input is checked here rather than trusted. */
             if (type == dir32_type)
                 vaddr_to_file_offset(segs, nsegs, r_offset);
-            else if (rela && type == relative_type && addend != 0)
+            else if (rela && type == relative_type)
             {
-                uint32_t file_off = vaddr_to_file_offset(segs, nsegs, r_offset);
-                wr32(in + file_off, addend);
+                uint32_t file_off;
+
+                if (try_vaddr_to_file_offset(segs, nsegs, r_offset, &file_off))
+                    wr32(in + file_off, addend);
+                else if (addend != 0)
+                    die("'%s' has a RELA RELATIVE relocation at 0x%08lx "
+                        "with a nonzero addend (0x%08lx) targeting memory "
+                        "with no file backing (likely .bss); a slot there "
+                        "needs an addend-carrying wire operation .ptos.reloc "
+                        "version 1 does not have -- a known format "
+                        "limitation, not a bug (see doc/elfload.txt)",
+                        in_path, (unsigned long)r_offset,
+                        (unsigned long)addend);
+                /* else: addend == 0 and the slot is .bss-resident -- the
+                 * loader's own zero-fill already provides exactly this
+                 * value, nothing to write */
             }
 
             if (nslots == slot_cap)
