@@ -597,12 +597,12 @@ int main(int argc, char **argv)
         ph = in + e_phoff + (uint32_t)i * e_phentsize;
 
         p_type = rd32(ph + PHDR_P_TYPE);
-        if (p_type == PT_PHDR)
-            die("'%s' has a PT_PHDR segment; packing would leave it "
-                "describing the old program header table instead of the "
-                "one this tool appends, which a standards-conforming "
-                "consumer other than bdos/elfld.c could read and misbehave "
-                "on -- unsupported by ptos-elf-pack", in_path);
+        if (p_type == PT_PTOS_RELOC)
+            die("'%s' already has a PT_PTOS_RELOC segment -- already "
+                "packed? Run ptos-elf-pack against the original, unpacked "
+                "ELF instead; packing an already-packed file would append "
+                "a second .ptos.reloc stream and PT_PTOS_RELOC entry, "
+                "which this format has no defined meaning for", in_path);
         if (p_type != PT_LOAD)
             continue;
 
@@ -932,12 +932,32 @@ int main(int argc, char **argv)
     new_data_off = in_size;
     padded_len = (uint32_t)((payload.len + 3u) & ~3u);
 
-    /* build the new program header table: the original entries, verbatim,
-     * plus one new PT_PTOS_RELOC entry */
+    /* build the new program header table: the original entries, minus any
+     * PT_PHDR (see below), plus one new PT_PTOS_RELOC entry */
     newphdrs.data = NULL;
     newphdrs.len = 0;
     newphdrs.cap = 0;
-    buf_append(&newphdrs, in + e_phoff, (size_t)e_phnum * e_phentsize);
+    for (i = 0; i < e_phnum; i++)
+    {
+        const unsigned char *ph = in + e_phoff + (uint32_t)i * e_phentsize;
+
+        /* Drop a PT_PHDR entry rather than copy it forward: it would
+         * describe the OLD table's now-stale location, and there is no
+         * valid replacement value either -- the appended table lives
+         * past every PT_LOAD's mapped range (this tool only appends
+         * file bytes, never extends a segment's memsz), so it has no
+         * p_vaddr a PT_PHDR entry could correctly describe at all.
+         * bdos/elfld.c has no use for PT_PHDR anyway (it reads
+         * e_phoff/e_phnum from the ELF header directly, not via
+         * AT_PHDR), so omitting it is both correct and harmless --
+         * PT_PHDR is optional, needed only by an ELF interpreter this
+         * freestanding loader has no equivalent of. None of the
+         * documented build recipes in doc/elfload.txt have been
+         * observed to emit one in the first place. */
+        if (rd32(ph + PHDR_P_TYPE) == PT_PHDR)
+            continue;
+        buf_append(&newphdrs, ph, e_phentsize);
+    }
 
     {
         unsigned char newph[PHDR_SIZE];
@@ -977,7 +997,10 @@ int main(int argc, char **argv)
             in_path);
 
     new_phdr_off = new_data_off + padded_len;
-    new_phnum = (uint32_t)e_phnum + 1;
+    /* newphdrs.len is a whole number of entries: the copy loop above
+     * appends exactly one PHDR_SIZE per non-PT_PHDR input entry, and the
+     * block below appends exactly one more (the new PT_PTOS_RELOC) */
+    new_phnum = (uint32_t)(newphdrs.len / PHDR_SIZE);
     if (new_phnum > 0xffffUL)
         die("'%s' already has too many program headers to add one more",
             in_path);
