@@ -1384,7 +1384,13 @@ ifdef ARCH_ARM
 TEST_PTOS_RELOC_LDFLAGS  = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
 TEST_PTOS_RELOC_LDFLAGS2 = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start
 else
-TEST_PTOS_RELOC_LDFLAGS = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start
+# --oformat=elf32-m68k is required here for the same reason
+# doc/elfload.txt's own bare m68k recipe and TEST_PTOS_RELOC_LDFLAGS2's
+# raw-ld invocation below both need it: m68k-atari-mintelf-ld's default
+# emulation is elf32-atariprg, so without it this would risk linking a
+# PRG instead of an ELF, which ptos-elf-pack would then reject outright
+# as not an ELF file at all rather than exercising the m68k path.
+TEST_PTOS_RELOC_LDFLAGS = -Wl,-pie -Wl,--no-dynamic-linker -Wl,--oformat=elf32-m68k -Wl,-e_start
 # the directory holding the multilib variant of libgcc.a that $(CC)
 # $(CPUFLAGS) would otherwise have picked automatically as a driver
 TEST_LIBGCC_DIR := $(shell dirname $$($(CC) $(CPUFLAGS) -print-libgcc-file-name))

@@ -104,6 +104,7 @@
 #define SHDR_SIZE       40
 #define SHDR_SH_TYPE    4
 #define SHDR_SH_FLAGS   8
+#define SHDR_SH_ADDR    12
 #define SHDR_SH_OFFSET  16
 #define SHDR_SH_SIZE    20
 #define SHDR_SH_LINK    24
@@ -231,6 +232,7 @@ typedef struct {
     uint32_t vaddr;
     uint32_t offset;
     uint32_t filesz;
+    uint32_t memsz;
 } SEGMENT;
 
 static const char *g_argv0;
@@ -382,6 +384,28 @@ static unsigned char *read_file(const char *path, long *out_size)
  * wire operation that carries its own addend, which version 1 does not
  * have (see doc/elfload.txt). Rather than extend the format under review
  * pressure, this is called out there as a known v1 boundary. */
+/* report whether the whole [vaddr, vaddr+size) range lies within some
+ * PT_LOAD segment's mapped memory image (p_vaddr..p_vaddr+p_memsz).
+ * SHF_ALLOC alone does not prove this: a valid ELF can place an allocated
+ * section outside every PT_LOAD (e.g. a PT_TLS-only section, or one a
+ * linker script assigns to no segment at all), and this loader -- like
+ * elf_fixup() -- only ever touches memory inside a PT_LOAD's own range,
+ * so a symbol living outside all of them does not move under the load
+ * bias the way an ordinary in-image symbol does. */
+static int range_covered_by_load(const SEGMENT *segs, size_t nsegs,
+                                 uint32_t vaddr, uint32_t size)
+{
+    size_t i;
+
+    for (i = 0; i < nsegs; i++)
+    {
+        if (vaddr >= segs[i].vaddr
+         && (uint64_t)(vaddr - segs[i].vaddr) + size <= segs[i].memsz)
+            return 1;
+    }
+    return 0;
+}
+
 static int try_vaddr_to_file_offset(const SEGMENT *segs, size_t nsegs,
                                     uint32_t vaddr, uint32_t *out_offset)
 {
@@ -439,17 +463,27 @@ static uint32_t vaddr_to_file_offset(const SEGMENT *segs, size_t nsegs,
  * not "field unused by convention". Likewise a relocation section with no
  * linked symbol table at all cannot prove anything about a symbol it
  * cannot look up. Both are therefore reported as not load-relative rather
- * than assumed safe. */
+ * than assumed safe.
+ *
+ * SHF_ALLOC alone is not enough either: a valid ELF can have an allocated
+ * section that no PT_LOAD actually covers (e.g. a PT_TLS-only section, or
+ * one a linker script leaves outside every segment) -- bdos/elfld.c's own
+ * elf_fixup()/elf_scan() only ever look inside PT_LOAD ranges, so such a
+ * symbol does not move under the load bias the way an ordinary in-image
+ * one does. range_covered_by_load() checks the symbol's whole section
+ * against the PT_LOAD segments already scanned in main(). */
 static int reloc_symbol_is_load_relative(const char *in_path, uint32_t r_info,
                                          uint32_t symtab_offset, uint32_t symtab_size,
                                          uint32_t symtab_entsize, uint32_t in_size,
                                          const unsigned char *in, uint32_t e_shoff,
-                                         uint16_t e_shnum, uint16_t e_shentsize)
+                                         uint16_t e_shnum, uint16_t e_shentsize,
+                                         const SEGMENT *segs, size_t nsegs)
 {
     uint32_t sym_index = r_info >> 8;
     uint32_t sym_off;
     uint16_t st_shndx;
     const unsigned char *sh;
+    uint32_t sh_addr, sh_size;
 
     if (sym_index == 0 || symtab_offset == 0)
         return 0;
@@ -473,7 +507,12 @@ static int reloc_symbol_is_load_relative(const char *in_path, uint32_t r_info,
         die("'%s' has a truncated section header table", in_path);
     sh = in + e_shoff + (uint32_t)st_shndx * e_shentsize;
 
-    return (rd32(sh + SHDR_SH_FLAGS) & SHF_ALLOC) != 0;
+    if ((rd32(sh + SHDR_SH_FLAGS) & SHF_ALLOC) == 0)
+        return 0;
+
+    sh_addr = rd32(sh + SHDR_SH_ADDR);
+    sh_size = rd32(sh + SHDR_SH_SIZE);
+    return range_covered_by_load(segs, nsegs, sh_addr, sh_size);
 }
 
 static int slot_cmp(const void *a, const void *b)
@@ -609,7 +648,7 @@ int main(int argc, char **argv)
     for (i = 0; i < e_phnum; i++)
     {
         const unsigned char *ph;
-        uint32_t p_type, p_offset, p_vaddr, p_filesz;
+        uint32_t p_type, p_offset, p_vaddr, p_filesz, p_memsz;
 
         if ((uint64_t)e_phoff + (uint64_t)i * e_phentsize + PHDR_SIZE > in_size)
             die("'%s' has a truncated program header table", in_path);
@@ -628,13 +667,17 @@ int main(int argc, char **argv)
         p_offset = rd32(ph + PHDR_P_OFFSET);
         p_vaddr = rd32(ph + PHDR_P_VADDR);
         p_filesz = rd32(ph + PHDR_P_FILESZ);
+        p_memsz = rd32(ph + PHDR_P_MEMSZ);
 
         if ((uint64_t)p_offset + p_filesz > in_size)
             die("'%s' has a PT_LOAD segment reaching past end of file", in_path);
+        if (p_memsz < p_filesz)
+            die("'%s' has a PT_LOAD segment with p_memsz < p_filesz", in_path);
 
         segs[nsegs].vaddr = p_vaddr;
         segs[nsegs].offset = p_offset;
         segs[nsegs].filesz = p_filesz;
+        segs[nsegs].memsz = p_memsz;
         nsegs++;
 
         if (!have_link_base || p_vaddr < link_base)
@@ -797,7 +840,7 @@ int main(int argc, char **argv)
                      && !reloc_symbol_is_load_relative(in_path, r_info, symtab_offset,
                                                        symtab_size, symtab_entsize,
                                                        in_size, in, e_shoff, e_shnum,
-                                                       e_shentsize))
+                                                       e_shentsize, segs, nsegs))
                         die("'%s' has a PC-relative relocation (type %lu) "
                             "at 0x%08lx against a symbol that does not "
                             "move with the image (absolute, unresolved, "
@@ -834,7 +877,7 @@ int main(int argc, char **argv)
              && !reloc_symbol_is_load_relative(in_path, r_info, symtab_offset,
                                                symtab_size, symtab_entsize,
                                                in_size, in, e_shoff, e_shnum,
-                                               e_shentsize))
+                                               e_shentsize, segs, nsegs))
                 die("'%s' has a DIR32 relocation at 0x%08lx against a "
                     "symbol that does not move with the image (absolute, "
                     "unresolved, or outside any loaded section); its "
