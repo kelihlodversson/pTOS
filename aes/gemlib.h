@@ -28,7 +28,17 @@
 
 typedef struct moblk
 {
-    BOOL m_out;
+    /*
+     * m_out is a WORD, not BOOL (was fine as an alias for WORD before
+     * -mshort's removal widened BOOL/int to 32 bits): ev_mouse()'s and
+     * ev_multi()'s MOBLK* arguments (gemsuper.c's crysbind()) are cast
+     * directly onto a raw WORD int_in[] wire buffer built from the
+     * caller's real evnt_mouse()/evnt_multi() AES parameter block
+     * (flags, then a 4-WORD GRECT -- 5 WORDs total, matching the
+     * documented AES wire format). A 4-byte m_out here would shift
+     * every m_gr field one WORD off that buffer.
+     */
+    WORD m_out;
     GRECT m_gr;
 } MOBLK;
 
