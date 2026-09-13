@@ -16,6 +16,17 @@
  * variables are made to work regardless. */
 #define VIRT_RAM_BASE       0x40000000UL
 
+/* virt_mmu_bootstrap()'s fixed physical placement (see startup.S's
+ * C_SYM(main)): a 128 MiB RAM window with its topmost megabyte reserved
+ * for the L1 section table itself (VIRT_RAM_BASE + VIRT_MMU_RAM_SIZE -
+ * 1 MiB = 0x47f00000). Named here, rather than left as literals in
+ * startup.S, so both the assembly that builds the table pre-MMU and any
+ * C code that wants to operate on it afterward through the pMMU
+ * maintenance layer (bios/mmu_walk.c) share one definition instead of
+ * two literals that could silently drift apart. */
+#define VIRT_MMU_RAM_SIZE   0x08000000UL   /* must match the qemu -m argument */
+#define VIRT_MMU_TABLE_PHYS 0x47f00000UL
+
 #define VIRT_GIC_DIST_BASE  0x08000000UL
 #define VIRT_GIC_CPU_BASE   0x08010000UL
 #define VIRT_UART0_BASE     0x09000000UL

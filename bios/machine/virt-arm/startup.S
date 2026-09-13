@@ -7,6 +7,7 @@
 
 #include "asmdefs.h"
 #include "header.h"
+#include "virt_memmap.h"
 
         .globl  C_SYM(os_entry)
         .extern C_SYM(stktop)
@@ -116,9 +117,10 @@ C_SYM(main):
                                  * (virtual) address -- not valid yet. */
     bl  print_string
 
-    /* MMU bring-up: literal physical constants only, no linked symbols */
-    mov r0, #0x08000000     /* 128 MiB RAM window, matches -m 128 in the qemu invocation below */
-    ldr r1, =0x47f00000     /* page table: fixed physical scratch address, top of a 128M RAM allocation */
+    /* MMU bring-up: physical constants only, no linked symbols -- see
+     * virt_memmap.h for VIRT_MMU_RAM_SIZE/VIRT_MMU_TABLE_PHYS */
+    mov r0, #VIRT_MMU_RAM_SIZE
+    ldr r1, =VIRT_MMU_TABLE_PHYS
     bl  C_SYM(virt_mmu_bootstrap)
 
     ldr pc, =virt_arm_post_mmu
