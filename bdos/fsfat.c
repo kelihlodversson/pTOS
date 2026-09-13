@@ -313,7 +313,7 @@ int nextcl(OFD *p, int wrtflg)
         complex, since the entry for a cluster can span logical records,
         and therefore we do it the old, slow way.
 */
-long xgetfree(long *buf, int drv)
+long xgetfree(long *buf, WORD drv)
 {
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_dfree(drv, (ULONG *)buf);

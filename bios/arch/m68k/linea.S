@@ -168,25 +168,61 @@ hide_mouse:
         move.l  (sp)+,d0
         rts
 
+/*
+ * undraw_sprite/draw_sprite/linea_blit call cur_replace(MCS*),
+ * cur_display(Mcdb*,MCS*,WORD,WORD) and linea_blit(struct blit_frame*)
+ * with their arguments already in the fixed registers the Line-A
+ * hardware convention puts them in (see the comment above), which
+ * happens to line up with plain cdecl stack order but NOT with
+ * -mfastcall: there pointer arguments go in a0, then a1, not on the
+ * stack. Route them through those registers instead of pushing under
+ * -mfastcall; the plain-ABI push sequence is kept for other targets.
+ */
 undraw_sprite:
+#if CONF_WITH_MFASTCALL
+        movea.l a2,a0            /* save area ptr */
+        jsr     C_SYM(cur_replace)
+#else
         move.l  a2,-(sp)        /* save area ptr */
         jsr     C_SYM(cur_replace)
         addq.l  #4,sp
+#endif
         rts
 
 draw_sprite:
-        move.w  d1,-(sp)        /* y coord of hotspot */
-        move.w  d0,-(sp)        /* x coord */
+#if CONF_WITH_MFASTCALL
+        movea.l a2,a1            /* save area ptr; a0 (new sprite), d0 (x)
+                                  * and d1 (y) are already where fastcall
+                                  * wants them */
+        jsr     C_SYM(cur_display)
+#else
+        /*
+         * cur_display(Mcdb*, MCS*, WORD, WORD) is an ordinary internal
+         * function compiled under this kernel's own (post -mshort)
+         * plain-stack ABI, which gives each WORD arg a full 4-byte slot
+         * rather than packing them tightly -- sign-extend x/y before
+         * pushing, and clean up 16 bytes, not 12.
+         */
+        ext.l   d1              /* y coord of hotspot, sign-extended */
+        move.l  d1,-(sp)
+        ext.l   d0              /* x coord, sign-extended */
+        move.l  d0,-(sp)
         move.l  a2,-(sp)        /* save area ptr */
         move.l  a0,-(sp)        /* new sprite */
         jsr     C_SYM(cur_display)
-        lea     12(sp),sp
+        lea     16(sp),sp
+#endif
         rts
 
 linea_blit:
+#if CONF_WITH_MFASTCALL
+        movea.l a6,a0                   // blit frame structure addr
+        jsr     C_SYM(linea_blit)
+#else
         move.l  a6,-(sp)                // blit frame structure addr
         jsr     C_SYM(linea_blit)
         addq.l  #4,sp
+#endif
         rts
 
         SECTION_RODATA

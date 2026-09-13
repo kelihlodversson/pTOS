@@ -99,9 +99,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Same idea as the architecture split above: a config that turns on
+      # CONF_WITH_MFASTCALL needs Thorsten Otto's toolchain instead of
+      # Vincent Riviere's (see setup-toolchain's own mfastcall input), and
+      # this makes that automatic for whichever configs need it, present or
+      # future, without this workflow having to list them.
+      - name: Check whether this config needs -mfastcall
+        id: check-mfastcall
+        run: |
+          if grep -qE '^CONF_WITH_MFASTCALL=y' "configs/${{ matrix.config }}_defconfig"; then
+            echo "mfastcall=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "mfastcall=false" >>"$GITHUB_OUTPUT"
+          fi
+
       - uses: ./.github/actions/setup-toolchain
         with:
           arch: m68k
+          mfastcall: ${{ steps.check-mfastcall.outputs.mfastcall }}
 
       - name: Build ${{ matrix.config }}
         env:
@@ -191,6 +206,9 @@ jobs:
       - uses: ./.github/actions/setup-toolchain
         with:
           arch: m68k
+          # "make release" builds atari192/atari256 among the m68k
+          # targets, and both defconfigs now enable CONF_WITH_MFASTCALL.
+          mfastcall: "true"
 
       # Not a release: these archives are only kept as workflow artifacts, to
       # confirm that "make release" still works and to have something to

@@ -1338,6 +1338,342 @@ LONG supexec(PFLONG);       /* defined in vectors.S */
 extern LONG supexec(PFLONG);   /* implemented in vectors.S */
 #endif
 
+#ifndef __arm__
+/*
+ * wrap_*(): xbios_vecs[] shims for m68k. vectors.S's biosxbios no
+ * longer jsr's straight into an xbios_vecs[] entry with sp still
+ * pointing at the raw trap frame: with -mshort no longer used for the
+ * kernel m68k build (#300), the target's own GCC-compiled prologue
+ * would read each WORD-sized parameter from a 4-byte padded stack
+ * slot, which that tightly-packed frame does not provide (see the
+ * comment in bios.c's own wrap_*() functions, and in vectors.S). It
+ * instead calls one of these with a single pointer to the raw
+ * argument words -- always exactly 4 bytes, so never ambiguous -- and
+ * each shim reconstructs the real, correctly-typed arguments
+ * explicitly before calling the real function normally. A
+ * zero-argument function needs no shim: it never looks at the extra
+ * pointer biosxbios unconditionally passes.
+ *
+ * Every xbios_vecs[] entry is covered this way, including the ones
+ * past 0x40 that only exist when CONF_WITH_MFP, CONF_WITH_PRINTER_PORT,
+ * CONF_WITH_NVRAM, CONF_WITH_TT_SHIFTER, CONF_WITH_VIDEL, CONF_WITH_DSP
+ * or CONF_WITH_DMASOUND is on: each has its own wrap_*() below, guarded
+ * by the same CONF_WITH_* and selected through VEC() in the table.
+ */
+#define PWLONG(pw, i) pwlong(pw, i)  /* pwlong(): asm.h */
+
+static LONG wrap_Initmous(WORD *pw)
+{
+    Initmous(pw[0], (struct param *)PWLONG(pw, 1),
+             (void (*)(UBYTE *))PWLONG(pw, 3));
+    return 0;
+}
+static LONG wrap_setscreen(WORD *pw)
+{
+    return setscreen((UBYTE *)PWLONG(pw, 0), (const UBYTE *)PWLONG(pw, 2),
+                      pw[4], pw[5]);
+}
+static LONG wrap_setpalette(WORD *pw)
+{
+    setpalette((const UWORD *)PWLONG(pw, 0));
+    return 0;
+}
+static LONG wrap_setcolor(WORD *pw) { return setcolor(pw[0], pw[1]); }
+static LONG wrap_floprd(WORD *pw)
+{
+    return floprd((UBYTE *)PWLONG(pw, 0), PWLONG(pw, 2), pw[4], pw[5],
+                   pw[6], pw[7], pw[8]);
+}
+static LONG wrap_flopwr(WORD *pw)
+{
+    return flopwr((const UBYTE *)PWLONG(pw, 0), PWLONG(pw, 2), pw[4], pw[5],
+                   pw[6], pw[7], pw[8]);
+}
+static LONG wrap_flopfmt(WORD *pw)
+{
+    return flopfmt((UBYTE *)PWLONG(pw, 0), (WORD *)PWLONG(pw, 2), pw[4],
+                    pw[5], pw[6], pw[7], pw[8], (ULONG)PWLONG(pw, 9), pw[11]);
+}
+static LONG wrap_midiws(WORD *pw)
+{
+    midiws(pw[0], (const UBYTE *)PWLONG(pw, 1));
+    return 0;
+}
+static LONG wrap_iorec(WORD *pw) { return iorec(pw[0]); }
+static LONG wrap_rsconf(WORD *pw)
+{
+    return (LONG)rsconf(pw[0], pw[1], pw[2], pw[3], pw[4], pw[5]);
+}
+static LONG wrap_keytbl(WORD *pw)
+{
+    return keytbl((const UBYTE *)PWLONG(pw, 0), (const UBYTE *)PWLONG(pw, 2),
+                   (const UBYTE *)PWLONG(pw, 4));
+}
+static LONG wrap_protobt(WORD *pw)
+{
+    protobt((UBYTE *)PWLONG(pw, 0), PWLONG(pw, 2), pw[4], pw[5]);
+    return 0;
+}
+static LONG wrap_flopver(WORD *pw)
+{
+    return flopver((WORD *)PWLONG(pw, 0), PWLONG(pw, 2), pw[4], pw[5],
+                    pw[6], pw[7], pw[8]);
+}
+static LONG wrap_cursconf(WORD *pw) { return cursconf(pw[0], pw[1]); }
+static LONG wrap_settime(WORD *pw)
+{
+    settime(PWLONG(pw, 0));
+    return 0;
+}
+static LONG wrap_ikbdws(WORD *pw)
+{
+    ikbdws(pw[0], (const UBYTE *)PWLONG(pw, 1));
+    return 0;
+}
+static LONG wrap_giaccess(WORD *pw) { return giaccess(pw[0], pw[1]); }
+static LONG wrap_offgibit(WORD *pw)
+{
+    offgibit(pw[0]);
+    return 0;
+}
+static LONG wrap_ongibit(WORD *pw)
+{
+    ongibit(pw[0]);
+    return 0;
+}
+static LONG wrap_kbdvbase(WORD *pw) { UNUSED(pw); return (LONG)kbdvbase(); }
+static LONG wrap_kbrate(WORD *pw) { return kbrate(pw[0], pw[1]); }
+static LONG wrap_floprate(WORD *pw) { return floprate(pw[0], pw[1]); }
+static LONG wrap_supexec(WORD *pw) { return supexec((PFLONG)PWLONG(pw, 0)); }
+static LONG wrap_DMAread(WORD *pw)
+{
+    return DMAread(PWLONG(pw, 0), pw[2], (UBYTE *)PWLONG(pw, 3), pw[5]);
+}
+static LONG wrap_DMAwrite(WORD *pw)
+{
+    return DMAwrite(PWLONG(pw, 0), pw[2], (const UBYTE *)PWLONG(pw, 3), pw[5]);
+}
+static LONG wrap_bconmap(WORD *pw) { return bconmap(pw[0]); }
+static LONG wrap_blitmode(WORD *pw) { return blitmode(pw[0]); }
+static LONG wrap_dosound(WORD *pw) { return dosound((const UBYTE *)PWLONG(pw, 0)); }
+
+/*
+ * The rest of these cover xbios_vecs[] entries only reachable when
+ * CONF_WITH_MFP, CONF_WITH_PRINTER_PORT, CONF_WITH_NVRAM,
+ * CONF_WITH_TT_SHIFTER, CONF_WITH_VIDEL, CONF_WITH_DSP or
+ * CONF_WITH_DMASOUND is on (i.e. LAST_ENTRY below 0x40), which the
+ * base config above does not need -- guarded the same way as the
+ * xbios_vecs[] entries that use them, below, both so the type each
+ * needs (e.g. DSPBLOCK) is only required where it's actually
+ * declared, and so an unused one doesn't warn.
+ */
+#if CONF_WITH_DMASOUND
+static LONG wrap_buffoper(WORD *pw) { return buffoper(pw[0]); }
+static LONG wrap_buffptr(WORD *pw) { return buffptr(PWLONG(pw, 0)); }
+static LONG wrap_devconnect(WORD *pw)
+{
+    return devconnect(pw[0], pw[1], pw[2], pw[3], pw[4]);
+}
+#endif /* CONF_WITH_DMASOUND */
+
+#if CONF_WITH_DSP
+static LONG wrap_dsp_available(WORD *pw)
+{
+    dsp_available((LONG *)PWLONG(pw, 0), (LONG *)PWLONG(pw, 2));
+    return 0;
+}
+static LONG wrap_dsp_blkbytes(WORD *pw)
+{
+    dsp_blkbytes((UBYTE *)PWLONG(pw, 0), PWLONG(pw, 2), (UBYTE *)PWLONG(pw, 4),
+                 PWLONG(pw, 6));
+    return 0;
+}
+static LONG wrap_dsp_blkhandshake(WORD *pw)
+{
+    dsp_blkhandshake((const UBYTE *)PWLONG(pw, 0), PWLONG(pw, 2),
+                      (char *)PWLONG(pw, 4), PWLONG(pw, 6));
+    return 0;
+}
+static LONG wrap_dsp_blkunpacked(WORD *pw)
+{
+    dsp_blkunpacked((LONG *)PWLONG(pw, 0), PWLONG(pw, 2), (LONG *)PWLONG(pw, 4),
+                     PWLONG(pw, 6));
+    return 0;
+}
+static LONG wrap_dsp_blkwords(WORD *pw)
+{
+    dsp_blkwords((WORD *)PWLONG(pw, 0), PWLONG(pw, 2), (WORD *)PWLONG(pw, 4),
+                  PWLONG(pw, 6));
+    return 0;
+}
+static LONG wrap_dsp_doblock(WORD *pw)
+{
+    dsp_doblock((const UBYTE *)PWLONG(pw, 0), PWLONG(pw, 2),
+                (char *)PWLONG(pw, 4), PWLONG(pw, 6));
+    return 0;
+}
+static LONG wrap_dsp_execboot(WORD *pw)
+{
+    dsp_execboot((const UBYTE *)PWLONG(pw, 0), PWLONG(pw, 2), pw[4]);
+    return 0;
+}
+static LONG wrap_dsp_execprog(WORD *pw)
+{
+    dsp_execprog((const UBYTE *)PWLONG(pw, 0), PWLONG(pw, 2), pw[4]);
+    return 0;
+}
+static LONG wrap_dsp_flushsubroutines(WORD *pw)
+{
+    UNUSED(pw); dsp_flushsubroutines(); return 0;
+}
+static LONG wrap_dsp_getprogability(WORD *pw)
+{
+    UNUSED(pw); return dsp_getprogability();
+}
+static LONG wrap_dsp_getwordsize(WORD *pw) { UNUSED(pw); return dsp_getwordsize(); }
+static LONG wrap_dsp_hf0(WORD *pw) { return dsp_hf0(pw[0]); }
+static LONG wrap_dsp_hf1(WORD *pw) { return dsp_hf1(pw[0]); }
+static LONG wrap_dsp_hf2(WORD *pw) { UNUSED(pw); return dsp_hf2(); }
+static LONG wrap_dsp_hf3(WORD *pw) { UNUSED(pw); return dsp_hf3(); }
+static LONG wrap_dsp_hstat(WORD *pw) { UNUSED(pw); return dsp_hstat(); }
+static LONG wrap_dsp_inqsubrability(WORD *pw) { return dsp_inqsubrability(pw[0]); }
+static LONG wrap_dsp_instream(WORD *pw)
+{
+    dsp_instream((char *)PWLONG(pw, 0), PWLONG(pw, 2), PWLONG(pw, 4),
+                 (LONG *)PWLONG(pw, 6));
+    return 0;
+}
+static LONG wrap_dsp_iostream(WORD *pw)
+{
+    dsp_iostream((char *)PWLONG(pw, 0), (char *)PWLONG(pw, 2), PWLONG(pw, 4),
+                 PWLONG(pw, 6), PWLONG(pw, 8), (LONG *)PWLONG(pw, 10));
+    return 0;
+}
+static LONG wrap_dsp_loadprog(WORD *pw)
+{
+    return dsp_loadprog((char *)PWLONG(pw, 0), pw[2], (void *)PWLONG(pw, 3));
+}
+static LONG wrap_dsp_loadsubroutine(WORD *pw)
+{
+    return dsp_loadsubroutine((const UBYTE *)PWLONG(pw, 0), PWLONG(pw, 2), pw[4]);
+}
+static LONG wrap_dsp_lock(WORD *pw) { UNUSED(pw); return dsp_lock(); }
+static LONG wrap_dsp_lodtobinary(WORD *pw)
+{
+    return dsp_lodtobinary((char *)PWLONG(pw, 0), (char *)PWLONG(pw, 2));
+}
+static LONG wrap_dsp_multblocks(WORD *pw)
+{
+    dsp_multblocks(PWLONG(pw, 0), PWLONG(pw, 2), (DSPBLOCK *)PWLONG(pw, 4),
+                    (DSPBLOCK *)PWLONG(pw, 6));
+    return 0;
+}
+static LONG wrap_dsp_outstream(WORD *pw)
+{
+    dsp_outstream((char *)PWLONG(pw, 0), PWLONG(pw, 2), PWLONG(pw, 4),
+                  (LONG *)PWLONG(pw, 6));
+    return 0;
+}
+static LONG wrap_dsp_removeinterrupts(WORD *pw)
+{
+    dsp_removeinterrupts(pw[0]);
+    return 0;
+}
+static LONG wrap_dsp_requestuniqueability(WORD *pw)
+{
+    UNUSED(pw); return dsp_requestuniqueability();
+}
+static LONG wrap_dsp_reserve(WORD *pw) { return dsp_reserve(PWLONG(pw, 0), PWLONG(pw, 2)); }
+static LONG wrap_dsp_runsubroutine(WORD *pw) { return dsp_runsubroutine(pw[0]); }
+static LONG wrap_dsp_setvectors(WORD *pw)
+{
+    dsp_setvectors((void (*)(LONG))PWLONG(pw, 0), (LONG (*)(void))PWLONG(pw, 2));
+    return 0;
+}
+static LONG wrap_dsp_triggerhc(WORD *pw) { dsp_triggerhc(pw[0]); return 0; }
+static LONG wrap_dsp_unlock(WORD *pw) { UNUSED(pw); dsp_unlock(); return 0; }
+#endif /* CONF_WITH_DSP */
+
+#if CONF_WITH_TT_SHIFTER
+static LONG wrap_egetpalette(WORD *pw)
+{
+    return egetpalette(pw[0], pw[1], (UWORD *)PWLONG(pw, 2));
+}
+static LONG wrap_egetshift(WORD *pw) { UNUSED(pw); return egetshift(); }
+static LONG wrap_esetbank(WORD *pw) { return esetbank(pw[0]); }
+static LONG wrap_esetcolor(WORD *pw) { return esetcolor(pw[0], pw[1]); }
+static LONG wrap_esetgray(WORD *pw) { return esetgray(pw[0]); }
+static LONG wrap_esetpalette(WORD *pw)
+{
+    return esetpalette(pw[0], pw[1], (UWORD *)PWLONG(pw, 2));
+}
+static LONG wrap_esetshift(WORD *pw) { return esetshift(pw[0]); }
+static LONG wrap_esetsmear(WORD *pw) { return esetsmear(pw[0]); }
+#endif /* CONF_WITH_TT_SHIFTER */
+
+#if CONF_WITH_DMASOUND
+static LONG wrap_dsptristate(WORD *pw) { return dsptristate(pw[0], pw[1]); }
+static LONG wrap_gpio(WORD *pw) { return gpio(pw[0], pw[1]); }
+static LONG wrap_locksnd(WORD *pw) { UNUSED(pw); return locksnd(); }
+static LONG wrap_setbuffer(WORD *pw)
+{
+    return setbuffer(pw[0], (ULONG)PWLONG(pw, 1), (ULONG)PWLONG(pw, 3));
+}
+static LONG wrap_setinterrupt(WORD *pw) { return setinterrupt(pw[0], pw[1]); }
+static LONG wrap_setmontracks(WORD *pw) { return setmontracks(pw[0]); }
+static LONG wrap_setsndmode(WORD *pw) { return setsndmode(pw[0]); }
+static LONG wrap_settracks(WORD *pw) { return settracks(pw[0], pw[1]); }
+static LONG wrap_sndstatus(WORD *pw) { return sndstatus(pw[0]); }
+static LONG wrap_soundcmd(WORD *pw) { return soundcmd(pw[0], pw[1]); }
+static LONG wrap_unlocksnd(WORD *pw) { UNUSED(pw); return unlocksnd(); }
+#endif /* CONF_WITH_DMASOUND */
+
+#if CONF_WITH_MFP
+static LONG wrap_jdisint(WORD *pw) { jdisint(pw[0]); return 0; }
+static LONG wrap_jenabint(WORD *pw) { jenabint(pw[0]); return 0; }
+static LONG wrap_mfpint(WORD *pw) { mfpint(pw[0], PWLONG(pw, 1)); return 0; }
+static LONG wrap_xbtimer(WORD *pw) { xbtimer(pw[0], pw[1], pw[2], PWLONG(pw, 3)); return 0; }
+#endif /* CONF_WITH_MFP */
+
+#if CONF_WITH_NVRAM
+static LONG wrap_nvmaccess(WORD *pw)
+{
+    return nvmaccess(pw[0], pw[1], pw[2], (UBYTE *)PWLONG(pw, 3));
+}
+#endif /* CONF_WITH_NVRAM */
+
+#if CONF_WITH_PRINTER_PORT
+static LONG wrap_setprt(WORD *pw) { return setprt(pw[0]); }
+#endif /* CONF_WITH_PRINTER_PORT */
+
+#if CONF_WITH_VIDEL
+static LONG wrap_vfixmode(WORD *pw) { return vfixmode(pw[0]); }
+static LONG wrap_vgetrgb(WORD *pw)
+{
+    return vgetrgb(pw[0], pw[1], (ULONG *)PWLONG(pw, 2));
+}
+static LONG wrap_vgetsize(WORD *pw) { return vgetsize(pw[0]); }
+static LONG wrap_vmontype(WORD *pw) { UNUSED(pw); return vmontype(); }
+static LONG wrap_vsetmode(WORD *pw) { return vsetmode(pw[0]); }
+static LONG wrap_vsetrgb(WORD *pw)
+{
+    return vsetrgb(pw[0], pw[1], (const ULONG *)PWLONG(pw, 2));
+}
+static LONG wrap_vsetsync(WORD *pw) { return vsetsync(pw[0]); }
+#endif /* CONF_WITH_VIDEL */
+
+/* Zero-argument functions reached via VEC() in the 0x00-0x40 range:
+ * no shim needed (see the comment above), but each is given a trivial
+ * wrapper to keep VEC() uniform. */
+static LONG wrap_physbase(WORD *pw) { UNUSED(pw); return (LONG)physbase(); }
+static LONG wrap_logbase(WORD *pw) { UNUSED(pw); return (LONG)logbase(); }
+static LONG wrap_getrez(WORD *pw) { UNUSED(pw); return getrez(); }
+static LONG wrap_random(WORD *pw) { UNUSED(pw); return random(); }
+static LONG wrap_scrdmp(WORD *pw) { UNUSED(pw); scrdmp(); return 0; }
+static LONG wrap_gettime(WORD *pw) { UNUSED(pw); return gettime(); }
+static LONG wrap_bioskeys(WORD *pw) { UNUSED(pw); bioskeys(); return 0; }
+static LONG wrap_vsync(WORD *pw) { UNUSED(pw); vsync(); return 0; }
+#endif /* !__arm__ */
 
 /*
  * xbios_vecs - the table of xbios command vectors.
@@ -1345,8 +1681,10 @@ extern LONG supexec(PFLONG);   /* implemented in vectors.S */
 
 #if DBG_XBIOS
 #define VEC(wrapper, direct) (PFLONG) wrapper
-#else
+#elif defined(__arm__)
 #define VEC(wrapper, direct) (PFLONG) direct
+#else
+#define VEC(wrapper, direct) (PFLONG) wrap_##direct
 #endif
 
 #if CONF_WITH_DMASOUND

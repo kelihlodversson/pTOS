@@ -209,7 +209,7 @@ long xrmdir(char *p)
  *                  EPTHNF
  *                  EFILNF
  */
-long xchmod(char *p, int wrt, UBYTE mod)
+long xchmod(char *p, WORD wrt, UBYTE mod)
 {
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_chmod(p, wrt, mod);
@@ -237,7 +237,7 @@ long ixsfirst(char *name, WORD att, DTAINFO *addr)
     const char *s;              /*  M01.01.03                   */
     DND *dn;
     FCB *f;
-    long pos;
+    LONG pos;
 
     if (att != FA_VOL)
         att |= (FA_ARCHIVE|FA_RO);
@@ -427,7 +427,7 @@ long xsnext(void)
  *
  *  Function 0x57   f_datime
  */
-long xgsdtof(DOSTIME *buf, int h, int wrt)
+long xgsdtof(DOSTIME *buf, WORD h, WORD wrt)
 {
     OFD *f = getofd(h);
     DFD *dfd;
@@ -600,7 +600,7 @@ void builds(const char *s1, char *s2)
  */
 /* rename file, n unused, old path p1, new path p2 */
 /*ARGSUSED*/
-long xrename(int n, char *p1, char *p2)
+long xrename(WORD n, char *p1, char *p2)
 {
     (void)n;
 #if CONF_WITH_PLUGGABLE_FS
@@ -702,7 +702,7 @@ void decr_curdir_usage(int n)
  *  Error returns:
  *                  EDRIVE
  */
-long xgetdir(char *buf, int drv)
+long xgetdir(char *buf, WORD drv)
 {
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_getdir(buf, drv);

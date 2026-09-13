@@ -21,6 +21,7 @@
 /* #define ENABLE_KDEBUG */
 
 #include "emutos.h"
+#include "asm.h"
 #include "fs.h"
 #include "biosdefs.h"
 #include "mem.h"
@@ -132,19 +133,107 @@ typedef struct
     UBYTE stdio_typ;    /* Standard I/O channel (highest bit must be set, too) */
     UBYTE nparms;       /* Number of parameters */
 #else
+    /*
+     * Shapes name each real parameter's width in order: 'w' a 16-bit
+     * word, 'l' a 32-bit long or pointer -- matching the trap1_v()/
+     * trap1_w()/... naming in include/arch/m68k/asm.h. Calling any of
+     * these through a cast from a function whose *declared* parameter
+     * types merely happen to share the same shape (e.g. WORD vs plain
+     * int, both 4 bytes wide once promoted -- see below) is safe: GCC
+     * gives every non-long stack parameter a full 4-byte slot on this
+     * target once int is 32 bits, so only the long/short *shape*
+     * matters, not the exact declared type.
+     *
+     * Before #300 removed -mshort for the kernel m68k build, plain int
+     * was 16 bits, matching WORD exactly, and no stack parameter -- of
+     * any type -- was ever padded: total byte count alone determined
+     * every argument's stack offset, so shape didn't matter either,
+     * only wparms (the raw word count) did. That is what the dispatch
+     * below used to switch on, calling through homogeneous-short union
+     * members (www, wwww, ...) regardless of which "words" were really
+     * one WORD argument or one half of a LONG one. Once int widens to
+     * 32 bits, GCC pads *only* the short/WORD slots (a real LONG
+     * parameter needs no padding, already being 4 bytes), so a WORD
+     * ahead of a LONG argument and a LONG ahead of a WORD argument stop
+     * being interchangeable, and wparms alone can no longer select a
+     * correct union member -- e.g. wparms=2 covers both xforce(WORD,
+     * WORD) and xconws(a single LONG pointer). Shape says which.
+     */
     union {
         long  (*v)(void);
         long  (*w)(short);
+        long  (*l)(long);
         long  (*ww)(short, short);
-        long  (*www)(short, short, short);
-        long  (*wwww)(short, short, short, short);
-        long  (*wwwww)(short, short, short, short, short);
-        long  (*wwwwwww)(short, short, short, short, short, short, short);
+        long  (*ll)(long, long);
+        long  (*lw)(long, short);
+        long  (*lww)(long, short, short);
+        /*
+         * xexec(WORD, char*, char*, char*) is the sole WLLL-shaped
+         * function, and all three "L" slots are real pointers (path,
+         * tail, env) -- not scalar longs. Under the plain stack ABI
+         * that made no difference (every argument gets an identically
+         * positioned 4-byte stack slot regardless of type), but under
+         * -mfastcall pointer- and long-typed arguments go to different
+         * register classes (a0/a1 vs d1/d2), so calling through a
+         * long-typed union member here would send xexec's path/tail
+         * pointers to the wrong registers. Use void* to match its real
+         * signature; harmless on the plain ABI since void* and long
+         * share the same stack layout there.
+         */
+        long  (*wlll)(short, void*, void*, void*);
+        /*
+         * The "L" letter in every shape above names a wire slot's
+         * *width* (32 bits), not its C type -- but under -mfastcall a
+         * pointer-typed argument and a scalar long-typed argument in
+         * that same slot go to different register classes (a0/a1 vs.
+         * d0-d2), unlike the plain stack ABI where both share the same
+         * 4-byte stack layout regardless of type (see the wlll comment
+         * above). Every shape below is the pointer-carrying twin of an
+         * existing long-shape, added because at least one function
+         * using that wire shape has a real pointer in an "L" slot;
+         * calling it through the long-typed union member would send
+         * that pointer to a data register instead of an address one.
+         */
+        long  (*p)(void*);
+        long  (*pl)(void*, long);
+        long  (*pw)(void*, short);
+        long  (*pww)(void*, short, short);
+        long  (*wlp)(short, long, void*);
+        long  (*wpl)(short, void*, long);
+        long  (*wpp)(short, void*, void*);
+        /*
+         * Same mismatch as above, but on the *return* side: xmalloc(),
+         * srealloc() and xmxalloc() all return void* (a block address),
+         * not a scalar long, even though their arguments are plain
+         * longs/words. Under -mfastcall a function's return value comes
+         * back in a0 when its own declared return type is a pointer, but
+         * in d0 when it is a scalar long/int -- unlike the plain stack
+         * ABI, where every GEMDOS return value is read from d0 regardless
+         * of C type. Calling through a long-returning union member (l,
+         * lw, ...) would read the stale d0 left over from whatever ffit()
+         * or shrinkit() last did internally, instead of the a0 the callee
+         * actually returned its result in. rl/rlw are the pointer-
+         * returning twins of l/lw, used only for the functions whose real
+         * C signature returns void* -- xtermres, the other LW-shaped
+         * function, genuinely returns a scalar long and still uses lw.
+         */
+        void  *(*rl)(long);
+        void  *(*rlw)(long, short);
     } fncall;
     UBYTE stdio_typ;    /* Standard I/O channel (highest bit must be set, too) */
-    UBYTE wparms;       /* Size of parameters in WORDs */
+    UBYTE shape;        /* FSHAPE_* -- which fncall union member to use */
 #endif
 } FND;
+
+#ifndef __arm__
+enum {
+    FSHAPE_V, FSHAPE_W, FSHAPE_L, FSHAPE_WW, FSHAPE_LL,
+    FSHAPE_LW, FSHAPE_LWW, FSHAPE_WLLL,
+    FSHAPE_P, FSHAPE_PL, FSHAPE_PW, FSHAPE_PWW,
+    FSHAPE_WLP, FSHAPE_WPL, FSHAPE_WPP,
+    FSHAPE_RL, FSHAPE_RLW
+};
+#endif
 
 
 /*
@@ -159,12 +248,12 @@ static const FND funcs[] =
 #define F(x) { (PFLONG)(x) }
 #define NI F(ni)
 #ifdef __arm__
-#   define W_N(w, n) (n)
+#   define W_N(n, shape) (n)
 #else
-#   define W_N(w, n) (w)
+#   define W_N(n, shape) FSHAPE_##shape
 #endif
 
-     { F(x0term), 0, W_N(0,0) },       /* 0x00 */
+     { F(x0term), 0, W_N(0,V) },       /* 0x00 */
 
     /*
      * console functions
@@ -173,17 +262,17 @@ static const FND funcs[] =
      * 0x80 is std in, 0x81 is stdout, 0x82 is stdaux, 0x83 stdprn
      */
 
-    { F(xconin),   0x80, W_N(0,0) },   /* 0x01 */
-    { F(xconout),  0x81, W_N(1,1) },   /* 0x02 */
-    { F(xauxin),   0x82, W_N(0,0) },   /* 0x03 */
-    { F(xauxout),  0x82, W_N(1,1) },   /* 0x04 */
-    { F(xprtout),  0x83, W_N(1,1) },   /* 0x05 */
-    { F(xrawio),   0,    W_N(1,1) },   /* 0x06 */
-    { F(xrawcin),  0x80, W_N(0,0) },   /* 0x07 */
-    { F(xnecin),   0x80, W_N(0,0) },   /* 0x08 */
-    { F(xconws),   0x81, W_N(2,1) },   /* 0x09 */
-    { F(xconrs),   0x80, W_N(2,1) },   /* 0x0A */
-    { F(xconstat), 0x80, W_N(0,0) },   /* 0x0B */
+    { F(xconin),   0x80, W_N(0,V) },   /* 0x01 */
+    { F(xconout),  0x81, W_N(1,W) },   /* 0x02 */
+    { F(xauxin),   0x82, W_N(0,V) },   /* 0x03 */
+    { F(xauxout),  0x82, W_N(1,W) },   /* 0x04 */
+    { F(xprtout),  0x83, W_N(1,W) },   /* 0x05 */
+    { F(xrawio),   0,    W_N(1,W) },   /* 0x06 */
+    { F(xrawcin),  0x80, W_N(0,V) },   /* 0x07 */
+    { F(xnecin),   0x80, W_N(0,V) },   /* 0x08 */
+    { F(xconws),   0x81, W_N(1,P) },   /* 0x09 */
+    { F(xconrs),   0x80, W_N(1,P) },   /* 0x0A */
+    { F(xconstat), 0x80, W_N(0,V) },   /* 0x0B */
 
     /*
      * disk functions
@@ -196,7 +285,7 @@ static const FND funcs[] =
     { NI, 0, 0 },
     { NI, 0, 0 },
 
-    { F(xsetdrv),  0, W_N(1,1) },      /* 0x0E */
+    { F(xsetdrv),  0, W_N(1,W) },      /* 0x0E */
 
     { NI, 0, 0 },
 
@@ -206,19 +295,19 @@ static const FND funcs[] =
      * Here the 0x80 flag indicates std file used, as above
      */
 
-    { F(xconostat), 0x81, W_N(0,0) },  /* 0x10 */
-    { F(xprtostat), 0x83, W_N(0,0) },  /* 0x11 */
-    { F(xauxistat), 0x82, W_N(0,0) },  /* 0x12 */
-    { F(xauxostat), 0x82, W_N(0,0) },  /* 0x13 */
+    { F(xconostat), 0x81, W_N(0,V) },  /* 0x10 */
+    { F(xprtostat), 0x83, W_N(0,V) },  /* 0x11 */
+    { F(xauxistat), 0x82, W_N(0,V) },  /* 0x12 */
+    { F(xauxostat), 0x82, W_N(0,V) },  /* 0x13 */
 
 #if CONF_WITH_ALT_RAM
-    { F(xmaddalt),  0, W_N(4,2) },     /* 0x14 */
+    { F(xmaddalt),  0, W_N(2,PL) },    /* 0x14 */
 #else
     { NI, 0, 0 },               /* 0x14 */
 #endif
 
 #if CONF_WITH_VIDEL
-    { F(srealloc),  0, W_N(2,1) },     /* 0x15 */
+    { F(srealloc),  0, W_N(1,RL) },    /* 0x15 */
 #else
     { NI, 0, 0 },               /* 0x15 */
 #endif
@@ -227,8 +316,8 @@ static const FND funcs[] =
     { NI, 0, 0 },
     { NI, 0, 0 },
 
-    { F(xgetdrv),  0, W_N(0,0) },      /* 0x19 */
-    { F(xsetdta),  0, W_N(2,1) },      /* 0x1A */
+    { F(xgetdrv),  0, W_N(0,V) },      /* 0x19 */
+    { F(xsetdta),  0, W_N(1,P) },      /* 0x1A */
 
     { NI, 0, 0 },
     { NI, 0, 0 },
@@ -249,52 +338,52 @@ static const FND funcs[] =
     { NI, 0, 0 },
     { NI, 0, 0 },
 
-    { F(xgetdate), 0, W_N(0,0) },      /* 0x2A */
-    { F(xsetdate), 0, W_N(1,1) },      /* 0x2B */
-    { F(xgettime), 0, W_N(0,0) },      /* 0x2C */
-    { F(xsettime), 0, W_N(1,1) },      /* 0x2D */
+    { F(xgetdate), 0, W_N(0,V) },      /* 0x2A */
+    { F(xsetdate), 0, W_N(1,W) },      /* 0x2B */
+    { F(xgettime), 0, W_N(0,V) },      /* 0x2C */
+    { F(xsettime), 0, W_N(1,W) },      /* 0x2D */
 
     { NI, 0, 0 },
 
-    { F(xgetdta),  0, W_N(0,0) },      /* 0x2F */
-    { F(xgetver),  0, W_N(0,0) },      /* 0x30 */
-    { F(xtermres), 0, W_N(3,2) },      /* 0x31 */
+    { F(xgetdta),  0, W_N(0,V) },      /* 0x2F */
+    { F(xgetver),  0, W_N(0,V) },      /* 0x30 */
+    { F(xtermres), 0, W_N(2,LW) },     /* 0x31 */
 
     { NI, 0, 0 },
     { NI, 0, 0 },
     { NI, 0, 0 },
     { NI, 0, 0 },
 
-    { F(xgetfree), 0, W_N(3,2) },      /* 0x36 */
+    { F(xgetfree), 0, W_N(2,PW) },     /* 0x36 */
 
     { NI, 0, 0 },
     { NI, 0, 0 },
 
-    { F(xmkdir),   0, W_N(2,1) },      /* 0x39 */
-    { F(xrmdir),   0, W_N(2,1) },      /* 0x3A */
-    { F(xchdir),   0, W_N(2,1) },      /* 0x3B */
-    { F(xcreat),   0, W_N(3,2) },      /* 0x3C */
-    { F(xopen),    0, W_N(3,2) },      /* 0x3D */
-    { F(xclose),   0, W_N(1,1) },      /* 0x3E - will handle its own redirection */
-    { F(xread),    0x82, W_N(5,3) },   /* 0x3F */
-    { F(xwrite),   0x82, W_N(5,3) },   /* 0x40 */
-    { F(xunlink),  0, W_N(2,1) },      /* 0x41 */
-    { F(xlseek),   0x81, W_N(4,3) },   /* 0x42 */
-    { F(xchmod),   0, W_N(4,3) },      /* 0x43 */
-    { F(xmxalloc), 0, W_N(3,2) },      /* 0x44 */
-    { F(xdup),     0, W_N(1,1) },      /* 0x45 */
-    { F(xforce),   0, W_N(2,2) },      /* 0x46 */
-    { F(xgetdir),  0, W_N(3,2) },      /* 0x47 */
-    { F(xmalloc),  0, W_N(2,1) },      /* 0x48 */
-    { F(xmfree),   0, W_N(2,1) },      /* 0x49 */
-    { F(xsetblk),  0, W_N(5,3) },      /* 0x4A */
-    { F(xexec),    0, W_N(7,4) },      /* 0x4B */
-    { F(xterm),    0, W_N(1,1) },      /* 0x4C */
+    { F(xmkdir),   0, W_N(1,P) },      /* 0x39 */
+    { F(xrmdir),   0, W_N(1,P) },      /* 0x3A */
+    { F(xchdir),   0, W_N(1,P) },      /* 0x3B */
+    { F(xcreat),   0, W_N(2,PW) },     /* 0x3C */
+    { F(xopen),    0, W_N(2,PW) },     /* 0x3D */
+    { F(xclose),   0, W_N(1,W) },      /* 0x3E - will handle its own redirection */
+    { F(xread),    0x82, W_N(3,WLP) }, /* 0x3F */
+    { F(xwrite),   0x82, W_N(3,WLP) }, /* 0x40 */
+    { F(xunlink),  0, W_N(1,P) },      /* 0x41 */
+    { F(xlseek),   0x81, W_N(3,LWW) }, /* 0x42 */
+    { F(xchmod),   0, W_N(3,PWW) },    /* 0x43 */
+    { F(xmxalloc), 0, W_N(2,RLW) },    /* 0x44 */
+    { F(xdup),     0, W_N(1,W) },      /* 0x45 */
+    { F(xforce),   0, W_N(2,WW) },     /* 0x46 */
+    { F(xgetdir),  0, W_N(2,PW) },     /* 0x47 */
+    { F(xmalloc),  0, W_N(1,RL) },     /* 0x48 */
+    { F(xmfree),   0, W_N(1,P) },      /* 0x49 */
+    { F(xsetblk),  0, W_N(3,WPL) },    /* 0x4A */
+    { F(xexec),    0, W_N(4,WLLL) },   /* 0x4B */
+    { F(xterm),    0, W_N(1,W) },      /* 0x4C */
 
     { NI, 0, 0 },
 
-    { F(xsfirst),  0, W_N(3,2) },      /* 0x4E */
-    { F(xsnext),   0, W_N(0,0) },      /* 0x4F */
+    { F(xsfirst),  0, W_N(2,PW) },     /* 0x4E */
+    { F(xsnext),   0, W_N(0,V) },      /* 0x4F */
 
     { NI, 0, 0 },               /* 0x50 */
     { NI, 0, 0 },
@@ -303,8 +392,8 @@ static const FND funcs[] =
     { NI, 0, 0 },
     { NI, 0, 0 },
 
-    { F(xrename),  0, W_N(5,3) },      /* 0x56 */
-    { F(xgsdtof),  0, W_N(4,3) }       /* 0x57 */
+    { F(xrename),  0, W_N(3,WPP) },    /* 0x56 */
+    { F(xgsdtof),  0, W_N(3,PWW) }     /* 0x57 */
 #undef F
 #undef NI
 #undef W_N
@@ -747,39 +836,90 @@ restrt:
             rc = EINTRN;    /* Internal error */
         }
 #else
-        switch(f->wparms)
+        /*
+         * A LONG argument spans two consecutive words in pw[]; pwlong()
+         * reassembles it from those two big-endian WORDs by value
+         * (shift+or), not by reinterpreting pw's storage as a LONG --
+         * that would alias a WORD lvalue through a LONG pointer, which
+         * is undefined behaviour under strict aliasing even though
+         * m68k itself never faults on a word-aligned-but-not-longword-
+         * aligned access.
+         */
+#define PWLONG(i) pwlong(pw, i)
+        switch(f->shape)
         {
-        case 0:
+        case FSHAPE_V:
             rc = (*f->fncall.v)();
             break;
 
-        case 1:
+        case FSHAPE_W:
             rc = (*f->fncall.w)(pw[1]);
             break;
 
-        case 2:
+        case FSHAPE_L:
+            rc = (*f->fncall.l)(PWLONG(1));
+            break;
+
+        case FSHAPE_WW:
             rc = (*f->fncall.ww)(pw[1],pw[2]);
             break;
 
-        case 3:
-            rc = (*f->fncall.www)(pw[1],pw[2],pw[3]);
+        case FSHAPE_LL:
+            rc = (*f->fncall.ll)(PWLONG(1),PWLONG(3));
             break;
 
-        case 4:
-            rc = (*f->fncall.wwww)(pw[1],pw[2],pw[3],pw[4]);
+        case FSHAPE_LW:
+            rc = (*f->fncall.lw)(PWLONG(1),pw[3]);
             break;
 
-        case 5:
-            rc = (*f->fncall.wwwww)(pw[1],pw[2],pw[3],pw[4],pw[5]);
+        case FSHAPE_LWW:
+            rc = (*f->fncall.lww)(PWLONG(1),pw[3],pw[4]);
             break;
 
-        case 7:
-            rc = (*f->fncall.wwwwwww)(pw[1],pw[2],pw[3],pw[4],pw[5],pw[6],pw[7]);
+        case FSHAPE_WLLL:
+            rc = (*f->fncall.wlll)(pw[1],(void*)PWLONG(2),(void*)PWLONG(4),(void*)PWLONG(6));
+            break;
+
+        case FSHAPE_P:
+            rc = (*f->fncall.p)((void*)PWLONG(1));
+            break;
+
+        case FSHAPE_PL:
+            rc = (*f->fncall.pl)((void*)PWLONG(1),PWLONG(3));
+            break;
+
+        case FSHAPE_PW:
+            rc = (*f->fncall.pw)((void*)PWLONG(1),pw[3]);
+            break;
+
+        case FSHAPE_PWW:
+            rc = (*f->fncall.pww)((void*)PWLONG(1),pw[3],pw[4]);
+            break;
+
+        case FSHAPE_WLP:
+            rc = (*f->fncall.wlp)(pw[1],PWLONG(2),(void*)PWLONG(4));
+            break;
+
+        case FSHAPE_WPL:
+            rc = (*f->fncall.wpl)(pw[1],(void*)PWLONG(2),PWLONG(4));
+            break;
+
+        case FSHAPE_WPP:
+            rc = (*f->fncall.wpp)(pw[1],(void*)PWLONG(2),(void*)PWLONG(4));
+            break;
+
+        case FSHAPE_RL:
+            rc = (long)(*f->fncall.rl)(PWLONG(1));
+            break;
+
+        case FSHAPE_RLW:
+            rc = (long)(*f->fncall.rlw)(PWLONG(1),pw[3]);
             break;
 
         default:
             rc = EINTRN;    /* Internal error */
         }
+#undef PWLONG
 #endif
     }
 

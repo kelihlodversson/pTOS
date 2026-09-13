@@ -57,7 +57,12 @@ _start:
         moveq   #0,d0
         move.l  d0,-(sp)         // empty env
         move.l  d0,-(sp)         // empty argv
-        move.w  d0,-(sp)         // argc = 0
+        /*
+         * main(int argc, char **argv) declares argc as a plain int;
+         * without -mshort that's a full 4-byte stack slot, not the
+         * tightly packed WORD this pushed before #300 removed -mshort.
+         */
+        move.l  d0,-(sp)         // argc = 0
         jsr     C_SYM(main)
         move.w  d0,-(sp)
 

@@ -69,7 +69,7 @@ meminit:
  */
 
         /* We will accumulate meminit_flags in this register */
-        moveq   #0, d7                  // _meminit_flags = 0
+        moveq   #0, d7                  // meminit_flags = 0
 
 #if CONF_WITH_FALCON_MMU
         /* detect if this is a Falcon by reading $ff8282 register */
@@ -106,12 +106,12 @@ not_a_tt:
 // ==== memchk - Check if old memory config can be used ======================
 // ===========================================================================
 // Inputs:
-//   d7.b: _meminit_flags (input/output)
+//   d7.b: meminit_flags (input/output)
 // Outputs:
 //   d6.b: old memctrl
-//   d5.l: old _phystop
-//   d3.l: old _ramvalid (#if CONF_WITH_TTRAM)
-//   a3.l: old _ramtop (#if CONF_WITH_TTRAM)
+//   d5.l: old phystop
+//   d3.l: old ramvalid (#if CONF_WITH_TTRAM)
+//   a3.l: old ramtop (#if CONF_WITH_TTRAM)
 memchk:
         // We must determine the ST-RAM settings in some way.
         // If EmuTOS lives in RAM, always assume that settings of previous OS
@@ -124,17 +124,17 @@ memchk:
         cmp.l   C_SYM(memvalid).w, d1          // magic in memvalid ?
         jne     memconf                 // no -> config memory
         move.l  #0x237698aa, d1
-        cmp.l   C_SYM(memval2).w, d1    // magic in memval2 ?
+        cmp.l   C_SYM(memval2).w, d1           // magic in memval2 ?
         jne     memconf                 // no -> config memory
         move.l  #0x5555aaaa, d1
-        cmp.l   C_SYM(memval3).w, d1    // magic in memval3 ?
+        cmp.l   C_SYM(memval3).w, d1           // magic in memval3 ?
         jne     memconf                 // no -> config memory
 #else
         cmp.l   #0x752019f3, C_SYM(memvalid).w // magic in memvalid ?
         jne     memconf                 // no -> config memory
-        cmp.l   #0x237698aa, C_SYM(memval2).w // magic in memval2 ?
+        cmp.l   #0x237698aa, C_SYM(memval2).w  // magic in memval2 ?
         jne     memconf                 // no -> config memory
-        cmp.l   #0x5555aaaa, C_SYM(memval3).w // magic in memval3 ? (TOS >= 1.2)
+        cmp.l   #0x5555aaaa, C_SYM(memval3).w  // magic in memval3 ? (TOS >= 1.2)
         jne     memconf                 // no -> config memory
 #endif // __mcoldfire__
 #endif // !EMUTOS_LIVES_IN_RAM
@@ -153,11 +153,11 @@ memchk:
 // ==== The ST-RAM configuration is valid ====================================
 // ===========================================================================
 // Inputs:
-//   d7.b: _meminit_flags (input/output)
+//   d7.b: meminit_flags (input/output)
 //   d6.b: old memctrl
-//   d5.l: old _phystop
-//   d3.l: old _ramvalid (#if CONF_WITH_TTRAM)
-//   a3.l: old _ramtop (#if CONF_WITH_TTRAM)
+//   d5.l: old phystop
+//   d3.l: old ramvalid (#if CONF_WITH_TTRAM)
+//   a3.l: old ramtop (#if CONF_WITH_TTRAM)
 
 #if CONF_WITH_FALCON_MMU
         btst    #MEMINIT_BIT_FALCON_MMU, d7 // is it Falcon MMU?
@@ -170,13 +170,13 @@ memchk:
 
 memory_reused:
 #if CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
-        // If _warm_magic == WARM_MAGIC, this is explicitly not a first boot
+        // If warm_magic == WARM_MAGIC, this is explicitly not a first boot
         lea     C_SYM(warm_magic).w, a0
         move.l  #0x5741524D, d1         // WARM_MAGIC
         cmp.l   (a0), d1
         jeq     .warm_magic_done        // Indeed, this is not a first boot
 
-        // _warm_magic != WARM_MAGIC: this is a first boot
+        // warm_magic != WARM_MAGIC: this is a first boot
         bset    #MEMINIT_BIT_FIRST_BOOT, d7
 
 .warm_magic_done:
@@ -189,18 +189,18 @@ memory_reused:
 // ==== memconf - Detect RAM and configure the memory controller =============
 // ===========================================================================
 // Inputs:
-//   d7.b: _meminit_flags (input/output)
+//   d7.b: meminit_flags (input/output)
 // Outputs:
 //   d6.b: new value of 0xffff8001 (maybe fake), to put into memctrl.
-//   d5.l: detected end of the ST-RAM, to put into _phystop.
+//   d5.l: detected end of the ST-RAM, to put into phystop.
 // Must be preserved:
-//   d3.l: old _ramvalid (#if CONF_WITH_TTRAM)
-//   a3.l: old _ramtop (#if CONF_WITH_TTRAM)
+//   d3.l: old ramvalid (#if CONF_WITH_TTRAM)
+//   a3.l: old ramtop (#if CONF_WITH_TTRAM)
 memconf:
 #if CONF_STRAM_SIZE
         // memconf for hardcoded ST-RAM size
         moveq   #0, d6                  // fake memctrl
-        move.l  #CONF_STRAM_SIZE, d5    // _phystop
+        move.l  #CONF_STRAM_SIZE, d5    // phystop
         // Fall into memconf_done
 #elif defined(MACHINE_AMIGA)
         lea     amiga_memconf_ret(pc),a6
@@ -448,9 +448,15 @@ detect_extra_stram:
 
         lea     5*1024*1024-1,a0        // start at the end of 5 MB
 loop_extra_stram:
+#if CONF_WITH_MFASTCALL
+        move.l  a0,d0                   // single scalar arg goes in d0
+#else
         pea     (a0)
+#endif
         jsr     C_SYM(check_read_byte)        // test the last byte
+#if !CONF_WITH_MFASTCALL
         addq.l  #4,sp
+#endif
         tst.w   d0                      // readable ?
         jeq     detect_extra_stram_end  // no, stop here
 
@@ -528,7 +534,7 @@ memconf_done:
         bset    #MEMINIT_BIT_FIRST_BOOT, d7
 #if CONF_WITH_TTRAM
         // Since the ST-RAM was invalid, TT-RAM settings were also invalid
-        moveq   #0, d3                  // _ramvalid
+        moveq   #0, d3                  // ramvalid
 #endif
 
 #endif // !EMUTOS_LIVES_IN_RAM
@@ -542,11 +548,11 @@ memconf_done:
  * - The MMU has been properly initalized
  * - The ST-RAM is ready to be used
  *
- * d7.b = _meminit_flags
+ * d7.b = C_SYM(meminit_flags)
  * d5.l = new phystop
- * d6.b = new memctrl
- * d3.l = old _ramvalid (#if CONF_WITH_TTRAM)
- * a3.l = old _ramtop (#if CONF_WITH_TTRAM)
+ * d6.b = new C_SYM(memctrl)
+ * d3.l = old C_SYM(ramvalid) (#if CONF_WITH_TTRAM)
+ * a3.l = old C_SYM(ramtop) (#if CONF_WITH_TTRAM)
  */
 stram_detected:
         // The previous temporary stack pointer may have moved
@@ -567,7 +573,7 @@ stram_detected:
         jbsr    call_bzero_a0_a1
 
         /* Store the ST-RAM parameters in the ST-RAM itself */
-        move.b  d6, C_SYM(memctrl).w    // set copy of hw memory config
+        move.b  d6, C_SYM(memctrl).w           // set copy of hw memory config
         move.l  d5, C_SYM(phystop).w          // highest address as phystop
 
         /* Make ST-RAM configuration valid */
@@ -580,8 +586,8 @@ stram_detected:
         move.l  #0x5555aaaa, (a0)       // set memval3 to ok
 #else
         move.l  #0x752019f3, C_SYM(memvalid).w // set memvalid to ok
-        move.l  #0x237698aa, C_SYM(memval2).w // set memval2 to ok
-        move.l  #0x5555aaaa, C_SYM(memval3).w // set memval3 to ok
+        move.l  #0x237698aa, C_SYM(memval2).w  // set memval2 to ok
+        move.l  #0x5555aaaa, C_SYM(memval3).w  // set memval3 to ok
 #endif
 
 #if CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
@@ -625,10 +631,15 @@ any_boot:
 // Clear memory from a0 to a1
 call_bzero_a0_a1:
         sub.l   a0,a1
+#if CONF_WITH_MFASTCALL
+        move.l  a1,d0       // size
+        jsr     C_SYM(bzero_nobuiltin)
+#else
         move.l  a1,-(sp)    // size
         move.l  a0,-(sp)    // start
         jsr     C_SYM(bzero_nobuiltin)
         addq.l  #8,sp
+#endif
         rts
 
 #if CONF_WITH_ADVANCED_CPU
@@ -700,9 +711,17 @@ sync_data_cache:
 // BOOL memtest_verify(ULONG *start, ULONG value, LONG length)
 //
 C_SYM(memtest_verify):
+        /*
+         * memtest_verify(ULONG *start, ULONG value, LONG length) had no
+         * -mfastcall branch: under fastcall, start/value/length already
+         * arrive in a0/d0/d1 -- exactly the registers the loop below
+         * reads -- so only the plain stack ABI needs to load them.
+         */
+#if !CONF_WITH_MFASTCALL
         movea.l 4(sp),a0                // a0-> start
         move.l  8(sp),d0                // d0 = value to check
         move.l  12(sp),d1               // d1 = length (bytes)
+#endif
         lsr.l   #2,d1                   // d1 = length (longs)
         subq.l  #1,d1                   // for dbne
 vloop:
@@ -727,9 +746,20 @@ verror:
 // BOOL memtest_rotate_verify(ULONG *start, LONG length)
 //
 C_SYM(memtest_rotate_verify):
+        /*
+         * memtest_rotate_verify(ULONG *start, LONG length) had no
+         * -mfastcall branch either: under fastcall, start already
+         * arrives in a0, and length in d0 -- but d0 is about to become
+         * this loop's rotating value register below, so move length to
+         * d1 first, before it's overwritten.
+         */
+#if CONF_WITH_MFASTCALL
+        move.l  d0,d1                   // d1 = length (bytes)
+#else
         movea.l 4(sp),a0                // a0-> start
-        moveq.l #1,d0                   // d0 = value to store
         move.l  8(sp),d1                // d1 = length (bytes)
+#endif
+        moveq.l #1,d0                   // d0 = value to store
         lsr.l   #2,d1                   // d1 = length (longs)
         subq.l  #1,d1                   // for dbne
 rloop:

@@ -97,11 +97,17 @@ aes_restart:
 #endif
 
         // clear the 'global memory' zone
+#if CONF_WITH_MFASTCALL
+        movea.l #C_SYM(D),a0
+        move.l  #SIZEOF_THEGLO,d0 // size in bytes
+        jsr     C_SYM(bzero_nobuiltin)    // clear it
+#else
         move.l  #SIZEOF_THEGLO, -(sp) // size in bytes
         movea.l #C_SYM(D),a0
         move.l  a0,-(sp)        // address
         jsr     C_SYM(bzero_nobuiltin)    // clear it
         addq.l  #8,sp
+#endif
 
         // _drwaddr ??? set to just_rts
         lea     C_SYM(just_rts),a0
@@ -164,6 +170,73 @@ C_SYM(accdesk_start):
 // A wrapper around Pexec. We can't use the above function _gemdos for this
 // since _gemdos is not reentrant.
 //////////////////////////////////////////////////////////////////////////////
+#if CONF_WITH_MFASTCALL
+C_SYM(dos_exec):
+        /*
+         * Under -mfastcall a call to
+         * dos_exec(WORD mode, const char*, const char*, const char*)
+         * arrives with mode in d0, pcspec in a0, pcmdln in a1, and only
+         * segenv (the 4th argument -- fastcall has just two address
+         * registers) spilled to the stack, at 4(sp) relative to our own
+         * entry sp. Unlike the non-fastcall path below, we can't defer
+         * reading these until after the disable/enable_interrupts calls
+         * further down: a jsr is free to clobber d0/a0/a1 like any
+         * caller-saved register, so save all four arguments to our own
+         * stack right now, before anything else touches it. Pushed in
+         * wire-frame order (mode, pcspec, pcmdln, segenv), they land
+         * contiguously and already read back with the exact same
+         * literal-offset trick as the tightly-packed re-push below --
+         * only the source (our own saved copy, not the caller's frame)
+         * differs.
+         */
+        move.l  4(sp),-(sp)             // segenv, from the caller's stack-spilled 4th arg
+        move.l  a1,-(sp)                // pcmdln
+        move.l  a0,-(sp)                // pcspec
+        move.w  d0,-(sp)                // mode, low word
+#ifdef __mcoldfire__
+        move.l  a2,-(sp)                // Save registers
+        move.l  d2,-(sp)
+#else
+        movem.l d2/a2,-(sp)             // Save registers
+#endif
+
+        // See the *** WARNING *** in the non-fastcall path below for why
+        // this stack adjustment exists. The saved-argument block above
+        // adds 14 bytes pushed before the reentrancy-guard snapshot
+        // taken here, which the constant below already accounts for.
+
+        jsr     C_SYM(disable_interrupts)
+        movea.l C_SYM(rlr),a0
+        movea.l PD_UDA(a0),a0
+        move.l  UDA_SPSUPER(a0),-(sp)   // Save rlr->p_uda->u_spsuper
+        movea.l sp,a1
+        suba.l  #0x50,a1                // Adjust the stack (see above)
+        move.l  a1,UDA_SPSUPER(a0)
+        jsr     C_SYM(enable_interrupts)
+
+        move.l  22(sp),-(sp)            // Push parameters on the stack again...
+        move.l  22(sp),-(sp)
+        move.l  22(sp),-(sp)
+        move.w  24(sp),-(sp)
+        move.w  #0x4B,-(sp)
+        trap    #1                      // ... and execute the Pexec call!
+        lea     16(sp),sp
+
+        jsr     C_SYM(disable_interrupts)
+        movea.l C_SYM(rlr),a0
+        movea.l PD_UDA(a0),a0
+        move.l  (sp)+,UDA_SPSUPER(a0)   // Restore rlr->p_uda->u_spsuper
+        jsr     C_SYM(enable_interrupts)
+
+#ifdef __mcoldfire__
+        move.l  (sp)+,d2
+        move.l  (sp)+,a2
+#else
+        movem.l (sp)+,d2/a2
+#endif
+        lea     14(sp),sp               // drop our saved mode/pcspec/pcmdln/segenv
+        rts
+#else
 C_SYM(dos_exec):
         move.l  sp,d1
 #ifdef __mcoldfire__
@@ -218,10 +291,25 @@ C_SYM(dos_exec):
         jsr     C_SYM(enable_interrupts)
 
         movea.l d1,a1
-        move.l  14(a1),-(sp)            // Push parameters on the stack again...
-        move.l  10(a1),-(sp)
-        move.l  6(a1),-(sp)
-        move.w  4(a1),-(sp)
+        /*
+         * Re-push each parameter, tightly packed, to build the GEMDOS
+         * wire frame trap #1 expects. The offsets below read them back
+         * off *our own caller's* frame, i.e. how GCC laid out a call to
+         * dos_exec(WORD mode, const char*, const char*, const char*)
+         * -- and with -mshort no longer used for the kernel m68k build
+         * (#300), that caller-side frame is no longer tightly packed
+         * either: GCC now gives "mode" a full 4-byte slot instead of 2,
+         * shifting every offset below by 2 from what tight packing
+         * would give (14->16, 10->12, 6->8 for the three pointer args,
+         * 4->6 for mode's low word -- mode's value always lands in the
+         * low word of its 4-byte slot regardless of sign, so a plain
+         * word read still recovers it correctly). See the identical
+         * fix in util/arch/m68k/miscasm.S's trap1_pexec.
+         */
+        move.l  16(a1),-(sp)            // Push parameters on the stack again...
+        move.l  12(a1),-(sp)
+        move.l  8(a1),-(sp)
+        move.w  6(a1),-(sp)
         move.w  #0x4B,-(sp)
         trap    #1                      // ... and execute the Pexec call!
         lea     16(sp),sp
@@ -239,6 +327,7 @@ C_SYM(dos_exec):
         movem.l (sp)+,d2/a2
 #endif
         rts
+#endif
 
 .bss
 

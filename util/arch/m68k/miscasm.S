@@ -15,49 +15,38 @@
 #include "asmdefs.h"
 
 /*
- * trap1 - trap 1 (GEMDOS) entry point
- */
-        .globl  C_SYM(trap1)
-C_SYM(trap1):
-        move.l  (sp)+,t1spsav   // save return address
-#ifdef __mcoldfire__
-        move.l  d2,t1regsav
-        move.l  a2,t1regsav+4
-        trap    #1              // call bdos call
-        move.l  t1regsav,d2
-        move.l  t1regsav+4,a2
-#else
-        movem.l d2/a2,t1regsav
-        trap    #1              // call bdos call
-        movem.l t1regsav,d2/a2
-#endif
-        move.l  t1spsav,-(sp)   // restore return address
-        rts
-
-        .bss
-        .even
-t1spsav:
-        .ds.l   1       // Save space for _trap_1
-t1regsav:
-        .ds.l   2
-
-        .text
-
-/*
- *  GEMDOS Pexec() call. This version is reentrant unlike the trap1 function!
+ *  GEMDOS Pexec() call. Reentrant: unlike the variadic C trap1() this
+ *  used to sit alongside (removed for #300 -- GEMDOS calls on m68k now
+ *  go through the typed trap1_v()/trap1_w()/... macros in asm.h
+ *  instead), its arguments are explicitly typed, so it saves/restores
+ *  d2/a2 on the stack around the trap rather than in static storage.
  */
         .globl  C_SYM(trap1_pexec)    // Reentrant Pexec call
 C_SYM(trap1_pexec):
+#if CONF_WITH_MFASTCALL
+        /*
+         * Build the GEMDOS wire frame trap #1 expects (opcode, mode,
+         * path, tail, env). Under -mfastcall a call to
+         * trap1_pexec(WORD mode, const char*, const char*, const char*)
+         * arrives with mode in d0, path in a0, tail in a1, and only env
+         * (the 4th argument -- fastcall has just two address registers)
+         * spilled to the stack, at 4(sp) relative to our own entry sp.
+         * Read env into a scratch register (d1, otherwise unused by
+         * this signature) before the d2/a2 save below touches the
+         * stack and shifts that offset, then build the frame directly
+         * against sp so it stays contiguous for the trap.
+         */
+        move.l  4(sp),d1        // env, from the caller's stack-spilled 4th arg
 #ifdef __mcoldfire__
         move.l  a2,-(sp)
         move.l  d2,-(sp)
 #else
         movem.l d2/a2,-(sp)
 #endif
-        move.l  22(sp),-(sp)    // Push parameter on the stack again for pexec
-        move.l  22(sp),-(sp)
-        move.l  22(sp),-(sp)
-        move.w  24(sp),-(sp)
+        move.l  d1,-(sp)        // env
+        move.l  a1,-(sp)        // tail
+        move.l  a0,-(sp)        // path
+        move.w  d0,-(sp)        // mode, low word
         move.w  #0x4b,-(sp)
         trap    #1              // Pexec
         lea     16(sp),sp
@@ -66,6 +55,42 @@ C_SYM(trap1_pexec):
         move.l  (sp)+,a2
 #else
         movem.l (sp)+,d2/a2
+#endif
+#else
+#ifdef __mcoldfire__
+        move.l  a2,-(sp)
+        move.l  d2,-(sp)
+#else
+        movem.l d2/a2,-(sp)
+#endif
+        /*
+         * Re-push each parameter, tightly packed, to build the GEMDOS
+         * wire frame trap #1 expects (opcode, mode, path, tail, env).
+         * The offsets below read them back off *our own caller's*
+         * frame, i.e. how GCC laid out a call to
+         * trap1_pexec(short mode, const char*, const char*, const char*)
+         * -- and with -mshort no longer used for the kernel m68k build
+         * (#300), that caller-side frame is no longer tightly packed
+         * either: GCC now gives "mode" a full 4-byte slot instead of 2,
+         * shifting every offset below by 2 from what tight packing
+         * would give (22->24 for the three pointer args, 24->26 for
+         * mode's low word -- mode's sign/zero-extended value always
+         * lands in the low word of its 4-byte slot regardless of
+         * sign, so a plain word read still recovers it correctly).
+         */
+        move.l  24(sp),-(sp)    // Push parameter on the stack again for pexec
+        move.l  24(sp),-(sp)
+        move.l  24(sp),-(sp)
+        move.w  26(sp),-(sp)
+        move.w  #0x4b,-(sp)
+        trap    #1              // Pexec
+        lea     16(sp),sp
+#ifdef __mcoldfire__
+        move.l  (sp)+,d2
+        move.l  (sp)+,a2
+#else
+        movem.l (sp)+,d2/a2
+#endif
 #endif
         rts
 
@@ -163,13 +188,31 @@ C_SYM(just_rts):
  *  if you do not need rounding, use mul_div() from intmath.h instead!
  */
         .globl  C_SYM(mul_div_round)
+/*
+ * mul_div_round(WORD mult1, WORD mult2, WORD divisor) takes three scalar
+ * arguments and had no -mfastcall branch at all: under fastcall they
+ * arrive in d0/d1/d2 (only the low word of each is defined -- see this
+ * file's protect_w/_ww "sign-extended to a full slot" comments -- which
+ * is exactly what the word-sized ops below already read), not tightly
+ * packed on the stack. Its non-fastcall stack path was also stale: with
+ * -mshort no longer used for the kernel build (#300), each WORD argument
+ * now gets its own 4-byte slot instead of being packed 2 bytes apart, so
+ * mult1/mult2/divisor's low words moved from 4/6/8(sp) to 6/10/14(sp).
+ */
 C_SYM(mul_div_round):
 #ifdef __mcoldfire__
+#if CONF_WITH_MFASTCALL
+        add.l   d1,d1           // d1 = mult2 * 2
+        muls.w  d0,d1           // d1 = mult1 * mult2 * 2
+        divs.w  d2,d1           // d1 = (mult1 * mult2 * 2) / divisor
+        move.l  d1,d0
+#else
         moveq.l #0,d0
-        move.w  6(sp),d0        // d0 = mult2
+        move.w  10(sp),d0       // d0 = mult2
         add.l   d0,d0           // d0 = mult2 * 2
-        muls.w  4(sp),d0        // d0 = mult1 * mult2 * 2
-        divs.w  8(sp),d0        // d0 = (mult1 * mult2 * 2) / divisor
+        muls.w  6(sp),d0        // d0 = mult1 * mult2 * 2
+        divs.w  14(sp),d0       // d0 = (mult1 * mult2 * 2) / divisor
+#endif
         ext.l   d0
         jmi     mdrminus
         addq.l  #1,d0           // d0 = (mult1 * mult2 * 2) / divisor + 1
@@ -180,10 +223,17 @@ mdrminus:
         asr.l   #1,d0           // d0 = ((mult1 * mult2 * 2) / divisor - 1) / 2
         rts
 #else
-        move.w  6(sp),d0        // d0 = mult2
+#if CONF_WITH_MFASTCALL
+        add.w   d1,d1           // d1 = mult2 * 2
+        muls.w  d0,d1           // d1 = mult1 * mult2 * 2
+        divs.w  d2,d1           // d1 = (mult1 * mult2 * 2) / divisor
+        move.w  d1,d0
+#else
+        move.w  10(sp),d0       // d0 = mult2
         add.w   d0,d0           // d0 = mult2 * 2
-        muls.w  4(sp),d0        // d0 = mult1 * mult2 * 2
-        divs.w  8(sp),d0        // d0 = (mult1 * mult2 * 2) / divisor
+        muls.w  6(sp),d0        // d0 = mult1 * mult2 * 2
+        divs.w  14(sp),d0       // d0 = (mult1 * mult2 * 2) / divisor
+#endif
         jmi     mdrminus
         addq.w  #1,d0           // d0 = (mult1 * mult2 * 2) / divisor + 1
         asr.w   #1,d0           // d0 = ((mult1 * mult2 * 2) / divisor + 1) / 2
@@ -209,8 +259,40 @@ mdrminus:
 
 /*
  * LONG protect_v(LONG (*func)(void));
+ *
+ * These four wrappers weren't wired up for -mfastcall at all: their
+ * bodies unconditionally read every argument off a plain-ABI stack
+ * frame, but a -mfastcall caller passes func in a0 and the scalar
+ * arguments in d0/d1/d2, spilling only what doesn't fit to the stack
+ * (confirmed against this GCC fork's own -mfastcall codegen for these
+ * exact argument shapes). Left as-is, every argument read here would
+ * come from wherever the caller's own stack happened to have -- e.g.
+ * a stale value from an earlier call, which is not a hypothetical: this
+ * is what let a garbled "func" pointer through protect_wlwwwl's caller
+ * (bios.c's hard-disk read/write path, hdv_rw) into a wild jsr.
+ *
+ * Fix: under -mfastcall, build the exact same plain-ABI frame each
+ * body already expects (func/args at the same fixed offsets, one full
+ * 4-byte slot each, matching how a plain-ABI caller pads WORD args --
+ * verified against this compiler's own non-fastcall codegen for the
+ * same signatures) by pushing the incoming registers, then bsr into
+ * the unchanged body under a new label. Only pop what this wrapper
+ * itself pushed before returning: any argument that didn't fit in
+ * a0/d0/d1/d2 arrived spilled on our own caller's stack (caller-cleanup,
+ * same convention as this file's other -mfastcall fixes), and must be
+ * left there for the caller to pop after we return, not touched here.
  */
+#if CONF_WITH_MFASTCALL
 C_SYM(protect_v):
+        move.l   a0,-(sp)                // func
+        bsr      protect_v_stackbody
+        lea      4(sp),sp                // drop func pushed above (no caller stack args)
+        rts
+
+protect_v_stackbody:
+#else
+C_SYM(protect_v):
+#endif
         move.l   4(sp),a0
         move.l   a2,-(sp)
         move.l   d2,-(sp)
@@ -222,9 +304,26 @@ C_SYM(protect_v):
 /*
  * LONG protect_w(LONG (*func)(WORD), WORD);
  */
+#if CONF_WITH_MFASTCALL
 C_SYM(protect_w):
+        ext.l    d0                      // a, sign-extended to a full slot
+        move.l   d0,-(sp)                // a
+        move.l   a0,-(sp)                // func
+        bsr      protect_w_stackbody
+        lea      8(sp),sp                // drop func/a pushed above (no caller stack args)
+        rts
+
+protect_w_stackbody:
+#else
+C_SYM(protect_w):
+#endif
         move.l   4(sp),a0
-        move.w   8(sp),d0
+        /*
+         * a's own slot is 4 bytes wide now (no -mshort), so its low word
+         * -- the value the jsr target's classic 2-byte-packed ABI below
+         * actually wants -- is at 10(sp), not 8(sp).
+         */
+        move.w   10(sp),d0
         move.l   a2,-(sp)
         move.l   d2,-(sp)
         move.w   d0,-(sp)
@@ -237,9 +336,33 @@ C_SYM(protect_w):
 /*
  * LONG protect_ww(LONG (*func)(WORD), WORD, WORD);
  */
+#if CONF_WITH_MFASTCALL
 C_SYM(protect_ww):
+        ext.l    d1                      // b, sign-extended to a full slot
+        move.l   d1,-(sp)                // b
+        ext.l    d0                      // a, sign-extended to a full slot
+        move.l   d0,-(sp)                // a
+        move.l   a0,-(sp)                // func
+        bsr      protect_ww_stackbody
+        lea      12(sp),sp               // drop func/a/b pushed above (no caller stack args)
+        rts
+
+protect_ww_stackbody:
+#else
+C_SYM(protect_ww):
+#endif
         move.l   4(sp),a0
-        move.l   8(sp),d0
+        /*
+         * a and b used to be two tightly packed WORDs sharing one 4-byte
+         * span at 8(sp), so a single move.l here could read both at once
+         * and re-push them unchanged for the jsr target's classic
+         * 2-byte-packed ABI below. Without -mshort each now has its own
+         * 4-byte slot, so that longword must be rebuilt explicitly from
+         * their low words (a's at 10(sp), b's at 14(sp)) instead.
+         */
+        move.w   10(sp),d0
+        swap     d0
+        move.w   14(sp),d0
         move.l   a2,-(sp)
         move.l   d2,-(sp)
         move.l   d0,-(sp)
@@ -251,18 +374,62 @@ C_SYM(protect_ww):
 
 /*
  * LONG protect_wlwwwl(LONG (*func)(), WORD, LONG, WORD, WORD, WORD, LONG);
+ *
+ * Only the first 3 scalar args (a, b, c) fit in d0/d1/d2 alongside func
+ * in a0; d, e and f spill to our caller's stack, each already sign-
+ * extended to a full 4-byte slot by the caller (same convention as
+ * every other -mfastcall stack-spill fix in this tree), at 4(sp)/8(sp)/
+ * 12(sp) relative to our own entry sp.
  */
+#if CONF_WITH_MFASTCALL
 C_SYM(protect_wlwwwl):
-        movem.l  8(sp),d0-d1/a0-a1
+        move.l   12(sp),-(sp)            // f, copied from our caller's spilled arg
+        move.l   12(sp),-(sp)            // e, ditto (offset shifted by the f push above)
+        move.l   12(sp),-(sp)            // d, ditto (offset shifted twice now)
+        ext.l    d2                      // c, sign-extended to a full slot
+        move.l   d2,-(sp)                // c
+        move.l   d1,-(sp)                // b (already a full LONG)
+        ext.l    d0                      // a, sign-extended to a full slot
+        move.l   d0,-(sp)                // a
+        move.l   a0,-(sp)                // func
+        bsr      protect_wlwwwl_stackbody
+        lea      28(sp),sp               // drop func/a/b/c/d/e/f pushed above; the
+                                          // caller's own spilled d/e/f are untouched
+                                          // and remain its to pop
+        rts
+
+protect_wlwwwl_stackbody:
+#else
+C_SYM(protect_wlwwwl):
+#endif
+        /*
+         * a/c/d/e used to be four tightly packed WORDs and b/f two LONGs,
+         * all sharing one contiguous 16-byte span at 8(sp) -- movem could
+         * blit that whole span into d0-d1/a0-a1 and back out unchanged,
+         * since the source already matched the jsr target's classic
+         * 2-byte-packed ABI byte-for-byte. Without -mshort each WORD now
+         * has its own 4-byte slot, so that trick no longer produces the
+         * right bytes: rebuild the 16-byte classic frame explicitly from
+         * each argument's own slot (WORD args from their low word) and
+         * push it right-to-left, exactly as protect_w/_ww do above.
+         *
+         * The jsr target itself (e.g. bios.c's hdv_rw) is always called
+         * via this same classic ABI regardless of CONF_WITH_MFASTCALL,
+         * matching every other protect_* vector (bconin_vec, hdv_mediach,
+         * hdv_bpb, bell_hook, userterm, ...): these are frozen, user-
+         * replaceable TOS hardware vectors that a third-party driver can
+         * install into without ever knowing this kernel's own -mfastcall
+         * setting, so the call convention here can't depend on it either.
+         */
         move.l   a2,-(sp)
         move.l   d2,-(sp)
-#ifdef __mcoldfire__
-        lea      -16(sp),sp
-        movem.l  d0-d1/a0-a1,(sp)
-#else
-        movem.l  d0-d1/a0-a1,-(sp)
-#endif
-        move.l   28(sp),a0
+        move.l   36(sp),-(sp)   // f (full LONG, from its own slot)
+        move.w   38(sp),-(sp)   // e (low word of its slot)
+        move.w   36(sp),-(sp)   // d (low word of its slot)
+        move.w   34(sp),-(sp)   // c (low word of its slot)
+        move.l   30(sp),-(sp)   // b (full LONG, from its own slot)
+        move.w   32(sp),-(sp)   // a (low word of its slot)
+        move.l   28(sp),a0      // func
         jsr      (a0)
         lea      16(sp),sp
         move.l   (sp)+,d2

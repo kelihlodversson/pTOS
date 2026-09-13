@@ -122,13 +122,34 @@ buggy_jit_save_registers_before_bus_error:
  * On a warm boot, only the first 64 vectors are reinitialized.
  * This avoids overwriting crash dumps starting at address 0x380.
  */
+#if CONF_WITH_MFASTCALL
+C_SYM(init_user_vec):
+        // under -mfastcall, the caller passes first_boot in d0 (not on the
+        // stack), and we need d0 free for the loop count below -- so decide
+        // the count into d1 first, then move it into d0 for the shared loop.
+        lea     user_vec, a0
+        lea     256, a1
+        moveq   #63, d1
+        tst.w   d0              // check FIRST_BOOT
+        jeq     set_uvec_fc
+        move.w  #191, d1
+set_uvec_fc:
+        move.l  d1, d0
+        jra     set_uvec
+#else
 C_SYM(init_user_vec):
         lea     user_vec, a0
         lea     256, a1
         moveq   #63, d0
-        tst.w   4(sp)           // check FIRST_BOOT
+        /*
+         * first_boot is a 32-bit UWORD-promoted int (no -mshort), so its
+         * stack slot is 4 bytes at 4(sp); the value tested below is its
+         * low word, which lives at 6(sp), not 4(sp).
+         */
+        tst.w   6(sp)           // check FIRST_BOOT
         jeq     set_uvec
         move.w  #191, d0
+#endif
 set_uvec:
         move.l  a0, (a1)+
 #ifdef __mcoldfire__
@@ -314,7 +335,7 @@ is_ipl:
 #endif /* CONF_WITH_ATARI_VIDEO */
 
 /*
- * _int_vbl - Int 0x70 - VBL interrupt
+ * int_vbl - Int 0x70 - VBL interrupt
  *
  * The sequence of events within the VBL interrupt handler
  * -------------------------------------------------------
@@ -348,7 +369,7 @@ C_SYM(int_vbl):
         addq.l  #1, C_SYM(vbclock).w          // count number of VBL interrupts
 
 #if CONF_WITH_ATARI_VIDEO
-// check for monitor switching and jump to _swv_vec if necessary...
+// check for monitor switching and jump to swv_vec if necessary...
         jsr     C_SYM(detect_monitor_change)
 #endif
 
@@ -544,6 +565,12 @@ C_SYM(int_timerc):
         jsr     C_SYM(int_vbl)
 #endif
 
+        // etv_timer is a frozen, user-replaceable TOS vector (Setexc()
+        // case 0x100, bios.c): call it via the classic tightly-packed
+        // ABI always, regardless of CONF_WITH_MFASTCALL, same as every
+        // other protect_*-style vector call in this tree -- a program
+        // that installs its own handler here follows the documented TOS
+        // convention, not this kernel's own internal compile flags.
         move.w  C_SYM(timer_ms).w, -(sp)
         move.l  C_SYM(etv_timer).w, a0
         jsr     (a0)                    // jump to etv_timer routine
@@ -688,9 +715,21 @@ C_SYM(scca_rx_interrupt):
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
-        move.w  #0,-(sp)                // indicate port A
+        /*
+         * scc_rx_interrupt_handler(WORD portnum) is an ordinary internal
+         * C function; under -mfastcall portnum goes in d0 instead of on
+         * the stack. d0 was just saved above, so it's free to reuse here
+         * -- the restore below reloads its original pre-interrupt value
+         * from the stack regardless of what the callee left in it.
+         */
+#if CONF_WITH_MFASTCALL
+        moveq   #0,d0                   // indicate port A
         jbsr    C_SYM(scc_rx_interrupt_handler)
-        lea     2(sp),sp
+#else
+        clr.l   -(sp)                   // indicate port A (full 4-byte slot, no -mshort)
+        jbsr    C_SYM(scc_rx_interrupt_handler)
+        lea     4(sp),sp
+#endif
 
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
@@ -708,9 +747,14 @@ C_SYM(scca_tx_interrupt):
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
-        move.w  #0,-(sp)                // indicate port A
+#if CONF_WITH_MFASTCALL
+        moveq   #0,d0                   // indicate port A
         jbsr    C_SYM(scc_tx_interrupt_handler)
-        lea     2(sp),sp
+#else
+        clr.l   -(sp)                   // indicate port A (full 4-byte slot, no -mshort)
+        jbsr    C_SYM(scc_tx_interrupt_handler)
+        lea     4(sp),sp
+#endif
 
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
@@ -728,9 +772,14 @@ C_SYM(scca_es_interrupt):
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
-        move.w  #0,-(sp)                // indicate port A
+#if CONF_WITH_MFASTCALL
+        moveq   #0,d0                   // indicate port A
         jbsr    C_SYM(scc_es_interrupt_handler)
-        lea     2(sp),sp
+#else
+        clr.l   -(sp)                   // indicate port A (full 4-byte slot, no -mshort)
+        jbsr    C_SYM(scc_es_interrupt_handler)
+        lea     4(sp),sp
+#endif
 
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
@@ -748,9 +797,14 @@ C_SYM(sccb_rx_interrupt):
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
-        move.w  #1,-(sp)                // indicate port B
+#if CONF_WITH_MFASTCALL
+        moveq   #1,d0                   // indicate port B
         jbsr    C_SYM(scc_rx_interrupt_handler)
-        lea     2(sp),sp
+#else
+        move.l  #1,-(sp)                // indicate port B (full 4-byte slot, no -mshort)
+        jbsr    C_SYM(scc_rx_interrupt_handler)
+        lea     4(sp),sp
+#endif
 
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
@@ -768,9 +822,14 @@ C_SYM(sccb_tx_interrupt):
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
-        move.w  #1,-(sp)                // indicate port B
+#if CONF_WITH_MFASTCALL
+        moveq   #1,d0                   // indicate port B
         jbsr    C_SYM(scc_tx_interrupt_handler)
-        lea     2(sp),sp
+#else
+        move.l  #1,-(sp)                // indicate port B (full 4-byte slot, no -mshort)
+        jbsr    C_SYM(scc_tx_interrupt_handler)
+        lea     4(sp),sp
+#endif
 
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
@@ -788,9 +847,14 @@ C_SYM(sccb_es_interrupt):
         movem.l d0-d1/a0-a1,-(sp)
 #endif
 
-        move.w  #1,-(sp)                // indicate port B
+#if CONF_WITH_MFASTCALL
+        moveq   #1,d0                   // indicate port B
         jbsr    C_SYM(scc_es_interrupt_handler)
-        lea     2(sp),sp
+#else
+        move.l  #1,-(sp)                // indicate port B (full 4-byte slot, no -mshort)
+        jbsr    C_SYM(scc_es_interrupt_handler)
+        lea     4(sp),sp
+#endif
 
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
@@ -811,7 +875,27 @@ C_SYM(sccb_es_interrupt):
  *     code expects D2/A2 to be unchanged, so we must save/restore them.
  */
 C_SYM(call_etv_critic):
-        move.l  4(sp),d0            // d0 is error code || device
+        /*
+         * call_etv_critic(WORD error, WORD device) takes two scalar args;
+         * under -mfastcall they arrive in d0/d1 (only the low word of
+         * each is defined) instead of tightly packed on the stack, and
+         * without -mshort the plain-ABI stack version gives each its own
+         * 4-byte slot instead of packing them into one. etv_critic itself
+         * is a frozen, user-replaceable TOS vector (Setexc() case 0x101),
+         * always invoked below via the classic tightly-packed ABI
+         * regardless of CONF_WITH_MFASTCALL (same convention as every
+         * protect_*-style vector call in this tree) -- so rebuild that
+         * one combined error:device LONG explicitly instead of reading
+         * it ready-made off the stack.
+         */
+#if CONF_WITH_MFASTCALL
+        swap    d0                  // error -> high word of d0
+        move.w  d1,d0               // device -> low word of d0
+#else
+        move.w  6(sp),d0            // error (low word of its slot)
+        swap    d0                  // -> high word of d0
+        move.w  10(sp),d0           // device (low word of its slot)
+#endif
         move.l  a2,-(sp)            // save regs
         move.l  d2,-(sp)
         move.l  d0,-(sp)            // error code || device to stack
@@ -834,7 +918,7 @@ C_SYM(default_etv_critic):
 #ifndef __mcoldfire__
 
 /*
- * _int_illegal - illegal instruction handler
+ * int_illegal - illegal instruction handler
  *
  * Convert an illegal 'MOVE CCR,...' to 'MOVE SR,...'
  * (see bios/processor.h for the full story)
@@ -857,7 +941,7 @@ ii_back:
         jra     illg_vec                // go directly to our panic handler
 
 /*
- * _int_priv - privileged instruction handler
+ * int_priv - privileged instruction handler
  *
  * Convert a privileged 'MOVE SR,...' to 'MOVE CCR,...'
  * (see bios/processor.h for the full story)
@@ -914,7 +998,7 @@ pi_back:
 // ==== Trap 61 - unimplemented integer instruction entry point =============
 
 /*
- * _int_unimpint - unimplemented integer instruction handler
+ * int_unimpint - unimplemented integer instruction handler
  *
  * Only relevant for 68060s: certain instructions that were implemented
  * in earlier processors are no longer implemented, but raise this exception
@@ -1334,8 +1418,41 @@ bx_sp_ok:
         add.l   d1,d1           // indirection function table is 1 LW per
         add.l   d1,d1           // so multiply function number by 4
         add.l   d1,a0           // add to the base address of lookup table
+#if CONF_WITH_MFASTCALL
+        /*
+         * Under -mfastcall, a single-pointer-argument function like
+         * wrap_*(WORD *pw) takes that pointer in a0 -- which conflicts
+         * with using a0 as the jsr target register below, so load the
+         * handler address into a2 instead (free here: not part of the
+         * d3-d7/a3-a7 register-save set above), and put the argument
+         * pointer in a0.
+         */
+        move.l  (a0),a2         // a2 = the procedure's address
+        move.l  sp,a0           // a0 = pointer to the raw argument words
+        jsr     (a2)            // go do it and then come back
+#else
         move.l  (a0),a0         // get the procedures address
+        /*
+         * Pass a pointer to the raw, tightly-packed argument words as
+         * the single argument, instead of jsr-ing straight in with sp
+         * still pointing at them: with -mshort no longer used for the
+         * kernel m68k build (#300), a normally-compiled C function's
+         * own prologue reads each WORD-sized parameter from a 4-byte,
+         * GCC-padded stack slot, which this tightly-packed trap frame
+         * does not provide. bios_vecs[]/xbios_vecs[] entries needing
+         * more than the function number now point at a wrap_*() shim
+         * (see bios.c/xbios.c) that takes this one pointer -- always
+         * exactly 4 bytes, so never ambiguous -- and explicitly
+         * reconstructs the real, correctly-typed arguments from it
+         * before calling the real function normally. A zero-argument
+         * function can still be called directly: it never looks at
+         * the extra pointer this unconditionally pushes.
+         */
+        move.l  sp,a1           // a1 = pointer to the raw argument words
+        move.l  a1,-(sp)        // pass it as the callee's one argument
         jsr     (a0)            // go do it and then come back
+        addq.l  #4,sp           // drop the pointer argument pushed above
+#endif
 
 bx_ret_exc:
         move.l  C_SYM(savptr).w, a1
@@ -1370,18 +1487,44 @@ C_SYM(just_rte):
  * The requested BIOS/XBIOS function number is in d0.
  */
 C_SYM(xbios_unimpl):
-       move.w   d0,-(sp)
-       jsr      C_SYM(xbios_do_unimpl)
-       addq.l   #2,sp
-       rts
+        /*
+         * xbios_do_unimpl(WORD number) is an ordinary internal C
+         * function: under -mfastcall its one scalar arg is expected in
+         * d0, which already holds the function number untouched from
+         * biosxbios above -- no push needed. Without -mshort the plain
+         * ABI now gives it a full 4-byte slot instead of a tightly
+         * packed WORD.
+         */
+#if CONF_WITH_MFASTCALL
+        jsr      C_SYM(xbios_do_unimpl)
+#else
+        ext.l    d0
+        move.l   d0,-(sp)
+        jsr      C_SYM(xbios_do_unimpl)
+        addq.l   #4,sp
+#endif
+        rts
 
 /*
  * Supexec() function handler
  * See xbios.c for more information.
+ *
+ * LONG supexec(PFLONG) is called as a plain C function, tail-jumping
+ * (not jsr) to the caller's codeptr so it adds no stack frame of its
+ * own. Under -mfastcall its one pointer argument arrives in a0
+ * already, not on the stack -- reading 4(a7) here overwrote that
+ * correct a0 with whatever the fastcall-compiled caller's own stack
+ * happened to hold (since nothing was pushed for this call), turning
+ * every supexec() call into a wild jump to an unrelated address.
  */
+#if CONF_WITH_MFASTCALL
+C_SYM(supexec):
+        jmp     (a0)
+#else
 C_SYM(supexec):
         movea.l 4(a7),a0
         jmp     (a0)
+#endif
 
 #if CONF_WITH_BUS_ERROR
 
@@ -1397,10 +1540,16 @@ C_SYM(check_read_byte):
         move.l  (8).w,a1
         lea     berr.w(pc),a0
         move.l  a0,(8).w
+#if CONF_WITH_MFASTCALL
+        // the single scalar argument arrives in d0, not on the stack --
+        // move it to a0 before the moveq below clobbers d0
+        movea.l d0,a0
+#else
+        move.l  4(sp),a0
+#endif
         moveq   #0,d0
         nop                                     // flush pipeline
 
-        move.l  4(sp),a0
         jbsr    buggy_jit_save_registers_before_bus_error
         tst.b   (a0)            // this may cause a Bus Error
         nop                                     // flush pipeline
@@ -1434,7 +1583,16 @@ msgcrb:
 
 /* Compendium says that the scancode is supplied in register d0. */
 C_SYM(keyclick):
-        move.w   4(sp),d0
+        /*
+         * keyclick(UBYTE scancode) is an ordinary internal C function.
+         * Under -mfastcall the caller already passes scancode in d0, so
+         * no read is needed; the plain ABI reads it from the caller's
+         * frame, now a full 4-byte slot (no -mshort), so the low word
+         * moved from 4(sp) to 6(sp).
+         */
+#if !CONF_WITH_MFASTCALL
+        move.w   6(sp),d0
+#endif
         move.l   a2,-(sp)
         move.l   d2,-(sp)
         move.l   C_SYM(kcl_hook).w,a0

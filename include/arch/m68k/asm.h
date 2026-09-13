@@ -36,10 +36,173 @@
 /* External function doing nothing */
 extern void just_rts(void);
 
-/* GEMDOS trap wrappers from miscasm.S */
-extern long trap1(int, ...);
+/* GEMDOS Pexec() trap wrapper from miscasm.S: reentrant, and its
+ * arguments are explicitly typed (not variadic), so unlike the old
+ * "extern long trap1(int, ...)" it replaced, it needs no
+ * -mshort-independent replacement -- see #300 and the trap1_v()/
+ * trap1_w()/... comment below. */
 extern long trap1_pexec(short mode, const char *path, const char *tail,
         const char *env);
+
+/*
+ * Typed trap #1 (GEMDOS) call primitives: trap1_<shape>(function, args...)
+ * pushes the GEMDOS function number and each argument explicitly sized
+ * ('w' a 16-bit word, 'l' a 32-bit long or pointer), one letter per
+ * argument after the function number.
+ *
+ * A plain C varargs call -- the kernel used to route every GEMDOS call
+ * through "extern long trap1(int, ...)", relying on the compiler to
+ * push each argument at its declared width -- only produces the stack
+ * layout GEMDOS expects when the C default argument promotion of a
+ * vararg matches that width, i.e. when int is 16 bits (-mshort). With
+ * -mshort no longer used for the kernel m68k build (#300), int is 32
+ * bits and trap1(int, ...) would push every argument as a promoted
+ * 32-bit int, corrupting calls that expect a word. These macros push
+ * exactly the bytes GEMDOS expects regardless of int's width, modeled
+ * on lib/libcmini's arch/m68k trap_1_* bindings.
+ */
+#define trap1_v(n)                                              \
+__extension__                                                   \
+({                                                               \
+    register long retvalue __asm__("d0");                       \
+                                                                  \
+    __asm__ volatile                                             \
+    (                                                            \
+        "move.w  %1,-(sp)\n\t"                                   \
+        "trap    #1\n\t"                                         \
+        "addq.l  #2,sp"                                          \
+    : "=r"(retvalue)                    /* outputs */            \
+    : "g"((short)(n))                   /* inputs  */            \
+    : "d1", "d2", "a0", "a1", "a2", "memory", "cc" /* clobbered */ \
+    );                                                           \
+    retvalue;                                                    \
+})
+
+#define trap1_w(n, a)                                            \
+__extension__                                                    \
+({                                                                \
+    register long retvalue __asm__("d0");                        \
+    short _a = (short)(a);                                       \
+                                                                   \
+    __asm__ volatile                                              \
+    (                                                             \
+        "move.w  %2,-(sp)\n\t"                                    \
+        "move.w  %1,-(sp)\n\t"                                    \
+        "trap    #1\n\t"                                          \
+        "addq.l  #4,sp"                                           \
+    : "=r"(retvalue)                    /* outputs */             \
+    : "g"((short)(n)), "r"(_a)          /* inputs  */             \
+    : "d1", "d2", "a0", "a1", "a2", "memory", "cc" /* clobbered */ \
+    );                                                            \
+    retvalue;                                                     \
+})
+
+#define trap1_ww(n, a, b)                                        \
+__extension__                                                    \
+({                                                                \
+    register long retvalue __asm__("d0");                        \
+    short _a = (short)(a);                                       \
+    short _b = (short)(b);                                       \
+                                                                   \
+    __asm__ volatile                                              \
+    (                                                             \
+        "move.w  %3,-(sp)\n\t"                                    \
+        "move.w  %2,-(sp)\n\t"                                    \
+        "move.w  %1,-(sp)\n\t"                                    \
+        "trap    #1\n\t"                                          \
+        "addq.l  #6,sp"                                           \
+    : "=r"(retvalue)                    /* outputs */             \
+    : "g"((short)(n)), "r"(_a), "r"(_b) /* inputs  */             \
+    : "d1", "d2", "a0", "a1", "a2", "memory", "cc" /* clobbered */ \
+    );                                                            \
+    retvalue;                                                     \
+})
+
+#define trap1_wl(n, a)                                            \
+__extension__                                                     \
+({                                                                 \
+    register long retvalue __asm__("d0");                         \
+    long _a = (long)(a);                                          \
+                                                                    \
+    __asm__ volatile                                               \
+    (                                                              \
+        "move.l  %2,-(sp)\n\t"                                     \
+        "move.w  %1,-(sp)\n\t"                                     \
+        "trap    #1\n\t"                                           \
+        "addq.l  #6,sp"                                            \
+    : "=r"(retvalue)                    /* outputs */              \
+    : "g"((short)(n)), "r"(_a)          /* inputs  */              \
+    : "d1", "d2", "a0", "a1", "a2", "memory", "cc" /* clobbered */  \
+    );                                                              \
+    retvalue;                                                       \
+})
+
+#define trap1_wlw(n, a, b)                                          \
+__extension__                                                       \
+({                                                                   \
+    register long retvalue __asm__("d0");                           \
+    long _a = (long)(a);                                            \
+    short _b = (short)(b);                                          \
+                                                                      \
+    __asm__ volatile                                                 \
+    (                                                                \
+        "move.w  %3,-(sp)\n\t"                                       \
+        "move.l  %2,-(sp)\n\t"                                       \
+        "move.w  %1,-(sp)\n\t"                                       \
+        "trap    #1\n\t"                                             \
+        "addq.l  #8,sp"                                              \
+    : "=r"(retvalue)                    /* outputs */                \
+    : "g"((short)(n)), "r"(_a), "r"(_b) /* inputs  */                \
+    : "d1", "d2", "a0", "a1", "a2", "memory", "cc" /* clobbered */    \
+    );                                                                \
+    retvalue;                                                         \
+})
+
+#define trap1_wlww(n, a, b, c)                                        \
+__extension__                                                         \
+({                                                                     \
+    register long retvalue __asm__("d0");                             \
+    long _a = (long)(a);                                              \
+    short _b = (short)(b);                                            \
+    short _c = (short)(c);                                            \
+                                                                        \
+    __asm__ volatile                                                   \
+    (                                                                  \
+        "move.w  %4,-(sp)\n\t"                                         \
+        "move.w  %3,-(sp)\n\t"                                         \
+        "move.l  %2,-(sp)\n\t"                                         \
+        "move.w  %1,-(sp)\n\t"                                         \
+        "trap    #1\n\t"                                               \
+        "lea     10(sp),sp"                                            \
+    : "=r"(retvalue)                              /* outputs */        \
+    : "g"((short)(n)), "r"(_a), "r"(_b), "r"(_c)  /* inputs  */        \
+    : "d1", "d2", "a0", "a1", "a2", "memory", "cc" /* clobbered */      \
+    );                                                                  \
+    retvalue;                                                           \
+})
+
+#define trap1_wwll(n, a, b, c)                                          \
+__extension__                                                           \
+({                                                                       \
+    register long retvalue __asm__("d0");                               \
+    short _a = (short)(a);                                              \
+    long  _b = (long)(b);                                               \
+    long  _c = (long)(c);                                               \
+                                                                          \
+    __asm__ volatile                                                     \
+    (                                                                    \
+        "move.l  %4,-(sp)\n\t"                                           \
+        "move.l  %3,-(sp)\n\t"                                           \
+        "move.w  %2,-(sp)\n\t"                                           \
+        "move.w  %1,-(sp)\n\t"                                           \
+        "trap    #1\n\t"                                                 \
+        "lea     12(sp),sp"                                              \
+    : "=r"(retvalue)                              /* outputs */          \
+    : "g"((short)(n)), "r"(_a), "r"(_b), "r"(_c)  /* inputs  */          \
+    : "d1", "d2", "a0", "a1", "a2", "memory", "cc" /* clobbered */        \
+    );                                                                    \
+    retvalue;                                                             \
+})
 
 /* Wrapper around the STOP instruction. This preserves SR. */
 extern void stop_until_interrupt(void);
@@ -387,5 +550,20 @@ __extension__                                      \
     : "cc", "memory"    /* clobbered */     \
     );                                      \
   })
+
+/*
+ * Reassembles a LONG from two big-endian WORDs by value, not by
+ * reinterpreting the WORD array's storage as a LONG: pw[i]/pw[i+1] are
+ * read as WORDs and combined arithmetically, so this never aliases a
+ * WORD lvalue through a LONG pointer (undefined behaviour under
+ * strict aliasing, however harmless it happens to be on this target).
+ * Used to reconstruct a real LONG/pointer argument that spans two
+ * consecutive words of a packed BIOS/XBIOS/GEMDOS trap frame -- see
+ * bios/bios.c, bios/xbios.c and bdos/bdosmain.c's own PWLONG macros.
+ */
+static __inline__ ULONG pwlong(const WORD *pw, int i)
+{
+    return ((ULONG)(UWORD)pw[i] << 16) | (UWORD)pw[i + 1];
+}
 
 #endif /* ASM_H */

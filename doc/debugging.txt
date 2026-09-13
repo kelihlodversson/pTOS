@@ -1,0 +1,192 @@
+Interactive debugging under an emulator
+========================================
+
+This documents interactive debugging tools and techniques verified
+against this tree, as a companion to doc/install.txt (building) and
+the `ptos-smoketest` Claude skill (automated boot verification, pass
+signals, timing tables).
+
+
+Hatari's own built-in debugger
+-------------------------------
+
+Unreliable, and should not be trusted for anything beyond casual use:
+breakpoints (`b pc = <addr>`, `b VBL = <n>`) fire spuriously at reset
+with `cpureg` showing the all-zero reset state; memory reads can lie
+(a value the instruction trace shows being stored reads back as 0);
+`echo` in a debugger `.ini` crashes Hatari outright
+(`Str_UnEscape: Assertion 's2 < s1'`). See the `ptos-smoketest` skill
+for the full list of verified gotchas. Prefer one of the two tools
+below instead.
+
+
+hrdb: a reliable remote debugger for Hatari
+---------------------------------------------
+
+Stock Hatari (https://github.com/hatari/hatari) has no network-
+accessible debugger. An actively maintained fork,
+https://github.com/tattlemuss/hatari (branch `hrdb-main`), adds one:
+a TCP remote-debug protocol (`src/debug/remotedebug.c`) plus a Qt GUI
+called hrdb (`tools/hrdb/`) that talks to it. Project page:
+https://clarets.org/steve/projects/hrdb.html.
+
+The Qt GUI needs Qt 5.11+/6, generally unavailable in a headless
+container -- but the protocol itself is plain text over TCP and needs
+no GUI at all. `tools/rdb.py` in this repo is a minimal scripted
+client for it (see its module docstring for the API); use that
+instead of building the Qt frontend.
+
+### Building the patched Hatari
+
+    git clone --branch hrdb-main --depth 1 https://github.com/tattlemuss/hatari
+    cd hatari && mkdir build && cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc)
+    # binary: build/src/hatari -- run it exactly like stock Hatari,
+    # same CLI flags as documented for the atari512/atari192/atari256
+    # targets in the ptos-smoketest skill
+
+Needs `libsdl2-dev` (`apt-get install -y libsdl2-dev`); cmake reports
+anything else missing. Verified against hrdb-main commit `21aa4cb`,
+building as Hatari v2.6.1.
+
+### The protocol
+
+Always active once Hatari is running -- no CLI flag needed. Listens
+on TCP port 56001, one client at a time. The emulator runs freely
+until a client sends "break"; the debug port is polled from the main
+event loop so it doesn't otherwise block emulation.
+
+Wire format (`src/debug/remotedebug.c`):
+  - Commands and replies are plain ASCII text, NUL-terminated (0x00).
+  - Multi-value replies separate fields with 0x01.
+  - Unsolicited notifications can arrive at any time and start with
+    "!" (e.g. "!status" when a breakpoint fires, "!symbols" when a
+    program loads) -- a client must be prepared to see these
+    interleaved with command replies, not just right after
+    connecting.
+  - On connect, the server immediately pushes four notifications, in
+    order: `!connected <protocol_id>`, `!config`, `!status`,
+    `!symbols`.
+  - Known quirk: every command reply is followed by a second, EMPTY
+    NUL-terminated message. `RemoteDebug_ProcessBuffer()` in the
+    server unconditionally calls `send_term()` after the command
+    handler has already sent its own terminator. Harmless if a client
+    skips empty messages; a client that reads exactly one message per
+    command instead misreads the *next* command's reply as this
+    phantom empty one. `tools/rdb.py` filters it out.
+  - Commands exercised so far: `status`, `break`, `step`, `run`,
+    `regs`, `mem`, `bp`, `bplist`. `bp`/`dbp` take a plain Hatari
+    breakpoint-condition expression (e.g. `pc=$fc23d8`) -- the same
+    syntax the interactive debugger's own `b` command uses. `mem`'s
+    reply payload is neither hex nor base64: it's a uuencode-like
+    scheme, 3 bytes packed into 4 characters each offset by 32 (see
+    `RemoteDebug_mem()` in the server source to extend the client to
+    other commands).
+
+### Process-management gotchas (observed in a sandboxed container)
+
+  - Launch with `setsid`, then `disown` it from the calling shell --
+    a plain `&`-backgrounded Hatari process was repeatedly observed
+    to die when the Bash tool call that started it returned, even
+    with `disown`; a `setsid`-detached one survives across separate
+    tool calls.
+  - Only one client is accepted at a time, and a stale process still
+    listening on port 56001 makes a newly launched Hatari fail to
+    start (`Failed to bind socket (bind() error: 98)`). Always check
+    `ps aux | grep 'build/src/hatari'` and kill any leftover PID
+    before relaunching.
+
+
+QEMU + GDB for m68k (virt-m68k)
+----------------------------------
+
+QEMU exposes a standard GDB remote-serial-protocol stub
+(`-S -gdb tcp::1234`), and `gdb-multiarch` connects to it reliably.
+This is the general recommended path for reproducing 68000-specific
+control-flow bugs (register/ABI mismatches, boot-sequencing issues)
+with real breakpoints and single-stepping -- much faster to iterate
+than Hatari, since virt-m68k boots in seconds under QEMU rather than
+tens of seconds.
+
+### Testing genuine-68000 code paths on virt-m68k
+
+`virt-m68k_defconfig` always uses `-cpu m68020` (see the `CPUFLAGS`
+comment in that file) because QEMU's `-cpu m68000` model has a real
+fidelity gap: it does not fault on "MOVE from CCR" (opcode 0x42C0),
+which is illegal on real 68000 silicon and is the *only* signal
+`bios/arch/m68k/processor.S`'s `_detect_cpu` has for telling a 68000
+apart from a 68010+. Confirmed by injecting the raw opcode into guest
+RAM and single-stepping over it under `-cpu m68000`: it executes as a
+normal instruction (PC advances by 2, D0 gets the CCR value) instead
+of trapping. Under `-cpu m68000`, pTOS's own detection therefore
+wrongly concludes 68010+, sets `longframe`, and every BIOS/XBIOS/
+GEMDOS trap misparses its argument frame from that point on.
+
+`CONF_DEBUG_FORCE_MC68000` (`Kconfig.debug`, `ARCH_M68K_CLASSIC` only,
+default `n`) works around this for testing: it forces
+`mcpu`/`longframe`/`fputype` to the real-68000 values right after
+`processor_init()` runs, regardless of what the (QEMU-fooled)
+auto-detection concluded. Never build a real target, or ship a config,
+with this on -- it will misidentify an actual 68010+ CPU as a 68000.
+Use it only on a throwaway virt-m68k debug build:
+
+    make virt-m68k_defconfig
+    # then edit .config:
+    #   CPUFLAGS="-m68000"
+    #   CONF_DEBUG_FORCE_MC68000=y
+    #   CONF_WITH_MFASTCALL=y                    (if testing fastcall)
+    #   CONF_WITH_LEGACY_RSC_LOAD=y               (TARGET_192/256 default
+    #   # CONF_WITH_PORTABLE_RSC_LOAD is not set    to legacy; match what
+    #                                               you're trying to repro)
+    make
+    qemu-system-m68k -M virt -m 128 -cpu m68000 -kernel virt-m68k.elf \
+      -d guest_errors -serial /dev/null -display none -S -gdb tcp::1234 &
+    gdb-multiarch -q -x script.gdb virt-m68k.elf
+
+### GDB scripting reliability notes
+
+  - `target remote` / `break *ADDR` / `continue` works reliably for
+    reaching the first stop. Repeated commands mixing breakpoint
+    `commands` blocks (which auto-`continue`) with further script
+    lines were flaky in this environment (intermittent "Cannot
+    execute this command while the target is running" on a later
+    step). Most reliable pattern: one `-x script.gdb` invocation per
+    breakpoint hit you actually need to inspect, restarting QEMU
+    fresh each time, rather than one long interactive session with
+    several breakpoints and continues chained together.
+  - Symbol addresses shift with every code-size change, so re-derive
+    them after any rebuild:
+    `m68k-atari-mintelf-nm virt-m68k.elf | grep ' _foo$'`.
+  - `-d exec` (full instruction trace) is invaluable for finding what
+    looped or crashed when setting up a breakpoint is too slow or the
+    crash site is unknown, but the output is enormous (millions of
+    lines within seconds of boot) -- redirect to a scratch file and
+    delete it immediately after grepping out what's needed, or it can
+    exhaust the session's disk quota.
+  - A raw opcode can be tested in isolation without booting pTOS at
+    all: connect to a freshly `-S`-paused QEMU (before any guest code
+    has run), then in gdb:
+    `set *(unsigned short*)0x2000 = 0xNNNN`,
+    `set $pc = 0x2000`, `set $sp = 0x3000`, `stepi`, and check `$pc`
+    (advanced normally by 2 = no fault; jumped elsewhere = it
+    trapped) plus any relevant registers. This is how the QEMU
+    `-cpu m68000` CCR gap above was confirmed.
+
+
+Which tool for which bug
+---------------------------
+
+  - A boot-sequencing or ABI/register-convention bug that's fully
+    reproducible on virt-m68k (no machine-specific hardware
+    involved): QEMU + GDB. Faster iteration, reliable scripting once
+    the "one script per breakpoint" pattern above is followed.
+  - A bug that depends on real Atari hardware behaviour (actual
+    memory map, actual TOS version, floppy/ACSI/MFP timing, or
+    anything that doesn't reproduce identically on virt-m68k): hrdb
+    against real Hatari. This is what found the actual root cause of
+    the atari192/atari256 `-mfastcall` boot crash (issue tracked on
+    the `feature/301-mfastcall-kernel-build` branch) -- a bug in
+    `memcpy`/`memmove`'s fastcall pointer-return convention that
+    virt-m68k's shorter, differently-timed boot never happened to
+    trigger, but that a full Hatari boot to a rendered desktop
+    reliably did.

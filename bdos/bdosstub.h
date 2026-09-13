@@ -19,7 +19,7 @@ void osinit_after_xmaddalt(void);
 
 #if CONF_WITH_ALT_RAM
 /* Register an Alt-RAM region to BDOS */
-long xmaddalt(UBYTE *start, long size);
+long xmaddalt(UBYTE *start, LONG size);
 
 /* Get the total size of Alt-RAM regions */
 long total_alt_ram(void);
