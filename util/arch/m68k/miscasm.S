@@ -435,3 +435,50 @@ C_SYM(protect_wlwwwl):
         move.l   (sp)+,d2
         move.l   (sp)+,a2
         rts
+
+/*
+ * tikfrk_etv_entry / tick_int_etv_entry - classic-ABI entry trampolines
+ * for etv_timer's two possible internal default handlers (bdos/time.c's
+ * tikfrk, vdi/vdi_misc.c's tick_int).
+ *
+ * etv_timer is a frozen, user-replaceable TOS vector: vectors.S's own
+ * call site (like every protect_* vector above) always invokes it via
+ * the classic tightly-packed-WORD ABI, since a third-party handler
+ * installed there follows the documented TOS convention, not this
+ * kernel's own -mfastcall setting. But tikfrk() and tick_int() are
+ * ordinary internal C functions, compiled under *this* kernel's own
+ * ABI -- ext.l'd/register args under -mfastcall, full 4-byte stack
+ * slots otherwise -- neither of which matches the classic wire format
+ * vectors.S uses to call them. Install these trampolines into
+ * etv_timer/Setexc(0x100, ...) instead of tikfrk/tick_int directly:
+ * they read the classic WORD argument and re-dispatch into the real
+ * C function using whichever ABI this build actually uses.
+ */
+        .globl  C_SYM(tikfrk_etv_entry)
+        .globl  C_SYM(tick_int_etv_entry)
+        .extern C_SYM(tikfrk)
+        .extern C_SYM(tick_int)
+
+C_SYM(tikfrk_etv_entry):
+        move.w  4(sp),d0        // n, from the classic caller's packed WORD arg
+        ext.l   d0
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(tikfrk)  // tail call: n already in d0, as fastcall wants it
+#else
+        move.l  d0,-(sp)
+        jsr      C_SYM(tikfrk)
+        addq.l  #4,sp
+        rts
+#endif
+
+C_SYM(tick_int_etv_entry):
+        move.w  4(sp),d0        // u, from the classic caller's packed WORD arg
+        ext.l   d0
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(tick_int) // tail call: u already in d0, as fastcall wants it
+#else
+        move.l  d0,-(sp)
+        jsr      C_SYM(tick_int)
+        addq.l  #4,sp
+        rts
+#endif
