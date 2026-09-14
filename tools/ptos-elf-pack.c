@@ -596,22 +596,28 @@ static int reloc_symbol_is_load_relative(const char *in_path, uint32_t r_info,
  * for the rest of this tool's run, since 'in' is never freed before
  * exit) -- dies rather than return an unterminated or out-of-range
  * string, matching every other malformed-input path in this file. */
-static const char *read_c_string(const unsigned char *in, uint32_t in_size,
+static const char *read_c_string(const unsigned char *in, uint32_t limit,
                                  uint32_t off, const char *what,
                                  const char *in_path)
 {
     uint32_t i;
 
-    if (off >= in_size)
-        die("'%s' has a %s string offset past the end of file", in_path, what);
+    /* 'limit' is the end of the specific table this string is supposed to
+     * live in (e.g. strtab_off + strtab_size), not just the end of the
+     * file: scanning all the way to in_size would let a malformed table
+     * with no NUL before its own declared end "borrow" a NUL from
+     * whatever unrelated content follows it in the file, accepting a
+     * name that was never actually inside the table it claims to be. */
+    if (off >= limit)
+        die("'%s' has a %s string offset past the end of its table", in_path, what);
 
-    for (i = off; i < in_size; i++)
+    for (i = off; i < limit; i++)
     {
         if (in[i] == '\0')
             return (const char *)(in + off);
     }
 
-    die("'%s' has a %s string that is not NUL-terminated within the file",
+    die("'%s' has a %s string that is not NUL-terminated within its table",
         in_path, what);
     return NULL; /* unreachable */
 }
@@ -676,9 +682,11 @@ static void find_abi_needed(const unsigned char *in, uint32_t in_size,
     {
         const unsigned char *sh;
         uint32_t sh_type, sh_offset, sh_size, sh_link;
-        uint32_t strtab_off, strtab_size;
+        uint32_t strtab_off, strtab_size, strtab_limit;
         uint32_t count, j;
 
+        if ((uint64_t)e_shoff + (uint64_t)i * e_shentsize + SHDR_SIZE > in_size)
+            die("'%s' has a truncated section header table", in_path);
         sh = in + e_shoff + (uint32_t)i * e_shentsize;
         sh_type = rd32(sh + SHDR_SH_TYPE);
         if (sh_type != SHT_DYNAMIC)
@@ -695,10 +703,19 @@ static void find_abi_needed(const unsigned char *in, uint32_t in_size,
             die("'%s' has a .dynamic section naming an out of range "
                 "string table", in_path);
         {
-            const unsigned char *strsh = in + e_shoff + sh_link * e_shentsize;
+            const unsigned char *strsh;
+
+            if ((uint64_t)e_shoff + (uint64_t)sh_link * e_shentsize + SHDR_SIZE > in_size)
+                die("'%s' has a truncated section header table", in_path);
+            strsh = in + e_shoff + sh_link * e_shentsize;
             strtab_off = rd32(strsh + SHDR_SH_OFFSET);
             strtab_size = rd32(strsh + SHDR_SH_SIZE);
         }
+
+        if ((uint64_t)strtab_off + (uint64_t)strtab_size > in_size)
+            die("'%s' has a .dynamic string table extending past end of file",
+                in_path);
+        strtab_limit = strtab_off + strtab_size;
 
         count = sh_size / DYN_SIZE;
         for (j = 0; j < count; j++)
@@ -719,7 +736,7 @@ static void find_abi_needed(const unsigned char *in, uint32_t in_size,
             if (d_val >= strtab_size)
                 die("'%s' has a DT_NEEDED entry pointing outside its "
                     "string table", in_path);
-            name = read_c_string(in, in_size, strtab_off + d_val,
+            name = read_c_string(in, strtab_limit, strtab_off + d_val,
                                  "DT_NEEDED", in_path);
 
             needed_count++;
@@ -776,11 +793,16 @@ static int symbol_is_undefined(uint32_t r_info, uint32_t symtab_offset,
  * symbol table (symtab_offset/size/entsize, exactly as computed for
  * every other relocation section in main()'s loop).
  *
- * Only ever called for a relocation type that exclusively arises from
- * real dynamic-symbol references (never something --emit-relocs
- * produces for an internal branch/call), so every case this function
- * rejects is a genuine packaging problem, not a plain binary's ordinary
- * relocation happening to look similar.
+ * Only ever called once the caller has already decided this relocation
+ * is a pTOS ABI import candidate: either its type is JUMP_SLOT/GLOB_DAT
+ * (which exclusively arise from real dynamic-symbol references, never
+ * something --emit-relocs produces for an internal branch/call), or it
+ * is DIR32 AND the caller's own symbol_is_undefined() check found an
+ * undefined symbol (DIR32 alone is not exclusive to imports -- it is
+ * also the ordinary internal-relocation type -- see the call site).
+ * Either way, every case this function itself rejects from here on is a
+ * genuine packaging problem, not a plain binary's ordinary relocation
+ * happening to look similar.
  */
 static const char *resolve_dynamic_import(const char *in_path, uint32_t r_info,
                                           uint32_t symtab_offset, uint32_t symtab_size,
@@ -834,6 +856,8 @@ static const char *resolve_dynamic_import(const char *in_path, uint32_t r_info,
     if (sh_link >= e_shnum)
         die("'%s' has a relocation section naming an out of range "
             "symbol table", in_path);
+    if ((uint64_t)e_shoff + (uint64_t)sh_link * e_shentsize + SHDR_SIZE > in_size)
+        die("'%s' has a truncated section header table", in_path);
     symsh = in + e_shoff + sh_link * e_shentsize;
     {
         uint32_t str_shndx = rd32(symsh + SHDR_SH_LINK);
@@ -842,15 +866,21 @@ static const char *resolve_dynamic_import(const char *in_path, uint32_t r_info,
         if (str_shndx >= e_shnum)
             die("'%s' has a symbol table naming an out of range string "
                 "table", in_path);
+        if ((uint64_t)e_shoff + (uint64_t)str_shndx * e_shentsize + SHDR_SIZE > in_size)
+            die("'%s' has a truncated section header table", in_path);
         strsh = in + e_shoff + str_shndx * e_shentsize;
         strtab_off = rd32(strsh + SHDR_SH_OFFSET);
         strtab_size = rd32(strsh + SHDR_SH_SIZE);
     }
 
+    if ((uint64_t)strtab_off + (uint64_t)strtab_size > in_size)
+        die("'%s' has a dynamic string table extending past end of file",
+            in_path);
+
     if (st_name >= strtab_size)
         die("'%s' has a dynamic symbol with a name offset past the end "
             "of its string table", in_path);
-    name = read_c_string(in, in_size, strtab_off + st_name,
+    name = read_c_string(in, strtab_off + strtab_size, strtab_off + st_name,
                          "dynamic symbol", in_path);
     if (name[0] == '\0')
         die("'%s' imports a symbol with an empty name", in_path);
@@ -1288,12 +1318,54 @@ int main(int argc, char **argv)
                 /* the bind mechanism has no addend component in version 1
                  * (doc/elfload.txt): it writes the resolved import address
                  * as-is, so a nonzero addend here would be silently
-                 * dropped rather than applied */
-                if (rela && addend != 0)
-                    die("'%s' has a dynamic-symbol relocation at 0x%08lx "
-                        "with a nonzero addend (0x%08lx); pTOS ABI imports "
-                        "do not support one", in_path,
-                        (unsigned long)r_offset, (unsigned long)addend);
+                 * dropped rather than applied.
+                 *
+                 * This only needs checking for the DIR32-as-import case
+                 * (m68k's plain absolute reference to an imported
+                 * function/object): RELA carries a real addend in
+                 * r_addend (already decoded above), and REL keeps one
+                 * embedded in the slot's own bytes exactly like an
+                 * ordinary DIR32/RELATIVE slot does. JUMP_SLOT/GLOB_DAT
+                 * are different: under REL (ARM), the linker
+                 * conventionally pre-fills that slot with a PLT-stub or
+                 * resolver placeholder address, not an addend -- verified
+                 * directly against this toolchain's actual PIE output, a
+                 * real R_ARM_JUMP_SLOT slot pre-filled with a nonzero PLT
+                 * address, not zero -- and RELA-encoded JUMP_SLOT/GLOB_DAT
+                 * (m68k) already carries r_addend 0 by convention in
+                 * every fixture built for this PR. So checking a
+                 * JUMP_SLOT/GLOB_DAT slot's bytes the same way DIR32's
+                 * are would reject perfectly ordinary PLT/GOT output. */
+                if (type == dir32_type)
+                {
+                    if (rela)
+                    {
+                        if (addend != 0)
+                            die("'%s' has a dynamic-symbol relocation at "
+                                "0x%08lx with a nonzero addend (0x%08lx); "
+                                "pTOS ABI imports do not support one",
+                                in_path, (unsigned long)r_offset,
+                                (unsigned long)addend);
+                    }
+                    else
+                    {
+                        uint32_t slot_off;
+                        uint32_t slot_val;
+
+                        if (!try_vaddr_to_file_offset(segs, nsegs, r_offset, &slot_off))
+                            die("'%s' has a dynamic-symbol relocation at "
+                                "0x%08lx with no file backing to read its "
+                                "implicit addend from", in_path,
+                                (unsigned long)r_offset);
+                        slot_val = rd32(in + slot_off);
+                        if (slot_val != 0)
+                            die("'%s' has a dynamic-symbol relocation at "
+                                "0x%08lx with a nonzero embedded addend "
+                                "(0x%08lx); pTOS ABI imports do not support "
+                                "one", in_path, (unsigned long)r_offset,
+                                (unsigned long)slot_val);
+                    }
+                }
 
                 sym_name = resolve_dynamic_import(in_path, r_info, symtab_offset,
                                                   symtab_size, symtab_entsize,

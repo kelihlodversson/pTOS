@@ -44,6 +44,23 @@
  * use the kernel's own WORD/UWORD (portab.h) types directly, which are
  * always exactly 16 bits on every architecture -- those use a plain
  * "short" here, unconditionally, rather than PTOS_WORD.
+ *
+ * -mshort must cover every translation unit that calls a function
+ * declared here, not just the ones that #include this header: it is a
+ * property of the *call*, so a WORD-sized argument crosses correctly
+ * only when both the caller's compile and the callee's compile agree on
+ * the stack width, regardless of which file the declaration lives in.
+ * That includes any other library linked into the same executable whose
+ * functions you call with a WORD/int-sized stack argument (e.g. an
+ * ordinary libcmini build, which is NOT built with -mshort -- see the
+ * m68k side of tools/ptos-elf-pack's test payload build in the Makefile,
+ * whose comment on PTOSABI_CFLAGS explains why linking a non -mshort
+ * libcmini/crt0 into the same executable as this header's callers is
+ * still safe there specifically: that payload never calls a libcmini
+ * function with a WORD-sized stack argument in the first place). Mixing
+ * an -mshort translation unit's calls into such a library carelessly
+ * reproduces the exact argument-corruption bug described above, just
+ * against a userland callee instead of a kernel one.
  */
 
 #ifndef PTOS_ABI_GEMDOS_H

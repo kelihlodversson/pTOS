@@ -67,7 +67,7 @@ config CONF_WITH_PTOS_ABI_IMPORTS
 	  instead of going through a TRAP #1 parameter block. See
 	  doc/elfload.txt's "Native pTOS ABI imports" section.
 
-	  This builds the kernel's own versioned export table (bdos/ptosabi.c)
+	  This builds the kernel's own versioned export table (bdos/ptosabi_gemdos.c)
 	  and the bdos/elfld.c code that resolves .ptos.imports/.ptos.bind ELF
 	  metadata against it. Both are compiled in only when this is set, so
 	  turning it off recovers their size on a kernel that still wants
