@@ -284,11 +284,14 @@ symbols; "readelf -r prog.elf" shows the R_*_JUMP_SLOT/R_*_GLOB_DAT
 relocations ptos-elf-pack converts (below).
 
 Every function pTOS currently exports through this mechanism is a GEMDOS
-(TRAP #1) call, under the "gemdos:" namespace, named after its classic
-public GEMDOS binding (Fopen, Dsetdrv, Cconws, ...) with the same C
-signature its existing internal implementation already has -- see
-bdos/ptosabi.c for the full list and bdos/fs.h, bdos/console.h,
-bdos/proc.h, bdos/mem.h, bdos/time.h for the exact prototypes. Only GEMDOS
+(TRAP #1) call, under the "gemdos:" namespace, named after its official
+GEMDOS function name as documented by tos.hyp
+(https://freemint.github.io/tos.hyp/en/gemdos_functions.html) -- Fopen,
+Dsetdrv, Cconws, and so on, verified name-for-name against that page --
+with the same C signature its existing internal implementation already
+has -- see bdos/ptosabi_gemdos.c for the full list and bdos/fs.h,
+bdos/console.h, bdos/proc.h, bdos/mem.h, bdos/time.h for the exact
+prototypes. Only GEMDOS
 opcodes the funcs[] dispatch table in bdos/bdosmain.c actually implements
 (i.e. not "NI"/not implemented) are exported. Later stages of #308 are
 expected to add further namespaces (aes:, vdi:, ptos:) the same way.
@@ -402,7 +405,7 @@ PT_PTOS_RELOC: by walking the program header table, never the section
 header table. When present, and the kernel was built with
 CONF_WITH_PTOS_ABI_IMPORTS, every import is looked up by exact
 "namespace:name" match against the kernel's own export table (currently
-just bdos/ptosabi.c's GEMDOS table; see above), with the ABI major
+just bdos/ptosabi_gemdos.c's GEMDOS table; see above), with the ABI major
 version required to match exactly and the minor version required to be at
 least the import's requested minimum. An import naming an unknown symbol,
 an unsupported namespace, or an ABI version the export table cannot
@@ -454,7 +457,7 @@ namespace -- both are straightforward extensions of this same conversion
 step, not a format change.
 
 abi_minor exists in the wire format (and in every export table lookup)
-but the current GEMDOS export table (bdos/ptosabi.c) always exports
+but the current GEMDOS export table (bdos/ptosabi_gemdos.c) always exports
 abi_minor 0 for everything: there is no feature-level granularity yet
 within GEMDOS's ABI major version 1.
 

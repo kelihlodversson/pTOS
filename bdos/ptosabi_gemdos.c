@@ -9,10 +9,13 @@
  * Exports every GEMDOS (TRAP #1) call the funcs[] dispatch table in
  * bdos/bdosmain.c actually implements (i.e. every entry there that isn't
  * "NI") as a pTOS ABI import, under the "gemdos" namespace, named after
- * its classic public GEMDOS binding (see include/bdosbind.h and
- * doc/pgmconv.txt-style opcode numbering).  Each entry is the same
- * already-typed internal handler function bdosmain.c's own trap
- * dispatcher calls -- no new implementation, no marshalling layer: a
+ * its official GEMDOS function name as documented by tos.hyp
+ * (https://freemint.github.io/tos.hyp/en/gemdos_functions.html) --
+ * verified name-for-name against that page's function list, not just
+ * inferred from include/bdosbind.h's own (partial) macro set.  Each
+ * entry is the same already-typed internal handler function
+ * bdosmain.c's own trap dispatcher calls -- no new implementation, no
+ * marshalling layer: a
  * native ELF application importing e.g. "gemdos:Fopen" calls exactly
  * bdos/fsopnclo.c's xopen(), with its real C signature, exactly as if it
  * were any other extern function.
