@@ -42,6 +42,9 @@
 /PTRELOC.TOS
 /relocprobe2-unpacked.tos
 /PTRELOC2.TOS
+/libptos-abi.so.1
+/abiprobe-unpacked.tos
+/ABIPROBE.TOS
 /test-hd.img
 
 # Host tools built by the Makefile

@@ -987,6 +987,10 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
         if (r < 0L)
             return r;
 
+        KDEBUG(("ptosabi: bind #%ld: %s:%s -> %p, slot=%08lx op=%d\n",
+                (long)i, ns, name, (void *)addr, (unsigned long)bind.slot_vaddr,
+                (int)bind.bind_op));
+
         /* the import's declared kind must agree with what the export
          * table actually is: an app importing a data symbol as if it
          * were callable (or vice versa) is a packaging/link error, not

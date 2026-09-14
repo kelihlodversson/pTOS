@@ -262,6 +262,23 @@ version numbers its ABI.
 This only works for a PIE (ET_DYN): a fixed base ET_EXEC has no .dynsym/
 .got.plt machinery at all, so imports require the "-pie
 --no-dynamic-linker" recipe already documented above for .ptos.reloc.
+
+On m68k, both the application and libptos-abi.so.1 itself MUST be built
+with -mshort. This is not just a matter of matching declared parameter
+widths: -mshort also changes the *stack argument width* m68k GCC
+generates for a WORD-sized parameter (2 bytes instead of 4), independent
+of that parameter's own declared C type, and every kernel GEMDOS handler
+is compiled with -mshort (doc/coding.txt / CLAUDE.md). Confirmed directly
+building tests/ptos_abi_import/abi_probe.c without it: a call written as
+Fwrite(handle, len, buf) reached the kernel's xwrite() as
+xwrite(0, 393216, <garbage>) instead of the real (6, 34, <buffer>) --
+every argument after the first WORD-sized one lands 2 bytes off from
+where the -mshort-compiled callee reads it. m68k-atari-mintelf-ld's
+default, driver-selected emulation also refuses both -shared and -pie
+outright ("-pie not supported"); its bare "m68kelf" emulation, invoked
+directly rather than through the $(CC) driver, accepts both -- see
+Makefile's PTOSABI_CFLAGS and the m68k branch of the ABIPROBE.TOS/
+libptos-abi.so.1 build rules for the exact working invocations.
 "readelf --dyn-syms prog.elf" lists the resulting undefined dynamic
 symbols; "readelf -r prog.elf" shows the R_*_JUMP_SLOT/R_*_GLOB_DAT
 relocations ptos-elf-pack converts (below).

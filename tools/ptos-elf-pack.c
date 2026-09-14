@@ -742,6 +742,34 @@ static void find_abi_needed(const unsigned char *in, uint32_t in_size,
 }
 
 /*
+ * symbol_is_undefined - lightweight peek at whether a relocation's
+ * symbol (r_info's top 24 bits) is SHN_UNDEF, without validating or
+ * dying on anything -- used only to decide whether an otherwise-DIR32
+ * relocation should be routed to the import path below instead of the
+ * ordinary internal-relocation path; any malformed input this misreads
+ * as "not undefined" still gets fully validated by whichever of the two
+ * paths actually ends up handling it.
+ */
+static int symbol_is_undefined(uint32_t r_info, uint32_t symtab_offset,
+                               uint32_t symtab_size, uint32_t symtab_entsize,
+                               uint32_t in_size, const unsigned char *in)
+{
+    uint32_t sym_index = r_info >> 8;
+    uint32_t sym_off;
+
+    if (sym_index == 0 || symtab_offset == 0 || symtab_entsize == 0)
+        return 0;
+    if (sym_index >= symtab_size / symtab_entsize)
+        return 0;
+    if ((uint64_t)symtab_offset + (uint64_t)sym_index * symtab_entsize + SYM_SIZE
+        > in_size)
+        return 0;
+
+    sym_off = symtab_offset + sym_index * symtab_entsize;
+    return rd16(in + sym_off + SYM_ST_SHNDX) == SHN_UNDEF;
+}
+
+/*
  * resolve_dynamic_import - resolve a JUMP_SLOT/GLOB_DAT relocation's
  * symbol (r_info's top 24 bits) into a "gemdos:<name>" import name and
  * its kind, given the relocation section's own already-resolved linked
@@ -1223,11 +1251,25 @@ int main(int argc, char **argv)
             /* R_*_JUMP_SLOT/R_*_GLOB_DAT exclusively arise from a real
              * dynamic-symbol reference -- never something --emit-relocs
              * produces for an internal branch/call -- so these two types
-             * are the pTOS ABI import mechanism's own, handled here
-             * instead of falling into the DIR32/RELATIVE/no-fixup
-             * dispatch below (doc/elfload.txt's "Native pTOS ABI
-             * imports" section). */
-            if (type == jump_slot_type || type == glob_dat_type)
+             * are always the pTOS ABI import mechanism's own. A DIR32
+             * against an undefined symbol is the same thing in disguise:
+             * this m68k toolchain has no -fPIC/-fPIE code generation, so
+             * a call to an imported function compiles to a plain
+             * absolute reference (an ordinary R_68K_32 relocation on the
+             * call's own address operand) rather than a PLT-relative
+             * call -- confirmed directly against this toolchain's actual
+             * "-pie --no-dynamic-linker" output, which emits exactly this
+             * shape (R_68K_32 in .rela.dyn) alongside an R_68K_JMP_SLOT
+             * PLT entry the generated code never actually references.
+             * ARM's PIC-capable codegen does not produce this shape (only
+             * JUMP_SLOT/GLOB_DAT), but the check costs nothing there. Any
+             * of these three types is handled here instead of falling
+             * into the DIR32/RELATIVE/no-fixup dispatch below
+             * (doc/elfload.txt's "Native pTOS ABI imports" section). */
+            if (type == jump_slot_type || type == glob_dat_type
+             || (type == dir32_type
+              && symbol_is_undefined(r_info, symtab_offset, symtab_size,
+                                     symtab_entsize, in_size, in)))
             {
                 const char *sym_name;
                 int kind;
@@ -1242,6 +1284,16 @@ int main(int argc, char **argv)
                         "satisfied at load time", in_path,
                         (unsigned long)type, (unsigned long)r_offset,
                         PTOS_ABI_SONAME_PREFIX);
+
+                /* the bind mechanism has no addend component in version 1
+                 * (doc/elfload.txt): it writes the resolved import address
+                 * as-is, so a nonzero addend here would be silently
+                 * dropped rather than applied */
+                if (rela && addend != 0)
+                    die("'%s' has a dynamic-symbol relocation at 0x%08lx "
+                        "with a nonzero addend (0x%08lx); pTOS ABI imports "
+                        "do not support one", in_path,
+                        (unsigned long)r_offset, (unsigned long)addend);
 
                 sym_name = resolve_dynamic_import(in_path, r_info, symtab_offset,
                                                   symtab_size, symtab_entsize,
