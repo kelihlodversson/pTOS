@@ -100,6 +100,7 @@
 #define PT_LOAD         1UL
 #define PT_PHDR         6UL
 #define PT_PTOS_RELOC   0x60000001UL
+#define PT_PTOS_IMPORTS 0x60000002UL
 
 #define SHDR_SIZE       40
 #define SHDR_SH_TYPE    4
@@ -112,6 +113,7 @@
 #define SHDR_SH_ENTSIZE 36
 
 #define SHT_RELA        4UL
+#define SHT_DYNAMIC     6UL
 #define SHT_REL         9UL
 #define SHT_RELR        19UL
 /* android's packed-dynamic-relocation format, predating the now-standard
@@ -125,14 +127,43 @@
 #define RELA_SIZE       12
 
 #define SYM_SIZE        16
+#define SYM_ST_NAME     0
+#define SYM_ST_INFO     12
 #define SYM_ST_SHNDX    14
 #define SHN_UNDEF       0U
 #define SHN_LORESERVE   0xff00U
 #define SHN_ABS         0xfff1U
 #define SHN_COMMON      0xfff2U
 
+/* ELF32_ST_TYPE(st_info): low 4 bits of the symbol's st_info byte */
+#define STT_OBJECT      1U
+#define STT_FUNC        2U
+
+#define DYN_SIZE        8       /* one Elf32_Dyn entry: d_tag + d_val/d_ptr */
+#define DT_NEEDED       1UL
+
 #define PTOS_RELOC_MAGIC    0x50544c31UL
 #define PTOS_RELOC_VERSION  1
+
+#define PTOS_IMPORTS_MAGIC    0x50544c32UL
+#define PTOS_IMPORTS_VERSION  1
+
+#define PTOSABI_KIND_FUNCTION   0
+#define PTOSABI_KIND_DATA       1
+
+#define PTOS_BIND_CODE_ADDRESS  0
+#define PTOS_BIND_DATA_ADDRESS  1
+
+/* must match bdos/elfld.c's PTOS_IMPORT_MAX_COUNT: the loader rejects a
+ * .ptos.imports payload with more entries than this, so producing one
+ * here would just move the failure from pack time to load time */
+#define PTOS_IMPORT_MAX_COUNT   512U
+
+/* the SDK's link-time-fiction stub library every pTOS ABI import must
+ * come from (doc/elfload.txt); its SONAME's trailing version number is
+ * read directly as the ABI major version every symbol pulled from it is
+ * imported at. */
+#define PTOS_ABI_SONAME_PREFIX  "libptos-abi.so."
 
 /* Relocation types confirmed (either from the target's ELF psABI or by
  * inspecting real "readelf -r" output from the documented build recipes in
@@ -225,6 +256,24 @@ static int type_symbol_field_is_meaningless(uint32_t machine, uint32_t type)
 typedef struct {
     uint32_t vaddr;
 } SLOT;
+
+/* one pTOS ABI import this tool has converted a dynamic relocation into
+ * (doc/elfload.txt's ".ptos.imports payload"); "name" already carries
+ * the "namespace:" prefix (always "gemdos:" in this version -- see
+ * find_abi_needed()) */
+typedef struct {
+    char     *name;
+    uint32_t  abi_major;
+    uint32_t  abi_minor;
+    int       kind;      /* PTOSABI_KIND_* */
+} IMPORT;
+
+/* one ".ptos.bind" entry: which import, which slot, which operation */
+typedef struct {
+    uint32_t import_index;
+    uint32_t slot_vaddr;
+    int      bind_op;    /* PTOS_BIND_* */
+} BIND;
 
 /* one input PT_LOAD segment's file<->memory mapping, needed to find the
  * file byte a RELA/RELATIVE slot's addend must be materialised into */
@@ -542,6 +591,310 @@ static int reloc_symbol_is_load_relative(const char *in_path, uint32_t r_info,
     return range_covered_by_load(segs, nsegs, sh_addr, sh_size);
 }
 
+/* read a NUL-terminated C string starting at file offset 'off', bounds
+ * checked against in_size. Returns a pointer directly into 'in' (valid
+ * for the rest of this tool's run, since 'in' is never freed before
+ * exit) -- dies rather than return an unterminated or out-of-range
+ * string, matching every other malformed-input path in this file. */
+static const char *read_c_string(const unsigned char *in, uint32_t in_size,
+                                 uint32_t off, const char *what,
+                                 const char *in_path)
+{
+    uint32_t i;
+
+    if (off >= in_size)
+        die("'%s' has a %s string offset past the end of file", in_path, what);
+
+    for (i = off; i < in_size; i++)
+    {
+        if (in[i] == '\0')
+            return (const char *)(in + off);
+    }
+
+    die("'%s' has a %s string that is not NUL-terminated within the file",
+        in_path, what);
+    return NULL; /* unreachable */
+}
+
+/* recognise "libptos-abi.so.<N>" for a decimal N and extract N, bounded
+ * well under the wire format's UWORD abi_major field so a pathological
+ * name cannot silently wrap; anything else (wrong prefix, no digits,
+ * non-digit characters, out of range) is simply not recognised. */
+static int parse_abi_soname(const char *name, uint32_t *out_major)
+{
+    static const char prefix[] = PTOS_ABI_SONAME_PREFIX;
+    size_t plen = sizeof(prefix) - 1;
+    const char *p;
+    uint32_t val;
+
+    if (strncmp(name, prefix, plen) != 0)
+        return 0;
+
+    p = name + plen;
+    if (*p == '\0')
+        return 0;
+
+    val = 0;
+    for (; *p != '\0'; p++)
+    {
+        if (*p < '0' || *p > '9')
+            return 0;
+        if (val > 6553U)   /* about to exceed 65535 on the next digit */
+            return 0;
+        val = val * 10 + (uint32_t)(*p - '0');
+    }
+    if (val > 65535U)
+        return 0;
+
+    *out_major = val;
+    return 1;
+}
+
+/*
+ * find_abi_needed - look for the SDK's libptos-abi.so.<N> dependency.
+ *
+ * Scans every SHT_DYNAMIC section (there is normally at most one) for
+ * DT_NEEDED entries. No .dynamic section, or one with no DT_NEEDED
+ * entries at all, is a plain binary that imports nothing: *out_recognized
+ * is set to 0 and the function returns normally. Exactly one DT_NEEDED
+ * naming "libptos-abi.so.<N>" is the only other accepted shape, setting
+ * *out_recognized to 1 and *out_abi_major to N. Anything else -- more
+ * than one DT_NEEDED, or one that does not match the pattern -- dies:
+ * pTOS has no general purpose dynamic linker, so a real shared library
+ * dependency can never be satisfied at load time (doc/elfload.txt).
+ */
+static void find_abi_needed(const unsigned char *in, uint32_t in_size,
+                            uint32_t e_shoff, uint16_t e_shnum,
+                            uint16_t e_shentsize, const char *in_path,
+                            int *out_recognized, uint32_t *out_abi_major)
+{
+    uint16_t i;
+    int needed_count = 0;
+    uint32_t major = 0;
+
+    for (i = 0; i < e_shnum; i++)
+    {
+        const unsigned char *sh;
+        uint32_t sh_type, sh_offset, sh_size, sh_link;
+        uint32_t strtab_off, strtab_size;
+        uint32_t count, j;
+
+        sh = in + e_shoff + (uint32_t)i * e_shentsize;
+        sh_type = rd32(sh + SHDR_SH_TYPE);
+        if (sh_type != SHT_DYNAMIC)
+            continue;
+
+        sh_offset = rd32(sh + SHDR_SH_OFFSET);
+        sh_size = rd32(sh + SHDR_SH_SIZE);
+        sh_link = rd32(sh + SHDR_SH_LINK);
+
+        if (sh_size % DYN_SIZE != 0)
+            die("'%s' has a malformed .dynamic section", in_path);
+
+        if (sh_link >= e_shnum)
+            die("'%s' has a .dynamic section naming an out of range "
+                "string table", in_path);
+        {
+            const unsigned char *strsh = in + e_shoff + sh_link * e_shentsize;
+            strtab_off = rd32(strsh + SHDR_SH_OFFSET);
+            strtab_size = rd32(strsh + SHDR_SH_SIZE);
+        }
+
+        count = sh_size / DYN_SIZE;
+        for (j = 0; j < count; j++)
+        {
+            const unsigned char *ent;
+            uint32_t d_tag, d_val;
+            const char *name;
+
+            if ((uint64_t)sh_offset + (uint64_t)j * DYN_SIZE + DYN_SIZE > in_size)
+                die("'%s' has a truncated .dynamic section", in_path);
+            ent = in + sh_offset + j * DYN_SIZE;
+
+            d_tag = rd32(ent + 0);
+            if (d_tag != DT_NEEDED)
+                continue;
+            d_val = rd32(ent + 4);
+
+            if (d_val >= strtab_size)
+                die("'%s' has a DT_NEEDED entry pointing outside its "
+                    "string table", in_path);
+            name = read_c_string(in, in_size, strtab_off + d_val,
+                                 "DT_NEEDED", in_path);
+
+            needed_count++;
+            if (!parse_abi_soname(name, &major))
+                die("'%s' needs '%s', which is not the pTOS ABI stub "
+                    "(expected \"%s<N>\"); pTOS has no general purpose "
+                    "dynamic linker, so this dependency can never be "
+                    "satisfied at load time", in_path, name,
+                    PTOS_ABI_SONAME_PREFIX);
+        }
+    }
+
+    if (needed_count > 1)
+        die("'%s' needs more than one shared library; only a single "
+            "\"%s<N>\" pTOS ABI stub dependency is supported",
+            in_path, PTOS_ABI_SONAME_PREFIX);
+
+    *out_recognized = (needed_count == 1);
+    *out_abi_major = major;
+}
+
+/*
+ * resolve_dynamic_import - resolve a JUMP_SLOT/GLOB_DAT relocation's
+ * symbol (r_info's top 24 bits) into a "gemdos:<name>" import name and
+ * its kind, given the relocation section's own already-resolved linked
+ * symbol table (symtab_offset/size/entsize, exactly as computed for
+ * every other relocation section in main()'s loop).
+ *
+ * Only ever called for a relocation type that exclusively arises from
+ * real dynamic-symbol references (never something --emit-relocs
+ * produces for an internal branch/call), so every case this function
+ * rejects is a genuine packaging problem, not a plain binary's ordinary
+ * relocation happening to look similar.
+ */
+static const char *resolve_dynamic_import(const char *in_path, uint32_t r_info,
+                                          uint32_t symtab_offset, uint32_t symtab_size,
+                                          uint32_t symtab_entsize, uint32_t in_size,
+                                          const unsigned char *in, uint32_t e_shoff,
+                                          uint16_t e_shnum, uint16_t e_shentsize,
+                                          uint32_t sh_link, int *out_kind)
+{
+    uint32_t sym_index = r_info >> 8;
+    uint32_t sym_off;
+    uint32_t st_name;
+    uint16_t st_shndx;
+    uint8_t st_info;
+    uint32_t st_type;
+    const unsigned char *symsh;
+    uint32_t strtab_off, strtab_size;
+    const char *name;
+
+    if (sym_index == 0 || symtab_offset == 0)
+        die("'%s' has a dynamic-symbol relocation with no symbol", in_path);
+
+    if (sym_index >= symtab_size / symtab_entsize)
+        die("'%s' has a dynamic-symbol relocation naming an out of range "
+            "symbol table entry", in_path);
+    if ((uint64_t)symtab_offset + (uint64_t)sym_index * symtab_entsize + SYM_SIZE
+        > in_size)
+        die("'%s' has a truncated dynamic symbol table", in_path);
+
+    sym_off = symtab_offset + sym_index * symtab_entsize;
+    st_name = rd32(in + sym_off + SYM_ST_NAME);
+    st_info = in[sym_off + SYM_ST_INFO];
+    st_shndx = rd16(in + sym_off + SYM_ST_SHNDX);
+
+    if (st_shndx != SHN_UNDEF)
+        die("'%s' has a dynamic-symbol relocation against a symbol that "
+            "is not undefined; only an import from the pTOS ABI stub "
+            "(always undefined in the input) is expected here", in_path);
+
+    st_type = (uint32_t)(st_info & 0xfU);
+    if (st_type == STT_FUNC)
+        *out_kind = PTOSABI_KIND_FUNCTION;
+    else if (st_type == STT_OBJECT)
+        *out_kind = PTOSABI_KIND_DATA;
+    else
+        die("'%s' imports a symbol that is neither a function nor a data "
+            "object (ELF symbol type %lu); cannot classify it as a pTOS "
+            "ABI import", in_path, (unsigned long)st_type);
+
+    /* sh_link is the symtab SECTION's own index; its sh_link in turn
+     * names the string table st_name is an offset into */
+    if (sh_link >= e_shnum)
+        die("'%s' has a relocation section naming an out of range "
+            "symbol table", in_path);
+    symsh = in + e_shoff + sh_link * e_shentsize;
+    {
+        uint32_t str_shndx = rd32(symsh + SHDR_SH_LINK);
+        const unsigned char *strsh;
+
+        if (str_shndx >= e_shnum)
+            die("'%s' has a symbol table naming an out of range string "
+                "table", in_path);
+        strsh = in + e_shoff + str_shndx * e_shentsize;
+        strtab_off = rd32(strsh + SHDR_SH_OFFSET);
+        strtab_size = rd32(strsh + SHDR_SH_SIZE);
+    }
+
+    if (st_name >= strtab_size)
+        die("'%s' has a dynamic symbol with a name offset past the end "
+            "of its string table", in_path);
+    name = read_c_string(in, in_size, strtab_off + st_name,
+                         "dynamic symbol", in_path);
+    if (name[0] == '\0')
+        die("'%s' imports a symbol with an empty name", in_path);
+
+    return name;
+}
+
+/* append (or find an existing, identical) import; returns its index.
+ * "gemdos:" is prefixed here rather than carried by the caller, since
+ * this version recognises exactly one namespace (see find_abi_needed());
+ * a later stage adding more (aes:, vdi:, ...) would pass the namespace
+ * in instead of hardcoding it here. */
+static uint32_t import_list_add(IMPORT **imports, size_t *nimports, size_t *cap,
+                                const char *sym_name, uint32_t abi_major,
+                                int kind, const char *in_path)
+{
+    size_t i;
+    char *full_name;
+
+    if (strlen(sym_name) > 200)
+        die("'%s' imports a symbol name that is implausibly long (%lu "
+            "bytes); refusing rather than build an oversized .ptos.imports "
+            "string table", in_path, (unsigned long)strlen(sym_name));
+
+    full_name = malloc(strlen("gemdos:") + strlen(sym_name) + 1);
+    if (!full_name)
+        die("out of memory");
+    strcpy(full_name, "gemdos:");
+    strcat(full_name, sym_name);
+
+    for (i = 0; i < *nimports; i++)
+    {
+        if ((*imports)[i].abi_major == abi_major
+         && strcmp((*imports)[i].name, full_name) == 0)
+        {
+            free(full_name);
+            return (uint32_t)i;
+        }
+    }
+
+    if (*nimports == *cap)
+    {
+        *cap = *cap ? *cap * 2 : 16;
+        *imports = realloc(*imports, *cap * sizeof(**imports));
+        if (!*imports)
+            die("out of memory");
+    }
+
+    (*imports)[*nimports].name = full_name;
+    (*imports)[*nimports].abi_major = abi_major;
+    (*imports)[*nimports].abi_minor = 0;
+    (*imports)[*nimports].kind = kind;
+    return (uint32_t)(*nimports)++;
+}
+
+static void bind_list_add(BIND **binds, size_t *nbinds, size_t *cap,
+                          uint32_t import_index, uint32_t slot_vaddr, int bind_op)
+{
+    if (*nbinds == *cap)
+    {
+        *cap = *cap ? *cap * 2 : 16;
+        *binds = realloc(*binds, *cap * sizeof(**binds));
+        if (!*binds)
+            die("out of memory");
+    }
+
+    (*binds)[*nbinds].import_index = import_index;
+    (*binds)[*nbinds].slot_vaddr = slot_vaddr;
+    (*binds)[*nbinds].bind_op = bind_op;
+    (*nbinds)++;
+}
+
 static int slot_cmp(const void *a, const void *b)
 {
     uint32_t va = ((const SLOT *)a)->vaddr;
@@ -561,7 +914,13 @@ int main(int argc, char **argv)
     uint32_t e_type, e_machine;
     uint32_t e_phoff, e_shoff, e_entry;
     uint16_t e_phentsize, e_phnum, e_shentsize, e_shnum, e_shstrndx;
-    uint32_t dir32_type, relative_type;
+    uint32_t dir32_type, relative_type, jump_slot_type, glob_dat_type;
+    int have_abi_needed;
+    uint32_t abi_major;
+    IMPORT *imports;
+    size_t nimports, import_cap;
+    BIND *binds;
+    size_t nbinds, bind_cap;
     SEGMENT *segs;
     size_t nsegs, seg_cap;
     SLOT *slots;
@@ -572,8 +931,10 @@ int main(int argc, char **argv)
     FILE *out;
     BUF payload;
     BUF newphdrs;
+    BUF imports_payload;
     unsigned char hdrbuf[8];
     uint32_t new_data_off, padded_len, new_phdr_off;
+    uint32_t imports_data_off, imports_padded_len;
     uint32_t new_phnum;
     int strip_shdr;
     int allow_no_relocations;
@@ -645,13 +1006,17 @@ int main(int argc, char **argv)
 
     if (e_machine == EM_ARM)
     {
-        dir32_type = 2;     /* R_ARM_ABS32 */
-        relative_type = 23; /* R_ARM_RELATIVE */
+        dir32_type = 2;      /* R_ARM_ABS32 */
+        relative_type = 23;  /* R_ARM_RELATIVE */
+        glob_dat_type = 21;  /* R_ARM_GLOB_DAT */
+        jump_slot_type = 22; /* R_ARM_JUMP_SLOT */
     }
     else if (e_machine == EM_68K)
     {
-        dir32_type = 1;     /* R_68K_32 */
-        relative_type = 22; /* R_68K_RELATIVE */
+        dir32_type = 1;      /* R_68K_32 */
+        glob_dat_type = 20;  /* R_68K_GLOB_DAT */
+        jump_slot_type = 21; /* R_68K_JMP_SLOT */
+        relative_type = 22;  /* R_68K_RELATIVE */
     }
     else
         die("'%s' targets an unsupported machine (%u); only ARM and m68k "
@@ -722,6 +1087,16 @@ int main(int argc, char **argv)
             "already packed, or stripped before packing?", in_path);
     if (e_shentsize != SHDR_SIZE)
         die("'%s' has an unexpected section header size", in_path);
+
+    find_abi_needed(in, in_size, e_shoff, e_shnum, e_shentsize, in_path,
+                    &have_abi_needed, &abi_major);
+
+    imports = NULL;
+    nimports = 0;
+    import_cap = 0;
+    binds = NULL;
+    nbinds = 0;
+    bind_cap = 0;
 
     /* copy the whole input file through unchanged; RELA/RELATIVE entries
      * may still patch a few bytes of it below (pack_addend) */
@@ -844,6 +1219,49 @@ int main(int argc, char **argv)
             r_info = rd32(ent + 4);
             type = r_info & 0xffUL;
             addend = rela ? rd32(ent + 8) : 0;
+
+            /* R_*_JUMP_SLOT/R_*_GLOB_DAT exclusively arise from a real
+             * dynamic-symbol reference -- never something --emit-relocs
+             * produces for an internal branch/call -- so these two types
+             * are the pTOS ABI import mechanism's own, handled here
+             * instead of falling into the DIR32/RELATIVE/no-fixup
+             * dispatch below (doc/elfload.txt's "Native pTOS ABI
+             * imports" section). */
+            if (type == jump_slot_type || type == glob_dat_type)
+            {
+                const char *sym_name;
+                int kind;
+                int bind_op;
+                uint32_t import_index;
+
+                if (!have_abi_needed)
+                    die("'%s' has a dynamic-symbol relocation (type %lu) "
+                        "at 0x%08lx but no \"%s<N>\" DT_NEEDED dependency; "
+                        "pTOS has no general purpose dynamic linker, so "
+                        "an unresolved dynamic reference can never be "
+                        "satisfied at load time", in_path,
+                        (unsigned long)type, (unsigned long)r_offset,
+                        PTOS_ABI_SONAME_PREFIX);
+
+                sym_name = resolve_dynamic_import(in_path, r_info, symtab_offset,
+                                                  symtab_size, symtab_entsize,
+                                                  in_size, in, e_shoff, e_shnum,
+                                                  e_shentsize, sh_link, &kind);
+
+                if (type == jump_slot_type)
+                    bind_op = PTOS_BIND_CODE_ADDRESS;
+                else if (kind == PTOSABI_KIND_FUNCTION)
+                    bind_op = PTOS_BIND_CODE_ADDRESS;
+                else
+                    bind_op = PTOS_BIND_DATA_ADDRESS;
+
+                import_index = import_list_add(&imports, &nimports, &import_cap,
+                                               sym_name, abi_major, kind, in_path);
+                bind_list_add(&binds, &nbinds, &bind_cap, import_index,
+                             r_offset, bind_op);
+
+                continue;
+            }
 
             if (type != dir32_type && type != relative_type)
             {
@@ -1058,6 +1476,89 @@ int main(int argc, char **argv)
     new_data_off = in_size;
     padded_len = (uint32_t)((payload.len + 3u) & ~3u);
 
+    /* build the .ptos.imports payload (doc/elfload.txt): a 32 byte header,
+     * the import table, the bind table, then a string table -- omitted
+     * entirely when the input imports nothing (nimports == 0), which
+     * includes every plain binary this tool already supported before
+     * this feature existed. */
+    imports_payload.data = NULL;
+    imports_payload.len = 0;
+    imports_payload.cap = 0;
+    imports_data_off = 0;
+    imports_padded_len = 0;
+
+    if (nimports > 0)
+    {
+        BUF strtab;
+        uint32_t *name_offs;
+        uint32_t import_table_off, bind_table_off, strtab_off;
+        unsigned char ihdrbuf[32];
+        size_t k;
+
+        if (nimports > PTOS_IMPORT_MAX_COUNT || nbinds > PTOS_IMPORT_MAX_COUNT)
+            die("'%s' has more pTOS ABI imports/binds (%lu/%lu) than the "
+                "loader accepts (%u each) -- see PTOS_IMPORT_MAX_COUNT in "
+                "bdos/elfld.c", in_path, (unsigned long)nimports,
+                (unsigned long)nbinds, PTOS_IMPORT_MAX_COUNT);
+
+        strtab.data = NULL;
+        strtab.len = 0;
+        strtab.cap = 0;
+
+        name_offs = malloc(nimports * sizeof(*name_offs));
+        if (!name_offs)
+            die("out of memory");
+        for (k = 0; k < nimports; k++)
+        {
+            name_offs[k] = (uint32_t)strtab.len;
+            buf_append(&strtab, imports[k].name, strlen(imports[k].name) + 1);
+        }
+
+        import_table_off = 32;
+        bind_table_off = import_table_off + (uint32_t)nimports * 12u;
+        strtab_off = bind_table_off + (uint32_t)nbinds * 12u;
+
+        wr32(ihdrbuf, PTOS_IMPORTS_MAGIC);
+        wr16(ihdrbuf + 4, PTOS_IMPORTS_VERSION);
+        wr16(ihdrbuf + 6, 0);
+        wr32(ihdrbuf + 8, (uint32_t)nimports);
+        wr32(ihdrbuf + 12, (uint32_t)nbinds);
+        wr32(ihdrbuf + 16, import_table_off);
+        wr32(ihdrbuf + 20, bind_table_off);
+        wr32(ihdrbuf + 24, strtab_off);
+        wr32(ihdrbuf + 28, (uint32_t)strtab.len);
+        buf_append(&imports_payload, ihdrbuf, sizeof(ihdrbuf));
+
+        for (k = 0; k < nimports; k++)
+        {
+            unsigned char ent[12];
+            wr32(ent + 0, name_offs[k]);
+            wr16(ent + 4, (uint16_t)imports[k].abi_major);
+            wr16(ent + 6, (uint16_t)imports[k].abi_minor);
+            ent[8] = (unsigned char)imports[k].kind;
+            ent[9] = ent[10] = ent[11] = 0;
+            buf_append(&imports_payload, ent, sizeof(ent));
+        }
+
+        for (k = 0; k < nbinds; k++)
+        {
+            unsigned char ent[12];
+            wr32(ent + 0, binds[k].import_index);
+            wr32(ent + 4, binds[k].slot_vaddr);
+            ent[8] = (unsigned char)binds[k].bind_op;
+            ent[9] = ent[10] = ent[11] = 0;
+            buf_append(&imports_payload, ent, sizeof(ent));
+        }
+
+        buf_append(&imports_payload, strtab.data, strtab.len);
+
+        free(name_offs);
+        free(strtab.data);
+
+        imports_data_off = new_data_off + padded_len;
+        imports_padded_len = (uint32_t)((imports_payload.len + 3u) & ~3u);
+    }
+
     /* build the new program header table: the original entries, minus any
      * PT_PHDR (see below), plus one new PT_PTOS_RELOC entry */
     newphdrs.data = NULL;
@@ -1102,6 +1603,21 @@ int main(int argc, char **argv)
         buf_append(&newphdrs, newph, sizeof(newph));
     }
 
+    if (nimports > 0)
+    {
+        unsigned char newph[PHDR_SIZE];
+        memset(newph, 0, sizeof(newph));
+        wr32(newph + PHDR_P_TYPE, (uint32_t)PT_PTOS_IMPORTS);
+        wr32(newph + PHDR_P_OFFSET, imports_data_off);
+        wr32(newph + PHDR_P_VADDR, 0);
+        wr32(newph + 12 /* p_paddr */, 0);
+        wr32(newph + PHDR_P_FILESZ, (uint32_t)imports_payload.len);
+        wr32(newph + PHDR_P_MEMSZ, 0);
+        wr32(newph + 24 /* p_flags */, 0);
+        wr32(newph + 28 /* p_align */, 1);   /* metadata only, see PT_PTOS_RELOC above */
+        buf_append(&newphdrs, newph, sizeof(newph));
+    }
+
     /* new_data_off/padded_len/newphdrs.len are all uint32_t/size_t
      * values derived from an in_size already proven to fit uint32_t, but
      * their sum -- the packed file's total length -- is not itself
@@ -1117,12 +1633,13 @@ int main(int argc, char **argv)
      * yet still be unloadable, so bound the whole appended region --
      * every offset within it that the loader might read -- by 0x80000000
      * instead of 0xffffffff. */
-    if ((uint64_t)new_data_off + padded_len + newphdrs.len > 0x80000000UL)
+    if ((uint64_t)new_data_off + padded_len + imports_padded_len + newphdrs.len
+        > 0x80000000UL)
         die("'%s': packed output would exceed the loader's 0x80000000 "
             "signed-offset limit (bdos/elfld.c read_at())",
             in_path);
 
-    new_phdr_off = new_data_off + padded_len;
+    new_phdr_off = new_data_off + padded_len + imports_padded_len;
     /* newphdrs.len is a whole number of entries: the copy loop above
      * appends exactly one PHDR_SIZE per non-PT_PHDR input entry, and the
      * block below appends exactly one more (the new PT_PTOS_RELOC) */
@@ -1164,13 +1681,34 @@ int main(int argc, char **argv)
         if (fwrite(zero, 1, padded_len - payload.len, out) != padded_len - payload.len)
             die("short write to '%s'", out_path);
     }
+    if (nimports > 0)
+    {
+        if (fwrite(imports_payload.data, 1, imports_payload.len, out)
+            != imports_payload.len)
+            die("short write to '%s'", out_path);
+        if (imports_padded_len > imports_payload.len)
+        {
+            static const unsigned char zero[4] = { 0, 0, 0, 0 };
+            if (fwrite(zero, 1, imports_padded_len - imports_payload.len, out)
+                != imports_padded_len - imports_payload.len)
+                die("short write to '%s'", out_path);
+        }
+    }
     if (fwrite(newphdrs.data, 1, newphdrs.len, out) != newphdrs.len)
         die("short write to '%s'", out_path);
 
     if (fclose(out) != 0)
         die("error closing '%s'", out_path);
 
-    fprintf(stderr, "%s: packed %lu relocation%s into '%s' (%lu bytes)\n",
+    if (nimports > 0)
+        fprintf(stderr, "%s: packed %lu relocation%s and %lu import%s "
+                "(%lu bind%s) into '%s' (%lu bytes)\n",
+                g_argv0, (unsigned long)nslots, nslots == 1 ? "" : "s",
+                (unsigned long)nimports, nimports == 1 ? "" : "s",
+                (unsigned long)nbinds, nbinds == 1 ? "" : "s",
+                out_path, (unsigned long)(new_phdr_off + newphdrs.len));
+    else
+        fprintf(stderr, "%s: packed %lu relocation%s into '%s' (%lu bytes)\n",
             g_argv0, (unsigned long)nslots, nslots == 1 ? "" : "s",
             out_path, (unsigned long)(new_phdr_off + newphdrs.len));
 
