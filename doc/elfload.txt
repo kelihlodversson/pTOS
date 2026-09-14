@@ -283,6 +283,31 @@ libptos-abi.so.1 build rules for the exact working invocations.
 symbols; "readelf -r prog.elf" shows the R_*_JUMP_SLOT/R_*_GLOB_DAT
 relocations ptos-elf-pack converts (below).
 
+-mshort is a property of the *call*, not of whichever file declares the
+function: it must cover every translation unit that calls a function
+declared in include/ptos-abi/gemdos.h, not just the ones that #include
+that header. That includes any other library the same executable calls
+with a WORD/int-sized stack argument -- an ordinary libcmini build is
+NOT one of those translation units (cli/Makefile's own TEST_CFLAGS
+comment explains why normal m68k userland must not add -mshort), so
+linking this header's calls into the same executable as a plain
+libcmini function taking such an argument reproduces the exact
+argument-corruption bug described above, just against a userland callee
+instead of a kernel one. Since libcmini is a build dependency here
+(lib/libcmini, BUILD_SHORT=Y in its own Makefile), it already builds an
+-mshort multilib variant of itself alongside its default one -- link
+against libcmini's own "mshort" or "<cpu>/mshort" build directory (e.g.
+obj/libcmini-build/m68020-60/mshort/libcmini.a and that same directory's
+objs/crt0.o, matching whichever CPU multilib the rest of the link
+targets) instead of the default, non -mshort one, rather than mixing
+the two. tests/ptos_abi_import/abi_probe.c itself does not need this:
+it never calls a libcmini function directly (its only crossing points
+into libcmini/crt0's own non -mshort code are argument-free -- crt0
+calling "int main(void)" -- and a register return, neither of which is
+stack-argument-width sensitive), so linking it against the ordinary
+default libcmini build is correct for that one payload specifically,
+not a general recommendation.
+
 Every function pTOS currently exports through this mechanism is a GEMDOS
 (TRAP #1) call, under the "gemdos:" namespace, named after its official
 GEMDOS function name as documented by tos.hyp

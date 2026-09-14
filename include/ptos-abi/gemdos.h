@@ -60,7 +60,13 @@
  * function with a WORD-sized stack argument in the first place). Mixing
  * an -mshort translation unit's calls into such a library carelessly
  * reproduces the exact argument-corruption bug described above, just
- * against a userland callee instead of a kernel one.
+ * against a userland callee instead of a kernel one. A real application
+ * that wants both this header's calls and ordinary libcmini functions
+ * (not just this one test payload) must link against libcmini's own
+ * "mshort"/"<cpu>/mshort" multilib build (lib/libcmini's Makefile
+ * already builds one alongside its default, non -mshort one --
+ * BUILD_SHORT=Y there) instead of the default, non -mshort one -- see
+ * doc/elfload.txt's "Building against the ABI (SDK side)" section.
  */
 
 #ifndef PTOS_ABI_GEMDOS_H

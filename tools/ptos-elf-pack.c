@@ -159,6 +159,13 @@
  * here would just move the failure from pack time to load time */
 #define PTOS_IMPORT_MAX_COUNT   512U
 
+/* must match bdos/elfld.c's PTOS_IMPORT_NAME_MAX: the loader reads at
+ * most this many bytes of a "namespace:name" string (plus its own
+ * NUL), so a longer one packed here would load fine here but always
+ * fail at Pexec() time with no way for the packer's own success to
+ * have warned about it */
+#define PTOS_IMPORT_NAME_MAX    63U
+
 /* the SDK's link-time-fiction stub library every pTOS ABI import must
  * come from (doc/elfload.txt); its SONAME's trailing version number is
  * read directly as the ABI major version every symbol pulled from it is
@@ -900,10 +907,13 @@ static uint32_t import_list_add(IMPORT **imports, size_t *nimports, size_t *cap,
     size_t i;
     char *full_name;
 
-    if (strlen(sym_name) > 200)
-        die("'%s' imports a symbol name that is implausibly long (%lu "
-            "bytes); refusing rather than build an oversized .ptos.imports "
-            "string table", in_path, (unsigned long)strlen(sym_name));
+    if (strlen("gemdos:") + strlen(sym_name) > PTOS_IMPORT_NAME_MAX)
+        die("'%s' imports a symbol whose full \"gemdos:%s\" name is %lu "
+            "bytes, past the loader's own PTOS_IMPORT_NAME_MAX (%u); "
+            "refusing rather than pack a binary Pexec() would always "
+            "reject", in_path, sym_name,
+            (unsigned long)(strlen("gemdos:") + strlen(sym_name)),
+            PTOS_IMPORT_NAME_MAX);
 
     full_name = malloc(strlen("gemdos:") + strlen(sym_name) + 1);
     if (!full_name)
