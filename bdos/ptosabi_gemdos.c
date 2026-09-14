@@ -43,6 +43,13 @@
  * vdi/vdi_control.c and their own "#include bdosbind.h" -- so this is
  * an established pattern here, not a new one.
  *
+ * Sversion is the one deliberate exception: bdosmain.c's xgetver() is a
+ * pure compile-time constant with no privileged instruction, no disk
+ * I/O, and no dependency on osif()'s redirection or hard-error recovery,
+ * so it is exported directly, with no trap1() indirection at all -- an
+ * optimisation that is safe only because of those specific properties,
+ * not a precedent for exporting any other handler this way.
+ *
  * This table is looked up by bdos/elfld.c at Pexec() time (see
  * doc/elfload.txt's "Native pTOS ABI imports" section); it is not used
  * by, and does not replace, the classic TRAP #1 dispatcher in
@@ -57,6 +64,11 @@
 #include "emutos.h"
 #include "asm.h"
 #include "ptosabi.h"
+
+/* bdosmain.c: see this file's own top comment on why Sversion is
+ * exported directly rather than through a trap1() wrapper like every
+ * other entry below. */
+long xgetver(void);
 
 #define GEMDOS_ABI_MAJOR    1
 #define GEMDOS_ABI_MINOR    0
@@ -169,9 +181,6 @@ static long ptosabi_Tsettime(unsigned short t)
 
 static void *ptosabi_Fgetdta(void)
 { return (void *)trap1(0x2F); }
-
-static long ptosabi_Sversion(void)
-{ return trap1(0x30); }
 
 static short ptosabi_Ptermres(long blkln, short rc)
 { return (short)trap1(0x31, blkln, rc); }
@@ -291,7 +300,7 @@ static const PTOSABI_EXPORT gemdos_exports[] =
     F("Tsettime", ptosabi_Tsettime), /* 0x2D */
 
     F("Fgetdta",  ptosabi_Fgetdta),  /* 0x2F */
-    F("Sversion", ptosabi_Sversion), /* 0x30 */
+    F("Sversion", xgetver),          /* 0x30 -- direct: see this file's top comment */
     F("Ptermres", ptosabi_Ptermres), /* 0x31 */
 
     F("Dfree",    ptosabi_Dfree),    /* 0x36 */
