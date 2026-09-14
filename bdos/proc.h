@@ -29,6 +29,11 @@ void xterm(UWORD rc)  NORETURN ;
 WORD xtermres(long blkln, WORD rc);
 
 /*
+ * in bdosmain.c
+ */
+long xgetver(void);
+
+/*
  * in kpgmld.c
  */
 

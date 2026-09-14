@@ -56,6 +56,7 @@
 #include "pghdr.h"
 #include "string.h"
 #include "kprint.h"
+#include "ptosabi.h"
 
 /*
  * minimal ELF32 definitions (see the System V ABI).  All fields use the
@@ -96,6 +97,27 @@
 
 #define PTOS_RELOC_MAGIC    0x50544c31UL   /* checked verbatim, native endian */
 #define PTOS_RELOC_VERSION  1
+
+/* pTOS-private OS-specific program header type for native ABI imports
+ * (same PT_LOOS..PT_HIOS range as PT_PTOS_RELOC above); locates the
+ * ".ptos.imports" payload documented in doc/elfload.txt's "Native pTOS
+ * ABI imports" section. */
+#define PT_PTOS_IMPORTS       0x60000002UL
+
+#define PTOS_IMPORTS_MAGIC    0x50544c32UL   /* checked verbatim, native endian */
+#define PTOS_IMPORTS_VERSION  1
+
+#define PTOS_BIND_CODE_ADDRESS  0
+#define PTOS_BIND_DATA_ADDRESS  1
+#define PTOS_BIND_GOT_SLOT      2
+
+/* sanity cap on import_count/bind_count: no real statically linked
+ * application needs anywhere near this many distinct pTOS ABI imports
+ * (the entire "gemdos" namespace today is a few dozen symbols), and the
+ * per-bind duplicate-slot check below is O(bind_count^2) -- an
+ * unbounded value from a crafted file would turn Pexec() into an
+ * effectively unbounded loop rather than a load-time error. */
+#define PTOS_IMPORT_MAX_COUNT   512U
 
 /* machine type and the "add the load bias to a 32-bit word" relocation
  * type for the architecture we are built for.  ELF_SLOT_ALIGN is the
@@ -182,6 +204,40 @@ typedef struct {
     UWORD   version;
     UWORD   reserved;
 } PTOSRELOCHDR;
+
+/* the 32 byte header at the start of a .ptos.imports payload; the import
+ * table, bind table and string table it describes follow it, each
+ * located by its own *_off field (relative to this header's own file
+ * offset, i.e. the PT_PTOS_IMPORTS program header's p_offset) rather
+ * than assumed adjacent -- see doc/elfload.txt. */
+typedef struct {
+    ULONG   magic;
+    UWORD   version;
+    UWORD   reserved;
+    ULONG   import_count;
+    ULONG   bind_count;
+    ULONG   import_table_off;
+    ULONG   bind_table_off;
+    ULONG   strtab_off;
+    ULONG   strtab_size;
+} PTOSIMPORTSHDR;
+
+/* one ".ptos.imports" import table entry (doc/elfload.txt) */
+typedef struct {
+    ULONG   name_off;   /* offset into the string table: "namespace:name" */
+    UWORD   abi_major;
+    UWORD   abi_minor;
+    UBYTE   kind;        /* PTOSABI_KIND_FUNCTION / PTOSABI_KIND_DATA */
+    UBYTE   reserved[3];
+} PTOSIMPORTENT;
+
+/* one ".ptos.bind" bind table entry (doc/elfload.txt) */
+typedef struct {
+    ULONG   import_index;
+    ULONG   slot_vaddr;
+    UBYTE   bind_op;      /* PTOS_BIND_* */
+    UBYTE   reserved[3];
+} PTOSBINDENT;
 
 /*
  * summary of what a program needs in memory, computed once from the
@@ -690,6 +746,264 @@ static LONG elf_relocate_ptos(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
     return 0;
 }
 
+#if CONF_WITH_PTOS_ABI_IMPORTS
+
+/* generous headroom over the longest real import name today,
+ * "gemdos:Ptermres" (15 bytes including the NUL) */
+#define PTOS_IMPORT_NAME_MAX   63
+
+/*
+ * look up one already-split "namespace:name" import against the
+ * kernel's own export tables. Only one table exists today
+ * (ptosabi_gemdos_table, bdos/ptosabi_gemdos.c); extend this dispatch
+ * with another strcmp() arm when a later stage of issue #308 adds
+ * another namespace (aes:, vdi:, ...) rather than restructuring it.
+ *
+ * Returns 0 and fills *out_addr and *out_kind on a match. Returns EPLFMT if
+ * the namespace is unrecognised, the symbol is unknown within it, or
+ * the export table's own ABI version cannot satisfy what the import
+ * asks for (an exact major version match, at least the requested minor)
+ * -- never binds a plausible-looking but wrong address.
+ */
+static LONG ptosabi_resolve(const char *namespace_name, const char *name,
+                            UWORD abi_major, UWORD abi_minor,
+                            PFLONG *out_addr, UBYTE *out_kind)
+{
+    const PTOSABI_TABLE *table;
+    UWORD i;
+
+    if (strcmp(namespace_name, ptosabi_gemdos_table.namespace_name) == 0)
+        table = &ptosabi_gemdos_table;
+    else
+        return EPLFMT;
+
+    if (table->abi_major != abi_major || table->abi_minor < abi_minor)
+        return EPLFMT;
+
+    for (i = 0; i < table->nexports; i++)
+    {
+        if (strcmp(table->exports[i].name, name) == 0)
+        {
+            *out_addr = table->exports[i].addr;
+            *out_kind = table->exports[i].kind;
+            return 0;
+        }
+    }
+
+    return EPLFMT;
+}
+
+/*
+ * read one import's "namespace:name" string out of the .ptos.imports
+ * string table into buf (which must be PTOS_IMPORT_NAME_MAX+1 bytes),
+ * and split it in place at the first ':' into *out_ns and *out_name.
+ * Rejects a string that doesn't fit in the buffer, isn't NUL-terminated
+ * within the string table's own bounds, or has no ':' separator (or an
+ * empty half on either side of one) -- never guesses a namespace or
+ * name out of a malformed entry.
+ */
+static LONG ptos_read_import_name(FH h, ULONG strtab_abs_off, ULONG strtab_size,
+                                  ULONG name_off, char *buf,
+                                  char **out_ns, char **out_name)
+{
+    ULONG avail, want, off;
+    LONG r;
+    char *colon;
+
+    if (name_off >= strtab_size)
+        return EPLFMT;
+
+    avail = strtab_size - name_off;
+    want = (avail < (ULONG)PTOS_IMPORT_NAME_MAX) ? avail : (ULONG)PTOS_IMPORT_NAME_MAX;
+
+    if (u32_add_overflow(strtab_abs_off, name_off, &off))
+        return EPLFMT;
+
+    r = read_at(h, off, buf, (LONG)want);
+    if (r < 0L)
+        return r;
+    buf[want] = '\0';
+
+    if (strlen(buf) == want)
+        return EPLFMT;   /* no NUL found within the read window */
+
+    colon = strchr(buf, ':');
+    if (colon == NULL || colon == buf || colon[1] == '\0')
+        return EPLFMT;
+
+    *colon = '\0';
+    *out_ns = buf;
+    *out_name = colon + 1;
+    return 0;
+}
+
+/*
+ * write one resolved import address into its 4-byte slot. Shares
+ * elf_fixup()'s bounds/alignment checks, but unlike a relocation this
+ * is not "add the load bias": the export table already holds real,
+ * running kernel addresses, so the resolved address is written as-is.
+ * All three PTOS_BIND_* operations write the plain address in version 1
+ * (see doc/elfload.txt for why they are still kept distinct); any other
+ * bind_op is a format error.
+ */
+static LONG ptos_bind_apply(UBYTE *load_base, const ELFINFO *info,
+                            ULONG vaddr, UBYTE bind_op, PFLONG addr)
+{
+    ULONG *slot;
+
+    if (bind_op != PTOS_BIND_CODE_ADDRESS && bind_op != PTOS_BIND_DATA_ADDRESS
+     && bind_op != PTOS_BIND_GOT_SLOT)
+        return EPLFMT;
+
+    if (vaddr < info->link_base)
+        return EPLFMT;
+    if (info->mem_end < (ULONG)sizeof(ULONG)
+     || vaddr > info->mem_end - (ULONG)sizeof(ULONG))
+        return EPLFMT;
+
+    slot = (ULONG *)(load_base + (vaddr - info->link_base));
+
+    if ((ULONG)slot & (ELF_SLOT_ALIGN - 1))
+        return EPLFMT;
+
+    *slot = (ULONG)addr;
+    return 0;
+}
+
+/*
+ * elf_resolve_imports - resolve and apply every entry in a .ptos.imports
+ * payload (doc/elfload.txt), found via a PT_PTOS_IMPORTS program header
+ * exactly the way elf_relocate_ptos() finds PT_PTOS_RELOC.
+ *
+ * Each bind record is resolved independently (re-reading its import
+ * record and name every time, even when several binds share one
+ * import_index): this keeps the loader's memory footprint at a handful
+ * of stack-resident records regardless of how many imports a program
+ * has, matching every other pass in this file, none of which ever
+ * builds an in-memory table of file content.
+ */
+static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
+                                const ELFINFO *info)
+{
+    PTOSIMPORTSHDR ih;
+    ULONG import_table_lim, bind_table_lim, strtab_lim, payload_end;
+    ULONG import_table_abs, bind_table_abs, strtab_abs;
+    ULONG i, j;
+    LONG r;
+
+    if (ph->p_filesz < (ULONG)sizeof(PTOSIMPORTSHDR))
+        return EPLFMT;
+
+    if (u32_add_overflow(ph->p_offset, ph->p_filesz, &payload_end))
+        return EPLFMT;
+
+    r = read_at(h, ph->p_offset, &ih, (LONG)sizeof(ih));
+    if (r < 0L)
+        return r;
+
+    if (ih.magic != PTOS_IMPORTS_MAGIC || ih.version != PTOS_IMPORTS_VERSION)
+        return EPLFMT;
+
+    if (ih.import_count > PTOS_IMPORT_MAX_COUNT || ih.bind_count > PTOS_IMPORT_MAX_COUNT)
+        return EPLFMT;
+
+    /* every table/region named by the header must lie fully inside the
+     * payload (ph->p_filesz), checked without ever forming an
+     * intermediate sum that could silently wrap for a crafted file */
+    if (u32_mul_overflow(ih.import_count, (ULONG)sizeof(PTOSIMPORTENT), &import_table_lim)
+     || u32_add_overflow(ih.import_table_off, import_table_lim, &import_table_lim)
+     || import_table_lim > ph->p_filesz)
+        return EPLFMT;
+
+    if (u32_mul_overflow(ih.bind_count, (ULONG)sizeof(PTOSBINDENT), &bind_table_lim)
+     || u32_add_overflow(ih.bind_table_off, bind_table_lim, &bind_table_lim)
+     || bind_table_lim > ph->p_filesz)
+        return EPLFMT;
+
+    if (u32_add_overflow(ih.strtab_off, ih.strtab_size, &strtab_lim)
+     || strtab_lim > ph->p_filesz)
+        return EPLFMT;
+
+    if (u32_add_overflow(ph->p_offset, ih.import_table_off, &import_table_abs)
+     || u32_add_overflow(ph->p_offset, ih.bind_table_off, &bind_table_abs)
+     || u32_add_overflow(ph->p_offset, ih.strtab_off, &strtab_abs))
+        return EPLFMT;
+
+    for (i = 0; i < ih.bind_count; i++)
+    {
+        PTOSBINDENT bind;
+        PTOSIMPORTENT imp;
+        char namebuf[PTOS_IMPORT_NAME_MAX + 1];
+        char *ns, *name;
+        PFLONG addr;
+        UBYTE kind;
+        ULONG off;
+
+        if (u32_mul_overflow(i, (ULONG)sizeof(PTOSBINDENT), &off)
+         || u32_add_overflow(bind_table_abs, off, &off))
+            return EPLFMT;
+
+        r = read_at(h, off, &bind, (LONG)sizeof(bind));
+        if (r < 0L)
+            return r;
+
+        if (bind.import_index >= ih.import_count)
+            return EPLFMT;
+
+        /* no two binds may target the same slot -- see doc/elfload.txt.
+         * Bounded to at most PTOS_IMPORT_MAX_COUNT^2 re-reads by the
+         * cap checked above. */
+        for (j = 0; j < i; j++)
+        {
+            PTOSBINDENT prior;
+            ULONG prior_off;
+
+            if (u32_mul_overflow(j, (ULONG)sizeof(PTOSBINDENT), &prior_off)
+             || u32_add_overflow(bind_table_abs, prior_off, &prior_off))
+                return EPLFMT;
+
+            r = read_at(h, prior_off, &prior, (LONG)sizeof(prior));
+            if (r < 0L)
+                return r;
+
+            if (prior.slot_vaddr == bind.slot_vaddr)
+                return EPLFMT;
+        }
+
+        if (u32_mul_overflow(bind.import_index, (ULONG)sizeof(PTOSIMPORTENT), &off)
+         || u32_add_overflow(import_table_abs, off, &off))
+            return EPLFMT;
+
+        r = read_at(h, off, &imp, (LONG)sizeof(imp));
+        if (r < 0L)
+            return r;
+
+        r = ptos_read_import_name(h, strtab_abs, ih.strtab_size, imp.name_off,
+                                  namebuf, &ns, &name);
+        if (r < 0L)
+            return r;
+
+        r = ptosabi_resolve(ns, name, imp.abi_major, imp.abi_minor, &addr, &kind);
+        if (r < 0L)
+            return r;
+
+        /* the import's declared kind must agree with what the export
+         * table actually is: an app importing a data symbol as if it
+         * were callable (or vice versa) is a packaging/link error, not
+         * something to bind anyway and hope for the best */
+        if (kind != imp.kind)
+            return EPLFMT;
+
+        r = ptos_bind_apply(load_base, info, bind.slot_vaddr, bind.bind_op, addr);
+        if (r < 0L)
+            return r;
+    }
+
+    return 0;
+}
+
+#endif /* CONF_WITH_PTOS_ABI_IMPORTS */
+
 /*
  * elf_pgmld - load pass, called by kpgmld()
  *
@@ -701,7 +1015,12 @@ LONG elf_pgmld(FH h, PD *p)
 {
     Elf32_Ehdr ehdr;
     Elf32_Phdr ph;
-    Elf32_Phdr ptos_reloc_ph;
+    /* zero-initialised so a build that cannot prove have_ptos_reloc/
+     * have_ptos_imports imply an assignment (this one included) never
+     * warns about a possibly-uninitialised read below; the real value
+     * is always the one assigned in the loop, never this one */
+    Elf32_Phdr ptos_reloc_ph = { 0 };
+    Elf32_Phdr ptos_imports_ph = { 0 };
     ELFINFO info;
     UBYTE *load_base;
     LONG bias;
@@ -711,6 +1030,7 @@ LONG elf_pgmld(FH h, PD *p)
     LONG r;
     UWORD i;
     BOOL have_ptos_reloc = FALSE;
+    BOOL have_ptos_imports = FALSE;
 
     r = read_at(h, 0UL, &ehdr, (LONG)sizeof(ehdr));
     if (r < 0L)
@@ -785,6 +1105,15 @@ LONG elf_pgmld(FH h, PD *p)
             continue;
         }
 
+        if (ph.p_type == PT_PTOS_IMPORTS)
+        {
+            /* same "last one wins, validated properly below" approach as
+             * PT_PTOS_RELOC above */
+            ptos_imports_ph = ph;
+            have_ptos_imports = TRUE;
+            continue;
+        }
+
         if (ph.p_type != PT_LOAD || ph.p_filesz == 0)
             continue;
 
@@ -809,9 +1138,26 @@ LONG elf_pgmld(FH h, PD *p)
     }
 
     if (have_ptos_reloc)
-        return elf_relocate_ptos(h, &ptos_reloc_ph, load_base, &info, bias);
+        r = elf_relocate_ptos(h, &ptos_reloc_ph, load_base, &info, bias);
+    else
+        r = elf_relocate(h, &ehdr, load_base, &info, bias);
+    if (r < 0L)
+        return r;
 
-    return elf_relocate(h, &ehdr, load_base, &info, bias);
+    if (have_ptos_imports)
+    {
+#if CONF_WITH_PTOS_ABI_IMPORTS
+        return elf_resolve_imports(h, &ptos_imports_ph, load_base, &info);
+#else
+        /* no export table to resolve against: binding nothing and
+         * pretending the program loaded correctly would leave every
+         * import slot at 0, which a native application must never
+         * silently call through (see doc/elfload.txt) */
+        return EPLFMT;
+#endif
+    }
+
+    return 0;
 }
 
 #endif /* CONF_WITH_ELF_LOADER */
