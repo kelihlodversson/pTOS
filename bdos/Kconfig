@@ -63,9 +63,9 @@ config CONF_WITH_PTOS_ABI_IMPORTS
 	help
 	  Let a native ELF executable import pTOS system functions -- currently
 	  every GEMDOS (TRAP #1) call the kernel implements -- as ordinary typed
-	  C function calls, resolved to their real kernel addresses by Pexec()
-	  instead of going through a TRAP #1 parameter block. See
-	  doc/elfload.txt's "Native pTOS ABI imports" section.
+	  C function calls, resolved by Pexec() to a thin per-call wrapper
+	  instead of requiring the caller to build a TRAP #1 parameter block by
+	  hand. See doc/elfload.txt's "Native pTOS ABI imports" section.
 
 	  This builds the kernel's own versioned export table (bdos/ptosabi_gemdos.c)
 	  and the bdos/elfld.c code that resolves .ptos.imports/.ptos.bind ELF

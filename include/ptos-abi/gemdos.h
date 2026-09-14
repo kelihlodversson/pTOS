@@ -7,9 +7,9 @@
  * option any later version.  See doc/license.txt for details.
  *
  * Declares the same functions bdos/ptosabi_gemdos.c exports under the
- * "gemdos" namespace, with the same C signature their internal
- * implementation already has (see that file for the exact mapping to
- * each GEMDOS opcode). Every name here is the official GEMDOS function
+ * "gemdos" namespace, with the same C signature that file's own
+ * trap1()-based wrapper for it uses (see that file for the exact mapping
+ * to each GEMDOS opcode). Every name here is the official GEMDOS function
  * name as documented by tos.hyp
  * (https://freemint.github.io/tos.hyp/en/gemdos_functions.html),
  * verified name-for-name against that page. A native ELF application

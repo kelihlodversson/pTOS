@@ -288,13 +288,21 @@ Every function pTOS currently exports through this mechanism is a GEMDOS
 GEMDOS function name as documented by tos.hyp
 (https://freemint.github.io/tos.hyp/en/gemdos_functions.html) -- Fopen,
 Dsetdrv, Cconws, and so on, verified name-for-name against that page --
-with the same C signature its existing internal implementation already
-has -- see bdos/ptosabi_gemdos.c for the full list and bdos/fs.h,
-bdos/console.h, bdos/proc.h, bdos/mem.h, bdos/time.h for the exact
-prototypes. Only GEMDOS
-opcodes the funcs[] dispatch table in bdos/bdosmain.c actually implements
-(i.e. not "NI"/not implemented) are exported. Later stages of #308 are
-expected to add further namespaces (aes:, vdi:, ptos:) the same way.
+with the same C signature bdosbind.h's own classic trap1()-based macro
+uses for it where one exists, or the internal handler's own parameter
+list (in the same order GEMDOS's own wire format already gives it) where
+it does not -- see bdos/ptosabi_gemdos.c for the full list and
+include/ptos-abi/gemdos.h for the exact prototypes a native application
+sees. Only GEMDOS opcodes the funcs[] dispatch table in bdos/bdosmain.c
+actually implements (i.e. not "NI"/not implemented) are exported. Later
+stages of #308 are expected to add further namespaces (aes:, vdi:, ptos:)
+the same way.
+
+A native import is a thin wrapper around trap1()/trap1_pexec(), the same
+TRAP #1/SVC entry point a classic PRG bound against bdosbind.h already
+uses -- see "How ptos-elf-pack builds it" and bdos/ptosabi_gemdos.c's own
+comment for why binding directly to bdosmain.c's internal handler would
+be unsafe instead.
 
 The ".ptos.imports" payload
 ............................
@@ -470,3 +478,25 @@ plus the exporting image's own data context) instead of a bare address
 for at least some function imports; this version has no encoding for
 that, by design -- see PT_PTOS_RELOC's own single-region assumption
 above, which has the identical boundary.
+
+Every exported GEMDOS call is a thin wrapper around trap1()/
+trap1_pexec() (util/arch/{m68k,arm}/miscasm.S, declared in "asm.h" and
+already used by include/bdosbind.h's own classic macros), not a raw
+pointer to bdosmain.c's internal handler. This is not an indirection for
+its own sake: bdos/proc.c's proc_go() starts every launched process,
+native ABI importers included, in genuine CPU user mode (clearing SR's
+S-bit on m68k, an SPSR of usr mode 0x10 on ARM). A native import slot is
+called directly by that user-mode process with no trap in between, so
+binding it to a raw handler address would run kernel-internal code --
+including anything that touches a privileged instruction, such as
+disable_interrupts()/enable_interrupts() (asm.h) -- at user privilege:
+undefined behaviour on real hardware, not merely unsupported. Going
+through trap1()/trap1_pexec() instead means every native call reaches
+bdosmain.c's osif() the normal way, via a real "trap #1"/"svc 1"
+instruction and the CPU's own user -> supervisor transition, so it gets
+osif()'s full behaviour for free and identically to a classic PRG bound
+against bdosbind.h: correct privilege, its per-call setjmp(errbuf)
+hard-error recovery (including the media-change retry loop), and its
+standard I/O device redirection (a prior Fforce() on Cconws()/Fwrite()/
+etc. is honoured exactly as it would be for a trap-based call). There is
+no native-import-specific limitation to document here as a result.

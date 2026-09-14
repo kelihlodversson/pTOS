@@ -52,7 +52,7 @@ PFVOID old_trap2; /* Old trap #2 handler, also used by rwa.S */
  */
 
 static long ni(void);
-long xgetver(void);
+static long xgetver(void);
 
 
 /*
@@ -315,12 +315,8 @@ static const FND funcs[] =
 /*
  *  xgetver -
  *      return current version number
- *
- *  not static: exported through the pTOS ABI (bdos/ptosabi_gemdos.c) as
- *  Sversion(); declared in proc.h alongside bdosmain.c's other
- *  externally callable GEMDOS handlers.
  */
-long xgetver(void)
+static long xgetver(void)
 {
     return (long)GEMDOS_VERSION;
 }
