@@ -616,8 +616,8 @@ dumpkbd.prg: obj/minicrt.o obj/memmove.o obj/dumpkbd.o obj/doprintf.o \
 # Host tools
 #
 
-TOCLEAN += bug draft erd grd ird mrd mkflop mkrom tos-lang-change \
-           temp.rsc temp.def
+TOCLEAN += bug draft erd grd ird mrd mkflop mkrom ptos-elf-pack \
+           tos-lang-change temp.rsc temp.def
 
 bug: tools/bug.c
 	$(NATIVECC) $< -o $@
@@ -626,6 +626,11 @@ mkrom: tools/mkrom.c
 	$(NATIVECC) $< -o $@
 
 mkflop: tools/mkflop.c
+	$(NATIVECC) $< -o $@
+
+# post-link tool packing an ELF's load relocations for bdos/elfld.c, see
+# doc/elfload.txt; not needed to build EmuTOS itself, built on demand
+ptos-elf-pack: tools/ptos-elf-pack.c
 	$(NATIVECC) $< -o $@
 
 erd: tools/erd.c
@@ -646,7 +651,7 @@ tos-lang-change: tools/tos-lang-change.c
 	$(NATIVECC) $< -o $@
 
 .PHONY: tools
-tools: bug draft erd grd ird mrd mkflop mkrom tos-lang-change
+tools: bug draft erd grd ird mrd mkflop mkrom ptos-elf-pack tos-lang-change
 
 #
 # NLS support
@@ -1138,6 +1143,25 @@ ifndef CONF_WITH_ELF_LOADER
 TEST_SUITES := $(filter-out pie_load,$(TEST_SUITES))
 endif
 
+# ptos_reloc_load launches two separate executables (reloc_probe.c, built
+# below, linked twice with different flags -- see TEST_PTOS_RELOC_LDFLAGS/
+# TEST_PTOS_RELOC_LDFLAGS2 below) packed into the compact PT_PTOS_RELOC
+# format via Pexec(), to exercise bdos/elfld.c's elf_relocate_ptos() --
+# needs CONF_WITH_ELF_LOADER for the same reason pie_load does. The same
+# object file links as either a fixed-base ET_EXEC with --emit-relocs
+# (REL-encoded on ARM, RELA-encoded on m68k -- ARM and m68k differ only in
+# relocation *encoding* here, both still name the DIR32 relocation type
+# directly, value already resolved into the slot at link time) or a PIE
+# ET_DYN with -pie --no-dynamic-linker (RELATIVE, value only in r_addend
+# on m68k's RELA, already in the slot on ARM's REL) -- so between the two
+# link shapes, on both architectures, this suite exercises every
+# combination elf_relocate_ptos()/ptos-elf-pack support: REL+DIR32,
+# REL+RELATIVE, RELA+DIR32, and RELA+RELATIVE (including the addend-
+# materialisation ptos-elf-pack does at pack time for that last case).
+ifndef CONF_WITH_ELF_LOADER
+TEST_SUITES := $(filter-out ptos_reloc_load,$(TEST_SUITES))
+endif
+
 GEN_SRC += tests/run_tests.c
 
 # Also depends on $(AUTOCONF_H): TEST_SUITES (and therefore this file's
@@ -1324,12 +1348,86 @@ else
 TEST_PIE_FILES =
 endif
 
+ifdef CONF_WITH_ELF_LOADER
+# PTRELOC.TOS / PTRELOC2.TOS: the ptos_reloc_load suite's two payloads
+# (see tests/ptos_reloc_load/reloc_probe.c), repacked into the compact
+# PT_PTOS_RELOC format, so loading them exercises elf_pgmld()'s *other*
+# relocation path (the one #309 added) instead of pieprobe.tos's ET_DYN
+# .rel.dyn/.rela.dyn one. The same object file is linked both ways so
+# each architecture covers both of the link shapes doc/elfload.txt
+# documents: a fixed-base ET_EXEC with --emit-relocs (REL-encoded on ARM,
+# RELA-encoded on m68k, value already resolved into the slot either way)
+# and a PIE ET_DYN with -pie --no-dynamic-linker (RELATIVE, value only in
+# r_addend on m68k's RELA -- exercising ptos-elf-pack's addend-
+# materialisation step -- already in the slot on ARM's REL). Which shape
+# is "primary" (PTRELOC.TOS) vs "secondary" (PTRELOC2.TOS) only affects
+# build order, not what gets tested: ptos_reloc_load.c launches both.
+#
+# On ARM, both shapes link fine through $(TEST_LD) (the normal $(CC)
+# driver), same as every other test binary. m68k's ET_EXEC secondary
+# shape does not: m68k-atari-mintelf-ld's default driver-selected script
+# ties TEXT's start to SIZEOF_HEADERS regardless of -Ttext (fine at a
+# nonzero base, but "not enough room for program headers" at -Ttext=0,
+# where there is nothing below it to hold them), while asking for the
+# same nonzero base via the $(CC) driver instead hits that script's own
+# PRG-shaped placement rule ("TEXT segment start address ... must be
+# 0x00000000"). Bypassing the driver and invoking the linker directly
+# with --oformat=elf32-m68k and a nonzero -Ttext, exactly as
+# doc/elfload.txt's own bare m68k recipe does, avoids both: verified
+# directly with this toolchain (a real libcmini-linked binary linked
+# this way, packed by ptos-elf-pack, and its 90 DIR32 relocations
+# decoded correctly).
+obj/reloc_probe.o: tests/ptos_reloc_load/reloc_probe.c $(AUTOCONF_H) | obj
+	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+ifdef ARCH_ARM
+TEST_PTOS_RELOC_LDFLAGS  = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
+TEST_PTOS_RELOC_LDFLAGS2 = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start
+else
+# --oformat=elf32-m68k is required here for the same reason
+# doc/elfload.txt's own bare m68k recipe and TEST_PTOS_RELOC_LDFLAGS2's
+# raw-ld invocation below both need it: m68k-atari-mintelf-ld's default
+# emulation is elf32-atariprg, so without it this would risk linking a
+# PRG instead of an ELF, which ptos-elf-pack would then reject outright
+# as not an ELF file at all rather than exercising the m68k path.
+TEST_PTOS_RELOC_LDFLAGS = -Wl,-pie -Wl,--no-dynamic-linker -Wl,--oformat=elf32-m68k -Wl,-e_start
+# the directory holding the multilib variant of libgcc.a that $(CC)
+# $(CPUFLAGS) would otherwise have picked automatically as a driver
+TEST_LIBGCC_DIR := $(shell dirname $$($(CC) $(CPUFLAGS) -print-libgcc-file-name))
+endif
+
+relocprobe-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+
+ifdef ARCH_ARM
+relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS2) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+else
+relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
+	$(CROSS_COMPILE)ld --oformat=elf32-m68k -q -Ttext=0x2000 -e _start \
+	  $(TEST_STARTUP) obj/reloc_probe.o \
+	  -L$(dir $(LIBCMINI_LIB)) -lcmini -L$(TEST_LIBGCC_DIR) -lgcc -o $@
+endif
+
+# --strip-shdr: no SHT_REL fallback must be reachable, so this test can
+# only pass by way of elf_relocate_ptos() actually working.
+PTRELOC.TOS: relocprobe-unpacked.tos ptos-elf-pack
+	./ptos-elf-pack --strip-shdr relocprobe-unpacked.tos $@
+
+PTRELOC2.TOS: relocprobe2-unpacked.tos ptos-elf-pack
+	./ptos-elf-pack --strip-shdr relocprobe2-unpacked.tos $@
+
+TEST_PTOS_RELOC_FILES = PTRELOC.TOS PTRELOC2.TOS
+else
+TEST_PTOS_RELOC_FILES =
+endif
+
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
-TEST_HD_FILES = runtests.tos tests/emudesk.inf $(TEST_PIE_FILES)
+TEST_HD_FILES = runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_PTOS_RELOC_FILES)
 
-test-hd.img: runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_PTOS_RELOC_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR)
 
@@ -1350,7 +1448,9 @@ endif
 # regardless of .config -- anything gated on it here would silently never
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
-TOCLEAN += tests/run_tests.c runtests.tos pieprobe.tos test-hd.img
+TOCLEAN += tests/run_tests.c runtests.tos pieprobe.tos \
+           relocprobe-unpacked.tos PTRELOC.TOS \
+           relocprobe2-unpacked.tos PTRELOC2.TOS test-hd.img
 TOCLEAN_POST += libcmini-clean
 
 .PHONY: libcmini-clean
