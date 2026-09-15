@@ -64,6 +64,8 @@ class RDB:
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
 
+    MAX_MSG_SIZE = 16 * 1024 * 1024  # a NUL that never arrives shouldn't grow buf forever
+
     def _read_msg(self):
         idx = self.buf.find(b"\x00", self._scanned)
         while idx < 0:
@@ -72,6 +74,12 @@ class RDB:
             if not data:
                 raise ConnectionError("socket closed")
             self.buf += data  # bytearray += extends in place, unlike bytes +=
+            if len(self.buf) > self.MAX_MSG_SIZE:
+                raise RuntimeError(
+                    f"_read_msg: buffered {len(self.buf)} bytes with no NUL "
+                    f"terminator seen (limit {self.MAX_MSG_SIZE}) -- server "
+                    "protocol desync or a misbehaving peer on this port?"
+                )
             idx = self.buf.find(b"\x00", self._scanned)
         msg = bytes(self.buf[:idx])
         del self.buf[:idx + 1]
