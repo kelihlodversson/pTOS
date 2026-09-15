@@ -97,8 +97,20 @@ runs:
     # there needs this step's URLs and hashes bumped by hand; the sha256
     # pin means a stale URL fails loudly here instead of silently building
     # against whatever the site happens to serve.
-    - name: Install a -mfastcall capable m68k toolchain
+    # Both tarballs are sha256-pinned already (see below), so that pin also
+    # makes a solid cache key: a URL bump always changes at least one hash,
+    # which busts the cache automatically instead of needing its own key
+    # bumped by hand too.
+    - name: Cache the -mfastcall toolchain
       if: inputs.arch == 'm68k' && inputs.mfastcall == 'true'
+      id: cache-mfastcall
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/th-otto-mintelf
+        key: mfastcall-toolchain-70ae7f69ec54484b805990ddef517af13fccc3744018dbca3cc0e61eec1c55b6-e37c22f84baaf8ffc890a11265d4369498f9bc4e68aaac21dcef887d3655f025
+
+    - name: Install a -mfastcall capable m68k toolchain
+      if: inputs.arch == 'm68k' && inputs.mfastcall == 'true' && steps.cache-mfastcall.outputs.cache-hit != 'true'
       shell: bash
       env:
         GCC_URL: https://tho-otto.m68k.eu/download/mint/gcc-13.4.0-mintelf-20250702-bin-linux64.tar.xz
@@ -136,7 +148,12 @@ runs:
         mkdir -p "$dest/usr/m68k-atari-mintelf/sys-root/usr"
         ln -s /usr/m68k-atari-mintelf/include "$dest/usr/m68k-atari-mintelf/sys-root/usr/include"
 
-        echo "$dest/usr/bin" >>"$GITHUB_PATH"
+    # Runs whether the toolchain came from cache or a fresh download --
+    # PATH itself is never part of the cache.
+    - name: Add the -mfastcall toolchain to PATH
+      if: inputs.arch == 'm68k' && inputs.mfastcall == 'true'
+      shell: bash
+      run: echo "$RUNNER_TEMP/th-otto-mintelf/usr/bin" >>"$GITHUB_PATH"
 
     # A plain bare metal arm-none-eabi toolchain is all the Raspberry Pi
     # targets need, and Ubuntu packages one.

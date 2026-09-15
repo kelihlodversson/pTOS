@@ -159,7 +159,7 @@ class RDB:
                         f"alphabet (32-95) in {enc!r}"
                     )
                 accum = (accum << 6) | (c - 32)
-            out += bytes([(accum >> 16) & 0xFF, (accum >> 8) & 0xFF, accum & 0xFF])
+            out.extend(((accum >> 16) & 0xFF, (accum >> 8) & 0xFF, accum & 0xFF))
         if len(out) < rcount:
             raise RuntimeError(
                 f"mem: truncated reply, decoded {len(out)} bytes but server "
