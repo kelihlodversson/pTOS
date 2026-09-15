@@ -6,11 +6,21 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  *
- * A PTOSABI_TABLE is the versioned set of functions/data pTOS exports
- * under one native ABI namespace (e.g. "gemdos"); bdos/elfld.c resolves
+ * A PTOSABI_TABLE is the versioned set of functions/data pTOS would export
+ * under one native ABI namespace (e.g. "aes", "vdi"); bdos/elfld.c resolves
  * a native ELF binary's .ptos.imports entries against these tables at
  * Pexec() time.  See doc/elfload.txt's "Native pTOS ABI imports" section
  * for the on-disk side of this mechanism.
+ *
+ * No namespace table is registered yet: an earlier iteration of this
+ * mechanism exported every GEMDOS (TRAP #1) call this way, but the
+ * classic trap1()/TRAP #1 interface already serves that namespace well
+ * enough that the added indirection was not worth it there (see
+ * doc/elfload.txt). This format and bdos/elfld.c's resolution mechanism
+ * are kept as-is, ready for a future namespace (most plausibly aes: or
+ * vdi:, once part of one of those moves to userspace) to register a
+ * PTOSABI_TABLE the same way and add a lookup arm to
+ * bdos/elfld.c's ptosabi_resolve().
  */
 
 #ifndef PTOSABI_H
@@ -42,9 +52,6 @@ typedef struct {
     const PTOSABI_EXPORT  *exports;
     UWORD                  nexports;
 } PTOSABI_TABLE;
-
-/* bdos/ptosabi_gemdos.c: every implemented GEMDOS (TRAP #1) call */
-extern const PTOSABI_TABLE ptosabi_gemdos_table;
 
 #endif /* CONF_WITH_PTOS_ABI_IMPORTS */
 

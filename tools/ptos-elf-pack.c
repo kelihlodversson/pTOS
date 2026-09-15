@@ -267,7 +267,8 @@ typedef struct {
 /* one pTOS ABI import this tool has converted a dynamic relocation into
  * (doc/elfload.txt's ".ptos.imports payload"); "name" already carries
  * the "namespace:" prefix (always "gemdos:" in this version -- see
- * find_abi_needed()) */
+ * find_abi_needed() and import_list_add()'s own comment on why no kernel
+ * currently registers that namespace) */
 typedef struct {
     char     *name;
     uint32_t  abi_major;
@@ -897,9 +898,15 @@ static const char *resolve_dynamic_import(const char *in_path, uint32_t r_info,
 
 /* append (or find an existing, identical) import; returns its index.
  * "gemdos:" is prefixed here rather than carried by the caller, since
- * this version recognises exactly one namespace (see find_abi_needed());
- * a later stage adding more (aes:, vdi:, ...) would pass the namespace
- * in instead of hardcoding it here. */
+ * this version recognises exactly one namespace (see find_abi_needed()).
+ * No kernel export table currently registers that namespace (or any
+ * other -- see bdos/ptosabi.h and doc/elfload.txt's "Native pTOS ABI
+ * imports" section): this still packs a well-formed .ptos.imports
+ * payload, but bdos/elfld.c's ptosabi_resolve() unconditionally rejects
+ * it today, exactly as it would an unknown namespace. A later stage
+ * registering a real namespace (most plausibly "aes" or "vdi") would
+ * pass it in here instead of hardcoding "gemdos" -- this conversion
+ * mechanism itself needs no other change to serve one. */
 static uint32_t import_list_add(IMPORT **imports, size_t *nimports, size_t *cap,
                                 const char *sym_name, uint32_t abi_major,
                                 int kind, const char *in_path)

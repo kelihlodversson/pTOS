@@ -11,10 +11,10 @@ Pexec() chooses between the two by inspecting the file's magic number, so
 both formats coexist: a file starting with 0x7f 'E' 'L' 'F' is loaded by the
 ELF loader, one starting with 0x601a by the PRG loader.
 
-An ELF binary can also import pTOS system functions -- currently every
-GEMDOS (TRAP #1) call the kernel implements -- as ordinary typed C
+An ELF binary can also import pTOS system functions as ordinary typed C
 function calls, resolved to their real kernel addresses when the program
-is loaded; see "Native pTOS ABI imports" below.
+is loaded -- see "Native pTOS ABI imports" below; no namespace currently
+registers any functions this way (that section explains why).
 
 
 Why relocation is needed
@@ -227,107 +227,24 @@ imports and calls as ordinary typed C functions, resolved to their real
 kernel addresses when the program is loaded, without a filesystem-based
 dynamic linker or any runtime symbol lookup. This is the second piece of
 the native pTOS ABI work tracked by issue #308 (the first being
-.ptos.reloc, above); it lets a native ELF application call
+.ptos.reloc, above); it would let a native ELF application call a pTOS
+function directly, compiled and linked as a normal extern function call.
 
-    LONG h = Fopen("A:\\FOO.TXT", 0);
-
-directly, compiled and linked as a normal extern function call, instead of
-going through a TRAP #1 parameter block. The classic trap-based GEMDOS
-ABI is completely unaffected: it keeps working exactly as before, for both
-PRG and unpacked/packed ELF binaries that do not use this mechanism.
-
-Building against the ABI (SDK side)
-....................................
-
-An application imports pTOS functions by linking against a small SDK-
-provided shared object, conventionally
-
-    libptos-abi.so.1
-
-pTOS never looks for this file on disk, at build time or at runtime: it is
-a "link-time fiction" whose only purpose is to make an unmodified linker
-produce the normal ELF dynamic-import machinery (.dynsym/.dynstr/.rel.plt
-or .rela.plt/.got.plt) for each imported symbol, instead of failing with
-"undefined reference". Its SONAME's trailing version number -- the ".1" in
-"libptos-abi.so.1" -- is not cosmetic: ptos-elf-pack reads it directly as
-the ABI major version every symbol pulled from that library is imported
-at (see below), the same way a normal Unix shared library's SONAME
-version numbers its ABI.
-
-    m68k-atari-mintelf-gcc -ffreestanding -nostdlib -fPIE -c prog.c -o prog.o
-    m68k-atari-mintelf-ld --oformat=elf32-m68k -pie --no-dynamic-linker \
-        -e _start prog.o -L. -lptos-abi -o prog.elf
-    ptos-elf-pack prog.elf prog-packed.elf
-
-This only works for a PIE (ET_DYN): a fixed base ET_EXEC has no .dynsym/
-.got.plt machinery at all, so imports require the "-pie
---no-dynamic-linker" recipe already documented above for .ptos.reloc.
-
-On m68k, both the application and libptos-abi.so.1 itself MUST be built
-with -mshort. This is not just a matter of matching declared parameter
-widths: -mshort also changes the *stack argument width* m68k GCC
-generates for a WORD-sized parameter (2 bytes instead of 4), independent
-of that parameter's own declared C type, and every kernel GEMDOS handler
-is compiled with -mshort (doc/coding.txt / CLAUDE.md). Confirmed directly
-building tests/ptos_abi_import/abi_probe.c without it: a call written as
-Fwrite(handle, len, buf) reached the kernel's xwrite() as
-xwrite(0, 393216, <garbage>) instead of the real (6, 34, <buffer>) --
-every argument after the first WORD-sized one lands 2 bytes off from
-where the -mshort-compiled callee reads it. m68k-atari-mintelf-ld's
-default, driver-selected emulation also refuses both -shared and -pie
-outright ("-pie not supported"); its bare "m68kelf" emulation, invoked
-directly rather than through the $(CC) driver, accepts both -- see
-Makefile's PTOSABI_CFLAGS and the m68k branch of the ABIPROBE.TOS/
-libptos-abi.so.1 build rules for the exact working invocations.
-"readelf --dyn-syms prog.elf" lists the resulting undefined dynamic
-symbols; "readelf -r prog.elf" shows the R_*_JUMP_SLOT/R_*_GLOB_DAT
-relocations ptos-elf-pack converts (below).
-
--mshort is a property of the *call*, not of whichever file declares the
-function: it must cover every translation unit that calls a function
-declared in include/ptos-abi/gemdos.h, not just the ones that #include
-that header. That includes any other library the same executable calls
-with a WORD/int-sized stack argument -- an ordinary libcmini build is
-NOT one of those translation units (cli/Makefile's own TEST_CFLAGS
-comment explains why normal m68k userland must not add -mshort), so
-linking this header's calls into the same executable as a plain
-libcmini function taking such an argument reproduces the exact
-argument-corruption bug described above, just against a userland callee
-instead of a kernel one. Since libcmini is a build dependency here
-(lib/libcmini, BUILD_SHORT=Y in its own Makefile), it already builds an
--mshort multilib variant of itself alongside its default one -- link
-against libcmini's own "mshort" or "<cpu>/mshort" build directory (e.g.
-obj/libcmini-build/m68020-60/mshort/libcmini.a and that same directory's
-objs/crt0.o, matching whichever CPU multilib the rest of the link
-targets) instead of the default, non -mshort one, rather than mixing
-the two. tests/ptos_abi_import/abi_probe.c itself does not need this:
-it never calls a libcmini function directly (its only crossing points
-into libcmini/crt0's own non -mshort code are argument-free -- crt0
-calling "int main(void)" -- and a register return, neither of which is
-stack-argument-width sensitive), so linking it against the ordinary
-default libcmini build is correct for that one payload specifically,
-not a general recommendation.
-
-Every function pTOS currently exports through this mechanism is a GEMDOS
-(TRAP #1) call, under the "gemdos:" namespace, named after its official
-GEMDOS function name as documented by tos.hyp
-(https://freemint.github.io/tos.hyp/en/gemdos_functions.html) -- Fopen,
-Dsetdrv, Cconws, and so on, verified name-for-name against that page --
-with the same C signature bdosbind.h's own classic trap1()-based macro
-uses for it where one exists, or the internal handler's own parameter
-list (in the same order GEMDOS's own wire format already gives it) where
-it does not -- see bdos/ptosabi_gemdos.c for the full list and
-include/ptos-abi/gemdos.h for the exact prototypes a native application
-sees. Only GEMDOS opcodes the funcs[] dispatch table in bdos/bdosmain.c
-actually implements (i.e. not "NI"/not implemented) are exported. Later
-stages of #308 are expected to add further namespaces (aes:, vdi:, ptos:)
-the same way.
-
-A native import is a thin wrapper around trap1()/trap1_pexec(), the same
-TRAP #1/SVC entry point a classic PRG bound against bdosbind.h already
-uses -- see "How ptos-elf-pack builds it" and bdos/ptosabi_gemdos.c's own
-comment for why binding directly to bdosmain.c's internal handler would
-be unsafe instead.
+No namespace currently registers any functions through this mechanism.
+An earlier iteration exported every GEMDOS (TRAP #1) call this way, under
+a "gemdos:" namespace, but GEMDOS's own classic trap-based ABI
+(include/bdosbind.h's trap1()/trap1_pexec(), TRAP #1 on m68k / SVC on
+ARM) already serves native callers well enough on its own that the added
+indirection through this mechanism was not worth it there, and that
+namespace was removed again. The format, the loader-side resolution
+mechanism (below), and bdos/ptosabi.h's table-registration structures
+are kept as they are: they are namespace-agnostic, and are expected to
+become genuinely useful once part of the AES and/or VDI interfaces moves
+to userspace and needs exactly this kind of import mechanism -- see
+bdos/ptosabi.h's own top comment for how a future namespace registers
+one. Building an application against this mechanism, and ptos-elf-pack's
+"How ptos-elf-pack builds it" recipe below, will make sense again once a
+namespace exists to link against; there is nothing to import yet.
 
 The ".ptos.imports" payload
 ............................
@@ -365,11 +282,10 @@ assumed adjacent (each is independently bounds-checked against p_filesz):
         9       3     reserved   (0)
 
     name_off points at a NUL-terminated "namespace:name" string in the
-    string table, e.g. "gemdos:Fopen". abi_major must match the export
+    string table, e.g. "vdi:v_opnwk". abi_major must match the export
     table's version for that namespace exactly (see bdos/elfld.c);
     abi_minor is a minimum the export table's own minor version must meet
-    or exceed. Version 1 of the GEMDOS export table always exports
-    abi_major 1, abi_minor 0.
+    or exceed.
 
   * the bind table: bind_count fixed-size 12 byte records --
 
@@ -381,7 +297,7 @@ assumed adjacent (each is independently bounds-checked against p_filesz):
 
     Several bind records may name the same import_index: this is exactly
     how more than one call site or GOT slot can share one imported
-    symbol without repeating its name, per issue #310.
+    symbol without repeating its name.
 
   * the string table: strtab_size bytes of NUL-terminated strings,
     referenced by name_off above.
@@ -420,15 +336,38 @@ symbol's STT_FUNC/STT_OBJECT type) and one bind record (bind_op
 PTOS_BIND_CODE_ADDRESS for R_*_JUMP_SLOT or a GLOB_DAT against a STT_FUNC
 symbol, PTOS_BIND_DATA_ADDRESS for a GLOB_DAT against a STT_OBJECT symbol)
 at that relocation's r_offset -- already a load-time vaddr, since
-.got.plt/.got are SHF_ALLOC sections. Two bind records against the same
+.got.plt/.got are SHF_ALLOC sections. On m68k specifically, a plain DIR32
+relocation (R_68K_32) against one of those same undefined dynamic symbols
+is ALSO converted the same way: this toolchain has no -fPIC/-fPIE code
+generation, so a call to an imported function compiles to a plain
+absolute reference (an ordinary R_68K_32 relocation on the call's own
+address operand) rather than a PLT-relative one -- confirmed directly
+against this toolchain's actual "-pie --no-dynamic-linker" output, which
+emits exactly this shape alongside an R_68K_JMP_SLOT PLT entry the
+generated code never actually references. ARM's PIC-capable codegen does
+not produce this shape (only JUMP_SLOT/GLOB_DAT), so the same check
+(present on both architectures) simply never matches there. Either way,
+a DIR32 import carries no addend of its own -- a nonzero one, RELA-
+explicit or REL-implicit, is rejected outright, since version 1's bind
+mechanism has no addend component. Two bind records against the same
 imported symbol are merged into references to one shared import entry
 rather than duplicated. A DT_NEEDED entry that does not match this
 pattern is a packaging error: pTOS has no general purpose dynamic linker,
 so a real shared library dependency can never be satisfied at load time.
 A relocation against an undefined dynamic symbol that is NOT covered by a
-recognised libptos-abi.so.<N> dependency, or whose type is neither
-JUMP_SLOT nor GLOB_DAT, is also a packaging error rather than something
-silently left unresolved.
+recognised libptos-abi.so.<N> dependency, or whose type is none of
+JUMP_SLOT, GLOB_DAT, or DIR32, is also a packaging error rather than
+something silently left unresolved.
+
+The "gemdos" namespace name above is hardcoded (ptos-elf-pack.c's
+import_list_add()) rather than derived from anything in the input file --
+a leftover from when a kernel-side "gemdos" export table existed to
+resolve it against (see "Native pTOS ABI imports" above). None does
+today, so this conversion still runs and still produces a well-formed
+.ptos.imports payload, but bdos/elfld.c's ptosabi_resolve() rejects it
+unconditionally, the same as it would an unregistered namespace of any
+other name. A future namespace would pass its own name into
+import_list_add() instead of the hardcoded one.
 
 Locating the metadata and loader resolution
 ............................................
@@ -436,18 +375,21 @@ Locating the metadata and loader resolution
 bdos/elfld.c looks for PT_PTOS_IMPORTS the same way it looks for
 PT_PTOS_RELOC: by walking the program header table, never the section
 header table. When present, and the kernel was built with
-CONF_WITH_PTOS_ABI_IMPORTS, every import is looked up by exact
-"namespace:name" match against the kernel's own export table (currently
-just bdos/ptosabi_gemdos.c's GEMDOS table; see above), with the ABI major
-version required to match exactly and the minor version required to be at
-least the import's requested minimum. An import naming an unknown symbol,
-an unsupported namespace, or an ABI version the export table cannot
-satisfy fails the whole Pexec() with EPLFMT rather than binding a null or
-garbage address -- a native application must never silently call through
-an unresolved slot. A PT_PTOS_IMPORTS header in a kernel built without
-CONF_WITH_PTOS_ABI_IMPORTS fails to load the same way: there is no export
-table to resolve against, so pretending the binary loaded correctly would
-leave every import slot at 0.
+CONF_WITH_PTOS_ABI_IMPORTS, every import would be looked up by exact
+"namespace:name" match against the kernel's own registered export tables
+(bdos/ptosabi.h's ptosabi_resolve(), currently registering none -- see
+"Native pTOS ABI imports" above), with the ABI major version required to
+match exactly and the minor version required to be at least the import's
+requested minimum. An import naming an unknown symbol, an unsupported
+namespace, or an ABI version the export table cannot satisfy fails the
+whole Pexec() with EPLFMT rather than binding a null or garbage address
+-- a native application must never silently call through an unresolved
+slot; with no namespace registered at all, every PT_PTOS_IMPORTS-carrying
+binary currently fails this way regardless of what it names. A
+PT_PTOS_IMPORTS header in a kernel built without CONF_WITH_PTOS_ABI_IMPORTS
+fails to load the same way: there is no export table to resolve against,
+so pretending the binary loaded correctly would leave every import slot
+at 0.
 
 Imports are resolved after .ptos.reloc/section based relocations are
 applied, but the two mechanisms never touch the same slot: a JUMP_SLOT/
@@ -482,17 +424,17 @@ Known .ptos.imports version 1 limitations
 --------------------------------------------
 
 ptos-elf-pack recognises exactly one DT_NEEDED entry per input binary
-(the SDK's libptos-abi.so.<N> stub). This is enough for the current single
-"gemdos:" namespace, all served from one ABI major version, but a later
-stage adding aes:/vdi: namespaces (issue #308) will need either several
-recognised DT_NEEDED libraries or a combined stub exporting more than one
-namespace -- both are straightforward extensions of this same conversion
-step, not a format change.
+(the SDK's libptos-abi.so.<N> stub). This is enough for a single
+namespace served from one ABI major version, but a later stage
+registering more than one namespace (most plausibly aes:/vdi:, issue
+#308) will need either several recognised DT_NEEDED libraries or a
+combined stub exporting more than one namespace -- both are
+straightforward extensions of this same conversion step, not a format
+change.
 
 abi_minor exists in the wire format (and in every export table lookup)
-but the current GEMDOS export table (bdos/ptosabi_gemdos.c) always exports
-abi_minor 0 for everything: there is no feature-level granularity yet
-within GEMDOS's ABI major version 1.
+for exactly this reason: a future export table can grow feature-level
+granularity within one ABI major version without changing the format.
 
 Binding is purely eager and address-based: PTOS_BIND_CODE_ADDRESS writes
 a bare code address, which is correct for pTOS's current non-FDPIC ABI
@@ -504,24 +446,13 @@ for at least some function imports; this version has no encoding for
 that, by design -- see PT_PTOS_RELOC's own single-region assumption
 above, which has the identical boundary.
 
-Every exported GEMDOS call is a thin wrapper around trap1()/
-trap1_pexec() (util/arch/{m68k,arm}/miscasm.S, declared in "asm.h" and
-already used by include/bdosbind.h's own classic macros), not a raw
-pointer to bdosmain.c's internal handler. This is not an indirection for
-its own sake: bdos/proc.c's proc_go() starts every launched process,
-native ABI importers included, in genuine CPU user mode (clearing SR's
-S-bit on m68k, an SPSR of usr mode 0x10 on ARM). A native import slot is
-called directly by that user-mode process with no trap in between, so
-binding it to a raw handler address would run kernel-internal code --
-including anything that touches a privileged instruction, such as
-disable_interrupts()/enable_interrupts() (asm.h) -- at user privilege:
-undefined behaviour on real hardware, not merely unsupported. Going
-through trap1()/trap1_pexec() instead means every native call reaches
-bdosmain.c's osif() the normal way, via a real "trap #1"/"svc 1"
-instruction and the CPU's own user -> supervisor transition, so it gets
-osif()'s full behaviour for free and identically to a classic PRG bound
-against bdosbind.h: correct privilege, its per-call setjmp(errbuf)
-hard-error recovery (including the media-change retry loop), and its
-standard I/O device redirection (a prior Fforce() on Cconws()/Fwrite()/
-etc. is honoured exactly as it would be for a trap-based call). There is
-no native-import-specific limitation to document here as a result.
+A future namespace's own export table should give real thought to the
+same three properties that led to GEMDOS's own removal from this
+mechanism (see "Native pTOS ABI imports" above): whether its handlers
+can run correctly at the CPU privilege level a native ABI importer
+actually executes at (bdos/proc.c's proc_go() starts every launched
+process in genuine user mode), whether they depend on an ambient
+setjmp/hard-error recovery frame their normal call path provides but a
+direct native call would not, and whether they depend on any other
+per-call context (I/O redirection and the like) an indirect trap-based
+call would set up but a direct one would not.

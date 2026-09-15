@@ -754,10 +754,13 @@ static LONG elf_relocate_ptos(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
 
 /*
  * look up one already-split "namespace:name" import against the
- * kernel's own export tables. Only one table exists today
- * (ptosabi_gemdos_table, bdos/ptosabi_gemdos.c); extend this dispatch
- * with another strcmp() arm when a later stage of issue #308 adds
- * another namespace (aes:, vdi:, ...) rather than restructuring it.
+ * kernel's own export tables. No namespace table is registered yet
+ * (bdos/ptosabi.h's own top comment): a GEMDOS "gemdos:" table lived
+ * here briefly, but the classic trap1()/TRAP #1 interface already
+ * serves GEMDOS well enough that the added indirection was not worth
+ * it (doc/elfload.txt). Extend this with a strcmp(namespace_name, ...)
+ * arm and a PTOSABI_TABLE lookup (bdos/ptosabi.h) once a future
+ * namespace (most plausibly "aes" or "vdi") registers one.
  *
  * Returns 0 and fills *out_addr and *out_kind on a match. Returns EPLFMT if
  * the namespace is unrecognised, the symbol is unknown within it, or
@@ -769,26 +772,12 @@ static LONG ptosabi_resolve(const char *namespace_name, const char *name,
                             UWORD abi_major, UWORD abi_minor,
                             PFLONG *out_addr, UBYTE *out_kind)
 {
-    const PTOSABI_TABLE *table;
-    UWORD i;
-
-    if (strcmp(namespace_name, ptosabi_gemdos_table.namespace_name) == 0)
-        table = &ptosabi_gemdos_table;
-    else
-        return EPLFMT;
-
-    if (table->abi_major != abi_major || table->abi_minor < abi_minor)
-        return EPLFMT;
-
-    for (i = 0; i < table->nexports; i++)
-    {
-        if (strcmp(table->exports[i].name, name) == 0)
-        {
-            *out_addr = table->exports[i].addr;
-            *out_kind = table->exports[i].kind;
-            return 0;
-        }
-    }
+    (void)namespace_name;
+    (void)name;
+    (void)abi_major;
+    (void)abi_minor;
+    (void)out_addr;
+    (void)out_kind;
 
     return EPLFMT;
 }
@@ -1000,8 +989,12 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
     {
         char namebuf[PTOS_IMPORT_NAME_MAX + 2];
         char *ns, *name;
-        PFLONG addr;
-        UBYTE kind;
+        /* zero-initialised: with no namespace currently registered (see
+         * ptosabi_resolve()), every call below returns EPLFMT without
+         * ever writing these, and -Wmaybe-uninitialized cannot see across
+         * that call boundary that the "r < 0L" check always fires first */
+        PFLONG addr = NULL;
+        UBYTE kind = 0;
 
         r = ptosabi_validate_import(h, import_table_abs, strtab_abs,
                                     ih.strtab_size, i, namebuf, &ns, &name,
@@ -1015,8 +1008,8 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
         PTOSBINDENT bind;
         char namebuf[PTOS_IMPORT_NAME_MAX + 2];
         char *ns, *name;
-        PFLONG addr;
-        UBYTE kind;
+        PFLONG addr = NULL;
+        UBYTE kind = 0;
         ULONG off;
 
         if (u32_mul_overflow(i, (ULONG)sizeof(PTOSBINDENT), &off)
@@ -1219,6 +1212,7 @@ LONG elf_pgmld(FH h, PD *p)
          * pretending the program loaded correctly would leave every
          * import slot at 0, which a native application must never
          * silently call through (see doc/elfload.txt) */
+        (void)ptos_imports_ph;
         return EPLFMT;
 #endif
     }

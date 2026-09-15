@@ -52,7 +52,7 @@ PFVOID old_trap2; /* Old trap #2 handler, also used by rwa.S */
  */
 
 static long ni(void);
-long xgetver(void);
+static long xgetver(void);
 
 
 /*
@@ -315,15 +315,8 @@ static const FND funcs[] =
 /*
  *  xgetver -
  *      return current version number
- *
- *  not static: exported directly (bypassing trap1(), see
- *  bdos/ptosabi_gemdos.c) as the pTOS ABI's Sversion() -- unlike every
- *  other export, this one is a pure compile-time constant with no
- *  privileged instruction, no disk I/O, and no dependency on osif()'s
- *  redirection, so calling it straight from a native ELF's user-mode
- *  code is exactly as safe as calling it from supervisor mode.
  */
-long xgetver(void)
+static long xgetver(void)
 {
     return (long)GEMDOS_VERSION;
 }

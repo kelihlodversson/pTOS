@@ -1162,28 +1162,6 @@ ifndef CONF_WITH_ELF_LOADER
 TEST_SUITES := $(filter-out ptos_reloc_load,$(TEST_SUITES))
 endif
 
-# ptos_abi_import launches a native ELF payload (abi_probe.c, built
-# below) linked against the SDK's libptos-abi.so.1 stub and packed with
-# tools/ptos-elf-pack.c, to exercise bdos/elfld.c's native pTOS ABI
-# import resolution (doc/elfload.txt) -- needs CONF_WITH_PTOS_ABI_IMPORTS
-# specifically: without it there is no kernel export table to resolve
-# against, so the payload would fail to load rather than test anything.
-# The payload build itself (below) also needs an ELF capable toolchain:
-# on m68k that means BUILD_TOOLCHAIN_IS_ELF (mintelf or bare elf), since
-# building libptos-abi.so.1 and linking the payload PIE both go through
-# "ld -m m68kelf -pie", which the a.out-only cross-mint toolchain's
-# linker rejects outright. ARM has no non-ELF toolchain choice at all, so
-# it is unconditionally eligible.
-ifndef CONF_WITH_PTOS_ABI_IMPORTS
-TEST_SUITES := $(filter-out ptos_abi_import,$(TEST_SUITES))
-else
-ifndef ARCH_ARM
-ifndef BUILD_TOOLCHAIN_IS_ELF
-TEST_SUITES := $(filter-out ptos_abi_import,$(TEST_SUITES))
-endif
-endif
-endif
-
 GEN_SRC += tests/run_tests.c
 
 # Also depends on $(AUTOCONF_H): TEST_SUITES (and therefore this file's
@@ -1444,129 +1422,12 @@ else
 TEST_PTOS_RELOC_FILES =
 endif
 
-ifdef CONF_WITH_PTOS_ABI_IMPORTS
-# The payload/SDK-stub build below always needs an ELF capable toolchain
-# (see the -m m68kelf comment further down): on m68k that means
-# BUILD_TOOLCHAIN_IS_ELF (mintelf or bare elf), since cross-mint's linker
-# is a.out-only and rejects "-shared"/"-pie" outright. ARM has no
-# non-ELF toolchain choice, so it is unconditionally eligible. A config
-# with CONF_WITH_PTOS_ABI_IMPORTS=y on m68k + cross-mint is otherwise
-# valid (CONF_WITH_ELF_LOADER itself has no toolchain "depends on"), so
-# this is not dead code: it just means the suite's own artifacts, and
-# only those, are skipped on that one combination.
-ifdef ARCH_ARM
-PTOS_ABI_TOOLCHAIN_IS_ELF = 1
-else
-PTOS_ABI_TOOLCHAIN_IS_ELF = $(BUILD_TOOLCHAIN_IS_ELF)
-endif
-
-ifdef PTOS_ABI_TOOLCHAIN_IS_ELF
-# libptos-abi.so.1 / ABIPROBE.TOS: the ptos_abi_import suite's SDK stub
-# and payload (tests/ptos_abi_import/{stub_gemdos,abi_probe}.c,
-# doc/elfload.txt's "Native pTOS ABI imports" section). Needs
-# CONF_WITH_PTOS_ABI_IMPORTS specifically, not just CONF_WITH_ELF_LOADER:
-# without it there is no kernel export table for the packed imports to
-# resolve against, and Pexec() would refuse to load the payload outright
-# rather than exercise anything.
-#
-# libptos-abi.so.1 is never loaded by pTOS, at build time or at runtime
-# (doc/elfload.txt): it exists only so the linker below produces real
-# ELF dynamic-import machinery (.dynsym/.rela.plt/.got.plt) for every
-# "gemdos:" symbol abi_probe.c calls, which ptos-elf-pack then converts.
-LIBPTOSABI_SONAME = libptos-abi.so.1
-
-# -mshort on m68k (never on ARM, which has no such flag and whose native
-# int is already 32 bits, matching the kernel): the kernel's GEMDOS
-# handlers overwhelmingly declare their WORD-sized parameters as plain
-# "int", relying on -mshort to make that 16 bits -- and critically,
-# -mshort also narrows the *stack argument width* m68k GCC generates for
-# such a parameter (2 bytes instead of 4), independently of the callee's
-# declared type. TEST_CFLAGS deliberately omits -mshort (see its own
-# comment above: ordinary userland code must not inherit kernel-only
-# conventions), so without this override here specifically, a call from
-# this pair of files into any real kernel GEMDOS handler pushes every
-# argument after the first WORD-sized one at the wrong stack offset --
-# reproduced directly: an unpatched build's Fwrite(handle, len, buf) call
-# reached the kernel's xwrite() as xwrite(0, 393216, <garbage>) instead of
-# the real (6, 34, <buffer>), because a 32-bit stack push for "handle"
-# shifted every later argument by 2 bytes past where -mshort-compiled
-# xwrite() reads them. Confirmed fixed with -mshort added here: the same
-# call reaches xwrite() with the correct arguments and the regression
-# test's file round-trip passes end to end under QEMU.
-# This only covers stub_gemdos.o/abi_probe.o themselves: $(TEST_STARTUP)
-# and $(LIBCMINI_LIB) below stay linked in from the toolchain's default,
-# non -mshort multilib (see TEST_LD's own comment above -- pulling in an
-# -mshort libcmini/libgcc here instead would be its own can of worms).
-# That is safe for this payload specifically because abi_probe.c crosses
-# into that non -mshort code at exactly two points, neither of which
-# pushes a WORD-sized argument on the stack: crt0 calling "int main(void)"
-# (no arguments at all) and main() returning its int result in D0, which
-# GCC's m68k calling convention always fully populates regardless of
-# -mshort (unlike stack arguments, a register return has no separate
-# "narrow" encoding to get out of sync). abi_probe.c itself never calls a
-# libcmini function directly. A real SDK consumer is not automatically
-# this safe: linking this header's calls into the same translation unit
-# as other libcmini functions that take WORD/int stack arguments would
-# reproduce the exact bug described above unless that unit is entirely
-# -mshort too.
-PTOSABI_CFLAGS = $(if $(ARCH_ARM),,-mshort)
-
-obj/stub_gemdos.o: tests/ptos_abi_import/stub_gemdos.c $(AUTOCONF_H) | obj
-	$(CC) $(TEST_CFLAGS) $(PTOSABI_CFLAGS) -Iinclude $(DEPFLAGS) -c $< -o $@
-
-obj/abi_probe.o: tests/ptos_abi_import/abi_probe.c $(AUTOCONF_H) | obj
-	$(CC) $(TEST_CFLAGS) $(PTOSABI_CFLAGS) -Iinclude $(DEPFLAGS) -c $< -o $@
-
-ifdef ARCH_ARM
-$(LIBPTOSABI_SONAME): obj/stub_gemdos.o
-	$(CC) $(CPUFLAGS) -nostartfiles -nostdlib -shared \
-	    -Wl,-soname,$(LIBPTOSABI_SONAME) $< -o $@
-
-abiprobe-unpacked.tos: $(TEST_STARTUP) obj/abi_probe.o $(LIBCMINI_LIB) $(LIBPTOSABI_SONAME)
-	$(TEST_LD) -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start \
-	    $(TEST_STARTUP) obj/abi_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini \
-	    -L. -l:$(LIBPTOSABI_SONAME) $(LIBS) -o $@
-else
-# m68k-atari-mintelf-ld's default, driver-selected emulation refuses both
-# -shared and -pie outright ("-pie not supported", the same pre-existing
-# limitation TEST_PTOS_RELOC_LDFLAGS's own comment above documents for
-# relocprobe-unpacked.tos). Its bare "m68kelf" emulation, invoked
-# directly rather than through the $(CC) driver, accepts both --
-# verified directly with this toolchain: a real libptos-abi.so.1 built
-# this way, and abi_probe.o linked against it the same way, produces
-# genuine R_68K_JMP_SLOT (.rela.plt) and R_68K_32-against-undefined-
-# symbol (.rela.dyn -- this toolchain has no -fPIC/-fPIE code
-# generation, so a call to an imported function compiles to a plain
-# absolute reference rather than a PLT-relative one) relocations for
-# every imported name, confirmed with readelf.
-$(LIBPTOSABI_SONAME): obj/stub_gemdos.o
-	$(CROSS_COMPILE)ld -m m68kelf --oformat=elf32-m68k -shared \
-	    -soname $(LIBPTOSABI_SONAME) $< -o $@
-
-abiprobe-unpacked.tos: $(TEST_STARTUP) obj/abi_probe.o $(LIBCMINI_LIB) $(LIBPTOSABI_SONAME)
-	$(CROSS_COMPILE)ld -m m68kelf --oformat=elf32-m68k -pie \
-	    --no-dynamic-linker -e _start \
-	    $(TEST_STARTUP) obj/abi_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini \
-	    -L. -l:$(LIBPTOSABI_SONAME) -L$(TEST_LIBGCC_DIR) -lgcc -o $@
-endif
-
-ABIPROBE.TOS: abiprobe-unpacked.tos ptos-elf-pack
-	./ptos-elf-pack --strip-shdr abiprobe-unpacked.tos $@
-
-TEST_PTOS_ABI_FILES = ABIPROBE.TOS
-else
-TEST_PTOS_ABI_FILES =
-endif
-else
-TEST_PTOS_ABI_FILES =
-endif
-
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
-TEST_HD_FILES = runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_PTOS_ABI_FILES)
+TEST_HD_FILES = runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_PTOS_RELOC_FILES)
 
-test-hd.img: runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_PTOS_ABI_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_PTOS_RELOC_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR)
 
@@ -1590,7 +1451,6 @@ endif
 TOCLEAN += tests/run_tests.c runtests.tos pieprobe.tos \
            relocprobe-unpacked.tos PTRELOC.TOS \
            relocprobe2-unpacked.tos PTRELOC2.TOS \
-           libptos-abi.so.1 abiprobe-unpacked.tos ABIPROBE.TOS \
            test-hd.img
 TOCLEAN_POST += libcmini-clean
 
