@@ -20,11 +20,14 @@ LONG fat_open_path(char *name, int mod);
 LONG fat_creat_path(char *name, char attr);
 LONG fat_unlink_path(char *name);
 /*
- * fat_getfree_path()'s buf and fat_rename_path()'s return type stay
- * "long" rather than "LONG": both match their only caller (xgetfree()/
- * xrename() in bdos/fsfat.c and bdos/fsdir.c), which this pass through
- * the fs/ FAT layer didn't touch. Switching just these two would trade
- * one mismatch for another instead of removing it.
+ * Two deliberate exceptions to this header's LONG convention:
+ * fat_getfree_path()'s "buf" parameter stays "long *", and
+ * fat_rename_path()'s return value stays plain "long" (not its return
+ * type only -- the whole declaration keeps the pre-existing "long"
+ * spelling). Both match their only caller (xgetfree()/xrename() in
+ * bdos/fsfat.c and bdos/fsdir.c), which this pass through the fs/ FAT
+ * layer didn't touch. Switching just these two would trade one
+ * mismatch for another instead of removing it.
  */
 LONG fat_getfree_path(long *buf, int drv);
 LONG fat_mkdir_path(char *s);

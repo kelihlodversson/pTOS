@@ -574,7 +574,7 @@ __extension__                                      \
  * consecutive words of a packed BIOS/XBIOS/GEMDOS trap frame -- see
  * bios/bios.c, bios/xbios.c and bdos/bdosmain.c's own PWLONG macros.
  */
-static __inline__ ULONG pwlong(const WORD *pw, int i)
+static __inline__ ULONG pwlong(const WORD *pw, unsigned i)
 {
     return ((ULONG)(UWORD)pw[i] << 16) | (UWORD)pw[i + 1];
 }
