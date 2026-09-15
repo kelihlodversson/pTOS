@@ -928,9 +928,15 @@ static uint32_t import_list_add(IMPORT **imports, size_t *nimports, size_t *cap,
     strcpy(full_name, "gemdos:");
     strcat(full_name, sym_name);
 
+    /* kind is part of the identity, not just a payload: two undefined
+     * dynamic symbols can share a name and abi_major yet differ in
+     * STT_FUNC/STT_OBJECT type (kind), and merging them here would make
+     * the second relocation silently reuse the first's kind -- binding a
+     * data address where a function was wanted, or vice versa. */
     for (i = 0; i < *nimports; i++)
     {
         if ((*imports)[i].abi_major == abi_major
+         && (*imports)[i].kind == kind
          && strcmp((*imports)[i].name, full_name) == 0)
         {
             free(full_name);

@@ -840,7 +840,17 @@ static LONG ptos_read_import_name(FH h, ULONG strtab_abs_off, ULONG strtab_size,
  * running kernel addresses, so the resolved address is written as-is.
  * All three PTOS_BIND_* operations write the plain address in version 1
  * (see doc/elfload.txt for why they are still kept distinct); any other
- * bind_op is a format error.
+ * bind_op is a format error, and so is a bind_op that disagrees with the
+ * resolved export's own kind -- PTOS_BIND_CODE_ADDRESS only ever pairs
+ * with PTOSABI_KIND_FUNCTION and PTOS_BIND_DATA_ADDRESS only with
+ * PTOSABI_KIND_DATA, matching how ptos-elf-pack emits them
+ * (doc/elfload.txt). Rejecting the mismatch here, rather than silently
+ * writing whichever address "kind" picks, matters once a future
+ * FDPIC-aware version starts writing a function descriptor instead of a
+ * bare address for PTOS_BIND_CODE_ADDRESS: at that point the two cases
+ * stop being interchangeable in practice, not just in principle.
+ * PTOS_BIND_GOT_SLOT makes no such claim either way, so it is accepted
+ * for both kinds.
  *
  * addr is read through whichever PTOSABI_ADDR member matches kind
  * (PTOSABI_KIND_*, from the same export this bind resolved against) --
@@ -858,6 +868,10 @@ static LONG ptos_bind_apply(UBYTE *load_base, const ELFINFO *info,
 
     if (bind_op != PTOS_BIND_CODE_ADDRESS && bind_op != PTOS_BIND_DATA_ADDRESS
      && bind_op != PTOS_BIND_GOT_SLOT)
+        return EPLFMT;
+
+    if ((bind_op == PTOS_BIND_CODE_ADDRESS && kind != PTOSABI_KIND_FUNCTION)
+     || (bind_op == PTOS_BIND_DATA_ADDRESS && kind != PTOSABI_KIND_DATA))
         return EPLFMT;
 
     if (vaddr < info->link_base)
@@ -1057,7 +1071,8 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
             return r;
 
         KDEBUG(("ptosabi: bind #%ld: %s:%s -> %p, slot=%08lx op=%d\n",
-                (long)i, ns, name, (void *)addr.func,
+                (long)i, ns, name,
+                (kind == PTOSABI_KIND_DATA) ? addr.data : (void *)addr.func,
                 (unsigned long)bind.slot_vaddr, (int)bind.bind_op));
 
         r = ptos_bind_apply(load_base, info, bind.slot_vaddr, bind.bind_op,

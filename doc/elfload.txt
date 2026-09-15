@@ -363,11 +363,14 @@ The "gemdos" namespace name above is hardcoded (ptos-elf-pack.c's
 import_list_add()) rather than derived from anything in the input file --
 a leftover from when a kernel-side "gemdos" export table existed to
 resolve it against (see "Native pTOS ABI imports" above). None does
-today, so this conversion still runs and still produces a well-formed
-.ptos.imports payload, but bdos/elfld.c's ptosabi_resolve() rejects it
-unconditionally, the same as it would an unregistered namespace of any
-other name. A future namespace would pass its own name into
-import_list_add() instead of the hardcoded one.
+today, so this conversion still runs -- every relocation is still parsed
+and turned into an import/bind record internally -- but ptos-elf-pack
+refuses to write out a .ptos.imports payload for them at all: emitting
+one would just report success for a file bdos/elfld.c's ptosabi_resolve()
+can only ever reject at Pexec() time, the same as it would an
+unregistered namespace of any other name. A future namespace would pass
+its own name into import_list_add() instead of the hardcoded one, and
+relax that refusal for it.
 
 Locating the metadata and loader resolution
 ............................................
