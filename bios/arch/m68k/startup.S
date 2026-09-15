@@ -17,36 +17,36 @@
 
 // ==== Definitions ==========================================================
 
-        .globl  _os_header
-        .globl  _os_beg       // base of OS, referenced by aes/arch/m68k/gemdosif.S
-        .globl  _main         // OS entry point
+        .globl  C_SYM(os_header)
+        .globl  C_SYM(os_beg)       // base of OS, referenced by aes/arch/m68k/gemdosif.S
+        .globl  C_SYM(main)         // OS entry point
 #if CONF_WITH_CARTRIDGE
-        .globl  _run_cartridge_applications
+        .globl  C_SYM(run_cartridge_applications)
 #endif
-        .globl  _osxhbootdelay
+        .globl  C_SYM(osxhbootdelay)
 
 // ==== References ===========================================================
 
         // TOS System variables
-        .extern resvalid
-        .extern resvector
-        .extern _stktop
+        .extern C_SYM(resvalid)
+        .extern C_SYM(resvector)
+        .extern C_SYM(stktop)
 
         // Memory
-        .extern meminit       // initialize the memory and its controller
+        .extern meminit        // initialize the memory and its controller
 
         // BIOS C part
-        .extern _biosmain     // BIOS C entry point
+        .extern C_SYM(biosmain)     // BIOS C entry point
 
         // Overall memory map
         .extern __etext       // end of text section
         .extern __edata       // end of data section
         .extern __endvdibss   // end of VDI BSS
 
-        .extern _root
-        .extern _shifty
-        .extern _run
-        .extern _ui_mupb
+        .extern C_SYM(root)
+        .extern C_SYM(shifty)
+        .extern C_SYM(run)
+        .extern C_SYM(ui_mupb)
         .extern amiga_startup
 
 // ===========================================================================
@@ -75,26 +75,26 @@ amiga_main:
  * OSHEADER
  */
 
-_os_header:
+C_SYM(os_header):
 os_entry:
-    bra.s   _main       // branch to _main
+    bra.s   C_SYM(main)       // branch to _main
 os_version:
     .dc.w   TOS_VERSION // TOS version
 reseth:
-    .dc.l   _main       // pointer to reset handler
+    .dc.l   C_SYM(main)       // pointer to reset handler
 // The 3-long structure here is actually the default GEM_MUPB.
 // It is supposed to be used when os_magic does not point to a valid GEM_MUPB.
 // In EmuTOS, this never happens, so os_end and os_res1 below are never used.
 // Note that the first field here has a different meaning from gm_magic.
-_os_beg:
-    .dc.l   _os_header  // base of OS = _sysbase
+C_SYM(os_beg):
+    .dc.l   C_SYM(os_header)  // base of OS = _sysbase
 os_end:
     .dc.l   __endvdibss // end of VDI BSS
 os_res1:
-    .dc.l   _main       // os_res1, reserved
+    .dc.l   C_SYM(main)       // os_res1, reserved
 _os_magic:
 #if CONF_WITH_AES
-    .dc.l   _ui_mupb    // os_magic, pointer to GEM's MUPB
+    .dc.l   C_SYM(ui_mupb)    // os_magic, pointer to GEM's MUPB
 #else
     .dc.l   0           // os_magic, pointer to GEM's MUPB
 #endif
@@ -109,15 +109,15 @@ _os_conf:               // Flag for PAL version + country
 os_dosdate:
     .dc.w   OS_DOSDATE  // Date of system build in GEMDOS format
 os_root:
-    .dc.l   _root       // Pointer to the GEMDOS mem pool
+    .dc.l   C_SYM(root)       // Pointer to the GEMDOS mem pool
 os_kbshift:
-    .dc.l   _shifty     // Pointer to the keyboard shift keys states
+    .dc.l   C_SYM(shifty)     // Pointer to the keyboard shift keys states
 os_run:
-    .dc.l   _run        // Pointer to a pointer to the actual basepage
+    .dc.l   C_SYM(run)        // Pointer to a pointer to the actual basepage
 os_dummy:
     .ascii  "ETOS"      // _main should start at offset 0x30, shouldn't it?
 
-_main:
+C_SYM(main):
         bra.w   _realmain   // MUST be 4 bytes long
 
 /*
@@ -311,11 +311,11 @@ osxh:
     .ascii  "OSXH"                      // magic number
     .dc.l   osxhend-osxh                // length
     .dc.b   MAJOR_VERSION,MINOR_VERSION,FIX_VERSION,UNOFFICIAL  // binary version
-    .dc.l   _version-_os_header         // offset to version string
+    .dc.l   C_SYM(version)-C_SYM(os_header)   // offset to version string
     .dc.l   OSXH_FEATURES               // feature flags
     .dc.w   OSXH_MACHINES               // machine flags
     .dc.w   OSXH_PROCESSORS             // processor flags
-_osxhbootdelay:
+C_SYM(osxhbootdelay):
     .dc.b   OSXH_BOOTDELAY              // cold-boot delay
 osxhend:
     .even                               // for alignment
@@ -399,7 +399,7 @@ valid_st_mmu_config:
         // to store any data.
         // We take this opportunity to set the stack pointer to the
         // address which will become our BIOS stack after memconf.
-        lea     _stktop,sp
+        lea     C_SYM(stktop),sp
 
 // Note: LisaEm doesn't properly implement movec/pmove illegal instructions,
 // so we just avoid them on MACHINE_LISA.
@@ -506,13 +506,13 @@ mmu_done:
 
 resetvec:
 #ifdef __mcoldfire__
-       move.l   resvalid.w, d0
+        move.l   C_SYM(resvalid).w, d0
        cmpi.l   #0x31415926, d0         // Jump to resetvector?
 #else
-       cmpi.l   #0x31415926, resvalid.w // Jump to resetvector?
+        cmpi.l   #0x31415926, C_SYM(resvalid).w // Jump to resetvector?
 #endif
        jne      noreset                 // No --> noreset
-       move.l   resvector.w, d0         // Yes: old resvec to d0
+        move.l   C_SYM(resvector).w, d0  // Yes: old resvec to d0
        jeq      noreset                 // Address null? Yes --> noreset
        btst     #0, d0                  // Address odd ?
        jne      noreset                 // Yes --> noreset
@@ -537,7 +537,7 @@ memdone:
  * The BIOS startup goes on in bios.c
  */
 
-        jmp     _biosmain
+        jmp     C_SYM(biosmain)
 
 #if CONF_WITH_CARTRIDGE
 /*
@@ -547,7 +547,7 @@ memdone:
  *
  * typebit: application type bit number which must be set to 1 to match
  */
-_run_cartridge_applications:
+C_SYM(run_cartridge_applications):
         move.w  4(sp),d0                // application bit number
         lea     cart_base, a0
 #ifdef __mcoldfire__

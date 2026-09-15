@@ -121,8 +121,8 @@ above; `ptest_pass()` must always be reached exactly once per test (calling
 it is what finalizes and counts the result).
 
 Test code is userland, built against libcmini rather than the kernel's own
-`portab.h` types (`ULONG`, `BOOL`, etc.) or `-mshort`/`-fleading-underscore`
-conventions — use plain C types and libcmini's headers (`<mint/osbind.h>`
+`portab.h` types (`ULONG`, `BOOL`, etc.) or `-mshort` conventions — use plain
+C types and libcmini's headers (`<mint/osbind.h>`
 for GEMDOS calls). It's cross-compiled for whichever architecture is
 currently configured (`ARCH_ARM`/`ARCH_M68K`), so avoid anything
 architecture-specific unless the test is deliberately targeted at one (see

@@ -332,8 +332,7 @@ config BUILD_TOOLCHAIN_MINTELF
 	help
 	  Vincent Rivière's newer ELF based toolchain for MiNT, the default.
 	  Being an ELF toolchain it is built with the same flags as the bare
-	  m68k-elf one below: -fleading-underscore to match the hand written
-	  assembler, --register-prefix-optional to let it write d0 rather
+	  m68k-elf one below: --register-prefix-optional to let it write d0 rather
 	  than %d0, and -DELF_TOOLCHAIN for the parts of the sources and of
 	  emutos.ld that differ between a.out and ELF.
 
@@ -348,10 +347,8 @@ config BUILD_TOOLCHAIN_ELF
 
 endchoice
 
-# The two ELF toolchains need the same treatment.  Note that
-# -fleading-underscore and -DELF_TOOLCHAIN go together: emutos.ld defines
-# leading-underscore aliases for the libgcc helpers precisely because our
-# code is compiled with the former, and that block is guarded by the latter.
+# The two ELF toolchains need the same treatment.  -DELF_TOOLCHAIN selects
+# ELF-specific source and linker-script behavior.
 config BUILD_TOOLCHAIN_IS_ELF
 	bool
 	default y if BUILD_TOOLCHAIN_MINTELF || BUILD_TOOLCHAIN_ELF

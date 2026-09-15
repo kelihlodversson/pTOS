@@ -14,16 +14,16 @@
 
 #define DESKSTACKSIZE   2048    /* in bytes: must be multiple of 4 */
 
-        .globl  _deskstart
+        .globl  C_SYM(deskstart)
 #if CONF_DEBUG_DESK_STACK
-        .globl  _deskstackbottom
+        .globl  C_SYM(deskstackbottom)
 #endif
 
-        .extern _deskmain
+        .extern C_SYM(deskmain)
 
         .text
 
-_deskstart:
+C_SYM(deskstart):
         // our basepage address is in r0.
 
         // set our temporary user stack
@@ -42,7 +42,7 @@ _deskstart:
         svc     1
 
 
-        bl      _deskmain               // Run the desktop
+        bl      C_SYM(deskmain)               // Run the desktop
 
         mov     r0, #0                  // Pterm
         svc     1
@@ -51,6 +51,6 @@ _deskstart:
 
 // Space for the Stack:
 .align 4
-_deskstackbottom:
+C_SYM(deskstackbottom):
         .space   DESKSTACKSIZE
 deskustack:

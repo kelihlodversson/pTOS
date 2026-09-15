@@ -14,9 +14,9 @@
 
 #ifdef MACHINE_LISA
 
-        .extern _lisa_int_1_c
-        .extern _lisa_int_2_c
-        .extern _vector_5ms
+        .extern C_SYM(lisa_int_1_c)
+        .extern C_SYM(lisa_int_2_c)
+        .extern C_SYM(vector_5ms)
         .extern lisa_lba2phys
 
 /******************************************************************************/
@@ -24,31 +24,31 @@
 /******************************************************************************/
 
 // Int 1 is used by VIA2 and VBL
-        .globl  _lisa_int_1
-_lisa_int_1:
+        .globl  C_SYM(lisa_int_1)
+C_SYM(lisa_int_1):
         move.w  #0x2700,sr              // Forbid higher level interrupts
         movem.l d0-d1/a0-a1,-(sp)
-        jbsr    _lisa_int_1_c           // Delegate to C implementation
+        jbsr    C_SYM(lisa_int_1_c)           // Delegate to C implementation
         movem.l (sp)+,d0-d1/a0-a1
         rte
 
 // Int 2 is used by VIA1 (COPS)
-        .globl  _lisa_int_2
-_lisa_int_2:
+        .globl  C_SYM(lisa_int_2)
+C_SYM(lisa_int_2):
         move.w  #0x2700,sr              // Forbid higher level interrupts
         movem.l d0-d1/a0-a1,-(sp)
-        jbsr    _lisa_int_2_c           // Delegate to C implementation
+        jbsr    C_SYM(lisa_int_2_c)           // Delegate to C implementation
         movem.l (sp)+,d0-d1/a0-a1
         rte
 
 // Call vector_5ms (200 Hz system timer callback) from C.
 // As it will return with RTE, we must setup a proper stack frame.
-        .globl  _lisa_call_5ms
-_lisa_call_5ms:
+        .globl  C_SYM(lisa_call_5ms)
+C_SYM(lisa_call_5ms):
         // The return address is already on the stack.
         // Assume that the CPU is always a 68000 and _longframe is false
         move.w  sr,-(sp)                // Push SR
-        move.l  _vector_5ms,a0
+        move.l  C_SYM(vector_5ms),a0
         jmp     (a0)                    // Call the 200 Hz system callback
 
 /******************************************************************************/
@@ -57,8 +57,8 @@ _lisa_call_5ms:
 /* FIXME: Write a real driver instead of calling TWGREAD from the Apple ROM!  */
 /******************************************************************************/
 
-        .globl  _lisa_read_lba_sector
-_lisa_read_lba_sector:
+        .globl  C_SYM(lisa_read_lba_sector)
+C_SYM(lisa_read_lba_sector):
         movem.l d2-d7/a2-a6,-(sp)
 
         move.l  4*11+4(sp),d6       // sector lba

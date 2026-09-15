@@ -21,37 +21,37 @@
 
         .globl  meminit                 // memory initialization
 #if CONF_WITH_ADVANCED_CPU
-        .globl  _detect_32bit_address_bus
+        .globl  C_SYM(detect_32bit_address_bus)
 #endif
 
 // ==== References ===========================================================
 
         .extern memdone       // return to, after memory config is done
-        .extern _warm_magic
-        .extern _stktop
-        .extern _meminit_flags
+        .extern C_SYM(warm_magic)
+        .extern C_SYM(stktop)
+        .extern C_SYM(meminit_flags)
         .extern amiga_memconf
 
         // functions for detecting hardware
-        .extern _check_read_byte
-        .extern _bzero_nobuiltin
-        .extern _flush_data_cache
-        .extern _invalidate_data_cache
+        .extern C_SYM(check_read_byte)
+        .extern C_SYM(bzero_nobuiltin)
+        .extern C_SYM(flush_data_cache)
+        .extern C_SYM(invalidate_data_cache)
 
         // ST-RAM settings
-        .extern memctrl
-        .extern _phystop
-        .extern memvalid
-        .extern memval2
-        .extern memval3
+        .extern C_SYM(memctrl)
+        .extern C_SYM(phystop)
+        .extern C_SYM(memvalid)
+        .extern C_SYM(memval2)
+        .extern C_SYM(memval3)
 
         // TT-RAM settings
-        .extern _ramtop
-        .extern _ramvalid
+        .extern C_SYM(ramtop)
+        .extern C_SYM(ramvalid)
 
         // Overall memory map
-        .extern _sysvars_start // start of system variables
-        .extern _sysvars_end   // end of system variables
+        .extern C_SYM(sysvars_start) // start of system variables
+        .extern C_SYM(sysvars_end)   // end of system variables
         .extern __bss         // start of BSS segment
         .extern __ebss        // end of BSS segment
 
@@ -121,32 +121,32 @@ memchk:
         // EmuTOS lives in ROM, we must check if the RAM is valid
 #ifdef __mcoldfire__
         move.l  #0x752019f3, d1
-        cmp.l   memvalid.w, d1          // magic in memvalid ?
+        cmp.l   C_SYM(memvalid).w, d1          // magic in memvalid ?
         jne     memconf                 // no -> config memory
         move.l  #0x237698aa, d1
-        cmp.l   memval2.w, d1           // magic in memval2 ?
+        cmp.l   C_SYM(memval2).w, d1    // magic in memval2 ?
         jne     memconf                 // no -> config memory
         move.l  #0x5555aaaa, d1
-        cmp.l   memval3.w, d1           // magic in memval3 ?
+        cmp.l   C_SYM(memval3).w, d1    // magic in memval3 ?
         jne     memconf                 // no -> config memory
 #else
-        cmp.l   #0x752019f3, memvalid.w // magic in memvalid ?
+        cmp.l   #0x752019f3, C_SYM(memvalid).w // magic in memvalid ?
         jne     memconf                 // no -> config memory
-        cmp.l   #0x237698aa, memval2.w  // magic in memval2 ?
+        cmp.l   #0x237698aa, C_SYM(memval2).w // magic in memval2 ?
         jne     memconf                 // no -> config memory
-        cmp.l   #0x5555aaaa, memval3.w  // magic in memval3 ? (TOS >= 1.2)
+        cmp.l   #0x5555aaaa, C_SYM(memval3).w // magic in memval3 ? (TOS >= 1.2)
         jne     memconf                 // no -> config memory
 #endif // __mcoldfire__
 #endif // !EMUTOS_LIVES_IN_RAM
 
         // The old RAM settings are valid, load them into registers.
         // They will stay in safe place in case we clear the sysvars.
-        move.b  memctrl.w, d6
-        move.l  _phystop.w, d5
+        move.b  C_SYM(memctrl).w, d6
+        move.l  C_SYM(phystop).w, d5
 
 #if CONF_WITH_TTRAM
-        move.l  _ramvalid.w, d3
-        move.l  _ramtop.w, a3
+        move.l  C_SYM(ramvalid).w, d3
+        move.l  C_SYM(ramtop).w, a3
 #endif
 
 // ===========================================================================
@@ -171,7 +171,7 @@ memchk:
 memory_reused:
 #if CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
         // If _warm_magic == WARM_MAGIC, this is explicitly not a first boot
-        lea     _warm_magic.w, a0
+        lea     C_SYM(warm_magic).w, a0
         move.l  #0x5741524D, d1         // WARM_MAGIC
         cmp.l   (a0), d1
         jeq     .warm_magic_done        // Indeed, this is not a first boot
@@ -449,7 +449,7 @@ detect_extra_stram:
         lea     5*1024*1024-1,a0        // start at the end of 5 MB
 loop_extra_stram:
         pea     (a0)
-        jsr     _check_read_byte        // test the last byte
+        jsr     C_SYM(check_read_byte)        // test the last byte
         addq.l  #4,sp
         tst.w   d0                      // readable ?
         jeq     detect_extra_stram_end  // no, stop here
@@ -552,7 +552,7 @@ stram_detected:
         // The previous temporary stack pointer may have moved
         // during early detections, so we reinitialize it now.
         // After that, normal stack usage is allowed.
-        lea     _stktop, sp
+        lea     C_SYM(stktop), sp
 
         btst    #MEMINIT_BIT_FIRST_BOOT, d7 // first boot ?
         jeq     any_boot                // no: skip first boot initialization
@@ -562,30 +562,30 @@ stram_detected:
 // ===========================================================================
 
         /* Clear the sysvars */
-        move.l  #_sysvars_start, a0
-        move.l  #_sysvars_end, a1
+        move.l  #C_SYM(sysvars_start), a0
+        move.l  #C_SYM(sysvars_end), a1
         jbsr    call_bzero_a0_a1
 
         /* Store the ST-RAM parameters in the ST-RAM itself */
-        move.b  d6, memctrl.w           // set copy of hw memory config
-        move.l  d5, _phystop.w          // highest address as phystop
+        move.b  d6, C_SYM(memctrl).w    // set copy of hw memory config
+        move.l  d5, C_SYM(phystop).w          // highest address as phystop
 
         /* Make ST-RAM configuration valid */
 #ifdef __mcoldfire__
-        lea     memvalid.w, a0
+        lea     C_SYM(memvalid).w, a0
         move.l  #0x752019f3, (a0)       // set memvalid to ok
-        lea     memval2.w, a0
+        lea     C_SYM(memval2).w, a0
         move.l  #0x237698aa, (a0)       // set memval2 to ok
-        lea     memval3.w, a0
+        lea     C_SYM(memval3).w, a0
         move.l  #0x5555aaaa, (a0)       // set memval3 to ok
 #else
-        move.l  #0x752019f3, memvalid.w // set memvalid to ok
-        move.l  #0x237698aa, memval2.w  // set memval2 to ok
-        move.l  #0x5555aaaa, memval3.w  // set memval3 to ok
+        move.l  #0x752019f3, C_SYM(memvalid).w // set memvalid to ok
+        move.l  #0x237698aa, C_SYM(memval2).w // set memval2 to ok
+        move.l  #0x5555aaaa, C_SYM(memval3).w // set memval3 to ok
 #endif
 
 #if CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
-        lea     _warm_magic.w, a0
+        lea     C_SYM(warm_magic).w, a0
         move.l  #0x5741524D, d1         // WARM_MAGIC
         move.l  d1, (a0)                // Next boot will not be a first boot
 #endif
@@ -593,8 +593,8 @@ stram_detected:
 #if CONF_WITH_TTRAM
         // After clearing sysvars, restore old TT-RAM settings.
         // They will be used later for TT-RAM initialization.
-        move.l  a3, _ramtop.w           // set ramtop to size of found memory
-        move.l  d3, _ramvalid.w
+        move.l  a3, C_SYM(ramtop).w           // set ramtop to size of found memory
+        move.l  d3, C_SYM(ramvalid).w
 #endif
 
 // ===========================================================================
@@ -614,7 +614,7 @@ any_boot:
         jbsr    call_bzero_a0_a1
 
         // Save the meminit_flags into BSS
-        move.b  d7, _meminit_flags
+        move.b  d7, C_SYM(meminit_flags)
 
         jmp     memdone                 // config done -> return to startup.S
 
@@ -627,7 +627,7 @@ call_bzero_a0_a1:
         sub.l   a0,a1
         move.l  a1,-(sp)    // size
         move.l  a0,-(sp)    // start
-        jsr     _bzero_nobuiltin
+        jsr     C_SYM(bzero_nobuiltin)
         addq.l  #8,sp
         rts
 
@@ -638,7 +638,7 @@ call_bzero_a0_a1:
 //   d0.w = 1 if 32-bit, or 0 if 24-bit
 // Clobbers:
 //   - Exception Vectors
-_detect_32bit_address_bus:
+C_SYM(detect_32bit_address_bus):
         movem.l d2/a2-a4,-(sp)          // Save registers
         move.l  sp,a2                   // Save sp before exception
         move.l  #bus_detected,0x08      // Bus Error will just return
@@ -675,12 +675,12 @@ end_detect_bus:
 sync_data_cache:
         pea     4.w                     // Size of test value
         move.l  a3,-(sp)                // Test address
-        jbsr    _flush_data_cache       // Push to RAM
+        jbsr    C_SYM(flush_data_cache)       // Push to RAM
         addq.l  #8,sp
 
         pea     4.w                     // Size of test value
         move.l  a4,-(sp)                // Mirror address
-        jbsr    _invalidate_data_cache  // Remove value from cache
+        jbsr    C_SYM(invalidate_data_cache)  // Remove value from cache
         addq.l  #8,sp
 
         rts
@@ -693,13 +693,13 @@ sync_data_cache:
 // ==== utility functions for memory test ====================================
 // ===========================================================================
 
-        .globl  _memtest_verify
-        .globl  _memtest_rotate_verify
+        .globl  C_SYM(memtest_verify)
+        .globl  C_SYM(memtest_rotate_verify)
 
 //
 // BOOL memtest_verify(ULONG *start, ULONG value, LONG length)
 //
-_memtest_verify:
+C_SYM(memtest_verify):
         movea.l 4(sp),a0                // a0-> start
         move.l  8(sp),d0                // d0 = value to check
         move.l  12(sp),d1               // d1 = length (bytes)
@@ -726,7 +726,7 @@ verror:
 //
 // BOOL memtest_rotate_verify(ULONG *start, LONG length)
 //
-_memtest_rotate_verify:
+C_SYM(memtest_rotate_verify):
         movea.l 4(sp),a0                // a0-> start
         moveq.l #1,d0                   // d0 = value to store
         move.l  8(sp),d1                // d1 = length (bytes)

@@ -20,35 +20,35 @@
 
 // ==== References ===========================================================
 
-        .extern _sysfonts
-        .extern _kprintf
+        .extern C_SYM(sysfonts)
+        .extern C_SYM(kprintf)
 
-        .extern _linea_show_mouse
-        .extern _linea_hide_mouse
-        .extern _linea_transform_mouse
+        .extern C_SYM(linea_show_mouse)
+        .extern C_SYM(linea_hide_mouse)
+        .extern C_SYM(linea_transform_mouse)
 
-        .extern _get_pix
-        .extern _put_pix
+        .extern C_SYM(get_pix)
+        .extern C_SYM(put_pix)
 
-        .extern _linea_line
-        .extern _linea_rect
-        .extern _linea_hline
-        .extern _linea_polygon
+        .extern C_SYM(linea_line)
+        .extern C_SYM(linea_rect)
+        .extern C_SYM(linea_hline)
+        .extern C_SYM(linea_polygon)
 
-        .extern _linea_blit
-        .extern _text_blt
+        .extern C_SYM(linea_blit)
+        .extern C_SYM(text_blt)
 
-        .extern _cur_replace
-        .extern _cur_display
-        .extern _linea_raster
-        .extern _linea_fill
+        .extern C_SYM(cur_replace)
+        .extern C_SYM(cur_display)
+        .extern C_SYM(linea_raster)
+        .extern C_SYM(linea_fill)
 
 // ==== Definitions ==========================================================
 
-        .globl  _int_linea              // entry for linea exception
+        .globl  C_SYM(int_linea)              // entry for linea exception
 
 // ==== Line-A handler ===============================
-_int_linea:
+C_SYM(int_linea):
         /* save d0/d1/a0/a2 as they are needed for sprite undraw/draw */
 #ifdef __mcoldfire__
         lea     linea_save,a1
@@ -91,7 +91,7 @@ _int_linea:
 #endif
         move.w  d0,-(sp)
         pea     linea_msg
-        jsr     _kprintf              /* Print debugging information */
+        jsr     C_SYM(kprintf)              /* Print debugging information */
         addq.l  #6,sp
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
@@ -127,7 +127,7 @@ wrong_linea:
         subq.l  #2,a0
         move.l  a0,-(sp)
         pea     wrong_linea_msg
-        jsr     _kprintf
+        jsr     C_SYM(kprintf)
         lea     10(sp),sp
 #endif /* ENABLE_KDEBUG */
         rte
@@ -157,20 +157,20 @@ _linea_0:
         lea     LA(v_planes),a0  // get base address for line a variables
         move.l  a0,d0
 
-        lea     _sysfonts,a1   // get pointer to the three system font headers
+        lea     C_SYM(sysfonts),a1   // get pointer to the three system font headers
 
         lea     linea_vecs,a2   // get pointer to table of the Line-A routines
         rts
 
 hide_mouse:
         move.l  d0,-(sp)
-        jsr     _linea_hide_mouse
+        jsr     C_SYM(linea_hide_mouse)
         move.l  (sp)+,d0
         rts
 
 undraw_sprite:
         move.l  a2,-(sp)        /* save area ptr */
-        jsr     _cur_replace
+        jsr     C_SYM(cur_replace)
         addq.l  #4,sp
         rts
 
@@ -179,13 +179,13 @@ draw_sprite:
         move.w  d0,-(sp)        /* x coord */
         move.l  a2,-(sp)        /* save area ptr */
         move.l  a0,-(sp)        /* new sprite */
-        jsr     _cur_display
+        jsr     C_SYM(cur_display)
         lea     12(sp),sp
         rts
 
 linea_blit:
         move.l  a6,-(sp)                // blit frame structure addr
-        jsr     _linea_blit
+        jsr     C_SYM(linea_blit)
         addq.l  #4,sp
         rts
 
@@ -229,21 +229,21 @@ linea_blit:
         .even   // Mandatory in ELF section .rodata
 linea_vecs:
         .dc.l   _linea_0
-        .dc.l   _put_pix        /* $1 - put pixel */
-        .dc.l   _get_pix        /* $2 - get pixel */
-        .dc.l   _linea_line     /* $3 - draw line */
-        .dc.l   _linea_hline    /* $4 - horizontal line */
-        .dc.l   _linea_rect     /* $5 - filled rectangle */
-        .dc.l   _linea_polygon  /* $6 - draw 1 line of polygon */
+        .dc.l   C_SYM(put_pix)        /* $1 - put pixel */
+        .dc.l   C_SYM(get_pix)        /* $2 - get pixel */
+        .dc.l   C_SYM(linea_line)     /* $3 - draw line */
+        .dc.l   C_SYM(linea_hline)    /* $4 - horizontal line */
+        .dc.l   C_SYM(linea_rect)     /* $5 - filled rectangle */
+        .dc.l   C_SYM(linea_polygon)  /* $6 - draw 1 line of polygon */
         .dc.l   linea_blit      /* $7 - area blit */
-        .dc.l   _text_blt       /* $8 - text blitting */
-        .dc.l   _linea_show_mouse      /* $9 - show mouse */
+        .dc.l   C_SYM(text_blt)       /* $8 - text blitting */
+        .dc.l   C_SYM(linea_show_mouse)      /* $9 - show mouse */
         .dc.l   hide_mouse      /* $A - hide mouse cursor */
-        .dc.l   _linea_transform_mouse /* $B - transform mouse */
+        .dc.l   C_SYM(linea_transform_mouse) /* $B - transform mouse */
         .dc.l   undraw_sprite   /* $C - undraw sprite */
         .dc.l   draw_sprite     /* $D - draw sprite */
-        .dc.l   _linea_raster   /* $E - copy raster form */
-        .dc.l   _linea_fill     /* $F - flood fill */
+        .dc.l   C_SYM(linea_raster)   /* $E - copy raster form */
+        .dc.l   C_SYM(linea_fill)     /* $F - flood fill */
 linea_ents:
         /* Number of implemented Line A routines */
         .equ    nb_linea,(linea_ents-linea_vecs)/4

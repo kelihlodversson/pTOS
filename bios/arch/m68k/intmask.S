@@ -21,13 +21,15 @@
  * There is a single save slot, so these do not nest.
  */
 
-        .globl  _disable_interrupts
-        .globl  _enable_interrupts
+#include "asmdefs.h"
+
+        .globl  C_SYM(disable_interrupts)
+        .globl  C_SYM(enable_interrupts)
 
         .text
 
 /* disable interrupts */
-_disable_interrupts:
+C_SYM(disable_interrupts):
 #ifdef __mcoldfire__
         move.l  d0,-(sp)
         move.w  sr,d0
@@ -42,7 +44,7 @@ _disable_interrupts:
         rts
 
 /* restore interrupt mask as it was before disable_interrupts() */
-_enable_interrupts:
+C_SYM(enable_interrupts):
 #ifdef __mcoldfire__
         move.l  d0,-(sp)
         move.w  savesr,d0

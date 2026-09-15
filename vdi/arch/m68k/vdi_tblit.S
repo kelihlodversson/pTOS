@@ -97,13 +97,13 @@
 //   Global routines defined in this module.           //
 /////////////////////////////////////////////////////////
 
-        .globl  _normal_blit
+        .globl  C_SYM(normal_blit)
 
 /////////////////////////////////////////////////////////
 //  Global variables referenced.                       //
 /////////////////////////////////////////////////////////
 
-        .extern _linea_vars
+        .extern C_SYM(linea_vars)
 /////////////////////////////////////////////////////////////////////////
 //  _text_blt expects variables SCRTCHP & SCRPT2 to be                  //
 //           initialized as follows:                                    //
@@ -228,7 +228,7 @@
 /////////////////////////////////////////////////////////////////////////
 
 //  interface to 'norm_blt'
-_normal_blit:
+C_SYM(normal_blit):
         movem.l d2-d7/a2-a6,-(sp)       // save registers that GCC expects unchanged
         move.l  44+4(sp),a6             // load ptr to end of vars
         move.l  44+8(sp),a0             // a0 & a1 must also be set

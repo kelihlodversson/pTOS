@@ -23,7 +23,7 @@
 #include "../obj/ramtos.h"
 #endif
 
-        .extern _bootram
+        .extern C_SYM(bootram)
 
 #define BOOTDEV 0x446
 
@@ -148,7 +148,7 @@ cpudone:
         move.l  d0,-(sp)        // cpu
         move.l  d3,-(sp)        // size
         move.l  a4,-(sp)        // src
-        bsr     _bootram
+        bsr     C_SYM(bootram)
 
 fail:
         rts

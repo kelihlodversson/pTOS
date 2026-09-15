@@ -13,14 +13,14 @@
 #include "asmstruct.h"
 #include "asmpd.h"
 
-        .globl  _psetup
-        .globl  _gotopgm
-        .globl  _dsptch
-        .globl  _switchto
+        .globl  C_SYM(psetup)
+        .globl  C_SYM(gotopgm)
+        .globl  C_SYM(dsptch)
+        .globl  C_SYM(switchto)
 
-        .extern _rlr
-        .extern _indisp
-        .extern _disp
+        .extern C_SYM(rlr)
+        .extern C_SYM(indisp)
+        .extern C_SYM(disp)
 
         .text
 
@@ -32,7 +32,7 @@
  * That pop will occur at the end of switchto()
  */
 
-_psetup:
+C_SYM(psetup):
         // PD* in r0, New process entry point in r1
         mrs     r3, cpsr        // current psr saved in r3
         cpsid   if              // disable interrupts
@@ -58,9 +58,9 @@ _psetup:
  * important.
  */
 
-_gotopgm:
+C_SYM(gotopgm):
         // get the basepage for the top of rlr
-        ldr     r0, =_rlr
+        ldr     r0, =C_SYM(rlr)
         ldr     r0, [r0]
         ldr     r1, [r0, PD_UDA]
         ldr     r0, [r0, PD_LDADDR] // The basepage must stay in r0
@@ -104,9 +104,9 @@ _gotopgm:
  *              jump to disp
  */
 
-_dsptch:
+C_SYM(dsptch):
         push    {r0-r3, lr}
-        ldr     ip, =_indisp
+        ldr     ip, =C_SYM(indisp)
         ldrb    r0, [ip]
         teq     r0, #0
         popne   {r0-r3, pc}
@@ -118,7 +118,7 @@ savestate:
         mrs     r3, cpsr        // current psr saved in r3
         cpsid   if              // disable interrupts
 
-        ldr     r0, =_rlr       // Get pointer to rlr PD structure
+        ldr     r0, =C_SYM(rlr)       // Get pointer to rlr PD structure
         ldr     r0, [r0]
 
         ldr     r1, [r0, PD_UDA]        // Get pointer to UDA structure
@@ -135,15 +135,15 @@ savestate:
 
         ldr     sp, =gemasm_stack
         msr     cpsr_cfxs, r3
-        b       _disp
+        b       C_SYM(disp)
 
 
-_switchto:
+C_SYM(switchto):
         // r0 points to UDA struct
         mrs     ip, cpsr        // current psr saved in ip
         cpsid   if              // disable interrupts
         mov     r1, #0
-        ldr     r2, =_indisp
+        ldr     r2, =C_SYM(indisp)
         strb    r1, [r2]
 
         cps     #0x1f

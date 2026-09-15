@@ -16,6 +16,14 @@
  */
 #define ASM_SOURCE
 
+/*
+ * Use GCC's spelling for a C symbol.  This is empty for ELF targets and an
+ * underscore for the Atari a.out ABI.
+ */
+#define C_SYM1(prefix, name) prefix ## name
+#define C_SYM0(prefix, name) C_SYM1(prefix, name)
+#define C_SYM(name) C_SYM0(__USER_LABEL_PREFIX__, name)
+
 /* general-purpose configuration file */
 #include "config.h"
 

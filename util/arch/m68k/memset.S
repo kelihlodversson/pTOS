@@ -19,8 +19,8 @@
 
 // ==== Definitions ==========================================================
 
-        .globl  _memset
-        .globl  _bzero_nobuiltin
+        .globl  C_SYM(memset)
+        .globl  C_SYM(bzero_nobuiltin)
 
         .text
 //
@@ -29,17 +29,17 @@
 // the obscure name is to circumvent GCC converting a call to bzero()
 // to a call to memset()
 //
-_bzero_nobuiltin:
+C_SYM(bzero_nobuiltin):
         move.l   4(sp),a0
         move.l   8(sp),d0
         move.l   d7,-(sp)
         moveq    #0,d7
-        jra      memset
+        jra      memset_common
 //
 // void *memset(void *address, short c, unsigned long size)
 // fills with byte c, returns the given address.
 
-_memset:
+C_SYM(memset):
         move.l   4(sp),a0
         move.l   d7,-(sp)
         move.w   12(sp),d0
@@ -58,7 +58,7 @@ _memset:
 
 // at this point, a0=block, d7=pattern, d0=size, (sp)=saved d7
 // and we do not read the stack args any more.
-memset:
+memset_common:
         move.l   a0,d1
         btst     #0,d1
         jeq      even

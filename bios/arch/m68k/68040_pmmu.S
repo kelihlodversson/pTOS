@@ -11,9 +11,9 @@
 
 #if CONF_WITH_68040_PMMU
 
-                .globl  _setup_68040_pmmu
-                .extern _ramtop
-                .extern _balloc_stram
+                .globl  C_SYM(setup_68040_pmmu)
+                .extern C_SYM(ramtop)
+                .extern C_SYM(balloc_stram)
 
                 .arch   68040
 
@@ -47,13 +47,13 @@ MEMORY_SIZE_IO2     = 1024*1024
 
                 .text
 
-_setup_68040_pmmu:
+C_SYM(setup_68040_pmmu):
                 movem.l d2-d7/a2-a6,-(sp)
 
                 jbsr    turn_off_all
 
                 // find out how much TT RAM we have
-                move.l  _ramtop.w,d0
+                move.l  C_SYM(ramtop).w,d0
                 jeq     no_ttram1
                 sub.l   #0x01000000,d0
                 move.l  d0,tt_ram_size
@@ -96,7 +96,7 @@ no_ttram1:
 
                 clr.w   -(sp)                   // FALSE
                 move.l  d0,-(sp)
-                jsr     _balloc_stram
+                jsr     C_SYM(balloc_stram)
                 addq.l  #6,sp
 
                 add.l   #~msk_rootp_addr,d0

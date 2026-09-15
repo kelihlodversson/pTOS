@@ -17,8 +17,8 @@
 /*
  * trap1 - trap 1 (GEMDOS) entry point
  */
-        .globl  _trap1
-_trap1:
+        .globl  C_SYM(trap1)
+C_SYM(trap1):
         move.l  (sp)+,t1spsav   // save return address
 #ifdef __mcoldfire__
         move.l  d2,t1regsav
@@ -46,8 +46,8 @@ t1regsav:
 /*
  *  GEMDOS Pexec() call. This version is reentrant unlike the trap1 function!
  */
-        .globl  _trap1_pexec    // Reentrant Pexec call
-_trap1_pexec:
+        .globl  C_SYM(trap1_pexec)    // Reentrant Pexec call
+C_SYM(trap1_pexec):
 #ifdef __mcoldfire__
         move.l  a2,-(sp)
         move.l  d2,-(sp)
@@ -75,8 +75,8 @@ _trap1_pexec:
  * Stop the CPU until an interrupt occurs.
  * This may save some host CPU time on emulators (i.e. ARAnyM).
  */
-        .globl  _stop_until_interrupt
-_stop_until_interrupt:
+        .globl  C_SYM(stop_until_interrupt)
+C_SYM(stop_until_interrupt):
         move.w  sr,d0
         move.w  d0,d1           // Backup
 #ifdef __mcoldfire__
@@ -143,8 +143,8 @@ stop7:
 #endif /* USE_STOP_INSN_TO_FREE_HOST_CPU */
 
 // The RTS below is shared for other purposes.
-        .globl  _just_rts
-_just_rts:
+        .globl  C_SYM(just_rts)
+C_SYM(just_rts):
         rts
 
 /*
@@ -162,8 +162,8 @@ _just_rts:
  *
  *  if you do not need rounding, use mul_div() from intmath.h instead!
  */
-        .globl  _mul_div_round
-_mul_div_round:
+        .globl  C_SYM(mul_div_round)
+C_SYM(mul_div_round):
 #ifdef __mcoldfire__
         moveq.l #0,d0
         move.w  6(sp),d0        // d0 = mult2
@@ -202,15 +202,15 @@ mdrminus:
  * below provide the necessary assembler support.
  */
 
-        .globl   _protect_v
-        .globl   _protect_w
-        .globl   _protect_ww
-        .globl   _protect_wlwwwl
+        .globl   C_SYM(protect_v)
+        .globl   C_SYM(protect_w)
+        .globl   C_SYM(protect_ww)
+        .globl   C_SYM(protect_wlwwwl)
 
 /*
  * LONG protect_v(LONG (*func)(void));
  */
-_protect_v:
+C_SYM(protect_v):
         move.l   4(sp),a0
         move.l   a2,-(sp)
         move.l   d2,-(sp)
@@ -222,7 +222,7 @@ _protect_v:
 /*
  * LONG protect_w(LONG (*func)(WORD), WORD);
  */
-_protect_w:
+C_SYM(protect_w):
         move.l   4(sp),a0
         move.w   8(sp),d0
         move.l   a2,-(sp)
@@ -237,7 +237,7 @@ _protect_w:
 /*
  * LONG protect_ww(LONG (*func)(WORD), WORD, WORD);
  */
-_protect_ww:
+C_SYM(protect_ww):
         move.l   4(sp),a0
         move.l   8(sp),d0
         move.l   a2,-(sp)
@@ -252,7 +252,7 @@ _protect_ww:
 /*
  * LONG protect_wlwwwl(LONG (*func)(), WORD, LONG, WORD, WORD, WORD, LONG);
  */
-_protect_wlwwwl:
+C_SYM(protect_wlwwwl):
         movem.l  8(sp),d0-d1/a0-a1
         move.l   a2,-(sp)
         move.l   d2,-(sp)

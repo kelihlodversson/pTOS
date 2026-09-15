@@ -9,24 +9,21 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-#ifndef STANDALONE_CONSOLE
+#ifdef STANDALONE_CONSOLE
+/* The standalone build does not include the kernel configuration headers. */
+#define C_SYM1(prefix, name) prefix ## name
+#define C_SYM0(prefix, name) C_SYM1(prefix, name)
+#define C_SYM(name) C_SYM0(__USER_LABEL_PREFIX__, name)
+#else
 #include "asmdefs.h"
 #endif
 
 /*
  * getwh()/getht() are called from C on both builds, but the two builds'
- * compilers disagree on whether a C symbol gets an assembly-visible
- * leading underscore (the ROM build's -fleading-underscore vs. the
- * standalone build's plain mintelf default, needed to match libcmini's
- * own convention -- see ../cli/Makefile). __USER_LABEL_PREFIX__ is
- * GCC's own predefined macro for whichever convention is actually
- * active, so this resolves correctly either way without needing a
- * build-specific #ifdef here.
+ * compilers disagree on whether a C symbol gets an assembly-visible leading
+ * underscore.  C_SYM() in asmdefs.h uses GCC's own predefined macro for
+ * whichever convention is actually active.
  */
-#define CONCAT1(a,b) a##b
-#define CONCAT(a,b) CONCAT1(a,b)
-#define C_SYM(name) CONCAT(__USER_LABEL_PREFIX__, name)
-
         .globl  C_SYM(getwh),C_SYM(getht)
 
         .text
@@ -39,12 +36,12 @@
  * provides _start and whose <mint/osbind.h> provides every GEMDOS/BIOS/
  * XBIOS call cmd.h needs directly -- see cmd.h and ../cli/Makefile.
  */
-        .globl  _coma_start
-        .globl  _jmp_gemdos,_jmp_bios,_jmp_xbios
-        .globl  _environment
-        .extern _cmdmain
+        .globl  C_SYM(coma_start)
+        .globl  C_SYM(jmp_gemdos),C_SYM(jmp_bios),C_SYM(jmp_xbios)
+        .globl  C_SYM(environment)
+        .extern C_SYM(cmdmain)
 
-_coma_start:
+C_SYM(coma_start):
         move.l  4(sp),a5                // a5 -> basepage
         lea     stack,sp
         move.l  12(a5),d0               // calc memory required
@@ -60,12 +57,12 @@ _coma_start:
 
 #ifdef __mcoldfire__
         move.l 44(a5),d0
-        move.l  d0,_environment
+        move.l  d0,C_SYM(environment)
 #else
-        move.l 44(a5),_environment
+        move.l 44(a5),C_SYM(environment)
 #endif
 
-        jsr     _cmdmain
+        jsr     C_SYM(cmdmain)
 
         clr.w   -(sp)                   // Pterm0()
         trap    #1
@@ -98,7 +95,7 @@ C_SYM(getht):
 /*
  * system call interface
  */
-_jmp_gemdos:
+C_SYM(jmp_gemdos):
         move.l  (sp)+,ret_addr          // so parameters are in the right place
         move.l  a2,save_a2              // must save a2/d2 because someone may
         move.l  d2,save_d2              //  intercept the trap & clobber them
@@ -108,7 +105,7 @@ _jmp_gemdos:
         move.l  ret_addr,-(sp)
         rts
 
-_jmp_bios:
+C_SYM(jmp_bios):
         move.l  (sp)+,ret_addr
         move.l  a2,save_a2
         move.l  d2,save_d2
@@ -118,7 +115,7 @@ _jmp_bios:
         move.l  ret_addr,-(sp)
         rts
 
-_jmp_xbios:
+C_SYM(jmp_xbios):
         move.l  (sp)+,ret_addr
         move.l  a2,save_a2
         move.l  d2,save_d2
@@ -129,7 +126,7 @@ _jmp_xbios:
         rts
 
         .bss
-_environment: // Environment string, from the BASEPAGE
+C_SYM(environment): // Environment string, from the BASEPAGE
         .ds.l   1
 ret_addr:
         .ds.l   1

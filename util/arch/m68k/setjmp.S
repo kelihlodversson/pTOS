@@ -21,19 +21,19 @@
  * it must be saved separately because it will be immediately popped out
  * by the caller just after the call.
  */
-        .globl  _setjmp
-        .globl  _longjmp
+        .globl  C_SYM(setjmp)
+        .globl  C_SYM(longjmp)
 
         .text
 
-_setjmp:
+C_SYM(setjmp):
         move.l  4(sp),a0                // jmp_buf
         move.l  (sp),(a0)+              // save setjmp() return address
         movem.l d2-d7/a2-a7,(a0)        // save setjmp() caller registers
         moveq   #0,d0                   // return from setjmp()
         rts
 
-_longjmp:
+C_SYM(longjmp):
         move.l  4(sp),a0                // jmp_buf
         move.w  8(sp),d0                // requested setjmp() return value
         jne     nonzero

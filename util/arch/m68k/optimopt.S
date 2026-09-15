@@ -13,8 +13,8 @@
 
 #include "asmdefs.h"
 
-        .globl  _scasb
-        .globl  _expand_string
+        .globl  C_SYM(scasb)
+        .globl  C_SYM(expand_string)
 
 /*
  * const char *scasb(const char *str, char c)
@@ -24,7 +24,7 @@
  *
  */
 
-_scasb:
+C_SYM(scasb):
         move.l  4(sp),a0
         move.w  8(sp),d1
 scasb_loop:
@@ -46,7 +46,7 @@ scasb_end:
  *  byte too, but it is not included in the length value returned.
  */
 
-_expand_string:
+C_SYM(expand_string):
         movea.l 8(sp),a0        // a0 -> source
         movea.l 4(sp),a1        // a1 -> dest
         move.l  a0,d0           // remember source start

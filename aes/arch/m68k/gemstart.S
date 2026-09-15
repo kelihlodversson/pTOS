@@ -18,32 +18,32 @@
 #include "asmdefs.h"
 #include "asmstruct.h"
 
-        .globl  _ui_start
-        .globl  _accdesk_start
-        .globl  _dos_exec
+        .globl  C_SYM(ui_start)
+        .globl  C_SYM(accdesk_start)
+        .globl  C_SYM(dos_exec)
 
-        .extern _ad_stail
-        .extern _ad_envrn
-        .extern _size_theglo
-        .extern _D
-        .extern _bzero_nobuiltin
-        .extern _just_rts
-        .extern _drwaddr
-        .extern _tikcod
-        .extern _init_p0_stkptr
-        .extern _gem_main
-        .extern _gl_changerez
-        .extern _run_accs_and_desktop
-        .extern _disable_interrupts
-        .extern _rlr
-        .extern _enable_interrupts
+        .extern C_SYM(ad_stail)
+        .extern C_SYM(ad_envrn)
+        .extern C_SYM(size_theglo)
+        .extern C_SYM(D)
+        .extern C_SYM(bzero_nobuiltin)
+        .extern C_SYM(just_rts)
+        .extern C_SYM(drwaddr)
+        .extern C_SYM(tikcod)
+        .extern C_SYM(init_p0_stkptr)
+        .extern C_SYM(gem_main)
+        .extern C_SYM(gl_changerez)
+        .extern C_SYM(run_accs_and_desktop)
+        .extern C_SYM(disable_interrupts)
+        .extern C_SYM(rlr)
+        .extern C_SYM(enable_interrupts)
 
         .text
 
 //////////////////////////////////////////////////////////////////////////////
 // AES start-up code
 //////////////////////////////////////////////////////////////////////////////
-_ui_start:
+C_SYM(ui_start):
         // obtain our basepage address
         movea.l sp,a5
         movea.l 4(a5),a5
@@ -54,7 +54,7 @@ _ui_start:
         // ad_stail is the address to the cmdline buffer in our basepage
         move.l  a5,d0
         add.l   #0x80,d0
-        move.l  d0,_ad_stail
+        move.l  d0,C_SYM(ad_stail)
 
         // mshrink to the needed size for TEXT+DATA+BSS plus 256 bytes.
         move.l  0xC(a5),d0
@@ -91,33 +91,33 @@ aes_restart:
         // restore original environment pointer
 #ifdef __mcoldfire__
         move.l  save_ad_envrn,d0
-        move.l  d0,_ad_envrn
+        move.l  d0,C_SYM(ad_envrn)
 #else
-        move.l  save_ad_envrn,_ad_envrn
+        move.l  save_ad_envrn,C_SYM(ad_envrn)
 #endif
 
         // clear the 'global memory' zone
         move.l  #SIZEOF_THEGLO, -(sp) // size in bytes
-        movea.l #_D,a0
+        movea.l #C_SYM(D),a0
         move.l  a0,-(sp)        // address
-        jsr     _bzero_nobuiltin    // clear it
+        jsr     C_SYM(bzero_nobuiltin)    // clear it
         addq.l  #8,sp
 
         // _drwaddr ??? set to just_rts
-        lea     _just_rts,a0
-        move.l  a0,_drwaddr
+        lea     C_SYM(just_rts),a0
+        move.l  a0,C_SYM(drwaddr)
 
         // call C routine to init the SSP in the UDA & return its offset
-        jsr     _init_p0_stkptr
-        movea.l #_D,a6
+        jsr     C_SYM(init_p0_stkptr)
+        movea.l #C_SYM(D),a6
         adda.l  d0,a6
         movea.l a6,sp
 
         // go in C
-        jsr     _gem_main
+        jsr     C_SYM(gem_main)
 
         // Check for resolution change - if so start over again
-        move.w  _gl_changerez,d0
+        move.w  C_SYM(gl_changerez),d0
         tst.w   d0
         jne     aes_restart
 
@@ -134,9 +134,9 @@ aes_restart:
 //////////////////////////////////////////////////////////////////////////////
 // Run accessories and desktop
 //////////////////////////////////////////////////////////////////////////////
-_accdesk_start:
+C_SYM(accdesk_start):
         move.l  4(sp),a5                // a5 -> basepage
-        movea.l #_D,a0
+        movea.l #C_SYM(D),a0
         move.l  UDA_SPSUPER(a0),sp      // use AES process 0 stack
         move.l  12(a5),d0               // calc memory required
         add.l   20(a5),d0
@@ -155,7 +155,7 @@ _accdesk_start:
         trap    #1
         addq.l  #6,sp
 
-        jsr     _run_accs_and_desktop
+        jsr     C_SYM(run_accs_and_desktop)
 
         clr.w   -(sp)                   // Pterm0()
         trap    #1
@@ -164,7 +164,7 @@ _accdesk_start:
 // A wrapper around Pexec. We can't use the above function _gemdos for this
 // since _gemdos is not reentrant.
 //////////////////////////////////////////////////////////////////////////////
-_dos_exec:
+C_SYM(dos_exec):
         move.l  sp,d1
 #ifdef __mcoldfire__
         move.l  a2,-(sp)                // Save registers
@@ -208,14 +208,14 @@ _dos_exec:
         // to a multiple of 4 bytes; so, for safety, you should increase
         // the minimum adjustment by two bytes on ColdFire systems.
 
-        jsr     _disable_interrupts
-        movea.l _rlr,a0
+        jsr     C_SYM(disable_interrupts)
+        movea.l C_SYM(rlr),a0
         movea.l PD_UDA(a0),a0
         move.l  UDA_SPSUPER(a0),-(sp)   // Save rlr->p_uda->u_spsuper
         movea.l sp,a1
         suba.l  #0x50,a1                // Adjust the stack (see above)
         move.l  a1,UDA_SPSUPER(a0)
-        jsr     _enable_interrupts
+        jsr     C_SYM(enable_interrupts)
 
         movea.l d1,a1
         move.l  14(a1),-(sp)            // Push parameters on the stack again...
@@ -226,11 +226,11 @@ _dos_exec:
         trap    #1                      // ... and execute the Pexec call!
         lea     16(sp),sp
 
-        jsr     _disable_interrupts
-        movea.l _rlr,a0
+        jsr     C_SYM(disable_interrupts)
+        movea.l C_SYM(rlr),a0
         movea.l PD_UDA(a0),a0
         move.l  (sp)+,UDA_SPSUPER(a0)   // Restore rlr->p_uda->u_spsuper
-        jsr     _enable_interrupts
+        jsr     C_SYM(enable_interrupts)
 
 #ifdef __mcoldfire__
         move.l  (sp)+,d2
