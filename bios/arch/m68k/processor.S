@@ -575,7 +575,7 @@ cpushl_bc:
  * WORD cache_exists(void);
  *  returns 1 if this file's cache control (below) supports the current
  *  processor, 0 otherwise. Note this is narrower than "has a cache": a
- *  bare 68020 does have one, but _processor_init() above never sets up
+ *  bare 68020 does have one, but C_SYM(processor_init)() above never sets up
  *  cacr_enable for it, so it's excluded here too.
  *
  * void set_cache(WORD enable);
@@ -585,7 +585,7 @@ cpushl_bc:
  *  returns 0 if the cache is fully disabled or not present, != 0 otherwise
  */
 C_SYM(cache_exists):
-        moveq.l #0,d0               // assume 68000/68010/68020: _processor_init()
+        moveq.l #0,d0               // assume 68000/68010/68020: C_SYM(processor_init)()
         cmpi.b  #30,C_SYM(mcpu)+3         // only sets up cacr_enable for 68030 and up
         jmi     ce_exit
         moveq.l #1,d0
@@ -593,11 +593,26 @@ ce_exit:
         rts
 
 C_SYM(set_cache):
+        /*
+         * set_cache(WORD enable) is an ordinary internal C function.
+         * Under -mfastcall enable arrives in d0, but d0 is about to be
+         * clobbered by the C_SYM(cache_exists) call below and then reused as
+         * a work register, so stash it in d1 (unused by C_SYM(cache_exists))
+         * first. Without -mshort enable's slot is a full 4 bytes now,
+         * so its tested low word moved from 4(sp) to 6(sp).
+         */
+#if CONF_WITH_MFASTCALL
+        move.l  d0,d1
+#endif
         jbsr    C_SYM(cache_exists)
         tst.w   d0
         jeq     sc_exit             // no cache, do nothing
         moveq.l #0,d0               // assume disable
-        tst.w   4(sp)
+#if CONF_WITH_MFASTCALL
+        tst.w   d1
+#else
+        tst.w   6(sp)
+#endif
         jne     sc_enable           // no, enable
         cmpi.b  #40,C_SYM(mcpu)+3         // possible dirty data in cache?
         jmi     sc_cacr             // no, go do it
@@ -635,7 +650,7 @@ gc_exit:
 #if CONF_WITH_68030_PMMU
         .even   // Mandatory in ELF section .rodata
 root_pointer_descriptor:
-        .dc.l   0x80000002,C_SYM(pmmutree) // lower limit 0, short format, table at '_pmmutree'
+        .dc.l   0x80000002,C_SYM(pmmutree) // lower limit 0, short format, table at 'C_SYM(pmmutree)'
 init_tc:
         .dc.l   0x80F04445          // enable, 32K pages, table indexes=4/4/4/5
 init_ttr0:                          // transparent translation is enabled for all FCs

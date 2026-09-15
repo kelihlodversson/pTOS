@@ -16,10 +16,9 @@ CPUFLAGS="-march=armv7-a -mtune=cortex-a7 -marm -mfpu=neon-vfpv4 -mfloat-abi=har
 # here explicitly.
 CONF_WITH_IDE=n
 
-# cli/cmdasm.S is hand written m68k assembler with no ARM counterpart, so
-# it cannot be assembled for this machine. Raspberry Pi excludes it the
-# same way via a Kconfig default (MACHINE_RPI); matched here explicitly.
-CONF_WITH_CLI=n
+# CONF_WITH_CLI is left at its default (y): cli/arch/arm/cmdasm.S provides
+# the ARM port, so EmuCON builds cleanly here (see virt-arm-cli_defconfig,
+# which boots straight into it).
 
 # The Line-A emulator (vdi/Kconfig) is only implemented for 68k-class
 # hardware (bios/arch/m68k/linea.S provides int_linea()); there is no ARM

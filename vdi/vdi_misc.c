@@ -21,6 +21,18 @@
 
 static BOOL in_proc;                   /* flag, if we are still running */
 
+void tick_int(int u);
+
+#ifndef __arm__
+/*
+ * tick_int_etv_entry (util/arch/m68k/miscasm.S) is what actually gets
+ * installed into etv_timer via Setexc() below: see the comment there
+ * for why tick_int() itself -- an ordinary internal C function -- can't
+ * be called directly through that frozen, classic-ABI TOS vector.
+ */
+extern void tick_int_etv_entry(void);
+#endif
+
 
 
 /*
@@ -76,17 +88,40 @@ void arb_line(Line * line)
  *
  * The etv_timer does point to this routine
  */
-static void tick_int(int u)
+void tick_int(int u)
 {
     if (!in_proc) {
         in_proc = 1;                    /* set flag, that we are running */
                                         /* MAD: evtl. registers to stack */
+        /*
+         * tim_addr/tim_chain are frozen, user-replaceable TOS vectors
+         * (Vex_timv() lets any program install its own handler in
+         * tim_addr): call them via the classic tightly-packed ABI
+         * always, using protect_wv(), same as every other protect_*
+         * vector in bios.c -- not as an ordinary compiled C call, which
+         * on m68k would use whatever ABI this kernel build was compiled
+         * with instead of the documented TOS convention a genuine
+         * external handler expects. protect_wv() (unlike protect_w())
+         * is declared void-returning, matching ETV_TIMER_T's own void
+         * return exactly -- only the int-vs-WORD parameter width still
+         * needs a cast, the same int/WORD mismatch is inherent to
+         * ETV_TIMER_T itself (include/biosdefs.h) for every frozen
+         * timer vector, not something specific to this call site.
+         */
+#ifdef __arm__
         (*linea_vars.tim_addr)(u);                 /* call the timer vector */
+#else
+        protect_wv((void(*)(WORD))linea_vars.tim_addr, (WORD)u);
+#endif
                                         /* and back from stack */
     }
     in_proc = 0;                        /* allow yet another trip through */
                                         /* MAD: evtl. registers to stack */
+#ifdef __arm__
     (*linea_vars.tim_chain)(u);         /* call the old timer vector too */
+#else
+    protect_wv((void(*)(WORD))linea_vars.tim_chain, (WORD)u);
+#endif
                                         /* and back from stack */
 }
 
@@ -139,8 +174,13 @@ void timer_init(void)
     linea_vars.tim_addr = do_nothing_int;          /* tick points to rts */
 
     disable_interrupts();
+#ifdef __arm__
     linea_vars.tim_chain = (void(*)(int))          /* save old vector */
     Setexc(0x100, (long)tick_int);      /* set etv_timer to tick_int */
+#else
+    linea_vars.tim_chain = (void(*)(int))          /* save old vector */
+    Setexc(0x100, (long)tick_int_etv_entry);   /* set etv_timer to tick_int */
+#endif
     enable_interrupts();
 
 }

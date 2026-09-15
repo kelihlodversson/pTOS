@@ -33,7 +33,7 @@
         .extern C_SYM(stktop)
 
         // Memory
-        .extern meminit        // initialize the memory and its controller
+        .extern meminit       // initialize the memory and its controller
 
         // BIOS C part
         .extern C_SYM(biosmain)     // BIOS C entry point
@@ -77,7 +77,7 @@ amiga_main:
 
 C_SYM(os_header):
 os_entry:
-    bra.s   C_SYM(main)       // branch to _main
+    bra.s   C_SYM(main)       // branch to main
 os_version:
     .dc.w   TOS_VERSION // TOS version
 reseth:
@@ -115,7 +115,7 @@ os_kbshift:
 os_run:
     .dc.l   C_SYM(run)        // Pointer to a pointer to the actual basepage
 os_dummy:
-    .ascii  "ETOS"      // _main should start at offset 0x30, shouldn't it?
+    .ascii  "ETOS"      // main should start at offset 0x30, shouldn't it?
 
 C_SYM(main):
         bra.w   _realmain   // MUST be 4 bytes long
@@ -300,9 +300,9 @@ C_SYM(main):
  * may check for its presence by checking the first 4 bytes which contain
  * the magic number 'OSXH'.
  *
- * To avoid problems with programs that branch directly to _main, rather
+ * To avoid problems with programs that branch directly to main, rather
  * than using the branch instruction at the beginning of the TOS os_header,
- * there is a 4-byte branch instruction at _main which branches past the
+ * there is a 4-byte branch instruction at main which branches past the
  * extended header.  This means, for example, that the extended OS header
  * begins at 0xfc0034 in the 192K ROMS, and at 0xe00034 in the 256K and
  * 512K ROMs.
@@ -311,7 +311,7 @@ osxh:
     .ascii  "OSXH"                      // magic number
     .dc.l   osxhend-osxh                // length
     .dc.b   MAJOR_VERSION,MINOR_VERSION,FIX_VERSION,UNOFFICIAL  // binary version
-    .dc.l   C_SYM(version)-C_SYM(os_header)   // offset to version string
+    .dc.l   C_SYM(version)-C_SYM(os_header)         // offset to version string
     .dc.l   OSXH_FEATURES               // feature flags
     .dc.w   OSXH_MACHINES               // machine flags
     .dc.w   OSXH_PROCESSORS             // processor flags
@@ -506,13 +506,13 @@ mmu_done:
 
 resetvec:
 #ifdef __mcoldfire__
-        move.l   C_SYM(resvalid).w, d0
+       move.l   C_SYM(resvalid).w, d0
        cmpi.l   #0x31415926, d0         // Jump to resetvector?
 #else
-        cmpi.l   #0x31415926, C_SYM(resvalid).w // Jump to resetvector?
+       cmpi.l   #0x31415926, C_SYM(resvalid).w // Jump to resetvector?
 #endif
        jne      noreset                 // No --> noreset
-        move.l   C_SYM(resvector).w, d0  // Yes: old resvec to d0
+       move.l   C_SYM(resvector).w, d0         // Yes: old resvec to d0
        jeq      noreset                 // Address null? Yes --> noreset
        btst     #0, d0                  // Address odd ?
        jne      noreset                 // Yes --> noreset
@@ -548,7 +548,16 @@ memdone:
  * typebit: application type bit number which must be set to 1 to match
  */
 C_SYM(run_cartridge_applications):
-        move.w  4(sp),d0                // application bit number
+        /*
+         * run_cartridge_applications(WORD typebit) is an ordinary
+         * internal C function: under -mfastcall typebit already arrives
+         * in d0, not on the stack; without -mshort the plain ABI now
+         * gives it a full 4-byte slot instead of a tightly packed WORD,
+         * so its low word moved from 4(sp) to 6(sp).
+         */
+#if !CONF_WITH_MFASTCALL
+        move.w  6(sp),d0                // application bit number
+#endif
         lea     cart_base, a0
 #ifdef __mcoldfire__
         move.l  #0xABCDEF42, d1

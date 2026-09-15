@@ -65,9 +65,9 @@ void *xmalloc(long amount);
 /* mfree */
 long xmfree(void *addr);
 /* mshrink */
-long xsetblk(int n, void *blk, long len);
+long xsetblk(WORD n, void *blk, long len);
 /* mxalloc */
-void *xmxalloc(long amount, int mode);
+void *xmxalloc(long amount, WORD mode);
 
 #if CONF_WITH_VIDEL
 /* srealloc */
