@@ -16,8 +16,6 @@
 *       -------------------------------------------------------------
 */
 
-#define ENABLE_KDEBUG
-
 #include "emutos.h"
 #include "struct.h"
 #include "obdefs.h"
@@ -674,25 +672,15 @@ WORD rs_load(AESGLOBAL *pglobal, char *rsfname)
      * use shel_find() to get resource location
      */
     strcpy(tmprsfname,rsfname);
-    KDEBUG(("rsrc_load(): requested '%s'\n", tmprsfname));
     if (!sh_find(tmprsfname))
-    {
-        KDEBUG(("rsrc_load(): resource lookup failed\n"));
         return FALSE;
-    }
-
-    KDEBUG(("rsrc_load(): opening '%s'\n", tmprsfname));
 
     dosrc = dos_open(tmprsfname,0); /* mode 0: read only */
     if (dosrc < 0L)
-    {
-        KDEBUG(("rsrc_load(): open failed: %ld\n", dosrc));
         return FALSE;
-    }
     fd = (UWORD)dosrc;
 
     ret = rs_readit(pglobal,fd);
-    KDEBUG(("rsrc_load(): resource parse %s\n", ret ? "succeeded" : "failed"));
     if (ret)
         rs_fixit(pglobal);
     dos_close(fd);
