@@ -1395,8 +1395,24 @@ int main(int argc, char **argv)
                                                   in_size, in, e_shoff, e_shnum,
                                                   e_shentsize, sh_link, &kind);
 
+                /* bind_op must agree with kind (bdos/elfld.c's
+                 * ptos_bind_apply() now rejects a mismatch outright): a
+                 * JUMP_SLOT is PLT machinery, which only ever exists for a
+                 * function call, so a JUMP_SLOT against a symbol whose ELF
+                 * type is not STT_FUNC is not a case this format can
+                 * represent -- reject it here instead of packing
+                 * mismatched bind_op/kind and letting Pexec() discover it
+                 * later. */
                 if (type == jump_slot_type)
+                {
+                    if (kind != PTOSABI_KIND_FUNCTION)
+                        die("'%s' has an R_*_JUMP_SLOT relocation at "
+                            "0x%08lx against '%s', whose ELF symbol type "
+                            "is not STT_FUNC; a JUMP_SLOT import must be a "
+                            "function", in_path, (unsigned long)r_offset,
+                            sym_name);
                     bind_op = PTOS_BIND_CODE_ADDRESS;
+                }
                 else if (kind == PTOSABI_KIND_FUNCTION)
                     bind_op = PTOS_BIND_CODE_ADDRESS;
                 else

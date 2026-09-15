@@ -336,7 +336,13 @@ symbol's STT_FUNC/STT_OBJECT type) and one bind record (bind_op
 PTOS_BIND_CODE_ADDRESS for R_*_JUMP_SLOT or a GLOB_DAT against a STT_FUNC
 symbol, PTOS_BIND_DATA_ADDRESS for a GLOB_DAT against a STT_OBJECT symbol)
 at that relocation's r_offset -- already a load-time vaddr, since
-.got.plt/.got are SHF_ALLOC sections. On m68k specifically, a plain DIR32
+.got.plt/.got are SHF_ALLOC sections. A JUMP_SLOT is PLT machinery and
+therefore only ever a function call, so one against a symbol whose type
+is not STT_FUNC is a packaging error: pTOS ABI imports have no way to
+represent that combination, and bdos/elfld.c's ptos_bind_apply() would
+reject it as a bind_op/kind mismatch regardless.
+
+On m68k specifically, a plain DIR32
 relocation (R_68K_32) against one of those same undefined dynamic symbols
 is ALSO converted the same way: this toolchain has no -fPIC/-fPIE code
 generation, so a call to an imported function compiles to a plain
