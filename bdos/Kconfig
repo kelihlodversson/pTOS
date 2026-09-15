@@ -56,6 +56,28 @@ config CONF_WITH_ELF_LOADER
 	  specific PRG format at all, and is available on m68k as an
 	  alternative to PRG.
 
+config CONF_WITH_PTOS_ABI_IMPORTS
+	bool "Native pTOS ABI imports for ELF executables"
+	depends on CONF_WITH_ELF_LOADER
+	default n
+	help
+	  Let a native ELF executable import pTOS system functions as ordinary
+	  typed C function calls, resolved by Pexec() against a kernel-side
+	  export table instead of requiring the caller to build a TRAP #1
+	  parameter block by hand. See doc/elfload.txt's "Native pTOS ABI
+	  imports" section for the .ptos.imports/.ptos.bind ELF metadata format
+	  and bdos/elfld.c's resolution mechanism this enables.
+
+	  No namespace export table is registered yet: an earlier iteration
+	  exported every GEMDOS (TRAP #1) call this way, but the classic
+	  trap1()/TRAP #1 interface already serves GEMDOS well enough that the
+	  added indirection was not worth it there. This mechanism is kept
+	  ready for a future namespace (most plausibly "aes" or "vdi", once
+	  part of one of those moves to userspace) to register one -- see
+	  bdos/ptosabi.h. Until then, turning this on builds bdos/elfld.c's
+	  resolution code with nothing for it to actually resolve against, so
+	  leave it off unless you are developing that future namespace.
+
 config CONF_WITH_PRG_LOADER
 	bool "Load classic Atari GEMDOS PRG executables"
 	depends on ARCH_M68K

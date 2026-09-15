@@ -11,6 +11,11 @@ Pexec() chooses between the two by inspecting the file's magic number, so
 both formats coexist: a file starting with 0x7f 'E' 'L' 'F' is loaded by the
 ELF loader, one starting with 0x601a by the PRG loader.
 
+An ELF binary can also import pTOS system functions as ordinary typed C
+function calls, resolved to their real kernel addresses when the program
+is loaded -- see "Native pTOS ABI imports" below; no namespace currently
+registers any functions this way (that section explains why).
+
 
 Why relocation is needed
 ------------------------
@@ -213,8 +218,197 @@ itself the moment it loads anywhere but its link address. Pass
 needs no load-time fixups (a position-independent ET_DYN is exempt from
 this check, since it can legitimately need none).
 
-Known version 1 limitations
-----------------------------
+Native pTOS ABI imports (.ptos.imports / .ptos.bind / PT_PTOS_IMPORTS)
+------------------------------------------------------------------------
+
+Alongside .ptos.reloc, an ELF binary may carry a second, independent piece
+of pTOS-private metadata: a table of pTOS system functions the program
+imports and calls as ordinary typed C functions, resolved to their real
+kernel addresses when the program is loaded, without a filesystem-based
+dynamic linker or any runtime symbol lookup. This is the second piece of
+the native pTOS ABI work tracked by issue #308 (the first being
+.ptos.reloc, above); it would let a native ELF application call a pTOS
+function directly, compiled and linked as a normal extern function call.
+
+No namespace currently registers any functions through this mechanism.
+An earlier iteration exported every GEMDOS (TRAP #1) call this way, under
+a "gemdos:" namespace, but GEMDOS's own classic trap-based ABI
+(include/bdosbind.h's trap1()/trap1_pexec(), TRAP #1 on m68k / SVC on
+ARM) already serves native callers well enough on its own that the added
+indirection through this mechanism was not worth it there, and that
+namespace was removed again. The format, the loader-side resolution
+mechanism (below), and bdos/ptosabi.h's table-registration structures
+are kept as they are: they are namespace-agnostic, and are expected to
+become genuinely useful once part of the AES and/or VDI interfaces moves
+to userspace and needs exactly this kind of import mechanism -- see
+bdos/ptosabi.h's own top comment for how a future namespace registers
+one. Building an application against this mechanism, and ptos-elf-pack's
+"How ptos-elf-pack builds it" recipe below, will make sense again once a
+namespace exists to link against; there is nothing to import yet.
+
+The ".ptos.imports" payload
+............................
+
+PT_PTOS_IMPORTS's value is 0x60000002, in the same PT_LOOS..PT_HIOS range
+as PT_PTOS_RELOC. Its p_offset/p_filesz locate the ".ptos.imports"
+payload; p_vaddr/p_paddr/p_memsz are 0, exactly like PT_PTOS_RELOC -- this
+is metadata, not something to map into the process image. A binary that
+imports nothing has no PT_PTOS_IMPORTS header at all: unlike .ptos.reloc,
+there is no reason to ever emit an empty one.
+
+".ptos.imports" payload layout, version 1:
+
+    offset  size  field
+    0       4     magic          (0x50544c32, native byte order)
+    4       2     version        (1)
+    6       2     reserved       (0; ignored by version 1 readers)
+    8       4     import_count
+    12      4     bind_count
+    16      4     import_table_off  (relative to payload start)
+    20      4     bind_table_off    (relative to payload start)
+    24      4     strtab_off        (relative to payload start)
+    28      4     strtab_size
+
+followed by three regions, located by the offsets above rather than
+assumed adjacent (each is independently bounds-checked against p_filesz):
+
+  * the import table: import_count fixed-size 12 byte records --
+
+        offset  size  field
+        0       4     name_off   (offset into the string table below)
+        4       2     abi_major
+        6       2     abi_minor  (minimum required feature version; 0 = any)
+        8       1     kind       (0 = function, 1 = data)
+        9       3     reserved   (0)
+
+    name_off points at a NUL-terminated "namespace:name" string in the
+    string table, e.g. "vdi:v_opnwk". abi_major must match the export
+    table's version for that namespace exactly (see bdos/elfld.c);
+    abi_minor is a minimum the export table's own minor version must meet
+    or exceed.
+
+  * the bind table: bind_count fixed-size 12 byte records --
+
+        offset  size  field
+        0       4     import_index  (index into the import table above)
+        4       4     slot_vaddr    (vaddr of the 4-byte slot to fill)
+        8       1     bind_op       (see below)
+        9       3     reserved      (0)
+
+    Several bind records may name the same import_index: this is exactly
+    how more than one call site or GOT slot can share one imported
+    symbol without repeating its name.
+
+  * the string table: strtab_size bytes of NUL-terminated strings,
+    referenced by name_off above.
+
+bind_op is one of:
+
+    PTOS_BIND_CODE_ADDRESS   0   slot_vaddr <- imported function's address
+    PTOS_BIND_DATA_ADDRESS   1   slot_vaddr <- imported data symbol's address
+    PTOS_BIND_GOT_SLOT       2   slot_vaddr <- imported symbol's address
+
+All three write the plain resolved address into the 4-byte slot and are
+functionally identical in version 1; they are kept distinct because a
+later FDPIC-aware version (issue #308) will need to write a two-word
+function descriptor instead of a bare code address for a function import,
+and needs to tell that case apart from a plain data address or an
+already-shared GOT slot without changing the format again. An unrecognised
+bind_op is a packaging/loading error, not silently ignored, following the
+same "never guess" rule .ptos.reloc's unrecognised relocation types
+follow.
+
+Every bind's slot_vaddr must satisfy the same bounds and alignment rules
+as a .ptos.reloc slot (fully inside the loaded image, naturally aligned
+for the target), and no two binds may target the same slot_vaddr.
+
+How ptos-elf-pack builds it
+............................
+
+ptos-elf-pack looks for a DT_NEEDED entry in the input's .dynamic section.
+If there is none, no ".ptos.imports" payload is produced at all -- a
+binary using only internal relocations is unaffected. If there is exactly
+one, and its name matches "libptos-abi.so.<N>" for a decimal N, every
+relocation in .rel.plt/.rela.plt or .rel.dyn/.rela.dyn targeting one of
+that library's undefined dynamic symbols is converted into one import
+(namespace "gemdos", abi_major N, abi_minor 0, kind taken from the
+symbol's STT_FUNC/STT_OBJECT type) and one bind record (bind_op
+PTOS_BIND_CODE_ADDRESS for R_*_JUMP_SLOT or a GLOB_DAT against a STT_FUNC
+symbol, PTOS_BIND_DATA_ADDRESS for a GLOB_DAT against a STT_OBJECT symbol)
+at that relocation's r_offset -- already a load-time vaddr, since
+.got.plt/.got are SHF_ALLOC sections. A JUMP_SLOT is PLT machinery and
+therefore only ever a function call, so one against a symbol whose type
+is not STT_FUNC is a packaging error: pTOS ABI imports have no way to
+represent that combination, and bdos/elfld.c's ptos_bind_apply() would
+reject it as a bind_op/kind mismatch regardless.
+
+On m68k specifically, a plain DIR32
+relocation (R_68K_32) against one of those same undefined dynamic symbols
+is ALSO converted the same way: this toolchain has no -fPIC/-fPIE code
+generation, so a call to an imported function compiles to a plain
+absolute reference (an ordinary R_68K_32 relocation on the call's own
+address operand) rather than a PLT-relative one -- confirmed directly
+against this toolchain's actual "-pie --no-dynamic-linker" output, which
+emits exactly this shape alongside an R_68K_JMP_SLOT PLT entry the
+generated code never actually references. ARM's PIC-capable codegen does
+not produce this shape (only JUMP_SLOT/GLOB_DAT), so the same check
+(present on both architectures) simply never matches there. Either way,
+a DIR32 import carries no addend of its own -- a nonzero one, RELA-
+explicit or REL-implicit, is rejected outright, since version 1's bind
+mechanism has no addend component. Two bind records against the same
+imported symbol are merged into references to one shared import entry
+rather than duplicated. A DT_NEEDED entry that does not match this
+pattern is a packaging error: pTOS has no general purpose dynamic linker,
+so a real shared library dependency can never be satisfied at load time.
+A relocation against an undefined dynamic symbol that is NOT covered by a
+recognised libptos-abi.so.<N> dependency, or whose type is none of
+JUMP_SLOT, GLOB_DAT, or DIR32, is also a packaging error rather than
+something silently left unresolved.
+
+The "gemdos" namespace name above is hardcoded (ptos-elf-pack.c's
+import_list_add()) rather than derived from anything in the input file --
+a leftover from when a kernel-side "gemdos" export table existed to
+resolve it against (see "Native pTOS ABI imports" above). None does
+today, so this conversion still runs -- every relocation is still parsed
+and turned into an import/bind record internally -- but ptos-elf-pack
+refuses to write out a .ptos.imports payload for them at all: emitting
+one would just report success for a file bdos/elfld.c's ptosabi_resolve()
+can only ever reject at Pexec() time, the same as it would an
+unregistered namespace of any other name. A future namespace would pass
+its own name into import_list_add() instead of the hardcoded one, and
+relax that refusal for it.
+
+Locating the metadata and loader resolution
+............................................
+
+bdos/elfld.c looks for PT_PTOS_IMPORTS the same way it looks for
+PT_PTOS_RELOC: by walking the program header table, never the section
+header table. When present, and the kernel was built with
+CONF_WITH_PTOS_ABI_IMPORTS, every import would be looked up by exact
+"namespace:name" match against the kernel's own registered export tables
+(bdos/ptosabi.h's ptosabi_resolve(), currently registering none -- see
+"Native pTOS ABI imports" above), with the ABI major version required to
+match exactly and the minor version required to be at least the import's
+requested minimum. An import naming an unknown symbol, an unsupported
+namespace, or an ABI version the export table cannot satisfy fails the
+whole Pexec() with EPLFMT rather than binding a null or garbage address
+-- a native application must never silently call through an unresolved
+slot; with no namespace registered at all, every PT_PTOS_IMPORTS-carrying
+binary currently fails this way regardless of what it names. A
+PT_PTOS_IMPORTS header in a kernel built without CONF_WITH_PTOS_ABI_IMPORTS
+fails to load the same way: there is no export table to resolve against,
+so pretending the binary loaded correctly would leave every import slot
+at 0.
+
+Imports are resolved after .ptos.reloc/section based relocations are
+applied, but the two mechanisms never touch the same slot: a JUMP_SLOT/
+GLOB_DAT relocation against an undefined dynamic symbol is never one of
+the relocation types .ptos.reloc lists (R_*_ABS32/R_*_RELATIVE, always
+against a symbol that resolves to real image content), so ptos-elf-pack
+always routes a given slot to exactly one of the two payloads, never both.
+
+Known .ptos.reloc version 1 limitations
+-----------------------------------------
 
 A RELA-encoded RELATIVE relocation whose target lies in a PT_LOAD
 segment's zero-filled tail (i.e. in .bss, past its file-backed part) is
@@ -233,3 +427,41 @@ elf_fixup() already computes at runtime (bias + addend) but version 1 of
 this format has no encoding for. This is a real format boundary, not a
 bug: extending the format to cover it is left for a future version rather
 than done ad hoc.
+
+
+Known .ptos.imports version 1 limitations
+--------------------------------------------
+
+ptos-elf-pack recognises exactly one DT_NEEDED entry per input binary
+(the SDK's libptos-abi.so.<N> stub). This is enough for a single
+namespace served from one ABI major version, but a later stage
+registering more than one namespace (most plausibly aes:/vdi:, issue
+#308) will need either several recognised DT_NEEDED libraries or a
+combined stub exporting more than one namespace -- both are
+straightforward extensions of this same conversion step, not a format
+change.
+
+abi_minor exists in the wire format (and in every export table lookup)
+for exactly this reason: a future export table can grow feature-level
+granularity within one ABI major version without changing the format.
+
+Binding is purely eager and address-based: PTOS_BIND_CODE_ADDRESS writes
+a bare code address, which is correct for pTOS's current non-FDPIC ABI
+where every image shares one uniform load bias and one GOT/data context.
+A future FDPIC-aware version, where code and data can be placed
+independently (issue #308), will need a function descriptor (code address
+plus the exporting image's own data context) instead of a bare address
+for at least some function imports; this version has no encoding for
+that, by design -- see PT_PTOS_RELOC's own single-region assumption
+above, which has the identical boundary.
+
+A future namespace's own export table should give real thought to the
+same three properties that led to GEMDOS's own removal from this
+mechanism (see "Native pTOS ABI imports" above): whether its handlers
+can run correctly at the CPU privilege level a native ABI importer
+actually executes at (bdos/proc.c's proc_go() starts every launched
+process in genuine user mode), whether they depend on an ambient
+setjmp/hard-error recovery frame their normal call path provides but a
+direct native call would not, and whether they depend on any other
+per-call context (I/O redirection and the like) an indirect trap-based
+call would set up but a direct one would not.
