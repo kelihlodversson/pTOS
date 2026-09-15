@@ -183,7 +183,7 @@ draw_sprite:
         lea     12(sp),sp
         rts
 
-linea_blit:
+linea_blit_wrapper:
         move.l  a6,-(sp)                // blit frame structure addr
         jsr     C_SYM(linea_blit)
         addq.l  #4,sp
@@ -235,7 +235,7 @@ linea_vecs:
         .dc.l   C_SYM(linea_hline)    /* $4 - horizontal line */
         .dc.l   C_SYM(linea_rect)     /* $5 - filled rectangle */
         .dc.l   C_SYM(linea_polygon)  /* $6 - draw 1 line of polygon */
-        .dc.l   linea_blit      /* $7 - area blit */
+        .dc.l   linea_blit_wrapper /* $7 - area blit */
         .dc.l   C_SYM(text_blt)       /* $8 - text blitting */
         .dc.l   C_SYM(linea_show_mouse)      /* $9 - show mouse */
         .dc.l   hide_mouse      /* $A - hide mouse cursor */
