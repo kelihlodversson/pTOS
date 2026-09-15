@@ -770,7 +770,7 @@ static LONG elf_relocate_ptos(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
  */
 static LONG ptosabi_resolve(const char *namespace_name, const char *name,
                             UWORD abi_major, UWORD abi_minor,
-                            PFLONG *out_addr, UBYTE *out_kind)
+                            PTOSABI_ADDR *out_addr, UBYTE *out_kind)
 {
     (void)namespace_name;
     (void)name;
@@ -841,11 +841,20 @@ static LONG ptos_read_import_name(FH h, ULONG strtab_abs_off, ULONG strtab_size,
  * All three PTOS_BIND_* operations write the plain address in version 1
  * (see doc/elfload.txt for why they are still kept distinct); any other
  * bind_op is a format error.
+ *
+ * addr is read through whichever PTOSABI_ADDR member matches kind
+ * (PTOSABI_KIND_*, from the same export this bind resolved against) --
+ * never the other one; see bdos/ptosabi.h's own comment on why the two
+ * union members are not interchangeable in general, even though they
+ * are the same size and representation on every architecture this
+ * loader actually runs on.
  */
 static LONG ptos_bind_apply(UBYTE *load_base, const ELFINFO *info,
-                            ULONG vaddr, UBYTE bind_op, PFLONG addr)
+                            ULONG vaddr, UBYTE bind_op, PTOSABI_ADDR addr,
+                            UBYTE kind)
 {
     ULONG *slot;
+    ULONG value;
 
     if (bind_op != PTOS_BIND_CODE_ADDRESS && bind_op != PTOS_BIND_DATA_ADDRESS
      && bind_op != PTOS_BIND_GOT_SLOT)
@@ -862,7 +871,8 @@ static LONG ptos_bind_apply(UBYTE *load_base, const ELFINFO *info,
     if ((ULONG)slot & (ELF_SLOT_ALIGN - 1))
         return EPLFMT;
 
-    *slot = (ULONG)addr;
+    value = (kind == PTOSABI_KIND_DATA) ? (ULONG)addr.data : (ULONG)addr.func;
+    *slot = value;
     return 0;
 }
 
@@ -884,7 +894,7 @@ static LONG ptosabi_validate_import(FH h, ULONG import_table_abs,
                                     ULONG strtab_abs, ULONG strtab_size,
                                     ULONG import_index, char *namebuf,
                                     char **out_ns, char **out_name,
-                                    PFLONG *out_addr, UBYTE *out_kind)
+                                    PTOSABI_ADDR *out_addr, UBYTE *out_kind)
 {
     PTOSIMPORTENT imp;
     ULONG off;
@@ -940,15 +950,12 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
                                 const ELFINFO *info)
 {
     PTOSIMPORTSHDR ih;
-    ULONG import_table_lim, bind_table_lim, strtab_lim, payload_end;
+    ULONG import_table_lim, bind_table_lim, strtab_lim;
     ULONG import_table_abs, bind_table_abs, strtab_abs;
     ULONG i, j;
     LONG r;
 
     if (ph->p_filesz < (ULONG)sizeof(PTOSIMPORTSHDR))
-        return EPLFMT;
-
-    if (u32_add_overflow(ph->p_offset, ph->p_filesz, &payload_end))
         return EPLFMT;
 
     r = read_at(h, ph->p_offset, &ih, (LONG)sizeof(ih));
@@ -993,7 +1000,7 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
          * ptosabi_resolve()), every call below returns EPLFMT without
          * ever writing these, and -Wmaybe-uninitialized cannot see across
          * that call boundary that the "r < 0L" check always fires first */
-        PFLONG addr = NULL;
+        PTOSABI_ADDR addr = { NULL };
         UBYTE kind = 0;
 
         r = ptosabi_validate_import(h, import_table_abs, strtab_abs,
@@ -1008,7 +1015,7 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
         PTOSBINDENT bind;
         char namebuf[PTOS_IMPORT_NAME_MAX + 2];
         char *ns, *name;
-        PFLONG addr = NULL;
+        PTOSABI_ADDR addr = { NULL };
         UBYTE kind = 0;
         ULONG off;
 
@@ -1050,10 +1057,11 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
             return r;
 
         KDEBUG(("ptosabi: bind #%ld: %s:%s -> %p, slot=%08lx op=%d\n",
-                (long)i, ns, name, (void *)addr, (unsigned long)bind.slot_vaddr,
-                (int)bind.bind_op));
+                (long)i, ns, name, (void *)addr.func,
+                (unsigned long)bind.slot_vaddr, (int)bind.bind_op));
 
-        r = ptos_bind_apply(load_base, info, bind.slot_vaddr, bind.bind_op, addr);
+        r = ptos_bind_apply(load_base, info, bind.slot_vaddr, bind.bind_op,
+                            addr, kind);
         if (r < 0L)
             return r;
     }

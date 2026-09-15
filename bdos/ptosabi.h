@@ -27,11 +27,26 @@
 #define PTOSABI_H
 
 #include "config.h"
+#include "portab.h"
 
 #if CONF_WITH_PTOS_ABI_IMPORTS
 
 #define PTOSABI_KIND_FUNCTION   0
 #define PTOSABI_KIND_DATA       1
+
+/* an export's address: PFLONG for PTOSABI_KIND_FUNCTION, a plain data
+ * pointer for PTOSABI_KIND_DATA. A union, not a single PFLONG field,
+ * because converting an object pointer to a function pointer type to
+ * store it there (or back) is not a conversion ISO C itself guarantees
+ * -- even though every architecture this code actually targets (m68k,
+ * ARM: flat 32-bit addressing, one pointer representation for code and
+ * data alike) makes it safe in practice. Always write and read through
+ * the member matching PTOSABI_EXPORT's own "kind" field; never round-trip
+ * a value through the other one. */
+typedef union {
+    PFLONG func;
+    void  *data;
+} PTOSABI_ADDR;
 
 /* one exported symbol: a bare name within its table's namespace (no
  * "namespace:" prefix -- the caller already matched the namespace to
@@ -39,9 +54,9 @@
  * data object -- must agree with the import's own recorded kind, since
  * the two are bound very differently by a future FDPIC-aware loader. */
 typedef struct {
-    const char *name;
-    PFLONG      addr;
-    UBYTE       kind;      /* PTOSABI_KIND_* */
+    const char   *name;
+    PTOSABI_ADDR  addr;
+    UBYTE         kind;      /* PTOSABI_KIND_* */
 } PTOSABI_EXPORT;
 
 /* one whole namespace's export table, at one ABI major.minor version. */

@@ -901,12 +901,12 @@ static const char *resolve_dynamic_import(const char *in_path, uint32_t r_info,
  * this version recognises exactly one namespace (see find_abi_needed()).
  * No kernel export table currently registers that namespace (or any
  * other -- see bdos/ptosabi.h and doc/elfload.txt's "Native pTOS ABI
- * imports" section): this still packs a well-formed .ptos.imports
- * payload, but bdos/elfld.c's ptosabi_resolve() unconditionally rejects
- * it today, exactly as it would an unknown namespace. A later stage
- * registering a real namespace (most plausibly "aes" or "vdi") would
- * pass it in here instead of hardcoding "gemdos" -- this conversion
- * mechanism itself needs no other change to serve one. */
+ * imports" section): main() refuses to emit a .ptos.imports payload for
+ * these imports rather than pack one bdos/elfld.c's ptosabi_resolve()
+ * would always reject at Pexec() time. A later stage registering a real
+ * namespace (most plausibly "aes" or "vdi") would pass it in here
+ * instead of hardcoding "gemdos", and relax that refusal for it -- this
+ * conversion mechanism itself needs no other change to serve one. */
 static uint32_t import_list_add(IMPORT **imports, size_t *nimports, size_t *cap,
                                 const char *sym_name, uint32_t abi_major,
                                 int kind, const char *in_path)
@@ -1584,8 +1584,14 @@ int main(int argc, char **argv)
      * to an ET_DYN (PIE): its position-independent code genuinely can
      * need zero R_*_RELATIVE fixups (doc/elfload.txt), so an empty
      * stream there is unremarkable. Require an explicit override for the
-     * (much rarer) genuine zero-relocation ET_EXEC instead of guessing. */
-    if (nslots == 0 && e_type == ET_EXEC && !allow_no_relocations)
+     * (much rarer) genuine zero-relocation ET_EXEC instead of guessing.
+     * nimports is excluded from this check deliberately: an ET_EXEC
+     * whose only dynamic content is pTOS ABI imports (nslots == 0,
+     * nimports > 0) has real content to pack, just none of it a plain
+     * load-time relocation -- rejecting that case here would be exactly
+     * the "linked without -q" false positive this check exists to avoid,
+     * just triggered by the wrong condition. */
+    if (nslots == 0 && nimports == 0 && e_type == ET_EXEC && !allow_no_relocations)
         die("'%s' is a fixed-base ET_EXEC with no relocations to pack; "
             "this is indistinguishable from one linked without -q/"
             "--emit-relocs (see doc/elfload.txt), which would silently "
@@ -1635,6 +1641,20 @@ int main(int argc, char **argv)
         uint32_t import_table_off, bind_table_off, strtab_off;
         unsigned char ihdrbuf[32];
         size_t k;
+
+        /* bdos/elfld.c's ptosabi_resolve() currently registers no namespace
+         * at all (see bdos/ptosabi.h) -- every lookup it could do against a
+         * ".ptos.imports" payload built below fails with EPLFMT, so
+         * Pexec() can never load the result. Refuse here rather than write
+         * out a file that reports success from this tool but is unloadable
+         * kernel-side; once a real namespace (aes:, vdi:, ...) is
+         * registered, gate this on whether that import's namespace is one
+         * of the supported ones instead of refusing unconditionally. */
+        die("'%s' imports %lu pTOS ABI symbol(s), but no kernel export "
+            "table is registered to resolve them against yet (see "
+            "bdos/ptosabi.h) -- the loader would reject the result at "
+            "Pexec() time, so refusing to write a misleadingly 'successful' "
+            "output instead", in_path, (unsigned long)nimports);
 
         if (nimports > PTOS_IMPORT_MAX_COUNT || nbinds > PTOS_IMPORT_MAX_COUNT)
             die("'%s' has more pTOS ABI imports/binds (%lu/%lu) than the "
