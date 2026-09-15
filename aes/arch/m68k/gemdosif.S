@@ -167,6 +167,7 @@ normal:
         jgt     alert_lookup        // yes, assume zeroth entry
         movea.w d0,a0               // else a0 = lookup table index
 alert_lookup:
+        clr.l   d0                  // clean slate: move.b below only sets the low byte
         move.b  0(a0,a1.l),d0       // convert error code to alert number
         /*
          * eralert(WORD n, WORD d) is an ordinary internal C function
@@ -177,6 +178,13 @@ alert_lookup:
          * value always lands in the low word of its slot regardless of
          * what's in the upper half, so a plain longword push of d0/d1
          * still works, matching this file's existing convention.
+         *
+         * The clr.l above matters regardless of ABI: without it, d0's
+         * bits 8-31 are whatever survived the error-code arithmetic
+         * above (the ones-complement/table-index computation just
+         * above alert_lookup), not zero -- so the alert number eralert()
+         * actually reads (its low WORD) could be corrupted by a stale
+         * non-zero upper byte, independent of -mfastcall.
          */
 #if CONF_WITH_MFASTCALL
         jsr     C_SYM(eralert)            // issue alert

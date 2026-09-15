@@ -335,6 +335,20 @@ C_SYM(protect_w):
         rts
 
 /*
+ * void protect_wv(void (*func)(WORD), WORD);
+ *
+ * Alias for protect_w() under a type-correct signature for a callback
+ * that returns nothing (the m68k calling convention returns a value in
+ * d0/d1 whether or not the caller uses it, so the generated code is
+ * identical either way) -- lets a void-returning callback be called
+ * without going through an incompatible LONG(*)(WORD) function-pointer
+ * cast, which is undefined behavior in C even when the return value is
+ * discarded.
+ */
+        .globl   C_SYM(protect_wv)
+        .set     C_SYM(protect_wv), C_SYM(protect_w)
+
+/*
  * LONG protect_l(LONG (*func)(LONG), LONG);
  *
  * Same as protect_w, but for a callback whose single argument is
@@ -364,6 +378,14 @@ C_SYM(protect_l):
         move.l   (sp)+,d2
         move.l   (sp)+,a2
         rts
+
+/*
+ * void protect_lv(void (*func)(LONG), LONG);
+ *
+ * Alias for protect_l(), same reasoning as protect_wv() above.
+ */
+        .globl   C_SYM(protect_lv)
+        .set     C_SYM(protect_lv), C_SYM(protect_l)
 
 /*
  * LONG protect_ww(LONG (*func)(WORD), WORD, WORD);

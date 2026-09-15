@@ -60,6 +60,16 @@ extern long trap1_pexec(short mode, const char *path, const char *tail,
  * 32-bit int, corrupting calls that expect a word. These macros push
  * exactly the bytes GEMDOS expects regardless of int's width, modeled
  * on lib/libcmini's arch/m68k trap_1_* bindings.
+ *
+ * Contract, uniform across every trap1_<shape> below: callee-cleanup
+ * (the "addq.l #N,sp" after the trap undoes this macro's own pushes;
+ * the caller pushes/frees nothing extra). Each 'w' argument is
+ * explicitly narrowed to `short` before the push (see each macro's own
+ * "short _a = ..." line), so it needs no pre-extension by the caller
+ * regardless of -mfastcall -- the narrowing happens inside the macro,
+ * not at the call site. Clobbers d1/d2/a0/a1/a2 plus memory/cc, listed
+ * in each macro's own asm constraints, matching what a real GEMDOS
+ * trap handler is free to touch.
  */
 #define trap1_v(n)                                              \
 __extension__                                                   \
@@ -213,7 +223,9 @@ WORD mul_div_round(WORD mult1, WORD mult2, WORD divisor);
 /* protect d2/a2 when calling external user-supplied code */
 LONG protect_v(LONG (*func)(void));
 LONG protect_w(LONG (*func)(WORD), WORD);
+void protect_wv(void (*func)(WORD), WORD);
 LONG protect_l(LONG (*func)(LONG), LONG);
+void protect_lv(void (*func)(LONG), LONG);
 LONG protect_ww(LONG (*func)(void), WORD, WORD);
 LONG protect_wlwwwl(LONG (*func)(void), WORD, LONG, WORD, WORD, WORD, LONG);
 
