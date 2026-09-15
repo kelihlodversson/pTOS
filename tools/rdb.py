@@ -190,10 +190,10 @@ class RDB:
     def wait_stopped(self, timeout=60):
         """Block until a "!status" notification reports execution stopped
         (e.g. a breakpoint fired), and return {"pc": ...}."""
-        deadline = time.time() + timeout
+        deadline = time.monotonic() + timeout
         self.sock.settimeout(1)
         try:
-            while time.time() < deadline:
+            while time.monotonic() < deadline:
                 try:
                     msg = self._read_msg()
                 except socket.timeout:
@@ -211,10 +211,10 @@ class RDB:
 
 
 if __name__ == "__main__":
-    r = RDB()
-    print("notifications on connect:")
-    for n in r.notifications:
-        print(" ", n)
-    print("status:", r.status())
-    regs = r.regs()
-    print("PC=%08X SR=%04X D0=%08X A0=%08X" % (regs["PC"], regs["SR"], regs["D0"], regs["A0"]))
+    with RDB() as r:
+        print("notifications on connect:")
+        for n in r.notifications:
+            print(" ", n)
+        print("status:", r.status())
+        regs = r.regs()
+        print("PC=%08X SR=%04X D0=%08X A0=%08X" % (regs["PC"], regs["SR"], regs["D0"], regs["A0"]))

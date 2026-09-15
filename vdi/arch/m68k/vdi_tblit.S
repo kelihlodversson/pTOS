@@ -243,20 +243,28 @@
 // so we must jump back manually afterwards) -- but every register that
 // survives that bsr unchanged (d2-d7/a2-a6, preserved by the body's own
 // movem.l below) is exactly the set the *caller* of normal_blit() may
-// also have a live value in, and there is no register left over to
-// smuggle the return address through without clobbering one of those
-// and never restoring it. Stashing it in memory instead of a register
-// sidesteps this entirely: normal_blit() is never reentrant (VDI text
-// blitting is not called from interrupt context, nor recursively), so
-// one scratch longword is all this needs.
+// also have a live value in, and d0/d1/a0/a1 don't survive the body's
+// own jbsr norm_blt either. So the real return address is carried on
+// the stack instead of in a register: popped into d0/d1 alongside dst,
+// then both re-pushed with dst on top and the return address below it
+// -- past the vars/src/dst window the shared stackbody below reads at
+// fixed offsets, so it rides along completely untouched by the bsr/rts
+// round-trip. Symmetric teardown afterwards, ending in a manual jmp
+// rather than a plain rts since the return address isn't the top of
+// stack (dst, needed for the caller's own cleanup, is).
 #if CONF_WITH_MFASTCALL
 C_SYM(normal_blit):
-        move.l  (sp)+,normal_blit_retaddr // stash the real return address
+        move.l  (sp)+,d0                 // real return address
+        move.l  (sp)+,d1                 // dst (caller-pushed stack arg)
+        move.l  d0,-(sp)                 // push retaddr back first (ends up below dst)
+        move.l  d1,-(sp)                 // push dst back on top of it
         move.l  a1,-(sp)                 // src
         move.l  a0,-(sp)                 // vars
         bsr     normal_blit_stackbody
-        lea     8(sp),sp                // drop vars/src pushed above; dst is our caller's to pop
-        movea.l normal_blit_retaddr,a0
+        lea     8(sp),sp                // drop vars/src pushed above
+        move.l  (sp)+,d0                 // dst
+        move.l  (sp)+,a0                 // real return address
+        move.l  d0,-(sp)                 // leave dst for our caller's own cleanup
         jmp     (a0)
 
 normal_blit_stackbody:
@@ -270,14 +278,6 @@ C_SYM(normal_blit):
         jbsr    norm_blt
         movem.l (sp)+,d2-d7/a2-a6       // restore saved registers
         rts
-
-#if CONF_WITH_MFASTCALL
-        .bss
-        .even
-normal_blit_retaddr:
-        .ds.l   1
-        .text
-#endif
 
         SECTION_RODATA
 
