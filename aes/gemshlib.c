@@ -17,7 +17,7 @@
 *       -------------------------------------------------------------
 */
 
-/* #define ENABLE_KDEBUG */
+#define ENABLE_KDEBUG
 
 #include "emutos.h"
 #include "asm.h"
@@ -412,8 +412,11 @@ static WORD findfile(char *pspec)
 {
     char *path;
     char *pname;
+    char curdir[LEN_ZPATH];
 
     KDEBUG(("sh_find(): input pspec='%s'\n",pspec));
+    sh_curdrvdir(curdir);
+    KDEBUG(("sh_find(): appdir='%s', current='%s'\n", rlr->p_appdir, curdir));
     pname = sh_name(pspec);                 /* get ptr to name      */
 
     dos_sdta(&D.g_dta);

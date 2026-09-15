@@ -10,7 +10,9 @@
  *  option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
+#define ENABLE_KDEBUG
+
+#include "emutos.h"
 #include "portab.h"
 #include "obdefs.h"
 #include "rsdefs.h"
@@ -674,14 +676,26 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
     BYTE **frstr;
     void **frimg;
     ULONG spec;
-    LONG i, off, words, bytes;
+    LONG i = -1, off, words, bytes;
     USERBLK *userblk;
+    const char *stage = "native header";
 
-    if (!scan_disk_cicons(disk, &cicons) || !layout_ordinary(disk, &cicons, &layout))
+    if (!scan_disk_cicons(disk, &cicons))
+    {
+        KDEBUG(("rsrc_load(): invalid CICON data\n"));
         return FALSE;
+    }
+    if (!layout_ordinary(disk, &cicons, &layout))
+    {
+        KDEBUG(("rsrc_load(): invalid resource layout\n"));
+        return FALSE;
+    }
     image = dos_alloc_anyram(layout.total);
     if (!image)
+    {
+        KDEBUG(("rsrc_load(): allocation of %ld bytes failed\n", layout.total));
         return FALSE;
+    }
     memset(image, 0, layout.total);
     hdr = (RSHDR *)image;
     *hdr = disk->hdr;
@@ -710,9 +724,11 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
     ((LONG *)(image + layout.extension))[0] = layout.total;
     ((LONG *)(image + layout.extension))[1] = cicons.table ? layout.cicon_table : 0L;
     ((LONG *)(image + layout.extension))[2] = 0L;
+    stage = "colour icons";
     if (!materialize_cicons(image, &layout, disk, &cicons))
         goto fail;
 
+    stage = "section ranges";
     if (!disk_range(disk, disk->hdr.rsh_object, (LONG)hdr->rsh_nobs * DISK_OBJECT_SIZE)
         || !disk_range(disk, disk->hdr.rsh_tedinfo, (LONG)hdr->rsh_nted * DISK_TEDINFO_SIZE)
         || !disk_range(disk, disk->hdr.rsh_iconblk, (LONG)hdr->rsh_nib * DISK_ICONBLK_SIZE)
@@ -722,6 +738,7 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         || !disk_range(disk, disk->hdr.rsh_frimg, (LONG)hdr->rsh_nimages * 4L))
         goto fail;
 
+    stage = "TEDINFO";
     for (i = 0; i < hdr->rsh_nted; i++)
     {
         off = disk->hdr.rsh_tedinfo + i*DISK_TEDINFO_SIZE;
@@ -741,6 +758,7 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         ted->te_just = disk_word(disk, off+16L); ted->te_color = disk_word(disk, off+18L);
         ted->te_junk2 = disk_word(disk, off+20L); ted->te_thickness = disk_word(disk, off+22L);
     }
+    stage = "ICONBLK";
     for (i = 0; i < hdr->rsh_nib; i++)
     {
         off = disk->hdr.rsh_iconblk + i*DISK_ICONBLK_SIZE;
@@ -763,6 +781,7 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         icon->ib_ytext = disk_word(disk, off+28L); icon->ib_wtext = disk_word(disk, off+30L);
         icon->ib_htext = disk_word(disk, off+32L);
     }
+    stage = "BITBLK";
     for (i = 0; i < hdr->rsh_nbb; i++)
     {
         off = disk->hdr.rsh_bitblk + i*DISK_BITBLK_SIZE;
@@ -776,6 +795,7 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         bit->bi_pdata = image + layout.raw + spec;
         bit->bi_x = disk_word(disk, off+8L); bit->bi_y = disk_word(disk, off+10L); bit->bi_color = disk_word(disk, off+12L);
     }
+    stage = "USERBLK";
     for (i = 0; i < hdr->rsh_nobs; i++)
     {
         off = disk->hdr.rsh_object + i*DISK_OBJECT_SIZE;
@@ -789,6 +809,7 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         userblk->ub_code = NULL;
         userblk->ub_parm = (LONG)disk_ulong(disk, spec+D_USERBLK_PARM);
     }
+    stage = "OBJECT";
     for (i = 0; i < hdr->rsh_nobs; i++)
     {
         off = disk->hdr.rsh_object + i*DISK_OBJECT_SIZE;
@@ -807,6 +828,7 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
         obj->ob_x = disk_word(disk, off+16L); obj->ob_y = disk_word(disk, off+18L);
         obj->ob_width = disk_word(disk, off+20L); obj->ob_height = disk_word(disk, off+22L);
     }
+    stage = "tree index";
     trees = (OBJECT **)(image + layout.trindex);
     for (i = 0; i < hdr->rsh_ntree; i++)
     {
@@ -815,8 +837,10 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
             || (spec >= (ULONG)(disk->hdr.rsh_object + (LONG)hdr->rsh_nobs*DISK_OBJECT_SIZE))) goto fail;
         trees[i] = (OBJECT *)(image + layout.object + ((spec-disk->hdr.rsh_object)/DISK_OBJECT_SIZE)*sizeof(OBJECT));
     }
+    stage = "free strings";
     frstr = (BYTE **)(image + layout.frstr);
     for (i = 0; i < hdr->rsh_nstring; i++) { spec = disk_ulong(disk, disk->hdr.rsh_frstr+i*4L); if (!disk_string(disk, spec)) goto fail; frstr[i] = (spec == (ULONG)-1L) ? (BYTE *)-1L : native_disk_ptr(image, &layout, disk, spec); }
+    stage = "free images";
     frimg = (void **)(image + layout.frimg);
     for (i = 0; i < hdr->rsh_nimages; i++)
     {
@@ -832,6 +856,7 @@ static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
     pglobal->ap_ptree = trees;
     return TRUE;
 fail:
+    KDEBUG(("rsrc_load(): %s conversion failed (entry=%ld)\n", stage, i));
     dos_free(image);
     return FALSE;
 }
@@ -849,37 +874,57 @@ WORD rs_readit(AESGLOBAL *pglobal,UWORD fd)
     struct disk_rsc disk;
     UBYTE *buffer;
     LONG rslsize;
+    LONG count;
 
     /* read the header */
-    if (dos_read(fd, DISK_RSHDR_SIZE, header) != DISK_RSHDR_SIZE)
+    count = dos_read(fd, DISK_RSHDR_SIZE, header);
+    KDEBUG(("rsrc_load(): header read %ld/%d bytes\n", count, DISK_RSHDR_SIZE));
+    if (count != DISK_RSHDR_SIZE)
         return FALSE;           /* error or short read */
     disk.base = header;
     disk.size = DISK_RSHDR_SIZE;
     disk_decode_rshdr(&disk);
     rslsize = disk.hdr.rsh_rssize;
+    KDEBUG(("rsrc_load(): decoded size=%ld version=%u\n", rslsize, disk.hdr.rsh_vrsn));
     if (disk.hdr.rsh_vrsn & NEW_FORMAT_RSC)
     {
         if (dos_lseek(fd, 0, rslsize) < 0L)
             return FALSE;
-        if (dos_read(fd, sizeof(ULONG), header) != sizeof(ULONG))
+        count = dos_read(fd, sizeof(ULONG), header);
+        KDEBUG(("rsrc_load(): extended-size read %ld/%d bytes\n", count, (int)sizeof(ULONG)));
+        if (count != sizeof(ULONG))
             return FALSE;
         disk.base = header;
         rslsize = (LONG)disk_ulong(&disk, 0L);
     }
     if (rslsize < DISK_RSHDR_SIZE)
+    {
+        KDEBUG(("rsrc_load(): invalid decoded size %ld\n", rslsize));
         return FALSE;
+    }
     buffer = dos_alloc_anyram(rslsize);
     if (!buffer)
         return FALSE;
     /* read it all in */
     if (dos_lseek(fd, 0, 0x0L) < 0L)    /* mode 0: absolute offset */
         goto fail;
-    if (dos_read(fd, rslsize, buffer) != rslsize)
+    count = dos_read(fd, rslsize, buffer);
+    KDEBUG(("rsrc_load(): payload read %ld/%ld bytes\n", count, rslsize));
+    if (count != rslsize)
         goto fail;               /* error or short read */
     if (!disk_header(&disk, buffer, rslsize))
+    {
+        KDEBUG(("rsrc_load(): invalid resource header (size=%ld)\n", rslsize));
         goto fail;
+    }
+    KDEBUG(("rsrc_load(): header size=%ld objects=%d trees=%d ted=%d icons=%d bitblks=%d\n",
+            disk.size, disk.hdr.rsh_nobs, disk.hdr.rsh_ntree, disk.hdr.rsh_nted,
+            disk.hdr.rsh_nib, disk.hdr.rsh_nbb));
     if (!materialize_rsc(pglobal, &disk))
+    {
+        KDEBUG(("rsrc_load(): materialization failed\n"));
         goto fail;
+    }
     dos_free(buffer);
     return TRUE;
 fail:
