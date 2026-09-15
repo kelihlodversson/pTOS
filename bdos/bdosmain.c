@@ -639,6 +639,9 @@ restrt:
 
         if (h >= NUMSTD)
         {
+            if (h >= NUMHANDLES)
+                return EIHNDL;  /* invalid handle: out of range */
+
             numl = (long) sft[h-NUMSTD].f_ofd;
 #if CONF_WITH_PLUGGABLE_FS
             if (!numl)
@@ -650,6 +653,9 @@ restrt:
             h = run->p_uft[h];
             if (h > 0)
             {
+                if (h >= NUMHANDLES)
+                    return EIHNDL;  /* invalid handle: out of range */
+
                 numl = (long) sft[h-NUMSTD].f_ofd;
 #if CONF_WITH_PLUGGABLE_FS
                 if (!numl)
@@ -688,7 +694,10 @@ restrt:
             {
 #ifdef __arm__
                 long count = pw[2];
-                if (count > 0xFFFFL)    /* disallow HUGE reads      */
+                /* on m68k, values 0x8000-0xffff become a negative signed
+                 * WORD passed to cgets(), which makes it return 0 without
+                 * reading; keep that same 15-bit limit here */
+                if (count > 0x7FFFL)    /* disallow HUGE reads      */
                     return 0;
 
                 if (count == 1)
