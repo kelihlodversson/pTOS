@@ -1233,11 +1233,11 @@ LONG bconout(WORD handle, WORD what)
     if (map_index >= bconmap_root.maptabsize)
         return 0L;
     if (map_index >= 0)
-        return protect_ww((PFLONG)bconmap_root.maptab[map_index].Bconout, handle, what);
+        return protect_ww(bconmap_root.maptab[map_index].Bconout, handle, what);
 #endif
 
     if ((handle >= 0) && (handle <= 7))
-        return protect_ww((PFLONG)bconout_vec[handle], handle, what);
+        return protect_ww(bconout_vec[handle], handle, what);
     return 0L;
 }
 
@@ -1275,7 +1275,8 @@ void bconout_str(WORD handle, const char* str)
 
 LONG lrwabs(WORD r_w, UBYTE *adr, WORD numb, WORD first, WORD drive, LONG lfirst)
 {
-    return protect_wlwwwl((PFLONG)hdv_rw, r_w, (LONG)adr, numb, first, drive, lfirst);
+    return protect_wlwwwl((LONG (*)(WORD, LONG, WORD, WORD, WORD, LONG))hdv_rw,
+                          r_w, (LONG)adr, numb, first, drive, lfirst);
 }
 
 #if defined(__arm__)

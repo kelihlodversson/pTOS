@@ -226,8 +226,8 @@ LONG protect_w(LONG (*func)(WORD), WORD);
 void protect_wv(void (*func)(WORD), WORD);
 LONG protect_l(LONG (*func)(LONG), LONG);
 void protect_lv(void (*func)(LONG), LONG);
-LONG protect_ww(LONG (*func)(void), WORD, WORD);
-LONG protect_wlwwwl(LONG (*func)(void), WORD, LONG, WORD, WORD, WORD, LONG);
+LONG protect_ww(LONG (*func)(WORD, WORD), WORD, WORD);
+LONG protect_wlwwwl(LONG (*func)(WORD, LONG, WORD, WORD, WORD, LONG), WORD, LONG, WORD, WORD, WORD, LONG);
 
 /*
  * Push/Pop registers from stack, with ColdFire support.

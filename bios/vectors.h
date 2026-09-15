@@ -127,8 +127,8 @@ extern void (*timer_vbl_hook)(void);
 #ifdef __m68k__
 LONG protect_v(LONG (*func)(void));
 LONG protect_w(LONG (*func)(WORD), WORD);
-LONG protect_ww(LONG (*func)(void), WORD, WORD);
-LONG protect_wlwwwl(LONG (*func)(void), WORD, LONG, WORD, WORD, WORD, LONG);
+LONG protect_ww(LONG (*func)(WORD, WORD), WORD, WORD);
+LONG protect_wlwwwl(LONG (*func)(WORD, LONG, WORD, WORD, WORD, LONG), WORD, LONG, WORD, WORD, WORD, LONG);
 #elif defined (__arm__)
 
 /* We assume ARM developers follow the eabi so the folllowing are simple pass-throughs */
@@ -141,13 +141,13 @@ static inline LONG protect_w(LONG (*func)(WORD), WORD a)
 {
     return func(a);
 }
-static inline LONG protect_ww(LONG (*func)(void), WORD a, WORD b)
+static inline LONG protect_ww(LONG (*func)(WORD, WORD), WORD a, WORD b)
 {
-    return ((LONG (*)(WORD, WORD))func)(a, b);
+    return func(a, b);
 }
-static inline LONG protect_wlwwwl(LONG (*func)(void), WORD a, LONG b, WORD c, WORD d, WORD e, LONG f)
+static inline LONG protect_wlwwwl(LONG (*func)(WORD, LONG, WORD, WORD, WORD, LONG), WORD a, LONG b, WORD c, WORD d, WORD e, LONG f)
 {
-    return ((LONG (*)(WORD, LONG, WORD, WORD, WORD, LONG))func)(a,b,c,d,e,f);
+    return func(a,b,c,d,e,f);
 }
 #endif
 

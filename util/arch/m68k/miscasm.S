@@ -388,7 +388,7 @@ C_SYM(protect_l):
         .set     C_SYM(protect_lv), C_SYM(protect_l)
 
 /*
- * LONG protect_ww(LONG (*func)(WORD), WORD, WORD);
+ * LONG protect_ww(LONG (*func)(WORD, WORD), WORD, WORD);
  */
 #if CONF_WITH_MFASTCALL
 C_SYM(protect_ww):
@@ -427,7 +427,8 @@ C_SYM(protect_ww):
         rts
 
 /*
- * LONG protect_wlwwwl(LONG (*func)(), WORD, LONG, WORD, WORD, WORD, LONG);
+ * LONG protect_wlwwwl(LONG (*func)(WORD, LONG, WORD, WORD, WORD, LONG),
+ *                      WORD, LONG, WORD, WORD, WORD, LONG);
  *
  * Only the first 3 scalar args (a, b, c) fit in d0/d1/d2 alongside func
  * in a0; d, e and f spill to our caller's stack, each already sign-
