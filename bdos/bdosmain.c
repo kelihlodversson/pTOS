@@ -658,7 +658,11 @@ restrt:
                 /*  M01.01.07  */
                 /*  write the char in the int at pw[1]  */
             rawout:
+#ifdef __arm__
+                xwrite(h , 1L , (char *) &pw[1]);
+#else
                 xwrite(h , 1L , ((char*) &pw[1])+1);
+#endif
                 return 0; /* dummy */
 
             case 9:                 /* Cconws() */
@@ -704,13 +708,29 @@ restrt:
 
     if (typ & 0x80)
     {
+#ifdef __arm__
+        /*
+         * On ARM, pw[] holds one LONG per parameter.  typ encodes the
+         * handle slot in terms of the m68k word layout: 0x81 means the
+         * handle follows a leading LONG argument, so it is the second
+         * LONG (pw[2]) rather than the fourth WORD (pw[3]).
+         */
+        if (typ == 0x81)
+            h = pw[2];
+        else
+            h = pw[1];
+#else
         if (typ == 0x81)
             h = pw[3];
         else
             h = pw[1];
+#endif
 
         if (h >= NUMSTD)
         {
+            if (h >= NUMHANDLES)
+                return EIHNDL;  /* invalid handle: out of range */
+
             numl = (long) sft[h-NUMSTD].f_ofd;
 #if CONF_WITH_PLUGGABLE_FS
             if (!numl)
@@ -722,6 +742,9 @@ restrt:
             h = run->p_uft[h];
             if (h > 0)
             {
+                if (h >= NUMHANDLES)
+                    return EIHNDL;  /* invalid handle: out of range */
+
                 numl = (long) sft[h-NUMSTD].f_ofd;
 #if CONF_WITH_PLUGGABLE_FS
                 if (!numl)
@@ -747,12 +770,33 @@ restrt:
             if (num < -3)
                 return EIHNDL;
 
+            /* on m68k the buffer word follows the two-word long count */
+#ifdef __arm__
+            pb = (char **) &pw[3];
+#else
             pb = (char **) &pw[4];
+#endif
 
             /* only do things on read and write */
 
             if (fn == GEMDOS_FREAD)     /* read */
             {
+#ifdef __arm__
+                long count = pw[2];
+                /* on m68k, values 0x8000-0xffff become a negative signed
+                 * WORD passed to cgets(), which makes it return 0 without
+                 * reading; keep that same 15-bit limit here */
+                if (count > 0x7FFFL)    /* disallow HUGE reads      */
+                    return 0;
+
+                if (count == 1)
+                {
+                    **pb = conin(HXFORM(num));
+                    return 1;
+                }
+
+                return cgets(HXFORM(num),(int)count,*pb);
+#else
                 if (pw[2])              /* disallow HUGE reads      */
                     return 0;
 
@@ -763,11 +807,16 @@ restrt:
                 }
 
                 return cgets(HXFORM(num),pw[3],*pb);
+#endif
             }
 
             if (fn == GEMDOS_FWRITE)    /* write */
             {
+#ifdef __arm__
+                long n, count = pw[2];
+#else
                 long n, count = *(long *)&pw[2];
+#endif
 
                 pb2 = *pb;      /* char * is buffer address */
 

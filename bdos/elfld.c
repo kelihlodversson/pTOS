@@ -33,6 +33,13 @@
  *
  * ARM needs this because it cannot produce the m68k specific PRG format;
  * m68k can use it too as a normal alternative to PRG.
+ *
+ * A third, preferred form of the relocation data can be present alongside
+ * either of the above: a PT_PTOS_RELOC program header pointing at a compact,
+ * architecture neutral ULEB128 delta stream (doc/elfload.txt), produced by
+ * post-processing a linked binary with tools/ptos-elf-pack.c.  When present
+ * it is used instead of the section-based relocations above, and the
+ * section header table is not consulted at all -- see elf_relocate_ptos().
  */
 
 /* #define ENABLE_KDEBUG */
@@ -81,6 +88,14 @@
 #define SHT_RELA    4
 #define SHT_REL     9
 #define SHF_ALLOC   0x2
+
+/* pTOS-private OS-specific program header type (PT_LOOS..PT_HIOS is
+ * 0x60000000..0x6fffffff): a compact, architecture neutral load relocation
+ * stream produced by tools/ptos-elf-pack.c.  See doc/elfload.txt. */
+#define PT_PTOS_RELOC       0x60000001UL
+
+#define PTOS_RELOC_MAGIC    0x50544c31UL   /* checked verbatim, native endian */
+#define PTOS_RELOC_VERSION  1
 
 /* machine type and the "add the load bias to a 32-bit word" relocation
  * type for the architecture we are built for.  ELF_SLOT_ALIGN is the
@@ -159,6 +174,14 @@ typedef struct {
     ULONG   r_info;
     ULONG   r_addend;
 } Elf32_Rela;
+
+/* the 8 byte header at the start of a .ptos.reloc payload; the ULEB128
+ * delta stream follows immediately after it (doc/elfload.txt) */
+typedef struct {
+    ULONG   magic;
+    UWORD   version;
+    UWORD   reserved;
+} PTOSRELOCHDR;
 
 /*
  * summary of what a program needs in memory, computed once from the
@@ -567,6 +590,107 @@ static LONG elf_relocate(FH h, const Elf32_Ehdr *e, UBYTE *load_base,
 }
 
 /*
+ * decode one ULEB128 value from the .ptos.reloc delta stream, starting at
+ * *pos (an absolute file offset) and never reading at or past limit.
+ * Advances *pos past the value consumed. Returns a negative GEMDOS error on
+ * a truncated stream or a value that would overflow a 32-bit ULONG.
+ */
+static LONG ptos_reloc_read_uleb128(FH h, ULONG *pos, ULONG limit, ULONG *out)
+{
+    ULONG value = 0;
+    UWORD shift = 0;
+    UBYTE b;
+    LONG r;
+
+    for (;;)
+    {
+        if (*pos >= limit)
+            return EPLFMT;
+
+        r = read_at(h, *pos, &b, (LONG)sizeof(b));
+        if (r < 0L)
+            return r;
+        (*pos)++;
+
+        /* a 6th continuation byte, or a 5th byte carrying bits above bit 31,
+         * would overflow a 32-bit value -- reject rather than truncate it */
+        if (shift >= 32 || (shift == 28 && (b & 0x70) != 0))
+            return EPLFMT;
+
+        value |= (ULONG)(b & 0x7f) << shift;
+
+        if (!(b & 0x80))
+        {
+            *out = value;
+            return 0;
+        }
+
+        shift += 7;
+    }
+}
+
+/*
+ * apply every slot listed in a .ptos.reloc payload (see doc/elfload.txt).
+ * Every version 1 entry means the same thing elf_fixup() already does for
+ * a DIR32 slot -- add the load bias -- so decoding just turns each delta
+ * back into a vaddr and hands it to elf_fixup() unchanged.
+ */
+static LONG elf_relocate_ptos(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
+                              const ELFINFO *info, LONG bias)
+{
+    PTOSRELOCHDR rh;
+    ULONG pos, limit;
+    ULONG vaddr;
+    ULONG delta;
+    LONG r;
+    BOOL first;
+
+    if (bias == 0)
+        return 0;   /* loaded at its link address: nothing to relocate */
+
+    if (ph->p_filesz < (ULONG)sizeof(PTOSRELOCHDR))
+        return EPLFMT;
+
+    if (u32_add_overflow(ph->p_offset, ph->p_filesz, &limit))
+        return EPLFMT;
+
+    r = read_at(h, ph->p_offset, &rh, (LONG)sizeof(rh));
+    if (r < 0L)
+        return r;
+
+    if (rh.magic != PTOS_RELOC_MAGIC || rh.version != PTOS_RELOC_VERSION)
+        return EPLFMT;
+
+    pos = ph->p_offset + (ULONG)sizeof(PTOSRELOCHDR);
+    vaddr = info->link_base;
+    first = TRUE;
+
+    while (pos < limit)
+    {
+        r = ptos_reloc_read_uleb128(h, &pos, limit, &delta);
+        if (r < 0L)
+            return r;
+
+        /* the format requires strictly ascending slots (doc/elfload.txt):
+         * a zero delta past the first entry would reapply the fixup to the
+         * slot just relocated, doubling its bias instead of being the
+         * malformed stream it is */
+        if (delta == 0 && !first)
+            return EPLFMT;
+        first = FALSE;
+
+        if (u32_add_overflow(vaddr, delta, &vaddr))
+            return EPLFMT;
+
+        r = elf_fixup(load_base, info, bias, vaddr, ELF_R_DIR32, FALSE, 0);
+        if (r < 0L)
+            return r;
+    }
+
+    return 0;
+}
+
+/*
  * elf_pgmld - load pass, called by kpgmld()
  *
  * Places the PT_LOAD segments in the TPA, zero fills the rest of it, then
@@ -577,6 +701,7 @@ LONG elf_pgmld(FH h, PD *p)
 {
     Elf32_Ehdr ehdr;
     Elf32_Phdr ph;
+    Elf32_Phdr ptos_reloc_ph;
     ELFINFO info;
     UBYTE *load_base;
     LONG bias;
@@ -585,6 +710,7 @@ LONG elf_pgmld(FH h, PD *p)
     ULONG ph_table_size;
     LONG r;
     UWORD i;
+    BOOL have_ptos_reloc = FALSE;
 
     r = read_at(h, 0UL, &ehdr, (LONG)sizeof(ehdr));
     if (r < 0L)
@@ -650,6 +776,15 @@ LONG elf_pgmld(FH h, PD *p)
         if (r < 0L)
             return r;
 
+        if (ph.p_type == PT_PTOS_RELOC)
+        {
+            /* last one wins if a malformed/hand-edited file has more than
+             * one; elf_relocate_ptos() below validates it properly */
+            ptos_reloc_ph = ph;
+            have_ptos_reloc = TRUE;
+            continue;
+        }
+
         if (ph.p_type != PT_LOAD || ph.p_filesz == 0)
             continue;
 
@@ -672,6 +807,9 @@ LONG elf_pgmld(FH h, PD *p)
         if (r != (LONG)ph.p_filesz)
             return EPLFMT;
     }
+
+    if (have_ptos_reloc)
+        return elf_relocate_ptos(h, &ptos_reloc_ph, load_base, &info, bias);
 
     return elf_relocate(h, &ehdr, load_base, &info, bias);
 }

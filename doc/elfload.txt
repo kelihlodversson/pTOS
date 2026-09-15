@@ -104,3 +104,132 @@ R_68K_32 / R_68K_RELATIVE in SHT_RELA sections; the loader handles those:
 
 Programs start executing at the ELF entry point (e_entry); the PT_LOAD
 segments are placed in the TPA and the rest of it, including .bss, is zeroed.
+
+
+Compact load relocations (.ptos.reloc / PT_PTOS_RELOC)
+-------------------------------------------------------
+
+The two forms above both make the loader depend on the ELF section header
+table: the retained SHT_REL/SHT_RELA sections from "ld --emit-relocs" carry
+far more than a load-time fixup needs (symbol/section tables meant only for
+linking, entries for sections that are never loaded, ...), and the binary
+can never be stripped of its section headers.
+
+pTOS also accepts a third, preferred form: a post-link tool (tools/
+ptos-elf-pack.c) reads either of the two forms above and rewrites it into an
+architecture-neutral, compact relocation stream, addressed through a
+pTOS-private program header instead of the section header table. This is
+the first piece of the larger native pTOS ABI work tracked by issue #308;
+this document covers only the relocation format, which stands on its own.
+
+Nothing already in the file moves or resizes -- the rewrite is two additions
+appended after the original content:
+
+  1. the ".ptos.reloc" payload: an 8 byte header followed by a ULEB128
+     delta stream (below);
+  2. a new program header table (a copy of the original entries plus one
+     new PT_PTOS_RELOC entry), which the rewritten ELF header now points at
+     via e_phoff/e_phnum.
+
+A RELA-encoded RELATIVE slot's own bytes are the one exception: as covered
+below, ptos-elf-pack overwrites that existing slot with its addend in
+place, so the file is not byte-identical to the input in that case -- only
+unmoved and unresized. An unmodified ELF header, program headers and
+section headers stay individually valid regardless; only e_phoff and
+e_phnum change, to point at the new table.
+
+PT_PTOS_RELOC's value is 0x60000001, inside the OS-specific range the ELF
+spec reserves (PT_LOOS..PT_HIOS, 0x60000000..0x6fffffff). Its p_offset/
+p_filesz locate the ".ptos.reloc" payload; p_vaddr/p_paddr/p_memsz are 0
+(the segment is metadata, not something to map into the process image).
+
+".ptos.reloc" payload layout, version 1:
+
+    offset  size  field
+    0       4     magic   (0x50544c31, native byte order, checked exactly)
+    4       2     version (1)
+    6       2     reserved (0; ignored by version 1 readers)
+    8       -     ULEB128 stream, one value per relocated slot
+
+Each ULEB128 value is a *delta*: the first is the distance from the image's
+link_base (the lowest p_vaddr of any PT_LOAD segment, as elsewhere in this
+document) to the first relocated slot; every value after that is the
+distance from the previous slot to the next one. Slots are therefore
+listed in strictly ascending address order, exactly like the classic PRG
+relocation table's fixup stream. The stream ends when it has consumed
+p_filesz - 8 bytes; there is no explicit terminator.
+
+Version 1 has exactly one relocation operation, applied to every slot the
+stream lists: a native ULONG at that address gets the program's load bias
+added to it --
+
+    *slot += actual_load_address - link_base
+
+identical to the DIR32 fixup described above. This covers everything the
+current loader relocates: for input relocations that already store the
+value to fix up directly in the slot (R_ARM_ABS32 / R_68K_32, and a REL-
+encoded R_ARM_RELATIVE / R_68K_RELATIVE), ptos-elf-pack lists the slot
+as-is; for a RELA-encoded RELATIVE relocation (m68k PIE), whose slot may
+legitimately be 0 in the file with the real value carried in r_addend
+instead, ptos-elf-pack first writes that addend into the slot's file bytes
+so every listed slot ends up needing the same "add the bias" operation.
+Relocation types the loader does not otherwise apply (PC-relative and
+similar) are never listed and need no entry -- but only when ptos-elf-pack
+recognises the type as one of the ones known not to need a load-time fixup;
+an input relocation of any other, unrecognised type is a packaging error,
+not silently skipped, since guessing wrong would silently corrupt the
+image.
+
+When bdos/elfld.c finds a PT_PTOS_RELOC program header, it always uses this
+stream and never touches the section header table, whether or not one is
+present -- so a file built this way does not *need* its section headers,
+.symtab or the original relocation sections to load correctly, even though
+ptos-elf-pack does not yet actually remove any of those bytes (reclaiming
+that space is a later refinement, tracked under issue #308). ptos-elf-pack's
+`--strip-shdr` flag clears only the four header fields that point at the
+section header table -- e_shoff/e_shnum/e_shentsize/e_shstrndx -- to prove
+that a given binary has no live reference back to it; a file packed without
+that flag simply carries section headers nothing then reads. Only a file
+with no PT_PTOS_RELOC header at all falls back to the section-based
+relocation described above, so existing unpacked ELF binaries keep working
+unchanged.
+
+Producing a packed binary is one extra step after the existing recipes
+above:
+
+    arm-none-eabi-ld -q -Ttext=0 -e _start prog.o -o prog.elf
+    ptos-elf-pack prog.elf prog-packed.elf
+
+"readelf -l prog-packed.elf" shows the extra program header as an unknown
+OS-specific type (0x60000001); this is expected and harmless for any tool
+that does not know about it.
+
+ptos-elf-pack refuses to pack a fixed-base ET_EXEC with zero relocated
+slots by default: that shape is indistinguishable, from the packed file
+alone, from one linked without "-q"/"--emit-relocs" in the first place --
+a mistake that would otherwise pack silently into a binary that corrupts
+itself the moment it loads anywhere but its link address. Pass
+`--allow-no-relocations` once you have confirmed the input genuinely
+needs no load-time fixups (a position-independent ET_DYN is exempt from
+this check, since it can legitimately need none).
+
+Known version 1 limitations
+----------------------------
+
+A RELA-encoded RELATIVE relocation whose target lies in a PT_LOAD
+segment's zero-filled tail (i.e. in .bss, past its file-backed part) is
+rejected rather than packed, but only when its addend is nonzero. A zero
+addend needs no rejection: the loader's own zero-fill already leaves 0 at
+that address, exactly what "0 += bias" (this format's one operation)
+needs there, so ptos-elf-pack packs it as-is with no write at all. Every
+other slot version 1 lists -- including a nonzero-addend RELATIVE with
+file backing -- is represented by baking its resolved value into the
+slot's own file bytes (see the RELA-addend-materialisation note above)
+and applying the same "add the load bias" operation uniformly; a
+.bss-resident slot has no file bytes to bake a nonzero value into.
+Representing that case correctly needs a second wire operation that
+carries its own addend explicitly, which the classic loader's own
+elf_fixup() already computes at runtime (bias + addend) but version 1 of
+this format has no encoding for. This is a real format boundary, not a
+bug: extending the format to cover it is left for a future version rather
+than done ad hoc.
