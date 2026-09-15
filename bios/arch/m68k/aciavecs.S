@@ -133,7 +133,7 @@ vkbderr:        .ds.l   1       // keyboard error
 vmiderr:        .ds.l   1       // MIDI-Error
 statvec:        .ds.l   1       // IKBD-Status
 mousevec:       .ds.l   1       // mouse-routine
-clockvec:       .ds.l   1       // time-routine
+kbd_clockvec:   .ds.l   1       // time-routine
 joyvec:         .ds.l   1       // joystick-routinee
 midisys:        .ds.l   1       // MIDI-systemvector
 ikbdsys:        .ds.l   1       // IKBD-systemvector
@@ -169,12 +169,12 @@ C_SYM(init_acia_vecs):
 #if CONF_WITH_IKBD_CLOCK
 #ifdef __mcoldfire__
         move.l  #C_SYM(clockvec),d0                        // in bios/clock.c
-        move.l  d0,clockvec-C_SYM(kbdvecs)(a1)
+        move.l  d0,kbd_clockvec-C_SYM(kbdvecs)(a1)
 #else
-        move.l  #C_SYM(clockvec),clockvec-C_SYM(kbdvecs)(a1)     // in bios/clock.c
+        move.l  #C_SYM(clockvec),kbd_clockvec-C_SYM(kbdvecs)(a1) // in bios/clock.c
 #endif
 #else
-        move.l  a0,clockvec-C_SYM(kbdvecs)(a1)
+        move.l  a0,kbd_clockvec-C_SYM(kbdvecs)(a1)
 #endif /* CONF_WITH_IKBD_CLOCK */
         move.l  a0,joyvec-C_SYM(kbdvecs)(a1)
 #if CONF_WITH_MIDI_ACIA
@@ -525,7 +525,7 @@ kbd_rel_mouse:
         jra     kbd_jump_vec
 kbd_clock:
         addq.l  #1,a0
-        move.l  clockvec,a1
+        move.l  kbd_clockvec,a1
         jra     kbd_jump_vec
 
 //
