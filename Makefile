@@ -1450,7 +1450,8 @@ endif
 # lib/libcmini/build/ behind.
 TOCLEAN += tests/run_tests.c runtests.tos pieprobe.tos \
            relocprobe-unpacked.tos PTRELOC.TOS \
-           relocprobe2-unpacked.tos PTRELOC2.TOS test-hd.img
+           relocprobe2-unpacked.tos PTRELOC2.TOS \
+           test-hd.img
 TOCLEAN_POST += libcmini-clean
 
 .PHONY: libcmini-clean
