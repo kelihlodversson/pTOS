@@ -363,7 +363,10 @@ so a real shared library dependency can never be satisfied at load time.
 A relocation against an undefined dynamic symbol that is NOT covered by a
 recognised libptos-abi.so.<N> dependency, or whose type is none of
 JUMP_SLOT, GLOB_DAT, or DIR32, is also a packaging error rather than
-something silently left unresolved.
+something silently left unresolved -- except the architecture-defined
+no-op/meaningless-symbol types (R_ARM_NONE, R_68K_NONE, R_ARM_V4BX),
+which the packer's no-fixup allowlist above already accepts regardless
+of what their (per the ABI, unused) symbol field names.
 
 The "gemdos" namespace name above is hardcoded (ptos-elf-pack.c's
 import_list_add()) rather than derived from anything in the input file --
