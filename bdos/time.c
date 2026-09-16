@@ -82,7 +82,20 @@ UWORD current_time, current_date;
  * private declarations
  */
 
+#ifdef __arm__
 static void tikfrk(int n);
+#else
+/*
+ * tikfrk_etv_entry (util/arch/m68k/miscasm.S) is what actually gets
+ * installed into etv_timer below: see the comment there for why
+ * tikfrk() itself -- an ordinary internal C function -- can't be
+ * called directly through that frozen, classic-ABI TOS vector. That
+ * trampoline is the only caller outside this file, so tikfrk() only
+ * needs external linkage here, not on __arm__.
+ */
+void tikfrk(int n);
+extern void tikfrk_etv_entry(void);
+#endif
 
 static const UBYTE nday_norm[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 static const UBYTE nday_leap[] = {0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
@@ -164,7 +177,11 @@ void time_init(void)
     current_date = HIWORD(dt);
     current_time = LOWORD(dt);
 
+#ifdef __arm__
     etv_timer = tikfrk;
+#else
+    etv_timer = (ETV_TIMER_T)tikfrk_etv_entry;
+#endif
 }
 
 
@@ -172,7 +189,10 @@ void time_init(void)
  *  tikfrk -
  */
 
-static void tikfrk(int n)
+#ifdef __arm__
+static
+#endif
+void tikfrk(int n)
 {
     int curmo, newday;
     const UBYTE *nday;

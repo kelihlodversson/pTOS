@@ -395,11 +395,11 @@ WORD log_media(BPB *b, int drv);
  * in fshand.c
  */
 
-long xforce(int std, int h);
+long xforce(WORD std, WORD h);
 long ixforce(int std, int h, PD *p);
 
 /* duplicate a file handle. */
-long xdup(int h);
+long xdup(WORD h);
 
 /*
  * in fsopnclo.c
@@ -410,10 +410,10 @@ long xcreat(char *name, UBYTE attr);
 long ixcreat(char *name, UBYTE attr);
 
 /* open a file (path name) */
-long xopen(char *name, int mod);
+long xopen(char *name, WORD mod);
 
 /* Close a file */
-long xclose(int h);
+long xclose(WORD h);
 long ixclose(OFD *fd, int part);
 
 /* remove a file */
@@ -447,7 +447,7 @@ void clfix(CLNO cl, CLNO link, DMD *dm);
 CLNO getrealcl(CLNO cl, DMD *dm);
 CLNO getclnum(CLNO cl, OFD *of);
 int nextcl(OFD *p, int wrtflg);
-long xgetfree(long *buf, int drv);
+long xgetfree(long *buf, WORD drv);
 
 /*
  * in fsio.c
@@ -457,15 +457,15 @@ long xgetfree(long *buf, int drv);
 long eof(int h);
 
 /* seek to byte position n on file with handle h */
-long xlseek(long n, int h, int flg);
+long xlseek(long n, WORD h, WORD flg);
 long ixlseek(OFD *p, long n);
 
 FCB *ixgetfcb(OFD *p);
 
-long xread(int h, long len, void *ubufr);
+long xread(WORD h, long len, void *ubufr);
 long ixread(OFD *p, long len, void *ubufr);
 
-long xwrite(int h, long len, void *ubufr);
+long xwrite(WORD h, long len, void *ubufr);
 long ixwrite(OFD *p, long len, void *ubufr);
 
 /*
@@ -474,15 +474,15 @@ long ixwrite(OFD *p, long len, void *ubufr);
 
 long xmkdir(char *s);
 long xrmdir(char *p);
-long xchmod(char *p, int wrt, UBYTE mod);
+long xchmod(char *p, WORD wrt, UBYTE mod);
 long ixsfirst(char *name, WORD att, DTAINFO *addr);
 long xsfirst(char *name, int att);
 long xsnext(void);
-long xgsdtof(DOSTIME *buf, int h, int wrt);
+long xgsdtof(DOSTIME *buf, WORD h, WORD wrt);
 void builds(const char *s1 , char *s2 );
-long xrename(int n, char *p1, char *p2);
+long xrename(WORD n, char *p1, char *p2);
 long xchdir(char *p);
-long xgetdir(char *buf, int drv);
+long xgetdir(char *buf, WORD drv);
 FCB *dirinit(DND *dn);
 DND *findit(char *name, const char **sp, int dflag);
 FCB *scan(DND *dnd, const char *n, WORD att, LONG *posp);
@@ -502,7 +502,7 @@ char *packit(char *s, char *d);
  */
 DTAINFO *xgetdta(void);
 void xsetdta(DTAINFO *addr);
-long xsetdrv(int drv);
+long xsetdrv(WORD drv);
 long xgetdrv(void);
 OFD  *getofd(int h);
 #if CONF_WITH_PLUGGABLE_FS

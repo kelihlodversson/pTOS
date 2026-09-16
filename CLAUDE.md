@@ -164,4 +164,7 @@ same object.
 - `doc/country.txt`, `doc/nls.txt` — countries, keyboard layouts, translations
 - `doc/ptos.txt` — pTOS's purpose and relationship to EmuTOS
 - `doc/status.txt` — tested pTOS hardware and emulator targets
+- `doc/debugging.txt` — interactive debugging under an emulator: hrdb (a
+  remote-debuggable Hatari fork) and QEMU+GDB for m68k, and when to reach for
+  each; see also the `ptos-smoketest` skill and `tools/rdb.py`
 - `readme.md` — what this fork is about and where it is going
