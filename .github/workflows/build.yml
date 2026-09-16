@@ -109,9 +109,10 @@ jobs:
       # CONF_WITH_MFASTCALL could end up enabled through a Kconfig default,
       # a "depends on", or a "select" without ever appearing as a literal
       # "CONF_WITH_MFASTCALL=y" line in the defconfig itself, which would
-      # silently pick the wrong toolchain. kconfiglib is enough on its own
-      # for this (no cross toolchain needed yet); setup-toolchain below
-      # installs it again, which is harmless.
+      # silently pick the wrong toolchain. "make X_defconfig" below runs
+      # "python3 -m defconfig" (tools/kconfig.mk), so kconfiglib has to be
+      # installed first -- no cross toolchain needed yet for that;
+      # setup-toolchain below installs it again, which is harmless.
       - name: Install kconfiglib
         run: python3 -m pip install --disable-pip-version-check kconfiglib
 

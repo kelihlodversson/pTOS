@@ -21,15 +21,18 @@
 
 static BOOL in_proc;                   /* flag, if we are still running */
 
-void tick_int(int u);
-
-#ifndef __arm__
+#ifdef __arm__
+static void tick_int(int u);
+#else
 /*
  * tick_int_etv_entry (util/arch/m68k/miscasm.S) is what actually gets
  * installed into etv_timer via Setexc() below: see the comment there
  * for why tick_int() itself -- an ordinary internal C function -- can't
- * be called directly through that frozen, classic-ABI TOS vector.
+ * be called directly through that frozen, classic-ABI TOS vector. That
+ * trampoline is the only caller outside this file, so tick_int() only
+ * needs external linkage here, not on __arm__.
  */
+void tick_int(int u);
 extern void tick_int_etv_entry(void);
 #endif
 
@@ -86,8 +89,12 @@ void arb_line(Line * line)
 /*
  * tick_int -  VDI Timer interrupt routine
  *
- * The etv_timer does point to this routine
+ * etv_timer points here directly on __arm__; on m68k it points to the
+ * tick_int_etv_entry trampoline above, which tail-calls into this.
  */
+#ifdef __arm__
+static
+#endif
 void tick_int(int u)
 {
     if (!in_proc) {
