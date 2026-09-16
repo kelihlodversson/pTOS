@@ -320,7 +320,13 @@ follow.
 
 Every bind's slot_vaddr must satisfy the same bounds and alignment rules
 as a .ptos.reloc slot (fully inside the loaded image, naturally aligned
-for the target), and no two binds may target the same slot_vaddr.
+for the target). The bind table itself must be sorted strictly ascending
+by slot_vaddr -- exactly like .ptos.reloc's own delta-encoded slot stream
+-- so no two binds may target the same slot_vaddr and an out-of-order
+entry is equally a format error. ptos-elf-pack sorts and rejects
+duplicates at pack time; the loader enforces the same invariant with a
+single comparison against the previous entry as it reads the table once,
+rather than re-reading every earlier bind for each new one.
 
 How ptos-elf-pack builds it
 ............................

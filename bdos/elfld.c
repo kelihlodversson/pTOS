@@ -959,6 +959,13 @@ static LONG ptosabi_validate_import(FH h, ULONG import_table_abs,
  * regardless of how many imports a program has, matching every other
  * pass in this file, none of which ever builds an in-memory table of
  * file content.
+ *
+ * The bind table itself must be sorted strictly ascending by slot_vaddr
+ * (doc/elfload.txt; enforced by ptos-elf-pack at pack time), exactly
+ * like .ptos.reloc's own delta-encoded slot stream (elf_relocate_ptos()
+ * above): that turns "no two binds may target the same slot" into a
+ * single comparison against the previous entry instead of re-reading
+ * every earlier bind for each new one.
  */
 static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
                                 const ELFINFO *info)
@@ -966,7 +973,8 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
     PTOSIMPORTSHDR ih;
     ULONG import_table_lim, bind_table_lim, strtab_lim;
     ULONG import_table_abs, bind_table_abs, strtab_abs;
-    ULONG i, j;
+    ULONG i;
+    ULONG prev_slot_vaddr = 0;
     LONG r;
 
     if (ph->p_filesz < (ULONG)sizeof(PTOSIMPORTSHDR))
@@ -1044,25 +1052,12 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
         if (bind.import_index >= ih.import_count)
             return EPLFMT;
 
-        /* no two binds may target the same slot -- see doc/elfload.txt.
-         * Bounded to at most PTOS_IMPORT_MAX_COUNT^2 re-reads by the
-         * cap checked above. */
-        for (j = 0; j < i; j++)
-        {
-            PTOSBINDENT prior;
-            ULONG prior_off;
-
-            if (u32_mul_overflow(j, (ULONG)sizeof(PTOSBINDENT), &prior_off)
-             || u32_add_overflow(bind_table_abs, prior_off, &prior_off))
-                return EPLFMT;
-
-            r = read_at(h, prior_off, &prior, (LONG)sizeof(prior));
-            if (r < 0L)
-                return r;
-
-            if (prior.slot_vaddr == bind.slot_vaddr)
-                return EPLFMT;
-        }
+        /* strictly ascending by slot_vaddr (see this function's own
+         * comment above) -- a duplicate or out-of-order entry is a
+         * malformed stream, not silently accepted */
+        if (i > 0 && bind.slot_vaddr <= prev_slot_vaddr)
+            return EPLFMT;
+        prev_slot_vaddr = bind.slot_vaddr;
 
         r = ptosabi_validate_import(h, import_table_abs, strtab_abs,
                                     ih.strtab_size, bind.import_index,

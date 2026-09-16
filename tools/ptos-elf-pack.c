@@ -985,6 +985,15 @@ static int slot_cmp(const void *a, const void *b)
     return 0;
 }
 
+static int bind_cmp(const void *a, const void *b)
+{
+    uint32_t va = ((const BIND *)a)->slot_vaddr;
+    uint32_t vb = ((const BIND *)b)->slot_vaddr;
+    if (va < vb) return -1;
+    if (va > vb) return 1;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     const char *in_path, *out_path;
@@ -1721,6 +1730,22 @@ int main(int argc, char **argv)
             ent[8] = (unsigned char)imports[k].kind;
             ent[9] = ent[10] = ent[11] = 0;
             buf_append(&imports_payload, ent, sizeof(ent));
+        }
+
+        /* sorted ascending by slot_vaddr (doc/elfload.txt), exactly like
+         * the .ptos.reloc slot list above: this lets bdos/elfld.c detect
+         * a duplicate slot with a single running comparison against the
+         * previous entry instead of re-reading every earlier bind for
+         * each new one. Reject a duplicate here too, at pack time, with a
+         * clearer diagnostic than the loader's own EPLFMT. */
+        if (nbinds > 1)
+            qsort(binds, nbinds, sizeof(*binds), bind_cmp);
+        for (k = 0; k + 1 < nbinds; k++)
+        {
+            if (binds[k].slot_vaddr == binds[k + 1].slot_vaddr)
+                die("'%s' has two pTOS ABI imports bound to the same slot "
+                    "(0x%08lx); unsupported by .ptos.bind version 1",
+                    in_path, (unsigned long)binds[k].slot_vaddr);
         }
 
         for (k = 0; k < nbinds; k++)
