@@ -383,6 +383,7 @@ config CONF_WITH_MFASTCALL
 	bool "Use the -mfastcall calling convention (m68k only)"
 	depends on ARCH_M68K_CLASSIC
 	depends on !TARGET_PRG && !TARGET_FLOPPY && !TARGET_AMIGA_FLOPPY
+	depends on !CONF_WITH_AROS
 	default n
 	help
 	  Build the whole kernel with GCC's -mfastcall calling convention
@@ -405,6 +406,11 @@ config CONF_WITH_MFASTCALL
 	  by every m68k object the build produces, kernel or utility alike,
 	  so there is no way to select it for just the ROM/floppy-payload
 	  image without it also reaching these RAM-loader entry points.
+
+	  Also excludes CONF_WITH_AROS: bios/arch/m68k/aros2.S's MemoryTest
+	  (borrowed, APL-licensed AROS source) reads its three C arguments
+	  unconditionally off the classic stack frame too, and has likewise
+	  never been audited for -mfastcall.
 
 	  This requires a GCC build with -mfastcall support, which neither
 	  of Vincent Riviere's toolchains (the ones normally installed for
