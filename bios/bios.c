@@ -79,6 +79,7 @@
 #ifdef MACHINE_VIRT_ARM
 #include "virt_pic.h"
 #include "virt_timer.h"
+#include "virt_mmu.h"
 #endif
 #ifdef MACHINE_VIRT_M68K
 #include "goldfish_pic.h"
@@ -580,6 +581,14 @@ static void bios_init(void)
     KDEBUG(("init_serport()\n"));
     init_serport();
     boot_status |= RS232_AVAILABLE;     /* track progress */
+
+#if CONF_DEBUG_MMU_MAINT_SELFTEST
+    /* Needs init_serport() (just above) done first: KINFO's underlying
+     * bconout1() has nothing listening until the BIOS's own device
+     * dispatch vectors are wired up, even though the UART hardware
+     * itself was already initialized earlier by startup.S. */
+    virt_mmu_selftest();
+#endif
 #if CONF_WITH_SCC
     if (has_scc)
         boot_status |= SCC_AVAILABLE;   /* track progress */

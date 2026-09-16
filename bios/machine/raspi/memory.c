@@ -13,6 +13,8 @@
 #endif
 
 #include "portab.h"
+#include "mmu.h"
+#include "mmu_shortdesc.h"
 #include "raspi_io.h"
 #include "raspi_int.h"
 #include "raspi_mbox.h"
@@ -51,6 +53,12 @@
 
 static void init_mmu(ULONG memory_size);
 
+// Root table for the pMMU maintenance layer (bios/mmu_walk.c); declared
+// here, ahead of raspi_mmu_protect_range() below, which needs it as the
+// mmu_protect_range() root. Defined for real, and pointed at its actual
+// storage, further down in this file.
+void *raspi_page_table0;
+
 #if CONF_WITH_MMU_TEXT_PROTECT
 /* page-granularity table covering section 0 (0x0-0xFFFFF), so ranges
  * within the first megabyte can be marked read-only individually.
@@ -66,12 +74,19 @@ static struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR
  * within section 0 (the first megabyte) - the only section init_mmu()
  * has broken out into a page table. Rounds start down / end up to
  * page boundaries, so it may protect a little more than asked.
+ *
+ * Narrows just the requested sub-range to read-only through the shared
+ * mmu_protect_range() API; text_protect_l2's other entries (still
+ * read-write from init_mmu()) are untouched, and the API's own
+ * synchronization (see mmu.h) replaces the explicit cache/TLB
+ * maintenance this used to do by hand.
  */
 void raspi_mmu_protect_range(ULONG start, ULONG end)
 {
     ULONG protect_start = start & ~(SMALL_PAGE_SIZE - 1);
     ULONG protect_end   = (end + SMALL_PAGE_SIZE - 1) & ~(SMALL_PAGE_SIZE - 1);
-    unsigned p;
+    mmu_attr_type attrs;
+    int rc;
 
     /* text_protect_l2[] only has entries for section 0 (the first
      * megabyte); silently protecting just the subset that fits would
@@ -81,21 +96,16 @@ void raspi_mmu_protect_range(ULONG start, ULONG end)
         panic("raspi_mmu_protect_range(%p,%p): outside the first megabyte\n",
               (void*)start, (void*)end);
 
-    for (p = 0; p < ARRAY_SIZE(text_protect_l2); p++)
-    {
-        ULONG page_addr = SMALL_PAGE_SIZE * p;
-        if (page_addr >= protect_start && page_addr < protect_end)
-            text_protect_l2[p].APXBit = APX_RO_ACCESS;
-    }
-
-    /* the updated descriptors just went through the D-cache like any other
-     * write; without cleaning them out, the MMU's table walk can still see
-     * the old (writable) descriptor in RAM and the protection would not
-     * reliably take effect. */
-    flush_data_cache_all();
-    asm volatile ("mcr p15, 0, %0, c8, c7, 0" : : "r" (0));   /* invalidate unified TLB */
-    data_sync_barrier();
-    flush_prefetch_buffer();
+    // Same attributes init_mmu() gave text_protect_l2's entries, minus
+    // MMU_ATTR_WRITE: read-only, still executable (it's kernel text),
+    // still global/shareable/write-back like the rest of RAM.
+    attrs = MMU_ATTR_WRITE_BACK | MMU_ATTR_READ | MMU_ATTR_EXEC |
+            MMU_ATTR_USER | MMU_ATTR_GLOBAL | MMU_ATTR_SHAREABLE;
+    rc = mmu_protect_range(raspi_page_table0, (virt_addr_type)protect_start,
+                          (size_t)(protect_end - protect_start), attrs);
+    if (rc != MMU_OK)
+        panic("raspi_mmu_protect_range(%p,%p): mmu_protect_range failed (%d)\n",
+              (void*)start, (void*)end, rc);
 
     KDEBUG(("mmu: write-protecting [%p,%p)\n", (void*)protect_start, (void*)protect_end));
 }
@@ -105,7 +115,49 @@ extern char sysvars_start[];
 extern char sysvars_end[];
 
 static UBYTE* coherent_buffer;
-struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR* raspi_page_table0;
+
+// Static pool of page-level (1 KB) tables for the pMMU maintenance layer's
+// allocator (see mmu_set_table_allocator() in init_mmu()). Carved out of
+// the reserved top-of-RAM megabyte, ahead of coherent_buffer. A bump
+// allocator with no reclamation is the documented Phase 1 stopgap (see
+// docs/superpowers/specs/2026-08-15-portable-pmmu-page-table-design.md's
+// Initialization Flow); nothing in this file's own boot sequence needs to
+// free a table, since every mapping it makes is already section-aligned
+// and text_protect_l2 is adopted, not allocated.
+#define MMU_TABLE_POOL_TABLES  8
+#define MMU_TABLE_POOL_SIZE    (MMU_TABLE_POOL_TABLES * ARMV6MMU_LEVEL2_COARSE_PAGE_TABLE_SIZE)
+
+static UBYTE *mmu_table_pool_base;
+static unsigned mmu_table_pool_used;
+
+static int raspi_mmu_table_alloc(unsigned level, size_t size, size_t align,
+                                 struct mmu_table_ref *table, void *cookie)
+{
+    UBYTE *addr;
+
+    UNUSED(level);
+    UNUSED(cookie);
+    if (size > ARMV6MMU_LEVEL2_COARSE_PAGE_TABLE_SIZE ||
+        align > ARMV6MMU_LEVEL2_COARSE_PAGE_TABLE_SIZE)
+        return MMU_ERR_NOMEM;
+    if (mmu_table_pool_used >= MMU_TABLE_POOL_TABLES)
+        return MMU_ERR_NOMEM;
+
+    addr = mmu_table_pool_base + (mmu_table_pool_used * ARMV6MMU_LEVEL2_COARSE_PAGE_TABLE_SIZE);
+    mmu_table_pool_used++;
+    table->virt = addr;
+    // Identity-mapped RAM: the boundary this design's address model
+    // requires before treating a phys_addr_type as a pointer.
+    table->phys = (phys_addr_type)(ULONG)addr;
+    return MMU_OK;
+}
+
+static void raspi_mmu_table_free(const struct mmu_table_ref *table, unsigned level, void *cookie)
+{
+    UNUSED(table);
+    UNUSED(level);
+    UNUSED(cookie);
+}
 
 UBYTE* raspi_get_coherent_buffer(int tag)
 {
@@ -160,8 +212,9 @@ void raspi_vcmem_init(void)
     /* Reserve the topmost megabyte for page tables and cache coherent buffers */
     phystop = (UBYTE *)((top_of_ram - MEGABYTE) & ~(MEGABYTE-1));
 
-    raspi_page_table0 = (struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR*)phystop;
-    coherent_buffer = phystop + PAGE_TABLE0_SIZE;
+    raspi_page_table0 = (void*)phystop;
+    mmu_table_pool_base = phystop + PAGE_TABLE0_SIZE;
+    coherent_buffer = mmu_table_pool_base + MMU_TABLE_POOL_SIZE;
 
     /* Now the bss has been cleared, we can enable the MMU and caches */
     init_mmu((ULONG)phystop);
@@ -169,55 +222,52 @@ void raspi_vcmem_init(void)
 
 static void init_mmu(ULONG memory_size)
 {
-    unsigned i;
+    mmu_attr_type ram_attrs, ordered_attrs, device_attrs;
+    ULONG device_base, device_size;
+    int rc;
 
     /* C has already written the stack and globals; do not discard them if
      * the firmware entered with D-cache enabled. */
     flush_data_cache_all();
 
-    for (i = 0; i < PAGE_TABLE0_ENTRIES; i++)
-    {
-        ULONG base_address = MEGABYTE * i;
+    // raspi_page_table0 sits in RAM the firmware handed us, not BSS, so
+    // it is not zeroed yet: mmu_map_range() below needs every entry to
+    // start genuinely invalid, or leftover bit patterns could look like
+    // an existing mapping and trip its overlap check.
+    bzero(raspi_page_table0, PAGE_TABLE0_SIZE);
 
-        struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *entry = &raspi_page_table0[i];
+    mmu_set_table_allocator(raspi_mmu_table_alloc, raspi_mmu_table_free, NULL);
 
-        // shared device
-        entry->Value10 = 2;
-        entry->BBit    = 1;
-        entry->CBit    = 1;
-        entry->XNBit   = 0;
-        entry->Domain  = 0;
-        entry->IMPBit  = 0;
-        entry->AP      = AP_ALL_ACCESS;
-        entry->TEX     = 0;
-        entry->APXBit  = APX_RW_ACCESS;
-        entry->SBit    = 1;
-        entry->NGBit   = 0;
-        entry->Value0  = 0;
-        entry->SBZ     = 0;
-        entry->Base    = ARMV6MMUL1SECTIONBASE (base_address);
+    // Normal cacheable RAM: [0, memory_size), identity mapped.
+    ram_attrs = MMU_ATTR_WRITE_BACK | MMU_ATTR_READ | MMU_ATTR_WRITE |
+                MMU_ATTR_EXEC | MMU_ATTR_USER | MMU_ATTR_GLOBAL | MMU_ATTR_SHAREABLE;
+    rc = mmu_map_range(raspi_page_table0, 0, 0, memory_size, ram_attrs);
+    if (rc != MMU_OK)
+        panic("init_mmu: mapping RAM failed (%d)\n", rc);
 
-        // We actually have a megabyte of memory above phystop we use
-        // for the page table and cache coherent buffers:
-        if (base_address == memory_size)
-        {
-            // strongly ordered
-            entry->BBit  = 0;
-            entry->CBit  = 0;
-            entry->TEX   = 0;
-            entry->SBit  = 1;
-        }
-        else
-        if (base_address > memory_size)
-        {
-            // shared device
-            entry->XNBit = 1;
-            entry->BBit  = 1;
-            entry->CBit  = 0;
-            entry->TEX   = 0;
-            entry->SBit  = 1;
-        }
-    }
+    // The reserved page-table/coherent-buffer megabyte needs RAM
+    // transactions, but strongly ordered (no reordering, no buffering)
+    // rather than cacheable like the rest of RAM above.
+    ordered_attrs = MMU_ATTR_STRONGLY_ORDERED | MMU_ATTR_READ | MMU_ATTR_WRITE |
+                    MMU_ATTR_EXEC | MMU_ATTR_USER | MMU_ATTR_GLOBAL | MMU_ATTR_SHAREABLE;
+    rc = mmu_map_range(raspi_page_table0, (virt_addr_type)memory_size,
+                       (phys_addr_type)memory_size, MEGABYTE, ordered_attrs);
+    if (rc != MMU_OK)
+        panic("init_mmu: mapping the reserved megabyte failed (%d)\n", rc);
+
+    // Everything else, up to the top of the 32-bit address space:
+    // execute-never shared device. PAGE_TABLE0_ENTRIES*MEGABYTE (4 GiB)
+    // does not fit in a ULONG; "0 - device_base" relies on well-defined
+    // unsigned wraparound to give exactly that byte count without ever
+    // forming the out-of-range value itself.
+    device_base = memory_size + MEGABYTE;
+    device_size = (ULONG)0 - device_base;
+    device_attrs = MMU_ATTR_DEVICE | MMU_ATTR_READ | MMU_ATTR_WRITE |
+                   MMU_ATTR_USER | MMU_ATTR_GLOBAL | MMU_ATTR_SHAREABLE;
+    rc = mmu_map_range(raspi_page_table0, (virt_addr_type)device_base,
+                       (phys_addr_type)device_base, device_size, device_attrs);
+    if (rc != MMU_OK)
+        panic("init_mmu: mapping the device region failed (%d)\n", rc);
 
 #if CONF_WITH_MMU_TEXT_PROTECT
     /*
@@ -256,13 +306,29 @@ static void init_mmu(ULONG memory_size)
         coarse_desc.IMPBit  = 0;
         coarse_desc.Base    = ARMV6MMUL1COARSEBASE((ULONG)text_protect_l2);
 
-        /* raspi_page_table0[0] is declared as a section descriptor, but a
-         * coarse-page-table descriptor is the same 4-byte hardware slot
-         * under a different bitfield layout. Reinterpreting it via a
-         * pointer cast between the two unrelated struct types would
-         * violate strict aliasing; memcpy() is well-defined regardless
-         * of the types on either side. */
-        memcpy(&raspi_page_table0[0], &coarse_desc, sizeof(coarse_desc));
+        /* raspi_page_table0's root entries are 4-byte hardware slots
+         * addressed generically by the pMMU maintenance layer, and a
+         * coarse-page-table descriptor is that same 4-byte slot under a
+         * different bitfield layout; memcpy() writes it without needing
+         * a pointer cast between unrelated struct types. */
+        memcpy(raspi_page_table0, &coarse_desc, sizeof(coarse_desc));
+
+        /* mmu_map_range() above installed section 0 as a normal RAM
+         * leaf; this memcpy() just replaced it with a table descriptor
+         * behind the maintenance layer's back, so mmu_protect_range()
+         * below has no way to resolve text_protect_l2 from that
+         * descriptor's physical address on its own. Register it once,
+         * as a pre-existing/non-owned table (identity-mapped RAM, hence
+         * the phys_addr_type cast) -- see the design doc's Table
+         * Ownership And Resolution section. */
+        {
+            struct mmu_table_ref text_protect_ref;
+
+            text_protect_ref.virt = text_protect_l2;
+            text_protect_ref.phys = (phys_addr_type)(ULONG)text_protect_l2;
+            if (mmu_table_adopt(&text_protect_ref, MMU_LEVEL_PAGE) != MMU_OK)
+                panic("init_mmu: mmu_table_adopt(text_protect_l2) failed\n");
+        }
     }
 #endif /* CONF_WITH_MMU_TEXT_PROTECT */
 
