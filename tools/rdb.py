@@ -56,17 +56,23 @@ class RDB:
         try:
             self._drain_notifications()
         except Exception:
-            self.sock.close()
+            self.close()
             raise
 
     def close(self):
-        self.sock.close()
+        if self.sock is not None:
+            self.sock.close()
+            self.sock = None
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.close()
+        try:
+            self.close()
+        except Exception:
+            if exc_type is None:
+                raise
 
     MAX_MSG_SIZE = 16 * 1024 * 1024  # a NUL that never arrives shouldn't grow buf forever
 
@@ -90,12 +96,12 @@ class RDB:
         self._scanned = 0
         return msg
 
-    def _drain_notifications(self, timeout=5):
+    def _drain_notifications(self, timeout=None):
         # RemoteDebugState_TryAccept() always sends exactly these four on
         # connect, in this order (see remotedebug.c): !connected, !config,
         # !status, !symbols. Read until the last one, rather than an idle
         # timeout, since the whole burst can take a while to arrive.
-        self.sock.settimeout(timeout)
+        self.sock.settimeout(self.timeout if timeout is None else timeout)
         try:
             while True:
                 msg = self._read_msg()

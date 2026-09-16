@@ -459,9 +459,10 @@ long xrawio(WORD parm)
 /*
  * xconws - Function 0x09 - Print line up to nul with tab expansion
  */
-void xconws(char *p)
+long xconws(char *p)
 {
     prt_line(HXFORM(run->p_uft[1]),p);
+    return 0;
 }
 
 
@@ -533,9 +534,10 @@ static int backsp(int h, char *cbuf, int retlen, int col)
  *
  * p - max length, return length, buffer space
  */
-void xconrs(char *p)
+long xconrs(char *p)
 {
     p[1] = cgets(HXFORM(run->p_uft[0]),(unsigned char)p[0],&p[2]);
+    return 0;
 }
 
 
