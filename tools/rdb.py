@@ -140,11 +140,15 @@ class RDB:
 
     # --- convenience wrappers -------------------------------------------------
     def status(self):
-        p = self.parts(self.send_cmd("status"))
-        return {"ok": p[0] == b"OK", "running": int(p[1], 16), "pc": int(p[2], 16)}
+        msg = self.send_cmd("status")
+        p = self.parts(msg)
+        if len(p) < 3 or p[0] != b"OK":
+            raise RuntimeError(f"status failed: {msg!r}")
+        return {"ok": True, "running": int(p[1], 16), "pc": int(p[2], 16)}
 
     def regs(self):
-        p = self.parts(self.send_cmd("regs"))
+        msg = self.send_cmd("regs")
+        p = self.parts(msg)
         if p[0] != b"OK":
             raise RuntimeError(f"regs failed: {p[:3]!r}")
         d = {}
@@ -152,6 +156,8 @@ class RDB:
         while i + 1 < len(p):
             d[p[i].decode()] = int(p[i + 1], 16)
             i += 2
+        if i != len(p):
+            raise RuntimeError(f"regs: trailing unpaired field in {msg!r}")
         return d
 
     def mem(self, addr, count):
@@ -224,7 +230,10 @@ class RDB:
                     running = int(p[1], 16)
                     if running == 0:
                         return {"pc": int(p[2], 16)}
-                else:
+                elif msg:
+                    # Same phantom-empty-terminator quirk send_cmd() already
+                    # filters out (see its own docstring) -- a real reply is
+                    # never empty.
                     self.notifications.append(msg)
         finally:
             self.sock.settimeout(self.timeout)
