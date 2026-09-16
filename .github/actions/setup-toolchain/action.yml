@@ -174,7 +174,7 @@ runs:
     # ends.  Nothing can be configured, and therefore built, without it.
     - name: Install kconfiglib
       shell: bash
-      run: python3 -m pip install --disable-pip-version-check kconfiglib
+      run: python3 -m pip install --disable-pip-version-check kconfiglib==14.1.0
 
     # Recorded in the log because a build that breaks only in CI is nearly
     # always a toolchain version difference.

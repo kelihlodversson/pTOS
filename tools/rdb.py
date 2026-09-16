@@ -27,7 +27,8 @@ text, NUL-terminated commands/replies, 0x01-separated fields within a
 reply, unsolicited notifications prefixed with "!" (e.g. "!status" when
 a breakpoint is hit).
 
-Usage:
+Usage (run from tools/, or otherwise put tools/ on sys.path/PYTHONPATH --
+this file isn't installed as a top-level package):
     from rdb import RDB
     r = RDB()                    # connect to 127.0.0.1:56001
     r.bp("pc=$fc23d8")           # standard Hatari breakpoint expression

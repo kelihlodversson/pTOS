@@ -112,9 +112,12 @@ jobs:
       # silently pick the wrong toolchain. "make X_defconfig" below runs
       # "python3 -m defconfig" (tools/kconfig.mk), so kconfiglib has to be
       # installed first -- no cross toolchain needed yet for that;
-      # setup-toolchain below installs it again, which is harmless.
+      # setup-toolchain below installs it again, which is harmless. Pinned
+      # (see setup-toolchain/action.yml's own install step) so a new
+      # kconfiglib release can't silently change what "defconfig" accepts
+      # and break this step out from under an unrelated PR.
       - name: Install kconfiglib
-        run: python3 -m pip install --disable-pip-version-check kconfiglib
+        run: python3 -m pip install --disable-pip-version-check kconfiglib==14.1.0
 
       - name: Check whether this config needs -mfastcall
         id: check-mfastcall
