@@ -53,7 +53,11 @@ class RDB:
         self._scanned = 0  # buf[:_scanned] is known NUL-free; skip rescanning it
         # Drain the initial handshake + notifications (!connected, !config, !status, !symbols)
         self.notifications = []
-        self._drain_notifications()
+        try:
+            self._drain_notifications()
+        except Exception:
+            self.sock.close()
+            raise
 
     def close(self):
         self.sock.close()
