@@ -1563,11 +1563,13 @@ berr:   move.l  a1,(8).w
 #if DBG_CHECK_READ_BYTE
         move.l  d0,-(sp)        // backup return value
 
-        move.w  d0,-(sp)
+        // full LONG, not WORD: without -mshort, doprintf()'s "%d" reads
+        // a 4-byte va_arg(ap, int), not 2
+        move.l  d0,-(sp)
         move.l  a0,-(sp)
         pea     msgcrb(pc)
-        jsr     _kprintf        // print debug message
-        lea     10(sp),sp
+        jsr     C_SYM(kprintf)  // print debug message
+        lea     12(sp),sp
 
         move.l  (sp)+,d0        // restore return value
 #endif

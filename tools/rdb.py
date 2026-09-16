@@ -158,11 +158,14 @@ class RDB:
         raddr = int(p[1], 16)
         rcount = int(p[2], 16)
         enc = p[3]
+        if len(enc) % 4:
+            raise RuntimeError(
+                f"mem: encoded payload length {len(enc)} isn't a multiple "
+                f"of 4 -- truncated or protocol-invalid reply in {enc!r}"
+            )
         out = bytearray()
         for i in range(0, len(enc), 4):
             chunk = enc[i:i + 4]
-            if len(chunk) < 4:
-                break
             accum = 0
             for c in chunk:
                 if not 32 <= c <= 95:

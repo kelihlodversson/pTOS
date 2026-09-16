@@ -13,7 +13,13 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-/* #define ENABLE_KDEBUG */
+/*
+ * #define ENABLE_KDEBUG
+ *
+ * Its kprintf() calls below push a full LONG for each %x/%d argument:
+ * without -mshort, doprintf() (util/doprintf.c) reads every unmodified
+ * "%x"/"%d" as a 4-byte va_arg(ap, int), not 2.
+ */
 
 #include "asmdefs.h"
 #include "lineaasm.h"
@@ -89,10 +95,10 @@ C_SYM(int_linea):
 #else
         movem.l d0-d1/a0-a1,-(sp)
 #endif
-        move.w  d0,-(sp)
+        move.l  d0,-(sp)
         pea     linea_msg
         jsr     C_SYM(kprintf)              /* Print debugging information */
-        addq.l  #6,sp
+        addq.l  #8,sp
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
@@ -123,12 +129,12 @@ linea_dispatch_pc:
 
 wrong_linea:
 #ifdef ENABLE_KDEBUG
-        move.w  d0,-(sp)
+        move.l  d0,-(sp)
         subq.l  #2,a0
         move.l  a0,-(sp)
         pea     wrong_linea_msg
         jsr     C_SYM(kprintf)
-        lea     10(sp),sp
+        lea     12(sp),sp
 #endif /* ENABLE_KDEBUG */
         rte
 
