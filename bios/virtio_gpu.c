@@ -5,6 +5,7 @@
 #include "portab.h"
 #include "biosmem.h"
 #include "endian.h"
+#define ENABLE_KDEBUG
 #include "kprint.h"
 #include "screen.h"
 #include "screen_mode.h"
@@ -143,7 +144,10 @@ void virtio_gpu_get_current_mode_desc(SCREEN_MODE_DESC *desc)
 
 void virtio_gpu_update(void)
 {
+    static ULONG vbl_count;
     if (!gpu_is_present) return;
+    if ((++vbl_count % 900UL) == 0UL)
+        KDEBUG(("virtio_gpu: vbl %lu alive, v_bas_ad=%p\n", vbl_count, v_bas_ad));
     if (gpu_in_flight) {
         virtio_poll(&gpu_dev);
         if (!gpu_dev.done) return;
