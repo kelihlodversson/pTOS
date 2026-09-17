@@ -8,6 +8,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+#define ENABLE_KDEBUG
 #include "emutos.h"
 #include "vdi_defs.h"
 #include "lineavars.h"
@@ -128,6 +129,8 @@ void screen(void)
 
     /* get workstation handle */
     handle = CONTRL->handle;
+
+    KDEBUG(("screen(): opcode=%d handle=%d\n", CONTRL->code, handle));
 
     /* no ints out & no pts out */
     flip_y = 0;
