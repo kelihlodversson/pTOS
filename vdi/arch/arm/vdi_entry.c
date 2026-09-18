@@ -11,13 +11,14 @@
 
 
 
+/* #define ENABLE_KDEBUG */
+
 #include "config.h"
 #include "portab.h"
 #include "intmath.h"
 #include "vdi_defs.h"
 #include "lineavars.h"
 #include "string.h"
-/* #define ENABLE_KDEBUG */
 #include "kprint.h"
 
 extern void screen(void);
