@@ -49,10 +49,6 @@ int GSX_ENTRY(int op, VDIPB* paramblock)
     WORD save_ptsin_count = paramblock->contrl->nptsin;
     WORD save_intin_count = paramblock->contrl->nintin;
 
-    KDEBUG(("GSX_ENTRY: op=%d handle=%d intin=%d ptsin=%d\n",
-            op, paramblock->contrl->handle,
-            save_intin_count, save_ptsin_count));
-
     if (paramblock->contrl->nptsin <= 0)
     {
         paramblock->contrl->nptsin = 0;

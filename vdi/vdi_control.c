@@ -9,7 +9,6 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-#define ENABLE_KDEBUG
 #include "emutos.h"
 #include "lineavars.h"
 #include "vdi_defs.h"
@@ -583,8 +582,6 @@ void vdi_v_opnwk(Vwk * vwk)
      */
     screen_get_current_mode_desc(&vwk->mode);
     vwk->backend = vdi_backend_select(&vwk->mode);
-    KDEBUG(("vdi_v_opnwk: mode layout=%d color_model=%d bpp=%d\n",
-            vwk->mode.layout, vwk->mode.color_model, vwk->mode.bits_per_pixel));
 #endif
 
     linea_vars.line_cw = -1;    /* invalidate current line width */
@@ -698,10 +695,6 @@ void vdi_vq_extnd(Vwk * vwk)
 {
     WORD i;
     WORD *dst, *src;
-
-    KDEBUG(("vq_extnd: flag=%d DEV_TAB[0]=%d SIZ_TAB[0]=%d V_REZ_HZ=%d\n",
-            *(INTIN), linea_vars.DEV_TAB[0], linea_vars.SIZ_TAB[0],
-            (int)linea_vars.V_REZ_HZ));
 
     flip_y = 1;
     dst = PTSOUT;
