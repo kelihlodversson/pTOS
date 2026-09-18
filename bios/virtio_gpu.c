@@ -1,11 +1,11 @@
 /* virtio-gpu 2D framebuffer for QEMU virt boards. */
+/* #define ENABLE_KDEBUG */
 #include "config.h"
 
 #if CONF_WITH_VIRTIO_GPU
 #include "portab.h"
 #include "biosmem.h"
 #include "endian.h"
-/* #define ENABLE_KDEBUG */
 #include "kprint.h"
 #include "screen.h"
 #include "screen_mode.h"
