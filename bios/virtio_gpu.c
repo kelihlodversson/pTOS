@@ -5,7 +5,7 @@
 #include "portab.h"
 #include "biosmem.h"
 #include "endian.h"
-#define ENABLE_KDEBUG
+/* #define ENABLE_KDEBUG */
 #include "kprint.h"
 #include "screen.h"
 #include "screen_mode.h"
