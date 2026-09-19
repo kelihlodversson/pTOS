@@ -122,7 +122,7 @@ void mouse_int(UBYTE *buf)
         delta_y = buf[2];
         if (delta_x || delta_y)
         {
-            linea_vars.cur_ms_stat |= ~(1<<5);  // Set motion status
+            linea_vars.cur_ms_stat |= (1<<5);   // Set motion status
             point.x = linea_vars.GCURX + delta_x;
             point.y = linea_vars.GCURY + delta_y;
             scrn_clip(&point);
