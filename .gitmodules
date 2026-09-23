@@ -1,3 +1,6 @@
 [submodule "lib/libcmini"]
 	path = lib/libcmini
 	url = https://github.com/KeliHlodversson/libcmini
+[submodule "pm68k/musashi"]
+	path = pm68k/musashi
+	url = git@github.com:kstenerud/Musashi.git
