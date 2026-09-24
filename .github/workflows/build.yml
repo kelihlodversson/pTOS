@@ -13,11 +13,16 @@
 
 name: Build
 
+# "epic/**" branches are long-lived integration branches for a multi-PR
+# body of work (e.g. epic/329-x32-port): sub-issue PRs target one of these
+# instead of master while the work is in progress, so they need the same
+# CI coverage master's own PRs get, not just validation once the epic
+# branch eventually merges to master.
 on:
   push:
-    branches: [master]
+    branches: [master, "epic/**"]
   pull_request:
-    branches: [master]
+    branches: [master, "epic/**"]
   workflow_dispatch:
 
 # Superseded runs of a pull request are of no interest.  Runs on master are
