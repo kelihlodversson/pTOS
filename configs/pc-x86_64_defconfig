@@ -1,0 +1,2 @@
+# x86-64 UEFI EFI application (qemu-system-x86_64 + OVMF)
+MACHINE_PC_X86_64=y

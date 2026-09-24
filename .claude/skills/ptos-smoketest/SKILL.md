@@ -1,6 +1,6 @@
 ---
 name: ptos-smoketest
-description: Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS) image boots under an emulator. Covers Hatari for m68k Atari targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi1 (QEMU machine `raspi1ap`), raspi2 (QEMU machine `raspi2b`), virt-arm and virt-m68k machines, plus testing the flashable Raspberry Pi SD card disk image (`tools/mkraspi-image.sh`) by attaching it to QEMU as a raw `-drive if=sd`. Also covers running the regression test suite (`make test-hd`) on QEMU with the test HD image as an SD card and reading pass/fail output from the serial console. Use when asked to boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung boot, verify the SD card image's MBR/FAT16 partition is readable by pTOS's own eMMC driver, run regression tests under QEMU, or when you need emulator invocations, --run-vbls/--avirecord/--trace flags, the Hatari debugger gotchas (spurious breakpoints, echo crash), the Falcon IDE 31s boot wait, the floppy motor/deselection timeouts (motor on/off 1.5-3s + deselect 5s = ~20s STE baseline), or QEMU's power-of-2 SD card image size requirement.
+description: Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS) image boots under an emulator. Covers Hatari for m68k Atari targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi1 (QEMU machine `raspi1ap`), raspi2 (QEMU machine `raspi2b`), virt-arm and virt-m68k machines, plus testing the flashable Raspberry Pi SD card disk image (`tools/mkraspi-image.sh`) by attaching it to QEMU as a raw `-drive if=sd`. Also covers the x86-64 UEFI target (`pc-x86_64_defconfig`, `pc-x86_64.efi`) under `qemu-system-x86_64` + OVMF firmware, booted from a synthesized FAT ESP directory. Also covers running the regression test suite (`make test-hd`) on QEMU with the test HD image as an SD card and reading pass/fail output from the serial console. Use when asked to boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung boot, verify the SD card image's MBR/FAT16 partition is readable by pTOS's own eMMC driver, run regression tests under QEMU, boot-test the x86-64 EFI image, or when you need emulator invocations, --run-vbls/--avirecord/--trace flags, the Hatari debugger gotchas (spurious breakpoints, echo crash), the Falcon IDE 31s boot wait, the floppy motor/deselection timeouts (motor on/off 1.5-3s + deselect 5s = ~20s STE baseline), QEMU's power-of-2 SD card image size requirement, or the OVMF writable-NVRAM-file gotcha.
 ---
 
 # pTOS Smoke Testing
@@ -25,6 +25,7 @@ the pTOS tree). Relevant outputs:
 | `virt-arm-cli_defconfig` | qemu-system-arm | `virt-arm.elf` | same as `virt-arm_defconfig`, but boots to EmuCON, not the desktop |
 | `virt-m68k-cli_defconfig` | qemu-system-m68k | `virt-m68k.elf` | same as `virt-m68k_defconfig`, but boots to EmuCON, not the desktop |
 | `test-hd` (any config) | qemu-system-arm | `test-hd.img` (SD card) | `-drive file=test-hd.img,format=raw,if=sd` with any `-bios`/`-kernel` |
+| `pc-x86_64_defconfig` | qemu-system-x86_64 | `pc-x86_64.efi` | `-machine pc` + OVMF firmware, booted from a FAT ESP (headless, COM1 serial only) |
 
 Atari configs build with the default mintelf toolchain (`m68k-atari-mintelf-`)
 and produce symbols in `ptos512k.sym` (load in the Hatari debugger with
@@ -526,6 +527,81 @@ cat /tmp/qemu.log
     the environment is actually delivering bytes to QEMU's serial chardev
     at all before suspecting the driver.
 
+## QEMU smoke test (x86-64 UEFI)
+
+Unlike every other pTOS image, `pc-x86_64.efi` is not loaded directly by an
+emulator's `-kernel`/`-bios` flag: it is booted the way real UEFI firmware
+boots anything, from `\EFI\BOOT\BOOTX64.EFI` on a FAT-formatted EFI System
+Partition. QEMU's `fat:` driver synthesizes that filesystem from a plain
+directory, and OVMF (the Debian/Ubuntu `ovmf` package) is a UEFI firmware
+build QEMU can run in place of a legacy BIOS.
+
+```sh
+make pc-x86_64_defconfig && make
+mkdir -p esp/EFI/BOOT
+cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+cp /usr/share/OVMF/OVMF_VARS_4M.fd .
+qemu-system-x86_64 -machine pc -m 256 \
+  -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+  -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
+  -drive format=raw,file=fat:rw:esp \
+  -serial file:/tmp/pc-x86_64.log -display none
+```
+
+This milestone (#330) has no framebuffer yet (see #332) and nothing to see
+on a graphical display, hence `-display none`; all boot progress is on
+COM1, captured above to a log file rather than `-serial stdio` so it can be
+grepped afterward.
+
+**Pass signal**: the image reaches the higher-half relocation and halts
+cleanly, with exactly one boot attempt -- a triple fault (e.g. a page-table
+or ABI bug) makes OVMF silently reset the VM and retry, which shows up as
+the same boot-progress lines repeating:
+
+```sh
+grep -c 'EFI entry reached' /tmp/pc-x86_64.log   # must be 1, not >1
+grep 'pTOS x86-64' /tmp/pc-x86_64.log
+```
+
+Expected log, in order (verified against this exact invocation):
+
+```
+pTOS x86-64: EFI entry reached
+pTOS x86-64: image base obtained
+pTOS x86-64: boot services exited
+pTOS x86-64: page tables built, relocating to higher half
+pTOS x86-64 EFI boot stub: alive in the higher half
+```
+
+`-machine pc` (i440fx, legacy IDE) is required, not `q35`: OVMF's boot
+manager reliably auto-discovers `\EFI\BOOT\BOOTX64.EFI` on the `fat:`
+drive as removable media through the legacy IDE controller `-machine pc`
+provides; getting the same auto-discovery working through `q35`'s AHCI
+needs more setup and was not the path verified here. If OVMF instead
+drops into the "EFI Internal Shell" (visible only with a display attached
+or `-vnc`/`-nographic`, since it is not COM1 output), the ESP was not
+found as bootable media -- a `startup.nsh` at the ESP root containing
+`FS0:\EFI\BOOT\BOOTX64.EFI` makes the shell chain-load it as a fallback,
+but with `-machine pc` this normally is not needed.
+
+### x86-64 UEFI gotchas
+
+- **OVMF_VARS_4M.fd must be a writable local copy**, not the package's own
+  file used in place. It holds UEFI's writable NVRAM (boot order,
+  variables) and QEMU writes to it as the VM runs; the Debian/Ubuntu
+  package's copy under `/usr/share/OVMF` is root-owned, so an unprivileged
+  `qemu-system-x86_64` cannot open it for writing and the run fails before
+  ever reaching pTOS code. `cp` it next to the ESP directory first (as
+  above) and pass that path instead.
+- **No debug/status output from OVMF itself on `-serial`.** The Debian/
+  Ubuntu `ovmf` package is a release build; it does not print its own boot
+  log to COM1 (only to the graphical console), so an empty serial log
+  before pTOS's own lines print is normal, not a hang -- it does not mean
+  the firmware failed to start.
+- **No video/framebuffer output**: this milestone's image only ever
+  writes to COM1; do not expect anything on a `-vnc`/graphical console
+  beyond firmware/shell text. Framebuffer support is issue #332.
+
 ## Common mistakes
 
 | Mistake | Fix |
@@ -544,3 +620,7 @@ cat /tmp/qemu.log
 | A scripted keystroke at the `virt-arm-cli`/`virt-m68k-cli` EmuCON prompt over `-serial stdio` gets no response | Input is implemented (polled from the 200 Hz tick), but some sandboxed shells never deliver the bytes to QEMU's serial chardev at all (`ppoll()` sees stdin `POLLIN` but QEMU never `read()`s it) — confirm with `strace` before assuming the driver is broken; reaching the `A:>` prompt alone is still a valid automated pass signal either way |
 | `qemu-system-arm ... -drive file=ptos-raspi.img,format=raw,if=sd` fails with "SD card size has to be a power of 2" | `mkraspi-image.sh`'s output isn't power-of-2 sized (real hardware doesn't care) — `qemu-img resize -f raw <scratch-copy> 512M` a copy for the test, never the real release artifact; resizing *down* (e.g. to 64M) truncates and corrupts the partition instead of padding it |
 | Attaching the SD card image via `-drive if=sd` without also passing `-bios`/`-kernel` | QEMU doesn't emulate the GPU/`start.elf` boot ROM, so it never reads `kernel*.img` off the disk itself — pass both: `-bios kernel.img -drive file=...,if=sd` |
+| `pc-x86_64.efi` passed to `-bios`/`-kernel` | Not a flat binary or ELF like every other pTOS image — it's a PE32+ EFI application; boot it via OVMF + a FAT ESP directory instead, see the x86-64 UEFI section above |
+| x86-64 UEFI run fails immediately, or `/usr/share/OVMF/OVMF_VARS_4M.fd` errors on open | That file is root-owned on a normal install; `cp` it to a writable local file first and point `-drive if=pflash,...,file=` at the copy, not the package's own file |
+| x86-64 UEFI boot log repeats the same `pTOS x86-64: ...` lines | A triple fault (bad page table, ABI/stack bug) makes OVMF silently reset and retry — `grep -c 'EFI entry reached' <log>` must be 1, not more |
+| Expecting OVMF firmware messages on `-serial` before pTOS's own output | The Debian/Ubuntu `ovmf` package is a release build with no serial debug log; an empty serial log up to the point pTOS's own lines start is normal, not a hang |
