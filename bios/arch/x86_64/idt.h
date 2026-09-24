@@ -13,8 +13,9 @@
 /*
  * Builds and loads an IDT covering the 32 CPU exception vectors
  * (x86_64_gdt_init() must have run first: every gate references
- * X86_64_KERNEL_CODE_SEL), and masks every legacy PIC line so neither
- * chip can raise a device IRQ. Vectors 32-255 are deliberately left
+ * X86_64_KERNEL_CODE_SEL, and #DF's gate references X86_64_DF_IST's
+ * dedicated stack), and masks every legacy PIC line so neither chip can
+ * raise a device IRQ. Vectors 32-255 are deliberately left
  * absent (not present) in the IDT: nothing in this milestone raises a
  * software interrupt, and the masked PIC cannot raise a hardware one, so
  * the only way one of those vectors could ever be taken is a genuine

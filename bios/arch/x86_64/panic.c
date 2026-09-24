@@ -92,7 +92,7 @@ static void dump_stack(const x86_64_exception_frame_t *frame)
     const UQUAD *sp = (const UQUAD *)(&frame->rflags + 1);
     int i;
 
-    earlycon_puts("stack:\n");
+    earlycon_puts("raw stack dump (not an unwound trace -- see comment above):\n");
     for (i = 0; i < 16; i++) {
         earlycon_puts("  ");
         earlycon_puthex((UQUAD)(uintptr_t)&sp[i]);

@@ -9,11 +9,14 @@
  * exception, since every IDT gate below references a segment selector into
  * this table.
  *
- * The TSS exists mainly for its selector to be loadable (ltr requires a
- * valid TSS descriptor) and for its IST slots to be available later: this
- * milestone does not use any of them yet.  rsp0 (the ring3->ring0 stack
- * switch target) and the IST entries stay zero until the syscall/userspace
- * sub-issues (#333/#334) give them a real stack to point at.
+ * The TSS's ist1 slot points at a dedicated stack for #DF (double fault,
+ * idt.c): #DF can be caused by the current stack itself being exhausted
+ * or corrupt, and IST is exactly the mechanism that lets the CPU switch
+ * to a known-good stack unconditionally on entry, rather than trying
+ * (and failing) to push a frame onto the same broken one. Every other
+ * gate still uses IST=0 (no switch): rsp0 (the ring3->ring0 stack switch
+ * target) and the remaining IST slots stay unused until the
+ * syscall/userspace sub-issues (#333/#334) need them.
  *
  * Copyright (C) 2025-2026 The pTOS development team.
  *
@@ -62,6 +65,13 @@ typedef struct {
 } PACKED tss_t;
 
 static tss_t tss;
+
+/* The #DF handler's dedicated stack (see the top-of-file comment). 4 KiB
+ * is generous: the #DF path (isr.S's common trampoline, then
+ * x86_64_exception_dispatch()) does not recurse and allocates nothing
+ * beyond its own register-frame pushes and a handful of stack locals. */
+#define DF_STACK_BYTES 4096
+static UBYTE df_stack[DF_STACK_BYTES] __attribute__((aligned(16)));
 
 /* One null, one code, one data descriptor (8 bytes each) plus one TSS
  * descriptor (16 bytes in long mode: gdt[3] and gdt[4] together). */
@@ -142,6 +152,7 @@ void x86_64_gdt_init(void)
     set_tss_descriptor((UQUAD)(uintptr_t)&tss, sizeof(tss) - 1);
 
     tss.iomap_base = sizeof(tss);
+    tss.ist1 = (UQUAD)(uintptr_t)&df_stack[DF_STACK_BYTES];
 
     gdtr.limit = sizeof(gdt) - 1;
     gdtr.base = (UQUAD)(uintptr_t)gdt;

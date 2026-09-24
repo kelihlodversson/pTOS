@@ -17,6 +17,11 @@
 #define X86_64_KERNEL_DATA_SEL 0x10
 #define X86_64_TSS_SEL         0x18
 
+/* IST index (1-7, 0 means "don't switch stacks") the #DF gate uses --
+ * see idt.c and the dedicated stack x86_64_gdt_init() points the TSS's
+ * ist1 slot at. */
+#define X86_64_DF_IST 1
+
 #ifndef __ASSEMBLER__
 
 /*

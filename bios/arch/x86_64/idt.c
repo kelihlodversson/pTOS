@@ -56,13 +56,13 @@ static void (*const exception_stub[32])(void) = {
 };
 #undef ISR
 
-static void set_gate(int vector, void (*handler)(void))
+static void set_gate(int vector, void (*handler)(void), int ist)
 {
     UQUAD addr = (UQUAD)(uintptr_t)handler;
 
     idt[vector].offset_low = (UWORD)(addr & 0xFFFF);
     idt[vector].selector = X86_64_KERNEL_CODE_SEL;
-    idt[vector].ist = 0;
+    idt[vector].ist = (UBYTE)ist;
     idt[vector].type_attr = 0x8E;
     idt[vector].offset_mid = (UWORD)((addr >> 16) & 0xFFFF);
     idt[vector].offset_high = (ULONG)(addr >> 32);
@@ -94,7 +94,7 @@ void x86_64_idt_init(void)
     int i;
 
     for (i = 0; i < 32; i++)
-        set_gate(i, exception_stub[i]);
+        set_gate(i, exception_stub[i], i == 8 ? X86_64_DF_IST : 0);
 
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (UQUAD)(uintptr_t)idt;
