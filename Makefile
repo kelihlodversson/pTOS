@@ -958,7 +958,7 @@ obj/m68kcpu.o: pm68k/m68kops.h
 endif
 
 # This needs to be outside the ifdef block as make clean and distclean are non-configured targets
-TOCLEAN += obj/m68kmake m68k/m68kops.c pm68k/m68kops.h
+TOCLEAN += obj/m68kmake pm68k/m68kops.c pm68k/m68kops.h
 
 
 #
