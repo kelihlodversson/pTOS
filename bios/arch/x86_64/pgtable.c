@@ -20,17 +20,20 @@ typedef UQUAD pgentry_t;
 /*
  * One PML4, and a small pool of PDPT/PD tables allocated on demand as
  * x86_64_build_page_tables() maps the identity (low) and higher-half
- * windows. Two PDPTs are enough: the low and high windows each need
- * exactly one PML4 slot, and mapping a range that crosses a 512 GiB
- * boundary (a different PML4 slot within the *same* window) cannot
- * happen for an image this small. Four PDs are generous headroom: the
- * identity window can span at most two 1 GiB-aligned PDs for any
- * span this milestone maps (a few MiB), and the higher-half window
- * never needs more than one, since X86_64_KERNEL_VIRT_BASE is itself
- * 1 GiB-aligned.
+ * windows. The higher-half window always needs exactly one PDPT and one
+ * PD, since X86_64_KERNEL_VIRT_BASE is itself both 512 GiB- and 1 GiB-
+ * aligned. The identity window normally needs one PDPT and at most two
+ * PDs (it can cross one 1 GiB boundary for any span this milestone maps,
+ * a few MiB) -- but if this image happened to be loaded within that span
+ * of an exact 512 GiB boundary, it would need a second PDPT (and a
+ * matching extra PD) too. That is astronomically unlikely on any real or
+ * emulated firmware, but pml4_slot_pdpt()/pdpt_slot_pd() below hard-trap
+ * rather than silently overrunning the pool if it ever happens, so these
+ * sizes only need to comfortably cover the normal case plus that
+ * worst-case doubling, not be provably exhaustive.
  */
-#define MAX_PDPTS 2
-#define MAX_PDS 4
+#define MAX_PDPTS 3
+#define MAX_PDS 6
 
 static pgentry_t pml4[512] __attribute__((aligned(4096)));
 static pgentry_t pdpts[MAX_PDPTS][512] __attribute__((aligned(4096)));
@@ -39,12 +42,16 @@ static int next_pdpt;
 static int next_pd;
 
 /* Returns the PDPT for pml4[pml4_index], allocating one from the pool on
- * first use. */
+ * first use. Traps (see the MAX_PDPTS comment above) rather than
+ * overrunning the pdpts[] pool if the caller ever needs more distinct
+ * PML4 slots than provisioned for. */
 static pgentry_t *pml4_slot_pdpt(UQUAD pml4_index)
 {
     pgentry_t *pdpt;
 
     if (!(pml4[pml4_index] & PTE_PRESENT)) {
+        if (next_pdpt >= MAX_PDPTS)
+            __builtin_trap();
         pdpt = pdpts[next_pdpt++];
         pml4[pml4_index] = (UQUAD)(uintptr_t)pdpt | PTE_WRITABLE | PTE_PRESENT;
     }
@@ -52,12 +59,16 @@ static pgentry_t *pml4_slot_pdpt(UQUAD pml4_index)
 }
 
 /* Returns the PD for pdpt[pdpt_index], allocating one from the pool on
- * first use. */
+ * first use. Traps (see the MAX_PDPTS comment above) rather than
+ * overrunning the pds[] pool if the caller ever needs more distinct PDPT
+ * slots than provisioned for. */
 static pgentry_t *pdpt_slot_pd(pgentry_t *pdpt, UQUAD pdpt_index)
 {
     pgentry_t *pd;
 
     if (!(pdpt[pdpt_index] & PTE_PRESENT)) {
+        if (next_pd >= MAX_PDS)
+            __builtin_trap();
         pd = pds[next_pd++];
         pdpt[pdpt_index] = (UQUAD)(uintptr_t)pd | PTE_WRITABLE | PTE_PRESENT;
     }

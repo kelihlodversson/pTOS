@@ -125,6 +125,20 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
         status = bs->GetMemoryMap(&this_map_size, (EFI_MEMORY_DESCRIPTOR *)map_buffer,
                                    &map_key, &descriptor_size, &descriptor_version);
+        if (status == EFI_BUFFER_TOO_SMALL) {
+            /* The map grew past the headroom padded in above (or a
+             * previous iteration's). Legitimate, not fatal: reallocate a
+             * buffer sized for the current map (with fresh headroom) and
+             * retry, rather than treating this the same as a real error. */
+            bs->FreePool(map_buffer);
+            map_size = this_map_size + 8 * descriptor_size;
+            status = bs->AllocatePool(EFI_LOADER_DATA, map_size, &map_buffer);
+            if (status & EFI_ERROR_BIT)
+                panic("AllocatePool(memory map) failed");
+            if (retry >= 8)
+                panic("GetMemoryMap kept outgrowing its buffer");
+            continue;
+        }
         if (status & EFI_ERROR_BIT)
             panic("GetMemoryMap failed");
 
@@ -139,6 +153,16 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             panic("ExitBootServices failed repeatedly");
     }
 
+    /*
+     * From here on there is no pTOS IDT, and the page tables built below
+     * unmap EFI's own IDT and interrupt handlers along with the rest of
+     * firmware memory: any interrupt taken after this point until #331
+     * gives this arch real exception/interrupt handling would vector
+     * through unmapped memory and triple-fault. ExitBootServices() does
+     * not itself guarantee interrupts are off, so disable them explicitly
+     * before doing anything else.
+     */
+    x86_64_cli();
     earlycon_puts("pTOS x86-64: boot services exited\n");
 
     cr3 = x86_64_build_page_tables(image_base, IMAGE_SPAN_BYTES, &mapped_base);

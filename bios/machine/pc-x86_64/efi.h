@@ -31,6 +31,10 @@ typedef UBYTE BOOLEAN;
 #define EFI_SUCCESS 0
 /* The high bit of EFI_STATUS marks an error, on both 32- and 64-bit UINTN. */
 #define EFI_ERROR_BIT 0x8000000000000000ULL
+/* EFI_BUFFER_TOO_SMALL (UEFI spec Appendix D): error code 5. A normal,
+ * expected result from GetMemoryMap() when the buffer offered is smaller
+ * than the current map, not necessarily a failure. */
+#define EFI_BUFFER_TOO_SMALL (EFI_ERROR_BIT | 5)
 
 typedef struct {
     ULONG Data1;
@@ -78,12 +82,14 @@ typedef EFI_STATUS (EFIAPI *EFI_HANDLE_PROTOCOL)(EFI_HANDLE Handle,
 #define EFI_LOADER_DATA 2
 
 typedef EFI_STATUS (EFIAPI *EFI_ALLOCATE_POOL)(ULONG PoolType, UQUAD Size, void **Buffer);
+typedef EFI_STATUS (EFIAPI *EFI_FREE_POOL)(void *Buffer);
 
 /*
  * EFI_BOOT_SERVICES (UEFI spec 4.4).  Field order and count matter: only
- * AllocatePool, GetMemoryMap, HandleProtocol and ExitBootServices are
- * given real prototypes, but every field ahead of them must still be
- * present (as a same-sized VOID*) so those land at their real offsets.
+ * AllocatePool, FreePool, GetMemoryMap, HandleProtocol and
+ * ExitBootServices are given real prototypes, but every field ahead of
+ * them must still be present (as a same-sized VOID*) so those land at
+ * their real offsets.
  */
 typedef struct {
     EFI_TABLE_HEADER Hdr;
@@ -95,7 +101,7 @@ typedef struct {
     void *FreePages;
     EFI_GET_MEMORY_MAP GetMemoryMap;
     EFI_ALLOCATE_POOL AllocatePool;
-    void *FreePool;
+    EFI_FREE_POOL FreePool;
 
     void *CreateEvent;
     void *SetTimer;

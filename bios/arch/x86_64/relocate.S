@@ -31,10 +31,19 @@
  * of its own boot stack's top (startup.c translates it the same way as
  * high_half_target, not the low/identity one), 16-byte aligned per the
  * SysV AMD64 ABI's stack alignment requirement at a public interface.
+ *
+ * The caller (efi_main(), startup.c) already disables interrupts right
+ * after ExitBootServices() succeeds, well before this is reached; cli
+ * here is belt-and-suspenders, since there is no pTOS IDT yet and the
+ * CR3 switch below unmaps EFI's own IDT and interrupt handlers along
+ * with the rest of firmware memory -- an interrupt taken between here
+ * and #331 giving this arch real exception/interrupt handling would
+ * vector through unmapped memory and triple-fault.
  */
         .globl  C_SYM(x86_64_relocate_higher_half)
 
 C_SYM(x86_64_relocate_higher_half):
+        cli
         mov     %rdx, %rsp
         /*
          * jmp, unlike call, does not push a return address, so without
