@@ -548,15 +548,15 @@ qemu-system-x86_64 -machine pc -m 256 \
   -serial file:/tmp/pc-x86_64.log -display none
 ```
 
-This milestone (#330) has no framebuffer yet (see #332) and nothing to see
-on a graphical display, hence `-display none`; all boot progress is on
-COM1, captured above to a log file rather than `-serial stdio` so it can be
-grepped afterward.
+Neither milestone (#330's higher-half relocation, #331's GDT/IDT) has a
+framebuffer yet (see #332) and nothing to see on a graphical display, hence
+`-display none`; all boot progress is on COM1, captured above to a log file
+rather than `-serial stdio` so it can be grepped afterward.
 
-**Pass signal**: the image reaches the higher-half relocation and halts
-cleanly, with exactly one boot attempt -- a triple fault (e.g. a page-table
-or ABI bug) makes OVMF silently reset the VM and retry, which shows up as
-the same boot-progress lines repeating:
+**Pass signal**: the image reaches the higher-half relocation, arms its
+IDT, and halts cleanly, with exactly one boot attempt -- a triple fault
+(e.g. a page-table, GDT/IDT or ABI bug) makes OVMF silently reset the VM
+and retry, which shows up as the same boot-progress lines repeating:
 
 ```sh
 grep -c 'EFI entry reached' /tmp/pc-x86_64.log   # must be 1, not >1
@@ -571,7 +571,18 @@ pTOS x86-64: image base obtained
 pTOS x86-64: boot services exited
 pTOS x86-64: page tables built, relocating to higher half
 pTOS x86-64 EFI boot stub: alive in the higher half
+pTOS x86-64: GDT/TSS loaded
+pTOS x86-64: IDT loaded, exceptions armed
 ```
+
+Once the IDT is armed (#331), a deliberately faulting instruction (e.g. a
+temporary null-pointer write or integer divide) produces a `panic:
+exception ...` block instead of a silent reset/triple-fault: the vector
+name, decoded error code (and, for `#PF`, CR2 plus the access-type
+decode), a full register dump, and a raw dump of the interrupted code's
+own stack. Verified with both a no-error-code vector (`#DE`, divide by
+zero) and an error-code one (`#PF`, null-pointer write) -- both produced
+exactly one such block and then hung, with no reset loop.
 
 `-machine pc` (i440fx, legacy IDE) is required, not `q35`: OVMF's boot
 manager reliably auto-discovers `\EFI\BOOT\BOOTX64.EFI` on the `fat:`

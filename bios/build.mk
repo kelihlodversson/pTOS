@@ -60,7 +60,7 @@ obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfis
 # Not yet part of $(OBJECTS) for this arch (see the ARCH_X86_64 branch of
 # the top level Makefile's $(EMUTOS_IMG) rule); listed here so they are
 # discoverable and buildable the normal way once that milestone lands.
-obj-$(ARCH_X86_64) += pgtable.o relocate.o
+obj-$(ARCH_X86_64) += pgtable.o relocate.o gdt.o idt.o isr.o panic.o
 obj-$(MACHINE_PC_X86_64) += earlycon.o
 
 obj-$(CONF_WITH_PCI) += pci_core.o
