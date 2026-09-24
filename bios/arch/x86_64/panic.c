@@ -20,7 +20,10 @@
 
 /* Intel SDM Vol 3A Table 6-1, indexed by vector number. Vectors without a
  * dedicated exception keep their reserved status, since nothing in this
- * milestone can ever raise them (see idt.h). */
+ * milestone can ever raise them (see idt.h). Exactly 32 entries, one per
+ * installed vector (0-31): a short initializer here leaves the missing
+ * tail entries as null pointers, which x86_64_exception_dispatch() would
+ * then dereference. */
 static const char *const vector_names[32] = {
     "#DE Divide Error",
     "#DB Debug",
@@ -45,7 +48,7 @@ static const char *const vector_names[32] = {
     "#VE Virtualization Exception",
     "#CP Control Protection Exception",
     "Reserved", "Reserved", "Reserved", "Reserved",
-    "Reserved", "Reserved", "Reserved", "Reserved", "Reserved"
+    "Reserved", "Reserved", "Reserved", "Reserved", "Reserved", "Reserved"
 };
 
 static void print_val(const char *label, UQUAD value)
