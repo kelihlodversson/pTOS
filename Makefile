@@ -129,6 +129,7 @@ optional-dirs-y = vdi
 optional-dirs-$(CONF_WITH_AES) += aes desk
 optional-dirs-$(CONF_WITH_CLI) += cli
 optional-dirs-$(CONF_WITH_USB) += usb
+optional-dirs-$(CONF_WITH_PM68K) += pm68k
 
 core_dirs = $(core-dirs-y)
 optional_dirs = $(optional-dirs-y)
@@ -137,7 +138,10 @@ dirs = $(core_dirs) $(optional_dirs)
 arch_subdirs = $(addprefix machine/,$(MACHINE)) $(addprefix arch/,$(ARCH))
 arch_dirs = $(foreach d,$(dirs),$(addprefix $(d)/,$(arch_subdirs)))
 
-vpath %.c $(arch_dirs) $(dirs)
+pm68k_source_dirs-$(CONF_WITH_PM68K) += pm68k/musashi
+pm68k_source_dirs = $(pm68k_source_dirs-y)
+
+vpath %.c $(arch_dirs) $(dirs) $(pm68k_source_dirs)
 vpath %.S $(arch_dirs) $(dirs)
 
 #
@@ -187,14 +191,30 @@ OBJCOPY = $(CROSS_COMPILE)objcopy
 # The native C compiler, used for the build tools.
 NATIVECC = gcc -std=gnu90 -pedantic $(WARNFLAGS) -W -O
 
+ifdef CONF_WITH_PM68K
+MUSASHI = pm68k/musashi
+GEN_SRC += pm68k/m68kops.c pm68k/m68kops.h
+TOCLEAN += obj/m68kmake pm68k/m68kops.c pm68k/m68kops.h
+
+obj/m68kmake: $(MUSASHI)/m68kmake.c | obj
+	$(NATIVECC) $< -o $@
+
+pm68k/m68kops.c pm68k/m68kops.h &: obj/m68kmake $(MUSASHI)/m68k_in.c
+	obj/m68kmake pm68k $(MUSASHI)/m68k_in.c
+
+obj/m68kcpu.o: pm68k/m68kops.h
+endif
+
 ifdef ARCH_ARM
 MULTILIBFLAGS = $(CPUFLAGS) -fsigned-char
 TOOLCHAIN_CFLAGS = -fno-reorder-functions -DELF_TOOLCHAIN
+PM68K_REG_CFLAGS = -ffixed-r9
 else
 MULTILIBFLAGS = $(CPUFLAGS) -mshort
 ifdef BUILD_TOOLCHAIN_IS_ELF
 TOOLCHAIN_CFLAGS = -Wa,--register-prefix-optional \
                    -fno-reorder-functions -DELF_TOOLCHAIN
+PM68K_REG_CFLAGS =
 endif
 endif
 
@@ -266,6 +286,11 @@ bdos_copts = -Ifs
 # private headers.  virtio_9p_pfs.c similarly wraps bios/virtio_9p.c's
 # fid-level API, needing -Ibios.
 fs_copts = -Ibdos -Ibios
+
+# The cpu emulator uses r9 to point to the current emulated cpu state on ARM
+# this allows it to be saved and restored automatically when entering and exiting the kernel.
+# The Mushashi submodule contains both missing prototypes and unused variables, so we disable these warnings for the pm68k module only
+pm68k_copts = -Ipm68k/musashi -DMUSASHI_CNF=\"../m68kconf.h\" -Wno-unused-variable -Wno-missing-prototypes -std=gnu99 $(PM68K_REG_CFLAGS)
 
 CFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_copts))
 SFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_sopts))

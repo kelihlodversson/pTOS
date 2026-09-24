@@ -1,0 +1,18 @@
+#
+# pemu68/Kconfig - 68k application emulation
+#
+
+menu "68k application emulation"
+
+config CONF_WITH_PM68K
+    bool "Run 68k applications through Musashi"
+    depends on ARCH_ARM
+    default n
+    help
+      Include the userspace 68000 compatibility runtime used to execute
+      traditional 68k TOS applications on non-68k pTOS targets.
+
+      Musashi provides the CPU core. pTOS provides memory access, GEMDOS,
+      BIOS/XBIOS, VDI/AES translation and process integration.
+
+endmenu
