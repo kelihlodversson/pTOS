@@ -12,6 +12,7 @@
 
 #ifndef SETJMP_H
 #define SETJMP_H
+#include "portab.h"
 
 typedef long jmp_buf[13];
 
