@@ -346,10 +346,21 @@ jobs:
           echo "x86_64 configurations: ${{ needs.x86_64.result }}"
           echo "release archives:      ${{ needs.release-archives.result }}"
           echo "raspi SD card image:   ${{ needs.raspi-sdcard.result }}"
-          case '${{ needs.m68k.result }}:${{ needs.arm.result }}:${{ needs.x86_64.result }}:${{ needs.release-archives.result }}:${{ needs.raspi-sdcard.result }}' in
-          success:success:success:success:success) ;;
-          *)
+
+          ok=true
+          [ '${{ needs.m68k.result }}' = success ] || ok=false
+          [ '${{ needs.arm.result }}' = success ] || ok=false
+          # A matrix with no configurations (no MACHINE_PC_X86_64=y defconfig
+          # exists yet on this branch) is skipped by GitHub, not a failure --
+          # only a real build failure in a non-empty matrix fails this gate.
+          case '${{ needs.x86_64.result }}' in
+          success|skipped) ;;
+          *) ok=false ;;
+          esac
+          [ '${{ needs.release-archives.result }}' = success ] || ok=false
+          [ '${{ needs.raspi-sdcard.result }}' = success ] || ok=false
+
+          if ! $ok; then
             echo "::error::at least one configuration failed to build"
             exit 1
-            ;;
-          esac
+          fi
