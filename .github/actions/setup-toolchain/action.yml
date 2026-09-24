@@ -12,8 +12,9 @@ description: Install a cross toolchain and the kconfiglib configuration front en
 inputs:
   arch:
     description: >
-      Which cross toolchain to install: "m68k" for the Atari, Amiga and
-      ColdFire targets, or "arm" for the Raspberry Pi ones.
+      Which toolchain to set up: "m68k" for the Atari, Amiga and ColdFire
+      targets, "arm" for the Raspberry Pi ones, or "x86_64" for the PC
+      (UEFI) one.
     required: true
 
 runs:
@@ -26,9 +27,9 @@ runs:
       shell: bash
       run: |
         case '${{ inputs.arch }}' in
-        m68k|arm) ;;
+        m68k|arm|x86_64) ;;
         *)
-          echo "::error::unknown arch '${{ inputs.arch }}', expected 'm68k' or 'arm'"
+          echo "::error::unknown arch '${{ inputs.arch }}', expected 'm68k', 'arm' or 'x86_64'"
           exit 1
           ;;
         esac
@@ -73,6 +74,27 @@ runs:
         # zip packs the Raspberry Pi kernels for a release.
         sudo apt-get install -y gcc-arm-none-eabi zip
 
+    # No cross toolchain: the runner's own native gcc/binutils compile and
+    # link the x86-64 EFI image directly (see the ARCH_X86_64 MULTILIBFLAGS
+    # comment in the top level Makefile). Installed explicitly, like the
+    # other two arches above, rather than assumed from the runner image --
+    # doc/install.txt documents this same "sudo apt-get install gcc
+    # binutils" as the Linux/x86-64 host requirement. The link step needs
+    # binutils' PE32+ ("i386pep") emulation specifically, not just ELF;
+    # verified below rather than assumed, so a runner image that ever
+    # drops it fails here with a clear message instead of a confusing
+    # linker error partway through a build.
+    - name: Install the x86-64 build tools
+      if: inputs.arch == 'x86_64'
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y gcc binutils
+        if ! ld --help | grep -q i386pep; then
+          echo "::error::this runner's ld has no i386pep (PE32+) emulation, needed to link the x86-64 EFI image"
+          exit 1
+        fi
+
     - name: Install Python 3
       uses: actions/setup-python@v5
       with:
@@ -108,4 +130,8 @@ runs:
           first_line m68k-atari-mintelf-gcc --version
           ;;
         arm)  first_line arm-none-eabi-gcc --version ;;
+        x86_64)
+          first_line gcc --version
+          first_line ld --version
+          ;;
         esac

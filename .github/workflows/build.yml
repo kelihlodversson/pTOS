@@ -44,6 +44,7 @@ jobs:
     outputs:
       m68k: ${{ steps.enumerate.outputs.m68k }}
       arm: ${{ steps.enumerate.outputs.arm }}
+      x86_64: ${{ steps.enumerate.outputs.x86_64 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -64,12 +65,16 @@ jobs:
 
           m68k=
           arm=
+          x86_64=
           for config in configs/*_defconfig; do
             name=$(basename "$config" _defconfig)
             # MACHINE_RPI or MACHINE_VIRT_ARM is what selects the ARM
-            # architecture; everything else in configs/ is m68k or ColdFire.
+            # architecture, MACHINE_PC_X86_64 the x86-64 one; everything
+            # else in configs/ is m68k or ColdFire.
             if grep -qE '^MACHINE_(RPI|VIRT_ARM)=y' "$config"; then
               arm="$arm $name"
+            elif grep -qE '^MACHINE_PC_X86_64=y' "$config"; then
+              x86_64="$x86_64 $name"
             else
               m68k="$m68k $name"
             fi
@@ -78,6 +83,7 @@ jobs:
           # One JSON array per architecture, for the matrices below.
           echo "m68k=$(to_json "$m68k")" >>"$GITHUB_OUTPUT"
           echo "arm=$(to_json "$arm")" >>"$GITHUB_OUTPUT"
+          echo "x86_64=$(to_json "$x86_64")" >>"$GITHUB_OUTPUT"
 
           {
             echo '## Configurations to build'
@@ -85,6 +91,8 @@ jobs:
             echo "m68k:$m68k"
             echo
             echo "arm:$arm"
+            echo
+            echo "x86_64:$x86_64"
           } >>"$GITHUB_STEP_SUMMARY"
 
   m68k:
@@ -166,6 +174,50 @@ jobs:
           # kernel.img, kernel7.img, kernel8-32.img or kernel7l.img, plus the
           # ELF the image was extracted from, which still has the symbols.
           for product in *.img emutos.elf emutos.map; do
+            if [ -e "$product" ]; then
+              cp "$product" products/
+            fi
+          done
+          ls -l products
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ptos-${{ matrix.config }}
+          path: products/
+          retention-days: 14
+
+      - name: Report the failure
+        if: failure()
+        run: |
+          echo "::error title=${{ matrix.config }}::the ${{ matrix.config }} configuration failed"
+
+  x86_64:
+    name: ${{ matrix.config }}
+    needs: configurations
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config: ${{ fromJSON(needs.configurations.outputs.x86_64) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: x86_64
+
+      - name: Build ${{ matrix.config }}
+        env:
+          CONFIG: ${{ matrix.config }}
+        run: |
+          make "${CONFIG}_defconfig"
+          make
+
+      - name: Collect the build products
+        run: |
+          mkdir products
+          # The PE32+ EFI application, plus the map file with its symbols.
+          for product in *.efi emutos.map; do
             if [ -e "$product" ]; then
               cp "$product" products/
             fi
@@ -280,7 +332,7 @@ jobs:
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [m68k, arm, release-archives, raspi-sdcard]
+    needs: [configurations, m68k, arm, x86_64, release-archives, raspi-sdcard]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
@@ -289,14 +341,27 @@ jobs:
     steps:
       - name: Check the results
         run: |
-          echo "m68k configurations: ${{ needs.m68k.result }}"
-          echo "arm configurations:  ${{ needs.arm.result }}"
-          echo "release archives:    ${{ needs.release-archives.result }}"
-          echo "raspi SD card image: ${{ needs.raspi-sdcard.result }}"
-          case '${{ needs.m68k.result }}:${{ needs.arm.result }}:${{ needs.release-archives.result }}:${{ needs.raspi-sdcard.result }}' in
-          success:success:success:success) ;;
-          *)
+          echo "m68k configurations:   ${{ needs.m68k.result }}"
+          echo "arm configurations:    ${{ needs.arm.result }}"
+          echo "x86_64 configurations: ${{ needs.x86_64.result }}"
+          echo "release archives:      ${{ needs.release-archives.result }}"
+          echo "raspi SD card image:   ${{ needs.raspi-sdcard.result }}"
+
+          ok=true
+          [ '${{ needs.m68k.result }}' = success ] || ok=false
+          [ '${{ needs.arm.result }}' = success ] || ok=false
+          # A matrix with no configurations (no MACHINE_PC_X86_64=y defconfig
+          # exists yet on this branch) generates no x86_64 job at all, and
+          # GitHub then reports needs.x86_64.result as "failure" rather than
+          # "skipped" -- so the x86_64 job's result only counts when its
+          # matrix was actually non-empty.
+          if [ '${{ needs.configurations.outputs.x86_64 }}' != '[]' ]; then
+            [ '${{ needs.x86_64.result }}' = success ] || ok=false
+          fi
+          [ '${{ needs.release-archives.result }}' = success ] || ok=false
+          [ '${{ needs.raspi-sdcard.result }}' = success ] || ok=false
+
+          if ! $ok; then
             echo "::error::at least one configuration failed to build"
             exit 1
-            ;;
-          esac
+          fi
