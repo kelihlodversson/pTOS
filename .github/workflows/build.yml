@@ -332,7 +332,7 @@ jobs:
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [m68k, arm, x86_64, release-archives, raspi-sdcard]
+    needs: [configurations, m68k, arm, x86_64, release-archives, raspi-sdcard]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
@@ -351,12 +351,13 @@ jobs:
           [ '${{ needs.m68k.result }}' = success ] || ok=false
           [ '${{ needs.arm.result }}' = success ] || ok=false
           # A matrix with no configurations (no MACHINE_PC_X86_64=y defconfig
-          # exists yet on this branch) is skipped by GitHub, not a failure --
-          # only a real build failure in a non-empty matrix fails this gate.
-          case '${{ needs.x86_64.result }}' in
-          success|skipped) ;;
-          *) ok=false ;;
-          esac
+          # exists yet on this branch) generates no x86_64 job at all, and
+          # GitHub then reports needs.x86_64.result as "failure" rather than
+          # "skipped" -- so the x86_64 job's result only counts when its
+          # matrix was actually non-empty.
+          if [ '${{ needs.configurations.outputs.x86_64 }}' != '[]' ]; then
+            [ '${{ needs.x86_64.result }}' = success ] || ok=false
+          fi
           [ '${{ needs.release-archives.result }}' = success ] || ok=false
           [ '${{ needs.raspi-sdcard.result }}' = success ] || ok=false
 
