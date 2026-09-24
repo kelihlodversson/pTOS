@@ -40,6 +40,21 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
 
           sudo apt-get install gcc-arm-none-eabi
 
+  PC (x86-64, UEFI boot)
+      A plain x86-64 gcc/binutils toolchain that can emit both ELF64 and
+      PE32+ ("i386pep") objects -- on a Linux/x86-64 host, the system
+      gcc/binutils themselves already do, so no separate cross toolchain
+      is needed there:
+
+          sudo apt-get install gcc binutils
+
+      On any other host, install an x86_64-elf or x86_64-linux-gnu cross
+      toolchain and set "Cross compiler prefix override" (below) to its
+      prefix. To boot-test the image, you will also need QEMU and an OVMF
+      UEFI firmware build:
+
+          sudo apt-get install qemu-system-x86 ovmf
+
 If your toolchain is installed under a name other than the one that goes
 with the choice above, fill in "Cross compiler prefix override" in the same
 menu.  It renames the executables only; the flags keep following the
