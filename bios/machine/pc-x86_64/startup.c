@@ -21,13 +21,6 @@
 #include "io.h"
 #include "pgtable.h"
 
-/* GetMemoryMap()'s own EFI_MEMORY_DESCRIPTOR array; sized generously so a
- * single call fills it without an intervening AllocatePool() call, which
- * would otherwise perturb the very map being fetched and invalidate the
- * MapKey ExitBootServices() needs (see the retry loop in efi_main()). */
-#define MEMORY_MAP_BUFFER_BYTES 16384
-static UBYTE memory_map_buffer[MEMORY_MAP_BUFFER_BYTES] __attribute__((aligned(8)));
-
 /* This image's own boot-time stack. Used only from the higher-half jump
  * onward, replacing whatever transient stack UEFI itself was using; 64 KiB
  * is generous for a boot stub that does not yet call into anything deep. */
@@ -35,10 +28,10 @@ static UBYTE memory_map_buffer[MEMORY_MAP_BUFFER_BYTES] __attribute__((aligned(8
 static UBYTE boot_stack[BOOT_STACK_BYTES] __attribute__((aligned(16)));
 
 /* Upper bound on this image's own size (code, data, bss -- including the
- * tables and stack above), used to size the identity/higher-half page
- * table window x86_64_build_page_tables() (pgtable.c) sets up. Checked
- * against EFI_LOADED_IMAGE_PROTOCOL.ImageSize below rather than trusted
- * blindly. */
+ * stack above and the page tables pgtable.c allocates), used to size the
+ * identity/higher-half page table window x86_64_build_page_tables() sets
+ * up. Checked against EFI_LOADED_IMAGE_PROTOCOL.ImageSize below rather
+ * than trusted blindly. */
 #define IMAGE_SPAN_BYTES (4 * 1024 * 1024)
 
 extern void x86_64_relocate_higher_half(UQUAD high_half_target, UQUAD cr3_value,
@@ -62,6 +55,20 @@ static NORETURN void panic(const char *msg)
     hang();
 }
 
+/*
+ * Translates a low (this image's actual, EFI-chosen load address) pointer
+ * to its higher-half virtual counterpart: X86_64_KERNEL_VIRT_BASE plus the
+ * pointer's byte offset from mapped_base, the 2 MiB-aligned base
+ * x86_64_build_page_tables() actually mapped both windows from (see
+ * x86_64_build_page_tables()'s own comment on why that -- not the
+ * unaligned image base -- is the correct reference point). Only valid for
+ * addresses inside the window that call was told to map.
+ */
+static UQUAD to_high_alias(UQUAD low_addr, UQUAD mapped_base)
+{
+    return X86_64_KERNEL_VIRT_BASE + (low_addr - mapped_base);
+}
+
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
@@ -73,8 +80,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     UQUAD image_base;
     UQUAD mapped_base;
     UQUAD cr3;
-    UQUAD low_addr;
-    UQUAD high_target;
+    UQUAD entry_high;
+    UQUAD stack_top_high;
+    void *map_buffer;
+    UQUAD map_size;
+    UQUAD map_key;
+    UQUAD descriptor_size;
+    ULONG descriptor_version;
     int retry;
 
     earlycon_init();
@@ -89,13 +101,29 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         panic("image larger than the mapped boot window");
     earlycon_puts("pTOS x86-64: image base obtained\n");
 
-    for (retry = 0; ; retry++) {
-        UQUAD map_size = sizeof(memory_map_buffer);
-        UQUAD map_key = 0;
-        UQUAD descriptor_size = 0;
-        ULONG descriptor_version = 0;
+    /*
+     * GetMemoryMap() with a too-small (here, zero) buffer always returns
+     * EFI_BUFFER_TOO_SMALL and fills in the size actually needed -- a
+     * normal, expected result, not a failure. AllocatePool() an
+     * appropriately sized buffer before fetching the real map: the map can
+     * grow by the time of the real call below (any allocation, including
+     * this one, can add a descriptor), so pad generously rather than
+     * reprobing in a loop.
+     */
+    map_size = 0;
+    status = bs->GetMemoryMap(&map_size, NULL, &map_key, &descriptor_size, &descriptor_version);
+    if (!(status & EFI_ERROR_BIT) || map_size == 0)
+        panic("GetMemoryMap probe did not report a required size");
+    map_size += 8 * descriptor_size;
 
-        status = bs->GetMemoryMap(&map_size, (EFI_MEMORY_DESCRIPTOR *)memory_map_buffer,
+    status = bs->AllocatePool(EFI_LOADER_DATA, map_size, &map_buffer);
+    if (status & EFI_ERROR_BIT)
+        panic("AllocatePool(memory map) failed");
+
+    for (retry = 0; ; retry++) {
+        UQUAD this_map_size = map_size;
+
+        status = bs->GetMemoryMap(&this_map_size, (EFI_MEMORY_DESCRIPTOR *)map_buffer,
                                    &map_key, &descriptor_size, &descriptor_version);
         if (status & EFI_ERROR_BIT)
             panic("GetMemoryMap failed");
@@ -117,21 +145,15 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     earlycon_puts("pTOS x86-64: page tables built, relocating to higher half\n");
 
     /*
-     * &x86_64_higher_half_main is this image's actual (low) runtime address
-     * here: the PE loader already applied this pointer's base relocation to
-     * account for wherever it loaded us, the same way it did for
-     * loaded_image->ImageBase above. Subtracting mapped_base -- the 2 MiB-
-     * aligned base x86_64_build_page_tables() actually mapped, not the
-     * unaligned image_base -- turns that into this image's byte offset
-     * from the start of the mapped window; adding the kernel's higher-half
-     * virtual base turns that offset into the matching high-half virtual
-     * address, which the page tables just built also map to the same
-     * physical page.
+     * &x86_64_higher_half_main and &boot_stack[...] are this image's
+     * actual (low) runtime addresses here: the PE loader already applied
+     * each pointer's base relocation to account for wherever it loaded us,
+     * the same way it did for loaded_image->ImageBase above.
      */
-    low_addr = (UQUAD)(uintptr_t)&x86_64_higher_half_main;
-    high_target = X86_64_KERNEL_VIRT_BASE + (low_addr - mapped_base);
+    entry_high = to_high_alias((UQUAD)(uintptr_t)&x86_64_higher_half_main, mapped_base);
+    stack_top_high = to_high_alias((UQUAD)(uintptr_t)&boot_stack[BOOT_STACK_BYTES], mapped_base);
 
-    x86_64_relocate_higher_half(high_target, cr3, &boot_stack[BOOT_STACK_BYTES]);
+    x86_64_relocate_higher_half(entry_high, cr3, (void *)(uintptr_t)stack_top_high);
 
     /* Not reached: x86_64_relocate_higher_half() never returns. */
     hang();

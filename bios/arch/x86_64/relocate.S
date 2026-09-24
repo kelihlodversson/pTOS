@@ -27,15 +27,24 @@
  * chosen) runtime address there: like every other absolute pointer in this
  * PIE image, the firmware's PE loader already relocated it to account for
  * wherever this image was actually loaded, before efi_main() ever ran.
- * new_stack_top must fall inside the range x86_64_build_page_tables()
- * (pgtable.c) was told to map: it keeps working immediately after the CR3
- * switch because that range is identity-mapped, without needing its own
- * high-half translation here.
+ * new_stack_top must already be this image's higher-half virtual address
+ * of its own boot stack's top (startup.c translates it the same way as
+ * high_half_target, not the low/identity one), 16-byte aligned per the
+ * SysV AMD64 ABI's stack alignment requirement at a public interface.
  */
         .globl  C_SYM(x86_64_relocate_higher_half)
 
 C_SYM(x86_64_relocate_higher_half):
         mov     %rdx, %rsp
+        /*
+         * jmp, unlike call, does not push a return address, so without
+         * this the SysV AMD64 ABI's "%rsp % 16 == 8 at function entry"
+         * requirement (as if a call had just pushed one) would be off by
+         * 8: x86_64_higher_half_main()'s first 16-byte-aligned SSE access
+         * would then fault. new_stack_top is 16-byte aligned, so this
+         * reproduces exactly what a call would have left behind.
+         */
+        sub     $8, %rsp
         mov     %rsi, %cr3
         jmp     *%rdi
 

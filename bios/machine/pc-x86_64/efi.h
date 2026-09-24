@@ -73,11 +73,17 @@ typedef EFI_STATUS (EFIAPI *EFI_HANDLE_PROTOCOL)(EFI_HANDLE Handle,
                                                   EFI_GUID *Protocol,
                                                   void **Interface);
 
+/* EFI_MEMORY_TYPE (UEFI spec 7.2); only the value AllocatePool() below
+ * needs is given a name. */
+#define EFI_LOADER_DATA 2
+
+typedef EFI_STATUS (EFIAPI *EFI_ALLOCATE_POOL)(ULONG PoolType, UQUAD Size, void **Buffer);
+
 /*
  * EFI_BOOT_SERVICES (UEFI spec 4.4).  Field order and count matter: only
- * GetMemoryMap, ExitBootServices and HandleProtocol are given real
- * prototypes, but every field ahead of them must still be present (as a
- * same-sized VOID*) so those three land at their real offsets.
+ * AllocatePool, GetMemoryMap, HandleProtocol and ExitBootServices are
+ * given real prototypes, but every field ahead of them must still be
+ * present (as a same-sized VOID*) so those land at their real offsets.
  */
 typedef struct {
     EFI_TABLE_HEADER Hdr;
@@ -88,7 +94,7 @@ typedef struct {
     void *AllocatePages;
     void *FreePages;
     EFI_GET_MEMORY_MAP GetMemoryMap;
-    void *AllocatePool;
+    EFI_ALLOCATE_POOL AllocatePool;
     void *FreePool;
 
     void *CreateEvent;

@@ -205,7 +205,15 @@ ifdef ARCH_X86_64
 # UEFI's 16-bit CHAR16 strings. -fno-ident drops the compiler-version
 # .comment section: the PE linker places it below the image base and
 # refuses to link ("section below image base") if it is present.
-MULTILIBFLAGS = $(CPUFLAGS) -fpie -mno-red-zone -fshort-wchar -fno-ident
+# -maccumulate-outgoing-args is required by GCC for every object built
+# with this MULTILIBFLAGS, because efi.h declares every EFI-called
+# function pointer (and efi_main() itself) with the ms_abi attribute: GCC
+# documents -maccumulate-outgoing-args as needed for ms_abi correctness
+# on x86-64, where its default sub/add-based outgoing-argument-area
+# handling around calls is not guaranteed to interact correctly with a
+# function using a calling convention other than the compiler's default.
+MULTILIBFLAGS = $(CPUFLAGS) -fpie -mno-red-zone -fshort-wchar -fno-ident \
+                -maccumulate-outgoing-args
 TOOLCHAIN_CFLAGS = -ffreestanding
 else
 MULTILIBFLAGS = $(CPUFLAGS) -mshort

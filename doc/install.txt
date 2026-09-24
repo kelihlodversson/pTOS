@@ -247,6 +247,35 @@ when that code probes a 68060-only register while telling 68040 and
 68060 apart. m68020 detection resolves earlier in that same routine, so
 it never reaches the register QEMU mishandles.
 
+PC (x86-64, UEFI boot)
+----------------------
+
+pc-x86_64           pc-x86_64.efi, a PE32+ EFI application
+
+Unlike every other pTOS image, this is not loaded directly by an
+emulator's -kernel/-bios flag: it is booted the way real UEFI firmware
+boots anything, by placing it at \EFI\BOOT\BOOTX64.EFI on a FAT-formatted
+EFI System Partition and letting firmware find it there. QEMU's "fat:"
+driver can synthesize that filesystem from a plain directory, and OVMF
+(the Debian/Ubuntu "ovmf" package) is a UEFI firmware build QEMU can use
+in place of a legacy BIOS:
+
+    make pc-x86_64_defconfig && make
+    mkdir -p esp/EFI/BOOT
+    cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+    qemu-system-x86_64 -machine pc -m 256 \
+        -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+        -drive if=pflash,format=raw,file=/usr/share/OVMF/OVMF_VARS_4M.fd \
+        -drive format=raw,file=fat:rw:esp \
+        -serial stdio -display none
+
+OVMF_VARS_4M.fd holds UEFI's writable NVRAM (boot order, variables); copy
+it somewhere writable first if the packaged copy is read-only, since QEMU
+writes to it as the VM runs. This milestone's image (#330) only prints
+its own boot progress over COM1, exposed above as -serial stdio -- there
+is no framebuffer output yet (see #332) and nothing to see on a graphical
+display, hence -display none.
+
 
 Countries and languages
 =======================
