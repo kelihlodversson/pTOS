@@ -263,18 +263,20 @@ in place of a legacy BIOS:
     make pc-x86_64_defconfig && make
     mkdir -p esp/EFI/BOOT
     cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+    cp /usr/share/OVMF/OVMF_VARS_4M.fd .
     qemu-system-x86_64 -machine pc -m 256 \
         -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-        -drive if=pflash,format=raw,file=/usr/share/OVMF/OVMF_VARS_4M.fd \
+        -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
         -drive format=raw,file=fat:rw:esp \
         -serial stdio -display none
 
-OVMF_VARS_4M.fd holds UEFI's writable NVRAM (boot order, variables); copy
-it somewhere writable first if the packaged copy is read-only, since QEMU
-writes to it as the VM runs. This milestone's image (#330) only prints
-its own boot progress over COM1, exposed above as -serial stdio -- there
-is no framebuffer output yet (see #332) and nothing to see on a graphical
-display, hence -display none.
+OVMF_VARS_4M.fd holds UEFI's writable NVRAM (boot order, variables), and
+QEMU writes to it as the VM runs; the package's copy under /usr/share is
+root-owned on a normal Debian/Ubuntu install, so it is copied to a
+writable local file first rather than used in place. This milestone's
+image (#330) only prints its own boot progress over COM1, exposed above
+as -serial stdio -- there is no framebuffer output yet (see #332) and
+nothing to see on a graphical display, hence -display none.
 
 
 Countries and languages
