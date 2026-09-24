@@ -82,11 +82,13 @@ static void print_page_fault_detail(UQUAD error_code)
  * addresses typically do show up in the first few slots, just not
  * unambiguously labelled as such. frame->rflags is the CPU-pushed
  * frame's last (highest-addressed) field, so the word right after it is
- * exactly where the interrupted code's own %rsp pointed (see isr.S: no
- * RSP/SS is ever pushed in this milestone, so this is the only place
- * that address is still recoverable from). This can itself fault (e.g.
- * a stack overflow) -- acceptable here, since there is no recovery path
- * either way. */
+ * exactly where the interrupted code's own %rsp pointed for every vector
+ * except #DF (see isr.S: no RSP/SS is pushed for a same-stack delivery,
+ * so this is the only place that address is still recoverable from) --
+ * #DF is the one exception that switches stacks via IST, so it does not
+ * call this at all; see the caller. This can itself fault (e.g. a stack
+ * overflow) -- acceptable here, since there is no recovery path either
+ * way. */
 static void dump_stack(const x86_64_exception_frame_t *frame)
 {
     const UQUAD *sp = (const UQUAD *)(&frame->rflags + 1);
@@ -141,7 +143,27 @@ void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
     print_val("r14=", frame->r14);
     print_val("r15=", frame->r15);
 
-    dump_stack(frame);
+    /*
+     * #DF (vector 8) is delivered through the TSS's ist1 (gdt.c/idt.c):
+     * the CPU switches to that dedicated stack unconditionally, and when
+     * an IST switch happens the hardware also pushes the interrupted
+     * code's SS and RSP -- fields x86_64_exception_frame_t does not
+     * model, since no other vector here ever triggers a stack switch.
+     * &frame->rflags + 1 (dump_stack()'s base for every other vector) is
+     * therefore not the interrupted stack for #DF: it is the top of
+     * df_stack itself, right where those two extra pushed fields live.
+     * Recovering the real interrupted RSP would mean dereferencing a
+     * value out of a double fault's own frame -- one more thing that can
+     * be wrong when the reason for the #DF was stack corruption in the
+     * first place -- so this skips the raw dump for #DF rather than
+     * risk it, while every other field above (including RIP/CS/RFLAGS,
+     * which come from the CPU-pushed part of the frame the struct does
+     * model correctly) stays accurate.
+     */
+    if (frame->vector == 8)
+        earlycon_puts("(stack dump skipped for #DF: see comment in panic.c)\n");
+    else
+        dump_stack(frame);
 
     hang();
 }
