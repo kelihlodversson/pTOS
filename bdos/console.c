@@ -279,7 +279,7 @@ static void conout(int h, int ch)
 /*
  * xconout - Function 0x02 - console output with tab expansion
  */
-long xconout(int ch)
+long xconout(WORD ch)
 {
     tabout(HXFORM(run->p_uft[1]),ch);
     return 1;
@@ -331,7 +331,7 @@ static void cookdout(int h, int ch)
 /*
  * xauxout - Function 0x04 - auxiliary output
  */
-long xauxout(int ch)
+long xauxout(WORD ch)
 {
     return Bconout(HXFORM(run->p_uft[2]), ch);
 }
@@ -340,7 +340,7 @@ long xauxout(int ch)
 /*
  * xprtout - Function 0x05 - printer output
  */
-long xprtout(int ch)
+long xprtout(WORD ch)
 {
     return Bconout(HXFORM(run->p_uft[3]), ch);
 }
@@ -441,7 +441,7 @@ long xauxin(void)
 /*
  * xrawio - Function 0x06 - Raw console I/O
  */
-long xrawio(int parm)
+long xrawio(WORD parm)
 {
     int i;
 
@@ -459,9 +459,10 @@ long xrawio(int parm)
 /*
  * xconws - Function 0x09 - Print line up to nul with tab expansion
  */
-void xconws(char *p)
+long xconws(char *p)
 {
     prt_line(HXFORM(run->p_uft[1]),p);
+    return 0;
 }
 
 
@@ -533,9 +534,10 @@ static int backsp(int h, char *cbuf, int retlen, int col)
  *
  * p - max length, return length, buffer space
  */
-void xconrs(char *p)
+long xconrs(char *p)
 {
     p[1] = cgets(HXFORM(run->p_uft[0]),(unsigned char)p[0],&p[2]);
+    return 0;
 }
 
 

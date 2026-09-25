@@ -167,7 +167,7 @@ long xmfree(void *addr)
  *  blk - addr of block to free
  *  len - length of block to free
  */
-long xsetblk(int n, void *blk, long len)
+long xsetblk(WORD n, void *blk, long len)
 {
     MD *p;
     MPB *mpb;
@@ -231,7 +231,7 @@ long xsetblk(int n, void *blk, long len)
 /*
  *  xmxalloc - Function 0x44 (Mxalloc)
  */
-void *xmxalloc(long amount, int mode)
+void *xmxalloc(long amount, WORD mode)
 {
     MD *m;
     void *ret_value;

@@ -25,8 +25,24 @@
  */
 
 C_SYM(scasb):
+        /*
+         * scasb(char *p, char b) takes one pointer argument and one
+         * scalar argument. Under -mfastcall p arrives in a0 (already
+         * where this code needs it) and b arrives in d0, not on the
+         * stack; move it to d1, which is what the loop below reads (see
+         * the identical fix in stringasm.S's strchr()).
+         */
+#if CONF_WITH_MFASTCALL
+        move.l  d0,d1
+#else
+        /*
+         * b is a 32-bit int (no -mshort), so its stack slot is 4 bytes at
+         * 8(sp); the byte compared below is b's low byte, which lives in
+         * the low word of that slot, i.e. at 10(sp), not 8(sp).
+         */
         move.l  4(sp),a0
-        move.w  8(sp),d1
+        move.w  10(sp),d1
+#endif
 scasb_loop:
         move.b  (a0)+,d0
         jeq     scasb_end
@@ -47,8 +63,19 @@ scasb_end:
  */
 
 C_SYM(expand_string):
+        /*
+         * expand_string(WORD *dest, BYTE *src) takes two pointer
+         * arguments. Under -mfastcall dest arrives in a0 and src in a1
+         * (the reverse of what this code's registers mean below), not
+         * on the stack; swap them into the a0=source/a1=dest convention
+         * the loop expects.
+         */
+#if CONF_WITH_MFASTCALL
+        exg     a0,a1            // a0 -> source, a1 -> dest
+#else
         movea.l 8(sp),a0        // a0 -> source
         movea.l 4(sp),a1        // a1 -> dest
+#endif
         move.l  a0,d0           // remember source start
         clr.w   d1              // work reg
 copy_loop:
