@@ -18,14 +18,15 @@
 /*
  * On entry to a stub, the CPU has already pushed (low to high address,
  * i.e. what %rsp points at going up): [error code, only for the vectors
- * listed below] RIP, CS, RFLAGS -- and nothing else, since every
- * exception in this milestone is taken at CPL0 with no IST stack switch
- * (see gdt.c), so the CPU has no reason to also push RSP/SS.
+ * listed below] RIP, CS, RFLAGS, RSP, SS. RSP and SS are part of every
+ * vector's frame in IA-32e (long) mode, not just ones that switch
+ * privilege level or use IST (Intel SDM Vol 3A 6.14.2) -- unlike legacy
+ * protected mode, where they are only pushed on a privilege change.
  *
  * isr_noerr pushes a dummy 0 error code first, so that after either
  * macro the stack shape is identical: [vector, error code, RIP, CS,
- * RFLAGS, ...] -- which is what lets one common trampoline, and one C
- * struct (x86_64_exception_frame_t, panic.h), handle every vector.
+ * RFLAGS, RSP, SS] -- which is what lets one common trampoline, and one
+ * C struct (x86_64_exception_frame_t, panic.h), handle every vector.
  *
  * Only 8, 10, 11, 12, 13, 14, 17 and 21 push a hardware error code
  * (Intel SDM Vol 3A 6.15, Table 6-1); every other vector uses isr_noerr.
@@ -87,13 +88,14 @@ C_SYM(x86_64_isr\num):
  *
  * Stack alignment: the CPU aligns %rsp to 16 bytes before pushing its own
  * frame (Intel SDM Vol 3A 6.14.2), so at the point a stub's first push
- * executes, %rsp % 16 is 8 for a no-error vector (RIP/CS/RFLAGS = 24
- * bytes already pushed) or 0 for an error-code vector (error
- * code/RIP/CS/RFLAGS = 32 bytes). isr_noerr's dummy push brings the
- * no-error case to 0 too, matching the error-code case exactly from that
- * point on. The vector push (8 bytes) and the 15 register pushes below
- * (120 bytes) total 128 bytes -- a multiple of 16 -- so %rsp % 16 == 0
- * again right before the call below, exactly what the ABI requires there.
+ * executes, %rsp % 16 is 8 for a no-error vector (RIP/CS/RFLAGS/RSP/SS =
+ * 40 bytes already pushed) or 0 for an error-code vector (error
+ * code/RIP/CS/RFLAGS/RSP/SS = 48 bytes). isr_noerr's dummy push brings
+ * the no-error case to 0 too, matching the error-code case exactly from
+ * that point on. The vector push (8 bytes) and the 15 register pushes
+ * below (120 bytes) total 128 bytes -- a multiple of 16 -- so %rsp % 16
+ * == 0 again right before the call below, exactly what the ABI requires
+ * there.
  */
 x86_64_isr_common:
         push    %rax
@@ -111,6 +113,18 @@ x86_64_isr_common:
         push    %r13
         push    %r14
         push    %r15
+
+        /*
+         * The SysV AMD64 ABI requires DF (the direction flag) clear at
+         * any C function boundary, but an exception can interrupt code
+         * that had set it (e.g. a backwards `std`-prefixed string op);
+         * RFLAGS is not restored until iretq, which this trampoline
+         * never reaches. Without this, x86_64_exception_dispatch() (and
+         * anything it calls) would inherit a possibly-set DF and any
+         * string instruction in the C handler could walk memory
+         * backwards instead of forwards.
+         */
+        cld
 
         mov     %rsp, %rdi
         call    C_SYM(x86_64_exception_dispatch)
