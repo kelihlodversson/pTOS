@@ -1,6 +1,11 @@
 /*
  * memmove.c - simple c implementation of memmove, memcpy, memset and bzero
  *
+ * util/arch/x86_64/memmove.c is an intentional duplicate of this file, not
+ * a generic/shared one -- see its own header comment for why (a GNU Make
+ * pattern-rule pitfall with m68k's own util/arch/m68k/memmove.S). Keep
+ * both in sync.
+ *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
