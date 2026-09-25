@@ -531,7 +531,7 @@ ifdef ARCH_X86_64
 # image as an EFI application; without it the default PE subsystem is a
 # Windows console app, which UEFI firmware refuses to load.
 PC_X86_64_BOOT_OBJ = obj/startup.o obj/pgtable.o obj/relocate.o obj/earlycon.o \
-                     obj/gdt.o obj/idt.o obj/isr.o obj/panic.o
+                     obj/gdt.o obj/idt.o obj/isr.o obj/panic.o obj/pmem.o
 
 # Linked directly with $(CROSS_COMPILE)ld, not through $(CC): gcc's driver
 # adds --eh-frame-hdr whenever -fpie/-pie is in play (needed for the PE

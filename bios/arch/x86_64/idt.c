@@ -11,6 +11,7 @@
 #include "gdt.h"
 #include "idt.h"
 #include "io.h"
+#include "pgtable.h"
 
 #define IDT_ENTRIES 256
 
@@ -56,10 +57,8 @@ static void (*const exception_stub[32])(void) = {
 };
 #undef ISR
 
-static void set_gate(int vector, void (*handler)(void), int ist)
+static void set_gate(int vector, UQUAD addr, int ist)
 {
-    UQUAD addr = (UQUAD)(uintptr_t)handler;
-
     idt[vector].offset_low = (UWORD)(addr & 0xFFFF);
     idt[vector].selector = X86_64_KERNEL_CODE_SEL;
     idt[vector].ist = (UBYTE)ist;
@@ -93,8 +92,19 @@ void x86_64_idt_init(void)
     dtr_t idtr;
     int i;
 
-    for (i = 0; i < 32; i++)
-        set_gate(i, exception_stub[i], i == 8 ? X86_64_DF_IST : 0);
+    /*
+     * exception_stub[] is compile-time-initialized data, so each entry is
+     * a low address the PE loader's relocations fixed up once at load
+     * time -- not a RIP-relative computation that would already reflect
+     * this function running post-relocation (see x86_64_low_to_high()'s
+     * own comment). Translated here so the installed gates keep working
+     * once x86_64_drop_identity_map() removes the low mapping below.
+     */
+    for (i = 0; i < 32; i++) {
+        UQUAD low_addr = (UQUAD)(uintptr_t)exception_stub[i];
+
+        set_gate(i, x86_64_low_to_high(low_addr), i == 8 ? X86_64_DF_IST : 0);
+    }
 
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (UQUAD)(uintptr_t)idt;
