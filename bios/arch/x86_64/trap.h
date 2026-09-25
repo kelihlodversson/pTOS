@@ -22,9 +22,10 @@
  * populate, and nothing here reads back what bios_init() (bios/bios.c)
  * writes into it (VEC_GEM/VEC_BIOS/VEC_XBIOS, bios/vectors.h) -- see
  * x86_64_map_low_vectors() (pgtable.c). `syscall` is also the mechanism
- * #333's eventual real ring-3 user processes will need anyway, so this
- * builds that path now rather than an `int`-based one that would just
- * need replacing later.
+ * #333's real ring-3 user processes (#334) will need, so this builds the
+ * genuine entry/exit mechanism now (folded into #349 rather than left for
+ * #333 to redo) instead of an `int`-based one that would just need
+ * replacing later.
  *
  * Entry-time calling convention for `syscall`:
  *
@@ -50,12 +51,12 @@
  * established solution, reused unchanged -- a pointer to one of
  * include/biosargs.h's structs as the single real argument.
  *
- * No ring-3 support yet (#333/#334): every caller today is already at
- * CPL0, so x86_64_trap_init() leaves STAR's SYSRET (user) segments unset
- * and the entry stub (trapasm.S) returns via a manual RFLAGS-restore-and-jump
- * rather than `sysretq`, which unconditionally forces CPL3 -- not what a
- * ring0-to-ring0 call needs, and not safely usable at all yet with no
- * ring-3 GDT entries. Revisit both once real user-mode processes exist.
+ * The entry/exit mechanism is genuinely ring-3-capable, not a ring0-only
+ * placeholder: the entry stub (trapasm.S) does the full `swapgs` / stack
+ * switch / `sysretq` sequence #333 specifies, verified with a throwaway
+ * in-kernel ring-3 harness (no real process yet -- that is #334's job).
+ * See x86_64_percpu_t below for the per-CPU state that makes this safe
+ * without depending on TSS.rsp0 (which `syscall` never consults).
  */
 #define X86_64_TRAP_GEMDOS 1
 #define X86_64_TRAP_BIOS 13
@@ -77,6 +78,28 @@ typedef struct {
     UQUAD r15, r14, r13, r12, r10, r9, r8, rbp, rdi, rsi, rdx, rbx, rax, r11, rcx;
 } PACKED x86_64_trap_frame_t;
 
+/*
+ * Per-CPU state trapasm.S's entry/exit stub reaches via %gs, not by
+ * symbol: `syscall` leaves RSP pointing at whatever the caller's own
+ * stack was (never a kernel one, once real ring-3 callers exist), and
+ * unlike an IDT gate's privilege-change path there is no TSS.rspN to
+ * supply a safe one automatically (Intel SDM Vol 2B "SYSCALL" -- rsp is
+ * "unmodified"). `swapgs` swaps the live GS base with IA32_KERNEL_GS_BASE
+ * (x86_64_trap_init() points the latter at this struct), giving the
+ * entry stub a way to reach known-good state before it dares touch the
+ * stack at all: it saves the interrupted RSP into user_rsp, loads RSP
+ * from kernel_rsp, does its normal push/dispatch/pop, then reverses both
+ * (restore RSP from user_rsp, swapgs back) before `sysretq`. Only one
+ * instance exists (no real multi-CPU support yet, see #329) -- offsets,
+ * not the symbol's address, are what trapasm.S actually uses (a fixed
+ * struct layout it must be kept in sync with by hand, there being no
+ * shared header the assembler and compiler both read here).
+ */
+typedef struct {
+    UQUAD kernel_rsp; /* offset 0: loaded into rsp on every syscall entry */
+    UQUAD user_rsp;   /* offset 8: the interrupted (caller's) rsp, saved here across the round trip */
+} x86_64_percpu_t;
+
 /* Called from trapasm.S's entry stub. Reads frame->rax/rdi/rsi/rdx/r10 per
  * the calling convention above, dispatches directly to osif()/
  * bios_vecs[]/xbios_vecs[] (no vector-table indirection: this arch does
@@ -86,13 +109,13 @@ typedef struct {
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame);
 
 /*
- * Enables the `syscall`/`sysret` extension (IA32_EFER.SCE) and points
+ * Enables the `syscall`/`sysret` extension (IA32_EFER.SCE), points
  * IA32_STAR/IA32_LSTAR/IA32_FMASK at this arch's entry stub
- * (x86_64_syscall_entry, trapasm.S) and kernel code/data selectors (gdt.h).
- * Must run after x86_64_gdt_init(), whose X86_64_KERNEL_CODE_SEL/
- * X86_64_KERNEL_DATA_SEL this reuses for STAR -- they need no dedicated
- * segments of their own, since SYSCALL's kernel CS/SS requirement (CS
- * immediately followed by SS) is exactly this GDT's existing layout.
+ * (x86_64_syscall_entry, trapasm.S) and the kernel/user selectors gdt.h
+ * already builds (no dedicated segments needed beyond those), and points
+ * IA32_KERNEL_GS_BASE at this CPU's x86_64_percpu_t so the entry stub's
+ * `swapgs` has something to swap in. Must run after x86_64_gdt_init(),
+ * whose selectors and ring-3 GDT layout this reuses.
  */
 void x86_64_trap_init(void);
 

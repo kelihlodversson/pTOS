@@ -11,27 +11,45 @@
 
         .text
 
+/* Offsets into x86_64_percpu_t (trap.h) -- kept in sync by hand, since
+ * this file (unlike trap.c) never includes that header: there is no
+ * assembler-visible equivalent of a C struct layout here. */
+#define PERCPU_KERNEL_RSP 0
+#define PERCPU_USER_RSP   8
+
 /*
  * Entry point for `syscall` (trap.h), installed as IA32_LSTAR by
  * x86_64_trap_init(). Unlike an exception or `int` vector, `syscall`
- * pushes nothing: RIP is loaded from LSTAR directly, the return address
- * arrives in %rcx and the pre-syscall RFLAGS in %r11 (both clobbered by
- * the instruction itself), and %rsp is left completely unchanged -- still
- * whatever the caller (always kernel code today, see trap.h) was already
- * using, so this needs no stack switch.
+ * pushes nothing and does not consult the TSS: RIP is loaded from LSTAR
+ * directly, the return address arrives in %rcx and the pre-syscall
+ * RFLAGS in %r11 (both clobbered by the instruction itself), and %rsp is
+ * left completely unchanged -- still whatever the caller was using,
+ * which once real ring-3 callers exist (#334) is a user stack this code
+ * must not touch before switching off of it.
  *
- * Stack alignment: trap1()/trap13()/trap14()-style callers (util/arch/
- * x86_64/miscasm.S) reach `syscall` as the very first instruction of a
- * normally-`call`ed function, before pushing anything of their own -- so
- * %rsp %16 == 8 here, exactly as if a return address had just been
- * pushed (which, in a sense, one has: the real return address is just in
- * %rcx instead of on the stack). The 15 register pushes below (120
- * bytes) bring that to %rsp %16 == 0 immediately before the call, exactly
- * what the SysV AMD64 ABI requires there -- the same arithmetic as
- * isr.S's isr_noerr case, coincidentally starting from the same residue.
+ * `swapgs` exchanges the live GS-segment base with IA32_KERNEL_GS_BASE
+ * (x86_64_trap_init() points the latter at this CPU's x86_64_percpu_t),
+ * giving a way to reach known-good kernel state -- via %gs-relative
+ * addressing -- before anything here dares assume %rsp points at a valid,
+ * writable stack. PERCPU_USER_RSP saves the interrupted %rsp so the exit
+ * path can restore it; PERCPU_KERNEL_RSP supplies a stack this code
+ * knows is safe to push registers onto.
  */
         .globl  C_SYM(x86_64_syscall_entry)
 C_SYM(x86_64_syscall_entry):
+        swapgs
+        movq    %rsp, %gs:PERCPU_USER_RSP
+        movq    %gs:PERCPU_KERNEL_RSP, %rsp
+
+        /*
+         * percpu.kernel_rsp (trap.c) is initialized to (top of stack) - 8,
+         * i.e. %rsp %16 == 8 here, exactly as if a return address had just
+         * been pushed (the same convention a normally-`call`ed function
+         * relies on). The 15 register pushes below (120 bytes) bring that
+         * to %rsp %16 == 0 immediately before the call, exactly what the
+         * SysV AMD64 ABI requires there -- the same arithmetic as isr.S's
+         * isr_noerr case, coincidentally starting from the same residue.
+         */
         push    %rcx    /* return RIP, from `syscall` */
         push    %r11    /* saved RFLAGS, from `syscall` */
         push    %rax
@@ -78,17 +96,19 @@ C_SYM(x86_64_syscall_entry):
         pop     %rcx
 
         /*
-         * Not `sysretq`: that unconditionally forces CPL3 on return
-         * (Intel SDM Vol 2B "SYSRET"), which is wrong for a ring0-to-ring0
-         * call and unusable regardless with no ring-3 GDT entries set up
-         * yet (see trap.h). Since there was never an actual privilege
-         * change, %rsp/%cs/%ss already never left ring0's own -- resuming
-         * the caller only needs %rflags restored (the push/popfq pair is
-         * the standard idiom for loading an arbitrary value into
-         * %rflags, since there is no direct move into it) and a jump to
-         * the return address `syscall` gave in %rcx, still there after
-         * the pop above.
+         * Mirror image of entry: restore the caller's own %rsp (saved
+         * above) before swapping GS back, so a fault between here and
+         * `sysretq` -- there is none, but the ordering is what makes that
+         * true -- would find %gs already pointing at the *caller's*
+         * value, not this CPU's kernel state. Neither instruction touches
+         * %rax/%rcx/%r11, which is why the pops above happen first:
+         * `sysretq` needs %rcx (target RIP) and %r11 (target RFLAGS)
+         * exactly as `syscall` provided them, and forces CPL=3 on the
+         * selectors gdt.h's SYSRET triple names (Intel SDM Vol 2B
+         * "SYSRET") -- correct now that a real ring-3 caller is what
+         * reaches this path, unlike the ring0-only placeholder this used
+         * to be.
          */
-        push    %r11
-        popfq
-        jmp     *%rcx
+        movq    %gs:PERCPU_USER_RSP, %rsp
+        swapgs
+        sysretq

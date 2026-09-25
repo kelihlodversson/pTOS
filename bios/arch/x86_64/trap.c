@@ -36,14 +36,36 @@ extern const UWORD xbios_ent;
 
 extern void x86_64_syscall_entry(void);
 
-/* IA32_EFER/STAR/LSTAR/FMASK (Intel SDM Vol 2B "SYSCALL"/"SYSRET"; Vol 4
- * 2.1 for the MSR indices). */
+/* IA32_EFER/STAR/LSTAR/FMASK/KERNEL_GS_BASE (Intel SDM Vol 2B "SYSCALL"/
+ * "SYSRET"/"SWAPGS"; Vol 4 2.1 for the MSR indices). */
 #define MSR_EFER 0xC0000080UL
 #define MSR_STAR 0xC0000081UL
 #define MSR_LSTAR 0xC0000082UL
 #define MSR_FMASK 0xC0000084UL
+#define MSR_KERNEL_GS_BASE 0xC0000102UL
 
 #define EFER_SCE 0x1ULL /* SYSCALL/SYSRET enable */
+
+/*
+ * This CPU's per-CPU state (trap.h). Only one instance: no real
+ * multi-CPU support yet (#329). trapasm.S reaches it by fixed offset via
+ * %gs after `swapgs`, never by this symbol's address -- see trap.h's own
+ * comment.
+ */
+static x86_64_percpu_t percpu;
+
+/*
+ * The kernel stack syscall entry switches to (percpu.kernel_rsp below),
+ * distinct from this image's own boot-time stack (startup.c's
+ * boot_stack): a real ring-3 caller's `syscall` always arrives while the
+ * kernel is between processes, never while boot_stack is itself in the
+ * middle of being used, but keeping the two separate now avoids relying
+ * on that not being true yet. 8 KiB is generous for a path that does not
+ * recurse (trap.c's dispatch is a single switch, and osif()/bios_vecs[]/
+ * xbios_vecs[] are shallow existing call trees on every other arch).
+ */
+#define SYSCALL_STACK_BYTES 8192
+static UBYTE syscall_stack[SYSCALL_STACK_BYTES] __attribute__((aligned(16)));
 
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame)
 {
@@ -95,11 +117,13 @@ void x86_64_trap_init(void)
      * base of the kernel SS it loads as that value + 8 -- exactly
      * X86_64_KERNEL_CODE_SEL immediately followed by X86_64_KERNEL_DATA_SEL
      * in this GDT already (gdt.c), so no dedicated syscall segments are
-     * needed. STAR[63:48] (the SYSRET/user side) is deliberately left 0:
-     * nothing here ever executes sysretq yet (see trap.h), and there are
-     * no ring-3 GDT entries for it to name regardless.
+     * needed. STAR[63:48] is X86_64_USER32_CS_SEL_BASE: `sysretq` adds 8
+     * for SS and 16 for CS to that same base (see gdt.h's own comment on
+     * why those two land on USER_DATA_SEL/USER_CODE_SEL), forcing RPL=3
+     * regardless of the low bits stored here.
      */
-    x86_64_wrmsr(MSR_STAR, (UQUAD)X86_64_KERNEL_CODE_SEL << 32);
+    x86_64_wrmsr(MSR_STAR, ((UQUAD)X86_64_KERNEL_CODE_SEL << 32)
+                          | ((UQUAD)X86_64_USER32_CS_SEL_BASE << 48));
 
     /*
      * Not a plain C `(UQUAD)(uintptr_t)x86_64_syscall_entry`: taking the
@@ -132,4 +156,33 @@ void x86_64_trap_init(void)
      * is never itself interrupted -- consistent with interrupts already
      * being off for the whole of this milestone (startup.c/panic.c). */
     x86_64_wrmsr(MSR_FMASK, 0x200);
+
+    /*
+     * percpu.kernel_rsp is initialized to (top of stack) - 8, not the top
+     * itself: trapasm.S's entry stub pushes registers immediately after
+     * loading this value, on the assumption that %rsp%16==8 already (as
+     * if a return address had just been pushed) -- the same convention
+     * the stub documents for a normally-`call`ed caller, so that its own
+     * `call x86_64_trap_dispatch` lands %rsp%16==0 right before the call,
+     * matching the SysV ABI.
+     */
+    percpu.kernel_rsp = (UQUAD)(uintptr_t)&syscall_stack[SYSCALL_STACK_BYTES] - 8;
+
+    /*
+     * IA32_KERNEL_GS_BASE, not IA32_GS_BASE: `swapgs` (trapasm.S) swaps
+     * the *live* GS base with whatever is in this MSR, so this is where
+     * the value GS should hold *while running kernel code* belongs.  GS
+     * itself is left alone here (already 0 from gdt_init()'s
+     * reload_segments(), the right starting value for "no user context
+     * has run yet"): the first `swapgs`, on the first syscall entry,
+     * exchanges the two, bringing this address into GS and leaving 0 in
+     * the MSR for that entry's matching exit to swap back out again.
+     * Same GOT hazard as x86_64_syscall_entry above in principle, but
+     * `percpu` is file-static (internal linkage): the compiler can prove
+     * no other translation unit could interpose it, so it already gets a
+     * direct `lea` -- confirmed by disassembly, not just assumed, given
+     * how expensive assuming wrongly about this exact class of bug just
+     * turned out to be.
+     */
+    x86_64_wrmsr(MSR_KERNEL_GS_BASE, (UQUAD)(uintptr_t)&percpu);
 }
