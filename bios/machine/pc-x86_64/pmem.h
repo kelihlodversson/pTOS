@@ -15,6 +15,21 @@
 #define X86_64_PAGE_SIZE 0x1000ULL
 
 /*
+ * Upper bound on the raw EFI memory map startup.c keeps a copy of after
+ * ExitBootServices() (the buffer GetMemoryMap() itself filled in has no
+ * promise of staying valid past that point). Shared with pmem.c, whose
+ * MAX_REGIONS is derived from this rather than guessed independently --
+ * an independent guess can't be proven never to overflow against a
+ * buffer sized independently of it (#348 review: a 16 KiB buffer and a
+ * MAX_REGIONS both picked by eyeballing one observed QEMU/OVMF map could
+ * still be defeated by a more fragmented real one). 64 KiB comfortably
+ * exceeds anything observed from real firmware (that same QEMU/OVMF boot:
+ * 128 descriptors, ~5 KiB) with well over an order of magnitude of
+ * headroom, and is cheap: this only reserves bss, not disk image size.
+ */
+#define X86_64_EFI_MAP_BYTES (64 * 1024)
+
+/*
  * Builds the free-page list from the EFI memory map GetMemoryMap() filled
  * in (see startup.c, which saves a copy of it before ExitBootServices()
  * -- the pointer GetMemoryMap() itself returned lives in memory that is

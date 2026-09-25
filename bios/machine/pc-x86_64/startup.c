@@ -39,23 +39,17 @@ static UBYTE boot_stack[BOOT_STACK_BYTES] __attribute__((aligned(16)));
 #define IMAGE_SPAN_BYTES (4 * 1024 * 1024)
 
 /*
- * Upper bound on the raw EFI memory map's size, copied into
- * saved_memory_map[] (below) before ExitBootServices() -- real firmware,
- * OVMF included, reports a few dozen descriptors (a few KiB); this is
- * generous headroom over that, in the same spirit as the map_size padding
- * already added around the GetMemoryMap() calls below.
- */
-#define SAVED_MAP_BYTES (16 * 1024)
-
-/*
  * A copy of the EFI memory map GetMemoryMap() returned, taken just before
  * ExitBootServices() -- the buffer GetMemoryMap() itself filled in is
  * EFI_LOADER_DATA pool memory that, while it happens to remain valid after
  * ExitBootServices() too, has no promise from the spec that it will; this
  * static copy (part of the image's own bss, always mapped) is what gets
  * handed to x86_64_pmem_init() a few lines further down efi_main().
+ * Sized from X86_64_EFI_MAP_BYTES (pmem.h), which pmem.c's MAX_REGIONS is
+ * in turn derived from -- see that constant's own comment for why both
+ * need to agree on one bound rather than each guess independently.
  */
-static UBYTE saved_memory_map[SAVED_MAP_BYTES] __attribute__((aligned(8)));
+static UBYTE saved_memory_map[X86_64_EFI_MAP_BYTES] __attribute__((aligned(8)));
 static UQUAD saved_map_size;
 static UQUAD saved_descriptor_size;
 
@@ -186,7 +180,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
          * this must reflect whichever one the eventually-successful
          * ExitBootServices() call actually used.
          */
-        if (this_map_size > SAVED_MAP_BYTES)
+        if (this_map_size > X86_64_EFI_MAP_BYTES)
             panic("EFI memory map exceeds the saved buffer");
         copy_bytes(saved_memory_map, map_buffer, this_map_size);
         saved_map_size = this_map_size;

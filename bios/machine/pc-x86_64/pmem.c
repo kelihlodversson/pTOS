@@ -18,16 +18,27 @@
 #include "io.h"
 
 /*
- * OVMF's own memory map is considerably more fragmented than "a few
- * dozen descriptors" might suggest -- a 256 MiB QEMU/OVMF boot has been
- * observed reporting 128 descriptors total. This list only grows past
- * the free-typed subset of those when excluding this image's own
- * reserved range splits one free descriptor in two (at most one extra
- * entry per descriptor), so double the largest descriptor count expected
- * from any real map is a safe, generous bound -- in the same spirit as
- * the MAX_PDPTS/MAX_PDS pools in pgtable.c.
+ * EFI_MEMORY_DESCRIPTOR's minimum possible stride (UEFI spec 7.2): the
+ * struct itself is 4 (Type) + 4 (padding, UQUAD alignment) + 8 + 8 + 8 +
+ * 8 = 40 bytes, and GetMemoryMap() is free to report a larger
+ * DescriptorSize (room to grow the struct in a future spec) but never a
+ * smaller one -- so 40 is the true worst case for how many descriptors
+ * X86_64_EFI_MAP_BYTES (pmem.h) could possibly hold.
  */
-#define MAX_REGIONS 256
+#define MIN_EFI_DESCRIPTOR_SIZE 40
+
+/*
+ * The whole saved map could -- at that smallest legal stride -- be
+ * entirely free-eligible descriptors; the "+ 4" covers
+ * add_free_region_excluding() splitting a free descriptor in two
+ * wherever this image's own reserved range overlaps it (ordinarily one
+ * descriptor, so one extra entry, but a little slack costs nothing).
+ * Derived from X86_64_EFI_MAP_BYTES, rather than guessed independently,
+ * so this can never overflow against whatever that buffer can actually
+ * hold (#348 review) -- in the same spirit as the MAX_PDPTS/MAX_PDS
+ * pools in pgtable.c, but provably sized rather than merely generous.
+ */
+#define MAX_REGIONS (X86_64_EFI_MAP_BYTES / MIN_EFI_DESCRIPTOR_SIZE + 4)
 
 typedef struct {
     UQUAD base;
