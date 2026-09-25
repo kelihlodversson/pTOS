@@ -43,6 +43,12 @@ obj-$(ARCH_COLDFIRE) += coldfire.o coldfire2.o spi_cf.o
 
 obj-$(ARCH_ARM) += vectorsasm.o aciaemu.o tosvars.o
 
+# tosvars.c is arch-neutral C (see its own header comment), needed by
+# every non-m68k/ColdFire arch alike -- x86-64 gets its own obj-y line
+# here rather than folding into ARCH_ARM's, since it lives outside any
+# arch/ subdirectory.
+obj-$(ARCH_X86_64) += tosvars.o
+
 # The cache maintenance operations below do not exist on the ARM1176 used
 # by the first generation Raspberry Pi.
 obj-$(CPU_ARMV7) += cache_armv7.o cache_armv7_asm.o

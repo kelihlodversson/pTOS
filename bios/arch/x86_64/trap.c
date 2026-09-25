@@ -74,12 +74,17 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame)
 
     switch (trap_class) {
     case X86_64_TRAP_GEMDOS: {
-        LONG pw[4];
+        /* 5 slots, not 4: bdosmain.c's own dispatch (the p4 case, e.g.
+         * Pexec's mode/path/tail/env) reads up to pw[4] -- GEMDOS's own
+         * widest call needs all 4 real argument registers this
+         * convention has (trap.h), not just the first 3. */
+        LONG pw[5];
 
         pw[0] = (LONG)fn;
         pw[1] = (LONG)frame->rdi;
         pw[2] = (LONG)frame->rsi;
         pw[3] = (LONG)frame->rdx;
+        pw[4] = (LONG)frame->r10;
         frame->rax = (UQUAD)osif(pw);
         break;
     }

@@ -490,9 +490,10 @@ restrt:
      * unlike every other call handled through it, its arguments don't
      * follow the table's implicit stdio/handle conventions -- so it's
      * special-cased here instead of getting its own funcs[] slot.
-     * ARM only: real m68k TOS software already has Supexec() and direct
-     * memory access for this, and the smallest m68k ROM images (see
-     * release.mk) have no code size to spare for a second way to do it.
+     * ARM/x86-64 only: real m68k TOS software already has Supexec() and
+     * direct memory access for this, and the smallest m68k ROM images
+     * (see release.mk) have no code size to spare for a second way to do
+     * it.
      */
     if (fn == GEMDOS_SSYSTEM)
         return xssystem((WORD)pw[1], pw[2], pw[3]);
