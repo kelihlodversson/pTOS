@@ -293,8 +293,9 @@ void NORETURN x86_64_higher_half_main(void)
      * Must follow the drop above, not precede it: both target PML4 slot 0
      * (see x86_64_map_low_vectors()'s own comment). Gives the shared
      * core's generic bios_init() (bios/bios.c) somewhere real to write
-     * VEC_GEM/VEC_BIOS/VEC_XBIOS, and the trap dispatch path (#349)
-     * somewhere to read them back from.
+     * VEC_GEM/VEC_BIOS/VEC_XBIOS -- nothing on this arch reads them back
+     * (trap.c dispatches directly, see its own comment), but bios_init()
+     * writes through them unconditionally regardless of arch.
      */
     x86_64_map_low_vectors();
     earlycon_puts("pTOS x86-64: low system-vector area mapped\n");

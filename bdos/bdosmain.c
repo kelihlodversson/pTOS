@@ -118,10 +118,22 @@ static const SPECNAME specname_table[] =
  * Each entry in the function table (below) consists of the address of
  * the function which corresponds to the function number, and a function
  * type.
+ *
+ * This, osif() below, and every other #if defined(__arm__) ||
+ * defined(__x86_64__) in this file are one axis: whether GEMDOS
+ * arguments arrive as one uniform LONG per parameter (pw[] indexed by
+ * parameter number) or packed m68k-native-width on the trap's own stack
+ * frame (mixed WORD/LONG, requiring per-call offset arithmetic). x86-64
+ * joins ARM on the LONG-array side of that split (#349): its own trap
+ * entry (bios/arch/x86_64/trap.c) already marshals arguments into a
+ * uniform LONG pw[] before calling osif(), the same shape ARM's _enter
+ * (bdos/arch/arm/rwa.S) builds for the same reason -- neither CPU has
+ * m68k's stack-based calling convention to reuse the trap frame's
+ * arguments from directly.
  */
 typedef struct
 {
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
     union {
         long  (*p0)(void);
         long  (*p1)(long);
@@ -158,7 +170,7 @@ static const FND funcs[] =
 {
 #define F(x) { (PFLONG)(x) }
 #define NI F(ni)
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 #   define W_N(w, n) (n)
 #else
 #   define W_N(w, n) (w)
@@ -445,7 +457,7 @@ static void mark_bcbs_invalid(int drv)
 }
 
 
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 long osif(LONG *pw);
 #else
 long osif(short *pw);
@@ -454,7 +466,7 @@ long osif(short *pw);
 /*
  *  osif - C implementation of trap #1. Called by _enter.
  */
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 long osif(LONG *pw)
 #else
 long osif(short *pw)
@@ -472,7 +484,7 @@ long osif(short *pw)
 restrt:
     fn = pw[0];
 
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
     /*
      * Ssystem() (0x154) is far outside the funcs[] table above, and
      * unlike every other call handled through it, its arguments don't
@@ -569,7 +581,7 @@ restrt:
                 /*  M01.01.07  */
                 /*  write the char in the int at pw[1]  */
             rawout:
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
                 xwrite(h , 1L , (char *) &pw[1]);
 #else
                 xwrite(h , 1L , ((char*) &pw[1])+1);
@@ -619,7 +631,7 @@ restrt:
 
     if (typ & 0x80)
     {
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
         /*
          * On ARM, pw[] holds one LONG per parameter.  typ encodes the
          * handle slot in terms of the m68k word layout: 0x81 means the
@@ -682,7 +694,7 @@ restrt:
                 return EIHNDL;
 
             /* on m68k the buffer word follows the two-word long count */
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
             pb = (char **) &pw[3];
 #else
             pb = (char **) &pw[4];
@@ -692,7 +704,7 @@ restrt:
 
             if (fn == GEMDOS_FREAD)     /* read */
             {
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
                 long count = pw[2];
                 /* on m68k, values 0x8000-0xffff become a negative signed
                  * WORD passed to cgets(), which makes it return 0 without
@@ -723,7 +735,7 @@ restrt:
 
             if (fn == GEMDOS_FWRITE)    /* write */
             {
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
                 long n, count = pw[2];
 #else
                 long n, count = *(long *)&pw[2];
@@ -770,7 +782,7 @@ restrt:
 
     if (!rc)
     {
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
         switch(f->nparms)
         {
         case 0:

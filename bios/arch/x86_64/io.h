@@ -43,4 +43,24 @@ static inline UQUAD x86_64_read_cr2(void)
     return val;
 }
 
+/* RDMSR/WRMSR (Intel SDM Vol 2B): the MSR index is always a 32-bit value
+ * in %ecx regardless of the value's own width, and the 64-bit value
+ * itself is split across %edx:%eax (high:low) on both instructions --
+ * used by trap.c to program IA32_STAR/LSTAR/FMASK for `syscall`. */
+static inline UQUAD x86_64_rdmsr(ULONG msr)
+{
+    ULONG lo, hi;
+
+    __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+    return ((UQUAD)hi << 32) | lo;
+}
+
+static inline void x86_64_wrmsr(ULONG msr, UQUAD value)
+{
+    ULONG lo = (ULONG)value;
+    ULONG hi = (ULONG)(value >> 32);
+
+    __asm__ volatile ("wrmsr" :: "c"(msr), "a"(lo), "d"(hi) : "memory");
+}
+
 #endif /* X86_64_IO_H */
