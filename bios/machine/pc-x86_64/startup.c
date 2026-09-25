@@ -94,20 +94,6 @@ static NORETURN void panic(const char *msg)
     hang();
 }
 
-/*
- * Translates a low (this image's actual, EFI-chosen load address) pointer
- * to its higher-half virtual counterpart: X86_64_KERNEL_VIRT_BASE plus the
- * pointer's byte offset from mapped_base, the 2 MiB-aligned base
- * x86_64_build_page_tables() actually mapped both windows from (see
- * x86_64_build_page_tables()'s own comment on why that -- not the
- * unaligned image base -- is the correct reference point). Only valid for
- * addresses inside the window that call was told to map.
- */
-static UQUAD to_high_alias(UQUAD low_addr, UQUAD mapped_base)
-{
-    return X86_64_KERNEL_VIRT_BASE + (low_addr - mapped_base);
-}
-
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
@@ -258,10 +244,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * &x86_64_higher_half_main and &boot_stack[...] are this image's
      * actual (low) runtime addresses here: the PE loader already applied
      * each pointer's base relocation to account for wherever it loaded us,
-     * the same way it did for loaded_image->ImageBase above.
+     * the same way it did for loaded_image->ImageBase above. Translated
+     * via x86_64_low_to_high() (pgtable.c), which remembers the same
+     * mapped_base x86_64_build_page_tables() just returned.
      */
-    entry_high = to_high_alias((UQUAD)(uintptr_t)&x86_64_higher_half_main, mapped_base);
-    stack_top_high = to_high_alias((UQUAD)(uintptr_t)&boot_stack[BOOT_STACK_BYTES], mapped_base);
+    entry_high = x86_64_low_to_high((UQUAD)(uintptr_t)&x86_64_higher_half_main);
+    stack_top_high = x86_64_low_to_high((UQUAD)(uintptr_t)&boot_stack[BOOT_STACK_BYTES]);
 
     x86_64_relocate_higher_half(entry_high, cr3, (void *)(uintptr_t)stack_top_high);
 
@@ -285,6 +273,17 @@ void NORETURN x86_64_higher_half_main(void)
 
     x86_64_idt_init();
     earlycon_puts("pTOS x86-64: IDT loaded, exceptions armed\n");
+
+    /*
+     * Safe now, and not before: x86_64_idt_init() just translated the one
+     * remaining low-address pointer table this image depends on
+     * (exception_stub[], via x86_64_low_to_high()) into the gates it
+     * installed, so nothing still needs the identity mapping to keep
+     * working. Frees that low canonical address range for #334's future
+     * ILP32 user processes (see #343 and #344's address-space split).
+     */
+    x86_64_drop_identity_map();
+    earlycon_puts("pTOS x86-64: identity mapping dropped\n");
 
     print_hex_line("pTOS x86-64: physical memory free=", x86_64_pmem_free_bytes());
     print_hex_line("  highest_addr=", x86_64_pmem_highest_addr());

@@ -63,6 +63,35 @@
 UQUAD x86_64_build_page_tables(UQUAD phys_base, UQUAD span, UQUAD *out_aligned_base);
 
 /*
+ * Translates a low (identity-mapped) address -- one inside the window the
+ * most recent x86_64_build_page_tables() call was told to map -- to its
+ * higher-half virtual counterpart. Needed wherever a pointer is baked in
+ * as compile-time-initialized data (a jump table, a string-literal table,
+ * ...) rather than computed at runtime: the PE loader fixes such a
+ * pointer up to this image's low load address once, at load time, and
+ * that stays true forever after, even for data only ever read from code
+ * running post-relocation -- unlike an ordinary RIP-relative pointer
+ * computation, which automatically reflects whatever alias currently
+ * executes it (see startup.c's commentary on that distinction, and the
+ * bug it names). idt.c's exception_stub[] and panic.c's vector_names[]
+ * are the two places this codebase currently needs it.
+ */
+UQUAD x86_64_low_to_high(UQUAD low_addr);
+
+/*
+ * Removes the identity (low) mapping, freeing that address range for
+ * #334's future ILP32 user processes (see #343 and #344's address-space
+ * split). Safe to call only once every low-address pointer baked into
+ * this image's own compile-time data has already been translated via
+ * x86_64_low_to_high() and is no longer needed in its untranslated form
+ * -- in particular, after x86_64_idt_init() has installed its gates.
+ * Leaves the higher-half kernel mapping and the physical-memory direct
+ * map untouched (distinct PML4 slots, see X86_64_KERNEL_VIRT_BASE and
+ * X86_64_PHYS_MAP_BASE above). Reloads CR3 itself before returning.
+ */
+void x86_64_drop_identity_map(void);
+
+/*
  * Maps [0, max_phys) into the permanent physical-memory direct map at
  * X86_64_PHYS_MAP_BASE, using 1 GiB pages -- so any physical address the
  * physical-memory allocator (pmem.c) hands out is reachable simply by

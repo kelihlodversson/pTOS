@@ -104,6 +104,13 @@ static void map_2m_range(UQUAD virt, UQUAD phys, UQUAD count)
         map_2m_page(virt + i * X86_64_PAGE_2M_SIZE, phys + i * X86_64_PAGE_2M_SIZE);
 }
 
+/* The identity (low) window's bounds, as x86_64_build_page_tables() last
+ * set them up -- remembered here (rather than left for each caller to
+ * recompute) so x86_64_low_to_high() and x86_64_drop_identity_map() below
+ * have a single source of truth for exactly what that window covers. */
+static UQUAD identity_low_base;
+static UQUAD identity_low_end;
+
 UQUAD x86_64_build_page_tables(UQUAD phys_base, UQUAD span, UQUAD *out_aligned_base)
 {
     UQUAD aligned_base = phys_base & ~(X86_64_PAGE_2M_SIZE - 1);
@@ -113,6 +120,9 @@ UQUAD x86_64_build_page_tables(UQUAD phys_base, UQUAD span, UQUAD *out_aligned_b
 
     map_2m_range(aligned_base, aligned_base, count);
     map_2m_range(X86_64_KERNEL_VIRT_BASE, aligned_base, count);
+
+    identity_low_base = aligned_base;
+    identity_low_end = aligned_end;
 
     *out_aligned_base = aligned_base;
     return (UQUAD)(uintptr_t)pml4;
@@ -124,6 +134,54 @@ static inline void reload_cr3(void)
 
     __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
     __asm__ volatile ("mov %0, %%cr3" :: "r"(cr3) : "memory");
+}
+
+/*
+ * Translates a low (identity-mapped) address to its higher-half virtual
+ * counterpart -- the same relationship x86_64_build_page_tables() itself
+ * mapped, expressed as X86_64_KERNEL_VIRT_BASE plus the address's offset
+ * from the identity window's own (2 MiB-aligned) base. Needed anywhere a
+ * pointer gets baked in as compile-time-initialized data rather than
+ * computed at runtime: such a pointer is fixed up by the PE loader to
+ * this image's low load address (see x86_64_drop_identity_map()'s own
+ * comment for why that stays true even for code that only ever runs
+ * post-relocation), so it must be translated explicitly wherever it is
+ * later read as a live address -- unlike an ordinary RIP-relative
+ * pointer computation, which already reflects whatever alias is
+ * currently executing (see startup.c's commentary on that distinction).
+ * Only valid for addresses inside the window x86_64_build_page_tables()
+ * was last told to map.
+ */
+UQUAD x86_64_low_to_high(UQUAD low_addr)
+{
+    return X86_64_KERNEL_VIRT_BASE + (low_addr - identity_low_base);
+}
+
+/*
+ * Removes the identity (low) mapping x86_64_build_page_tables() built,
+ * freeing that low canonical address range for #334's future ILP32 user
+ * processes (see #343 and #344's address-space-split scope) -- the
+ * kernel itself has no further use for it once every low-address pointer
+ * baked into its own compile-time data has been translated via
+ * x86_64_low_to_high() (idt.c's exception_stub[] jump table and panic.c's
+ * vector_names[] string table, at the time this was written -- see their
+ * own call sites). Only clears whichever PML4 slot(s) the identity window
+ * fell in (ordinarily one; see the MAX_PDPTS comment above for why it
+ * could exceptionally be two), leaving the higher-half kernel mapping and
+ * the physical-memory direct map (both distinct, non-overlapping PML4
+ * slots -- see pgtable.h) untouched. Reloads CR3 to flush the removed
+ * translation from the TLB.
+ */
+void x86_64_drop_identity_map(void)
+{
+    UQUAD first_index = (identity_low_base >> 39) & 0x1FF;
+    UQUAD last_index = ((identity_low_end - 1) >> 39) & 0x1FF;
+    UQUAD i;
+
+    for (i = first_index; i <= last_index; i++)
+        pml4[i] = 0;
+
+    reload_cr3();
 }
 
 /* CPUID.80000001H:EDX.Page1GB [bit 26] -- support for 1 GiB pages at the
