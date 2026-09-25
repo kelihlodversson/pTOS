@@ -92,6 +92,16 @@ UQUAD x86_64_low_to_high(UQUAD low_addr);
 void x86_64_drop_identity_map(void);
 
 /*
+ * Identity-maps and zeroes physical/virtual [0, 2 MiB) -- the low
+ * system-vector area bios_init() (bios/bios.c, generic) unconditionally
+ * writes VEC_GEM/VEC_BIOS/VEC_XBIOS into, and the GEMDOS/BIOS/XBIOS trap
+ * dispatch path (#349) reads back from. Must be called after
+ * x86_64_drop_identity_map(): see that function's own comment for why
+ * (both target PML4 slot 0).
+ */
+void x86_64_map_low_vectors(void);
+
+/*
  * Maps [0, max_phys) into the permanent physical-memory direct map at
  * X86_64_PHYS_MAP_BASE, using 1 GiB pages -- so any physical address the
  * physical-memory allocator (pmem.c) hands out is reachable simply by

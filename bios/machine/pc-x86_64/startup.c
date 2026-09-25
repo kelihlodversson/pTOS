@@ -227,8 +227,18 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * ordering is not just tidiness, an earlier version of this code got
      * it wrong exactly this way.
      */
+    /*
+     * Two independent reserved ranges, not one spanning both: this
+     * image's own load span, and separately physical [0, 2 MiB), which
+     * x86_64_map_low_vectors() (called later, post-jump) identity-maps
+     * for the low system-vector area (#349). EFI typically loads this
+     * image well above address 0 (mapped_base is usually several MiB in),
+     * so collapsing the gap between the two into one reserved block would
+     * falsely exclude a large amount of genuinely free memory.
+     */
     x86_64_pmem_init(saved_memory_map, saved_map_size, saved_descriptor_size,
-                      mapped_base, mapped_base + IMAGE_SPAN_BYTES + X86_64_PAGE_2M_SIZE);
+                      mapped_base, mapped_base + IMAGE_SPAN_BYTES + X86_64_PAGE_2M_SIZE,
+                      0, X86_64_PAGE_2M_SIZE);
     earlycon_puts("pTOS x86-64: physical memory map parsed\n");
 
     x86_64_build_physmap(x86_64_pmem_highest_addr());
@@ -278,6 +288,46 @@ void NORETURN x86_64_higher_half_main(void)
      */
     x86_64_drop_identity_map();
     earlycon_puts("pTOS x86-64: identity mapping dropped\n");
+
+    /*
+     * Must follow the drop above, not precede it: both target PML4 slot 0
+     * (see x86_64_map_low_vectors()'s own comment). Gives the shared
+     * core's generic bios_init() (bios/bios.c) somewhere real to write
+     * VEC_GEM/VEC_BIOS/VEC_XBIOS, and the trap dispatch path (#349)
+     * somewhere to read them back from.
+     */
+    x86_64_map_low_vectors();
+    earlycon_puts("pTOS x86-64: low system-vector area mapped\n");
+
+    /*
+     * A discriminating check, not just "didn't crash": VEC_TRAP1 (0x84,
+     * bios/vectors.h) is one of the specific offsets bios_init() and the
+     * trap dispatch path (#349) actually read/write, not just an
+     * arbitrary address within [0, 2 MiB). Writing a known sentinel there
+     * and reading it back proves this exact offset is really backed by
+     * the newly mapped page, not e.g. off by a PML4/PDPT/PD index
+     * somewhere upstream. x86_64_map_low_vectors() already zeroed it, so
+     * this also incidentally confirms the zero loop reached this offset.
+     */
+    {
+        /* GCC's -Warray-bounds statically flags dereferencing a small
+         * literal address as "likely null" -- true in general, but this
+         * one is deliberately backed by the mapping just installed above;
+         * routing it through a volatile intermediate (rather than a bare
+         * cast of the 0x84 literal) hides the constant from that analysis
+         * without weakening the check itself. */
+        volatile UQUAD vec_trap1_addr = 0x84;
+        volatile UQUAD *vec_trap1 = (volatile UQUAD *)(uintptr_t)vec_trap1_addr;
+        const UQUAD sentinel = 0x1122334455667788ULL;
+
+        if (*vec_trap1 != 0)
+            panic("low system-vector area: VEC_TRAP1 not zeroed");
+        *vec_trap1 = sentinel;
+        if (*vec_trap1 != sentinel)
+            panic("low system-vector area verification failed");
+        *vec_trap1 = 0;
+        earlycon_puts("pTOS x86-64: low system-vector area verified\n");
+    }
 
     print_hex_line("pTOS x86-64: physical memory free=", x86_64_pmem_free_bytes());
     print_hex_line("  highest_addr=", x86_64_pmem_highest_addr());
