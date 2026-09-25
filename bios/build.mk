@@ -61,7 +61,7 @@ obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfis
 # the top level Makefile's $(EMUTOS_IMG) rule); listed here so they are
 # discoverable and buildable the normal way once that milestone lands.
 obj-$(ARCH_X86_64) += pgtable.o relocate.o gdt.o idt.o isr.o panic.o
-obj-$(MACHINE_PC_X86_64) += earlycon.o
+obj-$(MACHINE_PC_X86_64) += earlycon.o pmem.o
 
 obj-$(CONF_WITH_PCI) += pci_core.o
 obj-$(CONF_WITH_PCI_VIRT_ECAM) += virt_pci.o

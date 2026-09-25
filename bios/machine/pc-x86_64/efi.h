@@ -77,9 +77,28 @@ typedef EFI_STATUS (EFIAPI *EFI_HANDLE_PROTOCOL)(EFI_HANDLE Handle,
                                                   EFI_GUID *Protocol,
                                                   void **Interface);
 
-/* EFI_MEMORY_TYPE (UEFI spec 7.2); only the value AllocatePool() below
- * needs is given a name. */
+/*
+ * EFI_MEMORY_TYPE (UEFI spec 7.2). Only the values pmem.c and
+ * AllocatePool() actually branch on are given names.
+ *
+ * Per the spec's ExitBootServices() description, once boot services have
+ * been exited, memory of type EfiBootServicesCode/Data is treated as free
+ * (conventional) memory by the OS -- it no longer needs to preserve
+ * whatever boot services code/data used to live there. EfiLoaderCode/Data
+ * is this image's own load segments (and anything it AllocatePool()'d,
+ * such as the memory map buffer itself) and must NOT be treated as free.
+ */
+#define EFI_LOADER_CODE 1
 #define EFI_LOADER_DATA 2
+#define EFI_BOOT_SERVICES_CODE 3
+#define EFI_BOOT_SERVICES_DATA 4
+#define EFI_RUNTIME_SERVICES_CODE 5
+#define EFI_RUNTIME_SERVICES_DATA 6
+#define EFI_CONVENTIONAL_MEMORY 7
+#define EFI_ACPI_RECLAIM_MEMORY 9
+#define EFI_ACPI_MEMORY_NVS 10
+#define EFI_PAL_CODE 13
+#define EFI_PERSISTENT_MEMORY 14
 
 typedef EFI_STATUS (EFIAPI *EFI_ALLOCATE_POOL)(ULONG PoolType, UQUAD Size, void **Buffer);
 typedef EFI_STATUS (EFIAPI *EFI_FREE_POOL)(void *Buffer);

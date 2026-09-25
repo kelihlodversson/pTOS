@@ -541,12 +541,16 @@ make pc-x86_64_defconfig && make
 mkdir -p esp/EFI/BOOT
 cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
 cp /usr/share/OVMF/OVMF_VARS_4M.fd .
-qemu-system-x86_64 -machine pc -m 256 \
+qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
   -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
   -drive format=raw,file=fat:rw:esp \
   -serial file:/tmp/pc-x86_64.log -display none
 ```
+
+`-cpu qemu64,+pdpe1gb` is required since #344: QEMU's default `qemu64` CPU
+model does not advertise 1 GiB page support, which the physical-memory
+direct map needs -- see the note further down.
 
 Neither milestone (#330's higher-half relocation, #331's GDT/IDT) has a
 framebuffer yet (see #332) and nothing to see on a graphical display, hence
@@ -563,17 +567,33 @@ grep -c 'EFI entry reached' /tmp/pc-x86_64.log   # must be 1, not >1
 grep 'pTOS x86-64' /tmp/pc-x86_64.log
 ```
 
-Expected log, in order (verified against this exact invocation):
+Expected log, in order (verified against this exact invocation, with
+`-cpu qemu64,+pdpe1gb` -- see the 1 GiB pages note below):
 
 ```
 pTOS x86-64: EFI entry reached
 pTOS x86-64: image base obtained
 pTOS x86-64: boot services exited
-pTOS x86-64: page tables built, relocating to higher half
+pTOS x86-64: page tables built
+pTOS x86-64: physical memory map parsed
+pTOS x86-64: physical memory direct map installed, relocating to higher half
 pTOS x86-64 EFI boot stub: alive in the higher half
 pTOS x86-64: GDT/TSS loaded
 pTOS x86-64: IDT loaded, exceptions armed
+pTOS x86-64: physical memory free=<hex bytes>
+  highest_addr=<hex address>
+pTOS x86-64: physical memory direct map verified
 ```
+
+**1 GiB pages (#344)**: the physical-memory direct map (`bios/arch/x86_64/pgtable.c`)
+needs CPUID.80000001H:EDX.Page1GB, which every real x86-64 CPU since
+~2010 has but QEMU's default `qemu64` CPU model does not advertise.
+Without it, `pTOS x86-64: EFI entry reached` is the only line printed,
+followed immediately by `panic: CPU lacks 1 GiB page support
+(CPUID.80000001H:EDX.Page1GB)` -- still exactly one boot attempt, just a
+much earlier panic than the others below. Add `-cpu qemu64,+pdpe1gb` (or
+any CPU model that already has it) to get past this and exercise the rest
+of the boot path.
 
 Once the IDT is armed (#331), a deliberately faulting instruction (e.g. a
 temporary null-pointer write or integer divide) produces a `panic:
