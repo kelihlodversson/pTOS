@@ -514,15 +514,15 @@ obj/emutospp.ld: emutos.ld include/config.h tosvars.ld $(AUTOCONF_H)
 #
 
 ifdef ARCH_X86_64
-# Milestone 1 of the x86-64 port (#329, #330): a standalone EFI boot stub,
-# built from its own small object list rather than from $(OBJECTS). It
-# does not yet call into the shared bios/bdos/fs/util pipeline the way
-# every other machine's startup.o does -- that needs exception/interrupt
-# handling (#331) first -- so pulling in the generic $(CORE_OBJ)/
-# $(OPTIONAL_OBJ) set here would just fail to link against machine hooks
-# (screen, floppy, IDE, ...) this port does not implement yet. Once #331
-# and later sub-issues of #329 land, this arch is expected to join the
-# normal $(OBJECTS)-based rule above like every other machine.
+# Milestones 1-2 of the x86-64 port (#329, #330, #331): a standalone EFI
+# boot stub, built from its own small object list rather than from
+# $(OBJECTS). It does not yet call into the shared bios/bdos/fs/util
+# pipeline the way every other machine's startup.o does -- so pulling in
+# the generic $(CORE_OBJ)/$(OPTIONAL_OBJ) set here would just fail to
+# link against machine hooks (screen, floppy, IDE, ...) this port does
+# not implement yet. Once later sub-issues of #329 land, this arch is
+# expected to join the normal $(OBJECTS)-based rule above like every
+# other machine.
 #
 # The link itself must go through the PE32+ ("i386pep") linker emulation,
 # not the ELF one $(LD) otherwise defaults to, and needs -pie so the
@@ -530,7 +530,8 @@ ifdef ARCH_X86_64
 # the ARCH_X86_64 MULTILIBFLAGS comment above). --subsystem 10 marks the
 # image as an EFI application; without it the default PE subsystem is a
 # Windows console app, which UEFI firmware refuses to load.
-PC_X86_64_BOOT_OBJ = obj/startup.o obj/pgtable.o obj/relocate.o obj/earlycon.o
+PC_X86_64_BOOT_OBJ = obj/startup.o obj/pgtable.o obj/relocate.o obj/earlycon.o \
+                     obj/gdt.o obj/idt.o obj/isr.o obj/panic.o
 
 # Linked directly with $(CROSS_COMPILE)ld, not through $(CC): gcc's driver
 # adds --eh-frame-hdr whenever -fpie/-pie is in play (needed for the PE

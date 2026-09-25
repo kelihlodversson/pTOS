@@ -1,13 +1,14 @@
 /*
  * startup.c - x86-64 EFI entry point: boot services, higher-half relocation
  *
- * Milestone 1 of the x86-64 port (issue #330): get from UEFI's own boot
- * environment to code running at this kernel's higher-half virtual
- * address, with just enough diagnostics over COM1 to prove it happened.
- * This does not yet call into the shared bios/bdos/fs/util pipeline every
- * other machine's startup.S hands off to (see the ARCH_X86_64 branch of
- * the top level Makefile's $(EMUTOS_IMG) rule for why) -- that begins once
- * exception/interrupt handling (#331) exists.
+ * Milestones 1-2 of the x86-64 port (issues #330, #331): get from UEFI's
+ * own boot environment to code running at this kernel's higher-half
+ * virtual address, with just enough diagnostics over COM1 to prove it
+ * happened, then give the CPU a real GDT/TSS/IDT so exceptions are
+ * caught and reported instead of triple-faulting. This does not yet call
+ * into the shared bios/bdos/fs/util pipeline every other machine's
+ * startup.S hands off to (see the ARCH_X86_64 branch of the top level
+ * Makefile's $(EMUTOS_IMG) rule for why) -- that is still later work.
  *
  * Copyright (C) 2025-2026 The pTOS development team.
  *
@@ -20,6 +21,8 @@
 #include "earlycon.h"
 #include "io.h"
 #include "pgtable.h"
+#include "gdt.h"
+#include "idt.h"
 
 /* This image's own boot-time stack. Used only from the higher-half jump
  * onward, replacing whatever transient stack UEFI itself was using; 64 KiB
@@ -186,5 +189,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 void NORETURN x86_64_higher_half_main(void)
 {
     earlycon_puts("pTOS x86-64 EFI boot stub: alive in the higher half\n");
+
+    x86_64_gdt_init();
+    earlycon_puts("pTOS x86-64: GDT/TSS loaded\n");
+
+    x86_64_idt_init();
+    earlycon_puts("pTOS x86-64: IDT loaded, exceptions armed\n");
+
     hang();
 }
