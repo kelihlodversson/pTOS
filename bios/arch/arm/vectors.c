@@ -128,7 +128,10 @@ void (*timer_vbl_hook)(void) = int_vbl;
 void int_timerc(void)
 {
     hz_200++;
-    timer_c_sieve = (timer_c_sieve << 1) | (timer_c_sieve >> 15);
+    // rotate left, as m68k's rol.w: unsigned, or the sign bit smears in and
+    // the sieve ends up 0xffff, making every call the "4th" one (200 Hz VBL,
+    // AES timer and key repeat)
+    timer_c_sieve = (WORD)(((UWORD)timer_c_sieve << 1) | ((UWORD)timer_c_sieve >> 15));
     if (timer_c_sieve & 4) // If the highest bit in any nybble is 1, we are in the 4th call
     {
         kb_timerc_int();
@@ -138,6 +141,11 @@ void int_timerc(void)
         // Fake vbl interrupt every 4 timer_c calls (50Hz), unless the
         // hook has been pointed at a real vsync source's fallback.
         timer_vbl_hook();
+
+        // The 50 Hz user timer, as on m68k (vectors.S): the VDI hooks it
+        // (tick_int), and through vex_timv the AES, whose evnt_timer()
+        // and timer events never fired without it.
+        etv_timer(timer_ms);
     }
 }
 
