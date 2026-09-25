@@ -38,7 +38,7 @@
 #include "asm.h"
 #include "vectors.h"
 #include "xbios.h"
-#if defined(__arm__)
+#if defined(__arm__) || defined(__x86_64__)
 #include "biosargs.h"
 #endif
 
@@ -218,7 +218,7 @@ static LONG xbios_8(UBYTE *buf, LONG filler, WORD devno, WORD sectno,
 }
 #endif
 
-#if defined(__arm__)
+#if defined(__arm__) || defined(__x86_64__)
 /*
  * ARM's trap entry only delivers 4 real arguments in registers; floprd()
  * needs 7, so it's called through the vec table via this trampoline
@@ -254,7 +254,7 @@ static LONG xbios_9(const UBYTE *buf, LONG filler, WORD devno, WORD sectno,
 }
 #endif
 
-#if defined(__arm__)
+#if defined(__arm__) || defined(__x86_64__)
 /* See xbios_8_arm above. */
 static LONG xbios_9_arm(struct xbios_flop_io_args *a)
 {
@@ -308,7 +308,7 @@ static LONG xbios_a(UBYTE *buf, WORD *skew, WORD devno, WORD spt,
 }
 #endif
 
-#if defined(__arm__)
+#if defined(__arm__) || defined(__x86_64__)
 /*
  * ARM's trap entry only delivers 4 real arguments in registers; flopfmt()
  * needs 9, so it's called through the vec table via this trampoline
@@ -425,7 +425,7 @@ static ULONG xbios_f(WORD speed, WORD flowctl, WORD ucr, WORD rsr, WORD tsr, WOR
 }
 #endif
 
-#if defined(__arm__)
+#if defined(__arm__) || defined(__x86_64__)
 /*
  * ARM's trap entry only delivers 4 real arguments in registers; rsconf()
  * needs 6, so it's called through the vec table via this trampoline
@@ -533,7 +533,7 @@ static LONG xbios_13(WORD *buf, LONG filler, WORD devno, WORD sectno,
 }
 #endif
 
-#if defined(__arm__)
+#if defined(__arm__) || defined(__x86_64__)
 /* See xbios_8_arm above. */
 static LONG xbios_13_arm(struct xbios_flop_io_args *a)
 {
@@ -1370,7 +1370,7 @@ const PFLONG xbios_vecs[] = {
     VEC(xbios_5, setscreen),
     VEC(xbios_6, setpalette),
     VEC(xbios_7, setcolor),
-#if defined(__arm__)
+#if defined(__arm__) || defined(__x86_64__)
     (PFLONG) xbios_8_arm,
     (PFLONG) xbios_9_arm,
     (PFLONG) xbios_a_arm,
@@ -1387,7 +1387,7 @@ const PFLONG xbios_vecs[] = {
     xbios_unimpl,   /* d */
 #endif
     VEC(xbios_e, iorec),
-#if defined(__arm__)
+#if defined(__arm__) || defined(__x86_64__)
     (PFLONG) xbios_f_arm,
 #else
     VEC(xbios_f, rsconf),
@@ -1395,7 +1395,7 @@ const PFLONG xbios_vecs[] = {
     VEC(xbios_10, keytbl),
     VEC(xbios_11, random),
     VEC(xbios_12, protobt),
-#if defined(__arm__)
+#if defined(__arm__) || defined(__x86_64__)
     (PFLONG) xbios_13_arm,
 #else
     VEC(xbios_13, flopver),

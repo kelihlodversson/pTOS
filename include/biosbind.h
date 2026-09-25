@@ -16,7 +16,7 @@
 #ifndef BIOSBIND_H
 #define BIOSBIND_H
 
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 #include "biosargs.h"
 #endif
 
@@ -33,7 +33,16 @@
 #define Drvmap() bios_l_v(0xa)
 #define Kbshift(a) bios_l_w(0xb,a)
 
-
+/*
+ * x86-64 calling convention (bios/arch/x86_64/trap.h): RAX = trap_class
+ * << 32 | function_number (13 = the historic m68k BIOS trap number, kept
+ * here as a literal the same way m68k's own "trap #13" below is a
+ * literal -- neither wants a dependency on that arch-internal header),
+ * real arguments in RDI/RSI/RDX/R10 (R10 in place of RCX, which
+ * `syscall` itself clobbers). Every one of these calls fits in the 4 the
+ * convention provides except Rwabs, which -- like ARM -- passes a
+ * bios_lrwabs_args struct pointer as its one real argument instead.
+ */
 
 static __inline__ void bios_v_l(int op, long a)
 {
@@ -47,6 +56,15 @@ static __inline__ void bios_v_l(int op, long a)
           "=r"(_r0), "=r"(_r1)
         : "r"(_r0), "r"(_r1)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
+    );
+#elif defined(__x86_64__)
+    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
+    register long _rdi __asm__("rdi") = a;
+    __asm__ volatile (
+        "syscall"
+        : "+r"(_rax), "+r"(_rdi)
+        :
+        : "rcx", "r11", "rsi", "rdx", "r10", "memory", "cc"
     );
 #else
     __asm__ volatile (
@@ -74,6 +92,16 @@ static __inline__ void bios_v_ww(int op, short a, short b)
           "=r"(_r0), "=r"(_r1), "=r"(_r2)
         : "r"(_r0), "r"(_r1), "r"(_r2)
         : "r3", "r12", "lr",  "memory", "cc"
+    );
+#elif defined(__x86_64__)
+    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
+    register long _rdi __asm__("rdi") = a;
+    register long _rsi __asm__("rsi") = b;
+    __asm__ volatile (
+        "syscall"
+        : "+r"(_rax), "+r"(_rdi), "+r"(_rsi)
+        :
+        : "rcx", "r11", "rdx", "r10", "memory", "cc"
     );
 #else
     __asm__ volatile (
@@ -105,6 +133,16 @@ static __inline__ short bios_w_w(int op, short a)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return (short)_r0;
+#elif defined(__x86_64__)
+    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
+    register long _rdi __asm__("rdi") = a;
+    __asm__ volatile (
+        "syscall"
+        : "+r"(_rax), "+r"(_rdi)
+        :
+        : "rcx", "r11", "rsi", "rdx", "r10", "memory", "cc"
+    );
+    return (short)_rax;
 #else
     register long retval __asm__("d0");
 
@@ -132,6 +170,15 @@ static __inline__ long bios_l_v(int op)
         : "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
+    __asm__ volatile (
+        "syscall"
+        : "+r"(_rax)
+        :
+        : "rcx", "r11", "rdi", "rsi", "rdx", "r10", "memory", "cc"
+    );
+    return _rax;
 #else
     register long retval __asm__("d0");
 
@@ -161,6 +208,16 @@ static __inline__ long bios_l_w(int op, short a)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
+    register long _rdi __asm__("rdi") = a;
+    __asm__ volatile (
+        "syscall"
+        : "+r"(_rax), "+r"(_rdi)
+        :
+        : "rcx", "r11", "rsi", "rdx", "r10", "memory", "cc"
+    );
+    return _rax;
 #else
     register long retval __asm__("d0");
 
@@ -192,6 +249,17 @@ static __inline__ long bios_l_ww(int op, short a, short b)
         : "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
+    register long _rdi __asm__("rdi") = a;
+    register long _rsi __asm__("rsi") = b;
+    __asm__ volatile (
+        "syscall"
+        : "+r"(_rax), "+r"(_rdi), "+r"(_rsi)
+        :
+        : "rcx", "r11", "rdx", "r10", "memory", "cc"
+    );
+    return _rax;
 #else
     register long retval __asm__("d0");
 
@@ -224,6 +292,17 @@ static __inline__ long bios_l_wl(int op, short a, long b)
         : "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
+    register long _rdi __asm__("rdi") = a;
+    register long _rsi __asm__("rsi") = b;
+    __asm__ volatile (
+        "syscall"
+        : "+r"(_rax), "+r"(_rdi), "+r"(_rsi)
+        :
+        : "rcx", "r11", "rdx", "r10", "memory", "cc"
+    );
+    return _rax;
 #else
     register long retval __asm__("d0");
 
@@ -244,15 +323,14 @@ static __inline__ long bios_l_wl(int op, short a, long b)
 static __inline__ long
 bios_l_wlwwwl(int op, short a, long b, short c, short d, short e, long f)
 {
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
     /*
-     * lrwabs() needs 6 real arguments; _biostrap only delivers 4 in
-     * registers, so pass them via a bios_lrwabs_args struct instead
-     * (biosargs.h). See kelihlodversson/pTOS#217.
+     * lrwabs() needs 6 real arguments; the trap convention only delivers
+     * 4 in registers (ARM's _biostrap, x86-64's trap.c dispatch alike),
+     * so pass them via a bios_lrwabs_args struct instead (biosargs.h).
+     * See kelihlodversson/pTOS#217.
      */
     struct bios_lrwabs_args args;
-    register long _r0 __asm__("r0")=(long)(op);
-    register long _r1 __asm__("r1");
 
     args.r_w = a;
     args.adr = (void *)b;
@@ -260,6 +338,11 @@ bios_l_wlwwwl(int op, short a, long b, short c, short d, short e, long f)
     args.first = d;
     args.drive = e;
     args.lfirst = f;
+#endif
+#ifdef __arm__
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1");
+
     _r1 = (long)&args;
 
     __asm__ volatile (
@@ -269,6 +352,16 @@ bios_l_wlwwwl(int op, short a, long b, short c, short d, short e, long f)
         : "r2", "r3", "r4", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
+    register long _rdi __asm__("rdi") = (long)&args;
+    __asm__ volatile (
+        "syscall"
+        : "+r"(_rax), "+r"(_rdi)
+        :
+        : "rcx", "r11", "rsi", "rdx", "r10", "memory", "cc"
+    );
+    return _rax;
 #else
     register long retval __asm__("d0");
 

@@ -37,7 +37,7 @@
 #include "nls.h"
 #include "biosmem.h"
 #include "../aes/aesstub.h"
-#if defined(__arm__)
+#if defined(__arm__) || defined(__x86_64__)
 #include "biosargs.h"
 #endif
 #include "ikbd.h"
@@ -152,12 +152,13 @@ void (*vector_5ms)(void);       /* 200 Hz system timer */
 
 /*==== BOOT ===============================================================*/
 
-#if defined(__arm__) || defined(__aarch64__)
+#if defined(__arm__) || defined(__aarch64__) || defined(__x86_64__)
 
 const char *mcpu_name;
 LONG mcpu;
 LONG fputype;
 
+#if defined(__arm__) || defined(__aarch64__)
 static char const arm_unknown[] = "ARM (unknown)";
 
 static struct {
@@ -232,6 +233,26 @@ void detect_cpu(void)
                 }
         }
 }
+#elif defined(__x86_64__)
+/*
+ * mcpu holds CPUID leaf 1's EAX (the family/model/stepping signature),
+ * not an m68k-style small integer code -- the same trick ARM plays with
+ * its own raw CPUID register (above): every other reader of mcpu
+ * (kprint.c, delay.c, aros.c, ide.c) only ever compares it against
+ * specific m68k CPU-type constants (0/10/20/30/40/60), which a real
+ * CPUID signature is never going to coincidentally match, so those
+ * m68k-only code paths stay correctly inert here without needing their
+ * own #ifdef.
+ */
+void detect_cpu(void)
+{
+        ULONG eax = 1, ebx, ecx, edx;
+
+        __asm__ volatile ("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+        mcpu = (LONG)eax;
+        mcpu_name = "x86-64";
+}
+#endif
 
 #endif
 
@@ -632,6 +653,18 @@ static void bios_init(void)
      */
 #ifdef __arm__
     cpsr_ie();
+#elif defined(__x86_64__)
+    /*
+     * Deliberately not `sti`: there is no PIC/APIC/timer driver yet, so
+     * every external interrupt vector in the IDT (bios/arch/x86_64/idt.c
+     * only populates the 32 CPU exception ones) is still an empty gate --
+     * enabling interrupts now would panic on the very first hardware
+     * interrupt to arrive, which real/QEMU x86 hardware fires quickly
+     * (PIT/RTC) even with no driver expecting it. Interrupts stay off for
+     * the whole of this milestone (matching gdt.c/trap.c's own comments);
+     * nothing on the path to CONF_WITH_CLI's EmuCON launch needs them --
+     * calibrate_delay()'s non-CONF_WITH_MFP fallback (delay.c) is a no-op.
+     */
 #else
 #if CONF_WITH_ATARI_VIDEO
     /* Keep the HBL disabled */
@@ -1271,12 +1304,14 @@ LONG lrwabs(WORD r_w, UBYTE *adr, WORD numb, WORD first, WORD drive, LONG lfirst
     return protect_wlwwwl((PFLONG)hdv_rw, r_w, (LONG)adr, numb, first, drive, lfirst);
 }
 
-#if defined(__arm__)
+#if defined(__arm__) || defined(__x86_64__)
 /*
- * ARM's trap entry (_biostrap, vectorsasm.S) only delivers 4 real
- * arguments in registers; lrwabs() needs 6, so it's called through the
- * vec table via this trampoline instead, unpacking a struct pointer.
- * See arch/arm/biosargs.h.
+ * ARM's trap entry (_biostrap, vectorsasm.S) and x86-64's dispatcher
+ * (bios/arch/x86_64/trap.c) alike only deliver 4 real arguments in
+ * registers; lrwabs() needs 6, so it's called through the vec table via
+ * this trampoline instead, unpacking a struct pointer. See
+ * include/arch/arm/biosargs.h and include/arch/x86_64/biosargs.h (not
+ * binary-compatible with each other, but the same shape).
  */
 static LONG bios_4_arm(struct bios_lrwabs_args *a)
 {
@@ -1527,7 +1562,7 @@ const PFLONG bios_vecs[] = {
     VEC(bios_1, bconstat),
     VEC(bios_2, bconin),
     VEC(bios_3, bconout),
-#if defined(__arm__)
+#if defined(__arm__) || defined(__x86_64__)
     (PFLONG) bios_4_arm,
 #else
     VEC(bios_4, lrwabs),
