@@ -268,6 +268,23 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
          * equivalent, both of which use the same convention. */
         if (fn >= bios_ent)
             frame->rax = fn;
+        else if (fn == 5)
+            /* BIOS function 5 is Setexc(). bios.c's setexc() was widened
+             * to return a native `long` (not the fixed-32-bit LONG every
+             * other BIOS call still uses) specifically so that its
+             * etv_timer/etv_critic/etv_term path -- vecnum 0x100-0x102 --
+             * can hand back a real x86-64 function pointer (see setexc()'s
+             * own comment in bios.c). Calling it through the same
+             * LONG-returning function-pointer type the other entries below
+             * use would truncate that pointer straight back to 32 bits at
+             * this call boundary, undoing the widening before it ever
+             * reaches frame->rax: Setexc(0x100, -1)/Setexc(0x102, -1) would
+             * hand timer_init()/xterm() a garbage callback address. The
+             * historical 32-bit-per-slot low vector-table path (every other
+             * vecnum) is unaffected either way, since that table can't hold
+             * a genuine 64-bit pointer regardless of this cast (#351). */
+            frame->rax = (UQUAD)((long (*)(UQUAD, UQUAD, UQUAD, UQUAD))bios_vecs[fn])
+                             (frame->rdi, frame->rsi, frame->rdx, frame->r10);
         else
             frame->rax = (UQUAD)((LONG (*)(UQUAD, UQUAD, UQUAD, UQUAD))bios_vecs[fn])
                              (frame->rdi, frame->rsi, frame->rdx, frame->r10);

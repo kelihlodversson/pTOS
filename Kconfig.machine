@@ -291,12 +291,21 @@ config STONX_NATIVE_PRINT
 
 config USE_STOP_INSN_TO_FREE_HOST_CPU
 	bool "Halt the CPU in idle loops"
+	depends on !MACHINE_PC_X86_64
 	default y
 	help
 	  Wait for the next interrupt instead of spinning while there is
 	  nothing to do (the STOP instruction on m68k).  Say n for emulators
 	  that do not emulate that instruction properly; the only effect is
 	  that they burn host CPU time in busy loops.
+
+	  Not selectable for MACHINE_PC_X86_64: that target deliberately
+	  keeps interrupts masked throughout boot and has no PIC/IOAPIC or
+	  timer driver yet, so the HLT this option makes idle loops execute
+	  (stop_until_interrupt(), include/arch/x86_64/asm.h) could never be
+	  woken by anything -- any idle loop that reached it (the welcome
+	  screen timeout, vsync()) would hang forever. Revisit once an
+	  interrupt controller and timer exist for this machine.
 
 config CONF_WITH_UAE
 	bool "Support the advanced features of the UAE emulator"
