@@ -38,6 +38,17 @@ extern long trap1(int, ...);
 extern long trap1_pexec(short mode, const char * path,
   const char * tail, const char * env);
 
+/*
+ * bios/arch/x86_64/trap.c: the kernel-mode (no privilege transition)
+ * counterpart of trap1()/the `syscall` instruction, used by
+ * include/biosbind.h and include/xbiosbind.h's x86_64 branches (and by
+ * trap1()/trap1_pexec() themselves) instead of a raw inline `syscall` --
+ * see trap.h's own comment on why the two must not be the same entry
+ * point. rax packs (trap_class << 32) | function_number the same way a
+ * real `syscall` would.
+ */
+extern long x86_64_kernel_trap(long rax, long rdi, long rsi, long rdx, long r10);
+
 /* External function doing nothing */
 extern void just_rts(void);
 

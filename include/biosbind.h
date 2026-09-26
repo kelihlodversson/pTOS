@@ -19,6 +19,9 @@
 #if defined(__arm__) || defined(__x86_64__)
 #include "biosargs.h"
 #endif
+#ifdef __x86_64__
+#include "asm.h"        /* x86_64_kernel_trap() */
+#endif
 
 #define Getmpb(a) bios_v_l(0x0,a)
 #define Bconstat(a) bios_w_w(0x1,a)
@@ -34,14 +37,17 @@
 #define Kbshift(a) bios_l_w(0xb,a)
 
 /*
- * x86-64 calling convention (bios/arch/x86_64/trap.h): RAX = trap_class
- * << 32 | function_number (13 = the historic m68k BIOS trap number, kept
- * here as a literal the same way m68k's own "trap #13" below is a
- * literal -- neither wants a dependency on that arch-internal header),
- * real arguments in RDI/RSI/RDX/R10 (R10 in place of RCX, which
- * `syscall` itself clobbers). Every one of these calls fits in the 4 the
- * convention provides except Rwabs, which -- like ARM -- passes a
- * bios_lrwabs_args struct pointer as its one real argument instead.
+ * x86-64 calling convention (bios/arch/x86_64/trap.h): x86_64_kernel_trap()'s
+ * first argument packs trap_class << 32 | function_number (13 = the
+ * historic m68k BIOS trap number, kept here as a literal the same way
+ * m68k's own "trap #13" below is a literal -- neither wants a dependency
+ * on that arch-internal header), the next four are the real arguments.
+ * Every one of these calls fits in the 4 the convention provides except
+ * Rwabs, which -- like ARM -- passes a bios_lrwabs_args struct pointer as
+ * its one real argument instead. This is a plain, ordinary C function
+ * call, not `syscall`: see trap.h's own comment on why kernel-mode code
+ * (every caller of these bindings, there being no real ring-3 process yet)
+ * must not use the actual `syscall` instruction to reach the dispatcher.
  */
 
 static __inline__ void bios_v_l(int op, long a)
@@ -58,14 +64,7 @@ static __inline__ void bios_v_l(int op, long a)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
 #elif defined(__x86_64__)
-    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
-    register long _rdi __asm__("rdi") = a;
-    __asm__ volatile (
-        "syscall"
-        : "+r"(_rax), "+r"(_rdi)
-        :
-        : "rcx", "r11", "rsi", "rdx", "r10", "memory", "cc"
-    );
+    x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     __asm__ volatile (
         "move.l  %1,-(sp)\n\t"
@@ -94,15 +93,7 @@ static __inline__ void bios_v_ww(int op, short a, short b)
         : "r3", "r12", "lr",  "memory", "cc"
     );
 #elif defined(__x86_64__)
-    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
-    register long _rdi __asm__("rdi") = a;
-    register long _rsi __asm__("rsi") = b;
-    __asm__ volatile (
-        "syscall"
-        : "+r"(_rax), "+r"(_rdi), "+r"(_rsi)
-        :
-        : "rcx", "r11", "rdx", "r10", "memory", "cc"
-    );
+    x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, b, 0, 0);
 #else
     __asm__ volatile (
         "move.w  %2,-(sp)\n\t"
@@ -134,15 +125,7 @@ static __inline__ short bios_w_w(int op, short a)
     );
     return (short)_r0;
 #elif defined(__x86_64__)
-    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
-    register long _rdi __asm__("rdi") = a;
-    __asm__ volatile (
-        "syscall"
-        : "+r"(_rax), "+r"(_rdi)
-        :
-        : "rcx", "r11", "rsi", "rdx", "r10", "memory", "cc"
-    );
-    return (short)_rax;
+    return (short)x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -171,14 +154,7 @@ static __inline__ long bios_l_v(int op)
     );
     return _r0;
 #elif defined(__x86_64__)
-    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
-    __asm__ volatile (
-        "syscall"
-        : "+r"(_rax)
-        :
-        : "rcx", "r11", "rdi", "rsi", "rdx", "r10", "memory", "cc"
-    );
-    return _rax;
+    return x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, 0, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -209,15 +185,7 @@ static __inline__ long bios_l_w(int op, short a)
     );
     return _r0;
 #elif defined(__x86_64__)
-    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
-    register long _rdi __asm__("rdi") = a;
-    __asm__ volatile (
-        "syscall"
-        : "+r"(_rax), "+r"(_rdi)
-        :
-        : "rcx", "r11", "rsi", "rdx", "r10", "memory", "cc"
-    );
-    return _rax;
+    return x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -250,16 +218,7 @@ static __inline__ long bios_l_ww(int op, short a, short b)
     );
     return _r0;
 #elif defined(__x86_64__)
-    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
-    register long _rdi __asm__("rdi") = a;
-    register long _rsi __asm__("rsi") = b;
-    __asm__ volatile (
-        "syscall"
-        : "+r"(_rax), "+r"(_rdi), "+r"(_rsi)
-        :
-        : "rcx", "r11", "rdx", "r10", "memory", "cc"
-    );
-    return _rax;
+    return x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, b, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -293,16 +252,7 @@ static __inline__ long bios_l_wl(int op, short a, long b)
     );
     return _r0;
 #elif defined(__x86_64__)
-    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
-    register long _rdi __asm__("rdi") = a;
-    register long _rsi __asm__("rsi") = b;
-    __asm__ volatile (
-        "syscall"
-        : "+r"(_rax), "+r"(_rdi), "+r"(_rsi)
-        :
-        : "rcx", "r11", "rdx", "r10", "memory", "cc"
-    );
-    return _rax;
+    return x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, b, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -353,15 +303,7 @@ bios_l_wlwwwl(int op, short a, long b, short c, short d, short e, long f)
     );
     return _r0;
 #elif defined(__x86_64__)
-    register long _rax __asm__("rax") = ((long)13 << 32) | (unsigned)op;
-    register long _rdi __asm__("rdi") = (long)&args;
-    __asm__ volatile (
-        "syscall"
-        : "+r"(_rax), "+r"(_rdi)
-        :
-        : "rcx", "r11", "rsi", "rdx", "r10", "memory", "cc"
-    );
-    return _rax;
+    return x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, (long)&args, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 

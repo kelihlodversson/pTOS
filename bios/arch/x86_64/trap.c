@@ -123,6 +123,19 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame)
     }
 }
 
+long x86_64_kernel_trap(long rax, long rdi, long rsi, long rdx, long r10)
+{
+    x86_64_trap_frame_t frame;
+
+    frame.rax = (UQUAD)rax;
+    frame.rdi = (UQUAD)rdi;
+    frame.rsi = (UQUAD)rsi;
+    frame.rdx = (UQUAD)rdx;
+    frame.r10 = (UQUAD)r10;
+    x86_64_trap_dispatch(&frame);
+    return (long)frame.rax;
+}
+
 void x86_64_trap_init(void)
 {
     UQUAD efer = x86_64_rdmsr(MSR_EFER);

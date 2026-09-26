@@ -51,12 +51,29 @@
  * established solution, reused unchanged -- a pointer to one of
  * include/biosargs.h's structs as the single real argument.
  *
- * The entry/exit mechanism is genuinely ring-3-capable, not a ring0-only
- * placeholder: the entry stub (trapasm.S) does the full `swapgs` / stack
- * switch / `sysretq` sequence #333 specifies, verified with a throwaway
- * in-kernel ring-3 harness (no real process yet -- that is #334's job).
- * See x86_64_percpu_t below for the per-CPU state that makes this safe
- * without depending on TSS.rsp0 (which `syscall` never consults).
+ * The entry/exit mechanism (trapasm.S's x86_64_syscall_entry, reached only
+ * via the actual `syscall` instruction) is genuinely ring-3-capable, not a
+ * ring0-only placeholder: it does the full `swapgs` / stack switch /
+ * `sysretq` sequence #333 specifies, verified with a throwaway in-kernel
+ * ring-3 harness (no real process yet -- that is #334's job). See
+ * x86_64_percpu_t below for the per-CPU state that makes this safe without
+ * depending on TSS.rsp0 (which `syscall` never consults).
+ *
+ * It is reached *only* by a genuine ring-3 caller, deliberately: every
+ * current caller (Super()/Setexc()/... from bios/bdos boot code, called
+ * the way m68k's "trap #1"/ARM's "svc 1" are when already supervisor) goes
+ * through x86_64_kernel_trap() below instead, an ordinary C function that
+ * calls x86_64_trap_dispatch() directly with no privilege transition at
+ * all. An earlier version of this file tried to let both kinds of caller
+ * share x86_64_syscall_entry, telling them apart by testing whether the
+ * interrupted RSP looked like a kernel address -- unsafe, since `syscall`
+ * does not validate RSP at all: a real ring-3 caller can put any 64-bit
+ * value there before executing it, including a higher-half one, and get
+ * misclassified as kernel-mode, skipping `swapgs`/the stack switch and
+ * pushing (and later reading back) attacker-influenced register state at
+ * CPL0 on whatever address it chose. Splitting the two mechanisms instead
+ * of trying to infer which one a `syscall` came from removes the
+ * distinction this bug depended on entirely.
  */
 #define X86_64_TRAP_GEMDOS 1
 #define X86_64_TRAP_BIOS 13
@@ -107,6 +124,31 @@ typedef struct {
  * VEC_GEM/VEC_BIOS/VEC_XBIOS writes go nowhere this ever reads), and
  * leaves the result in frame->rax for trapasm.S to restore before returning. */
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame);
+
+/*
+ * Kernel-mode entry point for GEMDOS/BIOS/XBIOS calls: builds a throwaway
+ * x86_64_trap_frame_t on the caller's own stack and calls
+ * x86_64_trap_dispatch() directly, exactly as if this were a genuine
+ * `syscall` round trip, but as a plain, ordinary, recursion-safe C
+ * function call -- no privilege transition, no swapgs, no dedicated
+ * stack. This is what every current caller (util/arch/x86_64/miscasm.S's
+ * trap1()/trap1_pexec(), and every x86_64 branch in include/biosbind.h/
+ * xbiosbind.h) uses instead of x86_64_syscall_entry, since none of them
+ * are a real ring-3 process (there is no such thing yet -- #334) and
+ * some of them call each other (bdos/fsmain.c's xsetdrv() calling
+ * Drvmap(), for one): an ordinary C call nests to any depth for free the
+ * same way any other recursive call does, on whatever kernel stack is
+ * already in use, which the shared syscall entry point cannot do without
+ * either corrupting its own single fixed stack bustack or performing the
+ * unsafe caller-classification the comment above rejects.
+ *
+ * Only rax/rdi/rsi/rdx/r10 are meaningful -- exactly the fields
+ * x86_64_trap_dispatch()'s GEMDOS/BIOS/XBIOS cases read -- matching the
+ * `syscall` calling convention above field for field so callers can be
+ * written (and read) as if this were that same convention with the
+ * privilege transition simply subtracted out.
+ */
+long x86_64_kernel_trap(long rax, long rdi, long rsi, long rdx, long r10);
 
 /*
  * Enables the `syscall`/`sysret` extension (IA32_EFER.SCE), points
