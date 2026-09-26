@@ -782,11 +782,37 @@ static void bios_init(void)
     nls_set_lang(get_lang_name());
 #endif
 
-    /* set start of user interface */
+    /* set start of user interface
+     *
+     * On x86-64, NOT a plain C `exec_os = ui_start`/`= coma_start`:
+     * taking the address of an extern symbol that way lets the compiler
+     * pick GOT-indirected addressing (`mov sym@GOTPCREL(%rip), %reg`,
+     * R_X86_64_REX_GOTPCRELX) for a symbol it can't prove is local at
+     * compile time, exactly the hazard bios/arch/x86_64/trap.c's own
+     * x86_64_syscall_entry/xbios_unimpl_addr comments already document
+     * at length -- this image's objects are ELF but the final link is
+     * PE (`ld -m i386pep`), whose backend does not perform the ELF
+     * static-executable GOT relaxation, so the load reads garbage
+     * instead of ui_start's/coma_start's real address. Forcing `lea`
+     * here (RIP-relative, self-adjusting to wherever this code actually
+     * runs, unlike a GOT load) sidesteps it, mirroring those same call
+     * sites' own fix. Confirmed by this exact bug reproducing here: a
+     * plain `exec_os = coma_start` read back as an unrelated garbage
+     * 64-bit value once gouser() (bdos/arch/x86_64/rwa.c) actually
+     * tried to call through it.
+     */
 #if CONF_WITH_AES
+#ifdef __x86_64__
+    __asm__("lea ui_start(%%rip), %0" : "=r"(exec_os));
+#else
     exec_os = ui_start;
+#endif
 #elif CONF_WITH_CLI
+#ifdef __x86_64__
+    __asm__("lea coma_start(%%rip), %0" : "=r"(exec_os));
+#else
     exec_os = coma_start;
+#endif
 #else
     exec_os = NULL;
 #endif
