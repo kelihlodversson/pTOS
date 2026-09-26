@@ -29,18 +29,30 @@
 
 /*
  * The whole saved map could -- at that smallest legal stride -- be
- * entirely free-eligible descriptors; the "+ 8" covers
- * add_free_region_excluding2() splitting a free descriptor against each
- * of its two independent reserved ranges (this image's own load span,
- * and separately the low system-vector page, #349) -- up to two extra
- * entries per descriptor if a single one somehow overlapped both, plus a
- * little slack, since a little more costs nothing. Derived from
- * X86_64_EFI_MAP_BYTES, rather than guessed independently, so this can
- * never overflow against whatever that buffer can actually hold (#348
- * review) -- in the same spirit as the MAX_PDPTS/MAX_PDS pools in
- * pgtable.c, but provably sized rather than merely generous.
+ * entirely free-eligible descriptors, and each one can turn into up to
+ * *three* surviving regions, not two: add_free_region_excluding2()
+ * clips a descriptor against reserved1 first (which can split it into a
+ * low and a high remainder -- 2 pieces), and then clips each of those
+ * remainders against reserved2 independently. reserved2 is a single
+ * contiguous range, so it can only strictly split one contiguous piece
+ * into two more -- if it also reached the other remainder, it would
+ * have to span across the entire reserved1 gap too, which just erodes
+ * that other remainder's edge rather than splitting it again (worked
+ * through in detail in the PR #350 review discussion this sizing
+ * responds to). So the true worst case per descriptor is 2 (from
+ * reserved1) + 1 (reserved2 splitting one of those further) = 3, and
+ * MAX_REGIONS has to provide 3 slots per possible descriptor, not a
+ * flat "+8" (which only covered two extra *total*, not per descriptor --
+ * a map with more than a handful of free descriptors actually split by
+ * both reserved ranges would exhaust the list and panic at boot). The
+ * "+ 8" left over here is now pure slack, since a little more costs
+ * nothing. Derived from X86_64_EFI_MAP_BYTES, rather than guessed
+ * independently, so this can never overflow against whatever that
+ * buffer can actually hold (#348 review) -- in the same spirit as the
+ * MAX_PDPTS/MAX_PDS pools in pgtable.c, but provably sized rather than
+ * merely generous.
  */
-#define MAX_REGIONS (X86_64_EFI_MAP_BYTES / MIN_EFI_DESCRIPTOR_SIZE + 8)
+#define MAX_REGIONS (3 * (X86_64_EFI_MAP_BYTES / MIN_EFI_DESCRIPTOR_SIZE) + 8)
 
 typedef struct {
     UQUAD base;
