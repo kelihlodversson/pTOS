@@ -633,7 +633,17 @@ static void bit_blt(struct blit_frame *blit_info)
            + (ULONG)d_xmin_off * (ULONG)blit_info->d_nxwd);
 
     /* if (just_screen && (s_addr < d_addr)) { */
-    if ((s_addr < d_addr)
+    /* Compared as integer addresses, not as pointers: s_addr/d_addr
+     * generally point into two distinct memory forms (source and
+     * destination), and C only defines `<`/`>` between pointers into the
+     * same array/object -- comparing across two unrelated allocations is
+     * undefined behavior, unlike the equality test just below (pointer
+     * equality is always well-defined, regardless of which objects the
+     * operands point into). This is purely an ordering/overlap check
+     * (mirroring the original ULONG-address comparison from before these
+     * were pointers), not a real array-bounds computation, so reducing
+     * to uintptr_t here costs nothing. */
+    if (((uintptr_t)s_addr < (uintptr_t)d_addr)
      || ((s_addr == d_addr) && (skew >= 0))) {
         /* start from lower right corner, so add width+length */
         s_addr = (UBYTE *)blit_info->s_form

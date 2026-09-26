@@ -442,7 +442,7 @@ config CONF_WITH_GOLDFISH_TTY
 	  as the serial console.
 
 config CONF_WITH_PC_COM1
-	bool "PC COM1 (16550 UART) support"
+	bool
 	depends on MACHINE_PC_X86_64
 	default y
 	help
@@ -450,6 +450,15 @@ config CONF_WITH_PC_COM1
 	  used for early boot diagnostics before bios_init() runs) as the
 	  serial console. This machine has no framebuffer driver yet (#332),
 	  so CONF_SERIAL_CONSOLE's default-on is this machine's only console.
+
+	  No user-facing prompt: earlycon.c's own init/puts calls (the
+	  pre-bios_init() diagnostic console startup.c and the panic paths
+	  use) are unconditional, with no guard checking this symbol at all,
+	  so turning it off would not actually silence or disable COM1 --
+	  it would just make this option lie about what it does. Until a
+	  real alternative (the framebuffer, #332) exists for this machine
+	  to fall back to, COM1 is genuinely mandatory equipment here, not
+	  a configurable choice.
 
 config CONF_WITH_PRINTER_PORT
 	bool "Parallel printer port support"
