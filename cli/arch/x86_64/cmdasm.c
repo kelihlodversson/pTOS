@@ -47,9 +47,32 @@ void coma_start(PD *bp)
      * Mshrink() call below reuses/frees anything else in it. */
     environment = bp->p_env;
 
-    /* Mshrink to the needed size: TEXT+DATA+BSS plus the basepage itself
-     * (sizeof(PD) == 256 == cli/cmdasm.S's (m68k) and cli/arch/arm/
-     * cmdasm.S's own hardcoded 256/SIZEOF_PD). */
+    /* Mshrink to the needed size: TEXT+DATA+BSS plus the basepage itself.
+     *
+     * `sizeof(PD)` here, not a hardcoded byte count: this matches the
+     * shared, cross-arch process loader's own convention for exactly
+     * this same computation (bdos/proc.c's `needed = h01_tlen + h01_dlen
+     * + h01_blen + sizeof(PD)`), which already relies on `struct _pd`'s
+     * real per-arch compiled size rather than assuming a fixed value.
+     * On m68k/ARM (ILP32) that size happens to be 256, matching
+     * cli/cmdasm.S's and cli/arch/arm/cmdasm.S's own hardcoded
+     * 256/SIZEOF_PD -- those files are raw assembly with no `sizeof()`
+     * to compute it from, so they carry a manually-maintained constant
+     * instead, kept in sync by hand.
+     *
+     * On this arch (LP64), `struct _pd`'s eight pointer-typed fields are
+     * 8 bytes each instead of 4, so `sizeof(PD)` is larger than 256 --
+     * deliberately: this is this port's own native basepage layout for
+     * a process built and run natively for the kernel's own LP64 ABI,
+     * which is what `bp` is today (there is no real x32/ILP32 process
+     * yet -- gouser() itself is NI, so this function has never actually
+     * run). It is NOT yet the fixed 256-byte, 32-bit-pointer basepage
+     * layout a genuine ELFCLASS32 x32-ABI TOS-compatible executable
+     * would need to see at these same field offsets -- reconciling the
+     * two (a native LP64 struct here vs. an ILP32-compatible one a real
+     * user process's own compiled code expects) is exactly the
+     * undecided design question #334 owns, not something this file can
+     * safely guess at ahead of that. */
     newsize = bp->p_tlen + bp->p_dlen + bp->p_blen + sizeof(PD);
     Mshrink(bp, newsize);
 
