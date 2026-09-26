@@ -117,20 +117,27 @@ C_SYM(x86_64_syscall_entry):
         pop     %rcx
 
         /*
-         * `sysretq` itself never validates %rcx (the target RIP, entirely
-         * caller-controlled: it is whatever the ring-3 caller's own %rcx
-         * held at the `syscall` instruction, untouched by anything
-         * above). A non-canonical target is not merely "the process
-         * faults after resuming" -- `sysretq` can fault on it directly,
-         * partway through changing privilege level/segment state, the
-         * same hardware hazard CVE-2012-0217 (and its Xen/*BSD analogues)
-         * exploited to run a #GP handler with attacker-influenced state
-         * still in effect. Checked here, still on the trusted kernel
-         * stack with kernel %gs, before either is given up below: shift
-         * left then arithmetic-shift right by 16 sign-extends bits 63:47
-         * from bit 47; canonical iff that reproduces the original value
-         * (Linux's entry_64.S uses the identical trick for the same
-         * reason).
+         * `sysretq` itself never validates %rcx (the target RIP). `syscall`
+         * does not preserve the caller's own pre-`syscall` %rcx at all --
+         * it overwrites %rcx with the return RIP (the address immediately
+         * following the `syscall` instruction in the caller's own code),
+         * which is what got pushed by the entry stub above and is what
+         * this restores unchanged. That return address is still
+         * caller-controlled in the sense that matters here: it comes from
+         * wherever in its own mapped code the caller executed `syscall`
+         * from, and (once a real per-process address space exists, #334)
+         * nothing at this entry/exit boundary re-validates it before
+         * `sysretq` uses it. A non-canonical target is not merely "the
+         * process faults after resuming" -- `sysretq` can fault on it
+         * directly, partway through changing privilege level/segment
+         * state, the same hardware hazard CVE-2012-0217 (and its Xen/*BSD
+         * analogues) exploited to run a #GP handler with attacker-
+         * influenced state still in effect. Checked here, still on the
+         * trusted kernel stack with kernel %gs, before either is given up
+         * below: shift left then arithmetic-shift right by 16
+         * sign-extends bits 63:47 from bit 47; canonical iff that
+         * reproduces the original value (Linux's entry_64.S uses the
+         * identical trick for the same reason).
          */
         movq    %rcx, %rax
         shlq    $16, %rax

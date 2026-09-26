@@ -62,6 +62,7 @@ static long xgetver(void);
 #define GEMDOS_FOPEN    0x3d
 #define GEMDOS_FREAD    0x3f
 #define GEMDOS_FWRITE   0x40
+#define GEMDOS_SUPER    0x20
 
 
 /*
@@ -503,6 +504,33 @@ restrt:
      */
     if (fn == GEMDOS_SSYSTEM)
         return xssystem((WORD)pw[1], pw[2], pw[3]);
+#endif
+
+#if defined(__x86_64__)
+    /*
+     * Super() (function 0x20): m68k/ARM intercept this directly in their
+     * own assembly GEMDOS trap entry (bdos/arch/{m68k,arm}/rwa.S) before
+     * ever reaching osif(), doing real supervisor-mode/user-stack
+     * switching there -- neither ever falls through to here for this
+     * function, so funcs[0x20] being NI (below) has never mattered for
+     * them. x86-64's trap.c dispatches straight into osif() with no
+     * equivalent entry-level interception, and has no real CPL0/CPL3
+     * distinction for a GEMDOS caller's own code to toggle yet either:
+     * every current caller, kernel-mode internal or the as-yet-unused
+     * ring-3 syscall path alike, is already executing at CPL0 by the
+     * time osif() runs -- #334's real per-process ring-3 application
+     * execution, the actual point of Super(), doesn't exist yet.
+     *
+     * Until it does, this is a degenerate but honest stand-in: every
+     * call (query, switch-to-supervisor, switch-to-user) reports
+     * "already supervisor" by returning 0, rather than falling through
+     * to funcs[0x20]'s NI and returning EINVFN -- which a caller like
+     * kprint.c's vkprintf() (see its own Super()/SuperToUser() pattern)
+     * would otherwise misread as a real (bogus) stack pointer to later
+     * restore.
+     */
+    if (fn == GEMDOS_SUPER)
+        return 0;
 #endif
 
     if (fn > MAX_FNCALL)

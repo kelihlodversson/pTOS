@@ -108,21 +108,23 @@ static UBYTE syscall_stack[SYSCALL_STACK_BYTES] __attribute__((aligned(16)));
  * -- pulling either in would mean this arch-generic file depending on a
  * bios/machine/pc-x86_64 header, the layering CLAUDE.md asks arch/ code
  * to avoid. Wildly generous is fine: these only need to safely contain
- * the real ranges, not match them tightly (see x86_64_is_kernel_mapped_addr()'s
- * own comment on why a loose bound here still cannot misfire against a
- * real GEMDOS argument).
+ * the real ranges, not match them tightly (see
+ * x86_64_arg_hits_known_kernel_range()'s own comment on why a loose
+ * bound here still cannot misfire against a real GEMDOS argument).
  */
 #define X86_64_KERNEL_IMAGE_SPAN_GENEROUS (32ULL * 1024 * 1024)  /* actual span ~4 MiB */
 #define X86_64_PHYS_MAP_SPAN_GENEROUS     (1ULL << 40)           /* 1 TiB */
 
 /*
- * True iff addr falls inside one of this kernel's own two known-mapped
- * address ranges: its own load image (X86_64_KERNEL_VIRT_BASE upward)
- * or the physical-memory direct map (X86_64_PHYS_MAP_BASE upward,
- * pgtable.h) -- the only ranges where a bad dereference could actually
- * read or corrupt live kernel state, as opposed to merely faulting
- * harmlessly into unmapped kernel-half address space. Used by
- * x86_64_trap_dispatch() to reject a genuine ring-3 caller's raw syscall
+ * NOT user-pointer validation, despite the name of what calls this
+ * (x86_64_trap_dispatch()'s from_ring3 check) -- read this comment in
+ * full before reusing or extending it. True iff addr falls inside one
+ * of this kernel's own two known-mapped address ranges: its own load
+ * image (X86_64_KERNEL_VIRT_BASE upward) or the physical-memory direct
+ * map (X86_64_PHYS_MAP_BASE upward, pgtable.h) -- the only ranges where
+ * a bad dereference could actually read or corrupt live kernel state,
+ * as opposed to merely faulting harmlessly into unmapped kernel-half
+ * address space. Used to reject a genuine ring-3 caller's raw syscall
  * argument without ever dereferencing it at CPL0 on the caller's behalf.
  *
  * This replaced an earlier, broader "reject anything outside the low
@@ -147,8 +149,45 @@ static UBYTE syscall_stack[SYSCALL_STACK_BYTES] __attribute__((aligned(16)));
  * by accident either: the odds of unrelated garbage exactly landing
  * inside one of these two narrow ranges are negligible, unlike the old
  * version's roughly 50% of the address space.
+ *
+ * Two further reasons this can never be "the" user-pointer check, worth
+ * spelling out precisely rather than leaving implicit:
+ *
+ * - #334's actual planned model for a real user process on this arch is
+ *   x32-style (an ILP32 process inside 64-bit long mode, like Linux's
+ *   x32 ABI), meaning every genuine user pointer will be below 4 GiB,
+ *   not merely "somewhere in the low canonical 47-bit half". A real
+ *   per-process check, once that address space exists, both can and
+ *   should be that much tighter -- rejecting anything outside a known
+ *   sub-4 GiB, per-process-mapped range, rather than merely rejecting
+ *   two specific kernel ranges out of the entire rest of the address
+ *   space. This function's job stops at "not a known kernel address";
+ *   it does not and cannot mean "is a valid pointer for this process".
+ *
+ * - Whether a signed scalar argument (Fseek()'s offset, Mxalloc()'s
+ *   amount, ...) arrives here sign-extended or zero-extended into its
+ *   64-bit register depends on how the *caller* wrote the literal or
+ *   variable it passed to a bdosbind.h/xbiosbind.h macro -- these expand
+ *   to a call through trap1()'s variadic `long trap1(int, ...)`
+ *   (include/arch/x86_64/asm.h), so a caller writing e.g. `Fseek(-9, ...)`
+ *   passes a plain (32-bit) `int` -9, which C's own variadic argument
+ *   passing does not further widen; the x86-64 backend's 32-bit register
+ *   write for that argument then zero-extends it into the corresponding
+ *   64-bit register by ordinary ISA rules (any 32-bit destination write
+ *   clears the upper 32 bits), giving 0x00000000FFFFFFF7 -- a completely
+ *   different bit pattern from the sign-extended 0xFFFFFFFFFFFFFFF7 a
+ *   caller instead gets by writing `Fseek(-9L, ...)`. Both patterns
+ *   happen to fall outside this function's own narrow ranges (a
+ *   zero-extended small negative is nowhere near 4 GiB, let alone this
+ *   kernel's own load span or physical map), so today's check is
+ *   unaffected either way -- but this ambiguity is real, predates this
+ *   port, and is not otherwise documented anywhere: no per-call,
+ *   per-slot argument-type metadata can be built reliably (#334 or
+ *   otherwise) on top of a calling convention whose own scalar
+ *   sign/zero-extension is undefined depending on how each of the
+ *   codebase's many existing call sites happened to write a literal.
  */
-static int x86_64_is_kernel_mapped_addr(UQUAD addr)
+static int x86_64_arg_hits_known_kernel_range(UQUAD addr)
 {
     if (addr >= X86_64_KERNEL_VIRT_BASE
         && addr < X86_64_KERNEL_VIRT_BASE + X86_64_KERNEL_IMAGE_SPAN_GENEROUS)
@@ -165,10 +204,10 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     ULONG fn = (ULONG)frame->rax;
 
     if (from_ring3 &&
-        (x86_64_is_kernel_mapped_addr(frame->rdi) ||
-         x86_64_is_kernel_mapped_addr(frame->rsi) ||
-         x86_64_is_kernel_mapped_addr(frame->rdx) ||
-         x86_64_is_kernel_mapped_addr(frame->r10))) {
+        (x86_64_arg_hits_known_kernel_range(frame->rdi) ||
+         x86_64_arg_hits_known_kernel_range(frame->rsi) ||
+         x86_64_arg_hits_known_kernel_range(frame->rdx) ||
+         x86_64_arg_hits_known_kernel_range(frame->r10))) {
         /* GEMDOS has a real "bad address" error code; BIOS/XBIOS calls
          * don't share one convention (return types vary per call), so
          * -1L (already this dispatcher's own "unhandled class" value

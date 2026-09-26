@@ -43,13 +43,20 @@
  * any way to know this OS is still using: [reserved1_base, reserved1_end)
  * -- this image's own load span (code, data, bss, boot stack and page
  * tables) plus the saved memory map buffer itself -- and
- * [reserved2_base, reserved2_end) -- the low system-vector page
- * (pgtable.c's x86_64_map_low_vectors(), #349). Kept as two ranges rather
- * than the smallest single range spanning both: EFI typically loads this
- * image well above address 0, and collapsing the (usually large) gap
- * between them into one reserved block would falsely exclude a lot of
- * genuinely free memory. Pass the same range twice for both if a caller
- * ever has only one to reserve.
+ * [reserved2_base, reserved2_end) -- a conservative margin below the
+ * caller's own load span, historically the low system-vector page
+ * pgtable.c's x86_64_map_low_vectors() identity-mapped directly; that
+ * function now maps virtual address 0 to an ordinary allocated page
+ * instead (see its own comment on why: physical address 0 is not
+ * guaranteed to be usable RAM on real PC firmware), so nothing actually
+ * requires this range to stay unallocated any more, but leaving it
+ * reserved costs nothing and avoids handing out low addresses some
+ * other firmware quirk might still treat specially. Kept as two ranges
+ * rather than the smallest single range spanning both: EFI typically
+ * loads this image well above address 0, and collapsing the (usually
+ * large) gap between them into one reserved block would falsely
+ * exclude a lot of genuinely free memory. Pass the same range twice for
+ * both if a caller ever has only one to reserve.
  *
  * Only ever grows the free list (there is no matching "free a page" yet
  * -- nothing this early returns memory), so this is a one-shot bump
@@ -77,20 +84,5 @@ UQUAD x86_64_pmem_free_bytes(void);
  * to cover to reach every byte of RAM the firmware ever reported, not
  * just the free subset. */
 UQUAD x86_64_pmem_highest_addr(void);
-
-/*
- * True iff [base, base+length) is entirely covered by is_ram_type()
- * descriptors in the EFI memory map x86_64_pmem_init() was given.
- * Unlike the free-page list, this walks the raw map itself, so it can
- * answer "is this real memory" for a range x86_64_pmem_init() was told
- * to reserve (and which therefore never appears as free) -- pgtable.c's
- * x86_64_map_low_vectors() uses this to confirm physical address 0 is
- * actually backed by RAM before zeroing it: real PC firmware can report
- * anything from VGA/option-ROM shadow MMIO to ACPI-reserved regions
- * starting well before the 2 MiB mark, and nothing about being asked to
- * simulate the m68k low system-vector area there makes that safe to
- * assume.
- */
-int x86_64_pmem_region_is_ram(UQUAD base, UQUAD length);
 
 #endif /* PC_X86_64_PMEM_H */

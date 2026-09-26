@@ -249,12 +249,15 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      */
     /*
      * Two independent reserved ranges, not one spanning both: this
-     * image's own load span, and separately physical [0, 2 MiB), which
-     * x86_64_map_low_vectors() (called later, post-jump) identity-maps
-     * for the low system-vector area (#349). EFI typically loads this
-     * image well above address 0 (mapped_base is usually several MiB in),
-     * so collapsing the gap between the two into one reserved block would
-     * falsely exclude a large amount of genuinely free memory.
+     * image's own load span, and separately physical [0, 2 MiB) -- a
+     * conservative margin kept unallocated even though
+     * x86_64_map_low_vectors() (called later, post-jump) no longer needs
+     * it specifically (it maps virtual address 0 to an ordinary
+     * allocated page now, not this exact range -- see its own comment).
+     * EFI typically loads this image well above address 0 (mapped_base
+     * is usually several MiB in), so collapsing the gap between the two
+     * into one reserved block would falsely exclude a large amount of
+     * genuinely free memory.
      */
     x86_64_pmem_init(saved_memory_map, saved_map_size, saved_descriptor_size,
                       mapped_base, mapped_base + IMAGE_SPAN_BYTES + X86_64_PAGE_2M_SIZE,
@@ -311,28 +314,30 @@ void NORETURN x86_64_higher_half_main(void)
     earlycon_puts("pTOS x86-64: identity mapping dropped\n");
 
     /*
-     * x86_64_map_low_vectors() zeroes physical address 0 unconditionally
-     * -- fine on the QEMU/OVMF map this port has actually been tested
-     * against, but real PC firmware is not required to report that range
-     * as RAM (VGA/option-ROM shadow areas, the EBDA, ACPI-reserved
-     * regions, ... can all start below 2 MiB, some below 4 KiB). Confirm
-     * it here, against the real EFI memory map, rather than let that
-     * function -- which has no machine-specific pmem.h to check against,
-     * see its own comment -- write zeroes into whatever happens to be
-     * there.
-     */
-    if (!x86_64_pmem_region_is_ram(0, X86_64_LOW_VECTOR_BYTES))
-        panic("low system-vector area is not usable RAM per the EFI memory map");
-
-    /*
      * Must follow the drop above, not precede it: both target PML4 slot 0
      * (see x86_64_map_low_vectors()'s own comment). Gives the shared
      * core's generic bios_init() (bios/bios.c) somewhere real to write
      * VEC_GEM/VEC_BIOS/VEC_XBIOS -- nothing on this arch reads them back
      * (trap.c dispatches directly, see its own comment), but bios_init()
      * writes through them unconditionally regardless of arch.
+     *
+     * x86_64_map_low_vectors() wants a 2 MiB-aligned physical page to
+     * back virtual address 0 with -- real RAM the physical-memory
+     * allocator (pmem.c) already vouches for, not physical address 0
+     * itself (see that function's own comment on why that would not be
+     * portable). x86_64_pmem_alloc_pages() only guarantees the ordinary
+     * 4 KiB (X86_64_PAGE_SIZE) alignment every free region already has,
+     * so this allocates twice the 2 MiB actually needed and rounds the
+     * returned base up to the next 2 MiB boundary, which is guaranteed to
+     * still fall within the allocated span; the wasted lead-in is cheap
+     * at this boot stage.
      */
-    x86_64_map_low_vectors();
+    {
+        UQUAD raw_phys = x86_64_pmem_alloc_pages(2 * (X86_64_PAGE_2M_SIZE / X86_64_PAGE_SIZE));
+        UQUAD aligned_phys = (raw_phys + X86_64_PAGE_2M_SIZE - 1) & ~(X86_64_PAGE_2M_SIZE - 1);
+
+        x86_64_map_low_vectors(aligned_phys);
+    }
     earlycon_puts("pTOS x86-64: low system-vector area mapped\n");
 
     /*

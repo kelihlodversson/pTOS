@@ -233,15 +233,35 @@ void x86_64_drop_identity_map(void)
 }
 
 /*
- * Identity-maps physical/virtual [0, 2 MiB) -- a single 2 MiB page, the
- * smallest granularity this file's page tables support -- but zeroes only
- * X86_64_LOW_VECTOR_BYTES of it. Must be called after
- * x86_64_drop_identity_map(): both target PML4 slot 0 (any real or
- * emulated system has far less than 512 GiB of RAM, so both the image's
- * own identity window and address 0 fall in the same slot), and this
- * needs that slot already cleared so it allocates its own fresh PDPT/PD
- * there rather than corrupting whatever the identity window's now-dangling
- * one still occupied.
+ * Maps virtual [0, 2 MiB) -- a single 2 MiB page, the smallest
+ * granularity this file's page tables support -- to backing_phys, a
+ * physical address the caller (startup.c) allocated from the physical-
+ * memory allocator rather than physical address 0 itself. Only
+ * X86_64_LOW_VECTOR_BYTES (one 4 KiB page) of it is ever zeroed or
+ * written. Must be called after x86_64_drop_identity_map(): both target
+ * PML4 slot 0 (any real or emulated system has far less than 512 GiB of
+ * RAM, so both the image's own identity window and address 0 fall in the
+ * same slot), and this needs that slot already cleared so it allocates
+ * its own fresh PDPT/PD there rather than corrupting whatever the
+ * identity window's now-dangling one still occupied.
+ *
+ * backing_phys must itself be 2 MiB-aligned (this file's own page tables
+ * have no finer granularity to map a smaller, differently-aligned region
+ * with) and must be memory the physical-memory allocator (pmem.c) handed
+ * out, i.e. real EFI-reported RAM -- deliberately NOT physical address 0
+ * itself: on real PC/UEFI hardware, physical address 0 is not guaranteed
+ * to be RAM at all (some firmware reports the low IVT/BDA area, or even
+ * all of low memory, as reserved rather than conventional memory, for
+ * legacy-compatibility reasons that have nothing to do with whether an
+ * OS not relying on real-mode BIOS calls could actually use it) -- an
+ * earlier version of this function identity-mapped and zeroed physical
+ * address 0 directly, which would have refused to boot on any such
+ * firmware even though the failure has nothing to do with the low
+ * system-vector area's actual purpose below. Using an ordinary allocated
+ * page instead removes the dependency on physical page zero specifically
+ * ever being usable, portably, rather than trying to first prove that it
+ * is (which is what an earlier version of this function's caller did,
+ * via a now-removed x86_64_pmem_region_is_ram() check).
  *
  * The zeroed prefix is the low system-vector area the shared core's
  * generic bios_init() unconditionally writes through (VEC_GEM/VEC_BIOS/
@@ -254,25 +274,17 @@ void x86_64_drop_identity_map(void)
  * whatever garbage was physically there) makes every not-yet-installed
  * vector a null pointer: dereferencing one faults straight into this
  * arch's own panic path (#331), which needs no ARM-style "any_vec"
- * indirection to produce a readable diagnostic.
- *
- * Deliberately NOT the whole mapped 2 MiB: on real PC/UEFI hardware,
- * physical address 0 is not guaranteed to be RAM for that entire span --
- * VGA/option-ROM shadow areas, the EBDA, and ACPI-reserved regions can all
- * start well before the 2 MiB mark. Only X86_64_LOW_VECTOR_BYTES (one 4
- * KiB page, comfortably covering every offset above) is ever written; the
- * caller (startup.c) already confirmed that specific range is real,
- * EFI-reported RAM (x86_64_pmem_region_is_ram()) before calling this. The
- * rest of the 2 MiB page stays mapped -- identity page tables have no
- * finer granularity here -- but untouched: nothing in the shared
- * dispatch path ever reads or writes past 0xfc.
+ * indirection to produce a readable diagnostic. The rest of the 2 MiB
+ * page stays mapped -- identity page tables have no finer granularity
+ * here -- but untouched: nothing in the shared dispatch path ever reads
+ * or writes past 0xfc.
  */
-void x86_64_map_low_vectors(void)
+void x86_64_map_low_vectors(UQUAD backing_phys)
 {
     volatile UQUAD *p = (volatile UQUAD *)(uintptr_t)0;
     UQUAD i;
 
-    map_2m_range(0, 0, 1);
+    map_2m_range(0, backing_phys, 1);
     reload_cr3();
 
     for (i = 0; i < X86_64_LOW_VECTOR_BYTES / sizeof(UQUAD); i++)

@@ -104,14 +104,18 @@ UQUAD x86_64_low_to_high(UQUAD low_addr);
 void x86_64_drop_identity_map(void);
 
 /*
- * Identity-maps and zeroes physical/virtual [0, 2 MiB) -- the low
- * system-vector area bios_init() (bios/bios.c, generic) unconditionally
- * writes VEC_GEM/VEC_BIOS/VEC_XBIOS into, and the GEMDOS/BIOS/XBIOS trap
- * dispatch path (#349) reads back from. Must be called after
- * x86_64_drop_identity_map(): see that function's own comment for why
- * (both target PML4 slot 0).
+ * Maps virtual [0, 2 MiB) to backing_phys (a 2 MiB-aligned physical
+ * address the caller allocated from the physical-memory allocator, real
+ * RAM by construction -- not physical address 0 itself, which real PC/
+ * UEFI firmware is not guaranteed to report as usable memory; see this
+ * function's own comment in pgtable.c) and zeroes the low system-vector
+ * area within it -- what bios_init() (bios/bios.c, generic)
+ * unconditionally writes VEC_GEM/VEC_BIOS/VEC_XBIOS into, and the
+ * GEMDOS/BIOS/XBIOS trap dispatch path (#349) reads back from. Must be
+ * called after x86_64_drop_identity_map(): see that function's own
+ * comment for why (both target PML4 slot 0).
  */
-void x86_64_map_low_vectors(void);
+void x86_64_map_low_vectors(UQUAD backing_phys);
 
 /*
  * Maps [0, max_phys) into the permanent physical-memory direct map at
