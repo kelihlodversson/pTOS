@@ -158,6 +158,35 @@ void x86_64_build_physmap(UQUAD max_phys);
  * boot) trap. */
 int x86_64_cpu_has_1g_pages(void);
 
+/*
+ * Populates a freshly allocated, caller-owned PML4 (at pml4_phys, a 4 KiB-
+ * aligned physical page the caller got from the physical-memory allocator
+ * -- the same "caller allocates, this file just builds page-table entries
+ * at the given backing" division of labor x86_64_map_low_vectors() above
+ * already uses) into a new #334 process address space: every canonical
+ * high-half slot (index 256-511 -- both X86_64_KERNEL_VIRT_BASE's and
+ * X86_64_PHYS_MAP_BASE's, plus any future high-half mapping added later,
+ * copied wholesale rather than by naming each one) is copied verbatim from
+ * this kernel's own master PML4, so the kernel and the physical-memory
+ * direct map stay mapped and reachable from this new address space too --
+ * required because `syscall`/`sysret` (#333) never changes CR3, so
+ * whichever process's page tables are current when a trap happens must
+ * already have the kernel's own mappings present, not just the calling
+ * process's own. Every low-half slot (0-255, covering the entire
+ * ILP32-addressable range below 4 GiB and then some) is left clear for
+ * the process loader to populate with that process's own text/data/bss/
+ * heap/stack -- including, deliberately, PML4 slot 0's own low-vector
+ * sub-range: unlike the single shared boot-time PML4, a new process's
+ * slot 0 starts with nothing mapped there at all, not a copy of the
+ * kernel's simulated system-vector page. Whether (and how safely) to also
+ * map that same physical low-vector page into a real process's own low
+ * half, so Setexc() continues to work the way real TOS's shared-address-
+ * space design assumed, is the copy_from_user()-style validation gap
+ * #352 already tracks -- not resolved by this function, which only
+ * builds the address space's kernel-shared half.
+ */
+void x86_64_new_address_space(UQUAD pml4_phys);
+
 #endif /* __ASSEMBLER__ */
 
 #endif /* X86_64_PGTABLE_H */

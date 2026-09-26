@@ -365,6 +365,28 @@ int x86_64_cpu_has_1g_pages(void)
     return (edx >> 26) & 1;
 }
 
+/*
+ * See this function's own comment in pgtable.h for the full design
+ * rationale; this is just the mechanical part. Written through the
+ * physical-memory direct map, exactly like x86_64_addr_mapped_readable()
+ * above does for reads -- pml4_phys is a physical address, and there is
+ * no guarantee it is (or ever will be) identity-mapped, only that it is
+ * reachable at X86_64_PHYS_MAP_BASE + pml4_phys once x86_64_build_physmap()
+ * has run, which every caller of this function needs to already be true
+ * of anyway (a process address space is meaningless before the kernel's
+ * own memory management is up).
+ */
+void x86_64_new_address_space(UQUAD pml4_phys)
+{
+    pgentry_t *new_pml4 = (pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + pml4_phys);
+    int i;
+
+    for (i = 0; i < 256; i++)
+        new_pml4[i] = 0;
+    for (i = 256; i < 512; i++)
+        new_pml4[i] = pml4[i];
+}
+
 void x86_64_build_physmap(UQUAD max_phys)
 {
     UQUAD count = (max_phys + X86_64_PAGE_1G_SIZE - 1) / X86_64_PAGE_1G_SIZE;
