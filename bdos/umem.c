@@ -463,9 +463,19 @@ long xmaddalt(UBYTE *start, LONG size)
     if (size <= 0)
         return -1;
 
-    /* does it overlap with ST RAM? */
-    if (((start < start_stram) && (start+size > start_stram))
-     || (start < end_stram))
+    /*
+     * Does it overlap with ST-RAM?  The plain interval test, rather than
+     * the older "starts below ST-RAM and reaches into it, or starts below
+     * the end of it" pair: the second half of that had no lower bound, so
+     * it also rejected a block lying entirely *underneath* ST-RAM.
+     *
+     * Every machine this code grew up on put its Alt-RAM above ST-RAM --
+     * the TT's TT-RAM at 0x01000000 above ST-RAM at 0 -- so the case never
+     * came up.  The RP2350 is the other way round: its SRAM is at
+     * 0x20000000 and the QSPI window the PSRAM answers in is at
+     * 0x11000000, below it.
+     */
+    if ((start < end_stram) && (start + size > start_stram))
         return -1;
 
     /* try to merge blocks */
