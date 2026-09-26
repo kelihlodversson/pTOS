@@ -198,10 +198,19 @@ static UBYTE syscall_stack[SYSCALL_STACK_BYTES] __attribute__((aligned(16)));
  *   legitimate small scalar arguments already occupy (handles, counts,
  *   modes -- a file handle of 3 and a "pointer" of 0x84 are
  *   indistinguishable by magnitude alone), so rejecting it here the same
- *   way would reject most real GEMDOS traffic, not just an attack. There
- *   is no magnitude-based fix for this one: closing it for real needs
- *   the same per-process address space and copy_from_user()-style
- *   validation #334 already owns, not an extension of this function.
+ *   way would reject most real GEMDOS traffic, not just an attack.
+ *   Unmapping it once bios_init()'s own boot-time writes are done isn't
+ *   safe either: Setexc() (bios/bios.c's setexc()) genuinely reads and
+ *   writes arbitrary low addresses via `(LONG *)(4L * num)` for any
+ *   vector number outside 0x100-0x102 -- e.g. Setexc(0x21, ...) touches
+ *   0x84 directly -- so this is real, ongoing kernel state a future
+ *   process's own Setexc() calls need, not boot-time scratch. There is
+ *   no magnitude-based fix for this one: closing it for real needs the
+ *   same per-process address space and copy_from_user()-style validation
+ *   #334 already owns, not an extension of this function. Tracked as
+ *   #352, with this exact reasoning (including the Setexc() finding and
+ *   why SMAP does not help -- it guards CPL0 access to *user*-accessible
+ *   pages, and this mapping is supervisor-only, the opposite case).
  */
 static int x86_64_arg_hits_known_kernel_range(UQUAD addr)
 {
