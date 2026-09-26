@@ -187,6 +187,41 @@ int x86_64_cpu_has_1g_pages(void);
  */
 void x86_64_new_address_space(UQUAD pml4_phys);
 
+/*
+ * Maps one 4 KiB page at virt to phys within pml4_phys -- a process address
+ * space x86_64_new_address_space() already populated, not this kernel's own
+ * PML4 -- for #334's ILP32 user processes. Unlike map_2m_page()/
+ * map_2m_range() (pgtable.c, kernel-only, statically pooled, 2 MiB/1 GiB
+ * granularity), this walks and allocates PDPT/PD/PT entries for an
+ * arbitrary caller-specified PML4 through the physical-memory direct map,
+ * so table counts are unbounded rather than drawn from a small fixed pool.
+ *
+ * alloc_page is called (0-3 times per call: PDPT, PD, PT, whichever levels
+ * do not already exist for virt) and must return a freshly allocated,
+ * page-aligned physical page each time; this file zeroes it before use.
+ * Taking a callback rather than calling
+ * bios/machine/pc-x86_64/pmem.h's x86_64_pmem_alloc_pages() directly keeps
+ * this arch-level file free of a dependency on that machine-level header
+ * (see CLAUDE.md's arch/machine split) -- the pc-x86_64 process loader
+ * passes a one-line wrapper around x86_64_pmem_alloc_pages(1).
+ *
+ * executable controls the leaf's NX bit (set when executable is false).
+ * EFER_NXE (trap.c's x86_64_trap_init()) must already be enabled before
+ * this is ever called with executable == 0 -- until it is, the NX bit is
+ * architecturally reserved-must-be-zero and setting it raises #GP instead
+ * of doing what its name says.
+ *
+ * writable/executable/PTE_USER are only meaningful at the leaf; every
+ * intermediate table entry this creates is unconditionally present+
+ * writable+user, since the effective access a leaf grants is the AND of
+ * every level's own bits down to it (see user_table_slot()'s own comment
+ * in pgtable.c) -- a stricter intermediate entry would silently override
+ * a more permissive leaf instead of the other way around.
+ */
+void x86_64_map_user_page(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
+                          int writable, int executable,
+                          UQUAD (*alloc_page)(void));
+
 #endif /* __ASSEMBLER__ */
 
 #endif /* X86_64_PGTABLE_H */

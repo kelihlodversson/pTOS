@@ -79,6 +79,7 @@ extern void x86_64_syscall_entry(void);
 #define MSR_KERNEL_GS_BASE 0xC0000102UL
 
 #define EFER_SCE 0x1ULL /* SYSCALL/SYSRET enable */
+#define EFER_NXE 0x800ULL /* No-Execute page-protection enable (bit 11) */
 
 /*
  * This CPU's per-CPU state (trap.h). Only one instance: no real
@@ -326,7 +327,15 @@ void x86_64_trap_init(void)
 {
     UQUAD efer = x86_64_rdmsr(MSR_EFER);
 
-    x86_64_wrmsr(MSR_EFER, efer | EFER_SCE);
+    /*
+     * One combined read-modify-write, not two separate MSR writes: a
+     * second wrmsr() using a stale `efer` read before the first one
+     * landed would clobber whichever bit it did not itself set. NXE
+     * readies the PTE_NX (bit 63) page-table protection bit #334's
+     * per-process page tables will need for non-executable data/stack
+     * segments; SCE is the pre-existing syscall/sysret enable.
+     */
+    x86_64_wrmsr(MSR_EFER, efer | EFER_SCE | EFER_NXE);
 
     /*
      * STAR[47:32] is both the kernel CS `syscall` loads directly and the

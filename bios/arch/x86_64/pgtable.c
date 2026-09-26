@@ -12,8 +12,10 @@
 
 #define PTE_PRESENT  0x1ULL
 #define PTE_WRITABLE 0x2ULL
+#define PTE_USER     0x4ULL    /* ring-3 accessible; must be set at every level, not just the leaf */
 #define PTE_PS       0x80ULL   /* 2 MiB (PD) or 1 GiB (PDPT) page, context-dependent */
 #define PTE_ADDR_MASK 0xFFFFFFFFFF000ULL
+#define PTE_NX       0x8000000000000000ULL /* no-execute leaf; needs EFER_NXE set first, see trap.c */
 
 typedef UQUAD pgentry_t;
 
@@ -385,6 +387,75 @@ void x86_64_new_address_space(UQUAD pml4_phys)
         new_pml4[i] = 0;
     for (i = 256; i < 512; i++)
         new_pml4[i] = pml4[i];
+}
+
+/*
+ * Returns the table one level below table[index], allocating and zeroing a
+ * fresh physical page for it via alloc_page() if that entry is not present
+ * yet. Always walked through the physical-memory direct map rather than a
+ * dereferenceable local pointer: unlike pml4_slot_pdpt()/pdpt_slot_pd()
+ * above (which only ever build this kernel's own small, statically pooled
+ * PDPT/PD tables), table here can itself already be a direct-map alias of
+ * an arbitrary process's own page, so unlike those, there is no "current
+ * low-or-high context" to reuse -- every level is addressed the same way,
+ * physically. Sets PTE_USER (in addition to PTE_PRESENT | PTE_WRITABLE) on
+ * a newly created intermediate entry: the effective access a leaf entry
+ * grants is the AND of every level's own permission bits down to it, so an
+ * intermediate table missing PTE_USER would silently make every ring-3
+ * mapping under it inaccessible regardless of what the leaf itself says.
+ * Traps if the existing entry is a large (PTE_PS) page: that would mean
+ * virt was already mapped at a coarser granularity, which never
+ * legitimately happens while populating a fresh per-process address space.
+ */
+static pgentry_t *user_table_slot(pgentry_t *table, UQUAD index, UQUAD (*alloc_page)(void))
+{
+    pgentry_t entry = table[index];
+    UQUAD child_phys;
+    pgentry_t *child;
+    int i;
+
+    if (entry & PTE_PRESENT) {
+        if (entry & PTE_PS)
+            __builtin_trap();
+        return (pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + (entry & PTE_ADDR_MASK));
+    }
+
+    child_phys = alloc_page();
+    child = (pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + child_phys);
+    for (i = 0; i < 512; i++)
+        child[i] = 0;
+    table[index] = child_phys | PTE_PRESENT | PTE_WRITABLE | PTE_USER;
+    return child;
+}
+
+/*
+ * See this function's own comment in pgtable.h for the full design
+ * rationale; this is just the mechanical part. pml4_phys is one a prior
+ * x86_64_new_address_space() call populated (the kernel-shared high half);
+ * this only ever touches the low half (slots 0-255), one 4 KiB leaf per
+ * call, walking/allocating the PDPT/PD/PT chain for virt as needed via
+ * user_table_slot() above.
+ */
+void x86_64_map_user_page(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
+                          int writable, int executable,
+                          UQUAD (*alloc_page)(void))
+{
+    UQUAD pml4_index = (virt >> 39) & 0x1FF;
+    UQUAD pdpt_index = (virt >> 30) & 0x1FF;
+    UQUAD pd_index = (virt >> 21) & 0x1FF;
+    UQUAD pt_index = (virt >> 12) & 0x1FF;
+    pgentry_t *l4 = (pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + pml4_phys);
+    pgentry_t *pdpt = user_table_slot(l4, pml4_index, alloc_page);
+    pgentry_t *pd = user_table_slot(pdpt, pdpt_index, alloc_page);
+    pgentry_t *pt = user_table_slot(pd, pd_index, alloc_page);
+    pgentry_t entry = (phys & PTE_ADDR_MASK) | PTE_PRESENT | PTE_USER;
+
+    if (writable)
+        entry |= PTE_WRITABLE;
+    if (!executable)
+        entry |= PTE_NX;
+
+    pt[pt_index] = entry;
 }
 
 void x86_64_build_physmap(UQUAD max_phys)
