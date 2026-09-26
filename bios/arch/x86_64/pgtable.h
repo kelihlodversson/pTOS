@@ -118,6 +118,29 @@ void x86_64_drop_identity_map(void);
 void x86_64_map_low_vectors(UQUAD backing_phys);
 
 /*
+ * Maps count 2 MiB pages at virt (2 MiB-aligned) to backing_phys (also
+ * 2 MiB-aligned) in THIS kernel's own page tables -- unlike
+ * x86_64_new_address_space()/x86_64_map_user_page() below, which build an
+ * arbitrary caller-specified process's own PML4, this extends the one
+ * this file already maintains internally, the same PML4
+ * x86_64_build_page_tables()/x86_64_map_low_vectors() populate. Must be
+ * called after x86_64_map_low_vectors(): both can share the same PML4
+ * slot 0 -- reusing whatever PDPT/PD that call already allocated there
+ * is what lets a virt outside its own [0, 2 MiB) window still land in the
+ * right table -- but only if that slot has already been (re)created.
+ *
+ * For #334: bios/machine/pc-x86_64/memory.c's own low TPA pool needs a
+ * real low, sub-4 GiB, virtual-equals-physical mapping -- not just a
+ * physical page below 4 GiB reachable via the (high, 64-bit-only)
+ * physical-memory direct map -- because pointers into it eventually get
+ * narrowed into a GEMDOS PD's 32-bit p_tbase/p_hitpa/... fields
+ * (USERPTR_T, bdosdefs.h), which must already be the process's own
+ * dereferenceable address, not a value that needs translating first.
+ * This is that mapping's mechanism.
+ */
+void x86_64_map_kernel_pages(UQUAD virt, UQUAD backing_phys, UQUAD count);
+
+/*
  * True iff virt is backed by a present mapping in this kernel's own page
  * tables, checked read-only (never allocates, unlike
  * x86_64_build_page_tables()/x86_64_build_physmap()'s own internal PML4/

@@ -294,6 +294,18 @@ void x86_64_map_low_vectors(UQUAD backing_phys)
 }
 
 /*
+ * See this function's own comment in pgtable.h; this is just the
+ * mechanical part, reusing map_2m_range() (this kernel's own master
+ * pml4[], the same one x86_64_build_page_tables()/x86_64_map_low_vectors()
+ * populate) rather than duplicating its PDPT/PD walk.
+ */
+void x86_64_map_kernel_pages(UQUAD virt, UQUAD backing_phys, UQUAD count)
+{
+    map_2m_range(virt, backing_phys, count);
+    reload_cr3();
+}
+
+/*
  * True iff virt is backed by a present mapping in this kernel's own page
  * tables (PML4 -> PDPT -> PD), checked read-only via the physical-memory
  * direct map (X86_64_PHYS_MAP_BASE) rather than pml4_slot_pdpt()/

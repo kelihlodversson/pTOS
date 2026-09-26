@@ -517,11 +517,45 @@ static char *alloc_env(ULONG flags, char *env)
  * returns: ptr to allocated memory (NULL => failed)
  *          updates 'avail' with the size of allocated memory
  */
+#ifdef __x86_64__
+/*
+ * bios/machine/pc-x86_64/memory.c's own low, sub-4GiB TPA pool -- not
+ * reached through mem.h/a shared header (bdos/build.mk's include path
+ * has no bios/machine/pc-x86_64 entry, unlike bios/'s own), declared
+ * directly here instead, matching this file's existing precedent of
+ * inlining small x86-64-specific declarations (struct gouser_stack
+ * above) rather than plumbing them through a shared header only one
+ * function needs.
+ */
+extern UBYTE *x86_64_low_tpa_alloc(LONG needed);
+#endif
+
 static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
 {
     MD *md;
     LONG st_ram_size;
     BOOL st_ram_available = FALSE;
+
+#ifdef __x86_64__
+    /*
+     * This arch has no ST/alternate-RAM distinction to route through
+     * ffit()/pmd/pmdalt at all -- and, more fundamentally, membot/
+     * memtop (what pmd's free list is ultimately built from) point into
+     * _end_os_stram, an ordinary higher-half kernel symbol that cannot
+     * be forced low without an unrelated relocation overflow (see
+     * memory.c's own comment on x86_64_low_tpa_init() for why). Route
+     * through that dedicated low pool instead; *avail is simply the
+     * whole request, since this pool never grows a TPA beyond what was
+     * asked for the way ST/alt-RAM's own tiebreaker logic below does.
+     */
+    {
+        UBYTE *low = x86_64_low_tpa_alloc(needed);
+
+        if (low)
+            *avail = needed;
+        return low;
+    }
+#endif
 
     st_ram_size = (LONG) ffit(-1L, &pmd);
     if (st_ram_size >= needed)
