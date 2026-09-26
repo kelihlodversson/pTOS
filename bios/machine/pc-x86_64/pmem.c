@@ -232,6 +232,25 @@ UQUAD x86_64_pmem_alloc_pages(UQUAD count)
     panic("pmem: out of physical memory");
 }
 
+UQUAD x86_64_pmem_alloc_pages_below(UQUAD count, UQUAD limit)
+{
+    UQUAD want = count * X86_64_PAGE_SIZE;
+    int i;
+
+    for (i = 0; i < region_count; i++) {
+        if (regions[i].length >= want && regions[i].base + want <= limit) {
+            UQUAD addr = regions[i].base;
+
+            regions[i].base += want;
+            regions[i].length -= want;
+            total_free -= want;
+            return addr;
+        }
+    }
+
+    panic("pmem: out of physical memory below requested limit");
+}
+
 UQUAD x86_64_pmem_free_bytes(void)
 {
     return total_free;

@@ -56,7 +56,66 @@ typedef struct
 
 /*
  *  PD - Process Descriptor (a.k.a. BASEPAGE)
+ *
+ *  This is the real, in-memory GEMDOS basepage layout every ILP32 user
+ *  process reads directly at these fixed byte offsets (the "0xNN"-style
+ *  comments below) -- unlike bdosdefs.h's other structs (MD/MPB above),
+ *  which are purely kernel-internal bookkeeping never exposed to a
+ *  process at a fixed address. On the ILP32 arches (m68k, ARM) a native
+ *  pointer already IS the 32-bit ABI field a process expects, so
+ *  USERPTR_T(type) below is just `type *` there, unchanged from before
+ *  this comment existed. On x86-64's LP64 kernel, a native pointer is 64
+ *  bits -- using one here would silently produce a different (larger,
+ *  differently-offset) struct layout than the ABI a real ring-3 x32
+ *  process reads, exactly the mismatch cli/arch/x86_64/cmdasm.c's own
+ *  comment on `sizeof(PD)` flagged as "the undecided design question
+ *  #334 owns" before this was resolved: USERPTR_T(type) is ULONG there
+ *  instead, matching the ABI's real 32-bit field width and giving this
+ *  struct the traditional 256-byte layout on every arch. Kernel code
+ *  that needs a real, dereferenceable pointer from one of these fields
+ *  (or needs to store one into one) must go through USERPTR_TO_PTR()/
+ *  PTR_TO_USERPTR() below rather than assuming a field is directly
+ *  dereferenceable or directly assignable from a real pointer -- true
+ *  today only on the ILP32 arches, where those macros are a no-op, and
+ *  necessary on x86-64, where a field is a plain integer needing an
+ *  explicit widen/narrow.
  */
+#ifdef __x86_64__
+#define USERPTR_T(type) ULONG
+/* Widens a stored 32-bit ABI value back into a real, dereferenceable
+ * kernel pointer -- valid to do at all only because #334's per-process
+ * address-space design keeps every such value within the low canonical
+ * range every process (and the kernel, via the identity-style low
+ * mapping #351/#334 need) can already reach directly; this performs the
+ * widening arithmetic only, not any access validation (a ring-3-supplied
+ * pointer's own trustworthiness is #352's separate, still-open concern).
+ * Returns void * -- callers cast to whatever pointee type the specific
+ * field actually holds (DTA *, PD *, char *, ...), same as the ILP32
+ * arches' own real pointer fields already require for anything other
+ * than UBYTE *. */
+#define USERPTR_TO_PTR(up) ((void *)(uintptr_t)(ULONG)(up))
+/* Narrows a real kernel pointer down to the 32-bit ABI field width.
+ * Traps rather than silently truncating if the address does not
+ * actually fit -- the exact silent-corruption bug #351 documents for a
+ * plain (LONG) cast, just caught here instead of reproduced. Every
+ * caller's own pointer is expected to already be low/32-bit-representable
+ * by construction (#334's per-process address-space design only ever
+ * hands out such addresses for anything meant to end up in a PD field),
+ * so this is a correctness safety net, not a normal-path failure mode. */
+static inline ULONG ptr_to_userptr(const void *p)
+{
+    UQUAD addr = (UQUAD)(uintptr_t)p;
+
+    if (addr > 0xFFFFFFFFULL)
+        __builtin_trap();
+    return (ULONG)addr;
+}
+#define PTR_TO_USERPTR(p) ptr_to_userptr(p)
+#else
+#define USERPTR_T(type) type *
+#define USERPTR_TO_PTR(up) ((void *)(up))
+#define PTR_TO_USERPTR(p) (p)
+#endif
 
 #define NUMSTD      6       /* number of standard files */
 #define NUMCURDIR   BLKDEVNUM   /* number of entries in curdir array */
@@ -66,20 +125,20 @@ typedef struct _pd PD;
 struct _pd
 {
 /* 0x00 */
-    UBYTE   *p_lowtpa;      /* pointer to start of TPA */
-    UBYTE   *p_hitpa;       /* pointer to end of TPA+1 */
-    UBYTE   *p_tbase;       /* pointer to base of text segment */
+    USERPTR_T(UBYTE) p_lowtpa;      /* pointer to start of TPA */
+    USERPTR_T(UBYTE) p_hitpa;       /* pointer to end of TPA+1 */
+    USERPTR_T(UBYTE) p_tbase;       /* pointer to base of text segment */
     LONG    p_tlen;         /* length of text segment */
 /* 0x10 */
-    UBYTE   *p_dbase;       /* pointer to base of data segment */
+    USERPTR_T(UBYTE) p_dbase;       /* pointer to base of data segment */
     LONG    p_dlen;         /* length of data segment */
-    UBYTE   *p_bbase;       /* pointer to base of bss segment */
+    USERPTR_T(UBYTE) p_bbase;       /* pointer to base of bss segment */
     LONG    p_blen;         /* length of bss segment */
 /* 0x20 */
-    DTA     *p_xdta;
-    PD      *p_parent;      /* parent PD */
+    USERPTR_T(DTA) p_xdta;
+    USERPTR_T(PD) p_parent;      /* parent PD */
     ULONG   p_flags;        /* see below */
-    char    *p_env;         /* pointer to environment string */
+    USERPTR_T(char) p_env;         /* pointer to environment string */
 /* 0x30 */
     SBYTE   p_uft[NUMSTD];  /* index into sys file table for std files */
     char    p_lddrv;
