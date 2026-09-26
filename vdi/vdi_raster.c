@@ -35,14 +35,27 @@
 #define GetMemW(addr) ((ULONG)*(UWORD*)(addr))
 #define SetMemW(addr, val) *(UWORD*)(addr) = val
 
-/* structure passed to raster blit functions */
+/* structure passed to raster blit functions.
+ *
+ * src_addr/dst_addr are UBYTE* (not ULONG): they are raw byte addresses
+ * into a memory form, walked by adding the byte-granular s_nxwd/s_nxln/
+ * s_nxpl offsets from struct blit_frame (vdi_raster.h documents those as
+ * "in bytes"), and GetMemW()/SetMemW() below already reinterpret-cast
+ * them to UWORD* only at the point of access -- a ULONG here was never
+ * anything but a byte address that happened to fit in 32 bits on every
+ * arch this file previously ran on. On x86-64, blit_info->s_form/d_form
+ * (vdi_raster.h, already UWORD*) can be a genuine higher-half kernel
+ * address; truncating it through ULONG in bit_blt() below would produce
+ * a bogus low address before do_blit()/hwblit_raster() ever dereferenced
+ * it. UBYTE* keeps identical byte-offset arithmetic (pointer + int moves
+ * by that many bytes) while staying native pointer width on every arch. */
 typedef struct {
     UWORD          halftone[16];
     WORD           src_x_inc, src_y_inc;
-    ULONG          src_addr;
+    UBYTE          *src_addr;
     WORD           end_1, end_2, end_3;
     WORD           dst_x_inc, dst_y_inc;
-    ULONG          dst_addr;
+    UBYTE          *dst_addr;
     UWORD          x_cnt, y_cnt;
     UBYTE          hop, op, status, skew;
 } BLITVARS;
@@ -543,7 +556,7 @@ static void bit_blt(struct blit_frame *blit_info)
     WORD skew, skew_idx;
     WORD s_span, s_xmin_off, s_xmax_off;
     WORD d_span, d_xmin_off, d_xmax_off;
-    ULONG s_addr, d_addr;
+    UBYTE *s_addr, *d_addr;
     BLITVARS blitter;
 
     /* a5-> BLiTTER register block */
@@ -605,24 +618,30 @@ static void bit_blt(struct blit_frame *blit_info)
     if (skew < 0 )
         skew_idx |= 0x0001;             /* d6[bit0]<- alignment flag */
 
-    /* Calculate starting addresses */
-    s_addr = (ULONG)blit_info->s_form
-        + (ULONG)blit_info->s_ymin * (ULONG)blit_info->s_nxln
-        + (ULONG)s_xmin_off * (ULONG)blit_info->s_nxwd;
-    d_addr = (ULONG)blit_info->d_form
-        + (ULONG)blit_info->d_ymin * (ULONG)blit_info->d_nxln
-        + (ULONG)d_xmin_off * (ULONG)blit_info->d_nxwd;
+    /* Calculate starting addresses.
+     *
+     * The offset (everything past the base pointer) is deliberately
+     * still computed the same all-ULONG way as before -- same 32-bit
+     * wraparound semantics on every arch -- and only added to the base
+     * pointer at the end, so this is a no-op change everywhere except
+     * that the base address itself no longer gets truncated first. */
+    s_addr = (UBYTE *)blit_info->s_form
+        + ((ULONG)blit_info->s_ymin * (ULONG)blit_info->s_nxln
+           + (ULONG)s_xmin_off * (ULONG)blit_info->s_nxwd);
+    d_addr = (UBYTE *)blit_info->d_form
+        + ((ULONG)blit_info->d_ymin * (ULONG)blit_info->d_nxln
+           + (ULONG)d_xmin_off * (ULONG)blit_info->d_nxwd);
 
     /* if (just_screen && (s_addr < d_addr)) { */
     if ((s_addr < d_addr)
      || ((s_addr == d_addr) && (skew >= 0))) {
         /* start from lower right corner, so add width+length */
-        s_addr = (ULONG)blit_info->s_form
-            + (ULONG)blit_info->s_ymax * (ULONG)blit_info->s_nxln
-            + (ULONG)s_xmax_off * (ULONG)blit_info->s_nxwd;
-        d_addr = (ULONG)blit_info->d_form
-            + (ULONG)blit_info->d_ymax * (ULONG)blit_info->d_nxln
-            + (ULONG)d_xmax_off * (ULONG)blit_info->d_nxwd;
+        s_addr = (UBYTE *)blit_info->s_form
+            + ((ULONG)blit_info->s_ymax * (ULONG)blit_info->s_nxln
+               + (ULONG)s_xmax_off * (ULONG)blit_info->s_nxwd);
+        d_addr = (UBYTE *)blit_info->d_form
+            + ((ULONG)blit_info->d_ymax * (ULONG)blit_info->d_nxln
+               + (ULONG)d_xmax_off * (ULONG)blit_info->d_nxwd);
 
         /* offset between consecutive words in planes */
         blt->src_x_inc = -blit_info->s_nxwd;
