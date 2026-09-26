@@ -581,6 +581,8 @@ pTOS x86-64 EFI boot stub: alive in the higher half
 pTOS x86-64: GDT/TSS loaded
 pTOS x86-64: IDT loaded, exceptions armed
 pTOS x86-64: identity mapping dropped
+pTOS x86-64: low system-vector area mapped
+pTOS x86-64: low system-vector area verified
 pTOS x86-64: physical memory free=<hex bytes>
   highest_addr=<hex address>
 pTOS x86-64: physical memory direct map verified

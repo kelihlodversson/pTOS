@@ -29,16 +29,30 @@
 
 /*
  * The whole saved map could -- at that smallest legal stride -- be
- * entirely free-eligible descriptors; the "+ 4" covers
- * add_free_region_excluding() splitting a free descriptor in two
- * wherever this image's own reserved range overlaps it (ordinarily one
- * descriptor, so one extra entry, but a little slack costs nothing).
- * Derived from X86_64_EFI_MAP_BYTES, rather than guessed independently,
- * so this can never overflow against whatever that buffer can actually
- * hold (#348 review) -- in the same spirit as the MAX_PDPTS/MAX_PDS
- * pools in pgtable.c, but provably sized rather than merely generous.
+ * entirely free-eligible descriptors, and each one can turn into up to
+ * *three* surviving regions, not two: add_free_region_excluding2()
+ * clips a descriptor against reserved1 first (which can split it into a
+ * low and a high remainder -- 2 pieces), and then clips each of those
+ * remainders against reserved2 independently. reserved2 is a single
+ * contiguous range, so it can only strictly split one contiguous piece
+ * into two more -- if it also reached the other remainder, it would
+ * have to span across the entire reserved1 gap too, which just erodes
+ * that other remainder's edge rather than splitting it again (worked
+ * through in detail in the PR #350 review discussion this sizing
+ * responds to). So the true worst case per descriptor is 2 (from
+ * reserved1) + 1 (reserved2 splitting one of those further) = 3, and
+ * MAX_REGIONS has to provide 3 slots per possible descriptor, not a
+ * flat "+8" (which only covered two extra *total*, not per descriptor --
+ * a map with more than a handful of free descriptors actually split by
+ * both reserved ranges would exhaust the list and panic at boot). The
+ * "+ 8" left over here is now pure slack, since a little more costs
+ * nothing. Derived from X86_64_EFI_MAP_BYTES, rather than guessed
+ * independently, so this can never overflow against whatever that
+ * buffer can actually hold (#348 review) -- in the same spirit as the
+ * MAX_PDPTS/MAX_PDS pools in pgtable.c, but provably sized rather than
+ * merely generous.
  */
-#define MAX_REGIONS (X86_64_EFI_MAP_BYTES / MIN_EFI_DESCRIPTOR_SIZE + 4)
+#define MAX_REGIONS (3 * (X86_64_EFI_MAP_BYTES / MIN_EFI_DESCRIPTOR_SIZE) + 8)
 
 typedef struct {
     UQUAD base;
@@ -138,8 +152,33 @@ static void add_free_region_excluding(UQUAD base, UQUAD length,
         add_free_region(reserved_end, end - reserved_end);
 }
 
+/* Same as add_free_region_excluding(), but against two independent
+ * reserved ranges -- this image's own load span and, separately, the low
+ * system-vector page (#349) -- rather than the smallest single range that
+ * happens to cover both. The two are typically far apart (EFI usually
+ * loads this image well above address 0), and reserving everything in
+ * between as one contiguous range would falsely exclude a large amount of
+ * genuinely free memory; this instead clips each disjoint reserved range
+ * out in turn, keeping whatever survives between them. */
+static void add_free_region_excluding2(UQUAD base, UQUAD length,
+                                        UQUAD reserved1_base, UQUAD reserved1_end,
+                                        UQUAD reserved2_base, UQUAD reserved2_end)
+{
+    UQUAD end = base + length;
+
+    if (end <= reserved1_base || base >= reserved1_end) {
+        add_free_region_excluding(base, length, reserved2_base, reserved2_end);
+        return;
+    }
+    if (base < reserved1_base)
+        add_free_region_excluding(base, reserved1_base - base, reserved2_base, reserved2_end);
+    if (end > reserved1_end)
+        add_free_region_excluding(reserved1_end, end - reserved1_end, reserved2_base, reserved2_end);
+}
+
 void x86_64_pmem_init(const void *efi_map, UQUAD map_size, UQUAD descriptor_size,
-                       UQUAD reserved_base, UQUAD reserved_end)
+                       UQUAD reserved1_base, UQUAD reserved1_end,
+                       UQUAD reserved2_base, UQUAD reserved2_end)
 {
     const UBYTE *cursor = (const UBYTE *)efi_map;
     const UBYTE *map_end = cursor + map_size;
@@ -163,7 +202,8 @@ void x86_64_pmem_init(const void *efi_map, UQUAD map_size, UQUAD descriptor_size
         case EFI_CONVENTIONAL_MEMORY:
         case EFI_BOOT_SERVICES_CODE:
         case EFI_BOOT_SERVICES_DATA:
-            add_free_region_excluding(base, length, reserved_base, reserved_end);
+            add_free_region_excluding2(base, length, reserved1_base, reserved1_end,
+                                        reserved2_base, reserved2_end);
             break;
         default:
             /* Reserved, ACPI, MMIO, runtime-services, this image's own

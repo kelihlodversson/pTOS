@@ -34,6 +34,18 @@
 #define X86_64_PAGE_1G_SIZE 0x40000000ULL
 
 /*
+ * Size of the prefix of the identity-mapped low page (see
+ * x86_64_map_low_vectors()) that is actually zeroed and used as the
+ * simulated m68k system-vector area: one 4 KiB page, comfortably above
+ * VEC_UNIMPINT (bios/vectors.h, 0xf4), the highest offset this arch's
+ * bios_init() call chain writes into. Callers wanting to confirm this
+ * exact range is real RAM before it is touched (x86_64_pmem_region_is_ram(),
+ * bios/machine/pc-x86_64/pmem.h) use this same constant rather than
+ * guessing a size independently.
+ */
+#define X86_64_LOW_VECTOR_BYTES 0x1000ULL
+
+/*
  * Virtual base of the permanent physical-memory direct map: every
  * physical address x86_64_build_physmap() was told to cover is also
  * reachable at this virtual base plus its physical address. Chosen well
@@ -90,6 +102,33 @@ UQUAD x86_64_low_to_high(UQUAD low_addr);
  * X86_64_PHYS_MAP_BASE above). Reloads CR3 itself before returning.
  */
 void x86_64_drop_identity_map(void);
+
+/*
+ * Maps virtual [0, 2 MiB) to backing_phys (a 2 MiB-aligned physical
+ * address the caller allocated from the physical-memory allocator, real
+ * RAM by construction -- not physical address 0 itself, which real PC/
+ * UEFI firmware is not guaranteed to report as usable memory; see this
+ * function's own comment in pgtable.c) and zeroes the low system-vector
+ * area within it -- what bios_init() (bios/bios.c, generic)
+ * unconditionally writes VEC_GEM/VEC_BIOS/VEC_XBIOS into, and the
+ * GEMDOS/BIOS/XBIOS trap dispatch path (#349) reads back from. Must be
+ * called after x86_64_drop_identity_map(): see that function's own
+ * comment for why (both target PML4 slot 0).
+ */
+void x86_64_map_low_vectors(UQUAD backing_phys);
+
+/*
+ * True iff virt is backed by a present mapping in this kernel's own page
+ * tables, checked read-only (never allocates, unlike
+ * x86_64_build_page_tables()/x86_64_build_physmap()'s own internal PML4/
+ * PDPT walking helpers). Requires x86_64_build_physmap() to have already
+ * run (it reads back through the physical-memory direct map); safe any
+ * time after that, including from an exception handler. See its own
+ * comment in pgtable.c for exactly what "confirmed mapped" means here
+ * (a 1 GiB or 2 MiB page; a further 4 KiB PT level, never created by
+ * this file, reads as "not confirmed" rather than being walked).
+ */
+int x86_64_addr_mapped_readable(UQUAD virt);
 
 /*
  * Maps [0, max_phys) into the permanent physical-memory direct map at

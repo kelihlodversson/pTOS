@@ -576,6 +576,21 @@ struct gouser_stack {
     LONG retaddr;
     LONG spsr;       /* note the basepage is passed in r0 and not on the stack */
 };
+#elif defined(__x86_64__)
+/*
+ * Not yet a real coroutine stack layout (unlike the ARM/m68k structs
+ * above): a genuine x86-64 gouser()/termuser() needs a dedicated
+ * per-process kernel stack (bdos/arch/x86_64/rwa.S's gouser()/termuser()
+ * panic rather than attempting anything with this, see that file's own
+ * comment) plus a real ring0->ring3 transition (iretq, reusing the
+ * GDT/TSS this arch's trap.c already sets up) -- more than this one
+ * struct can express. Kept as an empty placeholder so proc_go() below
+ * has something of the right *kind* to size/reference without pretending
+ * the m68k/ARM field layouts mean anything here.
+ */
+struct gouser_stack {
+    LONG unused;
+};
 #else
 struct gouser_stack {
   LONG other_sp;   /* a4, the other stack pointer */
@@ -604,6 +619,11 @@ static void proc_go(PD *p)
     sp->other_sp = (long) &supstk[SUPSIZ];
     /* store this new stack in the saved sp field of the PD */
     p->p_areg[7-3] = (long) sp;
+#elif defined(__x86_64__)
+    /* Not implemented yet -- see gouser_stack's own comment above and
+     * bdos/arch/x86_64/rwa.S. gouser() below panics with a clear message
+     * rather than silently running with none of this set up. */
+    (void)sp;
 #else
     sp->basepage = p;      /* the stack contains the basepage */
 

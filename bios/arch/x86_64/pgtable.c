@@ -30,10 +30,14 @@ typedef UQUAD pgentry_t;
  * emulated firmware, but pml4_slot_pdpt()/pdpt_slot_pd() below hard-trap
  * rather than silently overrunning the pool if it ever happens, so these
  * sizes only need to comfortably cover the normal case plus that
- * worst-case doubling, not be provably exhaustive.
+ * worst-case doubling, not be provably exhaustive. +1 each over that
+ * covers x86_64_map_low_vectors()'s own single-2 MiB-page mapping (#349),
+ * which (like the identity window) falls in PML4 slot 0 and so needs a
+ * fresh PDPT/PD of its own once x86_64_drop_identity_map() has cleared
+ * whatever the identity window used there.
  */
-#define MAX_PDPTS 3
-#define MAX_PDS 6
+#define MAX_PDPTS 4
+#define MAX_PDS 7
 
 static pgentry_t pml4[512] __attribute__((aligned(4096)));
 static pgentry_t pdpts[MAX_PDPTS][512] __attribute__((aligned(4096)));
@@ -47,10 +51,57 @@ static int next_pd;
  * PD/PT level at all -- see x86_64_build_physmap(). */
 static pgentry_t physmap_pdpt[512] __attribute__((aligned(4096)));
 
+/* The identity (low) window's bounds, as x86_64_build_page_tables() last
+ * set them up -- remembered here (rather than left for each caller to
+ * recompute) so phys_addr_of()/x86_64_low_to_high()/
+ * x86_64_drop_identity_map() below have a single source of truth for
+ * exactly what that window covers. */
+static UQUAD identity_low_base;
+static UQUAD identity_low_end;
+
+/*
+ * Converts a pointer to this image's own static data -- as a file-static
+ * array's address is always computed, i.e. RIP-relative -- into the
+ * physical address that belongs in a page-table entry. Such a computation
+ * reflects whichever alias is CURRENTLY executing it: this image's actual
+ * low load address before the higher-half jump (startup.c), or its high
+ * alias after (x86_64_low_to_high()'s own comment has the full story).
+ * Needed because pml4_slot_pdpt()/pdpt_slot_pd() below are called from
+ * both sides of that jump -- x86_64_build_page_tables() before it,
+ * x86_64_map_low_vectors() after -- and only the low case is already a
+ * physical address; the high one needs translating back down, or it gets
+ * stored verbatim as a physical frame number with a canonical-high-half
+ * bit pattern nowhere near this system's actual physical address width
+ * (the exact bug x86_64_build_physmap() was separately fixed for, and
+ * this needs its own fix rather than reusing that one: physmap_pdpt is
+ * only ever built pre-jump, but pdpts[]/pds[] are now built on both
+ * sides).
+ */
+static UQUAD phys_addr_of(const void *p)
+{
+    UQUAD addr = (UQUAD)(uintptr_t)p;
+
+    if (addr >= X86_64_KERNEL_VIRT_BASE)
+        return addr - X86_64_KERNEL_VIRT_BASE + identity_low_base;
+    return addr;
+}
+
 /* Returns the PDPT for pml4[pml4_index], allocating one from the pool on
  * first use. Traps (see the MAX_PDPTS comment above) rather than
  * overrunning the pdpts[] pool if the caller ever needs more distinct
- * PML4 slots than provisioned for. */
+ * PML4 slots than provisioned for.
+ *
+ * Always returns the pool array element directly (a pointer dereferenceable
+ * from wherever this is CURRENTLY called from), never a pointer
+ * reconstructed from the table entry's stored (always physical, see
+ * phys_addr_of()) address: that reconstruction would only be
+ * dereferenceable when physical addresses happen to equal virtual ones,
+ * true only in the low/identity context. This means a pml4_index whose
+ * entry already exists must have been allocated during the SAME low-or-
+ * high context as the current call -- true for every caller today (each
+ * only ever (re)uses a pml4_index it fully owns within one call), but not
+ * proven for all possible future ones.
+ */
 static pgentry_t *pml4_slot_pdpt(UQUAD pml4_index)
 {
     pgentry_t *pdpt;
@@ -59,15 +110,18 @@ static pgentry_t *pml4_slot_pdpt(UQUAD pml4_index)
         if (next_pdpt >= MAX_PDPTS)
             __builtin_trap();
         pdpt = pdpts[next_pdpt++];
-        pml4[pml4_index] = (UQUAD)(uintptr_t)pdpt | PTE_WRITABLE | PTE_PRESENT;
+        pml4[pml4_index] = phys_addr_of(pdpt) | PTE_WRITABLE | PTE_PRESENT;
+        return pdpt;
     }
-    return (pgentry_t *)(uintptr_t)(pml4[pml4_index] & PTE_ADDR_MASK);
+    return pdpts[next_pdpt - 1];
 }
 
 /* Returns the PD for pdpt[pdpt_index], allocating one from the pool on
  * first use. Traps (see the MAX_PDPTS comment above) rather than
  * overrunning the pds[] pool if the caller ever needs more distinct PDPT
- * slots than provisioned for. */
+ * slots than provisioned for. See pml4_slot_pdpt()'s own comment for why
+ * this always returns a pool array element directly, and its stated
+ * limitation. */
 static pgentry_t *pdpt_slot_pd(pgentry_t *pdpt, UQUAD pdpt_index)
 {
     pgentry_t *pd;
@@ -76,9 +130,10 @@ static pgentry_t *pdpt_slot_pd(pgentry_t *pdpt, UQUAD pdpt_index)
         if (next_pd >= MAX_PDS)
             __builtin_trap();
         pd = pds[next_pd++];
-        pdpt[pdpt_index] = (UQUAD)(uintptr_t)pd | PTE_WRITABLE | PTE_PRESENT;
+        pdpt[pdpt_index] = phys_addr_of(pd) | PTE_WRITABLE | PTE_PRESENT;
+        return pd;
     }
-    return (pgentry_t *)(uintptr_t)(pdpt[pdpt_index] & PTE_ADDR_MASK);
+    return pds[next_pd - 1];
 }
 
 /* Maps one 2 MiB page at virt to phys, walking (and allocating, as
@@ -103,13 +158,6 @@ static void map_2m_range(UQUAD virt, UQUAD phys, UQUAD count)
     for (i = 0; i < count; i++)
         map_2m_page(virt + i * X86_64_PAGE_2M_SIZE, phys + i * X86_64_PAGE_2M_SIZE);
 }
-
-/* The identity (low) window's bounds, as x86_64_build_page_tables() last
- * set them up -- remembered here (rather than left for each caller to
- * recompute) so x86_64_low_to_high() and x86_64_drop_identity_map() below
- * have a single source of truth for exactly what that window covers. */
-static UQUAD identity_low_base;
-static UQUAD identity_low_end;
 
 UQUAD x86_64_build_page_tables(UQUAD phys_base, UQUAD span, UQUAD *out_aligned_base)
 {
@@ -182,6 +230,122 @@ void x86_64_drop_identity_map(void)
         pml4[i] = 0;
 
     reload_cr3();
+}
+
+/*
+ * Maps virtual [0, 2 MiB) -- a single 2 MiB page, the smallest
+ * granularity this file's page tables support -- to backing_phys, a
+ * physical address the caller (startup.c) allocated from the physical-
+ * memory allocator rather than physical address 0 itself. Only
+ * X86_64_LOW_VECTOR_BYTES (one 4 KiB page) of it is ever zeroed or
+ * written. Must be called after x86_64_drop_identity_map(): both target
+ * PML4 slot 0 (any real or emulated system has far less than 512 GiB of
+ * RAM, so both the image's own identity window and address 0 fall in the
+ * same slot), and this needs that slot already cleared so it allocates
+ * its own fresh PDPT/PD there rather than corrupting whatever the
+ * identity window's now-dangling one still occupied.
+ *
+ * backing_phys must itself be 2 MiB-aligned (this file's own page tables
+ * have no finer granularity to map a smaller, differently-aligned region
+ * with) and must be memory the physical-memory allocator (pmem.c) handed
+ * out, i.e. real EFI-reported RAM -- deliberately NOT physical address 0
+ * itself: on real PC/UEFI hardware, physical address 0 is not guaranteed
+ * to be RAM at all (some firmware reports the low IVT/BDA area, or even
+ * all of low memory, as reserved rather than conventional memory, for
+ * legacy-compatibility reasons that have nothing to do with whether an
+ * OS not relying on real-mode BIOS calls could actually use it) -- an
+ * earlier version of this function identity-mapped and zeroed physical
+ * address 0 directly, which would have refused to boot on any such
+ * firmware even though the failure has nothing to do with the low
+ * system-vector area's actual purpose below. Using an ordinary allocated
+ * page instead removes the dependency on physical page zero specifically
+ * ever being usable, portably, rather than trying to first prove that it
+ * is (which is what an earlier version of this function's caller did,
+ * via a now-removed x86_64_pmem_region_is_ram() check).
+ *
+ * The zeroed prefix is the low system-vector area the shared core's
+ * generic bios_init() unconditionally writes through (VEC_GEM/VEC_BIOS/
+ * VEC_XBIOS at their traditional m68k addresses, bios/vectors.h, the
+ * highest of which -- VEC_UNIMPINT, 0xf4 -- this arch's generic bios_init()
+ * call chain also reaches) and the trap dispatch path (#349) reads back
+ * from -- every other pTOS port already reserves this same low range for
+ * exactly this, whether it is real m68k hardware or ARM's own simulated
+ * equivalent (bios/arch/arm/vectors.c). Zeroing it (rather than leaving
+ * whatever garbage was physically there) makes every not-yet-installed
+ * vector a null pointer: dereferencing one faults straight into this
+ * arch's own panic path (#331), which needs no ARM-style "any_vec"
+ * indirection to produce a readable diagnostic. The rest of the 2 MiB
+ * page stays mapped -- identity page tables have no finer granularity
+ * here -- but untouched: nothing in the shared dispatch path ever reads
+ * or writes past 0xfc.
+ */
+void x86_64_map_low_vectors(UQUAD backing_phys)
+{
+    volatile UQUAD *p = (volatile UQUAD *)(uintptr_t)0;
+    UQUAD i;
+
+    map_2m_range(0, backing_phys, 1);
+    reload_cr3();
+
+    for (i = 0; i < X86_64_LOW_VECTOR_BYTES / sizeof(UQUAD); i++)
+        p[i] = 0;
+}
+
+/*
+ * True iff virt is backed by a present mapping in this kernel's own page
+ * tables (PML4 -> PDPT -> PD), checked read-only via the physical-memory
+ * direct map (X86_64_PHYS_MAP_BASE) rather than pml4_slot_pdpt()/
+ * pdpt_slot_pd() above -- those assume an already-present entry belongs
+ * to the most-recently allocated pool slot (fine for their own
+ * allocating callers, wrong for looking up an arbitrary existing mapping
+ * out of order; see their own comments). Never walks past a PD entry:
+ * every mapping this file ever builds is a 2 MiB (PD, PTE_PS) or 1 GiB
+ * (PDPT, PTE_PS) page, so a PD entry present without PTE_PS (implying a
+ * further 4 KiB PT level this file never creates) is treated
+ * conservatively as "not confirmed mapped" rather than walked further.
+ *
+ * Used by panic.c's dump_stack() to avoid dereferencing an interrupted
+ * ring-3 caller's own (possibly garbage) RSP: once a real ring-3 fault
+ * is reachable (#350), a bad user RSP is a caller-triggerable, ordinary
+ * event, not the "something is already catastrophically wrong" case the
+ * unconditional raw dump was originally written for -- faulting again
+ * partway through printing a diagnostic risks losing the whole panic
+ * message to a triple fault instead of just skipping one section of it.
+ *
+ * Rejects a non-canonical address outright, before ever indexing pml4[]
+ * with it: bits 63:39 are masked away by the shift below regardless of
+ * whether they are a valid sign-extension of bit 47, so a non-canonical
+ * address could otherwise alias whatever pml4[] index its low bits
+ * happen to share with a real mapping and be misreported as mapped.
+ */
+int x86_64_addr_mapped_readable(UQUAD virt)
+{
+    UQUAD pml4_index = (virt >> 39) & 0x1FF;
+    UQUAD pdpt_index = (virt >> 30) & 0x1FF;
+    UQUAD pd_index = (virt >> 21) & 0x1FF;
+    pgentry_t entry;
+    const pgentry_t *table;
+    UQUAD canon_check = (UQUAD)(((QUAD)virt << 16) >> 16);
+
+    if (canon_check != virt)
+        return 0;
+
+    entry = pml4[pml4_index];
+    if (!(entry & PTE_PRESENT))
+        return 0;
+
+    table = (const pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + (entry & PTE_ADDR_MASK));
+    entry = table[pdpt_index];
+    if (!(entry & PTE_PRESENT))
+        return 0;
+    if (entry & PTE_PS)
+        return 1; /* 1 GiB page */
+
+    table = (const pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + (entry & PTE_ADDR_MASK));
+    entry = table[pd_index];
+    if (!(entry & PTE_PRESENT))
+        return 0;
+    return (entry & PTE_PS) ? 1 : 0; /* 2 MiB page, else not confirmed */
 }
 
 /* CPUID.80000001H:EDX.Page1GB [bit 26] -- support for 1 GiB pages at the

@@ -1,13 +1,21 @@
 /*
- * tosvars.c - storage for the ARM subset of the TOS system variables
+ * tosvars.c - storage for the non-m68k subset of the TOS system variables
  *
  * On m68k, tosvars.ld gives every one of these a fixed low-memory
  * address, for compatibility with real TOS software that reads them
- * directly. ARM has no such software to be compatible with, and
- * Ssystem() (bdos/ssystem.c) now gives ARM programs a documented way
- * to reach the same values without a fixed address at all -- so on
- * ARM these are just ordinary global variables, wherever the linker
- * puts them. See #219.
+ * directly. Neither ARM nor x86-64 has any such software to be
+ * compatible with, and Ssystem() (bdos/ssystem.c) now gives programs on
+ * either a documented way to reach the same values without a fixed
+ * address at all -- so here these are just ordinary global variables,
+ * wherever the linker puts them. See #219.
+ *
+ * Deliberately not under an arch/ subdirectory (unlike most files this
+ * generic-vs-per-arch), since the content is genuinely arch-neutral C:
+ * bios/build.mk pulls it in via a separate obj-$(ARCH_ARM)/obj-$(ARCH_X86_64)
+ * line in each arch's own section instead, the same pattern bdos/ssystem.c
+ * (also arch-neutral, also needed by both) already uses. m68k/ColdFire
+ * builds never reference this object at all, since tosvars.ld already
+ * gives them real fixed-address storage for every symbol here.
  *
  * This covers exactly the system variables bios/tosvars.h declares
  * (i.e. the ones used by C code); a handful of others that aren't
@@ -68,13 +76,13 @@ UBYTE *dskbufp;
 WORD dumpflg;
 
 /*
- * unlike m68k, this isn't overlaid on any real ROM header memory -- ARM
- * has no software depending on the exact byte layout of OSHEADER, so this
- * is just an ordinary struct populated with the same build-time values
- * bios/arch/m68k/startup.S embeds in its own header.
+ * unlike m68k, this isn't overlaid on any real ROM header memory -- neither
+ * ARM nor x86-64 has software depending on the exact byte layout of
+ * OSHEADER, so this is just an ordinary struct populated with the same
+ * build-time values bios/arch/m68k/startup.S embeds in its own header.
  */
 const OSHEADER os_header = {
-    0,                                          /* os_entry (unused on ARM) */
+    0,                                          /* os_entry (unused here) */
     0,                                          /* os_version */
     just_rts,                                   /* reseth */
     (OSHEADER *)&os_header,                     /* os_beg: ABI field is non-const */
@@ -115,5 +123,6 @@ LONG (*bconout_vec[8])(WORD, WORD);
 LONG vbl_list[8];
 
 /* on m68k this is patched externally in the OSXH header (see startup.S);
- * ARM has no such header, so the boot delay is simply always disabled. */
+ * neither ARM nor x86-64 has such a header, so the boot delay is simply
+ * always disabled. */
 UBYTE osxhbootdelay;

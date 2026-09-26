@@ -28,6 +28,7 @@ config ALWAYS_SHOW_INITINFO
 
 config INITINFO_DURATION
 	int "Duration of the welcome screen, in seconds"
+	default 0 if MACHINE_PC_X86_64
 	default 8 if MACHINE_FIREBEE
 	default 3
 	help
@@ -36,6 +37,17 @@ config INITINFO_DURATION
 	  hardware it can take several seconds for the monitor to recover
 	  from stand-by mode, so a longer duration is wise.  If set to 0,
 	  the welcome screen is never displayed.
+
+	  MACHINE_PC_X86_64 defaults to 0: the timeout (bios/initinfo.c)
+	  is driven by hz_200, which nothing advances on this machine yet
+	  (no PIC/APIC or timer driver -- see USE_STOP_INSN_TO_FREE_HOST_CPU
+	  above for the same gap). A nonzero duration would only be
+	  harmless today because biosmain()'s FIRST_BOOT is unconditionally
+	  false here too (no code sets MEMINIT_FIRST_BOOT for this arch, see
+	  bios/machine.h), so the welcome screen's timed wait is never
+	  actually entered -- but that's an incidental side effect of a
+	  separate gap, not something this option should rely on staying
+	  true. Revisit both together once a timer exists.
 
 endmenu
 

@@ -83,6 +83,17 @@ void font_set_default(void)
     linea_vars.v_fnt_wr = font->form_width;
     linea_vars.v_fnt_st = font->first_ade;
     linea_vars.v_fnt_nd = font->last_ade;
+    /*
+     * font->dat_table/off_table are compile-time-initialized pointers
+     * (baked in by each fnt_*.c source's own Fonthead initializer,
+     * pointing at const arrays in that same translation unit). On
+     * x86-64, startup.c's x86_64_apply_higher_half_relocations() (#343)
+     * has already rebased them (and everything else the PE loader's own
+     * base relocation table covers) from their low, pre-higher-half-jump
+     * load address to the higher-half virtual alias, before font_init()'s
+     * "fon8x8 = *f8x8" struct copy below carries the value forward -- no
+     * per-arch handling needed here.
+     */
     linea_vars.v_fnt_ad = (const UWORD *)font->dat_table;
     linea_vars.v_off_ad = font->off_table;
 }

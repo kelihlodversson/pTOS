@@ -16,8 +16,11 @@
 #ifndef BIOSBIND_H
 #define BIOSBIND_H
 
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 #include "biosargs.h"
+#endif
+#ifdef __x86_64__
+#include "asm.h"        /* x86_64_kernel_trap() */
 #endif
 
 #define Getmpb(a) bios_v_l(0x0,a)
@@ -33,7 +36,19 @@
 #define Drvmap() bios_l_v(0xa)
 #define Kbshift(a) bios_l_w(0xb,a)
 
-
+/*
+ * x86-64 calling convention (bios/arch/x86_64/trap.h): x86_64_kernel_trap()'s
+ * first argument packs trap_class << 32 | function_number (13 = the
+ * historic m68k BIOS trap number, kept here as a literal the same way
+ * m68k's own "trap #13" below is a literal -- neither wants a dependency
+ * on that arch-internal header), the next four are the real arguments.
+ * Every one of these calls fits in the 4 the convention provides except
+ * Rwabs, which -- like ARM -- passes a bios_lrwabs_args struct pointer as
+ * its one real argument instead. This is a plain, ordinary C function
+ * call, not `syscall`: see trap.h's own comment on why kernel-mode code
+ * (every caller of these bindings, there being no real ring-3 process yet)
+ * must not use the actual `syscall` instruction to reach the dispatcher.
+ */
 
 static __inline__ void bios_v_l(int op, long a)
 {
@@ -48,6 +63,8 @@ static __inline__ void bios_v_l(int op, long a)
         : "r"(_r0), "r"(_r1)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
+#elif defined(__x86_64__)
+    x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     __asm__ volatile (
         "move.l  %1,-(sp)\n\t"
@@ -75,6 +92,8 @@ static __inline__ void bios_v_ww(int op, short a, short b)
         : "r"(_r0), "r"(_r1), "r"(_r2)
         : "r3", "r12", "lr",  "memory", "cc"
     );
+#elif defined(__x86_64__)
+    x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, b, 0, 0);
 #else
     __asm__ volatile (
         "move.w  %2,-(sp)\n\t"
@@ -105,6 +124,8 @@ static __inline__ short bios_w_w(int op, short a)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return (short)_r0;
+#elif defined(__x86_64__)
+    return (short)x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -132,6 +153,8 @@ static __inline__ long bios_l_v(int op)
         : "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    return x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, 0, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -161,6 +184,8 @@ static __inline__ long bios_l_w(int op, short a)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    return x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -192,6 +217,8 @@ static __inline__ long bios_l_ww(int op, short a, short b)
         : "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    return x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, b, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -224,6 +251,8 @@ static __inline__ long bios_l_wl(int op, short a, long b)
         : "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    return x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, b, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -244,15 +273,14 @@ static __inline__ long bios_l_wl(int op, short a, long b)
 static __inline__ long
 bios_l_wlwwwl(int op, short a, long b, short c, short d, short e, long f)
 {
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
     /*
-     * lrwabs() needs 6 real arguments; _biostrap only delivers 4 in
-     * registers, so pass them via a bios_lrwabs_args struct instead
-     * (biosargs.h). See kelihlodversson/pTOS#217.
+     * lrwabs() needs 6 real arguments; the trap convention only delivers
+     * 4 in registers (ARM's _biostrap, x86-64's trap.c dispatch alike),
+     * so pass them via a bios_lrwabs_args struct instead (biosargs.h).
+     * See kelihlodversson/pTOS#217.
      */
     struct bios_lrwabs_args args;
-    register long _r0 __asm__("r0")=(long)(op);
-    register long _r1 __asm__("r1");
 
     args.r_w = a;
     args.adr = (void *)b;
@@ -260,6 +288,11 @@ bios_l_wlwwwl(int op, short a, long b, short c, short d, short e, long f)
     args.first = d;
     args.drive = e;
     args.lfirst = f;
+#endif
+#ifdef __arm__
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1");
+
     _r1 = (long)&args;
 
     __asm__ volatile (
@@ -269,6 +302,8 @@ bios_l_wlwwwl(int op, short a, long b, short c, short d, short e, long f)
         : "r2", "r3", "r4", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    return x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, (long)&args, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 

@@ -135,8 +135,16 @@ static void *sval_lookup(const SVAR *table, int count, ULONG addr)
  *   - arg1 == 0: look up the NULL cookie's value, i.e. the jar's
  *     total allocated capacity (the terminator slot always carries
  *     this in .value, wherever it currently sits)
+ *
+ * arg2 is native `long`, not `LONG`: it's the caller's own destination
+ * address (`&value` in the Ssystem(S_GETCOOKIE, tag, &value) idiom
+ * above), dereferenced below as `*(LONG *)arg2` -- the LONG there is
+ * correct and unrelated (it sizes the *write*, matching struct cookie's
+ * own 32-bit .value field, not the address). arg1 needs no such
+ * widening: every one of its uses (a tag, a 1-based slot number, or 0)
+ * is a plain scalar this function never dereferences as a pointer.
  */
-static LONG ssystem_getcookie(LONG arg1, LONG arg2)
+static LONG ssystem_getcookie(long arg1, long arg2)
 {
     struct cookie *jar = (struct cookie *)p_cookies;
     struct cookie *term;
@@ -370,8 +378,13 @@ static LONG ssystem_osversion(void)
  * a newer one than this kernel implements) than ours is both handled
  * correctly; see ssystem.h. arg2 == -1 queries sizeof(our struct)
  * without writing anything (arg1 is ignored).
+ *
+ * arg1 is native `long`, not `LONG`: it's the caller's own destination
+ * pointer, cast below to `(void *)arg1` for svar_copy() -- truncating
+ * it would corrupt a higher-half pointer before that cast ever runs.
+ * arg2 stays LONG: it's a plain byte count, never dereferenced.
  */
-static LONG ssystem_console_dim(LONG arg1, LONG arg2)
+static LONG ssystem_console_dim(long arg1, LONG arg2)
 {
     struct console_dim dim;
     LONG n;
@@ -395,8 +408,26 @@ static LONG ssystem_console_dim(LONG arg1, LONG arg2)
 
 /*
  * xssystem - implements GEMDOS Ssystem(), see ssystem.h
+ *
+ * arg1/arg2 are native `long` (see ssystem.h's own comment) so that
+ * S_GETCOOKIE's arg2 and S_CONSOLE_DIM's arg1 -- the only two modes
+ * that dereference their argument as a pointer this function itself
+ * never inspects -- reach ssystem_getcookie()/ssystem_console_dim()
+ * without being truncated first. Every other mode's helper below still
+ * declares its own parameters LONG, deliberately: S_{GET,SET}COOKIE's
+ * tag/value are opaque cookie-jar data (struct cookie's own fields are
+ * ULONG, per cookie.h, so a wider C parameter here couldn't preserve
+ * more than 32 bits of a stored value regardless), and S_GET/SETxVAL's
+ * addr identifies a fixed, historical 32-bit-per-slot TOS/MiNT sysvar
+ * address -- the same "can't hold a genuine 64-bit pointer no matter
+ * what C type wraps it" limitation #351 already tracks for Setexc()'s
+ * low vector table. (Some of lval_table's own sysvars -- etv_timer,
+ * hdv_rw, and others -- are themselves real pointers on this arch, so
+ * S_GETLVAL/S_SETLVAL narrowing *those* through a fixed 4-byte
+ * svar_copy() is a real, separate instance of that same limitation;
+ * flagged for #351 rather than a speculative fix here.)
  */
-LONG xssystem(WORD mode, LONG arg1, LONG arg2)
+LONG xssystem(WORD mode, long arg1, long arg2)
 {
     switch (mode)
     {

@@ -14,9 +14,16 @@
  * or corrupt, and IST is exactly the mechanism that lets the CPU switch
  * to a known-good stack unconditionally on entry, rather than trying
  * (and failing) to push a frame onto the same broken one. Every other
- * gate still uses IST=0 (no switch): rsp0 (the ring3->ring0 stack switch
- * target) and the remaining IST slots stay unused until the
- * syscall/userspace sub-issues (#333/#334) need them.
+ * gate still uses IST=0 (no switch), but does use rsp0 -- see gdt.h's own
+ * comment on why that (unlike `syscall`) is still needed now that ring 3
+ * code exists to fault. The remaining IST slots stay unused until #334
+ * needs them.
+ *
+ * Also builds the ring-3 SYSRET descriptor triple `sysretq` needs (see
+ * gdt.h's own comment on X86_64_USER32_CS_SEL_BASE) -- this milestone
+ * (#333, folded into #349) only proves the entry/exit mechanism itself
+ * with a throwaway in-kernel ring-3 harness, not real user processes
+ * (#334's job), but the GDT layout is the same either way.
  *
  * Copyright (C) 2025-2026 The pTOS development team.
  *
@@ -40,6 +47,12 @@
 #define GDT_NULL         0x0000000000000000ULL
 #define GDT_KERNEL_CODE  0x00209A0000000000ULL /* P DPL0 S=1 code,X,R; L=1 */
 #define GDT_KERNEL_DATA  0x0000920000000000ULL /* P DPL0 S=1 data,W */
+/* DPL=3 versions of the above, for ring-3 code/data -- see gdt.h's own
+ * comment on why USER32_CS_SEL_BASE's own slot (the first of the three)
+ * is left unused rather than a real descriptor. */
+#define GDT_USER32_UNUSED 0x0000000000000000ULL
+#define GDT_USER_DATA    0x0000F20000000000ULL /* P DPL3 S=1 data,W */
+#define GDT_USER_CODE    0x0020FA0000000000ULL /* P DPL3 S=1 code,X,R; L=1 */
 
 /* x86-64 Task State Segment (Intel SDM Vol 3A 8.7 "Task-State Segments"),
  * IA-32e mode format: no I/O-permission-bitmap fields other than the base
@@ -73,9 +86,18 @@ static tss_t tss;
 #define DF_STACK_BYTES 4096
 static UBYTE df_stack[DF_STACK_BYTES] __attribute__((aligned(16)));
 
-/* One null, one code, one data descriptor (8 bytes each) plus one TSS
- * descriptor (16 bytes in long mode: gdt[3] and gdt[4] together). */
-static UQUAD gdt[5] __attribute__((aligned(16)));
+/* rsp0's dedicated stack (see gdt.h's own comment on why ring-3 code
+ * makes this necessary now). 8 KiB matches the headroom trap.c's own
+ * syscall-entry kernel stack gives itself, for the same reason: this
+ * path is x86_64_exception_dispatch() again, just reached via an
+ * ordinary (non-IST) gate instead of #DF's. */
+#define RSP0_STACK_BYTES 8192
+static UBYTE rsp0_stack[RSP0_STACK_BYTES] __attribute__((aligned(16)));
+
+/* One null, one code, one data, three ring-3 SYSRET descriptors (8 bytes
+ * each) plus one TSS descriptor (16 bytes in long mode: gdt[6] and
+ * gdt[7] together). */
+static UQUAD gdt[8] __attribute__((aligned(16)));
 
 typedef struct {
     UWORD limit;
@@ -83,17 +105,17 @@ typedef struct {
 } PACKED dtr_t;
 
 /* Encodes a 16-byte long-mode TSS descriptor (Intel SDM Vol 3A 8.2.3)
- * across gdt[3] (base[0:31], limit, access/flags -- the same shape as an
+ * across gdt[6] (base[0:31], limit, access/flags -- the same shape as an
  * 8-byte descriptor, but with S=0 and Type=0x9, "64-bit TSS (available)")
- * and gdt[4] (base[32:63] in its low 32 bits, reserved above). */
+ * and gdt[7] (base[32:63] in its low 32 bits, reserved above). */
 static void set_tss_descriptor(UQUAD base, UWORD limit)
 {
-    gdt[3] = (UQUAD)limit
+    gdt[6] = (UQUAD)limit
            | ((base & 0xFFFFFFULL) << 16)
            | (0x89ULL << 40)                          /* P DPL0 S=0 Type=0x9 */
            | (((UQUAD)(limit >> 16) & 0xFULL) << 48)
            | (((base >> 24) & 0xFFULL) << 56);
-    gdt[4] = (base >> 32) & 0xFFFFFFFFULL;
+    gdt[7] = (base >> 32) & 0xFFFFFFFFULL;
 }
 
 static inline void lgdt(const dtr_t *gdtr)
@@ -149,10 +171,14 @@ void x86_64_gdt_init(void)
     gdt[0] = GDT_NULL;
     gdt[1] = GDT_KERNEL_CODE;
     gdt[2] = GDT_KERNEL_DATA;
+    gdt[3] = GDT_USER32_UNUSED;
+    gdt[4] = GDT_USER_DATA;
+    gdt[5] = GDT_USER_CODE;
     set_tss_descriptor((UQUAD)(uintptr_t)&tss, sizeof(tss) - 1);
 
     tss.iomap_base = sizeof(tss);
     tss.ist1 = (UQUAD)(uintptr_t)&df_stack[DF_STACK_BYTES];
+    tss.rsp0 = (UQUAD)(uintptr_t)&rsp0_stack[RSP0_STACK_BYTES];
 
     gdtr.limit = sizeof(gdt) - 1;
     gdtr.base = (UQUAD)(uintptr_t)gdt;
