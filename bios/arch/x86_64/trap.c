@@ -422,3 +422,27 @@ void x86_64_trap_init(void)
      */
     x86_64_wrmsr(MSR_KERNEL_GS_BASE, (UQUAD)(uintptr_t)&percpu);
 }
+
+/* See trap.h's own comment. Selectors are embedded as asm-immediate
+ * literals via XSTR, same technique gdt.c's reload_segments() already
+ * uses, rather than passed as operands: doing so needs no register to
+ * hold them across the pushes leading up to iretq. */
+#define STR(x) #x
+#define XSTR(x) STR(x)
+
+void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp)
+{
+    __asm__ volatile (
+        "mov %0, %%cr3\n\t"
+        "pushq $" XSTR(X86_64_USER_DATA_SEL) "\n\t" /* SS */
+        "pushq %1\n\t"                              /* RSP */
+        "pushq $0x2\n\t"                            /* RFLAGS */
+        "pushq $" XSTR(X86_64_USER_CODE_SEL) "\n\t" /* CS */
+        "pushq %2\n\t"                              /* RIP */
+        "iretq"
+        :
+        : "r"(pml4_phys), "r"(user_rsp), "r"(entry_rip)
+        : "memory"
+    );
+    __builtin_unreachable();
+}
