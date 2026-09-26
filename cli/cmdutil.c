@@ -341,10 +341,18 @@ char c1, c2;
     return 1;
 }
 
-PRIVATE LONG getjar(void)
+/*
+ * `long`, not portab.h's always-32-bit LONG: on x86-64 (LP64), p_cookies
+ * is a genuine 64-bit pointer, and getcookie() below casts this
+ * function's result straight back to COOKIE* -- a LONG return here would
+ * truncate it to a bogus low address before that cast ever saw it. `long`
+ * is exactly LONG's width on m68k/ARM (ILP32), so this changes nothing
+ * there.
+ */
+PRIVATE long getjar(void)
 {
 #if defined(__arm__) || defined(__x86_64__)
-    return (LONG)p_cookies;
+    return (long)p_cookies;
 #else
     return *(LONG *)0x5a0;
 #endif
@@ -357,7 +365,23 @@ WORD getcookie(LONG cookie,LONG *pvalue)
 {
 COOKIE *jar, *c;
 
+#if defined(__x86_64__)
+    /*
+     * Supexec() (XBIOS function 38) is deliberately unimplemented on
+     * this arch, the same as ARM (bios/xbios.c: "deprecated on ARM, use
+     * Ssystem() instead", #219) -- routing through it here would dispatch
+     * to xbios_unimpl, whose result (the function number, 38, per this
+     * arch's own out-of-range/unimplemented convention, trap.c) getjar()'s
+     * caller below would then dereference as a COOKIE*, faulting
+     * immediately. There is no real ring0/ring3 distinction yet for this
+     * arch's own code to cross with Supexec() anyway (#334): getjar()
+     * already runs at the same privilege as this caller, so call it
+     * directly instead.
+     */
+    jar = (COOKIE *)getjar();
+#else
     jar = (COOKIE *)Supexec(getjar);
+#endif
     if (!jar)
         return 0;
 

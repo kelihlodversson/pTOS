@@ -186,6 +186,22 @@ static UBYTE syscall_stack[SYSCALL_STACK_BYTES] __attribute__((aligned(16)));
  *   otherwise) on top of a calling convention whose own scalar
  *   sign/zero-extension is undefined depending on how each of the
  *   codebase's many existing call sites happened to write a literal.
+ *
+ * - This also does not, and cannot safely, cover the low system-vector
+ *   area pgtable.c's x86_64_map_low_vectors() maps at virtual [0, 2 MiB)
+ *   (supervisor-only: no U bit, so a ring-3 caller cannot reach it
+ *   *directly* -- but this dispatcher runs at CPL0, so a syscall
+ *   argument that happens to equal e.g. 0x84 (VEC_TRAP1) would still let
+ *   a ring-3 caller read or write that supervisor mapping *through* a
+ *   GEMDOS/BIOS buffer argument). Unlike the two ranges actually checked
+ *   above, [0, 2 MiB) overlaps the exact numeric range countless
+ *   legitimate small scalar arguments already occupy (handles, counts,
+ *   modes -- a file handle of 3 and a "pointer" of 0x84 are
+ *   indistinguishable by magnitude alone), so rejecting it here the same
+ *   way would reject most real GEMDOS traffic, not just an attack. There
+ *   is no magnitude-based fix for this one: closing it for real needs
+ *   the same per-process address space and copy_from_user()-style
+ *   validation #334 already owns, not an extension of this function.
  */
 static int x86_64_arg_hits_known_kernel_range(UQUAD addr)
 {
