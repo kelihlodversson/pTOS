@@ -363,8 +363,15 @@ void dopanic(const char *fmt, ...)
         pc = s->pc;
         sr = 0x2700; /* was already set in panic(); too late to get original value */
 
+        /* (unsigned long), not (ULONG): s->pc is a real pointer stored
+         * by panic() (via __builtin_return_address(0)), and %08lx
+         * already expects native-width unsigned long -- ULONG (always
+         * 32-bit) would truncate a genuine higher-half x86-64 address
+         * before this ever prints it, defeating the diagnostic for
+         * exactly the addresses this port's own panics need to show.
+         * A no-op on m68k/ARM, where long and LONG are the same width. */
         kcprintf("pc=%08lx\n",
-                 (ULONG)s->pc);
+                 (unsigned long)s->pc);
 #ifdef __arm__
     } else {
         /* field order must match any_vec()'s local struct in

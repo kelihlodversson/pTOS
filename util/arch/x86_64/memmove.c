@@ -60,7 +60,16 @@ void* memmove(void* in_dst, const void* in_src, size_t length)
         return in_dst;
 
     // move up
-    if( in_src > in_dst || (in_src + length) < in_dst)
+    /* Compared as integer addresses, not as pointers: memmove()/memcpy()
+     * must support buffers from two entirely unrelated objects, but C
+     * only defines `<`/`>` between pointers into the same array/object
+     * -- comparing across two unrelated allocations is undefined
+     * behavior, and can be optimized into the wrong copy direction.
+     * The alignment check just below already goes through ptr_t's own
+     * `.i` (int_ptr_t) member for the identical reason; do the same
+     * here instead of comparing in_src/in_dst directly. */
+    if ((int_ptr_t)in_src > (int_ptr_t)in_dst
+        || (int_ptr_t)in_src + length < (int_ptr_t)in_dst)
     {
         dst.v = in_dst;
         src.v = in_src;
