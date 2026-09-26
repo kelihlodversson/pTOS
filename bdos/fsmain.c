@@ -402,7 +402,7 @@ DTAINFO *xgetdta(void)          /* return address of dta */
  */
 void xsetdta(DTAINFO *addr)     /* set transfer address to addr */
 {
-    run->p_xdta = (DTA *)addr;
+    run->p_xdta = PTR_TO_USERPTR((DTA *)addr);
 }
 
 

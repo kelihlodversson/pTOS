@@ -1094,7 +1094,22 @@ void biosmain(void)
 #if CONF_WITH_CLI
     if (bootflags & BOOTFLAG_EARLY_CLI) {   /* run an early console */
         PD *pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", default_env);
-        pd->p_tbase = (UBYTE *) coma_start;
+        /*
+         * coma_start is kernel code (EmuCON's own entry point, linked
+         * into this image), not a real user process's text segment --
+         * on x86-64, unlike every ILP32 arch, that means its address is
+         * never low/32-bit-representable, so this deliberately uses the
+         * UNCHECKED narrow (PTR_TO_USERPTR() would trap on exactly
+         * that). gouser() panics before ever using p_tbase as a real
+         * ring-3 entry point on this arch today (see bdos/arch/x86_64/
+         * rwa.c), so the truncation below is harmless for now -- but a
+         * genuine x86-64 gouser() must special-case a kernel-code
+         * p_tbase like this one (call it directly, the way
+         * cli/arch/x86_64/cmdasm.c's own header comment already
+         * anticipates) rather than ever feeding it to a real
+         * ring0->ring3 transition.
+         */
+        pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *) coma_start);
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
         Pexec(PE_GOTHENFREE, "", (char *)pd, default_env);
     }
@@ -1117,7 +1132,11 @@ void biosmain(void)
          */
         PD *pd;
         pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", default_env);
-        pd->p_tbase = (UBYTE *) exec_os;
+        /* exec_os is always a kernel code symbol (ui_start or coma_start,
+         * see bios_init() above) -- see the identical BOOTFLAG_EARLY_CLI
+         * case's own comment above for why this deliberately uses the
+         * UNCHECKED narrow on x86-64. */
+        pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *) exec_os);
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
         Pexec(PE_GO, "", (char *)pd, default_env);
     }

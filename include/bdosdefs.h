@@ -111,10 +111,31 @@ static inline ULONG ptr_to_userptr(const void *p)
     return (ULONG)addr;
 }
 #define PTR_TO_USERPTR(p) ptr_to_userptr(p)
+/*
+ * The same narrowing as PTR_TO_USERPTR(), but WITHOUT the fits-in-32-bits
+ * trap -- a deliberate, temporary escape hatch for the handful of
+ * existing call sites (bios.c's CLI/ROM-shell bootstrap, bdosmain.c's
+ * placeholder initial_basepage, proc.c's own TPA-pool-resident PD
+ * fields) that store a kernel address known to be higher-half TODAY,
+ * because the two things that would actually make it low -- a genuine
+ * sub-4GiB kernel data arena (#351) and the GEMDOS TPA memory pool's own
+ * placement (bios/machine/pc-x86_64/memory.c, attempted once already
+ * this session and reverted -- see its own history) -- are not
+ * implemented yet. Using PTR_TO_USERPTR() at these specific sites
+ * traps immediately at boot, before gouser() is ever reached, which is
+ * a real regression relative to today's actual capabilities, not a
+ * caught bug: nothing downstream reads these fields as real addresses
+ * yet either (gouser() itself panics unconditionally). Once the TPA
+ * pool/kernel-data placement work lands, these call sites should switch
+ * to PTR_TO_USERPTR() (or simply stop needing this macro, if the value
+ * being stored is already guaranteed low by construction) instead of
+ * silently keeping this escape hatch. */
+#define PTR_TO_USERPTR_UNCHECKED(p) ((ULONG)(uintptr_t)(p))
 #else
 #define USERPTR_T(type) type *
 #define USERPTR_TO_PTR(up) ((void *)(up))
 #define PTR_TO_USERPTR(p) (p)
+#define PTR_TO_USERPTR_UNCHECKED(p) (p)
 #endif
 
 #define NUMSTD      6       /* number of standard files */

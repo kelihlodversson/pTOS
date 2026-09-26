@@ -270,7 +270,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         /* set the owner of the memory to be this process */
         p = (PD *) tail;
         set_owner(p, p);
-        set_owner(p->p_env, p);
+        set_owner(USERPTR_TO_PTR(p->p_env), p);
         FALLTHROUGH;
     case PE_GO:
         p = (PD *) tail;
@@ -344,7 +344,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         KDEBUG(("Error and longjmp in xexec()!\n"));
 
         /* free any memory allocated so far & close the file */
-        xmfree(cur_p->p_env);
+        xmfree(USERPTR_TO_PTR(cur_p->p_env));
         xmfree(cur_p);
         xclose(fh);
 
@@ -359,7 +359,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmld returned %ld (0x%lx)\n",rc,rc));
         /* free any memory allocated yet */
-        xmfree(cur_p->p_env);
+        xmfree(USERPTR_TO_PTR(cur_p->p_env));
         xmfree(cur_p);
 
         return rc;
@@ -391,9 +391,21 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
     /* first, zero it out */
     bzero(p, sizeof(PD)) ;
 
-    /* memory values */
-    p->p_lowtpa = (UBYTE *)p;              /*  M01.01.06   */
-    p->p_hitpa  = (UBYTE *)p  +  max;      /*  M01.01.06   */
+    /* memory values
+     *
+     * PTR_TO_USERPTR_UNCHECKED(), not PTR_TO_USERPTR(): p itself came
+     * from alloc_tpa(), which on x86-64 today still hands out memory
+     * from the higher-half TPA pool stand-in (bios/machine/pc-x86_64/
+     * memory.c) -- not yet the low, sub-4GiB placement #334/#351 call
+     * for (attempted once already this session and reverted; see that
+     * file's own history). Using the trapping macro here panics at
+     * every Pexec(), before gouser() is ever reached, which regresses
+     * this port's current boot milestone rather than catching a real
+     * bug -- nothing downstream reads these fields as real addresses
+     * yet either. Switch to PTR_TO_USERPTR() once the TPA pool actually
+     * lives somewhere low. */
+    p->p_lowtpa = PTR_TO_USERPTR_UNCHECKED((UBYTE *)p);              /*  M01.01.06   */
+    p->p_hitpa  = PTR_TO_USERPTR_UNCHECKED((UBYTE *)p  +  max);      /*  M01.01.06   */
 #if ARCH_ARM
     /*
      * p_hitpa becomes the actual initial user-mode sp of any process
@@ -408,8 +420,12 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
      */
     p->p_hitpa = (UBYTE *)((ULONG)p->p_hitpa & ~7UL);
 #endif
-    p->p_xdta = (DTA *) p->p_cmdlin;       /* default p_xdta is p_cmdlin */
-    p->p_env = envptr;
+    /* Same TPA-pool-is-still-higher-half reasoning as p_lowtpa/p_hitpa
+     * above applies to both of these: p_cmdlin is a field within p
+     * itself, and envptr comes from alloc_env()/xmxalloc(), the same
+     * TPA-style pools. */
+    p->p_xdta = PTR_TO_USERPTR_UNCHECKED((DTA *) p->p_cmdlin);       /* default p_xdta is p_cmdlin */
+    p->p_env = PTR_TO_USERPTR_UNCHECKED(envptr);
 
     /* copy tail */
     b = &p->p_cmdlin[0];
@@ -461,7 +477,7 @@ static char *alloc_env(ULONG flags, char *env)
 
     /* determine the env size */
     if (env == NULL)
-        env = run->p_env;
+        env = (char *)USERPTR_TO_PTR(run->p_env);
     size = (envsize(env) + 1) & ~1;  /* must be even */
 
     /* allocate it */
@@ -606,7 +622,11 @@ static void proc_go(PD *p)
     struct gouser_stack *sp;
 
     KDEBUG(("BDOS xexec: trying to load (and execute) a process on %p ...\n",p->p_tbase));
-    p->p_parent = run;
+    /* PTR_TO_USERPTR_UNCHECKED(), not PTR_TO_USERPTR(): see
+     * init_pd_fields()'s own comment above -- `run` can itself be
+     * &initial_basepage (bdosmain.c), a higher-half kernel symbol, same
+     * as p itself once TPA-pool-resident. */
+    p->p_parent = PTR_TO_USERPTR_UNCHECKED(run);
 
     /* create a stack at the end of the TPA */
     sp = (struct gouser_stack *) (p->p_hitpa - sizeof(struct gouser_stack));
@@ -689,7 +709,7 @@ void xterm(UWORD rc)
     userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
 
-    run = run->p_parent;
+    run = (PD *)USERPTR_TO_PTR(run->p_parent);
     ixterm(p);
     /* gouser() will store the current value of D0 in the active PD
      * so it cannot be used here. See proc_go() above.
