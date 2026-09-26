@@ -163,12 +163,19 @@ C_SYM(x86_64_syscall_entry):
         sysretq
 
         /*
-         * Non-canonical %rcx: still on the kernel stack, kernel %gs, and
-         * (per x86_64_trap_init()'s own comment on percpu.kernel_rsp)
-         * %rsp%16==8 here exactly as after a `call`, so this needs no
-         * stack adjustment of its own before calling into C -- same as
-         * the `call x86_64_trap_dispatch` above. x86_64_bad_sysret()
-         * (trap.c) never returns.
+         * Non-canonical %rcx: still on the kernel stack, kernel %gs.
+         * %rsp%16==8 here -- the 15 pops above undid the 15 pushes on
+         * entry, so this is the same residue as right after this stub's
+         * own entry (percpu.kernel_rsp's own comment: initialized to
+         * top-8, "as if a return address had just been pushed"). That
+         * phrasing describes a just-*entered* callee's own state, not a
+         * caller ready to make a call of its own -- exactly the
+         * distinction trap1()'s subq $8/addq $8 pair (miscasm.S) exists
+         * to bridge for the same reason. An earlier version of this
+         * comment conflated the two and skipped the adjustment; fixed
+         * here the same way. x86_64_bad_sysret() (trap.c) never returns,
+         * so there is no matching addq to restore afterward.
          */
 1:      movq    %rcx, %rdi
+        subq    $8, %rsp
         call    C_SYM(x86_64_bad_sysret)

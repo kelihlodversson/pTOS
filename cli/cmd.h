@@ -102,15 +102,23 @@ static __inline__ long cli_supexec_(long a)
 }
 #define Supexec(a) cli_supexec_((long)(a))
 
+/*
+ * (long), not (WORD)/(LONG), for every non-pointer argument here: see
+ * bdosbind.h's own comment on why trap1()'s variadic `...` needs an
+ * explicit widening cast at each call site to sign-extend correctly
+ * (rather than the zero-extension a narrower cast plus C's default
+ * variadic argument promotion produces on x86-64). (void *) casts are
+ * already full pointer width and need no change.
+ */
 #define jmp_gemdos_v(a)         trap1((int)(a))
-#define jmp_gemdos_w(a,b)       trap1((int)(a),(WORD)(b))
-#define jmp_gemdos_l(a,b)       trap1((int)(a),(LONG)(b))
+#define jmp_gemdos_w(a,b)       trap1((int)(a),(long)(b))
+#define jmp_gemdos_l(a,b)       trap1((int)(a),(long)(b))
 #define jmp_gemdos_p(a,b)       trap1((int)(a),(void*)(b))
-#define jmp_gemdos_ww(a,b,c)    trap1((int)(a),(WORD)(b),(WORD)(c))
-#define jmp_gemdos_pw(a,b,c)    trap1((int)(a),(void *)(b),(WORD)(c))
-#define jmp_gemdos_wlp(a,b,c,d) trap1((int)(a),(WORD)(b),(LONG)(c),(void *)(d))
-#define jmp_gemdos_wpp(a,b,c,d) trap1((int)(a),(WORD)(b),(void *)(c),(void *)(d))
-#define jmp_gemdos_pww(a,b,c,d) trap1((int)(a),(void *)(b),(WORD)(c),(WORD)(d))
+#define jmp_gemdos_ww(a,b,c)    trap1((int)(a),(long)(b),(long)(c))
+#define jmp_gemdos_pw(a,b,c)    trap1((int)(a),(void *)(b),(long)(c))
+#define jmp_gemdos_wlp(a,b,c,d) trap1((int)(a),(long)(b),(long)(c),(void *)(d))
+#define jmp_gemdos_wpp(a,b,c,d) trap1((int)(a),(long)(b),(void *)(c),(void *)(d))
+#define jmp_gemdos_pww(a,b,c,d) trap1((int)(a),(void *)(b),(long)(c),(long)(d))
 /* Pexec needs the 5-argument form; trap1_pexec handles the extra argument */
 #define jmp_gemdos_wppp(a,b,c,d,e) \
     trap1_pexec((short)(b),(const char *)(c),(const char *)(d),(const char *)(e))
