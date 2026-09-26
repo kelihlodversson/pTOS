@@ -10,7 +10,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 #include "cmd.h"
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 #include "tosvars.h"
 #endif
 #include "string.h"
@@ -343,7 +343,7 @@ char c1, c2;
 
 PRIVATE LONG getjar(void)
 {
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
     return (LONG)p_cookies;
 #else
     return *(LONG *)0x5a0;

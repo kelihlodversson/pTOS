@@ -368,7 +368,7 @@ static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
 }
 #endif
 
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 #if CONF_WITH_EXTENDED_MOUSE
 /*
  * Call the user_but vector from C
@@ -401,14 +401,33 @@ static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
  */
 void mov_cur(WORD new_x, WORD new_y)      /* user button vector */
 {
+#ifdef __arm__
     ULONG cpsr;
+#else
+    /* x86-64: this arch's own disable_interrupts()/enable_interrupts()
+     * (bios/arch/x86_64/intmask.c) share a single, non-nesting save slot
+     * -- fine for their existing callers, but mov_cur() can run from
+     * mouse_int(), itself interrupt-context, so it saves/restores its
+     * own local RFLAGS copy instead, the same way ARM's set_cpsr(cpsr)
+     * restores its own locally saved value rather than going through a
+     * shared slot. */
+    UQUAD rflags;
+#endif
     if (linea_vars.HIDE_CNT)
         return;
+#ifdef __arm__
     cpsr = disable_interrupts();
+#else
+    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(rflags) :: "memory");
+#endif
     linea_vars.newx = new_x;
     linea_vars.newy = new_y;
     linea_vars.draw_flag = TRUE;
+#ifdef __arm__
     set_cpsr(cpsr);
+#else
+    __asm__ volatile ("pushq %0; popfq" :: "r"(rflags) : "memory", "cc");
+#endif
 }
 
 /*
@@ -420,7 +439,7 @@ static ULONG default_user_mot(WORD x, WORD y)
     return MAKE_ULONG(x, y);
 }
 
-#endif /* __arm__ */
+#endif /* __arm__ || __x86_64__ */
 
 
 
@@ -655,7 +674,7 @@ void vdimouse_init(void)
     linea_vars.GCURY = linea_vars.DEV_TAB[1] / 2;
 
     linea_vars.user_but = (void(*)(WORD))just_rts;
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
     linea_vars.user_mot = default_user_mot;
 #else
     linea_vars.user_mot = (void (*)(LONG))just_rts;
@@ -698,7 +717,7 @@ void vdimouse_init(void)
 void vdimouse_exit(void)
 {
     linea_vars.user_but = (void(*)(WORD))just_rts;
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
     linea_vars.user_mot = default_user_mot;
 #else
     linea_vars.user_mot = (void (*)(LONG))just_rts;

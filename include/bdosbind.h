@@ -48,6 +48,7 @@ extern long trap1_pexec(short mode, const char *path, const char *tail, const ch
 #define Mfree(block) trap1(0x49, block)
 #define Mshrink(block,newsiz) trap1(0x4a, 0, block, newsiz)
 #define Pexec(mode,name,cmdline,env) trap1_pexec(mode, name, cmdline, env)
+#define Pterm0() trap1(0x00)
 #define Fsfirst(filename,attr) trap1(0x4e, filename, attr)
 #define Fsnext() trap1(0x4f)
 #define Frename(oldname,newname) trap1(0x56, 0, oldname, newname)

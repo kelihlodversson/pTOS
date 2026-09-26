@@ -46,8 +46,10 @@ obj-$(ARCH_ARM) += vectorsasm.o aciaemu.o tosvars.o
 # tosvars.c is arch-neutral C (see its own header comment), needed by
 # every non-m68k/ColdFire arch alike -- x86-64 gets its own obj-y line
 # here rather than folding into ARCH_ARM's, since it lives outside any
-# arch/ subdirectory.
-obj-$(ARCH_X86_64) += tosvars.o
+# arch/ subdirectory. aciaemu.o (this arch's own keyboard/mouse vector
+# stand-in, bios/arch/x86_64/aciaemu.c) is a genuine per-arch file, same
+# as ARM's own, just listed on its own line here for the same reason.
+obj-$(ARCH_X86_64) += tosvars.o aciaemu.o
 
 # The cache maintenance operations below do not exist on the ARM1176 used
 # by the first generation Raspberry Pi.
@@ -63,10 +65,7 @@ obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o virt_pic.o virt_timer.o
 
 obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfish_rtc_isr.o goldfish_pic_isr.o
 
-# Not yet part of $(OBJECTS) for this arch (see the ARCH_X86_64 branch of
-# the top level Makefile's $(EMUTOS_IMG) rule); listed here so they are
-# discoverable and buildable the normal way once that milestone lands.
-obj-$(ARCH_X86_64) += pgtable.o relocate.o gdt.o idt.o isr.o panic.o trap.o trapasm.o
+obj-$(ARCH_X86_64) += pgtable.o relocate.o gdt.o idt.o isr.o panic.o trap.o trapasm.o pe_reloc.o
 obj-$(MACHINE_PC_X86_64) += earlycon.o pmem.o
 
 obj-$(CONF_WITH_PCI) += pci_core.o

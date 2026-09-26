@@ -34,6 +34,18 @@ extern const UWORD bios_ent;
 extern const PFLONG xbios_vecs[];
 extern const UWORD xbios_ent;
 
+/*
+ * xbios_vecs[]'s filler for unimplemented function slots (bios/xbios.c).
+ * On m68k/ARM it's an assembly trampoline that has the shared BIOS/XBIOS
+ * trap entry's own dispatch loop leave the requested function number in
+ * a register before jumping in, so xbios_do_unimpl() can read it back
+ * out; this arch's dispatch (below) never goes through such a loop --
+ * xbios_vecs[fn] is called directly, with fn only ever known here, not
+ * inside whatever it points to. Special-cased below instead, the same
+ * way an out-of-range fn already is.
+ */
+extern LONG xbios_unimpl(void);
+
 extern void x86_64_syscall_entry(void);
 
 /* IA32_EFER/STAR/LSTAR/FMASK/KERNEL_GS_BASE (Intel SDM Vol 2B "SYSCALL"/
@@ -99,7 +111,7 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame)
                              (frame->rdi, frame->rsi, frame->rdx, frame->r10);
         break;
     case X86_64_TRAP_XBIOS:
-        if (fn >= xbios_ent)
+        if (fn >= xbios_ent || xbios_vecs[fn] == (PFLONG)xbios_unimpl)
             frame->rax = fn;
         else
             frame->rax = (UQUAD)((LONG (*)(UQUAD, UQUAD, UQUAD, UQUAD))xbios_vecs[fn])

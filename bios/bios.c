@@ -111,7 +111,7 @@ extern void coma_start(void) NORETURN;  /* found in cli/cmdasm.S */
 #endif
 
 #if CONF_WITH_ALT_RAM
-extern long xmaddalt(UBYTE *start, long size); /* found in bdos/mem.h */
+extern LONG xmaddalt(UBYTE *start, LONG size); /* found in bdos/mem.h */
 #endif
 
 #if CONF_WITH_68040_PMMU

@@ -945,7 +945,7 @@ LONG fat_snext_path(void)
     return E_OK;
 }
 
-LONG fat_getfree_path(long *buf, int drv)
+LONG fat_getfree_path(LONG *buf, int drv)
 {
     WORD drive = drv ? (WORD)(drv - 1) : run->p_curdrv;
     return fat_dfree(NULL, drive, (ULONG *)buf);
@@ -1120,7 +1120,7 @@ LONG fat_chmod_path(char *p, int wrt, char mod)
     return (long)(char)attr;
 }
 
-long fat_rename_path(char *p1, char *p2)
+LONG fat_rename_path(char *p1, char *p2)
 {
     DND *dn1, *dn2;
     const char *s1, *s2;

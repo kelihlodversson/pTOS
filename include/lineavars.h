@@ -47,14 +47,15 @@ typedef struct _mcs {
 extern MCS ext_mouse_cursor_save;   /* use for v_planes > 4 */
 
 /*
- * user_mot vector on ARM.  ARM is a new architecture with no legacy ABI to
- * preserve, so the callback follows the standard AAPCS calling convention and
- * can be written in plain C.  It takes the proposed x and y coordinates and
- * returns the (possibly modified) coordinates packed into a ULONG with x in
- * the high word and y in the low word (MAKE_ULONG(x, y)).  On m68k the legacy
- * line-A register convention is kept instead (see vdi_entry.S).
+ * user_mot vector on ARM and x86-64.  Neither is a legacy architecture with
+ * an ABI to preserve, so the callback follows each one's own standard
+ * calling convention and can be written in plain C.  It takes the proposed
+ * x and y coordinates and returns the (possibly modified) coordinates
+ * packed into a ULONG with x in the high word and y in the low word
+ * (MAKE_ULONG(x, y)).  On m68k the legacy line-A register convention is
+ * kept instead (see vdi_entry.S).
  */
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 typedef ULONG (*UserMotFunc)(WORD x, WORD y);
 #endif
 
@@ -135,7 +136,7 @@ struct _lineavars {
     void (*tim_chain)(int);            /* -62  timer interrupt vector save */
     void (*user_but)(WORD status);     /* -58  user button vector */
     void (*user_cur)(WORD x, WORD y);  /* -54  user cursor vector */
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
     UserMotFunc user_mot;        /* -50  user motion vector */
 #else
     void (*user_mot)(LONG);      /* -50  user motion vector */

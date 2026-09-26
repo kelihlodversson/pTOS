@@ -618,7 +618,7 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
                 if (color & 0x0001) {
                     *work |= pattern & b.leftmask;  /* left section */
                     work += vplanes;
-#if defined(__mcoldfire__) || defined(__arm__)
+#if defined(__mcoldfire__) || defined(__arm__) || defined(__x86_64__)
                     for (n = centre; n >= 0; n--) { /* centre section */
                         *work |= pattern;
                         work += vplanes;
@@ -639,7 +639,7 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
                 } else {
                     *work &= ~(pattern & b.leftmask);   /* left section */
                     work += vplanes;
-#if defined(__mcoldfire__) || defined(__arm__)
+#if defined(__mcoldfire__) || defined(__arm__) || defined(__x86_64__)
                     for (n = centre; n >= 0; n--) { /* centre section */
                         *work &= ~pattern;
                         work += vplanes;
@@ -676,7 +676,7 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
 
                 *work ^= pattern & b.leftmask;      /* left section */
                 work += vplanes;
-#if defined(__mcoldfire__) || defined(__arm__)
+#if defined(__mcoldfire__) || defined(__arm__) || defined(__x86_64__)
                 for (n = centre; n >= 0; n--) {    /* centre section */
                     *work ^= pattern;
                     work += vplanes;
@@ -713,7 +713,7 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
                 if (color & 0x0001) {
                     *work |= pattern & b.leftmask;  /* left section */
                     work += vplanes;
-#if defined(__mcoldfire__) || defined(__arm__)
+#if defined(__mcoldfire__) || defined(__arm__) || defined(__x86_64__)
                     for (n = centre; n >= 0; n--) { /* centre section */
                         *work |= pattern;
                         work += vplanes;
@@ -734,7 +734,7 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
                 } else {
                     *work &= ~(pattern & b.leftmask);   /* left section */
                     work += vplanes;
-#if defined(__mcoldfire__) || defined(__arm__)
+#if defined(__mcoldfire__) || defined(__arm__) || defined(__x86_64__)
                     for (n = centre; n >= 0; n--) { /* centre section */
                         *work &= ~pattern;
                         work += vplanes;
@@ -773,7 +773,7 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
                 data |= pattern & b.leftmask;
                 *work = data;
                 work += vplanes;
-#if defined(__mcoldfire__) || defined(__arm__)
+#if defined(__mcoldfire__) || defined(__arm__) || defined(__x86_64__)
                 for (n = centre; n >= 0; n--) {     /* centre section */
                     *work = pattern;
                     work += vplanes;

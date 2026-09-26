@@ -1,14 +1,14 @@
 /*
  * startup.c - x86-64 EFI entry point: boot services, higher-half relocation
  *
- * Milestones 1-2 of the x86-64 port (issues #330, #331): get from UEFI's
- * own boot environment to code running at this kernel's higher-half
- * virtual address, with just enough diagnostics over COM1 to prove it
- * happened, then give the CPU a real GDT/TSS/IDT so exceptions are
- * caught and reported instead of triple-faulting. This does not yet call
- * into the shared bios/bdos/fs/util pipeline every other machine's
- * startup.S hands off to (see the ARCH_X86_64 branch of the top level
- * Makefile's $(EMUTOS_IMG) rule for why) -- that is still later work.
+ * Milestones 1-3 of the x86-64 port (issues #330, #331, #349): get from
+ * UEFI's own boot environment to code running at this kernel's
+ * higher-half virtual address, give the CPU a real GDT/TSS/IDT so
+ * exceptions are caught and reported instead of triple-faulting, arm the
+ * syscall/sysretq trap dispatch, and hand off into the shared
+ * bios/bdos/fs/util pipeline every other machine's startup.S hands off
+ * to (see the ARCH_X86_64 branch of the top level Makefile's
+ * $(EMUTOS_IMG) rule).
  *
  * Copyright (C) 2025-2026 The pTOS development team.
  *
@@ -16,6 +16,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+#include "config.h"
 #include "portab.h"
 #include "efi.h"
 #include "earlycon.h"
@@ -24,6 +25,10 @@
 #include "gdt.h"
 #include "idt.h"
 #include "pmem.h"
+#include "trap.h"
+#include "pc_x86_64_memory.h"
+#include "bios.h"
+#include "pe_reloc.h"
 
 /* This image's own boot-time stack. Used only from the higher-half jump
  * onward, replacing whatever transient stack UEFI itself was using; 64 KiB
@@ -213,6 +218,21 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     earlycon_puts("pTOS x86-64: page tables built\n");
 
     /*
+     * Re-applies this image's own PE base relocation table a second time
+     * (EFI's loader already applied it once, for image_base itself), with
+     * delta = high alias - low alias, so every compile-time-initialized
+     * absolute pointer anywhere in the image (function pointer tables,
+     * string tables, jump tables, ...) becomes its higher-half virtual
+     * address in one pass, instead of needing to be tracked down and
+     * translated individually wherever it is later read (#343) -- must
+     * run before x86_64_drop_identity_map() removes the low mapping this
+     * walks and writes through, and before anything reads one of these
+     * pointers expecting the high alias.
+     */
+    x86_64_apply_higher_half_relocations(image_base, X86_64_KERNEL_VIRT_BASE - mapped_base);
+    earlycon_puts("pTOS x86-64: PE relocations re-applied for higher half\n");
+
+    /*
      * Must happen here, still running at this image's actual (low) load
      * address, not after the higher-half jump below: x86_64_build_physmap()
      * stores &physmap_pdpt (pgtable.c) into a page-table entry as a
@@ -279,12 +299,13 @@ void NORETURN x86_64_higher_half_main(void)
     earlycon_puts("pTOS x86-64: IDT loaded, exceptions armed\n");
 
     /*
-     * Safe now, and not before: x86_64_idt_init() just translated the one
-     * remaining low-address pointer table this image depends on
-     * (exception_stub[], via x86_64_low_to_high()) into the gates it
-     * installed, so nothing still needs the identity mapping to keep
-     * working. Frees that low canonical address range for #334's future
-     * ILP32 user processes (see #343 and #344's address-space split).
+     * Safe now, and not before: every compile-time-initialized absolute
+     * pointer this image depends on (idt.c's exception_stub[] included)
+     * was already rebased to its higher-half alias by
+     * x86_64_apply_higher_half_relocations(), above, so nothing still
+     * needs the identity mapping to keep working. Frees that low
+     * canonical address range for #334's future ILP32 user processes
+     * (see #343 and #344's address-space split).
      */
     x86_64_drop_identity_map();
     earlycon_puts("pTOS x86-64: identity mapping dropped\n");
@@ -357,5 +378,18 @@ void NORETURN x86_64_higher_half_main(void)
         earlycon_puts("pTOS x86-64: physical memory direct map verified\n");
     }
 
+    x86_64_trap_init();
+    earlycon_puts("pTOS x86-64: syscall/sysretq trap dispatch armed\n");
+
+    /* Must precede biosmain(): bios/biosmem.c's bmem_init() (called from
+     * bios_init(), biosmain()'s first step) reads phystop -- see
+     * pc_x86_64_memory.h's own comment for why this arch needs its own
+     * stand-in rather than a linker-provided one. */
+    pc_x86_64_memory_init();
+    earlycon_puts("pTOS x86-64: TPA memory pool stand-in ready, handing off to biosmain()\n");
+
+    biosmain();
+
+    /* Not reached: biosmain() never returns. */
     hang();
 }

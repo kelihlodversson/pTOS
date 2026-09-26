@@ -11,7 +11,6 @@
 #include "gdt.h"
 #include "idt.h"
 #include "io.h"
-#include "pgtable.h"
 
 #define IDT_ENTRIES 256
 
@@ -93,18 +92,17 @@ void x86_64_idt_init(void)
     int i;
 
     /*
-     * exception_stub[] is compile-time-initialized data, so each entry is
-     * a low address the PE loader's relocations fixed up once at load
-     * time -- not a RIP-relative computation that would already reflect
-     * this function running post-relocation (see x86_64_low_to_high()'s
-     * own comment). Translated here so the installed gates keep working
-     * once x86_64_drop_identity_map() removes the low mapping below.
+     * exception_stub[] is compile-time-initialized data: each entry was a
+     * low address the PE loader's relocations fixed up once at load time,
+     * but startup.c's x86_64_apply_higher_half_relocations() (#343) has
+     * since re-applied the same relocation table a second time, for the
+     * higher-half bias, so every entry here already holds its higher-half
+     * virtual address by the time this runs -- no further translation
+     * needed (or correct: translating an already-translated pointer a
+     * second time would double-apply the bias).
      */
-    for (i = 0; i < 32; i++) {
-        UQUAD low_addr = (UQUAD)(uintptr_t)exception_stub[i];
-
-        set_gate(i, x86_64_low_to_high(low_addr), i == 8 ? X86_64_DF_IST : 0);
-    }
+    for (i = 0; i < 32; i++)
+        set_gate(i, (UQUAD)(uintptr_t)exception_stub[i], i == 8 ? X86_64_DF_IST : 0);
 
     idtr.limit = sizeof(idt) - 1;
     idtr.base = (UQUAD)(uintptr_t)idt;

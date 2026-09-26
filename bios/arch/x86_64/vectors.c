@@ -31,3 +31,21 @@ void init_user_vec(UWORD first_boot)
 {
     (void)first_boot;
 }
+
+/*
+ * vbclock/int_timerc(): bios/arch/arm/vectors.c's real equivalents count
+ * and dispatch the periodic ~200 Hz tick (VBL emulation, keyboard
+ * repeat/timeout, kbd_int_timerc()'s work). This arch has no working
+ * timer or interrupt source yet (bios.c's biosmain() deliberately never
+ * enables interrupts -- see its own comment), so
+ * bios/mfp.c's init_system_timer() only ever stores int_timerc's address
+ * into vector_5ms (a seam nothing on this arch invokes); vbclock is only
+ * ever read as diagnostic/informational data (bdos/ssystem.c). Real
+ * storage and an empty body are all that is needed until this arch gets
+ * a working timer (#329's later milestones).
+ */
+volatile LONG vbclock;
+
+void int_timerc(void)
+{
+}

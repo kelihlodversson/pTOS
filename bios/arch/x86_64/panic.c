@@ -17,7 +17,6 @@
 #include "io.h"
 #include "earlycon.h"
 #include "panic.h"
-#include "pgtable.h"
 
 /* Intel SDM Vol 3A Table 6-1, indexed by vector number. Vectors without a
  * dedicated exception keep their reserved status, since nothing in this
@@ -26,13 +25,12 @@
  * tail entries as null pointers, which x86_64_exception_dispatch() would
  * then dereference.
  *
- * Each entry is compile-time-initialized data, so it is a low address the
- * PE loader's relocations fixed up once at load time, regardless of when
- * or from where it is later read (see x86_64_low_to_high()'s own
- * comment) -- x86_64_exception_dispatch() below translates it before
- * dereferencing, since by the time a panic can happen,
- * x86_64_drop_identity_map() has already removed the low mapping this
- * would otherwise silently still depend on. */
+ * Each entry is compile-time-initialized data: it was a low address the
+ * PE loader's relocations fixed up once at load time, but startup.c's
+ * x86_64_apply_higher_half_relocations() (#343) has since re-applied the
+ * same relocation table a second time, for the higher-half bias, so this
+ * already holds each string's higher-half virtual address by the time a
+ * panic can happen -- no translation needed at the point of use below. */
 static const char *const vector_names[32] = {
     "#DE Divide Error",
     "#DB Debug",
@@ -128,8 +126,7 @@ void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
     earlycon_puts("\npanic: exception ");
     earlycon_puthex(frame->vector);
     earlycon_puts(" ");
-    earlycon_puts((const char *)(uintptr_t)
-                  x86_64_low_to_high((UQUAD)(uintptr_t)vector_names[frame->vector]));
+    earlycon_puts(vector_names[frame->vector]);
     earlycon_puts("\n");
 
     print_val("error_code=", frame->error_code);

@@ -45,16 +45,17 @@ config CONF_WITH_MEMORY_TEST
 
 config CONF_WITH_TTRAM
 	bool "TT-RAM detection"
-	depends on CONF_WITH_ALT_RAM && !ARCH_ARM
+	depends on CONF_WITH_ALT_RAM && !ARCH_ARM && !ARCH_X86_64
 	default n if TARGET_192 || MACHINE_AMIGA || MACHINE_VIRT_M68K
 	default y
 	help
 	  Detect and use the fast RAM found in the 32-bit address space of
 	  TT and Falcon compatible machines.
 
-	  This cannot be selected on ARM: TT-RAM is reported through the
-	  ramtop/ramvalid system variables, which do not exist in the ARM
-	  variant of the fixed sysvars layout (see tosvars.ld).
+	  This cannot be selected on ARM or x86-64: TT-RAM is reported
+	  through the ramtop/ramvalid system variables, which do not exist
+	  in either arch's variant of the fixed sysvars layout (see
+	  tosvars.ld).
 
 config CONF_TTRAM_SIZE
 	hex "Size of the TT-RAM, in bytes (0 = autodetect)"
@@ -439,6 +440,16 @@ config CONF_WITH_GOLDFISH_TTY
 	help
 	  Use the Goldfish TTY device exposed by QEMU's m68k 'virt' machine
 	  as the serial console.
+
+config CONF_WITH_PC_COM1
+	bool "PC COM1 (16550 UART) support"
+	depends on MACHINE_PC_X86_64
+	default y
+	help
+	  Use the COM1 serial port (bios/machine/pc-x86_64/earlycon.c, also
+	  used for early boot diagnostics before bios_init() runs) as the
+	  serial console. This machine has no framebuffer driver yet (#332),
+	  so CONF_SERIAL_CONSOLE's default-on is this machine's only console.
 
 config CONF_WITH_PRINTER_PORT
 	bool "Parallel printer port support"

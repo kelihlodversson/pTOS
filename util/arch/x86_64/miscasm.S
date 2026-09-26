@@ -25,6 +25,11 @@
  * trap.h) and the real args in RDI/RSI/RDX, so this reshuffles before
  * `syscall`. No stack use before `syscall`, preserving trapasm.S's own
  * %rsp%16==8 entry assumption (its own comment has the full story).
+ *
+ * Called from kernel-mode code just as freely as a genuine ring-3 caller
+ * will be once #334 exists: trapasm.S's exit path tells the two apart by
+ * the interrupted RSP itself, so `syscall` here is safe even though there
+ * is no real ring-3 process yet (see trapasm.S's own comment on why).
  */
         .text
 C_SYM(trap1):

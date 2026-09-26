@@ -26,6 +26,7 @@
 #define UART_MCR 4 /* modem control register */
 #define UART_LSR 5 /* line status register */
 
+#define UART_LSR_DR   0x01 /* data ready (a byte is available to read) */
 #define UART_LSR_THRE 0x20 /* transmit holding register empty */
 
 void earlycon_init(void)
@@ -53,6 +54,26 @@ void earlycon_puts(const char *s)
             earlycon_putc('\r');
         earlycon_putc(*s++);
     }
+}
+
+BOOL earlycon_can_read(void)
+{
+    return (x86_64_inb(COM1_PORT + UART_LSR) & UART_LSR_DR) != 0;
+}
+
+UBYTE earlycon_read_byte(void)
+{
+    return x86_64_inb(COM1_PORT + UART_THR);
+}
+
+BOOL earlycon_can_write(void)
+{
+    return (x86_64_inb(COM1_PORT + UART_LSR) & UART_LSR_THRE) != 0;
+}
+
+void earlycon_write_byte(UBYTE b)
+{
+    x86_64_outb(COM1_PORT + UART_THR, b);
 }
 
 void earlycon_puthex(UQUAD value)

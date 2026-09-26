@@ -514,35 +514,33 @@ obj/emutospp.ld: emutos.ld include/config.h tosvars.ld $(AUTOCONF_H)
 #
 
 ifdef ARCH_X86_64
-# Milestones 1-2 of the x86-64 port (#329, #330, #331): a standalone EFI
-# boot stub, built from its own small object list rather than from
-# $(OBJECTS). It does not yet call into the shared bios/bdos/fs/util
-# pipeline the way every other machine's startup.o does -- so pulling in
-# the generic $(CORE_OBJ)/$(OPTIONAL_OBJ) set here would just fail to
-# link against machine hooks (screen, floppy, IDE, ...) this port does
-# not implement yet. Once later sub-issues of #329 land, this arch is
-# expected to join the normal $(OBJECTS)-based rule above like every
-# other machine.
+# Milestone 3 of the x86-64 port (#349): joins $(OBJECTS) like every other
+# machine, instead of the small standalone boot object list milestones
+# 1-2 (#330, #331) used while there was no trap dispatch or machine-hook
+# layer yet for the shared bios/bdos/fs/util pipeline to run on.
 #
-# The link itself must go through the PE32+ ("i386pep") linker emulation,
-# not the ELF one $(LD) otherwise defaults to, and needs -pie so the
-# linker emits the PE Base Relocation Table EDK II's loader requires (see
-# the ARCH_X86_64 MULTILIBFLAGS comment above). --subsystem 10 marks the
-# image as an EFI application; without it the default PE subsystem is a
-# Windows console app, which UEFI firmware refuses to load.
-PC_X86_64_BOOT_OBJ = obj/startup.o obj/pgtable.o obj/relocate.o obj/earlycon.o \
-                     obj/gdt.o obj/idt.o obj/isr.o obj/panic.o obj/pmem.o
+# The link itself must still go through the PE32+ ("i386pep") linker
+# emulation, not the ELF one $(LD) otherwise defaults to, and needs -pie
+# so the linker emits the PE Base Relocation Table EDK II's loader
+# requires (see the ARCH_X86_64 MULTILIBFLAGS comment above). --subsystem
+# 10 marks the image as an EFI application; without it the default PE
+# subsystem is a Windows console app, which UEFI firmware refuses to load.
 
 # Linked directly with $(CROSS_COMPILE)ld, not through $(CC): gcc's driver
 # adds --eh-frame-hdr whenever -fpie/-pie is in play (needed for the PE
 # Base Relocation Table, see the MULTILIBFLAGS comment above), and that
 # option is ELF-linker-only -- binutils' PE ("i386pep") backend rejects it
-# outright ("unrecognized option '--eh-frame-hdr'").
+# outright ("unrecognized option '--eh-frame-hdr'"). Bypassing the gcc
+# driver also means it never adds libgcc.a's own directory to the search
+# path the way it would for an ordinary $(CC)-driven link, so -lgcc below
+# needs an explicit -L for it, found the same way gcc itself would.
 X86_64_LD = $(CROSS_COMPILE)ld
+X86_64_LIBGCC_DIR = $(shell dirname $(shell $(CC) $(MULTILIBFLAGS) -print-libgcc-file-name))
 
-$(EMUTOS_IMG): $(PC_X86_64_BOOT_OBJ)
+$(EMUTOS_IMG): $(OBJECTS)
 	$(X86_64_LD) -m i386pep -pie --subsystem 10 -e efi_main \
-	  -Map=emutos.map -o $@ $(PC_X86_64_BOOT_OBJ)
+	  -L$(X86_64_LIBGCC_DIR) \
+	  -Map=emutos.map -o $@ $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(LIBS)
 else
 $(EMUTOS_IMG): $(OBJECTS) obj/emutospp.ld
 	$(LD) $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(LIBS) $(LDFLAGS) \

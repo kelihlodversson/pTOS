@@ -262,7 +262,7 @@ int kprintf(const char *RESTRICT fmt, ...)
 
 /*==== kcprintf - do both cprintf and kprintf ======*/
 
-static int vkcprintf(const char *fmt, va_list ap)
+int vkcprintf(const char *fmt, va_list ap)
 {
   vkprintf(fmt, ap);
   return vcprintf(fmt, ap);
@@ -634,12 +634,18 @@ void dopanic(const char *fmt, ...)
             kcprintf("Crash at text+%08lx\n", (long)((UBYTE *)pc - run->p_tbase));
     }
 
-    /* allow interrupts so we get keypresses */
+    /* allow interrupts so we get keypresses -- neither ARM (which enables
+     * them elsewhere, see cpsr_ie() in bios.c) nor x86-64 (which
+     * deliberately never does: no PIC/APIC/timer driver yet, see the
+     * matching comment in bios.c's biosmain()) needs this m68k-only
+     * set_sr() call. */
 #ifndef __arm__
+#ifndef __x86_64__
 #if CONF_WITH_ATARI_VIDEO
     set_sr(0x2300);
 #else
     set_sr(0x2000);
+#endif
 #endif
 #endif
 

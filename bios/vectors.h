@@ -51,8 +51,8 @@ void int_illegal(void);
 void int_priv(void);
 void int_unimpint(void);
 
-#ifdef __arm__
-#define trap_save_area 0 /* not used on arm */
+#if defined(__arm__) || defined(__x86_64__)
+#define trap_save_area 0 /* not used on arm/x86-64 */
 #else
 extern WORD trap_save_area[];
 #endif
@@ -129,9 +129,13 @@ LONG protect_v(LONG (*func)(void));
 LONG protect_w(LONG (*func)(WORD), WORD);
 LONG protect_ww(LONG (*func)(void), WORD, WORD);
 LONG protect_wlwwwl(LONG (*func)(void), WORD, LONG, WORD, WORD, WORD, LONG);
-#elif defined (__arm__)
+#elif defined (__arm__) || defined(__x86_64__)
 
-/* We assume ARM developers follow the eabi so the folllowing are simple pass-throughs */
+/* We assume ARM/x86-64 developers follow their platform's own standard
+ * calling convention (AAPCS / SysV x86-64), so the following are simple
+ * pass-throughs on either: neither needs the m68k d2/a2-preservation
+ * trick above (no such caller-saved-vs-callee-saved mismatch exists to
+ * protect against). */
 
 static inline LONG protect_v(LONG (*func)(void))
 {

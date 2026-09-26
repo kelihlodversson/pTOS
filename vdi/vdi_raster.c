@@ -24,7 +24,7 @@
 #include "string.h"     /* for bzero() */
 #include "gemdos.h"     /* for mem alloc & free */
 
-#if defined(__mcoldfire__) || defined(__arm__)
+#if defined(__mcoldfire__) || defined(__arm__) || defined(__x86_64__)
 #define ASM_BLIT_IS_AVAILABLE   0   /* assembler routine does not support ColdFire */
 #else
 #define ASM_BLIT_IS_AVAILABLE   1   /* may use m68k assembler fast_bit_blt routine */

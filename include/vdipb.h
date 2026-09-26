@@ -11,13 +11,13 @@ typedef struct
     WORD nintout;
     WORD subcode;
     WORD handle;
-#ifdef __arm__
-	WORD pad;
+#if defined(__arm__) || defined(__x86_64__)
+    WORD pad;
 #endif
-	void *ptr1;
-	void *ptr2;
-#ifndef __arm__
-	WORD filler; /* make it 12 WORDs long, as documented */
+    void *ptr1;
+    void *ptr2;
+#if !defined(__arm__) && !defined(__x86_64__)
+    WORD filler; /* make it 12 WORDs long, as documented */
 #endif
 } VDICONTROL;
 
