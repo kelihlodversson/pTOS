@@ -291,6 +291,63 @@ void x86_64_map_low_vectors(UQUAD backing_phys)
         p[i] = 0;
 }
 
+/*
+ * True iff virt is backed by a present mapping in this kernel's own page
+ * tables (PML4 -> PDPT -> PD), checked read-only via the physical-memory
+ * direct map (X86_64_PHYS_MAP_BASE) rather than pml4_slot_pdpt()/
+ * pdpt_slot_pd() above -- those assume an already-present entry belongs
+ * to the most-recently allocated pool slot (fine for their own
+ * allocating callers, wrong for looking up an arbitrary existing mapping
+ * out of order; see their own comments). Never walks past a PD entry:
+ * every mapping this file ever builds is a 2 MiB (PD, PTE_PS) or 1 GiB
+ * (PDPT, PTE_PS) page, so a PD entry present without PTE_PS (implying a
+ * further 4 KiB PT level this file never creates) is treated
+ * conservatively as "not confirmed mapped" rather than walked further.
+ *
+ * Used by panic.c's dump_stack() to avoid dereferencing an interrupted
+ * ring-3 caller's own (possibly garbage) RSP: once a real ring-3 fault
+ * is reachable (#350), a bad user RSP is a caller-triggerable, ordinary
+ * event, not the "something is already catastrophically wrong" case the
+ * unconditional raw dump was originally written for -- faulting again
+ * partway through printing a diagnostic risks losing the whole panic
+ * message to a triple fault instead of just skipping one section of it.
+ *
+ * Rejects a non-canonical address outright, before ever indexing pml4[]
+ * with it: bits 63:39 are masked away by the shift below regardless of
+ * whether they are a valid sign-extension of bit 47, so a non-canonical
+ * address could otherwise alias whatever pml4[] index its low bits
+ * happen to share with a real mapping and be misreported as mapped.
+ */
+int x86_64_addr_mapped_readable(UQUAD virt)
+{
+    UQUAD pml4_index = (virt >> 39) & 0x1FF;
+    UQUAD pdpt_index = (virt >> 30) & 0x1FF;
+    UQUAD pd_index = (virt >> 21) & 0x1FF;
+    pgentry_t entry;
+    const pgentry_t *table;
+    UQUAD canon_check = (UQUAD)(((QUAD)virt << 16) >> 16);
+
+    if (canon_check != virt)
+        return 0;
+
+    entry = pml4[pml4_index];
+    if (!(entry & PTE_PRESENT))
+        return 0;
+
+    table = (const pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + (entry & PTE_ADDR_MASK));
+    entry = table[pdpt_index];
+    if (!(entry & PTE_PRESENT))
+        return 0;
+    if (entry & PTE_PS)
+        return 1; /* 1 GiB page */
+
+    table = (const pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + (entry & PTE_ADDR_MASK));
+    entry = table[pd_index];
+    if (!(entry & PTE_PRESENT))
+        return 0;
+    return (entry & PTE_PS) ? 1 : 0; /* 2 MiB page, else not confirmed */
+}
+
 /* CPUID.80000001H:EDX.Page1GB [bit 26] -- support for 1 GiB pages at the
  * PDPT level, which x86_64_build_physmap() relies on. Querying an
  * extended leaf this way is always valid on any CPU already running this

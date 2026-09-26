@@ -118,6 +118,19 @@ void x86_64_drop_identity_map(void);
 void x86_64_map_low_vectors(UQUAD backing_phys);
 
 /*
+ * True iff virt is backed by a present mapping in this kernel's own page
+ * tables, checked read-only (never allocates, unlike
+ * x86_64_build_page_tables()/x86_64_build_physmap()'s own internal PML4/
+ * PDPT walking helpers). Requires x86_64_build_physmap() to have already
+ * run (it reads back through the physical-memory direct map); safe any
+ * time after that, including from an exception handler. See its own
+ * comment in pgtable.c for exactly what "confirmed mapped" means here
+ * (a 1 GiB or 2 MiB page; a further 4 KiB PT level, never created by
+ * this file, reads as "not confirmed" rather than being walked).
+ */
+int x86_64_addr_mapped_readable(UQUAD virt);
+
+/*
  * Maps [0, max_phys) into the permanent physical-memory direct map at
  * X86_64_PHYS_MAP_BASE, using 1 GiB pages -- so any physical address the
  * physical-memory allocator (pmem.c) hands out is reachable simply by

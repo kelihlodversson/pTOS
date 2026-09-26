@@ -1346,9 +1346,30 @@ static LONG bios_4(WORD r_w, UBYTE *adr, WORD numb, WORD first, WORD drive, LONG
  *
  */
 
-LONG setexc(WORD num, LONG vector)
+/*
+ * `long`, not portab.h's always-32-bit LONG, for the parameter, the
+ * etv_*-path local, and the return type: etv_timer/etv_critic/etv_term
+ * are genuine C function pointers (real 64-bit ones on x86-64's LP64),
+ * and num values 0x100-0x102 round-trip a caller's vector through them
+ * directly (see that path's own comment below) rather than through the
+ * fixed-32-bit-per-slot low-memory table the num=0x21/0x22 (etc.) path
+ * below still uses -- a LONG parameter/return here silently truncated
+ * any higher-half caller (e.g. bdosmain.c's own
+ * Setexc(0x21, (long)enter)) before it ever reached etv_timer's own
+ * assignment. A no-op on m68k/ARM, where long and LONG are the same
+ * width.
+ *
+ * The `addr = (LONG *)(4L * num)` path below is NOT similarly widened,
+ * deliberately: that low-memory table is fundamentally 32-bit-per-slot
+ * by historical (m68k) ABI convention, unrelated to this arch's own
+ * pointer width, and widening the slot itself would be a much larger
+ * change than this function's own parameter type. See kelihlodversson/
+ * pTOS#351 for the same "kernel pointer needs to fit in a narrower ABI
+ * slot" theme applied to that path specifically.
+ */
+long setexc(WORD num, long vector)
 {
-    LONG oldvector;
+    long oldvector;
     LONG *addr;
 
     /*
@@ -1368,17 +1389,17 @@ LONG setexc(WORD num, LONG vector)
     switch (num)
     {
     case 0x100:
-        oldvector = (LONG)etv_timer;
+        oldvector = (long)etv_timer;
         if (vector != -1)
             etv_timer = (void(*)(int))vector;
         return oldvector;
     case 0x101:
-        oldvector = (LONG)etv_critic;
+        oldvector = (long)etv_critic;
         if (vector != -1)
             etv_critic = (LONG(*)(WORD,WORD))vector;
         return oldvector;
     case 0x102:
-        oldvector = (LONG)etv_term;
+        oldvector = (long)etv_term;
         if (vector != -1)
             etv_term = (void(*)(void))vector;
         return oldvector;
@@ -1388,7 +1409,7 @@ LONG setexc(WORD num, LONG vector)
     oldvector = *addr;
 
     if(vector != -1) {
-        *addr = vector;
+        *addr = (LONG)vector;
     }
     return oldvector;
 }
