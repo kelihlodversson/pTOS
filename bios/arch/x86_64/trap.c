@@ -12,6 +12,7 @@
 #include "gdt.h"
 #include "gemerror.h"
 #include "io.h"
+#include "pgtable.h"
 #include "trap.h"
 
 /*
@@ -57,6 +58,16 @@ extern const UWORD xbios_ent;
  */
 extern LONG xbios_unimpl(void);
 
+/*
+ * xbios_unimpl's real address, materialized once by x86_64_trap_init()
+ * via the same forced RIP-relative `lea` x86_64_syscall_entry's own
+ * comment explains (this PE link has no GOT for a plain C
+ * `(PFLONG)xbios_unimpl` expression to safely go through), and compared
+ * against here instead of taking xbios_unimpl's address directly at
+ * every dispatch.
+ */
+static PFLONG xbios_unimpl_addr;
+
 extern void x86_64_syscall_entry(void);
 
 /* IA32_EFER/STAR/LSTAR/FMASK/KERNEL_GS_BASE (Intel SDM Vol 2B "SYSCALL"/
@@ -91,32 +102,61 @@ static x86_64_percpu_t percpu;
 static UBYTE syscall_stack[SYSCALL_STACK_BYTES] __attribute__((aligned(16)));
 
 /*
- * Coarse "is this even plausibly a user address" check on a raw syscall
- * argument from a genuine ring-3 caller (x86_64_trap_dispatch()'s
- * from_ring3). Canonical-low-half addresses (bit 47 and above all
- * clear) cover every address a real user process could plausibly hold a
- * pointer to, now or once #334 gives it a real address space, and every
- * legitimate non-pointer argument too (handles, counts, opcodes: always
- * small positive integers, nowhere near this boundary). Anything else --
- * a canonical-high-half (kernel) address, or a non-canonical one -- is
- * rejected outright, rather than handed to osif()/bios_vecs[]/
- * xbios_vecs[] to dereference at CPL0 on the caller's behalf.
- *
- * This is NOT full user-memory validation: it cannot tell a pointer that
- * merely lies in the low canonical half from one that isn't actually
- * backed by the calling process's own memory, because there is no such
- * thing as "the calling process" yet (#334). Real validation -- checking
- * the address is actually mapped and owned by the caller, with safe
- * fault recovery around the dereference (a copy_from_user()-style
- * mechanism) -- belongs with that per-process address-space work. This
- * only closes the specific, cheaply-closable case #350's review called
- * out: a ring-3 caller handing the kernel one of its own (or an
- * arbitrary non-canonical) addresses and having it blindly dereferenced
- * or written through at CPL0.
+ * Generous over-approximations of this image's own load span and the
+ * physical-memory direct map's actual size, used below rather than the
+ * exact bounds (startup.c's IMAGE_SPAN_BYTES, x86_64_pmem_highest_addr())
+ * -- pulling either in would mean this arch-generic file depending on a
+ * bios/machine/pc-x86_64 header, the layering CLAUDE.md asks arch/ code
+ * to avoid. Wildly generous is fine: these only need to safely contain
+ * the real ranges, not match them tightly (see x86_64_is_kernel_mapped_addr()'s
+ * own comment on why a loose bound here still cannot misfire against a
+ * real GEMDOS argument).
  */
-static int x86_64_looks_like_user_addr(UQUAD addr)
+#define X86_64_KERNEL_IMAGE_SPAN_GENEROUS (32ULL * 1024 * 1024)  /* actual span ~4 MiB */
+#define X86_64_PHYS_MAP_SPAN_GENEROUS     (1ULL << 40)           /* 1 TiB */
+
+/*
+ * True iff addr falls inside one of this kernel's own two known-mapped
+ * address ranges: its own load image (X86_64_KERNEL_VIRT_BASE upward)
+ * or the physical-memory direct map (X86_64_PHYS_MAP_BASE upward,
+ * pgtable.h) -- the only ranges where a bad dereference could actually
+ * read or corrupt live kernel state, as opposed to merely faulting
+ * harmlessly into unmapped kernel-half address space. Used by
+ * x86_64_trap_dispatch() to reject a genuine ring-3 caller's raw syscall
+ * argument without ever dereferencing it at CPL0 on the caller's behalf.
+ *
+ * This replaced an earlier, broader "reject anything outside the low
+ * canonical half" version (#350's review): that one also rejected
+ * ordinary *signed* GEMDOS arguments sign-extended into the upper half --
+ * Fseek()'s negative offset, Mxalloc()'s -1 size-query sentinel, and any
+ * other call passing a small negative long -- exactly as if they were
+ * pointers, breaking real functionality. There is no per-call, per-slot
+ * argument-type metadata available here (bios_vecs[]/xbios_vecs[]/
+ * bdosmain.c's funcs[] all carry an argument *count*, never which slots
+ * are pointers) to do real type-aware validation with, so this still
+ * isn't that; it is deliberately narrow instead. A sign-extended 32-bit
+ * value's low 32 bits are always close to 0xFFFFFFFF (e.g. -9 is
+ * 0xFFFFFFF7, -1 is 0xFFFFFFFF), far above the low-32-bit span of either
+ * range checked here (X86_64_KERNEL_VIRT_BASE's low 32 bits are
+ * 0x80000000, and X86_64_PHYS_MAP_BASE's top 32 bits are 0xFFFF8000, not
+ * 0xFFFFFFFF, putting the whole range far below any sign-extended
+ * negative's value) -- so no realistic signed integer argument can ever
+ * land in either, no matter how negative, while a genuine kernel address
+ * always does. This also means a call with fewer than 4 real arguments,
+ * whose unused slots the caller left uncleared, cannot be misclassified
+ * by accident either: the odds of unrelated garbage exactly landing
+ * inside one of these two narrow ranges are negligible, unlike the old
+ * version's roughly 50% of the address space.
+ */
+static int x86_64_is_kernel_mapped_addr(UQUAD addr)
 {
-    return addr < 0x0000800000000000ULL;
+    if (addr >= X86_64_KERNEL_VIRT_BASE
+        && addr < X86_64_KERNEL_VIRT_BASE + X86_64_KERNEL_IMAGE_SPAN_GENEROUS)
+        return 1;
+    if (addr >= X86_64_PHYS_MAP_BASE
+        && addr < X86_64_PHYS_MAP_BASE + X86_64_PHYS_MAP_SPAN_GENEROUS)
+        return 1;
+    return 0;
 }
 
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
@@ -125,10 +165,10 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     ULONG fn = (ULONG)frame->rax;
 
     if (from_ring3 &&
-        (!x86_64_looks_like_user_addr(frame->rdi) ||
-         !x86_64_looks_like_user_addr(frame->rsi) ||
-         !x86_64_looks_like_user_addr(frame->rdx) ||
-         !x86_64_looks_like_user_addr(frame->r10))) {
+        (x86_64_is_kernel_mapped_addr(frame->rdi) ||
+         x86_64_is_kernel_mapped_addr(frame->rsi) ||
+         x86_64_is_kernel_mapped_addr(frame->rdx) ||
+         x86_64_is_kernel_mapped_addr(frame->r10))) {
         /* GEMDOS has a real "bad address" error code; BIOS/XBIOS calls
          * don't share one convention (return types vary per call), so
          * -1L (already this dispatcher's own "unhandled class" value
@@ -169,7 +209,7 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
                              (frame->rdi, frame->rsi, frame->rdx, frame->r10);
         break;
     case X86_64_TRAP_XBIOS:
-        if (fn >= xbios_ent || xbios_vecs[fn] == (PFLONG)xbios_unimpl)
+        if (fn >= xbios_ent || xbios_vecs[fn] == xbios_unimpl_addr)
             frame->rax = fn;
         else
             frame->rax = (UQUAD)((LONG (*)(UQUAD, UQUAD, UQUAD, UQUAD))xbios_vecs[fn])
@@ -245,6 +285,17 @@ void x86_64_trap_init(void)
 
         __asm__("lea x86_64_syscall_entry(%%rip), %0" : "=r"(entry_addr));
         x86_64_wrmsr(MSR_LSTAR, entry_addr);
+    }
+
+    /* Same GOT hazard as x86_64_syscall_entry above, for the same reason
+     * (see xbios_unimpl_addr's own comment): xbios_unimpl is an external
+     * symbol, so a plain C `(PFLONG)xbios_unimpl` risks a GOT-indirected
+     * load this PE link never populates. */
+    {
+        UQUAD unimpl_addr;
+
+        __asm__("lea xbios_unimpl(%%rip), %0" : "=r"(unimpl_addr));
+        xbios_unimpl_addr = (PFLONG)(uintptr_t)unimpl_addr;
     }
 
     /* Cleared in RFLAGS on syscall entry: IF (bit 9), so a trap handler

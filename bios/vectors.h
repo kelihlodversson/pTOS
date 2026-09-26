@@ -149,9 +149,18 @@ static inline LONG protect_ww(LONG (*func)(void), WORD a, WORD b)
 {
     return ((LONG (*)(WORD, WORD))func)(a, b);
 }
-static inline LONG protect_wlwwwl(LONG (*func)(void), WORD a, LONG b, WORD c, WORD d, WORD e, LONG f)
+/*
+ * `long b`, not portab.h's always-32-bit LONG: lrwabs() (bios/bios.c)
+ * passes a genuine buffer pointer through this slot, and hdv_rw's real
+ * signature (tosvars.h) already declares it `UBYTE *`. `long` matches
+ * that pointer's real width on every arch this branch serves (32 bits on
+ * ARM's ILP32, same as LONG there; 64 bits on x86-64's LP64, where a
+ * LONG-sized slot would truncate it before the real driver ever saw it
+ * -- #350's review).
+ */
+static inline LONG protect_wlwwwl(LONG (*func)(void), WORD a, long b, WORD c, WORD d, WORD e, LONG f)
 {
-    return ((LONG (*)(WORD, LONG, WORD, WORD, WORD, LONG))func)(a,b,c,d,e,f);
+    return ((LONG (*)(WORD, long, WORD, WORD, WORD, LONG))func)(a,b,c,d,e,f);
 }
 #endif
 

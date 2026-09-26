@@ -1301,7 +1301,13 @@ void bconout_str(WORD handle, const char* str)
 
 LONG lrwabs(WORD r_w, UBYTE *adr, WORD numb, WORD first, WORD drive, LONG lfirst)
 {
-    return protect_wlwwwl((PFLONG)hdv_rw, r_w, (LONG)adr, numb, first, drive, lfirst);
+    /*
+     * (long)adr, not (LONG)adr: on ARM/x86-64, protect_wlwwwl()'s matching
+     * parameter is native `long` precisely so this cast doesn't truncate
+     * adr (see its own comment) -- on m68k, `long` is 32 bits same as
+     * LONG, so this is unchanged there.
+     */
+    return protect_wlwwwl((PFLONG)hdv_rw, r_w, (long)adr, numb, first, drive, lfirst);
 }
 
 #if defined(__arm__) || defined(__x86_64__)
