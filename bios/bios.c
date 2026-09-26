@@ -295,13 +295,13 @@ static void vecs_init(void)
      * previous one. This panics with "Exception number 27" if VEC_LEVEL3 is
      * not initialized with a valid default handler.
      */
-    VEC_LEVEL1 = just_rte;
-    VEC_LEVEL2 = just_rte;
-    VEC_LEVEL3 = just_rte;
-    VEC_LEVEL4 = just_rte;
-    VEC_LEVEL5 = just_rte;
-    VEC_LEVEL6 = just_rte;
-    VEC_LEVEL7 = just_rte;
+    SET_VEC(VEC_LEVEL1, just_rte);
+    SET_VEC(VEC_LEVEL2, just_rte);
+    SET_VEC(VEC_LEVEL3, just_rte);
+    SET_VEC(VEC_LEVEL4, just_rte);
+    SET_VEC(VEC_LEVEL5, just_rte);
+    SET_VEC(VEC_LEVEL6, just_rte);
+    SET_VEC(VEC_LEVEL7, just_rte);
 
 #ifdef __mcoldfire__
     /* On ColdFire, when a zero divide exception occurs, the PC value in the
@@ -312,12 +312,12 @@ static void vecs_init(void)
      * divides. So we keep the default panic() behaviour in such case. */
 #else
     /* Original TOS cowardly ignores integer divide by zero. */
-    VEC_DIVNULL = just_rte;
+    SET_VEC(VEC_DIVNULL, just_rte);
 #endif
 
     /* initialise some vectors we really need */
 #ifdef __m68k__
-    VEC_GEM = vditrap;
+    SET_VEC(VEC_GEM, vditrap);
 #else
     /* ARM's own gemtrap() (bios/arch/arm/vectorsasm.S) is the equivalent
      * of m68k's vditrap(): it decodes the svc #2 trap and dispatches into
@@ -327,12 +327,12 @@ static void vecs_init(void)
      * every VDI call (even v_opnwk()) panics with "Exception number 28"
      * (any_vec() computing 0x88/4 from VEC_GEM's own address) the first
      * time anything traps into it. */
-    VEC_GEM = gemtrap;
+    SET_VEC(VEC_GEM, gemtrap);
 #endif
-    VEC_BIOS = biostrap;
-    VEC_XBIOS = xbiostrap;
+    SET_VEC(VEC_BIOS, biostrap);
+    SET_VEC(VEC_XBIOS, xbiostrap);
 #if CONF_WITH_LINEA
-    VEC_LINEA = int_linea;
+    SET_VEC(VEC_LINEA, int_linea);
 #endif
     /* Emulate some instructions unsupported by the processor. */
 #ifdef __mcoldfire__
@@ -343,12 +343,12 @@ static void vecs_init(void)
         /* On 68010+, "move from sr" called from user mode causes a
          * privilege violation. This instruction must be emulated for
          * compatibility with 68000 processors. */
-        VEC_PRIVLGE = int_priv;
+        SET_VEC(VEC_PRIVLGE, int_priv);
     } else {
         /* On 68000, "move from ccr" is unsupported and causes an illegal
          * instruction exception. This instruction must be emulated for
          * compatibility with higher processors. */
-        VEC_ILLEGAL = int_illegal;
+        SET_VEC(VEC_ILLEGAL, int_illegal);
     }
 #endif
 #if CONF_WITH_ADVANCED_CPU && defined(__m68k__)
@@ -358,7 +358,7 @@ static void vecs_init(void)
      * emulated is movep; fortunately this is both the simplest and
      * commonest.
      */
-    VEC_UNIMPINT = int_unimpint;
+    SET_VEC(VEC_UNIMPINT, int_unimpint);
 #endif
 }
 

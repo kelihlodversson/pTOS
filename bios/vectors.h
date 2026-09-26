@@ -61,8 +61,41 @@ extern WORD trap_save_area[];
 #ifdef __arm__
 volatile PFVOID *vector_address(ULONG address);
 #define VEC_AT(address) (*vector_address(address))
+#elif defined(__x86_64__)
+/* This whole table is a fixed, historical 32-bit-per-slot layout (see
+ * #351): setexc()'s generic path (bios/bios.c) reads and writes every
+ * one of these cells -- and every other Setexc()-addressable vector
+ * number, e.g. 0x8c/4=0x23, right next to VEC_GEM/VEC_TRAP2 at 0x88 --
+ * as a plain 4-byte LONG. A native x86-64 function pointer is 8 bytes;
+ * storing one directly through a PFVOID-typed cell, as the generic
+ * fallback below does, spans two adjacent 4-byte slots and corrupts
+ * whatever real, distinct GEMDOS vector lives in the next one. Every
+ * VEC_LEVEL1..7/VEC_DIVNULL/VEC_GEM/VEC_BIOS/VEC_XBIOS write vecs_init()
+ * (bios.c) does on this arch hits exactly this hazard, since they are
+ * all spaced only 4 bytes apart. Keep the cell 4 bytes wide here too --
+ * see SET_VEC() below for the matching write side. */
+#define VEC_AT(address) (*(volatile LONG *)(address))
 #else
 #define VEC_AT(address) (*(volatile PFVOID *)(address))
+#endif
+
+/*
+ * SET_VEC(cell, fn): the only safe way to store a function pointer into
+ * a VEC_AT() cell from shared (m68k/ARM/x86-64) code such as bios.c's
+ * vecs_init(). On m68k/ARM this is a plain assignment (cell is already
+ * a native, correctly-sized PFVOID slot there). On x86-64, cell is a
+ * 4-byte LONG (see VEC_AT's own comment above): this arch's own trap
+ * dispatch never reads these particular cells back either way
+ * (bios/arch/x86_64/trap.c's own comment on why bios_init() writing
+ * VEC_GEM/VEC_BIOS/VEC_XBIOS is "pure unread data" here), so storing
+ * only the pointer's low 32 bits is safe -- a stray Setexc()-based
+ * read-back still gets *something* plausible-looking rather than
+ * always-zero, matching every other slot's own convention, without
+ * ever touching the next slot the way a full 8-byte store would. */
+#if defined(__x86_64__)
+#define SET_VEC(cell, fn) ((cell) = (LONG)(long)(fn))
+#else
+#define SET_VEC(cell, fn) ((cell) = (fn))
 #endif
 #define VEC_ILLEGAL VEC_AT(0x10) /* illegal instruction vector */
 #define VEC_DIVNULL VEC_AT(0x14) /* division by zero exception vector */
