@@ -53,6 +53,8 @@
  * path can restore it; PERCPU_KERNEL_RSP supplies a stack this code
  * knows is safe to push registers onto.
  */
+        .extern C_SYM(x86_64_bad_sysret)
+
         .globl  C_SYM(x86_64_syscall_entry)
 C_SYM(x86_64_syscall_entry):
         swapgs
@@ -114,6 +116,28 @@ C_SYM(x86_64_syscall_entry):
         pop     %rcx
 
         /*
+         * `sysretq` itself never validates %rcx (the target RIP, entirely
+         * caller-controlled: it is whatever the ring-3 caller's own %rcx
+         * held at the `syscall` instruction, untouched by anything
+         * above). A non-canonical target is not merely "the process
+         * faults after resuming" -- `sysretq` can fault on it directly,
+         * partway through changing privilege level/segment state, the
+         * same hardware hazard CVE-2012-0217 (and its Xen/*BSD analogues)
+         * exploited to run a #GP handler with attacker-influenced state
+         * still in effect. Checked here, still on the trusted kernel
+         * stack with kernel %gs, before either is given up below: shift
+         * left then arithmetic-shift right by 16 sign-extends bits 63:47
+         * from bit 47; canonical iff that reproduces the original value
+         * (Linux's entry_64.S uses the identical trick for the same
+         * reason).
+         */
+        movq    %rcx, %rax
+        shlq    $16, %rax
+        sarq    $16, %rax
+        cmpq    %rax, %rcx
+        jne     1f
+
+        /*
          * Mirror image of entry: restore the caller's own %rsp (saved
          * above) before swapping GS back, so a fault between here and
          * `sysretq` -- there is none, but the ordering is what makes that
@@ -129,3 +153,14 @@ C_SYM(x86_64_syscall_entry):
         movq    %gs:PERCPU_USER_RSP, %rsp
         swapgs
         sysretq
+
+        /*
+         * Non-canonical %rcx: still on the kernel stack, kernel %gs, and
+         * (per x86_64_trap_init()'s own comment on percpu.kernel_rsp)
+         * %rsp%16==8 here exactly as after a `call`, so this needs no
+         * stack adjustment of its own before calling into C -- same as
+         * the `call x86_64_trap_dispatch` above. x86_64_bad_sysret()
+         * (trap.c) never returns.
+         */
+1:      movq    %rcx, %rdi
+        call    C_SYM(x86_64_bad_sysret)

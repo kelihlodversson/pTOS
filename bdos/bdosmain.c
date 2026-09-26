@@ -121,15 +121,21 @@ static const SPECNAME specname_table[] =
  *
  * This, osif() below, and every other #if defined(__arm__) ||
  * defined(__x86_64__) in this file are one axis: whether GEMDOS
- * arguments arrive as one uniform LONG per parameter (pw[] indexed by
- * parameter number) or packed m68k-native-width on the trap's own stack
- * frame (mixed WORD/LONG, requiring per-call offset arithmetic). x86-64
- * joins ARM on the LONG-array side of that split (#349): its own trap
- * entry (bios/arch/x86_64/trap.c) already marshals arguments into a
- * uniform LONG pw[] before calling osif(), the same shape ARM's _enter
- * (bdos/arch/arm/rwa.S) builds for the same reason -- neither CPU has
- * m68k's stack-based calling convention to reuse the trap frame's
- * arguments from directly.
+ * arguments arrive as one uniform native `long` per parameter (pw[]
+ * indexed by parameter number) or packed m68k-native-width on the trap's
+ * own stack frame (mixed WORD/LONG, requiring per-call offset
+ * arithmetic). x86-64 joins ARM on the long-array side of that split
+ * (#349): its own trap entry (bios/arch/x86_64/trap.c) already marshals
+ * arguments into a uniform `long` pw[] before calling osif(), the same
+ * shape ARM's _enter (bdos/arch/arm/rwa.S) builds for the same reason --
+ * neither CPU has m68k's stack-based calling convention to reuse the
+ * trap frame's arguments from directly. Deliberately `long`, not
+ * portab.h's always-32-bit LONG: osif() below reinterprets a slot's
+ * address directly as a pointer of the real argument's width (e.g.
+ * `*((char **)&pw[1])`), which is only correct if each slot is exactly
+ * pointer-width -- true of LONG on ARM's ILP32, but not of x86-64's LP64,
+ * where a LONG-sized slot would truncate every pointer argument to its
+ * low 32 bits.
  */
 typedef struct
 {
@@ -458,7 +464,7 @@ static void mark_bcbs_invalid(int drv)
 
 
 #if defined(__arm__) || defined(__x86_64__)
-long osif(LONG *pw);
+long osif(long *pw);
 #else
 long osif(short *pw);
 #endif
@@ -467,7 +473,7 @@ long osif(short *pw);
  *  osif - C implementation of trap #1. Called by _enter.
  */
 #if defined(__arm__) || defined(__x86_64__)
-long osif(LONG *pw)
+long osif(long *pw)
 #else
 long osif(short *pw)
 #endif

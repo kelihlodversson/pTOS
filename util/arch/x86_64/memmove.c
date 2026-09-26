@@ -39,7 +39,15 @@ typedef unsigned long machine_word_t;
 typedef unsigned long int_ptr_t;
 #define STEP_SIZE sizeof(machine_word_t)
 #define ALIGN_MASK (STEP_SIZE-1)
-#define REPEAT_BYTE(c) (0x01010101 * (c))
+/*
+ * machine_word_t is 8 bytes here (unlike the identical-looking ARM copy
+ * of this file, where "unsigned long" is 4 bytes): a fixed 0x01010101
+ * pattern only fills the low 4 bytes of each word, leaving the high 4
+ * zeroed and corrupting every memset() fill of more than STEP_SIZE
+ * bytes with a nonzero c. (~0 / 0xff) instead produces a pattern of
+ * 0x01 bytes exactly as wide as machine_word_t, whatever that width is.
+ */
+#define REPEAT_BYTE(c) ((machine_word_t)(unsigned char)(c) * (machine_word_t)(~(machine_word_t)0 / 0xff))
 
 typedef union { char* b ; machine_word_t* w; int_ptr_t i; const void* v;} ptr_t;
 

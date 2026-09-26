@@ -151,6 +151,22 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame);
 long x86_64_kernel_trap(long rax, long rdi, long rsi, long rdx, long r10);
 
 /*
+ * Called from x86_64_syscall_entry's exit path (trapasm.S) when the
+ * about-to-be-restored return RIP (RCX -- entirely caller-controlled,
+ * see trapasm.S's own comment) is not a canonical address. `sysretq`
+ * does not validate this itself, and executing it anyway is the exact
+ * hardware hazard CVE-2012-0217 (and its Xen/*BSD analogues) exploited:
+ * on real silicon, a non-canonical target can fault after privilege/
+ * segment state has already started changing, delivering the resulting
+ * #GP with attacker-influenced state still in effect rather than
+ * cleanly at CPL0 beforehand. There is no user-mode fault-delivery
+ * mechanism yet (#334) to hand this back to the offending process
+ * safely, so this panics instead -- loud and diagnosable beats silently
+ * exploitable. Never returns.
+ */
+void x86_64_bad_sysret(UQUAD bad_rip) NORETURN;
+
+/*
  * Enables the `syscall`/`sysret` extension (IA32_EFER.SCE), points
  * IA32_STAR/IA32_LSTAR/IA32_FMASK at this arch's entry stub
  * (x86_64_syscall_entry, trapasm.S) and the kernel/user selectors gdt.h

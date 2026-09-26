@@ -260,7 +260,7 @@ void x86_64_map_low_vectors(void)
     map_2m_range(0, 0, 1);
     reload_cr3();
 
-    for (i = 0; i < 4096 / sizeof(UQUAD); i++)
+    for (i = 0; i < X86_64_PAGE_2M_SIZE / sizeof(UQUAD); i++)
         p[i] = 0;
 }
 

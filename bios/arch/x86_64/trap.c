@@ -8,16 +8,26 @@
  */
 
 #include "portab.h"
+#include "biosext.h"
 #include "gdt.h"
 #include "io.h"
 #include "trap.h"
 
 /*
  * osif() (bdos/bdosmain.c) is GEMDOS's own C-level trap #1 handler,
- * declared there to take a uniform LONG pw[] on this arch (see
+ * declared there to take a uniform native-`long` pw[] on this arch (see
  * bdosmain.c's own comment on the #if defined(__arm__) ||
  * defined(__x86_64__) split) -- not in any shared header, so declared
  * here exactly as ARM's bdos/arch/arm/rwa.S implicitly relies on it too.
+ * Deliberately `long`, not portab.h's always-32-bit LONG: several GEMDOS
+ * calls (Pexec, Cconws, Fsetdta, Mfree, ...) pass a genuine pointer
+ * through one of these slots, and bdosmain.c's own osif() reinterprets a
+ * slot's address directly as a pointer of the real argument's width
+ * (e.g. `*((char **)&pw[1])`) -- correct only if each slot is exactly
+ * pointer-width. On ARM (ILP32) that is already 32 bits, same as LONG,
+ * so this changes nothing there; on x86-64 (LP64) pointers are 64 bits,
+ * and a LONG-sized slot would silently truncate every such pointer to
+ * its low 32 bits before osif() ever saw it.
  *
  * bios_vecs[]/xbios_vecs[] (bios/bios.c, bios/xbios.c) are the BIOS/XBIOS
  * opcode-indexed function tables every other arch's own trap dispatcher
@@ -28,7 +38,7 @@
  * codebase's own established convention, since a callee only ever reads
  * the argument registers its own real signature declares.
  */
-extern long osif(LONG *pw);
+extern long osif(long *pw);
 extern const PFLONG bios_vecs[];
 extern const UWORD bios_ent;
 extern const PFLONG xbios_vecs[];
@@ -89,14 +99,19 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame)
         /* 5 slots, not 4: bdosmain.c's own dispatch (the p4 case, e.g.
          * Pexec's mode/path/tail/env) reads up to pw[4] -- GEMDOS's own
          * widest call needs all 4 real argument registers this
-         * convention has (trap.h), not just the first 3. */
-        LONG pw[5];
+         * convention has (trap.h), not just the first 3.
+         *
+         * `long`, not LONG: see this file's own top-of-file comment on
+         * why a fixed-32-bit slot here would truncate any pointer
+         * argument (Pexec's path/tail/env, Cconws's string, ...) before
+         * osif() ever saw it. */
+        long pw[5];
 
-        pw[0] = (LONG)fn;
-        pw[1] = (LONG)frame->rdi;
-        pw[2] = (LONG)frame->rsi;
-        pw[3] = (LONG)frame->rdx;
-        pw[4] = (LONG)frame->r10;
+        pw[0] = (long)fn;
+        pw[1] = (long)frame->rdi;
+        pw[2] = (long)frame->rsi;
+        pw[3] = (long)frame->rdx;
+        pw[4] = (long)frame->r10;
         frame->rax = (UQUAD)osif(pw);
         break;
     }
@@ -134,6 +149,13 @@ long x86_64_kernel_trap(long rax, long rdi, long rsi, long rdx, long r10)
     frame.r10 = (UQUAD)r10;
     x86_64_trap_dispatch(&frame);
     return (long)frame.rax;
+}
+
+/* See trap.h's own comment. */
+void x86_64_bad_sysret(UQUAD bad_rip)
+{
+    panic("x86-64: refusing sysretq to non-canonical RIP %016lx\n",
+          (unsigned long)bad_rip);
 }
 
 void x86_64_trap_init(void)
