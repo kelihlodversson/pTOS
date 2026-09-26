@@ -1,0 +1,44 @@
+# x86-64 UEFI EFI application (qemu-system-x86_64 + OVMF)
+MACHINE_PC_X86_64=y
+
+# bios/ide.c references struct IDE, only defined for m68k/Atari hardware
+# (see virt-arm_defconfig's own comment: "struct IDE is never defined for
+# this machine"). Matched here explicitly, the same way MACHINE_RPI/
+# MACHINE_VIRT_ARM/MACHINE_VIRT_M68K already are.
+CONF_WITH_IDE=n
+
+# bios/xhdi.c references xhdi_vec, implemented only in
+# bios/arch/m68k/natfeat.S. Matched here explicitly, same precedent as
+# CONF_WITH_IDE above.
+CONF_WITH_XHDI=n
+
+# The Line-A emulator (vdi/Kconfig) is only implemented for 68k-class
+# hardware (bios/arch/m68k/linea.S) and ARM's own trap-based emulation
+# (bios/machine/raspi/startup.S); there is no x86-64 implementation of
+# either. Matched here explicitly, same precedent as CONF_WITH_IDE above.
+CONF_WITH_LINEA=n
+
+# The whole point of this defconfig, for now: leave the AES/EmuDesk out,
+# so EmuTOS boots straight into EmuCON (aes/Kconfig) instead of the
+# graphical desktop -- there is no x86-64 framebuffer driver yet (#332)
+# and no aes/arch/x86_64/ implementation of the AES's own process-launch
+# assembly glue. Same precedent as virt-arm-cli_defconfig/
+# virt-m68k-cli_defconfig. CONF_WITH_CLI is left at its default (y):
+# this target actually needs EmuCON.
+CONF_WITH_AES=n
+
+# CONF_SERIAL_CONSOLE_POLLING_MODE's own default (n, interrupt mode)
+# assumes an interrupt handler somewhere feeds bconin2()/bconstat2()'s
+# ikbdiorec ring buffer (push_ascii_ikbdiorec(), bios/ikbd.c) -- on every
+# other arch, an MFP/UART receive interrupt does that (bios/serport.c's
+# mfp_rs232_rx_interrupt_handler(), or ARM's own equivalent). x86-64 has
+# no interrupt controller (PIC/IOAPIC) driver at all yet, let alone one
+# wired to COM1's IRQ, so nothing would ever push into that buffer:
+# bconin2() would loop in its `while (!bconstat2())` forever, hanging
+# EmuCON's input loop (and dopanic()'s own "press a key" wait) the first
+# time either actually tries to read a key. Polling mode instead reads
+# directly from CONF_WITH_PC_COM1's UART on each call (bconstat(1)/
+# bconin(1), bios/serport.c's own CONF_WITH_PC_COM1 branches) -- slower,
+# but correct without needing any interrupt routing this arch doesn't
+# have yet.
+CONF_SERIAL_CONSOLE_POLLING_MODE=y

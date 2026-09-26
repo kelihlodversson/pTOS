@@ -452,7 +452,7 @@ extern UBYTE _static_altram_end[];
  * to specifically request alternative RAM.
  */
 
-long xmaddalt(UBYTE *start, LONG size)
+LONG xmaddalt(UBYTE *start, LONG size)
 {
     MD *md, *p;
 
@@ -517,9 +517,9 @@ long xmaddalt(UBYTE *start, LONG size)
 }
 
 /* Get the total size of all Alt-RAM blocks */
-long total_alt_ram(void)
+LONG total_alt_ram(void)
 {
-    long total = 0;
+    LONG total = 0;
     MD* md;
 
 #if CONF_WITH_STATIC_ALT_RAM

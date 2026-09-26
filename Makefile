@@ -99,6 +99,7 @@ include country.mk
 ARCH-$(ARCH_COLDFIRE) += coldfire
 ARCH-$(ARCH_M68K) += m68k
 ARCH-$(ARCH_ARM) += arm
+ARCH-$(ARCH_X86_64) += x86_64
 ARCH = $(ARCH-y)
 
 MACHINE-$(MACHINE_ATARI) += atari
@@ -109,6 +110,7 @@ MACHINE-$(MACHINE_AMIGA) += amiga
 MACHINE-$(MACHINE_RPI) += raspi
 MACHINE-$(MACHINE_VIRT_ARM) += virt-arm
 MACHINE-$(MACHINE_VIRT_M68K) += virt-m68k
+MACHINE-$(MACHINE_PC_X86_64) += pc-x86_64
 MACHINE = $(MACHINE-y)
 
 ifdef CONFIGURED
@@ -191,10 +193,34 @@ ifdef ARCH_ARM
 MULTILIBFLAGS = $(CPUFLAGS) -fsigned-char
 TOOLCHAIN_CFLAGS = -fno-reorder-functions -DELF_TOOLCHAIN
 else
+ifdef ARCH_X86_64
+# -fpie and the matching "-Wl,-pie" at link time (see the x86-64 EMUTOS_IMG
+# rule below) are what makes the linker emit the PE Base Relocation Table
+# a UEFI PE32+ image needs; without it, EDK II's loader rejects the image
+# outright. -mno-red-zone is required for any code that can be interrupted
+# by an NMI/exception while running as a callee below its own stack
+# pointer (not yet the case in this milestone, but every later x86-64
+# object shares these flags, so it goes on the whole architecture now
+# rather than needing to be revisited per file). -fshort-wchar matches
+# UEFI's 16-bit CHAR16 strings. -fno-ident drops the compiler-version
+# .comment section: the PE linker places it below the image base and
+# refuses to link ("section below image base") if it is present.
+# -maccumulate-outgoing-args is required by GCC for every object built
+# with this MULTILIBFLAGS, because efi.h declares every EFI-called
+# function pointer (and efi_main() itself) with the ms_abi attribute: GCC
+# documents -maccumulate-outgoing-args as needed for ms_abi correctness
+# on x86-64, where its default sub/add-based outgoing-argument-area
+# handling around calls is not guaranteed to interact correctly with a
+# function using a calling convention other than the compiler's default.
+MULTILIBFLAGS = $(CPUFLAGS) -fpie -mno-red-zone -fshort-wchar -fno-ident \
+                -maccumulate-outgoing-args
+TOOLCHAIN_CFLAGS = -ffreestanding
+else
 MULTILIBFLAGS = $(CPUFLAGS) -mshort
 ifdef BUILD_TOOLCHAIN_IS_ELF
 TOOLCHAIN_CFLAGS = -Wa,--register-prefix-optional \
                    -fno-reorder-functions -DELF_TOOLCHAIN
+endif
 endif
 endif
 
@@ -276,12 +302,19 @@ LIBS = -lgcc
 LDFLAGS = -Wl,-T,obj/emutospp.ld
 PCREL_LDFLAGS = -Wl,--oformat=binary,-Ttext=0,--entry=0
 
+ifdef ARCH_X86_64
+# A PE32+ EFI application, not an EmuTOS-style ROM/RAM image: built by its
+# own rule below from its own small object list, not from $(OBJECTS)/
+# obj/emutospp.ld. LDFLAGS/PCREL_LDFLAGS above are unused for this arch.
+EMUTOS_IMG = emutos.efi
+else
 ifdef ARCH_ARM
 # The ARM linker script cannot produce a raw binary directly.
 EMUTOS_IMG = emutos.elf
 LDFLAGS += -Wl,-build-id=none
 else
 EMUTOS_IMG = emutos.img
+endif
 endif
 
 #
@@ -380,10 +413,13 @@ ifdef TARGET_VIRT_M68K_KERNEL
 image-default = virt-m68k.elf
 MEMBOT_REFERENCE = TOS162
 endif
+ifdef TARGET_PC_X86_64_EFI
+image-default = pc-x86_64.efi
+endif
 
 IMAGE = $(if $(IMAGE_NAME),$(IMAGE_NAME),$(image-default))
 
-TOCLEAN += *.img *.map *.elf *.prg *.st *.s19 *.stc *.rom *.adf *.sym
+TOCLEAN += *.img *.map *.elf *.prg *.st *.s19 *.stc *.rom *.adf *.sym *.efi
 
 #
 # Production targets
@@ -477,6 +513,35 @@ obj/emutospp.ld: emutos.ld include/config.h tosvars.ld $(AUTOCONF_H)
 # to enable one generic target to deal with all edited disassembly.
 #
 
+ifdef ARCH_X86_64
+# Milestone 3 of the x86-64 port (#349): joins $(OBJECTS) like every other
+# machine, instead of the small standalone boot object list milestones
+# 1-2 (#330, #331) used while there was no trap dispatch or machine-hook
+# layer yet for the shared bios/bdos/fs/util pipeline to run on.
+#
+# The link itself must still go through the PE32+ ("i386pep") linker
+# emulation, not the ELF one $(LD) otherwise defaults to, and needs -pie
+# so the linker emits the PE Base Relocation Table EDK II's loader
+# requires (see the ARCH_X86_64 MULTILIBFLAGS comment above). --subsystem
+# 10 marks the image as an EFI application; without it the default PE
+# subsystem is a Windows console app, which UEFI firmware refuses to load.
+
+# Linked directly with $(CROSS_COMPILE)ld, not through $(CC): gcc's driver
+# adds --eh-frame-hdr whenever -fpie/-pie is in play (needed for the PE
+# Base Relocation Table, see the MULTILIBFLAGS comment above), and that
+# option is ELF-linker-only -- binutils' PE ("i386pep") backend rejects it
+# outright ("unrecognized option '--eh-frame-hdr'"). Bypassing the gcc
+# driver also means it never adds libgcc.a's own directory to the search
+# path the way it would for an ordinary $(CC)-driven link, so -lgcc below
+# needs an explicit -L for it, found the same way gcc itself would.
+X86_64_LD = $(CROSS_COMPILE)ld
+X86_64_LIBGCC_DIR = $(shell dirname $(shell $(CC) $(MULTILIBFLAGS) -print-libgcc-file-name))
+
+$(EMUTOS_IMG): $(OBJECTS)
+	$(X86_64_LD) -m i386pep -pie --subsystem 10 -e efi_main \
+	  -L$(X86_64_LIBGCC_DIR) \
+	  -Map=emutos.map -o $@ $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(LIBS)
+else
 $(EMUTOS_IMG): $(OBJECTS) obj/emutospp.ld
 	$(LD) $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(LIBS) $(LDFLAGS) \
 	  -Wl,-Map=emutos.map -o $@
@@ -489,6 +554,7 @@ $(EMUTOS_IMG): $(OBJECTS) obj/emutospp.ld
 " LOWSTRAM=$(call SHELL_SYMADDR,__low_stram_start,emutos.map)"\
 " BSS=$(call SHELL_SYMADDR,__bss,emutos.map)"\
 " MEMBOT=$(call SHELL_SYMADDR,__end_os_stram,emutos.map)"
+endif
 
 #
 # Padded ROM images (192/256/512 KB and the 128 KB diagnostic cartridge)
@@ -538,6 +604,16 @@ endif
 #
 
 ifdef TARGET_VIRT_M68K_KERNEL
+$(IMAGE): $(EMUTOS_IMG)
+	cp $< $@
+endif
+
+#
+# x86-64 UEFI kernel image — a PE32+ EFI application, passed to firmware
+# unchanged (copy it to \EFI\BOOT\BOOTX64.EFI on a FAT ESP to boot it)
+#
+
+ifdef TARGET_PC_X86_64_EFI
 $(IMAGE): $(EMUTOS_IMG)
 	cp $< $@
 endif

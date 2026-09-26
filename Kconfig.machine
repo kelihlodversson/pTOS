@@ -75,6 +75,15 @@ config MACHINE_VIRT_M68K
 	  0x0, same as every Atari/Amiga/ColdFire target, so no MMU
 	  bootstrap trick is needed the way MACHINE_VIRT_ARM needs one.
 
+config MACHINE_PC_X86_64
+	bool "PC-compatible (x86-64, UEFI boot)"
+	help
+	  Native bare metal port to 64-bit (x86-64/AMD64) PC-compatible
+	  hardware, booting through UEFI firmware rather than legacy BIOS or
+	  Multiboot. The kernel itself is a 64-bit (LP64), higher-half image;
+	  pTOS userspace stays ILP32 (see doc/ptos.txt and issue #329). This
+	  is a distinct architecture target from the 32-bit IA-32 PC port.
+
 endchoice
 
 choice
@@ -116,6 +125,10 @@ config ARCH_COLDFIRE
 config ARCH_ARM
 	bool
 	default y if MACHINE_RPI || MACHINE_VIRT_ARM
+
+config ARCH_X86_64
+	bool
+	default y if MACHINE_PC_X86_64
 
 # ARMv7 and later provide cache maintenance operations that the ARM1176
 # of the first generation Raspberry Pi does not have.
@@ -278,12 +291,21 @@ config STONX_NATIVE_PRINT
 
 config USE_STOP_INSN_TO_FREE_HOST_CPU
 	bool "Halt the CPU in idle loops"
+	depends on !MACHINE_PC_X86_64
 	default y
 	help
 	  Wait for the next interrupt instead of spinning while there is
 	  nothing to do (the STOP instruction on m68k).  Say n for emulators
 	  that do not emulate that instruction properly; the only effect is
 	  that they burn host CPU time in busy loops.
+
+	  Not selectable for MACHINE_PC_X86_64: that target deliberately
+	  keeps interrupts masked throughout boot and has no PIC/IOAPIC or
+	  timer driver yet, so the HLT this option makes idle loops execute
+	  (stop_until_interrupt(), include/arch/x86_64/asm.h) could never be
+	  woken by anything -- any idle loop that reached it (the welcome
+	  screen timeout, vsync()) would hang forever. Revisit once an
+	  interrupt controller and timer exist for this machine.
 
 config CONF_WITH_UAE
 	bool "Support the advanced features of the UAE emulator"
@@ -374,6 +396,7 @@ config CPUFLAGS
 	default "-mcpu=5474" if MACHINE_FIREBEE
 	default "-mcpu=5475" if MACHINE_M548X
 	default "-m68040" if MACHINE_ARANYM
+	default "-m64" if MACHINE_PC_X86_64
 	default "-m68000"
 	help
 	  Passed to the compiler and to the linker to select the instruction

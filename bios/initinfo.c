@@ -65,7 +65,7 @@
 /*==== External declarations ==============================================*/
 
 #if CONF_WITH_ALT_RAM
-extern long total_alt_ram(void); /* in bdos/umem.c */
+extern LONG total_alt_ram(void); /* in bdos/umem.c */
 #endif
 
 #define LOGO_HEIGHT 6

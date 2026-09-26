@@ -40,6 +40,49 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
 
           sudo apt-get install gcc-arm-none-eabi
 
+  PC (x86-64, UEFI boot)
+      This target needs a toolchain whose *linker* supports the PE32+
+      ("i386pep") emulation, not just ELF: the final link step runs
+      "ld -m i386pep" directly (see the ARCH_X86_64 rule in the top level
+      Makefile) to produce the PE32+ image UEFI firmware itself loads. A
+      plain ELF-only cross binutils -- for example a from-source
+      x86_64-elf toolchain built the way most "OS dev" GCC cross-compiler
+      guides describe, with a bare --target=x86_64-elf and no extra
+      --enable-targets -- does *not* include that emulation and fails
+      with "unrecognized emulation mode: i386pep" at link time. Always
+      confirm before relying on one:
+
+          <prefix>ld --help | grep i386pep
+
+      On a Linux/x86-64 host, the system gcc/binutils already provide it,
+      so no separate cross toolchain is needed there:
+
+          sudo apt-get install gcc binutils
+
+      On any other host, two toolchains are known to work:
+
+      * a Debian/Ubuntu-packaged x86_64-linux-gnu cross toolchain (built
+        from the same binutils source as the native x86-64 package, just
+        cross-hosted, so it keeps the same PE emulations):
+
+            sudo apt-get install gcc-x86-64-linux-gnu binutils-x86-64-linux-gnu
+
+      * an x86_64-w64-mingw32 (MinGW-w64) cross toolchain, which is
+        PE-native and therefore always has i386pep support. Its GCC
+        defaults every function to the Microsoft x64 calling convention
+        (it targets Windows), which conflicts with the SysV AMD64
+        convention this port's hand-written assembly (relocate.S)
+        assumes for ordinary internal calls -- add "-mabi=sysv" to
+        CPUFLAGS (Kconfig) to restore that default globally, leaving
+        only the functions efi.h explicitly marks "ms_abi" using the
+        Microsoft convention.
+
+      Either way, set "Cross compiler prefix override" (below) to the
+      toolchain's prefix. To boot-test the image, you will also need
+      QEMU and an OVMF UEFI firmware build:
+
+          sudo apt-get install qemu-system-x86 ovmf
+
 If your toolchain is installed under a name other than the one that goes
 with the choice above, fill in "Cross compiler prefix override" in the same
 menu.  It renames the executables only; the flags keep following the
@@ -231,6 +274,37 @@ CPU exception EmuTOS's shared CPU-detection code expects and handles --
 when that code probes a 68060-only register while telling 68040 and
 68060 apart. m68020 detection resolves earlier in that same routine, so
 it never reaches the register QEMU mishandles.
+
+PC (x86-64, UEFI boot)
+----------------------
+
+pc-x86_64           pc-x86_64.efi, a PE32+ EFI application
+
+Unlike every other pTOS image, this is not loaded directly by an
+emulator's -kernel/-bios flag: it is booted the way real UEFI firmware
+boots anything, by placing it at \EFI\BOOT\BOOTX64.EFI on a FAT-formatted
+EFI System Partition and letting firmware find it there. QEMU's "fat:"
+driver can synthesize that filesystem from a plain directory, and OVMF
+(the Debian/Ubuntu "ovmf" package) is a UEFI firmware build QEMU can use
+in place of a legacy BIOS:
+
+    make pc-x86_64_defconfig && make
+    mkdir -p esp/EFI/BOOT
+    cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+    cp /usr/share/OVMF/OVMF_VARS_4M.fd .
+    qemu-system-x86_64 -machine pc -m 256 \
+        -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+        -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
+        -drive format=raw,file=fat:rw:esp \
+        -serial stdio -display none
+
+OVMF_VARS_4M.fd holds UEFI's writable NVRAM (boot order, variables), and
+QEMU writes to it as the VM runs; the package's copy under /usr/share is
+root-owned on a normal Debian/Ubuntu install, so it is copied to a
+writable local file first rather than used in place. This milestone's
+image (#330) only prints its own boot progress over COM1, exposed above
+as -serial stdio -- there is no framebuffer output yet (see #332) and
+nothing to see on a graphical display, hence -display none.
 
 
 Countries and languages

@@ -16,6 +16,7 @@ choice
 	default TARGET_SREC if ARCH_COLDFIRE
 	default TARGET_1024 if MACHINE_ARANYM
 	default TARGET_VIRT_M68K_KERNEL if MACHINE_VIRT_M68K
+	default TARGET_PC_X86_64_EFI if MACHINE_PC_X86_64
 	default TARGET_256
 	help
 	  Select what the build should produce.  Only the image types that
@@ -124,6 +125,16 @@ config TARGET_VIRT_M68K_KERNEL
 	  Like the ARM virt kernel image, this is not converted to a flat
 	  binary: QEMU's ELF loader is used directly.
 
+config TARGET_PC_X86_64_EFI
+	bool "x86-64 UEFI kernel image"
+	depends on MACHINE_PC_X86_64
+	help
+	  A PE32+ EFI application, bootable directly by UEFI firmware. Copy
+	  it to \EFI\BOOT\BOOTX64.EFI on a FAT-formatted EFI System
+	  Partition (or register it as a boot option) to boot it. Unlike
+	  every other pTOS image type, this is neither a flat binary nor a
+	  plain ELF image: PE32+ is the format UEFI firmware itself loads.
+
 endchoice
 
 config SREC_LMA
@@ -151,7 +162,7 @@ config IMAGE_NAME
 
 config EMUTOS_LIVES_IN_RAM
 	bool
-	default y if TARGET_PRG || TARGET_FLOPPY || TARGET_AMIGA_FLOPPY || TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL || TARGET_VIRT_M68K_KERNEL
+	default y if TARGET_PRG || TARGET_FLOPPY || TARGET_AMIGA_FLOPPY || TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL || TARGET_VIRT_M68K_KERNEL || TARGET_PC_X86_64_EFI
 
 config DIAGNOSTIC_CARTRIDGE
 	bool
