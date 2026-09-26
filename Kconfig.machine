@@ -387,6 +387,30 @@ config CROSS_COMPILE
 	  Fill it in when your toolchain is installed under a different name;
 	  the flags still follow the toolchain chosen above, not the prefix.
 
+config X32_CROSS_COMPILE
+	string "x32 test-program cross compiler prefix"
+	depends on MACHINE_PC_X86_64
+	default ""
+	help
+	  Prefix for the separate GCC used to build the ILP32 ("x32" psABI:
+	  ELFCLASS32 program headers, but genuine EM_X86_64 long-mode code --
+	  see issue #334) userspace test program under tests/x32_hello/.
+	  Kept apart from CROSS_COMPILE above because the two toolchains are
+	  usually different binaries entirely: the kernel itself needs a
+	  linker with PE32+ ("i386pep") support (see the "PC (x86-64, UEFI
+	  boot)" entry in doc/install.txt), which an ordinary Linux
+	  x86_64-linux-gnu toolchain has but whose gcc may or may not carry
+	  x32 multilib support depending on distribution, while a
+	  MinGW-w64 cross toolchain has the PE32+ linker but no x32 codegen
+	  at all.
+
+	  Leave empty, the usual case, to use the host's own "gcc"/"ld" --
+	  x32 multilib support is part of the ordinary gcc/binutils packages
+	  on a Debian/Ubuntu x86-64 host (see doc/install.txt), which is
+	  where this is meant to run: unlike CROSS_COMPILE, this is never
+	  needed to cross the *host*, only ever to point at a different
+	  installed gcc on the same machine.
+
 config CPUFLAGS
 	string "Compiler flags describing the target CPU"
 	default "-march=armv6k -mtune=arm1176jzf-s -marm -mfpu=vfp -mfloat-abi=hard" if TARGET_RPI1

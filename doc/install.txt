@@ -83,6 +83,36 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
 
           sudo apt-get install qemu-system-x86 ovmf
 
+  PC (x86-64, x32 userspace test program)
+      "make x32test" builds tests/x32_hello/x32_hello.c, the minimal x32
+      psABI (ELFCLASS32 program headers, genuine EM_X86_64 long-mode
+      instructions -- see issue #334) userspace test program, into
+      x32hello.elf. This is a *separate* build from the kernel image
+      above and needs a different toolchain: an ordinary ELF
+      x86_64-linux-gnu (or x86_64-linux-gnux32) gcc with x32 multilib
+      support, not the PE32+-capable one the kernel itself links with --
+      neither of the two toolchains doc/install.txt recommends above for
+      the kernel is guaranteed to have this (a MinGW-w64 cross toolchain
+      has no x32 codegen at all; a distribution's x86_64-linux-gnu
+      package may or may not ship the x32 multilib alongside it).
+
+      On a Debian/Ubuntu x86-64 host, the native gcc/binutils already
+      include x32 multilib support, so nothing extra needs installing
+      there beyond the ordinary "gcc binutils" from the kernel's own
+      section above -- confirm with:
+
+          gcc -print-multi-lib | grep x32
+
+      If it is missing, install it explicitly:
+
+          sudo apt-get install gcc-multilib
+
+      On any other host, point "x32 test-program cross compiler prefix"
+      (below, in the Toolchain menu) at a cross toolchain with x32
+      support instead -- for example a x86_64-linux-gnux32 triplet. This
+      setting is independent of "Cross compiler prefix override" above:
+      the two need not be, and often are not, the same toolchain.
+
 If your toolchain is installed under a name other than the one that goes
 with the choice above, fill in "Cross compiler prefix override" in the same
 menu.  It renames the executables only; the flags keep following the
