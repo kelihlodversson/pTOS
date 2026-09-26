@@ -45,7 +45,7 @@ void coma_start(PD *bp)
 
     /* Save the environment string pointer from the basepage before the
      * Mshrink() call below reuses/frees anything else in it. */
-    environment = bp->p_env;
+    environment = (char *)USERPTR_TO_PTR(bp->p_env);
 
     /* Mshrink to the needed size: TEXT+DATA+BSS plus the basepage itself.
      *

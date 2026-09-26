@@ -79,6 +79,7 @@ extern void x86_64_syscall_entry(void);
 #define MSR_KERNEL_GS_BASE 0xC0000102UL
 
 #define EFER_SCE 0x1ULL /* SYSCALL/SYSRET enable */
+#define EFER_NXE 0x800ULL /* No-Execute page-protection enable (bit 11) */
 
 /*
  * This CPU's per-CPU state (trap.h). Only one instance: no real
@@ -326,7 +327,15 @@ void x86_64_trap_init(void)
 {
     UQUAD efer = x86_64_rdmsr(MSR_EFER);
 
-    x86_64_wrmsr(MSR_EFER, efer | EFER_SCE);
+    /*
+     * One combined read-modify-write, not two separate MSR writes: a
+     * second wrmsr() using a stale `efer` read before the first one
+     * landed would clobber whichever bit it did not itself set. NXE
+     * readies the PTE_NX (bit 63) page-table protection bit #334's
+     * per-process page tables will need for non-executable data/stack
+     * segments; SCE is the pre-existing syscall/sysret enable.
+     */
+    x86_64_wrmsr(MSR_EFER, efer | EFER_SCE | EFER_NXE);
 
     /*
      * STAR[47:32] is both the kernel CS `syscall` loads directly and the
@@ -412,4 +421,28 @@ void x86_64_trap_init(void)
      * turned out to be.
      */
     x86_64_wrmsr(MSR_KERNEL_GS_BASE, (UQUAD)(uintptr_t)&percpu);
+}
+
+/* See trap.h's own comment. Selectors are embedded as asm-immediate
+ * literals via XSTR, same technique gdt.c's reload_segments() already
+ * uses, rather than passed as operands: doing so needs no register to
+ * hold them across the pushes leading up to iretq. */
+#define STR(x) #x
+#define XSTR(x) STR(x)
+
+void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp)
+{
+    __asm__ volatile (
+        "mov %0, %%cr3\n\t"
+        "pushq $" XSTR(X86_64_USER_DATA_SEL) "\n\t" /* SS */
+        "pushq %1\n\t"                              /* RSP */
+        "pushq $0x2\n\t"                            /* RFLAGS */
+        "pushq $" XSTR(X86_64_USER_CODE_SEL) "\n\t" /* CS */
+        "pushq %2\n\t"                              /* RIP */
+        "iretq"
+        :
+        : "r"(pml4_phys), "r"(user_rsp), "r"(entry_rip)
+        : "memory"
+    );
+    __builtin_unreachable();
 }

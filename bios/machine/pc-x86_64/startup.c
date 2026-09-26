@@ -405,7 +405,12 @@ void NORETURN x86_64_higher_half_main(void)
      * pc_x86_64_memory.h's own comment for why this arch needs its own
      * stand-in rather than a linker-provided one. */
     pc_x86_64_memory_init();
-    earlycon_puts("pTOS x86-64: TPA memory pool stand-in ready, handing off to biosmain()\n");
+    earlycon_puts("pTOS x86-64: TPA memory pool stand-in ready\n");
+
+    /* #334: the second, low-mapped pool bdos/proc.c's alloc_tpa() uses
+     * on this arch -- see pc_x86_64_memory.h's own comment. */
+    x86_64_low_tpa_init();
+    earlycon_puts("pTOS x86-64: low TPA pool ready, handing off to biosmain()\n");
 
     biosmain();
 

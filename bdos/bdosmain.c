@@ -378,7 +378,17 @@ void osinit_after_xmaddalt(void)
     /* Set up initial process. Required by Malloc() */
     run = &initial_basepage;
     run->p_flags = PF_STANDARD;
-    run->p_env = CONST_CAST(char *,double_nul);
+    /*
+     * double_nul is an ordinary kernel .rodata symbol -- higher-half on
+     * x86-64, so (like bios.c's coma_start/exec_os) not something
+     * PTR_TO_USERPTR() can narrow without trapping. initial_basepage is
+     * itself only a placeholder "current process" for BDOS's own early
+     * init, before any real Pexec()'d process exists, so this is the
+     * same class of kernel-structure-needing-a-sub-4GiB-home gap #351
+     * already tracks (there: the cookie jar and several BIOS/XBIOS
+     * return values; here: this one placeholder's own p_env) rather
+     * than something specific to this call site to solve alone. */
+    run->p_env = PTR_TO_USERPTR_UNCHECKED(CONST_CAST(char *,double_nul));
 
     time_init();
 

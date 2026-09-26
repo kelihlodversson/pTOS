@@ -190,4 +190,33 @@ void x86_64_bad_sysret(UQUAD bad_rip) NORETURN;
  */
 void x86_64_trap_init(void);
 
+/*
+ * #334's one-shot ring0->ring3 transition: loads CR3 = pml4_phys (a
+ * process address space x86_64_new_address_space()/x86_64_map_user_page()
+ * -- pgtable.h -- already populated) and iretq's to entry_rip in
+ * X86_64_USER_CODE_SEL/X86_64_USER_DATA_SEL with user_rsp already loaded.
+ * RFLAGS is set to 0x2 (the always-1 reserved bit, everything else
+ * clear): IF stays clear, matching this port's current whole-system
+ * policy of running with interrupts globally disabled (see MSR_FMASK in
+ * x86_64_trap_init() above) -- #335 is where a real interrupt
+ * controller, and with it a real case for enabling IF anywhere, first
+ * exists.
+ *
+ * Does not set up a per-process kernel stack or save any "resume the
+ * caller" state, and does not touch percpu.kernel_rsp/TSS.rsp0: this is
+ * only the primitive for a process's FIRST entry into ring 3, reusing
+ * the single boot-time kernel stack those already point at -- this port
+ * only ever runs one process at a time so far. A real per-process kernel
+ * stack plus full parent/child resumption (m68k/ARM's gouser()/
+ * termuser() coroutine, adapted for a per-process address space) is
+ * bdos/arch/x86_64/rwa.c's job once #334 needs more than one process
+ * alive at once; this function is what its first call into a fresh
+ * process ultimately does.
+ *
+ * Never returns to its caller: the only way back into the kernel from
+ * here on is a fault or `syscall` from the code now running at
+ * entry_rip, exactly like any other ring-3 caller.
+ */
+void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp) NORETURN;
+
 #endif /* X86_64_TRAP_H */

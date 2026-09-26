@@ -20,4 +20,26 @@
  * memory.c for why this is a stand-in rather than real memory discovery. */
 void pc_x86_64_memory_init(void);
 
+/*
+ * Allocates and low-maps (see memory.c's own comment) the second pool
+ * bdos/proc.c's alloc_tpa() uses on this arch. Must run after
+ * x86_64_build_physmap() (x86_64_pmem_alloc_pages_below() reads back
+ * through the physical-memory direct map) and after
+ * x86_64_map_low_vectors() (shares PML4 slot 0 with it, see
+ * x86_64_map_kernel_pages()'s own comment in pgtable.h) -- in practice,
+ * any time after pc_x86_64_memory_init() itself, which both preconditions
+ * already hold by.
+ */
+void x86_64_low_tpa_init(void);
+
+/*
+ * Bump-allocates `needed` bytes (16-byte aligned, matching _end_os_stram's
+ * own alignment attribute) from the pool x86_64_low_tpa_init() set up.
+ * Returns NULL if the pool is exhausted -- unlike x86_64_pmem_alloc_pages()
+ * one level down, callers here (bdos/proc.c's alloc_tpa()) already have
+ * an established "return NULL, caller reports ENSMEM" convention to use
+ * instead of panicking.
+ */
+UBYTE *x86_64_low_tpa_alloc(LONG needed);
+
 #endif /* PC_X86_64_MEMORY_H */
