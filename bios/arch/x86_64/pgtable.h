@@ -34,6 +34,18 @@
 #define X86_64_PAGE_1G_SIZE 0x40000000ULL
 
 /*
+ * Size of the prefix of the identity-mapped low page (see
+ * x86_64_map_low_vectors()) that is actually zeroed and used as the
+ * simulated m68k system-vector area: one 4 KiB page, comfortably above
+ * VEC_UNIMPINT (bios/vectors.h, 0xf4), the highest offset this arch's
+ * bios_init() call chain writes into. Callers wanting to confirm this
+ * exact range is real RAM before it is touched (x86_64_pmem_region_is_ram(),
+ * bios/machine/pc-x86_64/pmem.h) use this same constant rather than
+ * guessing a size independently.
+ */
+#define X86_64_LOW_VECTOR_BYTES 0x1000ULL
+
+/*
  * Virtual base of the permanent physical-memory direct map: every
  * physical address x86_64_build_physmap() was told to cover is also
  * reachable at this virtual base plus its physical address. Chosen well

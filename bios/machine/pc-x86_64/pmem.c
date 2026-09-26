@@ -16,6 +16,7 @@
 #include "pmem.h"
 #include "earlycon.h"
 #include "io.h"
+#include "pgtable.h"
 
 /*
  * EFI_MEMORY_DESCRIPTOR's minimum possible stride (UEFI spec 7.2): the
@@ -51,6 +52,29 @@ static free_region_t regions[MAX_REGIONS];
 static int region_count;
 static UQUAD total_free;
 static UQUAD highest_addr;
+
+/*
+ * A copy of x86_64_pmem_init()'s own (map, map_size, descriptor_size)
+ * arguments, kept so x86_64_pmem_region_is_ram() can re-walk the raw
+ * descriptors later -- regions[]/total_free cannot answer that query
+ * themselves, since a range the caller reserved (e.g. the low
+ * system-vector page) is deliberately excluded from them regardless of
+ * its real EFI type.
+ *
+ * x86_64_pmem_init() itself runs before the higher-half jump (startup.c),
+ * while efi_map is still this image's low, pre-relocation address of the
+ * saved map buffer -- exactly the runtime-computed-pointer hazard
+ * x86_64_low_to_high() exists for (see its own comment): stored as-is,
+ * this would still point at the low alias after x86_64_drop_identity_map()
+ * unmaps it, faulting the first time x86_64_pmem_region_is_ram() (called
+ * post-jump, post-drop) ever walked it. Translated once here instead, at
+ * the one point both the low address and a working x86_64_low_to_high()
+ * (which needs x86_64_build_page_tables()'s bookkeeping, already set up
+ * by the time startup.c calls this) are available together.
+ */
+static const UBYTE *saved_map;
+static UQUAD saved_map_size;
+static UQUAD saved_descriptor_size;
 
 static NORETURN void hang(void)
 {
@@ -175,6 +199,10 @@ void x86_64_pmem_init(const void *efi_map, UQUAD map_size, UQUAD descriptor_size
     total_free = 0;
     highest_addr = 0;
 
+    saved_map = (const UBYTE *)(uintptr_t)x86_64_low_to_high((UQUAD)(uintptr_t)efi_map);
+    saved_map_size = map_size;
+    saved_descriptor_size = descriptor_size;
+
     /* Strided by descriptor_size, not sizeof(EFI_MEMORY_DESCRIPTOR): see
      * the struct's own comment in efi.h. */
     for (; cursor < map_end; cursor += descriptor_size) {
@@ -228,4 +256,32 @@ UQUAD x86_64_pmem_free_bytes(void)
 UQUAD x86_64_pmem_highest_addr(void)
 {
     return highest_addr;
+}
+
+int x86_64_pmem_region_is_ram(UQUAD base, UQUAD length)
+{
+    UQUAD want_end = base + length;
+    UQUAD covered = 0;
+    const UBYTE *cursor = saved_map;
+    const UBYTE *map_end = cursor + saved_map_size;
+
+    for (; cursor < map_end; cursor += saved_descriptor_size) {
+        const EFI_MEMORY_DESCRIPTOR *desc = (const EFI_MEMORY_DESCRIPTOR *)(uintptr_t)cursor;
+        UQUAD dbase, dend, ostart, oend;
+
+        if (!is_ram_type(desc->Type))
+            continue;
+
+        dbase = desc->PhysicalStart;
+        dend = dbase + desc->NumberOfPages * X86_64_PAGE_SIZE;
+
+        ostart = (dbase > base) ? dbase : base;
+        oend = (dend < want_end) ? dend : want_end;
+        if (oend > ostart)
+            covered += oend - ostart;
+    }
+
+    /* EFI memory map descriptors never overlap (UEFI spec), so summing
+     * disjoint overlaps this way cannot overcount a real map. */
+    return covered >= length;
 }

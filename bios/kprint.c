@@ -264,8 +264,26 @@ int kprintf(const char *RESTRICT fmt, ...)
 
 int vkcprintf(const char *fmt, va_list ap)
 {
-  vkprintf(fmt, ap);
-  return vcprintf(fmt, ap);
+  va_list ap2;
+  int n;
+
+  /*
+   * Passing the same va_list to two consecutive doprintf() calls is only
+   * safe on an arch where va_list decays to a plain pointer, copied by
+   * value into each callee (m68k, ARM): the callee's own va_arg() walk
+   * advances its private copy, leaving the caller's ap untouched. Where
+   * va_list is itself an array-of-struct (x86-64's SysV ABI), passing it
+   * "by value" passes a pointer to that same struct, so vkprintf()'s
+   * va_arg() calls consume it for real; vcprintf() would then read
+   * whatever comes after the last argument vkprintf() consumed. va_copy()
+   * is the portable fix on every arch, not just the ones where the bug
+   * would otherwise be silent.
+   */
+  va_copy(ap2, ap);
+  vkprintf(fmt, ap2);
+  va_end(ap2);
+  n = vcprintf(fmt, ap);
+  return n;
 }
 
 int kcprintf(const char *RESTRICT fmt, ...)

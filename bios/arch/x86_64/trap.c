@@ -10,6 +10,7 @@
 #include "portab.h"
 #include "biosext.h"
 #include "gdt.h"
+#include "gemerror.h"
 #include "io.h"
 #include "trap.h"
 
@@ -89,10 +90,52 @@ static x86_64_percpu_t percpu;
 #define SYSCALL_STACK_BYTES 8192
 static UBYTE syscall_stack[SYSCALL_STACK_BYTES] __attribute__((aligned(16)));
 
-void x86_64_trap_dispatch(x86_64_trap_frame_t *frame)
+/*
+ * Coarse "is this even plausibly a user address" check on a raw syscall
+ * argument from a genuine ring-3 caller (x86_64_trap_dispatch()'s
+ * from_ring3). Canonical-low-half addresses (bit 47 and above all
+ * clear) cover every address a real user process could plausibly hold a
+ * pointer to, now or once #334 gives it a real address space, and every
+ * legitimate non-pointer argument too (handles, counts, opcodes: always
+ * small positive integers, nowhere near this boundary). Anything else --
+ * a canonical-high-half (kernel) address, or a non-canonical one -- is
+ * rejected outright, rather than handed to osif()/bios_vecs[]/
+ * xbios_vecs[] to dereference at CPL0 on the caller's behalf.
+ *
+ * This is NOT full user-memory validation: it cannot tell a pointer that
+ * merely lies in the low canonical half from one that isn't actually
+ * backed by the calling process's own memory, because there is no such
+ * thing as "the calling process" yet (#334). Real validation -- checking
+ * the address is actually mapped and owned by the caller, with safe
+ * fault recovery around the dereference (a copy_from_user()-style
+ * mechanism) -- belongs with that per-process address-space work. This
+ * only closes the specific, cheaply-closable case #350's review called
+ * out: a ring-3 caller handing the kernel one of its own (or an
+ * arbitrary non-canonical) addresses and having it blindly dereferenced
+ * or written through at CPL0.
+ */
+static int x86_64_looks_like_user_addr(UQUAD addr)
+{
+    return addr < 0x0000800000000000ULL;
+}
+
+void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
     UQUAD trap_class = frame->rax >> 32;
     ULONG fn = (ULONG)frame->rax;
+
+    if (from_ring3 &&
+        (!x86_64_looks_like_user_addr(frame->rdi) ||
+         !x86_64_looks_like_user_addr(frame->rsi) ||
+         !x86_64_looks_like_user_addr(frame->rdx) ||
+         !x86_64_looks_like_user_addr(frame->r10))) {
+        /* GEMDOS has a real "bad address" error code; BIOS/XBIOS calls
+         * don't share one convention (return types vary per call), so
+         * -1L (already this dispatcher's own "unhandled class" value
+         * below) is the closest existing precedent. */
+        frame->rax = (trap_class == X86_64_TRAP_GEMDOS) ? (UQUAD)EIMBA : (UQUAD)-1L;
+        return;
+    }
 
     switch (trap_class) {
     case X86_64_TRAP_GEMDOS: {
@@ -147,7 +190,7 @@ long x86_64_kernel_trap(long rax, long rdi, long rsi, long rdx, long r10)
     frame.rsi = (UQUAD)rsi;
     frame.rdx = (UQUAD)rdx;
     frame.r10 = (UQUAD)r10;
-    x86_64_trap_dispatch(&frame);
+    x86_64_trap_dispatch(&frame, 0);
     return (long)frame.rax;
 }
 

@@ -92,6 +92,7 @@ C_SYM(x86_64_syscall_entry):
         cld
 
         mov     %rsp, %rdi
+        movl    $1, %esi        /* from_ring3: only a real `syscall` reaches here */
         call    C_SYM(x86_64_trap_dispatch)
 
         /*

@@ -311,6 +311,20 @@ void NORETURN x86_64_higher_half_main(void)
     earlycon_puts("pTOS x86-64: identity mapping dropped\n");
 
     /*
+     * x86_64_map_low_vectors() zeroes physical address 0 unconditionally
+     * -- fine on the QEMU/OVMF map this port has actually been tested
+     * against, but real PC firmware is not required to report that range
+     * as RAM (VGA/option-ROM shadow areas, the EBDA, ACPI-reserved
+     * regions, ... can all start below 2 MiB, some below 4 KiB). Confirm
+     * it here, against the real EFI memory map, rather than let that
+     * function -- which has no machine-specific pmem.h to check against,
+     * see its own comment -- write zeroes into whatever happens to be
+     * there.
+     */
+    if (!x86_64_pmem_region_is_ram(0, X86_64_LOW_VECTOR_BYTES))
+        panic("low system-vector area is not usable RAM per the EFI memory map");
+
+    /*
      * Must follow the drop above, not precede it: both target PML4 slot 0
      * (see x86_64_map_low_vectors()'s own comment). Gives the shared
      * core's generic bios_init() (bios/bios.c) somewhere real to write

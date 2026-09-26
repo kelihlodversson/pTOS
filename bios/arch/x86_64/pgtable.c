@@ -233,24 +233,39 @@ void x86_64_drop_identity_map(void)
 }
 
 /*
- * Identity-maps physical/virtual [0, 2 MiB) -- a single 2 MiB page -- and
- * zeroes it. Must be called after x86_64_drop_identity_map(): both target
- * PML4 slot 0 (any real or emulated system has far less than 512 GiB of
- * RAM, so both the image's own identity window and address 0 fall in the
- * same slot), and this needs that slot already cleared so it allocates
- * its own fresh PDPT/PD there rather than corrupting whatever the
- * identity window's now-dangling one still occupied.
+ * Identity-maps physical/virtual [0, 2 MiB) -- a single 2 MiB page, the
+ * smallest granularity this file's page tables support -- but zeroes only
+ * X86_64_LOW_VECTOR_BYTES of it. Must be called after
+ * x86_64_drop_identity_map(): both target PML4 slot 0 (any real or
+ * emulated system has far less than 512 GiB of RAM, so both the image's
+ * own identity window and address 0 fall in the same slot), and this
+ * needs that slot already cleared so it allocates its own fresh PDPT/PD
+ * there rather than corrupting whatever the identity window's now-dangling
+ * one still occupied.
  *
- * This is the low system-vector area the shared core's generic bios_init()
- * unconditionally writes through (VEC_GEM/VEC_BIOS/VEC_XBIOS at their
- * traditional m68k addresses, bios/vectors.h) and the trap dispatch path
- * (#349) reads back from -- every other pTOS port already reserves this
- * same low range for exactly this, whether it is real m68k hardware or
- * ARM's own simulated equivalent (bios/arch/arm/vectors.c). Zeroing it
- * (rather than leaving whatever garbage was physically there) makes every
- * not-yet-installed vector a null pointer: dereferencing one faults
- * straight into this arch's own panic path (#331), which needs no
- * ARM-style "any_vec" indirection to produce a readable diagnostic.
+ * The zeroed prefix is the low system-vector area the shared core's
+ * generic bios_init() unconditionally writes through (VEC_GEM/VEC_BIOS/
+ * VEC_XBIOS at their traditional m68k addresses, bios/vectors.h, the
+ * highest of which -- VEC_UNIMPINT, 0xf4 -- this arch's generic bios_init()
+ * call chain also reaches) and the trap dispatch path (#349) reads back
+ * from -- every other pTOS port already reserves this same low range for
+ * exactly this, whether it is real m68k hardware or ARM's own simulated
+ * equivalent (bios/arch/arm/vectors.c). Zeroing it (rather than leaving
+ * whatever garbage was physically there) makes every not-yet-installed
+ * vector a null pointer: dereferencing one faults straight into this
+ * arch's own panic path (#331), which needs no ARM-style "any_vec"
+ * indirection to produce a readable diagnostic.
+ *
+ * Deliberately NOT the whole mapped 2 MiB: on real PC/UEFI hardware,
+ * physical address 0 is not guaranteed to be RAM for that entire span --
+ * VGA/option-ROM shadow areas, the EBDA, and ACPI-reserved regions can all
+ * start well before the 2 MiB mark. Only X86_64_LOW_VECTOR_BYTES (one 4
+ * KiB page, comfortably covering every offset above) is ever written; the
+ * caller (startup.c) already confirmed that specific range is real,
+ * EFI-reported RAM (x86_64_pmem_region_is_ram()) before calling this. The
+ * rest of the 2 MiB page stays mapped -- identity page tables have no
+ * finer granularity here -- but untouched: nothing in the shared
+ * dispatch path ever reads or writes past 0xfc.
  */
 void x86_64_map_low_vectors(void)
 {
@@ -260,7 +275,7 @@ void x86_64_map_low_vectors(void)
     map_2m_range(0, 0, 1);
     reload_cr3();
 
-    for (i = 0; i < X86_64_PAGE_2M_SIZE / sizeof(UQUAD); i++)
+    for (i = 0; i < X86_64_LOW_VECTOR_BYTES / sizeof(UQUAD); i++)
         p[i] = 0;
 }
 

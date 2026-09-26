@@ -78,4 +78,19 @@ UQUAD x86_64_pmem_free_bytes(void);
  * just the free subset. */
 UQUAD x86_64_pmem_highest_addr(void);
 
+/*
+ * True iff [base, base+length) is entirely covered by is_ram_type()
+ * descriptors in the EFI memory map x86_64_pmem_init() was given.
+ * Unlike the free-page list, this walks the raw map itself, so it can
+ * answer "is this real memory" for a range x86_64_pmem_init() was told
+ * to reserve (and which therefore never appears as free) -- pgtable.c's
+ * x86_64_map_low_vectors() uses this to confirm physical address 0 is
+ * actually backed by RAM before zeroing it: real PC firmware can report
+ * anything from VGA/option-ROM shadow MMIO to ACPI-reserved regions
+ * starting well before the 2 MiB mark, and nothing about being asked to
+ * simulate the m68k low system-vector area there makes that safe to
+ * assume.
+ */
+int x86_64_pmem_region_is_ram(UQUAD base, UQUAD length);
+
 #endif /* PC_X86_64_PMEM_H */

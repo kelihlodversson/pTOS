@@ -117,13 +117,25 @@ typedef struct {
     UQUAD user_rsp;   /* offset 8: the interrupted (caller's) rsp, saved here across the round trip */
 } x86_64_percpu_t;
 
-/* Called from trapasm.S's entry stub. Reads frame->rax/rdi/rsi/rdx/r10 per
- * the calling convention above, dispatches directly to osif()/
- * bios_vecs[]/xbios_vecs[] (no vector-table indirection: this arch does
- * not need ARM's dynamic-hooking generality, since bios_init()'s
+/*
+ * Called from trapasm.S's entry stub (from_ring3 = 1) and from
+ * x86_64_kernel_trap() below (from_ring3 = 0). Reads frame->rax/rdi/rsi/
+ * rdx/r10 per the calling convention above, dispatches directly to
+ * osif()/bios_vecs[]/xbios_vecs[] (no vector-table indirection: this arch
+ * does not need ARM's dynamic-hooking generality, since bios_init()'s
  * VEC_GEM/VEC_BIOS/VEC_XBIOS writes go nowhere this ever reads), and
- * leaves the result in frame->rax for trapasm.S to restore before returning. */
-void x86_64_trap_dispatch(x86_64_trap_frame_t *frame);
+ * leaves the result in frame->rax for the caller to pick up.
+ *
+ * from_ring3 tells this function whether frame->rdi/rsi/rdx/r10 are
+ * untrusted register values a genuine ring-3 caller supplied (see
+ * trap.c's x86_64_looks_like_user_addr()) or trusted arguments a
+ * kernel-mode caller passed via x86_64_kernel_trap() -- the latter
+ * legitimately includes real kernel (higher-half) pointers, e.g. an
+ * internal buffer bdos/fsmain.c passes to Cconws(), so the coarse
+ * "reject a kernel-half address" check below only ever applies to the
+ * former.
+ */
+void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
 
 /*
  * Kernel-mode entry point for GEMDOS/BIOS/XBIOS calls: builds a throwaway
