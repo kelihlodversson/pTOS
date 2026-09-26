@@ -116,5 +116,24 @@ void gouser(void)
 
 void termuser(void)
 {
-    panic("x86-64: termuser() reached -- process exit not implemented yet\n");
+    /*
+     * bdos/proc.c's xterm() already did `run = run->p_parent;
+     * run->p_dreg[0] = rc;` before calling here -- the m68k/ARM
+     * convention for "the exit code is in D0 once the parent resumes"
+     * (its own comment above xterm()'s definition), read back here
+     * since `run` now points at whichever PD launched this one (on
+     * this arch, so far, always the kernel's own placeholder
+     * initial_basepage -- see bdosmain.c -- since #334's own scope
+     * excludes multiple concurrent processes).
+     *
+     * A real parent/child coroutine resume (the m68k/ARM rwa.S
+     * equivalent of what this function's name promises) needs a
+     * per-process kernel stack this arch does not have yet -- see this
+     * file's own top comment. Until then, this is where "run a single
+     * process to completion" (#334's own success bar) actually ends:
+     * there is no suspended kernel call chain to resume back into, so
+     * report the exit code and stop cleanly instead of pretending to
+     * resume something that was never frozen in the first place.
+     */
+    panic("x86-64: process exited, rc=%ld\n", (long)run->p_dreg[0]);
 }
