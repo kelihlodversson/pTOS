@@ -96,27 +96,6 @@ C_SYM(x86_64_syscall_entry):
         call    C_SYM(x86_64_trap_dispatch)
 
         /*
-         * Restore every register (rax now holds x86_64_trap_dispatch()'s
-         * result, written into frame->rax in place), in exact reverse of
-         * the push sequence above.
-         */
-        pop     %r15
-        pop     %r14
-        pop     %r13
-        pop     %r12
-        pop     %r10
-        pop     %r9
-        pop     %r8
-        pop     %rbp
-        pop     %rdi
-        pop     %rsi
-        pop     %rdx
-        pop     %rbx
-        pop     %rax
-        pop     %r11
-        pop     %rcx
-
-        /*
          * `sysretq` itself never validates %rcx (the target RIP). `syscall`
          * does not preserve the caller's own pre-`syscall` %rcx at all --
          * it overwrites %rcx with the return RIP (the address immediately
@@ -138,44 +117,79 @@ C_SYM(x86_64_syscall_entry):
          * sign-extends bits 63:47 from bit 47; canonical iff that
          * reproduces the original value (Linux's entry_64.S uses the
          * identical trick for the same reason).
+         *
+         * Done here, BEFORE any of the pops below restore a register to
+         * its final "return to the caller" value, using %rax/%rdx purely
+         * as scratch and reading the saved %rcx directly off the stack
+         * at its known offset (112 = 14 saved registers below it, x8) --
+         * nothing has been popped yet, so every register is still fair
+         * game. An earlier version of this check ran AFTER all the pops
+         * below and used %rax as scratch there instead, silently
+         * overwriting x86_64_trap_dispatch()'s own result -- frame->rax,
+         * meant to become the syscall's actual return value -- with a
+         * copy of the return RIP on every single syscall, caught by a
+         * throwaway harness that actually checked the returned value
+         * (#334) rather than just that the round trip completed at all.
          */
-        movq    %rcx, %rax
+        movq    112(%rsp), %rdx
+        movq    %rdx, %rax
         shlq    $16, %rax
         sarq    $16, %rax
-        cmpq    %rax, %rcx
+        cmpq    %rax, %rdx
         jne     1f
+
+        /*
+         * Restore every register (rax now holds x86_64_trap_dispatch()'s
+         * result, written into frame->rax in place), in exact reverse of
+         * the push sequence above.
+         */
+        pop     %r15
+        pop     %r14
+        pop     %r13
+        pop     %r12
+        pop     %r10
+        pop     %r9
+        pop     %r8
+        pop     %rbp
+        pop     %rdi
+        pop     %rsi
+        pop     %rdx
+        pop     %rbx
+        pop     %rax
+        pop     %r11
+        pop     %rcx
 
         /*
          * Mirror image of entry: restore the caller's own %rsp (saved
          * above) before swapping GS back, so a fault between here and
          * `sysretq` -- there is none, but the ordering is what makes that
          * true -- would find %gs already pointing at the *caller's*
-         * value, not this CPU's kernel state. Neither instruction touches
-         * %rax/%rcx/%r11, which is why the pops above happen first:
-         * `sysretq` needs %rcx (target RIP) and %r11 (target RFLAGS)
-         * exactly as `syscall` provided them, and forces CPL=3 on the
-         * selectors gdt.h's SYSRET triple names (Intel SDM Vol 2B
-         * "SYSRET") -- correct for the only kind of caller that ever
-         * reaches this stub now.
+         * value, not this CPU's kernel state. `sysretq` needs %rcx
+         * (target RIP) and %r11 (target RFLAGS) exactly as `syscall`
+         * provided them, already restored by the pops above, and forces
+         * CPL=3 on the selectors gdt.h's SYSRET triple names (Intel SDM
+         * Vol 2B "SYSRET") -- correct for the only kind of caller that
+         * ever reaches this stub now.
          */
         movq    %gs:PERCPU_USER_RSP, %rsp
         swapgs
         sysretq
 
         /*
-         * Non-canonical %rcx: still on the kernel stack, kernel %gs.
-         * %rsp%16==8 here -- the 15 pops above undid the 15 pushes on
-         * entry, so this is the same residue as right after this stub's
-         * own entry (percpu.kernel_rsp's own comment: initialized to
-         * top-8, "as if a return address had just been pushed"). That
-         * phrasing describes a just-*entered* callee's own state, not a
-         * caller ready to make a call of its own -- exactly the
-         * distinction trap1()'s subq $8/addq $8 pair (miscasm.S) exists
-         * to bridge for the same reason. An earlier version of this
-         * comment conflated the two and skipped the adjustment; fixed
-         * here the same way. x86_64_bad_sysret() (trap.c) never returns,
-         * so there is no matching addq to restore afterward.
+         * Non-canonical %rcx: still on the kernel stack, kernel %gs,
+         * nothing popped yet -- %rsp%16==8 here, the same residue as
+         * right after this stub's own entry (percpu.kernel_rsp's own
+         * comment: initialized to top-8, "as if a return address had
+         * just been pushed"). That phrasing describes a just-*entered*
+         * callee's own state, not a caller ready to make a call of its
+         * own -- exactly the distinction trap1()'s subq $8/addq $8 pair
+         * (miscasm.S) exists to bridge for the same reason.
+         * x86_64_bad_sysret() (trap.c) never returns, so there is no
+         * matching addq to restore afterward. %rdx (not %rcx, which
+         * still holds this stub's OWN saved copy on the stack, not yet
+         * popped into the register) already holds the same bad address
+         * this checked above.
          */
-1:      movq    %rcx, %rdi
+1:      movq    %rdx, %rdi
         subq    $8, %rsp
         call    C_SYM(x86_64_bad_sysret)
