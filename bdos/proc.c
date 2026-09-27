@@ -38,6 +38,19 @@
  */
 #define TPASIZE_QUANTUM (128*1024L)     /* see alloc_tpa() */
 
+#ifdef __x86_64__
+/*
+ * bios/machine/pc-x86_64/memory.c's own low, sub-4GiB pool -- not
+ * reached through mem.h/a shared header (bdos/build.mk's include path
+ * has no bios/machine/pc-x86_64 entry, unlike bios/'s own), declared
+ * directly here instead, matching this file's existing precedent of
+ * inlining small x86-64-specific declarations (struct gouser_stack
+ * below) rather than plumbing them through a shared header only two
+ * functions need. Used by both alloc_tpa() and alloc_env() below.
+ */
+extern UBYTE *x86_64_low_tpa_alloc(LONG needed);
+#endif
+
 /*
  * forward prototypes
  */
@@ -270,7 +283,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         /* set the owner of the memory to be this process */
         p = (PD *) tail;
         set_owner(p, p);
-        set_owner(p->p_env, p);
+        set_owner(USERPTR_TO_PTR(p->p_env), p);
         FALLTHROUGH;
     case PE_GO:
         p = (PD *) tail;
@@ -344,7 +357,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         KDEBUG(("Error and longjmp in xexec()!\n"));
 
         /* free any memory allocated so far & close the file */
-        xmfree(cur_p->p_env);
+        xmfree(USERPTR_TO_PTR(cur_p->p_env));
         xmfree(cur_p);
         xclose(fh);
 
@@ -359,7 +372,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmld returned %ld (0x%lx)\n",rc,rc));
         /* free any memory allocated yet */
-        xmfree(cur_p->p_env);
+        xmfree(USERPTR_TO_PTR(cur_p->p_env));
         xmfree(cur_p);
 
         return rc;
@@ -391,9 +404,14 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
     /* first, zero it out */
     bzero(p, sizeof(PD)) ;
 
-    /* memory values */
-    p->p_lowtpa = (UBYTE *)p;              /*  M01.01.06   */
-    p->p_hitpa  = (UBYTE *)p  +  max;      /*  M01.01.06   */
+    /* memory values
+     *
+     * PTR_TO_USERPTR(), not the unchecked cast: p itself comes from
+     * alloc_tpa(), whose __x86_64__ branch (bdos/proc.c) already draws
+     * from x86_64_low_tpa_alloc()'s low, sub-4GiB pool (bios/machine/
+     * pc-x86_64/memory.c), so this can never truncate on that arch. */
+    p->p_lowtpa = PTR_TO_USERPTR((UBYTE *)p);              /*  M01.01.06   */
+    p->p_hitpa  = PTR_TO_USERPTR((UBYTE *)p  +  max);      /*  M01.01.06   */
 #if ARCH_ARM
     /*
      * p_hitpa becomes the actual initial user-mode sp of any process
@@ -407,9 +425,29 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
      * harmless.
      */
     p->p_hitpa = (UBYTE *)((ULONG)p->p_hitpa & ~7UL);
+#elif defined(__x86_64__)
+    /*
+     * p_hitpa becomes gouser()'s own initial ring-3 RSP directly
+     * (bdos/arch/x86_64/rwa.c), landing sp at exactly p_hitpa before the
+     * process's first instruction ever runs. The x86-64 SysV/x32 ABI's
+     * process-entry convention requires (RSP + 8) to be a multiple of
+     * 16 at that point (equivalently, RSP itself is 8 mod 16) -- p itself
+     * comes from a 16-byte-aligned allocator (x86_64_low_tpa_alloc()),
+     * but max (the process's own TPA size, ultimately from arbitrary
+     * ELF segment sizes) is not, so p+max need not satisfy this (#356's
+     * own review caught it: the first `call` in a real process can run
+     * with the wrong alignment, breaking anything that assumes the
+     * standard entry convention). Round down to the largest value
+     * satisfying it; losing at most 15 bytes of TPA is harmless. */
+    p->p_hitpa = ((p->p_hitpa + 8UL) & ~15UL) - 8UL;
 #endif
-    p->p_xdta = (DTA *) p->p_cmdlin;       /* default p_xdta is p_cmdlin */
-    p->p_env = envptr;
+    /* Same reasoning as p_lowtpa/p_hitpa above: p_cmdlin is a field
+     * within p itself, and envptr comes from alloc_env(), whose own
+     * __x86_64__ branch (bdos/proc.c) likewise draws from
+     * x86_64_low_tpa_alloc() rather than xmxalloc()'s higher-half pool
+     * (see #360). */
+    p->p_xdta = PTR_TO_USERPTR((DTA *) p->p_cmdlin);       /* default p_xdta is p_cmdlin */
+    p->p_env = PTR_TO_USERPTR(envptr);
 
     /* copy tail */
     b = &p->p_cmdlin[0];
@@ -461,11 +499,29 @@ static char *alloc_env(ULONG flags, char *env)
 
     /* determine the env size */
     if (env == NULL)
-        env = run->p_env;
+        env = (char *)USERPTR_TO_PTR(run->p_env);
     size = (envsize(env) + 1) & ~1;  /* must be even */
 
     /* allocate it */
+#ifdef __x86_64__
+    /*
+     * Same reasoning as alloc_tpa()'s own #ifdef __x86_64__ branch
+     * above: xmxalloc()'s ffit()/pmd free list is ultimately built from
+     * membot/memtop, which point into _end_os_stram -- an ordinary
+     * higher-half kernel symbol, so memory it hands out cannot be
+     * stored in a PD's USERPTR_T-typed p_env field without truncation
+     * (#360: this is exactly the bug that field's own corruption turned
+     * out to be, before this fix). Route through the same dedicated low
+     * pool alloc_tpa() already uses instead: an environment string is
+     * conceptually just as much "this process's own low memory" as its
+     * TPA is, and bdos/umem.c's set_owner()/xmfree() already handle an
+     * address outside every known MPB gracefully (see alloc_tpa()'s own
+     * comment), exactly what happens for memory from this same pool.
+     */
+    new_env = (char *)x86_64_low_tpa_alloc(size);
+#else
     new_env = xmxalloc(size, (flags&PF_TTRAMLOAD) ? MX_PREFTTRAM : MX_STRAM);
+#endif
     if (new_env)
     {
         memcpy(new_env, env, size);     /* copy it */
@@ -501,11 +557,33 @@ static char *alloc_env(ULONG flags, char *env)
  * returns: ptr to allocated memory (NULL => failed)
  *          updates 'avail' with the size of allocated memory
  */
+
 static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
 {
     MD *md;
     LONG st_ram_size;
     BOOL st_ram_available = FALSE;
+
+#ifdef __x86_64__
+    /*
+     * This arch has no ST/alternate-RAM distinction to route through
+     * ffit()/pmd/pmdalt at all -- and, more fundamentally, membot/
+     * memtop (what pmd's free list is ultimately built from) point into
+     * _end_os_stram, an ordinary higher-half kernel symbol that cannot
+     * be forced low without an unrelated relocation overflow (see
+     * memory.c's own comment on x86_64_low_tpa_init() for why). Route
+     * through that dedicated low pool instead; *avail is simply the
+     * whole request, since this pool never grows a TPA beyond what was
+     * asked for the way ST/alt-RAM's own tiebreaker logic below does.
+     */
+    {
+        UBYTE *low = x86_64_low_tpa_alloc(needed);
+
+        if (low)
+            *avail = needed;
+        return low;
+    }
+#endif
 
     st_ram_size = (LONG) ffit(-1L, &pmd);
     if (st_ram_size >= needed)
@@ -606,7 +684,15 @@ static void proc_go(PD *p)
     struct gouser_stack *sp;
 
     KDEBUG(("BDOS xexec: trying to load (and execute) a process on %p ...\n",p->p_tbase));
-    p->p_parent = run;
+    /* PTR_TO_USERPTR(), not the unchecked cast: `run` here is always
+     * either a real, alloc_tpa()'d PD or the first process's parent,
+     * initial_basepage (bdosmain.c) -- also low on x86-64 since #360's
+     * review (bdosmain.c's osinit_after_xmaddalt() now allocates it from
+     * the same pool). Checked because xterm()/ixterm() widen p_parent
+     * back and dereference it on every Pterm(), so a truncated value
+     * here would fault there instead of trapping at the point of
+     * corruption. */
+    p->p_parent = PTR_TO_USERPTR(run);
 
     /* create a stack at the end of the TPA */
     sp = (struct gouser_stack *) (p->p_hitpa - sizeof(struct gouser_stack));
@@ -689,7 +775,7 @@ void xterm(UWORD rc)
     userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
 
-    run = run->p_parent;
+    run = (PD *)USERPTR_TO_PTR(run->p_parent);
     ixterm(p);
     /* gouser() will store the current value of D0 in the active PD
      * so it cannot be used here. See proc_go() above.
