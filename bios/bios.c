@@ -966,6 +966,16 @@ static void run_reset_resident(void)
  * to use GEMDOS calls here!
  */
 
+#ifdef __x86_64__
+/*
+ * bios/machine/pc-x86_64/memory.c's own low, sub-4GiB pool -- declared
+ * directly here rather than via its own header, matching bdos/proc.c's
+ * and bdos/arch/x86_64/rwa.c's identical precedent for the same
+ * function: only autoexec() (below) needs it in this file.
+ */
+extern UBYTE *x86_64_low_tpa_alloc(LONG needed);
+#endif
+
 static void run_auto_program(const char* filename)
 {
     char path[30];
@@ -980,8 +990,13 @@ static void run_auto_program(const char* filename)
 
 static void autoexec(void)
 {
-    DTA dta;
     WORD err;
+#ifdef __x86_64__
+    DTA *dta;
+#else
+    DTA dta_storage;
+    DTA *dta = &dta_storage;
+#endif
 
     /* check if the user does not want to run AUTO programs */
     if (bootflags & BOOTFLAG_SKIP_AUTO_ACC)
@@ -994,22 +1009,41 @@ static void autoexec(void)
     if(!blkdev_avail(bootdev))          /* check, if bootdev available */
         return;
 
-    Fsetdta(&dta);
+#ifdef __x86_64__
+    /*
+     * A stack-local DTA doesn't work here on this arch: Fsetdta()
+     * stores its address in p_xdta, a USERPTR_T (ULONG) field
+     * (bdos/fsmain.c's xsetdta()), and the filesystem code (e.g.
+     * fs/fatfs_pfs.c's fat_sfirst()/fat_snext()) widens it back and
+     * dereferences it directly during Fsfirst()/Fsnext() -- an
+     * ordinary kernel stack address is higher-half here, so that
+     * reconstructed pointer is garbage regardless of whether the
+     * narrowing itself is checked (Copilot's review of #356 caught
+     * this: an earlier fix here only silenced the trap, not the
+     * underlying corruption). Use the same low, sub-4GiB pool real
+     * processes' own PDs/env already come from instead.
+     */
+    dta = (DTA *)x86_64_low_tpa_alloc(sizeof(DTA));
+    if (!dta)
+        return;
+#endif
+
+    Fsetdta(dta);
     err = Fsfirst("\\AUTO\\*.PRG", 7);
     while(err == 0) {
 #ifdef TARGET_PRG
-        if (!strncmp(dta.d_fname, "EMUTOS", 6))
+        if (!strncmp(dta->d_fname, "EMUTOS", 6))
         {
-            KDEBUG(("Skipping %s from AUTO folder\n", dta.d_fname));
+            KDEBUG(("Skipping %s from AUTO folder\n", dta->d_fname));
         }
         else
 #endif
         {
-            run_auto_program(dta.d_fname);
+            run_auto_program(dta->d_fname);
 
             /* Setdta. BetaDOS corrupted the AUTO load if the Setdta
              * not repeated here */
-            Fsetdta(&dta);
+            Fsetdta(dta);
         }
 
         err = Fsnext();
