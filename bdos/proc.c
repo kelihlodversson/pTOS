@@ -669,14 +669,15 @@ static void proc_go(PD *p)
     struct gouser_stack *sp;
 
     KDEBUG(("BDOS xexec: trying to load (and execute) a process on %p ...\n",p->p_tbase));
-    /* PTR_TO_USERPTR_UNCHECKED(), not PTR_TO_USERPTR(): unlike p_lowtpa/
-     * p_hitpa/p_xdta/p_env (init_pd_fields() above), `run` here is not
-     * guaranteed to come from the low TPA pool -- the first process's
-     * parent is &initial_basepage (bdosmain.c), an ordinary higher-half
-     * kernel symbol. Nothing downstream reads p_parent as a real address
-     * on this arch yet, so leave it unchecked rather than trapping on
-     * that legitimate case. */
-    p->p_parent = PTR_TO_USERPTR_UNCHECKED(run);
+    /* PTR_TO_USERPTR(), not the unchecked cast: `run` here is always
+     * either a real, alloc_tpa()'d PD or the first process's parent,
+     * initial_basepage (bdosmain.c) -- also low on x86-64 since #360's
+     * review (bdosmain.c's osinit_after_xmaddalt() now allocates it from
+     * the same pool). Checked because xterm()/ixterm() widen p_parent
+     * back and dereference it on every Pterm(), so a truncated value
+     * here would fault there instead of trapping at the point of
+     * corruption. */
+    p->p_parent = PTR_TO_USERPTR(run);
 
     /* create a stack at the end of the TPA */
     sp = (struct gouser_stack *) (p->p_hitpa - sizeof(struct gouser_stack));

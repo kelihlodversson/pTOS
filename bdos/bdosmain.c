@@ -77,8 +77,22 @@ static long xgetver(void);
  *
  * this used to be obtained via MGET, but that was a bit pointless,
  * since it was never freed
+ *
+ * Not a compiled BSS symbol on x86-64: its address is stored as the
+ * first Pexec()'d process's own p_parent (bdos/proc.c's proc_go()),
+ * which -- like every other PD pointer field -- is a USERPTR_T, so it
+ * must survive a narrow-then-widen round trip. An ordinary higher-half
+ * kernel symbol can't (PR #361/#360's own review caught this: xterm()
+ * widens p_parent back and dereferences it on every Pterm(), faulting
+ * the moment a real Pexec()'d process actually terminates). Allocated
+ * from the same low, sub-4GiB pool alloc_tpa()/alloc_env() already use
+ * instead, in osinit_after_xmaddalt() below, once that pool exists.
  */
+#ifdef __x86_64__
+extern UBYTE *x86_64_low_tpa_alloc(LONG needed);
+#else
 static PD initial_basepage;
+#endif
 
 /* initial environment string */
 static const char double_nul[2] __attribute__ ((aligned (2))) = { 0, 0 };
@@ -376,7 +390,12 @@ void osinit_before_xmaddalt(void)
 void osinit_after_xmaddalt(void)
 {
     /* Set up initial process. Required by Malloc() */
+#ifdef __x86_64__
+    run = (PD *)x86_64_low_tpa_alloc(sizeof(PD));
+    bzero(run, sizeof(PD));
+#else
     run = &initial_basepage;
+#endif
     run->p_flags = PF_STANDARD;
     /*
      * double_nul is an ordinary kernel .rodata symbol -- higher-half on
