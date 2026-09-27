@@ -413,6 +413,17 @@ WORD initinfo(ULONG *pshiftbits)
     {
         /* Wait until timeout or keypress */
         long end = hz_200 + INITINFO_DURATION * 200UL;
+#ifdef __x86_64__
+        /* x86-64 has no working timer interrupt yet
+         * (bios/arch/x86_64/vectors.c), so hz_200 never advances and
+         * "end" above never arrives: an unattended boot with a nonzero
+         * INITINFO_DURATION would otherwise wait forever for a keypress
+         * that may never come. Bound it with a plain, uncalibrated spin
+         * count instead, same reasoning and per-tick budget as
+         * bios/ide.c's wait_for_not_BSY() family. */
+        LONG initinfo_spins_left = (LONG)INITINFO_DURATION * 200L * 5000L;
+#endif
+        MAYBE_UNUSED(end);
 
         olddev = dev;
 
@@ -428,7 +439,11 @@ WORD initinfo(ULONG *pshiftbits)
             stop_until_interrupt();
 #endif
         }
+#ifdef __x86_64__
+        while (initinfo_spins_left-- > 0);
+#else
         while (hz_200 < end);
+#endif
 
         /* Wait while Shift is pressed, and normal key is not pressed */
         while ((shiftbits & MODE_SHIFT) && !bconstat2())
