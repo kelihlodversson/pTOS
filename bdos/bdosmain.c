@@ -77,11 +77,28 @@ static long xgetver(void);
  *
  * this used to be obtained via MGET, but that was a bit pointless,
  * since it was never freed
+ *
+ * Not a compiled BSS symbol on x86-64: its address is stored as the
+ * first Pexec()'d process's own p_parent (bdos/proc.c's proc_go()),
+ * which -- like every other PD pointer field -- is a USERPTR_T, so it
+ * must survive a narrow-then-widen round trip. An ordinary higher-half
+ * kernel symbol can't (PR #361/#360's own review caught this: xterm()
+ * widens p_parent back and dereferences it on every Pterm(), faulting
+ * the moment a real Pexec()'d process actually terminates). Allocated
+ * from the same low, sub-4GiB pool alloc_tpa()/alloc_env() already use
+ * instead, in osinit_after_xmaddalt() below, once that pool exists.
  */
+#ifdef __x86_64__
+extern UBYTE *x86_64_low_tpa_alloc(LONG needed);
+#else
 static PD initial_basepage;
+#endif
 
-/* initial environment string */
+/* initial environment string -- x86-64 uses p_cmdlin instead, see
+ * osinit_after_xmaddalt()'s own comment */
+#ifndef __x86_64__
 static const char double_nul[2] __attribute__ ((aligned (2))) = { 0, 0 };
+#endif
 
 
 /*
@@ -376,9 +393,32 @@ void osinit_before_xmaddalt(void)
 void osinit_after_xmaddalt(void)
 {
     /* Set up initial process. Required by Malloc() */
+#ifdef __x86_64__
+    run = (PD *)x86_64_low_tpa_alloc(sizeof(PD));
+    bzero(run, sizeof(PD));
+#else
     run = &initial_basepage;
+#endif
     run->p_flags = PF_STANDARD;
-    run->p_env = CONST_CAST(char *,double_nul);
+    /*
+     * double_nul is an ordinary kernel .rodata symbol -- higher-half on
+     * x86-64, so (like bios.c's coma_start/exec_os) not something
+     * PTR_TO_USERPTR() can narrow without trapping. Unlike those
+     * p_tbase cases, this one isn't merely inert: Copilot's review of
+     * #361 caught that any Pexec(..., env=NULL) call reachable while
+     * initial_basepage is still `run` (bdos/proc.c's alloc_env(),
+     * "env == NULL" branch -- e.g. aes/gemshlib.c's
+     * aes_run_rom_program()) widens this exact field back and scans it
+     * as a live string before ever replacing it, so a truncated address
+     * here is a real dereference, not just corruption nothing reads.
+     * Point x86-64 at p_cmdlin instead: already zeroed by the bzero()
+     * above, so it's an equally valid empty string, at a genuinely low
+     * address since `run` itself now is. */
+#ifdef __x86_64__
+    run->p_env = PTR_TO_USERPTR(&run->p_cmdlin[0]);
+#else
+    run->p_env = PTR_TO_USERPTR_UNCHECKED(CONST_CAST(char *,double_nul));
+#endif
 
     time_init();
 

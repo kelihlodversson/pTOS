@@ -782,11 +782,37 @@ static void bios_init(void)
     nls_set_lang(get_lang_name());
 #endif
 
-    /* set start of user interface */
+    /* set start of user interface
+     *
+     * On x86-64, NOT a plain C `exec_os = ui_start`/`= coma_start`:
+     * taking the address of an extern symbol that way lets the compiler
+     * pick GOT-indirected addressing (`mov sym@GOTPCREL(%rip), %reg`,
+     * R_X86_64_REX_GOTPCRELX) for a symbol it can't prove is local at
+     * compile time, exactly the hazard bios/arch/x86_64/trap.c's own
+     * x86_64_syscall_entry/xbios_unimpl_addr comments already document
+     * at length -- this image's objects are ELF but the final link is
+     * PE (`ld -m i386pep`), whose backend does not perform the ELF
+     * static-executable GOT relaxation, so the load reads garbage
+     * instead of ui_start's/coma_start's real address. Forcing `lea`
+     * here (RIP-relative, self-adjusting to wherever this code actually
+     * runs, unlike a GOT load) sidesteps it, mirroring those same call
+     * sites' own fix. Confirmed by this exact bug reproducing here: a
+     * plain `exec_os = coma_start` read back as an unrelated garbage
+     * 64-bit value once gouser() (bdos/arch/x86_64/rwa.c) actually
+     * tried to call through it.
+     */
 #if CONF_WITH_AES
+#ifdef __x86_64__
+    __asm__("lea ui_start(%%rip), %0" : "=r"(exec_os));
+#else
     exec_os = ui_start;
+#endif
 #elif CONF_WITH_CLI
+#ifdef __x86_64__
+    __asm__("lea coma_start(%%rip), %0" : "=r"(exec_os));
+#else
     exec_os = coma_start;
+#endif
 #else
     exec_os = NULL;
 #endif
@@ -940,6 +966,16 @@ static void run_reset_resident(void)
  * to use GEMDOS calls here!
  */
 
+#ifdef __x86_64__
+/*
+ * bios/machine/pc-x86_64/memory.c's own low, sub-4GiB pool -- declared
+ * directly here rather than via its own header, matching bdos/proc.c's
+ * and bdos/arch/x86_64/rwa.c's identical precedent for the same
+ * function: only autoexec() (below) needs it in this file.
+ */
+extern UBYTE *x86_64_low_tpa_alloc(LONG needed);
+#endif
+
 static void run_auto_program(const char* filename)
 {
     char path[30];
@@ -954,8 +990,13 @@ static void run_auto_program(const char* filename)
 
 static void autoexec(void)
 {
-    DTA dta;
     WORD err;
+#ifdef __x86_64__
+    DTA *dta;
+#else
+    DTA dta_storage;
+    DTA *dta = &dta_storage;
+#endif
 
     /* check if the user does not want to run AUTO programs */
     if (bootflags & BOOTFLAG_SKIP_AUTO_ACC)
@@ -968,22 +1009,41 @@ static void autoexec(void)
     if(!blkdev_avail(bootdev))          /* check, if bootdev available */
         return;
 
-    Fsetdta(&dta);
+#ifdef __x86_64__
+    /*
+     * A stack-local DTA doesn't work here on this arch: Fsetdta()
+     * stores its address in p_xdta, a USERPTR_T (ULONG) field
+     * (bdos/fsmain.c's xsetdta()), and the filesystem code (e.g.
+     * fs/fatfs_pfs.c's fat_sfirst()/fat_snext()) widens it back and
+     * dereferences it directly during Fsfirst()/Fsnext() -- an
+     * ordinary kernel stack address is higher-half here, so that
+     * reconstructed pointer is garbage regardless of whether the
+     * narrowing itself is checked (Copilot's review of #356 caught
+     * this: an earlier fix here only silenced the trap, not the
+     * underlying corruption). Use the same low, sub-4GiB pool real
+     * processes' own PDs/env already come from instead.
+     */
+    dta = (DTA *)x86_64_low_tpa_alloc(sizeof(DTA));
+    if (!dta)
+        return;
+#endif
+
+    Fsetdta(dta);
     err = Fsfirst("\\AUTO\\*.PRG", 7);
     while(err == 0) {
 #ifdef TARGET_PRG
-        if (!strncmp(dta.d_fname, "EMUTOS", 6))
+        if (!strncmp(dta->d_fname, "EMUTOS", 6))
         {
-            KDEBUG(("Skipping %s from AUTO folder\n", dta.d_fname));
+            KDEBUG(("Skipping %s from AUTO folder\n", dta->d_fname));
         }
         else
 #endif
         {
-            run_auto_program(dta.d_fname);
+            run_auto_program(dta->d_fname);
 
             /* Setdta. BetaDOS corrupted the AUTO load if the Setdta
              * not repeated here */
-            Fsetdta(&dta);
+            Fsetdta(dta);
         }
 
         err = Fsnext();
@@ -1094,7 +1154,22 @@ void biosmain(void)
 #if CONF_WITH_CLI
     if (bootflags & BOOTFLAG_EARLY_CLI) {   /* run an early console */
         PD *pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", default_env);
-        pd->p_tbase = (UBYTE *) coma_start;
+        /*
+         * coma_start is kernel code (EmuCON's own entry point, linked
+         * into this image), not a real user process's text segment --
+         * on x86-64, unlike every ILP32 arch, that means its address is
+         * never low/32-bit-representable, so this deliberately uses the
+         * UNCHECKED narrow (PTR_TO_USERPTR() would trap on exactly
+         * that). gouser() panics before ever using p_tbase as a real
+         * ring-3 entry point on this arch today (see bdos/arch/x86_64/
+         * rwa.c), so the truncation below is harmless for now -- but a
+         * genuine x86-64 gouser() must special-case a kernel-code
+         * p_tbase like this one (call it directly, the way
+         * cli/arch/x86_64/cmdasm.c's own header comment already
+         * anticipates) rather than ever feeding it to a real
+         * ring0->ring3 transition.
+         */
+        pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *) coma_start);
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
         Pexec(PE_GOTHENFREE, "", (char *)pd, default_env);
     }
@@ -1117,7 +1192,11 @@ void biosmain(void)
          */
         PD *pd;
         pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", default_env);
-        pd->p_tbase = (UBYTE *) exec_os;
+        /* exec_os is always a kernel code symbol (ui_start or coma_start,
+         * see bios_init() above) -- see the identical BOOTFLAG_EARLY_CLI
+         * case's own comment above for why this deliberately uses the
+         * UNCHECKED narrow on x86-64. */
+        pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *) exec_os);
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
         Pexec(PE_GO, "", (char *)pd, default_env);
     }

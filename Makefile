@@ -685,6 +685,55 @@ $(IMAGE): $(EMUTOS_IMG)
 endif
 
 #
+# x32 psABI userspace test program (#334) -- a *separate* GCC invocation
+# from the kernel's own -m64 EFI build above: ordinary -mx32 codegen
+# produces an ELFCLASS32 program with genuine EM_X86_64 long-mode
+# instructions (Linux's "x32" psABI, not IA-32 compatibility mode), linked
+# as a plain freestanding ELF executable, not through the PE32+ ("i386pep")
+# path $(EMUTOS_IMG) needs. See tests/x32_hello/x32_hello.c's own comment
+# for what it does and why it needs no CRT/libc.
+#
+
+ifdef ARCH_X86_64
+X32_CC = $(X32_CROSS_COMPILE)gcc
+
+# -fno-asynchronous-unwind-tables/-fno-unwind-tables drop the .eh_frame
+# segment gcc emits by default, -fcf-protection=none drops the
+# .note.gnu.property one (Intel CET markers), and -Wl,--build-id=none
+# drops the .note.gnu.build-id one -- each is otherwise its own PT_LOAD/
+# PT_NOTE segment, and pTOS's ELF loader (bdos/elfld.c, #43) only ever
+# maps the segments the image itself declares, so keeping this down to
+# exactly one real PT_LOAD segment (verified with readelf -l) is what
+# makes the result loadable there. -Wl,-Ttext=0x400000 -Wl,-n fixes the
+# link base and disables page alignment padding between segments (static,
+# non-PIE ET_EXEC, per #334's "x32 toolchain and executable contract"
+# section) -- -n is what collapses what would otherwise be separate R and
+# R+E LOAD segments into one. -Wl,-q (--emit-relocs) keeps the retained
+# RELA relocation entries the same contract calls for, so a less trivial
+# x32 program than tests/x32_hello/x32_hello.c (which has no absolute
+# data references and so links with none to retain) still gets a
+# relocatable binary -- see the ARCH_X86_64 branch elfld.c's own
+# EM_X86_64/ELF_R_DIR32/ELF_R_RELATIVE constants added for this.
+# -fno-pie/-no-pie force the ET_EXEC contract explicitly rather than
+# relying on the host GCC's own default: a distro configured with PIE
+# on by default would otherwise still produce ET_DYN here (-mx32 alone
+# doesn't disable it), which elfld.c's loader does not expect
+# (Copilot's review of #356 caught this).
+X32_CFLAGS = -mx32 -ffreestanding -fno-asynchronous-unwind-tables \
+             -fno-unwind-tables -fcf-protection=none -fno-pie
+X32_LDFLAGS = -nostdlib -static -no-pie -Wl,--build-id=none \
+              -Wl,-Ttext=0x400000 -Wl,-n -Wl,-q
+
+x32hello.elf: tests/x32_hello/x32_hello.c
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $<
+
+.PHONY: x32test
+x32test: x32hello.elf
+
+TOCLEAN += x32hello.elf
+endif
+
+#
 # Amiga images
 #
 

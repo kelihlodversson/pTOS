@@ -651,12 +651,18 @@ void dopanic(const char *fmt, ...)
 
     if (run)
     {
+        /* p_tbase is USERPTR_T (a plain ULONG on x86-64, see bdosdefs.h),
+         * not a native pointer there -- widen through USERPTR_TO_PTR()
+         * before using it in pointer arithmetic/comparisons below, the
+         * same as every other consumer of a PD's USERPTR_T fields. */
+        UBYTE *tbase = USERPTR_TO_PTR(run->p_tbase);
+
         kcprintf("basepage=%08lx\n",
                  (ULONG)run);
         kcprintf("text=%08lx data=%08lx bss=%08lx\n",
                  (ULONG)run->p_tbase, (ULONG)run->p_dbase, (ULONG)run->p_bbase);
-        if (pc && ((UBYTE *)pc >= run->p_tbase) && ((UBYTE *)pc < (run->p_tbase + run->p_tlen)))
-            kcprintf("Crash at text+%08lx\n", (long)((UBYTE *)pc - run->p_tbase));
+        if (pc && ((UBYTE *)pc >= tbase) && ((UBYTE *)pc < (tbase + run->p_tlen)))
+            kcprintf("Crash at text+%08lx\n", (long)((UBYTE *)pc - tbase));
     }
 
     /* allow interrupts so we get keypresses -- neither ARM (which enables

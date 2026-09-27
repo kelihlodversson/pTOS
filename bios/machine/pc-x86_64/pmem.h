@@ -75,6 +75,22 @@ void x86_64_pmem_init(const void *efi_map, UQUAD map_size, UQUAD descriptor_size
  * run out. */
 UQUAD x86_64_pmem_alloc_pages(UQUAD count);
 
+/*
+ * Same as x86_64_pmem_alloc_pages(), but only ever returns memory whose
+ * entire allocated span (base through base + count*X86_64_PAGE_SIZE) is
+ * below limit -- for the handful of allocations that must be
+ * dereferenceable through a genuinely 32-bit-wide field (a GEMDOS PD's
+ * p_tbase/p_hitpa, and anything else #351 tracks): x86_64_pmem_alloc_pages()
+ * hands out whichever free region a first-fit scan reaches first,
+ * regardless of address, which on a system with more than 4 GiB of RAM
+ * could just as easily be well above it. Scans the same free-region list
+ * for the first region whose base and end both fall under limit, rather
+ * than allocating normally and checking the result afterward (which
+ * would have no way to give the memory back if it turned out too high).
+ * Traps (see pmem.c) if no region under limit can satisfy the request.
+ */
+UQUAD x86_64_pmem_alloc_pages_below(UQUAD count, UQUAD limit);
+
 /* Total free bytes remaining across the whole free list (diagnostics). */
 UQUAD x86_64_pmem_free_bytes(void);
 
