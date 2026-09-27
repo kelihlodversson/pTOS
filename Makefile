@@ -259,23 +259,25 @@ MULTILIBFLAGS = $(CPUFLAGS) -fno-pic -mcmodel=large -mno-red-zone \
                 -fshort-wchar -fno-ident -maccumulate-outgoing-args
 TOOLCHAIN_CFLAGS = -ffreestanding
 
-# See the MULTILIBFLAGS comment above. Four of these six objects execute
-# across the higher-half address change itself and must stay -fpie for
-# that reason: bios/machine/pc-x86_64/startup.c's efi_main(), and
-# everything it calls before x86_64_relocate_higher_half() --
+# See the MULTILIBFLAGS comment above. All six objects below are kept on
+# plain -fpie; none of them do the cross-translation-unit function-
+# pointer-assignment pattern that makes the rest of the tree need the
+# -mcmodel=large fix (verified by inspection), so nothing is lost by
+# leaving them as they were. Four of the six need to stay -fpie for a
+# separate reason -- they execute across the higher-half address change
+# itself: bios/machine/pc-x86_64/startup.c's efi_main(), and everything
+# it calls before x86_64_relocate_higher_half() --
 # x86_64_build_page_tables()/x86_64_build_physmap()/x86_64_low_to_high()
 # in pgtable.c, x86_64_apply_higher_half_relocations() in pe_reloc.c,
-# x86_64_pmem_init()/x86_64_pmem_highest_addr() in pmem.c. earlycon.c is
-# included because earlycon_puts() is called from every one of the
-# above (and needs to work correctly on both sides of the jump for that
-# reason, even though it makes no address-of-a-relocatable-symbol
-# reference of its own). memory.c's pc_x86_64_memory_init() is actually
-# post-jump-only and would be safe either way; kept here too since it is
-# a small, leaf-level early-boot file in the same directory, not worth a
-# separate case. None of these six also do the cross-translation-unit
-# function-pointer-assignment pattern that makes the rest of the tree
-# need the -mcmodel=large fix (verified by inspection), so keeping them
-# on plain -fpie costs nothing.
+# x86_64_pmem_init()/x86_64_pmem_highest_addr() in pmem.c. The remaining
+# two are along for the ride rather than independently required:
+# earlycon.c, because earlycon_puts() is called from every one of the
+# four above and needs to work correctly on both sides of the jump for
+# that reason (even though it makes no address-of-a-relocatable-symbol
+# reference of its own); and memory.c, whose pc_x86_64_memory_init() is
+# actually post-jump-only and would be safe either way, kept here too
+# since it is a small, leaf-level early-boot file in the same directory,
+# not worth a separate case.
 X86_64_PIE_OBJS = obj/startup.o obj/pgtable.o obj/pe_reloc.o obj/pmem.o \
                   obj/earlycon.o obj/memory.o
 $(X86_64_PIE_OBJS): X86_64_PIE_OVERRIDE = -fpie -mcmodel=small
