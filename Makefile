@@ -212,6 +212,26 @@ ifdef ARCH_X86_64
 # on x86-64, where its default sub/add-based outgoing-argument-area
 # handling around calls is not guaranteed to interact correctly with a
 # function using a calling convention other than the compiler's default.
+#
+# KNOWN ISSUE (#358): -fpie's GOT-indirected codegen for
+# taking the address of a cross-translation-unit function at runtime
+# (`fnptr_var = other_tu_function;`) is silently miscompiled by this
+# port's ELF-objects/PE-link model (`ld -m i386pep` does not build/relocate
+# a working GOT for it the way a native ELF static-PIE link would) --
+# reproduces on a plain, unmodified boot the first time bios/chardev.c's
+# chardev_init() populates its BIOS device-vector tables (GCC constant-
+# propagates a `static const` table into exactly this pattern), crashing
+# with a #GP General Protection Fault at coma_start()'s first character of
+# console output. `-fno-pic -mcmodel=large` (plain 64-bit absolute
+# addressing, no GOT at all) fixes that specific crash but was found, in
+# the same investigation, to introduce a *different*, earlier #PF during
+# bios/machine/pc-x86_64/startup.c's own two-stage self-relocation
+# (UEFI's own initial load-time relocation, then
+# x86_64_apply_higher_half_relocations()'s second pass) -- not yet
+# root-caused, and risky to land without further, dedicated investigation
+# of that interaction. Left as -fpie for now; the GOT-indirection hazard
+# is real but narrower in practice than a boot-blocking regression in the
+# relocation path itself would be.
 MULTILIBFLAGS = $(CPUFLAGS) -fpie -mno-red-zone -fshort-wchar -fno-ident \
                 -maccumulate-outgoing-args
 TOOLCHAIN_CFLAGS = -ffreestanding
@@ -638,15 +658,20 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 # PT_NOTE segment, and pTOS's ELF loader (bdos/elfld.c, #43) only ever
 # maps the segments the image itself declares, so keeping this down to
 # exactly one real PT_LOAD segment (verified with readelf -l) is what
-# makes the result loadable there without any loader changes, matching
-# #334's own "no loader changes, only a toolchain/link-flags recipe"
-# scope. -Wl,-Ttext=0x400000 -Wl,-n fixes the link base and disables page
-# alignment padding between segments (static, non-PIE ET_EXEC, per #334's
-# "x32 toolchain and executable contract" section) -- -n is what collapses
-# what would otherwise be separate R and R+E LOAD segments into one.
+# makes the result loadable there. -Wl,-Ttext=0x400000 -Wl,-n fixes the
+# link base and disables page alignment padding between segments (static,
+# non-PIE ET_EXEC, per #334's "x32 toolchain and executable contract"
+# section) -- -n is what collapses what would otherwise be separate R and
+# R+E LOAD segments into one. -Wl,-q (--emit-relocs) keeps the retained
+# RELA relocation entries the same contract calls for, so a less trivial
+# x32 program than tests/x32_hello/x32_hello.c (which has no absolute
+# data references and so links with none to retain) still gets a
+# relocatable binary -- see the ARCH_X86_64 branch elfld.c's own
+# EM_X86_64/ELF_R_DIR32/ELF_R_RELATIVE constants added for this.
 X32_CFLAGS = -mx32 -ffreestanding -fno-asynchronous-unwind-tables \
              -fno-unwind-tables -fcf-protection=none
-X32_LDFLAGS = -nostdlib -static -Wl,--build-id=none -Wl,-Ttext=0x400000 -Wl,-n
+X32_LDFLAGS = -nostdlib -static -Wl,--build-id=none -Wl,-Ttext=0x400000 \
+              -Wl,-n -Wl,-q
 
 x32hello.elf: tests/x32_hello/x32_hello.c
 	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $<

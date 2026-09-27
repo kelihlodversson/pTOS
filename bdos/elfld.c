@@ -129,6 +129,24 @@
 #define ELF_R_DIR32     2       /* R_ARM_ABS32 */
 #define ELF_R_RELATIVE  23      /* R_ARM_RELATIVE */
 #define ELF_SLOT_ALIGN  4
+#elif ARCH_X86_64
+/* x32 psABI userspace (#334): ELFCLASS32 program headers with genuine
+ * EM_X86_64 long-mode code, not IA-32/EM_386 compat mode -- see
+ * tests/x32_hello/x32_hello.c's own comment and the ARCH_X86_64 section
+ * of the top level Makefile for how such a binary is built. Its 32-bit
+ * absolute relocations are RELA-encoded (like m68k, unlike ARM's REL),
+ * which the generic SHT_REL/SHT_RELA dispatch below already handles --
+ * R_X86_64_32 and R_X86_64_RELATIVE are the x32 psABI's own numbering for
+ * the same "direct 32-bit slot" / "load-bias-relative slot" relocation
+ * kinds ARM/m68k each have their own name for above. 4-byte aligned, like
+ * ARM: every relocated slot is a 32-bit ILP32 pointer field, and x86-64
+ * has no separate 2-byte-slot relocation case the way m68k's own operand-
+ * embedded relocations do.
+ */
+#define ELF_EM_EXPECTED 62      /* EM_X86_64 */
+#define ELF_R_DIR32     10      /* R_X86_64_32 */
+#define ELF_R_RELATIVE  8       /* R_X86_64_RELATIVE */
+#define ELF_SLOT_ALIGN  4
 #else
 #define ELF_EM_EXPECTED 4       /* EM_68K */
 #define ELF_R_DIR32     1       /* R_68K_32 */
