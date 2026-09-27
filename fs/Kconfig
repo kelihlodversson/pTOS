@@ -9,6 +9,7 @@ menu "Pluggable filesystems"
 
 config CONF_WITH_PLUGGABLE_FS
 	bool "Pluggable filesystem driver support"
+	depends on !ARCH_X86_64
 	default n
 	help
 	  Routes GEMDOS filesystem calls (Fopen, Fread, Dsetpath, Fsfirst,
@@ -19,6 +20,16 @@ config CONF_WITH_PLUGGABLE_FS
 	  helpers here, which dispatch through a per-drive vtable (with the
 	  FAT implementation available as fat_pfs_ops).  Say n unless a driver
 	  needs this.
+
+	  Not offered on x86-64: fatfs_pfs.c's PFSCOOKIE-based directory/file
+	  cookies pack a DND* into a plain 32-bit LONG when this is off,
+	  spending the cookie's otherwise-unused "aux" field on the pointer's
+	  high 32 bits to make that exact on every arch. This build's cookies
+	  can't do the same, because aux already holds fat_readdir()'s
+	  search-pool-slot bookkeeping here -- so a 64-bit DND* would silently
+	  truncate. Revisit once fatfs_pfs.c's pluggable-mode cookie
+	  representation is made pointer-width-safe without losing that
+	  bookkeeping.
 
 config CONF_WITH_PLUGGABLE_FS_TEST
 	bool "Pluggable filesystem self-test driver"
