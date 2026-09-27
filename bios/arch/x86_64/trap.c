@@ -60,11 +60,10 @@ extern LONG xbios_unimpl(void);
 
 /*
  * xbios_unimpl's real address, materialized once by x86_64_trap_init()
- * via the same forced RIP-relative `lea` x86_64_syscall_entry's own
- * comment explains (this PE link has no GOT for a plain C
- * `(PFLONG)xbios_unimpl` expression to safely go through), and compared
- * against here instead of taking xbios_unimpl's address directly at
- * every dispatch.
+ * via a plain C address-of (safe since #358 -- see the top level
+ * Makefile's ARCH_X86_64 MULTILIBFLAGS comment), and compared against
+ * here instead of taking xbios_unimpl's address directly at every
+ * dispatch.
  */
 static PFLONG xbios_unimpl_addr;
 
@@ -351,42 +350,31 @@ void x86_64_trap_init(void)
                           | ((UQUAD)X86_64_USER32_CS_SEL_BASE << 48));
 
     /*
-     * Not a plain C `(UQUAD)(uintptr_t)x86_64_syscall_entry`: taking the
-     * address of an extern symbol that way lets the compiler pick
-     * GOT-indirected addressing (`mov x86_64_syscall_entry@GOTPCREL(%rip),
-     * %reg`, R_X86_64_REX_GOTPCRELX) for a symbol it can't prove is local
-     * at compile time -- normally harmless (GNU ld's ELF backend relaxes
-     * it back to a direct `lea` when linking a static executable), but
-     * this image's objects are ELF while the final link is PE
-     * (`ld -m i386pep`, see the X86_64_LD comment in the top level
-     * Makefile), whose backend does not perform that relaxation or
-     * otherwise populate a GOT: the load reads whatever unrelated bytes
-     * happen to sit at that spot instead of a real address, and `syscall`
-     * later jumps straight into that garbage. Forcing `lea` here (which
-     * `-fpie` never routes through the GOT) sidesteps the whole class,
-     * and -- being RIP-relative -- self-adjusts to wherever this code is
-     * actually executing, so unlike idt.c's exception_stub[] (compile-time
-     * data fixed to the pre-relocation load address) this needs no
-     * x86_64_low_to_high() translation even though it also runs
-     * post-relocation.
+     * Plain C address-of, safe since #358: this file (like the rest of
+     * the kernel proper, everything that only ever runs post-relocation)
+     * is compiled -fno-pic -mcmodel=large, not -fpie, specifically so
+     * that taking the address of an extern symbol like
+     * x86_64_syscall_entry is an ordinary absolute 64-bit load/immediate,
+     * not GOT-indirected addressing that this image's PE link
+     * (`ld -m i386pep`) cannot correctly populate for. See the top level
+     * Makefile's ARCH_X86_64 MULTILIBFLAGS comment and #358 for the full
+     * story; this file used to work around it here with a forced
+     * `lea sym(%rip)` -- not needed anymore now that nothing on this arch
+     * is GOT-indirected in the first place. Unrelated to this: some
+     * other x86-64 address computations still need explicit translation
+     * via x86_64_low_to_high() (startup.c's own entry_high/stack_top_high,
+     * computed from a RIP-relative `&function` while still running at
+     * the low, pre-jump address) or need none at all (idt.c's
+     * exception_stub[], compile-time data whose relocation entries
+     * x86_64_apply_higher_half_relocations() already retargets straight
+     * to the higher half) -- neither of those is a GOT concern either way.
      */
-    {
-        UQUAD entry_addr;
+    x86_64_wrmsr(MSR_LSTAR, (UQUAD)(uintptr_t)x86_64_syscall_entry);
 
-        __asm__("lea x86_64_syscall_entry(%%rip), %0" : "=r"(entry_addr));
-        x86_64_wrmsr(MSR_LSTAR, entry_addr);
-    }
-
-    /* Same GOT hazard as x86_64_syscall_entry above, for the same reason
-     * (see xbios_unimpl_addr's own comment): xbios_unimpl is an external
-     * symbol, so a plain C `(PFLONG)xbios_unimpl` risks a GOT-indirected
-     * load this PE link never populates. */
-    {
-        UQUAD unimpl_addr;
-
-        __asm__("lea xbios_unimpl(%%rip), %0" : "=r"(unimpl_addr));
-        xbios_unimpl_addr = (PFLONG)(uintptr_t)unimpl_addr;
-    }
+    /* Same reasoning as x86_64_syscall_entry above: xbios_unimpl is an
+     * external symbol, and a plain C `(PFLONG)xbios_unimpl` is safe now
+     * that this file is no longer GOT-indirected (#358). */
+    xbios_unimpl_addr = (PFLONG)(uintptr_t)xbios_unimpl;
 
     /* Cleared in RFLAGS on syscall entry: IF (bit 9), so a trap handler
      * is never itself interrupted -- consistent with interrupts already
@@ -413,12 +401,13 @@ void x86_64_trap_init(void)
      * has run yet"): the first `swapgs`, on the first syscall entry,
      * exchanges the two, bringing this address into GS and leaving 0 in
      * the MSR for that entry's matching exit to swap back out again.
-     * Same GOT hazard as x86_64_syscall_entry above in principle, but
-     * `percpu` is file-static (internal linkage): the compiler can prove
-     * no other translation unit could interpose it, so it already gets a
-     * direct `lea` -- confirmed by disassembly, not just assumed, given
-     * how expensive assuming wrongly about this exact class of bug just
-     * turned out to be.
+     * `percpu` is file-static (internal linkage), so even before #358's
+     * fix this was never at risk of the GOT-indirection hazard
+     * x86_64_syscall_entry above used to need a workaround for: the
+     * compiler could already prove no other translation unit could
+     * interpose it, so it always got a direct `lea` here -- confirmed by
+     * disassembly at the time, not just assumed, given how expensive
+     * assuming wrongly about this exact class of bug turned out to be.
      */
     x86_64_wrmsr(MSR_KERNEL_GS_BASE, (UQUAD)(uintptr_t)&percpu);
 }
