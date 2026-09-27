@@ -103,6 +103,7 @@ void pc_x86_64_memory_init(void)
 
 static UQUAD low_tpa_next;
 static UQUAD low_tpa_end;
+static UQUAD low_tpa_phys_base;
 
 void x86_64_low_tpa_init(void)
 {
@@ -126,6 +127,7 @@ void x86_64_low_tpa_init(void)
 
     low_tpa_next = X86_64_LOW_TPA_VIRT_BASE;
     low_tpa_end = X86_64_LOW_TPA_VIRT_BASE + X86_64_LOW_TPA_BYTES;
+    low_tpa_phys_base = phys;
 }
 
 UBYTE *x86_64_low_tpa_alloc(LONG needed)
@@ -137,5 +139,23 @@ UBYTE *x86_64_low_tpa_alloc(LONG needed)
 
     low_tpa_next = aligned + (UQUAD)needed;
     return (UBYTE *)(uintptr_t)aligned;
+}
+
+/* one-line wrapper matching x86_64_map_user_page()'s alloc_page callback
+ * shape (pgtable.h's own comment on that function names this exact
+ * wrapper as the pc-x86_64 process loader's job) */
+static UQUAD low_tpa_alloc_page(void)
+{
+    return x86_64_pmem_alloc_pages(1);
+}
+
+void x86_64_map_low_tpa_into(UQUAD pml4_phys)
+{
+    UQUAD off;
+
+    for (off = 0; off < X86_64_LOW_TPA_BYTES; off += X86_64_PAGE_SIZE)
+        x86_64_map_user_page(pml4_phys, X86_64_LOW_TPA_VIRT_BASE + off,
+                              low_tpa_phys_base + off, 1, 1,
+                              low_tpa_alloc_page);
 }
 

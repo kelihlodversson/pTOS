@@ -1158,12 +1158,20 @@ LONG elf_pgmld(FH h, PD *p)
         return ENSMEM;
     }
 
-    /* fill the PD segment fields; execution starts at the ELF entry point */
-    p->p_tbase = load_base + (ehdr.e_entry - info.link_base);
+    /* fill the PD segment fields; execution starts at the ELF entry point.
+     * PTR_TO_USERPTR(), not a plain pointer assignment: on x86-64,
+     * USERPTR_T(UBYTE) is ULONG, and load_base is only guaranteed
+     * representable in 32 bits because it comes from p+1, p itself
+     * always being alloc_tpa()'s low, sub-4GiB TPA pool allocation
+     * (bdos/proc.c) -- the trapping macro catches it immediately if
+     * that ever stops being true, instead of gouser() silently
+     * launching a process at a truncated, wrong address (#356's own
+     * review flagged the previous plain assignment for exactly this). */
+    p->p_tbase = PTR_TO_USERPTR(load_base + (ehdr.e_entry - info.link_base));
     p->p_tlen  = (LONG)(info.file_end - info.link_base);
-    p->p_dbase = load_base + (info.file_end - info.link_base);
+    p->p_dbase = PTR_TO_USERPTR(load_base + (info.file_end - info.link_base));
     p->p_dlen  = 0;
-    p->p_bbase = load_base + (info.file_end - info.link_base);
+    p->p_bbase = PTR_TO_USERPTR(load_base + (info.file_end - info.link_base));
     p->p_blen  = (LONG)(info.mem_end - info.file_end);
 
     /* Zero the loaded image first so bss and inter-segment gaps start

@@ -48,6 +48,7 @@
  */
 extern UQUAD x86_64_pmem_alloc_pages(UQUAD count);
 extern void x86_64_new_address_space(UQUAD pml4_phys);
+extern void x86_64_map_low_tpa_into(UQUAD pml4_phys);
 extern void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp) NORETURN;
 
 void enter(void);
@@ -94,10 +95,19 @@ void gouser(void)
         /*
          * A real, loaded process (#334): build its own address space --
          * x86_64_new_address_space() shares the kernel + physical
-         * direct map (high half) and the low system-vector page + low
-         * TPA pool (bdos/proc.c's alloc_tpa(), PML4 slot 0) in automatically,
-         * see that function's own comment for why -- then enter ring 3
-         * at its own text base and initial stack (top of its own TPA).
+         * direct map (high half) in (PML4 slots 256-511) and clears
+         * every low slot, including slot 0, exactly like every other
+         * process-private slot (see that function's own comment) -- it
+         * does NOT share the low TPA pool or the low system-vector page
+         * in; an earlier version of this comment claimed it did, which
+         * was wrong (#356's own review caught it: a real loaded process
+         * faulted on its first instruction, since nothing had ever
+         * mapped its own text/stack into its new PML4). Map the low TPA
+         * pool -- where alloc_tpa()/alloc_env() (bdos/proc.c) already
+         * draw p_tbase/p_hitpa/p_env from -- in explicitly before
+         * entering ring 3. The low system-vector page is deliberately
+         * still not mapped here: #352 tracks whether (and how safely) a
+         * real process should ever see it.
          *
          * No per-process kernel stack or termuser()-style resumption
          * yet (see this file's own top comment): this is the one-shot
@@ -110,6 +120,7 @@ void gouser(void)
         UQUAD user_rsp = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_hitpa);
 
         x86_64_new_address_space(pml4_phys);
+        x86_64_map_low_tpa_into(pml4_phys);
         x86_64_enter_user(pml4_phys, entry_rip, user_rsp);
     }
 }
