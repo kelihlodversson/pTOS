@@ -48,7 +48,7 @@
  */
 extern UQUAD x86_64_pmem_alloc_pages(UQUAD count);
 extern void x86_64_new_address_space(UQUAD pml4_phys);
-extern void x86_64_map_low_tpa_into(UQUAD pml4_phys);
+extern void x86_64_map_low_tpa_into(UQUAD pml4_phys, UQUAD virt_start, UQUAD virt_end);
 extern void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp) NORETURN;
 
 void enter(void);
@@ -102,12 +102,16 @@ void gouser(void)
          * in; an earlier version of this comment claimed it did, which
          * was wrong (#356's own review caught it: a real loaded process
          * faulted on its first instruction, since nothing had ever
-         * mapped its own text/stack into its new PML4). Map the low TPA
-         * pool -- where alloc_tpa()/alloc_env() (bdos/proc.c) already
-         * draw p_tbase/p_hitpa/p_env from -- in explicitly before
-         * entering ring 3. The low system-vector page is deliberately
-         * still not mapped here: #352 tracks whether (and how safely) a
-         * real process should ever see it.
+         * mapped its own text/stack into its new PML4). Map this
+         * process's own p_lowtpa..p_hitpa range -- where alloc_tpa()/
+         * alloc_env() (bdos/proc.c) already draw p_tbase/p_hitpa/p_env
+         * from -- in explicitly before entering ring 3, not the whole
+         * shared pool (a second review round caught that too: every
+         * other process's/the kernel's own bookkeeping sharing this
+         * pool would otherwise be reachable from ring 3). The low
+         * system-vector page is deliberately still not mapped here:
+         * #352 tracks whether (and how safely) a real process should
+         * ever see it.
          *
          * No per-process kernel stack or termuser()-style resumption
          * yet (see this file's own top comment): this is the one-shot
@@ -120,7 +124,7 @@ void gouser(void)
         UQUAD user_rsp = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_hitpa);
 
         x86_64_new_address_space(pml4_phys);
-        x86_64_map_low_tpa_into(pml4_phys);
+        x86_64_map_low_tpa_into(pml4_phys, (UQUAD)p->p_lowtpa, (UQUAD)p->p_hitpa);
         x86_64_enter_user(pml4_phys, entry_rip, user_rsp);
     }
 }

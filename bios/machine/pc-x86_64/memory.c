@@ -149,13 +149,28 @@ static UQUAD low_tpa_alloc_page(void)
     return x86_64_pmem_alloc_pages(1);
 }
 
-void x86_64_map_low_tpa_into(UQUAD pml4_phys)
+/*
+ * Maps only [virt_start, virt_end) -- the calling process's own
+ * p_lowtpa..p_hitpa range -- not the whole pool: mapping every other
+ * process's PD/env/bookkeeping sharing this same pool as
+ * user-writable+executable would let a ring-3 program corrupt or read
+ * structures that aren't its own (Copilot's review of #356 caught
+ * this). Rounded out to whole pages since x86_64_map_user_page() only
+ * ever maps a full 4 KiB leaf: a process whose range shares a page
+ * boundary with a neighboring allocation still exposes that page, an
+ * inherent granularity limit this pool's 16-byte-aligned bump
+ * allocator doesn't avoid, but is a far smaller residual than mapping
+ * the entire 2 MiB pool.
+ */
+void x86_64_map_low_tpa_into(UQUAD pml4_phys, UQUAD virt_start, UQUAD virt_end)
 {
-    UQUAD off;
+    UQUAD page_start = virt_start & ~(UQUAD)(X86_64_PAGE_SIZE - 1);
+    UQUAD page_end = (virt_end + X86_64_PAGE_SIZE - 1) & ~(UQUAD)(X86_64_PAGE_SIZE - 1);
+    UQUAD virt;
 
-    for (off = 0; off < X86_64_LOW_TPA_BYTES; off += X86_64_PAGE_SIZE)
-        x86_64_map_user_page(pml4_phys, X86_64_LOW_TPA_VIRT_BASE + off,
-                              low_tpa_phys_base + off, 1, 1,
-                              low_tpa_alloc_page);
+    for (virt = page_start; virt < page_end; virt += X86_64_PAGE_SIZE)
+        x86_64_map_user_page(pml4_phys, virt,
+                              low_tpa_phys_base + (virt - X86_64_LOW_TPA_VIRT_BASE),
+                              1, 1, low_tpa_alloc_page);
 }
 

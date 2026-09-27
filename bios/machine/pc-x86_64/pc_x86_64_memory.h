@@ -43,23 +43,24 @@ void x86_64_low_tpa_init(void);
 UBYTE *x86_64_low_tpa_alloc(LONG needed);
 
 /*
- * Maps the whole low TPA pool (the same range x86_64_low_tpa_alloc()
- * hands out from) into pml4_phys -- a process address space
- * x86_64_new_address_space() already built -- with user+writable+
- * executable leaf permissions. Without this, a real loaded process's
- * own text/data/bss/heap/stack and its own PD/basepage (bdos/proc.c's
- * alloc_tpa()/alloc_env(), bdosmain.c's initial_basepage: all carved
- * from this same pool) are simply not present in its address space --
- * x86_64_new_address_space() clears PML4 slot 0 like every other low
- * slot -- so the process faults on its very first instruction once
- * CR3 is switched. Called from bdos/arch/x86_64/rwa.c's gouser(),
- * after x86_64_new_address_space() and before x86_64_enter_user().
- * One flat mapping for the whole pool, not just the calling process's
- * own p_lowtpa..p_hitpa sub-range: #334's own scope excludes multi-
- * process concerns, and every process today shares this single pool
- * (see memory.c's own comment on it), so there is no narrower "this
- * process's own pages" to compute yet.
+ * Maps [virt_start, virt_end) -- the calling process's own
+ * p_lowtpa..p_hitpa range within the low TPA pool -- into pml4_phys, a
+ * process address space x86_64_new_address_space() already built, with
+ * user+writable+executable leaf permissions (rounded out to whole
+ * pages; see this function's own comment in memory.c for why). Without
+ * this, a real loaded process's own text/data/bss/heap/stack (bdos/
+ * proc.c's alloc_tpa()/alloc_env(), all carved from this pool) are
+ * simply not present in its address space -- x86_64_new_address_space()
+ * clears PML4 slot 0 like every other low slot -- so the process
+ * faults on its very first instruction once CR3 is switched. Called
+ * from bdos/arch/x86_64/rwa.c's gouser(), after x86_64_new_address_space()
+ * and before x86_64_enter_user(). Deliberately only the calling
+ * process's own range, not the whole pool: every process shares this
+ * single pool (see memory.c's own comment on it), so mapping all of it
+ * would let a process reach every other process's/the kernel's own
+ * bookkeeping sharing the same pool (initial_basepage, other
+ * processes' PDs/env blocks) -- Copilot's review of #356 caught this.
  */
-void x86_64_map_low_tpa_into(UQUAD pml4_phys);
+void x86_64_map_low_tpa_into(UQUAD pml4_phys, UQUAD virt_start, UQUAD virt_end);
 
 #endif /* PC_X86_64_MEMORY_H */
