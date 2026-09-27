@@ -60,11 +60,10 @@ extern LONG xbios_unimpl(void);
 
 /*
  * xbios_unimpl's real address, materialized once by x86_64_trap_init()
- * via the same forced RIP-relative `lea` x86_64_syscall_entry's own
- * comment explains (this PE link has no GOT for a plain C
- * `(PFLONG)xbios_unimpl` expression to safely go through), and compared
- * against here instead of taking xbios_unimpl's address directly at
- * every dispatch.
+ * via a plain C address-of (safe since #358 -- see the top level
+ * Makefile's ARCH_X86_64 MULTILIBFLAGS comment), and compared against
+ * here instead of taking xbios_unimpl's address directly at every
+ * dispatch.
  */
 static PFLONG xbios_unimpl_addr;
 
@@ -351,11 +350,15 @@ void x86_64_trap_init(void)
      * (`ld -m i386pep`) cannot correctly populate for. See the top level
      * Makefile's ARCH_X86_64 MULTILIBFLAGS comment and #358 for the full
      * story; this file used to work around it here with a forced
-     * `lea sym(%rip)` the same way idt.c's exception_stub[] et al. still
-     * need translating via x86_64_low_to_high() for a different reason
-     * (those are compile-time data fixed to the pre-relocation load
-     * address) -- not needed anymore now that nothing on this arch is
-     * GOT-indirected in the first place.
+     * `lea sym(%rip)` -- not needed anymore now that nothing on this arch
+     * is GOT-indirected in the first place. Unrelated to this: some
+     * other x86-64 address computations still need explicit translation
+     * via x86_64_low_to_high() (startup.c's own entry_high/stack_top_high,
+     * computed from a RIP-relative `&function` while still running at
+     * the low, pre-jump address) or need none at all (idt.c's
+     * exception_stub[], compile-time data whose relocation entries
+     * x86_64_apply_higher_half_relocations() already retargets straight
+     * to the higher half) -- neither of those is a GOT concern either way.
      */
     x86_64_wrmsr(MSR_LSTAR, (UQUAD)(uintptr_t)x86_64_syscall_entry);
 
