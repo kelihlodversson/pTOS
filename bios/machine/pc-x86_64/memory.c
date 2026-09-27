@@ -168,19 +168,25 @@ static UQUAD low_tpa_alloc_page(void)
 }
 
 /*
- * Maps only [virt_start, virt_end) -- the calling process's own
- * p_lowtpa..p_hitpa range -- not the whole pool: mapping every other
- * process's PD/env/bookkeeping sharing this same pool as
- * user-writable+executable would let a ring-3 program corrupt or read
+ * Maps only [virt_start, virt_end) -- never the whole pool: mapping
+ * every other process's PD/env/bookkeeping sharing this same pool as
+ * user-accessible would let a ring-3 program corrupt or read
  * structures that aren't its own (Copilot's review of #356 caught
  * this). Rounded out to whole pages since x86_64_map_user_page() only
- * ever maps a full 4 KiB leaf: a process whose range shares a page
- * boundary with a neighboring allocation still exposes that page, an
- * inherent granularity limit this pool's 16-byte-aligned bump
+ * ever maps a full 4 KiB leaf: a range that shares a page boundary with
+ * a neighboring allocation still exposes that page, an inherent
+ * granularity limit this pool's page-aligned-per-allocation bump
  * allocator doesn't avoid, but is a far smaller residual than mapping
  * the entire 2 MiB pool.
+ *
+ * user (see this function's own comment in pc_x86_64_memory.h) is
+ * forwarded straight to x86_64_map_user_page() -- 0 here means the
+ * mapped range stays reachable through this process's own CR3 from
+ * ring 0 (initial_basepage's own PD, gouser()'s p_parent call) but
+ * traps if ring 3 itself ever touches it, instead of the user-writable
+ * leaf every call here produced before a later review round caught it.
  */
-void x86_64_map_low_tpa_into(UQUAD pml4_phys, UQUAD virt_start, UQUAD virt_end)
+void x86_64_map_low_tpa_into(UQUAD pml4_phys, UQUAD virt_start, UQUAD virt_end, int user)
 {
     UQUAD page_start = virt_start & ~(UQUAD)(X86_64_PAGE_SIZE - 1);
     UQUAD page_end = (virt_end + X86_64_PAGE_SIZE - 1) & ~(UQUAD)(X86_64_PAGE_SIZE - 1);
@@ -189,6 +195,6 @@ void x86_64_map_low_tpa_into(UQUAD pml4_phys, UQUAD virt_start, UQUAD virt_end)
     for (virt = page_start; virt < page_end; virt += X86_64_PAGE_SIZE)
         x86_64_map_user_page(pml4_phys, virt,
                               low_tpa_phys_base + (virt - X86_64_LOW_TPA_VIRT_BASE),
-                              1, 1, low_tpa_alloc_page);
+                              1, 1, user, low_tpa_alloc_page);
 }
 

@@ -48,7 +48,7 @@
  */
 extern UQUAD x86_64_pmem_alloc_pages(UQUAD count);
 extern void x86_64_new_address_space(UQUAD pml4_phys);
-extern void x86_64_map_low_tpa_into(UQUAD pml4_phys, UQUAD virt_start, UQUAD virt_end);
+extern void x86_64_map_low_tpa_into(UQUAD pml4_phys, UQUAD virt_start, UQUAD virt_end, int user);
 extern void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp) NORETURN;
 
 void enter(void);
@@ -143,7 +143,15 @@ void gouser(void)
          * process's own CR3, so it needs its own explicit mapping too
          * (another review round caught this): map just its one PD-sized
          * allocation, not the pool in between (which belongs to no
-         * currently-running process and stays unmapped).
+         * currently-running process and stays unmapped). Mapped
+         * supervisor-only (user=0): xterm()'s write happens from ring 0
+         * (the syscall handler hasn't dropped privilege back down yet),
+         * so the kernel can still reach it through this same CR3, but a
+         * user=1 leaf here would let ring 3 itself read or corrupt the
+         * kernel's own initial_basepage PD directly -- a still later
+         * review round caught the initial fix leaving this mapping
+         * user-writable like every other leaf this function had ever
+         * produced.
          *
          * The low system-vector page is deliberately still not mapped
          * here: #352 tracks whether (and how safely) a real process
@@ -160,8 +168,8 @@ void gouser(void)
         UQUAD user_rsp = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_hitpa);
 
         x86_64_new_address_space(pml4_phys);
-        x86_64_map_low_tpa_into(pml4_phys, (UQUAD)p->p_env, (UQUAD)p->p_hitpa);
-        x86_64_map_low_tpa_into(pml4_phys, (UQUAD)p->p_parent, (UQUAD)p->p_parent + sizeof(PD));
+        x86_64_map_low_tpa_into(pml4_phys, (UQUAD)p->p_env, (UQUAD)p->p_hitpa, 1);
+        x86_64_map_low_tpa_into(pml4_phys, (UQUAD)p->p_parent, (UQUAD)p->p_parent + sizeof(PD), 0);
         x86_64_enter_user(pml4_phys, entry_rip, user_rsp);
     }
 }
