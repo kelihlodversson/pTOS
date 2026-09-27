@@ -121,15 +121,33 @@ void gouser(void)
          * was wrong (#356's own review caught it: a real loaded process
          * faulted on its first instruction, since nothing had ever
          * mapped its own text/stack into its new PML4). Map this
-         * process's own p_lowtpa..p_hitpa range -- where alloc_tpa()/
-         * alloc_env() (bdos/proc.c) already draw p_tbase/p_hitpa/p_env
-         * from -- in explicitly before entering ring 3, not the whole
-         * shared pool (a second review round caught that too: every
-         * other process's/the kernel's own bookkeeping sharing this
-         * pool would otherwise be reachable from ring 3). The low
-         * system-vector page is deliberately still not mapped here:
-         * #352 tracks whether (and how safely) a real process should
-         * ever see it.
+         * process's own p_env..p_hitpa range -- where alloc_env() then
+         * alloc_tpa() (bdos/proc.c) draw p_env then p_tbase/p_hitpa from,
+         * strictly in that order and with nothing else from the pool
+         * allocated in between for the same launch, so the two are
+         * always contiguous (p_env < p_lowtpa) -- in explicitly before
+         * entering ring 3, not the whole shared pool (a second review
+         * round caught that too: every other process's/the kernel's own
+         * bookkeeping sharing this pool would otherwise be reachable
+         * from ring 3). Starting the range at p_env instead of p_lowtpa
+         * is itself a fix: an earlier version of this call mapped only
+         * [p_lowtpa, p_hitpa), leaving p_env's own page(s) unmapped, so
+         * a process reading its own basepage environment would fault
+         * (a later review round caught this too).
+         *
+         * p_parent (initial_basepage, per this function's own bottom
+         * comment) is a separate, non-contiguous allocation from
+         * earlier in the same pool (bdosmain.c's own one-time setup, at
+         * the very start of it) -- xterm() widens and writes through it
+         * on this process's own Pterm, while still running under this
+         * process's own CR3, so it needs its own explicit mapping too
+         * (another review round caught this): map just its one PD-sized
+         * allocation, not the pool in between (which belongs to no
+         * currently-running process and stays unmapped).
+         *
+         * The low system-vector page is deliberately still not mapped
+         * here: #352 tracks whether (and how safely) a real process
+         * should ever see it.
          *
          * No per-process kernel stack or termuser()-style resumption
          * yet (see this file's own top comment): this is the one-shot
@@ -142,7 +160,8 @@ void gouser(void)
         UQUAD user_rsp = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_hitpa);
 
         x86_64_new_address_space(pml4_phys);
-        x86_64_map_low_tpa_into(pml4_phys, (UQUAD)p->p_lowtpa, (UQUAD)p->p_hitpa);
+        x86_64_map_low_tpa_into(pml4_phys, (UQUAD)p->p_env, (UQUAD)p->p_hitpa);
+        x86_64_map_low_tpa_into(pml4_phys, (UQUAD)p->p_parent, (UQUAD)p->p_parent + sizeof(PD));
         x86_64_enter_user(pml4_phys, entry_rip, user_rsp);
     }
 }

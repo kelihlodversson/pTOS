@@ -714,10 +714,15 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 # data references and so links with none to retain) still gets a
 # relocatable binary -- see the ARCH_X86_64 branch elfld.c's own
 # EM_X86_64/ELF_R_DIR32/ELF_R_RELATIVE constants added for this.
+# -fno-pie/-no-pie force the ET_EXEC contract explicitly rather than
+# relying on the host GCC's own default: a distro configured with PIE
+# on by default would otherwise still produce ET_DYN here (-mx32 alone
+# doesn't disable it), which elfld.c's loader does not expect
+# (Copilot's review of #356 caught this).
 X32_CFLAGS = -mx32 -ffreestanding -fno-asynchronous-unwind-tables \
-             -fno-unwind-tables -fcf-protection=none
-X32_LDFLAGS = -nostdlib -static -Wl,--build-id=none -Wl,-Ttext=0x400000 \
-              -Wl,-n -Wl,-q
+             -fno-unwind-tables -fcf-protection=none -fno-pie
+X32_LDFLAGS = -nostdlib -static -no-pie -Wl,--build-id=none \
+              -Wl,-Ttext=0x400000 -Wl,-n -Wl,-q
 
 x32hello.elf: tests/x32_hello/x32_hello.c
 	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $<
