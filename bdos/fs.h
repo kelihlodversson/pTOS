@@ -485,6 +485,28 @@ long xchdir(char *p);
 long xgetdir(char *buf, int drv);
 FCB *dirinit(DND *dn);
 DND *findit(char *name, const char **sp, int dflag);
+/*
+ * dcrack()/findit() signal a genuine error by returning a small negative
+ * GEMDOS error code (gemerror.h: none exceeds -326 in magnitude)
+ * reinterpreted as a DND*, relying on callers to tell that apart from a
+ * real DND* with a `< 0` test on the assumption that a real one is always
+ * a positive, low m68k/ARM heap address. That assumption breaks on
+ * x86-64's higher-half kernel, where every real DND* -- being ordinary
+ * internal BDOS bookkeeping, never exposed to userspace and so never
+ * needing the USERPTR_T low/32-bit-representable convention other PD
+ * fields use -- is itself a large NEGATIVE value when read as a signed
+ * long (any canonical kernel address has its top bit set): a plain `< 0`
+ * test misreads every successful lookup as a failure there. Narrowing the
+ * test to the actual range GEMDOS error codes occupy fixes this on every
+ * arch at once: m68k/ARM's real DND* pointers are always far outside this
+ * range on the positive side, x86-64's are always far outside it on the
+ * negative side.
+ *
+ * p is expanded twice, so it must be a plain variable, never an
+ * expression with side effects (e.g. an embedded assignment): callers
+ * assign the DND* to a variable first, then test the variable.
+ */
+#define DND_IS_ERRCODE(p) ((long)(p) < 0 && (long)(p) > -4096L)
 FCB *scan(DND *dnd, const char *n, WORD att, LONG *posp);
 int incr_curdir_usage(DND *dnd);
 void decr_curdir_usage(int index);
