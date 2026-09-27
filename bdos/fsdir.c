@@ -242,7 +242,8 @@ long ixsfirst(char *name, WORD att, DTAINFO *addr)
     if (att != FA_VOL)
         att |= (FA_ARCHIVE|FA_RO);
 
-    if ((long)(dn = findit(name,&s,0)) < 0) /* M01.01.1212.01 */
+    dn = findit(name,&s,0); /* M01.01.1212.01 */
+    if (DND_IS_ERRCODE(dn))
         return (long)dn;
     if (!dn)
         return EPTHNF;
@@ -844,7 +845,8 @@ DND *findit(char *name, const char **sp, int dflag)
     n = name;
     KDEBUG(("findit(%s)\n",n));
 
-    if ((long)(p = dcrack(&n)) < 0)                     /* M01.01.1214.01 */
+    p = dcrack(&n);    /* M01.01.1214.01 */
+    if (DND_IS_ERRCODE(p))
         return p;
 
     /*

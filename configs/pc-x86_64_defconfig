@@ -1,11 +1,11 @@
 # x86-64 UEFI EFI application (qemu-system-x86_64 + OVMF)
 MACHINE_PC_X86_64=y
 
-# bios/ide.c references struct IDE, only defined for m68k/Atari hardware
-# (see virt-arm_defconfig's own comment: "struct IDE is never defined for
-# this machine"). Matched here explicitly, the same way MACHINE_RPI/
-# MACHINE_VIRT_ARM/MACHINE_VIRT_M68K already are.
-CONF_WITH_IDE=n
+# bios/ide.c now has a MACHINE_PC_X86_64 branch (#363): a real IDE/ATA
+# driver against the legacy PIIX3 IDE controller QEMU's -machine pc (and
+# real PC hardware) provides, using port I/O instead of the memory-mapped
+# register access every other machine here uses.
+CONF_WITH_IDE=y
 
 # bios/xhdi.c references xhdi_vec, implemented only in
 # bios/arch/m68k/natfeat.S. Matched here explicitly, same precedent as

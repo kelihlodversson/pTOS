@@ -115,10 +115,27 @@ extern void enable_interrupts(void);
 /*
  * Loops for the specified count; for a 1 millisecond delay on the
  * current system, use the value in the global 'loopcount_1_msec'.
+ *
+ * A plain C decrement loop over a dead local has no observable effect
+ * once the compiler proves nothing reads it back, so GCC's dead-code
+ * elimination deletes the whole loop at -O2 (verified: an isolated
+ * test_delay() wrapping just this macro compiles down to a bare `ret`,
+ * no loop at all) -- silently turning every DELAY_400NS/DELAY_5US call
+ * site (bios/ide.c) into a true no-op regardless of 'count'. Real
+ * inline assembly with a "memory" clobber, like the m68k port's own
+ * delay_loop() (include/arch/m68k/asm.h), keeps the loop: the compiler
+ * can no longer prove it has no side effects, so it can't be deleted.
  */
- #define delay_loop(count) __extension__ \
- ({                                      \
-   ULONG _count = (count);             \
-   while(_count) {_count--;}           \
- })
+#define delay_loop(count) __extension__ \
+({                                      \
+  ULONG _count = (count);              \
+  __asm__ volatile                     \
+  ("1:\n\t"                            \
+   "subl $1,%0\n\t"                    \
+   "jns 1b"                            \
+  : "+r"(_count)      /* input/output */ \
+  :                                     \
+  : "cc", "memory"    /* clobbered */  \
+  );                                    \
+})
 #endif /* ASM_H */

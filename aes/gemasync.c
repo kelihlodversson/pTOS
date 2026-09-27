@@ -231,6 +231,8 @@ EVSPEC acancel(EVSPEC m)
                 m1 |= p->e_mask;
             else
             {
+                if (p->e_mask & MU_BUTTON)
+                    bpend_cancel(p->e_parm);
                 q->e_nextp = p->e_nextp;
                 takeoff(p);
                 rlr->p_evwait &= ~p->e_mask;

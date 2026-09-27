@@ -111,7 +111,18 @@ static LONG natfeats_inquire(UWORD unit, ULONG *blocksize, ULONG *deviceflags, c
 #endif
 static LONG internal_inquire(UWORD unit, ULONG *blocksize, ULONG *deviceflags, char *productname, UWORD stringlen);
 
-#if CONF_WITH_IDE || CONF_WITH_SCSI || CONF_WITH_ARANYM || CONF_WITH_ACSI || CONF_WITH_SDMMC
+/*
+ * dmaboot()/the code below that calls it implement Atari TOS's own
+ * "execute a bootable partition's root sector as native code" API
+ * (DMAr magic, m68k register-passing convention) -- meaningless on
+ * x86-64, where a root sector could never contain valid code for this
+ * CPU, and booting happens through EFI/OVMF instead, not this legacy
+ * Atari mechanism. Excluded here rather than left to compile as dead
+ * code, since dmaboot() itself is raw m68k inline assembly that simply
+ * does not exist as an instruction set on this arch (#363 turned on
+ * CONF_WITH_IDE for pc-x86_64, reaching this for the first time).
+ */
+#if (CONF_WITH_IDE || CONF_WITH_SCSI || CONF_WITH_ARANYM || CONF_WITH_ACSI || CONF_WITH_SDMMC) && !defined(__x86_64__)
 /* scan disk majors in the following order */
 static const int majors[] =
 {
@@ -161,7 +172,8 @@ static void dmaboot(UWORD unit, void *bootcode)
  */
 void disk_try_dmaboot(void)
 {
-#if CONF_WITH_IDE || CONF_WITH_SCSI || CONF_WITH_ARANYM || CONF_WITH_ACSI || CONF_WITH_SDMMC
+/* excluded on x86-64: see dmaboot()'s own comment above */
+#if (CONF_WITH_IDE || CONF_WITH_SCSI || CONF_WITH_ARANYM || CONF_WITH_ACSI || CONF_WITH_SDMMC) && !defined(__x86_64__)
     UWORD i;
     LONG rc;
 
