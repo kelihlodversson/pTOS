@@ -402,7 +402,24 @@ DTAINFO *xgetdta(void)          /* return address of dta */
  */
 void xsetdta(DTAINFO *addr)     /* set transfer address to addr */
 {
-    run->p_xdta = PTR_TO_USERPTR((DTA *)addr);
+    /*
+     * PTR_TO_USERPTR_UNCHECKED(), not PTR_TO_USERPTR(): unlike
+     * p_lowtpa/p_hitpa/p_env/p_parent (bdos/proc.c's init_pd_fields()),
+     * which are always backed by the low TPA pool, this one can also be
+     * set by kernel-internal callers using their own stack-local DTA
+     * with an ordinary C call (not the trap dispatch) -- bios.c's
+     * autoexec() is exactly this: `DTA dta; Fsetdta(&dta);` before
+     * scanning the AUTO folder, an address that is genuinely
+     * higher-half on x86-64. Copilot's review of #356/#364 caught that
+     * the checked macro traps here on any boot that reaches a real
+     * block device (#363), for a case that isn't a corruption bug the
+     * way p_env's own history (#360) was: nothing widens this back and
+     * dereferences it outside the same kernel call's own local scope
+     * when the caller is kernel code, and a real user process's own
+     * Fsetdta() call already only ever passes its own, already-32-bit
+     * address.
+     */
+    run->p_xdta = PTR_TO_USERPTR_UNCHECKED((DTA *)addr);
 }
 
 

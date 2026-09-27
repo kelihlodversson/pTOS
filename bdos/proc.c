@@ -572,15 +572,22 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
      * _end_os_stram, an ordinary higher-half kernel symbol that cannot
      * be forced low without an unrelated relocation overflow (see
      * memory.c's own comment on x86_64_low_tpa_init() for why). Route
-     * through that dedicated low pool instead; *avail is simply the
-     * whole request, since this pool never grows a TPA beyond what was
-     * asked for the way ST/alt-RAM's own tiebreaker logic below does.
+     * through that dedicated low pool instead.
+     *
+     * needed+15, not needed: init_pd_fields() (below) rounds p_hitpa
+     * (p+max) down to the nearest address satisfying the SysV/x32 ABI's
+     * process-entry stack alignment, losing up to 15 bytes -- allocate
+     * that much extra slack up front and report the padded size as
+     * *avail, so an ELF whose own size exactly equals `needed` still
+     * gets a tpalen at least that large after rounding (elf_pgmld()
+     * would otherwise wrongly reject an exact-fit image with ENSMEM;
+     * Copilot's review of #356 caught this).
      */
     {
-        UBYTE *low = x86_64_low_tpa_alloc(needed);
+        UBYTE *low = x86_64_low_tpa_alloc(needed + 15);
 
         if (low)
-            *avail = needed;
+            *avail = needed + 15;
         return low;
     }
 #endif
