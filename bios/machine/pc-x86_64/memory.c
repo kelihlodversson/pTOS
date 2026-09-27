@@ -132,7 +132,25 @@ void x86_64_low_tpa_init(void)
 
 UBYTE *x86_64_low_tpa_alloc(LONG needed)
 {
-    UQUAD aligned = (low_tpa_next + 15) & ~(UQUAD)15;
+    /*
+     * Page-aligned, not just 16-byte aligned: x86_64_map_low_tpa_into()
+     * (gouser(), below) maps a process's own p_lowtpa..p_hitpa range
+     * rounded OUT to whole 4 KiB pages (x86_64_map_user_page() only
+     * ever maps a full leaf) -- with a finer-grained bump allocator,
+     * that rounding could pull in a neighboring allocation's own data
+     * (initial_basepage's own PD, bdosmain.c, is the first thing this
+     * pool ever hands out, so the very first process's own TPA would
+     * otherwise round back onto that same page) and expose it to ring
+     * 3. Page-aligning every top-level allocation here instead means
+     * no two different owners (kernel bookkeeping, one process's own
+     * PD/TPA/env, or -- once #334 grows beyond one process -- a second
+     * process's own) can ever share a page in the first place, closing
+     * the gap at the source rather than in the mapping code (Copilot's
+     * review of #356 caught this). Wastes at most one page per
+     * allocation out of this pool's 2 MiB; #334's own single-process
+     * scope makes that comfortably affordable.
+     */
+    UQUAD aligned = (low_tpa_next + (X86_64_PAGE_SIZE - 1)) & ~(UQUAD)(X86_64_PAGE_SIZE - 1);
 
     if (aligned + (UQUAD)needed > low_tpa_end)
         return NULL;

@@ -88,6 +88,24 @@ void gouser(void)
          * this arch's own coma_start(PD *)/ui_start(PD *), hence the
          * cast. Never returns: coma_start()/ui_start() call Pterm0()
          * themselves once their own main loop exits.
+         *
+         * The zero-length test itself is not a perfect distinguisher
+         * (Copilot's review of #356 caught this): aes/gemshlib.c's
+         * aes_run_rom_program() builds an identically-shaped PD (a
+         * PE_BASEPAGEFLAGS basepage, zero p_tlen/p_dlen/p_blen, p_tbase
+         * set to its own ROM entry) for launching a GEM ROM program,
+         * and would land here too, calling exec_os -- the wrong
+         * function -- instead of that program's own entry. Not
+         * reachable today: pc-x86_64_defconfig builds with
+         * CONF_WITH_AES=n (no x86-64 framebuffer driver yet, #332), so
+         * aes_run_rom_program() is never compiled in. A real fix needs
+         * more than switching to p->p_tbase: that field holds the same
+         * kind of deliberately-truncated, unusable kernel-code address
+         * as coma_start/ui_start above for exactly the same reason
+         * (never 32-bit-representable on this arch), so it can't
+         * substitute for exec_os here either -- untruncated ROM-program
+         * entries would need their own exec_os-style mechanism before
+         * CONF_WITH_AES could ever be turned on for this arch.
          */
         ((void (*)(PD *))exec_os)(p);
         panic("x86-64: kernel-code process entry returned unexpectedly\n");
