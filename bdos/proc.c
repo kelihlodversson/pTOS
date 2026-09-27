@@ -38,6 +38,19 @@
  */
 #define TPASIZE_QUANTUM (128*1024L)     /* see alloc_tpa() */
 
+#ifdef __x86_64__
+/*
+ * bios/machine/pc-x86_64/memory.c's own low, sub-4GiB pool -- not
+ * reached through mem.h/a shared header (bdos/build.mk's include path
+ * has no bios/machine/pc-x86_64 entry, unlike bios/'s own), declared
+ * directly here instead, matching this file's existing precedent of
+ * inlining small x86-64-specific declarations (struct gouser_stack
+ * below) rather than plumbing them through a shared header only two
+ * functions need. Used by both alloc_tpa() and alloc_env() below.
+ */
+extern UBYTE *x86_64_low_tpa_alloc(LONG needed);
+#endif
+
 /*
  * forward prototypes
  */
@@ -393,19 +406,12 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
 
     /* memory values
      *
-     * PTR_TO_USERPTR_UNCHECKED(), not PTR_TO_USERPTR(): p itself came
-     * from alloc_tpa(), which on x86-64 today still hands out memory
-     * from the higher-half TPA pool stand-in (bios/machine/pc-x86_64/
-     * memory.c) -- not yet the low, sub-4GiB placement #334/#351 call
-     * for (attempted once already this session and reverted; see that
-     * file's own history). Using the trapping macro here panics at
-     * every Pexec(), before gouser() is ever reached, which regresses
-     * this port's current boot milestone rather than catching a real
-     * bug -- nothing downstream reads these fields as real addresses
-     * yet either. Switch to PTR_TO_USERPTR() once the TPA pool actually
-     * lives somewhere low. */
-    p->p_lowtpa = PTR_TO_USERPTR_UNCHECKED((UBYTE *)p);              /*  M01.01.06   */
-    p->p_hitpa  = PTR_TO_USERPTR_UNCHECKED((UBYTE *)p  +  max);      /*  M01.01.06   */
+     * PTR_TO_USERPTR(), not the unchecked cast: p itself comes from
+     * alloc_tpa(), whose __x86_64__ branch (bdos/proc.c) already draws
+     * from x86_64_low_tpa_alloc()'s low, sub-4GiB pool (bios/machine/
+     * pc-x86_64/memory.c), so this can never truncate on that arch. */
+    p->p_lowtpa = PTR_TO_USERPTR((UBYTE *)p);              /*  M01.01.06   */
+    p->p_hitpa  = PTR_TO_USERPTR((UBYTE *)p  +  max);      /*  M01.01.06   */
 #if ARCH_ARM
     /*
      * p_hitpa becomes the actual initial user-mode sp of any process
@@ -420,12 +426,13 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
      */
     p->p_hitpa = (UBYTE *)((ULONG)p->p_hitpa & ~7UL);
 #endif
-    /* Same TPA-pool-is-still-higher-half reasoning as p_lowtpa/p_hitpa
-     * above applies to both of these: p_cmdlin is a field within p
-     * itself, and envptr comes from alloc_env()/xmxalloc(), the same
-     * TPA-style pools. */
-    p->p_xdta = PTR_TO_USERPTR_UNCHECKED((DTA *) p->p_cmdlin);       /* default p_xdta is p_cmdlin */
-    p->p_env = PTR_TO_USERPTR_UNCHECKED(envptr);
+    /* Same reasoning as p_lowtpa/p_hitpa above: p_cmdlin is a field
+     * within p itself, and envptr comes from alloc_env(), whose own
+     * __x86_64__ branch (bdos/proc.c) likewise draws from
+     * x86_64_low_tpa_alloc() rather than xmxalloc()'s higher-half pool
+     * (see #360). */
+    p->p_xdta = PTR_TO_USERPTR((DTA *) p->p_cmdlin);       /* default p_xdta is p_cmdlin */
+    p->p_env = PTR_TO_USERPTR(envptr);
 
     /* copy tail */
     b = &p->p_cmdlin[0];
@@ -481,7 +488,25 @@ static char *alloc_env(ULONG flags, char *env)
     size = (envsize(env) + 1) & ~1;  /* must be even */
 
     /* allocate it */
+#ifdef __x86_64__
+    /*
+     * Same reasoning as alloc_tpa()'s own #ifdef __x86_64__ branch
+     * above: xmxalloc()'s ffit()/pmd free list is ultimately built from
+     * membot/memtop, which point into _end_os_stram -- an ordinary
+     * higher-half kernel symbol, so memory it hands out cannot be
+     * stored in a PD's USERPTR_T-typed p_env field without truncation
+     * (#360: this is exactly the bug that field's own corruption turned
+     * out to be, before this fix). Route through the same dedicated low
+     * pool alloc_tpa() already uses instead: an environment string is
+     * conceptually just as much "this process's own low memory" as its
+     * TPA is, and bdos/umem.c's set_owner()/xmfree() already handle an
+     * address outside every known MPB gracefully (see alloc_tpa()'s own
+     * comment), exactly what happens for memory from this same pool.
+     */
+    new_env = (char *)x86_64_low_tpa_alloc(size);
+#else
     new_env = xmxalloc(size, (flags&PF_TTRAMLOAD) ? MX_PREFTTRAM : MX_STRAM);
+#endif
     if (new_env)
     {
         memcpy(new_env, env, size);     /* copy it */
@@ -517,18 +542,6 @@ static char *alloc_env(ULONG flags, char *env)
  * returns: ptr to allocated memory (NULL => failed)
  *          updates 'avail' with the size of allocated memory
  */
-#ifdef __x86_64__
-/*
- * bios/machine/pc-x86_64/memory.c's own low, sub-4GiB TPA pool -- not
- * reached through mem.h/a shared header (bdos/build.mk's include path
- * has no bios/machine/pc-x86_64 entry, unlike bios/'s own), declared
- * directly here instead, matching this file's existing precedent of
- * inlining small x86-64-specific declarations (struct gouser_stack
- * above) rather than plumbing them through a shared header only one
- * function needs.
- */
-extern UBYTE *x86_64_low_tpa_alloc(LONG needed);
-#endif
 
 static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
 {
@@ -656,10 +669,13 @@ static void proc_go(PD *p)
     struct gouser_stack *sp;
 
     KDEBUG(("BDOS xexec: trying to load (and execute) a process on %p ...\n",p->p_tbase));
-    /* PTR_TO_USERPTR_UNCHECKED(), not PTR_TO_USERPTR(): see
-     * init_pd_fields()'s own comment above -- `run` can itself be
-     * &initial_basepage (bdosmain.c), a higher-half kernel symbol, same
-     * as p itself once TPA-pool-resident. */
+    /* PTR_TO_USERPTR_UNCHECKED(), not PTR_TO_USERPTR(): unlike p_lowtpa/
+     * p_hitpa/p_xdta/p_env (init_pd_fields() above), `run` here is not
+     * guaranteed to come from the low TPA pool -- the first process's
+     * parent is &initial_basepage (bdosmain.c), an ordinary higher-half
+     * kernel symbol. Nothing downstream reads p_parent as a real address
+     * on this arch yet, so leave it unchecked rather than trapping on
+     * that legitimate case. */
     p->p_parent = PTR_TO_USERPTR_UNCHECKED(run);
 
     /* create a stack at the end of the TPA */
