@@ -449,7 +449,7 @@ static pgentry_t *user_table_slot(pgentry_t *table, UQUAD index, UQUAD (*alloc_p
  * user_table_slot() above.
  */
 void x86_64_map_user_page(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
-                          int writable, int executable,
+                          int writable, int executable, int user,
                           UQUAD (*alloc_page)(void))
 {
     UQUAD pml4_index = (virt >> 39) & 0x1FF;
@@ -460,8 +460,10 @@ void x86_64_map_user_page(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
     pgentry_t *pdpt = user_table_slot(l4, pml4_index, alloc_page);
     pgentry_t *pd = user_table_slot(pdpt, pdpt_index, alloc_page);
     pgentry_t *pt = user_table_slot(pd, pd_index, alloc_page);
-    pgentry_t entry = (phys & PTE_ADDR_MASK) | PTE_PRESENT | PTE_USER;
+    pgentry_t entry = (phys & PTE_ADDR_MASK) | PTE_PRESENT;
 
+    if (user)
+        entry |= PTE_USER;
     if (writable)
         entry |= PTE_WRITABLE;
     if (!executable)

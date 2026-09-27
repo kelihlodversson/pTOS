@@ -234,6 +234,15 @@ void x86_64_new_address_space(UQUAD pml4_phys);
  * architecturally reserved-must-be-zero and setting it raises #GP instead
  * of doing what its name says.
  *
+ * user controls the leaf's PTE_USER bit: pass 0 for kernel bookkeeping
+ * that this process's own CR3 must still be able to reach from ring 0
+ * (a page-table walk consults CR3 regardless of current privilege, so a
+ * supervisor-only leaf here is exactly as reachable to the kernel as one
+ * under the shared high-half mapping) but that ring 3 itself must never
+ * read or write -- initial_basepage's own PD, mapped in for
+ * termuser()/xterm() by gouser()'s p_parent call, is the reason this
+ * parameter exists (Copilot's review of #356 caught it going out
+ * user-writable like every other leaf this function had ever mapped).
  * writable/executable/PTE_USER are only meaningful at the leaf; every
  * intermediate table entry this creates is unconditionally present+
  * writable+user, since the effective access a leaf grants is the AND of
@@ -242,7 +251,7 @@ void x86_64_new_address_space(UQUAD pml4_phys);
  * a more permissive leaf instead of the other way around.
  */
 void x86_64_map_user_page(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
-                          int writable, int executable,
+                          int writable, int executable, int user,
                           UQUAD (*alloc_page)(void));
 
 #endif /* __ASSEMBLER__ */
