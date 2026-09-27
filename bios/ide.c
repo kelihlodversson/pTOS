@@ -107,6 +107,58 @@ struct IDE
 #define IDE_READ_ALT_STATUS(i) \
     IDE_READ_REGISTER_PAIR(filler0e)
 
+#elif defined(MACHINE_PC_X86_64)
+
+#include "ide_io.h"
+
+/*
+ * A legacy PC IDE controller's ATA task-file registers are port-mapped
+ * (in/out at fixed I/O ports), not memory-mapped like every other
+ * machine this file supports -- there is no real memory address for a
+ * "struct IDE" to overlay. This placeholder exists only so
+ * detect_ide()'s `ifinfo[i].base_address = ide_interface + i` keeps
+ * type-checking the same way every other machine's does; the macros
+ * below never dereference it, always addressing the one fixed legacy
+ * primary channel's well-known ports directly -- the same "the
+ * interface parameter is passed only for compatibility" convention
+ * MACHINE_M548X's own macros above already use for its one fixed
+ * on-board interface.
+ */
+struct IDE
+{
+    UBYTE unused;
+};
+
+#define ide_interface ((volatile struct IDE *)0)
+
+/* the legacy PC primary IDE channel's fixed I/O ports (ATA task file) */
+#define IDE_PORT_DATA       0x1F0
+#define IDE_PORT_FEATURES   0x1F1  /* read: error */
+#define IDE_PORT_SECCOUNT   0x1F2
+#define IDE_PORT_SECNUM     0x1F3
+#define IDE_PORT_CYL_LOW    0x1F4
+#define IDE_PORT_CYL_HIGH   0x1F5
+#define IDE_PORT_HEAD       0x1F6
+#define IDE_PORT_COMMAND    0x1F7  /* read: status */
+#define IDE_PORT_CONTROL    0x3F6  /* read: alternate status */
+
+#define IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(i,a,b) \
+    { x86_64_outb(IDE_PORT_SECNUM,a); x86_64_outb(IDE_PORT_SECCOUNT,b); }
+#define IDE_WRITE_CYLINDER_HIGH_CYLINDER_LOW(i,a) \
+    { x86_64_outb(IDE_PORT_CYL_HIGH,HIBYTE(a)); x86_64_outb(IDE_PORT_CYL_LOW,LOBYTE(a)); }
+#define IDE_WRITE_COMMAND_HEAD(i,a,b) \
+    { x86_64_outb(IDE_PORT_HEAD,b); x86_64_outb(IDE_PORT_COMMAND,a); }
+#define IDE_WRITE_CONTROL(i,a)    x86_64_outb(IDE_PORT_CONTROL,a)
+#define IDE_WRITE_HEAD(i,a)       x86_64_outb(IDE_PORT_HEAD,a)
+
+#define IDE_READ_STATUS(i)        x86_64_inb(IDE_PORT_COMMAND)
+#define IDE_READ_ALT_STATUS(i)    x86_64_inb(IDE_PORT_CONTROL)
+#define IDE_READ_ERROR(i)         x86_64_inb(IDE_PORT_FEATURES)
+#define IDE_READ_SECTOR_NUMBER_SECTOR_COUNT(i) \
+    MAKE_UWORD(x86_64_inb(IDE_PORT_SECNUM), x86_64_inb(IDE_PORT_SECCOUNT))
+#define IDE_READ_CYLINDER_HIGH_CYLINDER_LOW(i) \
+    MAKE_UWORD(x86_64_inb(IDE_PORT_CYL_HIGH), x86_64_inb(IDE_PORT_CYL_LOW))
+
 #else
 
 /* On standard hardware, the IDE registers can be accessed as single bytes. */
@@ -128,7 +180,7 @@ struct IDE
 #define IDE_READ_CYLINDER_HIGH_CYLINDER_LOW(i) \
     MAKE_UWORD(i->cylinder_high, i->cylinder_low)
 
-#endif /* MACHINE_M548X */
+#endif /* MACHINE_M548X / MACHINE_PC_X86_64 */
 
 /* the data register is naturally byteswapped on some hardware */
 #if defined(MACHINE_AMIGA)
@@ -566,6 +618,15 @@ BOOL detect_ide(void)
     has_ide = 0x01;
 #elif defined(MACHINE_FIREBEE)
     has_ide = 0x03;
+#elif defined(MACHINE_PC_X86_64)
+    /* the legacy primary IDE channel QEMU's -machine pc (and real PC
+     * hardware) always provides -- assumed present unconditionally,
+     * same as MACHINE_M548X's own one fixed on-board interface, rather
+     * than probed for like real Atari hardware's ghost-interface case
+     * below (there is no bus/address-decoding ambiguity to resolve on
+     * this arch: the ports are fixed and the controller is not optional
+     * hardware on a PC). */
+    has_ide = 0x01;
 #elif CONF_ATARI_HARDWARE
 
     /*
@@ -996,6 +1057,24 @@ static void ide_get_data_32(volatile struct IDE *interface,UBYTE *buffer,ULONG b
 /*
  * get data from IDE device
  */
+#ifdef __x86_64__
+/*
+ * x86-64's own data-register bulk transfer: the port-I/O equivalent of
+ * the m68k unrolled-loop path below, which this arch can't use at all
+ * (XFERWIDTH/xferswap/ide_get_and_incr are m68k inline assembly,
+ * poisoned to fail to compile here -- see include/arch/x86_64/asm.h).
+ * need_byteswap is always FALSE on this arch (IDE_DATA_REGISTER_IS_BYTESWAPPED),
+ * so unlike the m68k path there is only ever one case to handle.
+ */
+static void ide_get_data(volatile struct IDE *interface,UBYTE *buffer,ULONG bufferlen,int need_byteswap)
+{
+    MAYBE_UNUSED(interface);
+    MAYBE_UNUSED(need_byteswap);
+
+    KDEBUG(("ide_get_data(%p, %p, %lu, %d)\n", interface, buffer, bufferlen, need_byteswap));
+    x86_64_ide_insw(IDE_PORT_DATA, buffer, bufferlen / 2);
+}
+#else
 static void ide_get_data(volatile struct IDE *interface,UBYTE *buffer,ULONG bufferlen,int need_byteswap)
 {
     XFERWIDTH *p = (XFERWIDTH *)buffer;
@@ -1078,6 +1157,7 @@ static void ide_get_data(volatile struct IDE *interface,UBYTE *buffer,ULONG buff
         }
     }
 }
+#endif /* __x86_64__ */
 
 /*
  * read from the IDE device
@@ -1180,6 +1260,17 @@ static LONG ide_read(UBYTE cmd,UWORD ifnum,UWORD dev,ULONG sector,UWORD count,UB
 /*
  * send data to IDE device
  */
+#ifdef __x86_64__
+/* x86-64's own data-register bulk transfer -- see ide_get_data()'s own
+ * comment above for why this can't share the m68k path below. */
+static void ide_put_data(volatile struct IDE *interface,UBYTE *buffer,ULONG bufferlen,int need_byteswap)
+{
+    MAYBE_UNUSED(interface);
+    MAYBE_UNUSED(need_byteswap);
+
+    x86_64_ide_outsw(IDE_PORT_DATA, buffer, bufferlen / 2);
+}
+#else
 static void ide_put_data(volatile struct IDE *interface,UBYTE *buffer,ULONG bufferlen,int need_byteswap)
 {
     XFERWIDTH *p = (XFERWIDTH *)buffer;
@@ -1252,6 +1343,7 @@ static void ide_put_data(volatile struct IDE *interface,UBYTE *buffer,ULONG buff
         }
     }
 }
+#endif /* __x86_64__ */
 
 /*
  * write to the IDE device
