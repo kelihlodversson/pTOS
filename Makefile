@@ -194,17 +194,60 @@ MULTILIBFLAGS = $(CPUFLAGS) -fsigned-char
 TOOLCHAIN_CFLAGS = -fno-reorder-functions -DELF_TOOLCHAIN
 else
 ifdef ARCH_X86_64
-# -fpie and the matching "-Wl,-pie" at link time (see the x86-64 EMUTOS_IMG
-# rule below) are what makes the linker emit the PE Base Relocation Table
-# a UEFI PE32+ image needs; without it, EDK II's loader rejects the image
-# outright. -mno-red-zone is required for any code that can be interrupted
-# by an NMI/exception while running as a callee below its own stack
-# pointer (not yet the case in this milestone, but every later x86-64
-# object shares these flags, so it goes on the whole architecture now
-# rather than needing to be revisited per file). -fshort-wchar matches
-# UEFI's 16-bit CHAR16 strings. -fno-ident drops the compiler-version
-# .comment section: the PE linker places it below the image base and
-# refuses to link ("section below image base") if it is present.
+# The image still links as a relocatable PE32+ ("-Wl,-pie" at link time,
+# see the x86-64 EMUTOS_IMG rule below) -- EDK II's loader loads it at a
+# runtime-chosen low address, and startup.c's own
+# x86_64_apply_higher_half_relocations() (#343) then walks the very same
+# PE base relocation table a second time to shift everything again, up to
+# the fixed higher-half link address. The object files themselves,
+# though, default to -fno-pic -mcmodel=large: an absolute-addressing
+# model, not ELF's PC-relative/GOT one (see #358). GCC's -fpie codegen
+# for taking the address of an extern (cross-translation-unit) function
+# at runtime is GOT-indirected, relying on the *linker* to either build a
+# real, correctly-relocated GOT or relax the reference to a direct one --
+# both ordinary, well-supported ELF static-link behaviors that ld's PE
+# backend (`-m i386pep`, required for the PE32+ output UEFI needs) does
+# neither correctly for: it silently produces a GOT slot that comes out
+# wrong once the image moves from its as-loaded low address to the fixed
+# higher half. This bit real, portable, arch-generic code
+# (bios/chardev.c's chardev_init(), where GCC constant-propagates a
+# `static const` function-pointer table into exactly this pattern) with
+# no diagnostic at build time -- see #358 for the full writeup.
+# -mcmodel=large is required alongside -fno-pic because the small/default
+# code model's absolute addressing is only 32-bit (sign-extended) --
+# fine for a load-time base near 0, but this image's *final* address
+# after the higher-half shift (X86_64_KERNEL_VIRT_BASE upward) does not
+# fit in 32 bits. Under -mcmodel=large every such reference becomes a
+# full 64-bit absolute relocation instead, which both
+# x86_64_apply_higher_half_relocations() and the PE loader's own initial
+# relocation already handle correctly (the same relocation type every
+# static data initializer in this image -- e.g. bios.c's bios_vecs[] --
+# already used, PIC or not).
+#
+# X86_64_PIE_OVERRIDE (below) restores plain -fpie -mcmodel=small (i.e.
+# undoes both of the above, in that order so the later flag in each pair
+# wins) for the handful of objects that must stay genuinely position-
+# independent: the ones that execute on both sides of the higher-half
+# address change itself (before x86_64_relocate_higher_half() and,
+# transitively, after it), where -mcmodel=large's absolute references
+# would otherwise get shifted to their *final* higher-half address by
+# x86_64_apply_higher_half_relocations() while the code making them is
+# still running from its low, as-loaded address -- e.g. an ordinary
+# function call to another such object, now compiled as an absolute
+# jump target, resolving to a higher-half address that isn't mapped yet.
+# This is not a hypothetical: it is exactly what happens if
+# MULTILIBFLAGS's -mcmodel=large is applied uniformly, and is why this is
+# a *per-object* override rather than a second, simpler MULTILIBFLAGS
+# split by directory. See #358's own follow-up analysis.
+#
+# -mno-red-zone is required for any code that can be interrupted by an
+# NMI/exception while running as a callee below its own stack pointer
+# (not yet the case in this milestone, but every later x86-64 object
+# shares these flags, so it goes on the whole architecture now rather
+# than needing to be revisited per file). -fshort-wchar matches UEFI's
+# 16-bit CHAR16 strings. -fno-ident drops the compiler-version .comment
+# section: the PE linker places it below the image base and refuses to
+# link ("section below image base") if it is present.
 # -maccumulate-outgoing-args is required by GCC for every object built
 # with this MULTILIBFLAGS, because efi.h declares every EFI-called
 # function pointer (and efi_main() itself) with the ms_abi attribute: GCC
@@ -212,9 +255,28 @@ ifdef ARCH_X86_64
 # on x86-64, where its default sub/add-based outgoing-argument-area
 # handling around calls is not guaranteed to interact correctly with a
 # function using a calling convention other than the compiler's default.
-MULTILIBFLAGS = $(CPUFLAGS) -fpie -mno-red-zone -fshort-wchar -fno-ident \
-                -maccumulate-outgoing-args
+MULTILIBFLAGS = $(CPUFLAGS) -fno-pic -mcmodel=large -mno-red-zone \
+                -fshort-wchar -fno-ident -maccumulate-outgoing-args
 TOOLCHAIN_CFLAGS = -ffreestanding
+
+# See the MULTILIBFLAGS comment above: these are the only objects that
+# execute across the higher-half address change itself (bios/machine/
+# pc-x86_64/startup.c's efi_main(), and everything it calls before
+# x86_64_relocate_higher_half() -- x86_64_build_page_tables()/
+# x86_64_build_physmap()/x86_64_low_to_high() in pgtable.c,
+# x86_64_apply_higher_half_relocations() in pe_reloc.c,
+# x86_64_pmem_init()/x86_64_pmem_highest_addr() in pmem.c, and
+# earlycon_puts() from every one of the above). None of the four also do
+# the cross-translation-unit function-pointer-assignment pattern that
+# makes the rest of the tree need the -mcmodel=large fix (verified by
+# inspection), so keeping them on plain -fpie costs nothing and avoids
+# the ordering hazard entirely. pc_x86_64_memory_init() (memory.c) is
+# actually post-jump-only and would be safe either way; kept here too
+# since it is a small, leaf-level early-boot file in the same directory,
+# not worth a separate case.
+X86_64_PIE_OBJS = obj/startup.o obj/pgtable.o obj/pe_reloc.o obj/pmem.o \
+                  obj/earlycon.o obj/memory.o
+$(X86_64_PIE_OBJS): X86_64_PIE_OVERRIDE = -fpie -mcmodel=small
 else
 MULTILIBFLAGS = $(CPUFLAGS) -mshort
 ifdef BUILD_TOOLCHAIN_IS_ELF
@@ -293,7 +355,7 @@ bdos_copts = -Ifs
 # fid-level API, needing -Ibios.
 fs_copts = -Ibdos -Ibios
 
-CFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_copts))
+CFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_copts) $(X86_64_PIE_OVERRIDE))
 SFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_sopts))
 
 # Linker: relocation information and, for most targets, a raw binary.
