@@ -94,8 +94,11 @@ extern UBYTE *x86_64_low_tpa_alloc(LONG needed);
 static PD initial_basepage;
 #endif
 
-/* initial environment string */
+/* initial environment string -- x86-64 uses p_cmdlin instead, see
+ * osinit_after_xmaddalt()'s own comment */
+#ifndef __x86_64__
 static const char double_nul[2] __attribute__ ((aligned (2))) = { 0, 0 };
+#endif
 
 
 /*
@@ -400,14 +403,22 @@ void osinit_after_xmaddalt(void)
     /*
      * double_nul is an ordinary kernel .rodata symbol -- higher-half on
      * x86-64, so (like bios.c's coma_start/exec_os) not something
-     * PTR_TO_USERPTR() can narrow without trapping. initial_basepage is
-     * itself only a placeholder "current process" for BDOS's own early
-     * init, before any real Pexec()'d process exists, so this is the
-     * same class of kernel-structure-needing-a-sub-4GiB-home gap #351
-     * already tracks (there: the cookie jar and several BIOS/XBIOS
-     * return values; here: this one placeholder's own p_env) rather
-     * than something specific to this call site to solve alone. */
+     * PTR_TO_USERPTR() can narrow without trapping. Unlike those
+     * p_tbase cases, this one isn't merely inert: Copilot's review of
+     * #361 caught that any Pexec(..., env=NULL) call reachable while
+     * initial_basepage is still `run` (bdos/proc.c's alloc_env(),
+     * "env == NULL" branch -- e.g. aes/gemshlib.c's
+     * aes_run_rom_program()) widens this exact field back and scans it
+     * as a live string before ever replacing it, so a truncated address
+     * here is a real dereference, not just corruption nothing reads.
+     * Point x86-64 at p_cmdlin instead: already zeroed by the bzero()
+     * above, so it's an equally valid empty string, at a genuinely low
+     * address since `run` itself now is. */
+#ifdef __x86_64__
+    run->p_env = PTR_TO_USERPTR(&run->p_cmdlin[0]);
+#else
     run->p_env = PTR_TO_USERPTR_UNCHECKED(CONST_CAST(char *,double_nul));
+#endif
 
     time_init();
 
