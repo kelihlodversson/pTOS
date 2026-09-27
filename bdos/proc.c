@@ -425,6 +425,21 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
      * harmless.
      */
     p->p_hitpa = (UBYTE *)((ULONG)p->p_hitpa & ~7UL);
+#elif defined(__x86_64__)
+    /*
+     * p_hitpa becomes gouser()'s own initial ring-3 RSP directly
+     * (bdos/arch/x86_64/rwa.c), landing sp at exactly p_hitpa before the
+     * process's first instruction ever runs. The x86-64 SysV/x32 ABI's
+     * process-entry convention requires (RSP + 8) to be a multiple of
+     * 16 at that point (equivalently, RSP itself is 8 mod 16) -- p itself
+     * comes from a 16-byte-aligned allocator (x86_64_low_tpa_alloc()),
+     * but max (the process's own TPA size, ultimately from arbitrary
+     * ELF segment sizes) is not, so p+max need not satisfy this (#356's
+     * own review caught it: the first `call` in a real process can run
+     * with the wrong alignment, breaking anything that assumes the
+     * standard entry convention). Round down to the largest value
+     * satisfying it; losing at most 15 bytes of TPA is harmless. */
+    p->p_hitpa = ((p->p_hitpa + 8UL) & ~15UL) - 8UL;
 #endif
     /* Same reasoning as p_lowtpa/p_hitpa above: p_cmdlin is a field
      * within p itself, and envptr comes from alloc_env(), whose own
