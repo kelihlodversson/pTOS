@@ -151,7 +151,7 @@ static LONG fat_dfree(struct pfs_ops *fs, WORD drive, ULONG out[4])
  */
 #if CONF_WITH_PLUGGABLE_FS
 typedef char pfscookie_dnd_must_fit_index[BUILD_BUG_ON_ZERO(sizeof(DND *) > sizeof(LONG)) + 1];
-#define DND_TO_COOKIE(dn, c) ((c)->index = (LONG)(dn))
+#define DND_TO_COOKIE(dn, c) ((c)->index = (LONG)(dn), (c)->aux = 0)
 #define COOKIE_TO_DND(c) ((DND *)(c)->index)
 #else
 #define DND_TO_COOKIE(dn, c) \
