@@ -501,6 +501,10 @@ DND *findit(char *name, const char **sp, int dflag);
  * arch at once: m68k/ARM's real DND* pointers are always far outside this
  * range on the positive side, x86-64's are always far outside it on the
  * negative side.
+ *
+ * p is expanded twice, so it must be a plain variable, never an
+ * expression with side effects (e.g. an embedded assignment): callers
+ * assign the DND* to a variable first, then test the variable.
  */
 #define DND_IS_ERRCODE(p) ((long)(p) < 0 && (long)(p) > -4096L)
 FCB *scan(DND *dnd, const char *n, WORD att, LONG *posp);
