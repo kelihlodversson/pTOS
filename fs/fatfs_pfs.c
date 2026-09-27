@@ -958,7 +958,7 @@ LONG fat_open_path(char *name, int mod)
     PFSCOOKIE dir, out;
     LONG rc;
 
-    if ((long)(dn = findit(name, &s, 0)) < 0)
+    if (DND_IS_ERRCODE(dn = findit(name, &s, 0)))
         return (long)dn;
     if (!dn)
         return EFILNF;
@@ -979,7 +979,7 @@ LONG fat_creat_path(char *name, char attr)
     PFSCOOKIE dir, out;
     LONG rc;
 
-    if ((long)(dn = findit(name, &s, 0)) < 0)
+    if (DND_IS_ERRCODE(dn = findit(name, &s, 0)))
         return (long)dn;
     if (!dn)
         return EPTHNF;
@@ -999,7 +999,7 @@ LONG fat_mkdir_path(char *s)
     const char *sp;
     PFSCOOKIE dir;
 
-    if ((long)(dn = findit(s, &sp, 0)) < 0)
+    if (DND_IS_ERRCODE(dn = findit(s, &sp, 0)))
         return (long)dn;
     if (!dn)
         return EPTHNF;
@@ -1015,7 +1015,7 @@ LONG fat_rmdir_path(char *p)
     DND *d;
     const char *s;
 
-    if ((long)(d = findit(p, &s, 1)) < 0)
+    if (DND_IS_ERRCODE(d = findit(p, &s, 1)))
         return (long)d;
     if (!d)
         return EPTHNF;
@@ -1087,7 +1087,7 @@ LONG fat_unlink_path(char *name)
     const char *s;
     PFSCOOKIE dir;
 
-    if ((long)(dn = findit(name, &s, 0)) < 0)
+    if (DND_IS_ERRCODE(dn = findit(name, &s, 0)))
         return (long)dn;
     if (!dn)
         return EFILNF;
@@ -1106,7 +1106,7 @@ LONG fat_chmod_path(char *p, int wrt, char mod)
     UWORD attr = (UWORD)(UBYTE)mod;
     LONG rc;
 
-    if ((long)(dn = findit(p, &s, 0)) < 0)
+    if (DND_IS_ERRCODE(dn = findit(p, &s, 0)))
         return (long)dn;
     if (!dn)
         return EPTHNF;
@@ -1127,7 +1127,7 @@ long fat_rename_path(char *p1, char *p2)
     PFSCOOKIE old, new;
     BOOL was_locked;
 
-    if ((long)(dn1 = findit(p1, &s1, 0)) < 0)
+    if (DND_IS_ERRCODE(dn1 = findit(p1, &s1, 0)))
         return (long)dn1;
     if (!dn1)
         return EPTHNF;
