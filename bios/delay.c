@@ -30,11 +30,23 @@
 #define LOOPS_68060         110000  /* 68060 timing assumes 110MHz for safety */
 #define LOOPS_68030         3800    /* 68030 timing assumes 32MHz */
 #define LOOPS_68000         760     /* 68000 timing assumes 16MHz */
-#define LOOPS_X86_64        110000  /* x86-64: no calibrated clock yet, assumes
-                                     * 110MHz for safety -- real hardware and
-                                     * any reasonable emulator far exceed this,
-                                     * so the resulting delay is never shorter
-                                     * than intended, just possibly longer */
+#define LOOPS_X86_64        20000000 /* x86-64: no calibrated clock yet, and
+                                      * unlike the m68k estimates above (which
+                                      * calibrate_delay() replaces with a real
+                                      * measurement on actual Atari hardware --
+                                      * CONF_WITH_MFP is never set here, so it
+                                      * never runs), this value is permanent.
+                                      * "safety" here means never running
+                                      * SHORTER than intended, which -- unlike
+                                      * a timeout ceiling -- means assuming a
+                                      * fast CPU, not a slow one: a plain
+                                      * dependent sub/jns loop (asm.h) can
+                                      * execute close to 1 iteration/cycle, so
+                                      * this assumes a deliberately high ~20GHz
+                                      * ceiling (real hardware and any
+                                      * reasonable emulator are slower, making
+                                      * the actual delay longer, never
+                                      * shorter) */
 
 #define CALIBRATION_TIME    100     /* target # millisecs to run calibration */
 
