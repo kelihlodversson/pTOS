@@ -739,12 +739,39 @@ static UWORD ide_device_type(WORD dev)
  * the following routines for device type detection are adapted
  * from Hale Landis's public domain ATA driver, MINDRVR.
  */
+
+/*
+ * this and the two following functions poll a hardware status bit
+ * against a deadline expressed in hz_200 ticks. On x86-64 hz_200 never
+ * advances yet (no working timer interrupt: bios/arch/x86_64/vectors.c)
+ * -- a hz_200 deadline there never expires, so a missing or stuck IDE
+ * controller would leave the loop spinning forever instead of giving
+ * up. Bound it there with a plain, uncalibrated spin count instead: not
+ * a real time measurement (this arch has no calibrated delay loop yet
+ * either -- bios/delay.c's is m68k-only), just a "give up eventually"
+ * ceiling. 5000 spins per tick assumes each iteration -- a port I/O read
+ * plus a decrement -- costs at least ~1us in the worst realistic case
+ * (mainly QEMU's port-I/O VM-exit overhead, far more than bare metal),
+ * putting the ceiling in the same ballpark as the original tick-based
+ * timeouts (100ms/3s) rather than orders of magnitude off. Revisit once
+ * this arch has a real time source (#329's later milestones).
+ */
+#ifdef __x86_64__
+#define IDE_TIMEOUT_INIT(timeout)   LONG ide_spins_left = (LONG)(timeout) * 5000L
+#define IDE_TIMEOUT_EXPIRED(next)   (ide_spins_left-- <= 0)
+#else
+#define IDE_TIMEOUT_INIT(timeout)   ((void)0)
+#define IDE_TIMEOUT_EXPIRED(next)   (hz_200 >= (next))
+#endif
+
 static int wait_for_not_BSY_and_DRDY(volatile struct IDE *interface,LONG timeout)
 {
     LONG next = hz_200 + timeout;
+    IDE_TIMEOUT_INIT(timeout);
+    MAYBE_UNUSED(next);
 
     DELAY_400NS;
-    while(hz_200 < next) {
+    while(!IDE_TIMEOUT_EXPIRED(next)) {
         if ((IDE_READ_ALT_STATUS(interface) & (IDE_STATUS_BSY|IDE_STATUS_DRDY)) == IDE_STATUS_DRDY)
             return 0;
     }
@@ -855,11 +882,13 @@ static void ide_detect_devices(UWORD ifnum)
 static int wait_for_not_BSY(volatile struct IDE *interface,LONG timeout)
 {
     LONG next = hz_200 + timeout;
+    IDE_TIMEOUT_INIT(timeout);
+    MAYBE_UNUSED(next);
 
     KDEBUG(("wait_for_not_BSY(%p, %ld)\n", interface, timeout));
 
     DELAY_400NS;
-    while(hz_200 < next) {
+    while(!IDE_TIMEOUT_EXPIRED(next)) {
         if ((IDE_READ_ALT_STATUS(interface) & IDE_STATUS_BSY) == 0)
             return 0;
     }
@@ -871,9 +900,11 @@ static int wait_for_not_BSY(volatile struct IDE *interface,LONG timeout)
 static int wait_for_not_BSY_not_DRQ(volatile struct IDE *interface,LONG timeout)
 {
     LONG next = hz_200 + timeout;
+    IDE_TIMEOUT_INIT(timeout);
+    MAYBE_UNUSED(next);
 
     DELAY_400NS;
-    while(hz_200 < next) {
+    while(!IDE_TIMEOUT_EXPIRED(next)) {
         if ((IDE_READ_ALT_STATUS(interface) & (IDE_STATUS_BSY|IDE_STATUS_DRQ)) == 0)
             return 0;
     }
