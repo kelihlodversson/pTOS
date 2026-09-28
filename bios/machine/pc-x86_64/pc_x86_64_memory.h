@@ -90,4 +90,18 @@ void x86_64_low_kdata_init(void);
  */
 void *x86_64_low_kdata_alloc(LONG needed);
 
+/*
+ * Maps count 2 MiB pages of the CALLER-GIVEN physical range
+ * [aligned_phys, aligned_phys + page_count*2MiB) -- already 2 MiB-aligned,
+ * unlike x86_64_low_tpa_init()/x86_64_low_kdata_init()'s own allocations
+ * -- at a fixed low virtual base right after the low-kdata pool (see
+ * memory.c's own #332 comment). Used for the EFI GOP framebuffer
+ * (bios/machine/pc-x86_64/gop.c), whose physical location this file has
+ * no say over. Returns that virtual base, or 0 if page_count describes
+ * more than this pool's own sanity ceiling (memory.c's
+ * X86_64_FRAMEBUFFER_MAX_BYTES) -- the caller's job to treat 0 as
+ * "nothing mapped", not to retry with a smaller range.
+ */
+UQUAD x86_64_low_fb_init(UQUAD aligned_phys, UQUAD page_count);
+
 #endif /* PC_X86_64_MEMORY_H */

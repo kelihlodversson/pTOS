@@ -27,6 +27,7 @@
 #include "pmem.h"
 #include "trap.h"
 #include "pc_x86_64_memory.h"
+#include "pc_x86_64_gop.h"
 #include "bios.h"
 #include "pe_reloc.h"
 
@@ -136,6 +137,17 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     if (loaded_image->ImageSize > IMAGE_SPAN_BYTES)
         panic("image larger than the mapped boot window");
     earlycon_puts("pTOS x86-64: image base obtained\n");
+
+    /*
+     * #332: query GOP and stash its framebuffer's physical base/size/mode
+     * (this file's own bss, ordinary boot-time image data) while boot
+     * services -- LocateProtocol() included -- are still callable, and
+     * while GOP's own Mode/Info structures (EFI pool memory) are still
+     * valid. Absence of GOP is not fatal; see x86_64_gop_probe()'s own
+     * comment (gop.c).
+     */
+    x86_64_gop_probe(bs);
+    earlycon_puts("pTOS x86-64: EFI GOP framebuffer probed\n");
 
     /*
      * GetMemoryMap() with a too-small (here, zero) buffer always returns
@@ -445,7 +457,19 @@ void NORETURN x86_64_higher_half_main(void)
         x86_64_scsidriv_root_alloc();
     }
 #endif
-    earlycon_puts("pTOS x86-64: low kernel-data pool ready, handing off to biosmain()\n");
+    earlycon_puts("pTOS x86-64: low kernel-data pool ready\n");
+
+    /*
+     * #332: map the framebuffer x86_64_gop_probe() found (efi_main(),
+     * above) into this kernel's own page tables, into the same low-canonical
+     * PML4 slot 0 pool as the TPA/kdata pools just set up (see memory.c's
+     * own comment) -- must run after x86_64_low_kdata_init(), and before
+     * bios_init()'s screen_init_mode()/screen_init_address() (bios/screen.c)
+     * reach for pc_x86_64_gop_screenbase(). A no-op if no usable GOP
+     * framebuffer was found.
+     */
+    x86_64_gop_init();
+    earlycon_puts("pTOS x86-64: EFI GOP framebuffer ready, handing off to biosmain()\n");
 
     biosmain();
 

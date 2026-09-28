@@ -269,3 +269,46 @@ void *x86_64_low_kdata_alloc(LONG needed)
     return (void *)(uintptr_t)aligned;
 }
 
+/*
+ * A FOURTH pool (#332): the EFI GOP framebuffer, mapped read/write into
+ * this kernel's own page tables at a fixed low virtual base right after
+ * the low-kdata pool. Unlike the other three, this one's physical backing
+ * isn't allocated from pmem.c at all -- it's wherever firmware/hardware
+ * already put the framebuffer (bios/machine/pc-x86_64/gop.c's own
+ * x86_64_gop_probe() reads that address from GOP itself) -- this file
+ * only maps that caller-given range, it never chooses or owns it.
+ *
+ * Placed in the same low-canonical, PML4-slot-0 region as the TPA/kdata
+ * pools (reusing their already-built PD, not a fresh PML4 slot) rather
+ * than somewhere in the kernel's own higher half, for two reasons: it
+ * costs no extra PDPT/PD-pool budget (pgtable.c's MAX_PDPTS/MAX_PDS,
+ * already fully spoken for -- see that file's own comment) the way a new
+ * PML4 slot would, and it means v_bas_ad (screen.c) ends up with a real,
+ * sub-4GiB address "for free" -- one entry closer to closing #372's own
+ * v_bas_ad line in ssystem.c's lval_table, though not itself a claim
+ * that #372 is closed (the value stored there is still whatever a real
+ * ILP32 consumer needs it to be, which this file has no say over).
+ *
+ * X86_64_FRAMEBUFFER_MAX_BYTES is a sanity ceiling, not a real limit on
+ * any actual framebuffer size: it exists so a firmware-reported mode this
+ * arch has no business trusting blindly (a garbled FrameBufferSize, or a
+ * pixel format check that somehow let through something enormous) fails
+ * closed (x86_64_low_fb_init() returns 0, gop.c treats that as "no
+ * framebuffer") rather than mapping an unbounded amount of physical
+ * address space on the caller's say-so. 16 MiB comfortably covers every
+ * mode a QEMU/OVMF or typical real firmware GOP implementation reports
+ * (a 1920x1080 32bpp mode is a little under 8 MiB); nothing here assumes
+ * a specific resolution.
+ */
+#define X86_64_LOW_FB_VIRT_BASE (X86_64_LOW_KDATA_VIRT_BASE + X86_64_LOW_KDATA_BYTES)
+#define X86_64_FRAMEBUFFER_MAX_BYTES (16 * 1024 * 1024)
+
+UQUAD x86_64_low_fb_init(UQUAD aligned_phys, UQUAD page_count)
+{
+    if (page_count * X86_64_PAGE_2M_SIZE > X86_64_FRAMEBUFFER_MAX_BYTES)
+        return 0;
+
+    x86_64_map_kernel_pages(X86_64_LOW_FB_VIRT_BASE, aligned_phys, page_count);
+    return X86_64_LOW_FB_VIRT_BASE;
+}
+
