@@ -388,12 +388,49 @@
 */
 
 
+#ifdef __x86_64__
+/*
+ * Shadows the single most recently xsetdta()'d real pointer, for
+ * x86_64_widen_dta() (fs.h) below to hand back verbatim to any reader of
+ * run->p_xdta -- see xsetdta()'s own comment on why PTR_TO_USERPTR_UNCHECKED()'s
+ * round-trip through that 32-bit field alone cannot reconstruct a
+ * genuine higher-half kernel address. A single slot is correct (not a
+ * per-process table): BDOS calls are inherently synchronous with
+ * respect to `run`, so only one process's own p_xdta is ever "current"
+ * between an xsetdta() and whichever xgetdta()/fat_sfirst_path()/etc.
+ * reads it back.
+ */
+static DTAINFO *x86_64_real_dta;
+
+/*
+ * Widens a raw run->p_xdta value back into a real, dereferenceable
+ * pointer: if it matches the most recently xsetdta()'d address's own
+ * low 32 bits, return that real (possibly higher-half) pointer verbatim
+ * instead of zero-extending -- otherwise (an ordinary process's own
+ * already-low DTA address, or no kernel-code caller has ever used
+ * xsetdta() this boot) an ordinary zero-extending cast is correct, the
+ * same as ILP32 arches always do. Declared in fs.h for fs/fatfs_pfs.c's/
+ * fs/pfs.c's own direct run->p_xdta dereferences, which don't go through
+ * xgetdta() below at all.
+ */
+DTAINFO *x86_64_widen_dta(ULONG stored)
+{
+    if (x86_64_real_dta && PTR_TO_USERPTR_UNCHECKED(x86_64_real_dta) == stored)
+        return x86_64_real_dta;
+    return (DTAINFO *)(uintptr_t)stored;
+}
+#endif
+
 /*
  *  xgetdta - Function 0x2F     f_getdta
  */
 DTAINFO *xgetdta(void)          /* return address of dta */
 {
+#ifdef __x86_64__
+    return x86_64_widen_dta(run->p_xdta);
+#else
     return((DTAINFO *)run->p_xdta);
+#endif
 }
 
 
@@ -418,7 +455,20 @@ void xsetdta(DTAINFO *addr)     /* set transfer address to addr */
      * when the caller is kernel code, and a real user process's own
      * Fsetdta() call already only ever passes its own, already-32-bit
      * address.
+     *
+     * That reasoning covers the *storage* here being lossy, but not
+     * every *reader* of it: aes/geminit.c's count_accs() (the first
+     * kernel-code caller to actually exercise this at all, #375) showed
+     * that xgetdta()'s own zero-extending cast (and fs/fatfs_pfs.c's/
+     * fs/pfs.c's identical direct run->p_xdta casts, which don't even
+     * go through xgetdta()) reconstruct the wrong address for a real
+     * higher-half pointer, corrupting memory the moment Fsfirst()
+     * writes through it. x86_64_real_dta/x86_64_widen_dta() above fix
+     * that for every reader, not just xgetdta()'s own.
      */
+#ifdef __x86_64__
+    x86_64_real_dta = addr;
+#endif
     run->p_xdta = PTR_TO_USERPTR_UNCHECKED((DTA *)addr);
 }
 

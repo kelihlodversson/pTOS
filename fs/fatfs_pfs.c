@@ -951,7 +951,7 @@ LONG fat_sfirst_path(char *name, int att)
     long result;
     DTAINFO *dt;
 
-    dt = (DTAINFO *)(run->p_xdta);
+    dt = RUN_XDTA();
     dt->dt_offset_drive = -1L;
     result = ixsfirst(name, att, dt);
     if ((result < 0) || !contains_wildcard_characters(name))
@@ -964,7 +964,7 @@ LONG fat_snext_path(void)
     FCB *f;
     DTAINFO *dt;
 
-    dt = (DTAINFO *)run->p_xdta;
+    dt = RUN_XDTA();
     if (dt->dt_offset_drive < 0L)
         return ENMFIL;
     f = ixsnext(dt);
@@ -973,7 +973,7 @@ LONG fat_snext_path(void)
         dt->dt_offset_drive = -1L;
         return ENMFIL;
     }
-    makbuf(f, (DTAINFO *)run->p_xdta);
+    makbuf(f, RUN_XDTA());
     return E_OK;
 }
 

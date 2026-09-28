@@ -136,7 +136,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     image_base = (UQUAD)(uintptr_t)loaded_image->ImageBase;
     if (loaded_image->ImageSize > IMAGE_SPAN_BYTES)
         panic("image larger than the mapped boot window");
-    earlycon_puts("pTOS x86-64: image base obtained\n");
+    earlycon_puts("pTOS x86-64: image base obtained: 0x");
+    earlycon_puthex(image_base);
+    earlycon_puts("\n");
 
     /*
      * #332: query GOP and stash its framebuffer's physical base/size/mode
@@ -227,7 +229,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     earlycon_puts("pTOS x86-64: boot services exited\n");
 
     cr3 = x86_64_build_page_tables(image_base, IMAGE_SPAN_BYTES, &mapped_base);
-    earlycon_puts("pTOS x86-64: page tables built\n");
+    earlycon_puts("pTOS x86-64: page tables built, mapped_base=0x");
+    earlycon_puthex(mapped_base);
+    earlycon_puts("\n");
 
     /*
      * Re-applies this image's own PE base relocation table a second time

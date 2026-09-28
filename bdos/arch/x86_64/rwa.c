@@ -64,6 +64,42 @@ void bdos_trap2(void)
 {
 }
 
+#if CONF_WITH_AES
+extern void accdesk_start(void) NORETURN;      /* aes/arch/x86_64/gemstart.c */
+extern void deskstart(PD *) NORETURN;          /* desk/arch/x86_64/deskstart.c */
+#endif
+#if CONF_WITH_CLI
+extern void coma_start(PD *) NORETURN;         /* cli/arch/x86_64/cmdasm.c */
+#endif
+
+#if CONF_WITH_AES || CONF_WITH_CLI
+/*
+ * Captures sym's own address via `lea` (never a plain C address-of --
+ * see bios.c's own comment on why: a plain `exec_os = coma_start`-style
+ * assignment was seen reading back a garbage 64-bit value under this
+ * arch's -mcmodel=large + non-ELF-relaxed-PE-link combination) and,
+ * if its low 32 bits match `want` (an already-truncated PD->p_tbase
+ * value -- see this function's own comment on why p_tbase can only ever
+ * hold that much), updates *ptarget to the real, untruncated address.
+ * Used below to recover which specific ROM entry a zero-length PD
+ * launched via aes_run_rom_program()/coma_start's own Pexec(PE_GOTHENFREE)
+ * path (aes/gemshlib.c) actually names, since p_tbase itself cannot
+ * carry more than those low 32 bits on this arch.
+ */
+static void x86_64_match_rom_candidate(void (**ptarget)(PD *), ULONG want,
+                                        void *candidate_addr)
+{
+    if ((ULONG)(uintptr_t)candidate_addr == want)
+        *ptarget = (void (*)(PD *))candidate_addr;
+}
+#define X86_64_ROM_CANDIDATE(ptarget, want, sym) \
+    do { \
+        void *_addr; \
+        __asm__("lea " #sym "(%%rip), %0" : "=r"(_addr)); \
+        x86_64_match_rom_candidate((ptarget), (want), _addr); \
+    } while (0)
+#endif
+
 void gouser(void)
 {
     PD *p = run;
@@ -93,21 +129,37 @@ void gouser(void)
          * (Copilot's review of #356 caught this): aes/gemshlib.c's
          * aes_run_rom_program() builds an identically-shaped PD (a
          * PE_BASEPAGEFLAGS basepage, zero p_tlen/p_dlen/p_blen, p_tbase
-         * set to its own ROM entry) for launching a GEM ROM program,
-         * and would land here too, calling exec_os -- the wrong
-         * function -- instead of that program's own entry. Not
-         * reachable today: pc-x86_64_defconfig builds with
-         * CONF_WITH_AES=n (no x86-64 framebuffer driver yet, #332), so
-         * aes_run_rom_program() is never compiled in. A real fix needs
-         * more than switching to p->p_tbase: that field holds the same
-         * kind of deliberately-truncated, unusable kernel-code address
-         * as coma_start/ui_start above for exactly the same reason
-         * (never 32-bit-representable on this arch), so it can't
-         * substitute for exec_os here either -- untruncated ROM-program
-         * entries would need their own exec_os-style mechanism before
-         * CONF_WITH_AES could ever be turned on for this arch.
+         * set to its own ROM entry) for launching a GEM ROM program --
+         * accdesk_start (run once, from ui_start's own gem_main()) or
+         * deskstart/coma_start (run repeatedly, each time sh_ldapp()
+         * wants the desktop shell or EmuCON, via the same "AES
+         * reentrancy" dos_exec() path aes/arch/arm/gemstart.S's own
+         * comment documents at length). p_tbase can only ever hold each
+         * one's own low 32 bits (the same reason exec_os itself can't
+         * be stored there either -- see USERPTR_T's own comment,
+         * bdosdefs.h), so below, before falling back to exec_os,
+         * candidate ROM entries are matched by comparing p_tbase
+         * against each one's own low 32 bits, captured via the same
+         * `lea` technique bios.c's own exec_os assignment uses --
+         * recovering the real, untruncated address to actually call
+         * once a match is found. AES process 0 (ui_start) itself is not
+         * one of these candidates: exec_os already holds it (bios.c),
+         * so the plain fallback below already covers it correctly.
          */
-        ((void (*)(PD *))exec_os)(p);
+        void (*target)(PD *) = (void (*)(PD *))exec_os;
+#if CONF_WITH_AES || CONF_WITH_CLI
+        ULONG want = p->p_tbase;
+#endif
+
+#if CONF_WITH_AES
+        X86_64_ROM_CANDIDATE(&target, want, accdesk_start);
+        X86_64_ROM_CANDIDATE(&target, want, deskstart);
+#endif
+#if CONF_WITH_CLI
+        X86_64_ROM_CANDIDATE(&target, want, coma_start);
+#endif
+
+        target(p);
         panic("x86-64: kernel-code process entry returned unexpectedly\n");
     } else {
         /*
