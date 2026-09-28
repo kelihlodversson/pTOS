@@ -84,6 +84,10 @@
 #include "goldfish_pic.h"
 #include "goldfish_rtc.h"
 #endif
+#ifdef MACHINE_PC_X86_64
+#include "irq.h"
+#include "io.h"
+#endif
 
 
 /*==== Defines ============================================================*/
@@ -663,16 +667,16 @@ static void bios_init(void)
     cpsr_ie();
 #elif defined(__x86_64__)
     /*
-     * Deliberately not `sti`: there is no PIC/APIC/timer driver yet, so
-     * every external interrupt vector in the IDT (bios/arch/x86_64/idt.c
-     * only populates the 32 CPU exception ones) is still an empty gate --
-     * enabling interrupts now would panic on the very first hardware
-     * interrupt to arrive, which real/QEMU x86 hardware fires quickly
-     * (PIT/RTC) even with no driver expecting it. Interrupts stay off for
-     * the whole of this milestone (matching gdt.c/trap.c's own comments);
-     * nothing on the path to CONF_WITH_CLI's EmuCON launch needs them --
-     * calibrate_delay()'s non-CONF_WITH_MFP fallback (delay.c) is a no-op.
+     * #335: bring up the legacy PIC/PIT/PS-2 controller (bios/machine/
+     * pc-x86_64/irq.c) -- remapping the PIC, installing this machine's
+     * three device-IRQ IDT gates, programming a 200 Hz tick and enabling
+     * keyboard/mouse reporting -- before turning interrupts on at all, so
+     * the very first one that can arrive always has a real handler
+     * waiting for it (gdt.c/trap.c/idt.c's own comments on why interrupts
+     * stayed off until now).
      */
+    x86_64_irq_init();
+    x86_64_sti();
 #else
 #if CONF_WITH_ATARI_VIDEO
     /* Keep the HBL disabled */

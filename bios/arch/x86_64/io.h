@@ -34,6 +34,11 @@ static inline void x86_64_cli(void)
     __asm__ volatile ("cli" ::: "memory");
 }
 
+static inline void x86_64_sti(void)
+{
+    __asm__ volatile ("sti" ::: "memory");
+}
+
 /* CR2 holds the linear (faulting) address of the most recent #PF -- read
  * by the panic path (panic.c) while decoding one. */
 static inline UQUAD x86_64_read_cr2(void)
