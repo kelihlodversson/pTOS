@@ -171,21 +171,47 @@ void x86_64_ps2_init(void)
  * use for and no partial-byte meaning to give, so the whole sequence
  * (the five bytes after the 0xe1 itself) is swallowed instead of being
  * forwarded piecemeal as unrelated keys.
+ *
+ * Print Screen is the one exception to "the byte after 0xe0 stands on
+ * its own": it's actually two back-to-back extended pairs, E0 2A E0 37
+ * on make and E0 B7 E0 AA on break -- not a single E0<byte> pair like
+ * every other extended key. Forwarding 0x2a/0xb7 the way an ordinary
+ * extended byte is forwarded would misread it as Left Shift (KEY_LSHIFT
+ * is 0x2a) toggling modifier state, and forwarding 0x37 would trigger
+ * CONF_WITH_EXTENDED_MOUSE's own kbd_int() handling of 0x37 as "mouse
+ * button 3" -- so this one sequence is recognized (only when 0x2a/0xb7
+ * itself arrived right after an 0xe0, never a bare, unprefixed press of
+ * the real Left Shift key) and swallowed whole, second E0 included.
  */
 static int ps2_e1_bytes_left;
+static BOOL ps2_saw_e0;
+static BOOL ps2_prtscn_second_half;
 
 void x86_64_ps2_keyboard_irq(void)
 {
     UBYTE sc = x86_64_inb(PS2_DATA);
+    BOOL extended = ps2_saw_e0;
 
-    if (sc == 0xe0)
-        return;      /* drop the prefix; the next byte stands on its own */
+    ps2_saw_e0 = FALSE;
+
+    if (sc == 0xe0) {
+        ps2_saw_e0 = TRUE;
+        return;
+    }
     if (sc == 0xe1) {
         ps2_e1_bytes_left = 5;
         return;
     }
     if (ps2_e1_bytes_left) {
         ps2_e1_bytes_left--;
+        return;
+    }
+    if (ps2_prtscn_second_half) {
+        ps2_prtscn_second_half = FALSE;
+        return;
+    }
+    if (extended && (sc == 0x2a || sc == 0xb7)) {
+        ps2_prtscn_second_half = TRUE;
         return;
     }
 
