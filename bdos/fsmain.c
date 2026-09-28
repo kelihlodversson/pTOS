@@ -398,34 +398,62 @@
  * global) once kernel-code-process nesting is used: proc_go() switches
  * `run` to the child and xterm() restores the parent, while child
  * AES/desktop code can call dos_sdta() and overwrite a single global
- * shadow, corrupting the parent's widened DTA once it resumes. The two
- * free p_3fill slots in the PD itself hold the real DTA's own low and
- * high 32 bits for that process, saved/restored with `run` by
- * xsetdta()/x86_64_widen_dta() below.
+ * shadow, corrupting the parent's widened DTA once it resumes.
  *
- * The two halves are stored (and read back) directly, NOT via
- * PTR_TO_USERPTR_UNCHECKED()/USERPTR_TO_PTR(): those macros only ever
- * narrow to, or naively zero-extend from, 32 bits (bdosdefs.h) -- correct
- * for p_xdta's own storage (an ILP32-process-compatible field that must
- * degrade to that on this arch) but exactly the truncation this shadow
- * exists to see past. Splitting the real pointer across both p_3fill
- * slots keeps the full 64 bits, unlike a first version of this fix that
- * stored only the low half in p_3fill[0] and read it back with
- * USERPTR_TO_PTR() -- silently reintroducing the same truncation bug
- * this shadow was built to fix in the first place.
+ * This table -- not the PD itself -- is where that per-process shadow
+ * lives, and that is load-bearing, not just tidiness: a PD is a real
+ * process's own basepage, mapped read/write into that process's own
+ * address space (bdos/arch/x86_64/rwa.c's gouser()). An earlier version
+ * of this fix stored the shadow across two of PD's own reserved
+ * p_3fill words -- Copilot's review of #376 caught that this lets any
+ * ordinary ring-3 process forge an arbitrary 64-bit "real" pointer by
+ * writing p_3fill and a matching p_xdta directly (no trap needed, it's
+ * just memory the process already owns), which x86_64_widen_dta() would
+ * then hand straight to Fsfirst()/Fsnext() to write through -- an
+ * arbitrary-kernel-write primitive. A small fixed-size table in the
+ * kernel's own BSS, indexed by the owning PD's own pointer identity,
+ * cannot be reached or forged from ring 3 at all.
+ *
+ * Sized for this arch's actual current concurrency (a handful of nested
+ * kernel-code-process launches, or at most one real process at a time --
+ * #334's own still-open scope for more), not a hard limit: a full table
+ * just evicts the oldest entry (slot 0), which only degrades a future
+ * x86_64_widen_dta() call for whichever process owned it back to the
+ * always-correct-for-ILP32-processes zero-extending fallback, never a
+ * memory-safety issue.
  */
-#ifdef __x86_64__
-#define X86_64_REAL_DTA(run) \
-    ((DTAINFO *)(uintptr_t)(((UQUAD)(ULONG)(run)->p_3fill[1] << 32) | (ULONG)(run)->p_3fill[0]))
-#define X86_64_SET_REAL_DTA(run, ptr) \
-    do { \
-        UQUAD _v = (UQUAD)(uintptr_t)(ptr); \
-        (run)->p_3fill[0] = (LONG)(ULONG)_v; \
-        (run)->p_3fill[1] = (LONG)(ULONG)(_v >> 32); \
-    } while (0)
-#else
-#define X86_64_REAL_DTA(run) ((void)0, NULL)
-#endif
+#define X86_64_DTA_SHADOW_SLOTS 8
+static struct {
+    PD *owner;
+    DTAINFO *real;
+} x86_64_dta_shadow[X86_64_DTA_SHADOW_SLOTS];
+
+static DTAINFO *x86_64_dta_shadow_get(PD *p)
+{
+    int i;
+    for (i = 0; i < X86_64_DTA_SHADOW_SLOTS; i++)
+        if (x86_64_dta_shadow[i].owner == p)
+            return x86_64_dta_shadow[i].real;
+    return NULL;
+}
+
+static void x86_64_dta_shadow_set(PD *p, DTAINFO *real)
+{
+    int i, free_slot = -1;
+
+    for (i = 0; i < X86_64_DTA_SHADOW_SLOTS; i++) {
+        if (x86_64_dta_shadow[i].owner == p) {
+            x86_64_dta_shadow[i].real = real;
+            return;
+        }
+        if (free_slot < 0 && x86_64_dta_shadow[i].owner == NULL)
+            free_slot = i;
+    }
+    if (free_slot < 0)
+        free_slot = 0; /* table full: evict the oldest, see comment above */
+    x86_64_dta_shadow[free_slot].owner = p;
+    x86_64_dta_shadow[free_slot].real = real;
+}
 
 /*
  * Widens a raw run->p_xdta value back into a real, dereferenceable
@@ -440,7 +468,7 @@
  */
 DTAINFO *x86_64_widen_dta(ULONG stored)
 {
-    DTAINFO *real = X86_64_REAL_DTA(run);
+    DTAINFO *real = x86_64_dta_shadow_get(run);
     if (real && PTR_TO_USERPTR_UNCHECKED(real) == stored)
         return real;
     return (DTAINFO *)(uintptr_t)stored;
@@ -492,14 +520,15 @@ void xsetdta(DTAINFO *addr)     /* set transfer address to addr */
      * writes through it. x86_64_widen_dta() above fixes that for every
      * reader, not just xgetdta()'s own.
      *
-     * Kept per-process (across both p_3fill slots) once kernel-code-
-     * process nesting is used: proc_go() switches `run` to the child and
-     * xterm() restores the parent, while child AES/desktop code can call
+     * Kept per-process (in a kernel-only side table, not the PD itself --
+     * see that table's own comment on why) once kernel-code-process
+     * nesting is used: proc_go() switches `run` to the child and xterm()
+     * restores the parent, while child AES/desktop code can call
      * dos_sdta() and overwrite a single global shadow, corrupting the
      * parent's widened DTA once it resumes.
      */
 #ifdef __x86_64__
-    X86_64_SET_REAL_DTA(run, addr);
+    x86_64_dta_shadow_set(run, addr);
 #endif
     run->p_xdta = PTR_TO_USERPTR_UNCHECKED((DTA *)addr);
 }
