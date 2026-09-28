@@ -66,7 +66,7 @@ obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o virt_pic.o virt_timer.o
 obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfish_rtc_isr.o goldfish_pic_isr.o
 
 obj-$(ARCH_X86_64) += pgtable.o relocate.o gdt.o idt.o isr.o panic.o trap.o trapasm.o pe_reloc.o ide_io.o
-obj-$(MACHINE_PC_X86_64) += earlycon.o pmem.o gop.o
+obj-$(MACHINE_PC_X86_64) += earlycon.o pmem.o gop.o pic.o pit.o ps2.o irq.o irqasm.o
 
 obj-$(CONF_WITH_PCI) += pci_core.o
 obj-$(CONF_WITH_PCI_VIRT_ECAM) += virt_pci.o

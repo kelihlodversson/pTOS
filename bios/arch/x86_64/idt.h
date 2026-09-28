@@ -26,4 +26,19 @@
  */
 void x86_64_idt_init(void);
 
+/*
+ * Installs one additional IDT gate beyond the 32 fixed exception ones
+ * x86_64_idt_init() itself sets up -- for a machine's own device-IRQ
+ * vectors (#335's PIC-remapped range, 32-47 on pc-x86_64), which this
+ * file has no reason to know about (a different x86-64 machine could
+ * route interrupts completely differently). Same interrupt-gate shape as
+ * every exception gate (DPL0, IF cleared on entry -- an IRQ handler that
+ * wants nested interrupts re-enables them itself once past its own
+ * critical section, the same convention x86_64_idt_init()'s own comment
+ * documents for exceptions). Must be called after x86_64_idt_init(),
+ * which owns the IDT's own lifetime (allocation, load via lidt) -- this
+ * only ever adds to the table it already built and loaded.
+ */
+void x86_64_idt_set_gate(int vector, void (*handler)(void));
+
 #endif /* X86_64_IDT_H */

@@ -110,3 +110,8 @@ void x86_64_idt_init(void)
 
     mask_legacy_pic();
 }
+
+void x86_64_idt_set_gate(int vector, void (*handler)(void))
+{
+    set_gate(vector, (UQUAD)(uintptr_t)handler, 0);
+}

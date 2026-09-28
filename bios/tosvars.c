@@ -120,7 +120,14 @@ LONG (*bconstat_vec[8])(void);
 LONG (*bconin_vec[8])(void);
 LONG (*bcostat_vec[8])(void);
 LONG (*bconout_vec[8])(WORD, WORD);
-LONG vbl_list[8];
+/* PFVOID (a native function pointer, bios.c's own extern declaration),
+ * not LONG (always 32-bit): on m68k/ARM the two are the same width, so a
+ * LONG array here was silently ABI-compatible with every vbl_list[i]()
+ * call site, but on x86-64 (LP64, 8-byte pointers) a LONG-sized element
+ * is only half the storage each PFVOID slot needs, so vbl_list[4..7]
+ * would read straight past this array's real end into whatever
+ * followed it in memory -- and call that as code. */
+PFVOID vbl_list[8];
 
 /* on m68k this is patched externally in the OSXH header (see startup.S);
  * neither ARM nor x86-64 has such a header, so the boot delay is simply
