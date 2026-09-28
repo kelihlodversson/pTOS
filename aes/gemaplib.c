@@ -45,7 +45,7 @@
 BOOL     gl_play;
 BOOL     gl_recd;
 WORD     gl_rlen;
-FPD      *gl_rbuf;
+EVNTREC  *gl_rbuf;
 
 
 /*
@@ -188,28 +188,22 @@ void ap_tplay(const EVNTREC *pbuff,WORD length,WORD scale)
  */
 WORD ap_trecd(EVNTREC *pbuff,WORD length)
 {
-    WORD   i;
-    LONG   code;
-    FCODE  proutine;
-
     /*
-     * start recording in forker() [gemdisp.c]
-     *
-     * the events are recorded in the buffer in FPD format, and converted
-     * to EVNTREC format below, after recording is complete.  This assumes
-     * that sizeof(FPD) = sizeof(EVNTREC).
-     *
-     * if the size of the FPD structure changes (unlikely), you'll get
-     * an error from _Static_assert(), and you'll probably need to do
-     * the conversion to EVNTREC on the fly in gemdisp.c.
+     * start recording in forker() [gemdisp.c]: it writes directly in
+     * EVNTREC format (translating each recorded forkq() callback to its
+     * TCHNG/BCHNG/MCHNG/KCHNG code as it goes -- see its own comment),
+     * so there's nothing left to convert here once recording is done.
+     * This used to instead record raw FPD entries here and convert them
+     * to EVNTREC format in bulk afterwards, relying on sizeof(FPD) ==
+     * sizeof(EVNTREC) to let the same buffer be reinterpreted as either
+     * type; that held on m68k/ARM (FCODE and LONG both native-width
+     * there) but not on x86-64, where FCODE is an 8-byte function
+     * pointer no LONG-sized field can hold.
      */
-    _Static_assert(sizeof(EVNTREC)==sizeof(FPD),
-                    "EVNTREC & FPD structures are not the same size!");
-
     disable_interrupts();
     gl_recd = TRUE;
     gl_rlen = length;
-    gl_rbuf = (FPD *)pbuff;
+    gl_rbuf = pbuff;
     enable_interrupts();
 
     /* check every 0.1 seconds if recording is done */
@@ -221,26 +215,10 @@ WORD ap_trecd(EVNTREC *pbuff,WORD length)
      * figure out actual length & reset globals for next time
      */
     disable_interrupts();
-    length = (WORD)(gl_rbuf - (FPD *)pbuff);
+    length = (WORD)(gl_rbuf - pbuff);
     gl_rlen = 0;
     gl_rbuf = NULL;
     enable_interrupts();
-
-    /* convert to standard format */
-    for (i = 0; i < length; i++, pbuff++) {
-        proutine = (FCODE)pbuff->ap_event;
-        if (proutine == tchange)
-            code = TCHNG;
-        else if (proutine == bchange)
-            code = BCHNG;
-        else if (proutine == mchange)
-            code = MCHNG;
-        else if (proutine == kchange)
-            code = KCHNG;
-        else code = -1;
-        pbuff->ap_event = code;
-        /* ap_value is the (unchanged) f_data */
-    }
 
     return length;
 }
