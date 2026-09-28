@@ -6,16 +6,46 @@
  * live stack pointer between a parent's suspended kernel call chain
  * (frozen mid-Pexec) and a child's, using a per-arch struct gouser_stack
  * (bdos/proc.c) laid out to match that arch's own trap-entry register
- * save area. gouser() below does the #334 equivalent for a single
- * process (a genuine per-process address space and a real ring0->ring3
- * transition, via bios/arch/x86_64/pgtable.h and trap.h) -- but not yet
- * the full coroutine: termuser() (resuming a suspended parent once a
- * child exits) needs a per-process kernel stack this arch does not have
- * yet (this arch's single shared percpu.kernel_rsp, bios/arch/x86_64/
- * trap.c, cannot be reused across a suspended parent and a running
- * child without one clobbering the other's in-progress kernel call
- * chain) -- tracked as follow-up work (#334's own "context switch
- * support" scope item).
+ * save area. On those arches, a GEMDOS call from AES/kernel-internal
+ * code goes through a *real* trap #1, which switches to a single shared
+ * supervisor stack (supstk) automatically, at the CPU level, on trap
+ * entry -- so gouser()'s own reuse of that same shared stack for a
+ * nested/reentrant launch never clobbers the caller's own AES-level
+ * call chain, which is safely sitting on its own separate, untouched
+ * per-process stack (aes/struct.h's struct uda) the whole time.
+ *
+ * This arch has no such automatic isolation: AES-internal code calls
+ * BDOS directly, as an ordinary nested C function call, with no re-trap
+ * (see this file's own enter()/bdos_trap2() comment below) -- so a
+ * "kernel-code process" launch (the p_tlen==p_dlen==p_blen==0 branch of
+ * gouser() below: accdesk_start/deskstart/coma_start/ui_start, all
+ * reached via aes/gemshlib.c's aes_run_rom_program() or bios.c's own
+ * boot-time Pexec(PE_GO/PE_GOTHENFREE, ...)) executes on top of
+ * whatever the caller's own C call stack currently is. Resuming that
+ * caller once the launched process's own Pterm()/Pterm0() runs -- deep
+ * inside an entirely different, much-later call chain -- is exactly
+ * what setjmp()/longjmp() are for: x86_64_kexec_resume (below) is a
+ * LIFO stack of one jmp_buf per currently-suspended nesting level,
+ * saved/restored around each gouser() call the same way ordinary nested
+ * C calls naturally nest, with no need to touch any actual stack
+ * pointer at all (found via Copilot's review of #376, which caught two
+ * symptoms of this: aes/arch/x86_64/gemdosif.c's dos_exec() and aes/
+ * arch/x86_64/gemstart.c's accdesk_start() both blindly reset %rsp back
+ * to D.g_int[0].a_uda.u_spsuper on every reentrant launch, discarding
+ * whatever of gem_main()'s own call chain was still live there).
+ *
+ * A *real*, ring-3 process (the other branch of gouser() below, via
+ * x86_64_enter_user()) is a different problem this does NOT solve:
+ * there is no suspended C call chain to resume there at all (control
+ * left the kernel entirely via iretq), so termuser() still panics for
+ * that case -- a genuine per-process kernel stack (or an equivalent)
+ * remains #334's own open "context switch support" scope item, tracked
+ * separately from the kernel-code-process reentrancy this file's own
+ * x86_64_kexec_resume now handles. A real process launched *while*
+ * nested inside a kernel-code-process chain (e.g. eventually double-
+ * clicking a real .PRG from the desktop) would still panic incorrectly
+ * today -- not yet reachable by anything in this tree (no such launch
+ * path from AES exists yet), but worth revisiting once one does.
  *
  *  - enter()/bdos_trap2() are never actually invoked as functions on this
  *    arch: bdos/bdosmain.c only ever takes their *address* (Setexc(0x21,
@@ -37,6 +67,7 @@
 #include "bdosdefs.h"
 #include "tosvars.h"
 #include "bdosstub.h"
+#include "setjmp.h"
 
 /*
  * Declared directly, not through a shared header: bdos/build.mk's
@@ -53,7 +84,7 @@ extern void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp) 
 
 void enter(void);
 void bdos_trap2(void);
-void gouser(void) NORETURN;
+void gouser(void);
 void termuser(void) NORETURN;
 
 void enter(void)
@@ -63,6 +94,15 @@ void enter(void)
 void bdos_trap2(void)
 {
 }
+
+/*
+ * LIFO stack of one jmp_buf per currently-suspended "kernel-code
+ * process" launch nesting level -- see this file's own top comment.
+ * NULL when nothing is currently launched this way (the common case:
+ * an ordinary real-process Pterm() then correctly falls through to
+ * termuser()'s own panic below, #334's own remaining scope).
+ */
+static jmp_buf *x86_64_kexec_resume;
 
 #if CONF_WITH_AES
 extern void accdesk_start(void) NORETURN;      /* aes/arch/x86_64/gemstart.c */
@@ -145,11 +185,21 @@ void gouser(void)
          * once a match is found. AES process 0 (ui_start) itself is not
          * one of these candidates: exec_os already holds it (bios.c),
          * so the plain fallback below already covers it correctly.
+         *
+         * Reentrancy: this whole branch can run nested inside an
+         * already-running kernel-code process (accdesk_start's own
+         * aes_run_rom_program(deskstart)/(coma_start), called from deep
+         * inside gem_main()'s own call chain) -- see this file's own top
+         * comment on why that's safe here (an ordinary nested C call,
+         * no stack pointer touched) and how the eventual Pterm()/
+         * Pterm0() finds its way back via x86_64_kexec_resume.
          */
         void (*target)(PD *) = (void (*)(PD *))exec_os;
 #if CONF_WITH_AES || CONF_WITH_CLI
         ULONG want = p->p_tbase;
 #endif
+        jmp_buf buf;
+        jmp_buf *saved_resume = x86_64_kexec_resume;
 
 #if CONF_WITH_AES
         X86_64_ROM_CANDIDATE(&target, want, accdesk_start);
@@ -159,8 +209,19 @@ void gouser(void)
         X86_64_ROM_CANDIDATE(&target, want, coma_start);
 #endif
 
-        target(p);
-        panic("x86-64: kernel-code process entry returned unexpectedly\n");
+        x86_64_kexec_resume = &buf;
+        if (setjmp(buf) == 0) {
+            target(p);
+            panic("x86-64: kernel-code process entry returned unexpectedly\n");
+        }
+        /* Reached only via termuser()'s longjmp() below, once this
+         * launch's own Pterm()/Pterm0() runs: restore the enclosing
+         * level's own resume point (NULL if this was the outermost) and
+         * fall through to gouser()'s own ordinary C return, unwinding
+         * normally back through proc_go()/xexec() to this call's own
+         * original caller -- run has already been reassigned to it by
+         * xterm() by this point. */
+        x86_64_kexec_resume = saved_resume;
     } else {
         /*
          * A real, loaded process (#334): build its own address space --
@@ -210,10 +271,14 @@ void gouser(void)
          * should ever see it.
          *
          * No per-process kernel stack or termuser()-style resumption
-         * yet (see this file's own top comment): this is the one-shot
-         * primitive for #334's "run a single process to completion"
-         * milestone, not the full parent/child coroutine multiple
-         * concurrent processes would need.
+         * yet for *this* branch (see this file's own top comment and
+         * termuser()'s own): this is the one-shot primitive for #334's
+         * "run a single process to completion" milestone, not the full
+         * parent/child coroutine multiple concurrent real processes
+         * would need. (The *other* branch of gouser(), above -- a
+         * "kernel-code process" -- does have real reentrant resumption,
+         * via x86_64_kexec_resume; it just doesn't need a distinct
+         * kernel stack to get it, since it's ordinary nested C code.)
          */
         UQUAD pml4_phys = x86_64_pmem_alloc_pages(1);
         UQUAD entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
@@ -233,19 +298,29 @@ void termuser(void)
      * run->p_dreg[0] = rc;` before calling here -- the m68k/ARM
      * convention for "the exit code is in D0 once the parent resumes"
      * (its own comment above xterm()'s definition), read back here
-     * since `run` now points at whichever PD launched this one (on
-     * this arch, so far, always the kernel's own placeholder
-     * initial_basepage -- see bdosmain.c -- since #334's own scope
-     * excludes multiple concurrent processes).
+     * since `run` now points at whichever PD launched this one.
      *
-     * A real parent/child coroutine resume (the m68k/ARM rwa.S
-     * equivalent of what this function's name promises) needs a
-     * per-process kernel stack this arch does not have yet -- see this
-     * file's own top comment. Until then, this is where "run a single
-     * process to completion" (#334's own success bar) actually ends:
-     * there is no suspended kernel call chain to resume back into, so
-     * report the exit code and stop cleanly instead of pretending to
-     * resume something that was never frozen in the first place.
+     * x86_64_kexec_resume set means the process that just called
+     * Pterm()/Pterm0() was a "kernel-code process" (this file's own top
+     * comment): gouser() pushed a resume point there right before
+     * running it, so unwind back to exactly that point, an ordinary
+     * nested C call away from wherever this launch's own caller is
+     * (proc_go()/xexec(), which then returns run->p_dreg[0] -- the exit
+     * code this comment's own first paragraph describes -- back up
+     * through dos_exec()/aes_run_rom_program() to sh_ldapp() or
+     * gem_main(), exactly as those callers expect).
+     *
+     * NULL means a *real* ring-3 process (x86_64_enter_user() above)
+     * terminated instead -- there is no suspended C call chain to
+     * resume for that case (control left the kernel entirely via
+     * iretq), and this arch has no per-process kernel stack yet to
+     * build one with (see this file's own top comment: #334's own
+     * remaining "context switch support" scope item). Report the exit
+     * code and stop cleanly rather than pretending to resume something
+     * that was never frozen in the first place.
      */
+    if (x86_64_kexec_resume)
+        longjmp(*x86_64_kexec_resume, 1);
+
     panic("x86-64: process exited, rc=%ld\n", (long)run->p_dreg[0]);
 }

@@ -46,7 +46,6 @@ void accdesk_start(void) NORETURN; /* aes/geminit.c: "called only from gemstart.
 
 static void ui_start_on_scratch_stack(PD *p) NORETURN;
 static void ui_start_run_gem_main(PD *p) NORETURN;
-static void accdesk_start_on_stack(PD *unused) NORETURN;
 
 /* Saved across bzero(&D, ...) below, and restored into ad_envrn on
  * every AES restart -- ARM/m68k's own save_ad_envrn (gemstart.S). */
@@ -190,16 +189,29 @@ static void ui_start_run_gem_main(PD *p)
  * own comment shows -- not needed here since this process is never
  * itself Pexec()'d with a real TEXT/DATA/BSS to shrink to; skip that
  * step entirely, unlike a real loaded program's own entry).
+ *
+ * Unlike ui_start(), this needs no stack switch of its own: it is
+ * called from *inside* gem_main()'s own still-live call chain (already
+ * running on D.g_int[0].a_uda.u_spsuper by the time ui_start_run_gem_main()
+ * calls gem_main()), so it's already on the right stack, just deeper
+ * into it -- exactly like desk/arch/x86_64/deskstart.c's own deskstart(),
+ * which never switches stacks either. An earlier version of this
+ * function *did* call x86_64_call_on_stack(u_spsuper, ...) here, which
+ * was a real bug (Copilot's review of #376 caught it): jumping back to
+ * u_spsuper -- the same fixed top of stack gem_main() itself started
+ * running from -- discarded gem_main()'s own already-live call frames
+ * (aes_run_rom_program()/dos_exec()/Pexec()/gouser(), all still on the
+ * stack at this exact point) instead of merely continuing to descend
+ * from wherever they currently are, corrupting them the moment
+ * run_accs_and_desktop() itself pushed anything. bdos/arch/x86_64/
+ * rwa.c's own x86_64_kexec_resume mechanism (added alongside this fix)
+ * is what makes it safe to just call this directly now: gouser() saves
+ * a resume point right before calling this, and this function's own
+ * eventual Pterm0() unwinds back to exactly that point via longjmp(),
+ * resuming gem_main()'s own call chain intact.
  */
 void accdesk_start(void)
 {
-    x86_64_call_on_stack(D.g_int[0].a_uda.u_spsuper, accdesk_start_on_stack, NULL);
-}
-
-static void accdesk_start_on_stack(PD *unused)
-{
-    (void)unused;
-
     run_accs_and_desktop();
 
     Pterm0();
