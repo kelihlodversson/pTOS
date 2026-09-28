@@ -157,8 +157,20 @@ void forker(void)
                 /* if it's a time event & the previously recorded one
                  * was also a time event, then coalesce them.
                  * otherwise record the event
+                 *
+                 * gl_rec_started guards the (gl_rbuf-1) dereference:
+                 * on the very first entry of a recording session,
+                 * gl_rbuf still equals the caller's own pbuff (see
+                 * ap_trecd(), gemaplib.c), so gl_rbuf-1 points one
+                 * EVNTREC before the caller's buffer -- reading (and,
+                 * on a false-positive match, writing) that out-of-
+                 * bounds slot if the first recorded event happens to
+                 * be TCHNG. This bug predates this file's own x86-64
+                 * port (it read (gl_rbuf-1)->f_code before the EVNTREC
+                 * conversion above), so gl_rec_started is arch-neutral,
+                 * not specific to any one target.
                  */
-                if ((g.f_code == tchange) && ((gl_rbuf-1)->ap_event == TCHNG))
+                if (gl_rec_started && (g.f_code == tchange) && ((gl_rbuf-1)->ap_event == TCHNG))
                 {
                     (gl_rbuf-1)->ap_value += g.f_data;
                 }
@@ -168,6 +180,7 @@ void forker(void)
                     gl_rbuf->ap_value = g.f_data;
                     gl_rbuf++;
                     gl_rlen--;
+                    gl_rec_started = TRUE;
                     if (gl_rlen <= 0)
                         gl_recd = FALSE;
                 }

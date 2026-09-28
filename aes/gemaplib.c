@@ -46,6 +46,10 @@ BOOL     gl_play;
 BOOL     gl_recd;
 WORD     gl_rlen;
 EVNTREC  *gl_rbuf;
+/* Whether forker() (gemdisp.c) has written at least one entry into
+ * gl_rbuf yet this recording session -- see its own comment on why the
+ * TCHNG-coalescing check must not run until this is TRUE. */
+BOOL     gl_rec_started;
 
 
 /*
@@ -204,6 +208,7 @@ WORD ap_trecd(EVNTREC *pbuff,WORD length)
     gl_recd = TRUE;
     gl_rlen = length;
     gl_rbuf = pbuff;
+    gl_rec_started = FALSE;
     enable_interrupts();
 
     /* check every 0.1 seconds if recording is done */
