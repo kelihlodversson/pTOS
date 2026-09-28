@@ -269,3 +269,63 @@ void *x86_64_low_kdata_alloc(LONG needed)
     return (void *)(uintptr_t)aligned;
 }
 
+/*
+ * A FOURTH pool (#332): the EFI GOP framebuffer, mapped read/write into
+ * this kernel's own page tables at a fixed low virtual base right after
+ * the low-kdata pool. Unlike the other three, this one's physical backing
+ * isn't allocated from pmem.c at all -- it's wherever firmware/hardware
+ * already put the framebuffer (bios/machine/pc-x86_64/gop.c's own
+ * x86_64_gop_probe() reads that address from GOP itself) -- this file
+ * only maps that caller-given range, it never chooses or owns it.
+ *
+ * Placed in the same low-canonical, PML4-slot-0 region as the TPA/kdata
+ * pools (reusing their already-built PD, not a fresh PML4 slot) rather
+ * than somewhere in the kernel's own higher half, for two reasons: it
+ * costs no extra PDPT/PD-pool budget (pgtable.c's MAX_PDPTS/MAX_PDS,
+ * already fully spoken for -- see that file's own comment) the way a new
+ * PML4 slot would, and it means v_bas_ad (screen.c) ends up with a real,
+ * sub-4GiB address "for free" -- one entry closer to closing #372's own
+ * v_bas_ad line in ssystem.c's lval_table, though not itself a claim
+ * that #372 is closed (the value stored there is still whatever a real
+ * ILP32 consumer needs it to be, which this file has no say over).
+ *
+ * X86_64_FRAMEBUFFER_MAX_BYTES (pc_x86_64_memory.h -- public so gop.c's
+ * x86_64_gop_reserved_range() can apply the identical bound, see its own
+ * comment there) is a sanity ceiling, not a real limit on any actual
+ * framebuffer size: it exists so a firmware-reported mode this arch has
+ * no business trusting blindly (a garbled FrameBufferSize, or a pixel
+ * format check that somehow let through something enormous) fails closed
+ * (x86_64_low_fb_init() returns 0, gop.c treats that as "no framebuffer")
+ * rather than mapping an unbounded amount of physical address space on
+ * the caller's say-so. 64 MiB comfortably covers every mode a QEMU/OVMF
+ * or typical real firmware GOP implementation reports, up to and
+ * including a 3840x2160 32bpp (4K) mode at a little over 33 MiB -- a
+ * plain 16 MiB ceiling (this pool's original size) rejected that
+ * resolution outright, and real firmware reporting it is not implausible
+ * (Copilot review, PR #373). Costs nothing extra in PDPT/PD-pool budget
+ * either way: this whole pool shares PML4 slot 0's single PD with the
+ * TPA/kdata pools (see above), which covers up to 1 GiB of virtual space
+ * at 2 MiB granularity -- 64 MiB is a small fraction of that, the same as
+ * 16 MiB was.
+ */
+#define X86_64_LOW_FB_VIRT_BASE (X86_64_LOW_KDATA_VIRT_BASE + X86_64_LOW_KDATA_BYTES)
+
+UQUAD x86_64_low_fb_init(UQUAD aligned_phys, UQUAD page_count)
+{
+    /*
+     * Compared as a page count against a page-count ceiling, not as
+     * page_count * X86_64_PAGE_2M_SIZE against a byte ceiling: gop.c
+     * rejects any FrameBufferBase/FrameBufferSize pair that could
+     * overflow a UQUAD by the time it reaches this range-in-2MiB-pages
+     * form, but page_count itself is not otherwise bounded before this
+     * point, so multiplying first could still wrap to a small value and
+     * pass the byte-ceiling check it exists to enforce (Copilot review,
+     * PR #373).
+     */
+    if (page_count > X86_64_FRAMEBUFFER_MAX_BYTES / X86_64_PAGE_2M_SIZE)
+        return 0;
+
+    x86_64_map_kernel_pages(X86_64_LOW_FB_VIRT_BASE, aligned_phys, page_count);
+    return X86_64_LOW_FB_VIRT_BASE;
+}
+

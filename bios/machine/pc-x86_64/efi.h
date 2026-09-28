@@ -104,8 +104,21 @@ typedef EFI_STATUS (EFIAPI *EFI_ALLOCATE_POOL)(ULONG PoolType, UQUAD Size, void 
 typedef EFI_STATUS (EFIAPI *EFI_FREE_POOL)(void *Buffer);
 
 /*
+ * LocateProtocol (UEFI spec 7.3): searches every handle in the system for
+ * the first one implementing Protocol, unlike HandleProtocol() above,
+ * which needs a specific handle already in hand. Needed for
+ * EFI_GRAPHICS_OUTPUT_PROTOCOL (#332): GOP lives on whatever handle the
+ * firmware's own GPU driver installed it on, not on this image's own
+ * loaded-image handle the way EFI_LOADED_IMAGE_PROTOCOL does -- there is
+ * no handle to call HandleProtocol() against without already knowing it.
+ * Registration is always NULL here (this file never registers for
+ * protocol-arrival notifications via RegisterProtocolNotify).
+ */
+typedef EFI_STATUS (EFIAPI *EFI_LOCATE_PROTOCOL)(EFI_GUID *Protocol, void *Registration, void **Interface);
+
+/*
  * EFI_BOOT_SERVICES (UEFI spec 4.4).  Field order and count matter: only
- * AllocatePool, FreePool, GetMemoryMap, HandleProtocol and
+ * AllocatePool, FreePool, GetMemoryMap, HandleProtocol, LocateProtocol and
  * ExitBootServices are given real prototypes, but every field ahead of
  * them must still be present (as a same-sized VOID*) so those land at
  * their real offsets.
@@ -144,6 +157,22 @@ typedef struct {
     void *Exit;
     void *UnloadImage;
     EFI_EXIT_BOOT_SERVICES ExitBootServices;
+
+    /* Between ExitBootServices and LocateProtocol (UEFI spec 4.4 table
+     * order) -- none of these ten are ever called, but every one must
+     * still occupy its own slot for LocateProtocol to land at its real
+     * offset. */
+    void *GetNextMonotonicCount;
+    void *Stall;
+    void *SetWatchdogTimer;
+    void *ConnectController;
+    void *DisconnectController;
+    void *OpenProtocol;
+    void *CloseProtocol;
+    void *OpenProtocolInformation;
+    void *ProtocolsPerHandle;
+    void *LocateHandleBuffer;
+    EFI_LOCATE_PROTOCOL LocateProtocol;
 
     /* Fields beyond this point are never referenced, so are left out. */
 } EFI_BOOT_SERVICES;
@@ -190,5 +219,67 @@ typedef struct {
     ULONG ImageDataType;
     void *Unload;
 } EFI_LOADED_IMAGE_PROTOCOL;
+
+/* EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID (UEFI spec 12.9). */
+#define EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID \
+    { 0x9042a9de, 0x23dc, 0x4a38, { 0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a } }
+
+/*
+ * EFI_GRAPHICS_PIXEL_FORMAT (UEFI spec 12.9) -- only the two 32-bit-packed
+ * formats #332's own scope covers ("at minimum 32-bit RGB/BGR") are given
+ * names; PixelBitMask (a firmware-chosen, potentially non-byte-aligned
+ * layout described by PixelInformation) and PixelBltOnly (no linear
+ * framebuffer at all, Blt() is the only way to draw) are both rejected by
+ * this file's own probe rather than silently misinterpreted.
+ */
+#define PIXEL_RGB_RESERVED_8BIT_PER_COLOR 0
+#define PIXEL_BGR_RESERVED_8BIT_PER_COLOR 1
+#define PIXEL_BIT_MASK 2
+#define PIXEL_BLT_ONLY 3
+
+/*
+ * EFI_GRAPHICS_OUTPUT_MODE_INFORMATION (UEFI spec 12.9). PixelInformation
+ * (an EFI_PIXEL_BITMASK: four ULONG masks) is only meaningful when
+ * PixelFormat == PixelBitMask, which this file's probe rejects outright --
+ * kept as an opaque same-sized placeholder (4 ULONGs) purely so
+ * PixelsPerScanLine lands at its real offset, never actually read.
+ */
+typedef struct {
+    ULONG Version;
+    ULONG HorizontalResolution;
+    ULONG VerticalResolution;
+    ULONG PixelFormat;
+    ULONG PixelInformation[4];
+    ULONG PixelsPerScanLine;
+} EFI_GRAPHICS_OUTPUT_MODE_INFORMATION;
+
+/*
+ * EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE (UEFI spec 12.9): the live mode GOP
+ * already selected by the time this file's probe runs -- Info/
+ * FrameBufferBase/FrameBufferSize are all that's needed to use whatever
+ * mode firmware booted with (#332's own scope: "using whatever mode GOP
+ * hands over at boot time is sufficient"), no QueryMode()/SetMode() call
+ * needed.
+ */
+typedef struct {
+    ULONG MaxMode;
+    ULONG Mode;
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *Info;
+    UQUAD SizeOfInfo;
+    UQUAD FrameBufferBase;
+    UQUAD FrameBufferSize;
+} EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE;
+
+/*
+ * EFI_GRAPHICS_OUTPUT_PROTOCOL (UEFI spec 12.9): only Mode is read --
+ * QueryMode/SetMode/Blt are kept as opaque placeholders purely so Mode
+ * lands at its real (fourth) offset.
+ */
+typedef struct {
+    void *QueryMode;
+    void *SetMode;
+    void *Blt;
+    EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *Mode;
+} EFI_GRAPHICS_OUTPUT_PROTOCOL;
 
 #endif /* PC_X86_64_EFI_H */
