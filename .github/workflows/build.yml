@@ -230,6 +230,80 @@ jobs:
           path: products/
           retention-days: 14
 
+      # A build that links is not a build that boots: without this, a
+      # regression in the boot path, the trap-dispatch/machine-hook layer,
+      # or the exception/panic path would still show as a green job, since
+      # nothing above actually runs the image. Only pc-x86_64 boots this
+      # way (EFI/OVMF); a future non-EFI x86-64 config would need its own
+      # check instead of this one.
+      - name: Install QEMU and OVMF for the boot test
+        if: matrix.config == 'pc-x86_64'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-system-x86 ovmf
+
+      # Booted the same way ptos-smoketest documents: a synthesized FAT ESP
+      # directory (QEMU's fat: driver), OVMF firmware, -machine pc (legacy
+      # IDE, which OVMF's boot manager auto-discovers the ESP through --
+      # q35/AHCI needs more setup, not verified here), no display since
+      # there is no framebuffer driver yet (#332) and all boot progress is
+      # on COM1. -cpu qemu64,+pdpe1gb is required: the physical-memory
+      # direct map needs 1 GiB pages (#344), which QEMU's default qemu64
+      # CPU model does not advertise on its own.
+      #
+      # pTOS never exits on its own once it reaches the shell -- it waits
+      # for keyboard input forever -- so `timeout` is expected to be what
+      # ends the process, not a status. That is why the exit code is
+      # checked explicitly instead of just letting the step fail or
+      # succeed on it: 124 means the timeout fired (the normal case here),
+      # anything else means QEMU itself exited unexpectedly.
+      - name: Boot-test under QEMU/OVMF
+        if: matrix.config == 'pc-x86_64'
+        run: |
+          mkdir -p esp/EFI/BOOT
+          cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd .
+
+          set +e
+          timeout 60 qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+            -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
+            -drive format=raw,file=fat:rw:esp \
+            -serial file:boot.log -display none
+          qemu_exit=$?
+          set -e
+
+          echo "::group::Serial console log"
+          cat boot.log
+          echo "::endgroup::"
+
+          if [ "$qemu_exit" != 124 ]; then
+            echo "::error::qemu-system-x86_64 exited with code $qemu_exit instead of running until the timeout killed it -- that means it never reached the shell (where it would otherwise wait for input forever)"
+            exit 1
+          fi
+
+          # A triple fault (a page-table, GDT/IDT or ABI bug) makes OVMF
+          # silently reset the VM and retry, which shows up as the boot
+          # progress lines repeating -- so exactly one attempt is part of
+          # the pass signal, not just "did it get far enough".
+          entries=$(grep -c 'EFI entry reached' boot.log || true)
+          if [ "$entries" != 1 ]; then
+            echo "::error::expected exactly one 'EFI entry reached' line, found $entries -- likely a reset/triple-fault loop"
+            exit 1
+          fi
+
+          if grep -q '^panic:' boot.log; then
+            echo "::error::the kernel panicked during boot"
+            exit 1
+          fi
+
+          if ! grep -q 'Welcome to EmuCON2' boot.log; then
+            echo "::error::never reached the EmuCON2 shell prompt"
+            exit 1
+          fi
+
+          echo "Boot test passed: reached the EmuCON2 shell, no reset loop, no panic."
+
       - name: Report the failure
         if: failure()
         run: |
