@@ -176,13 +176,22 @@ void forker(void)
                 }
                 else
                 {
-                    gl_rbuf->ap_event = event_code(g.f_code);
-                    gl_rbuf->ap_value = g.f_data;
-                    gl_rbuf++;
-                    gl_rlen--;
-                    gl_rec_started = TRUE;
-                    if (gl_rlen <= 0)
+                    /* only write if there is still room in the buffer */
+                    if (gl_rlen > 0)
+                    {
+                        gl_rbuf->ap_event = event_code(g.f_code);
+                        gl_rbuf->ap_value = g.f_data;
+                        gl_rbuf++;
+                        gl_rlen--;
+                        gl_rec_started = TRUE;
+                        if (gl_rlen <= 0)
+                            gl_recd = FALSE;
+                    }
+                    else
+                    {
+                        /* buffer is full; stop recording */
                         gl_recd = FALSE;
+                    }
                 }
             }
         }

@@ -263,6 +263,16 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
         return;
     }
 
+    /* Trap class 2 (GEM) is not safe from ring 3 yet -- it dereferences
+     * AESPB/VDIPB pointers (rdi) directly without validation or
+     * translation, which would fault the kernel if rdi points at
+     * unmapped/kernel memory from user mode. Reject the entire class
+     * from ring 3 until the #352 copy/validation path exists. */
+    if (from_ring3 && trap_class == X86_64_TRAP_GEM) {
+        frame->rax = (UQUAD)-1L;
+        return;
+    }
+
     switch (trap_class) {
     case X86_64_TRAP_GEMDOS: {
         /* 5 slots, not 4: bdosmain.c's own dispatch (the p4 case, e.g.
