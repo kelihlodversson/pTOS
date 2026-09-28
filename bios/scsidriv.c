@@ -78,7 +78,15 @@ static LONG scsidriv_Error(SCSIHandle handle, WORD rwflag, WORD errnum);
  * since adding subsequent SCSI driver handlers is done by overwriting
  * the existing data, not reallocating the cookie.
  */
+#ifdef __x86_64__
+/* See scsidriv.h's own __x86_64__ branch: this is the pointer that
+ * scsidriv_root is #define'd to dereference, not a plain SCSIRoot
+ * variable, so it needs its own declared type (scsidriv_init()
+ * allocates it from the low-kdata pool before first use). */
+SCSIRoot *x86_64_scsidriv_root_ptr;
+#else
 SCSIRoot scsidriv_root;         /* in RAM so it can be modified */
+#endif
 
 const SCSIRoot scsidriv_root_init =
 {
@@ -95,6 +103,35 @@ const SCSIRoot scsidriv_root_init =
 };
 
 static UBYTE *frbptr;           /* set by scsidriv_init() */
+
+#ifdef __x86_64__
+/*
+ * bios/machine/pc-x86_64/memory.c's own low-kdata pool -- declared
+ * directly here rather than via its own header, matching bios.c's
+ * identical precedent for x86_64_low_tpa_alloc(): only the one-time
+ * allocation below needs it in this file. See scsidriv.h's own
+ * __x86_64__ branch for why scsidriv_root's storage needs to live there.
+ */
+extern void *x86_64_low_kdata_alloc(LONG needed);
+
+/*
+ * Reserves scsidriv_root's own low-kdata storage, separately from and
+ * well before scsidriv_init() itself: bios/machine.c's fill_cookie_jar()
+ * reads &scsidriv_root (the 'SCSI' cookie) before blkdev_init() ever
+ * calls scsidriv_init() (device/bus detection needs ACSI/IDE probing
+ * that has to happen first) -- on every other arch that ordering is
+ * harmless, since &scsidriv_root is a fixed link-time address regardless
+ * of whether its contents have been initialized yet, but here the
+ * address itself only exists once this runs. Called from
+ * bios/machine/pc-x86_64/startup.c, right alongside
+ * x86_64_low_kdata_init() itself, deliberately before fill_cookie_jar()
+ * can run.
+ */
+void x86_64_scsidriv_root_alloc(void)
+{
+    x86_64_scsidriv_root_ptr = x86_64_low_kdata_alloc(sizeof(*x86_64_scsidriv_root_ptr));
+}
+#endif
 
 /*
  * bitmap of detected devices on each bus
@@ -120,6 +157,9 @@ void scsidriv_init(void)
     HandleEntry *h;
     ULONG bit;
 
+    /* x86_64_scsidriv_root_ptr (see scsidriv.h) was already allocated by
+     * x86_64_scsidriv_root_alloc(), well before this runs -- see that
+     * function's own comment for why. */
     scsidriv_root = scsidriv_root_init;
 
     for (bus = 0, bit = 1; bus <= MAX_BUS; bus++, bit <<= 1)

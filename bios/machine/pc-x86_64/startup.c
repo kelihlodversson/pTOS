@@ -410,7 +410,42 @@ void NORETURN x86_64_higher_half_main(void)
     /* #334: the second, low-mapped pool bdos/proc.c's alloc_tpa() uses
      * on this arch -- see pc_x86_64_memory.h's own comment. */
     x86_64_low_tpa_init();
-    earlycon_puts("pTOS x86-64: low TPA pool ready, handing off to biosmain()\n");
+    earlycon_puts("pTOS x86-64: low TPA pool ready\n");
+
+    /* #351: the third, low-mapped pool for kernel-owned structures a
+     * 32-bit ABI field (the cookie jar) hands out by address -- see
+     * memory.c's own comment. Must run before fill_cookie_jar()
+     * (bios/machine.c, via bios_init()) or anything else that points a
+     * low-kdata-backed global (bios/vectors.h's x86_64_vector_5ms_ptr,
+     * bios/scsidriv.h's x86_64_scsidriv_root_ptr) into this pool. */
+    x86_64_low_kdata_init();
+
+    /*
+     * Reserve each low-kdata-backed global's own storage right here,
+     * deliberately well before the subsystem that actually populates it
+     * (init_system_timer(), scsidriv_init()) ever runs -- both are called
+     * much later in bios_init(), after fill_cookie_jar() already reads
+     * &vector_5ms/&scsidriv_root back for the '_5MS'/'SCSI' cookies. See
+     * bios/vectors.h's/bios/scsidriv.h's own comments on these two
+     * functions. Declared directly, not via their own headers, matching
+     * this file's own x86_64_low_tpa_init() precedent: SCSIRoot's real
+     * type is not otherwise needed here. Guarded exactly like each
+     * function's own definition (bios/mfp.c, bios/scsidriv.c), so a
+     * future x86-64 config that turns either option off still links.
+     */
+#if !CONF_WITH_MFP
+    {
+        extern void x86_64_vector_5ms_alloc(void);
+        x86_64_vector_5ms_alloc();
+    }
+#endif
+#if CONF_WITH_SCSI_DRIVER
+    {
+        extern void x86_64_scsidriv_root_alloc(void);
+        x86_64_scsidriv_root_alloc();
+    }
+#endif
+    earlycon_puts("pTOS x86-64: low kernel-data pool ready, handing off to biosmain()\n");
 
     biosmain();
 

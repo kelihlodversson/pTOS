@@ -198,3 +198,74 @@ void x86_64_map_low_tpa_into(UQUAD pml4_phys, UQUAD virt_start, UQUAD virt_end, 
                               1, 1, user, low_tpa_alloc_page);
 }
 
+/*
+ * A THIRD, independent pool (#351): kernel-owned structures that a 32-bit
+ * ABI field hands out *by address* -- today, the cookie jar's own 'SCSI'
+ * and '_5MS' entries (bios/machine.c's fill_cookie_jar(), guarded by
+ * CONF_WITH_SCSI_DRIVER and !CONF_WITH_MFP, both true for this machine)
+ * take the address of an ordinary higher-half kernel global
+ * (scsidriv_root, vector_5ms) and truncate it to the ULONG a cookie's
+ * value field can hold -- silently corrupting it, since this kernel's own
+ * data lives at 0xffffffff80000000+, nowhere near representable in 32
+ * bits. Not yet an active crash (nothing on this arch reads a cookie back
+ * yet), but already-wrong data produced on every boot.
+ *
+ * Deliberately a THIRD pool rather than reusing the low TPA pool's own
+ * spare space: the TPA pool's virtual range gets explicitly, selectively
+ * remapped into a real process's own address space as user-accessible
+ * (x86_64_map_low_tpa_into(), gouser()) -- carving kernel-only bookkeeping
+ * out of the same physical range would depend on every future caller of
+ * that function continuing to avoid this pool's particular offset, an
+ * invariant nothing enforces. This pool is never passed to
+ * x86_64_map_user_page() at all, so it can never become ring-3-reachable
+ * by construction, not by convention.
+ *
+ * Like the TPA pool, this only relocates each structure's *storage*: the
+ * variable itself becomes a pointer into this pool (set once, at
+ * kernel-init time, to whatever x86_64_low_kdata_alloc() hands back),
+ * with a macro making every existing read/write/address-of site
+ * transparently dereference that pointer instead of naming a fixed
+ * symbol -- each site remains an ordinary higher-half global on every
+ * other arch, where a 32-bit cookie value has never been a problem. See
+ * bios/vectors.h/bios/scsidriv.h's own __x86_64__ branches for the
+ * macro-indirection this pool feeds.
+ *
+ * Whether a real ring-3 process's own BIOS/XBIOS call could ever reach
+ * scsidriv_root/vector_5ms while running under that process's own CR3
+ * (which does not map this pool at all, the same gap #352 already tracks
+ * for the low system-vector page) is not addressed here: no BIOS/XBIOS
+ * call reachable from #334's current single-process milestone touches
+ * either structure, so this pool's own kernel-only reachability is
+ * sufficient for now, not a claim that it always will be.
+ */
+#define X86_64_LOW_KDATA_VIRT_BASE (X86_64_LOW_TPA_VIRT_BASE + X86_64_LOW_TPA_BYTES)
+#define X86_64_LOW_KDATA_BYTES (2 * 1024 * 1024)
+
+static UQUAD low_kdata_next;
+static UQUAD low_kdata_end;
+
+void x86_64_low_kdata_init(void)
+{
+    UQUAD raw = x86_64_pmem_alloc_pages_below(
+        (X86_64_LOW_KDATA_BYTES + X86_64_PAGE_2M_SIZE) / X86_64_PAGE_SIZE,
+        0x100000000ULL);
+    UQUAD phys = (raw + X86_64_PAGE_2M_SIZE - 1) & ~(X86_64_PAGE_2M_SIZE - 1);
+
+    x86_64_map_kernel_pages(X86_64_LOW_KDATA_VIRT_BASE, phys,
+                             X86_64_LOW_KDATA_BYTES / X86_64_PAGE_2M_SIZE);
+
+    low_kdata_next = X86_64_LOW_KDATA_VIRT_BASE;
+    low_kdata_end = X86_64_LOW_KDATA_VIRT_BASE + X86_64_LOW_KDATA_BYTES;
+}
+
+void *x86_64_low_kdata_alloc(LONG needed)
+{
+    UQUAD aligned = (low_kdata_next + 15) & ~(UQUAD)15;
+
+    if (aligned + (UQUAD)needed > low_kdata_end)
+        return NULL;
+
+    low_kdata_next = aligned + (UQUAD)needed;
+    return (void *)(uintptr_t)aligned;
+}
+

@@ -70,4 +70,24 @@ UBYTE *x86_64_low_tpa_alloc(LONG needed);
  */
 void x86_64_map_low_tpa_into(UQUAD pml4_phys, UQUAD virt_start, UQUAD virt_end, int user);
 
+/*
+ * Allocates and low-maps (see memory.c's own #351 comment) the third
+ * pool: kernel-owned structures a 32-bit ABI field (the cookie jar, so
+ * far) hands out by address, and so must have a real sub-4GiB address of
+ * their own. Same preconditions as x86_64_low_tpa_init(); call it right
+ * alongside that one.
+ */
+void x86_64_low_kdata_init(void);
+
+/*
+ * Bump-allocates `needed` bytes (16-byte aligned) from the pool
+ * x86_64_low_kdata_init() set up, for a kernel-internal caller to point
+ * its own low, sub-4GiB-address global at (bios/vectors.h's
+ * x86_64_vector_5ms_ptr, bios/scsidriv.h's x86_64_scsidriv_root_ptr).
+ * Returns NULL if the pool is exhausted; every current caller allocates
+ * once, at boot, for a small fixed-size object, so this is a can't-happen
+ * rather than a real error path.
+ */
+void *x86_64_low_kdata_alloc(LONG needed);
+
 #endif /* PC_X86_64_MEMORY_H */
