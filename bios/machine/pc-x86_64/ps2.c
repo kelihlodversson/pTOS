@@ -149,34 +149,43 @@ void x86_64_ps2_init(void)
 }
 
 /*
- * Set 1 also has two "extended" prefix bytes, 0xe0 and 0xe1, ahead of
- * keys with no place in the original XT layout (the dedicated arrow-key
- * cluster, Ins/Del/Home/End/PgUp/PgDn, right Ctrl/Alt, Pause, ...).
- * bios/ikbd.c's own convert_scancode() indexes current_keytbl.norm[]
- * et al (its own comment: "128-byte direct scancode lookup tables")
- * with whatever kbd_int() is handed, so passing 0xe0/0xe1 through
- * unfiltered is an out-of-bounds read there, and the byte that follows
- * would be misread as some ordinary key's scancode -- pTOS's own
- * KEY_UPARROW/KEY_LTARROW/KEY_RTARROW/KEY_DNARROW (ikbd.c) already match
- * this keyboard's *numpad* cluster's unprefixed codes instead (which
- * every PS/2 keyboard still sends for the same keys when Num Lock is
- * off, same as the Atari ST keyboard this scancode convention was
- * modeled after), so this driver has no separate extended-key mapping
- * to feed the dedicated cluster into: drop the prefix and the one byte
- * it introduces instead of forwarding either.
+ * Set 1 also has two "extended" prefix bytes ahead of keys with no place
+ * in the original XT layout: 0xe0 for the dedicated arrow-key cluster,
+ * Ins/Del/Home/End/PgUp/PgDn and right Ctrl/Alt, 0xe1 for Pause/Break
+ * alone. bios/ikbd.c's own convert_scancode() indexes
+ * current_keytbl.norm[] et al (its own comment: "128-byte direct
+ * scancode lookup tables") with whatever kbd_int() is handed, so passing
+ * either prefix through unfiltered is an out-of-bounds read there.
+ *
+ * The 0xe0 byte itself carries no key of its own, but the single byte
+ * that follows it does: Set 1 reuses the same low byte for the dedicated
+ * cluster as for the numpad-area/left-side key it sits next to (0xe0 0x48
+ * for the physical Up arrow is the same 0x48 as numpad-8/KEY_UPARROW;
+ * likewise 0x52/KEY_INSERT, 0x53/KEY_DELETE, 0x47/KEY_HOME, and so on),
+ * so dropping just the prefix and forwarding the next byte as-is gives
+ * kbd_int() a code it already understands -- no separate extended-key
+ * mapping needed.
+ *
+ * 0xe1 has no such follow-on key: it only ever starts Pause/Break's own
+ * fixed six-byte sequence (E1 1D 45 E1 9D C5), which this driver has no
+ * use for and no partial-byte meaning to give, so the whole sequence
+ * (the five bytes after the 0xe1 itself) is swallowed instead of being
+ * forwarded piecemeal as unrelated keys.
  */
-static BOOL ps2_extended_prefix;
+static int ps2_e1_bytes_left;
 
 void x86_64_ps2_keyboard_irq(void)
 {
     UBYTE sc = x86_64_inb(PS2_DATA);
 
-    if (sc == 0xe0 || sc == 0xe1) {
-        ps2_extended_prefix = TRUE;
+    if (sc == 0xe0)
+        return;      /* drop the prefix; the next byte stands on its own */
+    if (sc == 0xe1) {
+        ps2_e1_bytes_left = 5;
         return;
     }
-    if (ps2_extended_prefix) {
-        ps2_extended_prefix = FALSE;
+    if (ps2_e1_bytes_left) {
+        ps2_e1_bytes_left--;
         return;
     }
 
