@@ -87,9 +87,50 @@ void x86_64_gop_probe(void *bs_arg)
     if (gop->Mode->FrameBufferBase == 0 || gop->Mode->FrameBufferSize == 0)
         return;
 
+    /*
+     * Resolution/pitch fields are firmware-reported ULONGs (up to 2^32-1),
+     * but desc->width/height (screen_mode.h's SCREEN_MODE_DESC, filled in
+     * by pc_x86_64_gop_get_current_mode_desc() below) are UWORD -- an
+     * unchecked value above 65535 would silently truncate there. Capping
+     * here also bounds the PixelsPerScanLine * 4 * VerticalResolution
+     * multiplication below well clear of UQUAD overflow (65535^2 * 4 is a
+     * tiny fraction of 2^64), rather than needing a separate overflow
+     * check for it. No real GOP mode approaches this cap.
+     */
     if (gop->Mode->Info->HorizontalResolution == 0
         || gop->Mode->Info->VerticalResolution == 0
+        || gop->Mode->Info->HorizontalResolution > 0xFFFF
+        || gop->Mode->Info->VerticalResolution > 0xFFFF
+        || gop->Mode->Info->PixelsPerScanLine > 0xFFFF
         || gop->Mode->Info->PixelsPerScanLine < gop->Mode->Info->HorizontalResolution)
+        return;
+
+    /*
+     * FrameBufferSize is what x86_64_gop_init() below maps and the only
+     * bound anything later writing through the framebuffer has -- reject
+     * a mode whose reported size doesn't actually cover a full
+     * PixelsPerScanLine * 4 bytes/pixel * VerticalResolution image, rather
+     * than trusting firmware to have gotten its own three fields
+     * mutually consistent (Copilot review, PR #373). The multiplication
+     * cannot overflow: both factors were just capped to 0xFFFF above.
+     */
+    if (gop->Mode->FrameBufferSize
+        < (UQUAD)gop->Mode->Info->PixelsPerScanLine * 4 * gop->Mode->Info->VerticalResolution)
+        return;
+
+    /*
+     * Overflow-safe rather than computing FrameBufferBase + FrameBufferSize
+     * and checking the result: x86_64_gop_init()/x86_64_gop_reserved_range()
+     * below add FrameBufferSize (and then a further 2 MiB - 1 for
+     * alignment) to FrameBufferBase, and firmware is not trusted to have
+     * reported a pair that can't wrap a 64-bit address -- rejecting before
+     * doing that arithmetic, rather than after, means a wrapped result
+     * can never be mistaken for a small, valid range. The extra
+     * X86_64_PAGE_2M_SIZE margin covers the round-up-to-2MiB math both of
+     * those functions still need to do safely.
+     */
+    if (gop->Mode->FrameBufferBase >
+        ~(UQUAD)0 - gop->Mode->FrameBufferSize - X86_64_PAGE_2M_SIZE)
         return;
 
     gop_phys_base = gop->Mode->FrameBufferBase;
@@ -100,6 +141,39 @@ void x86_64_gop_probe(void *bs_arg)
     gop_found = TRUE;
 }
 
+/*
+ * The 2 MiB-aligned [phys_base, phys_end) span x86_64_gop_init() below maps
+ * -- shared with x86_64_gop_reserved_range() so the physical range pmem.c
+ * excludes from its own free list (reserved before any allocation can
+ * hand out the same pages -- see that function's own comment) is always
+ * exactly the range that ends up mapped, not a second, independently
+ * computed approximation of it that could drift out of sync.
+ *
+ * x86_64_map_kernel_pages() only maps whole 2 MiB pages (this file's own
+ * PD granularity, see pgtable.c) -- round the requested range out to
+ * that, exactly like x86_64_low_tpa_init()/x86_64_low_kdata_init()
+ * already do for their own allocations. gop_phys_base + gop_size cannot
+ * overflow this addition: x86_64_gop_probe() already rejected any mode
+ * whose FrameBufferBase/FrameBufferSize couldn't safely take the extra
+ * X86_64_PAGE_2M_SIZE this rounding needs.
+ */
+static void gop_aligned_range(UQUAD *phys_base, UQUAD *phys_end)
+{
+    *phys_base = gop_phys_base & ~(X86_64_PAGE_2M_SIZE - 1);
+    *phys_end = (gop_phys_base + gop_size + X86_64_PAGE_2M_SIZE - 1)
+                & ~(X86_64_PAGE_2M_SIZE - 1);
+}
+
+void x86_64_gop_reserved_range(UQUAD *base, UQUAD *end)
+{
+    if (!gop_found) {
+        *base = 0;
+        *end = 0;
+        return;
+    }
+    gop_aligned_range(base, end);
+}
+
 void x86_64_gop_init(void)
 {
     UQUAD aligned_phys, aligned_end, page_count, offset;
@@ -108,19 +182,11 @@ void x86_64_gop_init(void)
     if (!gop_found)
         return;
 
-    /*
-     * x86_64_map_kernel_pages() only maps whole 2 MiB pages (this file's
-     * own PD granularity, see pgtable.c) -- round the requested range
-     * out to that, exactly like x86_64_low_tpa_init()/
-     * x86_64_low_kdata_init() already do for their own allocations.
-     * offset (how far FrameBufferBase itself sits past the rounded-down
+    /* offset (how far FrameBufferBase itself sits past the rounded-down
      * base) is added back once mapped, so the returned screenbase is the
-     * framebuffer's own real start, not the rounded-down page boundary.
-     */
-    aligned_phys = gop_phys_base & ~(X86_64_PAGE_2M_SIZE - 1);
+     * framebuffer's own real start, not the rounded-down page boundary. */
+    gop_aligned_range(&aligned_phys, &aligned_end);
     offset = gop_phys_base - aligned_phys;
-    aligned_end = (gop_phys_base + gop_size + X86_64_PAGE_2M_SIZE - 1)
-                  & ~(X86_64_PAGE_2M_SIZE - 1);
     page_count = (aligned_end - aligned_phys) / X86_64_PAGE_2M_SIZE;
 
     virt_base = x86_64_low_fb_init(aligned_phys, page_count);

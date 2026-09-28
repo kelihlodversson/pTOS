@@ -259,27 +259,40 @@ MULTILIBFLAGS = $(CPUFLAGS) -fno-pic -mcmodel=large -mno-red-zone \
                 -fshort-wchar -fno-ident -maccumulate-outgoing-args
 TOOLCHAIN_CFLAGS = -ffreestanding
 
-# See the MULTILIBFLAGS comment above. All six objects below are kept on
-# plain -fpie; none of them do the cross-translation-unit function-
+# See the MULTILIBFLAGS comment above. All seven objects below are kept
+# on plain -fpie; none of them do the cross-translation-unit function-
 # pointer-assignment pattern that makes the rest of the tree need the
 # -mcmodel=large fix (verified by inspection), so nothing is lost by
-# leaving them as they were. Four of the six need to stay -fpie for a
+# leaving them as they were. Five of the seven need to stay -fpie for a
 # separate reason -- they execute across the higher-half address change
 # itself: bios/machine/pc-x86_64/startup.c's efi_main(), and everything
 # it calls before x86_64_relocate_higher_half() --
 # x86_64_build_page_tables()/x86_64_build_physmap()/x86_64_low_to_high()
 # in pgtable.c, x86_64_apply_higher_half_relocations() in pe_reloc.c,
-# x86_64_pmem_init()/x86_64_pmem_highest_addr() in pmem.c. The remaining
-# two are along for the ride rather than independently required:
-# earlycon.c, because earlycon_puts() is called from every one of the
-# four above and needs to work correctly on both sides of the jump for
-# that reason (even though it makes no address-of-a-relocatable-symbol
-# reference of its own); and memory.c, whose pc_x86_64_memory_init() is
-# actually post-jump-only and would be safe either way, kept here too
-# since it is a small, leaf-level early-boot file in the same directory,
-# not worth a separate case.
+# x86_64_pmem_init()/x86_64_pmem_highest_addr() in pmem.c, and (#332)
+# x86_64_gop_reserved_range() in gop.c -- called from efi_main() *after*
+# x86_64_apply_higher_half_relocations() has already run, unlike its own
+# x86_64_gop_probe() (called earlier, before that pass, so its absolute
+# references still held their as-loaded low values when it ran and
+# needed no override). Under plain -mcmodel=large, that same function's
+# read of gop.c's own static gop_found/gop_phys_base/gop_size would
+# compile to an absolute 64-bit load -- a real relocation entry, already
+# rewritten to its higher-half alias by that point, dereferenced while
+# still running at the low, as-loaded address with the new page tables
+# not yet live (CR3 isn't switched until x86_64_relocate_higher_half(),
+# the very last thing efi_main() does) -- an immediate #PF on a
+# plausible-looking but entirely wrong address, caught the hard way
+# before this override was added. The remaining two are along for the
+# ride rather than independently required: earlycon.c, because
+# earlycon_puts() is called from every one of the five above and needs
+# to work correctly on both sides of the jump for that reason (even
+# though it makes no address-of-a-relocatable-symbol reference of its
+# own); and memory.c, whose pc_x86_64_memory_init() is actually
+# post-jump-only and would be safe either way, kept here too since it is
+# a small, leaf-level early-boot file in the same directory, not worth a
+# separate case.
 X86_64_PIE_OBJS = obj/startup.o obj/pgtable.o obj/pe_reloc.o obj/pmem.o \
-                  obj/earlycon.o obj/memory.o
+                  obj/earlycon.o obj/memory.o obj/gop.o
 $(X86_64_PIE_OBJS): X86_64_PIE_OVERRIDE = -fpie -mcmodel=small
 else
 MULTILIBFLAGS = $(CPUFLAGS) -mshort

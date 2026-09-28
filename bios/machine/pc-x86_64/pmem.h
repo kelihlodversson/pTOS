@@ -38,25 +38,36 @@
  * map_size/descriptor_size are exactly what GetMemoryMap() returned
  * alongside it. Every descriptor of type EfiConventionalMemory,
  * EfiBootServicesCode or EfiBootServicesData becomes free memory (see the
- * EFI_MEMORY_TYPE comment in efi.h), except for two independent byte
+ * EFI_MEMORY_TYPE comment in efi.h), except for three independent byte
  * ranges neither the firmware's memory map nor anything it reports has
  * any way to know this OS is still using: [reserved1_base, reserved1_end)
  * -- this image's own load span (code, data, bss, boot stack and page
- * tables) plus the saved memory map buffer itself -- and
- * [reserved2_base, reserved2_end) -- a conservative margin below the
- * caller's own load span, historically the low system-vector page
- * pgtable.c's x86_64_map_low_vectors() identity-mapped directly; that
- * function now maps virtual address 0 to an ordinary allocated page
- * instead (see its own comment on why: physical address 0 is not
- * guaranteed to be usable RAM on real PC firmware), so nothing actually
- * requires this range to stay unallocated any more, but leaving it
- * reserved costs nothing and avoids handing out low addresses some
- * other firmware quirk might still treat specially. Kept as two ranges
- * rather than the smallest single range spanning both: EFI typically
- * loads this image well above address 0, and collapsing the (usually
- * large) gap between them into one reserved block would falsely
- * exclude a lot of genuinely free memory. Pass the same range twice for
- * both if a caller ever has only one to reserve.
+ * tables) plus the saved memory map buffer itself -- [reserved2_base,
+ * reserved2_end) -- a conservative margin below the caller's own load
+ * span, historically the low system-vector page pgtable.c's
+ * x86_64_map_low_vectors() identity-mapped directly; that function now
+ * maps virtual address 0 to an ordinary allocated page instead (see its
+ * own comment on why: physical address 0 is not guaranteed to be usable
+ * RAM on real PC firmware), so nothing actually requires this range to
+ * stay unallocated any more, but leaving it reserved costs nothing and
+ * avoids handing out low addresses some other firmware quirk might still
+ * treat specially -- and [reserved3_base, reserved3_end) -- the EFI GOP
+ * framebuffer's own aperture (bios/machine/pc-x86_64/gop.c's
+ * x86_64_gop_reserved_range(), read before this call), which this
+ * allocator would otherwise be free to hand out to something else: GOP's
+ * memory map descriptor for it is ordinary EfiConventionalMemory or
+ * EfiBootServices{Code,Data} on real firmware (nothing marks it
+ * "reserved" on this OS's behalf), so without this exclusion a later
+ * TPA/kdata/physmap allocation could receive the exact same physical
+ * pages the framebuffer is mapped to, silently corrupting the display or
+ * whatever the allocator handed that range out for (Copilot review, PR
+ * #373). Pass (0, 0) for any range a caller has nothing to reserve for
+ * (an empty range excludes nothing, see add_free_region_excluding()) --
+ * gop.c's own accessor already does this when no GOP framebuffer was
+ * found. Kept as three independent ranges rather than the smallest single
+ * range spanning all of them: they are typically far apart, and
+ * collapsing the gaps between them into one reserved block would falsely
+ * exclude a lot of genuinely free memory.
  *
  * Only ever grows the free list (there is no matching "free a page" yet
  * -- nothing this early returns memory), so this is a one-shot bump
@@ -66,7 +77,8 @@
  */
 void x86_64_pmem_init(const void *efi_map, UQUAD map_size, UQUAD descriptor_size,
                        UQUAD reserved1_base, UQUAD reserved1_end,
-                       UQUAD reserved2_base, UQUAD reserved2_end);
+                       UQUAD reserved2_base, UQUAD reserved2_end,
+                       UQUAD reserved3_base, UQUAD reserved3_end);
 
 /* Allocates `count` contiguous, page-aligned physical pages and returns
  * the physical address of the first one. Traps (see pmem.c) if the free

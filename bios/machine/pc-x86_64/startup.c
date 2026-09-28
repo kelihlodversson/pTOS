@@ -260,20 +260,32 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * it wrong exactly this way.
      */
     /*
-     * Two independent reserved ranges, not one spanning both: this
-     * image's own load span, and separately physical [0, 2 MiB) -- a
+     * Three independent reserved ranges, not one spanning all of them:
+     * this image's own load span, separately physical [0, 2 MiB) -- a
      * conservative margin kept unallocated even though
      * x86_64_map_low_vectors() (called later, post-jump) no longer needs
      * it specifically (it maps virtual address 0 to an ordinary
-     * allocated page now, not this exact range -- see its own comment).
-     * EFI typically loads this image well above address 0 (mapped_base
-     * is usually several MiB in), so collapsing the gap between the two
-     * into one reserved block would falsely exclude a large amount of
-     * genuinely free memory.
+     * allocated page now, not this exact range -- see its own comment) --
+     * and the EFI GOP framebuffer's own aperture (#332), wherever firmware
+     * put it: x86_64_gop_probe() already ran (efi_main(), above, before
+     * ExitBootServices()), so the range is known here, before any
+     * allocation could otherwise be handed the same physical pages the
+     * framebuffer is mapped to (Copilot review, PR #373; see
+     * x86_64_gop_reserved_range()'s own comment). EFI typically loads this
+     * image well above address 0 (mapped_base is usually several MiB in),
+     * and the framebuffer can be anywhere firmware chose, so collapsing
+     * the gaps between all three into one reserved block would falsely
+     * exclude a large amount of genuinely free memory.
      */
-    x86_64_pmem_init(saved_memory_map, saved_map_size, saved_descriptor_size,
-                      mapped_base, mapped_base + IMAGE_SPAN_BYTES + X86_64_PAGE_2M_SIZE,
-                      0, X86_64_PAGE_2M_SIZE);
+    {
+        UQUAD gop_reserved_base, gop_reserved_end;
+
+        x86_64_gop_reserved_range(&gop_reserved_base, &gop_reserved_end);
+        x86_64_pmem_init(saved_memory_map, saved_map_size, saved_descriptor_size,
+                          mapped_base, mapped_base + IMAGE_SPAN_BYTES + X86_64_PAGE_2M_SIZE,
+                          0, X86_64_PAGE_2M_SIZE,
+                          gop_reserved_base, gop_reserved_end);
+    }
     earlycon_puts("pTOS x86-64: physical memory map parsed\n");
 
     x86_64_build_physmap(x86_64_pmem_highest_addr());

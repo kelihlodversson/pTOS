@@ -295,13 +295,19 @@ void *x86_64_low_kdata_alloc(LONG needed)
  * pixel format check that somehow let through something enormous) fails
  * closed (x86_64_low_fb_init() returns 0, gop.c treats that as "no
  * framebuffer") rather than mapping an unbounded amount of physical
- * address space on the caller's say-so. 16 MiB comfortably covers every
- * mode a QEMU/OVMF or typical real firmware GOP implementation reports
- * (a 1920x1080 32bpp mode is a little under 8 MiB); nothing here assumes
- * a specific resolution.
+ * address space on the caller's say-so. 64 MiB comfortably covers every
+ * mode a QEMU/OVMF or typical real firmware GOP implementation reports,
+ * up to and including a 3840x2160 32bpp (4K) mode at a little over 33 MiB
+ * -- a plain 16 MiB ceiling (this pool's original size) rejected that
+ * resolution outright, and real firmware reporting it is not implausible
+ * (Copilot review, PR #373). Costs nothing extra in PDPT/PD-pool budget
+ * either way: this whole pool shares PML4 slot 0's single PD with the
+ * TPA/kdata pools (see above), which covers up to 1 GiB of virtual space
+ * at 2 MiB granularity -- 64 MiB is a small fraction of that, the same as
+ * 16 MiB was.
  */
 #define X86_64_LOW_FB_VIRT_BASE (X86_64_LOW_KDATA_VIRT_BASE + X86_64_LOW_KDATA_BYTES)
-#define X86_64_FRAMEBUFFER_MAX_BYTES (16 * 1024 * 1024)
+#define X86_64_FRAMEBUFFER_MAX_BYTES (64 * 1024 * 1024)
 
 UQUAD x86_64_low_fb_init(UQUAD aligned_phys, UQUAD page_count)
 {

@@ -10,6 +10,7 @@
 #ifndef PC_X86_64_GOP_H
 #define PC_X86_64_GOP_H
 
+#include "portab.h"
 #include "screen_mode.h"
 
 /*
@@ -42,6 +43,20 @@ void x86_64_gop_probe(void *bs);
  * GOP framebuffer.
  */
 void x86_64_gop_init(void);
+
+/*
+ * Returns the 2 MiB-aligned physical range x86_64_gop_init() maps (or
+ * will map), as [*base, *end) -- (0, 0) if x86_64_gop_probe() found no
+ * usable GOP framebuffer. Must be called after x86_64_gop_probe() and
+ * before x86_64_pmem_init() (startup.c): that allocator only excludes
+ * ranges it is explicitly told about, and GOP's own EFI memory map
+ * descriptor is ordinary EfiConventionalMemory/EfiBootServices{Code,Data}
+ * on real firmware -- nothing marks it reserved on this OS's behalf. Pass
+ * the result straight through as x86_64_pmem_init()'s third reserved
+ * range so a later TPA/kdata/physmap allocation can never be handed the
+ * same physical pages the framebuffer is mapped to.
+ */
+void x86_64_gop_reserved_range(UQUAD *base, UQUAD *end);
 
 /* True iff a GOP framebuffer was found, is in a supported pixel format,
  * and has been successfully mapped. Every other function below is only

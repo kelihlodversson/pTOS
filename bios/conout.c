@@ -49,7 +49,7 @@ static void cell_xfer(UBYTE *src, UBYTE *dst);
 static BOOL next_cell(void);
 
 /*
- * The *32() routines below (and every TRUECOLOR_MODE check gated the same
+ * The *32() routines below (and every TRUECOLOR32_MODE check gated the same
  * way) are generic 32bpp packed-truecolor console code -- nothing here is
  * virtio-gpu-specific. They used to be gated on CONF_WITH_VIRTIO_GPU, the
  * only machine with a 32bpp screen when this code was written; without one
@@ -64,11 +64,22 @@ static BOOL next_cell(void);
  * ("this build can encounter a 32bpp packed screen at all") -- virtio_gpu
  * itself depends on it (bios/Kconfig), so every existing config that
  * compiled these blocks in still does.
+ *
+ * TRUECOLOR_MODE alone (v_planes > 8) is not enough to pick the *32
+ * routines, though: it is also true for a 16bpp CONF_WITH_VIDEL (Falcon)
+ * screen, and nothing prevents a single build from having both
+ * CONF_WITH_VDI_BACKEND_TRUECOLOR32 and CONF_WITH_VIDEL enabled (unlike
+ * the machine-exclusive CONF_WITH_VIRTIO_GPU this used to be gated on).
+ * TRUECOLOR32_MODE checks the *active* mode's own depth, matching the
+ * same v_planes == 32 test vdi/vdi_backend_truecolor.c already uses to
+ * tell its own 32bpp case apart from 16bpp.
  */
+#define TRUECOLOR32_MODE (linea_vars.v_planes == 32)
+
 static ULONG cell_wrap(void)
 {
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR32
-    if (TRUECOLOR_MODE)
+    if (TRUECOLOR32_MODE)
         return (ULONG)linea_vars.v_lin_wr * linea_vars.v_cel_ht;
 #endif
     return linea_vars.v_cel_wr;
@@ -292,7 +303,7 @@ void
 blank_out (int topx, int topy, int botx, int boty)
 {
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR32
-    if (TRUECOLOR_MODE) {
+    if (TRUECOLOR32_MODE) {
         blank_out32(topx, topy, botx, boty);
         return;
     }
@@ -404,7 +415,7 @@ static UBYTE *cell_addr(UWORD x, UWORD y)
         y = linea_vars.v_cel_my;           /* clipped y */
 
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR32
-    if (TRUECOLOR_MODE)
+    if (TRUECOLOR32_MODE)
         disx = 8UL * (linea_vars.v_planes / 8) * x;
     else
 #endif
@@ -523,7 +534,7 @@ static void cell_xfer(UBYTE *src, UBYTE *dst)
     int plane;
 
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR32
-    if (TRUECOLOR_MODE) {
+    if (TRUECOLOR32_MODE) {
         cell_xfer32(src, dst);
         return;
     }
@@ -630,7 +641,7 @@ static void neg_cell(UBYTE *cell)
     linea_vars.v_stat_0 |= M_CRIT;                 /* start of critical section. */
 
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR32
-    if (TRUECOLOR_MODE) {
+    if (TRUECOLOR32_MODE) {
         for (len = cell_len; len--; ) {
             WORD i;
             ULONG *addr;
@@ -704,7 +715,7 @@ static BOOL next_cell(void)
     linea_vars.v_cur_ad = raspi_cell_addr(linea_vars.v_cur_cx, linea_vars.v_cur_cy);
 #else
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR32
-    if (TRUECOLOR_MODE) {
+    if (TRUECOLOR32_MODE) {
         linea_vars.v_cur_ad += 8 * (linea_vars.v_planes / 8);
         return 0;
     }
