@@ -390,20 +390,39 @@
 
 #ifdef __x86_64__
 /*
- * Shadows the single most recently xsetdta()'d real pointer, for
+ * Shadows the most recently xsetdta()'d real pointer, for
  * x86_64_widen_dta() (fs.h) below to hand back verbatim to any reader of
  * run->p_xdta -- see xsetdta()'s own comment on why PTR_TO_USERPTR_UNCHECKED()'s
  * round-trip through that 32-bit field alone cannot reconstruct a
  * genuine higher-half kernel address. Kept per-process (not a single
  * global) once kernel-code-process nesting is used: proc_go() switches
  * `run` to the child and xterm() restores the parent, while child
- * AES/desktop code can call dos_sdta() and overwrite x86_64_real_dta,
- * corrupting the parent's widened DTA once it resumes. The first free
- * p_3fill slot in the PD itself holds the real DTA for that process,
- * saved/restored with `run` by xsetdta() below.
+ * AES/desktop code can call dos_sdta() and overwrite a single global
+ * shadow, corrupting the parent's widened DTA once it resumes. The two
+ * free p_3fill slots in the PD itself hold the real DTA's own low and
+ * high 32 bits for that process, saved/restored with `run` by
+ * xsetdta()/x86_64_widen_dta() below.
+ *
+ * The two halves are stored (and read back) directly, NOT via
+ * PTR_TO_USERPTR_UNCHECKED()/USERPTR_TO_PTR(): those macros only ever
+ * narrow to, or naively zero-extend from, 32 bits (bdosdefs.h) -- correct
+ * for p_xdta's own storage (an ILP32-process-compatible field that must
+ * degrade to that on this arch) but exactly the truncation this shadow
+ * exists to see past. Splitting the real pointer across both p_3fill
+ * slots keeps the full 64 bits, unlike a first version of this fix that
+ * stored only the low half in p_3fill[0] and read it back with
+ * USERPTR_TO_PTR() -- silently reintroducing the same truncation bug
+ * this shadow was built to fix in the first place.
  */
 #ifdef __x86_64__
-#define X86_64_REAL_DTA(run) ((DTAINFO *)USERPTR_TO_PTR((run)->p_3fill[0]))
+#define X86_64_REAL_DTA(run) \
+    ((DTAINFO *)(uintptr_t)(((UQUAD)(ULONG)(run)->p_3fill[1] << 32) | (ULONG)(run)->p_3fill[0]))
+#define X86_64_SET_REAL_DTA(run, ptr) \
+    do { \
+        UQUAD _v = (UQUAD)(uintptr_t)(ptr); \
+        (run)->p_3fill[0] = (LONG)(ULONG)_v; \
+        (run)->p_3fill[1] = (LONG)(ULONG)(_v >> 32); \
+    } while (0)
 #else
 #define X86_64_REAL_DTA(run) ((void)0, NULL)
 #endif
@@ -473,14 +492,14 @@ void xsetdta(DTAINFO *addr)     /* set transfer address to addr */
      * writes through it. x86_64_widen_dta() above fixes that for every
      * reader, not just xgetdta()'s own.
      *
-     * Kept per-process (in p_3fill[0]) once kernel-code-process nesting
-     * is used: proc_go() switches `run` to the child and xterm() restores
-     * the parent, while child AES/desktop code can call dos_sdta() and
-     * overwrite a single global shadow, corrupting the parent's widened
-     * DTA once it resumes.
+     * Kept per-process (across both p_3fill slots) once kernel-code-
+     * process nesting is used: proc_go() switches `run` to the child and
+     * xterm() restores the parent, while child AES/desktop code can call
+     * dos_sdta() and overwrite a single global shadow, corrupting the
+     * parent's widened DTA once it resumes.
      */
 #ifdef __x86_64__
-    run->p_3fill[0] = PTR_TO_USERPTR_UNCHECKED((DTA *)addr);
+    X86_64_SET_REAL_DTA(run, addr);
 #endif
     run->p_xdta = PTR_TO_USERPTR_UNCHECKED((DTA *)addr);
 }
