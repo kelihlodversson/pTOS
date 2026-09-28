@@ -1,0 +1,162 @@
+pTOS - x86-64 syscall entry and trap-class dispatch convention
+================================================================
+
+This documents how a GEMDOS/BIOS/XBIOS call reaches the kernel on the
+x86-64 port (#329), alongside the m68k/ARM trap convention it replaces.
+The implementation lives in bios/arch/x86_64/trap.c, trap.h and
+trapasm.S.
+
+
+Background: how the other ports do this
+----------------------------------------
+
+On m68k, and on ARM's own simulation of the same hardware trap table
+(bios/arch/arm/vectorsasm.S), each call class gets its own CPU trap
+number -- 1 for GEMDOS, 13 for BIOS, 14 for XBIOS -- with a shared
+low-memory vector table (VEC_GEM/VEC_BIOS/VEC_XBIOS, bios/vectors.h)
+steering the CPU trap to gemtrap()/biostrap()/xbiostrap(), which then
+dispatch by function number into the existing, architecture-neutral
+handler tables: bdos/bdosmain.c's osif() for GEMDOS, bios.c's
+bios_vecs[] for BIOS, xbios.c's xbios_vecs[] for XBIOS.
+
+x86-64 has no equivalent hardware trap-number table to populate, and
+nothing on this arch reads back what bios_init() writes into
+VEC_GEM/VEC_BIOS/VEC_XBIOS -- see x86_64_map_low_vectors() in pgtable.c.
+Instead, every call reaches the kernel through the `syscall` instruction,
+using a register convention that mirrors the m68k trap numbers closely
+enough to reuse the same handler tables unchanged.
+
+
+The syscall register convention
+--------------------------------
+
+    RAX = (trap_class << 32) | function_number
+    RDI, RSI, RDX, R10 = up to 4 real arguments
+
+trap_class matches the historic m68k trap number for the same call
+class:
+
+    X86_64_TRAP_GEMDOS   1   (trap.h)
+    X86_64_TRAP_BIOS     13
+    X86_64_TRAP_XBIOS    14
+
+It is not read back from anywhere -- it exists purely so the dispatcher
+can switch on it, and for continuity with vectors.h's existing
+VEC_TRAP1/13/14 naming. function_number is whatever that class's own
+handler table already expects (a GEMDOS opcode, or an index into
+bios_vecs[]/xbios_vecs[]).
+
+R10 stands in for a "4th argument register" instead of RCX: `syscall`
+itself clobbers RCX (loaded with the return RIP) and R11 (loaded with
+the pre-syscall RFLAGS), so neither is available to carry an argument.
+This is the same substitution the Linux x86-64 syscall ABI makes for the
+same reason.
+
+Only 4 real argument registers are defined, matching ARM's own
+convention rather than the 2 more x86-64 could spare after RCX/R11 are
+excluded: the handful of BIOS/XBIOS calls needing more than 4 arguments
+already have an established solution, reused unchanged here -- a
+pointer to one of include/biosargs.h's structs passed as the single real
+argument.
+
+GEMDOS's own widest call (Pexec, mode/path/tail/env) uses all 4 slots;
+osif() is called with a 5-element pw[] (function number plus the 4
+argument slots) exactly as bdosmain.c's own ARM branch already does.
+
+
+Entry/exit mechanism
+---------------------
+
+`syscall` does not go through an IDT gate and does not switch stacks via
+the TSS: TSS.RSP0 only applies to a privilege change taken through an
+interrupt/exception gate, not to `syscall` (Intel SDM Vol 2B, "SYSCALL").
+On `syscall`, the CPU leaves RSP completely unchanged (still pointing at
+the caller's own stack), saves the return RIP in RCX and RFLAGS in R11
+-- both otherwise clobbered, which is why the argument convention above
+avoids RCX.
+
+The entry stub (trapasm.S's x86_64_syscall_entry, installed via
+IA32_LSTAR by x86_64_trap_init()) is responsible for the whole round
+trip:
+
+  1. `swapgs`, exchanging the live GS base for IA32_KERNEL_GS_BASE --
+     giving the stub a way to reach known-good per-CPU state (trap.h's
+     x86_64_percpu_t) via %gs-relative addressing, without needing a
+     general-purpose register to find it first.
+  2. Save the interrupted (caller's) RSP into percpu.user_rsp.
+  3. Load RSP from percpu.kernel_rsp -- a known-good kernel stack top,
+     not the caller's own stack.
+  4. Save RCX/R11 and the rest of the incoming register state onto that
+     stack (x86_64_trap_frame_t, trap.h) before touching either.
+  5. Call x86_64_trap_dispatch() with from_ring3 = 1.
+  6. Mirror the entry sequence on the way out: restore registers, reload
+     RSP from percpu.user_rsp, `swapgs` back, `sysretq`.
+
+Only one percpu instance exists today -- no real multi-CPU support yet
+(#329's own scope).
+
+x86_64_bad_sysret() is the exit path's guard against CVE-2012-0217 and
+its Xen/*BSD analogues: `sysretq` does not itself validate that the
+return RIP (RCX, entirely caller-controlled) is a canonical address, and
+executing it anyway can fault mid-transition with attacker-influenced
+state already partly in effect. There is no user-mode fault-delivery
+mechanism yet to hand a bad return address back to the offending
+process safely, so trapasm.S calls x86_64_bad_sysret() to panic instead.
+
+
+Kernel-mode callers: x86_64_kernel_trap()
+-------------------------------------------
+
+The `syscall` entry point above is reached *only* by a genuine ring-3
+caller. Every call this port's own boot code makes before a real process
+exists -- util/arch/x86_64/miscasm.S's trap1()/trap1_pexec(), and every
+x86-64 branch of include/biosbind.h/xbiosbind.h -- goes through
+x86_64_kernel_trap() instead: an ordinary, recursion-safe C function
+that builds a throwaway x86_64_trap_frame_t on the caller's own stack
+and calls x86_64_trap_dispatch() directly, with from_ring3 = 0 and no
+privilege transition at all.
+
+An earlier version of this code let both kinds of caller share the
+`syscall` entry point, telling them apart by testing whether the
+interrupted RSP looked like a kernel address. That test is unsafe:
+`syscall` never validates RSP, so a real ring-3 caller could put any
+64-bit value there -- including a higher-half one -- and be misclassified
+as kernel-mode, skipping `swapgs` and the stack switch entirely.
+Splitting the two mechanisms, rather than trying to infer which one a
+given `syscall` came from, removes the distinction that bug depended on.
+
+
+Dispatch and the from_ring3 pointer check
+--------------------------------------------
+
+x86_64_trap_dispatch() (trap.c) switches on trap_class and calls into
+osif()/bios_vecs[]/xbios_vecs[] exactly as m68k/ARM's own dispatchers
+do, with the result left in frame->rax. An out-of-range BIOS/XBIOS
+function number returns the function number itself, matching
+bios/arch/m68k/vectors.S's biosxbios convention.
+
+When from_ring3 is set, the raw RDI/RSI/RDX/R10 argument values are
+checked against x86_64_arg_hits_known_kernel_range() before dispatch:
+this rejects an argument that falls inside this kernel's own load image
+or the physical-memory direct map, the only two ranges where a bad
+dereference could actually read or corrupt live kernel state. This is
+deliberately narrow -- it is not general user-pointer validation, and
+does not (and safely cannot yet) reject the low system-vector area a
+ring-3 caller could still reach indirectly through a GEMDOS/BIOS buffer
+argument. See x86_64_arg_hits_known_kernel_range()'s own comment in
+trap.c for the full reasoning, and #352 for what actually closes that
+remaining gap once a real per-process address space (#334) exists to
+validate against.
+
+
+Status
+-------
+
+The mechanism above is implemented and verified (a throwaway in-kernel
+ring-3 harness: IRETQ into real CPL3, a real `syscall` from there
+reaching a BIOS handler, `sysretq` back with no fault). #334 is what
+drives a real, loaded ILP32 process through this same entry point as
+part of normal execution, including its own per-process kernel stack
+and full parent/child resumption -- this port currently runs at most one
+process at a time, using the single boot-time kernel stack
+percpu.kernel_rsp already points at.
