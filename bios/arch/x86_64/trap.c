@@ -7,6 +7,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+#include "config.h"
 #include "portab.h"
 #include "biosext.h"
 #include "gdt.h"
@@ -14,6 +15,27 @@
 #include "io.h"
 #include "pgtable.h"
 #include "trap.h"
+
+/*
+ * GSX_ENTRY()/VDIPB (vdi_entry.o) are unconditional: bios/build.mk's own
+ * VDI obj-y list has no CONF_WITH_* guard, matching every other arch (an
+ * m68k/ARM trap#2 always reaches a VDI call unless it's one of AES's own
+ * two meta-opcodes below). super()/AESPB (aes/gemsuper.c) exist only
+ * #if CONF_WITH_AES, so gemsuper.h is included unconditionally (it is a
+ * tiny standalone struct definition, safe to see either way) but super()
+ * itself is only called under that same guard below -- the same relative-
+ * include depth aes/arch/arm/gemdosifc.c already uses for its own
+ * bios/*.h includes from three levels down.
+ */
+#include "../../../vdi/vdi_defs.h"
+#include "../../../aes/gemsuper.h"
+
+#if CONF_WITH_AES
+/* Not declared in gemsuper.h itself (aes/gemsuper.c's own comment says
+ * "called only from gemdosif.S" -- true on every other arch; this file is
+ * x86-64's equivalent of that call site). */
+extern LONG super(WORD cx, AESPB *pcrys_blk);
+#endif
 
 /*
  * osif() (bdos/bdosmain.c) is GEMDOS's own C-level trap #1 handler,
@@ -295,6 +317,39 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
         else
             frame->rax = (UQUAD)((LONG (*)(UQUAD, UQUAD, UQUAD, UQUAD))xbios_vecs[fn])
                              (frame->rdi, frame->rsi, frame->rdx, frame->r10);
+        break;
+    case X86_64_TRAP_GEM:
+        /*
+         * Real trap#2, AES/VDI's shared entry: fn is the opcode
+         * (desk/gembind.c's gem() puts 0xC8 there, aes/gsx2.c's gsx2()
+         * puts 0x73, ...) and rdi is the pointer the caller built (an
+         * AESPB for AES's own opcodes, a VDIPB for everything else) --
+         * exactly the ARM/m68k convention, just without a separate
+         * assembly trap-entry stub: this dispatcher already is that
+         * entry point for every trap class.
+         *
+         * ARM's own aestrap (aes/arch/arm/gemdosif.S) treats 0xC8/0xC9 as
+         * AES's own two meta-opcodes and sends everything else straight
+         * to the previously-installed VDI trap-2 handler (savetrap2);
+         * there is no equivalent chaining needed here since this arch has
+         * no earlier VDI-only trap-2 handler to chain to in the first
+         * place -- GSX_ENTRY() below is simply the unconditional "not one
+         * of AES's two meta-opcodes" fallback, same as ARM's chain target
+         * ultimately resolves to.
+         */
+        if (fn == 0xC8 || fn == 0xC9)
+#if CONF_WITH_AES
+            frame->rax = (UQUAD)super((WORD)fn, (AESPB *)(uintptr_t)frame->rdi);
+#else
+            /* AES isn't built: these two opcodes can't occur legitimately
+             * (nothing on this image ever issues them), but a stray call
+             * with the right opcode should still get a harmless answer
+             * rather than being misrouted into GSX_ENTRY() as if it were
+             * ordinary VDI opcode 0xC8/0xC9. */
+            frame->rax = (UQUAD)-1L;
+#endif
+        else
+            frame->rax = (UQUAD)GSX_ENTRY((int)fn, (VDIPB *)(uintptr_t)frame->rdi);
         break;
     default:
         frame->rax = (UQUAD)-1L;

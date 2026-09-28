@@ -76,6 +76,7 @@
  * distinction this bug depended on entirely.
  */
 #define X86_64_TRAP_GEMDOS 1
+#define X86_64_TRAP_GEM 2
 #define X86_64_TRAP_BIOS 13
 #define X86_64_TRAP_XBIOS 14
 
