@@ -289,16 +289,18 @@ void *x86_64_low_kdata_alloc(LONG needed)
  * that #372 is closed (the value stored there is still whatever a real
  * ILP32 consumer needs it to be, which this file has no say over).
  *
- * X86_64_FRAMEBUFFER_MAX_BYTES is a sanity ceiling, not a real limit on
- * any actual framebuffer size: it exists so a firmware-reported mode this
- * arch has no business trusting blindly (a garbled FrameBufferSize, or a
- * pixel format check that somehow let through something enormous) fails
- * closed (x86_64_low_fb_init() returns 0, gop.c treats that as "no
- * framebuffer") rather than mapping an unbounded amount of physical
- * address space on the caller's say-so. 64 MiB comfortably covers every
- * mode a QEMU/OVMF or typical real firmware GOP implementation reports,
- * up to and including a 3840x2160 32bpp (4K) mode at a little over 33 MiB
- * -- a plain 16 MiB ceiling (this pool's original size) rejected that
+ * X86_64_FRAMEBUFFER_MAX_BYTES (pc_x86_64_memory.h -- public so gop.c's
+ * x86_64_gop_reserved_range() can apply the identical bound, see its own
+ * comment there) is a sanity ceiling, not a real limit on any actual
+ * framebuffer size: it exists so a firmware-reported mode this arch has
+ * no business trusting blindly (a garbled FrameBufferSize, or a pixel
+ * format check that somehow let through something enormous) fails closed
+ * (x86_64_low_fb_init() returns 0, gop.c treats that as "no framebuffer")
+ * rather than mapping an unbounded amount of physical address space on
+ * the caller's say-so. 64 MiB comfortably covers every mode a QEMU/OVMF
+ * or typical real firmware GOP implementation reports, up to and
+ * including a 3840x2160 32bpp (4K) mode at a little over 33 MiB -- a
+ * plain 16 MiB ceiling (this pool's original size) rejected that
  * resolution outright, and real firmware reporting it is not implausible
  * (Copilot review, PR #373). Costs nothing extra in PDPT/PD-pool budget
  * either way: this whole pool shares PML4 slot 0's single PD with the
@@ -307,11 +309,20 @@ void *x86_64_low_kdata_alloc(LONG needed)
  * 16 MiB was.
  */
 #define X86_64_LOW_FB_VIRT_BASE (X86_64_LOW_KDATA_VIRT_BASE + X86_64_LOW_KDATA_BYTES)
-#define X86_64_FRAMEBUFFER_MAX_BYTES (64 * 1024 * 1024)
 
 UQUAD x86_64_low_fb_init(UQUAD aligned_phys, UQUAD page_count)
 {
-    if (page_count * X86_64_PAGE_2M_SIZE > X86_64_FRAMEBUFFER_MAX_BYTES)
+    /*
+     * Compared as a page count against a page-count ceiling, not as
+     * page_count * X86_64_PAGE_2M_SIZE against a byte ceiling: gop.c
+     * rejects any FrameBufferBase/FrameBufferSize pair that could
+     * overflow a UQUAD by the time it reaches this range-in-2MiB-pages
+     * form, but page_count itself is not otherwise bounded before this
+     * point, so multiplying first could still wrap to a small value and
+     * pass the byte-ceiling check it exists to enforce (Copilot review,
+     * PR #373).
+     */
+    if (page_count > X86_64_FRAMEBUFFER_MAX_BYTES / X86_64_PAGE_2M_SIZE)
         return 0;
 
     x86_64_map_kernel_pages(X86_64_LOW_FB_VIRT_BASE, aligned_phys, page_count);

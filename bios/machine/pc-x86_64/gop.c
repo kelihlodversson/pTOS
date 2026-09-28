@@ -91,17 +91,25 @@ void x86_64_gop_probe(void *bs_arg)
      * Resolution/pitch fields are firmware-reported ULONGs (up to 2^32-1),
      * but desc->width/height (screen_mode.h's SCREEN_MODE_DESC, filled in
      * by pc_x86_64_gop_get_current_mode_desc() below) are UWORD -- an
-     * unchecked value above 65535 would silently truncate there. Capping
-     * here also bounds the PixelsPerScanLine * 4 * VerticalResolution
-     * multiplication below well clear of UQUAD overflow (65535^2 * 4 is a
-     * tiny fraction of 2^64), rather than needing a separate overflow
-     * check for it. No real GOP mode approaches this cap.
+     * unchecked value above 65535 would silently truncate there.
+     * PixelsPerScanLine needs a tighter cap than that: linea_init()
+     * (bios/lineainit.c) stores desc->pitch (PixelsPerScanLine * 4, this
+     * file's own byte stride) into linea_vars.v_lin_wr, also a UWORD, so
+     * PixelsPerScanLine itself must stay small enough that *4 still fits
+     * -- 0x3FFF (16383), not 0xFFFF (Copilot review, PR #373: a mode
+     * between 16384 and 65535 pixels/scanline would pass a plain 0xFFFF
+     * cap here but still silently truncate the pitch there, corrupting
+     * every row address past the first). Capping HorizontalResolution/
+     * VerticalResolution at 0xFFFF and PixelsPerScanLine at 0x3FFF also
+     * bounds the PixelsPerScanLine * 4 * VerticalResolution multiplication
+     * below well clear of UQUAD overflow, rather than needing a separate
+     * overflow check for it. No real GOP mode approaches either cap.
      */
     if (gop->Mode->Info->HorizontalResolution == 0
         || gop->Mode->Info->VerticalResolution == 0
         || gop->Mode->Info->HorizontalResolution > 0xFFFF
         || gop->Mode->Info->VerticalResolution > 0xFFFF
-        || gop->Mode->Info->PixelsPerScanLine > 0xFFFF
+        || gop->Mode->Info->PixelsPerScanLine > 0x3FFF
         || gop->Mode->Info->PixelsPerScanLine < gop->Mode->Info->HorizontalResolution)
         return;
 
@@ -178,12 +186,32 @@ static void gop_aligned_range(UQUAD *phys_base, UQUAD *phys_end)
 
 void x86_64_gop_reserved_range(UQUAD *base, UQUAD *end)
 {
+    UQUAD page_count;
+
     if (!gop_found) {
         *base = 0;
         *end = 0;
         return;
     }
+
     gop_aligned_range(base, end);
+
+    /*
+     * Apply x86_64_low_fb_init()'s own ceiling here too (pc_x86_64_memory.h's
+     * X86_64_FRAMEBUFFER_MAX_BYTES), not just at mapping time: without
+     * this, a firmware-reported mode too large to ever actually get
+     * mapped would still have its full (potentially huge) aligned range
+     * reserved out of x86_64_pmem_init()'s free list, needlessly starving
+     * the TPA/kdata pools -- or worse, failing them outright -- for a
+     * framebuffer that x86_64_gop_init() is going to reject anyway
+     * (Copilot review, PR #373). Returning an empty range here instead
+     * reserves nothing for a mode that will map nothing.
+     */
+    page_count = (*end - *base) / X86_64_PAGE_2M_SIZE;
+    if (page_count > X86_64_FRAMEBUFFER_MAX_BYTES / X86_64_PAGE_2M_SIZE) {
+        *base = 0;
+        *end = 0;
+    }
 }
 
 void x86_64_gop_init(void)
