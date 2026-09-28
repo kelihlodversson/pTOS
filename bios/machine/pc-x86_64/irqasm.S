@@ -88,14 +88,42 @@ x86_64_irq_common:
         push    %r14
         push    %r15
 
+        mov     120(%rsp), %rdi   /* the vector number, pushed by the stub,
+                                   * now 15 registers (120 bytes) below the
+                                   * current %rsp -- read while that offset
+                                   * is still this simple, before the FPU/
+                                   * SSE area below moves %rsp again */
+
+        /*
+         * An IRQ can land in the middle of any code, including a live
+         * floating-point/SSE computation (the SysV ABI has no callee-
+         * saved xmm registers at all, so a call boundary in the
+         * interrupted code's own logic offers no protection here) or an
+         * x32 userspace process using the FPU -- and this file's own
+         * dispatch chain already demonstrably reaches code that touches
+         * %xmm0-7 itself (kprintf's variadic prologue, per irq_stub's
+         * own comment on the alignment bug that first surfaced it).
+         * FXSAVE/FXRSTOR cover x87/MMX/SSE state in one instruction pair
+         * and need only a 512-byte, 16-byte-aligned buffer -- %rsp is
+         * exactly 16-aligned right here (the 15 pushes above brought it
+         * from irq_stub's own 8-mod-16 starting point to 0 mod 16, see
+         * its comment), and 512 is itself a multiple of 16, so reserving
+         * it here disturbs neither that alignment nor the call below's.
+         * bios/arch/x86_64/processor.c's own comment on UEFI already
+         * leaving CR0/CR4 configured for SSE is why this can run with no
+         * separate FPU-enable step of its own.
+         */
+        sub     $512, %rsp
+        fxsave  (%rsp)
+
         cld     /* see isr.S's own comment: the ABI requires DF clear at
                  * any C call boundary, and an IRQ can interrupt code
                  * that had set it */
 
-        mov     120(%rsp), %rdi   /* the vector number, pushed by the stub,
-                                   * now 15 registers (120 bytes) below the
-                                   * current %rsp */
         call    C_SYM(x86_64_pc_irq_dispatch)
+
+        fxrstor (%rsp)
+        add     $512, %rsp
 
         pop     %r15
         pop     %r14

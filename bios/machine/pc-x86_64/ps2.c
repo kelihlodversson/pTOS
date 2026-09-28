@@ -114,9 +114,17 @@ void x86_64_ps2_init(void)
 
     /* Flush whatever stale byte (if any) is left over from firmware's own
      * use of the controller before we start relying on the output-full
-     * bit meaning "a byte we asked for." */
-    while (x86_64_inb(PS2_STATUS) & PS2_STATUS_OUTPUT_FULL)
-        x86_64_inb(PS2_DATA);
+     * bit meaning "a byte we asked for." Bounded like every other poll
+     * in this file: a controller whose status port is stuck reading
+     * "output full" (no i8042 at all, or a wedged one) must not hang
+     * boot here, before the PIT/PIC setup that follows this call ever
+     * runs. */
+    {
+        int i;
+        for (i = 0; i < PS2_POLL_LIMIT
+                     && (x86_64_inb(PS2_STATUS) & PS2_STATUS_OUTPUT_FULL); i++)
+            x86_64_inb(PS2_DATA);
+    }
 
     ps2_write_command(PS2_CMD_READ_CONFIG);
     config = ps2_read_data();
@@ -140,9 +148,39 @@ void x86_64_ps2_init(void)
         x86_64_inb(PS2_DATA);
 }
 
+/*
+ * Set 1 also has two "extended" prefix bytes, 0xe0 and 0xe1, ahead of
+ * keys with no place in the original XT layout (the dedicated arrow-key
+ * cluster, Ins/Del/Home/End/PgUp/PgDn, right Ctrl/Alt, Pause, ...).
+ * bios/ikbd.c's own convert_scancode() indexes current_keytbl.norm[]
+ * et al (its own comment: "128-byte direct scancode lookup tables")
+ * with whatever kbd_int() is handed, so passing 0xe0/0xe1 through
+ * unfiltered is an out-of-bounds read there, and the byte that follows
+ * would be misread as some ordinary key's scancode -- pTOS's own
+ * KEY_UPARROW/KEY_LTARROW/KEY_RTARROW/KEY_DNARROW (ikbd.c) already match
+ * this keyboard's *numpad* cluster's unprefixed codes instead (which
+ * every PS/2 keyboard still sends for the same keys when Num Lock is
+ * off, same as the Atari ST keyboard this scancode convention was
+ * modeled after), so this driver has no separate extended-key mapping
+ * to feed the dedicated cluster into: drop the prefix and the one byte
+ * it introduces instead of forwarding either.
+ */
+static BOOL ps2_extended_prefix;
+
 void x86_64_ps2_keyboard_irq(void)
 {
-    kbd_int(x86_64_inb(PS2_DATA));
+    UBYTE sc = x86_64_inb(PS2_DATA);
+
+    if (sc == 0xe0 || sc == 0xe1) {
+        ps2_extended_prefix = TRUE;
+        return;
+    }
+    if (ps2_extended_prefix) {
+        ps2_extended_prefix = FALSE;
+        return;
+    }
+
+    kbd_int(sc);
 }
 
 /*
@@ -232,11 +270,23 @@ void x86_64_ps2_mouse_irq(void)
             if (dy > 127) dy = 127;
             if (dy < -128) dy = -128;
 
-            packet[0] = (SBYTE)(0xf8
-                                 | ((mouse_byte0 & 0x01) ? 0x02 : 0)   /* left  -> IKBD bit1 */
-                                 | ((mouse_byte0 & 0x02) ? 0x01 : 0)); /* right -> IKBD bit0 */
-            packet[1] = (SBYTE)dx;
-            packet[2] = (SBYTE)(-dy);  /* PS/2 Y+ is up; IKBD Y+ is down */
+            /* -dy overflows SBYTE's range when dy is -128 (the negative
+             * bound clamped above): -(-128) is 128, one past SBYTE_MAX,
+             * which would wrap back to -128 through the cast below and
+             * reverse this one edge-case motion instead of saturating
+             * it. Re-clamp the negated value the same way dx/dy were
+             * clamped coming in. */
+            {
+                WORD negated_dy = -dy;
+                if (negated_dy > 127)
+                    negated_dy = 127;
+
+                packet[0] = (SBYTE)(0xf8
+                                     | ((mouse_byte0 & 0x01) ? 0x02 : 0)   /* left  -> IKBD bit1 */
+                                     | ((mouse_byte0 & 0x02) ? 0x01 : 0)); /* right -> IKBD bit0 */
+                packet[1] = (SBYTE)dx;
+                packet[2] = (SBYTE)negated_dy;  /* PS/2 Y+ is up; IKBD Y+ is down */
+            }
 
             call_mousevec(packet);
         }
