@@ -128,9 +128,21 @@ void x86_64_gop_probe(void *bs_arg)
      * can never be mistaken for a small, valid range. The extra
      * X86_64_PAGE_2M_SIZE margin covers the round-up-to-2MiB math both of
      * those functions still need to do safely.
+     *
+     * Done as two separate subtractions, each checked before it is
+     * trusted, rather than one chained "~0 - size - 2M" expression: if
+     * FrameBufferSize itself were within X86_64_PAGE_2M_SIZE of UQUAD_MAX,
+     * that chained subtraction would itself underflow and wrap back
+     * around to a huge value, silently *accepting* the exact malformed
+     * range this check exists to reject (Copilot review, PR #373).
+     * Rejecting on the first line whenever FrameBufferSize alone is too
+     * close to UQUAD_MAX to leave room for the margin guarantees the
+     * second line's own subtraction cannot underflow either.
      */
+    if (gop->Mode->FrameBufferSize > ~(UQUAD)0 - X86_64_PAGE_2M_SIZE)
+        return;
     if (gop->Mode->FrameBufferBase >
-        ~(UQUAD)0 - gop->Mode->FrameBufferSize - X86_64_PAGE_2M_SIZE)
+        ~(UQUAD)0 - X86_64_PAGE_2M_SIZE - gop->Mode->FrameBufferSize)
         return;
 
     gop_phys_base = gop->Mode->FrameBufferBase;
