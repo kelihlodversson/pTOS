@@ -20,8 +20,10 @@ typedef struct kproc KPROC;
 struct kproc {
     PD *pd;
     DTAINFO *dta;
+#ifdef __x86_64__
     UBYTE *user_start;
     UBYTE *user_end;
+#endif
     KPROC *next;
 };
 
@@ -48,9 +50,11 @@ BOOL kproc_create(PD *pd)
         return FALSE;
     kproc->pd = pd;
     kproc->dta = (DTAINFO *)pd->p_cmdlin;
+#ifdef __x86_64__
     /* Snapshot bounds before ring 3 can modify the public basepage. */
     kproc->user_start = USERPTR_TO_PTR(pd->p_env);
     kproc->user_end = USERPTR_TO_PTR(pd->p_hitpa);
+#endif
     kproc->next = kproc_list;
     kproc_list = kproc;
     return TRUE;
@@ -74,8 +78,13 @@ void kproc_set_dta(PD *pd, DTAINFO *dta)
     KPROC *kproc = kproc_find(pd);
 
     if (!kproc) {
+#ifdef __x86_64__
         KINFO(("Missing kernel process record for %p\n", pd));
         halt();
+#else
+        pd->p_xdta = PTR_TO_USERPTR_UNCHECKED(dta);
+        return;
+#endif
     }
     kproc->dta = dta;
     pd->p_xdta = PTR_TO_USERPTR_UNCHECKED(dta);
