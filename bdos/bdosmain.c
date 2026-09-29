@@ -402,7 +402,7 @@ void osinit_after_xmaddalt(void)
     run = &initial_basepage;
 #endif
     run->p_flags = PF_STANDARD;
-    run->p_xdta = PTR_TO_USERPTR(&run->p_cmdlin[0]);
+    run->p_xdta = PTR_TO_USERPTR((DTA *)&run->p_cmdlin[0]);
     /*
      * double_nul is an ordinary kernel .rodata symbol -- higher-half on
      * x86-64, so (like bios.c's coma_start/exec_os) not something
