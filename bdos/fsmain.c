@@ -414,13 +414,11 @@
  * kernel's own BSS, indexed by the owning PD's own pointer identity,
  * cannot be reached or forged from ring 3 at all.
  *
- * Sized for this arch's actual current concurrency (a handful of nested
- * kernel-code-process launches, or at most one real process at a time --
- * #334's own still-open scope for more), not a hard limit: a full table
- * just evicts the oldest entry (slot 0), which only degrades a future
- * x86_64_widen_dta() call for whichever process owned it back to the
- * always-correct-for-ILP32-processes zero-extending fallback, never a
- * memory-safety issue.
+ * Entries are reclaimed when their owning process terminates.  Only
+ * higher-half pointers need an entry; ordinary ILP32 process pointers
+ * use the existing zero-extending fallback.  Exhaustion while more than
+ * eight kernel-code processes are live is fatal rather than evicting a
+ * live mapping and later dereferencing the truncated address.
  */
 #define X86_64_DTA_SHADOW_SLOTS 8
 static struct {
@@ -440,19 +438,41 @@ static DTAINFO *x86_64_dta_shadow_get(PD *p)
 static void x86_64_dta_shadow_set(PD *p, DTAINFO *real)
 {
     int i, free_slot = -1;
+    UQUAD address = (UQUAD)(uintptr_t)real;
 
     for (i = 0; i < X86_64_DTA_SHADOW_SLOTS; i++) {
         if (x86_64_dta_shadow[i].owner == p) {
-            x86_64_dta_shadow[i].real = real;
+            if (address > 0xffffffffUL) {
+                x86_64_dta_shadow[i].real = real;
+            } else {
+                x86_64_dta_shadow[i].owner = NULL;
+                x86_64_dta_shadow[i].real = NULL;
+            }
             return;
         }
         if (free_slot < 0 && x86_64_dta_shadow[i].owner == NULL)
             free_slot = i;
     }
+
+    if (address <= 0xffffffffUL)
+        return;
     if (free_slot < 0)
-        free_slot = 0; /* table full: evict the oldest, see comment above */
+        panic("x86-64: DTA shadow table exhausted\n");
     x86_64_dta_shadow[free_slot].owner = p;
     x86_64_dta_shadow[free_slot].real = real;
+}
+
+void x86_64_dta_shadow_forget(PD *p)
+{
+    int i;
+
+    for (i = 0; i < X86_64_DTA_SHADOW_SLOTS; i++) {
+        if (x86_64_dta_shadow[i].owner == p) {
+            x86_64_dta_shadow[i].owner = NULL;
+            x86_64_dta_shadow[i].real = NULL;
+            return;
+        }
+    }
 }
 
 /*

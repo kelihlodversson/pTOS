@@ -550,6 +550,7 @@ void xsetdta(DTAINFO *addr);
  * geminit.c's count_accs()) the way it can an ordinary ILP32 process's
  * own already-low one. */
 DTAINFO *x86_64_widen_dta(ULONG stored);
+void x86_64_dta_shadow_forget(PD *p);
 #define RUN_XDTA() x86_64_widen_dta(run->p_xdta)
 #else
 #define RUN_XDTA() ((DTAINFO *)run->p_xdta)

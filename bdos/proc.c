@@ -804,6 +804,9 @@ void xterm(UWORD rc)
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
 
     run = (PD *)USERPTR_TO_PTR(run->p_parent);
+#ifdef __x86_64__
+    x86_64_dta_shadow_forget(p);
+#endif
     ixterm(p);
     /* gouser() will store the current value of D0 in the active PD
      * so it cannot be used here. See proc_go() above.
