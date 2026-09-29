@@ -99,6 +99,7 @@ include country.mk
 ARCH-$(ARCH_COLDFIRE) += coldfire
 ARCH-$(ARCH_M68K) += m68k
 ARCH-$(ARCH_ARM) += arm
+ARCH-$(ARCH_X86_64) += x86_64
 ARCH = $(ARCH-y)
 
 MACHINE-$(MACHINE_ATARI) += atari
@@ -109,6 +110,7 @@ MACHINE-$(MACHINE_AMIGA) += amiga
 MACHINE-$(MACHINE_RPI) += raspi
 MACHINE-$(MACHINE_VIRT_ARM) += virt-arm
 MACHINE-$(MACHINE_VIRT_M68K) += virt-m68k
+MACHINE-$(MACHINE_PC_X86_64) += pc-x86_64
 MACHINE = $(MACHINE-y)
 
 ifdef CONFIGURED
@@ -191,10 +193,113 @@ ifdef ARCH_ARM
 MULTILIBFLAGS = $(CPUFLAGS) -fsigned-char
 TOOLCHAIN_CFLAGS = -fno-reorder-functions -DELF_TOOLCHAIN
 else
+ifdef ARCH_X86_64
+# The image still links as a relocatable PE32+ ("-Wl,-pie" at link time,
+# see the x86-64 EMUTOS_IMG rule below) -- EDK II's loader loads it at a
+# runtime-chosen low address, and startup.c's own
+# x86_64_apply_higher_half_relocations() (#343) then walks the very same
+# PE base relocation table a second time to shift everything again, up to
+# the fixed higher-half link address. The object files themselves,
+# though, default to -fno-pic -mcmodel=large: an absolute-addressing
+# model, not ELF's PC-relative/GOT one (see #358). GCC's -fpie codegen
+# for taking the address of an extern (cross-translation-unit) function
+# at runtime is GOT-indirected, relying on the *linker* to either build a
+# real, correctly-relocated GOT or relax the reference to a direct one --
+# both ordinary, well-supported ELF static-link behaviors that ld's PE
+# backend (`-m i386pep`, required for the PE32+ output UEFI needs) does
+# neither correctly for: it silently produces a GOT slot that comes out
+# wrong once the image moves from its as-loaded low address to the fixed
+# higher half. This bit real, portable, arch-generic code
+# (bios/chardev.c's chardev_init(), where GCC constant-propagates a
+# `static const` function-pointer table into exactly this pattern) with
+# no diagnostic at build time -- see #358 for the full writeup.
+# -mcmodel=large is required alongside -fno-pic because the small/default
+# code model's absolute addressing is only 32-bit (sign-extended) --
+# fine for a load-time base near 0, but this image's *final* address
+# after the higher-half shift (X86_64_KERNEL_VIRT_BASE upward) does not
+# fit in 32 bits. Under -mcmodel=large every such reference becomes a
+# full 64-bit absolute relocation instead, which both
+# x86_64_apply_higher_half_relocations() and the PE loader's own initial
+# relocation already handle correctly (the same relocation type every
+# static data initializer in this image -- e.g. bios.c's bios_vecs[] --
+# already used, PIC or not).
+#
+# X86_64_PIE_OVERRIDE (below) restores plain -fpie -mcmodel=small (i.e.
+# undoes both of the above, in that order so the later flag in each pair
+# wins) for the handful of objects that must stay genuinely position-
+# independent: the ones that execute on both sides of the higher-half
+# address change itself (before x86_64_relocate_higher_half() and,
+# transitively, after it), where -mcmodel=large's absolute references
+# would otherwise get shifted to their *final* higher-half address by
+# x86_64_apply_higher_half_relocations() while the code making them is
+# still running from its low, as-loaded address -- e.g. an ordinary
+# function call to another such object, now compiled as an absolute
+# jump target, resolving to a higher-half address that isn't mapped yet.
+# This is not a hypothetical: it is exactly what happens if
+# MULTILIBFLAGS's -mcmodel=large is applied uniformly, and is why this is
+# a *per-object* override rather than a second, simpler MULTILIBFLAGS
+# split by directory. See #358's own follow-up analysis.
+#
+# -mno-red-zone is required for any code that can be interrupted by an
+# NMI/exception while running as a callee below its own stack pointer
+# (not yet the case in this milestone, but every later x86-64 object
+# shares these flags, so it goes on the whole architecture now rather
+# than needing to be revisited per file). -fshort-wchar matches UEFI's
+# 16-bit CHAR16 strings. -fno-ident drops the compiler-version .comment
+# section: the PE linker places it below the image base and refuses to
+# link ("section below image base") if it is present.
+# -maccumulate-outgoing-args is required by GCC for every object built
+# with this MULTILIBFLAGS, because efi.h declares every EFI-called
+# function pointer (and efi_main() itself) with the ms_abi attribute: GCC
+# documents -maccumulate-outgoing-args as needed for ms_abi correctness
+# on x86-64, where its default sub/add-based outgoing-argument-area
+# handling around calls is not guaranteed to interact correctly with a
+# function using a calling convention other than the compiler's default.
+MULTILIBFLAGS = $(CPUFLAGS) -fno-pic -mcmodel=large -mno-red-zone \
+                -fshort-wchar -fno-ident -maccumulate-outgoing-args
+TOOLCHAIN_CFLAGS = -ffreestanding
+
+# See the MULTILIBFLAGS comment above. All seven objects below are kept
+# on plain -fpie; none of them do the cross-translation-unit function-
+# pointer-assignment pattern that makes the rest of the tree need the
+# -mcmodel=large fix (verified by inspection), so nothing is lost by
+# leaving them as they were. Five of the seven need to stay -fpie for a
+# separate reason -- they execute across the higher-half address change
+# itself: bios/machine/pc-x86_64/startup.c's efi_main(), and everything
+# it calls before x86_64_relocate_higher_half() --
+# x86_64_build_page_tables()/x86_64_build_physmap()/x86_64_low_to_high()
+# in pgtable.c, x86_64_apply_higher_half_relocations() in pe_reloc.c,
+# x86_64_pmem_init()/x86_64_pmem_highest_addr() in pmem.c, and (#332)
+# x86_64_gop_reserved_range() in gop.c -- called from efi_main() *after*
+# x86_64_apply_higher_half_relocations() has already run, unlike its own
+# x86_64_gop_probe() (called earlier, before that pass, so its absolute
+# references still held their as-loaded low values when it ran and
+# needed no override). Under plain -mcmodel=large, that same function's
+# read of gop.c's own static gop_found/gop_phys_base/gop_size would
+# compile to an absolute 64-bit load -- a real relocation entry, already
+# rewritten to its higher-half alias by that point, dereferenced while
+# still running at the low, as-loaded address with the new page tables
+# not yet live (CR3 isn't switched until x86_64_relocate_higher_half(),
+# the very last thing efi_main() does) -- an immediate #PF on a
+# plausible-looking but entirely wrong address, caught the hard way
+# before this override was added. The remaining two are along for the
+# ride rather than independently required: earlycon.c, because
+# earlycon_puts() is called from every one of the five above and needs
+# to work correctly on both sides of the jump for that reason (even
+# though it makes no address-of-a-relocatable-symbol reference of its
+# own); and memory.c, whose pc_x86_64_memory_init() is actually
+# post-jump-only and would be safe either way, kept here too since it is
+# a small, leaf-level early-boot file in the same directory, not worth a
+# separate case.
+X86_64_PIE_OBJS = obj/startup.o obj/pgtable.o obj/pe_reloc.o obj/pmem.o \
+                  obj/earlycon.o obj/memory.o obj/gop.o
+$(X86_64_PIE_OBJS): X86_64_PIE_OVERRIDE = -fpie -mcmodel=small
+else
 MULTILIBFLAGS = $(CPUFLAGS) -mshort
 ifdef BUILD_TOOLCHAIN_IS_ELF
 TOOLCHAIN_CFLAGS = -Wa,--register-prefix-optional \
                    -fno-reorder-functions -DELF_TOOLCHAIN
+endif
 endif
 endif
 
@@ -267,7 +372,7 @@ bdos_copts = -Ifs
 # fid-level API, needing -Ibios.
 fs_copts = -Ibdos -Ibios
 
-CFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_copts))
+CFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_copts) $(X86_64_PIE_OVERRIDE))
 SFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_sopts))
 
 # Linker: relocation information and, for most targets, a raw binary.
@@ -276,12 +381,19 @@ LIBS = -lgcc
 LDFLAGS = -Wl,-T,obj/emutospp.ld
 PCREL_LDFLAGS = -Wl,--oformat=binary,-Ttext=0,--entry=0
 
+ifdef ARCH_X86_64
+# A PE32+ EFI application, not an EmuTOS-style ROM/RAM image: built by its
+# own rule below from its own small object list, not from $(OBJECTS)/
+# obj/emutospp.ld. LDFLAGS/PCREL_LDFLAGS above are unused for this arch.
+EMUTOS_IMG = emutos.efi
+else
 ifdef ARCH_ARM
 # The ARM linker script cannot produce a raw binary directly.
 EMUTOS_IMG = emutos.elf
 LDFLAGS += -Wl,-build-id=none
 else
 EMUTOS_IMG = emutos.img
+endif
 endif
 
 #
@@ -380,10 +492,13 @@ ifdef TARGET_VIRT_M68K_KERNEL
 image-default = virt-m68k.elf
 MEMBOT_REFERENCE = TOS162
 endif
+ifdef TARGET_PC_X86_64_EFI
+image-default = pc-x86_64.efi
+endif
 
 IMAGE = $(if $(IMAGE_NAME),$(IMAGE_NAME),$(image-default))
 
-TOCLEAN += *.img *.map *.elf *.prg *.st *.s19 *.stc *.rom *.adf *.sym
+TOCLEAN += *.img *.map *.elf *.prg *.st *.s19 *.stc *.rom *.adf *.sym *.efi
 
 #
 # Production targets
@@ -477,6 +592,35 @@ obj/emutospp.ld: emutos.ld include/config.h tosvars.ld $(AUTOCONF_H)
 # to enable one generic target to deal with all edited disassembly.
 #
 
+ifdef ARCH_X86_64
+# Milestone 3 of the x86-64 port (#349): joins $(OBJECTS) like every other
+# machine, instead of the small standalone boot object list milestones
+# 1-2 (#330, #331) used while there was no trap dispatch or machine-hook
+# layer yet for the shared bios/bdos/fs/util pipeline to run on.
+#
+# The link itself must still go through the PE32+ ("i386pep") linker
+# emulation, not the ELF one $(LD) otherwise defaults to, and needs -pie
+# so the linker emits the PE Base Relocation Table EDK II's loader
+# requires (see the ARCH_X86_64 MULTILIBFLAGS comment above). --subsystem
+# 10 marks the image as an EFI application; without it the default PE
+# subsystem is a Windows console app, which UEFI firmware refuses to load.
+
+# Linked directly with $(CROSS_COMPILE)ld, not through $(CC): gcc's driver
+# adds --eh-frame-hdr whenever -fpie/-pie is in play (needed for the PE
+# Base Relocation Table, see the MULTILIBFLAGS comment above), and that
+# option is ELF-linker-only -- binutils' PE ("i386pep") backend rejects it
+# outright ("unrecognized option '--eh-frame-hdr'"). Bypassing the gcc
+# driver also means it never adds libgcc.a's own directory to the search
+# path the way it would for an ordinary $(CC)-driven link, so -lgcc below
+# needs an explicit -L for it, found the same way gcc itself would.
+X86_64_LD = $(CROSS_COMPILE)ld
+X86_64_LIBGCC_DIR = $(shell dirname $(shell $(CC) $(MULTILIBFLAGS) -print-libgcc-file-name))
+
+$(EMUTOS_IMG): $(OBJECTS)
+	$(X86_64_LD) -m i386pep -pie --subsystem 10 -e efi_main \
+	  -L$(X86_64_LIBGCC_DIR) \
+	  -Map=emutos.map -o $@ $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(LIBS)
+else
 $(EMUTOS_IMG): $(OBJECTS) obj/emutospp.ld
 	$(LD) $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(LIBS) $(LDFLAGS) \
 	  -Wl,-Map=emutos.map -o $@
@@ -489,6 +633,7 @@ $(EMUTOS_IMG): $(OBJECTS) obj/emutospp.ld
 " LOWSTRAM=$(call SHELL_SYMADDR,__low_stram_start,emutos.map)"\
 " BSS=$(call SHELL_SYMADDR,__bss,emutos.map)"\
 " MEMBOT=$(call SHELL_SYMADDR,__end_os_stram,emutos.map)"
+endif
 
 #
 # Padded ROM images (192/256/512 KB and the 128 KB diagnostic cartridge)
@@ -540,6 +685,65 @@ endif
 ifdef TARGET_VIRT_M68K_KERNEL
 $(IMAGE): $(EMUTOS_IMG)
 	cp $< $@
+endif
+
+#
+# x86-64 UEFI kernel image — a PE32+ EFI application, passed to firmware
+# unchanged (copy it to \EFI\BOOT\BOOTX64.EFI on a FAT ESP to boot it)
+#
+
+ifdef TARGET_PC_X86_64_EFI
+$(IMAGE): $(EMUTOS_IMG)
+	cp $< $@
+endif
+
+#
+# x32 psABI userspace test program (#334) -- a *separate* GCC invocation
+# from the kernel's own -m64 EFI build above: ordinary -mx32 codegen
+# produces an ELFCLASS32 program with genuine EM_X86_64 long-mode
+# instructions (Linux's "x32" psABI, not IA-32 compatibility mode), linked
+# as a plain freestanding ELF executable, not through the PE32+ ("i386pep")
+# path $(EMUTOS_IMG) needs. See tests/x32_hello/x32_hello.c's own comment
+# for what it does and why it needs no CRT/libc.
+#
+
+ifdef ARCH_X86_64
+X32_CC = $(X32_CROSS_COMPILE)gcc
+
+# -fno-asynchronous-unwind-tables/-fno-unwind-tables drop the .eh_frame
+# segment gcc emits by default, -fcf-protection=none drops the
+# .note.gnu.property one (Intel CET markers), and -Wl,--build-id=none
+# drops the .note.gnu.build-id one -- each is otherwise its own PT_LOAD/
+# PT_NOTE segment, and pTOS's ELF loader (bdos/elfld.c, #43) only ever
+# maps the segments the image itself declares, so keeping this down to
+# exactly one real PT_LOAD segment (verified with readelf -l) is what
+# makes the result loadable there. -Wl,-Ttext=0x400000 -Wl,-n fixes the
+# link base and disables page alignment padding between segments (static,
+# non-PIE ET_EXEC, per #334's "x32 toolchain and executable contract"
+# section) -- -n is what collapses what would otherwise be separate R and
+# R+E LOAD segments into one. -Wl,-q (--emit-relocs) keeps the retained
+# RELA relocation entries the same contract calls for, so a less trivial
+# x32 program than tests/x32_hello/x32_hello.c (which has no absolute
+# data references and so links with none to retain) still gets a
+# relocatable binary -- see the ARCH_X86_64 branch elfld.c's own
+# EM_X86_64/ELF_R_DIR32/ELF_R_RELATIVE constants added for this.
+# -fno-pie/-no-pie force the ET_EXEC contract explicitly rather than
+# relying on the host GCC's own default: a distro configured with PIE
+# on by default would otherwise still produce ET_DYN here (-mx32 alone
+# doesn't disable it), which elfld.c's loader does not expect
+# (Copilot's review of #356 caught this).
+X32_CFLAGS = -mx32 -ffreestanding -fno-asynchronous-unwind-tables \
+             -fno-unwind-tables -fcf-protection=none -fno-pie
+X32_LDFLAGS = -nostdlib -static -no-pie -Wl,--build-id=none \
+              -Wl,-Ttext=0x400000 -Wl,-n -Wl,-q
+
+x32hello.elf: tests/x32_hello/x32_hello.c
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $<
+
+.PHONY: x32test
+x32test: x32hello.elf
+
+TOCLEAN += x32hello.elf
 endif
 
 #

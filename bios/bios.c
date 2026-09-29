@@ -37,8 +37,11 @@
 #include "nls.h"
 #include "biosmem.h"
 #include "../aes/aesstub.h"
-#if defined(__arm__)
+#if defined(__arm__) || defined(__x86_64__)
 #include "biosargs.h"
+#endif
+#ifdef __x86_64__
+extern void x86_64_mark_kernel_code_pd(PD *p);
 #endif
 #include "ikbd.h"
 #include "mouse.h"
@@ -84,6 +87,10 @@
 #include "goldfish_pic.h"
 #include "goldfish_rtc.h"
 #endif
+#ifdef MACHINE_PC_X86_64
+#include "irq.h"
+#include "io.h"
+#endif
 
 
 /*==== Defines ============================================================*/
@@ -111,7 +118,7 @@ extern void coma_start(void) NORETURN;  /* found in cli/cmdasm.S */
 #endif
 
 #if CONF_WITH_ALT_RAM
-extern long xmaddalt(UBYTE *start, long size); /* found in bdos/mem.h */
+extern LONG xmaddalt(UBYTE *start, LONG size); /* found in bdos/mem.h */
 #endif
 
 #if CONF_WITH_68040_PMMU
@@ -147,17 +154,26 @@ UBYTE bootflags;
 
 /* Non-Atari hardware vectors */
 #if !CONF_WITH_MFP
+#ifdef __x86_64__
+/* See bios/vectors.h's own __x86_64__ branch: this is the pointer that
+ * vector_5ms is #define'd to dereference, not a plain function-pointer
+ * variable, so it needs its own declared type (bios/mfp.c allocates it
+ * from the low-kdata pool before first use). */
+void (**x86_64_vector_5ms_ptr)(void);
+#else
 void (*vector_5ms)(void);       /* 200 Hz system timer */
+#endif
 #endif
 
 /*==== BOOT ===============================================================*/
 
-#if defined(__arm__) || defined(__aarch64__)
+#if defined(__arm__) || defined(__aarch64__) || defined(__x86_64__)
 
 const char *mcpu_name;
 LONG mcpu;
 LONG fputype;
 
+#if defined(__arm__) || defined(__aarch64__)
 static char const arm_unknown[] = "ARM (unknown)";
 
 static struct {
@@ -232,6 +248,26 @@ void detect_cpu(void)
                 }
         }
 }
+#elif defined(__x86_64__)
+/*
+ * mcpu holds CPUID leaf 1's EAX (the family/model/stepping signature),
+ * not an m68k-style small integer code -- the same trick ARM plays with
+ * its own raw CPUID register (above): every other reader of mcpu
+ * (kprint.c, delay.c, aros.c, ide.c) only ever compares it against
+ * specific m68k CPU-type constants (0/10/20/30/40/60), which a real
+ * CPUID signature is never going to coincidentally match, so those
+ * m68k-only code paths stay correctly inert here without needing their
+ * own #ifdef.
+ */
+void detect_cpu(void)
+{
+        ULONG eax = 1, ebx, ecx, edx;
+
+        __asm__ volatile ("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+        mcpu = (LONG)eax;
+        mcpu_name = "x86-64";
+}
+#endif
 
 #endif
 
@@ -274,13 +310,13 @@ static void vecs_init(void)
      * previous one. This panics with "Exception number 27" if VEC_LEVEL3 is
      * not initialized with a valid default handler.
      */
-    VEC_LEVEL1 = just_rte;
-    VEC_LEVEL2 = just_rte;
-    VEC_LEVEL3 = just_rte;
-    VEC_LEVEL4 = just_rte;
-    VEC_LEVEL5 = just_rte;
-    VEC_LEVEL6 = just_rte;
-    VEC_LEVEL7 = just_rte;
+    SET_VEC(VEC_LEVEL1, just_rte);
+    SET_VEC(VEC_LEVEL2, just_rte);
+    SET_VEC(VEC_LEVEL3, just_rte);
+    SET_VEC(VEC_LEVEL4, just_rte);
+    SET_VEC(VEC_LEVEL5, just_rte);
+    SET_VEC(VEC_LEVEL6, just_rte);
+    SET_VEC(VEC_LEVEL7, just_rte);
 
 #ifdef __mcoldfire__
     /* On ColdFire, when a zero divide exception occurs, the PC value in the
@@ -291,12 +327,12 @@ static void vecs_init(void)
      * divides. So we keep the default panic() behaviour in such case. */
 #else
     /* Original TOS cowardly ignores integer divide by zero. */
-    VEC_DIVNULL = just_rte;
+    SET_VEC(VEC_DIVNULL, just_rte);
 #endif
 
     /* initialise some vectors we really need */
 #ifdef __m68k__
-    VEC_GEM = vditrap;
+    SET_VEC(VEC_GEM, vditrap);
 #else
     /* ARM's own gemtrap() (bios/arch/arm/vectorsasm.S) is the equivalent
      * of m68k's vditrap(): it decodes the svc #2 trap and dispatches into
@@ -306,12 +342,12 @@ static void vecs_init(void)
      * every VDI call (even v_opnwk()) panics with "Exception number 28"
      * (any_vec() computing 0x88/4 from VEC_GEM's own address) the first
      * time anything traps into it. */
-    VEC_GEM = gemtrap;
+    SET_VEC(VEC_GEM, gemtrap);
 #endif
-    VEC_BIOS = biostrap;
-    VEC_XBIOS = xbiostrap;
+    SET_VEC(VEC_BIOS, biostrap);
+    SET_VEC(VEC_XBIOS, xbiostrap);
 #if CONF_WITH_LINEA
-    VEC_LINEA = int_linea;
+    SET_VEC(VEC_LINEA, int_linea);
 #endif
     /* Emulate some instructions unsupported by the processor. */
 #ifdef __mcoldfire__
@@ -322,12 +358,12 @@ static void vecs_init(void)
         /* On 68010+, "move from sr" called from user mode causes a
          * privilege violation. This instruction must be emulated for
          * compatibility with 68000 processors. */
-        VEC_PRIVLGE = int_priv;
+        SET_VEC(VEC_PRIVLGE, int_priv);
     } else {
         /* On 68000, "move from ccr" is unsupported and causes an illegal
          * instruction exception. This instruction must be emulated for
          * compatibility with higher processors. */
-        VEC_ILLEGAL = int_illegal;
+        SET_VEC(VEC_ILLEGAL, int_illegal);
     }
 #endif
 #if CONF_WITH_ADVANCED_CPU && defined(__m68k__)
@@ -337,7 +373,7 @@ static void vecs_init(void)
      * emulated is movep; fortunately this is both the simplest and
      * commonest.
      */
-    VEC_UNIMPINT = int_unimpint;
+    SET_VEC(VEC_UNIMPINT, int_unimpint);
 #endif
 }
 
@@ -632,6 +668,18 @@ static void bios_init(void)
      */
 #ifdef __arm__
     cpsr_ie();
+#elif defined(__x86_64__)
+    /*
+     * #335: bring up the legacy PIC/PIT/PS-2 controller (bios/machine/
+     * pc-x86_64/irq.c) -- remapping the PIC, installing this machine's
+     * three device-IRQ IDT gates, programming a 200 Hz tick and enabling
+     * keyboard/mouse reporting -- before turning interrupts on at all, so
+     * the very first one that can arrive always has a real handler
+     * waiting for it (gdt.c/trap.c/idt.c's own comments on why interrupts
+     * stayed off until now).
+     */
+    x86_64_irq_init();
+    x86_64_sti();
 #else
 #if CONF_WITH_ATARI_VIDEO
     /* Keep the HBL disabled */
@@ -749,11 +797,37 @@ static void bios_init(void)
     nls_set_lang(get_lang_name());
 #endif
 
-    /* set start of user interface */
+    /* set start of user interface
+     *
+     * On x86-64, NOT a plain C `exec_os = ui_start`/`= coma_start`:
+     * taking the address of an extern symbol that way lets the compiler
+     * pick GOT-indirected addressing (`mov sym@GOTPCREL(%rip), %reg`,
+     * R_X86_64_REX_GOTPCRELX) for a symbol it can't prove is local at
+     * compile time, exactly the hazard bios/arch/x86_64/trap.c's own
+     * x86_64_syscall_entry/xbios_unimpl_addr comments already document
+     * at length -- this image's objects are ELF but the final link is
+     * PE (`ld -m i386pep`), whose backend does not perform the ELF
+     * static-executable GOT relaxation, so the load reads garbage
+     * instead of ui_start's/coma_start's real address. Forcing `lea`
+     * here (RIP-relative, self-adjusting to wherever this code actually
+     * runs, unlike a GOT load) sidesteps it, mirroring those same call
+     * sites' own fix. Confirmed by this exact bug reproducing here: a
+     * plain `exec_os = coma_start` read back as an unrelated garbage
+     * 64-bit value once gouser() (bdos/arch/x86_64/rwa.c) actually
+     * tried to call through it.
+     */
 #if CONF_WITH_AES
+#ifdef __x86_64__
+    __asm__("lea ui_start(%%rip), %0" : "=r"(exec_os));
+#else
     exec_os = ui_start;
+#endif
 #elif CONF_WITH_CLI
+#ifdef __x86_64__
+    __asm__("lea coma_start(%%rip), %0" : "=r"(exec_os));
+#else
     exec_os = coma_start;
+#endif
 #else
     exec_os = NULL;
 #endif
@@ -907,6 +981,16 @@ static void run_reset_resident(void)
  * to use GEMDOS calls here!
  */
 
+#ifdef __x86_64__
+/*
+ * bios/machine/pc-x86_64/memory.c's own low, sub-4GiB pool -- declared
+ * directly here rather than via its own header, matching bdos/proc.c's
+ * and bdos/arch/x86_64/rwa.c's identical precedent for the same
+ * function: only autoexec() (below) needs it in this file.
+ */
+extern UBYTE *x86_64_low_tpa_alloc(LONG needed);
+#endif
+
 static void run_auto_program(const char* filename)
 {
     char path[30];
@@ -921,8 +1005,13 @@ static void run_auto_program(const char* filename)
 
 static void autoexec(void)
 {
-    DTA dta;
     WORD err;
+#ifdef __x86_64__
+    DTA *dta;
+#else
+    DTA dta_storage;
+    DTA *dta = &dta_storage;
+#endif
 
     /* check if the user does not want to run AUTO programs */
     if (bootflags & BOOTFLAG_SKIP_AUTO_ACC)
@@ -935,22 +1024,41 @@ static void autoexec(void)
     if(!blkdev_avail(bootdev))          /* check, if bootdev available */
         return;
 
-    Fsetdta(&dta);
+#ifdef __x86_64__
+    /*
+     * A stack-local DTA doesn't work here on this arch: Fsetdta()
+     * stores its address in p_xdta, a USERPTR_T (ULONG) field
+     * (bdos/fsmain.c's xsetdta()), and the filesystem code (e.g.
+     * fs/fatfs_pfs.c's fat_sfirst()/fat_snext()) widens it back and
+     * dereferences it directly during Fsfirst()/Fsnext() -- an
+     * ordinary kernel stack address is higher-half here, so that
+     * reconstructed pointer is garbage regardless of whether the
+     * narrowing itself is checked (Copilot's review of #356 caught
+     * this: an earlier fix here only silenced the trap, not the
+     * underlying corruption). Use the same low, sub-4GiB pool real
+     * processes' own PDs/env already come from instead.
+     */
+    dta = (DTA *)x86_64_low_tpa_alloc(sizeof(DTA));
+    if (!dta)
+        return;
+#endif
+
+    Fsetdta(dta);
     err = Fsfirst("\\AUTO\\*.PRG", 7);
     while(err == 0) {
 #ifdef TARGET_PRG
-        if (!strncmp(dta.d_fname, "EMUTOS", 6))
+        if (!strncmp(dta->d_fname, "EMUTOS", 6))
         {
-            KDEBUG(("Skipping %s from AUTO folder\n", dta.d_fname));
+            KDEBUG(("Skipping %s from AUTO folder\n", dta->d_fname));
         }
         else
 #endif
         {
-            run_auto_program(dta.d_fname);
+            run_auto_program(dta->d_fname);
 
             /* Setdta. BetaDOS corrupted the AUTO load if the Setdta
              * not repeated here */
-            Fsetdta(&dta);
+            Fsetdta(dta);
         }
 
         err = Fsnext();
@@ -1061,8 +1169,26 @@ void biosmain(void)
 #if CONF_WITH_CLI
     if (bootflags & BOOTFLAG_EARLY_CLI) {   /* run an early console */
         PD *pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", default_env);
-        pd->p_tbase = (UBYTE *) coma_start;
+        /*
+         * coma_start is kernel code (EmuCON's own entry point, linked
+         * into this image), not a real user process's text segment --
+         * on x86-64, unlike every ILP32 arch, that means its address is
+         * never low/32-bit-representable, so this deliberately uses the
+         * UNCHECKED narrow (PTR_TO_USERPTR() would trap on exactly
+         * that). gouser() panics before ever using p_tbase as a real
+         * ring-3 entry point on this arch today (see bdos/arch/x86_64/
+         * rwa.c), so the truncation below is harmless for now -- but a
+         * genuine x86-64 gouser() must special-case a kernel-code
+         * p_tbase like this one (call it directly, the way
+         * cli/arch/x86_64/cmdasm.c's own header comment already
+         * anticipates) rather than ever feeding it to a real
+         * ring0->ring3 transition.
+         */
+        pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *) coma_start);
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
+#ifdef __x86_64__
+        x86_64_mark_kernel_code_pd(pd);
+#endif
         Pexec(PE_GOTHENFREE, "", (char *)pd, default_env);
     }
 #endif
@@ -1084,8 +1210,15 @@ void biosmain(void)
          */
         PD *pd;
         pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", default_env);
-        pd->p_tbase = (UBYTE *) exec_os;
+        /* exec_os is always a kernel code symbol (ui_start or coma_start,
+         * see bios_init() above) -- see the identical BOOTFLAG_EARLY_CLI
+         * case's own comment above for why this deliberately uses the
+         * UNCHECKED narrow on x86-64. */
+        pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *) exec_os);
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
+#ifdef __x86_64__
+        x86_64_mark_kernel_code_pd(pd);
+#endif
         Pexec(PE_GO, "", (char *)pd, default_env);
     }
 
@@ -1268,15 +1401,23 @@ void bconout_str(WORD handle, const char* str)
 
 LONG lrwabs(WORD r_w, UBYTE *adr, WORD numb, WORD first, WORD drive, LONG lfirst)
 {
-    return protect_wlwwwl((PFLONG)hdv_rw, r_w, (LONG)adr, numb, first, drive, lfirst);
+    /*
+     * (long)adr, not (LONG)adr: on ARM/x86-64, protect_wlwwwl()'s matching
+     * parameter is native `long` precisely so this cast doesn't truncate
+     * adr (see its own comment) -- on m68k, `long` is 32 bits same as
+     * LONG, so this is unchanged there.
+     */
+    return protect_wlwwwl((PFLONG)hdv_rw, r_w, (long)adr, numb, first, drive, lfirst);
 }
 
-#if defined(__arm__)
+#if defined(__arm__) || defined(__x86_64__)
 /*
- * ARM's trap entry (_biostrap, vectorsasm.S) only delivers 4 real
- * arguments in registers; lrwabs() needs 6, so it's called through the
- * vec table via this trampoline instead, unpacking a struct pointer.
- * See arch/arm/biosargs.h.
+ * ARM's trap entry (_biostrap, vectorsasm.S) and x86-64's dispatcher
+ * (bios/arch/x86_64/trap.c) alike only deliver 4 real arguments in
+ * registers; lrwabs() needs 6, so it's called through the vec table via
+ * this trampoline instead, unpacking a struct pointer. See
+ * include/arch/arm/biosargs.h and include/arch/x86_64/biosargs.h (not
+ * binary-compatible with each other, but the same shape).
  */
 static LONG bios_4_arm(struct bios_lrwabs_args *a)
 {
@@ -1305,9 +1446,30 @@ static LONG bios_4(WORD r_w, UBYTE *adr, WORD numb, WORD first, WORD drive, LONG
  *
  */
 
-LONG setexc(WORD num, LONG vector)
+/*
+ * `long`, not portab.h's always-32-bit LONG, for the parameter, the
+ * etv_*-path local, and the return type: etv_timer/etv_critic/etv_term
+ * are genuine C function pointers (real 64-bit ones on x86-64's LP64),
+ * and num values 0x100-0x102 round-trip a caller's vector through them
+ * directly (see that path's own comment below) rather than through the
+ * fixed-32-bit-per-slot low-memory table the num=0x21/0x22 (etc.) path
+ * below still uses -- a LONG parameter/return here silently truncated
+ * any higher-half caller (e.g. bdosmain.c's own
+ * Setexc(0x21, (long)enter)) before it ever reached etv_timer's own
+ * assignment. A no-op on m68k/ARM, where long and LONG are the same
+ * width.
+ *
+ * The `addr = (LONG *)(4L * num)` path below is NOT similarly widened,
+ * deliberately: that low-memory table is fundamentally 32-bit-per-slot
+ * by historical (m68k) ABI convention, unrelated to this arch's own
+ * pointer width, and widening the slot itself would be a much larger
+ * change than this function's own parameter type. See kelihlodversson/
+ * pTOS#351 for the same "kernel pointer needs to fit in a narrower ABI
+ * slot" theme applied to that path specifically.
+ */
+long setexc(WORD num, long vector)
 {
-    LONG oldvector;
+    long oldvector;
     LONG *addr;
 
     /*
@@ -1327,17 +1489,17 @@ LONG setexc(WORD num, LONG vector)
     switch (num)
     {
     case 0x100:
-        oldvector = (LONG)etv_timer;
+        oldvector = (long)etv_timer;
         if (vector != -1)
             etv_timer = (void(*)(int))vector;
         return oldvector;
     case 0x101:
-        oldvector = (LONG)etv_critic;
+        oldvector = (long)etv_critic;
         if (vector != -1)
             etv_critic = (LONG(*)(WORD,WORD))vector;
         return oldvector;
     case 0x102:
-        oldvector = (LONG)etv_term;
+        oldvector = (long)etv_term;
         if (vector != -1)
             etv_term = (void(*)(void))vector;
         return oldvector;
@@ -1347,7 +1509,7 @@ LONG setexc(WORD num, LONG vector)
     oldvector = *addr;
 
     if(vector != -1) {
-        *addr = vector;
+        *addr = (LONG)vector;
     }
     return oldvector;
 }
@@ -1527,7 +1689,7 @@ const PFLONG bios_vecs[] = {
     VEC(bios_1, bconstat),
     VEC(bios_2, bconin),
     VEC(bios_3, bconout),
-#if defined(__arm__)
+#if defined(__arm__) || defined(__x86_64__)
     (PFLONG) bios_4_arm,
 #else
     VEC(bios_4, lrwabs),

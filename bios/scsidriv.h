@@ -103,6 +103,34 @@ typedef struct
         #define cErrReset   1
 } SCSIRoot;
 
+#ifdef __x86_64__
+/*
+ * #351: bios/machine.c's fill_cookie_jar() hands out &scsidriv_root
+ * through the 'SCSI' cookie's 32-bit value field, which requires
+ * scsidriv_root's own STORAGE to have a real sub-4GiB address -- not
+ * true of an ordinary higher-half global on this arch (see
+ * bios/machine/pc-x86_64/memory.c's own #351 comment on the pool this
+ * points into). The macro makes every existing read/write/address-of
+ * site (scsidriv.c's own init and accessors, machine.c's cookie_add()
+ * call) transparently dereference that pointer instead of naming a
+ * fixed symbol; only the definition site and the one-time allocation
+ * (both scsidriv.c) need their own __x86_64__ branch.
+ */
+extern SCSIRoot *x86_64_scsidriv_root_ptr;
+#define scsidriv_root (*x86_64_scsidriv_root_ptr)
+
+/*
+ * Reserves x86_64_scsidriv_root_ptr's own storage from the low-kdata pool
+ * (bios/machine/pc-x86_64/memory.c). Must run before anything dereferences
+ * scsidriv_root (the scsidriv_root macro above) -- in particular before
+ * bios/machine.c's fill_cookie_jar(), which runs well before scsidriv_init()
+ * itself (blkdev_init() calls that after ACSI/IDE bus detection). Called
+ * from bios/machine/pc-x86_64/startup.c, right alongside
+ * x86_64_low_kdata_init(). See scsidriv.c's own comment on this function.
+ */
+void x86_64_scsidriv_root_alloc(void);
+#else
 extern SCSIRoot scsidriv_root;
+#endif
 
 void scsidriv_init(void);

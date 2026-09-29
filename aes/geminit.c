@@ -167,6 +167,19 @@ LONG init_p0_stkptr(void)
      * inherits whatever alignment is set up here.
      */
     stack_top = (ULONG *)((ULONG)stack_top & ~7UL);
+#elif ARCH_X86_64
+    /*
+     * The SysV AMD64 ABI requires %rsp % 16 == 0 at any C call boundary
+     * (so that a callee's own `call` leaves it 8 mod 16, matching what
+     * every prologue assumes for its local aligned-storage operands --
+     * e.g. a variadic function's %xmm0-7 spill via movaps, which #GPs on
+     * a misaligned address exactly like ARM's NEON/VFP does above). Same
+     * reasoning as the ARM branch: THEGLO (D) carries no alignment
+     * guarantee beyond its LONG/ULONG members' own 4-byte alignment, so
+     * round down explicitly rather than assume u_supstk's offset within
+     * UDA happens to already be a multiple of 16.
+     */
+    stack_top = (ULONG *)((UQUAD)stack_top & ~15ULL);
 #endif
 
     u->u_spsuper = stack_top;
@@ -898,6 +911,12 @@ void gem_main(void)
              * process and desk accessory (i != 0) needs it too, since
              * they all run AES/VDI code on this same private stack. */
             stack_top = (ULONG *)((ULONG)stack_top & ~7UL);
+#elif ARCH_X86_64
+            /* Same reasoning as init_p0_stkptr()'s own x86-64 branch:
+             * SysV AMD64 requires 16-byte stack alignment at a call
+             * boundary, and u_supstk's offset within UDA is not
+             * naturally a multiple of 16. */
+            stack_top = (ULONG *)((UQUAD)stack_top & ~15ULL);
 #endif
             rlr->p_uda->u_spsuper = stack_top;
         }

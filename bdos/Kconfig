@@ -32,7 +32,7 @@ config CONF_PREFER_STRAM_DISK_BUFFERS
 
 config CONF_WITH_ELF_LOADER
 	bool "Load ELF executables"
-	default y if ARCH_ARM
+	default y if ARCH_ARM || ARCH_X86_64
 	default n
 	help
 	  Add a second, ELF based executable loader alongside the classic
@@ -52,9 +52,12 @@ config CONF_WITH_ELF_LOADER
 	  own relocation table.  It reads the relocations from the section
 	  headers, so the binary must keep them (do not strip it).
 
-	  This is enabled by default on ARM, which cannot produce the m68k
-	  specific PRG format at all, and is available on m68k as an
-	  alternative to PRG.
+	  On x86-64 (#334) this is the ELFCLASS32/EM_X86_64 x32 psABI, not
+	  IA-32/EM_386 compat-mode code -- see tests/x32_hello/x32_hello.c.
+
+	  This is enabled by default on ARM and x86-64, neither of which can
+	  produce the m68k specific PRG format at all, and is available on
+	  m68k as an alternative to PRG.
 
 config CONF_WITH_PTOS_ABI_IMPORTS
 	bool "Native pTOS ABI imports for ELF executables"

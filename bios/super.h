@@ -29,6 +29,15 @@ static __inline__ long Super(void* ptr)
     );
     return _r0;
 }
+#elif defined(__x86_64__)
+/* Function 0x20 is an ordinary GEMDOS call here, reaching osif() through
+ * this arch's own syscall/sysretq dispatch (bios/arch/x86_64/trap.c) the
+ * same way every other GEMDOS call does -- no separate trap vector to
+ * install or inline asm to write, unlike m68k's "trap #1" below. */
+static __inline__ long Super(void *ptr)
+{
+    return trap1(0x20, (long)ptr);
+}
 #else
 #define Super(ptr)                          \
 __extension__                               \
@@ -63,8 +72,10 @@ __extension__                               \
  *
  * Binding originally by Vincent Rivière, from MiNTlib's osbind.h
  */
-#ifdef __arm__
-/* Let's start by assuming we don't have this bug on PI */
+#if defined(__arm__) || defined(__x86_64__)
+/* Let's start by assuming we don't have this bug on PI (and, likewise,
+ * on x86-64: trap1()'s "syscall" never touches %rsp at all, so there is
+ * no stack pointer for the bug this works around to disturb). */
 #define SuperToUser(ptr) Super(ptr)
 #else
 #define SuperToUser(ptr)                    \

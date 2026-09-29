@@ -30,7 +30,8 @@ typedef struct
 extern BOOL     gl_play;
 extern BOOL     gl_recd;
 extern WORD     gl_rlen;
-extern FPD      *gl_rbuf;
+extern EVNTREC  *gl_rbuf;
+extern BOOL     gl_rec_started;
 
 WORD ap_init(void);
 WORD ap_rdwr(WORD code, AESPD *p, WORD length, WORD *pbuff);

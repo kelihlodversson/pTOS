@@ -51,8 +51,8 @@ void int_illegal(void);
 void int_priv(void);
 void int_unimpint(void);
 
-#ifdef __arm__
-#define trap_save_area 0 /* not used on arm */
+#if defined(__arm__) || defined(__x86_64__)
+#define trap_save_area 0 /* not used on arm/x86-64 */
 #else
 extern WORD trap_save_area[];
 #endif
@@ -61,8 +61,41 @@ extern WORD trap_save_area[];
 #ifdef __arm__
 volatile PFVOID *vector_address(ULONG address);
 #define VEC_AT(address) (*vector_address(address))
+#elif defined(__x86_64__)
+/* This whole table is a fixed, historical 32-bit-per-slot layout (see
+ * #351): setexc()'s generic path (bios/bios.c) reads and writes every
+ * one of these cells -- and every other Setexc()-addressable vector
+ * number, e.g. 0x8c/4=0x23, right next to VEC_GEM/VEC_TRAP2 at 0x88 --
+ * as a plain 4-byte LONG. A native x86-64 function pointer is 8 bytes;
+ * storing one directly through a PFVOID-typed cell, as the generic
+ * fallback below does, spans two adjacent 4-byte slots and corrupts
+ * whatever real, distinct GEMDOS vector lives in the next one. Every
+ * VEC_LEVEL1..7/VEC_DIVNULL/VEC_GEM/VEC_BIOS/VEC_XBIOS write vecs_init()
+ * (bios.c) does on this arch hits exactly this hazard, since they are
+ * all spaced only 4 bytes apart. Keep the cell 4 bytes wide here too --
+ * see SET_VEC() below for the matching write side. */
+#define VEC_AT(address) (*(volatile LONG *)(address))
 #else
 #define VEC_AT(address) (*(volatile PFVOID *)(address))
+#endif
+
+/*
+ * SET_VEC(cell, fn): the only safe way to store a function pointer into
+ * a VEC_AT() cell from shared (m68k/ARM/x86-64) code such as bios.c's
+ * vecs_init(). On m68k/ARM this is a plain assignment (cell is already
+ * a native, correctly-sized PFVOID slot there). On x86-64, cell is a
+ * 4-byte LONG (see VEC_AT's own comment above): this arch's own trap
+ * dispatch never reads these particular cells back either way
+ * (bios/arch/x86_64/trap.c's own comment on why bios_init() writing
+ * VEC_GEM/VEC_BIOS/VEC_XBIOS is "pure unread data" here), so storing
+ * only the pointer's low 32 bits is safe -- a stray Setexc()-based
+ * read-back still gets *something* plausible-looking rather than
+ * always-zero, matching every other slot's own convention, without
+ * ever touching the next slot the way a full 8-byte store would. */
+#if defined(__x86_64__)
+#define SET_VEC(cell, fn) ((cell) = (LONG)(long)(fn))
+#else
+#define SET_VEC(cell, fn) ((cell) = (fn))
 #endif
 #define VEC_ILLEGAL VEC_AT(0x10) /* illegal instruction vector */
 #define VEC_DIVNULL VEC_AT(0x14) /* division by zero exception vector */
@@ -109,7 +142,34 @@ volatile PFVOID *vector_address(ULONG address);
 
 /* Non-Atari hardware vectors */
 #if !CONF_WITH_MFP
+#ifdef __x86_64__
+/*
+ * #351: bios/machine.c's fill_cookie_jar() hands out &vector_5ms through
+ * the '_5MS' cookie's 32-bit value field, which requires vector_5ms's own
+ * STORAGE to have a real sub-4GiB address -- not true of an ordinary
+ * higher-half global on this arch (see bios/machine/pc-x86_64/memory.c's
+ * own #351 comment on the pool this points into). The macro makes every
+ * existing read/write/address-of site (bios/mfp.c's assignment,
+ * machine.c's cookie_add() call) transparently dereference that pointer
+ * instead of naming a fixed symbol; only the definition site (bios.c)
+ * and the one-time allocation (mfp.c) need their own __x86_64__ branch.
+ */
+extern void (**x86_64_vector_5ms_ptr)(void);
+#define vector_5ms (*x86_64_vector_5ms_ptr)
+
+/*
+ * Reserves x86_64_vector_5ms_ptr's own storage from the low-kdata pool
+ * (bios/machine/pc-x86_64/memory.c). Must run before anything dereferences
+ * vector_5ms (the macro above) -- in particular before
+ * bios/machine.c's fill_cookie_jar(), which runs well before
+ * init_system_timer() itself. Called from bios/machine/pc-x86_64/
+ * startup.c, right alongside x86_64_low_kdata_init(). See bios/mfp.c's
+ * own comment on this function.
+ */
+void x86_64_vector_5ms_alloc(void);
+#else
 extern void (*vector_5ms)(void);              /* 200 Hz system timer */
+#endif
 #endif
 
 /*
@@ -129,9 +189,13 @@ LONG protect_v(LONG (*func)(void));
 LONG protect_w(LONG (*func)(WORD), WORD);
 LONG protect_ww(LONG (*func)(void), WORD, WORD);
 LONG protect_wlwwwl(LONG (*func)(void), WORD, LONG, WORD, WORD, WORD, LONG);
-#elif defined (__arm__)
+#elif defined (__arm__) || defined(__x86_64__)
 
-/* We assume ARM developers follow the eabi so the folllowing are simple pass-throughs */
+/* We assume ARM/x86-64 developers follow their platform's own standard
+ * calling convention (AAPCS / SysV x86-64), so the following are simple
+ * pass-throughs on either: neither needs the m68k d2/a2-preservation
+ * trick above (no such caller-saved-vs-callee-saved mismatch exists to
+ * protect against). */
 
 static inline LONG protect_v(LONG (*func)(void))
 {
@@ -145,9 +209,18 @@ static inline LONG protect_ww(LONG (*func)(void), WORD a, WORD b)
 {
     return ((LONG (*)(WORD, WORD))func)(a, b);
 }
-static inline LONG protect_wlwwwl(LONG (*func)(void), WORD a, LONG b, WORD c, WORD d, WORD e, LONG f)
+/*
+ * `long b`, not portab.h's always-32-bit LONG: lrwabs() (bios/bios.c)
+ * passes a genuine buffer pointer through this slot, and hdv_rw's real
+ * signature (tosvars.h) already declares it `UBYTE *`. `long` matches
+ * that pointer's real width on every arch this branch serves (32 bits on
+ * ARM's ILP32, same as LONG there; 64 bits on x86-64's LP64, where a
+ * LONG-sized slot would truncate it before the real driver ever saw it
+ * -- #350's review).
+ */
+static inline LONG protect_wlwwwl(LONG (*func)(void), WORD a, long b, WORD c, WORD d, WORD e, LONG f)
 {
-    return ((LONG (*)(WORD, LONG, WORD, WORD, WORD, LONG))func)(a,b,c,d,e,f);
+    return ((LONG (*)(WORD, long, WORD, WORD, WORD, LONG))func)(a,b,c,d,e,f);
 }
 #endif
 

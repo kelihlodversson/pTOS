@@ -38,7 +38,7 @@
 #include "xhdi.h"
 #include "intmath.h"
 
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 PUN_INFO *pun_ptr;      /* fixed address on m68k (tosvars.ld), ordinary
                          * storage here (#219); declared extern in ahdi.h */
 #endif

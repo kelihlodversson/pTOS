@@ -1,0 +1,259 @@
+/*
+ * pgtable.h - x86-64 higher-half page table setup
+ *
+ * Copyright (C) 2025-2026 The pTOS development team.
+ *
+ * This file is distributed under the GPL, version 2 or at your
+ * option any later version.  See doc/license.txt for details.
+ */
+
+#ifndef X86_64_PGTABLE_H
+#define X86_64_PGTABLE_H
+
+/*
+ * relocate.S includes this header too (for X86_64_KERNEL_VIRT_BASE), and
+ * GAS immediates do not understand a C integer suffix such as "ULL".
+ */
+#ifdef __ASSEMBLER__
+#define X86_64_KERNEL_VIRT_BASE 0xFFFFFFFF80000000
+#else
+
+#include "portab.h"
+
+/*
+ * Virtual base of the higher-half kernel mapping: the classic "top -2 GiB"
+ * x86-64 kernel convention (a canonical address, since bits 47-63 are all
+ * set).  See issue #329/#330.
+ */
+#define X86_64_KERNEL_VIRT_BASE 0xFFFFFFFF80000000ULL
+
+/* Size of one identity-mapped/higher-half-mapped 2 MiB page table entry. */
+#define X86_64_PAGE_2M_SIZE 0x200000ULL
+
+/* Size of one physical-memory direct-map 1 GiB page table entry. */
+#define X86_64_PAGE_1G_SIZE 0x40000000ULL
+
+/*
+ * Size of the prefix of the identity-mapped low page (see
+ * x86_64_map_low_vectors()) that is actually zeroed and used as the
+ * simulated m68k system-vector area: one 4 KiB page, comfortably above
+ * VEC_UNIMPINT (bios/vectors.h, 0xf4), the highest offset this arch's
+ * bios_init() call chain writes into. Callers wanting to confirm this
+ * exact range is real RAM before it is touched (x86_64_pmem_region_is_ram(),
+ * bios/machine/pc-x86_64/pmem.h) use this same constant rather than
+ * guessing a size independently.
+ */
+#define X86_64_LOW_VECTOR_BYTES 0x1000ULL
+
+/*
+ * Virtual base of the permanent physical-memory direct map: every
+ * physical address x86_64_build_physmap() was told to cover is also
+ * reachable at this virtual base plus its physical address. Chosen well
+ * below X86_64_KERNEL_VIRT_BASE (itself the top -2 GiB) so the two
+ * windows can never collide as long as physical RAM stays under 128 TiB
+ * -- outlandish for the hardware and VMs this port targets. Canonical
+ * (bits 47-63 all 1, like X86_64_KERNEL_VIRT_BASE) and 1 GiB-aligned, as
+ * x86_64_build_physmap()'s use of 1 GiB pages requires.
+ */
+#define X86_64_PHYS_MAP_BASE 0xFFFF800000000000ULL
+
+/*
+ * Build a minimal set of page tables identity-mapping [phys_base, phys_base
+ * + span) and additionally mapping the same physical range at
+ * X86_64_KERNEL_VIRT_BASE.  phys_base is rounded down, and span rounded up,
+ * to a 2 MiB boundary internally; *out_aligned_base receives that rounded-
+ * down base, since X86_64_KERNEL_VIRT_BASE corresponds to it (not to the
+ * unrounded phys_base) -- callers translating their own low addresses to
+ * their higher-half counterparts must subtract *out_aligned_base, not
+ * phys_base, or they will be off by (phys_base - *out_aligned_base).
+ * Returns the physical address to load into CR3 (the PML4 table).
+ *
+ * The tables and everything they map (this image's own code, data, bss,
+ * boot-time stack and the tables themselves) must fit within [phys_base,
+ * phys_base + span); the caller is responsible for that.
+ */
+UQUAD x86_64_build_page_tables(UQUAD phys_base, UQUAD span, UQUAD *out_aligned_base);
+
+/*
+ * Translates a low (identity-mapped) address -- one inside the window the
+ * most recent x86_64_build_page_tables() call was told to map -- to its
+ * higher-half virtual counterpart. Needed wherever a pointer is baked in
+ * as compile-time-initialized data (a jump table, a string-literal table,
+ * ...) rather than computed at runtime: the PE loader fixes such a
+ * pointer up to this image's low load address once, at load time, and
+ * that stays true forever after, even for data only ever read from code
+ * running post-relocation -- unlike an ordinary RIP-relative pointer
+ * computation, which automatically reflects whatever alias currently
+ * executes it (see startup.c's commentary on that distinction, and the
+ * bug it names). idt.c's exception_stub[] and panic.c's vector_names[]
+ * are the two places this codebase currently needs it.
+ */
+UQUAD x86_64_low_to_high(UQUAD low_addr);
+
+/*
+ * Removes the identity (low) mapping, freeing that address range for
+ * #334's future ILP32 user processes (see #343 and #344's address-space
+ * split). Safe to call only once every low-address pointer baked into
+ * this image's own compile-time data has already been translated via
+ * x86_64_low_to_high() and is no longer needed in its untranslated form
+ * -- in particular, after x86_64_idt_init() has installed its gates.
+ * Leaves the higher-half kernel mapping and the physical-memory direct
+ * map untouched (distinct PML4 slots, see X86_64_KERNEL_VIRT_BASE and
+ * X86_64_PHYS_MAP_BASE above). Reloads CR3 itself before returning.
+ */
+void x86_64_drop_identity_map(void);
+
+/*
+ * Maps virtual [0, 2 MiB) to backing_phys (a 2 MiB-aligned physical
+ * address the caller allocated from the physical-memory allocator, real
+ * RAM by construction -- not physical address 0 itself, which real PC/
+ * UEFI firmware is not guaranteed to report as usable memory; see this
+ * function's own comment in pgtable.c) and zeroes the low system-vector
+ * area within it -- what bios_init() (bios/bios.c, generic)
+ * unconditionally writes VEC_GEM/VEC_BIOS/VEC_XBIOS into, and the
+ * GEMDOS/BIOS/XBIOS trap dispatch path (#349) reads back from. Must be
+ * called after x86_64_drop_identity_map(): see that function's own
+ * comment for why (both target PML4 slot 0).
+ */
+void x86_64_map_low_vectors(UQUAD backing_phys);
+
+/*
+ * Maps count 2 MiB pages at virt (2 MiB-aligned) to backing_phys (also
+ * 2 MiB-aligned) in THIS kernel's own page tables -- unlike
+ * x86_64_new_address_space()/x86_64_map_user_page() below, which build an
+ * arbitrary caller-specified process's own PML4, this extends the one
+ * this file already maintains internally, the same PML4
+ * x86_64_build_page_tables()/x86_64_map_low_vectors() populate. Must be
+ * called after x86_64_map_low_vectors(): both can share the same PML4
+ * slot 0 -- reusing whatever PDPT/PD that call already allocated there
+ * is what lets a virt outside its own [0, 2 MiB) window still land in the
+ * right table -- but only if that slot has already been (re)created.
+ *
+ * For #334: bios/machine/pc-x86_64/memory.c's own low TPA pool needs a
+ * real low, sub-4 GiB, virtual-equals-physical mapping -- not just a
+ * physical page below 4 GiB reachable via the (high, 64-bit-only)
+ * physical-memory direct map -- because pointers into it eventually get
+ * narrowed into a GEMDOS PD's 32-bit p_tbase/p_hitpa/... fields
+ * (USERPTR_T, bdosdefs.h), which must already be the process's own
+ * dereferenceable address, not a value that needs translating first.
+ * This is that mapping's mechanism.
+ */
+void x86_64_map_kernel_pages(UQUAD virt, UQUAD backing_phys, UQUAD count);
+
+/*
+ * True iff virt is backed by a present mapping in this kernel's own page
+ * tables, checked read-only (never allocates, unlike
+ * x86_64_build_page_tables()/x86_64_build_physmap()'s own internal PML4/
+ * PDPT walking helpers). Requires x86_64_build_physmap() to have already
+ * run (it reads back through the physical-memory direct map); safe any
+ * time after that, including from an exception handler. See its own
+ * comment in pgtable.c for exactly what "confirmed mapped" means here
+ * (a 1 GiB or 2 MiB page; a further 4 KiB PT level, never created by
+ * this file, reads as "not confirmed" rather than being walked).
+ */
+int x86_64_addr_mapped_readable(UQUAD virt);
+
+/*
+ * Maps [0, max_phys) into the permanent physical-memory direct map at
+ * X86_64_PHYS_MAP_BASE, using 1 GiB pages -- so any physical address the
+ * physical-memory allocator (pmem.c) hands out is reachable simply by
+ * adding X86_64_PHYS_MAP_BASE, without needing its own entry in whatever
+ * page tables the kernel builds for its own mappings later.  max_phys is
+ * rounded up to a 1 GiB boundary internally.
+ *
+ * Must be called after x86_64_build_page_tables(), which this reuses the
+ * PML4 of, and -- critically -- while still running at this image's
+ * actual (low) load address, i.e. before the higher-half jump (see
+ * startup.c): &physmap_pdpt is a position-independent (RIP-relative)
+ * computation, so calling this after that jump would compute physmap_pdpt's
+ * *virtual* higher-half address and store that where a physical one
+ * belongs, corrupting the entry (an earlier version of this code did
+ * exactly that). Reloads CR3 itself before returning; harmless if CR3
+ * does not point at this PML4 yet (still EFI's own, at the call site this
+ * requires), and required once it does.
+ */
+void x86_64_build_physmap(UQUAD max_phys);
+
+/* True if this CPU supports 1 GiB pages (CPUID.80000001H:EDX.Page1GB),
+ * which x86_64_build_physmap() requires -- see its own comment. Exposed so
+ * callers can panic with a clear message before ever calling it, rather
+ * than via that function's own (uninformative, IDT-less at that point in
+ * boot) trap. */
+int x86_64_cpu_has_1g_pages(void);
+
+/*
+ * Populates a freshly allocated, caller-owned PML4 (at pml4_phys, a 4 KiB-
+ * aligned physical page the caller got from the physical-memory allocator
+ * -- the same "caller allocates, this file just builds page-table entries
+ * at the given backing" division of labor x86_64_map_low_vectors() above
+ * already uses) into a new #334 process address space: every canonical
+ * high-half slot (index 256-511 -- both X86_64_KERNEL_VIRT_BASE's and
+ * X86_64_PHYS_MAP_BASE's, plus any future high-half mapping added later,
+ * copied wholesale rather than by naming each one) is copied verbatim from
+ * this kernel's own master PML4, so the kernel and the physical-memory
+ * direct map stay mapped and reachable from this new address space too --
+ * required because `syscall`/`sysret` (#333) never changes CR3, so
+ * whichever process's page tables are current when a trap happens must
+ * already have the kernel's own mappings present, not just the calling
+ * process's own. Every low-half slot (0-255, covering the entire
+ * ILP32-addressable range below 4 GiB and then some) is left clear for
+ * the process loader to populate with that process's own text/data/bss/
+ * heap/stack -- including, deliberately, PML4 slot 0's own low-vector
+ * sub-range: unlike the single shared boot-time PML4, a new process's
+ * slot 0 starts with nothing mapped there at all, not a copy of the
+ * kernel's simulated system-vector page. Whether (and how safely) to also
+ * map that same physical low-vector page into a real process's own low
+ * half, so Setexc() continues to work the way real TOS's shared-address-
+ * space design assumed, is the copy_from_user()-style validation gap
+ * #352 already tracks -- not resolved by this function, which only
+ * builds the address space's kernel-shared half.
+ */
+void x86_64_new_address_space(UQUAD pml4_phys);
+
+/*
+ * Maps one 4 KiB page at virt to phys within pml4_phys -- a process address
+ * space x86_64_new_address_space() already populated, not this kernel's own
+ * PML4 -- for #334's ILP32 user processes. Unlike map_2m_page()/
+ * map_2m_range() (pgtable.c, kernel-only, statically pooled, 2 MiB/1 GiB
+ * granularity), this walks and allocates PDPT/PD/PT entries for an
+ * arbitrary caller-specified PML4 through the physical-memory direct map,
+ * so table counts are unbounded rather than drawn from a small fixed pool.
+ *
+ * alloc_page is called (0-3 times per call: PDPT, PD, PT, whichever levels
+ * do not already exist for virt) and must return a freshly allocated,
+ * page-aligned physical page each time; this file zeroes it before use.
+ * Taking a callback rather than calling
+ * bios/machine/pc-x86_64/pmem.h's x86_64_pmem_alloc_pages() directly keeps
+ * this arch-level file free of a dependency on that machine-level header
+ * (see CLAUDE.md's arch/machine split) -- the pc-x86_64 process loader
+ * passes a one-line wrapper around x86_64_pmem_alloc_pages(1).
+ *
+ * executable controls the leaf's NX bit (set when executable is false).
+ * EFER_NXE (trap.c's x86_64_trap_init()) must already be enabled before
+ * this is ever called with executable == 0 -- until it is, the NX bit is
+ * architecturally reserved-must-be-zero and setting it raises #GP instead
+ * of doing what its name says.
+ *
+ * user controls the leaf's PTE_USER bit: pass 0 for kernel bookkeeping
+ * that this process's own CR3 must still be able to reach from ring 0
+ * (a page-table walk consults CR3 regardless of current privilege, so a
+ * supervisor-only leaf here is exactly as reachable to the kernel as one
+ * under the shared high-half mapping) but that ring 3 itself must never
+ * read or write -- initial_basepage's own PD, mapped in for
+ * termuser()/xterm() by gouser()'s p_parent call, is the reason this
+ * parameter exists (Copilot's review of #356 caught it going out
+ * user-writable like every other leaf this function had ever mapped).
+ * writable/executable/PTE_USER are only meaningful at the leaf; every
+ * intermediate table entry this creates is unconditionally present+
+ * writable+user, since the effective access a leaf grants is the AND of
+ * every level's own bits down to it (see user_table_slot()'s own comment
+ * in pgtable.c) -- a stricter intermediate entry would silently override
+ * a more permissive leaf instead of the other way around.
+ */
+void x86_64_map_user_page(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
+                          int writable, int executable, int user,
+                          UQUAD (*alloc_page)(void));
+
+#endif /* __ASSEMBLER__ */
+
+#endif /* X86_64_PGTABLE_H */

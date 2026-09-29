@@ -20,6 +20,7 @@
 /*.dc42
 /*.map
 /*.elf
+/*.efi
 /dsm.txt
 /fal_dsm.txt
 /release-archives/

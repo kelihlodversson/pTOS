@@ -1015,7 +1015,7 @@ LONG pfs_do_sfirst(char *path, WORD att)
         if (pfs_match(name8_3, pfs_searches[i].pattern) &&
             pfs_attr_visible(attr.dos_attr, att))
         {
-            pfs_attr_to_dta((DTAINFO *)run->p_xdta, name8_3, &attr);
+            pfs_attr_to_dta(RUN_XDTA(), name8_3, &attr);
             return E_OK;
         }
     }
@@ -1055,7 +1055,7 @@ LONG pfs_do_snext(void)
         if (pfs_match(name8_3, pfs_searches[i].pattern) &&
             pfs_attr_visible(attr.dos_attr, pfs_searches[i].attr))
         {
-            pfs_attr_to_dta((DTAINFO *)run->p_xdta, name8_3, &attr);
+            pfs_attr_to_dta(RUN_XDTA(), name8_3, &attr);
             return E_OK;
         }
     }

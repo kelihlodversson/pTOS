@@ -28,6 +28,11 @@ void x0term(void);
 void xterm(UWORD rc)  NORETURN ;
 WORD xtermres(long blkln, WORD rc);
 
+#ifdef __x86_64__
+void x86_64_mark_kernel_code_pd(PD *p);
+BOOL x86_64_take_kernel_code_pd(PD *p);
+#endif
+
 /*
  * in kpgmld.c
  */
@@ -48,10 +53,20 @@ LONG kpgm_relocate( PD *p, long length); /* SOP */
 #endif
 
 /*
- * in rwa.S
+ * in rwa.S (or, on x86-64, rwa.c -- see that file's own header comment)
+ *
+ * gouser() is NOT marked NORETURN: on m68k/ARM it never returns from
+ * this specific call in the ordinary sense (control instead resumes,
+ * much later, via termuser()'s own raw-asm jump into the middle of
+ * gouser()'s own body, invisible to the compiler either way, so the
+ * annotation was previously harmless there); on x86-64, where a
+ * "kernel-code process" launch (aes/gemshlib.c's aes_run_rom_program())
+ * is an ordinary nested C call with no trap involved, gouser() DOES
+ * genuinely return via setjmp()/longjmp() once the launched process
+ * calls Pterm() -- marking it NORETURN there risked the compiler
+ * eliding proc_go()'s/xexec()'s own subsequent code as unreachable.
  */
-
-void gouser(void)  NORETURN;
+void gouser(void);
 void termuser(void)  NORETURN;
 
 #endif /* PROC_H */

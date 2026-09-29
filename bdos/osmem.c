@@ -33,7 +33,7 @@
 /*
  *  local constants
  */
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 #define BLOCK_PAD_BYTES 4
 #define OSM_PAYLOAD_BYTES 128
 #else
@@ -53,7 +53,7 @@
  *  local typedefs
  */
 #define MDS_PER_BLOCK   3
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 typedef LONG md_index_t;
 #else
 typedef WORD md_index_t;
