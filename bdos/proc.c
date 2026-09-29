@@ -69,6 +69,25 @@ static void proc_go(PD *p);
 
 PD      *run;           /* ptr to PD for current process */
 
+#ifdef __x86_64__
+/* Kernel code marks a freshly created ROM basepage here before Pexec(). */
+static PD *x86_64_kernel_code_pd;
+
+void x86_64_mark_kernel_code_pd(PD *p)
+{
+    x86_64_kernel_code_pd = p;
+}
+
+BOOL x86_64_take_kernel_code_pd(PD *p)
+{
+    if (x86_64_kernel_code_pd != p)
+        return FALSE;
+
+    x86_64_kernel_code_pd = NULL;
+    return TRUE;
+}
+#endif
+
 /*
  * internal variables
  */

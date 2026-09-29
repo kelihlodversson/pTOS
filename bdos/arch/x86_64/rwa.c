@@ -81,6 +81,7 @@ extern UQUAD x86_64_pmem_alloc_pages(UQUAD count);
 extern void x86_64_new_address_space(UQUAD pml4_phys);
 extern void x86_64_map_low_tpa_into(UQUAD pml4_phys, UQUAD virt_start, UQUAD virt_end, int user);
 extern void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp) NORETURN;
+extern BOOL x86_64_take_kernel_code_pd(PD *p);
 
 void enter(void);
 void bdos_trap2(void);
@@ -144,7 +145,7 @@ void gouser(void)
 {
     PD *p = run;
 
-    if (p->p_tlen == 0 && p->p_dlen == 0 && p->p_blen == 0) {
+    if (x86_64_take_kernel_code_pd(p)) {
         /*
          * bios.c's CLI/ROM-shell bootstrap (BOOTFLAG_EARLY_CLI, or the
          * default exec_os launch): p_tbase is a deliberately truncated,
@@ -165,11 +166,11 @@ void gouser(void)
          * cast. Never returns: coma_start()/ui_start() call Pterm0()
          * themselves once their own main loop exits.
          *
-         * The zero-length test itself is not a perfect distinguisher
-         * (Copilot's review of #356 caught this): aes/gemshlib.c's
-         * aes_run_rom_program() builds an identically-shaped PD (a
-         * PE_BASEPAGEFLAGS basepage, zero p_tlen/p_dlen/p_blen, p_tbase
-         * set to its own ROM entry) for launching a GEM ROM program --
+         * aes/gemshlib.c's aes_run_rom_program() builds a
+         * PE_BASEPAGEFLAGS basepage, then explicitly marks it as a
+         * kernel-code launch before Pexec() so this does not infer trust
+         * from mutable PD fields.  It sets p_tbase to its ROM entry for
+         * launching a GEM ROM program --
          * accdesk_start (run once, from ui_start's own gem_main()) or
          * deskstart/coma_start (run repeatedly, each time sh_ldapp()
          * wants the desktop shell or EmuCON, via the same "AES

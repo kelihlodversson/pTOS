@@ -57,6 +57,10 @@
 #include "../cli/clistub.h"
 #endif
 
+#ifdef __x86_64__
+extern void x86_64_mark_kernel_code_pd(PD *p);
+#endif
+
 /*
  * clear screen value for ob_spec:
  * white border, white text, hollow pattern, white fill
@@ -579,6 +583,9 @@ LONG aes_run_rom_program(PRG_ENTRY *entry)
     /* Create a basepage with the standard Pexec() */
     pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", NULL);
     pd->p_tbase = (UBYTE *) entry;
+#ifdef __x86_64__
+    x86_64_mark_kernel_code_pd(pd);
+#endif
 
     /* Run the program with dos_exec() for AES reentrancy issues */
     return dos_exec(PE_GOTHENFREE, NULL, (const char *)pd, NULL);
