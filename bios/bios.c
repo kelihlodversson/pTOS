@@ -40,6 +40,9 @@
 #if defined(__arm__) || defined(__x86_64__)
 #include "biosargs.h"
 #endif
+#ifdef __x86_64__
+extern void x86_64_mark_kernel_code_pd(PD *p);
+#endif
 #include "ikbd.h"
 #include "mouse.h"
 #include "midi.h"
@@ -1183,6 +1186,9 @@ void biosmain(void)
          */
         pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *) coma_start);
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
+#ifdef __x86_64__
+        x86_64_mark_kernel_code_pd(pd);
+#endif
         Pexec(PE_GOTHENFREE, "", (char *)pd, default_env);
     }
 #endif
@@ -1210,6 +1216,9 @@ void biosmain(void)
          * UNCHECKED narrow on x86-64. */
         pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *) exec_os);
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
+#ifdef __x86_64__
+        x86_64_mark_kernel_code_pd(pd);
+#endif
         Pexec(PE_GO, "", (char *)pd, default_env);
     }
 

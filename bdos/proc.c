@@ -69,6 +69,25 @@ static void proc_go(PD *p);
 
 PD      *run;           /* ptr to PD for current process */
 
+#ifdef __x86_64__
+/* Kernel code marks a freshly created ROM basepage here before Pexec(). */
+static PD *x86_64_kernel_code_pd;
+
+void x86_64_mark_kernel_code_pd(PD *p)
+{
+    x86_64_kernel_code_pd = p;
+}
+
+BOOL x86_64_take_kernel_code_pd(PD *p)
+{
+    if (x86_64_kernel_code_pd != p)
+        return FALSE;
+
+    x86_64_kernel_code_pd = NULL;
+    return TRUE;
+}
+#endif
+
 /*
  * internal variables
  */
@@ -288,8 +307,29 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     case PE_GO:
         p = (PD *) tail;
         proc_go(p);
-        /* should not return ? */
-        return (long)p;
+        /*
+         * "should not return ?": on m68k/ARM, proc_go()/gouser() (rwa.S)
+         * never actually reach this line for a reentrant launch (e.g.
+         * aes/gemshlib.c's aes_run_rom_program()) -- gouser()'s own trap-
+         * return mechanism (a raw asm jump, invisible to this C code)
+         * delivers control straight back to whichever trap #1 call site
+         * originally invoked Pexec(), with D0 already holding the exit
+         * code xterm()'s own `run->p_dreg[0] = rc;` supplied, bypassing
+         * this function's own C-level return entirely.
+         *
+         * On x86-64, though, proc_go()/gouser() (rwa.c) are ordinary
+         * nested C calls with no trap involved (#334's own "no re-trap
+         * needed for kernel-internal callers" simplification) -- so this
+         * line IS genuinely reached there, once a reentrant launch's own
+         * Pterm()/Pterm0() unwinds back via gouser()'s setjmp()/
+         * longjmp() pair. By then, xterm() has already reassigned `run`
+         * to the parent (this same call's own caller) and stashed the
+         * exit code in its p_dreg[0], so returning that instead of
+         * (long)p propagates the exit code exactly like the trap-based
+         * archs' D0 does -- harmless on m68k/ARM themselves, since they
+         * never execute this statement in the first place.
+         */
+        return run->p_dreg[0];
     case PE_LOADGO:
     case PE_LOAD:
         break;
@@ -783,6 +823,9 @@ void xterm(UWORD rc)
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
 
     run = (PD *)USERPTR_TO_PTR(run->p_parent);
+#ifdef __x86_64__
+    x86_64_dta_shadow_forget(p);
+#endif
     ixterm(p);
     /* gouser() will store the current value of D0 in the active PD
      * so it cannot be used here. See proc_go() above.

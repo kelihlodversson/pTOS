@@ -18,13 +18,11 @@ CONF_WITH_XHDI=n
 # either. Matched here explicitly, same precedent as CONF_WITH_IDE above.
 CONF_WITH_LINEA=n
 
-# The whole point of this defconfig, for now: leave the AES/EmuDesk out,
-# so EmuTOS boots straight into EmuCON (aes/Kconfig) instead of the
-# graphical desktop -- there is no x86-64 framebuffer driver yet (#332)
-# and no aes/arch/x86_64/ implementation of the AES's own process-launch
-# assembly glue. Same precedent as virt-arm-cli_defconfig/
-# virt-m68k-cli_defconfig. CONF_WITH_CLI is left at its default (y):
-# this target actually needs EmuCON.
+# Leave the AES/EmuDesk out so this defconfig boots straight into EmuCON.
+# The x86-64 GOP framebuffer and AES process-launch implementation support a
+# graphical desktop when CONF_WITH_AES is enabled, but this keeps a compact,
+# serial-friendly baseline matching virt-arm-cli_defconfig and
+# virt-m68k-cli_defconfig. CONF_WITH_CLI is left at its default (y).
 CONF_WITH_AES=n
 
 # CONF_SERIAL_CONSOLE_POLLING_MODE's own default (n, interrupt mode)

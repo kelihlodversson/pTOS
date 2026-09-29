@@ -268,7 +268,14 @@ void gsx_init(void)
 {
     gsx_wsopen();
     gsx_start();
-    gsx_setmb(far_bcha, far_mcha, &drwaddr);
+    /*
+     * far_bcha()/far_mcha() are declared with their real calling
+     * convention (gemdosif.h) -- void(WORD)/ULONG(WORD,WORD) -- so
+     * passing them to gsx_setmb()'s generic PFVOID (void(void))
+     * parameters here needs the same kind of explicit cast
+     * gsx_resetmb() already uses for old_bcode/old_mcode just below.
+     */
+    gsx_setmb((PFVOID)far_bcha, (PFVOID)far_mcha, &drwaddr);
     gsx_0code(MOUSE_STATE);
     xrat = ptsout[0];
     yrat = ptsout[1];
@@ -304,7 +311,8 @@ void gsx_graphic(BOOL tographic)
         {
             contrl.subcode = 2;
             gsx_ncode(ESCAPE_FUNCTION, 0, 0);
-            gsx_setmb(far_bcha, far_mcha, &drwaddr);
+            /* see gsx_init()'s own comment on this cast */
+            gsx_setmb((PFVOID)far_bcha, (PFVOID)far_mcha, &drwaddr);
         }
         else
         {

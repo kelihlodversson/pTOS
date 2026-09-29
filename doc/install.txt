@@ -322,7 +322,7 @@ in place of a legacy BIOS:
     mkdir -p esp/EFI/BOOT
     cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
     cp /usr/share/OVMF/OVMF_VARS_4M.fd .
-    qemu-system-x86_64 -machine pc -m 256 \
+    qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
         -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
         -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
         -drive format=raw,file=fat:rw:esp \
@@ -331,10 +331,15 @@ in place of a legacy BIOS:
 OVMF_VARS_4M.fd holds UEFI's writable NVRAM (boot order, variables), and
 QEMU writes to it as the VM runs; the package's copy under /usr/share is
 root-owned on a normal Debian/Ubuntu install, so it is copied to a
-writable local file first rather than used in place. This milestone's
-image (#330) only prints its own boot progress over COM1, exposed above
-as -serial stdio -- there is no framebuffer output yet (see #332) and
-nothing to see on a graphical display, hence -display none.
+writable local file first rather than used in place. `-cpu qemu64,+pdpe1gb`
+is required because QEMU's default `qemu64` CPU does not advertise the 1 GiB
+page support needed by the x86-64 physical-memory map.
+
+The defconfig intentionally sets `CONF_WITH_AES=n`, so this command is a
+headless EmuCON boot check. The UEFI GOP framebuffer also supports the AES and
+EmuDesk desktop: to test it, enable **AES -> Include the AES and the EmuDesk
+desktop** in `make menuconfig`, rebuild, and use a graphical display such as
+`-display gtk` instead of `-display none`.
 
 
 Countries and languages

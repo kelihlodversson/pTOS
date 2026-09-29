@@ -541,6 +541,20 @@ char *packit(char *s, char *d);
  */
 DTAINFO *xgetdta(void);
 void xsetdta(DTAINFO *addr);
+
+#ifdef __x86_64__
+/* See fsmain.c's own comment on xsetdta()/x86_64_widen_dta(): every
+ * direct run->p_xdta dereference (fs/fatfs_pfs.c, fs/pfs.c) needs this,
+ * not just xgetdta() -- a plain zero-extending cast cannot reconstruct
+ * a genuine higher-half kernel address (bios.c's autoexec(), aes/
+ * geminit.c's count_accs()) the way it can an ordinary ILP32 process's
+ * own already-low one. */
+DTAINFO *x86_64_widen_dta(ULONG stored);
+void x86_64_dta_shadow_forget(PD *p);
+#define RUN_XDTA() x86_64_widen_dta(run->p_xdta)
+#else
+#define RUN_XDTA() ((DTAINFO *)run->p_xdta)
+#endif
 long xsetdrv(int drv);
 long xgetdrv(void);
 OFD  *getofd(int h);

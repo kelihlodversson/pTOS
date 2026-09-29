@@ -1,6 +1,6 @@
 ---
 name: ptos-smoketest
-description: Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS) image boots under an emulator. Covers Hatari for m68k Atari targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi1 (QEMU machine `raspi1ap`), raspi2 (QEMU machine `raspi2b`), virt-arm and virt-m68k machines, plus testing the flashable Raspberry Pi SD card disk image (`tools/mkraspi-image.sh`) by attaching it to QEMU as a raw `-drive if=sd`. Also covers the x86-64 UEFI target (`pc-x86_64_defconfig`, `pc-x86_64.efi`) under `qemu-system-x86_64` + OVMF firmware, booted from a synthesized FAT ESP directory. Also covers running the regression test suite (`make test-hd`) on QEMU with the test HD image as an SD card and reading pass/fail output from the serial console. Use when asked to boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung boot, verify the SD card image's MBR/FAT16 partition is readable by pTOS's own eMMC driver, run regression tests under QEMU, boot-test the x86-64 EFI image, or when you need emulator invocations, --run-vbls/--avirecord/--trace flags, the Hatari debugger gotchas (spurious breakpoints, echo crash), the Falcon IDE 31s boot wait, the floppy motor/deselection timeouts (motor on/off 1.5-3s + deselect 5s = ~20s STE baseline), QEMU's power-of-2 SD card image size requirement, or the OVMF writable-NVRAM-file gotcha.
+description: Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS) image boots under an emulator. Covers Hatari for m68k Atari targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi1 (QEMU machine `raspi1ap`), raspi2 (QEMU machine `raspi2b`), virt-arm and virt-m68k machines, plus testing the flashable Raspberry Pi SD card disk image (`tools/mkraspi-image.sh`) by attaching it to QEMU as a raw `-drive if=sd`. Also covers the x86-64 UEFI target (`pc-x86_64_defconfig`, `pc-x86_64.efi`) under `qemu-system-x86_64` + OVMF firmware, booted from a synthesized FAT ESP directory, including its GOP framebuffer AES/EmuDesk smoke test. Also covers running the regression test suite (`make test-hd`) on QEMU with the test HD image as an SD card and reading pass/fail output from the serial console. Use when asked to boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung boot, verify the SD card image's MBR/FAT16 partition is readable by pTOS's own eMMC driver, run regression tests under QEMU, boot-test the x86-64 EFI image, or when you need emulator invocations, --run-vbls/--avirecord/--trace flags, the Hatari debugger gotchas (spurious breakpoints, echo crash), the Falcon IDE 31s boot wait, the floppy motor/deselection timeouts (motor on/off 1.5-3s + deselect 5s = ~20s STE baseline), QEMU's power-of-2 SD card image size requirement, or the OVMF writable-NVRAM-file gotcha.
 ---
 
 # pTOS Smoke Testing
@@ -25,7 +25,7 @@ the pTOS tree). Relevant outputs:
 | `virt-arm-cli_defconfig` | qemu-system-arm | `virt-arm.elf` | same as `virt-arm_defconfig`, but boots to EmuCON, not the desktop |
 | `virt-m68k-cli_defconfig` | qemu-system-m68k | `virt-m68k.elf` | same as `virt-m68k_defconfig`, but boots to EmuCON, not the desktop |
 | `test-hd` (any config) | qemu-system-arm | `test-hd.img` (SD card) | `-drive file=test-hd.img,format=raw,if=sd` with any `-bios`/`-kernel` |
-| `pc-x86_64_defconfig` | qemu-system-x86_64 | `pc-x86_64.efi` | `-machine pc` + OVMF firmware, booted from a FAT ESP (headless, COM1 serial only) |
+| `pc-x86_64_defconfig` | qemu-system-x86_64 | `pc-x86_64.efi` | `-machine pc` + OVMF firmware, booted from a FAT ESP; the defconfig boots EmuCON, while enabling AES boots the GOP-backed desktop |
 
 Atari configs build with the default mintelf toolchain (`m68k-atari-mintelf-`)
 and produce symbols in `ptos512k.sym` (load in the Hatari debugger with
@@ -552,15 +552,42 @@ qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
 model does not advertise 1 GiB page support, which the physical-memory
 direct map needs -- see the note further down.
 
-Neither milestone (#330's higher-half relocation, #331's GDT/IDT) has a
-framebuffer yet (see #332) and nothing to see on a graphical display, hence
-`-display none`; all boot progress is on COM1, captured above to a log file
-rather than `-serial stdio` so it can be grepped afterward.
+The default `pc-x86_64_defconfig` deliberately has `CONF_WITH_AES=n` and
+boots to EmuCON. The headless command above is the right fast boot check for
+that configuration. It captures COM1 output to a log so it can be grepped
+afterward.
 
-**Pass signal**: the image reaches the higher-half relocation, arms its
-IDT, and halts cleanly, with exactly one boot attempt -- a triple fault
-(e.g. a page-table, GDT/IDT or ABI bug) makes OVMF silently reset the VM
-and retry, which shows up as the same boot-progress lines repeating:
+### GOP desktop smoke test
+
+The EFI GOP framebuffer supports an AES/EmuDesk build. Start with the PC
+defconfig, then enable **AES -> Include the AES and the EmuDesk desktop** in
+`make menuconfig` before building. Use a graphical QEMU display instead of
+`-display none`:
+
+```sh
+make pc-x86_64_defconfig
+make menuconfig
+make
+mkdir -p esp/EFI/BOOT
+cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+cp /usr/share/OVMF/OVMF_VARS_4M.fd .
+qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
+  -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+  -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
+  -drive format=raw,file=fat:rw:esp \
+  -serial file:/tmp/pc-x86_64.log -display gtk
+```
+
+**Pass signal:** after the firmware screen, the pTOS GEM desktop renders in
+the QEMU window: menu bar at the top, patterned background, desktop icons and
+the bottom status bar. The serial log remains useful for detecting a panic or
+reset loop, but it is not a graphical-desktop assertion.
+
+**Serial pass signal**: the image reaches the higher-half relocation, arms
+its IDT, then remains running at its EmuCON or desktop loop, with exactly one
+boot attempt. A triple fault (e.g. a page-table, GDT/IDT or ABI bug) makes
+OVMF silently reset the VM and retry, which shows up as the same boot-progress
+lines repeating:
 
 ```sh
 grep -c 'EFI entry reached' /tmp/pc-x86_64.log   # must be 1, not >1
@@ -632,9 +659,9 @@ but with `-machine pc` this normally is not needed.
   log to COM1 (only to the graphical console), so an empty serial log
   before pTOS's own lines print is normal, not a hang -- it does not mean
   the firmware failed to start.
-- **No video/framebuffer output**: this milestone's image only ever
-  writes to COM1; do not expect anything on a `-vnc`/graphical console
-  beyond firmware/shell text. Framebuffer support is issue #332.
+- **`-display none` hides the desktop**: it is appropriate for the serial
+  EmuCON boot check, but an AES build needs a graphical QEMU display such as
+  `-display gtk` to verify GOP framebuffer output.
 
 ## Common mistakes
 
@@ -657,4 +684,5 @@ but with `-machine pc` this normally is not needed.
 | `pc-x86_64.efi` passed to `-bios`/`-kernel` | Not a flat binary or ELF like every other pTOS image — it's a PE32+ EFI application; boot it via OVMF + a FAT ESP directory instead, see the x86-64 UEFI section above |
 | x86-64 UEFI run fails immediately, or `/usr/share/OVMF/OVMF_VARS_4M.fd` errors on open | That file is root-owned on a normal install; `cp` it to a writable local file first and point `-drive if=pflash,...,file=` at the copy, not the package's own file |
 | x86-64 UEFI boot log repeats the same `pTOS x86-64: ...` lines | A triple fault (bad page table, ABI/stack bug) makes OVMF silently reset and retry — `grep -c 'EFI entry reached' <log>` must be 1, not more |
+| Expecting a desktop from `pc-x86_64_defconfig` | The defconfig deliberately sets `CONF_WITH_AES=n`; enable **AES -> Include the AES and the EmuDesk desktop** in `make menuconfig`, rebuild, and use a graphical QEMU display |
 | Expecting OVMF firmware messages on `-serial` before pTOS's own output | The Debian/Ubuntu `ovmf` package is a release build with no serial debug log; an empty serial log up to the point pTOS's own lines start is normal, not a hang |

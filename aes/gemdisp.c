@@ -94,6 +94,31 @@ static void mwait_act(AESPD *p)
 
 
 /*
+ * event_code(): map a forkq() callback to the TCHNG/BCHNG/MCHNG/KCHNG
+ * code appl_trecd() records events under, or -1 for any callback that
+ * isn't one of those four -- forkq() is used throughout AES for far
+ * more than just these, and forker() (below) sees every one of them
+ * while recording is active. An unrecognized entry is still recorded
+ * (with its own f_data as ap_value) rather than dropped, the same as
+ * before this was pulled out into its own function: ap_tplay()'s own
+ * switch has no case for it, so replaying it dispatches nothing, but
+ * the dsptch() call that follows still runs, preserving the recording's
+ * original pacing.
+ */
+static LONG event_code(FCODE f)
+{
+    if (f == tchange)
+        return TCHNG;
+    if (f == bchange)
+        return BCHNG;
+    if (f == mchange)
+        return MCHNG;
+    if (f == kchange)
+        return KCHNG;
+    return -1;
+}
+
+/*
  * forker(): remove all FPDs from the fork ring, calling the specified function each time
  *
  * this also handles event recording for the AES function appl_trecd()
@@ -132,18 +157,41 @@ void forker(void)
                 /* if it's a time event & the previously recorded one
                  * was also a time event, then coalesce them.
                  * otherwise record the event
+                 *
+                 * gl_rec_started guards the (gl_rbuf-1) dereference:
+                 * on the very first entry of a recording session,
+                 * gl_rbuf still equals the caller's own pbuff (see
+                 * ap_trecd(), gemaplib.c), so gl_rbuf-1 points one
+                 * EVNTREC before the caller's buffer -- reading (and,
+                 * on a false-positive match, writing) that out-of-
+                 * bounds slot if the first recorded event happens to
+                 * be TCHNG. This bug predates this file's own x86-64
+                 * port (it read (gl_rbuf-1)->f_code before the EVNTREC
+                 * conversion above), so gl_rec_started is arch-neutral,
+                 * not specific to any one target.
                  */
-                if ((g.f_code == tchange) && ((gl_rbuf-1)->f_code == tchange))
+                if (gl_rec_started && (g.f_code == tchange) && ((gl_rbuf-1)->ap_event == TCHNG))
                 {
-                    (gl_rbuf-1)->f_data += g.f_data;
+                    (gl_rbuf-1)->ap_value += g.f_data;
                 }
                 else
                 {
-                    memcpy(gl_rbuf, f, sizeof(FPD));
-                    gl_rbuf++;
-                    gl_rlen--;
-                    if (gl_rlen <= 0)
+                    /* only write if there is still room in the buffer */
+                    if (gl_rlen > 0)
+                    {
+                        gl_rbuf->ap_event = event_code(g.f_code);
+                        gl_rbuf->ap_value = g.f_data;
+                        gl_rbuf++;
+                        gl_rlen--;
+                        gl_rec_started = TRUE;
+                        if (gl_rlen <= 0)
+                            gl_recd = FALSE;
+                    }
+                    else
+                    {
+                        /* buffer is full; stop recording */
                         gl_recd = FALSE;
+                    }
                 }
             }
         }
