@@ -244,10 +244,10 @@ jobs:
 
       # Booted the same way ptos-smoketest documents: a synthesized FAT ESP
       # directory (QEMU's fat: driver), OVMF firmware, -machine pc (legacy
-      # IDE, which OVMF's boot manager auto-discovers the ESP through --
-      # q35/AHCI needs more setup, not verified here), no display since
-      # there is no framebuffer driver yet (#332) and all boot progress is
-      # on COM1. -cpu qemu64,+pdpe1gb is required: the physical-memory
+       # IDE, which OVMF's boot manager auto-discovers the ESP through --
+       # q35/AHCI needs more setup, not verified here). This deliberately
+       # keeps the default EmuCON image headless; the separate GOP/AES
+       # desktop smoke test is visual. -cpu qemu64,+pdpe1gb is required: the physical-memory
       # direct map needs 1 GiB pages (#344), which QEMU's default qemu64
       # CPU model does not advertise on its own.
       #

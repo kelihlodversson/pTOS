@@ -14,9 +14,10 @@ Tested platforms
   Raspberry Pi 2B          | tested | native ARM build and boot
   Raspberry Pi 3           | tested | native ARM build and boot in 32-bit mode
   Raspberry Pi 400         | tested | Raspberry Pi 4-class hardware
-  QEMU ARM virt            | tested | serial-console boot; use highmem=off
-  QEMU m68k virt           | tested | serial-console boot
-  Hatari Atari emulation   | tested | m68k Atari configurations
+   QEMU ARM virt            | tested | serial-console boot; use highmem=off
+   QEMU m68k virt           | tested | serial-console boot
+   QEMU x86-64 PC           | tested | UEFI/OVMF boot; GOP framebuffer supports AES/EmuDesk
+   Hatari Atari emulation   | tested | m68k Atari configurations
 
 Other configurations are maintained as portability targets and may be
 build-tested without equivalent runtime validation.  See configs/ and
