@@ -94,9 +94,25 @@ DTAINFO *kproc_get_dta(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
 
+#ifdef __x86_64__
+    /* pd->p_xdta lives in the basepage, which is writable by the owning
+     * process, so it must never be trusted as a DTA pointer: a ring-3
+     * caller could store any address there and then have Fsfirst()/
+     * Fsnext() write through it at CPL0, bypassing the Fsetdta() check
+     * in kproc_validate_user_dta() below. The kernel-private value is
+     * authoritative, and is only ever set from a validated source. */
+    if (!kproc) {
+        KINFO(("Missing kernel process record for %p\n", pd));
+        halt();
+    }
+    return kproc->dta;
+#else
+    /* No memory protection to defeat here: p_xdta is itself the full
+     * native pointer, so honour a direct write to it as TOS always has. */
     if (kproc && PTR_TO_USERPTR_UNCHECKED(kproc->dta) == pd->p_xdta)
         return kproc->dta;
     return (DTAINFO *)USERPTR_TO_PTR(pd->p_xdta);
+#endif
 }
 
 #ifdef __x86_64__

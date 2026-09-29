@@ -130,6 +130,10 @@ static void reserve_blocks(PD *p, MPB *mpb)
 
     for (m = *(q = &mpb->mp_mal); m; m = *q) {
         if (m->m_own == p) {
+            /* the block is kept allocated rather than freed, so freeit()
+             * will not run; drop any kernel-private process record here.
+             * Ptermres()'s own basepage is handled by xterm() below. */
+            kproc_destroy((PD *)m->m_start);
             *q = m->m_link; /* pouf ! like magic */
             xmfremd(m);
         } else {

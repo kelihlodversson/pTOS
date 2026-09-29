@@ -307,9 +307,9 @@ void xmfremd(MD *md)
  * are no free blocks on the list, we call getosm to get a block from
  * the os memory pool.
  *
- * If we cannot get memory for an MDBLOCK, we return NULL (the request
- * will fail).  Otherwise we will attempt to free up DNDs to make space
- * and if that fails, the system will be halted.
+ * If we cannot get memory for an MDBLOCK or a KPROC, we return NULL (the
+ * request will fail).  Otherwise we will attempt to free up DNDs to make
+ * space and if that fails, the system will be halted.
  *
  * Arguments:
  *  memtype: the type of request
@@ -351,8 +351,10 @@ void *xmgetblk(WORD memtype)
             break;
         }
 
-        /* no memory available for an MDBLOCK, that's (sort of) OK */
-        if (memtype == MEMTYPE_MDBLOCK)
+        /* no memory available for an MDBLOCK or KPROC, that's (sort of) OK:
+         * both are optional allocations whose callers report the failure
+         * to their own caller instead of halting the whole system */
+        if ((memtype == MEMTYPE_MDBLOCK) || (memtype == MEMTYPE_KPROC))
             break;
 
         /*
