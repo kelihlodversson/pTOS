@@ -44,6 +44,11 @@
 #define F_GETMOD 0x0
 #define F_SETMOD 0x1
 
+/*
+ * Public DTA result layout.  Its member offsets and sizeof(DTA) follow the
+ * active target ABI's natural alignment; callers must use these fields rather
+ * than assume the classic m68k byte offsets.
+ */
 typedef struct
 {
     char    d_reserved[21];     /* internal EmuTOS usage */

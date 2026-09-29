@@ -351,11 +351,12 @@ typedef struct
     CLNO  dt_clnum;             /*  if subdir, current cluster number,  */
                                 /*   otherwise 0                        */
     char  dt_attr;              /*  attribute from Fsfirst()            */
-                            /* public area, must not change             */
-    char  dt_fattr;             /*  attrib from fcb             21      */
-    DOSTIME dt_td;              /*  time, date fields from fcb  22-25   */
-    long  dt_fileln;            /*  file length field from fcb  26-29   */
-    char  dt_fname[14];         /*  file name from fcb          30-43   */
+                            /* public area, must not change member order */
+                            /* offsets follow the active target ABI; see DTA */
+    char  dt_fattr;             /*  attrib from fcb             */
+    DOSTIME dt_td;              /*  time, date fields from fcb  */
+    long  dt_fileln;            /*  file length field from fcb  */
+    char  dt_fname[14];         /*  file name from fcb          */
 } DTAINFO;                      /*    includes null terminator          */
 
 #define DTA_DRIVEMASK   0x0000001fL
