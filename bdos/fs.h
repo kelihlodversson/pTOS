@@ -355,7 +355,7 @@ typedef struct
                             /* offsets follow the active target ABI; see DTA */
     char  dt_fattr;             /*  attrib from fcb             */
     DOSTIME dt_td;              /*  time, date fields from fcb  */
-    long  dt_fileln;            /*  file length field from fcb  */
+    LONG  dt_fileln;            /*  file length field from fcb  */
     char  dt_fname[14];         /*  file name from fcb          */
 } DTAINFO;                      /*    includes null terminator          */
 
