@@ -42,10 +42,11 @@ void *xmgetblk(WORD memtype);
 
 /*  MGET - wrapper around xmgetblk */
 #define MGET(x)         ((x *)xmgetblk(MEMTYPE_ ## x))
-#define MEMTYPE_MDBLOCK 0   /* the 4 types of valid request, all needing 64 bytes */
+#define MEMTYPE_MDBLOCK 0   /* fixed-size kernel-pool allocation classes */
 #define MEMTYPE_DMD     1
 #define MEMTYPE_DND     2
 #define MEMTYPE_OFD     3
+#define MEMTYPE_KPROC   4
 
 /*  xmfreblk - free up memory allocated through mgetblk */
 void xmfreblk(void *m);

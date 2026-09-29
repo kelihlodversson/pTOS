@@ -20,6 +20,7 @@
 #include "fs.h"
 #include "mem.h"
 #include "proc.h"
+#include "kproc.h"
 #include "gemerror.h"
 #include "biosbind.h"
 #include "string.h"
@@ -294,6 +295,11 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
         /* initialize the PD */
         init_pd_fields(p, tail, max, env_ptr);
+        if (!kproc_create(p)) {
+            xmfree(env_ptr);
+            xmfree(p);
+            return ENSMEM;
+        }
         p->p_flags = (ULONG)path;   /* set the flags */
         init_pd_files(p);
 
@@ -383,6 +389,12 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     /* initialize the fields in the PD structure */
     init_pd_fields(p, tail, max, env_ptr);
+    if (!kproc_create(p)) {
+        xmfree(env_ptr);
+        xmfree(p);
+        xclose(fh);
+        return ENSMEM;
+    }
 
     /* set the flags (must be done after init_pd) */
     p->p_flags = hdr.h01_flags;
@@ -823,9 +835,7 @@ void xterm(UWORD rc)
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
 
     run = (PD *)USERPTR_TO_PTR(run->p_parent);
-#ifdef __x86_64__
-    x86_64_dta_shadow_forget(p);
-#endif
+    kproc_destroy(p);
     ixterm(p);
     /* gouser() will store the current value of D0 in the active PD
      * so it cannot be used here. See proc_go() above.

@@ -922,6 +922,7 @@ LONG pfs_do_sfirst(char *path, WORD att)
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, (const char **)&path);
     PFSCOOKIE dir;
+    DTA *owner = (DTA *)xgetdta();
     const char *name;
     BOOL owned;
     WORD i;
@@ -963,7 +964,7 @@ LONG pfs_do_sfirst(char *path, WORD att)
      * replace it, not leak a second slot and leave pfs_do_snext()
      * matching whichever of the two comes first in the table. */
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-        if ((pfs_searches[i].owner == run->p_xdta) && (pfs_searches[i].proc == run))
+        if ((pfs_searches[i].owner == owner) && (pfs_searches[i].proc == run))
             break;
     if (i < CONF_PFS_MAX_SEARCHES)
     {
@@ -981,7 +982,7 @@ LONG pfs_do_sfirst(char *path, WORD att)
         }
     }
 
-    pfs_searches[i].owner = run->p_xdta;
+    pfs_searches[i].owner = owner;
     pfs_searches[i].proc = run;
     pfs_searches[i].dir = dir;
     pfs_searches[i].dir_owned = owned;
@@ -1023,10 +1024,11 @@ LONG pfs_do_sfirst(char *path, WORD att)
 
 LONG pfs_do_snext(void)
 {
+    DTA *owner = (DTA *)xgetdta();
     WORD i;
 
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-        if ((pfs_searches[i].owner == run->p_xdta) && (pfs_searches[i].proc == run))
+        if ((pfs_searches[i].owner == owner) && (pfs_searches[i].proc == run))
             break;
     if (i == CONF_PFS_MAX_SEARCHES)
         return ENMFIL;

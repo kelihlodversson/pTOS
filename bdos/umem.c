@@ -19,6 +19,7 @@
 #include "bdosdefs.h"
 #include "fs.h"
 #include "mem.h"
+#include "kproc.h"
 #include "gemerror.h"
 #include "biosbind.h"
 #include "biosext.h"
@@ -152,6 +153,7 @@ long xmfree(void *addr)
     if (!p)
         return EIMBA;
 
+    kproc_destroy((PD *)addr);
     freeit(p,mpb);
     dump_mem_map();
 

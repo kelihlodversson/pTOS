@@ -33,11 +33,19 @@
 /*
  *  local constants
  */
-#if defined(__arm__) || defined(__x86_64__)
+/* xmgetblk() payloads hold native pointers in KPROC on every architecture.
+ * Align both the pool base and each block's payload for the native ABI. */
+#if defined(__x86_64__)
+#define BLOCK_PAD_BYTES 8
+#define OSM_ALIGN UQUAD
+#define OSM_PAYLOAD_BYTES 128
+#elif defined(__arm__)
 #define BLOCK_PAD_BYTES 4
+#define OSM_ALIGN ULONG
 #define OSM_PAYLOAD_BYTES 128
 #else
 #define BLOCK_PAD_BYTES 2
+#define OSM_ALIGN ULONG
 #define OSM_PAYLOAD_BYTES 128
 #endif
 #define OSM_PAYLOAD (OSM_PAYLOAD_BYTES/sizeof(WORD))
@@ -76,7 +84,10 @@ struct _mdb {
  */
 static WORD osmptr;
 static WORD osmlen;
-static WORD osmem[LENOSM];
+static union {
+    OSM_ALIGN align;
+    WORD words[LENOSM];
+} osmem;
 
 
 /*
@@ -123,7 +134,7 @@ static WORD *getosm(WORD n)
         return 0;
     }
 
-    m = &osmem[osmptr];         /*  start at base               */
+    m = &osmem.words[osmptr];   /*  start at base               */
     osmptr += n;                /*  new base                    */
     osmlen -= n;                /*  new length of free block    */
     return m;                   /*  allocated memory            */
@@ -307,7 +318,7 @@ void *xmgetblk(WORD memtype)
 {
     WORD i, j, w, *m, *q, **r;
 
-    if ((memtype < MEMTYPE_MDBLOCK) || (memtype > MEMTYPE_OFD))
+    if ((memtype < MEMTYPE_MDBLOCK) || (memtype > MEMTYPE_KPROC))
     {
         dbggtblk++;
         return NULL;

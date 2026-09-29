@@ -25,10 +25,12 @@
 #include "biosdefs.h"
 #include "mem.h"
 #include "proc.h"
+#include "kproc.h"
 #include "console.h"
 #include "time.h"
 #include "gemerror.h"
 #include "biosbind.h"
+#include "biosext.h"
 #include "string.h"
 #include "kprint.h"
 #include "ssystem.h"
@@ -400,6 +402,7 @@ void osinit_after_xmaddalt(void)
     run = &initial_basepage;
 #endif
     run->p_flags = PF_STANDARD;
+    run->p_xdta = PTR_TO_USERPTR(&run->p_cmdlin[0]);
     /*
      * double_nul is an ordinary kernel .rodata symbol -- higher-half on
      * x86-64, so (like bios.c's coma_start/exec_os) not something
@@ -419,6 +422,11 @@ void osinit_after_xmaddalt(void)
 #else
     run->p_env = PTR_TO_USERPTR_UNCHECKED(CONST_CAST(char *,double_nul));
 #endif
+
+    if (!kproc_create(run)) {
+        KINFO(("Unable to allocate initial kernel process\n"));
+        halt();
+    }
 
     time_init();
 

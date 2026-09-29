@@ -16,6 +16,8 @@
 #include "pgtable.h"
 #include "trap.h"
 
+extern BOOL kproc_validate_user_dta(UQUAD address);
+
 /*
  * GSX_ENTRY()/VDIPB (vdi_entry.o) are unconditional: bios/build.mk's own
  * VDI obj-y list has no CONF_WITH_* guard, matching every other arch (an
@@ -270,6 +272,16 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
      * from ring 3 until the #352 copy/validation path exists. */
     if (from_ring3 && trap_class == X86_64_TRAP_GEM) {
         frame->rax = (UQUAD)-1L;
+        return;
+    }
+
+    /* Fsetdta() stores its pointer in the public 32-bit PD field. Ensure a
+     * ring-3 caller's complete DTAINFO buffer belongs to this process before
+     * xsetdta() records it as the native DTA pointer. Kernel callers bypass
+     * this trap and may use their own higher-half buffers. */
+    if (from_ring3 && trap_class == X86_64_TRAP_GEMDOS && fn == 0x1a
+        && !kproc_validate_user_dta(frame->rdi)) {
+        frame->rax = (UQUAD)EIMBA;
         return;
     }
 
