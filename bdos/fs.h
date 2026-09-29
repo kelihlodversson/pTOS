@@ -359,6 +359,11 @@ typedef struct
     char  dt_fname[14];         /*  file name from fcb          */
 } DTAINFO;                      /*    includes null terminator          */
 
+typedef char dta_fattr_offset_must_match[
+    offsetof(DTAINFO, dt_fattr) == offsetof(DTA, d_attrib) ? 1 : -1];
+typedef char dta_fileln_offset_must_match[
+    offsetof(DTAINFO, dt_fileln) == offsetof(DTA, d_length) ? 1 : -1];
+
 #define DTA_DRIVEMASK   0x0000001fL
 
 /* the following structure is used to track current directories */
