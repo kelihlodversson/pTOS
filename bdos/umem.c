@@ -141,12 +141,8 @@ long xmfree(void *addr)
     KDEBUG(("BDOS: Mfree(%p)\n",addr));
 
     mpb = find_mpb(addr);
-    if (!mpb) {
-        /* x86-64 low-TPA basepages are outside the MPBs, but their
-         * KPROC sidecars still need to follow an Mfree() request. */
-        kproc_destroy((PD *)addr);
+    if (!mpb)
         return EIMBA;
-    }
 
     KDEBUG(("BDOS Mfree: mpb=%s\n",(mpb==&pmd)?"pmd":"pmdalt"));
 
