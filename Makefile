@@ -1552,8 +1552,17 @@ pieprobe.tos: $(TEST_STARTUP) obj/pie_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_PIE_LDFLAGS) $(TEST_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
 
 TEST_PIE_FILES = pieprobe.tos
+
+# LOADFAIL.TOS has a valid ELF header and program-header table, but omits
+# its loadable segment.  It reaches xexec()'s post-allocation load failure
+# cleanup path, unlike a file rejected by kpgmhdrld().
+LOADFAIL.TOS: pieprobe.tos
+	dd if=$< of=$@ bs=512 count=1
+
+TEST_LOAD_FAIL_FILES = LOADFAIL.TOS
 else
 TEST_PIE_FILES =
+TEST_LOAD_FAIL_FILES =
 endif
 
 ifdef CONF_WITH_ELF_LOADER
@@ -1633,9 +1642,9 @@ endif
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
-TEST_HD_FILES = runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_PTOS_RELOC_FILES)
+TEST_HD_FILES = runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES)
 
-test-hd.img: runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_PTOS_RELOC_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR)
 
@@ -1656,7 +1665,7 @@ endif
 # regardless of .config -- anything gated on it here would silently never
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
-TOCLEAN += tests/run_tests.c runtests.tos pieprobe.tos \
+TOCLEAN += tests/run_tests.c runtests.tos pieprobe.tos LOADFAIL.TOS \
            relocprobe-unpacked.tos PTRELOC.TOS \
            relocprobe2-unpacked.tos PTRELOC2.TOS \
            test-hd.img

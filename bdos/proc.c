@@ -420,6 +420,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         KDEBUG(("Error and longjmp in xexec()!\n"));
 
         /* free any memory allocated so far & close the file */
+        kproc_destroy(cur_p);
         xmfree(USERPTR_TO_PTR(cur_p->p_env));
         xmfree(cur_p);
         xclose(fh);
@@ -435,6 +436,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmld returned %ld (0x%lx)\n",rc,rc));
         /* free any memory allocated yet */
+        kproc_destroy(cur_p);
         xmfree(USERPTR_TO_PTR(cur_p->p_env));
         xmfree(cur_p);
 
