@@ -917,12 +917,12 @@ LONG pfs_do_rename(const char *p1, const char *p2)
     return rc;
 }
 
-LONG pfs_do_sfirst(char *path, WORD att)
+LONG pfs_do_sfirst_at(char *path, WORD att, DTAINFO *dta)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, (const char **)&path);
     PFSCOOKIE dir;
-    DTA *owner = (DTA *)xgetdta();
+    DTA *owner = (DTA *)dta;
     const char *name;
     BOOL owned;
     WORD i;
@@ -961,7 +961,7 @@ LONG pfs_do_sfirst(char *path, WORD att)
 
     /* a new Fsfirst() on a DTA that already has a search running (common
      * - callers rarely exhaust a search before starting another) must
-     * replace it, not leak a second slot and leave pfs_do_snext()
+     * replace it, not leak a second slot and leave pfs_do_snext_at()
      * matching whichever of the two comes first in the table. */
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
         if ((pfs_searches[i].owner == owner) && (pfs_searches[i].proc == run))
@@ -1016,15 +1016,15 @@ LONG pfs_do_sfirst(char *path, WORD att)
         if (pfs_match(name8_3, pfs_searches[i].pattern) &&
             pfs_attr_visible(attr.dos_attr, att))
         {
-            pfs_attr_to_dta(RUN_XDTA(), name8_3, &attr);
+            pfs_attr_to_dta(dta, name8_3, &attr);
             return E_OK;
         }
     }
 }
 
-LONG pfs_do_snext(void)
+LONG pfs_do_snext_at(DTAINFO *dta)
 {
-    DTA *owner = (DTA *)xgetdta();
+    DTA *owner = (DTA *)dta;
     WORD i;
 
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
@@ -1057,7 +1057,7 @@ LONG pfs_do_snext(void)
         if (pfs_match(name8_3, pfs_searches[i].pattern) &&
             pfs_attr_visible(attr.dos_attr, pfs_searches[i].attr))
         {
-            pfs_attr_to_dta(RUN_XDTA(), name8_3, &attr);
+            pfs_attr_to_dta(dta, name8_3, &attr);
             return E_OK;
         }
     }

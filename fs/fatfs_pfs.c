@@ -946,12 +946,10 @@ static BOOL contains_wildcard_characters(const char *test)
     return FALSE;
 }
 
-LONG fat_sfirst_path(char *name, int att)
+LONG fat_sfirst_path_at(char *name, WORD att, DTAINFO *dt)
 {
     long result;
-    DTAINFO *dt;
 
-    dt = RUN_XDTA();
     dt->dt_offset_drive = -1L;
     result = ixsfirst(name, att, dt);
     if ((result < 0) || !contains_wildcard_characters(name))
@@ -959,12 +957,10 @@ LONG fat_sfirst_path(char *name, int att)
     return E_OK;
 }
 
-LONG fat_snext_path(void)
+LONG fat_snext_path_at(DTAINFO *dt)
 {
     FCB *f;
-    DTAINFO *dt;
 
-    dt = RUN_XDTA();
     if (dt->dt_offset_drive < 0L)
         return ENMFIL;
     f = ixsnext(dt);
@@ -973,7 +969,7 @@ LONG fat_snext_path(void)
         dt->dt_offset_drive = -1L;
         return ENMFIL;
     }
-    makbuf(f, RUN_XDTA());
+    makbuf(f, dt);
     return E_OK;
 }
 

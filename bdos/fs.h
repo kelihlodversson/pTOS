@@ -499,6 +499,8 @@ long xmkdir(char *s);
 long xrmdir(char *p);
 long xchmod(char *p, int wrt, UBYTE mod);
 long ixsfirst(char *name, WORD att, DTAINFO *addr);
+long xfsfirst_at(char *name, WORD att, DTAINFO *dta);
+long xfsnext_at(DTAINFO *dta);
 long xsfirst(char *name, int att);
 long xsnext(void);
 long xgsdtof(DOSTIME *buf, int h, int wrt);
@@ -548,8 +550,7 @@ char *packit(char *s, char *d);
 DTAINFO *xgetdta(void);
 void xsetdta(DTAINFO *addr);
 /* The kernel-private process record preserves the native DTA pointer when
- * the public basepage's ABI-width p_xdta field cannot represent it. All
- * filesystem DTA dereferences, including direct ones, must use RUN_XDTA(). */
+ * the public basepage's ABI-width p_xdta field cannot represent it. */
 DTAINFO *kproc_get_dta(PD *pd);
 #define RUN_XDTA() kproc_get_dta(run)
 long xsetdrv(int drv);

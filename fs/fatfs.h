@@ -25,8 +25,8 @@ LONG fat_rmdir_path(char *p);
 LONG fat_chmod_path(char *p, int wrt, char mod);
 LONG fat_chdir_path(char *p);
 LONG fat_getdir_path(char *buf, int drv);
-LONG fat_sfirst_path(char *name, int att);
-LONG fat_snext_path(void);
+LONG fat_sfirst_path_at(char *name, WORD att, DTAINFO *dt);
+LONG fat_snext_path_at(DTAINFO *dt);
 LONG fat_rename_path(char *p1, char *p2);
 
 #endif /* FATFS_H */
