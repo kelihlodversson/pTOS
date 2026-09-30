@@ -1366,11 +1366,9 @@ ifndef CONF_WITH_ELF_LOADER
 TEST_SUITES := $(filter-out ptos_reloc_load,$(TEST_SUITES))
 endif
 
-# x32_hello uses x86-64 syscall registers and can only be compiled for the
-# native x86-64 target.
-ifndef ARCH_X86_64
+# x32_hello is a standalone _start program built by x32test, not a ptest
+# suite, so it must never be linked into runtests.tos.
 TEST_SUITES := $(filter-out x32_hello,$(TEST_SUITES))
-endif
 
 GEN_SRC += tests/run_tests.c
 
