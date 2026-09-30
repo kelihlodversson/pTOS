@@ -310,14 +310,18 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
         return (long)p;
     case PE_GOTHENFREE:
-        /* set the owner of the memory to be this process */
         p = (PD *) tail;
+        /* The allocation can fail; retain the parent's ownership until it
+         * succeeds so an ENSMEM return leaves the retained basepage freeable. */
+        if (!kproc_create(p))
+            return ENSMEM;
+        /* set the owner of the memory to be this process */
         set_owner(p, p);
         set_owner(USERPTR_TO_PTR(p->p_env), p);
         FALLTHROUGH;
     case PE_GO:
         p = (PD *) tail;
-        if (!kproc_create(p))
+        if (flag == PE_GO && !kproc_create(p))
             return ENSMEM;
         proc_go(p);
         /*
