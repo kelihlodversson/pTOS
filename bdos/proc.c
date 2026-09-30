@@ -317,6 +317,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         FALLTHROUGH;
     case PE_GO:
         p = (PD *) tail;
+        if (!kproc_create(p))
+            return ENSMEM;
         proc_go(p);
         /*
          * "should not return ?": on m68k/ARM, proc_go()/gouser() (rwa.S)

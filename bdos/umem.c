@@ -19,6 +19,7 @@
 #include "bdosdefs.h"
 #include "fs.h"
 #include "mem.h"
+#include "kproc.h"
 #include "gemerror.h"
 #include "biosbind.h"
 #include "biosext.h"
@@ -140,8 +141,12 @@ long xmfree(void *addr)
     KDEBUG(("BDOS: Mfree(%p)\n",addr));
 
     mpb = find_mpb(addr);
-    if (!mpb)
+    if (!mpb) {
+        /* x86-64 low-TPA basepages are outside the MPBs, but their
+         * KPROC sidecars still need to follow an Mfree() request. */
+        kproc_destroy((PD *)addr);
         return EIMBA;
+    }
 
     KDEBUG(("BDOS Mfree: mpb=%s\n",(mpb==&pmd)?"pmd":"pmdalt"));
 
