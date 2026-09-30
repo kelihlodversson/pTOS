@@ -1378,7 +1378,7 @@ GEN_SRC += tests/run_tests.c
 # dependency on the wildcarded sources alone -- switching config without
 # regenerating this file would leave it calling test_pie_load() on a
 # build where pie_load was just filtered out (or vice versa).
-tests/run_tests.c: $(wildcard tests/*/*.c) $(AUTOCONF_H) | obj
+tests/run_tests.c: Makefile $(wildcard tests/*/*.c) $(AUTOCONF_H) | obj
 	@echo '/* Auto-generated -- do not edit */' > $@
 	@echo '#include "test.h"' >> $@
 	@for s in $(TEST_SUITES); do \
