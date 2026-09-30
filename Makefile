@@ -1344,7 +1344,7 @@ TEST_SUITES := $(sort $(foreach d,$(patsubst tests/%/,%,$(wildcard tests/*/)),\
 # can't recognize that executable's format at all, so the suite would
 # just fail on an unsupported configuration instead of testing anything.
 ifndef CONF_WITH_ELF_LOADER
-TEST_SUITES := $(filter-out pie_load,$(TEST_SUITES))
+TEST_SUITES := $(filter-out pie_load load_fail,$(TEST_SUITES))
 endif
 
 # ptos_reloc_load launches two separate executables (reloc_probe.c, built
