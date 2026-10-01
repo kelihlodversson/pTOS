@@ -218,6 +218,7 @@ void x86_64_trap_init(void);
  * here on is a fault or `syscall` from the code now running at
  * entry_rip, exactly like any other ring-3 caller.
  */
-void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp) NORETURN;
+void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp,
+                       UQUAD basepage, UQUAD entry_type) NORETURN;
 
 #endif /* X86_64_TRAP_H */

@@ -496,10 +496,13 @@ void x86_64_trap_init(void)
 #define STR(x) #x
 #define XSTR(x) STR(x)
 
-void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp)
+void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp,
+                       UQUAD basepage, UQUAD entry_type)
 {
     __asm__ volatile (
         "mov %0, %%cr3\n\t"
+        "mov %3, %%rdi\n\t"
+        "mov %4, %%rsi\n\t"
         "pushq $" XSTR(X86_64_USER_DATA_SEL) "\n\t" /* SS */
         "pushq %1\n\t"                              /* RSP */
         "pushq $0x2\n\t"                            /* RFLAGS */
@@ -507,8 +510,9 @@ void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp)
         "pushq %2\n\t"                              /* RIP */
         "iretq"
         :
-        : "r"(pml4_phys), "r"(user_rsp), "r"(entry_rip)
-        : "memory"
+        : "r"(pml4_phys), "r"(user_rsp), "r"(entry_rip),
+          "r"(basepage), "r"(entry_type)
+        : "rdi", "rsi", "memory"
     );
     __builtin_unreachable();
 }
