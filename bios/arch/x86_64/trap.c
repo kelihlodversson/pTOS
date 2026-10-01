@@ -346,7 +346,7 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
                 frame->rax = (UQUAD)-1L;
                 break;
             }
-            if (!wire.adr) {
+            if (!wire.adr && wire.drive >= 0 && wire.drive < NUMFLOPPIES) {
                 /* TOS uses a null buffer to update floppy media-change state. */
                 native.r_w = wire.r_w;
                 native.adr = NULL;
