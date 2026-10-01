@@ -411,6 +411,9 @@ config X32_CROSS_COMPILE
 	  needed to cross the *host*, only ever to point at a different
 	  installed gcc on the same machine.
 
+	  It does have to be set on macOS, whose host "gcc" cannot compile
+	  "-mx32" at all; "x86_64-elf-" from Homebrew works (doc/install.txt).
+
 config CPUFLAGS
 	string "Compiler flags describing the target CPU"
 	default "-march=armv6k -mtune=arm1176jzf-s -marm -mfpu=vfp -mfloat-abi=hard" if TARGET_RPI1
