@@ -174,5 +174,8 @@ typedef struct _blkdev  BLKDEV;
 
 extern BLKDEV blkdev[];
 
+/* Return the buffer size consumed by a Rwabs() request before dispatching it. */
+BOOL blkdev_rwabs_buffer_size(WORD rw, WORD cnt, WORD dev, ULONG *size);
+
 
 #endif /* BLKDEV_H */

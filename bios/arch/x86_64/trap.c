@@ -11,6 +11,7 @@
 #include "portab.h"
 #include "biosext.h"
 #include "biosargs.h"
+#include "blkdev.h"
 #include "gdt.h"
 #include "gemerror.h"
 #include "io.h"
@@ -356,11 +357,12 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
                 frame->rax = (UQUAD)((LONG (*)(struct bios_lrwabs_args *))bios_vecs[fn])(&native);
                 break;
             }
-            if (wire.numb <= 0 || wire.numb > 0x7fffL) {
+            if (wire.numb <= 0 || wire.numb > 0x7fffL
+                || !blkdev_rwabs_buffer_size(wire.r_w, (WORD)wire.numb,
+                                              (WORD)wire.drive, &bytes)) {
                 frame->rax = (UQUAD)-1L;
                 break;
             }
-            bytes = (ULONG)wire.numb * SECTOR_SIZE;
             if (!kproc_validate_user_range(wire.adr, bytes)) {
                 frame->rax = (UQUAD)-1L;
                 break;
