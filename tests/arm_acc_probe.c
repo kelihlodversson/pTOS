@@ -9,6 +9,8 @@
 
 #include <mint/osbind.h>
 
+extern short _app;
+
 typedef unsigned short UWORD;
 
 typedef struct {
@@ -43,6 +45,14 @@ static void aes_call(void)
 
 int main(void)
 {
+    unsigned long sp;
+
+    __asm__ volatile ("mov %0, sp" : "=r" (sp));
+    if (_app || (sp & 7)) {
+        (void)Cconws("arm-acc-probe: invalid accessory entry\r\n");
+        return 1;
+    }
+
     gemblk.control = control;
     gemblk.global = global;
     gemblk.intin = intin;

@@ -111,12 +111,6 @@ MACHINE-$(MACHINE_VIRT_ARM) += virt-arm
 MACHINE-$(MACHINE_VIRT_M68K) += virt-m68k
 MACHINE = $(MACHINE-y)
 
-ifdef CONFIGURED
-ifeq (,$(ARCH))
-$(error No architecture selected.  Run "make <name>_defconfig" or "make menuconfig")
-endif
-endif
-
 #
 # Directories holding source code
 #
