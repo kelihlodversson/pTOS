@@ -55,18 +55,18 @@ LONG kpgm_relocate( PD *p, long length); /* SOP */
 /*
  * in rwa.S (or, on x86-64, rwa.c -- see that file's own header comment)
  *
- * gouser() is NOT marked NORETURN: on m68k/ARM it never returns from
- * this specific call in the ordinary sense (control instead resumes,
- * much later, via termuser()'s own raw-asm jump into the middle of
- * gouser()'s own body, invisible to the compiler either way, so the
- * annotation was previously harmless there); on x86-64, where a
+ * On m68k/ARM gouser() never returns from this specific call in the ordinary
+ * sense: control resumes later via termuser()'s raw-asm jump. On x86-64, a
  * "kernel-code process" launch (aes/gemshlib.c's aes_run_rom_program())
  * is an ordinary nested C call with no trap involved, gouser() DOES
  * genuinely return via setjmp()/longjmp() once the launched process
- * calls Pterm() -- marking it NORETURN there risked the compiler
- * eliding proc_go()'s/xexec()'s own subsequent code as unreachable.
+ * calls Pterm().
  */
+#ifdef __x86_64__
 void gouser(void);
+#else
+void gouser(void) NORETURN;
+#endif
 void termuser(void)  NORETURN;
 
 #endif /* PROC_H */

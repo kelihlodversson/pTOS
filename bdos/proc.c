@@ -20,6 +20,7 @@
 #include "fs.h"
 #include "mem.h"
 #include "proc.h"
+#include "kproc.h"
 #include "gemerror.h"
 #include "biosbind.h"
 #include "string.h"
@@ -129,6 +130,11 @@ static void reserve_blocks(PD *p, MPB *mpb)
 
     for (m = *(q = &mpb->mp_mal); m; m = *q) {
         if (m->m_own == p) {
+            /* the block is kept allocated rather than freed, so freeit()
+             * will not run; drop child process records here. xterm()
+             * removes p's record after calling its termination handler. */
+            if ((PD *)m->m_start != p)
+                kproc_destroy((PD *)m->m_start);
             *q = m->m_link; /* pouf ! like magic */
             xmfremd(m);
         } else {
@@ -294,18 +300,29 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
         /* initialize the PD */
         init_pd_fields(p, tail, max, env_ptr);
+        if (!kproc_create(p)) {
+            xmfree(env_ptr);
+            xmfree(p);
+            return ENSMEM;
+        }
         p->p_flags = (ULONG)path;   /* set the flags */
         init_pd_files(p);
 
         return (long)p;
     case PE_GOTHENFREE:
-        /* set the owner of the memory to be this process */
         p = (PD *) tail;
+        /* The allocation can fail; retain the parent's ownership until it
+         * succeeds so an ENSMEM return leaves the retained basepage freeable. */
+        if (!kproc_create(p))
+            return ENSMEM;
+        /* set the owner of the memory to be this process */
         set_owner(p, p);
         set_owner(USERPTR_TO_PTR(p->p_env), p);
         FALLTHROUGH;
     case PE_GO:
         p = (PD *) tail;
+        if (flag == PE_GO && !kproc_create(p))
+            return ENSMEM;
         proc_go(p);
         /*
          * "should not return ?": on m68k/ARM, proc_go()/gouser() (rwa.S)
@@ -383,6 +400,12 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     /* initialize the fields in the PD structure */
     init_pd_fields(p, tail, max, env_ptr);
+    if (!kproc_create(p)) {
+        xmfree(env_ptr);
+        xmfree(p);
+        xclose(fh);
+        return ENSMEM;
+    }
 
     /* set the flags (must be done after init_pd) */
     p->p_flags = hdr.h01_flags;
@@ -397,6 +420,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         KDEBUG(("Error and longjmp in xexec()!\n"));
 
         /* free any memory allocated so far & close the file */
+        kproc_destroy(cur_p);
         xmfree(USERPTR_TO_PTR(cur_p->p_env));
         xmfree(cur_p);
         xclose(fh);
@@ -412,6 +436,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmld returned %ld (0x%lx)\n",rc,rc));
         /* free any memory allocated yet */
+        kproc_destroy(cur_p);
         xmfree(USERPTR_TO_PTR(cur_p->p_env));
         xmfree(cur_p);
 
@@ -823,9 +848,7 @@ void xterm(UWORD rc)
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
 
     run = (PD *)USERPTR_TO_PTR(run->p_parent);
-#ifdef __x86_64__
-    x86_64_dta_shadow_forget(p);
-#endif
+    kproc_destroy(p);
     ixterm(p);
     /* gouser() will store the current value of D0 in the active PD
      * so it cannot be used here. See proc_go() above.

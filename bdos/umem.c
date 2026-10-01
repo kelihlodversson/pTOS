@@ -19,6 +19,7 @@
 #include "bdosdefs.h"
 #include "fs.h"
 #include "mem.h"
+#include "kproc.h"
 #include "gemerror.h"
 #include "biosbind.h"
 #include "biosext.h"

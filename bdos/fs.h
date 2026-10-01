@@ -347,7 +347,7 @@ typedef struct
 /*
  * DTAINFO - Information stored in the dta by srch-frst for use by srch-nxt.
  */
-typedef struct
+typedef struct dta_info
 {
                             /* EmuTOS private area, subject to change   */
     char  dt_name[12];          /*  file spec from Fsfirst()            */
@@ -499,6 +499,8 @@ long xmkdir(char *s);
 long xrmdir(char *p);
 long xchmod(char *p, int wrt, UBYTE mod);
 long ixsfirst(char *name, WORD att, DTAINFO *addr);
+long xfsfirst_at(char *name, WORD att, DTAINFO *dta);
+long xfsnext_at(DTAINFO *dta);
 long xsfirst(char *name, int att);
 long xsnext(void);
 long xgsdtof(DOSTIME *buf, int h, int wrt);
@@ -547,20 +549,10 @@ char *packit(char *s, char *d);
  */
 DTAINFO *xgetdta(void);
 void xsetdta(DTAINFO *addr);
-
-#ifdef __x86_64__
-/* See fsmain.c's own comment on xsetdta()/x86_64_widen_dta(): every
- * direct run->p_xdta dereference (fs/fatfs_pfs.c, fs/pfs.c) needs this,
- * not just xgetdta() -- a plain zero-extending cast cannot reconstruct
- * a genuine higher-half kernel address (bios.c's autoexec(), aes/
- * geminit.c's count_accs()) the way it can an ordinary ILP32 process's
- * own already-low one. */
-DTAINFO *x86_64_widen_dta(ULONG stored);
-void x86_64_dta_shadow_forget(PD *p);
-#define RUN_XDTA() x86_64_widen_dta(run->p_xdta)
-#else
-#define RUN_XDTA() ((DTAINFO *)run->p_xdta)
-#endif
+/* The kernel-private process record preserves the native DTA pointer when
+ * the public basepage's ABI-width p_xdta field cannot represent it. */
+DTAINFO *kproc_get_dta(PD *pd);
+#define RUN_XDTA() kproc_get_dta(run)
 long xsetdrv(int drv);
 long xgetdrv(void);
 OFD  *getofd(int h);

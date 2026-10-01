@@ -11,6 +11,7 @@
 /* #define ENABLE_KDEBUG */
 
 #include "emutos.h"
+#include "kproc.h"
 #include "fs.h"
 #include "mem.h"
 #include "gemerror.h"
@@ -388,123 +389,12 @@
 */
 
 
-#ifdef __x86_64__
-/*
- * Shadows the most recently xsetdta()'d real pointer, for
- * x86_64_widen_dta() (fs.h) below to hand back verbatim to any reader of
- * run->p_xdta -- see xsetdta()'s own comment on why PTR_TO_USERPTR_UNCHECKED()'s
- * round-trip through that 32-bit field alone cannot reconstruct a
- * genuine higher-half kernel address. Kept per-process (not a single
- * global) once kernel-code-process nesting is used: proc_go() switches
- * `run` to the child and xterm() restores the parent, while child
- * AES/desktop code can call dos_sdta() and overwrite a single global
- * shadow, corrupting the parent's widened DTA once it resumes.
- *
- * This table -- not the PD itself -- is where that per-process shadow
- * lives, and that is load-bearing, not just tidiness: a PD is a real
- * process's own basepage, mapped read/write into that process's own
- * address space (bdos/arch/x86_64/rwa.c's gouser()). An earlier version
- * of this fix stored the shadow across two of PD's own reserved
- * p_3fill words -- Copilot's review of #376 caught that this lets any
- * ordinary ring-3 process forge an arbitrary 64-bit "real" pointer by
- * writing p_3fill and a matching p_xdta directly (no trap needed, it's
- * just memory the process already owns), which x86_64_widen_dta() would
- * then hand straight to Fsfirst()/Fsnext() to write through -- an
- * arbitrary-kernel-write primitive. A small fixed-size table in the
- * kernel's own BSS, indexed by the owning PD's own pointer identity,
- * cannot be reached or forged from ring 3 at all.
- *
- * Entries are reclaimed when their owning process terminates.  Only
- * higher-half pointers need an entry; ordinary ILP32 process pointers
- * use the existing zero-extending fallback.  Exhaustion while more than
- * eight kernel-code processes are live is fatal rather than evicting a
- * live mapping and later dereferencing the truncated address.
- */
-#define X86_64_DTA_SHADOW_SLOTS 8
-static struct {
-    PD *owner;
-    DTAINFO *real;
-} x86_64_dta_shadow[X86_64_DTA_SHADOW_SLOTS];
-
-static DTAINFO *x86_64_dta_shadow_get(PD *p)
-{
-    int i;
-    for (i = 0; i < X86_64_DTA_SHADOW_SLOTS; i++)
-        if (x86_64_dta_shadow[i].owner == p)
-            return x86_64_dta_shadow[i].real;
-    return NULL;
-}
-
-static void x86_64_dta_shadow_set(PD *p, DTAINFO *real)
-{
-    int i, free_slot = -1;
-    UQUAD address = (UQUAD)(uintptr_t)real;
-
-    for (i = 0; i < X86_64_DTA_SHADOW_SLOTS; i++) {
-        if (x86_64_dta_shadow[i].owner == p) {
-            if (address > 0xffffffffUL) {
-                x86_64_dta_shadow[i].real = real;
-            } else {
-                x86_64_dta_shadow[i].owner = NULL;
-                x86_64_dta_shadow[i].real = NULL;
-            }
-            return;
-        }
-        if (free_slot < 0 && x86_64_dta_shadow[i].owner == NULL)
-            free_slot = i;
-    }
-
-    if (address <= 0xffffffffUL)
-        return;
-    if (free_slot < 0)
-        panic("x86-64: DTA shadow table exhausted\n");
-    x86_64_dta_shadow[free_slot].owner = p;
-    x86_64_dta_shadow[free_slot].real = real;
-}
-
-void x86_64_dta_shadow_forget(PD *p)
-{
-    int i;
-
-    for (i = 0; i < X86_64_DTA_SHADOW_SLOTS; i++) {
-        if (x86_64_dta_shadow[i].owner == p) {
-            x86_64_dta_shadow[i].owner = NULL;
-            x86_64_dta_shadow[i].real = NULL;
-            return;
-        }
-    }
-}
-
-/*
- * Widens a raw run->p_xdta value back into a real, dereferenceable
- * pointer: if it matches the most recently xsetdta()'d address's own
- * low 32 bits, return that real (possibly higher-half) pointer verbatim
- * instead of zero-extending -- otherwise (an ordinary process's own
- * already-low DTA address, or no kernel-code caller has ever used
- * xsetdta() this boot) an ordinary zero-extending cast is correct, the
- * same as ILP32 arches always do. Declared in fs.h for fs/fatfs_pfs.c's/
- * fs/pfs.c's own direct run->p_xdta dereferences, which don't go through
- * xgetdta() below at all.
- */
-DTAINFO *x86_64_widen_dta(ULONG stored)
-{
-    DTAINFO *real = x86_64_dta_shadow_get(run);
-    if (real && PTR_TO_USERPTR_UNCHECKED(real) == stored)
-        return real;
-    return (DTAINFO *)(uintptr_t)stored;
-}
-#endif
-
 /*
  *  xgetdta - Function 0x2F     f_getdta
  */
 DTAINFO *xgetdta(void)          /* return address of dta */
 {
-#ifdef __x86_64__
-    return x86_64_widen_dta(run->p_xdta);
-#else
-    return((DTAINFO *)run->p_xdta);
-#endif
+    return kproc_get_dta(run);
 }
 
 
@@ -513,44 +403,7 @@ DTAINFO *xgetdta(void)          /* return address of dta */
  */
 void xsetdta(DTAINFO *addr)     /* set transfer address to addr */
 {
-    /*
-     * PTR_TO_USERPTR_UNCHECKED(), not PTR_TO_USERPTR(): unlike
-     * p_lowtpa/p_hitpa/p_env/p_parent (bdos/proc.c's init_pd_fields()),
-     * which are always backed by the low TPA pool, this one can also be
-     * set by kernel-internal callers using their own stack-local DTA
-     * with an ordinary C call (not the trap dispatch) -- bios.c's
-     * autoexec() is exactly this: `DTA dta; Fsetdta(&dta);` before
-     * scanning the AUTO folder, an address that is genuinely
-     * higher-half on x86-64. Copilot's review of #356/#364 caught that
-     * the checked macro traps here on any boot that reaches a real
-     * block device (#363), for a case that isn't a corruption bug the
-     * way p_env's own history (#360) was: nothing widens this back and
-     * dereferences it outside the same kernel call's own local scope
-     * when the caller is kernel code, and a real user process's own
-     * Fsetdta() call already only ever passes its own, already-32-bit
-     * address.
-     *
-     * That reasoning covers the *storage* here being lossy, but not
-     * every *reader* of it: aes/geminit.c's count_accs() (the first
-     * kernel-code caller to actually exercise this at all, #375) showed
-     * that xgetdta()'s own zero-extending cast (and fs/fatfs_pfs.c's/
-     * fs/pfs.c's identical direct run->p_xdta casts, which don't even
-     * go through xgetdta()) reconstruct the wrong address for a real
-     * higher-half pointer, corrupting memory the moment Fsfirst()
-     * writes through it. x86_64_widen_dta() above fixes that for every
-     * reader, not just xgetdta()'s own.
-     *
-     * Kept per-process (in a kernel-only side table, not the PD itself --
-     * see that table's own comment on why) once kernel-code-process
-     * nesting is used: proc_go() switches `run` to the child and xterm()
-     * restores the parent, while child AES/desktop code can call
-     * dos_sdta() and overwrite a single global shadow, corrupting the
-     * parent's widened DTA once it resumes.
-     */
-#ifdef __x86_64__
-    x86_64_dta_shadow_set(run, addr);
-#endif
-    run->p_xdta = PTR_TO_USERPTR_UNCHECKED((DTA *)addr);
+    kproc_set_dta(run, addr);
 }
 
 
