@@ -74,11 +74,16 @@ static void gemdos1(u64 func, u64 arg)
 
 void _start(void)
 {
-    register u64 basepage __asm__("rdi");
-    register u64 entry_type __asm__("rsi");
+    u64 basepage;
+    u64 entry_type;
     u64 stack;
 
-    __asm__ volatile ("mov %%rsp, %0" : "=r" (stack));
+    /* Capture the entry contract before either GEMDOS wrapper overwrites
+     * its argument registers. */
+    __asm__ volatile ("mov %%rdi, %0\n\t"
+                      "mov %%rsi, %1\n\t"
+                      "mov %%rsp, %2"
+                      : "=r" (basepage), "=r" (entry_type), "=r" (stack));
     gemdos0(0x19);      /* Dgetdrv() */
     gemdos1(0x4c, basepage && entry_type == 0 && (stack & 15) == 8 ? 0 : 1);
 
