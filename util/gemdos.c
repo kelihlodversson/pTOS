@@ -24,12 +24,18 @@
 #include "asm.h"
 #include "gemdos.h"
 #include "bdosbind.h"
+#if ARCH_ARM
+#include "arch/arm/entry.h"
+#endif
 
 
 WORD pgmld(WORD handle, char *pname, LONG **ldaddr)
 {
     LONG    length, ret;
     LONG    *temp;
+#if ARCH_ARM
+    PD      *pd;
+#endif
 
     ret = Pexec(PE_LOAD, pname, "", NULL);
     if (ret < 0L)
@@ -40,8 +46,19 @@ WORD pgmld(WORD handle, char *pname, LONG **ldaddr)
     /* program length = code+data+bss lengths plus basepage length */
     temp = *ldaddr;
     length = temp[3] + temp[5] + temp[7] + 0x100;
+#if ARCH_ARM
+    /* Keep a valid, AAPCS-aligned user stack until the accessory runtime
+     * allocates its own.  gotopgm() enters accessories outside proc_go(). */
+    pd = (PD *)temp;
+    length = (((ULONG)pd + length + ARM_ACCESSORY_STARTUP_STACK_SIZE + 7UL)
+              & ~7UL) - (ULONG)pd;
+#endif
     if (Mshrink(*ldaddr, length) < 0L)
         return -1;
+
+#if ARCH_ARM
+    pd->p_hitpa = (UBYTE *)pd + length;
+#endif
 
     return 0;
 }
