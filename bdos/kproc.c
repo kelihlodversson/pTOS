@@ -145,4 +145,12 @@ BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size)
     memcpy(dst, (const void *)(uintptr_t)address, size);
     return TRUE;
 }
+
+BOOL kproc_copy_to_user(UQUAD address, const void *src, ULONG size)
+{
+    if (!kproc_validate_user_range(address, size))
+        return FALSE;
+    memcpy((void *)(uintptr_t)address, src, size);
+    return TRUE;
+}
 #endif
