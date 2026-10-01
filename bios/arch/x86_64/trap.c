@@ -10,6 +10,7 @@
 #include "config.h"
 #include "portab.h"
 #include "biosext.h"
+#include "biosargs.h"
 #include "gdt.h"
 #include "gemerror.h"
 #include "io.h"
@@ -17,6 +18,8 @@
 #include "trap.h"
 
 extern BOOL kproc_validate_user_dta(UQUAD address);
+extern BOOL kproc_validate_user_range(UQUAD address, ULONG size);
+extern BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size);
 
 /*
  * GSX_ENTRY()/VDIPB (vdi_entry.o) are unconditional: bios/build.mk's own
@@ -312,7 +315,24 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
          * equivalent, both of which use the same convention. */
         if (fn >= bios_ent)
             frame->rax = fn;
-        else if (fn == 5)
+        else if (from_ring3 && fn == 4) {
+            struct x32_bios_lrwabs_args wire;
+            struct bios_lrwabs_args native;
+
+            if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))
+                || wire.numb <= 0 || wire.numb > 0xffffL
+                || !kproc_validate_user_range(wire.adr, (ULONG)wire.numb * 512UL)) {
+                frame->rax = (UQUAD)-1L;
+                break;
+            }
+            native.r_w = wire.r_w;
+            native.adr = (void *)(uintptr_t)wire.adr;
+            native.numb = wire.numb;
+            native.first = wire.first;
+            native.drive = wire.drive;
+            native.lfirst = wire.lfirst;
+            frame->rax = (UQUAD)((LONG (*)(struct bios_lrwabs_args *))bios_vecs[fn])(&native);
+        } else if (fn == 5)
             /* BIOS function 5 is Setexc(). bios.c's setexc() was widened
              * to return a native `long` (not the fixed-32-bit LONG every
              * other BIOS call still uses) specifically so that its
@@ -336,7 +356,62 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     case X86_64_TRAP_XBIOS:
         if (fn >= xbios_ent || xbios_vecs[fn] == xbios_unimpl_addr)
             frame->rax = fn;
-        else
+        else if (from_ring3 && (fn == 8 || fn == 9 || fn == 19)) {
+            struct x32_xbios_flop_io_args wire;
+            struct xbios_flop_io_args native;
+
+            if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))
+                || wire.count <= 0 || wire.count > 0xffffL
+                || !kproc_validate_user_range(wire.buf, (ULONG)wire.count * 512UL)) {
+                frame->rax = (UQUAD)-1L;
+                break;
+            }
+            native.buf = (void *)(uintptr_t)wire.buf;
+            native.filler = wire.filler;
+            native.dev = wire.dev;
+            native.sect = wire.sect;
+            native.track = wire.track;
+            native.side = wire.side;
+            native.count = wire.count;
+            frame->rax = (UQUAD)((LONG (*)(struct xbios_flop_io_args *))xbios_vecs[fn])(&native);
+        } else if (from_ring3 && fn == 10) {
+            struct x32_xbios_flopfmt_args wire;
+            struct xbios_flopfmt_args native;
+
+            if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))
+                || wire.spt <= 0 || wire.spt > 20L
+                || !kproc_validate_user_range(wire.buf, 12500UL)
+                || (wire.interlv < 0
+                    && !kproc_validate_user_range(wire.skew, (ULONG)wire.spt * sizeof(WORD)))) {
+                frame->rax = (UQUAD)-1L;
+                break;
+            }
+            native.buf = (void *)(uintptr_t)wire.buf;
+            native.skew = (void *)(uintptr_t)wire.skew;
+            native.dev = wire.dev;
+            native.spt = wire.spt;
+            native.track = wire.track;
+            native.side = wire.side;
+            native.interlv = wire.interlv;
+            native.magic = wire.magic;
+            native.virgin = wire.virgin;
+            frame->rax = (UQUAD)((LONG (*)(struct xbios_flopfmt_args *))xbios_vecs[fn])(&native);
+        } else if (from_ring3 && fn == 15) {
+            struct x32_xbios_rsconf_args wire;
+            struct xbios_rsconf_args native;
+
+            if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))) {
+                frame->rax = (UQUAD)-1L;
+                break;
+            }
+            native.baud = wire.baud;
+            native.ctrl = wire.ctrl;
+            native.ucr = wire.ucr;
+            native.rsr = wire.rsr;
+            native.tsr = wire.tsr;
+            native.scr = wire.scr;
+            frame->rax = (UQUAD)((LONG (*)(struct xbios_rsconf_args *))xbios_vecs[fn])(&native);
+        } else
             frame->rax = (UQUAD)((LONG (*)(UQUAD, UQUAD, UQUAD, UQUAD))xbios_vecs[fn])
                              (frame->rdi, frame->rsi, frame->rdx, frame->r10);
         break;
