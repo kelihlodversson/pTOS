@@ -1,0 +1,53 @@
+Process entry contract
+======================
+
+This document defines the register and stack state at the first instruction
+of a loaded user process.  It applies to the ARM and x32 ports.  It is not
+the syscall ABI; see doc/x86_64-syscall.txt for x32 calls into the kernel.
+
+The launcher supplies an explicit entry type.  Startup code must not infer
+the type from p_parent, a filename, or any unspecified register value.
+
+    ENTRY_PROGRAM = 0
+    ENTRY_ACCESSORY = 1
+
+ARM
+---
+
+| Launch | Basepage | Type | Stack | Privilege | Termination |
+|--------|----------|------|-------|-----------|-------------|
+| program | r0 | r1 = ENTRY_PROGRAM | p_hitpa, 8-byte aligned | user | Pterm returns through GEMDOS to the parent launch path |
+| accessory | r0 | r1 = ENTRY_ACCESSORY | p_hitpa, 8-byte aligned | user | Pterm returns through the AES accessory lifecycle |
+
+proc_go() supplies the program state.  AES gotopgm() supplies the accessory
+state.  libcmini records r0 as _base, dispatches ENTRY_PROGRAM to _crtinit(),
+and dispatches ENTRY_ACCESSORY to _acc_main().
+
+x32
+---
+
+| Launch | Basepage | Type | Stack | Privilege | Termination |
+|--------|----------|------|-------|-----------|-------------|
+| program | RDI | RSI = ENTRY_PROGRAM | p_hitpa, RSP % 16 = 8 | ring 3 | Pterm resumes the launching kernel/AES context |
+| accessory | RDI | RSI = ENTRY_ACCESSORY | p_hitpa, RSP % 16 = 8 | ring 3 | Pterm resumes the AES accessory lifecycle |
+
+The x32 ring-3 transition writes RDI and RSI explicitly immediately before
+iretq.  The System V process-entry stack rule is RSP + 8 divisible by 16;
+p_hitpa is prepared by proc.c to satisfy it.  The x32 accessory path needs
+the same process mapping, saved kernel context, and lifecycle ownership as
+the ordinary ring-3 path before it can satisfy this contract.
+
+m68k
+----
+
+The established m68k convention is unchanged: the basepage is supplied in
+A0/at 4(sp) as documented by its existing gouser stack frame.  No entry-type
+register is added to the m68k ABI.
+
+Verification
+------------
+
+Each target must provide a small ordinary-program and accessory probe.  The
+probe records the basepage register, the explicit type, and the entry stack
+alignment before making GEMDOS or AES calls.  A successful image build alone
+does not verify this contract.
