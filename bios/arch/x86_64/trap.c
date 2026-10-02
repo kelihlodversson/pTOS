@@ -474,13 +474,18 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
             void *skew;
             ULONG skew_bytes;
             ULONG bytes;
+            WORD interlv;
             LONG result;
 
             if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))
                 || !(bytes = x86_64_flopfmt_buffer_size(wire.spt))
-                || !kproc_validate_user_range(wire.buf, bytes)
-                || (wire.interlv < 0
-                    && !kproc_validate_user_range(wire.skew, (ULONG)wire.spt * sizeof(WORD)))) {
+                || !kproc_validate_user_range(wire.buf, bytes)) {
+                frame->rax = (UQUAD)-1L;
+                break;
+            }
+            interlv = (WORD)wire.interlv;
+            if (interlv < 0
+                && !kproc_validate_user_range(wire.skew, (ULONG)wire.spt * sizeof(WORD))) {
                 frame->rax = (UQUAD)-1L;
                 break;
             }
@@ -491,7 +496,7 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
             }
             skew = NULL;
             skew_bytes = (ULONG)wire.spt * sizeof(WORD);
-            if (wire.interlv < 0) {
+            if (interlv < 0) {
                 skew = x86_64_copy_user_buffer(wire.skew, skew_bytes);
                 if (!skew) {
                     xmfree(buffer);
@@ -505,7 +510,7 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
             native.spt = wire.spt;
             native.track = wire.track;
             native.side = wire.side;
-            native.interlv = wire.interlv;
+            native.interlv = interlv;
             native.magic = wire.magic;
             native.virgin = wire.virgin;
             result = ((LONG (*)(struct xbios_flopfmt_args *))xbios_vecs[fn])(&native);
