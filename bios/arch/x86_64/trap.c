@@ -425,6 +425,7 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
             LONG result;
 
             if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))
+                || wire.count < -32768L
                 || wire.count > 0x7fffL
                 || (fn != 19 && wire.count <= 0)) {
                 frame->rax = (UQUAD)-1L;
