@@ -19,6 +19,9 @@ void kproc_set_dta(PD *pd, DTAINFO *dta);
 DTAINFO *kproc_get_dta(PD *pd);
 #ifdef __x86_64__
 BOOL kproc_validate_user_dta(UQUAD address);
+BOOL kproc_validate_user_range(UQUAD address, ULONG size);
+BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size);
+BOOL kproc_copy_to_user(UQUAD address, const void *src, ULONG size);
 #endif
 
 #endif

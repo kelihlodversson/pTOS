@@ -732,10 +732,21 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 # on by default would otherwise still produce ET_DYN here (-mx32 alone
 # doesn't disable it), which elfld.c's loader does not expect
 # (Copilot's review of #356 caught this).
+#
+# -Wl,-m,elf32_x86_64 names the linker's x32 output emulation
+# explicitly. Without it the driver picks its own default emulation,
+# which for a cross toolchain is "i386:x86-64" -- that combination is
+# rejected with "i386:x64-32 architecture of input file ... is
+# incompatible with i386:x86-64 output" even though x32 support is
+# present and compiled (-mx32 is fine, and "x86_64-elf-ld -V" lists
+# elf32_x86_64 among its supported emulations). Naming it here is
+# harmless where the default already matches, and is what lets the
+# Homebrew "x86_64-elf-" toolchain build this program; see
+# doc/install.txt.
 X32_CFLAGS = -mx32 -ffreestanding -fno-asynchronous-unwind-tables \
              -fno-unwind-tables -fcf-protection=none -fno-pie
 X32_LDFLAGS = -nostdlib -static -no-pie -Wl,--build-id=none \
-              -Wl,-Ttext=0x400000 -Wl,-n -Wl,-q
+              -Wl,-Ttext=0x400000 -Wl,-n -Wl,-q -Wl,-m,elf32_x86_64
 
 x32hello.elf: tests/x32_hello/x32_hello.c
 	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $<

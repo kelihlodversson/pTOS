@@ -8,6 +8,7 @@
  */
 
 #include "emutos.h"
+#include "string.h"
 #include "fs.h"
 #include "kproc.h"
 #include "mem.h"
@@ -123,19 +124,39 @@ DTAINFO *kproc_get_dta(PD *pd)
 #ifdef __x86_64__
 BOOL kproc_validate_user_dta(UQUAD address)
 {
+    return kproc_validate_user_range(address, sizeof(DTAINFO));
+}
+
+BOOL kproc_validate_user_range(UQUAD address, ULONG size)
+{
     KPROC *kproc = kproc_find(run);
     UQUAD start, end;
 
-    /* Fsetdta() is an ILP32 ABI call. Reject native-width pointers and any
-     * DTAINFO that is not wholly within this process's original mapping. */
-    if (!kproc || address > 0xffffffffULL)
+    /* The x32 ABI only carries 32-bit addresses.  Test the subtraction,
+     * rather than address + size, so an attacker cannot wrap the range. */
+    if (!kproc || !size || address > 0xffffffffULL)
         return FALSE;
     start = (UQUAD)(uintptr_t)kproc->user_start;
     end = (UQUAD)(uintptr_t)kproc->user_end;
-    if (!start || end > 0x100000000ULL || end < start
-        || end - start < sizeof(DTAINFO))
+    if (!start || end > 0x100000000ULL || end < start || end - start < size)
         return FALSE;
-    return address >= start && address <= end - sizeof(DTAINFO);
+    return address >= start && address <= end - size;
+}
+
+BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size)
+{
+    if (!kproc_validate_user_range(address, size))
+        return FALSE;
+    memcpy(dst, (const void *)(uintptr_t)address, size);
+    return TRUE;
+}
+
+BOOL kproc_copy_to_user(UQUAD address, const void *src, ULONG size)
+{
+    if (!kproc_validate_user_range(address, size))
+        return FALSE;
+    memcpy((void *)(uintptr_t)address, src, size);
+    return TRUE;
 }
 #endif
 

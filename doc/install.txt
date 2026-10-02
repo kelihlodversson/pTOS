@@ -113,6 +113,34 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
       setting is independent of "Cross compiler prefix override" above:
       the two need not be, and often are not, the same toolchain.
 
+      On macOS, Homebrew's x86_64-elf toolchain provides both the x32
+      codegen and the x32 linker emulation:
+
+          brew install x86_64-elf-gcc
+
+      then build with:
+
+          make X32_CROSS_COMPILE=x86_64-elf- x32test
+
+      Note that the host "gcc" on macOS cannot build this at all: "-mx32"
+      is an x86-64-ELF feature, so the compile fails on the 64-bit
+      register names ("unknown register name 'rax'"). The prefix is
+      therefore required rather than merely optional on that host. The
+      build system already passes "-Wl,-m,elf32_x86_64" to name the
+      linker's x32 output emulation explicitly, so no further flags are
+      needed; without it a cross toolchain's driver can default to
+      "i386:x86-64" and reject the x32 input with "i386:x64-32
+      architecture of input file ... is incompatible with i386:x86-64
+      output", even though the linker does support x32. You can check
+      for that emulation with:
+
+          x86_64-elf-ld -V | grep elf32_x86_64
+
+      A successful link leaves one warning, "has a LOAD segment with RWX
+      permissions". That is expected: the image is a single flat
+      read/write/execute segment, which is what keeps the program down
+      to the one PT_LOAD segment bdos/elfld.c maps.
+
 If your toolchain is installed under a name other than the one that goes
 with the choice above, fill in "Cross compiler prefix override" in the same
 menu.  It renames the executables only; the flags keep following the

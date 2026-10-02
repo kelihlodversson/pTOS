@@ -10,13 +10,45 @@
 #include "config.h"
 #include "portab.h"
 #include "biosext.h"
+#include "biosargs.h"
+#include "blkdev.h"
 #include "gdt.h"
 #include "gemerror.h"
 #include "io.h"
 #include "pgtable.h"
 #include "trap.h"
 
+#include "../../../bdos/mem.h"
+#include "../../../include/biosdefs.h"
+#include "../../../bios/disk.h"
+
 extern BOOL kproc_validate_user_dta(UQUAD address);
+extern BOOL kproc_validate_user_range(UQUAD address, ULONG size);
+extern BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size);
+extern BOOL kproc_copy_to_user(UQUAD address, const void *src, ULONG size);
+
+static void *x86_64_copy_user_buffer(UQUAD address, ULONG size)
+{
+    void *buffer;
+
+    buffer = xmxalloc((long)size, MX_STRAM);
+    if (!buffer)
+        return NULL;
+    if (!kproc_copy_from_user(buffer, address, size)) {
+        xmfree(buffer);
+        return NULL;
+    }
+    return buffer;
+}
+
+static ULONG x86_64_flopfmt_buffer_size(LONG spt)
+{
+    if (spt >= 1L && spt <= 10L)
+        return 6250UL;  /* DD: TRACK_SIZE_DD in bios/floppy.c */
+    if (spt >= 13L && spt <= 20L)
+        return 12500UL; /* HD: TRACK_SIZE_HD in bios/floppy.c */
+    return 0;
+}
 
 /*
  * GSX_ENTRY()/VDIPB (vdi_entry.o) are unconditional: bios/build.mk's own
@@ -312,7 +344,56 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
          * equivalent, both of which use the same convention. */
         if (fn >= bios_ent)
             frame->rax = fn;
-        else if (fn == 5)
+        else if (from_ring3 && fn == 4) {
+            struct x32_bios_lrwabs_args wire;
+            struct bios_lrwabs_args native;
+            ULONG bytes;
+            void *buffer;
+            LONG result;
+
+            if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))) {
+                frame->rax = (UQUAD)-1L;
+                break;
+            }
+            if (!wire.adr && wire.drive >= 0 && wire.drive < NUMFLOPPIES) {
+                /* TOS uses a null buffer to update floppy media-change state. */
+                native.r_w = wire.r_w;
+                native.adr = NULL;
+                native.numb = wire.numb;
+                native.first = wire.first;
+                native.drive = wire.drive;
+                native.lfirst = wire.lfirst;
+                frame->rax = (UQUAD)((LONG (*)(struct bios_lrwabs_args *))bios_vecs[fn])(&native);
+                break;
+            }
+            if (wire.numb <= 0 || wire.numb > 0x7fffL
+                || !blkdev_rwabs_buffer_size(wire.r_w, (WORD)wire.numb,
+                                              (WORD)wire.drive, &bytes)) {
+                frame->rax = (UQUAD)-1L;
+                break;
+            }
+            if (!kproc_validate_user_range(wire.adr, bytes)) {
+                frame->rax = (UQUAD)-1L;
+                break;
+            }
+            buffer = x86_64_copy_user_buffer(wire.adr, bytes);
+            if (!buffer) {
+                frame->rax = (UQUAD)ENSMEM;
+                break;
+            }
+            native.r_w = wire.r_w;
+            native.adr = buffer;
+            native.numb = wire.numb;
+            native.first = wire.first;
+            native.drive = wire.drive;
+            native.lfirst = wire.lfirst;
+            result = ((LONG (*)(struct bios_lrwabs_args *))bios_vecs[fn])(&native);
+            if ((wire.r_w & RW_RW) == RW_READ
+                && !kproc_copy_to_user(wire.adr, buffer, bytes))
+                result = ERR;
+            xmfree(buffer);
+            frame->rax = (UQUAD)result;
+        } else if (fn == 5)
             /* BIOS function 5 is Setexc(). bios.c's setexc() was widened
              * to return a native `long` (not the fixed-32-bit LONG every
              * other BIOS call still uses) specifically so that its
@@ -336,7 +417,126 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     case X86_64_TRAP_XBIOS:
         if (fn >= xbios_ent || xbios_vecs[fn] == xbios_unimpl_addr)
             frame->rax = fn;
-        else
+        else if (from_ring3 && (fn == 8 || fn == 9 || fn == 19)) {
+            struct x32_xbios_flop_io_args wire;
+            struct xbios_flop_io_args native;
+            ULONG bytes;
+            void *buffer;
+            LONG result;
+
+            if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))
+                || wire.count < -32768L
+                || wire.count > 0x7fffL
+                || (fn != 19 && wire.count <= 0)) {
+                frame->rax = (UQUAD)-1L;
+                break;
+            }
+            if (fn == 19) {
+                /* flopver() reserves the second sector for DMA and writes
+                 * one WORD per bad sector plus a terminator in the first.
+                 * Its fixed layout cannot safely represent more than the
+                 * first sector's worth of bad-sector entries. */
+                if (wire.count > SECTOR_SIZE / sizeof(WORD) - 1)
+                    bytes = 0;
+                else
+                    bytes = 2UL * SECTOR_SIZE;
+            } else {
+                bytes = (ULONG)wire.count * SECTOR_SIZE;
+            }
+            if (!bytes) {
+                frame->rax = (UQUAD)-1L;
+                break;
+            }
+            if (!kproc_validate_user_range(wire.buf, bytes)) {
+                frame->rax = (UQUAD)-1L;
+                break;
+            }
+            buffer = x86_64_copy_user_buffer(wire.buf, bytes);
+            if (!buffer) {
+                frame->rax = (UQUAD)ENSMEM;
+                break;
+            }
+            native.buf = buffer;
+            native.filler = wire.filler;
+            native.dev = wire.dev;
+            native.sect = wire.sect;
+            native.track = wire.track;
+            native.side = wire.side;
+            native.count = wire.count;
+            result = ((LONG (*)(struct xbios_flop_io_args *))xbios_vecs[fn])(&native);
+            if (fn != 9 && !kproc_copy_to_user(wire.buf, buffer, bytes))
+                result = ERR;
+            xmfree(buffer);
+            frame->rax = (UQUAD)result;
+        } else if (from_ring3 && fn == 10) {
+            struct x32_xbios_flopfmt_args wire;
+            struct xbios_flopfmt_args native;
+            void *buffer;
+            void *skew;
+            ULONG skew_bytes;
+            ULONG bytes;
+            WORD interlv;
+            LONG result;
+
+            if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))
+                || !(bytes = x86_64_flopfmt_buffer_size(wire.spt))
+                || !kproc_validate_user_range(wire.buf, bytes)) {
+                frame->rax = (UQUAD)-1L;
+                break;
+            }
+            interlv = (WORD)wire.interlv;
+            if (interlv < 0
+                && !kproc_validate_user_range(wire.skew, (ULONG)wire.spt * sizeof(WORD))) {
+                frame->rax = (UQUAD)-1L;
+                break;
+            }
+            buffer = x86_64_copy_user_buffer(wire.buf, bytes);
+            if (!buffer) {
+                frame->rax = (UQUAD)ENSMEM;
+                break;
+            }
+            skew = NULL;
+            skew_bytes = (ULONG)wire.spt * sizeof(WORD);
+            if (interlv < 0) {
+                skew = x86_64_copy_user_buffer(wire.skew, skew_bytes);
+                if (!skew) {
+                    xmfree(buffer);
+                    frame->rax = (UQUAD)ENSMEM;
+                    break;
+                }
+            }
+            native.buf = buffer;
+            native.skew = skew;
+            native.dev = wire.dev;
+            native.spt = wire.spt;
+            native.track = wire.track;
+            native.side = wire.side;
+            native.interlv = interlv;
+            native.magic = wire.magic;
+            native.virgin = wire.virgin;
+            result = ((LONG (*)(struct xbios_flopfmt_args *))xbios_vecs[fn])(&native);
+            if (!kproc_copy_to_user(wire.buf, buffer, bytes))
+                result = ERR;
+            if (skew)
+                xmfree(skew);
+            xmfree(buffer);
+            frame->rax = (UQUAD)result;
+        } else if (from_ring3 && fn == 15) {
+            struct x32_xbios_rsconf_args wire;
+            struct xbios_rsconf_args native;
+
+            if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))) {
+                frame->rax = (UQUAD)-1L;
+                break;
+            }
+            native.baud = wire.baud;
+            native.ctrl = wire.ctrl;
+            native.ucr = wire.ucr;
+            native.rsr = wire.rsr;
+            native.tsr = wire.tsr;
+            native.scr = wire.scr;
+            frame->rax = (UQUAD)((LONG (*)(struct xbios_rsconf_args *))xbios_vecs[fn])(&native);
+        } else
             frame->rax = (UQUAD)((LONG (*)(UQUAD, UQUAD, UQUAD, UQUAD))xbios_vecs[fn])
                              (frame->rdi, frame->rsi, frame->rdx, frame->r10);
         break;
