@@ -80,7 +80,8 @@
 extern UQUAD x86_64_pmem_alloc_pages(UQUAD count);
 extern void x86_64_new_address_space(UQUAD pml4_phys);
 extern void x86_64_map_low_tpa_into(UQUAD pml4_phys, UQUAD virt_start, UQUAD virt_end, int user);
-extern void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp) NORETURN;
+extern void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp,
+                              UQUAD basepage, UQUAD entry_type) NORETURN;
 extern BOOL x86_64_take_kernel_code_pd(PD *p);
 
 void enter(void);
@@ -288,7 +289,8 @@ void gouser(void)
         x86_64_new_address_space(pml4_phys);
         x86_64_map_low_tpa_into(pml4_phys, (UQUAD)p->p_env, (UQUAD)p->p_hitpa, 1);
         x86_64_map_low_tpa_into(pml4_phys, (UQUAD)p->p_parent, (UQUAD)p->p_parent + sizeof(PD), 0);
-        x86_64_enter_user(pml4_phys, entry_rip, user_rsp);
+        x86_64_enter_user(pml4_phys, entry_rip, user_rsp,
+                          (UQUAD)(uintptr_t)p, 0);
     }
 }
 
