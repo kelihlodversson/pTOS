@@ -81,6 +81,32 @@ config CONF_WITH_PTOS_ABI_IMPORTS
 	  resolution code with nothing for it to actually resolve against, so
 	  leave it off unless you are developing that future namespace.
 
+config CONF_WITH_KPROC
+	bool
+	default y if ARCH_X86_64
+	default n
+	help
+	  Keep a kernel-owned per-process record (struct kproc, bdos/kproc.c)
+	  beside the public GEMDOS basepage, so native pointers and trust
+	  state never have to live in the user-writable, 32-bit p_xdta field.
+
+	  This option is not user-selectable: its default follows the
+	  architecture, so a build that cannot even link cannot be chosen.
+	  On x86-64 it is on and load-bearing -- the record stores the
+	  authoritative ring-3 DTA pointer, a native pointer the ABI-width
+	  p_xdta cannot represent, and the user-range snapshot behind
+	  kproc_validate_user_dta(), which the ring-3 Fsetdta() check needs.
+	  The separate-address-spaces option (#402) will select and require
+	  it for any target it applies to.
+
+	  Everywhere else there is no memory protection to defeat and p_xdta
+	  is already a full native pointer, so the record would only cost ROM
+	  image bytes -- scarce on the 192/256 KB Atari targets -- for no
+	  benefit.  It is therefore off by default there; the record structure
+	  is left out of the link and bdos/kproc.c keeps only four small
+	  stubs that honour p_xdta directly, byte-compatible with the
+	  historic behaviour.
+
 config CONF_WITH_PRG_LOADER
 	bool "Load classic Atari GEMDOS PRG executables"
 	depends on ARCH_M68K
