@@ -737,8 +737,8 @@ X32_CFLAGS = -mx32 -ffreestanding -fno-asynchronous-unwind-tables \
 X32_LDFLAGS = -nostdlib -static -no-pie -Wl,--build-id=none \
               -Wl,-Ttext=0x400000 -Wl,-n -Wl,-q
 
-x32hello.elf: tests/x32_hello/x32_hello.c
-	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $<
+x32hello.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $^
 
 .PHONY: x32test
 x32test: x32hello.elf

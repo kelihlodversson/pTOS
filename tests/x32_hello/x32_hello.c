@@ -12,7 +12,8 @@
  * the -m64 PE32+ EFI application the kernel itself is.
  *
  * No CRT, no libc, no main(): this is freestanding, ring-3 code with
- * exactly one job, so _start is the ELF entry point directly (see
+ * exactly one job. The assembly _start stub captures the entry state before
+ * calling the C probe (see
  * X32_LDFLAGS' "-Wl,-n"/"-Wl,-Ttext=0x400000", which also needs no
  * dynamic linker or startup file to satisfy). The syscall convention
  * (RAX = (trap_class << 32) | function_number, next four arguments in
@@ -72,21 +73,8 @@ static void gemdos1(u64 func, u64 arg)
                        : "rcx", "r11", "memory");
 }
 
-void _start(void)
+void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 {
-    u64 basepage;
-    u64 entry_type;
-    u64 stack;
-
-    /* Capture the entry contract before either GEMDOS wrapper overwrites
-     * its argument registers. */
-    __asm__ volatile ("mov %%rdi, %0\n\t"
-                      "mov %%rsi, %1\n\t"
-                      "mov %%rsp, %2"
-                      : "=r" (basepage), "=r" (entry_type), "=r" (stack));
     gemdos0(0x19);      /* Dgetdrv() */
     gemdos1(0x4c, basepage && entry_type == 0 && (stack & 15) == 8 ? 0 : 1);
-
-    for (;;)
-        ;
 }
