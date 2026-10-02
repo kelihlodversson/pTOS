@@ -1,0 +1,55 @@
+Process entry contract
+======================
+
+This document defines the register and stack state at the first instruction
+of a loaded user process.  It applies to the ARM and x32 ports.  It is not
+the syscall ABI; the x32 syscall ABI is a separate contract.
+
+The launcher supplies an explicit entry type.  Startup code must not infer
+the type from p_parent, a filename, or any unspecified register value.
+
+    ENTRY_PROGRAM = 0
+    ENTRY_ACCESSORY = 1
+
+Entry contract
+--------------
+
+The launcher owns the producer columns below.  libcmini startup owns the
+consumer columns: it records the basepage, selects the startup routine from
+the explicit type, and establishes the C-call stack convention.  The x32
+termination cells describe the required implementation contract; they do
+not claim that the current unfinished ring-3 path already implements it.
+
+| Target | Launch | Producer | Consumer | Basepage | Type | User stack at process entry | Privilege | Termination |
+|--------|--------|----------|----------|----------|------|-----------------------------|-----------|-------------|
+| ARM | program | proc_go() | libcmini _crtinit() | r0 | r1 = ENTRY_PROGRAM | SP at p_hitpa, 8-byte aligned | user | Pterm returns through GEMDOS to the parent launch path |
+| ARM | accessory | AES gotopgm() | libcmini _acc_main() | r0 | r1 = ENTRY_ACCESSORY | SP at p_hitpa, 8-byte aligned | user | Pterm returns through the AES accessory lifecycle |
+| x32 | program | x32 process launcher | libcmini _crtinit() | RDI | RSI = ENTRY_PROGRAM | RSP 16-byte aligned; libcmini presents RSP + 8 divisible by 16 at C entry | ring 3 | Pterm resumes the saved launching kernel context |
+| x32 | accessory | x32 AES accessory launcher | libcmini _acc_main() | RDI | RSI = ENTRY_ACCESSORY | RSP 16-byte aligned; libcmini presents RSP + 8 divisible by 16 at C entry | ring 3 | Pterm resumes the saved AES accessory context |
+
+The x32 ring-3 transition must write RDI and RSI explicitly immediately
+before iretq.  The x32 launcher must provide a 16-byte-aligned stack at process entry;
+the C function-entry rule is RSP + 8 divisible by 16 because libcmini
+tail-jumps into C rather than calling it.  The x32 accessory path must provide
+the same process mapping and saved-context ownership as the ordinary path.
+
+The ARM launchers likewise initialize r0, r1, and the aligned stack before
+entering user code.  libcmini must not infer the launch type from p_parent,
+the filename, or an unspecified register value.
+
+m68k
+----
+
+The established m68k conventions are unchanged and remain distinct.  An
+ordinary program receives its basepage at 4(sp), with A0 cleared.  gotopgm()
+supplies a desk accessory's basepage in A0.  No entry-type register is added
+to the m68k ABI; startup code must use the launch convention selected by the
+existing launcher.
+
+Verification
+------------
+
+Each target must provide a small ordinary-program and accessory probe.  The
+probe records the basepage register, the explicit type, and the entry stack
+alignment before making GEMDOS or AES calls.  A successful image build alone
+does not verify this contract.
