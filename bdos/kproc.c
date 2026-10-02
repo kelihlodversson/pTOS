@@ -14,6 +14,11 @@
 #include "bdosstub.h"
 #include "biosext.h"
 
+/* The option gates only the record itself: the #else stubs stay in every
+ * link so the public p_xdta field keeps working verbatim. */
+
+#if CONF_WITH_KPROC
+
 typedef struct kproc KPROC;
 /* PD is the public GEMDOS basepage and is writable by its process. Keep
  * native pointers and the user-range snapshot in this kernel-only record. */
@@ -133,3 +138,32 @@ BOOL kproc_validate_user_dta(UQUAD address)
     return address >= start && address <= end - sizeof(DTAINFO);
 }
 #endif
+
+#else /* CONF_WITH_KPROC */
+
+/* No kernel-private record: honour the writable public p_xdta field directly,
+ * exactly as TOS always has on targets with no memory protection to defeat.
+ * The record exists solely to carry native pointers and trust state that a
+ * user-writable 32-bit basepage field cannot represent. */
+BOOL kproc_create(PD *pd)
+{
+    (void)pd;
+    return TRUE;
+}
+
+void kproc_destroy(PD *pd)
+{
+    (void)pd;
+}
+
+void kproc_set_dta(PD *pd, DTAINFO *dta)
+{
+    pd->p_xdta = PTR_TO_USERPTR_UNCHECKED(dta);
+}
+
+DTAINFO *kproc_get_dta(PD *pd)
+{
+    return (DTAINFO *)USERPTR_TO_PTR(pd->p_xdta);
+}
+
+#endif /* CONF_WITH_KPROC */
