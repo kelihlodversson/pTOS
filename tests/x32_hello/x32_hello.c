@@ -41,6 +41,7 @@
 
 typedef unsigned long long u64;
 typedef long long s64;
+typedef unsigned int u32;
 
 #define X86_64_TRAP_GEMDOS 1
 
@@ -76,5 +77,7 @@ static void gemdos1(u64 func, u64 arg)
 void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 {
     gemdos0(0x19);      /* Dgetdrv() */
-    gemdos1(0x4c, basepage && entry_type == 0 && (stack & 15) == 8 ? 0 : 1);
+    gemdos1(0x4c, basepage && basepage <= 0xffffffffULL &&
+            *(const u32 *)(unsigned long)basepage == (u32)basepage &&
+            entry_type == 0 && (stack & 15) == 8 ? 0 : 1);
 }
