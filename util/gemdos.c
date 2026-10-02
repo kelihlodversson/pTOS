@@ -33,9 +33,7 @@ WORD pgmld(WORD handle, char *pname, LONG **ldaddr)
 {
     LONG    length, ret;
     LONG    *temp;
-#if ARCH_ARM
     PD      *pd;
-#endif
 
     ret = Pexec(PE_LOAD, pname, "", NULL);
     if (ret < 0L)
@@ -53,8 +51,13 @@ WORD pgmld(WORD handle, char *pname, LONG **ldaddr)
     length = (((ULONG)pd + length + ARM_ACCESSORY_STARTUP_STACK_SIZE + 7UL)
               & ~7UL) - (ULONG)pd;
 #endif
-    if (Mshrink(*ldaddr, length) < 0L)
+    pd = (PD *)*ldaddr;
+    if (Mshrink(*ldaddr, length) < 0L) {
+        Mfree(pd->p_env);
+        Mfree(pd);
+        *ldaddr = (LONG *)-1L;
         return -1;
+    }
 
 #if ARCH_ARM
     pd->p_hitpa = (UBYTE *)pd + length;
