@@ -14,6 +14,9 @@
 #include "bdosstub.h"
 #include "biosext.h"
 
+/* The option gates only the record itself: the #else stubs stay in every
+ * link so the public p_xdta field keeps working verbatim. */
+
 #if CONF_WITH_KPROC
 
 typedef struct kproc KPROC;
