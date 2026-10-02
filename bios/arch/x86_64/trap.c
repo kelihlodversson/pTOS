@@ -416,13 +416,27 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
             LONG result;
 
             if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))
-                || wire.count <= 0 || wire.count > 0x7fffL) {
+                || wire.count > 0x7fffL
+                || (fn != 19 && wire.count <= 0)) {
                 frame->rax = (UQUAD)-1L;
                 break;
             }
-            bytes = (ULONG)wire.count * SECTOR_SIZE;
-            if (fn == 19 && bytes < 2UL * SECTOR_SIZE)
-                bytes = 2UL * SECTOR_SIZE;
+            if (fn == 19) {
+                /* flopver() reserves the second sector for DMA and writes
+                 * one WORD per bad sector plus a terminator in the first.
+                 * Its fixed layout cannot safely represent more than the
+                 * first sector's worth of bad-sector entries. */
+                if (wire.count > SECTOR_SIZE / sizeof(WORD) - 1)
+                    bytes = 0;
+                else
+                    bytes = 2UL * SECTOR_SIZE;
+            } else {
+                bytes = (ULONG)wire.count * SECTOR_SIZE;
+            }
+            if (!bytes) {
+                frame->rax = (UQUAD)-1L;
+                break;
+            }
             if (!kproc_validate_user_range(wire.buf, bytes)) {
                 frame->rax = (UQUAD)-1L;
                 break;
