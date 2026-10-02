@@ -41,6 +41,15 @@ static void *x86_64_copy_user_buffer(UQUAD address, ULONG size)
     return buffer;
 }
 
+static ULONG x86_64_flopfmt_buffer_size(LONG spt)
+{
+    if (spt >= 1L && spt <= 10L)
+        return 6250UL;  /* DD: TRACK_SIZE_DD in bios/floppy.c */
+    if (spt >= 13L && spt <= 20L)
+        return 12500UL; /* HD: TRACK_SIZE_HD in bios/floppy.c */
+    return 0;
+}
+
 /*
  * GSX_ENTRY()/VDIPB (vdi_entry.o) are unconditional: bios/build.mk's own
  * VDI obj-y list has no CONF_WITH_* guard, matching every other arch (an
@@ -464,17 +473,18 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
             void *buffer;
             void *skew;
             ULONG skew_bytes;
+            ULONG bytes;
             LONG result;
 
             if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))
-                || wire.spt <= 0 || wire.spt > 20L
-                || !kproc_validate_user_range(wire.buf, 12500UL)
+                || !(bytes = x86_64_flopfmt_buffer_size(wire.spt))
+                || !kproc_validate_user_range(wire.buf, bytes)
                 || (wire.interlv < 0
                     && !kproc_validate_user_range(wire.skew, (ULONG)wire.spt * sizeof(WORD)))) {
                 frame->rax = (UQUAD)-1L;
                 break;
             }
-            buffer = x86_64_copy_user_buffer(wire.buf, 12500UL);
+            buffer = x86_64_copy_user_buffer(wire.buf, bytes);
             if (!buffer) {
                 frame->rax = (UQUAD)ENSMEM;
                 break;
@@ -499,7 +509,7 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
             native.magic = wire.magic;
             native.virgin = wire.virgin;
             result = ((LONG (*)(struct xbios_flopfmt_args *))xbios_vecs[fn])(&native);
-            if (!kproc_copy_to_user(wire.buf, buffer, 12500UL))
+            if (!kproc_copy_to_user(wire.buf, buffer, bytes))
                 result = ERR;
             if (skew)
                 xmfree(skew);
