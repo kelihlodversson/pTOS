@@ -16,6 +16,7 @@
 #include "pmem.h"
 #include "earlycon.h"
 #include "io.h"
+#include "pgtable.h"
 
 /*
  * EFI_MEMORY_DESCRIPTOR's minimum possible stride (UEFI spec 7.2): the
@@ -257,22 +258,39 @@ void x86_64_pmem_init(const void *efi_map, UQUAD map_size, UQUAD descriptor_size
  */
 static LONG fail_countdown;
 
-/* Pages x86_64_pmem_free_pages() had to drop because the region list was
- * full (diagnostics: a non-zero value means pages were leaked). */
-static UQUAD lost_pages;
-/* Rejected x86_64_pmem_free_pages() calls (double free, out of range). */
+/* Rejected x86_64_pmem_free_pages() calls (double free, unmanaged memory). */
 static UQUAD bad_frees;
 
-UQUAD x86_64_pmem_try_alloc_pages(UQUAD count, UQUAD limit)
+/*
+ * Runtime page tracking (x86_64_pmem_track()).  Two bitmaps over every
+ * page below highest_addr replace the boot-time region list once the
+ * physical direct map exists:
+ *
+ *   managed  the page was free RAM when tracking began (or holds these
+ *            bitmaps): memory this allocator owns.  Everything else -- the
+ *            kernel image, ACPI and firmware ranges, holes, the
+ *            framebuffer -- is never managed, so it can neither be handed
+ *            out nor "freed" into the pool by a stray call.
+ *   alloc    the managed page is currently allocated.
+ *
+ * Unlike the region list, whose slots were sized for the firmware's
+ * memory map, this can represent any pattern of frees however fragmented,
+ * so a valid free can never fail for lack of metadata.  Its size is fixed
+ * by the amount of RAM: two bits per 4 KiB page.
+ */
+static UQUAD *bm_managed;
+static UQUAD *bm_alloc;
+static UQUAD npages;
+
+#define BM_TEST(bm, i)  (((bm)[(i) / 64] >> ((i) % 64)) & 1)
+#define BM_SET(bm, i)   ((bm)[(i) / 64] |= 1ULL << ((i) % 64))
+#define BM_CLEAR(bm, i) ((bm)[(i) / 64] &= ~(1ULL << ((i) % 64)))
+
+/* Boot-time allocation from the region list (before tracking). */
+static UQUAD region_alloc(UQUAD count, UQUAD limit)
 {
     UQUAD want = count * X86_64_PAGE_SIZE;
     int i;
-
-    if (!count || want / X86_64_PAGE_SIZE != count)
-        return X86_64_PMEM_NONE;
-
-    if (fail_countdown > 0 && --fail_countdown == 0)
-        return X86_64_PMEM_NONE;
 
     for (i = 0; i < region_count; i++) {
         if (regions[i].length >= want &&
@@ -285,70 +303,115 @@ UQUAD x86_64_pmem_try_alloc_pages(UQUAD count, UQUAD limit)
             return addr;
         }
     }
-
     return X86_64_PMEM_NONE;
+}
+
+void x86_64_pmem_track(void)
+{
+    UQUAD words = ((highest_addr / X86_64_PAGE_SIZE) + 63) / 64;
+    UQUAD bm_pages = (2 * words * sizeof(UQUAD) + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
+    UQUAD phys = region_alloc(bm_pages, 0);
+    UQUAD i, p;
+
+    if (phys == X86_64_PMEM_NONE)
+        panic("pmem: no memory for page tracking");
+
+    npages = highest_addr / X86_64_PAGE_SIZE;
+    bm_managed = (UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + phys);
+    bm_alloc = bm_managed + words;
+    for (i = 0; i < 2 * words; i++)
+        bm_managed[i] = 0;
+
+    /* the bitmaps' own pages: managed, and allocated for good */
+    for (p = phys / X86_64_PAGE_SIZE; p < phys / X86_64_PAGE_SIZE + bm_pages; p++) {
+        BM_SET(bm_managed, p);
+        BM_SET(bm_alloc, p);
+    }
+    /* everything still on the region list: managed and free */
+    for (i = 0; i < (UQUAD)region_count; i++)
+        for (p = regions[i].base / X86_64_PAGE_SIZE;
+             p < (regions[i].base + regions[i].length) / X86_64_PAGE_SIZE; p++)
+            BM_SET(bm_managed, p);
+    region_count = 0;
+}
+
+static BOOL page_free(UQUAD i)
+{
+    return BM_TEST(bm_managed, i) && !BM_TEST(bm_alloc, i);
+}
+
+/* First-fit (by address) run of `count` free pages ending at or below
+ * page index `end`. */
+static BOOL find_run(UQUAD count, UQUAD end, UQUAD *first)
+{
+    UQUAD i = 0, run = 0, start = 0;
+
+    if (end > npages)
+        end = npages;
+    while (i < end) {
+        if (!(i & 63) && !(bm_managed[i / 64] & ~bm_alloc[i / 64])) {
+            run = 0;                    /* nothing free in this whole word */
+            i += 64;
+            continue;
+        }
+        if (page_free(i)) {
+            if (!run)
+                start = i;
+            if (++run == count) {
+                *first = start;
+                return TRUE;
+            }
+        } else {
+            run = 0;
+        }
+        i++;
+    }
+    return FALSE;
+}
+
+UQUAD x86_64_pmem_try_alloc_pages(UQUAD count, UQUAD limit)
+{
+    UQUAD want = count * X86_64_PAGE_SIZE;
+    UQUAD first, i;
+
+    if (!count || want / X86_64_PAGE_SIZE != count)
+        return X86_64_PMEM_NONE;
+
+    if (fail_countdown > 0 && --fail_countdown == 0)
+        return X86_64_PMEM_NONE;
+
+    if (!bm_managed)
+        return region_alloc(count, limit);
+
+    if (!find_run(count, limit ? limit / X86_64_PAGE_SIZE : npages, &first))
+        return X86_64_PMEM_NONE;
+    for (i = first; i < first + count; i++)
+        BM_SET(bm_alloc, i);
+    total_free -= want;
+    return first * X86_64_PAGE_SIZE;
 }
 
 BOOL x86_64_pmem_free_pages(UQUAD base, UQUAD count)
 {
-    UQUAD want = count * X86_64_PAGE_SIZE;
-    UQUAD end = base + want;
-    int i, lo = -1, hi = -1, slot = -1;
+    UQUAD first, i;
 
-    if (!count || (base & (X86_64_PAGE_SIZE - 1)) ||
-        want / X86_64_PAGE_SIZE != count || end <= base ||
-        end > highest_addr) {
+    /* Every page must be managed memory that is currently allocated: that
+     * refuses a double free, a free of the kernel image or any reserved
+     * range, and a range straddling either, before anything changes. */
+    if (!bm_managed || !count || (base & (X86_64_PAGE_SIZE - 1)) ||
+        count > npages || base / X86_64_PAGE_SIZE > npages - count) {
         bad_frees++;
         return FALSE;
     }
-
-    /* A range overlapping anything already free is a double free (or a
-     * free of memory this allocator never owned): refuse it whole, so the
-     * free list can never describe the same page twice. */
-    for (i = 0; i < region_count; i++) {
-        if (!regions[i].length) {
-            if (slot < 0)
-                slot = i;
-            continue;
-        }
-        if (base < regions[i].base + regions[i].length && end > regions[i].base) {
+    first = base / X86_64_PAGE_SIZE;
+    for (i = first; i < first + count; i++)
+        if (!BM_TEST(bm_managed, i) || !BM_TEST(bm_alloc, i)) {
             bad_frees++;
             return FALSE;
         }
-        if (regions[i].base + regions[i].length == base)
-            lo = i;
-        else if (regions[i].base == end)
-            hi = i;
-    }
-
-    total_free += want;
-
-    if (lo >= 0) {
-        /* extend the region ending at base, then absorb its upper
-         * neighbour too if the freed range exactly bridges the two */
-        regions[lo].length += want;
-        if (hi >= 0) {
-            regions[lo].length += regions[hi].length;
-            regions[hi].length = 0;
-        }
-        return TRUE;
-    }
-    if (hi >= 0) {
-        regions[hi].base = base;
-        regions[hi].length += want;
-        return TRUE;
-    }
-    if (slot < 0) {
-        if (region_count >= MAX_REGIONS) {
-            /* cannot track it: leak the pages rather than corrupt the list */
-            total_free -= want;
-            lost_pages += count;
-            return TRUE;
-        }
-        slot = region_count++;
-    }
-    regions[slot].base = base;
-    regions[slot].length = want;
+    for (i = first; i < first + count; i++)
+        BM_CLEAR(bm_alloc, i);
+    total_free += count * X86_64_PAGE_SIZE;
     return TRUE;
 }
 
@@ -373,11 +436,6 @@ UQUAD x86_64_pmem_alloc_pages_below(UQUAD count, UQUAD limit)
 void x86_64_pmem_test_fail_after(LONG n)
 {
     fail_countdown = n;
-}
-
-UQUAD x86_64_pmem_lost_pages(void)
-{
-    return lost_pages;
 }
 
 UQUAD x86_64_pmem_bad_frees(void)

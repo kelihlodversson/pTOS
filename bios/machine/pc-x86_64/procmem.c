@@ -41,6 +41,7 @@ struct alloc {
     UQUAD va;
     ULONG pages;
     const void *owner;          /* identity of the owning process, or NULL */
+    ULONG pins;                 /* live address-space mappings of this block */
 };
 
 static UQUAD window_phys;       /* physical base of the 2 MiB backing block */
@@ -145,6 +146,7 @@ void *x86_64_procmem_alloc(ULONG bytes, UWORD flags)
     a->va = va;
     a->pages = pages;
     a->owner = NULL;
+    a->pins = 0;
     a->next = allocs;
     allocs = a;
 
@@ -190,8 +192,30 @@ BOOL x86_64_procmem_free(void *p)
         bad_frees++;
         return FALSE;
     }
+    if ((*link)->pins)          /* still mapped into a live address space */
+        return FALSE;
     release(link);
     return TRUE;
+}
+
+BOOL x86_64_procmem_pinned(const void *p)
+{
+    struct alloc **link = find_link(p);
+
+    return link && (*link)->pins;
+}
+
+void x86_64_procmem_pin(UQUAD va, UQUAD bytes, int delta)
+{
+    struct alloc *a;
+
+    for (a = allocs; a; a = a->next)
+        if (a->va < va + bytes && va < a->va + (UQUAD)a->pages * X86_64_PAGE_SIZE) {
+            if (delta > 0)
+                a->pins++;
+            else if (a->pins)
+                a->pins--;
+        }
 }
 
 ULONG x86_64_procmem_size(const void *p)
@@ -227,18 +251,29 @@ void x86_64_procmem_set_owner(const void *p, const void *owner)
 
 void x86_64_procmem_free_owned(const void *owner, void (*pre_free)(void *base))
 {
-    struct alloc **link = &allocs;
+    struct alloc **link;
+    struct alloc *a;
 
     if (!owner)                 /* NULL means "permanent", never "any" */
         return;
+
+    /* First let the caller drop whatever is keyed by each block (a basepage's
+     * KPROC record, and with it that process's address space and the pins
+     * it holds), so the second pass sees which blocks are really free to go. */
+    if (pre_free)
+        for (a = allocs; a; a = a->next)
+            if (a->owner == owner)
+                pre_free((void *)(uintptr_t)a->va);
+
+    /* A block still mapped into some other live address space stays
+     * allocated (and owned): reusing it would hand that process's view of
+     * it to a new owner. */
+    link = &allocs;
     while (*link) {
-        if ((*link)->owner == owner) {
-            if (pre_free)
-                pre_free((void *)(uintptr_t)(*link)->va);
+        if ((*link)->owner == owner && !(*link)->pins)
             release(link);      /* unlinks: *link is now the next one */
-        } else {
+        else
             link = &(*link)->next;
-        }
     }
 }
 

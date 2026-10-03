@@ -34,6 +34,10 @@ struct x86_64_aspace {
     UQUAD *pages;               /* kheap vector: PML4 first, then tables */
     ULONG count;
     ULONG capacity;
+    struct pin {                /* procmem ranges mapped (and so pinned) */
+        UQUAD va, bytes;
+    } *pins;
+    ULONG npins, pin_capacity;
 };
 
 /* Grows the vector and records a page; false (and nothing recorded) if the
@@ -108,6 +112,9 @@ void x86_64_aspace_destroy(X86_64_ASPACE *as)
         x86_64_write_cr3(x86_64_kernel_pml4_phys());
 
     as->magic = 0;
+    for (i = 0; i < as->npins; i++)
+        x86_64_procmem_pin(as->pins[i].va, as->pins[i].bytes, -1);
+    kfree(as->pins);
     for (i = 0; i < as->count; i++)
         x86_64_pmem_free_pages(as->pages[i], 1);
     kfree(as->pages);
@@ -145,6 +152,26 @@ BOOL x86_64_aspace_map_procmem(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD p
 
     if (!bytes || va + bytes < va || !x86_64_procmem_range_live(va, bytes))
         return FALSE;
+    /* Pin before mapping, and remember it before pinning, so every pin has
+     * a record that destroy undoes; a half-finished mapping is covered too. */
+    if (as->npins == as->pin_capacity) {
+        ULONG cap = as->pin_capacity ? as->pin_capacity * 2 : 4;
+        struct pin *grown = kalloc(cap * sizeof(*grown));
+
+        if (!grown)
+            return FALSE;
+        if (as->pins) {
+            memcpy(grown, as->pins, as->npins * sizeof(*grown));
+            kfree(as->pins);
+        }
+        as->pins = grown;
+        as->pin_capacity = cap;
+    }
+    as->pins[as->npins].va = va;
+    as->pins[as->npins].bytes = bytes;
+    as->npins++;
+    x86_64_procmem_pin(va, bytes, +1);
+
     page = va & ~(X86_64_PAGE_SIZE - 1);
     end = (va + bytes + X86_64_PAGE_SIZE - 1) & ~(X86_64_PAGE_SIZE - 1);
     for (; page < end; page += X86_64_PAGE_SIZE)

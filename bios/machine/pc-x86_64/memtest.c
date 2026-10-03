@@ -33,6 +33,7 @@
 #include "bdosdefs.h"
 #include "bdosbind.h"
 #include "gemdos.h"
+#include "gemerror.h"
 #include "kheap.h"
 #include "procmem.h"
 #include "kprint.h"
@@ -61,7 +62,6 @@ static int failures;
 /* Everything that must be exactly the same before and after a cycle. */
 typedef struct {
     UQUAD pmem_free;
-    UQUAD pmem_lost;
     UQUAD pmem_bad;
     KHEAP_STATS heap;
     PROCMEM_STATS pm;
@@ -71,7 +71,6 @@ typedef struct {
 static void snap(SNAP *s)
 {
     s->pmem_free = x86_64_pmem_free_bytes();
-    s->pmem_lost = x86_64_pmem_lost_pages();
     s->pmem_bad = x86_64_pmem_bad_frees();
     kheap_stats(&s->heap);
     x86_64_procmem_stats(&s->pm);
@@ -87,7 +86,6 @@ static BOOL same(const SNAP *a, const char *what)
 
     snap(&b);
     ok = a->pmem_free == b.pmem_free &&
-         b.pmem_lost == a->pmem_lost &&
          a->heap.live_blocks == b.heap.live_blocks &&
          a->heap.pages == b.heap.pages &&
          a->pm.live_allocs == b.pm.live_allocs &&
@@ -113,7 +111,8 @@ static void test_pmem(void)
 {
     SNAP s;
     UQUAD a, b, c, limited;
-    UQUAD bad;
+    UQUAD bad, n, i;
+    UQUAD *runs;
 
     snap(&s);
 
@@ -138,9 +137,37 @@ static void test_pmem(void)
     bad = x86_64_pmem_bad_frees();
     CHECK(!x86_64_pmem_free_pages(a, 1), "double free refused");
     CHECK(!x86_64_pmem_free_pages(a + 1, 1), "misaligned free refused");
-    CHECK(!x86_64_pmem_free_pages(x86_64_pmem_highest_addr(), 1), "foreign free refused");
+    CHECK(!x86_64_pmem_free_pages(x86_64_pmem_highest_addr(), 1), "beyond-RAM free refused");
     CHECK(x86_64_pmem_bad_frees() == bad + 3, "bad frees counted");
+    /* memory the allocator never owned -- here this image's own page-table
+     * pages, and physical page 0 -- is refused even though it is below the
+     * top of RAM and not on any free list */
+    bad = x86_64_pmem_bad_frees();
+    CHECK(!x86_64_pmem_free_pages(x86_64_kernel_pml4_phys() & ~(PAGE - 1), 1),
+          "kernel image page refused");
+    CHECK(!x86_64_pmem_free_pages(0, 1), "unmanaged page refused");
+    CHECK(x86_64_pmem_bad_frees() == bad + 2, "unmanaged frees counted");
     CHECK(x86_64_pmem_free_bytes() == s.pmem_free, "refused frees changed nothing");
+
+    /* runtime fragmentation: free every other page of a large run, then the
+     * rest -- far more separate holes than the boot-time region list could
+     * name -- and everything must come back */
+    n = 20000;
+    runs = kalloc(n * sizeof(UQUAD));
+    if (runs) {
+        for (i = 0; i < n; i++) {
+            runs[i] = x86_64_pmem_try_alloc_pages(1, 0);
+            if (runs[i] == X86_64_PMEM_NONE)
+                break;
+        }
+        CHECK(i == n, "20000 single pages");
+        for (n = i, i = 0; i < n; i += 2)
+            x86_64_pmem_free_pages(runs[i], 1);
+        for (i = 1; i < n; i += 2)
+            x86_64_pmem_free_pages(runs[i], 1);
+        kfree(runs);
+    }
+    CHECK(x86_64_pmem_free_bytes() == s.pmem_free, "fragmented frees all reclaimed");
 
     /* the PHYSICAL limit is honoured, and independent of any virtual one */
     c = x86_64_pmem_try_alloc_pages(1, 0);
@@ -368,6 +395,21 @@ static void test_aspace(void)
     CHECK(i == 500, "500 address-space cycles");
     same(&s2, "aspace cycles");
 
+    /* a block mapped into a live address space cannot be freed or reused */
+    as = x86_64_aspace_create();
+    if (as) {
+        CHECK(x86_64_aspace_map_procmem(as, (UQUAD)(uintptr_t)mem, 3 * PAGE,
+                                        ASPACE_PROT_WRITE | ASPACE_PROT_USER), "map for pin");
+        CHECK(x86_64_procmem_pinned(mem), "mapped block is pinned");
+        CHECK(!x86_64_procmem_free(mem), "pinned block cannot be freed");
+        x86_64_procmem_set_owner(mem, &failed);
+        x86_64_procmem_free_owned(&failed, NULL);
+        CHECK(x86_64_procmem_size(mem), "owned-free skips a pinned block");
+        x86_64_procmem_set_owner(mem, NULL);
+        x86_64_aspace_destroy(as);
+        CHECK(!x86_64_procmem_pinned(mem), "destroy unpins");
+    }
+
     /* failed setup at every allocation point unwinds completely */
     for (k = 1; k <= 8; k++) {
         x86_64_pmem_test_fail_after(k);
@@ -468,6 +510,56 @@ static PD *new_basepage(void)
     return (rc > 0) ? (PD *)(uintptr_t)rc : NULL;
 }
 
+/* The environment and TPA of a process need not be adjacent: with the
+ * window fragmented so they are far apart, only the two blocks themselves
+ * validate as user memory, not the other process's page between them. */
+static void test_kproc_ranges(void)
+{
+    SNAP s;
+    PROCMEM_STATS st;
+    void **v;
+    ULONG i, n = 0;
+    PD *pd, *saved = run;
+    UQUAD env, tpa, gap;
+
+    snap(&s);
+    x86_64_procmem_stats(&st);
+    v = kalloc(st.total_pages * sizeof(void *));
+    CHECK(v != NULL, "vector for fragmentation");
+    if (!v)
+        return;
+    while (n < st.total_pages && (v[n] = x86_64_procmem_alloc(PAGE, 0)) != NULL)
+        n++;
+    if (n >= 6) {
+        x86_64_procmem_free(v[n - 4]);          /* hole for the environment */
+        x86_64_procmem_free(v[n - 1]);          /* hole for the basepage */
+        pd = new_basepage();
+        CHECK(pd != NULL, "basepage in the fragmented window");
+        if (pd) {
+            env = (UQUAD)pd->p_env;
+            tpa = (UQUAD)(uintptr_t)pd;
+            gap = (UQUAD)(uintptr_t)v[n - 3];
+            CHECK(env == (UQUAD)(uintptr_t)v[n - 4] && tpa == (UQUAD)(uintptr_t)v[n - 1],
+                  "fragmented placement as arranged");
+            run = pd;
+            CHECK(kproc_validate_user_range(env, 8), "environment validates");
+            CHECK(kproc_validate_user_range(tpa, sizeof(PD)), "basepage validates");
+            CHECK(!kproc_validate_user_range(gap, 8), "page between them does not");
+            CHECK(!kproc_validate_user_range(env, tpa - env + 8), "range spanning the gap does not");
+            run = saved;
+            kproc_destroy(pd);
+            x86_64_procmem_free((void *)(uintptr_t)env);
+            x86_64_procmem_free(pd);
+        }
+    }
+    for (i = 0; i < n; i++)
+        if (i + 4 != n && i + 1 != n)           /* the two freed above */
+            x86_64_procmem_free(v[i]);
+    kfree(v);
+    run = saved;
+    same(&s, "fragmented kproc ranges");
+}
+
 static void test_lifecycle(void)
 {
     SNAP s;
@@ -496,6 +588,19 @@ static void test_lifecycle(void)
     }
     CHECK(i == LIFECYCLES, "process create/exit cycles");
     same(&s, "process lifecycle");
+
+    /* Mfree() of a live process's own block is refused, not applied */
+    pd = new_basepage();
+    if (pd) {
+        env = USERPTR_TO_PTR(pd->p_env);
+        set_owner(pd, pd);
+        set_owner(env, pd);
+        CHECK(kproc_prepare_user(pd, run) && kproc_user_pml4(pd), "prepare for Mfree test");
+        CHECK(Mfree(env) == EACCDN, "Mfree of a mapped environment refused");
+        CHECK(Mfree(pd) == EACCDN, "Mfree of the live basepage refused");
+        CHECK(kproc_user_pml4(pd) != 0, "address space survives the refused Mfree");
+        x86_64_free_owned(pd);
+    }
 
     /* failed setup: the basepage is abandoned, never launched */
     for (i = 0; i < LIFECYCLES; i++) {
@@ -543,6 +648,7 @@ void x86_64_memtest_run(void)
     test_procmem();
     test_aspace();
     test_kproc();
+    test_kproc_ranges();
     test_lifecycle();
 
     same(&s, "whole memtest");

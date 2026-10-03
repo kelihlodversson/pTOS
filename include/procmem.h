@@ -55,6 +55,17 @@ BOOL x86_64_procmem_contains(const void *p);
 /* TRUE iff every page of [va, va + bytes) belongs to a live allocation. */
 BOOL x86_64_procmem_range_live(UQUAD va, UQUAD bytes);
 
+/*
+ * A block mapped into a live address space (x86_64_aspace_map_procmem()) is
+ * pinned: it cannot be released while the mapping exists, because the pages
+ * would be handed to a new owner while the old process could still reach
+ * them.  x86_64_procmem_free() returns FALSE for a pinned block and leaves
+ * it allocated; x86_64_procmem_free_owned() skips it.  The address space
+ * unpins when it is destroyed.
+ */
+BOOL x86_64_procmem_pinned(const void *p);
+void x86_64_procmem_pin(UQUAD va, UQUAD bytes, int delta);   /* +1 / -1 */
+
 /* Physical address backing window address va (which must be inside it). */
 UQUAD x86_64_procmem_phys_of(UQUAD va);
 

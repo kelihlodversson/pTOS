@@ -13,6 +13,11 @@ Four kinds of memory, four owners
 
 Physical pages    pmem.c.  x86_64_pmem_try_alloc_pages() / _free_pages().
                   The only source of RAM; everything below is built on it.
+                  Once x86_64_pmem_track() has run, two bitmaps (managed,
+                  allocated) say which pages the allocator owns and which
+                  are in use, so any pattern of frees is representable and
+                  a free of anything not allocated by it (the kernel
+                  image, firmware ranges, holes) is refused.
                   Physical constraints (an end limit for DMA) are a
                   parameter of the allocation and nothing else.
 
@@ -64,6 +69,8 @@ Pexec (bdos/proc.c xexec()):
     kproc_create()     kalloc'd KPROC                      (or FALSE: ENSMEM)
     launch (PE_GO, PE_GOTHENFREE, PE_LOADGO):
       kproc_prepare_user()   address space + mappings      (or FALSE: ENSMEM)
+                             (for PE_LOADGO this precedes init_pd_files(),
+                             so a failure holds no file/directory references)
 
 Every failure returns ENSMEM and releases exactly what that call allocated,
 in reverse order; allocation failure never panics and never corrupts an
@@ -82,6 +89,18 @@ Ptermres makes p's blocks permanent (x86_64_procmem_disown()).  Mfree() of a
 procmem block frees that block (and the KPROC if it is a basepage), so a
 basepage created with Pexec(PE_BASEPAGE) and never launched is reclaimed
 by Mfree() of the basepage and its environment.
+
+Mapped blocks are pinned.  x86_64_aspace_map_procmem() pins every procmem
+block it maps and the address space unpins them when it is destroyed.  A
+pinned block is not released: Mfree() of a live process's own environment
+or basepage returns EACCDN (and leaves the KPROC and address space alone),
+and process-teardown skips a block another live address space still maps,
+so pages are never reused while a process can still reach them.
+
+The environment block and the basepage/TPA are separate allocations the
+window does not keep adjacent.  The KPROC record therefore snapshots them as
+two ranges, and kproc_validate_user_range() accepts only a range wholly
+inside one of them, never across whatever lies between.
 
 Exactly once: each object is unlinked from its list or marked dead before
 it is freed, so a second release finds nothing (procmem), a cleared magic

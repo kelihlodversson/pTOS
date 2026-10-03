@@ -31,6 +31,11 @@ struct kproc {
     PD *pd;
     DTAINFO *dta;
 #ifdef __x86_64__
+    /* The two separate allocations a process owns: its environment block
+     * and its basepage/TPA/stack.  The window does not keep them adjacent,
+     * and whatever lies between them is somebody else's. */
+    UBYTE *env_start;
+    UBYTE *env_end;
     UBYTE *user_start;
     UBYTE *user_end;
     X86_64_ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
@@ -74,7 +79,10 @@ BOOL kproc_create(PD *pd)
     kproc->dta = (DTAINFO *)pd->p_cmdlin;
 #ifdef __x86_64__
     /* Snapshot bounds before ring 3 can modify the public basepage. */
-    kproc->user_start = USERPTR_TO_PTR(pd->p_env);
+    kproc->env_start = USERPTR_TO_PTR(pd->p_env);
+    kproc->env_end = kproc->env_start +
+                     x86_64_procmem_size(kproc->env_start);
+    kproc->user_start = (UBYTE *)pd;
     kproc->user_end = USERPTR_TO_PTR(pd->p_hitpa);
 #endif
     kproc->next = kproc_list;
@@ -208,20 +216,30 @@ BOOL kproc_validate_user_dta(UQUAD address)
     return kproc_validate_user_range(address, sizeof(DTAINFO));
 }
 
-BOOL kproc_validate_user_range(UQUAD address, ULONG size)
+/* True iff [address, address + size) lies inside [start, end). */
+static BOOL range_within(UQUAD address, ULONG size, const UBYTE *start_p, const UBYTE *end_p)
 {
-    KPROC *kproc = kproc_find(run);
-    UQUAD start, end;
+    UQUAD start = (UQUAD)(uintptr_t)start_p;
+    UQUAD end = (UQUAD)(uintptr_t)end_p;
 
-    /* The x32 ABI only carries 32-bit addresses.  Test the subtraction,
-     * rather than address + size, so an attacker cannot wrap the range. */
-    if (!kproc || !size || address > 0xffffffffULL)
-        return FALSE;
-    start = (UQUAD)(uintptr_t)kproc->user_start;
-    end = (UQUAD)(uintptr_t)kproc->user_end;
     if (!start || end > 0x100000000ULL || end < start || end - start < size)
         return FALSE;
     return address >= start && address <= end - size;
+}
+
+BOOL kproc_validate_user_range(UQUAD address, ULONG size)
+{
+    KPROC *kproc = kproc_find(run);
+
+    /* The x32 ABI only carries 32-bit addresses.  Test the subtraction,
+     * rather than address + size, so an attacker cannot wrap the range.
+     * The range must lie wholly inside the process's environment block or
+     * wholly inside its basepage/TPA/stack, never across the gap between
+     * them. */
+    if (!kproc || !size || address > 0xffffffffULL)
+        return FALSE;
+    return range_within(address, size, kproc->user_start, kproc->user_end) ||
+           range_within(address, size, kproc->env_start, kproc->env_end);
 }
 
 BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size)

@@ -105,6 +105,12 @@ void x86_64_free_owned(PD *p)
 /* Mfree() of a process allocation: same release, one block. */
 long x86_64_procmem_mfree(void *addr)
 {
+    /* A block that a live process still has mapped (its own environment or
+     * basepage, say) cannot be freed from under it, and tearing down the
+     * address space the caller is running in would be worse: refuse, and
+     * leave the KPROC record alone. */
+    if (x86_64_procmem_pinned(addr))
+        return EACCDN;
     x86_64_release_block(addr);
     return x86_64_procmem_free(addr) ? E_OK : EIMBA;
 }
@@ -484,6 +490,15 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      * more I/O errors cannot occur, so it is safe now to finish initializing
      * the new process.
      */
+    /* Anything that can still fail for lack of memory is done before
+     * init_pd_files(): that takes references on inherited files and
+     * directories, which an ENSMEM return here would otherwise leak. */
+    if (flag != PE_LOAD && !x86_64_prepare_launch(cur_p)) {
+        kproc_destroy(cur_p);
+        xmfree(USERPTR_TO_PTR(cur_p->p_env));
+        xmfree(cur_p);
+        return ENSMEM;
+    }
     init_pd_files(cur_p);
 
     /* invalidate instruction cache for the TEXT segment only
@@ -492,17 +507,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      */
     invalidate_instruction_cache(((UBYTE *)cur_p) + sizeof(PD), hdr.h01_tlen);
 
-    if (flag != PE_LOAD) {
-        if (!x86_64_prepare_launch(cur_p)) {
-            /* out of memory for the address space: nothing has run yet,
-             * so release exactly what this call allocated */
-            kproc_destroy(cur_p);
-            xmfree(USERPTR_TO_PTR(cur_p->p_env));
-            xmfree(cur_p);
-            return ENSMEM;
-        }
+    if (flag != PE_LOAD)
         proc_go(cur_p);
-    }
     return (long)cur_p;
 }
 
