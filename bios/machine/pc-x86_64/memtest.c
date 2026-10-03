@@ -677,11 +677,15 @@ static void test_lifecycle(void)
     /* Pterm() trusts the recorded launcher, not the writable p_parent field */
     pd = new_basepage();
     if (pd) {
-        PD *forged = (PD *)(uintptr_t)X86_64_LOW_TPA_VIRT_BASE;     /* anywhere */
+        /* forge p_parent as the child itself: a value that can never be the
+         * real launcher, so code that still trusts p_parent is caught */
+        PD *forged = pd;
 
         kproc_set_parent(pd, run);
         pd->p_parent = (ULONG)(uintptr_t)forged;
+        CHECK(forged != run, "forged parent differs from the real one");
         CHECK(kproc_get_parent(pd) == run, "recorded parent survives a forged p_parent");
+        CHECK(kproc_get_parent(pd) != forged, "forged p_parent is not trusted");
         env = USERPTR_TO_PTR(pd->p_env);
         Mfree(pd);
         Mfree(env);

@@ -264,11 +264,13 @@ void gouser(void)
 void termuser(void)
 {
     /*
-     * bdos/proc.c's xterm() already did `run = run->p_parent;
+     * bdos/proc.c's xterm() already did `run = kproc_get_parent(p);
      * run->p_dreg[0] = rc;` before calling here -- the m68k/ARM
      * convention for "the exit code is in D0 once the parent resumes"
      * (its own comment above xterm()'s definition), read back here
-     * since `run` now points at whichever PD launched this one.
+     * since `run` now points at whichever PD launched this one.  On this
+     * arch the launcher comes from the process's kernel-private KPROC
+     * record, never from p_parent, which the process can rewrite.
      *
      * x86_64_kexec_resume set means the process that just called
      * Pterm()/Pterm0() was a "kernel-code process" (this file's own top
