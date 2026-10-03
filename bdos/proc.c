@@ -29,6 +29,9 @@
 #include "tosvars.h"
 #include "has.h"
 #include "../bios/vectors.h"
+#if ARCH_ARM
+#include "arch/arm/entry.h"
+#endif
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
 #endif
@@ -771,6 +774,7 @@ static void proc_go(PD *p)
 
 #ifdef __arm__
     p->p_dreg[0] = (LONG)p;  /* base page is passed in r0 */
+    sp->regs[1] = ARM_ENTRY_PROGRAM;
     sp->spsr = ((get_cpsr() & ~0x1f) | 0x10); /* the process will start in user mode, same interrupts */
     sp->retaddr = (long)p->p_tbase; /* return address is text start */
     /* the other stack is the supervisor stack */
