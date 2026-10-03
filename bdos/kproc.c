@@ -36,6 +36,8 @@ struct kproc {
      * and whatever lies between them is somebody else's. */
     UBYTE *env_start;
     UBYTE *env_end;
+    UQUAD env_gen;              /* identities of the two blocks recorded, so */
+    UQUAD tpa_gen;              /* a freed-and-reused address is not trusted */
     UBYTE *user_start;
     UBYTE *user_end;
     X86_64_ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
@@ -83,6 +85,8 @@ BOOL kproc_create(PD *pd)
     kproc->env_start = USERPTR_TO_PTR(pd->p_env);
     kproc->env_end = kproc->env_start +
                      x86_64_procmem_size(kproc->env_start);
+    kproc->env_gen = x86_64_procmem_gen(kproc->env_start);
+    kproc->tpa_gen = x86_64_procmem_gen(pd);
     kproc->user_start = (UBYTE *)pd;
     kproc->user_end = USERPTR_TO_PTR(pd->p_hitpa);
     /* The basepage is writable by whoever holds it until launch, so the
@@ -202,6 +206,9 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
      * caller a writable basepage), so they must still agree with it:
      * otherwise a launch could map a neighbouring allocation. */
     if (!envbytes || hitpa <= tpa ||
+        !kproc->env_gen || !kproc->tpa_gen ||
+        x86_64_procmem_gen(kproc->env_start) != kproc->env_gen ||
+        x86_64_procmem_gen(kproc->user_start) != kproc->tpa_gen ||
         (UQUAD)pd->p_env != env || (UQUAD)pd->p_hitpa > hitpa ||
         (UQUAD)pd->p_hitpa <= tpa)
         return FALSE;

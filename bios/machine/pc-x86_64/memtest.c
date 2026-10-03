@@ -637,6 +637,24 @@ static void test_lifecycle(void)
         x86_64_procmem_free(other);
     }
 
+    /* the environment freed and its address reused between creating the
+     * basepage and launching it: the recorded range now names someone
+     * else's block, which must not be mapped into the process */
+    pd = new_basepage();
+    if (pd) {
+        void *e = USERPTR_TO_PTR(pd->p_env);
+        void *stranger;
+
+        CHECK(Mfree(e) == 0, "free environment before launch");
+        stranger = x86_64_procmem_alloc(PAGE, PROCMEM_ZERO);
+        CHECK(stranger == e, "address reused as arranged");
+        CHECK(!kproc_prepare_user(pd, run), "reused environment address refused");
+        CHECK(!x86_64_procmem_pinned(stranger), "stranger's block was not mapped");
+        x86_64_procmem_free(stranger);
+        kproc_destroy(pd);
+        x86_64_procmem_free(pd);
+    }
+
     /* Mfree() of a live process's own block is refused, not applied */
     pd = new_basepage();
     if (pd) {

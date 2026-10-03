@@ -49,6 +49,12 @@ BOOL x86_64_procmem_free(void *p);
  * base is exactly p; 0 if p is not the base of one. */
 ULONG x86_64_procmem_size(const void *p);
 
+/* Identity of the live allocation whose base is exactly p: a number never
+ * given to any other allocation, even one later placed at the same address.
+ * 0 if p is not the base of one.  Lets a holder of an address tell "still my
+ * block" from "someone else's block that reused the space". */
+UQUAD x86_64_procmem_gen(const void *p);
+
 /* TRUE iff p lies in the window at all (live or not). */
 BOOL x86_64_procmem_contains(const void *p);
 

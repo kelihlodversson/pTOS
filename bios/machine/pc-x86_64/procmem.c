@@ -42,7 +42,10 @@ struct alloc {
     ULONG pages;
     const void *owner;          /* identity of the owning process, or NULL */
     ULONG pins;                 /* live address-space mappings of this block */
+    UQUAD gen;                  /* unique per allocation, never reused */
 };
+
+static UQUAD next_gen = 1;
 
 static UQUAD window_phys;       /* physical base of the 2 MiB backing block */
 static UQUAD used[WORDS];       /* bit per window page: in a live allocation */
@@ -147,6 +150,7 @@ void *x86_64_procmem_alloc(ULONG bytes, UWORD flags)
     a->pages = pages;
     a->owner = NULL;
     a->pins = 0;
+    a->gen = next_gen++;
     a->next = allocs;
     allocs = a;
 
@@ -216,6 +220,13 @@ void x86_64_procmem_pin(UQUAD va, UQUAD bytes, int delta)
             else if (a->pins)
                 a->pins--;
         }
+}
+
+UQUAD x86_64_procmem_gen(const void *p)
+{
+    struct alloc **link = find_link(p);
+
+    return link ? (*link)->gen : 0;
 }
 
 ULONG x86_64_procmem_size(const void *p)
