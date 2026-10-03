@@ -84,6 +84,16 @@ BOOL kproc_create(PD *pd)
                      x86_64_procmem_size(kproc->env_start);
     kproc->user_start = (UBYTE *)pd;
     kproc->user_end = USERPTR_TO_PTR(pd->p_hitpa);
+    /* The basepage is writable by whoever holds it until launch, so the
+     * snapshot is the only trusted bound: the TPA must lie within the one
+     * allocation the basepage sits at the start of, whatever p_hitpa says. */
+    {
+        UBYTE *alloc_end = kproc->user_start +
+                           x86_64_procmem_size(kproc->user_start);
+
+        if (kproc->user_end > alloc_end || kproc->user_end < kproc->user_start)
+            kproc->user_end = alloc_end;
+    }
 #endif
     kproc->next = kproc_list;
     kproc_list = kproc;
@@ -156,17 +166,25 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
 {
     KPROC *kproc = kproc_find(pd);
     X86_64_ASPACE *as;
-    UQUAD env = (UQUAD)pd->p_env;
-    UQUAD tpa = (UQUAD)(uintptr_t)pd;
-    UQUAD hitpa = (UQUAD)pd->p_hitpa;
-    ULONG envbytes = x86_64_procmem_size((void *)(uintptr_t)env);
+    UQUAD env, tpa, hitpa;
+    ULONG envbytes;
 
     if (!kproc)
         return FALSE;
     if (kproc->aspace)
         return TRUE;                /* already prepared */
-    if (!envbytes || hitpa <= tpa)
-        return FALSE;               /* not backed by process allocations */
+    env = (UQUAD)(uintptr_t)kproc->env_start;
+    tpa = (UQUAD)(uintptr_t)kproc->user_start;
+    hitpa = (UQUAD)(uintptr_t)kproc->user_end;
+    envbytes = (ULONG)(kproc->env_end - kproc->env_start);
+    /* Map only what was recorded when the basepage was made.  The public
+     * fields may have been rewritten since (PE_BASEPAGE/PE_LOAD hand the
+     * caller a writable basepage), so they must still agree with it:
+     * otherwise a launch could map a neighbouring allocation. */
+    if (!envbytes || hitpa <= tpa ||
+        (UQUAD)pd->p_env != env || (UQUAD)pd->p_hitpa > hitpa ||
+        (UQUAD)pd->p_hitpa <= tpa)
+        return FALSE;
 
     as = x86_64_aspace_create();
     if (!as)

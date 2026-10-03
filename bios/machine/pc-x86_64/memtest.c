@@ -589,6 +589,30 @@ static void test_lifecycle(void)
     CHECK(i == LIFECYCLES, "process create/exit cycles");
     same(&s, "process lifecycle");
 
+    /* a basepage whose public fields were rewritten before launch (it is
+     * writable until then) cannot map anything beyond what was recorded */
+    pd = new_basepage();
+    if (pd) {
+        UQUAD hi = pd->p_hitpa;
+        UQUAD envv = pd->p_env;
+        void *other = x86_64_procmem_alloc(PAGE, PROCMEM_ZERO);
+
+        env = USERPTR_TO_PTR(pd->p_env);
+        pd->p_hitpa = hi + 4 * PAGE;            /* reach into a neighbour */
+        CHECK(!kproc_prepare_user(pd, run), "extended p_hitpa refused");
+        pd->p_hitpa = hi;
+        pd->p_env = (ULONG)(uintptr_t)other;    /* point at someone else's block */
+        CHECK(!kproc_prepare_user(pd, run), "redirected p_env refused");
+        pd->p_env = envv;
+        CHECK(!kproc_user_pml4(pd), "refused launches left no address space");
+        CHECK(kproc_prepare_user(pd, run), "unmodified basepage still launches");
+        x86_64_free_owned(pd);                  /* owner not set: nothing yet */
+        kproc_destroy(pd);
+        x86_64_procmem_free(env);
+        x86_64_procmem_free(pd);
+        x86_64_procmem_free(other);
+    }
+
     /* Mfree() of a live process's own block is refused, not applied */
     pd = new_basepage();
     if (pd) {
