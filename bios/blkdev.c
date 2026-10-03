@@ -38,7 +38,7 @@
 #include "xhdi.h"
 #include "intmath.h"
 
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 PUN_INFO *pun_ptr;      /* fixed address on m68k (tosvars.ld), ordinary
                          * storage here (#219); declared extern in ahdi.h */
 #endif
@@ -432,6 +432,35 @@ int add_partition(UWORD unit, LONG *devices_available, char id[], ULONG start, U
  */
 
 #define CNTMAX  0x7FFF  /* 16-bit MAXINT */
+
+#ifdef __x86_64__
+BOOL blkdev_rwabs_buffer_size(WORD rw, WORD cnt, WORD dev, ULONG *size)
+{
+    ULONG record_size;
+
+    if (cnt <= 0)
+        return FALSE;
+
+    if (rw & RW_NOTRANSLATE) {
+        if (dev < 0 || dev >= UNITSNUM || !units[dev].valid)
+            return FALSE;
+        if (units[dev].psshift >= 31)
+            return FALSE;
+        record_size = 1UL << units[dev].psshift;
+    } else {
+        if (dev < 0 || dev >= BLKDEVNUM
+            || !(blkdev[dev].flags & DEVICE_VALID)
+            || !blkdev[dev].bpb.recsiz)
+            return FALSE;
+        record_size = blkdev[dev].bpb.recsiz;
+    }
+
+    if ((ULONG)cnt > 0xffffffffUL / record_size)
+        return FALSE;
+    *size = (ULONG)cnt * record_size;
+    return TRUE;
+}
+#endif
 
 static LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LONG lrecnr)
 {

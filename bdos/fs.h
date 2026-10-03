@@ -135,7 +135,10 @@ typedef struct
                     /* the following 3 items must be as in FCB: */
     DOSTIME o_td;       /* creation time/date: little-endian!   */
     CLNO  o_strtcl;     /* starting cluster number              */
-    long  o_fileln;     /* length of file in bytes              */
+    LONG  o_fileln;     /* length of file in bytes -- LONG, not
+                         * long: this mirrors FCB's own on-disk
+                         * 32-bit field (see FCB's own comment),
+                         * not a native-width value              */
 } OPT_PACKED DFD;
 
 
@@ -194,6 +197,12 @@ struct _ofd
  *
  *  architectural restriction: this is the structure of the
  *  directory entry on disk, compatible with MSDOS etc
+ *
+ *  f_fileln is LONG, not long: a real, fixed-width 32-bit on-disk
+ *  FAT field (matching every other real-DOS-format field here),
+ *  not this arch's own native integer width. sizeof(FCB) is used
+ *  directly as the directory-record stride (fsio.c), so any width
+ *  drift here misparses every FAT directory on this arch.
  */
 typedef struct
 {
@@ -202,7 +211,7 @@ typedef struct
     UBYTE f_fill[10];
     DOSTIME f_td;           /* time, date */
     CLNO f_clust;
-    long f_fileln;
+    LONG f_fileln;
 } OPT_PACKED FCB;
 
 #define ERASE_MARKER    '\xe5'  /* in f_name[0], indicates erased file */
@@ -338,7 +347,7 @@ typedef struct
 /*
  * DTAINFO - Information stored in the dta by srch-frst for use by srch-nxt.
  */
-typedef struct
+typedef struct dta_info
 {
                             /* EmuTOS private area, subject to change   */
     char  dt_name[12];          /*  file spec from Fsfirst()            */
@@ -453,7 +462,15 @@ void clfix(CLNO cl, CLNO link, DMD *dm);
 CLNO getrealcl(CLNO cl, DMD *dm);
 CLNO getclnum(CLNO cl, OFD *of);
 int nextcl(OFD *p, int wrtflg);
-long xgetfree(long *buf, int drv);
+/*
+ * buf is LONG *, not long *: it points at the caller's DISKINFO-shaped
+ * buffer for Dfree() (b_free/b_total/b_secsiz/b_clsiz), a fixed 4x32-bit
+ * on-disk-style ABI struct like FCB/DFD above, not four native-width
+ * values -- matching fat_getfree_path()'s own already-correct LONG *
+ * (fs/fatfs.h). The pointer itself is unaffected (still full native
+ * width; only what its target bytes mean changes).
+ */
+long xgetfree(LONG *buf, int drv);
 
 /*
  * in fsio.c
@@ -482,6 +499,8 @@ long xmkdir(char *s);
 long xrmdir(char *p);
 long xchmod(char *p, int wrt, UBYTE mod);
 long ixsfirst(char *name, WORD att, DTAINFO *addr);
+long xfsfirst_at(char *name, WORD att, DTAINFO *dta);
+long xfsnext_at(DTAINFO *dta);
 long xsfirst(char *name, int att);
 long xsnext(void);
 long xgsdtof(DOSTIME *buf, int h, int wrt);
@@ -530,6 +549,10 @@ char *packit(char *s, char *d);
  */
 DTAINFO *xgetdta(void);
 void xsetdta(DTAINFO *addr);
+/* The kernel-private process record preserves the native DTA pointer when
+ * the public basepage's ABI-width p_xdta field cannot represent it. */
+DTAINFO *kproc_get_dta(PD *pd);
+#define RUN_XDTA() kproc_get_dta(run)
 long xsetdrv(int drv);
 long xgetdrv(void);
 OFD  *getofd(int h);

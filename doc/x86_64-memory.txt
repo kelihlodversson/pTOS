@@ -1,0 +1,155 @@
+pTOS - x86-64 process memory, kernel heap and address spaces
+=============================================================
+
+This documents who owns what, and what frees it, for the memory an x32
+process needs on the x86-64 port (#329, #362).  The implementation lives in
+bios/machine/pc-x86_64/ (pmem.c, kheap.c, procmem.c, aspace.c), with the
+interfaces in include/kheap.h and include/procmem.h, and its callers in
+bdos/proc.c, bdos/umem.c and bdos/kproc.c.
+
+
+Four kinds of memory, four owners
+----------------------------------
+
+Physical pages    pmem.c.  x86_64_pmem_try_alloc_pages() / _free_pages().
+                  The only source of RAM; everything below is built on it.
+                  Once x86_64_pmem_track() has run, two bitmaps (managed,
+                  allocated) say which pages the allocator owns and which
+                  are in use, so any pattern of frees is representable and
+                  a free of anything not allocated by it (the kernel
+                  image, firmware ranges, holes) is refused.
+                  Physical constraints (an end limit for DMA) are a
+                  parameter of the allocation and nothing else.
+
+Kernel heap       kheap.c.  kalloc() / kfree().  KPROC records and
+                  address-space metadata.  Kernel-only: never a GEMDOS
+                  memory descriptor, never owned by a process, reached
+                  through the physical direct map (64-bit pointers).
+
+Process memory    procmem.c.  x86_64_procmem_alloc() / _free().  A
+                  process's environment block and its basepage/TPA (and the
+                  stack inside the TPA, until a process gets a private one).
+                  USER memory: it lives in one window below 4 GiB, can be
+                  Mfree()d, and carries a process owner.  Never a kheap
+                  block; kfree() refuses it.
+
+Address spaces    aspace.c.  x86_64_aspace_create() / _destroy().  The PML4
+                  and every page-table page under it, plus any PRIVATE leaf
+                  pages (x86_64_aspace_map_private(): the program image and
+                  stack of an isolated process, see
+                  doc/x86_64-address-space.txt); owned by the process's KPROC
+                  record and all freed with it.  Leaf pages that are not
+                  private -- procmem blocks, device pages -- belong to
+                  someone else and are never freed with the address space.
+
+
+Virtual limits versus physical limits
+--------------------------------------
+
+The 32-bit GEMDOS ABI fields (p_env, p_tbase, p_hitpa, ...) need a user
+VIRTUAL address below 4 GiB.  That is guaranteed by construction (procmem
+can only return window addresses, and the window is asserted below 4 GiB at
+compile time) and checked again where a mapping is made
+(x86_64_aspace_map_page() refuses any page that does not end at or below
+X86_64_USER_VA_LIMIT).
+
+PHYSICAL placement is a separate decision.  The window's backing pages and
+every page-table page come from anywhere in RAM, above 4 GiB included,
+because the MMU maps them; nothing assumes a low physical address.  A real
+physical limit (a DMA buffer) is the `limit` argument of
+x86_64_pmem_try_alloc_pages() and is unrelated to the virtual limit.
+
+Zeroing and permissions are explicit: PROCMEM_ZERO on allocation (every
+process allocation passes it, so nothing leaks between processes) and
+ASPACE_PROT_WRITE / _EXEC / _USER on each mapping (NX unless EXEC).
+
+
+Lifecycle and cleanup
+----------------------
+
+Pexec (bdos/proc.c xexec()):
+
+    alloc_env()        procmem block, owner = parent       (or NULL: ENSMEM)
+    alloc_tpa()        procmem block, owner = parent       (or NULL: ENSMEM)
+    kproc_create()     kalloc'd KPROC                      (or FALSE: ENSMEM)
+    launch (PE_GO, PE_GOTHENFREE, PE_LOADGO):
+      kproc_prepare_user()   address space + mappings      (or FALSE: ENSMEM)
+                             (for PE_LOADGO this precedes init_pd_files(),
+                             so a failure holds no file/directory references)
+
+Every failure returns ENSMEM and releases exactly what that call allocated,
+in reverse order; allocation failure never panics and never corrupts an
+owner list.  An address space is created only for a real ring-3 process
+(a "kernel-code process" such as EmuCON runs in ring 0 and needs none).
+
+Termination (xterm() -> ixterm()):
+
+    kproc_destroy(p)           unlink the record, destroy its address space
+                               (switching CR3 back to the kernel tables
+                               first if it is the loaded one: unpin the
+                               procmem blocks it mapped, free every private
+                               backing page and every table page), kfree it
+    x86_64_free_owned(p)       free every procmem block p owns; a block that
+                               is a basepage drops its own KPROC first
+
+Ptermres makes p's blocks permanent (x86_64_procmem_disown()).  Mfree() of a
+procmem block frees that block (and the KPROC if it is a basepage), so a
+basepage created with Pexec(PE_BASEPAGE) and never launched is reclaimed
+by Mfree() of the basepage and its environment.
+
+Mapped blocks are pinned.  x86_64_aspace_map_procmem() pins every procmem
+block it maps and the address space unpins them when it is destroyed.  A
+pinned block is not released: Mfree() of a live process's own environment
+or basepage returns EACCDN (and leaves the KPROC and address space alone),
+and process-teardown skips a block another live address space still maps,
+so pages are never reused while a process can still reach them.
+
+The environment block and the basepage/TPA are separate allocations the
+window does not keep adjacent.  The KPROC record therefore snapshots them as
+two ranges, and kproc_validate_user_range() accepts only a range wholly
+inside one of them, never across whatever lies between.
+
+Exactly once: each object is unlinked from its list or marked dead before
+it is freed, so a second release finds nothing (procmem), a cleared magic
+(aspace, kheap) or a free-list overlap (pmem) and is refused and counted
+instead of applied.  The counters are exported (bad_frees) so tests can
+assert on them.
+
+
+Failure behaviour
+------------------
+
+kalloc()               NULL; heap unchanged
+x86_64_procmem_alloc() NULL; window and records unchanged
+x86_64_aspace_create() NULL; nothing left allocated
+x86_64_aspace_map_private()
+                       FALSE; all-or-nothing: no mapping, backing page or
+                       page-table page from the call is left (internal
+                       bookkeeping vectors may keep extra capacity until the
+                       address space is destroyed)
+x86_64_aspace_map_page() / _map_procmem()
+                       FALSE; pages mapped before the failure stay in the
+                       address space (map_procmem keeps its pin on them) and
+                       are released when it is destroyed
+kproc_prepare_user()   FALSE; no address space is attached to the record
+
+The fixed xmgetblk() pool (bdos/osmem.c) is unchanged and still serves
+DMD/DND/OFD/MDBLOCK; KPROC records no longer use it on x86-64, so the
+number of processes is bounded by memory, not by that pool.  The low
+process window itself is still a fixed 2 MiB of virtual address space
+(X86_64_LOW_TPA_BYTES); making it grow is left for per-process address
+spaces (#401).
+
+
+Self-test
+----------
+
+With CONF_WITH_X86_64_MEMTEST (default on for pc-x86_64),
+bios/machine/pc-x86_64/memtest.c runs at every boot and prints
+"x86-64 memtest: PASS" or "FAIL (n)" on the console.  Each test snapshots
+every counter (free physical bytes, heap blocks and pages, window
+allocations and free pages, KPROC records), repeats a cycle many times --
+more than the former 118-block pool -- with and without injected
+allocation failures (x86_64_pmem_test_fail_after()), and requires the
+counters to match the snapshot exactly.  CI's boot test fails the build on
+FAIL or on no PASS line.

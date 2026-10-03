@@ -61,9 +61,14 @@ extern ULONG cookie_idt;
  */
 
 /* Convenience macro to test if first boot. See MEMINIT_BIT_FIRST_BOOT. */
-#if ARCH_ARM
-// Currently we always treat each boot as the first one on the ARM machines:
-// none of them has any persistent boot-state detection.
+#if ARCH_ARM || ARCH_X86_64
+// Currently we always treat each boot as the first one on the ARM and
+// x86-64 machines: like ARM, x86-64 has no persistent boot-state detection
+// either (meminit_flags is only ever written by bios/arch/m68k/memory.S's
+// own memconf()), so leaving it out of this special case left FIRST_BOOT
+// always false there -- bootdev (bios.c's biosmain()) never got updated
+// from blkdev_avail(DEFAULT_BOOTDEV), staying at its BSS-zero default
+// (FLOPPY_BOOTDEV) even once a real IDE disk was detected and available.
 #define FIRST_BOOT 1
 #else
 #define FIRST_BOOT (meminit_flags & MEMINIT_FIRST_BOOT)

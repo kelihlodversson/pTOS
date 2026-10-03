@@ -212,7 +212,16 @@ int sprintf(char *RESTRICT str, const char *RESTRICT fmt, ...)
     return n;
 }
 
-#ifdef __arm__
+/*
+ * ARM and x86-64 alike: neither has a hand-written arch-specific
+ * strlencpy()/strchr()/scasb()/expand_string() the way m68k does
+ * (util/arch/m68k/...), so both need this generic C fallback. Currently
+ * dormant for x86-64 (nothing pc-x86_64_defconfig enables today calls
+ * any of these), but bdos/elfld.c's strchr() and fs/pfs.c's strchr()
+ * would otherwise be undefined references the moment CONF_WITH_ELF_LOADER
+ * or CONF_WITH_PLUGGABLE_FS is turned on for this arch.
+ */
+#if defined(__arm__) || defined(__x86_64__)
 
 /*
  * WORD strlencpy(char *dest, const char *src)

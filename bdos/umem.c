@@ -19,6 +19,7 @@
 #include "bdosdefs.h"
 #include "fs.h"
 #include "mem.h"
+#include "kproc.h"
 #include "gemerror.h"
 #include "biosbind.h"
 #include "biosext.h"
@@ -27,6 +28,9 @@
 #include "cookie.h"
 #include "string.h"
 #include "has.h"        /* for has_videl */
+#ifdef __x86_64__
+#include "procmem.h"
+#endif
 
 
 /*
@@ -139,6 +143,10 @@ long xmfree(void *addr)
 
     KDEBUG(("BDOS: Mfree(%p)\n",addr));
 
+#ifdef __x86_64__
+    if (x86_64_procmem_contains(addr))
+        return x86_64_procmem_mfree(addr);
+#endif
     mpb = find_mpb(addr);
     if (!mpb)
         return EIMBA;
@@ -452,7 +460,7 @@ extern UBYTE _static_altram_end[];
  * to specifically request alternative RAM.
  */
 
-long xmaddalt(UBYTE *start, LONG size)
+LONG xmaddalt(UBYTE *start, LONG size)
 {
     MD *md, *p;
 
@@ -527,9 +535,9 @@ long xmaddalt(UBYTE *start, LONG size)
 }
 
 /* Get the total size of all Alt-RAM blocks */
-long total_alt_ram(void)
+LONG total_alt_ram(void)
 {
-    long total = 0;
+    LONG total = 0;
     MD* md;
 
 #if CONF_WITH_STATIC_ALT_RAM
@@ -609,6 +617,12 @@ void set_owner(void *addr, PD *p)
     MD *m;
     MPB *mpb;
 
+#ifdef __x86_64__
+    if (x86_64_procmem_contains(addr)) {
+        x86_64_procmem_set_owner(addr, p);
+        return;
+    }
+#endif
     mpb = find_mpb(addr);
 
     if (!mpb)       /* block address was invalid */

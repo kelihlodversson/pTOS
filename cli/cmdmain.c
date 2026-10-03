@@ -24,7 +24,7 @@
 #include "cmd.h"
 #include "version.h"
 #include "string.h"
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 #include "tosvars.h"
 #endif
 
@@ -366,7 +366,7 @@ int valid_res(WORD res)
 
 PRIVATE WORD get_nflops(void)
 {
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
     return nflops;
 #else
     return *(WORD *)0x4a6;          /* number of floppy drives */

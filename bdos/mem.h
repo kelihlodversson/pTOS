@@ -42,16 +42,25 @@ void *xmgetblk(WORD memtype);
 
 /*  MGET - wrapper around xmgetblk */
 #define MGET(x)         ((x *)xmgetblk(MEMTYPE_ ## x))
-#define MEMTYPE_MDBLOCK 0   /* the 4 types of valid request, all needing 64 bytes */
+#define MEMTYPE_MDBLOCK 0   /* fixed-size kernel-pool allocation classes */
 #define MEMTYPE_DMD     1
 #define MEMTYPE_DND     2
 #define MEMTYPE_OFD     3
+#define MEMTYPE_KPROC   4
 
 /*  xmfreblk - free up memory allocated through mgetblk */
 void xmfreblk(void *m);
 
 MD *xmgetmd(void);          /* xmgetmd - get an MD */
 void xmfremd(MD *md);       /* xmfremd - free an MD */
+
+#ifdef __x86_64__
+/* x86-64 process allocations (include/procmem.h) are not GEMDOS memory
+ * descriptors: Mfree() and process teardown reach them through these. */
+long x86_64_procmem_mfree(void *addr);
+void x86_64_free_owned(PD *p);
+void x86_64_make_resident(PD *p, ULONG keep_bytes);   /* Ptermres */
+#endif
 
 /* init os memory */
 void osmem_init(void);

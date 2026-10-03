@@ -40,6 +40,9 @@
 #ifdef MACHINE_RPI
 #include "raspi_screen.h"
 #endif
+#ifdef MACHINE_PC_X86_64
+#include "pc_x86_64_gop.h"
+#endif
 #include "lisa.h"
 #include "nova.h"
 
@@ -680,6 +683,33 @@ void screen_init_address(void)
      * linea_init() -- see the comment there. */
     v_bas_ad = raspi_physbase();
     setphys(v_bas_ad);
+#elif defined(MACHINE_PC_X86_64)
+    /* #332: mirrors CONF_WITH_VIRTIO_GPU's own present/absent branching
+     * above -- x86_64_gop_probe()/x86_64_gop_init() (startup.c) already
+     * did the actual discovery and mapping, well before biosmain(). No
+     * ST-RAM-shaped VRAM exists on this machine to fall back to when GOP
+     * is absent (headless firmware, or an unsupported pixel format);
+     * balloc_stram() still works here (it only carves from the generic
+     * TPA pool, see pc_x86_64_memory.h), it just yields memory nothing
+     * ever scans out -- the same "boots serial-only" posture
+     * virtio_gpu_present()'s own else branch takes when neither GPU nor
+     * requested-mode fallback is available.
+     */
+    if (pc_x86_64_gop_present())
+    {
+        v_bas_ad = pc_x86_64_gop_screenbase();
+        setphys(v_bas_ad);
+    }
+    else
+    {
+        ULONG vram_size;
+        UBYTE *screen_start;
+
+        vram_size = initial_vram_size();
+        screen_start = balloc_stram(vram_size, TRUE);
+        v_bas_ad = screen_start;
+        setphys(v_bas_ad);
+    }
 #else
     ULONG vram_size;
     UBYTE *screen_start;
@@ -930,6 +960,14 @@ void screen_get_current_mode_desc(SCREEN_MODE_DESC *desc)
     }
 #elif defined(MACHINE_RPI)
     raspi_get_current_mode_desc(desc);
+#elif defined(MACHINE_PC_X86_64)
+    if (pc_x86_64_gop_present())
+        pc_x86_64_gop_get_current_mode_desc(desc);
+    else
+    {
+        atari_get_current_mode_info(&planes, &hz_rez, &vt_rez);
+        planar_mode_desc(desc, planes, hz_rez, vt_rez);
+    }
 #elif defined(MACHINE_AMIGA)
     amiga_get_current_mode_info(&planes, &hz_rez, &vt_rez);
     planar_mode_desc(desc, planes, hz_rez, vt_rez);
