@@ -266,6 +266,13 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     return TRUE;
 }
 
+X86_64_ASPACE *kproc_user_aspace(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    return kproc ? kproc->aspace : NULL;
+}
+
 UQUAD kproc_user_pml4(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);

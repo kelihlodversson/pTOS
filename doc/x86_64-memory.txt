@@ -27,15 +27,20 @@ Kernel heap       kheap.c.  kalloc() / kfree().  KPROC records and
                   through the physical direct map (64-bit pointers).
 
 Process memory    procmem.c.  x86_64_procmem_alloc() / _free().  A
-                  process's environment block and its basepage/TPA/stack.
+                  process's environment block and its basepage/TPA (and the
+                  stack inside the TPA, until a process gets a private one).
                   USER memory: it lives in one window below 4 GiB, can be
                   Mfree()d, and carries a process owner.  Never a kheap
                   block; kfree() refuses it.
 
 Address spaces    aspace.c.  x86_64_aspace_create() / _destroy().  The PML4
-                  and every page-table page under it; owned by the
-                  process's KPROC record.  It never owns leaf pages: those
-                  belong to procmem.
+                  and every page-table page under it, plus any PRIVATE leaf
+                  pages (x86_64_aspace_map_private(): the program image and
+                  stack of an isolated process, see
+                  doc/x86_64-address-space.txt); owned by the process's KPROC
+                  record and all freed with it.  Leaf pages that are not
+                  private -- procmem blocks, device pages -- belong to
+                  someone else and are never freed with the address space.
 
 
 Virtual limits versus physical limits
@@ -81,7 +86,9 @@ Termination (xterm() -> ixterm()):
 
     kproc_destroy(p)           unlink the record, destroy its address space
                                (switching CR3 back to the kernel tables
-                               first if it is the loaded one), kfree it
+                               first if it is the loaded one: unpin the
+                               procmem blocks it mapped, free every private
+                               backing page and every table page), kfree it
     x86_64_free_owned(p)       free every procmem block p owns; a block that
                                is a basepage drops its own KPROC first
 

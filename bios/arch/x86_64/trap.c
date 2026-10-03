@@ -24,6 +24,7 @@
 
 extern BOOL kproc_validate_user_dta(UQUAD address);
 extern BOOL kproc_validate_user_range(UQUAD address, ULONG size);
+extern BOOL kproc_validate_user_write(UQUAD address, ULONG size);
 extern BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size);
 extern BOOL kproc_copy_to_user(UQUAD address, const void *src, ULONG size);
 
@@ -372,7 +373,12 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
                 frame->rax = (UQUAD)-1L;
                 break;
             }
-            if (!kproc_validate_user_range(wire.adr, bytes)) {
+            /* A buffer the device fills is also written back to the caller:
+             * it must be writable up front, not discovered not to be after
+             * the device operation has already happened. */
+            if (!(((wire.r_w & RW_RW) == RW_READ)
+                  ? kproc_validate_user_write(wire.adr, bytes)
+                  : kproc_validate_user_range(wire.adr, bytes))) {
                 frame->rax = (UQUAD)-1L;
                 break;
             }
@@ -447,7 +453,10 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
                 frame->rax = (UQUAD)-1L;
                 break;
             }
-            if (!kproc_validate_user_range(wire.buf, bytes)) {
+            /* Floprd/Flopver fill the buffer and it is copied back: it must be
+             * writable before the device operation; Flopwr only reads it. */
+            if (!(fn != 9 ? kproc_validate_user_write(wire.buf, bytes)
+                          : kproc_validate_user_range(wire.buf, bytes))) {
                 frame->rax = (UQUAD)-1L;
                 break;
             }
@@ -480,7 +489,8 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 
             if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))
                 || !(bytes = x86_64_flopfmt_buffer_size(wire.spt))
-                || !kproc_validate_user_range(wire.buf, bytes)) {
+                /* the buffer is copied back after the format: writable now */
+                || !kproc_validate_user_write(wire.buf, bytes)) {
                 frame->rax = (UQUAD)-1L;
                 break;
             }

@@ -779,6 +779,26 @@ static void test_process_validation(void)
           (UQUAD)(uintptr_t)pd == X86_64_LOW_TPA_VIRT_BASE,
           "window memory that is not the process's own is invalid");
     CHECK(!kproc_validate_user_range(0xFFFFFFFF80000000ULL, 8), "kernel address invalid");
+
+    /* A read-only destination passes the read check but not the write check
+     * the system calls make for every buffer a device operation fills (the
+     * Rwabs/Floprd/Flopver/Flopfmt buffers, trap.c): it must be refused up
+     * front, before the device is touched. */
+    {
+        X86_64_ASPACE *as = kproc_user_aspace(pd);
+
+        CHECK(as != NULL, "the process has an address space");
+        if (as) {
+            CHECK(x86_64_aspace_map_private(as, 0x800000, PAGE, ASPACE_PROT_USER), "read-only user page");
+            CHECK(x86_64_aspace_map_private(as, 0x900000, PAGE, ASPACE_PROT_USER | ASPACE_PROT_WRITE),
+                  "writable user page");
+            CHECK(kproc_validate_user_range(0x800000, 512), "read-only buffer is readable");
+            CHECK(!kproc_validate_user_write(0x800000, 512), "read-only buffer is not a valid output buffer");
+            CHECK(!kproc_copy_to_user(0x800000, b, 8), "copy into a read-only buffer refused");
+            CHECK(kproc_validate_user_write(0x900000, 512), "writable buffer is a valid output buffer");
+            CHECK(!kproc_validate_user_dta(0x800000), "a read-only DTA is refused");
+        }
+    }
     CHECK(!kproc_copy_to_user(0x10000000, b, 8), "copy to an unmapped address refused");
     run = saved;
 

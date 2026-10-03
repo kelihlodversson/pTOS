@@ -38,7 +38,9 @@ void kproc_mark_started(PD *pd);        /* proc_go() launched it */
  * that was never launched, whose inherited file and directory references
  * are therefore still held. */
 BOOL kproc_discard(PD *pd);
-UQUAD kproc_user_pml4(PD *pd);          /* 0 if not prepared */
+UQUAD kproc_user_pml4(PD *pd);
+#include "procmem.h"
+X86_64_ASPACE *kproc_user_aspace(PD *pd);   /* NULL if none (tests) */          /* 0 if not prepared */
 ULONG kproc_count(void);                /* live records, for leak tests */
 BOOL kproc_validate_user_dta(UQUAD address);
 /* valid user memory of the current process: mapped, user-accessible and (for
