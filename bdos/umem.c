@@ -28,6 +28,9 @@
 #include "cookie.h"
 #include "string.h"
 #include "has.h"        /* for has_videl */
+#ifdef __x86_64__
+#include "procmem.h"
+#endif
 
 
 /*
@@ -140,6 +143,10 @@ long xmfree(void *addr)
 
     KDEBUG(("BDOS: Mfree(%p)\n",addr));
 
+#ifdef __x86_64__
+    if (x86_64_procmem_contains(addr))
+        return x86_64_procmem_mfree(addr);
+#endif
     mpb = find_mpb(addr);
     if (!mpb)
         return EIMBA;
@@ -610,6 +617,12 @@ void set_owner(void *addr, PD *p)
     MD *m;
     MPB *mpb;
 
+#ifdef __x86_64__
+    if (x86_64_procmem_contains(addr)) {
+        x86_64_procmem_set_owner(addr, p);
+        return;
+    }
+#endif
     mpb = find_mpb(addr);
 
     if (!mpb)       /* block address was invalid */

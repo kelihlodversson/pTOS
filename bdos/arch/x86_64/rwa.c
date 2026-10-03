@@ -68,6 +68,7 @@
 #include "tosvars.h"
 #include "bdosstub.h"
 #include "setjmp.h"
+#include "kproc.h"
 
 /*
  * Declared directly, not through a shared header: bdos/build.mk's
@@ -77,9 +78,6 @@
  * precedent (bdos/proc.c's identical approach for
  * x86_64_low_tpa_alloc()).
  */
-extern UQUAD x86_64_pmem_alloc_pages(UQUAD count);
-extern void x86_64_new_address_space(UQUAD pml4_phys);
-extern void x86_64_map_low_tpa_into(UQUAD pml4_phys, UQUAD virt_start, UQUAD virt_end, int user);
 extern void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp,
                               UQUAD basepage, UQUAD entry_type) NORETURN;
 extern BOOL x86_64_take_kernel_code_pd(PD *p);
@@ -226,51 +224,21 @@ void gouser(void)
         x86_64_kexec_resume = saved_resume;
     } else {
         /*
-         * A real, loaded process (#334): build its own address space --
-         * x86_64_new_address_space() shares the kernel + physical
-         * direct map (high half) in (PML4 slots 256-511) and clears
-         * every low slot, including slot 0, exactly like every other
-         * process-private slot (see that function's own comment) -- it
-         * does NOT share the low TPA pool or the low system-vector page
-         * in; an earlier version of this comment claimed it did, which
-         * was wrong (#356's own review caught it: a real loaded process
-         * faulted on its first instruction, since nothing had ever
-         * mapped its own text/stack into its new PML4). Map this
-         * process's own p_env..p_hitpa range -- where alloc_env() then
-         * alloc_tpa() (bdos/proc.c) draw p_env then p_tbase/p_hitpa from,
-         * strictly in that order and with nothing else from the pool
-         * allocated in between for the same launch, so the two are
-         * always contiguous (p_env < p_lowtpa) -- in explicitly before
-         * entering ring 3, not the whole shared pool (a second review
-         * round caught that too: every other process's/the kernel's own
-         * bookkeeping sharing this pool would otherwise be reachable
-         * from ring 3). Starting the range at p_env instead of p_lowtpa
-         * is itself a fix: an earlier version of this call mapped only
-         * [p_lowtpa, p_hitpa), leaving p_env's own page(s) unmapped, so
-         * a process reading its own basepage environment would fault
-         * (a later review round caught this too).
+         * A real, loaded process (#334).  Its address space was already
+         * built, and can have failed with ENSMEM, back in Pexec():
+         * kproc_prepare_user() (bdos/kproc.c) makes the PML4 -- the
+         * kernel + physical direct map shared in, every low slot clear --
+         * and maps exactly this process's own environment block,
+         * basepage/TPA/stack (user) and its parent's basepage
+         * (kernel-only: xterm() writes the exit code through it from
+         * ring 0 while this CR3 is still loaded), never the rest of the
+         * shared window.  That address space belongs to the process's
+         * KPROC record and is freed with it (kproc_destroy(), from
+         * xterm()), so nothing here allocates or needs to unwind.
          *
-         * p_parent (initial_basepage, per this function's own bottom
-         * comment) is a separate, non-contiguous allocation from
-         * earlier in the same pool (bdosmain.c's own one-time setup, at
-         * the very start of it) -- xterm() widens and writes through it
-         * on this process's own Pterm, while still running under this
-         * process's own CR3, so it needs its own explicit mapping too
-         * (another review round caught this): map just its one PD-sized
-         * allocation, not the pool in between (which belongs to no
-         * currently-running process and stays unmapped). Mapped
-         * supervisor-only (user=0): xterm()'s write happens from ring 0
-         * (the syscall handler hasn't dropped privilege back down yet),
-         * so the kernel can still reach it through this same CR3, but a
-         * user=1 leaf here would let ring 3 itself read or corrupt the
-         * kernel's own initial_basepage PD directly -- a still later
-         * review round caught the initial fix leaving this mapping
-         * user-writable like every other leaf this function had ever
-         * produced.
-         *
-         * The low system-vector page is deliberately still not mapped
-         * here: #352 tracks whether (and how safely) a real process
-         * should ever see it.
+         * The low system-vector page is deliberately still not mapped:
+         * #352 tracks whether (and how safely) a real process should
+         * ever see it.
          *
          * No per-process kernel stack or termuser()-style resumption
          * yet for *this* branch (see this file's own top comment and
@@ -282,13 +250,12 @@ void gouser(void)
          * via x86_64_kexec_resume; it just doesn't need a distinct
          * kernel stack to get it, since it's ordinary nested C code.)
          */
-        UQUAD pml4_phys = x86_64_pmem_alloc_pages(1);
+        UQUAD pml4_phys = kproc_user_pml4(p);
         UQUAD entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
         UQUAD user_rsp = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_hitpa);
 
-        x86_64_new_address_space(pml4_phys);
-        x86_64_map_low_tpa_into(pml4_phys, (UQUAD)p->p_env, (UQUAD)p->p_hitpa, 1);
-        x86_64_map_low_tpa_into(pml4_phys, (UQUAD)p->p_parent, (UQUAD)p->p_parent + sizeof(PD), 0);
+        if (!pml4_phys)
+            panic("x86-64: process launched without an address space\n");
         x86_64_enter_user(pml4_phys, entry_rip, user_rsp,
                           (UQUAD)(uintptr_t)p, 0);
     }

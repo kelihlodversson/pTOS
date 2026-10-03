@@ -42,6 +42,7 @@
 #endif
 #ifdef __x86_64__
 extern void x86_64_mark_kernel_code_pd(PD *p);
+extern void x86_64_memtest_run(void);
 #endif
 #include "ikbd.h"
 #include "mouse.h"
@@ -988,7 +989,7 @@ static void run_reset_resident(void)
  * and bdos/arch/x86_64/rwa.c's identical precedent for the same
  * function: only autoexec() (below) needs it in this file.
  */
-extern UBYTE *x86_64_low_tpa_alloc(LONG needed);
+#include "procmem.h"
 #endif
 
 static void run_auto_program(const char* filename)
@@ -1038,7 +1039,7 @@ static void autoexec(void)
      * underlying corruption). Use the same low, sub-4GiB pool real
      * processes' own PDs/env already come from instead.
      */
-    dta = (DTA *)x86_64_low_tpa_alloc(sizeof(DTA));
+    dta = (DTA *)x86_64_procmem_alloc(sizeof(DTA), PROCMEM_ZERO);
     if (!dta)
         return;
 #endif
@@ -1161,6 +1162,10 @@ void biosmain(void)
 
     Dsetdrv(bootdev);           /* Set boot drive */
     init_default_environment(); /* Build default environment string */
+
+#if defined(__x86_64__) && CONF_WITH_X86_64_MEMTEST
+    x86_64_memtest_run();       /* reports "x86-64 memtest: PASS" or FAIL */
+#endif
 
 #if ENABLE_RESET_RESIDENT
     run_reset_resident();       /* see comments above */

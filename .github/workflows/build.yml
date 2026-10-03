@@ -297,6 +297,20 @@ jobs:
             exit 1
           fi
 
+          # The memory-management self-test (bios/machine/pc-x86_64/memtest.c,
+          # #362) repeats process create/exit and injected-failure cycles
+          # and requires every allocator to return to its starting state:
+          # a leaked mapping, page-table or backing page, KPROC record or
+          # kernel-heap block fails it.
+          if grep -q 'x86-64 memtest: FAIL' boot.log; then
+            echo "::error::the boot-time memory-management self-test failed"
+            exit 1
+          fi
+          if ! grep -q 'x86-64 memtest: PASS' boot.log; then
+            echo "::error::the boot-time memory-management self-test never reported PASS"
+            exit 1
+          fi
+
           if ! grep -q 'Welcome to EmuCON2' boot.log; then
             echo "::error::never reached the EmuCON2 shell prompt"
             exit 1

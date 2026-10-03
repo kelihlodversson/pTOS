@@ -91,7 +91,7 @@ static long xgetver(void);
  * instead, in osinit_after_xmaddalt() below, once that pool exists.
  */
 #ifdef __x86_64__
-extern UBYTE *x86_64_low_tpa_alloc(LONG needed);
+#include "procmem.h"
 #else
 static PD initial_basepage;
 #endif
@@ -396,8 +396,10 @@ void osinit_after_xmaddalt(void)
 {
     /* Set up initial process. Required by Malloc() */
 #ifdef __x86_64__
-    run = (PD *)x86_64_low_tpa_alloc(sizeof(PD));
-    bzero(run, sizeof(PD));
+    /* permanent: no owner, never freed */
+    run = (PD *)x86_64_procmem_alloc(sizeof(PD), PROCMEM_ZERO);
+    if (!run)
+        halt();
 #else
     run = &initial_basepage;
 #endif

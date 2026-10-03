@@ -338,6 +338,12 @@ void NORETURN x86_64_higher_half_main(void)
      * canonical address range for #334's future ILP32 user processes
      * (see #343 and #344's address-space split).
      */
+    /* Per-page ownership tracking, so pages can be freed and reused (#362).
+     * Needs the physical direct map live, which it only is once CR3 has
+     * switched in the higher-half jump above; nothing has allocated yet. */
+    x86_64_pmem_track();
+    earlycon_puts("pTOS x86-64: physical page tracking on\n");
+
     x86_64_drop_identity_map();
     earlycon_puts("pTOS x86-64: identity mapping dropped\n");
 

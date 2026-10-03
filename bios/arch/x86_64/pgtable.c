@@ -419,7 +419,8 @@ void x86_64_new_address_space(UQUAD pml4_phys)
  * virt was already mapped at a coarser granularity, which never
  * legitimately happens while populating a fresh per-process address space.
  */
-static pgentry_t *user_table_slot(pgentry_t *table, UQUAD index, UQUAD (*alloc_page)(void))
+static pgentry_t *user_table_slot(pgentry_t *table, UQUAD index,
+                                  UQUAD (*alloc_page)(void *), void *ctx)
 {
     pgentry_t entry = table[index];
     UQUAD child_phys;
@@ -432,7 +433,9 @@ static pgentry_t *user_table_slot(pgentry_t *table, UQUAD index, UQUAD (*alloc_p
         return (pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + (entry & PTE_ADDR_MASK));
     }
 
-    child_phys = alloc_page();
+    child_phys = alloc_page(ctx);
+    if (child_phys == X86_64_PGTABLE_NO_PAGE)
+        return 0;
     child = (pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + child_phys);
     for (i = 0; i < 512; i++)
         child[i] = 0;
@@ -448,19 +451,32 @@ static pgentry_t *user_table_slot(pgentry_t *table, UQUAD index, UQUAD (*alloc_p
  * call, walking/allocating the PDPT/PD/PT chain for virt as needed via
  * user_table_slot() above.
  */
-void x86_64_map_user_page(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
-                          int writable, int executable, int user,
-                          UQUAD (*alloc_page)(void))
+int x86_64_map_user_page(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
+                         int writable, int executable, int user,
+                         UQUAD (*alloc_page)(void *), void *ctx)
 {
     UQUAD pml4_index = (virt >> 39) & 0x1FF;
     UQUAD pdpt_index = (virt >> 30) & 0x1FF;
     UQUAD pd_index = (virt >> 21) & 0x1FF;
     UQUAD pt_index = (virt >> 12) & 0x1FF;
     pgentry_t *l4 = (pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + pml4_phys);
-    pgentry_t *pdpt = user_table_slot(l4, pml4_index, alloc_page);
-    pgentry_t *pd = user_table_slot(pdpt, pdpt_index, alloc_page);
-    pgentry_t *pt = user_table_slot(pd, pd_index, alloc_page);
+    pgentry_t *pdpt, *pd, *pt;
     pgentry_t entry = (phys & PTE_ADDR_MASK) | PTE_PRESENT;
+
+    /* A canonical low-half address only: the high half belongs to the
+     * kernel, whose slots new_address_space() copied in. */
+    if (virt >= 0x800000000000ULL)
+        return -1;
+
+    pdpt = user_table_slot(l4, pml4_index, alloc_page, ctx);
+    if (!pdpt)
+        return -1;
+    pd = user_table_slot(pdpt, pdpt_index, alloc_page, ctx);
+    if (!pd)
+        return -1;
+    pt = user_table_slot(pd, pd_index, alloc_page, ctx);
+    if (!pt)
+        return -1;
 
     if (user)
         entry |= PTE_USER;
@@ -470,6 +486,25 @@ void x86_64_map_user_page(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
         entry |= PTE_NX;
 
     pt[pt_index] = entry;
+    return 0;
+}
+
+UQUAD x86_64_kernel_pml4_phys(void)
+{
+    return phys_addr_of(pml4);
+}
+
+UQUAD x86_64_read_cr3(void)
+{
+    UQUAD cr3;
+
+    __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
+    return cr3 & PTE_ADDR_MASK;
+}
+
+void x86_64_write_cr3(UQUAD pml4_phys)
+{
+    __asm__ volatile ("mov %0, %%cr3" :: "r"(pml4_phys) : "memory");
 }
 
 void x86_64_build_physmap(UQUAD max_phys)
