@@ -69,11 +69,10 @@
  * collapsing the gaps between them into one reserved block would falsely
  * exclude a lot of genuinely free memory.
  *
- * Only ever grows the free list (there is no matching "free a page" yet
- * -- nothing this early returns memory), so this is a one-shot bump
- * allocator, not a general page allocator: adequate for standing up
- * permanent kernel mappings and, later, the shared core's own memory
- * pools, not for a process's reclaimable memory.
+ * x86_64_pmem_alloc_pages()/_below() are the panicking, permanent
+ * allocations for boot-time mappings; reclaimable memory (process address
+ * spaces, the kernel heap) uses x86_64_pmem_try_alloc_pages() and
+ * x86_64_pmem_free_pages() below.
  */
 void x86_64_pmem_init(const void *efi_map, UQUAD map_size, UQUAD descriptor_size,
                        UQUAD reserved1_base, UQUAD reserved1_end,
@@ -102,6 +101,39 @@ UQUAD x86_64_pmem_alloc_pages(UQUAD count);
  * Traps (see pmem.c) if no region under limit can satisfy the request.
  */
 UQUAD x86_64_pmem_alloc_pages_below(UQUAD count, UQUAD limit);
+
+/*
+ * Fallible, reclaimable counterparts of the allocators above, for callers
+ * that own what they allocate and can report failure (process address
+ * spaces and the kernel heap; the panicking forms stay for boot-time
+ * permanent mappings).
+ *
+ * x86_64_pmem_try_alloc_pages() returns X86_64_PMEM_NONE when `count`
+ * contiguous pages cannot be found.  limit is a PHYSICAL constraint -- the
+ * allocated span must end at or below it -- and is deliberately unrelated
+ * to any virtual-address limit: pass 0 for "anywhere" (the common case,
+ * since the MMU can map any physical page below a 4 GiB virtual address),
+ * or a real device limit for DMA buffers.
+ *
+ * x86_64_pmem_free_pages() returns pages to the free list (coalescing with
+ * free neighbours).  It returns FALSE and changes nothing if the range is
+ * misaligned, beyond RAM, or overlaps memory that is already free, so a
+ * double free is detected and cannot corrupt the list.  Pages are NOT
+ * zeroed on free: whoever allocates them next decides (see procmem.h).
+ */
+#define X86_64_PMEM_NONE (~0ULL)
+
+UQUAD x86_64_pmem_try_alloc_pages(UQUAD count, UQUAD limit);
+BOOL x86_64_pmem_free_pages(UQUAD base, UQUAD count);
+
+/* Diagnostics for leak tests: pages dropped because the free-region list
+ * was full, and rejected (double/foreign) frees.  Both stay 0 normally. */
+UQUAD x86_64_pmem_lost_pages(void);
+UQUAD x86_64_pmem_bad_frees(void);
+
+/* Failure injection for the boot self-test: the n-th (1 = next)
+ * x86_64_pmem_try_alloc_pages() from now fails.  n <= 0 disarms it. */
+void x86_64_pmem_test_fail_after(LONG n);
 
 /* Total free bytes remaining across the whole free list (diagnostics). */
 UQUAD x86_64_pmem_free_bytes(void);

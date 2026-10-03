@@ -250,13 +250,33 @@ void x86_64_pmem_init(const void *efi_map, UQUAD map_size, UQUAD descriptor_size
     }
 }
 
-UQUAD x86_64_pmem_alloc_pages(UQUAD count)
+/*
+ * Test-only failure injection (see pmem.h): when fail_countdown is
+ * positive, the Nth try_alloc from now fails as if memory had run out
+ * (1 = the very next call); zero or negative leaves it disarmed.
+ */
+static LONG fail_countdown;
+
+/* Pages x86_64_pmem_free_pages() had to drop because the region list was
+ * full (diagnostics: a non-zero value means pages were leaked). */
+static UQUAD lost_pages;
+/* Rejected x86_64_pmem_free_pages() calls (double free, out of range). */
+static UQUAD bad_frees;
+
+UQUAD x86_64_pmem_try_alloc_pages(UQUAD count, UQUAD limit)
 {
     UQUAD want = count * X86_64_PAGE_SIZE;
     int i;
 
+    if (!count || want / X86_64_PAGE_SIZE != count)
+        return X86_64_PMEM_NONE;
+
+    if (fail_countdown > 0 && --fail_countdown == 0)
+        return X86_64_PMEM_NONE;
+
     for (i = 0; i < region_count; i++) {
-        if (regions[i].length >= want) {
+        if (regions[i].length >= want &&
+            (!limit || regions[i].base + want <= limit)) {
             UQUAD addr = regions[i].base;
 
             regions[i].base += want;
@@ -266,26 +286,103 @@ UQUAD x86_64_pmem_alloc_pages(UQUAD count)
         }
     }
 
-    panic("pmem: out of physical memory");
+    return X86_64_PMEM_NONE;
+}
+
+BOOL x86_64_pmem_free_pages(UQUAD base, UQUAD count)
+{
+    UQUAD want = count * X86_64_PAGE_SIZE;
+    UQUAD end = base + want;
+    int i, lo = -1, hi = -1, slot = -1;
+
+    if (!count || (base & (X86_64_PAGE_SIZE - 1)) ||
+        want / X86_64_PAGE_SIZE != count || end <= base ||
+        end > highest_addr) {
+        bad_frees++;
+        return FALSE;
+    }
+
+    /* A range overlapping anything already free is a double free (or a
+     * free of memory this allocator never owned): refuse it whole, so the
+     * free list can never describe the same page twice. */
+    for (i = 0; i < region_count; i++) {
+        if (!regions[i].length) {
+            if (slot < 0)
+                slot = i;
+            continue;
+        }
+        if (base < regions[i].base + regions[i].length && end > regions[i].base) {
+            bad_frees++;
+            return FALSE;
+        }
+        if (regions[i].base + regions[i].length == base)
+            lo = i;
+        else if (regions[i].base == end)
+            hi = i;
+    }
+
+    total_free += want;
+
+    if (lo >= 0) {
+        /* extend the region ending at base, then absorb its upper
+         * neighbour too if the freed range exactly bridges the two */
+        regions[lo].length += want;
+        if (hi >= 0) {
+            regions[lo].length += regions[hi].length;
+            regions[hi].length = 0;
+        }
+        return TRUE;
+    }
+    if (hi >= 0) {
+        regions[hi].base = base;
+        regions[hi].length += want;
+        return TRUE;
+    }
+    if (slot < 0) {
+        if (region_count >= MAX_REGIONS) {
+            /* cannot track it: leak the pages rather than corrupt the list */
+            total_free -= want;
+            lost_pages += count;
+            return TRUE;
+        }
+        slot = region_count++;
+    }
+    regions[slot].base = base;
+    regions[slot].length = want;
+    return TRUE;
+}
+
+UQUAD x86_64_pmem_alloc_pages(UQUAD count)
+{
+    UQUAD addr = x86_64_pmem_try_alloc_pages(count, 0);
+
+    if (addr == X86_64_PMEM_NONE)
+        panic("pmem: out of physical memory");
+    return addr;
 }
 
 UQUAD x86_64_pmem_alloc_pages_below(UQUAD count, UQUAD limit)
 {
-    UQUAD want = count * X86_64_PAGE_SIZE;
-    int i;
+    UQUAD addr = x86_64_pmem_try_alloc_pages(count, limit);
 
-    for (i = 0; i < region_count; i++) {
-        if (regions[i].length >= want && regions[i].base + want <= limit) {
-            UQUAD addr = regions[i].base;
+    if (addr == X86_64_PMEM_NONE)
+        panic("pmem: out of physical memory below requested limit");
+    return addr;
+}
 
-            regions[i].base += want;
-            regions[i].length -= want;
-            total_free -= want;
-            return addr;
-        }
-    }
+void x86_64_pmem_test_fail_after(LONG n)
+{
+    fail_countdown = n;
+}
 
-    panic("pmem: out of physical memory below requested limit");
+UQUAD x86_64_pmem_lost_pages(void)
+{
+    return lost_pages;
+}
+
+UQUAD x86_64_pmem_bad_frees(void)
+{
+    return bad_frees;
 }
 
 UQUAD x86_64_pmem_free_bytes(void)

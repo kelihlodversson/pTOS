@@ -43,16 +43,7 @@
 #define TPASIZE_QUANTUM (128*1024L)     /* see alloc_tpa() */
 
 #ifdef __x86_64__
-/*
- * bios/machine/pc-x86_64/memory.c's own low, sub-4GiB pool -- not
- * reached through mem.h/a shared header (bdos/build.mk's include path
- * has no bios/machine/pc-x86_64 entry, unlike bios/'s own), declared
- * directly here instead, matching this file's existing precedent of
- * inlining small x86-64-specific declarations (struct gouser_stack
- * below) rather than plumbing them through a shared header only two
- * functions need. Used by both alloc_tpa() and alloc_env() below.
- */
-extern UBYTE *x86_64_low_tpa_alloc(LONG needed);
+#include "procmem.h"
 #endif
 
 /*
@@ -82,6 +73,42 @@ void x86_64_mark_kernel_code_pd(PD *p)
     x86_64_kernel_code_pd = p;
 }
 
+/*
+ * Per-launch setup that can fail for lack of memory, done where Pexec()
+ * can still return ENSMEM: a kernel-code process runs in ring 0 and needs
+ * nothing; a real one gets its ring-3 address space here, owned by its
+ * KPROC record from now on (see kproc_prepare_user()).
+ */
+static BOOL x86_64_prepare_launch(PD *p)
+{
+    if (x86_64_kernel_code_pd == p)
+        return TRUE;
+    return kproc_prepare_user(p, run);
+}
+
+/* Drops the kernel-private record keyed by a freed process block. */
+static void x86_64_release_block(void *base)
+{
+    kproc_destroy((PD *)base);
+}
+
+/*
+ * Frees every process allocation `p` owns (the x86-64 counterpart of
+ * free_all_owned() for the MPB lists), dropping KPROC records of any
+ * basepages among them first.
+ */
+void x86_64_free_owned(PD *p)
+{
+    x86_64_procmem_free_owned(p, x86_64_release_block);
+}
+
+/* Mfree() of a process allocation: same release, one block. */
+long x86_64_procmem_mfree(void *addr)
+{
+    x86_64_release_block(addr);
+    return x86_64_procmem_free(addr) ? E_OK : EIMBA;
+}
+
 BOOL x86_64_take_kernel_code_pd(PD *p)
 {
     if (x86_64_kernel_code_pd != p)
@@ -90,6 +117,10 @@ BOOL x86_64_take_kernel_code_pd(PD *p)
     x86_64_kernel_code_pd = NULL;
     return TRUE;
 }
+#endif
+
+#ifndef __x86_64__
+#define x86_64_prepare_launch(p) TRUE
 #endif
 
 /*
@@ -210,6 +241,9 @@ static void ixterm(PD *r)
     if (has_alt_ram)
         free_all_owned(r, &pmdalt);
 #endif
+#ifdef __x86_64__
+    x86_64_free_owned(r);
+#endif
 }
 
 
@@ -316,7 +350,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         p = (PD *) tail;
         /* The allocation can fail; retain the parent's ownership until it
          * succeeds so an ENSMEM return leaves the retained basepage freeable. */
-        if (!kproc_create(p))
+        if (!kproc_create(p) || !x86_64_prepare_launch(p))
             return ENSMEM;
         /* set the owner of the memory to be this process */
         set_owner(p, p);
@@ -324,7 +358,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         FALLTHROUGH;
     case PE_GO:
         p = (PD *) tail;
-        if (flag == PE_GO && !kproc_create(p))
+        if (flag == PE_GO && (!kproc_create(p) || !x86_64_prepare_launch(p)))
             return ENSMEM;
         proc_go(p);
         /*
@@ -458,8 +492,17 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      */
     invalidate_instruction_cache(((UBYTE *)cur_p) + sizeof(PD), hdr.h01_tlen);
 
-    if (flag != PE_LOAD)
+    if (flag != PE_LOAD) {
+        if (!x86_64_prepare_launch(cur_p)) {
+            /* out of memory for the address space: nothing has run yet,
+             * so release exactly what this call allocated */
+            kproc_destroy(cur_p);
+            xmfree(USERPTR_TO_PTR(cur_p->p_env));
+            xmfree(cur_p);
+            return ENSMEM;
+        }
         proc_go(cur_p);
+    }
     return (long)cur_p;
 }
 
@@ -476,7 +519,7 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
      *
      * PTR_TO_USERPTR(), not the unchecked cast: p itself comes from
      * alloc_tpa(), whose __x86_64__ branch (bdos/proc.c) already draws
-     * from x86_64_low_tpa_alloc()'s low, sub-4GiB pool (bios/machine/
+     * from procmem's low, sub-4GiB window (bios/machine/
      * pc-x86_64/memory.c), so this can never truncate on that arch. */
     p->p_lowtpa = PTR_TO_USERPTR((UBYTE *)p);              /*  M01.01.06   */
     p->p_hitpa  = PTR_TO_USERPTR((UBYTE *)p  +  max);      /*  M01.01.06   */
@@ -500,7 +543,7 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
      * process's first instruction ever runs. The x86-64 SysV/x32 ABI's
      * process-entry convention requires (RSP + 8) to be a multiple of
      * 16 at that point (equivalently, RSP itself is 8 mod 16) -- p itself
-     * comes from a 16-byte-aligned allocator (x86_64_low_tpa_alloc()),
+     * comes from a page-aligned allocator (x86_64_procmem_alloc()),
      * but max (the process's own TPA size, ultimately from arbitrary
      * ELF segment sizes) is not, so p+max need not satisfy this (#356's
      * own review caught it: the first `call` in a real process can run
@@ -512,7 +555,7 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
     /* Same reasoning as p_lowtpa/p_hitpa above: p_cmdlin is a field
      * within p itself, and envptr comes from alloc_env(), whose own
      * __x86_64__ branch (bdos/proc.c) likewise draws from
-     * x86_64_low_tpa_alloc() rather than xmxalloc()'s higher-half pool
+     * x86_64_procmem_alloc() rather than xmxalloc()'s higher-half pool
      * (see #360). */
     p->p_xdta = PTR_TO_USERPTR((DTA *) p->p_cmdlin);       /* default p_xdta is p_cmdlin */
     p->p_env = PTR_TO_USERPTR(envptr);
@@ -586,7 +629,7 @@ static char *alloc_env(ULONG flags, char *env)
      * address outside every known MPB gracefully (see alloc_tpa()'s own
      * comment), exactly what happens for memory from this same pool.
      */
-    new_env = (char *)x86_64_low_tpa_alloc(size);
+    new_env = (char *)x86_64_procmem_alloc(size, PROCMEM_ZERO);
 #else
     new_env = xmxalloc(size, (flags&PF_TTRAMLOAD) ? MX_PREFTTRAM : MX_STRAM);
 #endif
@@ -639,7 +682,7 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
      * memtop (what pmd's free list is ultimately built from) point into
      * _end_os_stram, an ordinary higher-half kernel symbol that cannot
      * be forced low without an unrelated relocation overflow (see
-     * memory.c's own comment on x86_64_low_tpa_init() for why). Route
+     * procmem.c's own comment on x86_64_low_tpa_init() for why). Route
      * through that dedicated low pool instead.
      *
      * needed+15, not needed: init_pd_fields() (below) rounds p_hitpa
@@ -652,7 +695,7 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
      * Copilot's review of #356 caught this).
      */
     {
-        UBYTE *low = x86_64_low_tpa_alloc(needed + 15);
+        UBYTE *low = x86_64_procmem_alloc(needed + 15, PROCMEM_ZERO);
 
         if (low)
             *avail = needed + 15;
@@ -875,6 +918,9 @@ WORD xtermres(long blkln, WORD rc)
 #if CONF_WITH_ALT_RAM
     if (has_alt_ram)
         reserve_blocks(run, &pmdalt);
+#endif
+#ifdef __x86_64__
+    x86_64_procmem_disown(run);     /* stays resident: no longer freed with run */
 #endif
     xterm(rc);
 }

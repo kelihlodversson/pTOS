@@ -14,6 +14,10 @@
 #include "mem.h"
 #include "bdosstub.h"
 #include "biosext.h"
+#ifdef __x86_64__
+#include "kheap.h"
+#include "procmem.h"
+#endif
 
 /* The option gates only the record itself: the #else stubs stay in every
  * link so the public p_xdta field keeps working verbatim. */
@@ -29,11 +33,23 @@ struct kproc {
 #ifdef __x86_64__
     UBYTE *user_start;
     UBYTE *user_end;
+    X86_64_ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
 #endif
     KPROC *next;
 };
 
 static KPROC *kproc_list;
+
+/* KPROC records are kernel-only objects.  On x86-64 they live in the
+ * growable kernel heap, so the number of processes is bounded by memory
+ * and not by the fixed xmgetblk() pool; they are never GEMDOS memory. */
+#ifdef __x86_64__
+#define KPROC_ALLOC()   ((KPROC *)kalloc(sizeof(KPROC)))
+#define KPROC_FREE(k)   kfree(k)
+#else
+#define KPROC_ALLOC()   MGET(KPROC)
+#define KPROC_FREE(k)   xmfreblk(k)
+#endif
 
 static KPROC *kproc_find(PD *pd)
 {
@@ -51,7 +67,7 @@ BOOL kproc_create(PD *pd)
 
     if (kproc)
         return TRUE;
-    kproc = MGET(KPROC);
+    kproc = KPROC_ALLOC();
     if (!kproc)
         return FALSE;
     kproc->pd = pd;
@@ -74,7 +90,13 @@ void kproc_destroy(PD *pd)
         if ((*link)->pd == pd) {
             KPROC *kproc = *link;
             *link = kproc->next;
-            xmfreblk(kproc);
+#ifdef __x86_64__
+            /* Unlinked first, so the record is gone before its address
+             * space is torn down: a second kproc_destroy() for the same
+             * PD finds nothing and cannot free either twice. */
+            x86_64_aspace_destroy(kproc->aspace);
+#endif
+            KPROC_FREE(kproc);
             return;
         }
 }
@@ -122,6 +144,65 @@ DTAINFO *kproc_get_dta(PD *pd)
 }
 
 #ifdef __x86_64__
+BOOL kproc_prepare_user(PD *pd, PD *parent)
+{
+    KPROC *kproc = kproc_find(pd);
+    X86_64_ASPACE *as;
+    UQUAD env = (UQUAD)pd->p_env;
+    UQUAD tpa = (UQUAD)(uintptr_t)pd;
+    UQUAD hitpa = (UQUAD)pd->p_hitpa;
+    ULONG envbytes = x86_64_procmem_size((void *)(uintptr_t)env);
+
+    if (!kproc)
+        return FALSE;
+    if (kproc->aspace)
+        return TRUE;                /* already prepared */
+    if (!envbytes || hitpa <= tpa)
+        return FALSE;               /* not backed by process allocations */
+
+    as = x86_64_aspace_create();
+    if (!as)
+        return FALSE;
+
+    /*
+     * The process's own environment block and its basepage + TPA + stack
+     * (the PD is the first thing in the TPA allocation, p_hitpa its end):
+     * two separate allocations, wherever the window put them.  They are
+     * user read/write/execute because the flat x32 image has a single RWX
+     * segment.  Then its parent's basepage, kernel-only: xterm() writes
+     * the exit code through it from ring 0 while this address space is
+     * still loaded.  Any failure unwinds the whole address space.
+     */
+    if (!x86_64_aspace_map_procmem(as, env, envbytes,
+                                   ASPACE_PROT_WRITE | ASPACE_PROT_USER) ||
+        !x86_64_aspace_map_procmem(as, tpa, hitpa - tpa,
+                                   ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER) ||
+        !x86_64_aspace_map_procmem(as, (UQUAD)(uintptr_t)parent, sizeof(PD),
+                                   ASPACE_PROT_WRITE)) {
+        x86_64_aspace_destroy(as);
+        return FALSE;
+    }
+    kproc->aspace = as;
+    return TRUE;
+}
+
+UQUAD kproc_user_pml4(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    return (kproc && kproc->aspace) ? x86_64_aspace_pml4(kproc->aspace) : 0;
+}
+
+ULONG kproc_count(void)
+{
+    ULONG n = 0;
+    KPROC *kproc;
+
+    for (kproc = kproc_list; kproc; kproc = kproc->next)
+        n++;
+    return n;
+}
+
 BOOL kproc_validate_user_dta(UQUAD address)
 {
     return kproc_validate_user_range(address, sizeof(DTAINFO));
