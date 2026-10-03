@@ -863,6 +863,9 @@ static void proc_go(PD *p)
      * here would fault there instead of trapping at the point of
      * corruption. */
     p->p_parent = PTR_TO_USERPTR(run);
+#ifdef __x86_64__
+    kproc_set_parent(p, run);   /* the copy xterm() trusts */
+#endif
 
     /* create a stack at the end of the TPA */
     sp = (struct gouser_stack *) (p->p_hitpa - sizeof(struct gouser_stack));
@@ -949,7 +952,13 @@ void xterm(UWORD rc)
     userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
 
+#ifdef __x86_64__
+    /* not run->p_parent: that field is in the process's own writable
+     * memory, and run->p_dreg[0] is written through the result below */
+    run = kproc_get_parent(p);
+#else
     run = (PD *)USERPTR_TO_PTR(run->p_parent);
+#endif
     kproc_destroy(p);
 #ifdef __x86_64__
     if (x86_64_resident_pd == p) {      /* Ptermres, now that nothing maps p */
