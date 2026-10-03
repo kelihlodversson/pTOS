@@ -86,10 +86,34 @@ static BOOL x86_64_prepare_launch(PD *p)
     return kproc_prepare_user(p, run);
 }
 
-/* Drops the kernel-private record keyed by a freed process block. */
+static void release_pd_files(PD *r);
+
+/* Drops the kernel-private record keyed by a freed process block.  A
+ * basepage that was created (inheriting its parent's standard handles and
+ * current directories in init_pd_files()) but never launched still holds
+ * those references, and nothing else will ever release them: do it now,
+ * exactly once -- the record is the proof it has not been done. */
 static void x86_64_release_block(void *base)
 {
+    if (kproc_discard((PD *)base))
+        release_pd_files((PD *)base);
+}
+
+/* Ptermres: an unlaunched child basepage the terminating process owns stays
+ * allocated, but its record is dropped like reserve_blocks() drops it. */
+static void x86_64_drop_child_record(void *base)
+{
     kproc_destroy((PD *)base);
+}
+
+/* Pending Ptermres: applied by xterm() once the process's address space is
+ * gone, because only then can the unused tail of its block be released. */
+static PD *x86_64_resident_pd;
+static ULONG x86_64_resident_len;
+
+void x86_64_make_resident(PD *p, ULONG keep_bytes)
+{
+    x86_64_procmem_keep(p, keep_bytes, x86_64_drop_child_record);
 }
 
 /*
@@ -202,7 +226,12 @@ static void free_all_owned(PD *p, MPB *mpb)
  *
  * @r: PD of process to terminate
  */
-static void ixterm(PD *r)
+/*
+ * release_pd_files - drop the file handles and current-directory references
+ * a process holds.  Called when the process terminates and, on x86-64, for
+ * a basepage discarded before it ever ran.
+ */
+static void release_pd_files(PD *r)
 {
     WORD h;
     WORD i;
@@ -239,6 +268,11 @@ static void ixterm(PD *r)
      */
     pfs_proc_exit(r);
 #endif
+}
+
+static void ixterm(PD *r)
+{
+    release_pd_files(r);
 
     /* free each item in the allocated list that is owned by 'r' */
 
@@ -866,6 +900,9 @@ static void proc_go(PD *p)
 #endif
 
     /* the new process is the one to run */
+#ifdef __x86_64__
+    kproc_mark_started(p);
+#endif
     run = (PD *)p;
 
     gouser();
@@ -902,6 +939,12 @@ void xterm(UWORD rc)
 
     run = (PD *)USERPTR_TO_PTR(run->p_parent);
     kproc_destroy(p);
+#ifdef __x86_64__
+    if (x86_64_resident_pd == p) {      /* Ptermres, now that nothing maps p */
+        x86_64_make_resident(p, x86_64_resident_len);
+        x86_64_resident_pd = NULL;
+    }
+#endif
     ixterm(p);
     /* gouser() will store the current value of D0 in the active PD
      * so it cannot be used here. See proc_go() above.
@@ -926,7 +969,11 @@ WORD xtermres(long blkln, WORD rc)
         reserve_blocks(run, &pmdalt);
 #endif
 #ifdef __x86_64__
-    x86_64_procmem_disown(run);     /* stays resident: no longer freed with run */
+    /* The window's blocks are not MPB descriptors, so xsetblk() above cannot
+     * shrink them: xterm() does it, and makes the rest resident, once the
+     * address space that maps them is destroyed. */
+    x86_64_resident_pd = run;
+    x86_64_resident_len = (ULONG)blkln;
 #endif
     xterm(rc);
 }

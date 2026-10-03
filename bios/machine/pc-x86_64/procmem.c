@@ -277,15 +277,32 @@ void x86_64_procmem_free_owned(const void *owner, void (*pre_free)(void *base))
     }
 }
 
-void x86_64_procmem_disown(const void *owner)
+void x86_64_procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *base))
 {
     struct alloc *a;
 
     if (!owner)
         return;
-    for (a = allocs; a; a = a->next)
-        if (a->owner == owner)
-            a->owner = NULL;
+    for (a = allocs; a; a = a->next) {
+        if (a->owner != owner)
+            continue;
+        if (a->va == (UQUAD)(uintptr_t)owner) {
+            /* the owner's own block: keep only the requested prefix, in
+             * whole pages, and give the tail back -- unless a live address
+             * space can still reach it */
+            ULONG keep = (ULONG)((keep_bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE);
+
+            if (keep_bytes && keep && keep < a->pages && !a->pins) {
+                set_pages((ULONG)((a->va - X86_64_LOW_TPA_VIRT_BASE) / X86_64_PAGE_SIZE) + keep,
+                          a->pages - keep, FALSE);
+                free_pages += a->pages - keep;
+                a->pages = keep;
+            }
+        } else if (pre_keep) {
+            pre_keep((void *)(uintptr_t)a->va);
+        }
+        a->owner = NULL;
+    }
 }
 
 void x86_64_procmem_stats(PROCMEM_STATS *stats)

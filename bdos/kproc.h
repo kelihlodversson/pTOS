@@ -28,6 +28,11 @@ DTAINFO *kproc_get_dta(PD *pd);
  * succeeded for pd first.
  */
 BOOL kproc_prepare_user(PD *pd, PD *parent);
+void kproc_mark_started(PD *pd);        /* proc_go() launched it */
+/* kproc_destroy() that also says whether the record belonged to a basepage
+ * that was never launched, whose inherited file and directory references
+ * are therefore still held. */
+BOOL kproc_discard(PD *pd);
 UQUAD kproc_user_pml4(PD *pd);          /* 0 if not prepared */
 ULONG kproc_count(void);                /* live records, for leak tests */
 BOOL kproc_validate_user_dta(UQUAD address);

@@ -42,9 +42,11 @@
 #include "pc_x86_64_memory.h"
 #include "io.h"
 #include "../../../bdos/kproc.h"
+#include "../../../bdos/fs.h"
 
 extern void set_owner(void *addr, PD *p);
 extern void x86_64_free_owned(PD *p);
+extern void x86_64_make_resident(PD *p, ULONG keep_bytes);
 extern PD *run;
 
 #define PAGE            X86_64_PAGE_SIZE
@@ -350,11 +352,33 @@ static void test_procmem(void)
         x86_64_procmem_free_owned(&owner_a, NULL);      /* again: nothing */
         x86_64_procmem_free_owned(NULL, NULL);          /* NULL is not "all" */
         CHECK(x86_64_procmem_size(perm), "permanent blocks never owned-freed");
-        x86_64_procmem_disown(&owner_b);
+        x86_64_procmem_keep(&owner_b, 0, NULL);
         x86_64_procmem_free_owned(&owner_b, NULL);
-        CHECK(x86_64_procmem_size(b1), "disowned block is resident");
+        CHECK(x86_64_procmem_size(b1), "kept block is resident");
         x86_64_procmem_free(b1);
         x86_64_procmem_free(perm);
+    }
+
+    /* Ptermres: the owner's block is cut back to the requested pages and
+     * the tail returned; the rest of what it owns is kept, not freed */
+    {
+        UBYTE *blk = x86_64_procmem_alloc(4 * PAGE, 0);
+        void *other = x86_64_procmem_alloc(PAGE, 0);
+        PROCMEM_STATS before, after;
+
+        x86_64_procmem_set_owner(blk, blk);
+        x86_64_procmem_set_owner(other, blk);
+        x86_64_procmem_stats(&before);
+        pre_free_calls = 0;
+        x86_64_procmem_keep(blk, PAGE + 1, count_pre_free);
+        x86_64_procmem_stats(&after);
+        CHECK(x86_64_procmem_size(blk) == 2 * PAGE, "Ptermres keeps whole pages of the prefix");
+        CHECK(after.free_pages == before.free_pages + 2, "unused tail returned");
+        CHECK(pre_free_calls == 1 && x86_64_procmem_size(other), "other owned block kept");
+        x86_64_procmem_free_owned(blk, NULL);
+        CHECK(x86_64_procmem_size(blk) && x86_64_procmem_size(other), "resident blocks survive owner cleanup");
+        x86_64_procmem_free(blk);
+        x86_64_procmem_free(other);
     }
 
     same(&s, "procmem");
@@ -638,6 +662,53 @@ static void test_lifecycle(void)
     }
     CHECK(i == LIFECYCLES, "abandoned basepage cycles");
     same(&s, "abandoned basepages");
+
+    /* an abandoned basepage gives back the directory references it inherited
+     * (init_pd_files() took them), exactly once */
+    {
+        int d;
+        WORD saved_use;
+
+        for (d = 0; d < NUMCURDIR && !run->p_curdir[d]; d++)
+            ;
+        if (d < NUMCURDIR) {
+            saved_use = dirtbl[run->p_curdir[d]].use;
+            pd = new_basepage();
+            CHECK(pd && dirtbl[run->p_curdir[d]].use == saved_use + 1, "basepage inherits a directory ref");
+            if (pd) {
+                env = USERPTR_TO_PTR(pd->p_env);
+                CHECK(Mfree(pd) == 0, "Mfree abandoned basepage");
+                Mfree(env);
+                CHECK(dirtbl[run->p_curdir[d]].use == saved_use, "inherited directory ref released once");
+            }
+        }
+    }
+
+    /* Ptermres with an unlaunched child basepage: its record goes, the
+     * allocations stay (kept resident), nothing is left to leak later */
+    {
+        PD *parent = new_basepage();
+        PD *child = new_basepage();
+        ULONG kp = kproc_count();
+
+        if (parent && child) {
+            void *cenv = USERPTR_TO_PTR(child->p_env);
+            void *penv = USERPTR_TO_PTR(parent->p_env);
+
+            set_owner(parent, parent);
+            set_owner(penv, parent);
+            set_owner(child, parent);
+            set_owner(cenv, parent);
+            x86_64_make_resident(parent, PAGE);
+            CHECK(kproc_count() == kp - 1, "child KPROC dropped at Ptermres");
+            CHECK(x86_64_procmem_size(child) && x86_64_procmem_size(cenv), "child blocks stay resident");
+            kproc_destroy(parent);              /* what xterm() does for itself */
+            x86_64_procmem_free(child);
+            x86_64_procmem_free(cenv);
+            x86_64_procmem_free(parent);
+            x86_64_procmem_free(penv);
+        }
+    }
 
     /* an allocation failure while preparing the launch is reported and
      * leaves nothing behind -- tried at every allocation point */

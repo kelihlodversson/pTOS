@@ -39,6 +39,7 @@ struct kproc {
     UBYTE *user_start;
     UBYTE *user_end;
     X86_64_ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
+    BOOL started;               /* proc_go() has launched it */
 #endif
     KPROC *next;
 };
@@ -118,6 +119,25 @@ void kproc_destroy(PD *pd)
             return;
         }
 }
+
+#ifdef __x86_64__
+void kproc_mark_started(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    if (kproc)
+        kproc->started = TRUE;
+}
+
+BOOL kproc_discard(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+    BOOL unstarted = kproc && !kproc->started;
+
+    kproc_destroy(pd);
+    return unstarted;
+}
+#endif
 
 void kproc_set_dta(PD *pd, DTAINFO *dta)
 {

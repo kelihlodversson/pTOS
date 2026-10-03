@@ -74,12 +74,17 @@ UQUAD x86_64_procmem_phys_of(UQUAD va);
  * names the process that dies with the block, NULL (the initial state)
  * means permanent.  free_owned() releases every block owned by `owner`,
  * calling pre_free(base) first for each (so the caller can drop anything
- * keyed by that address, such as a KPROC record); disown() makes them
- * permanent (Ptermres).  `owner` is only an identity, never dereferenced.
+ * keyed by that address, such as a KPROC record).  keep() is Ptermres: the
+ * owner's blocks become permanent, and the owner's own block -- the one
+ * starting at the address `owner` -- is cut back to keep_bytes (rounded up
+ * to whole pages, 0 meaning "all of it") when no live address space maps
+ * it; every other owned block is passed to pre_keep(base) first, for the
+ * same kind of per-address cleanup.  `owner` is only an identity, never
+ * dereferenced.
  */
 void x86_64_procmem_set_owner(const void *p, const void *owner);
 void x86_64_procmem_free_owned(const void *owner, void (*pre_free)(void *base));
-void x86_64_procmem_disown(const void *owner);
+void x86_64_procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *base));
 
 typedef struct {
     ULONG live_allocs;      /* allocations not yet freed */

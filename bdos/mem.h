@@ -59,6 +59,7 @@ void xmfremd(MD *md);       /* xmfremd - free an MD */
  * descriptors: Mfree() and process teardown reach them through these. */
 long x86_64_procmem_mfree(void *addr);
 void x86_64_free_owned(PD *p);
+void x86_64_make_resident(PD *p, ULONG keep_bytes);   /* Ptermres */
 #endif
 
 /* init os memory */
