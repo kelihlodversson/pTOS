@@ -176,7 +176,9 @@ ULONG x86_64_aspace_table_pages(const X86_64_ASPACE *as);
  * and neither sees the other's writes.  The pages are owned by `as` and
  * freed with it, exactly once.  Fails (FALSE, nothing mapped or allocated
  * left behind) if any page of the range is already mapped, a constraint is
- * violated or memory runs out.
+ * violated or memory runs out.  "Nothing left behind" means no mapping,
+ * backing page or page-table page: the address space's internal bookkeeping
+ * vectors may keep extra capacity until it is destroyed.
  */
 BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
 
@@ -201,7 +203,10 @@ BOOL x86_64_aspace_user_range_ok(const X86_64_ASPACE *as, UQUAD va, UQUAD bytes,
 /*
  * Kernel copies to and from a process's memory through the direct map, after
  * the same check; they work whichever address space is loaded and cannot
- * fault.  FALSE, with nothing copied, if the range is not valid.
+ * fault.  FALSE, with nothing copied, if the range is not valid or any page
+ * of it is not RAM the physical allocator owns (a device or bogus physical
+ * page mapped with x86_64_aspace_map_page() is valid for ring 3 but has no
+ * safe direct-map alias; it needs a separate access mechanism).
  */
 BOOL x86_64_aspace_copy_from_user(const X86_64_ASPACE *as, void *dst, UQUAD va, ULONG bytes);
 BOOL x86_64_aspace_copy_to_user(const X86_64_ASPACE *as, UQUAD va, const void *src, ULONG bytes);

@@ -280,9 +280,31 @@ static void copy_user(const X86_64_ASPACE *as, UBYTE *kernel, UQUAD va, ULONG by
     }
 }
 
+/* The kernel copies through the physical direct map, so every page must be RAM
+ * the allocator owns: a page that is mapped for the process but is device
+ * memory, or not RAM at all, is valid for ring 3 yet cannot be copied here --
+ * refuse it rather than dereference an alias that may fault. */
+static BOOL range_copyable(const X86_64_ASPACE *as, UQUAD va, UQUAD bytes, BOOL write)
+{
+    UQUAD page, last;
+
+    if (!x86_64_aspace_user_range_ok(as, va, bytes, write))
+        return FALSE;
+    last = (va + bytes - 1) & ~(X86_64_PAGE_SIZE - 1);
+    for (page = va & ~(X86_64_PAGE_SIZE - 1); ; page += X86_64_PAGE_SIZE) {
+        UQUAD phys;
+
+        if (!x86_64_aspace_translate(as, page, &phys, NULL) || !x86_64_pmem_is_allocated(phys))
+            return FALSE;
+        if (page == last)
+            break;
+    }
+    return TRUE;
+}
+
 BOOL x86_64_aspace_copy_from_user(const X86_64_ASPACE *as, void *dst, UQUAD va, ULONG bytes)
 {
-    if (!x86_64_aspace_user_range_ok(as, va, bytes, FALSE))
+    if (!range_copyable(as, va, bytes, FALSE))
         return FALSE;
     copy_user(as, dst, va, bytes, FALSE);
     return TRUE;
@@ -290,7 +312,7 @@ BOOL x86_64_aspace_copy_from_user(const X86_64_ASPACE *as, void *dst, UQUAD va, 
 
 BOOL x86_64_aspace_copy_to_user(const X86_64_ASPACE *as, UQUAD va, const void *src, ULONG bytes)
 {
-    if (!x86_64_aspace_user_range_ok(as, va, bytes, TRUE))
+    if (!range_copyable(as, va, bytes, TRUE))
         return FALSE;
     copy_user(as, (UBYTE *)src, va, bytes, TRUE);
     return TRUE;

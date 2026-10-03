@@ -125,6 +125,16 @@ static BOOL same(const SNAP *a, const char *what)
     return ok;
 }
 
+/* An address space the test cannot go on without: failing to get one is a
+ * reported failure, never a silent skip of what follows. */
+static X86_64_ASPACE *must_create(const char *what)
+{
+    X86_64_ASPACE *as = x86_64_aspace_create();
+
+    CHECK(as != NULL, what);
+    return as;
+}
+
 /* ---- physical page allocator ------------------------------------- */
 
 static void test_pmem(void)
@@ -416,6 +426,7 @@ static void test_aspace(void)
     ULONG i, k, failed = 0;
     UQUAD flags;
     UQUAD scratch;
+    UBYTE buf_dummy[16];
 
     snap(&s);
     mem = x86_64_procmem_alloc(3 * PAGE, PROCMEM_ZERO);
@@ -442,7 +453,7 @@ static void test_aspace(void)
     same(&s2, "aspace cycles");
 
     /* a block mapped into a live address space cannot be freed or reused */
-    as = x86_64_aspace_create();
+    as = must_create("address space for the pin test");
     if (as) {
         CHECK(x86_64_aspace_map_procmem(as, (UQUAD)(uintptr_t)mem, 3 * PAGE,
                                         ASPACE_PROT_WRITE | ASPACE_PROT_USER), "map for pin");
@@ -472,8 +483,7 @@ static void test_aspace(void)
     CHECK(failed >= 4, "injected failures were exercised");
 
     /* virtual (32-bit ABI) and physical limits are separate constraints */
-    as = x86_64_aspace_create();
-    CHECK(as != NULL, "create for constraints");
+    as = must_create("address space for the constraint tests");
     if (as) {
         scratch = x86_64_pmem_try_alloc_pages(1, 0);
         flags = ASPACE_PROT_WRITE | ASPACE_PROT_USER;
@@ -492,6 +502,13 @@ static void test_aspace(void)
               "phys above 4 GiB at low va");
         CHECK(x86_64_aspace_map_page(as, 0x40001000ULL, 0xFFFFF000000ULL, ASPACE_PROT_USER),
               "phys far above 4 GiB at low va");
+        /* ring 3 may be given a device or bogus physical page, but the kernel
+         * must refuse to copy through the direct map to it, not fault */
+        CHECK(x86_64_aspace_user_range_ok(as, 0x40000000ULL, 8, TRUE), "device-style page is valid for ring 3");
+        CHECK(!x86_64_aspace_copy_from_user(as, buf_dummy, 0x40000000ULL, 8) &&
+              !x86_64_aspace_copy_to_user(as, 0x40000000ULL, buf_dummy, 8) &&
+              !x86_64_aspace_copy_from_user(as, buf_dummy, 0x40000FFCULL, 8),
+              "copy to or from a page that is not owned RAM is refused");
         /* only live process memory can be mapped */
         CHECK(!x86_64_aspace_map_procmem(as, 0x500000, PAGE, flags), "outside window refused");
         x86_64_pmem_free_pages(scratch, 1);
@@ -499,7 +516,7 @@ static void test_aspace(void)
     }
 
     /* tearing down the address space that is currently loaded is safe */
-    as = x86_64_aspace_create();
+    as = must_create("address space to tear down while loaded");
     if (as) {
         UQUAD flagsave;
 
@@ -520,6 +537,7 @@ static PD *new_basepage(void)
 {
     long rc = Pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", NULL);
 
+    CHECK(rc > 0, "basepage creation");     /* never a silent skip */
     return (rc > 0) ? (PD *)(uintptr_t)rc : NULL;
 }
 
@@ -553,9 +571,8 @@ static void test_isolation(void)
     ULONG i, k, failed = 0;
 
     snap(&s);
-    a = x86_64_aspace_create();
-    b = x86_64_aspace_create();
-    CHECK(a && b, "two address spaces");
+    a = must_create("first isolation address space");
+    b = must_create("second isolation address space");
     if (!a || !b) {
         x86_64_aspace_destroy(a);
         x86_64_aspace_destroy(b);
@@ -649,8 +666,8 @@ static void test_isolation(void)
 
     /* the documented minimum layout for an EmuCON-sized process fits, in two
      * address spaces at once */
-    a = x86_64_aspace_create();
-    b = x86_64_aspace_create();
+    a = must_create("first layout address space");
+    b = must_create("second layout address space");
     if (a && b) {
         UWORD rw = ASPACE_PROT_WRITE | ASPACE_PROT_USER;
 
@@ -822,6 +839,7 @@ static void test_kproc_ranges(void)
         return;
     while (n < st.total_pages && (v[n] = x86_64_procmem_alloc(PAGE, 0)) != NULL)
         n++;
+    CHECK(n >= 6, "enough window pages to fragment");
     if (n >= 6) {
         x86_64_procmem_free(v[n - 4]);          /* hole for the environment */
         x86_64_procmem_free(v[n - 1]);          /* hole for the basepage */
