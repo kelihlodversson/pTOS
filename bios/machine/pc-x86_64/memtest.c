@@ -68,10 +68,26 @@ typedef struct {
     KHEAP_STATS heap;
     PROCMEM_STATS pm;
     ULONG kprocs;
+    ULONG dir_refs;             /* current-directory references run holds + children took */
 } SNAP;
+
+/* Sum of the use counts of every directory run has a reference to: a basepage
+ * that inherits and fails to give one back shows up here, which the allocator
+ * counters cannot see. */
+static ULONG dir_refs(void)
+{
+    ULONG sum = 0;
+    int d;
+
+    for (d = 0; d < NUMCURDIR; d++)
+        if (run->p_curdir[d])
+            sum += dirtbl[run->p_curdir[d]].use;
+    return sum;
+}
 
 static void snap(SNAP *s)
 {
+    s->dir_refs = dir_refs();
     s->pmem_free = x86_64_pmem_free_bytes();
     s->pmem_bad = x86_64_pmem_bad_frees();
     kheap_stats(&s->heap);
@@ -92,16 +108,18 @@ static BOOL same(const SNAP *a, const char *what)
          a->heap.pages == b.heap.pages &&
          a->pm.live_allocs == b.pm.live_allocs &&
          a->pm.free_pages == b.pm.free_pages &&
-         a->kprocs == b.kprocs;
+         a->kprocs == b.kprocs && a->dir_refs == b.dir_refs;
     if (!ok) {
         kcprintf("memtest FAIL: %s leaked: pmem %ld->%ld heap blocks %ld->%ld "
-                 "pages %ld->%ld window allocs %ld->%ld free %ld->%ld kprocs %ld->%ld\n",
+                 "pages %ld->%ld window allocs %ld->%ld free %ld->%ld kprocs %ld->%ld "
+                 "dir refs %ld->%ld\n",
                  what, (long)a->pmem_free, (long)b.pmem_free,
                  (long)a->heap.live_blocks, (long)b.heap.live_blocks,
                  (long)a->heap.pages, (long)b.heap.pages,
                  (long)a->pm.live_allocs, (long)b.pm.live_allocs,
                  (long)a->pm.free_pages, (long)b.pm.free_pages,
-                 (long)a->kprocs, (long)b.kprocs);
+                 (long)a->kprocs, (long)b.kprocs,
+                 (long)a->dir_refs, (long)b.dir_refs);
         failures++;
     }
     return ok;
@@ -571,9 +589,8 @@ static void test_kproc_ranges(void)
             CHECK(!kproc_validate_user_range(gap, 8), "page between them does not");
             CHECK(!kproc_validate_user_range(env, tpa - env + 8), "range spanning the gap does not");
             run = saved;
-            kproc_destroy(pd);
-            x86_64_procmem_free((void *)(uintptr_t)env);
-            x86_64_procmem_free(pd);
+            Mfree(pd);                          /* releases what it inherited */
+            Mfree((void *)(uintptr_t)env);
         }
     }
     for (i = 0; i < n; i++)
@@ -630,10 +647,9 @@ static void test_lifecycle(void)
         pd->p_env = envv;
         CHECK(!kproc_user_pml4(pd), "refused launches left no address space");
         CHECK(kproc_prepare_user(pd, run), "unmodified basepage still launches");
-        x86_64_free_owned(pd);                  /* owner not set: nothing yet */
-        kproc_destroy(pd);
-        x86_64_procmem_free(env);
-        x86_64_procmem_free(pd);
+        set_owner(pd, pd);
+        set_owner(env, pd);
+        x86_64_free_owned(pd);                  /* maps, references, blocks */
         x86_64_procmem_free(other);
     }
 
@@ -651,8 +667,7 @@ static void test_lifecycle(void)
         CHECK(!kproc_prepare_user(pd, run), "reused environment address refused");
         CHECK(!x86_64_procmem_pinned(stranger), "stranger's block was not mapped");
         x86_64_procmem_free(stranger);
-        kproc_destroy(pd);
-        x86_64_procmem_free(pd);
+        Mfree(pd);
     }
 
     /* Mfree() of a live process's own block is refused, not applied */
@@ -720,11 +735,12 @@ static void test_lifecycle(void)
             x86_64_make_resident(parent, PAGE);
             CHECK(kproc_count() == kp - 1, "child KPROC dropped at Ptermres");
             CHECK(x86_64_procmem_size(child) && x86_64_procmem_size(cenv), "child blocks stay resident");
-            kproc_destroy(parent);              /* what xterm() does for itself */
-            x86_64_procmem_free(child);
-            x86_64_procmem_free(cenv);
-            x86_64_procmem_free(parent);
-            x86_64_procmem_free(penv);
+            /* the terminating parent's own record and references go in
+             * xterm()/ixterm(); an unlaunched one is released by Mfree() */
+            Mfree(parent);
+            Mfree(child);                       /* its references went at Ptermres */
+            Mfree(cenv);
+            Mfree(penv);
         }
     }
 
@@ -754,6 +770,13 @@ void x86_64_memtest_run(void)
     SNAP s;
 
     failures = 0;
+
+    /* Give the boot process a current-directory reference, so that every
+     * basepage created below inherits (and must give back) a real one;
+     * without it the reference checks would be vacuous. */
+    if (Dsetpath("\\") == 0)
+        CHECK(dir_refs() > 0, "boot process holds a directory reference");
+
     snap(&s);
 
     test_pmem();

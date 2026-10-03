@@ -100,10 +100,22 @@ static void x86_64_release_block(void *base)
 }
 
 /* Ptermres: an unlaunched child basepage the terminating process owns stays
- * allocated, but its record is dropped like reserve_blocks() drops it. */
+ * allocated, but its record goes, like reserve_blocks() drops it.  The record
+ * is also what says its inherited file and directory references are still
+ * held, so they are released now and cleared from the basepage: whoever
+ * launches or frees it later must not release them a second time. */
 static void x86_64_drop_child_record(void *base)
 {
-    kproc_destroy((PD *)base);
+    PD *child = (PD *)base;
+    int i;
+
+    if (kproc_discard(child)) {
+        release_pd_files(child);
+        for (i = 0; i < NUMSTD; i++)
+            child->p_uft[i] = 0;
+        for (i = 0; i < NUMCURDIR; i++)
+            child->p_curdir[i] = 0;
+    }
 }
 
 /* Pending Ptermres: applied by xterm() once the process's address space is
