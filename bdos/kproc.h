@@ -50,6 +50,7 @@ BOOL kproc_discard(PD *pd);
  */
 BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);
 UQUAD kproc_user_entry(PD *pd);         /* image entry point; 0 if none */
+UQUAD kproc_user_stack(PD *pd);         /* initial RSP of an image's own stack; 0 if none */
 UQUAD kproc_user_pml4(PD *pd);          /* 0 if not prepared */
 X86_64_ASPACE *kproc_user_aspace(PD *pd);   /* NULL if none (tests) */
 ULONG kproc_count(void);                /* live records, for leak tests */

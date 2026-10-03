@@ -46,6 +46,7 @@ struct kproc {
     PD *parent;                 /* who launched it: the trusted copy of p_parent */
     const X32_IMAGE *image;     /* built-in program to map private, or NULL */
     UQUAD entry;                /* its entry point once loaded, else 0 */
+    UQUAD stack_top;            /* its private stack's top once loaded, else 0 */
 #endif
     KPROC *next;
 };
@@ -265,11 +266,22 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
         x86_64_aspace_destroy(as);
         return FALSE;
     }
-    if (kproc->image && !x86_64_x32image_load(as, kproc->image, &kproc->entry)) {
+    /*
+     * A built-in image gets its segments and a stack of its own, as private
+     * pages at the fixed addresses of include/procmem.h's layout.  (A bare
+     * basepage's TPA is no stack: it is the basepage and little else.)
+     */
+    if (kproc->image &&
+        (!x86_64_x32image_load(as, kproc->image, &kproc->entry) ||
+         !x86_64_aspace_map_private(as, X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE,
+                                    X86_64_USER_STACK_SIZE,
+                                    ASPACE_PROT_WRITE | ASPACE_PROT_USER))) {
         kproc->entry = 0;
         x86_64_aspace_destroy(as);
         return FALSE;
     }
+    if (kproc->image)
+        kproc->stack_top = X86_64_USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
     kproc->aspace = as;
     return TRUE;
 }
@@ -282,6 +294,13 @@ BOOL kproc_set_image(PD *pd, const X32_IMAGE *image)
         return FALSE;
     kproc->image = image;
     return TRUE;
+}
+
+UQUAD kproc_user_stack(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    return (kproc && kproc->aspace) ? kproc->stack_top : 0;
 }
 
 UQUAD kproc_user_entry(PD *pd)

@@ -35,17 +35,15 @@
  * whatever of gem_main()'s own call chain was still live there).
  *
  * A *real*, ring-3 process (the other branch of gouser() below, via
- * x86_64_enter_user()) is a different problem this does NOT solve:
- * there is no suspended C call chain to resume there at all (control
- * left the kernel entirely via iretq), so termuser() still panics for
- * that case -- a genuine per-process kernel stack (or an equivalent)
- * remains #334's own open "context switch support" scope item, tracked
- * separately from the kernel-code-process reentrancy this file's own
- * x86_64_kexec_resume now handles. A real process launched *while*
- * nested inside a kernel-code-process chain (e.g. eventually double-
- * clicking a real .PRG from the desktop) would still panic incorrectly
- * today -- not yet reachable by anything in this tree (no such launch
- * path from AES exists yet), but worth revisiting once one does.
+ * x86_64_enter_user()) leaves the kernel entirely by iretq, so there is no
+ * suspended C call chain to resume -- but gouser() saves a jmp_buf of its own
+ * right before iretq, and termuser() (reached from xterm() once the address
+ * space is gone, whether by Pterm() or by a fault) unwinds to it, exactly as
+ * for a kernel-code process.  That resumes the launcher with the exit code,
+ * which is what the built-in EmuCON, and its parent bios.c, rely on.  One
+ * syscall stack is shared, so only one ring-3 process can be running: a
+ * launch from inside its system call is refused (x86_64_user_active(); per-
+ * process kernel stacks are #399).
  *
  *  - enter()/bdos_trap2() are never actually invoked as functions on this
  *    arch: bdos/bdosmain.c only ever takes their *address* (Setexc(0x21,
@@ -91,7 +89,7 @@ void termuser(void) NORETURN;
 /* declared directly like the above: proc.h needs file-system types this file
  * has no other use for */
 extern void xterm(UWORD rc) NORETURN;               /* bdos/proc.c */
-void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2) NORETURN;
+void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2, UQUAD rsp) NORETURN;
 BOOL x86_64_user_active(void);
 
 void enter(void)
@@ -103,11 +101,9 @@ void bdos_trap2(void)
 }
 
 /*
- * LIFO stack of one jmp_buf per currently-suspended "kernel-code
- * process" launch nesting level -- see this file's own top comment.
- * NULL when nothing is currently launched this way (the common case:
- * an ordinary real-process Pterm() then correctly falls through to
- * termuser()'s own panic below, #334's own remaining scope).
+ * LIFO stack of one jmp_buf per currently-suspended launch nesting level
+ * (a "kernel-code process" or a ring-3 one) -- see this file's own top
+ * comment.  NULL when nothing is currently launched.
  */
 static jmp_buf *x86_64_kexec_resume;
 
@@ -247,28 +243,25 @@ void gouser(void)
          * #352 tracks whether (and how safely) a real process should
          * ever see it.
          *
-         * No per-process kernel stack or termuser()-style resumption
-         * yet for *this* branch (see this file's own top comment and
-         * termuser()'s own): this is the one-shot primitive for #334's
-         * "run a single process to completion" milestone, not the full
-         * parent/child coroutine multiple concurrent real processes
-         * would need. (The *other* branch of gouser(), above -- a
-         * "kernel-code process" -- does have real reentrant resumption,
-         * via x86_64_kexec_resume; it just doesn't need a distinct
-         * kernel stack to get it, since it's ordinary nested C code.)
+         * Both branches resume the launcher at Pterm() the same way (the
+         * jmp_buf saved below), so Pexec() returns the exit code.  What a
+         * ring-3 process does not get yet is a kernel stack of its own (see
+         * this file's own top comment): #399.
          */
         UQUAD pml4_phys = kproc_user_pml4(p);
         UQUAD entry_rip = kproc_user_entry(p);
-        /* p_hitpa was rounded in init_pd_fields() to RSP = 8 (mod 16), as
-         * doc/process-entry.txt requires; the KPROC snapshot bounds it, so
-         * a launcher that rewrote it after PE_BASEPAGE cannot move the
-         * stack outside the process's own mapped TPA. */
-        UQUAD user_rsp = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_hitpa);
+        /* A built-in image has a private stack of its own, from the KPROC
+         * record; any other process starts at its p_hitpa, which
+         * init_pd_fields() rounded to RSP = 8 (mod 16).  Either way the
+         * entry contract of doc/process-entry.txt: RSP + 8 divisible by 16. */
+        UQUAD user_rsp = kproc_user_stack(p);
         jmp_buf buf;
         jmp_buf *saved_resume = x86_64_kexec_resume;
 
         if (!entry_rip)         /* not a built-in image: the loader's own text */
             entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
+        if (!user_rsp)
+            user_rsp = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_hitpa);
         if (!pml4_phys)
             panic("x86-64: process launched without an address space\n");
         if ((user_rsp & 15) != 8)
@@ -303,10 +296,15 @@ void gouser(void)
  * exception stack, in ring 0, with the process's address space still
  * loaded; xterm() tears that down and never returns here.
  */
-void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2)
+void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2, UQUAD rsp)
 {
-    kcprintf("x32 process fault: vector %lu error=0x%lx rip=0x%lx addr=0x%lx\n",
-            (long)vector, (long)error_code, (long)rip, (long)cr2);
+    ULONG word[4];
+
+    kcprintf("x32 process fault: vector %lu error=0x%lx rip=0x%lx addr=0x%lx rsp=0x%lx\n",
+            (long)vector, (long)error_code, (long)rip, (long)cr2, (long)rsp);
+    if (kproc_copy_from_user(word, rsp, sizeof(word)))
+        kcprintf("  stack: 0x%lx 0x%lx 0x%lx 0x%lx\n",
+                (long)word[0], (long)word[1], (long)word[2], (long)word[3]);
     xterm((UWORD)-1);
     panic("x86-64: terminated faulting process returned\n");
 }
@@ -327,27 +325,19 @@ void termuser(void)
      * arch the launcher comes from the process's kernel-private KPROC
      * record, never from p_parent, which the process can rewrite.
      *
-     * x86_64_kexec_resume set means the process that just called
-     * Pterm()/Pterm0() was a "kernel-code process" (this file's own top
-     * comment): gouser() pushed a resume point there right before
-     * running it, so unwind back to exactly that point, an ordinary
-     * nested C call away from wherever this launch's own caller is
-     * (proc_go()/xexec(), which then returns run->p_dreg[0] -- the exit
-     * code this comment's own first paragraph describes -- back up
-     * through dos_exec()/aes_run_rom_program() to sh_ldapp() or
-     * gem_main(), exactly as those callers expect).
-     *
-     * NULL means a *real* ring-3 process (x86_64_enter_user() above)
-     * terminated instead -- there is no suspended C call chain to
-     * resume for that case (control left the kernel entirely via
-     * iretq), and this arch has no per-process kernel stack yet to
-     * build one with (see this file's own top comment: #334's own
-     * remaining "context switch support" scope item). Report the exit
-     * code and stop cleanly rather than pretending to resume something
-     * that was never frozen in the first place.
+     * x86_64_kexec_resume is the resume point gouser() pushed right before
+     * running this process, whether a "kernel-code process" (an ordinary
+     * nested C call) or a real ring-3 one (which left the kernel by iretq,
+     * so there is no suspended call chain, but the saved jmp_buf stands in
+     * for one): unwind back to exactly that point, an ordinary nested C
+     * call away from wherever this launch's own caller is (proc_go()/
+     * xexec(), which then returns run->p_dreg[0] -- the exit code this
+     * comment's own first paragraph describes -- back up to its caller).
+     * It is only ever NULL if nothing was launched, which cannot get here.
      */
     if (x86_64_kexec_resume)
         longjmp(*x86_64_kexec_resume, 1);
 
-    panic("x86-64: process exited, rc=%ld\n", (long)run->p_dreg[0]);
+    panic("x86-64: process terminated with no launch to resume, rc=%ld\n",
+          (long)run->p_dreg[0]);
 }

@@ -765,13 +765,19 @@ TOCLEAN += x32hello.elf
 # base, so the first PT_LOAD starts there and no segment lies below it;
 # noseparate-code keeps text and read-only data in that one R+X segment.
 #
-ifeq ($(CONF_WITH_CLI),y)
 X32_CLI_CFLAGS = $(X32_CFLAGS) -fno-tree-loop-distribute-patterns \
                  -fno-builtin -fno-stack-protector -std=gnu90 -Os -Wall -Wundef
 X32_CLI_LDFLAGS = -mx32 -nostdlib -static -no-pie -Wl,--build-id=none \
                   -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
                   -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000 \
                   -Wl,-e,_start
+
+obj/x32:
+	mkdir -p $@
+
+TOCLEAN += obj/x32/*
+
+ifeq ($(CONF_WITH_CLI),y)
 X32_CLI_OBJ = $(addprefix obj/x32/, cmdmain.o cmdedit.o cmdexec.o cmdint.o \
               cmdparse.o cmdutil.o cmdgetwh.o x32rt.o x32crt.o \
               doprintf.o string.o version.o)
@@ -782,9 +788,6 @@ X32_CLI_INC = -DSTANDALONE_CONSOLE -DX32_USERLAND -Icli/x32 -Icli/x32/include \
               -Iinclude -Icli
 X32_UTIL_INC = -Iinclude/arch/x86_64 -Iinclude -Iobj -Iutil
 obj/x32/doprintf.o obj/x32/string.o obj/x32/version.o: X32_CLI_INC = $(X32_UTIL_INC)
-
-obj/x32:
-	mkdir -p $@
 
 obj/x32/%.o: cli/%.c $(AUTOCONF_H) | obj/x32
 	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_INC) -MMD -MP -c $< -o $@
@@ -804,9 +807,15 @@ obj/x32/emucon.elf: $(X32_CLI_OBJ)
 
 # the kernel carries the executable's bytes (.incbin, which make cannot see)
 obj/emucon_image.o: obj/x32/emucon.elf
-obj/emucon_image.o: CFILE_FLAGS += -DX32_EMUCON_ELF=\"obj/x32/emucon.elf\"
+endif
 
-TOCLEAN += obj/x32
+# The ring-3 probe program of the boot self-test (tests/x32_probe/), built and
+# embedded the same way.
+ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
+obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_LDFLAGS) -o $@ $^
+
+obj/x32probe_image.o: obj/x32/x32probe.elf
 endif
 endif
 

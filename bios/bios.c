@@ -409,6 +409,7 @@ static void start_builtin_cli(char *env)
         return;
     }
     pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
+    kcprintf("EmuCON: starting the x32 image in ring 3\n");
     {
         long rc = Pexec(PE_GOTHENFREE, "", (char *)pd, env);
 

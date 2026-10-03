@@ -40,6 +40,7 @@
 #include "pgtable.h"
 #include "pmem.h"
 #include "pc_x86_64_memory.h"
+#include "x32image.h"
 #include "io.h"
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/fs.h"
@@ -1082,6 +1083,193 @@ static void test_lifecycle(void)
     same(&s, "failed launch");
 }
 
+/* ---- ring-3 processes and the x32 image loader (#398) -------------- */
+
+/*
+ * Runs the probe program (tests/x32_probe/) as a real ring-3 process, with
+ * `mode` as the first character of its command tail, and returns the exit
+ * code Pexec() gives back: 0..0xffff, 0xffff for a process that faulted.  A
+ * negative value is a launch that was refused (ENSMEM); the basepage is then
+ * still ours and is released here.  -1000 is a failure of the setup itself,
+ * already reported.
+ */
+static long run_probe(char mode)
+{
+    char tail[2];
+    PD *pd;
+    long rc;
+
+    tail[0] = mode;
+    tail[1] = '\0';
+    rc = Pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, tail, NULL);
+    CHECK(rc > 0, "probe basepage");
+    if (rc <= 0)
+        return -1000;
+    pd = (PD *)(uintptr_t)rc;
+    if (!kproc_set_image(pd, x86_64_x32probe_image())) {
+        CHECK(FALSE, "probe image attaches");
+        set_owner(pd, pd);
+        set_owner(USERPTR_TO_PTR(pd->p_env), pd);
+        x86_64_free_owned(pd);
+        return -1000;
+    }
+    rc = Pexec(PE_GOTHENFREE, "", (char *)pd, NULL);
+    if (rc < 0) {
+        set_owner(pd, pd);
+        set_owner(USERPTR_TO_PTR(pd->p_env), pd);
+        x86_64_free_owned(pd);
+    }
+    return rc;
+}
+
+#define MSR_GS_BASE        0xC0000101UL
+#define MSR_KERNEL_GS_BASE 0xC0000102UL
+
+/* The state a return from ring 3 must leave exactly as it found it. */
+typedef struct {
+    UQUAD cr3, gs, kernel_gs;
+} CPUSTATE;
+
+static void cpustate(CPUSTATE *c)
+{
+    c->cr3 = x86_64_read_cr3();
+    c->gs = x86_64_rdmsr(MSR_GS_BASE);
+    c->kernel_gs = x86_64_rdmsr(MSR_KERNEL_GS_BASE);
+}
+
+/* One ring-3 run that must exit with `want`, return to this very context
+ * with the same CPU state and leak nothing. */
+static void probe_expect(char mode, long want, const char *what)
+{
+    SNAP s;
+    CPUSTATE before, after;
+    PD *me = run;
+    long rc;
+
+    snap(&s);
+    cpustate(&before);
+    rc = run_probe(mode);
+    if (rc != -1000 && rc != want)
+        kcprintf("memtest: %s: exit code 0x%lx, wanted 0x%lx\n", what, rc, want);
+    CHECK(rc == want, what);
+    cpustate(&after);
+    CHECK(run == me, "the launcher is the current process again");
+    CHECK(after.cr3 == before.cr3 && after.cr3 == x86_64_kernel_pml4_phys(),
+          "back on the kernel page tables");
+    CHECK(after.gs == before.gs && after.kernel_gs == before.kernel_gs,
+          "the GS base is back in its ring-0 state");
+    same(&s, what);
+}
+
+static void test_ring3(void)
+{
+    SNAP s;
+    long rc;
+    int k, refused = 0, ran = 0;
+
+    /* entry through the process-entry contract, a GEMDOS call across the
+     * syscall boundary, and the exit code coming back */
+    probe_expect('e', 0, "ring-3 entry state: basepage, type, stack, CPL 3, GEMDOS call");
+    probe_expect('x', 0x1234, "ring-3 exit code reaches the launcher");
+
+    /* each process gets fresh private pages: what the first leaves in its
+     * data, the second does not see */
+    probe_expect('i', 0, "first run starts with zeroed data");
+    probe_expect('i', 0, "second run starts with zeroed data too");
+
+    /* bad pointers and kernel addresses as system call arguments */
+    probe_expect('b', 0, "bad arguments refused by the system calls");
+
+    /* a fault in ring 3 ends that process and nothing else */
+    probe_expect('f', 0xffff, "a ring-3 write to page 0 is contained");
+    probe_expect('k', 0xffff, "ring-3 access to the system variables is contained");
+    probe_expect('p', 0xffff, "a privileged instruction in ring 3 is contained");
+    probe_expect('e', 0, "a process runs normally after the faults");
+
+    /* an allocation failure while loading the image is an ordinary refused
+     * launch, tried at every allocation point */
+    snap(&s);
+    /* (the 256 KiB stack alone is 64 pages: step wider once past the first few) */
+    for (k = 1; k <= 240; k += (k < 24) ? 1 : 5) {
+        x86_64_pmem_test_fail_after(k);
+        rc = run_probe('x');
+        x86_64_pmem_test_fail_after(0);
+        if (rc == 0x1234)
+            ran++;
+        else if (rc == ENSMEM)
+            refused++;
+        else if (rc != -1000)
+            CHECK(FALSE, "a launch under memory pressure either runs or is refused");
+    }
+    if (refused < 5 || ran < 1)
+        kcprintf("memtest: %d launches refused, %d ran\n", refused, ran);
+    CHECK(refused >= 5 && ran >= 1, "image launch failures were exercised");
+    same(&s, "failed ring-3 launches");
+}
+
+/* A copy of the probe image with one field changed must be refused. */
+static void mutated(const X32_IMAGE *good, ULONG offset, ULONG size, ULONG value, const char *what)
+{
+    UBYTE *copy = kalloc(good->size);
+    X32_IMAGE bad;
+    ULONG i;
+
+    CHECK(copy != NULL, "image copy");
+    if (!copy)
+        return;
+    memcpy(copy, good->data, good->size);
+    for (i = 0; i < size; i++)
+        copy[offset + i] = (UBYTE)(value >> (8 * i));
+    bad.data = copy;
+    bad.size = good->size;
+    CHECK(!x86_64_x32image_check(&bad, NULL), what);
+    kfree(copy);
+}
+
+static void test_x32image(void)
+{
+    const X32_IMAGE *good = x86_64_x32probe_image();
+    X32_IMAGE cut;
+    UQUAD entry = 0;
+    X86_64_ASPACE *as;
+    SNAP s;
+
+    snap(&s);
+    CHECK(x86_64_x32image_check(good, &entry) && entry >= X86_64_USER_IMAGE_BASE &&
+          entry < X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE, "probe image is valid");
+    CHECK(x86_64_x32image_check(x86_64_emucon_image(), &entry), "EmuCON image is valid");
+
+    cut = *good;
+    cut.size = 40;
+    CHECK(!x86_64_x32image_check(&cut, NULL), "truncated header refused");
+    cut.size = 52 + 32;                 /* header and one program header only */
+    CHECK(!x86_64_x32image_check(&cut, NULL), "program headers beyond the file refused");
+
+    mutated(good, 4, 1, 2, "ELFCLASS64 refused");
+    mutated(good, 5, 1, 2, "big-endian refused");
+    mutated(good, 16, 2, 3, "shared object refused");
+    mutated(good, 18, 2, 3, "other machine refused");
+    mutated(good, 44, 2, 0, "no program headers refused");
+    mutated(good, 24, 4, 0x500000, "entry point outside the image refused");
+    mutated(good, 24, 4, 0x405000, "entry point in a non-executable segment refused");
+    mutated(good, 52 + 8, 4, 0x100000, "segment below the image window refused");
+    mutated(good, 52 + 8, 4, 0x7ff000, "segment running past the image window refused");
+    mutated(good, 52 + 24, 4, 7, "a writable and executable segment refused");
+    mutated(good, 52 + 16, 4, 0x7fffffff, "file size beyond the file refused");
+    mutated(good, 52 + 20, 4, 0, "empty segment refused");
+    mutated(good, 52 + 32 + 8, 4, 0x400000, "overlapping segments refused");
+
+    /* loading fills the pages and refuses what check() refuses */
+    as = must_create("image address space");
+    if (as) {
+        CHECK(x86_64_x32image_load(as, good, &entry), "image loads");
+        CHECK(x86_64_aspace_user_range_ok(as, entry, 16, FALSE) &&
+              !x86_64_aspace_user_range_ok(as, entry, 16, TRUE), "text is read-only");
+        x86_64_aspace_destroy(as);
+    }
+    same(&s, "image loader");
+}
+
 void x86_64_memtest_run(void)
 {
     SNAP s;
@@ -1105,6 +1293,8 @@ void x86_64_memtest_run(void)
     test_kproc();
     test_kproc_ranges();
     test_lifecycle();
+    test_x32image();
+    test_ring3();
 
     same(&s, "whole memtest");
     CHECK(x86_64_pmem_bad_frees() >= s.pmem_bad, "bad free counter monotonic");

@@ -33,7 +33,8 @@ void x86_64_mark_kernel_code_pd(PD *p);
 BOOL x86_64_take_kernel_code_pd(PD *p);
 /* in bdos/arch/x86_64/rwa.c */
 BOOL x86_64_user_active(void);      /* a ring-3 process is running */
-void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2) NORETURN;
+void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2,
+                       UQUAD rsp) NORETURN;
 #endif
 
 /*

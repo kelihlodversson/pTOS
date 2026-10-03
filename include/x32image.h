@@ -40,6 +40,8 @@ BOOL x86_64_x32image_load(X86_64_ASPACE *as, const X32_IMAGE *image, UQUAD *entr
 
 /* The embedded EmuCON (cli/arch/x86_64/emucon_image.c). */
 const X32_IMAGE *x86_64_emucon_image(void);
+/* The ring-3 probe program of the boot self-test (tests/x32_probe/). */
+const X32_IMAGE *x86_64_x32probe_image(void);
 
 #endif /* __x86_64__ */
 

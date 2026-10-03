@@ -311,12 +311,29 @@ jobs:
             exit 1
           fi
 
+          # The self-test also launches real ring-3 x32 processes
+          # (tests/x32_probe/): entry state and selectors, a GEMDOS call
+          # across the syscall boundary, fault containment, private pages.
+          # Its deliberate faults print "x32 process fault" lines BEFORE the
+          # PASS line; any such line after it is the built-in EmuCON itself
+          # faulting.
+          if sed -n '/x86-64 memtest: PASS/,$p' boot.log | grep -q 'x32 process fault'; then
+            echo "::error::the ring-3 EmuCON faulted"
+            exit 1
+          fi
+
+          # EmuCON is an x32 program run in ring 3 -- not linked into the
+          # kernel -- so its banner can only come from that process.
+          if ! grep -q 'EmuCON: starting the x32 image in ring 3' boot.log; then
+            echo "::error::the kernel never started the ring-3 EmuCON"
+            exit 1
+          fi
           if ! grep -q 'Welcome to EmuCON2' boot.log; then
             echo "::error::never reached the EmuCON2 shell prompt"
             exit 1
           fi
 
-          echo "Boot test passed: reached the EmuCON2 shell, no reset loop, no panic."
+          echo "Boot test passed: reached the ring-3 EmuCON2 shell, no reset loop, no panic."
 
       - name: Report the failure
         if: failure()
