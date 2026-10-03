@@ -697,6 +697,39 @@ static void test_isolation(void)
         same(&s, "private failure unwind");
     }
     CHECK(failed >= 6, "private-mapping failures were exercised");
+
+    /* a failed mapping that needed new PDPT/PD/PT pages gives those back too,
+     * not just the leaves: the address space looks exactly as it did before */
+    failed = 0;
+    for (k = 1; k <= 12; k++) {
+        ULONG tables0, private0;
+        BOOL ok;
+
+        a = x86_64_aspace_create();
+        if (!a || !x86_64_aspace_map_private(a, ISO_VA, PAGE, ASPACE_PROT_USER)) {
+            CHECK(FALSE, "setup for the table rollback test");
+            x86_64_aspace_destroy(a);
+            break;
+        }
+        tables0 = x86_64_aspace_table_pages(a);
+        private0 = x86_64_aspace_private_pages(a);
+        x86_64_pmem_test_fail_after(k);
+        /* a different 1 GiB region: needs a new PDPT entry, PD and PT */
+        ok = x86_64_aspace_map_private(a, 0x80000000ULL, 3 * PAGE, ASPACE_PROT_USER);
+        x86_64_pmem_test_fail_after(0);
+        if (!ok) {
+            failed++;
+            CHECK(x86_64_aspace_table_pages(a) == tables0, "failed mapping returns its table pages");
+            CHECK(x86_64_aspace_private_pages(a) == private0, "failed mapping returns its backing");
+            CHECK(!x86_64_aspace_translate(a, 0x80000000ULL, NULL, NULL), "failed mapping left no leaf");
+            /* and the region is usable afterwards */
+            CHECK(x86_64_aspace_map_private(a, 0x80000000ULL, 3 * PAGE, ASPACE_PROT_USER),
+                  "mapping succeeds after a rolled-back failure");
+        }
+        x86_64_aspace_destroy(a);
+        same(&s, "table rollback");
+    }
+    CHECK(failed >= 4, "table-rollback failures were exercised");
 }
 
 /* The user-pointer checks the system calls use are made against the

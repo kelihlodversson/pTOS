@@ -42,6 +42,7 @@ typedef char image_follows_window[
     (X86_64_USER_IMAGE_BASE >= X86_64_LOW_TPA_VIRT_BASE + X86_64_LOW_TPA_BYTES) ? 1 : -1];
 typedef char stack_below_limit[
     (X86_64_USER_STACK_TOP <= X86_64_USER_VA_LIMIT &&
+     X86_64_USER_STACK_SIZE <= X86_64_USER_STACK_TOP &&   /* before subtracting: no wrap */
      X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE <= X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE) ? 1 : -1];
 
 struct alloc {

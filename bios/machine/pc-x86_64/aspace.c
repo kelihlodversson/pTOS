@@ -301,10 +301,49 @@ ULONG x86_64_aspace_private_pages(const X86_64_ASPACE *as)
     return as->nowned;
 }
 
+/* True iff the table page at phys was allocated at or after index `first`
+ * of the address space's table-page record. */
+static BOOL table_is_newer(const struct x86_64_aspace *as, ULONG first, UQUAD phys)
+{
+    ULONG i;
+
+    for (i = first; i < as->count; i++)
+        if (as->pages[i] == phys)
+            return TRUE;
+    return FALSE;
+}
+
+/* Walks down toward va and, at the first entry that points at a table
+ * allocated since `first`, clears that entry: everything below it is new too,
+ * so the whole new subtree is cut off in one step. */
+static void unlink_new_tables(const struct x86_64_aspace *as, ULONG first, UQUAD va)
+{
+    UQUAD *table = (UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + as->pml4_phys);
+    UQUAD index[3];
+    int level;
+
+    index[0] = (va >> 39) & 0x1FF;
+    index[1] = (va >> 30) & 0x1FF;
+    index[2] = (va >> 21) & 0x1FF;
+    for (level = 0; level < 3; level++) {
+        UQUAD entry = table[index[level]];
+        UQUAD child = entry & PTE_ADDR;
+
+        if (!(entry & PTE_PRESENT) || (entry & PTE_PS))
+            return;
+        if (table_is_newer(as, first, child)) {
+            table[index[level]] = 0;
+            return;
+        }
+        table = (UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + child);
+    }
+}
+
 BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
 {
     UQUAD pages, i, mapped = 0, backing;
     ULONG first_owned = as->nowned;
+    ULONG first_tables = as->count;
 
     if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= X86_64_USER_VA_LIMIT ||
         bytes > X86_64_USER_VA_LIMIT - va)
@@ -350,12 +389,19 @@ BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD p
     if (mapped == pages)
         return TRUE;
 
-    /* roll back: unmap what this call mapped, free every page it took */
+    /* Roll back so the failed call leaves nothing: unmap what it mapped, cut
+     * off the table pages it had to create (every page attempted, the one
+     * that failed included, since the failure may have come part-way down),
+     * then free the backing and the new tables it took. */
     for (i = 0; i < mapped; i++)
         x86_64_unmap_user_page(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+    for (i = 0; i <= mapped && i < pages; i++)
+        unlink_new_tables(as, first_tables, va + i * X86_64_PAGE_SIZE);
     if (x86_64_read_cr3() == as->pml4_phys)
         x86_64_write_cr3(as->pml4_phys);        /* flush stale translations */
     while (as->nowned > first_owned)
         x86_64_pmem_free_pages(as->owned[--as->nowned], 1);
+    while (as->count > first_tables)
+        x86_64_pmem_free_pages(as->pages[--as->count], 1);
     return FALSE;
 }

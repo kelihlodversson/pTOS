@@ -105,10 +105,14 @@ void x86_64_procmem_stats(PROCMEM_STATS *stats);
  * Address spaces
  * --------------
  * One ring-3 process's page tables.  The object owns the PML4 and every
- * page-table page built under it, and nothing else: the leaf pages it
- * maps belong to procmem (or are device/test pages) and are never freed
- * with the address space.  Creation and mapping can fail for lack of
- * memory; destruction cannot, and frees each table page exactly once.
+ * page-table page built under it.  Of the leaf pages it maps, two kinds are
+ * distinguished: private pages (x86_64_aspace_map_private()) are allocated
+ * for it, owned by it and freed with it, while borrowed pages -- procmem
+ * blocks (x86_64_aspace_map_procmem(), pinned while mapped) and
+ * device/test pages (x86_64_aspace_map_page()) -- belong to someone else
+ * and are never freed with the address space.  Creation and mapping can fail
+ * for lack of memory; destruction cannot, and frees each table page and each
+ * private page exactly once.
  *
  * The kernel half (PML4 slots 256-511) is shared; the low half starts empty.
  */
