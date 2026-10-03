@@ -12,6 +12,7 @@
 #include "asmdefs.h"
 #include "asmstruct.h"
 #include "asmpd.h"
+#include "arch/arm/entry.h"
 
         .globl  C_SYM(psetup)
         .globl  C_SYM(gotopgm)
@@ -53,38 +54,26 @@ C_SYM(psetup):
  * This is the entry point for accessory processes.
  * It is called in supervisor mode, on the private AES stack of the new
  * accessory process. Its responsibility is to go to the start of the
- * accessory TEXT segment in user mode. The register a0 must contain the
- * address of the basepage. The value of the other registers is not
- * important.
+ * accessory TEXT segment in user mode. r0 contains the basepage and r1 is
+ * ARM_ENTRY_ACCESSORY. The user stack is initialized from the basepage before
+ * entering user mode, so the first AES trap has a valid stack.
  */
 
 C_SYM(gotopgm):
         // get the basepage for the top of rlr
         ldr     r0, =C_SYM(rlr)
         ldr     r0, [r0]
-        ldr     r1, [r0, PD_UDA]
         ldr     r0, [r0, PD_LDADDR] // The basepage must stay in r0
 
-        // *** WARNING ***
-        // We are currently on the top of the private stack for the
-        // new accessory process. On the next trap #2 for AES, the CPU
-        // will use this stack when going to supervisor mode, and this
-        // will be perfectly correct.
-        // Unfortunately, the AES trap prologue always switch to
-        // rlr->p_uda->u_spsuper even if it is already on that stack.
-        // Thus, if we don't take care, the stack pointer may go up in
-        // the next trap #2 and cause data corruption.
-        // Since ARM does not push data to the current stack, unlike 68k,
-        // we currently don't need to fix rlr->p_uda->u_spsuper.
+        /* trapaes saves its exception frame and r4-r11 on the banked user
+         * stack before switching to UDA_SPSUPER.  Do not use the AES private
+         * supervisor stack as that user stack. */
+        ldr     r2, [r0, #PD_p_hitpa]
+        cps     #0x1f
+        mov     sp, r2
+        cps     #0x13
 
-        // You must keep an eye on the "trap #2" prologue for AES.
-        // It is located in gemdosif_rpc.S, label "trapaes".
-        // If some additional data is pushed on the stack before
-        // the stack switch, you must add the equivalent room here.
-
-        // mov  r2, sp  // Current stack
-        // sub  r2, r2, #0 // additional space for the trap handler
-        // str  r2, [r1, UDA_SPUSER]  // Will be the stack on next trap
+        mov     r1, #ARM_ENTRY_ACCESSORY
 
         // Fake a return from exception to enter user mode executing
         // the new process. (This way, we don't have to execute anything in here in user mode.)
