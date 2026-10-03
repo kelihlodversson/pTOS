@@ -402,7 +402,7 @@ CORE = core
 endif
 
 TOCLEAN = *~ */*~ $(CORE) *.tmp obj/*.tmp obj/*.o obj/*.d obj/*.h obj/*.c \
-          obj/*.ld obj/auto.conf */*.dsm
+          obj/*.ld obj/auto.conf */*.dsm obj/x32/*
 
 #
 # GEN_SRC accumulates the generated source files.  They are built before
@@ -775,7 +775,6 @@ X32_CLI_LDFLAGS = -mx32 -nostdlib -static -no-pie -Wl,--build-id=none \
 obj/x32:
 	mkdir -p $@
 
-TOCLEAN += obj/x32/*
 
 ifeq ($(CONF_WITH_CLI),y)
 X32_CLI_OBJ = $(addprefix obj/x32/, cmdmain.o cmdedit.o cmdexec.o cmdint.o \
