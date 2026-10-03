@@ -1,0 +1,98 @@
+pTOS - x86-64 per-process address spaces
+=========================================
+
+How a ring-3 x32 process sees memory on the x86-64 port (#329, #401).  The
+implementation is bios/machine/pc-x86_64/aspace.c, with the interface in
+include/procmem.h; process memory and the kernel heap it builds on are in
+doc/x86_64-memory.txt.
+
+
+Isolation
+----------
+
+Every process has its own page-table root (the PML4 of an X86_64_ASPACE).
+Only the kernel half (PML4 slots 256-511) is shared, copied from the kernel's
+master table; none of its entries has the user bit, so ring 3 can never
+reach the kernel image or the physical direct map.  The low half starts
+empty: nothing is visible to a process except what is explicitly mapped for
+it, so the kernel's own low mappings (the system-vector page, the process
+window, kernel data) are not there.
+
+The handle lives in the process's kernel-private KPROC record, never in the
+public basepage, and is destroyed with it (see "Lifecycle" in
+doc/x86_64-memory.txt).  Its metadata comes from the growable kernel heap.
+
+Two kinds of leaf pages are mapped:
+
+  private    x86_64_aspace_map_private(): fresh zeroed pages owned by the
+             address space and freed with it.  Because backing is per
+             process, two address spaces can map the same virtual addresses
+             (the program image at X86_64_USER_IMAGE_BASE, the stack) to
+             different pages and neither sees the other's writes.
+
+  window     x86_64_aspace_map_procmem(): the process's basepage, environment
+             and TPA, which the BDOS reaches by the same address (see
+             doc/x86_64-memory.txt).  These addresses are unique across
+             processes, so they never overlap; the blocks are pinned while
+             mapped.
+
+Permissions are explicit on every mapping: ASPACE_PROT_WRITE, _EXEC (NX
+otherwise) and _USER.  The effective permission of a page is the AND of every
+level, exactly as the MMU computes it; x86_64_aspace_translate() reports it.
+
+
+Validating user pointers
+-------------------------
+
+A user pointer is valid for a process iff every page it covers is mapped in
+THAT process's page tables, user-accessible and, for a write, writable
+(x86_64_aspace_user_range_ok()).  A numeric range check is not enough: an
+address can be below 4 GiB and still unmapped, supervisor-only or read-only.
+The check also refuses an empty range, a wrap-around and anything reaching
+X86_64_USER_VA_LIMIT.
+
+kproc_validate_user_range() / _write() make that check for the current
+process, and kproc_copy_from_user() / kproc_copy_to_user() copy through the
+physical direct map after it, so a validated copy cannot fault and works
+whichever address space is loaded.  A process without an address space (a
+kernel-code process such as EmuCON today, running in ring 0) keeps the
+recorded-range check.
+
+
+Minimum x32 user virtual layout
+--------------------------------
+
+For the built-in EmuCON image and its process data (the constants are in
+include/procmem.h):
+
+    0x00000000 - 0x001fffff   unmapped: null guard (2 MiB)
+    0x00200000 - 0x003fffff   basepage, environment and TPA blocks (window)
+    0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB)
+    0x3ffc0000 - 0x3fffffff   user stack (256 KiB), growing down from
+                              X86_64_USER_STACK_TOP; the page below it is
+                              left unmapped as a guard
+
+The image address matches the link address x32 test programs already use
+(-Ttext=0x400000, Makefile).  EmuCON's code is about 33 KiB today as 64-bit
+objects, so 4 MiB is a generous bound; larger images or an arbitrary ELF
+placement policy are not part of this milestone.  The whole layout lies
+below 4 GiB, as the 32-bit ABI fields require.
+
+
+Faults
+-------
+
+A ring-3 page fault or other exception is still fatal to the whole system:
+the exception path panics (bios/arch/x86_64/panic.c) rather than terminating
+the process.  Recovering needs the launching kernel context saved and
+resumed at Pterm, which is the ring-3 EmuCON work (#398); until then the
+guarantee is that no user fault can enter kernel code as the process or
+corrupt kernel state, not that the system survives it.
+
+
+Not covered here
+-----------------
+
+Sharing read-only image pages between processes, demand paging, copy-on-write,
+Mmap/Munmap and relocation-free loading of arbitrary ELF files; a real ring-3
+isolation run (two processes executing in CPL3) is the runtime test in #400.

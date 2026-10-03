@@ -128,6 +128,16 @@ UQUAD x86_64_pmem_alloc_pages_below(UQUAD count, UQUAD limit);
 UQUAD x86_64_pmem_try_alloc_pages(UQUAD count, UQUAD limit);
 BOOL x86_64_pmem_free_pages(UQUAD base, UQUAD count);
 
+/*
+ * True iff the page containing phys is RAM this allocator owns and has handed
+ * out.  Only such pages are certain to be reachable through the physical
+ * direct map without side effects, so it is what the kernel's copies into
+ * and out of process memory check before dereferencing a direct-map alias:
+ * the map spans up to 1 GiB past the last RAM, and the pages of a device
+ * aperture (or a bogus physical address) must not be touched that way.
+ */
+BOOL x86_64_pmem_is_allocated(UQUAD phys);
+
 /* Diagnostics for leak tests: rejected (double/foreign) frees. */
 UQUAD x86_64_pmem_bad_frees(void);
 

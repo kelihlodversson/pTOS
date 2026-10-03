@@ -267,6 +267,14 @@ int x86_64_map_user_page(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
 #define X86_64_PGTABLE_NO_PAGE (~0ULL)
 
 /*
+ * Clears the 4 KiB leaf for virt in a process address space; the table pages
+ * above it stay (the owning address space frees them).  Returns 0, or -1 if
+ * virt was not mapped as a 4 KiB page.  The caller flushes the TLB if that
+ * address space is the loaded one.
+ */
+int x86_64_unmap_user_page(UQUAD pml4_phys, UQUAD virt);
+
+/*
  * The physical address of this kernel's own master PML4 -- what CR3 holds
  * outside any user process -- and raw CR3 access, so a process address
  * space can be torn down safely: its tables may only be freed once CR3 no

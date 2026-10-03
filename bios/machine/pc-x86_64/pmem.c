@@ -438,6 +438,13 @@ void x86_64_pmem_test_fail_after(LONG n)
     fail_countdown = n;
 }
 
+BOOL x86_64_pmem_is_allocated(UQUAD phys)
+{
+    UQUAD page = phys / X86_64_PAGE_SIZE;
+
+    return bm_managed && page < npages && BM_TEST(bm_managed, page) && BM_TEST(bm_alloc, page);
+}
+
 UQUAD x86_64_pmem_bad_frees(void)
 {
     return bad_frees;

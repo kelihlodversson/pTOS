@@ -489,6 +489,31 @@ int x86_64_map_user_page(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
     return 0;
 }
 
+int x86_64_unmap_user_page(UQUAD pml4_phys, UQUAD virt)
+{
+    pgentry_t *table = (pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + pml4_phys);
+    UQUAD index[4];
+    int level;
+
+    if (virt >= 0x800000000000ULL)
+        return -1;
+    index[0] = (virt >> 39) & 0x1FF;
+    index[1] = (virt >> 30) & 0x1FF;
+    index[2] = (virt >> 21) & 0x1FF;
+    index[3] = (virt >> 12) & 0x1FF;
+    for (level = 0; level < 3; level++) {
+        pgentry_t entry = table[index[level]];
+
+        if (!(entry & PTE_PRESENT) || (entry & PTE_PS))
+            return -1;
+        table = (pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + (entry & PTE_ADDR_MASK));
+    }
+    if (!(table[index[3]] & PTE_PRESENT))
+        return -1;
+    table[index[3]] = 0;
+    return 0;
+}
+
 UQUAD x86_64_kernel_pml4_phys(void)
 {
     return phys_addr_of(pml4);

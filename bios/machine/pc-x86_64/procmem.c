@@ -36,6 +36,15 @@
 typedef char window_is_below_4gib[
     (X86_64_LOW_TPA_VIRT_BASE + X86_64_LOW_TPA_BYTES <= X86_64_USER_VA_LIMIT) ? 1 : -1];
 
+/* The documented program image region starts past the process window and
+ * the stack ends at the 1 GiB mark, both well inside the 32-bit ABI limit. */
+typedef char image_follows_window[
+    (X86_64_USER_IMAGE_BASE >= X86_64_LOW_TPA_VIRT_BASE + X86_64_LOW_TPA_BYTES) ? 1 : -1];
+typedef char stack_below_limit[
+    (X86_64_USER_STACK_TOP <= X86_64_USER_VA_LIMIT &&
+     X86_64_USER_STACK_SIZE <= X86_64_USER_STACK_TOP &&   /* before subtracting: no wrap */
+     X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE <= X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE) ? 1 : -1];
+
 struct alloc {
     struct alloc *next;
     UQUAD va;

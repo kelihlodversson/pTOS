@@ -266,6 +266,13 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     return TRUE;
 }
 
+X86_64_ASPACE *kproc_user_aspace(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    return kproc ? kproc->aspace : NULL;
+}
+
 UQUAD kproc_user_pml4(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
@@ -285,7 +292,8 @@ ULONG kproc_count(void)
 
 BOOL kproc_validate_user_dta(UQUAD address)
 {
-    return kproc_validate_user_range(address, sizeof(DTAINFO));
+    /* the filesystem writes the DTA through this pointer later */
+    return kproc_validate_user_write(address, sizeof(DTAINFO));
 }
 
 /* True iff [address, address + size) lies inside [start, end). */
@@ -299,33 +307,58 @@ static BOOL range_within(UQUAD address, ULONG size, const UBYTE *start_p, const 
     return address >= start && address <= end - size;
 }
 
-BOOL kproc_validate_user_range(UQUAD address, ULONG size)
+static BOOL validate_user(UQUAD address, ULONG size, BOOL write)
 {
     KPROC *kproc = kproc_find(run);
 
     /* The x32 ABI only carries 32-bit addresses.  Test the subtraction,
-     * rather than address + size, so an attacker cannot wrap the range.
-     * The range must lie wholly inside the process's environment block or
-     * wholly inside its basepage/TPA/stack, never across the gap between
-     * them. */
+     * rather than address + size, so an attacker cannot wrap the range. */
     if (!kproc || !size || address > 0xffffffffULL)
         return FALSE;
+
+    /* A ring-3 process: valid means mapped, user-accessible (and writable
+     * for a write) in THIS process's own page tables -- not merely a number
+     * that falls in some range. */
+    if (kproc->aspace)
+        return x86_64_aspace_user_range_ok(kproc->aspace, address, size, write);
+
+    /* No address space (a kernel-code process, which runs in ring 0 on the
+     * kernel's own tables): the ranges recorded when it was created, wholly
+     * inside its environment block or wholly inside its basepage/TPA. */
     return range_within(address, size, kproc->user_start, kproc->user_end) ||
            range_within(address, size, kproc->env_start, kproc->env_end);
 }
 
+BOOL kproc_validate_user_range(UQUAD address, ULONG size)
+{
+    return validate_user(address, size, FALSE);
+}
+
+BOOL kproc_validate_user_write(UQUAD address, ULONG size)
+{
+    return validate_user(address, size, TRUE);
+}
+
 BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size)
 {
-    if (!kproc_validate_user_range(address, size))
+    KPROC *kproc = kproc_find(run);
+
+    if (!validate_user(address, size, FALSE))
         return FALSE;
+    if (kproc->aspace)
+        return x86_64_aspace_copy_from_user(kproc->aspace, dst, address, size);
     memcpy(dst, (const void *)(uintptr_t)address, size);
     return TRUE;
 }
 
 BOOL kproc_copy_to_user(UQUAD address, const void *src, ULONG size)
 {
-    if (!kproc_validate_user_range(address, size))
+    KPROC *kproc = kproc_find(run);
+
+    if (!validate_user(address, size, TRUE))
         return FALSE;
+    if (kproc->aspace)
+        return x86_64_aspace_copy_to_user(kproc->aspace, address, src, size);
     memcpy((void *)(uintptr_t)address, src, size);
     return TRUE;
 }
