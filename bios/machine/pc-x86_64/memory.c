@@ -49,6 +49,7 @@
 #include "pc_x86_64_memory.h"
 #include "pgtable.h"
 #include "pmem.h"
+#include "procmem.h"
 
 #define POOL_BYTES (2 * 1024 * 1024)
 
@@ -107,7 +108,10 @@ void pc_x86_64_memory_init(void)
  * either structure, so this pool's own kernel-only reachability is
  * sufficient for now, not a claim that it always will be.
  */
-#define X86_64_LOW_KDATA_VIRT_BASE (X86_64_LOW_TPA_VIRT_BASE + X86_64_LOW_TPA_BYTES)
+/* Above the user image window (include/procmem.h): every address space maps
+ * this pool and the framebuffer after it supervisor-only, so they must not
+ * collide with anything a process maps for itself. */
+#define X86_64_LOW_KDATA_VIRT_BASE (X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE)
 #define X86_64_LOW_KDATA_BYTES (2 * 1024 * 1024)
 
 static UQUAD low_kdata_next;
@@ -179,6 +183,8 @@ void *x86_64_low_kdata_alloc(LONG needed)
  */
 #define X86_64_LOW_FB_VIRT_BASE (X86_64_LOW_KDATA_VIRT_BASE + X86_64_LOW_KDATA_BYTES)
 
+static UQUAD low_fb_end;
+
 UQUAD x86_64_low_fb_init(UQUAD aligned_phys, UQUAD page_count)
 {
     /*
@@ -195,6 +201,19 @@ UQUAD x86_64_low_fb_init(UQUAD aligned_phys, UQUAD page_count)
         return 0;
 
     x86_64_map_kernel_pages(X86_64_LOW_FB_VIRT_BASE, aligned_phys, page_count);
+    low_fb_end = X86_64_LOW_FB_VIRT_BASE + page_count * X86_64_PAGE_2M_SIZE;
     return X86_64_LOW_FB_VIRT_BASE;
+}
+
+/*
+ * The kernel-only low range [*start, *end) every process address space has
+ * to carry besides the system-vector area at 0: the low kernel-data pool and
+ * the framebuffer, if there is one.  Ring 0 touches them while servicing a
+ * system call under the calling process's own CR3.
+ */
+void x86_64_low_kernel_range(UQUAD *start, UQUAD *end)
+{
+    *start = X86_64_LOW_KDATA_VIRT_BASE;
+    *end = low_fb_end ? low_fb_end : X86_64_LOW_KDATA_VIRT_BASE + X86_64_LOW_KDATA_BYTES;
 }
 

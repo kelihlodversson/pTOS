@@ -41,7 +41,6 @@
 #include "biosargs.h"
 #endif
 #ifdef __x86_64__
-extern void x86_64_mark_kernel_code_pd(PD *p);
 extern void x86_64_memtest_run(void);
 #endif
 #include "ikbd.h"
@@ -115,7 +114,13 @@ extern void run_cartridge_applications(WORD typebit); /* found in startup.S */
 #endif
 
 #if CONF_WITH_CLI
+#ifdef __x86_64__
+#include "x32image.h"
+extern BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);    /* bdos/kproc.c */
+static void start_builtin_cli(char *env);
+#else
 extern void coma_start(void) NORETURN;  /* found in cli/cmdasm.S */
+#endif
 #endif
 
 #if CONF_WITH_ALT_RAM
@@ -380,10 +385,42 @@ static void vecs_init(void)
 
 extern PFVOID vbl_list[8]; /* Default array for vblqueue */
 
+#if defined(__x86_64__) && CONF_WITH_CLI
+/*
+ * Runs the built-in EmuCON, an x32 program embedded in this image
+ * (cli/arch/x86_64/emucon_image.c), as an ordinary ring-3 process: a
+ * basepage and environment from Pexec(PE_BASEPAGEFLAGS), the image
+ * attached to its kernel record so launching maps its segments as private
+ * pages of the process's own address space, then the normal launch.  It
+ * enters at the image's own entry point with RDI = basepage and RSI =
+ * ENTRY_PROGRAM (doc/process-entry.txt), talks to the kernel only through
+ * `syscall`, and returns here, with its exit code, when it calls Pterm().
+ */
+static void start_builtin_cli(char *env)
+{
+    PD *pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", env);
+
+    if ((long)pd <= 0 && (long)pd >= -256) {    /* a GEMDOS error code */
+        kcprintf("EmuCON: cannot create its basepage (%ld)\n", (long)pd);
+        return;
+    }
+    if (!kproc_set_image(pd, x86_64_emucon_image())) {
+        kcprintf("EmuCON: its x32 image is not valid\n");
+        return;
+    }
+    pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
+    {
+        long rc = Pexec(PE_GOTHENFREE, "", (char *)pd, env);
+
+        if (rc < 0)
+            kcprintf("EmuCON: cannot start (%ld)\n", rc);
+    }
+}
+#endif
+
 /*
  * Initialize the BIOS
  */
-
 static void bios_init(void)
 {
     KDEBUG(("bios_init()\n"));
@@ -823,13 +860,11 @@ static void bios_init(void)
 #else
     exec_os = ui_start;
 #endif
-#elif CONF_WITH_CLI
-#ifdef __x86_64__
-    __asm__("lea coma_start(%%rip), %0" : "=r"(exec_os));
-#else
+#elif CONF_WITH_CLI && !defined(__x86_64__)
     exec_os = coma_start;
-#endif
 #else
+    /* x86-64 without the AES: EmuCON is an x32 program run in ring 3 by
+     * start_builtin_cli() below, not an entry point in this image */
     exec_os = NULL;
 #endif
 
@@ -1173,28 +1208,14 @@ void biosmain(void)
 
 #if CONF_WITH_CLI
     if (bootflags & BOOTFLAG_EARLY_CLI) {   /* run an early console */
+#ifdef __x86_64__
+        start_builtin_cli(default_env);
+#else
         PD *pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", default_env);
-        /*
-         * coma_start is kernel code (EmuCON's own entry point, linked
-         * into this image), not a real user process's text segment --
-         * on x86-64, unlike every ILP32 arch, that means its address is
-         * never low/32-bit-representable, so this deliberately uses the
-         * UNCHECKED narrow (PTR_TO_USERPTR() would trap on exactly
-         * that). gouser() panics before ever using p_tbase as a real
-         * ring-3 entry point on this arch today (see bdos/arch/x86_64/
-         * rwa.c), so the truncation below is harmless for now -- but a
-         * genuine x86-64 gouser() must special-case a kernel-code
-         * p_tbase like this one (call it directly, the way
-         * cli/arch/x86_64/cmdasm.c's own header comment already
-         * anticipates) rather than ever feeding it to a real
-         * ring0->ring3 transition.
-         */
         pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *) coma_start);
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
-#ifdef __x86_64__
-        x86_64_mark_kernel_code_pd(pd);
-#endif
         Pexec(PE_GOTHENFREE, "", (char *)pd, default_env);
+#endif
     }
 #endif
 
@@ -1215,17 +1236,16 @@ void biosmain(void)
          */
         PD *pd;
         pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", default_env);
-        /* exec_os is always a kernel code symbol (ui_start or coma_start,
-         * see bios_init() above) -- see the identical BOOTFLAG_EARLY_CLI
-         * case's own comment above for why this deliberately uses the
-         * UNCHECKED narrow on x86-64. */
         pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *) exec_os);
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
-#ifdef __x86_64__
-        x86_64_mark_kernel_code_pd(pd);
-#endif
         Pexec(PE_GO, "", (char *)pd, default_env);
     }
+#if defined(__x86_64__) && CONF_WITH_CLI
+    else {
+        /* the default shell of an x86-64 image without the AES */
+        start_builtin_cli(default_env);
+    }
+#endif
 
 #if CONF_WITH_SHUTDOWN
     /* try to shutdown the machine / close the emulator */

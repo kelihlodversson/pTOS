@@ -221,4 +221,8 @@ void x86_64_trap_init(void);
 void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp,
                        UQUAD basepage, UQUAD entry_type) NORETURN;
 
+/* Undoes the `swapgs` of a syscall that will never return to its exit stub
+ * (Pterm unwinding to the launching kernel context). */
+void x86_64_syscall_abandoned(void);
+
 #endif /* X86_64_TRAP_H */

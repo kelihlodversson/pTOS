@@ -92,4 +92,8 @@ UQUAD x86_64_low_fb_init(UQUAD aligned_phys, UQUAD page_count);
  * prints "x86-64 memtest: PASS" or "FAIL (n)".  Needs BDOS initialised. */
 void x86_64_memtest_run(void);
 
+/* The kernel-only low range [*start, *end) -- low kernel-data pool and
+ * framebuffer -- each process address space maps supervisor-only. */
+void x86_64_low_kernel_range(UQUAD *start, UQUAD *end);
+
 #endif /* PC_X86_64_MEMORY_H */

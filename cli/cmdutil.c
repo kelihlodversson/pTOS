@@ -10,7 +10,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 #include "cmd.h"
-#if defined(__arm__) || defined(__x86_64__)
+#if (defined(__arm__) || defined(__x86_64__)) && !defined(X32_USERLAND)
 #include "tosvars.h"
 #endif
 #include "string.h"
@@ -349,6 +349,7 @@ char c1, c2;
  * is exactly LONG's width on m68k/ARM (ILP32), so this changes nothing
  * there.
  */
+#ifndef X32_USERLAND
 PRIVATE long getjar(void)
 {
 #if defined(__arm__) || defined(__x86_64__)
@@ -357,12 +358,27 @@ PRIVATE long getjar(void)
     return *(LONG *)0x5a0;
 #endif
 }
+#endif /* !X32_USERLAND */
 
 /*
  *  getcookie()
  */
 WORD getcookie(LONG cookie,LONG *pvalue)
 {
+#ifdef X32_USERLAND
+    /*
+     * Ring 3: the cookie jar is kernel memory (and a 64-bit pointer
+     * besides); Ssystem(S_GETCOOKIE, tag, &value) looks the tag up on the
+     * caller's behalf and stores the 32-bit value through the pointer.
+     */
+    LONG value;
+
+    if (Ssystem(0x0008,cookie,(long)&value) != 0)
+        return 0;
+    if (pvalue)
+        *pvalue = value;
+    return 1;
+#else
 COOKIE *jar, *c;
 
 #if defined(__x86_64__)
@@ -394,6 +410,7 @@ COOKIE *jar, *c;
     }
 
     return 0;
+#endif /* X32_USERLAND */
 }
 
 /*

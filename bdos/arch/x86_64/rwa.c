@@ -69,6 +69,7 @@
 #include "bdosstub.h"
 #include "setjmp.h"
 #include "kproc.h"
+#include "kprint.h"
 
 /*
  * Declared directly, not through a shared header: bdos/build.mk's
@@ -81,11 +82,17 @@
 extern void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp,
                               UQUAD basepage, UQUAD entry_type) NORETURN;
 extern BOOL x86_64_take_kernel_code_pd(PD *p);
+extern void x86_64_syscall_abandoned(void);     /* bios/arch/x86_64/trap.c */
 
 void enter(void);
 void bdos_trap2(void);
 void gouser(void);
 void termuser(void) NORETURN;
+/* declared directly like the above: proc.h needs file-system types this file
+ * has no other use for */
+extern void xterm(UWORD rc) NORETURN;               /* bdos/proc.c */
+void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2) NORETURN;
+BOOL x86_64_user_active(void);
 
 void enter(void)
 {
@@ -104,15 +111,18 @@ void bdos_trap2(void)
  */
 static jmp_buf *x86_64_kexec_resume;
 
+/* Ring-3 processes currently running (launched by gouser() and not yet
+ * terminated).  There is one syscall stack, so a second launch from inside
+ * a syscall of the first cannot work yet (#399, per-process kernel stacks):
+ * proc.c refuses it. */
+static int x86_64_user_depth;
+
 #if CONF_WITH_AES
 extern void accdesk_start(void) NORETURN;      /* aes/arch/x86_64/gemstart.c */
 extern void deskstart(PD *) NORETURN;          /* desk/arch/x86_64/deskstart.c */
 #endif
-#if CONF_WITH_CLI
-extern void coma_start(PD *) NORETURN;         /* cli/arch/x86_64/cmdasm.c */
-#endif
 
-#if CONF_WITH_AES || CONF_WITH_CLI
+#if CONF_WITH_AES
 /*
  * Captures sym's own address via `lea` (never a plain C address-of --
  * see bios.c's own comment on why: a plain `exec_os = coma_start`-style
@@ -195,7 +205,7 @@ void gouser(void)
          * Pterm0() finds its way back via x86_64_kexec_resume.
          */
         void (*target)(PD *) = (void (*)(PD *))exec_os;
-#if CONF_WITH_AES || CONF_WITH_CLI
+#if CONF_WITH_AES
         ULONG want = p->p_tbase;
 #endif
         jmp_buf buf;
@@ -204,9 +214,6 @@ void gouser(void)
 #if CONF_WITH_AES
         X86_64_ROM_CANDIDATE(&target, want, accdesk_start);
         X86_64_ROM_CANDIDATE(&target, want, deskstart);
-#endif
-#if CONF_WITH_CLI
-        X86_64_ROM_CANDIDATE(&target, want, coma_start);
 #endif
 
         x86_64_kexec_resume = &buf;
@@ -251,14 +258,62 @@ void gouser(void)
          * kernel stack to get it, since it's ordinary nested C code.)
          */
         UQUAD pml4_phys = kproc_user_pml4(p);
-        UQUAD entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
+        UQUAD entry_rip = kproc_user_entry(p);
+        /* p_hitpa was rounded in init_pd_fields() to RSP = 8 (mod 16), as
+         * doc/process-entry.txt requires; the KPROC snapshot bounds it, so
+         * a launcher that rewrote it after PE_BASEPAGE cannot move the
+         * stack outside the process's own mapped TPA. */
         UQUAD user_rsp = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_hitpa);
+        jmp_buf buf;
+        jmp_buf *saved_resume = x86_64_kexec_resume;
 
+        if (!entry_rip)         /* not a built-in image: the loader's own text */
+            entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
         if (!pml4_phys)
             panic("x86-64: process launched without an address space\n");
-        x86_64_enter_user(pml4_phys, entry_rip, user_rsp,
-                          (UQUAD)(uintptr_t)p, 0);
+        if ((user_rsp & 15) != 8)
+            panic("x86-64: process stack not aligned for entry\n");
+
+        /*
+         * Control never comes back through x86_64_enter_user(): the process
+         * leaves ring 0 by iretq.  What comes back is its own Pterm() (or a
+         * fault in it), which unwinds with longjmp() to this exact point,
+         * exactly as for a kernel-code process above -- so the parent's
+         * Pexec() returns the exit code.  By then xterm() has already
+         * destroyed the address space (switching CR3 back to the kernel
+         * tables) and made the launcher `run` again.
+         */
+        x86_64_kexec_resume = &buf;
+        x86_64_user_depth++;
+        if (setjmp(buf) == 0)
+            x86_64_enter_user(pml4_phys, entry_rip, user_rsp,
+                              (UQUAD)(uintptr_t)p, 0);
+        x86_64_user_depth--;
+        x86_64_kexec_resume = saved_resume;
+        /* Pterm() was a syscall, still on its stack with the kernel GS
+         * base swapped in: put the GS state back the way ring 0 expects. */
+        x86_64_syscall_abandoned();
     }
+}
+
+/*
+ * A ring-3 process faulted (bios/arch/x86_64/panic.c).  The fault is the
+ * process's own: report it and terminate just that process, as Pterm(-1)
+ * would, so the launcher resumes and the kernel carries on.  Called on the
+ * exception stack, in ring 0, with the process's address space still
+ * loaded; xterm() tears that down and never returns here.
+ */
+void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2)
+{
+    kcprintf("x32 process fault: vector %lu error=0x%lx rip=0x%lx addr=0x%lx\n",
+            (long)vector, (long)error_code, (long)rip, (long)cr2);
+    xterm((UWORD)-1);
+    panic("x86-64: terminated faulting process returned\n");
+}
+
+BOOL x86_64_user_active(void)
+{
+    return x86_64_user_depth != 0;
 }
 
 void termuser(void)

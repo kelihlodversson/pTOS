@@ -17,6 +17,7 @@
 #ifdef __x86_64__
 #include "kheap.h"
 #include "procmem.h"
+#include "x32image.h"
 #endif
 
 /* The option gates only the record itself: the #else stubs stay in every
@@ -43,6 +44,8 @@ struct kproc {
     X86_64_ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
     BOOL started;               /* proc_go() has launched it */
     PD *parent;                 /* who launched it: the trusted copy of p_parent */
+    const X32_IMAGE *image;     /* built-in program to map private, or NULL */
+    UQUAD entry;                /* its entry point once loaded, else 0 */
 #endif
     KPROC *next;
 };
@@ -262,8 +265,30 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
         x86_64_aspace_destroy(as);
         return FALSE;
     }
+    if (kproc->image && !x86_64_x32image_load(as, kproc->image, &kproc->entry)) {
+        kproc->entry = 0;
+        x86_64_aspace_destroy(as);
+        return FALSE;
+    }
     kproc->aspace = as;
     return TRUE;
+}
+
+BOOL kproc_set_image(PD *pd, const X32_IMAGE *image)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    if (!kproc || kproc->aspace || !x86_64_x32image_check(image, NULL))
+        return FALSE;
+    kproc->image = image;
+    return TRUE;
+}
+
+UQUAD kproc_user_entry(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    return (kproc && kproc->aspace) ? kproc->entry : 0;
 }
 
 X86_64_ASPACE *kproc_user_aspace(PD *pd)

@@ -11,6 +11,7 @@
 
 #include "bdosdefs.h"
 #include "procmem.h"      /* X86_64_ASPACE (x86-64 only; empty elsewhere) */
+#include "x32image.h"
 
 typedef struct dta_info DTAINFO;
 
@@ -39,6 +40,16 @@ void kproc_mark_started(PD *pd);        /* proc_go() launched it */
  * that was never launched, whose inherited file and directory references
  * are therefore still held. */
 BOOL kproc_discard(PD *pd);
+/*
+ * Makes the process a built-in x32 program: kproc_prepare_user() will also
+ * map the image's segments as private pages of its address space.  Must
+ * come after kproc_create() and before the launch; FALSE if the image does
+ * not pass x86_64_x32image_check() or the address space already exists.
+ * The entry point is then the image's own, kept in the KPROC record and
+ * never read back from the user-writable p_tbase.
+ */
+BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);
+UQUAD kproc_user_entry(PD *pd);         /* image entry point; 0 if none */
 UQUAD kproc_user_pml4(PD *pd);          /* 0 if not prepared */
 X86_64_ASPACE *kproc_user_aspace(PD *pd);   /* NULL if none (tests) */
 ULONG kproc_count(void);                /* live records, for leak tests */

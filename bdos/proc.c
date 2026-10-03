@@ -83,6 +83,11 @@ static BOOL x86_64_prepare_launch(PD *p)
 {
     if (x86_64_kernel_code_pd == p)
         return TRUE;
+    /* A launch from inside a ring-3 process's own syscall would run on the
+     * one shared syscall stack the first process's call is still using
+     * (#399 brings per-process kernel stacks): refuse it cleanly. */
+    if (x86_64_user_active())
+        return FALSE;
     return kproc_prepare_user(p, run);
 }
 

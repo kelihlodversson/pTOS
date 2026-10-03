@@ -280,7 +280,35 @@ static int x86_64_arg_hits_known_kernel_range(UQUAD addr)
     return 0;
 }
 
+static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
+
+/*
+ * Set while a real ring-3 `syscall` is being serviced: its entry stub did
+ * `swapgs`, and its exit stub undoes it.  A call that never reaches the exit
+ * stub -- Pterm(), which unwinds straight back to the launching kernel
+ * context -- leaves the swapped state behind; x86_64_syscall_abandoned()
+ * restores it.
+ */
+static volatile int syscall_gs_swapped;
+
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
+{
+    if (from_ring3)
+        syscall_gs_swapped = 1;
+    trap_dispatch(frame, from_ring3);
+    if (from_ring3)
+        syscall_gs_swapped = 0;
+}
+
+void x86_64_syscall_abandoned(void)
+{
+    if (syscall_gs_swapped) {
+        __asm__ volatile ("swapgs" ::: "memory");
+        syscall_gs_swapped = 0;
+    }
+}
+
+static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
     UQUAD trap_class = frame->rax >> 32;
     ULONG fn = (ULONG)frame->rax;

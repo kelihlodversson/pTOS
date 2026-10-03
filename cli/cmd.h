@@ -47,11 +47,11 @@
  #define RESTRICT __restrict__
  /* the m68k standalone build only ever targets real Atari hardware;
     the ARM standalone build only ever targets pTOS's own raspi/virt-arm
-    ports, which have no Atari-style video hardware to switch resolution
-    on -- Getrez()/Setscreen() are a no-op there (see bios/screen.c's
+    ports and the x86-64 one, which have no Atari-style video hardware
+    to switch resolution on -- Getrez()/Setscreen() are a no-op there (see bios/screen.c's
     CONF_WITH_ATARI_VIDEO fallback), so exposing MODE's resolution
     switching would just look broken rather than doing anything real */
- #ifdef __arm__
+ #if defined(__arm__) || defined(X32_USERLAND)
   #define CLI_WITH_RESOLUTION    0
   #define CLI_WITH_TT_RESOLUTION 0
  #else
@@ -76,6 +76,7 @@
 #include <mint/osbind.h>
 #include <string.h>     /* strlen(), strcpy(), memcpy(), memset(), strncasecmp() */
 #include <ctype.h>      /* toupper() */
+#include <stdio.h>      /* sprintf() */
 
 /* EmuTOS/pTOS extends the standard 3-argument XBIOS Setscreen (opcode 5)
  * with a 4th word argument that sets the font height in the same call

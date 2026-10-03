@@ -628,12 +628,12 @@ static void test_isolation(void)
     CHECK(!x86_64_aspace_copy_to_user(b, ISO_VA + 2 * PAGE, buf, 8), "copy to an unmapped address refused");
 
     /* read-only and supervisor-only mappings */
-    CHECK(x86_64_aspace_map_private(a, 0x800000, PAGE, ASPACE_PROT_USER), "read-only mapping");
-    CHECK(x86_64_aspace_user_range_ok(a, 0x800000, 8, FALSE) &&
-          !x86_64_aspace_user_range_ok(a, 0x800000, 8, TRUE) &&
-          !x86_64_aspace_copy_to_user(a, 0x800000, buf, 8), "read-only page refuses writes");
-    CHECK(x86_64_aspace_map_private(a, 0x900000, PAGE, ASPACE_PROT_WRITE), "supervisor-only mapping");
-    CHECK(!x86_64_aspace_user_range_ok(a, 0x900000, 8, FALSE), "supervisor-only page invalid for ring 3");
+    CHECK(x86_64_aspace_map_private(a, 0x20000000, PAGE, ASPACE_PROT_USER), "read-only mapping");
+    CHECK(x86_64_aspace_user_range_ok(a, 0x20000000, 8, FALSE) &&
+          !x86_64_aspace_user_range_ok(a, 0x20000000, 8, TRUE) &&
+          !x86_64_aspace_copy_to_user(a, 0x20000000, buf, 8), "read-only page refuses writes");
+    CHECK(x86_64_aspace_map_private(a, 0x20100000, PAGE, ASPACE_PROT_WRITE), "supervisor-only mapping");
+    CHECK(!x86_64_aspace_user_range_ok(a, 0x20100000, 8, FALSE), "supervisor-only page invalid for ring 3");
 
     /* refusals leave nothing behind */
     k = x86_64_aspace_private_pages(a);
@@ -656,9 +656,21 @@ static void test_isolation(void)
           "kernel address invalid as a user pointer");
     if (probe != X86_64_PMEM_NONE)
         x86_64_pmem_free_pages(probe, 1);
-    CHECK(!x86_64_aspace_translate(a, 0, NULL, NULL) &&
-          !x86_64_aspace_translate(a, X86_64_LOW_TPA_VIRT_BASE, NULL, NULL),
-          "the kernel's low mappings are not in a process");
+    /* The kernel's low data (the system-vector area, the kernel-data pool)
+     * is there for ring 0's sake while it runs a system call under this
+     * address space -- and supervisor-only; the process window is not. */
+    {
+        UQUAD kstart, kend;
+
+        x86_64_low_kernel_range(&kstart, &kend);
+        CHECK(x86_64_aspace_translate(a, 0x400, NULL, &prot) && !(prot & ASPACE_PROT_USER),
+              "the system variables are mapped, supervisor-only");
+        CHECK(x86_64_aspace_translate(a, kstart, NULL, &prot) && !(prot & ASPACE_PROT_USER) &&
+              !x86_64_aspace_user_range_ok(a, kstart, 8, FALSE),
+              "the kernel-data pool is mapped, supervisor-only");
+    }
+    CHECK(!x86_64_aspace_translate(a, X86_64_LOW_TPA_VIRT_BASE, NULL, NULL),
+          "the process window is not in a fresh address space");
 
     x86_64_aspace_destroy(a);
     x86_64_aspace_destroy(b);
@@ -789,14 +801,14 @@ static void test_process_validation(void)
 
         CHECK(as != NULL, "the process has an address space");
         if (as) {
-            CHECK(x86_64_aspace_map_private(as, 0x800000, PAGE, ASPACE_PROT_USER), "read-only user page");
-            CHECK(x86_64_aspace_map_private(as, 0x900000, PAGE, ASPACE_PROT_USER | ASPACE_PROT_WRITE),
+            CHECK(x86_64_aspace_map_private(as, 0x20000000, PAGE, ASPACE_PROT_USER), "read-only user page");
+            CHECK(x86_64_aspace_map_private(as, 0x20100000, PAGE, ASPACE_PROT_USER | ASPACE_PROT_WRITE),
                   "writable user page");
-            CHECK(kproc_validate_user_range(0x800000, 512), "read-only buffer is readable");
-            CHECK(!kproc_validate_user_write(0x800000, 512), "read-only buffer is not a valid output buffer");
-            CHECK(!kproc_copy_to_user(0x800000, b, 8), "copy into a read-only buffer refused");
-            CHECK(kproc_validate_user_write(0x900000, 512), "writable buffer is a valid output buffer");
-            CHECK(!kproc_validate_user_dta(0x800000), "a read-only DTA is refused");
+            CHECK(kproc_validate_user_range(0x20000000, 512), "read-only buffer is readable");
+            CHECK(!kproc_validate_user_write(0x20000000, 512), "read-only buffer is not a valid output buffer");
+            CHECK(!kproc_copy_to_user(0x20000000, b, 8), "copy into a read-only buffer refused");
+            CHECK(kproc_validate_user_write(0x20100000, 512), "writable buffer is a valid output buffer");
+            CHECK(!kproc_validate_user_dta(0x20000000), "a read-only DTA is refused");
         }
     }
     CHECK(!kproc_copy_to_user(0x10000000, b, 8), "copy to an unmapped address refused");

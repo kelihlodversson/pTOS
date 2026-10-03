@@ -144,8 +144,21 @@ static NORETURN void hang(void)
     }
 }
 
+/* bdos/arch/x86_64/rwa.c */
+extern void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2) NORETURN;
+
 void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
 {
+    /*
+     * A fault taken in ring 3 is the process's own: terminate it and
+     * resume its launcher instead of halting the machine.  Only a
+     * kernel-mode exception is fatal.  (No swapgs here: exceptions never
+     * swap GS, and ring 3 runs with the "no user context" GS state.)
+     */
+    if ((frame->cs & 3) == 3)
+        x86_64_user_fault((ULONG)frame->vector, frame->error_code, frame->rip,
+                          frame->vector == 14 ? x86_64_read_cr2() : 0);
+
     earlycon_puts("\npanic: exception ");
     earlycon_puthex(frame->vector);
     earlycon_puts(" ");
