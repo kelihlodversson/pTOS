@@ -41,7 +41,10 @@ BOOL kproc_discard(PD *pd);
 UQUAD kproc_user_pml4(PD *pd);          /* 0 if not prepared */
 ULONG kproc_count(void);                /* live records, for leak tests */
 BOOL kproc_validate_user_dta(UQUAD address);
+/* valid user memory of the current process: mapped, user-accessible and (for
+ * _write) writable in its own address space */
 BOOL kproc_validate_user_range(UQUAD address, ULONG size);
+BOOL kproc_validate_user_write(UQUAD address, ULONG size);
 BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size);
 BOOL kproc_copy_to_user(UQUAD address, const void *src, ULONG size);
 #endif

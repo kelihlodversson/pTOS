@@ -38,7 +38,16 @@ struct x86_64_aspace {
         UQUAD va, bytes;
     } *pins;
     ULONG npins, pin_capacity;
+    UQUAD *owned;               /* private backing pages: ours alone, freed with us */
+    ULONG nowned, owned_capacity;
 };
+
+#define PTE_PRESENT  0x1ULL
+#define PTE_WRITABLE 0x2ULL
+#define PTE_USER     0x4ULL
+#define PTE_PS       0x80ULL
+#define PTE_NX       0x8000000000000000ULL
+#define PTE_ADDR     0xFFFFFFFFFF000ULL
 
 /* Grows the vector and records a page; false (and nothing recorded) if the
  * vector could not grow. */
@@ -115,6 +124,9 @@ void x86_64_aspace_destroy(X86_64_ASPACE *as)
     for (i = 0; i < as->npins; i++)
         x86_64_procmem_pin(as->pins[i].va, as->pins[i].bytes, -1);
     kfree(as->pins);
+    for (i = 0; i < as->nowned; i++)
+        x86_64_pmem_free_pages(as->owned[i], 1);
+    kfree(as->owned);
     for (i = 0; i < as->count; i++)
         x86_64_pmem_free_pages(as->pages[i], 1);
     kfree(as->pages);
@@ -178,4 +190,172 @@ BOOL x86_64_aspace_map_procmem(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD p
         if (!x86_64_aspace_map_page(as, page, x86_64_procmem_phys_of(page), prot))
             return FALSE;
     return TRUE;
+}
+
+/* ---- walking, validation and private memory ------------------------- */
+
+BOOL x86_64_aspace_translate(const X86_64_ASPACE *as, UQUAD va, UQUAD *phys, UWORD *prot)
+{
+    const UQUAD *table = (const UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + as->pml4_phys);
+    UQUAD index[4];
+    UQUAD entry = 0, size = 0, base = 0;
+    BOOL user = TRUE, write = TRUE, nx = FALSE;
+    int level;
+
+    /* canonical addresses only: bits 63..47 all equal */
+    if (va >= 0x800000000000ULL && va < 0xFFFF800000000000ULL)
+        return FALSE;
+    index[0] = (va >> 39) & 0x1FF;
+    index[1] = (va >> 30) & 0x1FF;
+    index[2] = (va >> 21) & 0x1FF;
+    index[3] = (va >> 12) & 0x1FF;
+    for (level = 0; level < 4; level++) {
+        entry = table[index[level]];
+        if (!(entry & PTE_PRESENT))
+            return FALSE;
+        user = user && (entry & PTE_USER);
+        write = write && (entry & PTE_WRITABLE);
+        nx = nx || (entry & PTE_NX);
+        if (level == 1 && (entry & PTE_PS)) {           /* 1 GiB page */
+            size = 0x40000000ULL;
+            break;
+        }
+        if (level == 2 && (entry & PTE_PS)) {           /* 2 MiB page */
+            size = 0x200000ULL;
+            break;
+        }
+        if (level == 3) {
+            size = X86_64_PAGE_SIZE;
+            break;
+        }
+        table = (const UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + (entry & PTE_ADDR));
+    }
+    base = entry & PTE_ADDR & ~(size - 1);
+    if (phys)
+        *phys = base + (va & (size - 1));
+    if (prot)
+        *prot = (write ? ASPACE_PROT_WRITE : 0) | (nx ? 0 : ASPACE_PROT_EXEC) |
+                (user ? ASPACE_PROT_USER : 0);
+    return TRUE;
+}
+
+BOOL x86_64_aspace_user_range_ok(const X86_64_ASPACE *as, UQUAD va, UQUAD bytes, BOOL write)
+{
+    UQUAD page, last;
+
+    if (!bytes || va >= X86_64_USER_VA_LIMIT || bytes > X86_64_USER_VA_LIMIT - va)
+        return FALSE;
+    last = (va + bytes - 1) & ~(X86_64_PAGE_SIZE - 1);
+    for (page = va & ~(X86_64_PAGE_SIZE - 1); ; page += X86_64_PAGE_SIZE) {
+        UWORD prot;
+
+        if (!x86_64_aspace_translate(as, page, NULL, &prot) ||
+            !(prot & ASPACE_PROT_USER) || (write && !(prot & ASPACE_PROT_WRITE)))
+            return FALSE;
+        if (page == last)
+            break;
+    }
+    return TRUE;
+}
+
+/* Copies page by page through the direct map; the range was validated. */
+static void copy_user(const X86_64_ASPACE *as, UBYTE *kernel, UQUAD va, ULONG bytes, BOOL to_user)
+{
+    while (bytes) {
+        UQUAD phys;
+        ULONG chunk = (ULONG)(X86_64_PAGE_SIZE - (va & (X86_64_PAGE_SIZE - 1)));
+        UBYTE *user;
+
+        if (chunk > bytes)
+            chunk = bytes;
+        x86_64_aspace_translate(as, va, &phys, NULL);
+        user = (UBYTE *)(uintptr_t)(X86_64_PHYS_MAP_BASE + phys);
+        if (to_user)
+            memcpy(user, kernel, chunk);
+        else
+            memcpy(kernel, user, chunk);
+        kernel += chunk;
+        va += chunk;
+        bytes -= chunk;
+    }
+}
+
+BOOL x86_64_aspace_copy_from_user(const X86_64_ASPACE *as, void *dst, UQUAD va, ULONG bytes)
+{
+    if (!x86_64_aspace_user_range_ok(as, va, bytes, FALSE))
+        return FALSE;
+    copy_user(as, dst, va, bytes, FALSE);
+    return TRUE;
+}
+
+BOOL x86_64_aspace_copy_to_user(const X86_64_ASPACE *as, UQUAD va, const void *src, ULONG bytes)
+{
+    if (!x86_64_aspace_user_range_ok(as, va, bytes, TRUE))
+        return FALSE;
+    copy_user(as, (UBYTE *)src, va, bytes, TRUE);
+    return TRUE;
+}
+
+ULONG x86_64_aspace_private_pages(const X86_64_ASPACE *as)
+{
+    return as->nowned;
+}
+
+BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
+{
+    UQUAD pages, i, mapped = 0, backing;
+    ULONG first_owned = as->nowned;
+
+    if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= X86_64_USER_VA_LIMIT ||
+        bytes > X86_64_USER_VA_LIMIT - va)
+        return FALSE;
+    pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
+    if (va + pages * X86_64_PAGE_SIZE > X86_64_USER_VA_LIMIT)
+        return FALSE;
+
+    /* all-or-nothing: refuse an overlap before touching anything */
+    for (i = 0; i < pages; i++)
+        if (x86_64_aspace_translate(as, va + i * X86_64_PAGE_SIZE, NULL, NULL))
+            return FALSE;
+
+    /* room to record every backing page first, so recording cannot fail
+     * once a page has been taken */
+    if (as->nowned + pages > as->owned_capacity) {
+        ULONG cap = as->owned_capacity ? as->owned_capacity : 8;
+        UQUAD *grown;
+
+        while (cap < as->nowned + pages)
+            cap *= 2;
+        grown = kalloc(cap * sizeof(UQUAD));
+        if (!grown)
+            return FALSE;
+        if (as->owned) {
+            memcpy(grown, as->owned, as->nowned * sizeof(UQUAD));
+            kfree(as->owned);
+        }
+        as->owned = grown;
+        as->owned_capacity = cap;
+    }
+
+    for (i = 0; i < pages; i++) {
+        backing = x86_64_pmem_try_alloc_pages(1, 0);
+        if (backing == X86_64_PMEM_NONE)
+            break;
+        memset((void *)(uintptr_t)(X86_64_PHYS_MAP_BASE + backing), 0, X86_64_PAGE_SIZE);
+        as->owned[as->nowned++] = backing;
+        if (!x86_64_aspace_map_page(as, va + i * X86_64_PAGE_SIZE, backing, prot))
+            break;
+        mapped++;
+    }
+    if (mapped == pages)
+        return TRUE;
+
+    /* roll back: unmap what this call mapped, free every page it took */
+    for (i = 0; i < mapped; i++)
+        x86_64_unmap_user_page(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+    if (x86_64_read_cr3() == as->pml4_phys)
+        x86_64_write_cr3(as->pml4_phys);        /* flush stale translations */
+    while (as->nowned > first_owned)
+        x86_64_pmem_free_pages(as->owned[--as->nowned], 1);
+    return FALSE;
 }
