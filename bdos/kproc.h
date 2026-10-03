@@ -28,6 +28,11 @@ DTAINFO *kproc_get_dta(PD *pd);
  * succeeded for pd first.
  */
 BOOL kproc_prepare_user(PD *pd, PD *parent);
+/* The launching process, recorded by proc_go() and used by Pterm() instead
+ * of the user-writable p_parent field.  kproc_get_parent() halts if there
+ * is no record (like kproc_get_dta()). */
+void kproc_set_parent(PD *pd, PD *parent);
+PD *kproc_get_parent(PD *pd);
 void kproc_mark_started(PD *pd);        /* proc_go() launched it */
 /* kproc_destroy() that also says whether the record belonged to a basepage
  * that was never launched, whose inherited file and directory references

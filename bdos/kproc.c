@@ -42,6 +42,7 @@ struct kproc {
     UBYTE *user_end;
     X86_64_ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
     BOOL started;               /* proc_go() has launched it */
+    PD *parent;                 /* who launched it: the trusted copy of p_parent */
 #endif
     KPROC *next;
 };
@@ -125,6 +126,32 @@ void kproc_destroy(PD *pd)
 }
 
 #ifdef __x86_64__
+void kproc_set_parent(PD *pd, PD *parent)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    if (!kproc) {
+        KINFO(("Missing kernel process record for %p\n", pd));
+        halt();
+    }
+    kproc->parent = parent;
+}
+
+PD *kproc_get_parent(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    /* pd->p_parent lives in the basepage, which the owning process can
+     * write: Pterm() must never steer where the kernel writes the exit
+     * code (and then continues running) by it.  The launcher recorded here
+     * is the only trusted value. */
+    if (!kproc || !kproc->parent) {
+        KINFO(("Missing parent for process record %p\n", pd));
+        halt();
+    }
+    return kproc->parent;
+}
+
 void kproc_mark_started(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);

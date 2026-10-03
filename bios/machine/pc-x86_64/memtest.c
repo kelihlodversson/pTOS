@@ -172,15 +172,19 @@ static void test_pmem(void)
     /* runtime fragmentation: free every other page of a large run, then the
      * rest -- far more separate holes than the boot-time region list could
      * name -- and everything must come back */
-    n = 20000;
+    n = x86_64_pmem_free_bytes() / PAGE / 4;    /* a quarter of free RAM, */
+    if (n > 20000)                              /* up to 20000 pages */
+        n = 20000;
+    CHECK(n >= 1000, "enough free memory for the fragmentation test");
     runs = kalloc(n * sizeof(UQUAD));
+    CHECK(runs != NULL, "page vector for the fragmentation test");
     if (runs) {
         for (i = 0; i < n; i++) {
             runs[i] = x86_64_pmem_try_alloc_pages(1, 0);
             if (runs[i] == X86_64_PMEM_NONE)
                 break;
         }
-        CHECK(i == n, "20000 single pages");
+        CHECK(i == n, "all single pages allocated");
         for (n = i, i = 0; i < n; i += 2)
             x86_64_pmem_free_pages(runs[i], 1);
         for (i = 1; i < n; i += 2)
@@ -668,6 +672,19 @@ static void test_lifecycle(void)
         CHECK(!x86_64_procmem_pinned(stranger), "stranger's block was not mapped");
         x86_64_procmem_free(stranger);
         Mfree(pd);
+    }
+
+    /* Pterm() trusts the recorded launcher, not the writable p_parent field */
+    pd = new_basepage();
+    if (pd) {
+        PD *forged = (PD *)(uintptr_t)X86_64_LOW_TPA_VIRT_BASE;     /* anywhere */
+
+        kproc_set_parent(pd, run);
+        pd->p_parent = (ULONG)(uintptr_t)forged;
+        CHECK(kproc_get_parent(pd) == run, "recorded parent survives a forged p_parent");
+        env = USERPTR_TO_PTR(pd->p_env);
+        Mfree(pd);
+        Mfree(env);
     }
 
     /* Mfree() of a live process's own block is refused, not applied */
