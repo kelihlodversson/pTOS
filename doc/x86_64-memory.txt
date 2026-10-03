@@ -122,8 +122,15 @@ Failure behaviour
 kalloc()               NULL; heap unchanged
 x86_64_procmem_alloc() NULL; window and records unchanged
 x86_64_aspace_create() NULL; nothing left allocated
-x86_64_aspace_map_*()  FALSE; mappings made before the failure stay in the
-                       address space and are freed with it
+x86_64_aspace_map_private()
+                       FALSE; all-or-nothing: no mapping, backing page or
+                       page-table page from the call is left (internal
+                       bookkeeping vectors may keep extra capacity until the
+                       address space is destroyed)
+x86_64_aspace_map_page() / _map_procmem()
+                       FALSE; pages mapped before the failure stay in the
+                       address space (map_procmem keeps its pin on them) and
+                       are released when it is destroyed
 kproc_prepare_user()   FALSE; no address space is attached to the record
 
 The fixed xmgetblk() pool (bdos/osmem.c) is unchanged and still serves
