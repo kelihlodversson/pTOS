@@ -107,6 +107,21 @@ static BOOL map_kernel_low(struct x86_64_aspace *as)
         if (x86_64_kernel_low_2m_phys(va, &phys) &&
             x86_64_map_kernel_2m_into(as->pml4_phys, va, phys, alloc_table_page, as) != 0)
             return FALSE;
+
+    /*
+     * The whole process window, supervisor-only.  A process that launches
+     * another (Pexec from its own system call) has ring 0 build the child's
+     * basepage, environment and program in blocks the window hands out
+     * later, under the parent's CR3; the window's backing is one fixed
+     * physical range, so mapping every page now makes those blocks
+     * reachable without any later mapping.  A process's own blocks are then
+     * mapped over their pages with the user bit (x86_64_aspace_map_procmem());
+     * nobody else's are reachable from ring 3.
+     */
+    for (va = X86_64_LOW_TPA_VIRT_BASE; va < X86_64_LOW_TPA_VIRT_BASE + X86_64_LOW_TPA_BYTES;
+         va += X86_64_PAGE_SIZE)
+        if (!x86_64_aspace_map_page(as, va, x86_64_procmem_phys_of(va), ASPACE_PROT_WRITE))
+            return FALSE;
     return TRUE;
 }
 
@@ -489,4 +504,26 @@ BOOL x86_64_aspace_load_private(X86_64_ASPACE *as, UQUAD va, UQUAD memsz,
         filesz -= chunk;
     }
     return TRUE;
+}
+
+/*
+ * Kernel stacks.  A page run from the physical allocator, reached through
+ * the direct map (so the same address in every address space); the stack
+ * pointer starts at the top less 8, as the syscall entry stub expects
+ * ("as if a return address had just been pushed").
+ */
+UQUAD x86_64_kstack_alloc(UQUAD *top)
+{
+    UQUAD phys = x86_64_pmem_try_alloc_pages(X86_64_KSTACK_PAGES, 0);
+
+    if (phys == X86_64_PMEM_NONE)
+        return 0;
+    *top = X86_64_PHYS_MAP_BASE + phys + X86_64_KSTACK_PAGES * X86_64_PAGE_SIZE - 8;
+    return phys;
+}
+
+void x86_64_kstack_free(UQUAD phys)
+{
+    if (phys)
+        x86_64_pmem_free_pages(phys, X86_64_KSTACK_PAGES);
 }

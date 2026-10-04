@@ -670,8 +670,10 @@ static void test_isolation(void)
               !x86_64_aspace_user_range_ok(a, kstart, 8, FALSE),
               "the kernel-data pool is mapped, supervisor-only");
     }
-    CHECK(!x86_64_aspace_translate(a, X86_64_LOW_TPA_VIRT_BASE, NULL, NULL),
-          "the process window is not in a fresh address space");
+    CHECK(x86_64_aspace_translate(a, X86_64_LOW_TPA_VIRT_BASE, NULL, &prot) &&
+          !(prot & ASPACE_PROT_USER) &&
+          !x86_64_aspace_user_range_ok(a, X86_64_LOW_TPA_VIRT_BASE, 8, FALSE),
+          "the process window is mapped supervisor-only in a fresh address space");
 
     x86_64_aspace_destroy(a);
     x86_64_aspace_destroy(b);
@@ -1186,6 +1188,27 @@ static void test_ring3(void)
     probe_expect('k', 0xffff, "ring-3 access to the system variables is contained");
     probe_expect('p', 0xffff, "a privileged instruction in ring 3 is contained");
     probe_expect('e', 0, "a process runs normally after the faults");
+
+    /*
+     * A ring-3 process runs another from inside its own system call
+     * (Pexec of C:\X32HELLO.ELF, an x32 ELF on the boot drive -- CI puts one
+     * there): the child makes calls of its own on its own kernel stack, exits,
+     * and the parent resumes on its own stack, page tables and user RSP.
+     * Without the file this cannot be tried; that is reported, and CI, which
+     * supplies it, requires the PASS line.
+     */
+    snap(&s);
+    rc = run_probe('n');
+    if (rc == 0x100) {
+        kcprintf("x86-64 nested pexec: SKIP (no C:\\X32HELLO.ELF)\n");
+    } else {
+        CHECK(rc == 0, "a ring-3 process runs a child and resumes");
+        if (rc == 0)
+            kcprintf("x86-64 nested pexec: PASS\n");
+        else
+            kcprintf("x86-64 nested pexec: FAIL (0x%lx)\n", rc);
+    }
+    same(&s, "nested Pexec from ring 3");
 
     /* an allocation failure while loading the image is an ordinary refused
      * launch, tried at every allocation point */

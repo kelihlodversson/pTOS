@@ -40,10 +40,12 @@
  * right before iretq, and termuser() (reached from xterm() once the address
  * space is gone, whether by Pterm() or by a fault) unwinds to it, exactly as
  * for a kernel-code process.  That resumes the launcher with the exit code,
- * which is what the built-in EmuCON, and its parent bios.c, rely on.  One
- * syscall stack is shared, so only one ring-3 process can be running: a
- * launch from inside its system call is refused (x86_64_user_active(); per-
- * process kernel stacks are #399).
+ * which is what the built-in EmuCON, and its parent bios.c, rely on.  Each
+ * ring-3 process makes its system calls on a kernel stack of its own, which
+ * is what lets one launch another from inside a call (EmuCON running a
+ * program): the suspended launcher's frames and the jmp_buf stay on ITS stack
+ * while the child runs, and gouser() restores the launcher's stack pointer,
+ * page tables, saved user RSP and GS state when the child is gone (#399).
  *
  *  - enter()/bdos_trap2() are never actually invoked as functions on this
  *    arch: bdos/bdosmain.c only ever takes their *address* (Setexc(0x21,
@@ -81,6 +83,14 @@ extern void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp,
                               UQUAD basepage, UQUAD entry_type) NORETURN;
 extern BOOL x86_64_take_kernel_code_pd(PD *p);
 extern void x86_64_syscall_abandoned(void);     /* bios/arch/x86_64/trap.c */
+extern UQUAD x86_64_get_kernel_stack(void);
+extern void x86_64_set_kernel_stack(UQUAD rsp);
+extern UQUAD x86_64_get_saved_user_rsp(void);
+extern void x86_64_set_saved_user_rsp(UQUAD rsp);
+extern int x86_64_gs_to_user(void);
+extern void x86_64_gs_back_to_syscall(void);
+extern void x86_64_write_cr3(UQUAD pml4_phys);  /* bios/arch/x86_64/pgtable.c */
+extern UQUAD x86_64_kernel_pml4_phys(void);
 
 void enter(void);
 void bdos_trap2(void);
@@ -90,7 +100,6 @@ void termuser(void) NORETURN;
  * has no other use for */
 extern void xterm(UWORD rc) NORETURN;               /* bdos/proc.c */
 void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2, UQUAD rsp) NORETURN;
-BOOL x86_64_user_active(void);
 
 void enter(void)
 {
@@ -106,12 +115,6 @@ void bdos_trap2(void)
  * comment.  NULL when nothing is currently launched.
  */
 static jmp_buf *x86_64_kexec_resume;
-
-/* Ring-3 processes currently running (launched by gouser() and not yet
- * terminated).  There is one syscall stack, so a second launch from inside
- * a syscall of the first cannot work yet (#399, per-process kernel stacks):
- * proc.c refuses it. */
-static int x86_64_user_depth;
 
 #if CONF_WITH_AES
 extern void accdesk_start(void) NORETURN;      /* aes/arch/x86_64/gemstart.c */
@@ -245,8 +248,8 @@ void gouser(void)
          *
          * Both branches resume the launcher at Pterm() the same way (the
          * jmp_buf saved below), so Pexec() returns the exit code.  What a
-         * ring-3 process does not get yet is a kernel stack of its own (see
-         * this file's own top comment): #399.
+         * ring-3 process has, which this branch switches to and back, is a
+         * kernel stack of its own (see this file's own top comment).
          */
         UQUAD pml4_phys = kproc_user_pml4(p);
         UQUAD entry_rip = kproc_user_entry(p);
@@ -257,13 +260,17 @@ void gouser(void)
         UQUAD user_rsp = kproc_user_stack(p);
         jmp_buf buf;
         jmp_buf *saved_resume = x86_64_kexec_resume;
+        UQUAD kstack_top, kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
+        UQUAD launcher_stack = x86_64_get_kernel_stack();
+        UQUAD launcher_user_rsp = x86_64_get_saved_user_rsp();
+        int launcher_in_syscall;
 
         if (!entry_rip)         /* not a built-in image: the loader's own text */
             entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
         if (!user_rsp)
             user_rsp = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_hitpa);
-        if (!pml4_phys)
-            panic("x86-64: process launched without an address space\n");
+        if (!pml4_phys || !kstack_phys)
+            panic("x86-64: process launched without an address space or kernel stack\n");
         if ((user_rsp & 15) != 8)
             panic("x86-64: process stack not aligned for entry\n");
 
@@ -273,19 +280,37 @@ void gouser(void)
          * fault in it), which unwinds with longjmp() to this exact point,
          * exactly as for a kernel-code process above -- so the parent's
          * Pexec() returns the exit code.  By then xterm() has already
-         * destroyed the address space (switching CR3 back to the kernel
-         * tables) and made the launcher `run` again.
+         * destroyed the address space (switching CR3 to the kernel tables)
+         * and made the launcher `run` again.
+         *
+         * The process's system calls run on a kernel stack of its own, so a
+         * launcher that is itself a ring-3 process, suspended in its Pexec()
+         * system call, keeps its frames (this one, and the jmp_buf) on ITS
+         * stack while the child makes calls.  Everything the launcher's own
+         * context needs is put back below: its stack for the next call, its
+         * page tables, its GS state, its saved user RSP.
          */
         x86_64_kexec_resume = &buf;
-        x86_64_user_depth++;
+        x86_64_set_kernel_stack(kstack_top);
+        launcher_in_syscall = x86_64_gs_to_user();
         if (setjmp(buf) == 0)
             x86_64_enter_user(pml4_phys, entry_rip, user_rsp,
                               (UQUAD)(uintptr_t)p, 0);
-        x86_64_user_depth--;
         x86_64_kexec_resume = saved_resume;
-        /* Pterm() was a syscall, still on its stack with the kernel GS
-         * base swapped in: put the GS state back the way ring 0 expects. */
+        /* Pterm() was a system call, still on the child's stack with the
+         * kernel GS base swapped in: normalise that first, then restore the
+         * launcher's own state.  Only now is the child's stack unused. */
         x86_64_syscall_abandoned();
+        x86_64_set_kernel_stack(launcher_stack);
+        x86_64_set_saved_user_rsp(launcher_user_rsp);
+        x86_64_kstack_free(kstack_phys);
+        {
+            UQUAD launcher_pml4 = kproc_user_pml4(run);
+
+            x86_64_write_cr3(launcher_pml4 ? launcher_pml4 : x86_64_kernel_pml4_phys());
+        }
+        if (launcher_in_syscall)
+            x86_64_gs_back_to_syscall();
     }
 }
 
@@ -307,11 +332,6 @@ void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2, UQU
                 (long)word[0], (long)word[1], (long)word[2], (long)word[3]);
     xterm((UWORD)-1);
     panic("x86-64: terminated faulting process returned\n");
-}
-
-BOOL x86_64_user_active(void)
-{
-    return x86_64_user_depth != 0;
 }
 
 void termuser(void)

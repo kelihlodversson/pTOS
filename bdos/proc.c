@@ -83,11 +83,6 @@ static BOOL x86_64_prepare_launch(PD *p)
 {
     if (x86_64_kernel_code_pd == p)
         return TRUE;
-    /* A launch from inside a ring-3 process's own syscall would run on the
-     * one shared syscall stack the first process's call is still using
-     * (#399 brings per-process kernel stacks): refuse it cleanly. */
-    if (x86_64_user_active())
-        return FALSE;
     return kproc_prepare_user(p, run);
 }
 
@@ -351,14 +346,6 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     KDEBUG(("BDOS xexec: flag or mode = %d\n",flag));
 
-#ifdef __x86_64__
-    /* A launch from inside a ring-3 process's own system call is refused
-     * before anything is allocated: the new blocks lie in the low window,
-     * which that process's page tables do not map, so even creating the
-     * basepage would fault in ring 0 (see x86_64_prepare_launch()). */
-    if (x86_64_user_active())
-        return ENSMEM;
-#endif
 
     /* first branch - actions that do not require loading files */
     switch(flag) {
@@ -567,8 +554,14 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      */
     invalidate_instruction_cache(((UBYTE *)cur_p) + sizeof(PD), hdr.h01_tlen);
 
-    if (flag != PE_LOAD)
+    if (flag != PE_LOAD) {
         proc_go(cur_p);
+#ifdef __x86_64__
+        /* Returns here, unlike on m68k/ARM (see the PE_GO case above), once
+         * the child has exited: its exit code is in the launcher's D0. */
+        return run->p_dreg[0];
+#endif
+    }
     return (long)cur_p;
 }
 

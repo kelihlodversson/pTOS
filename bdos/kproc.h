@@ -50,6 +50,12 @@ BOOL kproc_discard(PD *pd);
  */
 BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);
 UQUAD kproc_user_entry(PD *pd);         /* image entry point; 0 if none */
+/* Hands the process's kernel stack (the one its system calls run on) to the
+ * launcher, which frees it with x86_64_kstack_free() once the process has
+ * exited and the launcher runs on its own stack again: the process's last
+ * system call, Pterm(), is still using it while the record is destroyed.
+ * Returns the physical base (0 if none) and the initial stack pointer. */
+UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top);
 UQUAD kproc_user_stack(PD *pd);         /* initial RSP of an image's own stack; 0 if none */
 UQUAD kproc_user_pml4(PD *pd);          /* 0 if not prepared */
 X86_64_ASPACE *kproc_user_aspace(PD *pd);   /* NULL if none (tests) */

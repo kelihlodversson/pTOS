@@ -221,6 +221,18 @@ BOOL x86_64_aspace_copy_to_user(const X86_64_ASPACE *as, UQUAD va, const void *s
 BOOL x86_64_aspace_load_private(X86_64_ASPACE *as, UQUAD va, UQUAD memsz,
                                 UWORD prot, const void *src, ULONG filesz);
 
+/*
+ * Per-process kernel stacks: the stack a ring-3 process's system calls run
+ * on (the syscall entry stub switches to it), so that a process suspended
+ * inside a call -- Pexec() of a child -- keeps its frames while the child
+ * makes calls of its own.  x86_64_kstack_alloc() returns the physical base
+ * (0 if memory ran out) and the initial stack pointer; the stack is freed
+ * with x86_64_kstack_free(), never while it is still in use.
+ */
+#define X86_64_KSTACK_PAGES 4
+UQUAD x86_64_kstack_alloc(UQUAD *top);
+void x86_64_kstack_free(UQUAD phys);
+
 /* Private backing pages the address space owns (diagnostics, tests). */
 ULONG x86_64_aspace_private_pages(const X86_64_ASPACE *as);
 

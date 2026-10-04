@@ -224,5 +224,11 @@ void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp,
 /* Undoes the `swapgs` of a syscall that will never return to its exit stub
  * (Pterm unwinding to the launching kernel context). */
 void x86_64_syscall_abandoned(void);
+UQUAD x86_64_get_kernel_stack(void);
+void x86_64_set_kernel_stack(UQUAD rsp);
+UQUAD x86_64_get_saved_user_rsp(void);
+void x86_64_set_saved_user_rsp(UQUAD rsp);
+int x86_64_gs_to_user(void);
+void x86_64_gs_back_to_syscall(void);
 
 #endif /* X86_64_TRAP_H */

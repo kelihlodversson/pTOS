@@ -128,24 +128,44 @@ process as Pterm(-1) (exit code 0xffff); only an exception in ring 0 is fatal
 to the machine.  Returning from a syscall that never reaches its exit stub
 also undoes that stub's `swapgs` (x86_64_syscall_abandoned()).
 
-There is one syscall stack, so a process cannot yet Pexec() a second ring-3
-process from inside its own system call: that launch is refused with ENSMEM
-until per-process kernel stacks arrive (#399).  Interrupts stay disabled in
-ring 3 and in system calls, as everywhere else in this kernel (devices are
-polled).
+Each ring-3 process makes its system calls on a kernel stack of its own (four
+pages from the physical allocator, reached through the direct map; the KPROC
+record owns it, x86_64_kstack_alloc() in include/procmem.h).  gouser() points
+the syscall entry at the child's stack when it launches it and restores the
+launcher's when the child is gone, so a process can run another from inside its
+own Pexec() system call -- EmuCON running a program -- and the suspended
+launcher's frames, and the jmp_buf it resumes through, survive the child's calls.
+What else belongs to the launcher and is put back: its page tables (the
+child's destruction leaves the kernel's loaded), the user RSP the entry stub
+parked in the per-CPU area (one slot, overwritten by every call the child
+makes) and its GS state (the launcher is inside a call, with the kernel GS base
+swapped in; the child is entered, and exits, in the user state).  The child's
+kernel stack is freed by the launcher after the exit, never by xterm(): Pterm()
+is still running on it.
+
+The whole process window is mapped supervisor-only in every address space, a
+process's own blocks being mapped over it with the user bit: Pexec() from ring
+3 builds the child's basepage, environment and program under the parent's page
+tables, in blocks allocated after the parent's address space exists.
+
+Interrupts stay disabled in ring 3 and in system calls, as everywhere else in
+this kernel (devices are polled).  The exception stack (TSS rsp0) is still
+shared: an exception never resumes the code it interrupted, so nothing on it
+outlives the fault.
 
 
 Not covered here
 -----------------
 
 Sharing read-only image pages between processes, demand paging, copy-on-write,
-Mmap/Munmap and relocation-free loading of arbitrary ELF files; full Pexec of
-x32 programs from ring 3 is #399.
+Mmap/Munmap and relocation-free loading of arbitrary ELF files.
 
 Tests: the boot-time self-test (bios/machine/pc-x86_64/memtest.c) launches the
 probe program of tests/x32_probe/ in ring 3 -- entry registers, selectors and
 stack alignment, a GEMDOS call across the syscall boundary, bad system call
 arguments, exit codes, fresh private pages per process, three kinds of fault
 -- and checks after each run that CR3, the GS bases and every allocator are
-back where they were.  The CI boot test requires its PASS line and that the
+back where they were.  With C:\X32HELLO.ELF on the boot drive (CI puts it
+there) the probe also runs it through Pexec() from ring 3 and must resume and
+keep making calls ("x86-64 nested pexec: PASS").  The CI boot test requires its PASS line and that the
 built-in EmuCON ran afterwards without a fault.

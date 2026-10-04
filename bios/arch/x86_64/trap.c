@@ -300,6 +300,61 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
         syscall_gs_swapped = 0;
 }
 
+/*
+ * The stack the next system call switches to (percpu.kernel_rsp).  Each
+ * ring-3 process has one of its own; gouser() points this at the process it
+ * enters and back at the launcher's when the process exits.
+ */
+UQUAD x86_64_get_kernel_stack(void)
+{
+    return percpu.kernel_rsp;
+}
+
+void x86_64_set_kernel_stack(UQUAD rsp)
+{
+    percpu.kernel_rsp = rsp;
+}
+
+/*
+ * The interrupted user RSP the entry stub parks in the per-CPU area for the
+ * exit stub to restore: one slot, so a process suspended in a system call
+ * (Pexec) loses it to every call its child makes.  gouser() saves it when it
+ * launches and puts it back when the child is gone.
+ */
+UQUAD x86_64_get_saved_user_rsp(void)
+{
+    return percpu.user_rsp;
+}
+
+void x86_64_set_saved_user_rsp(UQUAD rsp)
+{
+    percpu.user_rsp = rsp;
+}
+
+/*
+ * A process launching another from inside its own system call is in the
+ * "swapped" GS state (entry did swapgs); the child must be entered in the
+ * user state, and the launcher put back into the swapped one when the child
+ * is gone.  gs_to_user() undoes the entry's swap if there was one and says
+ * whether it did; gs_back_to_syscall() redoes it.
+ */
+int x86_64_gs_to_user(void)
+{
+    int was = syscall_gs_swapped;
+
+    if (was) {
+        __asm__ volatile ("swapgs" ::: "memory");
+        syscall_gs_swapped = 0;
+    }
+    return was;
+}
+
+void x86_64_gs_back_to_syscall(void)
+{
+    __asm__ volatile ("swapgs" ::: "memory");
+    syscall_gs_swapped = 1;
+}
+
 void x86_64_syscall_abandoned(void)
 {
     if (syscall_gs_swapped) {
