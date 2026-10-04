@@ -659,7 +659,8 @@ static void test_isolation(void)
         x86_64_pmem_free_pages(probe, 1);
     /* The kernel's low data (the system-vector area, the kernel-data pool)
      * is there for ring 0's sake while it runs a system call under this
-     * address space -- and supervisor-only; the process window is not. */
+     * address space -- and supervisor-only; so is the process window, which
+     * a process's own blocks are then mapped over with the user bit. */
     {
         UQUAD kstart, kend;
 
@@ -1181,7 +1182,7 @@ static void test_ring3(void)
 
     /* bad pointers and kernel addresses as system call arguments */
     probe_expect('b', 0, "bad arguments refused by the system calls");
-    probe_expect('s', 0, "ring 3 cannot install kernel callbacks or launch from a syscall");
+    probe_expect('s', 0, "ring 3 cannot install kernel callbacks or write the kernel variables");
 
     /* a fault in ring 3 ends that process and nothing else */
     probe_expect('f', 0xffff, "a ring-3 write to page 0 is contained");
@@ -1197,18 +1198,28 @@ static void test_ring3(void)
      * Without the file this cannot be tried; that is reported, and CI, which
      * supplies it, requires the PASS line.
      */
-    snap(&s);
-    rc = run_probe('n');
-    if (rc == 0x100) {
-        kcprintf("x86-64 nested pexec: SKIP (no C:\\X32HELLO.TOS)\n");
-    } else {
-        CHECK(rc == 0, "a ring-3 process runs a child and resumes");
-        if (rc == 0)
-            kcprintf("x86-64 nested pexec: PASS\n");
-        else
-            kcprintf("x86-64 nested pexec: FAIL (0x%lx)\n", rc);
+    {
+        CPUSTATE before, after;
+        PD *me = run;
+
+        snap(&s);
+        cpustate(&before);
+        rc = run_probe('n');
+        cpustate(&after);
+        CHECK(run == me, "the launcher is the current process again after a nested launch");
+        CHECK(after.cr3 == before.cr3 && after.gs == before.gs && after.kernel_gs == before.kernel_gs,
+              "CR3 and the GS bases are back after a nested launch");
+        if (rc == 0x100) {
+            kcprintf("x86-64 nested pexec: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "a ring-3 process runs a child and resumes");
+            if (rc == 0)
+                kcprintf("x86-64 nested pexec: PASS\n");
+            else
+                kcprintf("x86-64 nested pexec: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "nested Pexec from ring 3");
     }
-    same(&s, "nested Pexec from ring 3");
 
     /* an allocation failure while loading the image is an ordinary refused
      * launch, tried at every allocation point */

@@ -229,8 +229,13 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
 
     if (!kproc)
         return FALSE;
-    if (kproc->aspace)
-        return TRUE;                /* already prepared */
+    if (kproc->aspace) {
+        /* Already prepared -- but a process that has been launched has handed
+         * its kernel stack to gouser(), and cannot be launched a second time
+         * (Pexec(PE_GO) of its own basepage, from ring 3): refuse, where the
+         * launch can still fail cleanly. */
+        return kproc->kstack_phys != 0;
+    }
     env = (UQUAD)(uintptr_t)kproc->env_start;
     tpa = (UQUAD)(uintptr_t)kproc->user_start;
     hitpa = (UQUAD)(uintptr_t)kproc->user_end;

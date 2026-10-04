@@ -60,6 +60,21 @@ static s64 gemdos0(u64 func)
     return (s64)rax;
 }
 
+static s64 gemdos1r(u64 func, u64 arg)
+{
+    register u64 rax __asm__("rax") = ((u64)X86_64_TRAP_GEMDOS << 32) | func;
+    register u64 rdi __asm__("rdi") = arg;
+    register u64 rsi __asm__("rsi") = 0;
+    register u64 rdx __asm__("rdx") = 0;
+    register u64 r10 __asm__("r10") = 0;
+
+    __asm__ volatile ("syscall"
+                       : "+r" (rax)
+                       : "r" (rdi), "r" (rsi), "r" (rdx), "r" (r10)
+                       : "rcx", "r11", "memory");
+    return (s64)rax;
+}
+
 static void gemdos1(u64 func, u64 arg)
 {
     register u64 rax __asm__("rax") = ((u64)X86_64_TRAP_GEMDOS << 32) | func;
@@ -76,8 +91,17 @@ static void gemdos1(u64 func, u64 arg)
 
 void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 {
-    gemdos0(0x19);      /* Dgetdrv() */
-    gemdos1(0x4c, basepage && basepage <= 0xffffffffULL &&
-            *(const u32 *)(unsigned long)basepage == (u32)basepage &&
-            entry_type == 0 && (stack & 15) == 8 ? 0 : 1);
+    int bad = 0;
+
+    /* a GEMDOS round trip with a result the kernel must get right: select
+     * drive C: and read it back, so a call that returns nothing or garbage
+     * is a failure, not just a call that was made */
+    gemdos1r(0x0e, 2);                  /* Dsetdrv(2) */
+    if (gemdos0(0x19) != 2)             /* Dgetdrv() */
+        bad = 1;
+    if (!(basepage && basepage <= 0xffffffffULL &&
+          *(const u32 *)(unsigned long)basepage == (u32)basepage &&
+          entry_type == 0 && (stack & 15) == 8))
+        bad = 1;
+    gemdos1(0x4c, bad);                 /* Pterm(bad) */
 }

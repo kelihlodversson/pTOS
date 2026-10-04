@@ -105,6 +105,7 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
           mkdir -p esp/EFI/BOOT
           cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
           cp x32hello.elf esp/X32HELLO.TOS
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd .
           qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
             -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
             -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
