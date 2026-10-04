@@ -19,7 +19,7 @@
  *      have Ssystem() write into the kernel's system variables, and to use any
  *      Pexec mode but PE_LOADGO (a basepage it cannot use, a launch it cannot
  *      make, its own basepage a second time): all must be refused; exits with 0 if they were
- *   n  run another program from inside this one: Pexec(PE_LOADGO) of
+ *   n  run another program from inside this one, twice: Pexec(PE_LOADGO) of
  *      C:\X32HELLO.TOS, which must exit with 0, after which this process
  *      must still be able to make system calls; exits with 0 if so, 0x100 if
  *      the file is not on the boot drive (reported as a skip by the self-test)
@@ -160,14 +160,23 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(bad);
         break;
     case 'n': {
-        s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS", (s64)(int)(unsigned long)"", 0);
+        int run_no;
 
-        if (rc == -33)                  /* EFILNF: not on the boot drive */
-            pterm(0x100);
-        if (rc != 0)
-            bad |= 1;                   /* the child's exit code, or an error */
-        if (gemdos(0x19, 0, 0) != 0 && gemdos(0x19, 0, 0) != 2)
-            bad |= 2;                   /* this process's calls still work */
+        /* twice: the second child reuses what the first one released (its
+         * kernel stack, its blocks) while this process's own frames are live
+         * on its own stack, which a launcher resuming on the wrong stack
+         * would not survive */
+        for (run_no = 0; run_no < 2; run_no++) {
+            s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                          (s64)(int)(unsigned long)"", 0);
+
+            if (rc == -33)              /* EFILNF: not on the boot drive */
+                pterm(0x100);
+            if (rc != 0)
+                bad |= 1;               /* the child's exit code, or an error */
+            if (gemdos(0x19, 0, 0) != 0 && gemdos(0x19, 0, 0) != 2)
+                bad |= 2;               /* this process's calls still work */
+        }
         pterm(bad);
         break;
     }

@@ -116,10 +116,12 @@ void x86_64_procmem_stats(PROCMEM_STATS *stats);
  *
  * The kernel half (PML4 slots 256-511) is shared.  The low half starts with
  * the kernel's own low data, all of it supervisor-only (no user bit): the
- * system-vector area, the kernel-data pool, the framebuffer and the whole
- * process window (see doc/x86_64-address-space.txt, "Kernel low mappings"),
- * because ring 0 runs under a process's page tables while it services that
- * process's system calls.  Everything else is empty until mapped.
+ * system-vector area, the kernel-data pool and the framebuffer (see
+ * doc/x86_64-address-space.txt, "Kernel low mappings"), because ring 0 runs
+ * under a process's page tables while it services that process's system
+ * calls.  The process window is empty except for what is mapped for the
+ * process: its own blocks (user) and the blocks of a child it is launching
+ * (borrowed, supervisor-only).
  */
 typedef struct x86_64_aspace X86_64_ASPACE;
 
@@ -169,6 +171,15 @@ BOOL x86_64_aspace_map_page(X86_64_ASPACE *as, UQUAD va, UQUAD phys, UWORD prot)
  * failure stay in the address space and go away with it.
  */
 BOOL x86_64_aspace_map_procmem(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
+
+/*
+ * Borrowing: maps [va, va + bytes) of live procmem blocks into `as`
+ * supervisor-only and writable (pinned), so ring 0 can build a child process
+ * under this address space during a ring-3 Pexec(); x86_64_aspace_unborrow()
+ * takes it away again (and unpins), exactly once per borrow.  See aspace.c.
+ */
+BOOL x86_64_aspace_borrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes);
+void x86_64_aspace_unborrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes);
 
 /* Number of table pages (PML4 included) the address space currently owns. */
 ULONG x86_64_aspace_table_pages(const X86_64_ASPACE *as);

@@ -95,6 +95,7 @@ static void release_pd_files(PD *r);
  * exactly once -- the record is the proof it has not been done. */
 static void x86_64_release_block(void *base)
 {
+    kproc_unborrow(base);       /* a block lent to a ring-3 launcher goes back */
     if (kproc_discard((PD *)base))
         release_pd_files((PD *)base);
 }
@@ -145,6 +146,7 @@ long x86_64_procmem_mfree(void *addr)
      * basepage, say) cannot be freed from under it, and tearing down the
      * address space the caller is running in would be worse: refuse, and
      * leave the KPROC record alone. */
+    kproc_unborrow(addr);
     if (x86_64_procmem_pinned(addr))
         return EACCDN;
     x86_64_release_block(addr);
@@ -689,6 +691,11 @@ static char *alloc_env(ULONG flags, char *env)
      * comment), exactly what happens for memory from this same pool.
      */
     new_env = (char *)x86_64_procmem_alloc(size, PROCMEM_ZERO);
+    /* built below under the launcher's page tables: lend it to a ring-3 one */
+    if (new_env && !kproc_borrow(run, new_env)) {
+        x86_64_procmem_free(new_env);
+        new_env = NULL;
+    }
 #else
     new_env = xmxalloc(size, (flags&PF_TTRAMLOAD) ? MX_PREFTTRAM : MX_STRAM);
 #endif
@@ -756,6 +763,10 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
     {
         UBYTE *low = x86_64_procmem_alloc(needed + 15, PROCMEM_ZERO);
 
+        if (low && !kproc_borrow(run, low)) {   /* see alloc_env() */
+            x86_64_procmem_free(low);
+            low = NULL;
+        }
         if (low)
             *avail = needed + 15;
         return low;

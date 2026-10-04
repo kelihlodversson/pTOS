@@ -671,10 +671,27 @@ static void test_isolation(void)
               !x86_64_aspace_user_range_ok(a, kstart, 8, FALSE),
               "the kernel-data pool is mapped, supervisor-only");
     }
-    CHECK(x86_64_aspace_translate(a, X86_64_LOW_TPA_VIRT_BASE, NULL, &prot) &&
-          !(prot & ASPACE_PROT_USER) &&
-          !x86_64_aspace_user_range_ok(a, X86_64_LOW_TPA_VIRT_BASE, 8, FALSE),
-          "the process window is mapped supervisor-only in a fresh address space");
+    CHECK(!x86_64_aspace_translate(a, X86_64_LOW_TPA_VIRT_BASE, NULL, NULL),
+          "the process window is not in a fresh address space");
+    /* a block lent to the address space is reachable for ring 0 only, and goes
+     * back exactly once */
+    {
+        void *blk = x86_64_procmem_alloc(PAGE, PROCMEM_ZERO);
+
+        CHECK(blk != NULL, "a block to lend");
+        if (blk) {
+            UQUAD v = (UQUAD)(uintptr_t)blk;
+
+            CHECK(x86_64_aspace_borrow(a, v, PAGE) && x86_64_procmem_pinned(blk) &&
+                  x86_64_aspace_translate(a, v, NULL, &prot) && !(prot & ASPACE_PROT_USER) &&
+                  (prot & ASPACE_PROT_WRITE) && !x86_64_aspace_user_range_ok(a, v, 8, FALSE),
+                  "a borrowed block is mapped supervisor-only and pinned");
+            x86_64_aspace_unborrow(a, v, PAGE);
+            CHECK(!x86_64_procmem_pinned(blk) && !x86_64_aspace_translate(a, v, NULL, NULL),
+                  "an unborrowed block is unmapped and unpinned");
+            CHECK(x86_64_procmem_free(blk), "and can be freed");
+        }
+    }
 
     x86_64_aspace_destroy(a);
     x86_64_aspace_destroy(b);

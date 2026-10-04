@@ -108,20 +108,6 @@ static BOOL map_kernel_low(struct x86_64_aspace *as)
             x86_64_map_kernel_2m_into(as->pml4_phys, va, phys, alloc_table_page, as) != 0)
             return FALSE;
 
-    /*
-     * The whole process window, supervisor-only.  A process that launches
-     * another (Pexec from its own system call) has ring 0 build the child's
-     * basepage, environment and program in blocks the window hands out
-     * later, under the parent's CR3; the window's backing is one fixed
-     * physical range, so mapping every page now makes those blocks
-     * reachable without any later mapping.  A process's own blocks are then
-     * mapped over their pages with the user bit (x86_64_aspace_map_procmem());
-     * nobody else's are reachable from ring 3.
-     */
-    for (va = X86_64_LOW_TPA_VIRT_BASE; va < X86_64_LOW_TPA_VIRT_BASE + X86_64_LOW_TPA_BYTES;
-         va += X86_64_PAGE_SIZE)
-        if (!x86_64_aspace_map_page(as, va, x86_64_procmem_phys_of(va), ASPACE_PROT_WRITE))
-            return FALSE;
     return TRUE;
 }
 
@@ -526,4 +512,40 @@ void x86_64_kstack_free(UQUAD phys)
 {
     if (phys)
         x86_64_pmem_free_pages(phys, X86_64_KSTACK_PAGES);
+}
+
+/*
+ * Supervisor-only access to someone else's process blocks, for exactly as long
+ * as ring 0 needs it.  Pexec() from a ring-3 process builds the child's
+ * basepage, environment and program under the launcher's page tables, in
+ * blocks allocated after that address space exists; each is borrowed into it
+ * (writable, no user bit, pinned so it cannot be freed from under the
+ * mapping) when it is allocated and returned when it is freed.  Nothing else
+ * in the window is reachable.
+ */
+BOOL x86_64_aspace_borrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
+{
+    if (x86_64_aspace_map_procmem(as, va, bytes, ASPACE_PROT_WRITE))
+        return TRUE;
+    x86_64_aspace_unborrow(as, va, bytes);      /* a half-finished borrow */
+    return FALSE;
+}
+
+void x86_64_aspace_unborrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
+{
+    UQUAD page, end;
+    ULONG i;
+
+    for (i = as->npins; i-- > 0; )
+        if (as->pins[i].va == va && as->pins[i].bytes == bytes) {
+            as->pins[i] = as->pins[--as->npins];
+            x86_64_procmem_pin(va, bytes, -1);
+            break;
+        }
+    page = va & ~(X86_64_PAGE_SIZE - 1);
+    end = (va + bytes + X86_64_PAGE_SIZE - 1) & ~(X86_64_PAGE_SIZE - 1);
+    for (; page < end; page += X86_64_PAGE_SIZE)
+        x86_64_unmap_user_page(as->pml4_phys, page);
+    if (x86_64_read_cr3() == as->pml4_phys)
+        x86_64_write_cr3(as->pml4_phys);        /* flush stale translations */
 }

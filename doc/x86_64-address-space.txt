@@ -143,10 +143,14 @@ swapped in; the child is entered, and exits, in the user state).  The child's
 kernel stack is freed by the launcher after the exit, never by xterm(): Pterm()
 is still running on it.
 
-The whole process window is mapped supervisor-only in every address space, a
-process's own blocks being mapped over it with the user bit: Pexec() from ring
-3 builds the child's basepage, environment and program under the parent's page
-tables, in blocks allocated after the parent's address space exists.  Only
+Pexec() from ring 3 builds the child's basepage, environment and program
+under the parent's page tables, in blocks allocated after the parent's address
+space exists.  Each is therefore borrowed into the parent's address space,
+supervisor-only and pinned, when it is allocated (kproc_borrow(), called from
+alloc_env()/alloc_tpa() for a ring-3 launcher) and returned when it is freed
+(kproc_unborrow(), from the release path); no other process's block is ever
+mapped, so a syscall pointer into a peer's memory faults in ring 0 instead of
+reading or writing it.  Only
 PE_LOADGO is accepted from ring 3 (EINVFN otherwise): the other modes would
 hand the caller a basepage in such a block, which stays supervisor-only and
 faults when used, or ask to launch one, which a process cannot set up.

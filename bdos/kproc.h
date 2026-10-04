@@ -55,6 +55,16 @@ UQUAD kproc_user_entry(PD *pd);         /* image entry point; 0 if none */
  * exited and the launcher runs on its own stack again: the process's last
  * system call, Pterm(), is still using it while the record is destroyed.
  * Returns the physical base (0 if none) and the initial stack pointer. */
+/*
+ * A ring-3 process launching a child (Pexec() from its own system call)
+ * builds the child's blocks under its own page tables.  kproc_borrow() maps a
+ * newly allocated block into the launcher's address space, supervisor-only
+ * (FALSE if that fails: the caller frees the block); a ring-0 launcher needs
+ * nothing.  kproc_unborrow() takes it away again, and must run before the
+ * block is freed.
+ */
+BOOL kproc_borrow(PD *launcher, void *block);
+void kproc_unborrow(void *block);
 UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top);
 UQUAD kproc_user_stack(PD *pd);         /* initial RSP of an image's own stack; 0 if none */
 UQUAD kproc_user_pml4(PD *pd);          /* 0 if not prepared */

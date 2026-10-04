@@ -20,6 +20,10 @@
 #include "x32image.h"
 #endif
 
+#ifdef __x86_64__
+#define KPROC_BORROWS 8
+#endif
+
 /* The option gates only the record itself: the #else stubs stay in every
  * link so the public p_xdta field keeps working verbatim. */
 
@@ -49,6 +53,9 @@ struct kproc {
     UQUAD stack_top;            /* its private stack's top once loaded, else 0 */
     UQUAD kstack_phys;          /* its kernel stack (system calls), 0 if none */
     UQUAD kstack_top;           /* initial stack pointer of that stack */
+    struct {                    /* blocks of a child being launched from this */
+        UQUAD va, bytes;        /* process, mapped supervisor-only into its */
+    } borrowed[KPROC_BORROWS];  /* address space until they are freed */
 #endif
     KPROC *next;
 };
@@ -311,6 +318,44 @@ BOOL kproc_set_image(PD *pd, const X32_IMAGE *image)
         return FALSE;
     kproc->image = image;
     return TRUE;
+}
+
+BOOL kproc_borrow(PD *launcher, void *block)
+{
+    KPROC *kproc = kproc_find(launcher);
+    UQUAD va = (UQUAD)(uintptr_t)block;
+    UQUAD bytes = x86_64_procmem_size(block);
+    int i;
+
+    if (!kproc || !kproc->aspace)
+        return TRUE;                /* a ring-0 launcher reaches all of it */
+    if (!bytes)
+        return FALSE;
+    for (i = 0; i < KPROC_BORROWS; i++)
+        if (!kproc->borrowed[i].bytes) {
+            if (!x86_64_aspace_borrow(kproc->aspace, va, bytes))
+                return FALSE;
+            kproc->borrowed[i].va = va;
+            kproc->borrowed[i].bytes = bytes;
+            return TRUE;
+        }
+    return FALSE;
+}
+
+void kproc_unborrow(void *block)
+{
+    UQUAD va = (UQUAD)(uintptr_t)block;
+    KPROC *kproc;
+    int i;
+
+    for (kproc = kproc_list; kproc; kproc = kproc->next)
+        for (i = 0; i < KPROC_BORROWS; i++)
+            if (kproc->borrowed[i].bytes && kproc->borrowed[i].va == va) {
+                if (kproc->aspace)
+                    x86_64_aspace_unborrow(kproc->aspace, va, kproc->borrowed[i].bytes);
+                kproc->borrowed[i].bytes = 0;
+                return;
+            }
 }
 
 UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top)

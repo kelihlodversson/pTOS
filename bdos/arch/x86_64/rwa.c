@@ -234,13 +234,13 @@ void gouser(void)
          * built, and can have failed with ENSMEM, back in Pexec():
          * kproc_prepare_user() (bdos/kproc.c) makes the PML4 -- the
          * kernel + physical direct map shared in, the kernel's low data
-         * and the whole process window mapped supervisor-only (aspace.c's
-         * map_kernel_low()) -- and maps this process's own environment
-         * block, basepage/TPA (user) and, for a built-in image, its
-         * segments and stack, over them, plus its parent's basepage
-         * (kernel-only: xterm() writes the exit code through it from
-         * ring 0 while this CR3 is still loaded).  Nothing else in the
-         * window is reachable from ring 3.  That address space belongs to
+         * mapped supervisor-only (aspace.c's map_kernel_low()) -- and maps
+         * this process's own environment block, basepage/TPA (user) and,
+         * for a built-in image, its segments and stack, plus its parent's
+         * basepage (kernel-only: xterm() writes the exit code through it
+         * from ring 0 while this CR3 is still loaded).  Nothing else in the
+         * process window is mapped, except the blocks of a child it is
+         * itself launching (kproc_borrow()).  That address space belongs to
          * the process's KPROC record and is freed with it (kproc_destroy(),
          * from xterm()), so nothing here allocates or needs to unwind.
          *
