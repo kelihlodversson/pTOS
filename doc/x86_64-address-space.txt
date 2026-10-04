@@ -146,7 +146,10 @@ is still running on it.
 The whole process window is mapped supervisor-only in every address space, a
 process's own blocks being mapped over it with the user bit: Pexec() from ring
 3 builds the child's basepage, environment and program under the parent's page
-tables, in blocks allocated after the parent's address space exists.
+tables, in blocks allocated after the parent's address space exists.  Only
+PE_LOADGO is accepted from ring 3 (EINVFN otherwise): the other modes would
+hand the caller a basepage in such a block, which stays supervisor-only and
+faults when used, or ask to launch one, which a process cannot set up.
 
 Interrupts stay disabled in ring 3 and in system calls, as everywhere else in
 this kernel (devices are polled).  The exception stack (TSS rsp0) is still

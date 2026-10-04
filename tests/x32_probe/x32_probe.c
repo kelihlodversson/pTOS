@@ -16,8 +16,9 @@
  *   b  pass the kernel a bad pointer (an unmapped one) and a kernel
  *      address as GEMDOS arguments; exit with 0 if both are refused
  *   s  try to install a kernel callback vector (BIOS Setexc 0x102) and to
- *      have Ssystem() write into the kernel's system variables, and to
- *      launch its own basepage a second time: all must be refused; exits with 0 if they were
+ *      have Ssystem() write into the kernel's system variables, and to use any
+ *      Pexec mode but PE_LOADGO (a basepage it cannot use, a launch it cannot
+ *      make, its own basepage a second time): all must be refused; exits with 0 if they were
  *   n  run another program from inside this one: Pexec(PE_LOADGO) of
  *      C:\X32HELLO.TOS, which must exit with 0, after which this process
  *      must still be able to make system calls; exits with 0 if so, 0x100 if
@@ -44,6 +45,7 @@ typedef unsigned int u32;
 #define GEMDOS 1
 #define EIMBA  (-40)
 #define ENSMEM (-39)
+#define EINVFN (-32)
 #define EACCDN (-36)
 #define BIOS   13
 
@@ -134,9 +136,14 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     case 's':
         if (sys(BIOS, 5, 0x102, 0x500000, 0) != -1)
             bad |= 1;                   /* Setexc(etv_term, user address) */
-        /* Pexec(PE_GO) of this very (already running) process's basepage: its
-         * kernel stack is in use, so the launch is refused */
-        if (sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", (s64)basepage, 0) != ENSMEM)
+        /* every Pexec mode but PE_LOADGO: PE_LOAD, PE_GO, PE_BASEPAGE,
+         * PE_GOTHENFREE, PE_BASEPAGEFLAGS (including launching this very
+         * basepage a second time) */
+        if (sys4(GEMDOS, 0x4b, 3, 0, 0, 0) != EINVFN ||
+            sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EINVFN ||
+            sys4(GEMDOS, 0x4b, 5, 0, 0, 0) != EINVFN ||
+            sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EINVFN ||
+            sys4(GEMDOS, 0x4b, 7, 0, 0, 0) != EINVFN)
             bad |= 32;
         /* Ssystem() writing through a pointer into the kernel's system
          * variables: S_GETCOOKIE (8) and S_CONSOLE_DIM (-2) */

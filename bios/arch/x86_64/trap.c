@@ -392,6 +392,22 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     }
 
     /*
+     * Pexec() from ring 3 may only be PE_LOADGO (mode 0): it loads and runs a
+     * program in one call, and the child is mapped for the launcher while it
+     * runs.  The other modes hand the caller a basepage (PE_BASEPAGE*,
+     * PE_LOAD) or ask to launch one (PE_GO, PE_GOTHENFREE): the blocks they
+     * create after the caller's address space exists are mapped supervisor-
+     * only in it, so the pointer would fault the moment the caller used it,
+     * and a launch needs the kernel-side image attachment a process cannot
+     * make.  Refused until a ring-3 caller can own such blocks.
+     */
+    if (from_ring3 && trap_class == X86_64_TRAP_GEMDOS && fn == 0x4b &&
+        (WORD)frame->rdi != 0) {
+        frame->rax = (UQUAD)EINVFN;
+        return;
+    }
+
+    /*
      * Ssystem() is the one call whose pointer arguments the kernel writes
      * through that this port has to guard today: ring 0 runs under the
      * process's own page tables, which carry the kernel's low data

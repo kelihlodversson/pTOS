@@ -1221,6 +1221,27 @@ static void test_ring3(void)
         same(&s, "nested Pexec from ring 3");
     }
 
+    /* a process that has been launched cannot be prepared (and launched) a
+     * second time: its kernel stack went to gouser() */
+    snap(&s);
+    {
+        PD *pd = new_basepage();
+
+        if (pd) {
+            UQUAD top, stack;
+
+            set_owner(pd, pd);
+            set_owner(USERPTR_TO_PTR(pd->p_env), pd);
+            CHECK(kproc_prepare_user(pd, run), "a basepage prepares");
+            stack = kproc_take_kernel_stack(pd, &top);
+            CHECK(stack != 0, "its kernel stack can be taken");
+            CHECK(!kproc_prepare_user(pd, run), "a prepared process whose stack is gone is refused");
+            x86_64_kstack_free(stack);
+            x86_64_free_owned(pd);
+        }
+    }
+    same(&s, "relaunch refusal");
+
     /* an allocation failure while loading the image is an ordinary refused
      * launch, tried at every allocation point */
     snap(&s);
