@@ -350,6 +350,14 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
         long arg1 = (long)frame->rsi, arg2 = (long)frame->rdx;
         BOOL ok = TRUE;
 
+        /* S_SETLVAL/S_SETWVAL/S_SETBVAL (0x0d-0x0f) store a caller-chosen
+         * value into a kernel system variable -- among them the vectors
+         * the kernel calls in ring 0 (etv_term at 0x408, ...), the very
+         * thing Setexc() is refused above.  Kernel-only from ring 3. */
+        if (mode >= 0x000d && mode <= 0x000f) {
+            frame->rax = (UQUAD)EACCDN;
+            return;
+        }
         if (mode == 0x0008 && arg2)                     /* S_GETCOOKIE value */
             ok = kproc_validate_user_write((UQUAD)arg2, 4);
         else if (mode == (WORD)0xfffe && arg2 > 0)      /* S_CONSOLE_DIM struct */

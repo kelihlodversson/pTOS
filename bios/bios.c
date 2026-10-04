@@ -401,6 +401,7 @@ extern PFVOID vbl_list[8]; /* Default array for vblqueue */
 static void start_builtin_cli(char *env)
 {
     PD *pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", env);
+    long rc;
 
     if ((long)pd <= 0 && (long)pd >= -256) {    /* a GEMDOS error code */
         kcprintf("EmuCON: cannot create its basepage (%ld)\n", (long)pd);
@@ -408,21 +409,21 @@ static void start_builtin_cli(char *env)
     }
     if (!kproc_set_image(pd, x86_64_emucon_image())) {
         kcprintf("EmuCON: its x32 image is not valid\n");
-        return;
-    }
-    pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
-    kcprintf("EmuCON: starting the x32 image in ring 3\n");
-    {
-        long rc = Pexec(PE_GOTHENFREE, "", (char *)pd, env);
-
-        if (rc < 0) {
-            /* a refused launch leaves the basepage and environment with the
-             * launcher (xexec()): release them, and the KPROC record */
+        rc = ENSMEM;
+    } else {
+        pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
+        kcprintf("EmuCON: starting the x32 image in ring 3\n");
+        rc = Pexec(PE_GOTHENFREE, "", (char *)pd, env);
+        if (rc < 0)
             kcprintf("EmuCON: cannot start (%ld)\n", rc);
-            set_owner(pd, pd);
-            set_owner(USERPTR_TO_PTR(pd->p_env), pd);
-            x86_64_free_owned(pd);
-        }
+    }
+    if (rc < 0) {
+        /* a basepage that was never launched (or whose launch was refused)
+         * stays with the launcher: release it, its environment and its
+         * KPROC record */
+        set_owner(pd, pd);
+        set_owner(USERPTR_TO_PTR(pd->p_env), pd);
+        x86_64_free_owned(pd);
     }
 }
 #endif

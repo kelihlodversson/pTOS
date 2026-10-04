@@ -41,6 +41,7 @@ typedef unsigned int u32;
 #define GEMDOS 1
 #define EIMBA  (-40)
 #define ENSMEM (-39)
+#define EACCDN (-36)
 #define BIOS   13
 
 /* the selectors gdt.h gives ring 3 */
@@ -133,6 +134,9 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             bad |= 4;
         if (sys(GEMDOS, 0x154, -2, 0x400, 16) != EIMBA)
             bad |= 8;
+        /* Ssystem(S_SETLVAL, etv_term, a user address) */
+        if (sys(GEMDOS, 0x154, 0x0d, 0x408, 0x500000) != EACCDN)
+            bad |= 16;
         pterm(bad);
         break;
     case 'f':

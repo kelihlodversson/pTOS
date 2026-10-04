@@ -35,6 +35,8 @@ const GEM_MUPB ui_mupb =
 #else
     coma_start      /* EmuCON entry point */
 #endif
+#elif defined(__x86_64__)
+    NULL            /* no AES and no CLI: nothing to start (bios.c halts) */
 #else
 #  error You must provide a main UI
 #endif

@@ -1238,7 +1238,9 @@ static void test_x32image(void)
     snap(&s);
     CHECK(x86_64_x32image_check(good, &entry) && entry >= X86_64_USER_IMAGE_BASE &&
           entry < X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE, "probe image is valid");
+#if CONF_WITH_CLI
     CHECK(x86_64_x32image_check(x86_64_emucon_image(), &entry), "EmuCON image is valid");
+#endif
 
     cut = *good;
     cut.size = 40;
