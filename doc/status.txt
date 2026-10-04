@@ -16,7 +16,7 @@ Tested platforms
   Raspberry Pi 400         | tested | Raspberry Pi 4-class hardware
   QEMU ARM virt            | tested | serial-console boot; use highmem=off
   QEMU m68k virt           | tested | serial-console boot
-  QEMU x86-64 PC           | tested | UEFI/OVMF boot; GOP framebuffer supports AES/EmuDesk
+  QEMU x86-64 PC           | tested | UEFI/OVMF boot; EmuCON runs as an x32 program in ring 3 (no AES/EmuDesk)
   Hatari Atari emulation   | tested | m68k Atari configurations
 
 Other configurations are maintained as portability targets and may be

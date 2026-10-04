@@ -89,7 +89,11 @@ runs:
       shell: bash
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y gcc binutils
+        # gcc-multilib: the built-in EmuCON and the boot self-test's probe
+        # program are x32 (-mx32) executables, built by the same gcc.  They
+        # are freestanding, but the multilib package is what guarantees the
+        # driver, its x32 specs and the linker emulation are all present.
+        sudo apt-get install -y gcc binutils gcc-multilib
         if ! ld --help | grep -q i386pep; then
           echo "::error::this runner's ld has no i386pep (PE32+) emulation, needed to link the x86-64 EFI image"
           exit 1

@@ -280,7 +280,35 @@ static int x86_64_arg_hits_known_kernel_range(UQUAD addr)
     return 0;
 }
 
+static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
+
+/*
+ * Set while a real ring-3 `syscall` is being serviced: its entry stub did
+ * `swapgs`, and its exit stub undoes it.  A call that never reaches the exit
+ * stub -- Pterm(), which unwinds straight back to the launching kernel
+ * context -- leaves the swapped state behind; x86_64_syscall_abandoned()
+ * restores it.
+ */
+static volatile int syscall_gs_swapped;
+
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
+{
+    if (from_ring3)
+        syscall_gs_swapped = 1;
+    trap_dispatch(frame, from_ring3);
+    if (from_ring3)
+        syscall_gs_swapped = 0;
+}
+
+void x86_64_syscall_abandoned(void)
+{
+    if (syscall_gs_swapped) {
+        __asm__ volatile ("swapgs" ::: "memory");
+        syscall_gs_swapped = 0;
+    }
+}
+
+static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
     UQUAD trap_class = frame->rax >> 32;
     ULONG fn = (ULONG)frame->rax;
@@ -306,6 +334,39 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     if (from_ring3 && trap_class == X86_64_TRAP_GEM) {
         frame->rax = (UQUAD)-1L;
         return;
+    }
+
+    /*
+     * Ssystem() is the one call whose pointer arguments the kernel writes
+     * through that this port has to guard today: ring 0 runs under the
+     * process's own page tables, which carry the kernel's low data
+     * (supervisor-only, but writable by ring 0), so a raw `Ssystem(S_GETCOOKIE,
+     * tag, 0x400)` or S_CONSOLE_DIM destination would overwrite the system
+     * variables.  The destination must be user memory of this process.  The
+     * general validation of every other call's pointers is #352 (see above).
+     */
+    if (from_ring3 && trap_class == X86_64_TRAP_GEMDOS && fn == 0x154) {
+        WORD mode = (WORD)frame->rdi;
+        long arg1 = (long)frame->rsi, arg2 = (long)frame->rdx;
+        BOOL ok = TRUE;
+
+        /* S_SETLVAL/S_SETWVAL/S_SETBVAL (0x0d-0x0f) store a caller-chosen
+         * value into a kernel system variable -- among them the vectors
+         * the kernel calls in ring 0 (etv_term at 0x408, ...), the very
+         * thing Setexc() is refused above.  Kernel-only from ring 3. */
+        if (mode >= 0x000d && mode <= 0x000f) {
+            frame->rax = (UQUAD)EACCDN;
+            return;
+        }
+        if (mode == 0x0008 && arg2)                     /* S_GETCOOKIE value */
+            ok = kproc_validate_user_write((UQUAD)arg2, 4);
+        else if (mode == (WORD)0xfffe && arg2 > 0)      /* S_CONSOLE_DIM struct */
+            ok = kproc_validate_user_write((UQUAD)arg1,
+                                           arg2 < 16 ? (ULONG)arg2 : 16UL);
+        if (!ok) {
+            frame->rax = (UQUAD)EIMBA;
+            return;
+        }
     }
 
     /* Fsetdta() stores its pointer in the public 32-bit PD field. Ensure a
@@ -345,7 +406,13 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
          * equivalent, both of which use the same convention. */
         if (fn >= bios_ent)
             frame->rax = fn;
-        else if (from_ring3 && fn == 4) {
+        else if (from_ring3 && fn == 5 && (long)frame->rsi != -1L) {
+            /* Setexc() with a new vector: the kernel would later call that
+             * address in ring 0 (etv_term from xterm(), the critical-error
+             * and timer vectors, the exception table).  Ring 3 may only
+             * query a vector, never install one. */
+            frame->rax = (UQUAD)-1L;
+        } else if (from_ring3 && fn == 4) {
             struct x32_bios_lrwabs_args wire;
             struct bios_lrwabs_args native;
             ULONG bytes;

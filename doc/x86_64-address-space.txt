@@ -1,7 +1,7 @@
 pTOS - x86-64 per-process address spaces
 =========================================
 
-How a ring-3 x32 process sees memory on the x86-64 port (#329, #401).  The
+How a ring-3 x32 process sees memory on the x86-64 port (#329, #401, #398).  The
 implementation is bios/machine/pc-x86_64/aspace.c, with the interface in
 include/procmem.h; process memory and the kernel heap it builds on are in
 doc/x86_64-memory.txt.
@@ -14,9 +14,10 @@ Every process has its own page-table root (the PML4 of an X86_64_ASPACE).
 Only the kernel half (PML4 slots 256-511) is shared, copied from the kernel's
 master table; none of its entries has the user bit, so ring 3 can never
 reach the kernel image or the physical direct map.  The low half starts
-empty: nothing is visible to a process except what is explicitly mapped for
-it, so the kernel's own low mappings (the system-vector page, the process
-window, kernel data) are not there.
+with only the kernel's own low data, supervisor-only (see "Kernel low
+mappings" below); nothing else is visible to a process except what is
+explicitly mapped for it, so the process window, in particular, is not there
+except for the process's own blocks.
 
 The handle lives in the process's kernel-private KPROC record, never in the
 public basepage, and is destroyed with it (see "Lifecycle" in
@@ -55,8 +56,32 @@ kproc_validate_user_range() / _write() make that check for the current
 process, and kproc_copy_from_user() / kproc_copy_to_user() copy through the
 physical direct map after it, so a validated copy cannot fault and works
 whichever address space is loaded.  A process without an address space (a
-kernel-code process such as EmuCON today, running in ring 0) keeps the
-recorded-range check.
+kernel-code process such as the AES's ROM programs, running in ring 0) keeps
+the recorded-range check.
+
+
+Kernel low mappings
+--------------------
+
+Ring 0 services a process's system calls under that process's own CR3, so
+the kernel's low-half data must be reachable there too.  x86_64_aspace_create()
+copies the kernel's 2 MiB mappings of
+
+    0x00000000 - 0x001fffff   the system-vector area (OS variables, vectors)
+    0x00800000 - ...          the low kernel-data pool, then the framebuffer
+
+into every address space WITHOUT the user bit.  Ring 3 faults on any of it,
+the null guard included, so a process still cannot read or write the system
+variables (EmuCON asks Ssystem() for _nflops, for example).  The pool and the
+framebuffer sit above the 4 MiB image window so that they never overlap what a
+process maps for itself; x86_64_low_kernel_range() says where they end.
+
+Ring 0 can still write that data on a process's behalf, through a pointer
+argument it did not validate: only Ssystem()'s destination pointers
+(S_GETCOOKIE, S_CONSOLE_DIM) and the Fsetdta()/Rwabs-family buffers are
+checked against the process's own mappings today.  Validating or copying every
+other call's pointers is #352 and still open; a process whose syscall
+arguments point at the system variables can corrupt them until then.
 
 
 Minimum x32 user virtual layout
@@ -72,27 +97,55 @@ include/procmem.h):
                               X86_64_USER_STACK_TOP; the page below it is
                               left unmapped as a guard
 
-The image address matches the link address x32 test programs already use
-(-Ttext=0x400000, Makefile).  EmuCON's code is about 33 KiB today as 64-bit
-objects, so 4 MiB is a generous bound; larger images or an arbitrary ELF
-placement policy are not part of this milestone.  The whole layout lies
-below 4 GiB, as the 32-bit ABI fields require.
+The image address matches the link address of the x32 programs (the
+Makefile's -Ttext-segment=0x400000).  EmuCON is about 20 KiB of code plus a
+192 KiB static heap, so 4 MiB is a generous bound; larger images or an
+arbitrary ELF placement policy are not part of this milestone.  The whole
+layout lies below 4 GiB, as the 32-bit ABI fields require.
+
+A built-in image (include/x32image.h: EmuCON, and the boot self-test's probe
+program) is attached to the process's KPROC record with kproc_set_image().
+kproc_prepare_user() then maps every PT_LOAD segment as private pages with the
+segment's own permissions (text and read-only data read+execute, data and bss
+read+write -- never both write and execute) and the 256 KiB private stack,
+and records the entry point and initial RSP in the KPROC record: the process
+is entered there, not at whatever its user-writable basepage says.  A bare
+basepage's TPA is not a stack; only built-in images have one of their own.
+This is not a general ELF loader (the rules are in x32image.h and checked
+before anything is mapped).
 
 
-Faults
--------
+Faults and termination
+-----------------------
 
-A ring-3 page fault or other exception is still fatal to the whole system:
-the exception path panics (bios/arch/x86_64/panic.c) rather than terminating
-the process.  Recovering needs the launching kernel context saved and
-resumed at Pterm, which is the ring-3 EmuCON work (#398); until then the
-guarantee is that no user fault can enter kernel code as the process or
-corrupt kernel state, not that the system survives it.
+A ring-3 process leaves by Pterm() or by a fault, and in both cases control
+returns to the kernel context that launched it (bdos/arch/x86_64/rwa.c):
+gouser() saves a jmp_buf before iretq, and termuser() unwinds to it once
+xterm() has destroyed the address space, so the launcher's Pexec() returns
+the exit code.  A fault in ring 3 (bios/arch/x86_64/panic.c) is reported on
+the console with the vector, error code, RIP, CR2 and RSP, and ends that
+process as Pterm(-1) (exit code 0xffff); only an exception in ring 0 is fatal
+to the machine.  Returning from a syscall that never reaches its exit stub
+also undoes that stub's `swapgs` (x86_64_syscall_abandoned()).
+
+There is one syscall stack, so a process cannot yet Pexec() a second ring-3
+process from inside its own system call: that launch is refused with ENSMEM
+until per-process kernel stacks arrive (#399).  Interrupts stay disabled in
+ring 3 and in system calls, as everywhere else in this kernel (devices are
+polled).
 
 
 Not covered here
 -----------------
 
 Sharing read-only image pages between processes, demand paging, copy-on-write,
-Mmap/Munmap and relocation-free loading of arbitrary ELF files; a real ring-3
-isolation run (two processes executing in CPL3) is the runtime test in #400.
+Mmap/Munmap and relocation-free loading of arbitrary ELF files; full Pexec of
+x32 programs from ring 3 is #399.
+
+Tests: the boot-time self-test (bios/machine/pc-x86_64/memtest.c) launches the
+probe program of tests/x32_probe/ in ring 3 -- entry registers, selectors and
+stack alignment, a GEMDOS call across the syscall boundary, bad system call
+arguments, exit codes, fresh private pages per process, three kinds of fault
+-- and checks after each run that CR3, the GS bases and every allocator are
+back where they were.  The CI boot test requires its PASS line and that the
+built-in EmuCON ran afterwards without a fault.

@@ -286,4 +286,13 @@ void x86_64_write_cr3(UQUAD pml4_phys);
 
 #endif /* __ASSEMBLER__ */
 
+/* Copying the kernel's own low 2 MiB mappings into a process's address
+ * space, supervisor-only (see pgtable.c).  The first returns 0 if virt is
+ * not a present 2 MiB mapping of the kernel's tables; the second returns
+ * -1 if memory ran out, virt is already mapped or an argument is not
+ * 2 MiB-aligned. */
+int x86_64_kernel_low_2m_phys(UQUAD virt, UQUAD *phys);
+int x86_64_map_kernel_2m_into(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
+                              UQUAD (*alloc_page)(void *), void *ctx);
+
 #endif /* X86_64_PGTABLE_H */

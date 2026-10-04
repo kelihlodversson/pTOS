@@ -24,6 +24,7 @@
 #include "procmem.h"
 #include "pgtable.h"
 #include "pmem.h"
+#include "pc_x86_64_memory.h"
 
 #define ASPACE_MAGIC    0x41535041434531ULL     /* "ASPACE1" */
 #define FIRST_CAPACITY  16
@@ -85,6 +86,30 @@ static UQUAD alloc_table_page(void *ctx)
     return phys;
 }
 
+/*
+ * Ring 0 services a process's system calls under that process's own CR3,
+ * so the kernel's low-half data has to be reachable there too: the
+ * system-vector area (the OS variables at 0x400.., the trap vectors), the
+ * low kernel-data pool and the framebuffer.  Each is a 2 MiB mapping copied
+ * from the kernel's own tables, supervisor-only -- ring 3 gets a fault from
+ * all of it, the null guard included -- and placed so as not to overlap
+ * anything a process maps for itself (include/procmem.h's layout).
+ */
+static BOOL map_kernel_low(struct x86_64_aspace *as)
+{
+    UQUAD start, end, va, phys;
+
+    if (x86_64_kernel_low_2m_phys(0, &phys) &&
+        x86_64_map_kernel_2m_into(as->pml4_phys, 0, phys, alloc_table_page, as) != 0)
+        return FALSE;
+    x86_64_low_kernel_range(&start, &end);
+    for (va = start; va < end; va += X86_64_PAGE_2M_SIZE)
+        if (x86_64_kernel_low_2m_phys(va, &phys) &&
+            x86_64_map_kernel_2m_into(as->pml4_phys, va, phys, alloc_table_page, as) != 0)
+            return FALSE;
+    return TRUE;
+}
+
 X86_64_ASPACE *x86_64_aspace_create(void)
 {
     struct x86_64_aspace *as = kalloc(sizeof(*as));
@@ -105,6 +130,10 @@ X86_64_ASPACE *x86_64_aspace_create(void)
         return NULL;
     }
     x86_64_new_address_space(pml4);
+    if (!map_kernel_low(as)) {
+        x86_64_aspace_destroy(as);
+        return NULL;
+    }
     return as;
 }
 
@@ -426,4 +455,38 @@ BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD p
     while (as->count > first_tables)
         x86_64_pmem_free_pages(as->pages[--as->count], 1);
     return FALSE;
+}
+
+/*
+ * Private segment of a program image: fresh zeroed pages with the segment's
+ * own permissions, then the file bytes copied in through the direct map --
+ * which, unlike x86_64_aspace_copy_to_user(), does not need the page to be
+ * user-writable, so a read-only or executable segment can be filled.  The
+ * map_private() contract (all-or-nothing, no leftovers) carries over: the
+ * copy cannot fail once the pages are mapped.
+ */
+BOOL x86_64_aspace_load_private(X86_64_ASPACE *as, UQUAD va, UQUAD memsz,
+                                UWORD prot, const void *src, ULONG filesz)
+{
+    const UBYTE *from = src;
+    UQUAD base = va & ~(X86_64_PAGE_SIZE - 1);
+    UQUAD at = va;
+
+    if (filesz > memsz || !memsz || memsz > X86_64_USER_VA_LIMIT)
+        return FALSE;
+    if (!x86_64_aspace_map_private(as, base, memsz + (va - base), prot))
+        return FALSE;
+    while (filesz) {
+        UQUAD phys;
+        ULONG chunk = (ULONG)(X86_64_PAGE_SIZE - (at & (X86_64_PAGE_SIZE - 1)));
+
+        if (chunk > filesz)
+            chunk = filesz;
+        x86_64_aspace_translate(as, at, &phys, NULL);
+        memcpy((UBYTE *)(uintptr_t)(X86_64_PHYS_MAP_BASE + phys), from, chunk);
+        from += chunk;
+        at += chunk;
+        filesz -= chunk;
+    }
+    return TRUE;
 }

@@ -83,6 +83,19 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
 
           sudo apt-get install qemu-system-x86 ovmf
 
+  PC (x86-64, built-in EmuCON)
+      On x86-64 EmuCON is not linked into the 64-bit kernel: "make" also
+      builds it as an x32 ELF executable (obj/x32/emucon.elf, from the
+      shared cli/ sources, in their standalone-console mode, with the small
+      runtime in cli/x32/) and embeds it in the EFI image, which runs it as
+      an ordinary ring-3 process.  The boot self-test's probe program
+      (tests/x32_probe/) is built and embedded the same way.  The compiler
+      therefore needs the same x32 support described for the test program
+      below; on Debian/Ubuntu that is the gcc-multilib package.  Setting
+      "x32 test-program cross compiler prefix" (X32_CROSS_COMPILE) applies
+      to all of them.  The AES and EmuDesk are not available on this
+      machine yet.
+
   PC (x86-64, x32 userspace test program)
       "make x32test" builds tests/x32_hello/x32_hello.c, the minimal x32
       psABI (ELFCLASS32 program headers, genuine EM_X86_64 long-mode

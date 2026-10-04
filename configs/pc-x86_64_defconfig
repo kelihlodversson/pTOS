@@ -18,11 +18,11 @@ CONF_WITH_XHDI=n
 # either. Matched here explicitly, same precedent as CONF_WITH_IDE above.
 CONF_WITH_LINEA=n
 
-# Leave the AES/EmuDesk out so this defconfig boots straight into EmuCON.
-# The x86-64 GOP framebuffer and AES process-launch implementation support a
-# graphical desktop when CONF_WITH_AES is enabled, but this keeps a compact,
-# serial-friendly baseline matching virt-arm-cli_defconfig and
-# virt-m68k-cli_defconfig. CONF_WITH_CLI is left at its default (y).
+# The AES/EmuDesk are not available on x86-64 (CONF_WITH_AES depends on
+# !ARCH_X86_64): processes run in ring 3 and the AES has not been moved there
+# yet, so this boots straight into EmuCON -- itself an x32 program in ring 3,
+# built apart from the kernel (see the top level Makefile).  CONF_WITH_CLI is
+# left at its default (y).
 CONF_WITH_AES=n
 
 # CONF_SERIAL_CONSOLE_POLLING_MODE's own default (n, interrupt mode)

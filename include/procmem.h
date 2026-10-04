@@ -211,6 +211,16 @@ BOOL x86_64_aspace_user_range_ok(const X86_64_ASPACE *as, UQUAD va, UQUAD bytes,
 BOOL x86_64_aspace_copy_from_user(const X86_64_ASPACE *as, void *dst, UQUAD va, ULONG bytes);
 BOOL x86_64_aspace_copy_to_user(const X86_64_ASPACE *as, UQUAD va, const void *src, ULONG bytes);
 
+/*
+ * x86_64_aspace_map_private() of the pages covering [va, va + memsz) -- va
+ * need not be page-aligned -- with the first filesz bytes at va then filled
+ * from src, whatever the permissions (a read-only text segment included);
+ * everything else stays zero.  filesz > memsz is refused.  Same
+ * all-or-nothing contract as map_private().
+ */
+BOOL x86_64_aspace_load_private(X86_64_ASPACE *as, UQUAD va, UQUAD memsz,
+                                UWORD prot, const void *src, ULONG filesz);
+
 /* Private backing pages the address space owns (diagnostics, tests). */
 ULONG x86_64_aspace_private_pages(const X86_64_ASPACE *as);
 
