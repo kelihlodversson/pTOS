@@ -110,6 +110,8 @@ static void x86_64_drop_child_record(void *base)
     PD *child = (PD *)base;
     int i;
 
+    kproc_unborrow(base);       /* lent to a ring-3 launcher while it was built */
+
     if (kproc_discard(child)) {
         release_pd_files(child);
         for (i = 0; i < NUMSTD; i++)
@@ -126,6 +128,11 @@ static ULONG x86_64_resident_len;
 
 void x86_64_make_resident(PD *p, ULONG keep_bytes)
 {
+    /* The process's own block is not passed to the callback below, and its
+     * tail cannot be given back while the launcher still has it mapped: return
+     * what a ring-3 launcher borrowed for it first (its environment goes
+     * through the callback). */
+    kproc_unborrow(p);
     x86_64_procmem_keep(p, keep_bytes, x86_64_drop_child_record);
 }
 

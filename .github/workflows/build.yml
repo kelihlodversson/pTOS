@@ -336,6 +336,11 @@ jobs:
             exit 1
           fi
 
+          if ! grep -q 'x86-64 nested ptermres: PASS' boot.log; then
+            echo "::error::a ring-3 process could not keep launching children that stay resident"
+            exit 1
+          fi
+
           # EmuCON is an x32 program run in ring 3 -- not linked into the
           # kernel -- so its banner can only come from that process.
           if ! grep -q 'EmuCON: starting the x32 image in ring 3' boot.log; then

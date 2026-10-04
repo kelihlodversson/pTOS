@@ -60,6 +60,21 @@ static s64 gemdos0(u64 func)
     return (s64)rax;
 }
 
+static s64 gemdos2(u64 func, u64 a, u64 b)
+{
+    register u64 rax __asm__("rax") = ((u64)X86_64_TRAP_GEMDOS << 32) | func;
+    register u64 rdi __asm__("rdi") = a;
+    register u64 rsi __asm__("rsi") = b;
+    register u64 rdx __asm__("rdx") = 0;
+    register u64 r10 __asm__("r10") = 0;
+
+    __asm__ volatile ("syscall"
+                       : "+r" (rax)
+                       : "r" (rdi), "r" (rsi), "r" (rdx), "r" (r10)
+                       : "rcx", "r11", "memory");
+    return (s64)rax;
+}
+
 static s64 gemdos1r(u64 func, u64 arg)
 {
     register u64 rax __asm__("rax") = ((u64)X86_64_TRAP_GEMDOS << 32) | func;
@@ -93,13 +108,15 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 {
     int bad = 0;
     /* command tail, TOS style: a length byte, then the text.  "f" makes this
-     * program fault (the boot self-test's nested-fault case runs it that
-     * way); no tail is the ordinary entry check below. */
+     * program fault, "r" to terminate and stay resident (the boot self-test's
+     * nested cases run it that way); no tail is the ordinary entry check below. */
     const volatile char *cmdline = (const volatile char *)(unsigned long)(basepage + 0x80);
     static u32 *volatile null_pointer;
 
     if (cmdline[0] == 1 && cmdline[1] == 'f')
         *null_pointer = 1;              /* a page fault in ring 3 */
+    if (cmdline[0] == 1 && cmdline[1] == 'r')
+        gemdos2(0x31, 0x100, 0);        /* Ptermres(0x100, 0): stay resident */
 
     /* a GEMDOS round trip with a result the kernel must get right: select
      * drive C: and read it back, so a call that returns nothing or garbage

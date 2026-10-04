@@ -26,6 +26,11 @@
  *   m  like n, but the child (C:\X32HELLO.TOS with the tail "f") faults: the
  *      Pexec must return 0xffff, and this process must still be able to make
  *      system calls; exits with 0 if so, 0x100 if the file is not there
+ *   q  like n, but six children that terminate and stay resident (Ptermres,
+ *      tail "r"): each must exit with 0 and this process must keep launching
+ *      (the blocks lent to it for a resident child must be returned, or its
+ *      launches start to fail); exits with 0 if so, 0x100 if the file is not
+ *      there
  *   f  write to address 0 (a page fault)
  *   k  read the kernel's system variables at 0x4ba (a page fault: that page is
  *      supervisor-only)
@@ -177,6 +182,24 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             if (gemdos(0x19, 0, 0) != 0 && gemdos(0x19, 0, 0) != 2)
                 bad |= 2;               /* this process's calls still work */
         }
+        pterm(bad);
+        break;
+    }
+    case 'q': {
+        static const char resident_tail[] = { 1, 'r', 0 };
+        int run_no;
+
+        for (run_no = 0; run_no < 6; run_no++) {
+            s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                          (s64)(int)(unsigned long)resident_tail, 0);
+
+            if (rc == -33)
+                pterm(0x100);
+            if (rc != 0)
+                bad |= 1;
+        }
+        if (gemdos(0x19, 0, 0) != 0 && gemdos(0x19, 0, 0) != 2)
+            bad |= 2;
         pterm(bad);
         break;
     }

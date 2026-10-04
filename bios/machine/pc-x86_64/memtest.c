@@ -1182,6 +1182,10 @@ static void probe_expect(char mode, long want, const char *what)
     same(&s, what);
 }
 
+/* set when a test left permanent (resident) memory behind, which moves the
+ * allocator baseline for the final whole-run check */
+static BOOL resident_leftovers;
+
 static void test_ring3(void)
 {
     SNAP s;
@@ -1266,6 +1270,50 @@ static void test_ring3(void)
                 kcprintf("x86-64 nested fault: FAIL (0x%lx)\n", rc);
         }
         same(&s, "nested fault from ring 3");
+    }
+
+    /*
+     * Children that terminate and stay resident (Ptermres) from a ring-3
+     * parent: the blocks lent to the parent for each must come back, or its
+     * launches start failing once the borrow slots are used up (each child
+     * takes two; there are eight).  The resident memory itself is permanent
+     * by design, so the allocator baseline moves by exactly that.
+     */
+    {
+        SNAP before, after;
+
+        snap(&before);
+        rc = run_probe('q');
+        snap(&after);
+        if (rc == 0x100) {
+            kcprintf("x86-64 nested ptermres: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "a ring-3 process launches children that stay resident, again and again");
+            if (rc == 0)
+                kcprintf("x86-64 nested ptermres: PASS\n");
+            else
+                kcprintf("x86-64 nested ptermres: FAIL (0x%lx)\n", rc);
+            /* each live window allocation has one tracking record (a heap
+             * block), so the resident blocks account for exactly the heap
+             * growth */
+            {
+                long grown = (long)after.pm.live_allocs - (long)before.pm.live_allocs;
+
+                if (after.kprocs != before.kprocs || after.dir_refs != before.dir_refs ||
+                    (long)after.heap.live_blocks - (long)before.heap.live_blocks != grown)
+                    kcprintf("memtest: ptermres: kprocs %ld->%ld heap blocks %ld->%ld "
+                             "window allocs %ld->%ld dir refs %ld->%ld\n",
+                             (long)before.kprocs, (long)after.kprocs,
+                             (long)before.heap.live_blocks, (long)after.heap.live_blocks,
+                             (long)before.pm.live_allocs, (long)after.pm.live_allocs,
+                             (long)before.dir_refs, (long)after.dir_refs);
+                CHECK(after.kprocs == before.kprocs && after.dir_refs == before.dir_refs &&
+                      (long)after.heap.live_blocks - (long)before.heap.live_blocks == grown,
+                      "resident children leave no process records, references or stray heap blocks behind");
+                CHECK(grown > 0 && grown <= 12, "only the resident blocks themselves stay allocated");
+            }
+            resident_leftovers = TRUE;
+        }
     }
 
     /* a process that has been launched cannot be prepared (and launched) a
@@ -1400,6 +1448,8 @@ void x86_64_memtest_run(void)
     test_lifecycle();
     test_x32image();
     test_ring3();
+    if (resident_leftovers)
+        snap(&s);               /* resident memory is permanent, by design */
 
     same(&s, "whole memtest");
     CHECK(x86_64_pmem_bad_frees() >= s.pmem_bad, "bad free counter monotonic");
