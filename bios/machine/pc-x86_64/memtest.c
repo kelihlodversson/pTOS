@@ -659,8 +659,9 @@ static void test_isolation(void)
         x86_64_pmem_free_pages(probe, 1);
     /* The kernel's low data (the system-vector area, the kernel-data pool)
      * is there for ring 0's sake while it runs a system call under this
-     * address space -- and supervisor-only; so is the process window, which
-     * a process's own blocks are then mapped over with the user bit. */
+     * address space -- and supervisor-only.  The process window, by contrast,
+     * is absent: only the process's own blocks (user) and the blocks of a
+     * child it is launching (borrowed, supervisor-only) are ever mapped. */
     {
         UQUAD kstart, kend;
 
