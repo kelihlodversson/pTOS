@@ -402,7 +402,7 @@ CORE = core
 endif
 
 TOCLEAN = *~ */*~ $(CORE) *.tmp obj/*.tmp obj/*.o obj/*.d obj/*.h obj/*.c \
-          obj/*.ld obj/auto.conf */*.dsm
+          obj/*.ld obj/auto.conf */*.dsm obj/x32/*
 
 #
 # GEN_SRC accumulates the generated source files.  They are built before
@@ -749,6 +749,73 @@ x32hello.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
 x32test: x32hello.elf
 
 TOCLEAN += x32hello.elf
+
+#
+# The built-in EmuCON (#398).  On x86-64 the command processor is not linked
+# into the LP64 kernel: it is built here as a separate x32 executable from the
+# same cli/*.c sources the other architectures use, in their standalone
+# console mode (STANDALONE_CONSOLE) with X32_USERLAND selecting the ring-3
+# variants of the few places that touch kernel memory, and the kernel
+# embeds the result (cli/arch/x86_64/emucon_image.c) to launch as an ordinary
+# ring-3 process.  Only the string and printf helpers are shared with the
+# kernel (util/); cli/x32/ is its whole runtime: the syscall bindings, a
+# _start that keeps the process-entry stack contract, and a static heap.
+#
+# -Wl,-Ttext-segment puts the ELF headers, not just the text, at the image
+# base, so the first PT_LOAD starts there and no segment lies below it;
+# noseparate-code keeps text and read-only data in that one R+X segment.
+#
+X32_CLI_CFLAGS = $(X32_CFLAGS) -fno-tree-loop-distribute-patterns \
+                 -fno-builtin -fno-stack-protector -std=gnu90 -Os -Wall -Wundef
+X32_CLI_LDFLAGS = -mx32 -nostdlib -static -no-pie -Wl,--build-id=none \
+                  -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
+                  -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000 \
+                  -Wl,-e,_start
+
+obj/x32:
+	mkdir -p $@
+
+
+ifeq ($(CONF_WITH_CLI),y)
+X32_CLI_OBJ = $(addprefix obj/x32/, cmdmain.o cmdedit.o cmdexec.o cmdint.o \
+              cmdparse.o cmdutil.o cmdgetwh.o x32rt.o x32crt.o \
+              doprintf.o string.o version.o)
+
+# EmuCON's own sources use cmd.h's standalone definitions and the cli/x32
+# headers; util/ and the generated version use the kernel's.
+X32_CLI_INC = -DSTANDALONE_CONSOLE -DX32_USERLAND -Icli/x32 -Icli/x32/include \
+              -Iinclude -Icli
+X32_UTIL_INC = -Iinclude/arch/x86_64 -Iinclude -Iobj -Iutil
+obj/x32/doprintf.o obj/x32/string.o obj/x32/version.o: X32_CLI_INC = $(X32_UTIL_INC)
+
+obj/x32/%.o: cli/%.c $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_INC) -MMD -MP -c $< -o $@
+obj/x32/%.o: cli/x32/%.c | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_INC) -MMD -MP -c $< -o $@
+obj/x32/%.o: cli/x32/%.S | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_INC) -MMD -MP -c $< -o $@
+obj/x32/%.o: util/%.c $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_INC) -MMD -MP -c $< -o $@
+obj/x32/version.o: obj/version.c | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_INC) -MMD -MP -c $< -o $@
+
+obj/x32/emucon.elf: $(X32_CLI_OBJ)
+	$(X32_CC) $(X32_CLI_LDFLAGS) -o $@ $^
+
+-include $(X32_CLI_OBJ:.o=.d)
+
+# the kernel carries the executable's bytes (.incbin, which make cannot see)
+obj/emucon_image.o: obj/x32/emucon.elf
+endif
+
+# The ring-3 probe program of the boot self-test (tests/x32_probe/), built and
+# embedded the same way.
+ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
+obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_LDFLAGS) -o $@ $^
+
+obj/x32probe_image.o: obj/x32/x32probe.elf
+endif
 endif
 
 #

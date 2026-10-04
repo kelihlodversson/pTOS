@@ -514,6 +514,63 @@ int x86_64_unmap_user_page(UQUAD pml4_phys, UQUAD virt)
     return 0;
 }
 
+/*
+ * The kernel's own low-half 2 MiB mappings (the system-vector area, the
+ * low kernel-data pool, the framebuffer) are reachable only in ring 0, but
+ * ring 0 also runs under a process's CR3 while it services that process's
+ * system calls, so every address space has to carry them -- supervisor-only.
+ * These two functions let an address space copy such a mapping: the first
+ * reads where the kernel maps a 2 MiB-aligned low address, the second makes
+ * the same mapping, without PTE_USER, in another PML4's low half.
+ */
+int x86_64_kernel_low_2m_phys(UQUAD virt, UQUAD *phys)
+{
+    UQUAD index[3];
+    const pgentry_t *table;
+    pgentry_t entry;
+    int level;
+
+    if (virt >= 0x800000000000ULL)
+        return 0;
+    index[0] = (virt >> 39) & 0x1FF;
+    index[1] = (virt >> 30) & 0x1FF;
+    index[2] = (virt >> 21) & 0x1FF;
+    table = (const pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + x86_64_kernel_pml4_phys());
+    for (level = 0; level < 2; level++) {
+        entry = table[index[level]];
+        if (!(entry & PTE_PRESENT) || (entry & PTE_PS))
+            return 0;
+        table = (const pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + (entry & PTE_ADDR_MASK));
+    }
+    entry = table[index[2]];
+    if (!(entry & PTE_PRESENT) || !(entry & PTE_PS))
+        return 0;
+    *phys = entry & PTE_ADDR_MASK & ~(X86_64_PAGE_2M_SIZE - 1);
+    return 1;
+}
+
+int x86_64_map_kernel_2m_into(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
+                              UQUAD (*alloc_page)(void *), void *ctx)
+{
+    pgentry_t *l4 = (pgentry_t *)(uintptr_t)(X86_64_PHYS_MAP_BASE + pml4_phys);
+    pgentry_t *pdpt, *pd;
+    UQUAD pd_index = (virt >> 21) & 0x1FF;
+
+    if (virt >= 0x800000000000ULL || (virt & (X86_64_PAGE_2M_SIZE - 1)) ||
+        (phys & (X86_64_PAGE_2M_SIZE - 1)))
+        return -1;
+    pdpt = user_table_slot(l4, (virt >> 39) & 0x1FF, alloc_page, ctx);
+    if (!pdpt)
+        return -1;
+    pd = user_table_slot(pdpt, (virt >> 30) & 0x1FF, alloc_page, ctx);
+    if (!pd)
+        return -1;
+    if (pd[pd_index] & PTE_PRESENT)
+        return -1;
+    pd[pd_index] = (phys & PTE_ADDR_MASK) | PTE_PS | PTE_WRITABLE | PTE_NX | PTE_PRESENT;
+    return 0;
+}
+
 UQUAD x86_64_kernel_pml4_phys(void)
 {
     return phys_addr_of(pml4);

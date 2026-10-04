@@ -30,7 +30,13 @@ const GEM_MUPB ui_mupb =
 #if CONF_WITH_AES
     ui_start        /* AES entry point */
 #elif CONF_WITH_CLI
+#ifdef __x86_64__
+    NULL            /* EmuCON is a separate x32 image, not a ROM entry point */
+#else
     coma_start      /* EmuCON entry point */
+#endif
+#elif defined(__x86_64__)
+    NULL            /* no AES and no CLI: nothing to start (bios.c halts) */
 #else
 #  error You must provide a main UI
 #endif
