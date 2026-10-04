@@ -336,6 +336,31 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
         return;
     }
 
+    /*
+     * Ssystem() is the one call whose pointer arguments the kernel writes
+     * through that this port has to guard today: ring 0 runs under the
+     * process's own page tables, which carry the kernel's low data
+     * (supervisor-only, but writable by ring 0), so a raw `Ssystem(S_GETCOOKIE,
+     * tag, 0x400)` or S_CONSOLE_DIM destination would overwrite the system
+     * variables.  The destination must be user memory of this process.  The
+     * general validation of every other call's pointers is #352 (see above).
+     */
+    if (from_ring3 && trap_class == X86_64_TRAP_GEMDOS && fn == 0x154) {
+        WORD mode = (WORD)frame->rdi;
+        long arg1 = (long)frame->rsi, arg2 = (long)frame->rdx;
+        BOOL ok = TRUE;
+
+        if (mode == 0x0008 && arg2)                     /* S_GETCOOKIE value */
+            ok = kproc_validate_user_write((UQUAD)arg2, 4);
+        else if (mode == (WORD)0xfffe && arg2 > 0)      /* S_CONSOLE_DIM struct */
+            ok = kproc_validate_user_write((UQUAD)arg1,
+                                           arg2 < 16 ? (ULONG)arg2 : 16UL);
+        if (!ok) {
+            frame->rax = (UQUAD)EIMBA;
+            return;
+        }
+    }
+
     /* Fsetdta() stores its pointer in the public 32-bit PD field. Ensure a
      * ring-3 caller's complete DTAINFO buffer belongs to this process before
      * xsetdta() records it as the native DTA pointer. Kernel callers bypass

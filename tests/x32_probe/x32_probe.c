@@ -15,8 +15,9 @@
  *      marker behind: a second run must still start zeroed
  *   b  pass the kernel a bad pointer (an unmapped one) and a kernel
  *      address as GEMDOS arguments; exit with 0 if both are refused
- *   s  try to install a kernel callback vector (BIOS Setexc 0x102) and to
- *      launch a process (Pexec) from inside this one: both must be refused;
+ *   s  try to install a kernel callback vector (BIOS Setexc 0x102), to
+ *      launch a process (Pexec) from inside this one and to have Ssystem()
+ *      write into the kernel's system variables: all must be refused;
  *      exits with 0 if they were
  *   f  write to address 0 (a page fault)
  *   k  read the kernel's system variables at 0x4ba (a page fault: that page is
@@ -126,6 +127,12 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             bad |= 1;                   /* Setexc(etv_term, user address) */
         if (sys(GEMDOS, 0x4b, 5, 0, 0) != ENSMEM)
             bad |= 2;                   /* Pexec(PE_BASEPAGE, ...) */
+        /* Ssystem() writing through a pointer into the kernel's system
+         * variables: S_GETCOOKIE (8) and S_CONSOLE_DIM (-2) */
+        if (sys(GEMDOS, 0x154, 8, 0x5f435055, 0x400) != EIMBA)
+            bad |= 4;
+        if (sys(GEMDOS, 0x154, -2, 0x400, 16) != EIMBA)
+            bad |= 8;
         pterm(bad);
         break;
     case 'f':
