@@ -373,7 +373,13 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
          * equivalent, both of which use the same convention. */
         if (fn >= bios_ent)
             frame->rax = fn;
-        else if (from_ring3 && fn == 4) {
+        else if (from_ring3 && fn == 5 && (long)frame->rsi != -1L) {
+            /* Setexc() with a new vector: the kernel would later call that
+             * address in ring 0 (etv_term from xterm(), the critical-error
+             * and timer vectors, the exception table).  Ring 3 may only
+             * query a vector, never install one. */
+            frame->rax = (UQUAD)-1L;
+        } else if (from_ring3 && fn == 4) {
             struct x32_bios_lrwabs_args wire;
             struct bios_lrwabs_args native;
             ULONG bytes;

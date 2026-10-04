@@ -3,7 +3,8 @@
  *
  * X32_EMBED_IMAGE(accessor, label, path) defines `const X32_IMAGE *accessor(void)`
  * returning the bytes of the executable at `path` (relative to the directory
-    ".incbin \"" path "\"\n"                                                \
+ * the compiler runs in, the top of the source tree), carried in .rodata via
+ * .incbin.
  *
  * Both addresses come from `lea`, not from a C address-of: the kernel's
  * objects are ELF but the final link is PE, which does not relax the GOT

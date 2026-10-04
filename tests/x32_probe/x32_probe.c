@@ -15,6 +15,9 @@
  *      marker behind: a second run must still start zeroed
  *   b  pass the kernel a bad pointer (an unmapped one) and a kernel
  *      address as GEMDOS arguments; exit with 0 if both are refused
+ *   s  try to install a kernel callback vector (BIOS Setexc 0x102) and to
+ *      launch a process (Pexec) from inside this one: both must be refused;
+ *      exits with 0 if they were
  *   f  write to address 0 (a page fault)
  *   k  read the kernel's system variables at 0x4ba (a page fault: that page is
  *      supervisor-only)
@@ -36,17 +39,19 @@ typedef unsigned int u32;
 
 #define GEMDOS 1
 #define EIMBA  (-40)
+#define ENSMEM (-39)
+#define BIOS   13
 
 /* the selectors gdt.h gives ring 3 */
 #define USER_CODE_SEL 0x2b
 #define USER_DATA_SEL 0x23
 
-static s64 gemdos(u64 func, s64 a, s64 b)
+static s64 sys(u64 class, u64 func, s64 a, s64 b, s64 c)
 {
-    register u64 rax __asm__("rax") = ((u64)GEMDOS << 32) | func;
+    register u64 rax __asm__("rax") = (class << 32) | func;
     register s64 rdi __asm__("rdi") = a;
     register s64 rsi __asm__("rsi") = b;
-    register u64 rdx __asm__("rdx") = 0;
+    register s64 rdx __asm__("rdx") = c;
     register u64 r10 __asm__("r10") = 0;
 
     __asm__ volatile ("syscall"
@@ -54,6 +59,11 @@ static s64 gemdos(u64 func, s64 a, s64 b)
                       : "r" (rdi), "r" (rsi), "r" (rdx), "r" (r10)
                       : "rcx", "r11", "memory");
     return (s64)rax;
+}
+
+static s64 gemdos(u64 func, s64 a, s64 b)
+{
+    return sys(GEMDOS, func, a, b, 0);
 }
 
 static void pterm(int code)
@@ -109,6 +119,13 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             bad |= 1;
         if (gemdos(0x3b, (s64)(int)0x80000000, 0) != EIMBA)
             bad |= 2;
+        pterm(bad);
+        break;
+    case 's':
+        if (sys(BIOS, 5, 0x102, 0x500000, 0) != -1)
+            bad |= 1;                   /* Setexc(etv_term, user address) */
+        if (sys(GEMDOS, 0x4b, 5, 0, 0) != ENSMEM)
+            bad |= 2;                   /* Pexec(PE_BASEPAGE, ...) */
         pterm(bad);
         break;
     case 'f':

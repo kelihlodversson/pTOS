@@ -1179,6 +1179,7 @@ static void test_ring3(void)
 
     /* bad pointers and kernel addresses as system call arguments */
     probe_expect('b', 0, "bad arguments refused by the system calls");
+    probe_expect('s', 0, "ring 3 cannot install kernel callbacks or launch from a syscall");
 
     /* a fault in ring 3 ends that process and nothing else */
     probe_expect('f', 0xffff, "a ring-3 write to page 0 is contained");

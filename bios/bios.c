@@ -118,6 +118,8 @@ extern void run_cartridge_applications(WORD typebit); /* found in startup.S */
 #include "x32image.h"
 extern BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);    /* bdos/kproc.c */
 static void start_builtin_cli(char *env);
+extern void set_owner(void *addr, PD *p);           /* bdos/mem.c */
+extern void x86_64_free_owned(PD *p);               /* bdos/proc.c */
 #else
 extern void coma_start(void) NORETURN;  /* found in cli/cmdasm.S */
 #endif
@@ -413,8 +415,14 @@ static void start_builtin_cli(char *env)
     {
         long rc = Pexec(PE_GOTHENFREE, "", (char *)pd, env);
 
-        if (rc < 0)
+        if (rc < 0) {
+            /* a refused launch leaves the basepage and environment with the
+             * launcher (xexec()): release them, and the KPROC record */
             kcprintf("EmuCON: cannot start (%ld)\n", rc);
+            set_owner(pd, pd);
+            set_owner(USERPTR_TO_PTR(pd->p_env), pd);
+            x86_64_free_owned(pd);
+        }
     }
 }
 #endif

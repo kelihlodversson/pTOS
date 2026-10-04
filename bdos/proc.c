@@ -351,6 +351,15 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     KDEBUG(("BDOS xexec: flag or mode = %d\n",flag));
 
+#ifdef __x86_64__
+    /* A launch from inside a ring-3 process's own system call is refused
+     * before anything is allocated: the new blocks lie in the low window,
+     * which that process's page tables do not map, so even creating the
+     * basepage would fault in ring 0 (see x86_64_prepare_launch()). */
+    if (x86_64_user_active())
+        return ENSMEM;
+#endif
+
     /* first branch - actions that do not require loading files */
     switch(flag) {
 #if DETECT_NATIVE_FEATURES
