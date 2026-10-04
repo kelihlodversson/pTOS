@@ -1191,7 +1191,7 @@ static void test_ring3(void)
 
     /*
      * A ring-3 process runs another from inside its own system call
-     * (Pexec of C:\X32HELLO.ELF, an x32 ELF on the boot drive -- CI puts one
+     * (Pexec of C:\X32HELLO.TOS, an x32 ELF on the boot drive -- CI puts one
      * there): the child makes calls of its own on its own kernel stack, exits,
      * and the parent resumes on its own stack, page tables and user RSP.
      * Without the file this cannot be tried; that is reported, and CI, which
@@ -1200,7 +1200,7 @@ static void test_ring3(void)
     snap(&s);
     rc = run_probe('n');
     if (rc == 0x100) {
-        kcprintf("x86-64 nested pexec: SKIP (no C:\\X32HELLO.ELF)\n");
+        kcprintf("x86-64 nested pexec: SKIP (no C:\\X32HELLO.TOS)\n");
     } else {
         CHECK(rc == 0, "a ring-3 process runs a child and resumes");
         if (rc == 0)

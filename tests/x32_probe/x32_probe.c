@@ -19,7 +19,7 @@
  *      have Ssystem() write into the kernel's system variables: all must be
  *      refused; exits with 0 if they were
  *   n  run another program from inside this one: Pexec(PE_LOADGO) of
- *      C:\X32HELLO.ELF, which must exit with 0, after which this process
+ *      C:\X32HELLO.TOS, which must exit with 0, after which this process
  *      must still be able to make system calls; exits with 0 if so, 0x100 if
  *      the file is not on the boot drive (reported as a skip by the self-test)
  *   f  write to address 0 (a page fault)
@@ -146,7 +146,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(bad);
         break;
     case 'n': {
-        s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.ELF", (s64)(int)(unsigned long)"", 0);
+        s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS", (s64)(int)(unsigned long)"", 0);
 
         if (rc == -33)                  /* EFILNF: not on the boot drive */
             pterm(0x100);

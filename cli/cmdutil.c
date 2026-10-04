@@ -307,11 +307,7 @@ const char *p;
     for (p = dtaptr->d_fname; *p; ) {
         if (*p++ == '.') {
             if (strequal(p,"app") || strequal(p,"gtp") || strequal(p,"prg")
-             || strequal(p,"tos") || strequal(p,"ttp")
-#if CLI_WITH_ELF
-             || strequal(p,"elf")
-#endif
-             )
+             || strequal(p,"tos") || strequal(p,"ttp"))
                 return p;
         }
     }

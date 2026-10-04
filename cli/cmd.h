@@ -16,8 +16,6 @@
  #include <sysconf.h>
  /* the ROM build shares cli/ across every machine, so gate resolution
     switching on the Atari video hardware actually configured in */
- /* the ELF loader (bdos/elfld.c) makes .elf files runnable programs */
- #define CLI_WITH_ELF           CONF_WITH_ELF_LOADER
  #define CLI_WITH_RESOLUTION    CONF_WITH_ATARI_VIDEO
  #define CLI_WITH_TT_RESOLUTION CONF_WITH_TT_SHIFTER
 #else
@@ -59,11 +57,6 @@
  #else
   #define CLI_WITH_RESOLUTION    1
   #define CLI_WITH_TT_RESOLUTION 1
- #endif
- #ifdef X32_USERLAND
-  #define CLI_WITH_ELF          1       /* the x86-64 kernel's ELF loader */
- #else
-  #define CLI_WITH_ELF          0
  #endif
  /* normally from portab.h, which this build doesn't include */
  #define FALLTHROUGH do { } while (0)

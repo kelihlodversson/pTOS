@@ -165,7 +165,7 @@ probe program of tests/x32_probe/ in ring 3 -- entry registers, selectors and
 stack alignment, a GEMDOS call across the syscall boundary, bad system call
 arguments, exit codes, fresh private pages per process, three kinds of fault
 -- and checks after each run that CR3, the GS bases and every allocator are
-back where they were.  With C:\X32HELLO.ELF on the boot drive (CI puts it
+back where they were.  With C:\X32HELLO.TOS on the boot drive (CI puts it
 there) the probe also runs it through Pexec() from ring 3 and must resume and
 keep making calls ("x86-64 nested pexec: PASS").  The CI boot test requires its PASS line and that the
 built-in EmuCON ran afterwards without a fault.

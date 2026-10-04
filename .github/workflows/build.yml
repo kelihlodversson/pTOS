@@ -265,7 +265,7 @@ jobs:
           # a real x32 ELF on the boot drive: the self-test runs it through
           # Pexec() from a ring-3 process (nested launch), as EmuCON does
           make x32test
-          cp x32hello.elf esp/X32HELLO.ELF
+          cp x32hello.elf esp/X32HELLO.TOS
           cp /usr/share/OVMF/OVMF_VARS_4M.fd .
 
           set +e
