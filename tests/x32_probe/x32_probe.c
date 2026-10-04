@@ -23,6 +23,9 @@
  *      C:\X32HELLO.TOS, which must exit with 0, after which this process
  *      must still be able to make system calls; exits with 0 if so, 0x100 if
  *      the file is not on the boot drive (reported as a skip by the self-test)
+ *   m  like n, but the child (C:\X32HELLO.TOS with the tail "f") faults: the
+ *      Pexec must return 0xffff, and this process must still be able to make
+ *      system calls; exits with 0 if so, 0x100 if the file is not there
  *   f  write to address 0 (a page fault)
  *   k  read the kernel's system variables at 0x4ba (a page fault: that page is
  *      supervisor-only)
@@ -163,6 +166,20 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             pterm(0x100);
         if (rc != 0)
             bad |= 1;                   /* the child's exit code, or an error */
+        if (gemdos(0x19, 0, 0) != 0 && gemdos(0x19, 0, 0) != 2)
+            bad |= 2;                   /* this process's calls still work */
+        pterm(bad);
+        break;
+    }
+    case 'm': {
+        static const char fault_tail[] = { 1, 'f', 0 };
+        s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                      (s64)(int)(unsigned long)fault_tail, 0);
+
+        if (rc == -33)
+            pterm(0x100);
+        if (rc != 0xffff)
+            bad |= 1;                   /* the faulting child's exit code */
         if (gemdos(0x19, 0, 0) != 0 && gemdos(0x19, 0, 0) != 2)
             bad |= 2;                   /* this process's calls still work */
         pterm(bad);

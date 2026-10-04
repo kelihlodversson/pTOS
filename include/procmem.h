@@ -114,7 +114,12 @@ void x86_64_procmem_stats(PROCMEM_STATS *stats);
  * for lack of memory; destruction cannot, and frees each table page and each
  * private page exactly once.
  *
- * The kernel half (PML4 slots 256-511) is shared; the low half starts empty.
+ * The kernel half (PML4 slots 256-511) is shared.  The low half starts with
+ * the kernel's own low data, all of it supervisor-only (no user bit): the
+ * system-vector area, the kernel-data pool, the framebuffer and the whole
+ * process window (see doc/x86_64-address-space.txt, "Kernel low mappings"),
+ * because ring 0 runs under a process's page tables while it services that
+ * process's system calls.  Everything else is empty until mapped.
  */
 typedef struct x86_64_aspace X86_64_ASPACE;
 

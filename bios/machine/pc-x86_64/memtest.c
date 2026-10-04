@@ -1221,6 +1221,35 @@ static void test_ring3(void)
         same(&s, "nested Pexec from ring 3");
     }
 
+    /*
+     * The same with a child that FAULTS: the other way back into the
+     * launcher's context (no syscall, so no swapgs to undo; the exception
+     * stack, not the child's syscall stack), which must put the ring-3
+     * parent's stack, page tables, saved RSP and GS state back too.
+     */
+    {
+        CPUSTATE before, after;
+        PD *me = run;
+
+        snap(&s);
+        cpustate(&before);
+        rc = run_probe('m');
+        cpustate(&after);
+        CHECK(run == me, "the launcher is the current process again after a nested fault");
+        CHECK(after.cr3 == before.cr3 && after.gs == before.gs && after.kernel_gs == before.kernel_gs,
+              "CR3 and the GS bases are back after a nested fault");
+        if (rc == 0x100) {
+            kcprintf("x86-64 nested fault: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "a ring-3 process survives its child's fault and resumes");
+            if (rc == 0)
+                kcprintf("x86-64 nested fault: PASS\n");
+            else
+                kcprintf("x86-64 nested fault: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "nested fault from ring 3");
+    }
+
     /* a process that has been launched cannot be prepared (and launched) a
      * second time: its kernel stack went to gouser() */
     snap(&s);

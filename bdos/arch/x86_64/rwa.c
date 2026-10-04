@@ -233,18 +233,16 @@ void gouser(void)
          * A real, loaded process (#334).  Its address space was already
          * built, and can have failed with ENSMEM, back in Pexec():
          * kproc_prepare_user() (bdos/kproc.c) makes the PML4 -- the
-         * kernel + physical direct map shared in, every low slot clear --
-         * and maps exactly this process's own environment block,
-         * basepage/TPA/stack (user) and its parent's basepage
+         * kernel + physical direct map shared in, the kernel's low data
+         * and the whole process window mapped supervisor-only (aspace.c's
+         * map_kernel_low()) -- and maps this process's own environment
+         * block, basepage/TPA (user) and, for a built-in image, its
+         * segments and stack, over them, plus its parent's basepage
          * (kernel-only: xterm() writes the exit code through it from
-         * ring 0 while this CR3 is still loaded), never the rest of the
-         * shared window.  That address space belongs to the process's
-         * KPROC record and is freed with it (kproc_destroy(), from
-         * xterm()), so nothing here allocates or needs to unwind.
-         *
-         * The low system-vector page is deliberately still not mapped:
-         * #352 tracks whether (and how safely) a real process should
-         * ever see it.
+         * ring 0 while this CR3 is still loaded).  Nothing else in the
+         * window is reachable from ring 3.  That address space belongs to
+         * the process's KPROC record and is freed with it (kproc_destroy(),
+         * from xterm()), so nothing here allocates or needs to unwind.
          *
          * Both branches resume the launcher at Pterm() the same way (the
          * jmp_buf saved below), so Pexec() returns the exit code.  What a

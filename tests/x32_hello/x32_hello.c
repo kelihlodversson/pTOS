@@ -92,6 +92,14 @@ static void gemdos1(u64 func, u64 arg)
 void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 {
     int bad = 0;
+    /* command tail, TOS style: a length byte, then the text.  "f" makes this
+     * program fault (the boot self-test's nested-fault case runs it that
+     * way); no tail is the ordinary entry check below. */
+    const volatile char *cmdline = (const volatile char *)(unsigned long)(basepage + 0x80);
+    static u32 *volatile null_pointer;
+
+    if (cmdline[0] == 1 && cmdline[1] == 'f')
+        *null_pointer = 1;              /* a page fault in ring 3 */
 
     /* a GEMDOS round trip with a result the kernel must get right: select
      * drive C: and read it back, so a call that returns nothing or garbage
