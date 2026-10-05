@@ -81,8 +81,8 @@ static ULONG dir_refs(void)
     int d;
 
     for (d = 0; d < NUMCURDIR; d++)
-        if (run->p_curdir[d])
-            sum += dirtbl[run->p_curdir[d]].use;
+        if (PD_CURDIR(run)[d])
+            sum += dirtbl[PD_CURDIR(run)[d]].use;
     return sum;
 }
 
@@ -1041,17 +1041,17 @@ static void test_lifecycle(void)
         int d;
         WORD saved_use;
 
-        for (d = 0; d < NUMCURDIR && !run->p_curdir[d]; d++)
+        for (d = 0; d < NUMCURDIR && !PD_CURDIR(run)[d]; d++)
             ;
         if (d < NUMCURDIR) {
-            saved_use = dirtbl[run->p_curdir[d]].use;
+            saved_use = dirtbl[PD_CURDIR(run)[d]].use;
             pd = new_basepage();
-            CHECK(pd && dirtbl[run->p_curdir[d]].use == saved_use + 1, "basepage inherits a directory ref");
+            CHECK(pd && dirtbl[PD_CURDIR(run)[d]].use == saved_use + 1, "basepage inherits a directory ref");
             if (pd) {
                 env = USERPTR_TO_PTR(pd->p_env);
                 CHECK(Mfree(pd) == 0, "Mfree abandoned basepage");
                 Mfree(env);
-                CHECK(dirtbl[run->p_curdir[d]].use == saved_use, "inherited directory ref released once");
+                CHECK(dirtbl[PD_CURDIR(run)[d]].use == saved_use, "inherited directory ref released once");
             }
         }
     }
@@ -1248,6 +1248,9 @@ static void test_ring3(void)
 
     /* a Pexec() that runs out of loan slots half way gives back what it took */
     probe_expect('z', 0, "a failed Pexec(PE_BASEPAGE) from ring 3 releases its blocks and loans");
+
+    /* the basepage's p_uft/p_curdir are not the kernel's tables (#418) */
+    probe_expect('t', 0, "overwriting the basepage's file and directory tables harms nothing");
 
     /* PE_LOAD then PE_GOTHENFREE, and a child freeing its parent's block */
     {

@@ -1160,7 +1160,7 @@ static DND *dcrack(const char **np)
     }
     else
     {
-        int curdir = run->p_curdir[d];
+        int curdir = PD_CURDIR(run)[d];
         p = dirtbl[curdir].dnd; /*  else use curr dir   */
     }
 

@@ -112,7 +112,7 @@ void stdhdl_init(void)
     bzero(sft, OPNFILES * sizeof(FTAB));
 
     for (i = 0; i < NUMSTD; i++)
-        run->p_uft[i] = default_handle[i];
+        PD_UFT(run)[i] = default_handle[i];
 
     /* initialise typeahead pointers */
     buffer[0] = NULL;       /* prn */
@@ -161,7 +161,7 @@ static long constat(int h)
  */
 long xconstat(void)
 {
-    return constat(HXFORM(run->p_uft[0]));
+    return constat(HXFORM(PD_UFT(run)[0]));
 }
 
 
@@ -170,7 +170,7 @@ long xconstat(void)
  */
 long xconostat(void)
 {
-    return Bcostat(HXFORM(run->p_uft[1]));
+    return Bcostat(HXFORM(PD_UFT(run)[1]));
 }
 
 
@@ -179,7 +179,7 @@ long xconostat(void)
  */
 long xprtostat(void)
 {
-    return Bcostat(HXFORM(run->p_uft[3]));
+    return Bcostat(HXFORM(PD_UFT(run)[3]));
 }
 
 
@@ -188,7 +188,7 @@ long xprtostat(void)
  */
 long xauxistat(void)
 {
-    return constat(HXFORM(run->p_uft[2]));
+    return constat(HXFORM(PD_UFT(run)[2]));
 }
 
 
@@ -197,7 +197,7 @@ long xauxistat(void)
  */
 long xauxostat(void)
 {
-    return Bcostat(HXFORM(run->p_uft[2]));
+    return Bcostat(HXFORM(PD_UFT(run)[2]));
 }
 
 
@@ -281,7 +281,7 @@ static void conout(int h, int ch)
  */
 long xconout(int ch)
 {
-    tabout(HXFORM(run->p_uft[1]),ch);
+    tabout(HXFORM(PD_UFT(run)[1]),ch);
     return 1;
 }
 
@@ -333,7 +333,7 @@ static void cookdout(int h, int ch)
  */
 long xauxout(int ch)
 {
-    return Bconout(HXFORM(run->p_uft[2]), ch);
+    return Bconout(HXFORM(PD_UFT(run)[2]), ch);
 }
 
 
@@ -342,7 +342,7 @@ long xauxout(int ch)
  */
 long xprtout(int ch)
 {
-    return Bconout(HXFORM(run->p_uft[3]), ch);
+    return Bconout(HXFORM(PD_UFT(run)[3]), ch);
 }
 
 
@@ -377,7 +377,7 @@ static long getch(int h)
  */
 long xrawcin(void)
 {
-    return getch(HXFORM(run->p_uft[0]));
+    return getch(HXFORM(PD_UFT(run)[0]));
 }
 
 
@@ -401,7 +401,7 @@ long xconin(void)
     int h;
     long ch;
 
-    h = HXFORM(run->p_uft[0]);
+    h = HXFORM(PD_UFT(run)[0]);
     conbrk(h);
     ch = conin(h);
     if (LOBYTE(ch) == ctrlc)
@@ -419,7 +419,7 @@ long xnecin(void)
     int h;
     long ch;
 
-    h = HXFORM(run->p_uft[0]);
+    h = HXFORM(PD_UFT(run)[0]);
     conbrk(h);
     ch = getch(h);
     if (LOBYTE(ch) == ctrlc)
@@ -434,7 +434,7 @@ long xnecin(void)
  */
 long xauxin(void)
 {
-    return Bconin(HXFORM(run->p_uft[2]));
+    return Bconin(HXFORM(PD_UFT(run)[2]));
 }
 
 
@@ -447,11 +447,11 @@ long xrawio(int parm)
 
     if (parm == 0xFF)
     {
-        i = HXFORM(run->p_uft[0]);
+        i = HXFORM(PD_UFT(run)[0]);
         return constat(i) ? getch(i) : 0L;
     }
 
-    Bconout(HXFORM(run->p_uft[1]), parm);
+    Bconout(HXFORM(PD_UFT(run)[1]), parm);
     return 0; /* dummy */
 }
 
@@ -461,7 +461,7 @@ long xrawio(int parm)
  */
 void xconws(char *p)
 {
-    prt_line(HXFORM(run->p_uft[1]),p);
+    prt_line(HXFORM(PD_UFT(run)[1]),p);
 }
 
 
@@ -535,7 +535,7 @@ static int backsp(int h, char *cbuf, int retlen, int col)
  */
 void xconrs(char *p)
 {
-    p[1] = cgets(HXFORM(run->p_uft[0]),(unsigned char)p[0],&p[2]);
+    p[1] = cgets(HXFORM(PD_UFT(run)[0]),(unsigned char)p[0],&p[2]);
 }
 
 

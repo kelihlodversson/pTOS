@@ -190,12 +190,15 @@ read what its ancestors were told (command line, flags, drive), and nothing
 it could use against them.  The kernel never reads p_parent: Pterm() uses the
 launcher recorded in the KPROC.
 
-Known limit: p_uft and p_curdir of a process's *own* basepage still hold the
-kernel's live file and directory table indices, which the kernel reads and
-updates in the (user-writable) basepage and does not validate.  A ring-3
-process that rewrites them can make the kernel index its system tables out of
-range.  The authoritative per-process tables belong in the KPROC record; that
-refactor is tracked in #418 and is out of scope here.
+File handles and directories (#418): the standard-handle map (p_uft) and the
+per-drive current directories (p_curdir) are kept in the process's KPROC record,
+not in its basepage, which a ring-3 process can overwrite.  The p_uft/p_curdir
+fields of such a basepage are unused (zero), as in FreeMiNT; the kernel reaches
+the tables only through PD_UFT()/PD_CURDIR() (include/bdosdefs.h), which are the
+plain fields on every other architecture and for the boot-time basepages that
+have no record.  The tables are released through the record when the process
+ends or when a never-launched basepage is freed.  Probe mode t of the self-test
+scribbles over both fields and must still do file, directory and console I/O.
 
 Interrupts stay disabled in ring 3 and in system calls, as everywhere else in
 this kernel (devices are polled).  The exception stack (TSS rsp0) is still

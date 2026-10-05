@@ -115,8 +115,10 @@ static void release_pd_files(PD *r);
  * exactly once -- the record is the proof it has not been done. */
 static void x86_64_release_block(void *base)
 {
-    if (kproc_discard((PD *)base))
+    /* the tables are in the record: release through it, then drop it */
+    if (kproc_unlaunched((PD *)base))
         release_pd_files((PD *)base);
+    kproc_discard((PD *)base);
     /* a block lent to a ring-3 launcher goes back, but only after its
      * basepage has been read: that launcher's page tables are loaded */
     kproc_unborrow(base);
@@ -130,15 +132,12 @@ static void x86_64_release_block(void *base)
 static void x86_64_drop_child_record(void *base)
 {
     PD *child = (PD *)base;
-    int i;
 
-    if (kproc_discard(child)) {
+    /* (the tables go with the record: later users of the basepage find the
+     * basepage's own, zero, ones and release nothing a second time) */
+    if (kproc_unlaunched(child))
         release_pd_files(child);
-        for (i = 0; i < NUMSTD; i++)
-            child->p_uft[i] = 0;
-        for (i = 0; i < NUMCURDIR; i++)
-            child->p_curdir[i] = 0;
-    }
+    kproc_discard(child);
     kproc_unborrow(base);       /* lent to a ring-3 launcher while it was built */
 }
 
@@ -307,7 +306,7 @@ static void release_pd_files(PD *r)
     /* check the standard devices in both file tables  */
 
     for (i = 0; i < NUMSTD; i++)
-        if ((h = r->p_uft[i]) > 0)
+        if ((h = PD_UFT(r)[i]) > 0)
             xclose(h);
 
     for (i = 0; i < OPNFILES; i++)
@@ -319,7 +318,7 @@ static void release_pd_files(PD *r)
 
     for (i = 0; i < NUMCURDIR; i++)
     {
-        if ((h = r->p_curdir[i]) != 0)
+        if ((h = PD_CURDIR(r)[i]) != 0)
             decr_curdir_usage(h);
     }
 
@@ -340,7 +339,9 @@ static void release_pd_files(PD *r)
 
 static void ixterm(PD *r)
 {
-    release_pd_files(r);
+#ifndef __x86_64__
+    release_pd_files(r);    /* (x86-64: xterm() did, while the record was there) */
+#endif
 
     /* free each item in the allocated list that is owned by 'r' */
 
@@ -698,17 +699,17 @@ static void init_pd_files(PD *p)
 
     /* inherit standard files from me */
     for (i = 0; i < NUMSTD; i++) {
-        WORD h = run->p_uft[i];
+        WORD h = PD_UFT(run)[i];
         if (h > 0)
             ixforce(i, h, p);
         else
-            p->p_uft[i] = h;
+            PD_UFT(p)[i] = h;
     }
 
     /* and current directory set */
     for (i = 0; i < NUMCURDIR; i++) {
-        int dn = run->p_curdir[i];
-        p->p_curdir[i] = dn;
+        int dn = PD_CURDIR(run)[i];
+        PD_CURDIR(p)[i] = dn;
         if (dn)
             dirtbl[dn].use++;
 #if CONF_WITH_PLUGGABLE_FS
@@ -1040,6 +1041,8 @@ void xterm(UWORD rc)
     /* not run->p_parent: that field is in the process's own writable
      * memory, and run->p_dreg[0] is written through the result below */
     run = kproc_get_parent(p);
+    /* the file and directory tables are in the record, which goes next */
+    release_pd_files(p);
 #else
     run = (PD *)USERPTR_TO_PTR(run->p_parent);
 #endif

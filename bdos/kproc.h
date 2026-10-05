@@ -40,6 +40,7 @@ void kproc_mark_started(PD *pd);        /* proc_go() launched it */
  * that was never launched, whose inherited file and directory references
  * are therefore still held. */
 BOOL kproc_discard(PD *pd);
+BOOL kproc_unlaunched(PD *pd);          /* has a record and was never launched */
 /*
  * Makes the process a built-in x32 program: kproc_prepare_user() will also
  * map the image's segments as private pages of its address space.  Must

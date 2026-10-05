@@ -38,6 +38,8 @@
  *      (the blocks lent to it for a resident child must be returned, or its
  *      launches start to fail); exits with 0 if so, 0x100 if the file is not
  *      there
+ *   t  scribble over the basepage's p_uft and p_curdir, then use handles and
+ *      directories; exits with a mask of what failed (#418)
  *   l  Pexec(PE_LOAD) of C:\\X32HELLO.TOS and PE_GOTHENFREE of its basepage; exits
  *      with 0, 0x100 if the file is not there
  *   y  a child (tail F) must not be able to Mfree this process's basepage
@@ -418,6 +420,37 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             if (gemdos(0x49, renv, 0) != 0 || gemdos(0x49, rc, 0) != 0)
                 bad |= 32;
         }
+        pterm(bad);
+        break;
+    }
+    case 't': {
+        /* the file and directory tables are the kernel's, not the basepage's
+         * (#418): scribble over both with wild indices, then use files,
+         * directories and the console, and exit (the self-test checks that
+         * nothing was released that was not held) */
+        volatile unsigned char *b = (volatile unsigned char *)(unsigned long)basepage;
+        static char path[128];
+        s64 fh;
+        int k;
+
+        gemdos(0x0e, 2, 0);                     /* Dsetdrv(C:) */
+        for (k = 0; k < 6; k++)
+            b[0x30 + k] = (unsigned char)(0x70 + k);    /* p_uft: past any table */
+        for (k = 0; k < 16; k++)
+            b[0x40 + k] = (unsigned char)(0xf0 + k);    /* p_curdir */
+        if (gemdos(0x19, 0, 0) != 2)
+            bad |= 1;
+        if (gemdos(0x47, (s64)(int)(unsigned long)path, 0) != 0)
+            bad |= 2;                           /* Dgetpath uses the current directory */
+        if (gemdos(0x40, 1, 0) != 0 && sys(GEMDOS, 0x40, 1, (s64)(int)(unsigned long)"", 0) < 0)
+            bad |= 4;                           /* Fwrite(stdout, ...) through the std map */
+        fh = gemdos(0x3d, (s64)(int)(unsigned long)"X32HELLO.TOS", 0);
+        if (fh == -33)
+            ;                                   /* not on the boot drive: skip the file part */
+        else if (fh < 6)
+            bad |= 8;
+        else if (gemdos(0x3e, fh, 0) != 0)
+            bad |= 16;
         pterm(bad);
         break;
     }
