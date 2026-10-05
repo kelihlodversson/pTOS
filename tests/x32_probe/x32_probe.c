@@ -446,6 +446,10 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
          * through p_uft, must give a real handle that closes again; and a
          * console write must not fault */
         gemdos(0x09, (s64)(int)(unsigned long)"", 0);   /* Cconws("") */
+        /* a zero-length Fwrite(stdout) resolves the handle through the map
+         * (syshnd()) without printing anything */
+        if (sys(GEMDOS, 0x40, 1, 0, (s64)(int)(unsigned long)path) != 0)
+            bad |= 32;
         fh = gemdos(0x45, 1, 0);
         if (fh < 6)
             bad |= 4;
