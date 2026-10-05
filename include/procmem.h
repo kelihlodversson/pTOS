@@ -55,6 +55,16 @@ ULONG x86_64_procmem_size(const void *p);
  * block" from "someone else's block that reused the space". */
 UQUAD x86_64_procmem_gen(const void *p);
 
+/*
+ * For tests that make memory permanent on purpose (Ptermres): the generation
+ * the next allocation will get, and a release of every unpinned allocation
+ * with no owner made at or after a generation, so the test can give back what
+ * it made resident.  Returns how many blocks it freed.  Nothing else should
+ * use this: ownerless memory is permanent by design.
+ */
+UQUAD x86_64_procmem_next_gen(void);
+ULONG x86_64_procmem_free_ownerless_since(UQUAD gen);
+
 /* TRUE iff p lies in the window at all (live or not). */
 BOOL x86_64_procmem_contains(const void *p);
 

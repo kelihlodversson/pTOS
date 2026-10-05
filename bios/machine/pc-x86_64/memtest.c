@@ -1182,10 +1182,6 @@ static void probe_expect(char mode, long want, const char *what)
     same(&s, what);
 }
 
-/* set when a test left permanent (resident) memory behind, which moves the
- * allocator baseline for the final whole-run check */
-static BOOL resident_leftovers;
-
 static void test_ring3(void)
 {
     SNAP s;
@@ -1277,11 +1273,14 @@ static void test_ring3(void)
      * parent: the blocks lent to the parent for each must come back, or its
      * launches start failing once the borrow slots are used up (each child
      * takes two; there are eight).  The resident memory itself is permanent
-     * by design, so the allocator baseline moves by exactly that.
+     * by design: once the behaviour is verified, the test gives it back, so
+     * a boot with the self-test enabled does not keep it for good.
      */
     {
         SNAP before, after;
+        UQUAD first_gen = x86_64_procmem_next_gen();
 
+        snap(&s);
         snap(&before);
         rc = run_probe('q');
         snap(&after);
@@ -1311,10 +1310,13 @@ static void test_ring3(void)
                       (long)after.heap.live_blocks - (long)before.heap.live_blocks == grown,
                       "resident children leave no process records, references or stray heap blocks behind");
                 CHECK(grown > 0 && grown <= 12, "only the resident blocks themselves stay allocated");
+                CHECK((long)x86_64_procmem_free_ownerless_since(first_gen) == grown,
+                      "the resident blocks are all given back");
             }
-            resident_leftovers = TRUE;
         }
     }
+
+    same(&s, "resident children, once given back");
 
     /* a process that has been launched cannot be prepared (and launched) a
      * second time: its kernel stack went to gouser() */
@@ -1448,8 +1450,6 @@ void x86_64_memtest_run(void)
     test_lifecycle();
     test_x32image();
     test_ring3();
-    if (resident_leftovers)
-        snap(&s);               /* resident memory is permanent, by design */
 
     same(&s, "whole memtest");
     CHECK(x86_64_pmem_bad_frees() >= s.pmem_bad, "bad free counter monotonic");
