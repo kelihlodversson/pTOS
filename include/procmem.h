@@ -80,6 +80,7 @@ BOOL x86_64_procmem_range_live(UQUAD va, UQUAD bytes);
  * unpins when it is destroyed.
  */
 BOOL x86_64_procmem_pinned(const void *p);
+ULONG x86_64_procmem_pins(const void *p);      /* the pin count itself */
 void x86_64_procmem_pin(UQUAD va, UQUAD bytes, int delta);   /* +1 / -1 */
 
 /* Physical address backing window address va (which must be inside it). */
@@ -99,6 +100,7 @@ UQUAD x86_64_procmem_phys_of(UQUAD va);
  * dereferenced.
  */
 void x86_64_procmem_set_owner(const void *p, const void *owner);
+const void *x86_64_procmem_owner(const void *p);   /* NULL: none, or not an allocation */
 void x86_64_procmem_free_owned(const void *owner, void (*pre_free)(void *base));
 void x86_64_procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *base));
 
@@ -154,8 +156,17 @@ typedef struct x86_64_aspace X86_64_ASPACE;
  *   0x00200000 - 0x003fffff   basepage, environment and TPA blocks
  *                             (procmem, X86_64_LOW_TPA_*; shared kernel view)
  *   0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB)
+ *   0x3ffb0000 - 0x3ffb0fff   ancestors' basepages, read-only (see below)
  *   0x3ffc0000 - 0x3fffffff   user stack (256 KiB), growing down
+ *
+ * The ancestors page holds scrubbed copies of the basepages of the process's
+ * launcher, that one's launcher and so on (X86_64_USER_ANCESTORS levels at
+ * most), 256 bytes each, chained through their p_parent fields (the last one's
+ * is 0).  The process's own p_parent points at the first.  Every copy's p_env
+ * is the process's own environment.
  */
+#define X86_64_USER_ANCESTORS_VA 0x3ffb0000ULL
+#define X86_64_USER_ANCESTORS    16
 #define X86_64_USER_IMAGE_BASE  0x00400000ULL
 #define X86_64_USER_IMAGE_SIZE  0x00400000ULL
 #define X86_64_USER_STACK_TOP   0x40000000ULL
@@ -190,6 +201,9 @@ BOOL x86_64_aspace_map_procmem(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD p
  */
 BOOL x86_64_aspace_borrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes);
 void x86_64_aspace_unborrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes);
+/* Re-maps an already borrowed block with other permissions (the user bit
+ * included): the block a ring-3 caller is handed. Still released by unborrow. */
+BOOL x86_64_aspace_regrant(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
 
 /* Number of table pages (PML4 included) the address space currently owns. */
 ULONG x86_64_aspace_table_pages(const X86_64_ASPACE *as);

@@ -1202,6 +1202,13 @@ static void test_ring3(void)
     probe_expect('b', 0, "bad arguments refused by the system calls");
     probe_expect('s', 0, "ring 3 cannot install kernel callbacks or write the kernel variables");
 
+    /* basepages a ring-3 process can use, and launches it cannot forge (#416) */
+    probe_expect('g', 0, "ring 3 builds, launches and frees basepages; forged launches are refused");
+
+    /* the ancestors' basepages: one (this launcher's), read-only */
+    probe_expect('w', 0x101, "a ring-3 process sees its launcher's basepage as a scrubbed copy");
+    probe_expect('u', 0xffff, "the ancestors page is read-only");
+
     /* a fault in ring 3 ends that process and nothing else */
     probe_expect('f', 0xffff, "a ring-3 write to page 0 is contained");
     probe_expect('k', 0xffff, "ring-3 access to the system variables is contained");
@@ -1237,6 +1244,43 @@ static void test_ring3(void)
                 kcprintf("x86-64 nested pexec: FAIL (0x%lx)\n", rc);
         }
         same(&s, "nested Pexec from ring 3");
+    }
+
+    /* a Pexec() that runs out of loan slots half way gives back what it took */
+    probe_expect('z', 0, "a failed Pexec(PE_BASEPAGE) from ring 3 releases its blocks and loans");
+
+    /* PE_LOAD then PE_GOTHENFREE, and a child freeing its parent's block */
+    {
+        snap(&s);
+        rc = run_probe('l');
+        if (rc == 0x100) {
+            kcprintf("x86-64 pexec load: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "ring 3 loads a program with PE_LOAD and launches it with PE_GOTHENFREE");
+            kcprintf(rc == 0 ? "x86-64 pexec load: PASS\n" : "x86-64 pexec load: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "PE_LOAD and PE_GOTHENFREE from ring 3");
+        snap(&s);
+        rc = run_probe('y');
+        if (rc != 0x100) {
+            if (rc != 0)
+                kcprintf("memtest: child Mfree probe: exit code 0x%lx\n", rc);
+            CHECK(rc == 0, "a child cannot free its parent's basepage");
+        }
+        same(&s, "a child's Mfree of its parent's block");
+    }
+
+    /* the chain of ancestor basepages grows by one level per launch */
+    {
+        snap(&s);
+        rc = run_probe('v');
+        if (rc == 0x100) {
+            kcprintf("x86-64 ancestors: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "a grandchild sees its launcher's and the launcher's launcher's basepage");
+            kcprintf(rc == 0 ? "x86-64 ancestors: PASS\n" : "x86-64 ancestors: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "ancestor chain of a nested launch");
     }
 
     /*
@@ -1309,7 +1353,7 @@ static void test_ring3(void)
                 CHECK(after.kprocs == before.kprocs && after.dir_refs == before.dir_refs &&
                       (long)after.heap.live_blocks - (long)before.heap.live_blocks == grown,
                       "resident children leave no process records, references or stray heap blocks behind");
-                CHECK(grown > 0 && grown <= 12, "only the resident blocks themselves stay allocated");
+                CHECK(grown > 0 && grown <= 20, "only the resident blocks themselves stay allocated");
                 CHECK((long)x86_64_procmem_free_ownerless_since(first_gen) == grown,
                       "the resident blocks are all given back");
             }

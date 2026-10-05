@@ -10,6 +10,7 @@
 #include "emutos.h"
 #include "string.h"
 #include "fs.h"
+#include "gemerror.h"
 #include "kproc.h"
 #include "mem.h"
 #include "bdosstub.h"
@@ -21,7 +22,7 @@
 #endif
 
 #ifdef __x86_64__
-#define KPROC_BORROWS 8
+#define KPROC_BORROWS 16       /* two per child a ring-3 process holds */
 #endif
 
 /* The option gates only the record itself: the #else stubs stay in every
@@ -48,9 +49,11 @@ struct kproc {
     X86_64_ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
     BOOL started;               /* proc_go() has launched it */
     PD *parent;                 /* who launched it: the trusted copy of p_parent */
+    PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
     const X32_IMAGE *image;     /* built-in program to map private, or NULL */
     UQUAD entry;                /* its entry point once loaded, else 0 */
     UQUAD stack_top;            /* its private stack's top once loaded, else 0 */
+    ULONG ancestors;            /* basepage copies on its read-only ancestors page */
     UQUAD kstack_phys;          /* its kernel stack (system calls), 0 if none */
     UQUAD kstack_top;           /* initial stack pointer of that stack */
     struct {                    /* blocks of a child being launched from this */
@@ -227,6 +230,53 @@ DTAINFO *kproc_get_dta(PD *pd)
 }
 
 #ifdef __x86_64__
+/*
+ * The ancestors page (include/procmem.h): `parent`'s basepage, then the copies
+ * its own page holds, each scrubbed of what must not leak or be believed --
+ * the file and directory tables and DTA pointer (kernel-owned state), the saved
+ * registers -- with p_env redirected to the process's own environment and
+ * p_parent chained to the next copy.  FALSE only if memory ran out.
+ */
+static BOOL build_ancestors(KPROC *kproc, X86_64_ASPACE *as, PD *parent)
+{
+    static UBYTE page[X86_64_USER_ANCESTORS * sizeof(PD)];
+    PD *copy = (PD *)page;
+    KPROC *pk = kproc_find(parent);
+    ULONG n = 1, i;
+
+    memcpy(&copy[0], parent, sizeof(PD));
+    if (pk && pk->aspace && pk->ancestors) {
+        ULONG take = pk->ancestors;
+
+        if (take > X86_64_USER_ANCESTORS - 1)
+            take = X86_64_USER_ANCESTORS - 1;
+        if (!x86_64_aspace_copy_from_user(pk->aspace, &copy[1],
+                                          X86_64_USER_ANCESTORS_VA,
+                                          take * sizeof(PD)))
+            return FALSE;
+        n += take;
+    }
+    for (i = 0; i < n; i++) {
+        bzero(copy[i].p_uft, sizeof copy[i].p_uft);
+        bzero(copy[i].p_curdir, sizeof copy[i].p_curdir);
+        copy[i].p_xdta = 0;
+        bzero(copy[i].p_1fill, sizeof copy[i].p_1fill);
+        bzero(copy[i].p_2fill, sizeof copy[i].p_2fill);
+        bzero(copy[i].p_3fill, sizeof copy[i].p_3fill);
+        bzero(copy[i].p_dreg, sizeof copy[i].p_dreg);
+        bzero(copy[i].p_areg, sizeof copy[i].p_areg);
+        copy[i].p_env = PTR_TO_USERPTR(kproc->env_start);
+        copy[i].p_parent = (i + 1 < n) ?
+            (ULONG)(X86_64_USER_ANCESTORS_VA + (i + 1) * sizeof(PD)) : 0;
+    }
+    if (!x86_64_aspace_load_private(as, X86_64_USER_ANCESTORS_VA,
+                                    4096, ASPACE_PROT_USER,
+                                    page, n * sizeof(PD)))
+        return FALSE;
+    kproc->ancestors = n;
+    return TRUE;
+}
+
 BOOL kproc_prepare_user(PD *pd, PD *parent)
 {
     KPROC *kproc = kproc_find(pd);
@@ -288,6 +338,12 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
         kproc->kstack_phys = 0;
         return FALSE;
     }
+    if (!build_ancestors(kproc, as, parent)) {
+        x86_64_aspace_destroy(as);
+        x86_64_kstack_free(kproc->kstack_phys);
+        kproc->kstack_phys = 0;
+        return FALSE;
+    }
     /*
      * A built-in image gets its segments and a stack of its own, as private
      * pages at the fixed addresses of include/procmem.h's layout.  (A bare
@@ -310,6 +366,13 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     return TRUE;
 }
 
+UQUAD kproc_ancestors_va(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    return kproc && kproc->aspace && kproc->ancestors ? X86_64_USER_ANCESTORS_VA : 0;
+}
+
 BOOL kproc_set_image(PD *pd, const X32_IMAGE *image)
 {
     KPROC *kproc = kproc_find(pd);
@@ -318,6 +381,76 @@ BOOL kproc_set_image(PD *pd, const X32_IMAGE *image)
         return FALSE;
     kproc->image = image;
     return TRUE;
+}
+
+void kproc_set_creator(PD *pd, PD *creator)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    if (kproc)
+        kproc->creator = creator;
+}
+
+/*
+ * Pexec(PE_BASEPAGE*, PE_LOAD) from ring 3: the basepage and its blocks,
+ * borrowed supervisor-only while they were built, are handed to the caller
+ * (which owns them) as ordinary user memory.  They go back, as every borrow
+ * does, when they are freed.
+ */
+void kproc_hand_over(PD *caller, PD *child)
+{
+    KPROC *launcher = kproc_find(caller);
+    KPROC *kproc = kproc_find(child);
+
+    if (!launcher || !launcher->aspace || !kproc)
+        return;
+    /* the caller may grow the TPA (p_hitpa) up to the end of its block */
+    kproc->user_end = kproc->user_start + x86_64_procmem_size(kproc->user_start);
+    x86_64_aspace_regrant(launcher->aspace, (UQUAD)(uintptr_t)kproc->env_start,
+                          kproc->env_end - kproc->env_start,
+                          ASPACE_PROT_WRITE | ASPACE_PROT_USER);
+    x86_64_aspace_regrant(launcher->aspace, (UQUAD)(uintptr_t)kproc->user_start,
+                          x86_64_procmem_size(kproc->user_start),
+                          ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER);
+}
+
+/*
+ * Pexec(PE_GO, PE_GOTHENFREE) from ring 3.  The basepage the caller passes is
+ * only a request: it must be one the kernel made for this caller and has not
+ * launched, and its public fields, which the caller may have rewritten, must
+ * still describe memory that basepage owns.  Returns E_OK, EIMBA for a
+ * basepage that is not (or no longer) the caller's, EPLFMT for fields out of
+ * bounds.  See doc/x86_64-address-space.txt, "Basepages in ring 3".
+ */
+LONG kproc_check_launch(PD *pd, PD *caller)
+{
+    KPROC *kproc = kproc_find(pd);
+    UQUAD lowtpa, hitpa, tbase, first;
+    UBYTE *alloc_end;
+
+    if (!kproc || kproc->started || kproc->creator != caller || kproc->aspace)
+        return EIMBA;
+    /* the blocks must still be the ones recorded: freed and reused ones are not */
+    if (x86_64_procmem_gen(kproc->user_start) != kproc->tpa_gen ||
+        x86_64_procmem_gen(kproc->env_start) != kproc->env_gen)
+        return EIMBA;
+    /* each field is read once into a local: that is the value validated */
+    lowtpa = pd->p_lowtpa;
+    hitpa = ((pd->p_hitpa + 8UL) & ~15UL) - 8;      /* RSP + 8 divisible by 16 */
+    tbase = pd->p_tbase;
+    first = (UQUAD)(uintptr_t)kproc->user_start + sizeof(PD);
+    /* the block's own end, not user_end: that is the bound of the launch
+     * last validated, and a launch that failed for lack of memory may be
+     * retried with different fields */
+    alloc_end = (UBYTE *)kproc->user_start + x86_64_procmem_size(kproc->user_start);
+    if (lowtpa != (UQUAD)(uintptr_t)kproc->user_start ||
+        hitpa < first || hitpa > (UQUAD)(uintptr_t)alloc_end ||
+        tbase < first || tbase >= hitpa ||
+        pd->p_env != PTR_TO_USERPTR(kproc->env_start))
+        return EPLFMT;
+    pd->p_hitpa = (ULONG)hitpa;
+    kproc->user_end = (UBYTE *)(uintptr_t)hitpa;    /* the trusted bound */
+    return E_OK;
 }
 
 BOOL kproc_borrow(PD *launcher, void *block)
@@ -340,6 +473,24 @@ BOOL kproc_borrow(PD *launcher, void *block)
             return TRUE;
         }
     return FALSE;
+}
+
+/* How many times `launcher` holds the block borrowed: pins that are its to
+ * give back, as opposed to somebody else's loan or a live process's own
+ * mapping. */
+ULONG kproc_borrow_count(PD *launcher, void *block)
+{
+    UQUAD va = (UQUAD)(uintptr_t)block;
+    KPROC *kproc;
+    ULONG n = 0;
+    int i;
+
+    kproc = kproc_find(launcher);
+    if (kproc && kproc->aspace)
+        for (i = 0; i < KPROC_BORROWS; i++)
+            if (kproc->borrowed[i].bytes && kproc->borrowed[i].va == va)
+                n++;
+    return n;
 }
 
 void kproc_unborrow(void *block)

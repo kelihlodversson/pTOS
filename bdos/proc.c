@@ -79,6 +79,26 @@ void x86_64_mark_kernel_code_pd(PD *p)
  * nothing; a real one gets its ring-3 address space here, owned by its
  * KPROC record from now on (see kproc_prepare_user()).
  */
+/* Pexec() from ring 3 (see doc/x86_64-address-space.txt, "Basepages in
+ * ring 3"): the caller owns what it creates, and may only launch what the
+ * kernel made for it. */
+static BOOL x86_64_ring3_caller(void)
+{
+    return kproc_user_aspace(run) != NULL;
+}
+
+static LONG x86_64_check_launch(PD *p)
+{
+    return x86_64_ring3_caller() ? kproc_check_launch(p, run) : E_OK;
+}
+
+static void x86_64_hand_over(PD *p)
+{
+    kproc_set_creator(p, run);
+    if (x86_64_ring3_caller())
+        kproc_hand_over(run, p);
+}
+
 static BOOL x86_64_prepare_launch(PD *p)
 {
     if (x86_64_kernel_code_pd == p)
@@ -95,9 +115,11 @@ static void release_pd_files(PD *r);
  * exactly once -- the record is the proof it has not been done. */
 static void x86_64_release_block(void *base)
 {
-    kproc_unborrow(base);       /* a block lent to a ring-3 launcher goes back */
     if (kproc_discard((PD *)base))
         release_pd_files((PD *)base);
+    /* a block lent to a ring-3 launcher goes back, but only after its
+     * basepage has been read: that launcher's page tables are loaded */
+    kproc_unborrow(base);
 }
 
 /* Ptermres: an unlaunched child basepage the terminating process owns stays
@@ -110,8 +132,6 @@ static void x86_64_drop_child_record(void *base)
     PD *child = (PD *)base;
     int i;
 
-    kproc_unborrow(base);       /* lent to a ring-3 launcher while it was built */
-
     if (kproc_discard(child)) {
         release_pd_files(child);
         for (i = 0; i < NUMSTD; i++)
@@ -119,6 +139,7 @@ static void x86_64_drop_child_record(void *base)
         for (i = 0; i < NUMCURDIR; i++)
             child->p_curdir[i] = 0;
     }
+    kproc_unborrow(base);       /* lent to a ring-3 launcher while it was built */
 }
 
 /* Pending Ptermres: applied by xterm() once the process's address space is
@@ -132,7 +153,10 @@ void x86_64_make_resident(PD *p, ULONG keep_bytes)
      * tail cannot be given back while the launcher still has it mapped: return
      * what a ring-3 launcher borrowed for it first (its environment goes
      * through the callback). */
-    kproc_unborrow(p);
+    /* (a basepage the launcher owns, launched with PE_GO, stays its: the
+     * grant it was given goes on) */
+    if (x86_64_procmem_owner(p) == p)
+        kproc_unborrow(p);
     x86_64_procmem_keep(p, keep_bytes, x86_64_drop_child_record);
 }
 
@@ -146,18 +170,37 @@ void x86_64_free_owned(PD *p)
     x86_64_procmem_free_owned(p, x86_64_release_block);
 }
 
-/* Mfree() of a process allocation: same release, one block. */
-long x86_64_procmem_mfree(void *addr)
+/* Mfree() of a process allocation: same release, one block.  `trusted` is
+ * Pexec()'s own rollback of what it just allocated for its caller. */
+static long x86_64_mfree(void *addr, BOOL trusted)
 {
     /* A block that a live process still has mapped (its own environment or
      * basepage, say) cannot be freed from under it, and tearing down the
      * address space the caller is running in would be worse: refuse, and
      * leave the KPROC record alone. */
-    kproc_unborrow(addr);
-    if (x86_64_procmem_pinned(addr))
+    /* A ring-3 caller frees what it owns and nothing else: the blocks of a
+     * process it launched are not its, nor those a peer retained. */
+    if (!trusted && x86_64_ring3_caller() && x86_64_procmem_owner(addr) != run)
         return EACCDN;
-    x86_64_release_block(addr);
+    if (x86_64_procmem_pins(addr) > kproc_borrow_count(run, addr))
+        return EACCDN;
+    x86_64_release_block(addr);     /* also returns it if it was borrowed */
     return x86_64_procmem_free(addr) ? E_OK : EIMBA;
+}
+
+long x86_64_procmem_mfree(void *addr)
+{
+    return x86_64_mfree(addr, FALSE);
+}
+
+/* xexec()'s rollback: its blocks are not owned yet, or belong to the child
+ * it failed to start, and are lent to a ring-3 caller who must get them back. */
+static void xexec_free(void *addr)
+{
+    if (x86_64_procmem_contains(addr))
+        x86_64_mfree(addr, TRUE);
+    else
+        xmfree(addr);
 }
 
 BOOL x86_64_take_kernel_code_pd(PD *p)
@@ -171,6 +214,10 @@ BOOL x86_64_take_kernel_code_pd(PD *p)
 #endif
 
 #ifndef __x86_64__
+#define xexec_free(a) xmfree(a)
+#define x86_64_ring3_caller() FALSE
+#define x86_64_check_launch(p) E_OK
+#define x86_64_hand_over(p) do { } while (0)
 #define x86_64_prepare_launch(p) TRUE
 #endif
 
@@ -388,7 +435,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         p = (PD *)alloc_tpa((ULONG)path,sizeof(PD),&max);
 
         if (p == NULL) {    /* not even enough memory for basepage */
-            xmfree(env_ptr);
+            xexec_free(env_ptr);
             KDEBUG(("BDOS xexec: No memory for basepage\n"));
             return ENSMEM;
         }
@@ -400,16 +447,20 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         /* initialize the PD */
         init_pd_fields(p, tail, max, env_ptr);
         if (!kproc_create(p)) {
-            xmfree(env_ptr);
-            xmfree(p);
+            xexec_free(env_ptr);
+            xexec_free(p);
             return ENSMEM;
         }
         p->p_flags = (ULONG)path;   /* set the flags */
         init_pd_files(p);
+        x86_64_hand_over(p);
 
         return (long)p;
     case PE_GOTHENFREE:
         p = (PD *) tail;
+        rc = x86_64_check_launch(p);
+        if (rc)
+            return rc;
         /* The allocation can fail; retain the parent's ownership until it
          * succeeds so an ENSMEM return leaves the retained basepage freeable. */
         if (!kproc_create(p) || !x86_64_prepare_launch(p))
@@ -420,6 +471,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         FALLTHROUGH;
     case PE_GO:
         p = (PD *) tail;
+        if (flag == PE_GO && (rc = x86_64_check_launch(p)) != E_OK)
+            return rc;
         if (flag == PE_GO && (!kproc_create(p) || !x86_64_prepare_launch(p)))
             return ENSMEM;
         proc_go(p);
@@ -485,7 +538,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     /* if failed, free env_ptr and return */
     if (p == NULL) {
         KDEBUG(("BDOS xexec: no memory for TPA\n"));
-        xmfree(env_ptr);
+        xexec_free(env_ptr);
         xclose(fh);
         return ENSMEM;
     }
@@ -500,8 +553,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     /* initialize the fields in the PD structure */
     init_pd_fields(p, tail, max, env_ptr);
     if (!kproc_create(p)) {
-        xmfree(env_ptr);
-        xmfree(p);
+        xexec_free(env_ptr);
+        xexec_free(p);
         xclose(fh);
         return ENSMEM;
     }
@@ -520,8 +573,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
         /* free any memory allocated so far & close the file */
         kproc_destroy(cur_p);
-        xmfree(USERPTR_TO_PTR(cur_p->p_env));
-        xmfree(cur_p);
+        xexec_free(USERPTR_TO_PTR(cur_p->p_env));
+        xexec_free(cur_p);
         xclose(fh);
 
         /* we still have to jump back to bdosmain.c so that the proper error
@@ -536,8 +589,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         KDEBUG(("BDOS xexec: kpgmld returned %ld (0x%lx)\n",rc,rc));
         /* free any memory allocated yet */
         kproc_destroy(cur_p);
-        xmfree(USERPTR_TO_PTR(cur_p->p_env));
-        xmfree(cur_p);
+        xexec_free(USERPTR_TO_PTR(cur_p->p_env));
+        xexec_free(cur_p);
 
         return rc;
     }
@@ -551,11 +604,13 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      * directories, which an ENSMEM return here would otherwise leak. */
     if (flag != PE_LOAD && !x86_64_prepare_launch(cur_p)) {
         kproc_destroy(cur_p);
-        xmfree(USERPTR_TO_PTR(cur_p->p_env));
-        xmfree(cur_p);
+        xexec_free(USERPTR_TO_PTR(cur_p->p_env));
+        xexec_free(cur_p);
         return ENSMEM;
     }
     init_pd_files(cur_p);
+    if (flag == PE_LOAD)
+        x86_64_hand_over(cur_p);
 
     /* invalidate instruction cache for the TEXT segment only
      * programs that jump into their DATA, BSS or HEAP are kindly invited
@@ -890,6 +945,10 @@ static void proc_go(PD *p)
     p->p_parent = PTR_TO_USERPTR(run);
 #ifdef __x86_64__
     kproc_set_parent(p, run);   /* the copy xterm() trusts */
+    /* A ring-3 process cannot see its launcher's basepage, nor the
+     * launcher's own: it gets read-only copies at a fixed address instead. */
+    if (kproc_ancestors_va(p))
+        p->p_parent = (ULONG)kproc_ancestors_va(p);
 #endif
 
     /* create a stack at the end of the TPA */

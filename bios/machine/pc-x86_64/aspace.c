@@ -549,3 +549,26 @@ void x86_64_aspace_unborrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
     if (x86_64_read_cr3() == as->pml4_phys)
         x86_64_write_cr3(as->pml4_phys);        /* flush stale translations */
 }
+
+/*
+ * Gives the caller access to a block it borrowed: the same pages, now with
+ * the user bit and the given permissions (ASPACE_PROT_*), e.g. the basepage and
+ * TPA of a child that Pexec(PE_BASEPAGE) is about to hand to a ring-3 caller.
+ * The block stays pinned and recorded as a borrow, so it goes back exactly as
+ * before (x86_64_aspace_unborrow()).  FALSE only if a page table could not be
+ * written, which cannot happen for pages already mapped.
+ */
+BOOL x86_64_aspace_regrant(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
+{
+    UQUAD page = va & ~(X86_64_PAGE_SIZE - 1);
+    UQUAD end = (va + bytes + X86_64_PAGE_SIZE - 1) & ~(X86_64_PAGE_SIZE - 1);
+    BOOL ok = TRUE;
+
+    for (; page < end; page += X86_64_PAGE_SIZE)
+        if (!x86_64_aspace_translate(as, page, NULL, NULL) ||
+            !x86_64_aspace_map_page(as, page, x86_64_procmem_phys_of(page), prot))
+            ok = FALSE;
+    if (x86_64_read_cr3() == as->pml4_phys)
+        x86_64_write_cr3(as->pml4_phys);        /* flush stale translations */
+    return ok;
+}

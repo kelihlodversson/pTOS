@@ -393,19 +393,20 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     }
 
     /*
-     * Pexec() from ring 3 may only be PE_LOADGO (mode 0): it loads and runs a
-     * program in one call, and the child is mapped for the launcher while it
-     * runs.  The other modes hand the caller a basepage (PE_BASEPAGE*,
-     * PE_LOAD) or ask to launch one (PE_GO, PE_GOTHENFREE): the blocks they
-     * create after the caller's address space exists are mapped supervisor-
-     * only in it, so the pointer would fault the moment the caller used it,
-     * and a launch needs the kernel-side image attachment a process cannot
-     * make.  Refused until a ring-3 caller can own such blocks.
+     * Pexec() from ring 3: the modes that create or launch a basepage are
+     * allowed (xexec() hands a created basepage's blocks to the caller and
+     * validates a launch request against the kernel's own record, see
+     * kproc_check_launch()); the kernel-internal PE_RELOCATE is not.
      */
-    if (from_ring3 && trap_class == X86_64_TRAP_GEMDOS && fn == 0x4b &&
-        (WORD)frame->rdi != 0) {
-        frame->rax = (UQUAD)EINVFN;
-        return;
+    if (from_ring3 && trap_class == X86_64_TRAP_GEMDOS && fn == 0x4b) {
+        WORD mode = (WORD)frame->rdi;
+
+        if (mode != PE_LOADGO && mode != PE_LOAD && mode != PE_GO &&
+            mode != PE_BASEPAGE && mode != PE_GOTHENFREE &&
+            mode != PE_BASEPAGEFLAGS) {
+            frame->rax = (UQUAD)EINVFN;
+            return;
+        }
     }
 
     /*

@@ -239,6 +239,13 @@ BOOL x86_64_procmem_pinned(const void *p)
     return link && (*link)->pins;
 }
 
+ULONG x86_64_procmem_pins(const void *p)
+{
+    struct alloc **link = find_link(p);
+
+    return link ? (*link)->pins : 0;
+}
+
 void x86_64_procmem_pin(UQUAD va, UQUAD bytes, int delta)
 {
     struct alloc *a;
@@ -280,6 +287,13 @@ BOOL x86_64_procmem_range_live(UQUAD va, UQUAD bytes)
         if (!page_used((ULONG)i))
             return FALSE;
     return TRUE;
+}
+
+const void *x86_64_procmem_owner(const void *p)
+{
+    struct alloc **link = find_link(p);
+
+    return link ? (*link)->owner : NULL;
 }
 
 void x86_64_procmem_set_owner(const void *p, const void *owner)

@@ -49,6 +49,7 @@ BOOL kproc_discard(PD *pd);
  * never read back from the user-writable p_tbase.
  */
 BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);
+UQUAD kproc_ancestors_va(PD *pd);       /* where its basepage copies are; 0 if none */
 UQUAD kproc_user_entry(PD *pd);         /* image entry point; 0 if none */
 /* Hands the process's kernel stack (the one its system calls run on) to the
  * launcher, which frees it with x86_64_kstack_free() once the process has
@@ -64,7 +65,13 @@ UQUAD kproc_user_entry(PD *pd);         /* image entry point; 0 if none */
  * block is freed.
  */
 BOOL kproc_borrow(PD *launcher, void *block);
+/* Pexec() from ring 3: who made a basepage, handing its blocks to that
+ * caller, and checking a basepage it asks to launch (E_OK, EIMBA, EPLFMT). */
+void kproc_set_creator(PD *pd, PD *creator);
+void kproc_hand_over(PD *caller, PD *child);
+LONG kproc_check_launch(PD *pd, PD *caller);
 void kproc_unborrow(void *block);
+ULONG kproc_borrow_count(PD *launcher, void *block);
 UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top);
 UQUAD kproc_user_stack(PD *pd);         /* initial RSP of an image's own stack; 0 if none */
 UQUAD kproc_user_pml4(PD *pd);          /* 0 if not prepared */
