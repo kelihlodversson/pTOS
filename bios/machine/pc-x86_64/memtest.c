@@ -1202,6 +1202,9 @@ static void test_ring3(void)
     probe_expect('b', 0, "bad arguments refused by the system calls");
     probe_expect('s', 0, "ring 3 cannot install kernel callbacks or write the kernel variables");
 
+    /* basepages a ring-3 process can use, and launches it cannot forge (#416) */
+    probe_expect('g', 0, "ring 3 builds, launches and frees basepages; forged launches are refused");
+
     /* a fault in ring 3 ends that process and nothing else */
     probe_expect('f', 0xffff, "a ring-3 write to page 0 is contained");
     probe_expect('k', 0xffff, "ring-3 access to the system variables is contained");

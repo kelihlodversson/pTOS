@@ -79,6 +79,26 @@ void x86_64_mark_kernel_code_pd(PD *p)
  * nothing; a real one gets its ring-3 address space here, owned by its
  * KPROC record from now on (see kproc_prepare_user()).
  */
+/* Pexec() from ring 3 (see doc/x86_64-address-space.txt, "Basepages in
+ * ring 3"): the caller owns what it creates, and may only launch what the
+ * kernel made for it. */
+static BOOL x86_64_ring3_caller(void)
+{
+    return kproc_user_aspace(run) != NULL;
+}
+
+static LONG x86_64_check_launch(PD *p)
+{
+    return x86_64_ring3_caller() ? kproc_check_launch(p, run) : E_OK;
+}
+
+static void x86_64_hand_over(PD *p)
+{
+    kproc_set_creator(p, run);
+    if (x86_64_ring3_caller())
+        kproc_hand_over(run, p);
+}
+
 static BOOL x86_64_prepare_launch(PD *p)
 {
     if (x86_64_kernel_code_pd == p)
@@ -95,9 +115,11 @@ static void release_pd_files(PD *r);
  * exactly once -- the record is the proof it has not been done. */
 static void x86_64_release_block(void *base)
 {
-    kproc_unborrow(base);       /* a block lent to a ring-3 launcher goes back */
     if (kproc_discard((PD *)base))
         release_pd_files((PD *)base);
+    /* a block lent to a ring-3 launcher goes back, but only after its
+     * basepage has been read: that launcher's page tables are loaded */
+    kproc_unborrow(base);
 }
 
 /* Ptermres: an unlaunched child basepage the terminating process owns stays
@@ -110,8 +132,6 @@ static void x86_64_drop_child_record(void *base)
     PD *child = (PD *)base;
     int i;
 
-    kproc_unborrow(base);       /* lent to a ring-3 launcher while it was built */
-
     if (kproc_discard(child)) {
         release_pd_files(child);
         for (i = 0; i < NUMSTD; i++)
@@ -119,6 +139,7 @@ static void x86_64_drop_child_record(void *base)
         for (i = 0; i < NUMCURDIR; i++)
             child->p_curdir[i] = 0;
     }
+    kproc_unborrow(base);       /* lent to a ring-3 launcher while it was built */
 }
 
 /* Pending Ptermres: applied by xterm() once the process's address space is
@@ -153,10 +174,9 @@ long x86_64_procmem_mfree(void *addr)
      * basepage, say) cannot be freed from under it, and tearing down the
      * address space the caller is running in would be worse: refuse, and
      * leave the KPROC record alone. */
-    kproc_unborrow(addr);
-    if (x86_64_procmem_pinned(addr))
+    if (x86_64_procmem_pins(addr) > kproc_borrow_count(addr))
         return EACCDN;
-    x86_64_release_block(addr);
+    x86_64_release_block(addr);     /* also returns it if it was borrowed */
     return x86_64_procmem_free(addr) ? E_OK : EIMBA;
 }
 
@@ -171,6 +191,9 @@ BOOL x86_64_take_kernel_code_pd(PD *p)
 #endif
 
 #ifndef __x86_64__
+#define x86_64_ring3_caller() FALSE
+#define x86_64_check_launch(p) E_OK
+#define x86_64_hand_over(p)
 #define x86_64_prepare_launch(p) TRUE
 #endif
 
@@ -406,10 +429,14 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         }
         p->p_flags = (ULONG)path;   /* set the flags */
         init_pd_files(p);
+        x86_64_hand_over(p);
 
         return (long)p;
     case PE_GOTHENFREE:
         p = (PD *) tail;
+        rc = x86_64_check_launch(p);
+        if (rc)
+            return rc;
         /* The allocation can fail; retain the parent's ownership until it
          * succeeds so an ENSMEM return leaves the retained basepage freeable. */
         if (!kproc_create(p) || !x86_64_prepare_launch(p))
@@ -420,6 +447,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         FALLTHROUGH;
     case PE_GO:
         p = (PD *) tail;
+        if (flag == PE_GO && (rc = x86_64_check_launch(p)) != E_OK)
+            return rc;
         if (flag == PE_GO && (!kproc_create(p) || !x86_64_prepare_launch(p)))
             return ENSMEM;
         proc_go(p);
@@ -556,6 +585,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         return ENSMEM;
     }
     init_pd_files(cur_p);
+    if (flag == PE_LOAD)
+        x86_64_hand_over(cur_p);
 
     /* invalidate instruction cache for the TEXT segment only
      * programs that jump into their DATA, BSS or HEAP are kindly invited

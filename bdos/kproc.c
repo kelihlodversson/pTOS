@@ -10,6 +10,7 @@
 #include "emutos.h"
 #include "string.h"
 #include "fs.h"
+#include "gemerror.h"
 #include "kproc.h"
 #include "mem.h"
 #include "bdosstub.h"
@@ -21,7 +22,7 @@
 #endif
 
 #ifdef __x86_64__
-#define KPROC_BORROWS 8
+#define KPROC_BORROWS 16       /* two per child a ring-3 process holds */
 #endif
 
 /* The option gates only the record itself: the #else stubs stay in every
@@ -48,6 +49,7 @@ struct kproc {
     X86_64_ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
     BOOL started;               /* proc_go() has launched it */
     PD *parent;                 /* who launched it: the trusted copy of p_parent */
+    PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
     const X32_IMAGE *image;     /* built-in program to map private, or NULL */
     UQUAD entry;                /* its entry point once loaded, else 0 */
     UQUAD stack_top;            /* its private stack's top once loaded, else 0 */
@@ -320,6 +322,71 @@ BOOL kproc_set_image(PD *pd, const X32_IMAGE *image)
     return TRUE;
 }
 
+void kproc_set_creator(PD *pd, PD *creator)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    if (kproc)
+        kproc->creator = creator;
+}
+
+/*
+ * Pexec(PE_BASEPAGE*, PE_LOAD) from ring 3: the basepage and its blocks,
+ * borrowed supervisor-only while they were built, are handed to the caller
+ * (which owns them) as ordinary user memory.  They go back, as every borrow
+ * does, when they are freed.
+ */
+void kproc_hand_over(PD *caller, PD *child)
+{
+    KPROC *launcher = kproc_find(caller);
+    KPROC *kproc = kproc_find(child);
+
+    if (!launcher || !launcher->aspace || !kproc)
+        return;
+    /* the caller may grow the TPA (p_hitpa) up to the end of its block */
+    kproc->user_end = kproc->user_start + x86_64_procmem_size(kproc->user_start);
+    x86_64_aspace_regrant(launcher->aspace, (UQUAD)(uintptr_t)kproc->env_start,
+                          kproc->env_end - kproc->env_start,
+                          ASPACE_PROT_WRITE | ASPACE_PROT_USER);
+    x86_64_aspace_regrant(launcher->aspace, (UQUAD)(uintptr_t)kproc->user_start,
+                          x86_64_procmem_size(kproc->user_start),
+                          ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER);
+}
+
+/*
+ * Pexec(PE_GO, PE_GOTHENFREE) from ring 3.  The basepage the caller passes is
+ * only a request: it must be one the kernel made for this caller and has not
+ * launched, and its public fields, which the caller may have rewritten, must
+ * still describe memory that basepage owns.  Returns E_OK, EIMBA for a
+ * basepage that is not (or no longer) the caller's, EPLFMT for fields out of
+ * bounds.  See doc/x86_64-address-space.txt, "Basepages in ring 3".
+ */
+LONG kproc_check_launch(PD *pd, PD *caller)
+{
+    KPROC *kproc = kproc_find(pd);
+    UQUAD lowtpa, hitpa, tbase, first;
+
+    if (!kproc || kproc->started || kproc->creator != caller || kproc->aspace)
+        return EIMBA;
+    /* the blocks must still be the ones recorded: freed and reused ones are not */
+    if (x86_64_procmem_gen(kproc->user_start) != kproc->tpa_gen ||
+        x86_64_procmem_gen(kproc->env_start) != kproc->env_gen)
+        return EIMBA;
+    /* each field is read once into a local: that is the value validated */
+    lowtpa = pd->p_lowtpa;
+    hitpa = ((pd->p_hitpa + 8UL) & ~15UL) - 8;      /* RSP + 8 divisible by 16 */
+    tbase = pd->p_tbase;
+    first = (UQUAD)(uintptr_t)kproc->user_start + sizeof(PD);
+    if (lowtpa != (UQUAD)(uintptr_t)kproc->user_start ||
+        hitpa < first || hitpa > (UQUAD)(uintptr_t)kproc->user_end ||
+        tbase < first || tbase > hitpa ||
+        pd->p_env != PTR_TO_USERPTR(kproc->env_start))
+        return EPLFMT;
+    pd->p_hitpa = (ULONG)hitpa;
+    kproc->user_end = (UBYTE *)(uintptr_t)hitpa;    /* the trusted bound */
+    return E_OK;
+}
+
 BOOL kproc_borrow(PD *launcher, void *block)
 {
     KPROC *kproc = kproc_find(launcher);
@@ -340,6 +407,23 @@ BOOL kproc_borrow(PD *launcher, void *block)
             return TRUE;
         }
     return FALSE;
+}
+
+/* How many ring-3 launchers hold the block borrowed: pins that are theirs to
+ * give back, as opposed to a live process's own mapping. */
+ULONG kproc_borrow_count(void *block)
+{
+    UQUAD va = (UQUAD)(uintptr_t)block;
+    KPROC *kproc;
+    ULONG n = 0;
+    int i;
+
+    for (kproc = kproc_list; kproc; kproc = kproc->next)
+        for (i = 0; i < KPROC_BORROWS; i++)
+            if (kproc->borrowed[i].bytes && kproc->borrowed[i].va == va &&
+                kproc->aspace)
+                n++;
+    return n;
 }
 
 void kproc_unborrow(void *block)

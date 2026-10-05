@@ -239,6 +239,13 @@ BOOL x86_64_procmem_pinned(const void *p)
     return link && (*link)->pins;
 }
 
+ULONG x86_64_procmem_pins(const void *p)
+{
+    struct alloc **link = find_link(p);
+
+    return link ? (*link)->pins : 0;
+}
+
 void x86_64_procmem_pin(UQUAD va, UQUAD bytes, int delta)
 {
     struct alloc *a;

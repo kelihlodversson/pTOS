@@ -80,6 +80,7 @@ BOOL x86_64_procmem_range_live(UQUAD va, UQUAD bytes);
  * unpins when it is destroyed.
  */
 BOOL x86_64_procmem_pinned(const void *p);
+ULONG x86_64_procmem_pins(const void *p);      /* the pin count itself */
 void x86_64_procmem_pin(UQUAD va, UQUAD bytes, int delta);   /* +1 / -1 */
 
 /* Physical address backing window address va (which must be inside it). */
@@ -190,6 +191,9 @@ BOOL x86_64_aspace_map_procmem(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD p
  */
 BOOL x86_64_aspace_borrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes);
 void x86_64_aspace_unborrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes);
+/* Re-maps an already borrowed block with other permissions (the user bit
+ * included): the block a ring-3 caller is handed. Still released by unborrow. */
+BOOL x86_64_aspace_regrant(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
 
 /* Number of table pages (PML4 included) the address space currently owns. */
 ULONG x86_64_aspace_table_pages(const X86_64_ASPACE *as);

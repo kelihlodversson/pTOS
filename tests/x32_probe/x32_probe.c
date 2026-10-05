@@ -16,9 +16,16 @@
  *   b  pass the kernel a bad pointer (an unmapped one) and a kernel
  *      address as GEMDOS arguments; exit with 0 if both are refused
  *   s  try to install a kernel callback vector (BIOS Setexc 0x102) and to
- *      have Ssystem() write into the kernel's system variables, and to use any
- *      Pexec mode but PE_LOADGO (a basepage it cannot use, a launch it cannot
- *      make, its own basepage a second time): all must be refused; exits with 0 if they were
+ *      have Ssystem() write into the kernel's system variables, to launch its own
+ *      (already running) basepage a second time with PE_GO and PE_GOTHENFREE,
+ *      and to use the kernel-internal Pexec mode 50: all must be refused;
+ *      exits with 0 if they were
+ *   g  basepages (#416): Pexec(PE_BASEPAGE) hands this process a basepage it
+ *      can read and write; machine code placed in it runs with PE_GO and
+ *      exits with 0x42; a launch of a copy of it, of a basepage with a field
+ *      pointing elsewhere, of one already launched or freed, and of this
+ *      process's own is refused; PE_BASEPAGEFLAGS works; exits with a bit
+ *      mask of what was wrong (0 = all well)
  *   n  run another program from inside this one, twice: Pexec(PE_LOADGO) of
  *      C:\X32HELLO.TOS, which must exit with 0, after which this process
  *      must still be able to make system calls; exits with 0 if so, 0x100 if
@@ -144,14 +151,10 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     case 's':
         if (sys(BIOS, 5, 0x102, 0x500000, 0) != -1)
             bad |= 1;                   /* Setexc(etv_term, user address) */
-        /* every Pexec mode but PE_LOADGO: PE_LOAD, PE_GO, PE_BASEPAGE,
-         * PE_GOTHENFREE, PE_BASEPAGEFLAGS (including launching this very
-         * basepage a second time) */
-        if (sys4(GEMDOS, 0x4b, 3, 0, 0, 0) != EINVFN ||
-            sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EINVFN ||
-            sys4(GEMDOS, 0x4b, 5, 0, 0, 0) != EINVFN ||
-            sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EINVFN ||
-            sys4(GEMDOS, 0x4b, 7, 0, 0, 0) != EINVFN)
+        /* this very (running) basepage a second time, and mode 50 */
+        if (sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EIMBA ||
+            sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EIMBA ||
+            sys4(GEMDOS, 0x4b, 50, 0, 0, 0) != EINVFN)
             bad |= 32;
         /* Ssystem() writing through a pointer into the kernel's system
          * variables: S_GETCOOKIE (8) and S_CONSOLE_DIM (-2) */
@@ -214,6 +217,83 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             bad |= 1;                   /* the faulting child's exit code */
         if (gemdos(0x19, 0, 0) != 0 && gemdos(0x19, 0, 0) != 2)
             bad |= 2;                   /* this process's calls still work */
+        pterm(bad);
+        break;
+    }
+    case 'g': {
+        /* movabs rax, (GEMDOS << 32) | Pterm; mov edi, 0x42; xor esi,esi;
+         * xor edx,edx; xor r10,r10; syscall; jmp . */
+        static const unsigned char code[] = {
+            0x48, 0xb8, 0x4c, 0, 0, 0, 1, 0, 0, 0,
+            0xbf, 0x42, 0, 0, 0, 0x31, 0xf6, 0x31, 0xd2,
+            0x4d, 0x31, 0xd2, 0x0f, 0x05, 0xeb, 0xfe
+        };
+        static volatile u32 forged[64];     /* a basepage-sized copy */
+        const s64 none = (s64)(int)(unsigned long)"";
+        volatile u32 *bp, *bp2;
+        s64 rc, bp_addr, bp2_addr, env;
+        u32 hitpa;
+        unsigned i;
+
+        bp_addr = sys4(GEMDOS, 0x4b, 5, 0, none, 0);
+        if (bp_addr <= 0 || bp_addr > 0x7fffffffLL)
+            pterm(1);
+        bp = (volatile u32 *)(unsigned long)bp_addr;
+        if (bp[0] != (u32)bp_addr)
+            bad |= 2;                       /* p_lowtpa */
+        bp[1] = bp[0] + 0x7f1;              /* (unaligned) grow the TPA within its block */
+        for (i = 0; i < sizeof(code); i++)
+            ((volatile unsigned char *)bp)[0x100 + i] = code[i];
+        bp[2] = (u32)bp_addr + 0x100;       /* p_tbase */
+        env = bp[11];                       /* p_env */
+        hitpa = bp[1];                      /* p_hitpa */
+
+        /* a copy of it is a forgery, a bad p_env or p_hitpa is not a launch */
+        for (i = 0; i < 64; i++)
+            forged[i] = bp[i];
+        if (sys4(GEMDOS, 0x4b, 4, none, (s64)(int)(unsigned long)forged, 0) != EIMBA)
+            bad |= 8;
+        bp[11] = 0x1000;
+        if (sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0) != -66)
+            bad |= 16;                      /* EPLFMT */
+        bp[11] = (u32)env;
+        bp[1] = 0xfffff000u;
+        if (sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0) != -66)
+            bad |= 16;
+        bp[1] = hitpa;
+        /* p_tbase out of the TPA */
+        bp[2] = 0x1000;
+        if (sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0) != -66)
+            bad |= 16;
+        bp[2] = (u32)bp_addr + 0x100;
+
+        /* the real launch: the child exits with 0x42 */
+        rc = sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0);
+        if (rc != 0x42)
+            bad |= 32;
+        /* once launched it is not launchable again, freed or not */
+        if (sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0) != EIMBA)
+            bad |= 64;
+        rc = gemdos(0x49, bp_addr, 0);
+        if (rc != 0)
+            bad |= 128;
+        if (gemdos(0x49, env, 0) != 0)
+            bad |= 1024;
+        if (sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0) != EIMBA)
+            bad |= 64;
+
+        /* PE_BASEPAGEFLAGS, and a launch of somebody else's block */
+        bp2_addr = sys4(GEMDOS, 0x4b, 7, 0, none, 0);
+        if (bp2_addr <= 0)
+            bad |= 256;
+        else {
+            bp2 = (volatile u32 *)(unsigned long)bp2_addr;
+            env = bp2[11];
+            if (sys4(GEMDOS, 0x4b, 6, none, env, 0) != EIMBA)
+                bad |= 512;                 /* the env block is no basepage */
+            if (gemdos(0x49, bp2_addr, 0) != 0 || gemdos(0x49, env, 0) != 0)
+                bad |= 128;
+        }
         pterm(bad);
         break;
     }
