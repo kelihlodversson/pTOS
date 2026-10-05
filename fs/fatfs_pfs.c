@@ -1067,7 +1067,7 @@ LONG fat_chdir_path(char *p)
     else
         dlog = run->p_curdrv;
 
-    olddir = run->p_curdir[dlog];
+    olddir = PD_CURDIR(run)[dlog];
 
     dnd = findit(p, &s, 1);
     if (DND_IS_ERRCODE(dnd))
@@ -1078,7 +1078,7 @@ LONG fat_chdir_path(char *p)
     newdir = incr_curdir_usage(dnd);
     if (newdir < 0)
         return EPTHNF;
-    run->p_curdir[dlog] = newdir;
+    PD_CURDIR(run)[dlog] = newdir;
 
     if (olddir)
         decr_curdir_usage(olddir);
@@ -1100,7 +1100,7 @@ LONG fat_getdir_path(char *buf, int drv)
         return EDRIVE;
     }
 
-    n = run->p_curdir[drv];
+    n = PD_CURDIR(run)[drv];
     p = dirtbl[n].dnd;
     len = LEN_ZPATH - 3;
     buf = dopath(p, buf, &len);

@@ -460,7 +460,7 @@ static int syshnd(int h)
     if (h >= NUMSTD)
         return(h-NUMSTD);
 
-    if ((h = run->p_uft[h]) > 0 )
+    if ((h = PD_UFT(run)[h]) > 0 )
         return(h-NUMSTD);
 
     return(h);

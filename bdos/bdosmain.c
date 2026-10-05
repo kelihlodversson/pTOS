@@ -639,7 +639,7 @@ restrt:
 
     if (typ && fn && ((fn<12) || ((fn>=16) && (fn<=19)))) /* std funcs */
     {
-        h = run->p_uft[typ & 0x7f];
+        h = PD_UFT(run)[typ & 0x7f];
         if (h > 0)
         {   /* handle standard device functions redirected to a file */
             switch(fn)
@@ -747,7 +747,7 @@ restrt:
         }
         else if (h >= 0)
         {
-            h = run->p_uft[h];
+            h = PD_UFT(run)[h];
             if (h > 0)
             {
                 if (h >= NUMHANDLES)

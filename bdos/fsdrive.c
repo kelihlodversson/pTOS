@@ -118,7 +118,7 @@ WORD ckdrv(int d, BOOL checkrem)
      * ensure that current process has a valid default directory
      * on this drive
      */
-    curdir = run->p_curdir[d];
+    curdir = PD_CURDIR(run)[d];
     if (curdir >= NCURDIR)      /* validate */
         curdir = 0;             /* if invalid, say none */
     if (!curdir                 /* no current dir for this drive */
@@ -127,7 +127,7 @@ WORD ckdrv(int d, BOOL checkrem)
         curdir = incr_curdir_usage(drvtbl[d]->m_dtl);   /* add root DND */
         if (curdir < 0)
             return ENSMEM;
-        run->p_curdir[d] = curdir;  /* link to process  */
+        PD_CURDIR(run)[d] = curdir;  /* link to process  */
     }
 
     return d;

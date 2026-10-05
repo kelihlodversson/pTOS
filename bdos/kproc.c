@@ -50,6 +50,8 @@ struct kproc {
     BOOL started;               /* proc_go() has launched it */
     PD *parent;                 /* who launched it: the trusted copy of p_parent */
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
+    SBYTE uft[NUMSTD];          /* its standard-handle map and current directories: */
+    UBYTE curdir[NUMCURDIR];    /* the authoritative ones, see PD_UFT() */
     const X32_IMAGE *image;     /* built-in program to map private, or NULL */
     UQUAD entry;                /* its entry point once loaded, else 0 */
     UQUAD stack_top;            /* its private stack's top once loaded, else 0 */
@@ -98,6 +100,13 @@ BOOL kproc_create(PD *pd)
     kproc->pd = pd;
     kproc->dta = (DTAINFO *)pd->p_cmdlin;
 #ifdef __x86_64__
+    /* Take over the tables the basepage may already hold; from now on the
+     * basepage's own copies are unused, and cleared so no stale value is
+     * mistaken for state. */
+    memcpy(kproc->uft, pd->p_uft, sizeof kproc->uft);
+    memcpy(kproc->curdir, pd->p_curdir, sizeof kproc->curdir);
+    bzero(pd->p_uft, sizeof pd->p_uft);
+    bzero(pd->p_curdir, sizeof pd->p_curdir);
     /* Snapshot bounds before ring 3 can modify the public basepage. */
     kproc->env_start = USERPTR_TO_PTR(pd->p_env);
     kproc->env_end = kproc->env_start +
@@ -143,6 +152,31 @@ void kproc_destroy(PD *pd)
 }
 
 #ifdef __x86_64__
+/* The tables of a process with a record are in it; the few without one (the
+ * boot-time basepages, which only ring 0 ever touches) keep them in the PD. */
+SBYTE *kproc_uft(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    return kproc ? kproc->uft : pd->p_uft;
+}
+
+UBYTE *kproc_curdir(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    return kproc ? kproc->curdir : pd->p_curdir;
+}
+
+/* TRUE for a record whose process was never launched: it still holds the
+ * references init_pd_files() took, which nothing else will release. */
+BOOL kproc_unlaunched(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    return kproc && !kproc->started;
+}
+
 void kproc_set_parent(PD *pd, PD *parent)
 {
     KPROC *kproc = kproc_find(pd);
