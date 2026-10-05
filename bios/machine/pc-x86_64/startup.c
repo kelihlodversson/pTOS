@@ -28,6 +28,7 @@
 #include "trap.h"
 #include "pc_x86_64_memory.h"
 #include "pc_x86_64_gop.h"
+#include "smbios.h"
 #include "bios.h"
 #include "pe_reloc.h"
 
@@ -150,6 +151,14 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      */
     x86_64_gop_probe(bs);
     earlycon_puts("pTOS x86-64: EFI GOP framebuffer probed\n");
+
+    /*
+     * Copy the machine name out of the firmware's SMBIOS tables now: they
+     * sit in firmware memory this image has no claim on once boot services
+     * exit (see smbios.h). Absence of SMBIOS is not fatal.
+     */
+    x86_64_smbios_probe(SystemTable);
+    earlycon_puts("pTOS x86-64: SMBIOS probed\n");
 
     /*
      * GetMemoryMap() with a too-small (here, zero) buffer always returns

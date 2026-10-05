@@ -48,6 +48,9 @@
 #ifdef MACHINE_RPI
 #include "raspi_io.h"
 #endif
+#ifdef MACHINE_PC_X86_64
+#include "smbios.h"
+#endif
 
 #if CONF_WITH_ADVANCED_CPU
 UBYTE is_bus32; /* 1 if address bus is 32-bit, 0 if it is 24-bit */
@@ -838,7 +841,11 @@ const char * machine_name(void)
 #elif defined(MACHINE_RPI)
     return raspi_board.name;
 #elif defined(MACHINE_PC_X86_64)
-    return "PC (x86-64 UEFI)";
+    {
+        const char *name = x86_64_smbios_machine_name();
+
+        return name ? name : "PC (x86-64 UEFI)";
+    }
 #elif defined(MACHINE_M548X)
     return m548x_machine_name();
 #else

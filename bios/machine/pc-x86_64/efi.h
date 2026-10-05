@@ -177,6 +177,12 @@ typedef struct {
     /* Fields beyond this point are never referenced, so are left out. */
 } EFI_BOOT_SERVICES;
 
+/* EFI_CONFIGURATION_TABLE (UEFI spec 4.6): a firmware table, e.g. SMBIOS. */
+typedef struct {
+    EFI_GUID VendorGuid;
+    void *VendorTable;
+} EFI_CONFIGURATION_TABLE;
+
 typedef struct {
     EFI_TABLE_HEADER Hdr;
     CHAR16 *FirmwareVendor;
@@ -189,7 +195,8 @@ typedef struct {
     void *StdErr;
     void *RuntimeServices;
     EFI_BOOT_SERVICES *BootServices;
-    /* Fields beyond this point are never referenced, so are left out. */
+    UQUAD NumberOfTableEntries;
+    EFI_CONFIGURATION_TABLE *ConfigurationTable;
 } EFI_SYSTEM_TABLE;
 
 /* EFI_LOADED_IMAGE_PROTOCOL_GUID (UEFI spec 9.1). */
