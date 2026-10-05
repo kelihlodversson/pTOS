@@ -287,7 +287,7 @@ static void cpu_name_add(const char *w, int n)
  * string (CPUID leaves 0x80000002-4), or the vendor string (leaf 0) if the
  * CPU has no brand string.  A brand string is up to 48 characters, e.g.
  * "Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz", so drop the "(R)"/"(TM)"
- * marks, the "CPU"/"Processor"/"N-Core" filler words and everything from
+ * marks, the "CPU"/"Processor"/"version"/"N-Core" filler words and everything from
  * the "@" on, and keep only the words that fit.
  */
 static const char *cpu_display_name(void)
@@ -332,6 +332,7 @@ static const char *cpu_display_name(void)
                 }
                 word[k] = '\0';
                 if (k && strcmp(word, "CPU") && strcmp(word, "Processor")
+                    && strcmp(word, "version")
                     && !(k > 5 && !strcmp(&word[k - 5], "-Core")))
                         cpu_name_add(word, k);
                 p += n;
