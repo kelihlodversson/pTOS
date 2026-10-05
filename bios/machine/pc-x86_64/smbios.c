@@ -61,18 +61,27 @@ static BOOL anchor_is(const UBYTE *p, const char *anchor)
  */
 static BOOL find_table(const UBYTE *ep, BOOL is_v3, const UBYTE **table, ULONG *size)
 {
+    const UBYTE *t;
+    ULONG sz;
+
     if (is_v3) {
         if (!anchor_is(ep, "_SM3_"))
             return FALSE;
-        *size = *(const ULONG *)(ep + 0x0C);
-        *table = (const UBYTE *)(uintptr_t)*(const UQUAD *)(ep + 0x10);
+        sz = *(const ULONG *)(ep + 0x0C);
+        t = (const UBYTE *)(uintptr_t)*(const UQUAD *)(ep + 0x10);
     } else {
         if (!anchor_is(ep, "_SM_"))
             return FALSE;
-        *size = *(const UWORD *)(ep + 0x16);
-        *table = (const UBYTE *)(uintptr_t)*(const ULONG *)(ep + 0x18);
+        sz = *(const UWORD *)(ep + 0x16);
+        t = (const UBYTE *)(uintptr_t)*(const ULONG *)(ep + 0x18);
     }
-    return *table != NULL && *size != 0 && *size <= SMBIOS_TABLE_MAX;
+    if (t == NULL || sz == 0 || sz > SMBIOS_TABLE_MAX)
+        return FALSE;
+
+    /* only on success: callers stop scanning as soon as *table is set */
+    *table = t;
+    *size = sz;
+    return TRUE;
 }
 
 /*
@@ -207,7 +216,7 @@ static BOOL add_words(const char *s, BOOL first_only)
             if (len)
                 smbios_name[len++] = ' ';
             for (i = 0; i < n; i++)
-                smbios_name[len++] = (s[i] >= 0x20 && s[i] < 0x7f) ? s[i] : '?';
+                smbios_name[len++] = (s[i] >= 0x20 && s[i] < 0x7f && s[i] != '%') ? s[i] : '?';
             smbios_name[len] = '\0';
             if (first_only)
                 return TRUE;
@@ -227,16 +236,18 @@ static void read_system_info(const UBYTE *table, ULONG size)
     while (s + 4 <= end && s[0] != SMBIOS_TYPE_END) {
         const UBYTE *next;
 
-        if (s[1] < 4)           /* corrupt: shorter than its own header */
+        /* corrupt: shorter than its own header, or no room left for the
+         * (at least empty, double NUL terminated) string set behind it */
+        if (s[1] < 4 || (UQUAD)(end - s) < (UQUAD)s[1] + 2)
             return;
 
         /* the string set after the formatted area ends with a double NUL */
         next = s + s[1];
         while (next + 1 < end && (next[0] || next[1]))
             next++;
-        next += 2;
-        if (next > end)
+        if (next + 1 >= end)    /* ran off the table without a terminator */
             return;
+        next += 2;
 
         if (s[0] == SMBIOS_TYPE_SYSTEM && s[1] > SMBIOS_SYS_PRODUCT) {
             const char *maker = get_string(s, next, s[SMBIOS_SYS_MANUFACTURER]);

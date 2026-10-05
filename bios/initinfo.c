@@ -365,7 +365,7 @@ WORD initinfo(ULONG *pshiftbits)
 #endif
     pair_end();
 
-    pair_start(_("Machine")); cprintf(machine_name()); pair_end();
+    pair_start(_("Machine")); cprintf("%s", machine_name()); pair_end();
 #ifdef MACHINE_PC_X86_64
     /*
      * phystop is only the 2 MiB kernel pool here, and a 64-bit pointer
