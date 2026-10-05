@@ -146,12 +146,13 @@ extern void x86_64_syscall_entry(void);
 static x86_64_percpu_t percpu;
 
 /*
- * The kernel stack syscall entry switches to (percpu.kernel_rsp below),
- * distinct from this image's own boot-time stack (startup.c's
- * boot_stack): a real ring-3 caller's `syscall` always arrives while the
- * kernel is between processes, never while boot_stack is itself in the
- * middle of being used, but keeping the two separate now avoids relying
- * on that not being true yet. 8 KiB is generous for a path that does not
+ * The initial kernel stack for syscall entry (percpu.kernel_rsp below),
+ * distinct from this image's own boot-time stack (startup.c's boot_stack).
+ * It serves only until the first ring-3 process is launched: every process
+ * has a kernel stack of its own (include/procmem.h), which gouser()
+ * (bdos/arch/x86_64/rwa.c) installs with x86_64_set_kernel_stack() before
+ * entering it, and the launcher's value is restored when the process is gone.
+ * 8 KiB is generous for a path that does not
  * recurse (trap.c's dispatch is a single switch, and osif()/bios_vecs[]/
  * xbios_vecs[] are shallow existing call trees on every other arch).
  */

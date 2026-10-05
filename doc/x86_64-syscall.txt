@@ -152,11 +152,24 @@ validate against.
 Status
 -------
 
-The mechanism above is implemented and verified (a throwaway in-kernel
-ring-3 harness: IRETQ into real CPL3, a real `syscall` from there
-reaching a BIOS handler, `sysretq` back with no fault). #334 is what
-drives a real, loaded ILP32 process through this same entry point as
-part of normal execution, including its own per-process kernel stack
-and full parent/child resumption -- this port currently runs at most one
-process at a time, using the single boot-time kernel stack
-percpu.kernel_rsp already points at.
+The mechanism above is implemented and verified: a real loaded x32 process is
+entered in ring 3 (bdos/arch/x86_64/rwa.c's gouser(), through
+x86_64_enter_user()), makes `syscall` calls that reach the GEMDOS/BIOS/XBIOS
+handlers, and returns with `sysretq`; the built-in EmuCON runs this way, and
+the boot self-test (bios/machine/pc-x86_64/memtest.c) exercises entry,
+nested launches, faults and exits.
+
+Kernel stack.  Each ring-3 process makes its system calls on a kernel stack of
+its own (include/procmem.h, x86_64_kstack_alloc(); the KPROC record owns it).
+Before it enters a process, gouser() points percpu.kernel_rsp at that stack,
+so the entry stub in step 3 above lands on the stack of the process making the
+call; when the process exits, or faults, gouser() puts the launcher's value
+back.  A process suspended inside a call -- Pexec() of a child -- therefore
+keeps its frames, and the jmp_buf its launch resumes through, while the child
+makes calls of its own.  gouser() restores the rest of the launcher's state
+the same way: its page tables, the user RSP the stub parks in percpu.user_rsp
+(a single slot every call overwrites) and its GS state.  The static
+syscall_stack in trap.c is only the initial value, used until the first
+process is launched.  The exception stack (TSS.rsp0) is still shared: an
+exception never resumes the code it interrupted.  See
+doc/x86_64-address-space.txt, "Faults and termination".
