@@ -107,6 +107,7 @@ static BOOL map_kernel_low(struct x86_64_aspace *as)
         if (x86_64_kernel_low_2m_phys(va, &phys) &&
             x86_64_map_kernel_2m_into(as->pml4_phys, va, phys, alloc_table_page, as) != 0)
             return FALSE;
+
     return TRUE;
 }
 
@@ -489,4 +490,62 @@ BOOL x86_64_aspace_load_private(X86_64_ASPACE *as, UQUAD va, UQUAD memsz,
         filesz -= chunk;
     }
     return TRUE;
+}
+
+/*
+ * Kernel stacks.  A page run from the physical allocator, reached through
+ * the direct map (so the same address in every address space); the stack
+ * pointer starts at the top less 8, as the syscall entry stub expects
+ * ("as if a return address had just been pushed").
+ */
+UQUAD x86_64_kstack_alloc(UQUAD *top)
+{
+    UQUAD phys = x86_64_pmem_try_alloc_pages(X86_64_KSTACK_PAGES, 0);
+
+    if (phys == X86_64_PMEM_NONE)
+        return 0;
+    *top = X86_64_PHYS_MAP_BASE + phys + X86_64_KSTACK_PAGES * X86_64_PAGE_SIZE - 8;
+    return phys;
+}
+
+void x86_64_kstack_free(UQUAD phys)
+{
+    if (phys)
+        x86_64_pmem_free_pages(phys, X86_64_KSTACK_PAGES);
+}
+
+/*
+ * Supervisor-only access to someone else's process blocks, for exactly as long
+ * as ring 0 needs it.  Pexec() from a ring-3 process builds the child's
+ * basepage, environment and program under the launcher's page tables, in
+ * blocks allocated after that address space exists; each is borrowed into it
+ * (writable, no user bit, pinned so it cannot be freed from under the
+ * mapping) when it is allocated and returned when it is freed.  Nothing else
+ * in the window is reachable.
+ */
+BOOL x86_64_aspace_borrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
+{
+    if (x86_64_aspace_map_procmem(as, va, bytes, ASPACE_PROT_WRITE))
+        return TRUE;
+    x86_64_aspace_unborrow(as, va, bytes);      /* a half-finished borrow */
+    return FALSE;
+}
+
+void x86_64_aspace_unborrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
+{
+    UQUAD page, end;
+    ULONG i;
+
+    for (i = as->npins; i-- > 0; )
+        if (as->pins[i].va == va && as->pins[i].bytes == bytes) {
+            as->pins[i] = as->pins[--as->npins];
+            x86_64_procmem_pin(va, bytes, -1);
+            break;
+        }
+    page = va & ~(X86_64_PAGE_SIZE - 1);
+    end = (va + bytes + X86_64_PAGE_SIZE - 1) & ~(X86_64_PAGE_SIZE - 1);
+    for (; page < end; page += X86_64_PAGE_SIZE)
+        x86_64_unmap_user_page(as->pml4_phys, page);
+    if (x86_64_read_cr3() == as->pml4_phys)
+        x86_64_write_cr3(as->pml4_phys);        /* flush stale translations */
 }

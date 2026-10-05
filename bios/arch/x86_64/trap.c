@@ -146,12 +146,13 @@ extern void x86_64_syscall_entry(void);
 static x86_64_percpu_t percpu;
 
 /*
- * The kernel stack syscall entry switches to (percpu.kernel_rsp below),
- * distinct from this image's own boot-time stack (startup.c's
- * boot_stack): a real ring-3 caller's `syscall` always arrives while the
- * kernel is between processes, never while boot_stack is itself in the
- * middle of being used, but keeping the two separate now avoids relying
- * on that not being true yet. 8 KiB is generous for a path that does not
+ * The initial kernel stack for syscall entry (percpu.kernel_rsp below),
+ * distinct from this image's own boot-time stack (startup.c's boot_stack).
+ * It serves only until the first ring-3 process is launched: every process
+ * has a kernel stack of its own (include/procmem.h), which gouser()
+ * (bdos/arch/x86_64/rwa.c) installs with x86_64_set_kernel_stack() before
+ * entering it, and the launcher's value is restored when the process is gone.
+ * 8 KiB is generous for a path that does not
  * recurse (trap.c's dispatch is a single switch, and osif()/bios_vecs[]/
  * xbios_vecs[] are shallow existing call trees on every other arch).
  */
@@ -300,6 +301,61 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
         syscall_gs_swapped = 0;
 }
 
+/*
+ * The stack the next system call switches to (percpu.kernel_rsp).  Each
+ * ring-3 process has one of its own; gouser() points this at the process it
+ * enters and back at the launcher's when the process exits.
+ */
+UQUAD x86_64_get_kernel_stack(void)
+{
+    return percpu.kernel_rsp;
+}
+
+void x86_64_set_kernel_stack(UQUAD rsp)
+{
+    percpu.kernel_rsp = rsp;
+}
+
+/*
+ * The interrupted user RSP the entry stub parks in the per-CPU area for the
+ * exit stub to restore: one slot, so a process suspended in a system call
+ * (Pexec) loses it to every call its child makes.  gouser() saves it when it
+ * launches and puts it back when the child is gone.
+ */
+UQUAD x86_64_get_saved_user_rsp(void)
+{
+    return percpu.user_rsp;
+}
+
+void x86_64_set_saved_user_rsp(UQUAD rsp)
+{
+    percpu.user_rsp = rsp;
+}
+
+/*
+ * A process launching another from inside its own system call is in the
+ * "swapped" GS state (entry did swapgs); the child must be entered in the
+ * user state, and the launcher put back into the swapped one when the child
+ * is gone.  gs_to_user() undoes the entry's swap if there was one and says
+ * whether it did; gs_back_to_syscall() redoes it.
+ */
+int x86_64_gs_to_user(void)
+{
+    int was = syscall_gs_swapped;
+
+    if (was) {
+        __asm__ volatile ("swapgs" ::: "memory");
+        syscall_gs_swapped = 0;
+    }
+    return was;
+}
+
+void x86_64_gs_back_to_syscall(void)
+{
+    __asm__ volatile ("swapgs" ::: "memory");
+    syscall_gs_swapped = 1;
+}
+
 void x86_64_syscall_abandoned(void)
 {
     if (syscall_gs_swapped) {
@@ -333,6 +389,22 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
      * from ring 3 until the #352 copy/validation path exists. */
     if (from_ring3 && trap_class == X86_64_TRAP_GEM) {
         frame->rax = (UQUAD)-1L;
+        return;
+    }
+
+    /*
+     * Pexec() from ring 3 may only be PE_LOADGO (mode 0): it loads and runs a
+     * program in one call, and the child is mapped for the launcher while it
+     * runs.  The other modes hand the caller a basepage (PE_BASEPAGE*,
+     * PE_LOAD) or ask to launch one (PE_GO, PE_GOTHENFREE): the blocks they
+     * create after the caller's address space exists are mapped supervisor-
+     * only in it, so the pointer would fault the moment the caller used it,
+     * and a launch needs the kernel-side image attachment a process cannot
+     * make.  Refused until a ring-3 caller can own such blocks.
+     */
+    if (from_ring3 && trap_class == X86_64_TRAP_GEMDOS && fn == 0x4b &&
+        (WORD)frame->rdi != 0) {
+        frame->rax = (UQUAD)EINVFN;
         return;
     }
 

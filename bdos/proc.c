@@ -83,11 +83,6 @@ static BOOL x86_64_prepare_launch(PD *p)
 {
     if (x86_64_kernel_code_pd == p)
         return TRUE;
-    /* A launch from inside a ring-3 process's own syscall would run on the
-     * one shared syscall stack the first process's call is still using
-     * (#399 brings per-process kernel stacks): refuse it cleanly. */
-    if (x86_64_user_active())
-        return FALSE;
     return kproc_prepare_user(p, run);
 }
 
@@ -100,6 +95,7 @@ static void release_pd_files(PD *r);
  * exactly once -- the record is the proof it has not been done. */
 static void x86_64_release_block(void *base)
 {
+    kproc_unborrow(base);       /* a block lent to a ring-3 launcher goes back */
     if (kproc_discard((PD *)base))
         release_pd_files((PD *)base);
 }
@@ -113,6 +109,8 @@ static void x86_64_drop_child_record(void *base)
 {
     PD *child = (PD *)base;
     int i;
+
+    kproc_unborrow(base);       /* lent to a ring-3 launcher while it was built */
 
     if (kproc_discard(child)) {
         release_pd_files(child);
@@ -130,6 +128,11 @@ static ULONG x86_64_resident_len;
 
 void x86_64_make_resident(PD *p, ULONG keep_bytes)
 {
+    /* The process's own block is not passed to the callback below, and its
+     * tail cannot be given back while the launcher still has it mapped: return
+     * what a ring-3 launcher borrowed for it first (its environment goes
+     * through the callback). */
+    kproc_unborrow(p);
     x86_64_procmem_keep(p, keep_bytes, x86_64_drop_child_record);
 }
 
@@ -150,6 +153,7 @@ long x86_64_procmem_mfree(void *addr)
      * basepage, say) cannot be freed from under it, and tearing down the
      * address space the caller is running in would be worse: refuse, and
      * leave the KPROC record alone. */
+    kproc_unborrow(addr);
     if (x86_64_procmem_pinned(addr))
         return EACCDN;
     x86_64_release_block(addr);
@@ -351,14 +355,6 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     KDEBUG(("BDOS xexec: flag or mode = %d\n",flag));
 
-#ifdef __x86_64__
-    /* A launch from inside a ring-3 process's own system call is refused
-     * before anything is allocated: the new blocks lie in the low window,
-     * which that process's page tables do not map, so even creating the
-     * basepage would fault in ring 0 (see x86_64_prepare_launch()). */
-    if (x86_64_user_active())
-        return ENSMEM;
-#endif
 
     /* first branch - actions that do not require loading files */
     switch(flag) {
@@ -567,8 +563,14 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      */
     invalidate_instruction_cache(((UBYTE *)cur_p) + sizeof(PD), hdr.h01_tlen);
 
-    if (flag != PE_LOAD)
+    if (flag != PE_LOAD) {
         proc_go(cur_p);
+#ifdef __x86_64__
+        /* Returns here, unlike on m68k/ARM (see the PE_GO case above), once
+         * the child has exited: its exit code is in the launcher's D0. */
+        return run->p_dreg[0];
+#endif
+    }
     return (long)cur_p;
 }
 
@@ -696,6 +698,11 @@ static char *alloc_env(ULONG flags, char *env)
      * comment), exactly what happens for memory from this same pool.
      */
     new_env = (char *)x86_64_procmem_alloc(size, PROCMEM_ZERO);
+    /* built below under the launcher's page tables: lend it to a ring-3 one */
+    if (new_env && !kproc_borrow(run, new_env)) {
+        x86_64_procmem_free(new_env);
+        new_env = NULL;
+    }
 #else
     new_env = xmxalloc(size, (flags&PF_TTRAMLOAD) ? MX_PREFTTRAM : MX_STRAM);
 #endif
@@ -763,6 +770,10 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
     {
         UBYTE *low = x86_64_procmem_alloc(needed + 15, PROCMEM_ZERO);
 
+        if (low && !kproc_borrow(run, low)) {   /* see alloc_env() */
+            x86_64_procmem_free(low);
+            low = NULL;
+        }
         if (low)
             *avail = needed + 15;
         return low;

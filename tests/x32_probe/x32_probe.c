@@ -15,10 +15,22 @@
  *      marker behind: a second run must still start zeroed
  *   b  pass the kernel a bad pointer (an unmapped one) and a kernel
  *      address as GEMDOS arguments; exit with 0 if both are refused
- *   s  try to install a kernel callback vector (BIOS Setexc 0x102), to
- *      launch a process (Pexec) from inside this one and to have Ssystem()
- *      write into the kernel's system variables: all must be refused;
- *      exits with 0 if they were
+ *   s  try to install a kernel callback vector (BIOS Setexc 0x102) and to
+ *      have Ssystem() write into the kernel's system variables, and to use any
+ *      Pexec mode but PE_LOADGO (a basepage it cannot use, a launch it cannot
+ *      make, its own basepage a second time): all must be refused; exits with 0 if they were
+ *   n  run another program from inside this one, twice: Pexec(PE_LOADGO) of
+ *      C:\X32HELLO.TOS, which must exit with 0, after which this process
+ *      must still be able to make system calls; exits with 0 if so, 0x100 if
+ *      the file is not on the boot drive (reported as a skip by the self-test)
+ *   m  like n, but the child (C:\X32HELLO.TOS with the tail "f") faults: the
+ *      Pexec must return 0xffff, and this process must still be able to make
+ *      system calls; exits with 0 if so, 0x100 if the file is not there
+ *   q  like n, but six children that terminate and stay resident (Ptermres,
+ *      tail "r"): each must exit with 0 and this process must keep launching
+ *      (the blocks lent to it for a resident child must be returned, or its
+ *      launches start to fail); exits with 0 if so, 0x100 if the file is not
+ *      there
  *   f  write to address 0 (a page fault)
  *   k  read the kernel's system variables at 0x4ba (a page fault: that page is
  *      supervisor-only)
@@ -41,6 +53,7 @@ typedef unsigned int u32;
 #define GEMDOS 1
 #define EIMBA  (-40)
 #define ENSMEM (-39)
+#define EINVFN (-32)
 #define EACCDN (-36)
 #define BIOS   13
 
@@ -48,19 +61,24 @@ typedef unsigned int u32;
 #define USER_CODE_SEL 0x2b
 #define USER_DATA_SEL 0x23
 
-static s64 sys(u64 class, u64 func, s64 a, s64 b, s64 c)
+static s64 sys4(u64 class, u64 func, s64 a, s64 b, s64 c, s64 d)
 {
     register u64 rax __asm__("rax") = (class << 32) | func;
     register s64 rdi __asm__("rdi") = a;
     register s64 rsi __asm__("rsi") = b;
     register s64 rdx __asm__("rdx") = c;
-    register u64 r10 __asm__("r10") = 0;
+    register s64 r10 __asm__("r10") = d;
 
     __asm__ volatile ("syscall"
                       : "+r" (rax)
                       : "r" (rdi), "r" (rsi), "r" (rdx), "r" (r10)
                       : "rcx", "r11", "memory");
     return (s64)rax;
+}
+
+static s64 sys(u64 class, u64 func, s64 a, s64 b, s64 c)
+{
+    return sys4(class, func, a, b, c, 0);
 }
 
 static s64 gemdos(u64 func, s64 a, s64 b)
@@ -126,8 +144,15 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     case 's':
         if (sys(BIOS, 5, 0x102, 0x500000, 0) != -1)
             bad |= 1;                   /* Setexc(etv_term, user address) */
-        if (sys(GEMDOS, 0x4b, 5, 0, 0) != ENSMEM)
-            bad |= 2;                   /* Pexec(PE_BASEPAGE, ...) */
+        /* every Pexec mode but PE_LOADGO: PE_LOAD, PE_GO, PE_BASEPAGE,
+         * PE_GOTHENFREE, PE_BASEPAGEFLAGS (including launching this very
+         * basepage a second time) */
+        if (sys4(GEMDOS, 0x4b, 3, 0, 0, 0) != EINVFN ||
+            sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EINVFN ||
+            sys4(GEMDOS, 0x4b, 5, 0, 0, 0) != EINVFN ||
+            sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EINVFN ||
+            sys4(GEMDOS, 0x4b, 7, 0, 0, 0) != EINVFN)
+            bad |= 32;
         /* Ssystem() writing through a pointer into the kernel's system
          * variables: S_GETCOOKIE (8) and S_CONSOLE_DIM (-2) */
         if (sys(GEMDOS, 0x154, 8, 0x5f435055, 0x400) != EIMBA)
@@ -139,6 +164,59 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             bad |= 16;
         pterm(bad);
         break;
+    case 'n': {
+        int run_no;
+
+        /* twice: the second child reuses what the first one released (its
+         * kernel stack, its blocks) while this process's own frames are live
+         * on its own stack, which a launcher resuming on the wrong stack
+         * would not survive */
+        for (run_no = 0; run_no < 2; run_no++) {
+            s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                          (s64)(int)(unsigned long)"", 0);
+
+            if (rc == -33)              /* EFILNF: not on the boot drive */
+                pterm(0x100);
+            if (rc != 0)
+                bad |= 1;               /* the child's exit code, or an error */
+            if (gemdos(0x19, 0, 0) != 0 && gemdos(0x19, 0, 0) != 2)
+                bad |= 2;               /* this process's calls still work */
+        }
+        pterm(bad);
+        break;
+    }
+    case 'q': {
+        static const char resident_tail[] = { 1, 'r', 0 };
+        int run_no;
+
+        for (run_no = 0; run_no < 6; run_no++) {
+            s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                          (s64)(int)(unsigned long)resident_tail, 0);
+
+            if (rc == -33)
+                pterm(0x100);
+            if (rc != 0)
+                bad |= 1;
+        }
+        if (gemdos(0x19, 0, 0) != 0 && gemdos(0x19, 0, 0) != 2)
+            bad |= 2;
+        pterm(bad);
+        break;
+    }
+    case 'm': {
+        static const char fault_tail[] = { 1, 'f', 0 };
+        s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                      (s64)(int)(unsigned long)fault_tail, 0);
+
+        if (rc == -33)
+            pterm(0x100);
+        if (rc != 0xffff)
+            bad |= 1;                   /* the faulting child's exit code */
+        if (gemdos(0x19, 0, 0) != 0 && gemdos(0x19, 0, 0) != 2)
+            bad |= 2;                   /* this process's calls still work */
+        pterm(bad);
+        break;
+    }
     case 'f':
         bad_address = (u32 *)0;
         *bad_address = 1;

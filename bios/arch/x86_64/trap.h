@@ -203,16 +203,15 @@ void x86_64_trap_init(void);
  * controller, and with it a real case for enabling IF anywhere, first
  * exists.
  *
- * Does not set up a per-process kernel stack or save any "resume the
- * caller" state, and does not touch percpu.kernel_rsp/TSS.rsp0: this is
- * only the primitive for a process's FIRST entry into ring 3, reusing
- * the single boot-time kernel stack those already point at -- this port
- * only ever runs one process at a time so far. A real per-process kernel
- * stack plus full parent/child resumption (m68k/ARM's gouser()/
- * termuser() coroutine, adapted for a per-process address space) is
- * bdos/arch/x86_64/rwa.c's job once #334 needs more than one process
- * alive at once; this function is what its first call into a fresh
- * process ultimately does.
+ * Does not itself select the kernel stack or save any "resume the caller"
+ * state, and does not touch percpu.kernel_rsp/TSS.rsp0: that is
+ * bdos/arch/x86_64/rwa.c's gouser(), which points percpu.kernel_rsp at the
+ * entered process's own kernel stack (include/procmem.h) just before calling
+ * this, so the process's system calls run on it, and which restores the
+ * launcher's stack, page tables, saved user RSP and GS state once the
+ * process has exited (its setjmp()/longjmp() pair is the "resume the caller"
+ * mechanism).  This function is only the primitive for a process's FIRST entry
+ * into ring 3.
  *
  * Never returns to its caller: the only way back into the kernel from
  * here on is a fault or `syscall` from the code now running at
@@ -224,5 +223,11 @@ void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp,
 /* Undoes the `swapgs` of a syscall that will never return to its exit stub
  * (Pterm unwinding to the launching kernel context). */
 void x86_64_syscall_abandoned(void);
+UQUAD x86_64_get_kernel_stack(void);
+void x86_64_set_kernel_stack(UQUAD rsp);
+UQUAD x86_64_get_saved_user_rsp(void);
+void x86_64_set_saved_user_rsp(UQUAD rsp);
+int x86_64_gs_to_user(void);
+void x86_64_gs_back_to_syscall(void);
 
 #endif /* X86_64_TRAP_H */

@@ -20,6 +20,10 @@
 #include "x32image.h"
 #endif
 
+#ifdef __x86_64__
+#define KPROC_BORROWS 8
+#endif
+
 /* The option gates only the record itself: the #else stubs stay in every
  * link so the public p_xdta field keeps working verbatim. */
 
@@ -47,6 +51,11 @@ struct kproc {
     const X32_IMAGE *image;     /* built-in program to map private, or NULL */
     UQUAD entry;                /* its entry point once loaded, else 0 */
     UQUAD stack_top;            /* its private stack's top once loaded, else 0 */
+    UQUAD kstack_phys;          /* its kernel stack (system calls), 0 if none */
+    UQUAD kstack_top;           /* initial stack pointer of that stack */
+    struct {                    /* blocks of a child being launched from this */
+        UQUAD va, bytes;        /* process, mapped supervisor-only into its */
+    } borrowed[KPROC_BORROWS];  /* address space until they are freed */
 #endif
     KPROC *next;
 };
@@ -123,6 +132,7 @@ void kproc_destroy(PD *pd)
              * space is torn down: a second kproc_destroy() for the same
              * PD finds nothing and cannot free either twice. */
             x86_64_aspace_destroy(kproc->aspace);
+            x86_64_kstack_free(kproc->kstack_phys);
 #endif
             KPROC_FREE(kproc);
             return;
@@ -226,8 +236,13 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
 
     if (!kproc)
         return FALSE;
-    if (kproc->aspace)
-        return TRUE;                /* already prepared */
+    if (kproc->aspace) {
+        /* Already prepared -- but a process that has been launched has handed
+         * its kernel stack to gouser(), and cannot be launched a second time
+         * (Pexec(PE_GO) of its own basepage, from ring 3): refuse, where the
+         * launch can still fail cleanly. */
+        return kproc->kstack_phys != 0;
+    }
     env = (UQUAD)(uintptr_t)kproc->env_start;
     tpa = (UQUAD)(uintptr_t)kproc->user_start;
     hitpa = (UQUAD)(uintptr_t)kproc->user_end;
@@ -247,6 +262,11 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     as = x86_64_aspace_create();
     if (!as)
         return FALSE;
+    kproc->kstack_phys = x86_64_kstack_alloc(&kproc->kstack_top);
+    if (!kproc->kstack_phys) {
+        x86_64_aspace_destroy(as);
+        return FALSE;
+    }
 
     /*
      * The process's own environment block and its basepage + TPA + stack
@@ -264,6 +284,8 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
         !x86_64_aspace_map_procmem(as, (UQUAD)(uintptr_t)parent, sizeof(PD),
                                    ASPACE_PROT_WRITE)) {
         x86_64_aspace_destroy(as);
+        x86_64_kstack_free(kproc->kstack_phys);
+        kproc->kstack_phys = 0;
         return FALSE;
     }
     /*
@@ -278,6 +300,8 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
                                     ASPACE_PROT_WRITE | ASPACE_PROT_USER))) {
         kproc->entry = 0;
         x86_64_aspace_destroy(as);
+        x86_64_kstack_free(kproc->kstack_phys);
+        kproc->kstack_phys = 0;
         return FALSE;
     }
     if (kproc->image)
@@ -294,6 +318,57 @@ BOOL kproc_set_image(PD *pd, const X32_IMAGE *image)
         return FALSE;
     kproc->image = image;
     return TRUE;
+}
+
+BOOL kproc_borrow(PD *launcher, void *block)
+{
+    KPROC *kproc = kproc_find(launcher);
+    UQUAD va = (UQUAD)(uintptr_t)block;
+    UQUAD bytes = x86_64_procmem_size(block);
+    int i;
+
+    if (!kproc || !kproc->aspace)
+        return TRUE;                /* a ring-0 launcher reaches all of it */
+    if (!bytes)
+        return FALSE;
+    for (i = 0; i < KPROC_BORROWS; i++)
+        if (!kproc->borrowed[i].bytes) {
+            if (!x86_64_aspace_borrow(kproc->aspace, va, bytes))
+                return FALSE;
+            kproc->borrowed[i].va = va;
+            kproc->borrowed[i].bytes = bytes;
+            return TRUE;
+        }
+    return FALSE;
+}
+
+void kproc_unborrow(void *block)
+{
+    UQUAD va = (UQUAD)(uintptr_t)block;
+    KPROC *kproc;
+    int i;
+
+    for (kproc = kproc_list; kproc; kproc = kproc->next)
+        for (i = 0; i < KPROC_BORROWS; i++)
+            if (kproc->borrowed[i].bytes && kproc->borrowed[i].va == va) {
+                if (kproc->aspace)
+                    x86_64_aspace_unborrow(kproc->aspace, va, kproc->borrowed[i].bytes);
+                kproc->borrowed[i].bytes = 0;
+                return;
+            }
+}
+
+UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top)
+{
+    KPROC *kproc = kproc_find(pd);
+    UQUAD phys;
+
+    if (!kproc || !kproc->kstack_phys)
+        return 0;
+    phys = kproc->kstack_phys;
+    *top = kproc->kstack_top;
+    kproc->kstack_phys = 0;         /* the launcher frees it, after the exit */
+    return phys;
 }
 
 UQUAD kproc_user_stack(PD *pd)

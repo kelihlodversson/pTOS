@@ -262,6 +262,10 @@ jobs:
         run: |
           mkdir -p esp/EFI/BOOT
           cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+          # a real x32 ELF on the boot drive: the self-test runs it through
+          # Pexec() from a ring-3 process (nested launch), as EmuCON does
+          make x32test
+          cp x32hello.elf esp/X32HELLO.TOS
           cp /usr/share/OVMF/OVMF_VARS_4M.fd .
 
           set +e
@@ -319,6 +323,21 @@ jobs:
           # faulting.
           if sed -n '/x86-64 memtest: PASS/,$p' boot.log | grep -q 'x32 process fault'; then
             echo "::error::the ring-3 EmuCON faulted"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 nested pexec: PASS' boot.log; then
+            echo "::error::a ring-3 process could not run a child through Pexec() and resume"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 nested fault: PASS' boot.log; then
+            echo "::error::a ring-3 process did not survive its child's fault and resume"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 nested ptermres: PASS' boot.log; then
+            echo "::error::a ring-3 process could not keep launching children that stay resident"
             exit 1
           fi
 

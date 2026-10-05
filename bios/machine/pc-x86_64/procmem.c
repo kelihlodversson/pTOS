@@ -211,6 +211,27 @@ BOOL x86_64_procmem_free(void *p)
     return TRUE;
 }
 
+UQUAD x86_64_procmem_next_gen(void)
+{
+    return next_gen;
+}
+
+ULONG x86_64_procmem_free_ownerless_since(UQUAD gen)
+{
+    ULONG freed = 0;
+    struct alloc **link = &allocs;
+
+    while (*link) {
+        if ((*link)->gen >= gen && !(*link)->owner && !(*link)->pins) {
+            release(link);              /* unlinks, so *link is the next one */
+            freed++;
+        } else {
+            link = &(*link)->next;
+        }
+    }
+    return freed;
+}
+
 BOOL x86_64_procmem_pinned(const void *p)
 {
     struct alloc **link = find_link(p);

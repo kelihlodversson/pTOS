@@ -55,6 +55,16 @@ ULONG x86_64_procmem_size(const void *p);
  * block" from "someone else's block that reused the space". */
 UQUAD x86_64_procmem_gen(const void *p);
 
+/*
+ * For tests that make memory permanent on purpose (Ptermres): the generation
+ * the next allocation will get, and a release of every unpinned allocation
+ * with no owner made at or after a generation, so the test can give back what
+ * it made resident.  Returns how many blocks it freed.  Nothing else should
+ * use this: ownerless memory is permanent by design.
+ */
+UQUAD x86_64_procmem_next_gen(void);
+ULONG x86_64_procmem_free_ownerless_since(UQUAD gen);
+
 /* TRUE iff p lies in the window at all (live or not). */
 BOOL x86_64_procmem_contains(const void *p);
 
@@ -114,7 +124,14 @@ void x86_64_procmem_stats(PROCMEM_STATS *stats);
  * for lack of memory; destruction cannot, and frees each table page and each
  * private page exactly once.
  *
- * The kernel half (PML4 slots 256-511) is shared; the low half starts empty.
+ * The kernel half (PML4 slots 256-511) is shared.  The low half starts with
+ * the kernel's own low data, all of it supervisor-only (no user bit): the
+ * system-vector area, the kernel-data pool and the framebuffer (see
+ * doc/x86_64-address-space.txt, "Kernel low mappings"), because ring 0 runs
+ * under a process's page tables while it services that process's system
+ * calls.  The process window is empty except for what is mapped for the
+ * process: its own blocks (user) and the blocks of a child it is launching
+ * (borrowed, supervisor-only).
  */
 typedef struct x86_64_aspace X86_64_ASPACE;
 
@@ -164,6 +181,15 @@ BOOL x86_64_aspace_map_page(X86_64_ASPACE *as, UQUAD va, UQUAD phys, UWORD prot)
  * failure stay in the address space and go away with it.
  */
 BOOL x86_64_aspace_map_procmem(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
+
+/*
+ * Borrowing: maps [va, va + bytes) of live procmem blocks into `as`
+ * supervisor-only and writable (pinned), so ring 0 can build a child process
+ * under this address space during a ring-3 Pexec(); x86_64_aspace_unborrow()
+ * takes it away again (and unpins), exactly once per borrow.  See aspace.c.
+ */
+BOOL x86_64_aspace_borrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes);
+void x86_64_aspace_unborrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes);
 
 /* Number of table pages (PML4 included) the address space currently owns. */
 ULONG x86_64_aspace_table_pages(const X86_64_ASPACE *as);
@@ -220,6 +246,18 @@ BOOL x86_64_aspace_copy_to_user(const X86_64_ASPACE *as, UQUAD va, const void *s
  */
 BOOL x86_64_aspace_load_private(X86_64_ASPACE *as, UQUAD va, UQUAD memsz,
                                 UWORD prot, const void *src, ULONG filesz);
+
+/*
+ * Per-process kernel stacks: the stack a ring-3 process's system calls run
+ * on (the syscall entry stub switches to it), so that a process suspended
+ * inside a call -- Pexec() of a child -- keeps its frames while the child
+ * makes calls of its own.  x86_64_kstack_alloc() returns the physical base
+ * (0 if memory ran out) and the initial stack pointer; the stack is freed
+ * with x86_64_kstack_free(), never while it is still in use.
+ */
+#define X86_64_KSTACK_PAGES 4
+UQUAD x86_64_kstack_alloc(UQUAD *top);
+void x86_64_kstack_free(UQUAD phys);
 
 /* Private backing pages the address space owns (diagnostics, tests). */
 ULONG x86_64_aspace_private_pages(const X86_64_ASPACE *as);

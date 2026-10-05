@@ -659,7 +659,9 @@ static void test_isolation(void)
         x86_64_pmem_free_pages(probe, 1);
     /* The kernel's low data (the system-vector area, the kernel-data pool)
      * is there for ring 0's sake while it runs a system call under this
-     * address space -- and supervisor-only; the process window is not. */
+     * address space -- and supervisor-only.  The process window, by contrast,
+     * is absent: only the process's own blocks (user) and the blocks of a
+     * child it is launching (borrowed, supervisor-only) are ever mapped. */
     {
         UQUAD kstart, kend;
 
@@ -672,6 +674,25 @@ static void test_isolation(void)
     }
     CHECK(!x86_64_aspace_translate(a, X86_64_LOW_TPA_VIRT_BASE, NULL, NULL),
           "the process window is not in a fresh address space");
+    /* a block lent to the address space is reachable for ring 0 only, and goes
+     * back exactly once */
+    {
+        void *blk = x86_64_procmem_alloc(PAGE, PROCMEM_ZERO);
+
+        CHECK(blk != NULL, "a block to lend");
+        if (blk) {
+            UQUAD v = (UQUAD)(uintptr_t)blk;
+
+            CHECK(x86_64_aspace_borrow(a, v, PAGE) && x86_64_procmem_pinned(blk) &&
+                  x86_64_aspace_translate(a, v, NULL, &prot) && !(prot & ASPACE_PROT_USER) &&
+                  (prot & ASPACE_PROT_WRITE) && !x86_64_aspace_user_range_ok(a, v, 8, FALSE),
+                  "a borrowed block is mapped supervisor-only and pinned");
+            x86_64_aspace_unborrow(a, v, PAGE);
+            CHECK(!x86_64_procmem_pinned(blk) && !x86_64_aspace_translate(a, v, NULL, NULL),
+                  "an unborrowed block is unmapped and unpinned");
+            CHECK(x86_64_procmem_free(blk), "and can be freed");
+        }
+    }
 
     x86_64_aspace_destroy(a);
     x86_64_aspace_destroy(b);
@@ -1179,13 +1200,144 @@ static void test_ring3(void)
 
     /* bad pointers and kernel addresses as system call arguments */
     probe_expect('b', 0, "bad arguments refused by the system calls");
-    probe_expect('s', 0, "ring 3 cannot install kernel callbacks or launch from a syscall");
+    probe_expect('s', 0, "ring 3 cannot install kernel callbacks or write the kernel variables");
 
     /* a fault in ring 3 ends that process and nothing else */
     probe_expect('f', 0xffff, "a ring-3 write to page 0 is contained");
     probe_expect('k', 0xffff, "ring-3 access to the system variables is contained");
     probe_expect('p', 0xffff, "a privileged instruction in ring 3 is contained");
     probe_expect('e', 0, "a process runs normally after the faults");
+
+    /*
+     * A ring-3 process runs another from inside its own system call
+     * (Pexec of C:\X32HELLO.TOS, an x32 ELF on the boot drive -- CI puts one
+     * there): the child makes calls of its own on its own kernel stack, exits,
+     * and the parent resumes on its own stack, page tables and user RSP.
+     * Without the file this cannot be tried; that is reported, and CI, which
+     * supplies it, requires the PASS line.
+     */
+    {
+        CPUSTATE before, after;
+        PD *me = run;
+
+        snap(&s);
+        cpustate(&before);
+        rc = run_probe('n');
+        cpustate(&after);
+        CHECK(run == me, "the launcher is the current process again after a nested launch");
+        CHECK(after.cr3 == before.cr3 && after.gs == before.gs && after.kernel_gs == before.kernel_gs,
+              "CR3 and the GS bases are back after a nested launch");
+        if (rc == 0x100) {
+            kcprintf("x86-64 nested pexec: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "a ring-3 process runs a child and resumes");
+            if (rc == 0)
+                kcprintf("x86-64 nested pexec: PASS\n");
+            else
+                kcprintf("x86-64 nested pexec: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "nested Pexec from ring 3");
+    }
+
+    /*
+     * The same with a child that FAULTS: the other way back into the
+     * launcher's context (no syscall, so no swapgs to undo; the exception
+     * stack, not the child's syscall stack), which must put the ring-3
+     * parent's stack, page tables, saved RSP and GS state back too.
+     */
+    {
+        CPUSTATE before, after;
+        PD *me = run;
+
+        snap(&s);
+        cpustate(&before);
+        rc = run_probe('m');
+        cpustate(&after);
+        CHECK(run == me, "the launcher is the current process again after a nested fault");
+        CHECK(after.cr3 == before.cr3 && after.gs == before.gs && after.kernel_gs == before.kernel_gs,
+              "CR3 and the GS bases are back after a nested fault");
+        if (rc == 0x100) {
+            kcprintf("x86-64 nested fault: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "a ring-3 process survives its child's fault and resumes");
+            if (rc == 0)
+                kcprintf("x86-64 nested fault: PASS\n");
+            else
+                kcprintf("x86-64 nested fault: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "nested fault from ring 3");
+    }
+
+    /*
+     * Children that terminate and stay resident (Ptermres) from a ring-3
+     * parent: the blocks lent to the parent for each must come back, or its
+     * launches start failing once the borrow slots are used up (each child
+     * takes two; there are eight).  The resident memory itself is permanent
+     * by design: once the behaviour is verified, the test gives it back, so
+     * a boot with the self-test enabled does not keep it for good.
+     */
+    {
+        SNAP before, after;
+        UQUAD first_gen = x86_64_procmem_next_gen();
+
+        snap(&s);
+        snap(&before);
+        rc = run_probe('q');
+        snap(&after);
+        if (rc == 0x100) {
+            kcprintf("x86-64 nested ptermres: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "a ring-3 process launches children that stay resident, again and again");
+            if (rc == 0)
+                kcprintf("x86-64 nested ptermres: PASS\n");
+            else
+                kcprintf("x86-64 nested ptermres: FAIL (0x%lx)\n", rc);
+            /* each live window allocation has one tracking record (a heap
+             * block), so the resident blocks account for exactly the heap
+             * growth */
+            {
+                long grown = (long)after.pm.live_allocs - (long)before.pm.live_allocs;
+
+                if (after.kprocs != before.kprocs || after.dir_refs != before.dir_refs ||
+                    (long)after.heap.live_blocks - (long)before.heap.live_blocks != grown)
+                    kcprintf("memtest: ptermres: kprocs %ld->%ld heap blocks %ld->%ld "
+                             "window allocs %ld->%ld dir refs %ld->%ld\n",
+                             (long)before.kprocs, (long)after.kprocs,
+                             (long)before.heap.live_blocks, (long)after.heap.live_blocks,
+                             (long)before.pm.live_allocs, (long)after.pm.live_allocs,
+                             (long)before.dir_refs, (long)after.dir_refs);
+                CHECK(after.kprocs == before.kprocs && after.dir_refs == before.dir_refs &&
+                      (long)after.heap.live_blocks - (long)before.heap.live_blocks == grown,
+                      "resident children leave no process records, references or stray heap blocks behind");
+                CHECK(grown > 0 && grown <= 12, "only the resident blocks themselves stay allocated");
+                CHECK((long)x86_64_procmem_free_ownerless_since(first_gen) == grown,
+                      "the resident blocks are all given back");
+            }
+        }
+    }
+
+    same(&s, "resident children, once given back");
+
+    /* a process that has been launched cannot be prepared (and launched) a
+     * second time: its kernel stack went to gouser() */
+    snap(&s);
+    {
+        PD *pd = new_basepage();
+
+        if (pd) {
+            UQUAD top, stack;
+
+            set_owner(pd, pd);
+            set_owner(USERPTR_TO_PTR(pd->p_env), pd);
+            CHECK(kproc_prepare_user(pd, run), "a basepage prepares");
+            stack = kproc_take_kernel_stack(pd, &top);
+            CHECK(stack != 0, "its kernel stack can be taken");
+            CHECK(!kproc_prepare_user(pd, run), "a prepared process whose stack is gone is refused");
+            x86_64_kstack_free(stack);
+            x86_64_free_owned(pd);
+        }
+    }
+    same(&s, "relaunch refusal");
 
     /* an allocation failure while loading the image is an ordinary refused
      * launch, tried at every allocation point */

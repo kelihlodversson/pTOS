@@ -96,6 +96,27 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
       to all of them.  The AES and EmuDesk are not available on this
       machine yet.
 
+  PC (x86-64, running an x32 program from EmuCON)
+      EmuCON runs a program by its ".tos" (".prg", ...) name whatever its
+      executable format: the loader recognises an ELF by its contents.  To
+      try the x32 test program, installed as X32HELLO.TOS, under QEMU/OVMF:
+
+          make pc-x86_64_defconfig && make && make x32test
+          mkdir -p esp/EFI/BOOT
+          cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+          cp x32hello.elf esp/X32HELLO.TOS
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd .
+          qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+            -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
+            -drive format=raw,file=fat:rw:esp -serial stdio -display none
+
+      then type "x32hello.tos" at the EmuCON prompt: the program runs in ring
+      3, calls GEMDOS, exits, and the prompt comes back (it prints nothing on
+      success).  The same file on the boot drive makes the boot self-test run
+      it from a ring-3 process and print "x86-64 nested pexec: PASS"; CI does
+      exactly that.
+
   PC (x86-64, x32 userspace test program)
       "make x32test" builds tests/x32_hello/x32_hello.c, the minimal x32
       psABI (ELFCLASS32 program headers, genuine EM_X86_64 long-mode
