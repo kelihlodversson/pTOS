@@ -442,8 +442,15 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             bad |= 1;
         if (gemdos(0x47, (s64)(int)(unsigned long)path, 0) != 0)
             bad |= 2;                           /* Dgetpath uses the current directory */
-        if (gemdos(0x40, 1, 0) != 0 && sys(GEMDOS, 0x40, 1, (s64)(int)(unsigned long)"", 0) < 0)
-            bad |= 4;                           /* Fwrite(stdout, ...) through the std map */
+        /* the standard-handle map: Fdup() of stdout, which the kernel resolves
+         * through p_uft, must give a real handle that closes again; and a
+         * console write must not fault */
+        gemdos(0x09, (s64)(int)(unsigned long)"", 0);   /* Cconws("") */
+        fh = gemdos(0x45, 1, 0);
+        if (fh < 6)
+            bad |= 4;
+        else if (gemdos(0x3e, fh, 0) != 0)
+            bad |= 4;
         fh = gemdos(0x3d, (s64)(int)(unsigned long)"X32HELLO.TOS", 0);
         if (fh == -33)
             ;                                   /* not on the boot drive: skip the file part */
