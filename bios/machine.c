@@ -837,6 +837,8 @@ const char * machine_name(void)
     return "Amiga";
 #elif defined(MACHINE_RPI)
     return raspi_board.name;
+#elif defined(MACHINE_PC_X86_64)
+    return "PC (x86-64 UEFI)";
 #elif defined(MACHINE_M548X)
     return m548x_machine_name();
 #else
