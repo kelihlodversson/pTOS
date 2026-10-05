@@ -193,7 +193,7 @@ BOOL x86_64_take_kernel_code_pd(PD *p)
 #ifndef __x86_64__
 #define x86_64_ring3_caller() FALSE
 #define x86_64_check_launch(p) E_OK
-#define x86_64_hand_over(p)
+#define x86_64_hand_over(p) do { } while (0)
 #define x86_64_prepare_launch(p) TRUE
 #endif
 

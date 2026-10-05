@@ -195,7 +195,7 @@ kernel's live file and directory table indices, which the kernel reads and
 updates in the (user-writable) basepage and does not validate.  A ring-3
 process that rewrites them can make the kernel index its system tables out of
 range.  The authoritative per-process tables belong in the KPROC record; that
-refactor is tracked in a separate issue and is out of scope here.
+refactor is tracked in #418 and is out of scope here.
 
 Interrupts stay disabled in ring 3 and in system calls, as everywhere else in
 this kernel (devices are polled).  The exception stack (TSS rsp0) is still
