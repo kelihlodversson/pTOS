@@ -1246,6 +1246,27 @@ static void test_ring3(void)
         same(&s, "nested Pexec from ring 3");
     }
 
+    /* PE_LOAD then PE_GOTHENFREE, and a child freeing its parent's block */
+    {
+        snap(&s);
+        rc = run_probe('l');
+        if (rc == 0x100) {
+            kcprintf("x86-64 pexec load: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "ring 3 loads a program with PE_LOAD and launches it with PE_GOTHENFREE");
+            kcprintf(rc == 0 ? "x86-64 pexec load: PASS\n" : "x86-64 pexec load: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "PE_LOAD and PE_GOTHENFREE from ring 3");
+        snap(&s);
+        rc = run_probe('y');
+        if (rc != 0x100) {
+            if (rc != 0)
+                kcprintf("memtest: child Mfree probe: exit code 0x%lx\n", rc);
+            CHECK(rc == 0, "a child cannot free its parent's basepage");
+        }
+        same(&s, "a child's Mfree of its parent's block");
+    }
+
     /* the chain of ancestor basepages grows by one level per launch */
     {
         snap(&s);
@@ -1329,7 +1350,7 @@ static void test_ring3(void)
                 CHECK(after.kprocs == before.kprocs && after.dir_refs == before.dir_refs &&
                       (long)after.heap.live_blocks - (long)before.heap.live_blocks == grown,
                       "resident children leave no process records, references or stray heap blocks behind");
-                CHECK(grown > 0 && grown <= 12, "only the resident blocks themselves stay allocated");
+                CHECK(grown > 0 && grown <= 20, "only the resident blocks themselves stay allocated");
                 CHECK((long)x86_64_procmem_free_ownerless_since(first_gen) == grown,
                       "the resident blocks are all given back");
             }

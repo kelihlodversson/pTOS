@@ -71,7 +71,7 @@ void kproc_set_creator(PD *pd, PD *creator);
 void kproc_hand_over(PD *caller, PD *child);
 LONG kproc_check_launch(PD *pd, PD *caller);
 void kproc_unborrow(void *block);
-ULONG kproc_borrow_count(void *block);
+ULONG kproc_borrow_count(PD *launcher, void *block);
 UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top);
 UQUAD kproc_user_stack(PD *pd);         /* initial RSP of an image's own stack; 0 if none */
 UQUAD kproc_user_pml4(PD *pd);          /* 0 if not prepared */

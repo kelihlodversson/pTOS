@@ -100,6 +100,7 @@ UQUAD x86_64_procmem_phys_of(UQUAD va);
  * dereferenced.
  */
 void x86_64_procmem_set_owner(const void *p, const void *owner);
+const void *x86_64_procmem_owner(const void *p);   /* NULL: none, or not an allocation */
 void x86_64_procmem_free_owned(const void *owner, void (*pre_free)(void *base));
 void x86_64_procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *base));
 

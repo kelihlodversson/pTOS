@@ -174,7 +174,11 @@ long x86_64_procmem_mfree(void *addr)
      * basepage, say) cannot be freed from under it, and tearing down the
      * address space the caller is running in would be worse: refuse, and
      * leave the KPROC record alone. */
-    if (x86_64_procmem_pins(addr) > kproc_borrow_count(addr))
+    /* A ring-3 caller frees what it owns and nothing else: the blocks of a
+     * process it launched are not its, nor those a peer retained. */
+    if (x86_64_ring3_caller() && x86_64_procmem_owner(addr) != run)
+        return EACCDN;
+    if (x86_64_procmem_pins(addr) > kproc_borrow_count(run, addr))
         return EACCDN;
     x86_64_release_block(addr);     /* also returns it if it was borrowed */
     return x86_64_procmem_free(addr) ? E_OK : EIMBA;

@@ -33,11 +33,14 @@
  *   m  like n, but the child (C:\X32HELLO.TOS with the tail "f") faults: the
  *      Pexec must return 0xffff, and this process must still be able to make
  *      system calls; exits with 0 if so, 0x100 if the file is not there
- *   q  like n, but six children that terminate and stay resident (Ptermres,
+ *   q  like n, but ten children that terminate and stay resident (Ptermres,
  *      tail "r"): each must exit with 0 and this process must keep launching
  *      (the blocks lent to it for a resident child must be returned, or its
  *      launches start to fail); exits with 0 if so, 0x100 if the file is not
  *      there
+ *   l  Pexec(PE_LOAD) of C:\\X32HELLO.TOS and PE_GOTHENFREE of its basepage; exits
+ *      with 0, 0x100 if the file is not there
+ *   y  a child (tail F) must not be able to Mfree this process's basepage
  *   w  walk the chain of ancestor basepages (p_parent): exits with 0x100 + the
  *      number of links, or 0x7f if a link is malformed (#416)
  *   v  like n, but the child (tail "w") must see one more ancestor than this
@@ -226,7 +229,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         static const char resident_tail[] = { 1, 'r', 0 };
         int run_no;
 
-        for (run_no = 0; run_no < 6; run_no++) {
+        for (run_no = 0; run_no < 10; run_no++) {
             s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
                           (s64)(int)(unsigned long)resident_tail, 0);
 
@@ -316,6 +319,25 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0) != EIMBA)
             bad |= 64;
 
+        /* PE_GOTHENFREE: runs the code, frees its own blocks, and is gone */
+        bp_addr = sys4(GEMDOS, 0x4b, 5, 0, none, 0);
+        if (bp_addr <= 0) {
+            bad |= 2048;
+        } else {
+            bp = (volatile u32 *)(unsigned long)bp_addr;
+            bp[1] = bp[0] + 0x7f1;
+            for (i = 0; i < sizeof(code); i++)
+                ((volatile unsigned char *)bp)[0x100 + i] = code[i];
+            bp[2] = (u32)bp_addr + 0x100;
+            env = bp[11];
+            if (sys4(GEMDOS, 0x4b, 6, none, bp_addr, 0) != 0x42)
+                bad |= 2048;
+            if (gemdos(0x49, bp_addr, 0) == 0 || gemdos(0x49, env, 0) == 0)
+                bad |= 4096;                /* already given back */
+            if (sys4(GEMDOS, 0x4b, 6, none, bp_addr, 0) != EIMBA)
+                bad |= 64;
+        }
+
         /* PE_BASEPAGEFLAGS, and a launch of somebody else's block */
         bp2_addr = sys4(GEMDOS, 0x4b, 7, 0, none, 0);
         if (bp2_addr <= 0)
@@ -328,6 +350,48 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             if (gemdos(0x49, bp2_addr, 0) != 0 || gemdos(0x49, env, 0) != 0)
                 bad |= 128;
         }
+        pterm(bad);
+        break;
+    }
+    case 'l': {
+        /* PE_LOAD of a program, then PE_GOTHENFREE of the basepage it gives */
+        s64 bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                       (s64)(int)(unsigned long)"", 0);
+        volatile u32 *bpp = (volatile u32 *)(unsigned long)bpa;
+
+        if (bpa == -33)
+            pterm(0x100);
+        if (bpa <= 0)
+            pterm(1);
+        if (bpp[0] != (u32)bpa)
+            bad |= 2;                       /* p_lowtpa */
+        if (sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", bpa, 0) != 0)
+            bad |= 4;                       /* the program's own exit code */
+        pterm(bad);
+        break;
+    }
+    case 'y': {
+        /* a child must not free what its parent holds: the child (tail F and
+         * the address in hex) tries to Mfree this process's basepage */
+        static char ftail[12] = { 9, 'F' };
+        s64 bpa = sys4(GEMDOS, 0x4b, 5, 0, (s64)(int)(unsigned long)"", 0);
+        s64 rc, envp;
+        int k;
+
+        if (bpa <= 0)
+            pterm(1);
+        for (k = 0; k < 8; k++)
+            ftail[2 + k] = "0123456789abcdef"[(bpa >> (28 - 4 * k)) & 15];
+        ftail[10] = 0;
+        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                  (s64)(int)(unsigned long)ftail, 0);
+        if (rc == -33)
+            pterm(0x100);
+        if (rc != 0)
+            bad |= 1;                       /* the child's Mfree was refused */
+        envp = *(volatile u32 *)(unsigned long)(bpa + 0x2c);
+        if (gemdos(0x49, bpa, 0) != 0 || gemdos(0x49, envp, 0) != 0)
+            bad |= 2;                       /* still ours to free */
         pterm(bad);
         break;
     }

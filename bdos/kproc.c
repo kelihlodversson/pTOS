@@ -426,6 +426,7 @@ LONG kproc_check_launch(PD *pd, PD *caller)
 {
     KPROC *kproc = kproc_find(pd);
     UQUAD lowtpa, hitpa, tbase, first;
+    UBYTE *alloc_end;
 
     if (!kproc || kproc->started || kproc->creator != caller || kproc->aspace)
         return EIMBA;
@@ -438,9 +439,13 @@ LONG kproc_check_launch(PD *pd, PD *caller)
     hitpa = ((pd->p_hitpa + 8UL) & ~15UL) - 8;      /* RSP + 8 divisible by 16 */
     tbase = pd->p_tbase;
     first = (UQUAD)(uintptr_t)kproc->user_start + sizeof(PD);
+    /* the block's own end, not user_end: that is the bound of the launch
+     * last validated, and a launch that failed for lack of memory may be
+     * retried with different fields */
+    alloc_end = (UBYTE *)kproc->user_start + x86_64_procmem_size(kproc->user_start);
     if (lowtpa != (UQUAD)(uintptr_t)kproc->user_start ||
-        hitpa < first || hitpa > (UQUAD)(uintptr_t)kproc->user_end ||
-        tbase < first || tbase > hitpa ||
+        hitpa < first || hitpa > (UQUAD)(uintptr_t)alloc_end ||
+        tbase < first || tbase >= hitpa ||
         pd->p_env != PTR_TO_USERPTR(kproc->env_start))
         return EPLFMT;
     pd->p_hitpa = (ULONG)hitpa;
@@ -470,19 +475,20 @@ BOOL kproc_borrow(PD *launcher, void *block)
     return FALSE;
 }
 
-/* How many ring-3 launchers hold the block borrowed: pins that are theirs to
- * give back, as opposed to a live process's own mapping. */
-ULONG kproc_borrow_count(void *block)
+/* How many times `launcher` holds the block borrowed: pins that are its to
+ * give back, as opposed to somebody else's loan or a live process's own
+ * mapping. */
+ULONG kproc_borrow_count(PD *launcher, void *block)
 {
     UQUAD va = (UQUAD)(uintptr_t)block;
     KPROC *kproc;
     ULONG n = 0;
     int i;
 
-    for (kproc = kproc_list; kproc; kproc = kproc->next)
+    kproc = kproc_find(launcher);
+    if (kproc && kproc->aspace)
         for (i = 0; i < KPROC_BORROWS; i++)
-            if (kproc->borrowed[i].bytes && kproc->borrowed[i].va == va &&
-                kproc->aspace)
+            if (kproc->borrowed[i].bytes && kproc->borrowed[i].va == va)
                 n++;
     return n;
 }

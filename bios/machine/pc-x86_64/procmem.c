@@ -289,6 +289,13 @@ BOOL x86_64_procmem_range_live(UQUAD va, UQUAD bytes)
     return TRUE;
 }
 
+const void *x86_64_procmem_owner(const void *p)
+{
+    struct alloc **link = find_link(p);
+
+    return link ? (*link)->owner : NULL;
+}
+
 void x86_64_procmem_set_owner(const void *p, const void *owner)
 {
     struct alloc **link = find_link(p);

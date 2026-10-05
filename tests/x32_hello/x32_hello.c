@@ -144,6 +144,18 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 
     if (cmdline[0] == 1 && cmdline[1] == 'f')
         *null_pointer = 1;              /* a page fault in ring 3 */
+    if (cmdline[0] == 9 && cmdline[1] == 'F') {
+        /* Mfree() of the address given in hex: must be refused */
+        u64 addr = 0;
+        int k;
+
+        for (k = 0; k < 8; k++) {
+            char c = cmdline[2 + k];
+
+            addr = (addr << 4) | (u64)(c <= '9' ? c - '0' : c - 'a' + 10);
+        }
+        gemdos1(0x4c, gemdos1r(0x49, addr) == 0 ? 1 : 0);
+    }
     if (cmdline[0] == 1 && cmdline[1] == 'w')
         gemdos1(0x4c, walk_ancestors(basepage));
     if (cmdline[0] == 1 && cmdline[1] == 'r')
