@@ -17,11 +17,11 @@
 #include "biosext.h"
 #ifdef __x86_64__
 #include "kheap.h"
+#endif
+#if CONF_WITH_USER_ASPACE
 #include "procmem.h"
 #include "x32image.h"
-#endif
 
-#ifdef __x86_64__
 #define KPROC_BORROWS 16       /* two per child a ring-3 process holds */
 #endif
 
@@ -36,7 +36,11 @@ typedef struct kproc KPROC;
 struct kproc {
     PD *pd;
     DTAINFO *dta;
-#ifdef __x86_64__
+    BOOL started;               /* proc_go() has launched it */
+    PD *parent;                 /* who launched it: the trusted copy of p_parent */
+    SBYTE uft[NUMSTD];          /* its standard-handle map and current directories: */
+    UBYTE curdir[NUMCURDIR];    /* the authoritative ones, see PD_UFT() */
+#if CONF_WITH_USER_ASPACE
     /* The two separate allocations a process owns: its environment block
      * and its basepage/TPA/stack.  The window does not keep them adjacent,
      * and whatever lies between them is somebody else's. */
@@ -47,11 +51,7 @@ struct kproc {
     UBYTE *user_start;
     UBYTE *user_end;
     X86_64_ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
-    BOOL started;               /* proc_go() has launched it */
-    PD *parent;                 /* who launched it: the trusted copy of p_parent */
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
-    SBYTE uft[NUMSTD];          /* its standard-handle map and current directories: */
-    UBYTE curdir[NUMCURDIR];    /* the authoritative ones, see PD_UFT() */
     const X32_IMAGE *image;     /* built-in program to map private, or NULL */
     UQUAD entry;                /* its entry point once loaded, else 0 */
     UQUAD stack_top;            /* its private stack's top once loaded, else 0 */
@@ -97,9 +97,9 @@ BOOL kproc_create(PD *pd)
     kproc = KPROC_ALLOC();
     if (!kproc)
         return FALSE;
+    bzero(kproc, sizeof *kproc);
     kproc->pd = pd;
     kproc->dta = (DTAINFO *)pd->p_cmdlin;
-#ifdef __x86_64__
     /* Take over the tables the basepage may already hold; from now on the
      * basepage's own copies are unused, and cleared so no stale value is
      * mistaken for state. */
@@ -107,6 +107,7 @@ BOOL kproc_create(PD *pd)
     memcpy(kproc->curdir, pd->p_curdir, sizeof kproc->curdir);
     bzero(pd->p_uft, sizeof pd->p_uft);
     bzero(pd->p_curdir, sizeof pd->p_curdir);
+#if CONF_WITH_USER_ASPACE
     /* Snapshot bounds before ring 3 can modify the public basepage. */
     kproc->env_start = USERPTR_TO_PTR(pd->p_env);
     kproc->env_end = kproc->env_start +
@@ -139,7 +140,7 @@ void kproc_destroy(PD *pd)
         if ((*link)->pd == pd) {
             KPROC *kproc = *link;
             *link = kproc->next;
-#ifdef __x86_64__
+#if CONF_WITH_USER_ASPACE
             /* Unlinked first, so the record is gone before its address
              * space is torn down: a second kproc_destroy() for the same
              * PD finds nothing and cannot free either twice. */
@@ -151,7 +152,6 @@ void kproc_destroy(PD *pd)
         }
 }
 
-#ifdef __x86_64__
 /* The tables of a process with a record are in it; the few without one (the
  * boot-time basepages, which only ring 0 ever touches) keep them in the PD. */
 SBYTE *kproc_uft(PD *pd)
@@ -197,8 +197,13 @@ PD *kproc_get_parent(PD *pd)
      * code (and then continues running) by it.  The launcher recorded here
      * is the only trusted value. */
     if (!kproc || !kproc->parent) {
+#if CONF_WITH_USER_ASPACE
         KINFO(("Missing parent for process record %p\n", pd));
         halt();
+#else
+        /* no memory protection to defeat: p_parent is as good as it ever was */
+        return (PD *)USERPTR_TO_PTR(pd->p_parent);
+#endif
     }
     return kproc->parent;
 }
@@ -219,14 +224,13 @@ BOOL kproc_discard(PD *pd)
     kproc_destroy(pd);
     return unstarted;
 }
-#endif
 
 void kproc_set_dta(PD *pd, DTAINFO *dta)
 {
     KPROC *kproc = kproc_find(pd);
 
     if (!kproc) {
-#ifdef __x86_64__
+#if CONF_WITH_USER_ASPACE
         KINFO(("Missing kernel process record for %p\n", pd));
         halt();
 #else
@@ -242,7 +246,7 @@ DTAINFO *kproc_get_dta(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
 
-#ifdef __x86_64__
+#if CONF_WITH_USER_ASPACE
     /* pd->p_xdta lives in the basepage, which is writable by the owning
      * process, so it must never be trusted as a DTA pointer: a ring-3
      * caller could store any address there and then have Fsfirst()/
@@ -263,7 +267,7 @@ DTAINFO *kproc_get_dta(PD *pd)
 #endif
 }
 
-#ifdef __x86_64__
+#if CONF_WITH_USER_ASPACE
 /*
  * The ancestors page (include/procmem.h): `parent`'s basepage, then the copies
  * its own page holds, each scrubbed of what must not leak or be believed --

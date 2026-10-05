@@ -479,6 +479,26 @@ to configs/ is enough to have it built; the matrices are derived from that
 directory rather than listed in the workflows.
 
 
+Kernel-private process records
+==============================
+
+CONF_WITH_KPROC keeps a record per process in kernel memory, next to its
+GEMDOS basepage (bdos/kproc.c): the launching process (Pterm() uses it
+instead of the basepage's p_parent), whether the process was launched, its
+DTA pointer, and its standard handle map and current directories, which are
+then no longer read from or written to the basepage's p_uft and p_curdir
+fields (as in FreeMiNT).  It is mandatory on x86-64, where ring-3 processes
+can write their whole basepage, and optional on every other architecture,
+where it is off by default (a program can overwrite the kernel there
+anyway).  Turn it on in "make menuconfig" to run the same code the x86-64
+port runs; programs that look at p_uft or p_curdir of their own basepage
+then see zeros.  The configurations rpi2-kproc and atari512-kproc build with
+it on.  Everything that is specific to per-process address spaces (page
+tables, kernel stacks, loaned memory, the ancestors' basepage copies) is
+selected by CONF_WITH_USER_ASPACE, which only the x86-64 port sets.
+
+
+
 Adding a configuration option
 =============================
 

@@ -339,8 +339,8 @@ static void release_pd_files(PD *r)
 
 static void ixterm(PD *r)
 {
-#ifndef __x86_64__
-    release_pd_files(r);    /* (x86-64: xterm() did, while the record was there) */
+#if !CONF_WITH_KPROC
+    release_pd_files(r);    /* (with records: xterm() did, while the record was there) */
 #endif
 
     /* free each item in the allocated list that is owned by 'r' */
@@ -944,8 +944,10 @@ static void proc_go(PD *p)
      * here would fault there instead of trapping at the point of
      * corruption. */
     p->p_parent = PTR_TO_USERPTR(run);
-#ifdef __x86_64__
+#if CONF_WITH_KPROC
     kproc_set_parent(p, run);   /* the copy xterm() trusts */
+#endif
+#if CONF_WITH_USER_ASPACE
     /* A ring-3 process cannot see its launcher's basepage, nor the
      * launcher's own: it gets read-only copies at a fixed address instead. */
     if (kproc_ancestors_va(p))
@@ -1000,7 +1002,7 @@ static void proc_go(PD *p)
 #endif
 
     /* the new process is the one to run */
-#ifdef __x86_64__
+#if CONF_WITH_KPROC
     kproc_mark_started(p);
 #endif
     run = (PD *)p;
@@ -1037,7 +1039,7 @@ void xterm(UWORD rc)
     userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
 
-#ifdef __x86_64__
+#if CONF_WITH_KPROC
     /* not run->p_parent: that field is in the process's own writable
      * memory, and run->p_dreg[0] is written through the result below */
     run = kproc_get_parent(p);

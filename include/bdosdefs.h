@@ -183,13 +183,14 @@ struct _pd
 
 /*
  * The standard-handle map and the per-drive current directories of a process.
- * On x86-64 a ring-3 process can write its whole basepage, so the kernel keeps
- * the authoritative copies in its own record of the process (bdos/kproc.c) and
- * the p_uft/p_curdir fields of such a basepage are unused (as in FreeMiNT).
- * Everywhere else, and for a process without a record, they are the fields.
+ * With kernel-private process records (CONF_WITH_KPROC, bdos/kproc.c) the
+ * authoritative copies are in the record, and the p_uft/p_curdir fields of the
+ * basepage are unused (as in FreeMiNT): a ring-3 process can write its whole
+ * basepage.  Without the option, and for a process without a record, they are
+ * the fields.
  * Always go through these, never through the fields.
  */
-#if defined(__x86_64__) && CONF_WITH_KPROC
+#if CONF_WITH_KPROC
 SBYTE *kproc_uft(PD *pd);
 UBYTE *kproc_curdir(PD *pd);
 #define PD_UFT(pd)      kproc_uft(pd)
