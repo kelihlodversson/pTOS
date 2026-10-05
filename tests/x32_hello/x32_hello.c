@@ -104,6 +104,35 @@ static void gemdos1(u64 func, u64 arg)
                        : "rcx", "r11", "memory");
 }
 
+/* Walks the basepage chain p_parent leads to: every link must lie on the
+ * read-only ancestors page, carry this process's own environment and no file
+ * or directory tables; returns 0x100 + the number of links, or 0x7f if one
+ * is wrong.  (#416) */
+static int walk_ancestors(u64 basepage)
+{
+    const volatile u32 *bp = (const volatile u32 *)(unsigned long)basepage;
+    u32 env = bp[11];                   /* p_env */
+    u32 at = bp[9];                     /* p_parent */
+    int n = 0, i;
+
+    while (at) {
+        const volatile u32 *a = (const volatile u32 *)(unsigned long)at;
+
+        if (at < 0x3ffb0000u || at + 0x100 > 0x3ffb1000u || (at & 0xff) || n >= 16)
+            return 0x7f;
+        if (a[11] != env || a[8] || a[9] > 0x3ffb1000u)
+            return 0x7f;                /* p_env, p_uft, p_parent */
+        if (a[12] || (a[13] & 0xffff))
+            return 0x7f;                /* p_uft */
+        for (i = 0; i < 4; i++)
+            if (a[16 + i])
+                return 0x7f;            /* p_curdir */
+        n++;
+        at = a[9];
+    }
+    return 0x100 + n;
+}
+
 void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 {
     int bad = 0;
@@ -115,6 +144,8 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 
     if (cmdline[0] == 1 && cmdline[1] == 'f')
         *null_pointer = 1;              /* a page fault in ring 3 */
+    if (cmdline[0] == 1 && cmdline[1] == 'w')
+        gemdos1(0x4c, walk_ancestors(basepage));
     if (cmdline[0] == 1 && cmdline[1] == 'r')
         gemdos2(0x31, 0x100, 0);        /* Ptermres(0x100, 0): stay resident */
 

@@ -93,6 +93,7 @@ include/procmem.h):
     0x00000000 - 0x001fffff   unmapped: null guard (2 MiB)
     0x00200000 - 0x003fffff   basepage, environment and TPA blocks (window)
     0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB)
+    0x3ffb0000 - 0x3ffb0fff   ancestors' basepages, read-only (below)
     0x3ffc0000 - 0x3fffffff   user stack (256 KiB), growing down from
                               X86_64_USER_STACK_TOP; the page below it is
                               left unmapped as a guard
@@ -150,10 +151,51 @@ supervisor-only and pinned, when it is allocated (kproc_borrow(), called from
 alloc_env()/alloc_tpa() for a ring-3 launcher) and returned when it is freed
 (kproc_unborrow(), from the release path); no other process's block is ever
 mapped, so a syscall pointer into a peer's memory faults in ring 0 instead of
-reading or writing it.  Only
-PE_LOADGO is accepted from ring 3 (EINVFN otherwise): the other modes would
-hand the caller a basepage in such a block, which stays supervisor-only and
-faults when used, or ask to launch one, which a process cannot set up.
+reading or writing it.
+
+Basepages in ring 3 (#416)
+--------------------------
+
+All Pexec() modes are accepted from ring 3 except the kernel-internal
+PE_RELOCATE.  PE_BASEPAGE, PE_BASEPAGEFLAGS and PE_LOAD return a basepage the
+caller can use: its blocks (basepage/TPA and environment) stay borrowed, but
+are re-granted to the caller as user memory (kproc_hand_over()).  The caller
+may rewrite the basepage, grow p_hitpa up to the end of its block, and place
+code in the TPA.
+
+A basepage handed to PE_GO or PE_GOTHENFREE is only a request.  The kernel
+keeps its own record of every basepage it made (KPROC), including who made it
+and whether it was launched, and kproc_check_launch() accepts the request only
+if that record says this very caller made it and nothing has launched or freed
+it since (block identities are checked, so a reused address does not pass).
+Anything else -- a copy of a basepage, a block that is no basepage, somebody
+else's, an already launched or freed one, the caller's own running basepage --
+is EIMBA.  The fields the caller may have changed are then validated, each
+read once: p_lowtpa must be the basepage itself, p_hitpa within its block
+(rounded for the initial stack alignment), p_tbase inside the TPA, p_env the
+recorded environment block; otherwise EPLFMT.  The entry point, stack and
+bounds the launch uses come from the record and the validated values, never
+from fields that were not checked.
+
+A ring-3 process cannot see its launcher's basepage (it is not mapped for it),
+and its p_parent could not be believed if it could.  Instead each process has a
+read-only page of scrubbed copies of its ancestors' basepages at
+0x3ffb0000: its launcher's, that one's launcher's, and so on, up to
+16 levels, 256 bytes each, chained through p_parent (the last is 0) and
+p_parent of the process itself points at the first.  The copies come from the
+launcher at the time of the launch, extended by the launcher's own page.  In
+each copy p_env is the *process's own* environment (so nothing dangles), and
+p_uft, p_curdir, p_xdta, and the saved registers are zero.  A process can
+read what its ancestors were told (command line, flags, drive), and nothing
+it could use against them.  The kernel never reads p_parent: Pterm() uses the
+launcher recorded in the KPROC.
+
+Known limit: p_uft and p_curdir of a process's *own* basepage still hold the
+kernel's live file and directory table indices, which the kernel reads and
+updates in the (user-writable) basepage and does not validate.  A ring-3
+process that rewrites them can make the kernel index its system tables out of
+range.  The authoritative per-process tables belong in the KPROC record; that
+refactor is tracked in a separate issue and is out of scope here.
 
 Interrupts stay disabled in ring 3 and in system calls, as everywhere else in
 this kernel (devices are polled).  The exception stack (TSS rsp0) is still
@@ -174,5 +216,7 @@ arguments, exit codes, fresh private pages per process, three kinds of fault
 -- and checks after each run that CR3, the GS bases and every allocator are
 back where they were.  With C:\X32HELLO.TOS on the boot drive (CI puts it
 there) the probe also runs it through Pexec() from ring 3 and must resume and
-keep making calls ("x86-64 nested pexec: PASS").  The CI boot test requires its PASS line and that the
+keep making calls ("x86-64 nested pexec: PASS"), and checks that a grandchild sees two ancestor
+basepages ("x86-64 ancestors: PASS").  Basepage handling (mode g of the probe) builds,
+launches and frees basepages and tries forged launches.  The CI boot test requires its PASS line and that the
 built-in EmuCON ran afterwards without a fault.

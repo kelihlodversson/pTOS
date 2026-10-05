@@ -1205,6 +1205,10 @@ static void test_ring3(void)
     /* basepages a ring-3 process can use, and launches it cannot forge (#416) */
     probe_expect('g', 0, "ring 3 builds, launches and frees basepages; forged launches are refused");
 
+    /* the ancestors' basepages: one (this launcher's), read-only */
+    probe_expect('w', 0x101, "a ring-3 process sees its launcher's basepage as a scrubbed copy");
+    probe_expect('u', 0xffff, "the ancestors page is read-only");
+
     /* a fault in ring 3 ends that process and nothing else */
     probe_expect('f', 0xffff, "a ring-3 write to page 0 is contained");
     probe_expect('k', 0xffff, "ring-3 access to the system variables is contained");
@@ -1240,6 +1244,19 @@ static void test_ring3(void)
                 kcprintf("x86-64 nested pexec: FAIL (0x%lx)\n", rc);
         }
         same(&s, "nested Pexec from ring 3");
+    }
+
+    /* the chain of ancestor basepages grows by one level per launch */
+    {
+        snap(&s);
+        rc = run_probe('v');
+        if (rc == 0x100) {
+            kcprintf("x86-64 ancestors: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "a grandchild sees its launcher's and the launcher's launcher's basepage");
+            kcprintf(rc == 0 ? "x86-64 ancestors: PASS\n" : "x86-64 ancestors: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "ancestor chain of a nested launch");
     }
 
     /*

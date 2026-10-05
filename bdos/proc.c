@@ -921,6 +921,10 @@ static void proc_go(PD *p)
     p->p_parent = PTR_TO_USERPTR(run);
 #ifdef __x86_64__
     kproc_set_parent(p, run);   /* the copy xterm() trusts */
+    /* A ring-3 process cannot see its launcher's basepage, nor the
+     * launcher's own: it gets read-only copies at a fixed address instead. */
+    if (kproc_ancestors_va(p))
+        p->p_parent = (ULONG)kproc_ancestors_va(p);
 #endif
 
     /* create a stack at the end of the TPA */

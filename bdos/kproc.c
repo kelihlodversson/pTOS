@@ -53,6 +53,7 @@ struct kproc {
     const X32_IMAGE *image;     /* built-in program to map private, or NULL */
     UQUAD entry;                /* its entry point once loaded, else 0 */
     UQUAD stack_top;            /* its private stack's top once loaded, else 0 */
+    ULONG ancestors;            /* basepage copies on its read-only ancestors page */
     UQUAD kstack_phys;          /* its kernel stack (system calls), 0 if none */
     UQUAD kstack_top;           /* initial stack pointer of that stack */
     struct {                    /* blocks of a child being launched from this */
@@ -229,6 +230,53 @@ DTAINFO *kproc_get_dta(PD *pd)
 }
 
 #ifdef __x86_64__
+/*
+ * The ancestors page (include/procmem.h): `parent`'s basepage, then the copies
+ * its own page holds, each scrubbed of what must not leak or be believed --
+ * the file and directory tables and DTA pointer (kernel-owned state), the saved
+ * registers -- with p_env redirected to the process's own environment and
+ * p_parent chained to the next copy.  FALSE only if memory ran out.
+ */
+static BOOL build_ancestors(KPROC *kproc, X86_64_ASPACE *as, PD *parent)
+{
+    static UBYTE page[X86_64_USER_ANCESTORS * sizeof(PD)];
+    PD *copy = (PD *)page;
+    KPROC *pk = kproc_find(parent);
+    ULONG n = 1, i;
+
+    memcpy(&copy[0], parent, sizeof(PD));
+    if (pk && pk->aspace && pk->ancestors) {
+        ULONG take = pk->ancestors;
+
+        if (take > X86_64_USER_ANCESTORS - 1)
+            take = X86_64_USER_ANCESTORS - 1;
+        if (!x86_64_aspace_copy_from_user(pk->aspace, &copy[1],
+                                          X86_64_USER_ANCESTORS_VA,
+                                          take * sizeof(PD)))
+            return FALSE;
+        n += take;
+    }
+    for (i = 0; i < n; i++) {
+        bzero(copy[i].p_uft, sizeof copy[i].p_uft);
+        bzero(copy[i].p_curdir, sizeof copy[i].p_curdir);
+        copy[i].p_xdta = 0;
+        bzero(copy[i].p_1fill, sizeof copy[i].p_1fill);
+        bzero(copy[i].p_2fill, sizeof copy[i].p_2fill);
+        bzero(copy[i].p_3fill, sizeof copy[i].p_3fill);
+        bzero(copy[i].p_dreg, sizeof copy[i].p_dreg);
+        bzero(copy[i].p_areg, sizeof copy[i].p_areg);
+        copy[i].p_env = PTR_TO_USERPTR(kproc->env_start);
+        copy[i].p_parent = (i + 1 < n) ?
+            (ULONG)(X86_64_USER_ANCESTORS_VA + (i + 1) * sizeof(PD)) : 0;
+    }
+    if (!x86_64_aspace_load_private(as, X86_64_USER_ANCESTORS_VA,
+                                    4096, ASPACE_PROT_USER,
+                                    page, n * sizeof(PD)))
+        return FALSE;
+    kproc->ancestors = n;
+    return TRUE;
+}
+
 BOOL kproc_prepare_user(PD *pd, PD *parent)
 {
     KPROC *kproc = kproc_find(pd);
@@ -290,6 +338,12 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
         kproc->kstack_phys = 0;
         return FALSE;
     }
+    if (!build_ancestors(kproc, as, parent)) {
+        x86_64_aspace_destroy(as);
+        x86_64_kstack_free(kproc->kstack_phys);
+        kproc->kstack_phys = 0;
+        return FALSE;
+    }
     /*
      * A built-in image gets its segments and a stack of its own, as private
      * pages at the fixed addresses of include/procmem.h's layout.  (A bare
@@ -310,6 +364,13 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
         kproc->stack_top = X86_64_USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
     kproc->aspace = as;
     return TRUE;
+}
+
+UQUAD kproc_ancestors_va(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    return kproc && kproc->aspace && kproc->ancestors ? X86_64_USER_ANCESTORS_VA : 0;
 }
 
 BOOL kproc_set_image(PD *pd, const X32_IMAGE *image)

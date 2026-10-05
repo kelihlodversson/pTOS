@@ -38,6 +38,11 @@
  *      (the blocks lent to it for a resident child must be returned, or its
  *      launches start to fail); exits with 0 if so, 0x100 if the file is not
  *      there
+ *   w  walk the chain of ancestor basepages (p_parent): exits with 0x100 + the
+ *      number of links, or 0x7f if a link is malformed (#416)
+ *   v  like n, but the child (tail "w") must see one more ancestor than this
+ *      process does; exits with 0 if so, 0x100 if the file is not there
+ *   u  write to the ancestors page (a page fault: it is read-only)
  *   f  write to address 0 (a page fault)
  *   k  read the kernel's system variables at 0x4ba (a page fault: that page is
  *      supervisor-only)
@@ -105,6 +110,35 @@ static volatile u32 marker;
 /* an address the compiler cannot see through, so that dereferencing a bad
  * one stays a runtime fault rather than a compile-time diagnostic */
 static u32 *volatile bad_address;
+
+/* Walks the basepage chain p_parent leads to: every link must lie on the
+ * read-only ancestors page, carry this process's own environment and no file
+ * or directory tables; returns 0x100 + the number of links, or 0x7f if one
+ * is wrong.  (#416) */
+static int walk_ancestors(u64 basepage)
+{
+    const volatile u32 *bp = (const volatile u32 *)(unsigned long)basepage;
+    u32 env = bp[11];                   /* p_env */
+    u32 at = bp[9];                     /* p_parent */
+    int n = 0, i;
+
+    while (at) {
+        const volatile u32 *a = (const volatile u32 *)(unsigned long)at;
+
+        if (at < 0x3ffb0000u || at + 0x100 > 0x3ffb1000u || (at & 0xff) || n >= 16)
+            return 0x7f;
+        if (a[11] != env || a[8] || a[9] > 0x3ffb1000u)
+            return 0x7f;                /* p_env, p_uft, p_parent */
+        if (a[12] || (a[13] & 0xffff))
+            return 0x7f;                /* p_uft */
+        for (i = 0; i < 4; i++)
+            if (a[16 + i])
+                return 0x7f;            /* p_curdir */
+        n++;
+        at = a[9];
+    }
+    return 0x100 + n;
+}
 
 void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss);
 
@@ -297,6 +331,23 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(bad);
         break;
     }
+    case 'w':
+        pterm(walk_ancestors(basepage));
+        break;
+    case 'v': {
+        static const char walk_tail[] = { 1, 'w', 0 };
+        s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                      (s64)(int)(unsigned long)walk_tail, 0);
+
+        if (rc == -33)
+            pterm(0x100);
+        pterm(rc == walk_ancestors(basepage) + 1 ? 0 : 1);
+        break;
+    }
+    case 'u':
+        bad_address = (u32 *)(unsigned long)((*(const u32 *)(unsigned long)(basepage + 0x24)) + 0x24);
+        *bad_address = 0;               /* the ancestors page is read-only */
+        break;
     case 'f':
         bad_address = (u32 *)0;
         *bad_address = 1;

@@ -155,8 +155,17 @@ typedef struct x86_64_aspace X86_64_ASPACE;
  *   0x00200000 - 0x003fffff   basepage, environment and TPA blocks
  *                             (procmem, X86_64_LOW_TPA_*; shared kernel view)
  *   0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB)
+ *   0x3ffb0000 - 0x3ffb0fff   ancestors' basepages, read-only (see below)
  *   0x3ffc0000 - 0x3fffffff   user stack (256 KiB), growing down
+ *
+ * The ancestors page holds scrubbed copies of the basepages of the process's
+ * launcher, that one's launcher and so on (X86_64_USER_ANCESTORS levels at
+ * most), 256 bytes each, chained through their p_parent fields (the last one's
+ * is 0).  The process's own p_parent points at the first.  Every copy's p_env
+ * is the process's own environment.
  */
+#define X86_64_USER_ANCESTORS_VA 0x3ffb0000ULL
+#define X86_64_USER_ANCESTORS    16
 #define X86_64_USER_IMAGE_BASE  0x00400000ULL
 #define X86_64_USER_IMAGE_SIZE  0x00400000ULL
 #define X86_64_USER_STACK_TOP   0x40000000ULL

@@ -49,6 +49,7 @@ BOOL kproc_discard(PD *pd);
  * never read back from the user-writable p_tbase.
  */
 BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);
+UQUAD kproc_ancestors_va(PD *pd);       /* where its basepage copies are; 0 if none */
 UQUAD kproc_user_entry(PD *pd);         /* image entry point; 0 if none */
 /* Hands the process's kernel stack (the one its system calls run on) to the
  * launcher, which frees it with x86_64_kstack_free() once the process has

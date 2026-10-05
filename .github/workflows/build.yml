@@ -331,6 +331,11 @@ jobs:
             exit 1
           fi
 
+          if ! grep -q 'x86-64 ancestors: PASS' boot.log; then
+            echo "::error::a ring-3 grandchild did not see its ancestors' basepages"
+            exit 1
+          fi
+
           if ! grep -q 'x86-64 nested fault: PASS' boot.log; then
             echo "::error::a ring-3 process did not survive its child's fault and resume"
             exit 1
