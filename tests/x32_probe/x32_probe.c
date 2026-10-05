@@ -338,6 +338,34 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
                 bad |= 64;
         }
 
+        /* PE_GO of a child that stays resident (Ptermres): the basepage and
+         * environment remain this process's, readable and freeable */
+        {
+            static const unsigned char rescode[] = {
+                0x48, 0xb8, 0x31, 0, 0, 0, 1, 0, 0, 0,      /* Ptermres */
+                0xbf, 0, 1, 0, 0, 0x31, 0xf6, 0x31, 0xd2,
+                0x4d, 0x31, 0xd2, 0x0f, 0x05, 0xeb, 0xfe
+            };
+
+            bp_addr = sys4(GEMDOS, 0x4b, 5, 0, none, 0);
+            if (bp_addr <= 0) {
+                bad |= 8192;
+            } else {
+                bp = (volatile u32 *)(unsigned long)bp_addr;
+                bp[1] = bp[0] + 0x7f1;
+                for (i = 0; i < sizeof(rescode); i++)
+                    ((volatile unsigned char *)bp)[0x100 + i] = rescode[i];
+                bp[2] = (u32)bp_addr + 0x100;
+                env = bp[11];
+                if (sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0) != 0)
+                    bad |= 8192;
+                if (bp[0] != (u32)bp_addr)
+                    bad |= 8192;            /* still readable */
+                if (gemdos(0x49, bp_addr, 0) != 0 || gemdos(0x49, env, 0) != 0)
+                    bad |= 16384;
+            }
+        }
+
         /* PE_BASEPAGEFLAGS, and a launch of somebody else's block */
         bp2_addr = sys4(GEMDOS, 0x4b, 7, 0, none, 0);
         if (bp2_addr <= 0)
@@ -349,6 +377,46 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
                 bad |= 512;                 /* the env block is no basepage */
             if (gemdos(0x49, bp2_addr, 0) != 0 || gemdos(0x49, env, 0) != 0)
                 bad |= 128;
+        }
+        pterm(bad);
+        break;
+    }
+    case 'z': {
+        /* Pexec() running out of loan slots half way (the environment is
+         * lent, the TPA cannot be) must give back what it had got: eight
+         * basepages fill the table, freeing one TPA leaves one slot */
+        s64 bpa[8], envs[8], rc, renv;
+        int k, n;
+
+        for (n = 0; n < 8; n++) {
+            bpa[n] = sys4(GEMDOS, 0x4b, 5, 0, (s64)(int)(unsigned long)"", 0);
+            if (bpa[n] <= 0)
+                break;
+            envs[n] = *(volatile u32 *)(unsigned long)(bpa[n] + 0x2c);
+        }
+        if (n == 8) {
+            if (gemdos(0x49, bpa[7], 0) != 0)
+                bad |= 1;
+            for (k = 0; k < 3; k++)
+                if (sys4(GEMDOS, 0x4b, 5, 0, (s64)(int)(unsigned long)"", 0) != ENSMEM)
+                    bad |= 2;
+        } else {
+            bad |= 4;                       /* the table is not what this assumes */
+        }
+        for (k = 0; k < n; k++) {
+            if (gemdos(0x49, envs[k], 0) != 0)
+                bad |= 8;
+            if (k < 7 && gemdos(0x49, bpa[k], 0) != 0)
+                bad |= 8;
+        }
+        /* all returned: a basepage is available again */
+        rc = sys4(GEMDOS, 0x4b, 5, 0, (s64)(int)(unsigned long)"", 0);
+        if (rc <= 0) {
+            bad |= 16;
+        } else {
+            renv = *(volatile u32 *)(unsigned long)(rc + 0x2c);
+            if (gemdos(0x49, renv, 0) != 0 || gemdos(0x49, rc, 0) != 0)
+                bad |= 32;
         }
         pterm(bad);
         break;

@@ -1246,6 +1246,9 @@ static void test_ring3(void)
         same(&s, "nested Pexec from ring 3");
     }
 
+    /* a Pexec() that runs out of loan slots half way gives back what it took */
+    probe_expect('z', 0, "a failed Pexec(PE_BASEPAGE) from ring 3 releases its blocks and loans");
+
     /* PE_LOAD then PE_GOTHENFREE, and a child freeing its parent's block */
     {
         snap(&s);

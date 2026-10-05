@@ -153,7 +153,10 @@ void x86_64_make_resident(PD *p, ULONG keep_bytes)
      * tail cannot be given back while the launcher still has it mapped: return
      * what a ring-3 launcher borrowed for it first (its environment goes
      * through the callback). */
-    kproc_unborrow(p);
+    /* (a basepage the launcher owns, launched with PE_GO, stays its: the
+     * grant it was given goes on) */
+    if (x86_64_procmem_owner(p) == p)
+        kproc_unborrow(p);
     x86_64_procmem_keep(p, keep_bytes, x86_64_drop_child_record);
 }
 
@@ -167,8 +170,9 @@ void x86_64_free_owned(PD *p)
     x86_64_procmem_free_owned(p, x86_64_release_block);
 }
 
-/* Mfree() of a process allocation: same release, one block. */
-long x86_64_procmem_mfree(void *addr)
+/* Mfree() of a process allocation: same release, one block.  `trusted` is
+ * Pexec()'s own rollback of what it just allocated for its caller. */
+static long x86_64_mfree(void *addr, BOOL trusted)
 {
     /* A block that a live process still has mapped (its own environment or
      * basepage, say) cannot be freed from under it, and tearing down the
@@ -176,12 +180,27 @@ long x86_64_procmem_mfree(void *addr)
      * leave the KPROC record alone. */
     /* A ring-3 caller frees what it owns and nothing else: the blocks of a
      * process it launched are not its, nor those a peer retained. */
-    if (x86_64_ring3_caller() && x86_64_procmem_owner(addr) != run)
+    if (!trusted && x86_64_ring3_caller() && x86_64_procmem_owner(addr) != run)
         return EACCDN;
     if (x86_64_procmem_pins(addr) > kproc_borrow_count(run, addr))
         return EACCDN;
     x86_64_release_block(addr);     /* also returns it if it was borrowed */
     return x86_64_procmem_free(addr) ? E_OK : EIMBA;
+}
+
+long x86_64_procmem_mfree(void *addr)
+{
+    return x86_64_mfree(addr, FALSE);
+}
+
+/* xexec()'s rollback: its blocks are not owned yet, or belong to the child
+ * it failed to start, and are lent to a ring-3 caller who must get them back. */
+static void xexec_free(void *addr)
+{
+    if (x86_64_procmem_contains(addr))
+        x86_64_mfree(addr, TRUE);
+    else
+        xmfree(addr);
 }
 
 BOOL x86_64_take_kernel_code_pd(PD *p)
@@ -195,6 +214,7 @@ BOOL x86_64_take_kernel_code_pd(PD *p)
 #endif
 
 #ifndef __x86_64__
+#define xexec_free(a) xmfree(a)
 #define x86_64_ring3_caller() FALSE
 #define x86_64_check_launch(p) E_OK
 #define x86_64_hand_over(p) do { } while (0)
@@ -415,7 +435,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         p = (PD *)alloc_tpa((ULONG)path,sizeof(PD),&max);
 
         if (p == NULL) {    /* not even enough memory for basepage */
-            xmfree(env_ptr);
+            xexec_free(env_ptr);
             KDEBUG(("BDOS xexec: No memory for basepage\n"));
             return ENSMEM;
         }
@@ -427,8 +447,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         /* initialize the PD */
         init_pd_fields(p, tail, max, env_ptr);
         if (!kproc_create(p)) {
-            xmfree(env_ptr);
-            xmfree(p);
+            xexec_free(env_ptr);
+            xexec_free(p);
             return ENSMEM;
         }
         p->p_flags = (ULONG)path;   /* set the flags */
@@ -518,7 +538,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     /* if failed, free env_ptr and return */
     if (p == NULL) {
         KDEBUG(("BDOS xexec: no memory for TPA\n"));
-        xmfree(env_ptr);
+        xexec_free(env_ptr);
         xclose(fh);
         return ENSMEM;
     }
@@ -533,8 +553,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     /* initialize the fields in the PD structure */
     init_pd_fields(p, tail, max, env_ptr);
     if (!kproc_create(p)) {
-        xmfree(env_ptr);
-        xmfree(p);
+        xexec_free(env_ptr);
+        xexec_free(p);
         xclose(fh);
         return ENSMEM;
     }
@@ -553,8 +573,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
         /* free any memory allocated so far & close the file */
         kproc_destroy(cur_p);
-        xmfree(USERPTR_TO_PTR(cur_p->p_env));
-        xmfree(cur_p);
+        xexec_free(USERPTR_TO_PTR(cur_p->p_env));
+        xexec_free(cur_p);
         xclose(fh);
 
         /* we still have to jump back to bdosmain.c so that the proper error
@@ -569,8 +589,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         KDEBUG(("BDOS xexec: kpgmld returned %ld (0x%lx)\n",rc,rc));
         /* free any memory allocated yet */
         kproc_destroy(cur_p);
-        xmfree(USERPTR_TO_PTR(cur_p->p_env));
-        xmfree(cur_p);
+        xexec_free(USERPTR_TO_PTR(cur_p->p_env));
+        xexec_free(cur_p);
 
         return rc;
     }
@@ -584,8 +604,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      * directories, which an ENSMEM return here would otherwise leak. */
     if (flag != PE_LOAD && !x86_64_prepare_launch(cur_p)) {
         kproc_destroy(cur_p);
-        xmfree(USERPTR_TO_PTR(cur_p->p_env));
-        xmfree(cur_p);
+        xexec_free(USERPTR_TO_PTR(cur_p->p_env));
+        xexec_free(cur_p);
         return ENSMEM;
     }
     init_pd_files(cur_p);
