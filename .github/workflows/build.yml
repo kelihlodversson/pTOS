@@ -121,9 +121,7 @@ jobs:
           CONFIG: ${{ matrix.config }}
         run: |
           make "${CONFIG}_defconfig"
-          # CI deliberately uses Ubuntu's native gcc/binutils instead of the
-          # x86_64-elf- cross toolchain selected by the developer default.
-          make CROSS_COMPILE=
+          make
 
       - name: Collect the build products
         run: |
@@ -213,7 +211,9 @@ jobs:
           CONFIG: ${{ matrix.config }}
         run: |
           make "${CONFIG}_defconfig"
-          make
+          # CI deliberately uses Ubuntu's native gcc/binutils instead of the
+          # x86_64-elf- cross toolchain selected by the developer default.
+          make CROSS_COMPILE=
 
       - name: Collect the build products
         run: |
