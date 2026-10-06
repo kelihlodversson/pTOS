@@ -26,10 +26,6 @@
  */
 void x86_64_ps2_init(void);
 
-/* Consume one pending controller byte without relying on IRQ delivery.
- * Used by the polled serial-console path while a ring-3 syscall has IF clear. */
-void x86_64_ps2_poll(void);
-
 /* Called from bios/machine/pc-x86_64/irq.c's IRQ1 dispatch: reads one
  * scancode byte from the controller and feeds it to bios/ikbd.c's
  * kbd_int(), the same machine-independent entry point every other IKBD-

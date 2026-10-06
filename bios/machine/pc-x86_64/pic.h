@@ -29,6 +29,7 @@
                                 * unmasked for any PIC2 line (mouse
                                 * included) to ever reach the CPU. */
 #define X86_64_IRQ_MOUSE 12    /* PS/2 port 2 (aux), vector 44 */
+#define X86_64_IRQ_COM1 4      /* 16550 COM1, vector 36 */
 
 /*
  * Remaps both PICs to X86_64_PIC1_VECTOR_BASE/X86_64_PIC2_VECTOR_BASE and

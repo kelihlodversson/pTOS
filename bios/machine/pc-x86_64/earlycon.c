@@ -28,6 +28,7 @@
 
 #define UART_LSR_DR   0x01 /* data ready (a byte is available to read) */
 #define UART_LSR_THRE 0x20 /* transmit holding register empty */
+#define UART_IER_RDI  0x01 /* received-data interrupt */
 
 void earlycon_init(void)
 {
@@ -74,6 +75,11 @@ BOOL earlycon_can_write(void)
 void earlycon_write_byte(UBYTE b)
 {
     x86_64_outb(COM1_PORT + UART_THR, b);
+}
+
+void earlycon_enable_rx_interrupt(void)
+{
+    x86_64_outb(COM1_PORT + UART_IER, UART_IER_RDI);
 }
 
 void earlycon_puthex(UQUAD value)

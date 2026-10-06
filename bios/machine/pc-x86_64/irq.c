@@ -19,16 +19,18 @@
 #include "ps2.h"
 #include "irq.h"
 #include "vectors.h"
+#include "earlycon.h"
+#include "ikbd.h"
 
 /* The 200 Hz rate every other pTOS machine's own hardware timer drives
  * vector_5ms()/int_timerc() at (see bios/arch/x86_64/vectors.c's own
  * comment) -- not this file's own invention. */
 #define SYSTEM_TICK_HZ 200
 
-/* irqasm.S's own entry stubs, numbered by IDT vector (32 = PIC1 IRQ0, 33 =
- * PIC1 IRQ1, 44 = PIC2 IRQ4 i.e. IRQ12). */
+/* irqasm.S's own entry stubs, numbered by IDT vector. */
 extern void x86_64_irq32(void);
 extern void x86_64_irq33(void);
+extern void x86_64_irq36(void);
 extern void x86_64_irq44(void);
 
 /* Called from irqasm.S's common trampoline for every device IRQ this
@@ -46,6 +48,10 @@ void x86_64_pc_irq_dispatch(int vector)
     case X86_64_PIC1_VECTOR_BASE + X86_64_IRQ_KEYBOARD:
         x86_64_ps2_keyboard_irq();
         break;
+    case X86_64_PIC1_VECTOR_BASE + X86_64_IRQ_COM1:
+        while (earlycon_can_read())
+            push_ascii_ikbdiorec(earlycon_read_byte());
+        break;
     case X86_64_PIC2_VECTOR_BASE + (X86_64_IRQ_MOUSE - 8):
         x86_64_ps2_mouse_irq();
         break;
@@ -60,6 +66,7 @@ void x86_64_irq_init(void)
 
     x86_64_idt_set_gate(X86_64_PIC1_VECTOR_BASE + X86_64_IRQ_TIMER, x86_64_irq32);
     x86_64_idt_set_gate(X86_64_PIC1_VECTOR_BASE + X86_64_IRQ_KEYBOARD, x86_64_irq33);
+    x86_64_idt_set_gate(X86_64_PIC1_VECTOR_BASE + X86_64_IRQ_COM1, x86_64_irq36);
     x86_64_idt_set_gate(X86_64_PIC2_VECTOR_BASE + (X86_64_IRQ_MOUSE - 8), x86_64_irq44);
 
     x86_64_pit_init(SYSTEM_TICK_HZ);
@@ -68,4 +75,8 @@ void x86_64_irq_init(void)
     x86_64_pic_unmask(X86_64_IRQ_TIMER);
     x86_64_pic_unmask(X86_64_IRQ_KEYBOARD);
     x86_64_pic_unmask(X86_64_IRQ_MOUSE);
+#if CONF_SERIAL_CONSOLE && !CONF_SERIAL_CONSOLE_POLLING_MODE
+    x86_64_pic_unmask(X86_64_IRQ_COM1);
+    earlycon_enable_rx_interrupt();
+#endif
 }

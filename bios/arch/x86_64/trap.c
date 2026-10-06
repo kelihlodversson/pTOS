@@ -803,9 +803,8 @@ void x86_64_trap_init(void)
      * that this file is no longer GOT-indirected (#358). */
     xbios_unimpl_addr = (PFLONG)(uintptr_t)xbios_unimpl;
 
-    /* Cleared in RFLAGS on syscall entry: IF (bit 9), so a trap handler
-     * is never itself interrupted -- consistent with interrupts already
-     * being off for the whole of this milestone (startup.c/panic.c). */
+    /* Clear IF (bit 9) on syscall entry. trapasm.S re-enables it only after
+     * switching off the user stack and saving a complete register frame. */
     x86_64_wrmsr(MSR_FMASK, 0x200);
 
     /*
@@ -855,7 +854,7 @@ void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp,
         "mov %4, %%rsi\n\t"
         "pushq $" XSTR(X86_64_USER_DATA_SEL) "\n\t" /* SS */
         "pushq %1\n\t"                              /* RSP */
-        "pushq $0x2\n\t"                            /* RFLAGS */
+        "pushq $0x202\n\t"                          /* RFLAGS: IF enabled */
         "pushq $" XSTR(X86_64_USER_CODE_SEL) "\n\t" /* CS */
         "pushq %2\n\t"                              /* RIP */
         "iretq"

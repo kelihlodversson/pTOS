@@ -13,7 +13,6 @@
 #endif
 
 #include "portab.h"
-#include "asm.h"
 #include "io.h"
 #include "ps2.h"
 #include "ikbd.h"
@@ -351,11 +350,4 @@ static void ps2_mouse_data(UBYTE byte)
 void x86_64_ps2_mouse_irq(void)
 {
     ps2_service();
-}
-
-void x86_64_ps2_poll(void)
-{
-    disable_interrupts();
-    ps2_service();
-    enable_interrupts();
 }
