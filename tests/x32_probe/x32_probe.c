@@ -179,12 +179,19 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(bad);
         break;
     case 'b':
-        /* unmapped user address as a DTA; a kernel address (the sign
-         * extension of 0x80000000) as a string argument */
+        /* unmapped user address as a DTA */
         if (gemdos(0x1a, 0x30000000, 0) != EIMBA)
             bad |= 1;
-        if (gemdos(0x3b, (s64)(int)0x80000000, 0) != EIMBA)
-            bad |= 2;
+        pterm(bad);
+        break;
+    case 'r':
+        /* a call is not judged by registers it does not use: Dgetdrv()
+         * takes no argument, so whatever the other four hold -- here
+         * kernel addresses -- must not matter (#435) */
+        if (sys4(GEMDOS, 0x19, (s64)0xFFFFFFFF80000000LL,
+                 (s64)0xFFFFFFFF80001000LL, (s64)0xFFFF800000000000LL,
+                 (s64)0xFFFFFFFF80002000LL) < 0)
+            bad |= 1;
         pterm(bad);
         break;
     case 's':

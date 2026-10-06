@@ -128,14 +128,12 @@ typedef struct {
  * leaves the result in frame->rax for the caller to pick up.
  *
  * from_ring3 tells this function whether frame->rdi/rsi/rdx/r10 are
- * untrusted register values a genuine ring-3 caller supplied (see
- * trap.c's x86_64_arg_hits_known_kernel_range() -- not general
- * user-pointer validation, read its own comment before assuming
- * otherwise) or trusted arguments a kernel-mode caller passed via
- * x86_64_kernel_trap() -- the latter legitimately includes real kernel
- * (higher-half) pointers, e.g. an internal buffer bdos/fsmain.c passes
- * to Cconws(), so the "reject a known-kernel-mapped address" check
- * below only ever applies to the former.
+ * untrusted register values a genuine ring-3 caller supplied or trusted
+ * arguments a kernel-mode caller passed via x86_64_kernel_trap() -- the
+ * latter legitimately includes real kernel (higher-half) pointers, e.g. an
+ * internal buffer bdos/fsmain.c passes to Cconws().  The dispatcher does
+ * not judge the raw register values either way; validating a pointer a
+ * call takes is that call's job (#352).
  */
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
 

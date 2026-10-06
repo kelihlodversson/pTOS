@@ -27,11 +27,9 @@
  * comment).
  *
  * All four argument registers are always set, even for a call that takes
- * fewer: x86_64_trap_dispatch()'s from_ring3 argument-safety check
- * (trap.c) inspects all four unconditionally regardless of the function's
- * real arity, and rejects the call (EIMBA) if any of them still holds a
- * leftover value that looks like a kernel address -- see that function's
- * own comment.
+ * fewer, so that the program does not depend on what the registers held at
+ * entry; the dispatcher does not look at registers a call does not use
+ * (#435).
  *
  * Copyright (C) 2026 The pTOS development team
  *
