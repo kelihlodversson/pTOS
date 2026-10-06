@@ -65,7 +65,8 @@ long ixforce(int std, int h, PD *p)
          * store the BIOS handle in the PD table; otherwise store the
          * non-std handle & update the use count
          */
-        if ((fh = (long) sft[h-NUMSTD].f_ofd) < 0L)
+        fh = (long) sft[h-NUMSTD].f_ofd;
+        if (IS_BIOS_HANDLE(fh))
             PD_UFT(p)[std] = fh;
         else
         {

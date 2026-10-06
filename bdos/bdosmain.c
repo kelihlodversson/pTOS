@@ -481,7 +481,9 @@ static void offree(DMD *d)
 
     for (i = 0; i < OPNFILES; i++)
     {
-        if (((long) (f = sft[i].f_ofd)) > 0L)
+        /* a higher-half OFD pointer is negative as a signed long */
+        f = sft[i].f_ofd;
+        if (f && !IS_BIOS_HANDLE(f))
         {
             if (f->o_dmd == d)
             {
@@ -534,6 +536,7 @@ long osif(short *pw)
     DMD *dmd;
     DND *dn;
     int typ, h, i, fn;
+    int isptr;
     int num, max;
     long rc, numl;
     const FND *f;
@@ -716,6 +719,8 @@ restrt:
 
     if (typ & 0x80)
     {
+        isptr = 0;      /* numl will be an sft[] pointer, not a plain handle */
+
 #if defined(__arm__) || defined(__x86_64__)
         /*
          * On ARM, pw[] holds one LONG per parameter.  typ encodes the
@@ -739,6 +744,7 @@ restrt:
             if (h >= NUMHANDLES)
                 return EIHNDL;  /* invalid handle: out of range */
 
+            isptr = 1;
             numl = (long) sft[h-NUMSTD].f_ofd;
 #if CONF_WITH_PLUGGABLE_FS
             if (!numl)
@@ -753,6 +759,7 @@ restrt:
                 if (h >= NUMHANDLES)
                     return EIHNDL;  /* invalid handle: out of range */
 
+                isptr = 1;
                 numl = (long) sft[h-NUMSTD].f_ofd;
 #if CONF_WITH_PLUGGABLE_FS
                 if (!numl)
@@ -768,7 +775,12 @@ restrt:
         if (!numl)
             return EIHNDL;  /* invalid handle: media change, etc */
 
-        if (numl < 0)
+        /*
+         * a negative value is a BIOS handle, but only if it is a handle
+         * (h itself) or a small one from the sft: a pointer into the
+         * higher half is negative too, and is a perfectly good OFD
+         */
+        if (numl < 0 && (!isptr || IS_BIOS_HANDLE(numl)))
         {       /* prn, aux, con */
                 /* -3   -2   -1  */
 

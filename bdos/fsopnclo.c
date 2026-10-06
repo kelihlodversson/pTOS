@@ -308,7 +308,7 @@ long xclose(int h)
         if (h < NUMSTD)             /* "can't happen" (bug in Fforce()?) */
             return EIHNDL;
     }
-    else if (((long) sft[h-NUMSTD].f_ofd) < 0L)
+    else if (IS_BIOS_HANDLE(sft[h-NUMSTD].f_ofd))
     {
         if (!(--sft[h-NUMSTD].f_use))
         {
