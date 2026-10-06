@@ -24,7 +24,8 @@
 
 #define PS2_STATUS_OUTPUT_FULL 0x01  /* a byte is waiting at PS2_DATA */
 #define PS2_STATUS_INPUT_FULL  0x02  /* the controller hasn't consumed
-                                      * the last byte written yet */
+                                       * the last byte written yet */
+#define PS2_STATUS_AUX_DATA    0x20  /* output byte came from the mouse port */
 
 #define PS2_CMD_READ_CONFIG     0x20
 #define PS2_CMD_WRITE_CONFIG    0x60
@@ -187,9 +188,8 @@ static int ps2_e1_bytes_left;
 static BOOL ps2_saw_e0;
 static BOOL ps2_prtscn_second_half;
 
-void x86_64_ps2_keyboard_irq(void)
+static void ps2_keyboard_data(UBYTE sc)
 {
-    UBYTE sc = x86_64_inb(PS2_DATA);
     BOOL extended = ps2_saw_e0;
 
     ps2_saw_e0 = FALSE;
@@ -216,6 +216,11 @@ void x86_64_ps2_keyboard_irq(void)
     }
 
     kbd_int(sc);
+}
+
+void x86_64_ps2_keyboard_irq(void)
+{
+    ps2_keyboard_data(x86_64_inb(PS2_DATA));
 }
 
 /*
@@ -261,10 +266,8 @@ static int mouse_byte_index;
 static UBYTE mouse_byte0;
 static UBYTE mouse_byte1;
 
-void x86_64_ps2_mouse_irq(void)
+static void ps2_mouse_data(UBYTE byte)
 {
-    UBYTE byte = x86_64_inb(PS2_DATA);
-
     if (mouse_byte_index == 0 && !(byte & 0x08)) {
         /* Lost sync (or garbage before the mouse's own reporting was
          * actually enabled) -- the real first byte of every packet always
@@ -328,4 +331,22 @@ void x86_64_ps2_mouse_irq(void)
         mouse_byte_index = 0;
         break;
     }
+}
+
+void x86_64_ps2_mouse_irq(void)
+{
+    ps2_mouse_data(x86_64_inb(PS2_DATA));
+}
+
+void x86_64_ps2_poll(void)
+{
+    UBYTE status = x86_64_inb(PS2_STATUS);
+
+    if (!(status & PS2_STATUS_OUTPUT_FULL))
+        return;
+
+    if (status & PS2_STATUS_AUX_DATA)
+        ps2_mouse_data(x86_64_inb(PS2_DATA));
+    else
+        ps2_keyboard_data(x86_64_inb(PS2_DATA));
 }

@@ -39,6 +39,9 @@
 #include "coldfire.h"
 #include "amiga.h"
 #include "lisa.h"
+#ifdef MACHINE_PC_X86_64
+#include "ps2.h"
+#endif
 
 
 /* forward declarations */
@@ -235,10 +238,16 @@ void push_ascii_ikbdiorec(UBYTE ascii)
 LONG bconstat2(void)
 {
 #if CONF_SERIAL_CONSOLE_POLLING_MODE && defined(MACHINE_PC_X86_64)
+    UBYTE ascii;
+
     /* Follow the m68k serial-RX interrupt model: both serial and keyboard
      * input enter the IKBD queue, so Bconin(2) has one source to consume. */
-    if (bconstat(1))
-        push_ascii_ikbdiorec((UBYTE)bconin(1));
+    if (bconstat(1)) {
+        ascii = (UBYTE)bconin(1);
+        disable_interrupts();
+        push_ascii_ikbdiorec(ascii);
+        enable_interrupts();
+    }
 #elif CONF_SERIAL_CONSOLE_POLLING_MODE
     /* Poll the serial port */
     return bconstat(1);
@@ -262,6 +271,11 @@ LONG bconin2(void)
 #else
     /* Check the IKBD IOREC */
     while (!bconstat2()) {
+#if CONF_SERIAL_CONSOLE_POLLING_MODE && defined(MACHINE_PC_X86_64)
+        /* A ring-3 syscall enters with IF clear. Poll PS/2 here rather than
+         * changing that saved interrupt state while waiting for console input. */
+        x86_64_ps2_poll();
+#endif
 #if USE_STOP_INSN_TO_FREE_HOST_CPU && !(CONF_SERIAL_CONSOLE_POLLING_MODE && defined(MACHINE_PC_X86_64))
         stop_until_interrupt();
 #endif
