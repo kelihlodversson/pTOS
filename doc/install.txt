@@ -54,10 +54,12 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
 
           <prefix>ld --help | grep i386pep
 
-      On a Linux/x86-64 host, the system gcc/binutils already provide it,
-      so no separate cross toolchain is needed there:
+      The pc-x86_64 configuration defaults to the x86_64-elf- prefix, so
+      it never relies on the host compiler.  Override CROSS_COMPILE when
+      your compatible toolchain uses another prefix.  On a Linux/x86-64
+      host, the system gcc/binutils can be selected explicitly:
 
-          sudo apt-get install gcc binutils
+          make CROSS_COMPILE= pc-x86_64_defconfig && make CROSS_COMPILE=
 
       On any other host, two toolchains are known to work:
 
@@ -91,10 +93,10 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
       an ordinary ring-3 process.  The boot self-test's probe program
       (tests/x32_probe/) is built and embedded the same way.  The compiler
       therefore needs the same x32 support described for the test program
-      below; on Debian/Ubuntu that is the gcc-multilib package.  Setting
-      "x32 test-program cross compiler prefix" (X32_CROSS_COMPILE) applies
-      to all of them.  The AES and EmuDesk are not available on this
-      machine yet.
+      below; on Debian/Ubuntu that is the gcc-multilib package.  It uses
+      the same cross compiler prefix as the kernel by default.  Set
+      X32_CROSS_COMPILE explicitly only when the x32 compiler differs.
+      The AES and EmuDesk are not available on this machine yet.
 
   PC (x86-64, running an x32 program from EmuCON)
       EmuCON runs a program by its ".tos" (".prg", ...) name whatever its
@@ -152,9 +154,9 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
 
           brew install x86_64-elf-gcc
 
-      then build with:
+      then build the complete EFI image with:
 
-          make X32_CROSS_COMPILE=x86_64-elf- x32test
+          make pc-x86_64_defconfig && make
 
       Note that the host "gcc" on macOS cannot build this at all: "-mx32"
       is an x86-64-ELF feature, so the compile fails on the 64-bit

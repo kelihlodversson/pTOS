@@ -170,6 +170,7 @@ OBJECTS = $(CORE_OBJ) $(OPTIONAL_OBJ)
 # installed under a different name, and is left unset unless the user
 # filled it in.  A command line CROSS_COMPILE= still wins over both.
 CROSS_COMPILE-$(ARCH_ARM) = arm-none-eabi-
+CROSS_COMPILE-$(ARCH_X86_64) = x86_64-elf-
 CROSS_COMPILE-$(BUILD_TOOLCHAIN_MINT) = m68k-atari-mint-
 CROSS_COMPILE-$(BUILD_TOOLCHAIN_MINTELF) = m68k-atari-mintelf-
 CROSS_COMPILE-$(BUILD_TOOLCHAIN_ELF) = m68k-elf-
@@ -702,6 +703,7 @@ endif
 #
 
 ifdef ARCH_X86_64
+X32_CROSS_COMPILE ?= $(CROSS_COMPILE)
 X32_CC = $(X32_CROSS_COMPILE)gcc
 
 # -fno-asynchronous-unwind-tables/-fno-unwind-tables drop the .eh_frame

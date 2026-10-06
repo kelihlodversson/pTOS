@@ -54,6 +54,7 @@ C_SYM(x86_64_irq\num):
 
         irq_stub 32     /* IRQ0  timer (PIT channel 0) */
         irq_stub 33     /* IRQ1  PS/2 keyboard */
+        irq_stub 36     /* IRQ4  COM1 */
         irq_stub 44     /* IRQ12 PS/2 mouse (aux port) */
 
 /*
