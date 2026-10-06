@@ -1409,7 +1409,11 @@ const PFLONG xbios_vecs[] = {
 #else
     VEC(xbios_f, rsconf),
 #endif
+#if defined(__x86_64__)
+    xbios_unimpl,   /* 10 keytbl -- needs a user-mapped 32-bit keytable */
+#else
     VEC(xbios_10, keytbl),
+#endif
     VEC(xbios_11, random),
     VEC(xbios_12, protobt),
 #if defined(__arm__) || defined(__x86_64__)

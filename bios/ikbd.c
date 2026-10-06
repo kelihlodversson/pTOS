@@ -124,6 +124,11 @@ static struct keytbl current_keytbl;
 
 LONG keytbl(const UBYTE* norm, const UBYTE* shft, const UBYTE* caps)
 {
+#ifdef __x86_64__
+    /* XBIOS Keytbl() returns a 32-bit pointer. current_keytbl is kernel
+     * memory on x86-64, so it cannot be exposed to a ring-3 caller. */
+    return -1;
+#else
     if (norm != (UBYTE*)-1) {
         current_keytbl.norm = norm;
     }
@@ -134,6 +139,7 @@ LONG keytbl(const UBYTE* norm, const UBYTE* shft, const UBYTE* caps)
         current_keytbl.caps = caps;
     }
     return (LONG) & current_keytbl;
+#endif
 }
 
 void bioskeys(void)
