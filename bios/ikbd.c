@@ -235,61 +235,34 @@ void push_ascii_ikbdiorec(UBYTE ascii)
 LONG bconstat2(void)
 {
 #if CONF_SERIAL_CONSOLE_POLLING_MODE && defined(MACHINE_PC_X86_64)
-    /* The PC has both a polled COM1 console and PS/2 IRQs filling the
-     * IKBD queue.  Prefer a real keyboard event, but leave serial usable
-     * for QEMU/OVMF automation. */
-    if (ikbdiorec.head != ikbdiorec.tail)
-        return -1;
-
-    return bconstat(1);
+    /* Follow the m68k serial-RX interrupt model: both serial and keyboard
+     * input enter the IKBD queue, so Bconin(2) has one source to consume. */
+    if (bconstat(1))
+        push_ascii_ikbdiorec((UBYTE)bconin(1));
 #elif CONF_SERIAL_CONSOLE_POLLING_MODE
     /* Poll the serial port */
     return bconstat(1);
-#else
+#endif
+
     /* Check the IKBD IOREC */
     if (ikbdiorec.head == ikbdiorec.tail) {
         return 0;               /* iorec empty */
     } else {
         return -1;              /* not empty => input available */
     }
-#endif
 }
 
 LONG bconin2(void)
 {
     ULONG value;
-#if CONF_SERIAL_CONSOLE_POLLING_MODE && defined(MACHINE_PC_X86_64)
-    {
-        UBYTE ascii;
-
-        while (!bconstat2()) {
-#if USE_STOP_INSN_TO_FREE_HOST_CPU
-            stop_until_interrupt();
-#endif
-        }
-
-        disable_interrupts();
-        if (ikbdiorec.head != ikbdiorec.tail) {
-            ikbdiorec.head += 4;
-            if (ikbdiorec.head >= ikbdiorec.size) {
-                ikbdiorec.head = 0;
-            }
-            value = *(ULONG_ALIAS *) (ikbdiorec.buf + ikbdiorec.head);
-            enable_interrupts();
-        } else {
-            enable_interrupts();
-            ascii = (UBYTE)bconin(1);
-            value = ikbdiorec_from_ascii(ascii);
-        }
-    }
-#elif CONF_SERIAL_CONSOLE_POLLING_MODE
+#if CONF_SERIAL_CONSOLE_POLLING_MODE && !defined(MACHINE_PC_X86_64)
     /* Poll the serial port */
     UBYTE ascii = (UBYTE)bconin(1);
     value = ikbdiorec_from_ascii(ascii);
 #else
     /* Check the IKBD IOREC */
     while (!bconstat2()) {
-#if USE_STOP_INSN_TO_FREE_HOST_CPU
+#if USE_STOP_INSN_TO_FREE_HOST_CPU && !(CONF_SERIAL_CONSOLE_POLLING_MODE && defined(MACHINE_PC_X86_64))
         stop_until_interrupt();
 #endif
     }
@@ -304,7 +277,7 @@ LONG bconin2(void)
 
     /* restore interrupts */
     enable_interrupts();
-#endif /* CONF_SERIAL_CONSOLE_POLLING_MODE */
+#endif /* CONF_SERIAL_CONSOLE_POLLING_MODE && !MACHINE_PC_X86_64 */
 
     if (!(conterm & 8))         /* shift status not wanted? */
         value &= 0x00ffffffL;   /* true, so clean it out */
