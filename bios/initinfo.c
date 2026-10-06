@@ -39,6 +39,9 @@
 #include "conout.h"
 #include "../bdos/bdosstub.h"
 #include "lineavars.h"
+#ifdef MACHINE_PC_X86_64
+#include "pmem.h"
+#endif
 
 /* Screen width, in characters, as signed value */
 #define SCREEN_WIDTH ((WORD)linea_vars.v_cel_mx + 1)
@@ -299,7 +302,9 @@ WORD initinfo(ULONG *pshiftbits)
 #endif
     int i;
     WORD olddev, dev = bootdev;
+#ifndef MACHINE_PC_X86_64
     long stramsize = (long)phystop;
+#endif
 #if CONF_WITH_ALT_RAM
     long altramsize = total_alt_ram();
 #endif
@@ -348,7 +353,7 @@ WORD initinfo(ULONG *pshiftbits)
     pair_start(_("CPU type"));
 #ifdef __mcoldfire__
     cprintf("ColdFire V4e");
-#elif defined(__arm__) || defined(__aarch64__)
+#elif defined(__arm__) || defined(__aarch64__) || defined(__x86_64__)
     cprintf("%s", mcpu_name);
 #else
 # if CONF_WITH_APOLLO_68080
@@ -360,8 +365,17 @@ WORD initinfo(ULONG *pshiftbits)
 #endif
     pair_end();
 
-    pair_start(_("Machine")); cprintf(machine_name()); pair_end();
+    pair_start(_("Machine")); cprintf("%s", machine_name()); pair_end();
+#ifdef MACHINE_PC_X86_64
+    /*
+     * phystop is only the 2 MiB kernel pool here, and a 64-bit pointer
+     * that does not fit a long on all targets; report what the physical
+     * memory allocator has free instead.
+     */
+    pair_start("Free RAM"); cprintf("%lu %s", (unsigned long)(x86_64_pmem_free_bytes() >> 20), _("MB")); pair_end();
+#else
     pair_start("ST-RAM"); cprintf_bytesize(stramsize); pair_end();
+#endif
 
 #if CONF_WITH_ALT_RAM
     if (altramsize > 0) {
@@ -413,16 +427,6 @@ WORD initinfo(ULONG *pshiftbits)
     {
         /* Wait until timeout or keypress */
         long end = hz_200 + INITINFO_DURATION * 200UL;
-#ifdef __x86_64__
-        /* x86-64 has no working timer interrupt yet
-         * (bios/arch/x86_64/vectors.c), so hz_200 never advances and
-         * "end" above never arrives: an unattended boot with a nonzero
-         * INITINFO_DURATION would otherwise wait forever for a keypress
-         * that may never come. Bound it with a plain, uncalibrated spin
-         * count instead, same reasoning and per-tick budget as
-         * bios/ide.c's wait_for_not_BSY() family. */
-        LONG initinfo_spins_left = (LONG)INITINFO_DURATION * 200L * 5000L;
-#endif
         MAYBE_UNUSED(end);
 
         olddev = dev;
@@ -439,11 +443,7 @@ WORD initinfo(ULONG *pshiftbits)
             stop_until_interrupt();
 #endif
         }
-#ifdef __x86_64__
-        while (initinfo_spins_left-- > 0);
-#else
         while (hz_200 < end);
-#endif
 
         /* Wait while Shift is pressed, and normal key is not pressed */
         while ((shiftbits & MODE_SHIFT) && !bconstat2())

@@ -257,6 +257,91 @@ void detect_cpu(void)
         }
 }
 #elif defined(__x86_64__)
+/* width of the CPU type value on the welcome screen (initinfo.c) */
+#define X86_CPU_NAME_MAX 20
+
+static char x86_cpu_name[X86_CPU_NAME_MAX + 1];
+
+static void cpuid(ULONG leaf, ULONG *r)
+{
+        __asm__ volatile ("cpuid"
+                          : "=a"(r[0]), "=b"(r[1]), "=c"(r[2]), "=d"(r[3])
+                          : "a"(leaf), "c"(0));
+}
+
+/* append the n-character word w to x86_cpu_name, space separated, if it fits */
+static void cpu_name_add(const char *w, int n)
+{
+        int len = strlen(x86_cpu_name);
+
+        if (len + (len != 0) + n > X86_CPU_NAME_MAX)
+                return;
+        if (len)
+                x86_cpu_name[len++] = ' ';
+        memcpy(&x86_cpu_name[len], w, n);
+        x86_cpu_name[len + n] = '\0';
+}
+
+/*
+ * Build a short name for the welcome screen from the processor brand
+ * string (CPUID leaves 0x80000002-4), or the vendor string (leaf 0) if the
+ * CPU has no brand string.  A brand string is up to 48 characters, e.g.
+ * "Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz", so drop the "(R)"/"(TM)"
+ * marks, the "CPU"/"Processor"/"version"/"N-Core" filler words and everything from
+ * the "@" on, and keep only the words that fit.
+ */
+static const char *cpu_display_name(void)
+{
+        ULONG r[4];
+        char raw[49];
+        char word[49];
+        const char *p;
+        int i, n, k;
+
+        cpuid(0x80000000UL, r);
+        if (r[0] >= 0x80000004UL) {
+                for (i = 0; i < 3; i++) {
+                        cpuid(0x80000002UL + i, r);
+                        memcpy(&raw[16 * i], r, 16);
+                }
+                raw[48] = '\0';
+        } else {
+                cpuid(0, r);
+                memcpy(&raw[0], &r[1], 4);      /* vendor is EBX, EDX, ECX */
+                memcpy(&raw[4], &r[3], 4);
+                memcpy(&raw[8], &r[2], 4);
+                raw[12] = '\0';
+        }
+
+        x86_cpu_name[0] = '\0';
+        p = raw;
+        while (*p) {
+                while (*p == ' ')
+                        p++;
+                for (n = 0; p[n] && p[n] != ' '; n++)
+                        ;
+                if (n == 1 && *p == '@')
+                        break;
+                for (i = k = 0; i < n; i++) {
+                        if (p[i] == '(') {      /* "(R)" or "(TM)" */
+                                while (i < n && p[i] != ')')
+                                        i++;
+                                continue;
+                        }
+                        word[k++] = p[i];
+                }
+                word[k] = '\0';
+                if (k && strcmp(word, "CPU") && strcmp(word, "Processor")
+                    && strcmp(word, "version")
+                    && !(k > 5 && !strcmp(&word[k - 5], "-Core")))
+                        cpu_name_add(word, k);
+                p += n;
+        }
+        if (!x86_cpu_name[0])
+                cpu_name_add("x86-64", 6);
+        return x86_cpu_name;
+}
+
 /*
  * mcpu holds CPUID leaf 1's EAX (the family/model/stepping signature),
  * not an m68k-style small integer code -- the same trick ARM plays with
@@ -269,11 +354,11 @@ void detect_cpu(void)
  */
 void detect_cpu(void)
 {
-        ULONG eax = 1, ebx, ecx, edx;
+        ULONG r[4];
 
-        __asm__ volatile ("cpuid" : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
-        mcpu = (LONG)eax;
-        mcpu_name = "x86-64";
+        cpuid(1, r);
+        mcpu = (LONG)r[0];
+        mcpu_name = cpu_display_name();
 }
 #endif
 
