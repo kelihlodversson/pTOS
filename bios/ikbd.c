@@ -246,6 +246,10 @@ LONG bconstat2(void)
 #if CONF_SERIAL_CONSOLE_POLLING_MODE && defined(MACHINE_PC_X86_64)
     UBYTE ascii;
 
+    /* Ring-3 syscalls enter with IF clear, so status checks as well as
+     * blocking reads must poll PS/2 for EmuCON control keys. */
+    x86_64_ps2_poll();
+
     /* Follow the m68k serial-RX interrupt model: both serial and keyboard
      * input enter the IKBD queue, so Bconin(2) has one source to consume. */
     if (bconstat(1)) {
@@ -277,11 +281,6 @@ LONG bconin2(void)
 #else
     /* Check the IKBD IOREC */
     while (!bconstat2()) {
-#if CONF_SERIAL_CONSOLE_POLLING_MODE && defined(MACHINE_PC_X86_64)
-        /* A ring-3 syscall enters with IF clear. Poll PS/2 here rather than
-         * changing that saved interrupt state while waiting for console input. */
-        x86_64_ps2_poll();
-#endif
 #if USE_STOP_INSN_TO_FREE_HOST_CPU && !(CONF_SERIAL_CONSOLE_POLLING_MODE && defined(MACHINE_PC_X86_64))
         stop_until_interrupt();
 #endif

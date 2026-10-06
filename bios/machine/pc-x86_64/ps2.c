@@ -13,6 +13,7 @@
 #endif
 
 #include "portab.h"
+#include "asm.h"
 #include "io.h"
 #include "ps2.h"
 #include "ikbd.h"
@@ -187,6 +188,7 @@ void x86_64_ps2_init(void)
 static int ps2_e1_bytes_left;
 static BOOL ps2_saw_e0;
 static BOOL ps2_prtscn_second_half;
+static void ps2_mouse_data(UBYTE byte);
 
 static void ps2_keyboard_data(UBYTE sc)
 {
@@ -218,9 +220,22 @@ static void ps2_keyboard_data(UBYTE sc)
     kbd_int(sc);
 }
 
+static void ps2_service(void)
+{
+    UBYTE status = x86_64_inb(PS2_STATUS);
+
+    if (!(status & PS2_STATUS_OUTPUT_FULL))
+        return;
+
+    if (status & PS2_STATUS_AUX_DATA)
+        ps2_mouse_data(x86_64_inb(PS2_DATA));
+    else
+        ps2_keyboard_data(x86_64_inb(PS2_DATA));
+}
+
 void x86_64_ps2_keyboard_irq(void)
 {
-    ps2_keyboard_data(x86_64_inb(PS2_DATA));
+    ps2_service();
 }
 
 /*
@@ -335,18 +350,12 @@ static void ps2_mouse_data(UBYTE byte)
 
 void x86_64_ps2_mouse_irq(void)
 {
-    ps2_mouse_data(x86_64_inb(PS2_DATA));
+    ps2_service();
 }
 
 void x86_64_ps2_poll(void)
 {
-    UBYTE status = x86_64_inb(PS2_STATUS);
-
-    if (!(status & PS2_STATUS_OUTPUT_FULL))
-        return;
-
-    if (status & PS2_STATUS_AUX_DATA)
-        ps2_mouse_data(x86_64_inb(PS2_DATA));
-    else
-        ps2_keyboard_data(x86_64_inb(PS2_DATA));
+    disable_interrupts();
+    ps2_service();
+    enable_interrupts();
 }
