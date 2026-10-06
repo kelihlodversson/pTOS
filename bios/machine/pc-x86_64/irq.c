@@ -49,8 +49,10 @@ void x86_64_pc_irq_dispatch(int vector)
         x86_64_ps2_keyboard_irq();
         break;
     case X86_64_PIC1_VECTOR_BASE + X86_64_IRQ_COM1:
+#if CONF_SERIAL_CONSOLE && !CONF_SERIAL_CONSOLE_POLLING_MODE
         while (earlycon_can_read())
             push_ascii_ikbdiorec(earlycon_read_byte());
+#endif
         break;
     case X86_64_PIC2_VECTOR_BASE + (X86_64_IRQ_MOUSE - 8):
         x86_64_ps2_mouse_irq();

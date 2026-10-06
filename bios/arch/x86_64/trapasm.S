@@ -99,6 +99,9 @@ C_SYM(x86_64_syscall_entry):
         mov     %rsp, %rdi
         movl    $1, %esi        /* from_ring3: only a real `syscall` reaches here */
         call    C_SYM(x86_64_trap_dispatch)
+        /* Do not let an IRQ use the caller's stack while restoring the
+         * syscall frame and returning through sysretq. */
+        cli
 
         /*
          * `sysretq` itself never validates %rcx (the target RIP). `syscall`
