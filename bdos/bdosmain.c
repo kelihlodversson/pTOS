@@ -481,7 +481,9 @@ static void offree(DMD *d)
 
     for (i = 0; i < OPNFILES; i++)
     {
-        if (((long) (f = sft[i].f_ofd)) > 0L)
+        /* a higher-half OFD pointer is negative as a signed long */
+        f = sft[i].f_ofd;
+        if (f && !IS_BIOS_HANDLE(f))
         {
             if (f->o_dmd == d)
             {
