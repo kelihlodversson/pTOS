@@ -82,30 +82,38 @@ config CONF_WITH_PTOS_ABI_IMPORTS
 	  leave it off unless you are developing that future namespace.
 
 config CONF_WITH_KPROC
-	bool
+	bool "Kernel-private process records" if !ARCH_X86_64
 	default y if ARCH_X86_64
 	default n
 	help
-	  Keep a kernel-owned per-process record (struct kproc, bdos/kproc.c)
-	  beside the public GEMDOS basepage, so native pointers and trust
-	  state never have to live in the user-writable, 32-bit p_xdta field.
+	  Keep a kernel-owned record per process (struct kproc, bdos/kproc.c)
+	  beside the public GEMDOS basepage, so state the kernel must be able
+	  to trust never has to live in memory the process can write: the
+	  launching process (used by Pterm() instead of the basepage's p_parent),
+	  whether the process was launched, its DTA pointer, and its standard
+	  handle map and current directories, which are then no longer read
+	  from or written to the basepage's p_uft and p_curdir fields (as in
+	  FreeMiNT).
 
-	  This option is not user-selectable: its default follows the
-	  architecture, so a build that cannot even link cannot be chosen.
-	  On x86-64 it is on and load-bearing -- the record stores the
-	  authoritative ring-3 DTA pointer, a native pointer the ABI-width
-	  p_xdta cannot represent, and the user-range snapshot behind
-	  kproc_validate_user_dta(), which the ring-3 Fsetdta() check needs.
-	  The separate-address-spaces option (#402) will select and require
-	  it for any target it applies to.
+	  Mandatory on x86-64, where ring-3 processes can write their whole
+	  basepage and the record is load-bearing.  On other architectures it
+	  is optional and off by default: nothing there protects the kernel
+	  from a program anyway, and programs that look at p_uft/p_curdir of
+	  their basepage see zeros when it is on.  Turn it on to exercise the
+	  same code the x86-64 port runs.
 
-	  Everywhere else there is no memory protection to defeat and p_xdta
-	  is already a full native pointer, so the record would only cost ROM
-	  image bytes -- scarce on the 192/256 KB Atari targets -- for no
-	  benefit.  It is therefore off by default there; the record structure
-	  is left out of the link and bdos/kproc.c keeps only four small
-	  stubs that honour p_xdta directly, byte-compatible with the
-	  historic behaviour.
+config CONF_WITH_USER_ASPACE
+	bool
+	default y if ARCH_X86_64
+	select CONF_WITH_KPROC
+	help
+	  Processes run in per-process address spaces (ring 3 on x86-64):
+	  the record also carries the process's page tables, kernel stack,
+	  memory-block identities and loans, and its read-only copies of its
+	  ancestors' basepages, and the DTA pointer in it is the only one
+	  trusted.  Not user-selectable: it follows the architecture, and
+	  requires CONF_WITH_KPROC.  The separate-address-spaces option
+	  (#402) will become the real home of this.
 
 config CONF_WITH_PRG_LOADER
 	bool "Load classic Atari GEMDOS PRG executables"

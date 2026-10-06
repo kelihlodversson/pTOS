@@ -1438,9 +1438,9 @@ ifndef CONF_WITH_ELF_LOADER
 TEST_SUITES := $(filter-out ptos_reloc_load,$(TEST_SUITES))
 endif
 
-# x32_hello is a standalone _start program built by x32test, not a ptest
-# suite, so it must never be linked into runtests.tos.
-TEST_SUITES := $(filter-out x32_hello,$(TEST_SUITES))
+# x32_hello and x32_probe are standalone _start programs built for the x86-64
+# boot test, not ptest suites, so they must never be linked into runtests.tos.
+TEST_SUITES := $(filter-out x32_hello x32_probe,$(TEST_SUITES))
 
 GEN_SRC += tests/run_tests.c
 

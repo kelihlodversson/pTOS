@@ -10,8 +10,10 @@
 #define KPROC_H
 
 #include "bdosdefs.h"
-#include "procmem.h"      /* X86_64_ASPACE (x86-64 only; empty elsewhere) */
+#if CONF_WITH_USER_ASPACE
+#include "procmem.h"      /* X86_64_ASPACE */
 #include "x32image.h"
+#endif
 
 typedef struct dta_info DTAINFO;
 
@@ -19,17 +21,7 @@ BOOL kproc_create(PD *pd);
 void kproc_destroy(PD *pd);
 void kproc_set_dta(PD *pd, DTAINFO *dta);
 DTAINFO *kproc_get_dta(PD *pd);
-#ifdef __x86_64__
-/*
- * Builds the ring-3 address space for a process about to be launched:
- * its environment block and its basepage..p_hitpa range, and `parent`'s
- * basepage kernel-only.  FALSE
- * (nothing built, nothing leaked) if memory ran out; the caller reports
- * ENSMEM.  The address space belongs to the KPROC record and is freed
- * with it by kproc_destroy(), exactly once.  kproc_create() must have
- * succeeded for pd first.
- */
-BOOL kproc_prepare_user(PD *pd, PD *parent);
+#if CONF_WITH_KPROC
 /* The launching process, recorded by proc_go() and used by Pterm() instead
  * of the user-writable p_parent field.  kproc_get_parent() halts if there
  * is no record (like kproc_get_dta()). */
@@ -41,6 +33,18 @@ void kproc_mark_started(PD *pd);        /* proc_go() launched it */
  * are therefore still held. */
 BOOL kproc_discard(PD *pd);
 BOOL kproc_unlaunched(PD *pd);          /* has a record and was never launched */
+#endif
+#if CONF_WITH_USER_ASPACE
+/*
+ * Builds the ring-3 address space for a process about to be launched:
+ * its environment block and its basepage..p_hitpa range, and `parent`'s
+ * basepage kernel-only.  FALSE
+ * (nothing built, nothing leaked) if memory ran out; the caller reports
+ * ENSMEM.  The address space belongs to the KPROC record and is freed
+ * with it by kproc_destroy(), exactly once.  kproc_create() must have
+ * succeeded for pd first.
+ */
+BOOL kproc_prepare_user(PD *pd, PD *parent);
 /*
  * Makes the process a built-in x32 program: kproc_prepare_user() will also
  * map the image's segments as private pages of its address space.  Must
