@@ -55,9 +55,39 @@ static BOOL anchor_is(const UBYTE *p, const char *anchor)
     return TRUE;
 }
 
+/* little-endian field reads: the entry point is packed, so no alignment */
+static ULONG rd16(const UBYTE *p)
+{
+    return p[0] | ((ULONG)p[1] << 8);
+}
+
+static ULONG rd32(const UBYTE *p)
+{
+    return rd16(p) | (rd16(p + 2) << 16);
+}
+
+static UQUAD rd64(const UBYTE *p)
+{
+    return rd32(p) | ((UQUAD)rd32(p + 4) << 32);
+}
+
+/* TRUE if the n bytes at p add up to 0 (mod 256), as the spec requires */
+static BOOL checksum_ok(const UBYTE *p, ULONG n)
+{
+    UBYTE sum = 0;
+
+    while (n--)
+        sum += *p++;
+    return sum == 0;
+}
+
 /*
  * Locate the structure table from an SMBIOS 3.0 ("_SM3_") or 2.x ("_SM_")
- * entry point.  Returns FALSE if the anchor does not match.
+ * entry point.  The table address is only trusted once the entry point has
+ * proved itself: its anchor, its own length and checksum, and for 2.x the
+ * intermediate "_DMI_" anchor and checksum.  Returns FALSE, and leaves the
+ * outputs alone, for anything else -- a damaged entry point must end in "no
+ * SMBIOS name", not a walk through whatever memory its address points at.
  */
 static BOOL find_table(const UBYTE *ep, BOOL is_v3, const UBYTE **table, ULONG *size)
 {
@@ -65,17 +95,23 @@ static BOOL find_table(const UBYTE *ep, BOOL is_v3, const UBYTE **table, ULONG *
     ULONG sz;
 
     if (is_v3) {
-        if (!anchor_is(ep, "_SM3_"))
+        /* entry point structure: 24 bytes, length in byte 6 (DSP0134 5.2.2) */
+        if (!anchor_is(ep, "_SM3_") || ep[6] < 0x18 || !checksum_ok(ep, ep[6]))
             return FALSE;
-        sz = *(const ULONG *)(ep + 0x0C);
-        t = (const UBYTE *)(uintptr_t)*(const UQUAD *)(ep + 0x10);
+        sz = rd32(ep + 0x0C);
+        t = (const UBYTE *)(uintptr_t)rd64(ep + 0x10);
     } else {
-        if (!anchor_is(ep, "_SM_"))
+        /* entry point structure: 31 bytes, length in byte 5, with an
+         * intermediate structure in bytes 0x10-0x1E (DSP0134 5.2.1) */
+        if (!anchor_is(ep, "_SM_") || ep[5] < 0x1F || !checksum_ok(ep, ep[5]))
             return FALSE;
-        sz = *(const UWORD *)(ep + 0x16);
-        t = (const UBYTE *)(uintptr_t)*(const ULONG *)(ep + 0x18);
+        if (!anchor_is(ep + 0x10, "_DMI_") || !checksum_ok(ep + 0x10, 15))
+            return FALSE;
+        sz = rd16(ep + 0x16);
+        t = (const UBYTE *)(uintptr_t)rd32(ep + 0x18);
     }
-    if (t == NULL || sz == 0 || sz > SMBIOS_TABLE_MAX)
+    if (t == NULL || sz == 0 || sz > SMBIOS_TABLE_MAX ||
+        (uintptr_t)t + sz < (uintptr_t)t)
         return FALSE;
 
     /* only on success: callers stop scanning as soon as *table is set */

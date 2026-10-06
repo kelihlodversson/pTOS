@@ -372,7 +372,7 @@ WORD initinfo(ULONG *pshiftbits)
      * that does not fit a long on all targets; report what the physical
      * memory allocator has free instead.
      */
-    pair_start("Free RAM"); cprintf("%lu %s", (unsigned long)(x86_64_pmem_free_bytes() >> 20), _("MB")); pair_end();
+    pair_start(_("Free RAM")); cprintf("%lu %s", (unsigned long)(x86_64_pmem_free_bytes() >> 20), _("MB")); pair_end();
 #else
     pair_start("ST-RAM"); cprintf_bytesize(stramsize); pair_end();
 #endif
