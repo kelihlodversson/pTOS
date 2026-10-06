@@ -15,6 +15,8 @@
 #ifndef KPRINT_H
 #define KPRINT_H
 
+#include <stdarg.h>
+
 /* console output */
 int cprintf(const char *RESTRICT fmt, ...) PRINTF_STYLE;
 
@@ -23,6 +25,18 @@ int kprintf(const char *RESTRICT fmt, ...) PRINTF_STYLE;
 
 /* output done both through kprintf and cprintf */
 int kcprintf(const char *RESTRICT fmt, ...) PRINTF_STYLE;
+
+/*
+ * va_list-based kcprintf(), for a caller that already has an existing
+ * va_list to forward rather than its own "..." to start one from --
+ * bios/arch/x86_64/panicasm.c's panic() needs this to hand its own
+ * message to dopanic() (bios/kprint.c) for display: unlike m68k/ARM's
+ * panicasm.S, which tail-jumps into dopanic() with fmt/the varargs still
+ * sitting in the same registers/stack slots the CPU's own trap left them
+ * in, a real C function call cannot forward a "..." parameter list to
+ * another variadic function without a va_list to hand over.
+ */
+int vkcprintf(const char *RESTRICT fmt, va_list ap);
 
 /* assert stuff */
 #if CONF_WITH_ASSERT

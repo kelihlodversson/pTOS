@@ -262,10 +262,28 @@ int kprintf(const char *RESTRICT fmt, ...)
 
 /*==== kcprintf - do both cprintf and kprintf ======*/
 
-static int vkcprintf(const char *fmt, va_list ap)
+int vkcprintf(const char *fmt, va_list ap)
 {
-  vkprintf(fmt, ap);
-  return vcprintf(fmt, ap);
+  va_list ap2;
+  int n;
+
+  /*
+   * Passing the same va_list to two consecutive doprintf() calls is only
+   * safe on an arch where va_list decays to a plain pointer, copied by
+   * value into each callee (m68k, ARM): the callee's own va_arg() walk
+   * advances its private copy, leaving the caller's ap untouched. Where
+   * va_list is itself an array-of-struct (x86-64's SysV ABI), passing it
+   * "by value" passes a pointer to that same struct, so vkprintf()'s
+   * va_arg() calls consume it for real; vcprintf() would then read
+   * whatever comes after the last argument vkprintf() consumed. va_copy()
+   * is the portable fix on every arch, not just the ones where the bug
+   * would otherwise be silent.
+   */
+  va_copy(ap2, ap);
+  vkprintf(fmt, ap2);
+  va_end(ap2);
+  n = vcprintf(fmt, ap);
+  return n;
 }
 
 int kcprintf(const char *RESTRICT fmt, ...)
@@ -345,8 +363,15 @@ void dopanic(const char *fmt, ...)
         pc = s->pc;
         sr = 0x2700; /* was already set in panic(); too late to get original value */
 
+        /* (unsigned long), not (ULONG): s->pc is a real pointer stored
+         * by panic() (via __builtin_return_address(0)), and %08lx
+         * already expects native-width unsigned long -- ULONG (always
+         * 32-bit) would truncate a genuine higher-half x86-64 address
+         * before this ever prints it, defeating the diagnostic for
+         * exactly the addresses this port's own panics need to show.
+         * A no-op on m68k/ARM, where long and LONG are the same width. */
         kcprintf("pc=%08lx\n",
-                 (ULONG)s->pc);
+                 (unsigned long)s->pc);
 #ifdef __arm__
     } else {
         /* field order must match any_vec()'s local struct in
@@ -626,20 +651,32 @@ void dopanic(const char *fmt, ...)
 
     if (run)
     {
+        /* p_tbase is USERPTR_T (a plain ULONG on x86-64, see bdosdefs.h),
+         * not a native pointer there -- widen through USERPTR_TO_PTR()
+         * before using it in pointer arithmetic/comparisons below, the
+         * same as every other consumer of a PD's USERPTR_T fields. */
+        UBYTE *tbase = USERPTR_TO_PTR(run->p_tbase);
+
         kcprintf("basepage=%08lx\n",
                  (ULONG)run);
         kcprintf("text=%08lx data=%08lx bss=%08lx\n",
                  (ULONG)run->p_tbase, (ULONG)run->p_dbase, (ULONG)run->p_bbase);
-        if (pc && ((UBYTE *)pc >= run->p_tbase) && ((UBYTE *)pc < (run->p_tbase + run->p_tlen)))
-            kcprintf("Crash at text+%08lx\n", (long)((UBYTE *)pc - run->p_tbase));
+        if (pc && ((UBYTE *)pc >= tbase) && ((UBYTE *)pc < (tbase + run->p_tlen)))
+            kcprintf("Crash at text+%08lx\n", (long)((UBYTE *)pc - tbase));
     }
 
-    /* allow interrupts so we get keypresses */
+    /* allow interrupts so we get keypresses -- neither ARM nor x86-64
+     * needs this m68k-only set_sr() call, since both already enable
+     * interrupts during their own bios_init() (cpsr_ie() and
+     * x86_64_irq_init()/x86_64_sti(), respectively, in bios.c) and never
+     * turn them back off. */
 #ifndef __arm__
+#ifndef __x86_64__
 #if CONF_WITH_ATARI_VIDEO
     set_sr(0x2300);
 #else
     set_sr(0x2000);
+#endif
 #endif
 #endif
 

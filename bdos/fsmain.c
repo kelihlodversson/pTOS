@@ -11,6 +11,7 @@
 /* #define ENABLE_KDEBUG */
 
 #include "emutos.h"
+#include "kproc.h"
 #include "fs.h"
 #include "mem.h"
 #include "gemerror.h"
@@ -393,7 +394,7 @@
  */
 DTAINFO *xgetdta(void)          /* return address of dta */
 {
-    return((DTAINFO *)run->p_xdta);
+    return kproc_get_dta(run);
 }
 
 
@@ -402,7 +403,7 @@ DTAINFO *xgetdta(void)          /* return address of dta */
  */
 void xsetdta(DTAINFO *addr)     /* set transfer address to addr */
 {
-    run->p_xdta = (DTA *)addr;
+    kproc_set_dta(run, addr);
 }
 
 
@@ -459,7 +460,7 @@ static int syshnd(int h)
     if (h >= NUMSTD)
         return(h-NUMSTD);
 
-    if ((h = run->p_uft[h]) > 0 )
+    if ((h = PD_UFT(run)[h]) > 0 )
         return(h-NUMSTD);
 
     return(h);

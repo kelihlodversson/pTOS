@@ -33,11 +33,19 @@
 /*
  *  local constants
  */
-#ifdef __arm__
+/* xmgetblk() payloads hold native pointers in KPROC on every architecture.
+ * Align both the pool base and each block's payload for the native ABI. */
+#if defined(__x86_64__)
+#define BLOCK_PAD_BYTES 8
+#define OSM_ALIGN UQUAD
+#define OSM_PAYLOAD_BYTES 128
+#elif defined(__arm__)
 #define BLOCK_PAD_BYTES 4
+#define OSM_ALIGN ULONG
 #define OSM_PAYLOAD_BYTES 128
 #else
 #define BLOCK_PAD_BYTES 2
+#define OSM_ALIGN ULONG
 #define OSM_PAYLOAD_BYTES 128
 #endif
 #define OSM_PAYLOAD (OSM_PAYLOAD_BYTES/sizeof(WORD))
@@ -53,7 +61,7 @@
  *  local typedefs
  */
 #define MDS_PER_BLOCK   3
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 typedef LONG md_index_t;
 #else
 typedef WORD md_index_t;
@@ -76,7 +84,10 @@ struct _mdb {
  */
 static WORD osmptr;
 static WORD osmlen;
-static WORD osmem[LENOSM];
+static union {
+    OSM_ALIGN align;
+    WORD words[LENOSM];
+} osmem;
 
 
 /*
@@ -123,7 +134,7 @@ static WORD *getosm(WORD n)
         return 0;
     }
 
-    m = &osmem[osmptr];         /*  start at base               */
+    m = &osmem.words[osmptr];   /*  start at base               */
     osmptr += n;                /*  new base                    */
     osmlen -= n;                /*  new length of free block    */
     return m;                   /*  allocated memory            */
@@ -296,9 +307,9 @@ void xmfremd(MD *md)
  * are no free blocks on the list, we call getosm to get a block from
  * the os memory pool.
  *
- * If we cannot get memory for an MDBLOCK, we return NULL (the request
- * will fail).  Otherwise we will attempt to free up DNDs to make space
- * and if that fails, the system will be halted.
+ * If we cannot get memory for an MDBLOCK or a KPROC, we return NULL (the
+ * request will fail).  Otherwise we will attempt to free up DNDs to make
+ * space and if that fails, the system will be halted.
  *
  * Arguments:
  *  memtype: the type of request
@@ -307,7 +318,7 @@ void *xmgetblk(WORD memtype)
 {
     WORD i, j, w, *m, *q, **r;
 
-    if ((memtype < MEMTYPE_MDBLOCK) || (memtype > MEMTYPE_OFD))
+    if ((memtype < MEMTYPE_MDBLOCK) || (memtype > MEMTYPE_KPROC))
     {
         dbggtblk++;
         return NULL;
@@ -340,8 +351,10 @@ void *xmgetblk(WORD memtype)
             break;
         }
 
-        /* no memory available for an MDBLOCK, that's (sort of) OK */
-        if (memtype == MEMTYPE_MDBLOCK)
+        /* no memory available for an MDBLOCK or KPROC, that's (sort of) OK:
+         * both are optional allocations whose callers report the failure
+         * to their own caller instead of halting the whole system */
+        if ((memtype == MEMTYPE_MDBLOCK) || (memtype == MEMTYPE_KPROC))
             break;
 
         /*

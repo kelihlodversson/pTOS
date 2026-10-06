@@ -11,6 +11,7 @@ menu "AES"
 
 config CONF_WITH_AES
 	bool "Include the AES and the EmuDesk desktop"
+	depends on !ARCH_X86_64
 	default n if TARGET_CART
 	default y
 	help
@@ -19,10 +20,14 @@ config CONF_WITH_AES
 	  This is only useful when the image size is severely restricted,
 	  such as for the diagnostic cartridge.
 
+	  Not available on x86-64: its processes run in ring 3, and the AES
+	  and EmuDesk have not been moved there yet.
+
 if CONF_WITH_AES
 
 config AES_STACK_SIZE
 	int "Size of the private AES stack, in LONGs"
+	default 4096 if ARCH_X86_64
 	default 2048 if MACHINE_FIREBEE || MACHINE_M548X
 	default 590
 	help
@@ -34,6 +39,15 @@ config AES_STACK_SIZE
 	  Gemlib needs a large AES stack, because Gemlib's v_gtext() puts a
 	  1024-word buffer on the stack.  This is principally a problem when
 	  recompiling for ColdFire systems, hence the larger default there.
+
+	  x86-64's SysV ABI has no register windows and is built here with
+	  -mno-red-zone, so every call frame in a deep chain (AES -> VDI ->
+	  the truecolor32 backend -> font blitting) is real, explicit stack
+	  space unlike the smaller frames m68k/ARM generate for the same
+	  call chain; 590 LONGs (the generic default) overflowed into
+	  adjacent memory the first time this arch actually exercised a
+	  SMALL-font desktop text draw (#375), corrupting THEGLO and causing
+	  a division by zero in aes/gemgraf.c's gsx_tcalc() shortly after.
 
 	  A suitable value can be estimated by enabling CONF_DEBUG_AES_STACK.
 

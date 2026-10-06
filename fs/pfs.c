@@ -274,7 +274,7 @@ static void pfs_dirtbl_release(WORD n)
  */
 static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const char **path, BOOL *owned)
 {
-    WORD n = run->p_curdir[drive];
+    WORD n = PD_CURDIR(run)[drive];
 
     if ((n > 0) && (n < PFS_MAX_CWD) && pfs_dirtbl[n].use &&
         (pfs_dirtbl[n].fs == fs) && (pfs_dirtbl[n].drive == drive))
@@ -298,7 +298,7 @@ static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const ch
  */
 static LONG pfs_cwd_set(WORD drive, struct pfs_ops *fs, PFSCOOKIE *cwd, const char *path)
 {
-    WORD old = run->p_curdir[drive];
+    WORD old = PD_CURDIR(run)[drive];
     WORD i;
 
     pfs_dirtbl_release(old);
@@ -306,7 +306,7 @@ static LONG pfs_cwd_set(WORD drive, struct pfs_ops *fs, PFSCOOKIE *cwd, const ch
     if (!path[0])
     {
         /* root: no slot needed, the sentinel (0) already means this */
-        run->p_curdir[drive] = 0;
+        PD_CURDIR(run)[drive] = 0;
         return E_OK;
     }
 
@@ -322,7 +322,7 @@ static LONG pfs_cwd_set(WORD drive, struct pfs_ops *fs, PFSCOOKIE *cwd, const ch
     pfs_dirtbl[i].cwd = *cwd;
     strlcpy(pfs_dirtbl[i].path, path, sizeof(pfs_dirtbl[i].path));
 
-    run->p_curdir[drive] = i;
+    PD_CURDIR(run)[drive] = i;
 
     return E_OK;
 }
@@ -917,11 +917,12 @@ LONG pfs_do_rename(const char *p1, const char *p2)
     return rc;
 }
 
-LONG pfs_do_sfirst(char *path, WORD att)
+LONG pfs_do_sfirst_at(char *path, WORD att, DTAINFO *dta)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, (const char **)&path);
     PFSCOOKIE dir;
+    DTA *owner = (DTA *)dta;
     const char *name;
     BOOL owned;
     WORD i;
@@ -960,10 +961,10 @@ LONG pfs_do_sfirst(char *path, WORD att)
 
     /* a new Fsfirst() on a DTA that already has a search running (common
      * - callers rarely exhaust a search before starting another) must
-     * replace it, not leak a second slot and leave pfs_do_snext()
+     * replace it, not leak a second slot and leave pfs_do_snext_at()
      * matching whichever of the two comes first in the table. */
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-        if ((pfs_searches[i].owner == run->p_xdta) && (pfs_searches[i].proc == run))
+        if ((pfs_searches[i].owner == owner) && (pfs_searches[i].proc == run))
             break;
     if (i < CONF_PFS_MAX_SEARCHES)
     {
@@ -981,7 +982,7 @@ LONG pfs_do_sfirst(char *path, WORD att)
         }
     }
 
-    pfs_searches[i].owner = run->p_xdta;
+    pfs_searches[i].owner = owner;
     pfs_searches[i].proc = run;
     pfs_searches[i].dir = dir;
     pfs_searches[i].dir_owned = owned;
@@ -1015,18 +1016,19 @@ LONG pfs_do_sfirst(char *path, WORD att)
         if (pfs_match(name8_3, pfs_searches[i].pattern) &&
             pfs_attr_visible(attr.dos_attr, att))
         {
-            pfs_attr_to_dta((DTAINFO *)run->p_xdta, name8_3, &attr);
+            pfs_attr_to_dta(dta, name8_3, &attr);
             return E_OK;
         }
     }
 }
 
-LONG pfs_do_snext(void)
+LONG pfs_do_snext_at(DTAINFO *dta)
 {
+    DTA *owner = (DTA *)dta;
     WORD i;
 
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-        if ((pfs_searches[i].owner == run->p_xdta) && (pfs_searches[i].proc == run))
+        if ((pfs_searches[i].owner == owner) && (pfs_searches[i].proc == run))
             break;
     if (i == CONF_PFS_MAX_SEARCHES)
         return ENMFIL;
@@ -1055,7 +1057,7 @@ LONG pfs_do_snext(void)
         if (pfs_match(name8_3, pfs_searches[i].pattern) &&
             pfs_attr_visible(attr.dos_attr, pfs_searches[i].attr))
         {
-            pfs_attr_to_dta((DTAINFO *)run->p_xdta, name8_3, &attr);
+            pfs_attr_to_dta(dta, name8_3, &attr);
             return E_OK;
         }
     }
@@ -1078,7 +1080,7 @@ void pfs_proc_exit(PD *r)
      * (otherwise unused, while this option is on) legacy table.
      */
     for (i = 0; i < BLKDEVNUM; i++)
-        pfs_dirtbl_release(r->p_curdir[i]);
+        pfs_dirtbl_release(PD_CURDIR(r)[i]);
 }
 
 

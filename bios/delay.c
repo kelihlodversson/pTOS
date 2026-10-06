@@ -30,6 +30,23 @@
 #define LOOPS_68060         110000  /* 68060 timing assumes 110MHz for safety */
 #define LOOPS_68030         3800    /* 68030 timing assumes 32MHz */
 #define LOOPS_68000         760     /* 68000 timing assumes 16MHz */
+#define LOOPS_X86_64        20000000 /* x86-64: no calibrated clock yet, and
+                                      * unlike the m68k estimates above (which
+                                      * calibrate_delay() replaces with a real
+                                      * measurement on actual Atari hardware --
+                                      * CONF_WITH_MFP is never set here, so it
+                                      * never runs), this value is permanent.
+                                      * "safety" here means never running
+                                      * SHORTER than intended, which -- unlike
+                                      * a timeout ceiling -- means assuming a
+                                      * fast CPU, not a slow one: a plain
+                                      * dependent sub/jns loop (asm.h) can
+                                      * execute close to 1 iteration/cycle, so
+                                      * this assumes a deliberately high ~20GHz
+                                      * ceiling (real hardware and any
+                                      * reasonable emulator are slower, making
+                                      * the actual delay longer, never
+                                      * shorter) */
 
 #define CALIBRATION_TIME    100     /* target # millisecs to run calibration */
 
@@ -56,6 +73,17 @@ void init_delay(void)
 {
 #if defined (MACHINE_FIREBEE) || defined (MACHINE_M548X)
     loopcount_1_msec = SDCLK_FREQUENCY_MHZ * 1000UL;
+#elif defined(MACHINE_PC_X86_64)
+    /* detect_cpu()'s mcpu here holds a raw CPUID signature, not an
+     * m68k-style CPU-type code (see its own comment) -- deliberately
+     * never matching the switch below, which would otherwise silently
+     * fall through to the 68000 case's LOOPS_68000 (assumes 16MHz),
+     * making delay400ns/delay5us (bios/ide.c) round down to zero and
+     * silently degenerate to a no-op. Use a dedicated, conservative
+     * estimate instead until this arch has a real calibrated delay
+     * loop (#329's later milestones).
+     */
+    loopcount_1_msec = LOOPS_X86_64;
 #else
 # if CONF_WITH_APOLLO_68080
     if (is_apollo_68080)

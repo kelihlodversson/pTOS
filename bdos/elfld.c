@@ -129,6 +129,24 @@
 #define ELF_R_DIR32     2       /* R_ARM_ABS32 */
 #define ELF_R_RELATIVE  23      /* R_ARM_RELATIVE */
 #define ELF_SLOT_ALIGN  4
+#elif ARCH_X86_64
+/* x32 psABI userspace (#334): ELFCLASS32 program headers with genuine
+ * EM_X86_64 long-mode code, not IA-32/EM_386 compat mode -- see
+ * tests/x32_hello/x32_hello.c's own comment and the ARCH_X86_64 section
+ * of the top level Makefile for how such a binary is built. Its 32-bit
+ * absolute relocations are RELA-encoded (like m68k, unlike ARM's REL),
+ * which the generic SHT_REL/SHT_RELA dispatch below already handles --
+ * R_X86_64_32 and R_X86_64_RELATIVE are the x32 psABI's own numbering for
+ * the same "direct 32-bit slot" / "load-bias-relative slot" relocation
+ * kinds ARM/m68k each have their own name for above. 4-byte aligned, like
+ * ARM: every relocated slot is a 32-bit ILP32 pointer field, and x86-64
+ * has no separate 2-byte-slot relocation case the way m68k's own operand-
+ * embedded relocations do.
+ */
+#define ELF_EM_EXPECTED 62      /* EM_X86_64 */
+#define ELF_R_DIR32     10      /* R_X86_64_32 */
+#define ELF_R_RELATIVE  8       /* R_X86_64_RELATIVE */
+#define ELF_SLOT_ALIGN  4
 #else
 #define ELF_EM_EXPECTED 4       /* EM_68K */
 #define ELF_R_DIR32     1       /* R_68K_32 */
@@ -1140,12 +1158,20 @@ LONG elf_pgmld(FH h, PD *p)
         return ENSMEM;
     }
 
-    /* fill the PD segment fields; execution starts at the ELF entry point */
-    p->p_tbase = load_base + (ehdr.e_entry - info.link_base);
+    /* fill the PD segment fields; execution starts at the ELF entry point.
+     * PTR_TO_USERPTR(), not a plain pointer assignment: on x86-64,
+     * USERPTR_T(UBYTE) is ULONG, and load_base is only guaranteed
+     * representable in 32 bits because it comes from p+1, p itself
+     * always being alloc_tpa()'s low, sub-4GiB TPA pool allocation
+     * (bdos/proc.c) -- the trapping macro catches it immediately if
+     * that ever stops being true, instead of gouser() silently
+     * launching a process at a truncated, wrong address (#356's own
+     * review flagged the previous plain assignment for exactly this). */
+    p->p_tbase = PTR_TO_USERPTR(load_base + (ehdr.e_entry - info.link_base));
     p->p_tlen  = (LONG)(info.file_end - info.link_base);
-    p->p_dbase = load_base + (info.file_end - info.link_base);
+    p->p_dbase = PTR_TO_USERPTR(load_base + (info.file_end - info.link_base));
     p->p_dlen  = 0;
-    p->p_bbase = load_base + (info.file_end - info.link_base);
+    p->p_bbase = PTR_TO_USERPTR(load_base + (info.file_end - info.link_base));
     p->p_blen  = (LONG)(info.mem_end - info.file_end);
 
     /* Zero the loaded image first so bss and inter-segment gaps start

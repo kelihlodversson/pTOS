@@ -32,7 +32,7 @@ config CONF_PREFER_STRAM_DISK_BUFFERS
 
 config CONF_WITH_ELF_LOADER
 	bool "Load ELF executables"
-	default y if ARCH_ARM
+	default y if ARCH_ARM || ARCH_X86_64
 	default n
 	help
 	  Add a second, ELF based executable loader alongside the classic
@@ -52,9 +52,12 @@ config CONF_WITH_ELF_LOADER
 	  own relocation table.  It reads the relocations from the section
 	  headers, so the binary must keep them (do not strip it).
 
-	  This is enabled by default on ARM, which cannot produce the m68k
-	  specific PRG format at all, and is available on m68k as an
-	  alternative to PRG.
+	  On x86-64 (#334) this is the ELFCLASS32/EM_X86_64 x32 psABI, not
+	  IA-32/EM_386 compat-mode code -- see tests/x32_hello/x32_hello.c.
+
+	  This is enabled by default on ARM and x86-64, neither of which can
+	  produce the m68k specific PRG format at all, and is available on
+	  m68k as an alternative to PRG.
 
 config CONF_WITH_PTOS_ABI_IMPORTS
 	bool "Native pTOS ABI imports for ELF executables"
@@ -77,6 +80,40 @@ config CONF_WITH_PTOS_ABI_IMPORTS
 	  bdos/ptosabi.h. Until then, turning this on builds bdos/elfld.c's
 	  resolution code with nothing for it to actually resolve against, so
 	  leave it off unless you are developing that future namespace.
+
+config CONF_WITH_KPROC
+	bool "Kernel-private process records" if !ARCH_X86_64
+	default y if ARCH_X86_64
+	default n
+	help
+	  Keep a kernel-owned record per process (struct kproc, bdos/kproc.c)
+	  beside the public GEMDOS basepage, so state the kernel must be able
+	  to trust never has to live in memory the process can write: the
+	  launching process (used by Pterm() instead of the basepage's p_parent),
+	  whether the process was launched, its DTA pointer, and its standard
+	  handle map and current directories, which are then no longer read
+	  from or written to the basepage's p_uft and p_curdir fields (as in
+	  FreeMiNT).
+
+	  Mandatory on x86-64, where ring-3 processes can write their whole
+	  basepage and the record is load-bearing.  On other architectures it
+	  is optional and off by default: nothing there protects the kernel
+	  from a program anyway, and programs that look at p_uft/p_curdir of
+	  their basepage see zeros when it is on.  Turn it on to exercise the
+	  same code the x86-64 port runs.
+
+config CONF_WITH_USER_ASPACE
+	bool
+	default y if ARCH_X86_64
+	select CONF_WITH_KPROC
+	help
+	  Processes run in per-process address spaces (ring 3 on x86-64):
+	  the record also carries the process's page tables, kernel stack,
+	  memory-block identities and loans, and its read-only copies of its
+	  ancestors' basepages, and the DTA pointer in it is the only one
+	  trusted.  Not user-selectable: it follows the architecture, and
+	  requires CONF_WITH_KPROC.  The separate-address-spaces option
+	  (#402) will become the real home of this.
 
 config CONF_WITH_PRG_LOADER
 	bool "Load classic Atari GEMDOS PRG executables"

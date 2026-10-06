@@ -113,7 +113,7 @@ WORD get_shift(ULONG blocksize);
 int add_partition(UWORD unit, LONG *devices_available, char id[], ULONG start, ULONG size);
 
 /* critical error handling */
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 extern LONG (*etv_critic)(WORD error, WORD device);
 #define call_etv_critic  etv_critic
 #else
@@ -173,6 +173,11 @@ typedef struct _blkdev  BLKDEV;
  */
 
 extern BLKDEV blkdev[];
+
+/* Return the buffer size consumed by a Rwabs() request before dispatching it. */
+#ifdef __x86_64__
+BOOL blkdev_rwabs_buffer_size(WORD rw, WORD cnt, WORD dev, ULONG *size);
+#endif
 
 
 #endif /* BLKDEV_H */
