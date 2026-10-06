@@ -121,7 +121,9 @@ jobs:
           CONFIG: ${{ matrix.config }}
         run: |
           make "${CONFIG}_defconfig"
-          make
+          # CI deliberately uses Ubuntu's native gcc/binutils instead of the
+          # x86_64-elf- cross toolchain selected by the developer default.
+          make CROSS_COMPILE=
 
       - name: Collect the build products
         run: |
@@ -264,7 +266,7 @@ jobs:
           cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
           # a real x32 ELF on the boot drive: the self-test runs it through
           # Pexec() from a ring-3 process (nested launch), as EmuCON does
-          make x32test
+          make CROSS_COMPILE= x32test
           cp x32hello.elf esp/X32HELLO.TOS
           cp /usr/share/OVMF/OVMF_VARS_4M.fd .
 
