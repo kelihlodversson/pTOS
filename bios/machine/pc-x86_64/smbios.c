@@ -95,15 +95,16 @@ static BOOL find_table(const UBYTE *ep, BOOL is_v3, const UBYTE **table, ULONG *
     ULONG sz;
 
     if (is_v3) {
-        /* entry point structure: 24 bytes, length in byte 6 (DSP0134 5.2.2) */
-        if (!anchor_is(ep, "_SM3_") || ep[6] < 0x18 || !checksum_ok(ep, ep[6]))
+        /* entry point structure: exactly 24 bytes, length in byte 6
+         * (DSP0134 5.2.2); any other length is not a structure we know */
+        if (!anchor_is(ep, "_SM3_") || ep[6] != 0x18 || !checksum_ok(ep, ep[6]))
             return FALSE;
         sz = rd32(ep + 0x0C);
         t = (const UBYTE *)(uintptr_t)rd64(ep + 0x10);
     } else {
-        /* entry point structure: 31 bytes, length in byte 5, with an
-         * intermediate structure in bytes 0x10-0x1E (DSP0134 5.2.1) */
-        if (!anchor_is(ep, "_SM_") || ep[5] < 0x1F || !checksum_ok(ep, ep[5]))
+        /* entry point structure: exactly 31 bytes, length in byte 5, with
+         * an intermediate structure in bytes 0x10-0x1E (DSP0134 5.2.1) */
+        if (!anchor_is(ep, "_SM_") || ep[5] != 0x1F || !checksum_ok(ep, ep[5]))
             return FALSE;
         if (!anchor_is(ep + 0x10, "_DMI_") || !checksum_ok(ep + 0x10, 15))
             return FALSE;
