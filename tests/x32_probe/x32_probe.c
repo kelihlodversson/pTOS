@@ -462,6 +462,24 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             bad |= 8;
         else if (gemdos(0x3e, fh, 0) != 0)
             bad |= 16;
+        /* read a file that is always on the boot drive: the image itself.
+         * The kernel keeps its open-file descriptors in the higher half,
+         * where a pointer has its sign bit set, and Fread() once took that
+         * for an invalid BIOS handle */
+        fh = gemdos(0x3d, (s64)(int)(unsigned long)"\\EFI\\BOOT\\BOOTX64.EFI", 0);
+        if (fh == -33 || fh == -34)
+            ;                                   /* no such file here: skip */
+        else if (fh < 6)
+            bad |= 64;
+        else {
+            static char magic[4];
+
+            if (sys(GEMDOS, 0x3f, fh, 2, (s64)(int)(unsigned long)magic) != 2 ||
+                magic[0] != 'M' || magic[1] != 'Z')
+                bad |= 64;
+            if (gemdos(0x3e, fh, 0) != 0)
+                bad |= 128;
+        }
         pterm(bad);
         break;
     }

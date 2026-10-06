@@ -327,6 +327,16 @@ struct _bcb
  * FTAB - Open File Table Entry
  */
 
+/*
+ * f_ofd normally points at an OFD, but a standard handle that has been
+ * redirected to a character device holds a small negative BIOS handle in
+ * it instead (-1 prn, -2 aux, -3 con).  "Negative" does not tell the two
+ * apart: a valid OFD pointer can have its sign bit set (the x86-64 kernel
+ * heap is in the higher half), so a BIOS handle is only one of -1..-3.
+ */
+#define BIOS_HANDLE_MIN (-3L)
+#define IS_BIOS_HANDLE(v) ((long)(v) < 0L && (long)(v) >= BIOS_HANDLE_MIN)
+
 /* point these at OFDs when needed */
 typedef struct
 {
