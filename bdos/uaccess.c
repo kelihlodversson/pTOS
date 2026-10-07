@@ -231,7 +231,10 @@ static long env_ok(long v)
                 continue;
             }
             /* a NUL last on the page: envsize() reads the next page's first
-             * byte too, so it must be readable, but only now */
+             * byte too, so it must be readable, but only now (and the pair
+             * must still end within UA_ENV_MAX bytes) */
+            if (n + chunk >= UA_ENV_MAX)
+                return ERANGE;
             if ((ULONG)(a + chunk) < a || !range_ok(a + chunk, 1, FALSE))
                 return EIMBA;
             if (!*(const char *)(uintptr_t)(a + chunk))

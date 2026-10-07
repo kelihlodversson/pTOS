@@ -133,6 +133,7 @@
 #include "string.h"
 #include "kprint.h"
 #include "fatfs.h"
+#include "kproc.h"
 #include "bdosstub.h"
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
@@ -302,7 +303,14 @@ long xfsfirst_at(char *name, WORD att, DTAINFO *dta)
  */
 long xsfirst(char *name, int att)
 {
-    return xfsfirst_at(name, att, RUN_XDTA());
+    DTAINFO *dta = RUN_XDTA();
+    long rc = xfsfirst_at(name, att, dta);
+
+#if CONF_WITH_USER_ASPACE
+    if (rc == E_OK)
+        kproc_dta_save(run, dta);   /* the search state is the kernel's */
+#endif
+    return rc;
 }
 
 
@@ -429,7 +437,20 @@ long xfsnext_at(DTAINFO *dta)
  */
 long xsnext(void)
 {
-    return xfsnext_at(RUN_XDTA());
+    DTAINFO *dta = RUN_XDTA();
+    long rc;
+
+#if CONF_WITH_USER_ASPACE
+    /* what the process left in the private part of its DTA is not believed */
+    if (!kproc_dta_restore(run, dta))
+        return ENMFIL;
+#endif
+    rc = xfsnext_at(dta);
+#if CONF_WITH_USER_ASPACE
+    if (rc == E_OK)
+        kproc_dta_save(run, dta);
+#endif
+    return rc;
 }
 
 

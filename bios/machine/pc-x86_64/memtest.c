@@ -1253,6 +1253,9 @@ static void test_ring3(void)
     /* GEMDOS pointer arguments are checked per call (#437) */
     probe_expect('c', 0, "bad GEMDOS pointers and lengths are refused, valid ones let through");
 
+    /* the search state of a DTA is the kernel's (#437) */
+    probe_expect('d', 0, "a tampered DTA cannot make Fsnext() misbehave");
+
     /* the basepage's p_uft/p_curdir are not the kernel's tables (#418) */
     probe_expect('t', 0, "overwriting the basepage's file and directory tables harms nothing");
 

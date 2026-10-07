@@ -155,7 +155,11 @@ uses.  The calls that take pointers:
     Fwrite(h, count, buf)   count bytes, read
     Dgetpath(buf, drv)      128 bytes, written
     Fsfirst(path, attr)     path string, read; the current DTA, written
-    Fsnext()                the current DTA, written
+    Fsnext()                the current DTA, written; what the process left in
+                            its private part is not believed: the kernel keeps
+                            its own copy of the search state of each of the
+                            process's last 8 DTAs and puts it back first, and
+                            a DTA never searched with has no more files
     Frename(0, old, new)    two strings, read
     Fdatime(buf, h, wflag)  4 bytes, read if wflag, else written
     Pexec(mode, ...)        modes 0 and 3: path string; modes 0, 3, 5, 7: the

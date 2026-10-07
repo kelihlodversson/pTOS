@@ -43,6 +43,9 @@
  *   c  the pointer arguments of GEMDOS calls are checked per call: bad strings,
  *      buffers, lengths and Pexec arguments are refused with EIMBA/ERANGE and
  *      valid ones are let through; exits with a mask of what was wrong (#437)
+ *   d  the search state of a DTA is the kernel's: a tampered DTA (an unmounted
+ *      drive, a wild cluster) cannot crash Fsnext(); a DTA never searched with
+ *      has no more files (#437)
  *   l  Pexec(PE_LOAD) of C:\\X32HELLO.TOS and PE_GOTHENFREE of its basepage; exits
  *      with 0, 0x100 if the file is not there
  *   y  a child (tail F) must not be able to Mfree this process's basepage
@@ -566,6 +569,24 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         for (k = 0; k < (int)sizeof(bigenv); k++)
             bigenv[k] = 'A';
         if (sys4(GEMDOS, 0x4b, 5, 0, P(""), P(bigenv)) != ERANGE) bad |= 512;
+        /* the limit: 32766 bytes including the two NULs that end it */
+        for (k = 0; k < (int)sizeof(bigenv); k++)
+            bigenv[k] = 'A';
+        bigenv[32764] = 0;
+        bigenv[32765] = 0;                  /* 32766 bytes: just fits */
+        rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), P(bigenv));
+        if (rc <= 0) {
+            bad |= 512;
+        } else {
+            s64 e3 = *(volatile u32 *)(unsigned long)(rc + 0x2c);
+
+            if (gemdos(0x49, e3, 0) != 0 || gemdos(0x49, rc, 0) != 0)
+                bad |= 512;
+        }
+        bigenv[32764] = 'A';
+        bigenv[32765] = 0;
+        bigenv[32766] = 0;                  /* 32767 bytes: one too many */
+        if (sys4(GEMDOS, 0x4b, 5, 0, P(""), P(bigenv)) != ERANGE) bad |= 512;
         /* a leading NUL is not the end of an environment: envsize() goes on
          * until two NULs in a row, so the bytes after it must be readable
          * (here "\0X" at the very end of the stack mapping) */
@@ -615,6 +636,36 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             if (gemdos(0x49, env, 0) != 0 || gemdos(0x49, rc, 0) != 0)
                 bad |= 256;
         }
+        pterm(bad);
+        break;
+    }
+    case 'd': {
+        /* the search state in a DTA is the kernel's, not the process's (#437) */
+        static u32 dta[16];                 /* a DTA: 44 bytes, ours to set */
+        static u32 fresh[16];
+        s64 rc;
+
+        gemdos(0x0e, 2, 0);                 /* Dsetdrv(C:) */
+        if (gemdos(0x1a, P(dta), 0) < 0 && 0)
+            bad |= 1;
+        rc = sys4(GEMDOS, 0x4e, P("*.*"), 0, 0, 0);
+        if (rc == 0) {
+            /* point the private part at drive 5, which is not mounted: the
+             * kernel used to dereference its (null) drive table entry */
+            dta[3] = 5;                     /* dt_offset_drive (after dt_name[12]) */
+            dta[4] = 0x7fff;                /* dt_cloffset ... */
+            dta[5] = 0x7fffffff;            /* ... and dt_clnum */
+            rc = gemdos(0x4f, 0, 0);
+            if (rc != 0 && rc != -49)
+                bad |= 2;                   /* a file, or no more of them */
+        } else if (rc != -33 && rc != -49) {
+            bad |= 4;                       /* neither a file nor none */
+        }
+        /* a DTA nothing was searched with has no search to continue */
+        gemdos(0x1a, P(fresh), 0);
+        fresh[3] = 2;
+        if (gemdos(0x4f, 0, 0) != -49)
+            bad |= 8;
         pterm(bad);
         break;
     }
