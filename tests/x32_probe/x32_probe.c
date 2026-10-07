@@ -648,7 +648,15 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         gemdos(0x0e, 2, 0);                 /* Dsetdrv(C:) */
         if (gemdos(0x1a, P(dta), 0) < 0 && 0)
             bad |= 1;
-        rc = sys4(GEMDOS, 0x4e, P("*.*"), 0, 0, 0);
+        rc = sys4(GEMDOS, 0x4e, P("*.*"), 0x10, 0, 0);   /* files and directories */
+        if (rc == 0) {
+            /* a new search that finds nothing ends the old one on that DTA */
+            if (sys4(GEMDOS, 0x4e, P("NOSUCH.QQQ"), 0x10, 0, 0) == 0)
+                bad |= 16;
+            if (gemdos(0x4f, 0, 0) != -49)
+                bad |= 16;
+            rc = sys4(GEMDOS, 0x4e, P("*.*"), 0x10, 0, 0);
+        }
         if (rc == 0) {
             /* point the private part at drive 5, which is not mounted: the
              * kernel used to dereference its (null) drive table entry */

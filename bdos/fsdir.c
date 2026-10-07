@@ -304,8 +304,12 @@ long xfsfirst_at(char *name, WORD att, DTAINFO *dta)
 long xsfirst(char *name, int att)
 {
     DTAINFO *dta = RUN_XDTA();
-    long rc = xfsfirst_at(name, att, dta);
+    long rc;
 
+#if CONF_WITH_USER_ASPACE
+    kproc_dta_forget(run, dta);     /* a failed search leaves nothing to continue */
+#endif
+    rc = xfsfirst_at(name, att, dta);
 #if CONF_WITH_USER_ASPACE
     if (rc == E_OK)
         kproc_dta_save(run, dta);   /* the search state is the kernel's */

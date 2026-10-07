@@ -435,6 +435,21 @@ BOOL kproc_dta_restore(PD *pd, DTAINFO *dta)
     return FALSE;
 }
 
+/* a new Fsfirst() starts over: whatever search this DTA held is gone, found
+ * anything or not */
+void kproc_dta_forget(PD *pd, const DTAINFO *dta)
+{
+    KPROC *kproc = kproc_find(pd);
+    UQUAD va = (UQUAD)(uintptr_t)dta;
+    int i;
+
+    if (!kproc || !kproc->aspace)
+        return;
+    for (i = 0; i < KPROC_DTAS; i++)
+        if (kproc->dtas[i].va == va)
+            kproc->dtas[i].va = 0;
+}
+
 void kproc_dta_save(PD *pd, const DTAINFO *dta)
 {
     KPROC *kproc = kproc_find(pd);
