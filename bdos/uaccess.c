@@ -219,12 +219,24 @@ static long env_ok(long v)
 
         if (chunk > UA_ENV_MAX - n)
             chunk = UA_ENV_MAX - n;
-        if (!range_ok(a, chunk + 1, FALSE))     /* one more: the byte after the last */
+        if (!range_ok(a, chunk, FALSE))
             return EIMBA;
         s = (const char *)(uintptr_t)a;         /* validated: usable directly */
-        for (i = 0; i < chunk; i++)
-            if (!s[i] && !s[i + 1])
+        for (i = 0; i < chunk; i++) {
+            if (s[i])
+                continue;
+            if (i + 1 < chunk) {
+                if (!s[i + 1])
+                    return E_OK;
+                continue;
+            }
+            /* a NUL last on the page: envsize() reads the next page's first
+             * byte too, so it must be readable, but only now */
+            if ((ULONG)(a + chunk) < a || !range_ok(a + chunk, 1, FALSE))
+                return EIMBA;
+            if (!*(const char *)(uintptr_t)(a + chunk))
                 return E_OK;
+        }
         a += chunk;
         n += chunk;
     }

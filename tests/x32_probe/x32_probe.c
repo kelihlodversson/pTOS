@@ -576,6 +576,22 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             top[1] = 'X';
             if (sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x3ffffffeLL) != EIMBA) bad |= 512;
         }
+        /* ... and a valid empty environment ("\0\0") on the last two bytes of
+         * the mapping is accepted: nothing past it is read */
+        {
+            volatile unsigned char *top = (volatile unsigned char *)0x3ffffffeUL;
+
+            top[1] = 0;
+            rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x3ffffffeLL);
+            if (rc <= 0) {
+                bad |= 512;
+            } else {
+                s64 e2 = *(volatile u32 *)(unsigned long)(rc + 0x2c);
+
+                if (gemdos(0x49, e2, 0) != 0 || gemdos(0x49, rc, 0) != 0)
+                    bad |= 512;
+            }
+        }
         /* no environment given: the caller's own is inherited through its
          * basepage's p_env, which it can have rewritten */
         {
