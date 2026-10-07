@@ -692,7 +692,7 @@ restrt:
 
             case 10:                /* Cconrs() */
                 pb2 = *((char **) &pw[1]);
-                max = *pb2++;
+                max = (unsigned char)*pb2++;
                 p = pb2 + 1;
                 for (i = 0; max--; i++, p++)
                 {

@@ -43,7 +43,7 @@
 #if CONF_WITH_USER_COPY
 
 #define UA_PATH_MAX     1024UL      /* longest path or file name string */
-#define UA_ENV_MAX      65536UL     /* longest environment block */
+#define UA_ENV_MAX      32766UL     /* longest environment block (envsize() counts in a WORD) */
 #define UA_TAIL_MAX     PDCLSIZE    /* command tail: copied up to this many */
 #define UA_PATHBUF      128         /* what Dgetpath() may write */
 #define UA_DFREE        16          /* a DISKINFO */
@@ -198,36 +198,17 @@ static long curdta_ok(void)
 }
 
 /*
- * Pexec(mode, path, tail, env): which arguments are pointers depends on the
- * mode.  Modes 0 and 3 load a file (path is a string); 5 and 7 only create a
- * basepage (the path slot holds flags); 4 and 6 launch a basepage the caller
- * made, which is looked up in the kernel's own records and never dereferenced
- * here.  The tail is copied from the user and must end (with its NUL) within
- * PDCLSIZE bytes, as the kernel adds a terminator of its own after the copy;
- * the environment, if given, is a list of strings ending with an empty one.
+ * An environment: strings, ending with an empty one.  envsize() walks it, so
+ * every byte up to and including the second NUL of the end must be readable,
+ * and it must fit what envsize() can count.
  */
-static long pexec_ok(const long *pw)
+static long env_ok(long v)
 {
-    WORD mode = (WORD)pw[1];
-    long rc;
-
-    if (mode == 4 || mode == 6)
-        return E_OK;
-    if (mode == 0 || mode == 3) {
-        rc = str_ok(pw[2], UA_PATH_MAX);
-        if (rc)
-            return rc;
-    } else if (mode != 5 && mode != 7) {
-        return E_OK;                    /* not a mode: the call says EINVFN */
-    }
-    rc = str_ok(pw[3], UA_TAIL_MAX);
-    if (rc)
-        return rc;
-    if (pw[4]) {
+    {
         ULONG a, n = 0;
 
         /* the list ends with an empty string: walk it string by string */
-        if (!uaddr(pw[4], &a))
+        if (!uaddr(v, &a))
             return EIMBA;
         for (;;) {
             long r = str_ok((long)a, UA_ENV_MAX - n);
@@ -256,6 +237,43 @@ static long pexec_ok(const long *pw)
     return E_OK;
 }
 
+/*
+ * Pexec(mode, path, tail, env): which arguments are pointers depends on the
+ * mode.  Modes 0 and 3 load a file (path is a string); 5 and 7 only create a
+ * basepage (the path slot holds flags); 4 and 6 launch a basepage the caller
+ * made, which is looked up in the kernel's own records and never dereferenced
+ * here.  The tail is copied from the user and must end (with its NUL) within
+ * PDCLSIZE bytes, as the kernel adds a terminator of its own after the copy;
+ * the environment, if given, is a list of strings ending with an empty one.
+ */
+static long pexec_ok(const long *pw)
+{
+    WORD mode = (WORD)pw[1];
+    long rc;
+
+    if (mode == 4 || mode == 6)
+        return E_OK;
+    if (mode == 0 || mode == 3) {
+        rc = str_ok(pw[2], UA_PATH_MAX);
+        if (rc)
+            return rc;
+    } else if (mode != 5 && mode != 7) {
+        return E_OK;                    /* not a mode: the call says EINVFN */
+    }
+    rc = str_ok(pw[3], UA_TAIL_MAX);
+    if (rc)
+        return rc;
+    if (pw[4])
+        return env_ok(pw[4]);
+#if CONF_WITH_USER_ASPACE
+    /* no environment given: alloc_env() inherits the caller's own, through the
+     * p_env field of its basepage, which the caller can have rewritten */
+    return env_ok((long)run->p_env);
+#else
+    return E_OK;
+#endif
+}
+
 /* Fdatime(buf, handle, wflag): the two words are read when setting, else written */
 static long fdatime_ok(const long *pw)
 {
@@ -278,7 +296,8 @@ static long ssystem_ok(const long *pw)
     if (mode == 0x0008 && arg2)                         /* S_GETCOOKIE value */
         return buf_ok(arg2, 4, TRUE);
     if (mode == (WORD)0xfffe && arg2 > 0)               /* S_CONSOLE_DIM struct */
-        return buf_ok(arg1, arg2 < 16 ? arg2 : 16, TRUE);
+        return buf_ok(arg1, arg2 < (long)sizeof(struct console_dim) ? arg2
+                            : (long)sizeof(struct console_dim), TRUE);
     return E_OK;
 }
 
