@@ -566,6 +566,16 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         for (k = 0; k < (int)sizeof(bigenv); k++)
             bigenv[k] = 'A';
         if (sys4(GEMDOS, 0x4b, 5, 0, P(""), P(bigenv)) != ERANGE) bad |= 512;
+        /* a leading NUL is not the end of an environment: envsize() goes on
+         * until two NULs in a row, so the bytes after it must be readable
+         * (here "\0X" at the very end of the stack mapping) */
+        {
+            volatile unsigned char *top = (volatile unsigned char *)0x3ffffffeUL;
+
+            top[0] = 0;
+            top[1] = 'X';
+            if (sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x3ffffffeLL) != EIMBA) bad |= 512;
+        }
         /* no environment given: the caller's own is inherited through its
          * basepage's p_env, which it can have rewritten */
         {

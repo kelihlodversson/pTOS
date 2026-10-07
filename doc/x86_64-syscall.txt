@@ -169,7 +169,8 @@ uses.  The calls that take pointers:
 "Checked" means every page of the range is mapped and user-accessible (and
 writable for an output) in the calling process, the range does not wrap
 around the 32-bit address space, and a string ends within 1024 bytes (an
-environment within 64 KiB); anything else is EIMBA, or ERANGE for a negative
+environment, which ends at its first double NUL, within 32766 bytes -- what
+envsize() can count); anything else is EIMBA, or ERANGE for a negative
 or oversized length or a string with no end.  Memory that passes is used
 directly, because the call runs under the process's own page tables.  The
 supervisor-only mappings (the system variables, kernel data) have no user bit,

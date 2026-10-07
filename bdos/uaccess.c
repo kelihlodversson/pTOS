@@ -198,43 +198,41 @@ static long curdta_ok(void)
 }
 
 /*
- * An environment: strings, ending with an empty one.  envsize() walks it, so
- * every byte up to and including the second NUL of the end must be readable,
- * and it must fit what envsize() can count.
+ * An environment: strings, each ending with a NUL, the list ending at the first
+ * NUL that is itself followed by a NUL -- exactly where envsize() stops, which
+ * is what matters: every byte it reads, including the second NUL, must be
+ * readable, and the list must be short enough for envsize()'s WORD count.
+ * (An empty list is two NULs; a lone leading NUL followed by something else is
+ * not the end of anything.)
  */
 static long env_ok(long v)
 {
-    {
-        ULONG a, n = 0;
+    ULONG a, n = 0;
 
-        /* the list ends with an empty string: walk it string by string */
-        if (!uaddr(v, &a))
-            return EIMBA;
-        for (;;) {
-            long r = str_ok((long)a, UA_ENV_MAX - n);
-            ULONG len;
-
-            if (r)
-                return r;
+    if (!uaddr(v, &a))
+        return EIMBA;
 #if CONF_WITH_USER_ASPACE
-            len = (ULONG)strlen((const char *)(uintptr_t)a);
-#else
-            len = 0;
-#endif
-            if (!len) {
-                /* the empty string ends the list; an empty list is two NULs
-                 * (envsize() reads both) */
-                if (!n && !range_ok(a + 1, 1, FALSE))
-                    return EIMBA;
-                break;
-            }
-            a += len + 1;
-            n += len + 1;
-            if (n >= UA_ENV_MAX)
-                return ERANGE;
-        }
+    while (n < UA_ENV_MAX) {
+        ULONG chunk = 4096UL - (a & 4095UL);
+        const char *s;
+        ULONG i;
+
+        if (chunk > UA_ENV_MAX - n)
+            chunk = UA_ENV_MAX - n;
+        if (!range_ok(a, chunk + 1, FALSE))     /* one more: the byte after the last */
+            return EIMBA;
+        s = (const char *)(uintptr_t)a;         /* validated: usable directly */
+        for (i = 0; i < chunk; i++)
+            if (!s[i] && !s[i + 1])
+                return E_OK;
+        a += chunk;
+        n += chunk;
     }
+    return ERANGE;
+#else
+    (void)n;
     return E_OK;
+#endif
 }
 
 /*
@@ -244,7 +242,7 @@ static long env_ok(long v)
  * made, which is looked up in the kernel's own records and never dereferenced
  * here.  The tail is copied from the user and must end (with its NUL) within
  * PDCLSIZE bytes, as the kernel adds a terminator of its own after the copy;
- * the environment, if given, is a list of strings ending with an empty one.
+ * the environment, if given, is a list of strings ending with a double NUL.
  */
 static long pexec_ok(const long *pw)
 {
