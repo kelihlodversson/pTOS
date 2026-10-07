@@ -290,7 +290,8 @@ static long pexec_ok(const long *pw)
 /* Fdatime(buf, handle, wflag): the two words are read when setting, else written */
 static long fdatime_ok(const long *pw)
 {
-    return buf_ok(pw[1], UA_DATIME, pw[3] == 0);
+    /* xgsdtof() takes the flag as an int: look at what it will look at */
+    return buf_ok(pw[1], UA_DATIME, (int)pw[3] == 0);
 }
 
 /* Ssystem(mode, arg1, arg2): only the modes that store through a pointer */
@@ -298,6 +299,7 @@ static long ssystem_ok(const long *pw)
 {
     WORD mode = (WORD)pw[1];
     long arg1 = pw[2], arg2 = pw[3];
+    LONG size = (LONG)pw[3];            /* ssystem_console_dim() takes a LONG */
 
 #if CONF_WITH_USER_ASPACE
     /* S_SETLVAL/S_SETWVAL/S_SETBVAL store a caller-chosen value into a kernel
@@ -308,8 +310,8 @@ static long ssystem_ok(const long *pw)
 #endif
     if (mode == 0x0008 && arg2)                         /* S_GETCOOKIE value */
         return buf_ok(arg2, 4, TRUE);
-    if (mode == (WORD)0xfffe && arg2 > 0)               /* S_CONSOLE_DIM struct */
-        return buf_ok(arg1, arg2 < (long)sizeof(struct console_dim) ? arg2
+    if (mode == (WORD)0xfffe && size > 0)               /* S_CONSOLE_DIM struct */
+        return buf_ok(arg1, size < (long)sizeof(struct console_dim) ? size
                             : (long)sizeof(struct console_dim), TRUE);
     return E_OK;
 }

@@ -552,6 +552,12 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys4(GEMDOS, 0x57, ro, 6, 0, 0) != EIMBA) bad |= 64;         /* writes it */
         if (sys4(GEMDOS, 0x57, ro, 6, 1, 0) != EIHNDL) bad |= 64;        /* only reads it */
         if (gemdos(0x14, 0x100000, 0x1000) != EACCDN) bad |= 64;         /* Maddalt */
+        /* scalars are judged as the call takes them: Fdatime()'s flag is an
+         * int, so 2^32 is "get" (a write), and S_CONSOLE_DIM's size is a LONG,
+         * so 2^32 - 8 + 8 is 8 bytes written whatever the upper half says */
+        if (sys4(GEMDOS, 0x57, ro, 6, 0x100000000LL, 0) != EIMBA) bad |= 64;
+        if (sys4(GEMDOS, 0x154, (s64)(short)0xfffe, ro, (s64)0xffffffff00000008LL, 0) != EIMBA)
+            bad |= 64;
 
         /* Pexec: the pointers depend on the mode */
         if (sys4(GEMDOS, 0x4b, 0, unmapped, P(""), 0) != EIMBA) bad |= 128;
