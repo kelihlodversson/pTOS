@@ -159,7 +159,7 @@ uses.  The calls that take pointers:
     Frename(0, old, new)    two strings, read
     Fdatime(buf, h, wflag)  4 bytes, read if wflag, else written
     Pexec(mode, ...)        modes 0 and 3: path string; modes 0, 3, 5, 7: the
-                            command tail (up to 128 bytes) and, if not null,
+                            command tail (ending within 128 bytes) and, if not null,
                             the environment (strings ending in an empty one);
                             modes 4 and 6 look the basepage up in the
                             kernel's records instead (#416)

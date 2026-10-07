@@ -64,7 +64,9 @@ typedef struct {
 static const UARG uargs[] = {
     { 0x09, 1, UA_STR,    UD_R,  0, 0 },                 /* Cconws */
     { 0x0A, 1, UA_CONRS,  UD_RW, 0, 0 },                 /* Cconrs */
-    { 0x14, 0, UA_PRIV,   0,     0, 0 },                 /* Maddalt */
+#if CONF_WITH_USER_ASPACE
+    { 0x14, 0, UA_PRIV,   0,     0, 0 },                 /* Maddalt: not for a user process */
+#endif
     { 0x1A, 1, UA_DTAPTR, UD_W,  0, 0 },                 /* Fsetdta */
     { 0x36, 1, UA_FIXED,  UD_W,  0, UA_DFREE },          /* Dfree */
     { 0x39, 1, UA_STR,    UD_R,  0, 0 },                 /* Dcreate */
@@ -111,13 +113,9 @@ static BOOL range_ok(ULONG a, ULONG len, BOOL write)
 #endif
 }
 
-/*
- * A NUL-terminated string of at most `max` bytes (the NUL included), all of
- * it readable.  With `may_run_out` a string that has no NUL within `max`
- * bytes is accepted as long as those bytes are readable (the command tail,
- * which the kernel copies up to that many).
- */
-static long str_ok(long v, ULONG max, BOOL may_run_out)
+/* A NUL-terminated string of at most `max` bytes (the NUL included), all of
+ * it readable; ERANGE if it does not end within `max` bytes. */
+static long str_ok(long v, ULONG max)
 {
     ULONG a, n = 0;
 
@@ -140,11 +138,10 @@ static long str_ok(long v, ULONG max, BOOL may_run_out)
         a += chunk;
         n += chunk;
     }
-    return may_run_out ? E_OK : ERANGE;
+    return ERANGE;
 #else
     (void)n;
     (void)max;
-    (void)may_run_out;
     return E_OK;
 #endif
 }
@@ -205,8 +202,9 @@ static long curdta_ok(void)
  * mode.  Modes 0 and 3 load a file (path is a string); 5 and 7 only create a
  * basepage (the path slot holds flags); 4 and 6 launch a basepage the caller
  * made, which is looked up in the kernel's own records and never dereferenced
- * here.  The tail is copied from the user, up to PDCLSIZE bytes; the
- * environment, if given, is a list of strings ending with an empty one.
+ * here.  The tail is copied from the user and must end (with its NUL) within
+ * PDCLSIZE bytes, as the kernel adds a terminator of its own after the copy;
+ * the environment, if given, is a list of strings ending with an empty one.
  */
 static long pexec_ok(const long *pw)
 {
@@ -216,13 +214,13 @@ static long pexec_ok(const long *pw)
     if (mode == 4 || mode == 6)
         return E_OK;
     if (mode == 0 || mode == 3) {
-        rc = str_ok(pw[2], UA_PATH_MAX, FALSE);
+        rc = str_ok(pw[2], UA_PATH_MAX);
         if (rc)
             return rc;
     } else if (mode != 5 && mode != 7) {
         return E_OK;                    /* not a mode: the call says EINVFN */
     }
-    rc = str_ok(pw[3], UA_TAIL_MAX, TRUE);
+    rc = str_ok(pw[3], UA_TAIL_MAX);
     if (rc)
         return rc;
     if (pw[4]) {
@@ -232,7 +230,7 @@ static long pexec_ok(const long *pw)
         if (!uaddr(pw[4], &a))
             return EIMBA;
         for (;;) {
-            long r = str_ok((long)a, UA_ENV_MAX - n, FALSE);
+            long r = str_ok((long)a, UA_ENV_MAX - n);
             ULONG len;
 
             if (r)
@@ -242,8 +240,13 @@ static long pexec_ok(const long *pw)
 #else
             len = 0;
 #endif
-            if (!len)
-                break;                  /* the empty string: end of the list */
+            if (!len) {
+                /* the empty string ends the list; an empty list is two NULs
+                 * (envsize() reads both) */
+                if (!n && !range_ok(a + 1, 1, FALSE))
+                    return EIMBA;
+                break;
+            }
             a += len + 1;
             n += len + 1;
             if (n >= UA_ENV_MAX)
@@ -265,10 +268,13 @@ static long ssystem_ok(const long *pw)
     WORD mode = (WORD)pw[1];
     long arg1 = pw[2], arg2 = pw[3];
 
+#if CONF_WITH_USER_ASPACE
     /* S_SETLVAL/S_SETWVAL/S_SETBVAL store a caller-chosen value into a kernel
-     * system variable, among them vectors the kernel calls in ring 0 */
+     * system variable, among them vectors the kernel calls in ring 0: not for
+     * a user process.  (Without address spaces every caller is trusted.) */
     if (mode >= 0x000d && mode <= 0x000f)
         return EACCDN;
+#endif
     if (mode == 0x0008 && arg2)                         /* S_GETCOOKIE value */
         return buf_ok(arg2, 4, TRUE);
     if (mode == (WORD)0xfffe && arg2 > 0)               /* S_CONSOLE_DIM struct */
@@ -298,7 +304,7 @@ long bdos_check_user_args(const long *pw)
             continue;
         switch (u->kind) {
         case UA_STR:
-            rc = str_ok(pw[u->arg], UA_PATH_MAX, FALSE);
+            rc = str_ok(pw[u->arg], UA_PATH_MAX);
             break;
         case UA_BUF:
             rc = buf_ok(pw[u->arg], pw[u->lenarg], u->dir & UD_W);

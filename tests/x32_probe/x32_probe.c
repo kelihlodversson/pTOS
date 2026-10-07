@@ -500,6 +500,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 #define ERANGE (-64)
         static char buf[256];
         static char longstr[2000];
+        static char tail128[128];
         const s64 unmapped = 0x30000000, lowvec = 0x84, kern = (s64)(int)0x80000000;
         const s64 ro = 0x3ffb0000;          /* the ancestors page: read-only */
         const s64 stack_end = 0x3ffffff8;   /* 64 bytes from here cross the top */
@@ -554,6 +555,12 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys4(GEMDOS, 0x4b, 0, P("X32HELLO.TOS"), P(""), unmapped) != EIMBA) bad |= 128;
         if (sys4(GEMDOS, 0x4b, 5, 0, P(""), unmapped) != EIMBA) bad |= 128;
         if (sys4(GEMDOS, 0x4b, 5, 0, unmapped, 0) != EIMBA) bad |= 128;
+        /* the tail must end within 128 bytes (the kernel adds a NUL after the
+         * copy); an empty environment is two NULs, and both must be readable */
+        for (k = 0; k < (int)sizeof(tail128); k++)
+            tail128[k] = 'A';
+        if (sys4(GEMDOS, 0x4b, 5, 0, P(tail128), 0) != ERANGE) bad |= 512;
+        if (sys4(GEMDOS, 0x4b, 5, 0, P(""), ro + 0xfff) != EIMBA) bad |= 512;
         /* mode 5's second argument is flags, not a pointer: kernel-looking
          * values there are fine (and a basepage comes back) */
         rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), 0);
