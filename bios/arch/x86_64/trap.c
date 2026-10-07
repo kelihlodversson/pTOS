@@ -19,10 +19,10 @@
 #include "trap.h"
 
 #include "../../../bdos/mem.h"
+#include "../../../bdos/uaccess.h"
 #include "../../../include/biosdefs.h"
 #include "../../../bios/disk.h"
 
-extern BOOL kproc_validate_user_dta(UQUAD address);
 extern BOOL kproc_validate_user_range(UQUAD address, ULONG size);
 extern BOOL kproc_validate_user_write(UQUAD address, ULONG size);
 extern BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size);
@@ -252,9 +252,9 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
      * call uses, and which of those are pointers, is only known per
      * function, and a register the call does not use is none of this
      * function's business.  Checking that a buffer or string pointer lies
-     * in the calling process's own address space belongs in the call that
-     * takes it (#352); until a call does that, it trusts its pointers, as
-     * Fsetdta() and Ssystem() below do not.
+     * in the calling process's own address space is done per call, for the
+     * pointers that call uses (GEMDOS: bdos/uaccess.c, below); BIOS and
+     * XBIOS calls still trust theirs unless they check it themselves (#352).
      */
 
     /* Trap class 2 (GEM) is not safe from ring 3 yet -- it dereferences
@@ -284,49 +284,6 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
         }
     }
 
-    /*
-     * Ssystem() is the one call whose pointer arguments the kernel writes
-     * through that this port has to guard today: ring 0 runs under the
-     * process's own page tables, which carry the kernel's low data
-     * (supervisor-only, but writable by ring 0), so a raw `Ssystem(S_GETCOOKIE,
-     * tag, 0x400)` or S_CONSOLE_DIM destination would overwrite the system
-     * variables.  The destination must be user memory of this process.  The
-     * general validation of every other call's pointers is #352 (see above).
-     */
-    if (from_ring3 && trap_class == X86_64_TRAP_GEMDOS && fn == 0x154) {
-        WORD mode = (WORD)frame->rdi;
-        long arg1 = (long)frame->rsi, arg2 = (long)frame->rdx;
-        BOOL ok = TRUE;
-
-        /* S_SETLVAL/S_SETWVAL/S_SETBVAL (0x0d-0x0f) store a caller-chosen
-         * value into a kernel system variable -- among them the vectors
-         * the kernel calls in ring 0 (etv_term at 0x408, ...), the very
-         * thing Setexc() is refused above.  Kernel-only from ring 3. */
-        if (mode >= 0x000d && mode <= 0x000f) {
-            frame->rax = (UQUAD)EACCDN;
-            return;
-        }
-        if (mode == 0x0008 && arg2)                     /* S_GETCOOKIE value */
-            ok = kproc_validate_user_write((UQUAD)arg2, 4);
-        else if (mode == (WORD)0xfffe && arg2 > 0)      /* S_CONSOLE_DIM struct */
-            ok = kproc_validate_user_write((UQUAD)arg1,
-                                           arg2 < 16 ? (ULONG)arg2 : 16UL);
-        if (!ok) {
-            frame->rax = (UQUAD)EIMBA;
-            return;
-        }
-    }
-
-    /* Fsetdta() stores its pointer in the public 32-bit PD field. Ensure a
-     * ring-3 caller's complete DTAINFO buffer belongs to this process before
-     * xsetdta() records it as the native DTA pointer. Kernel callers bypass
-     * this trap and may use their own higher-half buffers. */
-    if (from_ring3 && trap_class == X86_64_TRAP_GEMDOS && fn == 0x1a
-        && !kproc_validate_user_dta(frame->rdi)) {
-        frame->rax = (UQUAD)EIMBA;
-        return;
-    }
-
     switch (trap_class) {
     case X86_64_TRAP_GEMDOS: {
         /* 5 slots, not 4: bdosmain.c's own dispatch (the p4 case, e.g.
@@ -345,6 +302,16 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
         pw[2] = (long)frame->rsi;
         pw[3] = (long)frame->rdx;
         pw[4] = (long)frame->r10;
+        /* A ring-3 caller's pointers are checked, per call and only the ones
+         * the call uses, before the call runs (bdos/uaccess.c). */
+        if (from_ring3) {
+            long rc = bdos_check_user_args(pw);
+
+            if (rc) {
+                frame->rax = (UQUAD)rc;
+                break;
+            }
+        }
         frame->rax = (UQUAD)osif(pw);
         break;
     }

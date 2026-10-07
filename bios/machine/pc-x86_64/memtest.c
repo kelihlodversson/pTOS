@@ -1250,6 +1250,9 @@ static void test_ring3(void)
     /* a Pexec() that runs out of loan slots half way gives back what it took */
     probe_expect('z', 0, "a failed Pexec(PE_BASEPAGE) from ring 3 releases its blocks and loans");
 
+    /* GEMDOS pointer arguments are checked per call (#437) */
+    probe_expect('c', 0, "bad GEMDOS pointers and lengths are refused, valid ones let through");
+
     /* the basepage's p_uft/p_curdir are not the kernel's tables (#418) */
     probe_expect('t', 0, "overwriting the basepage's file and directory tables harms nothing");
 

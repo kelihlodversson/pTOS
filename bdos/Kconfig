@@ -106,6 +106,7 @@ config CONF_WITH_USER_ASPACE
 	bool
 	default y if ARCH_X86_64
 	select CONF_WITH_KPROC
+	select CONF_WITH_USER_COPY
 	help
 	  Processes run in per-process address spaces (ring 3 on x86-64):
 	  the record also carries the process's page tables, kernel stack,
@@ -114,6 +115,27 @@ config CONF_WITH_USER_ASPACE
 	  trusted.  Not user-selectable: it follows the architecture, and
 	  requires CONF_WITH_KPROC.  The separate-address-spaces option
 	  (#402) will become the real home of this.
+
+config CONF_WITH_USER_COPY
+	bool "Validate the pointers passed to GEMDOS calls" if !ARCH_X86_64 && !ARCH_M68K && CONF_WITH_KPROC
+	default y if ARCH_X86_64
+	default n
+	help
+	  Check the pointer arguments of every GEMDOS (trap 1) call against the
+	  calling process before the call runs (bdos/uaccess.c): each pointer a
+	  call really uses must lie in memory the process may read, or write for
+	  an output, for its whole length, with no wrap-around, and strings must
+	  end within a bound.  A bad pointer makes the call fail with EIMBA
+	  (ERANGE for a bad length) instead of the kernel dereferencing it.
+	  Arguments a call does not use are never looked at.
+
+	  Mandatory on x86-64, where the kernel runs under the calling
+	  process's page tables and would otherwise touch the system variables
+	  or another block through a pointer it was handed.  Optional and off by
+	  default elsewhere (not offered on m68k, whose packed argument frame is
+	  not handled yet); without per-process address spaces the checks only
+	  look for null pointers and bad lengths.  Other call classes (BIOS,
+	  XBIOS, VDI, AES) are guarded by the same option as they are converted.
 
 config CONF_WITH_PRG_LOADER
 	bool "Load classic Atari GEMDOS PRG executables"

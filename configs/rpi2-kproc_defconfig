@@ -5,3 +5,4 @@ TARGET_RPI2=y
 CONF_WITH_KPROC=y
 # The multi-language image supports every country at run time.
 # BUILD_UNIQUE_COUNTRY is not set
+CONF_WITH_USER_COPY=y

@@ -499,6 +499,14 @@ it on.  Everything that is specific to per-process address spaces (page
 tables, kernel stacks, loaned memory, the ancestors' basepage copies) is
 selected by CONF_WITH_USER_ASPACE, which only the x86-64 port sets.
 
+CONF_WITH_USER_COPY checks the pointer arguments of every GEMDOS call
+(bdos/uaccess.c) before the call runs: each pointer a call really uses must
+name memory the process may read, or write for an output, for the whole
+length the call touches, or the call fails with EIMBA (ERANGE for a bad
+length).  It is mandatory on x86-64 and optional on ARM, where without
+per-process address spaces it only rejects null pointers and bad lengths; it
+is not offered on m68k yet.  The rpi2-kproc configuration builds with it.
+
 
 
 Adding a configuration option

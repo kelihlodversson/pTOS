@@ -76,12 +76,13 @@ variables (EmuCON asks Ssystem() for _nflops, for example).  The pool and the
 framebuffer sit above the 4 MiB image window so that they never overlap what a
 process maps for itself; x86_64_low_kernel_range() says where they end.
 
-Ring 0 can still write that data on a process's behalf, through a pointer
-argument it did not validate: only Ssystem()'s destination pointers
-(S_GETCOOKIE, S_CONSOLE_DIM) and the Fsetdta()/Rwabs-family buffers are
-checked against the process's own mappings today.  Validating or copying every
-other call's pointers is #352 and still open; a process whose syscall
-arguments point at the system variables can corrupt them until then.
+Ring 0 can still write that data on a process's behalf through a pointer
+argument it did not check.  The GEMDOS (trap 1) calls are covered: every
+pointer a call uses is checked against the process's own mappings before the
+call runs (bdos/uaccess.c; doc/x86_64-syscall.txt lists them), so the
+supervisor-only system variables, which have no user bit, cannot be reached
+that way.  The BIOS and XBIOS calls other than the Rwabs-family buffers still
+trust their pointers (#352), and VDI/AES are refused from ring 3 (#376).
 
 
 Minimum x32 user virtual layout

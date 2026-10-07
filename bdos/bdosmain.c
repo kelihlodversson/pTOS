@@ -34,6 +34,7 @@
 #include "string.h"
 #include "kprint.h"
 #include "ssystem.h"
+#include "uaccess.h"
 #include "bdosstub.h"
 #include "tosvars.h"
 
@@ -543,6 +544,14 @@ long osif(short *pw)
 
 restrt:
     fn = pw[0];
+
+#if CONF_WITH_USER_COPY && !CONF_WITH_USER_ASPACE
+    /* without address spaces: null pointers and bad lengths only (uaccess.c);
+     * x86-64's trap entry knows which calls come from ring 3 and checks there */
+    rc = bdos_check_user_args(pw);
+    if (rc)
+        return rc;
+#endif
 
 #if defined(__arm__) || defined(__x86_64__)
     /*

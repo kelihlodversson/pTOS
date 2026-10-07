@@ -40,6 +40,9 @@
  *      there
  *   t  scribble over the basepage's p_uft and p_curdir, then use handles and
  *      directories; exits with a mask of what failed (#418)
+ *   c  the pointer arguments of GEMDOS calls are checked per call: bad strings,
+ *      buffers, lengths and Pexec arguments are refused with EIMBA/ERANGE and
+ *      valid ones are let through; exits with a mask of what was wrong (#437)
  *   l  Pexec(PE_LOAD) of C:\\X32HELLO.TOS and PE_GOTHENFREE of its basepage; exits
  *      with 0, 0x100 if the file is not there
  *   y  a child (tail F) must not be able to Mfree this process's basepage
@@ -486,6 +489,81 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
                 bad |= 64;
             if (gemdos(0x3e, fh, 0) != 0)
                 bad |= 128;
+        }
+        pterm(bad);
+        break;
+    }
+    case 'c': {
+        /* the pointers of GEMDOS calls are checked per call (#437) */
+#define P(x) ((s64)(int)(unsigned long)(x))
+#define EIHNDL (-37)
+#define ERANGE (-64)
+        static char buf[256];
+        static char longstr[2000];
+        const s64 unmapped = 0x30000000, lowvec = 0x84, kern = (s64)(int)0x80000000;
+        const s64 ro = 0x3ffb0000;          /* the ancestors page: read-only */
+        const s64 stack_end = 0x3ffffff8;   /* 64 bytes from here cross the top */
+        s64 rc;
+        int k;
+
+        for (k = 0; k < (int)sizeof(longstr); k++)
+            longstr[k] = 'A';
+
+        /* strings: unmapped, kernel, supervisor-only, null, no terminator */
+        if (gemdos(0x3d, unmapped, 0) != EIMBA) bad |= 1;
+        if (gemdos(0x3d, kern, 0) != EIMBA) bad |= 1;
+        if (gemdos(0x3d, lowvec, 0) != EIMBA) bad |= 1;
+        if (gemdos(0x3d, 0, 0) != EIMBA) bad |= 1;
+        if (gemdos(0x3d, P(longstr), 0) != ERANGE) bad |= 2;
+        if (gemdos(0x09, unmapped, 0) != EIMBA) bad |= 1;      /* Cconws */
+        if (gemdos(0x4e, unmapped, 0) != EIMBA) bad |= 1;      /* Fsfirst */
+        if (gemdos(0x41, lowvec, 0) != EIMBA) bad |= 1;        /* Fdelete */
+        if (sys4(GEMDOS, 0x56, 0, P("a"), unmapped, 0) != EIMBA) bad |= 1;   /* Frename */
+        /* a valid string is let through (the file need not exist) */
+        rc = gemdos(0x3d, P("NOSUCH.FIL"), 0);
+        if (rc == EIMBA || rc == ERANGE) bad |= 4;
+
+        /* buffers, with an invalid handle so a call that gets past the
+         * pointer check fails with EIHNDL, not by touching anything */
+        if (sys4(GEMDOS, 0x3f, 6, 16, unmapped, 0) != EIMBA) bad |= 8;
+        if (sys4(GEMDOS, 0x3f, 6, 16, lowvec, 0) != EIMBA) bad |= 8;
+        if (sys4(GEMDOS, 0x3f, 6, 16, ro, 0) != EIMBA) bad |= 8;      /* an output */
+        if (sys4(GEMDOS, 0x3f, 6, 64, stack_end, 0) != EIMBA) bad |= 8;
+        if (sys4(GEMDOS, 0x3f, 6, 0x100, 0xfffffff0LL, 0) != EIMBA) bad |= 8;
+        if (sys4(GEMDOS, 0x3f, 6, 0x7fffffffLL, P(buf), 0) != EIMBA) bad |= 8;
+        if (sys4(GEMDOS, 0x3f, 6, -1, P(buf), 0) != ERANGE) bad |= 16;
+        if (sys4(GEMDOS, 0x40, 6, 16, unmapped, 0) != EIMBA) bad |= 8;
+        if (sys4(GEMDOS, 0x3f, 6, 16, P(buf), 0) != EIHNDL) bad |= 32;
+        if (sys4(GEMDOS, 0x40, 6, 16, P(buf), 0) != EIHNDL) bad |= 32;
+        if (sys4(GEMDOS, 0x40, 6, 16, ro, 0) != EIHNDL) bad |= 32;    /* an input */
+        if (sys4(GEMDOS, 0x3f, 6, 0, unmapped, 0) != EIHNDL) bad |= 32;  /* nothing to touch */
+
+        /* the other calls with buffers */
+        if (gemdos(0x47, unmapped, 0) != EIMBA) bad |= 64;            /* Dgetpath */
+        if (gemdos(0x47, P(buf), 0) != 0) bad |= 64;
+        if (gemdos(0x36, unmapped, 3) != EIMBA) bad |= 64;            /* Dfree */
+        if (gemdos(0x0a, unmapped, 0) != EIMBA) bad |= 64;            /* Cconrs */
+        if (sys4(GEMDOS, 0x57, unmapped, 6, 0, 0) != EIMBA) bad |= 64;   /* Fdatime, get */
+        if (sys4(GEMDOS, 0x57, ro, 6, 0, 0) != EIMBA) bad |= 64;         /* writes it */
+        if (sys4(GEMDOS, 0x57, ro, 6, 1, 0) != EIHNDL) bad |= 64;        /* only reads it */
+        if (gemdos(0x14, 0x100000, 0x1000) != EACCDN) bad |= 64;         /* Maddalt */
+
+        /* Pexec: the pointers depend on the mode */
+        if (sys4(GEMDOS, 0x4b, 0, unmapped, P(""), 0) != EIMBA) bad |= 128;
+        if (sys4(GEMDOS, 0x4b, 0, P("X32HELLO.TOS"), unmapped, 0) != EIMBA) bad |= 128;
+        if (sys4(GEMDOS, 0x4b, 0, P("X32HELLO.TOS"), P(""), unmapped) != EIMBA) bad |= 128;
+        if (sys4(GEMDOS, 0x4b, 5, 0, P(""), unmapped) != EIMBA) bad |= 128;
+        if (sys4(GEMDOS, 0x4b, 5, 0, unmapped, 0) != EIMBA) bad |= 128;
+        /* mode 5's second argument is flags, not a pointer: kernel-looking
+         * values there are fine (and a basepage comes back) */
+        rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), 0);
+        if (rc <= 0) {
+            bad |= 256;
+        } else {
+            s64 env = *(volatile u32 *)(unsigned long)(rc + 0x2c);
+
+            if (gemdos(0x49, env, 0) != 0 || gemdos(0x49, rc, 0) != 0)
+                bad |= 256;
         }
         pterm(bad);
         break;
