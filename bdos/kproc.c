@@ -61,9 +61,10 @@ struct kproc {
     UQUAD kstack_top;           /* initial stack pointer of that stack */
     struct {                    /* the search state Fsfirst()/Fsnext() keep in */
         UQUAD va;               /* the DTAs of this process, as the kernel */
-        UBYTE state[offsetof(DTAINFO, dt_fattr)];   /* left them (see below) */
+        ULONG stamp;            /* left them, and when (see below) */
+        UBYTE state[offsetof(DTAINFO, dt_fattr)];
     } dtas[KPROC_DTAS];
-    UWORD dta_next;             /* the one to replace when they are all taken */
+    ULONG dta_clock;            /* counts the searches, to find the oldest */
     struct {                    /* blocks of a child being launched from this */
         UQUAD va, bytes;        /* process, mapped supervisor-only into its */
     } borrowed[KPROC_BORROWS];  /* address space until they are freed */
@@ -462,15 +463,20 @@ void kproc_dta_save(PD *pd, const DTAINFO *dta)
         if (kproc->dtas[i].va == va)
             break;
     if (i == KPROC_DTAS) {
-        for (i = 0; i < KPROC_DTAS; i++)
-            if (!kproc->dtas[i].va)
+        int j;
+
+        /* a free slot, else the one whose search is the oldest */
+        for (i = 0, j = 0; j < KPROC_DTAS; j++) {
+            if (!kproc->dtas[j].va) {
+                i = j;
                 break;
-        if (i == KPROC_DTAS) {
-            i = kproc->dta_next;
-            kproc->dta_next = (kproc->dta_next + 1) % KPROC_DTAS;
+            }
+            if ((LONG)(kproc->dtas[j].stamp - kproc->dtas[i].stamp) < 0)
+                i = j;
         }
         kproc->dtas[i].va = va;
     }
+    kproc->dtas[i].stamp = ++kproc->dta_clock;
     memcpy(kproc->dtas[i].state, dta, sizeof kproc->dtas[i].state);
 }
 

@@ -158,7 +158,7 @@ uses.  The calls that take pointers:
     Fsnext()                the current DTA, written; what the process left in
                             its private part is not believed: the kernel keeps
                             its own copy of the search state of each of the
-                            process's last 8 DTAs and puts it back first, and
+                            process's last 8 DTAs (the oldest goes first) and puts it back first, and
                             a DTA never searched with has no more files
     Frename(0, old, new)    two strings, read
     Fdatime(buf, h, wflag)  4 bytes, read if wflag, else written

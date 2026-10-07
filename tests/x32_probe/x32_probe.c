@@ -669,6 +669,31 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         } else if (rc != -33 && rc != -49) {
             bad |= 4;                       /* neither a file nor none */
         }
+        /* A process keeps the search state of its last eight DTAs.  Search
+         * with nine, the first of them again just before the ninth: the one
+         * to go is the oldest, the second, and the restarted first goes on. */
+        if (rc == 0 || rc == -49 || rc == -33) {
+            static u32 many[9][16];
+            int m;
+            s64 r0, r1, r2;
+
+            for (m = 0; m < 8; m++) {
+                gemdos(0x1a, P(many[m]), 0);
+                sys4(GEMDOS, 0x4e, P("*.*"), 0x10, 0, 0);
+            }
+            gemdos(0x1a, P(many[0]), 0);
+            sys4(GEMDOS, 0x4e, P("*.*"), 0x10, 0, 0);       /* restart the first */
+            gemdos(0x1a, P(many[8]), 0);
+            sys4(GEMDOS, 0x4e, P("*.*"), 0x10, 0, 0);       /* the ninth */
+            gemdos(0x1a, P(many[2]), 0);
+            r2 = gemdos(0x4f, 0, 0);
+            gemdos(0x1a, P(many[0]), 0);
+            r0 = gemdos(0x4f, 0, 0);
+            gemdos(0x1a, P(many[1]), 0);
+            r1 = gemdos(0x4f, 0, 0);
+            if (r2 == 0 && (r0 != 0 || r1 != -49))      /* (a directory of two or more) */
+                bad |= 32;
+        }
         /* a DTA nothing was searched with has no search to continue */
         gemdos(0x1a, P(fresh), 0);
         fresh[3] = 2;
