@@ -126,8 +126,8 @@ Splitting the two mechanisms, rather than trying to infer which one a
 given `syscall` came from, removes the distinction that bug depended on.
 
 
-Dispatch and the from_ring3 pointer check
---------------------------------------------
+Dispatch and pointer arguments
+------------------------------
 
 x86_64_trap_dispatch() (trap.c) switches on trap_class and calls into
 osif()/bios_vecs[]/xbios_vecs[] exactly as m68k/ARM's own dispatchers
@@ -135,18 +135,16 @@ do, with the result left in frame->rax. An out-of-range BIOS/XBIOS
 function number returns the function number itself, matching
 bios/arch/m68k/vectors.S's biosxbios convention.
 
-When from_ring3 is set, the raw RDI/RSI/RDX/R10 argument values are
-checked against x86_64_arg_hits_known_kernel_range() before dispatch:
-this rejects an argument that falls inside this kernel's own load image
-or the physical-memory direct map, the only two ranges where a bad
-dereference could actually read or corrupt live kernel state. This is
-deliberately narrow -- it is not general user-pointer validation, and
-does not (and safely cannot yet) reject the low system-vector area a
-ring-3 caller could still reach indirectly through a GEMDOS/BIOS buffer
-argument. See x86_64_arg_hits_known_kernel_range()'s own comment in
-trap.c for the full reasoning, and #352 for what actually closes that
-remaining gap once a real per-process address space (#334) exists to
-validate against.
+The dispatcher does not inspect the raw RDI/RSI/RDX/R10 values. A register
+a call does not use carries whatever the caller left in it, including, at
+process entry, values the kernel itself left there, and says nothing about
+the call. Which registers are pointers is known only per function, so
+checking that a buffer or string lies in the calling process's own address
+space belongs in the call that takes it, not in a filter in front of all of
+them. Few calls do so yet (Fsetdta(), Ssystem(), Rwabs()); the rest trust
+their pointers, which a ring-3 process can point at kernel memory by
+writing a higher-half value in the 64-bit register. #352 tracks closing
+that, including the low system-vector area.
 
 
 Status

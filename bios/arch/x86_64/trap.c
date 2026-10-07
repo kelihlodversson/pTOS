@@ -159,128 +159,6 @@ static x86_64_percpu_t percpu;
 #define SYSCALL_STACK_BYTES 8192
 static UBYTE syscall_stack[SYSCALL_STACK_BYTES] __attribute__((aligned(16)));
 
-/*
- * Generous over-approximations of this image's own load span and the
- * physical-memory direct map's actual size, used below rather than the
- * exact bounds (startup.c's IMAGE_SPAN_BYTES, x86_64_pmem_highest_addr())
- * -- pulling either in would mean this arch-generic file depending on a
- * bios/machine/pc-x86_64 header, the layering CLAUDE.md asks arch/ code
- * to avoid. Wildly generous is fine: these only need to safely contain
- * the real ranges, not match them tightly (see
- * x86_64_arg_hits_known_kernel_range()'s own comment on why a loose
- * bound here still cannot misfire against a real GEMDOS argument).
- */
-#define X86_64_KERNEL_IMAGE_SPAN_GENEROUS (32ULL * 1024 * 1024)  /* actual span ~4 MiB */
-#define X86_64_PHYS_MAP_SPAN_GENEROUS     (1ULL << 40)           /* 1 TiB */
-
-/*
- * NOT user-pointer validation, despite the name of what calls this
- * (x86_64_trap_dispatch()'s from_ring3 check) -- read this comment in
- * full before reusing or extending it. True iff addr falls inside one
- * of this kernel's own two known-mapped address ranges: its own load
- * image (X86_64_KERNEL_VIRT_BASE upward) or the physical-memory direct
- * map (X86_64_PHYS_MAP_BASE upward, pgtable.h) -- the only ranges where
- * a bad dereference could actually read or corrupt live kernel state,
- * as opposed to merely faulting harmlessly into unmapped kernel-half
- * address space. Used to reject a genuine ring-3 caller's raw syscall
- * argument without ever dereferencing it at CPL0 on the caller's behalf.
- *
- * This replaced an earlier, broader "reject anything outside the low
- * canonical half" version (#350's review): that one also rejected
- * ordinary *signed* GEMDOS arguments sign-extended into the upper half --
- * Fseek()'s negative offset, Mxalloc()'s -1 size-query sentinel, and any
- * other call passing a small negative long -- exactly as if they were
- * pointers, breaking real functionality. There is no per-call, per-slot
- * argument-type metadata available here (bios_vecs[]/xbios_vecs[]/
- * bdosmain.c's funcs[] all carry an argument *count*, never which slots
- * are pointers) to do real type-aware validation with, so this still
- * isn't that; it is deliberately narrow instead. A sign-extended 32-bit
- * value's low 32 bits are always close to 0xFFFFFFFF (e.g. -9 is
- * 0xFFFFFFF7, -1 is 0xFFFFFFFF), far above the low-32-bit span of either
- * range checked here (X86_64_KERNEL_VIRT_BASE's low 32 bits are
- * 0x80000000, and X86_64_PHYS_MAP_BASE's top 32 bits are 0xFFFF8000, not
- * 0xFFFFFFFF, putting the whole range far below any sign-extended
- * negative's value) -- so no realistic signed integer argument can ever
- * land in either, no matter how negative, while a genuine kernel address
- * always does. This also means a call with fewer than 4 real arguments,
- * whose unused slots the caller left uncleared, cannot be misclassified
- * by accident either: the odds of unrelated garbage exactly landing
- * inside one of these two narrow ranges are negligible, unlike the old
- * version's roughly 50% of the address space.
- *
- * Two further reasons this can never be "the" user-pointer check, worth
- * spelling out precisely rather than leaving implicit:
- *
- * - #334's actual planned model for a real user process on this arch is
- *   x32-style (an ILP32 process inside 64-bit long mode, like Linux's
- *   x32 ABI), meaning every genuine user pointer will be below 4 GiB,
- *   not merely "somewhere in the low canonical 47-bit half". A real
- *   per-process check, once that address space exists, both can and
- *   should be that much tighter -- rejecting anything outside a known
- *   sub-4 GiB, per-process-mapped range, rather than merely rejecting
- *   two specific kernel ranges out of the entire rest of the address
- *   space. This function's job stops at "not a known kernel address";
- *   it does not and cannot mean "is a valid pointer for this process".
- *
- * - Whether a signed scalar argument (Fseek()'s offset, Mxalloc()'s
- *   amount, ...) arrives here sign-extended or zero-extended into its
- *   64-bit register depends on how the *caller* wrote the literal or
- *   variable it passed to a bdosbind.h/xbiosbind.h macro -- these expand
- *   to a call through trap1()'s variadic `long trap1(int, ...)`
- *   (include/arch/x86_64/asm.h), so a caller writing e.g. `Fseek(-9, ...)`
- *   passes a plain (32-bit) `int` -9, which C's own variadic argument
- *   passing does not further widen; the x86-64 backend's 32-bit register
- *   write for that argument then zero-extends it into the corresponding
- *   64-bit register by ordinary ISA rules (any 32-bit destination write
- *   clears the upper 32 bits), giving 0x00000000FFFFFFF7 -- a completely
- *   different bit pattern from the sign-extended 0xFFFFFFFFFFFFFFF7 a
- *   caller instead gets by writing `Fseek(-9L, ...)`. Both patterns
- *   happen to fall outside this function's own narrow ranges (a
- *   zero-extended small negative is nowhere near 4 GiB, let alone this
- *   kernel's own load span or physical map), so today's check is
- *   unaffected either way -- but this ambiguity is real, predates this
- *   port, and is not otherwise documented anywhere: no per-call,
- *   per-slot argument-type metadata can be built reliably (#334 or
- *   otherwise) on top of a calling convention whose own scalar
- *   sign/zero-extension is undefined depending on how each of the
- *   codebase's many existing call sites happened to write a literal.
- *
- * - This also does not, and cannot safely, cover the low system-vector
- *   area pgtable.c's x86_64_map_low_vectors() maps at virtual [0, 2 MiB)
- *   (supervisor-only: no U bit, so a ring-3 caller cannot reach it
- *   *directly* -- but this dispatcher runs at CPL0, so a syscall
- *   argument that happens to equal e.g. 0x84 (VEC_TRAP1) would still let
- *   a ring-3 caller read or write that supervisor mapping *through* a
- *   GEMDOS/BIOS buffer argument). Unlike the two ranges actually checked
- *   above, [0, 2 MiB) overlaps the exact numeric range countless
- *   legitimate small scalar arguments already occupy (handles, counts,
- *   modes -- a file handle of 3 and a "pointer" of 0x84 are
- *   indistinguishable by magnitude alone), so rejecting it here the same
- *   way would reject most real GEMDOS traffic, not just an attack.
- *   Unmapping it once bios_init()'s own boot-time writes are done isn't
- *   safe either: Setexc() (bios/bios.c's setexc()) genuinely reads and
- *   writes arbitrary low addresses via `(LONG *)(4L * num)` for any
- *   vector number outside 0x100-0x102 -- e.g. Setexc(0x21, ...) touches
- *   0x84 directly -- so this is real, ongoing kernel state a future
- *   process's own Setexc() calls need, not boot-time scratch. There is
- *   no magnitude-based fix for this one: closing it for real needs the
- *   same per-process address space and copy_from_user()-style validation
- *   #334 already owns, not an extension of this function. Tracked as
- *   #352, with this exact reasoning (including the Setexc() finding and
- *   why SMAP does not help -- it guards CPL0 access to *user*-accessible
- *   pages, and this mapping is supervisor-only, the opposite case).
- */
-static int x86_64_arg_hits_known_kernel_range(UQUAD addr)
-{
-    if (addr >= X86_64_KERNEL_VIRT_BASE
-        && addr < X86_64_KERNEL_VIRT_BASE + X86_64_KERNEL_IMAGE_SPAN_GENEROUS)
-        return 1;
-    if (addr >= X86_64_PHYS_MAP_BASE
-        && addr < X86_64_PHYS_MAP_BASE + X86_64_PHYS_MAP_SPAN_GENEROUS)
-        return 1;
-    return 0;
-}
-
 static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
 
 /*
@@ -369,18 +247,15 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     UQUAD trap_class = frame->rax >> 32;
     ULONG fn = (ULONG)frame->rax;
 
-    if (from_ring3 &&
-        (x86_64_arg_hits_known_kernel_range(frame->rdi) ||
-         x86_64_arg_hits_known_kernel_range(frame->rsi) ||
-         x86_64_arg_hits_known_kernel_range(frame->rdx) ||
-         x86_64_arg_hits_known_kernel_range(frame->r10))) {
-        /* GEMDOS has a real "bad address" error code; BIOS/XBIOS calls
-         * don't share one convention (return types vary per call), so
-         * -1L (already this dispatcher's own "unhandled class" value
-         * below) is the closest existing precedent. */
-        frame->rax = (trap_class == X86_64_TRAP_GEMDOS) ? (UQUAD)EIMBA : (UQUAD)-1L;
-        return;
-    }
+    /*
+     * The raw argument registers are not inspected here: which of them a
+     * call uses, and which of those are pointers, is only known per
+     * function, and a register the call does not use is none of this
+     * function's business.  Checking that a buffer or string pointer lies
+     * in the calling process's own address space belongs in the call that
+     * takes it (#352); until a call does that, it trusts its pointers, as
+     * Fsetdta() and Ssystem() below do not.
+     */
 
     /* Trap class 2 (GEM) is not safe from ring 3 yet -- it dereferences
      * AESPB/VDIPB pointers (rdi) directly without validation or

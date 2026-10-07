@@ -1198,8 +1198,9 @@ static void test_ring3(void)
     probe_expect('i', 0, "first run starts with zeroed data");
     probe_expect('i', 0, "second run starts with zeroed data too");
 
-    /* bad pointers and kernel addresses as system call arguments */
+    /* bad pointers as system call arguments, and unused argument registers */
     probe_expect('b', 0, "bad arguments refused by the system calls");
+    probe_expect('r', 0, "arguments a call does not use are not looked at");
     probe_expect('s', 0, "ring 3 cannot install kernel callbacks or write the kernel variables");
 
     /* basepages a ring-3 process can use, and launches it cannot forge (#416) */
