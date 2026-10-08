@@ -517,19 +517,43 @@ static void mark_bcbs_invalid(int drv)
 }
 
 
-#if defined(__arm__) || defined(__x86_64__)
-long osif(long *pw);
+#if CONF_WITH_USER_COPY
+/*
+ * With the pointer checks (uaccess.c) there are two entries to the same
+ * dispatcher.  osif() is the trap entry: what it is given comes from the
+ * caller of the trap, so it is checked first.  osif_trusted() is for kernel
+ * code that calls GEMDOS as an internal API and knows what it passes (on
+ * x86-64: trap1(), which does not go through the trap handler at all).
+ */
+long osif_trusted(long *pw);
+
+long osif(long *pw)
+{
+    long rc = bdos_check_user_args(pw);
+
+    if (rc)
+        return rc;
+    return osif_trusted(pw);
+}
+
+#define OSIF_DISPATCH osif_trusted
 #else
-long osif(short *pw);
+#define OSIF_DISPATCH osif
+#endif
+
+#if defined(__arm__) || defined(__x86_64__)
+long OSIF_DISPATCH(long *pw);
+#else
+long OSIF_DISPATCH(short *pw);
 #endif
 
 /*
  *  osif - C implementation of trap #1. Called by _enter.
  */
 #if defined(__arm__) || defined(__x86_64__)
-long osif(long *pw)
+long OSIF_DISPATCH(long *pw)
 #else
-long osif(short *pw)
+long OSIF_DISPATCH(short *pw)
 #endif
 {
     char **pb, *pb2, *p, ctmp;
@@ -544,14 +568,6 @@ long osif(short *pw)
 
 restrt:
     fn = pw[0];
-
-#if CONF_WITH_USER_COPY && !CONF_WITH_USER_ASPACE
-    /* without address spaces: null pointers and bad lengths only (uaccess.c);
-     * x86-64's trap entry knows which calls come from ring 3 and checks there */
-    rc = bdos_check_user_args(pw);
-    if (rc)
-        return rc;
-#endif
 
 #if defined(__arm__) || defined(__x86_64__)
     /*

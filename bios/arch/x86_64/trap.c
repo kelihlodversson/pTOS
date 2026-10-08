@@ -19,7 +19,6 @@
 #include "trap.h"
 
 #include "../../../bdos/mem.h"
-#include "../../../bdos/uaccess.h"
 #include "../../../include/biosdefs.h"
 #include "../../../bios/disk.h"
 
@@ -97,7 +96,8 @@ extern LONG super(WORD cx, AESPB *pcrys_blk);
  * codebase's own established convention, since a callee only ever reads
  * the argument registers its own real signature declares.
  */
-extern long osif(long *pw);
+extern long osif(long *pw);          /* the trap entry: checks its arguments */
+extern long osif_trusted(long *pw);  /* the same, for kernel callers */
 extern const PFLONG bios_vecs[];
 extern const UWORD bios_ent;
 extern const PFLONG xbios_vecs[];
@@ -242,6 +242,25 @@ void x86_64_syscall_abandoned(void)
     }
 }
 
+/*
+ * The argument array osif() takes, from the trap frame.  5 slots, not 4:
+ * bdosmain.c's own dispatch (the p4 case, e.g. Pexec's mode/path/tail/env)
+ * reads up to pw[4] -- GEMDOS's own widest call needs all 4 real argument
+ * registers this convention has (trap.h), not just the first 3.
+ *
+ * `long`, not LONG: see this file's own top-of-file comment on why a
+ * fixed-32-bit slot here would truncate any pointer argument (Pexec's
+ * path/tail/env, Cconws's string, ...) before osif() ever saw it.
+ */
+static void gemdos_args(long *pw, const x86_64_trap_frame_t *frame)
+{
+    pw[0] = (long)(ULONG)frame->rax;
+    pw[1] = (long)frame->rdi;
+    pw[2] = (long)frame->rsi;
+    pw[3] = (long)frame->rdx;
+    pw[4] = (long)frame->r10;
+}
+
 static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
     UQUAD trap_class = frame->rax >> 32;
@@ -267,51 +286,14 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
         return;
     }
 
-    /*
-     * Pexec() from ring 3: the modes that create or launch a basepage are
-     * allowed (xexec() hands a created basepage's blocks to the caller and
-     * validates a launch request against the kernel's own record, see
-     * kproc_check_launch()); the kernel-internal PE_RELOCATE is not.
-     */
-    if (from_ring3 && trap_class == X86_64_TRAP_GEMDOS && fn == 0x4b) {
-        WORD mode = (WORD)frame->rdi;
-
-        if (mode != PE_LOADGO && mode != PE_LOAD && mode != PE_GO &&
-            mode != PE_BASEPAGE && mode != PE_GOTHENFREE &&
-            mode != PE_BASEPAGEFLAGS) {
-            frame->rax = (UQUAD)EINVFN;
-            return;
-        }
-    }
-
     switch (trap_class) {
     case X86_64_TRAP_GEMDOS: {
-        /* 5 slots, not 4: bdosmain.c's own dispatch (the p4 case, e.g.
-         * Pexec's mode/path/tail/env) reads up to pw[4] -- GEMDOS's own
-         * widest call needs all 4 real argument registers this
-         * convention has (trap.h), not just the first 3.
-         *
-         * `long`, not LONG: see this file's own top-of-file comment on
-         * why a fixed-32-bit slot here would truncate any pointer
-         * argument (Pexec's path/tail/env, Cconws's string, ...) before
-         * osif() ever saw it. */
         long pw[5];
 
-        pw[0] = (long)fn;
-        pw[1] = (long)frame->rdi;
-        pw[2] = (long)frame->rsi;
-        pw[3] = (long)frame->rdx;
-        pw[4] = (long)frame->r10;
-        /* A ring-3 caller's pointers are checked, per call and only the ones
-         * the call uses, before the call runs (bdos/uaccess.c). */
-        if (from_ring3) {
-            long rc = bdos_check_user_args(pw);
-
-            if (rc) {
-                frame->rax = (UQUAD)rc;
-                break;
-            }
-        }
+        /* Only a ring-3 `syscall` gets here: kernel code calls GEMDOS through
+         * x86_64_kernel_trap() (below), which does not use this function for
+         * it.  The caller's pointers are checked by osif() itself. */
+        gemdos_args(pw, frame);
         frame->rax = (UQUAD)osif(pw);
         break;
     }
@@ -580,6 +562,14 @@ long x86_64_kernel_trap(long rax, long rdi, long rsi, long rdx, long r10)
     frame.rsi = (UQUAD)rsi;
     frame.rdx = (UQUAD)rdx;
     frame.r10 = (UQUAD)r10;
+    if ((UQUAD)rax >> 32 == X86_64_TRAP_GEMDOS) {
+        /* kernel code calling GEMDOS as an internal API passes its own,
+         * kernel, pointers: no user-pointer checks (osif() has them) */
+        long pw[5];
+
+        gemdos_args(pw, &frame);
+        return osif_trusted(pw);
+    }
     x86_64_trap_dispatch(&frame, 0);
     return (long)frame.rax;
 }

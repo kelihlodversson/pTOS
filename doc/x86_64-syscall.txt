@@ -114,7 +114,9 @@ x86-64 branch of include/biosbind.h/xbiosbind.h -- goes through
 x86_64_kernel_trap() instead: an ordinary, recursion-safe C function
 that builds a throwaway x86_64_trap_frame_t on the caller's own stack
 and calls x86_64_trap_dispatch() directly, with from_ring3 = 0 and no
-privilege transition at all.
+privilege transition at all.  GEMDOS calls are the exception: the kernel
+entry hands them to osif_trusted(), the dispatcher behind osif() without
+its pointer checks, and they do not pass through the trap handler.
 
 An earlier version of this code let both kinds of caller share the
 `syscall` entry point, telling them apart by testing whether the
@@ -139,10 +141,14 @@ The dispatcher does not inspect the raw RDI/RSI/RDX/R10 values. A register
 a call does not use carries whatever the caller left in it, including, at
 process entry, values the kernel itself left there, and says nothing about
 the call. Which registers are pointers is known only per function, so
-the check for a ring-3 caller's GEMDOS (trap 1) pointers is a descriptor
-per call (bdos/uaccess.c, CONF_WITH_USER_COPY: mandatory here, #437) that is
-consulted before the call runs and looks at the pointers that call really
-uses.  The calls that take pointers:
+the check for a caller's GEMDOS (trap 1) pointers is a descriptor
+per call (bdos/uaccess.c, CONF_WITH_USER_COPY: mandatory here, #437) that
+osif() consults before the call runs and that looks at the pointers that
+call really uses.  The trap handler only builds the argument array and calls
+osif(); kernel code, which passes kernel pointers and is not checked, calls
+osif_trusted() through trap1().  The same file refuses what a user process
+may not do (Pexec() modes other than the user ones, Maddalt(), Ssystem()
+writes).  The calls that take pointers:
 
     Cconws(str)             string, read
     Cconrs(buf)             2 + buf[0] bytes, read and written

@@ -1,9 +1,10 @@
 /*
  * uaccess.c - checking the pointers a GEMDOS call is given
  *
- * A GEMDOS call from a process that is not trusted (a ring-3 process on
- * x86-64) must not make the kernel read or write memory the process could
- * not itself.  Whether an argument is a pointer, what it points at and how
+ * A GEMDOS call made through the trap (osif() in bdosmain.c, which runs this
+ * check first) must not make the kernel read or write memory the process
+ * could not itself.  Kernel code that calls GEMDOS as an internal API does
+ * not go through the check.  Whether an argument is a pointer, what it points at and how
  * big that is, is only known per call, so this file has a descriptor for
  * every call that takes pointers and checks exactly those arguments before the
  * call runs.  Arguments a call does not use are never looked at (an early
@@ -271,7 +272,12 @@ static long pexec_ok(const long *pw)
         if (rc)
             return rc;
     } else if (mode != 5 && mode != 7) {
+#if CONF_WITH_USER_ASPACE
+        /* the kernel's own modes (PE_RELOCATE) are not for the user */
+        return EINVFN;
+#else
         return E_OK;                    /* not a mode: the call says EINVFN */
+#endif
     }
     rc = str_ok(pw[3], UA_TAIL_MAX);
     if (rc)

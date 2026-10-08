@@ -131,9 +131,11 @@ typedef struct {
  * untrusted register values a genuine ring-3 caller supplied or trusted
  * arguments a kernel-mode caller passed via x86_64_kernel_trap() -- the
  * latter legitimately includes real kernel (higher-half) pointers, e.g. an
- * internal buffer bdos/fsmain.c passes to Cconws().  The dispatcher does
+ * internal buffer a kernel caller passes to a BIOS call.  The dispatcher does
  * not judge the raw register values either way; validating a pointer a
- * call takes is that call's job (#352).
+ * call takes is that call's job (#352).  GEMDOS is not dispatched here for
+ * a kernel-mode caller at all: x86_64_kernel_trap() sends it to osif_trusted()
+ * and a `syscall` reaches osif(), which checks its arguments (#437).
  */
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
 
