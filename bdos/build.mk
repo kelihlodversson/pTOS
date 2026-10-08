@@ -11,4 +11,4 @@ obj-$(CONF_WITH_USER_COPY) += uaccess.o
 # Ssystem() (bdos/ssystem.c) is needed by every non-m68k/ColdFire arch --
 # see the comment in osif() (bdos/bdosmain.c).
 obj-$(ARCH_ARM) += ssystem.o
-obj-$(ARCH_X86_64) += ssystem.o
+obj-$(ARCH_X86_64) += ssystem.o kcall.o

@@ -97,7 +97,6 @@ extern LONG super(WORD cx, AESPB *pcrys_blk);
  * the argument registers its own real signature declares.
  */
 extern long osif(long *pw);          /* the trap entry: checks its arguments */
-extern long osif_trusted(long *pw);  /* the same, for kernel callers */
 extern const PFLONG bios_vecs[];
 extern const UWORD bios_ent;
 extern const PFLONG xbios_vecs[];
@@ -290,9 +289,9 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     case X86_64_TRAP_GEMDOS: {
         long pw[5];
 
-        /* Only a ring-3 `syscall` gets here: kernel code calls GEMDOS through
-         * x86_64_kernel_trap() (below), which does not use this function for
-         * it.  The caller's pointers are checked by osif() itself. */
+        /* Only a ring-3 `syscall` gets here: kernel code calls the GEMDOS
+         * implementations directly (bdos/arch/x86_64/kcall.c).  The caller's
+         * pointers are checked by osif() itself. */
         gemdos_args(pw, frame);
         frame->rax = (UQUAD)osif(pw);
         break;
@@ -562,14 +561,8 @@ long x86_64_kernel_trap(long rax, long rdi, long rsi, long rdx, long r10)
     frame.rsi = (UQUAD)rsi;
     frame.rdx = (UQUAD)rdx;
     frame.r10 = (UQUAD)r10;
-    if ((UQUAD)rax >> 32 == X86_64_TRAP_GEMDOS) {
-        /* kernel code calling GEMDOS as an internal API passes its own,
-         * kernel, pointers: no user-pointer checks (osif() has them) */
-        long pw[5];
-
-        gemdos_args(pw, &frame);
-        return osif_trusted(pw);
-    }
+    if ((UQUAD)rax >> 32 == X86_64_TRAP_GEMDOS)
+        return EINVFN;          /* kernel code calls GEMDOS directly (kcall.c) */
     x86_64_trap_dispatch(&frame, 0);
     return (long)frame.rax;
 }

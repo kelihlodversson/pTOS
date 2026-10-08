@@ -134,20 +134,21 @@ typedef struct {
  * internal buffer a kernel caller passes to a BIOS call.  The dispatcher does
  * not judge the raw register values either way; validating a pointer a
  * call takes is that call's job (#352).  GEMDOS is not dispatched here for
- * a kernel-mode caller at all: x86_64_kernel_trap() sends it to osif_trusted()
- * and a `syscall` reaches osif(), which checks its arguments (#437).
+ * a kernel-mode caller at all: kernel code calls the GEMDOS implementations
+ * directly (bdos/arch/x86_64/kcall.c), and a `syscall` reaches osif(), which
+ * checks its arguments (#437).
  */
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
 
 /*
- * Kernel-mode entry point for GEMDOS/BIOS/XBIOS calls: builds a throwaway
+ * Kernel-mode entry point for BIOS/XBIOS calls (GEMDOS is refused: kernel
+ * code calls it directly, see kcall.c): builds a throwaway
  * x86_64_trap_frame_t on the caller's own stack and calls
  * x86_64_trap_dispatch() directly, exactly as if this were a genuine
  * `syscall` round trip, but as a plain, ordinary, recursion-safe C
  * function call -- no privilege transition, no swapgs, no dedicated
- * stack. This is what every current caller (util/arch/x86_64/miscasm.S's
- * trap1()/trap1_pexec(), and every x86_64 branch in include/biosbind.h/
- * xbiosbind.h) uses instead of x86_64_syscall_entry, since none of them
+ * stack. This is what every current caller (every x86_64 branch in
+ * include/biosbind.h/xbiosbind.h) uses instead of x86_64_syscall_entry, since none of them
  * are a real ring-3 process (there is no such thing yet -- #334) and
  * some of them call each other (bdos/fsmain.c's xsetdrv() calling
  * Drvmap(), for one): an ordinary C call nests to any depth for free the

@@ -35,6 +35,7 @@
 #include "bios.h"
 #include "kprint.h"
 #include "asm.h"
+#include "bdosbind.h"
 #include "earlycon.h"
 #include <stdarg.h>
 
@@ -53,9 +54,9 @@ void halt(void)
 
 /*
  * kill_program()/warm_reset()/cold_reset(): ARM/m68k's panicasm.S
- * fall-through design (kill_program() drops straight into warm_reset()
- * if Pterm() ever returns) is preserved here even though little of it is
- * exercised yet: Pterm() (trap1(0x4c,...)) reaches osif() -> xterm() ->
+ * design (kill_program() ends the running program; warm_reset() and
+ * cold_reset() are what is left to try) is preserved here even though little of it is
+ * exercised yet: Pterm() reaches xterm() ->
  * termuser() (bdos/arch/x86_64/rwa.c), which itself panics right now
  * (process launch/exit isn't implemented) -- so kill_program() recurses
  * into another panic() rather than actually returning, which is a stable
@@ -68,8 +69,7 @@ void halt(void)
  */
 void kill_program(void)
 {
-    (void)trap1(0x4c, (long)-1);
-    warm_reset();
+    Pterm(-1);
 }
 
 void warm_reset(void)

@@ -501,7 +501,7 @@ static void offree(DMD *d)
 /*
  * mark_bcbs_invalid - mark the BCBs for the specified drive as invalid
  */
-static void mark_bcbs_invalid(int drv)
+void mark_bcbs_invalid(int drv)
 {
     BCB *bx;
     int i;
@@ -517,43 +517,23 @@ static void mark_bcbs_invalid(int drv)
 }
 
 
-#if CONF_WITH_USER_COPY
-/*
- * With the pointer checks (uaccess.c) there are two entries to the same
- * dispatcher.  osif() is the trap entry: what it is given comes from the
- * caller of the trap, so it is checked first.  osif_trusted() is for kernel
- * code that calls GEMDOS as an internal API and knows what it passes (on
- * x86-64: trap1(), which does not go through the trap handler at all).
- */
-long osif_trusted(long *pw);
-
-long osif(long *pw)
-{
-    long rc = bdos_check_user_args(pw);
-
-    if (rc)
-        return rc;
-    return osif_trusted(pw);
-}
-
-#define OSIF_DISPATCH osif_trusted
-#else
-#define OSIF_DISPATCH osif
-#endif
-
 #if defined(__arm__) || defined(__x86_64__)
-long OSIF_DISPATCH(long *pw);
+long osif(long *pw);
 #else
-long OSIF_DISPATCH(short *pw);
+long osif(short *pw);
 #endif
 
 /*
  *  osif - C implementation of trap #1. Called by _enter.
+ *
+ *  What it is given comes from the caller of the trap, so the pointers it
+ *  carries are checked first (uaccess.c).  Kernel code does not come this
+ *  way: on x86-64 it calls the implementations directly (kcall.c).
  */
 #if defined(__arm__) || defined(__x86_64__)
-long OSIF_DISPATCH(long *pw)
+long osif(long *pw)
 #else
-long OSIF_DISPATCH(short *pw)
+long osif(short *pw)
 #endif
 {
     char **pb, *pb2, *p, ctmp;
@@ -565,6 +545,12 @@ long OSIF_DISPATCH(short *pw)
     int num, max;
     long rc, numl;
     const FND *f;
+
+#if CONF_WITH_USER_COPY
+    rc = bdos_check_user_args(pw);
+    if (rc)
+        return rc;
+#endif
 
 restrt:
     fn = pw[0];
