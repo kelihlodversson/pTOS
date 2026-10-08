@@ -668,8 +668,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             /* point the private part at drive 5, which is not mounted: the
              * kernel used to dereference its (null) drive table entry */
             dta[3] = 5;                     /* dt_offset_drive (after dt_name[12]) */
-            dta[4] = 0x7fff;                /* dt_cloffset ... */
-            dta[5] = 0x7fffffff;            /* ... and dt_clnum */
+            dta[4] = 0x7fff7fff;            /* dt_cloffset and dt_clnum, 16 bits each */
             rc = gemdos(0x4f, 0, 0);
             if (rc != 0 && rc != -49)
                 bad |= 2;                   /* a file, or no more of them */
