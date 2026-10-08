@@ -701,6 +701,27 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             if (r2 == 0 && (r0 != 0 || r1 != -49))      /* (a directory of two or more) */
                 bad |= 32;
         }
+        /* an exhausted search stays exhausted, even if a file turns up later */
+        {
+            static u32 ex[16];
+            s64 h;
+
+            gemdos(0x1a, P(ex), 0);
+            h = sys4(GEMDOS, 0x3c, P("X32EX1.TMP"), 0, 0, 0);
+            if (h >= 0) {
+                gemdos(0x3e, h, 0);
+                if (sys4(GEMDOS, 0x4e, P("X32EX?.TMP"), 0, 0, 0) != 0 ||
+                    gemdos(0x4f, 0, 0) != -49)
+                    bad |= 64;
+                h = sys4(GEMDOS, 0x3c, P("X32EX2.TMP"), 0, 0, 0);
+                if (h >= 0)
+                    gemdos(0x3e, h, 0);
+                if (gemdos(0x4f, 0, 0) != -49)
+                    bad |= 64;
+                gemdos(0x41, P("X32EX1.TMP"), 0);
+                gemdos(0x41, P("X32EX2.TMP"), 0);
+            }
+        }
         /* a DTA nothing was searched with has no search to continue */
         gemdos(0x1a, P(fresh), 0);
         fresh[3] = 2;

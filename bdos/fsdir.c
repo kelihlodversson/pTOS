@@ -453,6 +453,8 @@ long xsnext(void)
 #if CONF_WITH_USER_ASPACE
     if (rc == E_OK)
         kproc_dta_save(run, dta);
+    else if (rc == ENMFIL)
+        kproc_dta_forget(run, dta);     /* the search is over for good */
 #endif
     return rc;
 }
