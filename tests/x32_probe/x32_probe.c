@@ -652,8 +652,9 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         s64 rc;
 
         gemdos(0x0e, 2, 0);                 /* Dsetdrv(C:) */
-        if (gemdos(0x1a, P(dta), 0) < 0 && 0)
-            bad |= 1;
+        gemdos(0x1a, P(dta), 0);            /* Fsetdta has no return value */
+        if ((u32)gemdos(0x2f, 0, 0) != (u32)(unsigned long)dta)
+            bad |= 1;                       /* Fgetdta: it must have taken */
         rc = sys4(GEMDOS, 0x4e, P("*.*"), 0x10, 0, 0);   /* files and directories */
         if (rc == 0) {
             /* a new search that finds nothing ends the old one on that DTA */
