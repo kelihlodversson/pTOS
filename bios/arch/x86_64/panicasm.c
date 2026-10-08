@@ -70,6 +70,7 @@ void halt(void)
 void kill_program(void)
 {
     Pterm(-1);
+    warm_reset();
 }
 
 void warm_reset(void)

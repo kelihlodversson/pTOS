@@ -34,7 +34,7 @@ extern long kdos_malloc(long amount);
 extern long kdos_mfree(long block);
 extern long kdos_mshrink(long block, long newsiz);
 extern long kdos_pexec(long mode, long path, long tail, long env);
-extern void kdos_pterm(long rc) __attribute__((noreturn));
+extern void kdos_pterm(long rc);
 
 #define Crawio(w) kdos_crawio(TRAP1_ARG(w))
 #define Dsetdrv(drv) kdos_dsetdrv(TRAP1_ARG(drv))

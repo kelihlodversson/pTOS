@@ -105,12 +105,17 @@ long kdos_mshrink(long block, long newsiz)
     return xsetblk(0, (void *)block, newsiz);
 }
 
+/*
+ * xexec() reaches the disk (to find and read the program's header) before it
+ * installs a handler of its own, and relies on the one osif() used to set up;
+ * the exit of a process closes its files
+ */
 long kdos_pexec(long mode, long path, long tail, long env)
 {
-    return xexec((WORD)mode, (char *)path, (char *)tail, (char *)env);
+    return DISK_CALL(xexec((WORD)mode, (char *)path, (char *)tail, (char *)env));
 }
 
 void kdos_pterm(long rc)
 {
-    xterm((UWORD)rc);
+    (void)DISK_CALL((xterm((UWORD)rc), 0L));
 }
