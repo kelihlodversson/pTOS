@@ -312,7 +312,8 @@ static long pexec_ok(const long *pw)
      * p_env field of its basepage, which the caller can have rewritten */
     return env_ok((long)run->p_env);
 #else
-    return E_OK;
+    /* ... and without an address space there is still a null to refuse */
+    return run->p_env ? E_OK : EIMBA;
 #endif
 }
 
