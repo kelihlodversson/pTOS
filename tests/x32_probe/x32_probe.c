@@ -624,6 +624,33 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
                     bad |= 512;
             }
         }
+        /* an odd-sized environment is copied rounded up to an even size: the
+         * byte after its last NUL is read too ("A\0\0" ends the mapping) */
+        {
+            volatile unsigned char *top = (volatile unsigned char *)0x3ffffffdUL;
+
+            top[0] = 'A';
+            top[1] = 0;
+            top[2] = 0;
+            if (sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x3ffffffdLL) != EIMBA) bad |= 512;
+            /* the same, with the byte after it inside the mapping: accepted */
+            top = (volatile unsigned char *)0x3ffffff0UL;
+            top[0] = 'A';
+            top[1] = 0;
+            top[2] = 0;
+            rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x3ffffff0LL);
+            if (rc <= 0) {
+                bad |= 512;
+            } else {
+                s64 e2 = *(volatile u32 *)(unsigned long)(rc + 0x2c);
+
+                if (gemdos(0x49, e2, 0) != 0 || gemdos(0x49, rc, 0) != 0)
+                    bad |= 512;
+            }
+        }
+        /* a launch of a basepage needs one: null is refused up front */
+        if (sys4(GEMDOS, 0x4b, 4, 0, 0, 0) != EIMBA) bad |= 512;
+        if (sys4(GEMDOS, 0x4b, 6, 0, 0, 0) != EIMBA) bad |= 512;
         /* no environment given: the caller's own is inherited through its
          * basepage's p_env, which it can have rewritten */
         {

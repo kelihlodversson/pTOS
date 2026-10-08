@@ -206,6 +206,18 @@ static long curdta_ok(void)
  * (An empty list is two NULs; a lone leading NUL followed by something else is
  * not the end of anything.)
  */
+/*
+ * alloc_env() copies the environment rounded up to an even size: when the
+ * terminating NUL pair makes its size odd, the byte after it is read too
+ * (`after` is its address)
+ */
+static long env_pad_ok(ULONG after, ULONG size)
+{
+    if (!(size & 1))
+        return E_OK;
+    return range_ok(after, 1, FALSE) ? E_OK : EIMBA;
+}
+
 static long env_ok(long v)
 {
     ULONG a, n = 0;
@@ -228,7 +240,7 @@ static long env_ok(long v)
                 continue;
             if (i + 1 < chunk) {
                 if (!s[i + 1])
-                    return E_OK;
+                    return env_pad_ok(a + i + 2, n + i + 2);
                 continue;
             }
             /* a NUL last on the page: envsize() reads the next page's first
@@ -239,7 +251,7 @@ static long env_ok(long v)
             if ((ULONG)(a + chunk) < a || !range_ok(a + chunk, 1, FALSE))
                 return EIMBA;
             if (!*(const char *)(uintptr_t)(a + chunk))
-                return E_OK;
+                return env_pad_ok(a + chunk + 1, n + chunk + 1);
         }
         a += chunk;
         n += chunk;
@@ -265,8 +277,15 @@ static long pexec_ok(const long *pw)
     WORD mode = (WORD)pw[1];
     long rc;
 
-    if (mode == 4 || mode == 6)
+    if (mode == 4 || mode == 6) {
+        ULONG bp;
+
+        /* the basepage is found in the kernel's records (x86-64) and never
+         * dereferenced here, but it cannot be null or beyond 32 bits */
+        if (!uaddr(pw[3], &bp) || !bp)
+            return EIMBA;
         return E_OK;
+    }
     if (mode == 0 || mode == 3) {
         rc = str_ok(pw[2], UA_PATH_MAX);
         if (rc)
