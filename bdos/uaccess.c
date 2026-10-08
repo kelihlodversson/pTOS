@@ -194,18 +194,13 @@ static long curdta_ok(void)
 #if CONF_WITH_USER_ASPACE
     return kproc_validate_user_dta((UQUAD)(uintptr_t)kproc_get_dta(run)) ? E_OK : EIMBA;
 #else
-    return E_OK;
+    /* no address space to check against: a process can still have written a
+     * null into the public p_xdta, which Fsfirst()/Fsnext() would use */
+    return kproc_get_dta(run) ? E_OK : EIMBA;
 #endif
 }
 
-/*
- * An environment: strings, each ending with a NUL, the list ending at the first
- * NUL that is itself followed by a NUL -- exactly where envsize() stops, which
- * is what matters: every byte it reads, including the second NUL, must be
- * readable, and the list must be short enough for envsize()'s WORD count.
- * (An empty list is two NULs; a lone leading NUL followed by something else is
- * not the end of anything.)
- */
+#if CONF_WITH_USER_ASPACE
 /*
  * alloc_env() copies the environment rounded up to an even size: when the
  * terminating NUL pair makes its size odd, the byte after it is read too
@@ -217,7 +212,16 @@ static long env_pad_ok(ULONG after, ULONG size)
         return E_OK;
     return range_ok(after, 1, FALSE) ? E_OK : EIMBA;
 }
+#endif
 
+/*
+ * An environment: strings, each ending with a NUL, the list ending at the first
+ * NUL that is itself followed by a NUL -- exactly where envsize() stops, which
+ * is what matters: every byte it reads, including the second NUL, must be
+ * readable, and the list must be short enough for envsize()'s WORD count.
+ * (An empty list is two NULs; a lone leading NUL followed by something else is
+ * not the end of anything.)
+ */
 static long env_ok(long v)
 {
     ULONG a, n = 0;
