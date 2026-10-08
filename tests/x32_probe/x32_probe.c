@@ -558,6 +558,11 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys4(GEMDOS, 0x57, ro, 6, 0x100000000LL, 0) != EIMBA) bad |= 64;
         if (sys4(GEMDOS, 0x154, (s64)(short)0xfffe, ro, (s64)0xffffffff00000008LL, 0) != EIMBA)
             bad |= 64;
+        /* function numbers that are negative once narrowed to an int */
+        if (sys4(GEMDOS, 0xffffffffULL, 0, 0, 0, 0) != EINVFN)
+            bad |= 64;
+        if (sys4(GEMDOS, 0x80000000ULL, 0, 0, 0, 0) != EINVFN)
+            bad |= 64;
 
         /* Pexec: the pointers depend on the mode */
         if (sys4(GEMDOS, 0x4b, 0, unmapped, P(""), 0) != EIMBA) bad |= 128;

@@ -17,8 +17,9 @@
  * arguments are pw[0], pw[1], ... (osif()'s layout: one native long per
  * parameter).  Returns E_OK, EIMBA for a pointer that does not name memory the
  * calling process may use for the whole length the call will touch, ERANGE for
- * a bad length or a string with no end in range, or EACCDN for a call a user
- * process may not make.  Only the pointers the call really uses are looked at;
+ * a bad length or a string with no end in range, EACCDN for a call a user
+ * process may not make, or EINVFN for a Pexec() mode a user process may not
+ * use.  Only the pointers the call really uses are looked at;
  * the others are scalars and whatever they hold is none of its business.
  *
  * The calling process is `run`.  Memory the check accepts can be used
