@@ -79,21 +79,24 @@ root:
 
 ```sh
 stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT
 for archive in \
     binutils-2.45-mintelf-20250812-bin-linux64.tar.xz \
     gcc-15.2.0-mintelf-20250810-bin-linux64.tar.xz \
     mintlib-0.60.1-mintelf-20240718-dev.tar.xz; do
+    entries=$(tar -tJf "$archive") || exit 1
     while IFS= read -r path; do
         case "$path" in
             usr/*) ;;
             *) echo "unexpected archive path: $path" >&2; exit 1 ;;
         esac
-    done < <(tar -tJf "$archive")
-    tar -xJf "$archive" -C "$stage"
+    done <<EOF
+$entries
+EOF
+    tar -xJf "$archive" -C "$stage" || exit 1
 done
 # Compare `shasum -a 256 <archive>` with a trusted release record before this step.
 sudo cp -a "$stage/usr/." /usr/
-rm -rf "$stage"
 ```
 
 The tools are installed in `/usr/bin`, so no PATH change is normally needed.
@@ -195,18 +198,22 @@ unverified downloads as root:
 
 ```sh
 stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT
 for archive in \
     binutils-2.45-mintelf-20250812-bin-macos.tar.xz \
     gcc-15.2.0-mintelf-20250810-bin-macos.tar.xz \
     mintlib-0.60.1-mintelf-20240718-dev.tar.xz; do
+    entries=$(tar -tJf "$archive") || exit 1
     while IFS= read -r path; do
         case "$archive:$path" in
             *mintlib*:usr/m68k-atari-mintelf/sys-root/*) ;;
             *:opt/cross-mint/*) ;;
             *) echo "unexpected archive path: $path" >&2; exit 1 ;;
         esac
-    done < <(tar -tJf "$archive")
-    tar -xJf "$archive" -C "$stage"
+    done <<EOF
+$entries
+EOF
+    tar -xJf "$archive" -C "$stage" || exit 1
 done
 # Compare `shasum -a 256 <archive>` with a trusted release record before this step.
 sudo mkdir -p /opt/cross-mint/m68k-atari-mintelf/sys-root
