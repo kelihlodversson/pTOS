@@ -1294,6 +1294,20 @@ static void test_ring3(void)
         same(&s, "ancestor chain of a nested launch");
     }
 
+    /* a program whose code has an unaligned absolute relocation is loaded
+     * and runs correctly (#433) */
+    {
+        snap(&s);
+        rc = run_probe('a');
+        if (rc == 0x100) {
+            kcprintf("x86-64 unaligned relocation: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "an unaligned R_X86_64_32 slot is relocated");
+            kcprintf(rc == 0 ? "x86-64 unaligned relocation: PASS\n" : "x86-64 unaligned relocation: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "a program with an unaligned relocation");
+    }
+
     /*
      * The same with a child that FAULTS: the other way back into the
      * launcher's context (no syscall, so no swapgs to undo; the exception
