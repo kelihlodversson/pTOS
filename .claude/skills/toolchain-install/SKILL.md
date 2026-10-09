@@ -128,8 +128,8 @@ and is not the required ELF/mfastcall-capable toolchain for these builds.
 
 ## macOS
 
-Install GNU Make 4.3 or newer. Apple’s system `make` is BSD Make 3.81 and is
-too old for pTOS; Homebrew installs GNU Make as `gmake`:
+Install GNU Make 4.3 or newer. Apple’s system `/usr/bin/make` is GNU Make
+3.81, which is too old for pTOS; Homebrew installs a newer GNU Make as `gmake`:
 
 ```sh
 brew install make
