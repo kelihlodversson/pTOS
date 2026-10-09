@@ -35,6 +35,7 @@
 #include "bios.h"
 #include "kprint.h"
 #include "asm.h"
+#include "bdosbind.h"
 #include "earlycon.h"
 #include <stdarg.h>
 
@@ -52,23 +53,21 @@ void halt(void)
 }
 
 /*
- * kill_program()/warm_reset()/cold_reset(): ARM/m68k's panicasm.S
- * fall-through design (kill_program() drops straight into warm_reset()
- * if Pterm() ever returns) is preserved here even though little of it is
- * exercised yet: Pterm() (trap1(0x4c,...)) reaches osif() -> xterm() ->
- * termuser() (bdos/arch/x86_64/rwa.c), which itself panics right now
- * (process launch/exit isn't implemented) -- so kill_program() recurses
- * into another panic() rather than actually returning, which is a stable
- * (if deep) dead end, not a crash. Neither this arch's warm_reset() nor
- * cold_reset() has anywhere real to restart into yet (no portable
- * "jump back to entry" the way ARM's "b main" is -- this arch's own
- * entry is efi_main(), which needs a fresh UEFI environment that has
- * long since been exited by the time either of these could run), so
- * both just say so and hang rather than silently doing nothing.
+ * kill_program()/warm_reset()/cold_reset(): ARM/m68k's panicasm.S design
+ * (kill_program() ends the running program; warm_reset() and cold_reset()
+ * are what is left to try) is preserved here.  Pterm() reaches xterm() ->
+ * termuser() (bdos/arch/x86_64/rwa.c), which gives control back to whatever
+ * launched the running program -- a kernel-code launcher or a ring-3 one --
+ * by a non-local return, so it does not come back to kill_program().  Neither
+ * this arch's warm_reset() nor cold_reset() has anywhere real to restart into
+ * (no portable "jump back to entry" the way ARM's "b main" is -- this arch's
+ * own entry is efi_main(), which needs a fresh UEFI environment that has long
+ * since been exited by the time either of these could run), so both just say
+ * so and hang rather than silently doing nothing.
  */
 void kill_program(void)
 {
-    (void)trap1(0x4c, (long)-1);
+    Pterm(-1);
     warm_reset();
 }
 

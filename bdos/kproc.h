@@ -54,6 +54,12 @@ BOOL kproc_prepare_user(PD *pd, PD *parent);
  * never read back from the user-writable p_tbase.
  */
 BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);
+/* Fsfirst()/Fsnext() search state kept kernel-side: kproc_dta_save() after a
+ * search, kproc_dta_restore() before Fsnext() (FALSE: no search was made with
+ * this DTA, the search is over). */
+BOOL kproc_dta_restore(PD *pd, DTAINFO *dta);
+void kproc_dta_save(PD *pd, const DTAINFO *dta);
+void kproc_dta_forget(PD *pd, const DTAINFO *dta);   /* a new Fsfirst() starts */
 UQUAD kproc_ancestors_va(PD *pd);       /* where its basepage copies are; 0 if none */
 UQUAD kproc_user_entry(PD *pd);         /* image entry point; 0 if none */
 /* Hands the process's kernel stack (the one its system calls run on) to the

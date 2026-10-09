@@ -22,7 +22,6 @@
 #include "../../../include/biosdefs.h"
 #include "../../../bios/disk.h"
 
-extern BOOL kproc_validate_user_dta(UQUAD address);
 extern BOOL kproc_validate_user_range(UQUAD address, ULONG size);
 extern BOOL kproc_validate_user_write(UQUAD address, ULONG size);
 extern BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size);
@@ -97,7 +96,7 @@ extern LONG super(WORD cx, AESPB *pcrys_blk);
  * codebase's own established convention, since a callee only ever reads
  * the argument registers its own real signature declares.
  */
-extern long osif(long *pw);
+extern long osif(long *pw);          /* the trap entry: checks its arguments */
 extern const PFLONG bios_vecs[];
 extern const UWORD bios_ent;
 extern const PFLONG xbios_vecs[];
@@ -242,6 +241,25 @@ void x86_64_syscall_abandoned(void)
     }
 }
 
+/*
+ * The argument array osif() takes, from the trap frame.  5 slots, not 4:
+ * bdosmain.c's own dispatch (the p4 case, e.g. Pexec's mode/path/tail/env)
+ * reads up to pw[4] -- GEMDOS's own widest call needs all 4 real argument
+ * registers this convention has (trap.h), not just the first 3.
+ *
+ * `long`, not LONG: see this file's own top-of-file comment on why a
+ * fixed-32-bit slot here would truncate any pointer argument (Pexec's
+ * path/tail/env, Cconws's string, ...) before osif() ever saw it.
+ */
+static void gemdos_args(long *pw, const x86_64_trap_frame_t *frame)
+{
+    pw[0] = (long)(ULONG)frame->rax;
+    pw[1] = (long)frame->rdi;
+    pw[2] = (long)frame->rsi;
+    pw[3] = (long)frame->rdx;
+    pw[4] = (long)frame->r10;
+}
+
 static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
     UQUAD trap_class = frame->rax >> 32;
@@ -252,9 +270,9 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
      * call uses, and which of those are pointers, is only known per
      * function, and a register the call does not use is none of this
      * function's business.  Checking that a buffer or string pointer lies
-     * in the calling process's own address space belongs in the call that
-     * takes it (#352); until a call does that, it trusts its pointers, as
-     * Fsetdta() and Ssystem() below do not.
+     * in the calling process's own address space is done per call, for the
+     * pointers that call uses (GEMDOS: bdos/uaccess.c, below); BIOS and
+     * XBIOS calls still trust theirs unless they check it themselves (#352).
      */
 
     /* Trap class 2 (GEM) is not safe from ring 3 yet -- it dereferences
@@ -267,84 +285,14 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
         return;
     }
 
-    /*
-     * Pexec() from ring 3: the modes that create or launch a basepage are
-     * allowed (xexec() hands a created basepage's blocks to the caller and
-     * validates a launch request against the kernel's own record, see
-     * kproc_check_launch()); the kernel-internal PE_RELOCATE is not.
-     */
-    if (from_ring3 && trap_class == X86_64_TRAP_GEMDOS && fn == 0x4b) {
-        WORD mode = (WORD)frame->rdi;
-
-        if (mode != PE_LOADGO && mode != PE_LOAD && mode != PE_GO &&
-            mode != PE_BASEPAGE && mode != PE_GOTHENFREE &&
-            mode != PE_BASEPAGEFLAGS) {
-            frame->rax = (UQUAD)EINVFN;
-            return;
-        }
-    }
-
-    /*
-     * Ssystem() is the one call whose pointer arguments the kernel writes
-     * through that this port has to guard today: ring 0 runs under the
-     * process's own page tables, which carry the kernel's low data
-     * (supervisor-only, but writable by ring 0), so a raw `Ssystem(S_GETCOOKIE,
-     * tag, 0x400)` or S_CONSOLE_DIM destination would overwrite the system
-     * variables.  The destination must be user memory of this process.  The
-     * general validation of every other call's pointers is #352 (see above).
-     */
-    if (from_ring3 && trap_class == X86_64_TRAP_GEMDOS && fn == 0x154) {
-        WORD mode = (WORD)frame->rdi;
-        long arg1 = (long)frame->rsi, arg2 = (long)frame->rdx;
-        BOOL ok = TRUE;
-
-        /* S_SETLVAL/S_SETWVAL/S_SETBVAL (0x0d-0x0f) store a caller-chosen
-         * value into a kernel system variable -- among them the vectors
-         * the kernel calls in ring 0 (etv_term at 0x408, ...), the very
-         * thing Setexc() is refused above.  Kernel-only from ring 3. */
-        if (mode >= 0x000d && mode <= 0x000f) {
-            frame->rax = (UQUAD)EACCDN;
-            return;
-        }
-        if (mode == 0x0008 && arg2)                     /* S_GETCOOKIE value */
-            ok = kproc_validate_user_write((UQUAD)arg2, 4);
-        else if (mode == (WORD)0xfffe && arg2 > 0)      /* S_CONSOLE_DIM struct */
-            ok = kproc_validate_user_write((UQUAD)arg1,
-                                           arg2 < 16 ? (ULONG)arg2 : 16UL);
-        if (!ok) {
-            frame->rax = (UQUAD)EIMBA;
-            return;
-        }
-    }
-
-    /* Fsetdta() stores its pointer in the public 32-bit PD field. Ensure a
-     * ring-3 caller's complete DTAINFO buffer belongs to this process before
-     * xsetdta() records it as the native DTA pointer. Kernel callers bypass
-     * this trap and may use their own higher-half buffers. */
-    if (from_ring3 && trap_class == X86_64_TRAP_GEMDOS && fn == 0x1a
-        && !kproc_validate_user_dta(frame->rdi)) {
-        frame->rax = (UQUAD)EIMBA;
-        return;
-    }
-
     switch (trap_class) {
     case X86_64_TRAP_GEMDOS: {
-        /* 5 slots, not 4: bdosmain.c's own dispatch (the p4 case, e.g.
-         * Pexec's mode/path/tail/env) reads up to pw[4] -- GEMDOS's own
-         * widest call needs all 4 real argument registers this
-         * convention has (trap.h), not just the first 3.
-         *
-         * `long`, not LONG: see this file's own top-of-file comment on
-         * why a fixed-32-bit slot here would truncate any pointer
-         * argument (Pexec's path/tail/env, Cconws's string, ...) before
-         * osif() ever saw it. */
         long pw[5];
 
-        pw[0] = (long)fn;
-        pw[1] = (long)frame->rdi;
-        pw[2] = (long)frame->rsi;
-        pw[3] = (long)frame->rdx;
-        pw[4] = (long)frame->r10;
+        /* Only a ring-3 `syscall` gets here: kernel code calls the GEMDOS
+         * implementations directly (bdos/arch/x86_64/kcall.c).  The caller's
+         * pointers are checked by osif() itself. */
+        gemdos_args(pw, frame);
         frame->rax = (UQUAD)osif(pw);
         break;
     }
@@ -613,6 +561,8 @@ long x86_64_kernel_trap(long rax, long rdi, long rsi, long rdx, long r10)
     frame.rsi = (UQUAD)rsi;
     frame.rdx = (UQUAD)rdx;
     frame.r10 = (UQUAD)r10;
+    if ((UQUAD)rax >> 32 == X86_64_TRAP_GEMDOS)
+        return EINVFN;          /* kernel code calls GEMDOS directly (kcall.c) */
     x86_64_trap_dispatch(&frame, 0);
     return (long)frame.rax;
 }

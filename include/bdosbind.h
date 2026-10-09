@@ -15,6 +15,45 @@
 
 #include "bdosdefs.h"
 
+#if defined(__x86_64__) && defined(__LP64__)
+/*
+ * Kernel code on x86-64 does not trap into GEMDOS: these are plain C calls
+ * to the implementations (bdos/arch/x86_64/kcall.c).  Only the calls kernel
+ * code makes exist.
+ */
+#define TRAP1_ARG(x) ((long)(x))
+
+extern long kdos_crawio(long w);
+extern long kdos_dsetdrv(long drv);
+extern long kdos_fsetdta(long dta);
+extern long kdos_dsetpath(long path);
+extern long kdos_fsfirst(long name, long attr);
+extern long kdos_fsnext(void);
+extern long kdos_mxalloc(long amount, long mode);
+extern long kdos_malloc(long amount);
+extern long kdos_mfree(long block);
+extern long kdos_mshrink(long block, long newsiz);
+extern long kdos_pexec(long mode, long path, long tail, long env);
+extern void kdos_pterm(long rc);
+
+#define Crawio(w) kdos_crawio(TRAP1_ARG(w))
+#define Dsetdrv(drv) kdos_dsetdrv(TRAP1_ARG(drv))
+#define Fsetdta(buf) kdos_fsetdta(TRAP1_ARG(buf))
+#define Dsetpath(path) kdos_dsetpath(TRAP1_ARG(path))
+#define Mxalloc(amount,mode) kdos_mxalloc(TRAP1_ARG(amount), TRAP1_ARG(mode))
+#define Malloc(number) kdos_malloc(TRAP1_ARG(number))
+#define Mfree(block) kdos_mfree(TRAP1_ARG(block))
+#define Mshrink(block,newsiz) kdos_mshrink(TRAP1_ARG(block), TRAP1_ARG(newsiz))
+#define Pexec(mode,name,cmdline,env) kdos_pexec(TRAP1_ARG(mode), TRAP1_ARG(name), TRAP1_ARG(cmdline), TRAP1_ARG(env))
+#define Fsfirst(filename,attr) kdos_fsfirst(TRAP1_ARG(filename), TRAP1_ARG(attr))
+#define Fsnext() kdos_fsnext()
+#define Pterm(rc) kdos_pterm(TRAP1_ARG(rc))
+
+/* the reentrant Pexec() of the other targets is the same call here */
+#define trap1_pexec(mode,name,cmdline,env) Pexec(mode,name,cmdline,env)
+
+#else   /* every other target: trap into GEMDOS */
+
 /* OS entry points implemented in util/miscasm.S */
 extern long trap1(int, ...); /* Not reentrant! Do not call for Pexec() */
 extern long trap1_pexec(short mode, const char *path, const char *tail, const char *env);
@@ -96,5 +135,8 @@ extern long trap1_pexec(short mode, const char *path, const char *tail, const ch
 #define Fsnext() trap1(0x4f)
 #define Frename(oldname,newname) trap1(0x56, 0, TRAP1_ARG(oldname), TRAP1_ARG(newname))
 #define Fdatime(timeptr,handle,wflag) trap1(0x57, TRAP1_ARG(timeptr), TRAP1_ARG(handle), TRAP1_ARG(wflag))
+
+
+#endif  /* x86-64 kernel or trap */
 
 #endif /* _BDOSBIND_H */

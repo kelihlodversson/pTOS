@@ -40,6 +40,12 @@
  *      there
  *   t  scribble over the basepage's p_uft and p_curdir, then use handles and
  *      directories; exits with a mask of what failed (#418)
+ *   c  the pointer arguments of GEMDOS calls are checked per call: bad strings,
+ *      buffers, lengths and Pexec arguments are refused with EIMBA/ERANGE and
+ *      valid ones are let through; exits with a mask of what was wrong (#437)
+ *   d  the search state of a DTA is the kernel's: a tampered DTA (an unmounted
+ *      drive, a wild cluster) cannot crash Fsnext(); a DTA never searched with
+ *      has no more files (#437)
  *   l  Pexec(PE_LOAD) of C:\\X32HELLO.TOS and PE_GOTHENFREE of its basepage; exits
  *      with 0, 0x100 if the file is not there
  *   y  a child (tail F) must not be able to Mfree this process's basepage
@@ -487,6 +493,271 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             if (gemdos(0x3e, fh, 0) != 0)
                 bad |= 128;
         }
+        pterm(bad);
+        break;
+    }
+    case 'c': {
+        /* the pointers of GEMDOS calls are checked per call (#437) */
+#define P(x) ((s64)(int)(unsigned long)(x))
+#define EIHNDL (-37)
+#define ERANGE (-64)
+        static char buf[256];
+        static char longstr[2000];
+        static char tail128[128];
+        static char bigenv[40000];
+        const s64 unmapped = 0x30000000, lowvec = 0x84, kern = (s64)(int)0x80000000;
+        const s64 ro = 0x3ffb0000;          /* the ancestors page: read-only */
+        const s64 stack_end = 0x3ffffff8;   /* 64 bytes from here cross the top */
+        s64 rc;
+        int k;
+
+        for (k = 0; k < (int)sizeof(longstr); k++)
+            longstr[k] = 'A';
+
+        /* strings: unmapped, kernel, supervisor-only, null, no terminator */
+        if (gemdos(0x3d, unmapped, 0) != EIMBA) bad |= 1;
+        if (gemdos(0x3d, kern, 0) != EIMBA) bad |= 1;
+        if (gemdos(0x3d, lowvec, 0) != EIMBA) bad |= 1;
+        if (gemdos(0x3d, 0, 0) != EIMBA) bad |= 1;
+        if (gemdos(0x3d, P(longstr), 0) != ERANGE) bad |= 2;
+        if (gemdos(0x09, unmapped, 0) != EIMBA) bad |= 1;      /* Cconws */
+        if (gemdos(0x4e, unmapped, 0) != EIMBA) bad |= 1;      /* Fsfirst */
+        if (gemdos(0x41, lowvec, 0) != EIMBA) bad |= 1;        /* Fdelete */
+        if (sys4(GEMDOS, 0x56, 0, P("a"), unmapped, 0) != EIMBA) bad |= 1;   /* Frename */
+        /* a valid string is let through (the file need not exist) */
+        rc = gemdos(0x3d, P("NOSUCH.FIL"), 0);
+        if (rc == EIMBA || rc == ERANGE) bad |= 4;
+
+        /* buffers, with an invalid handle so a call that gets past the
+         * pointer check fails with EIHNDL, not by touching anything */
+        if (sys4(GEMDOS, 0x3f, 6, 16, unmapped, 0) != EIMBA) bad |= 8;
+        if (sys4(GEMDOS, 0x3f, 6, 16, lowvec, 0) != EIMBA) bad |= 8;
+        if (sys4(GEMDOS, 0x3f, 6, 16, ro, 0) != EIMBA) bad |= 8;      /* an output */
+        if (sys4(GEMDOS, 0x3f, 6, 64, stack_end, 0) != EIMBA) bad |= 8;
+        if (sys4(GEMDOS, 0x3f, 6, 0x100, 0xfffffff0LL, 0) != EIMBA) bad |= 8;
+        if (sys4(GEMDOS, 0x3f, 6, 0x7fffffffLL, P(buf), 0) != EIMBA) bad |= 8;
+        if (sys4(GEMDOS, 0x3f, 6, -1, P(buf), 0) != ERANGE) bad |= 16;
+        if (sys4(GEMDOS, 0x40, 6, 16, unmapped, 0) != EIMBA) bad |= 8;
+        if (sys4(GEMDOS, 0x3f, 6, 16, P(buf), 0) != EIHNDL) bad |= 32;
+        if (sys4(GEMDOS, 0x40, 6, 16, P(buf), 0) != EIHNDL) bad |= 32;
+        if (sys4(GEMDOS, 0x40, 6, 16, ro, 0) != EIHNDL) bad |= 32;    /* an input */
+        if (sys4(GEMDOS, 0x3f, 6, 0, unmapped, 0) != EIHNDL) bad |= 32;  /* nothing to touch */
+
+        /* the other calls with buffers */
+        if (gemdos(0x47, unmapped, 0) != EIMBA) bad |= 64;            /* Dgetpath */
+        if (gemdos(0x47, P(buf), 0) != 0) bad |= 64;
+        if (gemdos(0x36, unmapped, 3) != EIMBA) bad |= 64;            /* Dfree */
+        if (gemdos(0x0a, unmapped, 0) != EIMBA) bad |= 64;            /* Cconrs */
+        if (sys4(GEMDOS, 0x57, unmapped, 6, 0, 0) != EIMBA) bad |= 64;   /* Fdatime, get */
+        if (sys4(GEMDOS, 0x57, ro, 6, 0, 0) != EIMBA) bad |= 64;         /* writes it */
+        if (sys4(GEMDOS, 0x57, ro, 6, 1, 0) != EIHNDL) bad |= 64;        /* only reads it */
+        if (gemdos(0x14, 0x100000, 0x1000) != EACCDN) bad |= 64;         /* Maddalt */
+        /* scalars are judged as the call takes them: Fdatime()'s flag is an
+         * int, so 2^32 is "get" (a write), and S_CONSOLE_DIM's size is a LONG,
+         * so 2^32 - 8 + 8 is 8 bytes written whatever the upper half says */
+        if (sys4(GEMDOS, 0x57, ro, 6, 0x100000000LL, 0) != EIMBA) bad |= 64;
+        if (sys4(GEMDOS, 0x154, (s64)(short)0xfffe, ro, (s64)0xffffffff00000008LL, 0) != EIMBA)
+            bad |= 64;
+        /* function numbers that are negative once narrowed to an int */
+        if (sys4(GEMDOS, 0xffffffffULL, 0, 0, 0, 0) != EINVFN)
+            bad |= 64;
+        if (sys4(GEMDOS, 0x80000000ULL, 0, 0, 0, 0) != EINVFN)
+            bad |= 64;
+
+        /* Pexec: the pointers depend on the mode */
+        if (sys4(GEMDOS, 0x4b, 0, unmapped, P(""), 0) != EIMBA) bad |= 128;
+        if (sys4(GEMDOS, 0x4b, 0, P("X32HELLO.TOS"), unmapped, 0) != EIMBA) bad |= 128;
+        if (sys4(GEMDOS, 0x4b, 0, P("X32HELLO.TOS"), P(""), unmapped) != EIMBA) bad |= 128;
+        if (sys4(GEMDOS, 0x4b, 5, 0, P(""), unmapped) != EIMBA) bad |= 128;
+        if (sys4(GEMDOS, 0x4b, 5, 0, unmapped, 0) != EIMBA) bad |= 128;
+        /* the tail must end within 128 bytes (the kernel adds a NUL after the
+         * copy); an empty environment is two NULs, and both must be readable */
+        for (k = 0; k < (int)sizeof(tail128); k++)
+            tail128[k] = 'A';
+        if (sys4(GEMDOS, 0x4b, 5, 0, P(tail128), 0) != ERANGE) bad |= 512;
+        if (sys4(GEMDOS, 0x4b, 5, 0, P(""), ro + 0xfff) != EIMBA) bad |= 512;
+        /* an environment too long for envsize()'s WORD count */
+        for (k = 0; k < (int)sizeof(bigenv); k++)
+            bigenv[k] = 'A';
+        if (sys4(GEMDOS, 0x4b, 5, 0, P(""), P(bigenv)) != ERANGE) bad |= 512;
+        /* the limit: 32766 bytes including the two NULs that end it */
+        for (k = 0; k < (int)sizeof(bigenv); k++)
+            bigenv[k] = 'A';
+        bigenv[32764] = 0;
+        bigenv[32765] = 0;                  /* 32766 bytes: just fits */
+        rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), P(bigenv));
+        if (rc <= 0) {
+            bad |= 512;
+        } else {
+            s64 e3 = *(volatile u32 *)(unsigned long)(rc + 0x2c);
+
+            if (gemdos(0x49, e3, 0) != 0 || gemdos(0x49, rc, 0) != 0)
+                bad |= 512;
+        }
+        bigenv[32764] = 'A';
+        bigenv[32765] = 0;
+        bigenv[32766] = 0;                  /* 32767 bytes: one too many */
+        if (sys4(GEMDOS, 0x4b, 5, 0, P(""), P(bigenv)) != ERANGE) bad |= 512;
+        /* a leading NUL is not the end of an environment: envsize() goes on
+         * until two NULs in a row, so the bytes after it must be readable
+         * (here "\0X" at the very end of the stack mapping) */
+        {
+            volatile unsigned char *top = (volatile unsigned char *)0x3ffffffeUL;
+
+            top[0] = 0;
+            top[1] = 'X';
+            if (sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x3ffffffeLL) != EIMBA) bad |= 512;
+        }
+        /* ... and a valid empty environment ("\0\0") on the last two bytes of
+         * the mapping is accepted: nothing past it is read */
+        {
+            volatile unsigned char *top = (volatile unsigned char *)0x3ffffffeUL;
+
+            top[1] = 0;
+            rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x3ffffffeLL);
+            if (rc <= 0) {
+                bad |= 512;
+            } else {
+                s64 e2 = *(volatile u32 *)(unsigned long)(rc + 0x2c);
+
+                if (gemdos(0x49, e2, 0) != 0 || gemdos(0x49, rc, 0) != 0)
+                    bad |= 512;
+            }
+        }
+        /* an odd-sized environment is copied rounded up to an even size: the
+         * byte after its last NUL is read too ("A\0\0" ends the mapping) */
+        {
+            volatile unsigned char *top = (volatile unsigned char *)0x3ffffffdUL;
+
+            top[0] = 'A';
+            top[1] = 0;
+            top[2] = 0;
+            if (sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x3ffffffdLL) != EIMBA) bad |= 512;
+            /* the same, with the byte after it inside the mapping: accepted */
+            top = (volatile unsigned char *)0x3ffffff0UL;
+            top[0] = 'A';
+            top[1] = 0;
+            top[2] = 0;
+            rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x3ffffff0LL);
+            if (rc <= 0) {
+                bad |= 512;
+            } else {
+                s64 e2 = *(volatile u32 *)(unsigned long)(rc + 0x2c);
+
+                if (gemdos(0x49, e2, 0) != 0 || gemdos(0x49, rc, 0) != 0)
+                    bad |= 512;
+            }
+        }
+        /* a launch of a basepage needs one: null is refused up front */
+        if (sys4(GEMDOS, 0x4b, 4, 0, 0, 0) != EIMBA) bad |= 512;
+        if (sys4(GEMDOS, 0x4b, 6, 0, 0, 0) != EIMBA) bad |= 512;
+        /* no environment given: the caller's own is inherited through its
+         * basepage's p_env, which it can have rewritten */
+        {
+            volatile u32 *me = (volatile u32 *)(unsigned long)basepage;
+            u32 saved = me[11];
+
+            me[11] = 0x30000000u;
+            if (sys4(GEMDOS, 0x4b, 5, 0, P(""), 0) != EIMBA) bad |= 512;
+            me[11] = 0x84u;
+            if (sys4(GEMDOS, 0x4b, 5, 0, P(""), 0) != EIMBA) bad |= 512;
+            me[11] = saved;
+        }
+        /* mode 5's second argument is flags, not a pointer: kernel-looking
+         * values there are fine (and a basepage comes back) */
+        rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), 0);
+        if (rc <= 0) {
+            bad |= 256;
+        } else {
+            s64 env = *(volatile u32 *)(unsigned long)(rc + 0x2c);
+
+            if (gemdos(0x49, env, 0) != 0 || gemdos(0x49, rc, 0) != 0)
+                bad |= 256;
+        }
+        pterm(bad);
+        break;
+    }
+    case 'd': {
+        /* the search state in a DTA is the kernel's, not the process's (#437) */
+        static u32 dta[16];                 /* a DTA: 44 bytes, ours to set */
+        static u32 fresh[16];
+        s64 rc;
+
+        gemdos(0x0e, 2, 0);                 /* Dsetdrv(C:) */
+        gemdos(0x1a, P(dta), 0);            /* Fsetdta has no return value */
+        if ((u32)gemdos(0x2f, 0, 0) != (u32)(unsigned long)dta)
+            bad |= 1;                       /* Fgetdta: it must have taken */
+        rc = sys4(GEMDOS, 0x4e, P("*.*"), 0x10, 0, 0);   /* files and directories */
+        if (rc == 0) {
+            /* a new search that finds nothing ends the old one on that DTA */
+            if (sys4(GEMDOS, 0x4e, P("NOSUCH.QQQ"), 0x10, 0, 0) == 0)
+                bad |= 16;
+            if (gemdos(0x4f, 0, 0) != -49)
+                bad |= 16;
+            rc = sys4(GEMDOS, 0x4e, P("*.*"), 0x10, 0, 0);
+        }
+        if (rc == 0) {
+            /* point the private part at drive 5, which is not mounted: the
+             * kernel used to dereference its (null) drive table entry */
+            dta[3] = 5;                     /* dt_offset_drive (after dt_name[12]) */
+            dta[4] = 0x7fff7fff;            /* dt_cloffset and dt_clnum, 16 bits each */
+            rc = gemdos(0x4f, 0, 0);
+            if (rc != 0 && rc != -49)
+                bad |= 2;                   /* a file, or no more of them */
+        } else if (rc != -33 && rc != -49) {
+            bad |= 4;                       /* neither a file nor none */
+        }
+        /* A process keeps the search state of its last eight DTAs.  Search
+         * with nine, the first of them again just before the ninth: the one
+         * to go is the oldest, the second, and the restarted first goes on. */
+        if (rc == 0 || rc == -49 || rc == -33) {
+            static u32 many[9][16];
+            int m;
+            s64 r0, r1, r2;
+
+            for (m = 0; m < 8; m++) {
+                gemdos(0x1a, P(many[m]), 0);
+                sys4(GEMDOS, 0x4e, P("*.*"), 0x10, 0, 0);
+            }
+            gemdos(0x1a, P(many[0]), 0);
+            sys4(GEMDOS, 0x4e, P("*.*"), 0x10, 0, 0);       /* restart the first */
+            gemdos(0x1a, P(many[8]), 0);
+            sys4(GEMDOS, 0x4e, P("*.*"), 0x10, 0, 0);       /* the ninth */
+            gemdos(0x1a, P(many[2]), 0);
+            r2 = gemdos(0x4f, 0, 0);
+            gemdos(0x1a, P(many[0]), 0);
+            r0 = gemdos(0x4f, 0, 0);
+            gemdos(0x1a, P(many[1]), 0);
+            r1 = gemdos(0x4f, 0, 0);
+            if (r2 == 0 && (r0 != 0 || r1 != -49))      /* (a directory of two or more) */
+                bad |= 32;
+        }
+        /* an exhausted search stays exhausted, even if a file turns up later */
+        {
+            static u32 ex[16];
+            s64 h;
+
+            gemdos(0x1a, P(ex), 0);
+            h = sys4(GEMDOS, 0x3c, P("X32EX1.TMP"), 0, 0, 0);
+            if (h >= 0) {
+                gemdos(0x3e, h, 0);
+                if (sys4(GEMDOS, 0x4e, P("X32EX?.TMP"), 0, 0, 0) != 0 ||
+                    gemdos(0x4f, 0, 0) != -49)
+                    bad |= 64;
+                h = sys4(GEMDOS, 0x3c, P("X32EX2.TMP"), 0, 0, 0);
+                if (h >= 0)
+                    gemdos(0x3e, h, 0);
+                if (gemdos(0x4f, 0, 0) != -49)
+                    bad |= 64;
+                gemdos(0x41, P("X32EX1.TMP"), 0);
+                gemdos(0x41, P("X32EX2.TMP"), 0);
+            }
+        }
+        /* a DTA nothing was searched with has no search to continue */
+        gemdos(0x1a, P(fresh), 0);
+        fresh[3] = 2;
+        if (gemdos(0x4f, 0, 0) != -49)
+            bad |= 8;
         pterm(bad);
         break;
     }

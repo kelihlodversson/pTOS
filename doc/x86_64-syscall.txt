@@ -109,12 +109,14 @@ Kernel-mode callers: x86_64_kernel_trap()
 
 The `syscall` entry point above is reached *only* by a genuine ring-3
 caller. Every call this port's own boot code makes before a real process
-exists -- util/arch/x86_64/miscasm.S's trap1()/trap1_pexec(), and every
-x86-64 branch of include/biosbind.h/xbiosbind.h -- goes through
-x86_64_kernel_trap() instead: an ordinary, recursion-safe C function
-that builds a throwaway x86_64_trap_frame_t on the caller's own stack
-and calls x86_64_trap_dispatch() directly, with from_ring3 = 0 and no
-privilege transition at all.
+exists -- every x86-64 branch of include/biosbind.h/xbiosbind.h -- goes
+through x86_64_kernel_trap() instead: an ordinary, recursion-safe C
+function that builds a throwaway x86_64_trap_frame_t on the caller's own
+stack and calls x86_64_trap_dispatch() directly, with from_ring3 = 0 and
+no privilege transition at all.  GEMDOS is not reached this way: kernel
+code calls the GEMDOS implementations directly (bdos/arch/x86_64/kcall.c,
+through the names in include/bdosbind.h), and x86_64_kernel_trap() refuses
+the GEMDOS class.
 
 An earlier version of this code let both kinds of caller share the
 `syscall` entry point, telling them apart by testing whether the
@@ -139,13 +141,53 @@ The dispatcher does not inspect the raw RDI/RSI/RDX/R10 values. A register
 a call does not use carries whatever the caller left in it, including, at
 process entry, values the kernel itself left there, and says nothing about
 the call. Which registers are pointers is known only per function, so
-checking that a buffer or string lies in the calling process's own address
-space belongs in the call that takes it, not in a filter in front of all of
-them. Few calls do so yet (Fsetdta(), Ssystem(), Rwabs()); the rest trust
-their pointers, which a ring-3 process can point at kernel memory by
-writing a higher-half value in the 64-bit register. #352 tracks closing
-that, including the low system-vector area.
+the check for a caller's GEMDOS (trap 1) pointers is a descriptor
+per call (bdos/uaccess.c, CONF_WITH_USER_COPY: mandatory here, #437) that
+osif() consults before the call runs and that looks at the pointers that
+call really uses.  The trap handler only builds the argument array and calls
+osif(); kernel code, which passes kernel pointers and is not checked, does
+not come through osif() at all.  The same file refuses what a user process
+may not do (Pexec() modes other than the user ones, Maddalt(), Ssystem()
+writes).  The calls that take pointers:
 
+    Cconws(str)             string, read
+    Cconrs(buf)             2 + buf[0] bytes, read and written
+    Maddalt()               refused (EACCDN)
+    Fsetdta(dta)            a DTA, written
+    Dfree(buf, drv)         16 bytes, written
+    Dcreate/Ddelete/Dsetpath/Fcreate/Fopen/Fdelete/Fattrib(path, ...)
+                            string, read
+    Fread(h, count, buf)    count bytes, written
+    Fwrite(h, count, buf)   count bytes, read
+    Dgetpath(buf, drv)      128 bytes, written
+    Fsfirst(path, attr)     path string, read; the current DTA, written
+    Fsnext()                the current DTA, written; what the process left in
+                            its private part is not believed: the kernel keeps
+                            its own copy of the search state of each of the
+                            process's last 8 DTAs (the oldest goes first) and puts it back first, and
+                            a DTA never searched with has no more files
+    Frename(0, old, new)    two strings, read
+    Fdatime(buf, h, wflag)  4 bytes, read if wflag, else written
+    Pexec(mode, ...)        modes 0 and 3: path string; modes 0, 3, 5, 7: the
+                            command tail (ending within 128 bytes) and, if not null,
+                            the environment (strings ending in an empty one);
+                            modes 4 and 6 look the basepage up in the
+                            kernel's records instead (#416)
+    Ssystem(mode, ...)      S_GETCOOKIE's value and S_CONSOLE_DIM's buffer,
+                            written; the S_SET*VAL modes are refused
+
+"Checked" means every page of the range is mapped and user-accessible (and
+writable for an output) in the calling process, the range does not wrap
+around the 32-bit address space, and a string ends within 1024 bytes (an
+environment, which ends at its first double NUL, within 32766 bytes -- what
+envsize() can count); anything else is EIMBA, or ERANGE for a negative
+or oversized length or a string with no end.  Memory that passes is used
+directly, because the call runs under the process's own page tables.  The
+supervisor-only mappings (the system variables, kernel data) have no user bit,
+so a pointer into them fails.  Pointer-valued results (Malloc(), Fgetdta())
+are #351/#372.  BIOS and XBIOS (Rwabs() and the rest) still trust their
+pointers and are guarded by the same option as they are converted; trap class
+2 (VDI, AES) is refused from ring 3 outright (#376).  #352 is the umbrella.
 
 Status
 -------

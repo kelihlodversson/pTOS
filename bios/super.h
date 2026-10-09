@@ -30,13 +30,12 @@ static __inline__ long Super(void* ptr)
     return _r0;
 }
 #elif defined(__x86_64__)
-/* Function 0x20 is an ordinary GEMDOS call here, reaching osif() through
- * this arch's own syscall/sysretq dispatch (bios/arch/x86_64/trap.c) the
- * same way every other GEMDOS call does -- no separate trap vector to
- * install or inline asm to write, unlike m68k's "trap #1" below. */
+/* Kernel code always runs in supervisor mode here, and a process's own
+ * Super() is answered by osif() the same way: "already supervisor". */
 static __inline__ long Super(void *ptr)
 {
-    return trap1(0x20, (long)ptr);
+    (void)ptr;
+    return 0;
 }
 #else
 #define Super(ptr)                          \

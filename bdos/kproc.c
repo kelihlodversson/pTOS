@@ -23,6 +23,7 @@
 #include "x32image.h"
 
 #define KPROC_BORROWS 16       /* two per child a ring-3 process holds */
+#define KPROC_DTAS    8        /* directory searches it can have going at once */
 #endif
 
 /* The option gates only the record itself: the #else stubs stay in every
@@ -58,6 +59,12 @@ struct kproc {
     ULONG ancestors;            /* basepage copies on its read-only ancestors page */
     UQUAD kstack_phys;          /* its kernel stack (system calls), 0 if none */
     UQUAD kstack_top;           /* initial stack pointer of that stack */
+    struct {                    /* the search state Fsfirst()/Fsnext() keep in */
+        UQUAD va;               /* the DTAs of this process, as the kernel */
+        ULONG stamp;            /* left them, and when (see below) */
+        UBYTE state[offsetof(DTAINFO, dt_fattr)];
+    } dtas[KPROC_DTAS];
+    ULONG dta_clock;            /* counts the searches, to find the oldest */
     struct {                    /* blocks of a child being launched from this */
         UQUAD va, bytes;        /* process, mapped supervisor-only into its */
     } borrowed[KPROC_BORROWS];  /* address space until they are freed */
@@ -402,6 +409,75 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
         kproc->stack_top = X86_64_USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
     kproc->aspace = as;
     return TRUE;
+}
+
+/*
+ * The private part of a DTA (the pattern, drive, directory position) lives in
+ * memory the process can write, and Fsnext() acts on it: a drive that is not
+ * mounted, a cluster that is not in the file system.  So the kernel keeps its
+ * own copy of what it last left in each DTA of the process, and puts that back
+ * before every Fsnext().  A DTA the process has not searched with (or one it
+ * has not searched with for a while: the table is small) has none, and the
+ * search is over.
+ */
+BOOL kproc_dta_restore(PD *pd, DTAINFO *dta)
+{
+    KPROC *kproc = kproc_find(pd);
+    UQUAD va = (UQUAD)(uintptr_t)dta;
+    int i;
+
+    if (!kproc || !kproc->aspace)
+        return TRUE;                /* a kernel process's DTA is the kernel's */
+    for (i = 0; i < KPROC_DTAS; i++)
+        if (kproc->dtas[i].va == va) {
+            memcpy(dta, kproc->dtas[i].state, sizeof kproc->dtas[i].state);
+            return TRUE;
+        }
+    return FALSE;
+}
+
+/* a new Fsfirst() starts over: whatever search this DTA held is gone, found
+ * anything or not */
+void kproc_dta_forget(PD *pd, const DTAINFO *dta)
+{
+    KPROC *kproc = kproc_find(pd);
+    UQUAD va = (UQUAD)(uintptr_t)dta;
+    int i;
+
+    if (!kproc || !kproc->aspace)
+        return;
+    for (i = 0; i < KPROC_DTAS; i++)
+        if (kproc->dtas[i].va == va)
+            kproc->dtas[i].va = 0;
+}
+
+void kproc_dta_save(PD *pd, const DTAINFO *dta)
+{
+    KPROC *kproc = kproc_find(pd);
+    UQUAD va = (UQUAD)(uintptr_t)dta;
+    int i;
+
+    if (!kproc || !kproc->aspace)
+        return;
+    for (i = 0; i < KPROC_DTAS; i++)
+        if (kproc->dtas[i].va == va)
+            break;
+    if (i == KPROC_DTAS) {
+        int j;
+
+        /* a free slot, else the one whose search is the oldest */
+        for (i = 0, j = 0; j < KPROC_DTAS; j++) {
+            if (!kproc->dtas[j].va) {
+                i = j;
+                break;
+            }
+            if ((LONG)(kproc->dtas[j].stamp - kproc->dtas[i].stamp) < 0)
+                i = j;
+        }
+        kproc->dtas[i].va = va;
+    }
+    kproc->dtas[i].stamp = ++kproc->dta_clock;
+    memcpy(kproc->dtas[i].state, dta, sizeof kproc->dtas[i].state);
 }
 
 UQUAD kproc_ancestors_va(PD *pd)

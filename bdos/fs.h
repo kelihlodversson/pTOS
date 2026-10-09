@@ -511,6 +511,7 @@ long xchmod(char *p, int wrt, UBYTE mod);
 long ixsfirst(char *name, WORD att, DTAINFO *addr);
 long xfsfirst_at(char *name, WORD att, DTAINFO *dta);
 long xfsnext_at(DTAINFO *dta);
+void mark_bcbs_invalid(int drv);    /* bdosmain.c: after a disk error */
 long xsfirst(char *name, int att);
 long xsnext(void);
 long xgsdtof(DOSTIME *buf, int h, int wrt);

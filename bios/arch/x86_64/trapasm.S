@@ -190,8 +190,7 @@ C_SYM(x86_64_syscall_entry):
          * comment: initialized to top-8, "as if a return address had
          * just been pushed"). That phrasing describes a just-*entered*
          * callee's own state, not a caller ready to make a call of its
-         * own -- exactly the distinction trap1()'s subq $8/addq $8 pair
-         * (miscasm.S) exists to bridge for the same reason.
+         * own -- hence the subq $8 below, which makes it one.
          * x86_64_bad_sysret() (trap.c) never returns, so there is no
          * matching addq to restore afterward. %rdx (not %rcx, which
          * still holds this stub's OWN saved copy on the stack, not yet

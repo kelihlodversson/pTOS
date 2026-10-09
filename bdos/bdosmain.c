@@ -34,6 +34,7 @@
 #include "string.h"
 #include "kprint.h"
 #include "ssystem.h"
+#include "uaccess.h"
 #include "bdosstub.h"
 #include "tosvars.h"
 
@@ -500,7 +501,7 @@ static void offree(DMD *d)
 /*
  * mark_bcbs_invalid - mark the BCBs for the specified drive as invalid
  */
-static void mark_bcbs_invalid(int drv)
+void mark_bcbs_invalid(int drv)
 {
     BCB *bx;
     int i;
@@ -524,6 +525,10 @@ long osif(short *pw);
 
 /*
  *  osif - C implementation of trap #1. Called by _enter.
+ *
+ *  What it is given comes from the caller of the trap, so the pointers it
+ *  carries are checked first (uaccess.c).  Kernel code does not come this
+ *  way: on x86-64 it calls the implementations directly (kcall.c).
  */
 #if defined(__arm__) || defined(__x86_64__)
 long osif(long *pw)
@@ -540,6 +545,12 @@ long osif(short *pw)
     int num, max;
     long rc, numl;
     const FND *f;
+
+#if CONF_WITH_USER_COPY
+    rc = bdos_check_user_args(pw);
+    if (rc)
+        return rc;
+#endif
 
 restrt:
     fn = pw[0];
@@ -683,7 +694,7 @@ restrt:
 
             case 10:                /* Cconrs() */
                 pb2 = *((char **) &pw[1]);
-                max = *pb2++;
+                max = (unsigned char)*pb2++;
                 p = pb2 + 1;
                 for (i = 0; max--; i++, p++)
                 {
