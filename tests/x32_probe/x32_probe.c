@@ -816,6 +816,17 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(rc == walk_ancestors(basepage) + 1 ? 0 : 1);
         break;
     }
+    case 'a': {
+        /* a child with an unaligned absolute relocation (#433) */
+        static const char reloc_tail[] = { 1, 'a', 0 };
+        s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                      (s64)(int)(unsigned long)reloc_tail, 0);
+
+        if (rc == -33)
+            pterm(0x100);
+        pterm(rc == 0 ? 0 : 1);
+        break;
+    }
     case 'u':
         bad_address = (u32 *)(unsigned long)((*(const u32 *)(unsigned long)(basepage + 0x24)) + 0x24);
         *bad_address = 0;               /* the ancestors page is read-only */
