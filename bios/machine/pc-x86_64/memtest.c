@@ -1201,6 +1201,7 @@ static void test_ring3(void)
     /* bad pointers as system call arguments, and unused argument registers */
     probe_expect('b', 0, "bad arguments refused by the system calls");
     probe_expect('r', 0, "arguments a call does not use are not looked at");
+    probe_expect('o', 0, "Rwabs() from ring 3 fills the caller's buffer in place");
     probe_expect('s', 0, "ring 3 cannot install kernel callbacks or write the kernel variables");
 
     /* basepages a ring-3 process can use, and launches it cannot forge (#416) */

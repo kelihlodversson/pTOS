@@ -27,20 +27,6 @@ extern BOOL kproc_validate_user_write(UQUAD address, ULONG size);
 extern BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size);
 extern BOOL kproc_copy_to_user(UQUAD address, const void *src, ULONG size);
 
-static void *x86_64_copy_user_buffer(UQUAD address, ULONG size)
-{
-    void *buffer;
-
-    buffer = xmxalloc((long)size, MX_STRAM);
-    if (!buffer)
-        return NULL;
-    if (!kproc_copy_from_user(buffer, address, size)) {
-        xmfree(buffer);
-        return NULL;
-    }
-    return buffer;
-}
-
 static ULONG x86_64_flopfmt_buffer_size(LONG spt)
 {
     if (spt >= 1L && spt <= 10L)
@@ -312,7 +298,6 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
             struct x32_bios_lrwabs_args wire;
             struct bios_lrwabs_args native;
             ULONG bytes;
-            void *buffer;
             LONG result;
 
             if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))) {
@@ -345,22 +330,15 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
                 frame->rax = (UQUAD)-1L;
                 break;
             }
-            buffer = x86_64_copy_user_buffer(wire.adr, bytes);
-            if (!buffer) {
-                frame->rax = (UQUAD)ENSMEM;
-                break;
-            }
+            /* validated above: the call runs under the process's own page
+             * tables, so the device code reads or fills the buffer in place */
             native.r_w = wire.r_w;
-            native.adr = buffer;
+            native.adr = USERPTR_TO_PTR(wire.adr);
             native.numb = wire.numb;
             native.first = wire.first;
             native.drive = wire.drive;
             native.lfirst = wire.lfirst;
             result = ((LONG (*)(struct bios_lrwabs_args *))bios_vecs[fn])(&native);
-            if ((wire.r_w & RW_RW) == RW_READ
-                && !kproc_copy_to_user(wire.adr, buffer, bytes))
-                result = ERR;
-            xmfree(buffer);
             frame->rax = (UQUAD)result;
         } else if (fn == 5)
             /* BIOS function 5 is Setexc(). bios.c's setexc() was widened
@@ -390,7 +368,6 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
             struct x32_xbios_flop_io_args wire;
             struct xbios_flop_io_args native;
             ULONG bytes;
-            void *buffer;
             LONG result;
 
             if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))
@@ -416,19 +393,14 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
                 frame->rax = (UQUAD)-1L;
                 break;
             }
-            /* Floprd/Flopver fill the buffer and it is copied back: it must be
-             * writable before the device operation; Flopwr only reads it. */
+            /* Floprd/Flopver fill the buffer in place: it must be writable
+             * before the device operation; Flopwr only reads it. */
             if (!(fn != 9 ? kproc_validate_user_write(wire.buf, bytes)
                           : kproc_validate_user_range(wire.buf, bytes))) {
                 frame->rax = (UQUAD)-1L;
                 break;
             }
-            buffer = x86_64_copy_user_buffer(wire.buf, bytes);
-            if (!buffer) {
-                frame->rax = (UQUAD)ENSMEM;
-                break;
-            }
-            native.buf = buffer;
+            native.buf = USERPTR_TO_PTR(wire.buf);
             native.filler = wire.filler;
             native.dev = wire.dev;
             native.sect = wire.sect;
@@ -436,23 +408,17 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
             native.side = wire.side;
             native.count = wire.count;
             result = ((LONG (*)(struct xbios_flop_io_args *))xbios_vecs[fn])(&native);
-            if (fn != 9 && !kproc_copy_to_user(wire.buf, buffer, bytes))
-                result = ERR;
-            xmfree(buffer);
             frame->rax = (UQUAD)result;
         } else if (from_ring3 && fn == 10) {
             struct x32_xbios_flopfmt_args wire;
             struct xbios_flopfmt_args native;
-            void *buffer;
-            void *skew;
-            ULONG skew_bytes;
             ULONG bytes;
             WORD interlv;
             LONG result;
 
             if (!kproc_copy_from_user(&wire, frame->rdi, sizeof(wire))
                 || !(bytes = x86_64_flopfmt_buffer_size(wire.spt))
-                /* the buffer is copied back after the format: writable now */
+                /* the format fills the buffer in place: writable now */
                 || !kproc_validate_user_write(wire.buf, bytes)) {
                 frame->rax = (UQUAD)-1L;
                 break;
@@ -463,23 +429,8 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
                 frame->rax = (UQUAD)-1L;
                 break;
             }
-            buffer = x86_64_copy_user_buffer(wire.buf, bytes);
-            if (!buffer) {
-                frame->rax = (UQUAD)ENSMEM;
-                break;
-            }
-            skew = NULL;
-            skew_bytes = (ULONG)wire.spt * sizeof(WORD);
-            if (interlv < 0) {
-                skew = x86_64_copy_user_buffer(wire.skew, skew_bytes);
-                if (!skew) {
-                    xmfree(buffer);
-                    frame->rax = (UQUAD)ENSMEM;
-                    break;
-                }
-            }
-            native.buf = buffer;
-            native.skew = skew;
+            native.buf = USERPTR_TO_PTR(wire.buf);
+            native.skew = interlv < 0 ? USERPTR_TO_PTR(wire.skew) : NULL;
             native.dev = wire.dev;
             native.spt = wire.spt;
             native.track = wire.track;
@@ -488,11 +439,6 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
             native.magic = wire.magic;
             native.virgin = wire.virgin;
             result = ((LONG (*)(struct xbios_flopfmt_args *))xbios_vecs[fn])(&native);
-            if (!kproc_copy_to_user(wire.buf, buffer, bytes))
-                result = ERR;
-            if (skew)
-                xmfree(skew);
-            xmfree(buffer);
             frame->rax = (UQUAD)result;
         } else if (from_ring3 && fn == 15) {
             struct x32_xbios_rsconf_args wire;
