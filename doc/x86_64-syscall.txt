@@ -185,9 +185,15 @@ or oversized length or a string with no end.  Memory that passes is used
 directly, because the call runs under the process's own page tables.  The
 supervisor-only mappings (the system variables, kernel data) have no user bit,
 so a pointer into them fails.  Pointer-valued results (Malloc(), Fgetdta())
-are #351/#372.  BIOS and XBIOS (Rwabs() and the rest) still trust their
-pointers and are guarded by the same option as they are converted; trap class
-2 (VDI, AES) is refused from ring 3 outright (#376).  #352 is the umbrella.
+are #351/#372.  A few BIOS and XBIOS calls are checked in the trap handler
+itself (trap.c), not by the descriptor table: Rwabs() (BIOS 4), Floprd(),
+Flopwr(), Flopver() (XBIOS 8, 9, 19) and Flopfmt() (XBIOS 10) take their
+argument struct from the caller by copy, validate the buffer (and Flopfmt()'s
+skew table) and move the data through a kernel buffer; Rsconf() (XBIOS 15)
+copies its argument struct; Setexc() (BIOS 5) refuses to install a vector.
+The other BIOS and XBIOS calls still trust their pointers and are guarded by
+the same option as they are converted; trap class 2 (VDI, AES) is refused from
+ring 3 outright (#376).  #352 is the umbrella.
 
 Status
 -------
