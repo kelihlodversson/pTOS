@@ -69,12 +69,18 @@ merged. The mintlib development archive supplies target headers such as
 `stdint.h`, which the compiler archive does not contain. Their contents include
 `/usr/bin/m68k-atari-mintelf-*`,
 `/usr/m68k-atari-mintelf/`, and the GCC runtime under `/usr/lib64/gcc/`.
-Extract both at `/`, not inside `/usr/m68k-atari-mintelf`:
+Extract binutils and GCC at `/`, not inside `/usr/m68k-atari-mintelf`. The
+mintlib archive has the same `usr/m68k-atari-mintelf/sys-root` layout as the
+macOS archive, so strip those three leading components into the existing
+sysroot:
 
 ```sh
 sudo tar -xJf binutils-2.45-mintelf-20250812-bin-linux64.tar.xz -C /
 sudo tar -xJf gcc-15.2.0-mintelf-20250810-bin-linux64.tar.xz -C /
-sudo tar -xJf mintlib-0.60.1-mintelf-20240718-dev.tar.xz -C /
+sudo mkdir -p /usr/m68k-atari-mintelf/sys-root
+sudo tar --strip-components=3 \
+    -xJf mintlib-0.60.1-mintelf-20240718-dev.tar.xz \
+    -C /usr/m68k-atari-mintelf/sys-root
 ```
 
 The tools are installed in `/usr/bin`, so no PATH change is normally needed.
