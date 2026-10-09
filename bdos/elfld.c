@@ -143,13 +143,14 @@
  * absolute address in code is the 32-bit immediate of an instruction such
  * as `mov $sym, %edi`, which starts at any byte offset, and x86 has no
  * alignment requirement on the access (#433).  ELF_SLOT_T is the type to
- * access such a slot through, so the compiler does not assume otherwise.
+ * access such a slot through, so the compiler assumes neither alignment nor
+ * that the image bytes are not also seen as other types (MAY_ALIAS).
  */
 #define ELF_EM_EXPECTED 62      /* EM_X86_64 */
 #define ELF_R_DIR32     10      /* R_X86_64_32 */
 #define ELF_R_RELATIVE  8       /* R_X86_64_RELATIVE */
 #define ELF_SLOT_ALIGN  1
-typedef ULONG __attribute__((aligned(1))) elf_unaligned_slot_t;
+typedef ULONG __attribute__((aligned(1))) MAY_ALIAS elf_unaligned_slot_t;
 #define ELF_SLOT_T      elf_unaligned_slot_t
 #else
 #define ELF_EM_EXPECTED 4       /* EM_68K */
@@ -159,7 +160,7 @@ typedef ULONG __attribute__((aligned(1))) elf_unaligned_slot_t;
 #endif
 
 #ifndef ELF_SLOT_T
-#define ELF_SLOT_T ULONG
+#define ELF_SLOT_T ULONG_ALIAS
 #endif
 
 #if BYTE_ORDER == LITTLE_ENDIAN
