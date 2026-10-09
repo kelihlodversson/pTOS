@@ -53,7 +53,15 @@ struct kproc {
     UBYTE *user_end;
     X86_64_ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
-    const X32_IMAGE *image;     /* built-in program to map private, or NULL */
+    const X32_IMAGE *image;     /* program to map private (built in, or loaded), or NULL */
+    X32_IMAGE file_x32;         /* a program loaded from a file: its ELF bytes, */
+    UBYTE *file_data;           /* kept (and owned) until the launch maps them */
+    UQUAD file_end;             /* where its image ends, to place the startup area */
+    struct uheap_block {        /* Malloc() memory: private pages at X86_64_USER_HEAP_*, */
+        UQUAD va;               /* sorted by address */
+        ULONG pages;
+    } *heap;
+    ULONG nheap, heap_capacity;
     UQUAD entry;                /* its entry point once loaded, else 0 */
     UQUAD stack_top;            /* its private stack's top once loaded, else 0 */
     ULONG ancestors;            /* basepage copies on its read-only ancestors page */
@@ -153,6 +161,8 @@ void kproc_destroy(PD *pd)
              * PD finds nothing and cannot free either twice. */
             x86_64_aspace_destroy(kproc->aspace);
             x86_64_kstack_free(kproc->kstack_phys);
+            kfree(kproc->file_data);
+            kfree(kproc->heap);
 #endif
             KPROC_FREE(kproc);
             return;
@@ -322,6 +332,27 @@ static BOOL build_ancestors(KPROC *kproc, X86_64_ASPACE *as, PD *parent)
     return TRUE;
 }
 
+/*
+ * A program loaded from a file gets zeroed read/write memory right after its
+ * last page, for the startup code to build argv and environ in (see
+ * X86_64_USER_IMAGE_SLACK).  It must stay inside the image window, like the
+ * segments; a built-in image does not get one.
+ */
+static BOOL map_startup_area(const KPROC *kproc, X86_64_ASPACE *as)
+{
+    UQUAD va, room;
+
+    if (!kproc->file_end)
+        return TRUE;
+    va = (kproc->file_end + X86_64_USER_PAGE_SIZE - 1) & ~(X86_64_USER_PAGE_SIZE - 1);
+    room = X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE - va;
+    if (room > X86_64_USER_IMAGE_SLACK)
+        room = X86_64_USER_IMAGE_SLACK;
+    if (room < 4 * X86_64_USER_PAGE_SIZE)
+        return FALSE;
+    return x86_64_aspace_map_private(as, va, room, ASPACE_PROT_WRITE | ASPACE_PROT_USER);
+}
+
 BOOL kproc_prepare_user(PD *pd, PD *parent)
 {
     KPROC *kproc = kproc_find(pd);
@@ -375,7 +406,8 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     if (!x86_64_aspace_map_procmem(as, env, envbytes,
                                    ASPACE_PROT_WRITE | ASPACE_PROT_USER) ||
         !x86_64_aspace_map_procmem(as, tpa, hitpa - tpa,
-                                   ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER) ||
+                                   kproc->image ? ASPACE_PROT_WRITE | ASPACE_PROT_USER
+                                                : ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER) ||
         !x86_64_aspace_map_procmem(as, (UQUAD)(uintptr_t)parent, sizeof(PD),
                                    ASPACE_PROT_WRITE)) {
         x86_64_aspace_destroy(as);
@@ -396,6 +428,7 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
      */
     if (kproc->image &&
         (!x86_64_x32image_load(as, kproc->image, &kproc->entry) ||
+         !map_startup_area(kproc, as) ||
          !x86_64_aspace_map_private(as, X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE,
                                     X86_64_USER_STACK_SIZE,
                                     ASPACE_PROT_WRITE | ASPACE_PROT_USER))) {
@@ -407,6 +440,9 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     }
     if (kproc->image)
         kproc->stack_top = X86_64_USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
+    /* the segments are mapped: the ELF bytes they came from are not needed */
+    kfree(kproc->file_data);
+    kproc->file_data = NULL;
     kproc->aspace = as;
     return TRUE;
 }
@@ -497,6 +533,34 @@ BOOL kproc_set_image(PD *pd, const X32_IMAGE *image)
     return TRUE;
 }
 
+/*
+ * A program Pexec() read from a file: the ELF bytes (a kfree()able block this
+ * takes over, whether it succeeds or not) are kept until the launch maps the
+ * segments as private pages, as it does for a built-in image.  FALSE if the
+ * image does not pass x86_64_x32image_check() or the process has no record
+ * or has been prepared already.
+ */
+BOOL kproc_set_file_image(PD *pd, UBYTE *data, ULONG size)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    if (!kproc || kproc->aspace || kproc->image) {
+        kfree(data);
+        return FALSE;
+    }
+    kproc->file_x32.data = data;
+    kproc->file_x32.size = size;
+    if (!x86_64_x32image_check(&kproc->file_x32, NULL)) {
+        kfree(data);
+        kproc->file_x32.data = NULL;
+        return FALSE;
+    }
+    kproc->file_data = data;
+    kproc->file_end = x86_64_x32image_end(&kproc->file_x32);
+    kproc->image = &kproc->file_x32;
+    return TRUE;
+}
+
 void kproc_set_creator(PD *pd, PD *creator)
 {
     KPROC *kproc = kproc_find(pd);
@@ -559,7 +623,9 @@ LONG kproc_check_launch(PD *pd, PD *caller)
     alloc_end = (UBYTE *)kproc->user_start + x86_64_procmem_size(kproc->user_start);
     if (lowtpa != (UQUAD)(uintptr_t)kproc->user_start ||
         hitpa < first || hitpa > (UQUAD)(uintptr_t)alloc_end ||
-        tbase < first || tbase >= hitpa ||
+        /* a program with an image of its own starts at the entry point the
+         * kernel recorded, not at p_tbase, and that lies in the image */
+        (!kproc->image && (tbase < first || tbase >= hitpa)) ||
         pd->p_env != PTR_TO_USERPTR(kproc->env_start))
         return EPLFMT;
     pd->p_hitpa = (ULONG)hitpa;
@@ -634,6 +700,155 @@ UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top)
     *top = kproc->kstack_top;
     kproc->kstack_phys = 0;         /* the launcher frees it, after the exit */
     return phys;
+}
+
+/*
+ * Malloc() memory of a ring-3 process: private pages of its own address space
+ * in [X86_64_USER_HEAP_BASE, X86_64_USER_HEAP_LIMIT), a whole number of pages
+ * per block, placed first fit.  The kernel's own pool (the window the
+ * basepage and environment come from) is not where a process's Malloc()
+ * memory is: that window is small and shared by every process, and its
+ * addresses are the kernel's.  The pages go back with the address space
+ * when the process ends; Mfree() and Mshrink() give them back sooner.
+ */
+BOOL kproc_has_heap(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    return kproc && kproc->aspace;
+}
+
+static BOOL heap_room(KPROC *kproc)
+{
+    struct uheap_block *grown;
+    ULONG cap;
+
+    if (kproc->nheap < kproc->heap_capacity)
+        return TRUE;
+    cap = kproc->heap_capacity ? kproc->heap_capacity * 2 : 16;
+    grown = kalloc(cap * sizeof(*grown));
+    if (!grown)
+        return FALSE;
+    if (kproc->heap) {
+        memcpy(grown, kproc->heap, kproc->nheap * sizeof(*grown));
+        kfree(kproc->heap);
+    }
+    kproc->heap = grown;
+    kproc->heap_capacity = cap;
+    return TRUE;
+}
+
+/* First gap of at least `bytes` (0: the largest one): its address and the
+ * index at which a block there goes in the sorted table. */
+static UQUAD heap_gap(const KPROC *kproc, UQUAD bytes, ULONG *index, UQUAD *largest)
+{
+    UQUAD at = X86_64_USER_HEAP_BASE, found = 0;
+    ULONG i;
+
+    *largest = 0;
+    for (i = 0; i <= kproc->nheap; i++) {
+        UQUAD end = i < kproc->nheap ? kproc->heap[i].va : X86_64_USER_HEAP_LIMIT;
+
+        if (end - at > *largest)
+            *largest = end - at;
+        if (!found && bytes && end - at >= bytes) {
+            found = at;
+            *index = i;
+        }
+        if (i < kproc->nheap)
+            at = end + (UQUAD)kproc->heap[i].pages * X86_64_USER_PAGE_SIZE;
+    }
+    return found;
+}
+
+/* Malloc(): the address of `bytes` of fresh zeroed memory, 0 if there is none */
+UQUAD kproc_uheap_alloc(PD *pd, ULONG bytes)
+{
+    KPROC *kproc = kproc_find(pd);
+    UQUAD va, largest, size;
+    ULONG index = 0;
+
+    if (!kproc || !kproc->aspace || !bytes ||
+        bytes > X86_64_USER_HEAP_LIMIT - X86_64_USER_HEAP_BASE)
+        return 0;
+    size = ((UQUAD)bytes + X86_64_USER_PAGE_SIZE - 1) & ~(X86_64_USER_PAGE_SIZE - 1);
+    if (!heap_room(kproc))
+        return 0;
+    va = heap_gap(kproc, size, &index, &largest);
+    if (!va || !x86_64_aspace_map_private(kproc->aspace, va, size,
+                                          ASPACE_PROT_WRITE | ASPACE_PROT_USER))
+        return 0;
+    memmove(&kproc->heap[index + 1], &kproc->heap[index],
+            (kproc->nheap - index) * sizeof(kproc->heap[0]));
+    kproc->heap[index].va = va;
+    kproc->heap[index].pages = (ULONG)(size / X86_64_USER_PAGE_SIZE);
+    kproc->nheap++;
+    return va;
+}
+
+/* Malloc(-1): the size of the largest block that could be allocated */
+ULONG kproc_uheap_largest(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+    UQUAD largest;
+    ULONG index;
+
+    if (!kproc || !kproc->aspace)
+        return 0;
+    heap_gap(kproc, 0, &index, &largest);
+    return (ULONG)largest;
+}
+
+static struct uheap_block *heap_find(KPROC *kproc, UQUAD va)
+{
+    ULONG i;
+
+    for (i = 0; i < kproc->nheap; i++)
+        if (kproc->heap[i].va == va)
+            return &kproc->heap[i];
+    return NULL;
+}
+
+/* Mfree(): E_OK, or EIMBA if va is not the start of a block of this process */
+LONG kproc_uheap_free(PD *pd, UQUAD va)
+{
+    KPROC *kproc = kproc_find(pd);
+    struct uheap_block *b;
+
+    if (!kproc || !kproc->aspace || !(b = heap_find(kproc, va)))
+        return EIMBA;
+    if (!x86_64_aspace_unmap_private(kproc->aspace, va,
+                                     (UQUAD)b->pages * X86_64_USER_PAGE_SIZE))
+        return ERR;
+    memmove(b, b + 1, (kproc->nheap - 1 - (ULONG)(b - kproc->heap)) * sizeof(*b));
+    kproc->nheap--;
+    return E_OK;
+}
+
+/* Mshrink(): keeps the first `len` bytes of the block (rounded up to whole
+ * pages); EGSBF if that would make it bigger, EIMBA if va is no block */
+LONG kproc_uheap_shrink(PD *pd, UQUAD va, long len)
+{
+    KPROC *kproc = kproc_find(pd);
+    struct uheap_block *b;
+    UQUAD keep;
+
+    if (!kproc || !kproc->aspace || !(b = heap_find(kproc, va)))
+        return EIMBA;
+    if (len < 0)
+        return ERANGE;
+    if (len == 0)
+        return kproc_uheap_free(pd, va);
+    keep = ((UQUAD)len + X86_64_USER_PAGE_SIZE - 1) / X86_64_USER_PAGE_SIZE;
+    if (keep > b->pages)
+        return EGSBF;
+    if (keep == b->pages)
+        return E_OK;
+    if (!x86_64_aspace_unmap_private(kproc->aspace, va + keep * X86_64_USER_PAGE_SIZE,
+                                     (UQUAD)(b->pages - keep) * X86_64_USER_PAGE_SIZE))
+        return ERR;
+    b->pages = (ULONG)keep;
+    return E_OK;
 }
 
 UQUAD kproc_user_stack(PD *pd)

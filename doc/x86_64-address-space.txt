@@ -85,36 +85,69 @@ that way.  The BIOS and XBIOS calls other than the Rwabs-family buffers still
 trust their pointers (#352), and VDI/AES are refused from ring 3 (#376).
 
 
-Minimum x32 user virtual layout
---------------------------------
+x32 user virtual layout
+------------------------
 
-For the built-in EmuCON image and its process data (the constants are in
-include/procmem.h):
+The constants are in include/procmem.h.
 
     0x00000000 - 0x001fffff   unmapped: null guard (2 MiB)
     0x00200000 - 0x003fffff   basepage, environment and TPA blocks (window)
-    0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB)
+    0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB); for a
+                              program loaded from a file also the startup
+                              area, 64 KiB of zeroed read/write memory right
+                              after the image's last page
+    0x10000000 - 0x3effffff   Malloc() memory, private pages (below)
     0x3ffb0000 - 0x3ffb0fff   ancestors' basepages, read-only (below)
     0x3ffc0000 - 0x3fffffff   user stack (256 KiB), growing down from
                               X86_64_USER_STACK_TOP; the page below it is
                               left unmapped as a guard
 
-The image address matches the link address of the x32 programs (the
-Makefile's -Ttext-segment=0x400000).  EmuCON is about 20 KiB of code plus a
-192 KiB static heap, so 4 MiB is a generous bound; larger images or an
-arbitrary ELF placement policy are not part of this milestone.  The whole
-layout lies below 4 GiB, as the 32-bit ABI fields require.
+The whole layout lies below 4 GiB, as the 32-bit ABI fields require.
 
-A built-in image (include/x32image.h: EmuCON, and the boot self-test's probe
-program) is attached to the process's KPROC record with kproc_set_image().
-kproc_prepare_user() then maps every PT_LOAD segment as private pages with the
+A program is mapped from an x32 ELF image (include/x32image.h): the built-in
+EmuCON and the boot self-test's probe are embedded in the kernel, and any
+other program is read from its file by Pexec().  Both are attached to the
+process's KPROC record (kproc_set_image(), kproc_set_file_image()), and
+kproc_prepare_user() maps every PT_LOAD segment as private pages with the
 segment's own permissions (text and read-only data read+execute, data and bss
 read+write -- never both write and execute) and the 256 KiB private stack,
 and records the entry point and initial RSP in the KPROC record: the process
-is entered there, not at whatever its user-writable basepage says.  A bare
-basepage's TPA is not a stack; only built-in images have one of their own.
-This is not a general ELF loader (the rules are in x32image.h and checked
-before anything is mapped).
+is entered there, not at whatever its user-writable basepage says.  The
+program runs at the address it was linked for (the Makefile's X32_LDFLAGS:
+-Ttext-segment=0x400000, -z noseparate-code, -z max-page-size=0x1000), so
+nothing is relocated; an ELF that is not ET_EXEC, lies outside the image
+window, shares a page between two segments or has a segment both writable
+and executable is refused with EPLFMT.  This is not a general ELF loader.
+
+The window is not where a program's memory is.  The basepage and the
+environment are in the window because the BDOS reaches them by the same
+address in every address space; they are the only blocks a loaded program has
+there, so its TPA is the basepage and nothing more (bdos/elfld.c's sizing
+pass reports no text, data or bss).  The window is 2 MiB for all processes
+together; everything a program itself needs is private:
+
+  image and stack   as above.
+
+  startup area      what the C startup code of the TOS tradition builds argv
+                    and environ in, right after the bss (libcmini's
+                    parseargs()).  Taking it from the kernel, not from a TPA,
+                    is what lets that code run unchanged.
+
+  Malloc() memory   Malloc(), Mxalloc(), Mfree() and Mshrink() of a process
+                    with an address space are served from private pages in
+                    X86_64_USER_HEAP_BASE..X86_64_USER_HEAP_LIMIT
+                    (kproc_uheap_*(), bdos/kproc.c): whole 4 KiB pages,
+                    first fit, zeroed, freed with the address space.  A block
+                    is given back page by page by Mfree() and Mshrink(), and
+                    Malloc(-1) reports the largest gap.  Mfree() of anything
+                    else (the process's environment, say) takes the ordinary
+                    path.
+
+Because the address spaces are separate, two processes use the same addresses
+for their own images, stacks and heaps and neither sees the other's.  A TOS
+program's idea of its TPA -- a block after the basepage to carve a stack out
+of with Mshrink() -- does not hold here: libcmini's startup code skips that
+step on this architecture.
 
 
 Faults and termination

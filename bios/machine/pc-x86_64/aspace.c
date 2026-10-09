@@ -458,6 +458,48 @@ BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD p
     return FALSE;
 }
 
+BOOL x86_64_aspace_unmap_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
+{
+    UQUAD pages, i;
+    ULONG k;
+
+    if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= X86_64_USER_VA_LIMIT ||
+        bytes > X86_64_USER_VA_LIMIT - va)
+        return FALSE;
+    pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
+
+    /* all-or-nothing: every page must be one of ours before any is touched */
+    for (i = 0; i < pages; i++) {
+        UQUAD phys;
+        BOOL found = FALSE;
+
+        if (!x86_64_aspace_translate(as, va + i * X86_64_PAGE_SIZE, &phys, NULL))
+            return FALSE;
+        for (k = 0; k < as->nowned; k++)
+            if (as->owned[k] == phys) {
+                found = TRUE;
+                break;
+            }
+        if (!found)
+            return FALSE;
+    }
+    for (i = 0; i < pages; i++) {
+        UQUAD phys;
+
+        x86_64_aspace_translate(as, va + i * X86_64_PAGE_SIZE, &phys, NULL);
+        x86_64_unmap_user_page(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+        for (k = 0; k < as->nowned; k++)
+            if (as->owned[k] == phys) {
+                as->owned[k] = as->owned[--as->nowned];
+                break;
+            }
+        x86_64_pmem_free_pages(phys, 1);
+    }
+    if (x86_64_read_cr3() == as->pml4_phys)
+        x86_64_write_cr3(as->pml4_phys);        /* flush stale translations */
+    return TRUE;
+}
+
 /*
  * Private segment of a program image: fresh zeroed pages with the segment's
  * own permissions, then the file bytes copied in through the direct map --

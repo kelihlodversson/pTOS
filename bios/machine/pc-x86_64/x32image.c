@@ -118,6 +118,21 @@ BOOL x86_64_x32image_check(const X32_IMAGE *image, UQUAD *entry)
     return TRUE;
 }
 
+UQUAD x86_64_x32image_end(const X32_IMAGE *image)
+{
+    SEG seg[MAX_SEGMENTS];
+    UQUAD e, end = 0;
+    int n, i;
+
+    n = parse(image, seg, &e);
+    if (n < 0)
+        return 0;
+    for (i = 0; i < n; i++)
+        if ((UQUAD)seg[i].vaddr + seg[i].memsz > end)
+            end = (UQUAD)seg[i].vaddr + seg[i].memsz;
+    return end;
+}
+
 BOOL x86_64_x32image_load(X86_64_ASPACE *as, const X32_IMAGE *image, UQUAD *entry)
 {
     SEG seg[MAX_SEGMENTS];

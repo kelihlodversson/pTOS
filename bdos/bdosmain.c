@@ -66,6 +66,10 @@ static long xgetver(void);
 #define GEMDOS_FREAD    0x3f
 #define GEMDOS_FWRITE   0x40
 #define GEMDOS_SUPER    0x20
+#define GEMDOS_MXALLOC  0x44
+#define GEMDOS_MALLOC   0x48
+#define GEMDOS_MFREE    0x49
+#define GEMDOS_MSHRINK  0x4a
 
 
 /*
@@ -568,6 +572,41 @@ restrt:
      */
     if (fn == GEMDOS_SSYSTEM)
         return xssystem((WORD)pw[1], pw[2], pw[3]);
+#endif
+
+#if CONF_WITH_USER_ASPACE
+    /*
+     * Malloc(), Mxalloc(), Mfree() and Mshrink() of a process with an address
+     * space of its own are served from private pages of that address space,
+     * not from the kernel's pools (and not from the small window the
+     * basepage and environment are in).  Anything else -- a block Mfree()
+     * is given that is not one of those, say the process's own environment
+     * -- takes the ordinary path below.
+     */
+    if (kproc_has_heap(run))
+    {
+        long amount;
+
+        switch (fn)
+        {
+        case GEMDOS_MALLOC:
+        case GEMDOS_MXALLOC:
+            amount = pw[1];
+            if (amount == -1L)
+                return (long)kproc_uheap_largest(run);
+            if (amount <= 0L || amount > 0x7fffffffL)
+                return 0;
+            return (long)kproc_uheap_alloc(run, (ULONG)amount);
+        case GEMDOS_MFREE:
+            if ((UQUAD)pw[1] >= X86_64_USER_HEAP_BASE && (UQUAD)pw[1] < X86_64_USER_HEAP_LIMIT)
+                return kproc_uheap_free(run, (UQUAD)pw[1]);
+            break;
+        case GEMDOS_MSHRINK:
+            if ((UQUAD)pw[2] >= X86_64_USER_HEAP_BASE && (UQUAD)pw[2] < X86_64_USER_HEAP_LIMIT)
+                return kproc_uheap_shrink(run, (UQUAD)pw[2], pw[3]);
+            break;
+        }
+    }
 #endif
 
 #if defined(__x86_64__)

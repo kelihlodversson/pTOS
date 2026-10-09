@@ -57,6 +57,11 @@
 #include "string.h"
 #include "kprint.h"
 #include "ptosabi.h"
+#include "kproc.h"
+#if CONF_WITH_USER_ASPACE
+#include "kheap.h"
+#include "procmem.h"
+#endif
 
 /*
  * minimal ELF32 definitions (see the System V ABI).  All fields use the
@@ -438,9 +443,18 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
      * the file, bss the zero filled tail.  Their sum is the whole memory
      * image, which is all proc.c needs to size the TPA.
      */
+#if CONF_WITH_USER_ASPACE
+    /* the image does not live in the TPA but in private pages of the
+     * process's own address space (see elf_pgmld()): the TPA is the
+     * basepage and nothing else */
+    hd->h01_tlen = 0;
+    hd->h01_dlen = 0;
+    hd->h01_blen = 0;
+#else
     hd->h01_tlen = (LONG)(info.file_end - info.link_base);
     hd->h01_dlen = 0;
     hd->h01_blen = (LONG)(info.mem_end - info.file_end);
+#endif
     hd->h01_slen = 0;
     hd->h01_res1 = 0;
     /*
@@ -456,6 +470,80 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
 
     return 0;
 }
+
+#if CONF_WITH_USER_ASPACE
+/*
+ * elf_pgmld - load pass, called by kpgmld()
+ *
+ * A process with an address space of its own (x86-64) does not have its image
+ * placed in the TPA, relocated by the distance from its link address: its
+ * segments become private pages of that address space, at the addresses the
+ * program was linked for, so there is nothing to relocate.  This reads the
+ * whole file, hands it to the process's kernel record (which checks it
+ * against the rules of include/x32image.h and maps it when the process is
+ * launched) and sets the basepage's segment fields.  A program that breaks
+ * those rules is refused with EPLFMT.
+ */
+#define ELF_FILE_MAX    (X86_64_USER_IMAGE_SIZE + 0x10000UL)  /* image window, plus headers */
+
+LONG elf_pgmld(FH h, PD *p)
+{
+    Elf32_Ehdr ehdr;
+    ELFINFO info;
+    UBYTE *data;
+    LONG size, r;
+
+    r = read_at(h, 0UL, &ehdr, (LONG)sizeof(ehdr));
+    if (r < 0L)
+        return r;
+
+    r = elf_check_ehdr(&ehdr);
+    if (r < 0L)
+        return r;
+
+    r = elf_scan(h, &ehdr, &info);
+    if (r < 0L)
+        return r;
+
+    size = xlseek(0L, h, 2);
+    if (size < 0L)
+        return size;
+    if ((ULONG)size > ELF_FILE_MAX)
+        return EPLFMT;
+    r = xlseek(0L, h, 0);
+    if (r < 0L)
+        return r;
+
+    data = kalloc((ULONG)size);
+    if (!data)
+        return ENSMEM;
+    r = xread(h, size, data);
+    if (r < 0L || r != size)
+    {
+        kfree(data);
+        return (r < 0L) ? r : EPLFMT;
+    }
+
+    /* takes the buffer, also when it refuses the image */
+    if (!kproc_set_file_image(p, data, (ULONG)size))
+    {
+        KDEBUG(("BDOS elf_pgmld: image refused\n"));
+        return EPLFMT;
+    }
+
+    /* the segment fields describe where the image will be; execution starts
+     * at the ELF entry point */
+    p->p_tbase = PTR_TO_USERPTR((UBYTE *)(uintptr_t)ehdr.e_entry);
+    p->p_tlen  = (LONG)(info.file_end - info.link_base);
+    p->p_dbase = PTR_TO_USERPTR((UBYTE *)(uintptr_t)info.file_end);
+    p->p_dlen  = 0;
+    p->p_bbase = PTR_TO_USERPTR((UBYTE *)(uintptr_t)info.file_end);
+    p->p_blen  = (LONG)(info.mem_end - info.file_end);
+
+    return 0;
+}
+
+#else /* !CONF_WITH_USER_ASPACE */
 
 /*
  * apply a single relocation to the 32-bit word at vaddr.
@@ -1263,5 +1351,7 @@ LONG elf_pgmld(FH h, PD *p)
 
     return 0;
 }
+
+#endif /* CONF_WITH_USER_ASPACE */
 
 #endif /* CONF_WITH_ELF_LOADER */

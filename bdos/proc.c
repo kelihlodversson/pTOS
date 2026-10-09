@@ -43,20 +43,6 @@
 #define TPASIZE_QUANTUM (128*1024L)     /* see alloc_tpa() */
 
 #ifdef __x86_64__
-/*
- * alloc_tpa() gives a process on this arch exactly the block it asks for,
- * not all free memory as on m68k and ARM, and the process starts with its
- * stack pointer at the top of that block (p_hitpa).  A program loaded from a
- * file needs room for its stack and heap beyond its image: libcmini's
- * startup code finds none and ends the process with Pterm(-1) (#434).  So
- * xexec() asks for this much more than the image, the amount an Atari TOS
- * TPA-size field of 0 stands for.  The window the blocks come from is small
- * (X86_64_LOW_TPA_BYTES), which is why it is not "everything that is free".
- */
-#define X86_64_TPA_SLACK TPASIZE_QUANTUM
-#endif
-
-#ifdef __x86_64__
 #include "procmem.h"
 #endif
 
@@ -548,9 +534,6 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     /* allocate the basepage depending on memory policy */
     needed = hdr.h01_tlen + hdr.h01_dlen + hdr.h01_blen + sizeof(PD);
-#ifdef __x86_64__
-    needed += X86_64_TPA_SLACK;
-#endif
     p = (PD *)alloc_tpa(hdr.h01_flags,needed,&max);
 
     /* if failed, free env_ptr and return */

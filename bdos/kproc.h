@@ -54,6 +54,11 @@ BOOL kproc_prepare_user(PD *pd, PD *parent);
  * never read back from the user-writable p_tbase.
  */
 BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);
+/* The same for a program Pexec() read from a file (bdos/elfld.c): `data` is a
+ * kfree()able copy of the ELF file, which the record takes over (and frees
+ * once the launch has mapped the segments, or with the record).  The launch
+ * also maps a startup area after the image (X86_64_USER_IMAGE_SLACK). */
+BOOL kproc_set_file_image(PD *pd, UBYTE *data, ULONG size);
 /* Fsfirst()/Fsnext() search state kept kernel-side: kproc_dta_save() after a
  * search, kproc_dta_restore() before Fsnext() (FALSE: no search was made with
  * this DTA, the search is over). */
@@ -84,6 +89,18 @@ LONG kproc_check_launch(PD *pd, PD *caller);
 void kproc_unborrow(void *block);
 ULONG kproc_borrow_count(PD *launcher, void *block);
 UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top);
+/*
+ * Malloc() memory of a process with an address space: private pages in
+ * [X86_64_USER_HEAP_BASE, X86_64_USER_HEAP_LIMIT), freed with the process.
+ * Alloc returns the address of `bytes` rounded up to whole pages (0: none),
+ * largest what Malloc(-1) reports; free and shrink are Mfree() and
+ * Mshrink() of a block's start (EIMBA: no such block, EGSBF: bigger).
+ */
+BOOL kproc_has_heap(PD *pd);
+UQUAD kproc_uheap_alloc(PD *pd, ULONG bytes);
+ULONG kproc_uheap_largest(PD *pd);
+LONG kproc_uheap_free(PD *pd, UQUAD va);
+LONG kproc_uheap_shrink(PD *pd, UQUAD va, long len);
 UQUAD kproc_user_stack(PD *pd);         /* initial RSP of an image's own stack; 0 if none */
 UQUAD kproc_user_pml4(PD *pd);          /* 0 if not prepared */
 X86_64_ASPACE *kproc_user_aspace(PD *pd);   /* NULL if none (tests) */

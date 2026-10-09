@@ -14,7 +14,7 @@
  * No CRT, no libc, no main(): this is freestanding, ring-3 code with
  * exactly one job. The assembly _start stub captures the entry state before
  * calling the C probe (see
- * X32_LDFLAGS' "-Wl,-n"/"-Wl,-Ttext=0x400000", which also needs no
+ * X32_LDFLAGS' "-Wl,-Ttext-segment=0x400000", which also needs no
  * dynamic linker or startup file to satisfy). The syscall convention
  * (RAX = (trap_class << 32) | function_number, next four arguments in
  * RDI/RSI/RDX/R10) is bios/arch/x86_64/trap.h's own, reached the same way
@@ -64,6 +64,21 @@ static s64 gemdos2(u64 func, u64 a, u64 b)
     register u64 rdi __asm__("rdi") = a;
     register u64 rsi __asm__("rsi") = b;
     register u64 rdx __asm__("rdx") = 0;
+    register u64 r10 __asm__("r10") = 0;
+
+    __asm__ volatile ("syscall"
+                       : "+r" (rax)
+                       : "r" (rdi), "r" (rsi), "r" (rdx), "r" (r10)
+                       : "rcx", "r11", "memory");
+    return (s64)rax;
+}
+
+static s64 gemdos3r(u64 func, u64 a, u64 b, u64 c)
+{
+    register u64 rax __asm__("rax") = ((u64)X86_64_TRAP_GEMDOS << 32) | func;
+    register u64 rdi __asm__("rdi") = a;
+    register u64 rsi __asm__("rsi") = b;
+    register u64 rdx __asm__("rdx") = c;
     register u64 r10 __asm__("r10") = 0;
 
     __asm__ volatile ("syscall"
@@ -157,12 +172,45 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
     if (cmdline[0] == 1 && cmdline[1] == 'w')
         gemdos1(0x4c, walk_ancestors(basepage));
     if (cmdline[0] == 1 && cmdline[1] == 'h') {
-        /* room for a stack and heap beyond the image (#434): the basepage's
-         * p_hitpa (offset 4) lies well past the end of the bss
-         * (p_bbase + p_blen, offsets 0x18 and 0x1c) */
-        const u32 *bp = (const u32 *)(unsigned long)basepage;
+        /* Malloc() memory is private pages in the heap range, usable, zeroed
+         * and given back by Mfree() and Mshrink() (#434) */
+        volatile u32 *p, *q;
+        u64 a, b;
+        int k, bad_heap = 0;
 
-        gemdos1(0x4c, bp[1] - (bp[6] + bp[7]) >= 0x10000u ? 0 : 1);
+        a = (u64)gemdos1r(0x48, 100000);
+        b = (u64)gemdos1r(0x48, 4096);
+        if (a < 0x10000000ULL || a >= 0x3f000000ULL || (a & 0xfff) ||
+            b < 0x10000000ULL || b >= 0x3f000000ULL || (b & 0xfff))
+            bad_heap |= 1;
+        if (a < b + 4096 && b < a + 100000)
+            bad_heap |= 2;                      /* overlap */
+        p = (volatile u32 *)(unsigned long)a;
+        q = (volatile u32 *)(unsigned long)b;
+        for (k = 0; k < 100000 / 4; k++)
+            if (p[k] != 0)
+                bad_heap |= 4;                  /* not zeroed */
+        for (k = 0; k < 100000 / 4; k++)
+            p[k] = (u32)k + 1;
+        q[0] = 0x5a5a5a5a;
+        for (k = 0; k < 100000 / 4; k++)
+            if (p[k] != (u32)k + 1)
+                bad_heap |= 8;
+        if (q[0] != 0x5a5a5a5a)
+            bad_heap |= 8;
+        if (gemdos1r(0x48, -1) <= 0)
+            bad_heap |= 16;                     /* Malloc(-1): the largest block */
+        if (gemdos3r(0x4a, 0, a, 8192) != 0 || p[1] != 2)
+            bad_heap |= 32;                     /* Mshrink() keeps the front */
+        if (gemdos3r(0x4a, 0, a, 100000) != -67)
+            bad_heap |= 64;                     /* growing is EGSBF */
+        if (gemdos1r(0x49, a) != 0)
+            bad_heap |= 128;                    /* Mfree() */
+        if (gemdos1r(0x49, a) != -40)
+            bad_heap |= 256;                    /* twice is EIMBA */
+        if (gemdos1r(0x49, b) != 0)
+            bad_heap |= 512;
+        gemdos1(0x4c, bad_heap);
     }
     if (cmdline[0] == 1 && cmdline[1] == 'r')
         gemdos2(0x31, 0x100, 0);        /* Ptermres(0x100, 0): stay resident */

@@ -710,19 +710,14 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 # segment gcc emits by default, -fcf-protection=none drops the
 # .note.gnu.property one (Intel CET markers), and -Wl,--build-id=none
 # drops the .note.gnu.build-id one -- each is otherwise its own PT_LOAD/
-# PT_NOTE segment, and pTOS's ELF loader (bdos/elfld.c, #43) only ever
-# maps the segments the image itself declares, so keeping this down to
-# exactly one real PT_LOAD segment (verified with readelf -l) is what
-# makes the result loadable there. -Wl,-Ttext=0x400000 -Wl,-n fixes the
-# link base and disables page alignment padding between segments (static,
-# non-PIE ET_EXEC, per #334's "x32 toolchain and executable contract"
-# section) -- -n is what collapses what would otherwise be separate R and
-# R+E LOAD segments into one. -Wl,-q (--emit-relocs) keeps the retained
-# RELA relocation entries the same contract calls for, so a less trivial
-# x32 program than tests/x32_hello/x32_hello.c (which has no absolute
-# data references and so links with none to retain) still gets a
-# relocatable binary -- see the ARCH_X86_64 branch elfld.c's own
-# EM_X86_64/ELF_R_DIR32/ELF_R_RELATIVE constants added for this.
+# PT_NOTE segment, and a process's image is mapped from its PT_LOAD
+# segments (include/x32image.h) at the addresses they were linked for: no
+# relocation, so none is kept (no -q), and no two segments may share a page
+# or be writable and executable at once.  -Wl,-Ttext-segment=0x400000 puts
+# the ELF headers and the text at the image base, -z noseparate-code keeps
+# text and read-only data in one read+execute segment and -z max-page-size
+# =0x1000 pads the read+write segment only to a 4 KiB page (static, non-PIE
+# ET_EXEC), which gives the two-segment layout of the built-in EmuCON.
 # -fno-pie/-no-pie force the ET_EXEC contract explicitly rather than
 # relying on the host GCC's own default: a distro configured with PIE
 # on by default would otherwise still produce ET_DYN here (-mx32 alone
@@ -742,7 +737,8 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 X32_CFLAGS = -mx32 -ffreestanding -fno-asynchronous-unwind-tables \
              -fno-unwind-tables -fcf-protection=none -fno-pie
 X32_LDFLAGS = -nostdlib -static -no-pie -Wl,--build-id=none \
-              -Wl,-Ttext=0x400000 -Wl,-n -Wl,-q -Wl,-m,elf32_x86_64
+              -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
+              -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000
 
 x32hello.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
 	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $^

@@ -15,9 +15,10 @@
 #ifdef __x86_64__
 
 /*
- * A statically linked x32 ELF executable (ELFCLASS32, EM_X86_64, ET_EXEC)
- * embedded in the kernel image: the built-in EmuCON.  This is not a general
- * ELF loader.  Every PT_LOAD segment must lie inside the user image window
+ * A statically linked x32 ELF executable (ELFCLASS32, EM_X86_64, ET_EXEC):
+ * the built-in EmuCON, embedded in the kernel image, or a program Pexec()
+ * read from a file (bdos/elfld.c).  This is not a general ELF loader: no
+ * relocation, a fixed link address.  Every PT_LOAD segment must lie inside the user image window
  * (X86_64_USER_IMAGE_BASE, X86_64_USER_IMAGE_SIZE), segments may not
  * overlap, and the entry point must lie in an executable one; anything else
  * is refused before a page is mapped.
@@ -30,6 +31,10 @@ typedef struct {
 /* TRUE iff the image satisfies the rules above; *entry receives its entry
  * point.  Maps nothing. */
 BOOL x86_64_x32image_check(const X32_IMAGE *image, UQUAD *entry);
+
+/* The address just past the highest byte any segment of a checked image
+ * occupies (its memory size, bss included); 0 for an invalid image. */
+UQUAD x86_64_x32image_end(const X32_IMAGE *image);
 
 /* Maps and fills every segment of a checked image as private memory of `as`
  * (text read+execute, rodata read-only, data and bss read+write; all
