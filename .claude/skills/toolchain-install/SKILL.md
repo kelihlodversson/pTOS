@@ -65,11 +65,19 @@ m68k-atari-mintelf-gcc -Q --help=target | grep mfastcall
 m68k-atari-mintelf-ld --version
 ```
 
-Use the `m68k-atari-mintelf-` prefix, either through the configured toolchain
-choice or explicitly:
+The pTOS m68k toolchain choice automatically selects the
+`m68k-atari-mintelf-` prefix and the required compiler flags. No explicit
+`CROSS_COMPILE` override is normally required:
 
 ```sh
 make atari512_defconfig
+make
+```
+
+Use `CROSS_COMPILE=m68k-atari-mintelf-` only when overriding the configured
+prefix or diagnosing tool lookup:
+
+```sh
 make CROSS_COMPILE=m68k-atari-mintelf-
 ```
 
@@ -124,13 +132,21 @@ Use the `mintelf` variant, not plain `mint`, and choose the latest GCC release
 available there. The current expected version is `15.2.0`. The compiler must
 support `-mfastcall`.
 
-Verify and use the `m68k-atari-mintelf-` prefix:
+The pTOS m68k toolchain choice automatically selects the
+`m68k-atari-mintelf-` prefix and required flags. Verify the tools, then build
+normally:
 
 ```sh
 m68k-atari-mintelf-gcc --version
 m68k-atari-mintelf-gcc -Q --help=target | grep mfastcall
 m68k-atari-mintelf-ld --version
 make atari512_defconfig
+make
+```
+
+Only override the prefix explicitly when needed:
+
+```sh
 make CROSS_COMPILE=m68k-atari-mintelf-
 ```
 
