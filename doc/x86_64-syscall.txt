@@ -189,11 +189,11 @@ are #351/#372.  A few BIOS and XBIOS calls are checked in the trap handler
 itself (trap.c), not by the descriptor table: Rwabs() (BIOS 4), Floprd(),
 Flopwr(), Flopver() (XBIOS 8, 9, 19) and Flopfmt() (XBIOS 10) take their
 argument struct from the caller by copy and validate the buffer (and
-Flopfmt()'s skew table), which the driver then uses in place; Rsconf()
-(XBIOS 15) copies its argument struct; Setexc() (BIOS 5) refuses to install
-a vector.  The other BIOS and XBIOS calls still trust their pointers and are
-guarded by the same option as they are converted; trap class 2 (VDI, AES) is
-refused from ring 3 outright (#376).  #352 is the umbrella.
+Flopfmt()'s skew table) before the device operation; Rsconf() (XBIOS 15)
+copies its argument struct; Setexc() (BIOS 5) refuses to install a vector.
+The other BIOS and XBIOS calls still trust their pointers and are guarded by
+the same option as they are converted; trap class 2 (VDI, AES) is refused
+from ring 3 outright (#376).  #352 is the umbrella.
 
 Status
 -------
