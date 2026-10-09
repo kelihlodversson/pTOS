@@ -819,7 +819,9 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     case 'o': {
         /* Rwabs() reads straight into the caller's buffer: sector 0 of C:
          * is a FAT boot sector, which ends in 0x55 0xAA (#446) */
-        static unsigned char sector[512];
+        /* Rwabs() transfers whole logical sectors of the volume, up to
+         * MAX_LOGSEC_SIZE (bios/blkdev.h, 32768) bytes each, not 512 */
+        static unsigned char sector[32768];
         u32 args[6];
 
         args[0] = 0;                    /* r_w: read */
