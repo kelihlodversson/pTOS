@@ -169,7 +169,9 @@ Extract both archives at the filesystem root. Do not use
 ```sh
 sudo tar -xJf binutils-2.45-mintelf-20250812-bin-macos.tar.xz -C /
 sudo tar -xJf gcc-15.2.0-mintelf-20250810-bin-macos.tar.xz -C /
-sudo tar --strip-components=1 -xJf mintlib-0.60.1-mintelf-20240718-dev.tar.xz -C /opt/cross-mint
+sudo mkdir -p /opt/cross-mint/m68k-atari-mintelf/sys-root
+sudo tar --strip-components=3 -xJf mintlib-0.60.1-mintelf-20240718-dev.tar.xz \
+    -C /opt/cross-mint/m68k-atari-mintelf/sys-root
 export PATH=/opt/cross-mint/bin:$PATH
 ```
 
