@@ -49,15 +49,34 @@ make
 
 ### m68k
 
-Download the latest `gcc-mintelf` and binutils toolchain from:
+The recommended Ubuntu installation is the same PPA/package path used by CI:
+
+```sh
+sudo add-apt-repository -y ppa:vriviere/mintelf
+sudo apt-get update
+sudo apt-get install -y cross-mintelf-essential
+```
+
+If using archives from the tho-otto page instead, download this matching
+Linux 64-bit pair from the latest toolchain section:
+
+- `binutils-2.45-mintelf-20250812-bin-linux64.tar.xz`
+- `gcc-15.2.0-mintelf-20250810-bin-linux64.tar.xz`
+
+The archives share the filesystem root and are intended to be merged. Their
+contents include `/usr/bin/m68k-atari-mintelf-*`,
+`/usr/m68k-atari-mintelf/`, and the GCC runtime under `/usr/lib64/gcc/`.
+Extract both at `/`, not inside `/usr/m68k-atari-mintelf`:
+
+```sh
+sudo tar -xJf binutils-2.45-mintelf-20250812-bin-linux64.tar.xz -C /
+sudo tar -xJf gcc-15.2.0-mintelf-20250810-bin-linux64.tar.xz -C /
+```
+
+The tools are installed in `/usr/bin`, so no PATH change is normally needed.
+Verify the merged installation:
 
 <https://tho-otto.m68k.eu/crossmint.php>
-
-Use the `mintelf` toolchain, not the plain `mint`/cross-mint toolchain. The
-compiler must support `-mfastcall`. At the time this skill was written, the
-latest available GCC version on that page was `15.2.0`.
-
-Verify the installed tools before building:
 
 ```sh
 m68k-atari-mintelf-gcc --version
