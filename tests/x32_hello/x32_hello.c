@@ -14,7 +14,7 @@
  * No CRT, no libc, no main(): this is freestanding, ring-3 code with
  * exactly one job. The assembly _start stub captures the entry state before
  * calling the C probe (see
- * X32_LDFLAGS' "-Wl,-Ttext-segment=0x400000", which also needs no
+ * X32_LDFLAGS' "-Wl,-n"/"-Wl,-Ttext=0x400000", which also needs no
  * dynamic linker or startup file to satisfy). The syscall convention
  * (RAX = (trap_class << 32) | function_number, next four arguments in
  * RDI/RSI/RDX/R10) is bios/arch/x86_64/trap.h's own, reached the same way
@@ -146,6 +146,8 @@ static int walk_ancestors(u64 basepage)
     return 0x100 + n;
 }
 
+u32 x32_reloc_target;
+
 void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 {
     int bad = 0;
@@ -171,6 +173,16 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
     }
     if (cmdline[0] == 1 && cmdline[1] == 'w')
         gemdos1(0x4c, walk_ancestors(basepage));
+    if (cmdline[0] == 1 && cmdline[1] == 'a') {
+        /* an absolute address as an instruction's immediate: the
+         * R_X86_64_32 slot is not 4-byte aligned, and must still have been
+         * relocated, i.e. equal the same address taken PC-relative (#433) */
+        u32 absolute, relative;
+
+        __asm__ ("\t.p2align 2\n\tmovl $x32_reloc_target, %0" : "=a" (absolute));
+        __asm__ ("leal x32_reloc_target(%%rip), %0" : "=r" (relative));
+        gemdos1(0x4c, absolute == relative ? 0 : 1);
+    }
     if (cmdline[0] == 1 && cmdline[1] == 'h') {
         /* Malloc() memory is private pages in the heap range, usable, zeroed
          * and given back by Mfree() and Mshrink() (#434) */

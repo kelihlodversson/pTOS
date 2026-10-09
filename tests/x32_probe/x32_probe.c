@@ -771,7 +771,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (bpa == -33)
             pterm(0x100);
         if (bpa <= 0)
-            pterm(0x200 | (int)(-bpa & 0xff));
+            pterm(1);
         if (bpp[0] != (u32)bpa)
             bad |= 2;                       /* p_lowtpa */
         if (bpp[2] <= bpa || bpp[2] >= bpp[1])
@@ -817,6 +817,44 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (rc == -33)
             pterm(0x100);
         pterm(rc == walk_ancestors(basepage) + 1 ? 0 : 1);
+        break;
+    }
+    case 'o': {
+        /* Rwabs() reads straight into the caller's buffer: sector 0 of C:
+         * is a FAT boot sector, which ends in 0x55 0xAA (#446) */
+        /* Rwabs() transfers whole logical sectors of the volume, up to
+         * MAX_LOGSEC_SIZE (bios/blkdev.h, 32768) bytes each, not 512 */
+        static unsigned char sector[32768];
+        u32 args[6];
+
+        args[0] = 0;                    /* r_w: read */
+        args[1] = (u32)(unsigned long)sector;
+        args[2] = 1;                    /* numb */
+        args[3] = 0;                    /* first */
+        args[4] = 2;                    /* drive C: */
+        args[5] = 0;                    /* lfirst */
+        if (sys(BIOS, 4, (s64)(int)(unsigned long)args, 0, 0) != 0)
+            bad |= 1;
+        if (sector[510] != 0x55 || sector[511] != 0xAA)
+            bad |= 2;
+        pterm(bad);
+        break;
+    }
+    case 'a': {
+        /* PE_LOAD puts the program in the caller's TPA, away from its link
+         * address, so it is relocated -- including an unaligned absolute
+         * address in an instruction (#433) -- and then launched */
+        static const char reloc_tail[] = { 1, 'a', 0 };
+        s64 bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                       (s64)(int)(unsigned long)reloc_tail, 0);
+        s64 rc;
+
+        if (bpa == -33)
+            pterm(0x100);
+        if (bpa <= 0)
+            pterm(1);
+        rc = sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", bpa, 0);
+        pterm(rc == 0 ? 0 : 1);
         break;
     }
     case 'h': {

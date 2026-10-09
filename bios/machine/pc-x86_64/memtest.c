@@ -1201,6 +1201,7 @@ static void test_ring3(void)
     /* bad pointers as system call arguments, and unused argument registers */
     probe_expect('b', 0, "bad arguments refused by the system calls");
     probe_expect('r', 0, "arguments a call does not use are not looked at");
+    probe_expect('o', 0, "Rwabs() from ring 3 fills the caller's buffer in place");
     probe_expect('s', 0, "ring 3 cannot install kernel callbacks or write the kernel variables");
 
     /* basepages a ring-3 process can use, and launches it cannot forge (#416) */
@@ -1291,6 +1292,20 @@ static void test_ring3(void)
             kcprintf(rc == 0 ? "x86-64 ancestors: PASS\n" : "x86-64 ancestors: FAIL (0x%lx)\n", rc);
         }
         same(&s, "ancestor chain of a nested launch");
+    }
+
+    /* a program whose code has an unaligned absolute relocation is loaded
+     * and runs correctly (#433) */
+    {
+        snap(&s);
+        rc = run_probe('a');
+        if (rc == 0x100) {
+            kcprintf("x86-64 unaligned relocation: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "an unaligned R_X86_64_32 slot is relocated");
+            kcprintf(rc == 0 ? "x86-64 unaligned relocation: PASS\n" : "x86-64 unaligned relocation: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "a program with an unaligned relocation");
     }
 
     /* a new process is mapped at its link address, PE_LOAD relocates (#434) */
