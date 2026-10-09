@@ -60,8 +60,8 @@ sudo apt-get update
 sudo apt-get install -y cross-mintelf-essential
 ```
 
-If using archives from the tho-otto page instead, download this matching
-Linux 64-bit pair from the latest toolchain section:
+If using archives from the tho-otto page instead, download these three
+matching Linux 64-bit archives from the latest toolchain section:
 
 - `binutils-2.45-mintelf-20250812-bin-linux64.tar.xz`
 - `gcc-15.2.0-mintelf-20250810-bin-linux64.tar.xz`
@@ -72,14 +72,28 @@ merged. The mintlib development archive supplies target headers such as
 `stdint.h`, which the compiler archive does not contain. Their contents include
 `/usr/bin/m68k-atari-mintelf-*`,
 `/usr/m68k-atari-mintelf/`, and the GCC runtime under `/usr/lib64/gcc/`.
-Extract all three Linux archives at `/`. Their `usr/m68k-atari-mintelf/sys-root`
-paths already match the intended destination, so no component stripping is
-needed:
+Extract and validate all three archives as an ordinary user first. Their
+`usr/m68k-atari-mintelf/sys-root` paths already match the intended destination,
+so no component stripping is needed. Do not extract unverified archives as
+root:
 
 ```sh
-sudo tar -xJf binutils-2.45-mintelf-20250812-bin-linux64.tar.xz -C /
-sudo tar -xJf gcc-15.2.0-mintelf-20250810-bin-linux64.tar.xz -C /
-sudo tar -xJf mintlib-0.60.1-mintelf-20240718-dev.tar.xz -C /
+stage=$(mktemp -d)
+for archive in \
+    binutils-2.45-mintelf-20250812-bin-linux64.tar.xz \
+    gcc-15.2.0-mintelf-20250810-bin-linux64.tar.xz \
+    mintlib-0.60.1-mintelf-20240718-dev.tar.xz; do
+    while IFS= read -r path; do
+        case "$path" in
+            usr/*) ;;
+            *) echo "unexpected archive path: $path" >&2; exit 1 ;;
+        esac
+    done < <(tar -tJf "$archive")
+    tar -xJf "$archive" -C "$stage"
+done
+# Compare `shasum -a 256 <archive>` with a trusted release record before this step.
+sudo cp -a "$stage/usr/." /usr/
+rm -rf "$stage"
 ```
 
 The tools are installed in `/usr/bin`, so no PATH change is normally needed.
@@ -168,26 +182,42 @@ the tho-otto page:
 
 <https://tho-otto.m68k.eu/crossmint.php>
 
-The archives are designed to be extracted together. Both contain an
-`opt/cross-mint/` root:
+The binutils and GCC archives are designed to be extracted together and both
+contain an `opt/cross-mint/` root. The mintlib archive contains a separate
+`usr/m68k-atari-mintelf/sys-root/` root:
 
 - Binutils provides `/opt/cross-mint/bin/m68k-atari-mintelf-*` and target linker files.
 - GCC provides the matching compiler drivers, runtime, sysroot, and `mfastcall` multilibs.
 - Mintlib provides target headers such as `stdint.h` and the development libraries.
 
-Extract both archives at the filesystem root. Do not use
-`-C /opt/cross-mint`, which would create an unwanted nested path:
+Extract and validate the archives as an ordinary user first. Do not extract
+unverified downloads as root:
 
 ```sh
-sudo tar -xJf binutils-2.45-mintelf-20250812-bin-macos.tar.xz -C /
-sudo tar -xJf gcc-15.2.0-mintelf-20250810-bin-macos.tar.xz -C /
+stage=$(mktemp -d)
+for archive in \
+    binutils-2.45-mintelf-20250812-bin-macos.tar.xz \
+    gcc-15.2.0-mintelf-20250810-bin-macos.tar.xz \
+    mintlib-0.60.1-mintelf-20240718-dev.tar.xz; do
+    while IFS= read -r path; do
+        case "$archive:$path" in
+            *mintlib*:usr/m68k-atari-mintelf/sys-root/*) ;;
+            *:opt/cross-mint/*) ;;
+            *) echo "unexpected archive path: $path" >&2; exit 1 ;;
+        esac
+    done < <(tar -tJf "$archive")
+    tar -xJf "$archive" -C "$stage"
+done
+# Compare `shasum -a 256 <archive>` with a trusted release record before this step.
 sudo mkdir -p /opt/cross-mint/m68k-atari-mintelf/sys-root
-sudo tar --strip-components=3 -xJf mintlib-0.60.1-mintelf-20240718-dev.tar.xz \
-    -C /opt/cross-mint/m68k-atari-mintelf/sys-root
+sudo cp -a "$stage/opt/cross-mint/." /opt/cross-mint/
+sudo cp -a "$stage/usr/m68k-atari-mintelf/sys-root/." \
+    /opt/cross-mint/m68k-atari-mintelf/sys-root/
+rm -rf "$stage"
 export PATH=/opt/cross-mint/bin:$PATH
 ```
 
-Use the `mintelf` pair, not the plain `mint` archives. The compiler must
+Use the matching `mintelf` archives, not the plain `mint` archives. The compiler must
 support `-mfastcall`.
 
 The pTOS m68k toolchain choice automatically selects the
