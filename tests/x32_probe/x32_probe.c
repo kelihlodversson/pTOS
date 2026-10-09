@@ -816,6 +816,17 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(rc == walk_ancestors(basepage) + 1 ? 0 : 1);
         break;
     }
+    case 'h': {
+        /* a child loaded from a file has room for a stack and heap (#434) */
+        static const char room_tail[] = { 1, 'h', 0 };
+        s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                      (s64)(int)(unsigned long)room_tail, 0);
+
+        if (rc == -33)
+            pterm(0x100);
+        pterm(rc == 0 ? 0 : 1);
+        break;
+    }
     case 'u':
         bad_address = (u32 *)(unsigned long)((*(const u32 *)(unsigned long)(basepage + 0x24)) + 0x24);
         *bad_address = 0;               /* the ancestors page is read-only */

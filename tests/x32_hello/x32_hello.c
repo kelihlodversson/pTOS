@@ -156,6 +156,14 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
     }
     if (cmdline[0] == 1 && cmdline[1] == 'w')
         gemdos1(0x4c, walk_ancestors(basepage));
+    if (cmdline[0] == 1 && cmdline[1] == 'h') {
+        /* room for a stack and heap beyond the image (#434): the basepage's
+         * p_hitpa (offset 4) lies well past the end of the bss
+         * (p_bbase + p_blen, offsets 0x18 and 0x1c) */
+        const u32 *bp = (const u32 *)(unsigned long)basepage;
+
+        gemdos1(0x4c, bp[1] - (bp[6] + bp[7]) >= 0x10000u ? 0 : 1);
+    }
     if (cmdline[0] == 1 && cmdline[1] == 'r')
         gemdos2(0x31, 0x100, 0);        /* Ptermres(0x100, 0): stay resident */
 

@@ -1293,6 +1293,19 @@ static void test_ring3(void)
         same(&s, "ancestor chain of a nested launch");
     }
 
+    /* a program loaded from a file has room for a stack and heap (#434) */
+    {
+        snap(&s);
+        rc = run_probe('h');
+        if (rc == 0x100) {
+            kcprintf("x86-64 stack and heap room: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "a loaded program has stack and heap beyond its image");
+            kcprintf(rc == 0 ? "x86-64 stack and heap room: PASS\n" : "x86-64 stack and heap room: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "a program with room beyond its image");
+    }
+
     /*
      * The same with a child that FAULTS: the other way back into the
      * launcher's context (no syscall, so no swapgs to undo; the exception
