@@ -131,6 +131,8 @@ static int walk_ancestors(u64 basepage)
     return 0x100 + n;
 }
 
+u32 x32_reloc_target;
+
 void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 {
     int bad = 0;
@@ -156,6 +158,16 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
     }
     if (cmdline[0] == 1 && cmdline[1] == 'w')
         gemdos1(0x4c, walk_ancestors(basepage));
+    if (cmdline[0] == 1 && cmdline[1] == 'a') {
+        /* an absolute address as an instruction's immediate: the
+         * R_X86_64_32 slot is not 4-byte aligned, and must still have been
+         * relocated, i.e. equal the same address taken PC-relative (#433) */
+        u32 absolute, relative;
+
+        __asm__ ("\t.p2align 2\n\tmovl $x32_reloc_target, %0" : "=a" (absolute));
+        __asm__ ("leal x32_reloc_target(%%rip), %0" : "=r" (relative));
+        gemdos1(0x4c, absolute == relative ? 0 : 1);
+    }
     if (cmdline[0] == 1 && cmdline[1] == 'r')
         gemdos2(0x31, 0x100, 0);        /* Ptermres(0x100, 0): stay resident */
 
