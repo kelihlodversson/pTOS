@@ -816,6 +816,25 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(rc == walk_ancestors(basepage) + 1 ? 0 : 1);
         break;
     }
+    case 'o': {
+        /* Rwabs() reads straight into the caller's buffer: sector 0 of C:
+         * is a FAT boot sector, which ends in 0x55 0xAA (#446) */
+        static unsigned char sector[512];
+        u32 args[6];
+
+        args[0] = 0;                    /* r_w: read */
+        args[1] = (u32)(unsigned long)sector;
+        args[2] = 1;                    /* numb */
+        args[3] = 0;                    /* first */
+        args[4] = 2;                    /* drive C: */
+        args[5] = 0;                    /* lfirst */
+        if (sys(BIOS, 4, (s64)(int)(unsigned long)args, 0, 0) != 0)
+            bad |= 1;
+        if (sector[510] != 0x55 || sector[511] != 0xAA)
+            bad |= 2;
+        pterm(bad);
+        break;
+    }
     case 'u':
         bad_address = (u32 *)(unsigned long)((*(const u32 *)(unsigned long)(basepage + 0x24)) + 0x24);
         *bad_address = 0;               /* the ancestors page is read-only */
