@@ -28,6 +28,9 @@ make pc-x86_64_defconfig
 make CROSS_COMPILE=
 ```
 
+This configuration is supplied by the x32 configuration work; use a checkout
+that contains `configs/pc-x86_64_defconfig` before running these commands.
+
 The variable is `CROSS_COMPILE`, not `CROSS_PREFIX`. An empty
 `CROSS_COMPILE=` is required for this Ubuntu-native build.
 
@@ -111,6 +114,13 @@ and is not the required ELF/mfastcall-capable toolchain for these builds.
 
 ## macOS
 
+Install GNU Make 4.3 or newer. Apple’s system `make` is BSD Make 3.81 and is
+too old for pTOS; Homebrew installs GNU Make as `gmake`:
+
+```sh
+brew install make
+```
+
 ### x86-32 / x32
 
 Install the bare-metal x86-64 compiler and binutils from Homebrew:
@@ -122,14 +132,14 @@ brew install x86_64-elf-gcc x86_64-elf-binutils
 Build with the pTOS x86-64 default prefix:
 
 ```sh
-make pc-x86_64_defconfig
-make
+gmake pc-x86_64_defconfig
+gmake
 ```
 
 If Make is configured with another prefix, override it explicitly:
 
 ```sh
-make CROSS_COMPILE=x86_64-elf-
+gmake CROSS_COMPILE=x86_64-elf-
 ```
 
 ### ARM
@@ -143,8 +153,8 @@ brew install gcc-arm-embedded
 Build normally after selecting an ARM configuration:
 
 ```sh
-make rpi2_defconfig
-make
+gmake rpi2_defconfig
+gmake
 ```
 
 ### m68k
@@ -188,14 +198,14 @@ normally:
 m68k-atari-mintelf-gcc --version
 m68k-atari-mintelf-gcc -Q --help=target | grep mfastcall
 m68k-atari-mintelf-ld --version
-make atari512_defconfig
-make
+gmake atari512_defconfig
+gmake
 ```
 
 Only override the prefix explicitly when needed:
 
 ```sh
-make CROSS_COMPILE=m68k-atari-mintelf-
+gmake CROSS_COMPILE=m68k-atari-mintelf-
 ```
 
 ## Troubleshooting
@@ -203,4 +213,4 @@ make CROSS_COMPILE=m68k-atari-mintelf-
 - `x86_64-elf-gcc: command not found` on Ubuntu usually means the build was not invoked with `CROSS_COMPILE=`.
 - `m68k-atari-mint-gcc` is the wrong prefix for the required mintelf ELF toolchain.
 - A m68k compiler without `-mfastcall` is not suitable; install the mintelf package from the tho-otto page instead.
-- Confirm the selected prefix with `make V=1` when diagnosing a build.
+- Confirm the selected prefix with `make V=1` on Ubuntu or `gmake V=1` on macOS when diagnosing a build.
