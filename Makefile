@@ -711,16 +711,15 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 # .note.gnu.property one (Intel CET markers), and -Wl,--build-id=none
 # drops the .note.gnu.build-id one -- each is otherwise its own PT_LOAD/
 # PT_NOTE segment, and the loader (bdos/elfld.c) only ever maps the
-# segments the image itself declares.  A new process (Pexec() mode 0) gets
-# the PT_LOAD segments as private pages at the addresses they were linked for
-# (include/x32image.h): no two segments may share a page or be writable and
-# executable at once, which -z noseparate-code and -z max-page-size=0x1000
-# give (a read+execute segment holding the headers, text and read-only data,
-# and a read+write one padded to a 4 KiB page; -Wl,-Ttext-segment=0x400000
-# is the link base, static, non-PIE ET_EXEC).  Pexec(PE_LOAD) puts the
-# program in memory the caller owns, at some other address, and relocates it
-# there: that needs the relocation entries, which -Wl,-q (--emit-relocs)
-# keeps in the file, so a program is built with it to work in both cases.
+# segments the image itself declares.  A program is mapped into its own
+# address space (include/x32image.h): no two segments may share a page, which
+# -z noseparate-code and -z max-page-size=0x1000 give (a read+execute segment
+# holding the headers, text and read-only data, and a read+write one padded to
+# a 4 KiB page; -Wl,-Ttext-segment=0x400000 is the link base, static, non-PIE
+# ET_EXEC, the start of the image window, so that nothing is relocated).  A
+# program linked for another address is moved into the window and relocated,
+# which needs the relocation entries -Wl,-q (--emit-relocs) keeps in the file:
+# x32reloc.elf below is one.
 # -fno-pie/-no-pie force the ET_EXEC contract explicitly rather than
 # relying on the host GCC's own default: a distro configured with PIE
 # on by default would otherwise still produce ET_DYN here (-mx32 alone
@@ -746,10 +745,16 @@ X32_LDFLAGS = -nostdlib -static -no-pie -Wl,--build-id=none \
 x32hello.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
 	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $^
 
-.PHONY: x32test
-x32test: x32hello.elf
+# The same program linked for another address, which Pexec() has to move
+# into the image window and relocate (the relocations -q keeps are what it
+# uses).
+x32reloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -o $@ $^
 
-TOCLEAN += x32hello.elf
+.PHONY: x32test
+x32test: x32hello.elf x32reloc.elf
+
+TOCLEAN += x32hello.elf x32reloc.elf
 
 #
 # The built-in EmuCON (#398).  On x86-64 the command processor is not linked

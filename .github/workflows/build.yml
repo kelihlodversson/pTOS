@@ -268,6 +268,9 @@ jobs:
           # Pexec() from a ring-3 process (nested launch), as EmuCON does
           make CROSS_COMPILE= x32test
           cp x32hello.elf esp/X32HELLO.TOS
+          # the same program linked for another address, which Pexec() has to
+          # move into the image window and relocate
+          cp x32reloc.elf esp/X32RELOC.TOS
           cp /usr/share/OVMF/OVMF_VARS_4M.fd .
 
           set +e
@@ -330,6 +333,21 @@ jobs:
 
           if ! grep -q 'x86-64 nested pexec: PASS' boot.log; then
             echo "::error::a ring-3 process could not run a child through Pexec() and resume"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 private heap: PASS' boot.log; then
+            echo "::error::a loaded x32 program could not use its private Malloc() memory"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 private image: PASS' boot.log; then
+            echo "::error::a new process did not get its image in the image window"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 unaligned relocation: PASS' boot.log; then
+            echo "::error::a program linked for another address was not relocated correctly"
             exit 1
           fi
 

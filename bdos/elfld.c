@@ -422,103 +422,6 @@ static LONG elf_scan(FH h, const Elf32_Ehdr *e, ELFINFO *info)
     return 0;
 }
 
-#if CONF_WITH_USER_ASPACE
-/*
- * A process with an address space of its own (x86-64) can have its image
- * mapped from the ELF file as private pages at the addresses it was linked
- * for, with nothing to relocate (see include/x32image.h), when the process is
- * a new one built from the file (Pexec() mode PE_LOADGO) and the file follows
- * the rules of that header.  Anything else -- PE_LOAD, whose result the caller
- * gets in memory it owns and can look at before launching, a program that
- * has to be relocated because it was linked for another base, or one that
- * breaks those rules -- is loaded into the TPA and relocated like on the
- * other architectures.  xexec() says which Pexec() mode this is.
- */
-#define ELF_FILE_MAX    (X86_64_USER_IMAGE_SIZE + 0x10000UL)  /* image window, plus headers */
-
-static BOOL elf_private_wanted;
-
-void elf_set_private_image(BOOL wanted)
-{
-    elf_private_wanted = wanted;
-}
-
-/* the whole file in a kfree()able block, NULL if it is too big or cannot be read */
-static UBYTE *elf_read_whole(FH h, LONG *size)
-{
-    UBYTE *data;
-    LONG n, r;
-
-    n = xlseek(0L, h, 2);
-    if (n <= 0L || (ULONG)n > ELF_FILE_MAX)
-        return NULL;
-    if (xlseek(0L, h, 0) < 0L)
-        return NULL;
-    data = kalloc((ULONG)n);
-    if (!data)
-        return NULL;
-    r = xread(h, n, data);
-    if (r != n)
-    {
-        kfree(data);
-        return NULL;
-    }
-    *size = n;
-    return data;
-}
-
-static BOOL elf_private_eligible(FH h)
-{
-    X32_IMAGE image;
-    LONG size;
-    BOOL ok;
-
-    if (!elf_private_wanted)
-        return FALSE;
-    image.data = elf_read_whole(h, &size);
-    if (!image.data)
-        return FALSE;
-    image.size = (ULONG)size;
-    ok = x86_64_x32image_check(&image, NULL);
-    kfree((void *)image.data);
-    return ok;
-}
-
-/* the load pass for such a program: TRUE if p now has its image (ENSMEM and
- * the like come back through *rc and leave p without one) */
-static BOOL elf_load_private(FH h, PD *p, const Elf32_Ehdr *ehdr, const ELFINFO *info, LONG *rc)
-{
-    UBYTE *data;
-    LONG size;
-
-    *rc = 0;
-    if (!elf_private_eligible(h))
-        return FALSE;
-    data = elf_read_whole(h, &size);
-    if (!data)
-    {
-        *rc = ENSMEM;
-        return TRUE;
-    }
-    /* takes the buffer, also when it refuses the image */
-    if (!kproc_set_file_image(p, data, (ULONG)size))
-    {
-        *rc = EPLFMT;
-        return TRUE;
-    }
-
-    /* the segment fields describe where the image will be; execution starts
-     * at the ELF entry point */
-    p->p_tbase = PTR_TO_USERPTR((UBYTE *)(uintptr_t)ehdr->e_entry);
-    p->p_tlen  = (LONG)(info->file_end - info->link_base);
-    p->p_dbase = PTR_TO_USERPTR((UBYTE *)(uintptr_t)info->file_end);
-    p->p_dlen  = 0;
-    p->p_bbase = PTR_TO_USERPTR((UBYTE *)(uintptr_t)info->file_end);
-    p->p_blen  = (LONG)(info->mem_end - info->file_end);
-    return TRUE;
-}
-#endif /* CONF_WITH_USER_ASPACE */
-
 /*
  * elf_pgmhdrld - sizing pass, called by kpgmhdrld()
  *
@@ -553,20 +456,11 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
     hd->h01_dlen = 0;
     hd->h01_blen = (LONG)(info.mem_end - info.file_end);
 #if CONF_WITH_USER_ASPACE
-    if (elf_private_eligible(h))
-    {
-        /* the image will live in private pages of the process's own address
-         * space (elf_pgmld()): the TPA is the basepage and nothing more */
-        hd->h01_tlen = 0;
-        hd->h01_blen = 0;
-    }
-    else
-    {
-        /* after the bss, for the C startup code to build argv and environ in
-         * (the space the TOS tradition has it use); a private image gets the
-         * same from the launch (kproc_prepare_user()) */
-        hd->h01_blen += (LONG)X86_64_USER_IMAGE_SLACK;
-    }
+    /* the image does not live in the TPA but in private pages of the
+     * process's own address space (elf_pgmld()): the TPA is the basepage and
+     * nothing more */
+    hd->h01_tlen = 0;
+    hd->h01_blen = 0;
 #endif
     hd->h01_slen = 0;
     hd->h01_res1 = 0;
@@ -1233,7 +1127,11 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
  * relocates by the load bias.  The basepage TPA has already been allocated
  * by proc.c using the sizes returned by elf_pgmhdrld().
  */
+#if CONF_WITH_USER_ASPACE
+static LONG elf_load_image(FH h, PD *p, UBYTE **flatp, X32_LAYOUT *layout)
+#else
 LONG elf_pgmld(FH h, PD *p)
+#endif
 {
     Elf32_Ehdr ehdr;
     Elf32_Phdr ph;
@@ -1246,7 +1144,9 @@ LONG elf_pgmld(FH h, PD *p)
     ELFINFO info;
     UBYTE *load_base;
     LONG bias;
+#if !CONF_WITH_USER_ASPACE
     LONG tpalen;
+#endif
     ULONG phoff;
     ULONG ph_table_size;
     LONG r;
@@ -1266,20 +1166,55 @@ LONG elf_pgmld(FH h, PD *p)
     if (r < 0L)
         return r;
 
-#if CONF_WITH_USER_ASPACE
-    {
-        LONG prc;
-
-        if (elf_load_private(h, p, &ehdr, &info, &prc))
-            return prc;
-    }
-#endif
 
     /* the entry point must fall inside the loaded image, or p_tbase would
      * point outside the TPA (underflow below link_base, or past mem_end) */
     if (ehdr.e_entry < info.link_base || ehdr.e_entry >= info.mem_end)
         return EPLFMT;
 
+#if CONF_WITH_USER_ASPACE
+    /*
+     * The image is built in a flat kernel buffer holding the bytes of
+     * [link_base, mem_end), relocated there if it has to be, and then mapped
+     * into the process's own address space when the process is launched (see
+     * kproc_set_loaded_image()).  It goes where it was linked for if that lies
+     * in the image window; otherwise it is moved into the window, to its first
+     * page, and relocated by the distance.
+     */
+    {
+        ULONG span = info.mem_end - info.link_base;
+        ULONG lo = info.link_base & ~(ULONG)(X86_64_USER_PAGE_SIZE - 1);
+
+        if (info.link_base >= X86_64_USER_IMAGE_BASE
+         && info.mem_end <= X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE)
+            bias = 0;
+        else
+            bias = (LONG)(X86_64_USER_IMAGE_BASE - lo);
+        if (span > X86_64_USER_IMAGE_SIZE - (info.link_base - lo)
+         || (ULONG)info.link_base + (ULONG)bias < X86_64_USER_IMAGE_BASE
+         || (ULONG)info.mem_end + (ULONG)bias > X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE)
+        {
+            KDEBUG(("BDOS elf_pgmld: image does not fit the image window\n"));
+            return ENSMEM;
+        }
+        load_base = kalloc(span);
+        if (!load_base)
+            return ENSMEM;
+        *flatp = load_base;
+    }
+
+    /* the segment fields describe where the image will be; execution starts
+     * at the ELF entry point */
+    p->p_tbase = PTR_TO_USERPTR((UBYTE *)(uintptr_t)((ULONG)ehdr.e_entry + (ULONG)bias));
+    p->p_tlen  = (LONG)(info.file_end - info.link_base);
+    p->p_dbase = PTR_TO_USERPTR((UBYTE *)(uintptr_t)((ULONG)info.file_end + (ULONG)bias));
+    p->p_dlen  = 0;
+    p->p_bbase = PTR_TO_USERPTR((UBYTE *)(uintptr_t)((ULONG)info.file_end + (ULONG)bias));
+    p->p_blen  = (LONG)(info.mem_end - info.file_end);
+    layout->nseg = 0;
+    layout->end = 0;
+    layout->entry = (ULONG)ehdr.e_entry + (ULONG)bias;
+#else
     /* the image is loaded at the first byte after the basepage */
     load_base = (UBYTE *)(p + 1);
     /* compute the bias in unsigned then reinterpret as signed; this avoids
@@ -1309,6 +1244,8 @@ LONG elf_pgmld(FH h, PD *p)
     p->p_dlen  = 0;
     p->p_bbase = PTR_TO_USERPTR(load_base + (info.file_end - info.link_base));
     p->p_blen  = (LONG)(info.mem_end - info.file_end);
+
+#endif
 
     /* Zero the loaded image first so bss and inter-segment gaps start
      * cleared, then read the file backed parts over it. Only the
@@ -1353,7 +1290,26 @@ LONG elf_pgmld(FH h, PD *p)
             continue;
         }
 
-        if (ph.p_type != PT_LOAD || ph.p_filesz == 0)
+        if (ph.p_type != PT_LOAD)
+            continue;
+
+#if CONF_WITH_USER_ASPACE
+        if (layout->nseg == X32_MAX_SEGMENTS)
+            return EPLFMT;
+        {
+            X32_SEGMENT *s = &layout->seg[layout->nseg++];
+
+            s->vaddr = (ULONG)ph.p_vaddr + (ULONG)bias;
+            s->filesz = ph.p_filesz;
+            s->memsz = ph.p_memsz;
+            s->flags = ph.p_flags;
+            s->src = load_base + (ph.p_vaddr - info.link_base);
+            if (s->vaddr + s->memsz > layout->end)
+                layout->end = s->vaddr + s->memsz;
+        }
+#endif
+
+        if (ph.p_filesz == 0)
             continue;
 
         /* p_offset and p_filesz are 32-bit unsigned; xlseek/xread take
@@ -1376,6 +1332,11 @@ LONG elf_pgmld(FH h, PD *p)
             return EPLFMT;
     }
 
+#if CONF_WITH_USER_ASPACE
+    if (bias == 0)
+        r = 0;          /* where it was linked for: nothing to relocate */
+    else
+#endif
     if (have_ptos_reloc)
         r = elf_relocate_ptos(h, &ptos_reloc_ph, load_base, &info, bias);
     else
@@ -1385,7 +1346,12 @@ LONG elf_pgmld(FH h, PD *p)
 
     if (have_ptos_imports)
     {
-#if CONF_WITH_PTOS_ABI_IMPORTS
+#if CONF_WITH_USER_ASPACE
+        /* the kernel's exports are 64-bit addresses, which a 32-bit slot of a
+         * ring-3 program cannot hold */
+        (void)ptos_imports_ph;
+        return EPLFMT;
+#elif CONF_WITH_PTOS_ABI_IMPORTS
         return elf_resolve_imports(h, &ptos_imports_ph, load_base, &info);
 #else
         /* no export table to resolve against: binding nothing and
@@ -1399,5 +1365,39 @@ LONG elf_pgmld(FH h, PD *p)
 
     return 0;
 }
+
+#if CONF_WITH_USER_ASPACE
+/*
+ * elf_pgmld - load pass, called by kpgmld()
+ *
+ * A process with an address space of its own (x86-64) does not have its image
+ * placed in the TPA, which is its basepage and nothing more: elf_load_image()
+ * builds the image in a flat kernel buffer, relocated if it had to be moved
+ * into the image window, and the process's kernel record keeps it until the
+ * launch maps the segments as private pages of the new address space.  That
+ * holds for every way of loading (PE_LOADGO and PE_LOAD alike): the image
+ * belongs to the process it is for, not to the process that asked for it.
+ */
+LONG elf_pgmld(FH h, PD *p)
+{
+    UBYTE *flat = NULL;
+    X32_LAYOUT layout;
+    LONG r;
+
+    r = elf_load_image(h, p, &flat, &layout);
+    if (r < 0L)
+    {
+        kfree(flat);
+        return r;
+    }
+    /* takes the buffer, also when it refuses the layout */
+    if (!kproc_set_loaded_image(p, &layout, flat))
+    {
+        KDEBUG(("BDOS elf_pgmld: image refused\n"));
+        return EPLFMT;
+    }
+    return 0;
+}
+#endif
 
 #endif /* CONF_WITH_ELF_LOADER */

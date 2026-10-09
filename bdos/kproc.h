@@ -54,11 +54,13 @@ BOOL kproc_prepare_user(PD *pd, PD *parent);
  * never read back from the user-writable p_tbase.
  */
 BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);
-/* The same for a program Pexec() read from a file (bdos/elfld.c): `data` is a
- * kfree()able copy of the ELF file, which the record takes over (and frees
- * once the launch has mapped the segments, or with the record).  The launch
- * also maps a startup area after the image (X86_64_USER_IMAGE_SLACK). */
-BOOL kproc_set_file_image(PD *pd, UBYTE *data, ULONG size);
+/* The same for a program Pexec() loaded from a file (bdos/elfld.c): `layout`
+ * says where its segments go in the process's address space, already
+ * relocated if it had to be, and `data` is a kfree()able block they point
+ * into, which the record takes over (and frees once the launch has mapped the
+ * segments, or with the record).  The launch also maps a startup area after
+ * the image (X86_64_USER_IMAGE_SLACK). */
+BOOL kproc_set_loaded_image(PD *pd, const X32_LAYOUT *layout, UBYTE *data);
 /* Fsfirst()/Fsnext() search state kept kernel-side: kproc_dta_save() after a
  * search, kproc_dta_restore() before Fsnext() (FALSE: no search was made with
  * this DTA, the search is over). */

@@ -37,9 +37,9 @@ because a uniform shift of the whole image preserves their offsets.
 Accepted binaries
 -----------------
 
-(On x86-64 a new process whose file qualifies has its image mapped at its
-link address into a private address space instead, and nothing is relocated;
-the loader described here is used for the rest, see
+(On x86-64 the image is not placed in the TPA at all: it is built in a flat
+buffer, relocated by this loader if it was not linked for the image window,
+and mapped into the process's own address space, see
 doc/x86_64-address-space.txt.)
 
 The loader accepts a statically linked, native-endian ELF32 for the machine

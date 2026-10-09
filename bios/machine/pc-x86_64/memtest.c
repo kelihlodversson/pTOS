@@ -1114,6 +1114,8 @@ static void test_lifecycle(void)
  * still ours and is released here.  -1000 is a failure of the setup itself,
  * already reported.
  */
+static BOOL probe_may_fail_early;   /* under memory pressure the basepage itself may be refused */
+
 static long run_probe(char mode)
 {
     char tail[2];
@@ -1123,6 +1125,8 @@ static long run_probe(char mode)
     tail[0] = mode;
     tail[1] = '\0';
     rc = Pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, tail, NULL);
+    if (rc <= 0 && probe_may_fail_early)
+        return -1000;
     CHECK(rc > 0, "probe basepage");
     if (rc <= 0)
         return -1000;
@@ -1300,25 +1304,25 @@ static void test_ring3(void)
         snap(&s);
         rc = run_probe('a');
         if (rc == 0x100) {
-            kcprintf("x86-64 unaligned relocation: SKIP (no C:\\X32HELLO.TOS)\n");
+            kcprintf("x86-64 unaligned relocation: SKIP (no C:\\X32RELOC.TOS)\n");
         } else {
-            CHECK(rc == 0, "an unaligned R_X86_64_32 slot is relocated");
+            CHECK(rc == 0, "a program moved into the image window is relocated, unaligned slot included");
             kcprintf(rc == 0 ? "x86-64 unaligned relocation: PASS\n" : "x86-64 unaligned relocation: FAIL (0x%lx)\n", rc);
         }
         same(&s, "a program with an unaligned relocation");
     }
 
-    /* a new process is mapped at its link address, PE_LOAD relocates (#434) */
+    /* a new process is mapped at its link address, relocated into it if need be (#434) */
     {
         snap(&s);
         rc = run_probe('j');
         if (rc == 0x100) {
-            kcprintf("x86-64 private image: SKIP (no C:\\X32HELLO.TOS)\n");
+            kcprintf("x86-64 private image: SKIP (no C:\\X32HELLO.TOS or X32RELOC.TOS)\n");
         } else {
-            CHECK(rc == 0, "Pexec mode 0 maps the program privately at its link address");
+            CHECK(rc == 0, "a new process has its image in the image window");
             kcprintf(rc == 0 ? "x86-64 private image: PASS\n" : "x86-64 private image: FAIL (0x%lx)\n", rc);
         }
-        same(&s, "a program mapped at its link address");
+        same(&s, "a program mapped into the image window");
     }
 
     /* a program loaded from a file gets Malloc() memory of its own (#434) */
@@ -1440,7 +1444,9 @@ static void test_ring3(void)
     /* (the 256 KiB stack alone is 64 pages: step wider once past the first few) */
     for (k = 1; k <= 240; k += (k < 24) ? 1 : 5) {
         x86_64_pmem_test_fail_after(k);
+        probe_may_fail_early = TRUE;
         rc = run_probe('x');
+        probe_may_fail_early = FALSE;
         x86_64_pmem_test_fail_after(0);
         if (rc == 0x1234)
             ran++;

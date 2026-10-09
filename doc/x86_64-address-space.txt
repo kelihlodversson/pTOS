@@ -104,33 +104,39 @@ The constants are in include/procmem.h.
 
 The whole layout lies below 4 GiB, as the 32-bit ABI fields require.
 
-A program gets its memory in one of two ways, by how it is started.
+A program's image is mapped from an x32 program layout (include/x32image.h)
+into the address space of the process it is for, wherever it was loaded from
+and however it was asked for: the built-in EmuCON and the boot self-test's
+probe are embedded in the kernel as ELF images, and any other program is read
+from its file by Pexec(), in mode 0 (PE_LOADGO) and PE_LOAD alike.  The image
+belongs to the process it is for, not to the process that asked for it, and
+none of it is in the TPA, which is the basepage and nothing more
+(bdos/elfld.c's sizing pass reports no text, data or bss).
 
-  A new process (Pexec() mode 0, PE_LOADGO) built from an x32 ELF file, or
-  the built-in EmuCON and the boot self-test's probe, which are embedded in
-  the kernel, has its image mapped as private pages (include/x32image.h).
-  The image is attached to the process's KPROC record (kproc_set_image(),
-  kproc_set_file_image()) and kproc_prepare_user() maps every PT_LOAD segment
-  with the segment's own permissions (text and read-only data read+execute,
-  data and bss read+write -- never both write and execute), at the address
-  it was linked for (the Makefile's X32_LDFLAGS: -Ttext-segment=0x400000,
-  -z noseparate-code, -z max-page-size=0x1000).  Nothing is relocated, and
-  the entry point is the one recorded in the KPROC record, not whatever the
-  user-writable basepage says.  A file that is not ET_EXEC, lies outside the
-  image window, shares a page between two segments or has a segment both
-  writable and executable does not qualify; it is loaded the second way.
-  Such a process's TPA is its basepage and nothing more (bdos/elfld.c's
-  sizing pass reports no text, data or bss).
+  Where.  A program is linked for an address.  If that lies in the image
+  window (X86_64_USER_IMAGE_BASE, 4 MiB) it goes there, nothing is relocated,
+  and the Makefile's X32_LDFLAGS (-Ttext-segment=0x400000, -z noseparate-code,
+  -z max-page-size=0x1000) give the two-segment layout of the built-in
+  EmuCON.  Otherwise -- a PIE, or an ET_EXEC linked elsewhere -- it is moved
+  to the start of the window and relocated by the distance, by the loader of
+  doc/elfload.txt, so it must keep its relocation entries (link with -q).
+  The window is free in the new address space, so this is always possible if
+  the image fits; it is the only way a program is ever moved.
 
-  Any other program -- Pexec(PE_LOAD), whose result the caller gets in memory
-  it owns and can look at (or patch) before launching it, or a file that
-  does not qualify above -- is loaded into the TPA, after its basepage, and
-  relocated by the distance from its link address by the loader of
-  doc/elfload.txt (so it must keep its relocation entries: link with -q).
-  That is also what lets it be loaded where the caller's own image would
-  overlap it.  The TPA is then the image plus the startup area below.
+  How.  elf_pgmld() builds the image in a flat kernel buffer, relocates it
+  there, and hands the buffer and the resulting layout to the process's KPROC
+  record (kproc_set_loaded_image(); kproc_set_image() for a built-in ELF).
+  kproc_prepare_user() maps every segment as private pages with the segment's
+  own permissions, when the process is launched, and the entry point is the one
+  recorded in the KPROC record, not whatever the user-writable basepage says.
+  The rules (x86_64_x32_layout_valid()): every segment inside the window, no
+  two sharing a page, the entry point in an executable one.  The built-in
+  programs also may not have a segment that is both writable and executable;
+  a program loaded from a file may (a flat read+write+execute binary).
+  Anything else is refused with EPLFMT; a PTOS import table too, whose slots
+  would have to hold 64-bit kernel addresses.
 
-Both kinds of process get the rest the same way, and none of it is in the
+Every launched process gets the rest the same way, and none of it is in the
 window: the basepage and the environment are in the window because the BDOS
 reaches them by the same address in every address space, but the window is
 2 MiB for all processes together, so everything a program itself needs is
@@ -142,10 +148,10 @@ private:
   startup area      what the C startup code of the TOS tradition builds argv
                     and environ in, right after the bss (libcmini's
                     parseargs()): 64 KiB (X86_64_USER_IMAGE_SLACK) of zeroed
-                    read/write memory after the last page of a mapped image,
-                    or the same amount added to the bss of a TPA-resident
-                    one.  Taking it from the kernel, not from a TPA to carve
-                    a stack out of, is what lets that code run unchanged.
+                    read/write memory after the last page of a program
+                    loaded from a file.  Taking it from the kernel, not from
+                    a TPA to carve a stack out of, is what lets that code run
+                    unchanged.
 
   Malloc() memory   Malloc(), Mxalloc(), Mfree() and Mshrink() of a process
                     with an address space are served from private pages in

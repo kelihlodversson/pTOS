@@ -53,10 +53,11 @@ struct kproc {
     UBYTE *user_end;
     X86_64_ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
-    const X32_IMAGE *image;     /* program to map private (built in, or loaded), or NULL */
-    X32_IMAGE file_x32;         /* a program loaded from a file: its ELF bytes, */
-    UBYTE *file_data;           /* kept (and owned) until the launch maps them */
-    UQUAD file_end;             /* where its image ends, to place the startup area */
+    X32_LAYOUT layout;          /* the program to map private (built in, or loaded) */
+    BOOL has_image;             /* ... if there is one */
+    UBYTE *image_data;          /* a loaded program: the buffer its segments point */
+                                /* into, owned and freed once the launch maps them */
+    BOOL startup_area;          /* map the startup area after the image */
     struct uheap_block {        /* Malloc() memory: private pages at X86_64_USER_HEAP_*, */
         UQUAD va;               /* sorted by address */
         ULONG pages;
@@ -161,7 +162,7 @@ void kproc_destroy(PD *pd)
              * PD finds nothing and cannot free either twice. */
             x86_64_aspace_destroy(kproc->aspace);
             x86_64_kstack_free(kproc->kstack_phys);
-            kfree(kproc->file_data);
+            kfree(kproc->image_data);
             kfree(kproc->heap);
 #endif
             KPROC_FREE(kproc);
@@ -342,9 +343,9 @@ static BOOL map_startup_area(const KPROC *kproc, X86_64_ASPACE *as)
 {
     UQUAD va, room;
 
-    if (!kproc->file_end)
+    if (!kproc->startup_area)
         return TRUE;
-    va = (kproc->file_end + X86_64_USER_PAGE_SIZE - 1) & ~(X86_64_USER_PAGE_SIZE - 1);
+    va = (kproc->layout.end + X86_64_USER_PAGE_SIZE - 1) & ~(X86_64_USER_PAGE_SIZE - 1);
     room = X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE - va;
     if (room > X86_64_USER_IMAGE_SLACK)
         room = X86_64_USER_IMAGE_SLACK;
@@ -406,7 +407,7 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     if (!x86_64_aspace_map_procmem(as, env, envbytes,
                                    ASPACE_PROT_WRITE | ASPACE_PROT_USER) ||
         !x86_64_aspace_map_procmem(as, tpa, hitpa - tpa,
-                                   kproc->image ? ASPACE_PROT_WRITE | ASPACE_PROT_USER
+                                   kproc->has_image ? ASPACE_PROT_WRITE | ASPACE_PROT_USER
                                                 : ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER) ||
         !x86_64_aspace_map_procmem(as, (UQUAD)(uintptr_t)parent, sizeof(PD),
                                    ASPACE_PROT_WRITE)) {
@@ -428,8 +429,8 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
      * program loaded into it, or the code a caller put there, is not
      * something to push onto).
      */
-    if ((kproc->image &&
-         (!x86_64_x32image_load(as, kproc->image, &kproc->entry) ||
+    if ((kproc->has_image &&
+         (!x86_64_x32_layout_load(as, &kproc->layout) ||
           !map_startup_area(kproc, as))) ||
         !x86_64_aspace_map_private(as, X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE,
                                    X86_64_USER_STACK_SIZE,
@@ -442,8 +443,10 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     }
     kproc->stack_top = X86_64_USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
     /* the segments are mapped: the ELF bytes they came from are not needed */
-    kfree(kproc->file_data);
-    kproc->file_data = NULL;
+    kfree(kproc->image_data);
+    kproc->image_data = NULL;
+    if (kproc->has_image)
+        kproc->entry = kproc->layout.entry;
     kproc->aspace = as;
     return TRUE;
 }
@@ -528,37 +531,36 @@ BOOL kproc_set_image(PD *pd, const X32_IMAGE *image)
 {
     KPROC *kproc = kproc_find(pd);
 
-    if (!kproc || kproc->aspace || !x86_64_x32image_check(image, NULL))
+    if (!kproc || kproc->aspace || kproc->has_image ||
+        !x86_64_x32image_layout(image, &kproc->layout))
         return FALSE;
-    kproc->image = image;
+    kproc->has_image = TRUE;
+    kproc->startup_area = FALSE;
     return TRUE;
 }
 
 /*
- * A program Pexec() read from a file: the ELF bytes (a kfree()able block this
- * takes over, whether it succeeds or not) are kept until the launch maps the
- * segments as private pages, as it does for a built-in image.  FALSE if the
- * image does not pass x86_64_x32image_check() or the process has no record
- * or has been prepared already.
+ * A program Pexec() loaded from a file: where its segments go (already
+ * relocated, if it had to be) and the bytes they are filled from.  `data` is a
+ * kfree()able block the segments point into, which this takes over whether it
+ * succeeds or not; it is kept until the launch maps the segments as private
+ * pages, as for a built-in image, and freed then or with the record.  FALSE
+ * if the layout does not satisfy x86_64_x32_layout_valid() or the process has
+ * no record or has been prepared already.
  */
-BOOL kproc_set_file_image(PD *pd, UBYTE *data, ULONG size)
+BOOL kproc_set_loaded_image(PD *pd, const X32_LAYOUT *layout, UBYTE *data)
 {
     KPROC *kproc = kproc_find(pd);
 
-    if (!kproc || kproc->aspace || kproc->image) {
+    if (!kproc || kproc->aspace || kproc->has_image ||
+        !x86_64_x32_layout_valid(layout, FALSE)) {
         kfree(data);
         return FALSE;
     }
-    kproc->file_x32.data = data;
-    kproc->file_x32.size = size;
-    if (!x86_64_x32image_check(&kproc->file_x32, NULL)) {
-        kfree(data);
-        kproc->file_x32.data = NULL;
-        return FALSE;
-    }
-    kproc->file_data = data;
-    kproc->file_end = x86_64_x32image_end(&kproc->file_x32);
-    kproc->image = &kproc->file_x32;
+    kproc->layout = *layout;
+    kproc->has_image = TRUE;
+    kproc->image_data = data;
+    kproc->startup_area = TRUE;
     return TRUE;
 }
 
@@ -626,7 +628,7 @@ LONG kproc_check_launch(PD *pd, PD *caller)
         hitpa < first || hitpa > (UQUAD)(uintptr_t)alloc_end ||
         /* a program with an image of its own starts at the entry point the
          * kernel recorded, not at p_tbase, and that lies in the image */
-        (!kproc->image && (tbase < first || tbase >= hitpa)) ||
+        (!kproc->has_image && (tbase < first || tbase >= hitpa)) ||
         pd->p_env != PTR_TO_USERPTR(kproc->env_start))
         return EPLFMT;
     pd->p_hitpa = (ULONG)hitpa;

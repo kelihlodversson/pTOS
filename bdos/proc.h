@@ -49,10 +49,6 @@ LONG kpgmld(PD *p, FH h, PGMHDR01 *hd);
  */
 LONG elf_pgmhdrld(FH h, PGMHDR01 *hd);
 LONG elf_pgmld(FH h, PD *p);
-#if CONF_WITH_USER_ASPACE
-/* whether the next ELF load may map its image as private pages (PE_LOADGO) */
-void elf_set_private_image(BOOL wanted);
-#endif
 #endif
 
 #if DETECT_NATIVE_FEATURES
