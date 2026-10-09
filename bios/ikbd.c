@@ -121,6 +121,11 @@ static struct keytbl current_keytbl;
 
 LONG keytbl(const UBYTE* norm, const UBYTE* shft, const UBYTE* caps)
 {
+#ifdef __x86_64__
+    /* XBIOS Keytbl() returns a 32-bit pointer. current_keytbl is kernel
+     * memory on x86-64, so it cannot be exposed to a ring-3 caller. */
+    return -1;
+#else
     if (norm != (UBYTE*)-1) {
         current_keytbl.norm = norm;
     }
@@ -131,6 +136,7 @@ LONG keytbl(const UBYTE* norm, const UBYTE* shft, const UBYTE* caps)
         current_keytbl.caps = caps;
     }
     return (LONG) & current_keytbl;
+#endif
 }
 
 void bioskeys(void)
@@ -237,14 +243,14 @@ LONG bconstat2(void)
 #if CONF_SERIAL_CONSOLE_POLLING_MODE
     /* Poll the serial port */
     return bconstat(1);
-#else
+#endif
+
     /* Check the IKBD IOREC */
     if (ikbdiorec.head == ikbdiorec.tail) {
         return 0;               /* iorec empty */
     } else {
         return -1;              /* not empty => input available */
     }
-#endif
 }
 
 LONG bconin2(void)

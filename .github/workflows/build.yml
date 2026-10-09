@@ -13,11 +13,16 @@
 
 name: Build
 
+# "epic/**" branches are long-lived integration branches for a multi-PR
+# body of work (e.g. epic/329-x32-port): sub-issue PRs target one of these
+# instead of master while the work is in progress, so they need the same
+# CI coverage master's own PRs get, not just validation once the epic
+# branch eventually merges to master.
 on:
   push:
-    branches: [master]
+    branches: [master, "epic/**"]
   pull_request:
-    branches: [master]
+    branches: [master, "epic/**"]
   workflow_dispatch:
 
 # Superseded runs of a pull request are of no interest.  Runs on master are
@@ -39,6 +44,7 @@ jobs:
     outputs:
       m68k: ${{ steps.enumerate.outputs.m68k }}
       arm: ${{ steps.enumerate.outputs.arm }}
+      x86_64: ${{ steps.enumerate.outputs.x86_64 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,12 +65,16 @@ jobs:
 
           m68k=
           arm=
+          x86_64=
           for config in configs/*_defconfig; do
             name=$(basename "$config" _defconfig)
             # MACHINE_RPI or MACHINE_VIRT_ARM is what selects the ARM
-            # architecture; everything else in configs/ is m68k or ColdFire.
+            # architecture, MACHINE_PC_X86_64 the x86-64 one; everything
+            # else in configs/ is m68k or ColdFire.
             if grep -qE '^MACHINE_(RPI|VIRT_ARM)=y' "$config"; then
               arm="$arm $name"
+            elif grep -qE '^MACHINE_PC_X86_64=y' "$config"; then
+              x86_64="$x86_64 $name"
             else
               m68k="$m68k $name"
             fi
@@ -73,6 +83,7 @@ jobs:
           # One JSON array per architecture, for the matrices below.
           echo "m68k=$(to_json "$m68k")" >>"$GITHUB_OUTPUT"
           echo "arm=$(to_json "$arm")" >>"$GITHUB_OUTPUT"
+          echo "x86_64=$(to_json "$x86_64")" >>"$GITHUB_OUTPUT"
 
           {
             echo '## Configurations to build'
@@ -80,6 +91,8 @@ jobs:
             echo "m68k:$m68k"
             echo
             echo "arm:$arm"
+            echo
+            echo "x86_64:$x86_64"
           } >>"$GITHUB_STEP_SUMMARY"
 
   m68k:
@@ -172,6 +185,181 @@ jobs:
           name: ptos-${{ matrix.config }}
           path: products/
           retention-days: 14
+
+      - name: Report the failure
+        if: failure()
+        run: |
+          echo "::error title=${{ matrix.config }}::the ${{ matrix.config }} configuration failed"
+
+  x86_64:
+    name: ${{ matrix.config }}
+    needs: configurations
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config: ${{ fromJSON(needs.configurations.outputs.x86_64) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: x86_64
+
+      - name: Build ${{ matrix.config }}
+        env:
+          CONFIG: ${{ matrix.config }}
+        run: |
+          make "${CONFIG}_defconfig"
+          # CI deliberately uses Ubuntu's native gcc/binutils instead of the
+          # x86_64-elf- cross toolchain selected by the developer default.
+          make CROSS_COMPILE=
+
+      - name: Collect the build products
+        run: |
+          mkdir products
+          # The PE32+ EFI application, plus the map file with its symbols.
+          for product in *.efi emutos.map; do
+            if [ -e "$product" ]; then
+              cp "$product" products/
+            fi
+          done
+          ls -l products
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ptos-${{ matrix.config }}
+          path: products/
+          retention-days: 14
+
+      # A build that links is not a build that boots: without this, a
+      # regression in the boot path, the trap-dispatch/machine-hook layer,
+      # or the exception/panic path would still show as a green job, since
+      # nothing above actually runs the image. Only pc-x86_64 boots this
+      # way (EFI/OVMF); a future non-EFI x86-64 config would need its own
+      # check instead of this one.
+      - name: Install QEMU and OVMF for the boot test
+        if: matrix.config == 'pc-x86_64'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-system-x86 ovmf
+
+      # Booted the same way ptos-smoketest documents: a synthesized FAT ESP
+      # directory (QEMU's fat: driver), OVMF firmware, -machine pc (legacy
+      # IDE, which OVMF's boot manager auto-discovers the ESP through --
+      # q35/AHCI needs more setup, not verified here). This deliberately
+      # keeps the default EmuCON image headless; the separate GOP/AES
+      # desktop smoke test is visual. -cpu qemu64,+pdpe1gb is required: the physical-memory
+      # direct map needs 1 GiB pages (#344), which QEMU's default qemu64
+      # CPU model does not advertise on its own.
+      #
+      # pTOS never exits on its own once it reaches the shell -- it waits
+      # for keyboard input forever -- so `timeout` is expected to be what
+      # ends the process, not a status. That is why the exit code is
+      # checked explicitly instead of just letting the step fail or
+      # succeed on it: 124 means the timeout fired (the normal case here),
+      # anything else means QEMU itself exited unexpectedly.
+      - name: Boot-test under QEMU/OVMF
+        if: matrix.config == 'pc-x86_64'
+        run: |
+          mkdir -p esp/EFI/BOOT
+          cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+          # a real x32 ELF on the boot drive: the self-test runs it through
+          # Pexec() from a ring-3 process (nested launch), as EmuCON does
+          make CROSS_COMPILE= x32test
+          cp x32hello.elf esp/X32HELLO.TOS
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd .
+
+          set +e
+          timeout 60 qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+            -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
+            -drive format=raw,file=fat:rw:esp \
+            -serial file:boot.log -display none
+          qemu_exit=$?
+          set -e
+
+          echo "::group::Serial console log"
+          cat boot.log
+          echo "::endgroup::"
+
+          if [ "$qemu_exit" != 124 ]; then
+            echo "::error::qemu-system-x86_64 exited with code $qemu_exit instead of running until the timeout killed it -- that means it never reached the shell (where it would otherwise wait for input forever)"
+            exit 1
+          fi
+
+          # A triple fault (a page-table, GDT/IDT or ABI bug) makes OVMF
+          # silently reset the VM and retry, which shows up as the boot
+          # progress lines repeating -- so exactly one attempt is part of
+          # the pass signal, not just "did it get far enough".
+          entries=$(grep -c 'EFI entry reached' boot.log || true)
+          if [ "$entries" != 1 ]; then
+            echo "::error::expected exactly one 'EFI entry reached' line, found $entries -- likely a reset/triple-fault loop"
+            exit 1
+          fi
+
+          if grep -q '^panic:' boot.log; then
+            echo "::error::the kernel panicked during boot"
+            exit 1
+          fi
+
+          # The memory-management self-test (bios/machine/pc-x86_64/memtest.c,
+          # #362) repeats process create/exit and injected-failure cycles
+          # and requires every allocator to return to its starting state:
+          # a leaked mapping, page-table or backing page, KPROC record or
+          # kernel-heap block fails it.
+          if grep -q 'x86-64 memtest: FAIL' boot.log; then
+            echo "::error::the boot-time memory-management self-test failed"
+            exit 1
+          fi
+          if ! grep -q 'x86-64 memtest: PASS' boot.log; then
+            echo "::error::the boot-time memory-management self-test never reported PASS"
+            exit 1
+          fi
+
+          # The self-test also launches real ring-3 x32 processes
+          # (tests/x32_probe/): entry state and selectors, a GEMDOS call
+          # across the syscall boundary, fault containment, private pages.
+          # Its deliberate faults print "x32 process fault" lines BEFORE the
+          # PASS line; any such line after it is the built-in EmuCON itself
+          # faulting.
+          if sed -n '/x86-64 memtest: PASS/,$p' boot.log | grep -q 'x32 process fault'; then
+            echo "::error::the ring-3 EmuCON faulted"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 nested pexec: PASS' boot.log; then
+            echo "::error::a ring-3 process could not run a child through Pexec() and resume"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 ancestors: PASS' boot.log; then
+            echo "::error::a ring-3 grandchild did not see its ancestors' basepages"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 nested fault: PASS' boot.log; then
+            echo "::error::a ring-3 process did not survive its child's fault and resume"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 nested ptermres: PASS' boot.log; then
+            echo "::error::a ring-3 process could not keep launching children that stay resident"
+            exit 1
+          fi
+
+          # EmuCON is an x32 program run in ring 3 -- not linked into the
+          # kernel -- so its banner can only come from that process.
+          if ! grep -q 'EmuCON: starting the x32 image in ring 3' boot.log; then
+            echo "::error::the kernel never started the ring-3 EmuCON"
+            exit 1
+          fi
+          if ! grep -q 'Welcome to EmuCON2' boot.log; then
+            echo "::error::never reached the EmuCON2 shell prompt"
+            exit 1
+          fi
+
+          echo "Boot test passed: reached the ring-3 EmuCON2 shell, no reset loop, no panic."
 
       - name: Report the failure
         if: failure()
@@ -275,7 +463,7 @@ jobs:
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [m68k, arm, release-archives, raspi-sdcard]
+    needs: [configurations, m68k, arm, x86_64, release-archives, raspi-sdcard]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
@@ -284,14 +472,27 @@ jobs:
     steps:
       - name: Check the results
         run: |
-          echo "m68k configurations: ${{ needs.m68k.result }}"
-          echo "arm configurations:  ${{ needs.arm.result }}"
-          echo "release archives:    ${{ needs.release-archives.result }}"
-          echo "raspi SD card image: ${{ needs.raspi-sdcard.result }}"
-          case '${{ needs.m68k.result }}:${{ needs.arm.result }}:${{ needs.release-archives.result }}:${{ needs.raspi-sdcard.result }}' in
-          success:success:success:success) ;;
-          *)
+          echo "m68k configurations:   ${{ needs.m68k.result }}"
+          echo "arm configurations:    ${{ needs.arm.result }}"
+          echo "x86_64 configurations: ${{ needs.x86_64.result }}"
+          echo "release archives:      ${{ needs.release-archives.result }}"
+          echo "raspi SD card image:   ${{ needs.raspi-sdcard.result }}"
+
+          ok=true
+          [ '${{ needs.m68k.result }}' = success ] || ok=false
+          [ '${{ needs.arm.result }}' = success ] || ok=false
+          # A matrix with no configurations (no MACHINE_PC_X86_64=y defconfig
+          # exists yet on this branch) generates no x86_64 job at all, and
+          # GitHub then reports needs.x86_64.result as "failure" rather than
+          # "skipped" -- so the x86_64 job's result only counts when its
+          # matrix was actually non-empty.
+          if [ '${{ needs.configurations.outputs.x86_64 }}' != '[]' ]; then
+            [ '${{ needs.x86_64.result }}' = success ] || ok=false
+          fi
+          [ '${{ needs.release-archives.result }}' = success ] || ok=false
+          [ '${{ needs.raspi-sdcard.result }}' = success ] || ok=false
+
+          if ! $ok; then
             echo "::error::at least one configuration failed to build"
             exit 1
-            ;;
-          esac
+          fi

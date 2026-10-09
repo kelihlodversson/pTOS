@@ -133,6 +133,7 @@
 #include "string.h"
 #include "kprint.h"
 #include "fatfs.h"
+#include "kproc.h"
 #include "bdosstub.h"
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
@@ -285,19 +286,35 @@ long ixsfirst(char *name, WORD att, DTAINFO *addr)
 
 
 /*
- *  xsfirst - search first for matching name, into dta
- *
- *  Function 0x4E   f_sfirst
- *
- *  Error returns:  EFILNF
+ *  xfsfirst_at - search first for matching name, into specified dta
+ */
+long xfsfirst_at(char *name, WORD att, DTAINFO *dta)
+{
+#if CONF_WITH_PLUGGABLE_FS
+    return pfs_do_sfirst_at(name, att, dta);
+#else
+    return fat_sfirst_path_at(name, att, dta);
+#endif
+}
+
+/* xsfirst - search first using the current process DTA
+ * Function 0x4E f_sfirst
+ * Error returns: EFILNF
  */
 long xsfirst(char *name, int att)
 {
-#if CONF_WITH_PLUGGABLE_FS
-    return pfs_do_sfirst(name, att);
-#else
-    return fat_sfirst_path(name, att);
+    DTAINFO *dta = RUN_XDTA();
+    long rc;
+
+#if CONF_WITH_USER_ASPACE
+    kproc_dta_forget(run, dta);     /* a failed search leaves nothing to continue */
 #endif
+    rc = xfsfirst_at(name, att, dta);
+#if CONF_WITH_USER_ASPACE
+    if (rc == E_OK)
+        kproc_dta_save(run, dta);   /* the search state is the kernel's */
+#endif
+    return rc;
 }
 
 
@@ -407,19 +424,39 @@ FCB *ixsnext(DTAINFO *dt)
 
 
 /*
- *  xsnext - search next, return into dta
- *
- *  Function 0x4F   f_snext
- *
- *  Error returns:  ENMFIL
+ *  xfsnext_at - search next, return into specified dta
+ */
+long xfsnext_at(DTAINFO *dta)
+{
+#if CONF_WITH_PLUGGABLE_FS
+    return pfs_do_snext_at(dta);
+#else
+    return fat_snext_path_at(dta);
+#endif
+}
+
+/* xsnext - search next using the current process DTA
+ * Function 0x4F f_snext
+ * Error returns: ENMFIL
  */
 long xsnext(void)
 {
-#if CONF_WITH_PLUGGABLE_FS
-    return pfs_do_snext();
-#else
-    return fat_snext_path();
+    DTAINFO *dta = RUN_XDTA();
+    long rc;
+
+#if CONF_WITH_USER_ASPACE
+    /* what the process left in the private part of its DTA is not believed */
+    if (!kproc_dta_restore(run, dta))
+        return ENMFIL;
 #endif
+    rc = xfsnext_at(dta);
+#if CONF_WITH_USER_ASPACE
+    if (rc == E_OK)
+        kproc_dta_save(run, dta);
+    else if (rc == ENMFIL)
+        kproc_dta_forget(run, dta);     /* the search is over for good */
+#endif
+    return rc;
 }
 
 
@@ -1150,7 +1187,7 @@ static DND *dcrack(const char **np)
     }
     else
     {
-        int curdir = run->p_curdir[d];
+        int curdir = PD_CURDIR(run)[d];
         p = dirtbl[curdir].dnd; /*  else use curr dir   */
     }
 

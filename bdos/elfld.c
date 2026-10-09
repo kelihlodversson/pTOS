@@ -123,17 +123,44 @@
  * type for the architecture we are built for.  ELF_SLOT_ALIGN is the
  * alignment a 32-bit relocated slot must have: ARM faults on a 32-bit
  * access that is not 4-byte aligned, whereas m68k only requires 2-byte
- * alignment (and routinely relocates 2-byte-aligned instruction operands). */
+ * alignment (and routinely relocates 2-byte-aligned instruction operands),
+ * and x86-64 has none. */
 #if ARCH_ARM
 #define ELF_EM_EXPECTED 40      /* EM_ARM */
 #define ELF_R_DIR32     2       /* R_ARM_ABS32 */
 #define ELF_R_RELATIVE  23      /* R_ARM_RELATIVE */
 #define ELF_SLOT_ALIGN  4
+#elif ARCH_X86_64
+/* x32 psABI userspace (#334): ELFCLASS32 program headers with genuine
+ * EM_X86_64 long-mode code, not IA-32/EM_386 compat mode -- see
+ * tests/x32_hello/x32_hello.c's own comment and the ARCH_X86_64 section
+ * of the top level Makefile for how such a binary is built. Its 32-bit
+ * absolute relocations are RELA-encoded (like m68k, unlike ARM's REL),
+ * which the generic SHT_REL/SHT_RELA dispatch below already handles --
+ * R_X86_64_32 and R_X86_64_RELATIVE are the x32 psABI's own numbering for
+ * the same "direct 32-bit slot" / "load-bias-relative slot" relocation
+ * kinds ARM/m68k each have their own name for above. Not aligned: an
+ * absolute address in code is the 32-bit immediate of an instruction such
+ * as `mov $sym, %edi`, which starts at any byte offset, and x86 has no
+ * alignment requirement on the access (#433).  ELF_SLOT_T is the type to
+ * access such a slot through, so the compiler assumes neither alignment nor
+ * that the image bytes are not also seen as other types (MAY_ALIAS).
+ */
+#define ELF_EM_EXPECTED 62      /* EM_X86_64 */
+#define ELF_R_DIR32     10      /* R_X86_64_32 */
+#define ELF_R_RELATIVE  8       /* R_X86_64_RELATIVE */
+#define ELF_SLOT_ALIGN  1
+typedef ULONG __attribute__((aligned(1))) MAY_ALIAS elf_unaligned_slot_t;
+#define ELF_SLOT_T      elf_unaligned_slot_t
 #else
 #define ELF_EM_EXPECTED 4       /* EM_68K */
 #define ELF_R_DIR32     1       /* R_68K_32 */
 #define ELF_R_RELATIVE  22      /* R_68K_RELATIVE */
 #define ELF_SLOT_ALIGN  2
+#endif
+
+#ifndef ELF_SLOT_T
+#define ELF_SLOT_T ULONG_ALIAS
 #endif
 
 #if BYTE_ORDER == LITTLE_ENDIAN
@@ -465,7 +492,7 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
 static LONG elf_fixup(UBYTE *load_base, const ELFINFO *info, LONG bias,
                       ULONG vaddr, UBYTE type, BOOL rela, ULONG addend)
 {
-    ULONG *slot;
+    ELF_SLOT_T *slot;
 
     if (type != ELF_R_DIR32 && type != ELF_R_RELATIVE)
         return 0;   /* PC-relative and other slots need no load-time fixup */
@@ -481,7 +508,7 @@ static LONG elf_fixup(UBYTE *load_base, const ELFINFO *info, LONG bias,
      || vaddr > info->mem_end - (ULONG)sizeof(ULONG))
         return EPLFMT;
 
-    slot = (ULONG *)(load_base + (vaddr - info->link_base));
+    slot = (ELF_SLOT_T *)(load_base + (vaddr - info->link_base));
 
     /* the slot must satisfy the target's 32-bit access alignment (4 bytes on
      * ARM, 2 on m68k) or the load/store below would fault */
@@ -863,7 +890,7 @@ static LONG ptos_bind_apply(UBYTE *load_base, const ELFINFO *info,
                             ULONG vaddr, UBYTE bind_op, PTOSABI_ADDR addr,
                             UBYTE kind)
 {
-    ULONG *slot;
+    ELF_SLOT_T *slot;
     ULONG value;
 
     if (bind_op != PTOS_BIND_CODE_ADDRESS && bind_op != PTOS_BIND_DATA_ADDRESS
@@ -880,7 +907,7 @@ static LONG ptos_bind_apply(UBYTE *load_base, const ELFINFO *info,
      || vaddr > info->mem_end - (ULONG)sizeof(ULONG))
         return EPLFMT;
 
-    slot = (ULONG *)(load_base + (vaddr - info->link_base));
+    slot = (ELF_SLOT_T *)(load_base + (vaddr - info->link_base));
 
     if ((ULONG)slot & (ELF_SLOT_ALIGN - 1))
         return EPLFMT;
@@ -1140,12 +1167,20 @@ LONG elf_pgmld(FH h, PD *p)
         return ENSMEM;
     }
 
-    /* fill the PD segment fields; execution starts at the ELF entry point */
-    p->p_tbase = load_base + (ehdr.e_entry - info.link_base);
+    /* fill the PD segment fields; execution starts at the ELF entry point.
+     * PTR_TO_USERPTR(), not a plain pointer assignment: on x86-64,
+     * USERPTR_T(UBYTE) is ULONG, and load_base is only guaranteed
+     * representable in 32 bits because it comes from p+1, p itself
+     * always being alloc_tpa()'s low, sub-4GiB TPA pool allocation
+     * (bdos/proc.c) -- the trapping macro catches it immediately if
+     * that ever stops being true, instead of gouser() silently
+     * launching a process at a truncated, wrong address (#356's own
+     * review flagged the previous plain assignment for exactly this). */
+    p->p_tbase = PTR_TO_USERPTR(load_base + (ehdr.e_entry - info.link_base));
     p->p_tlen  = (LONG)(info.file_end - info.link_base);
-    p->p_dbase = load_base + (info.file_end - info.link_base);
+    p->p_dbase = PTR_TO_USERPTR(load_base + (info.file_end - info.link_base));
     p->p_dlen  = 0;
-    p->p_bbase = load_base + (info.file_end - info.link_base);
+    p->p_bbase = PTR_TO_USERPTR(load_base + (info.file_end - info.link_base));
     p->p_blen  = (LONG)(info.mem_end - info.file_end);
 
     /* Zero the loaded image first so bss and inter-segment gaps start

@@ -25,13 +25,16 @@
 #include "biosdefs.h"
 #include "mem.h"
 #include "proc.h"
+#include "kproc.h"
 #include "console.h"
 #include "time.h"
 #include "gemerror.h"
 #include "biosbind.h"
+#include "biosext.h"
 #include "string.h"
 #include "kprint.h"
 #include "ssystem.h"
+#include "uaccess.h"
 #include "bdosstub.h"
 #include "tosvars.h"
 
@@ -62,6 +65,7 @@ static long xgetver(void);
 #define GEMDOS_FOPEN    0x3d
 #define GEMDOS_FREAD    0x3f
 #define GEMDOS_FWRITE   0x40
+#define GEMDOS_SUPER    0x20
 
 
 /*
@@ -76,11 +80,28 @@ static long xgetver(void);
  *
  * this used to be obtained via MGET, but that was a bit pointless,
  * since it was never freed
+ *
+ * Not a compiled BSS symbol on x86-64: its address is stored as the
+ * first Pexec()'d process's own p_parent (bdos/proc.c's proc_go()),
+ * which -- like every other PD pointer field -- is a USERPTR_T, so it
+ * must survive a narrow-then-widen round trip. An ordinary higher-half
+ * kernel symbol can't (PR #361/#360's own review caught this: xterm()
+ * widens p_parent back and dereferences it on every Pterm(), faulting
+ * the moment a real Pexec()'d process actually terminates). Allocated
+ * from the same low, sub-4GiB pool alloc_tpa()/alloc_env() already use
+ * instead, in osinit_after_xmaddalt() below, once that pool exists.
  */
+#ifdef __x86_64__
+#include "procmem.h"
+#else
 static PD initial_basepage;
+#endif
 
-/* initial environment string */
+/* initial environment string -- x86-64 uses p_cmdlin instead, see
+ * osinit_after_xmaddalt()'s own comment */
+#ifndef __x86_64__
 static const char double_nul[2] __attribute__ ((aligned (2))) = { 0, 0 };
+#endif
 
 
 /*
@@ -118,10 +139,28 @@ static const SPECNAME specname_table[] =
  * Each entry in the function table (below) consists of the address of
  * the function which corresponds to the function number, and a function
  * type.
+ *
+ * This, osif() below, and every other #if defined(__arm__) ||
+ * defined(__x86_64__) in this file are one axis: whether GEMDOS
+ * arguments arrive as one uniform native `long` per parameter (pw[]
+ * indexed by parameter number) or packed m68k-native-width on the trap's
+ * own stack frame (mixed WORD/LONG, requiring per-call offset
+ * arithmetic). x86-64 joins ARM on the long-array side of that split
+ * (#349): its own trap entry (bios/arch/x86_64/trap.c) already marshals
+ * arguments into a uniform `long` pw[] before calling osif(), the same
+ * shape ARM's _enter (bdos/arch/arm/rwa.S) builds for the same reason --
+ * neither CPU has m68k's stack-based calling convention to reuse the
+ * trap frame's arguments from directly. Deliberately `long`, not
+ * portab.h's always-32-bit LONG: osif() below reinterprets a slot's
+ * address directly as a pointer of the real argument's width (e.g.
+ * `*((char **)&pw[1])`), which is only correct if each slot is exactly
+ * pointer-width -- true of LONG on ARM's ILP32, but not of x86-64's LP64,
+ * where a LONG-sized slot would truncate every pointer argument to its
+ * low 32 bits.
  */
 typedef struct
 {
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
     union {
         long  (*p0)(void);
         long  (*p1)(long);
@@ -158,7 +197,7 @@ static const FND funcs[] =
 {
 #define F(x) { (PFLONG)(x) }
 #define NI F(ni)
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 #   define W_N(w, n) (n)
 #else
 #   define W_N(w, n) (w)
@@ -357,9 +396,40 @@ void osinit_before_xmaddalt(void)
 void osinit_after_xmaddalt(void)
 {
     /* Set up initial process. Required by Malloc() */
+#ifdef __x86_64__
+    /* permanent: no owner, never freed */
+    run = (PD *)x86_64_procmem_alloc(sizeof(PD), PROCMEM_ZERO);
+    if (!run)
+        halt();
+#else
     run = &initial_basepage;
+#endif
     run->p_flags = PF_STANDARD;
-    run->p_env = CONST_CAST(char *,double_nul);
+    run->p_xdta = PTR_TO_USERPTR((DTA *)&run->p_cmdlin[0]);
+    /*
+     * double_nul is an ordinary kernel .rodata symbol -- higher-half on
+     * x86-64, so (like bios.c's coma_start/exec_os) not something
+     * PTR_TO_USERPTR() can narrow without trapping. Unlike those
+     * p_tbase cases, this one isn't merely inert: Copilot's review of
+     * #361 caught that any Pexec(..., env=NULL) call reachable while
+     * initial_basepage is still `run` (bdos/proc.c's alloc_env(),
+     * "env == NULL" branch -- e.g. aes/gemshlib.c's
+     * aes_run_rom_program()) widens this exact field back and scans it
+     * as a live string before ever replacing it, so a truncated address
+     * here is a real dereference, not just corruption nothing reads.
+     * Point x86-64 at p_cmdlin instead: already zeroed by the bzero()
+     * above, so it's an equally valid empty string, at a genuinely low
+     * address since `run` itself now is. */
+#ifdef __x86_64__
+    run->p_env = PTR_TO_USERPTR(&run->p_cmdlin[0]);
+#else
+    run->p_env = PTR_TO_USERPTR_UNCHECKED(CONST_CAST(char *,double_nul));
+#endif
+
+    if (!kproc_create(run)) {
+        KINFO(("Unable to allocate initial kernel process\n"));
+        halt();
+    }
 
     time_init();
 
@@ -412,7 +482,9 @@ static void offree(DMD *d)
 
     for (i = 0; i < OPNFILES; i++)
     {
-        if (((long) (f = sft[i].f_ofd)) > 0L)
+        /* a higher-half OFD pointer is negative as a signed long */
+        f = sft[i].f_ofd;
+        if (f && !IS_BIOS_HANDLE(f))
         {
             if (f->o_dmd == d)
             {
@@ -429,7 +501,7 @@ static void offree(DMD *d)
 /*
  * mark_bcbs_invalid - mark the BCBs for the specified drive as invalid
  */
-static void mark_bcbs_invalid(int drv)
+void mark_bcbs_invalid(int drv)
 {
     BCB *bx;
     int i;
@@ -445,17 +517,21 @@ static void mark_bcbs_invalid(int drv)
 }
 
 
-#ifdef __arm__
-long osif(LONG *pw);
+#if defined(__arm__) || defined(__x86_64__)
+long osif(long *pw);
 #else
 long osif(short *pw);
 #endif
 
 /*
  *  osif - C implementation of trap #1. Called by _enter.
+ *
+ *  What it is given comes from the caller of the trap, so the pointers it
+ *  carries are checked first (uaccess.c).  Kernel code does not come this
+ *  way: on x86-64 it calls the implementations directly (kcall.c).
  */
-#ifdef __arm__
-long osif(LONG *pw)
+#if defined(__arm__) || defined(__x86_64__)
+long osif(long *pw)
 #else
 long osif(short *pw)
 #endif
@@ -465,25 +541,60 @@ long osif(short *pw)
     DMD *dmd;
     DND *dn;
     int typ, h, i, fn;
+    int isptr;
     int num, max;
     long rc, numl;
     const FND *f;
 
+#if CONF_WITH_USER_COPY
+    rc = bdos_check_user_args(pw);
+    if (rc)
+        return rc;
+#endif
+
 restrt:
     fn = pw[0];
 
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
     /*
      * Ssystem() (0x154) is far outside the funcs[] table above, and
      * unlike every other call handled through it, its arguments don't
      * follow the table's implicit stdio/handle conventions -- so it's
      * special-cased here instead of getting its own funcs[] slot.
-     * ARM only: real m68k TOS software already has Supexec() and direct
-     * memory access for this, and the smallest m68k ROM images (see
-     * release.mk) have no code size to spare for a second way to do it.
+     * ARM/x86-64 only: real m68k TOS software already has Supexec() and
+     * direct memory access for this, and the smallest m68k ROM images
+     * (see release.mk) have no code size to spare for a second way to do
+     * it.
      */
     if (fn == GEMDOS_SSYSTEM)
         return xssystem((WORD)pw[1], pw[2], pw[3]);
+#endif
+
+#if defined(__x86_64__)
+    /*
+     * Super() (function 0x20): m68k/ARM intercept this directly in their
+     * own assembly GEMDOS trap entry (bdos/arch/{m68k,arm}/rwa.S) before
+     * ever reaching osif(), doing real supervisor-mode/user-stack
+     * switching there -- neither ever falls through to here for this
+     * function, so funcs[0x20] being NI (below) has never mattered for
+     * them. x86-64's trap.c dispatches straight into osif() with no
+     * equivalent entry-level interception, and has no real CPL0/CPL3
+     * distinction for a GEMDOS caller's own code to toggle yet either:
+     * every current caller, kernel-mode internal or the as-yet-unused
+     * ring-3 syscall path alike, is already executing at CPL0 by the
+     * time osif() runs -- #334's real per-process ring-3 application
+     * execution, the actual point of Super(), doesn't exist yet.
+     *
+     * Until it does, this is a degenerate but honest stand-in: every
+     * call (query, switch-to-supervisor, switch-to-user) reports
+     * "already supervisor" by returning 0, rather than falling through
+     * to funcs[0x20]'s NI and returning EINVFN -- which a caller like
+     * kprint.c's vkprintf() (see its own Super()/SuperToUser() pattern)
+     * would otherwise misread as a real (bogus) stack pointer to later
+     * restore.
+     */
+    if (fn == GEMDOS_SUPER)
+        return 0;
 #endif
 
     if (fn > MAX_FNCALL)
@@ -542,7 +653,7 @@ restrt:
 
     if (typ && fn && ((fn<12) || ((fn>=16) && (fn<=19)))) /* std funcs */
     {
-        h = run->p_uft[typ & 0x7f];
+        h = PD_UFT(run)[typ & 0x7f];
         if (h > 0)
         {   /* handle standard device functions redirected to a file */
             switch(fn)
@@ -569,7 +680,7 @@ restrt:
                 /*  M01.01.07  */
                 /*  write the char in the int at pw[1]  */
             rawout:
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
                 xwrite(h , 1L , (char *) &pw[1]);
 #else
                 xwrite(h , 1L , ((char*) &pw[1])+1);
@@ -583,7 +694,7 @@ restrt:
 
             case 10:                /* Cconrs() */
                 pb2 = *((char **) &pw[1]);
-                max = *pb2++;
+                max = (unsigned char)*pb2++;
                 p = pb2 + 1;
                 for (i = 0; max--; i++, p++)
                 {
@@ -619,7 +730,9 @@ restrt:
 
     if (typ & 0x80)
     {
-#ifdef __arm__
+        isptr = 0;      /* numl will be an sft[] pointer, not a plain handle */
+
+#if defined(__arm__) || defined(__x86_64__)
         /*
          * On ARM, pw[] holds one LONG per parameter.  typ encodes the
          * handle slot in terms of the m68k word layout: 0x81 means the
@@ -642,6 +755,7 @@ restrt:
             if (h >= NUMHANDLES)
                 return EIHNDL;  /* invalid handle: out of range */
 
+            isptr = 1;
             numl = (long) sft[h-NUMSTD].f_ofd;
 #if CONF_WITH_PLUGGABLE_FS
             if (!numl)
@@ -650,12 +764,13 @@ restrt:
         }
         else if (h >= 0)
         {
-            h = run->p_uft[h];
+            h = PD_UFT(run)[h];
             if (h > 0)
             {
                 if (h >= NUMHANDLES)
                     return EIHNDL;  /* invalid handle: out of range */
 
+                isptr = 1;
                 numl = (long) sft[h-NUMSTD].f_ofd;
 #if CONF_WITH_PLUGGABLE_FS
                 if (!numl)
@@ -671,7 +786,12 @@ restrt:
         if (!numl)
             return EIHNDL;  /* invalid handle: media change, etc */
 
-        if (numl < 0)
+        /*
+         * a negative value is a BIOS handle, but only if it is a handle
+         * (h itself) or a small one from the sft: a pointer into the
+         * higher half is negative too, and is a perfectly good OFD
+         */
+        if (numl < 0 && (!isptr || IS_BIOS_HANDLE(numl)))
         {       /* prn, aux, con */
                 /* -3   -2   -1  */
 
@@ -682,7 +802,7 @@ restrt:
                 return EIHNDL;
 
             /* on m68k the buffer word follows the two-word long count */
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
             pb = (char **) &pw[3];
 #else
             pb = (char **) &pw[4];
@@ -692,7 +812,7 @@ restrt:
 
             if (fn == GEMDOS_FREAD)     /* read */
             {
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
                 long count = pw[2];
                 /* on m68k, values 0x8000-0xffff become a negative signed
                  * WORD passed to cgets(), which makes it return 0 without
@@ -723,7 +843,7 @@ restrt:
 
             if (fn == GEMDOS_FWRITE)    /* write */
             {
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
                 long n, count = pw[2];
 #else
                 long n, count = *(long *)&pw[2];
@@ -770,7 +890,7 @@ restrt:
 
     if (!rc)
     {
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
         switch(f->nparms)
         {
         case 0:

@@ -51,7 +51,7 @@ long ixforce(int std, int h, PD *p)
         return EIHNDL;
 
     if (h < 0)                  /* if the non-std handle is a BIOS handle, */
-        p->p_uft[std] = h;      /* just store it as-is in the PD table */
+        PD_UFT(p)[std] = h;      /* just store it as-is in the PD table */
     else
     {
         if (h < NUMSTD)         /* validate the non-std handle */
@@ -65,11 +65,12 @@ long ixforce(int std, int h, PD *p)
          * store the BIOS handle in the PD table; otherwise store the
          * non-std handle & update the use count
          */
-        if ((fh = (long) sft[h-NUMSTD].f_ofd) < 0L)
-            p->p_uft[std] = fh;
+        fh = (long) sft[h-NUMSTD].f_ofd;
+        if (IS_BIOS_HANDLE(fh))
+            PD_UFT(p)[std] = fh;
         else
         {
-            p->p_uft[std] = h;
+            PD_UFT(p)[std] = h;
             sft[h-NUMSTD].f_use++;
         }
     }
@@ -98,7 +99,7 @@ long xdup(int h)
     if ((h < 0) || (h >= NUMSTD))
         return EIHNDL;          /* only dup standard */
 
-    fh = run->p_uft[h];
+    fh = PD_UFT(run)[h];
 
 #if CONF_WITH_PLUGGABLE_FS
     /*

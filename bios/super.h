@@ -29,6 +29,14 @@ static __inline__ long Super(void* ptr)
     );
     return _r0;
 }
+#elif defined(__x86_64__)
+/* Kernel code always runs in supervisor mode here, and a process's own
+ * Super() is answered by osif() the same way: "already supervisor". */
+static __inline__ long Super(void *ptr)
+{
+    (void)ptr;
+    return 0;
+}
 #else
 #define Super(ptr)                          \
 __extension__                               \
@@ -63,8 +71,10 @@ __extension__                               \
  *
  * Binding originally by Vincent Rivière, from MiNTlib's osbind.h
  */
-#ifdef __arm__
-/* Let's start by assuming we don't have this bug on PI */
+#if defined(__arm__) || defined(__x86_64__)
+/* Let's start by assuming we don't have this bug on PI (and, likewise,
+ * on x86-64: trap1()'s "syscall" never touches %rsp at all, so there is
+ * no stack pointer for the bug this works around to disturb). */
 #define SuperToUser(ptr) Super(ptr)
 #else
 #define SuperToUser(ptr)                    \

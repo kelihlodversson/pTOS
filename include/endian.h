@@ -7,7 +7,7 @@
 #define LITTLE_ENDIAN   1234    /* LSB first */
 #define BIG_ENDIAN      4321    /* MSB first */
 
-#if defined(__arm__) && ! defined(__armbe__)
+#if (defined(__arm__) && ! defined(__armbe__)) || defined(__x86_64__)
 #   define BYTE_ORDER   LITTLE_ENDIAN
 #else
 #   define BYTE_ORDER   BIG_ENDIAN

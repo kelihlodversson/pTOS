@@ -2,8 +2,10 @@
 # util/build.mk - objects making up the shared utility routines
 #
 
-obj-y += doprintf.o intmath.o langs.o memmove.o string.o miscasm.o nls.o \
+obj-y += doprintf.o intmath.o langs.o memmove.o string.o nls.o \
 	 setjmp.o cookie.o miscutil.o
+obj-$(ARCH_M68K) += miscasm.o
+obj-$(ARCH_ARM) += miscasm.o
 
 obj-$(CONF_WITH_VIRTIO) += virtio.o
 

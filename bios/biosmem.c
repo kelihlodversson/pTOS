@@ -65,8 +65,15 @@ void bmem_init(void)
     KDEBUG(("       stktop = %p\n", stktop));
     KDEBUG(("_end_os_stram = %p\n", _end_os_stram));
 
-    /* Start of available ST-RAM aligned to 4 bytes */
-    end_os = (UBYTE*)(((ULONG)_end_os_stram + 3 ) & ~3);
+    /* Start of available ST-RAM aligned to 4 bytes.  Rounded via UQUAD/
+     * uintptr_t, not ULONG: ULONG is a fixed 32-bit type (portab.h), and
+     * on LP64 x86-64 casting a real 64-bit higher-half pointer through it
+     * silently truncated to the low 32 bits, corrupting membot into a
+     * value memtop (a real UBYTE* -- see below) could then compute a
+     * negative/garbage span against in balloc_stram()'s "not enough
+     * memory" check. Harmless on the ILP32 arches (m68k/ARM), where a
+     * pointer already fits in 32 bits. */
+    end_os = (UBYTE*)(uintptr_t)(((UQUAD)(uintptr_t)_end_os_stram + 3 ) & ~(UQUAD)3);
     membot = end_os;
     KDEBUG(("       membot = %p\n", membot));
 
@@ -132,7 +139,7 @@ UBYTE *balloc_stram(ULONG size, BOOL top)
     return ret;
 }
 
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 MD themd;                       /* BIOS memory descriptor -- fixed address on
                                   * m68k (tosvars.ld), ordinary storage here (#219) */
 #else

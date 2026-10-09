@@ -1,0 +1,26 @@
+# x86-64 UEFI EFI application (qemu-system-x86_64 + OVMF)
+MACHINE_PC_X86_64=y
+
+# bios/ide.c now has a MACHINE_PC_X86_64 branch (#363): a real IDE/ATA
+# driver against the legacy PIIX3 IDE controller QEMU's -machine pc (and
+# real PC hardware) provides, using port I/O instead of the memory-mapped
+# register access every other machine here uses.
+CONF_WITH_IDE=y
+
+# bios/xhdi.c references xhdi_vec, implemented only in
+# bios/arch/m68k/natfeat.S. Matched here explicitly, same precedent as
+# CONF_WITH_IDE above.
+CONF_WITH_XHDI=n
+
+# The Line-A emulator (vdi/Kconfig) is only implemented for 68k-class
+# hardware (bios/arch/m68k/linea.S) and ARM's own trap-based emulation
+# (bios/machine/raspi/startup.S); there is no x86-64 implementation of
+# either. Matched here explicitly, same precedent as CONF_WITH_IDE above.
+CONF_WITH_LINEA=n
+
+# The AES/EmuDesk are not available on x86-64 (CONF_WITH_AES depends on
+# !ARCH_X86_64): processes run in ring 3 and the AES has not been moved there
+# yet, so this boots straight into EmuCON -- itself an x32 program in ring 3,
+# built apart from the kernel (see the top level Makefile).  CONF_WITH_CLI is
+# left at its default (y).
+CONF_WITH_AES=n

@@ -80,6 +80,17 @@ struct console_dim {
     UWORD cell_height;  /* font cell height, in pixels (v_cel_ht) */
 };
 
-LONG xssystem(WORD mode, LONG arg1, LONG arg2);
+/*
+ * arg1/arg2 are native `long`, not `LONG`: on LP64 (x86-64), S_GETCOOKIE's
+ * arg2 and S_CONSOLE_DIM's arg1 are genuine caller-supplied destination
+ * pointers that xssystem() itself never dereferences, only forwards --
+ * truncating them here, before the mode-specific helper ever sees them,
+ * would corrupt a higher-half pointer regardless of what that helper
+ * does afterward. A no-op on m68k/ARM, where long and LONG are already
+ * the same width. See ssystem.c's own comment on xssystem() for which
+ * of its helpers keep LONG (opaque cookie tag/value data, or sysvar
+ * addresses/sizes -- never a pointer the helper itself dereferences).
+ */
+LONG xssystem(WORD mode, long arg1, long arg2);
 
 #endif /* SSYSTEM_H */

@@ -123,7 +123,7 @@ void ikbd_writew(WORD w);
 void push_ascii_ikbdiorec(UBYTE ascii);
 #endif
 
-#ifdef __arm__
+#if defined(__arm__) || defined(__x86_64__)
 #define call_mousevec ((void (*)(SBYTE *))kbdvecs.mousevec)
 #else /*__arm__*/
 /* the following is in aciavecs.S */

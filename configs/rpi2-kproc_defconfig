@@ -1,0 +1,8 @@
+# Raspberry Pi 2B+ with the kernel-private process records on (#420): CI
+# builds the generic KPROC code on ARM, where the option is not mandatory.
+MACHINE_RPI=y
+TARGET_RPI2=y
+CONF_WITH_KPROC=y
+# The multi-language image supports every country at run time.
+# BUILD_UNIQUE_COUNTRY is not set
+CONF_WITH_USER_COPY=y

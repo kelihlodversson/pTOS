@@ -24,7 +24,7 @@
 #include "cmd.h"
 #include "version.h"
 #include "string.h"
-#ifdef __arm__
+#if (defined(__arm__) || defined(__x86_64__)) && !defined(X32_USERLAND)
 #include "tosvars.h"
 #endif
 
@@ -88,7 +88,11 @@ WORD argc, rc;
     current_res = original_res;
     original_color3 = Setcolor(3,-1);
 
+#ifdef X32_USERLAND
+    nflops_copy = get_nflops();     /* ring 3: no Supexec(), ask Ssystem() */
+#else
     nflops_copy = Supexec(get_nflops);      /* number of floppy drives */
+#endif
 
     /*
      * start up in ST medium if we are currently in ST low
@@ -366,7 +370,13 @@ int valid_res(WORD res)
 
 PRIVATE WORD get_nflops(void)
 {
-#ifdef __arm__
+#ifdef X32_USERLAND
+    /* S_GETWVAL (bdos/ssystem.h) of the _nflops system variable at 0x4a6:
+     * a ring-3 program cannot read the kernel's own variable. */
+    LONG n = Ssystem(0x000b,0x4a6L,0L);
+
+    return (n < 0) ? 0 : (WORD)n;
+#elif defined(__arm__) || defined(__x86_64__)
     return nflops;
 #else
     return *(WORD *)0x4a6;          /* number of floppy drives */

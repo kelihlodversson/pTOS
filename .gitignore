@@ -20,6 +20,7 @@
 /*.dc42
 /*.map
 /*.elf
+/*.efi
 /dsm.txt
 /fal_dsm.txt
 /release-archives/
@@ -38,6 +39,7 @@
 /tests/run_tests.c
 /runtests.tos
 /pieprobe.tos
+/LOADFAIL.TOS
 /relocprobe-unpacked.tos
 /PTRELOC.TOS
 /relocprobe2-unpacked.tos
