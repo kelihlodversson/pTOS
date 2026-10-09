@@ -62,15 +62,19 @@ Linux 64-bit pair from the latest toolchain section:
 
 - `binutils-2.45-mintelf-20250812-bin-linux64.tar.xz`
 - `gcc-15.2.0-mintelf-20250810-bin-linux64.tar.xz`
+- `mintlib-0.60.1-mintelf-20240718-dev.tar.xz`
 
-The archives share the filesystem root and are intended to be merged. Their
-contents include `/usr/bin/m68k-atari-mintelf-*`,
+The binutils and GCC archives share the filesystem root and are intended to be
+merged. The mintlib development archive supplies target headers such as
+`stdint.h`, which the compiler archive does not contain. Their contents include
+`/usr/bin/m68k-atari-mintelf-*`,
 `/usr/m68k-atari-mintelf/`, and the GCC runtime under `/usr/lib64/gcc/`.
 Extract both at `/`, not inside `/usr/m68k-atari-mintelf`:
 
 ```sh
 sudo tar -xJf binutils-2.45-mintelf-20250812-bin-linux64.tar.xz -C /
 sudo tar -xJf gcc-15.2.0-mintelf-20250810-bin-linux64.tar.xz -C /
+sudo tar -xJf mintlib-0.60.1-mintelf-20240718-dev.tar.xz -C /
 ```
 
 The tools are installed in `/usr/bin`, so no PATH change is normally needed.
@@ -148,6 +152,7 @@ the tho-otto page:
 
 - `binutils-2.45-mintelf-20250812-bin-macos.tar.xz`
 - `gcc-15.2.0-mintelf-20250810-bin-macos.tar.xz`
+- `mintlib-0.60.1-mintelf-20240718-dev.tar.xz`
 
 <https://tho-otto.m68k.eu/crossmint.php>
 
@@ -156,6 +161,7 @@ The archives are designed to be extracted together. Both contain an
 
 - Binutils provides `/opt/cross-mint/bin/m68k-atari-mintelf-*` and target linker files.
 - GCC provides the matching compiler drivers, runtime, sysroot, and `mfastcall` multilibs.
+- Mintlib provides target headers such as `stdint.h` and the development libraries.
 
 Extract both archives at the filesystem root. Do not use
 `-C /opt/cross-mint`, which would create an unwanted nested path:
@@ -163,6 +169,7 @@ Extract both archives at the filesystem root. Do not use
 ```sh
 sudo tar -xJf binutils-2.45-mintelf-20250812-bin-macos.tar.xz -C /
 sudo tar -xJf gcc-15.2.0-mintelf-20250810-bin-macos.tar.xz -C /
+sudo tar --strip-components=1 -xJf mintlib-0.60.1-mintelf-20240718-dev.tar.xz -C /opt/cross-mint
 export PATH=/opt/cross-mint/bin:$PATH
 ```
 
