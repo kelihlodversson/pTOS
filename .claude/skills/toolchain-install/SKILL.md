@@ -124,12 +124,30 @@ make
 
 ### m68k
 
-Download the latest `gcc-mintelf` and binutils toolchain from:
+Download these matching macOS archives from the latest toolchain section at
+the tho-otto page:
+
+- `binutils-2.45-mintelf-20250812-bin-macos.tar.xz`
+- `gcc-15.2.0-mintelf-20250810-bin-macos.tar.xz`
 
 <https://tho-otto.m68k.eu/crossmint.php>
 
-Use the `mintelf` variant, not plain `mint`, and choose the latest GCC release
-available there. The current expected version is `15.2.0`. The compiler must
+The archives are designed to be extracted together. Both contain an
+`opt/cross-mint/` root:
+
+- Binutils provides `/opt/cross-mint/bin/m68k-atari-mintelf-*` and target linker files.
+- GCC provides the matching compiler drivers, runtime, sysroot, and `mfastcall` multilibs.
+
+Extract both archives at the filesystem root. Do not use
+`-C /opt/cross-mint`, which would create an unwanted nested path:
+
+```sh
+sudo tar -xJf binutils-2.45-mintelf-20250812-bin-macos.tar.xz -C /
+sudo tar -xJf gcc-15.2.0-mintelf-20250810-bin-macos.tar.xz -C /
+export PATH=/opt/cross-mint/bin:$PATH
+```
+
+Use the `mintelf` pair, not the plain `mint` archives. The compiler must
 support `-mfastcall`.
 
 The pTOS m68k toolchain choice automatically selects the
