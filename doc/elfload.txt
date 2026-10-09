@@ -37,10 +37,10 @@ because a uniform shift of the whole image preserves their offsets.
 Accepted binaries
 -----------------
 
-(x86-64 has its own, much simpler rules: the image is mapped at its link
-address into a private address space and nothing is relocated, see
-doc/x86_64-address-space.txt.  The rest of this document is about ARM and
-m68k.)
+(On x86-64 a new process whose file qualifies has its image mapped at its
+link address into a private address space instead, and nothing is relocated;
+the loader described here is used for the rest, see
+doc/x86_64-address-space.txt.)
 
 The loader accepts a statically linked, native-endian ELF32 for the machine
 it was built for, in either of two forms:
