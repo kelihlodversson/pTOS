@@ -1293,6 +1293,19 @@ static void test_ring3(void)
         same(&s, "ancestor chain of a nested launch");
     }
 
+    /* a new process is mapped at its link address, PE_LOAD relocates (#434) */
+    {
+        snap(&s);
+        rc = run_probe('j');
+        if (rc == 0x100) {
+            kcprintf("x86-64 private image: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "Pexec mode 0 maps the program privately at its link address");
+            kcprintf(rc == 0 ? "x86-64 private image: PASS\n" : "x86-64 private image: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "a program mapped at its link address");
+    }
+
     /* a program loaded from a file gets Malloc() memory of its own (#434) */
     {
         snap(&s);

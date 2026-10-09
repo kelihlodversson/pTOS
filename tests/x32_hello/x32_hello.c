@@ -212,6 +212,16 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
             bad_heap |= 512;
         gemdos1(0x4c, bad_heap);
     }
+    if (cmdline[0] == 1 && (cmdline[1] == 'i' || cmdline[1] == 'I')) {
+        /* where the code runs: 'i' wants it at the link address (a new
+         * process: a private image at 0x400000), 'I' elsewhere (loaded by
+         * PE_LOAD into the TPA, below the image window, and relocated)
+         * (#434) */
+        unsigned long here = (unsigned long)&x32_entry_probe;
+        int at_link = here >= 0x400000UL && here < 0x800000UL;
+
+        gemdos1(0x4c, at_link == (cmdline[1] == 'i') ? 0 : 1);
+    }
     if (cmdline[0] == 1 && cmdline[1] == 'r')
         gemdos2(0x31, 0x100, 0);        /* Ptermres(0x100, 0): stay resident */
 

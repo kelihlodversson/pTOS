@@ -710,14 +710,17 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 # segment gcc emits by default, -fcf-protection=none drops the
 # .note.gnu.property one (Intel CET markers), and -Wl,--build-id=none
 # drops the .note.gnu.build-id one -- each is otherwise its own PT_LOAD/
-# PT_NOTE segment, and a process's image is mapped from its PT_LOAD
-# segments (include/x32image.h) at the addresses they were linked for: no
-# relocation, so none is kept (no -q), and no two segments may share a page
-# or be writable and executable at once.  -Wl,-Ttext-segment=0x400000 puts
-# the ELF headers and the text at the image base, -z noseparate-code keeps
-# text and read-only data in one read+execute segment and -z max-page-size
-# =0x1000 pads the read+write segment only to a 4 KiB page (static, non-PIE
-# ET_EXEC), which gives the two-segment layout of the built-in EmuCON.
+# PT_NOTE segment, and the loader (bdos/elfld.c) only ever maps the
+# segments the image itself declares.  A new process (Pexec() mode 0) gets
+# the PT_LOAD segments as private pages at the addresses they were linked for
+# (include/x32image.h): no two segments may share a page or be writable and
+# executable at once, which -z noseparate-code and -z max-page-size=0x1000
+# give (a read+execute segment holding the headers, text and read-only data,
+# and a read+write one padded to a 4 KiB page; -Wl,-Ttext-segment=0x400000
+# is the link base, static, non-PIE ET_EXEC).  Pexec(PE_LOAD) puts the
+# program in memory the caller owns, at some other address, and relocates it
+# there: that needs the relocation entries, which -Wl,-q (--emit-relocs)
+# keeps in the file, so a program is built with it to work in both cases.
 # -fno-pie/-no-pie force the ET_EXEC contract explicitly rather than
 # relying on the host GCC's own default: a distro configured with PIE
 # on by default would otherwise still produce ET_DYN here (-mx32 alone
@@ -738,7 +741,7 @@ X32_CFLAGS = -mx32 -ffreestanding -fno-asynchronous-unwind-tables \
              -fno-unwind-tables -fcf-protection=none -fno-pie
 X32_LDFLAGS = -nostdlib -static -no-pie -Wl,--build-id=none \
               -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
-              -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000
+              -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000 -Wl,-q
 
 x32hello.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
 	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $^

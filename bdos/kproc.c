@@ -422,24 +422,25 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
         return FALSE;
     }
     /*
-     * A built-in image gets its segments and a stack of its own, as private
-     * pages at the fixed addresses of include/procmem.h's layout.  (A bare
-     * basepage's TPA is no stack: it is the basepage and little else.)
+     * A built-in image or one mapped from a file gets its segments as private
+     * pages at the fixed addresses of include/procmem.h's layout; every
+     * process gets a private stack there (a TPA is no stack: the image of a
+     * program loaded into it, or the code a caller put there, is not
+     * something to push onto).
      */
-    if (kproc->image &&
-        (!x86_64_x32image_load(as, kproc->image, &kproc->entry) ||
-         !map_startup_area(kproc, as) ||
-         !x86_64_aspace_map_private(as, X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE,
-                                    X86_64_USER_STACK_SIZE,
-                                    ASPACE_PROT_WRITE | ASPACE_PROT_USER))) {
+    if ((kproc->image &&
+         (!x86_64_x32image_load(as, kproc->image, &kproc->entry) ||
+          !map_startup_area(kproc, as))) ||
+        !x86_64_aspace_map_private(as, X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE,
+                                   X86_64_USER_STACK_SIZE,
+                                   ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
         kproc->entry = 0;
         x86_64_aspace_destroy(as);
         x86_64_kstack_free(kproc->kstack_phys);
         kproc->kstack_phys = 0;
         return FALSE;
     }
-    if (kproc->image)
-        kproc->stack_top = X86_64_USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
+    kproc->stack_top = X86_64_USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
     /* the segments are mapped: the ELF bytes they came from are not needed */
     kfree(kproc->file_data);
     kproc->file_data = NULL;
