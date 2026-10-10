@@ -847,10 +847,10 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
          * instruction included (#433): once started by mode 0, once loaded
          * by PE_LOAD and then launched */
         static const char reloc_tail[] = { 1, 'a', 0 };
-        s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32RELOC.TOS",
-                      (s64)(int)(unsigned long)reloc_tail, 0);
-        s64 bpa;
+        s64 rc, bpa;
 
+        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32RELOC.TOS",
+                  (s64)(int)(unsigned long)reloc_tail, 0);
         if (rc == -33)
             pterm(0x100);
         if (rc != 0)
@@ -884,20 +884,20 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     }
     case 'j': {
         /* a new process has its image in the image window, linked for it or
-         * not */
+         * not, and its text is read-only: a child that writes to it faults
+         * (0xffff) */
         static const char link_tail[] = { 1, 'i', 0 };
-        s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                      (s64)(int)(unsigned long)link_tail, 0);
         static const char text_tail[] = { 1, 'T', 0 };
-        s64 rc2, rc3;
+        s64 rc, rc2, rc3;
 
+        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                  (s64)(int)(unsigned long)link_tail, 0);
         if (rc == -33)
             pterm(0x100);
         rc2 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32RELOC.TOS",
                    (s64)(int)(unsigned long)link_tail, 0);
         if (rc2 == -33)
             pterm(0x100);
-        /* and its text is read-only: a child that writes to it faults (0xffff) */
         rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
                    (s64)(int)(unsigned long)text_tail, 0);
         pterm((rc == 0 ? 0 : 1) | (rc2 == 0 ? 0 : 2) | (rc3 == 0xffff ? 0 : 4));

@@ -14,7 +14,8 @@
  * No CRT, no libc, no main(): this is freestanding, ring-3 code with
  * exactly one job. The assembly _start stub captures the entry state before
  * calling the C probe (see
- * X32_LDFLAGS' "-Wl,-n"/"-Wl,-Ttext=0x400000", which also needs no
+ * X32_LDFLAGS' "-Wl,-z,noseparate-code"/"-Wl,-Ttext-segment=0x400000", which
+ * also needs no
  * dynamic linker or startup file to satisfy). The syscall convention
  * (RAX = (trap_class << 32) | function_number, next four arguments in
  * RDI/RSI/RDX/R10) is bios/arch/x86_64/trap.h's own, reached the same way
