@@ -442,15 +442,17 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
      * pages at the fixed addresses of include/procmem.h's layout; every
      * process gets a private stack there (a TPA is no stack: the image of a
      * program loaded into it, or the code a caller put there, is not
-     * something to push onto).
+     * something to push onto).  The stack comes first: the move of a PE_LOAD
+     * image out of its caller cannot be undone, so nothing that can fail
+     * may follow it.
      */
-    if ((kproc->has_image &&
+    if (!x86_64_aspace_map_private(as, X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE,
+                                   X86_64_USER_STACK_SIZE,
+                                   ASPACE_PROT_WRITE | ASPACE_PROT_USER) ||
+        (kproc->has_image &&
          (kproc->load_parent ? !move_loaded_image(kproc, as, parent)
                              : (!x86_64_x32_layout_load(as, &kproc->layout) ||
-                                !map_startup_area(kproc, as)))) ||
-        !x86_64_aspace_map_private(as, X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE,
-                                   X86_64_USER_STACK_SIZE,
-                                   ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
+                                !map_startup_area(kproc, as))))) {
         kproc->entry = 0;
         x86_64_aspace_destroy(as);
         x86_64_kstack_free(kproc->kstack_phys);

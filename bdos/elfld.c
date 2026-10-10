@@ -605,8 +605,15 @@ static LONG elf_relocate(FH h, const Elf32_Ehdr *e, UBYTE *load_base,
     UWORD i;
 
     elf_reloc_tables = 0;
-    if (bias == 0)
+    if (bias == 0 && e->e_type == ET_EXEC)
         return 0;   /* loaded at its link address: nothing to relocate */
+    /*
+     * An ET_DYN has its values in the RELA addends, not in the image, so even
+     * at bias 0 its tables must be applied (a PIE with no section table has
+     * none to apply).
+     */
+    if (bias == 0 && (e->e_shoff == 0 || e->e_shnum == 0))
+        return 0;
 
     /*
      * we are loading at a non-link address, so relocations are mandatory.
@@ -1390,7 +1397,7 @@ LONG elf_pgmld(FH h, PD *p)
     }
 
 #if CONF_WITH_USER_ASPACE
-    if (bias == 0)
+    if (bias == 0 && ehdr.e_type == ET_EXEC)
         r = 0;          /* where it was linked for: nothing to relocate */
     else
 #endif
