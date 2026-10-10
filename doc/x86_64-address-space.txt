@@ -165,6 +165,12 @@ data or bss).  Where it is until the process runs depends on the Pexec() mode:
   relocated by the distance, by the loader of doc/elfload.txt, so it must keep
   its relocation entries (link with -q).
 
+  Size.  The loader stages the relocated image in a kernel buffer, so a
+  program loaded into its caller's heap is no bigger than the image window
+  less the startup area (4 MiB - 128 KiB), however much room the heap has;
+  a bigger one is refused with ENSMEM before any block is reserved.  Loading
+  in chunks, relocating as it goes, would lift that.
+
   How.  elf_pgmld() builds the image in a flat kernel buffer and relocates it
   there.  The buffer and the resulting layout go to the process's KPROC record
   (kproc_set_loaded_image(); kproc_set_image() for a built-in ELF), or the

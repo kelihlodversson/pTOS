@@ -1228,8 +1228,12 @@ LONG elf_pgmld(FH h, PD *p)
              */
             ULONG imgpages = (info.mem_end - lo + X86_64_USER_PAGE_SIZE - 1) / X86_64_USER_PAGE_SIZE;
 
+            /* (the image is staged in a kernel buffer first, which holds what
+             * the image window does: no more than that, whatever room the
+             * caller's heap has) */
             if (info.mem_end - lo > X86_64_USER_HEAP_LIMIT - X86_64_USER_HEAP_BASE
-             - X86_64_USER_IMAGE_SLACK - X86_64_USER_PAGE_SIZE)
+             - X86_64_USER_IMAGE_SLACK - X86_64_USER_PAGE_SIZE
+             || span > X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK)
                 return ENSMEM;
             place->pages = imgpages + X86_64_USER_IMAGE_SLACK / X86_64_USER_PAGE_SIZE;
             place->va = kproc_load_alloc(run, p, place->pages * X86_64_USER_PAGE_SIZE);
