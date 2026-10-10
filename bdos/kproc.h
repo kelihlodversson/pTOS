@@ -68,7 +68,7 @@ BOOL kproc_dta_restore(PD *pd, DTAINFO *dta);
 void kproc_dta_save(PD *pd, const DTAINFO *dta);
 void kproc_dta_forget(PD *pd, const DTAINFO *dta);   /* a new Fsfirst() starts */
 UQUAD kproc_ancestors_va(PD *pd);       /* where its basepage copies are; 0 if none */
-UQUAD kproc_user_entry(PD *pd);         /* image entry point; 0 if none */
+UQUAD kproc_user_entry(PD *pd);         /* image entry point; 0 if no image (it starts at p_tbase) */
 /* Hands the process's kernel stack (the one its system calls run on) to the
  * launcher, which frees it with x86_64_kstack_free() once the process has
  * exited and the launcher runs on its own stack again: the process's last
@@ -103,7 +103,7 @@ UQUAD kproc_uheap_alloc(PD *pd, ULONG bytes);
 ULONG kproc_uheap_largest(PD *pd);
 LONG kproc_uheap_free(PD *pd, UQUAD va);
 LONG kproc_uheap_shrink(PD *pd, UQUAD va, long len);
-UQUAD kproc_user_stack(PD *pd);         /* initial RSP of an image's own stack; 0 if none */
+UQUAD kproc_user_stack(PD *pd);         /* initial RSP of the private stack of a prepared process; 0 if not prepared */
 UQUAD kproc_user_pml4(PD *pd);          /* 0 if not prepared */
 X86_64_ASPACE *kproc_user_aspace(PD *pd);   /* NULL if none (tests) */
 ULONG kproc_count(void);                /* live records, for leak tests */

@@ -251,10 +251,11 @@ void gouser(void)
          */
         UQUAD pml4_phys = kproc_user_pml4(p);
         UQUAD entry_rip = kproc_user_entry(p);
-        /* A built-in image has a private stack of its own, from the KPROC
-         * record; any other process starts at its p_hitpa, which
-         * init_pd_fields() rounded to RSP = 8 (mod 16).  Either way the
-         * entry contract of doc/process-entry.txt: RSP + 8 divisible by 16. */
+        /* Every process has a private stack of its own, mapped when it was
+         * prepared (kproc_prepare_user()), whether it has an image or only a
+         * basepage whose p_tbase it starts at; its top is in the KPROC record,
+         * not in the user-writable basepage (the TPA is no stack).  The entry
+         * contract of doc/process-entry.txt: RSP + 8 divisible by 16. */
         UQUAD user_rsp = kproc_user_stack(p);
         jmp_buf buf;
         jmp_buf *saved_resume = x86_64_kexec_resume;
@@ -263,12 +264,10 @@ void gouser(void)
         UQUAD launcher_user_rsp = x86_64_get_saved_user_rsp();
         int launcher_in_syscall;
 
-        if (!entry_rip)         /* not a built-in image: the loader's own text */
+        if (!entry_rip)         /* no image: a basepage with its code in its TPA */
             entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
-        if (!user_rsp)
-            user_rsp = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_hitpa);
-        if (!pml4_phys || !kstack_phys)
-            panic("x86-64: process launched without an address space or kernel stack\n");
+        if (!pml4_phys || !kstack_phys || !user_rsp)
+            panic("x86-64: process launched without an address space, stack or kernel stack\n");
         if ((user_rsp & 15) != 8)
             panic("x86-64: process stack not aligned for entry\n");
 

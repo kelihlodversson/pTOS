@@ -229,7 +229,8 @@ read once: p_lowtpa must be the basepage itself, p_hitpa within its block
 (rounded for the initial stack alignment), p_tbase inside the TPA, p_env the
 recorded environment block; otherwise EPLFMT.  The entry point, stack and
 bounds the launch uses come from the record and the validated values, never
-from fields that were not checked.
+from fields that were not checked.  A process without an image of its own
+starts at p_tbase, in its TPA, on the private stack too -- not at p_hitpa.
 
 A ring-3 process cannot see its launcher's basepage (it is not mapped for it),
 and its p_parent could not be believed if it could.  Instead each process has a
