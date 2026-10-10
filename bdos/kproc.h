@@ -61,6 +61,22 @@ BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);
  * segments, or with the record).  The launch also maps a startup area after
  * the image (X86_64_USER_IMAGE_SLACK). */
 BOOL kproc_set_loaded_image(PD *pd, const X32_LAYOUT *layout, UBYTE *data);
+/*
+ * Pexec(PE_LOAD) from a ring-3 caller loads the program into the caller's own
+ * address space, in its heap, where it can read and patch it before the
+ * launch: kproc_load_alloc() takes the block for the process `child` that is
+ * being made (0: none), kproc_load_write() fills it, and
+ * kproc_set_moved_image() makes it the child's image, laid out as `layout`.
+ * Nothing is mapped for the child yet: PE_GO moves the block's pages, at the
+ * same addresses, from the caller's address space to the child's, with each
+ * segment's permissions.  The caller cannot free the block (Mfree() leaves it
+ * alone); freeing the child's basepage unlaunched gives it back, and so does
+ * kproc_load_release().
+ */
+UQUAD kproc_load_alloc(PD *caller, PD *child, ULONG bytes);
+BOOL kproc_load_write(PD *caller, UQUAD va, const void *src, ULONG bytes);
+void kproc_load_release(PD *caller, UQUAD va);
+BOOL kproc_set_moved_image(PD *pd, const X32_LAYOUT *layout, PD *caller, UQUAD va, ULONG pages);
 /* Fsfirst()/Fsnext() search state kept kernel-side: kproc_dta_save() after a
  * search, kproc_dta_restore() before Fsnext() (FALSE: no search was made with
  * this DTA, the search is over). */

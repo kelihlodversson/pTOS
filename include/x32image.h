@@ -66,6 +66,11 @@ BOOL x86_64_x32image_layout(const X32_IMAGE *image, X32_LAYOUT *layout);
  * segment. */
 BOOL x86_64_x32_layout_valid(const X32_LAYOUT *layout, BOOL strict);
 
+/* The same with another window for the segments than the image window: the
+ * memory a program loaded for its caller (Pexec(PE_LOAD)) is put in. */
+BOOL x86_64_x32_layout_valid_in(const X32_LAYOUT *layout, BOOL strict,
+                                UQUAD window_lo, UQUAD window_hi);
+
 /* Maps and fills every segment as private memory of `as` (read+write+execute
  * as the segment's flags say, all user-accessible).  FALSE if memory ran out;
  * segments already mapped stay in `as` and are freed with it, so the caller

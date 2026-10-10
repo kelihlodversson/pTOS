@@ -58,6 +58,7 @@
 #include "kprint.h"
 #include "ptosabi.h"
 #include "kproc.h"
+#include "bdosstub.h"
 #if CONF_WITH_USER_ASPACE
 #include "kheap.h"
 #include "procmem.h"
@@ -1133,7 +1134,22 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
  * by proc.c using the sizes returned by elf_pgmhdrld().
  */
 #if CONF_WITH_USER_ASPACE
-static LONG elf_load_image(FH h, PD *p, UBYTE **flatp, X32_LAYOUT *layout)
+static BOOL elf_into_caller;
+
+void elf_set_load_into_caller(BOOL wanted)
+{
+    elf_into_caller = wanted;
+}
+
+/* where elf_load_image() put the image if it went into the caller's heap */
+typedef struct {
+    UQUAD va;           /* the block (0: the image is in the flat buffer for the launch) */
+    ULONG pages;
+    UQUAD image_va;     /* where the flat buffer's first byte (link_base) is in it */
+    ULONG span;         /* and how much of it is the image */
+} ELFPLACE;
+
+static LONG elf_load_image(FH h, PD *p, UBYTE **flatp, X32_LAYOUT *layout, ELFPLACE *place)
 #else
 LONG elf_pgmld(FH h, PD *p)
 #endif
@@ -1193,19 +1209,45 @@ LONG elf_pgmld(FH h, PD *p)
          * from the page after the image's last one */
         ULONG limit = X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK;
 
-        if (info.link_base >= X86_64_USER_IMAGE_BASE
-         && ((ULONG)info.mem_end + X86_64_USER_PAGE_SIZE - 1) / X86_64_USER_PAGE_SIZE
-            * X86_64_USER_PAGE_SIZE <= limit)
-            bias = 0;
-        else
-            bias = (LONG)(X86_64_USER_IMAGE_BASE - lo);
-        if (span > limit - X86_64_USER_IMAGE_BASE
-         || (ULONG)info.link_base + (ULONG)bias < X86_64_USER_IMAGE_BASE
-         || ((ULONG)info.mem_end + (ULONG)bias + X86_64_USER_PAGE_SIZE - 1)
-            / X86_64_USER_PAGE_SIZE * X86_64_USER_PAGE_SIZE > limit)
+        place->va = 0;
+        if (elf_into_caller && kproc_has_heap(run))
         {
-            KDEBUG(("BDOS elf_pgmld: image does not fit the image window\n"));
-            return ENSMEM;
+            /*
+             * Pexec(PE_LOAD) from a ring-3 caller: the program goes into the
+             * caller's heap (kproc_load_alloc()), relocated to the address it
+             * gets there, where the caller can read and patch it until
+             * PE_GO moves it to the new process.  The block holds the image
+             * from its first page on and the startup area after it.
+             */
+            ULONG imgpages = (info.mem_end - lo + X86_64_USER_PAGE_SIZE - 1) / X86_64_USER_PAGE_SIZE;
+
+            if (info.mem_end - lo > X86_64_USER_HEAP_LIMIT - X86_64_USER_HEAP_BASE
+             - X86_64_USER_IMAGE_SLACK - X86_64_USER_PAGE_SIZE)
+                return ENSMEM;
+            place->pages = imgpages + X86_64_USER_IMAGE_SLACK / X86_64_USER_PAGE_SIZE;
+            place->va = kproc_load_alloc(run, p, place->pages * X86_64_USER_PAGE_SIZE);
+            if (!place->va)
+                return ENSMEM;
+            bias = (LONG)((ULONG)place->va - lo);
+            place->image_va = (ULONG)info.link_base + (ULONG)bias;
+            place->span = span;
+        }
+        else
+        {
+            if (info.link_base >= X86_64_USER_IMAGE_BASE
+             && ((ULONG)info.mem_end + X86_64_USER_PAGE_SIZE - 1) / X86_64_USER_PAGE_SIZE
+                * X86_64_USER_PAGE_SIZE <= limit)
+                bias = 0;
+            else
+                bias = (LONG)(X86_64_USER_IMAGE_BASE - lo);
+            if (span > limit - X86_64_USER_IMAGE_BASE
+             || (ULONG)info.link_base + (ULONG)bias < X86_64_USER_IMAGE_BASE
+             || ((ULONG)info.mem_end + (ULONG)bias + X86_64_USER_PAGE_SIZE - 1)
+                / X86_64_USER_PAGE_SIZE * X86_64_USER_PAGE_SIZE > limit)
+            {
+                KDEBUG(("BDOS elf_pgmld: image does not fit the image window\n"));
+                return ENSMEM;
+            }
         }
         load_base = kalloc(span);
         if (!load_base)
@@ -1412,13 +1454,33 @@ LONG elf_pgmld(FH h, PD *p)
 {
     UBYTE *flat = NULL;
     X32_LAYOUT layout;
+    ELFPLACE place;
     LONG r;
 
-    r = elf_load_image(h, p, &flat, &layout);
+    place.va = 0;
+    r = elf_load_image(h, p, &flat, &layout, &place);
     if (r < 0L)
     {
         kfree(flat);
+        if (place.va)
+            kproc_load_release(run, place.va);
         return r;
+    }
+    if (place.va)
+    {
+        /* PE_LOAD: the relocated image goes into the block in the caller's
+         * heap (the rest of it, bss and startup area, is zero already) */
+        BOOL ok = kproc_load_write(run, place.image_va, flat, place.span)
+               && kproc_set_moved_image(p, &layout, run, place.va, place.pages);
+
+        kfree(flat);
+        if (!ok)
+        {
+            kproc_load_release(run, place.va);
+            KDEBUG(("BDOS elf_pgmld: image refused\n"));
+            return EPLFMT;
+        }
+        return 0;
     }
     /* takes the buffer, also when it refuses the layout */
     if (!kproc_set_loaded_image(p, &layout, flat))

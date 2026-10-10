@@ -105,29 +105,43 @@ The constants are in include/procmem.h.
 The whole layout lies below 4 GiB, as the 32-bit ABI fields require.
 
 A program's image is mapped from an x32 program layout (include/x32image.h)
-into the address space of the process it is for, wherever it was loaded from
-and however it was asked for: the built-in EmuCON and the boot self-test's
-probe are embedded in the kernel as ELF images, and any other program is read
-from its file by Pexec(), in mode 0 (PE_LOADGO) and PE_LOAD alike.  The image
-belongs to the process it is for, not to the process that asked for it, and
-none of it is in the TPA, which is the basepage and nothing more
-(bdos/elfld.c's sizing pass reports no text, data or bss).
+into the address space of the process it is for: the built-in EmuCON and the
+boot self-test's probe are embedded in the kernel as ELF images, and any other
+program is read from its file by Pexec().  None of it is in the TPA, which is
+the basepage and nothing more (bdos/elfld.c's sizing pass reports no text,
+data or bss).  Where it is until the process runs depends on the Pexec() mode:
 
-  Where.  A program is linked for an address.  If that lies in the image
-  window (X86_64_USER_IMAGE_BASE, 4 MiB) it goes there, nothing is relocated,
-  and the Makefile's X32_LDFLAGS (-Ttext-segment=0x400000, -z noseparate-code,
+  Mode 0 (PE_LOADGO), and a PE_LOAD by a caller that is not a ring-3
+  process, keep the relocated image in a kernel buffer, which the launch maps
+  into the new address space.  Nobody sees it before.
+
+  PE_LOAD by a ring-3 process puts the program in the CALLER's address space,
+  in its heap (kproc_load_alloc()): relocated to the address it gets there,
+  in private pages the caller can read and patch -- a debugger, a loader that
+  fixes up its program -- until it launches the program with PE_GO or
+  PE_GOTHENFREE.  Then the pages MOVE to the new process
+  (x86_64_aspace_move_private()), at the same addresses and with each
+  segment's own permissions, and are the caller's no more.  Until then the
+  block is not Malloc() memory: Mfree() of it is refused (EIMBA), and freeing
+  the basepage that was returned gives it back.
+
+  Where it goes.  A program is linked for an address.  If that lies in the
+  image window (X86_64_USER_IMAGE_BASE, 4 MiB) and the process is a new one
+  (mode 0), it goes there and nothing is relocated; the Makefile's
+  X32_LDFLAGS (-Ttext-segment=0x400000, -z noseparate-code,
   -z max-page-size=0x1000) give the two-segment layout of the built-in
-  EmuCON.  Otherwise -- a PIE, or an ET_EXEC linked elsewhere -- it is moved
-  to the start of the window and relocated by the distance, by the loader of
-  doc/elfload.txt, so it must keep its relocation entries (link with -q).
-  The window is free in the new address space, so this is always possible if
-  the image fits; it is the only way a program is ever moved.
+  EmuCON.  Otherwise -- a PIE, an ET_EXEC linked elsewhere, or any program
+  loaded into its caller's heap -- it is moved to the address it is given and
+  relocated by the distance, by the loader of doc/elfload.txt, so it must keep
+  its relocation entries (link with -q).
 
-  How.  elf_pgmld() builds the image in a flat kernel buffer, relocates it
-  there, and hands the buffer and the resulting layout to the process's KPROC
-  record (kproc_set_loaded_image(); kproc_set_image() for a built-in ELF).
-  kproc_prepare_user() maps every segment as private pages with the segment's
-  own permissions, when the process is launched, and the entry point is the one
+  How.  elf_pgmld() builds the image in a flat kernel buffer and relocates it
+  there.  The buffer and the resulting layout go to the process's KPROC record
+  (kproc_set_loaded_image(); kproc_set_image() for a built-in ELF), or the
+  image is copied into the block in the caller's heap and the layout and the
+  block recorded instead (kproc_set_moved_image()).  kproc_prepare_user() maps
+  every segment as private pages with the segment's own permissions, or moves
+  the block, when the process is launched, and the entry point is the one
   recorded in the KPROC record, not whatever the user-writable basepage says.
   The rules (x86_64_x32_layout_valid()): every segment inside the window, no
   two sharing a page, the entry point in an executable one.  The built-in
@@ -215,7 +229,8 @@ PE_RELOCATE.  PE_BASEPAGE, PE_BASEPAGEFLAGS and PE_LOAD return a basepage the
 caller can use: its blocks (basepage/TPA and environment) stay borrowed, but
 are re-granted to the caller as user memory (kproc_hand_over()).  The caller
 may rewrite the basepage, grow p_hitpa up to the end of its block, and place
-code in the TPA.
+code in the TPA.  A program PE_LOAD loaded is in the caller's heap, not in the
+basepage's TPA (see "x32 user virtual layout").
 
 A basepage handed to PE_GO or PE_GOTHENFREE is only a request.  The kernel
 keeps its own record of every basepage it made (KPROC), including who made it

@@ -249,6 +249,24 @@ BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD p
 BOOL x86_64_aspace_unmap_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes);
 
 /*
+ * Hands private pages from one address space to another: [va, va + bytes) of
+ * `from` (every page must be one of its private pages) is mapped at the same
+ * addresses in `to` with `prot`, and unmapped in `from`, the pages themselves
+ * staying allocated and now owned by `to`.  FALSE, with nothing changed, if
+ * a page is not private to `from`, the range is mapped in `to` already or
+ * memory ran out.
+ */
+BOOL x86_64_aspace_move_private(X86_64_ASPACE *from, X86_64_ASPACE *to,
+                                UQUAD va, UQUAD bytes, UWORD prot);
+
+/*
+ * Changes the permissions of private pages [va, va + bytes) of `as` (the
+ * page and its ownership stay).  FALSE, with nothing changed, if a page is
+ * not one of its private pages.
+ */
+BOOL x86_64_aspace_protect_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
+
+/*
  * Software walk of the address space's own page tables, through the physical
  * direct map (so it works for any address space, loaded or not, and can
  * never fault).  Reports the physical page va maps to and the effective

@@ -148,6 +148,8 @@ static int walk_ancestors(u64 basepage)
 }
 
 u32 x32_reloc_target;
+/* initialised data a caller of Pexec(PE_LOAD) patches before launching (\001P) */
+u32 x32_patch = 0x11111111;
 
 void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 {
@@ -260,6 +262,8 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
             at[k] = (unsigned char)k;
         gemdos1(0x4c, 0);
     }
+    if (cmdline[0] == 1 && cmdline[1] == 'P')
+        gemdos1(0x4c, x32_patch == 0x22222222 ? 0 : 1);
     if (cmdline[0] == 1 && cmdline[1] == 'T') {
         /* the text is read-only: writing to it faults, which ends this
          * process as Pterm(-1) (#434) */

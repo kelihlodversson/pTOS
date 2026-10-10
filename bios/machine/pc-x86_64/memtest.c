@@ -1333,6 +1333,32 @@ static void test_ring3(void)
     /* Mfree() of an ordinary block is given the pointer as an x32 value (#434) */
     probe_expect('F', 0, "Mfree of a basepage through a pointer with upper bits set");
 
+    /* PE_LOAD puts the program in the caller's heap, and freeing the basepage
+     * gives it back (#434) */
+    {
+        snap(&s);
+        rc = run_probe('L');
+        if (rc == 0x100) {
+            kcprintf("x86-64 loaded program in the caller: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "the program PE_LOAD loaded is in the caller's heap, and goes back with its basepage");
+            kcprintf(rc == 0 ? "x86-64 loaded program in the caller: PASS\n" : "x86-64 loaded program in the caller: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "a program loaded into the caller");
+    }
+
+    /* PE_LOAD and PE_GOTHENFREE with a physical allocation failing at every
+     * point: whatever fails, nothing is leaked and the caller carries on (#434) */
+    snap(&s);
+    for (k = 1; k <= 120; k += (k < 24) ? 1 : 4) {
+        x86_64_pmem_test_fail_after(k);
+        probe_may_fail_early = TRUE;
+        (void)run_probe('l');
+        probe_may_fail_early = FALSE;
+        x86_64_pmem_test_fail_after(0);
+    }
+    same(&s, "failed PE_LOAD launches");
+
     /* a program loaded from a file gets Malloc() memory of its own (#434) */
     {
         snap(&s);
@@ -1469,6 +1495,57 @@ static void test_ring3(void)
     same(&s, "failed ring-3 launches");
 }
 
+/* Private pages move from one address space to another (#434). */
+static void test_move_private(void)
+{
+    X86_64_ASPACE *a, *b;
+    UBYTE pattern[64], back[64];
+    UWORD prot;
+    ULONG i;
+    SNAP s;
+
+    snap(&s);
+    a = must_create("move source");
+    b = must_create("move destination");
+    if (a && b) {
+        for (i = 0; i < sizeof(pattern); i++)
+            pattern[i] = (UBYTE)(i + 1);
+        CHECK(x86_64_aspace_map_private(a, 0x10000000, 3 * PAGE, ASPACE_PROT_WRITE | ASPACE_PROT_USER),
+              "block mapped in the source");
+        CHECK(x86_64_aspace_copy_to_user(a, 0x10001000, pattern, sizeof(pattern)), "block filled");
+        CHECK(x86_64_aspace_private_pages(a) == 3 && x86_64_aspace_private_pages(b) == 0, "owned pages before");
+
+        /* a range that is not all private to the source is refused, and nothing moves */
+        CHECK(!x86_64_aspace_move_private(a, b, 0x10000000, 4 * PAGE, ASPACE_PROT_USER),
+              "a range that is not all private is refused");
+        CHECK(!x86_64_aspace_translate(b, 0x10000000, NULL, NULL), "nothing moved by the refused call");
+
+        CHECK(x86_64_aspace_move_private(a, b, 0x10000000, 3 * PAGE, ASPACE_PROT_WRITE | ASPACE_PROT_USER),
+              "block moved");
+        CHECK(!x86_64_aspace_translate(a, 0x10000000, NULL, NULL) &&
+              !x86_64_aspace_translate(a, 0x10002000, NULL, NULL), "gone from the source");
+        CHECK(x86_64_aspace_private_pages(a) == 0 && x86_64_aspace_private_pages(b) == 3, "owned pages after");
+        CHECK(x86_64_aspace_copy_from_user(b, back, 0x10001000, sizeof(back)) &&
+              memcmp(back, pattern, sizeof(back)) == 0, "contents kept");
+
+        /* the destination changes the permissions of a page: read + execute */
+        CHECK(x86_64_aspace_protect_private(b, 0x10001000, PAGE, ASPACE_PROT_EXEC | ASPACE_PROT_USER),
+              "permissions changed");
+        CHECK(x86_64_aspace_translate(b, 0x10001000, NULL, &prot) &&
+              (prot & ASPACE_PROT_EXEC) && !(prot & ASPACE_PROT_WRITE), "execute, not write");
+        CHECK(!x86_64_aspace_protect_private(b, 0x20000000, PAGE, ASPACE_PROT_USER),
+              "an unmapped page cannot be protected");
+
+        /* the source can map the addresses again; the destination frees what it got */
+        CHECK(x86_64_aspace_map_private(a, 0x10000000, PAGE, ASPACE_PROT_USER), "source reuses the addresses");
+        CHECK(!x86_64_aspace_unmap_private(b, 0x10000000, 4 * PAGE), "unmap refuses a range with a foreign page");
+        CHECK(x86_64_aspace_unmap_private(b, 0x10000000, 3 * PAGE), "destination unmaps what it was given");
+    }
+    x86_64_aspace_destroy(a);
+    x86_64_aspace_destroy(b);
+    same(&s, "moving private pages");
+}
+
 /* A copy of the probe image with one field changed must be refused. */
 static void mutated(const X32_IMAGE *good, ULONG offset, ULONG size, ULONG value, const char *what)
 {
@@ -1591,6 +1668,7 @@ void x86_64_memtest_run(void)
     test_kproc_ranges();
     test_lifecycle();
     test_x32image();
+    test_move_private();
     test_ring3();
 
     same(&s, "whole memtest");

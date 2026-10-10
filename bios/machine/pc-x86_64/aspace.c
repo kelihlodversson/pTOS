@@ -512,6 +512,94 @@ BOOL x86_64_aspace_unmap_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
     return TRUE;
 }
 
+/* TRUE iff every page of [va, va + pages) is one of the private pages of `as` */
+static BOOL range_is_private(const struct x86_64_aspace *as, UQUAD va, UQUAD pages)
+{
+    UQUAD i;
+
+    for (i = 0; i < pages; i++) {
+        UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+
+        if (!pte || !(*pte & PTE_PRESENT) || !(*pte & X86_64_PTE_OWNED))
+            return FALSE;
+    }
+    return TRUE;
+}
+
+BOOL x86_64_aspace_move_private(X86_64_ASPACE *from, X86_64_ASPACE *to,
+                                UQUAD va, UQUAD bytes, UWORD prot)
+{
+    UQUAD pages, i, mapped = 0;
+    ULONG first_tables = to->count;
+
+    if (from == to || (va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= X86_64_USER_VA_LIMIT ||
+        bytes > X86_64_USER_VA_LIMIT - va)
+        return FALSE;
+    pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
+    if (!range_is_private(from, va, pages))
+        return FALSE;
+    for (i = 0; i < pages; i++)
+        if (x86_64_aspace_translate(to, va + i * X86_64_PAGE_SIZE, NULL, NULL))
+            return FALSE;
+
+    for (i = 0; i < pages; i++) {
+        UQUAD *src = x86_64_user_pte(from->pml4_phys, va + i * X86_64_PAGE_SIZE);
+
+        if (!x86_64_aspace_map_page(to, va + i * X86_64_PAGE_SIZE, *src & PTE_ADDR, prot))
+            break;
+        *x86_64_user_pte(to->pml4_phys, va + i * X86_64_PAGE_SIZE) |= X86_64_PTE_OWNED;
+        mapped++;
+    }
+    if (mapped != pages) {
+        /* give back what `to` took: its mappings and the table pages it needed;
+         * the pages themselves are still `from`'s */
+        for (i = 0; i < mapped; i++)
+            x86_64_unmap_user_page(to->pml4_phys, va + i * X86_64_PAGE_SIZE);
+        for (i = 0; i <= mapped && i < pages; i++)
+            unlink_new_tables(to, first_tables, va + i * X86_64_PAGE_SIZE);
+        if (x86_64_read_cr3() == to->pml4_phys)
+            x86_64_write_cr3(to->pml4_phys);
+        while (to->count > first_tables)
+            x86_64_pmem_free_pages(to->pages[--to->count], 1);
+        return FALSE;
+    }
+    for (i = 0; i < pages; i++) {
+        *x86_64_user_pte(from->pml4_phys, va + i * X86_64_PAGE_SIZE) = 0;
+        from->nowned--;
+        to->nowned++;
+    }
+    if (x86_64_read_cr3() == from->pml4_phys)
+        x86_64_write_cr3(from->pml4_phys);      /* flush stale translations */
+    return TRUE;
+}
+
+BOOL x86_64_aspace_protect_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
+{
+    UQUAD pages, i;
+
+    if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= X86_64_USER_VA_LIMIT ||
+        bytes > X86_64_USER_VA_LIMIT - va)
+        return FALSE;
+    pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
+    if (!range_is_private(as, va, pages))
+        return FALSE;
+    for (i = 0; i < pages; i++) {
+        UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+        UQUAD e = (*pte & (PTE_ADDR | X86_64_PTE_OWNED)) | PTE_PRESENT;
+
+        if (prot & ASPACE_PROT_USER)
+            e |= PTE_USER;
+        if (prot & ASPACE_PROT_WRITE)
+            e |= PTE_WRITABLE;
+        if (!(prot & ASPACE_PROT_EXEC))
+            e |= PTE_NX;
+        *pte = e;
+    }
+    if (x86_64_read_cr3() == as->pml4_phys)
+        x86_64_write_cr3(as->pml4_phys);
+    return TRUE;
+}
+
 /*
  * Private segment of a program image: fresh zeroed pages with the segment's
  * own permissions, then the file bytes copied in through the direct map --

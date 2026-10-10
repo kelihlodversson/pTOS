@@ -518,6 +518,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      * jump directly back to bdosmain.c, which is not a problem because
      * we haven't allocated anything yet.
      */
+#if CONF_WITH_USER_ASPACE && CONF_WITH_ELF_LOADER
+    elf_set_load_into_caller(flag == PE_LOAD);
+#endif
     rc = kpgmhdrld(path, &hdr, &fh);
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmhdrld returned %ld (0x%lx)\n",rc,rc));

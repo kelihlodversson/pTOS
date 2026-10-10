@@ -85,6 +85,12 @@ BOOL x86_64_x32image_layout(const X32_IMAGE *image, X32_LAYOUT *layout)
 
 BOOL x86_64_x32_layout_valid(const X32_LAYOUT *layout, BOOL strict)
 {
+    return x86_64_x32_layout_valid_in(layout, strict, X86_64_USER_IMAGE_BASE,
+                                      X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE);
+}
+
+BOOL x86_64_x32_layout_valid_in(const X32_LAYOUT *layout, BOOL strict, UQUAD window_lo, UQUAD window_hi)
+{
     BOOL entry_ok = FALSE;
     ULONG i, k;
 
@@ -96,8 +102,7 @@ BOOL x86_64_x32_layout_valid(const X32_LAYOUT *layout, BOOL strict)
 
         if (!s->memsz || s->filesz > s->memsz)
             return FALSE;
-        if (lo < X86_64_USER_IMAGE_BASE ||
-            hi > X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE)
+        if (lo < window_lo || hi > window_hi)
             return FALSE;
         if (strict && (s->flags & PF_W) && (s->flags & PF_X))
             return FALSE;               /* W^X */

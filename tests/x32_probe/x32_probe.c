@@ -762,23 +762,40 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         break;
     }
     case 'l': {
-        /* PE_LOAD of a program, then PE_GOTHENFREE of the basepage it gives */
-        s64 bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                       (s64)(int)(unsigned long)"", 0);
-        volatile u32 *bpp = (volatile u32 *)(unsigned long)bpa;
+        /* PE_LOAD of a program, then PE_GOTHENFREE of the basepage it gives.
+         * The program is in this process's own heap until then: it can be
+         * read and patched, and the patch is what runs (#434) */
+        static const char patch_tail[] = { 1, 'P', 0 };
+        s64 bpa, rc;
+        volatile u32 *bpp, *w;
+        u32 first, last;
 
+        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)patch_tail, 0);
+        bpp = (volatile u32 *)(unsigned long)bpa;
         if (bpa == -33)
             pterm(0x100);
         if (bpa <= 0)
-            pterm(1);
+            pterm(0x200 | (int)(-bpa & 0xff));
         if (bpp[0] != (u32)bpa)
             bad |= 2;                       /* p_lowtpa */
-        if (bpp[2] < 0x400000 || bpp[2] >= 0x800000)
-            bad |= 8;                       /* its entry point is in the image window, not the TPA */
+        if (bpp[2] < 0x10000000 || bpp[2] >= 0x3f000000)
+            bad |= 8;                       /* its entry point is in this process's heap */
         if (bpp[1] - bpp[0] > 0x1000)
             bad |= 16;                      /* and its TPA is the basepage and little else */
-        if (sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", bpa, 0) != 0)
-            bad |= 4;                       /* the program's own exit code */
+        /* its initialised data, found by value, patched */
+        first = (bpp[4] - bpp[3]) & ~3u;            /* p_dbase - p_tlen: where the image starts */
+        last = bpp[6] + bpp[7];                     /* p_bbase + p_blen */
+        for (w = (volatile u32 *)(unsigned long)first; (unsigned long)w < last; w++)
+            if (*w == 0x11111111u) {
+                *w = 0x22222222u;
+                break;
+            }
+        if ((unsigned long)w >= last)
+            bad |= 32;                      /* not found */
+        rc = sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", bpa, 0);
+        if (rc != 0)
+            bad |= 4;                       /* the program's own exit code: it saw the patch */
         pterm(bad);
         break;
     }
@@ -917,6 +934,35 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (bpa <= 0)
             pterm(1);
         pterm(sys4(GEMDOS, 0x49, bpa | 0xffff00000000LL, 0, 0, 0) == 0 ? 0 : 2);
+        break;
+    }
+    case 'L': {
+        /* the program PE_LOAD put in this process's heap is not Malloc()
+         * memory: Mfree() leaves it alone; freeing the basepage unlaunched
+         * gives it back (#434) */
+        s64 a, bpa, b;
+        volatile u32 *bpp;
+        u32 image;
+
+        a = sys4(GEMDOS, 0x48, 4096, 0, 0, 0);
+        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)"", 0);
+        if (bpa == -33)
+            pterm(0x100);
+        if (a <= 0 || bpa <= 0)
+            pterm(1);
+        bpp = (volatile u32 *)(unsigned long)bpa;
+        image = (bpp[4] - bpp[3]) & ~0xfffu;        /* the image's first page */
+        if (image != (u32)a + 4096)
+            bad |= 2;                       /* first fit: right after the first block */
+        if (sys4(GEMDOS, 0x49, image, 0, 0, 0) != -40)
+            bad |= 4;                       /* Mfree() leaves it alone */
+        if (sys4(GEMDOS, 0x49, bpa, 0, 0, 0) != 0)
+            bad |= 8;                       /* free the basepage */
+        b = sys4(GEMDOS, 0x48, 4096, 0, 0, 0);
+        if (b != image)
+            bad |= 16;                      /* and the address space is free again */
+        pterm(bad);
         break;
     }
     case 'u':
