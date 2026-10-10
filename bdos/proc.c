@@ -99,6 +99,12 @@ static void x86_64_hand_over(PD *p)
         kproc_hand_over(run, p);
 }
 
+/* PE_GO: a program PE_LOAD put in the caller's heap goes back there at the end */
+static void x86_64_give_back(PD *p, BOOL give_back)
+{
+    kproc_set_give_back(p, give_back);
+}
+
 static BOOL x86_64_prepare_launch(PD *p)
 {
     if (x86_64_kernel_code_pd == p)
@@ -218,6 +224,7 @@ BOOL x86_64_take_kernel_code_pd(PD *p)
 #define x86_64_check_launch(p) E_OK
 #define x86_64_hand_over(p) do { } while (0)
 #define x86_64_prepare_launch(p) TRUE
+#define x86_64_give_back(p, g) do { } while (0)
 #endif
 
 /*
@@ -464,7 +471,10 @@ long xexec(WORD flag, char *path, char *tail, char *env)
             return rc;
         /* The allocation can fail; retain the parent's ownership until it
          * succeeds so an ENSMEM return leaves the retained basepage freeable. */
-        if (!kproc_create(p) || !x86_64_prepare_launch(p))
+        if (!kproc_create(p))
+            return ENSMEM;
+        x86_64_give_back(p, FALSE);     /* (a PE_GO that failed before may have asked) */
+        if (!x86_64_prepare_launch(p))
             return ENSMEM;
         /* set the owner of the memory to be this process */
         set_owner(p, p);
@@ -474,7 +484,10 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         p = (PD *) tail;
         if (flag == PE_GO && (rc = x86_64_check_launch(p)) != E_OK)
             return rc;
-        if (flag == PE_GO && (!kproc_create(p) || !x86_64_prepare_launch(p)))
+        if (flag == PE_GO && !kproc_create(p))
+            return ENSMEM;
+        x86_64_give_back(p, flag == PE_GO);
+        if (flag == PE_GO && !x86_64_prepare_launch(p))
             return ENSMEM;
         proc_go(p);
         /*
@@ -518,6 +531,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      * jump directly back to bdosmain.c, which is not a problem because
      * we haven't allocated anything yet.
      */
+#if CONF_WITH_USER_ASPACE && CONF_WITH_ELF_LOADER
+    elf_set_load_into_caller(flag == PE_LOAD);
+#endif
     rc = kpgmhdrld(path, &hdr, &fh);
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmhdrld returned %ld (0x%lx)\n",rc,rc));

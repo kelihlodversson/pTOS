@@ -710,19 +710,16 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 # segment gcc emits by default, -fcf-protection=none drops the
 # .note.gnu.property one (Intel CET markers), and -Wl,--build-id=none
 # drops the .note.gnu.build-id one -- each is otherwise its own PT_LOAD/
-# PT_NOTE segment, and pTOS's ELF loader (bdos/elfld.c, #43) only ever
-# maps the segments the image itself declares, so keeping this down to
-# exactly one real PT_LOAD segment (verified with readelf -l) is what
-# makes the result loadable there. -Wl,-Ttext=0x400000 -Wl,-n fixes the
-# link base and disables page alignment padding between segments (static,
-# non-PIE ET_EXEC, per #334's "x32 toolchain and executable contract"
-# section) -- -n is what collapses what would otherwise be separate R and
-# R+E LOAD segments into one. -Wl,-q (--emit-relocs) keeps the retained
-# RELA relocation entries the same contract calls for, so a less trivial
-# x32 program than tests/x32_hello/x32_hello.c (which has no absolute
-# data references and so links with none to retain) still gets a
-# relocatable binary -- see the ARCH_X86_64 branch elfld.c's own
-# EM_X86_64/ELF_R_DIR32/ELF_R_RELATIVE constants added for this.
+# PT_NOTE segment, and the loader (bdos/elfld.c) only ever maps the
+# segments the image itself declares.  A program is mapped into its own
+# address space (include/x32image.h): no two segments may share a page, which
+# -z noseparate-code and -z max-page-size=0x1000 give (a read+execute segment
+# holding the headers, text and read-only data, and a read+write one padded to
+# a 4 KiB page; -Wl,-Ttext-segment=0x400000 is the link base, static, non-PIE
+# ET_EXEC, the start of the image window, so that nothing is relocated).  A
+# program linked for another address is moved into the window and relocated,
+# which needs the relocation entries -Wl,-q (--emit-relocs) keeps in the file:
+# x32reloc.elf below is one.
 # -fno-pie/-no-pie force the ET_EXEC contract explicitly rather than
 # relying on the host GCC's own default: a distro configured with PIE
 # on by default would otherwise still produce ET_DYN here (-mx32 alone
@@ -741,16 +738,34 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 # doc/install.txt.
 X32_CFLAGS = -mx32 -ffreestanding -fno-asynchronous-unwind-tables \
              -fno-unwind-tables -fcf-protection=none -fno-pie
-X32_LDFLAGS = -nostdlib -static -no-pie -Wl,--build-id=none \
-              -Wl,-Ttext=0x400000 -Wl,-n -Wl,-q -Wl,-m,elf32_x86_64
+X32_LDFLAGS_NOQ = -nostdlib -static -no-pie -Wl,--build-id=none \
+                  -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
+                  -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000
+X32_LDFLAGS = $(X32_LDFLAGS_NOQ) -Wl,-q
 
 x32hello.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
 	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $^
 
-.PHONY: x32test
-x32test: x32hello.elf
+# The same program linked for another address, which Pexec() has to move
+# into the image window and relocate (the relocations -q keeps are what it
+# uses).
+x32reloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -o $@ $^
 
-TOCLEAN += x32hello.elf
+# ... and linked for another address without keeping the relocations (no -q):
+# Pexec() must refuse it, not run it with every absolute address wrong.
+x32noreloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS_NOQ) -Wl,-Ttext-segment=0x20000000 -o $@ $^
+
+# ... and one with a 6 MiB bss, bigger than the image window: only a PE_LOAD
+# from ring 3 (which loads it straight into the caller's heap) can take it.
+x32big.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
+	$(X32_CC) $(X32_CFLAGS) -DX32_BIG $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -o $@ $^
+
+.PHONY: x32test
+x32test: x32hello.elf x32reloc.elf x32noreloc.elf x32big.elf
+
+TOCLEAN += x32hello.elf x32reloc.elf x32noreloc.elf x32big.elf
 
 #
 # The built-in EmuCON (#398).  On x86-64 the command processor is not linked

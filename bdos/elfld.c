@@ -57,6 +57,12 @@
 #include "string.h"
 #include "kprint.h"
 #include "ptosabi.h"
+#include "kproc.h"
+#include "bdosstub.h"
+#if CONF_WITH_USER_ASPACE
+#include "kheap.h"
+#include "procmem.h"
+#endif
 
 /*
  * minimal ELF32 definitions (see the System V ABI).  All fields use the
@@ -450,6 +456,13 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
     hd->h01_tlen = (LONG)(info.file_end - info.link_base);
     hd->h01_dlen = 0;
     hd->h01_blen = (LONG)(info.mem_end - info.file_end);
+#if CONF_WITH_USER_ASPACE
+    /* the image does not live in the TPA but in private pages of the
+     * process's own address space (elf_pgmld()): the TPA is the basepage and
+     * nothing more */
+    hd->h01_tlen = 0;
+    hd->h01_blen = 0;
+#endif
     hd->h01_slen = 0;
     hd->h01_res1 = 0;
     /*
@@ -579,6 +592,9 @@ static LONG elf_relocate_section(FH h, const Elf32_Shdr *sh, BOOL rela,
 }
 
 /* apply every relocation section retained by ld --emit-relocs */
+/* how many SHT_REL/SHT_RELA tables the last elf_relocate() applied */
+static UWORD elf_reloc_tables;
+
 static LONG elf_relocate(FH h, const Elf32_Ehdr *e, UBYTE *load_base,
                          const ELFINFO *info, LONG bias)
 {
@@ -588,8 +604,16 @@ static LONG elf_relocate(FH h, const Elf32_Ehdr *e, UBYTE *load_base,
     LONG r;
     UWORD i;
 
-    if (bias == 0)
+    elf_reloc_tables = 0;
+    if (bias == 0 && e->e_type == ET_EXEC)
         return 0;   /* loaded at its link address: nothing to relocate */
+    /*
+     * An ET_DYN has its values in the RELA addends, not in the image, so even
+     * at bias 0 its tables must be applied (a PIE with no section table has
+     * none to apply).
+     */
+    if (bias == 0 && (e->e_shoff == 0 || e->e_shnum == 0))
+        return 0;
 
     /*
      * we are loading at a non-link address, so relocations are mandatory.
@@ -660,6 +684,7 @@ static LONG elf_relocate(FH h, const Elf32_Ehdr *e, UBYTE *load_base,
                 continue;
         }
 
+        elf_reloc_tables++;
         if (sh.sh_type == SHT_REL)
             r = elf_relocate_section(h, &sh, FALSE, load_base, info, bias);
         else
@@ -1115,7 +1140,27 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
  * relocates by the load bias.  The basepage TPA has already been allocated
  * by proc.c using the sizes returned by elf_pgmhdrld().
  */
+#if CONF_WITH_USER_ASPACE
+static BOOL elf_into_caller;
+
+void elf_set_load_into_caller(BOOL wanted)
+{
+    elf_into_caller = wanted;
+}
+
+/* where elf_load_image() put the image if it went into the caller's heap */
+typedef struct {
+    UQUAD va;           /* the block (0: none) */
+    ULONG pages;
+    UQUAD image_va;     /* where the image's first byte (link_base) is in it */
+    BOOL pending;       /* the image is in the new process's own address space,
+                         * made for it now (kproc_load_begin()) */
+} ELFPLACE;
+
+static LONG elf_load_image(FH h, PD *p, X32_LAYOUT *layout, ELFPLACE *place)
+#else
 LONG elf_pgmld(FH h, PD *p)
+#endif
 {
     Elf32_Ehdr ehdr;
     Elf32_Phdr ph;
@@ -1128,7 +1173,9 @@ LONG elf_pgmld(FH h, PD *p)
     ELFINFO info;
     UBYTE *load_base;
     LONG bias;
+#if !CONF_WITH_USER_ASPACE
     LONG tpalen;
+#endif
     ULONG phoff;
     ULONG ph_table_size;
     LONG r;
@@ -1148,11 +1195,103 @@ LONG elf_pgmld(FH h, PD *p)
     if (r < 0L)
         return r;
 
+
     /* the entry point must fall inside the loaded image, or p_tbase would
      * point outside the TPA (underflow below link_base, or past mem_end) */
     if (ehdr.e_entry < info.link_base || ehdr.e_entry >= info.mem_end)
         return EPLFMT;
 
+#if CONF_WITH_USER_ASPACE
+    /*
+     * The image is read, and relocated if it has to be, straight into the pages
+     * it will run from, with no buffer in between: the block a PE_LOAD by a
+     * ring-3 caller gets in the caller's heap, or private pages of the new
+     * process's own address space, made now (kproc_load_begin()) and entered
+     * for the loading.  It goes where it was linked for if that lies in the
+     * image window; otherwise it is moved into the window, to its first page,
+     * and relocated by the distance.
+     */
+    {
+        ULONG span = info.mem_end - info.link_base;
+        ULONG lo = info.link_base & ~(ULONG)(X86_64_USER_PAGE_SIZE - 1);
+        /* the window must also hold the startup area (X86_64_USER_IMAGE_SLACK)
+         * from the page after the image's last one */
+        ULONG limit = X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK;
+
+        place->va = 0;
+        if (elf_into_caller && kproc_has_heap(run))
+        {
+            /*
+             * Pexec(PE_LOAD) from a ring-3 caller: the program goes into the
+             * caller's heap (kproc_load_alloc()), relocated to the address it
+             * gets there, where the caller can read and patch it until
+             * PE_GO moves it to the new process.  The block holds the image
+             * from its first page on and the startup area after it.
+             */
+            ULONG imgpages = (info.mem_end - lo + X86_64_USER_PAGE_SIZE - 1) / X86_64_USER_PAGE_SIZE;
+
+            /* (the rounded image and the startup area must fit the heap, exactly) */
+            if ((UQUAD)imgpages * X86_64_USER_PAGE_SIZE + X86_64_USER_IMAGE_SLACK
+                > X86_64_USER_HEAP_LIMIT - X86_64_USER_HEAP_BASE)
+                return ENSMEM;
+            place->pages = imgpages + X86_64_USER_IMAGE_SLACK / X86_64_USER_PAGE_SIZE;
+            place->va = kproc_load_alloc(run, p, place->pages * X86_64_USER_PAGE_SIZE);
+            if (!place->va)
+                return ENSMEM;
+            bias = (LONG)((ULONG)place->va - lo);
+            place->image_va = (ULONG)info.link_base + (ULONG)bias;
+        }
+        else
+        {
+            if (info.link_base >= X86_64_USER_IMAGE_BASE
+             && ((ULONG)info.mem_end + X86_64_USER_PAGE_SIZE - 1) / X86_64_USER_PAGE_SIZE
+                * X86_64_USER_PAGE_SIZE <= limit)
+                bias = 0;
+            else
+                bias = (LONG)(X86_64_USER_IMAGE_BASE - lo);
+            /* (span first: it keeps the sums below from wrapping) */
+            if (span > limit - X86_64_USER_IMAGE_BASE
+             || (ULONG)info.link_base + (ULONG)bias < X86_64_USER_IMAGE_BASE
+             || ((ULONG)info.mem_end + (ULONG)bias + X86_64_USER_PAGE_SIZE - 1)
+                / X86_64_USER_PAGE_SIZE * X86_64_USER_PAGE_SIZE > limit)
+            {
+                KDEBUG(("BDOS elf_pgmld: image does not fit the image window\n"));
+                return ENSMEM;
+            }
+            /* the new process's address space is made now, with the image's
+             * pages and the startup area after them: the file is read straight
+             * into it, below */
+            if (!kproc_load_begin(p, lo + (ULONG)bias,
+                                  ((ULONG)info.mem_end + (ULONG)bias + X86_64_USER_PAGE_SIZE - 1)
+                                  / X86_64_USER_PAGE_SIZE * X86_64_USER_PAGE_SIZE
+                                  + X86_64_USER_IMAGE_SLACK - (lo + (ULONG)bias)))
+                return ENSMEM;
+            place->pending = TRUE;
+            place->image_va = (ULONG)info.link_base + (ULONG)bias;
+        }
+        /* the file is read, and relocated, straight into the pages of the image
+         * (the block in the caller's heap, or the new process's pending address
+         * space, which is in use for that): no kernel buffer holds it */
+        load_base = (UBYTE *)(uintptr_t)place->image_va;
+    }
+
+    /* the segment fields describe where the image will be; execution starts
+     * at the ELF entry point */
+    p->p_tbase = PTR_TO_USERPTR((UBYTE *)(uintptr_t)((ULONG)ehdr.e_entry + (ULONG)bias));
+    p->p_tlen  = (LONG)(info.file_end - info.link_base);
+    p->p_dbase = PTR_TO_USERPTR((UBYTE *)(uintptr_t)((ULONG)info.file_end + (ULONG)bias));
+    p->p_dlen  = 0;
+    p->p_bbase = PTR_TO_USERPTR((UBYTE *)(uintptr_t)((ULONG)info.file_end + (ULONG)bias));
+    /* the bss runs to the end of the image's last page, where the startup area
+     * begins: the C startup code puts argv and environ at p_bbase + p_blen,
+     * which must not be inside a read-only last segment */
+    p->p_blen  = (LONG)(((ULONG)info.mem_end + (ULONG)bias + X86_64_USER_PAGE_SIZE - 1)
+                        / X86_64_USER_PAGE_SIZE * X86_64_USER_PAGE_SIZE
+                        - ((ULONG)info.file_end + (ULONG)bias));
+    layout->nseg = 0;
+    layout->end = 0;
+    layout->entry = (ULONG)ehdr.e_entry + (ULONG)bias;
+#else
     /* the image is loaded at the first byte after the basepage */
     load_base = (UBYTE *)(p + 1);
     /* compute the bias in unsigned then reinterpret as signed; this avoids
@@ -1183,6 +1322,8 @@ LONG elf_pgmld(FH h, PD *p)
     p->p_bbase = PTR_TO_USERPTR(load_base + (info.file_end - info.link_base));
     p->p_blen  = (LONG)(info.mem_end - info.file_end);
 
+#endif
+
     /* Zero the loaded image first so bss and inter-segment gaps start
      * cleared, then read the file backed parts over it. Only the
      * program's own footprint (mem_end - link_base, already validated
@@ -1192,6 +1333,10 @@ LONG elf_pgmld(FH h, PD *p)
      * needlessly, and slowly (each never-touched guest page can fault
      * in fresh host memory under an emulator), looks indistinguishable
      * from a hang for a program given a large default allocation. */
+#if CONF_WITH_USER_ASPACE
+    if (place->pending)
+        kproc_load_enter(p);            /* (left by elf_pgmld(), or by destroying the process) */
+#endif
     bzero(load_base, (LONG)(info.mem_end - info.link_base));
 
     if (u32_mul_overflow((ULONG)ehdr.e_phnum, (ULONG)ehdr.e_phentsize, &ph_table_size)
@@ -1226,7 +1371,26 @@ LONG elf_pgmld(FH h, PD *p)
             continue;
         }
 
-        if (ph.p_type != PT_LOAD || ph.p_filesz == 0)
+        if (ph.p_type != PT_LOAD)
+            continue;
+
+#if CONF_WITH_USER_ASPACE
+        if (layout->nseg == X32_MAX_SEGMENTS)
+            return EPLFMT;
+        {
+            X32_SEGMENT *s = &layout->seg[layout->nseg++];
+
+            s->vaddr = (ULONG)ph.p_vaddr + (ULONG)bias;
+            s->filesz = ph.p_filesz;
+            s->memsz = ph.p_memsz;
+            s->flags = ph.p_flags;
+            s->src = load_base + (ph.p_vaddr - info.link_base);
+            if (s->vaddr + s->memsz > layout->end)
+                layout->end = s->vaddr + s->memsz;
+        }
+#endif
+
+        if (ph.p_filesz == 0)
             continue;
 
         /* p_offset and p_filesz are 32-bit unsigned; xlseek/xread take
@@ -1249,6 +1413,11 @@ LONG elf_pgmld(FH h, PD *p)
             return EPLFMT;
     }
 
+#if CONF_WITH_USER_ASPACE
+    if (bias == 0 && ehdr.e_type == ET_EXEC)
+        r = 0;          /* where it was linked for: nothing to relocate */
+    else
+#endif
     if (have_ptos_reloc)
         r = elf_relocate_ptos(h, &ptos_reloc_ph, load_base, &info, bias);
     else
@@ -1256,9 +1425,29 @@ LONG elf_pgmld(FH h, PD *p)
     if (r < 0L)
         return r;
 
+#if CONF_WITH_USER_ASPACE
+    /*
+     * An ET_EXEC moved to another address has its absolute addresses in the
+     * image, and only the relocation tables ld -q keeps say where.  A file
+     * with a section table but no such table (it was linked without -q) would
+     * be "relocated" by nothing and run with every one of them wrong: refuse
+     * it.  (A PIE with nothing to relocate is a different, valid case.)
+     */
+    if (bias != 0 && ehdr.e_type == ET_EXEC && !have_ptos_reloc && elf_reloc_tables == 0)
+    {
+        KDEBUG(("BDOS elf_pgmld: ET_EXEC moved but linked without relocations\n"));
+        return EPLFMT;
+    }
+#endif
+
     if (have_ptos_imports)
     {
-#if CONF_WITH_PTOS_ABI_IMPORTS
+#if CONF_WITH_USER_ASPACE
+        /* the kernel's exports are 64-bit addresses, which a 32-bit slot of a
+         * ring-3 program cannot hold */
+        (void)ptos_imports_ph;
+        return EPLFMT;
+#elif CONF_WITH_PTOS_ABI_IMPORTS
         return elf_resolve_imports(h, &ptos_imports_ph, load_base, &info);
 #else
         /* no export table to resolve against: binding nothing and
@@ -1272,5 +1461,47 @@ LONG elf_pgmld(FH h, PD *p)
 
     return 0;
 }
+
+#if CONF_WITH_USER_ASPACE
+/*
+ * elf_pgmld - load pass, called by kpgmld()
+ *
+ * A process with an address space of its own (x86-64) does not have its image
+ * placed in the TPA, which is its basepage and nothing more: elf_load_image()
+ * reads the file and relocates it, if it had to be moved, in place, in the
+ * pages the image will run from -- private pages of the new process's own
+ * address space, made now and adopted by the launch (mode 0, and a PE_LOAD by
+ * a caller with none), or a block of a ring-3 caller's heap, which PE_GO moves
+ * to the new process (PE_LOAD).  No kernel buffer holds it.  Either way the
+ * image belongs to the process it is for, not to the process that asked for
+ * it, and the process's kernel record owns the pages (or the block) from the
+ * moment they exist: the caller destroys the record if this fails.
+ */
+LONG elf_pgmld(FH h, PD *p)
+{
+    X32_LAYOUT layout;
+    ELFPLACE place;
+    LONG r;
+
+    place.va = 0;
+    place.pending = FALSE;
+    r = elf_load_image(h, p, &layout, &place);
+    kproc_load_leave();
+    if (r < 0L)
+    {
+        /* (the block in the caller's heap and the new process's address
+         * space are the process's record's, which the caller destroys) */
+        return r;
+    }
+    if (place.va
+        ? !kproc_set_moved_image(p, &layout, run, place.va, place.pages)
+        : !kproc_set_loaded_image(p, &layout))
+    {
+        KDEBUG(("BDOS elf_pgmld: image refused\n"));
+        return EPLFMT;
+    }
+    return 0;
+}
+#endif
 
 #endif /* CONF_WITH_ELF_LOADER */

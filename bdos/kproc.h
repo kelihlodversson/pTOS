@@ -54,6 +54,41 @@ BOOL kproc_prepare_user(PD *pd, PD *parent);
  * never read back from the user-writable p_tbase.
  */
 BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);
+/* A program Pexec() loads from a file (bdos/elfld.c) is read straight into pages
+ * of the address space that will be the new process's: kproc_load_begin() makes
+ * it and maps [va, va + bytes) in it, the image and the startup area after it
+ * (X86_64_USER_IMAGE_SLACK); kproc_load_enter() makes it the one in use while
+ * the loader fills the pages, kproc_load_leave() puts the previous one back (and
+ * destroying the process does too, for a disk error that jumps past the loader).
+ * kproc_set_loaded_image() then says where the segments are (`layout`, already
+ * relocated if it had to be), and gives each its permissions.  The launch adopts
+ * the address space.  If the launch fails after that the program is gone, and
+ * the basepage can only be freed. */
+BOOL kproc_load_begin(PD *pd, UQUAD va, UQUAD bytes);
+void kproc_load_enter(PD *pd);
+void kproc_load_leave(void);
+BOOL kproc_set_loaded_image(PD *pd, const X32_LAYOUT *layout);
+/*
+ * Pexec(PE_LOAD) from a ring-3 caller loads the program into the caller's own
+ * address space, in its heap, where it can read and patch it before the
+ * launch: kproc_load_alloc() takes the block for the process `child` that is
+ * being made and records it with the child, so that destroying the child, a
+ * failed load included, gives it back (0: none), the loader reads the file into it, in place, and
+ * kproc_set_moved_image() makes it the child's image, laid out as `layout`.
+ * Nothing is mapped for the child yet: PE_GO moves the block's pages, at the
+ * same addresses, from the caller's address space to the child's, with each
+ * segment's permissions.  The caller cannot free the block (Mfree() leaves it
+ * alone); freeing the child's basepage unlaunched gives it back, and so does
+ * kproc_load_release().  With PE_GOTHENFREE the pages stay with the child;
+ * with PE_GO (kproc_set_give_back()) they only are lent, and move back to the
+ * caller as Malloc() memory when the child ends.
+ */
+UQUAD kproc_load_alloc(PD *caller, PD *child, ULONG bytes);
+void kproc_load_release(PD *caller, UQUAD va);
+BOOL kproc_set_moved_image(PD *pd, const X32_LAYOUT *layout, PD *caller, UQUAD va, ULONG pages);
+/* PE_GO (not PE_GOTHENFREE): the image goes back to the caller's heap when the
+ * process ends, Pterm() or Ptermres(); call it before kproc_prepare_user(). */
+void kproc_set_give_back(PD *pd, BOOL give_back);
 /* Fsfirst()/Fsnext() search state kept kernel-side: kproc_dta_save() after a
  * search, kproc_dta_restore() before Fsnext() (FALSE: no search was made with
  * this DTA, the search is over). */
@@ -61,7 +96,7 @@ BOOL kproc_dta_restore(PD *pd, DTAINFO *dta);
 void kproc_dta_save(PD *pd, const DTAINFO *dta);
 void kproc_dta_forget(PD *pd, const DTAINFO *dta);   /* a new Fsfirst() starts */
 UQUAD kproc_ancestors_va(PD *pd);       /* where its basepage copies are; 0 if none */
-UQUAD kproc_user_entry(PD *pd);         /* image entry point; 0 if none */
+UQUAD kproc_user_entry(PD *pd);         /* image entry point; 0 if no image (it starts at p_tbase) */
 /* Hands the process's kernel stack (the one its system calls run on) to the
  * launcher, which frees it with x86_64_kstack_free() once the process has
  * exited and the launcher runs on its own stack again: the process's last
@@ -84,7 +119,19 @@ LONG kproc_check_launch(PD *pd, PD *caller);
 void kproc_unborrow(void *block);
 ULONG kproc_borrow_count(PD *launcher, void *block);
 UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top);
-UQUAD kproc_user_stack(PD *pd);         /* initial RSP of an image's own stack; 0 if none */
+/*
+ * Malloc() memory of a process with an address space: private pages in
+ * [X86_64_USER_HEAP_BASE, X86_64_USER_HEAP_LIMIT), freed with the process.
+ * Alloc returns the address of `bytes` rounded up to whole pages (0: none),
+ * largest what Malloc(-1) reports; free and shrink are Mfree() and
+ * Mshrink() of a block's start (EIMBA: no such block, EGSBF: bigger).
+ */
+BOOL kproc_has_heap(PD *pd);
+UQUAD kproc_uheap_alloc(PD *pd, ULONG bytes);
+ULONG kproc_uheap_largest(PD *pd);
+LONG kproc_uheap_free(PD *pd, UQUAD va);
+LONG kproc_uheap_shrink(PD *pd, UQUAD va, long len);
+UQUAD kproc_user_stack(PD *pd);         /* initial RSP of the private stack of a prepared process; 0 if not prepared */
 UQUAD kproc_user_pml4(PD *pd);          /* 0 if not prepared */
 X86_64_ASPACE *kproc_user_aspace(PD *pd);   /* NULL if none (tests) */
 ULONG kproc_count(void);                /* live records, for leak tests */

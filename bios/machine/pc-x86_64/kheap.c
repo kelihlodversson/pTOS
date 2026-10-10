@@ -54,7 +54,9 @@ static const UWORD class_size[] = { 64, 128, 256, 512, 1024, 2048 };
 #define NUM_CLASSES     (sizeof(class_size) / sizeof(class_size[0]))
 #define MAX_SMALL       (2048 - BLOCK_HDR)
 
-#define MAX_LARGE_PAGES 256     /* sanity bound: 1 MiB */
+/* sanity bound: 4 MiB and a page of header, the image window an x32 program is
+ * loaded in as one block (bdos/elfld.c) */
+#define MAX_LARGE_PAGES 1088
 
 static struct slab *partial[NUM_CLASSES];
 static KHEAP_STATS stats;
