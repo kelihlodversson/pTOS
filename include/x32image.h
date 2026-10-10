@@ -59,8 +59,11 @@ BOOL x86_64_x32image_load(X86_64_ASPACE *as, const X32_IMAGE *image, UQUAD *entr
 BOOL x86_64_x32image_layout(const X32_IMAGE *image, X32_LAYOUT *layout);
 
 /* Whether a layout satisfies the rules above.  `strict` also forbids a segment
- * that is both writable and executable (the built-in programs are; a program
- * loaded from a file may be a single flat read+write+execute segment). */
+ * that is both writable and executable.  The built-in programs are checked
+ * strict (x86_64_x32image_layout(), so kproc_set_image()), and are refused
+ * with such a segment; a program loaded from a file is not
+ * (kproc_set_loaded_image()), and may be a single flat read+write+execute
+ * segment. */
 BOOL x86_64_x32_layout_valid(const X32_LAYOUT *layout, BOOL strict);
 
 /* Maps and fills every segment as private memory of `as` (read+write+execute

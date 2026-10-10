@@ -226,8 +226,10 @@ Anything else -- a copy of a basepage, a block that is no basepage, somebody
 else's, an already launched or freed one, the caller's own running basepage --
 is EIMBA.  The fields the caller may have changed are then validated, each
 read once: p_lowtpa must be the basepage itself, p_hitpa within its block
-(rounded for the initial stack alignment), p_tbase inside the TPA, p_env the
-recorded environment block; otherwise EPLFMT.  The entry point, stack and
+(rounded for the initial stack alignment), p_env the recorded environment
+block, and, for a process without an image of its own, p_tbase inside the TPA;
+otherwise EPLFMT.  (A process with an image starts at the entry point the
+kernel recorded for it, so p_tbase is not looked at.)  The entry point, stack and
 bounds the launch uses come from the record and the validated values, never
 from fields that were not checked.  A process without an image of its own
 starts at p_tbase, in its TPA, on the private stack too -- not at p_hitpa.

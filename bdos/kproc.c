@@ -395,9 +395,12 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     /*
      * The process's own environment block and its basepage + TPA + stack
      * (the PD is the first thing in the TPA allocation, p_hitpa its end):
-     * two separate allocations, wherever the window put them.  They are
-     * user read/write/execute because the flat x32 image has a single RWX
-     * segment.  Then its parent's basepage, kernel-only: xterm() writes
+     * two separate allocations, wherever the window put them.  The environment
+     * is user read/write.  The TPA is user read/write too, and also execute
+     * only for a process without an image of its own, whose code (put there
+     * by the caller of Pexec(PE_BASEPAGE)) is in it; a process with an image
+     * runs that, from private pages mapped further down, and its TPA is data.
+     * Then its parent's basepage, kernel-only: xterm() writes
      * the exit code through it from ring 0 while this address space is
      * still loaded.  Any failure unwinds the whole address space.
      */
