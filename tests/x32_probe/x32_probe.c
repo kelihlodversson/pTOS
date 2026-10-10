@@ -860,7 +860,15 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (bpa <= 0)
             pterm(2);
         rc = sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", bpa, 0);
-        pterm(rc == 0 ? 0 : 4);
+        if (rc != 0)
+            pterm(4);
+        /* linked for another address without its relocations: refused, with
+         * EPLFMT, instead of run with every absolute address wrong */
+        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32NOREL.TOS",
+                  (s64)(int)(unsigned long)reloc_tail, 0);
+        if (rc == -33)
+            pterm(0x100);
+        pterm(rc == -66 ? 0 : 8);
         break;
     }
     case 'h': {
@@ -880,7 +888,8 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         static const char link_tail[] = { 1, 'i', 0 };
         s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
                       (s64)(int)(unsigned long)link_tail, 0);
-        s64 rc2;
+        static const char text_tail[] = { 1, 'T', 0 };
+        s64 rc2, rc3;
 
         if (rc == -33)
             pterm(0x100);
@@ -888,7 +897,21 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
                    (s64)(int)(unsigned long)link_tail, 0);
         if (rc2 == -33)
             pterm(0x100);
-        pterm((rc == 0 ? 0 : 1) | (rc2 == 0 ? 0 : 2));
+        /* and its text is read-only: a child that writes to it faults (0xffff) */
+        rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)text_tail, 0);
+        pterm((rc == 0 ? 0 : 1) | (rc2 == 0 ? 0 : 2) | (rc3 == 0xffff ? 0 : 4));
+        break;
+    }
+    case 'F': {
+        /* what is not Malloc() memory takes the ordinary path with the same
+         * narrowed pointer: a basepage this process made (Pexec mode 5) is
+         * freed through a pointer with other bits in the upper half (#434) */
+        s64 bpa = sys4(GEMDOS, 0x4b, 5, 0, (s64)(int)(unsigned long)"", 0);
+
+        if (bpa <= 0)
+            pterm(1);
+        pterm(sys4(GEMDOS, 0x49, bpa | 0xffff00000000LL, 0, 0, 0) == 0 ? 0 : 2);
         break;
     }
     case 'u':

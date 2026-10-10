@@ -591,6 +591,9 @@ static LONG elf_relocate_section(FH h, const Elf32_Shdr *sh, BOOL rela,
 }
 
 /* apply every relocation section retained by ld --emit-relocs */
+/* how many SHT_REL/SHT_RELA tables the last elf_relocate() applied */
+static UWORD elf_reloc_tables;
+
 static LONG elf_relocate(FH h, const Elf32_Ehdr *e, UBYTE *load_base,
                          const ELFINFO *info, LONG bias)
 {
@@ -600,6 +603,7 @@ static LONG elf_relocate(FH h, const Elf32_Ehdr *e, UBYTE *load_base,
     LONG r;
     UWORD i;
 
+    elf_reloc_tables = 0;
     if (bias == 0)
         return 0;   /* loaded at its link address: nothing to relocate */
 
@@ -672,6 +676,7 @@ static LONG elf_relocate(FH h, const Elf32_Ehdr *e, UBYTE *load_base,
                 continue;
         }
 
+        elf_reloc_tables++;
         if (sh.sh_type == SHT_REL)
             r = elf_relocate_section(h, &sh, FALSE, load_base, info, bias);
         else
@@ -1348,6 +1353,21 @@ LONG elf_pgmld(FH h, PD *p)
         r = elf_relocate(h, &ehdr, load_base, &info, bias);
     if (r < 0L)
         return r;
+
+#if CONF_WITH_USER_ASPACE
+    /*
+     * An ET_EXEC moved to another address has its absolute addresses in the
+     * image, and only the relocation tables ld -q keeps say where.  A file
+     * with a section table but no such table (it was linked without -q) would
+     * be "relocated" by nothing and run with every one of them wrong: refuse
+     * it.  (A PIE with nothing to relocate is a different, valid case.)
+     */
+    if (bias != 0 && ehdr.e_type == ET_EXEC && !have_ptos_reloc && elf_reloc_tables == 0)
+    {
+        KDEBUG(("BDOS elf_pgmld: ET_EXEC moved but linked without relocations\n"));
+        return EPLFMT;
+    }
+#endif
 
     if (have_ptos_imports)
     {

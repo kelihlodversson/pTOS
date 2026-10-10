@@ -738,9 +738,10 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 # doc/install.txt.
 X32_CFLAGS = -mx32 -ffreestanding -fno-asynchronous-unwind-tables \
              -fno-unwind-tables -fcf-protection=none -fno-pie
-X32_LDFLAGS = -nostdlib -static -no-pie -Wl,--build-id=none \
-              -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
-              -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000 -Wl,-q
+X32_LDFLAGS_NOQ = -nostdlib -static -no-pie -Wl,--build-id=none \
+                  -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
+                  -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000
+X32_LDFLAGS = $(X32_LDFLAGS_NOQ) -Wl,-q
 
 x32hello.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
 	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $^
@@ -751,10 +752,15 @@ x32hello.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
 x32reloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
 	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -o $@ $^
 
-.PHONY: x32test
-x32test: x32hello.elf x32reloc.elf
+# ... and linked for another address without keeping the relocations (no -q):
+# Pexec() must refuse it, not run it with every absolute address wrong.
+x32noreloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS_NOQ) -Wl,-Ttext-segment=0x20000000 -o $@ $^
 
-TOCLEAN += x32hello.elf x32reloc.elf
+.PHONY: x32test
+x32test: x32hello.elf x32reloc.elf x32noreloc.elf
+
+TOCLEAN += x32hello.elf x32reloc.elf x32noreloc.elf
 
 #
 # The built-in EmuCON (#398).  On x86-64 the command processor is not linked

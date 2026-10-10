@@ -1324,11 +1324,14 @@ static void test_ring3(void)
         if (rc == 0x100) {
             kcprintf("x86-64 private image: SKIP (no C:\\X32HELLO.TOS or X32RELOC.TOS)\n");
         } else {
-            CHECK(rc == 0, "a new process has its image in the image window");
+            CHECK(rc == 0, "a new process has its image in the image window, the text read-only");
             kcprintf(rc == 0 ? "x86-64 private image: PASS\n" : "x86-64 private image: FAIL (0x%lx)\n", rc);
         }
         same(&s, "a program mapped into the image window");
     }
+
+    /* Mfree() of an ordinary block is given the pointer as an x32 value (#434) */
+    probe_expect('F', 0, "Mfree of a basepage through a pointer with upper bits set");
 
     /* a program loaded from a file gets Malloc() memory of its own (#434) */
     {

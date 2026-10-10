@@ -589,24 +589,31 @@ restrt:
 
         /* the arguments are x32 values in 64-bit syscall slots: a LONG is
          * its low 32 bits (Malloc(-1) arrives as 0xffffffff, or sign-extended),
-         * a pointer is zero-extended */
+         * a pointer is zero-extended.  They are narrowed in the slots
+         * themselves, so that the ordinary path below -- Mfree() of the
+         * environment, Mshrink() of a basepage loaded for the caller -- gets
+         * the same values. */
         switch (fn)
         {
         case GEMDOS_MALLOC:
         case GEMDOS_MXALLOC:
-            amount = (LONG)pw[1];
+            pw[1] = (LONG)pw[1];
+            amount = pw[1];
             if (amount == -1L)
                 return (long)kproc_uheap_largest(run);
             if (amount <= 0L)
                 return 0;
             return (long)kproc_uheap_alloc(run, (ULONG)amount);
         case GEMDOS_MFREE:
-            if ((ULONG)pw[1] >= X86_64_USER_HEAP_BASE && (ULONG)pw[1] < X86_64_USER_HEAP_LIMIT)
+            pw[1] = (ULONG)pw[1];
+            if (pw[1] >= X86_64_USER_HEAP_BASE && pw[1] < X86_64_USER_HEAP_LIMIT)
                 return kproc_uheap_free(run, (ULONG)pw[1]);
             break;
         case GEMDOS_MSHRINK:
-            if ((ULONG)pw[2] >= X86_64_USER_HEAP_BASE && (ULONG)pw[2] < X86_64_USER_HEAP_LIMIT)
-                return kproc_uheap_shrink(run, (ULONG)pw[2], (LONG)pw[3]);
+            pw[2] = (ULONG)pw[2];
+            pw[3] = (LONG)pw[3];
+            if (pw[2] >= X86_64_USER_HEAP_BASE && pw[2] < X86_64_USER_HEAP_LIMIT)
+                return kproc_uheap_shrink(run, (ULONG)pw[2], pw[3]);
             break;
         }
     }

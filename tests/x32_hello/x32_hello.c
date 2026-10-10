@@ -244,6 +244,12 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 
         gemdos1(0x4c, here >= 0x400000UL && here < 0x800000UL ? 0 : 1);
     }
+    if (cmdline[0] == 1 && cmdline[1] == 'T') {
+        /* the text is read-only: writing to it faults, which ends this
+         * process as Pterm(-1) (#434) */
+        *(volatile unsigned char *)(unsigned long)&x32_entry_probe = 0x90;
+        gemdos1(0x4c, 0);               /* not reached unless the text is writable */
+    }
     if (cmdline[0] == 1 && cmdline[1] == 'r')
         gemdos2(0x31, 0x100, 0);        /* Ptermres(0x100, 0): stay resident */
 

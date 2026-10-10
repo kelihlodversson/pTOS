@@ -271,6 +271,9 @@ jobs:
           # the same program linked for another address, which Pexec() has to
           # move into the image window and relocate
           cp x32reloc.elf esp/X32RELOC.TOS
+          # ... and one linked for another address without relocations, which
+          # must be refused
+          cp x32noreloc.elf esp/X32NOREL.TOS
           cp /usr/share/OVMF/OVMF_VARS_4M.fd .
 
           set +e
