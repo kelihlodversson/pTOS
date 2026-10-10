@@ -1220,7 +1220,12 @@ LONG elf_pgmld(FH h, PD *p)
     p->p_dbase = PTR_TO_USERPTR((UBYTE *)(uintptr_t)((ULONG)info.file_end + (ULONG)bias));
     p->p_dlen  = 0;
     p->p_bbase = PTR_TO_USERPTR((UBYTE *)(uintptr_t)((ULONG)info.file_end + (ULONG)bias));
-    p->p_blen  = (LONG)(info.mem_end - info.file_end);
+    /* the bss runs to the end of the image's last page, where the startup area
+     * begins: the C startup code puts argv and environ at p_bbase + p_blen,
+     * which must not be inside a read-only last segment */
+    p->p_blen  = (LONG)(((ULONG)info.mem_end + (ULONG)bias + X86_64_USER_PAGE_SIZE - 1)
+                        / X86_64_USER_PAGE_SIZE * X86_64_USER_PAGE_SIZE
+                        - ((ULONG)info.file_end + (ULONG)bias));
     layout->nseg = 0;
     layout->end = 0;
     layout->entry = (ULONG)ehdr.e_entry + (ULONG)bias;

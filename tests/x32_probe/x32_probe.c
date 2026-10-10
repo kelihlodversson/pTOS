@@ -888,7 +888,8 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
          * (0xffff) */
         static const char link_tail[] = { 1, 'i', 0 };
         static const char text_tail[] = { 1, 'T', 0 };
-        s64 rc, rc2, rc3;
+        static const char area_tail[] = { 1, 'S', 0 };
+        s64 rc, rc2, rc3, rc4;
 
         rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
                   (s64)(int)(unsigned long)link_tail, 0);
@@ -900,7 +901,11 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             pterm(0x100);
         rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
                    (s64)(int)(unsigned long)text_tail, 0);
-        pterm((rc == 0 ? 0 : 1) | (rc2 == 0 ? 0 : 2) | (rc3 == 0xffff ? 0 : 4));
+        /* and the startup area after it holds what the C startup code builds */
+        rc4 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)area_tail, 0);
+        pterm((rc == 0 ? 0 : 1) | (rc2 == 0 ? 0 : 2) | (rc3 == 0xffff ? 0 : 4) |
+              (rc4 == 0 ? 0 : 8));
         break;
     }
     case 'F': {

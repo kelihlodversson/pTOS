@@ -245,6 +245,21 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 
         gemdos1(0x4c, here >= 0x400000UL && here < 0x800000UL ? 0 : 1);
     }
+    if (cmdline[0] == 1 && cmdline[1] == 'S') {
+        /* the startup area: the bss is advertised as running to a page
+         * boundary, and 0x10800 bytes (the biggest environment a caller may
+         * give is 16383 four-byte environ slots) can be written from
+         * p_bbase + p_blen + 4 on (#434) */
+        const u32 *bp = (const u32 *)(unsigned long)basepage;
+        volatile unsigned char *at = (volatile unsigned char *)(unsigned long)(bp[6] + bp[7] + 4);
+        u32 k;
+
+        if ((bp[6] + bp[7]) & 0xfff)
+            gemdos1(0x4c, 1);
+        for (k = 0; k < 0x10800; k++)
+            at[k] = (unsigned char)k;
+        gemdos1(0x4c, 0);
+    }
     if (cmdline[0] == 1 && cmdline[1] == 'T') {
         /* the text is read-only: writing to it faults, which ends this
          * process as Pterm(-1) (#434) */

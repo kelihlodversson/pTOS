@@ -178,8 +178,11 @@ typedef struct x86_64_aspace X86_64_ASPACE;
 /* Zeroed read/write memory mapped right after the last page of a program
  * loaded from a file: where the C startup code of the TOS tradition puts the
  * argv and environ arrays it builds (libcmini's parseargs() uses the space
- * after the bss). */
-#define X86_64_USER_IMAGE_SLACK 0x00010000ULL
+ * after the bss).  Sized for the worst a ring-3 caller may hand over: an
+ * environment of 32766 bytes (bdos/uaccess.c) is at most 16383 strings, each
+ * with a 4-byte environ slot (64 KiB), and the command line, its copy and
+ * argv add a few hundred bytes. */
+#define X86_64_USER_IMAGE_SLACK 0x00020000ULL
 #define X86_64_USER_HEAP_BASE   0x10000000ULL
 #define X86_64_USER_HEAP_LIMIT  0x3f000000ULL
 #define X86_64_USER_STACK_TOP   0x40000000ULL

@@ -94,7 +94,7 @@ The constants are in include/procmem.h.
     0x00200000 - 0x003fffff   basepage, environment and TPA blocks (window)
     0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB); for a
                               program loaded from a file also the startup
-                              area, 64 KiB of zeroed read/write memory right
+                              area, 128 KiB of zeroed read/write memory right
                               after the image's last page
     0x10000000 - 0x3effffff   Malloc() memory, private pages (below)
     0x3ffb0000 - 0x3ffb0fff   ancestors' basepages, read-only (below)
@@ -147,7 +147,7 @@ private:
 
   startup area      what the C startup code of the TOS tradition builds argv
                     and environ in, right after the bss (libcmini's
-                    parseargs()): 64 KiB (X86_64_USER_IMAGE_SLACK) of zeroed
+                    parseargs()): 128 KiB (X86_64_USER_IMAGE_SLACK) of zeroed
                     read/write memory after the last page of a program
                     loaded from a file.  Taking it from the kernel, not from
                     a TPA to carve a stack out of, is what lets that code run
