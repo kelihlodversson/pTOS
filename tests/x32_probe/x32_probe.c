@@ -910,7 +910,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
                    (s64)(int)(unsigned long)link_tail, 0);
         rc4 = (mine == 0x1234) ? gemdos(0x48, 4096, 0) : 0;
-        pterm((rc < 0 ? 0 : 1) | (rc2 < 0 || rc2 == 0 ? 0 : 2) | (rc3 == 0 ? 0 : 4) |
+        pterm((rc < 0 ? 0 : 1) | (rc2 < 0 ? 0 : 2) | (rc3 == 0 ? 0 : 4) |
               (rc4 > 0 ? 0 : 8));
         break;
     }

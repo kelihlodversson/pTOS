@@ -1468,11 +1468,14 @@ LONG elf_pgmld(FH h, PD *p)
  *
  * A process with an address space of its own (x86-64) does not have its image
  * placed in the TPA, which is its basepage and nothing more: elf_load_image()
- * builds the image in a flat kernel buffer, relocated if it had to be moved
- * into the image window, and the process's kernel record keeps it until the
- * launch maps the segments as private pages of the new address space.  That
- * holds for every way of loading (PE_LOADGO and PE_LOAD alike): the image
- * belongs to the process it is for, not to the process that asked for it.
+ * reads the file and relocates it, if it had to be moved, in place, in the
+ * pages the image will run from -- private pages of the new process's own
+ * address space, made now and adopted by the launch (mode 0, and a PE_LOAD by
+ * a caller with none), or a block of a ring-3 caller's heap, which PE_GO moves
+ * to the new process (PE_LOAD).  No kernel buffer holds it.  Either way the
+ * image belongs to the process it is for, not to the process that asked for
+ * it, and the process's kernel record owns the pages (or the block) from the
+ * moment they exist: the caller destroys the record if this fails.
  */
 LONG elf_pgmld(FH h, PD *p)
 {
