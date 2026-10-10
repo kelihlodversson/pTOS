@@ -1184,18 +1184,20 @@ LONG elf_pgmld(FH h, PD *p)
     {
         ULONG span = info.mem_end - info.link_base;
         ULONG lo = info.link_base & ~(ULONG)(X86_64_USER_PAGE_SIZE - 1);
+        /* the window must also hold the startup area (X86_64_USER_IMAGE_SLACK)
+         * from the page after the image's last one */
+        ULONG limit = X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK;
 
         if (info.link_base >= X86_64_USER_IMAGE_BASE
-         && info.mem_end + X86_64_USER_PAGE_SIZE + X86_64_USER_IMAGE_SLACK
-            <= X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE)
+         && ((ULONG)info.mem_end + X86_64_USER_PAGE_SIZE - 1) / X86_64_USER_PAGE_SIZE
+            * X86_64_USER_PAGE_SIZE <= limit)
             bias = 0;
         else
             bias = (LONG)(X86_64_USER_IMAGE_BASE - lo);
-        /* the image and the startup area after it (X86_64_USER_IMAGE_SLACK) */
-        if (span > X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK - X86_64_USER_PAGE_SIZE
+        if (span > limit - X86_64_USER_IMAGE_BASE
          || (ULONG)info.link_base + (ULONG)bias < X86_64_USER_IMAGE_BASE
-         || (ULONG)info.mem_end + (ULONG)bias + X86_64_USER_PAGE_SIZE + X86_64_USER_IMAGE_SLACK
-            > X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE)
+         || ((ULONG)info.mem_end + (ULONG)bias + X86_64_USER_PAGE_SIZE - 1)
+            / X86_64_USER_PAGE_SIZE * X86_64_USER_PAGE_SIZE > limit)
         {
             KDEBUG(("BDOS elf_pgmld: image does not fit the image window\n"));
             return ENSMEM;
