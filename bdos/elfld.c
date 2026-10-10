@@ -1230,8 +1230,9 @@ LONG elf_pgmld(FH h, PD *p)
              */
             ULONG imgpages = (info.mem_end - lo + X86_64_USER_PAGE_SIZE - 1) / X86_64_USER_PAGE_SIZE;
 
-            if (info.mem_end - lo > X86_64_USER_HEAP_LIMIT - X86_64_USER_HEAP_BASE
-             - X86_64_USER_IMAGE_SLACK - X86_64_USER_PAGE_SIZE)
+            /* (the rounded image and the startup area must fit the heap, exactly) */
+            if ((UQUAD)imgpages * X86_64_USER_PAGE_SIZE + X86_64_USER_IMAGE_SLACK
+                > X86_64_USER_HEAP_LIMIT - X86_64_USER_HEAP_BASE)
                 return ENSMEM;
             place->pages = imgpages + X86_64_USER_IMAGE_SLACK / X86_64_USER_PAGE_SIZE;
             place->va = kproc_load_alloc(run, p, place->pages * X86_64_USER_PAGE_SIZE);
@@ -1248,6 +1249,7 @@ LONG elf_pgmld(FH h, PD *p)
                 bias = 0;
             else
                 bias = (LONG)(X86_64_USER_IMAGE_BASE - lo);
+            /* (span first: it keeps the sums below from wrapping) */
             if (span > limit - X86_64_USER_IMAGE_BASE
              || (ULONG)info.link_base + (ULONG)bias < X86_64_USER_IMAGE_BASE
              || ((ULONG)info.mem_end + (ULONG)bias + X86_64_USER_PAGE_SIZE - 1)
