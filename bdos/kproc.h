@@ -65,7 +65,8 @@ BOOL kproc_set_loaded_image(PD *pd, const X32_LAYOUT *layout, UBYTE *data);
  * Pexec(PE_LOAD) from a ring-3 caller loads the program into the caller's own
  * address space, in its heap, where it can read and patch it before the
  * launch: kproc_load_alloc() takes the block for the process `child` that is
- * being made (0: none), kproc_load_write() fills it, and
+ * being made and records it with the child, so that destroying the child, a
+ * failed load included, gives it back (0: none), kproc_load_write() fills it, and
  * kproc_set_moved_image() makes it the child's image, laid out as `layout`.
  * Nothing is mapped for the child yet: PE_GO moves the block's pages, at the
  * same addresses, from the caller's address space to the child's, with each
@@ -81,7 +82,12 @@ void kproc_load_release(PD *caller, UQUAD va);
 BOOL kproc_set_moved_image(PD *pd, const X32_LAYOUT *layout, PD *caller, UQUAD va, ULONG pages);
 /* PE_GO (not PE_GOTHENFREE): the image goes back to the caller's heap when the
  * process ends, Pterm() or Ptermres(); call it before kproc_prepare_user(). */
-void kproc_set_give_back(PD *pd);
+void kproc_set_give_back(PD *pd, BOOL give_back);
+/* The buffer an image is built in is held by the process's record from the
+ * start (freed with it, so a disk error cannot leak it); kproc_drop_buffer()
+ * frees it once the image is somewhere else. */
+BOOL kproc_hold_buffer(PD *pd, UBYTE *data);
+void kproc_drop_buffer(PD *pd);
 /* Fsfirst()/Fsnext() search state kept kernel-side: kproc_dta_save() after a
  * search, kproc_dta_restore() before Fsnext() (FALSE: no search was made with
  * this DTA, the search is over). */

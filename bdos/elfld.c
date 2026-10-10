@@ -1259,6 +1259,11 @@ LONG elf_pgmld(FH h, PD *p)
         load_base = kalloc(span);
         if (!load_base)
             return ENSMEM;
+        if (!kproc_hold_buffer(p, load_base))
+        {
+            kfree(load_base);
+            return ENSMEM;
+        }
         *flatp = load_base;
     }
 
@@ -1468,9 +1473,8 @@ LONG elf_pgmld(FH h, PD *p)
     r = elf_load_image(h, p, &flat, &layout, &place);
     if (r < 0L)
     {
-        kfree(flat);
-        if (place.va)
-            kproc_load_release(run, place.va);
+        /* (the buffer and the block in the caller's heap are the process's
+         * record's, which the caller destroys) */
         return r;
     }
     if (place.va)
@@ -1480,10 +1484,9 @@ LONG elf_pgmld(FH h, PD *p)
         BOOL ok = kproc_load_write(run, place.image_va, flat, place.span)
                && kproc_set_moved_image(p, &layout, run, place.va, place.pages);
 
-        kfree(flat);
+        kproc_drop_buffer(p);
         if (!ok)
         {
-            kproc_load_release(run, place.va);
             KDEBUG(("BDOS elf_pgmld: image refused\n"));
             return EPLFMT;
         }

@@ -1360,6 +1360,17 @@ static void test_ring3(void)
         same(&s, "PE_LOAD and PE_GO from ring 3");
     }
 
+    /* the same with the child leaving a block below its image */
+    {
+        snap(&s);
+        rc = run_probe('H');
+        if (rc != 0x100) {
+            CHECK(rc == 0, "PE_GO gives the image back although the child put a block below it");
+            kcprintf(rc == 0 ? "x86-64 pexec go gives back with a gap: PASS\n" : "x86-64 pexec go gives back with a gap: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "PE_LOAD and PE_GO with a gap");
+    }
+
     /* PE_LOAD and PE_GOTHENFREE with a physical allocation failing at every
      * point: whatever fails, nothing is leaked and the caller carries on (#434) */
     snap(&s);
@@ -1368,6 +1379,7 @@ static void test_ring3(void)
         probe_may_fail_early = TRUE;
         (void)run_probe('l');
         (void)run_probe('G');
+        (void)run_probe('H');
         probe_may_fail_early = FALSE;
         x86_64_pmem_test_fail_after(0);
     }

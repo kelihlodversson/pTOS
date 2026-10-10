@@ -836,6 +836,39 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(bad);
         break;
     }
+    case 'H': {
+        /* the same with the child leaving a block of its own below the image */
+        static const char patch_tail[] = { 1, 'm', 0 };
+        s64 bpa, rc, gap;
+        volatile u32 *bpp, *w;
+        u32 first;
+
+        /* a gap below the program: the heap's first block is freed again */
+        gap = gemdos(0x48, 0x10000, 0);
+        if (gap <= 0)
+            pterm(64);
+        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)patch_tail, 0);
+        bpp = (volatile u32 *)(unsigned long)bpa;
+        if (bpa == -33)
+            pterm(0x100);
+        if (bpa <= 0)
+            pterm(0x200 | (int)(-bpa & 0xff));
+        first = (bpp[4] - bpp[3]) & ~3u;
+        w = (volatile u32 *)(unsigned long)first;
+        if (gemdos(0x49, gap, 0) != 0)
+            bad |= 128;
+        rc = sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", bpa, 0);
+        if (rc != 0)
+            bad |= 4;                       /* the program's own exit code */
+        (void)*w;                           /* readable again */
+        if (gemdos(0x49, first & ~0xfffu, 0) != 0)
+            bad |= 8;                       /* a block of ours now, though the child put its own below it */
+        if (gemdos(0x49, first & ~0xfffu, 0) == 0)
+            bad |= 16;                      /* and only once */
+        pterm(bad);
+        break;
+    }
     case 'y': {
         /* a child must not free what its parent holds: the child (tail F and
          * the address in hex) tries to Mfree this process's basepage */

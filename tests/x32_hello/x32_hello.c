@@ -186,6 +186,11 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         __asm__ ("leal x32_reloc_target(%%rip), %0" : "=r" (relative));
         gemdos1(0x4c, absolute == relative ? 0 : 1);
     }
+    if (cmdline[0] == 1 && cmdline[1] == 'm') {
+        /* a block left allocated at the exit: the heap table has it below the
+         * image if the launcher left a gap there (#434) */
+        gemdos1(0x4c, gemdos1r(0x48, 4096) > 0 ? 0 : 1);
+    }
     if (cmdline[0] == 1 && cmdline[1] == 'h') {
         /* Malloc() memory is private pages in the heap range, usable, zeroed
          * and given back by Mfree() and Mshrink() (#434) */
