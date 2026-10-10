@@ -37,10 +37,10 @@ because a uniform shift of the whole image preserves their offsets.
 Accepted binaries
 -----------------
 
-(On x86-64 the image is not placed in the TPA at all: it is built in a flat
-buffer (or, for a PE_LOAD by a ring-3 caller, in the block of the caller's heap
-it will be in), relocated by this loader if it was not linked for the image window,
-and mapped into the process's own address space, see
+(On x86-64 the image is not placed in the TPA at all: it is read, and relocated
+by this loader if it was not linked for the image window, straight into the
+pages the process will run from, in the process's own address space or, for a
+PE_LOAD by a ring-3 caller, in a block of the caller's heap, see
 doc/x86_64-address-space.txt.)
 
 The loader accepts a statically linked, native-endian ELF32 for the machine

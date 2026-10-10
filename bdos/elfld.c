@@ -1150,12 +1150,14 @@ void elf_set_load_into_caller(BOOL wanted)
 
 /* where elf_load_image() put the image if it went into the caller's heap */
 typedef struct {
-    UQUAD va;           /* the block (0: the image is in a flat kernel buffer for the launch) */
+    UQUAD va;           /* the block (0: none) */
     ULONG pages;
     UQUAD image_va;     /* where the image's first byte (link_base) is in it */
+    BOOL pending;       /* the image is in the new process's own address space,
+                         * made for it now (kproc_load_begin()) */
 } ELFPLACE;
 
-static LONG elf_load_image(FH h, PD *p, UBYTE **flatp, X32_LAYOUT *layout, ELFPLACE *place)
+static LONG elf_load_image(FH h, PD *p, X32_LAYOUT *layout, ELFPLACE *place)
 #else
 LONG elf_pgmld(FH h, PD *p)
 #endif
@@ -1201,14 +1203,13 @@ LONG elf_pgmld(FH h, PD *p)
 
 #if CONF_WITH_USER_ASPACE
     /*
-     * (A PE_LOAD by a ring-3 caller builds it straight in the block it gets in
-     * the caller's heap, below, and has no buffer.)  Otherwise the image is
-     * built in a flat kernel buffer holding the bytes of
-     * [link_base, mem_end), relocated there if it has to be, and then mapped
-     * into the process's own address space when the process is launched (see
-     * kproc_set_loaded_image()).  It goes where it was linked for if that lies
-     * in the image window; otherwise it is moved into the window, to its first
-     * page, and relocated by the distance.
+     * The image is read, and relocated if it has to be, straight into the pages
+     * it will run from, with no buffer in between: the block a PE_LOAD by a
+     * ring-3 caller gets in the caller's heap, or private pages of the new
+     * process's own address space, made now (kproc_load_begin()) and entered
+     * for the loading.  It goes where it was linked for if that lies in the
+     * image window; otherwise it is moved into the window, to its first page,
+     * and relocated by the distance.
      */
     {
         ULONG span = info.mem_end - info.link_base;
@@ -1255,26 +1256,21 @@ LONG elf_pgmld(FH h, PD *p)
                 KDEBUG(("BDOS elf_pgmld: image does not fit the image window\n"));
                 return ENSMEM;
             }
-        }
-        if (place->va)
-        {
-            /* the file is read, and relocated, straight into the block: the
-             * caller's address space is the one in use, and the block is
-             * mapped and zero */
-            load_base = (UBYTE *)(uintptr_t)place->image_va;
-        }
-        else
-        {
-            load_base = kalloc(span);
-            if (!load_base)
+            /* the new process's address space is made now, with the image's
+             * pages and the startup area after them: the file is read straight
+             * into it, below */
+            if (!kproc_load_begin(p, lo + (ULONG)bias,
+                                  ((ULONG)info.mem_end + (ULONG)bias + X86_64_USER_PAGE_SIZE - 1)
+                                  / X86_64_USER_PAGE_SIZE * X86_64_USER_PAGE_SIZE
+                                  + X86_64_USER_IMAGE_SLACK - (lo + (ULONG)bias)))
                 return ENSMEM;
-            if (!kproc_hold_buffer(p, load_base))
-            {
-                kfree(load_base);
-                return ENSMEM;
-            }
-            *flatp = load_base;
+            place->pending = TRUE;
+            place->image_va = (ULONG)info.link_base + (ULONG)bias;
         }
+        /* the file is read, and relocated, straight into the pages of the image
+         * (the block in the caller's heap, or the new process's pending address
+         * space, which is in use for that): no kernel buffer holds it */
+        load_base = (UBYTE *)(uintptr_t)place->image_va;
     }
 
     /* the segment fields describe where the image will be; execution starts
@@ -1335,6 +1331,10 @@ LONG elf_pgmld(FH h, PD *p)
      * needlessly, and slowly (each never-touched guest page can fault
      * in fresh host memory under an emulator), looks indistinguishable
      * from a hang for a program given a large default allocation. */
+#if CONF_WITH_USER_ASPACE
+    if (place->pending)
+        kproc_load_enter(p);            /* (left by elf_pgmld(), or by destroying the process) */
+#endif
     bzero(load_base, (LONG)(info.mem_end - info.link_base));
 
     if (u32_mul_overflow((ULONG)ehdr.e_phnum, (ULONG)ehdr.e_phentsize, &ph_table_size)
@@ -1474,32 +1474,23 @@ LONG elf_pgmld(FH h, PD *p)
  */
 LONG elf_pgmld(FH h, PD *p)
 {
-    UBYTE *flat = NULL;
     X32_LAYOUT layout;
     ELFPLACE place;
     LONG r;
 
     place.va = 0;
-    r = elf_load_image(h, p, &flat, &layout, &place);
+    place.pending = FALSE;
+    r = elf_load_image(h, p, &layout, &place);
+    kproc_load_leave();
     if (r < 0L)
     {
-        /* (the buffer and the block in the caller's heap are the process's
-         * record's, which the caller destroys) */
+        /* (the block in the caller's heap and the new process's address
+         * space are the process's record's, which the caller destroys) */
         return r;
     }
-    if (place.va)
-    {
-        /* PE_LOAD: the image was read and relocated in place, in the block in
-         * the caller's heap */
-        if (!kproc_set_moved_image(p, &layout, run, place.va, place.pages))
-        {
-            KDEBUG(("BDOS elf_pgmld: image refused\n"));
-            return EPLFMT;
-        }
-        return 0;
-    }
-    /* takes the buffer, also when it refuses the layout */
-    if (!kproc_set_loaded_image(p, &layout, flat))
+    if (place.va
+        ? !kproc_set_moved_image(p, &layout, run, place.va, place.pages)
+        : !kproc_set_loaded_image(p, &layout))
     {
         KDEBUG(("BDOS elf_pgmld: image refused\n"));
         return EPLFMT;

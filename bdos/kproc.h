@@ -54,13 +54,20 @@ BOOL kproc_prepare_user(PD *pd, PD *parent);
  * never read back from the user-writable p_tbase.
  */
 BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);
-/* The same for a program Pexec() loaded from a file (bdos/elfld.c): `layout`
- * says where its segments go in the process's address space, already
- * relocated if it had to be, and `data` is a kfree()able block they point
- * into, which the record takes over (and frees once the launch has mapped the
- * segments, or with the record).  The launch also maps a startup area after
- * the image (X86_64_USER_IMAGE_SLACK). */
-BOOL kproc_set_loaded_image(PD *pd, const X32_LAYOUT *layout, UBYTE *data);
+/* A program Pexec() loads from a file (bdos/elfld.c) is read straight into pages
+ * of the address space that will be the new process's: kproc_load_begin() makes
+ * it and maps [va, va + bytes) in it, the image and the startup area after it
+ * (X86_64_USER_IMAGE_SLACK); kproc_load_enter() makes it the one in use while
+ * the loader fills the pages, kproc_load_leave() puts the previous one back (and
+ * destroying the process does too, for a disk error that jumps past the loader).
+ * kproc_set_loaded_image() then says where the segments are (`layout`, already
+ * relocated if it had to be), and gives each its permissions.  The launch adopts
+ * the address space.  If the launch fails after that the program is gone, and
+ * the basepage can only be freed. */
+BOOL kproc_load_begin(PD *pd, UQUAD va, UQUAD bytes);
+void kproc_load_enter(PD *pd);
+void kproc_load_leave(void);
+BOOL kproc_set_loaded_image(PD *pd, const X32_LAYOUT *layout);
 /*
  * Pexec(PE_LOAD) from a ring-3 caller loads the program into the caller's own
  * address space, in its heap, where it can read and patch it before the
@@ -82,11 +89,6 @@ BOOL kproc_set_moved_image(PD *pd, const X32_LAYOUT *layout, PD *caller, UQUAD v
 /* PE_GO (not PE_GOTHENFREE): the image goes back to the caller's heap when the
  * process ends, Pterm() or Ptermres(); call it before kproc_prepare_user(). */
 void kproc_set_give_back(PD *pd, BOOL give_back);
-/* The buffer an image is built in is held by the process's record from the
- * start (freed with it, so a disk error cannot leak it); kproc_drop_buffer()
- * frees it once the image is somewhere else. */
-BOOL kproc_hold_buffer(PD *pd, UBYTE *data);
-void kproc_drop_buffer(PD *pd);
 /* Fsfirst()/Fsnext() search state kept kernel-side: kproc_dta_save() after a
  * search, kproc_dta_restore() before Fsnext() (FALSE: no search was made with
  * this DTA, the search is over). */

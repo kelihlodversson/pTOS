@@ -190,6 +190,12 @@ typedef struct x86_64_aspace X86_64_ASPACE;
 
 X86_64_ASPACE *x86_64_aspace_create(void);
 void x86_64_aspace_destroy(X86_64_ASPACE *as);
+/* Makes `as` the address space in use (returns the one that was, a CR3 value for
+ * x86_64_aspace_leave()): ring 0 can then address its user pages by their user
+ * addresses, as it does under a process's own system calls.  Nothing in the
+ * kernel may rely on the previous address space's user half meanwhile. */
+UQUAD x86_64_aspace_enter(X86_64_ASPACE *as);
+void x86_64_aspace_leave(UQUAD previous);
 UQUAD x86_64_aspace_pml4(const X86_64_ASPACE *as);
 
 /*

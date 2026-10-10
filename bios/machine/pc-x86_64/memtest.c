@@ -1373,6 +1373,18 @@ static void test_ring3(void)
         same(&s, "PE_LOAD of a big program");
     }
 
+    /* a program whose file is cut short: the loading fails with the new
+     * process's address space in use (#434) */
+    {
+        snap(&s);
+        rc = run_probe('D');
+        if (rc != 0x100) {
+            CHECK(rc == 0, "a failed load puts the loader's address space back");
+            kcprintf(rc == 0 ? "x86-64 pexec truncated: PASS\n" : "x86-64 pexec truncated: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "a failed load");
+    }
+
     /* the same with the child leaving a block below its image */
     {
         snap(&s);
@@ -1384,7 +1396,7 @@ static void test_ring3(void)
         same(&s, "PE_LOAD and PE_GO with a gap");
     }
 
-    /* PE_LOAD and PE_GOTHENFREE with a physical allocation failing at every
+    /* PE_LOAD, PE_GO(THENFREE) and mode 0 with a physical allocation failing at every
      * point: whatever fails, nothing is leaked and the caller carries on (#434) */
     snap(&s);
     for (k = 1; k <= 120; k += (k < 24) ? 1 : 4) {
@@ -1393,6 +1405,7 @@ static void test_ring3(void)
         (void)run_probe('l');
         (void)run_probe('G');
         (void)run_probe('H');
+        (void)run_probe('j');
         probe_may_fail_early = FALSE;
         x86_64_pmem_test_fail_after(0);
     }
@@ -1657,24 +1670,20 @@ static void test_x32image(void)
 
         if (pd) {
             X32_LAYOUT l;
-            UBYTE *data = kalloc(16);
 
-            CHECK(data != NULL, "image bytes");
             memset(&l, 0, sizeof l);
             l.nseg = 1;
             l.seg[0].vaddr = X86_64_USER_IMAGE_BASE;
             l.seg[0].flags = 5;                 /* PF_R | PF_X */
-            l.seg[0].src = data;
             l.entry = X86_64_USER_IMAGE_BASE;
             l.seg[0].memsz = (ULONG)(X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK) + 0x1000;
             l.end = l.seg[0].vaddr + l.seg[0].memsz;
-            CHECK(!kproc_set_loaded_image(pd, &l, data), "no room for the startup area: refused");
-            data = kalloc(16);
-            CHECK(data != NULL, "image bytes");
-            l.seg[0].src = data;
+            CHECK(kproc_load_begin(pd, X86_64_USER_IMAGE_BASE, X86_64_USER_IMAGE_SIZE),
+                  "an address space for the program");
+            CHECK(!kproc_set_loaded_image(pd, &l), "no room for the startup area: refused");
             l.seg[0].memsz = (ULONG)(X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK);
             l.end = l.seg[0].vaddr + l.seg[0].memsz;
-            CHECK(kproc_set_loaded_image(pd, &l, data), "room for the startup area: accepted");
+            CHECK(kproc_set_loaded_image(pd, &l), "room for the startup area: accepted");
             set_owner(pd, pd);
             set_owner(USERPTR_TO_PTR(pd->p_env), pd);
             x86_64_free_owned(pd);

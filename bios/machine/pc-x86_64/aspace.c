@@ -176,6 +176,19 @@ static void free_owned_pages(struct x86_64_aspace *as)
     }
 }
 
+UQUAD x86_64_aspace_enter(X86_64_ASPACE *as)
+{
+    UQUAD previous = x86_64_read_cr3();
+
+    x86_64_write_cr3(as->pml4_phys);
+    return previous;
+}
+
+void x86_64_aspace_leave(UQUAD previous)
+{
+    x86_64_write_cr3(previous);
+}
+
 void x86_64_aspace_destroy(X86_64_ASPACE *as)
 {
     ULONG i;

@@ -891,6 +891,29 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(bad);
         break;
     }
+    case 'D': {
+        /* a program whose file is cut short fails in the middle of the loading,
+         * with the new process's address space in use: the Pexec() is refused,
+         * this process is back in its own and goes on, twice over, and a good
+         * program still launches (#434) */
+        static const char link_tail[] = { 1, 'i', 0 };
+        static volatile u32 mine;
+        s64 rc, rc2, rc3, rc4;
+
+        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32TRUNC.TOS",
+                  (s64)(int)(unsigned long)link_tail, 0);
+        if (rc == -33)
+            pterm(0x100);
+        mine = 0x1234;
+        rc2 = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32TRUNC.TOS",
+                   (s64)(int)(unsigned long)link_tail, 0);
+        rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)link_tail, 0);
+        rc4 = (mine == 0x1234) ? gemdos(0x48, 4096, 0) : 0;
+        pterm((rc < 0 ? 0 : 1) | (rc2 < 0 || rc2 == 0 ? 0 : 2) | (rc3 == 0 ? 0 : 4) |
+              (rc4 > 0 ? 0 : 8));
+        break;
+    }
     case 'y': {
         /* a child must not free what its parent holds: the child (tail F and
          * the address in hex) tries to Mfree this process's basepage */

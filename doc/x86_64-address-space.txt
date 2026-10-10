@@ -112,8 +112,17 @@ the basepage and nothing more (bdos/elfld.c's sizing pass reports no text,
 data or bss).  Where it is until the process runs depends on the Pexec() mode:
 
   Mode 0 (PE_LOADGO), and a PE_LOAD by a caller that is not a ring-3
-  process, keep the relocated image in a kernel buffer, which the launch maps
-  into the new address space.  Nobody sees it before.
+  process, read the program straight into private pages of the new process's
+  own address space, which is made at load time (kproc_load_begin()) and kept
+  in the process's KPROC record until the launch adopts it.  Nobody else sees
+  the pages.  The loader makes that address space the one in use while it
+  fills them (kproc_load_enter(), x86_64_aspace_enter()), so it can address
+  them by their user addresses, and puts the previous one back after
+  (kproc_load_leave(); destroying the process does too, which is what a disk
+  error that jumps past the loader gets).  If the launch fails after it has
+  adopted the address space (a page table could not be allocated), the
+  program is gone with it and the basepage can only be freed; Pexec() reports
+  ENSMEM.
 
   PE_LOAD by a ring-3 process puts the program in the CALLER's address space,
   in its heap (kproc_load_alloc()): relocated to the address it gets there,
@@ -165,18 +174,20 @@ data or bss).  Where it is until the process runs depends on the Pexec() mode:
   relocated by the distance, by the loader of doc/elfload.txt, so it must keep
   its relocation entries (link with -q).
 
-  How.  elf_pgmld() builds the image in a flat kernel buffer and relocates it
-  there.  The buffer and the resulting layout go to the process's KPROC record
-  (kproc_set_loaded_image(); kproc_set_image() for a built-in ELF).  A PE_LOAD
-  by a ring-3 caller has no buffer: the file is read and relocated in place,
-  in the block in the caller's heap (the caller's address space is the one in
-  use, and the block is mapped and zero), so the size of the program is
-  limited by the heap and not by a kernel allocation.  Its layout and the block
-  are recorded with the process (kproc_load_alloc(), when the block is made,
-  and kproc_set_moved_image()), so that a failed load, a disk error included,
-  gives the block back with the process's record.  kproc_prepare_user() maps
-  every segment as private pages with the segment's own permissions, or moves
-  the block, when the process is launched, and the entry point is the one
+  How.  elf_pgmld() reads the file and relocates it in place, in the pages the
+  image will run from, with no kernel buffer in between: the block in the
+  caller's heap for a PE_LOAD by a ring-3 caller (the caller's address space is
+  the one in use, and the block is mapped and zero), the new process's own
+  address space for the others (above).  The layout goes to the process's KPROC
+  record (kproc_set_loaded_image(), which also gives each segment its
+  permissions, or kproc_set_moved_image(); kproc_set_image() for a built-in
+  ELF), and the block, when there is one, is recorded with the process the
+  moment it is made (kproc_load_alloc()), so that a failed load, a disk error
+  included, gives it back with the process's record.  The size of a program
+  loaded into its caller's heap is limited by the heap; the others by the image
+  window.  kproc_prepare_user() adds the rest to the address space when the
+  process is launched (a built-in image's segments are mapped then, a PE_LOAD
+  block is moved in), and the entry point is the one
   recorded in the KPROC record, not whatever the user-writable basepage says.
   The rules (x86_64_x32_layout_valid()): every segment inside the window, no
   two sharing a page, the entry point in an executable one.  The built-in

@@ -277,6 +277,8 @@ jobs:
           # ... and one with a 6 MiB bss, loaded by PE_LOAD straight into the
           # caller's heap
           cp x32big.elf esp/X32BIG.TOS
+          # ... and one cut short, whose loading fails halfway
+          head -c 2000 x32hello.elf > esp/X32TRUNC.TOS
           cp /usr/share/OVMF/OVMF_VARS_4M.fd .
 
           set +e
@@ -369,6 +371,11 @@ jobs:
 
           if ! grep -q 'x86-64 pexec load big: PASS' boot.log; then
             echo "::error::PE_LOAD did not take a program bigger than the image window"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 pexec truncated: PASS' boot.log; then
+            echo "::error::a failed load did not leave the loader in its own address space"
             exit 1
           fi
 
