@@ -277,6 +277,11 @@ static void test_kheap(void)
           "failed kalloc changed nothing");
     CHECK(kalloc(0) == NULL, "kalloc(0)");
     CHECK(kalloc(0x7fffffffUL) == NULL, "kalloc huge");
+    /* the whole image window fits in one block: the ELF loader builds a program
+     * there (bdos/elfld.c) */
+    q = kalloc(X86_64_USER_IMAGE_SIZE);
+    CHECK(q != NULL, "a block as big as the image window");
+    kfree(q);
 
     /* ownership: freed twice, foreign pointers and process memory refused */
     q = kalloc(64);
@@ -1524,6 +1529,39 @@ static void test_x32image(void)
         x86_64_aspace_destroy(as);
     }
     same(&s, "image loader");
+
+    /* a program loaded from a file needs room after its image for the startup
+     * area, all of it, and is refused without (#434) */
+    snap(&s);
+    {
+        PD *pd = new_basepage();
+
+        if (pd) {
+            X32_LAYOUT l;
+            UBYTE *data = kalloc(16);
+
+            CHECK(data != NULL, "image bytes");
+            memset(&l, 0, sizeof l);
+            l.nseg = 1;
+            l.seg[0].vaddr = X86_64_USER_IMAGE_BASE;
+            l.seg[0].flags = 5;                 /* PF_R | PF_X */
+            l.seg[0].src = data;
+            l.entry = X86_64_USER_IMAGE_BASE;
+            l.seg[0].memsz = (ULONG)(X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK) + 0x1000;
+            l.end = l.seg[0].vaddr + l.seg[0].memsz;
+            CHECK(!kproc_set_loaded_image(pd, &l, data), "no room for the startup area: refused");
+            data = kalloc(16);
+            CHECK(data != NULL, "image bytes");
+            l.seg[0].src = data;
+            l.seg[0].memsz = (ULONG)(X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK);
+            l.end = l.seg[0].vaddr + l.seg[0].memsz;
+            CHECK(kproc_set_loaded_image(pd, &l, data), "room for the startup area: accepted");
+            set_owner(pd, pd);
+            set_owner(USERPTR_TO_PTR(pd->p_env), pd);
+            x86_64_free_owned(pd);
+        }
+    }
+    same(&s, "startup area room");
 }
 
 void x86_64_memtest_run(void)

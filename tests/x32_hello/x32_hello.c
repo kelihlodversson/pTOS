@@ -187,7 +187,7 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         /* Malloc() memory is private pages in the heap range, usable, zeroed
          * and given back by Mfree() and Mshrink() (#434) */
         volatile u32 *p, *q;
-        u64 a, b;
+        u64 a, b, c;
         int k, bad_heap = 0;
 
         a = (u64)gemdos1r(0x48, 100000);
@@ -210,7 +210,7 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
                 bad_heap |= 8;
         if (q[0] != 0x5a5a5a5a)
             bad_heap |= 8;
-        if (gemdos1r(0x48, -1) <= 0)
+        if (gemdos1r(0x48, 0xffffffffULL) <= 0)
             bad_heap |= 16;                     /* Malloc(-1): the largest block */
         if (gemdos3r(0x4a, 0, a, 8192) != 0 || p[1] != 2)
             bad_heap |= 32;                     /* Mshrink() keeps the front */
@@ -222,6 +222,18 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
             bad_heap |= 256;                    /* twice is EIMBA */
         if (gemdos1r(0x49, b) != 0)
             bad_heap |= 512;
+        /* the arguments are x32 values: a length is its low 32 bits and so is
+         * a pointer, whatever the upper half of the register holds */
+        c = (u64)gemdos1r(0x48, 16384);
+        if (gemdos3r(0x4a, 0, c, 0x100002000ULL) != 0)
+            bad_heap |= 1024;
+        if (gemdos1r(0x49, c | 0xffff00000000ULL) != 0)
+            bad_heap |= 2048;
+        /* a large block is mapped and given back page by page without
+         * a search through every page the process owns (64 MiB: 16384 pages) */
+        c = (u64)gemdos1r(0x48, 64 * 1024 * 1024);
+        if (!c || gemdos1r(0x49, c) != 0)
+            bad_heap |= 4096;
         gemdos1(0x4c, bad_heap);
     }
     if (cmdline[0] == 1 && cmdline[1] == 'i') {

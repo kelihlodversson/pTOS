@@ -1186,13 +1186,16 @@ LONG elf_pgmld(FH h, PD *p)
         ULONG lo = info.link_base & ~(ULONG)(X86_64_USER_PAGE_SIZE - 1);
 
         if (info.link_base >= X86_64_USER_IMAGE_BASE
-         && info.mem_end <= X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE)
+         && info.mem_end + X86_64_USER_PAGE_SIZE + X86_64_USER_IMAGE_SLACK
+            <= X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE)
             bias = 0;
         else
             bias = (LONG)(X86_64_USER_IMAGE_BASE - lo);
-        if (span > X86_64_USER_IMAGE_SIZE - (info.link_base - lo)
+        /* the image and the startup area after it (X86_64_USER_IMAGE_SLACK) */
+        if (span > X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK - X86_64_USER_PAGE_SIZE
          || (ULONG)info.link_base + (ULONG)bias < X86_64_USER_IMAGE_BASE
-         || (ULONG)info.mem_end + (ULONG)bias > X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE)
+         || (ULONG)info.mem_end + (ULONG)bias + X86_64_USER_PAGE_SIZE + X86_64_USER_IMAGE_SLACK
+            > X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE)
         {
             KDEBUG(("BDOS elf_pgmld: image does not fit the image window\n"));
             return ENSMEM;

@@ -336,22 +336,19 @@ static BOOL build_ancestors(KPROC *kproc, X86_64_ASPACE *as, PD *parent)
 /*
  * A program loaded from a file gets zeroed read/write memory right after its
  * last page, for the startup code to build argv and environ in (see
- * X86_64_USER_IMAGE_SLACK).  It must stay inside the image window, like the
- * segments; a built-in image does not get one.
+ * X86_64_USER_IMAGE_SLACK), all of it: kproc_set_loaded_image() refuses an
+ * image that leaves no room for it inside the image window, like the
+ * segments.  A built-in image does not get one.
  */
 static BOOL map_startup_area(const KPROC *kproc, X86_64_ASPACE *as)
 {
-    UQUAD va, room;
+    UQUAD va;
 
     if (!kproc->startup_area)
         return TRUE;
     va = (kproc->layout.end + X86_64_USER_PAGE_SIZE - 1) & ~(X86_64_USER_PAGE_SIZE - 1);
-    room = X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE - va;
-    if (room > X86_64_USER_IMAGE_SLACK)
-        room = X86_64_USER_IMAGE_SLACK;
-    if (room < 4 * X86_64_USER_PAGE_SIZE)
-        return FALSE;
-    return x86_64_aspace_map_private(as, va, room, ASPACE_PROT_WRITE | ASPACE_PROT_USER);
+    return x86_64_aspace_map_private(as, va, X86_64_USER_IMAGE_SLACK,
+                                     ASPACE_PROT_WRITE | ASPACE_PROT_USER);
 }
 
 BOOL kproc_prepare_user(PD *pd, PD *parent)
@@ -553,7 +550,9 @@ BOOL kproc_set_loaded_image(PD *pd, const X32_LAYOUT *layout, UBYTE *data)
     KPROC *kproc = kproc_find(pd);
 
     if (!kproc || kproc->aspace || kproc->has_image ||
-        !x86_64_x32_layout_valid(layout, FALSE)) {
+        !x86_64_x32_layout_valid(layout, FALSE) ||
+        ((layout->end + X86_64_USER_PAGE_SIZE - 1) & ~(X86_64_USER_PAGE_SIZE - 1)) +
+        X86_64_USER_IMAGE_SLACK > X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE) {
         kfree(data);
         return FALSE;
     }
