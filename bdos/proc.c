@@ -99,6 +99,12 @@ static void x86_64_hand_over(PD *p)
         kproc_hand_over(run, p);
 }
 
+/* PE_GO: a program PE_LOAD put in the caller's heap goes back there at the end */
+static void x86_64_give_back(PD *p)
+{
+    kproc_set_give_back(p);
+}
+
 static BOOL x86_64_prepare_launch(PD *p)
 {
     if (x86_64_kernel_code_pd == p)
@@ -218,6 +224,7 @@ BOOL x86_64_take_kernel_code_pd(PD *p)
 #define x86_64_check_launch(p) E_OK
 #define x86_64_hand_over(p) do { } while (0)
 #define x86_64_prepare_launch(p) TRUE
+#define x86_64_give_back(p) do { } while (0)
 #endif
 
 /*
@@ -474,7 +481,11 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         p = (PD *) tail;
         if (flag == PE_GO && (rc = x86_64_check_launch(p)) != E_OK)
             return rc;
-        if (flag == PE_GO && (!kproc_create(p) || !x86_64_prepare_launch(p)))
+        if (flag == PE_GO && !kproc_create(p))
+            return ENSMEM;
+        if (flag == PE_GO)
+            x86_64_give_back(p);
+        if (flag == PE_GO && !x86_64_prepare_launch(p))
             return ENSMEM;
         proc_go(p);
         /*

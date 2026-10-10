@@ -1347,6 +1347,19 @@ static void test_ring3(void)
         same(&s, "a program loaded into the caller");
     }
 
+    /* PE_LOAD then PE_GO: the program's pages come back when it ends (#434) */
+    {
+        snap(&s);
+        rc = run_probe('G');
+        if (rc == 0x100) {
+            kcprintf("x86-64 pexec go gives back: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "PE_GO gives the program's pages back to the caller when it ends");
+            kcprintf(rc == 0 ? "x86-64 pexec go gives back: PASS\n" : "x86-64 pexec go gives back: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "PE_LOAD and PE_GO from ring 3");
+    }
+
     /* PE_LOAD and PE_GOTHENFREE with a physical allocation failing at every
      * point: whatever fails, nothing is leaked and the caller carries on (#434) */
     snap(&s);
@@ -1354,6 +1367,7 @@ static void test_ring3(void)
         x86_64_pmem_test_fail_after(k);
         probe_may_fail_early = TRUE;
         (void)run_probe('l');
+        (void)run_probe('G');
         probe_may_fail_early = FALSE;
         x86_64_pmem_test_fail_after(0);
     }

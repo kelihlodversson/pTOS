@@ -121,9 +121,39 @@ data or bss).  Where it is until the process runs depends on the Pexec() mode:
   fixes up its program -- until it launches the program with PE_GO or
   PE_GOTHENFREE.  Then the pages MOVE to the new process
   (x86_64_aspace_move_private()), at the same addresses and with each
-  segment's own permissions, and are the caller's no more.  Until then the
-  block is not Malloc() memory: Mfree() of it is refused (EIMBA), and freeing
-  the basepage that was returned gives it back.
+  segment's own permissions.  Until then the block is not Malloc() memory:
+  Mfree() of it is refused (EIMBA), and freeing the basepage that was
+  returned gives it back.  What happens at the launch depends on the mode:
+
+    PE_GOTHENFREE: the pages are the new process's, the caller's block is
+    gone, and the pages are freed with the process.  This is what a launch
+    always did.
+
+    PE_GO: the pages are only LENT.  The caller's block stays in its heap
+    table (kind UH_LENT), so nothing else can be allocated at those addresses
+    and Mfree()/Mshrink() leave it alone.  When the process ends -- Pterm()
+    and Ptermres() alike, both go through kproc_destroy() -- the pages move
+    back to the caller at the same addresses, read/write, and the block
+    becomes ordinary Malloc() memory: the caller can read what the program
+    left in its data, and frees it with Mfree() like any block (PE_GO has
+    always left the program's memory with the launcher).  If the pages
+    cannot be moved back (a page table cannot be allocated), they are freed
+    with the process and the block is dropped; the caller is never left with
+    a block that has no pages.
+
+  Ptermres() gives the image back too: the process keeps its basepage and
+  environment, as for any process, and nothing of the image.  This is
+  because, without a way to run the resident part, the image is of no use to
+  anyone else; if Ptermres() becomes useful with virtual addresses (a
+  resident program the next processes can call), the image, or the part of it
+  the program keeps, would stay and this is the place to change
+  (give_image_back() in bdos/kproc.c).
+
+  The loan needs no shared pages because nothing runs while the process does:
+  the caller is stopped until Pterm().  With multitasking, a PE_GO caller
+  that goes on running while the child does would need the pages shared
+  (the same frames in both address spaces, counted), and this scheme would
+  be replaced by that.
 
   Where it goes.  A program is linked for an address.  If that lies in the
   image window (X86_64_USER_IMAGE_BASE, 4 MiB) and the process is a new one

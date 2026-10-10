@@ -799,6 +799,43 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(bad);
         break;
     }
+    case 'G': {
+        /* PE_LOAD, patch, then PE_GO (not PE_GOTHENFREE): when the program has
+         * ended its pages are this process's again, with what it left in them,
+         * and are Malloc() memory to free */
+        static const char patch_tail[] = { 1, 'P', 0 };
+        s64 bpa, rc;
+        volatile u32 *bpp, *w;
+        u32 first, last;
+
+        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)patch_tail, 0);
+        bpp = (volatile u32 *)(unsigned long)bpa;
+        if (bpa == -33)
+            pterm(0x100);
+        if (bpa <= 0)
+            pterm(0x200 | (int)(-bpa & 0xff));
+        first = (bpp[4] - bpp[3]) & ~3u;
+        last = bpp[6] + bpp[7];
+        for (w = (volatile u32 *)(unsigned long)first; (unsigned long)w < last; w++)
+            if (*w == 0x11111111u) {
+                *w = 0x22222222u;
+                break;
+            }
+        if ((unsigned long)w >= last)
+            pterm(32);
+        rc = sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", bpa, 0);
+        if (rc != 0)
+            bad |= 4;                       /* the program's own exit code */
+        if (*w != 0x22222222u)
+            bad |= 2;                       /* readable again, as it was left */
+        if (gemdos(0x49, first & ~0xfffu, 0) != 0)
+            bad |= 8;                       /* a block of ours now */
+        if (gemdos(0x49, first & ~0xfffu, 0) == 0)
+            bad |= 16;                      /* and only once */
+        pterm(bad);
+        break;
+    }
     case 'y': {
         /* a child must not free what its parent holds: the child (tail F and
          * the address in hex) tries to Mfree this process's basepage */

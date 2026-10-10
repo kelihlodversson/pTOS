@@ -71,12 +71,17 @@ BOOL kproc_set_loaded_image(PD *pd, const X32_LAYOUT *layout, UBYTE *data);
  * same addresses, from the caller's address space to the child's, with each
  * segment's permissions.  The caller cannot free the block (Mfree() leaves it
  * alone); freeing the child's basepage unlaunched gives it back, and so does
- * kproc_load_release().
+ * kproc_load_release().  With PE_GOTHENFREE the pages stay with the child;
+ * with PE_GO (kproc_set_give_back()) they only are lent, and move back to the
+ * caller as Malloc() memory when the child ends.
  */
 UQUAD kproc_load_alloc(PD *caller, PD *child, ULONG bytes);
 BOOL kproc_load_write(PD *caller, UQUAD va, const void *src, ULONG bytes);
 void kproc_load_release(PD *caller, UQUAD va);
 BOOL kproc_set_moved_image(PD *pd, const X32_LAYOUT *layout, PD *caller, UQUAD va, ULONG pages);
+/* PE_GO (not PE_GOTHENFREE): the image goes back to the caller's heap when the
+ * process ends, Pterm() or Ptermres(); call it before kproc_prepare_user(). */
+void kproc_set_give_back(PD *pd);
 /* Fsfirst()/Fsnext() search state kept kernel-side: kproc_dta_save() after a
  * search, kproc_dta_restore() before Fsnext() (FALSE: no search was made with
  * this DTA, the search is over). */

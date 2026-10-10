@@ -27,7 +27,8 @@
 
 enum { UH_MALLOC = 0,           /* a block Malloc() gave out */
        UH_LOADED = 1,           /* a program Pexec(PE_LOAD) loaded for a child, until PE_GO */
-       UH_IMAGE = 2 };          /* the image of this very process, moved here by PE_GO */
+       UH_IMAGE = 2,            /* the image of this very process, moved here by PE_GO */
+       UH_LENT = 3 };           /* the image of a PE_GO child, lent to it until it ends */
 #endif
 
 /* The option gates only the record itself: the #else stubs stay in every
@@ -65,6 +66,8 @@ struct kproc {
     PD *load_parent;            /* PE_LOAD: the process whose heap holds the image */
     UQUAD load_va;              /* until the launch moves it here: where, */
     ULONG load_pages;           /* and how many pages (startup area included) */
+    BOOL give_back;             /* PE_GO: the image goes back to its loader when this ends */
+    PD *lender;                 /* ... the process whose heap it came from, once moved */
     struct uheap_block {        /* Malloc() memory: private pages at X86_64_USER_HEAP_*, */
         UQUAD va;               /* sorted by address */
         ULONG pages;
@@ -157,6 +160,8 @@ BOOL kproc_create(PD *pd)
     return TRUE;
 }
 
+static void give_image_back(KPROC *kproc);
+
 void kproc_destroy(PD *pd)
 {
     KPROC **link;
@@ -170,6 +175,8 @@ void kproc_destroy(PD *pd)
              * launched goes back with the basepage */
             if (kproc->load_parent)
                 kproc_load_release(kproc->load_parent, kproc->load_va);
+            if (kproc->lender)
+                give_image_back(kproc);
             /* Unlinked first, so the record is gone before its address
              * space is torn down: a second kproc_destroy() for the same
              * PD finds nothing and cannot free either twice. */
@@ -887,6 +894,44 @@ LONG kproc_uheap_shrink(PD *pd, UQUAD va, long len)
 }
 
 /*
+ * The end of a PE_GO child that was loaded by PE_LOAD: its image, which the
+ * launch moved out of the loader's heap, goes back to the loader, at the same
+ * addresses, as a block it owns (Malloc() memory: it frees it with Mfree()).
+ * The loader was stopped all the time and now sees what the program left in
+ * its data.  This is for Pterm() and Ptermres() alike; if a Ptermres() process
+ * later keeps more than its basepage, that is where it would change.  If the
+ * pages cannot be moved (a page table cannot be allocated), they are freed
+ * with the child and the loader's block is dropped.
+ */
+static void give_image_back(KPROC *kproc)
+{
+    KPROC *pk = kproc_find(kproc->lender);
+    struct uheap_block *b;
+
+    if (!pk || !pk->aspace || !kproc->aspace || !kproc->nheap || kproc->heap[0].kind != UH_IMAGE ||
+        !(b = heap_find(pk, kproc->heap[0].va)) || b->kind != UH_LENT || b->pd != kproc->pd)
+        return;
+    if (        x86_64_aspace_move_private(kproc->aspace, pk->aspace, b->va,
+                                   (UQUAD)b->pages * X86_64_USER_PAGE_SIZE,
+                                   ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
+        b->kind = UH_MALLOC;
+        b->pd = NULL;
+    } else {
+        memmove(b, b + 1, (pk->nheap - 1 - (ULONG)(b - pk->heap)) * sizeof(*b));
+        pk->nheap--;
+    }
+}
+
+/* Pexec(PE_GO): the image of this process goes back to its loader when it ends */
+void kproc_set_give_back(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    if (kproc)
+        kproc->give_back = TRUE;
+}
+
+/*
  * Pexec(PE_LOAD) from a ring-3 caller puts the program in the caller's own
  * address space, in its heap, where the caller can read it and patch it
  * before launching it.  The block is the caller's until PE_GO/PE_GOTHENFREE,
@@ -958,8 +1003,13 @@ static BOOL move_loaded_image(KPROC *kproc, X86_64_ASPACE *to, PD *launcher)
     kproc->heap[0].kind = UH_IMAGE;
     kproc->heap[0].pd = NULL;
     kproc->nheap = 1;
-    memmove(b, b + 1, (pk->nheap - 1 - (ULONG)(b - pk->heap)) * sizeof(*b));
-    pk->nheap--;
+    if (kproc->give_back) {                 /* PE_GO: only lent, the loader's block stays */
+        b->kind = UH_LENT;
+        kproc->lender = kproc->load_parent;
+    } else {
+        memmove(b, b + 1, (pk->nheap - 1 - (ULONG)(b - pk->heap)) * sizeof(*b));
+        pk->nheap--;
+    }
     kproc->load_parent = NULL;
     for (i = 0; i < kproc->layout.nseg; i++) {
         const X32_SEGMENT *s = &kproc->layout.seg[i];
