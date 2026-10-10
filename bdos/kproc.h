@@ -66,7 +66,7 @@ BOOL kproc_set_loaded_image(PD *pd, const X32_LAYOUT *layout, UBYTE *data);
  * address space, in its heap, where it can read and patch it before the
  * launch: kproc_load_alloc() takes the block for the process `child` that is
  * being made and records it with the child, so that destroying the child, a
- * failed load included, gives it back (0: none), kproc_load_write() fills it, and
+ * failed load included, gives it back (0: none), the loader reads the file into it, in place, and
  * kproc_set_moved_image() makes it the child's image, laid out as `layout`.
  * Nothing is mapped for the child yet: PE_GO moves the block's pages, at the
  * same addresses, from the caller's address space to the child's, with each
@@ -77,7 +77,6 @@ BOOL kproc_set_loaded_image(PD *pd, const X32_LAYOUT *layout, UBYTE *data);
  * caller as Malloc() memory when the child ends.
  */
 UQUAD kproc_load_alloc(PD *caller, PD *child, ULONG bytes);
-BOOL kproc_load_write(PD *caller, UQUAD va, const void *src, ULONG bytes);
 void kproc_load_release(PD *caller, UQUAD va);
 BOOL kproc_set_moved_image(PD *pd, const X32_LAYOUT *layout, PD *caller, UQUAD va, ULONG pages);
 /* PE_GO (not PE_GOTHENFREE): the image goes back to the caller's heap when the

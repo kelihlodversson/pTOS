@@ -963,13 +963,6 @@ UQUAD kproc_load_alloc(PD *caller, PD *child, ULONG bytes)
     return va;
 }
 
-BOOL kproc_load_write(PD *caller, UQUAD va, const void *src, ULONG bytes)
-{
-    KPROC *kproc = kproc_find(caller);
-
-    return kproc && kproc->aspace && x86_64_aspace_copy_to_user(kproc->aspace, va, src, bytes);
-}
-
 void kproc_load_release(PD *caller, UQUAD va)
 {
     KPROC *kproc = kproc_find(caller);

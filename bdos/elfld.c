@@ -1150,10 +1150,9 @@ void elf_set_load_into_caller(BOOL wanted)
 
 /* where elf_load_image() put the image if it went into the caller's heap */
 typedef struct {
-    UQUAD va;           /* the block (0: the image is in the flat buffer for the launch) */
+    UQUAD va;           /* the block (0: the image is in a flat kernel buffer for the launch) */
     ULONG pages;
-    UQUAD image_va;     /* where the flat buffer's first byte (link_base) is in it */
-    ULONG span;         /* and how much of it is the image */
+    UQUAD image_va;     /* where the image's first byte (link_base) is in it */
 } ELFPLACE;
 
 static LONG elf_load_image(FH h, PD *p, UBYTE **flatp, X32_LAYOUT *layout, ELFPLACE *place)
@@ -1202,7 +1201,9 @@ LONG elf_pgmld(FH h, PD *p)
 
 #if CONF_WITH_USER_ASPACE
     /*
-     * The image is built in a flat kernel buffer holding the bytes of
+     * (A PE_LOAD by a ring-3 caller builds it straight in the block it gets in
+     * the caller's heap, below, and has no buffer.)  Otherwise the image is
+     * built in a flat kernel buffer holding the bytes of
      * [link_base, mem_end), relocated there if it has to be, and then mapped
      * into the process's own address space when the process is launched (see
      * kproc_set_loaded_image()).  It goes where it was linked for if that lies
@@ -1228,12 +1229,8 @@ LONG elf_pgmld(FH h, PD *p)
              */
             ULONG imgpages = (info.mem_end - lo + X86_64_USER_PAGE_SIZE - 1) / X86_64_USER_PAGE_SIZE;
 
-            /* (the image is staged in a kernel buffer first, which holds what
-             * the image window does: no more than that, whatever room the
-             * caller's heap has) */
             if (info.mem_end - lo > X86_64_USER_HEAP_LIMIT - X86_64_USER_HEAP_BASE
-             - X86_64_USER_IMAGE_SLACK - X86_64_USER_PAGE_SIZE
-             || span > X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK)
+             - X86_64_USER_IMAGE_SLACK - X86_64_USER_PAGE_SIZE)
                 return ENSMEM;
             place->pages = imgpages + X86_64_USER_IMAGE_SLACK / X86_64_USER_PAGE_SIZE;
             place->va = kproc_load_alloc(run, p, place->pages * X86_64_USER_PAGE_SIZE);
@@ -1241,7 +1238,6 @@ LONG elf_pgmld(FH h, PD *p)
                 return ENSMEM;
             bias = (LONG)((ULONG)place->va - lo);
             place->image_va = (ULONG)info.link_base + (ULONG)bias;
-            place->span = span;
         }
         else
         {
@@ -1260,15 +1256,25 @@ LONG elf_pgmld(FH h, PD *p)
                 return ENSMEM;
             }
         }
-        load_base = kalloc(span);
-        if (!load_base)
-            return ENSMEM;
-        if (!kproc_hold_buffer(p, load_base))
+        if (place->va)
         {
-            kfree(load_base);
-            return ENSMEM;
+            /* the file is read, and relocated, straight into the block: the
+             * caller's address space is the one in use, and the block is
+             * mapped and zero */
+            load_base = (UBYTE *)(uintptr_t)place->image_va;
         }
-        *flatp = load_base;
+        else
+        {
+            load_base = kalloc(span);
+            if (!load_base)
+                return ENSMEM;
+            if (!kproc_hold_buffer(p, load_base))
+            {
+                kfree(load_base);
+                return ENSMEM;
+            }
+            *flatp = load_base;
+        }
     }
 
     /* the segment fields describe where the image will be; execution starts
@@ -1483,13 +1489,9 @@ LONG elf_pgmld(FH h, PD *p)
     }
     if (place.va)
     {
-        /* PE_LOAD: the relocated image goes into the block in the caller's
-         * heap (the rest of it, bss and startup area, is zero already) */
-        BOOL ok = kproc_load_write(run, place.image_va, flat, place.span)
-               && kproc_set_moved_image(p, &layout, run, place.va, place.pages);
-
-        kproc_drop_buffer(p);
-        if (!ok)
+        /* PE_LOAD: the image was read and relocated in place, in the block in
+         * the caller's heap */
+        if (!kproc_set_moved_image(p, &layout, run, place.va, place.pages))
         {
             KDEBUG(("BDOS elf_pgmld: image refused\n"));
             return EPLFMT;

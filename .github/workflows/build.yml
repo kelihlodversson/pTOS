@@ -274,6 +274,9 @@ jobs:
           # ... and one linked for another address without relocations, which
           # must be refused
           cp x32noreloc.elf esp/X32NOREL.TOS
+          # ... and one with a 6 MiB bss, loaded by PE_LOAD straight into the
+          # caller's heap
+          cp x32big.elf esp/X32BIG.TOS
           cp /usr/share/OVMF/OVMF_VARS_4M.fd .
 
           set +e
@@ -351,6 +354,21 @@ jobs:
 
           if ! grep -q 'x86-64 unaligned relocation: PASS' boot.log; then
             echo "::error::a program linked for another address was not relocated correctly"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 pexec go gives back: PASS' boot.log; then
+            echo "::error::PE_GO did not give the loaded program's pages back"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 pexec go gives back with a gap: PASS' boot.log; then
+            echo "::error::PE_GO did not find the loaded program's pages after the child allocated below them"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 pexec load big: PASS' boot.log; then
+            echo "::error::PE_LOAD did not take a program bigger than the image window"
             exit 1
           fi
 

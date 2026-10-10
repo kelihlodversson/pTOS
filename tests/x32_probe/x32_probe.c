@@ -869,6 +869,28 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(bad);
         break;
     }
+    case 'B': {
+        /* PE_LOAD of a program bigger than the image window: it goes into
+         * this process's heap whole, and runs when launched */
+        static const char big_tail[] = { 1, 'B', 0 };
+        s64 bpa, rc;
+        volatile u32 *bpp;
+
+        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32BIG.TOS",
+                   (s64)(int)(unsigned long)big_tail, 0);
+        bpp = (volatile u32 *)(unsigned long)bpa;
+        if (bpa == -33)
+            pterm(0x100);
+        if (bpa <= 0)
+            pterm(0x200 | (int)(-bpa & 0xff));
+        if (bpp[7] < 0x600000)
+            bad |= 2;                       /* p_blen: the 6 MiB bss is there */
+        rc = sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", bpa, 0);
+        if (rc != 0)
+            bad |= 4;
+        pterm(bad);
+        break;
+    }
     case 'y': {
         /* a child must not free what its parent holds: the child (tail F and
          * the address in hex) tries to Mfree this process's basepage */

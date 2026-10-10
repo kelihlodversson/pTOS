@@ -1360,6 +1360,19 @@ static void test_ring3(void)
         same(&s, "PE_LOAD and PE_GO from ring 3");
     }
 
+    /* a program bigger than the image window, loaded by PE_LOAD (#434) */
+    {
+        snap(&s);
+        rc = run_probe('B');
+        if (rc == 0x100) {
+            kcprintf("x86-64 pexec load big: SKIP (no C:\\X32BIG.TOS)\n");
+        } else {
+            CHECK(rc == 0, "PE_LOAD takes a program bigger than the image window");
+            kcprintf(rc == 0 ? "x86-64 pexec load big: PASS\n" : "x86-64 pexec load big: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "PE_LOAD of a big program");
+    }
+
     /* the same with the child leaving a block below its image */
     {
         snap(&s);

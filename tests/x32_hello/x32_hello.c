@@ -150,6 +150,9 @@ static int walk_ancestors(u64 basepage)
 u32 x32_reloc_target;
 /* initialised data a caller of Pexec(PE_LOAD) patches before launching (\001P) */
 u32 x32_patch = 0x11111111;
+#ifdef X32_BIG
+static volatile unsigned char big_bss[6u << 20];
+#endif
 
 void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 {
@@ -267,6 +270,17 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
             at[k] = (unsigned char)k;
         gemdos1(0x4c, 0);
     }
+#ifdef X32_BIG
+    if (cmdline[0] == 1 && cmdline[1] == 'B') {
+        /* a program with a 6 MiB bss (x32big.elf), loaded whole into the
+         * caller's heap by PE_LOAD: both ends of it are there and zero (#434) */
+        if (big_bss[0] || big_bss[sizeof big_bss - 1])
+            gemdos1(0x4c, 1);
+        big_bss[0] = 1;
+        big_bss[sizeof big_bss - 1] = 2;
+        gemdos1(0x4c, big_bss[0] == 1 && big_bss[sizeof big_bss - 1] == 2 ? 0 : 2);
+    }
+#endif
     if (cmdline[0] == 1 && cmdline[1] == 'P')
         gemdos1(0x4c, x32_patch == 0x22222222 ? 0 : 1);
     if (cmdline[0] == 1 && cmdline[1] == 'T') {

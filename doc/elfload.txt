@@ -38,7 +38,8 @@ Accepted binaries
 -----------------
 
 (On x86-64 the image is not placed in the TPA at all: it is built in a flat
-buffer, relocated by this loader if it was not linked for the image window,
+buffer (or, for a PE_LOAD by a ring-3 caller, in the block of the caller's heap
+it will be in), relocated by this loader if it was not linked for the image window,
 and mapped into the process's own address space, see
 doc/x86_64-address-space.txt.)
 

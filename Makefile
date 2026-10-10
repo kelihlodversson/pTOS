@@ -757,10 +757,15 @@ x32reloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
 x32noreloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
 	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS_NOQ) -Wl,-Ttext-segment=0x20000000 -o $@ $^
 
-.PHONY: x32test
-x32test: x32hello.elf x32reloc.elf x32noreloc.elf
+# ... and one with a 6 MiB bss, bigger than the image window: only a PE_LOAD
+# from ring 3 (which loads it straight into the caller's heap) can take it.
+x32big.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
+	$(X32_CC) $(X32_CFLAGS) -DX32_BIG $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -o $@ $^
 
-TOCLEAN += x32hello.elf x32reloc.elf x32noreloc.elf
+.PHONY: x32test
+x32test: x32hello.elf x32reloc.elf x32noreloc.elf x32big.elf
+
+TOCLEAN += x32hello.elf x32reloc.elf x32noreloc.elf x32big.elf
 
 #
 # The built-in EmuCON (#398).  On x86-64 the command processor is not linked
