@@ -13,4 +13,4 @@
 #include "portab.h"
 #include "x32embed.h"
 
-X32_EMBED_IMAGE(x86_64_x32probe_image, x86_64_x32probe_elf, "obj/x32/x32probe.elf")
+X32_EMBED_IMAGE(testprobe_image, testprobe_elf, "obj/x32/x32probe.elf")

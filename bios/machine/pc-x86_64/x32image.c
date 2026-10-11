@@ -1,7 +1,7 @@
 /*
  * x32image.c - loader for the embedded x32 program image (x86-64)
  *
- * See include/x32image.h for the contract.
+ * See include/progimage.h for the contract.
  *
  * Copyright (C) 2026 The pTOS development team.
  *
@@ -17,7 +17,7 @@
 #include "portab.h"
 #include "string.h"
 #include "procmem.h"
-#include "x32image.h"
+#include "progimage.h"
 #include "pmem.h"
 
 #define EHDR_SIZE       52
@@ -37,7 +37,7 @@ static ULONG rd32(const UBYTE *p)
 }
 
 /* Reads and validates the program headers of an ELF image into a layout. */
-BOOL x86_64_x32image_layout(const X32_IMAGE *image, X32_LAYOUT *layout)
+BOOL image_layout(const PROG_IMAGE *image, PROG_LAYOUT *layout)
 {
     const UBYTE *e = image->data;
     ULONG phoff, phnum, i, ent;
@@ -59,12 +59,12 @@ BOOL x86_64_x32image_layout(const X32_IMAGE *image, X32_LAYOUT *layout)
     layout->end = 0;
     for (i = 0; i < phnum; i++) {
         const UBYTE *ph = e + phoff + i * PHDR_SIZE;
-        X32_SEGMENT *s;
+        PROG_SEGMENT *s;
         ULONG offset;
 
         if (rd32(ph) != PT_LOAD)
             continue;
-        if (layout->nseg == X32_MAX_SEGMENTS)
+        if (layout->nseg == PROG_MAX_SEGMENTS)
             return FALSE;
         s = &layout->seg[layout->nseg++];
         offset = rd32(ph + 4);
@@ -80,24 +80,24 @@ BOOL x86_64_x32image_layout(const X32_IMAGE *image, X32_LAYOUT *layout)
             layout->end = s->vaddr + s->memsz;
     }
     layout->entry = ent;
-    return x86_64_x32_layout_valid(layout, TRUE);
+    return layout_valid(layout, TRUE);
 }
 
-BOOL x86_64_x32_layout_valid(const X32_LAYOUT *layout, BOOL strict)
+BOOL layout_valid(const PROG_LAYOUT *layout, BOOL strict)
 {
-    return x86_64_x32_layout_valid_in(layout, strict, USER_IMAGE_BASE,
+    return layout_valid_in(layout, strict, USER_IMAGE_BASE,
                                       USER_IMAGE_BASE + USER_IMAGE_SIZE);
 }
 
-BOOL x86_64_x32_layout_valid_in(const X32_LAYOUT *layout, BOOL strict, UQUAD window_lo, UQUAD window_hi)
+BOOL layout_valid_in(const PROG_LAYOUT *layout, BOOL strict, UQUAD window_lo, UQUAD window_hi)
 {
     BOOL entry_ok = FALSE;
     ULONG i, k;
 
-    if (!layout->nseg || layout->nseg > X32_MAX_SEGMENTS)
+    if (!layout->nseg || layout->nseg > PROG_MAX_SEGMENTS)
         return FALSE;
     for (i = 0; i < layout->nseg; i++) {
-        const X32_SEGMENT *s = &layout->seg[i];
+        const PROG_SEGMENT *s = &layout->seg[i];
         UQUAD lo = s->vaddr, hi = s->vaddr + s->memsz;
 
         if (!s->memsz || s->filesz > s->memsz)
@@ -122,12 +122,12 @@ BOOL x86_64_x32_layout_valid_in(const X32_LAYOUT *layout, BOOL strict, UQUAD win
     return entry_ok;
 }
 
-BOOL x86_64_x32_layout_load(ASPACE *as, const X32_LAYOUT *layout)
+BOOL layout_load(ASPACE *as, const PROG_LAYOUT *layout)
 {
     ULONG i;
 
     for (i = 0; i < layout->nseg; i++) {
-        const X32_SEGMENT *s = &layout->seg[i];
+        const PROG_SEGMENT *s = &layout->seg[i];
         UWORD prot = ASPACE_PROT_USER;
 
         if (s->flags & PF_W)
@@ -140,22 +140,22 @@ BOOL x86_64_x32_layout_load(ASPACE *as, const X32_LAYOUT *layout)
     return TRUE;
 }
 
-BOOL x86_64_x32image_check(const X32_IMAGE *image, UQUAD *entry)
+BOOL image_check(const PROG_IMAGE *image, UQUAD *entry)
 {
-    X32_LAYOUT layout;
+    PROG_LAYOUT layout;
 
-    if (!x86_64_x32image_layout(image, &layout))
+    if (!image_layout(image, &layout))
         return FALSE;
     if (entry)
         *entry = layout.entry;
     return TRUE;
 }
 
-BOOL x86_64_x32image_load(ASPACE *as, const X32_IMAGE *image, UQUAD *entry)
+BOOL image_load(ASPACE *as, const PROG_IMAGE *image, UQUAD *entry)
 {
-    X32_LAYOUT layout;
+    PROG_LAYOUT layout;
 
-    if (!x86_64_x32image_layout(image, &layout) || !x86_64_x32_layout_load(as, &layout))
+    if (!image_layout(image, &layout) || !layout_load(as, &layout))
         return FALSE;
     if (entry)
         *entry = layout.entry;

@@ -1,7 +1,7 @@
 /*
  * x32embed.h - embedding an x32 executable in the kernel image (x86-64)
  *
- * X32_EMBED_IMAGE(accessor, label, path) defines `const X32_IMAGE *accessor(void)`
+ * X32_EMBED_IMAGE(accessor, label, path) defines `const PROG_IMAGE *accessor(void)`
  * returning the bytes of the executable at `path` (relative to the directory
  * the compiler runs in, the top of the source tree), carried in .rodata via
  * .incbin.
@@ -18,7 +18,7 @@
 #ifndef X32EMBED_H
 #define X32EMBED_H
 
-#include "x32image.h"
+#include "progimage.h"
 
 #define X32_EMBED_IMAGE(accessor, label, path)                              \
 __asm__(                                                                    \
@@ -30,9 +30,9 @@ __asm__(                                                                    \
     ".byte 0\n"                                                             \
     ".previous\n"                                                           \
 );                                                                          \
-const X32_IMAGE *accessor(void)                                             \
+const PROG_IMAGE *accessor(void)                                             \
 {                                                                           \
-    static X32_IMAGE image;                                                 \
+    static PROG_IMAGE image;                                                 \
                                                                             \
     if (!image.data) {                                                      \
         const UBYTE *start, *end;                                           \

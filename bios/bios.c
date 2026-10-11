@@ -115,8 +115,8 @@ extern void run_cartridge_applications(WORD typebit); /* found in startup.S */
 
 #if CONF_WITH_CLI
 #ifdef __x86_64__
-#include "x32image.h"
-extern BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);    /* bdos/kproc.c */
+#include "progimage.h"
+extern BOOL kproc_set_image(PD *pd, const PROG_IMAGE *image);    /* bdos/kproc.c */
 static void start_builtin_cli(char *env);
 extern void set_owner(void *addr, PD *p);           /* bdos/mem.c */
 extern void proc_free_owned(PD *p);               /* bdos/proc.c */
@@ -492,7 +492,7 @@ static void start_builtin_cli(char *env)
         kcprintf("EmuCON: cannot create its basepage (%ld)\n", (long)pd);
         return;
     }
-    if (!kproc_set_image(pd, x86_64_emucon_image())) {
+    if (!kproc_set_image(pd, emucon_image())) {
         kcprintf("EmuCON: its x32 image is not valid\n");
         rc = ENSMEM;
     } else {

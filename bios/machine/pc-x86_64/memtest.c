@@ -40,7 +40,7 @@
 #include "pgtable.h"
 #include "pmem.h"
 #include "pc_x86_64_memory.h"
-#include "x32image.h"
+#include "progimage.h"
 #include "io.h"
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/fs.h"
@@ -1184,7 +1184,7 @@ static long run_probe(char mode)
     if (rc <= 0)
         return -1000;
     pd = (PD *)(uintptr_t)rc;
-    if (!kproc_set_image(pd, x86_64_x32probe_image())) {
+    if (!kproc_set_image(pd, testprobe_image())) {
         CHECK(FALSE, "probe image attaches");
         set_owner(pd, pd);
         set_owner(USERPTR_TO_PTR(pd->p_env), pd);
@@ -1675,10 +1675,10 @@ static void test_move_private(void)
 }
 
 /* A copy of the probe image with one field changed must be refused. */
-static void mutated(const X32_IMAGE *good, ULONG offset, ULONG size, ULONG value, const char *what)
+static void mutated(const PROG_IMAGE *good, ULONG offset, ULONG size, ULONG value, const char *what)
 {
     UBYTE *copy = kalloc(good->size);
-    X32_IMAGE bad;
+    PROG_IMAGE bad;
     ULONG i;
 
     CHECK(copy != NULL, "image copy");
@@ -1689,30 +1689,30 @@ static void mutated(const X32_IMAGE *good, ULONG offset, ULONG size, ULONG value
         copy[offset + i] = (UBYTE)(value >> (8 * i));
     bad.data = copy;
     bad.size = good->size;
-    CHECK(!x86_64_x32image_check(&bad, NULL), what);
+    CHECK(!image_check(&bad, NULL), what);
     kfree(copy);
 }
 
 static void test_x32image(void)
 {
-    const X32_IMAGE *good = x86_64_x32probe_image();
-    X32_IMAGE cut;
+    const PROG_IMAGE *good = testprobe_image();
+    PROG_IMAGE cut;
     UQUAD entry = 0;
     ASPACE *as;
     SNAP s;
 
     snap(&s);
-    CHECK(x86_64_x32image_check(good, &entry) && entry >= USER_IMAGE_BASE &&
+    CHECK(image_check(good, &entry) && entry >= USER_IMAGE_BASE &&
           entry < USER_IMAGE_BASE + USER_IMAGE_SIZE, "probe image is valid");
 #if CONF_WITH_CLI
-    CHECK(x86_64_x32image_check(x86_64_emucon_image(), &entry), "EmuCON image is valid");
+    CHECK(image_check(emucon_image(), &entry), "EmuCON image is valid");
 #endif
 
     cut = *good;
     cut.size = 40;
-    CHECK(!x86_64_x32image_check(&cut, NULL), "truncated header refused");
+    CHECK(!image_check(&cut, NULL), "truncated header refused");
     cut.size = 52 + 32;                 /* header and one program header only */
-    CHECK(!x86_64_x32image_check(&cut, NULL), "program headers beyond the file refused");
+    CHECK(!image_check(&cut, NULL), "program headers beyond the file refused");
 
     mutated(good, 4, 1, 2, "ELFCLASS64 refused");
     mutated(good, 5, 1, 2, "big-endian refused");
@@ -1731,7 +1731,7 @@ static void test_x32image(void)
     /* loading fills the pages and refuses what check() refuses */
     as = must_create("image address space");
     if (as) {
-        CHECK(x86_64_x32image_load(as, good, &entry), "image loads");
+        CHECK(image_load(as, good, &entry), "image loads");
         CHECK(aspace_user_range_ok(as, entry, 16, FALSE) &&
               !aspace_user_range_ok(as, entry, 16, TRUE), "text is read-only");
         aspace_destroy(as);
@@ -1745,7 +1745,7 @@ static void test_x32image(void)
         PD *pd = new_basepage();
 
         if (pd) {
-            X32_LAYOUT l;
+            PROG_LAYOUT l;
 
             memset(&l, 0, sizeof l);
             l.nseg = 1;

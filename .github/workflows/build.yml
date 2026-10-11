@@ -331,10 +331,10 @@ jobs:
           # The self-test also launches real ring-3 x32 processes
           # (tests/x32_probe/): entry state and selectors, a GEMDOS call
           # across the syscall boundary, fault containment, private pages.
-          # Its deliberate faults print "x32 process fault" lines BEFORE the
+          # Its deliberate faults print "process fault:" lines BEFORE the
           # PASS line; any such line after it is the built-in EmuCON itself
           # faulting.
-          if sed -n '/x86-64 memtest: PASS/,$p' boot.log | grep -q 'x32 process fault'; then
+          if sed -n '/x86-64 memtest: PASS/,$p' boot.log | grep -q 'process fault:'; then
             echo "::error::the ring-3 EmuCON faulted"
             exit 1
           fi

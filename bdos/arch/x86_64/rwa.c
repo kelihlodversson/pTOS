@@ -99,7 +99,6 @@ void termuser(void) NORETURN;
 /* declared directly like the above: proc.h needs file-system types this file
  * has no other use for */
 extern void xterm(UWORD rc) NORETURN;               /* bdos/proc.c */
-void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2, UQUAD rsp) NORETURN;
 
 void enter(void)
 {
@@ -327,26 +326,6 @@ int x86_64_demand_page(UQUAD address)
     if (address >= USER_VA_LIMIT || !pml4 || pml4 != x86_64_read_cr3())
         return 0;
     return kproc_demand_page(run, address);
-}
-
-/*
- * A ring-3 process faulted (bios/arch/x86_64/panic.c).  The fault is the
- * process's own: report it and terminate just that process, as Pterm(-1)
- * would, so the launcher resumes and the kernel carries on.  Called on the
- * exception stack, in ring 0, with the process's address space still
- * loaded; xterm() tears that down and never returns here.
- */
-void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2, UQUAD rsp)
-{
-    ULONG word[4];
-
-    kcprintf("x32 process fault: vector %lu error=0x%lx rip=0x%lx addr=0x%lx rsp=0x%lx\n",
-            (long)vector, (long)error_code, (long)rip, (long)cr2, (long)rsp);
-    if (kproc_copy_from_user(word, rsp, sizeof(word)))
-        kcprintf("  stack: 0x%lx 0x%lx 0x%lx 0x%lx\n",
-                (long)word[0], (long)word[1], (long)word[2], (long)word[3]);
-    xterm((UWORD)-1);
-    panic("x86-64: terminated faulting process returned\n");
 }
 
 void termuser(void)

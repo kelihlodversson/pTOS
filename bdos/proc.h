@@ -32,10 +32,14 @@ WORD xtermres(long blkln, WORD rc);
 void mark_kernel_code_pd(PD *p);
 BOOL take_kernel_code_pd(PD *p);
 #endif
-#ifdef __x86_64__
-/* in bdos/arch/x86_64/rwa.c */
-void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2,
-                       UQUAD rsp) NORETURN;
+#if CONF_WITH_USER_ASPACE
+/* The running process faulted (the architecture's exception handler calls
+ * this): report it and end just that process, as Pterm(-1) would, so that its
+ * launcher resumes and the kernel carries on.  `cause` names the fault, `code`
+ * is the architecture's own detail (an error code), `address` the address
+ * accessed, `pc` the instruction, `sp` the stack pointer.  Called with the
+ * process's address space still in use; never returns. */
+void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp) NORETURN;
 #endif
 
 /*
