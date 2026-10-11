@@ -403,7 +403,7 @@ void osinit_after_xmaddalt(void)
     /* Set up initial process. Required by Malloc() */
 #ifdef __x86_64__
     /* permanent: no owner, never freed */
-    run = (PD *)x86_64_procmem_alloc(sizeof(PD), PROCMEM_ZERO);
+    run = (PD *)procmem_alloc(sizeof(PD), PROCMEM_ZERO);
     if (!run)
         halt();
 #else

@@ -27,18 +27,22 @@ cli/ and util/ to regenerate it).
    #ifdef __x86_64__ remain in bdos/bdosmain.c and bdos/proc.c), and move
    include/procmem.h's declarations into a header named for the feature.
 
-2. Process memory window (procmem)
-   x86_64_procmem_alloc/free/mfree/owner/size/gen/contains/pins/keep/...,
-   x86_64_free_owned, x86_64_release_block, x86_64_low_tpa_init.  Users:
-   bdos/proc.c, bdos/umem.c, bdos/bdosmain.c, bdos/mem.h.  The block pool the
-   basepage and environment come from (ownership, generations, pins).  Shared
-   design (ownership and generation checks), board part (where the window is).
+2. Process memory window (procmem)                                     DONE
+   x86_64_procmem_* is now procmem_* (alloc, free, mfree, owner, size, gen,
+   contains, pins, keep, ...); the ownership functions that bdos/proc.c defines
+   (Pterm/Ptermres/Mfree side) are proc_free_owned, proc_make_resident,
+   proc_release_block, proc_drop_child_record, proc_mfree, proc_resident_pd and
+   proc_resident_len.  Users: bdos/proc.c, bdos/umem.c, bdos/bdosmain.c,
+   bdos/mem.h, bios/bios.c.  The block pool the basepage and environment come
+   from (ownership, generations, pins).  Shared design (ownership and
+   generation checks); the board part (where the window is, X86_64_LOW_TPA_*,
+   x86_64_low_tpa_init) stays in bios/machine/pc-x86_64/ and goes with group 5.
 
 3. Launching and the ring-3 transition
    x86_64_prepare_launch, x86_64_ring3_caller, x86_64_kernel_code_pd,
-   x86_64_take/mark_kernel_code_pd, x86_64_resident_pd/_len,
-   x86_64_make_resident, x86_64_hand_over, x86_64_check_launch,
-   x86_64_give_back, x86_64_drop_child_record, x86_64_call_on_stack,
+   x86_64_take/mark_kernel_code_pd, proc_resident_pd/_len,
+   proc_make_resident, x86_64_hand_over, x86_64_check_launch,
+   x86_64_give_back, proc_drop_child_record, x86_64_call_on_stack,
    x86_64_kexec_resume, x86_64_user_fault, x86_64_kstack_alloc/free.  Users:
    bdos/proc.c, bdos/proc.h, aes/gemshlib.c, aes/arch/x86_64/gemstart.c.  The
    Pexec/Pterm/Ptermres policy (who made a basepage, what a loader may launch,

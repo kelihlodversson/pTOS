@@ -106,7 +106,7 @@ void x86_64_low_tpa_init(void)
     free_pages = WINDOW_PAGES;
 }
 
-BOOL x86_64_procmem_contains(const void *p)
+BOOL procmem_contains(const void *p)
 {
     UQUAD a = (UQUAD)(uintptr_t)p;
 
@@ -114,7 +114,7 @@ BOOL x86_64_procmem_contains(const void *p)
            a < X86_64_LOW_TPA_VIRT_BASE + X86_64_LOW_TPA_BYTES;
 }
 
-UQUAD x86_64_procmem_phys_of(UQUAD va)
+UQUAD procmem_phys_of(UQUAD va)
 {
     return window_phys + (va - X86_64_LOW_TPA_VIRT_BASE);
 }
@@ -137,7 +137,7 @@ static BOOL find_run(ULONG pages, ULONG *first)
     return FALSE;
 }
 
-void *x86_64_procmem_alloc(ULONG bytes, UWORD flags)
+void *procmem_alloc(ULONG bytes, UWORD flags)
 {
     struct alloc *a;
     ULONG pages, first;
@@ -170,7 +170,7 @@ void *x86_64_procmem_alloc(ULONG bytes, UWORD flags)
     /* Zero through the direct map: unlike the window's own low alias,
      * it is present whichever address space is currently loaded. */
     if (flags & PROCMEM_ZERO)
-        memset((void *)(uintptr_t)(X86_64_PHYS_MAP_BASE + x86_64_procmem_phys_of(va)),
+        memset((void *)(uintptr_t)(X86_64_PHYS_MAP_BASE + procmem_phys_of(va)),
                0, (size_t)pages * X86_64_PAGE_SIZE);
     return (void *)(uintptr_t)va;
 }
@@ -197,7 +197,7 @@ static void release(struct alloc **link)
     kfree(a);
 }
 
-BOOL x86_64_procmem_free(void *p)
+BOOL procmem_free(void *p)
 {
     struct alloc **link = find_link(p);
 
@@ -211,12 +211,12 @@ BOOL x86_64_procmem_free(void *p)
     return TRUE;
 }
 
-UQUAD x86_64_procmem_next_gen(void)
+UQUAD procmem_next_gen(void)
 {
     return next_gen;
 }
 
-ULONG x86_64_procmem_free_ownerless_since(UQUAD gen)
+ULONG procmem_free_ownerless_since(UQUAD gen)
 {
     ULONG freed = 0;
     struct alloc **link = &allocs;
@@ -232,21 +232,21 @@ ULONG x86_64_procmem_free_ownerless_since(UQUAD gen)
     return freed;
 }
 
-BOOL x86_64_procmem_pinned(const void *p)
+BOOL procmem_pinned(const void *p)
 {
     struct alloc **link = find_link(p);
 
     return link && (*link)->pins;
 }
 
-ULONG x86_64_procmem_pins(const void *p)
+ULONG procmem_pins(const void *p)
 {
     struct alloc **link = find_link(p);
 
     return link ? (*link)->pins : 0;
 }
 
-void x86_64_procmem_pin(UQUAD va, UQUAD bytes, int delta)
+void procmem_pin(UQUAD va, UQUAD bytes, int delta)
 {
     struct alloc *a;
 
@@ -259,21 +259,21 @@ void x86_64_procmem_pin(UQUAD va, UQUAD bytes, int delta)
         }
 }
 
-UQUAD x86_64_procmem_gen(const void *p)
+UQUAD procmem_gen(const void *p)
 {
     struct alloc **link = find_link(p);
 
     return link ? (*link)->gen : 0;
 }
 
-ULONG x86_64_procmem_size(const void *p)
+ULONG procmem_size(const void *p)
 {
     struct alloc **link = find_link(p);
 
     return link ? (*link)->pages * (ULONG)X86_64_PAGE_SIZE : 0;
 }
 
-BOOL x86_64_procmem_range_live(UQUAD va, UQUAD bytes)
+BOOL procmem_range_live(UQUAD va, UQUAD bytes)
 {
     UQUAD first, last, i;
 
@@ -289,14 +289,14 @@ BOOL x86_64_procmem_range_live(UQUAD va, UQUAD bytes)
     return TRUE;
 }
 
-const void *x86_64_procmem_owner(const void *p)
+const void *procmem_owner(const void *p)
 {
     struct alloc **link = find_link(p);
 
     return link ? (*link)->owner : NULL;
 }
 
-void x86_64_procmem_set_owner(const void *p, const void *owner)
+void procmem_set_owner(const void *p, const void *owner)
 {
     struct alloc **link = find_link(p);
 
@@ -304,7 +304,7 @@ void x86_64_procmem_set_owner(const void *p, const void *owner)
         (*link)->owner = owner;
 }
 
-void x86_64_procmem_free_owned(const void *owner, void (*pre_free)(void *base))
+void procmem_free_owned(const void *owner, void (*pre_free)(void *base))
 {
     struct alloc **link;
     struct alloc *a;
@@ -332,7 +332,7 @@ void x86_64_procmem_free_owned(const void *owner, void (*pre_free)(void *base))
     }
 }
 
-void x86_64_procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *base))
+void procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *base))
 {
     struct alloc *a;
 
@@ -360,7 +360,7 @@ void x86_64_procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(v
     }
 }
 
-void x86_64_procmem_stats(PROCMEM_STATS *stats)
+void procmem_stats(PROCMEM_STATS *stats)
 {
     stats->live_allocs = live_allocs;
     stats->total_pages = WINDOW_PAGES;

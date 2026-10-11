@@ -46,8 +46,8 @@
 #include "../../../bdos/fs.h"
 
 extern void set_owner(void *addr, PD *p);
-extern void x86_64_free_owned(PD *p);
-extern void x86_64_make_resident(PD *p, ULONG keep_bytes);
+extern void proc_free_owned(PD *p);
+extern void proc_make_resident(PD *p, ULONG keep_bytes);
 extern PD *run;
 
 #define PAGE            X86_64_PAGE_SIZE
@@ -92,7 +92,7 @@ static void snap(SNAP *s)
     s->pmem_free = x86_64_pmem_free_bytes();
     s->pmem_bad = x86_64_pmem_bad_frees();
     kheap_stats(&s->heap);
-    x86_64_procmem_stats(&s->pm);
+    procmem_stats(&s->pm);
     s->kprocs = kproc_count();
 }
 
@@ -289,9 +289,9 @@ static void test_kheap(void)
     kfree(q);
     kfree(q);                                       /* double free */
     kfree(&before);                                 /* not in the heap */
-    p = x86_64_procmem_alloc(1, 0);
+    p = procmem_alloc(1, 0);
     kfree(p);                                       /* user memory */
-    x86_64_procmem_free(p);
+    procmem_free(p);
     kheap_stats(&after);
     CHECK(after.bad_frees == before.bad_frees + 3, "bad kfree()s rejected");
 
@@ -321,102 +321,102 @@ static void test_procmem(void)
 
     /* repeated alloc/free reclaims the window */
     for (i = 0; i < 1000; i++) {
-        p = x86_64_procmem_alloc(5000, PROCMEM_ZERO);
+        p = procmem_alloc(5000, PROCMEM_ZERO);
         if (!p)
             break;
-        CHECK(x86_64_procmem_contains(p), "inside window");
+        CHECK(procmem_contains(p), "inside window");
         CHECK((UQUAD)(uintptr_t)p + 2 * PAGE <= USER_VA_LIMIT, "below 4 GiB");
         CHECK(!((UQUAD)(uintptr_t)p & (PAGE - 1)), "page aligned");
         memset(p, 0xAA, 5000);
-        CHECK(x86_64_procmem_free(p), "free");
+        CHECK(procmem_free(p), "free");
     }
     CHECK(i == 1000, "1000 alloc/free cycles");
     same(&s, "procmem cycles");
 
     /* zeroing is the caller's explicit choice */
-    p = x86_64_procmem_alloc(PAGE, 0);
+    p = procmem_alloc(PAGE, 0);
     memset(p, 0xAA, PAGE);
-    x86_64_procmem_free(p);
-    q = x86_64_procmem_alloc(PAGE, 0);
+    procmem_free(p);
+    q = procmem_alloc(PAGE, 0);
     CHECK(q == p && q[100] == 0xAA, "no PROCMEM_ZERO leaves old contents");
-    x86_64_procmem_free(q);
-    q = x86_64_procmem_alloc(PAGE, PROCMEM_ZERO);
+    procmem_free(q);
+    q = procmem_alloc(PAGE, PROCMEM_ZERO);
     CHECK(q == p && q[100] == 0 && q[PAGE - 1] == 0, "PROCMEM_ZERO zeroes");
-    CHECK(x86_64_procmem_free(q), "free zeroed");
+    CHECK(procmem_free(q), "free zeroed");
 
     /* double free, interior and foreign pointers are refused */
-    x86_64_procmem_stats(&st);
-    CHECK(!x86_64_procmem_free(q), "double free refused");
-    p = x86_64_procmem_alloc(2 * PAGE, 0);
-    CHECK(!x86_64_procmem_free(p + PAGE), "interior pointer refused");
-    CHECK(!x86_64_procmem_free(&st), "foreign pointer refused");
-    CHECK(x86_64_procmem_free(p), "free");
-    x86_64_procmem_stats(&st2);
+    procmem_stats(&st);
+    CHECK(!procmem_free(q), "double free refused");
+    p = procmem_alloc(2 * PAGE, 0);
+    CHECK(!procmem_free(p + PAGE), "interior pointer refused");
+    CHECK(!procmem_free(&st), "foreign pointer refused");
+    CHECK(procmem_free(p), "free");
+    procmem_stats(&st2);
     CHECK(st2.bad_frees == st.bad_frees + 3, "refused releases counted");
 
     /* exhaustion: allocation fails cleanly and everything comes back */
     v = kalloc(st.total_pages * sizeof(void *));
     for (i = 0; v && i < st.total_pages + 1; i++) {
-        v[i] = x86_64_procmem_alloc(PAGE, 0);
+        v[i] = procmem_alloc(PAGE, 0);
         if (!v[i])
             break;
         n++;
     }
     CHECK(v && n == st.free_pages && i == st.free_pages, "window fills exactly");
-    CHECK(x86_64_procmem_alloc(PAGE, 0) == NULL, "exhausted window returns NULL");
-    CHECK(!x86_64_procmem_range_live(X86_64_LOW_TPA_VIRT_BASE - PAGE, PAGE) &&
-          !x86_64_procmem_range_live(X86_64_LOW_TPA_VIRT_BASE + X86_64_LOW_TPA_BYTES, PAGE),
+    CHECK(procmem_alloc(PAGE, 0) == NULL, "exhausted window returns NULL");
+    CHECK(!procmem_range_live(X86_64_LOW_TPA_VIRT_BASE - PAGE, PAGE) &&
+          !procmem_range_live(X86_64_LOW_TPA_VIRT_BASE + X86_64_LOW_TPA_BYTES, PAGE),
           "range check rejects outside the window");
     while (n--)
-        x86_64_procmem_free(v[n]);
+        procmem_free(v[n]);
     kfree(v);
-    p = x86_64_procmem_alloc(PAGE, 0);
+    p = procmem_alloc(PAGE, 0);
     CHECK(p != NULL, "recovers after exhaustion");
-    x86_64_procmem_free(p);
+    procmem_free(p);
 
     /* ownership: owned blocks die with their owner, others survive */
     {
-        void *a1 = x86_64_procmem_alloc(PAGE, 0), *a2 = x86_64_procmem_alloc(PAGE, 0);
-        void *b1 = x86_64_procmem_alloc(PAGE, 0), *perm = x86_64_procmem_alloc(PAGE, 0);
+        void *a1 = procmem_alloc(PAGE, 0), *a2 = procmem_alloc(PAGE, 0);
+        void *b1 = procmem_alloc(PAGE, 0), *perm = procmem_alloc(PAGE, 0);
 
-        x86_64_procmem_set_owner(a1, &owner_a);
-        x86_64_procmem_set_owner(a2, &owner_a);
-        x86_64_procmem_set_owner(b1, &owner_b);
+        procmem_set_owner(a1, &owner_a);
+        procmem_set_owner(a2, &owner_a);
+        procmem_set_owner(b1, &owner_b);
         pre_free_calls = 0;
-        x86_64_procmem_free_owned(&owner_a, count_pre_free);
+        procmem_free_owned(&owner_a, count_pre_free);
         CHECK(pre_free_calls == 2, "pre_free per owned block");
-        CHECK(!x86_64_procmem_size(a1) && !x86_64_procmem_size(a2), "owned blocks freed");
-        CHECK(x86_64_procmem_size(b1) && x86_64_procmem_size(perm), "others survive");
-        x86_64_procmem_free_owned(&owner_a, NULL);      /* again: nothing */
-        x86_64_procmem_free_owned(NULL, NULL);          /* NULL is not "all" */
-        CHECK(x86_64_procmem_size(perm), "permanent blocks never owned-freed");
-        x86_64_procmem_keep(&owner_b, 0, NULL);
-        x86_64_procmem_free_owned(&owner_b, NULL);
-        CHECK(x86_64_procmem_size(b1), "kept block is resident");
-        x86_64_procmem_free(b1);
-        x86_64_procmem_free(perm);
+        CHECK(!procmem_size(a1) && !procmem_size(a2), "owned blocks freed");
+        CHECK(procmem_size(b1) && procmem_size(perm), "others survive");
+        procmem_free_owned(&owner_a, NULL);      /* again: nothing */
+        procmem_free_owned(NULL, NULL);          /* NULL is not "all" */
+        CHECK(procmem_size(perm), "permanent blocks never owned-freed");
+        procmem_keep(&owner_b, 0, NULL);
+        procmem_free_owned(&owner_b, NULL);
+        CHECK(procmem_size(b1), "kept block is resident");
+        procmem_free(b1);
+        procmem_free(perm);
     }
 
     /* Ptermres: the owner's block is cut back to the requested pages and
      * the tail returned; the rest of what it owns is kept, not freed */
     {
-        UBYTE *blk = x86_64_procmem_alloc(4 * PAGE, 0);
-        void *other = x86_64_procmem_alloc(PAGE, 0);
+        UBYTE *blk = procmem_alloc(4 * PAGE, 0);
+        void *other = procmem_alloc(PAGE, 0);
         PROCMEM_STATS before, after;
 
-        x86_64_procmem_set_owner(blk, blk);
-        x86_64_procmem_set_owner(other, blk);
-        x86_64_procmem_stats(&before);
+        procmem_set_owner(blk, blk);
+        procmem_set_owner(other, blk);
+        procmem_stats(&before);
         pre_free_calls = 0;
-        x86_64_procmem_keep(blk, PAGE + 1, count_pre_free);
-        x86_64_procmem_stats(&after);
-        CHECK(x86_64_procmem_size(blk) == 2 * PAGE, "Ptermres keeps whole pages of the prefix");
+        procmem_keep(blk, PAGE + 1, count_pre_free);
+        procmem_stats(&after);
+        CHECK(procmem_size(blk) == 2 * PAGE, "Ptermres keeps whole pages of the prefix");
         CHECK(after.free_pages == before.free_pages + 2, "unused tail returned");
-        CHECK(pre_free_calls == 1 && x86_64_procmem_size(other), "other owned block kept");
-        x86_64_procmem_free_owned(blk, NULL);
-        CHECK(x86_64_procmem_size(blk) && x86_64_procmem_size(other), "resident blocks survive owner cleanup");
-        x86_64_procmem_free(blk);
-        x86_64_procmem_free(other);
+        CHECK(pre_free_calls == 1 && procmem_size(other), "other owned block kept");
+        procmem_free_owned(blk, NULL);
+        CHECK(procmem_size(blk) && procmem_size(other), "resident blocks survive owner cleanup");
+        procmem_free(blk);
+        procmem_free(other);
     }
 
     same(&s, "procmem");
@@ -435,7 +435,7 @@ static void test_aspace(void)
     UBYTE buf_dummy[16];
 
     snap(&s);
-    mem = x86_64_procmem_alloc(3 * PAGE, PROCMEM_ZERO);
+    mem = procmem_alloc(3 * PAGE, PROCMEM_ZERO);
     CHECK(mem != NULL, "window block for mapping");
     if (!mem)
         return;
@@ -463,14 +463,14 @@ static void test_aspace(void)
     if (as) {
         CHECK(aspace_map_procmem(as, (UQUAD)(uintptr_t)mem, 3 * PAGE,
                                         ASPACE_PROT_WRITE | ASPACE_PROT_USER), "map for pin");
-        CHECK(x86_64_procmem_pinned(mem), "mapped block is pinned");
-        CHECK(!x86_64_procmem_free(mem), "pinned block cannot be freed");
-        x86_64_procmem_set_owner(mem, &failed);
-        x86_64_procmem_free_owned(&failed, NULL);
-        CHECK(x86_64_procmem_size(mem), "owned-free skips a pinned block");
-        x86_64_procmem_set_owner(mem, NULL);
+        CHECK(procmem_pinned(mem), "mapped block is pinned");
+        CHECK(!procmem_free(mem), "pinned block cannot be freed");
+        procmem_set_owner(mem, &failed);
+        procmem_free_owned(&failed, NULL);
+        CHECK(procmem_size(mem), "owned-free skips a pinned block");
+        procmem_set_owner(mem, NULL);
         aspace_destroy(as);
-        CHECK(!x86_64_procmem_pinned(mem), "destroy unpins");
+        CHECK(!procmem_pinned(mem), "destroy unpins");
     }
 
     /* failed setup at every allocation point unwinds completely */
@@ -534,7 +534,7 @@ static void test_aspace(void)
             x86_64_sti();
     }
 
-    x86_64_procmem_free(mem);
+    procmem_free(mem);
     same(&s, "aspace");
 }
 
@@ -682,20 +682,20 @@ static void test_isolation(void)
     /* a block lent to the address space is reachable for ring 0 only, and goes
      * back exactly once */
     {
-        void *blk = x86_64_procmem_alloc(PAGE, PROCMEM_ZERO);
+        void *blk = procmem_alloc(PAGE, PROCMEM_ZERO);
 
         CHECK(blk != NULL, "a block to lend");
         if (blk) {
             UQUAD v = (UQUAD)(uintptr_t)blk;
 
-            CHECK(aspace_borrow(a, v, PAGE) && x86_64_procmem_pinned(blk) &&
+            CHECK(aspace_borrow(a, v, PAGE) && procmem_pinned(blk) &&
                   aspace_translate(a, v, NULL, &prot) && !(prot & ASPACE_PROT_USER) &&
                   (prot & ASPACE_PROT_WRITE) && !aspace_user_range_ok(a, v, 8, FALSE),
                   "a borrowed block is mapped supervisor-only and pinned");
             aspace_unborrow(a, v, PAGE);
-            CHECK(!x86_64_procmem_pinned(blk) && !aspace_translate(a, v, NULL, NULL),
+            CHECK(!procmem_pinned(blk) && !aspace_translate(a, v, NULL, NULL),
                   "an unborrowed block is unmapped and unpinned");
-            CHECK(x86_64_procmem_free(blk), "and can be freed");
+            CHECK(procmem_free(blk), "and can be freed");
         }
     }
 
@@ -889,7 +889,7 @@ static void test_process_validation(void)
     CHECK(!kproc_copy_to_user(0x10000000, b, 8), "copy to an unmapped address refused");
     run = saved;
 
-    x86_64_free_owned(pd);
+    proc_free_owned(pd);
     same(&s, "process validation");
 }
 
@@ -939,17 +939,17 @@ static void test_kproc_ranges(void)
     UQUAD env, tpa, gap;
 
     snap(&s);
-    x86_64_procmem_stats(&st);
+    procmem_stats(&st);
     v = kalloc(st.total_pages * sizeof(void *));
     CHECK(v != NULL, "vector for fragmentation");
     if (!v)
         return;
-    while (n < st.total_pages && (v[n] = x86_64_procmem_alloc(PAGE, 0)) != NULL)
+    while (n < st.total_pages && (v[n] = procmem_alloc(PAGE, 0)) != NULL)
         n++;
     CHECK(n >= 6, "enough window pages to fragment");
     if (n >= 6) {
-        x86_64_procmem_free(v[n - 4]);          /* hole for the environment */
-        x86_64_procmem_free(v[n - 1]);          /* hole for the basepage */
+        procmem_free(v[n - 4]);          /* hole for the environment */
+        procmem_free(v[n - 1]);          /* hole for the basepage */
         pd = new_basepage();
         CHECK(pd != NULL, "basepage in the fragmented window");
         if (pd) {
@@ -970,7 +970,7 @@ static void test_kproc_ranges(void)
     }
     for (i = 0; i < n; i++)
         if (i + 4 != n && i + 1 != n)           /* the two freed above */
-            x86_64_procmem_free(v[i]);
+            procmem_free(v[i]);
     kfree(v);
     run = saved;
     same(&s, "fragmented kproc ranges");
@@ -996,11 +996,11 @@ static void test_lifecycle(void)
         set_owner(env, pd);
         if (!kproc_prepare_user(pd, run) || !kproc_user_root(pd)) {
             CHECK(FALSE, "launch preparation");
-            x86_64_free_owned(pd);
+            proc_free_owned(pd);
             break;
         }
-        x86_64_free_owned(pd);                  /* what ixterm() does */
-        x86_64_free_owned(pd);                  /* exactly once: now a no-op */
+        proc_free_owned(pd);                  /* what ixterm() does */
+        proc_free_owned(pd);                  /* exactly once: now a no-op */
     }
     CHECK(i == LIFECYCLES, "process create/exit cycles");
     same(&s, "process lifecycle");
@@ -1011,7 +1011,7 @@ static void test_lifecycle(void)
     if (pd) {
         UQUAD hi = pd->p_hitpa;
         UQUAD envv = pd->p_env;
-        void *other = x86_64_procmem_alloc(PAGE, PROCMEM_ZERO);
+        void *other = procmem_alloc(PAGE, PROCMEM_ZERO);
 
         env = USERPTR_TO_PTR(pd->p_env);
         pd->p_hitpa = hi + 4 * PAGE;            /* reach into a neighbour */
@@ -1024,8 +1024,8 @@ static void test_lifecycle(void)
         CHECK(kproc_prepare_user(pd, run), "unmodified basepage still launches");
         set_owner(pd, pd);
         set_owner(env, pd);
-        x86_64_free_owned(pd);                  /* maps, references, blocks */
-        x86_64_procmem_free(other);
+        proc_free_owned(pd);                  /* maps, references, blocks */
+        procmem_free(other);
     }
 
     /* the environment freed and its address reused between creating the
@@ -1037,11 +1037,11 @@ static void test_lifecycle(void)
         void *stranger;
 
         CHECK(Mfree(e) == 0, "free environment before launch");
-        stranger = x86_64_procmem_alloc(PAGE, PROCMEM_ZERO);
+        stranger = procmem_alloc(PAGE, PROCMEM_ZERO);
         CHECK(stranger == e, "address reused as arranged");
         CHECK(!kproc_prepare_user(pd, run), "reused environment address refused");
-        CHECK(!x86_64_procmem_pinned(stranger), "stranger's block was not mapped");
-        x86_64_procmem_free(stranger);
+        CHECK(!procmem_pinned(stranger), "stranger's block was not mapped");
+        procmem_free(stranger);
         Mfree(pd);
     }
 
@@ -1072,7 +1072,7 @@ static void test_lifecycle(void)
         CHECK(Mfree(env) == EACCDN, "Mfree of a mapped environment refused");
         CHECK(Mfree(pd) == EACCDN, "Mfree of the live basepage refused");
         CHECK(kproc_user_root(pd) != 0, "address space survives the refused Mfree");
-        x86_64_free_owned(pd);
+        proc_free_owned(pd);
     }
 
     /* failed setup: the basepage is abandoned, never launched */
@@ -1124,9 +1124,9 @@ static void test_lifecycle(void)
             set_owner(penv, parent);
             set_owner(child, parent);
             set_owner(cenv, parent);
-            x86_64_make_resident(parent, PAGE);
+            proc_make_resident(parent, PAGE);
             CHECK(kproc_count() == kp - 1, "child KPROC dropped at Ptermres");
-            CHECK(x86_64_procmem_size(child) && x86_64_procmem_size(cenv), "child blocks stay resident");
+            CHECK(procmem_size(child) && procmem_size(cenv), "child blocks stay resident");
             /* the terminating parent's own record and references go in
              * xterm()/ixterm(); an unlaunched one is released by Mfree() */
             Mfree(parent);
@@ -1151,7 +1151,7 @@ static void test_lifecycle(void)
             CHECK(!kproc_user_root(pd), "failed preparation leaves no address space");
         }
         x86_64_pmem_test_fail_after(0);
-        x86_64_free_owned(pd);
+        proc_free_owned(pd);
     }
     CHECK(failed >= 3, "launch failures were exercised");
     same(&s, "failed launch");
@@ -1188,14 +1188,14 @@ static long run_probe(char mode)
         CHECK(FALSE, "probe image attaches");
         set_owner(pd, pd);
         set_owner(USERPTR_TO_PTR(pd->p_env), pd);
-        x86_64_free_owned(pd);
+        proc_free_owned(pd);
         return -1000;
     }
     rc = Pexec(PE_GOTHENFREE, "", (char *)pd, NULL);
     if (rc < 0) {
         set_owner(pd, pd);
         set_owner(USERPTR_TO_PTR(pd->p_env), pd);
-        x86_64_free_owned(pd);
+        proc_free_owned(pd);
     }
     return rc;
 }
@@ -1537,7 +1537,7 @@ static void test_ring3(void)
      */
     {
         SNAP before, after;
-        UQUAD first_gen = x86_64_procmem_next_gen();
+        UQUAD first_gen = procmem_next_gen();
 
         snap(&s);
         snap(&before);
@@ -1569,7 +1569,7 @@ static void test_ring3(void)
                       (long)after.heap.live_blocks - (long)before.heap.live_blocks == grown,
                       "resident children leave no process records, references or stray heap blocks behind");
                 CHECK(grown > 0 && grown <= 20, "only the resident blocks themselves stay allocated");
-                CHECK((long)x86_64_procmem_free_ownerless_since(first_gen) == grown,
+                CHECK((long)procmem_free_ownerless_since(first_gen) == grown,
                       "the resident blocks are all given back");
             }
         }
@@ -1593,7 +1593,7 @@ static void test_ring3(void)
             CHECK(stack != 0, "its kernel stack can be taken");
             CHECK(!kproc_prepare_user(pd, run), "a prepared process whose stack is gone is refused");
             x86_64_kstack_free(stack);
-            x86_64_free_owned(pd);
+            proc_free_owned(pd);
         }
     }
     same(&s, "relaunch refusal");
@@ -1762,7 +1762,7 @@ static void test_x32image(void)
             CHECK(kproc_set_loaded_image(pd, &l), "room for the startup area: accepted");
             set_owner(pd, pd);
             set_owner(USERPTR_TO_PTR(pd->p_env), pd);
-            x86_64_free_owned(pd);
+            proc_free_owned(pd);
         }
     }
     same(&s, "startup area room");

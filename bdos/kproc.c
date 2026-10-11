@@ -144,9 +144,9 @@ BOOL kproc_create(PD *pd)
     /* Snapshot bounds before ring 3 can modify the public basepage. */
     kproc->env_start = USERPTR_TO_PTR(pd->p_env);
     kproc->env_end = kproc->env_start +
-                     x86_64_procmem_size(kproc->env_start);
-    kproc->env_gen = x86_64_procmem_gen(kproc->env_start);
-    kproc->tpa_gen = x86_64_procmem_gen(pd);
+                     procmem_size(kproc->env_start);
+    kproc->env_gen = procmem_gen(kproc->env_start);
+    kproc->tpa_gen = procmem_gen(pd);
     kproc->user_start = (UBYTE *)pd;
     kproc->user_end = USERPTR_TO_PTR(pd->p_hitpa);
     /* The basepage is writable by whoever holds it until launch, so the
@@ -154,7 +154,7 @@ BOOL kproc_create(PD *pd)
      * allocation the basepage sits at the start of, whatever p_hitpa says. */
     {
         UBYTE *alloc_end = kproc->user_start +
-                           x86_64_procmem_size(kproc->user_start);
+                           procmem_size(kproc->user_start);
 
         if (kproc->user_end > alloc_end || kproc->user_end < kproc->user_start)
             kproc->user_end = alloc_end;
@@ -406,8 +406,8 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
      * otherwise a launch could map a neighbouring allocation. */
     if (!envbytes || hitpa <= tpa ||
         !kproc->env_gen || !kproc->tpa_gen ||
-        x86_64_procmem_gen(kproc->env_start) != kproc->env_gen ||
-        x86_64_procmem_gen(kproc->user_start) != kproc->tpa_gen ||
+        procmem_gen(kproc->env_start) != kproc->env_gen ||
+        procmem_gen(kproc->user_start) != kproc->tpa_gen ||
         (UQUAD)pd->p_env != env || (UQUAD)pd->p_hitpa > hitpa ||
         (UQUAD)pd->p_hitpa <= tpa)
         return FALSE;
@@ -694,12 +694,12 @@ void kproc_hand_over(PD *caller, PD *child)
     if (!launcher || !launcher->aspace || !kproc)
         return;
     /* the caller may grow the TPA (p_hitpa) up to the end of its block */
-    kproc->user_end = kproc->user_start + x86_64_procmem_size(kproc->user_start);
+    kproc->user_end = kproc->user_start + procmem_size(kproc->user_start);
     aspace_regrant(launcher->aspace, (UQUAD)(uintptr_t)kproc->env_start,
                           kproc->env_end - kproc->env_start,
                           ASPACE_PROT_WRITE | ASPACE_PROT_USER);
     aspace_regrant(launcher->aspace, (UQUAD)(uintptr_t)kproc->user_start,
-                          x86_64_procmem_size(kproc->user_start),
+                          procmem_size(kproc->user_start),
                           ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER);
 }
 
@@ -720,8 +720,8 @@ LONG kproc_check_launch(PD *pd, PD *caller)
     if (!kproc || kproc->started || kproc->creator != caller || kproc->aspace)
         return EIMBA;
     /* the blocks must still be the ones recorded: freed and reused ones are not */
-    if (x86_64_procmem_gen(kproc->user_start) != kproc->tpa_gen ||
-        x86_64_procmem_gen(kproc->env_start) != kproc->env_gen)
+    if (procmem_gen(kproc->user_start) != kproc->tpa_gen ||
+        procmem_gen(kproc->env_start) != kproc->env_gen)
         return EIMBA;
     /* each field is read once into a local: that is the value validated */
     lowtpa = pd->p_lowtpa;
@@ -731,7 +731,7 @@ LONG kproc_check_launch(PD *pd, PD *caller)
     /* the block's own end, not user_end: that is the bound of the launch
      * last validated, and a launch that failed for lack of memory may be
      * retried with different fields */
-    alloc_end = (UBYTE *)kproc->user_start + x86_64_procmem_size(kproc->user_start);
+    alloc_end = (UBYTE *)kproc->user_start + procmem_size(kproc->user_start);
     if (lowtpa != (UQUAD)(uintptr_t)kproc->user_start ||
         hitpa < first || hitpa > (UQUAD)(uintptr_t)alloc_end ||
         /* a program with an image of its own starts at the entry point the
@@ -748,7 +748,7 @@ BOOL kproc_borrow(PD *launcher, void *block)
 {
     KPROC *kproc = kproc_find(launcher);
     UQUAD va = (UQUAD)(uintptr_t)block;
-    UQUAD bytes = x86_64_procmem_size(block);
+    UQUAD bytes = procmem_size(block);
     int i;
 
     if (!kproc || !kproc->aspace)

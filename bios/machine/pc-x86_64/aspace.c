@@ -203,7 +203,7 @@ void aspace_destroy(ASPACE *as)
 
     as->magic = 0;
     for (i = 0; i < as->npins; i++)
-        x86_64_procmem_pin(as->pins[i].va, as->pins[i].bytes, -1);
+        procmem_pin(as->pins[i].va, as->pins[i].bytes, -1);
     kfree(as->pins);
     free_owned_pages(as);
     for (i = 0; i < as->count; i++)
@@ -241,7 +241,7 @@ BOOL aspace_map_procmem(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
 {
     UQUAD page, end;
 
-    if (!bytes || va + bytes < va || !x86_64_procmem_range_live(va, bytes))
+    if (!bytes || va + bytes < va || !procmem_range_live(va, bytes))
         return FALSE;
     /* Pin before mapping, and remember it before pinning, so every pin has
      * a record that destroy undoes; a half-finished mapping is covered too. */
@@ -261,12 +261,12 @@ BOOL aspace_map_procmem(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
     as->pins[as->npins].va = va;
     as->pins[as->npins].bytes = bytes;
     as->npins++;
-    x86_64_procmem_pin(va, bytes, +1);
+    procmem_pin(va, bytes, +1);
 
     page = va & ~(X86_64_PAGE_SIZE - 1);
     end = (va + bytes + X86_64_PAGE_SIZE - 1) & ~(X86_64_PAGE_SIZE - 1);
     for (; page < end; page += X86_64_PAGE_SIZE)
-        if (!aspace_map_page(as, page, x86_64_procmem_phys_of(page), prot))
+        if (!aspace_map_page(as, page, procmem_phys_of(page), prot))
             return FALSE;
     return TRUE;
 }
@@ -757,7 +757,7 @@ void aspace_unborrow(ASPACE *as, UQUAD va, UQUAD bytes)
     for (i = as->npins; i-- > 0; )
         if (as->pins[i].va == va && as->pins[i].bytes == bytes) {
             as->pins[i] = as->pins[--as->npins];
-            x86_64_procmem_pin(va, bytes, -1);
+            procmem_pin(va, bytes, -1);
             break;
         }
     page = va & ~(X86_64_PAGE_SIZE - 1);
@@ -784,7 +784,7 @@ BOOL aspace_regrant(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
 
     for (; page < end; page += X86_64_PAGE_SIZE)
         if (!aspace_translate(as, page, NULL, NULL) ||
-            !aspace_map_page(as, page, x86_64_procmem_phys_of(page), prot))
+            !aspace_map_page(as, page, procmem_phys_of(page), prot))
             ok = FALSE;
     if (x86_64_read_cr3() == as->pml4_phys)
         x86_64_write_cr3(as->pml4_phys);        /* flush stale translations */
