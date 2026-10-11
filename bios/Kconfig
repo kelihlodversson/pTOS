@@ -175,13 +175,13 @@ config CONF_WITH_MACHINE_IRQ_INIT
 
 config CONF_WITH_DMABOOT
 	bool
-	default y if !ARCH_X86_64
+	default y if ARCH_M68K
 	help
 	  Boot from the root sector of a disk with the Atari "DMAr" boot
 	  protocol (disk_try_dmaboot(), dmaboot()): the sector is executed as
 	  native code with an m68k register-passing convention.  Meaningless
-	  where the root sector cannot hold code for this CPU (x86-64 boots
-	  through EFI).  Not user-selectable: it follows the architecture.
+	  where the root sector cannot hold code for this CPU (ARM boots from
+	  its firmware, x86-64 through EFI).  Not user-selectable: it follows the architecture.
 
 config CONF_WITH_ADDR_COOKIES
 	bool
