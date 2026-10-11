@@ -712,7 +712,7 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 # drops the .note.gnu.build-id one -- each is otherwise its own PT_LOAD/
 # PT_NOTE segment, and the loader (bdos/elfld.c) only ever maps the
 # segments the image itself declares.  A program is mapped into its own
-# address space (include/x32image.h): no two segments may share a page, which
+# address space (include/progimage.h): no two segments may share a page, which
 # -z noseparate-code and -z max-page-size=0x1000 give (a read+execute segment
 # holding the headers, text and read-only data, and a read+write one padded to
 # a 4 KiB page; -Wl,-Ttext-segment=0x400000 is the link base, static, non-PIE

@@ -109,7 +109,7 @@ The whole layout lies below 2 GiB (the 32-bit ABI would allow 4): every address
 of a process is a positive signed long, which the pointer and error code habits
 of TOS software expect.
 
-A program's image is mapped from an x32 program layout (include/x32image.h)
+A program's image is mapped from an x32 program layout (include/progimage.h)
 into the address space of the process it is for: the built-in EmuCON and the
 boot self-test's probe are embedded in the kernel as ELF images, and any other
 program is read from its file by Pexec().  None of it is in the TPA, which is
@@ -194,7 +194,7 @@ data or bss).  Where it is until the process runs depends on the Pexec() mode:
   process is launched (a built-in image's segments are mapped then, a PE_LOAD
   block is moved in), and the entry point is the one
   recorded in the KPROC record, not whatever the user-writable basepage says.
-  The rules (x86_64_x32_layout_valid()): every segment inside the window, no
+  The rules (layout_valid()): every segment inside the window, no
   two sharing a page, the entry point in an executable one.  The built-in
   programs also may not have a segment that is both writable and executable;
   a program loaded from a file may (a flat read+write+execute binary).

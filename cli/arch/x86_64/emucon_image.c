@@ -5,7 +5,7 @@
  * builds it as a separate x32 (ILP32) ELF executable, obj/x32/emucon.elf,
  * from the very same cli sources the other architectures use; this file
  * only carries that executable's bytes in the kernel's read-only data, for
- * bios.c to launch as an ordinary ring-3 process (include/x32image.h,
+ * bios.c to launch as an ordinary ring-3 process (include/progimage.h,
  * bdos/kproc.c).
  *
  * Copyright (C) 2026 The pTOS development team.
@@ -18,4 +18,4 @@
 #include "portab.h"
 #include "x32embed.h"
 
-X32_EMBED_IMAGE(x86_64_emucon_image, x86_64_emucon_elf, "obj/x32/emucon.elf")
+X32_EMBED_IMAGE(emucon_image, emucon_elf, "obj/x32/emucon.elf")

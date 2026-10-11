@@ -144,9 +144,10 @@ static NORETURN void hang(void)
     }
 }
 
+/* bdos/proc.c */
+extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc,
+                       UQUAD sp) NORETURN;
 /* bdos/arch/x86_64/rwa.c */
-extern void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2,
-                              UQUAD rsp) NORETURN;
 extern int x86_64_demand_page(UQUAD address);
 
 void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
@@ -163,8 +164,8 @@ void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
         if (answer == 1)
             return;
         if (answer == 2)                /* a lazy page and none left: the process ends, */
-            x86_64_user_fault(14, frame->error_code, frame->rip,   /* ring 3 or not */
-                              x86_64_read_cr2(), frame->rsp);
+            proc_fault("no physical page left", frame->error_code, /* ring 3 or not */
+                       x86_64_read_cr2(), frame->rip, frame->rsp);
     }
 
     /*
@@ -177,8 +178,8 @@ void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
      */
     if ((frame->cs & 3) == 3 && frame->vector != 2 /* NMI */ &&
         frame->vector != 8 /* #DF */ && frame->vector != 18 /* #MC */)
-        x86_64_user_fault((ULONG)frame->vector, frame->error_code, frame->rip,
-                          frame->vector == 14 ? x86_64_read_cr2() : 0, frame->rsp);
+        proc_fault(vector_names[frame->vector], frame->error_code,
+                   frame->vector == 14 ? x86_64_read_cr2() : 0, frame->rip, frame->rsp);
 
     earlycon_puts("\npanic: exception ");
     earlycon_puthex(frame->vector);

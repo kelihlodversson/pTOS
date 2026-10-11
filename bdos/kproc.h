@@ -12,7 +12,7 @@
 #include "bdosdefs.h"
 #if CONF_WITH_USER_ASPACE
 #include "procmem.h"      /* ASPACE */
-#include "x32image.h"
+#include "progimage.h"
 #endif
 
 typedef struct dta_info DTAINFO;
@@ -49,11 +49,11 @@ BOOL kproc_prepare_user(PD *pd, PD *parent);
  * Makes the process a built-in x32 program: kproc_prepare_user() will also
  * map the image's segments as private pages of its address space.  Must
  * come after kproc_create() and before the launch; FALSE if the image does
- * not pass x86_64_x32image_check() or the address space already exists.
+ * not pass image_check() or the address space already exists.
  * The entry point is then the image's own, kept in the KPROC record and
  * never read back from the user-writable p_tbase.
  */
-BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);
+BOOL kproc_set_image(PD *pd, const PROG_IMAGE *image);
 /* A program Pexec() loads from a file (bdos/elfld.c) is read straight into pages
  * of the address space that will be the new process's: kproc_load_begin() makes
  * it and maps [va, va + bytes) in it, the image and the startup area after it
@@ -67,7 +67,7 @@ BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);
 BOOL kproc_load_begin(PD *pd, UQUAD va, UQUAD bytes);
 void kproc_load_enter(PD *pd);
 void kproc_load_leave(void);
-BOOL kproc_set_loaded_image(PD *pd, const X32_LAYOUT *layout);
+BOOL kproc_set_loaded_image(PD *pd, const PROG_LAYOUT *layout);
 /*
  * Pexec(PE_LOAD) from a ring-3 caller loads the program into the caller's own
  * address space, in its heap, where it can read and patch it before the
@@ -85,7 +85,7 @@ BOOL kproc_set_loaded_image(PD *pd, const X32_LAYOUT *layout);
  */
 UQUAD kproc_load_alloc(PD *caller, PD *child, ULONG bytes);
 void kproc_load_release(PD *caller, UQUAD va);
-BOOL kproc_set_moved_image(PD *pd, const X32_LAYOUT *layout, PD *caller, UQUAD va, ULONG pages);
+BOOL kproc_set_moved_image(PD *pd, const PROG_LAYOUT *layout, PD *caller, UQUAD va, ULONG pages);
 /* PE_GO (not PE_GOTHENFREE): the image goes back to the caller's heap when the
  * process ends, Pterm() or Ptermres(); call it before kproc_prepare_user(). */
 void kproc_set_give_back(PD *pd, BOOL give_back);

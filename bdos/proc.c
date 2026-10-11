@@ -1109,6 +1109,20 @@ void xterm(UWORD rc)
 }
 
 
+#if CONF_WITH_USER_ASPACE
+void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp)
+{
+    ULONG word[4];
+
+    kcprintf("process fault: %s code=0x%lx addr=0x%lx pc=0x%lx sp=0x%lx\n",
+             cause, (long)code, (long)address, (long)pc, (long)sp);
+    if (kproc_copy_from_user(word, sp, sizeof(word)))
+        kcprintf("  stack: 0x%lx 0x%lx 0x%lx 0x%lx\n",
+                 (long)word[0], (long)word[1], (long)word[2], (long)word[3]);
+    xterm((UWORD)-1);
+}
+#endif
+
 /*
  * xtermres - Function 0x31 (Ptermres)
  */

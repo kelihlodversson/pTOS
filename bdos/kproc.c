@@ -22,7 +22,7 @@
 #endif
 #if CONF_WITH_USER_ASPACE
 #include "procmem.h"
-#include "x32image.h"
+#include "progimage.h"
 
 #define KPROC_BORROWS 16       /* two per child a ring-3 process holds */
 #define KPROC_DTAS    8        /* directory searches it can have going at once */
@@ -60,7 +60,7 @@ struct kproc {
     UBYTE *user_end;
     ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
-    X32_LAYOUT layout;          /* the program to map private (built in, or loaded) */
+    PROG_LAYOUT layout;          /* the program to map private (built in, or loaded) */
     BOOL has_image;             /* ... if there is one */
     ASPACE *pending_as;  /* a program loaded from a file: the address space made for it */
                                 /* at load time, with its image in it; the launch adopts it */
@@ -460,7 +460,7 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
      */
     if (kproc->has_image && !kproc->pending_as &&
         (kproc->load_parent ? !move_loaded_image(kproc, as, parent)
-                            : !x86_64_x32_layout_load(as, &kproc->layout))) {
+                            : !layout_load(as, &kproc->layout))) {
         return prepare_failed(kproc, as);
     }
     /* the limits of Psetlimit() are the launcher's at this moment (a stack
@@ -567,12 +567,12 @@ UQUAD kproc_ancestors_va(PD *pd)
     return kproc && kproc->aspace && kproc->ancestors ? USER_ANCESTORS_VA : 0;
 }
 
-BOOL kproc_set_image(PD *pd, const X32_IMAGE *image)
+BOOL kproc_set_image(PD *pd, const PROG_IMAGE *image)
 {
     KPROC *kproc = kproc_find(pd);
 
     if (!kproc || kproc->aspace || kproc->has_image ||
-        !x86_64_x32image_layout(image, &kproc->layout))
+        !image_layout(image, &kproc->layout))
         return FALSE;
     kproc->has_image = TRUE;
     return TRUE;
@@ -633,16 +633,16 @@ void kproc_load_leave(void)
 /*
  * The file is in the pages kproc_load_begin() mapped, relocated if it had to
  * be, and laid out as `layout`: each segment gets its own permissions now.
- * FALSE if the layout does not satisfy x86_64_x32_layout_valid(), leaves no
+ * FALSE if the layout does not satisfy layout_valid(), leaves no
  * room for the whole startup area inside the image window, or the process has
  * no pending address space; the record's destruction frees the pages.
  */
-static BOOL protect_layout(ASPACE *as, const X32_LAYOUT *layout)
+static BOOL protect_layout(ASPACE *as, const PROG_LAYOUT *layout)
 {
     ULONG i;
 
     for (i = 0; i < layout->nseg; i++) {
-        const X32_SEGMENT *s = &layout->seg[i];
+        const PROG_SEGMENT *s = &layout->seg[i];
         UQUAD first = s->vaddr & ~(USER_PAGE_SIZE - 1);
         UQUAD end = (s->vaddr + s->memsz + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
         UWORD prot = ASPACE_PROT_USER;
@@ -657,12 +657,12 @@ static BOOL protect_layout(ASPACE *as, const X32_LAYOUT *layout)
     return TRUE;
 }
 
-BOOL kproc_set_loaded_image(PD *pd, const X32_LAYOUT *layout)
+BOOL kproc_set_loaded_image(PD *pd, const PROG_LAYOUT *layout)
 {
     KPROC *kproc = kproc_find(pd);
 
     if (!kproc || kproc->aspace || !kproc->pending_as || kproc->has_image ||
-        !x86_64_x32_layout_valid(layout, FALSE) ||
+        !layout_valid(layout, FALSE) ||
         ((layout->end + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1)) +
         USER_IMAGE_SLACK > USER_IMAGE_BASE + USER_IMAGE_SIZE ||
         !protect_layout(kproc->pending_as, layout))
@@ -1002,7 +1002,7 @@ int kproc_demand_page(PD *pd, UQUAD va)
  * same end as a touch of the page by the process itself, not a bad pointer. */
 static void lazy_oom(void)
 {
-    kcprintf("x32 process: no physical page left for its memory\n");
+    kcprintf("process: no physical page left for its memory\n");
     xterm((UWORD)-1);
 }
 
@@ -1267,7 +1267,7 @@ static void release_loaded(KPROC *kproc)
 /* The process `pd` is the program loaded into [va, va + pages) of `caller`'s
  * heap (kproc_load_alloc()), laid out as `layout` there.  FALSE, with the block
  * still the caller's to release, if that is not so. */
-BOOL kproc_set_moved_image(PD *pd, const X32_LAYOUT *layout, PD *caller, UQUAD va, ULONG pages)
+BOOL kproc_set_moved_image(PD *pd, const PROG_LAYOUT *layout, PD *caller, UQUAD va, ULONG pages)
 {
     KPROC *kproc = kproc_find(pd);
     KPROC *ck = kproc_find(caller);
@@ -1276,7 +1276,7 @@ BOOL kproc_set_moved_image(PD *pd, const X32_LAYOUT *layout, PD *caller, UQUAD v
     if (!kproc || kproc->aspace || kproc->has_image || !ck || !ck->aspace ||
         kproc->load_parent != caller || kproc->load_va != va || kproc->load_pages != pages ||
         !(b = heap_find(ck, va)) || b->kind != UH_LOADED || b->pd != pd || b->pages != pages ||
-        !x86_64_x32_layout_valid_in(layout, FALSE, va, va + (UQUAD)pages * USER_PAGE_SIZE))
+        !layout_valid_in(layout, FALSE, va, va + (UQUAD)pages * USER_PAGE_SIZE))
         return FALSE;
     kproc->layout = *layout;
     kproc->has_image = TRUE;

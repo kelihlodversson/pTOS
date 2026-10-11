@@ -1157,7 +1157,7 @@ typedef struct {
                          * made for it now (kproc_load_begin()) */
 } ELFPLACE;
 
-static LONG elf_load_image(FH h, PD *p, X32_LAYOUT *layout, ELFPLACE *place)
+static LONG elf_load_image(FH h, PD *p, PROG_LAYOUT *layout, ELFPLACE *place)
 #else
 LONG elf_pgmld(FH h, PD *p)
 #endif
@@ -1375,10 +1375,10 @@ LONG elf_pgmld(FH h, PD *p)
             continue;
 
 #if CONF_WITH_USER_ASPACE
-        if (layout->nseg == X32_MAX_SEGMENTS)
+        if (layout->nseg == PROG_MAX_SEGMENTS)
             return EPLFMT;
         {
-            X32_SEGMENT *s = &layout->seg[layout->nseg++];
+            PROG_SEGMENT *s = &layout->seg[layout->nseg++];
 
             s->vaddr = (ULONG)ph.p_vaddr + (ULONG)bias;
             s->filesz = ph.p_filesz;
@@ -1479,7 +1479,7 @@ LONG elf_pgmld(FH h, PD *p)
  */
 LONG elf_pgmld(FH h, PD *p)
 {
-    X32_LAYOUT layout;
+    PROG_LAYOUT layout;
     ELFPLACE place;
     LONG r;
 

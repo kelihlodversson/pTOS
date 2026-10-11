@@ -19,7 +19,7 @@ cli/ and util/ to regenerate it).
    x86_64_aspace_*, X86_64_ASPACE, X86_64_USER_* (layout), the page fault
    reserve: now aspace_*, ASPACE, USER_*, ASPACE_FAULT_*.  The page-table root
    is aspace_root() (a CR3 value on x86-64), kproc_user_root().  Users:
-   bdos/kproc.c, bdos/elfld.c, bdos/bdosmain.c, include/x32image.h.  The
+   bdos/kproc.c, bdos/elfld.c, bdos/bdosmain.c, include/progimage.h.  The
    implementation stays where it is (bios/machine/pc-x86_64/aspace.c on top of
    the page tables of bios/arch/x86_64/pgtable.c); the page-table format is the
    CPU part, the physical page allocator the board part.
@@ -53,16 +53,30 @@ cli/ and util/ to regenerate it).
    struct gouser_stack and its set-up in proc_go(), the p_hitpa alignment in
    init_pd_fields() (the SysV/x32 entry convention), and proc_go() returning
    to its caller after the child ran (the x86-64 launch model has no gouser()
-   unwinding); x86_64_user_fault, x86_64_call_on_stack and x86_64_kexec_resume
-   are the interface between bdos/ and bdos/arch/x86_64/, aes/arch/x86_64/ and
-   bios/arch/x86_64/ and keep their names.  Entering ring 3 (iretq, CR3,
+   unwinding); x86_64_call_on_stack (used only by aes/arch/x86_64/gemstart.c)
+   and the static x86_64_kexec_resume (only in bdos/arch/x86_64/rwa.c) are
+   private to their architecture directories and keep their names.  The
+   upcall the exception handler makes when a process faults is general now:
+   proc_fault() in bdos/proc.c (see group 4).  Entering ring 3 (iretq, CR3,
    syscall stacks) is bdos/arch/x86_64/rwa.c.
 
-4. Program images
-   x86_64_x32image_*, x86_64_x32_layout_*, x86_64_emucon_image/_elf,
-   x86_64_x32probe_image.  Users: include/x32image.h, bdos/kproc.c,
-   bdos/elfld.c, cli/.  An ELF layout (segments, entry) is not x86-64
-   specific; the x32 rules (ET_EXEC in the image window, no W+X) are.
+4. Program images and the user fault upcall                           DONE
+   x86_64_x32image_check/layout/load, x86_64_x32_layout_valid/valid_in/load,
+   x86_64_emucon_image, x86_64_x32probe_image and the types X32_IMAGE,
+   X32_LAYOUT, X32_SEGMENT are now image_check/image_layout/image_load,
+   layout_valid/layout_valid_in/layout_load, emucon_image, testprobe_image and
+   PROG_IMAGE, PROG_LAYOUT, PROG_SEGMENT; include/x32image.h is
+   include/progimage.h (guarded by CONF_WITH_USER_ASPACE).  Users:
+   bdos/kproc.c, bdos/elfld.c, bios/bios.c.  An ELF layout (segments, entry)
+   is not x86-64 specific; the rules it is checked against (the image window,
+   no W+X for a built-in program) and the mapping stay in
+   bios/machine/pc-x86_64/x32image.c.
+   x86_64_user_fault became proc_fault(cause, code, address, pc, sp) in
+   bdos/proc.c: the exception handler (bios/arch/x86_64/panic.c) decodes the
+   vector into a cause name and passes the architecture's error code as `code`;
+   reporting the fault and ending the process (Pterm(-1)) is shared.  The
+   message is "process fault: <cause> code=... addr=... pc=... sp=..." (the CI
+   boot test greps "process fault:").
 
 5. Fixed low memory pools (a board matter)
    x86_64_low_kdata_alloc/init, x86_64_low_tpa_alloc, x86_64_vector_5ms_ptr/
