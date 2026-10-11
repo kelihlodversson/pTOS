@@ -144,9 +144,10 @@ static NORETURN void hang(void)
     }
 }
 
-/* bdos/arch/x86_64/rwa.c */
+/* bdos/proc.c */
 extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc,
                        UQUAD sp) NORETURN;
+/* bdos/arch/x86_64/rwa.c */
 extern int x86_64_demand_page(UQUAD address);
 
 void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
