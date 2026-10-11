@@ -102,9 +102,24 @@ config CONF_WITH_KPROC
 	  their basepage see zeros when it is on.  Turn it on to exercise the
 	  same code the x86-64 port runs.
 
+config CONF_WITH_PROCMEM
+	bool
+	default y if ARCH_X86_64
+	select CONF_WITH_KPROC
+	help
+	  The memory blocks of a process (its basepage with the TPA, and its
+	  environment) come from a window of kernel memory managed by
+	  include/procmem.h instead of from the GEMDOS memory descriptor lists:
+	  every block has an owner, a generation and a pin count, so that a
+	  stale or foreign address is recognised, and the blocks are reachable
+	  by a 32-bit address while the kernel itself is 64-bit.  Not
+	  user-selectable: it follows the architecture (and
+	  CONF_WITH_USER_ASPACE, which needs it).
+
 config CONF_WITH_USER_ASPACE
 	bool
 	default y if ARCH_X86_64
+	select CONF_WITH_PROCMEM
 	select CONF_WITH_KPROC
 	select CONF_WITH_USER_COPY
 	help

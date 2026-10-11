@@ -189,7 +189,7 @@ void kproc_destroy(PD *pd)
              * space is torn down: a second kproc_destroy() for the same
              * PD finds nothing and cannot free either twice. */
             aspace_destroy(kproc->aspace);
-            x86_64_kstack_free(kproc->kstack_phys);
+            kstack_free(kproc->kstack_phys);
             kfree(kproc->heap);
 #endif
             KPROC_FREE(kproc);
@@ -374,7 +374,7 @@ static BOOL prepare_failed(KPROC *kproc, ASPACE *as)
     }
     aspace_destroy(as);
     if (kproc->kstack_phys)
-        x86_64_kstack_free(kproc->kstack_phys);
+        kstack_free(kproc->kstack_phys);
     kproc->kstack_phys = 0;
     kproc->entry = 0;
     return FALSE;
@@ -417,7 +417,7 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     as = kproc->pending_as ? kproc->pending_as : aspace_create();
     if (!as)
         return FALSE;
-    kproc->kstack_phys = x86_64_kstack_alloc(&kproc->kstack_top);
+    kproc->kstack_phys = kstack_alloc(&kproc->kstack_top);
     if (!kproc->kstack_phys) {
         if (as != kproc->pending_as)
             aspace_destroy(as);

@@ -81,7 +81,7 @@
  */
 extern void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp,
                               UQUAD basepage, UQUAD entry_type) NORETURN;
-extern BOOL x86_64_take_kernel_code_pd(PD *p);
+extern BOOL take_kernel_code_pd(PD *p);
 extern void x86_64_syscall_abandoned(void);     /* bios/arch/x86_64/trap.c */
 extern UQUAD x86_64_get_kernel_stack(void);
 extern void x86_64_set_kernel_stack(UQUAD rsp);
@@ -153,7 +153,7 @@ void gouser(void)
 {
     PD *p = run;
 
-    if (x86_64_take_kernel_code_pd(p)) {
+    if (take_kernel_code_pd(p)) {
         /*
          * bios.c's CLI/ROM-shell bootstrap (BOOTFLAG_EARLY_CLI, or the
          * default exec_os launch): p_tbase is a deliberately truncated,
@@ -300,7 +300,7 @@ void gouser(void)
         x86_64_syscall_abandoned();
         x86_64_set_kernel_stack(launcher_stack);
         x86_64_set_saved_user_rsp(launcher_user_rsp);
-        x86_64_kstack_free(kstack_phys);
+        kstack_free(kstack_phys);
         {
             UQUAD launcher_pml4 = kproc_user_root(run);
 

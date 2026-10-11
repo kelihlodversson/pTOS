@@ -28,9 +28,11 @@ void x0term(void);
 void xterm(UWORD rc)  NORETURN ;
 WORD xtermres(long blkln, WORD rc);
 
+#if CONF_WITH_USER_ASPACE
+void mark_kernel_code_pd(PD *p);
+BOOL take_kernel_code_pd(PD *p);
+#endif
 #ifdef __x86_64__
-void x86_64_mark_kernel_code_pd(PD *p);
-BOOL x86_64_take_kernel_code_pd(PD *p);
 /* in bdos/arch/x86_64/rwa.c */
 void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2,
                        UQUAD rsp) NORETURN;

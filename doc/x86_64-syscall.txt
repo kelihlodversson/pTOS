@@ -206,7 +206,7 @@ the boot self-test (bios/machine/pc-x86_64/memtest.c) exercises entry,
 nested launches, faults and exits.
 
 Kernel stack.  Each ring-3 process makes its system calls on a kernel stack of
-its own (include/procmem.h, x86_64_kstack_alloc(); the KPROC record owns it).
+its own (include/procmem.h, kstack_alloc(); the KPROC record owns it).
 Before it enters a process, gouser() points percpu.kernel_rsp at that stack,
 so the entry stub in step 3 above lands on the stack of the process making the
 call; when the process exits, or faults, gouser() puts the launcher's value

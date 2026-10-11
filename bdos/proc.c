@@ -42,7 +42,7 @@
  */
 #define TPASIZE_QUANTUM (128*1024L)     /* see alloc_tpa() */
 
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
 #include "procmem.h"
 #endif
 
@@ -64,54 +64,65 @@ static void proc_go(PD *p);
 
 PD      *run;           /* ptr to PD for current process */
 
-#ifdef __x86_64__
+#if CONF_WITH_USER_ASPACE
 /* Kernel code marks a freshly created ROM basepage here before Pexec(). */
-static PD *x86_64_kernel_code_pd;
+static PD *kernel_code_pd;
 
-void x86_64_mark_kernel_code_pd(PD *p)
+void mark_kernel_code_pd(PD *p)
 {
-    x86_64_kernel_code_pd = p;
+    kernel_code_pd = p;
+}
+
+/* Pexec() from a process with an address space of its own (see
+ * doc/x86_64-address-space.txt, "Basepages in ring 3"): the caller owns what
+ * it creates, and may only launch what the kernel made for it. */
+static BOOL caller_has_aspace(void)
+{
+    return kproc_user_aspace(run) != NULL;
+}
+
+static LONG check_launch(PD *p)
+{
+    return caller_has_aspace() ? kproc_check_launch(p, run) : E_OK;
+}
+
+static void hand_over(PD *p)
+{
+    kproc_set_creator(p, run);
+    if (caller_has_aspace())
+        kproc_hand_over(run, p);
+}
+
+/* PE_GO: a program PE_LOAD put in the caller's heap goes back there at the end */
+static void give_back_image(PD *p, BOOL give_back)
+{
+    kproc_set_give_back(p, give_back);
 }
 
 /*
  * Per-launch setup that can fail for lack of memory, done where Pexec()
  * can still return ENSMEM: a kernel-code process runs in ring 0 and needs
- * nothing; a real one gets its ring-3 address space here, owned by its
- * KPROC record from now on (see kproc_prepare_user()).
+ * nothing; a real one gets its address space here, owned by its KPROC record
+ * from now on (see kproc_prepare_user()).
  */
-/* Pexec() from ring 3 (see doc/x86_64-address-space.txt, "Basepages in
- * ring 3"): the caller owns what it creates, and may only launch what the
- * kernel made for it. */
-static BOOL x86_64_ring3_caller(void)
+static BOOL prepare_launch(PD *p)
 {
-    return kproc_user_aspace(run) != NULL;
-}
-
-static LONG x86_64_check_launch(PD *p)
-{
-    return x86_64_ring3_caller() ? kproc_check_launch(p, run) : E_OK;
-}
-
-static void x86_64_hand_over(PD *p)
-{
-    kproc_set_creator(p, run);
-    if (x86_64_ring3_caller())
-        kproc_hand_over(run, p);
-}
-
-/* PE_GO: a program PE_LOAD put in the caller's heap goes back there at the end */
-static void x86_64_give_back(PD *p, BOOL give_back)
-{
-    kproc_set_give_back(p, give_back);
-}
-
-static BOOL x86_64_prepare_launch(PD *p)
-{
-    if (x86_64_kernel_code_pd == p)
+    if (kernel_code_pd == p)
         return TRUE;
     return kproc_prepare_user(p, run);
 }
 
+BOOL take_kernel_code_pd(PD *p)
+{
+    if (kernel_code_pd != p)
+        return FALSE;
+
+    kernel_code_pd = NULL;
+    return TRUE;
+}
+#endif /* CONF_WITH_USER_ASPACE */
+
+#if CONF_WITH_PROCMEM
 static void release_pd_files(PD *r);
 
 /* Drops the kernel-private record keyed by a freed process block.  A
@@ -125,9 +136,11 @@ static void proc_release_block(void *base)
     if (kproc_unlaunched((PD *)base))
         release_pd_files((PD *)base);
     kproc_discard((PD *)base);
-    /* a block lent to a ring-3 launcher goes back, but only after its
-     * basepage has been read: that launcher's page tables are loaded */
+#if CONF_WITH_USER_ASPACE
+    /* a block lent to a launcher with an address space goes back, but only
+     * after its basepage has been read: that launcher's page tables are loaded */
     kproc_unborrow(base);
+#endif
 }
 
 /* Ptermres: an unlaunched child basepage the terminating process owns stays
@@ -144,7 +157,9 @@ static void proc_drop_child_record(void *base)
     if (kproc_unlaunched(child))
         release_pd_files(child);
     kproc_discard(child);
-    kproc_unborrow(base);       /* lent to a ring-3 launcher while it was built */
+#if CONF_WITH_USER_ASPACE
+    kproc_unborrow(base);       /* lent to a launcher while it was built */
+#endif
 }
 
 /* Pending Ptermres: applied by xterm() once the process's address space is
@@ -154,19 +169,21 @@ static ULONG proc_resident_len;
 
 void proc_make_resident(PD *p, ULONG keep_bytes)
 {
+#if CONF_WITH_USER_ASPACE
     /* The process's own block is not passed to the callback below, and its
      * tail cannot be given back while the launcher still has it mapped: return
-     * what a ring-3 launcher borrowed for it first (its environment goes
-     * through the callback). */
+     * what a launcher borrowed for it first (its environment goes through the
+     * callback). */
     /* (a basepage the launcher owns, launched with PE_GO, stays its: the
      * grant it was given goes on) */
     if (procmem_owner(p) == p)
         kproc_unborrow(p);
+#endif
     procmem_keep(p, keep_bytes, proc_drop_child_record);
 }
 
 /*
- * Frees every process allocation `p` owns (the x86-64 counterpart of
+ * Frees every process allocation `p` owns (the counterpart of
  * free_all_owned() for the MPB lists), dropping KPROC records of any
  * basepages among them first.
  */
@@ -183,12 +200,17 @@ static long proc_mfree(void *addr, BOOL trusted)
      * basepage, say) cannot be freed from under it, and tearing down the
      * address space the caller is running in would be worse: refuse, and
      * leave the KPROC record alone. */
-    /* A ring-3 caller frees what it owns and nothing else: the blocks of a
-     * process it launched are not its, nor those a peer retained. */
-    if (!trusted && x86_64_ring3_caller() && procmem_owner(addr) != run)
+#if CONF_WITH_USER_ASPACE
+    /* A caller with an address space frees what it owns and nothing else: the
+     * blocks of a process it launched are not its, nor those a peer retained. */
+    if (!trusted && caller_has_aspace() && procmem_owner(addr) != run)
         return EACCDN;
     if (procmem_pins(addr) > kproc_borrow_count(run, addr))
         return EACCDN;
+#else
+    if (procmem_pins(addr) > 0)
+        return EACCDN;
+#endif
     proc_release_block(addr);     /* also returns it if it was borrowed */
     return procmem_free(addr) ? E_OK : EIMBA;
 }
@@ -197,35 +219,21 @@ long procmem_mfree(void *addr)
 {
     return proc_mfree(addr, FALSE);
 }
+#endif /* CONF_WITH_PROCMEM */
 
 /* xexec()'s rollback: its blocks are not owned yet, or belong to the child
- * it failed to start, and are lent to a ring-3 caller who must get them back. */
+ * it failed to start, and a launcher with an address space must get back what
+ * was lent to it. */
 static void xexec_free(void *addr)
 {
-    if (procmem_contains(addr))
+#if CONF_WITH_PROCMEM
+    if (procmem_contains(addr)) {
         proc_mfree(addr, TRUE);
-    else
-        xmfree(addr);
-}
-
-BOOL x86_64_take_kernel_code_pd(PD *p)
-{
-    if (x86_64_kernel_code_pd != p)
-        return FALSE;
-
-    x86_64_kernel_code_pd = NULL;
-    return TRUE;
-}
+        return;
+    }
 #endif
-
-#ifndef __x86_64__
-#define xexec_free(a) xmfree(a)
-#define x86_64_ring3_caller() FALSE
-#define x86_64_check_launch(p) E_OK
-#define x86_64_hand_over(p) do { } while (0)
-#define x86_64_prepare_launch(p) TRUE
-#define x86_64_give_back(p, g) do { } while (0)
-#endif
+    xmfree(addr);
+}
 
 /*
  * internal variables
@@ -357,7 +365,7 @@ static void ixterm(PD *r)
     if (has_alt_ram)
         free_all_owned(r, &pmdalt);
 #endif
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
     proc_free_owned(r);
 #endif
 }
@@ -461,34 +469,44 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         }
         p->p_flags = (ULONG)path;   /* set the flags */
         init_pd_files(p);
-        x86_64_hand_over(p);
+#if CONF_WITH_USER_ASPACE
+        hand_over(p);
+#endif
 
         return (long)p;
     case PE_GOTHENFREE:
         p = (PD *) tail;
-        rc = x86_64_check_launch(p);
+#if CONF_WITH_USER_ASPACE
+        rc = check_launch(p);
         if (rc)
             return rc;
+#endif
         /* The allocation can fail; retain the parent's ownership until it
          * succeeds so an ENSMEM return leaves the retained basepage freeable. */
         if (!kproc_create(p))
             return ENSMEM;
-        x86_64_give_back(p, FALSE);     /* (a PE_GO that failed before may have asked) */
-        if (!x86_64_prepare_launch(p))
+#if CONF_WITH_USER_ASPACE
+        give_back_image(p, FALSE);      /* (a PE_GO that failed before may have asked) */
+        if (!prepare_launch(p))
             return ENSMEM;
+#endif
         /* set the owner of the memory to be this process */
         set_owner(p, p);
         set_owner(USERPTR_TO_PTR(p->p_env), p);
         FALLTHROUGH;
     case PE_GO:
         p = (PD *) tail;
-        if (flag == PE_GO && (rc = x86_64_check_launch(p)) != E_OK)
+#if CONF_WITH_USER_ASPACE
+        if (flag == PE_GO && (rc = check_launch(p)) != E_OK)
             return rc;
+#endif
         if (flag == PE_GO && !kproc_create(p))
             return ENSMEM;
-        x86_64_give_back(p, flag == PE_GO);
-        if (flag == PE_GO && !x86_64_prepare_launch(p))
+#if CONF_WITH_USER_ASPACE
+        give_back_image(p, flag == PE_GO);
+        if (flag == PE_GO && !prepare_launch(p))
             return ENSMEM;
+#endif
         proc_go(p);
         /*
          * "should not return ?": on m68k/ARM, proc_go()/gouser() (rwa.S)
@@ -619,15 +637,19 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     /* Anything that can still fail for lack of memory is done before
      * init_pd_files(): that takes references on inherited files and
      * directories, which an ENSMEM return here would otherwise leak. */
-    if (flag != PE_LOAD && !x86_64_prepare_launch(cur_p)) {
+#if CONF_WITH_USER_ASPACE
+    if (flag != PE_LOAD && !prepare_launch(cur_p)) {
         kproc_destroy(cur_p);
         xexec_free(USERPTR_TO_PTR(cur_p->p_env));
         xexec_free(cur_p);
         return ENSMEM;
     }
+#endif
     init_pd_files(cur_p);
+#if CONF_WITH_USER_ASPACE
     if (flag == PE_LOAD)
-        x86_64_hand_over(cur_p);
+        hand_over(cur_p);
+#endif
 
     /* invalidate instruction cache for the TEXT segment only
      * programs that jump into their DATA, BSS or HEAP are kindly invited
@@ -658,7 +680,7 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
     /* memory values
      *
      * PTR_TO_USERPTR(), not the unchecked cast: p itself comes from
-     * alloc_tpa(), whose __x86_64__ branch (bdos/proc.c) already draws
+     * alloc_tpa(), whose CONF_WITH_PROCMEM branch (bdos/proc.c) already draws
      * from procmem's low, sub-4GiB window (bios/machine/
      * pc-x86_64/memory.c), so this can never truncate on that arch. */
     p->p_lowtpa = PTR_TO_USERPTR((UBYTE *)p);              /*  M01.01.06   */
@@ -694,7 +716,7 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
 #endif
     /* Same reasoning as p_lowtpa/p_hitpa above: p_cmdlin is a field
      * within p itself, and envptr comes from alloc_env(), whose own
-     * __x86_64__ branch (bdos/proc.c) likewise draws from
+     * CONF_WITH_PROCMEM branch (bdos/proc.c) likewise draws from
      * procmem_alloc() rather than xmxalloc()'s higher-half pool
      * (see #360). */
     p->p_xdta = PTR_TO_USERPTR((DTA *) p->p_cmdlin);       /* default p_xdta is p_cmdlin */
@@ -754,9 +776,9 @@ static char *alloc_env(ULONG flags, char *env)
     size = (envsize(env) + 1) & ~1;  /* must be even */
 
     /* allocate it */
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
     /*
-     * Same reasoning as alloc_tpa()'s own #ifdef __x86_64__ branch
+     * Same reasoning as alloc_tpa()'s own CONF_WITH_PROCMEM branch
      * above: xmxalloc()'s ffit()/pmd free list is ultimately built from
      * membot/memtop, which point into _end_os_stram -- an ordinary
      * higher-half kernel symbol, so memory it hands out cannot be
@@ -770,11 +792,14 @@ static char *alloc_env(ULONG flags, char *env)
      * comment), exactly what happens for memory from this same pool.
      */
     new_env = (char *)procmem_alloc(size, PROCMEM_ZERO);
-    /* built below under the launcher's page tables: lend it to a ring-3 one */
+#if CONF_WITH_USER_ASPACE
+    /* built below under the launcher's page tables: lend it to a launcher
+     * with an address space of its own */
     if (new_env && !kproc_borrow(run, new_env)) {
         procmem_free(new_env);
         new_env = NULL;
     }
+#endif
 #else
     new_env = xmxalloc(size, (flags&PF_TTRAMLOAD) ? MX_PREFTTRAM : MX_STRAM);
 #endif
@@ -820,9 +845,9 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
     LONG st_ram_size;
     BOOL st_ram_available = FALSE;
 
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
     /*
-     * This arch has no ST/alternate-RAM distinction to route through
+     * Process memory comes from the procmem window: there is no ST/alternate-RAM distinction to route through
      * ffit()/pmd/pmdalt at all -- and, more fundamentally, membot/
      * memtop (what pmd's free list is ultimately built from) point into
      * _end_os_stram, an ordinary higher-half kernel symbol that cannot
@@ -842,10 +867,12 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
     {
         UBYTE *low = procmem_alloc(needed + 15, PROCMEM_ZERO);
 
+#if CONF_WITH_USER_ASPACE
         if (low && !kproc_borrow(run, low)) {   /* see alloc_env() */
             procmem_free(low);
             low = NULL;
         }
+#endif
         if (low)
             *avail = needed + 15;
         return low;
@@ -1065,7 +1092,7 @@ void xterm(UWORD rc)
     run = (PD *)USERPTR_TO_PTR(run->p_parent);
 #endif
     kproc_destroy(p);
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
     if (proc_resident_pd == p) {      /* Ptermres, now that nothing maps p */
         proc_make_resident(p, proc_resident_len);
         proc_resident_pd = NULL;
@@ -1094,7 +1121,7 @@ WORD xtermres(long blkln, WORD rc)
     if (has_alt_ram)
         reserve_blocks(run, &pmdalt);
 #endif
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
     /* The window's blocks are not MPB descriptors, so xsetblk() above cannot
      * shrink them: xterm() does it, and makes the rest resident, once the
      * address space that maps them is destroyed. */

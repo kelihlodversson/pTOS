@@ -38,16 +38,25 @@ cli/ and util/ to regenerate it).
    generation checks); the board part (where the window is, X86_64_LOW_TPA_*,
    x86_64_low_tpa_init) stays in bios/machine/pc-x86_64/ and goes with group 5.
 
-3. Launching and the ring-3 transition
-   x86_64_prepare_launch, x86_64_ring3_caller, x86_64_kernel_code_pd,
-   x86_64_take/mark_kernel_code_pd, proc_resident_pd/_len,
-   proc_make_resident, x86_64_hand_over, x86_64_check_launch,
-   x86_64_give_back, proc_drop_child_record, x86_64_call_on_stack,
-   x86_64_kexec_resume, x86_64_user_fault, x86_64_kstack_alloc/free.  Users:
-   bdos/proc.c, bdos/proc.h, aes/gemshlib.c, aes/arch/x86_64/gemstart.c.  The
-   Pexec/Pterm/Ptermres policy (who made a basepage, what a loader may launch,
-   what stays resident) is shared; entering ring 3 (iretq, CR3, syscall stacks)
-   is bdos/arch/x86_64/rwa.c.
+3. Launching and the ring-3 transition                                 DONE
+   (the part in shared code)  bdos/proc.c no longer names the architecture
+   for these features: x86_64_prepare_launch, _ring3_caller, _check_launch,
+   _hand_over, _give_back are now prepare_launch, caller_has_aspace,
+   check_launch, hand_over, give_back_image; x86_64_{mark,take}_kernel_code_pd
+   are mark/take_kernel_code_pd; x86_64_kstack_alloc/free are kstack_alloc/free.
+   They are guarded by CONF_WITH_USER_ASPACE at each call site (no stub macros
+   for the other architectures).  The new CONF_WITH_PROCMEM (selected by
+   CONF_WITH_USER_ASPACE; also selects CONF_WITH_KPROC) guards what takes
+   process blocks from the procmem window: alloc_tpa(), alloc_env(),
+   proc_free_owned(), Ptermres' proc_make_resident().
+   Left, because they are real architecture differences and not features:
+   struct gouser_stack and its set-up in proc_go(), the p_hitpa alignment in
+   init_pd_fields() (the SysV/x32 entry convention), and proc_go() returning
+   to its caller after the child ran (the x86-64 launch model has no gouser()
+   unwinding); x86_64_user_fault, x86_64_call_on_stack and x86_64_kexec_resume
+   are the interface between bdos/ and bdos/arch/x86_64/, aes/arch/x86_64/ and
+   bios/arch/x86_64/ and keep their names.  Entering ring 3 (iretq, CR3,
+   syscall stacks) is bdos/arch/x86_64/rwa.c.
 
 4. Program images
    x86_64_x32image_*, x86_64_x32_layout_*, x86_64_emucon_image/_elf,
