@@ -16,7 +16,9 @@
 #ifndef XBIOSBIND_H
 #define XBIOSBIND_H
 
-#if defined(__arm__) || defined(__x86_64__)
+#include "config.h"
+
+#if CONF_WITH_NATIVE_ABI
 #include "biosargs.h"
 #endif
 #ifdef __x86_64__
@@ -265,7 +267,7 @@ xbios_v_wwwl(int op, short a, short b, short c, long d)
 static __inline__ void
 xbios_v_wwwwww(int op, short a, short b, short c, short d, short e, short f)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     /*
      * rsconf() needs 6 real arguments; the trap convention only delivers
      * 4 in registers, so pass them via a xbios_rsconf_args struct instead
@@ -494,7 +496,7 @@ static __inline__ short xbios_w_ww(int op, short a, short b)
 static __inline__ short xbios_w_llwwwww(int op,
     long a, long b, short c, short d, short e, short f, short g)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     /*
      * floprd()/flopwr()/flopver() need 7 real arguments; the trap
      * convention only delivers 4 in registers, so pass them via a
@@ -552,7 +554,7 @@ static __inline__ short xbios_w_llwwwww(int op,
 static __inline__ short xbios_w_llwwwwwlw(int op,
     long a, long b, short c, short d, short e, short f, short g, long h, short i)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     /*
      * flopfmt() needs 9 real arguments; the trap convention only delivers
      * 4 in registers, so pass them via a xbios_flopfmt_args struct

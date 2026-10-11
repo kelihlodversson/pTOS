@@ -142,6 +142,20 @@ config ARCH_M68K_CLASSIC
 	bool
 	default y if ARCH_M68K && !ARCH_COLDFIRE
 
+# The CPU is not an m68k: system calls and the structures they carry follow
+# the native C ABI instead of the 16 bit stack frames of TOS.  Arguments of
+# BIOS/XBIOS/GEMDOS/VDI calls arrive as an array of longs (biosargs.h, bdos
+# osif()), words that TOS keeps in 16 bits of a stack frame are padded to
+# native size, and the code that is hand written m68k assembler on the
+# m68k targets (mul_div(), call_usercode(), SuperToUser(), ...) is plain C.
+config CONF_WITH_NATIVE_ABI
+	bool
+	default y if !ARCH_M68K
+	help
+	  Use the native C calling convention for the operating system
+	  interfaces instead of the m68k stack frames.  Not user-selectable:
+	  it follows the architecture.
+
 # Set when the machine provides Atari ST compatible chipset registers.
 config CONF_ATARI_HARDWARE
 	bool

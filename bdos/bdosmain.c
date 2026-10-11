@@ -165,7 +165,7 @@ static const SPECNAME specname_table[] =
  */
 typedef struct
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     union {
         long  (*p0)(void);
         long  (*p1)(long);
@@ -202,7 +202,7 @@ static const FND funcs[] =
 {
 #define F(x) { (PFLONG)(x) }
 #define NI F(ni)
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 #   define W_N(w, n) (n)
 #else
 #   define W_N(w, n) (w)
@@ -522,7 +522,7 @@ void mark_bcbs_invalid(int drv)
 }
 
 
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 long osif(long *pw);
 #else
 long osif(short *pw);
@@ -535,7 +535,7 @@ long osif(short *pw);
  *  carries are checked first (uaccess.c).  Kernel code does not come this
  *  way: on x86-64 it calls the implementations directly (kcall.c).
  */
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 long osif(long *pw)
 #else
 long osif(short *pw)
@@ -732,7 +732,7 @@ restrt:
                 /*  M01.01.07  */
                 /*  write the char in the int at pw[1]  */
             rawout:
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
                 xwrite(h , 1L , (char *) &pw[1]);
 #else
                 xwrite(h , 1L , ((char*) &pw[1])+1);
@@ -784,7 +784,7 @@ restrt:
     {
         isptr = 0;      /* numl will be an sft[] pointer, not a plain handle */
 
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
         /*
          * On ARM, pw[] holds one LONG per parameter.  typ encodes the
          * handle slot in terms of the m68k word layout: 0x81 means the
@@ -854,7 +854,7 @@ restrt:
                 return EIHNDL;
 
             /* on m68k the buffer word follows the two-word long count */
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
             pb = (char **) &pw[3];
 #else
             pb = (char **) &pw[4];
@@ -864,7 +864,7 @@ restrt:
 
             if (fn == GEMDOS_FREAD)     /* read */
             {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
                 long count = pw[2];
                 /* on m68k, values 0x8000-0xffff become a negative signed
                  * WORD passed to cgets(), which makes it return 0 without
@@ -895,7 +895,7 @@ restrt:
 
             if (fn == GEMDOS_FWRITE)    /* write */
             {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
                 long n, count = pw[2];
 #else
                 long n, count = *(long *)&pw[2];
@@ -942,7 +942,7 @@ restrt:
 
     if (!rc)
     {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
         switch(f->nparms)
         {
         case 0:

@@ -73,7 +73,7 @@ __extension__                               \
  *
  * Binding originally by Vincent Rivière, from MiNTlib's osbind.h
  */
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 /* Let's start by assuming we don't have this bug on PI (and, likewise,
  * on x86-64: trap1()'s "syscall" never touches %rsp at all, so there is
  * no stack pointer for the bug this works around to disturb). */

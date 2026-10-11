@@ -24,7 +24,7 @@
 #include "cmd.h"
 #include "version.h"
 #include "string.h"
-#if (defined(__arm__) || defined(__x86_64__)) && !defined(X32_USERLAND)
+#if CONF_WITH_NATIVE_ABI && !defined(X32_USERLAND)
 #include "tosvars.h"
 #endif
 
@@ -376,7 +376,7 @@ PRIVATE WORD get_nflops(void)
     LONG n = Ssystem(0x000b,0x4a6L,0L);
 
     return (n < 0) ? 0 : (WORD)n;
-#elif defined(__arm__) || defined(__x86_64__)
+#elif CONF_WITH_NATIVE_ABI
     return nflops;
 #else
     return *(WORD *)0x4a6;          /* number of floppy drives */

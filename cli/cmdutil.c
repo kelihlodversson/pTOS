@@ -10,7 +10,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 #include "cmd.h"
-#if (defined(__arm__) || defined(__x86_64__)) && !defined(X32_USERLAND)
+#if CONF_WITH_NATIVE_ABI && !defined(X32_USERLAND)
 #include "tosvars.h"
 #endif
 #include "string.h"
@@ -352,7 +352,7 @@ char c1, c2;
 #ifndef X32_USERLAND
 PRIVATE long getjar(void)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     return (long)p_cookies;
 #else
     return *(LONG *)0x5a0;

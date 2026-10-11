@@ -147,11 +147,17 @@ cli/ and util/ to regenerate it).
        file's machine ladder.  The remaining MACHINE_PC_X86_64 tests in
        bios/ (machine.c, screen.c, delay.c, initinfo.c) are machine
        selection among MACHINE_RPI/FIREBEE/..., which CLAUDE.md prescribes.
-   Left for a later pass: "__arm__ || __x86_64__" that really means "not
-   m68k" -- GEMDOS/BIOS/XBIOS arguments as an array of native longs (osif(),
-   funcs[], W_N, biosbind.h, xbiosbind.h), md_index_t, bufl[], intmath.h,
-   lineavars.h, vdi/ -- an ABI property of the port that wants one option of
-   its own, not a feature option per site.
+7c DONE (PR #467): every "__arm__ || __x86_64__" that meant "not m68k" in the
+   kernel is now CONF_WITH_NATIVE_ABI (Kconfig.machine, follows !ARCH_M68K): the
+   GEMDOS/BIOS/XBIOS argument arrays (osif(), funcs[], biosbind.h,
+   xbiosbind.h), md_index_t, bufl[]/themd as ordinary storage, VDICONTROL
+   padding, UserMotFunc, intmath.h, plain-C replacements for m68k inline
+   assembler (call_usercode(), SuperToUser(), mul_div()), the cli's tosvars
+   access, and the vectors.h/xbios.c/bios.c trap ladders.  Headers that
+   test it include config.h.
+   Left: the per-arch trap stubs in biosbind.h/xbiosbind.h (`#ifdef
+   __arm__` / `__x86_64__` with inline assembler each), which are real
+   architecture code and belong under arch/; lib/libcmini is a submodule.
 
 Porting candidates (the audit of step 4 of #453)
 ------------------------------------------------
