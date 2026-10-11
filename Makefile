@@ -1293,9 +1293,13 @@ $(LIBCMINI_STAMP): FORCE | obj $(LIBCMINI_DIR)/Makefile
 	    printf '%s' "$$want" > $@; \
 	fi
 
+# Only the one library and the one startup object the test programs link are
+# requested, not libcmini's "libs startups": those build every multilib
+# variant the toolchain offers (68020-60, ColdFire, -mshort, ... on m68k), none
+# of which the test programs use.
 $(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj $(LIBCMINI_DIR)/Makefile
 	@echo '  LIBCMINI'
-	@$(LIBCMINI_MAKE) libs startups
+	@$(LIBCMINI_MAKE) $(LIBCMINI_LIB) $(LIBCMINI_CRT0)
 
 $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 
