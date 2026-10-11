@@ -132,9 +132,9 @@ static int walk_ancestors(u64 basepage)
     while (at) {
         const volatile u32 *a = (const volatile u32 *)(unsigned long)at;
 
-        if (at < 0x3ffb0000u || at + 0x100 > 0x3ffb1000u || (at & 0xff) || n >= 16)
+        if (at < 0x7eff0000u || at + 0x100 > 0x7eff1000u || (at & 0xff) || n >= 16)
             return 0x7f;
-        if (a[11] != env || a[8] || a[9] > 0x3ffb1000u)
+        if (a[11] != env || a[8] || a[9] > 0x7eff1000u)
             return 0x7f;                /* p_env, p_uft, p_parent */
         if (a[12] || (a[13] & 0xffff))
             return 0x7f;                /* p_uft */
@@ -203,8 +203,8 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 
         a = (u64)gemdos1r(0x48, 100000);
         b = (u64)gemdos1r(0x48, 4096);
-        if (a < 0x10000000ULL || a >= 0x3f000000ULL || (a & 0xfff) ||
-            b < 0x10000000ULL || b >= 0x3f000000ULL || (b & 0xfff))
+        if (a < 0x10000000ULL || a >= 0x7ef00000ULL || (a & 0xfff) ||
+            b < 0x10000000ULL || b >= 0x7ef00000ULL || (b & 0xfff))
             bad_heap |= 1;
         if (a < b + 4096 && b < a + 100000)
             bad_heap |= 2;                      /* overlap */
@@ -240,12 +240,83 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
             bad_heap |= 1024;
         if (gemdos1r(0x49, c | 0xffff00000000ULL) != 0)
             bad_heap |= 2048;
-        /* a large block is mapped and given back page by page without
-         * a search through every page the process owns (64 MiB: 16384 pages) */
+        /* a large block is reserved and given back without a search through
+         * every page the process owns (64 MiB: 16384 pages) */
         c = (u64)gemdos1r(0x48, 64 * 1024 * 1024);
         if (!c || gemdos1r(0x49, c) != 0)
             bad_heap |= 4096;
         gemdos1(0x4c, bad_heap);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'z') {
+        /* demand paging (#450): Malloc() hands out address space and a page
+         * gets its physical page when it is touched.  1.5 GiB is more than the
+         * test machine has; touched here and there it costs a few pages.  A
+         * kernel call that writes to or reads from an untouched page finds it
+         * backed. */
+        const u64 big_size = 0x60000000ULL;
+        volatile u32 *p;
+        u64 big, all, small;
+        int bad_lazy = 0;
+        static const char pattern[] = "\\";
+
+        all = (u64)gemdos1r(0x48, 0xffffffffULL);               /* Malloc(-1) */
+        if (all < 0x6e000000ULL || all > 0x7ef00000ULL - 0x10000000ULL)
+            bad_lazy |= 1;
+        big = (u64)gemdos1r(0x48, big_size);
+        if (big < 0x10000000ULL || big + big_size > 0x7ef00000ULL || (big & 0xfff)) {
+            gemdos1(0x4c, 2);
+        }
+        p = (volatile u32 *)(unsigned long)big;
+        if (p[0] || p[big_size / 8 / 4] || p[big_size / 4 - 1])
+            bad_lazy |= 4;                      /* zero, wherever it is */
+        p[0] = 0x11111111;
+        p[big_size / 8 / 4] = 0x22222222;
+        p[big_size / 4 - 1] = 0x33333333;
+        if (p[0] != 0x11111111 || p[big_size / 8 / 4] != 0x22222222 ||
+            p[big_size / 4 - 1] != 0x33333333)
+            bad_lazy |= 8;
+        /* the kernel writes to a page not touched yet (Dgetpath) ... */
+        if (gemdos3r(0x47, big + big_size / 2, 0, 0) != 0 ||
+            *(volatile unsigned char *)(unsigned long)(big + big_size / 2) != 0)
+            bad_lazy |= 16;
+        /* ... and reads from one (a file name: an empty name is no pointer error) */
+        if (gemdos2(0x3d, big + big_size / 4, 0) == -40)
+            bad_lazy |= 32;
+        (void)pattern;
+        if (gemdos1r(0x49, big) != 0)
+            bad_lazy |= 64;
+        /* a block shrunk or freed gives its touched pages back, the rest was never there */
+        small = (u64)gemdos1r(0x48, 8 * 4096);
+        ((volatile unsigned char *)(unsigned long)small)[0] = 1;
+        ((volatile unsigned char *)(unsigned long)small)[5 * 4096] = 1;
+        if (gemdos3r(0x4a, 0, small, 2 * 4096) != 0 ||
+            ((volatile unsigned char *)(unsigned long)small)[0] != 1)
+            bad_lazy |= 128;
+        if (gemdos1r(0x49, small) != 0)
+            bad_lazy |= 256;
+        gemdos1(0x4c, bad_lazy);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'Z') {
+        /* a page of a block that was freed is no longer lazy: touching it
+         * faults, which ends this process as Pterm(-1) (#450) */
+        volatile unsigned char *p = (volatile unsigned char *)(unsigned long)gemdos1r(0x48, 8192);
+
+        p[0] = 1;
+        gemdos1r(0x49, (u64)(unsigned long)p);
+        p[0] = 2;
+        gemdos1(0x4c, 0);               /* not reached */
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'X') {
+        /* touch every page of all the address space there is: the machine has
+         * less memory, and the process that finds none left ends as Pterm(-1)
+         * without the kernel running out (#450) */
+        u64 all = (u64)gemdos1r(0x48, 0xffffffffULL);
+        volatile unsigned char *p = (volatile unsigned char *)(unsigned long)gemdos1r(0x48, all);
+        u64 k;
+
+        for (k = 0; k < all; k += 4096)
+            p[k] = 1;
+        gemdos1(0x4c, 0x55);            /* the machine has more memory than that */
     }
     if (cmdline[0] == 1 && cmdline[1] == 'i') {
         /* the code runs in the image window, wherever the program was linked

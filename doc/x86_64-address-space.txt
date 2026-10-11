@@ -96,13 +96,15 @@ The constants are in include/procmem.h.
                               program loaded from a file also the startup
                               area, 128 KiB of zeroed read/write memory right
                               after the image's last page
-    0x10000000 - 0x3effffff   Malloc() memory, private pages (below)
-    0x3ffb0000 - 0x3ffb0fff   ancestors' basepages, read-only (below)
-    0x3ffc0000 - 0x3fffffff   user stack (256 KiB), growing down from
-                              X86_64_USER_STACK_TOP; the page below it is
-                              left unmapped as a guard
+    0x10000000 - 0x7eefffff   Malloc() memory, backed when touched (below)
+    0x7eff0000 - 0x7effffff   ancestors' basepages, read-only (below)
+    0x7f000000 - 0x7fffffff   user stack (16 MiB), growing down from
+                              X86_64_USER_STACK_TOP, backed when touched;
+                              the page below it is left unmapped as a guard
 
-The whole layout lies below 4 GiB, as the 32-bit ABI fields require.
+The whole layout lies below 2 GiB (the 32-bit ABI would allow 4): every address
+of a process is a positive signed long, which the pointer and error code habits
+of TOS software expect.
 
 A program's image is mapped from an x32 program layout (include/x32image.h)
 into the address space of the process it is for: the built-in EmuCON and the
@@ -202,8 +204,10 @@ reaches them by the same address in every address space, but the window is
 2 MiB for all processes together, so everything a program itself needs is
 private:
 
-  stack             the 256 KiB private stack at 0x3ffc0000, from which the
-                    process starts (not p_hitpa).
+  stack             the private stack, 16 MiB of address space below
+                    0x80000000, from which the process starts (not p_hitpa).
+                    No page of it is mapped when the process starts: the
+                    first push faults the first one in, and so on down.
 
   startup area      what the C startup code of the TOS tradition builds argv
                     and environ in, right after the bss (libcmini's
@@ -218,10 +222,35 @@ private:
                     X86_64_USER_HEAP_BASE..X86_64_USER_HEAP_LIMIT
                     (kproc_uheap_*(), bdos/kproc.c): whole 4 KiB pages,
                     first fit, zeroed, freed with the address space.  A block
-                    is given back page by page by Mfree() and Mshrink(), and
-                    Malloc(-1) reports the largest gap.  Mfree() of anything
-                    else (the process's environment, say) takes the ordinary
-                    path.
+                    is address space only: Malloc() maps nothing.  A page gets
+                    its zeroed physical page when the process first touches it
+                    (demand paging, below), and Mfree() and Mshrink() give the
+                    pages that were touched back.  Malloc(-1) reports the
+                    largest gap of address space, as the TPA size does on the
+                    other platforms.  Mfree() of anything else (the process's
+                    environment, say) takes the ordinary path.
+
+  demand paging     The page fault handler (bios/arch/x86_64/panic.c) asks
+                    first, for a fault on a page that is not there and is not
+                    an instruction fetch, whether the address is in the
+                    running process's stack or in one of its Malloc() blocks
+                    (kproc_demand_page()); if so it maps a zeroed page
+                    (x86_64_aspace_fault_in()) and resumes the instruction.
+                    Anything else is the process's own fault, as before:
+                    Pterm(-1).  Untouched address space costs nothing, not
+                    even page tables, so a process can hold more than the
+                    machine has (overcommit).  The process whose touch finds
+                    no physical page left (the last X86_64_FAULT_RESERVE, 4
+                    MiB, is kept for the kernel) is terminated like one that
+                    faults; its pages go back with its address space.  The
+                    kernel does the same for the buffers of system calls: a
+                    range it is asked to read or write is backed first
+                    (validate_user() in bdos/kproc.c), so a buffer in a page
+                    not touched yet is valid; one outside the lazy areas is
+                    not.  A freed block is not lazy any more: a touch of it
+                    faults.  A program image (PE_LOAD) is not lazy: it is
+                    filled in by the kernel and moved page by page, so it is
+                    backed when allocated.
 
 Because the address spaces are separate, two processes use the same addresses
 for their own images, stacks and heaps and neither sees the other's.  A TOS
@@ -298,7 +327,7 @@ starts at p_tbase, in its TPA, on the private stack too -- not at p_hitpa.
 A ring-3 process cannot see its launcher's basepage (it is not mapped for it),
 and its p_parent could not be believed if it could.  Instead each process has a
 read-only page of scrubbed copies of its ancestors' basepages at
-0x3ffb0000: its launcher's, that one's launcher's, and so on, up to
+0x7eff0000: its launcher's, that one's launcher's, and so on, up to
 16 levels, 256 bytes each, chained through p_parent (the last is 0) and
 p_parent of the process itself points at the first.  The copies come from the
 launcher at the time of the launch, extended by the launcher's own page.  In

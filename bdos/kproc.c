@@ -446,22 +446,19 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     /*
      * A built-in image gets its segments as private pages at the fixed
      * addresses of include/procmem.h's layout (one loaded from a file has them
-     * already, and one PE_LOAD put in its caller's heap is moved here); every
-     * process gets a private stack there (a TPA is no stack: the image of a
-     * program loaded into it, or the code a caller put there, is not
-     * something to push onto).  The stack comes first: the move of a PE_LOAD
-     * image out of its caller cannot be undone, so nothing that can fail
-     * may follow it.
+     * already, and one PE_LOAD put in its caller's heap is moved here).  The
+     * private stack (a TPA is no stack: the image of a program loaded into it,
+     * or the code a caller put there, is not something to push onto) is lazy:
+     * nothing is mapped for it, its pages come with the first touch.  The move
+     * of a PE_LOAD image out of its caller cannot be undone, so nothing that
+     * can fail may follow it.
      */
-    if (!x86_64_aspace_map_private(as, X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE,
-                                   X86_64_USER_STACK_SIZE,
-                                   ASPACE_PROT_WRITE | ASPACE_PROT_USER) ||
-        (kproc->has_image && !kproc->pending_as &&
-         (kproc->load_parent ? !move_loaded_image(kproc, as, parent)
-                             : !x86_64_x32_layout_load(as, &kproc->layout)))) {
+    if (kproc->has_image && !kproc->pending_as &&
+        (kproc->load_parent ? !move_loaded_image(kproc, as, parent)
+                            : !x86_64_x32_layout_load(as, &kproc->layout))) {
         return prepare_failed(kproc, as);
     }
-    kproc->stack_top = X86_64_USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
+    kproc->stack_top = X86_64_USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16; its pages come with the first touch */
     if (kproc->has_image)
         kproc->entry = kproc->layout.entry;
     kproc->aspace = as;
@@ -850,7 +847,7 @@ static UQUAD heap_gap(const KPROC *kproc, UQUAD bytes, ULONG *index, UQUAD *larg
     return found;
 }
 
-static UQUAD heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd)
+static UQUAD heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eager)
 {
     UQUAD va, largest, size;
     ULONG index = 0;
@@ -862,8 +859,10 @@ static UQUAD heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd)
     if (!heap_room(kproc))
         return 0;
     va = heap_gap(kproc, size, &index, &largest);
-    if (!va || !x86_64_aspace_map_private(kproc->aspace, va, size,
-                                          ASPACE_PROT_WRITE | ASPACE_PROT_USER))
+    /* (Malloc() memory is lazy; a program image is filled in by the kernel and
+     * moved page by page, so it is backed at once) */
+    if (!va || (eager && !x86_64_aspace_map_private(kproc->aspace, va, size,
+                                                    ASPACE_PROT_WRITE | ASPACE_PROT_USER)))
         return 0;
     memmove(&kproc->heap[index + 1], &kproc->heap[index],
             (kproc->nheap - index) * sizeof(kproc->heap[0]));
@@ -875,10 +874,54 @@ static UQUAD heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd)
     return va;
 }
 
+/*
+ * Demand paging.  The stack and the Malloc() blocks have address space but, until
+ * the process touches a page of it, no physical page: this is the page fault
+ * handler's question (and the kernel's, before it reads or writes a user buffer):
+ * is `va` in such an area, and if so, back its page now.  FALSE: it is not (a
+ * real fault), or no physical page could be had (the process is terminated).
+ */
+static BOOL lazy_area(const KPROC *kproc, UQUAD va)
+{
+    ULONG i;
+
+    if (va >= X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE && va < X86_64_USER_STACK_TOP)
+        return TRUE;
+    for (i = 0; i < kproc->nheap; i++)
+        if (va >= kproc->heap[i].va &&
+            va < kproc->heap[i].va + (UQUAD)kproc->heap[i].pages * X86_64_USER_PAGE_SIZE)
+            return TRUE;
+    return FALSE;
+}
+
+BOOL kproc_demand_page(PD *pd, UQUAD va)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    if (!kproc || !kproc->aspace || !lazy_area(kproc, va))
+        return FALSE;
+    return x86_64_aspace_fault_in(kproc->aspace, va, ASPACE_PROT_WRITE | ASPACE_PROT_USER);
+}
+
+/* the pages of [address, address + size) that lie in lazy areas get their
+ * physical pages (what a read or write of them by the process would do) */
+static BOOL demand_range(KPROC *kproc, UQUAD address, ULONG size)
+{
+    UQUAD page = address & ~(X86_64_USER_PAGE_SIZE - 1);
+    UQUAD last = (address + size - 1) & ~(X86_64_USER_PAGE_SIZE - 1);
+
+    for (; page <= last; page += X86_64_USER_PAGE_SIZE)
+        if (!x86_64_aspace_translate(kproc->aspace, page, NULL, NULL) &&
+            lazy_area(kproc, page) &&
+            !x86_64_aspace_fault_in(kproc->aspace, page, ASPACE_PROT_WRITE | ASPACE_PROT_USER))
+            return FALSE;
+    return TRUE;
+}
+
 /* Malloc(): the address of `bytes` of fresh zeroed memory, 0 if there is none */
 UQUAD kproc_uheap_alloc(PD *pd, ULONG bytes)
 {
-    return heap_alloc(kproc_find(pd), bytes, UH_MALLOC, NULL);
+    return heap_alloc(kproc_find(pd), bytes, UH_MALLOC, NULL, FALSE);
 }
 
 /* Malloc(-1): the size of the largest block that could be allocated */
@@ -907,7 +950,7 @@ static struct uheap_block *heap_find(KPROC *kproc, UQUAD va)
 /* gives the block back: unmaps its pages and drops its entry */
 static LONG heap_release(KPROC *kproc, struct uheap_block *b)
 {
-    if (!x86_64_aspace_unmap_private(kproc->aspace, b->va,
+    if (!x86_64_aspace_release_lazy(kproc->aspace, b->va,
                                      (UQUAD)b->pages * X86_64_USER_PAGE_SIZE))
         return ERR;
     memmove(b, b + 1, (kproc->nheap - 1 - (ULONG)(b - kproc->heap)) * sizeof(*b));
@@ -945,7 +988,7 @@ LONG kproc_uheap_shrink(PD *pd, UQUAD va, long len)
         return EGSBF;
     if (keep == b->pages)
         return E_OK;
-    if (!x86_64_aspace_unmap_private(kproc->aspace, va + keep * X86_64_USER_PAGE_SIZE,
+    if (!x86_64_aspace_release_lazy(kproc->aspace, va + keep * X86_64_USER_PAGE_SIZE,
                                      (UQUAD)(b->pages - keep) * X86_64_USER_PAGE_SIZE))
         return ERR;
     b->pages = (ULONG)keep;
@@ -1009,7 +1052,7 @@ UQUAD kproc_load_alloc(PD *caller, PD *child, ULONG bytes)
 
     if (!ck || ck->load_parent)
         return 0;
-    va = heap_alloc(kproc_find(caller), bytes, UH_LOADED, child);
+    va = heap_alloc(kproc_find(caller), bytes, UH_LOADED, child, TRUE);
     if (!va)
         return 0;
     /* recorded with the child at once: a disk error before the load is done
@@ -1161,7 +1204,8 @@ static BOOL validate_user(UQUAD address, ULONG size, BOOL write)
      * for a write) in THIS process's own page tables -- not merely a number
      * that falls in some range. */
     if (kproc->aspace)
-        return x86_64_aspace_user_range_ok(kproc->aspace, address, size, write);
+        return demand_range(kproc, address, size) &&
+               x86_64_aspace_user_range_ok(kproc->aspace, address, size, write);
 
     /* No address space (a kernel-code process, which runs in ring 0 on the
      * kernel's own tables): the ranges recorded when it was created, wholly

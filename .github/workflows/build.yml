@@ -369,6 +369,11 @@ jobs:
             exit 1
           fi
 
+          if ! grep -q 'x86-64 demand paging: PASS' boot.log; then
+            echo "::error::a process's Malloc() memory and stack were not backed on first touch"
+            exit 1
+          fi
+
           if ! grep -q 'x86-64 pexec load big: PASS' boot.log; then
             echo "::error::PE_LOAD did not take a program bigger than the image window"
             exit 1

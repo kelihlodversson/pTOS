@@ -136,9 +136,9 @@ static int walk_ancestors(u64 basepage)
     while (at) {
         const volatile u32 *a = (const volatile u32 *)(unsigned long)at;
 
-        if (at < 0x3ffb0000u || at + 0x100 > 0x3ffb1000u || (at & 0xff) || n >= 16)
+        if (at < 0x7eff0000u || at + 0x100 > 0x7eff1000u || (at & 0xff) || n >= 16)
             return 0x7f;
-        if (a[11] != env || a[8] || a[9] > 0x3ffb1000u)
+        if (a[11] != env || a[8] || a[9] > 0x7eff1000u)
             return 0x7f;                /* p_env, p_uft, p_parent */
         if (a[12] || (a[13] & 0xffff))
             return 0x7f;                /* p_uft */
@@ -506,8 +506,8 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         static char tail128[128];
         static char bigenv[40000];
         const s64 unmapped = 0x30000000, lowvec = 0x84, kern = (s64)(int)0x80000000;
-        const s64 ro = 0x3ffb0000;          /* the ancestors page: read-only */
-        const s64 stack_end = 0x3ffffff8;   /* 64 bytes from here cross the top */
+        const s64 ro = 0x7eff0000;          /* the ancestors page: read-only */
+        const s64 stack_end = 0x7ffffff8;   /* 64 bytes from here cross the top */
         s64 rc;
         int k;
 
@@ -602,19 +602,19 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
          * until two NULs in a row, so the bytes after it must be readable
          * (here "\0X" at the very end of the stack mapping) */
         {
-            volatile unsigned char *top = (volatile unsigned char *)0x3ffffffeUL;
+            volatile unsigned char *top = (volatile unsigned char *)0x7ffffffeUL;
 
             top[0] = 0;
             top[1] = 'X';
-            if (sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x3ffffffeLL) != EIMBA) bad |= 512;
+            if (sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x7ffffffeLL) != EIMBA) bad |= 512;
         }
         /* ... and a valid empty environment ("\0\0") on the last two bytes of
          * the mapping is accepted: nothing past it is read */
         {
-            volatile unsigned char *top = (volatile unsigned char *)0x3ffffffeUL;
+            volatile unsigned char *top = (volatile unsigned char *)0x7ffffffeUL;
 
             top[1] = 0;
-            rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x3ffffffeLL);
+            rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x7ffffffeLL);
             if (rc <= 0) {
                 bad |= 512;
             } else {
@@ -627,18 +627,18 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         /* an odd-sized environment is copied rounded up to an even size: the
          * byte after its last NUL is read too ("A\0\0" ends the mapping) */
         {
-            volatile unsigned char *top = (volatile unsigned char *)0x3ffffffdUL;
+            volatile unsigned char *top = (volatile unsigned char *)0x7ffffffdUL;
 
             top[0] = 'A';
             top[1] = 0;
             top[2] = 0;
-            if (sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x3ffffffdLL) != EIMBA) bad |= 512;
+            if (sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x7ffffffdLL) != EIMBA) bad |= 512;
             /* the same, with the byte after it inside the mapping: accepted */
-            top = (volatile unsigned char *)0x3ffffff0UL;
+            top = (volatile unsigned char *)0x7ffffff0UL;
             top[0] = 'A';
             top[1] = 0;
             top[2] = 0;
-            rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x3ffffff0LL);
+            rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x7ffffff0LL);
             if (rc <= 0) {
                 bad |= 512;
             } else {
@@ -1001,6 +1001,30 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (rc == -33)
             pterm(0x100);
         pterm(rc == -66 ? 0 : 8);
+        break;
+    }
+    case 'M': {
+        /* demand paging (#450): address space far beyond the machine's memory,
+         * touched sparsely; freed memory is not lazy any more; touching more
+         * pages than there are ends the process that does it, not the kernel */
+        static const char lazy_tail[] = { 1, 'z', 0 };
+        static const char freed_tail[] = { 1, 'Z', 0 };
+        static const char all_tail[] = { 1, 'X', 0 };
+        s64 rc, rc2, rc3, rc4;
+
+        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                  (s64)(int)(unsigned long)lazy_tail, 0);
+        if (rc == -33)
+            pterm(0x100);
+        rc2 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)freed_tail, 0);
+        rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)all_tail, 0);
+        /* and the system still works */
+        rc4 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)lazy_tail, 0);
+        pterm((rc == 0 ? 0 : 1) | (rc2 == 0xffff ? 0 : 2) | (rc3 == 0xffff ? 0 : 4) |
+              (rc4 == 0 ? 0 : 8));
         break;
     }
     case 'h': {

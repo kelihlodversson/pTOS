@@ -525,6 +525,60 @@ BOOL x86_64_aspace_unmap_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
     return TRUE;
 }
 
+BOOL x86_64_aspace_fault_in(X86_64_ASPACE *as, UQUAD va, UWORD prot)
+{
+    UQUAD page = va & ~(X86_64_PAGE_SIZE - 1), backing, *pte;
+
+    if (va >= X86_64_USER_VA_LIMIT)
+        return FALSE;
+    if (x86_64_aspace_translate(as, page, NULL, NULL))
+        return TRUE;                    /* (a racing mapping: nothing to do) */
+    if (x86_64_pmem_free_bytes() < X86_64_FAULT_RESERVE)
+        return FALSE;
+    backing = x86_64_pmem_try_alloc_pages(1, 0);
+    if (backing == X86_64_PMEM_NONE)
+        return FALSE;
+    memset((void *)(uintptr_t)(X86_64_PHYS_MAP_BASE + backing), 0, X86_64_PAGE_SIZE);
+    if (!x86_64_aspace_map_page(as, page, backing, prot)) {
+        x86_64_pmem_free_pages(backing, 1);
+        return FALSE;
+    }
+    pte = x86_64_user_pte(as->pml4_phys, page);
+    *pte |= X86_64_PTE_OWNED;
+    as->nowned++;
+    return TRUE;
+}
+
+BOOL x86_64_aspace_release_lazy(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
+{
+    UQUAD pages, i;
+
+    if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= X86_64_USER_VA_LIMIT ||
+        bytes > X86_64_USER_VA_LIMIT - va)
+        return FALSE;
+    pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
+
+    /* all-or-nothing: a page that is there must be one of ours */
+    for (i = 0; i < pages; i++) {
+        UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+
+        if (pte && (*pte & PTE_PRESENT) && !(*pte & X86_64_PTE_OWNED))
+            return FALSE;
+    }
+    for (i = 0; i < pages; i++) {
+        UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+
+        if (pte && (*pte & PTE_PRESENT)) {
+            x86_64_pmem_free_pages(*pte & PTE_ADDR, 1);
+            *pte = 0;
+            as->nowned--;
+        }
+    }
+    if (x86_64_read_cr3() == as->pml4_phys)
+        x86_64_write_cr3(as->pml4_phys);        /* flush stale translations */
+    return TRUE;
+}
+
 /* TRUE iff every page of [va, va + pages) is one of the private pages of `as` */
 static BOOL range_is_private(const struct x86_64_aspace *as, UQUAD va, UQUAD pages)
 {

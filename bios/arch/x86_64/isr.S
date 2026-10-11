@@ -129,11 +129,23 @@ x86_64_isr_common:
         mov     %rsp, %rdi
         call    C_SYM(x86_64_exception_dispatch)
 
-        /* Not reached: x86_64_exception_dispatch() is NORETURN -- this
-         * milestone has no recoverable fault handling, every exception
-         * is fatal. Safety net in case that ever changes without this
-         * trampoline being revisited. */
-.Lhang:
-        cli
-        hlt
-        jmp     .Lhang
+        /* Back only after a page fault that demand paging answered: put the
+         * registers back, drop the vector and error code and resume.
+         * Everything else is fatal and never gets here. */
+        pop     %r15
+        pop     %r14
+        pop     %r13
+        pop     %r12
+        pop     %r11
+        pop     %r10
+        pop     %r9
+        pop     %r8
+        pop     %rbp
+        pop     %rdi
+        pop     %rsi
+        pop     %rdx
+        pop     %rcx
+        pop     %rbx
+        pop     %rax
+        add     $16, %rsp
+        iretq

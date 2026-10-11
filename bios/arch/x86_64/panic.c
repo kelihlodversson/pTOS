@@ -147,9 +147,20 @@ static NORETURN void hang(void)
 /* bdos/arch/x86_64/rwa.c */
 extern void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2,
                               UQUAD rsp) NORETURN;
+extern BOOL x86_64_demand_page(UQUAD address);
 
 void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
 {
+    /*
+     * The one fault that is no fault: a process touches a page of its stack or
+     * of its Malloc() memory that has no physical page yet (error code bit 0
+     * clear: not present; bit 4 clear: not an instruction fetch).  Back it and
+     * resume the instruction.
+     */
+    if (frame->vector == 14 && !(frame->error_code & 0x11) &&
+        x86_64_demand_page(x86_64_read_cr2()))
+        return;
+
     /*
      * A fault taken in ring 3 is the process's own: terminate it and
      * resume its launcher instead of halting the machine.  Only a
