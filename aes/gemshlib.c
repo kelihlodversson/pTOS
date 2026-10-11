@@ -57,8 +57,8 @@
 #include "../cli/clistub.h"
 #endif
 
-#ifdef __x86_64__
-extern void x86_64_mark_kernel_code_pd(PD *p);
+#if CONF_WITH_USER_ASPACE
+extern void mark_kernel_code_pd(PD *p);
 #endif
 
 /*
@@ -583,8 +583,8 @@ LONG aes_run_rom_program(PRG_ENTRY *entry)
     /* Create a basepage with the standard Pexec() */
     pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", NULL);
     pd->p_tbase = (UBYTE *) entry;
-#ifdef __x86_64__
-    x86_64_mark_kernel_code_pd(pd);
+#if CONF_WITH_USER_ASPACE
+    mark_kernel_code_pd(pd);
 #endif
 
     /* Run the program with dos_exec() for AES reentrancy issues */

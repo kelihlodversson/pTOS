@@ -98,7 +98,7 @@ void kproc_dta_forget(PD *pd, const DTAINFO *dta);   /* a new Fsfirst() starts *
 UQUAD kproc_ancestors_va(PD *pd);       /* where its basepage copies are; 0 if none */
 UQUAD kproc_user_entry(PD *pd);         /* image entry point; 0 if no image (it starts at p_tbase) */
 /* Hands the process's kernel stack (the one its system calls run on) to the
- * launcher, which frees it with x86_64_kstack_free() once the process has
+ * launcher, which frees it with kstack_free() once the process has
  * exited and the launcher runs on its own stack again: the process's last
  * system call, Pterm(), is still using it while the record is destroyed.
  * Returns the physical base (0 if none) and the initial stack pointer. */

@@ -716,7 +716,7 @@ BOOL aspace_load_private(ASPACE *as, UQUAD va, UQUAD memsz,
  * pointer starts at the top less 8, as the syscall entry stub expects
  * ("as if a return address had just been pushed").
  */
-UQUAD x86_64_kstack_alloc(UQUAD *top)
+UQUAD kstack_alloc(UQUAD *top)
 {
     UQUAD phys = x86_64_pmem_try_alloc_pages(X86_64_KSTACK_PAGES, 0);
 
@@ -726,7 +726,7 @@ UQUAD x86_64_kstack_alloc(UQUAD *top)
     return phys;
 }
 
-void x86_64_kstack_free(UQUAD phys)
+void kstack_free(UQUAD phys)
 {
     if (phys)
         x86_64_pmem_free_pages(phys, X86_64_KSTACK_PAGES);

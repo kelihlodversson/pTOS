@@ -314,7 +314,7 @@ also undoes that stub's `swapgs` (x86_64_syscall_abandoned()).
 
 Each ring-3 process makes its system calls on a kernel stack of its own (four
 pages from the physical allocator, reached through the direct map; the KPROC
-record owns it, x86_64_kstack_alloc() in include/procmem.h).  gouser() points
+record owns it, kstack_alloc() in include/procmem.h).  gouser() points
 the syscall entry at the child's stack when it launches it and restores the
 launcher's when the child is gone, so a process can run another from inside its
 own Pexec() system call -- EmuCON running a program -- and the suspended

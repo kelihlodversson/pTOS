@@ -1592,7 +1592,7 @@ static void test_ring3(void)
             stack = kproc_take_kernel_stack(pd, &top);
             CHECK(stack != 0, "its kernel stack can be taken");
             CHECK(!kproc_prepare_user(pd, run), "a prepared process whose stack is gone is refused");
-            x86_64_kstack_free(stack);
+            kstack_free(stack);
             proc_free_owned(pd);
         }
     }
