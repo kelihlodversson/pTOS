@@ -28,7 +28,7 @@
 #include "cookie.h"
 #include "string.h"
 #include "has.h"        /* for has_videl */
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
 #include "procmem.h"
 #endif
 
@@ -143,7 +143,7 @@ long xmfree(void *addr)
 
     KDEBUG(("BDOS: Mfree(%p)\n",addr));
 
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
     if (procmem_contains(addr))
         return procmem_mfree(addr);
 #endif
@@ -617,7 +617,7 @@ void set_owner(void *addr, PD *p)
     MD *m;
     MPB *mpb;
 
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
     if (procmem_contains(addr)) {
         procmem_set_owner(addr, p);
         return;

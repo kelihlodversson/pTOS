@@ -96,7 +96,7 @@ static long xgetver(void);
  * from the same low, sub-4GiB pool alloc_tpa()/alloc_env() already use
  * instead, in osinit_after_xmaddalt() below, once that pool exists.
  */
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
 #include "procmem.h"
 #else
 static PD initial_basepage;
@@ -104,7 +104,7 @@ static PD initial_basepage;
 
 /* initial environment string -- x86-64 uses p_cmdlin instead, see
  * osinit_after_xmaddalt()'s own comment */
-#ifndef __x86_64__
+#if !CONF_WITH_PROCMEM
 static const char double_nul[2] __attribute__ ((aligned (2))) = { 0, 0 };
 #endif
 
@@ -401,7 +401,7 @@ void osinit_before_xmaddalt(void)
 void osinit_after_xmaddalt(void)
 {
     /* Set up initial process. Required by Malloc() */
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
     /* permanent: no owner, never freed */
     run = (PD *)procmem_alloc(sizeof(PD), PROCMEM_ZERO);
     if (!run)
@@ -425,7 +425,7 @@ void osinit_after_xmaddalt(void)
      * Point x86-64 at p_cmdlin instead: already zeroed by the bzero()
      * above, so it's an equally valid empty string, at a genuinely low
      * address since `run` itself now is. */
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
     run->p_env = PTR_TO_USERPTR(&run->p_cmdlin[0]);
 #else
     run->p_env = PTR_TO_USERPTR_UNCHECKED(CONST_CAST(char *,double_nul));
@@ -560,13 +560,13 @@ long osif(short *pw)
 restrt:
     fn = pw[0];
 
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_SSYSTEM
     /*
      * Ssystem() (0x154) is far outside the funcs[] table above, and
      * unlike every other call handled through it, its arguments don't
      * follow the table's implicit stdio/handle conventions -- so it's
      * special-cased here instead of getting its own funcs[] slot.
-     * ARM/x86-64 only: real m68k TOS software already has Supexec() and
+     * Only where CONF_WITH_SSYSTEM is set (ARM, x86-64): real m68k TOS software already has Supexec() and
      * direct memory access for this, and the smallest m68k ROM images
      * (see release.mk) have no code size to spare for a second way to do
      * it.
@@ -622,7 +622,7 @@ restrt:
     }
 #endif
 
-#if defined(__x86_64__)
+#if CONF_WITH_USER_ASPACE
     /*
      * Super() (function 0x20): m68k/ARM intercept this directly in their
      * own assembly GEMDOS trap entry (bdos/arch/{m68k,arm}/rwa.S) before

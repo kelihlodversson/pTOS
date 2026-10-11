@@ -29,9 +29,6 @@
 #include "tosvars.h"
 #include "has.h"
 #include "../bios/vectors.h"
-#if ARCH_ARM
-#include "arch/arm/entry.h"
-#endif
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
 #endif
@@ -247,11 +244,7 @@ static void xexec_free(void *addr)
  * auto-vectorizer (-mfpu=neon-vfpv4) relies on, but a plain WORD array
  * carries no alignment guarantee beyond the compiler's incidental default.
  */
-#if ARCH_ARM
-static WORD    supstk[SUPSIZ] __attribute__((aligned(8)));
-#else
-static WORD    supstk[SUPSIZ]; /* common sup stack for all processes */
-#endif
+static WORD    supstk[SUPSIZ] __attribute__((aligned(8))); /* common sup stack for all processes */
 static jmp_buf bakbuf;         /* longjmp buffer */
 
 
@@ -659,8 +652,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     if (flag != PE_LOAD) {
         proc_go(cur_p);
-#ifdef __x86_64__
-        /* Returns here, unlike on m68k/ARM (see the PE_GO case above), once
+#if CONF_WITH_USER_ASPACE
+        /* Returns here, unlike without CONF_WITH_USER_ASPACE (see the PE_GO case above), once
          * the child has exited: its exit code is in the launcher's D0. */
         return run->p_dreg[0];
 #endif
@@ -685,35 +678,7 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
      * pc-x86_64/memory.c), so this can never truncate on that arch. */
     p->p_lowtpa = PTR_TO_USERPTR((UBYTE *)p);              /*  M01.01.06   */
     p->p_hitpa  = PTR_TO_USERPTR((UBYTE *)p  +  max);      /*  M01.01.06   */
-#if ARCH_ARM
-    /*
-     * p_hitpa becomes the actual initial user-mode sp of any process
-     * launched from this PD: proc_go()'s gouser_stack is unwound entirely
-     * by gouser() (bdos/arch/arm/rwa.S), landing sp at exactly p_hitpa, not
-     * at a gouser_stack-relative offset. AAPCS requires sp to be 8-byte
-     * aligned at every public interface, which gcc's auto-vectorizer
-     * (-mfpu=neon-vfpv4) relies on, but the free-memory allocator this
-     * pointer comes from (alloc_tpa()/ffit()/getmpb()) only guarantees
-     * 4-byte alignment. Round down; losing at most 7 bytes of TPA is
-     * harmless.
-     */
-    p->p_hitpa = (UBYTE *)((ULONG)p->p_hitpa & ~7UL);
-#elif defined(__x86_64__)
-    /*
-     * p_hitpa becomes gouser()'s own initial ring-3 RSP directly
-     * (bdos/arch/x86_64/rwa.c), landing sp at exactly p_hitpa before the
-     * process's first instruction ever runs. The x86-64 SysV/x32 ABI's
-     * process-entry convention requires (RSP + 8) to be a multiple of
-     * 16 at that point (equivalently, RSP itself is 8 mod 16) -- p itself
-     * comes from a page-aligned allocator (procmem_alloc()),
-     * but max (the process's own TPA size, ultimately from arbitrary
-     * ELF segment sizes) is not, so p+max need not satisfy this (#356's
-     * own review caught it: the first `call` in a real process can run
-     * with the wrong alignment, breaking anything that assumes the
-     * standard entry convention). Round down to the largest value
-     * satisfying it; losing at most 15 bytes of TPA is harmless. */
-    p->p_hitpa = ((p->p_hitpa + 8UL) & ~15UL) - 8UL;
-#endif
+    proc_align_stack(p);
     /* Same reasoning as p_lowtpa/p_hitpa above: p_cmdlin is a field
      * within p itself, and envptr comes from alloc_env(), whose own
      * CONF_WITH_PROCMEM branch (bdos/proc.c) likewise draws from
@@ -941,42 +906,8 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
  *
  */
 
-#ifdef __arm__
-struct gouser_stack {
-    LONG regs[8];    /* argument registers from previous call (r7, r0-r6) */
-    LONG other_sp;   /* the other stack pointer */
-    LONG retaddr;
-    LONG spsr;       /* note the basepage is passed in r0 and not on the stack */
-};
-#elif defined(__x86_64__)
-/*
- * Not yet a real coroutine stack layout (unlike the ARM/m68k structs
- * above): a genuine x86-64 gouser()/termuser() needs a dedicated
- * per-process kernel stack (bdos/arch/x86_64/rwa.S's gouser()/termuser()
- * panic rather than attempting anything with this, see that file's own
- * comment) plus a real ring0->ring3 transition (iretq, reusing the
- * GDT/TSS this arch's trap.c already sets up) -- more than this one
- * struct can express. Kept as an empty placeholder so proc_go() below
- * has something of the right *kind* to size/reference without pretending
- * the m68k/ARM field layouts mean anything here.
- */
-struct gouser_stack {
-    LONG unused;
-};
-#else
-struct gouser_stack {
-  LONG other_sp;   /* a4, the other stack pointer */
-  WORD sr;         /* d0, the status register */
-  LONG retaddr;    /* a3, the return address */
-  LONG fill[11];   /* 10 registers d1-d7/a0-a2 and one dummy so that ... */
-  PD * basepage;   /* ... upon startup the basepage is in 4(sp) */
-};
-#endif
-
 static void proc_go(PD *p)
 {
-    struct gouser_stack *sp;
-
     KDEBUG(("BDOS xexec: trying to load (and execute) a process on %p ...\n",p->p_tbase));
     /* PTR_TO_USERPTR(), not the unchecked cast: `run` here is always
      * either a real, alloc_tpa()'d PD or the first process's parent,
@@ -997,52 +928,7 @@ static void proc_go(PD *p)
         p->p_parent = (ULONG)kproc_ancestors_va(p);
 #endif
 
-    /* create a stack at the end of the TPA */
-    sp = (struct gouser_stack *) (p->p_hitpa - sizeof(struct gouser_stack));
-
-#ifdef __arm__
-    p->p_dreg[0] = (LONG)p;  /* base page is passed in r0 */
-    sp->regs[1] = ARM_ENTRY_PROGRAM;
-    sp->spsr = ((get_cpsr() & ~0x1f) | 0x10); /* the process will start in user mode, same interrupts */
-    sp->retaddr = (long)p->p_tbase; /* return address is text start */
-    /* the other stack is the supervisor stack */
-    sp->other_sp = (long) &supstk[SUPSIZ];
-    /* store this new stack in the saved sp field of the PD */
-    p->p_areg[7-3] = (long) sp;
-#elif defined(__x86_64__)
-    /* Not implemented yet -- see gouser_stack's own comment above and
-     * bdos/arch/x86_64/rwa.S. gouser() below panics with a clear message
-     * rather than silently running with none of this set up. */
-    (void)sp;
-#else
-    sp->basepage = p;      /* the stack contains the basepage */
-
-    sp->retaddr = (long)p->p_tbase; /* return address a3 is text start */
-    sp->sr = get_sr() & 0x0700;  /* the process will start in user mode, same IPL */
-
-    /* the other stack is the supervisor stack */
-    sp->other_sp = (long) &supstk[SUPSIZ];
-
-    /* store this new stack in the saved a7 field of the PD */
-    p->p_areg[7-3] = (long) sp;
-
-#if 1
-    /* the following settings are not documented, and hence theoretically
-     * the assignments below are not necessary.
-     * However, many programs test if A0 = 0 to check if they are running
-     * as a normal program or as an accessory, so we need to clear at least
-     * this register!
-     */
-    {   /* d1-d7/a0-a2 and dummy return address set to zero */
-        int i;
-        for(i = 0; i < 11 ; i++)
-            sp->fill[i] = 0;
-    }
-    p->p_areg[6-3] = (long) sp;    /* a6 to hold a copy of the stack */
-    p->p_areg[5-3] = (long)p->p_dbase;  /* a5 to point to the DATA segt */
-    p->p_areg[4-3] = (long)p->p_bbase;  /* a4 to point to the BSS segt */
-#endif
-#endif
+    proc_launch_prepare(p, &supstk[SUPSIZ]);   /* arch: launch.c */
 
     /* the new process is the one to run */
 #if CONF_WITH_KPROC
