@@ -43,32 +43,32 @@ void x86_64_pic_remap(void)
      * order; skipping or reordering any of them leaves the chip in an
      * undefined state.
      */
-    x86_64_outb(PIC1_COMMAND, ICW1_INIT | ICW1_ICW4);
-    x86_64_outb(PIC2_COMMAND, ICW1_INIT | ICW1_ICW4);
+    port_outb(PIC1_COMMAND, ICW1_INIT | ICW1_ICW4);
+    port_outb(PIC2_COMMAND, ICW1_INIT | ICW1_ICW4);
 
-    x86_64_outb(PIC1_DATA, X86_64_PIC1_VECTOR_BASE);
-    x86_64_outb(PIC2_DATA, X86_64_PIC2_VECTOR_BASE);
+    port_outb(PIC1_DATA, X86_64_PIC1_VECTOR_BASE);
+    port_outb(PIC2_DATA, X86_64_PIC2_VECTOR_BASE);
 
-    x86_64_outb(PIC1_DATA, 1 << X86_64_IRQ_CASCADE);  /* slave is on IRQ2 */
-    x86_64_outb(PIC2_DATA, X86_64_IRQ_CASCADE);        /* slave's own cascade identity */
+    port_outb(PIC1_DATA, 1 << X86_64_IRQ_CASCADE);  /* slave is on IRQ2 */
+    port_outb(PIC2_DATA, X86_64_IRQ_CASCADE);        /* slave's own cascade identity */
 
-    x86_64_outb(PIC1_DATA, ICW4_8086);
-    x86_64_outb(PIC2_DATA, ICW4_8086);
+    port_outb(PIC1_DATA, ICW4_8086);
+    port_outb(PIC2_DATA, ICW4_8086);
 
     mask1 = 0xFF;
     mask2 = 0xFF;
-    x86_64_outb(PIC1_DATA, mask1);
-    x86_64_outb(PIC2_DATA, mask2);
+    port_outb(PIC1_DATA, mask1);
+    port_outb(PIC2_DATA, mask2);
 }
 
 void x86_64_pic_unmask(int irq)
 {
     if (irq < 8) {
         mask1 &= ~(UBYTE)(1 << irq);
-        x86_64_outb(PIC1_DATA, mask1);
+        port_outb(PIC1_DATA, mask1);
     } else {
         mask2 &= ~(UBYTE)(1 << (irq - 8));
-        x86_64_outb(PIC2_DATA, mask2);
+        port_outb(PIC2_DATA, mask2);
         /*
          * Any PIC2 line reaching the CPU at all depends on PIC1's own
          * IRQ2 (the cascade input) staying unmasked -- do so here rather
@@ -76,13 +76,13 @@ void x86_64_pic_unmask(int irq)
          * separately.
          */
         mask1 &= ~(UBYTE)(1 << X86_64_IRQ_CASCADE);
-        x86_64_outb(PIC1_DATA, mask1);
+        port_outb(PIC1_DATA, mask1);
     }
 }
 
 void x86_64_pic_send_eoi(int vector)
 {
     if (vector >= X86_64_PIC2_VECTOR_BASE)
-        x86_64_outb(PIC2_COMMAND, PIC_EOI);
-    x86_64_outb(PIC1_COMMAND, PIC_EOI);
+        port_outb(PIC2_COMMAND, PIC_EOI);
+    port_outb(PIC1_COMMAND, PIC_EOI);
 }

@@ -21,7 +21,7 @@
  * dropped -- because the tables live in firmware memory this image has no
  * claim on afterwards, which is why the name is copied here and not looked
  * up on demand.  No SMBIOS, or only placeholder strings, is not fatal: it
- * just means x86_64_smbios_machine_name() has nothing to report.
+ * just means pc_x86_64_machine_name() has nothing to report.
  *
  * system_table is really an EFI_SYSTEM_TABLE* (efi.h) -- taken as void* so
  * this header, unlike efi.h itself, stays includable from bios/machine.c
@@ -36,6 +36,6 @@ void x86_64_smbios_probe(void *system_table);
  */
 #define X86_64_SMBIOS_NAME_MAX 20
 
-const char *x86_64_smbios_machine_name(void);
+const char *pc_x86_64_machine_name(void);
 
 #endif /* PC_X86_64_SMBIOS_H */

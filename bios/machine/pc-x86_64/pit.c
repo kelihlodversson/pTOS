@@ -36,7 +36,7 @@ void x86_64_pit_init(UWORD hz)
 {
     ULONG divisor = PIT_INPUT_HZ / hz;
 
-    x86_64_outb(PIT_COMMAND, PIT_CMD_CHANNEL0_MODE2_LOHI);
-    x86_64_outb(PIT_CHANNEL0_DATA, (UBYTE)(divisor & 0xFF));
-    x86_64_outb(PIT_CHANNEL0_DATA, (UBYTE)((divisor >> 8) & 0xFF));
+    port_outb(PIT_COMMAND, PIT_CMD_CHANNEL0_MODE2_LOHI);
+    port_outb(PIT_CHANNEL0_DATA, (UBYTE)(divisor & 0xFF));
+    port_outb(PIT_CHANNEL0_DATA, (UBYTE)((divisor >> 8) & 0xFF));
 }

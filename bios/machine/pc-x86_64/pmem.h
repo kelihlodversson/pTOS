@@ -53,7 +53,7 @@
  * avoids handing out low addresses some other firmware quirk might still
  * treat specially -- and [reserved3_base, reserved3_end) -- the EFI GOP
  * framebuffer's own aperture (bios/machine/pc-x86_64/gop.c's
- * x86_64_gop_reserved_range(), read before this call), which this
+ * gop_reserved_range(), read before this call), which this
  * allocator would otherwise be free to hand out to something else: GOP's
  * memory map descriptor for it is ordinary EfiConventionalMemory or
  * EfiBootServices{Code,Data} on real firmware (nothing marks it
@@ -159,7 +159,7 @@ void x86_64_pmem_track(void);
 void x86_64_pmem_test_fail_after(LONG n);
 
 /* Total free bytes remaining across the whole free list (diagnostics). */
-UQUAD x86_64_pmem_free_bytes(void);
+UQUAD pmem_free_bytes(void);
 
 /* The highest physical address (exclusive) x86_64_pmem_init() saw
  * anywhere in the EFI memory map, regardless of type -- the span the

@@ -6,12 +6,12 @@
  * boot services are still up -- but mapping the discovered framebuffer
  * into this kernel's own page tables needs the physical-memory direct map
  * and PML4 slot 0's low-pool PD, neither of which exist until well after
- * the higher-half jump. x86_64_gop_probe() (called from startup.c, before
+ * the higher-half jump. gop_probe() (called from startup.c, before
  * ExitBootServices()) does the EFI-side query and stashes plain scalars
  * (a physical address, a size, a few small integers) into this file's own
  * bss -- ordinary boot-time image data, unlike GOP's own Mode/Info
  * structures, which live in EFI pool memory this image has no claim on
- * once boot services exit. x86_64_gop_init() (called from
+ * once boot services exit. gop_init() (called from
  * x86_64_higher_half_main(), well after the jump) does the actual
  * mapping from those stashed values.
  *
@@ -31,7 +31,7 @@
 #include "earlycon.h"
 #include "pgtable.h"
 #include "pc_x86_64_memory.h"
-#include "pc_x86_64_gop.h"
+#include "gop.h"
 
 static BOOL gop_found;
 static UQUAD gop_phys_base;
@@ -40,9 +40,9 @@ static ULONG gop_width;
 static ULONG gop_height;
 static ULONG gop_pitch_pixels;  /* EFI's PixelsPerScanLine -- pixels, not bytes */
 
-static UBYTE *gop_screenbase;   /* 0 until x86_64_gop_init() runs */
+static UBYTE *screenbase;       /* 0 until gop_init() runs */
 
-void x86_64_gop_probe(void *bs_arg)
+void gop_probe(void *bs_arg)
 {
     EFI_BOOT_SERVICES *bs = (EFI_BOOT_SERVICES *)bs_arg;
     EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
@@ -90,7 +90,7 @@ void x86_64_gop_probe(void *bs_arg)
     /*
      * Resolution/pitch fields are firmware-reported ULONGs (up to 2^32-1),
      * but desc->width/height (screen_mode.h's SCREEN_MODE_DESC, filled in
-     * by pc_x86_64_gop_get_current_mode_desc() below) are UWORD -- an
+     * by gop_get_current_mode_desc() below) are UWORD -- an
      * unchecked value above 65535 would silently truncate there.
      * PixelsPerScanLine needs a tighter cap than that: linea_init()
      * (bios/lineainit.c) stores desc->pitch (PixelsPerScanLine * 4, this
@@ -114,7 +114,7 @@ void x86_64_gop_probe(void *bs_arg)
         return;
 
     /*
-     * FrameBufferSize is what x86_64_gop_init() below maps and the only
+     * FrameBufferSize is what gop_init() below maps and the only
      * bound anything later writing through the framebuffer has -- reject
      * a mode whose reported size doesn't actually cover a full
      * PixelsPerScanLine * 4 bytes/pixel * VerticalResolution image, rather
@@ -128,7 +128,7 @@ void x86_64_gop_probe(void *bs_arg)
 
     /*
      * Overflow-safe rather than computing FrameBufferBase + FrameBufferSize
-     * and checking the result: x86_64_gop_init()/x86_64_gop_reserved_range()
+     * and checking the result: gop_init()/gop_reserved_range()
      * below add FrameBufferSize (and then a further 2 MiB - 1 for
      * alignment) to FrameBufferBase, and firmware is not trusted to have
      * reported a pair that can't wrap a 64-bit address -- rejecting before
@@ -162,8 +162,8 @@ void x86_64_gop_probe(void *bs_arg)
 }
 
 /*
- * The 2 MiB-aligned [phys_base, phys_end) span x86_64_gop_init() below maps
- * -- shared with x86_64_gop_reserved_range() so the physical range pmem.c
+ * The 2 MiB-aligned [phys_base, phys_end) span gop_init() below maps
+ * -- shared with gop_reserved_range() so the physical range pmem.c
  * excludes from its own free list (reserved before any allocation can
  * hand out the same pages -- see that function's own comment) is always
  * exactly the range that ends up mapped, not a second, independently
@@ -173,7 +173,7 @@ void x86_64_gop_probe(void *bs_arg)
  * PD granularity, see pgtable.c) -- round the requested range out to
  * that, exactly like x86_64_low_tpa_init()
  * already does for its own allocation. gop_phys_base + gop_size cannot
- * overflow this addition: x86_64_gop_probe() already rejected any mode
+ * overflow this addition: gop_probe() already rejected any mode
  * whose FrameBufferBase/FrameBufferSize couldn't safely take the extra
  * X86_64_PAGE_2M_SIZE this rounding needs.
  */
@@ -184,7 +184,7 @@ static void gop_aligned_range(UQUAD *phys_base, UQUAD *phys_end)
                 & ~(X86_64_PAGE_2M_SIZE - 1);
 }
 
-void x86_64_gop_reserved_range(UQUAD *base, UQUAD *end)
+void gop_reserved_range(UQUAD *base, UQUAD *end)
 {
     UQUAD page_count;
 
@@ -203,7 +203,7 @@ void x86_64_gop_reserved_range(UQUAD *base, UQUAD *end)
      * mapped would still have its full (potentially huge) aligned range
      * reserved out of x86_64_pmem_init()'s free list, needlessly starving
      * the TPA pool -- or worse, failing it outright -- for a
-     * framebuffer that x86_64_gop_init() is going to reject anyway
+     * framebuffer that gop_init() is going to reject anyway
      * (Copilot review, PR #373). Returning an empty range here instead
      * reserves nothing for a mode that will map nothing.
      */
@@ -214,7 +214,7 @@ void x86_64_gop_reserved_range(UQUAD *base, UQUAD *end)
     }
 }
 
-void x86_64_gop_init(void)
+void gop_init(void)
 {
     UQUAD aligned_phys, aligned_end, page_count, offset;
     UQUAD virt_base;
@@ -235,15 +235,15 @@ void x86_64_gop_init(void)
         return;
     }
 
-    gop_screenbase = (UBYTE *)(uintptr_t)(virt_base + offset);
+    screenbase = (UBYTE *)(uintptr_t)(virt_base + offset);
 }
 
-BOOL pc_x86_64_gop_present(void)
+BOOL gop_present(void)
 {
     return gop_found;
 }
 
-void pc_x86_64_gop_get_current_mode_desc(SCREEN_MODE_DESC *desc)
+void gop_get_current_mode_desc(SCREEN_MODE_DESC *desc)
 {
     desc->width = (UWORD)gop_width;
     desc->height = (UWORD)gop_height;
@@ -255,7 +255,7 @@ void pc_x86_64_gop_get_current_mode_desc(SCREEN_MODE_DESC *desc)
     desc->shifter = SCREEN_SHIFTER_NONE;
 }
 
-UBYTE *pc_x86_64_gop_screenbase(void)
+UBYTE *gop_screenbase(void)
 {
-    return gop_screenbase;
+    return screenbase;
 }

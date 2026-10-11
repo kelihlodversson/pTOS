@@ -89,7 +89,6 @@ extern void x86_64_memtest_run(void);
 #endif
 #ifdef MACHINE_PC_X86_64
 #include "irq.h"
-#include "io.h"
 #endif
 
 
@@ -798,13 +797,12 @@ static void bios_init(void)
      * #335: bring up the legacy PIC/PIT/PS-2 controller (bios/machine/
      * pc-x86_64/irq.c) -- remapping the PIC, installing this machine's
      * three device-IRQ IDT gates, programming a 200 Hz tick and enabling
-     * keyboard/mouse reporting -- before turning interrupts on at all, so
-     * the very first one that can arrive always has a real handler
-     * waiting for it (gdt.c/trap.c/idt.c's own comments on why interrupts
-     * stayed off until now).
+     * keyboard/mouse reporting -- and then turning interrupts on, so the
+     * very first one that can arrive always has a real handler waiting for
+     * it (gdt.c/trap.c/idt.c's own comments on why interrupts stayed off
+     * until now).
      */
-    x86_64_irq_init();
-    x86_64_sti();
+    machine_irq_init();
 #else
 #if CONF_WITH_ATARI_VIDEO
     /* Keep the HBL disabled */

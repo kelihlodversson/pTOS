@@ -62,7 +62,7 @@ void x86_64_pc_irq_dispatch(int vector)
     x86_64_pic_send_eoi(vector);
 }
 
-void x86_64_irq_init(void)
+void machine_irq_init(void)
 {
     x86_64_pic_remap();
 
@@ -81,4 +81,6 @@ void x86_64_irq_init(void)
     x86_64_pic_unmask(X86_64_IRQ_COM1);
     earlycon_enable_rx_interrupt();
 #endif
+
+    x86_64_sti();
 }

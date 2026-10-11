@@ -844,7 +844,7 @@ const char * machine_name(void)
     return raspi_board.name;
 #elif defined(MACHINE_PC_X86_64)
     {
-        const char *name = x86_64_smbios_machine_name();
+        const char *name = pc_x86_64_machine_name();
 
         return name ? name : "PC (x86-64 UEFI)";
     }

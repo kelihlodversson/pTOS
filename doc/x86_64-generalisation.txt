@@ -88,15 +88,23 @@ cli/ and util/ to regenerate it).
    fill_cookie_jar(), and vector_5ms/scsidriv_root are ordinary variables
    everywhere.  The pool, the pointers and their __x86_64__ branches are gone.
 
-6. Hardware access from shared drivers
-   x86_64_inb/outb/ide_insw/ide_outsw (bios/ide.c), x86_64_kernel_trap
-   (include/biosbind.h, include/xbiosbind.h, aes/gsx2.c, desk/gembind.c),
-   x86_64_sti/x86_64_irq_init (bios/kprint.c, bios/bios.c),
-   x86_64_gop_probe/_init (bios/screen.c), x86_64_smbios_machine_name
-   (bios/machine.c), x86_64_apply_higher_half_relocations (bios/font.c),
-   x86_64_pmem_free_bytes (bios/initinfo.c), x86_64_ps2_mouse_irq.  Each is
-   one call that a general name (io_inb(), irq_enable(), machine_name(), ...)
-   plus the existing machine/ or arch/ implementation covers.
+6. Hardware access from shared drivers                                 DONE
+   Renamed (perl over the tree) to general names, each implemented in the
+   existing arch/ or machine/ directory:
+     x86_64_inb/outb, x86_64_ide_inw/outw/insw/outsw -> port_inb/outb/inw/
+       outw/insw/outsw (bios/arch/x86_64/io.h, port_io.h/.c; was ide_io.*)
+     x86_64_kernel_trap -> kernel_trap (include/biosbind.h, xbiosbind.h,
+       aes/gsx2.c, desk/gembind.c)
+     x86_64_irq_init + x86_64_sti -> machine_irq_init() (irq enable is part
+       of it; bios/bios.c)
+     x86_64_gop_probe/init/reserved_range, pc_x86_64_gop_* -> gop_*
+       (bios/machine/pc-x86_64/gop.h, was pc_x86_64_gop.h)
+     x86_64_smbios_machine_name -> pc_x86_64_machine_name (as
+       m548x_machine_name())
+     x86_64_pmem_free_bytes -> pmem_free_bytes (bios/initinfo.c)
+   x86_64_apply_higher_half_relocations and x86_64_ps2_mouse_irq were only
+   named in comments of shared files; those comments no longer name them.
+   The #if/#ifdef around these calls is group 7.
 
 7. Architecture #ifdefs that guard a feature
    __x86_64__ / ARCH_X86_64 / "__arm__ || __x86_64__" in bdos/bdosmain.c,

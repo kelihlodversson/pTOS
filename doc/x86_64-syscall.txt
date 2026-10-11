@@ -104,18 +104,18 @@ mechanism yet to hand a bad return address back to the offending
 process safely, so trapasm.S calls x86_64_bad_sysret() to panic instead.
 
 
-Kernel-mode callers: x86_64_kernel_trap()
+Kernel-mode callers: kernel_trap()
 -------------------------------------------
 
 The `syscall` entry point above is reached *only* by a genuine ring-3
 caller. Every call this port's own boot code makes before a real process
 exists -- every x86-64 branch of include/biosbind.h/xbiosbind.h -- goes
-through x86_64_kernel_trap() instead: an ordinary, recursion-safe C
+through kernel_trap() instead: an ordinary, recursion-safe C
 function that builds a throwaway x86_64_trap_frame_t on the caller's own
 stack and calls x86_64_trap_dispatch() directly, with from_ring3 = 0 and
 no privilege transition at all.  GEMDOS is not reached this way: kernel
 code calls the GEMDOS implementations directly (bdos/arch/x86_64/kcall.c,
-through the names in include/bdosbind.h), and x86_64_kernel_trap() refuses
+through the names in include/bdosbind.h), and kernel_trap() refuses
 the GEMDOS class.
 
 An earlier version of this code let both kinds of caller share the

@@ -460,7 +460,7 @@ BOOL aspace_map_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
     /* the pages, the tables they need (one per 2 MiB, and the three above) and
      * the bookkeeping must leave the kernel's reserve alone, as a lazy fault
      * does (aspace_fault_in()) */
-    if (x86_64_pmem_free_bytes() < ASPACE_FAULT_RESERVE + ASPACE_FAULT_COST +
+    if (pmem_free_bytes() < ASPACE_FAULT_RESERVE + ASPACE_FAULT_COST +
                                    (pages + pages / 512 + 2) * X86_64_PAGE_SIZE)
         return FALSE;
 
@@ -542,7 +542,7 @@ BOOL aspace_fault_in(ASPACE *as, UQUAD va, UWORD prot)
         return TRUE;                    /* (a racing mapping: nothing to do) */
     /* the page, the tables it may need (three) and the bookkeeping's growth must
      * all leave the reserve alone */
-    if (x86_64_pmem_free_bytes() < ASPACE_FAULT_RESERVE + ASPACE_FAULT_COST)
+    if (pmem_free_bytes() < ASPACE_FAULT_RESERVE + ASPACE_FAULT_COST)
         return FALSE;
     backing = x86_64_pmem_try_alloc_pages(1, 0);
     if (backing == X86_64_PMEM_NONE)

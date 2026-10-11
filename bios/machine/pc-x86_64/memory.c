@@ -79,7 +79,7 @@ void pc_x86_64_memory_init(void)
  * the user image window. Unlike the other two, this one's physical backing
  * isn't allocated from pmem.c at all -- it's wherever firmware/hardware
  * already put the framebuffer (bios/machine/pc-x86_64/gop.c's own
- * x86_64_gop_probe() reads that address from GOP itself) -- this file
+ * gop_probe() reads that address from GOP itself) -- this file
  * only maps that caller-given range, it never chooses or owns it.
  *
  * Placed in the same low-canonical, PML4-slot-0 region as the TPA
@@ -94,7 +94,7 @@ void pc_x86_64_memory_init(void)
  * ILP32 consumer needs it to be, which this file has no say over).
  *
  * X86_64_FRAMEBUFFER_MAX_BYTES (pc_x86_64_memory.h -- public so gop.c's
- * x86_64_gop_reserved_range() can apply the identical bound, see its own
+ * gop_reserved_range() can apply the identical bound, see its own
  * comment there) is a sanity ceiling, not a real limit on any actual
  * framebuffer size: it exists so a firmware-reported mode this arch has
  * no business trusting blindly (a garbled FrameBufferSize, or a pixel

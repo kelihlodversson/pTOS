@@ -498,7 +498,7 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     }
 }
 
-long x86_64_kernel_trap(long rax, long rdi, long rsi, long rdx, long r10)
+long kernel_trap(long rax, long rdi, long rsi, long rdx, long r10)
 {
     x86_64_trap_frame_t frame;
 

@@ -62,7 +62,7 @@
  * It is reached *only* by a genuine ring-3 caller, deliberately: every
  * current caller (Super()/Setexc()/... from bios/bdos boot code, called
  * the way m68k's "trap #1"/ARM's "svc 1" are when already supervisor) goes
- * through x86_64_kernel_trap() below instead, an ordinary C function that
+ * through kernel_trap() below instead, an ordinary C function that
  * calls x86_64_trap_dispatch() directly with no privilege transition at
  * all. An earlier version of this file tried to let both kinds of caller
  * share x86_64_syscall_entry, telling them apart by testing whether the
@@ -120,7 +120,7 @@ typedef struct {
 
 /*
  * Called from trapasm.S's entry stub (from_ring3 = 1) and from
- * x86_64_kernel_trap() below (from_ring3 = 0). Reads frame->rax/rdi/rsi/
+ * kernel_trap() below (from_ring3 = 0). Reads frame->rax/rdi/rsi/
  * rdx/r10 per the calling convention above, dispatches directly to
  * osif()/bios_vecs[]/xbios_vecs[] (no vector-table indirection: this arch
  * does not need ARM's dynamic-hooking generality, since bios_init()'s
@@ -129,7 +129,7 @@ typedef struct {
  *
  * from_ring3 tells this function whether frame->rdi/rsi/rdx/r10 are
  * untrusted register values a genuine ring-3 caller supplied or trusted
- * arguments a kernel-mode caller passed via x86_64_kernel_trap() -- the
+ * arguments a kernel-mode caller passed via kernel_trap() -- the
  * latter legitimately includes real kernel (higher-half) pointers, e.g. an
  * internal buffer a kernel caller passes to a BIOS call.  The dispatcher does
  * not judge the raw register values either way; validating a pointer a
@@ -163,7 +163,7 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
  * written (and read) as if this were that same convention with the
  * privilege transition simply subtracted out.
  */
-long x86_64_kernel_trap(long rax, long rdi, long rsi, long rdx, long r10);
+long kernel_trap(long rax, long rdi, long rsi, long rdx, long r10);
 
 /*
  * Called from x86_64_syscall_entry's exit path (trapasm.S) when the

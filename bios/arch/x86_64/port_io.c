@@ -1,7 +1,7 @@
 /*
- * ide_io.c - x86-64 port I/O primitives for bios/ide.c's ATA register access
+ * port_io.c - x86-64 port I/O primitives for bios/ide.c's ATA register access
  *
- * See ide_io.h's own comment for why this exists separately from the
+ * See port_io.h's own comment for why this exists separately from the
  * shared, memory-mapped-register ATA protocol logic in bios/ide.c.
  *
  * Copyright (C) 2025-2026 The pTOS development team.
@@ -12,11 +12,11 @@
 
 #include "config.h"
 #include "portab.h"
-#include "ide_io.h"
+#include "port_io.h"
 
 #if CONF_WITH_IDE
 
-UWORD x86_64_ide_inw(UWORD port)
+UWORD port_inw(UWORD port)
 {
     UWORD val;
 
@@ -24,7 +24,7 @@ UWORD x86_64_ide_inw(UWORD port)
     return val;
 }
 
-void x86_64_ide_outw(UWORD port, UWORD val)
+void port_outw(UWORD port, UWORD val)
 {
     __asm__ volatile ("outw %0, %1" :: "a"(val), "Nd"(port));
 }
@@ -39,7 +39,7 @@ void x86_64_ide_outw(UWORD port, UWORD val)
  * updates all three; the "memory" clobber covers the block `buffer`
  * itself, which the constraints alone don't describe.
  */
-void x86_64_ide_insw(UWORD port, void *buffer, ULONG count)
+void port_insw(UWORD port, void *buffer, ULONG count)
 {
     __asm__ volatile ("rep insw"
                        : "+D"(buffer), "+c"(count)
@@ -47,7 +47,7 @@ void x86_64_ide_insw(UWORD port, void *buffer, ULONG count)
                        : "memory");
 }
 
-void x86_64_ide_outsw(UWORD port, const void *buffer, ULONG count)
+void port_outsw(UWORD port, const void *buffer, ULONG count)
 {
     __asm__ volatile ("rep outsw"
                        : "+S"(buffer), "+c"(count)
