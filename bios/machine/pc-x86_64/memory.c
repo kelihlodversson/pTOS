@@ -83,7 +83,7 @@ void pc_x86_64_memory_init(void)
  * Deliberately a THIRD pool rather than reusing the low TPA pool's own
  * spare space: the TPA pool's virtual range gets explicitly, selectively
  * remapped into a real process's own address space as user-accessible
- * (x86_64_aspace_map_procmem(), via kproc.c) -- carving kernel-only bookkeeping
+ * (aspace_map_procmem(), via kproc.c) -- carving kernel-only bookkeeping
  * out of the same physical range would depend on every future caller of
  * that function continuing to avoid this pool's particular offset, an
  * invariant nothing enforces. This pool is never passed to
@@ -111,7 +111,7 @@ void pc_x86_64_memory_init(void)
 /* Above the user image window (include/procmem.h): every address space maps
  * this pool and the framebuffer after it supervisor-only, so they must not
  * collide with anything a process maps for itself. */
-#define X86_64_LOW_KDATA_VIRT_BASE (X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE)
+#define X86_64_LOW_KDATA_VIRT_BASE (USER_IMAGE_BASE + USER_IMAGE_SIZE)
 #define X86_64_LOW_KDATA_BYTES (2 * 1024 * 1024)
 
 static UQUAD low_kdata_next;

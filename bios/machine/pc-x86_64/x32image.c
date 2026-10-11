@@ -85,8 +85,8 @@ BOOL x86_64_x32image_layout(const X32_IMAGE *image, X32_LAYOUT *layout)
 
 BOOL x86_64_x32_layout_valid(const X32_LAYOUT *layout, BOOL strict)
 {
-    return x86_64_x32_layout_valid_in(layout, strict, X86_64_USER_IMAGE_BASE,
-                                      X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE);
+    return x86_64_x32_layout_valid_in(layout, strict, USER_IMAGE_BASE,
+                                      USER_IMAGE_BASE + USER_IMAGE_SIZE);
 }
 
 BOOL x86_64_x32_layout_valid_in(const X32_LAYOUT *layout, BOOL strict, UQUAD window_lo, UQUAD window_hi)
@@ -122,7 +122,7 @@ BOOL x86_64_x32_layout_valid_in(const X32_LAYOUT *layout, BOOL strict, UQUAD win
     return entry_ok;
 }
 
-BOOL x86_64_x32_layout_load(X86_64_ASPACE *as, const X32_LAYOUT *layout)
+BOOL x86_64_x32_layout_load(ASPACE *as, const X32_LAYOUT *layout)
 {
     ULONG i;
 
@@ -134,7 +134,7 @@ BOOL x86_64_x32_layout_load(X86_64_ASPACE *as, const X32_LAYOUT *layout)
             prot |= ASPACE_PROT_WRITE;
         if (s->flags & PF_X)
             prot |= ASPACE_PROT_EXEC;
-        if (!x86_64_aspace_load_private(as, s->vaddr, s->memsz, prot, s->src, s->filesz))
+        if (!aspace_load_private(as, s->vaddr, s->memsz, prot, s->src, s->filesz))
             return FALSE;       /* the caller destroys `as`, which frees what i mapped */
     }
     return TRUE;
@@ -151,7 +151,7 @@ BOOL x86_64_x32image_check(const X32_IMAGE *image, UQUAD *entry)
     return TRUE;
 }
 
-BOOL x86_64_x32image_load(X86_64_ASPACE *as, const X32_IMAGE *image, UQUAD *entry)
+BOOL x86_64_x32image_load(ASPACE *as, const X32_IMAGE *image, UQUAD *entry)
 {
     X32_LAYOUT layout;
 

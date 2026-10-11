@@ -609,13 +609,13 @@ restrt:
             return (long)kproc_uheap_alloc(run, (ULONG)amount);
         case GEMDOS_MFREE:
             pw[1] = (ULONG)pw[1];
-            if (pw[1] >= X86_64_USER_HEAP_BASE && pw[1] < X86_64_USER_STACK_TOP)
+            if (pw[1] >= USER_HEAP_BASE && pw[1] < USER_STACK_TOP)
                 return kproc_uheap_free(run, (ULONG)pw[1]);
             break;
         case GEMDOS_MSHRINK:
             pw[2] = (ULONG)pw[2];
             pw[3] = (LONG)pw[3];
-            if (pw[2] >= X86_64_USER_HEAP_BASE && pw[2] < X86_64_USER_STACK_TOP)
+            if (pw[2] >= USER_HEAP_BASE && pw[2] < USER_STACK_TOP)
                 return kproc_uheap_shrink(run, (ULONG)pw[2], pw[3]);
             break;
         }

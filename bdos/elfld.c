@@ -1213,10 +1213,10 @@ LONG elf_pgmld(FH h, PD *p)
      */
     {
         ULONG span = info.mem_end - info.link_base;
-        ULONG lo = info.link_base & ~(ULONG)(X86_64_USER_PAGE_SIZE - 1);
-        /* the window must also hold the startup area (X86_64_USER_IMAGE_SLACK)
+        ULONG lo = info.link_base & ~(ULONG)(USER_PAGE_SIZE - 1);
+        /* the window must also hold the startup area (USER_IMAGE_SLACK)
          * from the page after the image's last one */
-        ULONG limit = X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK;
+        ULONG limit = USER_IMAGE_BASE + USER_IMAGE_SIZE - USER_IMAGE_SLACK;
 
         place->va = 0;
         if (elf_into_caller && kproc_has_heap(run))
@@ -1228,14 +1228,14 @@ LONG elf_pgmld(FH h, PD *p)
              * PE_GO moves it to the new process.  The block holds the image
              * from its first page on and the startup area after it.
              */
-            ULONG imgpages = (info.mem_end - lo + X86_64_USER_PAGE_SIZE - 1) / X86_64_USER_PAGE_SIZE;
+            ULONG imgpages = (info.mem_end - lo + USER_PAGE_SIZE - 1) / USER_PAGE_SIZE;
 
             /* (the rounded image and the startup area must fit the heap, exactly) */
-            if ((UQUAD)imgpages * X86_64_USER_PAGE_SIZE + X86_64_USER_IMAGE_SLACK
-                > X86_64_USER_HEAP_LIMIT - X86_64_USER_HEAP_BASE)
+            if ((UQUAD)imgpages * USER_PAGE_SIZE + USER_IMAGE_SLACK
+                > USER_HEAP_LIMIT - USER_HEAP_BASE)
                 return ENSMEM;
-            place->pages = imgpages + X86_64_USER_IMAGE_SLACK / X86_64_USER_PAGE_SIZE;
-            place->va = kproc_load_alloc(run, p, place->pages * X86_64_USER_PAGE_SIZE);
+            place->pages = imgpages + USER_IMAGE_SLACK / USER_PAGE_SIZE;
+            place->va = kproc_load_alloc(run, p, place->pages * USER_PAGE_SIZE);
             if (!place->va)
                 return ENSMEM;
             bias = (LONG)((ULONG)place->va - lo);
@@ -1243,17 +1243,17 @@ LONG elf_pgmld(FH h, PD *p)
         }
         else
         {
-            if (info.link_base >= X86_64_USER_IMAGE_BASE
-             && ((ULONG)info.mem_end + X86_64_USER_PAGE_SIZE - 1) / X86_64_USER_PAGE_SIZE
-                * X86_64_USER_PAGE_SIZE <= limit)
+            if (info.link_base >= USER_IMAGE_BASE
+             && ((ULONG)info.mem_end + USER_PAGE_SIZE - 1) / USER_PAGE_SIZE
+                * USER_PAGE_SIZE <= limit)
                 bias = 0;
             else
-                bias = (LONG)(X86_64_USER_IMAGE_BASE - lo);
+                bias = (LONG)(USER_IMAGE_BASE - lo);
             /* (span first: it keeps the sums below from wrapping) */
-            if (span > limit - X86_64_USER_IMAGE_BASE
-             || (ULONG)info.link_base + (ULONG)bias < X86_64_USER_IMAGE_BASE
-             || ((ULONG)info.mem_end + (ULONG)bias + X86_64_USER_PAGE_SIZE - 1)
-                / X86_64_USER_PAGE_SIZE * X86_64_USER_PAGE_SIZE > limit)
+            if (span > limit - USER_IMAGE_BASE
+             || (ULONG)info.link_base + (ULONG)bias < USER_IMAGE_BASE
+             || ((ULONG)info.mem_end + (ULONG)bias + USER_PAGE_SIZE - 1)
+                / USER_PAGE_SIZE * USER_PAGE_SIZE > limit)
             {
                 KDEBUG(("BDOS elf_pgmld: image does not fit the image window\n"));
                 return ENSMEM;
@@ -1262,9 +1262,9 @@ LONG elf_pgmld(FH h, PD *p)
              * pages and the startup area after them: the file is read straight
              * into it, below */
             if (!kproc_load_begin(p, lo + (ULONG)bias,
-                                  ((ULONG)info.mem_end + (ULONG)bias + X86_64_USER_PAGE_SIZE - 1)
-                                  / X86_64_USER_PAGE_SIZE * X86_64_USER_PAGE_SIZE
-                                  + X86_64_USER_IMAGE_SLACK - (lo + (ULONG)bias)))
+                                  ((ULONG)info.mem_end + (ULONG)bias + USER_PAGE_SIZE - 1)
+                                  / USER_PAGE_SIZE * USER_PAGE_SIZE
+                                  + USER_IMAGE_SLACK - (lo + (ULONG)bias)))
                 return ENSMEM;
             place->pending = TRUE;
             place->image_va = (ULONG)info.link_base + (ULONG)bias;
@@ -1285,8 +1285,8 @@ LONG elf_pgmld(FH h, PD *p)
     /* the bss runs to the end of the image's last page, where the startup area
      * begins: the C startup code puts argv and environ at p_bbase + p_blen,
      * which must not be inside a read-only last segment */
-    p->p_blen  = (LONG)(((ULONG)info.mem_end + (ULONG)bias + X86_64_USER_PAGE_SIZE - 1)
-                        / X86_64_USER_PAGE_SIZE * X86_64_USER_PAGE_SIZE
+    p->p_blen  = (LONG)(((ULONG)info.mem_end + (ULONG)bias + USER_PAGE_SIZE - 1)
+                        / USER_PAGE_SIZE * USER_PAGE_SIZE
                         - ((ULONG)info.file_end + (ULONG)bias));
     layout->nseg = 0;
     layout->end = 0;

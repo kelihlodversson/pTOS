@@ -111,7 +111,7 @@ static BOOL map_kernel_low(struct x86_64_aspace *as)
     return TRUE;
 }
 
-X86_64_ASPACE *x86_64_aspace_create(void)
+ASPACE *aspace_create(void)
 {
     struct x86_64_aspace *as = kalloc(sizeof(*as));
     UQUAD pml4;
@@ -132,7 +132,7 @@ X86_64_ASPACE *x86_64_aspace_create(void)
     }
     x86_64_new_address_space(pml4);
     if (!map_kernel_low(as)) {
-        x86_64_aspace_destroy(as);
+        aspace_destroy(as);
         return NULL;
     }
     return as;
@@ -176,7 +176,7 @@ static void free_owned_pages(struct x86_64_aspace *as)
     }
 }
 
-UQUAD x86_64_aspace_enter(X86_64_ASPACE *as)
+UQUAD aspace_enter(ASPACE *as)
 {
     UQUAD previous = x86_64_read_cr3();
 
@@ -184,12 +184,12 @@ UQUAD x86_64_aspace_enter(X86_64_ASPACE *as)
     return previous;
 }
 
-void x86_64_aspace_leave(UQUAD previous)
+void aspace_leave(UQUAD previous)
 {
     x86_64_write_cr3(previous);
 }
 
-void x86_64_aspace_destroy(X86_64_ASPACE *as)
+void aspace_destroy(ASPACE *as)
 {
     ULONG i;
 
@@ -212,23 +212,23 @@ void x86_64_aspace_destroy(X86_64_ASPACE *as)
     kfree(as);
 }
 
-UQUAD x86_64_aspace_pml4(const X86_64_ASPACE *as)
+UQUAD aspace_root(const ASPACE *as)
 {
     return as->pml4_phys;
 }
 
-ULONG x86_64_aspace_table_pages(const X86_64_ASPACE *as)
+ULONG aspace_table_pages(const ASPACE *as)
 {
     return as->count;
 }
 
-BOOL x86_64_aspace_map_page(X86_64_ASPACE *as, UQUAD va, UQUAD phys, UWORD prot)
+BOOL aspace_map_page(ASPACE *as, UQUAD va, UQUAD phys, UWORD prot)
 {
     if ((va | phys) & (X86_64_PAGE_SIZE - 1))
         return FALSE;
     /* The 32-bit ABI constraint, checked where the mapping is made: the
      * whole page must sit below 4 GiB.  phys is deliberately unchecked. */
-    if (va >= X86_64_USER_VA_LIMIT || X86_64_USER_VA_LIMIT - va < X86_64_PAGE_SIZE)
+    if (va >= USER_VA_LIMIT || USER_VA_LIMIT - va < X86_64_PAGE_SIZE)
         return FALSE;
     return x86_64_map_user_page(as->pml4_phys, va, phys,
                                 !!(prot & ASPACE_PROT_WRITE),
@@ -237,7 +237,7 @@ BOOL x86_64_aspace_map_page(X86_64_ASPACE *as, UQUAD va, UQUAD phys, UWORD prot)
                                 alloc_table_page, as) == 0;
 }
 
-BOOL x86_64_aspace_map_procmem(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
+BOOL aspace_map_procmem(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
 {
     UQUAD page, end;
 
@@ -266,14 +266,14 @@ BOOL x86_64_aspace_map_procmem(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD p
     page = va & ~(X86_64_PAGE_SIZE - 1);
     end = (va + bytes + X86_64_PAGE_SIZE - 1) & ~(X86_64_PAGE_SIZE - 1);
     for (; page < end; page += X86_64_PAGE_SIZE)
-        if (!x86_64_aspace_map_page(as, page, x86_64_procmem_phys_of(page), prot))
+        if (!aspace_map_page(as, page, x86_64_procmem_phys_of(page), prot))
             return FALSE;
     return TRUE;
 }
 
 /* ---- walking, validation and private memory ------------------------- */
 
-BOOL x86_64_aspace_translate(const X86_64_ASPACE *as, UQUAD va, UQUAD *phys, UWORD *prot)
+BOOL aspace_translate(const ASPACE *as, UQUAD va, UQUAD *phys, UWORD *prot)
 {
     const UQUAD *table = (const UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + as->pml4_phys);
     UQUAD index[4];
@@ -318,17 +318,17 @@ BOOL x86_64_aspace_translate(const X86_64_ASPACE *as, UQUAD va, UQUAD *phys, UWO
     return TRUE;
 }
 
-BOOL x86_64_aspace_user_range_ok(const X86_64_ASPACE *as, UQUAD va, UQUAD bytes, BOOL write)
+BOOL aspace_user_range_ok(const ASPACE *as, UQUAD va, UQUAD bytes, BOOL write)
 {
     UQUAD page, last;
 
-    if (!bytes || va >= X86_64_USER_VA_LIMIT || bytes > X86_64_USER_VA_LIMIT - va)
+    if (!bytes || va >= USER_VA_LIMIT || bytes > USER_VA_LIMIT - va)
         return FALSE;
     last = (va + bytes - 1) & ~(X86_64_PAGE_SIZE - 1);
     for (page = va & ~(X86_64_PAGE_SIZE - 1); ; page += X86_64_PAGE_SIZE) {
         UWORD prot;
 
-        if (!x86_64_aspace_translate(as, page, NULL, &prot) ||
+        if (!aspace_translate(as, page, NULL, &prot) ||
             !(prot & ASPACE_PROT_USER) || (write && !(prot & ASPACE_PROT_WRITE)))
             return FALSE;
         if (page == last)
@@ -338,7 +338,7 @@ BOOL x86_64_aspace_user_range_ok(const X86_64_ASPACE *as, UQUAD va, UQUAD bytes,
 }
 
 /* Copies page by page through the direct map; the range was validated. */
-static void copy_user(const X86_64_ASPACE *as, UBYTE *kernel, UQUAD va, ULONG bytes, BOOL to_user)
+static void copy_user(const ASPACE *as, UBYTE *kernel, UQUAD va, ULONG bytes, BOOL to_user)
 {
     while (bytes) {
         UQUAD phys;
@@ -347,7 +347,7 @@ static void copy_user(const X86_64_ASPACE *as, UBYTE *kernel, UQUAD va, ULONG by
 
         if (chunk > bytes)
             chunk = bytes;
-        x86_64_aspace_translate(as, va, &phys, NULL);
+        aspace_translate(as, va, &phys, NULL);
         user = (UBYTE *)(uintptr_t)(X86_64_PHYS_MAP_BASE + phys);
         if (to_user)
             memcpy(user, kernel, chunk);
@@ -363,17 +363,17 @@ static void copy_user(const X86_64_ASPACE *as, UBYTE *kernel, UQUAD va, ULONG by
  * the allocator owns: a page that is mapped for the process but is device
  * memory, or not RAM at all, is valid for ring 3 yet cannot be copied here --
  * refuse it rather than dereference an alias that may fault. */
-static BOOL range_copyable(const X86_64_ASPACE *as, UQUAD va, UQUAD bytes, BOOL write)
+static BOOL range_copyable(const ASPACE *as, UQUAD va, UQUAD bytes, BOOL write)
 {
     UQUAD page, last;
 
-    if (!x86_64_aspace_user_range_ok(as, va, bytes, write))
+    if (!aspace_user_range_ok(as, va, bytes, write))
         return FALSE;
     last = (va + bytes - 1) & ~(X86_64_PAGE_SIZE - 1);
     for (page = va & ~(X86_64_PAGE_SIZE - 1); ; page += X86_64_PAGE_SIZE) {
         UQUAD phys;
 
-        if (!x86_64_aspace_translate(as, page, &phys, NULL) || !x86_64_pmem_is_allocated(phys))
+        if (!aspace_translate(as, page, &phys, NULL) || !x86_64_pmem_is_allocated(phys))
             return FALSE;
         if (page == last)
             break;
@@ -381,7 +381,7 @@ static BOOL range_copyable(const X86_64_ASPACE *as, UQUAD va, UQUAD bytes, BOOL 
     return TRUE;
 }
 
-BOOL x86_64_aspace_copy_from_user(const X86_64_ASPACE *as, void *dst, UQUAD va, ULONG bytes)
+BOOL aspace_copy_from_user(const ASPACE *as, void *dst, UQUAD va, ULONG bytes)
 {
     if (!range_copyable(as, va, bytes, FALSE))
         return FALSE;
@@ -389,7 +389,7 @@ BOOL x86_64_aspace_copy_from_user(const X86_64_ASPACE *as, void *dst, UQUAD va, 
     return TRUE;
 }
 
-BOOL x86_64_aspace_copy_to_user(const X86_64_ASPACE *as, UQUAD va, const void *src, ULONG bytes)
+BOOL aspace_copy_to_user(const ASPACE *as, UQUAD va, const void *src, ULONG bytes)
 {
     if (!range_copyable(as, va, bytes, TRUE))
         return FALSE;
@@ -397,7 +397,7 @@ BOOL x86_64_aspace_copy_to_user(const X86_64_ASPACE *as, UQUAD va, const void *s
     return TRUE;
 }
 
-ULONG x86_64_aspace_private_pages(const X86_64_ASPACE *as)
+ULONG aspace_private_pages(const ASPACE *as)
 {
     return as->nowned;
 }
@@ -440,27 +440,27 @@ static void unlink_new_tables(const struct x86_64_aspace *as, ULONG first, UQUAD
     }
 }
 
-BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
+BOOL aspace_map_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
 {
     UQUAD pages, i, mapped = 0, backing;
     ULONG first_tables = as->count;
 
-    if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= X86_64_USER_VA_LIMIT ||
-        bytes > X86_64_USER_VA_LIMIT - va)
+    if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= USER_VA_LIMIT ||
+        bytes > USER_VA_LIMIT - va)
         return FALSE;
     pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
-    if (va + pages * X86_64_PAGE_SIZE > X86_64_USER_VA_LIMIT)
+    if (va + pages * X86_64_PAGE_SIZE > USER_VA_LIMIT)
         return FALSE;
 
     /* all-or-nothing: refuse an overlap before touching anything */
     for (i = 0; i < pages; i++)
-        if (x86_64_aspace_translate(as, va + i * X86_64_PAGE_SIZE, NULL, NULL))
+        if (aspace_translate(as, va + i * X86_64_PAGE_SIZE, NULL, NULL))
             return FALSE;
 
     /* the pages, the tables they need (one per 2 MiB, and the three above) and
      * the bookkeeping must leave the kernel's reserve alone, as a lazy fault
-     * does (x86_64_aspace_fault_in()) */
-    if (x86_64_pmem_free_bytes() < X86_64_FAULT_RESERVE + X86_64_FAULT_COST +
+     * does (aspace_fault_in()) */
+    if (x86_64_pmem_free_bytes() < ASPACE_FAULT_RESERVE + ASPACE_FAULT_COST +
                                    (pages + pages / 512 + 2) * X86_64_PAGE_SIZE)
         return FALSE;
 
@@ -471,7 +471,7 @@ BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD p
         if (backing == X86_64_PMEM_NONE)
             break;
         memset((void *)(uintptr_t)(X86_64_PHYS_MAP_BASE + backing), 0, X86_64_PAGE_SIZE);
-        if (!x86_64_aspace_map_page(as, va + i * X86_64_PAGE_SIZE, backing, prot)) {
+        if (!aspace_map_page(as, va + i * X86_64_PAGE_SIZE, backing, prot)) {
             x86_64_pmem_free_pages(backing, 1);
             break;
         }
@@ -503,12 +503,12 @@ BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD p
     return FALSE;
 }
 
-BOOL x86_64_aspace_unmap_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
+BOOL aspace_unmap_private(ASPACE *as, UQUAD va, UQUAD bytes)
 {
     UQUAD pages, i;
 
-    if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= X86_64_USER_VA_LIMIT ||
-        bytes > X86_64_USER_VA_LIMIT - va)
+    if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= USER_VA_LIMIT ||
+        bytes > USER_VA_LIMIT - va)
         return FALSE;
     pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
 
@@ -532,23 +532,23 @@ BOOL x86_64_aspace_unmap_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
     return TRUE;
 }
 
-BOOL x86_64_aspace_fault_in(X86_64_ASPACE *as, UQUAD va, UWORD prot)
+BOOL aspace_fault_in(ASPACE *as, UQUAD va, UWORD prot)
 {
     UQUAD page = va & ~(X86_64_PAGE_SIZE - 1), backing, *pte;
 
-    if (va >= X86_64_USER_VA_LIMIT)
+    if (va >= USER_VA_LIMIT)
         return FALSE;
-    if (x86_64_aspace_translate(as, page, NULL, NULL))
+    if (aspace_translate(as, page, NULL, NULL))
         return TRUE;                    /* (a racing mapping: nothing to do) */
     /* the page, the tables it may need (three) and the bookkeeping's growth must
      * all leave the reserve alone */
-    if (x86_64_pmem_free_bytes() < X86_64_FAULT_RESERVE + X86_64_FAULT_COST)
+    if (x86_64_pmem_free_bytes() < ASPACE_FAULT_RESERVE + ASPACE_FAULT_COST)
         return FALSE;
     backing = x86_64_pmem_try_alloc_pages(1, 0);
     if (backing == X86_64_PMEM_NONE)
         return FALSE;
     memset((void *)(uintptr_t)(X86_64_PHYS_MAP_BASE + backing), 0, X86_64_PAGE_SIZE);
-    if (!x86_64_aspace_map_page(as, page, backing, prot)) {
+    if (!aspace_map_page(as, page, backing, prot)) {
         x86_64_pmem_free_pages(backing, 1);
         return FALSE;
     }
@@ -558,12 +558,12 @@ BOOL x86_64_aspace_fault_in(X86_64_ASPACE *as, UQUAD va, UWORD prot)
     return TRUE;
 }
 
-BOOL x86_64_aspace_release_lazy(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
+BOOL aspace_release_lazy(ASPACE *as, UQUAD va, UQUAD bytes)
 {
     UQUAD pages, i;
 
-    if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= X86_64_USER_VA_LIMIT ||
-        bytes > X86_64_USER_VA_LIMIT - va)
+    if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= USER_VA_LIMIT ||
+        bytes > USER_VA_LIMIT - va)
         return FALSE;
     pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
 
@@ -602,26 +602,26 @@ static BOOL range_is_private(const struct x86_64_aspace *as, UQUAD va, UQUAD pag
     return TRUE;
 }
 
-BOOL x86_64_aspace_move_private(X86_64_ASPACE *from, X86_64_ASPACE *to,
+BOOL aspace_move_private(ASPACE *from, ASPACE *to,
                                 UQUAD va, UQUAD bytes, UWORD prot)
 {
     UQUAD pages, i, mapped = 0;
     ULONG first_tables = to->count;
 
-    if (from == to || (va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= X86_64_USER_VA_LIMIT ||
-        bytes > X86_64_USER_VA_LIMIT - va)
+    if (from == to || (va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= USER_VA_LIMIT ||
+        bytes > USER_VA_LIMIT - va)
         return FALSE;
     pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
     if (!range_is_private(from, va, pages))
         return FALSE;
     for (i = 0; i < pages; i++)
-        if (x86_64_aspace_translate(to, va + i * X86_64_PAGE_SIZE, NULL, NULL))
+        if (aspace_translate(to, va + i * X86_64_PAGE_SIZE, NULL, NULL))
             return FALSE;
 
     for (i = 0; i < pages; i++) {
         UQUAD *src = x86_64_user_pte(from->pml4_phys, va + i * X86_64_PAGE_SIZE);
 
-        if (!x86_64_aspace_map_page(to, va + i * X86_64_PAGE_SIZE, *src & PTE_ADDR, prot))
+        if (!aspace_map_page(to, va + i * X86_64_PAGE_SIZE, *src & PTE_ADDR, prot))
             break;
         *x86_64_user_pte(to->pml4_phys, va + i * X86_64_PAGE_SIZE) |= X86_64_PTE_OWNED;
         mapped++;
@@ -649,12 +649,12 @@ BOOL x86_64_aspace_move_private(X86_64_ASPACE *from, X86_64_ASPACE *to,
     return TRUE;
 }
 
-BOOL x86_64_aspace_protect_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
+BOOL aspace_protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
 {
     UQUAD pages, i;
 
-    if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= X86_64_USER_VA_LIMIT ||
-        bytes > X86_64_USER_VA_LIMIT - va)
+    if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= USER_VA_LIMIT ||
+        bytes > USER_VA_LIMIT - va)
         return FALSE;
     pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
     if (!range_is_private(as, va, pages))
@@ -679,21 +679,21 @@ BOOL x86_64_aspace_protect_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWO
 /*
  * Private segment of a program image: fresh zeroed pages with the segment's
  * own permissions, then the file bytes copied in through the direct map --
- * which, unlike x86_64_aspace_copy_to_user(), does not need the page to be
+ * which, unlike aspace_copy_to_user(), does not need the page to be
  * user-writable, so a read-only or executable segment can be filled.  The
  * map_private() contract (all-or-nothing, no leftovers) carries over: the
  * copy cannot fail once the pages are mapped.
  */
-BOOL x86_64_aspace_load_private(X86_64_ASPACE *as, UQUAD va, UQUAD memsz,
+BOOL aspace_load_private(ASPACE *as, UQUAD va, UQUAD memsz,
                                 UWORD prot, const void *src, ULONG filesz)
 {
     const UBYTE *from = src;
     UQUAD base = va & ~(X86_64_PAGE_SIZE - 1);
     UQUAD at = va;
 
-    if (filesz > memsz || !memsz || memsz > X86_64_USER_VA_LIMIT)
+    if (filesz > memsz || !memsz || memsz > USER_VA_LIMIT)
         return FALSE;
-    if (!x86_64_aspace_map_private(as, base, memsz + (va - base), prot))
+    if (!aspace_map_private(as, base, memsz + (va - base), prot))
         return FALSE;
     while (filesz) {
         UQUAD phys;
@@ -701,7 +701,7 @@ BOOL x86_64_aspace_load_private(X86_64_ASPACE *as, UQUAD va, UQUAD memsz,
 
         if (chunk > filesz)
             chunk = filesz;
-        x86_64_aspace_translate(as, at, &phys, NULL);
+        aspace_translate(as, at, &phys, NULL);
         memcpy((UBYTE *)(uintptr_t)(X86_64_PHYS_MAP_BASE + phys), from, chunk);
         from += chunk;
         at += chunk;
@@ -741,15 +741,15 @@ void x86_64_kstack_free(UQUAD phys)
  * mapping) when it is allocated and returned when it is freed.  Nothing else
  * in the window is reachable.
  */
-BOOL x86_64_aspace_borrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
+BOOL aspace_borrow(ASPACE *as, UQUAD va, UQUAD bytes)
 {
-    if (x86_64_aspace_map_procmem(as, va, bytes, ASPACE_PROT_WRITE))
+    if (aspace_map_procmem(as, va, bytes, ASPACE_PROT_WRITE))
         return TRUE;
-    x86_64_aspace_unborrow(as, va, bytes);      /* a half-finished borrow */
+    aspace_unborrow(as, va, bytes);      /* a half-finished borrow */
     return FALSE;
 }
 
-void x86_64_aspace_unborrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
+void aspace_unborrow(ASPACE *as, UQUAD va, UQUAD bytes)
 {
     UQUAD page, end;
     ULONG i;
@@ -773,18 +773,18 @@ void x86_64_aspace_unborrow(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
  * the user bit and the given permissions (ASPACE_PROT_*), e.g. the basepage and
  * TPA of a child that Pexec(PE_BASEPAGE) is about to hand to a ring-3 caller.
  * The block stays pinned and recorded as a borrow, so it goes back exactly as
- * before (x86_64_aspace_unborrow()).  FALSE only if a page table could not be
+ * before (aspace_unborrow()).  FALSE only if a page table could not be
  * written, which cannot happen for pages already mapped.
  */
-BOOL x86_64_aspace_regrant(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
+BOOL aspace_regrant(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
 {
     UQUAD page = va & ~(X86_64_PAGE_SIZE - 1);
     UQUAD end = (va + bytes + X86_64_PAGE_SIZE - 1) & ~(X86_64_PAGE_SIZE - 1);
     BOOL ok = TRUE;
 
     for (; page < end; page += X86_64_PAGE_SIZE)
-        if (!x86_64_aspace_translate(as, page, NULL, NULL) ||
-            !x86_64_aspace_map_page(as, page, x86_64_procmem_phys_of(page), prot))
+        if (!aspace_translate(as, page, NULL, NULL) ||
+            !aspace_map_page(as, page, x86_64_procmem_phys_of(page), prot))
             ok = FALSE;
     if (x86_64_read_cr3() == as->pml4_phys)
         x86_64_write_cr3(as->pml4_phys);        /* flush stale translations */

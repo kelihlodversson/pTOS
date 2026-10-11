@@ -128,9 +128,9 @@ static BOOL same(const SNAP *a, const char *what)
 
 /* An address space the test cannot go on without: failing to get one is a
  * reported failure, never a silent skip of what follows. */
-static X86_64_ASPACE *must_create(const char *what)
+static ASPACE *must_create(const char *what)
 {
-    X86_64_ASPACE *as = x86_64_aspace_create();
+    ASPACE *as = aspace_create();
 
     CHECK(as != NULL, what);
     return as;
@@ -279,7 +279,7 @@ static void test_kheap(void)
     CHECK(kalloc(0x7fffffffUL) == NULL, "kalloc huge");
     /* the whole image window fits in one block: the ELF loader builds a program
      * there (bdos/elfld.c) */
-    q = kalloc(X86_64_USER_IMAGE_SIZE);
+    q = kalloc(USER_IMAGE_SIZE);
     CHECK(q != NULL, "a block as big as the image window");
     kfree(q);
 
@@ -325,7 +325,7 @@ static void test_procmem(void)
         if (!p)
             break;
         CHECK(x86_64_procmem_contains(p), "inside window");
-        CHECK((UQUAD)(uintptr_t)p + 2 * PAGE <= X86_64_USER_VA_LIMIT, "below 4 GiB");
+        CHECK((UQUAD)(uintptr_t)p + 2 * PAGE <= USER_VA_LIMIT, "below 4 GiB");
         CHECK(!((UQUAD)(uintptr_t)p & (PAGE - 1)), "page aligned");
         memset(p, 0xAA, 5000);
         CHECK(x86_64_procmem_free(p), "free");
@@ -427,7 +427,7 @@ static void test_procmem(void)
 static void test_aspace(void)
 {
     SNAP s, s2;
-    X86_64_ASPACE *as;
+    ASPACE *as;
     UBYTE *mem;
     ULONG i, k, failed = 0;
     UQUAD flags;
@@ -443,17 +443,17 @@ static void test_aspace(void)
 
     /* create / map / destroy, far more often than any fixed pool */
     for (i = 0; i < 500; i++) {
-        as = x86_64_aspace_create();
+        as = aspace_create();
         if (!as)
             break;
-        if (!x86_64_aspace_map_procmem(as, (UQUAD)(uintptr_t)mem, 3 * PAGE,
+        if (!aspace_map_procmem(as, (UQUAD)(uintptr_t)mem, 3 * PAGE,
                                        ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
-            x86_64_aspace_destroy(as);
+            aspace_destroy(as);
             break;
         }
         if (i == 0)
-            CHECK(x86_64_aspace_table_pages(as) >= 4, "PML4 + 3 table levels owned");
-        x86_64_aspace_destroy(as);
+            CHECK(aspace_table_pages(as) >= 4, "PML4 + 3 table levels owned");
+        aspace_destroy(as);
     }
     CHECK(i == 500, "500 address-space cycles");
     same(&s2, "aspace cycles");
@@ -461,7 +461,7 @@ static void test_aspace(void)
     /* a block mapped into a live address space cannot be freed or reused */
     as = must_create("address space for the pin test");
     if (as) {
-        CHECK(x86_64_aspace_map_procmem(as, (UQUAD)(uintptr_t)mem, 3 * PAGE,
+        CHECK(aspace_map_procmem(as, (UQUAD)(uintptr_t)mem, 3 * PAGE,
                                         ASPACE_PROT_WRITE | ASPACE_PROT_USER), "map for pin");
         CHECK(x86_64_procmem_pinned(mem), "mapped block is pinned");
         CHECK(!x86_64_procmem_free(mem), "pinned block cannot be freed");
@@ -469,21 +469,21 @@ static void test_aspace(void)
         x86_64_procmem_free_owned(&failed, NULL);
         CHECK(x86_64_procmem_size(mem), "owned-free skips a pinned block");
         x86_64_procmem_set_owner(mem, NULL);
-        x86_64_aspace_destroy(as);
+        aspace_destroy(as);
         CHECK(!x86_64_procmem_pinned(mem), "destroy unpins");
     }
 
     /* failed setup at every allocation point unwinds completely */
     for (k = 1; k <= 8; k++) {
         x86_64_pmem_test_fail_after(k);
-        as = x86_64_aspace_create();
-        if (as && !x86_64_aspace_map_procmem(as, (UQUAD)(uintptr_t)mem, 3 * PAGE,
+        as = aspace_create();
+        if (as && !aspace_map_procmem(as, (UQUAD)(uintptr_t)mem, 3 * PAGE,
                                              ASPACE_PROT_WRITE | ASPACE_PROT_USER))
             failed++;
         else if (!as)
             failed++;
         x86_64_pmem_test_fail_after(0);
-        x86_64_aspace_destroy(as);              /* NULL-safe */
+        aspace_destroy(as);              /* NULL-safe */
         same(&s2, "aspace failure unwind");
     }
     CHECK(failed >= 4, "injected failures were exercised");
@@ -493,32 +493,32 @@ static void test_aspace(void)
     if (as) {
         scratch = x86_64_pmem_try_alloc_pages(1, 0);
         flags = ASPACE_PROT_WRITE | ASPACE_PROT_USER;
-        CHECK(x86_64_aspace_map_page(as, X86_64_USER_VA_LIMIT - PAGE, scratch, flags),
+        CHECK(aspace_map_page(as, USER_VA_LIMIT - PAGE, scratch, flags),
               "last page below 4 GiB maps");
-        CHECK(!x86_64_aspace_map_page(as, X86_64_USER_VA_LIMIT, scratch, flags),
+        CHECK(!aspace_map_page(as, USER_VA_LIMIT, scratch, flags),
               "va at 4 GiB refused");
-        CHECK(!x86_64_aspace_map_page(as, X86_64_USER_VA_LIMIT + PAGE, scratch, flags),
+        CHECK(!aspace_map_page(as, USER_VA_LIMIT + PAGE, scratch, flags),
               "va above 4 GiB refused");
-        CHECK(!x86_64_aspace_map_page(as, 0xFFFFFFFF80000000ULL, scratch, flags),
+        CHECK(!aspace_map_page(as, 0xFFFFFFFF80000000ULL, scratch, flags),
               "kernel va refused");
-        CHECK(!x86_64_aspace_map_page(as, X86_64_USER_VA_LIMIT - 2 * PAGE + 16, scratch, flags),
+        CHECK(!aspace_map_page(as, USER_VA_LIMIT - 2 * PAGE + 16, scratch, flags),
               "unaligned va refused");
         /* physical backing above 4 GiB is fine for a low virtual address */
-        CHECK(x86_64_aspace_map_page(as, 0x40000000ULL, 0x123456000ULL, flags),
+        CHECK(aspace_map_page(as, 0x40000000ULL, 0x123456000ULL, flags),
               "phys above 4 GiB at low va");
-        CHECK(x86_64_aspace_map_page(as, 0x40001000ULL, 0xFFFFF000000ULL, ASPACE_PROT_USER),
+        CHECK(aspace_map_page(as, 0x40001000ULL, 0xFFFFF000000ULL, ASPACE_PROT_USER),
               "phys far above 4 GiB at low va");
         /* ring 3 may be given a device or bogus physical page, but the kernel
          * must refuse to copy through the direct map to it, not fault */
-        CHECK(x86_64_aspace_user_range_ok(as, 0x40000000ULL, 8, TRUE), "device-style page is valid for ring 3");
-        CHECK(!x86_64_aspace_copy_from_user(as, buf_dummy, 0x40000000ULL, 8) &&
-              !x86_64_aspace_copy_to_user(as, 0x40000000ULL, buf_dummy, 8) &&
-              !x86_64_aspace_copy_from_user(as, buf_dummy, 0x40000FFCULL, 8),
+        CHECK(aspace_user_range_ok(as, 0x40000000ULL, 8, TRUE), "device-style page is valid for ring 3");
+        CHECK(!aspace_copy_from_user(as, buf_dummy, 0x40000000ULL, 8) &&
+              !aspace_copy_to_user(as, 0x40000000ULL, buf_dummy, 8) &&
+              !aspace_copy_from_user(as, buf_dummy, 0x40000FFCULL, 8),
               "copy to or from a page that is not owned RAM is refused");
         /* only live process memory can be mapped */
-        CHECK(!x86_64_aspace_map_procmem(as, 0x500000, PAGE, flags), "outside window refused");
+        CHECK(!aspace_map_procmem(as, 0x500000, PAGE, flags), "outside window refused");
         x86_64_pmem_free_pages(scratch, 1);
-        x86_64_aspace_destroy(as);
+        aspace_destroy(as);
     }
 
     /* tearing down the address space that is currently loaded is safe */
@@ -527,8 +527,8 @@ static void test_aspace(void)
         UQUAD flagsave;
 
         __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flagsave) :: "memory");
-        x86_64_write_cr3(x86_64_aspace_pml4(as));
-        x86_64_aspace_destroy(as);
+        x86_64_write_cr3(aspace_root(as));
+        aspace_destroy(as);
         CHECK(x86_64_read_cr3() == x86_64_kernel_pml4_phys(), "CR3 back on kernel tables");
         if (flagsave & 0x200)
             x86_64_sti();
@@ -553,13 +553,13 @@ static PD *new_basepage(void)
 
 /* Runs fn with interrupts off and returns the byte it read under `as`'s
  * page tables at user address va: a real MMU access, not a software walk. */
-static UBYTE read_byte_under(X86_64_ASPACE *as, UQUAD va)
+static UBYTE read_byte_under(ASPACE *as, UQUAD va)
 {
     UQUAD flags;
     UBYTE value;
 
     __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
-    x86_64_write_cr3(x86_64_aspace_pml4(as));
+    x86_64_write_cr3(aspace_root(as));
     value = *(volatile UBYTE *)(uintptr_t)va;
     x86_64_write_cr3(x86_64_kernel_pml4_phys());
     if (flags & 0x200)
@@ -570,7 +570,7 @@ static UBYTE read_byte_under(X86_64_ASPACE *as, UQUAD va)
 static void test_isolation(void)
 {
     SNAP s;
-    X86_64_ASPACE *a, *b;
+    ASPACE *a, *b;
     UQUAD pa, pb, probe;
     UWORD prot;
     UBYTE buf[128], big[200];
@@ -580,33 +580,33 @@ static void test_isolation(void)
     a = must_create("first isolation address space");
     b = must_create("second isolation address space");
     if (!a || !b) {
-        x86_64_aspace_destroy(a);
-        x86_64_aspace_destroy(b);
+        aspace_destroy(a);
+        aspace_destroy(b);
         return;
     }
 
     /* the same virtual addresses in both, with different backing */
-    CHECK(x86_64_aspace_map_private(a, ISO_VA, 3 * PAGE + 1, ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER),
+    CHECK(aspace_map_private(a, ISO_VA, 3 * PAGE + 1, ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER),
           "private mapping in A");
-    CHECK(x86_64_aspace_map_private(b, ISO_VA, 2 * PAGE, ASPACE_PROT_WRITE | ASPACE_PROT_USER),
+    CHECK(aspace_map_private(b, ISO_VA, 2 * PAGE, ASPACE_PROT_WRITE | ASPACE_PROT_USER),
           "overlapping private mapping in B");
-    CHECK(x86_64_aspace_private_pages(a) == 4 && x86_64_aspace_private_pages(b) == 2,
+    CHECK(aspace_private_pages(a) == 4 && aspace_private_pages(b) == 2,
           "backing pages owned by each");
-    CHECK(x86_64_aspace_translate(a, ISO_VA, &pa, &prot) &&
-          x86_64_aspace_translate(b, ISO_VA, &pb, &prot) && pa != pb,
+    CHECK(aspace_translate(a, ISO_VA, &pa, &prot) &&
+          aspace_translate(b, ISO_VA, &pb, &prot) && pa != pb,
           "same address, different physical pages");
-    CHECK(!x86_64_aspace_translate(b, ISO_VA + 3 * PAGE, NULL, NULL) &&
-          x86_64_aspace_translate(a, ISO_VA + 3 * PAGE, NULL, NULL),
+    CHECK(!aspace_translate(b, ISO_VA + 3 * PAGE, NULL, NULL) &&
+          aspace_translate(a, ISO_VA + 3 * PAGE, NULL, NULL),
           "a page mapped in A only is absent in B");
 
     /* private writes stay private -- checked in software ... */
     memset(buf, 'A', 8);
-    CHECK(x86_64_aspace_copy_to_user(a, ISO_VA, buf, 8), "write A");
+    CHECK(aspace_copy_to_user(a, ISO_VA, buf, 8), "write A");
     memset(buf, 'B', 8);
-    CHECK(x86_64_aspace_copy_to_user(b, ISO_VA, buf, 8), "write B");
-    x86_64_aspace_copy_from_user(a, buf, ISO_VA, 8);
+    CHECK(aspace_copy_to_user(b, ISO_VA, buf, 8), "write B");
+    aspace_copy_from_user(a, buf, ISO_VA, 8);
     CHECK(buf[0] == 'A' && buf[7] == 'A', "A keeps its own data");
-    x86_64_aspace_copy_from_user(b, buf, ISO_VA, 8);
+    aspace_copy_from_user(b, buf, ISO_VA, 8);
     CHECK(buf[0] == 'B' && buf[7] == 'B', "B keeps its own data");
 
     /* ... and by the MMU itself: load each page table root and read */
@@ -617,48 +617,48 @@ static void test_isolation(void)
     /* a copy that crosses a page boundary lands in both pages */
     for (i = 0; i < sizeof(big); i++)
         big[i] = (UBYTE)(i + 1);
-    CHECK(x86_64_aspace_copy_to_user(a, ISO_VA + PAGE - 100, big, sizeof(big)), "cross-page write");
+    CHECK(aspace_copy_to_user(a, ISO_VA + PAGE - 100, big, sizeof(big)), "cross-page write");
     memset(big, 0, sizeof(big));
-    CHECK(x86_64_aspace_copy_from_user(a, big, ISO_VA + PAGE - 100, sizeof(big)) &&
+    CHECK(aspace_copy_from_user(a, big, ISO_VA + PAGE - 100, sizeof(big)) &&
           big[0] == 1 && big[99] == 100 && big[100] == 101 && big[199] == 200,
           "cross-page read back");
 
     /* validation is against this process's mappings, not a number range */
-    CHECK(x86_64_aspace_user_range_ok(a, ISO_VA, 4 * PAGE, TRUE), "A's whole mapping valid");
-    CHECK(!x86_64_aspace_user_range_ok(a, ISO_VA + 4 * PAGE - 1, 2, FALSE), "range running off the end invalid");
-    CHECK(!x86_64_aspace_user_range_ok(b, ISO_VA + 2 * PAGE, 8, FALSE), "address valid in A, not in B");
-    CHECK(!x86_64_aspace_user_range_ok(a, 0x10000000, 8, FALSE), "unmapped low address invalid");
-    CHECK(!x86_64_aspace_user_range_ok(a, 0xFFFFFFFFULL, 2, FALSE), "range crossing 4 GiB invalid");
-    CHECK(!x86_64_aspace_user_range_ok(a, 0xFFFFFFFFFFFFFFF0ULL, 8, FALSE), "wrapping range invalid");
-    CHECK(!x86_64_aspace_user_range_ok(a, ISO_VA, 0, FALSE), "empty range invalid");
-    CHECK(!x86_64_aspace_copy_to_user(b, ISO_VA + 2 * PAGE, buf, 8), "copy to an unmapped address refused");
+    CHECK(aspace_user_range_ok(a, ISO_VA, 4 * PAGE, TRUE), "A's whole mapping valid");
+    CHECK(!aspace_user_range_ok(a, ISO_VA + 4 * PAGE - 1, 2, FALSE), "range running off the end invalid");
+    CHECK(!aspace_user_range_ok(b, ISO_VA + 2 * PAGE, 8, FALSE), "address valid in A, not in B");
+    CHECK(!aspace_user_range_ok(a, 0x10000000, 8, FALSE), "unmapped low address invalid");
+    CHECK(!aspace_user_range_ok(a, 0xFFFFFFFFULL, 2, FALSE), "range crossing 4 GiB invalid");
+    CHECK(!aspace_user_range_ok(a, 0xFFFFFFFFFFFFFFF0ULL, 8, FALSE), "wrapping range invalid");
+    CHECK(!aspace_user_range_ok(a, ISO_VA, 0, FALSE), "empty range invalid");
+    CHECK(!aspace_copy_to_user(b, ISO_VA + 2 * PAGE, buf, 8), "copy to an unmapped address refused");
 
     /* read-only and supervisor-only mappings */
-    CHECK(x86_64_aspace_map_private(a, 0x20000000, PAGE, ASPACE_PROT_USER), "read-only mapping");
-    CHECK(x86_64_aspace_user_range_ok(a, 0x20000000, 8, FALSE) &&
-          !x86_64_aspace_user_range_ok(a, 0x20000000, 8, TRUE) &&
-          !x86_64_aspace_copy_to_user(a, 0x20000000, buf, 8), "read-only page refuses writes");
-    CHECK(x86_64_aspace_map_private(a, 0x20100000, PAGE, ASPACE_PROT_WRITE), "supervisor-only mapping");
-    CHECK(!x86_64_aspace_user_range_ok(a, 0x20100000, 8, FALSE), "supervisor-only page invalid for ring 3");
+    CHECK(aspace_map_private(a, 0x20000000, PAGE, ASPACE_PROT_USER), "read-only mapping");
+    CHECK(aspace_user_range_ok(a, 0x20000000, 8, FALSE) &&
+          !aspace_user_range_ok(a, 0x20000000, 8, TRUE) &&
+          !aspace_copy_to_user(a, 0x20000000, buf, 8), "read-only page refuses writes");
+    CHECK(aspace_map_private(a, 0x20100000, PAGE, ASPACE_PROT_WRITE), "supervisor-only mapping");
+    CHECK(!aspace_user_range_ok(a, 0x20100000, 8, FALSE), "supervisor-only page invalid for ring 3");
 
     /* refusals leave nothing behind */
-    k = x86_64_aspace_private_pages(a);
-    CHECK(!x86_64_aspace_map_private(a, ISO_VA + PAGE, PAGE, ASPACE_PROT_USER), "overlap refused");
-    CHECK(!x86_64_aspace_map_private(a, ISO_VA - PAGE, 2 * PAGE, ASPACE_PROT_USER), "partial overlap refused");
-    CHECK(!x86_64_aspace_map_private(a, X86_64_USER_VA_LIMIT, PAGE, ASPACE_PROT_USER), "4 GiB refused");
-    CHECK(!x86_64_aspace_map_private(a, X86_64_USER_VA_LIMIT - PAGE, 2 * PAGE, ASPACE_PROT_USER), "crossing 4 GiB refused");
-    CHECK(!x86_64_aspace_map_private(a, ISO_VA + 1, PAGE, ASPACE_PROT_USER), "unaligned refused");
-    CHECK(!x86_64_aspace_map_private(a, 0xFFFFFFFF80000000ULL, PAGE, ASPACE_PROT_USER), "kernel address refused");
-    CHECK(x86_64_aspace_private_pages(a) == k, "no backing taken by refused mappings");
+    k = aspace_private_pages(a);
+    CHECK(!aspace_map_private(a, ISO_VA + PAGE, PAGE, ASPACE_PROT_USER), "overlap refused");
+    CHECK(!aspace_map_private(a, ISO_VA - PAGE, 2 * PAGE, ASPACE_PROT_USER), "partial overlap refused");
+    CHECK(!aspace_map_private(a, USER_VA_LIMIT, PAGE, ASPACE_PROT_USER), "4 GiB refused");
+    CHECK(!aspace_map_private(a, USER_VA_LIMIT - PAGE, 2 * PAGE, ASPACE_PROT_USER), "crossing 4 GiB refused");
+    CHECK(!aspace_map_private(a, ISO_VA + 1, PAGE, ASPACE_PROT_USER), "unaligned refused");
+    CHECK(!aspace_map_private(a, 0xFFFFFFFF80000000ULL, PAGE, ASPACE_PROT_USER), "kernel address refused");
+    CHECK(aspace_private_pages(a) == k, "no backing taken by refused mappings");
 
     /* kernel mappings are present for the CPU's sake but supervisor-only */
     probe = x86_64_pmem_try_alloc_pages(1, 0);
-    CHECK(x86_64_aspace_translate(a, (UQUAD)(uintptr_t)&x86_64_memtest_run, NULL, &prot) &&
+    CHECK(aspace_translate(a, (UQUAD)(uintptr_t)&x86_64_memtest_run, NULL, &prot) &&
           !(prot & ASPACE_PROT_USER), "kernel code is supervisor-only");
     CHECK(probe != X86_64_PMEM_NONE &&
-          x86_64_aspace_translate(a, X86_64_PHYS_MAP_BASE + probe, NULL, &prot) &&
+          aspace_translate(a, X86_64_PHYS_MAP_BASE + probe, NULL, &prot) &&
           !(prot & ASPACE_PROT_USER), "physical direct map is supervisor-only");
-    CHECK(!x86_64_aspace_user_range_ok(a, (UQUAD)(uintptr_t)&x86_64_memtest_run, 8, FALSE),
+    CHECK(!aspace_user_range_ok(a, (UQUAD)(uintptr_t)&x86_64_memtest_run, 8, FALSE),
           "kernel address invalid as a user pointer");
     if (probe != X86_64_PMEM_NONE)
         x86_64_pmem_free_pages(probe, 1);
@@ -671,13 +671,13 @@ static void test_isolation(void)
         UQUAD kstart, kend;
 
         x86_64_low_kernel_range(&kstart, &kend);
-        CHECK(x86_64_aspace_translate(a, 0x400, NULL, &prot) && !(prot & ASPACE_PROT_USER),
+        CHECK(aspace_translate(a, 0x400, NULL, &prot) && !(prot & ASPACE_PROT_USER),
               "the system variables are mapped, supervisor-only");
-        CHECK(x86_64_aspace_translate(a, kstart, NULL, &prot) && !(prot & ASPACE_PROT_USER) &&
-              !x86_64_aspace_user_range_ok(a, kstart, 8, FALSE),
+        CHECK(aspace_translate(a, kstart, NULL, &prot) && !(prot & ASPACE_PROT_USER) &&
+              !aspace_user_range_ok(a, kstart, 8, FALSE),
               "the kernel-data pool is mapped, supervisor-only");
     }
-    CHECK(!x86_64_aspace_translate(a, X86_64_LOW_TPA_VIRT_BASE, NULL, NULL),
+    CHECK(!aspace_translate(a, X86_64_LOW_TPA_VIRT_BASE, NULL, NULL),
           "the process window is not in a fresh address space");
     /* a block lent to the address space is reachable for ring 0 only, and goes
      * back exactly once */
@@ -688,19 +688,19 @@ static void test_isolation(void)
         if (blk) {
             UQUAD v = (UQUAD)(uintptr_t)blk;
 
-            CHECK(x86_64_aspace_borrow(a, v, PAGE) && x86_64_procmem_pinned(blk) &&
-                  x86_64_aspace_translate(a, v, NULL, &prot) && !(prot & ASPACE_PROT_USER) &&
-                  (prot & ASPACE_PROT_WRITE) && !x86_64_aspace_user_range_ok(a, v, 8, FALSE),
+            CHECK(aspace_borrow(a, v, PAGE) && x86_64_procmem_pinned(blk) &&
+                  aspace_translate(a, v, NULL, &prot) && !(prot & ASPACE_PROT_USER) &&
+                  (prot & ASPACE_PROT_WRITE) && !aspace_user_range_ok(a, v, 8, FALSE),
                   "a borrowed block is mapped supervisor-only and pinned");
-            x86_64_aspace_unborrow(a, v, PAGE);
-            CHECK(!x86_64_procmem_pinned(blk) && !x86_64_aspace_translate(a, v, NULL, NULL),
+            aspace_unborrow(a, v, PAGE);
+            CHECK(!x86_64_procmem_pinned(blk) && !aspace_translate(a, v, NULL, NULL),
                   "an unborrowed block is unmapped and unpinned");
             CHECK(x86_64_procmem_free(blk), "and can be freed");
         }
     }
 
-    x86_64_aspace_destroy(a);
-    x86_64_aspace_destroy(b);
+    aspace_destroy(a);
+    aspace_destroy(b);
     same(&s, "isolation");
 
     /* the documented minimum layout for an EmuCON-sized process fits, in two
@@ -710,21 +710,21 @@ static void test_isolation(void)
     if (a && b) {
         UWORD rw = ASPACE_PROT_WRITE | ASPACE_PROT_USER;
 
-        CHECK(x86_64_aspace_map_private(a, X86_64_USER_IMAGE_BASE, 64 * PAGE, rw | ASPACE_PROT_EXEC) &&
-              x86_64_aspace_map_private(a, X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE,
-                                        X86_64_USER_STACK_SIZE, rw), "layout in A");
-        CHECK(x86_64_aspace_map_private(b, X86_64_USER_IMAGE_BASE, 64 * PAGE, rw | ASPACE_PROT_EXEC) &&
-              x86_64_aspace_map_private(b, X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE,
-                                        X86_64_USER_STACK_SIZE, rw), "same layout in B");
-        CHECK(x86_64_aspace_user_range_ok(a, X86_64_USER_STACK_TOP - 16, 16, TRUE),
+        CHECK(aspace_map_private(a, USER_IMAGE_BASE, 64 * PAGE, rw | ASPACE_PROT_EXEC) &&
+              aspace_map_private(a, USER_STACK_TOP - USER_STACK_SIZE,
+                                        USER_STACK_SIZE, rw), "layout in A");
+        CHECK(aspace_map_private(b, USER_IMAGE_BASE, 64 * PAGE, rw | ASPACE_PROT_EXEC) &&
+              aspace_map_private(b, USER_STACK_TOP - USER_STACK_SIZE,
+                                        USER_STACK_SIZE, rw), "same layout in B");
+        CHECK(aspace_user_range_ok(a, USER_STACK_TOP - 16, 16, TRUE),
               "top of the stack is valid");
-        CHECK(!x86_64_aspace_user_range_ok(a, X86_64_USER_STACK_TOP, 1, FALSE),
+        CHECK(!aspace_user_range_ok(a, USER_STACK_TOP, 1, FALSE),
               "above the stack is not");
-        CHECK(!x86_64_aspace_user_range_ok(a, X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE - PAGE, 1, FALSE),
+        CHECK(!aspace_user_range_ok(a, USER_STACK_TOP - USER_STACK_SIZE - PAGE, 1, FALSE),
               "the guard below the stack is not");
     }
-    x86_64_aspace_destroy(a);
-    x86_64_aspace_destroy(b);
+    aspace_destroy(a);
+    aspace_destroy(b);
     same(&s, "layout");
 
     /* lazy pages: a page is backed on request, zeroed, once; the pages that
@@ -733,71 +733,71 @@ static void test_isolation(void)
     if (a) {
         UWORD rw = ASPACE_PROT_WRITE | ASPACE_PROT_USER, prot;
         UQUAD va = 0x20000000ULL, phys;
-        ULONG before = x86_64_aspace_private_pages(a);
+        ULONG before = aspace_private_pages(a);
 
-        CHECK(!x86_64_aspace_translate(a, va, NULL, NULL), "a lazy page is not there yet");
-        CHECK(x86_64_aspace_fault_in(a, va + 0x123, rw) &&
-              x86_64_aspace_translate(a, va, &phys, &prot) && (prot & ASPACE_PROT_USER) &&
+        CHECK(!aspace_translate(a, va, NULL, NULL), "a lazy page is not there yet");
+        CHECK(aspace_fault_in(a, va + 0x123, rw) &&
+              aspace_translate(a, va, &phys, &prot) && (prot & ASPACE_PROT_USER) &&
               (prot & ASPACE_PROT_WRITE) && !(prot & ASPACE_PROT_EXEC) &&
-              x86_64_aspace_private_pages(a) == before + 1,
+              aspace_private_pages(a) == before + 1,
               "fault_in backs the page containing the address");
         CHECK(*(volatile UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + phys) == 0 &&
               *(volatile UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + phys + PAGE - 8) == 0,
               "and it is zeroed");
-        CHECK(x86_64_aspace_fault_in(a, va, rw) && x86_64_aspace_private_pages(a) == before + 1,
+        CHECK(aspace_fault_in(a, va, rw) && aspace_private_pages(a) == before + 1,
               "a page that is there is left as it is");
-        CHECK(x86_64_aspace_fault_in(a, va + 100 * PAGE, rw) &&
-              x86_64_aspace_private_pages(a) == before + 2,
+        CHECK(aspace_fault_in(a, va + 100 * PAGE, rw) &&
+              aspace_private_pages(a) == before + 2,
               "a second page, far away");
-        CHECK(!x86_64_aspace_fault_in(a, X86_64_USER_VA_LIMIT, rw), "not above the 32-bit limit");
-        CHECK(x86_64_aspace_release_lazy(a, va, 200 * PAGE) &&
-              x86_64_aspace_private_pages(a) == before &&
-              !x86_64_aspace_translate(a, va, NULL, NULL) &&
-              !x86_64_aspace_translate(a, va + 100 * PAGE, NULL, NULL),
+        CHECK(!aspace_fault_in(a, USER_VA_LIMIT, rw), "not above the 32-bit limit");
+        CHECK(aspace_release_lazy(a, va, 200 * PAGE) &&
+              aspace_private_pages(a) == before &&
+              !aspace_translate(a, va, NULL, NULL) &&
+              !aspace_translate(a, va + 100 * PAGE, NULL, NULL),
               "release_lazy skips the pages never touched and frees the others");
-        CHECK(x86_64_aspace_release_lazy(a, va, 200 * PAGE), "and an empty range is nothing");
+        CHECK(aspace_release_lazy(a, va, 200 * PAGE), "and an empty range is nothing");
         /* eager mapping keeps the kernel's reserve too: a range that would take
          * all but half of it is refused, and nothing is left behind */
         {
             UQUAD free_bytes = x86_64_pmem_free_bytes();
-            UQUAD big = (free_bytes - X86_64_FAULT_RESERVE / 2) & ~(PAGE - 1);
+            UQUAD big = (free_bytes - ASPACE_FAULT_RESERVE / 2) & ~(PAGE - 1);
 
-            CHECK(big < X86_64_USER_VA_LIMIT - 0x30000000ULL &&
-                  !x86_64_aspace_map_private(a, 0x30000000ULL, big, rw) &&
+            CHECK(big < USER_VA_LIMIT - 0x30000000ULL &&
+                  !aspace_map_private(a, 0x30000000ULL, big, rw) &&
                   x86_64_pmem_free_bytes() == free_bytes &&
-                  x86_64_aspace_private_pages(a) == before,
+                  aspace_private_pages(a) == before,
                   "map_private leaves the reserve alone");
-            CHECK(x86_64_aspace_map_private(a, 0x30000000ULL, 16 * PAGE, rw) &&
-                  x86_64_aspace_release_lazy(a, 0x30000000ULL, 16 * PAGE),
+            CHECK(aspace_map_private(a, 0x30000000ULL, 16 * PAGE, rw) &&
+                  aspace_release_lazy(a, 0x30000000ULL, 16 * PAGE),
                   "and a small range is fine");
         }
     }
-    x86_64_aspace_destroy(a);
+    aspace_destroy(a);
     same(&s, "lazy pages");
 
     /* many create/map/destroy cycles, and failure at every allocation point */
     for (i = 0; i < 300; i++) {
-        a = x86_64_aspace_create();
+        a = aspace_create();
         if (!a)
             break;
-        if (!x86_64_aspace_map_private(a, ISO_VA, 5 * PAGE, ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
-            x86_64_aspace_destroy(a);
+        if (!aspace_map_private(a, ISO_VA, 5 * PAGE, ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
+            aspace_destroy(a);
             break;
         }
-        x86_64_aspace_destroy(a);
+        aspace_destroy(a);
     }
     CHECK(i == 300, "300 private-mapping cycles");
     same(&s, "private cycles");
     for (k = 1; k <= 14; k++) {
         x86_64_pmem_test_fail_after(k);
-        a = x86_64_aspace_create();
-        if (!a || !x86_64_aspace_map_private(a, ISO_VA, 5 * PAGE, ASPACE_PROT_WRITE | ASPACE_PROT_USER))
+        a = aspace_create();
+        if (!a || !aspace_map_private(a, ISO_VA, 5 * PAGE, ASPACE_PROT_WRITE | ASPACE_PROT_USER))
             failed++;
         x86_64_pmem_test_fail_after(0);
         if (a)
-            CHECK(failed == 0 || x86_64_aspace_private_pages(a) == 0 ||
-                  x86_64_aspace_private_pages(a) == 5, "failed mapping leaves no partial pages");
-        x86_64_aspace_destroy(a);
+            CHECK(failed == 0 || aspace_private_pages(a) == 0 ||
+                  aspace_private_pages(a) == 5, "failed mapping leaves no partial pages");
+        aspace_destroy(a);
         same(&s, "private failure unwind");
     }
     CHECK(failed >= 6, "private-mapping failures were exercised");
@@ -809,28 +809,28 @@ static void test_isolation(void)
         ULONG tables0, private0;
         BOOL ok;
 
-        a = x86_64_aspace_create();
-        if (!a || !x86_64_aspace_map_private(a, ISO_VA, PAGE, ASPACE_PROT_USER)) {
+        a = aspace_create();
+        if (!a || !aspace_map_private(a, ISO_VA, PAGE, ASPACE_PROT_USER)) {
             CHECK(FALSE, "setup for the table rollback test");
-            x86_64_aspace_destroy(a);
+            aspace_destroy(a);
             break;
         }
-        tables0 = x86_64_aspace_table_pages(a);
-        private0 = x86_64_aspace_private_pages(a);
+        tables0 = aspace_table_pages(a);
+        private0 = aspace_private_pages(a);
         x86_64_pmem_test_fail_after(k);
         /* a different 1 GiB region: needs a new PDPT entry, PD and PT */
-        ok = x86_64_aspace_map_private(a, 0x80000000ULL, 3 * PAGE, ASPACE_PROT_USER);
+        ok = aspace_map_private(a, 0x80000000ULL, 3 * PAGE, ASPACE_PROT_USER);
         x86_64_pmem_test_fail_after(0);
         if (!ok) {
             failed++;
-            CHECK(x86_64_aspace_table_pages(a) == tables0, "failed mapping returns its table pages");
-            CHECK(x86_64_aspace_private_pages(a) == private0, "failed mapping returns its backing");
-            CHECK(!x86_64_aspace_translate(a, 0x80000000ULL, NULL, NULL), "failed mapping left no leaf");
+            CHECK(aspace_table_pages(a) == tables0, "failed mapping returns its table pages");
+            CHECK(aspace_private_pages(a) == private0, "failed mapping returns its backing");
+            CHECK(!aspace_translate(a, 0x80000000ULL, NULL, NULL), "failed mapping left no leaf");
             /* and the region is usable afterwards */
-            CHECK(x86_64_aspace_map_private(a, 0x80000000ULL, 3 * PAGE, ASPACE_PROT_USER),
+            CHECK(aspace_map_private(a, 0x80000000ULL, 3 * PAGE, ASPACE_PROT_USER),
                   "mapping succeeds after a rolled-back failure");
         }
-        x86_64_aspace_destroy(a);
+        aspace_destroy(a);
         same(&s, "table rollback");
     }
     CHECK(failed >= 4, "table-rollback failures were exercised");
@@ -852,7 +852,7 @@ static void test_process_validation(void)
     env = USERPTR_TO_PTR(pd->p_env);
     set_owner(pd, pd);
     set_owner(env, pd);
-    CHECK(kproc_prepare_user(pd, run) && kproc_user_pml4(pd), "address space for validation");
+    CHECK(kproc_prepare_user(pd, run) && kproc_user_root(pd), "address space for validation");
 
     run = pd;
     CHECK(kproc_validate_user_range((UQUAD)(uintptr_t)env, 8), "own environment readable");
@@ -872,12 +872,12 @@ static void test_process_validation(void)
      * Rwabs/Floprd/Flopver/Flopfmt buffers, trap.c): it must be refused up
      * front, before the device is touched. */
     {
-        X86_64_ASPACE *as = kproc_user_aspace(pd);
+        ASPACE *as = kproc_user_aspace(pd);
 
         CHECK(as != NULL, "the process has an address space");
         if (as) {
-            CHECK(x86_64_aspace_map_private(as, 0x20000000, PAGE, ASPACE_PROT_USER), "read-only user page");
-            CHECK(x86_64_aspace_map_private(as, 0x20100000, PAGE, ASPACE_PROT_USER | ASPACE_PROT_WRITE),
+            CHECK(aspace_map_private(as, 0x20000000, PAGE, ASPACE_PROT_USER), "read-only user page");
+            CHECK(aspace_map_private(as, 0x20100000, PAGE, ASPACE_PROT_USER | ASPACE_PROT_WRITE),
                   "writable user page");
             CHECK(kproc_validate_user_range(0x20000000, 512), "read-only buffer is readable");
             CHECK(!kproc_validate_user_write(0x20000000, 512), "read-only buffer is not a valid output buffer");
@@ -994,7 +994,7 @@ static void test_lifecycle(void)
         env = USERPTR_TO_PTR(pd->p_env);
         set_owner(pd, pd);
         set_owner(env, pd);
-        if (!kproc_prepare_user(pd, run) || !kproc_user_pml4(pd)) {
+        if (!kproc_prepare_user(pd, run) || !kproc_user_root(pd)) {
             CHECK(FALSE, "launch preparation");
             x86_64_free_owned(pd);
             break;
@@ -1020,7 +1020,7 @@ static void test_lifecycle(void)
         pd->p_env = (ULONG)(uintptr_t)other;    /* point at someone else's block */
         CHECK(!kproc_prepare_user(pd, run), "redirected p_env refused");
         pd->p_env = envv;
-        CHECK(!kproc_user_pml4(pd), "refused launches left no address space");
+        CHECK(!kproc_user_root(pd), "refused launches left no address space");
         CHECK(kproc_prepare_user(pd, run), "unmodified basepage still launches");
         set_owner(pd, pd);
         set_owner(env, pd);
@@ -1068,10 +1068,10 @@ static void test_lifecycle(void)
         env = USERPTR_TO_PTR(pd->p_env);
         set_owner(pd, pd);
         set_owner(env, pd);
-        CHECK(kproc_prepare_user(pd, run) && kproc_user_pml4(pd), "prepare for Mfree test");
+        CHECK(kproc_prepare_user(pd, run) && kproc_user_root(pd), "prepare for Mfree test");
         CHECK(Mfree(env) == EACCDN, "Mfree of a mapped environment refused");
         CHECK(Mfree(pd) == EACCDN, "Mfree of the live basepage refused");
-        CHECK(kproc_user_pml4(pd) != 0, "address space survives the refused Mfree");
+        CHECK(kproc_user_root(pd) != 0, "address space survives the refused Mfree");
         x86_64_free_owned(pd);
     }
 
@@ -1148,7 +1148,7 @@ static void test_lifecycle(void)
         x86_64_pmem_test_fail_after(k);
         if (!kproc_prepare_user(pd, run)) {
             failed++;
-            CHECK(!kproc_user_pml4(pd), "failed preparation leaves no address space");
+            CHECK(!kproc_user_root(pd), "failed preparation leaves no address space");
         }
         x86_64_pmem_test_fail_after(0);
         x86_64_free_owned(pd);
@@ -1626,7 +1626,7 @@ static void test_ring3(void)
 /* Private pages move from one address space to another (#434). */
 static void test_move_private(void)
 {
-    X86_64_ASPACE *a, *b;
+    ASPACE *a, *b;
     UBYTE pattern[64], back[64];
     UWORD prot;
     ULONG i;
@@ -1638,39 +1638,39 @@ static void test_move_private(void)
     if (a && b) {
         for (i = 0; i < sizeof(pattern); i++)
             pattern[i] = (UBYTE)(i + 1);
-        CHECK(x86_64_aspace_map_private(a, 0x10000000, 3 * PAGE, ASPACE_PROT_WRITE | ASPACE_PROT_USER),
+        CHECK(aspace_map_private(a, 0x10000000, 3 * PAGE, ASPACE_PROT_WRITE | ASPACE_PROT_USER),
               "block mapped in the source");
-        CHECK(x86_64_aspace_copy_to_user(a, 0x10001000, pattern, sizeof(pattern)), "block filled");
-        CHECK(x86_64_aspace_private_pages(a) == 3 && x86_64_aspace_private_pages(b) == 0, "owned pages before");
+        CHECK(aspace_copy_to_user(a, 0x10001000, pattern, sizeof(pattern)), "block filled");
+        CHECK(aspace_private_pages(a) == 3 && aspace_private_pages(b) == 0, "owned pages before");
 
         /* a range that is not all private to the source is refused, and nothing moves */
-        CHECK(!x86_64_aspace_move_private(a, b, 0x10000000, 4 * PAGE, ASPACE_PROT_USER),
+        CHECK(!aspace_move_private(a, b, 0x10000000, 4 * PAGE, ASPACE_PROT_USER),
               "a range that is not all private is refused");
-        CHECK(!x86_64_aspace_translate(b, 0x10000000, NULL, NULL), "nothing moved by the refused call");
+        CHECK(!aspace_translate(b, 0x10000000, NULL, NULL), "nothing moved by the refused call");
 
-        CHECK(x86_64_aspace_move_private(a, b, 0x10000000, 3 * PAGE, ASPACE_PROT_WRITE | ASPACE_PROT_USER),
+        CHECK(aspace_move_private(a, b, 0x10000000, 3 * PAGE, ASPACE_PROT_WRITE | ASPACE_PROT_USER),
               "block moved");
-        CHECK(!x86_64_aspace_translate(a, 0x10000000, NULL, NULL) &&
-              !x86_64_aspace_translate(a, 0x10002000, NULL, NULL), "gone from the source");
-        CHECK(x86_64_aspace_private_pages(a) == 0 && x86_64_aspace_private_pages(b) == 3, "owned pages after");
-        CHECK(x86_64_aspace_copy_from_user(b, back, 0x10001000, sizeof(back)) &&
+        CHECK(!aspace_translate(a, 0x10000000, NULL, NULL) &&
+              !aspace_translate(a, 0x10002000, NULL, NULL), "gone from the source");
+        CHECK(aspace_private_pages(a) == 0 && aspace_private_pages(b) == 3, "owned pages after");
+        CHECK(aspace_copy_from_user(b, back, 0x10001000, sizeof(back)) &&
               memcmp(back, pattern, sizeof(back)) == 0, "contents kept");
 
         /* the destination changes the permissions of a page: read + execute */
-        CHECK(x86_64_aspace_protect_private(b, 0x10001000, PAGE, ASPACE_PROT_EXEC | ASPACE_PROT_USER),
+        CHECK(aspace_protect_private(b, 0x10001000, PAGE, ASPACE_PROT_EXEC | ASPACE_PROT_USER),
               "permissions changed");
-        CHECK(x86_64_aspace_translate(b, 0x10001000, NULL, &prot) &&
+        CHECK(aspace_translate(b, 0x10001000, NULL, &prot) &&
               (prot & ASPACE_PROT_EXEC) && !(prot & ASPACE_PROT_WRITE), "execute, not write");
-        CHECK(!x86_64_aspace_protect_private(b, 0x20000000, PAGE, ASPACE_PROT_USER),
+        CHECK(!aspace_protect_private(b, 0x20000000, PAGE, ASPACE_PROT_USER),
               "an unmapped page cannot be protected");
 
         /* the source can map the addresses again; the destination frees what it got */
-        CHECK(x86_64_aspace_map_private(a, 0x10000000, PAGE, ASPACE_PROT_USER), "source reuses the addresses");
-        CHECK(!x86_64_aspace_unmap_private(b, 0x10000000, 4 * PAGE), "unmap refuses a range with a foreign page");
-        CHECK(x86_64_aspace_unmap_private(b, 0x10000000, 3 * PAGE), "destination unmaps what it was given");
+        CHECK(aspace_map_private(a, 0x10000000, PAGE, ASPACE_PROT_USER), "source reuses the addresses");
+        CHECK(!aspace_unmap_private(b, 0x10000000, 4 * PAGE), "unmap refuses a range with a foreign page");
+        CHECK(aspace_unmap_private(b, 0x10000000, 3 * PAGE), "destination unmaps what it was given");
     }
-    x86_64_aspace_destroy(a);
-    x86_64_aspace_destroy(b);
+    aspace_destroy(a);
+    aspace_destroy(b);
     same(&s, "moving private pages");
 }
 
@@ -1698,12 +1698,12 @@ static void test_x32image(void)
     const X32_IMAGE *good = x86_64_x32probe_image();
     X32_IMAGE cut;
     UQUAD entry = 0;
-    X86_64_ASPACE *as;
+    ASPACE *as;
     SNAP s;
 
     snap(&s);
-    CHECK(x86_64_x32image_check(good, &entry) && entry >= X86_64_USER_IMAGE_BASE &&
-          entry < X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE, "probe image is valid");
+    CHECK(x86_64_x32image_check(good, &entry) && entry >= USER_IMAGE_BASE &&
+          entry < USER_IMAGE_BASE + USER_IMAGE_SIZE, "probe image is valid");
 #if CONF_WITH_CLI
     CHECK(x86_64_x32image_check(x86_64_emucon_image(), &entry), "EmuCON image is valid");
 #endif
@@ -1732,9 +1732,9 @@ static void test_x32image(void)
     as = must_create("image address space");
     if (as) {
         CHECK(x86_64_x32image_load(as, good, &entry), "image loads");
-        CHECK(x86_64_aspace_user_range_ok(as, entry, 16, FALSE) &&
-              !x86_64_aspace_user_range_ok(as, entry, 16, TRUE), "text is read-only");
-        x86_64_aspace_destroy(as);
+        CHECK(aspace_user_range_ok(as, entry, 16, FALSE) &&
+              !aspace_user_range_ok(as, entry, 16, TRUE), "text is read-only");
+        aspace_destroy(as);
     }
     same(&s, "image loader");
 
@@ -1749,15 +1749,15 @@ static void test_x32image(void)
 
             memset(&l, 0, sizeof l);
             l.nseg = 1;
-            l.seg[0].vaddr = X86_64_USER_IMAGE_BASE;
+            l.seg[0].vaddr = USER_IMAGE_BASE;
             l.seg[0].flags = 5;                 /* PF_R | PF_X */
-            l.entry = X86_64_USER_IMAGE_BASE;
-            l.seg[0].memsz = (ULONG)(X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK) + 0x1000;
+            l.entry = USER_IMAGE_BASE;
+            l.seg[0].memsz = (ULONG)(USER_IMAGE_SIZE - USER_IMAGE_SLACK) + 0x1000;
             l.end = l.seg[0].vaddr + l.seg[0].memsz;
-            CHECK(kproc_load_begin(pd, X86_64_USER_IMAGE_BASE, X86_64_USER_IMAGE_SIZE),
+            CHECK(kproc_load_begin(pd, USER_IMAGE_BASE, USER_IMAGE_SIZE),
                   "an address space for the program");
             CHECK(!kproc_set_loaded_image(pd, &l), "no room for the startup area: refused");
-            l.seg[0].memsz = (ULONG)(X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK);
+            l.seg[0].memsz = (ULONG)(USER_IMAGE_SIZE - USER_IMAGE_SLACK);
             l.end = l.seg[0].vaddr + l.seg[0].memsz;
             CHECK(kproc_set_loaded_image(pd, &l), "room for the startup area: accepted");
             set_owner(pd, pd);

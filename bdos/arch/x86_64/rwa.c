@@ -249,7 +249,7 @@ void gouser(void)
          * ring-3 process has, which this branch switches to and back, is a
          * kernel stack of its own (see this file's own top comment).
          */
-        UQUAD pml4_phys = kproc_user_pml4(p);
+        UQUAD pml4_phys = kproc_user_root(p);
         UQUAD entry_rip = kproc_user_entry(p);
         /* Every process has a private stack of its own, mapped when it was
          * prepared (kproc_prepare_user()), whether it has an image or only a
@@ -302,7 +302,7 @@ void gouser(void)
         x86_64_set_saved_user_rsp(launcher_user_rsp);
         x86_64_kstack_free(kstack_phys);
         {
-            UQUAD launcher_pml4 = kproc_user_pml4(run);
+            UQUAD launcher_pml4 = kproc_user_root(run);
 
             x86_64_write_cr3(launcher_pml4 ? launcher_pml4 : x86_64_kernel_pml4_phys());
         }
@@ -322,9 +322,9 @@ void gouser(void)
  */
 int x86_64_demand_page(UQUAD address)
 {
-    UQUAD pml4 = kproc_user_pml4(run);
+    UQUAD pml4 = kproc_user_root(run);
 
-    if (address >= X86_64_USER_VA_LIMIT || !pml4 || pml4 != x86_64_read_cr3())
+    if (address >= USER_VA_LIMIT || !pml4 || pml4 != x86_64_read_cr3())
         return 0;
     return kproc_demand_page(run, address);
 }

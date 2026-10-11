@@ -33,9 +33,9 @@ Process memory    procmem.c.  x86_64_procmem_alloc() / _free().  A
                   Mfree()d, and carries a process owner.  Never a kheap
                   block; kfree() refuses it.
 
-Address spaces    aspace.c.  x86_64_aspace_create() / _destroy().  The PML4
+Address spaces    aspace.c.  aspace_create() / _destroy().  The PML4
                   and every page-table page under it, plus any PRIVATE leaf
-                  pages (x86_64_aspace_map_private(): the program image and
+                  pages (aspace_map_private(): the program image and
                   stack of an isolated process, see
                   doc/x86_64-address-space.txt); owned by the process's KPROC
                   record and all freed with it.  Leaf pages that are not
@@ -50,8 +50,8 @@ The 32-bit GEMDOS ABI fields (p_env, p_tbase, p_hitpa, ...) need a user
 VIRTUAL address below 4 GiB.  That is guaranteed by construction (procmem
 can only return window addresses, and the window is asserted below 4 GiB at
 compile time) and checked again where a mapping is made
-(x86_64_aspace_map_page() refuses any page that does not end at or below
-X86_64_USER_VA_LIMIT).
+(aspace_map_page() refuses any page that does not end at or below
+USER_VA_LIMIT).
 
 PHYSICAL placement is a separate decision.  The window's backing pages and
 every page-table page come from anywhere in RAM, above 4 GiB included,
@@ -97,7 +97,7 @@ procmem block frees that block (and the KPROC if it is a basepage), so a
 basepage created with Pexec(PE_BASEPAGE) and never launched is reclaimed
 by Mfree() of the basepage and its environment.
 
-Mapped blocks are pinned.  x86_64_aspace_map_procmem() pins every procmem
+Mapped blocks are pinned.  aspace_map_procmem() pins every procmem
 block it maps and the address space unpins them when it is destroyed.  A
 pinned block is not released: Mfree() of a live process's own environment
 or basepage returns EACCDN (and leaves the KPROC and address space alone),
@@ -121,13 +121,13 @@ Failure behaviour
 
 kalloc()               NULL; heap unchanged
 x86_64_procmem_alloc() NULL; window and records unchanged
-x86_64_aspace_create() NULL; nothing left allocated
-x86_64_aspace_map_private()
+aspace_create() NULL; nothing left allocated
+aspace_map_private()
                        FALSE; all-or-nothing: no mapping, backing page or
                        page-table page from the call is left (internal
                        bookkeeping vectors may keep extra capacity until the
                        address space is destroyed)
-x86_64_aspace_map_page() / _map_procmem()
+aspace_map_page() / _map_procmem()
                        FALSE; pages mapped before the failure stay in the
                        address space (map_procmem keeps its pin on them) and
                        are released when it is destroyed

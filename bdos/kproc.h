@@ -11,7 +11,7 @@
 
 #include "bdosdefs.h"
 #if CONF_WITH_USER_ASPACE
-#include "procmem.h"      /* X86_64_ASPACE */
+#include "procmem.h"      /* ASPACE */
 #include "x32image.h"
 #endif
 
@@ -57,7 +57,7 @@ BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);
 /* A program Pexec() loads from a file (bdos/elfld.c) is read straight into pages
  * of the address space that will be the new process's: kproc_load_begin() makes
  * it and maps [va, va + bytes) in it, the image and the startup area after it
- * (X86_64_USER_IMAGE_SLACK); kproc_load_enter() makes it the one in use while
+ * (USER_IMAGE_SLACK); kproc_load_enter() makes it the one in use while
  * the loader fills the pages, kproc_load_leave() puts the previous one back (and
  * destroying the process does too, for a disk error that jumps past the loader).
  * kproc_set_loaded_image() then says where the segments are (`layout`, already
@@ -121,7 +121,7 @@ ULONG kproc_borrow_count(PD *launcher, void *block);
 UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top);
 /*
  * Malloc() memory of a process with an address space: private pages in
- * [X86_64_USER_HEAP_BASE, X86_64_USER_HEAP_LIMIT), freed with the process;
+ * [USER_HEAP_BASE, USER_HEAP_LIMIT), freed with the process;
  * lazy: a page gets its physical page when it is first touched.
  * Alloc returns the address of `bytes` rounded up to whole pages (0: none),
  * largest what Malloc(-1) reports; free and shrink are Mfree() and
@@ -145,8 +145,8 @@ ULONG kproc_uheap_largest(PD *pd);
 LONG kproc_uheap_free(PD *pd, UQUAD va);
 LONG kproc_uheap_shrink(PD *pd, UQUAD va, long len);
 UQUAD kproc_user_stack(PD *pd);         /* initial RSP of the private stack of a prepared process; 0 if not prepared */
-UQUAD kproc_user_pml4(PD *pd);          /* 0 if not prepared */
-X86_64_ASPACE *kproc_user_aspace(PD *pd);   /* NULL if none (tests) */
+UQUAD kproc_user_root(PD *pd);          /* 0 if not prepared */
+ASPACE *kproc_user_aspace(PD *pd);   /* NULL if none (tests) */
 ULONG kproc_count(void);                /* live records, for leak tests */
 BOOL kproc_validate_user_dta(UQUAD address);
 /* valid user memory of the current process: mapped, user-accessible and (for
