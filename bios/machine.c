@@ -628,12 +628,6 @@ void machine_detect(void)
 #endif
 }
 
-/*
- * perform machine-specific initialisation
- */
-void machine_init(void)
-{
-#if !CONF_WITH_RESET
 #if CONF_WITH_LOW_SYSVARS
 /* The machine calls this once sysvar_alloc() works, before fill_cookie_jar()
  * reads the addresses of these variables back for the cookies. */
@@ -647,6 +641,13 @@ void sysvars_alloc(void)
 #endif
 }
 #endif
+
+/*
+ * perform machine-specific initialisation
+ */
+void machine_init(void)
+{
+#if !CONF_WITH_RESET
 
 /*
  * we must disable interrupts here, because the reset instruction hasn't
