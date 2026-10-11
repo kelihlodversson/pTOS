@@ -756,6 +756,21 @@ static void test_isolation(void)
               !x86_64_aspace_translate(a, va + 100 * PAGE, NULL, NULL),
               "release_lazy skips the pages never touched and frees the others");
         CHECK(x86_64_aspace_release_lazy(a, va, 200 * PAGE), "and an empty range is nothing");
+        /* eager mapping keeps the kernel's reserve too: a range that would take
+         * all but half of it is refused, and nothing is left behind */
+        {
+            UQUAD free_bytes = x86_64_pmem_free_bytes();
+            UQUAD big = (free_bytes - X86_64_FAULT_RESERVE / 2) & ~(PAGE - 1);
+
+            CHECK(big < X86_64_USER_VA_LIMIT - 0x30000000ULL &&
+                  !x86_64_aspace_map_private(a, 0x30000000ULL, big, rw) &&
+                  x86_64_pmem_free_bytes() == free_bytes &&
+                  x86_64_aspace_private_pages(a) == before,
+                  "map_private leaves the reserve alone");
+            CHECK(x86_64_aspace_map_private(a, 0x30000000ULL, 16 * PAGE, rw) &&
+                  x86_64_aspace_release_lazy(a, 0x30000000ULL, 16 * PAGE),
+                  "and a small range is fine");
+        }
     }
     x86_64_aspace_destroy(a);
     same(&s, "lazy pages");

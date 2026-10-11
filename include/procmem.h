@@ -279,7 +279,8 @@ BOOL x86_64_aspace_unmap_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes);
  * also if there is one already); FALSE if a physical page or a page table
  * could not be had, or less than X86_64_FAULT_RESERVE of physical memory would
  * be left (the kernel's own needs come first: the reserve is never dipped into,
- * the tables the page may need counted).  The caller has decided that the
+ * the tables the page may need counted).  x86_64_aspace_map_private() keeps the
+ * same reserve, for the pages of a program image and the like.  The caller has decided that the
  * address belongs to a lazy area.  x86_64_aspace_release_lazy() is
  * x86_64_aspace_unmap_private() for such an area: pages never touched are
  * simply not there, and are skipped; FALSE, with nothing changed, if a page

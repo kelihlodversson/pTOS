@@ -457,6 +457,13 @@ BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD p
         if (x86_64_aspace_translate(as, va + i * X86_64_PAGE_SIZE, NULL, NULL))
             return FALSE;
 
+    /* the pages, the tables they need (one per 2 MiB, and the three above) and
+     * the bookkeeping must leave the kernel's reserve alone, as a lazy fault
+     * does (x86_64_aspace_fault_in()) */
+    if (x86_64_pmem_free_bytes() < X86_64_FAULT_RESERVE + X86_64_FAULT_COST +
+                                   (pages + pages / 512 + 2) * X86_64_PAGE_SIZE)
+        return FALSE;
+
     for (i = 0; i < pages; i++) {
         UQUAD *pte;
 
