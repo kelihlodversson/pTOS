@@ -14,10 +14,10 @@
 #include "vectors.h"
 #include "sound.h"
 #include "tosvars.h"
+#include "string.h"
 
 /*
- * bios.c's detect_cpu() (guarded by the same #if this arch shares with
- * ARM) already sets mcpu/mcpu_name; there is no ColdFire/m68k-style CPU
+ * detect_cpu() (below) sets mcpu/mcpu_name; there is no ColdFire/m68k-style CPU
  * *variant* to configure here, and no SSE/FPU enable step either --
  * UEFI firmware already runs in long mode with CR0/CR4 set up for SSE,
  * and no floating point is used anywhere in this port yet (#329).
@@ -25,6 +25,110 @@
 void processor_init(void)
 {
     detect_cpu();
+}
+
+/* width of the CPU type value on the welcome screen (initinfo.c) */
+#define X86_CPU_NAME_MAX 20
+
+static char x86_cpu_name[X86_CPU_NAME_MAX + 1];
+
+static void cpuid(ULONG leaf, ULONG *r)
+{
+    __asm__ volatile ("cpuid"
+              : "=a"(r[0]), "=b"(r[1]), "=c"(r[2]), "=d"(r[3])
+              : "a"(leaf), "c"(0));
+}
+
+/* append the n-character word w to x86_cpu_name, space separated, if it fits */
+static void cpu_name_add(const char *w, int n)
+{
+    int len = strlen(x86_cpu_name);
+
+    if (len + (len != 0) + n > X86_CPU_NAME_MAX)
+        return;
+    if (len)
+        x86_cpu_name[len++] = ' ';
+    memcpy(&x86_cpu_name[len], w, n);
+    x86_cpu_name[len + n] = '\0';
+}
+
+/*
+ * Build a short name for the welcome screen from the processor brand
+ * string (CPUID leaves 0x80000002-4), or the vendor string (leaf 0) if the
+ * CPU has no brand string.  A brand string is up to 48 characters, e.g.
+ * "Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz", so drop the "(R)"/"(TM)"
+ * marks, the "CPU"/"Processor"/"version"/"N-Core" filler words and everything from
+ * the "@" on, and keep only the words that fit.
+ */
+static const char *cpu_display_name(void)
+{
+    ULONG r[4];
+    char raw[49];
+    char word[49];
+    const char *p;
+    int i, n, k;
+
+    cpuid(0x80000000UL, r);
+    if (r[0] >= 0x80000004UL) {
+        for (i = 0; i < 3; i++) {
+            cpuid(0x80000002UL + i, r);
+            memcpy(&raw[16 * i], r, 16);
+        }
+        raw[48] = '\0';
+    } else {
+        cpuid(0, r);
+        memcpy(&raw[0], &r[1], 4);      /* vendor is EBX, EDX, ECX */
+        memcpy(&raw[4], &r[3], 4);
+        memcpy(&raw[8], &r[2], 4);
+        raw[12] = '\0';
+    }
+
+    x86_cpu_name[0] = '\0';
+    p = raw;
+    while (*p) {
+        while (*p == ' ')
+            p++;
+        for (n = 0; p[n] && p[n] != ' '; n++)
+            ;
+        if (n == 1 && *p == '@')
+            break;
+        for (i = k = 0; i < n; i++) {
+            if (p[i] == '(') {      /* "(R)" or "(TM)" */
+                while (i < n && p[i] != ')')
+                    i++;
+                continue;
+            }
+            word[k++] = p[i];
+        }
+        word[k] = '\0';
+        if (k && strcmp(word, "CPU") && strcmp(word, "Processor")
+            && strcmp(word, "version")
+            && !(k > 5 && !strcmp(&word[k - 5], "-Core")))
+            cpu_name_add(word, k);
+        p += n;
+    }
+    if (!x86_cpu_name[0])
+        cpu_name_add("x86-64", 6);
+    return x86_cpu_name;
+}
+
+/*
+ * mcpu holds CPUID leaf 1's EAX (the family/model/stepping signature),
+ * not an m68k-style small integer code -- the same trick ARM plays with
+ * its own raw CPUID register (bios/arch/arm/cpudetect.c): every other reader of mcpu
+ * (kprint.c, delay.c, aros.c, ide.c) only ever compares it against
+ * specific m68k CPU-type constants (0/10/20/30/40/60), which a real
+ * CPUID signature is never going to coincidentally match, so those
+ * m68k-only code paths stay correctly inert here without needing their
+ * own #ifdef.
+ */
+void detect_cpu(void)
+{
+    ULONG r[4];
+
+    cpuid(1, r);
+    mcpu = (LONG)r[0];
+    mcpu_name = cpu_display_name();
 }
 
 /*

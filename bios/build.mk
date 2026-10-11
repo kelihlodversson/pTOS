@@ -41,7 +41,7 @@ obj-$(ARCH_M68K) += aciavecs.o kprintasm.o linea.o natfeat.o natfeats.o \
 
 obj-$(ARCH_COLDFIRE) += coldfire.o coldfire2.o spi_cf.o
 
-obj-$(ARCH_ARM) += vectorsasm.o aciaemu.o tosvars.o
+obj-$(ARCH_ARM) += vectorsasm.o aciaemu.o tosvars.o cpudetect.o
 
 # tosvars.c is arch-neutral C (see its own header comment), needed by
 # every non-m68k/ColdFire arch alike -- x86-64 gets its own obj-y line

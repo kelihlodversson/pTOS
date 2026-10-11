@@ -125,7 +125,28 @@ cli/ and util/ to regenerate it).
        were three #if branches in proc.c (struct gouser_stack, the p_hitpa
        rounding, proc_go()), are proc_launch_prepare()/proc_align_stack() in
        bdos/arch/{m68k,arm,x86_64}/launch.c
-   7b: bios/ (bios.c, xbios.c, ide.c, blkdev.c, disk.c, ...), still to do.
+   7b (bios/): DONE.
+     ring-3 built-in EmuCON (start_builtin_cli(), endrom.c, exec_os), Super()
+       stand-in (super.h), Keytbl()/XBIOS 10, Rwabs buffer size for the
+       uaccess checks (blkdev_rwabs_buffer_size) -> CONF_WITH_USER_ASPACE
+     the DTA that has to live in process memory (autoexec()) ->
+       CONF_WITH_PROCMEM
+     the memtest declaration and call -> CONF_WITH_X86_64_MEMTEST (was
+       also tested with __x86_64__)
+     interrupt controller bring-up and enabling (bios.c, kprint.c) -> new
+       CONF_WITH_MACHINE_IRQ_INIT with machine_irq_init() declared in
+       bios/machine.h (the x86 irq.h is gone)
+     DMAr boot sectors (disk.c) -> new CONF_WITH_DMABOOT
+     entry address of ui_start/coma_start: plain assignment on every
+       architecture (x86-64 objects are -fno-pic -mcmodel=large, so no GOT)
+     detect_cpu() for ARM and x86-64, which sat in bios.c under #if, ->
+       bios/arch/arm/cpudetect.c and bios/arch/x86_64/processor.c;
+       xbios_unimpl() for x86-64 -> bios/arch/x86_64/vectors.c
+     32-bit Setexc() vector cells (vectors.h VEC_AT/SET_VEC) -> __LP64__
+     bios/ide.c: __x86_64__ -> MACHINE_PC_X86_64, like the rest of that
+       file's machine ladder.  The remaining MACHINE_PC_X86_64 tests in
+       bios/ (machine.c, screen.c, delay.c, initinfo.c) are machine
+       selection among MACHINE_RPI/FIREBEE/..., which CLAUDE.md prescribes.
    Left for a later pass: "__arm__ || __x86_64__" that really means "not
    m68k" -- GEMDOS/BIOS/XBIOS arguments as an array of native longs (osif(),
    funcs[], W_N, biosbind.h, xbiosbind.h), md_index_t, bufl[], intmath.h,

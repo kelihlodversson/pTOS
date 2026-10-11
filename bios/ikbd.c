@@ -121,9 +121,9 @@ static struct keytbl current_keytbl;
 
 LONG keytbl(const UBYTE* norm, const UBYTE* shft, const UBYTE* caps)
 {
-#ifdef __x86_64__
+#if CONF_WITH_USER_ASPACE
     /* XBIOS Keytbl() returns a 32-bit pointer. current_keytbl is kernel
-     * memory on x86-64, so it cannot be exposed to a ring-3 caller. */
+     * memory, so it cannot be exposed to a caller in its own address space. */
     return -1;
 #else
     if (norm != (UBYTE*)-1) {

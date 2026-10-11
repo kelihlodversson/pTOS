@@ -40,7 +40,7 @@
 #if defined(__arm__) || defined(__x86_64__)
 #include "biosargs.h"
 #endif
-#ifdef __x86_64__
+#if CONF_WITH_X86_64_MEMTEST
 extern void x86_64_memtest_run(void);
 #endif
 #include "ikbd.h"
@@ -87,9 +87,6 @@ extern void x86_64_memtest_run(void);
 #include "goldfish_pic.h"
 #include "goldfish_rtc.h"
 #endif
-#ifdef MACHINE_PC_X86_64
-#include "irq.h"
-#endif
 
 
 /*==== Defines ============================================================*/
@@ -113,7 +110,7 @@ extern void run_cartridge_applications(WORD typebit); /* found in startup.S */
 #endif
 
 #if CONF_WITH_CLI
-#ifdef __x86_64__
+#if CONF_WITH_USER_ASPACE
 #include "progimage.h"
 extern BOOL kproc_set_image(PD *pd, const PROG_IMAGE *image);    /* bdos/kproc.c */
 static void start_builtin_cli(char *env);
@@ -172,186 +169,6 @@ const char *mcpu_name;
 LONG mcpu;
 LONG fputype;
 
-#if defined(__arm__) || defined(__aarch64__)
-static char const arm_unknown[] = "ARM (unknown)";
-
-static struct {
-        uint32_t match;
-        uint32_t mask;
-        const char *name;
-} const arm_cputypes[] = {
-        { 0x00000000, 0x0008f000, arm_unknown },
-        { 0x00807000, 0x0088f000, "ARMv4T" },
-        { 0x00007000, 0x0088f000, "ARMv3" },
-        { 0x00000000, 0x000f0000, "ARMv3" },
-        { 0x00010000, 0x000f0000, "ARMv4" },
-        { 0x00020000, 0x000f0000, "ARMv4T" },
-        { 0x00030000, 0x000f0000, "ARMv5" },
-        { 0x00040000, 0x000f0000, "ARMv5T" },
-        { 0x00050000, 0x000f0000, "ARMv5TE" },
-        { 0x00060000, 0x000f0000, "ARMv5TEJ" },
-        { 0x00070000, 0x000f0000, "ARMv6" },
-        { 0x00080000, 0x000f0000, "ARMv7" },
-        { 0x00090000, 0x000f0000, "ARMv7M" },
-        { 0x41000000, 0xff00f000, "ARMv4" },
-        { 0x41007000, 0xfff8fe00, "ARM710" },
-        { 0x41807200, 0xffffff00, "ARM720T" },
-        { 0x41007400, 0xff00ff00, "ARM74x" },
-        { 0x41009400, 0xff00ff00, "ARM94x" },
-        { 0x41069260, 0xff0ffff0, "ARM926EJ-S" },
-        { 0x41007000, 0x0000f000, "ARM7xx" },
-        { 0x4100b360, 0xff00fff0, "ARM1136" },
-        { 0x4100b560, 0xff00fff0, "ARM1156" },
-        { 0x4100b760, 0xff00fff0, "ARM1176" },
-        { 0x4100b020, 0xff00fff0, "ARM11MPCORE" },
-        { 0x4401a100, 0xffffffe0, "StrongARM 1100" },
-        { 0x6901b110, 0xfffffff0, "StrongARM 1110" },
-        { 0x56056900, 0xffffff00, "PXA9xx" },
-        { 0x56158000, 0xfffff000, "PXA168" },
-        { 0x56050000, 0xff0f0000, "Feroceon" },
-        { 0x66015261, 0xff01fff1, "FA526" },
-        { 0x410fc050, 0xff0ffff0, "Cortex-A5" },
-        { 0x410fc070, 0xff0ffff0, "Cortex-A7" },
-        { 0x410fc080, 0xff0ffff0, "Cortex-A8" },
-        { 0x410fc090, 0xff0ffff0, "Cortex-A9" },
-        { 0x410fc0d0, 0xff0ffff0, "Cortex-A12" },
-        { 0x410fc0f0, 0xff0ffff0, "Cortex-A15" },
-        { 0x410fc0e0, 0xff0ffff0, "Cortex-A17" },
-        { 0x410fd030, 0xff0ffff0, "Cortex-A53" },
-        { 0x410fd040, 0xff0ffff0, "Cortex-A35" },
-        { 0x410fd050, 0xff0ffff0, "Cortex-A55" },
-        { 0x410fd070, 0xff0ffff0, "Cortex-A57" },
-        { 0x410fd080, 0xff0ffff0, "Cortex-A72" },
-        { 0x410fd090, 0xff0ffff0, "Cortex-A73" },
-        { 0x410fd0a0, 0xff0ffff0, "Cortex-A75" },
-        { 0x510f02d0, 0xff0ffff0, "Scorpion (dual-core)" },
-        { 0x510f04d0, 0xff0ffff0, "Krait (dual-core)" },
-        { 0x510f06f0, 0xff0ffff0, "Krait (quad-core)" },
-        { 0x510f8030, 0xff0ffff0, "Kryo 385 Silver (Cortex-A55)" },
-        { 0x510f8020, 0xff0ffff0, "Kryo 385 Gold (Cortex-A75)" },
-        { 0x000f0000, 0x000f0000, "ARMv8" },
-};
-
-void detect_cpu(void)
-{
-        int i;
-
-        mcpu = read_cpuid_id();
-        mcpu_name = arm_unknown;
-        for (i = 0; i < (int)ARRAY_SIZE(arm_cputypes); i++)
-        {
-                if ((mcpu & arm_cputypes[i].mask) == arm_cputypes[i].match)
-                {
-                        mcpu_name = arm_cputypes[i].name;
-                        break;
-                }
-        }
-}
-#elif defined(__x86_64__)
-/* width of the CPU type value on the welcome screen (initinfo.c) */
-#define X86_CPU_NAME_MAX 20
-
-static char x86_cpu_name[X86_CPU_NAME_MAX + 1];
-
-static void cpuid(ULONG leaf, ULONG *r)
-{
-        __asm__ volatile ("cpuid"
-                          : "=a"(r[0]), "=b"(r[1]), "=c"(r[2]), "=d"(r[3])
-                          : "a"(leaf), "c"(0));
-}
-
-/* append the n-character word w to x86_cpu_name, space separated, if it fits */
-static void cpu_name_add(const char *w, int n)
-{
-        int len = strlen(x86_cpu_name);
-
-        if (len + (len != 0) + n > X86_CPU_NAME_MAX)
-                return;
-        if (len)
-                x86_cpu_name[len++] = ' ';
-        memcpy(&x86_cpu_name[len], w, n);
-        x86_cpu_name[len + n] = '\0';
-}
-
-/*
- * Build a short name for the welcome screen from the processor brand
- * string (CPUID leaves 0x80000002-4), or the vendor string (leaf 0) if the
- * CPU has no brand string.  A brand string is up to 48 characters, e.g.
- * "Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz", so drop the "(R)"/"(TM)"
- * marks, the "CPU"/"Processor"/"version"/"N-Core" filler words and everything from
- * the "@" on, and keep only the words that fit.
- */
-static const char *cpu_display_name(void)
-{
-        ULONG r[4];
-        char raw[49];
-        char word[49];
-        const char *p;
-        int i, n, k;
-
-        cpuid(0x80000000UL, r);
-        if (r[0] >= 0x80000004UL) {
-                for (i = 0; i < 3; i++) {
-                        cpuid(0x80000002UL + i, r);
-                        memcpy(&raw[16 * i], r, 16);
-                }
-                raw[48] = '\0';
-        } else {
-                cpuid(0, r);
-                memcpy(&raw[0], &r[1], 4);      /* vendor is EBX, EDX, ECX */
-                memcpy(&raw[4], &r[3], 4);
-                memcpy(&raw[8], &r[2], 4);
-                raw[12] = '\0';
-        }
-
-        x86_cpu_name[0] = '\0';
-        p = raw;
-        while (*p) {
-                while (*p == ' ')
-                        p++;
-                for (n = 0; p[n] && p[n] != ' '; n++)
-                        ;
-                if (n == 1 && *p == '@')
-                        break;
-                for (i = k = 0; i < n; i++) {
-                        if (p[i] == '(') {      /* "(R)" or "(TM)" */
-                                while (i < n && p[i] != ')')
-                                        i++;
-                                continue;
-                        }
-                        word[k++] = p[i];
-                }
-                word[k] = '\0';
-                if (k && strcmp(word, "CPU") && strcmp(word, "Processor")
-                    && strcmp(word, "version")
-                    && !(k > 5 && !strcmp(&word[k - 5], "-Core")))
-                        cpu_name_add(word, k);
-                p += n;
-        }
-        if (!x86_cpu_name[0])
-                cpu_name_add("x86-64", 6);
-        return x86_cpu_name;
-}
-
-/*
- * mcpu holds CPUID leaf 1's EAX (the family/model/stepping signature),
- * not an m68k-style small integer code -- the same trick ARM plays with
- * its own raw CPUID register (above): every other reader of mcpu
- * (kprint.c, delay.c, aros.c, ide.c) only ever compares it against
- * specific m68k CPU-type constants (0/10/20/30/40/60), which a real
- * CPUID signature is never going to coincidentally match, so those
- * m68k-only code paths stay correctly inert here without needing their
- * own #ifdef.
- */
-void detect_cpu(void)
-{
-        ULONG r[4];
-
-        cpuid(1, r);
-        mcpu = (LONG)r[0];
-        mcpu_name = cpu_display_name();
-}
-#endif
 
 #endif
 
@@ -463,7 +280,7 @@ static void vecs_init(void)
 
 extern PFVOID vbl_list[8]; /* Default array for vblqueue */
 
-#if defined(__x86_64__) && CONF_WITH_CLI
+#if CONF_WITH_USER_ASPACE && CONF_WITH_CLI
 /*
  * Runs the built-in EmuCON, an x32 program embedded in this image
  * (cli/arch/x86_64/emucon_image.c), as an ordinary ring-3 process: a
@@ -790,9 +607,7 @@ static void bios_init(void)
      * We need a timer for DMA timeouts in floppy and harddisk initialisation.
      * The VBL processing will be enabled later with the vblsem semaphore.
      */
-#ifdef __arm__
-    cpsr_ie();
-#elif defined(__x86_64__)
+#if CONF_WITH_MACHINE_IRQ_INIT
     /*
      * #335: bring up the legacy PIC/PIT/PS-2 controller (bios/machine/
      * pc-x86_64/irq.c) -- remapping the PIC, installing this machine's
@@ -803,6 +618,8 @@ static void bios_init(void)
      * until now).
      */
     machine_irq_init();
+#elif defined(__arm__)
+    cpsr_ie();
 #else
 #if CONF_WITH_ATARI_VIDEO
     /* Keep the HBL disabled */
@@ -920,36 +737,15 @@ static void bios_init(void)
     nls_set_lang(get_lang_name());
 #endif
 
-    /* set start of user interface
-     *
-     * On x86-64, NOT a plain C `exec_os = ui_start`/`= coma_start`:
-     * taking the address of an extern symbol that way lets the compiler
-     * pick GOT-indirected addressing (`mov sym@GOTPCREL(%rip), %reg`,
-     * R_X86_64_REX_GOTPCRELX) for a symbol it can't prove is local at
-     * compile time, exactly the hazard bios/arch/x86_64/trap.c's own
-     * x86_64_syscall_entry/xbios_unimpl_addr comments already document
-     * at length -- this image's objects are ELF but the final link is
-     * PE (`ld -m i386pep`), whose backend does not perform the ELF
-     * static-executable GOT relaxation, so the load reads garbage
-     * instead of ui_start's/coma_start's real address. Forcing `lea`
-     * here (RIP-relative, self-adjusting to wherever this code actually
-     * runs, unlike a GOT load) sidesteps it, mirroring those same call
-     * sites' own fix. Confirmed by this exact bug reproducing here: a
-     * plain `exec_os = coma_start` read back as an unrelated garbage
-     * 64-bit value once gouser() (bdos/arch/x86_64/rwa.c) actually
-     * tried to call through it.
-     */
+    /* set start of user interface */
 #if CONF_WITH_AES
-#ifdef __x86_64__
-    __asm__("lea ui_start(%%rip), %0" : "=r"(exec_os));
-#else
     exec_os = ui_start;
-#endif
-#elif CONF_WITH_CLI && !defined(__x86_64__)
+#elif CONF_WITH_CLI && !CONF_WITH_USER_ASPACE
     exec_os = coma_start;
 #else
-    /* x86-64 without the AES: EmuCON is an x32 program run in ring 3 by
-     * start_builtin_cli() below, not an entry point in this image */
+    /* Without the AES and with per-process address spaces, EmuCON is a
+     * program run in its own address space by start_builtin_cli() below, not
+     * an entry point in this image */
     exec_os = NULL;
 #endif
 
@@ -1102,7 +898,7 @@ static void run_reset_resident(void)
  * to use GEMDOS calls here!
  */
 
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
 /*
  * bios/machine/pc-x86_64/memory.c's own low, sub-4GiB pool -- declared
  * directly here rather than via its own header, matching bdos/proc.c's
@@ -1127,7 +923,7 @@ static void run_auto_program(const char* filename)
 static void autoexec(void)
 {
     WORD err;
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
     DTA *dta;
 #else
     DTA dta_storage;
@@ -1145,7 +941,7 @@ static void autoexec(void)
     if(!blkdev_avail(bootdev))          /* check, if bootdev available */
         return;
 
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
     /*
      * A stack-local DTA doesn't work here on this arch: Fsetdta()
      * stores its address in p_xdta, a USERPTR_T (ULONG) field
@@ -1283,7 +1079,7 @@ void biosmain(void)
     Dsetdrv(bootdev);           /* Set boot drive */
     init_default_environment(); /* Build default environment string */
 
-#if defined(__x86_64__) && CONF_WITH_X86_64_MEMTEST
+#if CONF_WITH_X86_64_MEMTEST
     x86_64_memtest_run();       /* reports "x86-64 memtest: PASS" or FAIL */
 #endif
 
@@ -1293,7 +1089,7 @@ void biosmain(void)
 
 #if CONF_WITH_CLI
     if (bootflags & BOOTFLAG_EARLY_CLI) {   /* run an early console */
-#ifdef __x86_64__
+#if CONF_WITH_USER_ASPACE
         start_builtin_cli(default_env);
 #else
         PD *pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", default_env);
@@ -1325,7 +1121,7 @@ void biosmain(void)
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
         Pexec(PE_GO, "", (char *)pd, default_env);
     }
-#if defined(__x86_64__) && CONF_WITH_CLI
+#if CONF_WITH_USER_ASPACE && CONF_WITH_CLI
     else {
         /* the default shell of an x86-64 image without the AES */
         start_builtin_cli(default_env);

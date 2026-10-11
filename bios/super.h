@@ -13,6 +13,8 @@
 #ifndef _SUPER_H
 #define _SUPER_H
 
+#include "config.h"
+
 #undef Super
 /* Standard Super() binding */
 #ifdef __arm__
@@ -29,7 +31,7 @@ static __inline__ long Super(void* ptr)
     );
     return _r0;
 }
-#elif defined(__x86_64__)
+#elif CONF_WITH_USER_ASPACE
 /* Kernel code always runs in supervisor mode here, and a process's own
  * Super() is answered by osif() the same way: "already supervisor". */
 static __inline__ long Super(void *ptr)

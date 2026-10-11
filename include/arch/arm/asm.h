@@ -157,4 +157,5 @@ extern void enable_interrupts(void);
    ULONG _count = (count);             \
    while(_count) {_count--;}           \
  })
+
 #endif /* ASM_H */

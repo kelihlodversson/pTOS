@@ -133,4 +133,5 @@ extern void enable_interrupts(void);
   : "cc", "memory"    /* clobbered */  \
   );                                    \
 })
+
 #endif /* ASM_H */
