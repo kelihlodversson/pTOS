@@ -85,7 +85,7 @@ typedef struct
  *  necessary on x86-64, where a field is a plain integer needing an
  *  explicit widen/narrow.
  */
-#ifdef __x86_64__
+#ifdef __LP64__
 #define USERPTR_T(type) ULONG
 /* Widens a stored 32-bit ABI value back into a real, dereferenceable
  * kernel pointer -- valid to do at all only because #334's per-process

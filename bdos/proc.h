@@ -76,11 +76,22 @@ LONG kpgm_relocate( PD *p, long length); /* SOP */
  * genuinely return via setjmp()/longjmp() once the launched process
  * calls Pterm().
  */
-#ifdef __x86_64__
+#if CONF_WITH_USER_ASPACE
 void gouser(void);
 #else
 void gouser(void) NORETURN;
 #endif
 void termuser(void)  NORETURN;
+
+/*
+ * in bdos/arch/<arch>/launch.c
+ *
+ * proc_align_stack() rounds p_hitpa, the initial stack pointer of the
+ * process, as the architecture's entry convention needs.
+ * proc_launch_prepare() builds the state gouser() resumes the new process
+ * from; super_sp is the top of the shared supervisor stack.
+ */
+void proc_align_stack(PD *p);
+void proc_launch_prepare(PD *p, void *super_sp);
 
 #endif /* PROC_H */

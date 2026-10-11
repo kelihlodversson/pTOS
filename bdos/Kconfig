@@ -120,6 +120,7 @@ config CONF_WITH_USER_ASPACE
 	bool
 	default y if ARCH_X86_64
 	select CONF_WITH_PROCMEM
+	select CONF_WITH_KHEAP
 	select CONF_WITH_KPROC
 	select CONF_WITH_USER_COPY
 	help
@@ -130,6 +131,36 @@ config CONF_WITH_USER_ASPACE
 	  trusted.  Not user-selectable: it follows the architecture, and
 	  requires CONF_WITH_KPROC.  The separate-address-spaces option
 	  (#402) will become the real home of this.
+
+config CONF_WITH_KHEAP
+	bool
+	default y if ARCH_X86_64
+	help
+	  A growable heap for kernel-only objects (include/kheap.h):
+	  kernel-private process records (struct kproc) and address-space
+	  metadata come from it instead of the fixed GEMDOS memory descriptor
+	  pool, so their number is bounded by memory, not by that pool.  The
+	  machine provides it.  Not user-selectable: it follows the
+	  architecture, and CONF_WITH_USER_ASPACE requires it.
+
+config CONF_WITH_KCALL
+	bool
+	default y if ARCH_X86_64
+	help
+	  Kernel code calls GEMDOS functions as plain C calls to their
+	  implementations (bdos/arch/*/kcall.c) instead of through a
+	  trap, because the trap path belongs to the processes.  Only the
+	  calls kernel code makes exist.  Not user-selectable: it follows
+	  the architecture.
+
+config CONF_WITH_SSYSTEM
+	bool
+	default y if ARCH_ARM || ARCH_X86_64
+	help
+	  Ssystem() (GEMDOS 0x154, bdos/ssystem.c) is written in C and
+	  dispatched from osif(); on the other architectures it is handled by
+	  the assembly trap entry.  Not user-selectable: it follows the
+	  architecture.
 
 config CONF_WITH_USER_COPY
 	bool "Validate the pointers passed to GEMDOS calls" if !ARCH_X86_64 && !ARCH_M68K && CONF_WITH_KPROC

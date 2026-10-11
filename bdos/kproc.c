@@ -15,7 +15,7 @@
 #include "mem.h"
 #include "bdosstub.h"
 #include "biosext.h"
-#ifdef __x86_64__
+#if CONF_WITH_KHEAP
 #include "kheap.h"
 #include "kprint.h"
 #include "proc.h"
@@ -103,7 +103,7 @@ static KPROC *kproc_list;
 /* KPROC records are kernel-only objects.  On x86-64 they live in the
  * growable kernel heap, so the number of processes is bounded by memory
  * and not by the fixed xmgetblk() pool; they are never GEMDOS memory. */
-#ifdef __x86_64__
+#if CONF_WITH_KHEAP
 #define KPROC_ALLOC()   ((KPROC *)kalloc(sizeof(KPROC)))
 #define KPROC_FREE(k)   kfree(k)
 #else

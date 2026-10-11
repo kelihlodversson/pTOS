@@ -10,8 +10,9 @@
 #define KHEAP_H
 
 #include "portab.h"
+#include "config.h"
 
-#ifdef __x86_64__
+#if CONF_WITH_KHEAP
 
 /*
  * Memory for kernel-only objects: KPROC records, address-space and
@@ -52,6 +53,6 @@ typedef struct {
 
 void kheap_stats(KHEAP_STATS *stats);
 
-#endif /* __x86_64__ */
+#endif /* CONF_WITH_KHEAP */
 
 #endif /* KHEAP_H */

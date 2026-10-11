@@ -14,10 +14,11 @@
 #define _BDOSBIND_H
 
 #include "bdosdefs.h"
+#include "config.h"
 
-#if defined(__x86_64__) && defined(__LP64__)
+#if CONF_WITH_KCALL && defined(__LP64__)
 /*
- * Kernel code on x86-64 does not trap into GEMDOS: these are plain C calls
+ * Kernel code (CONF_WITH_KCALL) does not trap into GEMDOS: these are plain C calls
  * to the implementations (bdos/arch/x86_64/kcall.c).  Only the calls kernel
  * code makes exist.
  */
@@ -95,7 +96,7 @@ extern long trap1_pexec(short mode, const char *path, const char *tail, const ch
  * being equal there makes this a no-op, not because ARM's own trap1()
  * shares m68k's exact mechanism.
  */
-#if defined(__x86_64__)
+#if defined(__LP64__)
 #define TRAP1_ARG(x) ((long)(x))
 #else
 #define TRAP1_ARG(x) (x)

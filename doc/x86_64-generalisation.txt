@@ -107,12 +107,30 @@ cli/ and util/ to regenerate it).
    The #if/#ifdef around these calls is group 7.
 
 7. Architecture #ifdefs that guard a feature
-   __x86_64__ / ARCH_X86_64 / "__arm__ || __x86_64__" in bdos/bdosmain.c,
-   bdos/proc.c, bdos/umem.c, bios/bios.c, bios/xbios.c, include/xbiosbind.h,
-   include/biosbind.h, bios/ide.c, bios/vectors.h, include/intmath.h ...
-   Each is either a real difference (move to arch/) or a feature (Ssystem
-   additions, per-process address spaces, lazy memory, Psetlimit, ring-3
-   pointer validation): give the feature its Kconfig option.
+   7a (bdos/, include/): DONE.
+     __x86_64__ around procmem_*/proc_free_owned (bdos/mem.h, umem.c,
+       bdosmain.c's initial basepage and environment, include/procmem.h)
+       -> CONF_WITH_PROCMEM
+     __x86_64__ around kalloc()/kfree() for KPROC records (bdos/kproc.c,
+       include/kheap.h) -> new CONF_WITH_KHEAP (selected by
+       CONF_WITH_USER_ASPACE)
+     the GEMDOS calls kernel code makes without a trap (include/bdosbind.h,
+       bdos/arch/x86_64/kcall.c) -> new CONF_WITH_KCALL
+     Ssystem() in C (bdos/ssystem.c, osif()) -> new CONF_WITH_SSYSTEM
+     Super() answered by osif(), gouser() returning to the launcher
+       (bdos/proc.c, proc.h, bdosmain.c) -> CONF_WITH_USER_ASPACE
+     USERPTR_T / TRAP1_ARG widening -> __LP64__ (a property of the
+       compiler's pointer width, not of the architecture)
+     the first-run state of a process and the entry stack alignment, which
+       were three #if branches in proc.c (struct gouser_stack, the p_hitpa
+       rounding, proc_go()), are proc_launch_prepare()/proc_align_stack() in
+       bdos/arch/{m68k,arm,x86_64}/launch.c
+   7b: bios/ (bios.c, xbios.c, ide.c, blkdev.c, disk.c, ...), still to do.
+   Left for a later pass: "__arm__ || __x86_64__" that really means "not
+   m68k" -- GEMDOS/BIOS/XBIOS arguments as an array of native longs (osif(),
+   funcs[], W_N, biosbind.h, xbiosbind.h), md_index_t, bufl[], intmath.h,
+   lineavars.h, vdi/ -- an ABI property of the port that wants one option of
+   its own, not a feature option per site.
 
 Porting candidates (the audit of step 4 of #453)
 ------------------------------------------------

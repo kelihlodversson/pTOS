@@ -10,8 +10,9 @@
 #define PROCMEM_H
 
 #include "portab.h"
+#include "config.h"
 
-#ifdef __x86_64__
+#if CONF_WITH_PROCMEM
 
 /*
  * Process allocations
@@ -364,6 +365,6 @@ void kstack_free(UQUAD phys);
 /* Private backing pages the address space owns (diagnostics, tests). */
 ULONG aspace_private_pages(const ASPACE *as);
 
-#endif /* __x86_64__ */
+#endif /* CONF_WITH_PROCMEM */
 
 #endif /* PROCMEM_H */
