@@ -134,15 +134,4 @@ extern void enable_interrupts(void);
   );                                    \
 })
 
-/*
- * SET_ENTRY_POINT(var, fn) - store the address of the function fn in var, for
- * an entry point the kernel later jumps to.
- *
- * On x86-64 a plain `var = fn` lets the compiler pick GOT-indirected
- * addressing (R_X86_64_REX_GOTPCRELX) for a symbol it cannot prove local, and
- * this image's final link is PE, whose backend does not relax it as ELF does:
- * the load would read garbage.  `lea` is RIP-relative and always right.
- */
-#define SET_ENTRY_POINT(var, fn) __asm__("lea " #fn "(%%rip), %0" : "=r"(var))
-
 #endif /* ASM_H */
