@@ -30,7 +30,6 @@
 #include "pc_x86_64_gop.h"
 #include "smbios.h"
 #include "bios.h"
-#include "sysvar.h"
 #include "pe_reloc.h"
 
 /* This image's own boot-time stack. Used only from the higher-half jump
@@ -456,28 +455,11 @@ void NORETURN x86_64_higher_half_main(void)
     x86_64_low_tpa_init();
     earlycon_puts("pTOS x86-64: low TPA pool ready\n");
 
-    /* #351: the third, low-mapped pool for kernel-owned structures a
-     * 32-bit ABI field (the cookie jar) hands out by address -- see
-     * memory.c's own comment. Must run before fill_cookie_jar()
-     * (bios/machine.c, via bios_init()) or anything else that points a
-     * system variable (bios/vectors.h's vector_5ms_ptr, bios/scsidriv.h's
-     * scsidriv_root_ptr) into this pool. */
-    x86_64_low_kdata_init();
-
-    /*
-     * Reserve the storage of each system variable whose address a 32-bit
-     * cookie value hands out, here, well before the subsystem that populates
-     * it runs: fill_cookie_jar() reads their addresses back much earlier (see
-     * include/sysvar.h).
-     */
-    sysvars_alloc();
-    earlycon_puts("pTOS x86-64: low kernel-data pool ready\n");
-
     /*
      * #332: map the framebuffer x86_64_gop_probe() found (efi_main(),
      * above) into this kernel's own page tables, into the same low-canonical
-     * PML4 slot 0 pool as the TPA/kdata pools just set up (see memory.c's
-     * own comment) -- must run after x86_64_low_kdata_init(), and before
+     * PML4 slot 0 pool as the TPA pool just set up (see memory.c's
+     * own comment) -- must run after x86_64_low_tpa_init(), and before
      * bios_init()'s screen_init_mode()/screen_init_address() (bios/screen.c)
      * reach for pc_x86_64_gop_screenbase(). A no-op if no usable GOP
      * framebuffer was found.

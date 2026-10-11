@@ -124,19 +124,6 @@ config CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
 	  which is always the case on the FireBee, where the RAM is set up
 	  by the BaS, and whenever EmuTOS itself lives in RAM.
 
-
-config CONF_WITH_LOW_SYSVARS
-	bool
-	default y if ARCH_X86_64
-	help
-	  System variables whose address is handed out through a 32-bit field
-	  (the values of the '_5MS' and 'SCSI' cookies) are allocated by the
-	  machine (sysvar_alloc(), include/sysvar.h) from memory with a 32-bit
-	  address, instead of being placed by the linker.  Needed where the
-	  kernel's own data is not reachable by a 32-bit address while the
-	  programs' ABI is 32-bit.  Not user-selectable: it follows the
-	  architecture.
-
 endmenu
 
 menu "Storage devices"
@@ -176,6 +163,15 @@ config CONF_WITH_SCSI_DRIVER
 	  Provide the XHDI "SCSI Driver" interface, giving applications
 	  generic SCSI/ATAPI command pass-through to the ACSI/IDE/SCSI
 	  block devices.
+
+config CONF_WITH_ADDR_COOKIES
+	bool
+	default y if !ARCH_X86_64
+	help
+	  Publish the cookies whose value is the address of a kernel
+	  variable ('_5MS', 'SCSI').  A cookie value is 32 bits wide, so
+	  an architecture whose kernel data lives above 4 GiB cannot
+	  offer them.  Not user selectable: it follows the architecture.
 
 config CONF_WITH_GPT_SUPPORT
 	bool "GPT (GUID Partition Table) support"

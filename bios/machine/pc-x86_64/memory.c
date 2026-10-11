@@ -47,7 +47,6 @@
 #include "portab.h"
 #include "tosvars.h"
 #include "pc_x86_64_memory.h"
-#include "sysvar.h"
 #include "pgtable.h"
 #include "pmem.h"
 #include "procmem.h"
@@ -69,91 +68,22 @@ void pc_x86_64_memory_init(void)
  * still say where it sits, because the pool below is placed after it.
  */
 
-/*
- * A THIRD, independent pool (#351): kernel-owned structures that a 32-bit
- * ABI field hands out *by address* -- today, the cookie jar's own 'SCSI'
- * and '_5MS' entries (bios/machine.c's fill_cookie_jar(), guarded by
- * CONF_WITH_SCSI_DRIVER and !CONF_WITH_MFP, both true for this machine)
- * take the address of an ordinary higher-half kernel global
- * (scsidriv_root, vector_5ms) and truncate it to the ULONG a cookie's
- * value field can hold -- silently corrupting it, since this kernel's own
- * data lives at 0xffffffff80000000+, nowhere near representable in 32
- * bits. Not yet an active crash (nothing on this arch reads a cookie back
- * yet), but already-wrong data produced on every boot.
- *
- * Deliberately a THIRD pool rather than reusing the low TPA pool's own
- * spare space: the TPA pool's virtual range gets explicitly, selectively
- * remapped into a real process's own address space as user-accessible
- * (aspace_map_procmem(), via kproc.c) -- carving kernel-only bookkeeping
- * out of the same physical range would depend on every future caller of
- * that function continuing to avoid this pool's particular offset, an
- * invariant nothing enforces. This pool is never passed to
- * x86_64_map_user_page() at all, so it can never become ring-3-reachable
- * by construction, not by convention.
- *
- * Like the TPA pool, this only relocates each structure's *storage*: the
- * variable itself becomes a pointer into this pool (set once, at
- * kernel-init time, to whatever sysvar_alloc() hands back),
- * with a macro making every existing read/write/address-of site
- * transparently dereference that pointer instead of naming a fixed
- * symbol -- each site remains an ordinary higher-half global on every
- * other arch, where a 32-bit cookie value has never been a problem. See
- * bios/vectors.h/bios/scsidriv.h's own __x86_64__ branches for the
- * macro-indirection this pool feeds.
- *
- * Whether a real ring-3 process's own BIOS/XBIOS call could ever reach
- * scsidriv_root/vector_5ms while running under that process's own CR3
- * (which does not map this pool at all, the same gap #352 already tracks
- * for the low system-vector page) is not addressed here: no BIOS/XBIOS
- * call reachable from #334's current single-process milestone touches
- * either structure, so this pool's own kernel-only reachability is
- * sufficient for now, not a claim that it always will be.
- */
 /* Above the user image window (include/procmem.h): every address space maps
- * this pool and the framebuffer after it supervisor-only, so they must not
- * collide with anything a process maps for itself. */
-#define X86_64_LOW_KDATA_VIRT_BASE (USER_IMAGE_BASE + USER_IMAGE_SIZE)
-#define X86_64_LOW_KDATA_BYTES (2 * 1024 * 1024)
-
-static UQUAD low_kdata_next;
-static UQUAD low_kdata_end;
-
-void x86_64_low_kdata_init(void)
-{
-    UQUAD raw = x86_64_pmem_alloc_pages_below(
-        (X86_64_LOW_KDATA_BYTES + X86_64_PAGE_2M_SIZE) / X86_64_PAGE_SIZE,
-        0x100000000ULL);
-    UQUAD phys = (raw + X86_64_PAGE_2M_SIZE - 1) & ~(X86_64_PAGE_2M_SIZE - 1);
-
-    x86_64_map_kernel_pages(X86_64_LOW_KDATA_VIRT_BASE, phys,
-                             X86_64_LOW_KDATA_BYTES / X86_64_PAGE_2M_SIZE);
-
-    low_kdata_next = X86_64_LOW_KDATA_VIRT_BASE;
-    low_kdata_end = X86_64_LOW_KDATA_VIRT_BASE + X86_64_LOW_KDATA_BYTES;
-}
-
-void *sysvar_alloc(LONG needed)
-{
-    UQUAD aligned = (low_kdata_next + 15) & ~(UQUAD)15;
-
-    if (aligned + (UQUAD)needed > low_kdata_end)
-        return NULL;
-
-    low_kdata_next = aligned + (UQUAD)needed;
-    return (void *)(uintptr_t)aligned;
-}
+ * the framebuffer supervisor-only, so it must not collide with anything a
+ * process maps for itself. */
+#define X86_64_LOW_FB_VIRT_BASE (USER_IMAGE_BASE + USER_IMAGE_SIZE)
 
 /*
- * A FOURTH pool (#332): the EFI GOP framebuffer, mapped read/write into
+ * A third pool (#332): the EFI GOP framebuffer, mapped read/write into
  * this kernel's own page tables at a fixed low virtual base right after
- * the low-kdata pool. Unlike the other three, this one's physical backing
+ * the user image window. Unlike the other two, this one's physical backing
  * isn't allocated from pmem.c at all -- it's wherever firmware/hardware
  * already put the framebuffer (bios/machine/pc-x86_64/gop.c's own
  * x86_64_gop_probe() reads that address from GOP itself) -- this file
  * only maps that caller-given range, it never chooses or owns it.
  *
- * Placed in the same low-canonical, PML4-slot-0 region as the TPA/kdata
- * pools (reusing their already-built PD, not a fresh PML4 slot) rather
+ * Placed in the same low-canonical, PML4-slot-0 region as the TPA
+ * pool (reusing their already-built PD, not a fresh PML4 slot) rather
  * than somewhere in the kernel's own higher half, for two reasons: it
  * costs no extra PDPT/PD-pool budget (pgtable.c's MAX_PDPTS/MAX_PDS,
  * already fully spoken for -- see that file's own comment) the way a new
@@ -178,11 +108,10 @@ void *sysvar_alloc(LONG needed)
  * resolution outright, and real firmware reporting it is not implausible
  * (Copilot review, PR #373). Costs nothing extra in PDPT/PD-pool budget
  * either way: this whole pool shares PML4 slot 0's single PD with the
- * TPA/kdata pools (see above), which covers up to 1 GiB of virtual space
+ * TPA pool (see above), which covers up to 1 GiB of virtual space
  * at 2 MiB granularity -- 64 MiB is a small fraction of that, the same as
  * 16 MiB was.
  */
-#define X86_64_LOW_FB_VIRT_BASE (X86_64_LOW_KDATA_VIRT_BASE + X86_64_LOW_KDATA_BYTES)
 
 static UQUAD low_fb_end;
 
@@ -208,13 +137,13 @@ UQUAD x86_64_low_fb_init(UQUAD aligned_phys, UQUAD page_count)
 
 /*
  * The kernel-only low range [*start, *end) every process address space has
- * to carry besides the system-vector area at 0: the low kernel-data pool and
- * the framebuffer, if there is one.  Ring 0 touches them while servicing a
+ * to carry besides the system-vector area at 0: the framebuffer, if
+ * there is one.  Ring 0 touches them while servicing a
  * system call under the calling process's own CR3.
  */
 void x86_64_low_kernel_range(UQUAD *start, UQUAD *end)
 {
-    *start = X86_64_LOW_KDATA_VIRT_BASE;
-    *end = low_fb_end ? low_fb_end : X86_64_LOW_KDATA_VIRT_BASE + X86_64_LOW_KDATA_BYTES;
+    *start = X86_64_LOW_FB_VIRT_BASE;
+    *end = low_fb_end ? low_fb_end : X86_64_LOW_FB_VIRT_BASE;
 }
 

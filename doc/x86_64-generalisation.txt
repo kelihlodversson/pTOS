@@ -79,17 +79,14 @@ cli/ and util/ to regenerate it).
    boot test greps "process fault:").
 
 5. Fixed low memory pools (a board matter)                             DONE
-   x86_64_low_kdata_alloc, x86_64_vector_5ms_ptr/_alloc,
-   x86_64_scsidriv_root_ptr/_alloc are now sysvar_alloc() (the machine's
-   allocator, declared in include/sysvar.h), vector_5ms_ptr/vector_5ms_alloc()
-   and scsidriv_root_ptr/scsidriv_root_alloc(), guarded by the new
-   CONF_WITH_LOW_SYSVARS (bios/Kconfig; "system variables whose address a
-   32-bit cookie value hands out come from memory with a 32-bit address";
-   follows the architecture) instead of __x86_64__.  A new sysvars_alloc()
-   (bios/machine.c) calls the two allocations; the machine's startup calls it
-   once its pool is ready, so the board no longer names the variables.  The
-   pool itself (x86_64_low_kdata_init, x86_64_low_tpa_init and the
-   X86_64_LOW_* constants) stays in bios/machine/pc-x86_64/.
+   The pool (x86_64_low_kdata_*) and the x86_64_vector_5ms_ptr and
+   x86_64_scsidriv_root_ptr indirections existed only so that the '_5MS' and
+   'SCSI' cookies could hold a 32-bit address of a kernel variable.  An x32
+   program has no use for either cookie (no hooked 5 ms tick, no SCSI driver),
+   so they are no longer published there: the new CONF_WITH_ADDR_COOKIES
+   (bios/Kconfig; follows the architecture, off on x86-64) guards them in
+   fill_cookie_jar(), and vector_5ms/scsidriv_root are ordinary variables
+   everywhere.  The pool, the pointers and their __x86_64__ branches are gone.
 
 6. Hardware access from shared drivers
    x86_64_inb/outb/ide_insw/ide_outsw (bios/ide.c), x86_64_kernel_trap

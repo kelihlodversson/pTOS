@@ -142,29 +142,7 @@ volatile PFVOID *vector_address(ULONG address);
 
 /* Non-Atari hardware vectors */
 #if !CONF_WITH_MFP
-#if CONF_WITH_LOW_SYSVARS
-/*
- * fill_cookie_jar() (bios/machine.c) hands out &vector_5ms through the '_5MS'
- * cookie's 32-bit value field, which requires vector_5ms's own STORAGE to have
- * a 32-bit address: the machine provides it (sysvar_alloc(), include/sysvar.h)
- * and this pointer points there.  The macro makes every existing
- * read/write/address-of site (bios/mfp.c's assignment, machine.c's
- * cookie_add() call) dereference that pointer instead of naming a fixed
- * symbol; only the definition site (bios.c) and the one-time allocation
- * (mfp.c) differ.
- */
-extern void (**vector_5ms_ptr)(void);
-#define vector_5ms (*vector_5ms_ptr)
-
-/*
- * Reserves vector_5ms_ptr's own storage with sysvar_alloc().  Must run before
- * anything dereferences vector_5ms (the macro above) -- in particular before
- * fill_cookie_jar(); sysvars_alloc() calls it.
- */
-void vector_5ms_alloc(void);
-#else
 extern void (*vector_5ms)(void);              /* 200 Hz system timer */
-#endif
 #endif
 
 /*

@@ -58,7 +58,7 @@
  * memory map descriptor for it is ordinary EfiConventionalMemory or
  * EfiBootServices{Code,Data} on real firmware (nothing marks it
  * "reserved" on this OS's behalf), so without this exclusion a later
- * TPA/kdata/physmap allocation could receive the exact same physical
+ * TPA/physmap allocation could receive the exact same physical
  * pages the framebuffer is mapped to, silently corrupting the display or
  * whatever the allocator handed that range out for (Copilot review, PR
  * #373). Pass (0, 0) for any range a caller has nothing to reserve for

@@ -128,7 +128,7 @@ void procmem_stats(PROCMEM_STATS *stats);
  *
  * The kernel half (PML4 slots 256-511) is shared.  The low half starts with
  * the kernel's own low data, all of it supervisor-only (no user bit): the
- * system-vector area, the kernel-data pool and the framebuffer (see
+ * system-vector area and the framebuffer (see
  * doc/x86_64-address-space.txt, "Kernel low mappings"), because ring 0 runs
  * under a process's page tables while it services that process's system
  * calls.  The process window is empty except for what is mapped for the

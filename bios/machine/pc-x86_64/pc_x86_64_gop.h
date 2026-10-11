@@ -35,7 +35,7 @@ void x86_64_gop_probe(void *bs);
  * Maps the framebuffer x86_64_gop_probe() found into this kernel's own
  * page tables (bios/machine/pc-x86_64/memory.c's low-pool machinery) and
  * computes its real, dereferenceable virtual address. Must run after
- * x86_64_low_kdata_init() (same preconditions: the physical-memory direct
+ * x86_64_low_tpa_init() (same preconditions: the physical-memory direct
  * map and PML4 slot 0's low-pool PD must already exist) and before
  * anything calls the pc_x86_64_gop_*() accessors below -- in practice,
  * before biosmain() reaches bios_init()'s screen_init_mode()/
@@ -53,7 +53,7 @@ void x86_64_gop_init(void);
  * descriptor is ordinary EfiConventionalMemory/EfiBootServices{Code,Data}
  * on real firmware -- nothing marks it reserved on this OS's behalf. Pass
  * the result straight through as x86_64_pmem_init()'s third reserved
- * range so a later TPA/kdata/physmap allocation can never be handed the
+ * range so a later TPA/physmap allocation can never be handed the
  * same physical pages the framebuffer is mapped to.
  */
 void x86_64_gop_reserved_range(UQUAD *base, UQUAD *end);

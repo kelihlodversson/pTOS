@@ -538,7 +538,7 @@ int x86_64_unmap_user_page(UQUAD pml4_phys, UQUAD virt)
 
 /*
  * The kernel's own low-half 2 MiB mappings (the system-vector area, the
- * low kernel-data pool, the framebuffer) are reachable only in ring 0, but
+ * framebuffer) are reachable only in ring 0, but
  * ring 0 also runs under a process's CR3 while it services that process's
  * system calls, so every address space has to carry them -- supervisor-only.
  * These two functions let an address space copy such a mapping: the first

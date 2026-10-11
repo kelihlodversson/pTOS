@@ -171,8 +171,8 @@ void x86_64_gop_probe(void *bs_arg)
  *
  * x86_64_map_kernel_pages() only maps whole 2 MiB pages (this file's own
  * PD granularity, see pgtable.c) -- round the requested range out to
- * that, exactly like x86_64_low_tpa_init()/x86_64_low_kdata_init()
- * already do for their own allocations. gop_phys_base + gop_size cannot
+ * that, exactly like x86_64_low_tpa_init()
+ * already does for its own allocation. gop_phys_base + gop_size cannot
  * overflow this addition: x86_64_gop_probe() already rejected any mode
  * whose FrameBufferBase/FrameBufferSize couldn't safely take the extra
  * X86_64_PAGE_2M_SIZE this rounding needs.
@@ -202,7 +202,7 @@ void x86_64_gop_reserved_range(UQUAD *base, UQUAD *end)
      * this, a firmware-reported mode too large to ever actually get
      * mapped would still have its full (potentially huge) aligned range
      * reserved out of x86_64_pmem_init()'s free list, needlessly starving
-     * the TPA/kdata pools -- or worse, failing them outright -- for a
+     * the TPA pool -- or worse, failing it outright -- for a
      * framebuffer that x86_64_gop_init() is going to reject anyway
      * (Copilot review, PR #373). Returning an empty range here instead
      * reserves nothing for a mode that will map nothing.

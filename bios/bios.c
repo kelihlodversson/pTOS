@@ -162,15 +162,7 @@ UBYTE bootflags;
 
 /* Non-Atari hardware vectors */
 #if !CONF_WITH_MFP
-#if CONF_WITH_LOW_SYSVARS
-/* See bios/vectors.h: this is the pointer that vector_5ms is #define'd to
- * dereference, not a plain function-pointer variable, so it needs its own
- * declared type (bios/mfp.c allocates it with sysvar_alloc() before first
- * use). */
-void (**vector_5ms_ptr)(void);
-#else
 void (*vector_5ms)(void);       /* 200 Hz system timer */
-#endif
 #endif
 
 /*==== BOOT ===============================================================*/

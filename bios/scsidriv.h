@@ -103,30 +103,6 @@ typedef struct
         #define cErrReset   1
 } SCSIRoot;
 
-#if CONF_WITH_LOW_SYSVARS
-/*
- * fill_cookie_jar() (bios/machine.c) hands out &scsidriv_root through the
- * 'SCSI' cookie's 32-bit value field, which requires scsidriv_root's own
- * STORAGE to have a 32-bit address: the machine provides it (sysvar_alloc(),
- * include/sysvar.h) and this pointer points there.  The macro makes every
- * existing read/write/address-of site (scsidriv.c's own init and accessors,
- * machine.c's cookie_add() call) dereference that pointer instead of naming a
- * fixed symbol; only the definition site and the one-time allocation (both
- * scsidriv.c) differ.
- */
-extern SCSIRoot *scsidriv_root_ptr;
-#define scsidriv_root (*scsidriv_root_ptr)
-
-/*
- * Reserves scsidriv_root_ptr's own storage with sysvar_alloc().  Must run
- * before anything dereferences scsidriv_root (the macro above) -- in
- * particular before fill_cookie_jar(), which runs well before scsidriv_init()
- * itself (blkdev_init() calls that after bus detection); sysvars_alloc()
- * calls it.
- */
-void scsidriv_root_alloc(void);
-#else
 extern SCSIRoot scsidriv_root;
-#endif
 
 void scsidriv_init(void);

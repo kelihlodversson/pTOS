@@ -34,7 +34,6 @@
 
 #include "emutos.h"
 #include "scsidriv.h"
-#include "sysvar.h"
 #include "biosdefs.h"
 #include "biosext.h"
 #include "has.h"
@@ -79,15 +78,7 @@ static LONG scsidriv_Error(SCSIHandle handle, WORD rwflag, WORD errnum);
  * since adding subsequent SCSI driver handlers is done by overwriting
  * the existing data, not reallocating the cookie.
  */
-#if CONF_WITH_LOW_SYSVARS
-/* See scsidriv.h: this is the pointer that scsidriv_root is #define'd to
- * dereference, not a plain SCSIRoot variable, so it needs its own declared
- * type (scsidriv_root_alloc() allocates it with sysvar_alloc() before first
- * use). */
-SCSIRoot *scsidriv_root_ptr;
-#else
 SCSIRoot scsidriv_root;         /* in RAM so it can be modified */
-#endif
 
 const SCSIRoot scsidriv_root_init =
 {
@@ -104,23 +95,6 @@ const SCSIRoot scsidriv_root_init =
 };
 
 static UBYTE *frbptr;           /* set by scsidriv_init() */
-
-#if CONF_WITH_LOW_SYSVARS
-/*
- * Reserves scsidriv_root's own storage, separately from and well before
- * scsidriv_init() itself: fill_cookie_jar() reads &scsidriv_root (the 'SCSI'
- * cookie) before blkdev_init() ever calls scsidriv_init() (device/bus
- * detection needs probing that has to happen first) -- on every other machine
- * that ordering is harmless, since &scsidriv_root is a fixed link-time address
- * regardless of whether its contents have been initialized yet, but here the
- * address itself only exists once this runs.  Called from sysvars_alloc()
- * (bios/machine.c), which the machine calls once its pool is ready.
- */
-void scsidriv_root_alloc(void)
-{
-    scsidriv_root_ptr = sysvar_alloc(sizeof(*scsidriv_root_ptr));
-}
-#endif
 
 /*
  * bitmap of detected devices on each bus
@@ -146,9 +120,6 @@ void scsidriv_init(void)
     HandleEntry *h;
     ULONG bit;
 
-    /* scsidriv_root_ptr (see scsidriv.h) was already allocated by
-     * scsidriv_root_alloc(), well before this runs -- see that
-     * function's own comment for why. */
     scsidriv_root = scsidriv_root_init;
 
     for (bus = 0, bit = 1; bus <= MAX_BUS; bus++, bit <<= 1)
