@@ -161,9 +161,25 @@ typedef struct x86_64_aspace X86_64_ASPACE;
  *   0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB), then,
  *                             for a program loaded from a file, the startup
  *                             area X86_64_USER_IMAGE_SLACK long after it
- *   0x10000000 - 0x3effffff   Malloc() memory of a process, private pages
- *   0x3ffb0000 - 0x3ffb0fff   ancestors' basepages, read-only (see below)
- *   0x3ffc0000 - 0x3fffffff   user stack (256 KiB), growing down
+ *   0x0fff0000 - 0x0fff0fff   ancestors' basepages, read-only (see below)
+ *   0x10000000 - 0x7efeffff   Malloc() memory of a process, backed by private
+ *                             pages as they are first touched (see below)
+ *   0x7efff000 - 0x7effffff   guard page: neither heap nor stack, never mapped
+ *   0x7f000000 - 0x7fffffff   user stack (16 MiB by default), growing down,
+ *                             likewise; Psetlimit() can make it bigger, and
+ *                             the Malloc() memory then ends lower
+ *
+ * Everything stays below 0x80000000, so that every address of a process is a
+ * positive signed long (the old TOS habits of sign-extending pointers and of
+ * returning negative GEMDOS error codes in the same register as addresses).
+ *
+ * The heap and the stack are lazy: Malloc() hands out address space, and a page
+ * of it gets its (zeroed) physical page when the process first touches it, in
+ * the page fault handler (x86_64_aspace_fault_in()).  Untouched address space
+ * costs nothing, so the sum of what the processes may use is more than there is
+ * physical memory (overcommit); the process that touches a page when none is
+ * left is terminated, as Pterm(-1).  Malloc(-1) reports the largest free
+ * stretch of address space, as the TPA size does on the other platforms.
  *
  * The ancestors page holds scrubbed copies of the basepages of the process's
  * launcher, that one's launcher and so on (X86_64_USER_ANCESTORS levels at
@@ -171,7 +187,7 @@ typedef struct x86_64_aspace X86_64_ASPACE;
  * is 0).  The process's own p_parent points at the first.  Every copy's p_env
  * is the process's own environment.
  */
-#define X86_64_USER_ANCESTORS_VA 0x3ffb0000ULL
+#define X86_64_USER_ANCESTORS_VA 0x0fff0000ULL
 #define X86_64_USER_ANCESTORS    16
 #define X86_64_USER_IMAGE_BASE  0x00400000ULL
 #define X86_64_USER_IMAGE_SIZE  0x00400000ULL
@@ -184,9 +200,13 @@ typedef struct x86_64_aspace X86_64_ASPACE;
  * argv add a few hundred bytes. */
 #define X86_64_USER_IMAGE_SLACK 0x00020000ULL
 #define X86_64_USER_HEAP_BASE   0x10000000ULL
-#define X86_64_USER_HEAP_LIMIT  0x3f000000ULL
-#define X86_64_USER_STACK_TOP   0x40000000ULL
-#define X86_64_USER_STACK_SIZE  0x00040000ULL
+/* (the end of the heap with the default stack, a guard page below the stack's
+ * first; a process whose stack limit was raised has less) */
+#define X86_64_USER_HEAP_LIMIT  0x7efff000ULL
+#define X86_64_USER_STACK_TOP   0x80000000ULL
+/* the default size of the stack: address space, backed when touched */
+#define X86_64_USER_STACK_SIZE  0x01000000ULL
+#define X86_64_USER_STACK_MIN   0x00004000ULL   /* the least Psetlimit() allows */
 
 X86_64_ASPACE *x86_64_aspace_create(void);
 void x86_64_aspace_destroy(X86_64_ASPACE *as);
@@ -253,6 +273,24 @@ BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD p
  * is destroyed.
  */
 BOOL x86_64_aspace_unmap_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes);
+
+/*
+ * Lazy memory.  x86_64_aspace_fault_in() backs the page containing `va` with a
+ * new zeroed private page, with `prot`, if there is no mapping there yet (TRUE
+ * also if there is one already); FALSE if a physical page or a page table
+ * could not be had, or less than X86_64_FAULT_RESERVE of physical memory would
+ * be left (the kernel's own needs come first: the reserve is never dipped into,
+ * the tables the page may need counted).  x86_64_aspace_map_private() keeps the
+ * same reserve, for the pages of a program image and the like.  The caller has decided that the
+ * address belongs to a lazy area.  x86_64_aspace_release_lazy() is
+ * x86_64_aspace_unmap_private() for such an area: pages never touched are
+ * simply not there, and are skipped; FALSE, with nothing changed, if a page
+ * that is there is not one of its private pages.
+ */
+#define X86_64_FAULT_RESERVE 0x00400000ULL
+#define X86_64_FAULT_COST    0x00008000ULL      /* the most one page costs: it, 3 tables, bookkeeping */
+BOOL x86_64_aspace_fault_in(X86_64_ASPACE *as, UQUAD va, UWORD prot);
+BOOL x86_64_aspace_release_lazy(X86_64_ASPACE *as, UQUAD va, UQUAD bytes);
 
 /*
  * Hands private pages from one address space to another: [va, va + bytes) of

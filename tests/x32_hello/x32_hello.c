@@ -132,9 +132,9 @@ static int walk_ancestors(u64 basepage)
     while (at) {
         const volatile u32 *a = (const volatile u32 *)(unsigned long)at;
 
-        if (at < 0x3ffb0000u || at + 0x100 > 0x3ffb1000u || (at & 0xff) || n >= 16)
+        if (at < 0x0fff0000u || at + 0x100 > 0x0fff1000u || (at & 0xff) || n >= 16)
             return 0x7f;
-        if (a[11] != env || a[8] || a[9] > 0x3ffb1000u)
+        if (a[11] != env || a[8] || a[9] > 0x0fff1000u)
             return 0x7f;                /* p_env, p_uft, p_parent */
         if (a[12] || (a[13] & 0xffff))
             return 0x7f;                /* p_uft */
@@ -153,6 +153,20 @@ u32 x32_patch = 0x11111111;
 #ifdef X32_BIG
 static volatile unsigned char big_bss[6u << 20];
 #endif
+
+/* a deep recursion, 64 KiB a frame, to touch the stack down to n * 64 KiB */
+static int deep_stack(int n)
+{
+    volatile unsigned char buf[65536];
+
+    buf[0] = (unsigned char)n;
+    buf[sizeof buf - 1] = (unsigned char)n;
+    return n ? deep_stack(n - 1) + buf[0] : buf[0];
+}
+
+#define PSETLIMIT_CORE  2
+#define PSETLIMIT_DATA  3
+#define PSETLIMIT_STACK 0x100
 
 void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 {
@@ -203,8 +217,8 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 
         a = (u64)gemdos1r(0x48, 100000);
         b = (u64)gemdos1r(0x48, 4096);
-        if (a < 0x10000000ULL || a >= 0x3f000000ULL || (a & 0xfff) ||
-            b < 0x10000000ULL || b >= 0x3f000000ULL || (b & 0xfff))
+        if (a < 0x10000000ULL || a >= 0x7f000000ULL || (a & 0xfff) ||
+            b < 0x10000000ULL || b >= 0x7f000000ULL || (b & 0xfff))
             bad_heap |= 1;
         if (a < b + 4096 && b < a + 100000)
             bad_heap |= 2;                      /* overlap */
@@ -240,12 +254,197 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
             bad_heap |= 1024;
         if (gemdos1r(0x49, c | 0xffff00000000ULL) != 0)
             bad_heap |= 2048;
-        /* a large block is mapped and given back page by page without
-         * a search through every page the process owns (64 MiB: 16384 pages) */
+        /* a large block is reserved and given back without a search through
+         * every page the process owns (64 MiB: 16384 pages) */
         c = (u64)gemdos1r(0x48, 64 * 1024 * 1024);
         if (!c || gemdos1r(0x49, c) != 0)
             bad_heap |= 4096;
         gemdos1(0x4c, bad_heap);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'z') {
+        /* demand paging (#450): Malloc() hands out address space and a page
+         * gets its physical page when it is touched.  1.5 GiB is more than the
+         * test machine has; touched here and there it costs a few pages.  A
+         * kernel call that writes to or reads from an untouched page finds it
+         * backed. */
+        const u64 big_size = 0x60000000ULL;
+        volatile u32 *p;
+        u64 big, all, small;
+        int bad_lazy = 0;
+        static const char pattern[] = "\\";
+
+        all = (u64)gemdos1r(0x48, 0xffffffffULL);               /* Malloc(-1) */
+        if (all < 0x6e000000ULL || all > 0x7f000000ULL - 0x10000000ULL)
+            bad_lazy |= 1;
+        big = (u64)gemdos1r(0x48, big_size);
+        if (big < 0x10000000ULL || big + big_size > 0x7f000000ULL || (big & 0xfff)) {
+            gemdos1(0x4c, 2);
+        }
+        p = (volatile u32 *)(unsigned long)big;
+        if (p[0] || p[big_size / 8 / 4] || p[big_size / 4 - 1])
+            bad_lazy |= 4;                      /* zero, wherever it is */
+        p[0] = 0x11111111;
+        p[big_size / 8 / 4] = 0x22222222;
+        p[big_size / 4 - 1] = 0x33333333;
+        if (p[0] != 0x11111111 || p[big_size / 8 / 4] != 0x22222222 ||
+            p[big_size / 4 - 1] != 0x33333333)
+            bad_lazy |= 8;
+        /* the kernel writes to a page not touched yet (Dgetpath) ... */
+        if (gemdos3r(0x47, big + big_size / 2, 0, 0) != 0 ||
+            *(volatile unsigned char *)(unsigned long)(big + big_size / 2) != 0)
+            bad_lazy |= 16;
+        /* ... and reads from one (a file name: an empty name is no pointer error) */
+        if (gemdos2(0x3d, big + big_size / 4, 0) == -40)
+            bad_lazy |= 32;
+        (void)pattern;
+        if (gemdos1r(0x49, big) != 0)
+            bad_lazy |= 64;
+        /* a block shrunk or freed gives its touched pages back, the rest was never there */
+        small = (u64)gemdos1r(0x48, 8 * 4096);
+        ((volatile unsigned char *)(unsigned long)small)[0] = 1;
+        ((volatile unsigned char *)(unsigned long)small)[5 * 4096] = 1;
+        if (gemdos3r(0x4a, 0, small, 2 * 4096) != 0 ||
+            ((volatile unsigned char *)(unsigned long)small)[0] != 1)
+            bad_lazy |= 128;
+        if (gemdos1r(0x49, small) != 0)
+            bad_lazy |= 256;
+        gemdos1(0x4c, bad_lazy);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'Z') {
+        /* a page of a block that was freed is no longer lazy: touching it
+         * faults, which ends this process as Pterm(-1) (#450) */
+        volatile unsigned char *p = (volatile unsigned char *)(unsigned long)gemdos1r(0x48, 8192);
+
+        p[0] = 1;
+        gemdos1r(0x49, (u64)(unsigned long)p);
+        p[0] = 2;
+        gemdos1(0x4c, 0);               /* not reached */
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'Y') {
+        /* the same, but it is the kernel that touches the pages: Dgetpath()
+         * writes into one untouched page after the other.  Running out of
+         * physical pages ends the process, it is not a bad pointer (#450) */
+        u64 all = (u64)gemdos1r(0x48, 0xffffffffULL);
+        u64 p = (u64)gemdos1r(0x48, all);
+        u64 k;
+
+        for (k = 0; k < all; k += 4096)
+            if (gemdos3r(0x47, p + k, 0, 0) != 0)
+                gemdos1(0x4c, 0x66);    /* an error code: the process survived */
+        gemdos1(0x4c, 0x55);            /* the machine has more memory than that */
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'X') {
+        /* touch every page of all the address space there is: the machine has
+         * less memory, and the process that finds none left ends as Pterm(-1)
+         * without the kernel running out (#450) */
+        u64 all = (u64)gemdos1r(0x48, 0xffffffffULL);
+        volatile unsigned char *p = (volatile unsigned char *)(unsigned long)gemdos1r(0x48, all);
+        u64 k;
+
+        for (k = 0; k < all; k += 4096)
+            p[k] = 1;
+        gemdos1(0x4c, 0x55);            /* the machine has more memory than that */
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'l') {
+        /* Psetlimit() (#450): the defaults, MiNT's modes 2 and 3 and the stack
+         * (0x100), with a negative value only asking */
+        s64 a, rc;
+        int bad_lim = 0;
+
+        if (gemdos2(0x11f, PSETLIMIT_STACK, (u64)-1LL) != 0x1000000 ||
+            gemdos2(0x11f, PSETLIMIT_STACK, (u64)-1LL) != 0x1000000)
+            bad_lim |= 1;                       /* 16 MiB, and asking leaves it */
+        if (gemdos2(0x11f, 1, 0) != -32 || gemdos2(0x11f, 7, 0) != -32)
+            bad_lim |= 2;                       /* CPU time is not kept; no such mode */
+        if (gemdos2(0x11f, PSETLIMIT_DATA, (u64)-1LL) != 0 ||
+            gemdos2(0x11f, PSETLIMIT_CORE, (u64)-1LL) != 0)
+            bad_lim |= 4;                       /* no limit */
+        /* the allocatable memory */
+        if (gemdos2(0x11f, PSETLIMIT_DATA, 0x100000) != 0 ||
+            gemdos2(0x11f, PSETLIMIT_DATA, (u64)-1LL) != 0x100000)
+            bad_lim |= 8;
+        if (gemdos1r(0x48, 0x200000) != 0)
+            bad_lim |= 16;                      /* over the limit: no memory */
+        a = gemdos1r(0x48, 0x80000);
+        if (a <= 0)
+            bad_lim |= 32;
+        if (gemdos1r(0x48, 0xffffffffULL) != 0x80000)
+            bad_lim |= 64;                      /* Malloc(-1): what is left */
+        gemdos1r(0x49, (u64)a);
+        if (gemdos2(0x11f, PSETLIMIT_DATA, 0) != 0x100000)
+            bad_lim |= 128;                     /* no limit again; the old value */
+        a = gemdos1r(0x48, 0x200000);
+        if (a <= 0)
+            bad_lim |= 256;
+        gemdos1r(0x49, (u64)a);
+        /* the total memory counts the image too: this one is already bigger */
+        gemdos2(0x11f, PSETLIMIT_CORE, 4096);
+        if (gemdos1r(0x48, 4096) != 0)
+            bad_lim |= 512;
+        gemdos2(0x11f, PSETLIMIT_CORE, 0);
+        /* the stack: 64 MiB, so that the Malloc() memory ends lower */
+        if (gemdos2(0x11f, PSETLIMIT_STACK, 0x4000000) != 0x1000000 ||
+            gemdos2(0x11f, PSETLIMIT_STACK, (u64)-1LL) != 0x4000000)
+            bad_lim |= 1024;
+        if (gemdos1r(0x48, 0xffffffffULL) > 0x6c000000LL)
+            bad_lim |= 2048;
+        if (gemdos2(0x11f, PSETLIMIT_STACK, 100) != -64)
+            bad_lim |= 4096;                    /* too small */
+        if (gemdos2(0x11f, PSETLIMIT_STACK, 0) != 0x4000000 ||
+            gemdos2(0x11f, PSETLIMIT_STACK, (u64)-1LL) != 0x1000000)
+            bad_lim |= 8192;                    /* 0 is the default */
+        /* a block in the way of a bigger stack */
+        a = gemdos1r(0x48, 0x68000000);
+        if (a <= 0)
+            bad_lim |= 16384;
+        rc = gemdos2(0x11f, PSETLIMIT_STACK, 0x10000000);
+        if (rc != -39)
+            bad_lim |= 32768;
+        gemdos1r(0x49, (u64)a);
+        gemdos1(0x4c, bad_lim);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'R') {
+        /* a limit that is not a whole number of pages: Malloc(-1) reports what
+         * Malloc() will give, a whole number of pages (#450) */
+        u64 a;
+
+        gemdos2(0x11f, PSETLIMIT_DATA, 0x100064);
+        a = (u64)gemdos1r(0x48, 0xffffffffULL);
+        if (a != 0x100000)
+            gemdos1(0x4c, 1);
+        a = (u64)gemdos1r(0x48, a);
+        gemdos1(0x4c, a > 0 ? 0 : 2);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'G') {
+        /* the heap ends one guard page below the stack's address space: the
+         * largest block ends there, and the guard page is neither (#450) */
+        u64 all = (u64)gemdos1r(0x48, 0xffffffffULL);
+        u64 p = (u64)gemdos1r(0x48, all);
+
+        if (p + all != 0x7efff000ULL)
+            gemdos1(0x4c, 1);
+        *(volatile unsigned char *)(unsigned long)(p + all) = 1;   /* faults */
+        gemdos1(0x4c, 0);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'D') {
+        /* 20 MiB of stack is more than the default 16: the process faults */
+        gemdos1(0x4c, deep_stack(320) & 1);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'E') {
+        /* ... with a stack limit of 64 MiB it is fine, and the limit cannot
+         * then be put below what the stack has grown to */
+        if (gemdos2(0x11f, PSETLIMIT_STACK, 0x4000000) != 0x1000000)
+            gemdos1(0x4c, 1);
+        deep_stack(320);
+        if (gemdos2(0x11f, PSETLIMIT_STACK, 0x100000) != -64)
+            gemdos1(0x4c, 2);
+        gemdos1(0x4c, 0);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'Q') {
+        /* the limits of the launcher are this process's (what Psetlimit()
+         * set before the launch) */
+        gemdos1(0x4c, gemdos2(0x11f, PSETLIMIT_STACK, (u64)-1LL) == 0x2000000 &&
+                      gemdos2(0x11f, PSETLIMIT_DATA, (u64)-1LL) == 0x300000 ? 0 : 1);
     }
     if (cmdline[0] == 1 && cmdline[1] == 'i') {
         /* the code runs in the image window, wherever the program was linked

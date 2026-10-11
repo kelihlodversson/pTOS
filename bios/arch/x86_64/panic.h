@@ -42,8 +42,9 @@ typedef struct {
 } PACKED x86_64_exception_frame_t;
 
 /* Called from isr.S's common trampoline for every one of the 32 CPU
- * exception vectors (see idt.c).  Never returns: this milestone has no
- * recoverable fault handling, so every exception is fatal. */
-void x86_64_exception_dispatch(x86_64_exception_frame_t *frame) NORETURN;
+ * exception vectors (see idt.c).  Returns, to resume the interrupted code,
+ * only for a page fault that demand paging answered (a lazy page of a
+ * process's stack or Malloc() memory); every other exception is fatal. */
+void x86_64_exception_dispatch(x86_64_exception_frame_t *frame);
 
 #endif /* X86_64_PANIC_H */

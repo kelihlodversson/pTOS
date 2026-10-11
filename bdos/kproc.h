@@ -121,12 +121,25 @@ ULONG kproc_borrow_count(PD *launcher, void *block);
 UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top);
 /*
  * Malloc() memory of a process with an address space: private pages in
- * [X86_64_USER_HEAP_BASE, X86_64_USER_HEAP_LIMIT), freed with the process.
+ * [X86_64_USER_HEAP_BASE, X86_64_USER_HEAP_LIMIT), freed with the process;
+ * lazy: a page gets its physical page when it is first touched.
  * Alloc returns the address of `bytes` rounded up to whole pages (0: none),
  * largest what Malloc(-1) reports; free and shrink are Mfree() and
  * Mshrink() of a block's start (EIMBA: no such block, EGSBF: bigger).
  */
 BOOL kproc_has_heap(PD *pd);
+/* The page fault handler's question: `va` is in the stack or a Malloc() block of
+ * the process, whose page has not been touched yet.  0: it is not (a real fault);
+ * 1: it is, and the page is backed now; 2: it is, and no physical page was left
+ * (the process is to be terminated). */
+int kproc_demand_page(PD *pd, UQUAD va);
+/* Psetlimit(): modes 2 and 3 are MiNT's (total memory, Malloc()ed memory, in
+ * bytes), PSETLIMIT_STACK is this port's (the stack's address space); see
+ * bdos/kproc.c.  Returns the old value, or a negative error code. */
+#define PSETLIMIT_CORE  2
+#define PSETLIMIT_DATA  3
+#define PSETLIMIT_STACK 0x100
+LONG kproc_psetlimit(PD *pd, WORD mode, LONG value);
 UQUAD kproc_uheap_alloc(PD *pd, ULONG bytes);
 ULONG kproc_uheap_largest(PD *pd);
 LONG kproc_uheap_free(PD *pd, UQUAD va);

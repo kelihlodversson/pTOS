@@ -312,6 +312,24 @@ void gouser(void)
 }
 
 /*
+ * A page fault on a page that is not there (bios/arch/x86_64/panic.c asks
+ * before it treats the fault as fatal): if it is a page of the running process's
+ * stack or Malloc() memory, which are backed when first touched, back it and
+ * resume.  The process's address space must be the one in use; a fault at a user
+ * address while the kernel runs for the process (a buffer it did not validate)
+ * is answered the same way.  0: not a lazy page; 1: backed; 2: it is one and no
+ * physical page is left.
+ */
+int x86_64_demand_page(UQUAD address)
+{
+    UQUAD pml4 = kproc_user_pml4(run);
+
+    if (address >= X86_64_USER_VA_LIMIT || !pml4 || pml4 != x86_64_read_cr3())
+        return 0;
+    return kproc_demand_page(run, address);
+}
+
+/*
  * A ring-3 process faulted (bios/arch/x86_64/panic.c).  The fault is the
  * process's own: report it and terminate just that process, as Pterm(-1)
  * would, so the launcher resumes and the kernel carries on.  Called on the

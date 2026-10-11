@@ -727,6 +727,54 @@ static void test_isolation(void)
     x86_64_aspace_destroy(b);
     same(&s, "layout");
 
+    /* lazy pages: a page is backed on request, zeroed, once; the pages that
+     * were never touched are skipped when the area is given back */
+    a = must_create("lazy address space");
+    if (a) {
+        UWORD rw = ASPACE_PROT_WRITE | ASPACE_PROT_USER, prot;
+        UQUAD va = 0x20000000ULL, phys;
+        ULONG before = x86_64_aspace_private_pages(a);
+
+        CHECK(!x86_64_aspace_translate(a, va, NULL, NULL), "a lazy page is not there yet");
+        CHECK(x86_64_aspace_fault_in(a, va + 0x123, rw) &&
+              x86_64_aspace_translate(a, va, &phys, &prot) && (prot & ASPACE_PROT_USER) &&
+              (prot & ASPACE_PROT_WRITE) && !(prot & ASPACE_PROT_EXEC) &&
+              x86_64_aspace_private_pages(a) == before + 1,
+              "fault_in backs the page containing the address");
+        CHECK(*(volatile UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + phys) == 0 &&
+              *(volatile UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + phys + PAGE - 8) == 0,
+              "and it is zeroed");
+        CHECK(x86_64_aspace_fault_in(a, va, rw) && x86_64_aspace_private_pages(a) == before + 1,
+              "a page that is there is left as it is");
+        CHECK(x86_64_aspace_fault_in(a, va + 100 * PAGE, rw) &&
+              x86_64_aspace_private_pages(a) == before + 2,
+              "a second page, far away");
+        CHECK(!x86_64_aspace_fault_in(a, X86_64_USER_VA_LIMIT, rw), "not above the 32-bit limit");
+        CHECK(x86_64_aspace_release_lazy(a, va, 200 * PAGE) &&
+              x86_64_aspace_private_pages(a) == before &&
+              !x86_64_aspace_translate(a, va, NULL, NULL) &&
+              !x86_64_aspace_translate(a, va + 100 * PAGE, NULL, NULL),
+              "release_lazy skips the pages never touched and frees the others");
+        CHECK(x86_64_aspace_release_lazy(a, va, 200 * PAGE), "and an empty range is nothing");
+        /* eager mapping keeps the kernel's reserve too: a range that would take
+         * all but half of it is refused, and nothing is left behind */
+        {
+            UQUAD free_bytes = x86_64_pmem_free_bytes();
+            UQUAD big = (free_bytes - X86_64_FAULT_RESERVE / 2) & ~(PAGE - 1);
+
+            CHECK(big < X86_64_USER_VA_LIMIT - 0x30000000ULL &&
+                  !x86_64_aspace_map_private(a, 0x30000000ULL, big, rw) &&
+                  x86_64_pmem_free_bytes() == free_bytes &&
+                  x86_64_aspace_private_pages(a) == before,
+                  "map_private leaves the reserve alone");
+            CHECK(x86_64_aspace_map_private(a, 0x30000000ULL, 16 * PAGE, rw) &&
+                  x86_64_aspace_release_lazy(a, 0x30000000ULL, 16 * PAGE),
+                  "and a small range is fine");
+        }
+    }
+    x86_64_aspace_destroy(a);
+    same(&s, "lazy pages");
+
     /* many create/map/destroy cycles, and failure at every allocation point */
     for (i = 0; i < 300; i++) {
         a = x86_64_aspace_create();
@@ -1411,6 +1459,32 @@ static void test_ring3(void)
     }
     same(&s, "failed PE_LOAD launches");
 
+    /* Psetlimit(): the limits, the stack size, inheritance (#450) */
+    {
+        snap(&s);
+        rc = run_probe('N');
+        if (rc == 0x100) {
+            kcprintf("x86-64 psetlimit: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "Psetlimit sets and reports the limits, the stack grows to its limit, children inherit");
+            kcprintf(rc == 0 ? "x86-64 psetlimit: PASS\n" : "x86-64 psetlimit: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "a program that sets limits");
+    }
+
+    /* a program's memory is backed when it is touched (#450) */
+    {
+        snap(&s);
+        rc = run_probe('M');
+        if (rc == 0x100) {
+            kcprintf("x86-64 demand paging: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "address space beyond the machine's memory is lazy, and running out ends only the process");
+            kcprintf(rc == 0 ? "x86-64 demand paging: PASS\n" : "x86-64 demand paging: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "a program that runs out of memory");
+    }
+
     /* a program loaded from a file gets Malloc() memory of its own (#434) */
     {
         snap(&s);
@@ -1538,8 +1612,10 @@ static void test_ring3(void)
             ran++;
         else if (rc == ENSMEM)
             refused++;
+        else if (rc == 0xffff)
+            ;                   /* (the stack is lazy: it ran, and was ended for want of a page) */
         else if (rc != -1000)
-            CHECK(FALSE, "a launch under memory pressure either runs or is refused");
+            CHECK(FALSE, "a launch under memory pressure either runs, is refused or loses a page");
     }
     if (refused < 5 || ran < 1)
         kcprintf("memtest: %d launches refused, %d ran\n", refused, ran);
