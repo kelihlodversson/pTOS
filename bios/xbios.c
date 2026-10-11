@@ -1331,25 +1331,9 @@ LONG xbios_do_unimpl(WORD number)
     return number;
 }
 
-LONG xbios_unimpl(void);    /* defined in vectors.S; x86-64 below */
+LONG xbios_unimpl(void);    /* defined in vectors.S, or bios/arch/x86_64/vectors.c */
 LONG supexec(PFLONG);       /* defined in vectors.S */
 
-#if defined(__x86_64__)
-/*
- * m68k/ARM's xbios_unimpl is a trampoline that reads the requested
- * function number out of a register the shared trap-entry dispatch left
- * it in, then tail-calls xbios_do_unimpl() with it. This arch's
- * dispatcher (bios/arch/x86_64/trap.c) calls xbios_vecs[fn] directly with
- * no such register to read fn back out of, so it special-cases this
- * exact function pointer before ever calling it (same as an out-of-range
- * fn) -- this body exists only so the symbol is valid and unimplemented
- * xbios_vecs[] slots have something real to take the address of.
- */
-LONG xbios_unimpl(void)
-{
-    return -1;
-}
-#endif
 
 #if defined(__m68k__)
 extern LONG supexec(PFLONG);   /* implemented in vectors.S */
@@ -1409,7 +1393,7 @@ const PFLONG xbios_vecs[] = {
 #else
     VEC(xbios_f, rsconf),
 #endif
-#if defined(__x86_64__)
+#if CONF_WITH_USER_ASPACE
     xbios_unimpl,   /* 10 keytbl -- needs a user-mapped 32-bit keytable */
 #else
     VEC(xbios_10, keytbl),

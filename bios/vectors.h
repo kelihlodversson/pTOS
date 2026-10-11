@@ -61,7 +61,7 @@ extern WORD trap_save_area[];
 #ifdef __arm__
 volatile PFVOID *vector_address(ULONG address);
 #define VEC_AT(address) (*vector_address(address))
-#elif defined(__x86_64__)
+#elif defined(__LP64__)
 /* This whole table is a fixed, historical 32-bit-per-slot layout (see
  * #351): setexc()'s generic path (bios/bios.c) reads and writes every
  * one of these cells -- and every other Setexc()-addressable vector
@@ -92,7 +92,7 @@ volatile PFVOID *vector_address(ULONG address);
  * read-back still gets *something* plausible-looking rather than
  * always-zero, matching every other slot's own convention, without
  * ever touching the next slot the way a full 8-byte store would. */
-#if defined(__x86_64__)
+#if defined(__LP64__)
 #define SET_VEC(cell, fn) ((cell) = (LONG)(long)(fn))
 #else
 #define SET_VEC(cell, fn) ((cell) = (fn))

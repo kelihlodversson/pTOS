@@ -17,7 +17,7 @@
 #include "pic.h"
 #include "pit.h"
 #include "ps2.h"
-#include "irq.h"
+#include "machine.h"
 #include "io.h"
 #include "vectors.h"
 #include "earlycon.h"
@@ -63,6 +63,19 @@ void x86_64_pc_irq_dispatch(int vector)
     x86_64_pic_send_eoi(vector);
 }
 
+/*
+ * Remaps and configures the legacy PIC (bios/machine/pc-x86_64/pic.h),
+ * installs this machine's three device-IRQ IDT gates (timer, keyboard,
+ * mouse -- irqasm.S's own stubs), programs the PIT for a 200 Hz tick
+ * (pit.h) and brings up the PS/2 controller (ps2.h), unmasks all
+ * three lines, and finally enables interrupts (`sti`).  Declared in
+ * bios/machine.h and called by
+ * bios/bios.c once every other machine's platform-specific setup has already
+ * run, so the very first interrupt that can arrive always has a real,
+ * installed handler waiting for it.  Must run after x86_64_idt_init()
+ * (bios/arch/x86_64/idt.c) and x86_64_gdt_init() (the IDT and its gates must
+ * exist before this adds more of them).
+ */
 void machine_irq_init(void)
 {
     x86_64_pic_remap();

@@ -756,7 +756,7 @@ static UWORD ide_device_type(WORD dev)
  * timeouts (100ms/3s) rather than orders of magnitude off. Revisit once
  * this arch has a real time source (#329's later milestones).
  */
-#ifdef __x86_64__
+#ifdef MACHINE_PC_X86_64
 #define IDE_TIMEOUT_INIT(timeout)   LONG ide_spins_left = (LONG)(timeout) * 5000L
 #define IDE_TIMEOUT_EXPIRED(next)   (ide_spins_left-- <= 0)
 #else
@@ -1088,7 +1088,7 @@ static void ide_get_data_32(volatile struct IDE *interface,UBYTE *buffer,ULONG b
 /*
  * get data from IDE device
  */
-#ifdef __x86_64__
+#ifdef MACHINE_PC_X86_64
 /*
  * x86-64's own data-register bulk transfer: the port-I/O equivalent of
  * the m68k unrolled-loop path below, which this arch can't use at all
@@ -1188,7 +1188,7 @@ static void ide_get_data(volatile struct IDE *interface,UBYTE *buffer,ULONG buff
         }
     }
 }
-#endif /* __x86_64__ */
+#endif /* MACHINE_PC_X86_64 */
 
 /*
  * read from the IDE device
@@ -1291,7 +1291,7 @@ static LONG ide_read(UBYTE cmd,UWORD ifnum,UWORD dev,ULONG sector,UWORD count,UB
 /*
  * send data to IDE device
  */
-#ifdef __x86_64__
+#ifdef MACHINE_PC_X86_64
 /* x86-64's own data-register bulk transfer -- see ide_get_data()'s own
  * comment above for why this can't share the m68k path below. */
 static void ide_put_data(volatile struct IDE *interface,UBYTE *buffer,ULONG bufferlen,int need_byteswap)
@@ -1374,7 +1374,7 @@ static void ide_put_data(volatile struct IDE *interface,UBYTE *buffer,ULONG buff
         }
     }
 }
-#endif /* __x86_64__ */
+#endif /* MACHINE_PC_X86_64 */
 
 /*
  * write to the IDE device

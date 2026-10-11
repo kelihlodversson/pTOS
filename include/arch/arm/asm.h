@@ -157,4 +157,11 @@ extern void enable_interrupts(void);
    ULONG _count = (count);             \
    while(_count) {_count--;}           \
  })
+
+/*
+ * SET_ENTRY_POINT(var, fn) - store the address of the function fn in var, for
+ * an entry point the kernel later jumps to.
+ */
+#define SET_ENTRY_POINT(var, fn) ((var) = (fn))
+
 #endif /* ASM_H */

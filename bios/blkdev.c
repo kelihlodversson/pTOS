@@ -433,7 +433,7 @@ int add_partition(UWORD unit, LONG *devices_available, char id[], ULONG start, U
 
 #define CNTMAX  0x7FFF  /* 16-bit MAXINT */
 
-#ifdef __x86_64__
+#if CONF_WITH_USER_ASPACE
 BOOL blkdev_rwabs_buffer_size(WORD rw, WORD cnt, WORD dev, ULONG *size)
 {
     ULONG record_size;
