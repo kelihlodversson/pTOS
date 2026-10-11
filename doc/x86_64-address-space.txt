@@ -253,10 +253,26 @@ private:
                     backed when allocated.
 
 Because the address spaces are separate, two processes use the same addresses
-for their own images, stacks and heaps and neither sees the other's.  A TOS
-program's idea of its TPA -- a block after the basepage to carve a stack out
-of with Mshrink() -- does not hold here: libcmini's startup code skips that
-step on this architecture.
+for their own images, stacks and heaps and neither sees the other's.
+
+What a process starts with (the x32 start contract).  The kernel does what the
+startup code of a TOS program does for itself on m68k and ARM, as Linux does for
+an ELF program:
+
+  - the process runs on its private stack, with RSP set, and nothing to
+    allocate: its pages are backed as they are touched;
+  - it needs no Mshrink() and has no TPA to carve a stack and a heap out of:
+    Malloc() hands out address space of its own (the p_hitpa of its basepage is
+    not a limit it has to respect or shrink);
+  - there is no _stksize: the stack is 16 MiB of address space for every
+    process;
+  - the program header flags (PF_*: TT-RAM, memory protection, TPA size) are
+    part of the TOS executable format and do not exist in an ELF file, so there
+    is nothing to read them from.
+
+libcmini's startup for x32 (sources/arch/x86_64, _crtinit() in main.c) therefore
+only parses argv and environ into the startup area after the bss, runs the
+constructors and calls main().
 
 
 Faults and termination
