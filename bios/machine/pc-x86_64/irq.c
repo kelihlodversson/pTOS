@@ -18,6 +18,7 @@
 #include "pit.h"
 #include "ps2.h"
 #include "irq.h"
+#include "io.h"
 #include "vectors.h"
 #include "earlycon.h"
 #include "ikbd.h"
@@ -36,7 +37,7 @@ extern void x86_64_irq44(void);
 /* Called from irqasm.S's common trampoline for every device IRQ this
  * machine handles. Always sends EOI, even for a vector with no case
  * below (unreachable in practice: the PIC is never unmasked for a line
- * without a case here -- see x86_64_irq_init()), so a stray/spurious IRQ
+ * without a case here -- see machine_irq_init()), so a stray/spurious IRQ
  * can never leave a chip believing itself still "in service" and unable
  * to raise another. */
 void x86_64_pc_irq_dispatch(int vector)
@@ -62,7 +63,7 @@ void x86_64_pc_irq_dispatch(int vector)
     x86_64_pic_send_eoi(vector);
 }
 
-void x86_64_irq_init(void)
+void machine_irq_init(void)
 {
     x86_64_pic_remap();
 
@@ -81,4 +82,6 @@ void x86_64_irq_init(void)
     x86_64_pic_unmask(X86_64_IRQ_COM1);
     earlycon_enable_rx_interrupt();
 #endif
+
+    x86_64_sti();
 }

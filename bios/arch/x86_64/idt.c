@@ -82,8 +82,8 @@ static inline void lidt(const dtr_t *idtr)
  * back on before it has device IRQ handling ready for what it unmasks. */
 static void mask_legacy_pic(void)
 {
-    x86_64_outb(0x21, 0xFF);
-    x86_64_outb(0xA1, 0xFF);
+    port_outb(0x21, 0xFF);
+    port_outb(0xA1, 0xFF);
 }
 
 void x86_64_idt_init(void)

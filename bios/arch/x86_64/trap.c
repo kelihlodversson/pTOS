@@ -498,16 +498,16 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     }
 }
 
-long x86_64_kernel_trap(long rax, long rdi, long rsi, long rdx, long r10)
+long kernel_trap(long callno, long arg1, long arg2, long arg3, long arg4)
 {
     x86_64_trap_frame_t frame;
 
-    frame.rax = (UQUAD)rax;
-    frame.rdi = (UQUAD)rdi;
-    frame.rsi = (UQUAD)rsi;
-    frame.rdx = (UQUAD)rdx;
-    frame.r10 = (UQUAD)r10;
-    if ((UQUAD)rax >> 32 == X86_64_TRAP_GEMDOS)
+    frame.rax = (UQUAD)callno;
+    frame.rdi = (UQUAD)arg1;
+    frame.rsi = (UQUAD)arg2;
+    frame.rdx = (UQUAD)arg3;
+    frame.r10 = (UQUAD)arg4;
+    if ((UQUAD)callno >> 32 == X86_64_TRAP_GEMDOS)
         return EINVFN;          /* kernel code calls GEMDOS directly (kcall.c) */
     x86_64_trap_dispatch(&frame, 0);
     return (long)frame.rax;

@@ -14,15 +14,14 @@
  * Remaps and configures the legacy PIC (bios/machine/pc-x86_64/pic.h),
  * installs this machine's three device-IRQ IDT gates (timer, keyboard,
  * mouse -- irqasm.S's own stubs), programs the PIT for a 200 Hz tick
- * (pit.h) and brings up the PS/2 controller (ps2.h), then unmasks all
- * three lines. Does not itself enable interrupts (no `sti`) -- CPU-wide
- * interrupt enable is bios/bios.c's own call, once every other
- * machine's platform-specific setup (this included) has already run, so
- * the very first interrupt that can arrive always has a real, installed
- * handler waiting for it. Must run after x86_64_idt_init() (bios/arch/
- * x86_64/idt.c) and x86_64_gdt_init() (the IDT and its gates must exist
- * before this adds more of them).
+ * (pit.h) and brings up the PS/2 controller (ps2.h), unmasks all
+ * three lines, and finally enables interrupts (`sti`).  Called by
+ * bios/bios.c once every other machine's platform-specific setup has already
+ * run, so the very first interrupt that can arrive always has a real,
+ * installed handler waiting for it.  Must run after x86_64_idt_init()
+ * (bios/arch/x86_64/idt.c) and x86_64_gdt_init() (the IDT and its gates must
+ * exist before this adds more of them).
  */
-void x86_64_irq_init(void);
+void machine_irq_init(void);
 
 #endif /* PC_X86_64_IRQ_H */

@@ -450,7 +450,7 @@ UQUAD x86_64_pmem_bad_frees(void)
     return bad_frees;
 }
 
-UQUAD x86_64_pmem_free_bytes(void)
+UQUAD pmem_free_bytes(void)
 {
     return total_free;
 }

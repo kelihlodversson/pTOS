@@ -329,7 +329,7 @@ void x86_64_smbios_probe(void *system_table)
         read_system_info(table, size);
 }
 
-const char *x86_64_smbios_machine_name(void)
+const char *pc_x86_64_machine_name(void)
 {
     return smbios_name[0] ? smbios_name : NULL;
 }

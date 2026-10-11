@@ -1,16 +1,17 @@
 /*
- * ide_io.h - x86-64 port I/O primitives for bios/ide.c's ATA register access
+ * port_io.h - x86-64 port I/O primitives (word access, block transfers)
  *
  * A legacy PC IDE controller's ATA task-file registers are port-mapped
  * (in/out at fixed I/O ports), unlike every other machine bios/ide.c
  * supports, which memory-maps them (a real struct with byte offsets,
- * dereferenced directly). This header gives ide.c's own x86-64 register-
- * access macros (see its MACHINE_PC_X86_64 branch) the primitives they
- * need instead, so the shared ATA protocol logic in ide.c itself stays
- * arch-neutral.
+ * dereferenced directly). This header gives ide.c's x86-64 register-access
+ * macros (see its MACHINE_PC_X86_64 branch) the primitives they need
+ * instead, so the shared ATA protocol logic in ide.c itself stays
+ * arch-neutral.  The port_*() names are general: any architecture with
+ * a separate I/O address space provides them from its arch/ directory.
  *
  * Single-register access (inb()/outb()) reuses bios/arch/x86_64/io.h's
- * existing x86_64_inb()/x86_64_outb() -- this file only adds what that
+ * existing port_inb()/port_outb() -- this file only adds what that
  * one doesn't already have: word-wide single-register access and the
  * block transfer primitives PIO sector reads/writes need.
  *
@@ -20,13 +21,13 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-#ifndef X86_64_IDE_IO_H
-#define X86_64_IDE_IO_H
+#ifndef X86_64_PORT_IO_H
+#define X86_64_PORT_IO_H
 
-#include "io.h"     /* x86_64_inb()/x86_64_outb(), reused directly */
+#include "io.h"     /* port_inb()/port_outb(), reused directly */
 
-UWORD x86_64_ide_inw(UWORD port);
-void x86_64_ide_outw(UWORD port, UWORD val);
+UWORD port_inw(UWORD port);
+void port_outw(UWORD port, UWORD val);
 
 /*
  * Block-transfers `count` UWORDs between `port` and `buffer` via the
@@ -35,7 +36,7 @@ void x86_64_ide_outw(UWORD port, UWORD val);
  * (ide_get_data()/ide_put_data()'s __x86_64__ branch calls these
  * instead of that loop). `buffer` need not be aligned.
  */
-void x86_64_ide_insw(UWORD port, void *buffer, ULONG count);
-void x86_64_ide_outsw(UWORD port, const void *buffer, ULONG count);
+void port_insw(UWORD port, void *buffer, ULONG count);
+void port_outsw(UWORD port, const void *buffer, ULONG count);
 
-#endif /* X86_64_IDE_IO_H */
+#endif /* X86_64_PORT_IO_H */

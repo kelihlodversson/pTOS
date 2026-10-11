@@ -20,7 +20,7 @@
 #include "biosargs.h"
 #endif
 #ifdef __x86_64__
-#include "asm.h"        /* x86_64_kernel_trap() */
+#include "asm.h"        /* kernel_trap() */
 #endif
 
 #define Getmpb(a) bios_v_l(0x0,a)
@@ -37,7 +37,7 @@
 #define Kbshift(a) bios_l_w(0xb,a)
 
 /*
- * x86-64 calling convention (bios/arch/x86_64/trap.h): x86_64_kernel_trap()'s
+ * x86-64 calling convention (bios/arch/x86_64/trap.h): kernel_trap()'s
  * first argument packs trap_class << 32 | function_number (13 = the
  * historic m68k BIOS trap number, kept here as a literal the same way
  * m68k's own "trap #13" below is a literal -- neither wants a dependency
@@ -64,7 +64,7 @@ static __inline__ void bios_v_l(int op, long a)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
 #elif defined(__x86_64__)
-    x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, 0, 0, 0);
+    kernel_trap(((long)13 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     __asm__ volatile (
         "move.l  %1,-(sp)\n\t"
@@ -93,7 +93,7 @@ static __inline__ void bios_v_ww(int op, short a, short b)
         : "r3", "r12", "lr",  "memory", "cc"
     );
 #elif defined(__x86_64__)
-    x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, b, 0, 0);
+    kernel_trap(((long)13 << 32) | (unsigned)op, a, b, 0, 0);
 #else
     __asm__ volatile (
         "move.w  %2,-(sp)\n\t"
@@ -125,7 +125,7 @@ static __inline__ short bios_w_w(int op, short a)
     );
     return (short)_r0;
 #elif defined(__x86_64__)
-    return (short)x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, 0, 0, 0);
+    return (short)kernel_trap(((long)13 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -154,7 +154,7 @@ static __inline__ long bios_l_v(int op)
     );
     return _r0;
 #elif defined(__x86_64__)
-    return x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, 0, 0, 0, 0);
+    return kernel_trap(((long)13 << 32) | (unsigned)op, 0, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -185,7 +185,7 @@ static __inline__ long bios_l_w(int op, short a)
     );
     return _r0;
 #elif defined(__x86_64__)
-    return x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, 0, 0, 0);
+    return kernel_trap(((long)13 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -218,7 +218,7 @@ static __inline__ long bios_l_ww(int op, short a, short b)
     );
     return _r0;
 #elif defined(__x86_64__)
-    return x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, b, 0, 0);
+    return kernel_trap(((long)13 << 32) | (unsigned)op, a, b, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -252,7 +252,7 @@ static __inline__ long bios_l_wl(int op, short a, long b)
     );
     return _r0;
 #elif defined(__x86_64__)
-    return x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, a, b, 0, 0);
+    return kernel_trap(((long)13 << 32) | (unsigned)op, a, b, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -303,7 +303,7 @@ bios_l_wlwwwl(int op, short a, long b, short c, short d, short e, long f)
     );
     return _r0;
 #elif defined(__x86_64__)
-    return x86_64_kernel_trap(((long)13 << 32) | (unsigned)op, (long)&args, 0, 0, 0);
+    return kernel_trap(((long)13 << 32) | (unsigned)op, (long)&args, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 

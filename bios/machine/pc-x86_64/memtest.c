@@ -89,7 +89,7 @@ static ULONG dir_refs(void)
 static void snap(SNAP *s)
 {
     s->dir_refs = dir_refs();
-    s->pmem_free = x86_64_pmem_free_bytes();
+    s->pmem_free = pmem_free_bytes();
     s->pmem_bad = x86_64_pmem_bad_frees();
     kheap_stats(&s->heap);
     procmem_stats(&s->pm);
@@ -149,14 +149,14 @@ static void test_pmem(void)
 
     a = x86_64_pmem_try_alloc_pages(4, 0);
     CHECK(a != X86_64_PMEM_NONE && !(a & (PAGE - 1)), "pmem alloc");
-    CHECK(x86_64_pmem_free_bytes() == s.pmem_free - 4 * PAGE, "pmem accounting");
+    CHECK(pmem_free_bytes() == s.pmem_free - 4 * PAGE, "pmem accounting");
 
     /* free out of order: the pieces must coalesce back, not fragment */
     CHECK(x86_64_pmem_free_pages(a + 2 * PAGE, 1), "free middle");
     CHECK(x86_64_pmem_free_pages(a, 1), "free first");
     CHECK(x86_64_pmem_free_pages(a + PAGE, 1), "free second");
     CHECK(x86_64_pmem_free_pages(a + 3 * PAGE, 1), "free last");
-    CHECK(x86_64_pmem_free_bytes() == s.pmem_free, "pmem restored");
+    CHECK(pmem_free_bytes() == s.pmem_free, "pmem restored");
     /* first-fit is by list slot, not address, so a need not come back;
      * but a 4-page run must exist at or below the end of the freed one */
     b = x86_64_pmem_try_alloc_pages(4, a + 4 * PAGE);
@@ -178,12 +178,12 @@ static void test_pmem(void)
           "kernel image page refused");
     CHECK(!x86_64_pmem_free_pages(0, 1), "unmanaged page refused");
     CHECK(x86_64_pmem_bad_frees() == bad + 2, "unmanaged frees counted");
-    CHECK(x86_64_pmem_free_bytes() == s.pmem_free, "refused frees changed nothing");
+    CHECK(pmem_free_bytes() == s.pmem_free, "refused frees changed nothing");
 
     /* runtime fragmentation: free every other page of a large run, then the
      * rest -- far more separate holes than the boot-time region list could
      * name -- and everything must come back */
-    n = x86_64_pmem_free_bytes() / PAGE / 4;    /* a quarter of free RAM, */
+    n = pmem_free_bytes() / PAGE / 4;    /* a quarter of free RAM, */
     if (n > 20000)                              /* up to 20000 pages */
         n = 20000;
     CHECK(n >= 1000, "enough free memory for the fragmentation test");
@@ -202,7 +202,7 @@ static void test_pmem(void)
             x86_64_pmem_free_pages(runs[i], 1);
         kfree(runs);
     }
-    CHECK(x86_64_pmem_free_bytes() == s.pmem_free, "fragmented frees all reclaimed");
+    CHECK(pmem_free_bytes() == s.pmem_free, "fragmented frees all reclaimed");
 
     /* the PHYSICAL limit is honoured, and independent of any virtual one */
     c = x86_64_pmem_try_alloc_pages(1, 0);
@@ -760,12 +760,12 @@ static void test_isolation(void)
         /* eager mapping keeps the kernel's reserve too: a range that would take
          * all but half of it is refused, and nothing is left behind */
         {
-            UQUAD free_bytes = x86_64_pmem_free_bytes();
+            UQUAD free_bytes = pmem_free_bytes();
             UQUAD big = (free_bytes - ASPACE_FAULT_RESERVE / 2) & ~(PAGE - 1);
 
             CHECK(big < USER_VA_LIMIT - 0x30000000ULL &&
                   !aspace_map_private(a, 0x30000000ULL, big, rw) &&
-                  x86_64_pmem_free_bytes() == free_bytes &&
+                  pmem_free_bytes() == free_bytes &&
                   aspace_private_pages(a) == before,
                   "map_private leaves the reserve alone");
             CHECK(aspace_map_private(a, 0x30000000ULL, 16 * PAGE, rw) &&

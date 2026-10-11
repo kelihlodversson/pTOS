@@ -31,7 +31,7 @@
  * exists, a throwaway in-kernel harness that IRETQs into CPL3 first,
  * purely to exercise this path): every kernel-mode caller -- bios/bdos
  * calling Super()/Setexc()/... the way m68k's "trap #1"/ARM's "svc 1" are
- * called when already supervisor -- goes through x86_64_kernel_trap()
+ * called when already supervisor -- goes through kernel_trap()
  * (trap.c) instead, an ordinary C function call with no privilege
  * transition at all. An earlier version of this file let both share this
  * entry point, telling them apart by testing whether the interrupted RSP

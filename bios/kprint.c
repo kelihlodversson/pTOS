@@ -668,7 +668,7 @@ void dopanic(const char *fmt, ...)
     /* allow interrupts so we get keypresses -- neither ARM nor x86-64
      * needs this m68k-only set_sr() call, since both already enable
      * interrupts during their own bios_init() (cpsr_ie() and
-     * x86_64_irq_init()/x86_64_sti(), respectively, in bios.c) and never
+     * machine_irq_init(), respectively, in bios.c) and never
      * turn them back off. */
 #ifndef __arm__
 #ifndef __x86_64__

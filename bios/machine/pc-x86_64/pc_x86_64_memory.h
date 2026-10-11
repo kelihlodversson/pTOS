@@ -47,7 +47,7 @@ void x86_64_low_tpa_init(void);
  * firmware-reported mode is refused rather than mapped on faith (see
  * memory.c's own #332 comment on x86_64_low_fb_init() for the full
  * rationale). Public rather than private to memory.c so
- * bios/machine/pc-x86_64/gop.c's own x86_64_gop_reserved_range() can
+ * bios/machine/pc-x86_64/gop.c's own gop_reserved_range() can
  * apply the exact same bound before x86_64_pmem_init() ever reserves
  * physical memory for a mode x86_64_low_fb_init() will end up rejecting
  * anyway (Copilot review, PR #373) -- one constant, not two that could

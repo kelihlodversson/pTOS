@@ -49,7 +49,7 @@
 /*
  * Bounded retry counts, not a real elapsed-time timeout: hz_200 isn't
  * ticking yet when this runs (the PIT that drives it is programmed and
- * unmasked only after this returns, see irq.c's own x86_64_irq_init()),
+ * unmasked only after this returns, see irq.c's own machine_irq_init()),
  * and this is boot-time, one-shot setup, not a latency-sensitive path --
  * a plain iteration bound is the same defensive convention other early,
  * pre-tick x86-64 boot code already uses (e.g. gop.c's own firmware-
@@ -64,7 +64,7 @@ static BOOL wait_input_clear(void)
     int i;
 
     for (i = 0; i < PS2_POLL_LIMIT; i++) {
-        if (!(x86_64_inb(PS2_STATUS) & PS2_STATUS_INPUT_FULL))
+        if (!(port_inb(PS2_STATUS) & PS2_STATUS_INPUT_FULL))
             return TRUE;
     }
     return FALSE;
@@ -75,7 +75,7 @@ static BOOL wait_output_full(void)
     int i;
 
     for (i = 0; i < PS2_POLL_LIMIT; i++) {
-        if (x86_64_inb(PS2_STATUS) & PS2_STATUS_OUTPUT_FULL)
+        if (port_inb(PS2_STATUS) & PS2_STATUS_OUTPUT_FULL)
             return TRUE;
     }
     return FALSE;
@@ -84,20 +84,20 @@ static BOOL wait_output_full(void)
 static void ps2_write_command(UBYTE cmd)
 {
     if (wait_input_clear())
-        x86_64_outb(PS2_COMMAND, cmd);
+        port_outb(PS2_COMMAND, cmd);
 }
 
 static void ps2_write_data(UBYTE data)
 {
     if (wait_input_clear())
-        x86_64_outb(PS2_DATA, data);
+        port_outb(PS2_DATA, data);
 }
 
 static UBYTE ps2_read_data(void)
 {
     if (!wait_output_full())
         return 0;
-    return x86_64_inb(PS2_DATA);
+    return port_inb(PS2_DATA);
 }
 
 static void ps2_write_aux(UBYTE data)
@@ -123,8 +123,8 @@ void x86_64_ps2_init(void)
     {
         int i;
         for (i = 0; i < PS2_POLL_LIMIT
-                     && (x86_64_inb(PS2_STATUS) & PS2_STATUS_OUTPUT_FULL); i++)
-            x86_64_inb(PS2_DATA);
+                     && (port_inb(PS2_STATUS) & PS2_STATUS_OUTPUT_FULL); i++)
+            port_inb(PS2_DATA);
     }
 
     ps2_write_command(PS2_CMD_READ_CONFIG);
@@ -146,7 +146,7 @@ void x86_64_ps2_init(void)
      * the keyboard/timer paths are unaffected. */
     ps2_write_aux(MOUSE_CMD_ENABLE_REPORTING);
     if (wait_output_full())
-        x86_64_inb(PS2_DATA);
+        port_inb(PS2_DATA);
 }
 
 /*
@@ -221,15 +221,15 @@ static void ps2_keyboard_data(UBYTE sc)
 
 static void ps2_service(void)
 {
-    UBYTE status = x86_64_inb(PS2_STATUS);
+    UBYTE status = port_inb(PS2_STATUS);
 
     if (!(status & PS2_STATUS_OUTPUT_FULL))
         return;
 
     if (status & PS2_STATUS_AUX_DATA)
-        ps2_mouse_data(x86_64_inb(PS2_DATA));
+        ps2_mouse_data(port_inb(PS2_DATA));
     else
-        ps2_keyboard_data(x86_64_inb(PS2_DATA));
+        ps2_keyboard_data(port_inb(PS2_DATA));
 }
 
 void x86_64_ps2_keyboard_irq(void)

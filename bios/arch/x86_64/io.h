@@ -12,12 +12,12 @@
 
 #include "portab.h"
 
-static inline void x86_64_outb(UWORD port, UBYTE val)
+static inline void port_outb(UWORD port, UBYTE val)
 {
     __asm__ volatile ("outb %0, %1" :: "a"(val), "Nd"(port));
 }
 
-static inline UBYTE x86_64_inb(UWORD port)
+static inline UBYTE port_inb(UWORD port)
 {
     UBYTE val;
     __asm__ volatile ("inb %1, %0" : "=a"(val) : "Nd"(port));
