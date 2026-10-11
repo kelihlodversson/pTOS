@@ -161,10 +161,12 @@ typedef struct x86_64_aspace X86_64_ASPACE;
  *   0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB), then,
  *                             for a program loaded from a file, the startup
  *                             area X86_64_USER_IMAGE_SLACK long after it
- *   0x10000000 - 0x7eefffff   Malloc() memory of a process, backed by private
+ *   0x0fff0000 - 0x0fff0fff   ancestors' basepages, read-only (see below)
+ *   0x10000000 - 0x7effffff   Malloc() memory of a process, backed by private
  *                             pages as they are first touched (see below)
- *   0x7eff0000 - 0x7effffff   ancestors' basepages, read-only (see below)
- *   0x7f000000 - 0x7fffffff   user stack (16 MiB), growing down, likewise
+ *   0x7f000000 - 0x7fffffff   user stack (16 MiB by default), growing down,
+ *                             likewise; Psetlimit() can make it bigger, and
+ *                             the Malloc() memory then ends lower
  *
  * Everything stays below 0x80000000, so that every address of a process is a
  * positive signed long (the old TOS habits of sign-extending pointers and of
@@ -184,7 +186,7 @@ typedef struct x86_64_aspace X86_64_ASPACE;
  * is 0).  The process's own p_parent points at the first.  Every copy's p_env
  * is the process's own environment.
  */
-#define X86_64_USER_ANCESTORS_VA 0x7eff0000ULL
+#define X86_64_USER_ANCESTORS_VA 0x0fff0000ULL
 #define X86_64_USER_ANCESTORS    16
 #define X86_64_USER_IMAGE_BASE  0x00400000ULL
 #define X86_64_USER_IMAGE_SIZE  0x00400000ULL
@@ -197,9 +199,13 @@ typedef struct x86_64_aspace X86_64_ASPACE;
  * argv add a few hundred bytes. */
 #define X86_64_USER_IMAGE_SLACK 0x00020000ULL
 #define X86_64_USER_HEAP_BASE   0x10000000ULL
-#define X86_64_USER_HEAP_LIMIT  0x7ef00000ULL
+/* (the end of the heap with the default stack; a process whose stack limit was
+ * raised has less) */
+#define X86_64_USER_HEAP_LIMIT  0x7f000000ULL
 #define X86_64_USER_STACK_TOP   0x80000000ULL
+/* the default size of the stack: address space, backed when touched */
 #define X86_64_USER_STACK_SIZE  0x01000000ULL
+#define X86_64_USER_STACK_MIN   0x00004000ULL   /* the least Psetlimit() allows */
 
 X86_64_ASPACE *x86_64_aspace_create(void);
 void x86_64_aspace_destroy(X86_64_ASPACE *as);

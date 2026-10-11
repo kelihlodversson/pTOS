@@ -1444,6 +1444,19 @@ static void test_ring3(void)
     }
     same(&s, "failed PE_LOAD launches");
 
+    /* Psetlimit(): the limits, the stack size, inheritance (#450) */
+    {
+        snap(&s);
+        rc = run_probe('N');
+        if (rc == 0x100) {
+            kcprintf("x86-64 psetlimit: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "Psetlimit sets and reports the limits, the stack grows to its limit, children inherit");
+            kcprintf(rc == 0 ? "x86-64 psetlimit: PASS\n" : "x86-64 psetlimit: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "a program that sets limits");
+    }
+
     /* a program's memory is backed when it is touched (#450) */
     {
         snap(&s);
@@ -1584,8 +1597,10 @@ static void test_ring3(void)
             ran++;
         else if (rc == ENSMEM)
             refused++;
+        else if (rc == 0xffff)
+            ;                   /* (the stack is lazy: it ran, and was ended for want of a page) */
         else if (rc != -1000)
-            CHECK(FALSE, "a launch under memory pressure either runs or is refused");
+            CHECK(FALSE, "a launch under memory pressure either runs, is refused or loses a page");
     }
     if (refused < 5 || ran < 1)
         kcprintf("memtest: %d launches refused, %d ran\n", refused, ran);

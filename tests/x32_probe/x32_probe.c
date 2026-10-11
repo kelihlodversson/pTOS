@@ -136,9 +136,9 @@ static int walk_ancestors(u64 basepage)
     while (at) {
         const volatile u32 *a = (const volatile u32 *)(unsigned long)at;
 
-        if (at < 0x7eff0000u || at + 0x100 > 0x7eff1000u || (at & 0xff) || n >= 16)
+        if (at < 0x0fff0000u || at + 0x100 > 0x0fff1000u || (at & 0xff) || n >= 16)
             return 0x7f;
-        if (a[11] != env || a[8] || a[9] > 0x7eff1000u)
+        if (a[11] != env || a[8] || a[9] > 0x0fff1000u)
             return 0x7f;                /* p_env, p_uft, p_parent */
         if (a[12] || (a[13] & 0xffff))
             return 0x7f;                /* p_uft */
@@ -506,7 +506,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         static char tail128[128];
         static char bigenv[40000];
         const s64 unmapped = 0x30000000, lowvec = 0x84, kern = (s64)(int)0x80000000;
-        const s64 ro = 0x7eff0000;          /* the ancestors page: read-only */
+        const s64 ro = 0x0fff0000;          /* the ancestors page: read-only */
         const s64 stack_end = 0x7ffffff8;   /* 64 bytes from here cross the top */
         s64 rc;
         int k;
@@ -1001,6 +1001,32 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (rc == -33)
             pterm(0x100);
         pterm(rc == -66 ? 0 : 8);
+        break;
+    }
+    case 'N': {
+        /* Psetlimit() (#450): the defaults and the modes in a child, a deep
+         * stack that faults without a bigger limit and does not with one, and
+         * the limits of the launcher passed on to a child */
+        static const char l_tail[] = { 1, 'l', 0 };
+        static const char d_tail[] = { 1, 'D', 0 };
+        static const char e_tail[] = { 1, 'E', 0 };
+        static const char q_tail[] = { 1, 'Q', 0 };
+        s64 rc, rc2, rc3, rc4;
+
+        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                  (s64)(int)(unsigned long)l_tail, 0);
+        if (rc == -33)
+            pterm(0x100);
+        rc2 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)d_tail, 0);
+        rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)e_tail, 0);
+        sys4(GEMDOS, 0x11f, 0x100, 0x2000000, 0, 0);
+        sys4(GEMDOS, 0x11f, 3, 0x300000, 0, 0);
+        rc4 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)q_tail, 0);
+        pterm((rc == 0 ? 0 : 1) | (rc2 == 0xffff ? 0 : 2) | (rc3 == 0 ? 0 : 4) |
+              (rc4 == 0 ? 0 : 8));
         break;
     }
     case 'M': {

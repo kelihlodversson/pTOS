@@ -132,9 +132,9 @@ static int walk_ancestors(u64 basepage)
     while (at) {
         const volatile u32 *a = (const volatile u32 *)(unsigned long)at;
 
-        if (at < 0x7eff0000u || at + 0x100 > 0x7eff1000u || (at & 0xff) || n >= 16)
+        if (at < 0x0fff0000u || at + 0x100 > 0x0fff1000u || (at & 0xff) || n >= 16)
             return 0x7f;
-        if (a[11] != env || a[8] || a[9] > 0x7eff1000u)
+        if (a[11] != env || a[8] || a[9] > 0x0fff1000u)
             return 0x7f;                /* p_env, p_uft, p_parent */
         if (a[12] || (a[13] & 0xffff))
             return 0x7f;                /* p_uft */
@@ -153,6 +153,20 @@ u32 x32_patch = 0x11111111;
 #ifdef X32_BIG
 static volatile unsigned char big_bss[6u << 20];
 #endif
+
+/* a deep recursion, 64 KiB a frame, to touch the stack down to n * 64 KiB */
+static int deep_stack(int n)
+{
+    volatile unsigned char buf[65536];
+
+    buf[0] = (unsigned char)n;
+    buf[sizeof buf - 1] = (unsigned char)n;
+    return n ? deep_stack(n - 1) + buf[0] : buf[0];
+}
+
+#define PSETLIMIT_CORE  2
+#define PSETLIMIT_DATA  3
+#define PSETLIMIT_STACK 0x100
 
 void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 {
@@ -203,8 +217,8 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 
         a = (u64)gemdos1r(0x48, 100000);
         b = (u64)gemdos1r(0x48, 4096);
-        if (a < 0x10000000ULL || a >= 0x7ef00000ULL || (a & 0xfff) ||
-            b < 0x10000000ULL || b >= 0x7ef00000ULL || (b & 0xfff))
+        if (a < 0x10000000ULL || a >= 0x7f000000ULL || (a & 0xfff) ||
+            b < 0x10000000ULL || b >= 0x7f000000ULL || (b & 0xfff))
             bad_heap |= 1;
         if (a < b + 4096 && b < a + 100000)
             bad_heap |= 2;                      /* overlap */
@@ -260,10 +274,10 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         static const char pattern[] = "\\";
 
         all = (u64)gemdos1r(0x48, 0xffffffffULL);               /* Malloc(-1) */
-        if (all < 0x6e000000ULL || all > 0x7ef00000ULL - 0x10000000ULL)
+        if (all < 0x6e000000ULL || all > 0x7f000000ULL - 0x10000000ULL)
             bad_lazy |= 1;
         big = (u64)gemdos1r(0x48, big_size);
-        if (big < 0x10000000ULL || big + big_size > 0x7ef00000ULL || (big & 0xfff)) {
+        if (big < 0x10000000ULL || big + big_size > 0x7f000000ULL || (big & 0xfff)) {
             gemdos1(0x4c, 2);
         }
         p = (volatile u32 *)(unsigned long)big;
@@ -317,6 +331,84 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         for (k = 0; k < all; k += 4096)
             p[k] = 1;
         gemdos1(0x4c, 0x55);            /* the machine has more memory than that */
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'l') {
+        /* Psetlimit() (#450): the defaults, MiNT's modes 2 and 3 and the stack
+         * (0x100), with a negative value only asking */
+        s64 a, rc;
+        int bad_lim = 0;
+
+        if (gemdos2(0x11f, PSETLIMIT_STACK, (u64)-1LL) != 0x1000000 ||
+            gemdos2(0x11f, PSETLIMIT_STACK, (u64)-1LL) != 0x1000000)
+            bad_lim |= 1;                       /* 16 MiB, and asking leaves it */
+        if (gemdos2(0x11f, 1, 0) != -32 || gemdos2(0x11f, 7, 0) != -32)
+            bad_lim |= 2;                       /* CPU time is not kept; no such mode */
+        if (gemdos2(0x11f, PSETLIMIT_DATA, (u64)-1LL) != 0 ||
+            gemdos2(0x11f, PSETLIMIT_CORE, (u64)-1LL) != 0)
+            bad_lim |= 4;                       /* no limit */
+        /* the allocatable memory */
+        if (gemdos2(0x11f, PSETLIMIT_DATA, 0x100000) != 0 ||
+            gemdos2(0x11f, PSETLIMIT_DATA, (u64)-1LL) != 0x100000)
+            bad_lim |= 8;
+        if (gemdos1r(0x48, 0x200000) != 0)
+            bad_lim |= 16;                      /* over the limit: no memory */
+        a = gemdos1r(0x48, 0x80000);
+        if (a <= 0)
+            bad_lim |= 32;
+        if (gemdos1r(0x48, 0xffffffffULL) != 0x80000)
+            bad_lim |= 64;                      /* Malloc(-1): what is left */
+        gemdos1r(0x49, (u64)a);
+        if (gemdos2(0x11f, PSETLIMIT_DATA, 0) != 0x100000)
+            bad_lim |= 128;                     /* no limit again; the old value */
+        a = gemdos1r(0x48, 0x200000);
+        if (a <= 0)
+            bad_lim |= 256;
+        gemdos1r(0x49, (u64)a);
+        /* the total memory counts the image too: this one is already bigger */
+        gemdos2(0x11f, PSETLIMIT_CORE, 4096);
+        if (gemdos1r(0x48, 4096) != 0)
+            bad_lim |= 512;
+        gemdos2(0x11f, PSETLIMIT_CORE, 0);
+        /* the stack: 64 MiB, so that the Malloc() memory ends lower */
+        if (gemdos2(0x11f, PSETLIMIT_STACK, 0x4000000) != 0x1000000 ||
+            gemdos2(0x11f, PSETLIMIT_STACK, (u64)-1LL) != 0x4000000)
+            bad_lim |= 1024;
+        if (gemdos1r(0x48, 0xffffffffULL) > 0x6c000000LL)
+            bad_lim |= 2048;
+        if (gemdos2(0x11f, PSETLIMIT_STACK, 100) != -64)
+            bad_lim |= 4096;                    /* too small */
+        if (gemdos2(0x11f, PSETLIMIT_STACK, 0) != 0x4000000 ||
+            gemdos2(0x11f, PSETLIMIT_STACK, (u64)-1LL) != 0x1000000)
+            bad_lim |= 8192;                    /* 0 is the default */
+        /* a block in the way of a bigger stack */
+        a = gemdos1r(0x48, 0x68000000);
+        if (a <= 0)
+            bad_lim |= 16384;
+        rc = gemdos2(0x11f, PSETLIMIT_STACK, 0x10000000);
+        if (rc != -39)
+            bad_lim |= 32768;
+        gemdos1r(0x49, (u64)a);
+        gemdos1(0x4c, bad_lim);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'D') {
+        /* 20 MiB of stack is more than the default 16: the process faults */
+        gemdos1(0x4c, deep_stack(320) & 1);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'E') {
+        /* ... with a stack limit of 64 MiB it is fine, and the limit cannot
+         * then be put below what the stack has grown to */
+        if (gemdos2(0x11f, PSETLIMIT_STACK, 0x4000000) != 0x1000000)
+            gemdos1(0x4c, 1);
+        deep_stack(320);
+        if (gemdos2(0x11f, PSETLIMIT_STACK, 0x100000) != -64)
+            gemdos1(0x4c, 2);
+        gemdos1(0x4c, 0);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'Q') {
+        /* the limits of the launcher are this process's (what Psetlimit()
+         * set before the launch) */
+        gemdos1(0x4c, gemdos2(0x11f, PSETLIMIT_STACK, (u64)-1LL) == 0x2000000 &&
+                      gemdos2(0x11f, PSETLIMIT_DATA, (u64)-1LL) == 0x300000 ? 0 : 1);
     }
     if (cmdline[0] == 1 && cmdline[1] == 'i') {
         /* the code runs in the image window, wherever the program was linked
