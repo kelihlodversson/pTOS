@@ -428,6 +428,34 @@ The expected pass signal is the normal `All tests passed.` summary. The
 harness exits through `Pterm(0)` when complete; use a host timeout when
 running unattended.
 
+### Regression tests from a host directory (`make test-dir`)
+
+`make test-dir` collects the same files as `make test-hd` (`runtests.tos`,
+`emudesk.inf`, the probe programs, `TESTS/`) into a plain `test-dir/`, so no
+image is built and neither `mkfs.fat` nor mtools is needed. QEMU's virtual FAT
+driver (vvfat) presents the directory as an MBR-partitioned FAT16 disk, which
+pTOS's own MBR parser and FAT driver read (`fda: MBR at 0 $06`):
+
+```sh
+# raspi2/raspi1ap: the SD card model wants a power-of-two size, vvfat is
+# 504 MiB. A raw "size" window that is smaller than the vvfat disk is accepted
+# (it cannot be larger), and the files sit at the start of the disk.
+qemu-system-arm -M raspi2b -bios kernel7.img \
+  -drive if=sd,driver=raw,size=256M,file.driver=vvfat,file.dir=test-dir,file.rw=on \
+  -d guest_errors -serial stdio -display none
+
+# virt-arm: virtio-blk takes vvfat as it is
+qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf \
+  -global virtio-mmio.force-legacy=false \
+  -drive if=none,id=hd0,format=raw,file.driver=vvfat,file.dir=test-dir,file.rw=on \
+  -device virtio-blk-device,drive=hd0 -d guest_errors -serial stdio -display none
+```
+
+The plain `-drive file=fat:rw:test-dir,format=raw,if=sd` form fails with
+"Invalid SD card size: 504 MiB". Both runs above print `All tests passed.`
+(6 of 6) and then keep running: use a host `timeout`. Hatari is out of scope
+(its GEMDOS drive would bypass pTOS's FAT driver).
+
 ### Standard smoke pattern and pass signals
 
 ```sh
@@ -556,6 +584,21 @@ The default `pc-x86_64_defconfig` deliberately has `CONF_WITH_AES=n` and
 boots to EmuCON. The headless command above is the right fast boot check for
 that configuration. It captures COM1 output to a log so it can be grepped
 afterward.
+
+### x86-64 regression tests
+
+With the x86-64 configuration, `runtests.tos` and the probe programs are built
+as x32 programs (libcmini's `ptos_x86_64_defconfig`, the same compiler and
+flags as `x32hello.elf`). The `ptos_reloc_load` suite is left out: the loader's
+packed relocation format knows only ARM and m68k. Copy `make test-dir`'s
+contents into the ESP directory next to `EFI/BOOT/BOOTX64.EFI`, boot, and type
+`runtests.tos` at the EmuCON prompt (`C:\>`):
+
+```sh
+make pc-x86_64_defconfig && make
+make test-dir
+cp -R test-dir/. esp/
+```
 
 ### GOP desktop smoke test
 
