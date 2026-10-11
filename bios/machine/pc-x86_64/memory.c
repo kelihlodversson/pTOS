@@ -47,6 +47,7 @@
 #include "portab.h"
 #include "tosvars.h"
 #include "pc_x86_64_memory.h"
+#include "sysvar.h"
 #include "pgtable.h"
 #include "pmem.h"
 #include "procmem.h"
@@ -92,7 +93,7 @@ void pc_x86_64_memory_init(void)
  *
  * Like the TPA pool, this only relocates each structure's *storage*: the
  * variable itself becomes a pointer into this pool (set once, at
- * kernel-init time, to whatever x86_64_low_kdata_alloc() hands back),
+ * kernel-init time, to whatever sysvar_alloc() hands back),
  * with a macro making every existing read/write/address-of site
  * transparently dereference that pointer instead of naming a fixed
  * symbol -- each site remains an ordinary higher-half global on every
@@ -131,7 +132,7 @@ void x86_64_low_kdata_init(void)
     low_kdata_end = X86_64_LOW_KDATA_VIRT_BASE + X86_64_LOW_KDATA_BYTES;
 }
 
-void *x86_64_low_kdata_alloc(LONG needed)
+void *sysvar_alloc(LONG needed)
 {
     UQUAD aligned = (low_kdata_next + 15) & ~(UQUAD)15;
 

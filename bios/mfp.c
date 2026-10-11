@@ -17,6 +17,7 @@
 #include "mfp.h"
 #include "tosvars.h"
 #include "vectors.h"
+#include "sysvar.h"
 #include "coldfire.h"
 #include "raspi_int.h"
 #include "raspi_vsync.h"
@@ -191,30 +192,20 @@ int timeout_gpip(LONG delay)
  */
 WORD timer_c_sieve;
 
-#if !CONF_WITH_MFP && defined(__x86_64__)
+#if !CONF_WITH_MFP && CONF_WITH_LOW_SYSVARS
 /*
- * bios/machine/pc-x86_64/memory.c's own low-kdata pool -- declared
- * directly here rather than via its own header, matching bios.c's
- * identical precedent for x86_64_low_tpa_alloc(): only the one-time
- * allocation below needs it in this file. See bios/vectors.h's own
- * __x86_64__ branch for why vector_5ms's storage needs to live there.
+ * Reserves vector_5ms's own storage, separately from and well before
+ * init_system_timer() itself: fill_cookie_jar() reads &vector_5ms (the '_5MS'
+ * cookie) long before bios_init() ever calls init_system_timer() -- on every
+ * other machine that ordering is harmless, since &vector_5ms is a fixed
+ * link-time address regardless of whether its contents have been initialized
+ * yet, but here the address itself only exists once this runs.  Called from
+ * sysvars_alloc() (bios/machine.c), which the machine calls once its pool is
+ * ready.
  */
-extern void *x86_64_low_kdata_alloc(LONG needed);
-
-/*
- * Reserves vector_5ms's own low-kdata storage, separately from and well
- * before init_system_timer() itself: bios/machine.c's fill_cookie_jar()
- * reads &vector_5ms (the '_5MS' cookie) long before bios_init() ever
- * calls init_system_timer() -- on every other arch that ordering is
- * harmless, since &vector_5ms is a fixed link-time address regardless of
- * whether its contents have been initialized yet, but here the address
- * itself only exists once this runs. Called from bios/machine/pc-x86_64/
- * startup.c, right alongside x86_64_low_kdata_init() itself, deliberately
- * before fill_cookie_jar() can run.
- */
-void x86_64_vector_5ms_alloc(void)
+void vector_5ms_alloc(void)
 {
-    x86_64_vector_5ms_ptr = x86_64_low_kdata_alloc(sizeof(*x86_64_vector_5ms_ptr));
+    vector_5ms_ptr = sysvar_alloc(sizeof(*vector_5ms_ptr));
 }
 #endif
 
@@ -224,9 +215,9 @@ void init_system_timer(void)
     timer_ms = 20;
 
 #if !CONF_WITH_MFP
-    /* x86_64_vector_5ms_ptr (see vectors.h) was already allocated by
-     * x86_64_vector_5ms_alloc(), well before this runs -- see that
-     * function's own comment for why. */
+    /* vector_5ms_ptr (see vectors.h) was already allocated by
+     * vector_5ms_alloc(), well before this runs -- see that function's own
+     * comment for why. */
     vector_5ms = int_timerc;
 #endif
 

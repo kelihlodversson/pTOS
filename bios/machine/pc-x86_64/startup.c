@@ -30,6 +30,7 @@
 #include "pc_x86_64_gop.h"
 #include "smbios.h"
 #include "bios.h"
+#include "sysvar.h"
 #include "pe_reloc.h"
 
 /* This image's own boot-time stack. Used only from the higher-half jump
@@ -459,35 +460,17 @@ void NORETURN x86_64_higher_half_main(void)
      * 32-bit ABI field (the cookie jar) hands out by address -- see
      * memory.c's own comment. Must run before fill_cookie_jar()
      * (bios/machine.c, via bios_init()) or anything else that points a
-     * low-kdata-backed global (bios/vectors.h's x86_64_vector_5ms_ptr,
-     * bios/scsidriv.h's x86_64_scsidriv_root_ptr) into this pool. */
+     * system variable (bios/vectors.h's vector_5ms_ptr, bios/scsidriv.h's
+     * scsidriv_root_ptr) into this pool. */
     x86_64_low_kdata_init();
 
     /*
-     * Reserve each low-kdata-backed global's own storage right here,
-     * deliberately well before the subsystem that actually populates it
-     * (init_system_timer(), scsidriv_init()) ever runs -- both are called
-     * much later in bios_init(), after fill_cookie_jar() already reads
-     * &vector_5ms/&scsidriv_root back for the '_5MS'/'SCSI' cookies. See
-     * bios/vectors.h's/bios/scsidriv.h's own comments on these two
-     * functions. Declared directly, not via their own headers, matching
-     * this file's own x86_64_low_tpa_init() precedent: SCSIRoot's real
-     * type is not otherwise needed here. Guarded exactly like each
-     * function's own definition (bios/mfp.c, bios/scsidriv.c), so a
-     * future x86-64 config that turns either option off still links.
+     * Reserve the storage of each system variable whose address a 32-bit
+     * cookie value hands out, here, well before the subsystem that populates
+     * it runs: fill_cookie_jar() reads their addresses back much earlier (see
+     * include/sysvar.h).
      */
-#if !CONF_WITH_MFP
-    {
-        extern void x86_64_vector_5ms_alloc(void);
-        x86_64_vector_5ms_alloc();
-    }
-#endif
-#if CONF_WITH_SCSI_DRIVER
-    {
-        extern void x86_64_scsidriv_root_alloc(void);
-        x86_64_scsidriv_root_alloc();
-    }
-#endif
+    sysvars_alloc();
     earlycon_puts("pTOS x86-64: low kernel-data pool ready\n");
 
     /*

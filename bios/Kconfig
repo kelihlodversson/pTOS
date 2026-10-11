@@ -124,6 +124,19 @@ config CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
 	  which is always the case on the FireBee, where the RAM is set up
 	  by the BaS, and whenever EmuTOS itself lives in RAM.
 
+
+config CONF_WITH_LOW_SYSVARS
+	bool
+	default y if ARCH_X86_64
+	help
+	  System variables whose address is handed out through a 32-bit field
+	  (the values of the '_5MS' and 'SCSI' cookies) are allocated by the
+	  machine (sysvar_alloc(), include/sysvar.h) from memory with a 32-bit
+	  address, instead of being placed by the linker.  Needed where the
+	  kernel's own data is not reachable by a 32-bit address while the
+	  programs' ABI is 32-bit.  Not user-selectable: it follows the
+	  architecture.
+
 endmenu
 
 menu "Storage devices"

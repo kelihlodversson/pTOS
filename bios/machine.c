@@ -42,6 +42,7 @@
 #include "dma.h"
 #include "nova.h"
 #include "biosext.h"
+#include "sysvar.h"
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
 #endif
@@ -633,6 +634,20 @@ void machine_detect(void)
 void machine_init(void)
 {
 #if !CONF_WITH_RESET
+#if CONF_WITH_LOW_SYSVARS
+/* The machine calls this once sysvar_alloc() works, before fill_cookie_jar()
+ * reads the addresses of these variables back for the cookies. */
+void sysvars_alloc(void)
+{
+#if !CONF_WITH_MFP
+    vector_5ms_alloc();
+#endif
+#if CONF_WITH_SCSI_DRIVER
+    scsidriv_root_alloc();
+#endif
+}
+#endif
+
 /*
  * we must disable interrupts here, because the reset instruction hasn't
  * been run during startup

@@ -142,31 +142,26 @@ volatile PFVOID *vector_address(ULONG address);
 
 /* Non-Atari hardware vectors */
 #if !CONF_WITH_MFP
-#ifdef __x86_64__
+#if CONF_WITH_LOW_SYSVARS
 /*
- * #351: bios/machine.c's fill_cookie_jar() hands out &vector_5ms through
- * the '_5MS' cookie's 32-bit value field, which requires vector_5ms's own
- * STORAGE to have a real sub-4GiB address -- not true of an ordinary
- * higher-half global on this arch (see bios/machine/pc-x86_64/memory.c's
- * own #351 comment on the pool this points into). The macro makes every
- * existing read/write/address-of site (bios/mfp.c's assignment,
- * machine.c's cookie_add() call) transparently dereference that pointer
- * instead of naming a fixed symbol; only the definition site (bios.c)
- * and the one-time allocation (mfp.c) need their own __x86_64__ branch.
+ * fill_cookie_jar() (bios/machine.c) hands out &vector_5ms through the '_5MS'
+ * cookie's 32-bit value field, which requires vector_5ms's own STORAGE to have
+ * a 32-bit address: the machine provides it (sysvar_alloc(), include/sysvar.h)
+ * and this pointer points there.  The macro makes every existing
+ * read/write/address-of site (bios/mfp.c's assignment, machine.c's
+ * cookie_add() call) dereference that pointer instead of naming a fixed
+ * symbol; only the definition site (bios.c) and the one-time allocation
+ * (mfp.c) differ.
  */
-extern void (**x86_64_vector_5ms_ptr)(void);
-#define vector_5ms (*x86_64_vector_5ms_ptr)
+extern void (**vector_5ms_ptr)(void);
+#define vector_5ms (*vector_5ms_ptr)
 
 /*
- * Reserves x86_64_vector_5ms_ptr's own storage from the low-kdata pool
- * (bios/machine/pc-x86_64/memory.c). Must run before anything dereferences
- * vector_5ms (the macro above) -- in particular before
- * bios/machine.c's fill_cookie_jar(), which runs well before
- * init_system_timer() itself. Called from bios/machine/pc-x86_64/
- * startup.c, right alongside x86_64_low_kdata_init(). See bios/mfp.c's
- * own comment on this function.
+ * Reserves vector_5ms_ptr's own storage with sysvar_alloc().  Must run before
+ * anything dereferences vector_5ms (the macro above) -- in particular before
+ * fill_cookie_jar(); sysvars_alloc() calls it.
  */
-void x86_64_vector_5ms_alloc(void);
+void vector_5ms_alloc(void);
 #else
 extern void (*vector_5ms)(void);              /* 200 Hz system timer */
 #endif

@@ -162,12 +162,12 @@ UBYTE bootflags;
 
 /* Non-Atari hardware vectors */
 #if !CONF_WITH_MFP
-#ifdef __x86_64__
-/* See bios/vectors.h's own __x86_64__ branch: this is the pointer that
- * vector_5ms is #define'd to dereference, not a plain function-pointer
- * variable, so it needs its own declared type (bios/mfp.c allocates it
- * from the low-kdata pool before first use). */
-void (**x86_64_vector_5ms_ptr)(void);
+#if CONF_WITH_LOW_SYSVARS
+/* See bios/vectors.h: this is the pointer that vector_5ms is #define'd to
+ * dereference, not a plain function-pointer variable, so it needs its own
+ * declared type (bios/mfp.c allocates it with sysvar_alloc() before first
+ * use). */
+void (**vector_5ms_ptr)(void);
 #else
 void (*vector_5ms)(void);       /* 200 Hz system timer */
 #endif

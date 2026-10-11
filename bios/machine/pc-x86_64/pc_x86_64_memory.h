@@ -51,15 +51,9 @@ void x86_64_low_tpa_init(void);
 void x86_64_low_kdata_init(void);
 
 /*
- * Bump-allocates `needed` bytes (16-byte aligned) from the pool
- * x86_64_low_kdata_init() set up, for a kernel-internal caller to point
- * its own low, sub-4GiB-address global at (bios/vectors.h's
- * x86_64_vector_5ms_ptr, bios/scsidriv.h's x86_64_scsidriv_root_ptr).
- * Returns NULL if the pool is exhausted; every current caller allocates
- * once, at boot, for a small fixed-size object, so this is a can't-happen
- * rather than a real error path.
+ * (sysvar_alloc(), declared in include/sysvar.h, bump-allocates from the pool
+ * x86_64_low_kdata_init() set up.)
  */
-void *x86_64_low_kdata_alloc(LONG needed);
 
 /*
  * Sanity ceiling for the fourth (EFI GOP framebuffer) pool below -- not a
