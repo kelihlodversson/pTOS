@@ -533,7 +533,9 @@ BOOL x86_64_aspace_fault_in(X86_64_ASPACE *as, UQUAD va, UWORD prot)
         return FALSE;
     if (x86_64_aspace_translate(as, page, NULL, NULL))
         return TRUE;                    /* (a racing mapping: nothing to do) */
-    if (x86_64_pmem_free_bytes() < X86_64_FAULT_RESERVE)
+    /* the page, the tables it may need (three) and the bookkeeping's growth must
+     * all leave the reserve alone */
+    if (x86_64_pmem_free_bytes() < X86_64_FAULT_RESERVE + X86_64_FAULT_COST)
         return FALSE;
     backing = x86_64_pmem_try_alloc_pages(1, 0);
     if (backing == X86_64_PMEM_NONE)

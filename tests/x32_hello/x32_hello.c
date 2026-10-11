@@ -320,6 +320,19 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         p[0] = 2;
         gemdos1(0x4c, 0);               /* not reached */
     }
+    if (cmdline[0] == 1 && cmdline[1] == 'Y') {
+        /* the same, but it is the kernel that touches the pages: Dgetpath()
+         * writes into one untouched page after the other.  Running out of
+         * physical pages ends the process, it is not a bad pointer (#450) */
+        u64 all = (u64)gemdos1r(0x48, 0xffffffffULL);
+        u64 p = (u64)gemdos1r(0x48, all);
+        u64 k;
+
+        for (k = 0; k < all; k += 4096)
+            if (gemdos3r(0x47, p + k, 0, 0) != 0)
+                gemdos1(0x4c, 0x66);    /* an error code: the process survived */
+        gemdos1(0x4c, 0x55);            /* the machine has more memory than that */
+    }
     if (cmdline[0] == 1 && cmdline[1] == 'X') {
         /* touch every page of all the address space there is: the machine has
          * less memory, and the process that finds none left ends as Pterm(-1)

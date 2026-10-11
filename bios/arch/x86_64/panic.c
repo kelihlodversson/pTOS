@@ -147,7 +147,7 @@ static NORETURN void hang(void)
 /* bdos/arch/x86_64/rwa.c */
 extern void x86_64_user_fault(ULONG vector, UQUAD error_code, UQUAD rip, UQUAD cr2,
                               UQUAD rsp) NORETURN;
-extern BOOL x86_64_demand_page(UQUAD address);
+extern int x86_64_demand_page(UQUAD address);
 
 void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
 {
@@ -157,9 +157,15 @@ void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
      * clear: not present; bit 4 clear: not an instruction fetch).  Back it and
      * resume the instruction.
      */
-    if (frame->vector == 14 && !(frame->error_code & 0x11) &&
-        x86_64_demand_page(x86_64_read_cr2()))
-        return;
+    if (frame->vector == 14 && !(frame->error_code & 0x11)) {
+        int answer = x86_64_demand_page(x86_64_read_cr2());
+
+        if (answer == 1)
+            return;
+        if (answer == 2)                /* a lazy page and none left: the process ends, */
+            x86_64_user_fault(14, frame->error_code, frame->rip,   /* ring 3 or not */
+                              x86_64_read_cr2(), frame->rsp);
+    }
 
     /*
      * A fault taken in ring 3 is the process's own: terminate it and

@@ -278,13 +278,15 @@ BOOL x86_64_aspace_unmap_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes);
  * new zeroed private page, with `prot`, if there is no mapping there yet (TRUE
  * also if there is one already); FALSE if a physical page or a page table
  * could not be had, or less than X86_64_FAULT_RESERVE of physical memory would
- * be left (the kernel's own needs come first).  The caller has decided that the
+ * be left (the kernel's own needs come first: the reserve is never dipped into,
+ * the tables the page may need counted).  The caller has decided that the
  * address belongs to a lazy area.  x86_64_aspace_release_lazy() is
  * x86_64_aspace_unmap_private() for such an area: pages never touched are
  * simply not there, and are skipped; FALSE, with nothing changed, if a page
  * that is there is not one of its private pages.
  */
 #define X86_64_FAULT_RESERVE 0x00400000ULL
+#define X86_64_FAULT_COST    0x00008000ULL      /* the most one page costs: it, 3 tables, bookkeeping */
 BOOL x86_64_aspace_fault_in(X86_64_ASPACE *as, UQUAD va, UWORD prot);
 BOOL x86_64_aspace_release_lazy(X86_64_ASPACE *as, UQUAD va, UQUAD bytes);
 

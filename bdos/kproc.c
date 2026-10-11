@@ -17,6 +17,8 @@
 #include "biosext.h"
 #ifdef __x86_64__
 #include "kheap.h"
+#include "kprint.h"
+#include "proc.h"
 #endif
 #if CONF_WITH_USER_ASPACE
 #include "procmem.h"
@@ -986,26 +988,48 @@ static BOOL back_page(KPROC *kproc, UQUAD va)
     return TRUE;
 }
 
-BOOL kproc_demand_page(PD *pd, UQUAD va)
+int kproc_demand_page(PD *pd, UQUAD va)
 {
     KPROC *kproc = kproc_find(pd);
 
     if (!kproc || !kproc->aspace || !lazy_area(kproc, va))
-        return FALSE;
-    return back_page(kproc, va);
+        return 0;
+    return back_page(kproc, va) ? 1 : 2;
 }
 
-/* the pages of [address, address + size) that lie in lazy areas get their
- * physical pages (what a read or write of them by the process would do) */
-static BOOL demand_range(KPROC *kproc, UQUAD address, ULONG size)
+/* A kernel call needs a page of a lazy area and no physical page is left: the
+ * same end as a touch of the page by the process itself, not a bad pointer. */
+static void lazy_oom(void)
 {
-    UQUAD page = address & ~(X86_64_USER_PAGE_SIZE - 1);
-    UQUAD last = (address + size - 1) & ~(X86_64_USER_PAGE_SIZE - 1);
+    kcprintf("x32 process: no physical page left for its memory\n");
+    xterm((UWORD)-1);
+}
 
-    for (; page <= last; page += X86_64_USER_PAGE_SIZE)
-        if (!x86_64_aspace_translate(kproc->aspace, page, NULL, NULL) &&
-            lazy_area(kproc, page) && !back_page(kproc, page))
+/* Whether the process may read (or write) [address, address + size), the pages
+ * of its lazy areas that are not there yet included; those get their physical
+ * pages now (what a read or write of them by the process would do).  The first
+ * pass changes nothing: it only rejects a range with a gap, a page the access
+ * is not allowed on, or anything beyond the 32-bit limit, before any page is
+ * backed.  A range that is fine but cannot be backed ends the process. */
+static BOOL demand_range(KPROC *kproc, UQUAD address, ULONG size, BOOL write)
+{
+    UQUAD first = address & ~(X86_64_USER_PAGE_SIZE - 1);
+    UQUAD last = (address + size - 1) & ~(X86_64_USER_PAGE_SIZE - 1), page;
+
+    for (page = first; page <= last; page += X86_64_USER_PAGE_SIZE) {
+        UWORD prot;
+
+        if (x86_64_aspace_translate(kproc->aspace, page, NULL, &prot)) {
+            if (!(prot & ASPACE_PROT_USER) || (write && !(prot & ASPACE_PROT_WRITE)))
+                return FALSE;
+        } else if (!lazy_area(kproc, page)) {
             return FALSE;
+        }
+    }
+    for (page = first; page <= last; page += X86_64_USER_PAGE_SIZE)
+        if (!x86_64_aspace_translate(kproc->aspace, page, NULL, NULL) &&
+            !back_page(kproc, page))
+            lazy_oom();
     return TRUE;
 }
 
@@ -1358,7 +1382,7 @@ static BOOL validate_user(UQUAD address, ULONG size, BOOL write)
      * for a write) in THIS process's own page tables -- not merely a number
      * that falls in some range. */
     if (kproc->aspace)
-        return demand_range(kproc, address, size) &&
+        return demand_range(kproc, address, size, write) &&
                x86_64_aspace_user_range_ok(kproc->aspace, address, size, write);
 
     /* No address space (a kernel-code process, which runs in ring 0 on the

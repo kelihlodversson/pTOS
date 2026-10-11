@@ -129,8 +129,10 @@ UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top);
  */
 BOOL kproc_has_heap(PD *pd);
 /* The page fault handler's question: `va` is in the stack or a Malloc() block of
- * the process, whose page has not been touched yet; TRUE once it is backed. */
-BOOL kproc_demand_page(PD *pd, UQUAD va);
+ * the process, whose page has not been touched yet.  0: it is not (a real fault);
+ * 1: it is, and the page is backed now; 2: it is, and no physical page was left
+ * (the process is to be terminated). */
+int kproc_demand_page(PD *pd, UQUAD va);
 /* Psetlimit(): modes 2 and 3 are MiNT's (total memory, Malloc()ed memory, in
  * bytes), PSETLIMIT_STACK is this port's (the stack's address space); see
  * bdos/kproc.c.  Returns the old value, or a negative error code. */

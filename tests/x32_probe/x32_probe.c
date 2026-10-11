@@ -1036,7 +1036,8 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         static const char lazy_tail[] = { 1, 'z', 0 };
         static const char freed_tail[] = { 1, 'Z', 0 };
         static const char all_tail[] = { 1, 'X', 0 };
-        s64 rc, rc2, rc3, rc4;
+        static const char kern_tail[] = { 1, 'Y', 0 };
+        s64 rc, rc2, rc3, rc4, rc5;
 
         rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
                   (s64)(int)(unsigned long)lazy_tail, 0);
@@ -1046,11 +1047,14 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
                    (s64)(int)(unsigned long)freed_tail, 0);
         rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
                    (s64)(int)(unsigned long)all_tail, 0);
+        /* the same when it is the kernel that touches the pages */
+        rc5 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)kern_tail, 0);
         /* and the system still works */
         rc4 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
                    (s64)(int)(unsigned long)lazy_tail, 0);
         pterm((rc == 0 ? 0 : 1) | (rc2 == 0xffff ? 0 : 2) | (rc3 == 0xffff ? 0 : 4) |
-              (rc4 == 0 ? 0 : 8));
+              (rc4 == 0 ? 0 : 8) | (rc5 == 0xffff ? 0 : 16));
         break;
     }
     case 'h': {
