@@ -157,13 +157,14 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
  * either corrupting its own single fixed stack bustack or performing the
  * unsafe caller-classification the comment above rejects.
  *
- * Only rax/rdi/rsi/rdx/r10 are meaningful -- exactly the fields
- * x86_64_trap_dispatch()'s GEMDOS/BIOS/XBIOS cases read -- matching the
- * `syscall` calling convention above field for field so callers can be
+ * callno and arg1..arg4 are the call number and its arguments, and map
+ * onto the registers the `syscall` convention above uses (rax, rdi, rsi,
+ * rdx, r10) -- exactly the fields x86_64_trap_dispatch()'s
+ * GEMDOS/BIOS/XBIOS cases read -- so callers can be
  * written (and read) as if this were that same convention with the
  * privilege transition simply subtracted out.
  */
-long kernel_trap(long rax, long rdi, long rsi, long rdx, long r10);
+long kernel_trap(long callno, long arg1, long arg2, long arg3, long arg4);
 
 /*
  * Called from x86_64_syscall_entry's exit path (trapasm.S) when the

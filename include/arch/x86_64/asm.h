@@ -39,10 +39,10 @@
  * include/biosbind.h and include/xbiosbind.h's x86_64 branches instead of
  * a raw inline `syscall` --
  * see trap.h's own comment on why the two must not be the same entry
- * point. rax packs (trap_class << 32) | function_number the same way a
- * real `syscall` would.
+ * point. callno packs (trap_class << 32) | function_number the same way a
+ * real `syscall` would; arg1..arg4 are the call's arguments.
  */
-extern long kernel_trap(long rax, long rdi, long rsi, long rdx, long r10);
+extern long kernel_trap(long callno, long arg1, long arg2, long arg3, long arg4);
 
 /* External function doing nothing */
 extern void just_rts(void);
