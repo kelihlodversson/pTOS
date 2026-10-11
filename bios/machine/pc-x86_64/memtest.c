@@ -662,7 +662,7 @@ static void test_isolation(void)
           "kernel address invalid as a user pointer");
     if (probe != X86_64_PMEM_NONE)
         x86_64_pmem_free_pages(probe, 1);
-    /* The kernel's low data (the system-vector area, the kernel-data pool)
+    /* The kernel's low data (the system-vector area, the framebuffer)
      * is there for ring 0's sake while it runs a system call under this
      * address space -- and supervisor-only.  The process window, by contrast,
      * is absent: only the process's own blocks (user) and the blocks of a
@@ -673,9 +673,10 @@ static void test_isolation(void)
         x86_64_low_kernel_range(&kstart, &kend);
         CHECK(aspace_translate(a, 0x400, NULL, &prot) && !(prot & ASPACE_PROT_USER),
               "the system variables are mapped, supervisor-only");
-        CHECK(aspace_translate(a, kstart, NULL, &prot) && !(prot & ASPACE_PROT_USER) &&
-              !aspace_user_range_ok(a, kstart, 8, FALSE),
-              "the kernel-data pool is mapped, supervisor-only");
+        if (kend > kstart)
+            CHECK(aspace_translate(a, kstart, NULL, &prot) && !(prot & ASPACE_PROT_USER) &&
+                  !aspace_user_range_ok(a, kstart, 8, FALSE),
+                  "the framebuffer is mapped, supervisor-only");
     }
     CHECK(!aspace_translate(a, X86_64_LOW_TPA_VIRT_BASE, NULL, NULL),
           "the process window is not in a fresh address space");

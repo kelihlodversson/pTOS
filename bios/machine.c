@@ -794,6 +794,7 @@ void fill_cookie_jar(void)
     cookie_add(COOKIE_XHDI, (ULONG)xhdi_vec);
 #endif
 
+#if CONF_WITH_ADDR_COOKIES
 #if CONF_WITH_SCSI_DRIVER
     cookie_add(COOKIE_SCSIDRIV, (ULONG)&scsidriv_root);
 #endif
@@ -803,6 +804,7 @@ void fill_cookie_jar(void)
      * interrupt vector so FreeMiNT can hook it. */
     cookie_add(COOKIE__5MS, (ULONG)&vector_5ms);
 #endif
+#endif /* CONF_WITH_ADDR_COOKIES */
 }
 
 static const char * guess_machine_name(void)

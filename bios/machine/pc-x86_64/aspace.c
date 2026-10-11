@@ -90,7 +90,7 @@ static UQUAD alloc_table_page(void *ctx)
  * Ring 0 services a process's system calls under that process's own CR3,
  * so the kernel's low-half data has to be reachable there too: the
  * system-vector area (the OS variables at 0x400.., the trap vectors), the
- * low kernel-data pool and the framebuffer.  Each is a 2 MiB mapping copied
+ * framebuffer, if there is one.  Each is a 2 MiB mapping copied
  * from the kernel's own tables, supervisor-only -- ring 3 gets a fault from
  * all of it, the null guard included -- and placed so as not to overlap
  * anything a process maps for itself (include/procmem.h's layout).

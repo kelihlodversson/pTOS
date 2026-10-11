@@ -26,7 +26,7 @@ void pc_x86_64_memory_init(void);
  * X86_64_LOW_TPA_VIRT_BASE, mapped in the kernel's own page tables and
  * managed by procmem.c.  See include/procmem.h for the allocator that
  * hands it out and procmem.c for how it is backed.  Both constants stay
- * here because memory.c places the low-kdata pool right after the window.
+ * here because memory.c places the framebuffer after the process image window.
  */
 #define X86_64_LOW_TPA_VIRT_BASE 0x200000ULL
 #define X86_64_LOW_TPA_BYTES (2 * 1024 * 1024)
@@ -42,27 +42,7 @@ void pc_x86_64_memory_init(void);
 void x86_64_low_tpa_init(void);
 
 /*
- * Allocates and low-maps (see memory.c's own #351 comment) the third
- * pool: kernel-owned structures a 32-bit ABI field (the cookie jar, so
- * far) hands out by address, and so must have a real sub-4GiB address of
- * their own. Same preconditions as x86_64_low_tpa_init(); call it right
- * alongside that one.
- */
-void x86_64_low_kdata_init(void);
-
-/*
- * Bump-allocates `needed` bytes (16-byte aligned) from the pool
- * x86_64_low_kdata_init() set up, for a kernel-internal caller to point
- * its own low, sub-4GiB-address global at (bios/vectors.h's
- * x86_64_vector_5ms_ptr, bios/scsidriv.h's x86_64_scsidriv_root_ptr).
- * Returns NULL if the pool is exhausted; every current caller allocates
- * once, at boot, for a small fixed-size object, so this is a can't-happen
- * rather than a real error path.
- */
-void *x86_64_low_kdata_alloc(LONG needed);
-
-/*
- * Sanity ceiling for the fourth (EFI GOP framebuffer) pool below -- not a
+ * Sanity ceiling for the third (EFI GOP framebuffer) pool below -- not a
  * real limit on any actual framebuffer size, just a bound past which a
  * firmware-reported mode is refused rather than mapped on faith (see
  * memory.c's own #332 comment on x86_64_low_fb_init() for the full
@@ -78,8 +58,8 @@ void *x86_64_low_kdata_alloc(LONG needed);
 /*
  * Maps count 2 MiB pages of the CALLER-GIVEN physical range
  * [aligned_phys, aligned_phys + page_count*2MiB) -- already 2 MiB-aligned,
- * unlike x86_64_low_tpa_init()/x86_64_low_kdata_init()'s own allocations
- * -- at a fixed low virtual base right after the low-kdata pool (see
+ * unlike x86_64_low_tpa_init()'s own allocation
+ * -- at a fixed low virtual base right after the user image window (see
  * memory.c's own #332 comment). Used for the EFI GOP framebuffer
  * (bios/machine/pc-x86_64/gop.c), whose physical location this file has
  * no say over. Returns that virtual base, or 0 if page_count describes
@@ -92,8 +72,8 @@ UQUAD x86_64_low_fb_init(UQUAD aligned_phys, UQUAD page_count);
  * prints "x86-64 memtest: PASS" or "FAIL (n)".  Needs BDOS initialised. */
 void x86_64_memtest_run(void);
 
-/* The kernel-only low range [*start, *end) -- low kernel-data pool and
- * framebuffer -- each process address space maps supervisor-only. */
+/* The kernel-only low range [*start, *end) -- framebuffer (empty
+ * if there is none) -- each process address space maps supervisor-only. */
 void x86_64_low_kernel_range(UQUAD *start, UQUAD *end);
 
 #endif /* PC_X86_64_MEMORY_H */

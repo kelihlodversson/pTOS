@@ -68,13 +68,13 @@ the kernel's low-half data must be reachable there too.  aspace_create()
 copies the kernel's 2 MiB mappings of
 
     0x00000000 - 0x001fffff   the system-vector area (OS variables, vectors)
-    0x00800000 - ...          the low kernel-data pool, then the framebuffer
+    0x00800000 - ...          the framebuffer, if there is one
 
 into every address space WITHOUT the user bit.  Ring 3 faults on any of it,
 the null guard included, so a process still cannot read or write the system
-variables (EmuCON asks Ssystem() for _nflops, for example).  The pool and the
-framebuffer sit above the 4 MiB image window so that they never overlap what a
-process maps for itself; x86_64_low_kernel_range() says where they end.
+variables (EmuCON asks Ssystem() for _nflops, for example).  The framebuffer
+sits above the 4 MiB image window so that it never overlaps what a process
+maps for itself; x86_64_low_kernel_range() says where it ends.
 
 Ring 0 can still write that data on a process's behalf through a pointer
 argument it did not check.  The GEMDOS (trap 1) calls are covered: every

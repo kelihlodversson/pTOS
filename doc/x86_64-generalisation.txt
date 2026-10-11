@@ -78,12 +78,15 @@ cli/ and util/ to regenerate it).
    message is "process fault: <cause> code=... addr=... pc=... sp=..." (the CI
    boot test greps "process fault:").
 
-5. Fixed low memory pools (a board matter)
-   x86_64_low_kdata_alloc/init, x86_64_low_tpa_alloc, x86_64_vector_5ms_ptr/
-   _alloc, x86_64_scsidriv_root_ptr/_alloc.  Users: bios/mfp.c,
-   bios/scsidriv.c, bios/scsidriv.h, bios/vectors.h.  Shared code reaches
-   fixed-address system variables that do not exist as such here; wants a
-   general allocator for "system variable storage" provided by the machine.
+5. Fixed low memory pools (a board matter)                             DONE
+   The pool (x86_64_low_kdata_*) and the x86_64_vector_5ms_ptr and
+   x86_64_scsidriv_root_ptr indirections existed only so that the '_5MS' and
+   'SCSI' cookies could hold a 32-bit address of a kernel variable.  An x32
+   program has no use for either cookie (no hooked 5 ms tick, no SCSI driver),
+   so they are no longer published there: the new CONF_WITH_ADDR_COOKIES
+   (bios/Kconfig; follows the architecture, off on x86-64) guards them in
+   fill_cookie_jar(), and vector_5ms/scsidriv_root are ordinary variables
+   everywhere.  The pool, the pointers and their __x86_64__ branches are gone.
 
 6. Hardware access from shared drivers
    x86_64_inb/outb/ide_insw/ide_outsw (bios/ide.c), x86_64_kernel_trap
