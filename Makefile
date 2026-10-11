@@ -265,9 +265,9 @@ TOOLCHAIN_CFLAGS = -ffreestanding
 # x86_64_build_page_tables()/x86_64_build_physmap()/x86_64_low_to_high()
 # in pgtable.c, x86_64_apply_higher_half_relocations() in pe_reloc.c,
 # x86_64_pmem_init()/x86_64_pmem_highest_addr() in pmem.c, and (#332)
-# x86_64_gop_reserved_range() in gop.c -- called from efi_main() *after*
+# gop_reserved_range() in gop.c -- called from efi_main() *after*
 # x86_64_apply_higher_half_relocations() has already run, unlike its own
-# x86_64_gop_probe() (called earlier, before that pass, so its absolute
+# gop_probe() (called earlier, before that pass, so its absolute
 # references still held their as-loaded low values when it ran and
 # needed no override). Under plain -mcmodel=large, that same function's
 # read of gop.c's own static gop_found/gop_phys_base/gop_size would

@@ -49,7 +49,7 @@
 /*
  * Bounded retry counts, not a real elapsed-time timeout: hz_200 isn't
  * ticking yet when this runs (the PIT that drives it is programmed and
- * unmasked only after this returns, see irq.c's own x86_64_irq_init()),
+ * unmasked only after this returns, see irq.c's own machine_irq_init()),
  * and this is boot-time, one-shot setup, not a latency-sensitive path --
  * a plain iteration bound is the same defensive convention other early,
  * pre-tick x86-64 boot code already uses (e.g. gop.c's own firmware-
