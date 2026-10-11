@@ -115,7 +115,7 @@ static const char *cpu_display_name(void)
 /*
  * mcpu holds CPUID leaf 1's EAX (the family/model/stepping signature),
  * not an m68k-style small integer code -- the same trick ARM plays with
- * its own raw CPUID register (above): every other reader of mcpu
+ * its own raw CPUID register (bios/arch/arm/cpudetect.c): every other reader of mcpu
  * (kprint.c, delay.c, aros.c, ide.c) only ever compares it against
  * specific m68k CPU-type constants (0/10/20/30/40/60), which a real
  * CPUID signature is never going to coincidentally match, so those
