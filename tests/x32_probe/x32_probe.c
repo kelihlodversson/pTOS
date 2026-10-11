@@ -1011,7 +1011,9 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         static const char d_tail[] = { 1, 'D', 0 };
         static const char e_tail[] = { 1, 'E', 0 };
         static const char q_tail[] = { 1, 'Q', 0 };
-        s64 rc, rc2, rc3, rc4;
+        static const char g_tail[] = { 1, 'G', 0 };
+        static const char r_tail[] = { 1, 'R', 0 };
+        s64 rc, rc2, rc3, rc4, rc5, rc6;
 
         rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
                   (s64)(int)(unsigned long)l_tail, 0);
@@ -1021,12 +1023,16 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
                    (s64)(int)(unsigned long)d_tail, 0);
         rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
                    (s64)(int)(unsigned long)e_tail, 0);
+        rc5 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)g_tail, 0);
+        rc6 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)r_tail, 0);
         sys4(GEMDOS, 0x11f, 0x100, 0x2000000, 0, 0);
         sys4(GEMDOS, 0x11f, 3, 0x300000, 0, 0);
         rc4 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
                    (s64)(int)(unsigned long)q_tail, 0);
         pterm((rc == 0 ? 0 : 1) | (rc2 == 0xffff ? 0 : 2) | (rc3 == 0 ? 0 : 4) |
-              (rc4 == 0 ? 0 : 8));
+              (rc4 == 0 ? 0 : 8) | (rc5 == 0xffff ? 0 : 16) | (rc6 == 0 ? 0 : 32));
         break;
     }
     case 'M': {

@@ -97,12 +97,13 @@ The constants are in include/procmem.h.
                               area, 128 KiB of zeroed read/write memory right
                               after the image's last page
     0x0fff0000 - 0x0fff0fff   ancestors' basepages, read-only (below)
-    0x10000000 - 0x7effffff   Malloc() memory, backed when touched (below)
+    0x10000000 - 0x7efeffff   Malloc() memory, backed when touched (below)
+    0x7efff000 - 0x7effffff   guard page, never mapped: between heap and stack
     0x7f000000 - 0x7fffffff   user stack (16 MiB by default), growing down
                               from X86_64_USER_STACK_TOP, backed when
                               touched; the page below it is left unmapped as
                               a guard.  Psetlimit() changes its size, and the
-                              Malloc() memory then ends where the stack starts
+                              Malloc() memory then ends one guard page below where the stack starts
 
 The whole layout lies below 2 GiB (the 32-bit ABI would allow 4): every address
 of a process is a positive signed long, which the pointer and error code habits

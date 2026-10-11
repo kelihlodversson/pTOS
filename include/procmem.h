@@ -162,8 +162,9 @@ typedef struct x86_64_aspace X86_64_ASPACE;
  *                             for a program loaded from a file, the startup
  *                             area X86_64_USER_IMAGE_SLACK long after it
  *   0x0fff0000 - 0x0fff0fff   ancestors' basepages, read-only (see below)
- *   0x10000000 - 0x7effffff   Malloc() memory of a process, backed by private
+ *   0x10000000 - 0x7efeffff   Malloc() memory of a process, backed by private
  *                             pages as they are first touched (see below)
+ *   0x7efff000 - 0x7effffff   guard page: neither heap nor stack, never mapped
  *   0x7f000000 - 0x7fffffff   user stack (16 MiB by default), growing down,
  *                             likewise; Psetlimit() can make it bigger, and
  *                             the Malloc() memory then ends lower
@@ -199,9 +200,9 @@ typedef struct x86_64_aspace X86_64_ASPACE;
  * argv add a few hundred bytes. */
 #define X86_64_USER_IMAGE_SLACK 0x00020000ULL
 #define X86_64_USER_HEAP_BASE   0x10000000ULL
-/* (the end of the heap with the default stack; a process whose stack limit was
- * raised has less) */
-#define X86_64_USER_HEAP_LIMIT  0x7f000000ULL
+/* (the end of the heap with the default stack, a guard page below the stack's
+ * first; a process whose stack limit was raised has less) */
+#define X86_64_USER_HEAP_LIMIT  0x7efff000ULL
 #define X86_64_USER_STACK_TOP   0x80000000ULL
 /* the default size of the stack: address space, backed when touched */
 #define X86_64_USER_STACK_SIZE  0x01000000ULL

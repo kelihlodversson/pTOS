@@ -478,7 +478,7 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
                 if (kproc->nheap)
                     highest = kproc->heap[kproc->nheap - 1].va +
                               (UQUAD)kproc->heap[kproc->nheap - 1].pages * X86_64_USER_PAGE_SIZE;
-                if (X86_64_USER_STACK_TOP - pk->stack_size >= highest)
+                if (X86_64_USER_STACK_TOP - pk->stack_size - X86_64_USER_PAGE_SIZE >= highest)
                     kproc->stack_size = pk->stack_size;
             }
         }
@@ -834,10 +834,11 @@ static UQUAD stack_bytes(const KPROC *kproc)
     return kproc->stack_size ? kproc->stack_size : X86_64_USER_STACK_SIZE;
 }
 
-/* where the Malloc() memory ends: the stack's address space starts */
+/* where the Malloc() memory ends: the stack's address space starts, less a guard
+ * page that belongs to neither (a stack that outgrows its limit faults) */
 static UQUAD heap_limit(const KPROC *kproc)
 {
-    return X86_64_USER_STACK_TOP - stack_bytes(kproc);
+    return X86_64_USER_STACK_TOP - stack_bytes(kproc) - X86_64_USER_PAGE_SIZE;
 }
 
 /* how many bytes of Malloc() blocks the process holds, and how big its image is
@@ -1075,7 +1076,7 @@ LONG kproc_psetlimit(PD *pd, WORD mode, LONG value)
                 return ERANGE;
             size = ((UQUAD)value + X86_64_USER_PAGE_SIZE - 1) & ~(X86_64_USER_PAGE_SIZE - 1);
         }
-        if (size > X86_64_USER_STACK_TOP - X86_64_USER_HEAP_BASE)
+        if (size + X86_64_USER_PAGE_SIZE > X86_64_USER_STACK_TOP - X86_64_USER_HEAP_BASE)
             return ENSMEM;
         highest = X86_64_USER_HEAP_BASE;
         if (kproc->nheap) {
@@ -1083,7 +1084,7 @@ LONG kproc_psetlimit(PD *pd, WORD mode, LONG value)
 
             highest = b->va + (UQUAD)b->pages * X86_64_USER_PAGE_SIZE;
         }
-        if (X86_64_USER_STACK_TOP - size < highest)
+        if (X86_64_USER_STACK_TOP - size - X86_64_USER_PAGE_SIZE < highest)
             return ENSMEM;
         if (kproc->stack_low && X86_64_USER_STACK_TOP - size > kproc->stack_low)
             return ERANGE;
@@ -1110,8 +1111,9 @@ ULONG kproc_uheap_largest(PD *pd)
     if (!kproc || !kproc->aspace)
         return 0;
     heap_gap(kproc, 0, &index, &largest);
-    if (largest > alloc_room(kproc))
-        largest = alloc_room(kproc);
+    /* (Malloc() rounds a request up to whole pages: what is left, down to them) */
+    if (largest > (alloc_room(kproc) & ~(X86_64_USER_PAGE_SIZE - 1)))
+        largest = alloc_room(kproc) & ~(X86_64_USER_PAGE_SIZE - 1);
     return (ULONG)largest;
 }
 

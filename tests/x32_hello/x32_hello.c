@@ -403,6 +403,29 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         gemdos1r(0x49, (u64)a);
         gemdos1(0x4c, bad_lim);
     }
+    if (cmdline[0] == 1 && cmdline[1] == 'R') {
+        /* a limit that is not a whole number of pages: Malloc(-1) reports what
+         * Malloc() will give, a whole number of pages (#450) */
+        u64 a;
+
+        gemdos2(0x11f, PSETLIMIT_DATA, 0x100064);
+        a = (u64)gemdos1r(0x48, 0xffffffffULL);
+        if (a != 0x100000)
+            gemdos1(0x4c, 1);
+        a = (u64)gemdos1r(0x48, a);
+        gemdos1(0x4c, a > 0 ? 0 : 2);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'G') {
+        /* the heap ends one guard page below the stack's address space: the
+         * largest block ends there, and the guard page is neither (#450) */
+        u64 all = (u64)gemdos1r(0x48, 0xffffffffULL);
+        u64 p = (u64)gemdos1r(0x48, all);
+
+        if (p + all != 0x7efff000ULL)
+            gemdos1(0x4c, 1);
+        *(volatile unsigned char *)(unsigned long)(p + all) = 1;   /* faults */
+        gemdos1(0x4c, 0);
+    }
     if (cmdline[0] == 1 && cmdline[1] == 'D') {
         /* 20 MiB of stack is more than the default 16: the process faults */
         gemdos1(0x4c, deep_stack(320) & 1);
