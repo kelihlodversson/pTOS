@@ -13,6 +13,8 @@
 #ifndef VECTORS_H
 #define VECTORS_H
 
+#include "config.h"
+
 /* initialize default exception vectors */
 
 void init_exc_vec(void);
@@ -33,7 +35,7 @@ void int_timerc(void);
 
 void biostrap(void);
 void xbiostrap(void);
-#ifndef __m68k__
+#if CONF_WITH_NATIVE_ABI
 void gemtrap(void);    /* ARM's own VDI trap dispatcher, bios/arch/arm/vectorsasm.S */
 #endif
 
@@ -51,7 +53,7 @@ void int_illegal(void);
 void int_priv(void);
 void int_unimpint(void);
 
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 #define trap_save_area 0 /* not used on arm/x86-64 */
 #else
 extern WORD trap_save_area[];
@@ -157,12 +159,12 @@ extern void (*vector_5ms)(void);              /* 200 Hz system timer */
 extern void (*timer_vbl_hook)(void);
 
 /* protect d2/a2 when calling external user-supplied code */
-#ifdef __m68k__
+#if !CONF_WITH_NATIVE_ABI
 LONG protect_v(LONG (*func)(void));
 LONG protect_w(LONG (*func)(WORD), WORD);
 LONG protect_ww(LONG (*func)(void), WORD, WORD);
 LONG protect_wlwwwl(LONG (*func)(void), WORD, LONG, WORD, WORD, WORD, LONG);
-#elif defined (__arm__) || defined(__x86_64__)
+#else
 
 /* We assume ARM/x86-64 developers follow their platform's own standard
  * calling convention (AAPCS / SysV x86-64), so the following are simple

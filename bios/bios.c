@@ -37,7 +37,7 @@
 #include "nls.h"
 #include "biosmem.h"
 #include "../aes/aesstub.h"
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 #include "biosargs.h"
 #endif
 #if CONF_WITH_X86_64_MEMTEST
@@ -232,7 +232,7 @@ static void vecs_init(void)
 #endif
 
     /* initialise some vectors we really need */
-#ifdef __m68k__
+#if !CONF_WITH_NATIVE_ABI
     SET_VEC(VEC_GEM, vditrap);
 #else
     /* ARM's own gemtrap() (bios/arch/arm/vectorsasm.S) is the equivalent
@@ -1316,7 +1316,7 @@ LONG lrwabs(WORD r_w, UBYTE *adr, WORD numb, WORD first, WORD drive, LONG lfirst
     return protect_wlwwwl((PFLONG)hdv_rw, r_w, (long)adr, numb, first, drive, lfirst);
 }
 
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 /*
  * ARM's trap entry (_biostrap, vectorsasm.S) and x86-64's dispatcher
  * (bios/arch/x86_64/trap.c) alike only deliver 4 real arguments in
@@ -1595,7 +1595,7 @@ const PFLONG bios_vecs[] = {
     VEC(bios_1, bconstat),
     VEC(bios_2, bconin),
     VEC(bios_3, bconout),
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     (PFLONG) bios_4_arm,
 #else
     VEC(bios_4, lrwabs),

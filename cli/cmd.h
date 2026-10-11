@@ -22,6 +22,12 @@
  /* config.h */
  #define CONF_ATARI_HARDWARE    1
  #define CONF_WITH_TT_SHIFTER   1
+ /* the kernel's CONF_WITH_NATIVE_ABI (Kconfig.machine): everything but m68k */
+ #if defined(__arm__) || defined(__x86_64__)
+  #define CONF_WITH_NATIVE_ABI  1
+ #else
+  #define CONF_WITH_NATIVE_ABI  0
+ #endif
  #define MAXPATHLEN      256
  #define BLKDEVNUM       26
  /* sysconf.h */

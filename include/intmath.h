@@ -10,6 +10,8 @@
 #ifndef INTMATH_H
 #define INTMATH_H
 
+#include "config.h"
+
 ULONG Isqrt(ULONG x);
 
 /*
@@ -53,7 +55,7 @@ ULONG Isqrt(ULONG x);
  */
 static __inline__ WORD mul_div(WORD m1, WORD m2, WORD d1)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     return (WORD)(( (long)m1 * (long)m2 ) / d1);
 #else
     __asm__ (
@@ -79,7 +81,7 @@ static __inline__ WORD mul_div(WORD m1, WORD m2, WORD d1)
  */
 static __inline__ UWORD umul_shift(UWORD m1, UWORD m2)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     return (UWORD)(((ULONG)m1 * (ULONG)m2 + 32768UL) >> 16);
 #else
     __asm__ (
@@ -101,7 +103,7 @@ static __inline__ UWORD umul_shift(UWORD m1, UWORD m2)
  */
 static __inline__ LONG muls(WORD m1, WORD m2)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     return (LONG)m1 * (LONG)m2;
 #else
     LONG ret;
@@ -124,7 +126,7 @@ static __inline__ LONG muls(WORD m1, WORD m2)
  */
 static __inline__ UWORD divu(ULONG d1, UWORD d2)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     return (UWORD)(d1 / d2);
 #else
     __asm__ (

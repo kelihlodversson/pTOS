@@ -16,7 +16,9 @@
 #ifndef BIOSBIND_H
 #define BIOSBIND_H
 
-#if defined(__arm__) || defined(__x86_64__)
+#include "config.h"
+
+#if CONF_WITH_NATIVE_ABI
 #include "biosargs.h"
 #endif
 #ifdef __x86_64__
@@ -273,7 +275,7 @@ static __inline__ long bios_l_wl(int op, short a, long b)
 static __inline__ long
 bios_l_wlwwwl(int op, short a, long b, short c, short d, short e, long f)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     /*
      * lrwabs() needs 6 real arguments; the trap convention only delivers
      * 4 in registers (ARM's _biostrap, x86-64's trap.c dispatch alike),
