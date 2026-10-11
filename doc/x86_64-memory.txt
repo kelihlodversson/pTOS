@@ -92,7 +92,8 @@ Termination (xterm() -> ixterm()):
     proc_free_owned(p)       free every procmem block p owns; a block that
                                is a basepage drops its own KPROC first
 
-Ptermres makes p's blocks permanent (procmem_disown()).  Mfree() of a
+Ptermres makes p's blocks permanent (proc_make_resident(), which
+calls procmem_keep()).  Mfree() of a
 procmem block frees that block (and the KPROC if it is a basepage), so a
 basepage created with Pexec(PE_BASEPAGE) and never launched is reclaimed
 by Mfree() of the basepage and its environment.
