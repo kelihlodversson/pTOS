@@ -119,7 +119,7 @@ static void release_pd_files(PD *r);
  * current directories in init_pd_files()) but never launched still holds
  * those references, and nothing else will ever release them: do it now,
  * exactly once -- the record is the proof it has not been done. */
-static void x86_64_release_block(void *base)
+static void proc_release_block(void *base)
 {
     /* the tables are in the record: release through it, then drop it */
     if (kproc_unlaunched((PD *)base))
@@ -135,7 +135,7 @@ static void x86_64_release_block(void *base)
  * is also what says its inherited file and directory references are still
  * held, so they are released now and cleared from the basepage: whoever
  * launches or frees it later must not release them a second time. */
-static void x86_64_drop_child_record(void *base)
+static void proc_drop_child_record(void *base)
 {
     PD *child = (PD *)base;
 
@@ -149,10 +149,10 @@ static void x86_64_drop_child_record(void *base)
 
 /* Pending Ptermres: applied by xterm() once the process's address space is
  * gone, because only then can the unused tail of its block be released. */
-static PD *x86_64_resident_pd;
-static ULONG x86_64_resident_len;
+static PD *proc_resident_pd;
+static ULONG proc_resident_len;
 
-void x86_64_make_resident(PD *p, ULONG keep_bytes)
+void proc_make_resident(PD *p, ULONG keep_bytes)
 {
     /* The process's own block is not passed to the callback below, and its
      * tail cannot be given back while the launcher still has it mapped: return
@@ -160,9 +160,9 @@ void x86_64_make_resident(PD *p, ULONG keep_bytes)
      * through the callback). */
     /* (a basepage the launcher owns, launched with PE_GO, stays its: the
      * grant it was given goes on) */
-    if (x86_64_procmem_owner(p) == p)
+    if (procmem_owner(p) == p)
         kproc_unborrow(p);
-    x86_64_procmem_keep(p, keep_bytes, x86_64_drop_child_record);
+    procmem_keep(p, keep_bytes, proc_drop_child_record);
 }
 
 /*
@@ -170,14 +170,14 @@ void x86_64_make_resident(PD *p, ULONG keep_bytes)
  * free_all_owned() for the MPB lists), dropping KPROC records of any
  * basepages among them first.
  */
-void x86_64_free_owned(PD *p)
+void proc_free_owned(PD *p)
 {
-    x86_64_procmem_free_owned(p, x86_64_release_block);
+    procmem_free_owned(p, proc_release_block);
 }
 
 /* Mfree() of a process allocation: same release, one block.  `trusted` is
  * Pexec()'s own rollback of what it just allocated for its caller. */
-static long x86_64_mfree(void *addr, BOOL trusted)
+static long proc_mfree(void *addr, BOOL trusted)
 {
     /* A block that a live process still has mapped (its own environment or
      * basepage, say) cannot be freed from under it, and tearing down the
@@ -185,25 +185,25 @@ static long x86_64_mfree(void *addr, BOOL trusted)
      * leave the KPROC record alone. */
     /* A ring-3 caller frees what it owns and nothing else: the blocks of a
      * process it launched are not its, nor those a peer retained. */
-    if (!trusted && x86_64_ring3_caller() && x86_64_procmem_owner(addr) != run)
+    if (!trusted && x86_64_ring3_caller() && procmem_owner(addr) != run)
         return EACCDN;
-    if (x86_64_procmem_pins(addr) > kproc_borrow_count(run, addr))
+    if (procmem_pins(addr) > kproc_borrow_count(run, addr))
         return EACCDN;
-    x86_64_release_block(addr);     /* also returns it if it was borrowed */
-    return x86_64_procmem_free(addr) ? E_OK : EIMBA;
+    proc_release_block(addr);     /* also returns it if it was borrowed */
+    return procmem_free(addr) ? E_OK : EIMBA;
 }
 
-long x86_64_procmem_mfree(void *addr)
+long procmem_mfree(void *addr)
 {
-    return x86_64_mfree(addr, FALSE);
+    return proc_mfree(addr, FALSE);
 }
 
 /* xexec()'s rollback: its blocks are not owned yet, or belong to the child
  * it failed to start, and are lent to a ring-3 caller who must get them back. */
 static void xexec_free(void *addr)
 {
-    if (x86_64_procmem_contains(addr))
-        x86_64_mfree(addr, TRUE);
+    if (procmem_contains(addr))
+        proc_mfree(addr, TRUE);
     else
         xmfree(addr);
 }
@@ -358,7 +358,7 @@ static void ixterm(PD *r)
         free_all_owned(r, &pmdalt);
 #endif
 #ifdef __x86_64__
-    x86_64_free_owned(r);
+    proc_free_owned(r);
 #endif
 }
 
@@ -683,7 +683,7 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
      * process's first instruction ever runs. The x86-64 SysV/x32 ABI's
      * process-entry convention requires (RSP + 8) to be a multiple of
      * 16 at that point (equivalently, RSP itself is 8 mod 16) -- p itself
-     * comes from a page-aligned allocator (x86_64_procmem_alloc()),
+     * comes from a page-aligned allocator (procmem_alloc()),
      * but max (the process's own TPA size, ultimately from arbitrary
      * ELF segment sizes) is not, so p+max need not satisfy this (#356's
      * own review caught it: the first `call` in a real process can run
@@ -695,7 +695,7 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
     /* Same reasoning as p_lowtpa/p_hitpa above: p_cmdlin is a field
      * within p itself, and envptr comes from alloc_env(), whose own
      * __x86_64__ branch (bdos/proc.c) likewise draws from
-     * x86_64_procmem_alloc() rather than xmxalloc()'s higher-half pool
+     * procmem_alloc() rather than xmxalloc()'s higher-half pool
      * (see #360). */
     p->p_xdta = PTR_TO_USERPTR((DTA *) p->p_cmdlin);       /* default p_xdta is p_cmdlin */
     p->p_env = PTR_TO_USERPTR(envptr);
@@ -769,10 +769,10 @@ static char *alloc_env(ULONG flags, char *env)
      * address outside every known MPB gracefully (see alloc_tpa()'s own
      * comment), exactly what happens for memory from this same pool.
      */
-    new_env = (char *)x86_64_procmem_alloc(size, PROCMEM_ZERO);
+    new_env = (char *)procmem_alloc(size, PROCMEM_ZERO);
     /* built below under the launcher's page tables: lend it to a ring-3 one */
     if (new_env && !kproc_borrow(run, new_env)) {
-        x86_64_procmem_free(new_env);
+        procmem_free(new_env);
         new_env = NULL;
     }
 #else
@@ -840,10 +840,10 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
      * Copilot's review of #356 caught this).
      */
     {
-        UBYTE *low = x86_64_procmem_alloc(needed + 15, PROCMEM_ZERO);
+        UBYTE *low = procmem_alloc(needed + 15, PROCMEM_ZERO);
 
         if (low && !kproc_borrow(run, low)) {   /* see alloc_env() */
-            x86_64_procmem_free(low);
+            procmem_free(low);
             low = NULL;
         }
         if (low)
@@ -1066,9 +1066,9 @@ void xterm(UWORD rc)
 #endif
     kproc_destroy(p);
 #ifdef __x86_64__
-    if (x86_64_resident_pd == p) {      /* Ptermres, now that nothing maps p */
-        x86_64_make_resident(p, x86_64_resident_len);
-        x86_64_resident_pd = NULL;
+    if (proc_resident_pd == p) {      /* Ptermres, now that nothing maps p */
+        proc_make_resident(p, proc_resident_len);
+        proc_resident_pd = NULL;
     }
 #endif
     ixterm(p);
@@ -1098,8 +1098,8 @@ WORD xtermres(long blkln, WORD rc)
     /* The window's blocks are not MPB descriptors, so xsetblk() above cannot
      * shrink them: xterm() does it, and makes the rest resident, once the
      * address space that maps them is destroyed. */
-    x86_64_resident_pd = run;
-    x86_64_resident_len = (ULONG)blkln;
+    proc_resident_pd = run;
+    proc_resident_len = (ULONG)blkln;
 #endif
     xterm(rc);
 }

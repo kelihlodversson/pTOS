@@ -20,7 +20,7 @@
  * basepage and TPA -- comes from one low virtual window that lies entirely
  * below 4 GiB, so any address in it fits the 32-bit GEMDOS ABI fields
  * (p_env, p_tbase, p_hitpa, ...).  That is a VIRTUAL constraint, met by
- * construction: x86_64_procmem_alloc() can only return window addresses.
+ * construction: procmem_alloc() can only return window addresses.
  * The PHYSICAL pages backing the window are chosen separately and may lie
  * anywhere in RAM, above 4 GiB included, because the MMU maps them;
  * nothing here assumes a low physical address.
@@ -28,13 +28,13 @@
  * Each allocation is a whole number of 4 KiB pages and is tracked: the
  * window records which pages are in use, and each live allocation has a
  * record (a kheap block) naming its base, size and owner.  An allocation
- * is released exactly once -- by x86_64_procmem_free() (Mfree), by
- * x86_64_procmem_free_owned() (process teardown), or by the caller's
+ * is released exactly once -- by procmem_free() (Mfree), by
+ * procmem_free_owned() (process teardown), or by the caller's
  * failure path -- and a second release is refused and counted, never
  * applied.  These blocks are user memory: they are never kheap blocks, and
  * kfree() rejects them.
  *
- * x86_64_procmem_alloc() returns NULL, with no side effect, when the
+ * procmem_alloc() returns NULL, with no side effect, when the
  * window has no free run of pages or the tracking record cannot be
  * allocated.
  */
@@ -42,18 +42,18 @@
                                  * it the pages hold whatever a previous
                                  * owner left behind */
 
-void *x86_64_procmem_alloc(ULONG bytes, UWORD flags);
-BOOL x86_64_procmem_free(void *p);
+void *procmem_alloc(ULONG bytes, UWORD flags);
+BOOL procmem_free(void *p);
 
 /* Size in bytes (a whole number of pages) of the live allocation whose
  * base is exactly p; 0 if p is not the base of one. */
-ULONG x86_64_procmem_size(const void *p);
+ULONG procmem_size(const void *p);
 
 /* Identity of the live allocation whose base is exactly p: a number never
  * given to any other allocation, even one later placed at the same address.
  * 0 if p is not the base of one.  Lets a holder of an address tell "still my
  * block" from "someone else's block that reused the space". */
-UQUAD x86_64_procmem_gen(const void *p);
+UQUAD procmem_gen(const void *p);
 
 /*
  * For tests that make memory permanent on purpose (Ptermres): the generation
@@ -62,29 +62,29 @@ UQUAD x86_64_procmem_gen(const void *p);
  * it made resident.  Returns how many blocks it freed.  Nothing else should
  * use this: ownerless memory is permanent by design.
  */
-UQUAD x86_64_procmem_next_gen(void);
-ULONG x86_64_procmem_free_ownerless_since(UQUAD gen);
+UQUAD procmem_next_gen(void);
+ULONG procmem_free_ownerless_since(UQUAD gen);
 
 /* TRUE iff p lies in the window at all (live or not). */
-BOOL x86_64_procmem_contains(const void *p);
+BOOL procmem_contains(const void *p);
 
 /* TRUE iff every page of [va, va + bytes) belongs to a live allocation. */
-BOOL x86_64_procmem_range_live(UQUAD va, UQUAD bytes);
+BOOL procmem_range_live(UQUAD va, UQUAD bytes);
 
 /*
  * A block mapped into a live address space (aspace_map_procmem()) is
  * pinned: it cannot be released while the mapping exists, because the pages
  * would be handed to a new owner while the old process could still reach
- * them.  x86_64_procmem_free() returns FALSE for a pinned block and leaves
- * it allocated; x86_64_procmem_free_owned() skips it.  The address space
+ * them.  procmem_free() returns FALSE for a pinned block and leaves
+ * it allocated; procmem_free_owned() skips it.  The address space
  * unpins when it is destroyed.
  */
-BOOL x86_64_procmem_pinned(const void *p);
-ULONG x86_64_procmem_pins(const void *p);      /* the pin count itself */
-void x86_64_procmem_pin(UQUAD va, UQUAD bytes, int delta);   /* +1 / -1 */
+BOOL procmem_pinned(const void *p);
+ULONG procmem_pins(const void *p);      /* the pin count itself */
+void procmem_pin(UQUAD va, UQUAD bytes, int delta);   /* +1 / -1 */
 
 /* Physical address backing window address va (which must be inside it). */
-UQUAD x86_64_procmem_phys_of(UQUAD va);
+UQUAD procmem_phys_of(UQUAD va);
 
 /*
  * Ownership, mirroring the GEMDOS memory descriptor owner: set_owner()
@@ -99,10 +99,10 @@ UQUAD x86_64_procmem_phys_of(UQUAD va);
  * same kind of per-address cleanup.  `owner` is only an identity, never
  * dereferenced.
  */
-void x86_64_procmem_set_owner(const void *p, const void *owner);
-const void *x86_64_procmem_owner(const void *p);   /* NULL: none, or not an allocation */
-void x86_64_procmem_free_owned(const void *owner, void (*pre_free)(void *base));
-void x86_64_procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *base));
+void procmem_set_owner(const void *p, const void *owner);
+const void *procmem_owner(const void *p);   /* NULL: none, or not an allocation */
+void procmem_free_owned(const void *owner, void (*pre_free)(void *base));
+void procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *base));
 
 typedef struct {
     ULONG live_allocs;      /* allocations not yet freed */
@@ -111,7 +111,7 @@ typedef struct {
     ULONG bad_frees;        /* rejected releases (double/foreign free) */
 } PROCMEM_STATS;
 
-void x86_64_procmem_stats(PROCMEM_STATS *stats);
+void procmem_stats(PROCMEM_STATS *stats);
 
 /*
  * Address spaces

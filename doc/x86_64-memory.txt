@@ -26,7 +26,7 @@ Kernel heap       kheap.c.  kalloc() / kfree().  KPROC records and
                   memory descriptor, never owned by a process, reached
                   through the physical direct map (64-bit pointers).
 
-Process memory    procmem.c.  x86_64_procmem_alloc() / _free().  A
+Process memory    procmem.c.  procmem_alloc() / _free().  A
                   process's environment block and its basepage/TPA (and the
                   stack inside the TPA, until a process gets a private one).
                   USER memory: it lives in one window below 4 GiB, can be
@@ -89,10 +89,11 @@ Termination (xterm() -> ixterm()):
                                first if it is the loaded one: unpin the
                                procmem blocks it mapped, free every private
                                backing page and every table page), kfree it
-    x86_64_free_owned(p)       free every procmem block p owns; a block that
+    proc_free_owned(p)       free every procmem block p owns; a block that
                                is a basepage drops its own KPROC first
 
-Ptermres makes p's blocks permanent (x86_64_procmem_disown()).  Mfree() of a
+Ptermres makes p's blocks permanent (proc_make_resident(), which
+calls procmem_keep()).  Mfree() of a
 procmem block frees that block (and the KPROC if it is a basepage), so a
 basepage created with Pexec(PE_BASEPAGE) and never launched is reclaimed
 by Mfree() of the basepage and its environment.
@@ -120,7 +121,7 @@ Failure behaviour
 ------------------
 
 kalloc()               NULL; heap unchanged
-x86_64_procmem_alloc() NULL; window and records unchanged
+procmem_alloc() NULL; window and records unchanged
 aspace_create() NULL; nothing left allocated
 aspace_map_private()
                        FALSE; all-or-nothing: no mapping, backing page or

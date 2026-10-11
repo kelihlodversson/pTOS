@@ -144,8 +144,8 @@ long xmfree(void *addr)
     KDEBUG(("BDOS: Mfree(%p)\n",addr));
 
 #ifdef __x86_64__
-    if (x86_64_procmem_contains(addr))
-        return x86_64_procmem_mfree(addr);
+    if (procmem_contains(addr))
+        return procmem_mfree(addr);
 #endif
     mpb = find_mpb(addr);
     if (!mpb)
@@ -618,8 +618,8 @@ void set_owner(void *addr, PD *p)
     MPB *mpb;
 
 #ifdef __x86_64__
-    if (x86_64_procmem_contains(addr)) {
-        x86_64_procmem_set_owner(addr, p);
+    if (procmem_contains(addr)) {
+        procmem_set_owner(addr, p);
         return;
     }
 #endif

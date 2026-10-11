@@ -119,7 +119,7 @@ extern void run_cartridge_applications(WORD typebit); /* found in startup.S */
 extern BOOL kproc_set_image(PD *pd, const X32_IMAGE *image);    /* bdos/kproc.c */
 static void start_builtin_cli(char *env);
 extern void set_owner(void *addr, PD *p);           /* bdos/mem.c */
-extern void x86_64_free_owned(PD *p);               /* bdos/proc.c */
+extern void proc_free_owned(PD *p);               /* bdos/proc.c */
 #else
 extern void coma_start(void) NORETURN;  /* found in cli/cmdasm.S */
 #endif
@@ -508,7 +508,7 @@ static void start_builtin_cli(char *env)
          * KPROC record */
         set_owner(pd, pd);
         set_owner(USERPTR_TO_PTR(pd->p_env), pd);
-        x86_64_free_owned(pd);
+        proc_free_owned(pd);
     }
 }
 #endif
@@ -1169,7 +1169,7 @@ static void autoexec(void)
      * underlying corruption). Use the same low, sub-4GiB pool real
      * processes' own PDs/env already come from instead.
      */
-    dta = (DTA *)x86_64_procmem_alloc(sizeof(DTA), PROCMEM_ZERO);
+    dta = (DTA *)procmem_alloc(sizeof(DTA), PROCMEM_ZERO);
     if (!dta)
         return;
 #endif
