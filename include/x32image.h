@@ -21,7 +21,7 @@
  * the built-in EmuCON, embedded in the kernel image -- or a layout the ELF
  * loader (bdos/elfld.c) built from a file, relocated into the image window.
  * This is not a general ELF loader.  Every PT_LOAD segment must lie inside the
- * user image window (X86_64_USER_IMAGE_BASE, X86_64_USER_IMAGE_SIZE),
+ * user image window (USER_IMAGE_BASE, USER_IMAGE_SIZE),
  * segments may not share a page, and the entry point must lie in an
  * executable one; anything else is refused before a page is mapped.
  */
@@ -52,7 +52,7 @@ typedef struct {
 BOOL x86_64_x32image_check(const X32_IMAGE *image, UQUAD *entry);
 
 /* x86_64_x32image_layout() and x86_64_x32_layout_load() in one step. */
-BOOL x86_64_x32image_load(X86_64_ASPACE *as, const X32_IMAGE *image, UQUAD *entry);
+BOOL x86_64_x32image_load(ASPACE *as, const X32_IMAGE *image, UQUAD *entry);
 
 /* Fills *layout from the ELF bytes of an image (src points into them).  FALSE
  * if they are not an ET_EXEC x32 executable or the layout is not valid. */
@@ -75,7 +75,7 @@ BOOL x86_64_x32_layout_valid_in(const X32_LAYOUT *layout, BOOL strict,
  * as the segment's flags say, all user-accessible).  FALSE if memory ran out;
  * segments already mapped stay in `as` and are freed with it, so the caller
  * destroys the address space. */
-BOOL x86_64_x32_layout_load(X86_64_ASPACE *as, const X32_LAYOUT *layout);
+BOOL x86_64_x32_layout_load(ASPACE *as, const X32_LAYOUT *layout);
 
 /* The embedded EmuCON (cli/arch/x86_64/emucon_image.c). */
 const X32_IMAGE *x86_64_emucon_image(void);
