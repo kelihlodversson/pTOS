@@ -143,6 +143,9 @@ typedef struct x86_64_aspace X86_64_ASPACE;
 #define ASPACE_PROT_EXEC    0x2
 #define ASPACE_PROT_USER    0x4
 
+/* The size of a page of a process's memory (the heap is a whole number of them). */
+#define X86_64_USER_PAGE_SIZE 0x1000ULL
+
 /* The 32-bit ABI limit: no user mapping may reach or pass this address. */
 #define X86_64_USER_VA_LIMIT 0x100000000ULL
 
@@ -155,7 +158,10 @@ typedef struct x86_64_aspace X86_64_ASPACE;
  *   0x00000000 - 0x001fffff   unmapped (null guard, 2 MiB)
  *   0x00200000 - 0x003fffff   basepage, environment and TPA blocks
  *                             (procmem, X86_64_LOW_TPA_*; shared kernel view)
- *   0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB)
+ *   0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB), then,
+ *                             for a program loaded from a file, the startup
+ *                             area X86_64_USER_IMAGE_SLACK long after it
+ *   0x10000000 - 0x3effffff   Malloc() memory of a process, private pages
  *   0x3ffb0000 - 0x3ffb0fff   ancestors' basepages, read-only (see below)
  *   0x3ffc0000 - 0x3fffffff   user stack (256 KiB), growing down
  *
@@ -169,11 +175,27 @@ typedef struct x86_64_aspace X86_64_ASPACE;
 #define X86_64_USER_ANCESTORS    16
 #define X86_64_USER_IMAGE_BASE  0x00400000ULL
 #define X86_64_USER_IMAGE_SIZE  0x00400000ULL
+/* Zeroed read/write memory mapped right after the last page of a program
+ * loaded from a file: where the C startup code of the TOS tradition puts the
+ * argv and environ arrays it builds (libcmini's parseargs() uses the space
+ * after the bss).  Sized for the worst a ring-3 caller may hand over: an
+ * environment of 32766 bytes (bdos/uaccess.c) is at most 16383 strings, each
+ * with a 4-byte environ slot (64 KiB), and the command line, its copy and
+ * argv add a few hundred bytes. */
+#define X86_64_USER_IMAGE_SLACK 0x00020000ULL
+#define X86_64_USER_HEAP_BASE   0x10000000ULL
+#define X86_64_USER_HEAP_LIMIT  0x3f000000ULL
 #define X86_64_USER_STACK_TOP   0x40000000ULL
 #define X86_64_USER_STACK_SIZE  0x00040000ULL
 
 X86_64_ASPACE *x86_64_aspace_create(void);
 void x86_64_aspace_destroy(X86_64_ASPACE *as);
+/* Makes `as` the address space in use (returns the one that was, a CR3 value for
+ * x86_64_aspace_leave()): ring 0 can then address its user pages by their user
+ * addresses, as it does under a process's own system calls.  Nothing in the
+ * kernel may rely on the previous address space's user half meanwhile. */
+UQUAD x86_64_aspace_enter(X86_64_ASPACE *as);
+void x86_64_aspace_leave(UQUAD previous);
 UQUAD x86_64_aspace_pml4(const X86_64_ASPACE *as);
 
 /*
@@ -221,6 +243,34 @@ ULONG x86_64_aspace_table_pages(const X86_64_ASPACE *as);
  * vectors may keep extra capacity until it is destroyed.
  */
 BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
+
+/*
+ * Gives back [va, va + bytes) -- va page-aligned, bytes rounded up to whole
+ * pages -- of private memory: unmaps it and frees the backing pages, which
+ * must all have come from x86_64_aspace_map_private() of this address space.
+ * FALSE, with nothing changed, if any page of the range is not such a page.
+ * The page-table pages that held the mappings stay until the address space
+ * is destroyed.
+ */
+BOOL x86_64_aspace_unmap_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes);
+
+/*
+ * Hands private pages from one address space to another: [va, va + bytes) of
+ * `from` (every page must be one of its private pages) is mapped at the same
+ * addresses in `to` with `prot`, and unmapped in `from`, the pages themselves
+ * staying allocated and now owned by `to`.  FALSE, with nothing changed, if
+ * a page is not private to `from`, the range is mapped in `to` already or
+ * memory ran out.
+ */
+BOOL x86_64_aspace_move_private(X86_64_ASPACE *from, X86_64_ASPACE *to,
+                                UQUAD va, UQUAD bytes, UWORD prot);
+
+/*
+ * Changes the permissions of private pages [va, va + bytes) of `as` (the
+ * page and its ownership stay).  FALSE, with nothing changed, if a page is
+ * not one of its private pages.
+ */
+BOOL x86_64_aspace_protect_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
 
 /*
  * Software walk of the address space's own page tables, through the physical

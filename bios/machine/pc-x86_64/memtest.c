@@ -277,6 +277,11 @@ static void test_kheap(void)
           "failed kalloc changed nothing");
     CHECK(kalloc(0) == NULL, "kalloc(0)");
     CHECK(kalloc(0x7fffffffUL) == NULL, "kalloc huge");
+    /* the whole image window fits in one block: the ELF loader builds a program
+     * there (bdos/elfld.c) */
+    q = kalloc(X86_64_USER_IMAGE_SIZE);
+    CHECK(q != NULL, "a block as big as the image window");
+    kfree(q);
 
     /* ownership: freed twice, foreign pointers and process memory refused */
     q = kalloc(64);
@@ -1114,6 +1119,8 @@ static void test_lifecycle(void)
  * still ours and is released here.  -1000 is a failure of the setup itself,
  * already reported.
  */
+static BOOL probe_may_fail_early;   /* under memory pressure the basepage itself may be refused */
+
 static long run_probe(char mode)
 {
     char tail[2];
@@ -1123,6 +1130,8 @@ static long run_probe(char mode)
     tail[0] = mode;
     tail[1] = '\0';
     rc = Pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, tail, NULL);
+    if (rc <= 0 && probe_may_fail_early)
+        return -1000;
     CHECK(rc > 0, "probe basepage");
     if (rc <= 0)
         return -1000;
@@ -1300,12 +1309,119 @@ static void test_ring3(void)
         snap(&s);
         rc = run_probe('a');
         if (rc == 0x100) {
-            kcprintf("x86-64 unaligned relocation: SKIP (no C:\\X32HELLO.TOS)\n");
+            kcprintf("x86-64 unaligned relocation: SKIP (no C:\\X32RELOC.TOS)\n");
         } else {
-            CHECK(rc == 0, "an unaligned R_X86_64_32 slot is relocated");
+            CHECK(rc == 0, "a program moved into the image window is relocated, unaligned slot included");
             kcprintf(rc == 0 ? "x86-64 unaligned relocation: PASS\n" : "x86-64 unaligned relocation: FAIL (0x%lx)\n", rc);
         }
         same(&s, "a program with an unaligned relocation");
+    }
+
+    /* a new process is mapped at its link address, relocated into it if need be (#434) */
+    {
+        snap(&s);
+        rc = run_probe('j');
+        if (rc == 0x100) {
+            kcprintf("x86-64 private image: SKIP (no C:\\X32HELLO.TOS or X32RELOC.TOS)\n");
+        } else {
+            CHECK(rc == 0, "a new process has its image in the image window, the text read-only");
+            kcprintf(rc == 0 ? "x86-64 private image: PASS\n" : "x86-64 private image: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "a program mapped into the image window");
+    }
+
+    /* Mfree() of an ordinary block is given the pointer as an x32 value (#434) */
+    probe_expect('F', 0, "Mfree of a basepage through a pointer with upper bits set");
+
+    /* PE_LOAD puts the program in the caller's heap, and freeing the basepage
+     * gives it back (#434) */
+    {
+        snap(&s);
+        rc = run_probe('L');
+        if (rc == 0x100) {
+            kcprintf("x86-64 loaded program in the caller: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "the program PE_LOAD loaded is in the caller's heap, and goes back with its basepage");
+            kcprintf(rc == 0 ? "x86-64 loaded program in the caller: PASS\n" : "x86-64 loaded program in the caller: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "a program loaded into the caller");
+    }
+
+    /* PE_LOAD then PE_GO: the program's pages come back when it ends (#434) */
+    {
+        snap(&s);
+        rc = run_probe('G');
+        if (rc == 0x100) {
+            kcprintf("x86-64 pexec go gives back: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "PE_GO gives the program's pages back to the caller when it ends");
+            kcprintf(rc == 0 ? "x86-64 pexec go gives back: PASS\n" : "x86-64 pexec go gives back: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "PE_LOAD and PE_GO from ring 3");
+    }
+
+    /* a program bigger than the image window, loaded by PE_LOAD (#434) */
+    {
+        snap(&s);
+        rc = run_probe('B');
+        if (rc == 0x100) {
+            kcprintf("x86-64 pexec load big: SKIP (no C:\\X32BIG.TOS)\n");
+        } else {
+            CHECK(rc == 0, "PE_LOAD takes a program bigger than the image window");
+            kcprintf(rc == 0 ? "x86-64 pexec load big: PASS\n" : "x86-64 pexec load big: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "PE_LOAD of a big program");
+    }
+
+    /* a program whose file is cut short: the loading fails with the new
+     * process's address space in use (#434) */
+    {
+        snap(&s);
+        rc = run_probe('D');
+        if (rc != 0x100) {
+            CHECK(rc == 0, "a failed load puts the loader's address space back");
+            kcprintf(rc == 0 ? "x86-64 pexec truncated: PASS\n" : "x86-64 pexec truncated: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "a failed load");
+    }
+
+    /* the same with the child leaving a block below its image */
+    {
+        snap(&s);
+        rc = run_probe('H');
+        if (rc != 0x100) {
+            CHECK(rc == 0, "PE_GO gives the image back although the child put a block below it");
+            kcprintf(rc == 0 ? "x86-64 pexec go gives back with a gap: PASS\n" : "x86-64 pexec go gives back with a gap: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "PE_LOAD and PE_GO with a gap");
+    }
+
+    /* PE_LOAD, PE_GO(THENFREE) and mode 0 with a physical allocation failing at every
+     * point: whatever fails, nothing is leaked and the caller carries on (#434) */
+    snap(&s);
+    for (k = 1; k <= 120; k += (k < 24) ? 1 : 4) {
+        x86_64_pmem_test_fail_after(k);
+        probe_may_fail_early = TRUE;
+        (void)run_probe('l');
+        (void)run_probe('G');
+        (void)run_probe('H');
+        (void)run_probe('j');
+        probe_may_fail_early = FALSE;
+        x86_64_pmem_test_fail_after(0);
+    }
+    same(&s, "failed PE_LOAD launches");
+
+    /* a program loaded from a file gets Malloc() memory of its own (#434) */
+    {
+        snap(&s);
+        rc = run_probe('h');
+        if (rc == 0x100) {
+            kcprintf("x86-64 private heap: SKIP (no C:\\X32HELLO.TOS)\n");
+        } else {
+            CHECK(rc == 0, "a loaded program can Malloc, Mshrink and Mfree private memory");
+            kcprintf(rc == 0 ? "x86-64 private heap: PASS\n" : "x86-64 private heap: FAIL (0x%lx)\n", rc);
+        }
+        same(&s, "a program that allocates memory");
     }
 
     /*
@@ -1414,7 +1530,9 @@ static void test_ring3(void)
     /* (the 256 KiB stack alone is 64 pages: step wider once past the first few) */
     for (k = 1; k <= 240; k += (k < 24) ? 1 : 5) {
         x86_64_pmem_test_fail_after(k);
+        probe_may_fail_early = TRUE;
         rc = run_probe('x');
+        probe_may_fail_early = FALSE;
         x86_64_pmem_test_fail_after(0);
         if (rc == 0x1234)
             ran++;
@@ -1427,6 +1545,57 @@ static void test_ring3(void)
         kcprintf("memtest: %d launches refused, %d ran\n", refused, ran);
     CHECK(refused >= 5 && ran >= 1, "image launch failures were exercised");
     same(&s, "failed ring-3 launches");
+}
+
+/* Private pages move from one address space to another (#434). */
+static void test_move_private(void)
+{
+    X86_64_ASPACE *a, *b;
+    UBYTE pattern[64], back[64];
+    UWORD prot;
+    ULONG i;
+    SNAP s;
+
+    snap(&s);
+    a = must_create("move source");
+    b = must_create("move destination");
+    if (a && b) {
+        for (i = 0; i < sizeof(pattern); i++)
+            pattern[i] = (UBYTE)(i + 1);
+        CHECK(x86_64_aspace_map_private(a, 0x10000000, 3 * PAGE, ASPACE_PROT_WRITE | ASPACE_PROT_USER),
+              "block mapped in the source");
+        CHECK(x86_64_aspace_copy_to_user(a, 0x10001000, pattern, sizeof(pattern)), "block filled");
+        CHECK(x86_64_aspace_private_pages(a) == 3 && x86_64_aspace_private_pages(b) == 0, "owned pages before");
+
+        /* a range that is not all private to the source is refused, and nothing moves */
+        CHECK(!x86_64_aspace_move_private(a, b, 0x10000000, 4 * PAGE, ASPACE_PROT_USER),
+              "a range that is not all private is refused");
+        CHECK(!x86_64_aspace_translate(b, 0x10000000, NULL, NULL), "nothing moved by the refused call");
+
+        CHECK(x86_64_aspace_move_private(a, b, 0x10000000, 3 * PAGE, ASPACE_PROT_WRITE | ASPACE_PROT_USER),
+              "block moved");
+        CHECK(!x86_64_aspace_translate(a, 0x10000000, NULL, NULL) &&
+              !x86_64_aspace_translate(a, 0x10002000, NULL, NULL), "gone from the source");
+        CHECK(x86_64_aspace_private_pages(a) == 0 && x86_64_aspace_private_pages(b) == 3, "owned pages after");
+        CHECK(x86_64_aspace_copy_from_user(b, back, 0x10001000, sizeof(back)) &&
+              memcmp(back, pattern, sizeof(back)) == 0, "contents kept");
+
+        /* the destination changes the permissions of a page: read + execute */
+        CHECK(x86_64_aspace_protect_private(b, 0x10001000, PAGE, ASPACE_PROT_EXEC | ASPACE_PROT_USER),
+              "permissions changed");
+        CHECK(x86_64_aspace_translate(b, 0x10001000, NULL, &prot) &&
+              (prot & ASPACE_PROT_EXEC) && !(prot & ASPACE_PROT_WRITE), "execute, not write");
+        CHECK(!x86_64_aspace_protect_private(b, 0x20000000, PAGE, ASPACE_PROT_USER),
+              "an unmapped page cannot be protected");
+
+        /* the source can map the addresses again; the destination frees what it got */
+        CHECK(x86_64_aspace_map_private(a, 0x10000000, PAGE, ASPACE_PROT_USER), "source reuses the addresses");
+        CHECK(!x86_64_aspace_unmap_private(b, 0x10000000, 4 * PAGE), "unmap refuses a range with a foreign page");
+        CHECK(x86_64_aspace_unmap_private(b, 0x10000000, 3 * PAGE), "destination unmaps what it was given");
+    }
+    x86_64_aspace_destroy(a);
+    x86_64_aspace_destroy(b);
+    same(&s, "moving private pages");
 }
 
 /* A copy of the probe image with one field changed must be refused. */
@@ -1492,6 +1661,35 @@ static void test_x32image(void)
         x86_64_aspace_destroy(as);
     }
     same(&s, "image loader");
+
+    /* a program loaded from a file needs room after its image for the startup
+     * area, all of it, and is refused without (#434) */
+    snap(&s);
+    {
+        PD *pd = new_basepage();
+
+        if (pd) {
+            X32_LAYOUT l;
+
+            memset(&l, 0, sizeof l);
+            l.nseg = 1;
+            l.seg[0].vaddr = X86_64_USER_IMAGE_BASE;
+            l.seg[0].flags = 5;                 /* PF_R | PF_X */
+            l.entry = X86_64_USER_IMAGE_BASE;
+            l.seg[0].memsz = (ULONG)(X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK) + 0x1000;
+            l.end = l.seg[0].vaddr + l.seg[0].memsz;
+            CHECK(kproc_load_begin(pd, X86_64_USER_IMAGE_BASE, X86_64_USER_IMAGE_SIZE),
+                  "an address space for the program");
+            CHECK(!kproc_set_loaded_image(pd, &l), "no room for the startup area: refused");
+            l.seg[0].memsz = (ULONG)(X86_64_USER_IMAGE_SIZE - X86_64_USER_IMAGE_SLACK);
+            l.end = l.seg[0].vaddr + l.seg[0].memsz;
+            CHECK(kproc_set_loaded_image(pd, &l), "room for the startup area: accepted");
+            set_owner(pd, pd);
+            set_owner(USERPTR_TO_PTR(pd->p_env), pd);
+            x86_64_free_owned(pd);
+        }
+    }
+    same(&s, "startup area room");
 }
 
 void x86_64_memtest_run(void)
@@ -1518,6 +1716,7 @@ void x86_64_memtest_run(void)
     test_kproc_ranges();
     test_lifecycle();
     test_x32image();
+    test_move_private();
     test_ring3();
 
     same(&s, "whole memtest");

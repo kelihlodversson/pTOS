@@ -14,7 +14,8 @@
  * No CRT, no libc, no main(): this is freestanding, ring-3 code with
  * exactly one job. The assembly _start stub captures the entry state before
  * calling the C probe (see
- * X32_LDFLAGS' "-Wl,-n"/"-Wl,-Ttext=0x400000", which also needs no
+ * X32_LDFLAGS' "-Wl,-z,noseparate-code"/"-Wl,-Ttext-segment=0x400000", which
+ * also needs no
  * dynamic linker or startup file to satisfy). The syscall convention
  * (RAX = (trap_class << 32) | function_number, next four arguments in
  * RDI/RSI/RDX/R10) is bios/arch/x86_64/trap.h's own, reached the same way
@@ -64,6 +65,21 @@ static s64 gemdos2(u64 func, u64 a, u64 b)
     register u64 rdi __asm__("rdi") = a;
     register u64 rsi __asm__("rsi") = b;
     register u64 rdx __asm__("rdx") = 0;
+    register u64 r10 __asm__("r10") = 0;
+
+    __asm__ volatile ("syscall"
+                       : "+r" (rax)
+                       : "r" (rdi), "r" (rsi), "r" (rdx), "r" (r10)
+                       : "rcx", "r11", "memory");
+    return (s64)rax;
+}
+
+static s64 gemdos3r(u64 func, u64 a, u64 b, u64 c)
+{
+    register u64 rax __asm__("rax") = ((u64)X86_64_TRAP_GEMDOS << 32) | func;
+    register u64 rdi __asm__("rdi") = a;
+    register u64 rsi __asm__("rsi") = b;
+    register u64 rdx __asm__("rdx") = c;
     register u64 r10 __asm__("r10") = 0;
 
     __asm__ volatile ("syscall"
@@ -132,6 +148,11 @@ static int walk_ancestors(u64 basepage)
 }
 
 u32 x32_reloc_target;
+/* initialised data a caller of Pexec(PE_LOAD) patches before launching (\001P) */
+u32 x32_patch = 0x11111111;
+#ifdef X32_BIG
+static volatile unsigned char big_bss[6u << 20];
+#endif
 
 void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 {
@@ -167,6 +188,106 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         __asm__ ("\t.p2align 2\n\tmovl $x32_reloc_target, %0" : "=a" (absolute));
         __asm__ ("leal x32_reloc_target(%%rip), %0" : "=r" (relative));
         gemdos1(0x4c, absolute == relative ? 0 : 1);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'm') {
+        /* a block left allocated at the exit: the heap table has it below the
+         * image if the launcher left a gap there (#434) */
+        gemdos1(0x4c, gemdos1r(0x48, 4096) > 0 ? 0 : 1);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'h') {
+        /* Malloc() memory is private pages in the heap range, usable, zeroed
+         * and given back by Mfree() and Mshrink() (#434) */
+        volatile u32 *p, *q;
+        u64 a, b, c;
+        int k, bad_heap = 0;
+
+        a = (u64)gemdos1r(0x48, 100000);
+        b = (u64)gemdos1r(0x48, 4096);
+        if (a < 0x10000000ULL || a >= 0x3f000000ULL || (a & 0xfff) ||
+            b < 0x10000000ULL || b >= 0x3f000000ULL || (b & 0xfff))
+            bad_heap |= 1;
+        if (a < b + 4096 && b < a + 100000)
+            bad_heap |= 2;                      /* overlap */
+        p = (volatile u32 *)(unsigned long)a;
+        q = (volatile u32 *)(unsigned long)b;
+        for (k = 0; k < 100000 / 4; k++)
+            if (p[k] != 0)
+                bad_heap |= 4;                  /* not zeroed */
+        for (k = 0; k < 100000 / 4; k++)
+            p[k] = (u32)k + 1;
+        q[0] = 0x5a5a5a5a;
+        for (k = 0; k < 100000 / 4; k++)
+            if (p[k] != (u32)k + 1)
+                bad_heap |= 8;
+        if (q[0] != 0x5a5a5a5a)
+            bad_heap |= 8;
+        if (gemdos1r(0x48, 0xffffffffULL) <= 0)
+            bad_heap |= 16;                     /* Malloc(-1): the largest block */
+        if (gemdos3r(0x4a, 0, a, 8192) != 0 || p[1] != 2)
+            bad_heap |= 32;                     /* Mshrink() keeps the front */
+        if (gemdos3r(0x4a, 0, a, 100000) != -67)
+            bad_heap |= 64;                     /* growing is EGSBF */
+        if (gemdos1r(0x49, a) != 0)
+            bad_heap |= 128;                    /* Mfree() */
+        if (gemdos1r(0x49, a) != -40)
+            bad_heap |= 256;                    /* twice is EIMBA */
+        if (gemdos1r(0x49, b) != 0)
+            bad_heap |= 512;
+        /* the arguments are x32 values: a length is its low 32 bits and so is
+         * a pointer, whatever the upper half of the register holds */
+        c = (u64)gemdos1r(0x48, 16384);
+        if (gemdos3r(0x4a, 0, c, 0x100002000ULL) != 0)
+            bad_heap |= 1024;
+        if (gemdos1r(0x49, c | 0xffff00000000ULL) != 0)
+            bad_heap |= 2048;
+        /* a large block is mapped and given back page by page without
+         * a search through every page the process owns (64 MiB: 16384 pages) */
+        c = (u64)gemdos1r(0x48, 64 * 1024 * 1024);
+        if (!c || gemdos1r(0x49, c) != 0)
+            bad_heap |= 4096;
+        gemdos1(0x4c, bad_heap);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'i') {
+        /* the code runs in the image window, wherever the program was linked
+         * for: at its link address if that lies there, else moved into it and
+         * relocated (#434) */
+        unsigned long here = (unsigned long)&x32_entry_probe;
+
+        gemdos1(0x4c, here >= 0x400000UL && here < 0x800000UL ? 0 : 1);
+    }
+    if (cmdline[0] == 1 && cmdline[1] == 'S') {
+        /* the startup area: the bss is advertised as running to a page
+         * boundary, and 0x10800 bytes (the biggest environment a caller may
+         * give is 16383 four-byte environ slots) can be written from
+         * p_bbase + p_blen + 4 on (#434) */
+        const u32 *bp = (const u32 *)(unsigned long)basepage;
+        volatile unsigned char *at = (volatile unsigned char *)(unsigned long)(bp[6] + bp[7] + 4);
+        u32 k;
+
+        if ((bp[6] + bp[7]) & 0xfff)
+            gemdos1(0x4c, 1);
+        for (k = 0; k < 0x10800; k++)
+            at[k] = (unsigned char)k;
+        gemdos1(0x4c, 0);
+    }
+#ifdef X32_BIG
+    if (cmdline[0] == 1 && cmdline[1] == 'B') {
+        /* a program with a 6 MiB bss (x32big.elf), loaded whole into the
+         * caller's heap by PE_LOAD: both ends of it are there and zero (#434) */
+        if (big_bss[0] || big_bss[sizeof big_bss - 1])
+            gemdos1(0x4c, 1);
+        big_bss[0] = 1;
+        big_bss[sizeof big_bss - 1] = 2;
+        gemdos1(0x4c, big_bss[0] == 1 && big_bss[sizeof big_bss - 1] == 2 ? 0 : 2);
+    }
+#endif
+    if (cmdline[0] == 1 && cmdline[1] == 'P')
+        gemdos1(0x4c, x32_patch == 0x22222222 ? 0 : 1);
+    if (cmdline[0] == 1 && cmdline[1] == 'T') {
+        /* the text is read-only: writing to it faults, which ends this
+         * process as Pterm(-1) (#434) */
+        *(volatile unsigned char *)(unsigned long)&x32_entry_probe = 0x90;
+        gemdos1(0x4c, 0);               /* not reached unless the text is writable */
     }
     if (cmdline[0] == 1 && cmdline[1] == 'r')
         gemdos2(0x31, 0x100, 0);        /* Ptermres(0x100, 0): stay resident */

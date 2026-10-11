@@ -85,36 +85,149 @@ that way.  The BIOS and XBIOS calls other than the Rwabs-family buffers still
 trust their pointers (#352), and VDI/AES are refused from ring 3 (#376).
 
 
-Minimum x32 user virtual layout
---------------------------------
+x32 user virtual layout
+------------------------
 
-For the built-in EmuCON image and its process data (the constants are in
-include/procmem.h):
+The constants are in include/procmem.h.
 
     0x00000000 - 0x001fffff   unmapped: null guard (2 MiB)
     0x00200000 - 0x003fffff   basepage, environment and TPA blocks (window)
-    0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB)
+    0x00400000 - 0x007fffff   program image: text, data, bss (4 MiB); for a
+                              program loaded from a file also the startup
+                              area, 128 KiB of zeroed read/write memory right
+                              after the image's last page
+    0x10000000 - 0x3effffff   Malloc() memory, private pages (below)
     0x3ffb0000 - 0x3ffb0fff   ancestors' basepages, read-only (below)
     0x3ffc0000 - 0x3fffffff   user stack (256 KiB), growing down from
                               X86_64_USER_STACK_TOP; the page below it is
                               left unmapped as a guard
 
-The image address matches the link address of the x32 programs (the
-Makefile's -Ttext-segment=0x400000).  EmuCON is about 20 KiB of code plus a
-192 KiB static heap, so 4 MiB is a generous bound; larger images or an
-arbitrary ELF placement policy are not part of this milestone.  The whole
-layout lies below 4 GiB, as the 32-bit ABI fields require.
+The whole layout lies below 4 GiB, as the 32-bit ABI fields require.
 
-A built-in image (include/x32image.h: EmuCON, and the boot self-test's probe
-program) is attached to the process's KPROC record with kproc_set_image().
-kproc_prepare_user() then maps every PT_LOAD segment as private pages with the
-segment's own permissions (text and read-only data read+execute, data and bss
-read+write -- never both write and execute) and the 256 KiB private stack,
-and records the entry point and initial RSP in the KPROC record: the process
-is entered there, not at whatever its user-writable basepage says.  A bare
-basepage's TPA is not a stack; only built-in images have one of their own.
-This is not a general ELF loader (the rules are in x32image.h and checked
-before anything is mapped).
+A program's image is mapped from an x32 program layout (include/x32image.h)
+into the address space of the process it is for: the built-in EmuCON and the
+boot self-test's probe are embedded in the kernel as ELF images, and any other
+program is read from its file by Pexec().  None of it is in the TPA, which is
+the basepage and nothing more (bdos/elfld.c's sizing pass reports no text,
+data or bss).  Where it is until the process runs depends on the Pexec() mode:
+
+  Mode 0 (PE_LOADGO), and a PE_LOAD by a caller that is not a ring-3
+  process, read the program straight into private pages of the new process's
+  own address space, which is made at load time (kproc_load_begin()) and kept
+  in the process's KPROC record until the launch adopts it.  Nobody else sees
+  the pages.  The loader makes that address space the one in use while it
+  fills them (kproc_load_enter(), x86_64_aspace_enter()), so it can address
+  them by their user addresses, and puts the previous one back after
+  (kproc_load_leave(); destroying the process does too, which is what a disk
+  error that jumps past the loader gets).  If the launch fails after it has
+  adopted the address space (a page table could not be allocated), the
+  program is gone with it and the basepage can only be freed; Pexec() reports
+  ENSMEM.
+
+  PE_LOAD by a ring-3 process puts the program in the CALLER's address space,
+  in its heap (kproc_load_alloc()): relocated to the address it gets there,
+  in private pages the caller can read and patch -- a debugger, a loader that
+  fixes up its program -- until it launches the program with PE_GO or
+  PE_GOTHENFREE.  Then the pages MOVE to the new process
+  (x86_64_aspace_move_private()), at the same addresses and with each
+  segment's own permissions.  Until then the block is not Malloc() memory:
+  Mfree() of it is refused (EIMBA), and freeing the basepage that was
+  returned gives it back.  What happens at the launch depends on the mode:
+
+    PE_GOTHENFREE: the pages are the new process's, the caller's block is
+    gone, and the pages are freed with the process.  This is what a launch
+    always did.
+
+    PE_GO: the pages are only LENT.  The caller's block stays in its heap
+    table (kind UH_LENT), so nothing else can be allocated at those addresses
+    and Mfree()/Mshrink() leave it alone.  When the process ends -- Pterm()
+    and Ptermres() alike, both go through kproc_destroy() -- the pages move
+    back to the caller at the same addresses, read/write, and the block
+    becomes ordinary Malloc() memory: the caller can read what the program
+    left in its data, and frees it with Mfree() like any block (PE_GO has
+    always left the program's memory with the launcher).  If the pages
+    cannot be moved back (a page table cannot be allocated), they are freed
+    with the process and the block is dropped; the caller is never left with
+    a block that has no pages.
+
+  Ptermres() gives the image back too: the process keeps its basepage and
+  environment, as for any process, and nothing of the image.  This is
+  because, without a way to run the resident part, the image is of no use to
+  anyone else; if Ptermres() becomes useful with virtual addresses (a
+  resident program the next processes can call), the image, or the part of it
+  the program keeps, would stay and this is the place to change
+  (give_image_back() in bdos/kproc.c).
+
+  The loan needs no shared pages because nothing runs while the process does:
+  the caller is stopped until Pterm().  With multitasking, a PE_GO caller
+  that goes on running while the child does would need the pages shared
+  (the same frames in both address spaces, counted), and this scheme would
+  be replaced by that.
+
+  Where it goes.  A program is linked for an address.  If that lies in the
+  image window (X86_64_USER_IMAGE_BASE, 4 MiB) and the process is a new one
+  (mode 0), it goes there and nothing is relocated; the Makefile's
+  X32_LDFLAGS (-Ttext-segment=0x400000, -z noseparate-code,
+  -z max-page-size=0x1000) give the two-segment layout of the built-in
+  EmuCON.  Otherwise -- a PIE, an ET_EXEC linked elsewhere, or any program
+  loaded into its caller's heap -- it is moved to the address it is given and
+  relocated by the distance, by the loader of doc/elfload.txt, so it must keep
+  its relocation entries (link with -q).
+
+  How.  elf_pgmld() reads the file and relocates it in place, in the pages the
+  image will run from, with no kernel buffer in between: the block in the
+  caller's heap for a PE_LOAD by a ring-3 caller (the caller's address space is
+  the one in use, and the block is mapped and zero), the new process's own
+  address space for the others (above).  The layout goes to the process's KPROC
+  record (kproc_set_loaded_image(), which also gives each segment its
+  permissions, or kproc_set_moved_image(); kproc_set_image() for a built-in
+  ELF), and the block, when there is one, is recorded with the process the
+  moment it is made (kproc_load_alloc()), so that a failed load, a disk error
+  included, gives it back with the process's record.  The size of a program
+  loaded into its caller's heap is limited by the heap; the others by the image
+  window.  kproc_prepare_user() adds the rest to the address space when the
+  process is launched (a built-in image's segments are mapped then, a PE_LOAD
+  block is moved in), and the entry point is the one
+  recorded in the KPROC record, not whatever the user-writable basepage says.
+  The rules (x86_64_x32_layout_valid()): every segment inside the window, no
+  two sharing a page, the entry point in an executable one.  The built-in
+  programs also may not have a segment that is both writable and executable;
+  a program loaded from a file may (a flat read+write+execute binary).
+  Anything else is refused with EPLFMT; a PTOS import table too, whose slots
+  would have to hold 64-bit kernel addresses.
+
+Every launched process gets the rest the same way, and none of it is in the
+window: the basepage and the environment are in the window because the BDOS
+reaches them by the same address in every address space, but the window is
+2 MiB for all processes together, so everything a program itself needs is
+private:
+
+  stack             the 256 KiB private stack at 0x3ffc0000, from which the
+                    process starts (not p_hitpa).
+
+  startup area      what the C startup code of the TOS tradition builds argv
+                    and environ in, right after the bss (libcmini's
+                    parseargs()): 128 KiB (X86_64_USER_IMAGE_SLACK) of zeroed
+                    read/write memory after the last page of a program
+                    loaded from a file.  Taking it from the kernel, not from
+                    a TPA to carve a stack out of, is what lets that code run
+                    unchanged.
+
+  Malloc() memory   Malloc(), Mxalloc(), Mfree() and Mshrink() of a process
+                    with an address space are served from private pages in
+                    X86_64_USER_HEAP_BASE..X86_64_USER_HEAP_LIMIT
+                    (kproc_uheap_*(), bdos/kproc.c): whole 4 KiB pages,
+                    first fit, zeroed, freed with the address space.  A block
+                    is given back page by page by Mfree() and Mshrink(), and
+                    Malloc(-1) reports the largest gap.  Mfree() of anything
+                    else (the process's environment, say) takes the ordinary
+                    path.
+
+Because the address spaces are separate, two processes use the same addresses
+for their own images, stacks and heaps and neither sees the other's.  A TOS
+program's idea of its TPA -- a block after the basepage to carve a stack out
+of with Mshrink() -- does not hold here: libcmini's startup code skips that
+step on this architecture.
 
 
 Faults and termination
@@ -162,7 +275,8 @@ PE_RELOCATE.  PE_BASEPAGE, PE_BASEPAGEFLAGS and PE_LOAD return a basepage the
 caller can use: its blocks (basepage/TPA and environment) stay borrowed, but
 are re-granted to the caller as user memory (kproc_hand_over()).  The caller
 may rewrite the basepage, grow p_hitpa up to the end of its block, and place
-code in the TPA.
+code in the TPA.  A program PE_LOAD loaded is in the caller's heap, not in the
+basepage's TPA (see "x32 user virtual layout").
 
 A basepage handed to PE_GO or PE_GOTHENFREE is only a request.  The kernel
 keeps its own record of every basepage it made (KPROC), including who made it
@@ -173,10 +287,13 @@ Anything else -- a copy of a basepage, a block that is no basepage, somebody
 else's, an already launched or freed one, the caller's own running basepage --
 is EIMBA.  The fields the caller may have changed are then validated, each
 read once: p_lowtpa must be the basepage itself, p_hitpa within its block
-(rounded for the initial stack alignment), p_tbase inside the TPA, p_env the
-recorded environment block; otherwise EPLFMT.  The entry point, stack and
+(rounded for the initial stack alignment), p_env the recorded environment
+block, and, for a process without an image of its own, p_tbase inside the TPA;
+otherwise EPLFMT.  (A process with an image starts at the entry point the
+kernel recorded for it, so p_tbase is not looked at.)  The entry point, stack and
 bounds the launch uses come from the record and the validated values, never
-from fields that were not checked.
+from fields that were not checked.  A process without an image of its own
+starts at p_tbase, in its TPA, on the private stack too -- not at p_hitpa.
 
 A ring-3 process cannot see its launcher's basepage (it is not mapped for it),
 and its p_parent could not be believed if it could.  Instead each process has a

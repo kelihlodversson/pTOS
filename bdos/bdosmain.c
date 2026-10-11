@@ -66,6 +66,10 @@ static long xgetver(void);
 #define GEMDOS_FREAD    0x3f
 #define GEMDOS_FWRITE   0x40
 #define GEMDOS_SUPER    0x20
+#define GEMDOS_MXALLOC  0x44
+#define GEMDOS_MALLOC   0x48
+#define GEMDOS_MFREE    0x49
+#define GEMDOS_MSHRINK  0x4a
 
 
 /*
@@ -568,6 +572,51 @@ restrt:
      */
     if (fn == GEMDOS_SSYSTEM)
         return xssystem((WORD)pw[1], pw[2], pw[3]);
+#endif
+
+#if CONF_WITH_USER_ASPACE
+    /*
+     * Malloc(), Mxalloc(), Mfree() and Mshrink() of a process with an address
+     * space of its own are served from private pages of that address space,
+     * not from the kernel's pools (and not from the small window the
+     * basepage and environment are in).  Anything else -- a block Mfree()
+     * is given that is not one of those, say the process's own environment
+     * -- takes the ordinary path below.
+     */
+    if (kproc_has_heap(run))
+    {
+        long amount;
+
+        /* the arguments are x32 values in 64-bit syscall slots: a LONG is
+         * its low 32 bits (Malloc(-1) arrives as 0xffffffff, or sign-extended),
+         * a pointer is zero-extended.  They are narrowed in the slots
+         * themselves, so that the ordinary path below -- Mfree() of the
+         * environment, Mshrink() of a basepage loaded for the caller -- gets
+         * the same values. */
+        switch (fn)
+        {
+        case GEMDOS_MALLOC:
+        case GEMDOS_MXALLOC:
+            pw[1] = (LONG)pw[1];
+            amount = pw[1];
+            if (amount == -1L)
+                return (long)kproc_uheap_largest(run);
+            if (amount <= 0L)
+                return 0;
+            return (long)kproc_uheap_alloc(run, (ULONG)amount);
+        case GEMDOS_MFREE:
+            pw[1] = (ULONG)pw[1];
+            if (pw[1] >= X86_64_USER_HEAP_BASE && pw[1] < X86_64_USER_HEAP_LIMIT)
+                return kproc_uheap_free(run, (ULONG)pw[1]);
+            break;
+        case GEMDOS_MSHRINK:
+            pw[2] = (ULONG)pw[2];
+            pw[3] = (LONG)pw[3];
+            if (pw[2] >= X86_64_USER_HEAP_BASE && pw[2] < X86_64_USER_HEAP_LIMIT)
+                return kproc_uheap_shrink(run, (ULONG)pw[2], pw[3]);
+            break;
+        }
+    }
 #endif
 
 #if defined(__x86_64__)

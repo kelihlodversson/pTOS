@@ -39,8 +39,8 @@ struct x86_64_aspace {
         UQUAD va, bytes;
     } *pins;
     ULONG npins, pin_capacity;
-    UQUAD *owned;               /* private backing pages: ours alone, freed with us */
-    ULONG nowned, owned_capacity;
+    ULONG nowned;               /* private backing pages: ours alone, freed with us.  They are found */
+                                /* by X86_64_PTE_OWNED in the leaf entry, not listed */
 };
 
 #define PTE_PRESENT  0x1ULL
@@ -138,6 +138,57 @@ X86_64_ASPACE *x86_64_aspace_create(void)
     return as;
 }
 
+/* Frees every private page by walking the user half of the page tables for
+ * leaf entries marked X86_64_PTE_OWNED.  The 2 MiB mappings of the kernel's low
+ * data (PS entries) and the process-window pages are not marked and not
+ * followed. */
+static void free_owned_pages(struct x86_64_aspace *as)
+{
+    UQUAD *l4 = (UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + as->pml4_phys);
+    ULONG i4, i3, i2, i1;
+
+    for (i4 = 0; i4 < 256; i4++) {
+        UQUAD *l3;
+
+        if (!(l4[i4] & PTE_PRESENT))
+            continue;
+        l3 = (UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + (l4[i4] & PTE_ADDR));
+        for (i3 = 0; i3 < 512; i3++) {
+            UQUAD *l2;
+
+            if (!(l3[i3] & PTE_PRESENT) || (l3[i3] & PTE_PS))
+                continue;
+            l2 = (UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + (l3[i3] & PTE_ADDR));
+            for (i2 = 0; i2 < 512; i2++) {
+                UQUAD *l1;
+
+                if (!(l2[i2] & PTE_PRESENT) || (l2[i2] & PTE_PS))
+                    continue;
+                l1 = (UQUAD *)(uintptr_t)(X86_64_PHYS_MAP_BASE + (l2[i2] & PTE_ADDR));
+                for (i1 = 0; i1 < 512; i1++)
+                    if ((l1[i1] & PTE_PRESENT) && (l1[i1] & X86_64_PTE_OWNED)) {
+                        x86_64_pmem_free_pages(l1[i1] & PTE_ADDR, 1);
+                        l1[i1] = 0;
+                        as->nowned--;
+                    }
+            }
+        }
+    }
+}
+
+UQUAD x86_64_aspace_enter(X86_64_ASPACE *as)
+{
+    UQUAD previous = x86_64_read_cr3();
+
+    x86_64_write_cr3(as->pml4_phys);
+    return previous;
+}
+
+void x86_64_aspace_leave(UQUAD previous)
+{
+    x86_64_write_cr3(previous);
+}
+
 void x86_64_aspace_destroy(X86_64_ASPACE *as)
 {
     ULONG i;
@@ -154,9 +205,7 @@ void x86_64_aspace_destroy(X86_64_ASPACE *as)
     for (i = 0; i < as->npins; i++)
         x86_64_procmem_pin(as->pins[i].va, as->pins[i].bytes, -1);
     kfree(as->pins);
-    for (i = 0; i < as->nowned; i++)
-        x86_64_pmem_free_pages(as->owned[i], 1);
-    kfree(as->owned);
+    free_owned_pages(as);
     for (i = 0; i < as->count; i++)
         x86_64_pmem_free_pages(as->pages[i], 1);
     kfree(as->pages);
@@ -394,7 +443,6 @@ static void unlink_new_tables(const struct x86_64_aspace *as, ULONG first, UQUAD
 BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
 {
     UQUAD pages, i, mapped = 0, backing;
-    ULONG first_owned = as->nowned;
     ULONG first_tables = as->count;
 
     if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= X86_64_USER_VA_LIMIT ||
@@ -409,33 +457,20 @@ BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD p
         if (x86_64_aspace_translate(as, va + i * X86_64_PAGE_SIZE, NULL, NULL))
             return FALSE;
 
-    /* room to record every backing page first, so recording cannot fail
-     * once a page has been taken */
-    if (as->nowned + pages > as->owned_capacity) {
-        ULONG cap = as->owned_capacity ? as->owned_capacity : 8;
-        UQUAD *grown;
-
-        while (cap < as->nowned + pages)
-            cap *= 2;
-        grown = kalloc(cap * sizeof(UQUAD));
-        if (!grown)
-            return FALSE;
-        if (as->owned) {
-            memcpy(grown, as->owned, as->nowned * sizeof(UQUAD));
-            kfree(as->owned);
-        }
-        as->owned = grown;
-        as->owned_capacity = cap;
-    }
-
     for (i = 0; i < pages; i++) {
+        UQUAD *pte;
+
         backing = x86_64_pmem_try_alloc_pages(1, 0);
         if (backing == X86_64_PMEM_NONE)
             break;
         memset((void *)(uintptr_t)(X86_64_PHYS_MAP_BASE + backing), 0, X86_64_PAGE_SIZE);
-        as->owned[as->nowned++] = backing;
-        if (!x86_64_aspace_map_page(as, va + i * X86_64_PAGE_SIZE, backing, prot))
+        if (!x86_64_aspace_map_page(as, va + i * X86_64_PAGE_SIZE, backing, prot)) {
+            x86_64_pmem_free_pages(backing, 1);
             break;
+        }
+        pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+        *pte |= X86_64_PTE_OWNED;
+        as->nowned++;
         mapped++;
     }
     if (mapped == pages)
@@ -445,17 +480,137 @@ BOOL x86_64_aspace_map_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD p
      * off the table pages it had to create (every page attempted, the one
      * that failed included, since the failure may have come part-way down),
      * then free the backing and the new tables it took. */
-    for (i = 0; i < mapped; i++)
+    for (i = 0; i < mapped; i++) {
+        UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+
+        x86_64_pmem_free_pages(*pte & PTE_ADDR, 1);
+        as->nowned--;
         x86_64_unmap_user_page(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+    }
     for (i = 0; i <= mapped && i < pages; i++)
         unlink_new_tables(as, first_tables, va + i * X86_64_PAGE_SIZE);
     if (x86_64_read_cr3() == as->pml4_phys)
         x86_64_write_cr3(as->pml4_phys);        /* flush stale translations */
-    while (as->nowned > first_owned)
-        x86_64_pmem_free_pages(as->owned[--as->nowned], 1);
     while (as->count > first_tables)
         x86_64_pmem_free_pages(as->pages[--as->count], 1);
     return FALSE;
+}
+
+BOOL x86_64_aspace_unmap_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes)
+{
+    UQUAD pages, i;
+
+    if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= X86_64_USER_VA_LIMIT ||
+        bytes > X86_64_USER_VA_LIMIT - va)
+        return FALSE;
+    pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
+
+    /* all-or-nothing: every page must be one of ours before any is touched */
+    for (i = 0; i < pages; i++) {
+        UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+
+        if (!pte || !(*pte & PTE_PRESENT) || !(*pte & X86_64_PTE_OWNED))
+            return FALSE;
+    }
+    for (i = 0; i < pages; i++) {
+        UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+        UQUAD phys = *pte & PTE_ADDR;
+
+        *pte = 0;
+        x86_64_pmem_free_pages(phys, 1);
+        as->nowned--;
+    }
+    if (x86_64_read_cr3() == as->pml4_phys)
+        x86_64_write_cr3(as->pml4_phys);        /* flush stale translations */
+    return TRUE;
+}
+
+/* TRUE iff every page of [va, va + pages) is one of the private pages of `as` */
+static BOOL range_is_private(const struct x86_64_aspace *as, UQUAD va, UQUAD pages)
+{
+    UQUAD i;
+
+    for (i = 0; i < pages; i++) {
+        UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+
+        if (!pte || !(*pte & PTE_PRESENT) || !(*pte & X86_64_PTE_OWNED))
+            return FALSE;
+    }
+    return TRUE;
+}
+
+BOOL x86_64_aspace_move_private(X86_64_ASPACE *from, X86_64_ASPACE *to,
+                                UQUAD va, UQUAD bytes, UWORD prot)
+{
+    UQUAD pages, i, mapped = 0;
+    ULONG first_tables = to->count;
+
+    if (from == to || (va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= X86_64_USER_VA_LIMIT ||
+        bytes > X86_64_USER_VA_LIMIT - va)
+        return FALSE;
+    pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
+    if (!range_is_private(from, va, pages))
+        return FALSE;
+    for (i = 0; i < pages; i++)
+        if (x86_64_aspace_translate(to, va + i * X86_64_PAGE_SIZE, NULL, NULL))
+            return FALSE;
+
+    for (i = 0; i < pages; i++) {
+        UQUAD *src = x86_64_user_pte(from->pml4_phys, va + i * X86_64_PAGE_SIZE);
+
+        if (!x86_64_aspace_map_page(to, va + i * X86_64_PAGE_SIZE, *src & PTE_ADDR, prot))
+            break;
+        *x86_64_user_pte(to->pml4_phys, va + i * X86_64_PAGE_SIZE) |= X86_64_PTE_OWNED;
+        mapped++;
+    }
+    if (mapped != pages) {
+        /* give back what `to` took: its mappings and the table pages it needed;
+         * the pages themselves are still `from`'s */
+        for (i = 0; i < mapped; i++)
+            x86_64_unmap_user_page(to->pml4_phys, va + i * X86_64_PAGE_SIZE);
+        for (i = 0; i <= mapped && i < pages; i++)
+            unlink_new_tables(to, first_tables, va + i * X86_64_PAGE_SIZE);
+        if (x86_64_read_cr3() == to->pml4_phys)
+            x86_64_write_cr3(to->pml4_phys);
+        while (to->count > first_tables)
+            x86_64_pmem_free_pages(to->pages[--to->count], 1);
+        return FALSE;
+    }
+    for (i = 0; i < pages; i++) {
+        *x86_64_user_pte(from->pml4_phys, va + i * X86_64_PAGE_SIZE) = 0;
+        from->nowned--;
+        to->nowned++;
+    }
+    if (x86_64_read_cr3() == from->pml4_phys)
+        x86_64_write_cr3(from->pml4_phys);      /* flush stale translations */
+    return TRUE;
+}
+
+BOOL x86_64_aspace_protect_private(X86_64_ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
+{
+    UQUAD pages, i;
+
+    if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= X86_64_USER_VA_LIMIT ||
+        bytes > X86_64_USER_VA_LIMIT - va)
+        return FALSE;
+    pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
+    if (!range_is_private(as, va, pages))
+        return FALSE;
+    for (i = 0; i < pages; i++) {
+        UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
+        UQUAD e = (*pte & (PTE_ADDR | X86_64_PTE_OWNED)) | PTE_PRESENT;
+
+        if (prot & ASPACE_PROT_USER)
+            e |= PTE_USER;
+        if (prot & ASPACE_PROT_WRITE)
+            e |= PTE_WRITABLE;
+        if (!(prot & ASPACE_PROT_EXEC))
+            e |= PTE_NX;
+        *pte = e;
+    }
+    if (x86_64_read_cr3() == as->pml4_phys)
+        x86_64_write_cr3(as->pml4_phys);
+    return TRUE;
 }
 
 /*

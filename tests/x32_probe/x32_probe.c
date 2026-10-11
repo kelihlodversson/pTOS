@@ -762,20 +762,156 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         break;
     }
     case 'l': {
-        /* PE_LOAD of a program, then PE_GOTHENFREE of the basepage it gives */
-        s64 bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                       (s64)(int)(unsigned long)"", 0);
-        volatile u32 *bpp = (volatile u32 *)(unsigned long)bpa;
+        /* PE_LOAD of a program, then PE_GOTHENFREE of the basepage it gives.
+         * The program is in this process's own heap until then: it can be
+         * read and patched, and the patch is what runs (#434) */
+        static const char patch_tail[] = { 1, 'P', 0 };
+        s64 bpa, rc;
+        volatile u32 *bpp, *w;
+        u32 first, last;
 
+        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)patch_tail, 0);
+        bpp = (volatile u32 *)(unsigned long)bpa;
         if (bpa == -33)
             pterm(0x100);
         if (bpa <= 0)
-            pterm(1);
+            pterm(0x200 | (int)(-bpa & 0xff));
         if (bpp[0] != (u32)bpa)
             bad |= 2;                       /* p_lowtpa */
-        if (sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", bpa, 0) != 0)
-            bad |= 4;                       /* the program's own exit code */
+        if (bpp[2] < 0x10000000 || bpp[2] >= 0x3f000000)
+            bad |= 8;                       /* its entry point is in this process's heap */
+        if (bpp[1] - bpp[0] > 0x1000)
+            bad |= 16;                      /* and its TPA is the basepage and little else */
+        /* its initialised data, found by value, patched */
+        first = (bpp[4] - bpp[3]) & ~3u;            /* p_dbase - p_tlen: where the image starts */
+        last = bpp[6] + bpp[7];                     /* p_bbase + p_blen */
+        for (w = (volatile u32 *)(unsigned long)first; (unsigned long)w < last; w++)
+            if (*w == 0x11111111u) {
+                *w = 0x22222222u;
+                break;
+            }
+        if ((unsigned long)w >= last)
+            bad |= 32;                      /* not found */
+        rc = sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", bpa, 0);
+        if (rc != 0)
+            bad |= 4;                       /* the program's own exit code: it saw the patch */
         pterm(bad);
+        break;
+    }
+    case 'G': {
+        /* PE_LOAD, patch, then PE_GO (not PE_GOTHENFREE): when the program has
+         * ended its pages are this process's again, with what it left in them,
+         * and are Malloc() memory to free */
+        static const char patch_tail[] = { 1, 'P', 0 };
+        s64 bpa, rc;
+        volatile u32 *bpp, *w;
+        u32 first, last;
+
+        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)patch_tail, 0);
+        bpp = (volatile u32 *)(unsigned long)bpa;
+        if (bpa == -33)
+            pterm(0x100);
+        if (bpa <= 0)
+            pterm(0x200 | (int)(-bpa & 0xff));
+        first = (bpp[4] - bpp[3]) & ~3u;
+        last = bpp[6] + bpp[7];
+        for (w = (volatile u32 *)(unsigned long)first; (unsigned long)w < last; w++)
+            if (*w == 0x11111111u) {
+                *w = 0x22222222u;
+                break;
+            }
+        if ((unsigned long)w >= last)
+            pterm(32);
+        rc = sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", bpa, 0);
+        if (rc != 0)
+            bad |= 4;                       /* the program's own exit code */
+        if (*w != 0x22222222u)
+            bad |= 2;                       /* readable again, as it was left */
+        if (gemdos(0x49, first & ~0xfffu, 0) != 0)
+            bad |= 8;                       /* a block of ours now */
+        if (gemdos(0x49, first & ~0xfffu, 0) == 0)
+            bad |= 16;                      /* and only once */
+        pterm(bad);
+        break;
+    }
+    case 'H': {
+        /* the same with the child leaving a block of its own below the image */
+        static const char patch_tail[] = { 1, 'm', 0 };
+        s64 bpa, rc, gap;
+        volatile u32 *bpp, *w;
+        u32 first;
+
+        /* a gap below the program: the heap's first block is freed again */
+        gap = gemdos(0x48, 0x10000, 0);
+        if (gap <= 0)
+            pterm(64);
+        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)patch_tail, 0);
+        bpp = (volatile u32 *)(unsigned long)bpa;
+        if (bpa == -33)
+            pterm(0x100);
+        if (bpa <= 0)
+            pterm(0x200 | (int)(-bpa & 0xff));
+        first = (bpp[4] - bpp[3]) & ~3u;
+        w = (volatile u32 *)(unsigned long)first;
+        if (gemdos(0x49, gap, 0) != 0)
+            bad |= 128;
+        rc = sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", bpa, 0);
+        if (rc != 0)
+            bad |= 4;                       /* the program's own exit code */
+        (void)*w;                           /* readable again */
+        if (gemdos(0x49, first & ~0xfffu, 0) != 0)
+            bad |= 8;                       /* a block of ours now, though the child put its own below it */
+        if (gemdos(0x49, first & ~0xfffu, 0) == 0)
+            bad |= 16;                      /* and only once */
+        pterm(bad);
+        break;
+    }
+    case 'B': {
+        /* PE_LOAD of a program bigger than the image window: it goes into
+         * this process's heap whole, and runs when launched */
+        static const char big_tail[] = { 1, 'B', 0 };
+        s64 bpa, rc;
+        volatile u32 *bpp;
+
+        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32BIG.TOS",
+                   (s64)(int)(unsigned long)big_tail, 0);
+        bpp = (volatile u32 *)(unsigned long)bpa;
+        if (bpa == -33)
+            pterm(0x100);
+        if (bpa <= 0)
+            pterm(0x200 | (int)(-bpa & 0xff));
+        if (bpp[7] < 0x600000)
+            bad |= 2;                       /* p_blen: the 6 MiB bss is there */
+        rc = sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", bpa, 0);
+        if (rc != 0)
+            bad |= 4;
+        pterm(bad);
+        break;
+    }
+    case 'D': {
+        /* a program whose file is cut short fails in the middle of the loading,
+         * with the new process's address space in use: the Pexec() is refused,
+         * this process is back in its own and goes on, twice over, and a good
+         * program still launches (#434) */
+        static const char link_tail[] = { 1, 'i', 0 };
+        static volatile u32 mine;
+        s64 rc, rc2, rc3, rc4;
+
+        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32TRUNC.TOS",
+                  (s64)(int)(unsigned long)link_tail, 0);
+        if (rc == -33)
+            pterm(0x100);
+        mine = 0x1234;
+        rc2 = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32TRUNC.TOS",
+                   (s64)(int)(unsigned long)link_tail, 0);
+        rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)link_tail, 0);
+        rc4 = (mine == 0x1234) ? gemdos(0x48, 4096, 0) : 0;
+        pterm((rc < 0 ? 0 : 1) | (rc2 < 0 ? 0 : 2) | (rc3 == 0 ? 0 : 4) |
+              (rc4 > 0 ? 0 : 8));
         break;
     }
     case 'y': {
@@ -838,14 +974,110 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         break;
     }
     case 'a': {
-        /* a child with an unaligned absolute relocation (#433) */
+        /* a program linked for another address is moved into the image
+         * window and relocated, an unaligned absolute address in an
+         * instruction included (#433): once started by mode 0, once loaded
+         * by PE_LOAD and then launched */
         static const char reloc_tail[] = { 1, 'a', 0 };
+        s64 rc, bpa;
+
+        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32RELOC.TOS",
+                  (s64)(int)(unsigned long)reloc_tail, 0);
+        if (rc == -33)
+            pterm(0x100);
+        if (rc != 0)
+            pterm(1);
+        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32RELOC.TOS",
+                   (s64)(int)(unsigned long)reloc_tail, 0);
+        if (bpa <= 0)
+            pterm(2);
+        rc = sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", bpa, 0);
+        if (rc != 0)
+            pterm(4);
+        /* linked for another address without its relocations: refused, with
+         * EPLFMT, instead of run with every absolute address wrong */
+        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32NOREL.TOS",
+                  (s64)(int)(unsigned long)reloc_tail, 0);
+        if (rc == -33)
+            pterm(0x100);
+        pterm(rc == -66 ? 0 : 8);
+        break;
+    }
+    case 'h': {
+        /* a child loaded from a file gets Malloc() memory of its own (#434) */
+        static const char heap_tail[] = { 1, 'h', 0 };
         s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                      (s64)(int)(unsigned long)reloc_tail, 0);
+                      (s64)(int)(unsigned long)heap_tail, 0);
 
         if (rc == -33)
             pterm(0x100);
         pterm(rc == 0 ? 0 : 1);
+        break;
+    }
+    case 'j': {
+        /* a new process has its image in the image window, linked for it or
+         * not, and its text is read-only: a child that writes to it faults
+         * (0xffff) */
+        static const char link_tail[] = { 1, 'i', 0 };
+        static const char text_tail[] = { 1, 'T', 0 };
+        static const char area_tail[] = { 1, 'S', 0 };
+        s64 rc, rc2, rc3, rc4;
+
+        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                  (s64)(int)(unsigned long)link_tail, 0);
+        if (rc == -33)
+            pterm(0x100);
+        rc2 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32RELOC.TOS",
+                   (s64)(int)(unsigned long)link_tail, 0);
+        if (rc2 == -33)
+            pterm(0x100);
+        rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)text_tail, 0);
+        /* and the startup area after it holds what the C startup code builds */
+        rc4 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)area_tail, 0);
+        pterm((rc == 0 ? 0 : 1) | (rc2 == 0 ? 0 : 2) | (rc3 == 0xffff ? 0 : 4) |
+              (rc4 == 0 ? 0 : 8));
+        break;
+    }
+    case 'F': {
+        /* what is not Malloc() memory takes the ordinary path with the same
+         * narrowed pointer: a basepage this process made (Pexec mode 5) is
+         * freed through a pointer with other bits in the upper half (#434) */
+        s64 bpa = sys4(GEMDOS, 0x4b, 5, 0, (s64)(int)(unsigned long)"", 0);
+
+        if (bpa <= 0)
+            pterm(1);
+        pterm(sys4(GEMDOS, 0x49, bpa | 0xffff00000000LL, 0, 0, 0) == 0 ? 0 : 2);
+        break;
+    }
+    case 'L': {
+        /* the program PE_LOAD put in this process's heap is not Malloc()
+         * memory: Mfree() leaves it alone; freeing the basepage unlaunched
+         * gives it back (#434) */
+        s64 a, bpa, b;
+        volatile u32 *bpp;
+        u32 image;
+
+        a = sys4(GEMDOS, 0x48, 4096, 0, 0, 0);
+        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                   (s64)(int)(unsigned long)"", 0);
+        if (bpa == -33)
+            pterm(0x100);
+        if (a <= 0 || bpa <= 0)
+            pterm(1);
+        bpp = (volatile u32 *)(unsigned long)bpa;
+        image = (bpp[4] - bpp[3]) & ~0xfffu;        /* the image's first page */
+        if (image != (u32)a + 4096)
+            bad |= 2;                       /* first fit: right after the first block */
+        if (sys4(GEMDOS, 0x49, image, 0, 0, 0) != -40)
+            bad |= 4;                       /* Mfree() leaves it alone */
+        if (sys4(GEMDOS, 0x49, bpa, 0, 0, 0) != 0)
+            bad |= 8;                       /* free the basepage */
+        b = sys4(GEMDOS, 0x48, 4096, 0, 0, 0);
+        if (b != image)
+            bad |= 16;                      /* and the address space is free again */
+        pterm(bad);
         break;
     }
     case 'u':

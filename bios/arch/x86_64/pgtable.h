@@ -274,6 +274,14 @@ int x86_64_map_user_page(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
  */
 int x86_64_unmap_user_page(UQUAD pml4_phys, UQUAD virt);
 
+/* A bit of a leaf entry the CPU ignores, which the address-space code uses to
+ * mark a page it owns (backing it allocated, to free with the mapping). */
+#define X86_64_PTE_OWNED 0x200ULL
+
+/* The 4 KiB leaf entry that maps virt in the address space whose PML4 is
+ * pml4_phys, or NULL if there is none (no table on the way, or a larger page). */
+UQUAD *x86_64_user_pte(UQUAD pml4_phys, UQUAD virt);
+
 /*
  * The physical address of this kernel's own master PML4 -- what CR3 holds
  * outside any user process -- and raw CR3 access, so a process address

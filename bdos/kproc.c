@@ -24,6 +24,11 @@
 
 #define KPROC_BORROWS 16       /* two per child a ring-3 process holds */
 #define KPROC_DTAS    8        /* directory searches it can have going at once */
+
+enum { UH_MALLOC = 0,           /* a block Malloc() gave out */
+       UH_LOADED = 1,           /* a program Pexec(PE_LOAD) loaded for a child, until PE_GO */
+       UH_IMAGE = 2,            /* the image of this very process, moved here by PE_GO */
+       UH_LENT = 3 };           /* the image of a PE_GO child, lent to it until it ends */
 #endif
 
 /* The option gates only the record itself: the #else stubs stay in every
@@ -53,7 +58,23 @@ struct kproc {
     UBYTE *user_end;
     X86_64_ASPACE *aspace;      /* ring-3 page tables, NULL until prepared */
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
-    const X32_IMAGE *image;     /* built-in program to map private, or NULL */
+    X32_LAYOUT layout;          /* the program to map private (built in, or loaded) */
+    BOOL has_image;             /* ... if there is one */
+    X86_64_ASPACE *pending_as;  /* a program loaded from a file: the address space made for it */
+                                /* at load time, with its image in it; the launch adopts it */
+    BOOL lost;                  /* ... and the launch failed after adopting it: nothing to launch */
+    PD *load_parent;            /* PE_LOAD: the process whose heap holds the image */
+    UQUAD load_va;              /* until the launch moves it here: where, */
+    ULONG load_pages;           /* and how many pages (startup area included) */
+    BOOL give_back;             /* PE_GO: the image goes back to its loader when this ends */
+    PD *lender;                 /* ... the process whose heap it came from, once moved */
+    struct uheap_block {        /* Malloc() memory: private pages at X86_64_USER_HEAP_*, */
+        UQUAD va;               /* sorted by address */
+        ULONG pages;
+        UBYTE kind;             /* UH_MALLOC, or a program image, which Mfree() leaves alone */
+        PD *pd;                 /* UH_LOADED: the process it is loaded for */
+    } *heap;
+    ULONG nheap, heap_capacity;
     UQUAD entry;                /* its entry point once loaded, else 0 */
     UQUAD stack_top;            /* its private stack's top once loaded, else 0 */
     ULONG ancestors;            /* basepage copies on its read-only ancestors page */
@@ -139,6 +160,9 @@ BOOL kproc_create(PD *pd)
     return TRUE;
 }
 
+static void give_image_back(KPROC *kproc);
+static void release_loaded(KPROC *kproc);
+
 void kproc_destroy(PD *pd)
 {
     KPROC **link;
@@ -148,11 +172,20 @@ void kproc_destroy(PD *pd)
             KPROC *kproc = *link;
             *link = kproc->next;
 #if CONF_WITH_USER_ASPACE
+            /* a program PE_LOAD put in its caller's heap that was never
+             * launched goes back with the basepage */
+            if (kproc->load_parent)
+                release_loaded(kproc);
+            if (kproc->lender)
+                give_image_back(kproc);
+            kproc_load_leave();             /* (a disk error jumped out of a load) */
+            x86_64_aspace_destroy(kproc->pending_as);
             /* Unlinked first, so the record is gone before its address
              * space is torn down: a second kproc_destroy() for the same
              * PD finds nothing and cannot free either twice. */
             x86_64_aspace_destroy(kproc->aspace);
             x86_64_kstack_free(kproc->kstack_phys);
+            kfree(kproc->heap);
 #endif
             KPROC_FREE(kproc);
             return;
@@ -322,6 +355,26 @@ static BOOL build_ancestors(KPROC *kproc, X86_64_ASPACE *as, PD *parent)
     return TRUE;
 }
 
+static BOOL move_loaded_image(KPROC *kproc, X86_64_ASPACE *to, PD *launcher);
+
+/* A launch that cannot be completed: the address space is gone.  One that was
+ * made at load time holds the program's only copy, so there is nothing left
+ * to launch (`lost`): the basepage can only be freed. */
+static BOOL prepare_failed(KPROC *kproc, X86_64_ASPACE *as)
+{
+    if (as == kproc->pending_as) {
+        kproc->pending_as = NULL;
+        kproc->has_image = FALSE;
+        kproc->lost = TRUE;
+    }
+    x86_64_aspace_destroy(as);
+    if (kproc->kstack_phys)
+        x86_64_kstack_free(kproc->kstack_phys);
+    kproc->kstack_phys = 0;
+    kproc->entry = 0;
+    return FALSE;
+}
+
 BOOL kproc_prepare_user(PD *pd, PD *parent)
 {
     KPROC *kproc = kproc_find(pd);
@@ -329,7 +382,7 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     UQUAD env, tpa, hitpa;
     ULONG envbytes;
 
-    if (!kproc)
+    if (!kproc || kproc->lost)
         return FALSE;
     if (kproc->aspace) {
         /* Already prepared -- but a process that has been launched has handed
@@ -354,60 +407,65 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
         (UQUAD)pd->p_hitpa <= tpa)
         return FALSE;
 
-    as = x86_64_aspace_create();
+    /* a program loaded from a file already has its address space, with its
+     * image in it (kproc_load_begin()) */
+    as = kproc->pending_as ? kproc->pending_as : x86_64_aspace_create();
     if (!as)
         return FALSE;
     kproc->kstack_phys = x86_64_kstack_alloc(&kproc->kstack_top);
     if (!kproc->kstack_phys) {
-        x86_64_aspace_destroy(as);
+        if (as != kproc->pending_as)
+            x86_64_aspace_destroy(as);
         return FALSE;
     }
 
     /*
      * The process's own environment block and its basepage + TPA + stack
      * (the PD is the first thing in the TPA allocation, p_hitpa its end):
-     * two separate allocations, wherever the window put them.  They are
-     * user read/write/execute because the flat x32 image has a single RWX
-     * segment.  Then its parent's basepage, kernel-only: xterm() writes
+     * two separate allocations, wherever the window put them.  The environment
+     * is user read/write.  The TPA is user read/write too, and also execute
+     * only for a process without an image of its own, whose code (put there
+     * by the caller of Pexec(PE_BASEPAGE)) is in it; a process with an image
+     * runs that, from private pages mapped further down, and its TPA is data.
+     * Then its parent's basepage, kernel-only: xterm() writes
      * the exit code through it from ring 0 while this address space is
      * still loaded.  Any failure unwinds the whole address space.
      */
     if (!x86_64_aspace_map_procmem(as, env, envbytes,
                                    ASPACE_PROT_WRITE | ASPACE_PROT_USER) ||
         !x86_64_aspace_map_procmem(as, tpa, hitpa - tpa,
-                                   ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER) ||
+                                   kproc->has_image ? ASPACE_PROT_WRITE | ASPACE_PROT_USER
+                                                : ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER) ||
         !x86_64_aspace_map_procmem(as, (UQUAD)(uintptr_t)parent, sizeof(PD),
                                    ASPACE_PROT_WRITE)) {
-        x86_64_aspace_destroy(as);
-        x86_64_kstack_free(kproc->kstack_phys);
-        kproc->kstack_phys = 0;
-        return FALSE;
+        return prepare_failed(kproc, as);
     }
     if (!build_ancestors(kproc, as, parent)) {
-        x86_64_aspace_destroy(as);
-        x86_64_kstack_free(kproc->kstack_phys);
-        kproc->kstack_phys = 0;
-        return FALSE;
+        return prepare_failed(kproc, as);
     }
     /*
-     * A built-in image gets its segments and a stack of its own, as private
-     * pages at the fixed addresses of include/procmem.h's layout.  (A bare
-     * basepage's TPA is no stack: it is the basepage and little else.)
+     * A built-in image gets its segments as private pages at the fixed
+     * addresses of include/procmem.h's layout (one loaded from a file has them
+     * already, and one PE_LOAD put in its caller's heap is moved here); every
+     * process gets a private stack there (a TPA is no stack: the image of a
+     * program loaded into it, or the code a caller put there, is not
+     * something to push onto).  The stack comes first: the move of a PE_LOAD
+     * image out of its caller cannot be undone, so nothing that can fail
+     * may follow it.
      */
-    if (kproc->image &&
-        (!x86_64_x32image_load(as, kproc->image, &kproc->entry) ||
-         !x86_64_aspace_map_private(as, X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE,
-                                    X86_64_USER_STACK_SIZE,
-                                    ASPACE_PROT_WRITE | ASPACE_PROT_USER))) {
-        kproc->entry = 0;
-        x86_64_aspace_destroy(as);
-        x86_64_kstack_free(kproc->kstack_phys);
-        kproc->kstack_phys = 0;
-        return FALSE;
+    if (!x86_64_aspace_map_private(as, X86_64_USER_STACK_TOP - X86_64_USER_STACK_SIZE,
+                                   X86_64_USER_STACK_SIZE,
+                                   ASPACE_PROT_WRITE | ASPACE_PROT_USER) ||
+        (kproc->has_image && !kproc->pending_as &&
+         (kproc->load_parent ? !move_loaded_image(kproc, as, parent)
+                             : !x86_64_x32_layout_load(as, &kproc->layout)))) {
+        return prepare_failed(kproc, as);
     }
-    if (kproc->image)
-        kproc->stack_top = X86_64_USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
+    kproc->stack_top = X86_64_USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
+    if (kproc->has_image)
+        kproc->entry = kproc->layout.entry;
     kproc->aspace = as;
+    kproc->pending_as = NULL;               /* (the address space is the process's now) */
     return TRUE;
 }
 
@@ -491,9 +549,104 @@ BOOL kproc_set_image(PD *pd, const X32_IMAGE *image)
 {
     KPROC *kproc = kproc_find(pd);
 
-    if (!kproc || kproc->aspace || !x86_64_x32image_check(image, NULL))
+    if (!kproc || kproc->aspace || kproc->has_image ||
+        !x86_64_x32image_layout(image, &kproc->layout))
         return FALSE;
-    kproc->image = image;
+    kproc->has_image = TRUE;
+    return TRUE;
+}
+
+/*
+ * A program Pexec() loads from a file (mode 0, and PE_LOAD by a caller with no
+ * address space of its own) is read straight into pages of the address space
+ * that will be the new process's.  kproc_load_begin() makes that address space
+ * and maps [va, va + bytes) in it, the image and the startup area after it
+ * (X86_64_USER_IMAGE_SLACK: zeroed read/write memory for the startup code to
+ * build argv and environ in); kproc_load_enter() makes it the one in use, so
+ * the loader can address the pages by their user addresses, and
+ * kproc_load_leave() puts the previous one back.  The record owns the address
+ * space until the launch adopts it (kproc_prepare_user()), or it is destroyed.
+ * Leaving is also done by destroying the record, which is what a disk error
+ * that jumps past the loader gets.
+ */
+static UQUAD load_prev_cr3;
+static KPROC *load_active;
+
+BOOL kproc_load_begin(PD *pd, UQUAD va, UQUAD bytes)
+{
+    KPROC *kproc = kproc_find(pd);
+    X86_64_ASPACE *as;
+
+    if (!kproc || kproc->aspace || kproc->pending_as || kproc->has_image || kproc->lost)
+        return FALSE;
+    as = x86_64_aspace_create();
+    if (!as)
+        return FALSE;
+    if (!x86_64_aspace_map_private(as, va, bytes, ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
+        x86_64_aspace_destroy(as);
+        return FALSE;
+    }
+    kproc->pending_as = as;
+    return TRUE;
+}
+
+void kproc_load_enter(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    if (kproc && kproc->pending_as && !load_active) {
+        load_prev_cr3 = x86_64_aspace_enter(kproc->pending_as);
+        load_active = kproc;
+    }
+}
+
+void kproc_load_leave(void)
+{
+    if (load_active) {
+        load_active = NULL;
+        x86_64_aspace_leave(load_prev_cr3);
+    }
+}
+
+/*
+ * The file is in the pages kproc_load_begin() mapped, relocated if it had to
+ * be, and laid out as `layout`: each segment gets its own permissions now.
+ * FALSE if the layout does not satisfy x86_64_x32_layout_valid(), leaves no
+ * room for the whole startup area inside the image window, or the process has
+ * no pending address space; the record's destruction frees the pages.
+ */
+static BOOL protect_layout(X86_64_ASPACE *as, const X32_LAYOUT *layout)
+{
+    ULONG i;
+
+    for (i = 0; i < layout->nseg; i++) {
+        const X32_SEGMENT *s = &layout->seg[i];
+        UQUAD first = s->vaddr & ~(X86_64_USER_PAGE_SIZE - 1);
+        UQUAD end = (s->vaddr + s->memsz + X86_64_USER_PAGE_SIZE - 1) & ~(X86_64_USER_PAGE_SIZE - 1);
+        UWORD prot = ASPACE_PROT_USER;
+
+        if (s->flags & 2)                   /* PF_W */
+            prot |= ASPACE_PROT_WRITE;
+        if (s->flags & 1)                   /* PF_X */
+            prot |= ASPACE_PROT_EXEC;
+        if (!x86_64_aspace_protect_private(as, first, end - first, prot))
+            return FALSE;
+    }
+    return TRUE;
+}
+
+BOOL kproc_set_loaded_image(PD *pd, const X32_LAYOUT *layout)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    if (!kproc || kproc->aspace || !kproc->pending_as || kproc->has_image ||
+        !x86_64_x32_layout_valid(layout, FALSE) ||
+        ((layout->end + X86_64_USER_PAGE_SIZE - 1) & ~(X86_64_USER_PAGE_SIZE - 1)) +
+        X86_64_USER_IMAGE_SLACK > X86_64_USER_IMAGE_BASE + X86_64_USER_IMAGE_SIZE ||
+        !protect_layout(kproc->pending_as, layout))
+        return FALSE;
+    kproc->layout = *layout;
+    kproc->has_image = TRUE;
     return TRUE;
 }
 
@@ -559,7 +712,9 @@ LONG kproc_check_launch(PD *pd, PD *caller)
     alloc_end = (UBYTE *)kproc->user_start + x86_64_procmem_size(kproc->user_start);
     if (lowtpa != (UQUAD)(uintptr_t)kproc->user_start ||
         hitpa < first || hitpa > (UQUAD)(uintptr_t)alloc_end ||
-        tbase < first || tbase >= hitpa ||
+        /* a program with an image of its own starts at the entry point the
+         * kernel recorded, not at p_tbase, and that lies in the image */
+        (!kproc->has_image && (tbase < first || tbase >= hitpa)) ||
         pd->p_env != PTR_TO_USERPTR(kproc->env_start))
         return EPLFMT;
     pd->p_hitpa = (ULONG)hitpa;
@@ -634,6 +789,308 @@ UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top)
     *top = kproc->kstack_top;
     kproc->kstack_phys = 0;         /* the launcher frees it, after the exit */
     return phys;
+}
+
+/*
+ * Malloc() memory of a ring-3 process: private pages of its own address space
+ * in [X86_64_USER_HEAP_BASE, X86_64_USER_HEAP_LIMIT), a whole number of pages
+ * per block, placed first fit.  The kernel's own pool (the window the
+ * basepage and environment come from) is not where a process's Malloc()
+ * memory is: that window is small and shared by every process, and its
+ * addresses are the kernel's.  The pages go back with the address space
+ * when the process ends; Mfree() and Mshrink() give them back sooner.
+ */
+BOOL kproc_has_heap(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    return kproc && kproc->aspace;
+}
+
+static BOOL heap_room(KPROC *kproc)
+{
+    struct uheap_block *grown;
+    ULONG cap;
+
+    if (kproc->nheap < kproc->heap_capacity)
+        return TRUE;
+    cap = kproc->heap_capacity ? kproc->heap_capacity * 2 : 16;
+    grown = kalloc(cap * sizeof(*grown));
+    if (!grown)
+        return FALSE;
+    if (kproc->heap) {
+        memcpy(grown, kproc->heap, kproc->nheap * sizeof(*grown));
+        kfree(kproc->heap);
+    }
+    kproc->heap = grown;
+    kproc->heap_capacity = cap;
+    return TRUE;
+}
+
+/* First gap of at least `bytes` (0: the largest one): its address and the
+ * index at which a block there goes in the sorted table. */
+static UQUAD heap_gap(const KPROC *kproc, UQUAD bytes, ULONG *index, UQUAD *largest)
+{
+    UQUAD at = X86_64_USER_HEAP_BASE, found = 0;
+    ULONG i;
+
+    *largest = 0;
+    for (i = 0; i <= kproc->nheap; i++) {
+        UQUAD end = i < kproc->nheap ? kproc->heap[i].va : X86_64_USER_HEAP_LIMIT;
+
+        if (end - at > *largest)
+            *largest = end - at;
+        if (!found && bytes && end - at >= bytes) {
+            found = at;
+            *index = i;
+        }
+        if (i < kproc->nheap)
+            at = end + (UQUAD)kproc->heap[i].pages * X86_64_USER_PAGE_SIZE;
+    }
+    return found;
+}
+
+static UQUAD heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd)
+{
+    UQUAD va, largest, size;
+    ULONG index = 0;
+
+    if (!kproc || !kproc->aspace || !bytes ||
+        bytes > X86_64_USER_HEAP_LIMIT - X86_64_USER_HEAP_BASE)
+        return 0;
+    size = ((UQUAD)bytes + X86_64_USER_PAGE_SIZE - 1) & ~(X86_64_USER_PAGE_SIZE - 1);
+    if (!heap_room(kproc))
+        return 0;
+    va = heap_gap(kproc, size, &index, &largest);
+    if (!va || !x86_64_aspace_map_private(kproc->aspace, va, size,
+                                          ASPACE_PROT_WRITE | ASPACE_PROT_USER))
+        return 0;
+    memmove(&kproc->heap[index + 1], &kproc->heap[index],
+            (kproc->nheap - index) * sizeof(kproc->heap[0]));
+    kproc->heap[index].va = va;
+    kproc->heap[index].pages = (ULONG)(size / X86_64_USER_PAGE_SIZE);
+    kproc->heap[index].kind = kind;
+    kproc->heap[index].pd = pd;
+    kproc->nheap++;
+    return va;
+}
+
+/* Malloc(): the address of `bytes` of fresh zeroed memory, 0 if there is none */
+UQUAD kproc_uheap_alloc(PD *pd, ULONG bytes)
+{
+    return heap_alloc(kproc_find(pd), bytes, UH_MALLOC, NULL);
+}
+
+/* Malloc(-1): the size of the largest block that could be allocated */
+ULONG kproc_uheap_largest(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+    UQUAD largest;
+    ULONG index;
+
+    if (!kproc || !kproc->aspace)
+        return 0;
+    heap_gap(kproc, 0, &index, &largest);
+    return (ULONG)largest;
+}
+
+static struct uheap_block *heap_find(KPROC *kproc, UQUAD va)
+{
+    ULONG i;
+
+    for (i = 0; i < kproc->nheap; i++)
+        if (kproc->heap[i].va == va)
+            return &kproc->heap[i];
+    return NULL;
+}
+
+/* gives the block back: unmaps its pages and drops its entry */
+static LONG heap_release(KPROC *kproc, struct uheap_block *b)
+{
+    if (!x86_64_aspace_unmap_private(kproc->aspace, b->va,
+                                     (UQUAD)b->pages * X86_64_USER_PAGE_SIZE))
+        return ERR;
+    memmove(b, b + 1, (kproc->nheap - 1 - (ULONG)(b - kproc->heap)) * sizeof(*b));
+    kproc->nheap--;
+    return E_OK;
+}
+
+/* Mfree(): E_OK, or EIMBA if va is not the start of a block of this process */
+LONG kproc_uheap_free(PD *pd, UQUAD va)
+{
+    KPROC *kproc = kproc_find(pd);
+    struct uheap_block *b;
+
+    if (!kproc || !kproc->aspace || !(b = heap_find(kproc, va)) || b->kind != UH_MALLOC)
+        return EIMBA;
+    return heap_release(kproc, b);
+}
+
+/* Mshrink(): keeps the first `len` bytes of the block (rounded up to whole
+ * pages); EGSBF if that would make it bigger, EIMBA if va is no block */
+LONG kproc_uheap_shrink(PD *pd, UQUAD va, long len)
+{
+    KPROC *kproc = kproc_find(pd);
+    struct uheap_block *b;
+    UQUAD keep;
+
+    if (!kproc || !kproc->aspace || !(b = heap_find(kproc, va)) || b->kind != UH_MALLOC)
+        return EIMBA;
+    if (len < 0)
+        return ERANGE;
+    if (len == 0)
+        return kproc_uheap_free(pd, va);
+    keep = ((UQUAD)len + X86_64_USER_PAGE_SIZE - 1) / X86_64_USER_PAGE_SIZE;
+    if (keep > b->pages)
+        return EGSBF;
+    if (keep == b->pages)
+        return E_OK;
+    if (!x86_64_aspace_unmap_private(kproc->aspace, va + keep * X86_64_USER_PAGE_SIZE,
+                                     (UQUAD)(b->pages - keep) * X86_64_USER_PAGE_SIZE))
+        return ERR;
+    b->pages = (ULONG)keep;
+    return E_OK;
+}
+
+/*
+ * The end of a PE_GO child that was loaded by PE_LOAD: its image, which the
+ * launch moved out of the loader's heap, goes back to the loader, at the same
+ * addresses, as a block it owns (Malloc() memory: it frees it with Mfree()).
+ * The loader was stopped all the time and now sees what the program left in
+ * its data.  This is for Pterm() and Ptermres() alike; if a Ptermres() process
+ * later keeps more than its basepage, that is where it would change.  If the
+ * pages cannot be moved (a page table cannot be allocated), they are freed
+ * with the child and the loader's block is dropped.
+ */
+static void give_image_back(KPROC *kproc)
+{
+    KPROC *pk = kproc_find(kproc->lender);
+    struct uheap_block *b, *own;
+
+    /* (the heap table is sorted by address: the child may have put blocks
+     * below its image, so look for it where it is) */
+    if (!pk || !pk->aspace || !kproc->aspace ||
+        !(own = heap_find(kproc, kproc->load_va)) || own->kind != UH_IMAGE ||
+        !(b = heap_find(pk, kproc->load_va)) || b->kind != UH_LENT || b->pd != kproc->pd)
+        return;
+    if (x86_64_aspace_move_private(kproc->aspace, pk->aspace, b->va,
+                                   (UQUAD)b->pages * X86_64_USER_PAGE_SIZE,
+                                   ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
+        b->kind = UH_MALLOC;
+        b->pd = NULL;
+    } else {
+        memmove(b, b + 1, (pk->nheap - 1 - (ULONG)(b - pk->heap)) * sizeof(*b));
+        pk->nheap--;
+    }
+}
+
+/* Pexec(PE_GO) (TRUE) or PE_GOTHENFREE: whether the image goes back to its
+ * loader when the process ends; set on every launch attempt */
+void kproc_set_give_back(PD *pd, BOOL give_back)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    if (kproc)
+        kproc->give_back = give_back;
+}
+
+/*
+ * Pexec(PE_LOAD) from a ring-3 caller puts the program in the caller's own
+ * address space, in its heap, where the caller can read it and patch it
+ * before launching it.  The block is the caller's until PE_GO/PE_GOTHENFREE,
+ * which moves its pages, at the same addresses, to the new process (see
+ * move_loaded_image()); Mfree() leaves it alone, and freeing the child's
+ * basepage gives it back.
+ */
+UQUAD kproc_load_alloc(PD *caller, PD *child, ULONG bytes)
+{
+    KPROC *ck = kproc_find(child);
+    UQUAD va;
+
+    if (!ck || ck->load_parent)
+        return 0;
+    va = heap_alloc(kproc_find(caller), bytes, UH_LOADED, child);
+    if (!va)
+        return 0;
+    /* recorded with the child at once: a disk error before the load is done
+     * jumps past the loader, and destroying the child gives the block back */
+    ck->load_parent = caller;
+    ck->load_va = va;
+    ck->load_pages = (bytes + X86_64_USER_PAGE_SIZE - 1) / X86_64_USER_PAGE_SIZE;
+    return va;
+}
+
+void kproc_load_release(PD *caller, UQUAD va)
+{
+    KPROC *kproc = kproc_find(caller);
+    struct uheap_block *b;
+
+    if (kproc && kproc->aspace && (b = heap_find(kproc, va)) != NULL && b->kind == UH_LOADED)
+        heap_release(kproc, b);
+}
+
+/* the block a never-launched child holds in its loader's heap, if it is still
+ * that child's */
+static void release_loaded(KPROC *kproc)
+{
+    KPROC *pk = kproc_find(kproc->load_parent);
+    struct uheap_block *b;
+
+    if (pk && pk->aspace && (b = heap_find(pk, kproc->load_va)) != NULL &&
+        b->kind == UH_LOADED && b->pd == kproc->pd)
+        heap_release(pk, b);
+}
+
+/* The process `pd` is the program loaded into [va, va + pages) of `caller`'s
+ * heap (kproc_load_alloc()), laid out as `layout` there.  FALSE, with the block
+ * still the caller's to release, if that is not so. */
+BOOL kproc_set_moved_image(PD *pd, const X32_LAYOUT *layout, PD *caller, UQUAD va, ULONG pages)
+{
+    KPROC *kproc = kproc_find(pd);
+    KPROC *ck = kproc_find(caller);
+    struct uheap_block *b;
+
+    if (!kproc || kproc->aspace || kproc->has_image || !ck || !ck->aspace ||
+        kproc->load_parent != caller || kproc->load_va != va || kproc->load_pages != pages ||
+        !(b = heap_find(ck, va)) || b->kind != UH_LOADED || b->pd != pd || b->pages != pages ||
+        !x86_64_x32_layout_valid_in(layout, FALSE, va, va + (UQUAD)pages * X86_64_USER_PAGE_SIZE))
+        return FALSE;
+    kproc->layout = *layout;
+    kproc->has_image = TRUE;
+    return TRUE;
+}
+
+/* The launch: the block leaves the caller's address space for the new one,
+ * with each segment's own permissions, and is the new process's image. */
+static BOOL move_loaded_image(KPROC *kproc, X86_64_ASPACE *to, PD *launcher)
+{
+    KPROC *pk = kproc_find(kproc->load_parent);
+    struct uheap_block *b;
+
+    if (!pk || !pk->aspace || kproc->load_parent != launcher ||
+        !(b = heap_find(pk, kproc->load_va)) || b->kind != UH_LOADED ||
+        b->pd != kproc->pd || b->pages != kproc->load_pages || !heap_room(kproc))
+        return FALSE;
+    if (!x86_64_aspace_move_private(pk->aspace, to, kproc->load_va,
+                                    (UQUAD)kproc->load_pages * X86_64_USER_PAGE_SIZE,
+                                    ASPACE_PROT_WRITE | ASPACE_PROT_USER))
+        return FALSE;
+    kproc->heap[0].va = kproc->load_va;     /* (the new process has no other block yet) */
+    kproc->heap[0].pages = kproc->load_pages;
+    kproc->heap[0].kind = UH_IMAGE;
+    kproc->heap[0].pd = NULL;
+    kproc->nheap = 1;
+    if (kproc->give_back) {                 /* PE_GO: only lent, the loader's block stays */
+        b->kind = UH_LENT;
+        kproc->lender = kproc->load_parent;
+    } else {
+        memmove(b, b + 1, (pk->nheap - 1 - (ULONG)(b - pk->heap)) * sizeof(*b));
+        pk->nheap--;
+    }
+    kproc->load_parent = NULL;
+    if (!protect_layout(to, &kproc->layout))
+        return FALSE;
+    return TRUE;
 }
 
 UQUAD kproc_user_stack(PD *pd)
