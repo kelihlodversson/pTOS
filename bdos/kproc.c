@@ -146,6 +146,16 @@ static KPROC *kproc_find(PD *pd)
     return NULL;
 }
 
+ULONG kproc_count(void)
+{
+    ULONG n = 0;
+    KPROC *kproc;
+
+    for (kproc = kproc_list; kproc; kproc = kproc->next)
+        n++;
+    return n;
+}
+
 BOOL kproc_create(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
@@ -1493,16 +1503,6 @@ UQUAD kproc_user_root(PD *pd)
     KPROC *kproc = kproc_find(pd);
 
     return (kproc && kproc->aspace) ? aspace_root(kproc->aspace) : 0;
-}
-
-ULONG kproc_count(void)
-{
-    ULONG n = 0;
-    KPROC *kproc;
-
-    for (kproc = kproc_list; kproc; kproc = kproc->next)
-        n++;
-    return n;
 }
 
 BOOL kproc_validate_user_dta(UQUAD address)

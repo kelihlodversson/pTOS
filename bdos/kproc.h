@@ -37,6 +37,7 @@ SBYTE kproc_get_prio(PD *pd);
 void kproc_set_prio(PD *pd, SBYTE prio);
 /* Prusage(): the 8 longs of MiNT's, in milliseconds and bytes */
 void kproc_usage(PD *pd, ULONG r[8]);
+ULONG kproc_count(void);                /* live records, for leak tests and S_MEMINFO */
 /* kproc_destroy() that also says whether the record belonged to a basepage
  * that was never launched, whose inherited file and directory references
  * are therefore still held. */
@@ -175,7 +176,6 @@ LONG kproc_uheap_shrink(PD *pd, UQUAD va, long len);
 UQUAD kproc_user_stack(PD *pd);         /* initial RSP of the private stack of a prepared process; 0 if not prepared */
 UQUAD kproc_user_root(PD *pd);          /* 0 if not prepared */
 ASPACE *kproc_user_aspace(PD *pd);   /* NULL if none (tests) */
-ULONG kproc_count(void);                /* live records, for leak tests */
 BOOL kproc_validate_user_dta(UQUAD address);
 /* valid user memory of the current process: mapped, user-accessible and (for
  * _write) writable in its own address space */
