@@ -35,6 +35,8 @@
 #include "ahdi.h"
 #include "biosdefs.h"
 #include "fs.h"            /* OPNFILES */
+#include "biosext.h"       /* phys_pages_total() */
+#include "kproc.h"
 #include "string.h"
 
 /* not in tosvars.h -- only bios/arch/arm/vectors.c otherwise uses it */
@@ -397,19 +399,19 @@ static LONG ssystem_osfeatures(void)
 }
 
 /*
- * S_KNAME - the kernel name into the caller's buffer (arg1, arg2 bytes),
- * always terminated; E_OK, or ERANGE when it does not fit.  FreeMiNT gives
- * the whole name and version and cuts it to the buffer; this gives 'pTOS'
- * and refuses a buffer that cannot hold all of it, so a caller never gets a
- * truncated name (doc/mint-calls.txt).
+ * S_KNAME, S_CNAME, S_CVERSION - a string of the build into the caller's buffer
+ * (arg1, arg2 bytes), always terminated; E_OK, or ERANGE when it does not fit,
+ * nothing written.  FreeMiNT gives the whole kernel name and version (and the
+ * compiler's) and cuts it to the buffer; these give 'pTOS', the compiler's name
+ * and its version, and refuse a buffer that cannot hold all of one, so a caller
+ * never gets a truncated string (doc/mint-calls.txt).  `size` is sizeof() of the
+ * string, its NUL included.
  */
-static LONG ssystem_kname(long buf, LONG len)
+static LONG ssystem_string(long buf, LONG len, const char *str, size_t size)
 {
-    static const char name[] = "pTOS";
-
-    if (!buf || len < (long)sizeof(name))
+    if (!buf || len < (LONG)size)
         return ERANGE;
-    svar_copy((void *)buf, name, sizeof(name));
+    svar_copy((void *)buf, str, size);
     return E_OK;
 }
 
@@ -473,6 +475,34 @@ static LONG ssystem_console_dim(long arg1, LONG arg2)
 }
 
 
+/*
+ * ssystem_meminfo - S_MEMINFO (pTOS extension, see ssystem.h)
+ */
+static LONG ssystem_meminfo(long arg1, LONG arg2)
+{
+    struct mem_info info;
+    LONG n;
+
+    if (arg2 == -1)
+        return (LONG)sizeof(info);
+
+    if (!arg1 || arg2 <= 0)
+        return EINVFN;
+
+    info.page_size = 4096UL;
+    info.phys_pages = (ULONG)phys_pages_total();    /* -1: not known */
+    info.free_pages = (ULONG)phys_pages_free();
+#if CONF_WITH_USER_ASPACE
+    info.processes = kproc_count();
+#else
+    info.processes = 1;
+#endif
+
+    n = arg2 < (LONG)sizeof(info) ? arg2 : (LONG)sizeof(info);
+    svar_copy((void *)arg1, &info, n);
+    return n;
+}
+
 /* the modes xssystem() implements, for S_INQUIRE; keep in step with it */
 static BOOL ssystem_has_mode(WORD mode)
 {
@@ -494,6 +524,9 @@ static BOOL ssystem_has_mode(WORD mode)
     case S_SETWVAL:
     case S_SETBVAL:
     case S_KNAME:
+    case S_CNAME:
+    case S_CVERSION:
+    case S_MEMINFO:
     case S_CONSOLE_DIM:
         return TRUE;
     default:
@@ -552,7 +585,7 @@ LONG xsysconf(WORD which)
  * S_GETCOOKIE's arg2, S_CONSOLE_DIM's arg1 and S_KNAME's arg1 -- the only
  * three modes that dereference their argument as a pointer this function
  * itself never inspects -- reach ssystem_getcookie()/ssystem_console_dim()/
- * ssystem_kname() without being truncated first (S_KNAME's length arg2 is a
+ * ssystem_string() without being truncated first (S_KNAME's length arg2 is a
  * scalar and is narrowed, S_CONSOLE_DIM's is too). Every other mode's helper
  * below still
  * declares its own parameters LONG, deliberately: S_{GET,SET}COOKIE's
@@ -592,8 +625,14 @@ LONG xssystem(WORD mode, long arg1, long arg2)
         return ssystem_osbuilddate();
     case S_OSFEATURES:
         return ssystem_osfeatures();
-    case S_KNAME:
-        return ssystem_kname(arg1, (LONG)arg2);    /* a scalar of the x32 caller */
+    case S_KNAME:       /* (the length is a scalar of the x32 caller) */
+        return ssystem_string(arg1, (LONG)arg2, SSYSTEM_KNAME, sizeof(SSYSTEM_KNAME));
+    case S_CNAME:
+        return ssystem_string(arg1, (LONG)arg2, SSYSTEM_CNAME, sizeof(SSYSTEM_CNAME));
+    case S_CVERSION:
+        return ssystem_string(arg1, (LONG)arg2, SSYSTEM_CVERSION, sizeof(SSYSTEM_CVERSION));
+    case S_MEMINFO:
+        return ssystem_meminfo(arg1, (LONG)arg2);
 
     case S_GETCOOKIE:
         return ssystem_getcookie(arg1, arg2);

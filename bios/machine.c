@@ -677,6 +677,8 @@ void fill_cookie_jar(void)
     cookie_add(COOKIE_COLDFIRE, 0);
     setvalue_mcf();
     cookie_add(COOKIE_MCF, (ULONG)&cookie_mcf);
+#elif CONF_WITH_NATIVE_ABI
+    cookie_add(COOKIE_CPU, CPU_COOKIE_NATIVE);      /* not a 68k: see cookie.h */
 #else
     /* this is detected by detect_cpu(), called from processor_init() */
     cookie_add(COOKIE_CPU, mcpu);
@@ -692,7 +694,9 @@ void fill_cookie_jar(void)
     setvalue_vdo();
     cookie_add(COOKIE_VDO, cookie_vdo);
 
-#ifndef __mcoldfire__
+#if CONF_WITH_NATIVE_ABI
+    cookie_add(COOKIE_FPU, CPU_COOKIE_FOREIGN | 1);     /* see cookie.h */
+#elif !defined(__mcoldfire__)
   /* this is detected by detect_fpu(), called from processor_init() */
     cookie_add(COOKIE_FPU, fputype);
 #endif

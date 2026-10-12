@@ -33,6 +33,8 @@ void test_ssystem_info(void)
 {
     long rc;
     char name[8];
+    char big[128];
+    struct { unsigned long page_size, phys_pages, free_pages, processes; } mi;
 
     ptest_begin("ssystem_info");
 
@@ -53,8 +55,8 @@ void test_ssystem_info(void)
             SS_OSNAME, SS_OSXNAME, SS_OSVERSION, SS_OSBUILDDATE, SS_OSFEATURES,
             8, 9, 10, 11, 12, 13, 14, 15,   /* cookies, system variables */
             26,                             /* S_DELCOOKIE */
-            SS_KNAME,
-            -2                              /* S_CONSOLE_DIM, 0xfffe */
+            SS_KNAME, 910, 911,             /* S_KNAME, S_CNAME, S_CVERSION */
+            -2, -3                          /* S_CONSOLE_DIM 0xfffe, S_MEMINFO 0xfffd */
         };
         unsigned int i;
 
@@ -100,6 +102,33 @@ void test_ssystem_info(void)
     /* a buffer of exactly the five bytes is enough */
     rc = Ssystem(SS_KNAME, (long)name, 5L);
     ptest_assert_msg(rc == 0 && strcmp(name, "pTOS") == 0, "S_KNAME with a buffer of five bytes failed");
+
+    /* the compiler's name and version: a string, refused when the buffer is
+     * too small for it */
+    memset(big, 'x', sizeof(big));
+    rc = Ssystem(910, (long)big, (long)sizeof(big));
+    ptest_assert_msg(rc == 0 && strlen(big) >= 3 && strlen(big) < 16, "S_CNAME failed");
+    memset(big, 'x', sizeof(big));
+    rc = Ssystem(911, (long)big, (long)sizeof(big));
+    ptest_assert_msg(rc == 0 && strlen(big) >= 3 && big[0] >= '0' && big[0] <= '9',
+                     "S_CVERSION is not a version");
+    memset(name, 'x', sizeof(name));
+    ptest_assert_msg(Ssystem(911, (long)name, 2L) == ERANGE && name[0] == 'x',
+                     "S_CVERSION into a buffer too small was not refused");
+
+    /* the memory in one call: the struct as far as it was asked for, its size
+     * for -1, the fields that agree with Sysconf() */
+    ptest_assert_msg(Ssystem(-3, 0L, -1L) == (long)sizeof(mi), "S_MEMINFO size query");
+    memset(&mi, 0, sizeof(mi));
+    rc = Ssystem(-3, (long)&mi, (long)sizeof(mi));
+    ptest_assert_msg(rc == (long)sizeof(mi), "S_MEMINFO failed");
+    ptest_assert_msg(mi.page_size == 4096UL, "S_MEMINFO: the page size is not 4096");
+    ptest_assert_msg(mi.phys_pages == (unsigned long)Sysconf(10), "S_MEMINFO: the pages differ from Sysconf()");
+    ptest_assert_msg(mi.processes >= 1, "S_MEMINFO: no process");
+    memset(&mi, 0xff, sizeof(mi));
+    ptest_assert_msg(Ssystem(-3, (long)&mi, 4L) == 4 && mi.phys_pages == 0xffffffffUL,
+                     "S_MEMINFO copied more than it was asked for");
+    ptest_assert_msg(Ssystem(-3, 0L, 16L) < 0, "S_MEMINFO into NULL was not refused");
 
     /* where the pointers of a process are checked (private address spaces,
      * S_OSFEATURES bit 0) a buffer that is not the caller's is refused.  The

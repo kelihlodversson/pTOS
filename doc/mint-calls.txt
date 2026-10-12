@@ -97,10 +97,14 @@ Information
                             S_KNAME (900)             kernel name into a buffer            DONE, differs: 'pTOS' only (MiNT: name
                                                                                            and version, cut to the buffer); a
                                                                                            short buffer is ERANGE, nothing written
-                            S_CNAME, S_CVERSION..     compiler name, version, flags        PLAN (cheap: strings from the build)
+                            S_CNAME (910)             compiler name                        DONE (group 4): 'gcc' or 'clang'; like
+                            S_CVERSION (911)          compiler version                     S_KNAME, a short buffer is ERANGE
+                                                                                           (MiNT cuts); __VERSION__
+                            S_CDEFINES, S_COPTIM      compiler definitions, flags          EINVFN: the build does not record them
                             S_DEBUG*                  MiNT's debug settings                EINVFN
                             S_CONSOLE_DIM (0xfffe)    pTOS only                            DONE earlier
-                            memory modes              free/total pages, address spaces     PLAN: a pTOS range above 0x8000
+                            S_MEMINFO (0xfffd)        pTOS only: page size, physical      DONE (group 4): same protocol as
+                                                      and free pages, process records     S_CONSOLE_DIM (size, struct grows)
 
 Cookies (readable with Ssystem(S_GETCOOKIE))
 --------------------------------------------
@@ -108,11 +112,17 @@ Cookies (readable with Ssystem(S_GETCOOKIE))
   Set today (bios/machine.c fill_cookie_jar): _CPU, _FPU, _VDO, _MCH, _SWI,
   _SND, _FRB (only with alternative RAM), _AKP, _IDT, _FDC, __NF, XHDI, SCSI, _5MS (as
   the machine has them), and the ColdFire ones.  _FLK is not set (fill_cookie_jar() has
-  only its comment): PLAN, with the process calls, if what it promises -- file and
-  record locking -- is ever implemented; until then it stays out. On x86-64
-  _CPU holds the raw CPUID signature, not one of the 68k values (0, 10, ...);
-  decide there what a program should see. "MiNT" is not set: it would promise
-  Pfork, signals and the rest. PLAN: look at _CPU/_MCH/_VDO for x32.
+  only its comment): until file and record locking is implemented it stays out.
+  "MiNT" is not set either: it would promise Pfork, signals and the rest.
+
+  DONE (group 4): _CPU and _FPU of a CPU that is no 68k.  The Atari values are small
+  numbers (0, 10, ..., 60; bit masks), and a program that takes the number for one of
+  those takes a foreign CPU for a 68k (x86-64 had the raw CPUID signature there, ARM the
+  raw ID register).  Bit 31 is set now, which no 68k value has (include/cookie.h):
+  _CPU = 0x80000000 | the ELF machine number (ARM 40, x86-64 62, also for x32),
+  _FPU = 0x80000001 (hardware floating point: VFP, SSE2).  _MCH and _VDO are
+  MCH_NOHARD and VDO_NOHARD without Atari hardware, as they were.  The kernel's own
+  mcpu is not changed; nothing in the kernel reads the cookie.
 
 Process calls
 -------------
@@ -141,7 +151,7 @@ Groups and their PRs
   1  Ssystem information modes and S_INQUIRE            DONE (#474)
   2  Mxalloc protection modes, Maccess, Mvalidate        DONE (#476)
   3  Sysconf                                            DONE (#477)
-  4  cookies, Ssystem memory modes, S_CNAME..           PLAN
+  4  cookies, Ssystem memory modes, S_CNAME..           DONE (#480)
   5  the process calls                                  PLAN
 
   Sconfig() is EINVFN and needs no group.
