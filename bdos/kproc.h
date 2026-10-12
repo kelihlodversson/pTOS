@@ -28,6 +28,15 @@ DTAINFO *kproc_get_dta(PD *pd);
 void kproc_set_parent(PD *pd, PD *parent);
 PD *kproc_get_parent(PD *pd);
 void kproc_mark_started(PD *pd);        /* proc_go() launched it */
+/* The process-id calls (bdos/mintproc.c).  A pid is 1..32767 and names a record;
+ * 0 is the kernel's own context, which has none and is every boot-time basepage's
+ * launcher. */
+WORD kproc_pid(PD *pd);                 /* 0: no record */
+WORD kproc_parent_pid(PD *pd);          /* 0: launched by the kernel, or no record */
+SBYTE kproc_get_prio(PD *pd);
+void kproc_set_prio(PD *pd, SBYTE prio);
+/* Prusage(): the 8 longs of MiNT's, in milliseconds and bytes */
+void kproc_usage(PD *pd, ULONG r[8]);
 ULONG kproc_count(void);                /* live records, for leak tests and S_MEMINFO */
 /* kproc_destroy() that also says whether the record belonged to a basepage
  * that was never launched, whose inherited file and directory references

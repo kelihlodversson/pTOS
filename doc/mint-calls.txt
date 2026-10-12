@@ -127,17 +127,33 @@ Cookies (readable with Ssystem(S_GETCOOKIE))
 Process calls
 -------------
 
-  call                       no.   pTOS today   decision
-  Pgetpid/Pgetppid           0x10b/c   not there   PLAN: from the process record
-  Pgetuid/Pgeteuid/Pgetgid/
-  Pgetegid                   0x10f 0x138 0x114 0x139   PLAN: 0 (there are no users)
-  Pgetauid/Psetauid          0x145/6   not there   PLAN: 0 / accepted
-  Pgetpriority/Psetpriority  0x158/9   not there   PLAN: accepted, scheduling stays cooperative
-  Prusage                    0x11e     not there   PLAN: the page counts the address space knows
-  Pnice, Pumask              0x10a 0x133  not there   PLAN: accepted / a kernel-wide mask
-  Dgetcwd                    0x13b     not there   PLAN: the current directory as a string
-  Dlock                      0x135     not there   EINVFN: there is no other process to lock out
-  Dpathconf, Fcntl           0x124 0x104  not there   OUT: file systems and devices (Dcntl, XFS)
+  call                       no.       decision
+  Pgetpid                    0x10b     DONE (group 5): the pid of the process record, 1..32767, never reused
+                                       while it lives; 0 for a context with no record (the kernel's own)
+  Pgetppid                   0x10c     DONE: the launcher's pid, 0 if it was the kernel
+  Pgetuid, Pgeteuid,         0x10f     DONE: 0, there are no users (every process is root's)
+  Pgetgid, Pgetegid          0x114
+                             0x138/9
+  Pgetauid, Psetauid         0x145/6   DONE: 0; Psetauid(0) is accepted, any other id is EINVAL (there is no
+                                       other user; MiNT lets it be set once)
+  Pgetpriority,              0x158/9   DONE, kept and without effect (scheduling is cooperative): FreeMiNT's
+  Psetpriority                         values (20 minus the priority, clamped to -20..20); the process, its
+                                       group (itself alone) and the user (root) can be named, by 0 or by
+                                       their own number, any other is ESRCH
+  Prusage                    0x11e     DONE: milliseconds since the record was made less what its children
+                                       used, as user time ([1]); the children's ([3]); the memory in bytes
+                                       of its private pages ([4]); the system times and [5..7] are 0
+  Dgetcwd                    0x13b     DONE: Dgetpath's string with a size (ERANGE when it does not fit)
+  Pnice, Pumask              0x10a     EINVFN: there is no scheduler to nice, and no permission bits to mask
+                             0x133
+  Dlock                      0x135     EINVFN: there is no other process to lock out
+  Mvalidate(pid...)          0x141     the own pid is accepted now, as 0 is
+  Dpathconf, Fcntl           0x124     OUT: file systems and devices (Dcntl, XFS)
+                             0x104
+
+  The calls are there with CONF_WITH_KPROC (the x86-64 port, and the kproc
+  configurations of ARM and m68k); without a record a process has no pid, and the
+  calls are EINVFN like any other call beyond the table.
 
 Not in this issue
 -----------------
@@ -152,6 +168,6 @@ Groups and their PRs
   2  Mxalloc protection modes, Maccess, Mvalidate        DONE (#476)
   3  Sysconf                                            DONE (#477)
   4  cookies, Ssystem memory modes, S_CNAME..           DONE (#480)
-  5  the process calls                                  PLAN
+  5  the process calls                                  DONE (#481)
 
   Sconfig() is EINVFN and needs no group.

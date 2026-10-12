@@ -15,6 +15,7 @@
 #include "mem.h"
 #include "bdosstub.h"
 #include "biosext.h"
+#include "tosvars.h"
 #if CONF_WITH_KHEAP
 #include "kheap.h"
 #include "kprint.h"
@@ -46,6 +47,10 @@ struct kproc {
     DTAINFO *dta;
     BOOL started;               /* proc_go() has launched it */
     PD *parent;                 /* who launched it: the trusted copy of p_parent */
+    WORD pid;                   /* its process id, 1..KPROC_PID_MAX, never reused while it lives */
+    SBYTE prio;                 /* Psetpriority(): kept, and with no effect (scheduling is cooperative) */
+    ULONG start_tick;           /* hz_200 when the record was made, for Prusage() */
+    ULONG child_ticks;          /* the ticks the processes it launched have used up */
     SBYTE uft[NUMSTD];          /* its standard-handle map and current directories: */
     UBYTE curdir[NUMCURDIR];    /* the authoritative ones, see PD_UFT() */
 #if CONF_WITH_USER_ASPACE
@@ -111,6 +116,26 @@ static KPROC *kproc_list;
 #define KPROC_FREE(k)   xmfreblk(k)
 #endif
 
+#define KPROC_PID_MAX   32767
+
+/* a process id no record has */
+static WORD new_pid(void)
+{
+    static WORD last;
+    KPROC *k;
+    WORD pid;
+
+    for (;;) {
+        last = (last >= KPROC_PID_MAX) ? 1 : last + 1;
+        pid = last;
+        for (k = kproc_list; k; k = k->next)
+            if (k->pid == pid)
+                break;
+        if (!k)
+            return pid;
+    }
+}
+
 static KPROC *kproc_find(PD *pd)
 {
     KPROC *kproc;
@@ -142,6 +167,8 @@ BOOL kproc_create(PD *pd)
         return FALSE;
     bzero(kproc, sizeof *kproc);
     kproc->pd = pd;
+    kproc->pid = new_pid();
+    kproc->start_tick = (ULONG)hz_200;
     kproc->dta = (DTAINFO *)pd->p_cmdlin;
     /* Take over the tables the basepage may already hold; from now on the
      * basepage's own copies are unused, and cleared so no stale value is
@@ -185,7 +212,11 @@ void kproc_destroy(PD *pd)
     for (link = &kproc_list; *link; link = &(*link)->next)
         if ((*link)->pd == pd) {
             KPROC *kproc = *link;
+            KPROC *launcher = kproc->parent ? kproc_find(kproc->parent) : NULL;
+
             *link = kproc->next;
+            if (launcher)                   /* what it used is its launcher's children's */
+                launcher->child_ticks += (ULONG)hz_200 - kproc->start_tick;
 #if CONF_WITH_USER_ASPACE
             /* a program PE_LOAD put in its caller's heap that was never
              * launched goes back with the basepage */
@@ -205,6 +236,63 @@ void kproc_destroy(PD *pd)
             KPROC_FREE(kproc);
             return;
         }
+}
+
+WORD kproc_pid(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    return kproc ? kproc->pid : 0;
+}
+
+WORD kproc_parent_pid(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    return (kproc && kproc->parent) ? kproc_pid(kproc->parent) : 0;
+}
+
+SBYTE kproc_get_prio(PD *pd)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    return kproc ? kproc->prio : 0;
+}
+
+void kproc_set_prio(PD *pd, SBYTE prio)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    if (kproc)
+        kproc->prio = prio;
+}
+
+/*
+ * Prusage(), after FreeMiNT's (sys/k_resource.c), times in milliseconds: [0] the
+ * system time, [1] the user time, [2] and [3] the same of the processes it
+ * launched, [4] the memory used, [5..7] 0.  The system does not tell kernel from
+ * program time: a process's time is the time since it was made less what its
+ * children used (they run while it waits, one at a time), all of it counted as
+ * user time; the system times are 0.  The memory is the private pages it has.
+ */
+void kproc_usage(PD *pd, ULONG r[8])
+{
+    KPROC *kproc = kproc_find(pd);
+    ULONG elapsed, i;
+
+    for (i = 0; i < 8; i++)
+        r[i] = 0;
+    if (!kproc)
+        return;
+    elapsed = (ULONG)hz_200 - kproc->start_tick;
+    if (elapsed < kproc->child_ticks)
+        elapsed = kproc->child_ticks;
+    r[1] = (elapsed - kproc->child_ticks) * (1000UL / CLOCKS_PER_SEC);
+    r[3] = kproc->child_ticks * (1000UL / CLOCKS_PER_SEC);
+#if CONF_WITH_USER_ASPACE
+    if (kproc->aspace)
+        r[4] = aspace_private_pages(kproc->aspace) * (ULONG)USER_PAGE_SIZE;
+#endif
 }
 
 /* The tables of a process with a record are in it; the few without one (the
@@ -1152,14 +1240,14 @@ LONG kproc_maccess(PD *pd, UQUAD address, LONG size, WORD mode)
  * Mvalidate(pid, addr, size, flags), MiNT's: whether the range is memory of the
  * process, and in `flags` (a LONG of the caller, if not NULL) its protection
  * bits and map: private memory, in the one kind of RAM, is 0.  Only the
- * caller's own memory (pid 0) can be asked about: another process's pages are
- * not a thing this one can reach (and there are no process ids to name one).
+ * caller's own memory (pid 0, or its own pid) can be asked about: another
+ * process's pages are not a thing this one can reach.
  */
 LONG kproc_mvalidate(PD *pd, WORD pid, UQUAD address, LONG size, UQUAD flags)
 {
     ULONG zero = 0;
 
-    if (pid != 0)
+    if (pid != 0 && pid != kproc_pid(pd))
         return ESRCH;
     if (size <= 0 || !kproc_user_access(pd, address, (ULONG)size, FALSE))
         return EINVAL;

@@ -1526,7 +1526,9 @@ TEST_CPUFLAGS = $(CPUFLAGS)
 endif
 TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC) \
-              $(if $(ARCH_ARM),-mword-relocations)
+              $(if $(ARCH_ARM),-mword-relocations) \
+              $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
+              $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE)
 
 TEST_OBJ = obj/runtests.o obj/run_tests.o obj/testlib.o
 

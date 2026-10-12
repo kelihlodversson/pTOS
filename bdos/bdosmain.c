@@ -35,6 +35,7 @@
 #include "kprint.h"
 #include "ssystem.h"
 #include "shutdown.h"
+#include "mintproc.h"
 #include "uaccess.h"
 #include "bdosstub.h"
 #include "tosvars.h"
@@ -592,6 +593,17 @@ restrt:
 #else
         return xshutdown(*(LONG_ALIAS *)&pw[1]);
 #endif
+#endif
+
+#if CONF_WITH_KPROC
+    /* the MiNT process calls, outside the table too (bdos/mintproc.c) */
+    {
+        BOOL handled;
+
+        rc = mintproc_call(fn, pw, &handled);
+        if (handled)
+            return rc;
+    }
 #endif
 
 #if CONF_WITH_USER_ASPACE
