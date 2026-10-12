@@ -582,13 +582,13 @@ LONG xsysconf(WORD which)
  * xssystem - implements GEMDOS Ssystem(), see ssystem.h
  *
  * arg1/arg2 are native `long` (see ssystem.h's own comment) so that
- * S_GETCOOKIE's arg2, S_CONSOLE_DIM's arg1 and S_KNAME's arg1 -- the only
- * three modes that dereference their argument as a pointer this function
- * itself never inspects -- reach ssystem_getcookie()/ssystem_console_dim()/
- * ssystem_string() without being truncated first (S_KNAME's length arg2 is a
- * scalar and is narrowed, S_CONSOLE_DIM's is too). Every other mode's helper
- * below still
- * declares its own parameters LONG, deliberately: S_{GET,SET}COOKIE's
+ * S_GETCOOKIE's arg2, and the arg1 of S_CONSOLE_DIM, S_MEMINFO, S_KNAME,
+ * S_CNAME and S_CVERSION -- the only modes that dereference their argument
+ * as a pointer this function itself never inspects -- reach
+ * ssystem_getcookie()/ssystem_console_dim()/ssystem_meminfo()/
+ * ssystem_string() without being truncated first (the length or size in arg2
+ * of those that have one is a scalar and is narrowed). Every other mode's
+ * helper below still declares its own parameters LONG, deliberately: S_{GET,SET}COOKIE's
  * tag/value are opaque cookie-jar data (struct cookie's own fields are
  * ULONG, per cookie.h, so a wider C parameter here couldn't preserve
  * more than 32 bits of a stored value regardless), and S_GET/SETxVAL's

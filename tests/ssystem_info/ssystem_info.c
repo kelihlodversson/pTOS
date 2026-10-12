@@ -125,6 +125,18 @@ void test_ssystem_info(void)
     ptest_assert_msg(rc == (long)sizeof(mi), "S_MEMINFO failed");
     ptest_assert_msg(mi.page_size == 4096UL, "S_MEMINFO: the page size is not 4096");
     ptest_assert_msg(mi.phys_pages == (unsigned long)Sysconf(10), "S_MEMINFO: the pages differ from Sysconf()");
+    /* the free pages are what Sysconf(7) says (all ones where it cannot say), give
+     * or take the few pages this process touches between the two calls */
+    {
+        long avail = Sysconf(7);
+
+        if (avail == EINVFN)
+            ptest_assert_msg(mi.free_pages == 0xffffffffUL, "S_MEMINFO: free pages unknown, not all ones");
+        else
+            ptest_assert_msg(mi.free_pages <= mi.phys_pages
+                             && (long)mi.free_pages - avail <= 64 && avail - (long)mi.free_pages <= 64,
+                             "S_MEMINFO: the free pages differ from Sysconf()");
+    }
     ptest_assert_msg(mi.processes >= 1, "S_MEMINFO: no process (all ones: not counted)");
     memset(&mi, 0xff, sizeof(mi));
     ptest_assert_msg(Ssystem(-3, (long)&mi, 4L) == 4 && mi.phys_pages == 0xffffffffUL,
