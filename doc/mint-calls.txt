@@ -39,10 +39,10 @@ Memory
   Psetlimit()       0x11f   limits of the process     mode 2 (total memory), 3 (Malloc()   DONE
                                                       data) and 0x100 (the stack, this
                                                       port's own); 1 (CPU time) is EINVFN
-  Pexec modes/flags 0x4b    mode 7 sets the program   the flags are read (PF_TTRAMLOAD,   PLAN, group 2: the PF_* protection
-                            flags of a basepage       PF_TTRAMMEM) for the RAM choice;     bits of the flags choose private or
-                            (PF_FASTLOAD, TTRAMLOAD,  the protection bits and mode 7      global for the process's own
-                            TTRAMMEM, PROTMODE bits)  are not used                        memory; the rest stays
+  Pexec modes/flags 0x4b    mode 7 sets the program   PF_TTRAMLOAD is read for the         PLAN, group 2: the PF_* protection
+                            flags of a basepage       RAM choice; PF_TTRAMMEM, the        bits of the flags choose private or
+                            (PF_FASTLOAD, TTRAMLOAD,  protection bits and the mode 7      global for the process's own
+                            TTRAMMEM, PROTMODE bits)  flags call are not used            memory; the rest stays
   Sconfig(mode,f)   0x33    MagiC: read or set        not there                           EINVFN: nothing to configure
                             kernel configuration                                         (pTOS has no such flags)
 
