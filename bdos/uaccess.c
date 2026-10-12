@@ -338,8 +338,11 @@ static long ssystem_ok(const long *pw)
     if (mode >= 0x000d && mode <= 0x000f)
         return EACCDN;
 #endif
-    if (mode == 900 && size > 0)                        /* S_KNAME buffer */
-        return buf_ok(arg1, size, TRUE);
+    if (mode == 900)                                    /* S_KNAME buffer */
+        /* ssystem_kname() writes "pTOS\0", five bytes, and only when the
+         * buffer is that big; a smaller one is refused without a look at the
+         * pointer, and nothing beyond the five bytes is the caller's business */
+        return size >= 5 ? buf_ok(arg1, 5, TRUE) : E_OK;
     if (mode == 0x0008 && arg2)                         /* S_GETCOOKIE value */
         return buf_ok(arg2, 4, TRUE);
     if (mode == (WORD)0xfffe && size > 0)               /* S_CONSOLE_DIM struct */

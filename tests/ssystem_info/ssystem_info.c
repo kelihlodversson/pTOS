@@ -43,12 +43,22 @@ void test_ssystem_info(void)
         return;
     }
 
-    /* SS_INQUIRE: the modes that exist, and one that does not */
+    /* S_INQUIRE: every mode the call implements, and one that does not */
+    {
+        static const long modes[] = {
+            SS_OSNAME, SS_OSXNAME, SS_OSVERSION, SS_OSBUILDDATE, SS_OSFEATURES,
+            8, 9, 10, 11, 12, 13, 14, 15,   /* cookies, system variables */
+            26,                             /* S_DELCOOKIE */
+            SS_KNAME,
+            -2                              /* S_CONSOLE_DIM, 0xfffe */
+        };
+        unsigned int i;
+
+        for (i = 0; i < sizeof(modes) / sizeof(modes[0]); i++)
+            ptest_assert_msg(Ssystem(SS_INQUIRE, modes[i], 0L) == 0,
+                             "S_INQUIRE does not know a mode that is implemented");
+    }
     ptest_assert_msg(Ssystem(SS_INQUIRE, SS_INQUIRE, 0L) == 0, "S_INQUIRE does not know itself");
-    ptest_assert_msg(Ssystem(SS_INQUIRE, SS_OSXNAME, 0L) == 0, "S_INQUIRE: S_OSXNAME missing");
-    ptest_assert_msg(Ssystem(SS_INQUIRE, SS_OSBUILDDATE, 0L) == 0, "S_INQUIRE: S_OSBUILDDATE missing");
-    ptest_assert_msg(Ssystem(SS_INQUIRE, SS_OSFEATURES, 0L) == 0, "S_INQUIRE: S_OSFEATURES missing");
-    ptest_assert_msg(Ssystem(SS_INQUIRE, SS_KNAME, 0L) == 0, "S_INQUIRE: S_KNAME missing");
     ptest_assert_msg(Ssystem(SS_INQUIRE, 0x7001, 0L) == EINVFN, "S_INQUIRE claims a mode that does not exist");
     ptest_assert_msg(Ssystem(0x7001, 0L, 0L) == EINVFN, "a mode that does not exist is not refused");
 
@@ -83,6 +93,9 @@ void test_ssystem_info(void)
     rc = Ssystem(SS_KNAME, (long)name, 4L);
     ptest_assert_msg(rc == ERANGE, "S_KNAME with a buffer too small is not refused");
     ptest_assert_msg(name[0] == 'x', "S_KNAME wrote into a buffer too small");
+    /* a buffer of exactly the five bytes is enough */
+    rc = Ssystem(SS_KNAME, (long)name, 5L);
+    ptest_assert_msg(rc == 0 && strcmp(name, "pTOS") == 0, "S_KNAME with a buffer of five bytes failed");
 
     /* where the pointers of a process are checked (private address spaces,
      * S_OSFEATURES bit 0) a buffer that is not the caller's is refused */
