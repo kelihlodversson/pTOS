@@ -57,10 +57,14 @@ void test_cookie_values(void)
 
     /* there is no Atari hardware here, and no MiNT */
 #if defined(__arm__) || defined(__x86_64__)
+    value = 0;
     ptest_assert_msg(Ssystem(SS_GETCOOKIE, TAG('_', 'M', 'C', 'H'), (long)&value) == 0,
                      "no _MCH cookie");
+    ptest_assert_msg(value == 0xffffffffUL, "_MCH is not MCH_NOHARD");
+    value = 0;
     ptest_assert_msg(Ssystem(SS_GETCOOKIE, TAG('_', 'V', 'D', 'O'), (long)&value) == 0,
                      "no _VDO cookie");
+    ptest_assert_msg(value == 0xffffffffUL, "_VDO is not VDO_NOHARD");
 #endif
     ptest_assert_msg(Ssystem(SS_GETCOOKIE, TAG('M', 'i', 'N', 'T'), (long)&value) != 0,
                      "a MiNT cookie promises what pTOS does not have");

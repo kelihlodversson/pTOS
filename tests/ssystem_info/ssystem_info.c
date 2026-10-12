@@ -110,8 +110,9 @@ void test_ssystem_info(void)
     ptest_assert_msg(rc == 0 && strlen(big) >= 3 && strlen(big) < 16, "S_CNAME failed");
     memset(big, 'x', sizeof(big));
     rc = Ssystem(911, (long)big, (long)sizeof(big));
-    ptest_assert_msg(rc == 0 && strlen(big) >= 3 && big[0] >= '0' && big[0] <= '9',
-                     "S_CVERSION is not a version");
+    /* (gcc's starts with a digit, clang's with its name: only a string is asked for) */
+    ptest_assert_msg(rc == 0 && strlen(big) >= 1 && strlen(big) < sizeof(big) - 1,
+                     "S_CVERSION is not a string");
     memset(name, 'x', sizeof(name));
     ptest_assert_msg(Ssystem(911, (long)name, 2L) == ERANGE && name[0] == 'x',
                      "S_CVERSION into a buffer too small was not refused");
@@ -124,7 +125,7 @@ void test_ssystem_info(void)
     ptest_assert_msg(rc == (long)sizeof(mi), "S_MEMINFO failed");
     ptest_assert_msg(mi.page_size == 4096UL, "S_MEMINFO: the page size is not 4096");
     ptest_assert_msg(mi.phys_pages == (unsigned long)Sysconf(10), "S_MEMINFO: the pages differ from Sysconf()");
-    ptest_assert_msg(mi.processes >= 1, "S_MEMINFO: no process");
+    ptest_assert_msg(mi.processes >= 1, "S_MEMINFO: no process (all ones: not counted)");
     memset(&mi, 0xff, sizeof(mi));
     ptest_assert_msg(Ssystem(-3, (long)&mi, 4L) == 4 && mi.phys_pages == 0xffffffffUL,
                      "S_MEMINFO copied more than it was asked for");

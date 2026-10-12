@@ -492,10 +492,10 @@ static LONG ssystem_meminfo(long arg1, LONG arg2)
     info.page_size = 4096UL;
     info.phys_pages = (ULONG)phys_pages_total();    /* -1: not known */
     info.free_pages = (ULONG)phys_pages_free();
-#if CONF_WITH_USER_ASPACE
+#if CONF_WITH_KPROC
     info.processes = kproc_count();
 #else
-    info.processes = 1;
+    info.processes = 0xffffffffUL;      /* not counted: there are no records */
 #endif
 
     n = arg2 < (LONG)sizeof(info) ? arg2 : (LONG)sizeof(info);

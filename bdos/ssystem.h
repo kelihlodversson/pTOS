@@ -124,7 +124,8 @@ struct mem_info {
     ULONG page_size;    /* bytes per page */
     ULONG phys_pages;   /* pages of physical memory */
     ULONG free_pages;   /* of which free */
-    ULONG processes;    /* process records, the caller's and its launchers' included */
+    ULONG processes;    /* process records, the caller's and its launchers' included;
+                         * 0xffffffff where there are none (no CONF_WITH_KPROC) */
 };
 
 struct console_dim {
