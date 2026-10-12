@@ -9,7 +9,7 @@
 # directory as the disk, so no image and no mtools are needed):
 #
 #   virt-arm     virt-arm-cli_defconfig   virt-arm.elf    qemu-system-arm
-#   virt-m68k    virt-m68k-cli_defconfig  virt-m68k.elf   qemu-system-m68k
+#   virt-m68k    virt-m68k-cli-elf_defconfig  virt-m68k.elf   qemu-system-m68k
 #   pc-x86_64    pc-x86_64_defconfig      pc-x86_64.efi   qemu-system-x86_64 + OVMF
 #
 # The virt machines are configured without the AES so that they boot to

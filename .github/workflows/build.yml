@@ -442,7 +442,7 @@ jobs:
             qemu: qemu-system-arm
             make_args: ''
           - machine: virt-m68k
-            config: virt-m68k-cli
+            config: virt-m68k-cli-elf
             arch: m68k
             # pinned for the toolchain PPA, like the m68k build jobs
             runner: ubuntu-22.04
