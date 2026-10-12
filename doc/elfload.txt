@@ -179,12 +179,17 @@ added to it --
 
 identical to the DIR32 fixup described above. This covers everything the
 current loader relocates: for input relocations that already store the
-value to fix up directly in the slot (R_ARM_ABS32 / R_68K_32 / R_X86_64_32, and a REL-
-encoded R_ARM_RELATIVE / R_68K_RELATIVE), ptos-elf-pack lists the slot
-as-is; for a RELA-encoded RELATIVE relocation (m68k PIE), whose slot may
-legitimately be 0 in the file with the real value carried in r_addend
-instead, ptos-elf-pack first writes that addend into the slot's file bytes
-so every listed slot ends up needing the same "add the bias" operation.
+value to fix up directly in the slot (R_ARM_ABS32 / R_68K_32 / R_X86_64_32,
+and ARM's REL-encoded R_ARM_RELATIVE), ptos-elf-pack lists the slot as-is; for
+a RELA-encoded RELATIVE relocation (R_68K_RELATIVE on m68k, R_X86_64_RELATIVE
+on x32), whose slot may legitimately be 0 in the file with the real value
+carried in r_addend instead, ptos-elf-pack first writes that addend into the
+slot's file bytes so every listed slot ends up needing the same "add the bias"
+operation.
+(pTOS ABI imports, a separate feature with no namespace registered yet, are
+not packed for x32: a call to an imported function leaves a PLT32 relocation
+against an undefined symbol, which ptos-elf-pack rejects like any PC-relative
+relocation against a symbol that does not move with the image.)
 Relocation types the loader does not otherwise apply (PC-relative and
 similar) are never listed and need no entry -- but only when ptos-elf-pack
 recognises the type as one of the ones known not to need a load-time fixup;
