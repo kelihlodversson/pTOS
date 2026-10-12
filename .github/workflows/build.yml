@@ -446,7 +446,7 @@ jobs:
             arch: m68k
             # pinned for the toolchain PPA, like the m68k build jobs
             runner: ubuntu-22.04
-            qemu: qemu-system-m68k
+            qemu: qemu-system-misc
             make_args: ''
           - machine: pc-x86_64
             config: pc-x86_64
