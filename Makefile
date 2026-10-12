@@ -1412,6 +1412,14 @@ LIBCMINI_DIR  = lib/libcmini
 LIBCMINI_INC  = $(LIBCMINI_DIR)/include
 LIBCMINI_BUILDDIR = $(abspath obj/libcmini-build)
 LIBCMINI_MAKE = $(MAKE) -C $(LIBCMINI_DIR) BUILDDIR=$(LIBCMINI_BUILDDIR)
+ifdef ARCH_X86_64
+# libcmini's x86-64 port is the x32 userland: built with the same compiler and
+# flags as the other x32 programs (X32_CROSS_COMPILE/X32_CFLAGS), not the
+# x86_64-linux-gnux32- prefix its own Makefile assumes.  -ffreestanding is
+# left out: libcmini's abort() must stay noreturn for -Werror.
+LIBCMINI_MAKE += CROSSPREFIX=$(X32_CROSS_COMPILE) \
+    ARCH_CFLAGS="-fno-pie -fcf-protection=none -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-stack-protector"
+endif
 LIBCMINI_OBJDIR = $(LIBCMINI_BUILDDIR)/./objs
 LIBCMINI_CRT0 = $(LIBCMINI_OBJDIR)/minicrt0.o
 LIBCMINI_LIB  = $(LIBCMINI_BUILDDIR)/./libcmini.a
@@ -1451,7 +1459,14 @@ endif
 # combination elf_relocate_ptos()/ptos-elf-pack support: REL+DIR32,
 # REL+RELATIVE, RELA+DIR32, and RELA+RELATIVE (including the addend-
 # materialisation ptos-elf-pack does at pack time for that last case).
-ifndef CONF_WITH_ELF_LOADER
+# bdos/elfld.c's PT_PTOS_RELOC understands only ARM and m68k relocations, so
+# x86-64 does not run the suite (or ptos-elf-pack, which stops on EM_X86_64).
+ifdef ARCH_X86_64
+TEST_WITH_PTOS_RELOC =
+else
+TEST_WITH_PTOS_RELOC := $(CONF_WITH_ELF_LOADER)
+endif
+ifndef TEST_WITH_PTOS_RELOC
 TEST_SUITES := $(filter-out ptos_reloc_load,$(TEST_SUITES))
 endif
 
@@ -1497,7 +1512,20 @@ tests/run_tests.c: Makefile $(wildcard tests/*/*.c) $(AUTOCONF_H) | obj
 # rebase, so a program linked without this flag loads with unrelocated
 # absolute addresses baked into its code whenever it lands away from its
 # link address.
-TEST_CFLAGS = $(CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
+ifdef ARCH_X86_64
+# The test programs are x32 userland, not the LP64 kernel: the flags the other
+# x32 programs use, and a link like theirs (the kernel's loader maps a
+# freestanding static ELF, keeping its relocations).
+TEST_CC = $(X32_CC)
+# no x32 libgcc on the host, and x32 code needs none (64-bit arithmetic is native)
+TEST_LIBS =
+TEST_CPUFLAGS = $(X32_CFLAGS)
+else
+TEST_CC = $(CC)
+TEST_LIBS = $(LIBS)
+TEST_CPUFLAGS = $(CPUFLAGS)
+endif
+TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC) \
               $(if $(ARCH_ARM),-mword-relocations)
 
@@ -1515,20 +1543,20 @@ TEST_OBJ = obj/runtests.o obj/run_tests.o obj/testlib.o
 # every test object the same config-triggered staleness the kernel's
 # objects get for free.
 obj/runtests.o: tests/runtests.c $(AUTOCONF_H) | obj
-	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 obj/run_tests.o: tests/run_tests.c $(AUTOCONF_H) | obj
-	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 obj/testlib.o: tests/testlib.c $(AUTOCONF_H) | obj
-	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 TEST_STARTUP = $(LIBCMINI_CRT0)
 
 # Each test suite object depends on its source and the generated run_tests.c
 define test-suite-rule
 obj/$(1).o: tests/$(1)/$(1).c tests/run_tests.c $(AUTOCONF_H) | obj
-	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $$< -o $$@
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $$< -o $$@
 endef
 $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 
@@ -1542,6 +1570,8 @@ TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
 # load.
 ifdef ARCH_ARM
 LIBCMINI_DEFCONFIG = ptos_arm_defconfig
+else ifdef ARCH_X86_64
+LIBCMINI_DEFCONFIG = ptos_x86_64_defconfig
 else
 LIBCMINI_DEFCONFIG = mintelf_defconfig
 endif
@@ -1611,7 +1641,7 @@ $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 # would make the link step pull in the -mshort multilib variant of
 # libgcc (via $(LIBS) = -lgcc below) while libcmini itself was built
 # against the toolchain's default, non -mshort multilib.
-TEST_LD = $(CC) $(CPUFLAGS) -nostartfiles -nostdlib
+TEST_LD = $(TEST_CC) $(TEST_CPUFLAGS) -nostartfiles -nostdlib
 
 # Link the test harness as runtests.tos.  On ARM this must stay a
 # relocatable ELF image the pTOS ELF loader can load at a fixed address
@@ -1623,12 +1653,14 @@ TEST_LD = $(CC) $(CPUFLAGS) -nostartfiles -nostdlib
 # convention regardless of format.
 ifdef ARCH_ARM
 TEST_LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
+else ifdef ARCH_X86_64
+TEST_LDFLAGS = $(X32_LDFLAGS) -Wl,-e_start
 else
 TEST_LDFLAGS = -Wl,-e_start
 endif
 
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
-	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 
 ifdef CONF_WITH_ELF_LOADER
 # pieprobe.tos: the pie_load suite's payload (see tests/pie_load/pie_probe.c).
@@ -1637,12 +1669,20 @@ ifdef CONF_WITH_ELF_LOADER
 # .rel.dyn/.rela.dyn, as opposed to a fixed ET_EXEC's retained REL/RELA
 # sections) -- the two are handled by different code in bdos/elfld.c.
 obj/pie_probe.o: tests/pie_load/pie_probe.c $(AUTOCONF_H) | obj
-	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
+ifdef ARCH_X86_64
+# x32: the same ELF shape as the other x32 programs, but ET_DYN.  Absolute
+# 32-bit references (libcmini is built -fno-pie) become text relocations.
+TEST_PIE_LDFLAGS = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-z,notext \
+                   -Wl,--build-id=none -Wl,-m,elf32_x86_64 \
+                   -Wl,-z,max-page-size=0x1000 -Wl,-z,noseparate-code -Wl,-e_start
+else
 TEST_PIE_LDFLAGS = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start
+endif
 
 pieprobe.tos: $(TEST_STARTUP) obj/pie_probe.o $(LIBCMINI_LIB)
-	$(TEST_LD) $(TEST_PIE_LDFLAGS) $(TEST_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+	$(TEST_LD) $(TEST_PIE_LDFLAGS) $(TEST_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 
 TEST_PIE_FILES = pieprobe.tos
 
@@ -1658,7 +1698,7 @@ TEST_PIE_FILES =
 TEST_LOAD_FAIL_FILES =
 endif
 
-ifdef CONF_WITH_ELF_LOADER
+ifdef TEST_WITH_PTOS_RELOC
 # PTRELOC.TOS / PTRELOC2.TOS: the ptos_reloc_load suite's two payloads
 # (see tests/ptos_reloc_load/reloc_probe.c), repacked into the compact
 # PT_PTOS_RELOC format, so loading them exercises elf_pgmld()'s *other*
@@ -1688,7 +1728,7 @@ ifdef CONF_WITH_ELF_LOADER
 # this way, packed by ptos-elf-pack, and its 90 DIR32 relocations
 # decoded correctly).
 obj/reloc_probe.o: tests/ptos_reloc_load/reloc_probe.c $(AUTOCONF_H) | obj
-	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 ifdef ARCH_ARM
 TEST_PTOS_RELOC_LDFLAGS  = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
@@ -1707,11 +1747,11 @@ TEST_LIBGCC_DIR := $(shell dirname $$($(CC) $(CPUFLAGS) -print-libgcc-file-name)
 endif
 
 relocprobe-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
-	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 
 ifdef ARCH_ARM
 relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
-	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS2) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS2) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 else
 relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld --oformat=elf32-m68k -q -Ttext=0x2000 -e _start \
@@ -1744,14 +1784,28 @@ test-hd.img: runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_F
 .PHONY: test-hd
 test-hd: test-hd.img
 
+# The same files as a plain host directory, for QEMU's virtual FAT driver
+# (-drive file=fat:rw:test-dir,format=raw,...): no disk image to build and
+# size, no mkfs.fat or mtools.  See the ptos-smoketest skill for the
+# invocations.
+TEST_DIR = test-dir
+
+.PHONY: test-dir
+test-dir: $(TEST_HD_FILES) $(shell find $(TEST_DESTDIR) -type f)
+	@echo '  MKDIR  $(TEST_DIR)'
+	@rm -rf $(TEST_DIR)
+	@mkdir -p $(TEST_DIR)
+	@cp $(TEST_HD_FILES) $(TEST_DIR)/
+	@cp -R $(TEST_DESTDIR) $(TEST_DIR)/
+
 ifdef ARCH_ARM
 # A desk accessory is not part of the regression image: load this probe
 # explicitly when validating the ARM accessory entry path.
 obj/arm_acc_probe.o: tests/arm_acc_probe.c $(AUTOCONF_H) | obj
-	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 ACCPROBE.ACC: $(TEST_STARTUP) obj/arm_acc_probe.o $(LIBCMINI_LIB)
-	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/arm_acc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/arm_acc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 
 .PHONY: arm-acc-probe
 arm-acc-probe: ACCPROBE.ACC
@@ -1759,8 +1813,8 @@ endif
 
 else # !CONF_WITH_REGRESSION_TESTS
 
-.PHONY: test-hd
-test-hd:
+.PHONY: test-hd test-dir
+test-hd test-dir:
 	@echo 'Enable CONF_WITH_REGRESSION_TESTS first (make menuconfig)'
 
 endif
@@ -1790,6 +1844,7 @@ TOCLEAN += $(GEN_SRC)
 .PHONY: clean
 clean: $(TOCLEAN_POST)
 	rm -f $(TOCLEAN)
+	rm -rf test-dir
 
 .PHONY: distclean
 distclean: clean
