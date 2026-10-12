@@ -1451,14 +1451,14 @@ endif
 # needs CONF_WITH_ELF_LOADER for the same reason pie_load does. The same
 # object file links as either a fixed-base ET_EXEC with --emit-relocs
 # (REL-encoded on ARM, RELA-encoded on m68k and x32 -- they differ only in
-# relocation *encoding* here, both still name the DIR32 relocation type
+# relocation *encoding* here, all still name the DIR32 relocation type
 # directly, value already resolved into the slot at link time) or a PIE
 # ET_DYN with -pie --no-dynamic-linker (RELATIVE, value only in r_addend
-# on m68k's RELA, already in the slot on ARM's REL) -- so between the two
-# link shapes, on both architectures, this suite exercises every
-# combination elf_relocate_ptos()/ptos-elf-pack support: REL+DIR32,
-# REL+RELATIVE, RELA+DIR32, and RELA+RELATIVE (including the addend-
-# materialisation ptos-elf-pack does at pack time for that last case).
+# on the RELA architectures m68k and x32, already in the slot on ARM's REL)
+# -- so between the two link shapes, on all three architectures, this suite
+# exercises every combination elf_relocate_ptos()/ptos-elf-pack support:
+# REL+DIR32, REL+RELATIVE, RELA+DIR32, and RELA+RELATIVE (including the
+# addend-materialisation ptos-elf-pack does at pack time for that last case).
 TEST_WITH_PTOS_RELOC := $(CONF_WITH_ELF_LOADER)
 ifndef TEST_WITH_PTOS_RELOC
 TEST_SUITES := $(filter-out ptos_reloc_load,$(TEST_SUITES))
