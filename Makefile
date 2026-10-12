@@ -1450,22 +1450,16 @@ endif
 # format via Pexec(), to exercise bdos/elfld.c's elf_relocate_ptos() --
 # needs CONF_WITH_ELF_LOADER for the same reason pie_load does. The same
 # object file links as either a fixed-base ET_EXEC with --emit-relocs
-# (REL-encoded on ARM, RELA-encoded on m68k -- ARM and m68k differ only in
-# relocation *encoding* here, both still name the DIR32 relocation type
+# (REL-encoded on ARM, RELA-encoded on m68k and x32 -- they differ only in
+# relocation *encoding* here, all still name the DIR32 relocation type
 # directly, value already resolved into the slot at link time) or a PIE
 # ET_DYN with -pie --no-dynamic-linker (RELATIVE, value only in r_addend
-# on m68k's RELA, already in the slot on ARM's REL) -- so between the two
-# link shapes, on both architectures, this suite exercises every
-# combination elf_relocate_ptos()/ptos-elf-pack support: REL+DIR32,
-# REL+RELATIVE, RELA+DIR32, and RELA+RELATIVE (including the addend-
-# materialisation ptos-elf-pack does at pack time for that last case).
-# bdos/elfld.c's PT_PTOS_RELOC understands only ARM and m68k relocations, so
-# x86-64 does not run the suite (or ptos-elf-pack, which stops on EM_X86_64).
-ifdef ARCH_X86_64
-TEST_WITH_PTOS_RELOC =
-else
+# on the RELA architectures m68k and x32, already in the slot on ARM's REL)
+# -- so between the two link shapes, on all three architectures, this suite
+# exercises every combination elf_relocate_ptos()/ptos-elf-pack support:
+# REL+DIR32, REL+RELATIVE, RELA+DIR32, and RELA+RELATIVE (including the
+# addend-materialisation ptos-elf-pack does at pack time for that last case).
 TEST_WITH_PTOS_RELOC := $(CONF_WITH_ELF_LOADER)
-endif
 ifndef TEST_WITH_PTOS_RELOC
 TEST_SUITES := $(filter-out ptos_reloc_load,$(TEST_SUITES))
 endif
@@ -1742,6 +1736,11 @@ obj/reloc_probe.o: tests/ptos_reloc_load/reloc_probe.c $(AUTOCONF_H) | obj
 ifdef ARCH_ARM
 TEST_PTOS_RELOC_LDFLAGS  = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
 TEST_PTOS_RELOC_LDFLAGS2 = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start
+else ifdef ARCH_X86_64
+# x32: a fixed base ET_EXEC linked with -q (RELA, R_X86_64_32), and the ET_DYN
+# shape (R_X86_64_RELATIVE)
+TEST_PTOS_RELOC_LDFLAGS  = $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -Wl,-e_start
+TEST_PTOS_RELOC_LDFLAGS2 = $(TEST_PIE_LDFLAGS)
 else
 # --oformat=elf32-m68k is required here for the same reason
 # doc/elfload.txt's own bare m68k recipe and TEST_PTOS_RELOC_LDFLAGS2's
@@ -1766,7 +1765,7 @@ relocprobe-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 endif
 
-ifdef ARCH_ARM
+ifneq ($(ARCH_ARM)$(ARCH_X86_64),)
 relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS2) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 else

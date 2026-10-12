@@ -6,7 +6,7 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  *
- * Reads a statically linked ARM or m68k ELF32 executable of either kind
+ * Reads a statically linked ARM, m68k or x32 (ELFCLASS32 EM_X86_64) ELF32 executable of either kind
  * bdos/elfld.c already accepts -- a fixed base ET_EXEC linked with
  * "ld --emit-relocs", or a position independent ET_DYN linked with
  * "ld -pie --no-dynamic-linker" -- and rewrites it into the compact,
@@ -89,6 +89,7 @@
 #define ET_DYN          3
 #define EM_68K          4
 #define EM_ARM          40
+#define EM_X86_64       62      /* the x32 psABI: ELFCLASS32 with EM_X86_64 */
 
 #define PHDR_SIZE       32
 #define PHDR_P_TYPE     0
@@ -217,6 +218,16 @@ static const uint32_t m68k_no_fixup_types[] = {
     6,  /* R_68K_PC8 */
 };
 
+/* x32: RELA-encoded.  PC-relative (and the matching 16/8 bit) types need no
+ * load-time fixup; the PLT32 call of a static link is one of them. */
+static const uint32_t x86_64_no_fixup_types[] = {
+    0,  /* R_X86_64_NONE */
+    2,  /* R_X86_64_PC32 */
+    4,  /* R_X86_64_PLT32 */
+    13, /* R_X86_64_PC16 */
+    15, /* R_X86_64_PC8 */
+};
+
 static int type_needs_no_fixup(uint32_t machine, uint32_t type)
 {
     const uint32_t *list;
@@ -226,6 +237,11 @@ static int type_needs_no_fixup(uint32_t machine, uint32_t type)
     {
         list = arm_no_fixup_types;
         count = sizeof(arm_no_fixup_types) / sizeof(arm_no_fixup_types[0]);
+    }
+    else if (machine == EM_X86_64)
+    {
+        list = x86_64_no_fixup_types;
+        count = sizeof(x86_64_no_fixup_types) / sizeof(x86_64_no_fixup_types[0]);
     }
     else
     {
@@ -255,7 +271,7 @@ static int type_symbol_field_is_meaningless(uint32_t machine, uint32_t type)
 {
     if (machine == EM_ARM)
         return type == 0 /* R_ARM_NONE */ || type == 40 /* R_ARM_V4BX */;
-    return type == 0; /* R_68K_NONE */
+    return type == 0; /* R_68K_NONE, R_X86_64_NONE */
 }
 
 /* one input relocation this tool cares about, resolved to the load-time
@@ -1108,9 +1124,16 @@ int main(int argc, char **argv)
         jump_slot_type = 21; /* R_68K_JMP_SLOT */
         relative_type = 22;  /* R_68K_RELATIVE */
     }
+    else if (e_machine == EM_X86_64)
+    {
+        dir32_type = 10;     /* R_X86_64_32 */
+        glob_dat_type = 6;   /* R_X86_64_GLOB_DAT */
+        jump_slot_type = 7;  /* R_X86_64_JUMP_SLOT */
+        relative_type = 8;   /* R_X86_64_RELATIVE */
+    }
     else
-        die("'%s' targets an unsupported machine (%u); only ARM and m68k "
-            "are known to bdos/elfld.c", in_path, (unsigned)e_machine);
+        die("'%s' targets an unsupported machine (%u); only ARM, m68k and "
+            "x32 are known to bdos/elfld.c", in_path, (unsigned)e_machine);
 
     if (e_phentsize != PHDR_SIZE)
         die("'%s' has an unexpected program header size", in_path);

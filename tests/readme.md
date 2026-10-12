@@ -37,9 +37,7 @@ FAT driver present the directory as the disk (see [Running](#running)).
 
 On x86-64 the programs are built as x32 programs (libcmini's
 `ptos_x86_64_defconfig`, with the compiler and flags of the other x32
-programs), and the `ptos_reloc_load` suite is left out because the packed
-relocation format knows only ARM and m68k (#469). There is no disk image
-target for x86-64: use `make test-dir`.
+programs). There is no disk image target for x86-64: use `make test-dir`.
 
 ## Running
 
