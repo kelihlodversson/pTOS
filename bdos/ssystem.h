@@ -61,6 +61,18 @@ LONG xsysconf(WORD which);
 #define S_SETBVAL       0x000f
 #define S_DELCOOKIE     0x001a
 #define S_KNAME         900
+#define S_CNAME         910
+#define S_CVERSION      911
+
+/* The strings of S_KNAME, S_CNAME and S_CVERSION.  The bytes the call writes (the
+ * string and its NUL) are what the pointer check of bdos/uaccess.c looks at. */
+#define SSYSTEM_KNAME       "pTOS"
+#ifdef __clang__
+#define SSYSTEM_CNAME       "clang"
+#else
+#define SSYSTEM_CNAME       "gcc"
+#endif
+#define SSYSTEM_CVERSION    __VERSION__
 
 /*
  * S_CONSOLE_DIM - pTOS-only extension, NOT part of MiNT's Ssystem()
@@ -97,6 +109,24 @@ LONG xsysconf(WORD which);
  * inferring it after the fact from a real call's return value.
  */
 #define S_CONSOLE_DIM   ((WORD)0xfffe)
+
+/*
+ * S_MEMINFO - pTOS-only as well, a negative WORD next to S_CONSOLE_DIM: what the
+ * memory is, in one call, for programs that would otherwise ask Sysconf() four
+ * times.  arg1 is a struct mem_info*, arg2 its size, the same protocol as
+ * S_CONSOLE_DIM (min(arg2, sizeof) bytes are copied, the number of bytes is
+ * returned, arg2 == -1 returns sizeof and ignores arg1).  A field the machine
+ * cannot say is 0xffffffff.
+ */
+#define S_MEMINFO       ((WORD)0xfffd)
+
+struct mem_info {
+    ULONG page_size;    /* bytes per page */
+    ULONG phys_pages;   /* pages of physical memory */
+    ULONG free_pages;   /* of which free */
+    ULONG processes;    /* process records, the caller's and its launchers' included;
+                         * 0xffffffff where there are none (no CONF_WITH_KPROC) */
+};
 
 struct console_dim {
     UWORD width;        /* columns */

@@ -333,6 +333,15 @@ static long mvalidate_ok(const long *pw)
     return flags ? buf_ok(flags, 4, TRUE) : E_OK;
 }
 
+/* the buffer of a mode that stores a string (ssystem_string()): it writes the
+ * string and its NUL, `need` bytes, and only when the buffer is that big; a
+ * smaller one is refused without a look at the pointer, and nothing beyond the
+ * `need` bytes is the caller's business */
+static long string_buf_ok(long buf, long size, unsigned long need)
+{
+    return size >= (long)need ? buf_ok(buf, (long)need, TRUE) : E_OK;
+}
+
 /* Ssystem(mode, arg1, arg2): only the modes that store through a pointer */
 static long ssystem_ok(const long *pw)
 {
@@ -347,11 +356,15 @@ static long ssystem_ok(const long *pw)
     if (mode >= 0x000d && mode <= 0x000f)
         return EACCDN;
 #endif
-    if (mode == 900)                                    /* S_KNAME buffer */
-        /* ssystem_kname() writes "pTOS\0", five bytes, and only when the
-         * buffer is that big; a smaller one is refused without a look at the
-         * pointer, and nothing beyond the five bytes is the caller's business */
-        return size >= 5 ? buf_ok(arg1, 5, TRUE) : E_OK;
+    if (mode == S_KNAME)                                /* the buffers of the strings */
+        return string_buf_ok(arg1, size, sizeof(SSYSTEM_KNAME));
+    if (mode == S_CNAME)
+        return string_buf_ok(arg1, size, sizeof(SSYSTEM_CNAME));
+    if (mode == S_CVERSION)
+        return string_buf_ok(arg1, size, sizeof(SSYSTEM_CVERSION));
+    if (mode == S_MEMINFO && size > 0)                  /* S_MEMINFO struct */
+        return buf_ok(arg1, size < (long)sizeof(struct mem_info) ? size
+                            : (long)sizeof(struct mem_info), TRUE);
     if (mode == 0x0008 && arg2)                         /* S_GETCOOKIE value */
         return buf_ok(arg2, 4, TRUE);
     if (mode == (WORD)0xfffe && size > 0)               /* S_CONSOLE_DIM struct */

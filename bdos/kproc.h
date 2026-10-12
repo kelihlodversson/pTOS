@@ -28,6 +28,7 @@ DTAINFO *kproc_get_dta(PD *pd);
 void kproc_set_parent(PD *pd, PD *parent);
 PD *kproc_get_parent(PD *pd);
 void kproc_mark_started(PD *pd);        /* proc_go() launched it */
+ULONG kproc_count(void);                /* live records, for leak tests and S_MEMINFO */
 /* kproc_destroy() that also says whether the record belonged to a basepage
  * that was never launched, whose inherited file and directory references
  * are therefore still held. */
@@ -166,7 +167,6 @@ LONG kproc_uheap_shrink(PD *pd, UQUAD va, long len);
 UQUAD kproc_user_stack(PD *pd);         /* initial RSP of the private stack of a prepared process; 0 if not prepared */
 UQUAD kproc_user_root(PD *pd);          /* 0 if not prepared */
 ASPACE *kproc_user_aspace(PD *pd);   /* NULL if none (tests) */
-ULONG kproc_count(void);                /* live records, for leak tests */
 BOOL kproc_validate_user_dta(UQUAD address);
 /* valid user memory of the current process: mapped, user-accessible and (for
  * _write) writable in its own address space */

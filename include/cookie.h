@@ -24,6 +24,25 @@ struct cookie {
  */
 
 #define COOKIE_CPU      0x5f435055L
+
+/*
+ * _CPU and _FPU on a CPU that is no 68k.  The values of the Atari cookies are
+ * small numbers (0, 10, 20, 30, 40, 60 for the 68000 to 68060; bit masks for
+ * the FPU), and a program that takes the number for one of those would take a
+ * foreign CPU for a 68k.  So the cookie of a foreign CPU has bit 31 set, which
+ * no 68k value has.  _CPU: the low 16 bits are the ELF machine number of the
+ * CPU (CPU_COOKIE_ARM, CPU_COOKIE_X86_64); _FPU: CPU_COOKIE_FOREIGN | 1, hardware
+ * floating point (the ABI of both ports needs it: VFP, SSE2), bit 0 meaning
+ * "has one" and nothing about a 68k FPU.
+ */
+#define CPU_COOKIE_FOREIGN  0x80000000UL
+#define CPU_COOKIE_ARM      (CPU_COOKIE_FOREIGN | 40)   /* EM_ARM */
+#define CPU_COOKIE_X86_64   (CPU_COOKIE_FOREIGN | 62)   /* EM_X86_64 (x32 too) */
+#if defined(__arm__)
+#define CPU_COOKIE_NATIVE   CPU_COOKIE_ARM
+#elif defined(__x86_64__)
+#define CPU_COOKIE_NATIVE   CPU_COOKIE_X86_64
+#endif
 #define COOKIE_VDO      0x5f56444fL
 #define COOKIE_FPU      0x5f465055L
 #define COOKIE_FDC      0x5f464443L
