@@ -162,6 +162,20 @@ config CONF_WITH_SSYSTEM
 	  the assembly trap entry.  Not user-selectable: it follows the
 	  architecture.
 
+config CONF_WITH_GEMDOS_SHUTDOWN
+	bool "Shutdown() GEMDOS call"
+	default n if TARGET_192 || TARGET_256 || TARGET_CART
+	default y
+	help
+	  Add GEMDOS Shutdown() (0x151, as in MiNT and MagiC): close all files,
+	  write out the disk buffers, then power off, restart or halt.  Where
+	  the machine has no software power-off or reset (the Atari ST and
+	  its relatives have no power-off at all) it ends in the "safe to turn
+	  off your computer" message instead.  Off by default for the ROM
+	  images that have no room left (192 KB, 256 KB, the cartridge).
+	  The power off is what
+	  CONF_WITH_SHUTDOWN (bios/Kconfig) provides where that is set.
+
 config CONF_WITH_USER_COPY
 	bool "Validate the pointers passed to GEMDOS calls" if !ARCH_X86_64 && !ARCH_M68K && CONF_WITH_KPROC
 	default y if ARCH_X86_64

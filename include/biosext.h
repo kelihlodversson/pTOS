@@ -67,9 +67,23 @@ void panic(const char *fmt, ...) PRINTF_STYLE NORETURN;
 /* halt the machine */
 void halt(void) NORETURN;
 
+/* Shutdown() (bdos/xshutdown.c) asks the machine to restart or switch itself
+ * off.  Both return only where the machine cannot do it, and the caller then
+ * halts.  bios/shutdown.c has the default (nothing for a power-off, the CPU's
+ * warm_reset()/cold_reset() for a restart), a machine can replace it in
+ * bios/machine/<name>/shutdown.c. */
+void machine_reset(BOOL cold);
+void machine_poweroff(void);
+
+#if CONF_WITH_GEMDOS_SHUTDOWN
+/* the floppy motors off, deselect the drives */
+void flop_shutdown(void);
+#endif
+
 
 #if CONF_WITH_SHUTDOWN
 BOOL can_shutdown(void);
+void shutdown(void);
 #endif
 
 #if CONF_WITH_EJECT

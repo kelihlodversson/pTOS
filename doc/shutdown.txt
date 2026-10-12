@@ -1,0 +1,61 @@
+Shutdown() - GEMDOS 0x151
+=========================
+
+LONG Shutdown(LONG mode), as MiNT 1.04 and MagiC have it. Enabled by
+CONF_WITH_GEMDOS_SHUTDOWN (bdos/Kconfig; on by default, off for the ROM images
+with no room left: 192 KB, 256 KB and the cartridge).
+
+    mode  name         meaning
+    0     SHUT_POWER   switch the power off; where the machine cannot, halt
+    1     SHUT_BOOT    warm boot
+    2     SHUT_COLD    cold boot (differs from warm only where the machine
+                       keeps a warm boot marker, like the Atari memvalid)
+    3     SHUT_HALT    stop
+
+Another mode is refused with ERANGE and the system goes on. A second call
+while the first is running gets EACCDN. Otherwise the call does not return.
+
+The sequence (bdos/xshutdown.c) is the same on every machine: close every open
+file, write out the dirty disk buffers, let the floppy drives go, then ask the
+machine for what was wanted. pTOS is single-tasking, nothing runs afterwards,
+so there is no process to unwind. A machine that cannot do what was asked ends
+in the same place as SHUT_HALT: the screen cleared, "It is now safe to turn off
+your computer.", and halt().
+
+The machine's part is two functions with general names (include/biosext.h):
+
+    void machine_poweroff(void);    returns only where it cannot
+    void machine_reset(BOOL cold);  returns only where it cannot
+
+bios/shutdown.c is the default: a reset is the CPU's warm_reset()/cold_reset()
+(bios/arch/<arch>/panicasm), the power off is shutdown() of bios.c
+(CONF_WITH_SHUTDOWN: the emulators' native feature, the FireBee's PIC, the
+Amiga). A machine replaces the file with bios/machine/<name>/shutdown.c:
+
+    pc-x86_64   power off: the ACPI sleep control register of QEMU
+                (0x604, 0xb004), written only when the CPU is QEMU's (the
+                hypervisor bit, signature TCG or KVM). Real PCs keep it where
+                the FADT says, which is not read yet, so they, and every other
+                hypervisor, halt. Reset: the keyboard controller's
+                reset pulse, else a triple fault.
+    virt-arm    PSCI SYSTEM_OFF/SYSTEM_RESET through HVC.
+    virt-m68k   the virt-ctrl device (halt, reset).
+    raspi       the power management watchdog; power off is the same reset
+                with the firmware's "halt" partition set.
+
+Tested under QEMU: tests/shutdown_args (a refused mode leaves the system
+running), and tests/shutdown_power/shutdown_prog.c, built as POWEROFF.TOS,
+REBOOT.TOS, COLDBOOT.TOS and HALT.TOS. tools/run-regression-tests.sh runs the
+suite and POWEROFF.TOS in one machine, then REBOOT.TOS, COLDBOOT.TOS and
+HALT.TOS in a machine each. QEMU runs without -no-reboot: after POWEROFF.TOS it
+must leave by itself with a normal exit status (a reset in its place would
+restart the machine and be seen); after REBOOT.TOS and COLDBOOT.TOS it must
+keep running without the halt message and, where the image can start again (not
+virt-m68k, #475), show a second EmuCON banner; after HALT.TOS it must keep
+running, with the message. Each program leaves
+a file open with data written, and the file has to be on the disk afterwards.
+That is x86-64, virt-arm and virt-m68k in CI; raspi2b and Hatari by hand (Hatari
+ends in the halt message, a plain Atari has no power off).
+
+Not done: ACPI power off from the FADT on real PCs, EFI ResetSystem, the
+CT60/Raven power off, ColdFire boards other than the FireBee.

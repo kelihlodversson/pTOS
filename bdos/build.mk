@@ -12,3 +12,4 @@ obj-$(CONF_WITH_USER_COPY) += uaccess.o
 # see the comment in osif() (bdos/bdosmain.c).
 obj-$(CONF_WITH_SSYSTEM) += ssystem.o
 obj-$(CONF_WITH_KCALL) += kcall.o
+obj-$(CONF_WITH_GEMDOS_SHUTDOWN) += xshutdown.o

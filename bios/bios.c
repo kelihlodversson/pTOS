@@ -985,7 +985,7 @@ static void autoexec(void)
 #if CONF_WITH_SHUTDOWN
 
 /* Try to shutdown the machine. This may fail. */
-static void shutdown(void)
+void shutdown(void)
 {
 #if DETECT_NATIVE_FEATURES
     nf_shutdown();

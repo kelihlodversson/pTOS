@@ -48,8 +48,10 @@ UWORD proc_stk[32];
 
 void halt(void)
 {
+    /* nothing is to run any more: interrupts off, then stop the CPU (it only
+     * leaves hlt for an NMI or a reset) */
     for (;;)
-        ;
+        __asm__ volatile ("cli; hlt" : : : "memory");
 }
 
 /*

@@ -34,6 +34,7 @@
 #include "string.h"
 #include "kprint.h"
 #include "ssystem.h"
+#include "shutdown.h"
 #include "uaccess.h"
 #include "bdosstub.h"
 #include "tosvars.h"
@@ -573,6 +574,20 @@ restrt:
      */
     if (fn == GEMDOS_SSYSTEM)
         return xssystem((WORD)pw[1], pw[2], pw[3]);
+#endif
+
+#if CONF_WITH_GEMDOS_SHUTDOWN
+    /*
+     * Shutdown() (0x151) is far outside the funcs[] table too.  Its one
+     * argument is a LONG: two words on the m68k stack, the narrowed low 32
+     * bits of a slot elsewhere.
+     */
+    if (fn == GEMDOS_SHUTDOWN)
+#if CONF_WITH_NATIVE_ABI
+        return xshutdown((LONG)pw[1]);
+#else
+        return xshutdown(*(LONG_ALIAS *)&pw[1]);
+#endif
 #endif
 
 #if CONF_WITH_USER_ASPACE
