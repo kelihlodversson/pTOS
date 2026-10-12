@@ -27,7 +27,12 @@ void test_sysconf(void)
     last = Sysconf(-1);
     if (last == EINVFN)
     {
-        ptest_pass();               /* no Sysconf() on this machine */
+#if defined(__arm__) || defined(__x86_64__)
+        /* these have it (CONF_WITH_SSYSTEM): a dispatch that is gone is a failure */
+        ptest_fail("Sysconf() is missing");
+#else
+        ptest_pass();               /* no Sysconf() on the Atari ROMs */
+#endif
         return;
     }
 
