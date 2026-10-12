@@ -12,6 +12,28 @@
 #include "portab.h"
 
 #define GEMDOS_SSYSTEM  0x154
+#define GEMDOS_SYSCONF  0x122
+
+/*
+ * Sysconf(which), as FreeMiNT numbers it (sys/dos.c): the limits and sizes the
+ * kernel has.  A number it does not know is EINVFN (FreeMiNT: ENOSYS, the same
+ * -32).  See doc/mint-calls.txt for what each answers here.
+ */
+#define SC_LAST             (-1)    /* the highest number */
+#define SC_MEMR_MAX         0       /* memory regions per process */
+#define SC_ARG_MAX          1       /* length of the command tail of Pexec() */
+#define SC_OPEN_MAX         2       /* open files */
+#define SC_NGROUPS_MAX      3       /* supplementary group ids */
+#define SC_CHILD_MAX        4       /* processes per user */
+#define SC_CLK_TCK          5       /* ticks per second */
+#define SC_PAGE_SIZE        6       /* bytes per page */
+#define SC_AVPHYS_PAGES     7       /* free physical pages */
+#define SC_GETPW_R_SIZE_MAX 8       /* passwd buffer size */
+#define SC_GETGR_R_SIZE_MAX 9       /* group buffer size */
+#define SC_PHYS_PAGES       10      /* physical pages */
+#define SC_MAX              SC_PHYS_PAGES
+
+LONG xsysconf(WORD which);
 
 /*
  * Ssystem() mode values, as documented for MiNT. Only the subset below

@@ -576,6 +576,8 @@ restrt:
      */
     if (fn == GEMDOS_SSYSTEM)
         return xssystem((WORD)pw[1], pw[2], pw[3]);
+    if (fn == GEMDOS_SYSCONF)               /* the same, and for the same reason */
+        return xsysconf((WORD)pw[1]);
 #endif
 
 #if CONF_WITH_GEMDOS_SHUTDOWN

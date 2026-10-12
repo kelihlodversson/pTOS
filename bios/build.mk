@@ -25,6 +25,9 @@ obj-y += memory.o processor.o intmask.o vectors.o bios.o xbios.o acsi.o biosmem.
 # Shutdown(): the platform's way to restart or switch off (bdos/xshutdown.c).
 obj-$(CONF_WITH_GEMDOS_SHUTDOWN) += shutdown.o
 
+# Sysconf() (bdos/ssystem.c) asks how much physical memory there is.
+obj-$(CONF_WITH_SSYSTEM) += physmem.o
+
 # ui_mupb's address must be greater than the exec_os contents (see the
 # comment in endrom.c), so this must stay last in bios/.
 obj-y += endrom.o

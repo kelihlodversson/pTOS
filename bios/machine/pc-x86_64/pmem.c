@@ -455,6 +455,18 @@ UQUAD pmem_free_bytes(void)
     return total_free;
 }
 
+UQUAD pmem_managed_bytes(void)
+{
+    UQUAD i, count = 0;
+
+    if (!bm_managed)
+        return 0;
+    for (i = 0; i < npages; i++)
+        if (BM_TEST(bm_managed, i))
+            count++;
+    return count * X86_64_PAGE_SIZE;
+}
+
 UQUAD x86_64_pmem_highest_addr(void)
 {
     return highest_addr;

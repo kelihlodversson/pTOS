@@ -34,6 +34,7 @@
 #include "lineavars.h"
 #include "ahdi.h"
 #include "biosdefs.h"
+#include "fs.h"            /* OPNFILES */
 #include "string.h"
 
 /* not in tosvars.h -- only bios/arch/arm/vectors.c otherwise uses it */
@@ -497,6 +498,50 @@ static BOOL ssystem_has_mode(WORD mode)
         return TRUE;
     default:
         return FALSE;
+    }
+}
+
+/*
+ * xsysconf - GEMDOS Sysconf() (0x122), after FreeMiNT's sys_s_ysconf()
+ * (sys/dos.c): what the system limits are.  Unlimited is 0x7fffffff.  The
+ * kernel's own numbers, not guesses at what a program may want.
+ */
+#define SYSCONF_UNLIMITED   0x7fffffffL
+#define SYSCONF_PAGE_SIZE   4096L
+
+LONG xsysconf(WORD which)
+{
+    LONG pages;
+
+    switch (which)
+    {
+    case SC_LAST:
+        return SC_MAX;
+    case SC_MEMR_MAX:
+        return SYSCONF_UNLIMITED;       /* the blocks of a process are a table that grows */
+    case SC_ARG_MAX:
+        return 127;                     /* the command tail of the basepage, its length byte excluded */
+    case SC_OPEN_MAX:
+        return OPNFILES;                /* the file table, shared by all processes */
+    case SC_NGROUPS_MAX:
+        return 0;                       /* there are no users, so no groups */
+    case SC_CHILD_MAX:
+        return SYSCONF_UNLIMITED;       /* only memory limits the processes */
+    case SC_CLK_TCK:
+        return CLOCKS_PER_SEC;          /* the 200 Hz system tick (hz_200) */
+    case SC_PAGE_SIZE:
+        return SYSCONF_PAGE_SIZE;
+    case SC_AVPHYS_PAGES:
+        pages = phys_pages_free();
+        return pages < 0 ? EINVFN : pages;
+    case SC_GETPW_R_SIZE_MAX:
+    case SC_GETGR_R_SIZE_MAX:
+        return 1024;                    /* FreeMiNT's; there are no passwd or group files */
+    case SC_PHYS_PAGES:
+        pages = phys_pages_total();
+        return pages < 0 ? EINVFN : pages;
+    default:
+        return EINVFN;
     }
 }
 
