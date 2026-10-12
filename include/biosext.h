@@ -75,8 +75,10 @@ void halt(void) NORETURN;
 void machine_reset(BOOL cold);
 void machine_poweroff(void);
 
+#if CONF_WITH_GEMDOS_SHUTDOWN
 /* the floppy motors off, deselect the drives */
 void flop_shutdown(void);
+#endif
 
 
 #if CONF_WITH_SHUTDOWN

@@ -1643,6 +1643,7 @@ static void fdc_start_dma_write(WORD count)
 
 #endif /* CONF_WITH_FDC */
 
+#if CONF_WITH_GEMDOS_SHUTDOWN
 /*
  * flop_shutdown - Shutdown() is about to stop the machine: let the drives go
  */
@@ -1652,3 +1653,4 @@ void flop_shutdown(void)
     deselect();
 #endif
 }
+#endif /* CONF_WITH_GEMDOS_SHUTDOWN */

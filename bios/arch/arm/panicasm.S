@@ -70,9 +70,15 @@ C_SYM(panic):
  * simply halt the machine.
  */
 C_SYM(halt):
+        cpsid   i                       // nothing is to run any more
 haltloop:
-        // endless loop
-        b     haltloop
+#if __ARM_ARCH >= 7
+        wfi
+#else
+        mov     r0, #0
+        mcr     p15, 0, r0, c7, c0, 4   // wait for interrupt (ARMv6)
+#endif
+        b       haltloop
 
 /* void kill_program(void)
  * try to terminate via Pterm(); if Pterm() returns here (!),

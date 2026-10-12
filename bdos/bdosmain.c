@@ -586,7 +586,7 @@ restrt:
 #if CONF_WITH_NATIVE_ABI
         return xshutdown((LONG)pw[1]);
 #else
-        return xshutdown(*(LONG *)&pw[1]);
+        return xshutdown(*(LONG_ALIAS *)&pw[1]);
 #endif
 #endif
 
