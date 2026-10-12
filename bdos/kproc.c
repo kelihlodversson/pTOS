@@ -1131,7 +1131,7 @@ LONG kproc_uheap_mode(WORD mode)
  * Maccess(addr, size, mode), MiNT's: 0 if the caller may use the range (mode 0:
  * read and write, 1: read only), else EINVAL, also for any other mode.
  */
-LONG kproc_maccess(PD *pd, ULONG address, LONG size, WORD mode)
+LONG kproc_maccess(PD *pd, UQUAD address, LONG size, WORD mode)
 {
     if ((mode != 0 && mode != 1) || size <= 0)
         return EINVAL;
@@ -1145,7 +1145,7 @@ LONG kproc_maccess(PD *pd, ULONG address, LONG size, WORD mode)
  * caller's own memory (pid 0) can be asked about: another process's pages are
  * not a thing this one can reach (and there are no process ids to name one).
  */
-LONG kproc_mvalidate(PD *pd, WORD pid, ULONG address, LONG size, ULONG flags)
+LONG kproc_mvalidate(PD *pd, WORD pid, UQUAD address, LONG size, UQUAD flags)
 {
     ULONG zero = 0;
 

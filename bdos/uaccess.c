@@ -328,7 +328,7 @@ static long fdatime_ok(const long *pw)
  * address and size are only looked at (Maccess() has no pointer to check) */
 static long mvalidate_ok(const long *pw)
 {
-    ULONG flags = (ULONG)pw[4];
+    long flags = pw[4];                 /* the whole slot: buf_ok() rejects what is no x32 address */
 
     return flags ? buf_ok(flags, 4, TRUE) : E_OK;
 }

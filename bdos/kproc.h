@@ -157,8 +157,8 @@ LONG kproc_psetlimit(PD *pd, WORD mode, LONG value);
  * that outlives the process. */
 LONG kproc_uheap_mode(WORD mode);
 /* Maccess(), Mvalidate(): MiNT's checks of the caller's own memory */
-LONG kproc_maccess(PD *pd, ULONG address, LONG size, WORD mode);
-LONG kproc_mvalidate(PD *pd, WORD pid, ULONG address, LONG size, ULONG flags);
+LONG kproc_maccess(PD *pd, UQUAD address, LONG size, WORD mode);
+LONG kproc_mvalidate(PD *pd, WORD pid, UQUAD address, LONG size, UQUAD flags);
 UQUAD kproc_uheap_alloc(PD *pd, ULONG bytes);
 ULONG kproc_uheap_largest(PD *pd);
 LONG kproc_uheap_free(PD *pd, UQUAD va);

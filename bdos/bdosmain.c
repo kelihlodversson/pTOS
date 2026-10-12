@@ -616,10 +616,12 @@ restrt:
         case GEMDOS_PSETLIMIT:
             return kproc_psetlimit(run, (WORD)pw[1], (LONG)pw[2]);
         case GEMDOS_MACCESS:
-            return kproc_maccess(run, (ULONG)pw[1], (LONG)pw[2], (WORD)pw[3]);
+            /* (the addresses stay the whole 64-bit slots: bits above 32 make
+             * it no x32 address, which the checks reject) */
+            return kproc_maccess(run, (UQUAD)pw[1], (LONG)pw[2], (WORD)pw[3]);
         case GEMDOS_MVALIDATE:
-            return kproc_mvalidate(run, (WORD)pw[1], (ULONG)pw[2], (LONG)pw[3],
-                                   (ULONG)pw[4]);
+            return kproc_mvalidate(run, (WORD)pw[1], (UQUAD)pw[2], (LONG)pw[3],
+                                   (UQUAD)pw[4]);
         case GEMDOS_MXALLOC:
             /* the protection bits of the mode word: only what this memory
              * model can give is allocated (kproc_uheap_mode()) */
