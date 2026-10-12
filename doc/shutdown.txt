@@ -2,8 +2,8 @@ Shutdown() - GEMDOS 0x151
 =========================
 
 LONG Shutdown(LONG mode), as MiNT 1.04 and MagiC have it. Enabled by
-CONF_WITH_GEMDOS_SHUTDOWN (bdos/Kconfig; on by default, off for the 192 KB ROM
-and the cartridge).
+CONF_WITH_GEMDOS_SHUTDOWN (bdos/Kconfig; on by default, off for the ROM images
+with no room left: 192 KB, 256 KB and the cartridge).
 
     mode  name         meaning
     0     SHUT_POWER   switch the power off; where the machine cannot, halt
@@ -32,9 +32,11 @@ bios/shutdown.c is the default: a reset is the CPU's warm_reset()/cold_reset()
 (CONF_WITH_SHUTDOWN: the emulators' native feature, the FireBee's PIC, the
 Amiga). A machine replaces the file with bios/machine/<name>/shutdown.c:
 
-    pc-x86_64   power off: the ACPI sleep control register of QEMU/Bochs
-                (0x604, 0xb004). Real PCs keep it where the FADT says, which
-                is not read yet, so they halt. Reset: the keyboard controller's
+    pc-x86_64   power off: the ACPI sleep control register of QEMU
+                (0x604, 0xb004), written only when the CPU is QEMU's (the
+                hypervisor bit, signature TCG or KVM). Real PCs keep it where
+                the FADT says, which is not read yet, so they, and every other
+                hypervisor, halt. Reset: the keyboard controller's
                 reset pulse, else a triple fault.
     virt-arm    PSCI SYSTEM_OFF/SYSTEM_RESET through HVC.
     virt-m68k   the virt-ctrl device (halt, reset).

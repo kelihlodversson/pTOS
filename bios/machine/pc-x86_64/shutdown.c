@@ -1,11 +1,13 @@
 /*
  * shutdown.c - restart and power off of a PC, for Shutdown()
  *
- * Power off: the ACPI sleep control register of the emulators (QEMU's PIIX4
- * and ICH9 at 0x604, Bochs and older QEMU at 0xb004), written with
- * SLP_TYP S5 | SLP_EN.  Real hardware has that register somewhere else, which
- * the FADT of the firmware's ACPI tables says; reading it is not done yet, so
- * such a machine just stops with the message.
+ * Power off: the ACPI sleep control register of QEMU (PIIX4 and ICH9 at
+ * 0x604, older machine types at 0xb004), written with SLP_TYP S5 | SLP_EN --
+ * only when the CPU says it is QEMU's (the hypervisor bit and the TCG or KVM
+ * signature), because on any other machine those ports can be something else
+ * and a write is not harmless.  Real hardware has the register where the FADT
+ * of the firmware's ACPI tables says; reading it is not done yet, so such a
+ * machine, and every other hypervisor, just stops with the message.
  *
  * Restart: a reset pulse through the keyboard controller, and where that does
  * nothing a triple fault (an interrupt with an empty IDT).
@@ -30,8 +32,46 @@
 #define PM1A_CNT_QEMU       0x604
 #define PM1A_CNT_BOCHS      0xb004
 
+static void cpuid(ULONG leaf, ULONG *r)
+{
+    __asm__ volatile ("cpuid"
+              : "=a"(r[0]), "=b"(r[1]), "=c"(r[2]), "=d"(r[3])
+              : "a"(leaf), "c"(0));
+}
+
+/* QEMU, by what its CPU models answer: a hypervisor, signed "TCGTCGTCGTCG"
+ * (its own emulation) or "KVMKVMKVM" (KVM under it) */
+static BOOL running_on_qemu(void)
+{
+    ULONG r[4];
+    static const char tcg[12] = "TCGTCGTCGTCG";
+    static const char kvm[12] = "KVMKVMKVM\0\0\0";
+    char sig[12];
+    int i;
+
+    cpuid(1, r);
+    if (!(r[2] & (1UL << 31)))
+        return FALSE;               /* no hypervisor */
+    cpuid(0x40000000UL, r);
+    for (i = 0; i < 4; i++)
+    {
+        sig[i] = (char)(r[1] >> (8 * i));
+        sig[4 + i] = (char)(r[2] >> (8 * i));
+        sig[8 + i] = (char)(r[3] >> (8 * i));
+    }
+    for (i = 0; i < 12 && sig[i] == tcg[i]; i++)
+        ;
+    if (i == 12)
+        return TRUE;
+    for (i = 0; i < 12 && sig[i] == kvm[i]; i++)
+        ;
+    return i == 12;
+}
+
 void machine_poweroff(void)
 {
+    if (!running_on_qemu())
+        return;
     x86_64_cli();
     port_outw(PM1A_CNT_QEMU, ACPI_SLP_S5_EN);
     port_outw(PM1A_CNT_BOCHS, ACPI_SLP_S5_EN);

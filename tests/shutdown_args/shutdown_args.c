@@ -14,6 +14,8 @@
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
 
+#define ERANGE  (-64L)
+
 void test_shutdown_args(void);
 
 void test_shutdown_args(void)
@@ -23,9 +25,9 @@ void test_shutdown_args(void)
     ptest_begin("shutdown_args");
 
     rc = Shutdown(4L);
-    ptest_assert_msg(rc < 0, "Shutdown(4) did not refuse an unknown mode");
+    ptest_assert_msg(rc == ERANGE, "Shutdown(4) did not refuse an unknown mode with ERANGE");
     rc = Shutdown(-1L);
-    ptest_assert_msg(rc < 0, "Shutdown(-1) did not refuse an unknown mode");
+    ptest_assert_msg(rc == ERANGE, "Shutdown(-1) did not refuse an unknown mode with ERANGE");
 
     /* still here, and files still work */
     rc = Fsfirst("C:\\*.*", 0);

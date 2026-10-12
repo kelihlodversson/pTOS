@@ -1464,6 +1464,11 @@ ifndef TEST_WITH_PTOS_RELOC
 TEST_SUITES := $(filter-out ptos_reloc_load,$(TEST_SUITES))
 endif
 
+# Shutdown() is an option (the small ROMs have no room for it)
+ifndef CONF_WITH_GEMDOS_SHUTDOWN
+TEST_SUITES := $(filter-out shutdown_args,$(TEST_SUITES))
+endif
+
 # x32_hello and x32_probe are standalone _start programs built for the x86-64
 # boot test, not ptest suites, so they must never be linked into runtests.tos.
 TEST_SUITES := $(filter-out x32_hello x32_probe,$(TEST_SUITES))
