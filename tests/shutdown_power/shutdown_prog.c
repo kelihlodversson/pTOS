@@ -4,9 +4,11 @@
  * Not a suite of runtests.tos (the machine does not come back): built four
  * times, as POWEROFF.TOS, REBOOT.TOS, COLDBOOT.TOS and HALT.TOS (SHUT_MODE
  * and SHUT_WHAT from the Makefile).  tools/run-regression-tests.sh starts
- * them, each in a machine of its own, and expects QEMU to leave by itself
- * after the power off and the two reboots (which the machines' reset ends
- * QEMU on with -no-reboot), and to stay running after the halt.
+ * them, each in a machine of its own.  QEMU runs without -no-reboot: it must
+ * leave by itself after the power off (a reset would restart the machine
+ * instead), and keep running after the two reboots (without the halt message,
+ * and with a second EmuCON banner where the image can start again) and after
+ * the halt.
  *
  * Before it shuts down the program leaves a file open with data written and
  * not closed: a Shutdown() that does not close the files and write out the

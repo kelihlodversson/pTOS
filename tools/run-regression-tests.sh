@@ -272,6 +272,12 @@ reboot_run() {
         record "shutdown ($1)" FAIL "the machine switched off instead of restarting"
         return
     fi
+    # ... and one whose reset did nothing falls back to the halt message and
+    # stays up, which looks the same to QEMU
+    if grep -aq 'safe to turn off your computer' "$log"; then
+        record "shutdown ($1)" FAIL "the reset did nothing, the machine halted"
+        return
+    fi
     # ... and a restart brings a second EmuCON banner.  Not on virt-m68k: its
     # image does not start again after any reset of the QEMU machine (#475;
     # also not after the monitor's system_reset), so there a machine that is
