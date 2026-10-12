@@ -54,7 +54,9 @@ Information
                             S_LOADKBD, S_SETEXC       keyboard table, Setexc policy        EINVFN
                             S_GETBOOTLOG (29)         path of the boot log                 EINVFN: there is none
                             S_CLOCKUTC (100)          RTC in UTC                           PLAN, needs the RTC drivers' view
-                            S_KNAME (900)             kernel name into a buffer            DONE: 'pTOS'
+                            S_KNAME (900)             kernel name into a buffer            DONE, differs: 'pTOS' only (MiNT: name
+                                                                                           and version, cut to the buffer); a
+                                                                                           short buffer is ERANGE, nothing written
                             S_CNAME, S_CVERSION..     compiler name, version, flags        PLAN (cheap: strings from the build)
                             S_DEBUG*                  MiNT's debug settings                EINVFN
                             S_CONSOLE_DIM (0xfffe)    pTOS only                            DONE earlier

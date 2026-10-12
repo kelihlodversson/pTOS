@@ -388,9 +388,12 @@ static LONG ssystem_osfeatures(void)
 
 /*
  * S_KNAME - the kernel name into the caller's buffer (arg1, arg2 bytes),
- * always terminated; E_OK, or ERANGE when it does not fit
+ * always terminated; E_OK, or ERANGE when it does not fit.  FreeMiNT gives
+ * the whole name and version and cuts it to the buffer; this gives 'pTOS'
+ * and refuses a buffer that cannot hold all of it, so a caller never gets a
+ * truncated name (doc/mint-calls.txt).
  */
-static LONG ssystem_kname(long buf, long len)
+static LONG ssystem_kname(long buf, LONG len)
 {
     static const char name[] = "pTOS";
 
@@ -534,7 +537,7 @@ LONG xssystem(WORD mode, long arg1, long arg2)
     case S_OSFEATURES:
         return ssystem_osfeatures();
     case S_KNAME:
-        return ssystem_kname(arg1, arg2);
+        return ssystem_kname(arg1, (LONG)arg2);    /* a scalar of the x32 caller */
 
     case S_GETCOOKIE:
         return ssystem_getcookie(arg1, arg2);
