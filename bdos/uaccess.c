@@ -338,6 +338,8 @@ static long ssystem_ok(const long *pw)
     if (mode >= 0x000d && mode <= 0x000f)
         return EACCDN;
 #endif
+    if (mode == 900 && arg2 > 0)                        /* S_KNAME buffer */
+        return buf_ok(arg1, arg2, TRUE);
     if (mode == 0x0008 && arg2)                         /* S_GETCOOKIE value */
         return buf_ok(arg2, 4, TRUE);
     if (mode == (WORD)0xfffe && size > 0)               /* S_CONSOLE_DIM struct */

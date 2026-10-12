@@ -33,6 +33,7 @@
 #include "cookie.h"
 #include "lineavars.h"
 #include "ahdi.h"
+#include "biosdefs.h"
 #include "string.h"
 
 /* not in tosvars.h -- only bios/arch/arm/vectors.c otherwise uses it */
@@ -346,6 +347,59 @@ static LONG ssystem_osname(void)
     return ((LONG)'p' << 24) | ((LONG)'T' << 16) | ((LONG)'O' << 8) | 'S';
 }
 
+/*
+ * S_OSXNAME - FreeMiNT answers 'Free', the distribution; this one is built
+ * from EmuTOS
+ */
+static LONG ssystem_osxname(void)
+{
+    return ((LONG)'E' << 24) | ((LONG)'m' << 16) | ((LONG)'u' << 8) | 'T';
+}
+
+/* the OS header of the image (bios/header.c) */
+extern const OSHEADER os_header;
+
+/*
+ * S_OSBUILDDATE - the date the OS was built, as BCD YYYYMMDD (FreeMiNT's
+ * MiNT_date); the OS header has it as MMDDYYYY
+ */
+static LONG ssystem_osbuilddate(void)
+{
+    ULONG d = os_header.os_date;
+
+    return (LONG)(((d & 0xffffUL) << 16) | (d >> 16));
+}
+
+/*
+ * S_OSFEATURES - bit field of the built-in system features, as FreeMiNT has
+ * it: bit 0 memory protection, bit 1 virtual memory (swapping), bit 2 storage
+ * encryption.  Memory protection is the private address spaces; nothing is
+ * swapped out, and nothing is encrypted.
+ */
+static LONG ssystem_osfeatures(void)
+{
+    LONG features = 0;
+
+#if CONF_WITH_USER_ASPACE
+    features |= 0x01;
+#endif
+    return features;
+}
+
+/*
+ * S_KNAME - the kernel name into the caller's buffer (arg1, arg2 bytes),
+ * always terminated; E_OK, or ERANGE when it does not fit
+ */
+static LONG ssystem_kname(long buf, long len)
+{
+    static const char name[] = "pTOS";
+
+    if (!buf || len < (long)sizeof(name))
+        return ERANGE;
+    svar_copy((void *)buf, name, sizeof(name));
+    return E_OK;
+}
+
 static LONG ssystem_osversion(void)
 {
     /*
@@ -406,6 +460,34 @@ static LONG ssystem_console_dim(long arg1, LONG arg2)
 }
 
 
+/* the modes xssystem() implements, for S_INQUIRE; keep in step with it */
+static BOOL ssystem_has_mode(WORD mode)
+{
+    switch (mode)
+    {
+    case S_INQUIRE:
+    case S_OSNAME:
+    case S_OSXNAME:
+    case S_OSVERSION:
+    case S_OSBUILDDATE:
+    case S_OSFEATURES:
+    case S_GETCOOKIE:
+    case S_SETCOOKIE:
+    case S_DELCOOKIE:
+    case S_GETLVAL:
+    case S_GETWVAL:
+    case S_GETBVAL:
+    case S_SETLVAL:
+    case S_SETWVAL:
+    case S_SETBVAL:
+    case S_KNAME:
+    case S_CONSOLE_DIM:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
 /*
  * xssystem - implements GEMDOS Ssystem(), see ssystem.h
  *
@@ -436,13 +518,23 @@ LONG xssystem(WORD mode, long arg1, long arg2)
          * whether to use Ssystem() at all before falling back to
          * Supexec()/direct memory access -- which ARM doesn't have,
          * so this must not fall through to EINVFN like every other
-         * unhandled mode. */
-        return E_OK;
+         * unhandled mode.  Asked about a mode (arg1), it says whether
+         * that one is implemented: E_OK or EINVFN, the answer the call
+         * itself would give to a mode it does not know. */
+        return ssystem_has_mode((WORD)arg1) ? E_OK : EINVFN;
 
     case S_OSNAME:
         return ssystem_osname();
+    case S_OSXNAME:
+        return ssystem_osxname();
     case S_OSVERSION:
         return ssystem_osversion();
+    case S_OSBUILDDATE:
+        return ssystem_osbuilddate();
+    case S_OSFEATURES:
+        return ssystem_osfeatures();
+    case S_KNAME:
+        return ssystem_kname(arg1, arg2);
 
     case S_GETCOOKIE:
         return ssystem_getcookie(arg1, arg2);
