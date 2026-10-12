@@ -50,8 +50,8 @@ suite and POWEROFF.TOS in one machine, then REBOOT.TOS, COLDBOOT.TOS and
 HALT.TOS in a machine each. QEMU runs without -no-reboot: after POWEROFF.TOS it
 must leave by itself with a normal exit status (a reset in its place would
 restart the machine and be seen); after REBOOT.TOS and COLDBOOT.TOS it must
-keep running without the halt message and, where the image can start again (not
-virt-m68k, #475), show a second EmuCON banner; after HALT.TOS it must keep
+keep running without the halt message and show a second EmuCON banner (the
+machine starts again; #475 was virt-m68k not doing that); after HALT.TOS it must keep
 running, with the message. Each program leaves
 a file open with data written, and the file has to be on the disk afterwards.
 That is x86-64, virt-arm and virt-m68k in CI; raspi2b and Hatari by hand (Hatari

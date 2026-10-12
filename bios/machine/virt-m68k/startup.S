@@ -16,6 +16,7 @@
         .extern __bss
         .extern __ebss
         .extern C_SYM(phystop)
+        .extern __low_stram_end
 
         .text
 
@@ -97,6 +98,24 @@ C_SYM(osxhbootdelay):
         .even
 C_SYM(main):
         move.w  #0x2700,sr              // supervisor mode, interrupts masked
+
+        // Clear low memory: the exception vectors, the system variables, the
+        // BIOS stack and the low ST-RAM section, everything from address 0 to
+        // the end of .low_stram.  The ELF has no data for them (they are NOBITS),
+        // so QEMU's loader leaves them as the machine's RAM starts out, zeroed,
+        // and the code has always relied on that.  After a reset of the machine
+        // (Shutdown(SHUT_BOOT), the monitor's system_reset) the RAM is as the last
+        // run left it, vectors and variables included, and the boot went wrong
+        // at the first illegal instruction of the FPU probe.  The classic Atari
+        // boot clears this memory in meminit; here nothing did.  (No stack yet:
+        // it is in the memory being cleared.)
+        sub.l   a0,a0
+        lea     __low_stram_end,a1
+clear_low:
+        clr.l   (a0)+
+        cmp.l   a1,a0
+        jlo     clear_low
+
         lea     C_SYM(stktop),sp              // initial supervisor stack (.stack section, tosvars.ld)
 
         // Clear .bss: unlike the classic Atari boot, there is no meminit

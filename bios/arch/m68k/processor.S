@@ -162,6 +162,7 @@ exit:
 _detect_fpu:
 #if CONF_WITH_ADVANCED_CPU
         movem.l d2/a2,-(sp)
+        move.l  (0x10).w,-(sp)  // save the Illegal Instruction vector
         move.l  sp,a0           // save the ssp
         moveq   #0,d0           // assume no FPU
         move.l  (0x2c).w,a1     // save the Line-F vector
@@ -169,6 +170,9 @@ _detect_fpu:
         move.l  #fexit,d1
         move.l  d1,(0x2c).w     // install temporary Line-F
         move.l  d1,(0x08).w
+        move.l  d1,(0x10).w     // ... and Illegal Instruction: QEMU's CPUs without
+                                // an FPU raise that, not Line-F, for the coprocessor
+                                // instructions below
         nop                     // flush pipelines
 
         move.l  C_SYM(mcpu),d1        // check if 68000 or 68010
@@ -218,6 +222,7 @@ sfp:    tst.w   0xfffffa40.w    // CIR
 fexit:  move.l  a1,(0x2c).w     // restore Line-F
         move.l  a2,(0x08).w
         move.l  a0,sp
+        move.l  (sp)+,(0x10).w  // restore Illegal Instruction
         nop                     // flush pipelines
         swap    d0
         movem.l (sp)+,d2/a2
