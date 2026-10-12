@@ -37,8 +37,8 @@ static BOOL to_user(UQUAD address, const void *src, ULONG n)
 #if CONF_WITH_USER_ASPACE
     return kproc_copy_to_user(address, src, n);
 #else
-    if (!address)
-        return FALSE;
+    if (!address || address > 0xffffffffULL || n > 0x100000000ULL - address)
+        return FALSE;                   /* no pointer, or a range that runs off the 4 GiB end */
     memcpy((void *)(uintptr_t)address, src, n);
     return TRUE;
 #endif
@@ -116,12 +116,33 @@ static long dgetcwd(UQUAD path, WORD drv, WORD size)
     return to_user(path, buf, n) ? E_OK : EIMBA;
 }
 
-long mintproc_call(const long *pw, BOOL *handled)
+/*
+ * The arguments of the call, after its number.  On the native ABIs (ARM, x86-64)
+ * every argument is a slot of its own, a long, the pointers whole; on the m68k
+ * it is the packed trap frame TOS has: a word for a WORD, two for a long or a
+ * pointer, one after the other.  So an argument is named by its position among
+ * the arguments of the call, ARG_W(n) for the n-th when every one before it
+ * is a WORD, and the calls with a pointer say where the words that follow it
+ * are.
+ */
+#if CONF_WITH_NATIVE_ABI
+#define ARG_W(n)        ((WORD)((const long *)pw)[n])
+#define ARG_P(n)        ((UQUAD)((const long *)pw)[n])      /* the pointer is the n-th slot */
+#define ARG_W_AFTER_P(n)    ARG_W((n) + 1)                  /* a WORD after a pointer at slot n */
+#define DGETCWD_SIZE        ARG_W(3)                        /* Dgetcwd(path, drv, size) */
+#else
+#define ARG_W(n)        (((const WORD *)pw)[n])
+#define ARG_P(n)        ((UQUAD)(ULONG)*(const ULONG_ALIAS *)&((const WORD *)pw)[n])
+#define ARG_W_AFTER_P(n)    ARG_W((n) + 2)                  /* a pointer is two words */
+#define DGETCWD_SIZE        ARG_W(4)
+#endif
+
+long mintproc_call(long fn, const void *pw, BOOL *handled)
 {
     ULONG usage[8];
 
     *handled = TRUE;
-    switch (pw[0])
+    switch (fn)
     {
     case GEMDOS_PGETPID:
         return kproc_pid(run);
@@ -135,16 +156,16 @@ long mintproc_call(const long *pw, BOOL *handled)
         return 0;                       /* there are no users: all of it is root */
     case GEMDOS_PSETAUID:
         /* FreeMiNT lets it be set once and never changed; there is only 0 */
-        return (WORD)pw[1] == 0 ? E_OK : EINVAL;
+        return ARG_W(1) == 0 ? E_OK : EINVAL;
     case GEMDOS_PGETPRIORITY:
-        return pgetpriority((WORD)pw[1], (WORD)pw[2]);
+        return pgetpriority(ARG_W(1), ARG_W(2));
     case GEMDOS_PSETPRIORITY:
-        return psetpriority((WORD)pw[1], (WORD)pw[2], (WORD)pw[3]);
+        return psetpriority(ARG_W(1), ARG_W(2), ARG_W(3));
     case GEMDOS_PRUSAGE:
         kproc_usage(run, usage);
-        return to_user((UQUAD)pw[1], usage, sizeof(usage)) ? E_OK : EIMBA;
+        return to_user(ARG_P(1), usage, sizeof(usage)) ? E_OK : EIMBA;
     case GEMDOS_DGETCWD:
-        return dgetcwd((UQUAD)pw[1], (WORD)pw[2], (WORD)pw[3]);
+        return dgetcwd(ARG_P(1), ARG_W_AFTER_P(1), DGETCWD_SIZE);
     default:
         *handled = FALSE;
         return 0;

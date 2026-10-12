@@ -23,8 +23,8 @@
 #define GEMDOS_PGETPRIORITY 0x158
 #define GEMDOS_PSETPRIORITY 0x159
 
-/* the call pw[0] (the arguments after it), if it is one of these: *handled is
+/* the call fn (pw the arguments after its number, in the layout of the ABI), if it is one of these: *handled is
  * TRUE and the result returned; else *handled is FALSE */
-long mintproc_call(const long *pw, BOOL *handled);
+long mintproc_call(long fn, const void *pw, BOOL *handled);
 
 #endif /* MINTPROC_H */

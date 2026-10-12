@@ -600,7 +600,7 @@ restrt:
     {
         BOOL handled;
 
-        rc = mintproc_call(pw, &handled);
+        rc = mintproc_call(fn, pw, &handled);
         if (handled)
             return rc;
     }

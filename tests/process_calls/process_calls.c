@@ -2,9 +2,12 @@
  * process_calls.c - regression test for the MiNT process calls
  *
  * Process ids, the user, group and audit ids, the priority, Prusage() and
- * Dgetcwd(), where processes have a kernel record (CONF_WITH_KPROC: the
- * x86-64 port).  Elsewhere the calls are not there (EINVFN) and the suite
- * passes without testing anything.
+ * Dgetcwd(), where processes have a kernel record: the Makefile defines
+ * TEST_WITH_KPROC for CONF_WITH_KPROC (the x86-64 port, and the kproc
+ * configurations of ARM and m68k) and TEST_WITH_USER_ASPACE for
+ * CONF_WITH_USER_ASPACE (pointers are checked, Prusage() counts memory).
+ * Everywhere else the calls are not there (EINVFN) and the suite passes
+ * without testing anything.
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -35,7 +38,7 @@ void test_process_calls(void)
     pid = Pgetpid();
     if (pid == EINVFN)
     {
-#ifdef __x86_64__
+#ifdef TEST_WITH_KPROC
         ptest_fail("the process calls are missing");
 #else
         ptest_pass();               /* no process records here */
@@ -75,13 +78,13 @@ void test_process_calls(void)
         usage[i] = -1;
     ptest_assert_msg(Prusage(usage) == 0, "Prusage() failed");
     ptest_assert_msg(usage[1] >= 0, "Prusage(): the user time");
-#ifdef __x86_64__
+#ifdef TEST_WITH_USER_ASPACE
     /* the pages of its address space; a process without one has none to count */
     ptest_assert_msg(usage[4] > 0, "Prusage(): the memory");
 #endif
     ptest_assert_msg(usage[0] == 0 && usage[5] == 0 && usage[6] == 0 && usage[7] == 0,
                      "Prusage(): what is not kept is not 0");
-#ifdef __x86_64__
+#ifdef TEST_WITH_USER_ASPACE
     /* (pointers are checked where processes have address spaces) */
     ptest_assert_msg(Prusage((long *)0x100) == EIMBA, "Prusage() into an unmapped address was not refused");
 #endif
@@ -95,7 +98,7 @@ void test_process_calls(void)
     ptest_assert_msg(Dgetcwd(cwd, 0, 0) == ERANGE, "Dgetcwd() with no room was not refused");
     ptest_assert_msg(Dgetcwd(cwd, 0, (int)strlen(path)) == ERANGE, "Dgetcwd() one byte short was not refused");
     ptest_assert_msg(Dgetcwd(cwd, 0, (int)strlen(path) + 1) == 0, "Dgetcwd() with exactly the room failed");
-#ifdef __x86_64__
+#ifdef TEST_WITH_USER_ASPACE
     ptest_assert_msg(Dgetcwd((char *)0x100, 0, 64) == EIMBA, "Dgetcwd() into an unmapped address was not refused");
 #endif
 
@@ -105,7 +108,7 @@ void test_process_calls(void)
     ptest_assert_msg(Pnice(1) == EINVFN, "Pnice() was not refused");
     ptest_assert_msg(Pumask(022) == EINVFN, "Pumask() was not refused");
 
-#ifdef __x86_64__
+#ifdef TEST_WITH_USER_ASPACE
     /* Mvalidate() takes the own pid now (it is there with address spaces) */
     ptest_assert_msg(Mvalidate((int)pid, cwd, 16L, 0) == 0, "Mvalidate() with the own pid failed");
 #endif
