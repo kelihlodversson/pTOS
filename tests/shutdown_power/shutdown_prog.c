@@ -7,7 +7,7 @@
  * them, each in a machine of its own.  QEMU runs without -no-reboot: it must
  * leave by itself after the power off (a reset would restart the machine
  * instead), and keep running after the two reboots (without the halt message,
- * and with a second EmuCON banner where the image can start again) and after
+ * and with a second EmuCON banner: the machine starts again) and after
  * the halt.
  *
  * Before it shuts down the program leaves a file open with data written and

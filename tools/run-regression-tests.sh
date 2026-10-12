@@ -257,8 +257,8 @@ shutdown_check() {
 }
 
 # reboot_run <label> <program> <text>: a machine of its own runs the program;
-# it must print the text and not switch off (a second EmuCON banner shows the
-# restart, where the image can restart), and the data file must be on the disk
+# it must print the text, not switch off, and start again (a second EmuCON
+# banner), and the data file must be on the disk
 reboot_run() {
     start_vm "$1"
     type_line "$2"
@@ -278,20 +278,15 @@ reboot_run() {
         record "shutdown ($1)" FAIL "the reset did nothing, the machine halted"
         return
     fi
-    # ... and a restart brings a second EmuCON banner.  Not on virt-m68k: its
-    # image does not start again after any reset of the QEMU machine (#475;
-    # also not after the monitor's system_reset), so there a machine that is
-    # still running after the reset is all that can be seen.
-    if [ "$machine" != virt-m68k ]; then
-        n=0
-        while [ "$(grep -ac 'Type HELP for builtin commands' "$log")" -lt 2 ] && [ "$n" -lt 90 ]; do
-            sleep 1
-            n=$((n + 1))
-        done
-        if [ "$(grep -ac 'Type HELP for builtin commands' "$log")" -lt 2 ]; then
-            record "shutdown ($1)" FAIL "the machine did not start again"
-            return
-        fi
+    # ... and a restart brings a second EmuCON banner
+    n=0
+    while [ "$(grep -ac 'Type HELP for builtin commands' "$log")" -lt 2 ] && [ "$n" -lt 90 ]; do
+        sleep 1
+        n=$((n + 1))
+    done
+    if [ "$(grep -ac 'Type HELP for builtin commands' "$log")" -lt 2 ]; then
+        record "shutdown ($1)" FAIL "the machine did not start again"
+        return
     fi
     stop_vm
     if data_file_ok; then
