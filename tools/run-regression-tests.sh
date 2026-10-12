@@ -19,9 +19,10 @@
 #
 # Machine 1 runs runtests.tos, which must end with "All tests passed.", and
 # then Shutdown(SHUT_POWER) (poweroff.tos): the machine must switch itself off,
-# which ends QEMU.  More machines follow for the rest of Shutdown() (reboot.tos,
-# coldboot.tos: the machine resets, which ends QEMU because of -no-reboot;
-# halt.tos: the message, and the machine still running).  Each of the shutdown
+# which ends QEMU (with a normal exit status; QEMU is not run with -no-reboot,
+# so a reset in its place would show).  More machines follow for the rest of
+# Shutdown() (reboot.tos, coldboot.tos: the machine starts again, a second
+# EmuCON banner; halt.tos: the message, and the machine still running).  Each of the shutdown
 # programs leaves a file open with data written, and the file must be on the
 # disk afterwards, whole: Shutdown() closes the files and writes the buffers.
 # The script returns 0 when all of that holds, and prints the console logs
@@ -189,7 +190,7 @@ start_vm() {
         "$@" -global virtio-mmio.force-legacy=false \
             -drive if=none,id=hd0,format=raw,file.driver=vvfat,file.dir="$disk",file.rw=on \
             -device virtio-blk-device,drive=hd0 \
-            -d guest_errors -serial stdio -display none -no-reboot \
+            -d guest_errors -serial stdio -display none \
             <"$work/in" >"$log" 2>"${log%.log}.qemu" &
         qemu_pid=$!
         wait_for 'Type HELP for builtin commands' 120 || die "EmuCON never started ($label)" "never started"
@@ -204,7 +205,7 @@ start_vm() {
         firmware=${OVMF_DIR:-/usr/share/OVMF}
         cp "$firmware/OVMF_VARS_4M.fd" "$work/vars-$label.fd"
         rm -f "$work/mon.sock"
-        qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb -no-reboot \
+        qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
             -drive if=pflash,format=raw,readonly=on,file="$firmware/OVMF_CODE_4M.fd" \
             -drive if=pflash,format=raw,file="$work/vars-$label.fd" \
             -drive format=raw,file=fat:rw:"$disk" \
@@ -235,15 +236,10 @@ sys.exit(0 if data == bytes((i * 7 + 3) & 255 for i in range(512)) else 1)
 PY
 }
 
-# shutdown_run <label> <program> <text>: a machine of its own runs the program;
-# QEMU must go by itself, having printed the text, and the data file must be on
-# the disk
-shutdown_run() {
-    start_vm "$1"
-    type_line "$2"
-    shutdown_check "$1" "$3"
-}
-
+# shutdown_check <label> <text>: the program has been started; QEMU must go by
+# itself, normally, having printed the text, and the data file must be on the
+# disk.  (QEMU is not run with -no-reboot: a reset that should have been a power
+# off would restart the machine instead of ending QEMU.)
 shutdown_check() {
     if ! wait_for "shutdown: PASS ($2)" 60; then
         record "shutdown ($1)" FAIL "the program never ran"
@@ -257,6 +253,45 @@ shutdown_check() {
         record "shutdown ($1)" FAIL "the file left open was not on the disk"
     else
         record "shutdown ($1)" PASS
+    fi
+}
+
+# reboot_run <label> <program> <text>: a machine of its own runs the program;
+# it must print the text and not switch off (a second EmuCON banner shows the
+# restart, where the image can restart), and the data file must be on the disk
+reboot_run() {
+    start_vm "$1"
+    type_line "$2"
+    if ! wait_for "shutdown: PASS ($3)" 60; then
+        record "shutdown ($1)" FAIL "the program never ran"
+        return
+    fi
+    # a machine that was switched off, not restarted, takes QEMU with it
+    sleep 15
+    if ! kill -0 "$qemu_pid" 2>/dev/null; then
+        record "shutdown ($1)" FAIL "the machine switched off instead of restarting"
+        return
+    fi
+    # ... and a restart brings a second EmuCON banner.  Not on virt-m68k: its
+    # image does not start again after any reset of the QEMU machine (#475;
+    # also not after the monitor's system_reset), so there a machine that is
+    # still running after the reset is all that can be seen.
+    if [ "$machine" != virt-m68k ]; then
+        n=0
+        while [ "$(grep -ac 'Type HELP for builtin commands' "$log")" -lt 2 ] && [ "$n" -lt 90 ]; do
+            sleep 1
+            n=$((n + 1))
+        done
+        if [ "$(grep -ac 'Type HELP for builtin commands' "$log")" -lt 2 ]; then
+            record "shutdown ($1)" FAIL "the machine did not start again"
+            return
+        fi
+    fi
+    stop_vm
+    if data_file_ok; then
+        record "shutdown ($1)" PASS
+    else
+        record "shutdown ($1)" FAIL "the file left open was not on the disk"
     fi
 }
 
@@ -280,8 +315,8 @@ if grep -aq 'All tests passed\.' "$suite_log" && ! grep -aq 'FAIL' "$suite_log";
 
     # -- the machines of the other modes --------------------------------------
 
-    shutdown_run reboot reboot.tos "rebooting"
-    shutdown_run coldboot coldboot.tos "cold booting"
+    reboot_run reboot reboot.tos "rebooting"
+    reboot_run coldboot coldboot.tos "cold booting"
 
     # halt: the message, the machine still there, and the file on the disk
     start_vm halt

@@ -21,8 +21,8 @@
 
 #define VIRT_CTRL_BASE      0xff009000UL
 #define VIRT_CTRL_CMD       (*(volatile ULONG *)(VIRT_CTRL_BASE + 0x04))
-#define CMD_HALT            1UL
-#define CMD_RESET           2UL
+#define CMD_HALT            2UL
+#define CMD_RESET           1UL
 
 void machine_poweroff(void)
 {

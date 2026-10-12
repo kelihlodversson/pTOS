@@ -36,10 +36,18 @@ static BOOL shutting_down;
 static void close_files(void)
 {
     volatile int i;
+    volatile int k;
 
     for (i = 0; i < OPNFILES; i++)
-        if (sft[i].f_own && !setjmp(errbuf))
+        /* a slot used more than once (a redirected or inherited standard
+         * handle) needs one close for each use before it is free; a disk
+         * error gives the slot up */
+        for (k = sft[i].f_use; k > 0 && sft[i].f_own; k--)
+        {
+            if (setjmp(errbuf))
+                break;
             xclose(i + NUMSTD);
+        }
 }
 
 /* write out every dirty disk buffer */
