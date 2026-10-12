@@ -36,9 +36,16 @@ void test_mint_memory(void)
 
     ptest_begin("mint_memory");
 
+#if defined(__arm__) || defined(__x86_64__)
+    ptest_assert_msg(Ssystem(-1, 7, 0L) != EINVFN, "Ssystem() is missing");
+#endif
     if (Ssystem(-1, 7, 0L) == EINVFN || !(Ssystem(7, 0L, 0L) & 1))
     {
+#ifdef __x86_64__
+        ptest_fail("the x86-64 port has address spaces of its own");
+#else
         ptest_pass();               /* no address spaces of their own here */
+#endif
         return;
     }
 
