@@ -1862,7 +1862,8 @@ endif
 # regardless of .config -- anything gated on it here would silently never
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
-TOCLEAN += tests/run_tests.c runtests.tos $(TEST_SHUTDOWN_FILES) pieprobe.tos LOADFAIL.TOS \
+TOCLEAN += tests/run_tests.c runtests.tos poweroff.tos reboot.tos coldboot.tos \
+           halt.tos pieprobe.tos LOADFAIL.TOS \
            relocprobe-unpacked.tos PTRELOC.TOS \
            relocprobe2-unpacked.tos PTRELOC2.TOS \
            test-hd.img ACCPROBE.ACC

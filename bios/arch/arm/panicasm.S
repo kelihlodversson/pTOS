@@ -70,7 +70,7 @@ C_SYM(panic):
  * simply halt the machine.
  */
 C_SYM(halt):
-        cpsid   i                       // nothing is to run any more
+        cpsid   if                      // IRQ and FIQ: nothing is to run any more
 haltloop:
 #if __ARM_ARCH >= 7
         wfi

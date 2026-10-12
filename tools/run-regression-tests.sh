@@ -39,6 +39,7 @@ tools=$(cd "$(dirname "$0")" && pwd)
 top=$(dirname "$tools")
 work=$(mktemp -d "${TMPDIR:-/tmp}/ptos-regression.XXXXXX")
 qemu_pid=
+qemu_status=0
 log=
 disk=
 results=$work/results       # "name|PASS" or "name|FAIL" per line, in order
@@ -134,14 +135,22 @@ wait_for() {
     return 1
 }
 
-# wait_exit <seconds>: wait until QEMU has gone by itself
+# wait_exit <seconds>: wait until QEMU has gone by itself, and normally: the
+# exit status is collected (so a QEMU that crashed after the guest printed its
+# PASS is not taken for a power off) and must be 0
 wait_exit() {
     n=0
     while kill -0 "$qemu_pid" 2>/dev/null && [ "$n" -lt "$1" ]; do
         sleep 1
         n=$((n + 1))
     done
-    ! kill -0 "$qemu_pid" 2>/dev/null
+    if kill -0 "$qemu_pid" 2>/dev/null; then
+        return 1
+    fi
+    wait "$qemu_pid"
+    qemu_status=$?
+    qemu_pid=
+    [ "$qemu_status" -eq 0 ]
 }
 
 # type_line <text>: type a line into the guest's console
@@ -239,7 +248,11 @@ shutdown_check() {
     if ! wait_for "shutdown: PASS ($2)" 60; then
         record "shutdown ($1)" FAIL "the program never ran"
     elif ! wait_exit 60; then
-        record "shutdown ($1)" FAIL "QEMU was still running 60 s after it"
+        if [ -z "$qemu_pid" ]; then
+            record "shutdown ($1)" FAIL "QEMU ended with exit status $qemu_status"
+        else
+            record "shutdown ($1)" FAIL "QEMU was still running 60 s after it"
+        fi
     elif ! data_file_ok; then
         record "shutdown ($1)" FAIL "the file left open was not on the disk"
     else

@@ -3,8 +3,10 @@
  *
  * Only the calls that must leave the system running can be tested here: a
  * mode that does not exist is refused with an error and nothing happens.
- * The real thing (the machine stops) is tests/shutdown_power/poweroff.c,
- * which tools/run-regression-tests.sh runs last and expects QEMU to leave.
+ * The real thing (the machine stops or restarts) is
+ * tests/shutdown_power/shutdown_prog.c, built as POWEROFF.TOS, REBOOT.TOS,
+ * COLDBOOT.TOS and HALT.TOS, which tools/run-regression-tests.sh runs after
+ * the suite, each mode in a machine of its own.
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
