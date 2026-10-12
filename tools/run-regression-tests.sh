@@ -70,6 +70,7 @@ summarize() {
             echo "| --- | --- |"
             grep -aE '^  [A-Za-z0-9_]+.*\.\.\. (PASS|FAIL)' "$log" | tr -d '\r' |
                 sed -E 's/^ +(.*)\.\.\. (PASS|FAIL)$/| \1 | \2 |/'
+            [ -n "$poweroff" ] && echo "| shutdown (power off) | $poweroff |"
             echo
             summary_line=$(grep -a -- '--- Summary' "$log" | tail -1 | tr -d '\r')
             [ -n "$summary_line" ] && echo "\`$summary_line\`" && echo
@@ -97,6 +98,14 @@ wait_for() {
     return 1
 }
 
+# type_line <text>: type a line into the guest's console
+type_line() {
+    case $machine in
+    pc-x86_64) python3 "$tools/qemu-type.py" "$work/mon.sock" "$1" ;;
+    *) printf '%s\r' "$1" >&3 ;;
+    esac
+}
+
 case $machine in
 virt-arm | virt-m68k)
     if [ "$machine" = virt-arm ]; then
@@ -117,9 +126,9 @@ virt-arm | virt-m68k)
     wait_for 'Type HELP for builtin commands' 120 || { echo "$0: EmuCON never started" >&2; show_log; summarize "never started"; exit 1; }
     sleep 2
     # the prompt is A:\ on the m68k machine and C:\ on ARM; the tests are on C:
-    printf 'C:\r' >&3
+    type_line 'C:'
     sleep 2
-    printf 'runtests.tos\r' >&3
+    type_line 'runtests.tos'
     ;;
 pc-x86_64)
     mkdir -p "$work/esp/EFI/BOOT"
@@ -136,7 +145,7 @@ pc-x86_64)
     qemu_pid=$!
     wait_for 'C:\>' 120 || { echo "$0: EmuCON never showed its prompt" >&2; show_log; summarize "never started"; exit 1; }
     sleep 1
-    python3 "$tools/qemu-type.py" "$work/mon.sock" 'runtests.tos'
+    type_line 'runtests.tos'
     ;;
 *)
     echo "usage: $0 <virt-arm|virt-m68k|pc-x86_64> [timeout-seconds]" >&2
@@ -151,6 +160,29 @@ while [ "$n" -lt "$limit" ]; do
     sleep 1
     n=$((n + 1))
 done
+
+# Shutdown(SHUT_POWER) last (tests/shutdown_power/poweroff.c): once the suite
+# has passed, the machine must switch itself off, which ends QEMU.
+poweroff=
+if grep -aq 'All tests passed\.' "$log" && ! grep -aq 'FAIL' "$log"; then
+    type_line 'poweroff.tos'
+    if wait_for 'shutdown: PASS' 60; then
+        n=0
+        while kill -0 "$qemu_pid" 2>/dev/null && [ "$n" -lt 60 ]; do
+            sleep 1
+            n=$((n + 1))
+        done
+        if kill -0 "$qemu_pid" 2>/dev/null; then
+            poweroff="FAIL"
+            echo "FAIL: QEMU was still running 60 s after Shutdown(SHUT_POWER)" >>"$log"
+        else
+            poweroff="PASS"
+        fi
+    else
+        poweroff="FAIL"
+        echo "FAIL: poweroff.tos never ran" >>"$log"
+    fi
+fi
 
 show_log
 

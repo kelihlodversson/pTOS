@@ -1642,3 +1642,13 @@ static void fdc_start_dma_write(WORD count)
 }
 
 #endif /* CONF_WITH_FDC */
+
+/*
+ * flop_shutdown - Shutdown() is about to stop the machine: let the drives go
+ */
+void flop_shutdown(void)
+{
+#if CONF_WITH_FDC
+    deselect();
+#endif
+}

@@ -91,7 +91,9 @@ configuration (`virt-arm-cli`, `virt-m68k-cli-elf` (the m68k ELF loader is an op
 `make test-dir` has run. The virt machines are the `-cli` configurations so
 that they boot to EmuCON, where the script types `runtests.tos` into the
 serial console; the script ends QEMU when the harness has printed its
-verdict and fails unless that is `All tests passed.`
+verdict and fails unless that is `All tests passed.` After a pass it starts
+`poweroff.tos` (`Shutdown(SHUT_POWER)`, doc/shutdown.txt) and expects QEMU to
+switch off by itself.
 
 See the `ptos-smoketest` skill (`.claude/skills/ptos-smoketest/SKILL.md`)
 for more emulator invocations and gotchas.
