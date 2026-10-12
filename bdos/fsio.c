@@ -315,6 +315,10 @@ long eof(int h)
  *
  * Function 0x42        f_seek
  *
+ * n is a LONG, not a long: on a 64 bit kernel the argument slot of an x32
+ * caller holds the 32 bit offset zero-extended, so a negative offset (from
+ * SEEK_CUR or SEEK_END) would arrive as a huge positive one.
+ *
  * Error returns
  *   EIHNDL
  *
@@ -322,7 +326,7 @@ long eof(int h)
  *      ixlseek()
  */
 
-long xlseek(long n, int h, int flg)
+long xlseek(LONG n, int h, int flg)
 {
     OFD *f;
 

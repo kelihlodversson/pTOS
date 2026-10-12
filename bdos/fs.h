@@ -27,7 +27,10 @@
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"        /* PFSCOOKIE is embedded by value in FTAB below */
 #endif
-#if ARCH_ARM
+/* The structures that mirror on-disk records (FCB, DFD's three FCB fields)
+ * are packed wherever LONG is aligned to 4: fsopnclo.c copies 10 bytes from
+ * a DFD into an FCB. */
+#if ARCH_ARM || ARCH_X86_64
 #   define OPT_PACKED  __attribute__((packed))
 #else
 #   define OPT_PACKED
@@ -490,7 +493,7 @@ long xgetfree(LONG *buf, int drv);
 long eof(int h);
 
 /* seek to byte position n on file with handle h */
-long xlseek(long n, int h, int flg);
+long xlseek(LONG n, int h, int flg);
 long ixlseek(OFD *p, long n);
 
 FCB *ixgetfcb(OFD *p);
