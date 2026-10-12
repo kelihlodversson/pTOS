@@ -324,6 +324,15 @@ static long fdatime_ok(const long *pw)
     return buf_ok(pw[1], UA_DATIME, (int)pw[3] == 0);
 }
 
+/* Mvalidate(pid, addr, size, flags): flags, if not NULL, is stored through; the
+ * address and size are only looked at (Maccess() has no pointer to check) */
+static long mvalidate_ok(const long *pw)
+{
+    long flags = pw[4];                 /* the whole slot: buf_ok() rejects what is no x32 address */
+
+    return flags ? buf_ok(flags, 4, TRUE) : E_OK;
+}
+
 /* Ssystem(mode, arg1, arg2): only the modes that store through a pointer */
 static long ssystem_ok(const long *pw)
 {
@@ -365,6 +374,8 @@ long bdos_check_user_args(const long *pw)
         return fdatime_ok(pw);
     if (fn == GEMDOS_SSYSTEM)
         return ssystem_ok(pw);
+    if (fn == 0x141)                    /* Mvalidate */
+        return mvalidate_ok(pw);
 
     for (i = 0; i < ARRAY_SIZE(uargs); i++) {
         const UARG *u = &uargs[i];

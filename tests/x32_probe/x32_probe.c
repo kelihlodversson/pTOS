@@ -75,6 +75,7 @@ typedef unsigned int u32;
 
 #define GEMDOS 1
 #define EIMBA  (-40)
+#define EINVAL (-25)
 #define ENSMEM (-39)
 #define EINVFN (-32)
 #define EACCDN (-36)
@@ -552,6 +553,14 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys4(GEMDOS, 0x57, ro, 6, 0, 0) != EIMBA) bad |= 64;         /* writes it */
         if (sys4(GEMDOS, 0x57, ro, 6, 1, 0) != EIHNDL) bad |= 64;        /* only reads it */
         if (gemdos(0x14, 0x100000, 0x1000) != EACCDN) bad |= 64;         /* Maddalt */
+        /* Maccess/Mvalidate: an address is an x32 address, 32 bits; one with a
+         * bit above them is not the valid low address it ends in */
+        if (sys4(GEMDOS, 0x17d, ro, 16, 1, 0) != 0) bad |= 64;
+        if (sys4(GEMDOS, 0x17d, ro, 16, 0, 0) != EINVAL) bad |= 64;      /* read-only */
+        if (sys4(GEMDOS, 0x17d, 0x100000000LL | ro, 16, 1, 0) != EINVAL) bad |= 64;
+        if (sys4(GEMDOS, 0x141, 0, ro, 16, 0) != 0) bad |= 64;
+        if (sys4(GEMDOS, 0x141, 0, 0x100000000LL | ro, 16, 0) != EINVAL) bad |= 64;
+        if (sys4(GEMDOS, 0x141, 0, ro, 16, 0x100000000LL | P(buf)) != EIMBA) bad |= 64;
         /* scalars are judged as the call takes them: Fdatime()'s flag is an
          * int, so 2^32 is "get" (a write), and S_CONSOLE_DIM's size is a LONG,
          * so 2^32 - 8 + 8 is 8 bytes written whatever the upper half says */

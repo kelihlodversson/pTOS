@@ -140,6 +140,25 @@ int kproc_demand_page(PD *pd, UQUAD va);
 #define PSETLIMIT_DATA  3
 #define PSETLIMIT_STACK 0x100
 LONG kproc_psetlimit(PD *pd, WORD mode, LONG value);
+/* The mode word of Mxalloc() (MiNT's, sys/mint/mem.h): bits 0-2 the RAM kind
+ * (there is one kind of memory here: accepted, and ignored), bit 3 asks to
+ * change the protection of a block already allocated (MiNT has that disabled),
+ * bits 4-7 the protection of a new block plus one (0: the program's default),
+ * 0x2000 zeroed memory (it always is), 0x4000 "keep after termination". */
+#define MXMODE_RAMKIND  0x0007
+#define MXMODE_CHANGE   0x0008
+#define MXMODE_PROT     0x00f0
+#define MXMODE_PROTP    0x0010  /* private: nobody else sees it (the only kind here) */
+#define MXMODE_ZERO     0x2000
+#define MXMODE_KEEP     0x4000
+/* E_OK if a block of this mode can be allocated from the private heap, else
+ * EINVFN: a protection other than private (others cannot be given access to
+ * memory of this process), a protection change of an existing block, memory
+ * that outlives the process. */
+LONG kproc_uheap_mode(WORD mode);
+/* Maccess(), Mvalidate(): MiNT's checks of the caller's own memory */
+LONG kproc_maccess(PD *pd, UQUAD address, LONG size, WORD mode);
+LONG kproc_mvalidate(PD *pd, WORD pid, UQUAD address, LONG size, UQUAD flags);
 UQUAD kproc_uheap_alloc(PD *pd, ULONG bytes);
 ULONG kproc_uheap_largest(PD *pd);
 LONG kproc_uheap_free(PD *pd, UQUAD va);
@@ -152,6 +171,9 @@ BOOL kproc_validate_user_dta(UQUAD address);
 /* valid user memory of the current process: mapped, user-accessible and (for
  * _write) writable in its own address space */
 BOOL kproc_validate_user_range(UQUAD address, ULONG size);
+/* the same question for Maccess()/Mvalidate(): the process's own access, with
+ * no page backed for the answer */
+BOOL kproc_user_access(PD *pd, UQUAD address, ULONG size, BOOL write);
 BOOL kproc_validate_user_write(UQUAD address, ULONG size);
 BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size);
 BOOL kproc_copy_to_user(UQUAD address, const void *src, ULONG size);

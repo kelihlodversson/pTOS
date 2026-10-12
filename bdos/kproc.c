@@ -1007,12 +1007,9 @@ static void lazy_oom(void)
 }
 
 /* Whether the process may read (or write) [address, address + size), the pages
- * of its lazy areas that are not there yet included; those get their physical
- * pages now (what a read or write of them by the process would do).  The first
- * pass changes nothing: it only rejects a range with a gap, a page the access
- * is not allowed on, or anything beyond the 32-bit limit, before any page is
- * backed.  A range that is fine but cannot be backed ends the process. */
-static BOOL demand_range(KPROC *kproc, UQUAD address, ULONG size, BOOL write)
+ * of its lazy areas that are not there yet included: a range with a gap, or a
+ * page the access is not allowed on, is not.  Changes nothing. */
+static BOOL range_allowed(KPROC *kproc, UQUAD address, ULONG size, BOOL write)
 {
     UQUAD first = address & ~(USER_PAGE_SIZE - 1);
     UQUAD last = (address + size - 1) & ~(USER_PAGE_SIZE - 1), page;
@@ -1027,6 +1024,20 @@ static BOOL demand_range(KPROC *kproc, UQUAD address, ULONG size, BOOL write)
             return FALSE;
         }
     }
+    return TRUE;
+}
+
+/* The same, and the pages of its lazy areas that are not there yet get their
+ * physical pages now (what a read or write of them by the process would do).
+ * The first pass rejects a range before any page is backed.  A range that is
+ * fine but cannot be backed ends the process. */
+static BOOL demand_range(KPROC *kproc, UQUAD address, ULONG size, BOOL write)
+{
+    UQUAD first = address & ~(USER_PAGE_SIZE - 1);
+    UQUAD last = (address + size - 1) & ~(USER_PAGE_SIZE - 1), page;
+
+    if (!range_allowed(kproc, address, size, write))
+        return FALSE;
     for (page = first; page <= last; page += USER_PAGE_SIZE)
         if (!aspace_translate(kproc->aspace, page, NULL, NULL) &&
             !back_page(kproc, page))
@@ -1093,6 +1104,58 @@ LONG kproc_psetlimit(PD *pd, WORD mode, LONG value)
     default:
         return EINVFN;
     }
+}
+
+/*
+ * Mxalloc()'s mode word, after MiNT (sys/dosmem.c sys_m_xalloc()).  A new
+ * block of this port is private pages: no other process can be given access
+ * to them, so MiNT's "global", "readable by all" (and "super", "invalid") kinds
+ * cannot be honoured and the call says so instead of allocating something else.
+ * A program's default protection (the bits 4-7 of its flags) is not applied to
+ * Malloc() either: memory is private.  The bit that changes the protection of a
+ * block is disabled in MiNT too; "keep" would have the block outlive the process,
+ * which an address space of its own cannot.
+ */
+LONG kproc_uheap_mode(WORD mode)
+{
+    UWORD m = (UWORD)mode;
+
+    if (m & (MXMODE_CHANGE | MXMODE_KEEP))
+        return EINVFN;
+    if ((m & MXMODE_PROT) != 0 && (m & MXMODE_PROT) != MXMODE_PROTP)
+        return EINVFN;
+    return E_OK;
+}
+
+/*
+ * Maccess(addr, size, mode), MiNT's: 0 if the caller may use the range (mode 0:
+ * read and write, 1: read only), else EINVAL, also for any other mode.
+ */
+LONG kproc_maccess(PD *pd, UQUAD address, LONG size, WORD mode)
+{
+    if ((mode != 0 && mode != 1) || size <= 0)
+        return EINVAL;
+    return kproc_user_access(pd, address, (ULONG)size, mode == 0) ? E_OK : EINVAL;
+}
+
+/*
+ * Mvalidate(pid, addr, size, flags), MiNT's: whether the range is memory of the
+ * process, and in `flags` (a LONG of the caller, if not NULL) its protection
+ * bits and map: private memory, in the one kind of RAM, is 0.  Only the
+ * caller's own memory (pid 0) can be asked about: another process's pages are
+ * not a thing this one can reach (and there are no process ids to name one).
+ */
+LONG kproc_mvalidate(PD *pd, WORD pid, UQUAD address, LONG size, UQUAD flags)
+{
+    ULONG zero = 0;
+
+    if (pid != 0)
+        return ESRCH;
+    if (size <= 0 || !kproc_user_access(pd, address, (ULONG)size, FALSE))
+        return EINVAL;
+    if (flags && !kproc_copy_to_user(flags, &zero, sizeof(zero)))
+        return EINVAL;
+    return E_OK;
 }
 
 /* Malloc(): the address of `bytes` of fresh zeroed memory, 0 if there is none */
@@ -1392,6 +1455,18 @@ static BOOL validate_user(UQUAD address, ULONG size, BOOL write)
      * inside its environment block or wholly inside its basepage/TPA. */
     return range_within(address, size, kproc->user_start, kproc->user_end) ||
            range_within(address, size, kproc->env_start, kproc->env_end);
+}
+
+/* Maccess(), Mvalidate(): may the process touch the range?  Asks only; no page
+ * of its lazy areas is backed for the answer. */
+BOOL kproc_user_access(PD *pd, UQUAD address, ULONG size, BOOL write)
+{
+    KPROC *kproc = kproc_find(pd);
+
+    if (!kproc || !kproc->aspace || !size || address > 0xffffffffULL ||
+        size > 0x100000000ULL - address)
+        return FALSE;
+    return range_allowed(kproc, address, size, write);
 }
 
 BOOL kproc_validate_user_range(UQUAD address, ULONG size)
