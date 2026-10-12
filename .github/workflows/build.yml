@@ -615,6 +615,6 @@ jobs:
           [ '${{ needs.raspi-sdcard.result }}' = success ] || ok=false
 
           if ! $ok; then
-            echo "::error::at least one configuration failed to build"
+            echo "::error::at least one required job failed (configuration build, regression suite, release archives or SD card image): see the results above"
             exit 1
           fi

@@ -44,6 +44,48 @@ trap cleanup EXIT
 vvfat="file.driver=vvfat,file.dir=$top/test-dir,file.rw=on"
 virtio="-global virtio-mmio.force-legacy=false -drive if=none,id=hd0,format=raw,$vvfat -device virtio-blk-device,drive=hd0"
 
+# show_log: the console log, and what QEMU itself said (only separate from the
+# console log on x86-64: a missing firmware file or a bad drive option ends up
+# there, and the work directory is deleted on exit)
+show_log() {
+    echo "::group::Console log ($machine)"
+    cat "$log" 2>/dev/null
+    echo "::endgroup::"
+    if [ -s "$work/qemu.out" ]; then
+        echo "::group::QEMU output ($machine)"
+        cat "$work/qemu.out"
+        echo "::endgroup::"
+    fi
+}
+
+# summarize <verdict>: on GitHub Actions, put the result on the job's summary
+# page (a table of the suites, and the failure details), not only in the log
+summarize() {
+    [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
+    {
+        echo "### Regression suite: $machine — $1"
+        echo
+        if grep -aqE '^  [A-Za-z0-9_]+.*\.\.\. (PASS|FAIL)' "$log" 2>/dev/null; then
+            echo "| Suite | Result |"
+            echo "| --- | --- |"
+            grep -aE '^  [A-Za-z0-9_]+.*\.\.\. (PASS|FAIL)' "$log" | tr -d '\r' |
+                sed -E 's/^ +(.*)\.\.\. (PASS|FAIL)$/| \1 | \2 |/'
+            echo
+            summary_line=$(grep -a -- '--- Summary' "$log" | tail -1 | tr -d '\r')
+            [ -n "$summary_line" ] && echo "\`$summary_line\`" && echo
+            if grep -aq 'FAIL: ' "$log"; then
+                echo "Failures:"
+                echo
+                echo '```'
+                grep -a 'FAIL: ' "$log" | tr -d '\r'
+                echo '```'
+            fi
+        else
+            echo "The suite never produced a result; see the console log in the job output."
+        fi
+    } >>"$GITHUB_STEP_SUMMARY"
+}
+
 # wait_for <text> <seconds>: wait until the console log contains the text
 wait_for() {
     n=0
@@ -72,7 +114,7 @@ virt-arm | virt-m68k)
     "$@" $virtio -d guest_errors -serial stdio -display none -no-reboot \
         <"$work/in" >"$log" 2>&1 &
     qemu_pid=$!
-    wait_for 'Type HELP for builtin commands' 120 || { echo "$0: EmuCON never started" >&2; cat "$log"; exit 1; }
+    wait_for 'Type HELP for builtin commands' 120 || { echo "$0: EmuCON never started" >&2; show_log; summarize "never started"; exit 1; }
     sleep 2
     # the prompt is A:\ on the m68k machine and C:\ on ARM; the tests are on C:
     printf 'C:\r' >&3
@@ -92,7 +134,7 @@ pc-x86_64)
         -serial file:"$log" -monitor unix:"$work/mon.sock",server,nowait \
         -display none >"$work/qemu.out" 2>&1 &
     qemu_pid=$!
-    wait_for 'C:\>' 120 || { echo "$0: EmuCON never showed its prompt" >&2; cat "$log"; exit 1; }
+    wait_for 'C:\>' 120 || { echo "$0: EmuCON never showed its prompt" >&2; show_log; summarize "never started"; exit 1; }
     sleep 1
     python3 "$tools/qemu-type.py" "$work/mon.sock" 'runtests.tos'
     ;;
@@ -110,17 +152,23 @@ while [ "$n" -lt "$limit" ]; do
     n=$((n + 1))
 done
 
-echo "::group::Console log ($machine)"
-cat "$log"
-echo "::endgroup::"
+show_log
 
 if ! grep -aq 'All tests passed\.' "$log"; then
+    summarize FAILED
     echo "$0: the regression suite did not pass on $machine" >&2
     exit 1
 fi
 if grep -aq 'FAIL' "$log"; then
+    summarize FAILED
     echo "$0: a test reported FAIL on $machine" >&2
     exit 1
 fi
 summary=$(grep -a -- '--- Summary' "$log" | tail -1)
+if [ -z "$summary" ]; then
+    summarize FAILED
+    echo "$0: no summary line in the output on $machine" >&2
+    exit 1
+fi
+summarize passed
 echo "$machine: $summary"
