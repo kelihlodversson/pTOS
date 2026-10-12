@@ -589,8 +589,8 @@ afterward.
 
 With the x86-64 configuration, `runtests.tos` and the probe programs are built
 as x32 programs (libcmini's `ptos_x86_64_defconfig`, the same compiler and
-flags as `x32hello.elf`). The `ptos_reloc_load` suite is left out: the loader's
-packed relocation format knows only ARM and m68k. Copy `make test-dir`'s
+flags as `x32hello.elf`; `ptos_reloc_load` runs too, with the probes packed by
+`ptos-elf-pack`). Copy `make test-dir`'s
 contents into the ESP directory next to `EFI/BOOT/BOOTX64.EFI`, boot, and type
 `runtests.tos` at the EmuCON prompt (`C:\>`):
 

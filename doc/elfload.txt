@@ -30,7 +30,8 @@ relocation entries and applies the same additive fixup:
     *slot += actual_load_address - link_base
 
 Only 32-bit absolute relocations need this (R_ARM_ABS32 / R_ARM_RELATIVE on
-ARM, R_68K_32 / R_68K_RELATIVE on m68k); PC-relative slots are left alone
+ARM, R_68K_32 / R_68K_RELATIVE on m68k, R_X86_64_32 / R_X86_64_RELATIVE on
+x86-64's x32); PC-relative slots are left alone
 because a uniform shift of the whole image preserves their offsets.
 
 
@@ -178,7 +179,7 @@ added to it --
 
 identical to the DIR32 fixup described above. This covers everything the
 current loader relocates: for input relocations that already store the
-value to fix up directly in the slot (R_ARM_ABS32 / R_68K_32, and a REL-
+value to fix up directly in the slot (R_ARM_ABS32 / R_68K_32 / R_X86_64_32, and a REL-
 encoded R_ARM_RELATIVE / R_68K_RELATIVE), ptos-elf-pack lists the slot
 as-is; for a RELA-encoded RELATIVE relocation (m68k PIE), whose slot may
 legitimately be 0 in the file with the real value carried in r_addend
