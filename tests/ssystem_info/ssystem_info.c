@@ -98,7 +98,16 @@ void test_ssystem_info(void)
     ptest_assert_msg(rc == 0 && strcmp(name, "pTOS") == 0, "S_KNAME with a buffer of five bytes failed");
 
     /* where the pointers of a process are checked (private address spaces,
-     * S_OSFEATURES bit 0) a buffer that is not the caller's is refused */
+     * S_OSFEATURES bit 0) a buffer that is not the caller's is refused.  The
+     * x86-64 port has them, so the bit has to be there (and the test below
+     * must not be skipped); ARM and m68k do not */
+#ifdef __x86_64__
+    ptest_assert_msg(Ssystem(SS_OSFEATURES, 0L, 0L) & 1,
+                     "S_OSFEATURES: memory protection is not reported on x86-64");
+#else
+    ptest_assert_msg(!(Ssystem(SS_OSFEATURES, 0L, 0L) & 1),
+                     "S_OSFEATURES: memory protection is reported without address spaces");
+#endif
     if (Ssystem(SS_OSFEATURES, 0L, 0L) & 1)
     {
         rc = Ssystem(SS_KNAME, 0x100L, 16L);

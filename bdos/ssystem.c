@@ -356,7 +356,7 @@ static LONG ssystem_osxname(void)
     return ((LONG)'E' << 24) | ((LONG)'m' << 16) | ((LONG)'u' << 8) | 'T';
 }
 
-/* the OS header of the image (bios/header.c) */
+/* the OS header of the image (bios/tosvars.c) */
 extern const OSHEADER os_header;
 
 /*

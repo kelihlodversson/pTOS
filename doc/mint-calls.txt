@@ -28,7 +28,9 @@ Memory
   Mvalidate(...)    0x141   may a process touch the   not there                           EINVFN: a process cannot reach
                             block?                                                         another's pages; a check against
                                                                                            the caller's own mappings maybe
-  Maddalt(a,sz)     0x14    add alternative RAM       not there                           EINVFN: there is one pool
+  Maddalt(a,sz)     0x14    add alternative RAM       there (xmaddalt, with                DONE earlier: EACCDN for a user
+                                                      CONF_WITH_ALT_RAM, on by default)    process with an address space of
+                                                                                           its own, it is the kernel's pool
   Psetlimit()       0x11f   limits of the process     modes 2 (memory) and 3 (stack)      DONE
                                                       done, 1 is EINVFN
 
