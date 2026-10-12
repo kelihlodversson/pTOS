@@ -1681,8 +1681,17 @@ else
 TEST_PIE_LDFLAGS = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start
 endif
 
+ifdef ARCH_M68K
+# The compiler driver's default m68k link is a PRG ("-pie not supported"):
+# ask the linker for its ELF emulation directly.  libgcc is not needed by the
+# probe.
+pieprobe.tos: $(TEST_STARTUP) obj/pie_probe.o $(LIBCMINI_LIB)
+	$(CROSS_COMPILE)ld -m m68kelf -pie --no-dynamic-linker -e _start \
+	  $(TEST_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini -o $@
+else
 pieprobe.tos: $(TEST_STARTUP) obj/pie_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_PIE_LDFLAGS) $(TEST_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+endif
 
 TEST_PIE_FILES = pieprobe.tos
 
@@ -1746,8 +1755,16 @@ TEST_PTOS_RELOC_LDFLAGS = -Wl,-pie -Wl,--no-dynamic-linker -Wl,--oformat=elf32-m
 TEST_LIBGCC_DIR := $(shell dirname $$($(CC) $(CPUFLAGS) -print-libgcc-file-name))
 endif
 
+ifdef ARCH_M68K
+# (the driver's default m68k link is a PRG: "-pie not supported")
+relocprobe-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
+	$(CROSS_COMPILE)ld -m m68kelf -pie --no-dynamic-linker -e _start \
+	  $(TEST_STARTUP) obj/reloc_probe.o \
+	  -L$(dir $(LIBCMINI_LIB)) -lcmini -L$(TEST_LIBGCC_DIR) -lgcc -o $@
+else
 relocprobe-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+endif
 
 ifdef ARCH_ARM
 relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
