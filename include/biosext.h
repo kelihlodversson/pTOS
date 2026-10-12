@@ -75,6 +75,12 @@ void halt(void) NORETURN;
 void machine_reset(BOOL cold);
 void machine_poweroff(void);
 
+/* physical memory in pages of 4096 bytes, for Sysconf(): the whole, and what is
+ * free; negative where the machine cannot say.  bios/physmem.c, replaced per
+ * machine in bios/machine/<name>/physmem.c. */
+LONG phys_pages_total(void);
+LONG phys_pages_free(void);
+
 #if CONF_WITH_GEMDOS_SHUTDOWN
 /* the floppy motors off, deselect the drives */
 void flop_shutdown(void);

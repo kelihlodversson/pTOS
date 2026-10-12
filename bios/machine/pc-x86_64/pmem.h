@@ -161,6 +161,11 @@ void x86_64_pmem_test_fail_after(LONG n);
 /* Total free bytes remaining across the whole free list (diagnostics). */
 UQUAD pmem_free_bytes(void);
 
+/* The bytes of RAM the allocator manages once page tracking is on (x86_64_pmem_track()):
+ * what it hands out, plus what it has handed out; not the kernel image, firmware,
+ * holes or the framebuffer.  0 before tracking. */
+UQUAD pmem_managed_bytes(void);
+
 /* The highest physical address (exclusive) x86_64_pmem_init() saw
  * anywhere in the EFI memory map, regardless of type -- the span the
  * physical-memory direct map (pgtable.c's x86_64_build_physmap()) needs

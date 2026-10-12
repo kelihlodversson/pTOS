@@ -58,9 +58,25 @@ Memory
 Information
 -----------
 
-  Sysconf(n)        0x122   -1 = highest n, n = what  not there                           PLAN: _SC_ARG_MAX, _SC_OPEN_MAX,
-                            the system limits are                                          page size, memory; the rest
-                                                                                           EINVFN
+  Sysconf(n)        0x122   -1 = highest n, n = what  not there                           DONE (group 3), where Ssystem() is
+                            the system limits are                                          (ARM, x86-64). The numbers are
+                                                                                           MiNT's (sys/dos.c), the answers the
+                                                                                           kernel's own:
+                                                                                             -1 highest              10
+                                                                                              0 _SC_MEMR_MAX         unlimited (0x7fffffff)
+                                                                                              1 _SC_ARG_MAX          127, the command tail
+                                                                                              2 _SC_OPEN_MAX         75, the file table
+                                                                                              3 _SC_NGROUPS_MAX      0, there are no users
+                                                                                              4 _SC_CHILD_MAX        unlimited
+                                                                                              5 _SC_CLK_TCK          200, the system tick
+                                                                                              6 _SC_PAGE_SIZE        4096
+                                                                                              7 _SC_AVPHYS_PAGES     free pages (x86-64: the
+                                                                                                                     page allocator's); EINVFN
+                                                                                                                     where a machine cannot count
+                                                                                              8, 9 passwd, group     1024 (MiNT's; no such files)
+                                                                                             10 _SC_PHYS_PAGES       the pages of RAM (x86-64: what
+                                                                                                                     the allocator manages)
+                                                                                           any other number: EINVFN
   Ssystem(mode...)  0x154   S_INQUIRE(-1)            S_INQUIRE said E_OK for any mode     DONE: exact, per mode
                             S_OSNAME (0)              'pTOS'                               DONE earlier
                             S_OSXNAME (1)             not there                            DONE: 'EmuT'
@@ -124,7 +140,7 @@ Groups and their PRs
 
   1  Ssystem information modes and S_INQUIRE            DONE (#474)
   2  Mxalloc protection modes, Maccess, Mvalidate        DONE (#476)
-  3  Sysconf                                            PLAN
+  3  Sysconf                                            DONE (#477)
   4  cookies, Ssystem memory modes, S_CNAME..           PLAN
   5  the process calls                                  PLAN
 

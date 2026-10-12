@@ -281,6 +281,7 @@ static UQUAD bad_frees;
 static UQUAD *bm_managed;
 static UQUAD *bm_alloc;
 static UQUAD npages;
+static UQUAD managed_pages;     /* the pages set in bm_managed, counted once as they are */
 
 #define BM_TEST(bm, i)  (((bm)[(i) / 64] >> ((i) % 64)) & 1)
 #define BM_SET(bm, i)   ((bm)[(i) / 64] |= 1ULL << ((i) % 64))
@@ -323,15 +324,19 @@ void x86_64_pmem_track(void)
         bm_managed[i] = 0;
 
     /* the bitmaps' own pages: managed, and allocated for good */
+    managed_pages = 0;
     for (p = phys / X86_64_PAGE_SIZE; p < phys / X86_64_PAGE_SIZE + bm_pages; p++) {
         BM_SET(bm_managed, p);
         BM_SET(bm_alloc, p);
+        managed_pages++;
     }
     /* everything still on the region list: managed and free */
     for (i = 0; i < (UQUAD)region_count; i++)
         for (p = regions[i].base / X86_64_PAGE_SIZE;
-             p < (regions[i].base + regions[i].length) / X86_64_PAGE_SIZE; p++)
+             p < (regions[i].base + regions[i].length) / X86_64_PAGE_SIZE; p++) {
             BM_SET(bm_managed, p);
+            managed_pages++;
+        }
     region_count = 0;
 }
 
@@ -453,6 +458,12 @@ UQUAD x86_64_pmem_bad_frees(void)
 UQUAD pmem_free_bytes(void)
 {
     return total_free;
+}
+
+UQUAD pmem_managed_bytes(void)
+{
+    /* the set of managed pages does not change after x86_64_pmem_track() */
+    return managed_pages * X86_64_PAGE_SIZE;
 }
 
 UQUAD x86_64_pmem_highest_addr(void)
