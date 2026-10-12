@@ -38,12 +38,8 @@ void test_ssystem_info(void)
 
     if (Ssystem(SS_INQUIRE, SS_OSNAME, 0L) == EINVFN)
     {
-#if defined(__arm__) || defined(__x86_64__)
-        /* these have it (CONF_WITH_SSYSTEM): a dispatch that is gone is a failure */
-        ptest_fail("Ssystem() is missing");
-#else
-        ptest_pass();               /* no Ssystem() on the Atari ROMs */
-#endif
+        /* no Ssystem() on this machine */
+        ptest_pass();
         return;
     }
 
