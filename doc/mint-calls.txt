@@ -44,7 +44,8 @@ Information
                             S_OSVERSION (2)           0.0.0-alpha                          DONE earlier
                             S_OSHEADER (3)            not there                            EINVFN: the header's pointers
                                                                                            are 64 bit on x86-64
-                            S_OSBUILDDATE (4)         not there                            DONE: BCD YYYYMMDD of the OS header
+                            S_OSBUILDDATE (4)         not there                            DONE: packed as MiNT's, binary day<<24 |
+                                                                                           month<<16 | year, from the OS header
                             S_OSBUILDTIME (5)         not there                            EINVFN: the header has no time
                             S_OSCOMPILE (6)           CPU of the kernel build              EINVFN: no 68k CPU id to give
                             S_OSFEATURES (7)          bit 0 memory protection              DONE: bit 0 with private spaces

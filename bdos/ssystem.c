@@ -360,14 +360,23 @@ static LONG ssystem_osxname(void)
 extern const OSHEADER os_header;
 
 /*
- * S_OSBUILDDATE - the date the OS was built, as BCD YYYYMMDD (FreeMiNT's
- * MiNT_date); the OS header has it as MMDDYYYY
+ * S_OSBUILDDATE - the date the OS was built, packed the way FreeMiNT's
+ * MiNT_date is: the day in bits 31-24, the month in bits 23-16 and the year in
+ * bits 15-0, all binary.  The OS header has it as BCD MMDDYYYY.
  */
+static LONG bcd2bin(ULONG b)
+{
+    return (LONG)((b >> 4) & 15) * 10 + (LONG)(b & 15);
+}
+
 static LONG ssystem_osbuilddate(void)
 {
     ULONG d = os_header.os_date;
+    LONG month = bcd2bin(d >> 24);
+    LONG day = bcd2bin(d >> 16);
+    LONG year = bcd2bin(d >> 8) * 100 + bcd2bin(d);
 
-    return (LONG)(((d & 0xffffUL) << 16) | (d >> 16));
+    return (day << 24) | (month << 16) | year;
 }
 
 /*

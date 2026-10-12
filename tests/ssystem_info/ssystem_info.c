@@ -25,6 +25,7 @@
 
 #define EINVFN          (-32L)
 #define ERANGE          (-64L)
+#define EIMBA           (-40L)
 
 void test_ssystem_info(void);
 
@@ -59,13 +60,14 @@ void test_ssystem_info(void)
     ptest_assert_msg(rc >= 0 && (rc & 0xff) >= 'a' && (rc & 0xff) <= 'z',
                      "S_OSVERSION has no release letter");
 
-    /* the build date, BCD YYYYMMDD: a plausible year, month and day */
+    /* the build date as FreeMiNT packs it, all binary: day in bits 31-24,
+     * month in bits 23-16, year in bits 15-0 */
     rc = Ssystem(SS_OSBUILDDATE, 0L, 0L);
-    ptest_assert_msg(((rc >> 16) & 0xffff) >= 0x2018 && ((rc >> 16) & 0xffff) <= 0x2099,
+    ptest_assert_msg((rc & 0xffff) >= 2018 && (rc & 0xffff) <= 2099,
                      "S_OSBUILDDATE: the year is not plausible");
-    ptest_assert_msg(((rc >> 8) & 0xff) >= 0x01 && ((rc >> 8) & 0xff) <= 0x12,
+    ptest_assert_msg(((rc >> 16) & 0xff) >= 1 && ((rc >> 16) & 0xff) <= 12,
                      "S_OSBUILDDATE: the month is not plausible");
-    ptest_assert_msg((rc & 0xff) >= 0x01 && (rc & 0xff) <= 0x31,
+    ptest_assert_msg(((rc >> 24) & 0xff) >= 1 && ((rc >> 24) & 0xff) <= 31,
                      "S_OSBUILDDATE: the day is not plausible");
 
     /* features: only the three bits FreeMiNT defines */
@@ -81,6 +83,14 @@ void test_ssystem_info(void)
     rc = Ssystem(SS_KNAME, (long)name, 4L);
     ptest_assert_msg(rc == ERANGE, "S_KNAME with a buffer too small is not refused");
     ptest_assert_msg(name[0] == 'x', "S_KNAME wrote into a buffer too small");
+
+    /* where the pointers of a process are checked (private address spaces,
+     * S_OSFEATURES bit 0) a buffer that is not the caller's is refused */
+    if (Ssystem(SS_OSFEATURES, 0L, 0L) & 1)
+    {
+        rc = Ssystem(SS_KNAME, 0x100L, 16L);
+        ptest_assert_msg(rc == EIMBA, "S_KNAME into an unmapped address is not refused");
+    }
 
     ptest_pass();
 }
