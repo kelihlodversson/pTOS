@@ -1,0 +1,122 @@
+MiNT / MagiC system calls in pTOS (the audit of #454)
+=====================================================
+
+What pTOS has now that it had no way to give before: per-process address
+spaces with page-level permissions (include/procmem.h, ASPACE_PROT_*), lazy
+memory, per-process limits (Psetlimit), checked user pointers
+(bdos/uaccess.c), a kernel-side process record (bdos/kproc.c). Reference:
+FreeMiNT (sys/ssystem.c, sys/dosmem.c, sys/syscall_vectors.c,
+sys/mint/ssystem.h) and https://freemint.github.io/tos.hyp/en/.
+
+The decision column: DONE (with the PR), PLAN (a group of this issue, own PR),
+EINVFN (cannot be honoured, the call says so), OUT (not in this issue).
+Where a call or mode needs the address space, it is only there with
+CONF_WITH_USER_ASPACE; the architecture independent parts carry no x86-64
+names.
+
+Memory
+------
+
+  call              no.     MiNT                      pTOS today                          decision
+  Mxalloc(amt,mode) 0x44    mode word: 0-1 ST/TT RAM  generic path (m68k, and ARM and    PLAN: protection bits on the
+                            preference, bits 4-6      x86-64 for the kernel and for a      private heap path; the ST/TT
+                            protection (private,      process without its own space):      bits stay as they are
+                            global, super, readable)  xmxalloc() masks the mode to 0-3
+                                                      and picks pmd or pmdalt by it (only
+                                                      with alternative RAM). The private
+                                                      heap of a process with an address
+                                                      space (kproc_uheap_alloc) takes no
+                                                      mode at all
+  Maccess(a,sz,m)   0x17d   change the access of a    not there                           PLAN: pages of the caller's
+                            block (read-only, rw,                                          own heap; -1 asks
+                            super-only)
+  Mvalidate(...)    0x141   may a process touch the   not there                           EINVFN: a process cannot reach
+                            block?                                                         another's pages; a check against
+                                                                                           the caller's own mappings maybe
+  Maddalt(a,sz)     0x14    add alternative RAM       there (xmaddalt, with                DONE earlier: EACCDN for a user
+                                                      CONF_WITH_ALT_RAM, on by default)    process with an address space of
+                                                                                           its own, it is the kernel's pool
+  Psetlimit()       0x11f   limits of the process     mode 2 (total memory), 3 (Malloc()   DONE
+                                                      data) and 0x100 (the stack, this
+                                                      port's own); 1 (CPU time) is EINVFN
+  Pexec modes/flags 0x4b    mode 7 sets the program   PF_TTRAMLOAD is read for the         PLAN, group 2: the PF_* protection
+                            flags of a basepage       RAM choice; PF_TTRAMMEM, the        bits of the flags choose private or
+                            (PF_FASTLOAD, TTRAMLOAD,  protection bits and the mode 7      global for the process's own
+                            TTRAMMEM, PROTMODE bits)  flags call are not used            memory; the rest stays
+  Sconfig(mode,f)   0x33    MagiC: read or set        not there                           EINVFN: nothing to configure
+                            kernel configuration                                         (pTOS has no such flags)
+
+Information
+-----------
+
+  Sysconf(n)        0x122   -1 = highest n, n = what  not there                           PLAN: _SC_ARG_MAX, _SC_OPEN_MAX,
+                            the system limits are                                          page size, memory; the rest
+                                                                                           EINVFN
+  Ssystem(mode...)  0x154   S_INQUIRE(-1)            S_INQUIRE said E_OK for any mode     DONE: exact, per mode
+                            S_OSNAME (0)              'pTOS'                               DONE earlier
+                            S_OSXNAME (1)             not there                            DONE: 'EmuT'
+                            S_OSVERSION (2)           0.0.0-alpha                          DONE earlier
+                            S_OSHEADER (3)            not there                            EINVFN: the header's pointers
+                                                                                           are 64 bit on x86-64
+                            S_OSBUILDDATE (4)         not there                            DONE: packed as MiNT's, binary day<<24 |
+                                                                                           month<<16 | year, from the OS header
+                            S_OSBUILDTIME (5)         not there                            EINVFN: the header has no time
+                            S_OSCOMPILE (6)           CPU of the kernel build              EINVFN: no 68k CPU id to give
+                            S_OSFEATURES (7)          bit 0 memory protection              DONE: bit 0 with private spaces
+                            S_GET/S_SETCOOKIE (8, 9)  cookie jar                           DONE earlier (+ S_DELCOOKIE 26)
+                            S_GET/SETxVAL (10-15)     TOS system variables                 DONE earlier (the table)
+                            S_SECLEVEL.. S_CTRLALTDEL MiNT's run-time settings             EINVFN: nothing to set
+                            S_LOADKBD, S_SETEXC       keyboard table, Setexc policy        EINVFN
+                            S_GETBOOTLOG (29)         path of the boot log                 EINVFN: there is none
+                            S_CLOCKUTC (100)          RTC in UTC                           PLAN, needs the RTC drivers' view
+                            S_KNAME (900)             kernel name into a buffer            DONE, differs: 'pTOS' only (MiNT: name
+                                                                                           and version, cut to the buffer); a
+                                                                                           short buffer is ERANGE, nothing written
+                            S_CNAME, S_CVERSION..     compiler name, version, flags        PLAN (cheap: strings from the build)
+                            S_DEBUG*                  MiNT's debug settings                EINVFN
+                            S_CONSOLE_DIM (0xfffe)    pTOS only                            DONE earlier
+                            memory modes              free/total pages, address spaces     PLAN: a pTOS range above 0x8000
+
+Cookies (readable with Ssystem(S_GETCOOKIE))
+--------------------------------------------
+
+  Set today (bios/machine.c fill_cookie_jar): _CPU, _FPU, _VDO, _MCH, _SWI,
+  _SND, _FRB (only with alternative RAM), _AKP, _IDT, _FDC, __NF, XHDI, SCSI, _5MS (as
+  the machine has them), and the ColdFire ones.  _FLK is not set (fill_cookie_jar() has
+  only its comment): PLAN, with the process calls, if what it promises -- file and
+  record locking -- is ever implemented; until then it stays out. On x86-64
+  _CPU holds the raw CPUID signature, not one of the 68k values (0, 10, ...);
+  decide there what a program should see. "MiNT" is not set: it would promise
+  Pfork, signals and the rest. PLAN: look at _CPU/_MCH/_VDO for x32.
+
+Process calls
+-------------
+
+  call                       no.   pTOS today   decision
+  Pgetpid/Pgetppid           0x10b/c   not there   PLAN: from the process record
+  Pgetuid/Pgeteuid/Pgetgid/
+  Pgetegid                   0x10f 0x138 0x114 0x139   PLAN: 0 (there are no users)
+  Pgetauid/Psetauid          0x145/6   not there   PLAN: 0 / accepted
+  Pgetpriority/Psetpriority  0x158/9   not there   PLAN: accepted, scheduling stays cooperative
+  Prusage                    0x11e     not there   PLAN: the page counts the address space knows
+  Pnice, Pumask              0x10a 0x133  not there   PLAN: accepted / a kernel-wide mask
+  Dgetcwd                    0x13b     not there   PLAN: the current directory as a string
+  Dlock                      0x135     not there   EINVFN: there is no other process to lock out
+  Dpathconf, Fcntl           0x124 0x104  not there   OUT: file systems and devices (Dcntl, XFS)
+
+Not in this issue
+-----------------
+
+Pfork/Pwait/signals (real multitasking), MiNT file systems and device drivers
+(Dcntl, XFS), networking.
+
+Groups and their PRs
+--------------------
+
+  1  Ssystem information modes and S_INQUIRE            DONE (#474)
+  2  Mxalloc protection modes, Maccess, Pexec flags     PLAN
+  3  Sysconf                                            PLAN
+  4  cookies, Ssystem memory modes, S_CNAME..           PLAN
+  5  the process calls                                  PLAN
+
+  Sconfig() is EINVFN and needs no group.
