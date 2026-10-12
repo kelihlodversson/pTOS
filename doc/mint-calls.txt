@@ -18,31 +18,40 @@ Memory
 ------
 
   call              no.     MiNT                      pTOS today                          decision
-  Mxalloc(amt,mode) 0x44    mode word: 0-1 ST/TT RAM  generic path (m68k, and ARM and    PLAN: protection bits on the
-                            preference, bits 4-6      x86-64 for the kernel and for a      private heap path; the ST/TT
-                            protection (private,      process without its own space):      bits stay as they are
-                            global, super, readable)  xmxalloc() masks the mode to 0-3
-                                                      and picks pmd or pmdalt by it (only
-                                                      with alternative RAM). The private
-                                                      heap of a process with an address
-                                                      space (kproc_uheap_alloc) takes no
-                                                      mode at all
-  Maccess(a,sz,m)   0x17d   change the access of a    not there                           PLAN: pages of the caller's
-                            block (read-only, rw,                                          own heap; -1 asks
-                            super-only)
-  Mvalidate(...)    0x141   may a process touch the   not there                           EINVFN: a process cannot reach
-                            block?                                                         another's pages; a check against
-                                                                                           the caller's own mappings maybe
+  Mxalloc(amt,mode) 0x44    mode word: bits 0-2 RAM   generic path (m68k, and ARM and    DONE (group 2): on the private heap
+                            kind (ST/TT), bit 3       x86-64 for the kernel and for a      the RAM kind and 0x2000 (zeroed) are
+                            "change the protection    process without its own space):      accepted; private (0x10) is the
+                            of the block" (disabled   xmxalloc() masks the mode to 0-3    default and the only protection kind;
+                            in MiNT), bits 4-7 the    and picks pmd or pmdalt by it (only  global/super/readable/invalid, the
+                            protection of the new     with alternative RAM). The private   change bit and "keep" (0x4000) are
+                            block plus one (0: the    heap of a process with an address    EINVFN: other processes cannot be given
+                            program's default),       space takes the mode as above        access to a private address space, and
+                            0x4000 keep               (kproc_uheap_mode)                   nothing outlives its process
+  Maccess(a,sz,m)   0x17d   a CHECK, not a change:    not there                           DONE (group 2): 0 if the caller may
+                            may the caller use the                                         use the range (mode 0: read and
+                            range (0: read/write,                                          write, 1: read), else EINVAL; pages
+                            1: read)? 0 or EINVAL                                          of its lazy areas count and are not
+                                                                                           backed for the answer
+  Mvalidate(p,a,s,f) 0x141  is the range memory of    not there                           DONE (group 2): pid 0 (the caller):
+                            the process; f gets its                                        0 and *f = 0 (private, one kind of
+                            protection and map                                             RAM), else EINVAL; another pid is
+                                                                                           ESRCH (there are no process ids to
+                                                                                           name one; Pgetpid, group 5, may
+                                                                                           accept the caller's own)
   Maddalt(a,sz)     0x14    add alternative RAM       there (xmaddalt, with                DONE earlier: EACCDN for a user
                                                       CONF_WITH_ALT_RAM, on by default)    process with an address space of
                                                                                            its own, it is the kernel's pool
   Psetlimit()       0x11f   limits of the process     mode 2 (total memory), 3 (Malloc()   DONE
                                                       data) and 0x100 (the stack, this
                                                       port's own); 1 (CPU time) is EINVFN
-  Pexec modes/flags 0x4b    mode 7 sets the program   PF_TTRAMLOAD is read for the         PLAN, group 2: the PF_* protection
-                            flags of a basepage       RAM choice; PF_TTRAMMEM, the        bits of the flags choose private or
-                            (PF_FASTLOAD, TTRAMLOAD,  protection bits and the mode 7      global for the process's own
-                            TTRAMMEM, PROTMODE bits)  flags call are not used            memory; the rest stays
+  Pexec modes/flags 0x4b    mode 7 sets the program   PF_TTRAMLOAD is read for the         DONE as it is (group 2): the protection
+                            flags of a basepage       RAM choice; PF_TTRAMMEM, the        bits of the flags (4-7) are not applied
+                            (PF_FASTLOAD, TTRAMLOAD,  protection bits and the mode 7      to Malloc() or to Mxalloc(): memory is
+                            TTRAMMEM, PROTMODE bits)  flags call are not used            private whatever they say; an ELF
+                                                                                           program has no header flags to carry
+                                                                                           them, and a protection other than
+                                                                                           private would have to be EINVFN, so
+                                                                                           there is nothing to read them for
   Sconfig(mode,f)   0x33    MagiC: read or set        not there                           EINVFN: nothing to configure
                             kernel configuration                                         (pTOS has no such flags)
 
@@ -114,7 +123,7 @@ Groups and their PRs
 --------------------
 
   1  Ssystem information modes and S_INQUIRE            DONE (#474)
-  2  Mxalloc protection modes, Maccess, Pexec flags     PLAN
+  2  Mxalloc protection modes, Maccess, Mvalidate        DONE (#476)
   3  Sysconf                                            PLAN
   4  cookies, Ssystem memory modes, S_CNAME..           PLAN
   5  the process calls                                  PLAN

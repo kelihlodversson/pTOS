@@ -70,6 +70,8 @@ static long xgetver(void);
 #define GEMDOS_MXALLOC  0x44
 #define GEMDOS_MALLOC   0x48
 #define GEMDOS_PSETLIMIT 0x11f
+#define GEMDOS_MVALIDATE 0x141
+#define GEMDOS_MACCESS  0x17d
 #define GEMDOS_MFREE    0x49
 #define GEMDOS_MSHRINK  0x4a
 
@@ -613,8 +615,19 @@ restrt:
         {
         case GEMDOS_PSETLIMIT:
             return kproc_psetlimit(run, (WORD)pw[1], (LONG)pw[2]);
-        case GEMDOS_MALLOC:
+        case GEMDOS_MACCESS:
+            return kproc_maccess(run, (ULONG)pw[1], (LONG)pw[2], (WORD)pw[3]);
+        case GEMDOS_MVALIDATE:
+            return kproc_mvalidate(run, (WORD)pw[1], (ULONG)pw[2], (LONG)pw[3],
+                                   (ULONG)pw[4]);
         case GEMDOS_MXALLOC:
+            /* the protection bits of the mode word: only what this memory
+             * model can give is allocated (kproc_uheap_mode()) */
+            rc = kproc_uheap_mode((WORD)pw[2]);
+            if (rc)
+                return rc;
+            /* fall through: the size is read as Malloc() does */
+        case GEMDOS_MALLOC:
             pw[1] = (LONG)pw[1];
             amount = pw[1];
             if (amount == -1L)
