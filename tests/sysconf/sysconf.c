@@ -38,8 +38,10 @@ void test_sysconf(void)
 
     ptest_assert_msg(last == 10, "Sysconf(-1) is not 10");
 
-    /* every number up to the highest answers, none beyond it does */
-    for (n = 0; n <= last; n++)
+    /* every number up to the highest answers, none beyond it does (the bound is
+     * the known 10, not what Sysconf(-1) said: a wrong answer must not make the
+     * test run for as long as that is) */
+    for (n = 0; n <= 10; n++)
         ptest_assert_msg(Sysconf((int)n) != EINVFN || n == 7,
                          "a number up to Sysconf(-1) is refused");
     ptest_assert_msg(Sysconf(11) == EINVFN, "Sysconf(11) was not refused");
