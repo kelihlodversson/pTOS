@@ -422,6 +422,70 @@ jobs:
         run: |
           echo "::error title=${{ matrix.config }}::the ${{ matrix.config }} configuration failed"
 
+  # The regression suite (tests/, `make test-dir`) run under QEMU.  The virt
+  # machines are built without the AES (the *-cli configurations) so that
+  # they boot to EmuCON, where tools/run-regression-tests.sh types the name
+  # of the suite into the serial console; pc-x86_64 boots to EmuCON anyway
+  # and is typed into through the QEMU monitor.  See tests/readme.md.
+  regression:
+    name: regression (${{ matrix.machine }})
+    needs: configurations
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - machine: virt-arm
+            config: virt-arm-cli
+            arch: arm
+            runner: ubuntu-latest
+            qemu: qemu-system-arm
+            make_args: ''
+          - machine: virt-m68k
+            config: virt-m68k-cli
+            arch: m68k
+            # pinned for the toolchain PPA, like the m68k build jobs
+            runner: ubuntu-22.04
+            qemu: qemu-system-m68k
+            make_args: ''
+          - machine: pc-x86_64
+            config: pc-x86_64
+            arch: x86_64
+            runner: ubuntu-latest
+            qemu: qemu-system-x86 ovmf
+            # native gcc, as in the x86_64 build job above
+            make_args: CROSS_COMPILE=
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ${{ matrix.qemu }}
+
+      - name: Build the kernel and the test programs
+        env:
+          CONFIG: ${{ matrix.config }}
+          MAKE_ARGS: ${{ matrix.make_args }}
+        run: |
+          make "${CONFIG}_defconfig"
+          make $MAKE_ARGS
+          make $MAKE_ARGS test-dir
+
+      - name: Run the regression suite
+        run: tools/run-regression-tests.sh ${{ matrix.machine }}
+
+      - name: Report the failure
+        if: failure()
+        run: |
+          echo "::error title=regression (${{ matrix.machine }})::the regression suite failed on ${{ matrix.machine }}"
+
   release-archives:
     name: Release archives
     runs-on: ubuntu-22.04
@@ -519,7 +583,7 @@ jobs:
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [configurations, m68k, arm, x86_64, release-archives, raspi-sdcard]
+    needs: [configurations, m68k, arm, x86_64, regression, release-archives, raspi-sdcard]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
@@ -531,6 +595,7 @@ jobs:
           echo "m68k configurations:   ${{ needs.m68k.result }}"
           echo "arm configurations:    ${{ needs.arm.result }}"
           echo "x86_64 configurations: ${{ needs.x86_64.result }}"
+          echo "regression suite:      ${{ needs.regression.result }}"
           echo "release archives:      ${{ needs.release-archives.result }}"
           echo "raspi SD card image:   ${{ needs.raspi-sdcard.result }}"
 
@@ -545,6 +610,7 @@ jobs:
           if [ '${{ needs.configurations.outputs.x86_64 }}' != '[]' ]; then
             [ '${{ needs.x86_64.result }}' = success ] || ok=false
           fi
+          [ '${{ needs.regression.result }}' = success ] || ok=false
           [ '${{ needs.release-archives.result }}' = success ] || ok=false
           [ '${{ needs.raspi-sdcard.result }}' = success ] || ok=false
 
