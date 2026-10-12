@@ -18,10 +18,15 @@ Memory
 ------
 
   call              no.     MiNT                      pTOS today                          decision
-  Mxalloc(amt,mode) 0x44    mode word: 0-1 ST/TT RAM  mode ignored (all RAM is one pool)  PLAN: protection bits
-                            preference, bits 4-6      after the first-fit; ST/TT bits are
-                            protection (private,      accepted and ignored
-                            global, super, readable)
+  Mxalloc(amt,mode) 0x44    mode word: 0-1 ST/TT RAM  generic path (m68k, and ARM and    PLAN: protection bits on the
+                            preference, bits 4-6      x86-64 for the kernel and for a      private heap path; the ST/TT
+                            protection (private,      process without its own space):      bits stay as they are
+                            global, super, readable)  xmxalloc() masks the mode to 0-3
+                                                      and picks pmd or pmdalt by it (only
+                                                      with alternative RAM). The private
+                                                      heap of a process with an address
+                                                      space (kproc_uheap_alloc) takes no
+                                                      mode at all
   Maccess(a,sz,m)   0x17d   change the access of a    not there                           PLAN: pages of the caller's
                             block (read-only, rw,                                          own heap; -1 asks
                             super-only)
@@ -31,8 +36,15 @@ Memory
   Maddalt(a,sz)     0x14    add alternative RAM       there (xmaddalt, with                DONE earlier: EACCDN for a user
                                                       CONF_WITH_ALT_RAM, on by default)    process with an address space of
                                                                                            its own, it is the kernel's pool
-  Psetlimit()       0x11f   limits of the process     modes 2 (memory) and 3 (stack)      DONE
-                                                      done, 1 is EINVFN
+  Psetlimit()       0x11f   limits of the process     mode 2 (total memory), 3 (Malloc()   DONE
+                                                      data) and 0x100 (the stack, this
+                                                      port's own); 1 (CPU time) is EINVFN
+  Pexec modes/flags 0x4b    mode 7 sets the program   the flags are read (PF_TTRAMLOAD,   PLAN, group 2: the PF_* protection
+                            flags of a basepage       PF_TTRAMMEM) for the RAM choice;     bits of the flags choose private or
+                            (PF_FASTLOAD, TTRAMLOAD,  the protection bits and mode 7      global for the process's own
+                            TTRAMMEM, PROTMODE bits)  are not used                        memory; the rest stays
+  Sconfig(mode,f)   0x33    MagiC: read or set        not there                           EINVFN: nothing to configure
+                            kernel configuration                                         (pTOS has no such flags)
 
 Information
 -----------
@@ -69,7 +81,10 @@ Cookies (readable with Ssystem(S_GETCOOKIE))
 --------------------------------------------
 
   Set today (bios/machine.c fill_cookie_jar): _CPU, _FPU, _VDO, _MCH, _SWI,
-  _SND, _FRB, _FLK, _AKP, _IDT, _FDC, and the ColdFire ones. On x86-64
+  _SND, _FRB (only with alternative RAM), _AKP, _IDT, _FDC, __NF, XHDI, SCSI, _5MS (as
+  the machine has them), and the ColdFire ones.  _FLK is not set (fill_cookie_jar() has
+  only its comment): PLAN, with the process calls, if what it promises -- file and
+  record locking -- is ever implemented; until then it stays out. On x86-64
   _CPU holds the raw CPUID signature, not one of the 68k values (0, 10, ...);
   decide there what a program should see. "MiNT" is not set: it would promise
   Pfork, signals and the rest. PLAN: look at _CPU/_MCH/_VDO for x32.
@@ -99,7 +114,9 @@ Groups and their PRs
 --------------------
 
   1  Ssystem information modes and S_INQUIRE            DONE (#474)
-  2  Mxalloc protection modes and Maccess               PLAN
+  2  Mxalloc protection modes, Maccess, Pexec flags     PLAN
   3  Sysconf                                            PLAN
   4  cookies, Ssystem memory modes, S_CNAME..           PLAN
   5  the process calls                                  PLAN
+
+  Sconfig() is EINVFN and needs no group.
