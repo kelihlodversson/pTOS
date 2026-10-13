@@ -2,31 +2,20 @@
 MACHINE_VIRT_M68K=y
 
 # QEMU's m68k 'virt' board defaults to an m68040 core (see hw/m68k/virt.c's
-# mc->default_cpu_type), but this targets m68020 instead: QEMU's m68k
-# target unconditionally cpu_abort()s (crashes the whole VM) reading the
-# 68060-only PCR control register instead of raising the guest illegal
-# -instruction exception every other unsupported-register case gets
-# (target/m68k/helper.c: HELPER(m68k_movec_from), case M68K_CR_PCR).
-# bios/arch/m68k/processor.S's CPU detection -- shared, generic code used
-# by every m68k machine -- deliberately probes that exact register to
-# tell 68040 from 68060 apart, protected by its own exception vectors;
-# that protection can't help here because QEMU aborts before the guest
-# ever sees a trap. Targeting m68020 avoids the problem entirely: that
-# same detection routine resolves to "68020" from an earlier, unrelated
-# probe (the CACR cache-control register) before ever reaching the PCR
-# read. No v1 functionality needs 68040 (this port uses no PMMU); revisit
-# if a later feature needs 68040-specific behavior, or once upstream QEMU
-# fixes this (there is no per-target CPUFLAGS default for this board yet,
-# unlike the Raspberry Pi targets, so spell it out explicitly here,
-# following the MACHINE_ARANYM precedent in Kconfig.machine).
+# mc->default_cpu_type).  This targets m68020 code generation, which runs on
+# -cpu m68020 (the invocation documented in readme.md) and -cpu m68040.  The
+# boot-time CPU detection in bios/arch/m68k/processor.S avoids the
+# 68060-only PCR control register on this board, because QEMU's m68k target
+# cpu_abort()s the whole VM on that read instead of raising the guest
+# illegal-instruction exception (target/m68k/helper.c: HELPER(m68k_movec_from),
+# case M68K_CR_PCR), and QEMU's 68060 lacks the PCR, the MMU registers and
+# cpusha/cinva as well.  For -cpu m68060 also set CPUFLAGS="-m68060"
+# (menuconfig): QEMU has no software package for the 64-bit mulu.l/divu.l
+# that -m68020 code generation may use, which the 68060 does not implement.
+# (There is no per-target CPUFLAGS default for this board yet, unlike the
+# Raspberry Pi targets, so it is spelled out here, following the
+# MACHINE_ARANYM precedent in Kconfig.machine.)
 CPUFLAGS="-m68020"
-
-# -cpu m68040 boots this image as is.  For -cpu m68060, set CPUFLAGS="-m68060"
-# (menuconfig): QEMU's 68060 has no software package for the 68060-unimplemented
-# 64-bit mulu.l/divu.l that -m68020 code generation uses.  The boot-time CPU
-# detection avoids the PCR read, which QEMU's 68040/68060 abort the VM on, and
-# the cache/MMU-register instructions QEMU's 68060 lacks are skipped (see
-# bios/arch/m68k/processor.S and include/asmdefs.h).
 
 # QEMU's 'virt' board has no IDE interface; without this, bios/ide.c fails
 # to build because struct IDE is never defined for this machine. Matched
