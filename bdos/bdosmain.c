@@ -203,20 +203,20 @@ typedef struct
         long  (*wpp)(short, void*, void*);
         /*
          * Same mismatch as above, but on the *return* side: xmalloc(),
-         * srealloc() and xmxalloc() all return void* (a block address),
-         * not a scalar long, even though their arguments are plain
-         * longs/words. Under -mfastcall a function's return value comes
-         * back in a0 when its own declared return type is a pointer, but
+         * srealloc(), xmxalloc() and xgetdta() all return a pointer, not
+         * a scalar long, even though their arguments are plain longs/words.
+         * Under -mfastcall a function's return value comes back in a0 when its own declared return type is a pointer, but
          * in d0 when it is a scalar long/int -- unlike the plain stack
          * ABI, where every GEMDOS return value is read from d0 regardless
          * of C type. Calling through a long-returning union member (l,
          * lw, ...) would read the stale d0 left over from whatever ffit()
          * or shrinkit() last did internally, instead of the a0 the callee
-         * actually returned its result in. rl/rlw are the pointer-
-         * returning twins of l/lw, used only for the functions whose real
-         * C signature returns void* -- xtermres, the other LW-shaped
+         * actually returned its result in. rv/rl/rlw are the pointer-
+         * returning twins of v/l/lw, used only for the functions whose real
+         * C signature returns a pointer -- xtermres, the other LW-shaped
          * function, genuinely returns a scalar long and still uses lw.
          */
+        void  *(*rv)(void);
         void  *(*rl)(long);
         void  *(*rlw)(long, short);
     } fncall;
@@ -231,7 +231,7 @@ enum {
     FSHAPE_LW, FSHAPE_LWW, FSHAPE_WLLL,
     FSHAPE_P, FSHAPE_PL, FSHAPE_PW, FSHAPE_PWW,
     FSHAPE_WLP, FSHAPE_WPL, FSHAPE_WPP,
-    FSHAPE_RL, FSHAPE_RLW
+    FSHAPE_RV, FSHAPE_RL, FSHAPE_RLW
 };
 #endif
 
@@ -345,7 +345,7 @@ static const FND funcs[] =
 
     { NI, 0, 0 },
 
-    { F(xgetdta),  0, W_N(0,V) },      /* 0x2F */
+    { F(xgetdta),  0, W_N(0,RV) },      /* 0x2F */
     { F(xgetver),  0, W_N(0,V) },      /* 0x30 */
     { F(xtermres), 0, W_N(2,LW) },     /* 0x31 */
 
@@ -955,6 +955,10 @@ restrt:
 
         case FSHAPE_WPP:
             rc = (*f->fncall.wpp)(pw[1],(void*)PWLONG(2),(void*)PWLONG(4));
+            break;
+
+        case FSHAPE_RV:
+            rc = (long)(*f->fncall.rv)();
             break;
 
         case FSHAPE_RL:

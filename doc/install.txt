@@ -232,6 +232,12 @@ when that code probes a 68060-only register while telling 68040 and
 68060 apart. m68020 detection resolves earlier in that same routine, so
 it never reaches the register QEMU mishandles.
 
+virt-m68k-cli_defconfig boots to EmuCON instead of the desktop, and
+virt-m68k-cli-fastcall_defconfig is the same with CONF_WITH_MFASTCALL set
+(it needs the -mfastcall toolchain, see above): the way to run the
+regression suite under the register-argument calling convention without
+an Atari emulator.
+
 
 Countries and languages
 =======================
