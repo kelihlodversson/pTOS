@@ -22,6 +22,13 @@
  * on what the interrupted code was doing with d0. Set d0 to the real
  * pic_index (after saving the caller's own d0 alongside d1/a0-a1, so it
  * comes back unchanged on return) instead of pushing it.
+ *
+ * d2 is saved as well: -mfastcall makes d0-d2/a0-a1 all call-clobbered,
+ * so a C handler may trash d2, which the interrupted code (e.g. a
+ * compiled screen-clearing loop) can be keeping live.  Saving only
+ * d0-d1/a0-a1 corrupted it and ran such loops past the end of the
+ * framebuffer.  The classic ABI only clobbers d0-d1/a0-a1; saving d2
+ * too is harmless there.
  */
 
 #include "asmdefs.h"
@@ -35,7 +42,7 @@
         .text
 
 C_SYM(goldfish_pic_isr1):
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 #if CONF_WITH_MFASTCALL
         moveq   #1,d0
         jsr     C_SYM(goldfish_pic_dispatch)
@@ -44,11 +51,11 @@ C_SYM(goldfish_pic_isr1):
         jsr     C_SYM(goldfish_pic_dispatch)
         addq.l  #4,sp
 #endif
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
         rte
 
 C_SYM(goldfish_pic_isr2):
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 #if CONF_WITH_MFASTCALL
         moveq   #2,d0
         jsr     C_SYM(goldfish_pic_dispatch)
@@ -57,11 +64,11 @@ C_SYM(goldfish_pic_isr2):
         jsr     C_SYM(goldfish_pic_dispatch)
         addq.l  #4,sp
 #endif
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
         rte
 
 C_SYM(goldfish_pic_isr3):
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 #if CONF_WITH_MFASTCALL
         moveq   #3,d0
         jsr     C_SYM(goldfish_pic_dispatch)
@@ -70,11 +77,11 @@ C_SYM(goldfish_pic_isr3):
         jsr     C_SYM(goldfish_pic_dispatch)
         addq.l  #4,sp
 #endif
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
         rte
 
 C_SYM(goldfish_pic_isr4):
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 #if CONF_WITH_MFASTCALL
         moveq   #4,d0
         jsr     C_SYM(goldfish_pic_dispatch)
@@ -83,5 +90,5 @@ C_SYM(goldfish_pic_isr4):
         jsr     C_SYM(goldfish_pic_dispatch)
         addq.l  #4,sp
 #endif
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
         rte

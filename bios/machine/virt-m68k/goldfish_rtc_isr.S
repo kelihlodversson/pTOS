@@ -21,21 +21,21 @@
         .text
 
 C_SYM(goldfish_rtc_isr):
-        movem.l d0-d1/a0-a1,-(sp)      // save the registers goldfish_rtc_service() clobbers
+        movem.l d0-d2/a0-a1,-(sp)      // save the registers goldfish_rtc_service() clobbers (d2 too under -mfastcall)
         jsr     C_SYM(goldfish_rtc_service)  // ack + re-arm the device (bios/machine/virt-m68k/goldfish_rtc.c)
 
         // vector_5ms is set to int_timerc (bios/arch/m68k/vectors.S) by
         // the shared bios/mfp.c: init_system_timer(), which runs later in
         // bios_init()'s sequence than goldfish_rtc_init() -- so the first
         // several ticks can legitimately arrive with it still NULL. Test
-        // the sysvar directly (no register needed) so the saved d0-d1/a0-a1
+        // the sysvar directly (no register needed) so the saved d0-d2/a0-a1
         // stay untouched on the no-tick path below.
         tst.l   C_SYM(vector_5ms)
         jeq     no_tick
 
         // Tail-jump, not jsr/rts: int_timerc ends with its own RTE, which
         // must pop a genuine exception frame. It can't be the *original*
-        // hardware frame directly underneath, though: d0-d1/a0-a1 are still
+        // hardware frame directly underneath, though: d0-d2/a0-a1 are still
         // our saved copies at this point, not restored yet, and using a0 to
         // hold the jump target (below) means we cannot restore it first
         // either -- there is no register left to hold the target once every
@@ -63,9 +63,9 @@ rtc_nolong:
         jmp     (a0)
 
 restore:
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
         rte
 
 no_tick:
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
         rte
