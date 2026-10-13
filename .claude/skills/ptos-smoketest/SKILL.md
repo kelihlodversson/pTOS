@@ -21,7 +21,7 @@ the pTOS tree). Relevant outputs:
 | `rpi1_defconfig` | qemu-system-arm | `kernel.img` | `-M raspi1ap` (video + serial) |
 | `rpi2_defconfig` | qemu-system-arm | `kernel7.img` | `-M raspi2b` (video + serial) |
 | `virt-arm_defconfig` | qemu-system-arm | `virt-arm.elf` | `-M virt,highmem=off -cpu cortex-a7` (headless) |
-| `virt-m68k_defconfig` | qemu-system-m68k | `virt-m68k.elf` | `-M virt -cpu m68020` (headless) |
+| `virt-m68k_defconfig` | qemu-system-m68k | `virt-m68k.elf` | `-M virt -cpu m68020` (or `m68040`; `m68060` needs `CPUFLAGS="-m68060"`) (headless) |
 | `virt-arm-cli_defconfig` | qemu-system-arm | `virt-arm.elf` | same as `virt-arm_defconfig`, but boots to EmuCON, not the desktop |
 | `virt-m68k-cli_defconfig` | qemu-system-m68k | `virt-m68k.elf` | same as `virt-m68k_defconfig`, but boots to EmuCON, not the desktop |
 | `test-hd` (any config) | qemu-system-arm | `test-hd.img` (SD card) | `-drive file=test-hd.img,format=raw,if=sd` with any `-bios`/`-kernel` |
@@ -291,7 +291,10 @@ qemu-system-arm -M raspi2b -bios kernel7.img -device usb-mouse -device usb-kbd \
 make virt-arm_defconfig && make
 qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -serial stdio
 
-# virt-m68k (headless) — MUST use -cpu m68020: the 68040 CACR probe hits a fatal QEMU bug
+# virt-m68k (headless) — -cpu m68020 and -cpu m68040 work as built.  -cpu m68060
+# needs the kernel built with CPUFLAGS="-m68060" (menuconfig): QEMU's 68060 has no
+# software package for the 64-bit mulu.l/divu.l that -m68020 code may use.  The
+# boot-time CPU detection no longer reads the PCR (QEMU aborts the VM on it).
 make virt-m68k_defconfig && make
 qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_errors -serial stdio
 
@@ -609,7 +612,7 @@ cat /tmp/qemu.log
 | Verifying boot with Hatari breakpoints | Use AVI frame analysis or `--trace` |
 | Measuring wall-clock under `--parse` | `--parse` is full-speed; only `--run-vbls` is paced |
 | Falcon boot looks hung | 31 s `ide_init` wait — attach `--ide-master`, use STE, or drop `CONF_WITH_IDE` |
-| `qemu-system-m68k` with default CPU | always `-cpu m68020` |
+| `qemu-system-m68k` with default CPU | the board default is m68040, which works; the documented invocation uses `-cpu m68020`; for `-cpu m68060` rebuild with `CPUFLAGS="-m68060"` |
 | `-M virt` without `highmem=off` | use `-M virt,highmem=off` — no >4 GiB access support |
 | Expecting video from virt-arm/virt-m68k | headless; check serial + guest_errors only |
 | Trying `qemu-system-aarch64 -M raspi3b -bios kernel7.img` for a 32-bit pTOS build | `raspi3b`/`raspi4b` are AArch64-only in QEMU, no override exists; use `raspi2b` under `qemu-system-arm` instead |

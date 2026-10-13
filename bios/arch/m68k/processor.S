@@ -104,8 +104,24 @@ _detect_cpu:
 // 68040 or 68060 (or Apollo 68080)
 
 x040:   moveq   #40,d0          // assume 68040
+#ifdef MACHINE_VIRT_M68K
+// QEMU aborts the whole VM ("Unimplemented control register read 0x808")
+// when a 68040 reads the 68060-only PCR, instead of raising an exception.
+// So tell the two apart without touching the PCR: the 68060 CACR has
+// writable bits (e.g. ESB, bit 29) that are reserved on the 68040.
+        MOVEC_CACR_D1           // d1 = get cache control register
+        move.l  d1,d2           // hold a copy for later
+        bset    #29,d1          // 68060: enable store buffer
+        MOVEC_D1_CACR
+        MOVEC_CACR_D1           //   & read it back again to check
+        MOVEC_D2_CACR           // restore original CACR
+        btst    #29,d1          // stuck? then it is a 68060
+        jeq     exit
+        moveq   #60,d0
+#else
         MOVEC_PCR_D1            // attempt to access the PCR
         moveq   #60,d0          // no fault, assume 68060
+#endif
 
 #if CONF_WITH_APOLLO_68080
         ADDIWL_0_A0             // check for addiw.l instruction
@@ -161,14 +177,18 @@ exit:
  */
 _detect_fpu:
 #if CONF_WITH_ADVANCED_CPU
-        movem.l d2/a2,-(sp)
+        movem.l d2/a2-a3,-(sp)
         move.l  sp,a0           // save the ssp
         moveq   #0,d0           // assume no FPU
         move.l  (0x2c).w,a1     // save the Line-F vector
         move.l  (0x08).w,a2
+        move.l  (0x10).w,a3     // QEMU's 'virt' reports FPU opcodes as illegal
         move.l  #fexit,d1
         move.l  d1,(0x2c).w     // install temporary Line-F
         move.l  d1,(0x08).w
+#ifdef MACHINE_VIRT_M68K
+        move.l  d1,(0x10).w
+#endif
         nop                     // flush pipelines
 
         move.l  C_SYM(mcpu),d1        // check if 68000 or 68010
@@ -182,6 +202,7 @@ _detect_fpu:
         cmpi.w  #60,d1          // enable FPU on 68060 before the check
         jmi     no60
 
+#ifndef MACHINE_VIRT_M68K       // QEMU has no PCR and aborts on access
         MOVEC_PCR_D2            // get revision number etc
         swap    d2
         cmp.w   #0x0431,d2      // "broken" 68LC/EC060
@@ -189,6 +210,7 @@ _detect_fpu:
         swap    d2
         bclr    #0x01,d2
         MOVEC_D2_PCR            // clear DFP (the disable-FPU bit)
+#endif
 
 no60:   clr.l   -(sp)           // push NULL frame
         clr.l   -(sp)           // extra longs for 68060
@@ -217,10 +239,11 @@ sfp:    tst.w   0xfffffa40.w    // CIR
 
 fexit:  move.l  a1,(0x2c).w     // restore Line-F
         move.l  a2,(0x08).w
+        move.l  a3,(0x10).w
         move.l  a0,sp
         nop                     // flush pipelines
         swap    d0
-        movem.l (sp)+,d2/a2
+        movem.l (sp)+,d2/a2-a3
 
 #else
         // handle only 68000 (with possible SFP004)
@@ -336,6 +359,12 @@ m68060:
 //   enable the caches (on the 68060, we also enable the branch cache)
 //
 
+#ifdef MACHINE_VIRT_M68K
+        // QEMU's 68060 implements neither the TC nor the TTRs (the movec
+        // raises an illegal instruction exception): leave them alone.
+        cmpi.b  #60,C_SYM(mcpu)+3
+        jeq     ttr_done
+#endif
         moveq   #0,d0
         MOVEC_D0_TC             // disable translation
 
@@ -355,6 +384,7 @@ m68060:
         move.l  #0x00ff8000,d0
         MOVEC_D0_DTT1           // and DTTR1
 
+ttr_done:
         nop
         CINVA_BC                // invalidate the caches
         nop
