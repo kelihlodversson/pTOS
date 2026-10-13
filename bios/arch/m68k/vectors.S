@@ -615,6 +615,12 @@ timerc_end:
 
 // ==== MFP USART interrupt handlers ============================================
 
+// Every asynchronous handler below that calls into C saves d0-d2/a0-a1, not
+// just the classic ABI's scratch set d0-d1/a0-a1: -mfastcall also makes d2
+// call-clobbered, and the interrupted code may be keeping a live value in it.
+// The ColdFire variants are never built with -mfastcall and keep their
+// original d0-d1/a0-a1 frame.
+
         .globl C_SYM(mfp_rs232_rx_interrupt)
         .globl C_SYM(mfp_rs232_tx_interrupt)
 
@@ -623,7 +629,7 @@ C_SYM(mfp_rs232_rx_interrupt):
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
 #else
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 #endif
 
         jbsr    C_SYM(mfp_rs232_rx_interrupt_handler)
@@ -631,7 +637,7 @@ C_SYM(mfp_rs232_rx_interrupt):
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
 #else
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
 #endif
         rte
 
@@ -640,7 +646,7 @@ C_SYM(mfp_rs232_tx_interrupt):
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
 #else
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 #endif
 
         jbsr    C_SYM(mfp_rs232_tx_interrupt_handler)
@@ -649,7 +655,7 @@ C_SYM(mfp_rs232_tx_interrupt):
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
 #else
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
 #endif
         rte
 
@@ -667,7 +673,7 @@ C_SYM(mfp_tt_rx_interrupt):
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
 #else
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 #endif
 
         jbsr    C_SYM(mfp_tt_rx_interrupt_handler)
@@ -675,7 +681,7 @@ C_SYM(mfp_tt_rx_interrupt):
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
 #else
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
 #endif
         rte
 
@@ -684,7 +690,7 @@ C_SYM(mfp_tt_tx_interrupt):
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
 #else
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 #endif
 
         jbsr    C_SYM(mfp_tt_tx_interrupt_handler)
@@ -693,7 +699,7 @@ C_SYM(mfp_tt_tx_interrupt):
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
 #else
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
 #endif
         rte
 
@@ -715,7 +721,7 @@ C_SYM(scca_rx_interrupt):
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
 #else
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 #endif
 
         /*
@@ -738,7 +744,7 @@ C_SYM(scca_rx_interrupt):
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
 #else
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
 #endif
         rte
 
@@ -747,7 +753,7 @@ C_SYM(scca_tx_interrupt):
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
 #else
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 #endif
 
 #if CONF_WITH_MFASTCALL
@@ -763,7 +769,7 @@ C_SYM(scca_tx_interrupt):
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
 #else
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
 #endif
         rte
 
@@ -772,7 +778,7 @@ C_SYM(scca_es_interrupt):
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
 #else
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 #endif
 
 #if CONF_WITH_MFASTCALL
@@ -788,7 +794,7 @@ C_SYM(scca_es_interrupt):
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
 #else
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
 #endif
         rte
 
@@ -797,7 +803,7 @@ C_SYM(sccb_rx_interrupt):
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
 #else
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 #endif
 
 #if CONF_WITH_MFASTCALL
@@ -813,7 +819,7 @@ C_SYM(sccb_rx_interrupt):
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
 #else
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
 #endif
         rte
 
@@ -822,7 +828,7 @@ C_SYM(sccb_tx_interrupt):
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
 #else
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 #endif
 
 #if CONF_WITH_MFASTCALL
@@ -838,7 +844,7 @@ C_SYM(sccb_tx_interrupt):
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
 #else
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
 #endif
         rte
 
@@ -847,7 +853,7 @@ C_SYM(sccb_es_interrupt):
         lea     -16(sp),sp
         movem.l d0-d1/a0-a1,(sp)
 #else
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 #endif
 
 #if CONF_WITH_MFASTCALL
@@ -863,7 +869,7 @@ C_SYM(sccb_es_interrupt):
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
 #else
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
 #endif
         rte
 
