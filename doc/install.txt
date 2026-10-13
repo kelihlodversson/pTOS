@@ -224,13 +224,14 @@ Run it with:
 
 Both flags after -M virt matter, not just the -kernel one: -m 128 is
 required because the image hardcodes 128 MiB as the top of RAM (there is
-no FDT parsing yet to size it from the command line), and -cpu m68020 is
-required instead of the board's own m68040 default because this specific
-QEMU version fatally aborts the whole VM -- instead of raising the guest
-CPU exception EmuTOS's shared CPU-detection code expects and handles --
-when that code probes a 68060-only register while telling 68040 and
-68060 apart. m68020 detection resolves earlier in that same routine, so
-it never reaches the register QEMU mishandles.
+no FDT parsing yet to size it from the command line).  -cpu m68020 and
+-cpu m68040 both work with the image as built.  -cpu m68060 needs the
+kernel built with CPUFLAGS="-m68060" (menuconfig), because QEMU has no
+software package for the 64-bit mulu.l/divu.l that -m68020 code
+generation may use.  The boot-time CPU detection does not read the
+68060-only PCR on this board, since QEMU fatally aborts the whole VM on
+that read instead of raising a guest exception, and the cache and MMU
+register instructions QEMU's 68060 lacks are skipped.
 
 
 Countries and languages
