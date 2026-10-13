@@ -127,11 +127,16 @@ clear_bss_done:
         // anything but WARM_MAGIC in _warm_magic is a first boot.  Without
         // this, meminit_flags stays 0 and every boot looks like a warm boot
         // (no welcome screen, kept bootdev, ...).
+#if CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
         move.l  #0x5741524D,d0          // WARM_MAGIC
         cmp.l   C_SYM(warm_magic).w,d0
         jeq     not_first_boot
         move.b  #MEMINIT_FIRST_BOOT,C_SYM(meminit_flags)
         move.l  d0,C_SYM(warm_magic).w  // next boot will not be a first boot
 not_first_boot:
+#else
+        // No warm_magic to tell the boots apart: every boot is a first boot
+        move.b  #MEMINIT_FIRST_BOOT,C_SYM(meminit_flags)
+#endif
 
         jmp     C_SYM(biosmain)
