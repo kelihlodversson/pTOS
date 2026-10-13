@@ -48,6 +48,9 @@ long check_read_byte(long);
 /* */
 LONG default_etv_critic(WORD err,WORD dev);
 void int_illegal(void);
+#ifdef MACHINE_VIRT_M68K
+void int_illegal_linef(void);
+#endif
 void int_priv(void);
 void int_unimpint(void);
 

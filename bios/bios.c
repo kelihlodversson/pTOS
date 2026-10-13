@@ -323,6 +323,11 @@ static void vecs_init(void)
          * privilege violation. This instruction must be emulated for
          * compatibility with 68000 processors. */
         VEC_PRIVLGE = int_priv;
+#ifdef MACHINE_VIRT_M68K
+        /* QEMU raises "illegal instruction" for FPU opcodes on a 68020
+         * without FPU, instead of line-F. */
+        VEC_ILLEGAL = int_illegal_linef;
+#endif
     } else {
         /* On 68000, "move from ccr" is unsupported and causes an illegal
          * instruction exception. This instruction must be emulated for

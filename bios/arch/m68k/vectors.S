@@ -30,6 +30,9 @@
 #endif
         .globl  C_SYM(int_timerc)
         .globl  C_SYM(int_illegal)
+#ifdef MACHINE_VIRT_M68K
+        .globl  C_SYM(int_illegal_linef)
+#endif
         .globl  C_SYM(int_priv)
 #if CONF_WITH_ADVANCED_CPU
         .globl  C_SYM(int_unimpint)
@@ -939,6 +942,36 @@ C_SYM(int_illegal):
 ii_back:
         movem.l (sp)+,d0/a0
         jra     illg_vec                // go directly to our panic handler
+
+#ifdef MACHINE_VIRT_M68K
+/*
+ * _int_illegal_linef - illegal instruction handler for QEMU's m68k 'virt'
+ *
+ * With a 68020 and no FPU, QEMU delivers FPU/coprocessor opcodes (0xFxxx)
+ * as an illegal instruction exception instead of the line-F exception a
+ * real 68020 raises.  Anything that detects or emulates an FPU through the
+ * line-F vector would then end up in the panic handler.  Forward such
+ * opcodes to the line-F vector; everything else is a genuine illegal
+ * instruction.
+ */
+C_SYM(int_illegal_linef):
+        movem.l d0/a0,-(sp)             // saving d0 and a0 while we test
+        movea.l 10(sp),a0               // the offending address
+        move.w  (a0),d0                 // the offending instruction
+        andi.w  #0xf000,d0
+        cmpi.w  #0xf000,d0
+        jne     iil_back                // not a line-F opcode
+
+        movem.l (sp)+,d0/a0
+        andi.w  #0xf000,6(sp)           // make the frame look like a
+        ori.w   #0x002c,6(sp)           // line-F exception (vector 11)
+        move.l  (0x2c).w,-(sp)          // continue in the line-F handler
+        rts
+
+iil_back:
+        movem.l (sp)+,d0/a0
+        jra     illg_vec                // go directly to our panic handler
+#endif
 
 /*
  * int_priv - privileged instruction handler
