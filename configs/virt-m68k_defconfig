@@ -21,6 +21,13 @@ MACHINE_VIRT_M68K=y
 # following the MACHINE_ARANYM precedent in Kconfig.machine).
 CPUFLAGS="-m68020"
 
+# -cpu m68040 boots this image as is.  For -cpu m68060, set CPUFLAGS="-m68060"
+# (menuconfig): QEMU's 68060 has no software package for the 68060-unimplemented
+# 64-bit mulu.l/divu.l that -m68020 code generation uses.  The boot-time CPU
+# detection avoids the PCR read, which QEMU's 68040/68060 abort the VM on, and
+# the cache/MMU-register instructions QEMU's 68060 lacks are skipped (see
+# bios/arch/m68k/processor.S and include/asmdefs.h).
+
 # QEMU's 'virt' board has no IDE interface; without this, bios/ide.c fails
 # to build because struct IDE is never defined for this machine. Matched
 # to the same override already used by MACHINE_RPI and MACHINE_VIRT_ARM.
