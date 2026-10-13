@@ -238,6 +238,10 @@ virt-m68k-cli-fastcall_defconfig is the same with CONF_WITH_MFASTCALL set
 regression suite under the register-argument calling convention without
 an Atari emulator.
 
+virt-m68k-fastcall_defconfig is virt-m68k_defconfig (AES/VDI/desktop)
+built the same way, for running the GEM desktop and benchmarks under
+-mfastcall.
+
 
 Countries and languages
 =======================
