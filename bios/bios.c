@@ -1600,7 +1600,9 @@ static LONG wrap_bios_b(WORD *pw) { return bios_b(pw[0]); }
  * bios_vecs - the table of bios command vectors.
  */
 
-#if DBGBIOS
+#if DBGBIOS && defined(__arm__)
+#define VEC(wrapper, direct) (PFLONG) wrapper   /* no wrap_*() shims on ARM */
+#elif DBGBIOS
 #define VEC(wrapper, direct) (PFLONG) wrap_##wrapper
 #elif defined(__arm__)
 #define VEC(wrapper, direct) (PFLONG) direct
