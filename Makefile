@@ -111,12 +111,6 @@ MACHINE-$(MACHINE_VIRT_ARM) += virt-arm
 MACHINE-$(MACHINE_VIRT_M68K) += virt-m68k
 MACHINE = $(MACHINE-y)
 
-ifdef CONFIGURED
-ifeq (,$(ARCH))
-$(error No architecture selected.  Run "make <name>_defconfig" or "make menuconfig")
-endif
-endif
-
 #
 # Directories holding source code
 #
@@ -1338,9 +1332,13 @@ $(LIBCMINI_STAMP): FORCE | obj $(LIBCMINI_DIR)/Makefile
 	    printf '%s' "$$want" > $@; \
 	fi
 
+# Only the one library and the one startup object the test programs link are
+# requested, not libcmini's "libs startups": those build every multilib
+# variant the toolchain offers (68020-60, ColdFire, -mshort, ... on m68k), none
+# of which the test programs use.
 $(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj $(LIBCMINI_DIR)/Makefile
 	@echo '  LIBCMINI'
-	@$(LIBCMINI_MAKE) libs startups
+	@$(LIBCMINI_MAKE) $(LIBCMINI_LIB) $(LIBCMINI_CRT0)
 
 $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 
@@ -1473,6 +1471,19 @@ test-hd.img: runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_PTOS_RELOC_
 .PHONY: test-hd
 test-hd: test-hd.img
 
+ifdef ARCH_ARM
+# A desk accessory is not part of the regression image: load this probe
+# explicitly when validating the ARM accessory entry path.
+obj/arm_acc_probe.o: tests/arm_acc_probe.c $(AUTOCONF_H) | obj
+	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+ACCPROBE.ACC: $(TEST_STARTUP) obj/arm_acc_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/arm_acc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+
+.PHONY: arm-acc-probe
+arm-acc-probe: ACCPROBE.ACC
+endif
+
 else # !CONF_WITH_REGRESSION_TESTS
 
 .PHONY: test-hd
@@ -1488,8 +1499,9 @@ endif
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
 TOCLEAN += tests/run_tests.c runtests.tos pieprobe.tos \
-           relocprobe-unpacked.tos PTRELOC.TOS \
-           relocprobe2-unpacked.tos PTRELOC2.TOS test-hd.img
+            relocprobe-unpacked.tos PTRELOC.TOS \
+            relocprobe2-unpacked.tos PTRELOC2.TOS \
+            test-hd.img ACCPROBE.ACC
 TOCLEAN_POST += libcmini-clean
 
 .PHONY: libcmini-clean

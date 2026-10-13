@@ -212,7 +212,9 @@ C_SYM(tikcod):
         pop     {r0-r5,lr}
         pop_privstack
 
-        b        C_SYM(tiksav)    // Chain to vector stored in _tiksav
+        ldr     ip, =C_SYM(tiksav)
+        ldr     ip, [ip]
+        bx      ip                // Chain to vector stored in _tiksav
 
 
 .bss
