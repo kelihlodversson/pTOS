@@ -1427,9 +1427,14 @@ bx_sp_ok:
          * d3-d7/a3-a7 register-save set above), and put the argument
          * pointer in a0.
          */
+        move.l  a2,-(sp)        // keep the caller's a2: GEMDOS's Pterm resumes
+                                // the parent through a context that does not
+                                // restore a2, so leaving the handler address
+                                // in it crashes the parent (sh_main's jsr (a2))
         move.l  (a0),a2         // a2 = the procedure's address
-        move.l  sp,a0           // a0 = pointer to the raw argument words
+        lea     4(sp),a0        // a0 = pointer to the raw argument words
         jsr     (a2)            // go do it and then come back
+        move.l  (sp)+,a2
 #else
         move.l  (a0),a0         // get the procedures address
         /*

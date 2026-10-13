@@ -537,3 +537,217 @@ C_SYM(tick_int_etv_entry):
         addq.l  #4,sp
         rts
 #endif
+
+/*
+ * <name>_etv_entry - classic-ABI entry points of the default handlers of the
+ * Bconout vectors (bconout_vec[], the Bconmap tables) and of hdv_rw, hdv_bpb and
+ * hdv_mediach; see bios/classicvec.h.
+ *
+ * The vectors are called with TOS's classic ABI (protect_ww() and its relatives
+ * above, and any third-party driver chaining to the handler it replaced): the
+ * arguments packed after the return address.  The handlers are ordinary C
+ * functions in this kernel's ABI.  Each entry point hands the address of the
+ * classic frame and the handler to a C function (bios/classicvec.c) that reads
+ * the arguments out of the frame and calls the handler: two pointers, in a0/a1
+ * with -mfastcall and on the stack otherwise, the result in d0 either way.
+ * d0/d1/a0/a1 are scratch in the classic convention too; d2/a2 are the caller's
+ * (protect_*() saves them).
+ */
+
+        .globl   C_SYM(bconout0_etv_entry)
+        .extern  C_SYM(bconout0)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconout0_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconout0),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+
+        .globl   C_SYM(bconout1_etv_entry)
+        .extern  C_SYM(bconout1)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconout1_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconout1),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+
+        .globl   C_SYM(bconout2_etv_entry)
+        .extern  C_SYM(bconout2)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconout2_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconout2),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+
+        .globl   C_SYM(bconout3_etv_entry)
+        .extern  C_SYM(bconout3)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconout3_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconout3),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+
+        .globl   C_SYM(bconout4_etv_entry)
+        .extern  C_SYM(bconout4)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconout4_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconout4),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+
+        .globl   C_SYM(bconout5_etv_entry)
+        .extern  C_SYM(bconout5)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconout5_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconout5),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+
+#if CONF_WITH_SCC
+        .globl   C_SYM(bconoutA_etv_entry)
+        .extern  C_SYM(bconoutA)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconoutA_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconoutA),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+#endif /* CONF_WITH_SCC */
+
+#if CONF_WITH_SCC
+        .globl   C_SYM(bconoutB_etv_entry)
+        .extern  C_SYM(bconoutB)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconoutB_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconoutB),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+#endif /* CONF_WITH_SCC */
+
+#if CONF_WITH_TT_MFP
+        .globl   C_SYM(bconoutTT_etv_entry)
+        .extern  C_SYM(bconoutTT)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconoutTT_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconoutTT),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+#endif /* CONF_WITH_TT_MFP */
+
+        .globl   C_SYM(blkdev_rwabs_etv_entry)
+        .extern  C_SYM(blkdev_rwabs)
+        .extern  C_SYM(classic_rwabs)
+C_SYM(blkdev_rwabs_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(blkdev_rwabs),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_rwabs)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_rwabs)
+        addq.l   #8,sp
+        rts
+#endif
+
+        .globl   C_SYM(blkdev_getbpb_etv_entry)
+        .extern  C_SYM(blkdev_getbpb)
+        .extern  C_SYM(classic_w)
+C_SYM(blkdev_getbpb_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(blkdev_getbpb),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_w)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_w)
+        addq.l   #8,sp
+        rts
+#endif
+
+        .globl   C_SYM(blkdev_mediach_etv_entry)
+        .extern  C_SYM(blkdev_mediach)
+        .extern  C_SYM(classic_w)
+C_SYM(blkdev_mediach_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(blkdev_mediach),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_w)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_w)
+        addq.l   #8,sp
+        rts
+#endif

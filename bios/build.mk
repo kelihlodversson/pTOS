@@ -22,6 +22,9 @@ obj-y += memory.o processor.o intmask.o vectors.o bios.o xbios.o acsi.o biosmem.
 	 parport.o screen.o serport.o sound.o videl.o vt52.o xhdi.o delay.o \
 	 sd.o memory2.o bootparams.o bootargs.o scsi.o
 
+# The classic-ABI halves of the default BIOS vector entry points (m68k only).
+obj-y += classicvec.o
+
 # ui_mupb's address must be greater than the exec_os contents (see the
 # comment in endrom.c), so this must stay last in bios/.
 obj-y += endrom.o

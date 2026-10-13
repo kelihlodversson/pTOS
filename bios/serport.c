@@ -13,6 +13,7 @@
  */
 
 #include "emutos.h"
+#include "classicvec.h"
 #include "asm.h"
 #include "chardev.h"
 #include "cookie.h"
@@ -69,7 +70,7 @@ static void init_bconmap(void);
 static LONG bconstatA(void);
 static LONG bconinA(void);
 static LONG bcostatA(void);
-static LONG bconoutA(WORD,WORD);
+LONG bconoutA(WORD,WORD);        /* (global: the classic entry point calls it) */
 static ULONG rsconfA(WORD baud, WORD ctrl, WORD ucr, WORD rsr, WORD tsr, WORD scr);
 
 static LONG bconstatB(void);
@@ -82,7 +83,7 @@ static ULONG rsconfB(WORD baud, WORD ctrl, WORD ucr, WORD rsr, WORD tsr, WORD sc
 static LONG bconstatTT(void);
 static LONG bconinTT(void);
 static LONG bcostatTT(void);
-static LONG bconoutTT(WORD,WORD);
+LONG bconoutTT(WORD,WORD);       /* (the same) */
 static ULONG rsconfTT(WORD baud, WORD ctrl, WORD ucr, WORD rsr, WORD tsr, WORD scr);
 #endif  /* CONF_WITH_TT_MFP */
 
@@ -113,7 +114,7 @@ static EXT_IOREC iorec_dummy;
 static const MAPTAB maptable_dummy =
     { char_dummy, char_dummy, char_dummy, charout_dummy, rsconf_dummy, &iorec_dummy };
 static const MAPTAB maptable_mfp =
-    { bconstat1, bconin1, bcostat1, bconout1, rsconf1, &iorec1 };
+    { bconstat1, bconin1, bcostat1, CLASSIC_ENTRY(bconout1), rsconf1, &iorec1 };
 #endif  /* BCONMAP_AVAILABLE */
 
 #if CONF_WITH_SCC
@@ -122,16 +123,16 @@ static EXT_IOREC iorecA, iorecB;
 static UBYTE ibufA[RS232_BUFSIZE], obufA[RS232_BUFSIZE];
 static UBYTE ibufB[RS232_BUFSIZE], obufB[RS232_BUFSIZE];
 static const MAPTAB maptable_port_a =
-    { bconstatA, bconinA, bcostatA, bconoutA, rsconfA, &iorecA };
+    { bconstatA, bconinA, bcostatA, CLASSIC_ENTRY(bconoutA), rsconfA, &iorecA };
 static const MAPTAB maptable_port_b =
-    { bconstatB, bconinB, bcostatB, bconoutB, rsconfB, &iorecB };
+    { bconstatB, bconinB, bcostatB, CLASSIC_ENTRY(bconoutB), rsconfB, &iorecB };
 #endif  /* CONF_WITH_SCC */
 
 #if CONF_WITH_TT_MFP
 static EXT_IOREC iorecTT;
 static UBYTE ibufTT[RS232_BUFSIZE], obufTT[RS232_BUFSIZE];
 static const MAPTAB maptable_mfp_tt =
-    { bconstatTT, bconinTT, bcostatTT, bconoutTT, rsconfTT, &iorecTT };
+    { bconstatTT, bconinTT, bcostatTT, CLASSIC_ENTRY(bconoutTT), rsconfTT, &iorecTT };
 #endif  /* CONF_WITH_TT_MFP */
 
 /*
@@ -483,7 +484,7 @@ static LONG bcostatTT(void)
     return (out->head == incr_tail(out)) ? 0L : -1L;
 }
 
-static LONG bconoutTT(WORD dev, WORD b)
+LONG bconoutTT(WORD dev, WORD b)
 {
     WORD old_sr;
 
@@ -582,7 +583,7 @@ static LONG bcostatA(void)
     return (out->head == incr_tail(out)) ? 0L : -1L;
 }
 
-static LONG bconoutA(WORD dev, WORD b)
+LONG bconoutA(WORD dev, WORD b)
 {
     SCC *scc = (SCC *)SCC_BASE;
     IOREC *out;
