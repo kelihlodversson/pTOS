@@ -150,7 +150,19 @@ C_SYM(bdos_trap2):
         rts
 
 oterm:  move.l  #fstrt,sp
-        clr     -(sp)
+        /*
+         * xterm(UWORD rc) is an ordinary internal C function: with
+         * -mfastcall rc goes in d0, otherwise in a full 4-byte stack slot
+         * (the value in the low word).  A bare 2-byte "clr -(sp)" leaves
+         * the callee reading its return code from beyond what was pushed.
+         * The stack was just reset to fstrt and the call never returns
+         * here, so there is nothing to pop.
+         */
+#if CONF_WITH_MFASTCALL
+        moveq   #0,d0                   // rc = 0
+#else
+        clr.l   -(sp)                   // rc = 0, in a full 4-byte slot
+#endif
         jsr     C_SYM(xterm)
         rte
 
