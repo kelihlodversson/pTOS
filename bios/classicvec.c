@@ -20,7 +20,7 @@
 /* a LONG of the frame: two WORDs, the higher first (they need not be long aligned) */
 static LONG frame_long(const WORD *p)
 {
-    return ((LONG)(UWORD)p[0] << 16) | (UWORD)p[1];
+    return (LONG)(((ULONG)(UWORD)p[0] << 16) | (UWORD)p[1]);
 }
 
 /* (WORD, WORD): Bconout() of a device */
