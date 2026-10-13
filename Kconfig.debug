@@ -135,6 +135,22 @@ config CONF_DEBUG_DESK_STACK
 	depends on CONF_WITH_AES
 	default n
 
+config CONF_DEBUG_MMU_MAINT_SELFTEST
+	bool "Boot-time pMMU maintenance layer self-test (virt-arm)"
+	depends on MACHINE_VIRT_ARM && CONF_WITH_MMU_MAINT
+	default n
+	help
+	  Exercise the portable pMMU page-table maintenance abstraction
+	  (bios/mmu_walk.c) against the table virt_mmu_bootstrap() already
+	  built: pick a known-unused section, force section-to-page
+	  demotion via mmu_protect_range(), verify unaffected pages keep
+	  their original mapping while the targeted page changed, restore
+	  the section, and free the now-empty child table. Logs each step
+	  via KINFO/KDEBUG. See the Testing And Validation section of
+	  docs/superpowers/specs/2026-08-15-portable-pmmu-page-table-design.md.
+	  Say n unless you are actively verifying that layer; it costs a
+	  little boot time and briefly perturbs a real page-table entry.
+
 source "tests/Kconfig"
 
 endmenu
