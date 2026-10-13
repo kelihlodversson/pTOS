@@ -414,7 +414,7 @@ static LONG xbios_e(WORD devno)
  */
 static ULONG rsconf(WORD baud, WORD ctrl, WORD ucr, WORD rsr, WORD tsr, WORD scr)
 {
-    return (*rsconfptr)(baud, ctrl, ucr, rsr, tsr, scr);
+    return protect_wwwwww(rsconfptr, baud, ctrl, ucr, rsr, tsr, scr);
 }
 
 #if DBG_XBIOS

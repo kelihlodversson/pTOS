@@ -29,6 +29,13 @@ LONG classic_ww(const WORD *frame, LONG (*fn)(WORD, WORD))
     return fn(frame[0], frame[1]);
 }
 
+/* (WORD x 6): Rsconf() of a device */
+ULONG classic_rsconf(const WORD *frame,
+                     ULONG (*fn)(WORD, WORD, WORD, WORD, WORD, WORD))
+{
+    return fn(frame[0], frame[1], frame[2], frame[3], frame[4], frame[5]);
+}
+
 /* (WORD): hdv_bpb, hdv_mediach */
 LONG classic_w(const WORD *frame, LONG (*fn)(WORD))
 {

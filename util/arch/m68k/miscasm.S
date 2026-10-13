@@ -257,6 +257,7 @@ mdrminus:
         .globl   C_SYM(protect_l)
         .globl   C_SYM(protect_ww)
         .globl   C_SYM(protect_wlwwwl)
+        .globl   C_SYM(protect_wwwwww)
 
 /*
  * LONG protect_v(LONG (*func)(void));
@@ -487,6 +488,53 @@ C_SYM(protect_wlwwwl):
         move.l   28(sp),a0      // func
         jsr      (a0)
         lea      16(sp),sp
+        move.l   (sp)+,d2
+        move.l   (sp)+,a2
+        rts
+
+/*
+ * ULONG protect_wwwwww(ULONG (*func)(WORD, WORD, WORD, WORD, WORD, WORD),
+ *                      WORD, WORD, WORD, WORD, WORD, WORD);
+ *
+ * Calls the Rsconf() vector (rsconfptr, the Bconmap tables) with TOS's classic
+ * ABI: six tightly packed WORDs.  Same scheme as protect_wlwwwl above: with
+ * -mfastcall func is in a0, a/b/c in d0/d1/d2 and d/e/f spilled to our
+ * caller's stack (4(sp)/8(sp)/12(sp), a full slot each, the value in the low
+ * word); they are copied together with a/b/c into the plain-ABI frame the
+ * body expects.  Without -mfastcall that frame is the caller's own.
+ */
+#if CONF_WITH_MFASTCALL
+C_SYM(protect_wwwwww):
+        move.l   12(sp),-(sp)            // f, copied from our caller's spilled arg
+        move.l   12(sp),-(sp)            // e (offset shifted by the f push above)
+        move.l   12(sp),-(sp)            // d (offset shifted twice now)
+        ext.l    d2                      // c, sign-extended to a full slot
+        move.l   d2,-(sp)                // c
+        ext.l    d1                      // b
+        move.l   d1,-(sp)                // b
+        ext.l    d0                      // a
+        move.l   d0,-(sp)                // a
+        move.l   a0,-(sp)                // func
+        bsr      protect_wwwwww_stackbody
+        lea      28(sp),sp               // drop func/a..f pushed above; the caller's
+                                          // own spilled d/e/f remain its to pop
+        rts
+
+protect_wwwwww_stackbody:
+#else
+C_SYM(protect_wwwwww):
+#endif
+        move.l   a2,-(sp)
+        move.l   d2,-(sp)
+        move.w   38(sp),-(sp)   // f (low word of its slot)
+        move.w   36(sp),-(sp)   // e
+        move.w   34(sp),-(sp)   // d
+        move.w   32(sp),-(sp)   // c
+        move.w   30(sp),-(sp)   // b
+        move.w   28(sp),-(sp)   // a
+        move.l   24(sp),a0      // func
+        jsr      (a0)
+        lea      12(sp),sp
         move.l   (sp)+,d2
         move.l   (sp)+,a2
         rts
@@ -751,3 +799,73 @@ C_SYM(blkdev_mediach_etv_entry):
         addq.l   #8,sp
         rts
 #endif
+
+        .globl   C_SYM(rsconf1_etv_entry)
+        .extern  C_SYM(rsconf1)
+        .extern  C_SYM(classic_rsconf)
+C_SYM(rsconf1_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(rsconf1),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_rsconf)
+        addq.l   #8,sp
+        rts
+#endif
+
+#if CONF_WITH_SCC
+        .globl   C_SYM(rsconfA_etv_entry)
+        .extern  C_SYM(rsconfA)
+        .extern  C_SYM(classic_rsconf)
+C_SYM(rsconfA_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(rsconfA),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_rsconf)
+        addq.l   #8,sp
+        rts
+#endif
+#endif /* CONF_WITH_SCC */
+
+#if CONF_WITH_SCC
+        .globl   C_SYM(rsconfB_etv_entry)
+        .extern  C_SYM(rsconfB)
+        .extern  C_SYM(classic_rsconf)
+C_SYM(rsconfB_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(rsconfB),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_rsconf)
+        addq.l   #8,sp
+        rts
+#endif
+#endif /* CONF_WITH_SCC */
+
+#if CONF_WITH_TT_MFP
+        .globl   C_SYM(rsconfTT_etv_entry)
+        .extern  C_SYM(rsconfTT)
+        .extern  C_SYM(classic_rsconf)
+C_SYM(rsconfTT_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(rsconfTT),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        jmp      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_rsconf)
+        addq.l   #8,sp
+        rts
+#endif
+#endif /* CONF_WITH_TT_MFP */

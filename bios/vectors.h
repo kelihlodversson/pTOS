@@ -132,6 +132,7 @@ LONG protect_v(LONG (*func)(void));
 LONG protect_w(LONG (*func)(WORD), WORD);
 LONG protect_ww(LONG (*func)(WORD, WORD), WORD, WORD);
 LONG protect_wlwwwl(LONG (*func)(WORD, LONG, WORD, WORD, WORD, LONG), WORD, LONG, WORD, WORD, WORD, LONG);
+ULONG protect_wwwwww(ULONG (*func)(WORD, WORD, WORD, WORD, WORD, WORD), WORD, WORD, WORD, WORD, WORD, WORD);
 #elif defined (__arm__)
 
 /* We assume ARM developers follow the eabi so the folllowing are simple pass-throughs */
@@ -149,6 +150,10 @@ static inline LONG protect_ww(LONG (*func)(WORD, WORD), WORD a, WORD b)
     return func(a, b);
 }
 static inline LONG protect_wlwwwl(LONG (*func)(WORD, LONG, WORD, WORD, WORD, LONG), WORD a, LONG b, WORD c, WORD d, WORD e, LONG f)
+{
+    return func(a,b,c,d,e,f);
+}
+static inline ULONG protect_wwwwww(ULONG (*func)(WORD, WORD, WORD, WORD, WORD, WORD), WORD a, WORD b, WORD c, WORD d, WORD e, WORD f)
 {
     return func(a,b,c,d,e,f);
 }

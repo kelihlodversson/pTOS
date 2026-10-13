@@ -228,6 +228,7 @@ LONG protect_l(LONG (*func)(LONG), LONG);
 void protect_lv(void (*func)(LONG), LONG);
 LONG protect_ww(LONG (*func)(WORD, WORD), WORD, WORD);
 LONG protect_wlwwwl(LONG (*func)(WORD, LONG, WORD, WORD, WORD, LONG), WORD, LONG, WORD, WORD, WORD, LONG);
+ULONG protect_wwwwww(ULONG (*func)(WORD, WORD, WORD, WORD, WORD, WORD), WORD, WORD, WORD, WORD, WORD, WORD);
 
 /*
  * Push/Pop registers from stack, with ColdFire support.
