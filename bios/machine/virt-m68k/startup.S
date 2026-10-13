@@ -7,6 +7,7 @@
 
 #include "asmdefs.h"
 #include "header.h"
+#include "memory.h"
 
         .globl  C_SYM(os_entry)
 
@@ -16,6 +17,8 @@
         .extern __bss
         .extern __ebss
         .extern C_SYM(phystop)
+        .extern C_SYM(warm_magic)
+        .extern C_SYM(meminit_flags)
 
         .text
 
@@ -118,5 +121,17 @@ clear_bss_done:
         // sysvar (tosvars.ld); bios/biosmem.c's bmem_init() reads it
         // directly to size the entire free-memory pool.
         move.l  #0x08000000,C_SYM(phystop)
+
+        // The classic meminit code is not used here, so decide first boot
+        // vs. warm boot ourselves, the way it does when EmuTOS lives in RAM:
+        // anything but WARM_MAGIC in _warm_magic is a first boot.  Without
+        // this, meminit_flags stays 0 and every boot looks like a warm boot
+        // (no welcome screen, kept bootdev, ...).
+        move.l  #0x5741524D,d0          // WARM_MAGIC
+        cmp.l   C_SYM(warm_magic).w,d0
+        jeq     not_first_boot
+        move.b  #MEMINIT_FIRST_BOOT,C_SYM(meminit_flags)
+        move.l  d0,C_SYM(warm_magic).w  // next boot will not be a first boot
+not_first_boot:
 
         jmp     C_SYM(biosmain)
