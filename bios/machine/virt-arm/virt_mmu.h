@@ -18,10 +18,14 @@
  *     VIRT_RAM_BASE + ram_size_bytes) -- this is what makes the fixed
  *     low TOS system-variable addresses (see tosvars.ld) resolve to
  *     real RAM.
- *   - every other virtual address is identity-mapped (virtual ==
- *     physical), which is how the peripheral drivers (virt_uart.c, the
- *     future virt_pic.c/virt_timer.c) already address the GIC and the
- *     UART via VIRT_GIC_*_BASE/VIRT_UART0_BASE literal constants.
+ *   - the first 16 MiB of that RAM are also mapped where they physically
+ *     are, for the code executing there when the MMU is switched on or off
+ *     (a software reset); this mapping is kept.
+ *   - the board's devices are mapped out of the RAM's way, with the
+ *     hardware address 0x08000000 and up at virtual 0xf0000000 + that
+ *     address, and 0x10000000 and up (PCIe) at 0xc0000000 + (that address
+ *     - 0x10000000): see VIRT_DEV_VA() in virt_memmap.h.
+ *   - everything else is unmapped and faults.
  *
  * Must be called with the MMU off, from startup.S, with a physical
  * (not linked/virtual) stack pointer already set up.  Neither this

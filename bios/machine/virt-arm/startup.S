@@ -7,6 +7,7 @@
 
 #include "asmdefs.h"
 #include "header.h"
+#include "virt_memmap.h"
 
         .globl  C_SYM(os_entry)
         .extern C_SYM(stktop)
@@ -107,8 +108,76 @@ C_SYM(main):
     mov r8, r0
     mov r9, r1
     mov r10, r2
+    mov r7, #0                  /* 1: a restart, not the first boot */
 
-    ldr sp, =0x47ff0000
+    /*
+     * A software reset (cold_reset/warm_reset in bios/arch/arm/panicasm.S)
+     * branches here with the MMU on and the code running at its virtual
+     * address, where the early stack and the device tree below do not
+     * exist.  Take over what the first boot found (the RAM size, from
+     * _phystop, and the registers saved in arm_boot_regs), then switch
+     * to the physical alias of this code, which the identity mapping of
+     * the start of the RAM keeps, and turn the MMU and the caches off, as
+     * they are at power on.  r3-r6 only: r0-r2 hold the boot loader's.
+     */
+    mrc p15, 0, r3, c1, c0, 0
+    tst r3, #1                 /* SCTLR.M */
+    beq 1f
+    mov r7, #1
+    bl  C_SYM(flush_data_cache_all)
+    ldr r4, =C_SYM(phystop)
+    ldr r11, [r4]
+    add r11, r11, #0x100000     /* the RAM window */
+    ldr r4, =C_SYM(arm_boot_regs)
+    ldmia r4, {r8-r10}
+    ldr r4, =0f
+    add r4, r4, #VIRT_RAM_BASE
+    bx  r4
+0:  mrc p15, 0, r3, c1, c0, 0
+    ldr r4, =0x1805             /* M, C, Z and I */
+    bic r3, r3, r4
+    mcr p15, 0, r3, c1, c0, 0
+    mov r3, #0
+    mcr p15, 0, r3, c8, c7, 0   /* invalidate the TLB */
+    mcr p15, 0, r3, c7, c5, 0   /* invalidate the instruction cache */
+    mcr p15, 0, r3, c7, c5, 6   /* and the branch predictor */
+    dsb
+    isb
+1:
+
+    /*
+     * How much RAM there is: QEMU's -m, from the memory node of the device
+     * tree in r2.  virt_fdt_ram_size() needs no stack, which matters here:
+     * the early stack goes at the top of the RAM, so it can only be set
+     * up once the size is known.  Without a device tree, assume the
+     * 128 MiB the port was written for.  The size is limited to what
+     * VIRT_MAX_RAM_SIZE allows and rounded down to whole megabytes.  r11
+     * (callee-saved) keeps it until the MMU is set up.
+     */
+    cmp r7, #0
+    movne r0, r11               /* a restart: the size is known */
+    bne 5f
+    mov r0, r10
+    bl  virt_fdt_ram_size
+    mov r7, #0                  /* (the walker uses it) */
+5:  cmp r0, #0
+    ldreq r0, =VIRT_DEFAULT_RAM_SIZE
+    ldr r1, =VIRT_MAX_RAM_SIZE
+    cmp r0, r1
+    movhi r0, r1
+    ldr r1, =0x00800000
+    cmp r0, r1
+    movlo r0, r1                /* 8 MiB at least */
+    lsr r0, r0, #20
+    lsl r11, r0, #20
+
+    /*
+     * The early stack has to be inside the part of the RAM that is also
+     * mapped where it physically is (see virt_mmu.c): the MMU is switched
+     * on while it is in use.  8 MiB up is the smallest RAM there is, so
+     * the end of the first 8 MiB is always in it.
+     */
+    ldr sp, =VIRT_RAM_BASE + 0x00800000
     bl  C_SYM(virt_uart0_init)
     adr r4, hello_msg_phys     /* PC-relative: correct at the physical PC we're
                                  * actually executing at pre-MMU, unlike
@@ -117,14 +186,23 @@ C_SYM(main):
     bl  print_string
 
     /* MMU bring-up: literal physical constants only, no linked symbols */
-    mov r0, #0x08000000     /* 128 MiB RAM window, matches -m 128 in the qemu invocation below */
-    ldr r1, =0x47f00000     /* page table: fixed physical scratch address, top of a 128M RAM allocation */
+    mov r0, r11                 /* the RAM window */
+    ldr r1, =VIRT_RAM_BASE
+    add r1, r1, r11
+    sub r1, r1, #0x100000       /* page table: the last megabyte of the RAM */
     bl  C_SYM(virt_mmu_bootstrap)
 
     ldr pc, =virt_arm_post_mmu
 
 virt_arm_post_mmu:
-    ldr sp, =0x47ff0000     /* physical scratch stack, until the switch to C_SYM(stktop) below */
+    /*
+     * Running at the virtual address now, with the RAM at virtual 0: the
+     * scratch stack is a new one, growing down from 64 KiB below the top of
+     * the RAM (not the early stack of the first 8 MiB, which is only mapped
+     * for the MMU switch itself), until the switch to C_SYM(stktop) below.
+     * The physical alias of the start of the RAM is not needed any more.
+     */
+    sub sp, r11, #0x10000
     ldr r4, =hello_msg_virt
     bl  print_string
 
@@ -167,17 +245,13 @@ virt_arm_post_mmu:
      * dispatch.
      *
      * The real top of usable RAM is the top of the low MMU window built
-     * by virt_mmu_bootstrap() (see the call above: 0x08000000 bytes,
-     * hardcoded to match this file's own MMU size argument and the
-     * qemu -m 128 invocation documented for this target), minus the 1MB
-     * reserved at its very top for the MMU page table itself (see the
-     * 0x47f00000 page-table address passed to virt_mmu_bootstrap: that is
-     * VIRT_RAM_BASE + 0x07f00000, i.e. 127MB into the window) -- the same
-     * "reserve the last megabyte" convention bios/machine/raspi/memory.c
-     * uses for the same reason.
+     * by virt_mmu_bootstrap() (the RAM size found from the device tree
+     * above, in r11), minus the 1MB reserved at its very top for the MMU
+     * page table itself -- the same "reserve the last megabyte"
+     * convention bios/machine/raspi/memory.c uses for the same reason.
      */
     ldr r0, =C_SYM(phystop)
-    ldr r1, =0x07f00000
+    sub r1, r11, #0x100000
     str r1, [r0]
 
     /*
@@ -186,6 +260,23 @@ virt_arm_post_mmu:
      * loader registers saved in r8-r10 above.  Mirrors
      * bios/machine/raspi/startup.S.
      */
+    /*
+     * r10 is the physical address of the device tree (or ATAG list), which
+     * was reached through the physical alias of the start of the RAM
+     * (dropped above); the same bytes are in the low window, at the address
+     * minus VIRT_RAM_BASE.  If it is not in the window, there is nothing
+     * the code could read, so say there is none.
+     */
+    cmp r7, #0
+    bne 3f                      /* a restart: translated by the first boot */
+    cmp r10, #0
+    beq 3f
+    ldr r0, =VIRT_RAM_BASE
+    sub r0, r10, r0
+    cmp r0, r11
+    movhs r10, #0
+    movlo r10, r0
+3:
     ldr r3, =C_SYM(arm_boot_regs)
     stmia r3, {r8-r10}
 
@@ -205,6 +296,163 @@ virt_arm_post_mmu:
 
     ldr sp, =C_SYM(stktop)
     b   C_SYM(biosmain)
+
+/*
+ * virt_fdt_ram_size -- the size of the RAM, from a flattened device tree
+ *
+ * In:  r0 = address of the device tree
+ * Out: r0 = the size in bytes found in the "reg" property of the first
+ *      memory node ("memory" or "memory@..."), or 0 if there is no valid
+ *      tree or no such node, or if the tree is not consistent with its own
+ *      size (an offset or a length that leaves it).  r1-r7, r11 and r12 are
+ *      used; there is no stack, since this runs before the RAM size, and so
+ *      the stack, is known.
+ *
+ * Just enough of the format (see the Devicetree Specification, "Flattened
+ * Devicetree (DTB) Format") to do that.  The header and the structure block
+ * are big-endian 32-bit words.  The structure block is a sequence of tokens:
+ * 1 = begin node (then the node's name, a NUL terminated string padded to a
+ * multiple of 4), 2 = end node, 3 = property (then the length and the offset
+ * of its name in the strings block, and the data padded to a multiple of 4),
+ * 4 = nop, 9 = end.  Everything is read in aligned words or bytes, as the
+ * MMU is not on yet, and nothing is read from beyond the end of the tree
+ * (r11, header field totalsize): a damaged tree must give 0, not a data abort
+ * before the exception vectors are installed.  "reg" has 2 address and 2 size
+ * cells on this board (4 words, the size being the last two), or 1 and 1
+ * (2 words).
+ */
+virt_fdt_ram_size:
+    ldr r1, [r0]
+    rev r1, r1
+    ldr r2, =0xd00dfeed         /* FDT_MAGIC */
+    cmp r1, r2
+    bne fdt_none
+    ldr r11, [r0, #4]           /* totalsize */
+    rev r11, r11
+    cmp r11, #0x28              /* the header is 40 bytes */
+    blo fdt_none
+    ldr r1, [r0, #8]            /* off_dt_struct */
+    rev r1, r1
+    ldr r3, [r0, #12]           /* off_dt_strings */
+    rev r3, r3
+    cmp r1, r11
+    bhs fdt_none
+    cmp r3, r11
+    bhs fdt_none
+    tst r1, #3                  /* the structure block is word aligned */
+    bne fdt_none
+    add r1, r0, r1              /* r1: the next token */
+    add r3, r0, r3              /* r3: the strings block */
+    add r11, r0, r11            /* r11: the end of the tree */
+    mov r4, #0                  /* r4: depth of the node we are in */
+    mov r5, #0                  /* r5: depth of the memory node, 0 if not in it */
+fdt_token:
+    add r2, r1, #4              /* room for the token? */
+    cmp r2, r11
+    bhi fdt_none
+    ldr r2, [r1], #4
+    rev r2, r2
+    cmp r2, #1
+    beq fdt_begin
+    cmp r2, #2
+    beq fdt_end
+    cmp r2, #3
+    beq fdt_prop
+    cmp r2, #4
+    beq fdt_token               /* nop */
+fdt_none:
+    mov r0, #0                  /* the end of the tree, or garbage */
+    bx  lr
+
+fdt_begin:
+    add r4, r4, #1
+    add r2, r1, #8              /* room to look at the start of the name? */
+    cmp r2, r11
+    bhi fdt_none
+    cmp r5, #0
+    bne fdt_skip_name           /* already inside the memory node */
+    ldr r6, [r1]                /* is the name "memory" + NUL or '@'? */
+    ldr r7, =0x6f6d656d         /* "memo" */
+    cmp r6, r7
+    bne fdt_skip_name
+    ldrh r6, [r1, #4]
+    ldr r7, =0x7972             /* "ry" */
+    cmp r6, r7
+    bne fdt_skip_name
+    ldrb r6, [r1, #6]
+    cmp r6, #0
+    cmpne r6, #'@'
+    moveq r5, r4
+fdt_skip_name:
+    cmp r1, r11                 /* the name must end inside the tree */
+    bhs fdt_none
+    ldrb r6, [r1], #1
+    cmp r6, #0
+    bne fdt_skip_name
+    add r1, r1, #3
+    bic r1, r1, #3
+    b   fdt_token
+
+fdt_end:
+    cmp r5, r4
+    moveq r5, #0                /* leaving the memory node */
+    sub r4, r4, #1
+    b   fdt_token
+
+fdt_prop:
+    add r2, r1, #8              /* room for the length and the name offset? */
+    cmp r2, r11
+    bhi fdt_none
+    ldr r6, [r1], #4            /* length of the data */
+    rev r6, r6
+    ldr r7, [r1], #4            /* offset of the name */
+    rev r7, r7
+    sub r2, r11, r1             /* the data must be inside the tree */
+    cmp r6, r2
+    bhi fdt_none
+    cmp r5, #0
+    beq fdt_next_prop
+    cmp r5, r4
+    bne fdt_next_prop           /* not a property of the memory node itself */
+    sub r2, r11, r3             /* its name: inside the strings, with room */
+    cmp r7, r2                  /* for "reg" and its NUL? */
+    bhs fdt_next_prop
+    sub r2, r2, r7
+    cmp r2, #4
+    blo fdt_next_prop
+    add r7, r3, r7              /* is it "reg"? */
+    ldrb r12, [r7]
+    cmp r12, #'r'
+    bne fdt_next_prop
+    ldrb r12, [r7, #1]
+    cmp r12, #'e'
+    bne fdt_next_prop
+    ldrb r12, [r7, #2]
+    cmp r12, #'g'
+    bne fdt_next_prop
+    ldrb r12, [r7, #3]
+    cmp r12, #0
+    bne fdt_next_prop
+    cmp r6, #16
+    ldreq r0, [r1, #8]          /* 2+2 cells: the size is the last two words */
+    ldreq r12, [r1, #12]
+    beq fdt_have_size
+    cmp r6, #8
+    bne fdt_next_prop
+    mov r0, #0                  /* 1+1 cells: a single word */
+    ldr r12, [r1, #4]
+fdt_have_size:
+    rev r0, r0                  /* the high word, big-endian */
+    rev r12, r12                /* the low word */
+    cmp r0, #0
+    mvnne r12, #0               /* 4 GiB or more: say 4 GiB - 1 */
+    mov r0, r12
+    bx  lr
+fdt_next_prop:
+    add r6, r6, #3
+    bic r6, r6, #3
+    add r1, r1, r6
+    b   fdt_token
 
 print_string:
     push {r4, lr}

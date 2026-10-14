@@ -102,6 +102,67 @@ C_SYM(main):
         move.w  #0x2700,sr              // supervisor mode, interrupts masked
         lea     C_SYM(stktop),sp              // initial supervisor stack (.stack section, tosvars.ld)
 
+        // RAM size: QEMU's -m.  The machine puts a Linux-style bootinfo list
+        // right after the end of the loaded image (hw/m68k/virt.c: the
+        // address after the highest loaded byte, rounded up to even, which is
+        // __ebss as the last segment is .data + .bss), and one of its
+        // records, BI_MEMCHUNK (tag 5, size 12), holds the start and size of
+        // the RAM.  Each record is a tag word, a size word (of the whole
+        // record) and the data; the list ends with a zero tag.  Fall back to
+        // 128 MB if nothing sensible is found there, e.g. when something
+        // else loaded the image.  This must come before the .bss is cleared,
+        // which can write a word past __ebss when that is not a multiple of
+        // four, onto the start of the list.  _phystop is a fixed-address sysvar
+        // (tosvars.ld); bios/biosmem.c's bmem_init() reads it directly to
+        // size the entire free-memory pool, and the virtio-gpu framebuffer
+        // is allocated just below it, so it has to be right.
+        //
+        // A software reset (warm_reset or cold_reset in
+        // bios/arch/m68k/panicasm.S) comes back here, but QEMU does not
+        // create the list again, and the memory above __ebss is in use by
+        // then.  The size found the first time is kept in two words in .data
+        // (which nothing clears, unlike the .bss and _warm_magic), and used
+        // when the first one holds its marker.
+        cmp.l   #0x52414D53,ram_size_valid      // 'RAMS'
+        jne     bi_scan
+        move.l  ram_size_saved,d1
+        jra     bi_done
+bi_scan:
+        lea     __ebss,a0
+        move.l  a0,d0
+        addq.l  #1,d0
+        and.l   #-2,d0
+        move.l  d0,a0
+        move.l  #0x08000000,d1          // default: 128 MB
+        moveq   #31,d2                  // look at the first 32 records
+bi_next:
+        move.w  (a0),d0                 // tag
+        jeq     bi_done                 // BI_LAST (or no list at all)
+        move.w  2(a0),d3                // size of this record
+        cmp.w   #4,d3
+        jcs     bi_done                 // too small to be a record: no list
+        cmp.w   #5,d0                   // BI_MEMCHUNK?
+        jne     bi_skip
+        cmp.w   #12,d3
+        jne     bi_skip
+        tst.l   4(a0)                   // RAM starts at 0 on this board
+        jne     bi_skip
+        move.l  8(a0),d0
+        cmp.l   #0x00100000,d0          // anything below 1 MB is nonsense
+        jcs     bi_skip
+        cmp.l   #0x7f000000,d0          // keep the size in a positive LONG,
+        jls     bi_size_ok              // clear of the devices at 0xff000000
+        move.l  #0x7f000000,d0
+bi_size_ok:
+        move.l  d0,d1
+        jra     bi_done
+bi_skip:
+        adda.w  d3,a0
+        dbra    d2,bi_next
+bi_done:
+        move.l  d1,ram_size_saved
+        move.l  #0x52414D53,ram_size_valid
+
         // Clear .bss: unlike the classic Atari boot, there is no meminit
         // pass to do this for us here (that routine tests and clears
         // ST-MMU banks, none of which exist on this board), so it has to
@@ -115,12 +176,7 @@ clear_bss:
         jra     clear_bss
 clear_bss_done:
 
-        // RAM size is fixed by convention, matching the "-m 128" in the
-        // qemu invocation documented in readme.md -- there is no FDT to
-        // parse for v1 (see the design doc). _phystop is a fixed-address
-        // sysvar (tosvars.ld); bios/biosmem.c's bmem_init() reads it
-        // directly to size the entire free-memory pool.
-        move.l  #0x08000000,C_SYM(phystop)
+        move.l  d1,C_SYM(phystop)       // the RAM size found above
 
         // The classic meminit code is not used here, so decide first boot
         // vs. warm boot ourselves, the way it does when EmuTOS lives in RAM:
@@ -140,3 +196,8 @@ not_first_boot:
 #endif
 
         jmp     C_SYM(biosmain)
+
+        .data
+        .even
+ram_size_valid: .dc.l   0
+ram_size_saved: .dc.l   0

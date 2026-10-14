@@ -202,6 +202,17 @@ addresses, and QEMU's ELF loader is what places it correctly.  Run it with:
     qemu-system-arm -M virt -cpu cortex-a7 -m 128 -kernel virt-arm.elf \
         -d guest_errors -serial stdio
 
+The RAM size follows -m, read from the memory node of the device tree QEMU
+passes in r2 (128 MiB is assumed without one): from 8 MiB up to 1 GiB is
+used, the rest is ignored.  The RAM, which is at 0x40000000 on this
+board, is mapped at virtual address 0, where the kernel is linked (its first
+16 MiB are also mapped at the physical address, which a software reset needs
+to switch the MMU off), and the
+devices are moved out of its way: the hardware addresses from 0x08000000 up
+to 0x0fffffff (the GIC, the UART, the virtio-mmio transports) are at 0xf0000000
+plus that address, and the PCIe windows, which start at 0x10000000, at
+0xc0000000 plus the address minus 0x10000000.
+
 Adding "-S -s" lets a remote gdb attach, as with the Raspberry Pi
 configurations.
 
@@ -222,9 +233,10 @@ Run it with:
     qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf \
         -d guest_errors -serial stdio
 
-Both flags after -M virt matter, not just the -kernel one: -m 128 is
-required because the image hardcodes 128 MiB as the top of RAM (there is
-no FDT parsing yet to size it from the command line).  -cpu m68020 and
+Both flags after -M virt matter, not just the -kernel one: -m sets the RAM
+size, which the image reads from the bootinfo list QEMU puts after it (a
+size of 2 GiB or more is limited to just under 2 GiB, and 128 MiB is assumed
+if there is no list), and -cpu selects the CPU.  -cpu m68020 and
 -cpu m68040 both work with the image as built.  -cpu m68060 needs the
 kernel built with CPUFLAGS="-m68060" (menuconfig), because QEMU has no
 software package for the 64-bit mulu.l/divu.l that -m68020 code
