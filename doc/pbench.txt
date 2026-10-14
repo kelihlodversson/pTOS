@@ -1,0 +1,247 @@
+pBench, a graphics benchmark for pTOS
+=====================================
+
+pBench (tools/pBench) times the AES and VDI work that GEM programs spend
+their time on.  Its tests model the graphics tests of GEM Bench 6, but pBench
+only talks to the OS through trap #2 (m68k) or svc 2 (ARM) and a few GEMDOS
+calls: it never touches hardware.  GEM Bench itself polls the keyboard ACIA
+at 0xFFFFFC00 when a test starts, so it hangs on any machine that does not
+have one (virt-m68k, for instance); pBench runs wherever pTOS runs GEM.
+
+Typical uses are comparing builds of pTOS (the VDI/AES changes in #300 and
+#492 were measured with the same workloads) and comparing emulators or
+hardware with each other.
+
+
+Building
+--------
+
+pBench is a normal userland program, built like the regression test harness
+(libcmini, the same CPU flags as the kernel):
+
+    make atari512_defconfig && make       # or any other configuration
+    make pbench.prg                       # the program
+    make pbench-hd.img                    # + a raw disk image that runs it
+
+pbench-hd.img holds PBENCH.PRG and an EMUDESK.INF that starts it, the way
+test-hd.img starts the regression tests.  CONF_WITH_REGRESSION_TESTS (the
+default) is required, since that is what enables the libcmini build rules.
+
+
+Running
+-------
+
+    pbench.prg [-q] [-r N] [-l] [TESTS]
+
+    -q        quit when done, instead of waiting for a key
+    -r N      run each test N times (the time reported is for one run)
+    -l        list the tests
+    TESTS     letters selecting tests: d t f s g w b r j e (default: all)
+
+Without -r, a test that finishes in less than two seconds is repeated (up to
+4000 times) until the measurement is long enough to be accurate, and the time
+of a single run is reported.  Fast machines therefore still get meaningful
+numbers.  Started from the desktop, as EMUDESK.INF does, it takes the options from the
+first line of PBENCH.CFG in the current directory if there is one, and
+otherwise runs all the tests with the defaults.  (Options can also be given
+on the command line, from a shell such as EmuCON.)
+
+Results appear
+
+  - in the test area of the screen, when all tests are done,
+  - on the serial port (the GEMDOS AUX: device), so that unattended runs can
+    be read from QEMU's -serial or Hatari's --rs232-out, and
+  - in PBENCH.TXT in the current directory.
+
+A line looks like
+
+    VDI Text               34.600 s    462 lines       42%
+
+i.e. the name, the time of one run, the number of operations in it, and the
+speed relative to the reference (100% = as fast as the reference, larger is
+faster).  Like GEM Bench, which compares with a benchmark file made on a
+stock Atari STE with TOS 2.06, pBench compares with TOS 2.06; the first line
+of the report says which of the baselines (below) was used.  It is chosen by
+the screen mode (ST-LOW, ST-MEDIUM or ST-HIGH, found from the size of the
+screen) and by whether the blitter is in use (XBIOS Blitmode()); any other
+screen is compared with ST-MEDIUM.
+
+The workloads were calibrated against GEM Bench: on TOS 2.06 under Hatari
+(ST-MEDIUM, blitter) every pBench test is within about 25% of the time GEM
+Bench's DEFAULT.GB6 gives for it, and most within 10%.
+
+Baselines
+---------
+
+tools/pBench/baselines holds pBench's results under Hatari 2.5 for
+
+  tos206      TOS 2.06 US (md5 c9093f27159e7d13ac0d1501a95e53d4)
+  emutos256   EmuTOS 1.4, 256k image, US (etos256us.img, md5
+              c99f94cf706047e3e4966aad3fa0f434)
+  ptos-a06e0df6   pTOS at commit a06e0df6, atari512 configuration (the last
+              commit before the kernel stopped being built with -mshort)
+  tos404-falcon-truecolor   TOS 4.04 on a Falcon (16 MHz 68030, 14 MB), 640x480
+              at 16 bits on a VGA monitor (md5
+              e5ea0f216fb446f1c4a4f476bc5f03d4)
+  ptos-master     pTOS at commit c26b030e (without -mshort), atari512
+  ptos-master-fastcall   the same built with CONF_WITH_MFASTCALL
+
+in the screen modes low, med and high, with and without the blitter, as
+SYSTEM-MODE-blitter.txt and SYSTEM-MODE-noblitter.txt.  The machine is an STE
+(which has the blitter) or an ST (which does not), with 4 MB of RAM, running
+at 8 MHz.  The ROM images themselves are not in the repository: TOS 2.06 is
+not free, and EmuTOS can be downloaded from emutos.sourceforge.io.
+
+How fast they are, as the geometric mean of the ten tests relative to
+TOS 2.06 (what GEM Bench calls the Display score):
+
+    screen      blitter    EmuTOS 1.4  a06e0df6  master  master fastcall
+    ST-LOW      blitter        63%        62%       59%        60%
+    ST-LOW      no blitter     97%        97%       94%        95%
+    ST-MEDIUM   blitter        69%        67%       63%        65%
+    ST-MEDIUM   no blitter    100%        98%       94%        95%
+    ST-HIGH     blitter        79%        76%       71%        73%
+    ST-HIGH     no blitter    102%       100%       94%        96%
+
+(TOS 2.06 is 100% in every row.)  Without the blitter, dropping -mshort cost
+pTOS four to six points, and -mfastcall gets one or two of them back.
+
+TOS 2.06 draws text with the blitter and the others do not, which is where
+nearly all of the difference with the blitter comes from.  Results of runs
+of the same image vary by a quarter of a percent or so (the starting point
+of the 200 Hz timer).
+
+tools/pBench/refs.h, the reference times compiled into pBench, is generated
+from the tos206 files and the Falcon true colour baseline:
+
+    tools/pBench/mkrefs.py tools/pBench/baselines/tos206-*.txt \
+        tools/pBench/baselines/tos404-falcon-truecolor.txt > tools/pBench/refs.h
+
+ptos-master-virt-m68k.txt and ptos-master-rpi2.txt are pBench on pTOS master
+under QEMU (virt-m68k, 1280x800 at 32 bits; raspi2b, 1280x720 at 16 bits),
+made with tools/pBench/run-qemu.py.  Their reference is the Falcon baseline,
+which is also what pBench compares any screen with more than 8 bits per pixel
+against:
+
+    Display score relative to the Falcon (TOS 4.04, true colour)
+    virt-m68k   ~47 times as fast
+    rpi2        ~54 times as fast
+
+That says more about QEMU's CPUs than about pTOS.  QEMU's clock is the host's,
+so these vary with the machine they were made on (10% between runs is
+normal), and are only good for rough comparisons.
+
+The Falcon baseline is made with run-hatari.py --falcon 001C: TOS 4.04 takes
+its video mode from bytes 5 and 6 of the #E line of NEWDESK.INF
+("#E 18 03 00 06 00 1C 00 00 00 00" is 640x480, 16 bits, VGA), and starts the
+program of a #Z line if that is the second line of the file, after "#R 01".
+(Hatari's --auto replaces the file, so it cannot be used.)
+
+To make baselines for another system (the images are given as KEY=IMAGE=NAME):
+
+    tools/pBench/run-baselines.py --pbench pbench.prg --out DIR \
+        --system mykey=/path/to/image.img="My system"
+
+or a single one with tools/pBench/run-hatari.py, and compare with
+
+    tools/pBench/compare.py tools/pBench/baselines/tos206-med-blitter.txt \
+        DIR/mykey-med-blitter.txt
+
+Both Hatari scripts need pbench.prg built for the m68k (an m68k configuration
+such as atari512_defconfig, then "make pbench.prg").
+
+
+Running under Hatari:
+
+    hatari --machine ste --memsize 4 --tos ptos512k.img \
+        --auto 'C:\PBENCH.PRG' --rs232-out pbench.out dir
+
+where dir holds PBENCH.PRG (it is given last so that Hatari boots from it as
+C:, which --auto needs with the original TOS).  tools/pBench/run-hatari.py
+does this and waits for the results.  Under QEMU (virt-m68k), put PBENCH.PRG and an
+EMUDESK.INF with "#Z 00 C:\PBENCH.PRG@" in a directory and attach it with
+-drive file=fat:rw:dir,format=raw,if=none,id=hd0 -device
+virtio-blk-device,drive=hd0, plus virtio-gpu-device and virtio-keyboard-device
+(see the smoke test skill for the other options); -serial file:out.txt
+collects the results.
+
+
+The tests
+---------
+
+The VDI drawing tests (t, f, s, g, b, r, j) draw in the same 624x159 pixel area
+(clipped to it), like GEM Bench's tests do.  The dialog test draws a dialog of
+its own, centred on the screen; the window test uses the desktop's work area;
+and the enquire test does not draw at all.
+
+  d  GEM Dialog Box   32 times: form_dial() start, grow, objc_draw() of a
+                      532x164 dialog (strings, buttons, text fields, boxes),
+                      form_dial() shrink and finish.
+  t  VDI Text         v_gtext() of 91 character lines in the 8x8 font, 21
+                      lines of text and then 21 lines of blanks over them,
+                      11 times, the text colour changing every pass.
+  f  VDI Text Effects the same with 94 character lines for each of the text
+                      effects 1 to 16 (vst_effects()), a vr_recfl() clearing
+                      the area after each.
+  s  VDI Small Text   as VDI Text in the 6x6 font, 28 lines.
+  g  VDI Graphics     81 steps of two v_bar() and two v_ellipse() calls
+                      (black, then white) that grow and slide, then 14 fans
+                      of 131 two-point v_pline() lines, in XOR mode.
+  w  GEM Window       65 times: wind_create() with the gadgets GEM Bench
+                      uses (all but INFO, as its trace shows, though it
+                      does set an info line), wind_set() of the name and
+                      info lines, wind_open()
+                      (the AES animates this), wind_close(), wind_delete().
+  b  Blitting         1200 screen to screen vro_cpyfm() of a 201x51 patterned
+                      box, S_ONLY, to positions moving back and forth.
+  r  VDI Scroll       219 times: print a 69 character line at the bottom of
+                      the area, scroll the area up eight pixels with
+                      vro_cpyfm(), fill a small box.
+  j  Justified Text   73 passes of 20 v_justified() lines, each pass a bit
+                      wider, then vr_recfl().
+  e  VDI Enquire      4794 times: vq_extnd(), vql_/vqm_/vqf_/vqt_attributes(),
+                      vqt_fontinfo(), vq_mouse(), vq_key_s(), vqt_extent().
+
+GEM Bench's CPU, memory and FPU tests are not part of pBench.
+
+
+How the tests were derived
+--------------------------
+
+The workload of each test was not taken from GEM Bench's code but from what
+it does: GEM Bench was run under Hatari on a pTOS kernel patched to log every
+VDI and AES call (opcode, handle, counts and the first parameters, with
+runs of identical calls folded together).  tools/pBench/trace.patch is that
+patch (it prints through the native features interface, so Hatari needs
+--natfeats on and its standard output has to be captured), and
+tools/pBench/analyse-trace.py summarises such a log: which calls make up each
+phase of the run, and the exact parameters in a time window.  From these the
+sequence of calls, their counts, the geometry of the lines and boxes and the
+font sizes were read off; the dialog and the window's gadgets are pBench's
+own.  Iteration counts were then adjusted until the times on Hatari matched
+GEM Bench's.
+
+Since the AES and VDI are only called, not reimplemented, results depend on
+the pTOS build being measured exactly as they should: a change that makes
+v_gtext() slower makes pBench's "VDI Text" slower.
+
+
+Notes
+-----
+
+  - The GEM Window test reads and drops the redraw and other messages the AES
+    sends the program: with TOS 4.04 the AES stops (the window stays on the
+    screen forever) once enough of them are waiting unread.
+  - The mouse pointer is hidden during the run (graf_mouse(M_OFF) and
+    v_hide_c()); when pBench ends, form_dial() asks the AES to redraw the
+    whole screen.
+  - On the ARM ports the GEM calls use "svc 2" with the opcode (115 for the
+    VDI, 200 for the AES) in r0 and the parameter block in r1, as
+    tests/arm_acc_probe.c does.  Two details differ from the m68k: a LONG
+    in a pair of WORDs of a parameter array is stored the way the CPU stores
+    it (low word first), and the VDI control array has a pad word before
+    its two pointers (include/vdipb.h).  pBench runs all its tests on
+    rpi2 under QEMU (raspi2b).
+  - Timing uses clock() from libcmini, which reads _hz_200 (200 Hz) through
+    Ssystem(), so it works on every target.  Differences below a few
+    milliseconds are lost in the rounding.

@@ -1,0 +1,81 @@
+diff --git a/aes/gemsuper.c b/aes/gemsuper.c
+index 7307da1ca..6aa4059de 100644
+--- a/aes/gemsuper.c
++++ b/aes/gemsuper.c
+@@ -440,6 +440,16 @@ static void xif(AESPB *pcrys_blk)
+     if (AIN_LEN)
+         memcpy(addr_in, pcrys_blk->addrin, min(AIN_LEN,AI_SIZE)*sizeof(LONG));
+ 
++    {
++        static char b_[160];
++        char *b = b_;
++        int i, n;
++        extern void trace_line(const char *);
++        n = sprintf(b, "A %d ni%d na%d i:", OP_CODE, IN_LEN, AIN_LEN);
++        for (i = 0; i < IN_LEN && i < 6; i++) n += sprintf(b+n, " %d", int_in[i]);
++        for (i = 0; i < AIN_LEN && i < 2; i++) n += sprintf(b+n, " a%lx", addr_in[i]);
++        trace_line(b);
++    }
+     RET_CODE = crysbind(OP_CODE, (AESGLOBAL *)pcrys_blk->global, control, int_in, int_out,
+                                 addr_in);
+ 
+diff --git a/vdi/vdi_main.c b/vdi/vdi_main.c
+index 87b511589..4e4147314 100644
+--- a/vdi/vdi_main.c
++++ b/vdi/vdi_main.c
+@@ -12,6 +12,8 @@
+ #include "vdi_defs.h"
+ #include "lineavars.h"
+ #include "kprint.h"
++#include "tosvars.h"
++#include "string.h"
+ #include "vdi_backend.h"
+ #include "asm.h"
+ 
+@@ -120,6 +122,38 @@ static struct vdi_jmptab const jmptb2[] = {
+ /*
+  * screen - Screen driver entry point
+  */
++/*
++ * Temporary tracing, see tools/pBench/trace.patch: consecutive identical
++ * lines are folded into "xN" so that a benchmark's output stays readable.
++ */
++static char trace_last[160];
++static LONG trace_rep, trace_t0;
++void trace_flush(void)
++{
++    if (trace_last[0])
++        kprintf("%ld x%ld %s\n", trace_t0, trace_rep, trace_last);
++    trace_last[0] = 0;
++}
++void trace_line(const char *line)
++{
++    if (trace_last[0] && !strcmp(line, trace_last)) { trace_rep++; return; }
++    trace_flush();
++    strcpy(trace_last, line);
++    trace_rep = 1;
++    trace_t0 = hz_200;
++}
++static char vtrace_b[160];
++static void vtrace(void)
++{
++    char *b = vtrace_b;
++    int i, n;
++    n = sprintf(b, "V %d.%d h%d np%d ni%d i:", CONTRL->code, CONTRL->subcode, CONTRL->handle, CONTRL->nptsin, CONTRL->nintin);
++    for (i = 0; i < CONTRL->nintin && i < 6; i++) n += sprintf(b+n, " %d", INTIN[i]);
++    n += sprintf(b+n, " p:");
++    for (i = 0; i < CONTRL->nptsin*2 && i < 8; i++) n += sprintf(b+n, " %d", PTSIN[i]);
++    trace_line(b);
++}
++
+ void screen(void)
+ {
+     WORD opcode, handle;
+@@ -132,6 +166,7 @@ void screen(void)
+     /* no ints out & no pts out */
+     flip_y = 0;
+     opcode = CONTRL->code;
++    vtrace();
+ 
+     /* is it open work or vwork? */
+     if ((opcode != V_OPNWK_OP) && (opcode != V_OPNVWK_OP)) {

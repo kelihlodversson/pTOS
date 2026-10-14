@@ -1,0 +1,14 @@
+# pBench baseline
+# system: pTOS master (c26b030e) virt-m68k
+# emulator: QEMU emulator version 10.1.0 (Debian 1:10.1.0+ds-5ubuntu2.7), machine virt (m68020)
+# Screen 1280x800, 32 planes
+GEM Dialog Box         0.412 s     32 dialogs
+VDI Text               0.079 s    462 lines
+VDI Text Effects       0.144 s    352 lines
+VDI Small Text         0.100 s    616 lines
+VDI Graphics           0.341 s   2158 objects
+GEM Window             6.585 s     65 windows
+Blitting               0.123 s   1200 blits
+VDI Scroll             0.208 s    219 scrolls
+Justified Text         0.196 s   1460 lines
+VDI Enquire            0.056 s  43146 calls

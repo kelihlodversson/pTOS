@@ -1366,6 +1366,29 @@ endif
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
 
+# pBench, the graphics benchmark in tools/pBench (see doc/pbench.txt): a GEM
+# program built exactly like the test harness above (libcmini, userland
+# flags), but not part of it and not run by it.
+PBENCH_CFLAGS = $(TEST_CFLAGS) -Itools/pBench
+
+obj/pbench.o: tools/pBench/pbench.c tools/pBench/gem.h tools/pBench/refs.h $(AUTOCONF_H) | obj
+	$(CC) $(PBENCH_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+obj/pbench_gem.o: tools/pBench/gem.c tools/pBench/gem.h $(AUTOCONF_H) | obj
+	$(CC) $(PBENCH_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+pbench.prg: $(TEST_STARTUP) obj/pbench.o obj/pbench_gem.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/pbench.o obj/pbench_gem.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+
+# A raw HD image that starts pBench from emudesk.inf, like test-hd.img does
+# for the regression tests.
+pbench-hd.img: pbench.prg tools/pBench/emudesk.inf
+	@echo '  MKHD   $@'
+	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) pbench.prg tools/pBench/emudesk.inf
+
+.PHONY: pbench
+pbench: pbench.prg
+
 ifdef CONF_WITH_ELF_LOADER
 # pieprobe.tos: the pie_load suite's payload (see tests/pie_load/pie_probe.c).
 # Linked -pie --no-dynamic-linker instead of runtests.tos's --emit-relocs,
@@ -1501,7 +1524,7 @@ endif
 TOCLEAN += tests/run_tests.c runtests.tos pieprobe.tos \
             relocprobe-unpacked.tos PTRELOC.TOS \
             relocprobe2-unpacked.tos PTRELOC2.TOS \
-            test-hd.img ACCPROBE.ACC
+            test-hd.img ACCPROBE.ACC pbench.prg pbench-hd.img
 TOCLEAN_POST += libcmini-clean
 
 .PHONY: libcmini-clean

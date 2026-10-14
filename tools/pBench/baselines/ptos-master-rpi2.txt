@@ -1,0 +1,14 @@
+# pBench baseline
+# system: pTOS master (c26b030e) rpi2
+# emulator: QEMU emulator version 10.1.0 (Debian 1:10.1.0+ds-5ubuntu2.7), machine raspi2b
+# Screen 1280x720, 16 planes
+GEM Dialog Box         0.269 s     32 dialogs
+VDI Text               0.038 s    462 lines
+VDI Text Effects       0.169 s    352 lines
+VDI Small Text         0.045 s    616 lines
+VDI Graphics           0.175 s   2158 objects
+GEM Window             3.465 s     65 windows
+Blitting               0.338 s   1200 blits
+VDI Scroll             0.532 s    219 scrolls
+Justified Text         0.120 s   1460 lines
+VDI Enquire            0.069 s  43146 calls
