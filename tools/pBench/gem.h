@@ -124,6 +124,7 @@ WORD form_dial(WORD flag, WORD lx, WORD ly, WORD lw, WORD lh,
                WORD x, WORD y, WORD w, WORD h);
 WORD objc_draw(OBJECT *tree, WORD start, WORD depth,
                WORD x, WORD y, WORD w, WORD h);
+WORD evnt_mesag_poll(WORD *msg);
 WORD evnt_keybd(void);
 WORD evnt_timer(WORD lo, WORD hi);
 

@@ -264,6 +264,21 @@ WORD objc_draw(OBJECT *tree, WORD start, WORD depth,
     return aes(42, 6, 1, 1);
 }
 
+/* fetch one pending AES message, if there is one, without waiting */
+WORD evnt_mesag_poll(WORD *msg)
+{
+    WORD i;
+
+    aintin[0] = 0x0030;         /* MU_MESAG | MU_TIMER */
+    for (i = 1; i < 14; i++)
+        aintin[i] = 0;
+    aintin[14] = 0;             /* timer: no wait */
+    aintin[15] = 0;
+    addrin[0] = (LONG)msg;
+    aes(25, 16, 7, 1);
+    return aintout[0] & 0x0010;
+}
+
 WORD evnt_keybd(void)
 {
     return aes(20, 0, 1, 0);

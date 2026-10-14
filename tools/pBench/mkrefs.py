@@ -9,8 +9,11 @@
 #
 # Usage: mkrefs.py baselines/tos206-*.txt > refs.h
 #
-# Each baseline file (see run-hatari.py) becomes one reference set, chosen by
-# pBench at run time from the screen size and whether the blitter is in use.
+# Each baseline file (see run-hatari.py) becomes one reference set.  pBench
+# chooses one at run time from the screen size and whether the blitter is in
+# use; a baseline with a "# Screen WxH, N planes" header and more than 8
+# planes (a Falcon in true colour) is the reference for all true colour
+# screens.
 #
 import re
 import sys
@@ -21,6 +24,8 @@ LINE = re.compile(r'^(\D.*?)\s+(\d+)\.(\d{3}) s\s+\d+\s')
 
 def read(path):
     name = mode = blit = None
+    planes = 0
+    width = height = 0
     times = []
     for line in open(path):
         line = line.rstrip('\n')
@@ -28,21 +33,28 @@ def read(path):
             name = line.split(':', 1)[1].strip()
         elif line.startswith('# emulator:'):
             m = re.search(r'screen ST-(\w+), blitter (\w+)', line)
-            mode, blit = m.group(1), m.group(2)
+            if m:
+                mode, blit = m.group(1), m.group(2)
+        elif line.startswith('# Screen'):
+            m = re.search(r'(\d+)x(\d+), (\d+) planes', line)
+            width, height, planes = (int(x) for x in m.groups())
         elif not line.startswith('#'):
             m = LINE.match(line)
             if m:
                 times.append(int(m.group(2)) * 1000 + int(m.group(3)))
+    if planes > 8:
+        mode, blit = 'TRUECOLOR', 'on'
+        SIZES[mode] = (width, height)
     if len(times) != 10 or not mode:
         sys.exit('%s: not a complete pBench baseline' % path)
-    return name, mode, blit == 'on', times
+    return name, mode, blit == 'on', times, planes if planes > 8 else 0
 
 
 def main():
     sets = [read(p) for p in sys.argv[1:]]
     if not sets:
         sys.exit(__doc__)
-    sets.sort(key=lambda s: (s[1] != 'MED', s[1], not s[2]))
+    sets.sort(key=lambda s: (s[4] != 0, s[1] != 'MED', s[1], not s[2]))
     print('''/*
  * refs.h - reference times for pBench
  *
@@ -54,17 +66,23 @@ def main():
 struct pb_ref {
     const char *name;
     short w, h;
+    short planes;
     int blitter;
     long ms[10];
 };
 ''')
     print('#define PB_NREFS %d\n' % len(sets))
     print('static const struct pb_ref pb_refs[PB_NREFS] = {')
-    for i, (name, mode, blit, times) in enumerate(sets):
+    for i, (name, mode, blit, times, planes) in enumerate(sets):
         w, h = SIZES[mode]
-        label = '%s, ST-%s, %s' % (name, mode, 'blitter' if blit else 'no blitter')
-        print('    { "%s", %d, %d, %d,\n      { %s } }%s'
-              % (label, w, h, int(blit), ', '.join(str(t) for t in times),
+        if planes:
+            label = '%s, %dx%d, %d planes' % (name, w, h, planes)
+        else:
+            label = '%s, ST-%s, %s' % (name, mode,
+                                       'blitter' if blit else 'no blitter')
+        print('    { "%s", %d, %d, %d, %d,\n      { %s } }%s'
+              % (label, w, h, planes, int(blit),
+                 ', '.join(str(t) for t in times),
                  ',' if i + 1 < len(sets) else ''))
     print('};')
 

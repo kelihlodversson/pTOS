@@ -22,6 +22,9 @@
  *   -l          list the tests
  *   TESTS       letters selecting tests (default: all)
  *
+ * Started without arguments, as from the desktop, pBench takes them from the
+ * first line of PBENCH.CFG, if there is one.
+ *
  * Results go to the screen, the serial port (AUX:) and PBENCH.TXT.
  */
 
@@ -40,6 +43,7 @@ static WORD scr_w, scr_h;       /* screen size */
 static WORD gl_wchar, gl_hchar;
 static WORD ncolors = 2;        /* colours the screen can show */
 static int blitter;             /* is the blitter in use? */
+static WORD planes;             /* bits per pixel */
 static long repeat = 0;         /* repeat count asked for with -r, 0 = auto */
 
 #define MIN_TICKS   400L        /* 2 s at 200 Hz */
@@ -332,6 +336,20 @@ static long test_graphics(void)
  * GEM Window: create, open (AES animates the opening), close and delete a
  * full-screen window, over and over.
  */
+/*
+ * Opening and closing windows makes the AES send this program redraw and
+ * other messages, which it never reads: left alone they pile up, and with
+ * some AES versions (TOS 4.04) the AES eventually stops waiting for room in
+ * the queue.  So read and drop them.
+ */
+static void drain_messages(void)
+{
+    WORD msg[8];
+
+    while (evnt_mesag_poll(msg))
+        ;
+}
+
 static long test_window(void)
 {
     WORD i, count = 65;
@@ -348,8 +366,10 @@ static long test_window(void)
         wind_set_str(handle, WF_INFO, " pBench window test ");
         wind_open(handle, x, y, w, h);
         wind_get(handle, WF_WORKXYWH, &wx, &wy, &ww, &wh);
+        drain_messages();
         wind_close(handle);
         wind_delete(handle);
+        drain_messages();
         wind_get(0, WF_WORKXYWH, &wx, &wy, &ww, &wh);
     }
     return i;
@@ -508,8 +528,13 @@ static const struct pb_ref *find_reference(void)
 {
     int i, best = -1;
 
+    /* true colour is compared with the true colour reference, if any */
+    if (planes > 8)
+        for (i = 0; i < PB_NREFS; i++)
+            if (pb_refs[i].planes > 8)
+                return &pb_refs[i];
     for (i = 0; i < PB_NREFS; i++)
-        if (pb_refs[i].blitter == blitter)
+        if (pb_refs[i].planes == 0 && pb_refs[i].blitter == blitter)
         {
             if (pb_refs[i].w == scr_w && pb_refs[i].h == scr_h)
                 return &pb_refs[i];
@@ -519,7 +544,7 @@ static const struct pb_ref *find_reference(void)
     return best >= 0 ? &pb_refs[best] : &pb_refs[0];
 }
 
-static char report[NTESTS + 2][96];
+static char report[NTESTS + 3][96];
 static int nreport;
 
 /* the report also goes to the serial port, for unattended runs */
@@ -533,7 +558,7 @@ static void emit(const char *line)
 {
     aux_puts(line);
     aux_puts("\r\n");
-    if (nreport < NTESTS + 2)
+    if (nreport < NTESTS + 3)
     {
         size_t n = strlen(line);
 
@@ -615,13 +640,52 @@ static int selected(const struct test *t, const char *sel)
     return !sel || strchr(sel, t->key) != NULL;
 }
 
+#define MAX_ARGS 16
+
+/* the arguments from the first line of PBENCH.CFG */
+static int read_config(char **args)
+{
+    static char buf[256];
+    long n;
+    int fd, count = 0;
+    char *p;
+
+    fd = Fopen("PBENCH.CFG", 0);
+    if (fd < 0)
+        return 0;
+    n = Fread(fd, sizeof(buf) - 1, buf);
+    Fclose(fd);
+    if (n <= 0)
+        return 0;
+    buf[n] = 0;
+    for (p = buf; *p && *p != '\r' && *p != '\n' && count < MAX_ARGS - 1; )
+    {
+        while (*p == ' ' || *p == '\t')
+            *p++ = 0;
+        if (!*p || *p == '\r' || *p == '\n')
+            break;
+        args[count++] = p;
+        while (*p && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n')
+            p++;
+    }
+    if (*p)
+        *p = 0;
+    return count;
+}
+
 int main(int argc, char **argv)
 {
+    char *cfgargs[MAX_ARGS];
     int i, quit = 0, list = 0;
     const char *sel = NULL;
     WORD ww, hh;
     WORD handle, ext[45];
 
+    if (argc <= 1)
+    {
+        argc = read_config(cfgargs + 1) + 1;
+        argv = cfgargs;
+    }
     for (i = 1; i < argc; i++)
     {
         if (!strcmp(argv[i], "-q"))
@@ -658,6 +722,12 @@ int main(int argc, char **argv)
     ncolors = ext[13];
     if (ncolors < 2)
         ncolors = 2;
+    {
+        WORD vext[57];
+
+        vq_extnd(vh, 1, vext);
+        planes = vext[4];
+    }
     blitter = (Blitmode(-1) & 3) == 3;
     reference = find_reference();
 
@@ -668,6 +738,8 @@ int main(int argc, char **argv)
     {
         char hdr[96];
 
+        sprintf(hdr, "Screen %dx%d, %d planes", scr_w, scr_h, planes);
+        emit(hdr);
         sprintf(hdr, "Speed relative to %s", reference->name);
         emit(hdr);
     }

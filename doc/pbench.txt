@@ -41,9 +41,10 @@ Running
 Without -r, a test that finishes in less than two seconds is repeated (up to
 4000 times) until the measurement is long enough to be accurate, and the time
 of a single run is reported.  Fast machines therefore still get meaningful
-numbers.  Started from the desktop, as EMUDESK.INF does, it runs all the tests with the
-defaults; the options are for starting it from a shell (EmuCON) or a
-program that passes a command line.
+numbers.  Started from the desktop, as EMUDESK.INF does, it takes the options from the
+first line of PBENCH.CFG in the current directory if there is one, and
+otherwise runs all the tests with the defaults.  (Options can also be given
+on the command line, from a shell such as EmuCON.)
 
 Results appear
 
@@ -79,6 +80,9 @@ tools/pBench/baselines holds pBench's results under Hatari 2.5 for
               c99f94cf706047e3e4966aad3fa0f434)
   ptos-a06e0df6   pTOS at commit a06e0df6, atari512 configuration (the last
               commit before the kernel stopped being built with -mshort)
+  tos404-falcon-truecolor   TOS 4.04 on a Falcon (16 MHz 68030, 14 MB), 640x480
+              at 16 bits on a VGA monitor (md5
+              e5ea0f216fb446f1c4a4f476bc5f03d4)
   ptos-master     pTOS at commit c26b030e (without -mshort), atari512
   ptos-master-fastcall   the same built with CONF_WITH_MFASTCALL
 
@@ -114,10 +118,23 @@ from the tos206 files:
 
 ptos-master-virt-m68k.txt and ptos-master-rpi2.txt are pBench on pTOS master
 under QEMU (virt-m68k, 1280x800 at 32 bits; raspi2b, 1280x720 at 16 bits),
-made with tools/pBench/run-qemu.py.  QEMU's clock is the host's, so these
-vary with the machine they were made on (a few percent between runs) and are
-only good for rough comparisons; they also show times far below TOS 2.06's
-on a real ST, simply because the emulated CPUs are so much faster.
+made with tools/pBench/run-qemu.py.  Their reference is the Falcon baseline,
+which is also what pBench compares any screen with more than 8 bits per pixel
+against:
+
+    Display score relative to the Falcon (TOS 4.04, true colour)
+    virt-m68k   ~47 times as fast
+    rpi2        ~54 times as fast
+
+That says more about QEMU's CPUs than about pTOS.  QEMU's clock is the host's,
+so these vary with the machine they were made on (10% between runs is
+normal), and are only good for rough comparisons.
+
+The Falcon baseline is made with run-hatari.py --falcon 001C: TOS 4.04 takes
+its video mode from bytes 5 and 6 of the #E line of NEWDESK.INF
+("#E 18 03 00 06 00 1C 00 00 00 00" is 640x480, 16 bits, VGA), and starts the
+program of a #Z line if that is the second line of the file, after "#R 01".
+(Hatari's --auto replaces the file, so it cannot be used.)
 
 To make baselines for another system (the images are given as KEY=IMAGE=NAME):
 
@@ -207,6 +224,9 @@ v_gtext() slower makes pBench's "VDI Text" slower.
 Notes
 -----
 
+  - The GEM Window test reads and drops the redraw and other messages the AES
+    sends the program: with TOS 4.04 the AES stops (the window stays on the
+    screen forever) once enough of them are waiting unread.
   - The mouse pointer is hidden during the run (graf_mouse(M_OFF) and
     v_hide_c()); when pBench ends, form_dial() asks the AES to redraw the
     whole screen.
