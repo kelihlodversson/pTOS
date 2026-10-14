@@ -1,0 +1,13 @@
+# pBench baseline
+# system: TOS 2.06 US
+# emulator: Hatari v2.5.0, machine ST, screen ST-MED, blitter off
+GEM Dialog Box        22.210 s     32 dialogs
+VDI Text              33.755 s    462 lines
+VDI Text Effects      41.550 s    352 lines
+VDI Small Text        44.885 s    616 lines
+VDI Graphics          31.115 s   2158 objects
+GEM Window            15.610 s     65 windows
+Blitting              20.325 s   1200 blits
+VDI Scroll            26.015 s    219 scrolls
+Justified Text        26.270 s   1460 lines
+VDI Enquire           19.315 s  43146 calls
