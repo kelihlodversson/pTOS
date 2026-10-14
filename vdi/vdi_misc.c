@@ -21,7 +21,7 @@
 
 static BOOL in_proc;                   /* flag, if we are still running */
 
-#ifdef __arm__
+#if CONF_WITH_NATIVE_ABI
 static void tick_int(int u);
 #else
 /*
@@ -92,7 +92,7 @@ void arb_line(Line * line)
  * etv_timer points here directly on __arm__; on m68k it points to the
  * tick_int_etv_entry trampoline above, which tail-calls into this.
  */
-#ifdef __arm__
+#if CONF_WITH_NATIVE_ABI
 static
 #endif
 void tick_int(int u)
@@ -115,7 +115,7 @@ void tick_int(int u)
          * ETV_TIMER_T itself (include/biosdefs.h) for every frozen
          * timer vector, not something specific to this call site.
          */
-#ifdef __arm__
+#if CONF_WITH_NATIVE_ABI
         (*linea_vars.tim_addr)(u);                 /* call the timer vector */
 #else
         protect_wv((void(*)(WORD))linea_vars.tim_addr, (WORD)u);
@@ -124,7 +124,7 @@ void tick_int(int u)
     }
     in_proc = 0;                        /* allow yet another trip through */
                                         /* MAD: evtl. registers to stack */
-#ifdef __arm__
+#if CONF_WITH_NATIVE_ABI
     (*linea_vars.tim_chain)(u);         /* call the old timer vector too */
 #else
     protect_wv((void(*)(WORD))linea_vars.tim_chain, (WORD)u);
@@ -181,7 +181,7 @@ void timer_init(void)
     linea_vars.tim_addr = do_nothing_int;          /* tick points to rts */
 
     disable_interrupts();
-#ifdef __arm__
+#if CONF_WITH_NATIVE_ABI
     linea_vars.tim_chain = (void(*)(int))          /* save old vector */
     Setexc(0x100, (long)tick_int);      /* set etv_timer to tick_int */
 #else

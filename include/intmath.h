@@ -130,7 +130,7 @@ static __inline__ LONG muls(WORD m1, WORD m2)
  */
 static __inline__ WORD divs(LONG d1, WORD d2)
 {
-#ifdef __arm__
+#if CONF_WITH_NATIVE_ABI
     return (WORD)(d1 / d2);
 #else
     __asm__ (
@@ -153,7 +153,7 @@ static __inline__ WORD divs(LONG d1, WORD d2)
  */
 static __inline__ WORD mods(LONG d1, WORD d2)
 {
-#ifdef __arm__
+#if CONF_WITH_NATIVE_ABI
     return (WORD)(d1 % d2);
 #else
     __asm__ (

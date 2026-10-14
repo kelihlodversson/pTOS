@@ -1597,7 +1597,7 @@ static LONG bios_b(WORD flag)
 #endif
 
 
-#ifndef __arm__
+#if !CONF_WITH_NATIVE_ABI
 /*
  * wrap_*(): bios_vecs[] shims for m68k. vectors.S's biosxbios no
  * longer jsr's straight into a bios_vecs[] entry with sp still
@@ -1666,17 +1666,17 @@ static LONG wrap_bios_9(WORD *pw) { return bios_9(pw[0]); }
 static LONG wrap_bios_a(WORD *pw) { UNUSED(pw); return bios_a(); }
 static LONG wrap_bios_b(WORD *pw) { return bios_b(pw[0]); }
 #endif /* DBGBIOS */
-#endif /* !__arm__ */
+#endif /* !CONF_WITH_NATIVE_ABI */
 
 /**
  * bios_vecs - the table of bios command vectors.
  */
 
-#if DBGBIOS && defined(__arm__)
+#if DBGBIOS && CONF_WITH_NATIVE_ABI
 #define VEC(wrapper, direct) (PFLONG) wrapper   /* no wrap_*() shims on ARM */
 #elif DBGBIOS
 #define VEC(wrapper, direct) (PFLONG) wrap_##wrapper
-#elif defined(__arm__)
+#elif CONF_WITH_NATIVE_ABI
 #define VEC(wrapper, direct) (PFLONG) direct
 #else
 #define VEC(wrapper, direct) (PFLONG) wrap_##direct

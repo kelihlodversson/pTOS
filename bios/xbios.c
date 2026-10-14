@@ -1339,7 +1339,7 @@ LONG supexec(PFLONG);       /* defined in vectors.S */
 extern LONG supexec(PFLONG);   /* implemented in vectors.S */
 #endif
 
-#ifndef __arm__
+#if !CONF_WITH_NATIVE_ABI
 /*
  * wrap_*(): xbios_vecs[] shims for m68k. vectors.S's biosxbios no
  * longer jsr's straight into an xbios_vecs[] entry with sp still
@@ -1674,7 +1674,7 @@ static LONG wrap_scrdmp(WORD *pw) { UNUSED(pw); scrdmp(); return 0; }
 static LONG wrap_gettime(WORD *pw) { UNUSED(pw); return gettime(); }
 static LONG wrap_bioskeys(WORD *pw) { UNUSED(pw); bioskeys(); return 0; }
 static LONG wrap_vsync(WORD *pw) { UNUSED(pw); vsync(); return 0; }
-#endif /* !__arm__ */
+#endif /* !CONF_WITH_NATIVE_ABI */
 
 /*
  * xbios_vecs - the table of xbios command vectors.
@@ -1682,7 +1682,7 @@ static LONG wrap_vsync(WORD *pw) { UNUSED(pw); vsync(); return 0; }
 
 #if DBG_XBIOS
 #define VEC(wrapper, direct) (PFLONG) wrapper
-#elif defined(__arm__)
+#elif CONF_WITH_NATIVE_ABI
 #define VEC(wrapper, direct) (PFLONG) direct
 #else
 #define VEC(wrapper, direct) (PFLONG) wrap_##direct

@@ -273,7 +273,7 @@ typedef struct
 #endif
 } FND;
 
-#ifndef __arm__
+#if !CONF_WITH_NATIVE_ABI
 enum {
     FSHAPE_V, FSHAPE_W, FSHAPE_L, FSHAPE_WW, FSHAPE_LL,
     FSHAPE_LW, FSHAPE_LWW, FSHAPE_WLLL,
