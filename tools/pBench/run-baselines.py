@@ -10,6 +10,7 @@
 #
 # Usage: run-baselines.py --pbench PBENCH.PRG --out DIR [--jobs N]
 #                         [--res low,med,high] [--blitter on,off]
+#                         [--timeout SEC]
 #                         --system KEY=IMAGE[=NAME] ...
 #
 # For every system, runs run-hatari.py in the ST screen modes given by --res
@@ -29,11 +30,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def run(job):
-    key, image, name, res, blit, pbench, out = job
+    key, image, name, res, blit, pbench, out, timeout = job
     dest = os.path.join(out, '%s-%s-%s.txt'
                         % (key, res, 'blitter' if blit == 'on' else 'noblitter'))
     cmd = [sys.executable, os.path.join(HERE, 'run-hatari.py'),
-           '--tos', image, '--name', name, '--res', res, '--blitter', blit,
+           '--timeout', str(timeout), '--tos', image, '--name', name,
+           '--res', res, '--blitter', blit,
            pbench, dest]
     # Hatari now and then dies at start-up on a busy host; the result of a
     # run does not depend on that, so try again
@@ -52,6 +54,8 @@ def main():
     ap.add_argument('--jobs', type=int, default=6)
     ap.add_argument('--res', default='low,med,high')
     ap.add_argument('--blitter', default='on,off')
+    ap.add_argument('--timeout', type=int, default=1800,
+                    help='seconds a run may take (it is tried up to 3 times)')
     ap.add_argument('--system', action='append', required=True,
                     help='KEY=IMAGE[=NAME]')
     a = ap.parse_args()
@@ -65,7 +69,7 @@ def main():
         for res in a.res.split(','):
             for blit in a.blitter.split(','):
                 jobs.append((key, image, name, res, blit,
-                             os.path.abspath(a.pbench), a.out))
+                             os.path.abspath(a.pbench), a.out, a.timeout))
     failed = 0
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as pool:
         for dest, rc, text in pool.map(run, jobs):

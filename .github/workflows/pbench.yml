@@ -108,11 +108,15 @@ jobs:
       # and the comment are not lost
       - name: Run pBench in every ST screen mode, with and without blitter
         continue-on-error: true
+        # A run takes half a minute; one that hangs is given two minutes, three
+        # tries, in two waves of three: well below the job's 20 minutes, which
+        # would cancel the reporting steps too.
+        timeout-minutes: 12
         env:
           CONFIG: ${{ matrix.config }}
         run: |
           python3 tools/pBench/run-baselines.py \
-            --pbench products/pbench.prg --out results --jobs 3 \
+            --pbench products/pbench.prg --out results --jobs 3 --timeout 120 \
             --system "${CONFIG}=products/system.img=pTOS ${CONFIG} (${GITHUB_SHA::8})"
 
       # What the baselines in the repository are made from when they have to
