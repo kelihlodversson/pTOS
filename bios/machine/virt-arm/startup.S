@@ -14,6 +14,7 @@
         .extern C_SYM(biosmain)
         .extern __endvdibss
         .extern C_SYM(virt_mmu_bootstrap)
+        .extern C_SYM(virt_mmu_drop_identity)
         .extern C_SYM(phystop)
         .extern __bss
         .extern __ebss
@@ -114,11 +115,9 @@ C_SYM(main):
      * tree in r2.  virt_fdt_ram_size() needs no stack, which matters here:
      * the early stack goes at the top of the RAM, so it can only be set
      * up once the size is known.  Without a device tree, assume the
-     * 128 MiB the port was written for.  The size is also limited to
-     * 128 MiB, because the low virtual window that maps the fixed-address
-     * TOS system variables (see virt_mmu.c) stops where the devices start
-     * -- RAM beyond that is not used -- and rounded down to whole
-     * megabytes.  r11 (callee-saved) keeps it until the MMU is set up.
+     * 128 MiB the port was written for.  The size is limited to what
+     * VIRT_MAX_RAM_SIZE allows and rounded down to whole megabytes.  r11
+     * (callee-saved) keeps it until the MMU is set up.
      */
     mov r0, r10
     bl  virt_fdt_ram_size
@@ -127,12 +126,19 @@ C_SYM(main):
     ldr r1, =VIRT_MAX_RAM_SIZE
     cmp r0, r1
     movhi r0, r1
+    ldr r1, =0x00800000
+    cmp r0, r1
+    movlo r0, r1                /* 8 MiB at least */
     lsr r0, r0, #20
     lsl r11, r0, #20
 
-    ldr r1, =VIRT_RAM_BASE
-    add r1, r1, r11             /* top of the RAM */
-    sub sp, r1, #0x10000        /* early stack: its last 64 KiB */
+    /*
+     * The early stack has to be inside the part of the RAM that is also
+     * mapped where it physically is (see virt_mmu.c): the MMU is switched
+     * on while it is in use.  8 MiB up is the smallest RAM there is, so
+     * the end of the first 8 MiB is always in it.
+     */
+    ldr sp, =VIRT_RAM_BASE + 0x00800000
     bl  C_SYM(virt_uart0_init)
     adr r4, hello_msg_phys     /* PC-relative: correct at the physical PC we're
                                  * actually executing at pre-MMU, unlike
@@ -150,9 +156,15 @@ C_SYM(main):
     ldr pc, =virt_arm_post_mmu
 
 virt_arm_post_mmu:
-    ldr r1, =VIRT_RAM_BASE
-    add r1, r1, r11
-    sub sp, r1, #0x10000    /* physical scratch stack, until the switch to C_SYM(stktop) below */
+    /*
+     * Running at the virtual address now, with the RAM at virtual 0: the
+     * scratch stack is the last 64 KiB of it (the early physical stack
+     * was the same bytes), until the switch to C_SYM(stktop) below.  The
+     * physical alias of the start of the RAM is not needed any more.
+     */
+    sub sp, r11, #0x10000
+    mov r0, r11
+    bl  C_SYM(virt_mmu_drop_identity)
     ldr r4, =hello_msg_virt
     bl  print_string
 

@@ -40,7 +40,7 @@ static LONG virt_pci_get_windows(pci_backend_windows_t *windows)
 
 static volatile UBYTE *virt_pci_ecam_ptr(UBYTE bus, UBYTE dev, UBYTE func, UWORD reg)
 {
-    return (volatile UBYTE *)(VIRT_PCIE_ECAM_BASE + ((ULONG)bus << 20) +
+    return (volatile UBYTE *)(VIRT_DEV_VA(VIRT_PCIE_ECAM_BASE) + ((ULONG)bus << 20) +
                               ((ULONG)dev << 15) + ((ULONG)func << 12) + reg);
 }
 
@@ -111,7 +111,7 @@ static LONG virt_pci_bus_to_phys(ULONG bus_address, BOOL io, ULONG *phys_address
     if (io) {
         if (bus_address >= VIRT_PCIE_PIO_SIZE)
             return PCI_BAD_RESOURCE;
-        *phys_address = VIRT_PCIE_PIO_BASE + bus_address;
+        *phys_address = VIRT_DEV_VA(VIRT_PCIE_PIO_BASE) + bus_address;
         return PCI_SUCCESSFUL;
     }
 
@@ -119,7 +119,7 @@ static LONG virt_pci_bus_to_phys(ULONG bus_address, BOOL io, ULONG *phys_address
         (bus_address >= VIRT_PCIE_MMIO_BASE + VIRT_PCIE_MMIO_SIZE))
         return PCI_BAD_RESOURCE;
 
-    *phys_address = bus_address;
+    *phys_address = VIRT_DEV_VA(bus_address);
     return PCI_SUCCESSFUL;
 }
 
@@ -129,18 +129,18 @@ static LONG virt_pci_phys_to_bus(ULONG phys_address, BOOL io, ULONG *bus_address
         return PCI_GENERAL_ERROR;
 
     if (io) {
-        if ((phys_address < VIRT_PCIE_PIO_BASE) ||
-            (phys_address >= VIRT_PCIE_PIO_BASE + VIRT_PCIE_PIO_SIZE))
+        if ((phys_address < VIRT_DEV_VA(VIRT_PCIE_PIO_BASE)) ||
+            (phys_address >= VIRT_DEV_VA(VIRT_PCIE_PIO_BASE) + VIRT_PCIE_PIO_SIZE))
             return PCI_BAD_RESOURCE;
-        *bus_address = phys_address - VIRT_PCIE_PIO_BASE;
+        *bus_address = phys_address - VIRT_DEV_VA(VIRT_PCIE_PIO_BASE);
         return PCI_SUCCESSFUL;
     }
 
-    if ((phys_address < VIRT_PCIE_MMIO_BASE) ||
-        (phys_address >= VIRT_PCIE_MMIO_BASE + VIRT_PCIE_MMIO_SIZE))
+    if ((phys_address < VIRT_DEV_VA(VIRT_PCIE_MMIO_BASE)) ||
+        (phys_address >= VIRT_DEV_VA(VIRT_PCIE_MMIO_BASE) + VIRT_PCIE_MMIO_SIZE))
         return PCI_BAD_RESOURCE;
 
-    *bus_address = phys_address;
+    *bus_address = phys_address - VIRT_DEV_VA(VIRT_PCIE_MMIO_BASE) + VIRT_PCIE_MMIO_BASE;
     return PCI_SUCCESSFUL;
 }
 
