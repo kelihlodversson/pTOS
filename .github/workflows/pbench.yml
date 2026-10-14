@@ -12,9 +12,11 @@
 
 name: pBench
 
+# "epic/**": pull requests to a long-lived integration branch are measured
+# too, as the Build workflow does.
 on:
   pull_request:
-    branches: [master]
+    branches: [master, "epic/**"]
   workflow_dispatch:
 
 concurrency:
