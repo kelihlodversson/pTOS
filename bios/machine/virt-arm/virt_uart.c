@@ -15,14 +15,29 @@
 #include "virt_uart.h"
 #include "ikbd.h"
 
-#define UART0_DR     (*(volatile ULONG*)(VIRT_UART0_BASE+0x00))
-#define UART0_FR     (*(volatile ULONG*)(VIRT_UART0_BASE+0x18))
-#define UART0_IBRD   (*(volatile ULONG*)(VIRT_UART0_BASE+0x24))
-#define UART0_FBRD   (*(volatile ULONG*)(VIRT_UART0_BASE+0x28))
-#define UART0_LCRH   (*(volatile ULONG*)(VIRT_UART0_BASE+0x2C))
-#define UART0_CR     (*(volatile ULONG*)(VIRT_UART0_BASE+0x30))
-#define UART0_IMSC   (*(volatile ULONG*)(VIRT_UART0_BASE+0x38))
-#define UART0_ICR    (*(volatile ULONG*)(VIRT_UART0_BASE+0x44))
+/*
+ * The UART is used before the MMU is on (the boot messages of startup.S),
+ * when it is at its hardware address, and afterwards, when it is at its
+ * virtual one (see virt_memmap.h), so the address is picked from the state
+ * of the MMU, which is bit 0 of the system control register.
+ */
+static ULONG uart_base(void)
+{
+    ULONG control;
+
+    __asm__ volatile ("mrc p15, 0, %0, c1, c0, 0" : "=r" (control));
+    return (control & 1) ? VIRT_UART0_BASE : VIRT_UART0_PA;
+}
+
+#define UART_REG(off)   (*(volatile ULONG*)(uart_base() + (off)))
+#define UART0_DR     UART_REG(0x00)
+#define UART0_FR     UART_REG(0x18)
+#define UART0_IBRD   UART_REG(0x24)
+#define UART0_FBRD   UART_REG(0x28)
+#define UART0_LCRH   UART_REG(0x2C)
+#define UART0_CR     UART_REG(0x30)
+#define UART0_IMSC   UART_REG(0x38)
+#define UART0_ICR    UART_REG(0x44)
 
 /* Fixed PL011 input clock on the QEMU 'virt' board. QEMU's UART model
  * does not enforce real baud-rate timing (bytes are transferred as soon
