@@ -43,7 +43,8 @@ def read(path):
             if m:
                 times.append(int(m.group(2)) * 1000 + int(m.group(3)))
     if planes > 8:
-        mode, blit = 'TRUECOLOR', 'on'
+        # a key of its own for every size, so that several sets keep theirs
+        mode, blit = 'TC%dx%d' % (width, height), 'on'
         SIZES[mode] = (width, height)
     if len(times) != 10 or not mode:
         sys.exit('%s: not a complete pBench baseline' % path)

@@ -54,6 +54,10 @@ def main():
     ap.add_argument('--timeout', type=int, default=600)
     ap.add_argument('output')
     a = ap.parse_args()
+    if a.target == 'virt-m68k' and not a.pbench:
+        ap.error('--target virt-m68k needs --pbench')
+    if a.target == 'rpi2' and not a.image:
+        ap.error('--target rpi2 needs --image')
 
     work = tempfile.mkdtemp(prefix='pbench-qemu-')
     serial = os.path.join(work, 'serial.txt')

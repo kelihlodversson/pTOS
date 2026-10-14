@@ -112,9 +112,10 @@ of the same image vary by a quarter of a percent or so (the starting point
 of the 200 Hz timer).
 
 tools/pBench/refs.h, the reference times compiled into pBench, is generated
-from the tos206 files:
+from the tos206 files and the Falcon true colour baseline:
 
-    tools/pBench/mkrefs.py tools/pBench/baselines/tos206-*.txt > tools/pBench/refs.h
+    tools/pBench/mkrefs.py tools/pBench/baselines/tos206-*.txt \
+        tools/pBench/baselines/tos404-falcon-truecolor.txt > tools/pBench/refs.h
 
 ptos-master-virt-m68k.txt and ptos-master-rpi2.txt are pBench on pTOS master
 under QEMU (virt-m68k, 1280x800 at 32 bits; raspi2b, 1280x720 at 16 bits),
@@ -186,8 +187,10 @@ and the enquire test does not draw at all.
   g  VDI Graphics     81 steps of two v_bar() and two v_ellipse() calls
                       (black, then white) that grow and slide, then 14 fans
                       of 131 two-point v_pline() lines, in XOR mode.
-  w  GEM Window       65 times: wind_create() with all gadgets,
-                      wind_set() of the name and info lines, wind_open()
+  w  GEM Window       65 times: wind_create() with the gadgets GEM Bench
+                      uses (all but INFO, as its trace shows, though it
+                      does set an info line), wind_set() of the name and
+                      info lines, wind_open()
                       (the AES animates this), wind_close(), wind_delete().
   b  Blitting         1200 screen to screen vro_cpyfm() of a 201x51 patterned
                       box, S_ONLY, to positions moving back and forth.
