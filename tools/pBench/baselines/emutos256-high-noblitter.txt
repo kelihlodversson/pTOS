@@ -1,13 +1,14 @@
 # pBench baseline
 # system: EmuTOS 1.4 256k US
 # emulator: Hatari v2.5.0, machine ST, screen ST-HIGH, blitter off
-GEM Dialog Box        21.540 s     32 dialogs
-VDI Text              22.765 s    462 lines
+# Screen 640x400, 1 planes
+GEM Dialog Box        21.245 s     32 dialogs
+VDI Text              22.770 s    462 lines
 VDI Text Effects      26.730 s    352 lines
-VDI Small Text        32.140 s    616 lines
+VDI Small Text        32.135 s    616 lines
 VDI Graphics          27.080 s   2158 objects
-GEM Window            18.015 s     65 windows
-Blitting              10.665 s   1200 blits
-VDI Scroll            15.870 s    219 scrolls
-Justified Text        17.310 s   1460 lines
-VDI Enquire           16.830 s  43146 calls
+GEM Window            18.610 s     65 windows
+Blitting              10.660 s   1200 blits
+VDI Scroll            15.865 s    219 scrolls
+Justified Text        17.315 s   1460 lines
+VDI Enquire           16.825 s  43146 calls

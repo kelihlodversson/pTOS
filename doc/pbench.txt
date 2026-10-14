@@ -96,7 +96,7 @@ How fast they are, as the geometric mean of the ten tests relative to
 TOS 2.06 (what GEM Bench calls the Display score):
 
     screen      blitter    EmuTOS 1.4  a06e0df6  master  master fastcall
-    ST-LOW      blitter        63%        61%       59%        60%
+    ST-LOW      blitter        63%        62%       59%        60%
     ST-LOW      no blitter     97%        97%       94%        95%
     ST-MEDIUM   blitter        69%        67%       63%        65%
     ST-MEDIUM   no blitter    100%        98%       94%        95%
@@ -168,8 +168,10 @@ collects the results.
 The tests
 ---------
 
-All of them draw in the same 624x159 pixel area (clipped to it), like GEM
-Bench's tests do.
+The VDI drawing tests (t, f, s, g, b, r, j) draw in the same 624x159 pixel area
+(clipped to it), like GEM Bench's tests do.  The dialog test draws a dialog of
+its own, centred on the screen; the window test uses the desktop's work area;
+and the enquire test does not draw at all.
 
   d  GEM Dialog Box   32 times: form_dial() start, grow, objc_draw() of a
                       532x164 dialog (strings, buttons, text fields, boxes),

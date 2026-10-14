@@ -505,7 +505,7 @@ void vql_attributes(WORD handle, WORD *attr)
     attr[0] = intout[0];
     attr[1] = intout[1];
     attr[2] = intout[2];
-    attr[3] = intout[3];
+    attr[3] = ptsout[0];        /* the line width */
 }
 
 void vqm_attributes(WORD handle, WORD *attr)

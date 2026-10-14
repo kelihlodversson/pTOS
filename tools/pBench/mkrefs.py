@@ -80,6 +80,7 @@ struct pb_ref {
         else:
             label = '%s, ST-%s, %s' % (name, mode,
                                        'blitter' if blit else 'no blitter')
+        label = label.replace('\\', '\\\\').replace('"', '\\"')
         print('    { "%s", %d, %d, %d, %d,\n      { %s } }%s'
               % (label, w, h, planes, int(blit),
                  ', '.join(str(t) for t in times),

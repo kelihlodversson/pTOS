@@ -2,13 +2,13 @@
 # system: TOS 4.04
 # emulator: Hatari v2.5.0, machine FALCON, Videl mode 001C
 # Screen 640x480, 16 planes
-GEM Dialog Box        11.640 s     32 dialogs
+GEM Dialog Box        11.545 s     32 dialogs
 VDI Text               7.335 s    462 lines
 VDI Text Effects      11.930 s    352 lines
-VDI Small Text        10.180 s    616 lines
-VDI Graphics           8.560 s   2158 objects
-GEM Window            22.550 s     65 windows
+VDI Small Text        10.195 s    616 lines
+VDI Graphics           8.550 s   2158 objects
+GEM Window            22.555 s     65 windows
 Blitting               7.510 s   1200 blits
-VDI Scroll            13.940 s    219 scrolls
-Justified Text         9.925 s   1460 lines
-VDI Enquire            7.765 s  43146 calls
+VDI Scroll            13.945 s    219 scrolls
+Justified Text         9.935 s   1460 lines
+VDI Enquire            7.670 s  43146 calls

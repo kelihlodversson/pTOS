@@ -116,7 +116,7 @@ static void build_dialog(void)
     dlg[0].ob_type = G_BOX;
     dlg[0].ob_flags = 0;
     dlg[0].ob_state = OS_OUTLINED;
-    dlg[0].ob_spec = 0xFF1100L | (0xFEL << 16) | 0xF0;
+    dlg[0].ob_spec = (0xFEL << 16) | 0x11F0;     /* thick (-2) frame */
     dlg[0].ob_x = 0;
     dlg[0].ob_y = 0;
     dlg[0].ob_w = 532;
@@ -170,7 +170,7 @@ static void build_dialog(void)
     {
         dlg[n].ob_type = G_BOX;
         dlg[n].ob_state = i == 1 ? OS_SHADOWED : 0;
-        dlg[n].ob_spec = 0xFF1100L | (0x01L << 16) | 0x70 | (i & 3);
+        dlg[n].ob_spec = (0x01L << 16) | 0x1170 | (i & 3);   /* +1 frame */
         dlg[n].ob_x = 360 + (i % 2) * 80;
         dlg[n].ob_y = 12 + (i / 2) * 40;
         dlg[n].ob_w = 70;
@@ -740,7 +740,7 @@ int main(int argc, char **argv)
 
         sprintf(hdr, "Screen %dx%d, %d planes", scr_w, scr_h, planes);
         emit(hdr);
-        sprintf(hdr, "Speed relative to %s", reference->name);
+        sprintf(hdr, "Speed relative to %.60s", reference->name);
         emit(hdr);
     }
     for (i = 0; i < NTESTS; i++)
