@@ -22,6 +22,9 @@ obj-y += memory.o processor.o intmask.o vectors.o bios.o xbios.o acsi.o biosmem.
 	 parport.o screen.o serport.o sound.o videl.o vt52.o xhdi.o delay.o \
 	 sd.o memory2.o bootparams.o bootargs.o scsi.o
 
+# The classic-ABI halves of the default BIOS vector entry points (m68k only).
+obj-y += classicvec.o
+
 # ui_mupb's address must be greater than the exec_os contents (see the
 # comment in endrom.c), so this must stay last in bios/.
 obj-y += endrom.o
@@ -55,7 +58,6 @@ obj-$(CONF_WITH_USB_XHCI) += raspi_vl805.o
 obj-$(CONF_WITH_RASPI_VSYNC_IRQ) += raspi_vsync.o
 
 obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o virt_pic.o virt_timer.o
-obj-$(CONF_WITH_VDI_TRUECOLOR32_TEST) += virt_screen.o
 
 obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfish_rtc_isr.o goldfish_pic_isr.o
 
@@ -64,6 +66,8 @@ obj-$(CONF_WITH_PCI_VIRT_ECAM) += virt_pci.o
 obj-$(CONF_WITH_PCI_RPI4_BRCMSTB) += raspi_pci.o
 
 obj-$(CONF_WITH_VIRTIO_BLK) += virtio_blk.o
+
+obj-$(CONF_WITH_VIRTIO_GPU) += virtio_gpu.o
 
 obj-$(CONF_WITH_VIRTIO_INPUT) += virtio_input.o virtio_input_keytbl.o
 

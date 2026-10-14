@@ -351,12 +351,18 @@ typedef struct
     CLNO  dt_clnum;             /*  if subdir, current cluster number,  */
                                 /*   otherwise 0                        */
     char  dt_attr;              /*  attribute from Fsfirst()            */
-                            /* public area, must not change             */
-    char  dt_fattr;             /*  attrib from fcb             21      */
-    DOSTIME dt_td;              /*  time, date fields from fcb  22-25   */
-    long  dt_fileln;            /*  file length field from fcb  26-29   */
-    char  dt_fname[14];         /*  file name from fcb          30-43   */
+                            /* public area, must not change member order */
+                            /* offsets follow the active target ABI; see DTA */
+    char  dt_fattr;             /*  attrib from fcb             */
+    DOSTIME dt_td;              /*  time, date fields from fcb  */
+    LONG  dt_fileln;            /*  file length field from fcb  */
+    char  dt_fname[14];         /*  file name from fcb          */
 } DTAINFO;                      /*    includes null terminator          */
+
+typedef char dta_fattr_offset_must_match[
+    offsetof(DTAINFO, dt_fattr) == offsetof(DTA, d_attrib) ? 1 : -1];
+typedef char dta_fileln_offset_must_match[
+    offsetof(DTAINFO, dt_fileln) == offsetof(DTA, d_length) ? 1 : -1];
 
 #define DTA_DRIVEMASK   0x0000001fL
 
@@ -395,11 +401,11 @@ WORD log_media(BPB *b, int drv);
  * in fshand.c
  */
 
-long xforce(int std, int h);
+long xforce(WORD std, WORD h);
 long ixforce(int std, int h, PD *p);
 
 /* duplicate a file handle. */
-long xdup(int h);
+long xdup(WORD h);
 
 /*
  * in fsopnclo.c
@@ -410,10 +416,10 @@ long xcreat(char *name, UBYTE attr);
 long ixcreat(char *name, UBYTE attr);
 
 /* open a file (path name) */
-long xopen(char *name, int mod);
+long xopen(char *name, WORD mod);
 
 /* Close a file */
-long xclose(int h);
+long xclose(WORD h);
 long ixclose(OFD *fd, int part);
 
 /* remove a file */
@@ -447,7 +453,7 @@ void clfix(CLNO cl, CLNO link, DMD *dm);
 CLNO getrealcl(CLNO cl, DMD *dm);
 CLNO getclnum(CLNO cl, OFD *of);
 int nextcl(OFD *p, int wrtflg);
-long xgetfree(long *buf, int drv);
+long xgetfree(long *buf, WORD drv);
 
 /*
  * in fsio.c
@@ -457,15 +463,15 @@ long xgetfree(long *buf, int drv);
 long eof(int h);
 
 /* seek to byte position n on file with handle h */
-long xlseek(long n, int h, int flg);
+long xlseek(long n, WORD h, WORD flg);
 long ixlseek(OFD *p, long n);
 
 FCB *ixgetfcb(OFD *p);
 
-long xread(int h, long len, void *ubufr);
+long xread(WORD h, long len, void *ubufr);
 long ixread(OFD *p, long len, void *ubufr);
 
-long xwrite(int h, long len, void *ubufr);
+long xwrite(WORD h, long len, void *ubufr);
 long ixwrite(OFD *p, long len, void *ubufr);
 
 /*
@@ -474,17 +480,39 @@ long ixwrite(OFD *p, long len, void *ubufr);
 
 long xmkdir(char *s);
 long xrmdir(char *p);
-long xchmod(char *p, int wrt, UBYTE mod);
+long xchmod(char *p, WORD wrt, UBYTE mod);
 long ixsfirst(char *name, WORD att, DTAINFO *addr);
 long xsfirst(char *name, int att);
 long xsnext(void);
-long xgsdtof(DOSTIME *buf, int h, int wrt);
+long xgsdtof(DOSTIME *buf, WORD h, WORD wrt);
 void builds(const char *s1 , char *s2 );
-long xrename(int n, char *p1, char *p2);
+long xrename(WORD n, char *p1, char *p2);
 long xchdir(char *p);
-long xgetdir(char *buf, int drv);
+long xgetdir(char *buf, WORD drv);
 FCB *dirinit(DND *dn);
 DND *findit(char *name, const char **sp, int dflag);
+/*
+ * dcrack()/findit() signal a genuine error by returning a small negative
+ * GEMDOS error code (gemerror.h: none exceeds -326 in magnitude)
+ * reinterpreted as a DND*, relying on callers to tell that apart from a
+ * real DND* with a `< 0` test on the assumption that a real one is always
+ * a positive, low m68k/ARM heap address. That assumption breaks on
+ * x86-64's higher-half kernel, where every real DND* -- being ordinary
+ * internal BDOS bookkeeping, never exposed to userspace and so never
+ * needing the USERPTR_T low/32-bit-representable convention other PD
+ * fields use -- is itself a large NEGATIVE value when read as a signed
+ * long (any canonical kernel address has its top bit set): a plain `< 0`
+ * test misreads every successful lookup as a failure there. Narrowing the
+ * test to the actual range GEMDOS error codes occupy fixes this on every
+ * arch at once: m68k/ARM's real DND* pointers are always far outside this
+ * range on the positive side, x86-64's are always far outside it on the
+ * negative side.
+ *
+ * p is expanded twice, so it must be a plain variable, never an
+ * expression with side effects (e.g. an embedded assignment): callers
+ * assign the DND* to a variable first, then test the variable.
+ */
+#define DND_IS_ERRCODE(p) ((long)(p) < 0 && (long)(p) > -4096L)
 FCB *scan(DND *dnd, const char *n, WORD att, LONG *posp);
 int incr_curdir_usage(DND *dnd);
 void decr_curdir_usage(int index);
@@ -502,7 +530,7 @@ char *packit(char *s, char *d);
  */
 DTAINFO *xgetdta(void);
 void xsetdta(DTAINFO *addr);
-long xsetdrv(int drv);
+long xsetdrv(WORD drv);
 long xgetdrv(void);
 OFD  *getofd(int h);
 #if CONF_WITH_PLUGGABLE_FS

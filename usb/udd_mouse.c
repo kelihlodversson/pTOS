@@ -6,7 +6,7 @@
 #include "usb_api.h"
 #include "bios.h"               /* for kbdvecs */
 #include "ikbd.h"               /* for call_mousevec() */
-#include "tosvars.h"            /* for mousexvec() */
+#include "biosext.h"            /* for mousexvec() */
 
 /****************************************************************************/
 /*
@@ -25,7 +25,7 @@ extern void (*old_ikbd_int) (void);
  */
 extern void interrupt_ikbd (void);
 
-static UBYTE mouse_packet[6];
+static SBYTE mouse_packet[6];
 
 /*
  * END kernel interface

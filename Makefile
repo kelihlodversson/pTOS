@@ -111,12 +111,6 @@ MACHINE-$(MACHINE_VIRT_ARM) += virt-arm
 MACHINE-$(MACHINE_VIRT_M68K) += virt-m68k
 MACHINE = $(MACHINE-y)
 
-ifdef CONFIGURED
-ifeq (,$(ARCH))
-$(error No architecture selected.  Run "make <name>_defconfig" or "make menuconfig")
-endif
-endif
-
 #
 # Directories holding source code
 #
@@ -189,12 +183,37 @@ NATIVECC = gcc -std=gnu90 -pedantic $(WARNFLAGS) -W -O
 
 ifdef ARCH_ARM
 MULTILIBFLAGS = $(CPUFLAGS) -fsigned-char
-TOOLCHAIN_CFLAGS = -fleading-underscore -fno-reorder-functions -DELF_TOOLCHAIN
+TOOLCHAIN_CFLAGS = -fno-reorder-functions -DELF_TOOLCHAIN
 else
-MULTILIBFLAGS = $(CPUFLAGS) -mshort
+# The kernel can never assume a real FPU is present -- processor.S detects
+# one at runtime, for userland's benefit, precisely because most m68k
+# targets this builds for don't have one. Every toolchain used here has
+# always defaulted to -msoft-float on its own, silently, so this was never
+# needed -- until Thorsten Otto's -mfastcall-patched GCC (Kconfig's
+# CONF_WITH_MFASTCALL help text), which defaults the other way once -m68020
+# or later is selected (-mhard-float/-m68881 enabled), freely emitting real
+# FPU instructions QEMU's -cpu m68020 (no FPU) can't execute. Pass it
+# explicitly so kernel codegen never depends on a toolchain's own default.
+MULTILIBFLAGS = $(CPUFLAGS) -msoft-float
+ifdef CONF_WITH_MFASTCALL
+MULTILIBFLAGS += -mfastcall
+endif
 ifdef BUILD_TOOLCHAIN_IS_ELF
-TOOLCHAIN_CFLAGS = -fleading-underscore -Wa,--register-prefix-optional \
+TOOLCHAIN_CFLAGS = -Wa,--register-prefix-optional \
                    -fno-reorder-functions -DELF_TOOLCHAIN
+endif
+endif
+
+# CONF_WITH_MFASTCALL selects -mfastcall above, but neither of the toolchains
+# offered in the "m68k toolchain" choice (Kconfig.machine) support it -- only
+# a patched GCC does (Thorsten Otto's fork, see the option's help text).  Fail
+# now with an actionable message instead of letting every compile fail later
+# with a generic "unrecognized command-line option '-mfastcall'".
+ifdef CONFIGURED
+ifdef CONF_WITH_MFASTCALL
+ifeq (,$(shell echo 'void f(void){}' | $(CC) $(CPUFLAGS) -x c -mfastcall -c -o /dev/null - >/dev/null 2>&1 && echo y))
+$(error $(CC) does not support -mfastcall. Install a patched toolchain (e.g. Thorsten Otto's m68k-atari-mint-gcc fork, https://tho-otto.m68k.eu/crossmint.php) and point CROSS_COMPILE at it, or disable CONF_WITH_MFASTCALL in "make menuconfig")
+endif
 endif
 endif
 
@@ -604,20 +623,34 @@ endif
 #
 # Misc utilities, built on demand
 #
+# Unlike the kernel image itself, these are ordinary user programs whose
+# main() is invoked by util/arch/m68k/minicrt.S's startup code, which
+# still pushes argc/argv on the stack rather than the -mfastcall
+# register convention -- so, like TARGET_PRG/FLOPPY/AMIGA_FLOPPY (see
+# Kconfig.machine's CONF_WITH_MFASTCALL help text), these targets can't
+# be selected together with a MULTILIBFLAGS that includes -mfastcall.
+# They aren't config-gated the way those targets are (built on demand,
+# any time, regardless of the loaded .config), so the same restriction
+# is enforced here instead, at the point they're actually requested.
 
+ifdef CONF_WITH_MFASTCALL
+date.prg dumpkbd.prg:
+	$(error $@ cannot be built with CONF_WITH_MFASTCALL set: util/arch/m68k/minicrt.S's startup has not been audited for -mfastcall's register-argument convention. Disable CONF_WITH_MFASTCALL in "make menuconfig" first)
+else
 date.prg: obj/minicrt.o obj/doprintf.o obj/date.o
 	$(LD) $+ $(LIBS) -o $@ -s
 
 dumpkbd.prg: obj/minicrt.o obj/memmove.o obj/dumpkbd.o obj/doprintf.o \
 	     obj/string.o
 	$(LD) $+ $(LIBS) -o $@ -s
+endif
 
 #
 # Host tools
 #
 
-TOCLEAN += bug draft erd grd ird mrd mkflop mkrom tos-lang-change \
-           temp.rsc temp.def
+TOCLEAN += bug draft erd grd ird mrd mkflop mkrom ptos-elf-pack \
+           tos-lang-change temp.rsc temp.def
 
 bug: tools/bug.c
 	$(NATIVECC) $< -o $@
@@ -626,6 +659,11 @@ mkrom: tools/mkrom.c
 	$(NATIVECC) $< -o $@
 
 mkflop: tools/mkflop.c
+	$(NATIVECC) $< -o $@
+
+# post-link tool packing an ELF's load relocations for bdos/elfld.c, see
+# doc/elfload.txt; not needed to build EmuTOS itself, built on demand
+ptos-elf-pack: tools/ptos-elf-pack.c
 	$(NATIVECC) $< -o $@
 
 erd: tools/erd.c
@@ -646,7 +684,7 @@ tos-lang-change: tools/tos-lang-change.c
 	$(NATIVECC) $< -o $@
 
 .PHONY: tools
-tools: bug draft erd grd ird mrd mkflop mkrom tos-lang-change
+tools: bug draft erd grd ird mrd mkflop mkrom ptos-elf-pack tos-lang-change
 
 #
 # NLS support
@@ -879,8 +917,23 @@ obj/version.c: obj/version2.c
 obj:
 	@mkdir -p obj
 
+ifdef ARCH_M68K
+ifdef BUILD_TOOLCHAIN_IS_ELF
+M68K_LOCAL_LABEL_FIX = tools/fix-m68k-local-labels.py
+
+obj/%.o : %.c $(M68K_LOCAL_LABEL_FIX) | obj
+	$(CC) $(CFILE_FLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -MT $@ -S $< -o $@.s
+	python3 $(M68K_LOCAL_LABEL_FIX) $@.s $@.fixed.s
+	$(CC) $(SFILE_FLAGS) -x assembler -c $@.fixed.s -o $@
+	rm -f $@.s $@.fixed.s
+else
 obj/%.o : %.c | obj
 	$(CC) $(CFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
+endif
+else
+obj/%.o : %.c | obj
+	$(CC) $(CFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
+endif
 
 obj/%.o : %.S | obj
 	$(CC) $(SFILE_FLAGS) $(DEPFLAGS) -c $< -o $@
@@ -1123,6 +1176,25 @@ ifndef CONF_WITH_ELF_LOADER
 TEST_SUITES := $(filter-out pie_load,$(TEST_SUITES))
 endif
 
+# ptos_reloc_load launches two separate executables (reloc_probe.c, built
+# below, linked twice with different flags -- see TEST_PTOS_RELOC_LDFLAGS/
+# TEST_PTOS_RELOC_LDFLAGS2 below) packed into the compact PT_PTOS_RELOC
+# format via Pexec(), to exercise bdos/elfld.c's elf_relocate_ptos() --
+# needs CONF_WITH_ELF_LOADER for the same reason pie_load does. The same
+# object file links as either a fixed-base ET_EXEC with --emit-relocs
+# (REL-encoded on ARM, RELA-encoded on m68k -- ARM and m68k differ only in
+# relocation *encoding* here, both still name the DIR32 relocation type
+# directly, value already resolved into the slot at link time) or a PIE
+# ET_DYN with -pie --no-dynamic-linker (RELATIVE, value only in r_addend
+# on m68k's RELA, already in the slot on ARM's REL) -- so between the two
+# link shapes, on both architectures, this suite exercises every
+# combination elf_relocate_ptos()/ptos-elf-pack support: REL+DIR32,
+# REL+RELATIVE, RELA+DIR32, and RELA+RELATIVE (including the addend-
+# materialisation ptos-elf-pack does at pack time for that last case).
+ifndef CONF_WITH_ELF_LOADER
+TEST_SUITES := $(filter-out ptos_reloc_load,$(TEST_SUITES))
+endif
+
 GEN_SRC += tests/run_tests.c
 
 # Also depends on $(AUTOCONF_H): TEST_SUITES (and therefore this file's
@@ -1147,7 +1219,7 @@ tests/run_tests.c: $(wildcard tests/*/*.c) $(AUTOCONF_H) | obj
 
 # The test harness is userland code linked against libcmini, not the
 # kernel: it must NOT inherit CFILE_FLAGS, since that carries kernel-only
-# conventions (-fleading-underscore, -DELF_TOOLCHAIN, -mshort/-fsigned-char)
+# conventions (-fleading-underscore, -DELF_TOOLCHAIN, ARM's -fsigned-char)
 # that are irrelevant -- or outright ABI-incompatible with libcmini's own
 # build -- for a normal ARM/m68k userland binary.  $(CPUFLAGS) is kept so
 # generated code targets the selected machine's CPU/FPU, matching what the
@@ -1260,17 +1332,21 @@ $(LIBCMINI_STAMP): FORCE | obj $(LIBCMINI_DIR)/Makefile
 	    printf '%s' "$$want" > $@; \
 	fi
 
+# Only the one library and the one startup object the test programs link are
+# requested, not libcmini's "libs startups": those build every multilib
+# variant the toolchain offers (68020-60, ColdFire, -mshort, ... on m68k), none
+# of which the test programs use.
 $(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj $(LIBCMINI_DIR)/Makefile
 	@echo '  LIBCMINI'
-	@$(LIBCMINI_MAKE) libs startups
+	@$(LIBCMINI_MAKE) $(LIBCMINI_LIB) $(LIBCMINI_CRT0)
 
 $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 
 # Like TEST_CFLAGS, this must not reuse the kernel's $(LD) (= $(CC)
-# $(MULTILIBFLAGS) ...): on m68k, MULTILIBFLAGS carries -mshort, which
-# would make the link step pull in the -mshort multilib variant of
-# libgcc (via $(LIBS) = -lgcc below) while libcmini itself was built
-# against the toolchain's default, non -mshort multilib.
+# $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) ...): those carry kernel-only
+# conventions (-fleading-underscore, -DELF_TOOLCHAIN, ARM's -fsigned-char)
+# that are irrelevant -- or outright ABI-incompatible -- for linking a
+# normal ARM/m68k userland binary against libcmini.
 TEST_LD = $(CC) $(CPUFLAGS) -nostartfiles -nostdlib
 
 # Link the test harness as runtests.tos.  On ARM this must stay a
@@ -1309,17 +1385,104 @@ else
 TEST_PIE_FILES =
 endif
 
+ifdef CONF_WITH_ELF_LOADER
+# PTRELOC.TOS / PTRELOC2.TOS: the ptos_reloc_load suite's two payloads
+# (see tests/ptos_reloc_load/reloc_probe.c), repacked into the compact
+# PT_PTOS_RELOC format, so loading them exercises elf_pgmld()'s *other*
+# relocation path (the one #309 added) instead of pieprobe.tos's ET_DYN
+# .rel.dyn/.rela.dyn one. The same object file is linked both ways so
+# each architecture covers both of the link shapes doc/elfload.txt
+# documents: a fixed-base ET_EXEC with --emit-relocs (REL-encoded on ARM,
+# RELA-encoded on m68k, value already resolved into the slot either way)
+# and a PIE ET_DYN with -pie --no-dynamic-linker (RELATIVE, value only in
+# r_addend on m68k's RELA -- exercising ptos-elf-pack's addend-
+# materialisation step -- already in the slot on ARM's REL). Which shape
+# is "primary" (PTRELOC.TOS) vs "secondary" (PTRELOC2.TOS) only affects
+# build order, not what gets tested: ptos_reloc_load.c launches both.
+#
+# On ARM, both shapes link fine through $(TEST_LD) (the normal $(CC)
+# driver), same as every other test binary. m68k's ET_EXEC secondary
+# shape does not: m68k-atari-mintelf-ld's default driver-selected script
+# ties TEXT's start to SIZEOF_HEADERS regardless of -Ttext (fine at a
+# nonzero base, but "not enough room for program headers" at -Ttext=0,
+# where there is nothing below it to hold them), while asking for the
+# same nonzero base via the $(CC) driver instead hits that script's own
+# PRG-shaped placement rule ("TEXT segment start address ... must be
+# 0x00000000"). Bypassing the driver and invoking the linker directly
+# with --oformat=elf32-m68k and a nonzero -Ttext, exactly as
+# doc/elfload.txt's own bare m68k recipe does, avoids both: verified
+# directly with this toolchain (a real libcmini-linked binary linked
+# this way, packed by ptos-elf-pack, and its 90 DIR32 relocations
+# decoded correctly).
+obj/reloc_probe.o: tests/ptos_reloc_load/reloc_probe.c $(AUTOCONF_H) | obj
+	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+ifdef ARCH_ARM
+TEST_PTOS_RELOC_LDFLAGS  = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
+TEST_PTOS_RELOC_LDFLAGS2 = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start
+else
+# --oformat=elf32-m68k is required here for the same reason
+# doc/elfload.txt's own bare m68k recipe and TEST_PTOS_RELOC_LDFLAGS2's
+# raw-ld invocation below both need it: m68k-atari-mintelf-ld's default
+# emulation is elf32-atariprg, so without it this would risk linking a
+# PRG instead of an ELF, which ptos-elf-pack would then reject outright
+# as not an ELF file at all rather than exercising the m68k path.
+TEST_PTOS_RELOC_LDFLAGS = -Wl,-pie -Wl,--no-dynamic-linker -Wl,--oformat=elf32-m68k -Wl,-e_start
+# the directory holding the multilib variant of libgcc.a that $(CC)
+# $(CPUFLAGS) would otherwise have picked automatically as a driver
+TEST_LIBGCC_DIR := $(shell dirname $$($(CC) $(CPUFLAGS) -print-libgcc-file-name))
+endif
+
+relocprobe-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+
+ifdef ARCH_ARM
+relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS2) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+else
+relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
+	$(CROSS_COMPILE)ld --oformat=elf32-m68k -q -Ttext=0x2000 -e _start \
+	  $(TEST_STARTUP) obj/reloc_probe.o \
+	  -L$(dir $(LIBCMINI_LIB)) -lcmini -L$(TEST_LIBGCC_DIR) -lgcc -o $@
+endif
+
+# --strip-shdr: no SHT_REL fallback must be reachable, so this test can
+# only pass by way of elf_relocate_ptos() actually working.
+PTRELOC.TOS: relocprobe-unpacked.tos ptos-elf-pack
+	./ptos-elf-pack --strip-shdr relocprobe-unpacked.tos $@
+
+PTRELOC2.TOS: relocprobe2-unpacked.tos ptos-elf-pack
+	./ptos-elf-pack --strip-shdr relocprobe2-unpacked.tos $@
+
+TEST_PTOS_RELOC_FILES = PTRELOC.TOS PTRELOC2.TOS
+else
+TEST_PTOS_RELOC_FILES =
+endif
+
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
-TEST_HD_FILES = runtests.tos tests/emudesk.inf $(TEST_PIE_FILES)
+TEST_HD_FILES = runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_PTOS_RELOC_FILES)
 
-test-hd.img: runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_PTOS_RELOC_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR)
 
 .PHONY: test-hd
 test-hd: test-hd.img
+
+ifdef ARCH_ARM
+# A desk accessory is not part of the regression image: load this probe
+# explicitly when validating the ARM accessory entry path.
+obj/arm_acc_probe.o: tests/arm_acc_probe.c $(AUTOCONF_H) | obj
+	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+ACCPROBE.ACC: $(TEST_STARTUP) obj/arm_acc_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/arm_acc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+
+.PHONY: arm-acc-probe
+arm-acc-probe: ACCPROBE.ACC
+endif
 
 else # !CONF_WITH_REGRESSION_TESTS
 
@@ -1335,7 +1498,10 @@ endif
 # regardless of .config -- anything gated on it here would silently never
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
-TOCLEAN += tests/run_tests.c runtests.tos pieprobe.tos test-hd.img
+TOCLEAN += tests/run_tests.c runtests.tos pieprobe.tos \
+            relocprobe-unpacked.tos PTRELOC.TOS \
+            relocprobe2-unpacked.tos PTRELOC2.TOS \
+            test-hd.img ACCPROBE.ACC
 TOCLEAN_POST += libcmini-clean
 
 .PHONY: libcmini-clean

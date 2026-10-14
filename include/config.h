@@ -57,12 +57,24 @@
 #endif
 
 /*
+ * Whether this target's own C calling convention already matches the
+ * classic, frozen TOS vector ABI (bios/classicvec.h's CLASSIC_ENTRY()):
+ * packed WORD/LONG arguments, no padding. Every m68k target -- classic and
+ * ColdFire alike -- still uses GCC's own m68k calling convention for its C
+ * functions, which pads a WORD argument to a full 4-byte stack slot and so
+ * is NOT that packed ABI (with or without -mfastcall, which replaces the
+ * stack entirely for the arguments it covers). Only a port with no legacy
+ * TOS ABI to begin with, like ARM, is "native" and needs no trampoline.
+ */
+#define CONF_WITH_NATIVE_ABI (!ARCH_M68K)
+
+/*
  * Determine if kprintf() is available.  It is, as soon as there is
  * somewhere to send its output to.
  */
 #if CONF_WITH_UAE || DETECT_NATIVE_FEATURES || STONX_NATIVE_PRINT \
     || CONSOLE_DEBUG_PRINT || RS232_DEBUG_PRINT || SCC_DEBUG_PRINT \
-    || COLDFIRE_DEBUG_PRINT || MIDI_DEBUG_PRINT
+    || COLDFIRE_DEBUG_PRINT || MIDI_DEBUG_PRINT || CARTRIDGE_DEBUG_PRINT
 # define HAS_KPRINTF 1
 #else
 # define HAS_KPRINTF 0

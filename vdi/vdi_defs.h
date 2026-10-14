@@ -21,7 +21,8 @@ struct vdi_backend_ops;   /* forward declaration -- full definition in vdi_backe
 
 #define HAVE_BEZIER 0           /* switch on bezier capability - entirely untested */
 
-#define EXTENDED_PALETTE (CONF_WITH_VIDEL || CONF_WITH_TT_SHIFTER)
+#define EXTENDED_PALETTE (CONF_WITH_VIDEL || CONF_WITH_TT_SHIFTER \
+    || defined(MACHINE_RPI) || CONF_WITH_VDI_BACKEND_TRUECOLOR32)
 
 #define TRUECOLOR_MODE  (linea_vars.v_planes > 8)
 

@@ -14,16 +14,16 @@
 /* Desktop stack use can be estimated using CONF_DEBUG_DESK_STACK. */
 #define DESKSTACKSIZE   2560    /* in bytes: must be multiple of 4 */
 
-        .globl  _deskstart
+        .globl  C_SYM(deskstart)
 #if CONF_DEBUG_DESK_STACK
-        .globl  _deskstackbottom
+        .globl  C_SYM(deskstackbottom)
 #endif
 
-        .extern _deskmain
+        .extern C_SYM(deskmain)
 
         .text
 
-_deskstart:
+C_SYM(deskstart):
 
         movea.l a7,a5
         movea.l #deskustack,a7
@@ -42,7 +42,7 @@ _deskstart:
 
 #if CONF_DEBUG_DESK_STACK
         move.l  #STACK_MARKER,d0        // fill stack with marker bytes
-        lea     _deskstackbottom,a0
+        lea     C_SYM(deskstackbottom),a0
         lea     deskustack,a1
 fill:
         move.l  d0,(a0)+
@@ -51,7 +51,7 @@ fill:
 #endif
 
 restart:
-        jsr     _deskmain               // Run the desktop
+        jsr     C_SYM(deskmain)               // Run the desktop
         tst.w   d0
         jeq     restart                 // handle read of .INF file
 
@@ -61,6 +61,6 @@ restart:
 .bss
 
 // Space for the Stack:
-_deskstackbottom:
+C_SYM(deskstackbottom):
         .ds.b   DESKSTACKSIZE
 deskustack:

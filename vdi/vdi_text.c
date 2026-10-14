@@ -248,7 +248,7 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     linea_vars.LOFF = d1;
     linea_vars.ROFF = d2;
 
-    linea_vars.FBASE = (const UWORD *)fnt_ptr->dat_table;
+    linea_vars.FBASE = fnt_ptr->dat_table;
     linea_vars.FWIDTH = fnt_ptr->form_width;
 
     /*

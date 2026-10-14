@@ -142,6 +142,8 @@ void set_aestrap(void)
 *
 * return 1 if intercepted, else 0
 */
+BOOL aestrap_intercepted(void);
+
 BOOL aestrap_intercepted(void)
 {
     return ((LONG)VEC_GEM) < os_beg || ((LONG)VEC_GEM) >= ((LONG)_etext);

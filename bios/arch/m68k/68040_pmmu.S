@@ -11,9 +11,9 @@
 
 #if CONF_WITH_68040_PMMU
 
-                .globl  _setup_68040_pmmu
-                .extern _ramtop
-                .extern _balloc_stram
+                .globl  C_SYM(setup_68040_pmmu)
+                .extern C_SYM(ramtop)
+                .extern C_SYM(balloc_stram)
 
                 .arch   68040
 
@@ -47,13 +47,13 @@ MEMORY_SIZE_IO2     = 1024*1024
 
                 .text
 
-_setup_68040_pmmu:
+C_SYM(setup_68040_pmmu):
                 movem.l d2-d7/a2-a6,-(sp)
 
                 jbsr    turn_off_all
 
                 // find out how much TT RAM we have
-                move.l  _ramtop.w,d0
+                move.l  C_SYM(ramtop).w,d0
                 jeq     no_ttram1
                 sub.l   #0x01000000,d0
                 move.l  d0,tt_ram_size
@@ -94,10 +94,25 @@ no_ttram1:
 
                 add.l   #~msk_rootp_addr,d0     // padding
 
-                clr.w   -(sp)                   // FALSE
+                /*
+                 * balloc_stram(ULONG size, BOOL top) is an ordinary
+                 * internal C function returning UBYTE*. Under
+                 * -mfastcall size/top arrive in d0/d1 (size is already
+                 * in d0 from the computation above) and the pointer
+                 * return comes back in a0, not d0. Without -mshort,
+                 * BOOL is a full 32-bit int, so its plain-ABI slot is 4
+                 * bytes now, not 2.
+                 */
+#if CONF_WITH_MFASTCALL
+                moveq   #0,d1                   // FALSE
+                jsr     C_SYM(balloc_stram)
+                move.l  a0,d0                   // pointer return, for the math below
+#else
+                clr.l   -(sp)                   // FALSE
                 move.l  d0,-(sp)
-                jsr     _balloc_stram
-                addq.l  #6,sp
+                jsr     C_SYM(balloc_stram)
+                addq.l  #8,sp
+#endif
 
                 add.l   #~msk_rootp_addr,d0
                 and.l   #msk_rootp_addr,d0

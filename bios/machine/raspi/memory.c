@@ -1,7 +1,5 @@
 /*
- * raspi_screen.h Raspberry PI framebuffer support
- *
- * Copyright (C) 2013-2018 The EmuTOS development team
+ * memory.c - Raspberry Pi memory and MMU initialization
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -393,7 +391,7 @@ static void init_mmu(ULONG memory_size)
 //   As long we use the ARM1176JZF-S implementation in the BCM2835 these static values will work:
 //
 
-#define DATA_CACHE_LINE_LENGTH  32
+#define DATA_CACHE_LINE_LENGTH      32
 
 void invalidate_data_cache (void *start, long length)
 {

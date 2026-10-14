@@ -19,26 +19,26 @@
 
 /* References */
 
-        .globl  _processor_init
-        .globl  _invalidate_instruction_cache
-        .globl  _instruction_cache_kludge
-        .globl  _flush_data_cache
-        .globl  _invalidate_data_cache
-        .globl  _mcpu
-        .globl  _fputype
+        .globl  C_SYM(processor_init)
+        .globl  C_SYM(invalidate_instruction_cache)
+        .globl  C_SYM(instruction_cache_kludge)
+        .globl  C_SYM(flush_data_cache)
+        .globl  C_SYM(invalidate_data_cache)
+        .globl  C_SYM(mcpu)
+        .globl  C_SYM(fputype)
 #if CONF_WITH_CACHE_CONTROL || CONF_WITH_NOVA
-        .globl  _cache_exists
-        .globl  _set_cache
-        .globl  _get_cache
+        .globl  C_SYM(cache_exists)
+        .globl  C_SYM(set_cache)
+        .globl  C_SYM(get_cache)
 #endif
 #if CONF_WITH_APOLLO_68080
-        .globl  _is_apollo_68080
+        .globl  C_SYM(is_apollo_68080)
 #endif
 
-        .extern _longframe              // If not 0, use long stack frames
-        .extern _setup_68030_pmmu
+        .extern C_SYM(longframe)              // If not 0, use long stack frames
+        .extern C_SYM(setup_68030_pmmu)
 #if CONF_WITH_68030_PMMU
-        .extern _pmmutree
+        .extern C_SYM(pmmutree)
 #endif
 
         .text
@@ -104,14 +104,30 @@ _detect_cpu:
 // 68040 or 68060 (or Apollo 68080)
 
 x040:   moveq   #40,d0          // assume 68040
+#ifdef MACHINE_VIRT_M68K
+// QEMU aborts the whole VM ("Unimplemented control register read 0x808")
+// when a 68040 reads the 68060-only PCR, instead of raising an exception.
+// So tell the two apart without touching the PCR: the 68060 CACR has
+// writable bits (e.g. ESB, bit 29) that are reserved on the 68040.
+        MOVEC_CACR_D1           // d1 = get cache control register
+        move.l  d1,d2           // hold a copy for later
+        bset    #29,d1          // 68060: enable store buffer
+        MOVEC_D1_CACR
+        MOVEC_CACR_D1           //   & read it back again to check
+        MOVEC_D2_CACR           // restore original CACR
+        btst    #29,d1          // stuck? then it is a 68060
+        jeq     exit
+        moveq   #60,d0
+#else
         MOVEC_PCR_D1            // attempt to access the PCR
         moveq   #60,d0          // no fault, assume 68060
+#endif
 
 #if CONF_WITH_APOLLO_68080
         ADDIWL_0_A0             // check for addiw.l instruction
 // Apollo 68080
         moveq   #40,d0          // no fault, force 68040 detection
-        move.w  #1,_is_apollo_68080
+        move.w  #1,C_SYM(is_apollo_68080)
 #endif
 
 exit:
@@ -161,17 +177,21 @@ exit:
  */
 _detect_fpu:
 #if CONF_WITH_ADVANCED_CPU
-        movem.l d2/a2,-(sp)
+        movem.l d2/a2-a3,-(sp)
         move.l  sp,a0           // save the ssp
         moveq   #0,d0           // assume no FPU
         move.l  (0x2c).w,a1     // save the Line-F vector
         move.l  (0x08).w,a2
+        move.l  (0x10).w,a3     // QEMU's 'virt' reports FPU opcodes as illegal
         move.l  #fexit,d1
         move.l  d1,(0x2c).w     // install temporary Line-F
         move.l  d1,(0x08).w
+#ifdef MACHINE_VIRT_M68K
+        move.l  d1,(0x10).w
+#endif
         nop                     // flush pipelines
 
-        move.l  _mcpu,d1        // check if 68000 or 68010
+        move.l  C_SYM(mcpu),d1        // check if 68000 or 68010
         cmpi.w  #20,d1
 #if CONF_WITH_SFP004
         jmi     sfp
@@ -182,6 +202,7 @@ _detect_fpu:
         cmpi.w  #60,d1          // enable FPU on 68060 before the check
         jmi     no60
 
+#ifndef MACHINE_VIRT_M68K       // QEMU has no PCR and aborts on access
         MOVEC_PCR_D2            // get revision number etc
         swap    d2
         cmp.w   #0x0431,d2      // "broken" 68LC/EC060
@@ -189,6 +210,7 @@ _detect_fpu:
         swap    d2
         bclr    #0x01,d2
         MOVEC_D2_PCR            // clear DFP (the disable-FPU bit)
+#endif
 
 no60:   clr.l   -(sp)           // push NULL frame
         clr.l   -(sp)           // extra longs for 68060
@@ -217,10 +239,11 @@ sfp:    tst.w   0xfffffa40.w    // CIR
 
 fexit:  move.l  a1,(0x2c).w     // restore Line-F
         move.l  a2,(0x08).w
+        move.l  a3,(0x10).w
         move.l  a0,sp
         nop                     // flush pipelines
         swap    d0
-        movem.l (sp)+,d2/a2
+        movem.l (sp)+,d2/a2-a3
 
 #else
         // handle only 68000 (with possible SFP004)
@@ -248,23 +271,23 @@ nosfp:  move.l  a1,(0x08).w     // restore bus error
 /*
  * void processor_init(void) - sets mcpu and fputype.
  */
-_processor_init:
+C_SYM(processor_init):
 #ifndef __mcoldfire__           // On ColdFire, the caches are enabled by the pre-OS
         jbsr    _detect_cpu
         swap    d0
         move.w  d0,_mcpu_subtype    // save processor subtype
         clr.w   d0
         swap    d0
-        move.l  d0,_mcpu            // & type
+        move.l  d0,C_SYM(mcpu)            // & type
 #if CONF_WITH_ADVANCED_CPU
         jeq     m68000
 
-        move.w  #1,_longframe.w // this is a 68010 or later
+        move.w  #1,C_SYM(longframe).w // this is a 68010 or later
 m68000:
         jbsr    _detect_fpu
-        move.l  d0,_fputype
+        move.l  d0,C_SYM(fputype)
 
-        cmpi.b  #20,_mcpu+3
+        cmpi.b  #20,C_SYM(mcpu)+3
         jne     pi_chk030
 
 // We're running on a 68020
@@ -272,7 +295,7 @@ m68000:
         jra     init_cacr
 
 pi_chk030:
-        cmpi.b  #30,_mcpu+3
+        cmpi.b  #30,C_SYM(mcpu)+3
         jne     pi_chk040
 
 // We're running on a 68030 or a 68ec030
@@ -288,7 +311,7 @@ pi_chk030:
 // enabling the data cache.  The PMMU tree will ensure that caching is
 // inhibited for access to i/o addresses.
 
-        jsr     _setup_68030_pmmu
+        jsr     C_SYM(setup_68030_pmmu)
         PMOVE_TO_CRP(root_pointer_descriptor)   // tell system where tree is
         PMOVE_TO_TC(init_tc)        // enable PMMU
         PMOVE_TO_TTR0(init_ttr0)    // override PMMU tree for accesses to
@@ -315,10 +338,10 @@ init_cacr:
 
 pi_chk040:
         move.l  #0x80008000,d1  // set 040 CACR value: DE and IE
-        cmpi.b  #40,_mcpu+3
+        cmpi.b  #40,C_SYM(mcpu)+3
         jeq     m68040
         move.l  #0x80c08000,d1  // set 060 CACR value: EDC, EBC/CABC and EIC
-        cmpi.b  #60,_mcpu+3
+        cmpi.b  #60,C_SYM(mcpu)+3
         jeq     m68060
         jra     pi_done
 
@@ -336,6 +359,12 @@ m68060:
 //   enable the caches (on the 68060, we also enable the branch cache)
 //
 
+#ifdef MACHINE_VIRT_M68K
+        // QEMU's 68060 implements neither the TC nor the TTRs (the movec
+        // raises an illegal instruction exception): leave them alone.
+        cmpi.b  #60,C_SYM(mcpu)+3
+        jeq     ttr_done
+#endif
         moveq   #0,d0
         MOVEC_D0_TC             // disable translation
 
@@ -355,6 +384,7 @@ m68060:
         move.l  #0x00ff8000,d0
         MOVEC_D0_DTT1           // and DTTR1
 
+ttr_done:
         nop
         CINVA_BC                // invalidate the caches
         nop
@@ -379,7 +409,7 @@ pi_done:
  * we don't do that on ColdFire, because ColdFire executables are brand new
  * and supposed to be aware of cache issues.
  */
-_instruction_cache_kludge:
+C_SYM(instruction_cache_kludge):
 #ifdef __mcoldfire__
         rts
 #endif
@@ -400,15 +430,15 @@ _instruction_cache_kludge:
  * the cost to repopulate them later.
  */
 
-_invalidate_instruction_cache:
+C_SYM(invalidate_instruction_cache):
 #ifdef __mcoldfire__
         lea     cpushl_bc,a1    // flush/invalidate both caches
         jra     cpushl_loop
 #else
 #if CONF_WITH_ADVANCED_CPU
-        cmpi.b  #20,_mcpu+3
+        cmpi.b  #20,C_SYM(mcpu)+3
         jeq     ii_020or030
-        cmpi.b  #30,_mcpu+3
+        cmpi.b  #30,C_SYM(mcpu)+3
         jne     ii_not30
 
 ii_020or030:
@@ -418,9 +448,9 @@ ii_020or030:
         jra     ii_done
 
 ii_not30:
-        cmp.b   #40,_mcpu+3
+        cmp.b   #40,C_SYM(mcpu)+3
         jeq     ii_inval
-        cmpi.b  #60,_mcpu+3
+        cmpi.b  #60,C_SYM(mcpu)+3
         jne     ii_done
 
 ii_inval:
@@ -447,7 +477,7 @@ ii_done:
  *   copyback:
  *     we must push the data cache (the backing memory may be stale)
  */
-_flush_data_cache:
+C_SYM(flush_data_cache):
 #ifdef __mcoldfire__
         lea     cpushl_dc,a1    // flush/invalidate data cache
         jra     cpushl_loop
@@ -456,7 +486,7 @@ _flush_data_cache:
 
         // 68020 has no data cache, 68030 data cache is always write-through,
         // in either case no action is necessary.
-        cmpi.b  #40,_mcpu+3
+        cmpi.b  #40,C_SYM(mcpu)+3
         jmi     fd_no_dirty
 
         // 68040/68060 data caches are either write-through or copyback
@@ -478,22 +508,22 @@ fd_no_dirty:
  * for both modes of data cache (write_through and copyback),
  * the cache needs to be invalidated
  */
-_invalidate_data_cache:
+C_SYM(invalidate_data_cache):
 #ifdef __mcoldfire__
         lea     cpushl_dc,a1    // flush/invalidate data cache
         // fall through cpushl_loop
 #else
 #if CONF_WITH_ADVANCED_CPU
-        cmpi.b  #30,_mcpu+3
+        cmpi.b  #30,C_SYM(mcpu)+3
         jne     ic_not30
         MOVEC_CACR_D0                   // get current cacr
         ori.w   #0x0800,d0              // set CD bit
         MOVEC_D0_CACR                   // clear data cache
         jra     ic_done
 ic_not30:
-        cmpi.b  #40,_mcpu+3
+        cmpi.b  #40,C_SYM(mcpu)+3
         jeq     ic_inval
-        cmpi.b  #60,_mcpu+3
+        cmpi.b  #60,C_SYM(mcpu)+3
         jne     ic_done
 
 ic_inval:
@@ -575,7 +605,7 @@ cpushl_bc:
  * WORD cache_exists(void);
  *  returns 1 if this file's cache control (below) supports the current
  *  processor, 0 otherwise. Note this is narrower than "has a cache": a
- *  bare 68020 does have one, but _processor_init() above never sets up
+ *  bare 68020 does have one, but C_SYM(processor_init)() above never sets up
  *  cacr_enable for it, so it's excluded here too.
  *
  * void set_cache(WORD enable);
@@ -584,22 +614,37 @@ cpushl_bc:
  * WORD get_cache(void);
  *  returns 0 if the cache is fully disabled or not present, != 0 otherwise
  */
-_cache_exists:
-        moveq.l #0,d0               // assume 68000/68010/68020: _processor_init()
-        cmpi.b  #30,_mcpu+3         // only sets up cacr_enable for 68030 and up
+C_SYM(cache_exists):
+        moveq.l #0,d0               // assume 68000/68010/68020: C_SYM(processor_init)()
+        cmpi.b  #30,C_SYM(mcpu)+3         // only sets up cacr_enable for 68030 and up
         jmi     ce_exit
         moveq.l #1,d0
 ce_exit:
         rts
 
-_set_cache:
-        jbsr    _cache_exists
+C_SYM(set_cache):
+        /*
+         * set_cache(WORD enable) is an ordinary internal C function.
+         * Under -mfastcall enable arrives in d0, but d0 is about to be
+         * clobbered by the C_SYM(cache_exists) call below and then reused as
+         * a work register, so stash it in d1 (unused by C_SYM(cache_exists))
+         * first. Without -mshort enable's slot is a full 4 bytes now,
+         * so its tested low word moved from 4(sp) to 6(sp).
+         */
+#if CONF_WITH_MFASTCALL
+        move.l  d0,d1
+#endif
+        jbsr    C_SYM(cache_exists)
         tst.w   d0
         jeq     sc_exit             // no cache, do nothing
         moveq.l #0,d0               // assume disable
-        tst.w   4(sp)
+#if CONF_WITH_MFASTCALL
+        tst.w   d1
+#else
+        tst.w   6(sp)
+#endif
         jne     sc_enable           // no, enable
-        cmpi.b  #40,_mcpu+3         // possible dirty data in cache?
+        cmpi.b  #40,C_SYM(mcpu)+3         // possible dirty data in cache?
         jmi     sc_cacr             // no, go do it
         nop
         CPUSHA_DC                   // 040/060: yes, clean the data cache first
@@ -607,7 +652,7 @@ _set_cache:
         jra     sc_cacr             // now go do it
 sc_enable:
         move.l  cacr_enable,d0      // enabling: set processor-appropriate value
-        cmpi.b  #40,_mcpu+3         // 040/060 ?
+        cmpi.b  #40,C_SYM(mcpu)+3         // 040/060 ?
         jmi     sc_cacr             // no, just go set cacr
         nop
         CINVA_BC                    // 040/060: invalidate the caches first
@@ -617,8 +662,8 @@ sc_cacr:
 sc_exit:
         rts
 
-_get_cache:
-        jbsr    _cache_exists
+C_SYM(get_cache):
+        jbsr    C_SYM(cache_exists)
         tst.w   d0
         jeq     gc_exit             // no cache, do nothing
 
@@ -635,7 +680,7 @@ gc_exit:
 #if CONF_WITH_68030_PMMU
         .even   // Mandatory in ELF section .rodata
 root_pointer_descriptor:
-        .dc.l   0x80000002,_pmmutree // lower limit 0, short format, table at '_pmmutree'
+        .dc.l   0x80000002,C_SYM(pmmutree) // lower limit 0, short format, table at 'C_SYM(pmmutree)'
 init_tc:
         .dc.l   0x80F04445          // enable, 32K pages, table indexes=4/4/4/5
 init_ttr0:                          // transparent translation is enabled for all FCs
@@ -650,9 +695,9 @@ init_ttr1:                          // transparent translation is enabled for al
         .even
 
 #ifndef __mcoldfire__
-_mcpu:          .ds.l   1
+C_SYM(mcpu):          .ds.l   1
 _mcpu_subtype:  .ds.w   1
-_fputype:       .ds.l   1
+C_SYM(fputype):       .ds.l   1
 temp:           .ds.l   1
 #endif
 
@@ -661,5 +706,5 @@ cacr_enable:    .ds.l   1
 #endif
 
 #if CONF_WITH_APOLLO_68080
-_is_apollo_68080:   .ds.w   1
+C_SYM(is_apollo_68080):   .ds.w   1
 #endif

@@ -135,7 +135,7 @@ BCB *getbcb(DMD *dmd,WORD buftype,RECNO recnum)
      *          the last (least recently) used buffer.
      */
 
-    for (b = *(q = phdr); b; b = *(q = &b->b_link))
+    for (b = *(q = phdr); b; b = *(q = (BCB **)(void *)b))
     {
         if ((b->b_bufdrv == dmd->m_drvnum) && (b->b_buftyp == buftype) && (b->b_bufrec == recnum))
             break;
@@ -159,7 +159,7 @@ BCB *getbcb(DMD *dmd,WORD buftype,RECNO recnum)
          * is the least recently used.
          */
 
-doio:   for (p = *(q = phdr); p->b_link; p = *(q = &p->b_link))
+doio:   for (p = *(q = phdr); p->b_link; p = *(q = (BCB **)(void *)p))
             if (b == p)
                 break;
         b = p;

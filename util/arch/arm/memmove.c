@@ -1,7 +1,5 @@
 /*
- * memmove_c.c - simple c implementation of memove and memcpy
- *
- * Copyright (C) 2002-2016 The EmuTOS development team
+ * memmove.c - simple c implementation of memmove, memcpy, memset and bzero
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.

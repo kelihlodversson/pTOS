@@ -15,49 +15,38 @@
 #include "asmdefs.h"
 
 /*
- * trap1 - trap 1 (GEMDOS) entry point
+ *  GEMDOS Pexec() call. Reentrant: unlike the variadic C trap1() this
+ *  used to sit alongside (removed for #300 -- GEMDOS calls on m68k now
+ *  go through the typed trap1_v()/trap1_w()/... macros in asm.h
+ *  instead), its arguments are explicitly typed, so it saves/restores
+ *  d2/a2 on the stack around the trap rather than in static storage.
  */
-        .globl  _trap1
-_trap1:
-        move.l  (sp)+,t1spsav   // save return address
-#ifdef __mcoldfire__
-        move.l  d2,t1regsav
-        move.l  a2,t1regsav+4
-        trap    #1              // call bdos call
-        move.l  t1regsav,d2
-        move.l  t1regsav+4,a2
-#else
-        movem.l d2/a2,t1regsav
-        trap    #1              // call bdos call
-        movem.l t1regsav,d2/a2
-#endif
-        move.l  t1spsav,-(sp)   // restore return address
-        rts
-
-        .bss
-        .even
-t1spsav:
-        .ds.l   1       // Save space for _trap_1
-t1regsav:
-        .ds.l   2
-
-        .text
-
-/*
- *  GEMDOS Pexec() call. This version is reentrant unlike the trap1 function!
- */
-        .globl  _trap1_pexec    // Reentrant Pexec call
-_trap1_pexec:
+        .globl  C_SYM(trap1_pexec)    // Reentrant Pexec call
+C_SYM(trap1_pexec):
+#if CONF_WITH_MFASTCALL
+        /*
+         * Build the GEMDOS wire frame trap #1 expects (opcode, mode,
+         * path, tail, env). Under -mfastcall a call to
+         * trap1_pexec(WORD mode, const char*, const char*, const char*)
+         * arrives with mode in d0, path in a0, tail in a1, and only env
+         * (the 4th argument -- fastcall has just two address registers)
+         * spilled to the stack, at 4(sp) relative to our own entry sp.
+         * Read env into a scratch register (d1, otherwise unused by
+         * this signature) before the d2/a2 save below touches the
+         * stack and shifts that offset, then build the frame directly
+         * against sp so it stays contiguous for the trap.
+         */
+        move.l  4(sp),d1        // env, from the caller's stack-spilled 4th arg
 #ifdef __mcoldfire__
         move.l  a2,-(sp)
         move.l  d2,-(sp)
 #else
         movem.l d2/a2,-(sp)
 #endif
-        move.l  22(sp),-(sp)    // Push parameter on the stack again for pexec
-        move.l  22(sp),-(sp)
-        move.l  22(sp),-(sp)
-        move.w  24(sp),-(sp)
+        move.l  d1,-(sp)        // env
+        move.l  a1,-(sp)        // tail
+        move.l  a0,-(sp)        // path
+        move.w  d0,-(sp)        // mode, low word
         move.w  #0x4b,-(sp)
         trap    #1              // Pexec
         lea     16(sp),sp
@@ -67,6 +56,42 @@ _trap1_pexec:
 #else
         movem.l (sp)+,d2/a2
 #endif
+#else
+#ifdef __mcoldfire__
+        move.l  a2,-(sp)
+        move.l  d2,-(sp)
+#else
+        movem.l d2/a2,-(sp)
+#endif
+        /*
+         * Re-push each parameter, tightly packed, to build the GEMDOS
+         * wire frame trap #1 expects (opcode, mode, path, tail, env).
+         * The offsets below read them back off *our own caller's*
+         * frame, i.e. how GCC laid out a call to
+         * trap1_pexec(short mode, const char*, const char*, const char*)
+         * -- and with -mshort no longer used for the kernel m68k build
+         * (#300), that caller-side frame is no longer tightly packed
+         * either: GCC now gives "mode" a full 4-byte slot instead of 2,
+         * shifting every offset below by 2 from what tight packing
+         * would give (22->24 for the three pointer args, 24->26 for
+         * mode's low word -- mode's sign/zero-extended value always
+         * lands in the low word of its 4-byte slot regardless of
+         * sign, so a plain word read still recovers it correctly).
+         */
+        move.l  24(sp),-(sp)    // Push parameter on the stack again for pexec
+        move.l  24(sp),-(sp)
+        move.l  24(sp),-(sp)
+        move.w  26(sp),-(sp)
+        move.w  #0x4b,-(sp)
+        trap    #1              // Pexec
+        lea     16(sp),sp
+#ifdef __mcoldfire__
+        move.l  (sp)+,d2
+        move.l  (sp)+,a2
+#else
+        movem.l (sp)+,d2/a2
+#endif
+#endif
         rts
 
 #if USE_STOP_INSN_TO_FREE_HOST_CPU
@@ -75,8 +100,8 @@ _trap1_pexec:
  * Stop the CPU until an interrupt occurs.
  * This may save some host CPU time on emulators (i.e. ARAnyM).
  */
-        .globl  _stop_until_interrupt
-_stop_until_interrupt:
+        .globl  C_SYM(stop_until_interrupt)
+C_SYM(stop_until_interrupt):
         move.w  sr,d0
         move.w  d0,d1           // Backup
 #ifdef __mcoldfire__
@@ -143,8 +168,8 @@ stop7:
 #endif /* USE_STOP_INSN_TO_FREE_HOST_CPU */
 
 // The RTS below is shared for other purposes.
-        .globl  _just_rts
-_just_rts:
+        .globl  C_SYM(just_rts)
+C_SYM(just_rts):
         rts
 
 /*
@@ -162,14 +187,32 @@ _just_rts:
  *
  *  if you do not need rounding, use mul_div() from intmath.h instead!
  */
-        .globl  _mul_div_round
-_mul_div_round:
+        .globl  C_SYM(mul_div_round)
+/*
+ * mul_div_round(WORD mult1, WORD mult2, WORD divisor) takes three scalar
+ * arguments and had no -mfastcall branch at all: under fastcall they
+ * arrive in d0/d1/d2 (only the low word of each is defined -- see this
+ * file's protect_w/_ww "sign-extended to a full slot" comments -- which
+ * is exactly what the word-sized ops below already read), not tightly
+ * packed on the stack. Its non-fastcall stack path was also stale: with
+ * -mshort no longer used for the kernel build (#300), each WORD argument
+ * now gets its own 4-byte slot instead of being packed 2 bytes apart, so
+ * mult1/mult2/divisor's low words moved from 4/6/8(sp) to 6/10/14(sp).
+ */
+C_SYM(mul_div_round):
 #ifdef __mcoldfire__
+#if CONF_WITH_MFASTCALL
+        add.l   d1,d1           // d1 = mult2 * 2
+        muls.w  d0,d1           // d1 = mult1 * mult2 * 2
+        divs.w  d2,d1           // d1 = (mult1 * mult2 * 2) / divisor
+        move.l  d1,d0
+#else
         moveq.l #0,d0
-        move.w  6(sp),d0        // d0 = mult2
+        move.w  10(sp),d0       // d0 = mult2
         add.l   d0,d0           // d0 = mult2 * 2
-        muls.w  4(sp),d0        // d0 = mult1 * mult2 * 2
-        divs.w  8(sp),d0        // d0 = (mult1 * mult2 * 2) / divisor
+        muls.w  6(sp),d0        // d0 = mult1 * mult2 * 2
+        divs.w  14(sp),d0       // d0 = (mult1 * mult2 * 2) / divisor
+#endif
         ext.l   d0
         jmi     mdrminus
         addq.l  #1,d0           // d0 = (mult1 * mult2 * 2) / divisor + 1
@@ -180,10 +223,17 @@ mdrminus:
         asr.l   #1,d0           // d0 = ((mult1 * mult2 * 2) / divisor - 1) / 2
         rts
 #else
-        move.w  6(sp),d0        // d0 = mult2
+#if CONF_WITH_MFASTCALL
+        add.w   d1,d1           // d1 = mult2 * 2
+        muls.w  d0,d1           // d1 = mult1 * mult2 * 2
+        divs.w  d2,d1           // d1 = (mult1 * mult2 * 2) / divisor
+        move.w  d1,d0
+#else
+        move.w  10(sp),d0       // d0 = mult2
         add.w   d0,d0           // d0 = mult2 * 2
-        muls.w  4(sp),d0        // d0 = mult1 * mult2 * 2
-        divs.w  8(sp),d0        // d0 = (mult1 * mult2 * 2) / divisor
+        muls.w  6(sp),d0        // d0 = mult1 * mult2 * 2
+        divs.w  14(sp),d0       // d0 = (mult1 * mult2 * 2) / divisor
+#endif
         jmi     mdrminus
         addq.w  #1,d0           // d0 = (mult1 * mult2 * 2) / divisor + 1
         asr.w   #1,d0           // d0 = ((mult1 * mult2 * 2) / divisor + 1) / 2
@@ -202,15 +252,49 @@ mdrminus:
  * below provide the necessary assembler support.
  */
 
-        .globl   _protect_v
-        .globl   _protect_w
-        .globl   _protect_ww
-        .globl   _protect_wlwwwl
+        .globl   C_SYM(protect_v)
+        .globl   C_SYM(protect_w)
+        .globl   C_SYM(protect_l)
+        .globl   C_SYM(protect_ww)
+        .globl   C_SYM(protect_wlwwwl)
+        .globl   C_SYM(protect_wwwwww)
 
 /*
  * LONG protect_v(LONG (*func)(void));
+ *
+ * These four wrappers weren't wired up for -mfastcall at all: their
+ * bodies unconditionally read every argument off a plain-ABI stack
+ * frame, but a -mfastcall caller passes func in a0 and the scalar
+ * arguments in d0/d1/d2, spilling only what doesn't fit to the stack
+ * (confirmed against this GCC fork's own -mfastcall codegen for these
+ * exact argument shapes). Left as-is, every argument read here would
+ * come from wherever the caller's own stack happened to have -- e.g.
+ * a stale value from an earlier call, which is not a hypothetical: this
+ * is what let a garbled "func" pointer through protect_wlwwwl's caller
+ * (bios.c's hard-disk read/write path, hdv_rw) into a wild jsr.
+ *
+ * Fix: under -mfastcall, build the exact same plain-ABI frame each
+ * body already expects (func/args at the same fixed offsets, one full
+ * 4-byte slot each, matching how a plain-ABI caller pads WORD args --
+ * verified against this compiler's own non-fastcall codegen for the
+ * same signatures) by pushing the incoming registers, then bsr into
+ * the unchanged body under a new label. Only pop what this wrapper
+ * itself pushed before returning: any argument that didn't fit in
+ * a0/d0/d1/d2 arrived spilled on our own caller's stack (caller-cleanup,
+ * same convention as this file's other -mfastcall fixes), and must be
+ * left there for the caller to pop after we return, not touched here.
  */
-_protect_v:
+#if CONF_WITH_MFASTCALL
+C_SYM(protect_v):
+        move.l   a0,-(sp)                // func
+        bsr      protect_v_stackbody
+        lea      4(sp),sp                // drop func pushed above (no caller stack args)
+        rts
+
+protect_v_stackbody:
+#else
+C_SYM(protect_v):
+#endif
         move.l   4(sp),a0
         move.l   a2,-(sp)
         move.l   d2,-(sp)
@@ -222,9 +306,26 @@ _protect_v:
 /*
  * LONG protect_w(LONG (*func)(WORD), WORD);
  */
-_protect_w:
+#if CONF_WITH_MFASTCALL
+C_SYM(protect_w):
+        ext.l    d0                      // a, sign-extended to a full slot
+        move.l   d0,-(sp)                // a
+        move.l   a0,-(sp)                // func
+        bsr      protect_w_stackbody
+        lea      8(sp),sp                // drop func/a pushed above (no caller stack args)
+        rts
+
+protect_w_stackbody:
+#else
+C_SYM(protect_w):
+#endif
         move.l   4(sp),a0
-        move.w   8(sp),d0
+        /*
+         * a's own slot is 4 bytes wide now (no -mshort), so its low word
+         * -- the value the jsr target's classic 2-byte-packed ABI below
+         * actually wants -- is at 10(sp), not 8(sp).
+         */
+        move.w   10(sp),d0
         move.l   a2,-(sp)
         move.l   d2,-(sp)
         move.w   d0,-(sp)
@@ -235,9 +336,39 @@ _protect_w:
         rts
 
 /*
- * LONG protect_ww(LONG (*func)(WORD), WORD, WORD);
+ * void protect_wv(void (*func)(WORD), WORD);
+ *
+ * Alias for protect_w() under a type-correct signature for a callback
+ * that returns nothing (the m68k calling convention returns a value in
+ * d0/d1 whether or not the caller uses it, so the generated code is
+ * identical either way) -- lets a void-returning callback be called
+ * without going through an incompatible LONG(*)(WORD) function-pointer
+ * cast, which is undefined behavior in C even when the return value is
+ * discarded.
  */
-_protect_ww:
+        .globl   C_SYM(protect_wv)
+        .set     C_SYM(protect_wv), C_SYM(protect_w)
+
+/*
+ * LONG protect_l(LONG (*func)(LONG), LONG);
+ *
+ * Same as protect_w, but for a callback whose single argument is
+ * already a full LONG (e.g. Dsp_SetVectors()' receiver, called with
+ * the DSP data word) -- no WORD/LONG slot-width mismatch to correct
+ * for, so no ext.l/narrowing is needed on either ABI's entry path.
+ */
+#if CONF_WITH_MFASTCALL
+C_SYM(protect_l):
+        move.l   d0,-(sp)                // a (already a full LONG in d0)
+        move.l   a0,-(sp)                // func
+        bsr      protect_l_stackbody
+        lea      8(sp),sp                // drop func/a pushed above (no caller stack args)
+        rts
+
+protect_l_stackbody:
+#else
+C_SYM(protect_l):
+#endif
         move.l   4(sp),a0
         move.l   8(sp),d0
         move.l   a2,-(sp)
@@ -250,21 +381,546 @@ _protect_ww:
         rts
 
 /*
- * LONG protect_wlwwwl(LONG (*func)(), WORD, LONG, WORD, WORD, WORD, LONG);
+ * void protect_lv(void (*func)(LONG), LONG);
+ *
+ * Alias for protect_l(), same reasoning as protect_wv() above.
  */
-_protect_wlwwwl:
-        movem.l  8(sp),d0-d1/a0-a1
+        .globl   C_SYM(protect_lv)
+        .set     C_SYM(protect_lv), C_SYM(protect_l)
+
+/*
+ * LONG protect_ww(LONG (*func)(WORD, WORD), WORD, WORD);
+ */
+#if CONF_WITH_MFASTCALL
+C_SYM(protect_ww):
+        ext.l    d1                      // b, sign-extended to a full slot
+        move.l   d1,-(sp)                // b
+        ext.l    d0                      // a, sign-extended to a full slot
+        move.l   d0,-(sp)                // a
+        move.l   a0,-(sp)                // func
+        bsr      protect_ww_stackbody
+        lea      12(sp),sp               // drop func/a/b pushed above (no caller stack args)
+        rts
+
+protect_ww_stackbody:
+#else
+C_SYM(protect_ww):
+#endif
+        move.l   4(sp),a0
+        /*
+         * a and b used to be two tightly packed WORDs sharing one 4-byte
+         * span at 8(sp), so a single move.l here could read both at once
+         * and re-push them unchanged for the jsr target's classic
+         * 2-byte-packed ABI below. Without -mshort each now has its own
+         * 4-byte slot, so that longword must be rebuilt explicitly from
+         * their low words (a's at 10(sp), b's at 14(sp)) instead.
+         */
+        move.w   10(sp),d0
+        swap     d0
+        move.w   14(sp),d0
         move.l   a2,-(sp)
         move.l   d2,-(sp)
-#ifdef __mcoldfire__
-        lea      -16(sp),sp
-        movem.l  d0-d1/a0-a1,(sp)
+        move.l   d0,-(sp)
+        jsr      (a0)
+        addq.l   #4,sp
+        move.l   (sp)+,d2
+        move.l   (sp)+,a2
+        rts
+
+/*
+ * LONG protect_wlwwwl(LONG (*func)(WORD, LONG, WORD, WORD, WORD, LONG),
+ *                      WORD, LONG, WORD, WORD, WORD, LONG);
+ *
+ * Only the first 3 scalar args (a, b, c) fit in d0/d1/d2 alongside func
+ * in a0; d, e and f spill to our caller's stack, each already sign-
+ * extended to a full 4-byte slot by the caller (same convention as
+ * every other -mfastcall stack-spill fix in this tree), at 4(sp)/8(sp)/
+ * 12(sp) relative to our own entry sp.
+ */
+#if CONF_WITH_MFASTCALL
+C_SYM(protect_wlwwwl):
+        move.l   12(sp),-(sp)            // f, copied from our caller's spilled arg
+        move.l   12(sp),-(sp)            // e, ditto (offset shifted by the f push above)
+        move.l   12(sp),-(sp)            // d, ditto (offset shifted twice now)
+        ext.l    d2                      // c, sign-extended to a full slot
+        move.l   d2,-(sp)                // c
+        move.l   d1,-(sp)                // b (already a full LONG)
+        ext.l    d0                      // a, sign-extended to a full slot
+        move.l   d0,-(sp)                // a
+        move.l   a0,-(sp)                // func
+        bsr      protect_wlwwwl_stackbody
+        lea      28(sp),sp               // drop func/a/b/c/d/e/f pushed above; the
+                                          // caller's own spilled d/e/f are untouched
+                                          // and remain its to pop
+        rts
+
+protect_wlwwwl_stackbody:
 #else
-        movem.l  d0-d1/a0-a1,-(sp)
+C_SYM(protect_wlwwwl):
 #endif
-        move.l   28(sp),a0
+        /*
+         * a/c/d/e used to be four tightly packed WORDs and b/f two LONGs,
+         * all sharing one contiguous 16-byte span at 8(sp) -- movem could
+         * blit that whole span into d0-d1/a0-a1 and back out unchanged,
+         * since the source already matched the jsr target's classic
+         * 2-byte-packed ABI byte-for-byte. Without -mshort each WORD now
+         * has its own 4-byte slot, so that trick no longer produces the
+         * right bytes: rebuild the 16-byte classic frame explicitly from
+         * each argument's own slot (WORD args from their low word) and
+         * push it right-to-left, exactly as protect_w/_ww do above.
+         *
+         * The jsr target itself (e.g. bios.c's hdv_rw) is always called
+         * via this same classic ABI regardless of CONF_WITH_MFASTCALL,
+         * matching every other protect_* vector (bconin_vec, hdv_mediach,
+         * hdv_bpb, bell_hook, userterm, ...): these are frozen, user-
+         * replaceable TOS hardware vectors that a third-party driver can
+         * install into without ever knowing this kernel's own -mfastcall
+         * setting, so the call convention here can't depend on it either.
+         */
+        move.l   a2,-(sp)
+        move.l   d2,-(sp)
+        move.l   36(sp),-(sp)   // f (full LONG, from its own slot)
+        move.w   38(sp),-(sp)   // e (low word of its slot)
+        move.w   36(sp),-(sp)   // d (low word of its slot)
+        move.w   34(sp),-(sp)   // c (low word of its slot)
+        move.l   30(sp),-(sp)   // b (full LONG, from its own slot)
+        move.w   32(sp),-(sp)   // a (low word of its slot)
+        move.l   28(sp),a0      // func
         jsr      (a0)
         lea      16(sp),sp
         move.l   (sp)+,d2
         move.l   (sp)+,a2
         rts
+
+/*
+ * ULONG protect_wwwwww(ULONG (*func)(WORD, WORD, WORD, WORD, WORD, WORD),
+ *                      WORD, WORD, WORD, WORD, WORD, WORD);
+ *
+ * Calls the Rsconf() vector (rsconfptr, the Bconmap tables) with TOS's classic
+ * ABI: six tightly packed WORDs.  Same scheme as protect_wlwwwl above: with
+ * -mfastcall func is in a0, a/b/c in d0/d1/d2 and d/e/f spilled to our
+ * caller's stack (4(sp)/8(sp)/12(sp), a full slot each, the value in the low
+ * word); they are copied together with a/b/c into the plain-ABI frame the
+ * body expects.  Without -mfastcall that frame is the caller's own.
+ */
+#if CONF_WITH_MFASTCALL
+C_SYM(protect_wwwwww):
+        move.l   12(sp),-(sp)            // f, copied from our caller's spilled arg
+        move.l   12(sp),-(sp)            // e (offset shifted by the f push above)
+        move.l   12(sp),-(sp)            // d (offset shifted twice now)
+        ext.l    d2                      // c, sign-extended to a full slot
+        move.l   d2,-(sp)                // c
+        ext.l    d1                      // b
+        move.l   d1,-(sp)                // b
+        ext.l    d0                      // a
+        move.l   d0,-(sp)                // a
+        move.l   a0,-(sp)                // func
+        bsr      protect_wwwwww_stackbody
+        lea      28(sp),sp               // drop func/a..f pushed above; the caller's
+                                          // own spilled d/e/f remain its to pop
+        rts
+
+protect_wwwwww_stackbody:
+#else
+C_SYM(protect_wwwwww):
+#endif
+        move.l   a2,-(sp)
+        move.l   d2,-(sp)
+        move.w   38(sp),-(sp)   // f (low word of its slot)
+        move.w   36(sp),-(sp)   // e
+        move.w   34(sp),-(sp)   // d
+        move.w   32(sp),-(sp)   // c
+        move.w   30(sp),-(sp)   // b
+        move.w   28(sp),-(sp)   // a
+        move.l   24(sp),a0      // func
+        jsr      (a0)
+        lea      12(sp),sp
+        move.l   (sp)+,d2
+        move.l   (sp)+,a2
+        rts
+
+/*
+ * tikfrk_etv_entry / tick_int_etv_entry - classic-ABI entry trampolines
+ * for etv_timer's two possible internal default handlers (bdos/time.c's
+ * tikfrk, vdi/vdi_misc.c's tick_int).
+ *
+ * etv_timer is a frozen, user-replaceable TOS vector: vectors.S's own
+ * call site (like every protect_* vector above) always invokes it via
+ * the classic tightly-packed-WORD ABI, since a third-party handler
+ * installed there follows the documented TOS convention, not this
+ * kernel's own -mfastcall setting. But tikfrk() and tick_int() are
+ * ordinary internal C functions, compiled under *this* kernel's own
+ * ABI -- ext.l'd/register args under -mfastcall, full 4-byte stack
+ * slots otherwise -- neither of which matches the classic wire format
+ * vectors.S uses to call them. Install these trampolines into
+ * etv_timer/Setexc(0x100, ...) instead of tikfrk/tick_int directly:
+ * they read the classic WORD argument and re-dispatch into the real
+ * C function using whichever ABI this build actually uses.
+ */
+        .globl  C_SYM(tikfrk_etv_entry)
+        .globl  C_SYM(tick_int_etv_entry)
+        .extern C_SYM(tikfrk)
+        .extern C_SYM(tick_int)
+
+C_SYM(tikfrk_etv_entry):
+        move.w  4(sp),d0        // n, from the classic caller's packed WORD arg
+        ext.l   d0
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)       // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(tikfrk)  // n already in d0, as fastcall wants it
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l  d0,-(sp)
+        jsr      C_SYM(tikfrk)
+        addq.l  #4,sp
+        rts
+#endif
+
+C_SYM(tick_int_etv_entry):
+        move.w  4(sp),d0        // u, from the classic caller's packed WORD arg
+        ext.l   d0
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)       // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(tick_int)  // u already in d0, as fastcall wants it
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l  d0,-(sp)
+        jsr      C_SYM(tick_int)
+        addq.l  #4,sp
+        rts
+#endif
+
+/*
+ * <name>_etv_entry - classic-ABI entry points of the default handlers of the
+ * Bconout vectors (bconout_vec[], the Bconmap tables) and of hdv_rw, hdv_bpb and
+ * hdv_mediach; see bios/classicvec.h.
+ *
+ * The vectors are called with TOS's classic ABI (protect_ww() and its relatives
+ * above, and any third-party driver chaining to the handler it replaced): the
+ * arguments packed after the return address.  The handlers are ordinary C
+ * functions in this kernel's ABI.  Each entry point hands the address of the
+ * classic frame and the handler to a C function (bios/classicvec.c) that reads
+ * the arguments out of the frame and calls the handler: two pointers, in a0/a1
+ * with -mfastcall and on the stack otherwise, the result in d0 either way.
+ * d0/d1/a0/a1 are scratch in the classic convention too; d2/a2 are the caller's:
+ * with -mfastcall the entry points save d2 around the C helper themselves
+ * (a2 is callee-saved there too), so they can be chained to directly.
+ */
+
+        .globl   C_SYM(bconout0_etv_entry)
+        .extern  C_SYM(bconout0)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconout0_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconout0),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+
+        .globl   C_SYM(bconout1_etv_entry)
+        .extern  C_SYM(bconout1)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconout1_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconout1),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+
+        .globl   C_SYM(bconout2_etv_entry)
+        .extern  C_SYM(bconout2)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconout2_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconout2),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+
+        .globl   C_SYM(bconout3_etv_entry)
+        .extern  C_SYM(bconout3)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconout3_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconout3),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+
+        .globl   C_SYM(bconout4_etv_entry)
+        .extern  C_SYM(bconout4)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconout4_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconout4),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+
+        .globl   C_SYM(bconout5_etv_entry)
+        .extern  C_SYM(bconout5)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconout5_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconout5),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+
+#if CONF_WITH_SCC
+        .globl   C_SYM(bconoutA_etv_entry)
+        .extern  C_SYM(bconoutA)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconoutA_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconoutA),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+#endif /* CONF_WITH_SCC */
+
+#if CONF_WITH_SCC
+        .globl   C_SYM(bconoutB_etv_entry)
+        .extern  C_SYM(bconoutB)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconoutB_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconoutB),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+#endif /* CONF_WITH_SCC */
+
+#if CONF_WITH_TT_MFP
+        .globl   C_SYM(bconoutTT_etv_entry)
+        .extern  C_SYM(bconoutTT)
+        .extern  C_SYM(classic_ww)
+C_SYM(bconoutTT_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(bconoutTT),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_ww)
+        addq.l   #8,sp
+        rts
+#endif
+#endif /* CONF_WITH_TT_MFP */
+
+        .globl   C_SYM(blkdev_rwabs_etv_entry)
+        .extern  C_SYM(blkdev_rwabs)
+        .extern  C_SYM(classic_rwabs)
+C_SYM(blkdev_rwabs_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(blkdev_rwabs),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_rwabs)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_rwabs)
+        addq.l   #8,sp
+        rts
+#endif
+
+        .globl   C_SYM(blkdev_getbpb_etv_entry)
+        .extern  C_SYM(blkdev_getbpb)
+        .extern  C_SYM(classic_w)
+C_SYM(blkdev_getbpb_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(blkdev_getbpb),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_w)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_w)
+        addq.l   #8,sp
+        rts
+#endif
+
+        .globl   C_SYM(blkdev_mediach_etv_entry)
+        .extern  C_SYM(blkdev_mediach)
+        .extern  C_SYM(classic_w)
+C_SYM(blkdev_mediach_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(blkdev_mediach),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_w)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_w)
+        addq.l   #8,sp
+        rts
+#endif
+
+        .globl   C_SYM(rsconf1_etv_entry)
+        .extern  C_SYM(rsconf1)
+        .extern  C_SYM(classic_rsconf)
+C_SYM(rsconf1_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(rsconf1),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_rsconf)
+        addq.l   #8,sp
+        rts
+#endif
+
+#if CONF_WITH_SCC
+        .globl   C_SYM(rsconfA_etv_entry)
+        .extern  C_SYM(rsconfA)
+        .extern  C_SYM(classic_rsconf)
+C_SYM(rsconfA_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(rsconfA),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_rsconf)
+        addq.l   #8,sp
+        rts
+#endif
+#endif /* CONF_WITH_SCC */
+
+#if CONF_WITH_SCC
+        .globl   C_SYM(rsconfB_etv_entry)
+        .extern  C_SYM(rsconfB)
+        .extern  C_SYM(classic_rsconf)
+C_SYM(rsconfB_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(rsconfB),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_rsconf)
+        addq.l   #8,sp
+        rts
+#endif
+#endif /* CONF_WITH_SCC */
+
+#if CONF_WITH_TT_MFP
+        .globl   C_SYM(rsconfTT_etv_entry)
+        .extern  C_SYM(rsconfTT)
+        .extern  C_SYM(classic_rsconf)
+C_SYM(rsconfTT_etv_entry):
+        lea      4(sp),a0                // the classic frame
+        lea      C_SYM(rsconfTT),a1        // the handler
+#if CONF_WITH_MFASTCALL
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
+#else
+        move.l   a1,-(sp)
+        move.l   a0,-(sp)
+        jsr      C_SYM(classic_rsconf)
+        addq.l   #8,sp
+        rts
+#endif
+#endif /* CONF_WITH_TT_MFP */

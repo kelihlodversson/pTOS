@@ -44,6 +44,7 @@ void akbin(EVB *e);
 void adelay(EVB *e, LONG c);
 void abutton(EVB *e, LONG p);
 void amouse(EVB *e, LONG pmo);
+void bpend_cancel(LONG parm);
 
 
 #endif

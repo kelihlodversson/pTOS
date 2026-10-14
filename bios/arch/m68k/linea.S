@@ -13,48 +13,59 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-/* #define ENABLE_KDEBUG */
+/*
+ * #define ENABLE_KDEBUG
+ *
+ * Its kprintf() calls below push a full LONG for each %x/%d argument:
+ * without -mshort, doprintf() (util/doprintf.c) reads every unmodified
+ * "%x"/"%d" as a 4-byte va_arg(ap, int), not 2.
+ */
 
 #include "asmdefs.h"
 #include "lineaasm.h"
 
 // ==== References ===========================================================
 
-        .extern _sysfonts
-        .extern _kprintf
+        .extern C_SYM(sysfonts)
+        .extern C_SYM(kprintf)
 
-        .extern _linea_show_mouse
-        .extern _linea_hide_mouse
-        .extern _linea_transform_mouse
+        .extern C_SYM(linea_show_mouse)
+        .extern C_SYM(linea_hide_mouse)
+        .extern C_SYM(linea_transform_mouse)
 
-        .extern _get_pix
-        .extern _put_pix
+        .extern C_SYM(get_pix)
+        .extern C_SYM(put_pix)
 
-        .extern _linea_line
-        .extern _linea_rect
-        .extern _linea_hline
-        .extern _linea_polygon
+        .extern C_SYM(linea_line)
+        .extern C_SYM(linea_rect)
+        .extern C_SYM(linea_hline)
+        .extern C_SYM(linea_polygon)
 
-        .extern _linea_blit
-        .extern _text_blt
+        .extern C_SYM(linea_blit)
+        .extern C_SYM(text_blt)
 
-        .extern _cur_replace
-        .extern _cur_display
-        .extern _linea_raster
-        .extern _linea_fill
+        .extern C_SYM(cur_replace)
+        .extern C_SYM(cur_display)
+        .extern C_SYM(linea_raster)
+        .extern C_SYM(linea_fill)
 
 // ==== Definitions ==========================================================
 
-        .globl  _int_linea              // entry for linea exception
+        .globl  C_SYM(int_linea)              // entry for linea exception
 
 // ==== Line-A handler ===============================
-_int_linea:
+C_SYM(int_linea):
         /* save d0/d1/a0/a2 as they are needed for sprite undraw/draw */
 #ifdef __mcoldfire__
         lea     linea_save,a1
         movem.l d0/d1/a0/a2,(a1)
 #else
         movem.l d0/d1/a0/a2,linea_save
+#endif
+#if CONF_WITH_MFASTCALL
+        /* the routines below call C functions, which under -mfastcall may
+         * clobber d2; the interrupted program expects it back */
+        move.l  d2,linea_save+16
 #endif
 #ifdef __mcoldfire__
         move.l  4(sp),a0        /* Get the opcode address */
@@ -89,10 +100,10 @@ _int_linea:
 #else
         movem.l d0-d1/a0-a1,-(sp)
 #endif
-        move.w  d0,-(sp)
+        move.l  d0,-(sp)
         pea     linea_msg
-        jsr     _kprintf              /* Print debugging information */
-        addq.l  #6,sp
+        jsr     C_SYM(kprintf)              /* Print debugging information */
+        addq.l  #8,sp
 #ifdef __mcoldfire__
         movem.l (sp),d0-d1/a0-a1
         lea     16(sp),sp
@@ -119,23 +130,26 @@ _int_linea:
 #endif
         jsr     (a1)
 linea_dispatch_pc:
+#if CONF_WITH_MFASTCALL
+        move.l  linea_save+16,d2
+#endif
         rte
 
 wrong_linea:
 #ifdef ENABLE_KDEBUG
-        move.w  d0,-(sp)
+        move.l  d0,-(sp)
         subq.l  #2,a0
         move.l  a0,-(sp)
         pea     wrong_linea_msg
-        jsr     _kprintf
-        lea     10(sp),sp
+        jsr     C_SYM(kprintf)
+        lea     12(sp),sp
 #endif /* ENABLE_KDEBUG */
         rte
 
         .bss
         .even
 linea_save:
-        .ds.l   4       /* d0, d1, a0, a2 */
+        .ds.l   5       /* d0, d1, a0, a2, d2 */
 
         SECTION_RODATA
 
@@ -157,36 +171,72 @@ _linea_0:
         lea     LA(v_planes),a0  // get base address for line a variables
         move.l  a0,d0
 
-        lea     _sysfonts,a1   // get pointer to the three system font headers
+        lea     C_SYM(sysfonts),a1   // get pointer to the three system font headers
 
         lea     linea_vecs,a2   // get pointer to table of the Line-A routines
         rts
 
 hide_mouse:
         move.l  d0,-(sp)
-        jsr     _linea_hide_mouse
+        jsr     C_SYM(linea_hide_mouse)
         move.l  (sp)+,d0
         rts
 
+/*
+ * undraw_sprite/draw_sprite/linea_blit call cur_replace(MCS*),
+ * cur_display(Mcdb*,MCS*,WORD,WORD) and linea_blit(struct blit_frame*)
+ * with their arguments already in the fixed registers the Line-A
+ * hardware convention puts them in (see the comment above), which
+ * happens to line up with plain cdecl stack order but NOT with
+ * -mfastcall: there pointer arguments go in a0, then a1, not on the
+ * stack. Route them through those registers instead of pushing under
+ * -mfastcall; the plain-ABI push sequence is kept for other targets.
+ */
 undraw_sprite:
+#if CONF_WITH_MFASTCALL
+        movea.l a2,a0            /* save area ptr */
+        jsr     C_SYM(cur_replace)
+#else
         move.l  a2,-(sp)        /* save area ptr */
-        jsr     _cur_replace
+        jsr     C_SYM(cur_replace)
         addq.l  #4,sp
+#endif
         rts
 
 draw_sprite:
-        move.w  d1,-(sp)        /* y coord of hotspot */
-        move.w  d0,-(sp)        /* x coord */
+#if CONF_WITH_MFASTCALL
+        movea.l a2,a1            /* save area ptr; a0 (new sprite), d0 (x)
+                                  * and d1 (y) are already where fastcall
+                                  * wants them */
+        jsr     C_SYM(cur_display)
+#else
+        /*
+         * cur_display(Mcdb*, MCS*, WORD, WORD) is an ordinary internal
+         * function compiled under this kernel's own (post -mshort)
+         * plain-stack ABI, which gives each WORD arg a full 4-byte slot
+         * rather than packing them tightly -- sign-extend x/y before
+         * pushing, and clean up 16 bytes, not 12.
+         */
+        ext.l   d1              /* y coord of hotspot, sign-extended */
+        move.l  d1,-(sp)
+        ext.l   d0              /* x coord, sign-extended */
+        move.l  d0,-(sp)
         move.l  a2,-(sp)        /* save area ptr */
         move.l  a0,-(sp)        /* new sprite */
-        jsr     _cur_display
-        lea     12(sp),sp
+        jsr     C_SYM(cur_display)
+        lea     16(sp),sp
+#endif
         rts
 
-linea_blit:
+linea_blit_wrapper:
+#if CONF_WITH_MFASTCALL
+        movea.l a6,a0                   // blit frame structure addr
+        jsr     C_SYM(linea_blit)
+#else
         move.l  a6,-(sp)                // blit frame structure addr
-        jsr     _linea_blit
+        jsr     C_SYM(linea_blit)
         addq.l  #4,sp
+#endif
         rts
 
         SECTION_RODATA
@@ -229,21 +279,21 @@ linea_blit:
         .even   // Mandatory in ELF section .rodata
 linea_vecs:
         .dc.l   _linea_0
-        .dc.l   _put_pix        /* $1 - put pixel */
-        .dc.l   _get_pix        /* $2 - get pixel */
-        .dc.l   _linea_line     /* $3 - draw line */
-        .dc.l   _linea_hline    /* $4 - horizontal line */
-        .dc.l   _linea_rect     /* $5 - filled rectangle */
-        .dc.l   _linea_polygon  /* $6 - draw 1 line of polygon */
-        .dc.l   linea_blit      /* $7 - area blit */
-        .dc.l   _text_blt       /* $8 - text blitting */
-        .dc.l   _linea_show_mouse      /* $9 - show mouse */
+        .dc.l   C_SYM(put_pix)        /* $1 - put pixel */
+        .dc.l   C_SYM(get_pix)        /* $2 - get pixel */
+        .dc.l   C_SYM(linea_line)     /* $3 - draw line */
+        .dc.l   C_SYM(linea_hline)    /* $4 - horizontal line */
+        .dc.l   C_SYM(linea_rect)     /* $5 - filled rectangle */
+        .dc.l   C_SYM(linea_polygon)  /* $6 - draw 1 line of polygon */
+        .dc.l   linea_blit_wrapper /* $7 - area blit */
+        .dc.l   C_SYM(text_blt)       /* $8 - text blitting */
+        .dc.l   C_SYM(linea_show_mouse)      /* $9 - show mouse */
         .dc.l   hide_mouse      /* $A - hide mouse cursor */
-        .dc.l   _linea_transform_mouse /* $B - transform mouse */
+        .dc.l   C_SYM(linea_transform_mouse) /* $B - transform mouse */
         .dc.l   undraw_sprite   /* $C - undraw sprite */
         .dc.l   draw_sprite     /* $D - draw sprite */
-        .dc.l   _linea_raster   /* $E - copy raster form */
-        .dc.l   _linea_fill     /* $F - flood fill */
+        .dc.l   C_SYM(linea_raster)   /* $E - copy raster form */
+        .dc.l   C_SYM(linea_fill)     /* $F - flood fill */
 linea_ents:
         /* Number of implemented Line A routines */
         .equ    nb_linea,(linea_ents-linea_vecs)/4

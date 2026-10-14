@@ -20,15 +20,16 @@
  */
 
  /* ==== Start of Exception related variables ================================ */
-_proc_lives     = 0x380;        /* validates system crash page, if 0x12345678 */
-_proc_dregs     = 0x384;        /* saved registers d0-d7 */
-_proc_aregs     = 0x3a4;        /* saved registers a0-a7 */
-_proc_enum      = 0x3c4;        /* vector number of crash exception */
-_proc_usp       = 0x3c8;        /* saved user stackpointer */
-_proc_stk       = 0x3cc;        /* 16 words from exception stack */
+#define TOSVAR(name, address) C_SYM(name) = address
+TOSVAR(proc_lives, 0x380);      /* validates system crash page, if 0x12345678 */
+TOSVAR(proc_dregs, 0x384);      /* saved registers d0-d7 */
+TOSVAR(proc_aregs, 0x3a4);      /* saved registers a0-a7 */
+TOSVAR(proc_enum, 0x3c4);       /* vector number of crash exception */
+TOSVAR(proc_usp, 0x3c8);        /* saved user stackpointer */
+TOSVAR(proc_stk, 0x3cc);        /* 16 words from exception stack */
 
 /* ==== Start of System variables =========================================== */
-_sysvars_start  = 0x400;
+C_SYM(sysvars_start) = 0x400;
 /*
  * These fixed low-memory addresses are m68k only. ARM has no real TOS
  * software depending on them, and Ssystem() (bdos/ssystem.c) now gives
@@ -43,84 +44,81 @@ _sysvars_start  = 0x400;
  * this fixed m68k address instead of its real storage.
  */
 #if ARCH_M68K
-_etv_timer      = 0x400;        /* GEM event timer vector */
-_etv_critic     = 0x404;        /* GEM critical error handler */
-_etv_term       = 0x408;        /* GEM program termination vector */
-_etv_xtra       = 0x40c;        /* GEM additional vectors (unused) */
-_memvalid       = 0x420;        /* memory conf valid, if 0x752019f3 */
-memvalid        = _memvalid;
-memctrl         = 0x424;        /* copy of contents of 0xffff8001 */
-resvalid        = 0x426;        /* validates resvector, if 0x31415926 */
-resvector       = 0x42a;        /* reset vector */
-_phystop        = 0x42e;        /* physical top of RAM */
-_membot         = 0x432;        /* start of TPA (user memory) */
-_memtop         = 0x436;        /* end of TPA (user memory) */
-_memval2        = 0x43a;        /* validates memcntrl/memconf, if 0x237698aa */
-memval2         = _memval2;
-_flock          = 0x43e;        /* if != 0, VBL floppy routine is disabled */
-_seekrate       = 0x440;        /* floppy seek rate */
-_timer_ms       = 0x442;        /* time between timer calls in ms */
-_fverify        = 0x444;        /* if != 0, verify floppy writes */
-_bootdev        = 0x446;        /* default boot drive */
-_palmode        = 0x448;        /* 0 = NTSC, else PAL */
-_defshiftmod    = 0x44a;        /* default video resolution */
-_sshiftmod      = 0x44c;        /* copy of contents of 0xffff8260 */
-_v_bas_ad       = 0x44e;        /* screen base address */
-_vblsem         = 0x452;        /* if > 0, the VBL routine is executed */
-_nvbls          = 0x454;        /* number of VBL routines */
-_vblqueue       = 0x456;        /* pointer to list of VBL routines */
-_colorptr       = 0x45a;        /* pointer to color palette to be loaded */
-_screenpt       = 0x45e;        /* pointer to video RAM for next VBL */
-_vbclock        = 0x462;        /* number of VBL routines executed */
-_frclock        = 0x466;        /* number of VBL routines processed */
-_hdv_init       = 0x46a;        /* vector for hard disk initialization */
-_swv_vec        = 0x46e;        /* vector for resolution change */
-_hdv_bpb        = 0x472;        /* vector for getbpb for harddisk */
-_hdv_rw         = 0x476;        /* vector for read/write for harddisk */
-_hdv_boot       = 0x47a;        /* vector for hard disk boot */
-_hdv_mediach    = 0x47e;        /* vector for hard disk media change */
-_cmdload        = 0x482;        /* if not 0, load command.prg after boot */
-_conterm        = 0x484;        /* attribute vector for console output */
-trp14ret        = 0x486;        /* return address for trap #14 (unused) */
-criticret       = 0x48a;        /* return address for critical error hndlr */
-_themd          = 0x48e;        /* first memory descriptor block */
-____md          = 0x49e;        /* space for additional memory descriptors */
-_savptr         = 0x4a2;        /* pointer to BIOS save register block */
-_nflops         = 0x4a6;        /* number of connected floppy drives */
-_con_state      = 0x4a8;        /* vector for screen output */
-_save_row       = 0x4ac;        /* temporary storage for cursor line pos. */
-sav_context     = 0x4ae;        /* ptr to save area for exception processing */
-_bufl           = 0x4b2;        /* pointers to buffer ctrl blocks for GEMDOS */
-_hz_200         = 0x4ba;        /* counter for 200 Hz system clock */
-the_env         = 0x4be;        /* pointer to default environment string */
-_drvbits        = 0x4c2;        /* bit allocation for physical drives */
-_dskbufp        = 0x4c6;        /* pointer to disk buffer */
-_autopath       = 0x4ca;        /* pointer to auto-execute path */
-_vbl_list       = 0x4ce;        /* pointers to 8 VBL routines */
-_dumpflg        = 0x4ee;        /* flag for screen dump */
-_prtabt         = 0x4f0;        /* printer abort flag */
-_sysbase        = 0x4f2;        /* pointer to start of OS */
-_shell_p        = 0x4f6;        /* pointer to shell */
-_end_os         = 0x4fa;        /* pointer to end of OS */
-_exec_os        = 0x4fe;        /* pointer to entry point of OS */
-_dump_vec       = 0x502;        /* pointer to screen dump routine */
-_prt_stat       = 0x506;        /* pointer to prv_lsto */
-_prt_vec        = 0x50a;        /* pointer to prv_lst */
-_aux_stat       = 0x50e;        /* pointer to prv_auxo */
-_aux_vec        = 0x512;        /* pointer to prv_aux */
-_pun_ptr        = 0x516;        /* if AHDI, pointer to pun_info */
-_memval3        = 0x51a;        /* memory conf valid if = $5555aaaa */
-memval3         = _memval3;
-_bconstat_vec   = 0x51e;        /* 8 pointers to input-status routines */
-_bconin_vec     = 0x53e;        /* 8 pointers to input routines */
-_bcostat_vec    = 0x55e;        /* 8 pointers to output-status routines */
-_bconout_vec    = 0x57e;        /* 8 pointers to output routines */
-_longframe      = 0x59e;        /* if not 0, then not 68000 - use long stack frames */
-_p_cookies      = 0x5a0;        /* pointer to cookie jar */
-_ramtop         = 0x5a4;        /* top of TT-RAM, or NULL if no TT-RAM is present */
-_ramvalid       = 0x5a8;        /* if equal to RAMVALID_MAGIC, then ramtop is valid */
-_bell_hook      = 0x5ac;        /* pointer to routine for system bell */
-_kcl_hook       = 0x5b0;        /* pointer to routine for system keyclick */
+TOSVAR(etv_timer, 0x400);        /* GEM event timer vector */
+TOSVAR(etv_critic, 0x404);       /* GEM critical error handler */
+TOSVAR(etv_term, 0x408);         /* GEM program termination vector */
+TOSVAR(etv_xtra, 0x40c);         /* GEM additional vectors (unused) */
+TOSVAR(memvalid, 0x420);         /* memory conf valid, if 0x752019f3 */
+TOSVAR(memctrl, 0x424);          /* copy of contents of 0xffff8001 */
+TOSVAR(resvalid, 0x426);         /* validates resvector, if 0x31415926 */
+TOSVAR(resvector, 0x42a);        /* reset vector */
+TOSVAR(phystop, 0x42e);          /* physical top of RAM */
+TOSVAR(membot, 0x432);           /* start of TPA (user memory) */
+TOSVAR(memtop, 0x436);           /* end of TPA (user memory) */
+TOSVAR(memval2, 0x43a);          /* validates memcntrl/memconf, if 0x237698aa */
+TOSVAR(flock, 0x43e);            /* if != 0, VBL floppy routine is disabled */
+TOSVAR(seekrate, 0x440);         /* floppy seek rate */
+TOSVAR(timer_ms, 0x442);         /* time between timer calls in ms */
+TOSVAR(fverify, 0x444);          /* if != 0, verify floppy writes */
+TOSVAR(bootdev, 0x446);          /* default boot drive */
+TOSVAR(palmode, 0x448);          /* 0 = NTSC, else PAL */
+TOSVAR(defshiftmod, 0x44a);      /* default video resolution */
+TOSVAR(sshiftmod, 0x44c);        /* copy of contents of 0xffff8260 */
+TOSVAR(v_bas_ad, 0x44e);         /* screen base address */
+TOSVAR(vblsem, 0x452);           /* if > 0, the VBL routine is executed */
+TOSVAR(nvbls, 0x454);            /* number of VBL routines */
+TOSVAR(vblqueue, 0x456);         /* pointer to list of VBL routines */
+TOSVAR(colorptr, 0x45a);         /* pointer to color palette to be loaded */
+TOSVAR(screenpt, 0x45e);         /* pointer to video RAM for next VBL */
+TOSVAR(vbclock, 0x462);          /* number of VBL routines executed */
+TOSVAR(frclock, 0x466);          /* number of VBL routines processed */
+TOSVAR(hdv_init, 0x46a);         /* vector for hard disk initialization */
+TOSVAR(swv_vec, 0x46e);          /* vector for resolution change */
+TOSVAR(hdv_bpb, 0x472);          /* vector for getbpb for harddisk */
+TOSVAR(hdv_rw, 0x476);           /* vector for read/write for harddisk */
+TOSVAR(hdv_boot, 0x47a);         /* vector for hard disk boot */
+TOSVAR(hdv_mediach, 0x47e);      /* vector for hard disk media change */
+TOSVAR(cmdload, 0x482);          /* if not 0, load command.prg after boot */
+TOSVAR(conterm, 0x484);          /* attribute vector for console output */
+TOSVAR(trp14ret, 0x486);         /* return address for trap #14 (unused) */
+TOSVAR(criticret, 0x48a);        /* return address for critical error hndlr */
+TOSVAR(themd, 0x48e);            /* first memory descriptor block */
+____md          = 0x49e;         /* private space for additional memory descriptors */
+TOSVAR(savptr, 0x4a2);           /* pointer to BIOS save register block */
+TOSVAR(nflops, 0x4a6);           /* number of connected floppy drives */
+TOSVAR(con_state, 0x4a8);        /* vector for screen output */
+TOSVAR(save_row, 0x4ac);         /* temporary storage for cursor line pos. */
+TOSVAR(sav_context, 0x4ae);      /* ptr to save area for exception processing */
+TOSVAR(bufl, 0x4b2);             /* pointers to buffer ctrl blocks for GEMDOS */
+TOSVAR(hz_200, 0x4ba);           /* counter for 200 Hz system clock */
+TOSVAR(the_env, 0x4be);          /* pointer to default environment string */
+TOSVAR(drvbits, 0x4c2);          /* bit allocation for physical drives */
+TOSVAR(dskbufp, 0x4c6);          /* pointer to disk buffer */
+TOSVAR(autopath, 0x4ca);         /* pointer to auto-execute path */
+TOSVAR(vbl_list, 0x4ce);         /* pointers to 8 VBL routines */
+TOSVAR(dumpflg, 0x4ee);          /* flag for screen dump */
+TOSVAR(prtabt, 0x4f0);           /* printer abort flag */
+TOSVAR(sysbase, 0x4f2);          /* pointer to start of OS */
+TOSVAR(shell_p, 0x4f6);          /* pointer to shell */
+TOSVAR(end_os, 0x4fa);           /* pointer to end of OS */
+TOSVAR(exec_os, 0x4fe);          /* pointer to entry point of OS */
+TOSVAR(dump_vec, 0x502);         /* pointer to screen dump routine */
+TOSVAR(prt_stat, 0x506);         /* pointer to prv_lsto */
+TOSVAR(prt_vec, 0x50a);          /* pointer to prv_lst */
+TOSVAR(aux_stat, 0x50e);         /* pointer to prv_auxo */
+TOSVAR(aux_vec, 0x512);          /* pointer to prv_aux */
+TOSVAR(pun_ptr, 0x516);          /* if AHDI, pointer to pun_info */
+TOSVAR(memval3, 0x51a);          /* memory conf valid if = $5555aaaa */
+TOSVAR(bconstat_vec, 0x51e);     /* 8 pointers to input-status routines */
+TOSVAR(bconin_vec, 0x53e);       /* 8 pointers to input routines */
+TOSVAR(bcostat_vec, 0x55e);      /* 8 pointers to output-status routines */
+TOSVAR(bconout_vec, 0x57e);      /* 8 pointers to output routines */
+TOSVAR(longframe, 0x59e);        /* if not 0, then not 68000 - use long stack frames */
+TOSVAR(p_cookies, 0x5a0);        /* pointer to cookie jar */
+TOSVAR(ramtop, 0x5a4);           /* top of TT-RAM, or NULL if no TT-RAM is present */
+TOSVAR(ramvalid, 0x5a8);         /* if equal to RAMVALID_MAGIC, then ramtop is valid */
+TOSVAR(bell_hook, 0x5ac);        /* pointer to routine for system bell */
+TOSVAR(kcl_hook, 0x5b0);         /* pointer to routine for system keyclick */
 /*
  * We can add any undocumented variables here, they will have fixed addresses
  * and will be accessible in supervisor mode only.
@@ -128,7 +126,7 @@ _kcl_hook       = 0x5b0;        /* pointer to routine for system keyclick */
 
 #if CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
                                 /* any location not cleared on reset is ok */
-_warm_magic     = 0x6fc;        /* set to WARM_MAGIC if next boot must not */
+TOSVAR(warm_magic, 0x6fc);       /* set to WARM_MAGIC if next boot must not */
                                 /* be considered as a first boot (reset) */
 #endif
 
@@ -137,8 +135,8 @@ _warm_magic     = 0x6fc;        /* set to WARM_MAGIC if next boot must not */
  * This is where the 68030 PMMU tree is built.
  * Unless you really understand the implications, don't change this value!
  */
-_pmmutree       = 0x700;        /* for pmmu tree on 68030 */
-ASSERT((ABSOLUTE(_pmmutree) & 0xf) == 0, "error: bad _pmmutree alignment");
+TOSVAR(pmmutree, 0x700);         /* for pmmu tree on 68030 */
+ASSERT((ABSOLUTE(C_SYM(pmmutree)) & 0xf) == 0, "error: bad _pmmutree alignment");
 #endif
 #endif /* ARCH_M68K */
 

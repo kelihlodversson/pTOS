@@ -104,6 +104,11 @@ typedef struct
  * or isn't version-2 virtio-mmio. */
 BOOL virtio_probe(ULONG base, UWORD want_device_id, VIRTIO_DEV *dev);
 
+/* Finds the nth device of a type on this machine's virtio-mmio bus.  This is
+ * the board resource-discovery boundary: drivers do not need to duplicate the
+ * virt-arm/virt-m68k MMIO map or RAM-address aliasing rules. */
+BOOL virtio_find_device(UWORD want_device_id, WORD nth, VIRTIO_DEV *dev, WORD *slot);
+
 /* Configures queue 0 from dev->desc/avail/used and sets DRIVER_OK.  The
  * three queue base registers are programmed with dev->phys_offset applied,
  * so the caller must have set that field first (see virtio_probe()).
@@ -128,6 +133,15 @@ void virtio_notify(VIRTIO_DEV *dev);
  * as the interrupt source. Acks the device's InterruptStatus and, if the
  * used ring advanced, sets dev->done. */
 void virtio_handle_interrupt(VIRTIO_DEV *dev);
+
+/* Polled equivalent of the interrupt path, for early boot before interrupts
+ * are enabled and for clients which deliberately do not install an IRQ. */
+void virtio_poll(VIRTIO_DEV *dev);
+
+/* Makes a caller-owned DMA buffer visible to a device on cached ARM RAM.
+ * It is a no-op on the m68k targets. */
+void virtio_flush_buffer(void *start, ULONG size);
+void virtio_invalidate_buffer(void *start, ULONG size);
 
 /* Drains one not-yet-consumed used-ring entry: returns TRUE and fills
  * *out_index (the descriptor index the device completed) and *out_len

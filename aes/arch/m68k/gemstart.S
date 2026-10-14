@@ -18,32 +18,32 @@
 #include "asmdefs.h"
 #include "asmstruct.h"
 
-        .globl  _ui_start
-        .globl  _accdesk_start
-        .globl  _dos_exec
+        .globl  C_SYM(ui_start)
+        .globl  C_SYM(accdesk_start)
+        .globl  C_SYM(dos_exec)
 
-        .extern _ad_stail
-        .extern _ad_envrn
-        .extern _size_theglo
-        .extern _D
-        .extern _bzero_nobuiltin
-        .extern _just_rts
-        .extern _drwaddr
-        .extern _tikcod
-        .extern _init_p0_stkptr
-        .extern _gem_main
-        .extern _gl_changerez
-        .extern _run_accs_and_desktop
-        .extern _disable_interrupts
-        .extern _rlr
-        .extern _enable_interrupts
+        .extern C_SYM(ad_stail)
+        .extern C_SYM(ad_envrn)
+        .extern C_SYM(size_theglo)
+        .extern C_SYM(D)
+        .extern C_SYM(bzero_nobuiltin)
+        .extern C_SYM(just_rts)
+        .extern C_SYM(drwaddr)
+        .extern C_SYM(tikcod)
+        .extern C_SYM(init_p0_stkptr)
+        .extern C_SYM(gem_main)
+        .extern C_SYM(gl_changerez)
+        .extern C_SYM(run_accs_and_desktop)
+        .extern C_SYM(disable_interrupts)
+        .extern C_SYM(rlr)
+        .extern C_SYM(enable_interrupts)
 
         .text
 
 //////////////////////////////////////////////////////////////////////////////
 // AES start-up code
 //////////////////////////////////////////////////////////////////////////////
-_ui_start:
+C_SYM(ui_start):
         // obtain our basepage address
         movea.l sp,a5
         movea.l 4(a5),a5
@@ -54,7 +54,7 @@ _ui_start:
         // ad_stail is the address to the cmdline buffer in our basepage
         move.l  a5,d0
         add.l   #0x80,d0
-        move.l  d0,_ad_stail
+        move.l  d0,C_SYM(ad_stail)
 
         // mshrink to the needed size for TEXT+DATA+BSS plus 256 bytes.
         move.l  0xC(a5),d0
@@ -91,33 +91,39 @@ aes_restart:
         // restore original environment pointer
 #ifdef __mcoldfire__
         move.l  save_ad_envrn,d0
-        move.l  d0,_ad_envrn
+        move.l  d0,C_SYM(ad_envrn)
 #else
-        move.l  save_ad_envrn,_ad_envrn
+        move.l  save_ad_envrn,C_SYM(ad_envrn)
 #endif
 
         // clear the 'global memory' zone
+#if CONF_WITH_MFASTCALL
+        movea.l #C_SYM(D),a0
+        move.l  #SIZEOF_THEGLO,d0 // size in bytes
+        jsr     C_SYM(bzero_nobuiltin)    // clear it
+#else
         move.l  #SIZEOF_THEGLO, -(sp) // size in bytes
-        movea.l #_D,a0
+        movea.l #C_SYM(D),a0
         move.l  a0,-(sp)        // address
-        jsr     _bzero_nobuiltin    // clear it
+        jsr     C_SYM(bzero_nobuiltin)    // clear it
         addq.l  #8,sp
+#endif
 
         // _drwaddr ??? set to just_rts
-        lea     _just_rts,a0
-        move.l  a0,_drwaddr
+        lea     C_SYM(just_rts),a0
+        move.l  a0,C_SYM(drwaddr)
 
         // call C routine to init the SSP in the UDA & return its offset
-        jsr     _init_p0_stkptr
-        movea.l #_D,a6
+        jsr     C_SYM(init_p0_stkptr)
+        movea.l #C_SYM(D),a6
         adda.l  d0,a6
         movea.l a6,sp
 
         // go in C
-        jsr     _gem_main
+        jsr     C_SYM(gem_main)
 
         // Check for resolution change - if so start over again
-        move.w  _gl_changerez,d0
+        move.w  C_SYM(gl_changerez),d0
         tst.w   d0
         jne     aes_restart
 
@@ -134,9 +140,9 @@ aes_restart:
 //////////////////////////////////////////////////////////////////////////////
 // Run accessories and desktop
 //////////////////////////////////////////////////////////////////////////////
-_accdesk_start:
+C_SYM(accdesk_start):
         move.l  4(sp),a5                // a5 -> basepage
-        movea.l #_D,a0
+        movea.l #C_SYM(D),a0
         move.l  UDA_SPSUPER(a0),sp      // use AES process 0 stack
         move.l  12(a5),d0               // calc memory required
         add.l   20(a5),d0
@@ -155,7 +161,7 @@ _accdesk_start:
         trap    #1
         addq.l  #6,sp
 
-        jsr     _run_accs_and_desktop
+        jsr     C_SYM(run_accs_and_desktop)
 
         clr.w   -(sp)                   // Pterm0()
         trap    #1
@@ -164,7 +170,74 @@ _accdesk_start:
 // A wrapper around Pexec. We can't use the above function _gemdos for this
 // since _gemdos is not reentrant.
 //////////////////////////////////////////////////////////////////////////////
-_dos_exec:
+#if CONF_WITH_MFASTCALL
+C_SYM(dos_exec):
+        /*
+         * Under -mfastcall a call to
+         * dos_exec(WORD mode, const char*, const char*, const char*)
+         * arrives with mode in d0, pcspec in a0, pcmdln in a1, and only
+         * segenv (the 4th argument -- fastcall has just two address
+         * registers) spilled to the stack, at 4(sp) relative to our own
+         * entry sp. Unlike the non-fastcall path below, we can't defer
+         * reading these until after the disable/enable_interrupts calls
+         * further down: a jsr is free to clobber d0/a0/a1 like any
+         * caller-saved register, so save all four arguments to our own
+         * stack right now, before anything else touches it. Pushed in
+         * wire-frame order (mode, pcspec, pcmdln, segenv), they land
+         * contiguously and already read back with the exact same
+         * literal-offset trick as the tightly-packed re-push below --
+         * only the source (our own saved copy, not the caller's frame)
+         * differs.
+         */
+        move.l  4(sp),-(sp)             // segenv, from the caller's stack-spilled 4th arg
+        move.l  a1,-(sp)                // pcmdln
+        move.l  a0,-(sp)                // pcspec
+        move.w  d0,-(sp)                // mode, low word
+#ifdef __mcoldfire__
+        move.l  a2,-(sp)                // Save registers
+        move.l  d2,-(sp)
+#else
+        movem.l d2/a2,-(sp)             // Save registers
+#endif
+
+        // See the *** WARNING *** in the non-fastcall path below for why
+        // this stack adjustment exists. The saved-argument block above
+        // adds 14 bytes pushed before the reentrancy-guard snapshot
+        // taken here, which the constant below already accounts for.
+
+        jsr     C_SYM(disable_interrupts)
+        movea.l C_SYM(rlr),a0
+        movea.l PD_UDA(a0),a0
+        move.l  UDA_SPSUPER(a0),-(sp)   // Save rlr->p_uda->u_spsuper
+        movea.l sp,a1
+        suba.l  #0x50,a1                // Adjust the stack (see above)
+        move.l  a1,UDA_SPSUPER(a0)
+        jsr     C_SYM(enable_interrupts)
+
+        move.l  22(sp),-(sp)            // Push parameters on the stack again...
+        move.l  22(sp),-(sp)
+        move.l  22(sp),-(sp)
+        move.w  24(sp),-(sp)
+        move.w  #0x4B,-(sp)
+        trap    #1                      // ... and execute the Pexec call!
+        lea     16(sp),sp
+
+        jsr     C_SYM(disable_interrupts)
+        movea.l C_SYM(rlr),a0
+        movea.l PD_UDA(a0),a0
+        move.l  (sp)+,UDA_SPSUPER(a0)   // Restore rlr->p_uda->u_spsuper
+        jsr     C_SYM(enable_interrupts)
+
+#ifdef __mcoldfire__
+        move.l  (sp)+,d2
+        move.l  (sp)+,a2
+#else
+        movem.l (sp)+,d2/a2
+#endif
+        lea     14(sp),sp               // drop our saved mode/pcspec/pcmdln/segenv
+        rts
+#else
+C_SYM(dos_exec):
         move.l  sp,d1
 #ifdef __mcoldfire__
         move.l  a2,-(sp)                // Save registers
@@ -208,29 +281,44 @@ _dos_exec:
         // to a multiple of 4 bytes; so, for safety, you should increase
         // the minimum adjustment by two bytes on ColdFire systems.
 
-        jsr     _disable_interrupts
-        movea.l _rlr,a0
+        jsr     C_SYM(disable_interrupts)
+        movea.l C_SYM(rlr),a0
         movea.l PD_UDA(a0),a0
         move.l  UDA_SPSUPER(a0),-(sp)   // Save rlr->p_uda->u_spsuper
         movea.l sp,a1
         suba.l  #0x50,a1                // Adjust the stack (see above)
         move.l  a1,UDA_SPSUPER(a0)
-        jsr     _enable_interrupts
+        jsr     C_SYM(enable_interrupts)
 
         movea.l d1,a1
-        move.l  14(a1),-(sp)            // Push parameters on the stack again...
-        move.l  10(a1),-(sp)
-        move.l  6(a1),-(sp)
-        move.w  4(a1),-(sp)
+        /*
+         * Re-push each parameter, tightly packed, to build the GEMDOS
+         * wire frame trap #1 expects. The offsets below read them back
+         * off *our own caller's* frame, i.e. how GCC laid out a call to
+         * dos_exec(WORD mode, const char*, const char*, const char*)
+         * -- and with -mshort no longer used for the kernel m68k build
+         * (#300), that caller-side frame is no longer tightly packed
+         * either: GCC now gives "mode" a full 4-byte slot instead of 2,
+         * shifting every offset below by 2 from what tight packing
+         * would give (14->16, 10->12, 6->8 for the three pointer args,
+         * 4->6 for mode's low word -- mode's value always lands in the
+         * low word of its 4-byte slot regardless of sign, so a plain
+         * word read still recovers it correctly). See the identical
+         * fix in util/arch/m68k/miscasm.S's trap1_pexec.
+         */
+        move.l  16(a1),-(sp)            // Push parameters on the stack again...
+        move.l  12(a1),-(sp)
+        move.l  8(a1),-(sp)
+        move.w  6(a1),-(sp)
         move.w  #0x4B,-(sp)
         trap    #1                      // ... and execute the Pexec call!
         lea     16(sp),sp
 
-        jsr     _disable_interrupts
-        movea.l _rlr,a0
+        jsr     C_SYM(disable_interrupts)
+        movea.l C_SYM(rlr),a0
         movea.l PD_UDA(a0),a0
         move.l  (sp)+,UDA_SPSUPER(a0)   // Restore rlr->p_uda->u_spsuper
-        jsr     _enable_interrupts
+        jsr     C_SYM(enable_interrupts)
 
 #ifdef __mcoldfire__
         move.l  (sp)+,d2
@@ -239,6 +327,7 @@ _dos_exec:
         movem.l (sp)+,d2/a2
 #endif
         rts
+#endif
 
 .bss
 

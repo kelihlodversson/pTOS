@@ -43,7 +43,7 @@ void clfix(CLNO cl, CLNO link, DMD *dm)
     int spans;
     CLNO f, mask;
     LONG offset, recnum;
-    char *buf;
+    UBYTE *buf;
 
     offset = dm->m_16 ? (LONG)cl << 1 : ((LONG)cl + (cl >> 1));
     recnum = offset >> dm->m_rblog;
@@ -120,7 +120,7 @@ CLNO getrealcl(CLNO cl, DMD *dm)
 {
     CLNO f;
     LONG offset, recnum;
-    char *buf;
+    UBYTE *buf;
 
     offset = dm->m_16 ? (LONG)cl << 1 : ((LONG)cl + (cl >> 1));
     recnum = offset >> dm->m_rblog;
@@ -186,7 +186,7 @@ static CLNO findfree16(DMD *dm)
 {
     int recnum, offset;
     CLNO clnum;
-    char *buf;
+    UBYTE *buf;
 
     for (clnum = 2; clnum < dm->m_numcl+2; )
     {
@@ -313,7 +313,7 @@ int nextcl(OFD *p, int wrtflg)
         complex, since the entry for a cluster can span logical records,
         and therefore we do it the old, slow way.
 */
-long xgetfree(long *buf, int drv)
+long xgetfree(long *buf, WORD drv)
 {
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_dfree(drv, (ULONG *)buf);

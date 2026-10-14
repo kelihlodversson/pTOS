@@ -1,7 +1,7 @@
 #
 # kconfig.mk - Makefile fragment driving the configuration system
 #
-# Copyright (C) 2017 The EmuTOS development team.
+# Copyright (C) 2025-2026 The pTOS development team.
 #
 # This file is distributed under the GPL, version 2 or at your
 # option any later version.  See doc/license.txt for details.
@@ -91,11 +91,11 @@ guiconfig:
 
 .PHONY: oldconfig
 oldconfig:
-	$(PYTHON) -m oldconfig --kconfig $(KCONFIG_TOP)
+	$(PYTHON) -m oldconfig $(KCONFIG_TOP)
 
 .PHONY: olddefconfig
 olddefconfig:
-	$(PYTHON) -m olddefconfig --kconfig $(KCONFIG_TOP)
+	$(PYTHON) -m olddefconfig $(KCONFIG_TOP)
 
 .PHONY: savedefconfig
 savedefconfig:
@@ -104,12 +104,12 @@ savedefconfig:
 
 .PHONY: allnoconfig
 allnoconfig:
-	$(PYTHON) -m allnoconfig --kconfig $(KCONFIG_TOP)
+	$(PYTHON) -m allnoconfig $(KCONFIG_TOP)
 
 .PHONY: alldefconfig
 alldefconfig:
-	$(PYTHON) -m alldefconfig --kconfig $(KCONFIG_TOP)
+	$(PYTHON) -m alldefconfig $(KCONFIG_TOP)
 
 .PHONY: listnewconfig
 listnewconfig:
-	$(PYTHON) -m listnewconfig --kconfig $(KCONFIG_TOP)
+	$(PYTHON) -m listnewconfig $(KCONFIG_TOP)

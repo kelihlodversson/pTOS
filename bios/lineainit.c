@@ -13,6 +13,7 @@
 /* #define ENABLE_KDEBUG */
 
 #include "emutos.h"
+#include "bios.h"
 #include "lineavars.h"
 #include "screen.h"
 #include "screen_mode.h"

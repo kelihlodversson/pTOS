@@ -4,6 +4,7 @@
  * Copyright (C) 1999 by Caldera Inc.
  * Copyright (C) 1985, 2001 by Authors (see below)
  * Copyright (C) 2017 The EmuTOS development team
+ * Copyright (C) 2018-2026 The pTOS development team
  *
  *
  * This file is distributed under the GPL, version 2 or at your
@@ -16,16 +17,16 @@
 
 // ==== Definitions ==========================================================
 
-        .globl  _termuser
-        .globl  _gouser
-        .globl  _enter
-        .globl  _bdos_trap2
+        .globl  C_SYM(termuser)
+        .globl  C_SYM(gouser)
+        .globl  C_SYM(enter)
+        .globl  C_SYM(bdos_trap2)
 
 // ==== References ===========================================================
 
-        .extern _osif
-        .extern _run
-        .extern _old_trap2
+        .extern C_SYM(osif)
+        .extern C_SYM(run)
+        .extern C_SYM(old_trap2)
 
 //==== bdos_trap2 - trap 2 entry point =======================================
 //
@@ -33,10 +34,10 @@
 // and VDI are already in memory.
 //
 
-_bdos_trap2:
+C_SYM(bdos_trap2):
         teq     r0, #0
         beq     do_xterm
-        ldr     ip, =_old_trap2
+        ldr     ip, =C_SYM(old_trap2)
         ldr     ip, [ip]
         bx      ip
 do_xterm:
@@ -47,13 +48,13 @@ do_xterm:
 
 //==== _enter - Front end of TRAP #1 handler =================================
 
-_enter:
+C_SYM(enter):
 
         teq     r0, #0x20       // toggle/inquire state?
         beq     x20
 
 1:      // Not Super()
-        ldr     ip, =_run
+        ldr     ip, =C_SYM(run)
         ldr     ip, [ip]        // ip -> current basepage
         add     ip, ip, #P_REGSAVE
         stmia   ip, {r0,r8-r11}
@@ -91,14 +92,14 @@ _enter:
 
         // now switch to fs stack
         ldr     sp,=fstrt
-        bl      _osif
+        bl      C_SYM(osif)
 
 //...fall into gouser....
 
 //==== _gouser ===============================================================
 
-_gouser:
-        ldr     ip, =_run
+C_SYM(gouser):
+        ldr     ip, =C_SYM(run)
         ldr     ip, [ip]        // ip -> current basepage
         add     ip, ip, #P_REGSAVE
         str     r0, [ip]        // save result register
@@ -131,8 +132,8 @@ ggusr:  ldr     r8, [ip, #4*5]  // saved stack pointer (maybe usp, maybe ssp)
         // xterm [ 0x4C ] aren't correctly passed back to the parent.
         // this is entered from C code as termuser()
         // aug 2005, RCL
-_termuser:
-        ldr     ip, =_run
+C_SYM(termuser):
+        ldr     ip, =C_SYM(run)
         ldr     ip, [ip]        // ip -> current basepage
         add     ip, ip, #P_REGSAVE
         b       ggusr

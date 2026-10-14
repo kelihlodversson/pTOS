@@ -2109,11 +2109,11 @@ int butoff = 0;
             found_butoff = 1;
         }
         if (msgoff) {
-            fprintf(fp,"     (LONG) &msg_str[%d],\n",MAX_LINENUM-msgoff);
+            fprintf(fp,"     { (LONG)&msg_str[%d] },\n",MAX_LINENUM-msgoff);
             msgoff--;
         } else if (butoff)
         {
-            fprintf(fp,"     (LONG) &msg_but[%d],\n",MAX_BUTNUM-butoff);
+            fprintf(fp,"     { (LONG)&msg_but[%d] },\n",MAX_BUTNUM-butoff);
             butoff--;
         } else
 #endif
@@ -2653,7 +2653,7 @@ char *base = (char *)rschdr;
          */
         error("TEXT/BOXTEXT objects not allowed in EmuDesk resource",inrsc);
 #endif
-        fprintf(fp,"&%srs_tedinfo[%ld],\n",prefix,
+        fprintf(fp,"{ (LONG)&%srs_tedinfo[%ld] },\n",prefix,
             (get_offset(&obj->ob_spec)-rsh.tedinfo)/sizeof(TEDINFO));
         break;
     case G_FTEXT:

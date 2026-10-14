@@ -16,6 +16,14 @@
  */
 #define ASM_SOURCE
 
+/*
+ * Use GCC's spelling for a C symbol.  This is empty for ELF targets and an
+ * underscore for the Atari a.out ABI.
+ */
+#define C_SYM1(prefix, name) prefix ## name
+#define C_SYM0(prefix, name) C_SYM1(prefix, name)
+#define C_SYM(name) C_SYM0(__USER_LABEL_PREFIX__, name)
+
 /* general-purpose configuration file */
 #include "config.h"
 
@@ -63,11 +71,20 @@
 #define FSAVE_MINUS_SP      .dc.w 0xf327            /* 6888X, 68040-68060 (except 68ec040/68ec060) */
 #define FRESTORE_SP_PLUS    .dc.w 0xf35f            /* 6888X, 68040-68060 (except 68ec040/68ec060) */
 
+#ifdef MACHINE_VIRT_M68K
+/* QEMU emulates no caches, and its 68060 raises line-F for these */
+#define CPUSHA_DC           nop
+#define CPUSHA_BC           nop
+#define CINVA_DC            nop
+#define CINVA_IC            nop
+#define CINVA_BC            nop
+#else
 #define CPUSHA_DC           .dc.w 0xf478            /* 68040-68060 */
 #define CPUSHA_BC           .dc.w 0xf4f8            /* 68040-68060 */
 #define CINVA_DC            .dc.w 0xf458            /* 68040-68060 */
 #define CINVA_IC            .dc.w 0xf498            /* 68040-68060 */
 #define CINVA_BC            .dc.w 0xf4d8            /* 68040-68060 */
+#endif
 
 #define ADDIWL_0_A0         .dc.l 0x06d00000        /* 68080 */
 

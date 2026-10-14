@@ -46,6 +46,18 @@ typedef struct _mcs {
 
 extern MCS ext_mouse_cursor_save;   /* use for v_planes > 4 */
 
+/*
+ * user_mot vector on ARM.  ARM is a new architecture with no legacy ABI to
+ * preserve, so the callback follows the standard AAPCS calling convention and
+ * can be written in plain C.  It takes the proposed x and y coordinates and
+ * returns the (possibly modified) coordinates packed into a ULONG with x in
+ * the high word and y in the low word (MAKE_ULONG(x, y)).  On m68k the legacy
+ * line-A register convention is kept instead (see vdi_entry.S).
+ */
+#ifdef __arm__
+typedef ULONG (*UserMotFunc)(WORD x, WORD y);
+#endif
+
 struct Vwk_;
 struct font_head;
 
@@ -111,19 +123,23 @@ struct _lineavars {
 
     /* note that this area is only used when v_planes <= 4 */
     struct {
-	    WORD save_len;              /* -330 height of saved form */
-    	UWORD *save_addr;           /* -328 screen addr of saved form */
-	    BYTE save_stat;             /* -324 save status */
-    	BYTE save_reserved;
-	    ULONG save_area[4*16];      /* -322 form save area */
-	} mouse_cursor_save;
-	
+        WORD save_len;              /* -330 height of saved form */
+        UWORD *save_addr;           /* -328 screen addr of saved form */
+        BYTE save_stat;             /* -324 save status */
+        BYTE save_reserved;
+        ULONG save_area[4*16];      /* -322 form save area */
+    } mouse_cursor_save;
+
     /* Timer vectors */
     void (*tim_addr)(int);             /* -66  timer interrupt vector */
     void (*tim_chain)(int);            /* -62  timer interrupt vector save */
     void (*user_but)(WORD status);     /* -58  user button vector */
     void (*user_cur)(WORD x, WORD y);  /* -54  user cursor vector */
-    void (*user_mot)(void);            /* -50  user motion vector */
+#ifdef __arm__
+    UserMotFunc user_mot;        /* -50  user motion vector */
+#else
+    void (*user_mot)(LONG);      /* -50  user motion vector */
+#endif
 
     /* VDI ESC variables */
     
@@ -203,7 +219,7 @@ struct _lineavars {
     WORD DESTY;                 /* upper left of destination on screen */
     WORD DELX;
     WORD DELY;                  /* width and height of character */
-    const UWORD *FBASE;         /* pointer to font data */
+    const UBYTE *FBASE;         /* pointer to font data */
     WORD FWIDTH;                /* width of font form (in bytes) */
     WORD STYLE;                 /* special effects */
     WORD LITEMASK;              /* special effects */

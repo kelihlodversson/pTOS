@@ -1,7 +1,8 @@
 /*
- * panicasm_arm.S - support routines for panic debug messages
+ * panicasm.S - support routines for panic debug messages
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2022 The EmuTOS development team
+ * Copyright (C) 2018-2026 The pTOS development team
  *
  * Authors:
  *  LVL     Laurent Vogel
@@ -15,11 +16,11 @@
 
         .text
 
-        .globl  _panic
-        .globl  _halt
-        .globl  _kill_program
-        .globl  _warm_reset
-        .globl  _cold_reset
+        .globl  C_SYM(panic)
+        .globl  C_SYM(halt)
+        .globl  C_SYM(kill_program)
+        .globl  C_SYM(warm_reset)
+        .globl  C_SYM(cold_reset)
 
 
 /*
@@ -30,45 +31,45 @@
  * the exception number proc_enum will be zero.
  */
 
-_panic:
+C_SYM(panic):
         // svc mode, no interrupts
         cpsid   aif, #0x13
 
         push    {ip}
 
         // dump the registers including USP
-        ldr     ip, =_proc_dregs
+        ldr     ip, =C_SYM(proc_dregs)
         stmia   ip!, {r0-r11} // save registers up to r11
         pop     {r11} // read pushed ip into r11
         stmia   ip!,  {r11,r13,r14} // save old value of ip (now in r11) plus sp and ir
-        ldr     ip, =_proc_usp
+        ldr     ip, =C_SYM(proc_usp)
         cps     #0x1f
         str     sp, [ip]   // dump user stack pointer as well
         cps     #0x13
 
         // tell dopanic() that there are arguments following
-        ldr     ip, =_proc_enum
+        ldr     ip, =C_SYM(proc_enum)
         mov     r0, #0
         str     r0, [ip]
 
         // dump 8 longs from the stack
         ldmia   sp, {r0-r7}
-        ldr     ip, =_proc_stk
+        ldr     ip, =C_SYM(proc_stk)
         stmia   ip, {r0-r7}
 
         // magic value
-        ldr     ip,=_proc_lives
+        ldr     ip,=C_SYM(proc_lives)
         ldr     r0,=0x12345678
         str     r0, [ip]
 
         // at this time, we have not altered the stack, so we can jump to the
         // C routine directly in kprint.c
-        b     _dopanic
+        b     C_SYM(dopanic)
 
 /* void halt(void)
  * simply halt the machine.
  */
-_halt:
+C_SYM(halt):
 haltloop:
         // endless loop
         b     haltloop
@@ -77,7 +78,7 @@ haltloop:
  * try to terminate via Pterm(); if Pterm() returns here (!),
  * we do a warm reset
  */
-_kill_program:
+C_SYM(kill_program):
         mov     r1,#-1              // error code for program killed by OS
         mov     r0,#0x4C            // Pterm
         svc     1
@@ -86,7 +87,7 @@ _kill_program:
 /* void warm_reset(void)
  * Restart this OS
  */
-_cold_reset:
-_warm_reset:
-        bl      _flush_data_cache
-        b       _main
+C_SYM(cold_reset):
+C_SYM(warm_reset):
+        bl      C_SYM(flush_data_cache)
+        b       C_SYM(main)

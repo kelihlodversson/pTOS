@@ -35,6 +35,17 @@ it first.
 The user merges the PR themselves once they're satisfied and any review
 comments are addressed — never merge or force-push a PR as part of this flow.
 
+### Epic branches
+
+For larger features or refactorings that span multiple related issues, create an
+epic branch named `epic/{task-id}-{title-with-dashes}`. Epic branches are
+protected like `master`: all changes go through PRs.
+
+Epic branches coordinate work on a major feature. Each sub-issue gets its own
+feature/bugfix/chore branch off `master`, and the resulting PR targets the epic
+branch instead. When all sub-issues are resolved and the epic branch is ready,
+a final PR merges it into `master`.
+
 ## Building
 
 The build is configured the way the Linux kernel is. There is no `make rpi2`;
@@ -162,5 +173,9 @@ same object.
 - `doc/install.txt` — the build system in full, and every configuration
 - `doc/coding.txt` — coding style
 - `doc/country.txt`, `doc/nls.txt` — countries, keyboard layouts, translations
-- `doc/status.txt`, `doc/bugs.txt` — what works and what does not
+- `doc/ptos.txt` — pTOS's purpose and relationship to EmuTOS
+- `doc/status.txt` — tested pTOS hardware and emulator targets
+- `doc/debugging.txt` — interactive debugging under an emulator: hrdb (a
+  remote-debuggable Hatari fork) and QEMU+GDB for m68k, and when to reach for
+  each; see also the `ptos-smoketest` skill and `tools/rdb.py`
 - `readme.md` — what this fork is about and where it is going

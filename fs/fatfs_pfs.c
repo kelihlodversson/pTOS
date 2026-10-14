@@ -77,7 +77,7 @@ static CLNO fat_countfree(DMD *dm)
 {
     int recnum, offset;
     CLNO free, clnum;
-    char *buf;
+    UBYTE *buf;
 
     for (clnum = 2, free = 0; clnum < dm->m_numcl+2; )
     {
@@ -127,11 +127,45 @@ static LONG fat_dfree(struct pfs_ops *fs, WORD drive, ULONG out[4])
     return E_OK;
 }
 
+/*
+ * A directory/file cookie's DND* lives in PFSCOOKIE's plain LONG "index"
+ * field (fs/pfs.h: "the core never looks inside index/aux; a driver is
+ * free to store whatever it needs there"). LONG is a fixed 32 bits
+ * (portab.h) but a DND* is a native pointer, 64 bits on x86-64's
+ * higher-half kernel -- a plain (LONG)dn / (DND *)index round-trip there
+ * only works because every DND happens to live in the kernel image's own
+ * narrow, sign-extension-safe address range; nothing enforces that.
+ *
+ * When CONF_WITH_PLUGGABLE_FS is off, "aux" is otherwise unused on a
+ * directory/file cookie in this file (fat_readdir()'s pool-slot
+ * bookkeeping in aux only exists in the pluggable build below), so it's
+ * free to spend on the pointer's high 32 bits and make the round-trip
+ * exact on every arch. When CONF_WITH_PLUGGABLE_FS is on, aux already
+ * means something else there, so this reduces to the previous plain
+ * cast -- correct on today's only pluggable-FS-capable archs (m68k/ARM,
+ * both 32-bit); the assertion below catches it at compile time if that
+ * ever changes.
+ *
+ * dn/c are expanded more than once: pass plain variables, never an
+ * expression with side effects.
+ */
+#if CONF_WITH_PLUGGABLE_FS
+typedef char pfscookie_dnd_must_fit_index[BUILD_BUG_ON_ZERO(sizeof(DND *) > sizeof(LONG)) + 1];
+#define DND_TO_COOKIE(dn, c) ((c)->index = (LONG)(dn), (c)->aux = 0)
+#define COOKIE_TO_DND(c) ((DND *)(c)->index)
+#else
+#define DND_TO_COOKIE(dn, c) \
+    ((c)->index = (LONG)(ULONG)(UQUAD)(uintptr_t)(dn), \
+     (c)->aux   = (LONG)(ULONG)((UQUAD)(uintptr_t)(dn) >> 32))
+#define COOKIE_TO_DND(c) \
+    ((DND *)(uintptr_t)(((UQUAD)(ULONG)(c)->aux << 32) | (UQUAD)(ULONG)(c)->index))
+#endif
+
 static LONG fat_open(PFSCOOKIE *dir, const char *name, WORD mode, PFSCOOKIE *out)
 {
     FCB *f;
-    DND *dn = (DND *)dir->index;
-    long pos;
+    DND *dn = COOKIE_TO_DND(dir);
+    LONG pos;
     LONG rc;
 
     pos = 0;
@@ -151,13 +185,13 @@ static LONG fat_open(PFSCOOKIE *dir, const char *name, WORD mode, PFSCOOKIE *out
 
 static LONG fat_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *out)
 {
-    DND *dn = (DND *)dir->index;
+    DND *dn = COOKIE_TO_DND(dir);
     OFD *fd;
     FCB *f;
     const char *s = name;
     char n[2], a[11];                       /*  M01.01.03   */
     int i, f2;                              /*  M01.01.03   */
-    long pos, rc;
+    LONG pos, rc;
 
     n[0] = (char)ERASE_MARKER; n[1] = 0;
 
@@ -382,9 +416,9 @@ static LONG fat_mkdir(PFSCOOKIE *dir, const char *name)
 
 static LONG fat_remove(PFSCOOKIE *dir, const char *name)
 {
-    DND *dn = (DND *)dir->index;
+    DND *dn = COOKIE_TO_DND(dir);
     FCB *f;
-    long pos;
+    LONG pos;
 
     pos = 0;
     if (!(f = scan(dn, name, FA_NORM, &pos)))
@@ -401,7 +435,7 @@ static LONG fat_rmdir_dnd(DND *d)
     DND *d1, **q;
     FCB *f;
     OFD *fd, *f2;
-    long pos;
+    LONG pos;
 
     if (!d->d_parent)
         return EACCDN;
@@ -446,10 +480,10 @@ static LONG fat_rmdir_dnd(DND *d)
 
 static LONG __attribute__((unused)) fat_rmdir(PFSCOOKIE *dir, const char *name)
 {
-    DND *parent = (DND *)dir->index;
+    DND *parent = COOKIE_TO_DND(dir);
     DND *d;
     FCB *f;
-    long pos;
+    LONG pos;
 
     /* pfs_resolve_dir() resolves a trailing slash to the target directory. */
     if (!*name)
@@ -471,10 +505,10 @@ static LONG __attribute__((unused)) fat_rmdir(PFSCOOKIE *dir, const char *name)
 
 static LONG fat_chattr(PFSCOOKIE *dir, const char *name, BOOL set, UWORD *dos_attr)
 {
-    DND *dn = (DND *)dir->index;
+    DND *dn = COOKIE_TO_DND(dir);
     OFD *fd;
     char mod = (char)*dos_attr;
-    long pos;
+    LONG pos;
 
     pos = 0;
     if (!scan(dn, name, FA_NORM, &pos))
@@ -501,14 +535,14 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
     OFD *fd;
     DFD *dfd;
     FCB *f;
-    DND *dn1 = (DND *)olddir->index;
-    DND *dn2 = (DND *)newdir->index;
+    DND *dn1 = COOKIE_TO_DND(olddir);
+    DND *dn2 = COOKIE_TO_DND(newdir);
     DMD *dmd1, *dmd2;
     CLNO strtcl1, strtcl2, temp;
     const char *s1 = oldname, *s2 = newname;
     char buf[11], att;
     int hnew;
-    long posp;
+    LONG posp;
     UWORD filetime, filedate;
     CLNO clust;
     LONG fileln, rc;
@@ -652,7 +686,7 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
  */
 static LONG fat_abspath(PFSCOOKIE *dir, const char *tail, char *buf, int buflen)
 {
-    DND *dn = (DND *)dir->index;
+    DND *dn = COOKIE_TO_DND(dir);
     char *p = buf;
     char *end;
     int len;
@@ -700,14 +734,13 @@ static LONG fat_root(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out)
     path[3] = 0;
 
     dn = findit(path, &sp, 1);
-    if ((LONG)dn < 0)
+    if (DND_IS_ERRCODE(dn))
         return (LONG)dn;
     if (!dn)
         return EPTHNF;
 
     out->fs = &fat_pfs_ops;
-    out->index = (LONG)dn;
-    out->aux = 0;
+    DND_TO_COOKIE(dn, out);
     out->pos = 0;
 
     return E_OK;
@@ -725,14 +758,13 @@ static LONG fat_lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
         return rc;
 
     dn = findit(abspath, &sp, 1);
-    if ((LONG)dn < 0)
+    if (DND_IS_ERRCODE(dn))
         return (LONG)dn;
     if (!dn)
         return EPTHNF;
 
     out->fs = &fat_pfs_ops;
-    out->index = (LONG)dn;
-    out->aux = 0;
+    DND_TO_COOKIE(dn, out);
     out->pos = 0;
 
     return E_OK;
@@ -958,13 +990,13 @@ LONG fat_open_path(char *name, int mod)
     PFSCOOKIE dir, out;
     LONG rc;
 
-    if ((long)(dn = findit(name, &s, 0)) < 0)
+    dn = findit(name, &s, 0);
+    if (DND_IS_ERRCODE(dn))
         return (long)dn;
     if (!dn)
         return EFILNF;
     dir.fs = NULL;
-    dir.index = (LONG)dn;
-    dir.aux = 0;
+    DND_TO_COOKIE(dn, &dir);
     dir.pos = 0;
     rc = fat_open(&dir, s, mod, &out);
     if (rc < 0)
@@ -979,13 +1011,13 @@ LONG fat_creat_path(char *name, char attr)
     PFSCOOKIE dir, out;
     LONG rc;
 
-    if ((long)(dn = findit(name, &s, 0)) < 0)
+    dn = findit(name, &s, 0);
+    if (DND_IS_ERRCODE(dn))
         return (long)dn;
     if (!dn)
         return EPTHNF;
     dir.fs = NULL;
-    dir.index = (LONG)dn;
-    dir.aux = 0;
+    DND_TO_COOKIE(dn, &dir);
     dir.pos = 0;
     rc = fat_create(&dir, s, (UWORD)(UBYTE)attr, &out);
     if (rc < 0)
@@ -999,13 +1031,13 @@ LONG fat_mkdir_path(char *s)
     const char *sp;
     PFSCOOKIE dir;
 
-    if ((long)(dn = findit(s, &sp, 0)) < 0)
+    dn = findit(s, &sp, 0);
+    if (DND_IS_ERRCODE(dn))
         return (long)dn;
     if (!dn)
         return EPTHNF;
     dir.fs = NULL;
-    dir.index = (LONG)dn;
-    dir.aux = 0;
+    DND_TO_COOKIE(dn, &dir);
     dir.pos = 0;
     return fat_mkdir(&dir, sp);
 }
@@ -1015,7 +1047,8 @@ LONG fat_rmdir_path(char *p)
     DND *d;
     const char *s;
 
-    if ((long)(d = findit(p, &s, 1)) < 0)
+    d = findit(p, &s, 1);
+    if (DND_IS_ERRCODE(d))
         return (long)d;
     if (!d)
         return EPTHNF;
@@ -1027,7 +1060,6 @@ LONG fat_rmdir_path(char *p)
 LONG fat_chdir_path(char *p)
 {
     DND *dnd;
-    long rc;
     int olddir, newdir, dlog;
     const char *s;
 
@@ -1041,9 +1073,9 @@ LONG fat_chdir_path(char *p)
 
     olddir = run->p_curdir[dlog];
 
-    rc = (long)(dnd = findit(p, &s, 1));
-    if (rc < 0L)
-        return rc;
+    dnd = findit(p, &s, 1);
+    if (DND_IS_ERRCODE(dnd))
+        return (long)dnd;
     if (!dnd)
         return EPTHNF;
 
@@ -1087,13 +1119,13 @@ LONG fat_unlink_path(char *name)
     const char *s;
     PFSCOOKIE dir;
 
-    if ((long)(dn = findit(name, &s, 0)) < 0)
+    dn = findit(name, &s, 0);
+    if (DND_IS_ERRCODE(dn))
         return (long)dn;
     if (!dn)
         return EFILNF;
     dir.fs = NULL;
-    dir.index = (LONG)dn;
-    dir.aux = 0;
+    DND_TO_COOKIE(dn, &dir);
     dir.pos = 0;
     return fat_remove(&dir, s);
 }
@@ -1106,13 +1138,13 @@ LONG fat_chmod_path(char *p, int wrt, char mod)
     UWORD attr = (UWORD)(UBYTE)mod;
     LONG rc;
 
-    if ((long)(dn = findit(p, &s, 0)) < 0)
+    dn = findit(p, &s, 0);
+    if (DND_IS_ERRCODE(dn))
         return (long)dn;
     if (!dn)
         return EPTHNF;
     dir.fs = NULL;
-    dir.index = (LONG)dn;
-    dir.aux = 0;
+    DND_TO_COOKIE(dn, &dir);
     dir.pos = 0;
     rc = fat_chattr(&dir, s, wrt ? TRUE : FALSE, &attr);
     if (rc < 0)
@@ -1127,7 +1159,8 @@ long fat_rename_path(char *p1, char *p2)
     PFSCOOKIE old, new;
     BOOL was_locked;
 
-    if ((long)(dn1 = findit(p1, &s1, 0)) < 0)
+    dn1 = findit(p1, &s1, 0);
+    if (DND_IS_ERRCODE(dn1))
         return (long)dn1;
     if (!dn1)
         return EPTHNF;
@@ -1136,17 +1169,15 @@ long fat_rename_path(char *p1, char *p2)
     dn2 = findit(p2, &s2, 0);
     if (!was_locked)
         dn1->d_flag &= ~DND_LOCKED;
-    if ((long)dn2 < 0)
+    if (DND_IS_ERRCODE(dn2))
         return (long)dn2;
     if (!dn2)
         return EPTHNF;
     old.fs = NULL;
-    old.index = (LONG)dn1;
-    old.aux = 0;
+    DND_TO_COOKIE(dn1, &old);
     old.pos = 0;
     new.fs = NULL;
-    new.index = (LONG)dn2;
-    new.aux = 0;
+    DND_TO_COOKIE(dn2, &new);
     new.pos = 0;
     return fat_rename(&old, s1, &new, s2);
 }

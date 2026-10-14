@@ -110,7 +110,7 @@ const Fonthead fnt_tr_6x6 = {
 
     0,                  /*   UBYTE *hor_table   */
     off_6x6_table,      /*   UWORD *off_table   */
-    dat_table,          /*   UWORD *dat_table   */
+    (const UBYTE *)dat_table, /* UBYTE *dat_table */
     192,                /*   UWORD form_width   */
     6,                  /*   UWORD form_height  */
 

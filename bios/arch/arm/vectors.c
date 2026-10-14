@@ -1,5 +1,5 @@
 /*
- * vectors_arm.c - exception vectors
+ * vectors.c - exception vectors
  * The ARM processor has a much leaner exception vector table.
  * In order to simplify porting of the OS (and eventually TSRs hooking into)
  * interrupts, we attempt to simulate the 68k setup by performing some initial
@@ -7,6 +7,7 @@
  * handler from the same offsets as defined on the 68000.
  *
  * Copyright (C) 2001-2017 by the EmuTOS development team
+ * Copyright (C) 2018-2026 The pTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -52,6 +53,11 @@ typedef struct {
 } exception_frame_t;
 
 static void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG far);
+
+volatile PFVOID *vector_address(ULONG address)
+{
+    return (volatile PFVOID *)address;
+}
 
 /* basically initialize the 62 exception vectors. */
 void init_exc_vec(void)
@@ -122,7 +128,10 @@ void (*timer_vbl_hook)(void) = int_vbl;
 void int_timerc(void)
 {
     hz_200++;
-    timer_c_sieve = (timer_c_sieve << 1) | (timer_c_sieve >> 15);
+    // rotate left, as m68k's rol.w: unsigned, or the sign bit smears in and
+    // the sieve ends up 0xffff, making every call the "4th" one (200 Hz VBL,
+    // AES timer and key repeat)
+    timer_c_sieve = (WORD)(((UWORD)timer_c_sieve << 1) | ((UWORD)timer_c_sieve >> 15));
     if (timer_c_sieve & 4) // If the highest bit in any nybble is 1, we are in the 4th call
     {
         kb_timerc_int();
@@ -132,6 +141,11 @@ void int_timerc(void)
         // Fake vbl interrupt every 4 timer_c calls (50Hz), unless the
         // hook has been pointed at a real vsync source's fallback.
         timer_vbl_hook();
+
+        // The 50 Hz user timer, as on m68k (vectors.S): the VDI hooks it
+        // (tick_int), and through vex_timv the AES, whose evnt_timer()
+        // and timer events never fired without it.
+        etv_timer(timer_ms);
     }
 }
 

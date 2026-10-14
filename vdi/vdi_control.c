@@ -24,6 +24,7 @@
 #include "intmath.h"
 #include "bdosbind.h"
 #include "tosvars.h"
+#include "screen_mode.h"
 
 #define FIRST_VDI_HANDLE    1
 #define LAST_VDI_HANDLE     (FIRST_VDI_HANDLE+NUM_VDI_HANDLES-1)
@@ -726,16 +727,6 @@ void vdi_vq_extnd(Vwk * vwk)
     for (i = 0; i < 45; i++)
         *dst++ = *src++;
 }
-
-
-/*
- * vdi_v_nop - dummy
- */
-void vdi_v_nop(Vwk * vwk)
-{
-    /* will never be implemented */
-}
-
 
 #if CONF_WITH_VDI_BACKEND_DISPATCH
 const vdi_backend_ops *vdi_screen_backend(void)

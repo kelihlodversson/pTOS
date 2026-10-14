@@ -146,9 +146,9 @@ static WORD     ig_close;
  *      ILL NOSEL[]     disabled if there are no icons selected
  *      ILL_MULTSEL[]   disabled if two or more icons are selected
  */
-static const BYTE ILL_NOSEL[] = { OPENITEM, DELTITEM, 0 };
-static const BYTE ILL_MULTSEL[] = { OPENITEM, 0 };
-static const BYTE ILL_NOWIN[] = {
+static const UBYTE ILL_NOSEL[] = { OPENITEM, DELTITEM, 0 };
+static const UBYTE ILL_MULTSEL[] = { OPENITEM, 0 };
+static const UBYTE ILL_NOWIN[] = {
     NFOLITEM, CLOSITEM, CLSWITEM,
 #if CONF_WITH_SELECTALL
     SLCTITEM,
@@ -1515,64 +1515,6 @@ static void cnx_get(void)
     }
 }
 
-
-/*  Counts the occurrences of c in str */
-static int count_chars(char *str, char c)
-{
-    int count;
-
-    count = 0;
-    while(*str)
-    {
-        if (*str++ == c)
-            count++;
-    }
-
-    return count;
-}
-
-/* Fixes the TEDINFO strings */
-void fix_tedinfo(TEDINFO *tedinfo, int nted)
-{
-    int i = 0;
-    long len;
-    int j;
-    char *tedinfptr;
-
-    /* Fix TEDINFO strings: */
-    len = 0;
-    for (i = 0; i < nted; i++)
-    {
-        if (tedinfo[i].te_ptext == 0)
-        {
-            /* Count number of '_' in strings
-             * ( +2 for @ at the beginning, and \0 at the end )
-             */
-            len += count_chars(tedinfo[i].te_ptmplt, '_') + 2;
-        }
-    }
-    tedinfptr = dos_alloc_anyram(len);   /* Get memory */
-    if (!tedinfptr)
-    {
-        KDEBUG(("insufficient memory for TEDINFO strings (need %ld bytes)\n",len));
-        nomem_alert();          /* infinite loop */
-    }
-
-    for (i = 0; i < nted; i++)
-    {
-        if (tedinfo[i].te_ptext == 0)
-        {
-            tedinfo[i].te_ptext = tedinfptr;
-            *tedinfptr++ = '@'; /* First character of uninitialized string */
-            len = count_chars(tedinfo[i].te_ptmplt, '_');
-            for (j = 0; j < len; j++)
-            {
-                *tedinfptr++ = '_';     /* Set other characters to '_' */
-            }
-            *tedinfptr++ = 0;   /* Final 0 */
-        }
-    }
-}
 
 /*
  *  Change the sizes of the menus after translation, and fix up the

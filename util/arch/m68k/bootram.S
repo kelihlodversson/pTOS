@@ -20,7 +20,7 @@
 
  #include "asmdefs.h"
 
-        .globl  _bootram
+        .globl  C_SYM(bootram)
 /*
  * void bootram(const UBYTE *src, ULONG size, ULONG cpu);
  *
@@ -34,7 +34,7 @@
  * when ramtos is copied to its final destination.
  */
 
-_bootram:
+C_SYM(bootram):
         // Disable the interrupts, since we are going to destroy everything
         move.w  #0x2700,sr
 

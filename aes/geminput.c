@@ -566,6 +566,20 @@ void abutton(EVB *e, LONG p)
 }
 
 
+/*
+ * A button wait that has not been satisfied is being cancelled (another
+ * event of the same evnt_multi() came first): if it wanted more than one
+ * click, it no longer counts as someone who cares about multiple clicks.
+ * Without this, gl_bpend only ever grew, and b_click() delayed every
+ * click by the double click time.
+ */
+void bpend_cancel(LONG parm)
+{
+    if (LOBYTE(HIWORD(parm)) > 1 && gl_bpend > 0)
+        gl_bpend--;
+}
+
+
 void amouse(EVB *e, LONG pmo)
 {
     MOBLK   mob;

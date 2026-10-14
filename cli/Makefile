@@ -133,8 +133,10 @@ $(LIBCMINI_DIR)/Makefile:
 $(LIBCMINI_BUILDDIR)/.config: $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG) | $(LIBCMINI_DIR)/Makefile
 	@$(LIBCMINI_MAKE) $(LIBCMINI_DEFCONFIG)
 
+# Only the library and the startup object emucon2.tos links, not "libs startups"
+# (every multilib variant the toolchain offers).
 $(LIBCMINI_LIB): $(LIBCMINI_BUILDDIR)/.config $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S)
-	@$(LIBCMINI_MAKE) libs startups
+	@$(LIBCMINI_MAKE) $(LIBCMINI_LIB) $(LIBCMINI_CRT0)
 
 $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 

@@ -99,6 +99,9 @@ jobs:
       - uses: ./.github/actions/setup-toolchain
         with:
           arch: m68k
+          # "make release" builds atari192/atari256 among the m68k
+          # targets, and both defconfigs now enable CONF_WITH_MFASTCALL.
+          mfastcall: "true"
 
       - name: Build the release archives
         env:

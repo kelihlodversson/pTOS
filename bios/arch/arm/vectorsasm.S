@@ -1,5 +1,5 @@
 /*
- * vectorsasm_arm.S - exception vectors
+ * vectorsasm.S - exception vectors
  * The ARM processor has a much leaner exception vector table.
  * In order to simplify porting of the OS (and eventually TSRs hooking into)
  * interrupts, we attempt to simulate the 68k setup by performing some initial
@@ -7,6 +7,7 @@
  * handler from the same offsets as defined on the 68000.
  *
  * Copyright (C) 2001-2017 by the EmuTOS development team
+ * Copyright (C) 2018-2026 The pTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -16,54 +17,54 @@
 
 // ==== Definitions ==========================================================
 
-        .globl  _gemtrap        // call VDI/AES
-        .globl  _biostrap       // call BIOS from C
-        .globl  _xbiostrap      // call XBIOS from C
-        .globl  _xbios_unimpl
+        .globl  C_SYM(gemtrap)        // call VDI/AES
+        .globl  C_SYM(biostrap)       // call BIOS from C
+        .globl  C_SYM(xbiostrap)      // call XBIOS from C
+        .globl  C_SYM(xbios_unimpl)
 
-        .globl  _check_read_byte
-        .globl  _int_vbl
+        .globl  C_SYM(check_read_byte)
+        .globl  C_SYM(int_vbl)
 
-        .globl  _int_illegal
-        .globl  _int_priv
+        .globl  C_SYM(int_illegal)
+        .globl  C_SYM(int_priv)
 
-        .globl  _just_rts       // really _just_bxlr
-        .globl  _just_rte       // really _just_movspc
-        .globl  _bell
-        .globl  _keyclick
-        .globl  _trap_save_area
+        .globl  C_SYM(just_rts)       // really _just_bxlr
+        .globl  C_SYM(just_rte)       // really _just_movspc
+        .globl  C_SYM(bell)
+        .globl  C_SYM(keyclick)
+        .globl  C_SYM(trap_save_area)
 
-        .globl  _default_etv_critic
+        .globl  C_SYM(default_etv_critic)
 
 // ==== References ===========================================================
 
         // TOS System variables
-        .extern _longframe
-        .extern _vbclock
-        .extern _frclock
-        .extern _vblqueue
-        .extern _swv_vec
-        .extern _hz_200
-        .extern etv_timer
-        .extern etv_critic
-        .extern _timer_ms
-        .extern _v_bas_ad
+        .extern C_SYM(longframe)
+        .extern C_SYM(vbclock)
+        .extern C_SYM(frclock)
+        .extern C_SYM(vblqueue)
+        .extern C_SYM(swv_vec)
+        .extern C_SYM(hz_200)
+        .extern C_SYM(etv_timer)
+        .extern C_SYM(etv_critic)
+        .extern C_SYM(timer_ms)
+        .extern C_SYM(v_bas_ad)
 
-        .extern _GSX_ENTRY
-        .extern _blink          // conout.c - console output
+        .extern C_SYM(GSX_ENTRY)
+        .extern C_SYM(blink)          // conout.c - console output
 
 // Note: this scheme is designed to print the exception number
 // for vectors 2 to 63 even if working on a 32bit address bus.
 // LVL.
 
-        .extern _dopanic
+        .extern C_SYM(dopanic)
 
-        .extern _proc_lives
-        .extern _proc_dregs
-        .extern _proc_aregs
-        .extern _proc_enum
-        .extern _proc_usp
-        .extern _proc_stk
+        .extern C_SYM(proc_lives)
+        .extern C_SYM(proc_dregs)
+        .extern C_SYM(proc_aregs)
+        .extern C_SYM(proc_enum)
+        .extern C_SYM(proc_usp)
+        .extern C_SYM(proc_stk)
 
         .text
 /*
@@ -78,7 +79,7 @@
  *
  */
 
-_gemtrap:
+C_SYM(gemtrap):
         cmp     r0, #0x73               // VDI call?
         beq     2f
 
@@ -87,14 +88,14 @@ no_vdi:
         beq     1f                      // r0 is already -2  -  no GDOS installed
 
         cmn     r0, #1                  //  query for jsr:able address? (r0 == -1?)
-        ldreq   r0, =_GSX_ENTRY         // Return address of VDI dispatcher
+        ldreq   r0, =C_SYM(GSX_ENTRY)         // Return address of VDI dispatcher
 1:
         movs    pc, lr                  // Return from exception
 2:
         // save return state onto the SVC stack
         srsfd sp!, #0x13
         // Call VDI entry. Arguments are already in registers at the right place
-        bl      _GSX_ENTRY
+        bl      C_SYM(GSX_ENTRY)
         // return to caller with saved state on stack
         rfefd   sp!
 
@@ -105,13 +106,13 @@ no_vdi:
  * (2) The default character-mode critical error handler
  *     Just returns the error code from the arguments
  */
-_default_etv_critic:
+C_SYM(default_etv_critic):
         // error code is already in r0 -- simply return
         bx      lr
 
 // ==== Trap 13 - BIOS entry point ==========================================
 
-_biostrap:
+C_SYM(biostrap):
         // funcion number is in r0 and arguments in r1-rN
         // For normal eabi C functions, only ther first 4 args are in registers,
         // so we push r4-r11 to the stack.
@@ -127,14 +128,14 @@ _biostrap:
         mov r2, r3
         mov r3, r4
 
-        ldr     r5, =_bios_ent
+        ldr     r5, =C_SYM(bios_ent)
         ldrh    r5, [r5]        // r5 is now number of entries in the table
-        ldr     r4, =_bios_vecs // r4 is the start of the table
+        ldr     r4, =C_SYM(bios_vecs) // r4 is the start of the table
         b       1f
 
 // ==== Trap 14 - XBIOS entry point =========================================
 
-_xbiostrap:
+C_SYM(xbiostrap):
         // funcion number is in r0 and arguments in r1-rN
         // For normal eabi C functions, only ther first 4 args are in registers,
         // so we push the remaining ones to the stack
@@ -150,9 +151,9 @@ _xbiostrap:
         mov r2, r3
         mov r3, r4
 
-        ldr     r5, =_xbios_ent
+        ldr     r5, =C_SYM(xbios_ent)
         ldrh    r5, [r5]         // r5 is now number of entries in the table
-        ldr     r4, =_xbios_vecs // r4 is the start of the table
+        ldr     r4, =C_SYM(xbios_vecs) // r4 is the start of the table
 
 // ==== Trap 13+14 handler ==================================================
 
@@ -181,21 +182,21 @@ _xbiostrap:
  * The requested BIOS/XBIOS function number is in r11 upon entry, so we move that to r0.
  */
 
-_xbios_unimpl:
+C_SYM(xbios_unimpl):
         mov     r0, r11
-        b       _xbios_do_unimpl // Chain into C funcion
+        b       C_SYM(xbios_do_unimpl) // Chain into C funcion
 
 /*
  * _just_rts / _just_rte - we just return back to whatever dispatched the handler
  */
 
 buggy_jit_save_registers_before_bus_error:
-_just_rts:
-_just_rte:
+C_SYM(just_rts):
+C_SYM(just_rte):
         bx lr
 
-_keyclick:
-        ldr     ip, =_kcl_hook
+C_SYM(keyclick):
+        ldr     ip, =C_SYM(kcl_hook)
         ldr     ip, [ip]
         bx      ip
 

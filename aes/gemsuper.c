@@ -20,6 +20,8 @@
 #include "emutos.h"
 #include "struct.h"
 #include "aesdefs.h"
+#undef AI_SIZE
+#define AI_SIZE 4       /* for fsel_boxinput() compatibility */
 #include "aesext.h"
 #include "aesvars.h"
 #include "obdefs.h"

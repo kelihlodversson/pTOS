@@ -66,7 +66,7 @@ finished:
     bx    lr
 ENDPROC(__v7_flush_dcache_all)
 
-ENTRY(_v7_flush_dcache_all)
+ENTRY(C_SYM(v7_flush_dcache_all))
     stmfd    sp!, {r4-r5, r7, r9-r11, lr}
 
     bl    __v7_flush_dcache_all
@@ -136,7 +136,7 @@ inval_finished:
     bx    lr
 ENDPROC(__v7_invalidate_dcache_all)
 
-ENTRY(_v7_invalidate_dcache_all)
+ENTRY(C_SYM(v7_invalidate_dcache_all))
     stmfd    sp!, {r4-r5, r7, r9-r11, lr}
     bl    __v7_invalidate_dcache_all
     ldmfd    sp!, {r4-r5, r7, r9-r11, lr}

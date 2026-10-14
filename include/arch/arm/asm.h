@@ -2,6 +2,7 @@
  * asm.h - Assembler help routines
  *
  * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2018-2026 The pTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -150,10 +151,24 @@ extern void enable_interrupts(void);
 /*
  * Loops for the specified count; for a 1 millisecond delay on the
  * current system, use the value in the global 'loopcount_1_msec'.
+ *
+ * The counter is a dead local: nothing reads it once the loop is done, so a
+ * plain `while (_count) _count--;` has no effect the compiler has to keep, and
+ * -O2 deletes the whole loop (verified: a function wrapping just that compiles
+ * to a bare `bx lr`) -- every DELAY_400NS/DELAY_5US and everything timed with
+ * loopcount_1_msec would then not wait at all.  The empty volatile asm, which
+ * claims to read and change the counter, is an effect the compiler cannot prove
+ * away, so each iteration stays.  (x86-64 has the same loop in assembler,
+ * include/arch/x86_64/asm.h, and m68k too.)
  */
- #define delay_loop(count) __extension__ \
- ({                                      \
-   ULONG _count = (count);             \
-   while(_count) {_count--;}           \
- })
+#define delay_loop(count) __extension__ \
+({                                      \
+  ULONG _count = (count);              \
+  while(_count)                         \
+  {                                     \
+    _count--;                           \
+    __asm__ volatile ("" : "+r"(_count)); \
+  }                                     \
+})
+
 #endif /* ASM_H */

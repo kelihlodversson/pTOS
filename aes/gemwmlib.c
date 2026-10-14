@@ -802,7 +802,7 @@ void w_bldactive(WORD w_handle)
     havehbar = kind & (LFARROW | RTARROW | HSLIDE | SIZER);
 
     /* remember sizer area (if needed) */
-    sizer_x = -1;           /* assume no sizer */
+    sizer_x = sizer_y = -1; /* assume no sizer */
     if (havevbar && havehbar)
     {
         sizer_x = t.g_w - gl_wbox;

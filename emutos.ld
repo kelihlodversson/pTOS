@@ -14,6 +14,11 @@
  * to allow #include, #define, #if, etc. */
 #include "include/config.h"
 
+/* Match the C compiler's spelling of externally visible symbols. */
+#define C_SYM1(prefix, name) prefix ## name
+#define C_SYM0(prefix, name) C_SYM1(prefix, name)
+#define C_SYM(name) C_SYM0(__USER_LABEL_PREFIX__, name)
+
 #if !defined(MACHINE_RPI) && !defined(MACHINE_VIRT_ARM) && !defined(MACHINE_VIRT_M68K)
 /* Create a plain binary file, without any header (not possible on ARM).
  * MACHINE_VIRT_M68K is excluded for a different reason than the ARM
@@ -38,7 +43,7 @@ OUTPUT_FORMAT(elf32-m68k)
  * only works because startup.o happens to be first in obj-y (see
  * bios/build.mk). Naming the real entry point removes that silent
  * -failure-mode dependency for the two targets that actually need one. */
-ENTRY(_os_entry)
+ENTRY(C_SYM(os_entry))
 #endif
 
 #if !EMUTOS_LIVES_IN_RAM || defined (MACHINE_RPI)
@@ -141,15 +146,15 @@ SECTIONS
     {
         /* System variables are located at fixed addresses */
 #include "tosvars.ld"
-        . = 0x800; /* Extend sysvars area upto end of supervisor-only RAM */
-        _sysvars_end = .;
+         . = 0x800; /* Extend sysvars area upto end of supervisor-only RAM */
+         C_SYM(sysvars_end) = .;
     } >stram
 
 #if CONF_WITH_STATIC_ALT_RAM
     /* First section in static Alt-RAM */
     .first_altram :
     {
-        __static_altram_start = .;
+        C_SYM(_static_altram_start) = .;
     } >altram
 #endif
 
@@ -159,9 +164,9 @@ SECTIONS
      */
     .stack : LMA_AT(.stack)
     {
-        _stkbot = .;
+        C_SYM(stkbot) = .;
         . += 2K;
-        _stktop = .;
+         C_SYM(stktop) = .;
     } >REGION_READ_WRITE
 #endif
     /* SUBALIGN doesn't just bound the gap between input sections here --
@@ -190,11 +195,11 @@ SECTIONS
      */
     .low_stram : LMA_AT(.low_stram) MIN_SUBALIGN
     {
-        __low_stram_start = .;
-        obj/lowstram.o(.bss COMMON)
-        __low_stram_end = .;
-        ASSERT(ABSOLUTE(_shifty) < 0x8000, "error: bad _shifty address");
-        ASSERT((ABSOLUTE(_dskbuf) & 3) == 0, "error: bad _dskbuf alignment");
+         __low_stram_start = .;
+         obj/lowstram.o(.bss COMMON)
+         __low_stram_end = .;
+         ASSERT(ABSOLUTE(C_SYM(shifty)) < 0x8000, "error: bad _shifty address");
+        ASSERT((ABSOLUTE(C_SYM(dskbuf)) & 3) == 0, "error: bad _dskbuf alignment");
         ASSERT(ABSOLUTE(__low_stram_end) <= 0x8000, "error: .low_stram section extends beyond 32k");
     } >stram
 
@@ -208,13 +213,15 @@ SECTIONS
 #endif
     {
         CREATE_OBJECT_SYMBOLS
-        __text = .;
+         __text = .;
+         C_SYM(_text) = __text;
         *(.text .rodata .rodata.*)
         /* Note: .rodata sections are only present in ELF objects.
          * We mix .text and .rodata to keep critical parts (such as BIOS
          * and fonts) at the beginning of the ROM.
          */
-        __etext = .;
+         __etext = .;
+         C_SYM(_etext) = __etext;
     } >REGION_READ_ONLY =0x4afc
 
     /* FIXME: Our DATA segment is currently read-only.
@@ -226,8 +233,10 @@ SECTIONS
     .data : LMA_AT(.data) MIN_SUBALIGN
     {
         __data = .;
+        C_SYM(_data) = __data;
         *(.data)
         __edata = .;
+        C_SYM(_edata) = __edata;
     } >REGION_READ_ONLY
 
     /* The BSS segment contains uninitialized global variables.
@@ -235,9 +244,11 @@ SECTIONS
      */
     .bss : LMA_AT(.bss) MIN_SUBALIGN
     {
-        __bss = .;
+         __bss = .;
+         C_SYM(_bss) = __bss;
         *(.bss COMMON)
-        __ebss = .;
+         __ebss = .;
+         C_SYM(_ebss) = __ebss;
     } >REGION_READ_WRITE
 
 #if defined (MACHINE_RPI) || defined (MACHINE_VIRT_ARM)
@@ -255,10 +266,10 @@ SECTIONS
          * happens to end, so force it here.
          */
         . = ALIGN(8);
-        _stkbot = .;
+        C_SYM(stkbot) = .;
         . += 32K;
-        _stktop = .;
-    } >REGION_READ_WRITE
+        C_SYM(stktop) = .;
+     } >REGION_READ_WRITE
 #endif
 
     /* This section is always the last one stored in ST-RAM.
@@ -268,14 +279,15 @@ SECTIONS
      */
     .laststram : LMA_AT(.laststram) ALIGN(4)
     {
-        __end_os_stram = .;
+         __end_os_stram = .;
+         C_SYM(_end_os_stram) = __end_os_stram;
     } >stram
 
 #if CONF_WITH_STATIC_ALT_RAM
     /* Last section in static Alt-RAM */
     .last_altram :
     {
-        __static_altram_end = .;
+        C_SYM(_static_altram_end) = .;
     } >altram
 #endif
 
@@ -290,28 +302,3 @@ SECTIONS
 #endif
     }
 }
-
-#ifdef ELF_TOOLCHAIN
-/* Our code is compiled with -fleading-underscore, so the references to external
- * libraries will include a leading underscore. However, libgcc was not compiled
- * with that option, so its symbols do not start with a leading underscore. So
- * we need to define leading-underscore aliases to the no-leading-underscore
- * functions in libgcc.
- */
-#define DEFINE_SYMBOL_ALIAS(alias, impl) EXTERN(impl) PROVIDE(alias = impl);
-#define ELF_LIB_REF(symbol) DEFINE_SYMBOL_ALIAS(_##symbol, symbol)
-#if !defined (MACHINE_RPI)
-ELF_LIB_REF(__mulsi3)
-ELF_LIB_REF(__divsi3)
-ELF_LIB_REF(__modsi3)
-ELF_LIB_REF(__udivsi3)
-ELF_LIB_REF(__umodsi3)
-ELF_LIB_REF(__bswapsi2)
-ELF_LIB_REF(__aeabi_udiv)
-ELF_LIB_REF(__aeabi_udivmod)
-#endif
-ELF_LIB_REF(__aeabi_idiv)
-ELF_LIB_REF(__aeabi_idivmod)
-ELF_LIB_REF(__aeabi_uidiv)
-ELF_LIB_REF(__aeabi_uidivmod)
-#endif
