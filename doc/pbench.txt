@@ -248,18 +248,24 @@ is updated by the next push to the pull request, not repeated.  (A pull
 request from a fork cannot comment; the table is in the job summary.)
 
 When a change moves the performance on purpose, in either direction, make new
-baselines from the new build, with the same Hatari as CI uses (the report
-says if it differs from the one in the baseline's header), and commit them
-with the change:
+baselines and commit them with the change.  They have to come from the Hatari
+CI uses (the Ubuntu 24.04 package, 2.4.1, which gives results about 2% from
+those of 2.5.0; the report says when the two differ), so take them from the
+"pbench-results-CONFIG" artifact of the pBench run on the pull request:
+
+    gh run download RUN-ID -n pbench-results-atari512 -D tools/pBench/ci-baselines
+
+Running run-baselines.py locally gives the same files, for the Hatari you
+have, and is how a change is tried before it is pushed:
 
     make atari512_defconfig && make && make pbench.prg
-    tools/pBench/run-baselines.py --pbench pbench.prg \
-        --out tools/pBench/ci-baselines \
+    tools/pBench/run-baselines.py --pbench pbench.prg --out /tmp/pbench \
         --system atari512=ptos512k.img="pTOS atari512 (COMMIT)"
+    tools/pBench/check-baseline.py tools/pBench/ci-baselines /tmp/pbench atari512
 
 To add another configuration to the check, add it to the two matrices of the
-workflow and make its baselines the same way, with the configuration's name
-as the key.
+workflow and make its baselines from the artifact in the same way, with the
+configuration's name as the key.
 
 
 Notes
