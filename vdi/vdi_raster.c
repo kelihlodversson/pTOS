@@ -771,6 +771,51 @@ static const UBYTE text_ops[20][4] = {
 
 
 /*
+ * set_light_halftone()
+ *
+ * Set up lightened text: the source is ANDed with a mask that is rotated
+ * one bit further left for each line, the lines being counted from the
+ * bottom of the glyph (see liteop in vdi_tblit.S).  This is what the
+ * blitter's halftone does when HOP is "source AND halftone": it takes the
+ * halftone word of the current line, which is the line number in the
+ * status register, and that number restarts at 0 with every blitter_go()
+ * and is decremented from line to line when the blit goes upwards, as
+ * blitter_text_blit() does it.  The line r lines above the bottom one has
+ * the halftone word -r modulo 16, so word i is the mask rotated left by
+ * -i modulo 16, whatever the height of the glyph.
+ */
+static void set_light_halftone(void)
+{
+    UWORD mask = (UWORD)linea_vars.LITEMASK;
+    WORD i, n;
+
+    BLITTER->halftone[0] = mask;
+    for (i = 1; i < 16; i++)
+    {
+        n = 16 - i;
+        BLITTER->halftone[i] = (UWORD)((mask << n) | (mask >> (16 - n)));
+    }
+    BLITTER->hop = HOP_SOURCE_AND_HALFTONE;
+}
+
+
+/*
+ * does the data cache have to be flushed before and invalidated after the
+ * blitter draws?  see the use in blitter_text_blit().  it can only matter
+ * on a ColdFire and on a 68040/68060 (see flush_data_cache() in
+ * processor.S), whose cpu type, mcpu, is 40 or more.
+ */
+#if defined(__mcoldfire__)
+#define TEXT_CACHE_OPS 1
+#elif CONF_WITH_ADVANCED_CPU
+extern LONG mcpu;
+#define TEXT_CACHE_OPS (mcpu >= 40)
+#else
+#define TEXT_CACHE_OPS 0
+#endif
+
+
+/*
  * blitter_text_blit()
  *
  * Output the glyph that planar_text_blit() has set up in vars to a bitplane
@@ -784,9 +829,13 @@ static const UBYTE text_ops[20][4] = {
  * plane, so it is set up once, and a plane only needs its addresses, line
  * count and operation.  The data cache is dealt with once for all planes.
  *
- * Source and destination never overlap, so the blit always goes from the
- * top left to the bottom right, and the skew flags are those of that
- * direction (see skew_flags[] and bit_blt()).
+ * Source and destination never overlap, so the blit always goes from left
+ * to right, and the skew flags are those of that direction (see
+ * skew_flags[] and bit_blt()).  The lines go from the bottom of the glyph
+ * to its top, which is the order the software text output has and, more
+ * to the point, the one the glyph and the screen position are already
+ * given in (the bottom line, and a negative step to the line above), so
+ * no address has to be calculated.
  *
  * In:
  *  vars        as for normal_blit()
@@ -799,12 +848,16 @@ static const UBYTE text_ops[20][4] = {
 BOOL blitter_text_blit(LOCALVARS *vars)
 {
     WORD plane, planes, mode, w, h, dx, sx, s_span, d_span, skew, skew_idx;
-    WORD nxwd, nxln, skew_reg;
+    WORD nxwd, skew_reg, style;
     UWORD lendmask, rendmask, fg, bg;
-    LONG s_addr, d_addr, length;
+    LONG s_addr, d_addr, plane_addr, length;
 
-    /* effects the blitter path does not do yet */
-    if (vars->STYLE & (F_THICKEN | F_LIGHT | F_SKEW))
+    /*
+     * effects the blitter path does not do: text_blt() draws bold text into
+     * the buffer first when the blitter is in use, so only skew is left
+     */
+    style = vars->STYLE;
+    if (style & (F_THICKEN | F_SKEW))
         return FALSE;
 
     mode = vars->WRT_MODE;
@@ -820,7 +873,6 @@ BOOL blitter_text_blit(LOCALVARS *vars)
 
     planes = vars->nbrplane;
     nxwd = vars->nextwrd;               /* offset to the next word of a plane */
-    nxln = -vars->d_next;               /* and to the next line */
 
     /*
      * the source and destination start in the word with the first pixel
@@ -845,13 +897,16 @@ BOOL blitter_text_blit(LOCALVARS *vars)
         lendmask &= rendmask;           /* one word: the other masks are ignored */
 
     BLITTER->src_x_incr = 2;            /* the glyph is a form of one plane */
-    BLITTER->src_y_incr = -vars->s_next - 2 * s_span;
+    BLITTER->src_y_incr = vars->s_next - 2 * s_span;
     BLITTER->dst_x_incr = nxwd;
-    BLITTER->dst_y_incr = nxln - nxwd * d_span;
+    BLITTER->dst_y_incr = vars->d_next - nxwd * d_span;
     BLITTER->endmask_1 = lendmask;
     BLITTER->endmask_2 = 0xffff;
     BLITTER->endmask_3 = rendmask;
-    BLITTER->hop = HOP_SOURCE_ONLY;
+    if (style & F_LIGHT)
+        set_light_halftone();
+    else
+        BLITTER->hop = HOP_SOURCE_ONLY;
 
     /* see bit_blt() for the special case of one word */
     if (!s_span && !d_span)
@@ -862,10 +917,9 @@ BOOL blitter_text_blit(LOCALVARS *vars)
     else
         skew_reg = (skew & 0x0f) | skew_flags[skew_idx];
 
-    /* the top line of the glyph and of where it goes */
-    s_addr = (LONG)vars->sform + (LONG)(WORD)(h - 1) * vars->s_next;
-    d_addr = (LONG)vars->dform + (LONG)(WORD)(h - 1) * vars->d_next;
-    length = (LONG)h * nxln;
+    /* the bottom line of the glyph and of where it goes, see above */
+    s_addr = (LONG)vars->sform;
+    d_addr = (LONG)vars->dform;
 
     fg = vars->forecol;
     bg = vars->ambient;
@@ -874,14 +928,23 @@ BOOL blitter_text_blit(LOCALVARS *vars)
      * since the blitter doesn't see the data cache, and we may be in
      * copyback mode, the cache must be flushed first and, as the screen
      * has changed behind the cpu's back, invalidated afterwards, see
-     * hwblit_raster()
+     * hwblit_raster().  that is only so where there is such a cache: the
+     * calls do nothing on the other processors, but they and the length
+     * they are given, which takes a library multiplication to work out,
+     * are a noticeable part of the time a glyph takes.
      */
-    flush_data_cache((void *)d_addr, length);
+    length = 0;
+    if (TEXT_CACHE_OPS)
+    {
+        length = (LONG)h * -vars->d_next;
+        flush_data_cache((void *)(d_addr - length + 1), length);
+    }
 
+    plane_addr = d_addr;
     for (plane = 0; plane < planes; plane++)
     {
         BLITTER->src_addr = (UWORD *)s_addr;
-        BLITTER->dst_addr = (UWORD *)d_addr;
+        BLITTER->dst_addr = (UWORD *)plane_addr;
         BLITTER->x_count = d_span + 1;
         BLITTER->y_count = h;
         BLITTER->skew = skew_reg;
@@ -890,10 +953,11 @@ BOOL blitter_text_blit(LOCALVARS *vars)
 
         fg >>= 1;
         bg >>= 1;
-        d_addr += 2;                    /* the next plane */
+        plane_addr += 2;                /* the next plane */
     }
 
-    invalidate_data_cache((void *)(d_addr - 2 * planes), length);
+    if (TEXT_CACHE_OPS)
+        invalidate_data_cache((void *)(d_addr - length + 1), length);
     return TRUE;
 }
 #endif

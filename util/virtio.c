@@ -10,11 +10,12 @@
 #include "virtio.h"
 
 #if defined(MACHINE_VIRT_ARM)
-/* Kept here behind the discovery interface until #75 centralizes the map. */
-#define VIRTIO_MMIO_BASE    0x0a000000UL
-#define VIRTIO_MMIO_STRIDE  0x200UL
-#define VIRTIO_MMIO_COUNT   32
-#define VIRTIO_PHYS_OFFSET  0x40000000UL
+#include "virt_memmap.h"
+/* The transports, at their virtual addresses (see virt_memmap.h). */
+#define VIRTIO_MMIO_BASE    VIRT_VIRTIO_MMIO_BASE
+#define VIRTIO_MMIO_STRIDE  VIRT_VIRTIO_MMIO_STRIDE
+#define VIRTIO_MMIO_COUNT   VIRT_VIRTIO_MMIO_COUNT
+#define VIRTIO_PHYS_OFFSET  VIRT_RAM_BASE
 #elif defined(MACHINE_VIRT_M68K)
 #define VIRTIO_MMIO_BASE    0xff010000UL
 #define VIRTIO_MMIO_STRIDE  0x200UL

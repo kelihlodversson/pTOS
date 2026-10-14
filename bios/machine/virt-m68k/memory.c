@@ -18,8 +18,8 @@
  * this file for MACHINE_VIRT_M68K (the way bios/machine/virt-arm/memory.c
  * is resolved for MACHINE_VIRT_ARM). This machine needs no runtime memory
  * initialization of its own beyond the one function below: the RAM size
- * is fixed by the QEMU command line, and startup.S sets _phystop directly
- * before any C code runs.
+ * is set by the QEMU command line, and startup.S reads it from the bootinfo
+ * list QEMU provides and sets _phystop directly before any C code runs.
  */
 
 #if CONF_WITH_ADVANCED_CPU
