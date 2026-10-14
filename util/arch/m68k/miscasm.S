@@ -566,7 +566,10 @@ C_SYM(tikfrk_etv_entry):
         move.w  4(sp),d0        // n, from the classic caller's packed WORD arg
         ext.l   d0
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(tikfrk)  // tail call: n already in d0, as fastcall wants it
+        move.l   d2,-(sp)       // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(tikfrk)  // n already in d0, as fastcall wants it
+        move.l   (sp)+,d2
+        rts
 #else
         move.l  d0,-(sp)
         jsr      C_SYM(tikfrk)
@@ -578,7 +581,10 @@ C_SYM(tick_int_etv_entry):
         move.w  4(sp),d0        // u, from the classic caller's packed WORD arg
         ext.l   d0
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(tick_int) // tail call: u already in d0, as fastcall wants it
+        move.l   d2,-(sp)       // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(tick_int)  // u already in d0, as fastcall wants it
+        move.l   (sp)+,d2
+        rts
 #else
         move.l  d0,-(sp)
         jsr      C_SYM(tick_int)
@@ -598,8 +604,9 @@ C_SYM(tick_int_etv_entry):
  * classic frame and the handler to a C function (bios/classicvec.c) that reads
  * the arguments out of the frame and calls the handler: two pointers, in a0/a1
  * with -mfastcall and on the stack otherwise, the result in d0 either way.
- * d0/d1/a0/a1 are scratch in the classic convention too; d2/a2 are the caller's
- * (protect_*() saves them).
+ * d0/d1/a0/a1 are scratch in the classic convention too; d2/a2 are the caller's:
+ * with -mfastcall the entry points save d2 around the C helper themselves
+ * (a2 is callee-saved there too), so they can be chained to directly.
  */
 
         .globl   C_SYM(bconout0_etv_entry)
@@ -609,7 +616,10 @@ C_SYM(bconout0_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(bconout0),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)
@@ -625,7 +635,10 @@ C_SYM(bconout1_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(bconout1),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)
@@ -641,7 +654,10 @@ C_SYM(bconout2_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(bconout2),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)
@@ -657,7 +673,10 @@ C_SYM(bconout3_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(bconout3),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)
@@ -673,7 +692,10 @@ C_SYM(bconout4_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(bconout4),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)
@@ -689,7 +711,10 @@ C_SYM(bconout5_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(bconout5),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)
@@ -706,7 +731,10 @@ C_SYM(bconoutA_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(bconoutA),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)
@@ -724,7 +752,10 @@ C_SYM(bconoutB_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(bconoutB),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)
@@ -742,7 +773,10 @@ C_SYM(bconoutTT_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(bconoutTT),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_ww)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)
@@ -759,7 +793,10 @@ C_SYM(blkdev_rwabs_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(blkdev_rwabs),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_rwabs)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_rwabs)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)
@@ -775,7 +812,10 @@ C_SYM(blkdev_getbpb_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(blkdev_getbpb),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_w)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_w)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)
@@ -791,7 +831,10 @@ C_SYM(blkdev_mediach_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(blkdev_mediach),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_w)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_w)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)
@@ -807,7 +850,10 @@ C_SYM(rsconf1_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(rsconf1),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)
@@ -824,7 +870,10 @@ C_SYM(rsconfA_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(rsconfA),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)
@@ -842,7 +891,10 @@ C_SYM(rsconfB_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(rsconfB),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)
@@ -860,7 +912,10 @@ C_SYM(rsconfTT_etv_entry):
         lea      4(sp),a0                // the classic frame
         lea      C_SYM(rsconfTT),a1        // the handler
 #if CONF_WITH_MFASTCALL
-        jmp      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+        move.l   d2,-(sp)                  // d2 is the caller\'s: fastcall C may clobber it
+        jsr      C_SYM(classic_rsconf)         // frame in a0, handler in a1
+        move.l   (sp)+,d2
+        rts
 #else
         move.l   a1,-(sp)
         move.l   a0,-(sp)

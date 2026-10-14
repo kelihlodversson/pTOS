@@ -62,6 +62,11 @@ C_SYM(int_linea):
 #else
         movem.l d0/d1/a0/a2,linea_save
 #endif
+#if CONF_WITH_MFASTCALL
+        /* the routines below call C functions, which under -mfastcall may
+         * clobber d2; the interrupted program expects it back */
+        move.l  d2,linea_save+16
+#endif
 #ifdef __mcoldfire__
         move.l  4(sp),a0        /* Get the opcode address */
 #else
@@ -125,6 +130,9 @@ C_SYM(int_linea):
 #endif
         jsr     (a1)
 linea_dispatch_pc:
+#if CONF_WITH_MFASTCALL
+        move.l  linea_save+16,d2
+#endif
         rte
 
 wrong_linea:
@@ -141,7 +149,7 @@ wrong_linea:
         .bss
         .even
 linea_save:
-        .ds.l   4       /* d0, d1, a0, a2 */
+        .ds.l   5       /* d0, d1, a0, a2, d2 */
 
         SECTION_RODATA
 
