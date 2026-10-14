@@ -896,7 +896,7 @@ static void ide_rw_start(UWORD ifnum,UWORD dev,ULONG sector,UWORD count,UBYTE cm
 
         n = divu(sector,devinfo->sectors);
         secnum = (UBYTE)(sector-(n*devinfo->sectors) + 1);  /* sectors start at 1 */
-        cylnum = n / devinfo->heads;
+        cylnum = divu(n, devinfo->heads);
         headnum = (UBYTE)(n-(cylnum*devinfo->heads));
 
         KDEBUG((" CHS mode: %u/%u/%u\n",cylnum,headnum,secnum));
@@ -1432,7 +1432,7 @@ static void set_chs_mode(WORD dev,struct IDENTIFY *identify)
      * we don't care about the result, since some ATA-1 implementations
      * may not return an error indication even if the command fails.
      */
-    ide_nodata(IDE_CMD_INIT_DEV_PARAMS,ifnum,ifdev,(info->heads-1)*info->sectors,info->sectors);
+    ide_nodata(IDE_CMD_INIT_DEV_PARAMS,ifnum,ifdev,muls(info->heads-1, info->sectors),info->sectors);
 }
 
 static void set_lba48_mode(WORD dev, UWORD lba48)

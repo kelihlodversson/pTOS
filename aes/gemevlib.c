@@ -27,6 +27,7 @@
 #include "geminput.h"
 #include "gemaplib.h"
 #include "gemevlib.h"
+#include "intmath.h"
 
 
 /* Global variables: */
@@ -304,7 +305,7 @@ WORD ev_dclick(WORD rate, WORD setit)
     if (setit)
     {
         gl_dcindex = rate;
-        gl_dclick = gl_dcrates[gl_dcindex] / gl_ticktime ;
+        gl_dclick = divs(gl_dcrates[gl_dcindex], gl_ticktime);
     }
 
     return gl_dcindex;

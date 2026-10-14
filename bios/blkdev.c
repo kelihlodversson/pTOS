@@ -485,8 +485,8 @@ LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LONG lrec
 
         /* convert logical sectors to physical ones */
         sectors = blkdev[dev].bpb.recsiz >> units[blkdev[dev].unit].psshift;
-        lcount *= sectors;
-        lrecnr *= sectors;
+        lcount *= (WORD)sectors;
+        lrecnr *= (WORD)sectors;
 
         /* check if the count fits into this partition */
         if ((lrecnr < 0) || (blkdev[dev].size > 0

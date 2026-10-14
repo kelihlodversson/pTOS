@@ -19,6 +19,7 @@
 #include "gemerror.h"
 #include "asm.h"
 #include "machine.h"
+#include "intmath.h"
 
 #if CONF_WITH_DMASOUND
 
@@ -314,7 +315,7 @@ static LONG sndcmd_ste(WORD mode, WORD data)
      case 0:                /* LTATTEN */
         if (data != -1)
         {
-            ltatten = ((UWORD)data & 0xff)/6;
+            ltatten = divs(data & 0xff, 6);
             if (ltatten > 40)
                 ltatten = 40;
             write_microwire(LMC1992_COMMAND(LMC1992_FUNCTION_LEFT_FRONT_FADER,
@@ -324,7 +325,7 @@ static LONG sndcmd_ste(WORD mode, WORD data)
      case 1:                /* RTATTEN */
         if (data != -1)
         {
-            rtatten = ((UWORD)data & 0xff)/6;
+            rtatten = divs(data & 0xff, 6);
             if (rtatten > 40)
                 rtatten = 40;
             write_microwire(LMC1992_COMMAND(LMC1992_FUNCTION_RIGHT_FRONT_FADER,

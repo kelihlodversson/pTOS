@@ -410,7 +410,7 @@ void gsx_start(void)
     vst_height(gl_ws.ws_chmaxh, &dummy, &dummy, &dummy, &dummy);
 
     gl_hbox = gl_hchar + 3;
-    gl_wbox = (gl_hbox * gl_ws.ws_hpixel) / gl_ws.ws_wpixel;
+    gl_wbox = divs(muls(gl_hbox, gl_ws.ws_hpixel), gl_ws.ws_wpixel);
     if (gl_wbox < gl_wchar + 4)
         gl_wbox = gl_wchar + 4;
 
@@ -486,12 +486,12 @@ static void gsx_tcalc(WORD font, char *ptext, WORD *ptextw, WORD *ptexth, WORD *
 
     /* figure out the width of the text string in pixels */
     *pnumchs = expand_string(intin, ptext);
-    *ptextw = min(*ptextw, *pnumchs * wc);
+    *ptextw = min(*ptextw, (WORD)muls(*pnumchs, wc));
 
     /* figure out the height of the text */
     *ptexth = min(*ptexth, hc);
-    if (*ptexth / hc)
-        *pnumchs = min(*pnumchs, *ptextw / wc);
+    if (divs(*ptexth, hc))
+        *pnumchs = min(*pnumchs, divs(*ptextw, wc));
     else
         *pnumchs = 0;
 }

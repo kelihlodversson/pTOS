@@ -210,7 +210,7 @@ static const WORD videl_palette2[240][3] =
 /* Create an ST color value from VDI color */
 static int vdi2st(int col)
 {
-    return (col + 72) / 143;
+    return divs(col + 72, 143);
 }
 
 
@@ -231,7 +231,7 @@ static const WORD st2vdi_lookup_table[8] =
 /* Create an STe color value from VDI color */
 static int vdi2ste(int col)
 {
-    col = (col * 3 + 100) / 200;
+    col = divs(col * 3 + 100, 200);
     col = ((col & 1) << 3) | (col >> 1);  /* Shift lowest bit to top */
 
     return col;
@@ -260,7 +260,7 @@ static const WORD ste2vdi_lookup_table[16] =
 /* Create a TT color value from VDI color */
 static int vdi2tt(int col)
 {
-    return (col * 15 + 500) / 1000;
+    return divs(col * 15 + 500, 1000);
 }
 
 

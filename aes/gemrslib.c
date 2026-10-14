@@ -108,7 +108,7 @@ void rs_obfix(OBJECT *tree, WORD curob)
 void *get_sub(UWORD rsindex, UWORD offset, UWORD rsize)
 {
     /* get base of objects and then index in */
-    return (char *)rs_hdr + offset + rsize * rsindex;
+    return (char *)rs_hdr + offset + muls(rsize, rsindex);
 }
 
 
@@ -464,7 +464,13 @@ void transform_all_cicons(LONG num_cicons, CICONBLK **ciconblkptr)
             continue;
         }
 #endif
-        data_size = (LONG)(w/8*gl_nplanes) * h;
+        /*
+         * the plane size w/8*gl_nplanes is a 16-bit value, as it was when
+         * the kernel was built with -mshort (a colour icon is at most a few
+         * hundred pixels wide); a 32-bit product would cost two libgcc
+         * multiplications on a 68000
+         */
+        data_size = muls((WORD)muls(w/8, gl_nplanes), h);
         expand = (cicon->num_planes != gl_nplanes); /* boolean */
 
         /* if we need to expand the icon, we need a temp buffer */

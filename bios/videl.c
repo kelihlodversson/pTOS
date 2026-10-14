@@ -28,6 +28,7 @@
 #include "vt52.h"
 #include "xbiosbind.h"
 #include "vectors.h"
+#include "intmath.h"
 
 #if CONF_WITH_VIDEL
 
@@ -422,7 +423,7 @@ static WORD determine_width(WORD mode)
     linewidth <<= (mode & VIDEL_BPPMASK);
     /* overscan is ignored if VGA is set */
     if ((mode&(VIDEL_OVERSCAN|VIDEL_VGA)) == VIDEL_OVERSCAN)
-        linewidth = linewidth * 12 / 10;    /* multiply by 1.2 */
+        linewidth = divs(muls(linewidth, 12), 10);    /* multiply by 1.2 */
 
     return linewidth;
 }
@@ -753,7 +754,7 @@ LONG vgetsize(WORD inmode)
     if (vctl&0x01)
         height >>= 1;
 
-    return (LONG)determine_width(mode) * 2 * height;
+    return muls(determine_width(mode) * 2, height);
 }
 
 /*

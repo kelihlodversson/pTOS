@@ -104,8 +104,8 @@ static void gr_scale(WORD xdist, WORD ydist, WORD *pcnt, WORD *pxstep, WORD *pys
 
     if ((*pcnt = i) != 0)
     {
-        *pxstep = max(1, xdist / i);
-        *pystep = max(1, ydist / i);
+        *pxstep = max(1, divs(xdist, i));
+        *pystep = max(1, divs(ydist, i));
     }
     else
         *pxstep = *pystep = 1;

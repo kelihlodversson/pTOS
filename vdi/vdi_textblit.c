@@ -321,7 +321,7 @@ static void pre_blit(LOCALVARS *vars)
     vars->height = vars->DELY;
 
     vars->tsdad = linea_vars.SOURCEX & 0x000f;     /* source dot address */
-    offset = (linea_vars.SOURCEY+vars->DELY-1) * (LONG)vars->s_next + ((linea_vars.SOURCEX >> 3) & ~1);
+    offset = muls(linea_vars.SOURCEY+vars->DELY-1, vars->s_next) + ((linea_vars.SOURCEX >> 3) & ~1);
     src = vars->sform + offset;         /* bottom of font char source */
     vars->s_next = -vars->s_next;       /* we draw from the bottom up */
 
@@ -453,12 +453,12 @@ void rotate(LOCALVARS *vars)
 
     if (linea_vars.CHUP == 900)
     {
-        dst += (vars->DELX - 1) * vars->d_next;
+        dst += muls(vars->DELX - 1, vars->d_next);
         vars->d_next = -vars->d_next;
     }
     else        /* 2700 */
     {
-        src += (linea_vars.SOURCEY + vars->height - 1) * vars->s_next;
+        src += muls(linea_vars.SOURCEY + vars->height - 1, vars->s_next);
         vars->s_next = -vars->s_next;
     }
 
@@ -1166,7 +1166,7 @@ static void screen_blit(LOCALVARS *vars)
      * calculate the starting address for the character to be copied
      */
     vars->tsdad = linea_vars.SOURCEX & 0x000f; /* source dot address */
-    offset = (linea_vars.SOURCEY+vars->DELY-1) * (LONG)vars->s_next + ((linea_vars.SOURCEX >> 3) & ~1);
+    offset = muls(linea_vars.SOURCEY+vars->DELY-1, vars->s_next) + ((linea_vars.SOURCEX >> 3) & ~1);
     vars->sform += offset;
     vars->s_next = -vars->s_next;   /* we draw from the bottom up */
 

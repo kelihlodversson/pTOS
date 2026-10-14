@@ -98,7 +98,7 @@ static UWORD Isin(WORD angle)
     tmpsin = sin_tbl[index];
 
     if (remainder != 0)         /* add interpolation. */
-        tmpsin += ((sin_tbl[index + 1] - tmpsin) * remainder) >> 3;
+        tmpsin += muls(sin_tbl[index + 1] - tmpsin, remainder) >> 3;
 
     return tmpsin;
 }
