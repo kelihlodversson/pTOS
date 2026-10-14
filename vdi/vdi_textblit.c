@@ -1395,8 +1395,8 @@ void text_blt(void)
      * clip rectangle first and thickens what is left, which the buffer,
      * thickened first and cut afterwards, does not reproduce.
      */
-    if (!need_preblit && blitter_is_enabled && !clipped
-     && (vars.STYLE & (F_THICKEN | F_SKEW)) == F_THICKEN)
+    if ((vars.STYLE & (F_THICKEN | F_SKEW)) == F_THICKEN
+     && !need_preblit && !clipped && blitter_is_enabled)
     {
         need_preblit = TRUE;
         mono_cell = TRUE;

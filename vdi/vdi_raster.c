@@ -830,7 +830,7 @@ static void set_light_halftone(WORD h)
 BOOL blitter_text_blit(LOCALVARS *vars)
 {
     WORD plane, planes, mode, w, h, dx, sx, s_span, d_span, skew, skew_idx;
-    WORD nxwd, nxln, skew_reg;
+    WORD nxwd, nxln, skew_reg, style;
     UWORD lendmask, rendmask, fg, bg;
     LONG s_addr, d_addr, length;
 
@@ -838,7 +838,8 @@ BOOL blitter_text_blit(LOCALVARS *vars)
      * effects the blitter path does not do: text_blt() draws bold text into
      * the buffer first when the blitter is in use, so only skew is left
      */
-    if (vars->STYLE & (F_THICKEN | F_SKEW))
+    style = vars->STYLE;
+    if (style & (F_THICKEN | F_SKEW))
         return FALSE;
 
     mode = vars->WRT_MODE;
@@ -885,7 +886,7 @@ BOOL blitter_text_blit(LOCALVARS *vars)
     BLITTER->endmask_1 = lendmask;
     BLITTER->endmask_2 = 0xffff;
     BLITTER->endmask_3 = rendmask;
-    if (vars->STYLE & F_LIGHT)
+    if (style & F_LIGHT)
         set_light_halftone(h);
     else
         BLITTER->hop = HOP_SOURCE_ONLY;
