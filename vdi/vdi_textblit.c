@@ -26,6 +26,7 @@
 #include "lineavars.h"
 #include "vdi_inline.h"
 #include "biosext.h"
+#include "has.h"
 
 
 /*
@@ -1212,6 +1213,12 @@ void planar_text_blit(LOCALVARS *vars)
     vars->dform += (vars->DESTX&0xfff0)>>shift_offset[linea_vars.v_planes];
     vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)linea_vars.v_lin_wr;
     vars->d_next = -linea_vars.v_lin_wr;
+
+#if CONF_WITH_BLITTER
+    /* the blitter, if there is one in use, unless it can't do this glyph */
+    if (blitter_is_enabled && blitter_text_blit(vars))
+        return;
+#endif
 
     normal_blit(vars+1, vars->sform, vars->dform);  /* call assembler helper function */
 }

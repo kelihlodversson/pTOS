@@ -98,6 +98,9 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst);
  * the planar backend's ops table when it is on (see vdi_backend.h)
  */
 void planar_text_blit(LOCALVARS *vars);
+#if CONF_WITH_BLITTER
+BOOL blitter_text_blit(LOCALVARS *vars);    /* vdi_raster.c, FALSE: not done */
+#endif
 void truecolor_text_blit(LOCALVARS *vars);
 
 /*

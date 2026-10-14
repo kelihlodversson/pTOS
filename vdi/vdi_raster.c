@@ -14,6 +14,7 @@
 #include "asm.h"
 #include "vdi_defs.h"
 #include "vdi_raster.h"
+#include "vdi_textblit.h"
 #include "vdi_backend.h"
 #include "vdistub.h"
 #include "blitter.h"
@@ -307,6 +308,29 @@ void vdi_vr_trnfm(Vwk * vwk)
 
 #if CONF_WITH_BLITTER
 /*
+ * blitter_go()
+ *
+ * Start the blitter that has been set up, and wait until it is done.
+ * We run it in the Atari-recommended way: use no-HOG mode, and manually
+ * restart the blitter until it's done.
+ */
+static void blitter_go(void)
+{
+    BLITTER->status = BUSY;     /* no-HOG mode */
+    __asm__ __volatile__(
+    "lea    0xFFFF8A3C,a0\n\t"
+    "0:\n\t"
+    "tas    (a0)\n\t"
+    "nop\n\t"
+    "jbmi   0b\n\t"
+    :
+    :
+    : "a0", "memory", "cc"
+    );
+}
+
+
+/*
  * hwblit_raster()
  *
  * Interface to hardware blitter for raster functions
@@ -340,21 +364,7 @@ hwblit_raster(BLITVARS *blt)
     BLITTER->hop = blt->hop;
     BLITTER->skew = blt->skew;
 
-    /*
-     * we run the blitter in the Atari-recommended way: use no-HOG mode,
-     * and manually restart the blitter until it's done.
-     */
-    BLITTER->status = BUSY;     /* no-HOG mode */
-    __asm__ __volatile__(
-    "lea    0xFFFF8A3C,a0\n\t"
-    "0:\n\t"
-    "tas    (a0)\n\t"
-    "nop\n\t"
-    "jbmi   0b\n\t"
-    :
-    :
-    : "a0", "memory", "cc"
-    );
+    blitter_go();
 
     /*
      * we've modified data behind the cpu's back, so we must
@@ -719,6 +729,172 @@ static void bit_blt(struct blit_frame *blit_info)
         s_addr += blit_info->s_nxpl;          /* a0-> start of next src plane   */
         d_addr += blit_info->d_nxpl;          /* a1-> start of next dst plane   */
     }
+}
+#endif
+
+
+#if CONF_WITH_BLITTER
+/*
+ * the blitter operation to use for a text glyph, from the writing mode
+ * (0-3 are the VDI modes, 4-19 the BitBlt modes 0-15 that LineA allows)
+ * and, for each plane, the foreground and background colour bits of
+ * that plane: index is (foreground bit * 2 + background bit).
+ *
+ * the source is the glyph, a set bit being foreground, so for example
+ * replace mode is "destination = source" (op 3) in a plane where the
+ * foreground bit is set and "destination = 0" (op 0) where it is not.
+ * these are the same operations the software text blit uses
+ * (wrmappin in vdi_tblit.S), and the numbers are those of the blitter.
+ */
+static const UBYTE text_ops[20][4] = {
+    { 0, 0,  3,  3 },           /* replace */
+    { 4, 4,  7,  7 },           /* transparent */
+    { 6, 6,  6,  6 },           /* xor */
+    { 1, 1, 13, 13 },           /* inverse transparent */
+    { 0, 15, 0, 15 },           /* BitBlt mode 0: all zeros */
+    { 0, 14, 1, 15 },           /* 1: source AND destination */
+    { 0, 13, 2, 15 },           /* 2: source AND (NOT destination) */
+    { 0, 12, 3, 15 },           /* 3: source */
+    { 0, 11, 4, 15 },           /* 4: (NOT source) AND destination */
+    { 0, 10, 5, 15 },           /* 5: destination */
+    { 0,  9, 6, 15 },           /* 6: source XOR destination */
+    { 0,  8, 7, 15 },           /* 7: source OR destination */
+    { 0,  7, 8, 15 },           /* 8: (NOT source) AND (NOT destination) */
+    { 0,  6, 9, 15 },           /* 9: (NOT source) XOR destination */
+    { 0,  5, 10, 15 },          /* A: NOT destination */
+    { 0,  4, 11, 15 },          /* B: source OR (NOT destination) */
+    { 0,  3, 12, 15 },          /* C: NOT source */
+    { 0,  2, 13, 15 },          /* D: (NOT source) OR destination */
+    { 0,  1, 14, 15 },          /* E: (NOT source) OR (NOT destination) */
+    { 0,  0, 15, 15 }           /* F: all ones */
+};
+
+
+/*
+ * blitter_text_blit()
+ *
+ * Output the glyph that planar_text_blit() has set up in vars to a bitplane
+ * screen with the blitter, the way normal_blit() does with the CPU.
+ *
+ * The glyph is a one plane form (the font, or the buffer text effects,
+ * rotation and scaling draw into) and the screen has several planes
+ * interleaved a word at a time, so one blit per plane is needed, each with
+ * the operation that plane's foreground and background bits ask for.  All
+ * the rest (the shift, the end masks, the spans) is the same for every
+ * plane, so it is set up once, and a plane only needs its addresses, line
+ * count and operation.  The data cache is dealt with once for all planes.
+ *
+ * Source and destination never overlap, so the blit always goes from the
+ * top left to the bottom right, and the skew flags are those of that
+ * direction (see skew_flags[] and bit_blt()).
+ *
+ * In:
+ *  vars        as for normal_blit()
+ *
+ * Out:
+ *  TRUE if the glyph has been output; FALSE if it has not, because it
+ *  needs something the blitter path does not do (yet): the caller must
+ *  use normal_blit() for it.
+ */
+BOOL blitter_text_blit(LOCALVARS *vars)
+{
+    WORD plane, planes, mode, w, h, dx, sx, s_span, d_span, skew, skew_idx;
+    WORD nxwd, nxln, skew_reg;
+    UWORD lendmask, rendmask, fg, bg;
+    LONG s_addr, d_addr, length;
+
+    /* effects the blitter path does not do yet */
+    if (vars->STYLE & (F_THICKEN | F_LIGHT | F_SKEW))
+        return FALSE;
+
+    mode = vars->WRT_MODE;
+    if (mode < 0 || mode > 19)
+        return FALSE;
+
+    w = vars->width;
+    h = vars->height;
+    if (w <= 0 || h <= 0)
+        return TRUE;                    /* nothing to output */
+    if (vars->s_next >= 0 || vars->d_next >= 0)
+        return FALSE;                   /* not bottom to top, see screen_blit() */
+
+    planes = vars->nbrplane;
+    nxwd = vars->nextwrd;               /* offset to the next word of a plane */
+    nxln = -vars->d_next;               /* and to the next line */
+
+    /*
+     * the source and destination start in the word with the first pixel
+     * (tsdad/tddad are the pixel numbers in that word), so the spans are
+     * the number of words, less one, a line of the glyph covers
+     */
+    sx = vars->tsdad;
+    dx = vars->tddad;
+    s_span = (sx + w - 1) >> 4;
+    d_span = (dx + w - 1) >> 4;
+    skew = dx - sx;
+
+    skew_idx = 0x0004;                  /* blitting left to right */
+    if (s_span == d_span)
+        skew_idx |= 0x0002;             /* spans are equal */
+    if (skew < 0)
+        skew_idx |= 0x0001;             /* the source starts further right */
+
+    lendmask = 0xffff >> dx;
+    rendmask = ~(0x7fff >> ((dx + w - 1) & 15));
+    if (!d_span)
+        lendmask &= rendmask;           /* one word: the other masks are ignored */
+
+    BLITTER->src_x_incr = 2;            /* the glyph is a form of one plane */
+    BLITTER->src_y_incr = -vars->s_next - 2 * s_span;
+    BLITTER->dst_x_incr = nxwd;
+    BLITTER->dst_y_incr = nxln - nxwd * d_span;
+    BLITTER->endmask_1 = lendmask;
+    BLITTER->endmask_2 = 0xffff;
+    BLITTER->endmask_3 = rendmask;
+    BLITTER->hop = HOP_SOURCE_ONLY;
+
+    /* see bit_blt() for the special case of one word */
+    if (!s_span && !d_span)
+    {
+        BLITTER->src_x_incr = skew;     /* sets the skew direction */
+        skew_reg = skew ? (skew & 0x0f) : FXSR;
+    }
+    else
+        skew_reg = (skew & 0x0f) | skew_flags[skew_idx];
+
+    /* the top line of the glyph and of where it goes */
+    s_addr = (LONG)vars->sform + (LONG)(WORD)(h - 1) * vars->s_next;
+    d_addr = (LONG)vars->dform + (LONG)(WORD)(h - 1) * vars->d_next;
+    length = (LONG)h * nxln;
+
+    fg = vars->forecol;
+    bg = vars->ambient;
+
+    /*
+     * since the blitter doesn't see the data cache, and we may be in
+     * copyback mode, the cache must be flushed first and, as the screen
+     * has changed behind the cpu's back, invalidated afterwards, see
+     * hwblit_raster()
+     */
+    flush_data_cache((void *)d_addr, length);
+
+    for (plane = 0; plane < planes; plane++)
+    {
+        BLITTER->src_addr = (UWORD *)s_addr;
+        BLITTER->dst_addr = (UWORD *)d_addr;
+        BLITTER->x_count = d_span + 1;
+        BLITTER->y_count = h;
+        BLITTER->skew = skew_reg;
+        BLITTER->op = text_ops[mode][((fg & 1) << 1) | (bg & 1)];
+        blitter_go();
+
+        fg >>= 1;
+        bg >>= 1;
+        d_addr += 2;                    /* the next plane */
+    }
+
+    invalidate_data_cache((void *)(d_addr - 2 * planes), length);
+    return TRUE;
 }
 #endif
 
