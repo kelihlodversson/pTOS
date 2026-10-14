@@ -73,7 +73,8 @@ jobs:
   measure:
     name: Measure ${{ matrix.config }}
     needs: build
-    # A newer Hatari than the build's runner has in its packages.
+    # Hatari comes from the distribution's packages, which the 22.04 of the
+    # build's runner has an old version of.
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -95,7 +96,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends hatari
-          hatari --version
+          hatari --version || true     # (it exits with 1)
 
       - name: Run pBench in every ST screen mode, with and without blitter
         env:
@@ -104,6 +105,14 @@ jobs:
           python3 tools/pBench/run-baselines.py \
             --pbench products/pbench.prg --out results --jobs 3 \
             --system "${CONFIG}=products/ptos512k.img=pTOS ${CONFIG} (${GITHUB_SHA::8})"
+
+      # What the baselines in the repository are made from when they have to
+      # be made again: see doc/pbench.txt.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pbench-results-${{ matrix.config }}
+          path: results/
+          retention-days: 14
 
       - name: Compare with the baseline
         id: compare
