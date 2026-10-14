@@ -452,6 +452,7 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
 
 void vdi_v_gtext(Vwk * vwk)
 {
+    { volatile WORD i; for (i = 0; i < 1500; i++) ; }
     output_text(vwk, CONTRL->nintin, INTIN, -1, NULL);
 }
 
