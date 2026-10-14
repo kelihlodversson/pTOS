@@ -789,12 +789,28 @@ f2op_15:
         jra     f2_drt          // %0x#@*!
 
 //
-// _fast_bit_blt - wrapper for bit_blt
+// C_SYM(fast_bit_blt) - wrapper for bit_blt
 //
 // It emulates the link opcode by setting a6 to FRAME_LEN plus the passed
 // address.  That way the rest of the assembler stuff can stay as
 // it is for now - some of it is also used for text blitting.
+//
+// Under -mfastcall, void fast_bit_blt(struct blit_frame*) passes its one
+// pointer argument in a0 instead of on the stack. Build the equivalent
+// cdecl stack frame from a0 and bsr into the unchanged body -- same
+// technique used in memset.S/memmove.S, see the comment there for the
+// full correctness argument.
+#if CONF_WITH_MFASTCALL
 C_SYM(fast_bit_blt):
+        move.l  a0,-(sp)                 // start of frame
+        bsr     fast_bit_blt_stackbody
+        lea     4(sp),sp                 // drop the frame built above
+        rts
+
+fast_bit_blt_stackbody:
+#else
+C_SYM(fast_bit_blt):
+#endif
         // A wrapper, so save and set up registers
         movea.l 4(sp),a0                // a0 -> start of frame
         movem.l d2-d7/a2-a6,-(sp)

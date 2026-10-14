@@ -66,13 +66,57 @@
 // moves length bytes from src to dst. returns dst as passed.
 // the behaviour is undefined if the two regions overlap.
 
+/*
+ * Under -mfastcall, both entry points below take (dst, src, length) in
+ * a0/a1/d0 instead of on the stack -- but every exit point throughout the
+ * rest of this file (there are many: "end", "end1", "end4", ..., plus the
+ * simple loop below) reads them back off a classic cdecl frame at fixed
+ * offsets (4(sp)/8(sp)/12(sp)), and memcpy/memmove share most of that code
+ * via internal jumps. Rewriting every one of those offsets in place would
+ * be needlessly invasive and easy to get subtly wrong. Instead, build that
+ * exact frame from the incoming registers and bsr into the unchanged body:
+ * the frame this pushes (dst, src, length, in that order, right below the
+ * bsr's own return address) is byte-for-byte what a cdecl caller would
+ * have pushed before "jsr memcpy", so the body needs no other change.
+ * Its own rts pops only the bsr's return address (matching plain cdecl
+ * callee behaviour: the *caller* pops arguments, not the callee), landing
+ * back here with the pushed frame still on the stack, in generic cdecl code
+ * as much as a real caller's, so we drop it as generic cdecl code would.
+ */
+#if CONF_WITH_MFASTCALL
 C_SYM(memcpy):
+        move.l  d0,-(sp)         // length
+        move.l  a1,-(sp)         // src
+        move.l  a0,-(sp)         // dst
+        bsr     memcpy_stackbody
+        lea     12(sp),sp        // drop the frame built above
+        movea.l d0,a0            // pointer return goes in a0 under fastcall;
+                                 // the body below still only sets d0 (see
+                                 // its own "return destination pointer"
+                                 // comments -- that was correct for the
+                                 // pre-fastcall convention, and is now also
+                                 // needed by any non-fastcall caller left)
+        rts
+
+C_SYM(memmove):
+        move.l  d0,-(sp)         // length
+        move.l  a1,-(sp)         // src
+        move.l  a0,-(sp)         // dst
+        bsr     memmove_stackbody
+        lea     12(sp),sp        // drop the frame built above
+        movea.l d0,a0            // see memcpy() above
+        rts
+
+memcpy_stackbody:
+#else
+C_SYM(memcpy):
+#endif
 #ifndef __mcoldfire__
         move.l   8(sp),a0        // load source pointer
         move.l   4(sp),a1        // load destination pointer
         move.l   12(sp),d0       // get length
         cmpi.l   #BREAKEVEN,d0   // is it worth doing the complicated version?
-        jge      memmove_common  // yes, branch
+        jge      memmove_common         // yes, branch
         jra      sdecr
 sloop:
         move.b   (a0)+,(a1)+
@@ -81,7 +125,11 @@ sdecr:
         move.l   4(sp),d0        // return destination pointer
         rts
 #endif
+#if CONF_WITH_MFASTCALL
+memmove_stackbody:
+#else
 C_SYM(memmove):
+#endif
         move.l   8(sp),a0        // load source pointer
         move.l   4(sp),a1        // load destination pointer
 memmove_common:

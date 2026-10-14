@@ -233,6 +233,16 @@ generation may use.  The boot-time CPU detection does not read the
 that read instead of raising a guest exception, and the cache and MMU
 register instructions QEMU's 68060 lacks are skipped.
 
+virt-m68k-cli_defconfig boots to EmuCON instead of the desktop, and
+virt-m68k-cli-fastcall_defconfig is the same with CONF_WITH_MFASTCALL set
+(it needs the -mfastcall toolchain, see above): the way to run the
+regression suite under the register-argument calling convention without
+an Atari emulator.
+
+virt-m68k-fastcall_defconfig is virt-m68k_defconfig (AES/VDI/desktop)
+built the same way, for running the GEM desktop and benchmarks under
+-mfastcall.
+
 
 Countries and languages
 =======================

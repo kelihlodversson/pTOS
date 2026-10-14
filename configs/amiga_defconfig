@@ -1,2 +1,7 @@
 # Amiga ROM image
 MACHINE_AMIGA=y
+
+# Without -mfastcall the 256 KB ROM no longer fits (the kernel is no longer built
+# with -mshort), so this image needs the smaller code the register calling
+# convention gives.
+CONF_WITH_MFASTCALL=y

@@ -23,26 +23,61 @@
         .globl  C_SYM(bzero_nobuiltin)
 
         .text
+
+/*
+ * Under -mfastcall both entry points below take their arguments in
+ * registers (a0/d0/d1) instead of on the stack. Rather than rewrite every
+ * stack offset in the shared body (see the many "end"/"end1"/.../"zero4"
+ * exits below), build the equivalent cdecl stack frame from the incoming
+ * registers and bsr into the unchanged body -- same technique used in
+ * memmove.S, see the comment there for the full correctness argument.
+ */
 //
 // void bzero_nobuiltin(void *address, unsigned long size)
 //
 // the obscure name is to circumvent GCC converting a call to bzero()
 // to a call to memset()
 //
+#if CONF_WITH_MFASTCALL
 C_SYM(bzero_nobuiltin):
+        move.l  d0,-(sp)         // size
+        move.l  a0,-(sp)         // address
+        bsr     bzero_stackbody
+        lea     8(sp),sp         // drop the frame built above
+        rts
+
+bzero_stackbody:
+#else
+C_SYM(bzero_nobuiltin):
+#endif
         move.l   4(sp),a0
         move.l   8(sp),d0
         move.l   d7,-(sp)
         moveq    #0,d7
         jra      memset_common
 //
-// void *memset(void *address, short c, unsigned long size)
+// void *memset(void *address, int c, unsigned long size)
 // fills with byte c, returns the given address.
 
+#if CONF_WITH_MFASTCALL
 C_SYM(memset):
+        move.l  d1,-(sp)         // size
+        move.l  d0,-(sp)         // c
+        move.l  a0,-(sp)         // address
+        bsr     memset_stackbody
+        lea     12(sp),sp        // drop the frame built above
+        movea.l d0,a0            // pointer return goes in a0 under fastcall;
+                                 // see memmove.S's memcpy()/memmove() for the
+                                 // same fixup and the full explanation
+        rts
+
+memset_stackbody:
+#else
+C_SYM(memset):
+#endif
         move.l   4(sp),a0
         move.l   d7,-(sp)
-        move.w   12(sp),d0
+        move.w   14(sp),d0      // low word of c (int, 4 bytes since #300)
         move.b   d0,d7
 #ifdef __mcoldfire__
         lsl.l    #8,d7
@@ -53,7 +88,7 @@ C_SYM(memset):
         move.w   d7,d0
         swap     d7
         move.w   d0,d7
-        move.l   14(sp),d0
+        move.l   16(sp),d0      // size (4 bytes, right after the 4-byte c)
         jle      end
 
 // at this point, a0=block, d7=pattern, d0=size, (sp)=saved d7

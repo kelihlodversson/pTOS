@@ -27,18 +27,18 @@
         .globl  C_SYM(lisa_int_1)
 C_SYM(lisa_int_1):
         move.w  #0x2700,sr              // Forbid higher level interrupts
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
         jbsr    C_SYM(lisa_int_1_c)           // Delegate to C implementation
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
         rte
 
 // Int 2 is used by VIA1 (COPS)
         .globl  C_SYM(lisa_int_2)
 C_SYM(lisa_int_2):
         move.w  #0x2700,sr              // Forbid higher level interrupts
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
         jbsr    C_SYM(lisa_int_2_c)           // Delegate to C implementation
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
         rte
 
 // Call vector_5ms (200 Hz system timer callback) from C.

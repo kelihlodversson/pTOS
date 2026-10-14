@@ -13,6 +13,7 @@
  */
 
 #include "emutos.h"
+#include "classicvec.h"
 #include "gemerror.h"
 #include "tosvars.h"
 #include "chardev.h"
@@ -42,8 +43,9 @@ static LONG (* const bcostat_init[NUM_CHAR_VECS])(void) =
       bcostat3, char_dummy, char_dummy, char_dummy };
 
 static LONG (* const bconout_init[NUM_CHAR_VECS])(WORD,WORD) =
-    { bconout0, bconout1, bconout2, bconout3,
-      bconout4, bconout5, charout_dummy, charout_dummy };
+    { CLASSIC_ENTRY(bconout0), CLASSIC_ENTRY(bconout1), CLASSIC_ENTRY(bconout2),
+      CLASSIC_ENTRY(bconout3), CLASSIC_ENTRY(bconout4), CLASSIC_ENTRY(bconout5),
+      charout_dummy, charout_dummy };
 
 /*
  * dummy - unimplemented functions
