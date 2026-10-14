@@ -1117,8 +1117,8 @@ void gdp_justified(Vwk * vwk)
      * calculate values for interword spacing
      */
     if (interword && spaces) {
-        delword = divs(max_x - width, spaces);
-        just.rmword = mods(max_x - width, spaces);
+        delword = divs((WORD)(max_x - width), spaces);
+        just.rmword = mods((WORD)(max_x - width), spaces);
 
         if (just.rmword < 0) {
             direction = -1;
@@ -1163,8 +1163,8 @@ void gdp_justified(Vwk * vwk)
      * calculate values for intercharacter spacing
      */
     if (interchar && cnt > 1) {
-        delchar = divs(max_x - width, cnt - 1);
-        just.rmchar = mods(max_x - width, cnt - 1);
+        delchar = divs((WORD)(max_x - width), cnt - 1);
+        just.rmchar = mods((WORD)(max_x - width), cnt - 1);
 
         if (just.rmchar < 0) {
             direction = -1;
