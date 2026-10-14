@@ -290,10 +290,35 @@ X86_64_PIE_OBJS = obj/startup.o obj/pgtable.o obj/pe_reloc.o obj/pmem.o \
                   obj/earlycon.o obj/memory.o obj/gop.o
 $(X86_64_PIE_OBJS): X86_64_PIE_OVERRIDE = -fpie -mcmodel=small
 else
-MULTILIBFLAGS = $(CPUFLAGS) -mshort
+# The kernel can never assume a real FPU is present -- processor.S detects
+# one at runtime, for userland's benefit, precisely because most m68k
+# targets this builds for don't have one. Every toolchain used here has
+# always defaulted to -msoft-float on its own, silently, so this was never
+# needed -- until Thorsten Otto's -mfastcall-patched GCC (Kconfig's
+# CONF_WITH_MFASTCALL help text), which defaults the other way once -m68020
+# or later is selected (-mhard-float/-m68881 enabled), freely emitting real
+# FPU instructions QEMU's -cpu m68020 (no FPU) can't execute. Pass it
+# explicitly so kernel codegen never depends on a toolchain's own default.
+MULTILIBFLAGS = $(CPUFLAGS) -msoft-float
+ifdef CONF_WITH_MFASTCALL
+MULTILIBFLAGS += -mfastcall
+endif
 ifdef BUILD_TOOLCHAIN_IS_ELF
 TOOLCHAIN_CFLAGS = -Wa,--register-prefix-optional \
                    -fno-reorder-functions -DELF_TOOLCHAIN
+endif
+endif
+endif
+
+# CONF_WITH_MFASTCALL selects -mfastcall above, but neither of the toolchains
+# offered in the "m68k toolchain" choice (Kconfig.machine) support it -- only
+# a patched GCC does (Thorsten Otto's fork, see the option's help text).  Fail
+# now with an actionable message instead of letting every compile fail later
+# with a generic "unrecognized command-line option '-mfastcall'".
+ifdef CONFIGURED
+ifdef CONF_WITH_MFASTCALL
+ifeq (,$(shell echo 'void f(void){}' | $(CC) $(CPUFLAGS) -x c -mfastcall -c -o /dev/null - >/dev/null 2>&1 && echo y))
+$(error $(CC) does not support -mfastcall. Install a patched toolchain (e.g. Thorsten Otto's m68k-atari-mint-gcc fork, https://tho-otto.m68k.eu/crossmint.php) and point CROSS_COMPILE at it, or disable CONF_WITH_MFASTCALL in "make menuconfig")
 endif
 endif
 endif
@@ -897,13 +922,27 @@ endif
 #
 # Misc utilities, built on demand
 #
+# Unlike the kernel image itself, these are ordinary user programs whose
+# main() is invoked by util/arch/m68k/minicrt.S's startup code, which
+# still pushes argc/argv on the stack rather than the -mfastcall
+# register convention -- so, like TARGET_PRG/FLOPPY/AMIGA_FLOPPY (see
+# Kconfig.machine's CONF_WITH_MFASTCALL help text), these targets can't
+# be selected together with a MULTILIBFLAGS that includes -mfastcall.
+# They aren't config-gated the way those targets are (built on demand,
+# any time, regardless of the loaded .config), so the same restriction
+# is enforced here instead, at the point they're actually requested.
 
+ifdef CONF_WITH_MFASTCALL
+date.prg dumpkbd.prg:
+	$(error $@ cannot be built with CONF_WITH_MFASTCALL set: util/arch/m68k/minicrt.S's startup has not been audited for -mfastcall's register-argument convention. Disable CONF_WITH_MFASTCALL in "make menuconfig" first)
+else
 date.prg: obj/minicrt.o obj/doprintf.o obj/date.o
 	$(LD) $+ $(LIBS) -o $@ -s
 
 dumpkbd.prg: obj/minicrt.o obj/memmove.o obj/dumpkbd.o obj/doprintf.o \
 	     obj/string.o
 	$(LD) $+ $(LIBS) -o $@ -s
+endif
 
 #
 # Host tools
@@ -1497,7 +1536,7 @@ tests/run_tests.c: Makefile $(wildcard tests/*/*.c) $(AUTOCONF_H) | obj
 
 # The test harness is userland code linked against libcmini, not the
 # kernel: it must NOT inherit CFILE_FLAGS, since that carries kernel-only
-# conventions (-fleading-underscore, -DELF_TOOLCHAIN, -mshort/-fsigned-char)
+# conventions (-fleading-underscore, -DELF_TOOLCHAIN, ARM's -fsigned-char)
 # that are irrelevant -- or outright ABI-incompatible with libcmini's own
 # build -- for a normal ARM/m68k userland binary.  $(CPUFLAGS) is kept so
 # generated code targets the selected machine's CPU/FPU, matching what the
@@ -1638,10 +1677,10 @@ $(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBC
 $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 
 # Like TEST_CFLAGS, this must not reuse the kernel's $(LD) (= $(CC)
-# $(MULTILIBFLAGS) ...): on m68k, MULTILIBFLAGS carries -mshort, which
-# would make the link step pull in the -mshort multilib variant of
-# libgcc (via $(LIBS) = -lgcc below) while libcmini itself was built
-# against the toolchain's default, non -mshort multilib.
+# $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) ...): those carry kernel-only
+# conventions (-fleading-underscore, -DELF_TOOLCHAIN, ARM's -fsigned-char)
+# that are irrelevant -- or outright ABI-incompatible -- for linking a
+# normal ARM/m68k userland binary against libcmini.
 TEST_LD = $(TEST_CC) $(TEST_CPUFLAGS) -nostartfiles -nostdlib
 
 # Link the test harness as runtests.tos.  On ARM this must stay a
@@ -1678,6 +1717,29 @@ $(eval $(call shutdown-prog,reboot,1,rebooting))
 $(eval $(call shutdown-prog,coldboot,2,cold booting))
 $(eval $(call shutdown-prog,halt,3,halting))
 TEST_SHUTDOWN_FILES = poweroff.tos reboot.tos coldboot.tos halt.tos
+
+# pBench, the graphics benchmark in tools/pBench (see doc/pbench.txt): a GEM
+# program built exactly like the test harness above (libcmini, userland
+# flags), but not part of it and not run by it.
+PBENCH_CFLAGS = $(TEST_CFLAGS) -Itools/pBench
+
+obj/pbench.o: tools/pBench/pbench.c tools/pBench/gem.h tools/pBench/refs.h $(AUTOCONF_H) | obj
+	$(CC) $(PBENCH_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+obj/pbench_gem.o: tools/pBench/gem.c tools/pBench/gem.h $(AUTOCONF_H) | obj
+	$(CC) $(PBENCH_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+pbench.prg: $(TEST_STARTUP) obj/pbench.o obj/pbench_gem.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/pbench.o obj/pbench_gem.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+
+# A raw HD image that starts pBench from emudesk.inf, like test-hd.img does
+# for the regression tests.
+pbench-hd.img: pbench.prg tools/pBench/emudesk.inf
+	@echo '  MKHD   $@'
+	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) pbench.prg tools/pBench/emudesk.inf
+
+.PHONY: pbench
+pbench: pbench.prg
 
 ifdef CONF_WITH_ELF_LOADER
 # pieprobe.tos: the pie_load suite's payload (see tests/pie_load/pie_probe.c).
@@ -1868,7 +1930,7 @@ TOCLEAN += tests/run_tests.c runtests.tos poweroff.tos reboot.tos coldboot.tos \
            halt.tos pieprobe.tos LOADFAIL.TOS \
            relocprobe-unpacked.tos PTRELOC.TOS \
            relocprobe2-unpacked.tos PTRELOC2.TOS \
-           test-hd.img ACCPROBE.ACC
+           test-hd.img ACCPROBE.ACC pbench.prg pbench-hd.img
 TOCLEAN_POST += libcmini-clean
 
 .PHONY: libcmini-clean

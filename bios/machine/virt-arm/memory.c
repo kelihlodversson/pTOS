@@ -14,8 +14,8 @@
  * bios/build.mk lists memory.o unconditionally, and vpath resolves it to
  * this file for MACHINE_VIRT_ARM (the way bios/machine/raspi/memory.c is
  * resolved for MACHINE_RPI). This machine needs no runtime memory
- * initialization of its own: the RAM size is fixed by the QEMU command
- * line and startup.S sets phystop directly, and the MMU bring-up lives in
+ * initialization of its own: the RAM size is set by the QEMU command line
+ * and startup.S reads it from the device tree and sets phystop directly, and the MMU bring-up lives in
  * virt_mmu.c, called from startup.S before any C code runs. So this file
  * is deliberately empty.
  */

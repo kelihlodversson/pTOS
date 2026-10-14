@@ -9,6 +9,26 @@
  * int_timerc: virtio interrupts have nothing to do with EmuTOS's system
  * timer tick, so a plain register-save / dispatch / restore / rte is
  * enough.
+ *
+ * void goldfish_pic_dispatch(WORD pic_index) takes one scalar argument.
+ * Under -mfastcall that goes in d0, not on the stack: pushing it and
+ * calling through a plain jsr (the pre-fastcall convention below) left
+ * the compiled dispatch() reading pic_index out of d0 -- whatever the
+ * interrupted code happened to leave there -- since d0's incoming value
+ * here is only ever the interrupted code's own, never touched by this
+ * ISR before the call. dispatch() then uses that garbage index into
+ * pic_handlers[pic_index][bit] and calls whatever pointer it finds
+ * there: a wild call, firing asynchronously and unpredictably depending
+ * on what the interrupted code was doing with d0. Set d0 to the real
+ * pic_index (after saving the caller's own d0 alongside d1/a0-a1, so it
+ * comes back unchanged on return) instead of pushing it.
+ *
+ * d2 is saved as well: -mfastcall makes d0-d2/a0-a1 all call-clobbered,
+ * so a C handler may trash d2, which the interrupted code (e.g. a
+ * compiled screen-clearing loop) can be keeping live.  Saving only
+ * d0-d1/a0-a1 corrupted it and ran such loops past the end of the
+ * framebuffer.  The classic ABI only clobbers d0-d1/a0-a1; saving d2
+ * too is harmless there.
  */
 
 #include "asmdefs.h"
@@ -22,33 +42,53 @@
         .text
 
 C_SYM(goldfish_pic_isr1):
-        movem.l d0-d1/a0-a1,-(sp)
-        move.w  #1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
+#if CONF_WITH_MFASTCALL
+        moveq   #1,d0
         jsr     C_SYM(goldfish_pic_dispatch)
-        addq.l  #2,sp
-        movem.l (sp)+,d0-d1/a0-a1
+#else
+        move.l  #1,-(sp)
+        jsr     C_SYM(goldfish_pic_dispatch)
+        addq.l  #4,sp
+#endif
+        movem.l (sp)+,d0-d2/a0-a1
         rte
 
 C_SYM(goldfish_pic_isr2):
-        movem.l d0-d1/a0-a1,-(sp)
-        move.w  #2,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
+#if CONF_WITH_MFASTCALL
+        moveq   #2,d0
         jsr     C_SYM(goldfish_pic_dispatch)
-        addq.l  #2,sp
-        movem.l (sp)+,d0-d1/a0-a1
+#else
+        move.l  #2,-(sp)
+        jsr     C_SYM(goldfish_pic_dispatch)
+        addq.l  #4,sp
+#endif
+        movem.l (sp)+,d0-d2/a0-a1
         rte
 
 C_SYM(goldfish_pic_isr3):
-        movem.l d0-d1/a0-a1,-(sp)
-        move.w  #3,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
+#if CONF_WITH_MFASTCALL
+        moveq   #3,d0
         jsr     C_SYM(goldfish_pic_dispatch)
-        addq.l  #2,sp
-        movem.l (sp)+,d0-d1/a0-a1
+#else
+        move.l  #3,-(sp)
+        jsr     C_SYM(goldfish_pic_dispatch)
+        addq.l  #4,sp
+#endif
+        movem.l (sp)+,d0-d2/a0-a1
         rte
 
 C_SYM(goldfish_pic_isr4):
-        movem.l d0-d1/a0-a1,-(sp)
-        move.w  #4,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
+#if CONF_WITH_MFASTCALL
+        moveq   #4,d0
         jsr     C_SYM(goldfish_pic_dispatch)
-        addq.l  #2,sp
-        movem.l (sp)+,d0-d1/a0-a1
+#else
+        move.l  #4,-(sp)
+        jsr     C_SYM(goldfish_pic_dispatch)
+        addq.l  #4,sp
+#endif
+        movem.l (sp)+,d0-d2/a0-a1
         rte

@@ -642,7 +642,7 @@ static void AddConfigDev(struct ConfigDev *configDev)
 
 /* From rom/exec/addmemlist.c *************************************************/
 
-extern long xmaddalt(UBYTE *start, long size); /* found in bdos/mem.h */
+extern long xmaddalt(UBYTE *start, LONG size); /* found in bdos/mem.h */
 
 static void AddMemList(ULONG size, ULONG attributes, LONG pri, APTR base, STRPTR name)
 {

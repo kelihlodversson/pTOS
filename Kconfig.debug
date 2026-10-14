@@ -135,6 +135,27 @@ config CONF_DEBUG_DESK_STACK
 	depends on CONF_WITH_AES
 	default n
 
+config CONF_DEBUG_FORCE_MC68000
+	bool "Force CPU auto-detection to report a plain 68000"
+	depends on ARCH_M68K_CLASSIC
+	default n
+	help
+	  QEMU's m68k "m68000" CPU model does not fault on the "MOVE from
+	  CCR" instruction the way real 68000 silicon does, which is what
+	  detect_cpu() (bios/arch/m68k/processor.S) relies on to tell a
+	  68000 apart from a 68010 or later. Under that model, detection
+	  wrongly concludes 68010+, which sets longframe and breaks the
+	  BIOS/XBIOS/GEMDOS trap dispatch: it then expects the extra
+	  68010+ exception-frame format word that a real 68000 frame does
+	  not have, and every trap call misreads its arguments.
+
+	  Say y to override mcpu/longframe/fputype to the 68000 values
+	  right after auto-detection runs. This is a debugging aid for
+	  testing under QEMU only -- never enable it for a build that
+	  might run on real hardware or an accurate emulator (e.g.
+	  Hatari), since it will misidentify an actual 68010+ CPU as a
+	  68000.
+
 source "tests/Kconfig"
 
 endmenu

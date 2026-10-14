@@ -46,6 +46,7 @@
 /PTRELOC2.TOS
 /test-hd.img
 /test-dir/
+/pbench-hd.img
 
 # Host tools built by the Makefile
 /bug

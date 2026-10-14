@@ -126,7 +126,7 @@ midiibufhi:     .ds.w   1
 #if CONF_WITH_EXTENDED_MOUSE
 C_SYM(mousexvec):     .ds.l   1       // mouse-routine for additional buttons
 #endif
-kbdvec:         .ds.l   1       // must be right before _kbdvecs
+kbdvec:         .ds.l   1       // must be right before C_SYM(kbdvecs)
 C_SYM(kbdvecs):
 midivec:        .ds.l   1       // MIDI input
 vkbderr:        .ds.l   1       // keyboard error
@@ -195,11 +195,18 @@ C_SYM(init_acia_vecs):
 #endif /* CONF_WITH_IKBD_ACIA */
 
         // initialize the iorecs
+#if CONF_WITH_MFASTCALL
+        lea     C_SYM(ikbdiorec),a0
+        lea     iorec_table,a1
+        move.l  #iorec_table_end-iorec_table,d0
+        jsr     C_SYM(memmove)
+#else
         pea     iorec_table_end-iorec_table
         pea     iorec_table
         pea     C_SYM(ikbdiorec)
         jsr     C_SYM(memmove)
         lea     12(sp),sp
+#endif
 
         // initialize IKBD-related variables
         moveq.l #0,d0
@@ -215,11 +222,25 @@ C_SYM(init_acia_vecs):
 #endif
 
 #if CONF_WITH_IKBD_ACIA || CONF_WITH_MIDI_ACIA
-        // finally, setup the interrupt vector
-        pea     C_SYM(int_acia)
-        move.w  #6,-(sp)
+        /*
+         * mfpint(WORD num, LONG vector) is an ordinary internal C
+         * function. Under -mfastcall num/vector arrive in d0/d1 (vector
+         * is a plain LONG scalar, not a pointer type, so it goes in a
+         * data register like any other LONG argument -- same reasoning
+         * as protect_wlwwwl's LONG b above -- not in a0); without
+         * -mshort num's slot is a full 4 bytes now, not a tightly
+         * packed WORD.
+         */
+#if CONF_WITH_MFASTCALL
+        moveq   #6,d0
+        move.l  #C_SYM(int_acia),d1
         jsr     C_SYM(mfpint)
-        addq.l  #6,sp
+#else
+        pea     C_SYM(int_acia)
+        move.l  #6,-(sp)
+        jsr     C_SYM(mfpint)
+        addq.l  #8,sp
+#endif
 #endif /* CONF_WITH_IKBD_ACIA || CONF_WITH_MIDI_ACIA */
 
 #ifdef MACHINE_AMIGA
@@ -370,10 +391,22 @@ joybuf: .ds.b   3
         .text
 
 _kbdvec:
-        move.w  d0,-(sp)
-        // call the C routine in ikbd.c to do the work.
+        /*
+         * kbd_int(UBYTE scancode) is an ordinary internal C function.
+         * _kbdvec is entered (per the KBDVECS convention documented
+         * above) with the byte already in d0, zero-extended by every
+         * caller (_ikbdsys, call_ikbdraw()) -- under -mfastcall that's
+         * exactly where kbd_int expects its one scalar arg, no push
+         * needed; without -mshort the plain ABI now wants a full 4-byte
+         * slot instead of a tightly packed WORD.
+         */
+#if CONF_WITH_MFASTCALL
         jsr     C_SYM(kbd_int)
-        addq.l  #2,sp
+#else
+        move.l  d0,-(sp)
+        jsr     C_SYM(kbd_int)
+        addq.l  #4,sp
+#endif
 just_rts:
         rts
 
@@ -536,7 +569,14 @@ kbd_jump_vec:
 /******************************************************************************/
 
 C_SYM(call_mousevec):
+        /*
+         * call_mousevec(SBYTE *packet) is an ordinary internal C
+         * function called from various C files: under -mfastcall its
+         * one pointer arg arrives in a0 already, not on the stack.
+         */
+#if !CONF_WITH_MFASTCALL
         move.l  4(sp),a0
+#endif
         move.l  mousevec,a1
 #ifdef __mcoldfire__
         lea     -44(sp),sp
@@ -561,8 +601,20 @@ C_SYM(call_mousevec):
 
         .globl  C_SYM(call_ikbdraw)
 C_SYM(call_ikbdraw):
+        /*
+         * call_ikbdraw(UBYTE b) is an ordinary internal C function.
+         * ikbdraw's cmp.w #0xf6,d0 needs a clean, zero-extended byte in
+         * d0 -- under -mfastcall b arrives there already, but only the
+         * low byte is defined, so mask off the rest; without -mshort
+         * the plain ABI now gives b a full 4-byte slot (low byte at
+         * 7(sp)) instead of a 2-byte one.
+         */
+#if CONF_WITH_MFASTCALL
+        and.l   #0xff,d0
+#else
         moveq   #0,d0
-        move.b  5(sp),d0                // raw IKBD byte
+        move.b  7(sp),d0                // raw IKBD byte (low byte of its slot)
+#endif
         jra     ikbdraw
 
 #endif /* CONF_WITH_FLEXCAN || CONF_SERIAL_IKBD || defined(MACHINE_LISA) */
@@ -575,7 +627,14 @@ C_SYM(call_ikbdraw):
 
         .globl  C_SYM(call_joyvec)
 C_SYM(call_joyvec):
+        /*
+         * call_joyvec(UBYTE *packet) is an ordinary internal C function:
+         * under -mfastcall its one pointer arg arrives in a0 already,
+         * not on the stack.
+         */
+#if !CONF_WITH_MFASTCALL
         move.l  4(sp),a0
+#endif
         move.l  joyvec,a1
 #ifdef __mcoldfire__
         lea     -44(sp),sp

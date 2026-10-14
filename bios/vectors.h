@@ -50,6 +50,9 @@ long check_read_byte(long);
 /* */
 LONG default_etv_critic(WORD err,WORD dev);
 void int_illegal(void);
+#ifdef MACHINE_VIRT_M68K
+void int_illegal_linef(void);
+#endif
 void int_priv(void);
 void int_unimpint(void);
 
@@ -162,8 +165,9 @@ extern void (*timer_vbl_hook)(void);
 #if !CONF_WITH_NATIVE_ABI
 LONG protect_v(LONG (*func)(void));
 LONG protect_w(LONG (*func)(WORD), WORD);
-LONG protect_ww(LONG (*func)(void), WORD, WORD);
-LONG protect_wlwwwl(LONG (*func)(void), WORD, LONG, WORD, WORD, WORD, LONG);
+LONG protect_ww(LONG (*func)(WORD, WORD), WORD, WORD);
+LONG protect_wlwwwl(LONG (*func)(WORD, LONG, WORD, WORD, WORD, LONG), WORD, LONG, WORD, WORD, WORD, LONG);
+ULONG protect_wwwwww(ULONG (*func)(WORD, WORD, WORD, WORD, WORD, WORD), WORD, WORD, WORD, WORD, WORD, WORD);
 #else
 
 /* We assume ARM/x86-64 developers follow their platform's own standard
@@ -180,9 +184,9 @@ static inline LONG protect_w(LONG (*func)(WORD), WORD a)
 {
     return func(a);
 }
-static inline LONG protect_ww(LONG (*func)(void), WORD a, WORD b)
+static inline LONG protect_ww(LONG (*func)(WORD, WORD), WORD a, WORD b)
 {
-    return ((LONG (*)(WORD, WORD))func)(a, b);
+    return func(a, b);
 }
 /*
  * `long b`, not portab.h's always-32-bit LONG: lrwabs() (bios/bios.c)
@@ -196,6 +200,10 @@ static inline LONG protect_ww(LONG (*func)(void), WORD a, WORD b)
 static inline LONG protect_wlwwwl(LONG (*func)(void), WORD a, long b, WORD c, WORD d, WORD e, LONG f)
 {
     return ((LONG (*)(WORD, long, WORD, WORD, WORD, LONG))func)(a,b,c,d,e,f);
+}
+static inline ULONG protect_wwwwww(ULONG (*func)(WORD, WORD, WORD, WORD, WORD, WORD), WORD a, WORD b, WORD c, WORD d, WORD e, WORD f)
+{
+    return func(a,b,c,d,e,f);
 }
 #endif
 

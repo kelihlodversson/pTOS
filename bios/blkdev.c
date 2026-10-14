@@ -14,6 +14,7 @@
 /* #define ENABLE_KDEBUG */
 
 #include "emutos.h"
+#include "classicvec.h"
 #include "string.h"
 #include "endian.h"
 #include "gemerror.h"
@@ -61,8 +62,8 @@ static LONG bootcheck(void);
 static WORD hd_boot_read(void);
 #endif
 static void blkdev_hdv_init(void);
-static LONG blkdev_mediach(WORD dev);
-static LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LONG lrecnr);
+LONG blkdev_mediach(WORD dev);          /* (global: the classic entry points call them) */
+LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LONG lrecnr);
 static void bus_init(void);
 
 /* get intel words */
@@ -119,9 +120,9 @@ void blkdev_init(void)
     hdv_init    = flop_hdv_init;
 
     /* setup general block device vectors */
-    hdv_bpb     = blkdev_getbpb;
-    hdv_rw      = blkdev_rwabs;
-    hdv_mediach = blkdev_mediach;
+    hdv_bpb     = CLASSIC_ENTRY(blkdev_getbpb);
+    hdv_rw      = CLASSIC_ENTRY(blkdev_rwabs);
+    hdv_mediach = CLASSIC_ENTRY(blkdev_mediach);
 
     /* setting drvbits */
     blkdev_hdv_init();
@@ -462,7 +463,7 @@ BOOL blkdev_rwabs_buffer_size(WORD rw, WORD cnt, WORD dev, ULONG *size)
 }
 #endif
 
-static LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LONG lrecnr)
+LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LONG lrecnr)
 {
     int retry_count, retries;
     int unit = dev;
@@ -513,8 +514,8 @@ static LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LO
 
         /* convert logical sectors to physical ones */
         sectors = blkdev[dev].bpb.recsiz >> units[blkdev[dev].unit].psshift;
-        lcount *= sectors;
-        lrecnr *= sectors;
+        lcount *= (WORD)sectors;
+        lrecnr *= (WORD)sectors;
 
         /* check if the count fits into this partition */
         if ((lrecnr < 0) || (blkdev[dev].size > 0
@@ -839,7 +840,7 @@ LONG blkdev_getbpb(WORD dev)
  * blkdev_mediach - BIOS media change vector
  */
 
-static LONG blkdev_mediach(WORD dev)
+LONG blkdev_mediach(WORD dev)
 {
     BLKDEV *b;
     UWORD unit;
