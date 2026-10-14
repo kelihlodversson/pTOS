@@ -31,9 +31,11 @@
 
 /*
  * How many megabytes at the start of the RAM are also mapped where the RAM
- * really is, for the code that is running there, at its physical address,
- * when the MMU is switched on.  startup.S drops them with
- * virt_mmu_drop_identity() after the jump into virtual addressing.
+ * really is.  The code is running there, at its physical address, when the
+ * MMU is switched on, and a software reset comes back to it to switch the
+ * MMU off again, so the mapping stays.  The RAM is limited to what fits
+ * below VIRT_RAM_BASE (VIRT_MAX_RAM_SIZE), so it never overlaps the RAM's
+ * own mapping at virtual 0.
  */
 #define IDENTITY_SECTIONS   16
 
@@ -110,8 +112,7 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
     /* the first part of the RAM where it physically is, for the code that
      * is executing there right now, pre-MMU, and must keep executing from
      * immediately after the MMU-enable write below, until startup.S's
-     * explicit jump into virtual addressing.  It can overlap the RAM above
-     * when that is more than 1 GB. */
+     * explicit jump into virtual addressing, and again on a reset. */
     for (i = 0; i < IDENTITY_SECTIONS && i < ram_sections; i++)
         section_entry(&table[ram_base_section + i],
                       (ram_base_section + i) * MEGABYTE, TRUE);
@@ -145,40 +146,6 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
     /* Context-synchronize before relying on the new translation regime --
      * required by the architecture, and specifically what makes the very
      * next instruction fetch (back in startup.S) behave predictably. */
-    flush_prefetch_buffer();
-}
-
-/*
- * Back to one mapping of the RAM, at virtual 0, once the code is running
- * there: the sections at the physical address are unmapped, or are the
- * RAM's own mapping again when it reaches that far (> 1 GB).  'ram_size_bytes'
- * is the size given to virt_mmu_bootstrap().  The page table is in the RAM's
- * last megabyte, which is virtual ram_size_bytes - 1 MB.
- */
-void virt_mmu_drop_identity(ULONG ram_size_bytes)
-{
-    struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *table =
-        (struct TARMV6MMU_LEVEL1_SECTION_DESCRIPTOR *)
-            (ram_size_bytes - MEGABYTE);
-    ULONG ram_sections = ram_size_bytes / MEGABYTE;
-    ULONG ram_base_section = VIRT_RAM_BASE / MEGABYTE;
-    ULONG i;
-
-    for (i = 0; i < IDENTITY_SECTIONS && i < ram_sections; i++)
-    {
-        ULONG section = ram_base_section + i;
-
-        if (section < ram_sections)
-            section_entry(&table[section], section * MEGABYTE + VIRT_RAM_BASE,
-                          TRUE);
-        else
-            *(volatile ULONG_ALIAS *)&table[section] = 0;
-    }
-
-    flush_data_cache_all();     /* the table walker must see the new entries */
-    asm volatile ("mcr p15, 0, %0, c8, c7,  0" : : "r" (0));  /* invalidate unified TLB */
-    flush_branch_target_cache();
-    data_sync_barrier();
     flush_prefetch_buffer();
 }
 

@@ -25,10 +25,12 @@
 
 /* The RAM the port assumes when the device tree does not say how much there
  * is, and the most it uses.  The RAM is mapped at virtual 0 (see virt_mmu.h),
- * so it can be as big as the free part of the address space below the
- * devices; the limit keeps phystop a positive LONG, like on virt-m68k. */
+ * so it can be as big as the address space below VIRT_RAM_BASE, where the
+ * first megabytes of the RAM are mapped a second time, at their physical
+ * address, for the MMU switches at boot and reset.  The limit also keeps
+ * phystop a positive LONG, like on virt-m68k. */
 #define VIRT_DEFAULT_RAM_SIZE   VIRT_UL(0x08000000)
-#define VIRT_MAX_RAM_SIZE       VIRT_UL(0x7f000000)
+#define VIRT_MAX_RAM_SIZE       VIRT_UL(0x40000000)
 
 /*
  * The devices.  Their hardware (physical) addresses are the ones named

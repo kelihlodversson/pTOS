@@ -19,8 +19,8 @@
  *     low TOS system-variable addresses (see tosvars.ld) resolve to
  *     real RAM.
  *   - the first 16 MiB of that RAM are also mapped where they physically
- *     are, for the code executing there when the MMU is switched on; see
- *     virt_mmu_drop_identity().
+ *     are, for the code executing there when the MMU is switched on or off
+ *     (a software reset); this mapping is kept.
  *   - the board's devices are mapped out of the RAM's way, with the
  *     hardware address 0x08000000 and up at virtual 0xf0000000 + that
  *     address, and 0x10000000 and up (PCIe) at 0xc0000000 + (that address
@@ -34,14 +34,6 @@
  * valid yet, only literal constants and its own parameters/locals.
  */
 void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys);
-
-/*
- * Called once the code is running at its virtual address (so after the
- * jump in startup.S), with the same RAM size: removes the physical alias
- * of the start of the RAM.  The page table must be at the top of the RAM,
- * in its last megabyte.
- */
-void virt_mmu_drop_identity(ULONG ram_size_bytes);
 
 /*
  * Translates a linked (virtual, low-window) address of RAM -- e.g. the

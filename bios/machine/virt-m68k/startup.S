@@ -116,6 +116,24 @@ C_SYM(main):
         // (tosvars.ld); bios/biosmem.c's bmem_init() reads it directly to
         // size the entire free-memory pool, and the virtio-gpu framebuffer
         // is allocated just below it, so it has to be right.
+        //
+        // A software reset (warm_reset in bios/arch/m68k/panicasm.S) comes
+        // back here, but QEMU does not create the list again, and the
+        // memory above __ebss is in use by then.  _warm_magic and _phystop
+        // are sysvars outside the .bss: when the former says this is not the
+        // first boot, the latter is the size found the first time.
+#if CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
+        move.l  #0x5741524D,d0          // WARM_MAGIC
+        cmp.l   C_SYM(warm_magic).w,d0
+        jne     bi_scan
+        move.l  C_SYM(phystop).w,d1
+        cmp.l   #0x00100000,d1
+        jcs     bi_scan
+        cmp.l   #0x7f000000,d1
+        jhi     bi_scan
+        jra     bi_done
+bi_scan:
+#endif
         lea     __ebss,a0
         move.l  a0,d0
         addq.l  #1,d0

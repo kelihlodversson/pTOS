@@ -203,9 +203,11 @@ addresses, and QEMU's ELF loader is what places it correctly.  Run it with:
         -d guest_errors -serial stdio
 
 The RAM size follows -m, read from the memory node of the device tree QEMU
-passes in r2 (128 MiB is assumed without one): from 8 MiB up to just under
-2 GiB is used, the rest is ignored.  The RAM, which is at 0x40000000 on this
-board, is mapped at virtual address 0, where the kernel is linked, and the
+passes in r2 (128 MiB is assumed without one): from 8 MiB up to 1 GiB is
+used, the rest is ignored.  The RAM, which is at 0x40000000 on this
+board, is mapped at virtual address 0, where the kernel is linked (its first
+16 MiB are also mapped at the physical address, which a software reset needs
+to switch the MMU off), and the
 devices are moved out of its way: the hardware addresses from 0x08000000 up
 to 0x0fffffff (the GIC, the UART, the virtio-mmio transports) are at 0xf0000000
 plus that address, and the PCIe windows, which start at 0x10000000, at

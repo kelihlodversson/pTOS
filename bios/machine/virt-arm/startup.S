@@ -14,7 +14,6 @@
         .extern C_SYM(biosmain)
         .extern __endvdibss
         .extern C_SYM(virt_mmu_bootstrap)
-        .extern C_SYM(virt_mmu_drop_identity)
         .extern C_SYM(phystop)
         .extern __bss
         .extern __ebss
@@ -109,6 +108,42 @@ C_SYM(main):
     mov r8, r0
     mov r9, r1
     mov r10, r2
+    mov r7, #0                  /* 1: a restart, not the first boot */
+
+    /*
+     * A software reset (cold_reset/warm_reset in bios/arch/arm/panicasm.S)
+     * branches here with the MMU on and the code running at its virtual
+     * address, where the early stack and the device tree below do not
+     * exist.  Take over what the first boot found (the RAM size, from
+     * _phystop, and the registers saved in arm_boot_regs), then switch
+     * to the physical alias of this code, which the identity mapping of
+     * the start of the RAM keeps, and turn the MMU and the caches off, as
+     * they are at power on.  r3-r6 only: r0-r2 hold the boot loader's.
+     */
+    mrc p15, 0, r3, c1, c0, 0
+    tst r3, #1                 /* SCTLR.M */
+    beq 1f
+    mov r7, #1
+    bl  C_SYM(flush_data_cache_all)
+    ldr r4, =C_SYM(phystop)
+    ldr r11, [r4]
+    add r11, r11, #0x100000     /* the RAM window */
+    ldr r4, =C_SYM(arm_boot_regs)
+    ldmia r4, {r8-r10}
+    ldr r4, =0f
+    add r4, r4, #VIRT_RAM_BASE
+    bx  r4
+0:  mrc p15, 0, r3, c1, c0, 0
+    ldr r4, =0x1805             /* M, C, Z and I */
+    bic r3, r3, r4
+    mcr p15, 0, r3, c1, c0, 0
+    mov r3, #0
+    mcr p15, 0, r3, c8, c7, 0   /* invalidate the TLB */
+    mcr p15, 0, r3, c7, c5, 0   /* invalidate the instruction cache */
+    mcr p15, 0, r3, c7, c5, 6   /* and the branch predictor */
+    dsb
+    isb
+1:
 
     /*
      * How much RAM there is: QEMU's -m, from the memory node of the device
@@ -119,9 +154,12 @@ C_SYM(main):
      * VIRT_MAX_RAM_SIZE allows and rounded down to whole megabytes.  r11
      * (callee-saved) keeps it until the MMU is set up.
      */
+    cmp r7, #0
+    movne r0, r11               /* a restart: the size is known */
+    bne 5f
     mov r0, r10
     bl  virt_fdt_ram_size
-    cmp r0, #0
+5:  cmp r0, #0
     ldreq r0, =VIRT_DEFAULT_RAM_SIZE
     ldr r1, =VIRT_MAX_RAM_SIZE
     cmp r0, r1
@@ -164,8 +202,6 @@ virt_arm_post_mmu:
      * The physical alias of the start of the RAM is not needed any more.
      */
     sub sp, r11, #0x10000
-    mov r0, r11
-    bl  C_SYM(virt_mmu_drop_identity)
     ldr r4, =hello_msg_virt
     bl  print_string
 
@@ -230,6 +266,8 @@ virt_arm_post_mmu:
      * minus VIRT_RAM_BASE.  If it is not in the window, there is nothing
      * the code could read, so say there is none.
      */
+    cmp r7, #0
+    bne 3f                      /* a restart: translated by the first boot */
     cmp r10, #0
     beq 3f
     ldr r0, =VIRT_RAM_BASE
