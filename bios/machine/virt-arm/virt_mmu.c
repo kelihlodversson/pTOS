@@ -101,7 +101,7 @@ void virt_mmu_bootstrap(ULONG ram_size_bytes, void *pagetable_phys)
      * (volatile: left alone, the compiler turns this into NEON stores, and
      * the FPU is not enabled yet) */
     for (i = 0; i < PAGE_TABLE_ENTRIES; i++)
-        *(volatile ULONG *)&table[i] = 0;
+        *(volatile ULONG_ALIAS *)&table[i] = 0;
 
     /* the RAM, where the TOS system variables need it: at virtual 0 */
     for (i = 0; i < ram_sections; i++)
@@ -172,7 +172,7 @@ void virt_mmu_drop_identity(ULONG ram_size_bytes)
             section_entry(&table[section], section * MEGABYTE + VIRT_RAM_BASE,
                           TRUE);
         else
-            *(ULONG *)&table[section] = 0;
+            *(volatile ULONG_ALIAS *)&table[section] = 0;
     }
 
     flush_data_cache_all();     /* the table walker must see the new entries */

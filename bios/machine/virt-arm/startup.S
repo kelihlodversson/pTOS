@@ -158,9 +158,10 @@ C_SYM(main):
 virt_arm_post_mmu:
     /*
      * Running at the virtual address now, with the RAM at virtual 0: the
-     * scratch stack is the last 64 KiB of it (the early physical stack
-     * was the same bytes), until the switch to C_SYM(stktop) below.  The
-     * physical alias of the start of the RAM is not needed any more.
+     * scratch stack is a new one, growing down from 64 KiB below the top of
+     * the RAM (not the early stack of the first 8 MiB, which is only mapped
+     * for the MMU switch itself), until the switch to C_SYM(stktop) below.
+     * The physical alias of the start of the RAM is not needed any more.
      */
     sub sp, r11, #0x10000
     mov r0, r11
@@ -222,6 +223,21 @@ virt_arm_post_mmu:
      * loader registers saved in r8-r10 above.  Mirrors
      * bios/machine/raspi/startup.S.
      */
+    /*
+     * r10 is the physical address of the device tree (or ATAG list), which
+     * was reached through the physical alias of the start of the RAM
+     * (dropped above); the same bytes are in the low window, at the address
+     * minus VIRT_RAM_BASE.  If it is not in the window, there is nothing
+     * the code could read, so say there is none.
+     */
+    cmp r10, #0
+    beq 3f
+    ldr r0, =VIRT_RAM_BASE
+    sub r0, r10, r0
+    cmp r0, r11
+    movhs r10, #0
+    movlo r10, r0
+3:
     ldr r3, =C_SYM(arm_boot_regs)
     stmia r3, {r8-r10}
 
@@ -248,8 +264,10 @@ virt_arm_post_mmu:
  * In:  r0 = address of the device tree
  * Out: r0 = the size in bytes found in the "reg" property of the first
  *      memory node ("memory" or "memory@..."), or 0 if there is no valid
- *      tree or no such node.  r1-r7 and r12 are used; there is no stack,
- *      since this runs before the RAM size, and so the stack, is known.
+ *      tree or no such node, or if the tree is not consistent with its own
+ *      size (an offset or a length that leaves it).  r1-r7, r11 and r12 are
+ *      used; there is no stack, since this runs before the RAM size, and so
+ *      the stack, is known.
  *
  * Just enough of the format (see the Devicetree Specification, "Flattened
  * Devicetree (DTB) Format") to do that.  The header and the structure block
@@ -258,8 +276,11 @@ virt_arm_post_mmu:
  * multiple of 4), 2 = end node, 3 = property (then the length and the offset
  * of its name in the strings block, and the data padded to a multiple of 4),
  * 4 = nop, 9 = end.  Everything is read in aligned words or bytes, as the
- * MMU is not on yet.  "reg" has 2 address and 2 size cells on this board
- * (4 words, the size being the last two), or 1 and 1 (2 words).
+ * MMU is not on yet, and nothing is read from beyond the end of the tree
+ * (r11, header field totalsize): a damaged tree must give 0, not a data abort
+ * before the exception vectors are installed.  "reg" has 2 address and 2 size
+ * cells on this board (4 words, the size being the last two), or 1 and 1
+ * (2 words).
  */
 virt_fdt_ram_size:
     ldr r1, [r0]
@@ -267,15 +288,29 @@ virt_fdt_ram_size:
     ldr r2, =0xd00dfeed         /* FDT_MAGIC */
     cmp r1, r2
     bne fdt_none
+    ldr r11, [r0, #4]           /* totalsize */
+    rev r11, r11
+    cmp r11, #0x28              /* the header is 40 bytes */
+    blo fdt_none
     ldr r1, [r0, #8]            /* off_dt_struct */
     rev r1, r1
-    add r1, r0, r1              /* r1: the next token */
     ldr r3, [r0, #12]           /* off_dt_strings */
     rev r3, r3
+    cmp r1, r11
+    bhs fdt_none
+    cmp r3, r11
+    bhs fdt_none
+    tst r1, #3                  /* the structure block is word aligned */
+    bne fdt_none
+    add r1, r0, r1              /* r1: the next token */
     add r3, r0, r3              /* r3: the strings block */
+    add r11, r0, r11            /* r11: the end of the tree */
     mov r4, #0                  /* r4: depth of the node we are in */
     mov r5, #0                  /* r5: depth of the memory node, 0 if not in it */
 fdt_token:
+    add r2, r1, #4              /* room for the token? */
+    cmp r2, r11
+    bhi fdt_none
     ldr r2, [r1], #4
     rev r2, r2
     cmp r2, #1
@@ -292,6 +327,9 @@ fdt_none:
 
 fdt_begin:
     add r4, r4, #1
+    add r2, r1, #8              /* room to look at the start of the name? */
+    cmp r2, r11
+    bhi fdt_none
     cmp r5, #0
     bne fdt_skip_name           /* already inside the memory node */
     ldr r6, [r1]                /* is the name "memory" + NUL or '@'? */
@@ -307,6 +345,8 @@ fdt_begin:
     cmpne r6, #'@'
     moveq r5, r4
 fdt_skip_name:
+    cmp r1, r11                 /* the name must end inside the tree */
+    bhs fdt_none
     ldrb r6, [r1], #1
     cmp r6, #0
     bne fdt_skip_name
@@ -321,15 +361,27 @@ fdt_end:
     b   fdt_token
 
 fdt_prop:
+    add r2, r1, #8              /* room for the length and the name offset? */
+    cmp r2, r11
+    bhi fdt_none
     ldr r6, [r1], #4            /* length of the data */
     rev r6, r6
     ldr r7, [r1], #4            /* offset of the name */
     rev r7, r7
+    sub r2, r11, r1             /* the data must be inside the tree */
+    cmp r6, r2
+    bhi fdt_none
     cmp r5, #0
     beq fdt_next_prop
     cmp r5, r4
     bne fdt_next_prop           /* not a property of the memory node itself */
-    add r7, r3, r7              /* its name: is it "reg"? */
+    sub r2, r11, r3             /* its name: inside the strings, with room */
+    cmp r7, r2                  /* for "reg" and its NUL? */
+    bhs fdt_next_prop
+    sub r2, r2, r7
+    cmp r2, #4
+    blo fdt_next_prop
+    add r7, r3, r7              /* is it "reg"? */
     ldrb r12, [r7]
     cmp r12, #'r'
     bne fdt_next_prop
