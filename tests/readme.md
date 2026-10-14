@@ -150,3 +150,51 @@ placeholder file (`.keep`) since git can't track empty directories.
 Nothing here is unique to `stack_alignment` — add as many
 `tests/<name>/<name>.c` files as needed and they all run in one pass,
 reported individually and summarized together.
+
+## Suites that need AES/VDI
+
+`tools/pBench/gem.c` (the minimal AES/VDI bindings of pBench, see
+`doc/pbench.txt`) is linked into `runtests.tos` and `tools/pBench` is on the
+include path of every suite, so a suite can `#include "gem.h"` and call
+`appl_init()`, `v_opnvwk()` and the VDI text and drawing calls without
+anything else. Bindings that a suite needs and `gem.h` lacks belong there.
+
+### text_blit
+
+`text_blit` checks VDI text output on Atari ST/STE style bitplane screens
+(1, 2 or 4 planes, 320 or 640 pixels wide). It is part of the blitter text
+epic (#498), and is skipped, and reported as `SKIP`, on every other machine:
+without a blitter (`Blitmode()` says so), on ARM and on screens that are not
+bitplane screens it has nothing to compare.
+
+It draws strings on a band of the screen (restored afterwards), starting
+from a fixed pseudo-random pattern, in three groups:
+
+- plain text (no effects, no rotation) in every system font, writing mode,
+  a few colours, 18 horizontal alignments and 8 clip rectangles, compared
+  with a model in the test that draws the glyphs straight from the font data;
+- text with every combination of the effects (bold, light, skewed, underline,
+  outline) and rotation (0, 90, 180, 270 degrees), and
+- text with effects under clip rectangles, where the last two groups compare
+  the output with the blitter disabled and enabled with `Blitmode()`.
+
+While text output does not use the blitter at all, both renderings come from
+the same code and the comparison between them cannot fail; the model is what
+is checked then. A blitter implementation of text output has to produce
+exactly the pixels of the software one, which is what the comparison
+guarantees from then on.
+
+Failures print the first few differing cases (string, position, point size,
+effects, writing mode, colour, rotation, clip rectangle and the first byte
+that differs). It needs about two minutes under Hatari, which is what to run
+it on (`--machine ste`; `--tos-res low|med|high` for the three screen modes):
+
+```sh
+make atari512_defconfig && make
+make test-hd
+hatari --tos ptos512k.img --machine ste --memsize 4 --sound off \
+  --fast-forward on --acsi test-hd.img --conout 2
+```
+
+Hatari does not exit when the tests are done (the harness returns to the
+desktop), so run it under `timeout -s KILL` and read the output.
