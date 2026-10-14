@@ -31,18 +31,22 @@ import os
 import re
 import sys
 
-LINE = re.compile(r'^(\D.*?)\s+(\d+)\.(\d{3}) s\s')
+LINE = re.compile(r'^(\D.*?)\s+(\d+)\.(\d{3}) s\s+(.*?)\s*$')
 MEAN_LIMIT = 3.0        # percent
 TEST_LIMIT = 8.0        # percent
 
 
 def read(path):
+    # name -> time in ms, and name -> the work done ("65 windows"): a result
+    # that did less work (a test stopping early) must not pass as faster
     times = {}
+    work = {}
     for line in open(path):
         m = LINE.match(line)
         if m:
             times[m.group(1)] = int(m.group(2)) * 1000 + int(m.group(3))
-    return times
+            work[m.group(1)] = m.group(4)
+    return times, work
 
 
 def emulator(path):
@@ -81,7 +85,14 @@ def main():
 
     files = sorted(glob.glob(os.path.join(a.baselines, a.key + '-*.txt')))
     if not files:
-        sys.exit('no baselines for %s in %s' % (a.key, a.baselines))
+        text = ('### pBench: no baselines\n\nThere are no `%s-*.txt` files '
+                'in `%s`; see "Performance baselines for CI" in '
+                '`doc/pbench.txt`.\n' % (a.key, a.baselines))
+        print(text)
+        if a.report:
+            with open(a.report, 'w') as f:
+                f.write(text)
+        sys.exit(1)
     out = []
     worse = better = missing = 0
     for path in files:
@@ -94,7 +105,7 @@ def main():
             out.append('')
             missing += 1
             continue
-        base, res = read(path), read(res_path)
+        (base, base_work), (res, res_work) = read(path), read(res_path)
         if emulator(path) != emulator(res_path):
             out.append('Note: the baseline was made with %s, this run used %s;'
                        ' a different Hatari can move the numbers.'
@@ -103,6 +114,16 @@ def main():
         if set(base) != set(res):
             out.append('The tests differ from the baseline: %s.'
                        % ', '.join(sorted(set(base) ^ set(res))))
+            out.append('')
+            missing += 1
+            continue
+        bad = [n for n in base if n in res and base_work[n] != res_work[n]]
+        if bad:
+            out.append('The work done differs from the baseline, so the times '
+                       'cannot be compared: %s.'
+                       % ', '.join('%s (%s, was %s)' % (n, res_work[n],
+                                                        base_work[n])
+                                   for n in bad))
             out.append('')
             missing += 1
             continue

@@ -103,7 +103,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends hatari
           hatari --version || true     # (it exits with 1)
 
+      # A mode that gave no result is reported by the comparison below, which
+      # still has to run (and fails the job) so that the report, the summary
+      # and the comment are not lost
       - name: Run pBench in every ST screen mode, with and without blitter
+        continue-on-error: true
         env:
           CONFIG: ${{ matrix.config }}
         run: |
