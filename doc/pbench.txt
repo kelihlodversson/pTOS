@@ -233,7 +233,8 @@ The workflow .github/workflows/pbench.yml runs pBench under Hatari on every
 pull request to master, in the three ST screen modes with and without the
 blitter, and compares the times with pTOS's own baselines in
 tools/pBench/ci-baselines (KEY-MODE-blitter.txt and KEY-MODE-noblitter.txt,
-the key being the configuration, atari512).  These are not the TOS 2.06 and
+the key being the configuration: atari512, and atari256, which is built with
+-mfastcall).  These are not the TOS 2.06 and
 EmuTOS baselines above, which need ROMs CI does not have and answer another
 question.  Only Hatari takes part: its clock is the emulated one, so two runs
 of the same image give the same times to the millisecond, wherever they are
