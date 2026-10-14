@@ -226,6 +226,42 @@ the pTOS build being measured exactly as they should: a change that makes
 v_gtext() slower makes pBench's "VDI Text" slower.
 
 
+Performance baselines for CI
+----------------------------
+
+The workflow .github/workflows/pbench.yml runs pBench under Hatari on every
+pull request to master, in the three ST screen modes with and without the
+blitter, and compares the times with pTOS's own baselines in
+tools/pBench/ci-baselines (KEY-MODE-blitter.txt and KEY-MODE-noblitter.txt,
+the key being the configuration, atari512).  These are not the TOS 2.06 and
+EmuTOS baselines above, which need ROMs CI does not have and answer another
+question.  Only Hatari takes part: its clock is the emulated one, so two runs
+of the same image give the same times to the millisecond, wherever they are
+made.  QEMU's clock is the host's, so its numbers cannot decide anything.
+
+tools/pBench/check-baseline.py makes the comparison.  The check fails if the
+geometric mean over the ten tests (the Display score) is more than 3% slower
+than the baseline, or any test more than 8% slower, or pBench did not finish.
+If the mean is more than 3% faster, or a test more than 8%, the workflow
+comments on the pull request, so that an improvement is noticed.  The comment
+is updated by the next push to the pull request, not repeated.  (A pull
+request from a fork cannot comment; the table is in the job summary.)
+
+When a change moves the performance on purpose, in either direction, make new
+baselines from the new build, with the same Hatari as CI uses (the report
+says if it differs from the one in the baseline's header), and commit them
+with the change:
+
+    make atari512_defconfig && make && make pbench.prg
+    tools/pBench/run-baselines.py --pbench pbench.prg \
+        --out tools/pBench/ci-baselines \
+        --system atari512=ptos512k.img="pTOS atari512 (COMMIT)"
+
+To add another configuration to the check, add it to the two matrices of the
+workflow and make its baselines the same way, with the configuration's name
+as the key.
+
+
 Notes
 -----
 

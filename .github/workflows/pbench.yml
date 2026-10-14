@@ -1,0 +1,151 @@
+#
+# Performance check for pTOS: runs pBench (tools/pBench, doc/pbench.txt) under
+# Hatari and compares the result with the baseline kept in the repository.
+#
+# A change that makes the graphics significantly slower fails the check; one
+# that makes them significantly faster gets a comment on the pull request, so
+# that the improvement is noticed and the baseline moved up on purpose.
+#
+# Only Hatari is used: its clock is the emulated one, so the numbers do not
+# depend on the runner (QEMU's do).
+#
+
+name: pBench
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.config }}
+    # Pinned like the build workflow: the m68k toolchain comes from a PPA.
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        # The key of the baselines in tools/pBench/ci-baselines is the name of
+        # the configuration.
+        config: [atari512]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install kconfiglib
+        run: python3 -m pip install --disable-pip-version-check kconfiglib==14.1.0
+
+      - name: Check whether this config needs -mfastcall
+        id: check-mfastcall
+        run: |
+          make "${{ matrix.config }}_defconfig"
+          if grep -qE '^CONF_WITH_MFASTCALL=y' .config; then
+            echo "mfastcall=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "mfastcall=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: m68k
+          mfastcall: ${{ steps.check-mfastcall.outputs.mfastcall }}
+
+      - name: Build the system and pBench
+        run: |
+          make
+          make pbench.prg
+          mkdir products
+          cp ptos512k.img pbench.prg products/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pbench-${{ matrix.config }}
+          path: products/
+          retention-days: 7
+
+  measure:
+    name: Measure ${{ matrix.config }}
+    needs: build
+    # A newer Hatari than the build's runner has in its packages.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [atari512]
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pbench-${{ matrix.config }}
+          path: products
+
+      - name: Install Hatari
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends hatari
+          hatari --version
+
+      - name: Run pBench in every ST screen mode, with and without blitter
+        env:
+          CONFIG: ${{ matrix.config }}
+        run: |
+          python3 tools/pBench/run-baselines.py \
+            --pbench products/pbench.prg --out results --jobs 3 \
+            --system "${CONFIG}=products/ptos512k.img=pTOS ${CONFIG} (${GITHUB_SHA::8})"
+
+      - name: Compare with the baseline
+        id: compare
+        env:
+          CONFIG: ${{ matrix.config }}
+        run: |
+          rc=0
+          python3 tools/pBench/check-baseline.py --report report.md \
+            tools/pBench/ci-baselines results "$CONFIG" || rc=$?
+          cat report.md >>"$GITHUB_STEP_SUMMARY"
+          # 0 as the baseline, 1 slower (or no result), 2 faster
+          echo "status=$rc" >>"$GITHUB_OUTPUT"
+
+      # Update the comment this job made on an earlier push, or make one when
+      # there is something to say: a significant change, in either direction.
+      # A pull request from a fork has a read-only token, so there the
+      # summary above is all there is.
+      - name: Comment on the pull request
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          CONFIG: ${{ matrix.config }}
+          STATUS: ${{ steps.compare.outputs.status }}
+        run: |
+          marker="<!-- pbench-check:${CONFIG} -->"
+          id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+                 --paginate --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" | head -n1)
+          if [ -z "$id" ] && [ "$STATUS" = 0 ]; then
+            exit 0
+          fi
+          { echo "$marker"; cat report.md; echo; echo "Commit ${GITHUB_SHA::8}."; } >comment.md
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -F body=@comment.md >/dev/null
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -F body=@comment.md >/dev/null
+          fi
+
+      - name: Fail on a slowdown
+        if: steps.compare.outputs.status == '1'
+        run: |
+          echo "::error title=pBench::the graphics got significantly slower than tools/pBench/ci-baselines (see the summary)"
+          exit 1
