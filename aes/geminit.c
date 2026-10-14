@@ -718,6 +718,14 @@ void run_accs_and_desktop(void)
      * after the outer enable_interrupts() "restores" the already-masked sr
      * that the inner pair clobbered it with (issue #46).
      */
+    /*
+     * tikcod() ends by jumping to tiksav, but gsx_tick() only stores the
+     * previous timer vector in tiksav after vdi_vex_timv() has already
+     * installed tikcod() and re-enabled interrupts.  A timer tick arriving
+     * in that window would jump to address 0, so give tiksav a harmless
+     * value first: that tick just skips the (default) old vector.
+     */
+    tiksav = (void *)justretf;
     gl_ticktime = gsx_tick(&tikcod, &tiksav);
 
     /* set initial click rate: must do this after setting gl_ticktime */
