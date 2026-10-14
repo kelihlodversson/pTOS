@@ -1390,8 +1390,12 @@ void text_blt(void)
      * which the buffer, a single plane, does only once.  nothing else asks
      * for the buffer here, so the character has to stay as wide as it is
      * without it (mono_cell).
+     *
+     * not if it is clipped: the software path cuts the character to the
+     * clip rectangle first and thickens what is left, which the buffer,
+     * thickened first and cut afterwards, does not reproduce.
      */
-    if (!need_preblit && blitter_is_enabled
+    if (!need_preblit && blitter_is_enabled && !clipped
      && (vars.STYLE & (F_THICKEN | F_SKEW)) == F_THICKEN)
     {
         need_preblit = TRUE;
