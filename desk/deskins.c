@@ -123,7 +123,7 @@ static WORD grid_free(WORD x,WORD y)
     {
         if (pa->a_flags & AF_ISDESK)    /* icon on desktop? */
         {
-            if ((x == pa->a_xspot/G.g_icw) && (y == pa->a_yspot/G.g_ich))
+            if ((x == divs(pa->a_xspot, G.g_icw)) && (y == divs(pa->a_yspot, G.g_ich)))
             {
                 return FALSE;
             }
@@ -157,12 +157,12 @@ void snap_icon(WORD x, WORD y, WORD *px, WORD *py, WORD sxoff, WORD syoff)
      * and convert it to pixels
      */
     icw  = G.g_icw;
-    columns = G.g_desk.g_w / icw;
-    spare_pixels = G.g_desk.g_w - (columns * icw);
+    columns = divs(G.g_desk.g_w, icw);
+    spare_pixels = G.g_desk.g_w - muls(columns, icw);
 
-    xgrid = (x - sxoff + (icw / 2)) / icw;  /* x grid position */
+    xgrid = divs(x - sxoff + (icw / 2), icw);  /* x grid position */
     xgrid = min(xgrid, columns-1);          /* clamp it for safety */
-    *px = (xgrid * icw) + (spare_pixels / columns);
+    *px = muls(xgrid, icw) + divs(spare_pixels, columns);
 
     /*
      * Determine:
@@ -173,13 +173,13 @@ void snap_icon(WORD x, WORD y, WORD *px, WORD *py, WORD sxoff, WORD syoff)
      * and convert it to pixels
      */
     ich = G.g_ich;
-    rows = G.g_desk.g_h / ich;
-    spare_pixels = G.g_desk.g_h - (rows * ich);
+    rows = divs(G.g_desk.g_h, ich);
+    spare_pixels = G.g_desk.g_h - muls(rows, ich);
 
     y -= G.g_desk.g_y;
-    ygrid  = (y - syoff + (ich / 2)) / ich; /* y grid position */
+    ygrid  = divs(y - syoff + (ich / 2), ich); /* y grid position */
     ygrid = min(ygrid, rows-1);             /* clamp it for safety */
-    *py = (ygrid * ich) + (spare_pixels / rows);
+    *py = muls(ygrid, ich) + divs(spare_pixels, rows);
     *py += G.g_desk.g_y;
 }
 
@@ -198,11 +198,11 @@ static void ins_posdisk(WORD dx, WORD dy, WORD *pdx, WORD *pdy)
 {
     WORD  xcnt, ycnt, xin, yin, x, y;
 
-    xcnt = G.g_desk.g_w / G.g_icw;  /* number of grid positions */
-    ycnt = G.g_desk.g_h / G.g_ich;
+    xcnt = divs(G.g_desk.g_w, G.g_icw);  /* number of grid positions */
+    ycnt = divs(G.g_desk.g_h, G.g_ich);
 
-    xin = dx / G.g_icw;             /* input grid position */
-    yin = dy / G.g_ich;
+    xin = divs(dx, G.g_icw);             /* input grid position */
+    yin = divs(dy, G.g_ich);
 
     for (x = xin, y = yin; y < ycnt; y++, x = 0)
     {
@@ -210,8 +210,8 @@ static void ins_posdisk(WORD dx, WORD dy, WORD *pdx, WORD *pdy)
         {
             if (grid_free(x,y))
             {
-                *pdx = dx + (x - xin) * G.g_icw;
-                *pdy = dy + (y - yin) * G.g_ich;
+                *pdx = dx + muls(x - xin, G.g_icw);
+                *pdy = dy + muls(y - yin, G.g_ich);
                 return;
             }
         }

@@ -93,7 +93,7 @@ void win_view(void)
     GRECT t;
 
     wind_calc_grect(1, WINDOW_STYLE, &G.g_desk, &t);
-    G.g_icols = max(1, t.g_w / G.g_iwspc);
+    G.g_icols = max(1, divs(t.g_w, G.g_iwspc));
     }
 #endif
 }
@@ -174,8 +174,8 @@ WNODE *win_alloc(WORD obid)
         pw->w_root = wob;
         pw->w_cvcol = 0;
         pw->w_cvrow = 0x0;
-        pw->w_pncol = (pt->g_w - gl_wchar) / G.g_iwspc;
-        pw->w_pnrow = (pt->g_h - gl_hchar) / G.g_ihspc;
+        pw->w_pncol = divs(pt->g_w - gl_wchar, G.g_iwspc);
+        pw->w_pnrow = divs(pt->g_h - gl_hchar, G.g_ihspc);
         pw->w_vncol = 0;
         pw->w_vnrow = 0x0;
         pw->w_id = wind_create_grect(WINDOW_STYLE, &G.g_desk);
@@ -322,12 +322,12 @@ static void win_ocalc(WNODE *pwin, WORD wfit, WORD hfit, FNODE **ppstart)
     if (G.g_ifit)
     {
         pwin->w_vncol = wfit;
-        pwin->w_vnrow = (cnt + wfit - 1) / wfit;
+        pwin->w_vnrow = divs(cnt + wfit - 1, wfit);
     }
     else
     {
         pwin->w_vncol = min(cnt, G.g_icols);
-        pwin->w_vnrow = (cnt + G.g_icols - 1) / G.g_icols;
+        pwin->w_vnrow = divs(cnt + G.g_icols - 1, G.g_icols);
     }
     /*
      * w_vncol must never be less than wfit (the window's physical column
@@ -342,7 +342,7 @@ static void win_ocalc(WNODE *pwin, WORD wfit, WORD hfit, FNODE **ppstart)
     if (pwin->w_vncol < wfit)
         pwin->w_vncol = wfit;
 #else
-    pwin->w_vnrow = (cnt + wfit - 1) / wfit;
+    pwin->w_vnrow = divs(cnt + wfit - 1, wfit);
 #endif
     if (pwin->w_vnrow < 1)
         pwin->w_vnrow = 1;
@@ -421,7 +421,7 @@ void win_bldview(WNODE *pwin, GRECT *r)
     obj_wfree(pwin->w_root, x, y, w, h);
 
     /* make pstart point at 1st file in current view */
-    win_ocalc(pwin, w/G.g_iwspc, h/G.g_ihspc, &pstart);
+    win_ocalc(pwin, divs(w, G.g_iwspc), divs(h, G.g_ihspc), &pstart);
 #if CONF_WITH_SIZE_TO_FIT
     o_wfit = min(pwin->w_pncol + 1, pwin->w_vncol - pwin->w_cvcol);
 #else
@@ -675,7 +675,7 @@ void win_dispfile(WNODE *pw, WORD file)
 #else
     col = pw->w_pncol;
 #endif
-    delcv = win_delta(pw, FALSE, file/col); /* FALSE => calculate vertical delta */
+    delcv = win_delta(pw, FALSE, divs(file, col)); /* FALSE => calculate vertical delta */
     pw->w_cvrow += delcv;
 
     /*
@@ -683,7 +683,7 @@ void win_dispfile(WNODE *pw, WORD file)
      * while still displaying the item
      */
 #if CONF_WITH_SIZE_TO_FIT
-    pw->w_cvcol = max(0, file%col - pw->w_pncol + 1);
+    pw->w_cvcol = max(0, mods(file, col) - pw->w_pncol + 1);
 #else
     pw->w_cvcol = 0;
 #endif

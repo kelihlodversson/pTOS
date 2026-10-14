@@ -277,18 +277,18 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
         break;
     case 1:
         delv = fnt_ptr->top - fnt_ptr->half;
-        delh += (fnt_ptr->half * d2) / fnt_ptr->top;
+        delh += divs(muls(fnt_ptr->half, d2), fnt_ptr->top);
         break;
     case 2:
         delv = fnt_ptr->top - fnt_ptr->ascent;
-        delh += (fnt_ptr->ascent * d2) / fnt_ptr->top;
+        delh += divs(muls(fnt_ptr->ascent, d2), fnt_ptr->top);
         break;
     case 3:
         delv = fnt_ptr->top + fnt_ptr->bottom;
         break;
     case 4:
         delv = fnt_ptr->top + fnt_ptr->descent;
-        delh += (fnt_ptr->descent * d1) / fnt_ptr->bottom;
+        delh += divs(muls(fnt_ptr->descent, d1), fnt_ptr->bottom);
         break;
     case 5:
         delv = 0;
@@ -839,7 +839,7 @@ void vdi_vst_rotation(Vwk * vwk)
         angle -= 3600;
 
     /* this sets a value of 0, 900, 1800, 2700 or 3600, just like TOS3/TOS4 */
-    INTOUT[0] = vwk->chup = ((angle + 450) / 900) * 900;
+    INTOUT[0] = vwk->chup = divs(angle + 450, 900) * 900;
 }
 
 
@@ -1117,8 +1117,8 @@ void gdp_justified(Vwk * vwk)
      * calculate values for interword spacing
      */
     if (interword && spaces) {
-        delword = (max_x - width) / spaces;
-        just.rmword = (max_x - width) % spaces;
+        delword = divs(max_x - width, spaces);
+        just.rmword = mods(max_x - width, spaces);
 
         if (just.rmword < 0) {
             direction = -1;
@@ -1163,8 +1163,8 @@ void gdp_justified(Vwk * vwk)
      * calculate values for intercharacter spacing
      */
     if (interchar && cnt > 1) {
-        delchar = (max_x - width) / (cnt - 1);
-        just.rmchar = (max_x - width) % (cnt - 1);
+        delchar = divs(max_x - width, cnt - 1);
+        just.rmchar = mods(max_x - width, cnt - 1);
 
         if (just.rmchar < 0) {
             direction = -1;

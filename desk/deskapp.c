@@ -719,8 +719,8 @@ static void build_inf(char *infbuf, WORD xcnt, WORD ycnt)
     {
         if (drivemask&(1L<<i))
         {
-            drive_x = icon_index % xcnt; /* x position */
-            drive_y = icon_index / xcnt; /* y position */
+            drive_x = mods(icon_index, xcnt); /* x position */
+            drive_y = divs(icon_index, xcnt); /* y position */
             icon_type = (i > 1) ? IG_HARD : IG_FLOPPY;
             drive_letter = 'A' + i;
             text = desktop_str_addr(STDISK);
@@ -813,11 +813,11 @@ void app_start(void)
     G.g_wicon = (MAX_ICONTEXT_WIDTH * gl_wschar) + (2 * G.g_iblist[0].ib_xtext);
     G.g_hicon = G.g_iblist[0].ib_hicon + gl_hschar + 2;
 
-    xcnt = G.g_desk.g_w / (G.g_wicon+MIN_WINT); /* icon count */
-    G.g_icw = G.g_desk.g_w / xcnt;              /* width */
+    xcnt = divs(G.g_desk.g_w, G.g_wicon+MIN_WINT); /* icon count */
+    G.g_icw = divs(G.g_desk.g_w, xcnt);              /* width */
 
-    ycnt = G.g_desk.g_h / (G.g_hicon+MIN_HINT); /* icon count */
-    G.g_ich = G.g_desk.g_h / ycnt;              /* height */
+    ycnt = divs(G.g_desk.g_h, G.g_hicon+MIN_HINT); /* icon count */
+    G.g_ich = divs(G.g_desk.g_h, ycnt);              /* height */
 
 #if CONF_WITH_BACKGROUNDS
     /*
@@ -1200,9 +1200,9 @@ void app_save(WORD todisk)
         pws = &cnxsave->cs_wnode[i];
         ptmp = pws->pth_save;
         pcurr += sprintf(pcurr,"#W %02X %02X %02X %02X %02X %02X %02X",
-                        pws->hsl_save,pws->vsl_save,pws->x_save/gl_wchar,
-                        pws->y_save/gl_hchar,pws->w_save/gl_wchar,
-                        pws->h_save/gl_hchar,0);
+                        pws->hsl_save,pws->vsl_save,divs(pws->x_save, gl_wchar),
+                        divs(pws->y_save, gl_hchar),divs(pws->w_save, gl_wchar),
+                        divs(pws->h_save, gl_hchar),0);
         pcurr += sprintf(pcurr," %s@\r\n",(*ptmp!='@')?ptmp:"");
     }
 
@@ -1259,8 +1259,8 @@ void app_save(WORD todisk)
         }
         pcurr += sprintf(pcurr,"#%c",type);
         if (pa->a_flags & AF_ISDESK)
-            pcurr += sprintf(pcurr," %02X %02X",(pa->a_xspot/G.g_icw)&0x00ff,
-                            (max(0,(pa->a_yspot-G.g_desk.g_y))/G.g_ich)&0x00ff);
+            pcurr += sprintf(pcurr," %02X %02X",divs(pa->a_xspot, G.g_icw)&0x00ff,
+                            divs(max(0,(pa->a_yspot-G.g_desk.g_y)), G.g_ich)&0x00ff);
         pcurr += sprintf(pcurr," %02X %02X",pa->a_aicon&0x00ff,pa->a_dicon&0x00ff);
         if (pa->a_flags & AF_ISDESK)
             pcurr += sprintf(pcurr," %c",pa->a_letter?pa->a_letter:' ');

@@ -35,6 +35,7 @@
 #include "lisa.h"
 #include "disk.h"
 #include "acsi.h"
+#include "intmath.h"
 
 #if (CONF_WITH_MONSTER || CONF_WITH_IKBD_CLOCK)
 static UBYTE int2bcd(UWORD a)
@@ -494,7 +495,7 @@ static void monstersetdt(ULONG time)
 
     extract_time(&tm, LOWORD(time));
     extract_date(&dt, HIWORD(time));
-    dt.year = (dt.year + 1980) % 100;
+    dt.year = mods(dt.year + 1980, 100);
 
     write_ds1307(0, int2bcd(tm.second));    /* Seconds */
     write_ds1307(1, int2bcd(tm.minute));    /* Minute */
@@ -1045,7 +1046,7 @@ static void idosetdate(UWORD date)
     struct ymd dt;
 
     extract_date(&dt, date);
-    dt.year = (dt.year + 1980) % 100;
+    dt.year = mods(dt.year + 1980, 100);
 
     iclkbuf.year = int2bcd(dt.year);
     iclkbuf.month = int2bcd(dt.month);

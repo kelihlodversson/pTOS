@@ -215,7 +215,7 @@ static void fm_build(OBJECT *tree, WORD iconnum, WORD nummsg, WORD mlenmsg,
      */
     if (iconnum)
     {
-        hicon = (rs_bitblk[NOTEBB].bi_hl+gl_hchar-1) / gl_hchar;
+        hicon = divs(rs_bitblk[NOTEBB].bi_hl+gl_hchar-1, gl_hchar);
         r_set(&ic, 1+INTER_WSPACE, 1+INTER_HSPACE, 4, hicon);
         al.g_w += ic.g_w + 1 + INTER_WSPACE;
         ms.g_x = ic.g_x + ic.g_w + 1 + INTER_WSPACE;

@@ -26,6 +26,7 @@
 #include "raspi_screen.h"
 #include "../vdi/vdi_defs.h"    /* for phys_work stuff */
 #include "gsxdefs.h"
+#include "intmath.h"
 
 #define PLANE_OFFSET    2       /* interleaved planes */
 
@@ -297,7 +298,7 @@ blank_out (int topx, int topy, int botx, int boty)
     pairs = (botx - topx) / 2 + 1;      /* pairs of characters */
 
     /* calculate the BYTE offset from the end of one row to next start */
-    offs = linea_vars.v_lin_wr - pairs * 2 * linea_vars.v_planes;
+    offs = linea_vars.v_lin_wr - muls(pairs * 2, linea_vars.v_planes);
 
     /* # of lines in region - 1 */
     rows = (boty - topy + 1) * linea_vars.v_cel_ht;
@@ -404,7 +405,7 @@ static UBYTE *cell_addr(UWORD x, UWORD y)
          *
          * X displacement = even(X) * v_planes + Xmod2
          */
-        disx = linea_vars.v_planes * (x & ~1);
+        disx = muls(linea_vars.v_planes, x & ~1);
         if (IS_ODD(x)) {        /* Xmod2 = 0 ? */
             disx++;             /* Xmod2 = 1 */
         }
@@ -834,7 +835,7 @@ void scroll_up(UWORD top_line)
     src = dst + cell_wr;
 
     /* form # of bytes to move */
-    count = cell_wr * (linea_vars.v_cel_my - top_line);
+    count = cell_wr * (UWORD)(linea_vars.v_cel_my - top_line);
 
     /* move BYTEs of memory*/
     memmove(dst, src, count);
@@ -862,7 +863,7 @@ void scroll_down(UWORD start_line)
     dst = src + cell_wr;
 
     /* form # of bytes to move */
-    count = cell_wr * (linea_vars.v_cel_my - start_line);
+    count = cell_wr * (UWORD)(linea_vars.v_cel_my - start_line);
 
     /* move BYTEs of memory*/
     memmove(dst, src, count);

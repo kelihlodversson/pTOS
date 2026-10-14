@@ -55,6 +55,7 @@
 #include "biosext.h"
 #include "lineavars.h"      /* for MOUSE_BT, V_REZ_HZ */
 #include "asm.h"
+#include "intmath.h"
 
 /* Needed to force media change */
 #define MEDIACHANGE     0x02
@@ -795,7 +796,7 @@ static void show_file(char *name,LONG bufsize,char *iobuf)
     form_dial(FMD_START, 0,0,0,0, 0,0,scr_width,scr_height);
     clear_screen();
 
-    pagesize = (G.g_desk.g_y+G.g_desk.g_h)/gl_hchar - 1;
+    pagesize = divs(G.g_desk.g_y+G.g_desk.g_h, gl_hchar) - 1;
     linecount = 0L;
 
     while(1)

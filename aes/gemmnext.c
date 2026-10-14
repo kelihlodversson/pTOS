@@ -50,6 +50,7 @@
 #include "gemoblib.h"
 #include "gemwmlib.h"
 #include "rectfunc.h"
+#include "intmath.h"
 
 #include "string.h"
 
@@ -87,7 +88,7 @@ static WORD clamp_height(WORD height)
     if (height < MIN_HEIGHT_VALUE)
         return MIN_HEIGHT_VALUE;
 
-    max_height = gl_rfull.g_h / gl_hchar;
+    max_height = divs(gl_rfull.g_h, gl_hchar);
     if (height > max_height)
         return max_height;
 
