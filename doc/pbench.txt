@@ -79,6 +79,8 @@ tools/pBench/baselines holds pBench's results under Hatari 2.5 for
               c99f94cf706047e3e4966aad3fa0f434)
   ptos-a06e0df6   pTOS at commit a06e0df6, atari512 configuration (the last
               commit before the kernel stopped being built with -mshort)
+  ptos-master     pTOS at commit c26b030e (without -mshort), atari512
+  ptos-master-fastcall   the same built with CONF_WITH_MFASTCALL
 
 in the screen modes low, med and high, with and without the blitter, as
 SYSTEM-MODE-blitter.txt and SYSTEM-MODE-noblitter.txt.  The machine is an STE
@@ -86,16 +88,19 @@ SYSTEM-MODE-blitter.txt and SYSTEM-MODE-noblitter.txt.  The machine is an STE
 at 8 MHz.  The ROM images themselves are not in the repository: TOS 2.06 is
 not free, and EmuTOS can be downloaded from emutos.sourceforge.io.
 
-How fast the three are, as the geometric mean of the ten tests relative to
+How fast they are, as the geometric mean of the ten tests relative to
 TOS 2.06 (what GEM Bench calls the Display score):
 
-    screen      blitter       TOS 2.06   EmuTOS 1.4   pTOS a06e0df6
-    ST-LOW      blitter          100%        63%          61%
-    ST-LOW      no blitter       100%        97%          97%
-    ST-MEDIUM   blitter          100%        69%          67%
-    ST-MEDIUM   no blitter       100%       100%          98%
-    ST-HIGH     blitter          100%        79%          76%
-    ST-HIGH     no blitter       100%       102%         100%
+    screen      blitter    EmuTOS 1.4  a06e0df6  master  master fastcall
+    ST-LOW      blitter        63%        61%       59%        60%
+    ST-LOW      no blitter     97%        97%       94%        95%
+    ST-MEDIUM   blitter        69%        67%       63%        65%
+    ST-MEDIUM   no blitter    100%        98%       94%        95%
+    ST-HIGH     blitter        79%        76%       71%        73%
+    ST-HIGH     no blitter    102%       100%       94%        96%
+
+(TOS 2.06 is 100% in every row.)  Without the blitter, dropping -mshort cost
+pTOS four to six points, and -mfastcall gets one or two of them back.
 
 TOS 2.06 draws text with the blitter and the others do not, which is where
 nearly all of the difference with the blitter comes from.  Results of runs

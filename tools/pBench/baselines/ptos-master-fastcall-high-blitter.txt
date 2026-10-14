@@ -1,0 +1,13 @@
+# pBench baseline
+# system: pTOS master c26b030e atari512 -mfastcall
+# emulator: Hatari v2.5.0, machine STE, screen ST-HIGH, blitter on
+GEM Dialog Box        20.945 s     32 dialogs
+VDI Text              26.045 s    462 lines
+VDI Text Effects      29.760 s    352 lines
+VDI Small Text        37.510 s    616 lines
+VDI Graphics          29.085 s   2158 objects
+GEM Window             9.760 s     65 windows
+Blitting               2.415 s   1200 blits
+VDI Scroll            12.230 s    219 scrolls
+Justified Text        17.920 s   1460 lines
+VDI Enquire           17.005 s  43146 calls
