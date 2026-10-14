@@ -117,23 +117,17 @@ C_SYM(main):
         // size the entire free-memory pool, and the virtio-gpu framebuffer
         // is allocated just below it, so it has to be right.
         //
-        // A software reset (warm_reset in bios/arch/m68k/panicasm.S) comes
-        // back here, but QEMU does not create the list again, and the
-        // memory above __ebss is in use by then.  _warm_magic and _phystop
-        // are sysvars outside the .bss: when the former says this is not the
-        // first boot, the latter is the size found the first time.
-#if CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
-        move.l  #0x5741524D,d0          // WARM_MAGIC
-        cmp.l   C_SYM(warm_magic).w,d0
+        // A software reset (warm_reset or cold_reset in
+        // bios/arch/m68k/panicasm.S) comes back here, but QEMU does not
+        // create the list again, and the memory above __ebss is in use by
+        // then.  The size found the first time is kept in two words in .data
+        // (which nothing clears, unlike the .bss and _warm_magic), and used
+        // when the first one holds its marker.
+        cmp.l   #0x52414D53,ram_size_valid      // 'RAMS'
         jne     bi_scan
-        move.l  C_SYM(phystop).w,d1
-        cmp.l   #0x00100000,d1
-        jcs     bi_scan
-        cmp.l   #0x7f000000,d1
-        jhi     bi_scan
+        move.l  ram_size_saved,d1
         jra     bi_done
 bi_scan:
-#endif
         lea     __ebss,a0
         move.l  a0,d0
         addq.l  #1,d0
@@ -166,6 +160,8 @@ bi_skip:
         adda.w  d3,a0
         dbra    d2,bi_next
 bi_done:
+        move.l  d1,ram_size_saved
+        move.l  #0x52414D53,ram_size_valid
 
         // Clear .bss: unlike the classic Atari boot, there is no meminit
         // pass to do this for us here (that routine tests and clears
@@ -200,3 +196,8 @@ not_first_boot:
 #endif
 
         jmp     C_SYM(biosmain)
+
+        .data
+        .even
+ram_size_valid: .dc.l   0
+ram_size_saved: .dc.l   0

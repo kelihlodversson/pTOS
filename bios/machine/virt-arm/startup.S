@@ -159,6 +159,7 @@ C_SYM(main):
     bne 5f
     mov r0, r10
     bl  virt_fdt_ram_size
+    mov r7, #0                  /* (the walker uses it) */
 5:  cmp r0, #0
     ldreq r0, =VIRT_DEFAULT_RAM_SIZE
     ldr r1, =VIRT_MAX_RAM_SIZE
