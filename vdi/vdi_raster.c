@@ -312,11 +312,12 @@ void vdi_vr_trnfm(Vwk * vwk)
  *
  * Start the blitter that has been set up, and wait until it is done.
  * We run it in the Atari-recommended way: use no-HOG mode, and manually
- * restart the blitter until it's done.
+ * restart the blitter until it's done.  'lineno' is the line of the
+ * halftone to start with (0-15), 0 when it is not used.
  */
-static void blitter_go(void)
+static void blitter_go(UBYTE lineno)
 {
-    BLITTER->status = BUSY;     /* no-HOG mode */
+    BLITTER->status = BUSY | lineno;    /* no-HOG mode */
     __asm__ __volatile__(
     "lea    0xFFFF8A3C,a0\n\t"
     "0:\n\t"
@@ -364,7 +365,7 @@ hwblit_raster(BLITVARS *blt)
     BLITTER->hop = blt->hop;
     BLITTER->skew = blt->skew;
 
-    blitter_go();
+    blitter_go(0);
 
     /*
      * we've modified data behind the cpu's back, so we must
@@ -816,6 +817,191 @@ extern LONG mcpu;
 
 
 /*
+ * blitter_skewed_text_blit()
+ *
+ * The same as blitter_text_blit(), for a glyph that is skewed (and not
+ * bold, which text_blt() does not send here).
+ *
+ * Going up from the bottom line, a line of skewed text starts one pixel
+ * further right than the one below it whenever the bit of the skew mask
+ * that goes with it is set, the most significant bit being the bottom
+ * line's own (see skewop in vdi_tblit.S).  So there are strips of lines
+ * that start at the same pixel, and each strip is a blit of its own, which
+ * is the way to get what the software path writes: only the strips, not
+ * the rectangle around them (text in the replace mode would show the
+ * difference, which is why this cannot be done through a buffer).
+ *
+ * Each strip has to be set up in full, and with one or two planes, that is
+ * more than the software path takes for the whole glyph (ST-MEDIUM and
+ * ST-HIGH text effects got slower with it), so this is for four planes
+ * or more.
+ */
+static BOOL blitter_skewed_text_blit(LOCALVARS *vars)
+{
+    WORD plane, planes, mode, w, h, sx, dx, dot, s_span, d_span, skew, skew_idx;
+    WORD nxwd, skew_reg, style, r0, r1, n, shift, word_off;
+    UWORD lendmask, rendmask, fg, bg, fgbits, bgbits, skew_mask;
+    LONG s_addr, d_addr, s_row, d_row, plane_addr, length;
+
+    style = vars->STYLE;
+    planes = vars->nbrplane;
+    if (planes < 4)
+        return FALSE;                   /* the software path is quicker, see below */
+
+    mode = vars->WRT_MODE;
+    if (mode < 0 || mode > 19)
+        return FALSE;
+
+    w = vars->width;
+    h = vars->height;
+    if (w <= 0 || h <= 0)
+        return TRUE;                    /* nothing to output */
+    if (vars->s_next >= 0 || vars->d_next >= 0)
+        return FALSE;                   /* not bottom to top, see screen_blit() */
+
+    nxwd = vars->nextwrd;               /* offset to the next word of a plane */
+
+    /*
+     * the source starts in the word with its first pixel (tsdad is the
+     * pixel number in that word), so the span is the number of words, less
+     * one, a line of the glyph covers.  the destination's span is worked out
+     * for each strip of lines below, as skewed text moves to the right as
+     * it goes up.
+     */
+    sx = vars->tsdad;
+    dx = vars->tddad;
+    s_span = (sx + w - 1) >> 4;
+
+    /*
+     * skewed text: going up from the bottom line, a line starts one pixel
+     * further right than the one below it whenever the bit of the skew mask
+     * that goes with it is set, the first bit (the most significant one)
+     * being the bottom line's own (see skewop in vdi_tblit.S).  so there are
+     * strips of lines that start at the same pixel, which is also all the
+     * blitter needs to be told: each strip is a blit of its own.  the rows
+     * between are not touched, which is what the software path does too,
+     * and why this cannot be done through a buffer, that is written as a
+     * rectangle.
+     */
+    skew_mask = (style & F_SKEW) ? (UWORD)linea_vars.SKEWMASK : 0;
+
+    /* the bottom line of the glyph and of where it goes, see above */
+    s_addr = (LONG)vars->sform;
+    d_addr = (LONG)vars->dform;
+
+    fgbits = vars->forecol;
+    bgbits = vars->ambient;
+
+    if (style & F_LIGHT)
+        set_light_halftone();
+    else
+        BLITTER->hop = HOP_SOURCE_ONLY;
+    BLITTER->src_x_incr = 2;            /* the glyph is a form of one plane */
+    BLITTER->dst_x_incr = nxwd;
+    BLITTER->endmask_2 = 0xffff;
+
+    /*
+     * since the blitter doesn't see the data cache, and we may be in
+     * copyback mode, the cache must be flushed first and, as the screen
+     * has changed behind the cpu's back, invalidated afterwards, see
+     * hwblit_raster().  that is only so where there is such a cache: the
+     * calls do nothing on the other processors, but they and the length
+     * they are given, which takes a library multiplication to work out,
+     * are a noticeable part of the time a glyph takes.
+     */
+    length = 0;
+    if (TEXT_CACHE_OPS)
+    {
+        length = (LONG)h * -vars->d_next;
+        flush_data_cache((void *)(d_addr - length + 1), length);
+    }
+
+    s_row = s_addr;
+    d_row = d_addr;
+    shift = 0;
+    r0 = 0;
+    for (;;)
+    {
+        /* the strip is the lines from r0 up to the next with a bit set */
+        if (skew_mask)
+        {
+            if ((skew_mask >> (15 - (r0 & 15))) & 1)
+                shift++;
+            for (r1 = r0 + 1; r1 < h; r1++)
+                if ((skew_mask >> (15 - (r1 & 15))) & 1)
+                    break;
+        }
+        else
+            r1 = h;
+        n = r1 - r0;
+
+        /* where it starts: the word with its first pixel, and the pixel in it */
+        word_off = (dx + shift) >> 4;
+        dot = (dx + shift) & 15;
+        d_span = (dot + w - 1) >> 4;
+        skew = dot - sx;
+
+        skew_idx = 0x0004;              /* blitting left to right */
+        if (s_span == d_span)
+            skew_idx |= 0x0002;         /* spans are equal */
+        if (skew < 0)
+            skew_idx |= 0x0001;         /* the source starts further right */
+
+        lendmask = 0xffff >> dot;
+        rendmask = ~(0x7fff >> ((dot + w - 1) & 15));
+        if (!d_span)
+            lendmask &= rendmask;       /* one word: the other masks are ignored */
+
+        BLITTER->src_y_incr = vars->s_next - 2 * s_span;
+        BLITTER->dst_y_incr = vars->d_next - nxwd * d_span;
+        BLITTER->endmask_1 = lendmask;
+        BLITTER->endmask_3 = rendmask;
+
+        /* see bit_blt() for the special case of one word */
+        if (!s_span && !d_span)
+        {
+            BLITTER->src_x_incr = skew; /* sets the skew direction */
+            skew_reg = skew ? (skew & 0x0f) : FXSR;
+        }
+        else
+        {
+            BLITTER->src_x_incr = 2;
+            skew_reg = (skew & 0x0f) | skew_flags[skew_idx];
+        }
+
+        plane_addr = d_row;
+        if (word_off)
+            plane_addr += word_off * nxwd;
+        fg = fgbits;
+        bg = bgbits;
+        for (plane = 0; plane < planes; plane++)
+        {
+            BLITTER->src_addr = (UWORD *)s_row;
+            BLITTER->dst_addr = (UWORD *)plane_addr;
+            BLITTER->x_count = d_span + 1;
+            BLITTER->y_count = n;
+            BLITTER->skew = skew_reg;
+            BLITTER->op = text_ops[mode][((fg & 1) << 1) | (bg & 1)];
+            blitter_go((-r0) & 15);     /* light: the line r0 up is -r0 */
+
+            fg >>= 1;
+            bg >>= 1;
+            plane_addr += 2;            /* the next plane */
+        }
+
+        if (r1 >= h)
+            break;
+        s_row += n * vars->s_next;      /* the next strip, a few lines up */
+        d_row += n * vars->d_next;
+        r0 = r1;
+    }
+
+    if (TEXT_CACHE_OPS)
+        invalidate_data_cache((void *)(d_addr - length + 1), length);
+    return TRUE;
+}
+
+/*
  * blitter_text_blit()
  *
  * Output the glyph that planar_text_blit() has set up in vars to a bitplane
@@ -854,11 +1040,17 @@ BOOL blitter_text_blit(LOCALVARS *vars)
 
     /*
      * effects the blitter path does not do: text_blt() draws bold text into
-     * the buffer first when the blitter is in use, so only skew is left
+     * the buffer first when the blitter is in use, so only bold text that
+     * could not go that way (clipped, or skewed) is left; skew alone has
+     * a way of its own
      */
     style = vars->STYLE;
     if (style & (F_THICKEN | F_SKEW))
+    {
+        if ((style & (F_THICKEN | F_SKEW)) == F_SKEW)
+            return blitter_skewed_text_blit(vars);
         return FALSE;
+    }
 
     mode = vars->WRT_MODE;
     if (mode < 0 || mode > 19)
@@ -949,7 +1141,7 @@ BOOL blitter_text_blit(LOCALVARS *vars)
         BLITTER->y_count = h;
         BLITTER->skew = skew_reg;
         BLITTER->op = text_ops[mode][((fg & 1) << 1) | (bg & 1)];
-        blitter_go();
+        blitter_go(0);
 
         fg >>= 1;
         bg >>= 1;
