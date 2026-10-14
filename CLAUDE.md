@@ -42,9 +42,10 @@ epic branch named `epic/{task-id}-{title-with-dashes}`. Epic branches are
 protected like `master`: all changes go through PRs.
 
 Epic branches coordinate work on a major feature. Each sub-issue gets its own
-feature/bugfix/chore branch off `master`, and the resulting PR targets the epic
-branch instead. When all sub-issues are resolved and the epic branch is ready,
-a final PR merges it into `master`.
+feature/bugfix/chore branch off the epic branch (not `master`), and the
+resulting PR targets the epic branch, so every sub-issue goes through full CI
+and review before it is merged into the epic. When all sub-issues are resolved
+and the epic branch is ready, a final PR merges it into `master`.
 
 ## Building
 
