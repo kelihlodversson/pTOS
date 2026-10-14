@@ -141,6 +141,7 @@ WORD vsl_color(WORD handle, WORD color);
 WORD vst_color(WORD handle, WORD color);
 WORD vst_point(WORD handle, WORD point);
 WORD vst_effects(WORD handle, WORD effects);
+WORD vst_rotation(WORD handle, WORD angle);
 void vst_alignment(WORD handle, WORD h, WORD v);
 void v_gtext(WORD handle, WORD x, WORD y, const char *s);
 void v_justified(WORD handle, WORD x, WORD y, const char *s, WORD len,
