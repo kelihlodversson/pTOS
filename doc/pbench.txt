@@ -112,6 +112,13 @@ from the tos206 files:
 
     tools/pBench/mkrefs.py tools/pBench/baselines/tos206-*.txt > tools/pBench/refs.h
 
+ptos-master-virt-m68k.txt and ptos-master-rpi2.txt are pBench on pTOS master
+under QEMU (virt-m68k, 1280x800 at 32 bits; raspi2b, 1280x720 at 16 bits),
+made with tools/pBench/run-qemu.py.  QEMU's clock is the host's, so these
+vary with the machine they were made on (a few percent between runs) and are
+only good for rough comparisons; they also show times far below TOS 2.06's
+on a real ST, simply because the emulated CPUs are so much faster.
+
 To make baselines for another system (the images are given as KEY=IMAGE=NAME):
 
     tools/pBench/run-baselines.py --pbench pbench.prg --out DIR \
