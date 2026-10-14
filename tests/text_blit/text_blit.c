@@ -88,6 +88,7 @@ typedef struct {
     short mode;                 /* vswr_mode(): 1 replace, 2 trans, 3 xor, 4 rev trans */
     short color;
     short rot;                  /* tenths of a degree */
+    short halign;               /* vst_alignment() horizontal: 0 left, 2 right */
     short clip;                 /* if set, clip to cr */
     GRECT cr;                   /* relative to the band */
 } CASE;
@@ -161,6 +162,7 @@ static void report(const char *kind, const CASE *c, long off, int a, int b)
     pnums("mode", c->mode);
     pnums("col", c->color);
     pnums("rot", c->rot);
+    pnums("al", c->halign);
     if (c->clip)
     {
         conws(" clip=");
@@ -187,6 +189,15 @@ static const struct fonthead *const *get_sysfonts(void)
     /* Line-A initialisation: a1 points to the three system font headers */
     __asm__ volatile (".word 0xa000" : "=a"(fonts) : : "d0", "d1", "d2", "a0", "a2", "memory", "cc");
     return fonts;
+}
+
+/* Cursconf() is a macro with a value too */
+static void set_cursor(int on)
+{
+    long old;
+
+    old = Cursconf(on ? 1 : 0, 0);
+    (void)old;
 }
 
 /* Blitmode() is a macro with a value; this one discards it */
@@ -288,7 +299,7 @@ static void draw(const CASE *c)
     last_point = vst_point(vh, c->point);
     vst_effects(vh, c->effects);
     vst_rotation(vh, c->rot);
-    vst_alignment(vh, 0, 5);            /* left, top of the cell */
+    vst_alignment(vh, c->halign, 5);    /* top of the cell */
     if (c->clip)
     {
         cr = c->cr;
@@ -370,12 +381,34 @@ static void model_pixel(U8 *buf, const CASE *c, int x, int y, int glyph_bit)
     }
 }
 
+/* the width of a plain string in pixels */
+static int string_width(const CASE *c)
+{
+    const struct fonthead *f = find_font(c->point);
+    const char *s;
+    int w = 0;
+
+    for (s = c->str; *s; s++)
+    {
+        unsigned ch = (U8)*s;
+
+        if (ch < f->first_ade || ch > f->last_ade)
+            ch = '?';
+        ch -= f->first_ade;
+        w += f->off_table[ch + 1] - f->off_table[ch];
+    }
+    return w;
+}
+
 /* what plain text (no effects, no rotation) should look like */
 static void model_text(U8 *buf, const CASE *c)
 {
     const struct fonthead *f = find_font(last_point);
     const char *s;
     int x = c->x;
+
+    if (c->halign == 2)
+        x -= string_width(c);
 
     for (s = c->str; *s; s++)
     {
@@ -441,6 +474,29 @@ static void check(const CASE *c, int plain)
         cases_failed++;
 }
 
+/*
+ * check a case, and, if VDI would draw it with direct_screen_blit()
+ * (CONF_WITH_VDI_TEXT_SPEEDUP: no effects, no rotation, not clipped, left
+ * aligned, byte aligned, an 8 pixel wide font), also the same pixels
+ * right aligned, which VDI draws glyph by glyph through the path that
+ * Blitmode() chooses.  Both are worth checking: the shortcut ignores
+ * Blitmode(), so on its own it would compare itself with itself.
+ */
+static void check_cases(const CASE *c, int plain)
+{
+    CASE twin;
+
+    check(c, plain);
+    if (!c->effects && !c->rot && !c->clip && !c->halign && (c->x & 7) == 0
+        && find_font(c->point)->max_cell_width == 8)
+    {
+        twin = *c;
+        twin.halign = 2;
+        twin.x = (short)(c->x + string_width(c));
+        check(&twin, plain);
+    }
+}
+
 /* ---- the test cases ---- */
 
 static const short points[3] = { 8, 9, 10 };            /* 6x6, 8x8, 8x16 */
@@ -484,6 +540,7 @@ static void group_plain(void)
     c.rot = 0;
     c.effects = 0;
     c.clip = 0;
+    c.halign = 0;
     c.y = TEXT_Y;
     for (pt = 0; pt < 3; pt++)
         for (mode = 1; mode <= 4; mode++)
@@ -498,7 +555,7 @@ static void group_plain(void)
                     {
                         c.x = (short)(TEXT_X + dx);
                         c.clip = 0;
-                        check(&c, 1);
+                        check_cases(&c, 1);
                     }
                     /* a few shifts with each clip rectangle */
                     for (k = 0; k < NCLIPS; k++)
@@ -506,7 +563,7 @@ static void group_plain(void)
                         {
                             c.x = (short)(TEXT_X + dx);
                             set_clip(&c, k, dx);
-                            check(&c, 1);
+                            check_cases(&c, 1);
                         }
                 }
 }
@@ -520,6 +577,7 @@ static void group_effects(void)
     int pt, fx, r, mode, s, d;
 
     c.clip = 0;
+    c.halign = 0;
     c.y = TEXT_Y;
     c.color = (short)(ncolors > 2 ? 5 % ncolors : 1);
     for (pt = 1; pt < 3; pt++)
@@ -539,7 +597,7 @@ static void group_effects(void)
                             c.mode = (short)mode;
                             c.rot = rots[r];
                             c.x = (short)(TEXT_X + shifts[d]);
-                            check(&c, 0);
+                            check_cases(&c, 0);
                         }
                 }
 }
@@ -556,6 +614,7 @@ static void group_clipped_effects(void)
     int pt, f, k, mode, dx;
 
     c.rot = 0;
+    c.halign = 0;
     c.y = TEXT_Y;
     c.color = (short)(ncolors > 2 ? 5 % ncolors : 1);
     c.str = strings[1];
@@ -570,7 +629,7 @@ static void group_clipped_effects(void)
                         c.mode = (short)mode;
                         c.x = (short)(TEXT_X + dx);
                         set_clip(&c, k, dx);
-                        check(&c, 0);
+                        check_cases(&c, 0);
                     }
 }
 
@@ -611,9 +670,16 @@ void test_text_blit(void)
         return;
     }
 
+    /*
+     * the mouse is hidden, and so is the console's cursor: it blinks by
+     * inverting its cell in the screen memory, which would change the
+     * band between the two renderings if it were in it (the last text
+     * row of ST-HIGH is)
+     */
+    v_hide_c(vh);
+    set_cursor(0);
     copy(saved, band);
     make_pattern();
-    v_hide_c(vh);
 
     run_group("text_blit: plain text matches the model (#499)", group_plain);
     run_group("text_blit: effects and rotation, CPU vs blitter (#499)", group_effects);
@@ -624,6 +690,7 @@ void test_text_blit(void)
     vswr_mode(vh, MD_REPLACE);
     vst_color(vh, 1);
     copy(band, saved);
+    set_cursor(1);
     v_show_c(vh, 1);
     set_blitter(blitter_was_on);
     v_clsvwk(vh);
