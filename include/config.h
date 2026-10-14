@@ -57,7 +57,8 @@
 #endif
 
 /*
- * Whether this target's own C calling convention already matches the
+ * CONF_WITH_NATIVE_ABI (Kconfig.machine, follows the architecture): whether
+ * this target's own C calling convention already matches the
  * classic, frozen TOS vector ABI (bios/classicvec.h's CLASSIC_ENTRY()):
  * packed WORD/LONG arguments, no padding. Every m68k target -- classic and
  * ColdFire alike -- still uses GCC's own m68k calling convention for its C
@@ -66,7 +67,6 @@
  * stack entirely for the arguments it covers). Only a port with no legacy
  * TOS ABI to begin with, like ARM, is "native" and needs no trampoline.
  */
-#define CONF_WITH_NATIVE_ABI (!ARCH_M68K)
 
 /*
  * Determine if kprintf() is available.  It is, as soon as there is
