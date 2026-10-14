@@ -310,8 +310,13 @@ void outline(LOCALVARS *vars)
 /*
  * copy the character into a buffer so that we can
  * outline/rotate/scale it
+ *
+ * a bold character is normally made wider by the weight in the buffer.
+ * if 'mono_cell' is set, and the font is monospaced, it is not, so the
+ * buffer is as wide as the character cell, as the software text output
+ * (normal_blit()) has it when it makes a bold character without a buffer.
  */
-static void pre_blit(LOCALVARS *vars)
+static void pre_blit(LOCALVARS *vars, BOOL mono_cell)
 {
     WORD weight, skew, size, n, tmp_style;
     WORD dest_width, dest_height;
@@ -332,7 +337,8 @@ static void pre_blit(LOCALVARS *vars)
     dest_width = vars->DELX;
     if (vars->STYLE & F_THICKEN)
     {
-        dest_width += weight;
+        if (!(mono_cell && linea_vars.MONO))
+            dest_width += weight;
         vars->smear = weight;
     }
 
@@ -1276,6 +1282,7 @@ void text_blt(void)
     WORD clipped, delx, dely, weight;
     WORD temp;
     BOOL need_preblit = FALSE;
+    BOOL mono_cell = FALSE;
 
     vars.swap_tmps = 0;
 
@@ -1377,17 +1384,24 @@ void text_blt(void)
 
 #if CONF_WITH_BLITTER
     /*
-     * bold text is drawn into the buffer when the blitter is going to
-     * output it: the software path thickens the glyph again for each plane
-     * of the screen, which the buffer, a single plane, does only once
+     * bold text (without skew, which does not combine with it so simply) is
+     * drawn into the buffer when the blitter is going to output it: the
+     * software path thickens the glyph again for each plane of the screen,
+     * which the buffer, a single plane, does only once.  nothing else asks
+     * for the buffer here, so the character has to stay as wide as it is
+     * without it (mono_cell).
      */
-    if (blitter_is_enabled && (vars.STYLE & F_THICKEN))
+    if (!need_preblit && blitter_is_enabled
+     && (vars.STYLE & (F_THICKEN | F_SKEW)) == F_THICKEN)
+    {
         need_preblit = TRUE;
+        mono_cell = TRUE;
+    }
 #endif
 
     if (need_preblit)
     {
-        pre_blit(&vars);
+        pre_blit(&vars, mono_cell);
     }
 
     if (linea_vars.CHUP)
