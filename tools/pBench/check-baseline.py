@@ -57,6 +57,14 @@ def emulator(path):
     return None
 
 
+def screen(path):
+    for line in open(path):
+        m = re.match(r'# (Screen .*?)\s*$', line)
+        if m:
+            return m.group(1)
+    return None
+
+
 def describe(name):
     # atari512-med-noblitter -> "ST-MEDIUM, no blitter"
     m = re.match(r'.*-(low|med|high)-(blitter|noblitter)$', name)
@@ -106,6 +114,13 @@ def main():
             missing += 1
             continue
         (base, base_work), (res, res_work) = read(path), read(res_path)
+        if screen(path) is None or screen(path) != screen(res_path):
+            out.append('The screen differs from the baseline\'s, so the times '
+                       'cannot be compared: %s, was %s.'
+                       % (screen(res_path), screen(path)))
+            out.append('')
+            missing += 1
+            continue
         if emulator(path) != emulator(res_path):
             out.append('Note: the baseline was made with %s, this run used %s;'
                        ' a different Hatari can move the numbers.'
