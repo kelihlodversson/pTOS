@@ -1354,7 +1354,8 @@ void text_blt(void)
      *  (in truecolor mode) if (skewing OR thickening OR outlining), OR
      *  if outlining, OR
      *     rotating AND (skewing OR thickening), OR
-     *     skewing AND clipping-is-required,
+     *     skewing AND clipping-is-required, OR
+     *     (with the blitter in use) thickening,
      *      call pre_blit()
      *
      * Audited under issue #171: this is the text_blt() pre-blit-decision
@@ -1373,6 +1374,16 @@ void text_blt(void)
         need_preblit = TRUE;
     else if ((vars.STYLE & F_SKEW) && clipped)
         need_preblit = TRUE;
+
+#if CONF_WITH_BLITTER
+    /*
+     * bold text is drawn into the buffer when the blitter is going to
+     * output it: the software path thickens the glyph again for each plane
+     * of the screen, which the buffer, a single plane, does only once
+     */
+    if (blitter_is_enabled && (vars.STYLE & F_THICKEN))
+        need_preblit = TRUE;
+#endif
 
     if (need_preblit)
     {

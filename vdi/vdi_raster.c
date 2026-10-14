@@ -771,6 +771,37 @@ static const UBYTE text_ops[20][4] = {
 
 
 /*
+ * set_light_halftone()
+ *
+ * Set up lightened text: the source is ANDed with a mask that is rotated
+ * one bit further left for each line, the lines being counted from the
+ * bottom of the glyph (see liteop in vdi_tblit.S).  This is what the
+ * blitter's halftone does when HOP is "source AND halftone": it takes the
+ * halftone word of the current line, counted from the first line of the
+ * blit, which the blitter does from the top, and that count (the line
+ * number in the status register) restarts at 0 with every blitter_go().
+ * Word i of the halftone is therefore for lines i, i+16, i+32 ... from the
+ * top, which are lines h-1-i, h-17-i ... from the bottom, all of which
+ * rotate the mask by the same amount, (h-1-i) modulo 16.
+ *
+ * In:
+ *  h           the number of lines of the glyph
+ */
+static void set_light_halftone(WORD h)
+{
+    UWORD mask = (UWORD)linea_vars.LITEMASK;
+    WORD i, n;
+
+    for (i = 0; i < 16; i++)
+    {
+        n = (h - 1 - i) & 15;
+        BLITTER->halftone[i] = n ? (UWORD)((mask << n) | (mask >> (16 - n))) : mask;
+    }
+    BLITTER->hop = HOP_SOURCE_AND_HALFTONE;
+}
+
+
+/*
  * blitter_text_blit()
  *
  * Output the glyph that planar_text_blit() has set up in vars to a bitplane
@@ -803,8 +834,11 @@ BOOL blitter_text_blit(LOCALVARS *vars)
     UWORD lendmask, rendmask, fg, bg;
     LONG s_addr, d_addr, length;
 
-    /* effects the blitter path does not do yet */
-    if (vars->STYLE & (F_THICKEN | F_LIGHT | F_SKEW))
+    /*
+     * effects the blitter path does not do: text_blt() draws bold text into
+     * the buffer first when the blitter is in use, so only skew is left
+     */
+    if (vars->STYLE & (F_THICKEN | F_SKEW))
         return FALSE;
 
     mode = vars->WRT_MODE;
@@ -851,7 +885,10 @@ BOOL blitter_text_blit(LOCALVARS *vars)
     BLITTER->endmask_1 = lendmask;
     BLITTER->endmask_2 = 0xffff;
     BLITTER->endmask_3 = rendmask;
-    BLITTER->hop = HOP_SOURCE_ONLY;
+    if (vars->STYLE & F_LIGHT)
+        set_light_halftone(h);
+    else
+        BLITTER->hop = HOP_SOURCE_ONLY;
 
     /* see bit_blt() for the special case of one word */
     if (!s_span && !d_span)
