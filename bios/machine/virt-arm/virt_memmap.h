@@ -10,11 +10,24 @@
 
 #ifdef MACHINE_VIRT_ARM
 
+/* constants that startup.S uses too: no C-only UL suffix there */
+#ifdef __ASSEMBLER__
+#define VIRT_UL(x)  x
+#else
+#define VIRT_UL(x)  x##UL
+#endif
+
 /* Where RAM starts on this board.  Unlike every other machine this port
  * supports, address 0 is NOT RAM here (it is flash) -- see the boot
  * sequence in startup.S for how the fixed low-address TOS system
  * variables are made to work regardless. */
-#define VIRT_RAM_BASE       0x40000000UL
+#define VIRT_RAM_BASE       VIRT_UL(0x40000000)
+
+/* The RAM the port assumes when the device tree does not say how much there is,
+ * and the most it can use: the low virtual window that holds the fixed-address
+ * TOS system variables (see virt_mmu.c) has to stop where the devices start. */
+#define VIRT_DEFAULT_RAM_SIZE   VIRT_UL(0x08000000)
+#define VIRT_MAX_RAM_SIZE       VIRT_UL(0x08000000)
 
 #define VIRT_GIC_DIST_BASE  0x08000000UL
 #define VIRT_GIC_CPU_BASE   0x08010000UL
