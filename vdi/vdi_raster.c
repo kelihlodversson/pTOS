@@ -831,6 +831,10 @@ extern LONG mcpu;
  * the rectangle around them (text in the replace mode would show the
  * difference, which is why this cannot be done through a buffer).
  *
+ * Glyphs wider than 16 pixels are left to the software path: it shifts them
+ * on the rows where the mask bit is clear (mlt_left/mlt_rite in vdi_tblit.S),
+ * not on the ones where it is set, which is not what the strips do.
+ *
  * Each strip has to be set up in full, and with one or two planes, that is
  * more than the software path takes for the whole glyph (ST-MEDIUM and
  * ST-HIGH text effects got slower with it), so this is for four planes
@@ -856,6 +860,8 @@ static BOOL blitter_skewed_text_blit(LOCALVARS *vars)
     h = vars->height;
     if (w <= 0 || h <= 0)
         return TRUE;                    /* nothing to output */
+    if (w > 16)
+        return FALSE;                   /* wider glyphs shift on other rows, see below */
     if (vars->s_next >= 0 || vars->d_next >= 0)
         return FALSE;                   /* not bottom to top, see screen_blit() */
 
@@ -971,7 +977,7 @@ static BOOL blitter_skewed_text_blit(LOCALVARS *vars)
 
         plane_addr = d_row;
         if (word_off)
-            plane_addr += word_off * nxwd;
+            plane_addr += (LONG)word_off * nxwd;
         fg = fgbits;
         bg = bgbits;
         for (plane = 0; plane < planes; plane++)
@@ -991,8 +997,8 @@ static BOOL blitter_skewed_text_blit(LOCALVARS *vars)
 
         if (r1 >= h)
             break;
-        s_row += n * vars->s_next;      /* the next strip, a few lines up */
-        d_row += n * vars->d_next;
+        s_row += (LONG)n * vars->s_next;      /* the next strip, a few lines up */
+        d_row += (LONG)n * vars->d_next;
         r0 = r1;
     }
 
