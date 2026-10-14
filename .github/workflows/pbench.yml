@@ -32,8 +32,12 @@ jobs:
     strategy:
       matrix:
         # The key of the baselines in tools/pBench/ci-baselines is the name of
-        # the configuration.
-        config: [atari512]
+        # the configuration.  atari256 is built with -mfastcall.
+        include:
+          - config: atari512
+            image: ptos512k.img
+          - config: atari256
+            image: ptos256us.img
     steps:
       - uses: actions/checkout@v4
         with:
@@ -62,7 +66,8 @@ jobs:
           make
           make pbench.prg
           mkdir products
-          cp ptos512k.img pbench.prg products/
+          cp ${{ matrix.image }} products/system.img
+          cp pbench.prg products/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -80,7 +85,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: [atari512]
+        config: [atari512, atari256]
     permissions:
       contents: read
       pull-requests: write
@@ -104,7 +109,7 @@ jobs:
         run: |
           python3 tools/pBench/run-baselines.py \
             --pbench products/pbench.prg --out results --jobs 3 \
-            --system "${CONFIG}=products/ptos512k.img=pTOS ${CONFIG} (${GITHUB_SHA::8})"
+            --system "${CONFIG}=products/system.img=pTOS ${CONFIG} (${GITHUB_SHA::8})"
 
       # What the baselines in the repository are made from when they have to
       # be made again: see doc/pbench.txt.
