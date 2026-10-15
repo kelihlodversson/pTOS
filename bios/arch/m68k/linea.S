@@ -62,6 +62,11 @@ C_SYM(int_linea):
 #else
         movem.l d0/d1/a0/a2,linea_save
 #endif
+#if CONF_WITH_MFASTCALL
+        /* the routines below call C functions, which under -mfastcall may
+         * clobber d2; the interrupted program expects it back */
+        move.l  d2,linea_save+16
+#endif
 #ifdef __mcoldfire__
         move.l  4(sp),a0        /* Get the opcode address */
 #else
@@ -90,20 +95,20 @@ C_SYM(int_linea):
 
 #ifdef ENABLE_KDEBUG
 #ifdef __mcoldfire__
-        lea     -20(sp),sp
-        movem.l d0-d2/a0-a1,(sp)
+        lea     -16(sp),sp
+        movem.l d0-d1/a0-a1,(sp)
 #else
-        movem.l d0-d2/a0-a1,-(sp)
+        movem.l d0-d1/a0-a1,-(sp)
 #endif
         move.l  d0,-(sp)
         pea     linea_msg
         jsr     C_SYM(kprintf)              /* Print debugging information */
         addq.l  #8,sp
 #ifdef __mcoldfire__
-        movem.l (sp),d0-d2/a0-a1
-        lea     20(sp),sp
+        movem.l (sp),d0-d1/a0-a1
+        lea     16(sp),sp
 #else
-        movem.l (sp)+,d0-d2/a0-a1
+        movem.l (sp)+,d0-d1/a0-a1
 #endif
 #endif /* ENABLE_KDEBUG */
 
@@ -123,17 +128,10 @@ C_SYM(int_linea):
 #else
         movem.l linea_save,d0/d1/a0/a2
 #endif
-#if CONF_WITH_MFASTCALL
-        /* the routines below call C functions, which under -mfastcall may
-         * clobber d2; the interrupted program expects it back.  On the
-         * stack, not in linea_save: an interrupt handler may make a Line-A
-         * call of its own while this one is running. */
-        move.l  d2,-(sp)
-#endif
         jsr     (a1)
 linea_dispatch_pc:
 #if CONF_WITH_MFASTCALL
-        move.l  (sp)+,d2
+        move.l  linea_save+16,d2
 #endif
         rte
 
@@ -151,7 +149,7 @@ wrong_linea:
         .bss
         .even
 linea_save:
-        .ds.l   4       /* d0, d1, a0, a2 */
+        .ds.l   5       /* d0, d1, a0, a2, d2 */
 
         SECTION_RODATA
 
