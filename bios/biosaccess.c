@@ -107,16 +107,19 @@ long xbios_check_user_args(WORD fn, const long *a)
         ULONG bytes;
         long unit = NUMFLOPPIES + (long)(WORD)a[3];
         WORD count = (WORD)a[1];
+        WORD rw = (fn == 0x2A ? RW_READ : RW_WRITE) | RW_NOTRANSLATE;
 
+        /* the device first, even for a count of 0: the implementation looks
+         * the unit up whatever the count is */
+        if (unit < 0 || unit >= UNITSNUM
+            || !blkdev_rwabs_buffer_size(rw, 1, (WORD)unit, &bytes))
+            return EUNDEV;
         if (count < 0)
             return ERANGE;
         if (!count)
             return E_OK;
-        if (unit < 0 || unit >= UNITSNUM
-            || !blkdev_rwabs_buffer_size((fn == 0x2A ? RW_READ : RW_WRITE)
-                                         | RW_NOTRANSLATE, count,
-                                         (WORD)unit, &bytes))
-            return EUNDEV;
+        if (!blkdev_rwabs_buffer_size(rw, count, (WORD)unit, &bytes))
+            return ERANGE;
         return user_buf_check(a[2], bytes, fn == 0x2A);
 #else
         return E_OK;

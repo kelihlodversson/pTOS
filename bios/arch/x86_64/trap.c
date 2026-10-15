@@ -254,6 +254,21 @@ static void gemdos_args(long *pw, const x86_64_trap_frame_t *frame)
  */
 static UWORD ring3_palette[16];
 
+const UWORD *x86_64_ring3_palette(void)
+{
+    return ring3_palette;
+}
+
+/*
+ * XBIOS calls that return nothing (Initmous(), Setpalette(), Midiws(),
+ * Protobt(), Ikbdws()) leave whatever was in RAX; a user process gets 0, so
+ * that "the call was accepted" can be told from a refusal.
+ */
+static int xbios_returns_void(ULONG fn)
+{
+    return fn == 0x00 || fn == 0x06 || fn == 0x0C || fn == 0x12 || fn == 0x19;
+}
+
 static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
     UQUAD trap_class = frame->rax >> 32;
@@ -480,11 +495,15 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
                 frame->rax = (UQUAD)EIMBA;
                 break;
             }
-            frame->rax = (UQUAD)((LONG (*)(UQUAD, UQUAD, UQUAD, UQUAD))xbios_vecs[fn])
-                             ((UQUAD)(uintptr_t)ring3_palette, frame->rsi, frame->rdx, frame->r10);
-        } else
+            ((LONG (*)(UQUAD, UQUAD, UQUAD, UQUAD))xbios_vecs[fn])
+                ((UQUAD)(uintptr_t)ring3_palette, frame->rsi, frame->rdx, frame->r10);
+            frame->rax = 0;
+        } else {
             frame->rax = (UQUAD)((LONG (*)(UQUAD, UQUAD, UQUAD, UQUAD))xbios_vecs[fn])
                              (frame->rdi, frame->rsi, frame->rdx, frame->r10);
+            if (from_ring3 && xbios_returns_void(fn))
+                frame->rax = 0;
+        }
         break;
     case X86_64_TRAP_GEM:
         /*
