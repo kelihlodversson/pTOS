@@ -160,6 +160,11 @@ static long buf_ok(long v, long len, BOOL write)
     return E_OK;
 }
 
+long user_buf_check(long v, long len, BOOL write)
+{
+    return buf_ok(v, len, write);
+}
+
 /* ------------------------------------------------------------------ */
 
 /* Cconrs(): byte 0 is the capacity, then the length byte, then the text */

@@ -1309,6 +1309,9 @@ static void test_ring3(void)
     /* a Pexec() that runs out of loan slots half way gives back what it took */
     probe_expect('z', 0, "a failed Pexec(PE_BASEPAGE) from ring 3 releases its blocks and loans");
 
+    /* BIOS and XBIOS pointer arguments are checked per call (#352) */
+    probe_expect('A', 0, "bad BIOS/XBIOS pointers are refused, calls that would give the kernel a user address are refused, valid ones let through");
+
     /* GEMDOS pointer arguments are checked per call (#437) */
     probe_expect('c', 0, "bad GEMDOS pointers and lengths are refused, valid ones let through");
 

@@ -26,6 +26,15 @@
  * directly: the call runs under the process's own page tables.
  */
 long bdos_check_user_args(const long *pw);
+
+/*
+ * One user buffer [v, v + len): EIMBA if it is not all memory the calling
+ * process may use (writable too, if `write`), if the address is not a 32-bit
+ * one or the range wraps; ERANGE for a negative or oversized length; a zero
+ * length names nothing and passes.  Used by the BIOS and XBIOS checks
+ * (bios/biosaccess.c), which have the same rules as the GEMDOS ones.
+ */
+long user_buf_check(long v, long len, BOOL write);
 #endif
 
 #endif /* UACCESS_H */

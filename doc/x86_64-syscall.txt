@@ -185,15 +185,112 @@ or oversized length or a string with no end.  Memory that passes is used
 directly, because the call runs under the process's own page tables.  The
 supervisor-only mappings (the system variables, kernel data) have no user bit,
 so a pointer into them fails.  Pointer-valued results (Malloc(), Fgetdta())
-are #351/#372.  A few BIOS and XBIOS calls are checked in the trap handler
-itself (trap.c), not by the descriptor table: Rwabs() (BIOS 4), Floprd(),
-Flopwr(), Flopver() (XBIOS 8, 9, 19) and Flopfmt() (XBIOS 10) take their
-argument struct from the caller by copy and validate the buffer (and
-Flopfmt()'s skew table) before the device operation; Rsconf() (XBIOS 15)
-copies its argument struct; Setexc() (BIOS 5) refuses to install a vector.
-The other BIOS and XBIOS calls still trust their pointers and are guarded by
-the same option as they are converted; trap class 2 (VDI, AES) is refused
-from ring 3 outright (#376).  #352 is the umbrella.
+are #351/#372.
+
+BIOS and XBIOS from ring 3 (#352)
+---------------------------------
+
+The BIOS (trap 13) and XBIOS (trap 14) calls a user process makes are judged
+the same way: a function per trap class (bios/biosaccess.c) knows, for every
+call that takes a pointer, what it points at, how big that is and which way
+the data goes, and checks exactly that before the call runs; the other
+arguments are scalars and are not looked at.  A pointer fails, with EIMBA, if
+the range is not all mapped and user-accessible (writable for an output) in
+the calling process, wraps around the 32-bit space, or lies in the
+supervisor-only mappings (the low system vectors at 0x84, say).  Calls the
+kernel makes itself (kernel_trap(), from_ring3 = 0) are not checked: their
+pointers are the kernel's own.
+
+A user pointer is also something the kernel must not keep: it would use it
+later, from an interrupt or a callback, under whichever page tables are
+loaded then, and a function pointer would be called in ring 0.  Where a call
+does that it is refused (EACCDN), or, for Setpalette(), served from a copy.
+
+    BIOS
+    0  Getmpb(mpb)          refused (EACCDN): kernel memory descriptors
+    1  Bconstat(dev)        scalars
+    2  Bconin(dev)          scalars
+    3  Bconout(dev, c)      scalars
+    4  Rwabs(...)           argument struct copied in; the buffer is checked
+                            (and made writable for a read) before the device
+                            operation (trap.c)
+    5  Setexc(num, vec)     vec must be -1 (a query), else EACCDN; num must
+                            be 0..0x102, else ERANGE (it is scaled and read
+                            as a kernel address).  Installing a vector is for
+                            the kernel
+    6  Tickcal()            scalars
+    7  Getbpb(dev)          scalars (the BPB pointer returned: #351/#372)
+    8  Bcostat(dev)         scalars
+    9  Mediach(dev)         scalars
+    10 Drvmap()             scalars
+    11 Kbshift(mode)        scalars
+
+    XBIOS (the calls this configuration has)
+    0   Initmous(type, param, vec)
+                            vec must be null (the keyboard interrupt would
+                            call it), else EACCDN; for types 1, 2 and 4,
+                            param is a struct param (12 bytes), read
+    2   Physbase()          scalars (result: #351)
+    3   Logbase()           scalars (result: #351)
+    4   Getrez()            scalars
+    5   Setscreen(log, phys, rez, mode)
+                            a positive log or phys would become the kernel's
+                            and VDI's screen: EACCDN; 0 and -1 are "unchanged"
+    6   Setpalette(pal)     16 words, read, even address.  The kernel reads
+                            them at the next VBL, so it is given a copy
+    7   Setcolor(n, c)      scalars
+    8, 9, 19  Floprd(), Flopwr(), Flopver()
+                            argument struct copied in; the buffer checked
+                            before the device operation (trap.c)
+    10  Flopfmt(...)        argument struct copied in; the buffer and the
+                            skew table checked (trap.c)
+    12  Midiws(cnt, ptr)    cnt + 1 bytes (cnt unsigned), read
+    14  Iorec(dev)          scalars (result is a kernel pointer: #426)
+    15  Rsconf(...)         argument struct copied in (trap.c)
+    17  Random()            scalars
+    18  Protobt(buf, ...)   a 512-byte boot sector, written
+    20  Scrdmp()            scalars
+    21  Cursconf(f, v)      scalars
+    22  Settime(t)          scalars
+    23  Gettime()           scalars
+    24  Bioskeys()          scalars
+    25  Ikbdws(cnt, ptr)    cnt + 1 bytes (cnt unsigned), read
+    28  Giaccess(d, r)      scalars
+    29  Offgibit(b)         scalars
+    30  Ongibit(b)          scalars
+    32  Dosound(table)      a positive table would be kept and read by the
+                            timer: EACCDN; 0 and -1 (query) are fine
+    34  Kbdvbase()          scalars (result is a kernel pointer: #426)
+    35  Kbrate(i, r)        scalars
+    37  Vsync()             scalars
+    41  Floprate(d, r)      scalars
+    42  DMAread(sec, cnt, buf, major)
+                            cnt sectors of that device's own size, written
+                            (EUNDEV for no such device, ERANGE for a negative
+                            count)
+    43  DMAwrite(...)       the same, read
+    44  Bconmap(dev)        -2 is the kernel's table: EACCDN; else scalars
+    64  Blitmode(m)         scalars
+
+Not implemented here (the function number comes back): Ssbrk, Keytbl and
+Supexec (use Ssystem()), Prtblk, Puntaes, Mfpint, Jdisint, Jenabint, Xbtimer,
+Setprt, NVMaccess and the Videl, DSP and DMA-sound calls, which need
+hardware or an interface this port does not have.  If one of them is
+enabled for an architecture, it needs its row here and in
+bios/biosaccess.c first.
+
+The test is tests/x32_probe/x32_probe.c, mode A: an unmapped address, a
+kernel address, the supervisor-only low vectors (0x84), a read-only page
+(for an output), a range that crosses the top of the mapping, a 32-bit wrap,
+a vector number that would be a wild read, and arguments that only look like
+addresses (the registers of a call that does not use them), run by the boot
+self-test (bios/machine/pc-x86_64/memtest.c) in QEMU.  Setpalette() takes the
+palette in a copy, so nothing a process does to its own memory afterwards
+reaches the kernel.  The check assumes the validated mapping stays as it is
+for the length of the call; if demand paging or concurrent unmapping is ever
+introduced, these calls (like the GEMDOS ones) need fault recovery.
+
+Trap class 2 (VDI, AES) is refused from ring 3 outright (#376).
 
 Status
 -------

@@ -11,6 +11,7 @@
 #include "portab.h"
 #include "biosext.h"
 #include "biosargs.h"
+#include "biosaccess.h"
 #include "blkdev.h"
 #include "gdt.h"
 #include "gemerror.h"
@@ -246,10 +247,19 @@ static void gemdos_args(long *pw, const x86_64_trap_frame_t *frame)
     pw[4] = (long)frame->r10;
 }
 
+/*
+ * The palette Setpalette() is given by a user process, copied: the kernel
+ * keeps the pointer and reads the 16 words at the next VBL, under whichever
+ * page tables are loaded then.
+ */
+static UWORD ring3_palette[16];
+
 static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
     UQUAD trap_class = frame->rax >> 32;
     ULONG fn = (ULONG)frame->rax;
+    long cargs[4];
+    long crc;
 
     /*
      * The raw argument registers are not inspected here: which of them a
@@ -288,12 +298,13 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
          * equivalent, both of which use the same convention. */
         if (fn >= bios_ent)
             frame->rax = fn;
-        else if (from_ring3 && fn == 5 && (long)frame->rsi != -1L) {
-            /* Setexc() with a new vector: the kernel would later call that
-             * address in ring 0 (etv_term from xterm(), the critical-error
-             * and timer vectors, the exception table).  Ring 3 may only
-             * query a vector, never install one. */
-            frame->rax = (UQUAD)-1L;
+        else if (from_ring3 && fn != 4
+                 && (cargs[0] = (long)frame->rdi, cargs[1] = (long)frame->rsi,
+                     cargs[2] = (long)frame->rdx, cargs[3] = (long)frame->r10,
+                     (crc = bios_check_user_args((WORD)fn, cargs)) != E_OK)) {
+            /* a pointer the call may not be given, or a call a user process
+             * may not make (bios/biosaccess.c) */
+            frame->rax = (UQUAD)crc;
         } else if (from_ring3 && fn == 4) {
             struct x32_bios_lrwabs_args wire;
             struct bios_lrwabs_args native;
@@ -455,6 +466,22 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
             native.tsr = wire.tsr;
             native.scr = wire.scr;
             frame->rax = (UQUAD)((LONG (*)(struct xbios_rsconf_args *))xbios_vecs[fn])(&native);
+        } else if (from_ring3
+                   && (cargs[0] = (long)frame->rdi, cargs[1] = (long)frame->rsi,
+                       cargs[2] = (long)frame->rdx, cargs[3] = (long)frame->r10,
+                       (crc = xbios_check_user_args((WORD)fn, cargs)) != E_OK)) {
+            /* a pointer the call may not be given, or a call a user process
+             * may not make (bios/biosaccess.c) */
+            frame->rax = (UQUAD)crc;
+        } else if (from_ring3 && fn == 6) {
+            /* Setpalette(): checked above; the kernel reads the palette later,
+             * so it gets a copy of its own */
+            if (!kproc_copy_from_user(ring3_palette, frame->rdi, sizeof(ring3_palette))) {
+                frame->rax = (UQUAD)EIMBA;
+                break;
+            }
+            frame->rax = (UQUAD)((LONG (*)(UQUAD, UQUAD, UQUAD, UQUAD))xbios_vecs[fn])
+                             ((UQUAD)(uintptr_t)ring3_palette, frame->rsi, frame->rdx, frame->r10);
         } else
             frame->rax = (UQUAD)((LONG (*)(UQUAD, UQUAD, UQUAD, UQUAD))xbios_vecs[fn])
                              (frame->rdi, frame->rsi, frame->rdx, frame->r10);
