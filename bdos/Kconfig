@@ -32,7 +32,7 @@ config CONF_PREFER_STRAM_DISK_BUFFERS
 
 config CONF_WITH_ELF_LOADER
 	bool "Load ELF executables"
-	default y if ARCH_ARM
+	default y if ARCH_ARM || ARCH_X86_64
 	default n
 	help
 	  Add a second, ELF based executable loader alongside the classic
@@ -52,9 +52,12 @@ config CONF_WITH_ELF_LOADER
 	  own relocation table.  It reads the relocations from the section
 	  headers, so the binary must keep them (do not strip it).
 
-	  This is enabled by default on ARM, which cannot produce the m68k
-	  specific PRG format at all, and is available on m68k as an
-	  alternative to PRG.
+	  On x86-64 (#334) this is the ELFCLASS32/EM_X86_64 x32 psABI, not
+	  IA-32/EM_386 compat-mode code -- see tests/x32_hello/x32_hello.c.
+
+	  This is enabled by default on ARM and x86-64, neither of which can
+	  produce the m68k specific PRG format at all, and is available on
+	  m68k as an alternative to PRG.
 
 config CONF_WITH_PTOS_ABI_IMPORTS
 	bool "Native pTOS ABI imports for ELF executables"
@@ -77,6 +80,122 @@ config CONF_WITH_PTOS_ABI_IMPORTS
 	  bdos/ptosabi.h. Until then, turning this on builds bdos/elfld.c's
 	  resolution code with nothing for it to actually resolve against, so
 	  leave it off unless you are developing that future namespace.
+
+config CONF_WITH_KPROC
+	bool "Kernel-private process records" if !ARCH_X86_64
+	default y if ARCH_X86_64
+	default n
+	help
+	  Keep a kernel-owned record per process (struct kproc, bdos/kproc.c)
+	  beside the public GEMDOS basepage, so state the kernel must be able
+	  to trust never has to live in memory the process can write: the
+	  launching process (used by Pterm() instead of the basepage's p_parent),
+	  whether the process was launched, its DTA pointer, and its standard
+	  handle map and current directories, which are then no longer read
+	  from or written to the basepage's p_uft and p_curdir fields (as in
+	  FreeMiNT).
+
+	  Mandatory on x86-64, where ring-3 processes can write their whole
+	  basepage and the record is load-bearing.  On other architectures it
+	  is optional and off by default: nothing there protects the kernel
+	  from a program anyway, and programs that look at p_uft/p_curdir of
+	  their basepage see zeros when it is on.  Turn it on to exercise the
+	  same code the x86-64 port runs.
+
+config CONF_WITH_PROCMEM
+	bool
+	default y if ARCH_X86_64
+	select CONF_WITH_KPROC
+	help
+	  The memory blocks of a process (its basepage with the TPA, and its
+	  environment) come from a window of kernel memory managed by
+	  include/procmem.h instead of from the GEMDOS memory descriptor lists:
+	  every block has an owner, a generation and a pin count, so that a
+	  stale or foreign address is recognised, and the blocks are reachable
+	  by a 32-bit address while the kernel itself is 64-bit.  Not
+	  user-selectable: it follows the architecture (and
+	  CONF_WITH_USER_ASPACE, which needs it).
+
+config CONF_WITH_USER_ASPACE
+	bool
+	default y if ARCH_X86_64
+	select CONF_WITH_PROCMEM
+	select CONF_WITH_KHEAP
+	select CONF_WITH_KPROC
+	select CONF_WITH_USER_COPY
+	help
+	  Processes run in per-process address spaces (ring 3 on x86-64):
+	  the record also carries the process's page tables, kernel stack,
+	  memory-block identities and loans, and its read-only copies of its
+	  ancestors' basepages, and the DTA pointer in it is the only one
+	  trusted.  Not user-selectable: it follows the architecture, and
+	  requires CONF_WITH_KPROC.  The separate-address-spaces option
+	  (#402) will become the real home of this.
+
+config CONF_WITH_KHEAP
+	bool
+	default y if ARCH_X86_64
+	help
+	  A growable heap for kernel-only objects (include/kheap.h):
+	  kernel-private process records (struct kproc) and address-space
+	  metadata come from it instead of the fixed GEMDOS memory descriptor
+	  pool, so their number is bounded by memory, not by that pool.  The
+	  machine provides it.  Not user-selectable: it follows the
+	  architecture, and CONF_WITH_USER_ASPACE requires it.
+
+config CONF_WITH_KCALL
+	bool
+	default y if ARCH_X86_64
+	help
+	  Kernel code calls GEMDOS functions as plain C calls to their
+	  implementations (bdos/arch/*/kcall.c) instead of through a
+	  trap, because the trap path belongs to the processes.  Only the
+	  calls kernel code makes exist.  Not user-selectable: it follows
+	  the architecture.
+
+config CONF_WITH_SSYSTEM
+	bool
+	default y if ARCH_ARM || ARCH_X86_64
+	help
+	  Ssystem() (GEMDOS 0x154, bdos/ssystem.c) is written in C and
+	  dispatched from osif(); on the other architectures it is handled by
+	  the assembly trap entry.  Not user-selectable: it follows the
+	  architecture.
+
+config CONF_WITH_GEMDOS_SHUTDOWN
+	bool "Shutdown() GEMDOS call"
+	default n if TARGET_192 || TARGET_256 || TARGET_CART
+	default y
+	help
+	  Add GEMDOS Shutdown() (0x151, as in MiNT and MagiC): close all files,
+	  write out the disk buffers, then power off, restart or halt.  Where
+	  the machine has no software power-off or reset (the Atari ST and
+	  its relatives have no power-off at all) it ends in the "safe to turn
+	  off your computer" message instead.  Off by default for the ROM
+	  images that have no room left (192 KB, 256 KB, the cartridge).
+	  The power off is what
+	  CONF_WITH_SHUTDOWN (bios/Kconfig) provides where that is set.
+
+config CONF_WITH_USER_COPY
+	bool "Validate the pointers passed to GEMDOS calls" if !ARCH_X86_64 && !ARCH_M68K && CONF_WITH_KPROC
+	default y if ARCH_X86_64
+	default n
+	help
+	  Check the pointer arguments of every GEMDOS (trap 1) call against the
+	  calling process before the call runs (bdos/uaccess.c): each pointer a
+	  call really uses must lie in memory the process may read, or write for
+	  an output, for its whole length, with no wrap-around, and strings must
+	  end within a bound.  A bad pointer makes the call fail with EIMBA
+	  (ERANGE for a bad length) instead of the kernel dereferencing it.
+	  Arguments a call does not use are never looked at.
+
+	  Mandatory on x86-64, where the kernel runs under the calling
+	  process's page tables and would otherwise touch the system variables
+	  or another block through a pointer it was handed.  Optional and off by
+	  default elsewhere (not offered on m68k, whose packed argument frame is
+	  not handled yet); without per-process address spaces the checks only
+	  look for null pointers and bad lengths.  Other call classes (BIOS,
+	  XBIOS, VDI, AES) are guarded by the same option as they are converted.
 
 config CONF_WITH_PRG_LOADER
 	bool "Load classic Atari GEMDOS PRG executables"

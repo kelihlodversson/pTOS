@@ -20,6 +20,7 @@
 /*.dc42
 /*.map
 /*.elf
+/*.efi
 /dsm.txt
 /fal_dsm.txt
 /release-archives/
@@ -38,11 +39,13 @@
 /tests/run_tests.c
 /runtests.tos
 /pieprobe.tos
+/LOADFAIL.TOS
 /relocprobe-unpacked.tos
 /PTRELOC.TOS
 /relocprobe2-unpacked.tos
 /PTRELOC2.TOS
 /test-hd.img
+/test-dir/
 /pbench-hd.img
 
 # Host tools built by the Makefile

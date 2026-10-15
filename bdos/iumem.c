@@ -15,6 +15,7 @@
 #include "emutos.h"
 #include "fs.h"
 #include "mem.h"
+#include "kproc.h"
 #include "bdosstub.h"
 
 
@@ -180,6 +181,15 @@ void freeit(MD *m, MPB *mp)
         KDEBUG(("BDOS freeit: invalid MD address %p\n",m));
         return;
     }
+
+    /*
+     * a basepage is a user-memory block like any other, so it can be
+     * released by Mfree(), by Mshrink() down to zero length, and by
+     * free_all_owned() when its owner terminates. Drop the matching
+     * kernel-private process record here, the one place every such
+     * release funnels through, so no path can leak one.
+     */
+    kproc_destroy((PD *)m->m_start);
 
     /*
      * snip it out

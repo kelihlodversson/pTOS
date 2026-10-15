@@ -1,6 +1,8 @@
 #ifndef VDIPB_H
 #define VDIPB_H 1
 
+#include "config.h"
+
 /* VDI control parameters */
 typedef struct
 {
@@ -11,13 +13,13 @@ typedef struct
     WORD nintout;
     WORD subcode;
     WORD handle;
-#ifdef __arm__
-	WORD pad;
+#if CONF_WITH_NATIVE_ABI
+    WORD pad;
 #endif
-	void *ptr1;
-	void *ptr2;
-#ifndef __arm__
-	WORD filler; /* make it 12 WORDs long, as documented */
+    void *ptr1;
+    void *ptr2;
+#if !CONF_WITH_NATIVE_ABI
+    WORD filler; /* make it 12 WORDs long, as documented */
 #endif
 } VDICONTROL;
 

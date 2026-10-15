@@ -1,0 +1,318 @@
+pTOS - x86-64 syscall entry and trap-class dispatch convention
+================================================================
+
+This documents how a GEMDOS/BIOS/XBIOS call reaches the kernel on the
+x86-64 port (#329), alongside the m68k/ARM trap convention it replaces.
+The implementation lives in bios/arch/x86_64/trap.c, trap.h and
+trapasm.S.
+
+
+Background: how the other ports do this
+----------------------------------------
+
+On m68k, and on ARM's own simulation of the same hardware trap table
+(bios/arch/arm/vectorsasm.S), each call class gets its own CPU trap
+number -- 1 for GEMDOS, 13 for BIOS, 14 for XBIOS -- with a shared
+low-memory vector table (VEC_GEM/VEC_BIOS/VEC_XBIOS, bios/vectors.h)
+steering the CPU trap to gemtrap()/biostrap()/xbiostrap(), which then
+dispatch by function number into the existing, architecture-neutral
+handler tables: bdos/bdosmain.c's osif() for GEMDOS, bios.c's
+bios_vecs[] for BIOS, xbios.c's xbios_vecs[] for XBIOS.
+
+x86-64 has no equivalent hardware trap-number table to populate, and
+nothing on this arch reads back what bios_init() writes into
+VEC_GEM/VEC_BIOS/VEC_XBIOS -- see x86_64_map_low_vectors() in pgtable.c.
+Instead, every call reaches the kernel through the `syscall` instruction,
+using a register convention that mirrors the m68k trap numbers closely
+enough to reuse the same handler tables unchanged.
+
+
+The syscall register convention
+--------------------------------
+
+    RAX = (trap_class << 32) | function_number
+    RDI, RSI, RDX, R10 = up to 4 real arguments
+
+trap_class matches the historic m68k trap number for the same call
+class:
+
+    X86_64_TRAP_GEMDOS   1   (trap.h)
+    X86_64_TRAP_BIOS     13
+    X86_64_TRAP_XBIOS    14
+
+It is not read back from anywhere -- it exists purely so the dispatcher
+can switch on it, and for continuity with vectors.h's existing
+VEC_TRAP1/13/14 naming. function_number is whatever that class's own
+handler table already expects (a GEMDOS opcode, or an index into
+bios_vecs[]/xbios_vecs[]).
+
+R10 stands in for a "4th argument register" instead of RCX: `syscall`
+itself clobbers RCX (loaded with the return RIP) and R11 (loaded with
+the pre-syscall RFLAGS), so neither is available to carry an argument.
+This is the same substitution the Linux x86-64 syscall ABI makes for the
+same reason.
+
+Only 4 real argument registers are defined, matching ARM's own
+convention rather than the 2 more x86-64 could spare after RCX/R11 are
+excluded: the handful of BIOS/XBIOS calls needing more than 4 arguments
+already have an established solution, reused unchanged here -- a
+pointer to one of include/biosargs.h's structs passed as the single real
+argument.
+
+GEMDOS's own widest call (Pexec, mode/path/tail/env) uses all 4 slots;
+osif() is called with a 5-element pw[] (function number plus the 4
+argument slots) exactly as bdosmain.c's own ARM branch already does.
+
+
+Entry/exit mechanism
+---------------------
+
+`syscall` does not go through an IDT gate and does not switch stacks via
+the TSS: TSS.RSP0 only applies to a privilege change taken through an
+interrupt/exception gate, not to `syscall` (Intel SDM Vol 2B, "SYSCALL").
+On `syscall`, the CPU leaves RSP completely unchanged (still pointing at
+the caller's own stack), saves the return RIP in RCX and RFLAGS in R11
+-- both otherwise clobbered, which is why the argument convention above
+avoids RCX.
+
+The entry stub (trapasm.S's x86_64_syscall_entry, installed via
+IA32_LSTAR by x86_64_trap_init()) is responsible for the whole round
+trip:
+
+  1. `swapgs`, exchanging the live GS base for IA32_KERNEL_GS_BASE --
+     giving the stub a way to reach known-good per-CPU state (trap.h's
+     x86_64_percpu_t) via %gs-relative addressing, without needing a
+     general-purpose register to find it first.
+  2. Save the interrupted (caller's) RSP into percpu.user_rsp.
+  3. Load RSP from percpu.kernel_rsp -- a known-good kernel stack top,
+     not the caller's own stack.
+  4. Save RCX/R11 and the rest of the incoming register state onto that
+     stack (x86_64_trap_frame_t, trap.h) before touching either.
+  5. Call x86_64_trap_dispatch() with from_ring3 = 1.
+  6. Mirror the entry sequence on the way out: restore registers, reload
+     RSP from percpu.user_rsp, `swapgs` back, `sysretq`.
+
+Only one percpu instance exists today -- no real multi-CPU support yet
+(#329's own scope).
+
+x86_64_bad_sysret() is the exit path's guard against CVE-2012-0217 and
+its Xen/*BSD analogues: `sysretq` does not itself validate that the
+return RIP (RCX, entirely caller-controlled) is a canonical address, and
+executing it anyway can fault mid-transition with attacker-influenced
+state already partly in effect. There is no user-mode fault-delivery
+mechanism yet to hand a bad return address back to the offending
+process safely, so trapasm.S calls x86_64_bad_sysret() to panic instead.
+
+
+Kernel-mode callers: kernel_trap()
+-------------------------------------------
+
+The `syscall` entry point above is reached *only* by a genuine ring-3
+caller. Every call this port's own boot code makes before a real process
+exists -- every x86-64 branch of include/biosbind.h/xbiosbind.h -- goes
+through kernel_trap() instead: an ordinary, recursion-safe C
+function that builds a throwaway x86_64_trap_frame_t on the caller's own
+stack and calls x86_64_trap_dispatch() directly, with from_ring3 = 0 and
+no privilege transition at all.  GEMDOS is not reached this way: kernel
+code calls the GEMDOS implementations directly (bdos/arch/x86_64/kcall.c,
+through the names in include/bdosbind.h), and kernel_trap() refuses
+the GEMDOS class.
+
+An earlier version of this code let both kinds of caller share the
+`syscall` entry point, telling them apart by testing whether the
+interrupted RSP looked like a kernel address. That test is unsafe:
+`syscall` never validates RSP, so a real ring-3 caller could put any
+64-bit value there -- including a higher-half one -- and be misclassified
+as kernel-mode, skipping `swapgs` and the stack switch entirely.
+Splitting the two mechanisms, rather than trying to infer which one a
+given `syscall` came from, removes the distinction that bug depended on.
+
+
+Dispatch and pointer arguments
+------------------------------
+
+x86_64_trap_dispatch() (trap.c) switches on trap_class and calls into
+osif()/bios_vecs[]/xbios_vecs[] exactly as m68k/ARM's own dispatchers
+do, with the result left in frame->rax. An out-of-range BIOS/XBIOS
+function number returns the function number itself, matching
+bios/arch/m68k/vectors.S's biosxbios convention.
+
+The dispatcher does not inspect the raw RDI/RSI/RDX/R10 values. A register
+a call does not use carries whatever the caller left in it, including, at
+process entry, values the kernel itself left there, and says nothing about
+the call. Which registers are pointers is known only per function, so
+the check for a caller's GEMDOS (trap 1) pointers is a descriptor
+per call (bdos/uaccess.c, CONF_WITH_USER_COPY: mandatory here, #437) that
+osif() consults before the call runs and that looks at the pointers that
+call really uses.  The trap handler only builds the argument array and calls
+osif(); kernel code, which passes kernel pointers and is not checked, does
+not come through osif() at all.  The same file refuses what a user process
+may not do (Pexec() modes other than the user ones, Maddalt(), Ssystem()
+writes).  The calls that take pointers:
+
+    Cconws(str)             string, read
+    Cconrs(buf)             2 + buf[0] bytes, read and written
+    Maddalt()               refused (EACCDN)
+    Fsetdta(dta)            a DTA, written
+    Dfree(buf, drv)         16 bytes, written
+    Dcreate/Ddelete/Dsetpath/Fcreate/Fopen/Fdelete/Fattrib(path, ...)
+                            string, read
+    Fread(h, count, buf)    count bytes, written
+    Fwrite(h, count, buf)   count bytes, read
+    Dgetpath(buf, drv)      128 bytes, written
+    Fsfirst(path, attr)     path string, read; the current DTA, written
+    Fsnext()                the current DTA, written; what the process left in
+                            its private part is not believed: the kernel keeps
+                            its own copy of the search state of each of the
+                            process's last 8 DTAs (the oldest goes first) and puts it back first, and
+                            a DTA never searched with has no more files
+    Frename(0, old, new)    two strings, read
+    Fdatime(buf, h, wflag)  4 bytes, read if wflag, else written
+    Pexec(mode, ...)        modes 0 and 3: path string; modes 0, 3, 5, 7: the
+                            command tail (ending within 128 bytes) and, if not null,
+                            the environment (strings ending in an empty one);
+                            modes 4 and 6 look the basepage up in the
+                            kernel's records instead (#416)
+    Ssystem(mode, ...)      S_GETCOOKIE's value and S_CONSOLE_DIM's buffer,
+                            written; the S_SET*VAL modes are refused
+
+"Checked" means every page of the range is mapped and user-accessible (and
+writable for an output) in the calling process, the range does not wrap
+around the 32-bit address space, and a string ends within 1024 bytes (an
+environment, which ends at its first double NUL, within 32766 bytes -- what
+envsize() can count); anything else is EIMBA, or ERANGE for a negative
+or oversized length or a string with no end.  Memory that passes is used
+directly, because the call runs under the process's own page tables.  The
+supervisor-only mappings (the system variables, kernel data) have no user bit,
+so a pointer into them fails.  Pointer-valued results (Malloc(), Fgetdta())
+are #351/#372.
+
+BIOS and XBIOS from ring 3 (#352)
+---------------------------------
+
+The BIOS (trap 13) and XBIOS (trap 14) calls a user process makes are judged
+the same way: a function per trap class (bios/biosaccess.c) knows, for every
+call that takes a pointer, what it points at, how big that is and which way
+the data goes, and checks exactly that before the call runs; the other
+arguments are scalars and are not looked at.  A pointer fails, with EIMBA, if
+the range is not all mapped and user-accessible (writable for an output) in
+the calling process, wraps around the 32-bit space, or lies in the
+supervisor-only mappings (the low system vectors at 0x84, say).  Calls the
+kernel makes itself (kernel_trap(), from_ring3 = 0) are not checked: their
+pointers are the kernel's own.
+
+A user pointer is also something the kernel must not keep: it would use it
+later, from an interrupt or a callback, under whichever page tables are
+loaded then, and a function pointer would be called in ring 0.  Where a call
+does that it is refused (EACCDN), or, for Setpalette(), served from a copy.
+
+    BIOS
+    0  Getmpb(mpb)          refused (EACCDN): kernel memory descriptors
+    1  Bconstat(dev)        scalars
+    2  Bconin(dev)          scalars
+    3  Bconout(dev, c)      scalars
+    4  Rwabs(...)           argument struct copied in; the buffer is checked
+                            (and made writable for a read) before the device
+                            operation (trap.c)
+    5  Setexc(num, vec)     vec must be -1 (a query), else EACCDN; num must
+                            be 0..0x102, else ERANGE (it is scaled and read
+                            as a kernel address).  Installing a vector is for
+                            the kernel
+    6  Tickcal()            scalars
+    7  Getbpb(dev)          scalars (the BPB pointer returned: #351/#372)
+    8  Bcostat(dev)         scalars
+    9  Mediach(dev)         scalars
+    10 Drvmap()             scalars
+    11 Kbshift(mode)        scalars
+
+    XBIOS (the calls this configuration has)
+    0   Initmous(type, param, vec)
+                            vec must be null (the keyboard interrupt would
+                            call it), else EACCDN; for types 1, 2 and 4,
+                            param is a struct param (12 bytes), read
+    2   Physbase()          scalars (result: #351)
+    3   Logbase()           scalars (result: #351)
+    4   Getrez()            scalars
+    5   Setscreen(log, phys, rez, mode)
+                            a positive log or phys would become the kernel's
+                            and VDI's screen: EACCDN; 0 and -1 are "unchanged"
+    6   Setpalette(pal)     16 words, read, even address.  The kernel reads
+                            them at the next VBL, so it is given a copy
+    7   Setcolor(n, c)      scalars
+    8, 9, 19  Floprd(), Flopwr(), Flopver()
+                            argument struct copied in; the buffer checked
+                            before the device operation (trap.c)
+    10  Flopfmt(...)        argument struct copied in; the buffer and the
+                            skew table checked (trap.c)
+    12  Midiws(cnt, ptr)    cnt + 1 bytes (cnt unsigned), read
+    14  Iorec(dev)          scalars (result is a kernel pointer: #426)
+    15  Rsconf(...)         argument struct copied in (trap.c)
+    17  Random()            scalars
+    18  Protobt(buf, ...)   a 512-byte boot sector, written
+    20  Scrdmp()            scalars
+    21  Cursconf(f, v)      scalars
+    22  Settime(t)          scalars
+    23  Gettime()           scalars
+    24  Bioskeys()          scalars
+    25  Ikbdws(cnt, ptr)    cnt + 1 bytes (cnt unsigned), read
+    28  Giaccess(d, r)      scalars
+    29  Offgibit(b)         scalars
+    30  Ongibit(b)          scalars
+    32  Dosound(table)      a positive table would be kept and read by the
+                            timer: EACCDN; 0 and -1 (query) are fine
+    34  Kbdvbase()          scalars (result is a kernel pointer: #426)
+    35  Kbrate(i, r)        scalars
+    37  Vsync()             scalars
+    41  Floprate(d, r)      scalars
+    42  DMAread(sec, cnt, buf, major)
+                            cnt sectors of that device's own size, written
+                            (EUNDEV for no such device, ERANGE for a negative
+                            count)
+    43  DMAwrite(...)       the same, read
+    44  Bconmap(dev)        -2 is the kernel's table: EACCDN; else scalars
+    64  Blitmode(m)         scalars
+
+Not implemented here (the function number comes back): Ssbrk, Keytbl and
+Supexec (use Ssystem()), Prtblk, Puntaes, Mfpint, Jdisint, Jenabint, Xbtimer,
+Setprt, NVMaccess and the Videl, DSP and DMA-sound calls, which need
+hardware or an interface this port does not have.  If one of them is
+enabled for an architecture, it needs its row here and in
+bios/biosaccess.c first.
+
+The test is tests/x32_probe/x32_probe.c, mode A: an unmapped address, a
+kernel address, the supervisor-only low vectors (0x84), a read-only page
+(for an output), a range that crosses the top of the mapping, a 32-bit wrap,
+a vector number that would be a wild read, and arguments that only look like
+addresses (the registers of a call that does not use them), run by the boot
+self-test (bios/machine/pc-x86_64/memtest.c) in QEMU.  Setpalette() takes the
+palette in a copy, so nothing a process does to its own memory afterwards
+reaches the kernel.  The check assumes the validated mapping stays as it is
+for the length of the call; if demand paging or concurrent unmapping is ever
+introduced, these calls (like the GEMDOS ones) need fault recovery.
+
+Trap class 2 (VDI, AES) is refused from ring 3 outright (#376).
+
+Status
+-------
+
+The mechanism above is implemented and verified: a real loaded x32 process is
+entered in ring 3 (bdos/arch/x86_64/rwa.c's gouser(), through
+x86_64_enter_user()), makes `syscall` calls that reach the GEMDOS/BIOS/XBIOS
+handlers, and returns with `sysretq`; the built-in EmuCON runs this way, and
+the boot self-test (bios/machine/pc-x86_64/memtest.c) exercises entry,
+nested launches, faults and exits.
+
+Kernel stack.  Each ring-3 process makes its system calls on a kernel stack of
+its own (include/procmem.h, kstack_alloc(); the KPROC record owns it).
+Before it enters a process, gouser() points percpu.kernel_rsp at that stack,
+so the entry stub in step 3 above lands on the stack of the process making the
+call; when the process exits, or faults, gouser() puts the launcher's value
+back.  A process suspended inside a call -- Pexec() of a child -- therefore
+keeps its frames, and the jmp_buf its launch resumes through, while the child
+makes calls of its own.  gouser() restores the rest of the launcher's state
+the same way: its page tables, the user RSP the stub parks in percpu.user_rsp
+(a single slot every call overwrites) and its GS state.  The static
+syscall_stack in trap.c is only the initial value, used until the first
+process is launched.  The exception stack (TSS.rsp0) is still shared: an
+exception never resumes the code it interrupted.  See
+doc/x86_64-address-space.txt, "Faults and termination".

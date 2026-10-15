@@ -18,6 +18,7 @@
 #include "bdosdefs.h"   /* for PD, used by pfs_proc_exit() below */
 
 struct pfs_ops;
+struct dta_info;
 
 /* Opaque handle identifying a file or directory within one driver
  * instance.  The core never looks inside index/aux; a driver is free to
@@ -82,7 +83,7 @@ struct pfs_ops {
      * fs/pfs.c relies on this to upgrade a borrowed cookie (one it must
      * not release, e.g. the cached current directory) into one it owns
      * and must eventually release(), for state that outlives the call
-     * that resolved 'dir' (see pfs_do_sfirst()'s search table).  For a
+     * that resolved 'dir' (see pfs_do_sfirst_at()'s search table).  For a
      * driver whose cookies carry no refcounted resource (like FAT's,
      * which just wrap a cached DND*), this can simply be `*out = *dir;`;
      * a driver that does refcount (e.g. a future 9p fid) must actually
@@ -225,7 +226,7 @@ LONG pfs_do_create(const char *path, UWORD attr);
 LONG pfs_do_unlink(const char *path);
 LONG pfs_do_chmod(const char *path, WORD wrt, WORD mod);
 LONG pfs_do_rename(const char *p1, const char *p2);
-LONG pfs_do_sfirst(char *path, WORD att);
-LONG pfs_do_snext(void);
+LONG pfs_do_sfirst_at(char *path, WORD att, struct dta_info *dta);
+LONG pfs_do_snext_at(struct dta_info *dta);
 
 #endif /* PFS_H */

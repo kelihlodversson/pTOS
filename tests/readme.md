@@ -3,7 +3,7 @@
 A small, platform-independent regression test harness. Test suites are
 plain C, run inside a real (emulated) pTOS boot, and are cross-compiled
 for every architecture pTOS targets — the same test source runs unmodified
-on m68k and ARM.
+on m68k, ARM and x86-64 (as x32 programs).
 
 ## Building
 
@@ -30,6 +30,15 @@ make test-hd
 `lib/libcmini` is a git submodule. If it's missing, `make test-hd` fails
 with an actionable error — run `git submodule update --init` and retry.
 
+`make test-dir` collects the same files (`runtests.tos`, `emudesk.inf`, the
+probe programs and `TESTS/`) into a plain `test-dir/` directory instead of
+an image. That needs neither `mkfs.fat` nor mtools, and lets QEMU's virtual
+FAT driver present the directory as the disk (see [Running](#running)).
+
+On x86-64 the programs are built as x32 programs (libcmini's
+`ptos_x86_64_defconfig`, with the compiler and flags of the other x32
+programs). There is no disk image target for x86-64: use `make test-dir`.
+
 ## Running
 
 `tests/emudesk.inf`'s `#Z` autorun line launches `C:\RUNTESTS.TOS`
@@ -47,6 +56,25 @@ qemu-system-arm -M raspi2b -bios kernel7.img \
   -d guest_errors -serial stdio
 ```
 
+From a host directory, without building an image (`make test-dir` first).
+raspi2b wants a power-of-two SD card size, so give vvfat a smaller raw
+window; virt-arm takes it over virtio-blk as it is:
+
+```sh
+qemu-system-arm -M raspi2b -bios kernel7.img \
+  -drive if=sd,driver=raw,size=256M,file.driver=vvfat,file.dir=test-dir,file.rw=on \
+  -d guest_errors -serial stdio
+
+qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf \
+  -global virtio-mmio.force-legacy=false \
+  -drive if=none,id=hd0,format=raw,file.driver=vvfat,file.dir=test-dir,file.rw=on \
+  -device virtio-blk-device,drive=hd0 -d guest_errors -serial stdio -display none
+```
+
+On x86-64 (QEMU with OVMF), copy `test-dir`'s contents into the directory
+that holds `EFI/BOOT/BOOTX64.EFI` and is attached as a FAT drive, boot, and
+type `runtests.tos` at the EmuCON prompt — there is no autorun.
+
 On Hatari (m68k), attach it as an ACSI disk and use `--conout 2` to capture
 the console text (a VT-52 terminal channel) directly to Hatari's own
 stdout:
@@ -55,6 +83,17 @@ stdout:
 hatari --tos ptos512k.img --machine ste --memsize 4 --sound off \
   --acsi test-hd.img --conout 2 --run-vbls 1200
 ```
+
+CI runs the suite on three machines (the `regression` job in
+`.github/workflows/build.yml`) with `tools/run-regression-tests.sh
+<virt-arm|virt-m68k|pc-x86_64>`, which also works locally once the matching
+configuration (`virt-arm-cli`, `virt-m68k-cli-elf` (the m68k ELF loader is an option, and three suites need it) or `pc-x86_64`) is built and
+`make test-dir` has run. The virt machines are the `-cli` configurations so
+that they boot to EmuCON, where the script types `runtests.tos` into the
+serial console; the script ends QEMU when the harness has printed its
+verdict and fails unless that is `All tests passed.` After a pass it starts
+`poweroff.tos` (`Shutdown(SHUT_POWER)`, doc/shutdown.txt) and expects QEMU to
+switch off by itself.
 
 See the `ptos-smoketest` skill (`.claude/skills/ptos-smoketest/SKILL.md`)
 for more emulator invocations and gotchas.
@@ -124,7 +163,7 @@ Test code is userland, built against libcmini rather than the kernel's own
 `portab.h` types (`ULONG`, `BOOL`, etc.) or `-mshort` conventions — use plain
 C types and libcmini's headers (`<mint/osbind.h>`
 for GEMDOS calls). It's cross-compiled for whichever architecture is
-currently configured (`ARCH_ARM`/`ARCH_M68K`), so avoid anything
+currently configured (`ARCH_ARM`/`ARCH_M68K`/`ARCH_X86_64`), so avoid anything
 architecture-specific unless the test is deliberately targeted at one (see
 `stack_alignment`, which is ARM-only in effect: it exercises a bug that
 never existed on m68k).

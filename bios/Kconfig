@@ -45,16 +45,17 @@ config CONF_WITH_MEMORY_TEST
 
 config CONF_WITH_TTRAM
 	bool "TT-RAM detection"
-	depends on CONF_WITH_ALT_RAM && !ARCH_ARM
+	depends on CONF_WITH_ALT_RAM && !ARCH_ARM && !ARCH_X86_64
 	default n if TARGET_192 || MACHINE_AMIGA || MACHINE_VIRT_M68K
 	default y
 	help
 	  Detect and use the fast RAM found in the 32-bit address space of
 	  TT and Falcon compatible machines.
 
-	  This cannot be selected on ARM: TT-RAM is reported through the
-	  ramtop/ramvalid system variables, which do not exist in the ARM
-	  variant of the fixed sysvars layout (see tosvars.ld).
+	  This cannot be selected on ARM or x86-64: TT-RAM is reported
+	  through the ramtop/ramvalid system variables, which do not exist
+	  in either arch's variant of the fixed sysvars layout (see
+	  tosvars.ld).
 
 config CONF_TTRAM_SIZE
 	hex "Size of the TT-RAM, in bytes (0 = autodetect)"
@@ -162,6 +163,34 @@ config CONF_WITH_SCSI_DRIVER
 	  Provide the XHDI "SCSI Driver" interface, giving applications
 	  generic SCSI/ATAPI command pass-through to the ACSI/IDE/SCSI
 	  block devices.
+
+config CONF_WITH_MACHINE_IRQ_INIT
+	bool
+	default y if ARCH_X86_64
+	help
+	  The machine brings up its own interrupt controller and enables
+	  interrupts (machine_irq_init(), declared in bios/machine.h) instead
+	  of the CPU-level enable the other architectures do at that point of
+	  the boot.  Not user-selectable: it follows the architecture.
+
+config CONF_WITH_DMABOOT
+	bool
+	default y if ARCH_M68K
+	help
+	  Boot from the root sector of a disk with the Atari "DMAr" boot
+	  protocol (disk_try_dmaboot(), dmaboot()): the sector is executed as
+	  native code with an m68k register-passing convention.  Meaningless
+	  where the root sector cannot hold code for this CPU (ARM boots from
+	  its firmware, x86-64 through EFI).  Not user-selectable: it follows the architecture.
+
+config CONF_WITH_ADDR_COOKIES
+	bool
+	default y if !ARCH_X86_64
+	help
+	  Publish the cookies whose value is the address of a kernel
+	  variable ('_5MS', 'SCSI').  A cookie value is 32 bits wide, so
+	  an architecture whose kernel data lives above 4 GiB cannot
+	  offer them.  Not user selectable: it follows the architecture.
 
 config CONF_WITH_GPT_SUPPORT
 	bool "GPT (GUID Partition Table) support"
@@ -439,6 +468,25 @@ config CONF_WITH_GOLDFISH_TTY
 	help
 	  Use the Goldfish TTY device exposed by QEMU's m68k 'virt' machine
 	  as the serial console.
+
+config CONF_WITH_PC_COM1
+	bool
+	depends on MACHINE_PC_X86_64
+	default y
+	help
+	  Use the COM1 serial port (bios/machine/pc-x86_64/earlycon.c, also
+	  used for early boot diagnostics before bios_init() runs) as the
+	  serial console. This machine has no framebuffer driver yet (#332),
+	  so CONF_SERIAL_CONSOLE's default-on is this machine's only console.
+
+	  No user-facing prompt: earlycon.c's own init/puts calls (the
+	  pre-bios_init() diagnostic console startup.c and the panic paths
+	  use) are unconditional, with no guard checking this symbol at all,
+	  so turning it off would not actually silence or disable COM1 --
+	  it would just make this option lie about what it does. Until a
+	  real alternative (the framebuffer, #332) exists for this machine
+	  to fall back to, COM1 is genuinely mandatory equipment here, not
+	  a configurable choice.
 
 config CONF_WITH_PRINTER_PORT
 	bool "Parallel printer port support"
@@ -747,7 +795,7 @@ config CONF_WITH_SHUTDOWN
 
 config USE_STATIC_INLINES
 	bool "Use static inline functions"
-	depends on !ARCH_ARM
+	depends on !ARCH_ARM && !ARCH_X86_64
 	default y
 	help
 	  Compile some very small functions as static inlines.  This makes
