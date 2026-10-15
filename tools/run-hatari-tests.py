@@ -100,6 +100,17 @@ def main():
         print('run-hatari-tests: skipped, but they have to run on this '
               'machine:\n  ' + '\n  '.join(skipped), file=sys.stderr)
         return 2
+    # the suites are found by the build, so one that vanished (or was
+    # renamed) would otherwise leave this green with its coverage gone: each
+    # has to have printed a group line that ends in PASS
+    missing = [t for t in MUST_RUN
+               if not any(l.strip().startswith(t + ':') and
+                          l.rstrip().endswith('PASS')
+                          for l in text.splitlines())]
+    if missing:
+        print('run-hatari-tests: no passing result from %s'
+              % ', '.join(missing), file=sys.stderr)
+        return 1
     return 0
 
 

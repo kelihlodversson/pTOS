@@ -143,6 +143,9 @@ jobs:
         if: always()
         run: |
           for f in results/*.txt; do
+            # no match leaves the pattern itself: nothing to show then, and
+            # the comparison below reports the missing results
+            [ -e "$f" ] || continue
             echo "::group::$f"
             cat "$f"
             echo "::endgroup::"
