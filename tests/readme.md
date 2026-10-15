@@ -229,3 +229,11 @@ turned off, `text_blit` fails with the 68040 (1552 of the 7488 justified text
 cases, for one) and still passes with the 68030: Hatari shows the missing
 flush and invalidate of the 68040's data cache, but not that of the 68030's
 (so the 68030 code is only checked for not crashing here).
+
+The workflow `.github/workflows/hatari-tests.yml` does this on every pull
+request to `master` or an epic branch (`tools/run-hatari-tests.py` runs one
+machine): the ROM image of `atari512` and of `atari512-fastcall` (the same
+built with `-mfastcall`, so that the code is run under that calling convention
+too) on an emulated STE in ST-LOW, ST-MEDIUM and ST-HIGH, and on a Falcon with
+a 68030 and with a 68040. It fails if a test fails, and also if `text_blit` or
+`raster_copy` skip themselves, as they have to run on every one of these.

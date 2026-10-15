@@ -34,12 +34,16 @@ jobs:
     strategy:
       matrix:
         # The key of the baselines in tools/pBench/ci-baselines is the name of
-        # the configuration.  atari256 is built with -mfastcall.
+        # the configuration.  atari256 and atari512-fastcall are built with
+        # -mfastcall.
         include:
           - config: atari512
             image: ptos512k.img
           - config: atari256
             image: ptos256us.img
+          # the 512 KB image of the TT and the Falcon built with -mfastcall
+          - config: atari512-fastcall
+            image: ptos512k.img
     steps:
       - uses: actions/checkout@v4
         with:
@@ -95,6 +99,8 @@ jobs:
             modes: low,med,high,f030,f040
           - config: atari256
             modes: low,med,high
+          - config: atari512-fastcall
+            modes: f030,f040
     permissions:
       contents: read
       pull-requests: write
@@ -129,6 +135,18 @@ jobs:
             --pbench products/pbench.prg --out results --jobs 5 --timeout 120 \
             --res "$MODES" \
             --system "${CONFIG}=products/system.img=pTOS ${CONFIG} (${GITHUB_SHA::8})"
+
+      # The results as text too, so that baselines can be made from the log
+      # when the artifact cannot be had (no -mfastcall toolchain to make them
+      # with locally either)
+      - name: Show the results
+        if: always()
+        run: |
+          for f in results/*.txt; do
+            echo "::group::$f"
+            cat "$f"
+            echo "::endgroup::"
+          done
 
       # What the baselines in the repository are made from when they have to
       # be made again: see doc/pbench.txt.

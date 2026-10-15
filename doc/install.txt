@@ -101,6 +101,8 @@ atari192            ptos192us.img, ROM padded to 192 KB (at 0x00fc0000)
 atari256            ptos256us.img, ROM padded to 256 KB (at 0x00e00000)
 atari512            ptos512k.img, ROM padded to 512 KB (at 0x00e00000),
                     multi-language
+atari512-fastcall   the same built with -mfastcall (needs the -mfastcall
+                    toolchain, see above), for the TT and the Falcon
 cartridge           ptoscart.img and ptos.stc, diagnostic cartridge
 prg                 ptos.prg, a RAM TOS, multi-language
 floppy              ptosus.st, a bootable floppy holding a RAM TOS

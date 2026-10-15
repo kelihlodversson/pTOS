@@ -94,7 +94,12 @@ def main():
     ap.add_argument('key')
     a = ap.parse_args()
 
-    files = sorted(glob.glob(os.path.join(a.baselines, a.key + '-*.txt')))
+    # not the files of a key that starts with this one (atari512 and
+    # atari512-fastcall)
+    mode = re.compile(r'^%s-(low|med|high|f030|f040)-(blitter|noblitter)\.txt$'
+                      % re.escape(a.key))
+    files = sorted(f for f in glob.glob(os.path.join(a.baselines, a.key + '-*.txt'))
+                   if mode.match(os.path.basename(f)))
     if not files:
         text = ('### pBench: no baselines\n\nThere are no `%s-*.txt` files '
                 'in `%s`; see "Performance baselines for CI" in '
