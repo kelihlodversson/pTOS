@@ -198,3 +198,21 @@ hatari --tos ptos512k.img --machine ste --memsize 4 --sound off \
 
 Hatari does not exit when the tests are done (the harness returns to the
 desktop), so run it under `timeout -s KILL` and read the output.
+
+### raster_copy
+
+`raster_copy` checks `vro_cpyfm()` copies between two areas of the screen on
+Atari ST/STE style bitplane screens (1, 2 or 4 planes, 320 or 640 pixels
+wide), and is skipped, as `text_blit` is, without a blitter, on ARM and on
+other screens. It is part of the blitter text epic (#498), issue #503.
+
+With the blitter disabled the copy is done by the assembler `fast_bit_blt()`,
+with it enabled by `bit_blt()` and the blitter. The test makes the same copies
+through both on a band of the screen (restored afterwards), and compares the
+screen memory: all 16 writing modes, widths from 1 to 70 pixels, heights of 1
+and 7 lines, three alignments of the source and four of the destination, and
+destinations that are far from the source, overlap it on the same lines, or
+one line above or below it (so that the blit goes in either direction), with
+and without a clip rectangle. Mode 5 leaves the destination as it is: the
+blitter is checked against the band as it was, and on a one plane screen not
+compared with the CPU path, which changes it in some cases (#535).
