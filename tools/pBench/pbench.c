@@ -14,8 +14,11 @@
  * here through the documented OS interfaces only -- no direct hardware access
  * -- so it runs on every pTOS target.  See doc/pbench.txt.
  *
- * Usage:  pbench.prg [-q] [-r N] [-l] [TESTS]
+ * Usage:  pbench.prg [-q] [-n] [-r N] [-l] [TESTS]
  *   -q          quit when done instead of waiting for a key
+ *   -n          run with the blitter turned off (Blitmode()), and turn it on
+ *               again at the end if it was on: for a machine whose blitter
+ *               an emulator cannot be told to leave out, like the Falcon
  *   -r N        repeat each test N times (the time reported is per run)
  *               Without -r, a test that finishes in under two seconds is
  *               repeated, so that fast machines still get a meaningful time
@@ -43,6 +46,15 @@ static WORD scr_w, scr_h;       /* screen size */
 static WORD gl_wchar, gl_hchar;
 static WORD ncolors = 2;        /* colours the screen can show */
 static int blitter;             /* is the blitter in use? */
+
+/* Blitmode() is a macro with a value; this one discards it */
+static void set_blitter(int on)
+{
+    long old;
+
+    old = Blitmode(on);
+    (void)old;
+}
 static WORD planes;             /* bits per pixel */
 static long repeat = 0;         /* repeat count asked for with -r, 0 = auto */
 
@@ -676,7 +688,8 @@ static int read_config(char **args)
 int main(int argc, char **argv)
 {
     char *cfgargs[MAX_ARGS];
-    int i, quit = 0, list = 0;
+    int i, quit = 0, list = 0, noblit = 0;
+    long blitmode;
     const char *sel = NULL;
     WORD ww, hh;
     WORD handle, ext[45];
@@ -692,6 +705,8 @@ int main(int argc, char **argv)
             quit = 1;
         else if (!strcmp(argv[i], "-l"))
             list = 1;
+        else if (!strcmp(argv[i], "-n"))
+            noblit = 1;
         else if (!strcmp(argv[i], "-r") && i + 1 < argc)
             repeat = atol(argv[++i]);
         else
@@ -728,6 +743,9 @@ int main(int argc, char **argv)
         vq_extnd(vh, 1, vext);
         planes = vext[4];
     }
+    blitmode = Blitmode(-1);
+    if (noblit && (blitmode & 2))
+        set_blitter(0);
     blitter = (Blitmode(-1) & 3) == 3;
     reference = find_reference();
 
@@ -752,6 +770,8 @@ int main(int argc, char **argv)
     show_report();
     v_show_c(vh, 0);
     save_report();
+    if (noblit && (blitmode & 2))
+        set_blitter((int)(blitmode & 1));
     if (!quit)
         evnt_keybd();
     form_dial(FMD_FINISH, 0, 0, 0, 0, 0, 0, scr_w, scr_h);

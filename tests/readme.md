@@ -162,10 +162,11 @@ anything else. Bindings that a suite needs and `gem.h` lacks belong there.
 ### text_blit
 
 `text_blit` checks VDI text output on Atari ST/STE style bitplane screens
-(1, 2 or 4 planes, 320 or 640 pixels wide). It is part of the blitter text
-epic (#498), and is skipped, and reported as `SKIP`, on every other machine:
-without a blitter (`Blitmode()` says so), on ARM and on screens that are not
-bitplane screens it has nothing to compare.
+(1, 2 or 4 planes, 320 or 640 pixels wide; also the 640x480 with 16 colours
+of a Falcon). It is part of the blitter text
+epic (#498), and is skipped, and reported as `SKIP` with the screen it found,
+on every other machine: without a blitter (`Blitmode()` says so), on ARM and on
+screens that are not bitplane screens it has nothing to compare.
 
 It draws strings on a band of the screen (restored afterwards), starting
 from a fixed pseudo-random pattern, in three groups:
@@ -216,3 +217,15 @@ one line above or below it (so that the blit goes in either direction), with
 and without a clip rectangle. Mode 5 leaves the destination as it is: the
 blitter is checked against the band as it was, and on a one plane screen not
 compared with the CPU path, which changes it in some cases (#535).
+
+### On an emulated Falcon
+
+Both suites run on a Falcon in Hatari, where the CPU can have a data cache
+(`--machine falcon --cpulevel 3` or `4`, `--memsize 14`, `--dsp none`, the
+test disk as `--ide-master`), in the screen mode pTOS starts in (640x480 with
+16 colours), and pass with the 68030 and with the 68040. As a control, with
+the blitter code's cache calls (`BLITTER_CACHE_OPS` in `vdi/vdi_raster.c`)
+turned off, `text_blit` fails with the 68040 (1552 of the 7488 justified text
+cases, for one) and still passes with the 68030: Hatari shows the missing
+flush and invalidate of the 68040's data cache, but not that of the 68030's
+(so the 68030 code is only checked for not crashing here).

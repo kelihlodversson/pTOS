@@ -66,11 +66,14 @@ def screen(path):
 
 
 def describe(name):
-    # atari512-med-noblitter -> "ST-MEDIUM, no blitter"
-    m = re.match(r'.*-(low|med|high)-(blitter|noblitter)$', name)
+    # atari512-med-noblitter -> "ST-MEDIUM, no blitter",
+    # atari512-f040-blitter -> "Falcon with a 68040, blitter"
+    m = re.match(r'.*-(low|med|high|f030|f040)-(blitter|noblitter)$', name)
     if not m:
         return name
-    res = {'low': 'ST-LOW', 'med': 'ST-MEDIUM', 'high': 'ST-HIGH'}[m.group(1)]
+    res = {'low': 'ST-LOW', 'med': 'ST-MEDIUM', 'high': 'ST-HIGH',
+           'f030': 'Falcon with a 68030',
+           'f040': 'Falcon with a 68040'}[m.group(1)]
     return '%s, %s' % (res, 'blitter' if m.group(2) == 'blitter'
                        else 'no blitter')
 
