@@ -192,6 +192,29 @@ static BOOL ok_for_blitter_string(Vwk *vwk)
 #endif
 
 /*
+ * set up text_blt() to output a character: where its image is in the font
+ * form, and how big; returns its index in the font (which is not that of
+ * the character if it is out of range for the font, a '?' being output)
+ */
+static WORD load_char(const Fonthead *fnt_ptr, WORD ch)
+{
+    WORD temp = ch;
+
+    /* If the character is out of range for this font make it a ? */
+    if ((temp < fnt_ptr->first_ade) || (temp > fnt_ptr->last_ade))
+        temp = '?';
+    temp -= fnt_ptr->first_ade;
+
+    linea_vars.SOURCEX = fnt_ptr->off_table[temp];
+    linea_vars.DELX = fnt_ptr->off_table[temp + 1] - linea_vars.SOURCEX;
+
+    linea_vars.SOURCEY = 0;
+    linea_vars.DELY = fnt_ptr->form_height;
+
+    return temp;
+}
+
+/*
  * output specified text string
  *
  * 'width' is the pre-calculated width of the text on the screen;
@@ -208,6 +231,8 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     WORD outline, underline;
 
     WORD temp;
+    BOOL done, skip_clipped, line_out;
+    WORD adv_extra, clip_extra, xmn, xmx, xlim;
     const Fonthead *fnt_ptr;
     Point * point;
 #if CONF_WITH_BLITTER
@@ -375,32 +400,106 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     use_blitter = ok_for_blitter_string(vwk);
 #endif
 
+    /*
+     * Characters that are wholly outside the clip window are not handed to
+     * text_blt() (nor to the blitter's string path, whose set-up would be
+     * made for nothing): that costs a good deal to find out there, and of
+     * the characters of a line of text, those that stick out of a window or
+     * are on a line that is not in it can be most of them.
+     *
+     * This is only done for text that is neither rotated nor scaled, whose
+     * lines are not moved up or down by justification, with the test
+     * check_clip() makes in vdi_textblit.c on the width and height that
+     * text_blt() gives it, and the move of the destination it makes when it
+     * finds there is nothing to draw.  Not asking is always all right, as
+     * text_blt() then makes the same test itself: so no character is
+     * skipped that is not outside, but some outside ones may go to it.
+     *
+     * clip_extra and adv_extra are what the style adds to the width of a
+     * character for the test and for the move; the left edge is tested
+     * against xlim, which has clip_extra taken off it.
+     */
+    adv_extra = clip_extra = xmn = xmx = xlim = 0;
+    line_out = FALSE;
+    skip_clipped = vwk->clip && !vwk->chup && !vwk->scaled;
+    if (skip_clipped && justified
+     && (justified->chary || justified->rmchary
+      || justified->wordy || justified->rmwordy))
+        skip_clipped = FALSE;
+    if (skip_clipped)
+    {
+        WORD y = linea_vars.DESTY;
+        WORD clip_dely = fnt_ptr->form_height;
+
+        adv_extra = 0;
+        if ((vwk->style & F_THICKEN) && !(fnt_ptr->flags & F_MONOSPACE))
+            adv_extra += fnt_ptr->thicken;
+        clip_extra = adv_extra;
+        if (vwk->style & F_SKEW)
+            clip_extra += linea_vars.LOFF + linea_vars.ROFF;
+        if (vwk->style & F_OUTLINE)
+        {
+            adv_extra += OUTLINE_THICKNESS * 2;
+            clip_extra += OUTLINE_THICKNESS * 2;
+            clip_dely += OUTLINE_THICKNESS * 2;
+        }
+        xmn = vwk->xmn_clip;
+        xmx = vwk->xmx_clip;
+        xlim = xmn - clip_extra;
+
+        /* the line is the same for all the characters: in or out? */
+        line_out = (y < vwk->ymn_clip && y + clip_dely <= vwk->ymn_clip)
+                || y > vwk->ymx_clip;
+
+        /*
+         * a string that lies inside the window needs no test at all (width
+         * is what the characters add up to, if the font has no offsets
+         * that move them)
+         */
+        if (!line_out && !justified && !(fnt_ptr->flags & F_HORZ_OFF)
+         && linea_vars.DESTX >= xmn
+         && linea_vars.DESTX + width + clip_extra <= xmx
+         && y >= vwk->ymn_clip)
+            skip_clipped = FALSE;
+    }
+
     for (j = 0; j < count; j++) {
 
-#if CONF_WITH_BLITTER
-        /* the characters that are plain and not clipped, all at once */
-        if (use_blitter)
+        temp = load_char(fnt_ptr, str[j]);
+
+        done = FALSE;
+        if (skip_clipped)
         {
-            j += blitter_text_string(fnt_ptr, count - j, str + j, justified);
-            if (j >= count)
-                break;
+            done = line_out;
+            if (!done)
+            {
+                WORD x = linea_vars.DESTX;
+
+                done = x > xmx || (x < xmn && x + linea_vars.DELX <= xlim);
+            }
+            if (done)
+                linea_vars.DESTX += linea_vars.DELX + adv_extra;
         }
+
+        if (!done)
+        {
+#if CONF_WITH_BLITTER
+            /* the characters that are plain and not clipped, all at once */
+            if (use_blitter)
+            {
+                WORD n = blitter_text_string(fnt_ptr, count - j, str + j, justified);
+
+                if (n > 0)
+                {
+                    j += n;
+                    if (j >= count)
+                        break;
+                    temp = load_char(fnt_ptr, str[j]);
+                }
+            }
 #endif
-
-        temp = str[j];
-
-        /* If the character is out of range for this font make it a ? */
-        if ((temp < fnt_ptr->first_ade) || (temp > fnt_ptr->last_ade))
-            temp = '?';
-        temp -= fnt_ptr->first_ade;
-
-        linea_vars.SOURCEX = fnt_ptr->off_table[temp];
-        linea_vars.DELX = fnt_ptr->off_table[temp + 1] - linea_vars.SOURCEX;
-
-        linea_vars.SOURCEY = 0;
-        linea_vars.DELY = fnt_ptr->form_height;
-
-        text_blt();
+            text_blt();
+        }
 
         if (justified) {
             linea_vars.DESTX += justified->charx;
