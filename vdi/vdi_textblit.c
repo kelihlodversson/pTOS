@@ -1393,10 +1393,16 @@ void text_blt(void)
      *
      * not if it is clipped: the software path cuts the character to the
      * clip rectangle first and thickens what is left, which the buffer,
-     * thickened first and cut afterwards, does not reproduce.
+     * thickened first and cut afterwards does not reproduce.
+     *
+     * nor if LOFF or ROFF are set: pre_blit() makes the buffer that much
+     * wider whether or not there is skew, which the software path does not
+     * (VDI clears them without skew, but a Line-A caller may not), so the
+     * blitter would draw buffer that nothing has been drawn into.
      */
     if ((vars.STYLE & (F_THICKEN | F_SKEW)) == F_THICKEN
-     && !need_preblit && !clipped && blitter_is_enabled)
+     && !need_preblit && !clipped && blitter_is_enabled
+     && !linea_vars.LOFF && !linea_vars.ROFF)
     {
         need_preblit = TRUE;
         mono_cell = TRUE;
