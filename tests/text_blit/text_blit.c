@@ -22,7 +22,9 @@
  * fail; the model comparison is what is checked then.
  *
  * The test needs an Atari ST/STE style bitplane screen (1, 2 or 4 planes,
- * 320 or 640 pixels wide) and a blitter; it is skipped everywhere else.
+ * 320 or 640 pixels wide: an ST, an STE, a TT in an ST mode, or a Falcon in
+ * a mode with 16 colours or fewer) and a blitter; it is skipped everywhere
+ * else.
  * It draws on a band of the screen, which is saved and restored.
  *
  * Copyright (C) 2026 The pTOS development team
@@ -67,7 +69,7 @@ struct fonthead {
 
 /* the area of the screen the test draws on */
 #define BAND_LINES      80
-#define MAX_BPL         160
+#define MAX_BPL         320           /* 4 planes of 640 pixels */
 #define BAND_MAX        (BAND_LINES * MAX_BPL)
 #define TEXT_X          40              /* where text starts, plus a shift */
 #define TEXT_Y          40              /* ... and its top line in the band */
@@ -714,7 +716,16 @@ void test_text_blit(void)
     {
         ptest_begin("text_blit (#499)");
         conws(rc == -1 ? "SKIP (no blitter)\r\n" :
-              rc == -2 ? "SKIP (no VDI)\r\n" : "SKIP (not an ST bitplane screen)\r\n");
+              rc == -2 ? "SKIP (no VDI)\r\n" : "SKIP (not a screen it can use: ");
+        if (rc == -3)
+        {
+            pnum(scr_w);
+            conws("x");
+            pnum(scr_h);
+            conws(", ");
+            pnum(planes);
+            conws(" planes)\r\n");
+        }
         if (rc != -1)
         {
             if (vh > 0)

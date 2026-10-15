@@ -9,13 +9,14 @@
 # option any later version.  See doc/license.txt for details.
 #
 # Usage: run-baselines.py --pbench PBENCH.PRG --out DIR [--jobs N]
-#                         [--res low,med,high] [--blitter on,off]
+#                         [--res low,med,high,f030,f040] [--blitter on,off]
 #                         [--timeout SEC]
 #                         --system KEY=IMAGE[=NAME] ...
 #
 # For every system, runs run-hatari.py in the ST screen modes given by --res
-# (default all three: low, medium, high) with and without the blitter (--blitter
-# restricts that), and writes DIR/KEY-MODE-BLIT.txt,
+# (default all three: low, medium, high; f030 and f040 are a Falcon with a
+# 68030 or a 68040, for a system that runs on one) with and without the blitter
+# (--blitter restricts that), and writes DIR/KEY-MODE-BLIT.txt,
 # for example tos206-med-blitter.txt or emutos256-high-noblitter.txt.
 # Several Hatari instances are run at a time; their results do not depend on
 # how busy the host is, since Hatari's clock is the emulated one.

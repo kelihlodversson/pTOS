@@ -31,9 +31,11 @@ default) is required, since that is what enables the libcmini build rules.
 Running
 -------
 
-    pbench.prg [-q] [-r N] [-l] [TESTS]
+    pbench.prg [-q] [-n] [-r N] [-l] [TESTS]
 
     -q        quit when done, instead of waiting for a key
+    -n        run with the blitter turned off (Blitmode()), and turn it on
+              again at the end if it was on
     -r N      run each test N times (the time reported is for one run)
     -l        list the tests
     TESTS     letters selecting tests: d t f s g w b r j e (default: all)
@@ -230,15 +232,27 @@ Performance baselines for CI
 ----------------------------
 
 The workflow .github/workflows/pbench.yml runs pBench under Hatari on every
-pull request to master, in the three ST screen modes with and without the
-blitter, and compares the times with pTOS's own baselines in
+pull request to master or to an epic branch, in the three ST screen modes with
+and without the blitter, and, for atari512, on an emulated Falcon with a 68030
+and with a 68040, and compares the times with pTOS's own baselines in
 tools/pBench/ci-baselines (KEY-MODE-blitter.txt and KEY-MODE-noblitter.txt,
-the key being the configuration: atari512, and atari256, which is built with
--mfastcall).  These are not the TOS 2.06 and
+the key being the configuration: atari512, atari256, which is built with
+-mfastcall, and atari512-fastcall, the Falcon image built with it; the mode
+low, med or high for the ST, f030 or f040 for the Falcon: the ST modes for
+atari512 and atari256, the Falcon ones for atari512 and atari512-fastcall).  These are not the TOS 2.06 and
 EmuTOS baselines above, which need ROMs CI does not have and answer another
 question.  Only Hatari takes part: its clock is the emulated one, so two runs
 of the same image give the same times to the millisecond, wherever they are
-made.  QEMU's clock is the host's, so its numbers cannot decide anything.
+made (those of the emulated 68040 vary by a few milliseconds, up to 1% of a
+short test, still far below the limits below).  QEMU's clock is the host's,
+so its numbers cannot decide anything.
+
+The Falcon is started in the screen mode pTOS gives it in Hatari, 640x480 with
+16 colours, by Hatari's --auto like the ST.  It has a blitter that Hatari has
+no option to leave out (--blitter is for the ST only), so for the runs without
+the blitter pBench is told to turn it off with its -n, from PBENCH.CFG.  The
+emulated Falcon is also what runs the data cache code of the blitter text and
+raster paths, which the STE's 68000 does not have: see tests/readme.md.
 
 tools/pBench/check-baseline.py makes the comparison.  The check fails if the
 geometric mean over the ten tests (the Display score) is more than 3% slower

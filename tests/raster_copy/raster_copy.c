@@ -11,8 +11,9 @@
  * of source and destination, and for destinations that overlap the source in
  * every direction.  The path is selected with Blitmode().
  *
- * The test needs an Atari ST/STE style bitplane screen (1, 2 or 4 planes,
- * 320 or 640 pixels wide) and a blitter; it is skipped everywhere else.
+ * The test needs a bitplane screen with the planes interleaved a word at a
+ * time (1, 2, 4 or 8 planes, 320 or 640 pixels wide: an ST, an STE, a TT
+ * or a Falcon) and a blitter; it is skipped everywhere else.
  * It draws on a band of the screen, which is saved and restored.
  *
  * Copyright (C) 2026 The pTOS development team
@@ -41,7 +42,7 @@ typedef unsigned char U8;
 
 /* the lines of the screen the test uses, at its bottom, and at most the bytes in them */
 #define BAND_LINES      24
-#define MAX_BPL         160
+#define MAX_BPL         640           /* 8 planes of 640 pixels */
 #define BAND_MAX        (BAND_LINES * MAX_BPL)
 
 static short vh;
@@ -132,7 +133,8 @@ static int setup(void)
     vq_extnd(vh, 1, out);
     planes = out[4];
 
-    if ((planes != 1 && planes != 2 && planes != 4) || (scr_w != 320 && scr_w != 640))
+    if ((planes != 1 && planes != 2 && planes != 4 && planes != 8)
+        || (scr_w != 320 && scr_w != 640))
         return -3;
     bpl = (long)(scr_w >> 4) * 2 * planes;
     if (bpl * BAND_LINES > BAND_MAX || scr_h < 2 * BAND_LINES)
@@ -396,7 +398,16 @@ void test_raster_copy(void)
     {
         ptest_begin("raster_copy (#503)");
         conws(rc == -1 ? "SKIP (no blitter)\r\n" :
-              rc == -2 ? "SKIP (no VDI)\r\n" : "SKIP (not an ST bitplane screen)\r\n");
+              rc == -2 ? "SKIP (no VDI)\r\n" : "SKIP (not a screen it can use: ");
+        if (rc == -3)
+        {
+            pnum(scr_w);
+            conws("x");
+            pnum(scr_h);
+            conws(", ");
+            pnum(planes);
+            conws(" planes)\r\n");
+        }
         if (rc != -1)
         {
             if (vh > 0)

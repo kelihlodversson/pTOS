@@ -11,9 +11,14 @@
 #
 #   --tos FILE       the TOS/EmuTOS image to run (required)
 #   --name TEXT      what to call it in the result file (default: the image)
-#   --res low|med|high   the ST screen mode (default med)
+#   --res low|med|high|f030|f040
+#                    the ST screen mode (default med), or a Falcon with a
+#                    68030 or a 68040 in the screen mode pTOS starts it in
+#                    (the Hatari default: 640x480 with 16 colours)
 #   --blitter on|off     the STE (which has a blitter) or the plain ST (which
-#                        does not) is emulated; default on
+#                        does not) is emulated; default on.  A Falcon has a
+#                        blitter that Hatari cannot leave out, so pBench is
+#                        told to turn it off (its -n) for off
 #   --falcon MODE    emulate a Falcon with TOS 4.04 (--tos) instead, in the
 #                    Videl mode MODE (four hex digits, e.g. 001C for
 #                    640x480 true colour on a VGA monitor); --res/--blitter
@@ -50,7 +55,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--tos', required=True)
     ap.add_argument('--name')
-    ap.add_argument('--res', default='med', choices=['low', 'med', 'high'])
+    ap.add_argument('--res', default='med',
+                    choices=['low', 'med', 'high', 'f030', 'f040'])
     ap.add_argument('--blitter', default='on', choices=['on', 'off'])
     ap.add_argument('--falcon')
     ap.add_argument('--timeout', type=int, default=1800)
@@ -78,6 +84,19 @@ def main():
                '--monitor', 'vga', '--memsize', '14', '--dsp', 'none',
                '--sound', 'off', '--fast-forward', 'on', '--fastfdc', 'on',
                '--screenshot-dir', shots, work]
+    elif a.res in ('f030', 'f040'):
+        # pTOS (or EmuTOS) on a Falcon: Hatari's --auto runs the program as
+        # on the ST.  pBench's -n turns the blitter off, there being no
+        # option for that on a Falcon
+        machine = 'falcon'
+        if a.blitter == 'off':
+            with open(os.path.join(work, 'PBENCH.CFG'), 'w', newline='') as f:
+                f.write('-n\r\n')
+        cmd = ['hatari', '--tos', a.tos, '--machine', 'falcon',
+               '--cpulevel', '3' if a.res == 'f030' else '4',
+               '--monitor', 'vga', '--memsize', '14', '--dsp', 'none',
+               '--sound', 'off', '--fast-forward', 'on', '--fastfdc', 'on',
+               '--auto', 'C:\\PBENCH.PRG', '--screenshot-dir', shots, work]
     else:
         machine = 'ste' if a.blitter == 'on' else 'st'
         # the directory goes last: Hatari boots from the drive given last,
@@ -122,6 +141,10 @@ def main():
         if a.falcon:
             f.write('# emulator: %s, machine FALCON, Videl mode %s\n'
                     % (hatari_version(), a.falcon.upper()))
+        elif machine == 'falcon':
+            f.write('# emulator: %s, machine FALCON, CPU 680%s0, blitter %s\n'
+                    % (hatari_version(), '3' if a.res == 'f030' else '4',
+                       a.blitter))
         else:
             f.write('# emulator: %s, machine %s, screen ST-%s, blitter %s\n'
                     % (hatari_version(), machine.upper(), a.res.upper(),
