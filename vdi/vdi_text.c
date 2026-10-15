@@ -20,34 +20,12 @@
 #include "vdistub.h"
 #include "lineavars.h"
 #include "biosext.h"
+#include "has.h"
+#include "vdi_textblit.h"
 
 
 extern WORD deftxbuf[];         /* Default text scratch buffer */
 extern const WORD scrtsiz;      /* Default offset to large text buffer */
-
-
-/*
- * Local structure for passing justification info
- *
- * note 1: in each of the following pairs of variables, only one variable
- * has a non-zero value:
- *  (wordx,wordy), (rmwordx,rmwordy), (charx,chary), (rmcharx,rmchary)
- *
- * note 2: if rmword is zero, there are no 'remainder pixels' to use up
- * between words; otherwise, rmword = max(rmwordx/rmwordy).  similarly
- * for rmchar/rmcharx/rmchary.
- */
-typedef struct
-{
-                        /* word-spacing variables */
-    WORD wordx, wordy;          /* #pixels to add to each space */
-    WORD rmword;                /* remaining #pixels to add over all spaces */
-    WORD rmwordx, rmwordy;      /* add this to use up remainder */
-                        /* character-spacing variables */
-    WORD charx, chary;          /* #pixels to add to each character */
-    WORD rmchar;                /* remaining #pixels to add over all characters */
-    WORD rmcharx, rmchary;      /* add this to use up remainder */
-} JUSTINFO;
 
 
 /* Prototypes for this module */
@@ -186,6 +164,33 @@ static BOOL ok_for_direct_blit(Vwk *vwk, WORD width, JUSTINFO *justified)
 }
 #endif
 
+#if CONF_WITH_BLITTER
+/*
+ * check if the blitter can output the characters of the string the quick
+ * way, see blitter_text_string(): nothing but plain text (light and
+ * underline are all right, and so is justification), on a bitplane screen
+ */
+static BOOL ok_for_blitter_string(Vwk *vwk)
+{
+    if (!blitter_is_enabled)
+        return FALSE;
+
+    if (vdi_screen_is_truecolor() || TRUECOLOR_MODE)
+        return FALSE;
+
+    if (vwk->style & (F_THICKEN | F_SKEW | F_OUTLINE))
+        return FALSE;
+
+    if (vwk->chup || vwk->scaled)
+        return FALSE;
+
+    if (vwk->cur_font->flags & F_HORZ_OFF)
+        return FALSE;
+
+    return TRUE;
+}
+#endif
+
 /*
  * output specified text string
  *
@@ -205,6 +210,9 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     WORD temp;
     const Fonthead *fnt_ptr;
     Point * point;
+#if CONF_WITH_BLITTER
+    BOOL use_blitter;
+#endif
 
     if (count <= 0)     /* quick out for unlikely occurrence */
         return;
@@ -363,7 +371,21 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
 
     linea_vars.XDDA = 32767;       /* init the horizontal dda */
 
+#if CONF_WITH_BLITTER
+    use_blitter = ok_for_blitter_string(vwk);
+#endif
+
     for (j = 0; j < count; j++) {
+
+#if CONF_WITH_BLITTER
+        /* the characters that are plain and not clipped, all at once */
+        if (use_blitter)
+        {
+            j += blitter_text_string(fnt_ptr, count - j, str + j, justified);
+            if (j >= count)
+                break;
+        }
+#endif
 
         temp = str[j];
 
