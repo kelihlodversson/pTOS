@@ -180,10 +180,17 @@ endaltram:
         move.l  #0x1357bd13,0x5a8.w         // Validate _ramvalid
 
         // Boot ramtos
+#if CONF_WITH_MFASTCALL
+        moveq   #0,d1                       // CPU = 68000
+        // FIXME: Detect CPU for proper cache management in _bootram
+        move.l  ramtos_size(pc),d0          // ramtos size
+        move.l  a4,a0                       // Temporary ramtos address
+#else
         clr.l   -(sp)                       // CPU = 68000
         // FIXME: Detect CPU for proper cache management in _bootram
         move.l  ramtos_size(pc),-(sp)       // ramtos size
         move.l  a4,-(sp)                    // Temporary ramtos address
+#endif
         bsr     C_SYM(bootram)              // Boot ramtos
 
         // We will never return here

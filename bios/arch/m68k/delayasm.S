@@ -58,7 +58,9 @@ C_SYM(run_calibration):
         ori.b   #0x02,(a0)          //set pre-scaler = divide-by-10 & start TimerD
 #endif
 
+#if !CONF_WITH_MFASTCALL
         move.l  4(a7),d0            //loopcount
+#endif                              //(-mfastcall: it is in d0 already)
 cal_loop:                           //just like asm.h inline function
         subq.l  #1,d0
         jpl     cal_loop
