@@ -196,7 +196,7 @@ static BOOL ok_for_blitter_string(Vwk *vwk)
  * form, and how big; returns its index in the font (which is not that of
  * the character if it is out of range for the font, a '?' being output)
  */
-static WORD load_char(const Fonthead *fnt_ptr, WORD ch)
+static inline WORD load_char(const Fonthead *fnt_ptr, WORD ch)
 {
     WORD temp = ch;
 
