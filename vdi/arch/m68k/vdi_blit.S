@@ -555,7 +555,22 @@ f2op_04:
         and.w   d0,(a1)
         jra     f2_rtn
 
-mode_05:                        // dummy label. Never called!!!!
+        and.w   d7,d0           // S and P                                       4
+mode_05:
+        jmp     (a3)            // D' <- D: nothing to do                        8
+
+        // logic op 5 is one of the unary ones (see unary_blt), so these
+        // are called, with whatever d0 and d6 hold; a label with no code of
+        // its own would run mode_06's XOR on that
+        .org    mode_05+F1OP-SAP
+        and.w   d7,d0           // S and P                                       4
+f1op_05:
+        jmp     (a3)            //                                               8
+
+        .org    mode_05+F2OP-SAP
+        and.w   d7,d0           // S and P                                       4
+f2op_05:
+        jra     f2_drt          // nothing to write, on to the next row
 
         and.w   d7,d0           // S and P                                       4
 mode_06:
