@@ -1180,18 +1180,21 @@ BOOL blitter_text_blit(LOCALVARS *vars)
  * does not output anything if the string cannot go this way at all.
  *
  * The caller has checked for what takes more than a plain glyph: effects
- * other than light and underline, rotation, scaling, justification, fonts
- * with horizontal offsets, and a screen that is not a bitplane one.
+ * other than light and underline, rotation, scaling, fonts with horizontal
+ * offsets, and a screen that is not a bitplane one.  Justified text is
+ * all right: as there is no rotation, all it does is move the next glyph
+ * further to the right, in the order output_text() does it.
  *
  * In:
  *  fnt         the font
  *  count       the number of characters left in the string
  *  str         the characters
+ *  justified   the justification info for v_justified(), or NULL
  *
  * Out:
  *  the number of characters output, DESTX being moved on past them
  */
-WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str)
+WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTINFO *justified)
 {
     WORD plane, planes, mode, h, nxwd, n;
     WORD c, delx, destx, sourcex, sx, dx, s_span, d_span, skew, skew_idx;
@@ -1322,6 +1325,24 @@ WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str)
             invalidate_data_cache((void *)(d_row + x_off - length + 1), length);
 
         destx += delx;
+        if (justified)
+        {
+            destx += justified->charx;
+            if (justified->rmchar)
+            {
+                destx += justified->rmcharx;
+                justified->rmchar--;
+            }
+            if (*str == ' ')
+            {
+                destx += justified->wordx;
+                if (justified->rmword)
+                {
+                    destx += justified->rmwordx;
+                    justified->rmword--;
+                }
+            }
+        }
         n++;
         if (--count <= 0)
             break;

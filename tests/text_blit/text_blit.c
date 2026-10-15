@@ -91,6 +91,8 @@ typedef struct {
     short halign;               /* vst_alignment() horizontal: 0 left, 2 right */
     short clip;                 /* if set, clip to cr */
     GRECT cr;                   /* relative to the band */
+    short jlen;                 /* if set, v_justified() to this width */
+    short jword, jchar;         /* ... with this word and character spacing */
 } CASE;
 
 static short vh;
@@ -306,7 +308,10 @@ static void draw(const CASE *c)
         cr.y += (WORD)band_y;
         vs_clip(vh, 1, &cr);
     }
-    v_gtext(vh, c->x, (WORD)(band_y + c->y), c->str);
+    if (c->jlen)
+        v_justified(vh, c->x, (WORD)(band_y + c->y), c->str, c->jlen, c->jword, c->jchar);
+    else
+        v_gtext(vh, c->x, (WORD)(band_y + c->y), c->str);
     if (c->clip)
         vs_clip(vh, 0, &cr);
 }
@@ -537,6 +542,7 @@ static void group_plain(void)
     if (ncolors > 2)
         colors[ncol++] = (short)(ncolors > 4 ? 5 : 2);
 
+    c.jlen = 0;
     c.rot = 0;
     c.effects = 0;
     c.clip = 0;
@@ -576,6 +582,7 @@ static void group_effects(void)
     CASE c;
     int pt, fx, r, mode, s, d;
 
+    c.jlen = 0;
     c.clip = 0;
     c.halign = 0;
     c.y = TEXT_Y;
@@ -613,6 +620,7 @@ static void group_clipped_effects(void)
     CASE c;
     int pt, f, k, mode, dx;
 
+    c.jlen = 0;
     c.rot = 0;
     c.halign = 0;
     c.y = TEXT_Y;
@@ -631,6 +639,52 @@ static void group_clipped_effects(void)
                         set_clip(&c, k, dx);
                         check_cases(&c, 0);
                     }
+}
+
+/*
+ * justified text, CPU vs blitter: the spacing moves the glyphs apart (or,
+ * for a width below the natural one, together) a pixel count at a time
+ */
+static void group_justified(void)
+{
+    static const char *const jstrings[2] = { "a b c", "Wi .,m x" };
+    static const short fxs[] = { 0, EF_LIGHT, EF_UNDER, EF_BOLD };
+    static const short deltas[] = { -6, 0, 5, 23, 40 };
+    static const short spacing[][2] = { { 1, 0 }, { 0, 1 }, { 1, 1 } };
+    CASE c;
+    int pt, f, s, dl, sp, dx, k, mode;
+
+    c.rot = 0;
+    c.halign = 0;
+    c.y = TEXT_Y;
+    c.color = (short)(ncolors > 2 ? 5 % ncolors : 1);
+    for (pt = 0; pt < 3; pt++)
+        for (f = 0; f < (int)(sizeof(fxs) / sizeof(fxs[0])); f++)
+            for (mode = 1; mode <= 2; mode++)
+                for (s = 0; s < 2; s++)
+                    for (dl = 0; dl < (int)(sizeof(deltas) / sizeof(deltas[0])); dl++)
+                        for (sp = 0; sp < 3; sp++)
+                            for (dx = 0; dx < 16; dx += 5)
+                            {
+                                c.str = jstrings[s];
+                                c.point = points[pt];
+                                c.effects = fxs[f];
+                                c.mode = (short)mode;
+                                c.x = (short)(TEXT_X + dx);
+                                c.clip = 0;
+                                c.jlen = 0;
+                                c.jlen = (short)(string_width(&c) + deltas[dl]);
+                                c.jword = spacing[sp][0];
+                                c.jchar = spacing[sp][1];
+                                check(&c, 0);
+                                /* and with a clip rectangle through it */
+                                if (dl == 2 || dl == 3)
+                                    for (k = 0; k < NCLIPS; k += 2)
+                                    {
+                                        set_clip(&c, k, dx);
+                                        check(&c, 0);
+                                    }
+                            }
 }
 
 static void run_group(const char *name, void (*fn)(void))
@@ -684,6 +738,7 @@ void test_text_blit(void)
     run_group("text_blit: plain text matches the model (#499)", group_plain);
     run_group("text_blit: effects and rotation, CPU vs blitter (#499)", group_effects);
     run_group("text_blit: effects and clipping, CPU vs blitter (#499)", group_clipped_effects);
+    run_group("text_blit: justified text, CPU vs blitter (#531)", group_justified);
 
     vst_effects(vh, 0);
     vst_rotation(vh, 0);
