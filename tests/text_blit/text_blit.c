@@ -439,6 +439,45 @@ static void model_text(U8 *buf, const CASE *c)
     }
 }
 
+/*
+ * what a clipped case should look like, without trusting the clipping
+ * (and the shortcuts VDI takes for text outside the clip rectangle): the
+ * same text drawn with no clip rectangle at all, of which only the pixels
+ * inside the rectangle are kept; the rest of the band is as it was before.
+ * Only valid for effects that work on each pixel on its own: thickening and
+ * skewing work on the part of the glyph that is not clipped, and lightening
+ * starts its mask at the first row that is not (VDI has always done so),
+ * so what they draw inside the rectangle depends on the rectangle.
+ */
+static void model_clip(U8 *buf, const U8 *ref, const CASE *c)
+{
+    int x0 = c->cr.x, y0 = c->cr.y;
+    int x1 = c->cr.x + c->cr.w, y1 = c->cr.y + c->cr.h;
+    int x, y, p;
+
+    if (x0 < 0)
+        x0 = 0;
+    if (y0 < 0)
+        y0 = 0;
+    if (x1 > scr_w)
+        x1 = scr_w;
+    if (y1 > BAND_LINES)
+        y1 = BAND_LINES;
+    for (y = y0; y < y1; y++)
+        for (x = x0; x < x1; x++)
+        {
+            long off = (long)y * bpl + (long)(x >> 4) * planes * 2 + ((x & 8) ? 1 : 0);
+            U8 mask = (U8)(0x80 >> (x & 7));
+
+            for (p = 0; p < planes; p++)
+            {
+                long o = off + 2 * p;
+
+                buf[o] = (U8)((buf[o] & ~mask) | (ref[o] & mask));
+            }
+        }
+}
+
 /* ---- one case ---- */
 
 static void check(const CASE *c, int plain)
@@ -473,6 +512,25 @@ static void check(const CASE *c, int plain)
         if (d >= 0)
         {
             report("differs from model", c, d, snap_cpu[d], expect[d]);
+            failed = 1;
+        }
+    }
+
+    if (c->clip && !(c->effects & (EF_BOLD | EF_LIGHT | EF_SKEW)))
+    {
+        CASE open = *c;
+
+        /* the same without a clip rectangle: pixels inside it must agree */
+        open.clip = 0;
+        copy(band, pattern);
+        set_blitter(0);
+        draw(&open);
+        copy(expect, pattern);
+        model_clip(expect, band, c);
+        d = first_diff(snap_cpu, expect);
+        if (d >= 0)
+        {
+            report("differs from unclipped", c, d, snap_cpu[d], expect[d]);
             failed = 1;
         }
     }
@@ -519,6 +577,12 @@ static const short clips[][4] = {
     { 1, 1, 1, 1 },             /* a single pixel */
     { 8, 0, 8, 40 },            /* exactly a byte */
     { 16, 0, 16, 40 },          /* exactly a word */
+    { 0, -30, 200, 10 },        /* wholly above the text */
+    { 0, 30, 200, 10 },         /* wholly below it */
+    { -30, 0, 20, 40 },         /* wholly to its left */
+    { 100, 0, 40, 40 },         /* wholly to its right */
+    { -1, 0, 1, 40 },           /* the column just before it */
+    { 24, 0, 6, 40 },           /* the column just after the 3 wide glyphs */
 };
 #define NCLIPS ((int)(sizeof(clips) / sizeof(clips[0])))
 

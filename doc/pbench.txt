@@ -41,7 +41,7 @@ Running
               no text, only the rectangle fill that follows each effect), to
               see which effect takes the time. The time reported is that of
               the one effect, not of the 16, and means nothing against the
-              reference or the CI baselines
+              reference or the CI baselines. A value outside 0..17 is ignored
     -l        list the tests
     TESTS     letters selecting tests: d t f s g w b r j e (default: all)
 

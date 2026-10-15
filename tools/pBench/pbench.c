@@ -723,7 +723,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-r") && i + 1 < argc)
             repeat = atol(argv[++i]);
         else if (!strcmp(argv[i], "-e") && i + 1 < argc)
-            only_effect = atoi(argv[++i]);
+        {
+            long e = atol(argv[++i]);
+
+            /* anything but 0..17 is ignored: all the effects are run */
+            only_effect = (e >= 0 && e <= NO_TEXT) ? (int)e : -1;
+        }
         else
             sel = argv[i];
     }
