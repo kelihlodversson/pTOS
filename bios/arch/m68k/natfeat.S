@@ -95,11 +95,13 @@ nfCall:
         .dc.l   0x27011992              // XHDI magic constant
 C_SYM(xhdi_vec):
         // Important: The XHDI specification requires us to backup all the registers
+        // (d2 too: under -mfastcall d2 is call-clobbered, so xhdi_handler()
+        // may change it, which the specification does not allow)
 #ifdef __mcoldfire__
-        lea     -12(sp),sp
-        movem.l d1/a0-a1,(sp)
+        lea     -16(sp),sp
+        movem.l d1-d2/a0-a1,(sp)
 #else
-        movem.l d1/a0-a1,-(sp)
+        movem.l d1-d2/a0-a1,-(sp)
 #endif
         /*
          * xhdi_handler(UWORD *stack) is an ordinary internal C function
@@ -108,18 +110,18 @@ C_SYM(xhdi_vec):
          * saved above, so it's free to reuse here.
          */
 #if CONF_WITH_MFASTCALL
-        lea     16(sp),a0
+        lea     20(sp),a0
         jsr     C_SYM(xhdi_handler)
 #else
-        pea     16(sp)
+        pea     20(sp)
         jsr     C_SYM(xhdi_handler)
         addq.l  #4,sp
 #endif
 #ifdef __mcoldfire__
-        movem.l (sp),d1/a0-a1
-        lea     12(sp),sp
+        movem.l (sp),d1-d2/a0-a1
+        lea     16(sp),sp
 #else
-        movem.l (sp)+,d1/a0-a1
+        movem.l (sp)+,d1-d2/a0-a1
 #endif
         rts
 
