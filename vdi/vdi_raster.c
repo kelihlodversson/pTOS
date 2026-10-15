@@ -308,6 +308,22 @@ void vdi_vr_trnfm(Vwk * vwk)
 
 #if CONF_WITH_BLITTER
 /*
+ * does the data cache have to be flushed before and invalidated after the
+ * blitter draws?  see the use in hwblit_start() and blitter_text_blit().  it can only matter
+ * on a ColdFire and on a 68040/68060 (see flush_data_cache() in
+ * processor.S), whose cpu type, mcpu, is 40 or more.
+ */
+#if defined(__mcoldfire__)
+#define BLITTER_CACHE_OPS 1
+#elif CONF_WITH_ADVANCED_CPU
+extern LONG mcpu;
+#define BLITTER_CACHE_OPS (mcpu >= 40)
+#else
+#define BLITTER_CACHE_OPS 0
+#endif
+
+
+/*
  * blitter_go()
  *
  * Start the blitter that has been set up, and wait until it is done.
@@ -332,46 +348,72 @@ static void blitter_go(UBYTE lineno)
 
 
 /*
- * hwblit_raster()
+ * hwblit_start(), hwblit_plane(), hwblit_end()
  *
- * Interface to hardware blitter for raster functions
+ * Interface to hardware blitter for raster functions: a blit of several
+ * planes, which have all but their addresses, line count and operation in
+ * common.  hwblit_start() sends what they share to the blitter once, and
+ * flushes the data cache, hwblit_plane() does a plane, hwblit_end()
+ * invalidates the data cache.
+ *
+ * the registers keep what they are given from one blit to the next (only the
+ * addresses, the counts and the status change as it runs), so this is a
+ * lot less than writing all of them for every plane, which is what takes
+ * the time with the screen's four planes.  the counts are not shared,
+ * as the blitter counts down in them.
  */
-static void
-hwblit_raster(BLITVARS *blt)
+static void hwblit_start(BLITVARS *blt)
 {
-    LONG length;
     /*
      * since the blitter doesn't see the data cache, and we may be in
      * copyback mode (e.g. the FireBee), we must flush the data cache
      * first to ensure that the memory is current.  we strictly do not
      * need to calculate the length, since the current cache control
-     * routines ignore it & act on the whole cache anyway.
+     * routines ignore it & act on the whole cache anyway.  where there
+     * is no such cache, even the calls are left out, with the length they
+     * are given, which takes two library multiplications to work out.
      */
-    length = (blt->y_cnt * blt->dst_y_inc) + (blt->x_cnt * blt->dst_x_inc);
-    flush_data_cache((void *)blt->dst_addr,length);
+    if (BLITTER_CACHE_OPS)
+    {
+        LONG length = (blt->y_cnt * blt->dst_y_inc) + (blt->x_cnt * blt->dst_x_inc);
+
+        flush_data_cache((void *)blt->dst_addr, length);
+    }
 
     BLITTER->src_x_incr = blt->src_x_inc;
     BLITTER->src_y_incr = blt->src_y_inc;
-    BLITTER->src_addr = (UWORD *)blt->src_addr;
     BLITTER->endmask_1 = blt->end_1;
     BLITTER->endmask_2 = blt->end_2;
     BLITTER->endmask_3 = blt->end_3;
     BLITTER->dst_x_incr = blt->dst_x_inc;
     BLITTER->dst_y_incr = blt->dst_y_inc;
+    BLITTER->hop = blt->hop;
+    BLITTER->skew = blt->skew;
+}
+
+static void hwblit_plane(const BLITVARS *blt)
+{
+    BLITTER->src_addr = (UWORD *)blt->src_addr;
     BLITTER->dst_addr = (UWORD *)blt->dst_addr;
     BLITTER->x_count = blt->x_cnt;
     BLITTER->y_count = blt->y_cnt;
     BLITTER->op = blt->op;
-    BLITTER->hop = blt->hop;
-    BLITTER->skew = blt->skew;
 
     blitter_go(0);
+}
 
+static void hwblit_end(const BLITVARS *blt, LONG dst_addr)
+{
     /*
      * we've modified data behind the cpu's back, so we must
      * invalidate any cached data.
      */
-    invalidate_data_cache((void *)blt->dst_addr,length);
+    if (BLITTER_CACHE_OPS)
+    {
+        LONG length = (blt->y_cnt * blt->dst_y_inc) + (blt->x_cnt * blt->dst_x_inc);
+
+        invalidate_data_cache((void *)dst_addr, length);
+    }
 }
 #endif
 
@@ -528,6 +570,15 @@ do_blit(BLITVARS * blt)
 
 #if CONF_WITH_BLITTER || !ASM_BLIT_IS_AVAILABLE
 /*
+ * a 16 bit by 16 bit multiplication with a 32 bit result, which is one
+ * instruction (mulu) where a plain 32 bit multiplication is a call of the
+ * library's multiplication, about 450 cycles on a 68000.  for operands that
+ * are never negative and fit in 16 bits, like the coordinates and the
+ * offsets of a screen.
+ */
+#define MULU16(a, b) ((ULONG)(UWORD)(a) * (ULONG)(UWORD)(b))
+
+/*
  * bit_blt()
  *
  * Purpose:
@@ -554,8 +605,11 @@ static void bit_blt(struct blit_frame *blit_info)
     WORD skew, skew_idx;
     WORD s_span, s_xmin_off, s_xmax_off;
     WORD d_span, d_xmin_off, d_xmax_off;
-    ULONG s_addr, d_addr;
+    ULONG s_addr, d_addr, first_d_addr;
     BLITVARS blitter;
+#if !ASM_BLIT_IS_AVAILABLE && CONF_WITH_BLITTER
+    BOOL use_hw;
+#endif
 
     /* a5-> BLiTTER register block */
     BLITVARS *blt = &blitter;
@@ -618,22 +672,22 @@ static void bit_blt(struct blit_frame *blit_info)
 
     /* Calculate starting addresses */
     s_addr = (ULONG)blit_info->s_form
-        + (ULONG)blit_info->s_ymin * (ULONG)blit_info->s_nxln
-        + (ULONG)s_xmin_off * (ULONG)blit_info->s_nxwd;
+        + MULU16(blit_info->s_ymin, blit_info->s_nxln)
+        + MULU16(s_xmin_off, blit_info->s_nxwd);
     d_addr = (ULONG)blit_info->d_form
-        + (ULONG)blit_info->d_ymin * (ULONG)blit_info->d_nxln
-        + (ULONG)d_xmin_off * (ULONG)blit_info->d_nxwd;
+        + MULU16(blit_info->d_ymin, blit_info->d_nxln)
+        + MULU16(d_xmin_off, blit_info->d_nxwd);
 
     /* if (just_screen && (s_addr < d_addr)) { */
     if ((s_addr < d_addr)
      || ((s_addr == d_addr) && (skew >= 0))) {
         /* start from lower right corner, so add width+length */
         s_addr = (ULONG)blit_info->s_form
-            + (ULONG)blit_info->s_ymax * (ULONG)blit_info->s_nxln
-            + (ULONG)s_xmax_off * (ULONG)blit_info->s_nxwd;
+            + MULU16(blit_info->s_ymax, blit_info->s_nxln)
+            + MULU16(s_xmax_off, blit_info->s_nxwd);
         d_addr = (ULONG)blit_info->d_form
-            + (ULONG)blit_info->d_ymax * (ULONG)blit_info->d_nxln
-            + (ULONG)d_xmax_off * (ULONG)blit_info->d_nxwd;
+            + MULU16(blit_info->d_ymax, blit_info->d_nxln)
+            + MULU16(d_xmax_off, blit_info->d_nxwd);
 
         /* offset between consecutive words in planes */
         blt->src_x_inc = -blit_info->s_nxwd;
@@ -693,6 +747,30 @@ static void bit_blt(struct blit_frame *blit_info)
 
     blt->hop = HOP_SOURCE_ONLY;         /* set HOP to source only */
 
+    /*
+     * We can only be here if either:
+     * (a) we are on ColdFire (ASM_BLIT_IS_AVAILABLE is 0): the
+     *     hardware blitter may or may not be enabled, or
+     * (b) we are on 68K (ASM_BLIT_IS_AVAILABLE is 1): the
+     *     hardware blitter must be enabled to get here.
+     */
+#if !ASM_BLIT_IS_AVAILABLE
+#if CONF_WITH_BLITTER
+    use_hw = blitter_is_enabled;
+    if (use_hw)
+    {
+        blt->dst_addr = d_addr;
+        blt->y_cnt = blit_info->b_ht;
+        hwblit_start(blt);
+    }
+#endif
+#else
+    blt->dst_addr = d_addr;
+    blt->y_cnt = blit_info->b_ht;
+    hwblit_start(blt);
+#endif
+    first_d_addr = d_addr;
+
     for (plane = 0; plane < blit_info->plane_ct; plane++) {
         int op_tabidx;
 
@@ -705,18 +783,11 @@ static void bit_blt(struct blit_frame *blit_info)
         op_tabidx |= (blit_info->bg_col>>plane) & 0x0001;
         blt->op = blit_info->op_tab[op_tabidx] & 0x000f;
 
-        /*
-         * We can only be here if either:
-         * (a) we are on ColdFire (ASM_BLIT_IS_AVAILABLE is 0): the
-         *     hardware blitter may or may not be enabled, or
-         * (b) we are on 68K (ASM_BLIT_IS_AVAILABLE is 1): the
-         *     hardware blitter must be enabled to get here.
-         */
 #if !ASM_BLIT_IS_AVAILABLE
 #if CONF_WITH_BLITTER
-        if (blitter_is_enabled)
+        if (use_hw)
         {
-            hwblit_raster(blt);
+            hwblit_plane(blt);
         }
         else
 #endif
@@ -724,12 +795,21 @@ static void bit_blt(struct blit_frame *blit_info)
             do_blit(blt);
         }
 #else
-        hwblit_raster(blt);
+        hwblit_plane(blt);
 #endif
 
         s_addr += blit_info->s_nxpl;          /* a0-> start of next src plane   */
         d_addr += blit_info->d_nxpl;          /* a1-> start of next dst plane   */
     }
+
+#if !ASM_BLIT_IS_AVAILABLE
+#if CONF_WITH_BLITTER
+    if (use_hw)
+        hwblit_end(blt, first_d_addr);
+#endif
+#else
+    hwblit_end(blt, first_d_addr);
+#endif
 }
 #endif
 
@@ -798,22 +878,6 @@ static void set_light_halftone(void)
     }
     BLITTER->hop = HOP_SOURCE_AND_HALFTONE;
 }
-
-
-/*
- * does the data cache have to be flushed before and invalidated after the
- * blitter draws?  see the use in blitter_text_blit().  it can only matter
- * on a ColdFire and on a 68040/68060 (see flush_data_cache() in
- * processor.S), whose cpu type, mcpu, is 40 or more.
- */
-#if defined(__mcoldfire__)
-#define TEXT_CACHE_OPS 1
-#elif CONF_WITH_ADVANCED_CPU
-extern LONG mcpu;
-#define TEXT_CACHE_OPS (mcpu >= 40)
-#else
-#define TEXT_CACHE_OPS 0
-#endif
 
 
 /*
@@ -916,7 +980,7 @@ static BOOL blitter_skewed_text_blit(LOCALVARS *vars)
      * are a noticeable part of the time a glyph takes.
      */
     length = 0;
-    if (TEXT_CACHE_OPS)
+    if (BLITTER_CACHE_OPS)
     {
         length = (LONG)h * -vars->d_next;
         flush_data_cache((void *)(d_addr - length + 1), length);
@@ -1002,7 +1066,7 @@ static BOOL blitter_skewed_text_blit(LOCALVARS *vars)
         r0 = r1;
     }
 
-    if (TEXT_CACHE_OPS)
+    if (BLITTER_CACHE_OPS)
         invalidate_data_cache((void *)(d_addr - length + 1), length);
     return TRUE;
 }
@@ -1132,7 +1196,7 @@ BOOL blitter_text_blit(LOCALVARS *vars)
      * are a noticeable part of the time a glyph takes.
      */
     length = 0;
-    if (TEXT_CACHE_OPS)
+    if (BLITTER_CACHE_OPS)
     {
         length = (LONG)h * -vars->d_next;
         flush_data_cache((void *)(d_addr - length + 1), length);
@@ -1154,7 +1218,7 @@ BOOL blitter_text_blit(LOCALVARS *vars)
         plane_addr += 2;                /* the next plane */
     }
 
-    if (TEXT_CACHE_OPS)
+    if (BLITTER_CACHE_OPS)
         invalidate_data_cache((void *)(d_addr - length + 1), length);
     return TRUE;
 }
@@ -1261,7 +1325,7 @@ WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTI
 
     /* the cache, where there is one, see blitter_text_blit() */
     length = 0;
-    if (TEXT_CACHE_OPS)
+    if (BLITTER_CACHE_OPS)
         length = (LONG)h * linea_vars.v_lin_wr;
 
     n = 0;
@@ -1306,7 +1370,7 @@ WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTI
         s_addr = s_row + ((sourcex >> 3) & ~1);
         d_addr = d_row + x_off;
 
-        if (TEXT_CACHE_OPS)
+        if (BLITTER_CACHE_OPS)
             flush_data_cache((void *)(d_addr - length + 1), length);
 
         for (plane = 0; plane < planes; plane++)
@@ -1321,7 +1385,7 @@ WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTI
             d_addr += 2;                /* the next plane */
         }
 
-        if (TEXT_CACHE_OPS)
+        if (BLITTER_CACHE_OPS)
             invalidate_data_cache((void *)(d_row + x_off - length + 1), length);
 
         destx += delx;
