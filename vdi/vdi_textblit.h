@@ -12,6 +12,8 @@
 
 #include "portab.h"
 
+struct font_head;
+
 /*
  * the following structure mimics the format of the stack frame
  * containing the local variables used by the lower-level assembler
@@ -99,7 +101,8 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst);
  */
 void planar_text_blit(LOCALVARS *vars);
 #if CONF_WITH_BLITTER
-BOOL blitter_text_blit(LOCALVARS *vars);    /* vdi_raster.c, FALSE: not done */
+BOOL blitter_text_blit(LOCALVARS *vars);
+WORD blitter_text_string(const struct font_head *fnt, WORD count, const WORD *str);
 #endif
 void truecolor_text_blit(LOCALVARS *vars);
 
