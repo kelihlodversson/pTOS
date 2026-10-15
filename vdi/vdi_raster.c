@@ -309,15 +309,20 @@ void vdi_vr_trnfm(Vwk * vwk)
 #if CONF_WITH_BLITTER
 /*
  * does the data cache have to be flushed before and invalidated after the
- * blitter draws?  see the use in hwblit_start() and blitter_text_blit().  it can only matter
- * on a ColdFire and on a 68040/68060 (see flush_data_cache() in
- * processor.S), whose cpu type, mcpu, is 40 or more.
+ * blitter draws?  see the use in hwblit_start(), hwblit_end() and
+ * blitter_text_blit().  it can only matter on a ColdFire and on a
+ * 68030/68040/68060 (see flush_data_cache() and invalidate_data_cache() in
+ * processor.S), whose cpu type, mcpu, is 30 or more.  the 68030's data cache
+ * is always write-through, so the flush before the blit does nothing for it,
+ * but the invalidate afterwards has to clear it, or the cpu would go on
+ * reading the pixels the blitter has overwritten.  the 68000 and 68020 have no
+ * data cache.
  */
 #if defined(__mcoldfire__)
 #define BLITTER_CACHE_OPS 1
 #elif CONF_WITH_ADVANCED_CPU
 extern LONG mcpu;
-#define BLITTER_CACHE_OPS (mcpu >= 40)
+#define BLITTER_CACHE_OPS (mcpu >= 30)
 #else
 #define BLITTER_CACHE_OPS 0
 #endif
