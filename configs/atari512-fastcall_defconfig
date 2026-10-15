@@ -1,0 +1,12 @@
+# atari512_defconfig built with -mfastcall (Thorsten Otto's patched GCC): the
+# 512 KB ROM image for the TT and the Falcon with the register-argument
+# calling convention.  CI runs it on an emulated Falcon with a 68030 and with
+# a 68040, in the pBench and the Hatari test workflows (the 256 KB image,
+# atari256, is the -mfastcall build for the ST and the STE).  Needs the
+# -mfastcall toolchain, which CI's setup-toolchain action installs for any
+# config that sets CONF_WITH_MFASTCALL.
+TARGET_512=y
+# Single-country, as atari512_defconfig (the multi-language image no longer
+# fits in 512K)
+BUILD_UNIQUE_COUNTRY=y
+CONF_WITH_MFASTCALL=y
