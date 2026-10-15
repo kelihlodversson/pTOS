@@ -198,8 +198,12 @@ wait_kbd_ack:
         lea     C_SYM(scancode_atari_from_amiga),a0
         or.b    0(a0,d1.w),d0
 
+        // d2 holds the CIAA interrupt status of the caller: the keyboard
+        // vector is C code (or a program's), which may change it
+        move.l  d2,-(sp)
         move.l  C_SYM(kbdvecs)-4,a0           // kbdvec
         jsr     (a0)
+        move.l  (sp)+,d2
         rts
 
 /* CIA A Timer B interrupt (for 200 Hz system timer) */
