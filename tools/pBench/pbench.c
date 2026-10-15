@@ -14,7 +14,7 @@
  * here through the documented OS interfaces only -- no direct hardware access
  * -- so it runs on every pTOS target.  See doc/pbench.txt.
  *
- * Usage:  pbench.prg [-q] [-n] [-r N] [-l] [TESTS]
+ * Usage:  pbench.prg [-q] [-n] [-r N] [-e N] [-l] [TESTS]
  *   -q          quit when done instead of waiting for a key
  *   -n          run with the blitter turned off (Blitmode()), and turn it on
  *               again at the end if it was on: for a machine whose blitter
@@ -22,6 +22,10 @@
  *   -r N        repeat each test N times (the time reported is per run)
  *               Without -r, a test that finishes in under two seconds is
  *               repeated, so that fast machines still get a meaningful time
+ *   -e N        VDI Text Effects: only text effect N (0 is plain text, 17 draws
+ *               no text, only the rectangle fill that follows each effect),
+ *               to see which effect takes the time; the time reported is then
+ *               that of the one effect, not of the 16
  *   -l          list the tests
  *   TESTS       letters selecting tests (default: all)
  *
@@ -246,25 +250,34 @@ static long test_text(void)
 }
 
 /*
- * VDI Text Effects: the same lines in each of the text effects 1..16.
+ * VDI Text Effects: the same lines in each of the text effects 1..16, or
+ * in the one given with -e (0: no effect; 17: no text, only the fill).
  */
+#define NO_TEXT 17
+static int only_effect = -1;    /* -e N, -1 = all of 1..16 */
+
 static long test_effects(void)
 {
-    WORD effect, line;
+    WORD effect, line, first = 1, last = 16;
     long calls = 0;
 
+    if (only_effect >= 0)
+        first = last = only_effect;
     set_clip();
     clear_area();
     vst_point(vh, 9);
     vsf_color(vh, 0);
-    for (effect = 1; effect <= 16; effect++)
+    for (effect = first; effect <= last; effect++)
     {
-        vst_color(vh, tcol((effect - 1) % 3 + 1));
-        vst_effects(vh, effect);
-        for (line = 0; line < 22; line++)
-            v_gtext(vh, 1, 31 + line * 9, text94);
+        vst_color(vh, tcol((effect + 2) % 3 + 1));
+        vst_effects(vh, effect == NO_TEXT ? 0 : effect);
+        if (effect != NO_TEXT)
+        {
+            for (line = 0; line < 22; line++)
+                v_gtext(vh, 1, 31 + line * 9, text94);
+            calls += 22;
+        }
         vr_recfl(vh, 1, 22, 640, 187);
-        calls += 22;
     }
     vst_effects(vh, 0);
     return calls;
@@ -709,6 +722,8 @@ int main(int argc, char **argv)
             noblit = 1;
         else if (!strcmp(argv[i], "-r") && i + 1 < argc)
             repeat = atol(argv[++i]);
+        else if (!strcmp(argv[i], "-e") && i + 1 < argc)
+            only_effect = atoi(argv[++i]);
         else
             sel = argv[i];
     }

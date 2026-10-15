@@ -31,12 +31,17 @@ default) is required, since that is what enables the libcmini build rules.
 Running
 -------
 
-    pbench.prg [-q] [-n] [-r N] [-l] [TESTS]
+    pbench.prg [-q] [-n] [-r N] [-e N] [-l] [TESTS]
 
     -q        quit when done, instead of waiting for a key
     -n        run with the blitter turned off (Blitmode()), and turn it on
               again at the end if it was on
     -r N      run each test N times (the time reported is for one run)
+    -e N      VDI Text Effects: only text effect N (0 is plain text; 17 draws
+              no text, only the rectangle fill that follows each effect), to
+              see which effect takes the time. The time reported is that of
+              the one effect, not of the 16, and means nothing against the
+              reference or the CI baselines
     -l        list the tests
     TESTS     letters selecting tests: d t f s g w b r j e (default: all)
 
