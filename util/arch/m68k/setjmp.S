@@ -39,7 +39,7 @@ C_SYM(setjmp):
         rts
 
 C_SYM(longjmp):
-        tst.w   d0                      // requested setjmp() return value
+        ext.l   d0                      // requested setjmp() return value, as an int
         jne     nonzero
         moveq   #1,d0                   // if was 0, force it to 1
 nonzero:
@@ -67,6 +67,7 @@ C_SYM(longjmp):
          * word, which lives at 10(sp), not 8(sp).
          */
         move.w  10(sp),d0               // requested setjmp() return value
+        ext.l   d0                      // setjmp() returns an int: all 32 bits
         jne     nonzero
         moveq   #1,d0                   // if was 0, force it to 1
 nonzero:
