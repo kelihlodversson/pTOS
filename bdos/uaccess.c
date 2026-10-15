@@ -320,8 +320,8 @@ static long pexec_ok(const long *pw)
 /* Fdatime(buf, handle, wflag): the two words are read when setting, else written */
 static long fdatime_ok(const long *pw)
 {
-    /* xgsdtof() takes the flag as an int: look at what it will look at */
-    return buf_ok(pw[1], UA_DATIME, (int)pw[3] == 0);
+    /* xgsdtof() takes the flag as a WORD: look at what it will look at */
+    return buf_ok(pw[1], UA_DATIME, (WORD)pw[3] == 0);
 }
 
 /* Mvalidate(pid, addr, size, flags): flags, if not NULL, is stored through; the

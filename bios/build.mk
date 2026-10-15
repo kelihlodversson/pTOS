@@ -28,6 +28,9 @@ obj-$(CONF_WITH_GEMDOS_SHUTDOWN) += shutdown.o
 # Sysconf() (bdos/ssystem.c) asks how much physical memory there is.
 obj-$(CONF_WITH_SSYSTEM) += physmem.o
 
+# The classic-ABI halves of the default BIOS vector entry points (m68k only).
+obj-y += classicvec.o
+
 # ui_mupb's address must be greater than the exec_os contents (see the
 # comment in endrom.c), so this must stay last in bios/.
 obj-y += endrom.o

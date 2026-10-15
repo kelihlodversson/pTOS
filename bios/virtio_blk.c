@@ -254,8 +254,11 @@ LONG virtio_blk_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
     status = &virtio_blk_status[dev].value;
     phys_offset = virtio_blk_dev[dev].phys_offset;
 
-    /* Walk a byte pointer rather than computing buf + i*SECTOR_SIZE: int is
-     * 16 bits on m68k, so that multiply would overflow from i == 64 on. */
+    /* Walk a byte pointer rather than computing buf + i*SECTOR_SIZE: before
+     * #300 removed -mshort, int was 16 bits on m68k, so that multiply would
+     * have overflowed from i == 64 on. int is 32 bits everywhere now, but
+     * keep walking a pointer regardless -- simpler than re-deriving the
+     * address every iteration, and correct independent of int's width. */
     sectbuf = buf;
 
     for (i = 0; i < (WORD)count; i++, sectbuf += SECTOR_SIZE)
