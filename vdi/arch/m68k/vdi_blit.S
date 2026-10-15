@@ -1094,6 +1094,8 @@ next_plane:
         addx.w  d0,d0                   // as fg0/bg0, fg0/bg1, fg1/bg0, and fg1/bg1
 
         move.b  OP_TAB(a6,d0.w),d0      // d0 <- appropriate logic op
+        cmp.w   #5,d0                   // op 5 (D' = D) leaves the plane as it
+        jeq     np_cont                 // is: skip it, on to the next plane
         move.w  d0,d1
         lsl.w   #2,d1                   // d1 <- offset into logic op table
         move.l  log_op(pc,d1.w),a2      // a2 <- thread to appropriate logic op

@@ -685,14 +685,21 @@ static void bit_blt(struct blit_frame *blit_info)
     for (plane = 0; plane < blit_info->plane_ct; plane++) {
         int op_tabidx;
 
-        blt->src_addr = s_addr;         /* load Source pointer to this plane */
-        blt->dst_addr = d_addr;         /* load Dest ptr to this plane   */
-        blt->y_cnt = blit_info->b_ht;   /* load the line count   */
-
         /* calculate operation for actual plane */
         op_tabidx = ((blit_info->fg_col>>plane) & 0x0001 ) <<1;
         op_tabidx |= (blit_info->bg_col>>plane) & 0x0001;
         blt->op = blit_info->op_tab[op_tabidx] & 0x000f;
+
+        /* op 5 (D' = D) leaves the plane as it is: nothing to blit */
+        if (blt->op == 5) {
+            s_addr += blit_info->s_nxpl;
+            d_addr += blit_info->d_nxpl;
+            continue;
+        }
+
+        blt->src_addr = s_addr;         /* load Source pointer to this plane */
+        blt->dst_addr = d_addr;         /* load Dest ptr to this plane   */
+        blt->y_cnt = blit_info->b_ht;   /* load the line count   */
 
         /*
          * We can only be here if either:
@@ -1414,6 +1421,10 @@ cpy_raster(struct raster_t *raster, struct blit_frame *info)
 
     raster->mode = mode;        /* raw request, for the truecolor backend */
 
+    /* opaque mode 5 (D' = D) leaves the destination as it is */
+    if (!raster->transparent && mode == 5)
+        return;
+
     /* if true, the plane count is invalid or clipping took all! */
     if (setup_info(raster, info))
         return;
@@ -1623,6 +1634,11 @@ void linea_blit(struct blit_frame *info)
     info->s_ymax = info->s_ymin + info->b_ht - 1;
     info->d_xmax = info->d_xmin + info->b_wd - 1;
     info->d_ymax = info->d_ymin + info->b_ht - 1;
+
+    /* nothing to do if every fore/background combination is op 5 (D' = D) */
+    if ((info->op_tab[0] & 0x0f) == 5 && (info->op_tab[1] & 0x0f) == 5
+     && (info->op_tab[2] & 0x0f) == 5 && (info->op_tab[3] & 0x0f) == 5)
+        return;
 
     /*
      * call assembler blit routine or C-implementation.  we call the
