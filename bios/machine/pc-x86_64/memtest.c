@@ -42,6 +42,8 @@
 #include "pc_x86_64_memory.h"
 #include "progimage.h"
 #include "io.h"
+#include "trap.h"
+#include "tosvars.h"
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/fs.h"
 
@@ -1308,6 +1310,30 @@ static void test_ring3(void)
 
     /* a Pexec() that runs out of loan slots half way gives back what it took */
     probe_expect('z', 0, "a failed Pexec(PE_BASEPAGE) from ring 3 releases its blocks and loans");
+
+    /* BIOS and XBIOS pointer arguments are checked per call (#352) */
+    probe_expect('A', 0, "bad BIOS/XBIOS pointers are refused, calls that would give the kernel a user address are refused, valid ones let through");
+    {
+        /* the probe's Setpalette() was given a valid array and changed it at
+         * once: what the kernel kept is its own copy of the original */
+        const UWORD *kept = x86_64_ring3_palette();
+        int k, same_pal = 1;
+
+        for (k = 0; k < 16; k++)
+            if (kept[k] != (UWORD)(0x0100 + 0x11 * k))
+                same_pal = 0;
+        CHECK(same_pal, "Setpalette() from ring 3 keeps a copy of the palette");
+        CHECK(colorptr == NULL || colorptr == kept,
+              "the palette the kernel will load is its own, not the process's");
+    }
+    {
+        long rc = run_probe('E');
+
+        if (rc == 0x100)
+            kcprintf("x86-64 DMAread/DMAwrite checks: SKIP (no disk)\n");
+        else
+            CHECK(rc == 0, "DMAread/DMAwrite from ring 3 check buffers, counts and devices");
+    }
 
     /* GEMDOS pointer arguments are checked per call (#437) */
     probe_expect('c', 0, "bad GEMDOS pointers and lengths are refused, valid ones let through");

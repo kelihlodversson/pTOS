@@ -40,6 +40,11 @@
  *      there
  *   t  scribble over the basepage's p_uft and p_curdir, then use handles and
  *      directories; exits with a mask of what failed (#418)
+ *   A  the pointer arguments of BIOS and XBIOS calls are checked per call, and
+ *      the calls that would put a user address into kernel state or call it
+ *      are refused (#352); exits with a mask of what was wrong
+ *   E  DMAread() and DMAwrite() against the IDE disk (#352): buffers, counts and
+ *      devices; exits with 0x100 if there is no disk
  *   c  the pointer arguments of GEMDOS calls are checked per call: bad strings,
  *      buffers, lengths and Pexec arguments are refused with EIMBA/ERANGE and
  *      valid ones are let through; exits with a mask of what was wrong (#437)
@@ -80,6 +85,7 @@ typedef unsigned int u32;
 #define EINVFN (-32)
 #define EACCDN (-36)
 #define BIOS   13
+#define XBIOS  14
 
 /* the selectors gdt.h gives ring 3 */
 #define USER_CODE_SEL 0x2b
@@ -202,7 +208,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(bad);
         break;
     case 's':
-        if (sys(BIOS, 5, 0x102, 0x500000, 0) != -1)
+        if (sys(BIOS, 5, 0x102, 0x500000, 0) != EACCDN)
             bad |= 1;                   /* Setexc(etv_term, user address) */
         /* this very (running) basepage a second time, and mode 50 */
         if (sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EIMBA ||
@@ -494,6 +500,177 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             if (gemdos(0x3e, fh, 0) != 0)
                 bad |= 128;
         }
+        pterm(bad);
+        break;
+    }
+    case 'A': {
+        /* the pointers of BIOS and XBIOS calls are checked per call (#352) */
+#define PA(x) ((s64)(int)(unsigned long)(x))
+#ifndef ERANGE
+#define ERANGE (-64)
+#endif
+#define EUNDEV (-15)
+        static unsigned char abuf[1024] __attribute__((aligned(4096)));
+        static unsigned short pal[16];
+        const s64 unmapped = 0x30000000, lowvec = 0x84, kern = (s64)(int)0x80000000;
+        const s64 ro = 0x0fff0000;          /* the ancestors page: read-only */
+        const s64 stack_end = 0x7ffffff8;   /* 64 bytes from here cross the top */
+        const s64 kaddr = (s64)0xFFFFFFFF80001000LL;
+        s64 rc;
+
+        /* BIOS: Getmpb() hands out kernel memory descriptors */
+        if (sys(BIOS, 0, PA(abuf), 0, 0) != EACCDN) bad |= 1;
+        /* Setexc(): a user process may query, not set, and only a vector it can
+         * name (the number is scaled and read as a kernel address) */
+        if (sys(BIOS, 5, 0x100, 0x500000, 0) != EACCDN) bad |= 2;
+        if (sys(BIOS, 5, 0x101, 0, 0) != EACCDN) bad |= 2;
+        if (sys(BIOS, 5, 0x102, 0xfffffffeLL, 0) != EACCDN) bad |= 2;
+        if (sys(BIOS, 5, 0x103, -1, 0) != ERANGE) bad |= 2;
+        if (sys(BIOS, 5, 0x7fff, -1, 0) != ERANGE) bad |= 2;
+        if (sys(BIOS, 5, -1, -1, 0) != ERANGE) bad |= 2;
+        if (sys(BIOS, 5, -32768, -1, 0) != ERANGE) bad |= 2;
+        rc = sys(BIOS, 5, 0x102, -1, 0);        /* a query: the old vector */
+        if (rc == EACCDN || rc == ERANGE) bad |= 2;
+        /* only a real -1 is "no new vector": 0xffffffff would be installed */
+        if (sys(BIOS, 5, 0x100, 0xffffffffLL, 0) != EACCDN) bad |= 2;
+
+        /* XBIOS: Initmous() takes a vector the kernel would call, and a struct */
+        if (sys(XBIOS, 0, 1, 0, 0x500000) != EACCDN) bad |= 4;
+        if (sys(XBIOS, 0, 0, 0, 0x500000) != EACCDN) bad |= 4;
+        if (sys(XBIOS, 0, 1, unmapped, 0) != EIMBA) bad |= 4;
+        if (sys(XBIOS, 0, 2, lowvec, 0) != EIMBA) bad |= 4;
+        if (sys(XBIOS, 0, 4, kern, 0) != EIMBA) bad |= 4;
+        /* Setscreen() with a screen address becomes the kernel's screen */
+        if (sys4(XBIOS, 5, 0x500000, -1, -1, -1) != EACCDN) bad |= 8;
+        if (sys4(XBIOS, 5, 0, 0x500000, -1, -1) != EACCDN) bad |= 8;
+        if (sys4(XBIOS, 5, 0, 0, -1, -1) != 0) bad |= 8;     /* nothing asked */
+        /* Setpalette() is read later; the address must be an even one, mapped,
+         * and 32 bytes of it */
+        if (sys(XBIOS, 6, unmapped, 0, 0) != EIMBA) bad |= 16;
+        if (sys(XBIOS, 6, lowvec, 0, 0) != EIMBA) bad |= 16;
+        if (sys(XBIOS, 6, PA(pal) + 1, 0, 0) != EIMBA) bad |= 16;
+        if (sys(XBIOS, 6, stack_end - 8, 0, 0) != EIMBA) bad |= 16;
+        if (sys(XBIOS, 6, 0xfffffff0LL, 0, 0) != EIMBA) bad |= 16;
+        /* Midiws() and Ikbdws(): cnt + 1 bytes, cnt unsigned */
+        if (sys(XBIOS, 12, 3, unmapped, 0) != EIMBA) bad |= 32;
+        if (sys(XBIOS, 12, 0, lowvec, 0) != EIMBA) bad |= 32;
+        if (sys(XBIOS, 12, 0xffff, PA(abuf) + 1024 - 100, 0) != EIMBA) bad |= 32;
+        if (sys(XBIOS, 12, 0xffff, kern, 0) != EIMBA) bad |= 32;
+        if (sys(XBIOS, 25, 3, unmapped, 0) != EIMBA) bad |= 32;
+        if (sys(XBIOS, 25, 1, lowvec, 0) != EIMBA) bad |= 32;
+        if (sys(XBIOS, 25, 0xffff, stack_end, 0) != EIMBA) bad |= 32;
+        /* Protobt(): a boot sector, which it writes */
+        if (sys4(XBIOS, 18, unmapped, -1, -1, -1) != EIMBA) bad |= 64;
+        if (sys4(XBIOS, 18, lowvec, -1, -1, -1) != EIMBA) bad |= 64;
+        if (sys4(XBIOS, 18, ro, -1, -1, -1) != EIMBA) bad |= 64;
+        if (sys4(XBIOS, 18, stack_end - 100, -1, -1, -1) != EIMBA) bad |= 64;
+        /* Dosound() keeps its table for the timer to read */
+        if (sys(XBIOS, 32, 0x500000, 0, 0) != EACCDN) bad |= 128;
+        if (sys(XBIOS, 32, -1, 0, 0) != 0) bad |= 128;      /* the current table */
+        /* Bconmap(-2) is the kernel's table */
+        if (sys(XBIOS, 44, -2, 0, 0) != EACCDN) bad |= 256;
+        rc = sys(XBIOS, 44, -1, 0, 0);
+        if (rc == EACCDN) bad |= 256;
+
+        /* what is valid is let through, and does what it should.  The calls
+         * that return nothing return 0 here. */
+        {
+            static struct {
+                unsigned char topmode, buttons, xparam, yparam;
+                short xmax, ymax, xinitial, yinitial;
+            } mparam = { 0, 0, 1, 1, 640, 400, 0, 0 };
+            int k;
+
+            if (sys(XBIOS, 0, 0, 0, 0) != 0) bad |= 2048;                 /* Initmous */
+            if (sys(XBIOS, 0, 1, PA(&mparam), 0) != 0) bad |= 2048;
+            if (sys(XBIOS, 0, 2, PA(&mparam), 0) != 0) bad |= 2048;
+            if (sys(XBIOS, 12, 0, PA(abuf), 0) != 0) bad |= 2048;         /* Midiws */
+            /* (this configuration has no MIDI port: the bytes are dropped, and
+             * the call must not wait for a port that is not there) */
+            if (sys(BIOS, 3, 3, 'x', 0) != 0) bad |= 2048;               /* Bconout(MIDI) */
+            if (sys(XBIOS, 25, 0, PA(abuf), 0) != 0) bad |= 2048;         /* Ikbdws */
+            if (sys(XBIOS, 25, 1023, PA(abuf), 0) != 0) bad |= 2048;      /* the whole buffer */
+            /* Protobt() writes the boot sector it is given */
+            for (k = 0; k < 512; k++)
+                abuf[k] = 0;
+            if (sys4(XBIOS, 18, PA(abuf), 0x123456, 2, 0) != 0) bad |= 2048;
+            for (k = 0; k < 32 && !abuf[k]; k++)
+                ;
+            if (k == 32) bad |= 2048;                           /* it wrote something */
+            /* Setpalette(): the kernel keeps a copy.  The process changes its
+             * own array at once; the self-test then checks that what the
+             * kernel kept is the original (x86_64_ring3_palette()) */
+            for (k = 0; k < 16; k++)
+                pal[k] = (unsigned short)(0x0100 + 0x11 * k);
+            if (sys(XBIOS, 6, PA(pal), 0, 0) != 0) bad |= 2048;
+            for (k = 0; k < 16; k++)
+                pal[k] = 0xdead;
+        }
+
+        /* arguments a call does not use are scalars, whatever they look like */
+        rc = sys4(BIOS, 1, 2, kaddr, kaddr, kaddr);         /* Bconstat(CON) */
+        if (rc != 0 && rc != -1) bad |= 512;
+        rc = sys4(BIOS, 11, -1, kaddr, kaddr, kaddr);       /* Kbshift(-1) */
+        if (rc < 0) bad |= 512;
+        rc = sys4(XBIOS, 4, kaddr, kaddr, kaddr, kaddr);    /* Getrez() */
+        if (rc < 0 || rc > 7) bad |= 512;
+        rc = sys4(XBIOS, 17, kaddr, kaddr, kaddr, kaddr);   /* Random() */
+        if (rc < 0 || rc > 0xffffff) bad |= 512;
+        rc = sys4(BIOS, 6, kaddr, kaddr, kaddr, kaddr);     /* Tickcal() */
+        if (rc <= 0) bad |= 512;
+        /* ... and the kernel's own Setexc() queries still work through the
+         * kernel's own entry, which this process cannot use: the system is
+         * still there */
+        if (gemdos(0x19, 0, 0) < 0) bad |= 1024;
+        pterm(bad);
+        break;
+    }
+    case 'E': {
+        /* DMAread() and DMAwrite() against a disk that is there (#352): the
+         * pc-x86_64 IDE disk is major 16.  Exits with 0x100 if there is none. */
+#define PE(x) ((s64)(int)(unsigned long)(x))
+#ifndef ERANGE
+#define ERANGE (-64)
+#endif
+#define EUNDEV (-15)
+        static unsigned char dbuf[1024] __attribute__((aligned(4096)));
+        const s64 unmapped = 0x30000000, lowvec = 0x84, kern = (s64)(int)0x80000000;
+        const s64 ro = 0x0fff0000;
+        const s64 stack_end = 0x7ffffff8;
+        const s64 major = 16;
+        s64 rc;
+
+        rc = sys4(XBIOS, 42, 0, 1, PE(dbuf), major);        /* sector 0 */
+        if (rc == EUNDEV)
+            pterm(0x100);
+        if (rc != 0) bad |= 1;
+        if (dbuf[510] != 0x55 || dbuf[511] != 0xaa) bad |= 2;
+        /* a bad buffer is refused before the device is touched: DMAread */
+        if (sys4(XBIOS, 42, 0, 1, unmapped, major) != EIMBA) bad |= 4;
+        if (sys4(XBIOS, 42, 0, 1, lowvec, major) != EIMBA) bad |= 4;
+        if (sys4(XBIOS, 42, 0, 1, kern, major) != EIMBA) bad |= 4;
+        if (sys4(XBIOS, 42, 0, 1, ro, major) != EIMBA) bad |= 4;          /* an output */
+        if (sys4(XBIOS, 42, 0, 1, stack_end, major) != EIMBA) bad |= 4;
+        if (sys4(XBIOS, 42, 0, 1, 0xfffffff0LL, major) != EIMBA) bad |= 4;
+        if (sys4(XBIOS, 42, 0, 0x7fff, PE(dbuf), major) != EIMBA) bad |= 4;  /* 16 MiB */
+        /* ... and DMAwrite, which would write the disk if it got through */
+        if (sys4(XBIOS, 43, 0, 1, unmapped, major) != EIMBA) bad |= 8;
+        if (sys4(XBIOS, 43, 0, 1, lowvec, major) != EIMBA) bad |= 8;
+        if (sys4(XBIOS, 43, 0, 1, kern, major) != EIMBA) bad |= 8;
+        if (sys4(XBIOS, 43, 0, 1, stack_end, major) != EIMBA) bad |= 8;
+        if (sys4(XBIOS, 43, 0, 0x7fff, PE(dbuf), major) != EIMBA) bad |= 8;
+        /* counts and devices: the device is judged first, whatever the count */
+        if (sys4(XBIOS, 42, 0, -1, PE(dbuf), major) != ERANGE) bad |= 16;
+        if (sys4(XBIOS, 42, 0, 0, PE(dbuf), major) != 0) bad |= 16;
+        if (sys4(XBIOS, 42, 0, 0, PE(dbuf), 32767) != EUNDEV) bad |= 16;
+        if (sys4(XBIOS, 42, 0, 0, PE(dbuf), -2) != EUNDEV) bad |= 16;
+        if (sys4(XBIOS, 42, 0, 1, PE(dbuf), 99) != EUNDEV) bad |= 16;
+        if (sys4(XBIOS, 43, 0, 0, PE(dbuf), 32767) != EUNDEV) bad |= 16;
+        if (sys4(XBIOS, 43, 0, -1, PE(dbuf), 99) != EUNDEV) bad |= 16;
+        if (sys4(XBIOS, 43, 0, -1, PE(dbuf), major) != ERANGE) bad |= 16;
+        if (sys4(XBIOS, 43, 0, 0, PE(dbuf), major) != 0) bad |= 16;
+        /* the system is still there */
+        if (gemdos(0x19, 0, 0) < 0) bad |= 32;
         pterm(bad);
         break;
     }

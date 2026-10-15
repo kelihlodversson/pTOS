@@ -31,6 +31,9 @@ obj-$(CONF_WITH_SSYSTEM) += physmem.o
 # The classic-ABI halves of the default BIOS vector entry points (m68k only).
 obj-y += classicvec.o
 
+# What a BIOS or XBIOS call from a user process may pass (bios/biosaccess.c).
+obj-$(CONF_WITH_USER_COPY) += biosaccess.o
+
 # ui_mupb's address must be greater than the exec_os contents (see the
 # comment in endrom.c), so this must stay last in bios/.
 obj-y += endrom.o

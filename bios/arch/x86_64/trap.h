@@ -92,6 +92,9 @@
  * portion at all: `syscall` does not build a stack frame the way an
  * exception or `int` does, so everything here is trapasm.S's own doing.
  */
+/* The copy of the palette the last ring-3 Setpalette() was given (a test hook) */
+const UWORD *x86_64_ring3_palette(void);
+
 typedef struct {
     UQUAD r15, r14, r13, r12, r10, r9, r8, rbp, rdi, rsi, rdx, rbx, rax, r11, rcx;
 } PACKED x86_64_trap_frame_t;
