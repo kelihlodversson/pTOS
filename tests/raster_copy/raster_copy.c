@@ -261,9 +261,9 @@ static void check(const CASE *c)
     copy(snap_blt, band);
 
     /*
-     * mode 5 leaves the destination as it is, whatever the path.  the CPU
-     * path does not do that on a one plane screen in some cases (#535), so
-     * there only the blitter is checked, against the band as it was
+     * mode 5 leaves the destination as it is, whatever the path: the
+     * blitter is checked against the band as it was, and then the CPU path
+     * against the blitter's
      */
     if (c->mode == 5)
     {
@@ -274,8 +274,6 @@ static void check(const CASE *c)
             cases_failed++;
             return;
         }
-        if (planes == 1)
-            return;
     }
 
     d = first_diff(snap_cpu, snap_blt);

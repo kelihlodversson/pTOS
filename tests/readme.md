@@ -215,8 +215,8 @@ and 7 lines, three alignments of the source and four of the destination, and
 destinations that are far from the source, overlap it on the same lines, or
 one line above or below it (so that the blit goes in either direction), with
 and without a clip rectangle. Mode 5 leaves the destination as it is: the
-blitter is checked against the band as it was, and on a one plane screen not
-compared with the CPU path, which changes it in some cases (#535).
+blitter is checked against the band as it was, and the CPU path against the
+blitter's.
 
 ### On an emulated Falcon
 
