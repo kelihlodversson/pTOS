@@ -1158,6 +1158,188 @@ BOOL blitter_text_blit(LOCALVARS *vars)
         invalidate_data_cache((void *)(d_addr - length + 1), length);
     return TRUE;
 }
+
+
+/*
+ * blitter_text_string()
+ *
+ * Output the start of a string of plain text, glyph by glyph, with the
+ * blitter, and tell how many glyphs that was.
+ *
+ * Going through text_blt() and its helpers for every glyph takes a lot more
+ * than the glyph itself, most of it for things that are the same for every
+ * character of the string.  So everything that is, is worked out and sent to
+ * the blitter once: the plane count and the operation of each plane, the rows
+ * the glyphs are read from and written to, the halftone and the registers
+ * that are the same for every glyph.  A glyph then needs its own spans,
+ * masks and addresses only.
+ *
+ * It stops at the first glyph that has to be output the general way (one
+ * that is not entirely inside the clip rectangle, or has no width), so the
+ * caller does that one, and tries again with the rest of the string.  It
+ * does not output anything if the string cannot go this way at all.
+ *
+ * The caller has checked for what takes more than a plain glyph: effects
+ * other than light and underline, rotation, scaling, justification, fonts
+ * with horizontal offsets, and a screen that is not a bitplane one.
+ *
+ * In:
+ *  fnt         the font
+ *  count       the number of characters left in the string
+ *  str         the characters
+ *
+ * Out:
+ *  the number of characters output, DESTX being moved on past them
+ */
+WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str)
+{
+    WORD plane, planes, mode, h, nxwd, n;
+    WORD c, delx, destx, sourcex, sx, dx, s_span, d_span, skew, skew_idx;
+    WORD xmin, xmax, skew_reg, shift;
+    UWORD lendmask, rendmask, fg;
+    BOOL clip;
+    UBYTE ops[8];
+    LONG s_row, d_row, s_addr, d_addr, x_off, length;
+    const UWORD *off_table = fnt->off_table;
+
+    planes = linea_vars.v_planes;
+    if (planes < 1 || planes > 8)
+        return 0;
+    mode = linea_vars.WRT_MODE;
+    if (mode < 0 || mode > 19)
+        return 0;
+    h = fnt->form_height;
+    if (h <= 0)
+        return 0;
+
+    /* clipping: the rows are the same for the whole string, the columns not */
+    clip = linea_vars.CLIP;
+    xmin = linea_vars.XMINCL;
+    xmax = linea_vars.XMAXCL;
+    if (clip)
+    {
+        if (linea_vars.DESTY < linea_vars.YMINCL || linea_vars.DESTY + h > linea_vars.YMAXCL)
+            return 0;                   /* some or all of it is clipped */
+    }
+
+    /*
+     * the first glyph, to be sure that there is something to do before the
+     * setup, which is not for free: text_blt() will have to do those that are
+     * clipped, one by one, and each of them would pay for it
+     */
+    destx = linea_vars.DESTX;
+    c = *str;
+    if (c < fnt->first_ade || c > fnt->last_ade)
+        c = '?';
+    c -= fnt->first_ade;
+    delx = off_table[c + 1] - off_table[c];
+    if (delx <= 0 || (clip && (destx < xmin || destx + delx > xmax)))
+        return 0;
+
+    nxwd = planes * sizeof(WORD);
+    shift = shift_offset[planes];
+    fg = linea_vars.TEXTFG;
+    for (plane = 0; plane < planes; plane++)
+    {
+        ops[plane] = text_ops[mode][(fg & 1) << 1];     /* the background is 0 */
+        fg >>= 1;
+    }
+
+    /* the bottom line of the glyphs and of where they go: they are drawn from the bottom up */
+    s_row = (LONG)fnt->dat_table + (UWORD)(h - 1) * (ULONG)fnt->form_width;
+    d_row = (LONG)v_bas_ad + (UWORD)(linea_vars.DESTY + h - 1) * (ULONG)linea_vars.v_lin_wr;
+
+    BLITTER->dst_x_incr = nxwd;
+    BLITTER->endmask_2 = 0xffff;
+    if (linea_vars.STYLE & F_LIGHT)
+        set_light_halftone();
+    else
+        BLITTER->hop = HOP_SOURCE_ONLY;
+
+    /* the cache, where there is one, see blitter_text_blit() */
+    length = 0;
+    if (TEXT_CACHE_OPS)
+        length = (LONG)h * linea_vars.v_lin_wr;
+
+    n = 0;
+    for (;;)
+    {
+        sourcex = off_table[c];
+        sx = sourcex & 0x000f;
+        dx = destx & 0x000f;
+        s_span = (sx + delx - 1) >> 4;
+        d_span = (dx + delx - 1) >> 4;
+        skew = dx - sx;
+
+        skew_idx = 0x0004;              /* blitting left to right */
+        if (s_span == d_span)
+            skew_idx |= 0x0002;         /* spans are equal */
+        if (skew < 0)
+            skew_idx |= 0x0001;         /* the source starts further right */
+
+        lendmask = 0xffff >> dx;
+        rendmask = ~(0x7fff >> ((dx + delx - 1) & 15));
+        if (!d_span)
+            lendmask &= rendmask;       /* one word: the other masks are ignored */
+
+        BLITTER->src_y_incr = -(WORD)fnt->form_width - 2 * s_span;
+        BLITTER->dst_y_incr = -(WORD)linea_vars.v_lin_wr - nxwd * d_span;
+        BLITTER->endmask_1 = lendmask;
+        BLITTER->endmask_3 = rendmask;
+
+        /* see bit_blt() for the special case of one word */
+        if (!s_span && !d_span)
+        {
+            BLITTER->src_x_incr = skew; /* sets the skew direction */
+            skew_reg = skew ? (skew & 0x0f) : FXSR;
+        }
+        else
+        {
+            BLITTER->src_x_incr = 2;    /* the glyph is a form of one plane */
+            skew_reg = (skew & 0x0f) | skew_flags[skew_idx];
+        }
+
+        x_off = (destx & 0xfff0) >> shift;
+        s_addr = s_row + ((sourcex >> 3) & ~1);
+        d_addr = d_row + x_off;
+
+        if (TEXT_CACHE_OPS)
+            flush_data_cache((void *)(d_addr - length + 1), length);
+
+        for (plane = 0; plane < planes; plane++)
+        {
+            BLITTER->src_addr = (UWORD *)s_addr;
+            BLITTER->dst_addr = (UWORD *)d_addr;
+            BLITTER->x_count = d_span + 1;
+            BLITTER->y_count = h;
+            BLITTER->skew = skew_reg;
+            BLITTER->op = ops[plane];
+            blitter_go(0);
+            d_addr += 2;                /* the next plane */
+        }
+
+        if (TEXT_CACHE_OPS)
+            invalidate_data_cache((void *)(d_row + x_off - length + 1), length);
+
+        destx += delx;
+        n++;
+        if (--count <= 0)
+            break;
+
+        /* the next one, if it can go this way too */
+        str++;
+        c = *str;
+        if (c < fnt->first_ade || c > fnt->last_ade)
+            c = '?';
+        c -= fnt->first_ade;
+        delx = off_table[c + 1] - off_table[c];
+        if (delx <= 0 || (clip && (destx < xmin || destx + delx > xmax)))
+            break;
+    }
+
+    linea_vars.DESTX = destx;
+    return n;
+}
 #endif
 
 
