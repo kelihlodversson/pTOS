@@ -215,6 +215,25 @@ static inline WORD load_char(const Fonthead *fnt_ptr, WORD ch)
 }
 
 /*
+ * the furthest to the right the destination can get with a string of 'count'
+ * characters, whatever they are: a character is at most max_cell_width wide
+ * and gets adv_extra from its style, and each one that follows is moved on by
+ * the spacing of the justification
+ */
+static LONG run_reach(const Fonthead *fnt_ptr, WORD count, WORD adv_extra,
+                      const JUSTINFO *justified)
+{
+    LONG step = (LONG)fnt_ptr->max_cell_width + adv_extra;
+
+    if (justified)
+        step += (LONG)justified->charx + justified->rmcharx
+              + justified->wordx + justified->rmwordx;
+    if (step > 0x7fffL)
+        return 0x7fffffffL;
+    return (LONG)linea_vars.DESTX + (LONG)count * (WORD)step;
+}
+
+/*
  * move the destination for the justification after a character: the spacing
  * between characters, and between words (after a blank)
  */
@@ -488,11 +507,14 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
         else if (!(fnt_ptr->flags & F_HORZ_OFF)
               && (!justified
                || (justified->charx >= 0 && justified->rmcharx >= 0
-                && justified->wordx >= 0 && justified->rmwordx >= 0)))
+                && justified->wordx >= 0 && justified->rmwordx >= 0))
+              && run_reach(fnt_ptr, count, adv_extra, justified) < 32767L)
         {
             /*
              * if the characters go from left to right, one after the other (no
-             * justification that can move them back, no offsets of their own),
+             * justification that can move them back, no offsets of their own,
+             * and so far to the right that the position of a character
+             * cannot wrap round: DESTX is a signed 16 bit number),
              * those that are wholly left of the window are a run at the start
              * and those wholly right of it are a run at the end: the first
              * character that is right of the window ends the string, as the
