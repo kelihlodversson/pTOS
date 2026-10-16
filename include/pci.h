@@ -55,6 +55,9 @@ typedef ULONG PCI_HANDLE;
 #define PCI_CONFIG_INTERRUPT_LINE 0x3cU
 #define PCI_CONFIG_INTERRUPT_PIN  0x3dU
 
+#define PCI_COMMAND_MEMORY        0x0002U
+#define PCI_COMMAND_MASTER        0x0004U
+
 #define PCI_MAX_BARS            6
 
 typedef struct {

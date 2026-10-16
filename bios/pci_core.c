@@ -33,6 +33,9 @@
 #define PCI_BAR_MEM_PREFETCH    0x00000008UL
 #define PCI_BAR_IO_MASK         0xfffffffcUL
 #define PCI_BAR_MEM_MASK        0xfffffff0UL
+#define PCI_BRIDGE_MEMORY_BASE  0x20U
+#define PCI_BRIDGE_MEMORY_LIMIT 0x22U
+#define PCI_BRIDGE_MEMORY_MASK  0xfff0UL
 
 typedef struct {
     PCI_HANDLE handle;
@@ -56,6 +59,17 @@ static UWORD pci_device_count;
 static BOOL pci_bus_scanned[PCI_MAX_BUSES];
 static UBYTE pci_next_bus;
 static BOOL pci_table_full_reported;
+
+/*
+ * Bump allocator for memory BARs that firmware left unassigned (address
+ * field all zero, even though the BAR's own type/size fields are valid --
+ * seen on real Raspberry Pi 4 hardware for VL805's BAR0). Carves naturally
+ * aligned ranges out of the backend's advertised MMIO window, low to high;
+ * never reclaimed, since pci_init() resets it on every re-scan anyway.
+ */
+static ULONG pci_mmio_alloc_next;
+static ULONG pci_mmio_alloc_end;
+static ULONG pci_mmio_window_base;
 
 static pci_device_t *pci_device_from_handle(PCI_HANDLE handle);
 static LONG pci_check_reg(UWORD reg, UWORD size);
@@ -222,6 +236,7 @@ static BOOL pci_is_pci_bridge(const pci_device_t *device)
 static void pci_scan_bridge(pci_device_t *device)
 {
     ULONG value;
+    ULONG memory_limit;
     UBYTE secondary;
     UBYTE subordinate;
 
@@ -244,6 +259,18 @@ static void pci_scan_bridge(pci_device_t *device)
         pci_write_config_raw(device, PCI_CONFIG_PRIMARY_BUS, 1, (ULONG)device->bus);
         pci_write_config_raw(device, PCI_CONFIG_SECONDARY_BUS, 1, (ULONG)secondary);
         pci_write_config_raw(device, PCI_CONFIG_SUBORDINATE_BUS, 1, (ULONG)subordinate);
+    }
+
+    if ((pci_mmio_alloc_end > pci_mmio_window_base) &&
+        (pci_mmio_alloc_end != 0UL)) {
+        memory_limit = pci_mmio_alloc_end - 1UL;
+        pci_write_config_raw(device, PCI_BRIDGE_MEMORY_BASE, 2,
+                             (pci_mmio_window_base >> 16) & PCI_BRIDGE_MEMORY_MASK);
+        pci_write_config_raw(device, PCI_BRIDGE_MEMORY_LIMIT, 2,
+                             (memory_limit >> 16) & PCI_BRIDGE_MEMORY_MASK);
+        if (pci_read_config_raw(device, PCI_CONFIG_COMMAND, 2, &value) == PCI_SUCCESSFUL)
+            pci_write_config_raw(device, PCI_CONFIG_COMMAND, 2,
+                                 value | PCI_COMMAND_MEMORY);
     }
 
     pci_scan_bus(secondary);
@@ -325,11 +352,14 @@ static void pci_decode_bars(pci_device_t *device)
     UWORD last;
     UWORD limit;
     ULONG original;
+    ULONG command;
     BOOL skip_next;
+    BOOL has_memory;
 
     memset(device->resources, 0, sizeof(device->resources));
 
     limit = pci_bar_limit(device);
+    has_memory = FALSE;
     for (bar = 0; bar < limit; bar++) {
         skip_next = FALSE;
         if (pci_read_config_raw(device, PCI_CONFIG_BAR0 + (bar * 4U), 4, &original) == PCI_SUCCESSFUL) {
@@ -339,8 +369,18 @@ static void pci_decode_bars(pci_device_t *device)
                 skip_next = TRUE;
         }
         pci_decode_bar(device, bar);
+        if ((device->resources[bar].length != 0UL) &&
+            ((device->resources[bar].flags & PCI_RESOURCE_IO) == 0U))
+            has_memory = TRUE;
         if (skip_next)
             bar++;
+    }
+
+    if (has_memory &&
+        (pci_read_config_raw(device, PCI_CONFIG_COMMAND, 2, &command) == PCI_SUCCESSFUL)) {
+        command |= PCI_COMMAND_MEMORY;
+        if (pci_write_config_raw(device, PCI_CONFIG_COMMAND, 2, command) != PCI_SUCCESSFUL)
+            KINFO(("pci: could not enable memory decoding\n"));
     }
 
     last = PCI_MAX_BARS;
@@ -372,36 +412,114 @@ static void pci_decode_bar(pci_device_t *device, UWORD bar)
     ULONG mask;
     ULONG masked_address;
     ULONG phys_address;
+    ULONG bar_hi;
     BOOL io;
     pci_resource_t *resource;
 
     reg = PCI_CONFIG_BAR0 + (bar * 4U);
 
-    if (pci_read_config_raw(device, reg, 4, &original) != PCI_SUCCESSFUL)
+    if (pci_read_config_raw(device, reg, 4, &original) != PCI_SUCCESSFUL) {
+        KINFO(("pci: BAR%u could not be read\n", bar));
         return;
-    if (original == 0UL)
+    }
+    if (pci_write_config_raw(device, reg, 4, 0xffffffffUL) != PCI_SUCCESSFUL) {
+        KINFO(("pci: BAR%u sizing write failed\n", bar));
         return;
-
-    if (pci_write_config_raw(device, reg, 4, 0xffffffffUL) != PCI_SUCCESSFUL)
-        return;
+    }
     if (pci_read_config_raw(device, reg, 4, &mask) != PCI_SUCCESSFUL) {
         pci_write_config_raw(device, reg, 4, original);
+        KINFO(("pci: BAR%u sizing read-back failed\n", bar));
         return;
     }
     pci_write_config_raw(device, reg, 4, original);
 
-    if (mask == 0UL)
+    if (mask == 0UL) {
+        KINFO(("pci: BAR%u sizing mask is 0 (bar=0x%lx)\n", bar, original));
         return;
+    }
 
     io = (original & PCI_BAR_IO) != 0UL;
+
+    /*
+     * A memory BAR whose type field says 64-bit has its real base
+     * address split across this register (low 32 bits) and the next
+     * one (high 32 bits) -- pci_decode_bars() already recognized the
+     * pair and arranged to skip re-decoding the high half as a second,
+     * separate BAR. This port has no LPAE and every pci_resource_t
+     * field is 32-bit, so a nonzero high dword is a genuinely
+     * unrepresentable address here, not just an inconvenience: leave
+     * the resource undecoded (length stays 0) rather than silently
+     * dropping the high bits and returning a wrong, truncated address.
+     */
+    if (!io && ((original & PCI_BAR_MEM_TYPE_MASK) == PCI_BAR_MEM_TYPE_64)) {
+        if (bar + 1U >= pci_bar_limit(device)) {
+            KINFO(("pci: BAR%u is 64-bit but there is no BAR%u to hold the high dword\n",
+                   bar, bar + 1U));
+            return;
+        }
+        if (pci_read_config_raw(device, reg + 4U, 4, &bar_hi) != PCI_SUCCESSFUL) {
+            KINFO(("pci: BAR%u high dword could not be read\n", bar));
+            return;
+        }
+        if (bar_hi != 0UL) {
+            KINFO(("pci: BAR%u is a 64-bit BAR with a nonzero high dword (0x%lx) -- "
+                   "address is above 4 GiB, unrepresentable on this 32-bit port\n",
+                   bar, bar_hi));
+            return;
+        }
+    }
+
     masked_address = original & (io ? PCI_BAR_IO_MASK : PCI_BAR_MEM_MASK);
     mask &= io ? PCI_BAR_IO_MASK : PCI_BAR_MEM_MASK;
-    if (mask == 0UL)
+    if (mask == 0UL) {
+        KINFO(("pci: BAR%u size mask is 0 after masking flag bits (bar=0x%lx)\n",
+               bar, original));
         return;
+    }
+
+    /*
+     * Real Raspberry Pi 4 firmware does not assign BAR addresses for
+     * downstream devices (confirmed on real hardware: VL805's BAR0 has
+     * valid type/size fields but an address of 0) -- this port has no
+     * separate PCI enumerator/BIOS to do it either, so pci_core.c must.
+     * Carve a naturally aligned range out of the backend's MMIO window
+     * and program it into the BAR ourselves.
+     */
+    if (!io && (masked_address == 0UL)) {
+        ULONG size;
+        ULONG aligned;
+
+        size = pci_bar_size(mask, io);
+        aligned = (pci_mmio_alloc_next + size - 1UL) & ~(size - 1UL);
+
+        if ((pci_mmio_alloc_end == 0UL) || (aligned < pci_mmio_alloc_next) ||
+            (aligned >= pci_mmio_alloc_end) || (size > pci_mmio_alloc_end - aligned)) {
+            KINFO(("pci: BAR%u is unassigned and needs 0x%lx bytes, but no "
+                   "MMIO space is available to allocate it from\n", bar, size));
+            return;
+        }
+
+        if (pci_write_config_raw(device, reg, 4,
+                                  (original & ~PCI_BAR_MEM_MASK) | aligned) != PCI_SUCCESSFUL) {
+            KINFO(("pci: BAR%u address assignment write failed\n", bar));
+            return;
+        }
+
+        KINFO(("pci: BAR%u was unassigned; allocated bus address 0x%lx (size 0x%lx)\n",
+               bar, aligned, size));
+        pci_mmio_alloc_next = aligned + size;
+        masked_address = aligned;
+    }
 
     if ((pci_backend != 0) && (pci_backend->bus_to_phys != 0)) {
-        if (pci_backend->bus_to_phys(masked_address, io, &phys_address) != PCI_SUCCESSFUL)
+        LONG bus_to_phys_ret;
+
+        bus_to_phys_ret = pci_backend->bus_to_phys(masked_address, io, &phys_address);
+        if (bus_to_phys_ret != PCI_SUCCESSFUL) {
+            KINFO(("pci: BAR%u bus address 0x%lx (io=%d) could not be translated (%ld)\n",
+                   bar, masked_address, (int)io, bus_to_phys_ret));
             return;
+        }
     } else {
         phys_address = masked_address;
     }
@@ -415,6 +533,9 @@ static void pci_decode_bar(pci_device_t *device, UWORD bar)
     resource->length = pci_bar_size(mask, io);
     resource->offset = phys_address - masked_address;
     resource->dmaoffset = 0UL;
+
+    KDEBUG(("pci: BAR%u decoded: bus 0x%lx -> CPU address 0x%lx, size 0x%lx\n",
+            bar, masked_address, phys_address, resource->length));
 }
 
 static ULONG pci_bar_size(ULONG mask, BOOL io)
@@ -428,6 +549,7 @@ static ULONG pci_bar_size(ULONG mask, BOOL io)
 LONG pci_init(void)
 {
     LONG ret;
+    pci_backend_windows_t windows;
 
     pci_device_count = 0;
     pci_table_full_reported = FALSE;
@@ -442,6 +564,17 @@ LONG pci_init(void)
     ret = pci_backend->init();
     if (ret != PCI_SUCCESSFUL)
         return ret;
+
+    pci_mmio_alloc_next = 0UL;
+    pci_mmio_alloc_end = 0UL;
+    pci_mmio_window_base = 0UL;
+    if ((pci_backend->get_windows != 0) &&
+        (pci_backend->get_windows(&windows) == PCI_SUCCESSFUL) &&
+        (windows.mmio_size != 0UL)) {
+        pci_mmio_alloc_next = windows.mmio_base;
+        pci_mmio_alloc_end = windows.mmio_base + windows.mmio_size;
+        pci_mmio_window_base = windows.mmio_base;
+    }
 
     pci_scan_bus(0);
     KINFO(("pci: %u device(s) found\n", pci_device_count));
