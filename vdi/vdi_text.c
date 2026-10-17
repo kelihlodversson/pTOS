@@ -215,6 +215,49 @@ static inline WORD load_char(const Fonthead *fnt_ptr, WORD ch)
 }
 
 /*
+ * the furthest to the right the destination can get with a string of 'count'
+ * characters, whatever they are: a character is at most max_cell_width wide
+ * and gets adv_extra from its style, and each one that follows is moved on by
+ * the spacing of the justification
+ */
+static LONG run_reach(const Fonthead *fnt_ptr, WORD count, WORD adv_extra,
+                      const JUSTINFO *justified)
+{
+    LONG step = (LONG)fnt_ptr->max_cell_width + adv_extra;
+
+    if (justified)
+        step += (LONG)justified->charx + justified->rmcharx
+              + justified->wordx + justified->rmwordx;
+    if (step > 0x7fffL)
+        return 0x7fffffffL;
+    return (LONG)linea_vars.DESTX + (LONG)count * (WORD)step;
+}
+
+/*
+ * move the destination for the justification after a character: the spacing
+ * between characters, and between words (after a blank)
+ */
+static inline void justify_step(JUSTINFO *justified, WORD ch)
+{
+    linea_vars.DESTX += justified->charx;
+    linea_vars.DESTY += justified->chary;
+    if (justified->rmchar) {
+        linea_vars.DESTX += justified->rmcharx;
+        linea_vars.DESTY += justified->rmchary;
+        justified->rmchar--;
+    }
+    if (ch == ' ') {
+        linea_vars.DESTX += justified->wordx;
+        linea_vars.DESTY += justified->wordy;
+        if (justified->rmword) {
+            linea_vars.DESTX += justified->rmwordx;
+            linea_vars.DESTY += justified->rmwordy;
+            justified->rmword--;
+        }
+    }
+}
+
+/*
  * output specified text string
  *
  * 'width' is the pre-calculated width of the text on the screen;
@@ -231,7 +274,7 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     WORD outline, underline;
 
     WORD temp;
-    BOOL done, skip_clipped, line_out;
+    BOOL done, skip_clipped, line_out, run_mode;
     WORD adv_extra, clip_extra, xmn, xmx, xlim;
     const Fonthead *fnt_ptr;
     Point * point;
@@ -420,7 +463,7 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
      * against xlim, which has clip_extra taken off it.
      */
     adv_extra = clip_extra = xmn = xmx = xlim = 0;
-    line_out = FALSE;
+    line_out = run_mode = FALSE;
     skip_clipped = vwk->clip && !vwk->chup && !vwk->scaled;
     if (skip_clipped && justified
      && (justified->chary || justified->rmchary
@@ -461,24 +504,76 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
          && linea_vars.DESTX + width + clip_extra <= xmx
          && y >= vwk->ymn_clip)
             skip_clipped = FALSE;
+        else if (!(fnt_ptr->flags & F_HORZ_OFF)
+              && (!justified
+               || (justified->charx >= 0 && justified->rmcharx >= 0
+                && justified->wordx >= 0 && justified->rmwordx >= 0))
+              && run_reach(fnt_ptr, count, adv_extra, justified) < 32767L)
+        {
+            /*
+             * if the characters go from left to right, one after the other (no
+             * justification that can move them back, no offsets of their own,
+             * and so far to the right that the position of a character
+             * cannot wrap round: DESTX is a signed 16 bit number),
+             * those that are wholly left of the window are a run at the start
+             * and those wholly right of it are a run at the end: the first
+             * character that is right of the window ends the string, as the
+             * underline is cut by the window all the same wherever it ends, and
+             * a line that is not in the window needs no loop at all (nor, then,
+             * the underline, if its rows are not in it either)
+             */
+            run_mode = TRUE;
+            if (line_out)
+            {
+                WORD ul_top = starty;
+
+                if (!(vwk->style & F_UNDER)
+                 || ul_top + fnt_ptr->ul_size <= vwk->ymn_clip
+                 || ul_top > vwk->ymx_clip)
+                    return;
+            }
+        }
     }
 
-    for (j = 0; j < count; j++) {
+    j = 0;
+    if (run_mode)
+    {
+        /* the characters wholly left of the window (or all, if the line is out) */
+        while (j < count)
+        {
+            WORD x = linea_vars.DESTX;
+
+            load_char(fnt_ptr, str[j]);
+            if (!line_out && !(x < xmn && x + linea_vars.DELX <= xlim))
+                break;
+            linea_vars.DESTX = x + linea_vars.DELX + adv_extra;
+            if (justified)
+                justify_step(justified, str[j]);
+            j++;
+        }
+    }
+
+    for (; j < count; j++) {
 
         temp = load_char(fnt_ptr, str[j]);
 
         done = FALSE;
         if (skip_clipped)
         {
-            done = line_out;
-            if (!done)
+            if (run_mode)
+            {
+                if (linea_vars.DESTX > xmx)
+                    break;
+            }
+            else
             {
                 WORD x = linea_vars.DESTX;
 
-                done = x > xmx || (x < xmn && x + linea_vars.DELX <= xlim);
+                done = line_out || x > xmx
+                    || (x < xmn && x + linea_vars.DELX <= xlim);
+                if (done)
+                    linea_vars.DESTX += linea_vars.DELX + adv_extra;
             }
-            if (done)
-                linea_vars.DESTX += linea_vars.DELX + adv_extra;
         }
 
         if (!done)
@@ -501,24 +596,8 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
             text_blt();
         }
 
-        if (justified) {
-            linea_vars.DESTX += justified->charx;
-            linea_vars.DESTY += justified->chary;
-            if (justified->rmchar) {
-                linea_vars.DESTX += justified->rmcharx;
-                linea_vars.DESTY += justified->rmchary;
-                justified->rmchar--;
-            }
-            if (str[j] == ' ') {
-                linea_vars.DESTX += justified->wordx;
-                linea_vars.DESTY += justified->wordy;
-                if (justified->rmword) {
-                    linea_vars.DESTX += justified->rmwordx;
-                    linea_vars.DESTY += justified->rmwordy;
-                    justified->rmword--;
-                }
-            }
-        }
+        if (justified)
+            justify_step(justified, str[j]);
         /* end if justified */
         if (fnt_ptr->flags & F_HORZ_OFF)
             linea_vars.DESTX += fnt_ptr->hor_table[temp];
