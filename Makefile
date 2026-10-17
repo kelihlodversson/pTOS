@@ -1512,6 +1512,13 @@ endif
 # boot test, not ptest suites, so they must never be linked into runtests.tos.
 TEST_SUITES := $(filter-out x32_hello x32_probe,$(TEST_SUITES))
 
+# raster_copy and text_blit draw through the VDI, which x86-64 refuses to user
+# processes until #548 (and tools/pBench/gem.c, their bindings, has none for
+# it), so they are left out there.
+ifdef ARCH_X86_64
+TEST_SUITES := $(filter-out raster_copy text_blit,$(TEST_SUITES))
+endif
+
 GEN_SRC += tests/run_tests.c
 
 # Also depends on $(AUTOCONF_H): TEST_SUITES (and therefore this file's
@@ -1571,7 +1578,8 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
 
 # obj/pbench_gem.o (tools/pBench/gem.c) gives suites that need it minimal
 # AES/VDI bindings, e.g. text_blit; it is compiled by the pBench rules below.
-TEST_OBJ = obj/runtests.o obj/run_tests.o obj/testlib.o obj/pbench_gem.o
+# Not on x86-64, where no suite uses it (see above).
+TEST_OBJ = obj/runtests.o obj/run_tests.o obj/testlib.o $(if $(ARCH_X86_64),,obj/pbench_gem.o)
 
 # Test objects are userland code (see TEST_CFLAGS above) and never
 # #include "config.h", so unlike the kernel's own objects they get no
@@ -1726,10 +1734,10 @@ TEST_SHUTDOWN_FILES = poweroff.tos reboot.tos coldboot.tos halt.tos
 PBENCH_CFLAGS = $(TEST_CFLAGS) -Itools/pBench
 
 obj/pbench.o: tools/pBench/pbench.c tools/pBench/gem.h tools/pBench/refs.h $(AUTOCONF_H) | obj
-	$(CC) $(PBENCH_CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(TEST_CC) $(PBENCH_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 obj/pbench_gem.o: tools/pBench/gem.c tools/pBench/gem.h $(AUTOCONF_H) | obj
-	$(CC) $(PBENCH_CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(TEST_CC) $(PBENCH_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 pbench.prg: $(TEST_STARTUP) obj/pbench.o obj/pbench_gem.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/pbench.o obj/pbench_gem.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
