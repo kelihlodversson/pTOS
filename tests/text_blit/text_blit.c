@@ -661,10 +661,18 @@ static void group_effects(void)
                     /* all modes are checked with the common effects only */
                     if (mode > 2 && fx != 0 && fx != EF_BOLD && fx != EF_SKEW && fx != EF_OUTLINE)
                         continue;
-                    for (s = 1; s < 2; s++)
+                    for (s = 1; s < 3; s++)
                         for (d = 0; d < 4; d++)
                         {
-                            c.str = strings[s];
+                            /*
+                             * bold also with glyphs that have a pixel in the
+                             * last column and none beside it: a bold glyph
+                             * of a monospaced font is no wider than the plain
+                             * one, and loses that column before thickening
+                             */
+                            if (s == 2 && !(fx & EF_BOLD))
+                                continue;
+                            c.str = s == 2 ? "\xbf\xdfw" : strings[s];
                             c.point = points[pt];
                             c.effects = (short)fx;
                             c.mode = (short)mode;

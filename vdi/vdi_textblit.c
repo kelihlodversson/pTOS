@@ -22,6 +22,7 @@
 #include "vdi_textblit.h"
 #include "vdi_backend.h"
 #include "kprint.h"
+#include "endian.h"
 #include "vdistub.h"
 #include "lineavars.h"
 #include "vdi_inline.h"
@@ -185,6 +186,14 @@ static WORD do_clip(LOCALVARS *vars)
  * must not dereference UWORD* pointers directly on little-endian
  * machines: the accessors below are endian-neutral (a no-op on m68k).
  */
+#if BYTE_ORDER == BIG_ENDIAN
+/*
+ * the buffer's order is the CPU's own: the words can be used as they are,
+ * which makes outline() a good deal quicker than going a byte at a time
+ */
+#define get_buf_word(p)     (*(const UWORD *)(p))
+#define put_buf_word(p, w)  (*(UWORD *)(p) = (w))
+#else
 static UWORD get_buf_word(const UWORD *p)
 {
     const UBYTE *b = (const UBYTE *)p;
@@ -197,6 +206,7 @@ static void put_buf_word(UWORD *p, UWORD w)
     b[0] = (UBYTE)(w >> 8);
     b[1] = (UBYTE)(w & 0xff);
 }
+#endif
 
 static ULONG merge_byte(UWORD *p, UWORD n)
 {
@@ -315,8 +325,12 @@ void outline(LOCALVARS *vars)
  * if 'mono_cell' is set, and the font is monospaced, it is not, so the
  * buffer is as wide as the character cell, as the software text output
  * (normal_blit()) has it when it makes a bold character without a buffer.
+ *
+ * if 'keep_skew' is set, a skewed character is only thickened in the
+ * buffer, not skewed: the skew is left to the output of the buffer, as
+ * the software text output does it when there is no buffer.
  */
-static void pre_blit(LOCALVARS *vars, BOOL mono_cell)
+static void pre_blit(LOCALVARS *vars, BOOL mono_cell, BOOL keep_skew)
 {
     WORD weight, skew, size, n, tmp_style;
     WORD dest_width, dest_height;
@@ -332,7 +346,7 @@ static void pre_blit(LOCALVARS *vars, BOOL mono_cell)
     vars->s_next = -vars->s_next;       /* we draw from the bottom up */
 
     weight = linea_vars.WEIGHT;
-    skew = linea_vars.LOFF + linea_vars.ROFF;
+    skew = keep_skew ? 0 : linea_vars.LOFF + linea_vars.ROFF;
 
     dest_width = vars->DELX;
     if (vars->STYLE & F_THICKEN)
@@ -363,7 +377,7 @@ static void pre_blit(LOCALVARS *vars, BOOL mono_cell)
     vars->buffa = linea_vars.SCRPT2 - vars->buffa; /* switch buffers */
     dst = (UBYTE *)linea_vars.SCRTCHP + vars->buffa;
     vars->sform = dst;
-    if (vars->STYLE & (F_OUTLINE|F_SKEW))
+    if ((vars->STYLE & F_OUTLINE) || ((vars->STYLE & F_SKEW) && !keep_skew))
     {
         p = (WORD *)vars->sform;
         n = (size - vars->d_next) / 2;  /* add bottom line */
@@ -384,7 +398,7 @@ static void pre_blit(LOCALVARS *vars, BOOL mono_cell)
     vars->nbrplane = 1;             /* 1 plane for this blit */
     vars->nextwrd = 2;
     tmp_style = vars->STYLE;        /* save temporarily */
-    vars->STYLE &= (F_SKEW|F_THICKEN);  /* only thicken, skew */
+    vars->STYLE &= keep_skew ? F_THICKEN : (F_SKEW|F_THICKEN);  /* only thicken, skew */
 
     normal_blit(vars+1, src, dst);  /* call assembler helper function */
 
@@ -400,7 +414,7 @@ static void pre_blit(LOCALVARS *vars, BOOL mono_cell)
 
     linea_vars.SOURCEX = 0;
     linea_vars.SOURCEY = 0;
-    vars->STYLE &= ~(F_SKEW|F_THICKEN); /* cancel effects */
+    vars->STYLE &= keep_skew ? ~F_THICKEN : ~(F_SKEW|F_THICKEN); /* cancel effects */
 }
 
 
@@ -1283,6 +1297,7 @@ void text_blt(void)
     WORD temp;
     BOOL need_preblit = FALSE;
     BOOL mono_cell = FALSE;
+    BOOL keep_skew = FALSE;
 
     vars.swap_tmps = 0;
 
@@ -1399,19 +1414,42 @@ void text_blt(void)
      * wider whether or not there is skew, which the software path does not
      * (VDI clears them without skew, but a Line-A caller may not), so the
      * blitter would draw buffer that nothing has been drawn into.
+     *
+     * nor with one plane, where the software path, which then thickens the
+     * character only once too, is quicker.  (VDI text that is not clipped
+     * does not get here at all: blitter_text_string() outputs it.)
      */
     if ((vars.STYLE & (F_THICKEN | F_SKEW)) == F_THICKEN
      && !need_preblit && !clipped && blitter_is_enabled
-     && !linea_vars.LOFF && !linea_vars.ROFF)
+     && !linea_vars.LOFF && !linea_vars.ROFF
+     && linea_vars.v_planes >= 2)
     {
         need_preblit = TRUE;
         mono_cell = TRUE;
     }
 #endif
 
+    /*
+     * bold and skewed text that nothing else draws into the buffer (it is
+     * not clipped or rotated): the software path thickens and skews the
+     * character again for each plane of the screen.  thickening it into the
+     * buffer once, as above, and leaving the skew to the output of the
+     * buffer, gives the same pixels (a line is thickened before it is
+     * shifted, or after, the same way, and light is applied after both).
+     * with fewer than four planes the extra pass costs more than it saves.
+     */
+    if ((vars.STYLE & (F_THICKEN | F_SKEW)) == (F_THICKEN | F_SKEW)
+     && !need_preblit && !clipped && !linea_vars.CHUP
+     && linea_vars.v_planes >= 4)
+    {
+        need_preblit = TRUE;
+        mono_cell = TRUE;
+        keep_skew = TRUE;
+    }
+
     if (need_preblit)
     {
-        pre_blit(&vars, mono_cell);
+        pre_blit(&vars, mono_cell, keep_skew);
     }
 
     if (linea_vars.CHUP)
