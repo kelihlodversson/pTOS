@@ -603,7 +603,7 @@ do_blit(BLITVARS * blt)
  */
 static void bit_blt(struct blit_frame *blit_info)
 {
-    WORD plane;
+    WORD plane, op_tabidx;
     UWORD s_xmin, s_xmax;
     UWORD d_xmin, d_xmax;
     UWORD lendmask, rendmask;
@@ -618,6 +618,20 @@ static void bit_blt(struct blit_frame *blit_info)
 
     /* a5-> BLiTTER register block */
     BLITVARS *blt = &blitter;
+
+    /*
+     * op 5 (D' = D) leaves a plane as it is.  if that is so for every
+     * plane, there is nothing to do, and the setup and the work on the data
+     * cache below can be left out too.
+     */
+    for (plane = 0; plane < blit_info->plane_ct; plane++) {
+        op_tabidx = ((blit_info->fg_col >> plane) & 0x0001) << 1;
+        op_tabidx |= (blit_info->bg_col >> plane) & 0x0001;
+        if ((blit_info->op_tab[op_tabidx] & 0x000f) != 5)
+            break;
+    }
+    if (plane == blit_info->plane_ct)
+        return;
 
     /* Calculate Xmax coordinates from Xmin coordinates and width */
     s_xmin = blit_info->s_xmin;               /* d0<- src Xmin */
@@ -777,16 +791,21 @@ static void bit_blt(struct blit_frame *blit_info)
     first_d_addr = d_addr;
 
     for (plane = 0; plane < blit_info->plane_ct; plane++) {
-        int op_tabidx;
-
-        blt->src_addr = s_addr;         /* load Source pointer to this plane */
-        blt->dst_addr = d_addr;         /* load Dest ptr to this plane   */
-        blt->y_cnt = blit_info->b_ht;   /* load the line count   */
-
         /* calculate operation for actual plane */
         op_tabidx = ((blit_info->fg_col>>plane) & 0x0001 ) <<1;
         op_tabidx |= (blit_info->bg_col>>plane) & 0x0001;
         blt->op = blit_info->op_tab[op_tabidx] & 0x000f;
+
+        /* op 5 (D' = D) leaves the plane as it is: nothing to blit */
+        if (blt->op == 5) {
+            s_addr += blit_info->s_nxpl;
+            d_addr += blit_info->d_nxpl;
+            continue;
+        }
+
+        blt->src_addr = s_addr;         /* load Source pointer to this plane */
+        blt->dst_addr = d_addr;         /* load Dest ptr to this plane   */
+        blt->y_cnt = blit_info->b_ht;   /* load the line count   */
 
 #if !ASM_BLIT_IS_AVAILABLE
 #if CONF_WITH_BLITTER
@@ -1051,13 +1070,18 @@ static BOOL blitter_skewed_text_blit(LOCALVARS *vars)
         bg = bgbits;
         for (plane = 0; plane < planes; plane++)
         {
-            BLITTER->src_addr = (UWORD *)s_row;
-            BLITTER->dst_addr = (UWORD *)plane_addr;
-            BLITTER->x_count = d_span + 1;
-            BLITTER->y_count = n;
-            BLITTER->skew = skew_reg;
-            BLITTER->op = text_ops[mode][((fg & 1) << 1) | (bg & 1)];
-            blitter_go((-r0) & 15);     /* light: the line r0 up is -r0 */
+            UBYTE op = text_ops[mode][((fg & 1) << 1) | (bg & 1)];
+
+            if (op != 5)                /* op 5 (D' = D) leaves the plane as it is */
+            {
+                BLITTER->src_addr = (UWORD *)s_row;
+                BLITTER->dst_addr = (UWORD *)plane_addr;
+                BLITTER->x_count = d_span + 1;
+                BLITTER->y_count = n;
+                BLITTER->skew = skew_reg;
+                BLITTER->op = op;
+                blitter_go((-r0) & 15); /* light: the line r0 up is -r0 */
+            }
 
             fg >>= 1;
             bg >>= 1;
@@ -1210,13 +1234,18 @@ BOOL blitter_text_blit(LOCALVARS *vars)
     plane_addr = d_addr;
     for (plane = 0; plane < planes; plane++)
     {
-        BLITTER->src_addr = (UWORD *)s_addr;
-        BLITTER->dst_addr = (UWORD *)plane_addr;
-        BLITTER->x_count = d_span + 1;
-        BLITTER->y_count = h;
-        BLITTER->skew = skew_reg;
-        BLITTER->op = text_ops[mode][((fg & 1) << 1) | (bg & 1)];
-        blitter_go(0);
+        UBYTE op = text_ops[mode][((fg & 1) << 1) | (bg & 1)];
+
+        if (op != 5)                    /* op 5 (D' = D) leaves the plane as it is */
+        {
+            BLITTER->src_addr = (UWORD *)s_addr;
+            BLITTER->dst_addr = (UWORD *)plane_addr;
+            BLITTER->x_count = d_span + 1;
+            BLITTER->y_count = h;
+            BLITTER->skew = skew_reg;
+            BLITTER->op = op;
+            blitter_go(0);
+        }
 
         fg >>= 1;
         bg >>= 1;
@@ -1380,13 +1409,16 @@ WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTI
 
         for (plane = 0; plane < planes; plane++)
         {
-            BLITTER->src_addr = (UWORD *)s_addr;
-            BLITTER->dst_addr = (UWORD *)d_addr;
-            BLITTER->x_count = d_span + 1;
-            BLITTER->y_count = h;
-            BLITTER->skew = skew_reg;
-            BLITTER->op = ops[plane];
-            blitter_go(0);
+            if (ops[plane] != 5)        /* op 5 (D' = D) leaves the plane as it is */
+            {
+                BLITTER->src_addr = (UWORD *)s_addr;
+                BLITTER->dst_addr = (UWORD *)d_addr;
+                BLITTER->x_count = d_span + 1;
+                BLITTER->y_count = h;
+                BLITTER->skew = skew_reg;
+                BLITTER->op = ops[plane];
+                blitter_go(0);
+            }
             d_addr += 2;                /* the next plane */
         }
 
@@ -2124,6 +2156,10 @@ cpy_raster(struct raster_t *raster, struct blit_frame *info)
 
     raster->mode = mode;        /* raw request, for the truecolor backend */
 
+    /* opaque mode 5 (D' = D) leaves the destination as it is */
+    if (!raster->transparent && mode == 5)
+        return;
+
     /* if true, the plane count is invalid or clipping took all! */
     if (setup_info(raster, info))
         return;
@@ -2333,6 +2369,11 @@ void linea_blit(struct blit_frame *info)
     info->s_ymax = info->s_ymin + info->b_ht - 1;
     info->d_xmax = info->d_xmin + info->b_wd - 1;
     info->d_ymax = info->d_ymin + info->b_ht - 1;
+
+    /* nothing to do if every fore/background combination is op 5 (D' = D) */
+    if ((info->op_tab[0] & 0x0f) == 5 && (info->op_tab[1] & 0x0f) == 5
+     && (info->op_tab[2] & 0x0f) == 5 && (info->op_tab[3] & 0x0f) == 5)
+        return;
 
     /*
      * call assembler blit routine or C-implementation.  we call the
