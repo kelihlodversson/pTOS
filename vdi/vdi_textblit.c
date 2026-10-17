@@ -26,6 +26,7 @@
 #include "lineavars.h"
 #include "vdi_inline.h"
 #include "biosext.h"
+#include "has.h"
 
 
 /*
@@ -309,8 +310,13 @@ void outline(LOCALVARS *vars)
 /*
  * copy the character into a buffer so that we can
  * outline/rotate/scale it
+ *
+ * a bold character is normally made wider by the weight in the buffer.
+ * if 'mono_cell' is set, and the font is monospaced, it is not, so the
+ * buffer is as wide as the character cell, as the software text output
+ * (normal_blit()) has it when it makes a bold character without a buffer.
  */
-static void pre_blit(LOCALVARS *vars)
+static void pre_blit(LOCALVARS *vars, BOOL mono_cell)
 {
     WORD weight, skew, size, n, tmp_style;
     WORD dest_width, dest_height;
@@ -331,7 +337,8 @@ static void pre_blit(LOCALVARS *vars)
     dest_width = vars->DELX;
     if (vars->STYLE & F_THICKEN)
     {
-        dest_width += weight;
+        if (!(mono_cell && linea_vars.MONO))
+            dest_width += weight;
         vars->smear = weight;
     }
 
@@ -1213,6 +1220,12 @@ void planar_text_blit(LOCALVARS *vars)
     vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)linea_vars.v_lin_wr;
     vars->d_next = -linea_vars.v_lin_wr;
 
+#if CONF_WITH_BLITTER
+    /* the blitter, if there is one in use, unless it can't do this glyph */
+    if (blitter_is_enabled && blitter_text_blit(vars))
+        return;
+#endif
+
     normal_blit(vars+1, vars->sform, vars->dform);  /* call assembler helper function */
 }
 
@@ -1269,6 +1282,7 @@ void text_blt(void)
     WORD clipped, delx, dely, weight;
     WORD temp;
     BOOL need_preblit = FALSE;
+    BOOL mono_cell = FALSE;
 
     vars.swap_tmps = 0;
 
@@ -1347,7 +1361,8 @@ void text_blt(void)
      *  (in truecolor mode) if (skewing OR thickening OR outlining), OR
      *  if outlining, OR
      *     rotating AND (skewing OR thickening), OR
-     *     skewing AND clipping-is-required,
+     *     skewing AND clipping-is-required, OR
+     *     (with the blitter in use) thickening,
      *      call pre_blit()
      *
      * Audited under issue #171: this is the text_blt() pre-blit-decision
@@ -1367,9 +1382,36 @@ void text_blt(void)
     else if ((vars.STYLE & F_SKEW) && clipped)
         need_preblit = TRUE;
 
+#if CONF_WITH_BLITTER
+    /*
+     * bold text (without skew, which does not combine with it so simply) is
+     * drawn into the buffer when the blitter is going to output it: the
+     * software path thickens the glyph again for each plane of the screen,
+     * which the buffer, a single plane, does only once.  nothing else asks
+     * for the buffer here, so the character has to stay as wide as it is
+     * without it (mono_cell).
+     *
+     * not if it is clipped: the software path cuts the character to the
+     * clip rectangle first and thickens what is left, which the buffer,
+     * thickened first and cut afterwards does not reproduce.
+     *
+     * nor if LOFF or ROFF are set: pre_blit() makes the buffer that much
+     * wider whether or not there is skew, which the software path does not
+     * (VDI clears them without skew, but a Line-A caller may not), so the
+     * blitter would draw buffer that nothing has been drawn into.
+     */
+    if ((vars.STYLE & (F_THICKEN | F_SKEW)) == F_THICKEN
+     && !need_preblit && !clipped && blitter_is_enabled
+     && !linea_vars.LOFF && !linea_vars.ROFF)
+    {
+        need_preblit = TRUE;
+        mono_cell = TRUE;
+    }
+#endif
+
     if (need_preblit)
     {
-        pre_blit(&vars);
+        pre_blit(&vars, mono_cell);
     }
 
     if (linea_vars.CHUP)

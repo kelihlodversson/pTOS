@@ -12,6 +12,31 @@
 
 #include "portab.h"
 
+struct font_head;
+
+/*
+ * Structure for passing justification info (v_justified) to the text output
+ *
+ * note 1: in each of the following pairs of variables, only one variable
+ * has a non-zero value:
+ *  (wordx,wordy), (rmwordx,rmwordy), (charx,chary), (rmcharx,rmchary)
+ *
+ * note 2: if rmword is zero, there are no 'remainder pixels' to use up
+ * between words; otherwise, rmword = max(rmwordx/rmwordy).  similarly
+ * for rmchar/rmcharx/rmchary.
+ */
+typedef struct
+{
+                        /* word-spacing variables */
+    WORD wordx, wordy;          /* #pixels to add to each space */
+    WORD rmword;                /* remaining #pixels to add over all spaces */
+    WORD rmwordx, rmwordy;      /* add this to use up remainder */
+                        /* character-spacing variables */
+    WORD charx, chary;          /* #pixels to add to each character */
+    WORD rmchar;                /* remaining #pixels to add over all characters */
+    WORD rmcharx, rmchary;      /* add this to use up remainder */
+} JUSTINFO;
+
 /*
  * the following structure mimics the format of the stack frame
  * containing the local variables used by the lower-level assembler
@@ -98,6 +123,10 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst);
  * the planar backend's ops table when it is on (see vdi_backend.h)
  */
 void planar_text_blit(LOCALVARS *vars);
+#if CONF_WITH_BLITTER
+BOOL blitter_text_blit(LOCALVARS *vars);
+WORD blitter_text_string(const struct font_head *fnt, WORD count, const WORD *str, JUSTINFO *justified);
+#endif
 void truecolor_text_blit(LOCALVARS *vars);
 
 /*
