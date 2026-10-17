@@ -383,6 +383,13 @@ WORD vst_effects(WORD handle, WORD effects)
     return intout[0];
 }
 
+WORD vst_rotation(WORD handle, WORD angle)
+{
+    intin[0] = angle;
+    vdi(13, 0, 1, 0, handle);
+    return intout[0];
+}
+
 void vst_alignment(WORD handle, WORD h, WORD v)
 {
     intin[0] = h;

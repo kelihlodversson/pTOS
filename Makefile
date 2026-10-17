@@ -1569,7 +1569,9 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
               $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE)
 
-TEST_OBJ = obj/runtests.o obj/run_tests.o obj/testlib.o
+# obj/pbench_gem.o (tools/pBench/gem.c) gives suites that need it minimal
+# AES/VDI bindings, e.g. text_blit; it is compiled by the pBench rules below.
+TEST_OBJ = obj/runtests.o obj/run_tests.o obj/testlib.o obj/pbench_gem.o
 
 # Test objects are userland code (see TEST_CFLAGS above) and never
 # #include "config.h", so unlike the kernel's own objects they get no
@@ -1596,7 +1598,7 @@ TEST_STARTUP = $(LIBCMINI_CRT0)
 # Each test suite object depends on its source and the generated run_tests.c
 define test-suite-rule
 obj/$(1).o: tests/$(1)/$(1).c tests/run_tests.c $(AUTOCONF_H) | obj
-	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $$< -o $$@
+	$(TEST_CC) $(TEST_CFLAGS) -Itools/pBench $(DEPFLAGS) -c $$< -o $$@
 endef
 $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 

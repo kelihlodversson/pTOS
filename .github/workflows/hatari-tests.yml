@@ -1,0 +1,110 @@
+#
+# Regression tests under Hatari: runtests.tos (tests/, doc in tests/readme.md)
+# on the test disk, on an emulated STE in the three ST screen modes and on an
+# emulated Falcon with a 68030 and with a 68040.  The two blitter suites
+# (text_blit and raster_copy) compare the blitter with the CPU path pixel by
+# pixel, and have to run, not skip themselves, on every one of them; the
+# Falcon is the one with a data cache (the blitter paths flush and invalidate
+# it, see BLITTER_CACHE_OPS in vdi/vdi_raster.c).
+#
+# atari512-fastcall is the same image built with -mfastcall, which is the
+# only place its code is tested under that calling convention at run time.
+#
+
+name: Hatari tests
+
+on:
+  pull_request:
+    branches: [master, "epic/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.config }}
+    # Pinned like the build workflow: the m68k toolchain comes from a PPA.
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        config: [atari512, atari512-fastcall]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install kconfiglib
+        run: python3 -m pip install --disable-pip-version-check kconfiglib==14.1.0
+
+      - name: Check whether this config needs -mfastcall
+        id: check-mfastcall
+        run: |
+          make "${{ matrix.config }}_defconfig"
+          if grep -qE '^CONF_WITH_MFASTCALL=y' .config; then
+            echo "mfastcall=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "mfastcall=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: m68k
+          mfastcall: ${{ steps.check-mfastcall.outputs.mfastcall }}
+
+      # mkfs.fat and mtools make the test disk (tools/mkhdisk.sh)
+      - name: Install the disk image tools
+        run: sudo apt-get install -y --no-install-recommends dosfstools mtools
+
+      - name: Build the system and the test disk
+        run: |
+          make
+          make test-hd
+          mkdir products
+          cp ptos512k.img products/system.img
+          cp test-hd.img products/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hatari-tests-${{ matrix.config }}
+          path: products/
+          retention-days: 7
+
+  test:
+    name: Test ${{ matrix.config }}, ${{ matrix.mode }}
+    needs: build
+    # Hatari comes from the distribution's packages, which the 22.04 of the
+    # build's runner has an old version of.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [atari512, atari512-fastcall]
+        mode: [low, med, high, f030, f040]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: hatari-tests-${{ matrix.config }}
+          path: products
+
+      - name: Install Hatari
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends hatari
+          hatari --version || true     # (it exits with 1)
+
+      # About four minutes; ten is for one that hangs, well below the job's
+      # 20 minutes, which would cancel the reporting too
+      - name: Run the tests under Hatari
+        timeout-minutes: 15
+        run: |
+          python3 tools/run-hatari-tests.py --tos products/system.img \
+            --disk products/test-hd.img --mode "${{ matrix.mode }}" \
+            --timeout 600
