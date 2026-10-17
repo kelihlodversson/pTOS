@@ -603,7 +603,7 @@ do_blit(BLITVARS * blt)
  */
 static void bit_blt(struct blit_frame *blit_info)
 {
-    WORD plane;
+    WORD plane, op_tabidx;
     UWORD s_xmin, s_xmax;
     UWORD d_xmin, d_xmax;
     UWORD lendmask, rendmask;
@@ -618,6 +618,20 @@ static void bit_blt(struct blit_frame *blit_info)
 
     /* a5-> BLiTTER register block */
     BLITVARS *blt = &blitter;
+
+    /*
+     * op 5 (D' = D) leaves a plane as it is.  if that is so for every
+     * plane, there is nothing to do, and the setup and the work on the data
+     * cache below can be left out too.
+     */
+    for (plane = 0; plane < blit_info->plane_ct; plane++) {
+        op_tabidx = ((blit_info->fg_col >> plane) & 0x0001) << 1;
+        op_tabidx |= (blit_info->bg_col >> plane) & 0x0001;
+        if ((blit_info->op_tab[op_tabidx] & 0x000f) != 5)
+            break;
+    }
+    if (plane == blit_info->plane_ct)
+        return;
 
     /* Calculate Xmax coordinates from Xmin coordinates and width */
     s_xmin = blit_info->s_xmin;               /* d0<- src Xmin */
@@ -777,8 +791,6 @@ static void bit_blt(struct blit_frame *blit_info)
     first_d_addr = d_addr;
 
     for (plane = 0; plane < blit_info->plane_ct; plane++) {
-        int op_tabidx;
-
         /* calculate operation for actual plane */
         op_tabidx = ((blit_info->fg_col>>plane) & 0x0001 ) <<1;
         op_tabidx |= (blit_info->bg_col>>plane) & 0x0001;
