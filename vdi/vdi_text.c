@@ -167,8 +167,8 @@ static BOOL ok_for_direct_blit(Vwk *vwk, WORD width, JUSTINFO *justified)
 #if CONF_WITH_BLITTER
 /*
  * check if the blitter can output the characters of the string the quick
- * way, see blitter_text_string(): nothing but plain text (light and
- * underline are all right, and so is justification), on a bitplane screen
+ * way, see blitter_text_string(): plain or bold text (light and underline
+ * are all right, and so is justification), on a bitplane screen
  */
 static BOOL ok_for_blitter_string(Vwk *vwk)
 {
@@ -178,7 +178,7 @@ static BOOL ok_for_blitter_string(Vwk *vwk)
     if (vdi_screen_is_truecolor() || TRUECOLOR_MODE)
         return FALSE;
 
-    if (vwk->style & (F_THICKEN | F_SKEW | F_OUTLINE))
+    if (vwk->style & (F_SKEW | F_OUTLINE))
         return FALSE;
 
     if (vwk->chup || vwk->scaled)
