@@ -1,14 +1,14 @@
 # pBench baseline
-# system: pTOS atari512 (3abfaa46)
+# system: pTOS atari512 (8d984acd)
 # emulator: Hatari v2.4.1, machine ST, screen ST-HIGH, blitter off
 # Screen 640x400, 1 planes
-GEM Dialog Box        21.455 s     32 dialogs
-VDI Text              24.960 s    462 lines
-VDI Text Effects      29.325 s    352 lines
-VDI Small Text        35.615 s    616 lines
+GEM Dialog Box        21.510 s     32 dialogs
+VDI Text              23.490 s    462 lines
+VDI Text Effects      27.755 s    352 lines
+VDI Small Text        35.795 s    616 lines
 VDI Graphics          28.455 s   2158 objects
-GEM Window            18.990 s     65 windows
+GEM Window            19.050 s     65 windows
 Blitting              10.720 s   1200 blits
-VDI Scroll            16.865 s    219 scrolls
-Justified Text        18.735 s   1460 lines
+VDI Scroll            16.915 s    219 scrolls
+Justified Text        19.295 s   1460 lines
 VDI Enquire           16.675 s  43146 calls
