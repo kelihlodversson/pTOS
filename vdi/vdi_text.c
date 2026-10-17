@@ -279,7 +279,7 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     const Fonthead *fnt_ptr;
     Point * point;
 #if CONF_WITH_BLITTER
-    BOOL use_blitter;
+    WORD (*blitter_string)(const Fonthead *, WORD, const WORD *, JUSTINFO *);
 #endif
 
     if (count <= 0)     /* quick out for unlikely occurrence */
@@ -440,7 +440,10 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     linea_vars.XDDA = 32767;       /* init the horizontal dda */
 
 #if CONF_WITH_BLITTER
-    use_blitter = ok_for_blitter_string(vwk);
+    /* the blitter's way of outputting several characters at once, if any */
+    blitter_string = NULL;
+    if (ok_for_blitter_string(vwk))
+        blitter_string = (vwk->style & F_THICKEN) ? blitter_bold_string : blitter_text_string;
 #endif
 
     /*
@@ -579,10 +582,10 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
         if (!done)
         {
 #if CONF_WITH_BLITTER
-            /* the characters that are plain and not clipped, all at once */
-            if (use_blitter)
+            /* the characters that are plain or bold and not clipped, all at once */
+            if (blitter_string)
             {
-                WORD n = blitter_text_string(fnt_ptr, count - j, str + j, justified);
+                WORD n = blitter_string(fnt_ptr, count - j, str + j, justified);
 
                 if (n > 0)
                 {

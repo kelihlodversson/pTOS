@@ -126,6 +126,7 @@ void planar_text_blit(LOCALVARS *vars);
 #if CONF_WITH_BLITTER
 BOOL blitter_text_blit(LOCALVARS *vars);
 WORD blitter_text_string(const struct font_head *fnt, WORD count, const WORD *str, JUSTINFO *justified);
+WORD blitter_bold_string(const struct font_head *fnt, WORD count, const WORD *str, JUSTINFO *justified);
 #endif
 void truecolor_text_blit(LOCALVARS *vars);
 

@@ -1294,8 +1294,8 @@ static void thicken_glyph(const Fonthead *fnt, WORD sourcex, WORD w, WORD weight
 /*
  * blitter_text_string()
  *
- * Output the start of a string of plain or bold text, glyph by glyph, with
- * the blitter, and tell how many glyphs that was.
+ * Output the start of a string of plain text, glyph by glyph, with the
+ * blitter, and tell how many glyphs that was.
  *
  * Going through text_blt() and its helpers for every glyph takes a lot more
  * than the glyph itself, most of it for things that are the same for every
@@ -1305,20 +1305,14 @@ static void thicken_glyph(const Fonthead *fnt, WORD sourcex, WORD w, WORD weight
  * that are the same for every glyph.  A glyph then needs its own spans,
  * masks and addresses only.
  *
- * A bold glyph is thickened into the text buffer (thicken_glyph()) and
- * output from there, with the width text_blt() gives it.  That is what
- * text_blt() does for a bold glyph that is not clipped when the blitter is
- * in use, less the overhead of going through it and normal_blit().
- *
  * It stops at the first glyph that has to be output the general way (one
- * that is not entirely inside the clip rectangle, has no width, or is bold
- * and wider than a word), so the caller does that one, and tries again with
- * the rest of the string.  It does not output anything if the string
- * cannot go this way at all.
+ * that is not entirely inside the clip rectangle, or has no width), so the
+ * caller does that one, and tries again with the rest of the string.  It
+ * does not output anything if the string cannot go this way at all.
  *
- * The caller has checked for what takes more than a plain or bold glyph:
- * effects other than bold, light and underline, rotation, scaling, fonts
- * with horizontal offsets, and a screen that is not a bitplane one.  Justified text is
+ * The caller has checked for what takes more than a plain glyph: effects
+ * other than light and underline, rotation, scaling, fonts with horizontal
+ * offsets, and a screen that is not a bitplane one.  Justified text is
  * all right: as there is no rotation, all it does is move the next glyph
  * further to the right, in the order output_text() does it.
  *
@@ -1335,10 +1329,9 @@ WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTI
 {
     WORD plane, planes, mode, h, nxwd, n;
     WORD c, delx, destx, sourcex, sx, dx, s_span, d_span, skew, skew_idx;
-    WORD xmin, xmax, skew_reg, shift, weight, extra, w, s_stride;
+    WORD xmin, xmax, skew_reg, shift;
     UWORD lendmask, rendmask, fg;
-    UWORD *tbuf;
-    BOOL clip, thick;
+    BOOL clip;
     UBYTE ops[8];
     LONG s_row, d_row, s_addr, d_addr, x_off, length;
     const UWORD *off_table = fnt->off_table;
@@ -1368,27 +1361,13 @@ WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTI
      * setup, which is not for free: text_blt() will have to do those that are
      * clipped, one by one, and each of them would pay for it
      */
-    /*
-     * bold: each glyph is thickened into the text buffer and output from
-     * there, as text_blt() does it, with the same width: wider by the
-     * weight, unless the font is monospaced.  only for glyphs that are no
-     * wider than a word, which is all that thicken_glyph() does
-     */
-    thick = (linea_vars.STYLE & F_THICKEN) && linea_vars.WEIGHT > 0;
-    weight = thick ? linea_vars.WEIGHT : 0;
-    extra = (thick && !linea_vars.MONO) ? weight : 0;
-    tbuf = (UWORD *)linea_vars.SCRTCHP;
-    if (thick && h * (WORD)sizeof(UWORD) > SCRATCHBUF_SIZE)
-        return 0;
-
     destx = linea_vars.DESTX;
     c = *str;
     if (c < fnt->first_ade || c > fnt->last_ade)
         c = '?';
     c -= fnt->first_ade;
     delx = off_table[c + 1] - off_table[c];
-    w = delx + extra;
-    if (delx <= 0 || (thick && w > 16) || (clip && (destx < xmin || destx + w > xmax)))
+    if (delx <= 0 || (clip && (destx < xmin || destx + delx > xmax)))
         return 0;
 
     nxwd = planes * sizeof(WORD);
@@ -1420,21 +1399,10 @@ WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTI
     for (;;)
     {
         sourcex = off_table[c];
-        if (thick)
-        {
-            thicken_glyph(fnt, sourcex, w, weight, h, tbuf);
-            sourcex = 0;
-            s_row = (LONG)(tbuf + h - 1);
-            s_stride = sizeof(UWORD);
-            if (BLITTER_CACHE_OPS)
-                flush_data_cache(tbuf, (LONG)h * sizeof(UWORD));
-        }
-        else
-            s_stride = fnt->form_width;
         sx = sourcex & 0x000f;
         dx = destx & 0x000f;
-        s_span = (sx + w - 1) >> 4;
-        d_span = (dx + w - 1) >> 4;
+        s_span = (sx + delx - 1) >> 4;
+        d_span = (dx + delx - 1) >> 4;
         skew = dx - sx;
 
         skew_idx = 0x0004;              /* blitting left to right */
@@ -1444,11 +1412,11 @@ WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTI
             skew_idx |= 0x0001;         /* the source starts further right */
 
         lendmask = 0xffff >> dx;
-        rendmask = ~(0x7fff >> ((dx + w - 1) & 15));
+        rendmask = ~(0x7fff >> ((dx + delx - 1) & 15));
         if (!d_span)
             lendmask &= rendmask;       /* one word: the other masks are ignored */
 
-        BLITTER->src_y_incr = -s_stride - 2 * s_span;
+        BLITTER->src_y_incr = -(WORD)fnt->form_width - 2 * s_span;
         BLITTER->dst_y_incr = -(WORD)linea_vars.v_lin_wr - nxwd * d_span;
         BLITTER->endmask_1 = lendmask;
         BLITTER->endmask_3 = rendmask;
@@ -1467,6 +1435,207 @@ WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTI
 
         x_off = (destx & 0xfff0) >> shift;
         s_addr = s_row + ((sourcex >> 3) & ~1);
+        d_addr = d_row + x_off;
+
+        if (BLITTER_CACHE_OPS)
+            flush_data_cache((void *)(d_addr - length + 1), length);
+
+        for (plane = 0; plane < planes; plane++)
+        {
+            if (ops[plane] != 5)        /* op 5 (D' = D) leaves the plane as it is */
+            {
+                BLITTER->src_addr = (UWORD *)s_addr;
+                BLITTER->dst_addr = (UWORD *)d_addr;
+                BLITTER->x_count = d_span + 1;
+                BLITTER->y_count = h;
+                BLITTER->skew = skew_reg;
+                BLITTER->op = ops[plane];
+                blitter_go(0);
+            }
+            d_addr += 2;                /* the next plane */
+        }
+
+        if (BLITTER_CACHE_OPS)
+            invalidate_data_cache((void *)(d_row + x_off - length + 1), length);
+
+        destx += delx;
+        if (justified)
+        {
+            destx += justified->charx;
+            if (justified->rmchar)
+            {
+                destx += justified->rmcharx;
+                justified->rmchar--;
+            }
+            if (*str == ' ')
+            {
+                destx += justified->wordx;
+                if (justified->rmword)
+                {
+                    destx += justified->rmwordx;
+                    justified->rmword--;
+                }
+            }
+        }
+        n++;
+        if (--count <= 0)
+            break;
+
+        /* the next one, if it can go this way too */
+        str++;
+        c = *str;
+        if (c < fnt->first_ade || c > fnt->last_ade)
+            c = '?';
+        c -= fnt->first_ade;
+        delx = off_table[c + 1] - off_table[c];
+        if (delx <= 0 || (clip && (destx < xmin || destx + delx > xmax)))
+            break;
+    }
+
+    linea_vars.DESTX = destx;
+    return n;
+}
+
+
+/*
+ * blitter_bold_string()
+ *
+ * The same as blitter_text_string(), for bold text: each glyph is thickened
+ * into the text buffer (thicken_glyph()) and output from there, with the
+ * width text_blt() gives it.  That is what text_blt() does for a bold glyph
+ * that is not clipped when the blitter is in use, less the overhead of going
+ * through it and normal_blit().  It also stops at a glyph that is wider
+ * than a word once thickened, which thicken_glyph() does not do.
+ *
+ * It is a function of its own, not a case of blitter_text_string(), so as
+ * not to slow down plain text: the more the loop has to keep, the more the
+ * compiler spills (atari256, built with -Os and -mfastcall, lost up to 10%
+ * on plain text when they were one).
+ */
+WORD blitter_bold_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTINFO *justified)
+{
+    WORD plane, planes, mode, h, nxwd, n;
+    WORD c, delx, destx, sx, dx, s_span, d_span, skew, skew_idx;
+    WORD xmin, xmax, skew_reg, shift, weight, extra, w;
+    UWORD lendmask, rendmask, fg;
+    UWORD *tbuf;
+    BOOL clip;
+    UBYTE ops[8];
+    LONG s_row, d_row, s_addr, d_addr, x_off, length;
+    const UWORD *off_table = fnt->off_table;
+
+    weight = linea_vars.WEIGHT;
+    if (weight <= 0)                    /* text_blt() does not thicken then */
+        return blitter_text_string(fnt, count, str, justified);
+
+    planes = linea_vars.v_planes;
+    if (planes < 1 || planes > 8)
+        return 0;
+    mode = linea_vars.WRT_MODE;
+    if (mode < 0 || mode > 19)
+        return 0;
+    h = fnt->form_height;
+    if (h <= 0)
+        return 0;
+
+    /* clipping: the rows are the same for the whole string, the columns not */
+    clip = linea_vars.CLIP;
+    xmin = linea_vars.XMINCL;
+    xmax = linea_vars.XMAXCL;
+    if (clip)
+    {
+        if (linea_vars.DESTY < linea_vars.YMINCL || linea_vars.DESTY + h > linea_vars.YMAXCL)
+            return 0;                   /* some or all of it is clipped */
+    }
+
+    /* a bold glyph is wider by the weight, unless the font is monospaced */
+    extra = linea_vars.MONO ? 0 : weight;
+    tbuf = (UWORD *)linea_vars.SCRTCHP;
+    if (h * (WORD)sizeof(UWORD) > SCRATCHBUF_SIZE)
+        return 0;
+
+    /*
+     * the first glyph, to be sure that there is something to do before the
+     * setup, which is not for free: text_blt() will have to do those that are
+     * clipped, one by one, and each of them would pay for it
+     */
+    destx = linea_vars.DESTX;
+    c = *str;
+    if (c < fnt->first_ade || c > fnt->last_ade)
+        c = '?';
+    c -= fnt->first_ade;
+    delx = off_table[c + 1] - off_table[c];
+    w = delx + extra;
+    if (delx <= 0 || w > 16 || (clip && (destx < xmin || destx + w > xmax)))
+        return 0;
+
+    nxwd = planes * sizeof(WORD);
+    shift = shift_offset[planes];
+    fg = linea_vars.TEXTFG;
+    for (plane = 0; plane < planes; plane++)
+    {
+        ops[plane] = text_ops[mode][(fg & 1) << 1];     /* the background is 0 */
+        fg >>= 1;
+    }
+
+    /* the bottom line of the glyphs and of where they go: they are drawn from the bottom up */
+    s_row = (LONG)(tbuf + h - 1);       /* the glyphs are drawn into the buffer */
+    d_row = (LONG)v_bas_ad + (UWORD)(linea_vars.DESTY + h - 1) * (ULONG)linea_vars.v_lin_wr;
+
+    BLITTER->dst_x_incr = nxwd;
+    BLITTER->endmask_2 = 0xffff;
+    if (linea_vars.STYLE & F_LIGHT)
+        set_light_halftone();
+    else
+        BLITTER->hop = HOP_SOURCE_ONLY;
+
+    /* the cache, where there is one, see blitter_text_blit() */
+    length = 0;
+    if (BLITTER_CACHE_OPS)
+        length = (LONG)h * linea_vars.v_lin_wr;
+
+    n = 0;
+    for (;;)
+    {
+        thicken_glyph(fnt, off_table[c], w, weight, h, tbuf);
+        if (BLITTER_CACHE_OPS)
+            flush_data_cache(tbuf, (LONG)h * sizeof(UWORD));
+        sx = 0;                         /* a glyph starts the buffer's words */
+        dx = destx & 0x000f;
+        s_span = 0;                     /* and is no wider than one of them */
+        d_span = (dx + w - 1) >> 4;
+        skew = dx - sx;
+
+        skew_idx = 0x0004;              /* blitting left to right */
+        if (s_span == d_span)
+            skew_idx |= 0x0002;         /* spans are equal */
+        if (skew < 0)
+            skew_idx |= 0x0001;         /* the source starts further right */
+
+        lendmask = 0xffff >> dx;
+        rendmask = ~(0x7fff >> ((dx + w - 1) & 15));
+        if (!d_span)
+            lendmask &= rendmask;       /* one word: the other masks are ignored */
+
+        BLITTER->src_y_incr = -(WORD)sizeof(UWORD);
+        BLITTER->dst_y_incr = -(WORD)linea_vars.v_lin_wr - nxwd * d_span;
+        BLITTER->endmask_1 = lendmask;
+        BLITTER->endmask_3 = rendmask;
+
+        /* see bit_blt() for the special case of one word */
+        if (!s_span && !d_span)
+        {
+            BLITTER->src_x_incr = skew; /* sets the skew direction */
+            skew_reg = skew ? (skew & 0x0f) : FXSR;
+        }
+        else
+        {
+            BLITTER->src_x_incr = 2;    /* the glyph is a form of one plane */
+            skew_reg = (skew & 0x0f) | skew_flags[skew_idx];
+        }
+
+        x_off = (destx & 0xfff0) >> shift;
+        s_addr = s_row;
         d_addr = d_row + x_off;
 
         if (BLITTER_CACHE_OPS)
@@ -1521,7 +1690,7 @@ WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTI
         c -= fnt->first_ade;
         delx = off_table[c + 1] - off_table[c];
         w = delx + extra;
-        if (delx <= 0 || (thick && w > 16) || (clip && (destx < xmin || destx + w > xmax)))
+        if (delx <= 0 || w > 16 || (clip && (destx < xmin || destx + w > xmax)))
             break;
     }
 
