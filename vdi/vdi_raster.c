@@ -603,7 +603,8 @@ do_blit(BLITVARS * blt)
  */
 static void bit_blt(struct blit_frame *blit_info)
 {
-    WORD plane, op_tabidx;
+    WORD plane;
+    UWORD fg, bg;
     UWORD s_xmin, s_xmax;
     UWORD d_xmin, d_xmax;
     UWORD lendmask, rendmask;
@@ -618,20 +619,6 @@ static void bit_blt(struct blit_frame *blit_info)
 
     /* a5-> BLiTTER register block */
     BLITVARS *blt = &blitter;
-
-    /*
-     * op 5 (D' = D) leaves a plane as it is.  if that is so for every
-     * plane, there is nothing to do, and the setup and the work on the data
-     * cache below can be left out too.
-     */
-    for (plane = 0; plane < blit_info->plane_ct; plane++) {
-        op_tabidx = ((blit_info->fg_col >> plane) & 0x0001) << 1;
-        op_tabidx |= (blit_info->bg_col >> plane) & 0x0001;
-        if ((blit_info->op_tab[op_tabidx] & 0x000f) != 5)
-            break;
-    }
-    if (plane == blit_info->plane_ct)
-        return;
 
     /* Calculate Xmax coordinates from Xmin coordinates and width */
     s_xmin = blit_info->s_xmin;               /* d0<- src Xmin */
@@ -790,13 +777,25 @@ static void bit_blt(struct blit_frame *blit_info)
 #endif
     first_d_addr = d_addr;
 
+    /*
+     * the colour bits of the plane, lowest plane first: they are shifted
+     * along rather than shifted out by the plane number each time, which
+     * is cheaper on the 68000 and pays for the test of op 5 below
+     */
+    fg = blit_info->fg_col;
+    bg = blit_info->bg_col;
     for (plane = 0; plane < blit_info->plane_ct; plane++) {
         /* calculate operation for actual plane */
-        op_tabidx = ((blit_info->fg_col>>plane) & 0x0001 ) <<1;
-        op_tabidx |= (blit_info->bg_col>>plane) & 0x0001;
-        blt->op = blit_info->op_tab[op_tabidx] & 0x000f;
+        blt->op = blit_info->op_tab[((fg & 1) << 1) | (bg & 1)] & 0x000f;
+        fg >>= 1;
+        bg >>= 1;
 
-        /* op 5 (D' = D) leaves the plane as it is: nothing to blit */
+        /*
+         * op 5 (D' = D) leaves the plane as it is: nothing to blit.  only
+         * Line-A BitBlt gets here with it: the VDI's opaque copy in mode 5
+         * is left out in cpy_raster(), its transparent copy has no op 5,
+         * and a Line-A blit where every plane has it, in linea_blit()
+         */
         if (blt->op == 5) {
             s_addr += blit_info->s_nxpl;
             d_addr += blit_info->d_nxpl;
@@ -874,6 +873,13 @@ static const UBYTE text_ops[20][4] = {
     { 0,  0, 15, 15 }           /* F: all ones */
 };
 
+/*
+ * op 5 (D' = D), which leaves a plane as it is, is only in the rows of
+ * BitBlt modes 5 and A, which only Line-A can ask for.  the glyph functions
+ * below blit such a plane all the same, which leaves it as it was: leaving
+ * it out would take a test in every plane of every glyph, and plain VDI text
+ * measurably slower for it (#559)
+ */
 
 /*
  * set_light_halftone()
@@ -1070,18 +1076,13 @@ static BOOL blitter_skewed_text_blit(LOCALVARS *vars)
         bg = bgbits;
         for (plane = 0; plane < planes; plane++)
         {
-            UBYTE op = text_ops[mode][((fg & 1) << 1) | (bg & 1)];
-
-            if (op != 5)                /* op 5 (D' = D) leaves the plane as it is */
-            {
-                BLITTER->src_addr = (UWORD *)s_row;
-                BLITTER->dst_addr = (UWORD *)plane_addr;
-                BLITTER->x_count = d_span + 1;
-                BLITTER->y_count = n;
-                BLITTER->skew = skew_reg;
-                BLITTER->op = op;
-                blitter_go((-r0) & 15); /* light: the line r0 up is -r0 */
-            }
+            BLITTER->src_addr = (UWORD *)s_row;
+            BLITTER->dst_addr = (UWORD *)plane_addr;
+            BLITTER->x_count = d_span + 1;
+            BLITTER->y_count = n;
+            BLITTER->skew = skew_reg;
+            BLITTER->op = text_ops[mode][((fg & 1) << 1) | (bg & 1)];
+            blitter_go((-r0) & 15);     /* light: the line r0 up is -r0 */
 
             fg >>= 1;
             bg >>= 1;
@@ -1234,18 +1235,13 @@ BOOL blitter_text_blit(LOCALVARS *vars)
     plane_addr = d_addr;
     for (plane = 0; plane < planes; plane++)
     {
-        UBYTE op = text_ops[mode][((fg & 1) << 1) | (bg & 1)];
-
-        if (op != 5)                    /* op 5 (D' = D) leaves the plane as it is */
-        {
-            BLITTER->src_addr = (UWORD *)s_addr;
-            BLITTER->dst_addr = (UWORD *)plane_addr;
-            BLITTER->x_count = d_span + 1;
-            BLITTER->y_count = h;
-            BLITTER->skew = skew_reg;
-            BLITTER->op = op;
-            blitter_go(0);
-        }
+        BLITTER->src_addr = (UWORD *)s_addr;
+        BLITTER->dst_addr = (UWORD *)plane_addr;
+        BLITTER->x_count = d_span + 1;
+        BLITTER->y_count = h;
+        BLITTER->skew = skew_reg;
+        BLITTER->op = text_ops[mode][((fg & 1) << 1) | (bg & 1)];
+        blitter_go(0);
 
         fg >>= 1;
         bg >>= 1;
@@ -1409,16 +1405,13 @@ WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTI
 
         for (plane = 0; plane < planes; plane++)
         {
-            if (ops[plane] != 5)        /* op 5 (D' = D) leaves the plane as it is */
-            {
-                BLITTER->src_addr = (UWORD *)s_addr;
-                BLITTER->dst_addr = (UWORD *)d_addr;
-                BLITTER->x_count = d_span + 1;
-                BLITTER->y_count = h;
-                BLITTER->skew = skew_reg;
-                BLITTER->op = ops[plane];
-                blitter_go(0);
-            }
+            BLITTER->src_addr = (UWORD *)s_addr;
+            BLITTER->dst_addr = (UWORD *)d_addr;
+            BLITTER->x_count = d_span + 1;
+            BLITTER->y_count = h;
+            BLITTER->skew = skew_reg;
+            BLITTER->op = ops[plane];
+            blitter_go(0);
             d_addr += 2;                /* the next plane */
         }
 
@@ -2156,10 +2149,6 @@ cpy_raster(struct raster_t *raster, struct blit_frame *info)
 
     raster->mode = mode;        /* raw request, for the truecolor backend */
 
-    /* opaque mode 5 (D' = D) leaves the destination as it is */
-    if (!raster->transparent && mode == 5)
-        return;
-
     /* if true, the plane count is invalid or clipping took all! */
     if (setup_info(raster, info))
         return;
@@ -2170,6 +2159,10 @@ cpy_raster(struct raster_t *raster, struct blit_frame *info)
 
         /* planes of source and destination equal in number? */
         if (info->s_nxwd != info->d_nxwd)
+            return;
+
+        /* mode 5 (D' = D) leaves the destination as it is */
+        if (mode == 5)
             return;
 
         info->op_tab[0] = mode; /* fg:0 bg:0 */
@@ -2362,6 +2355,9 @@ void linea_raster(void)
 /* line-A wrapper for blitting */
 void linea_blit(struct blit_frame *info)
 {
+    WORD plane;
+    UWORD fg, bg;
+
     /* with line-A, need to calculate these for bit_blt()
      * (whereas VDI needs to calculate wd & ht)
      */
@@ -2370,9 +2366,22 @@ void linea_blit(struct blit_frame *info)
     info->d_xmax = info->d_xmin + info->b_wd - 1;
     info->d_ymax = info->d_ymin + info->b_ht - 1;
 
-    /* nothing to do if every fore/background combination is op 5 (D' = D) */
-    if ((info->op_tab[0] & 0x0f) == 5 && (info->op_tab[1] & 0x0f) == 5
-     && (info->op_tab[2] & 0x0f) == 5 && (info->op_tab[3] & 0x0f) == 5)
+    /*
+     * op 5 (D' = D) leaves a plane as it is.  if that is so for every
+     * plane, there is nothing to do, and the setup and the work on the data
+     * cache in bit_blt() can be left out too.  this is looked at here and not
+     * in bit_blt(), as only Line-A can ask for it plane by plane, and the
+     * VDI should not pay for it on every blit
+     */
+    fg = info->fg_col;
+    bg = info->bg_col;
+    for (plane = 0; plane < info->plane_ct; plane++) {
+        if ((info->op_tab[((fg & 1) << 1) | (bg & 1)] & 0x0f) != 5)
+            break;
+        fg >>= 1;
+        bg >>= 1;
+    }
+    if (plane == info->plane_ct)
         return;
 
     /*

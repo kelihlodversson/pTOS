@@ -11,6 +11,11 @@
  * of source and destination, and for destinations that overlap the source in
  * every direction.  The path is selected with Blitmode().
  *
+ * Line-A BitBlt ($A007) goes through the same two paths, with a logic op
+ * for each combination of foreground and background bit of a plane; the
+ * test does that too, with op 5 (D' = D) in some or all of the planes,
+ * which must then be left as they are (#545, #559).
+ *
  * The test needs a bitplane screen with the planes interleaved a word at a
  * time (1, 2, 4 or 8 planes, 320 or 640 pixels wide: an ST, an STE, a TT
  * or a Falcon) and a blitter; it is skipped everywhere else.
@@ -284,6 +289,162 @@ static void check(const CASE *c)
     }
 }
 
+/* ---- Line-A BitBlt ---- */
+
+/* the 76 byte parameter block of Line-A BitBlt; the last 24 bytes are its own */
+typedef struct {
+    short b_wd, b_ht, plane_ct, fg_col, bg_col;
+    U8 op_tab[4];
+    short s_xmin, s_ymin;
+    void *s_form;
+    short s_nxwd, s_nxln, s_nxpl;
+    short d_xmin, d_ymin;
+    void *d_form;
+    short d_nxwd, d_nxln, d_nxpl;
+    void *p_addr;
+    short p_nxln, p_nxpl, p_mask;
+    short space[12];
+} BITBLT;
+
+typedef char bitblt_is_76_bytes[sizeof(BITBLT) == 76 ? 1 : -1];
+
+/* a6 points to the block; d0-d2 and a0-a2 are not kept */
+static void linea_bitblt(BITBLT *b)
+{
+    __asm__ volatile (
+        "move.l %%a6,-(%%sp)\n\t"
+        "movea.l %0,%%a6\n\t"
+        ".word 0xa007\n\t"
+        "movea.l (%%sp)+,%%a6"
+        :
+        : "a" (b)
+        : "d0", "d1", "d2", "a0", "a1", "a2", "cc", "memory");
+}
+
+typedef struct {
+    CASE c;                     /* where; c.mode is the index into ab_ops[] */
+    short fg, bg;               /* the colours: a bit for each plane */
+} ABCASE;
+
+/* op 5 in every combination, in some, and in one */
+static const U8 ab_ops[][4] = {
+    { 5, 5, 5, 5 },
+    { 3, 5, 5, 12 },
+    { 5, 6, 9, 5 },
+    { 0, 5, 15, 7 }
+};
+
+static const short ab_colours[][2] = {
+    { 0x00, 0x00 }, { 0xff, 0x00 }, { 0x05, 0x03 }, { 0x0a, 0xff }
+};
+
+/* the op the plane gets, as linea_blit() and fast_bit_blt() pick it */
+static int ab_op(const ABCASE *a, int plane)
+{
+    int idx = (((a->fg >> plane) & 1) << 1) | ((a->bg >> plane) & 1);
+
+    return ab_ops[a->c.mode][idx] & 15;
+}
+
+static void ab_draw(const ABCASE *a)
+{
+    BITBLT b;
+    char *base = (char *)Logbase();
+    int i;
+
+    for (i = 0; i < (int)sizeof(b.space) / (int)sizeof(b.space[0]); i++)
+        b.space[i] = 0;
+    b.b_wd = a->c.w;
+    b.b_ht = a->c.h;
+    b.plane_ct = planes;
+    b.fg_col = a->fg;
+    b.bg_col = a->bg;
+    for (i = 0; i < 4; i++)
+        b.op_tab[i] = ab_ops[a->c.mode][i];
+    b.s_xmin = a->c.sx;
+    b.s_ymin = (short)(band_y + a->c.sy);
+    b.s_form = base;
+    b.s_nxwd = (short)(2 * planes);
+    b.s_nxln = (short)bpl;
+    b.s_nxpl = 2;
+    b.d_xmin = a->c.dx;
+    b.d_ymin = (short)(band_y + a->c.dy);
+    b.d_form = base;
+    b.d_nxwd = (short)(2 * planes);
+    b.d_nxln = (short)bpl;
+    b.d_nxpl = 2;
+    b.p_addr = 0;
+    b.p_nxln = b.p_nxpl = b.p_mask = 0;
+    linea_bitblt(&b);
+}
+
+static void ab_report(const ABCASE *a, const char *what, long off, int got, int want)
+{
+    if (reports >= 8)
+        return;
+    reports++;
+    conws("\r\n    ");
+    conws(what);
+    conws(":");
+    pnums("ops", a->c.mode);
+    pnums("fg", a->fg);
+    pnums("bg", a->bg);
+    pnums("w", a->c.w);
+    pnums("src", a->c.sx);
+    pnums("dst", a->c.dx);
+    conws(",");
+    pnum(a->c.dy);
+    pnums("line", off / bpl);
+    pnums("byte", off % bpl);
+    pnums("got", got);
+    pnums("want", want);
+}
+
+static void ab_check(const ABCASE *a)
+{
+    long off, d;
+    int plane;
+
+    cases_run++;
+
+    copy(band, pattern);
+    set_blitter(0);
+    ab_draw(a);
+    copy(snap_cpu, band);
+
+    copy(band, pattern);
+    set_blitter(1);
+    ab_draw(a);
+    copy(snap_blt, band);
+
+    /* a plane with op 5 is as it was, whatever the path */
+    for (off = 0; off < band_len; off++)
+    {
+        plane = (int)(((off % bpl) >> 1) % planes);
+        if (ab_op(a, plane) != 5)
+            continue;
+        if (snap_blt[off] != pattern[off])
+        {
+            ab_report(a, "blitter changed an op 5 plane", off, snap_blt[off], pattern[off]);
+            cases_failed++;
+            return;
+        }
+        if (snap_cpu[off] != pattern[off])
+        {
+            ab_report(a, "CPU changed an op 5 plane", off, snap_cpu[off], pattern[off]);
+            cases_failed++;
+            return;
+        }
+    }
+
+    d = first_diff(snap_cpu, snap_blt);
+    if (d >= 0)
+    {
+        ab_report(a, "blitter differs from CPU", d, snap_blt[d], snap_cpu[d]);
+        cases_failed++;
+    }
+}
+
 /* ---- the test cases ---- */
 
 static const short widths[] = { 1, 16, 17, 33, 70 };
@@ -369,6 +530,31 @@ static void group_clipped(void)
                     }
 }
 
+/* Line-A BitBlt with op 5 in the table, unclipped, to the right and below */
+static void group_linea(void)
+{
+    static const short ab_widths[] = { 1, 17, 70 };
+    ABCASE a;
+    int ops, col, wi, si, di, layout;
+
+    for (ops = 0; ops < (int)(sizeof(ab_ops) / sizeof(ab_ops[0])); ops++)
+        for (col = 0; col < (int)(sizeof(ab_colours) / sizeof(ab_colours[0])); col++)
+            for (wi = 0; wi < (int)(sizeof(ab_widths) / sizeof(ab_widths[0])); wi++)
+                for (si = 0; si < 2; si++)
+                    for (di = 1; di < 3; di++)
+                        for (layout = 0; layout < 2; layout++)
+                        {
+                            a.c.mode = (short)ops;
+                            a.c.w = ab_widths[wi];
+                            a.c.h = 7;
+                            a.c.clip = 0;
+                            place(&a.c, layout, src_x[si], dst_x[di]);
+                            a.fg = ab_colours[col][0];
+                            a.bg = ab_colours[col][1];
+                            ab_check(&a);
+                        }
+}
+
 static void run_group(const char *name, void (*fn)(void))
 {
     cases_run = 0;
@@ -423,6 +609,7 @@ void test_raster_copy(void)
 
     run_group("raster_copy: screen copies, CPU vs blitter (#503)", group_copies);
     run_group("raster_copy: clipped screen copies, CPU vs blitter (#503)", group_clipped);
+    run_group("raster_copy: Line-A BitBlt with op 5, CPU vs blitter (#559)", group_linea);
 
     copy(band, saved);
     set_cursor(1);
