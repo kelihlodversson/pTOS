@@ -126,6 +126,9 @@ void planar_text_blit(LOCALVARS *vars);
 #if CONF_WITH_BLITTER
 BOOL blitter_text_blit(LOCALVARS *vars);
 WORD blitter_text_string(const struct font_head *fnt, WORD count, const WORD *str, JUSTINFO *justified);
+#if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
+WORD blitter_bold_string(const struct font_head *fnt, WORD count, const WORD *str, JUSTINFO *justified);
+#endif
 #endif
 void truecolor_text_blit(LOCALVARS *vars);
 
@@ -133,6 +136,10 @@ void truecolor_text_blit(LOCALVARS *vars);
  * portable C implementations, provided on every target
  */
 void outline(LOCALVARS *vars);
+#if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
+void thicken_glyph(const UBYTE *src, WORD form_width, WORD sx, WORD w, WORD weight,
+                   WORD h, UWORD *buf);
+#endif
 void rotate(LOCALVARS *vars);   /* actually local, but non-static improves performance */
 void scale(LOCALVARS *vars);
 

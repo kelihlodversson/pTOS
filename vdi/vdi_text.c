@@ -167,8 +167,9 @@ static BOOL ok_for_direct_blit(Vwk *vwk, WORD width, JUSTINFO *justified)
 #if CONF_WITH_BLITTER
 /*
  * check if the blitter can output the characters of the string the quick
- * way, see blitter_text_string(): nothing but plain text (light and
- * underline are all right, and so is justification), on a bitplane screen
+ * way, see blitter_text_string(): plain text, or bold text with
+ * CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP (light and underline are all right,
+ * and so is justification), on a bitplane screen
  */
 static BOOL ok_for_blitter_string(Vwk *vwk)
 {
@@ -178,7 +179,11 @@ static BOOL ok_for_blitter_string(Vwk *vwk)
     if (vdi_screen_is_truecolor() || TRUECOLOR_MODE)
         return FALSE;
 
+#if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
+    if (vwk->style & (F_SKEW | F_OUTLINE))
+#else
     if (vwk->style & (F_THICKEN | F_SKEW | F_OUTLINE))
+#endif
         return FALSE;
 
     if (vwk->chup || vwk->scaled)
@@ -279,7 +284,7 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     const Fonthead *fnt_ptr;
     Point * point;
 #if CONF_WITH_BLITTER
-    BOOL use_blitter;
+    WORD (*blitter_string)(const Fonthead *, WORD, const WORD *, JUSTINFO *);
 #endif
 
     if (count <= 0)     /* quick out for unlikely occurrence */
@@ -440,7 +445,14 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     linea_vars.XDDA = 32767;       /* init the horizontal dda */
 
 #if CONF_WITH_BLITTER
-    use_blitter = ok_for_blitter_string(vwk);
+    /* the blitter's way of outputting several characters at once, if any */
+    blitter_string = NULL;
+    if (ok_for_blitter_string(vwk))
+#if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
+        blitter_string = (vwk->style & F_THICKEN) ? blitter_bold_string : blitter_text_string;
+#else
+        blitter_string = blitter_text_string;
+#endif
 #endif
 
     /*
@@ -579,10 +591,10 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
         if (!done)
         {
 #if CONF_WITH_BLITTER
-            /* the characters that are plain and not clipped, all at once */
-            if (use_blitter)
+            /* the characters that are plain or bold and not clipped, all at once */
+            if (blitter_string)
             {
-                WORD n = blitter_text_string(fnt_ptr, count - j, str + j, justified);
+                WORD n = blitter_string(fnt_ptr, count - j, str + j, justified);
 
                 if (n > 0)
                 {
