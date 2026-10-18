@@ -251,8 +251,8 @@ Work on the feature is tracked in #573.
 With scalable fonts, pTOS also has a GDOS built in, which applications
 recognise as SpeedoGDOS (vdi/vdi_gdos.c).  Once the AUTO folder has run,
 vq_gdos() answers '_FSM' and an FSMC cookie with the magic '_SPD' and
-version 4.00 and quality -1 (as fVDI's SpeedoGDOS mode) is installed (not on x86-64, where programs cannot call the
-VDI).  vst_load_fonts() then adds the TrueType (*.TTF) and OpenType (*.OTF)
+version 4.00 and quality -1 (as fVDI's SpeedoGDOS mode) is installed
+(not on x86-64, where programs cannot call the VDI).  vst_load_fonts() then adds the TrueType (*.TTF) and OpenType (*.OTF)
 fonts of CONF_VDI_FONT_DIR (\GEMSYS\FONTS on the boot drive by default) to
 a workstation, and vqt_name() lists them after the system fonts with the
 outline flag of SpeedoGDOS (intout[33] = 1).  Their font ids, from 10000
