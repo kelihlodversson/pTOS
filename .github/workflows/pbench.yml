@@ -34,12 +34,16 @@ jobs:
     strategy:
       matrix:
         # The key of the baselines in tools/pBench/ci-baselines is the name of
-        # the configuration.  atari256 is built with -mfastcall.
+        # the configuration.  atari256 and atari512-fastcall are built with
+        # -mfastcall.
         include:
           - config: atari512
             image: ptos512k.img
           - config: atari256
             image: ptos256us.img
+          # the 512 KB image of the TT and the Falcon built with -mfastcall
+          - config: atari512-fastcall
+            image: ptos512k.img
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,11 +87,20 @@ jobs:
     # Hatari comes from the distribution's packages, which the 22.04 of the
     # build's runner has an old version of.
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        config: [atari512, atari256]
+        # The screen modes (see run-baselines.py --res): the ST modes of
+        # every configuration, and an emulated Falcon with a 68030 and with
+        # a 68040 for the one whose ROM image runs on it.
+        include:
+          - config: atari512
+            modes: low,med,high,f030,f040
+          - config: atari256
+            modes: low,med,high
+          - config: atari512-fastcall
+            modes: f030,f040
     permissions:
       contents: read
       pull-requests: write
@@ -108,18 +121,35 @@ jobs:
       # A mode that gave no result is reported by the comparison below, which
       # still has to run (and fails the job) so that the report, the summary
       # and the comment are not lost
-      - name: Run pBench in every ST screen mode, with and without blitter
+      - name: Run pBench in every screen mode, with and without blitter
         continue-on-error: true
-        # A run takes half a minute; one that hangs is given two minutes, three
-        # tries, in two waves of three: well below the job's 20 minutes, which
-        # would cancel the reporting steps too.
-        timeout-minutes: 12
+        # A run takes half a minute; one that hangs is given
+        # two minutes, three tries, in two waves of five: well below the job's
+        # 25 minutes, which would cancel the reporting steps too.
+        timeout-minutes: 15
         env:
           CONFIG: ${{ matrix.config }}
+          MODES: ${{ matrix.modes }}
         run: |
           python3 tools/pBench/run-baselines.py \
-            --pbench products/pbench.prg --out results --jobs 3 --timeout 120 \
+            --pbench products/pbench.prg --out results --jobs 5 --timeout 120 \
+            --res "$MODES" \
             --system "${CONFIG}=products/system.img=pTOS ${CONFIG} (${GITHUB_SHA::8})"
+
+      # The results as text too, so that baselines can be made from the log
+      # when the artifact cannot be had (no -mfastcall toolchain to make them
+      # with locally either)
+      - name: Show the results
+        if: always()
+        run: |
+          for f in results/*.txt; do
+            # no match leaves the pattern itself: nothing to show then, and
+            # the comparison below reports the missing results
+            [ -e "$f" ] || continue
+            echo "::group::$f"
+            cat "$f"
+            echo "::endgroup::"
+          done
 
       # What the baselines in the repository are made from when they have to
       # be made again: see doc/pbench.txt.
