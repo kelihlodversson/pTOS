@@ -10,8 +10,10 @@
  * place that looks at a caller's pointers (bdos/uaccess.c).
  *
  * Only the calls kernel code makes exist; one that needs more is added here
- * with the translation osif() does for it (a handle to its open file, for
- * instance, which is why there is no Fread() or Fwrite() yet).
+ * with the translation osif() does for it.  Fopen(), Fread(), Fseek() and
+ * Fclose() (the scalable fonts read their font files with them) need none:
+ * osif() only redirects the standard handles 0 to 5, and a file the kernel
+ * opens gets a handle above them.
  *
  * osif() also catches the longjmp() the file system makes on a disk error.
  * A call that can reach the disk does the same here, minus the media change
@@ -113,6 +115,26 @@ long kdos_mshrink(long block, long newsiz)
 long kdos_pexec(long mode, long path, long tail, long env)
 {
     return DISK_CALL(xexec((WORD)mode, (char *)path, (char *)tail, (char *)env));
+}
+
+long kdos_fopen(long name, long mode)
+{
+    return DISK_CALL(xopen((char *)name, (WORD)mode));
+}
+
+long kdos_fclose(long h)
+{
+    return DISK_CALL(xclose((WORD)h));
+}
+
+long kdos_fread(long h, long count, long buf)
+{
+    return DISK_CALL(xread((WORD)h, count, (void *)buf));
+}
+
+long kdos_fseek(long offset, long h, long mode)
+{
+    return DISK_CALL(xlseek(offset, (WORD)h, (WORD)mode));
 }
 
 void kdos_pterm(long rc)
