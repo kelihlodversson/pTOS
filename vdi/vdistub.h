@@ -38,8 +38,12 @@ void linea_blit(struct blit_frame *info);
 void linea_raster(void);
 
 #if CONF_WITH_VDI_SCALABLE_FONTS
-/* check once that FreeType works (vdi/vdi_ftsystem.c) */
-void vdi_freetype_check(void);
+/* set FreeType up, before GEMDOS takes the memory (vdi/vdi_ftsystem.c) */
+void vdi_freetype_init(void);
+#ifdef CONF_DEBUG_FREETYPE_TEST_FONT
+/* render glyphs from that font file, once GEMDOS has the boot drive */
+void vdi_freetype_test_font(void);
+#endif
 #endif
 
 /* End of the VDI BSS section.
