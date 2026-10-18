@@ -1,6 +1,17 @@
 ---
 name: toolchain-install
-description: Install and select pTOS cross toolchains on Ubuntu Intel or macOS, including without sudo. Use it BEFORE you report a pTOS configuration as unbuildable or skip it for lack of a compiler, whenever a build fails with "x86_64-elf-gcc: No such file or directory", "m68k-atari-mintelf-gcc does not support -mfastcall", "arm-none-eabi-gcc: not found", "command not found", Error 127, or any other missing cross-compiler error. It also covers building pc-x86_64 with the native gcc (make CROSS_COMPILE=), installing Thorsten Otto's -mfastcall m68k toolchain into a user directory for the amiga, amiga-kickdisk and *-fastcall configs, the ARM toolchain, and the answer when a user asks how to build pTOS or install its toolchains.
+description: >-
+  Install and select pTOS cross toolchains on Ubuntu Intel or macOS,
+  including without sudo. Use it BEFORE you report a pTOS configuration as
+  unbuildable or skip it for lack of a compiler, whenever a build fails with
+  "x86_64-elf-gcc: No such file or directory", "m68k-atari-mintelf-gcc does
+  not support -mfastcall", "arm-none-eabi-gcc: not found", "command not
+  found", Error 127, or any other missing cross-compiler error. It also
+  covers building pc-x86_64 with the native gcc (make CROSS_COMPILE=),
+  installing Thorsten Otto's -mfastcall m68k toolchain into a user directory
+  for the amiga, amiga-kickdisk and *-fastcall configs, the ARM toolchain,
+  and the answer when a user asks how to build pTOS or install its
+  toolchains.
 ---
 
 # pTOS Toolchain Installation
@@ -106,19 +117,23 @@ the session's scratchpad directory instead.
 
 ```sh
 dest=$HOME/.local/th-otto-mintelf
-dl=$HOME/.local/th-otto-dl
-mkdir -p "$dest" "$dl" && cd "$dl" &&
-for f in gcc-13.4.0-mintelf-20250702-bin-linux64.tar.xz \
-         binutils-2.45-mintelf-20250812-bin-linux64.tar.xz \
-         mintlib-0.60.1-mintelf-20240718-dev.tar.xz; do
-    curl -sSLO --fail --retry 3 "https://tho-otto.m68k.eu/download/mint/$f" || exit 1
-done &&
-sha256sum -c - <<'EOF' &&
+# The subshell keeps the cd and any exit from leaving the current shell,
+# so the build commands afterwards still run in the pTOS checkout.
+(
+    dl=$HOME/.local/th-otto-dl
+    mkdir -p "$dest" "$dl" && cd "$dl" || exit 1
+    for f in gcc-13.4.0-mintelf-20250702-bin-linux64.tar.xz \
+             binutils-2.45-mintelf-20250812-bin-linux64.tar.xz \
+             mintlib-0.60.1-mintelf-20240718-dev.tar.xz; do
+        curl -sSLO --fail --retry 3 "https://tho-otto.m68k.eu/download/mint/$f" || exit 1
+    done
+    sha256sum -c - <<'EOF' || exit 1
 70ae7f69ec54484b805990ddef517af13fccc3744018dbca3cc0e61eec1c55b6  gcc-13.4.0-mintelf-20250702-bin-linux64.tar.xz
 e37c22f84baaf8ffc890a11265d4369498f9bc4e68aaac21dcef887d3655f025  binutils-2.45-mintelf-20250812-bin-linux64.tar.xz
 0a9f4f61c976af26b3b4c2fdfbfcaaa19c671174a6a1c874496375f775ff33ec  mintlib-0.60.1-mintelf-20240718-dev.tar.xz
 EOF
-for f in *.tar.xz; do tar -xJf "$f" -C "$dest" || exit 1; done
+    for f in *.tar.xz; do tar -xJf "$f" -C "$dest" || exit 1; done
+) &&
 "$dest/usr/bin/m68k-atari-mintelf-gcc" -Q --help=target | grep mfastcall
 ```
 
