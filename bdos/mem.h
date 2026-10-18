@@ -54,6 +54,14 @@ void xmfreblk(void *m);
 MD *xmgetmd(void);          /* xmgetmd - get an MD */
 void xmfremd(MD *md);       /* xmfremd - free an MD */
 
+#if CONF_WITH_PROCMEM
+/* Process allocations (include/procmem.h) are not GEMDOS memory
+ * descriptors: Mfree() and process teardown reach them through these. */
+long procmem_mfree(void *addr);
+void proc_free_owned(PD *p);
+void proc_make_resident(PD *p, ULONG keep_bytes);   /* Ptermres */
+#endif
+
 /* init os memory */
 void osmem_init(void);
 
@@ -66,9 +74,9 @@ void *xmalloc(long amount);
 /* mfree */
 long xmfree(void *addr);
 /* mshrink */
-long xsetblk(int n, void *blk, long len);
+long xsetblk(WORD n, void *blk, long len);
 /* mxalloc */
-void *xmxalloc(long amount, int mode);
+void *xmxalloc(long amount, WORD mode);
 
 #if CONF_WITH_VIDEL
 /* srealloc */

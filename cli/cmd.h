@@ -22,6 +22,12 @@
  /* config.h */
  #define CONF_ATARI_HARDWARE    1
  #define CONF_WITH_TT_SHIFTER   1
+ /* the kernel's CONF_WITH_NATIVE_ABI (Kconfig.machine): everything but m68k */
+ #if defined(__arm__) || defined(__x86_64__)
+  #define CONF_WITH_NATIVE_ABI  1
+ #else
+  #define CONF_WITH_NATIVE_ABI  0
+ #endif
  #define MAXPATHLEN      256
  #define BLKDEVNUM       26
  /* sysconf.h */
@@ -47,11 +53,11 @@
  #define RESTRICT __restrict__
  /* the m68k standalone build only ever targets real Atari hardware;
     the ARM standalone build only ever targets pTOS's own raspi/virt-arm
-    ports, which have no Atari-style video hardware to switch resolution
-    on -- Getrez()/Setscreen() are a no-op there (see bios/screen.c's
+    ports and the x86-64 one, which have no Atari-style video hardware
+    to switch resolution on -- Getrez()/Setscreen() are a no-op there (see bios/screen.c's
     CONF_WITH_ATARI_VIDEO fallback), so exposing MODE's resolution
     switching would just look broken rather than doing anything real */
- #ifdef __arm__
+ #if defined(__arm__) || defined(X32_USERLAND)
   #define CLI_WITH_RESOLUTION    0
   #define CLI_WITH_TT_RESOLUTION 0
  #else
@@ -76,6 +82,7 @@
 #include <mint/osbind.h>
 #include <string.h>     /* strlen(), strcpy(), memcpy(), memset(), strncasecmp() */
 #include <ctype.h>      /* toupper() */
+#include <stdio.h>      /* sprintf() */
 
 /* EmuTOS/pTOS extends the standard 3-argument XBIOS Setscreen (opcode 5)
  * with a 4th word argument that sets the font height in the same call
@@ -88,7 +95,7 @@
                           (short)(rez),(short)(height)))
 
 #else /* ROM build: use the shared portable trap dispatchers */
-#include "asm.h"        /* trap1(), trap1_pexec() */
+#include "asm.h"        /* trap1()/trap1_v()/trap1_w()/..., trap1_pexec() */
 #include "biosbind.h"   /* Bconstat(), Bconin(), Bconout() */
 #include "xbiosbind.h"  /* Setscreen(), Cursconf(), Kbrate() */
 
@@ -102,6 +109,7 @@ static __inline__ long cli_supexec_(long a)
 }
 #define Supexec(a) cli_supexec_((long)(a))
 
+#ifndef __m68k__
 /*
  * TRAP1_W(x): the historically-(WORD)-cast slots below need to stay
  * genuinely WORD-sized (16-bit) on m68k, not widen to `long` -- see
@@ -135,6 +143,21 @@ static __inline__ long cli_supexec_(long a)
 #define jmp_gemdos_wlp(a,b,c,d) trap1((int)(a),TRAP1_W(b),(long)(c),(void *)(d))
 #define jmp_gemdos_wpp(a,b,c,d) trap1((int)(a),TRAP1_W(b),(void *)(c),(void *)(d))
 #define jmp_gemdos_pww(a,b,c,d) trap1((int)(a),(void *)(b),TRAP1_W(c),TRAP1_W(d))
+#else
+/* m68k: a variadic trap1() call would push every argument as a
+ * promoted 32-bit int now that -mshort is gone (#300); use the typed
+ * trap1_v()/trap1_w()/... primitives from asm.h instead, which push
+ * each argument at the width GEMDOS actually expects. */
+#define jmp_gemdos_v(a)         trap1_v((int)(a))
+#define jmp_gemdos_w(a,b)       trap1_w((int)(a),(WORD)(b))
+#define jmp_gemdos_l(a,b)       trap1_wl((int)(a),(LONG)(b))
+#define jmp_gemdos_p(a,b)       trap1_wl((int)(a),(void*)(b))
+#define jmp_gemdos_ww(a,b,c)    trap1_ww((int)(a),(WORD)(b),(WORD)(c))
+#define jmp_gemdos_pw(a,b,c)    trap1_wlw((int)(a),(void *)(b),(WORD)(c))
+#define jmp_gemdos_wlp(a,b,c,d) trap1_wwll((int)(a),(WORD)(b),(LONG)(c),(void *)(d))
+#define jmp_gemdos_wpp(a,b,c,d) trap1_wwll((int)(a),(WORD)(b),(void *)(c),(void *)(d))
+#define jmp_gemdos_pww(a,b,c,d) trap1_wlww((int)(a),(void *)(b),(WORD)(c),(WORD)(d))
+#endif
 /* Pexec needs the 5-argument form; trap1_pexec handles the extra argument */
 #define jmp_gemdos_wppp(a,b,c,d,e) \
     trap1_pexec((short)(b),(const char *)(c),(const char *)(d),(const char *)(e))

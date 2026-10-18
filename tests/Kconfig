@@ -8,4 +8,16 @@ config CONF_WITH_REGRESSION_TESTS
       When enabled, 'make test-hd' produces a raw disk image that
       boots pTOS and runs the test suite automatically.
 
+config CONF_WITH_X86_64_MEMTEST
+    bool "Run the x86-64 memory-management self-test at boot"
+    depends on MACHINE_PC_X86_64
+    default y
+    help
+      At every boot, exercise the tracked process allocations, the
+      growable kernel heap, per-process address spaces and KPROC records
+      with repeated create/exit and injected-failure cycles, and check that
+      none of them leaks (bios/machine/pc-x86_64/memtest.c).  The result is
+      one line on the console, "x86-64 memtest: PASS" or "FAIL (n)", which
+      the CI boot test looks for.  It takes a fraction of a second.
+
 endmenu

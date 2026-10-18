@@ -139,7 +139,7 @@ UBYTE *balloc_stram(ULONG size, BOOL top)
     return ret;
 }
 
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 MD themd;                       /* BIOS memory descriptor -- fixed address on
                                   * m68k (tosvars.ld), ordinary storage here (#219) */
 #else

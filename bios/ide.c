@@ -109,7 +109,7 @@ struct IDE
 
 #elif defined(MACHINE_PC_X86_64)
 
-#include "ide_io.h"
+#include "port_io.h"
 
 /*
  * A legacy PC IDE controller's ATA task-file registers are port-mapped
@@ -143,21 +143,21 @@ struct IDE
 #define IDE_PORT_CONTROL    0x3F6  /* read: alternate status */
 
 #define IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(i,a,b) \
-    { x86_64_outb(IDE_PORT_SECNUM,a); x86_64_outb(IDE_PORT_SECCOUNT,b); }
+    { port_outb(IDE_PORT_SECNUM,a); port_outb(IDE_PORT_SECCOUNT,b); }
 #define IDE_WRITE_CYLINDER_HIGH_CYLINDER_LOW(i,a) \
-    { x86_64_outb(IDE_PORT_CYL_HIGH,HIBYTE(a)); x86_64_outb(IDE_PORT_CYL_LOW,LOBYTE(a)); }
+    { port_outb(IDE_PORT_CYL_HIGH,HIBYTE(a)); port_outb(IDE_PORT_CYL_LOW,LOBYTE(a)); }
 #define IDE_WRITE_COMMAND_HEAD(i,a,b) \
-    { x86_64_outb(IDE_PORT_HEAD,b); x86_64_outb(IDE_PORT_COMMAND,a); }
-#define IDE_WRITE_CONTROL(i,a)    x86_64_outb(IDE_PORT_CONTROL,a)
-#define IDE_WRITE_HEAD(i,a)       x86_64_outb(IDE_PORT_HEAD,a)
+    { port_outb(IDE_PORT_HEAD,b); port_outb(IDE_PORT_COMMAND,a); }
+#define IDE_WRITE_CONTROL(i,a)    port_outb(IDE_PORT_CONTROL,a)
+#define IDE_WRITE_HEAD(i,a)       port_outb(IDE_PORT_HEAD,a)
 
-#define IDE_READ_STATUS(i)        x86_64_inb(IDE_PORT_COMMAND)
-#define IDE_READ_ALT_STATUS(i)    x86_64_inb(IDE_PORT_CONTROL)
-#define IDE_READ_ERROR(i)         x86_64_inb(IDE_PORT_FEATURES)
+#define IDE_READ_STATUS(i)        port_inb(IDE_PORT_COMMAND)
+#define IDE_READ_ALT_STATUS(i)    port_inb(IDE_PORT_CONTROL)
+#define IDE_READ_ERROR(i)         port_inb(IDE_PORT_FEATURES)
 #define IDE_READ_SECTOR_NUMBER_SECTOR_COUNT(i) \
-    MAKE_UWORD(x86_64_inb(IDE_PORT_SECNUM), x86_64_inb(IDE_PORT_SECCOUNT))
+    MAKE_UWORD(port_inb(IDE_PORT_SECNUM), port_inb(IDE_PORT_SECCOUNT))
 #define IDE_READ_CYLINDER_HIGH_CYLINDER_LOW(i) \
-    MAKE_UWORD(x86_64_inb(IDE_PORT_CYL_HIGH), x86_64_inb(IDE_PORT_CYL_LOW))
+    MAKE_UWORD(port_inb(IDE_PORT_CYL_HIGH), port_inb(IDE_PORT_CYL_LOW))
 
 #else
 
@@ -756,7 +756,7 @@ static UWORD ide_device_type(WORD dev)
  * timeouts (100ms/3s) rather than orders of magnitude off. Revisit once
  * this arch has a real time source (#329's later milestones).
  */
-#ifdef __x86_64__
+#ifdef MACHINE_PC_X86_64
 #define IDE_TIMEOUT_INIT(timeout)   LONG ide_spins_left = (LONG)(timeout) * 5000L
 #define IDE_TIMEOUT_EXPIRED(next)   (ide_spins_left-- <= 0)
 #else
@@ -988,7 +988,7 @@ static void ide_rw_start(UWORD ifnum,UWORD dev,ULONG sector,UWORD count,UBYTE cm
 
         n = divu(sector,devinfo->sectors);
         secnum = (UBYTE)(sector-(n*devinfo->sectors) + 1);  /* sectors start at 1 */
-        cylnum = n / devinfo->heads;
+        cylnum = divu(n, devinfo->heads);
         headnum = (UBYTE)(n-(cylnum*devinfo->heads));
 
         KDEBUG((" CHS mode: %u/%u/%u\n",cylnum,headnum,secnum));
@@ -1088,7 +1088,7 @@ static void ide_get_data_32(volatile struct IDE *interface,UBYTE *buffer,ULONG b
 /*
  * get data from IDE device
  */
-#ifdef __x86_64__
+#ifdef MACHINE_PC_X86_64
 /*
  * x86-64's own data-register bulk transfer: the port-I/O equivalent of
  * the m68k unrolled-loop path below, which this arch can't use at all
@@ -1103,7 +1103,7 @@ static void ide_get_data(volatile struct IDE *interface,UBYTE *buffer,ULONG buff
     MAYBE_UNUSED(need_byteswap);
 
     KDEBUG(("ide_get_data(%p, %p, %lu, %d)\n", interface, buffer, bufferlen, need_byteswap));
-    x86_64_ide_insw(IDE_PORT_DATA, buffer, bufferlen / 2);
+    port_insw(IDE_PORT_DATA, buffer, bufferlen / 2);
 }
 #else
 static void ide_get_data(volatile struct IDE *interface,UBYTE *buffer,ULONG bufferlen,int need_byteswap)
@@ -1188,7 +1188,7 @@ static void ide_get_data(volatile struct IDE *interface,UBYTE *buffer,ULONG buff
         }
     }
 }
-#endif /* __x86_64__ */
+#endif /* MACHINE_PC_X86_64 */
 
 /*
  * read from the IDE device
@@ -1291,7 +1291,7 @@ static LONG ide_read(UBYTE cmd,UWORD ifnum,UWORD dev,ULONG sector,UWORD count,UB
 /*
  * send data to IDE device
  */
-#ifdef __x86_64__
+#ifdef MACHINE_PC_X86_64
 /* x86-64's own data-register bulk transfer -- see ide_get_data()'s own
  * comment above for why this can't share the m68k path below. */
 static void ide_put_data(volatile struct IDE *interface,UBYTE *buffer,ULONG bufferlen,int need_byteswap)
@@ -1299,7 +1299,7 @@ static void ide_put_data(volatile struct IDE *interface,UBYTE *buffer,ULONG buff
     MAYBE_UNUSED(interface);
     MAYBE_UNUSED(need_byteswap);
 
-    x86_64_ide_outsw(IDE_PORT_DATA, buffer, bufferlen / 2);
+    port_outsw(IDE_PORT_DATA, buffer, bufferlen / 2);
 }
 #else
 static void ide_put_data(volatile struct IDE *interface,UBYTE *buffer,ULONG bufferlen,int need_byteswap)
@@ -1374,7 +1374,7 @@ static void ide_put_data(volatile struct IDE *interface,UBYTE *buffer,ULONG buff
         }
     }
 }
-#endif /* __x86_64__ */
+#endif /* MACHINE_PC_X86_64 */
 
 /*
  * write to the IDE device
@@ -1555,7 +1555,7 @@ static void set_chs_mode(WORD dev,struct IDENTIFY *identify)
      * we don't care about the result, since some ATA-1 implementations
      * may not return an error indication even if the command fails.
      */
-    ide_nodata(IDE_CMD_INIT_DEV_PARAMS,ifnum,ifdev,(info->heads-1)*info->sectors,info->sectors);
+    ide_nodata(IDE_CMD_INIT_DEV_PARAMS,ifnum,ifdev,muls(info->heads-1, info->sectors),info->sectors);
 }
 
 static void set_lba48_mode(WORD dev, UWORD lba48)

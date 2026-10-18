@@ -62,7 +62,7 @@
  * It is reached *only* by a genuine ring-3 caller, deliberately: every
  * current caller (Super()/Setexc()/... from bios/bdos boot code, called
  * the way m68k's "trap #1"/ARM's "svc 1" are when already supervisor) goes
- * through x86_64_kernel_trap() below instead, an ordinary C function that
+ * through kernel_trap() below instead, an ordinary C function that
  * calls x86_64_trap_dispatch() directly with no privilege transition at
  * all. An earlier version of this file tried to let both kinds of caller
  * share x86_64_syscall_entry, telling them apart by testing whether the
@@ -92,6 +92,9 @@
  * portion at all: `syscall` does not build a stack frame the way an
  * exception or `int` does, so everything here is trapasm.S's own doing.
  */
+/* The copy of the palette the last ring-3 Setpalette() was given (a test hook) */
+const UWORD *x86_64_ring3_palette(void);
+
 typedef struct {
     UQUAD r15, r14, r13, r12, r10, r9, r8, rbp, rdi, rsi, rdx, rbx, rax, r11, rcx;
 } PACKED x86_64_trap_frame_t;
@@ -120,7 +123,7 @@ typedef struct {
 
 /*
  * Called from trapasm.S's entry stub (from_ring3 = 1) and from
- * x86_64_kernel_trap() below (from_ring3 = 0). Reads frame->rax/rdi/rsi/
+ * kernel_trap() below (from_ring3 = 0). Reads frame->rax/rdi/rsi/
  * rdx/r10 per the calling convention above, dispatches directly to
  * osif()/bios_vecs[]/xbios_vecs[] (no vector-table indirection: this arch
  * does not need ARM's dynamic-hooking generality, since bios_init()'s
@@ -128,26 +131,27 @@ typedef struct {
  * leaves the result in frame->rax for the caller to pick up.
  *
  * from_ring3 tells this function whether frame->rdi/rsi/rdx/r10 are
- * untrusted register values a genuine ring-3 caller supplied (see
- * trap.c's x86_64_arg_hits_known_kernel_range() -- not general
- * user-pointer validation, read its own comment before assuming
- * otherwise) or trusted arguments a kernel-mode caller passed via
- * x86_64_kernel_trap() -- the latter legitimately includes real kernel
- * (higher-half) pointers, e.g. an internal buffer bdos/fsmain.c passes
- * to Cconws(), so the "reject a known-kernel-mapped address" check
- * below only ever applies to the former.
+ * untrusted register values a genuine ring-3 caller supplied or trusted
+ * arguments a kernel-mode caller passed via kernel_trap() -- the
+ * latter legitimately includes real kernel (higher-half) pointers, e.g. an
+ * internal buffer a kernel caller passes to a BIOS call.  The dispatcher does
+ * not judge the raw register values either way; validating a pointer a
+ * call takes is that call's job (#352).  GEMDOS is not dispatched here for
+ * a kernel-mode caller at all: kernel code calls the GEMDOS implementations
+ * directly (bdos/arch/x86_64/kcall.c), and a `syscall` reaches osif(), which
+ * checks its arguments (#437).
  */
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
 
 /*
- * Kernel-mode entry point for GEMDOS/BIOS/XBIOS calls: builds a throwaway
+ * Kernel-mode entry point for BIOS/XBIOS calls (GEMDOS is refused: kernel
+ * code calls it directly, see kcall.c): builds a throwaway
  * x86_64_trap_frame_t on the caller's own stack and calls
  * x86_64_trap_dispatch() directly, exactly as if this were a genuine
  * `syscall` round trip, but as a plain, ordinary, recursion-safe C
  * function call -- no privilege transition, no swapgs, no dedicated
- * stack. This is what every current caller (util/arch/x86_64/miscasm.S's
- * trap1()/trap1_pexec(), and every x86_64 branch in include/biosbind.h/
- * xbiosbind.h) uses instead of x86_64_syscall_entry, since none of them
+ * stack. This is what every current caller (every x86_64 branch in
+ * include/biosbind.h/xbiosbind.h) uses instead of x86_64_syscall_entry, since none of them
  * are a real ring-3 process (there is no such thing yet -- #334) and
  * some of them call each other (bdos/fsmain.c's xsetdrv() calling
  * Drvmap(), for one): an ordinary C call nests to any depth for free the
@@ -156,13 +160,14 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
  * either corrupting its own single fixed stack bustack or performing the
  * unsafe caller-classification the comment above rejects.
  *
- * Only rax/rdi/rsi/rdx/r10 are meaningful -- exactly the fields
- * x86_64_trap_dispatch()'s GEMDOS/BIOS/XBIOS cases read -- matching the
- * `syscall` calling convention above field for field so callers can be
+ * callno and arg1..arg4 are the call number and its arguments, and map
+ * onto the registers the `syscall` convention above uses (rax, rdi, rsi,
+ * rdx, r10) -- exactly the fields x86_64_trap_dispatch()'s
+ * GEMDOS/BIOS/XBIOS cases read -- so callers can be
  * written (and read) as if this were that same convention with the
  * privilege transition simply subtracted out.
  */
-long x86_64_kernel_trap(long rax, long rdi, long rsi, long rdx, long r10);
+long kernel_trap(long callno, long arg1, long arg2, long arg3, long arg4);
 
 /*
  * Called from x86_64_syscall_entry's exit path (trapasm.S) when the
@@ -203,21 +208,31 @@ void x86_64_trap_init(void);
  * controller, and with it a real case for enabling IF anywhere, first
  * exists.
  *
- * Does not set up a per-process kernel stack or save any "resume the
- * caller" state, and does not touch percpu.kernel_rsp/TSS.rsp0: this is
- * only the primitive for a process's FIRST entry into ring 3, reusing
- * the single boot-time kernel stack those already point at -- this port
- * only ever runs one process at a time so far. A real per-process kernel
- * stack plus full parent/child resumption (m68k/ARM's gouser()/
- * termuser() coroutine, adapted for a per-process address space) is
- * bdos/arch/x86_64/rwa.c's job once #334 needs more than one process
- * alive at once; this function is what its first call into a fresh
- * process ultimately does.
+ * Does not itself select the kernel stack or save any "resume the caller"
+ * state, and does not touch percpu.kernel_rsp/TSS.rsp0: that is
+ * bdos/arch/x86_64/rwa.c's gouser(), which points percpu.kernel_rsp at the
+ * entered process's own kernel stack (include/procmem.h) just before calling
+ * this, so the process's system calls run on it, and which restores the
+ * launcher's stack, page tables, saved user RSP and GS state once the
+ * process has exited (its setjmp()/longjmp() pair is the "resume the caller"
+ * mechanism).  This function is only the primitive for a process's FIRST entry
+ * into ring 3.
  *
  * Never returns to its caller: the only way back into the kernel from
  * here on is a fault or `syscall` from the code now running at
  * entry_rip, exactly like any other ring-3 caller.
  */
-void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp) NORETURN;
+void x86_64_enter_user(UQUAD pml4_phys, UQUAD entry_rip, UQUAD user_rsp,
+                       UQUAD basepage, UQUAD entry_type) NORETURN;
+
+/* Undoes the `swapgs` of a syscall that will never return to its exit stub
+ * (Pterm unwinding to the launching kernel context). */
+void x86_64_syscall_abandoned(void);
+UQUAD x86_64_get_kernel_stack(void);
+void x86_64_set_kernel_stack(UQUAD rsp);
+UQUAD x86_64_get_saved_user_rsp(void);
+void x86_64_set_saved_user_rsp(UQUAD rsp);
+int x86_64_gs_to_user(void);
+void x86_64_gs_back_to_syscall(void);
 
 #endif /* X86_64_TRAP_H */

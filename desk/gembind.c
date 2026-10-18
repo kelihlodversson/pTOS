@@ -30,7 +30,7 @@
 #include <stdarg.h>
 
 #ifdef __x86_64__
-#include "asm.h"        /* x86_64_kernel_trap() */
+#include "asm.h"        /* kernel_trap() */
 #endif
 
 
@@ -121,7 +121,7 @@ static __inline__ WORD gem(const GEMBLK *gb)
      * same kind of "generic pointer, opaque to the trap dispatcher itself"
      * cast super()'s own caller does on every other arch.
      */
-    WORD retval = (WORD)x86_64_kernel_trap(((long)2 << 32) | 200, (long)gb, 0, 0, 0);
+    WORD retval = (WORD)kernel_trap(((long)2 << 32) | 200, (long)gb, 0, 0, 0);
 #else
     register WORD retval __asm__("d0");
     register WORD opcode __asm__("d0") = 200; /* AES */

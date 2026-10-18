@@ -228,7 +228,49 @@
 /////////////////////////////////////////////////////////////////////////
 
 //  interface to 'norm_blt'
+//
+// void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst) has three
+// pointer arguments; under -mfastcall only the first two (vars, src) go
+// to address registers (a0, a1) -- the third (dst) is passed on the
+// stack, same as the plain ABI. Like the plain ABI, the STACK argument
+// is caller-cleanup: our caller (compiled under -mfastcall) pushes dst
+// before the call and pops it itself afterwards, so this wrapper must
+// leave dst on the stack for it -- only drop the vars/src slots pushed
+// below, not dst.
+//
+// The real return address has to survive the "bsr normal_blit_stackbody"
+// call below (its own rts pops the bsr's own return address, not ours,
+// so we must jump back manually afterwards) -- but every register that
+// survives that bsr unchanged (d2-d7/a2-a6, preserved by the body's own
+// movem.l below) is exactly the set the *caller* of normal_blit() may
+// also have a live value in, and d0/d1/a0/a1 don't survive the body's
+// own jbsr norm_blt either. So the real return address is carried on
+// the stack instead of in a register: popped into d0/d1 alongside dst,
+// then both re-pushed with dst on top and the return address below it
+// -- past the vars/src/dst window the shared stackbody below reads at
+// fixed offsets, so it rides along completely untouched by the bsr/rts
+// round-trip. Symmetric teardown afterwards, ending in a manual jmp
+// rather than a plain rts since the return address isn't the top of
+// stack (dst, needed for the caller's own cleanup, is).
+#if CONF_WITH_MFASTCALL
 C_SYM(normal_blit):
+        move.l  (sp)+,d0                 // real return address
+        move.l  (sp)+,d1                 // dst (caller-pushed stack arg)
+        move.l  d0,-(sp)                 // push retaddr back first (ends up below dst)
+        move.l  d1,-(sp)                 // push dst back on top of it
+        move.l  a1,-(sp)                 // src
+        move.l  a0,-(sp)                 // vars
+        bsr     normal_blit_stackbody
+        lea     8(sp),sp                // drop vars/src pushed above
+        move.l  (sp)+,d0                 // dst
+        move.l  (sp)+,a0                 // real return address
+        move.l  d0,-(sp)                 // leave dst for our caller's own cleanup
+        jmp     (a0)
+
+normal_blit_stackbody:
+#else
+C_SYM(normal_blit):
+#endif
         movem.l d2-d7/a2-a6,-(sp)       // save registers that GCC expects unchanged
         move.l  44+4(sp),a6             // load ptr to end of vars
         move.l  44+8(sp),a0             // a0 & a1 must also be set

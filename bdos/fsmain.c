@@ -418,7 +418,7 @@ void xsetdta(DTAINFO *addr)     /* set transfer address to addr */
  * problems with BetaDOS, which expects to be able to select drive P:
  * even if it does not exist.
  */
-long xsetdrv(int drv)
+long xsetdrv(WORD drv)
 {
     if ((drv >= 0) && (drv < BLKDEVNUM))
         run->p_curdrv = drv;
@@ -460,7 +460,7 @@ static int syshnd(int h)
     if (h >= NUMSTD)
         return(h-NUMSTD);
 
-    if ((h = run->p_uft[h]) > 0 )
+    if ((h = PD_UFT(run)[h]) > 0 )
         return(h-NUMSTD);
 
     return(h);

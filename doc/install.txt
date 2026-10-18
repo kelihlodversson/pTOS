@@ -54,10 +54,12 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
 
           <prefix>ld --help | grep i386pep
 
-      On a Linux/x86-64 host, the system gcc/binutils already provide it,
-      so no separate cross toolchain is needed there:
+      The pc-x86_64 configuration defaults to the x86_64-elf- prefix, so
+      it never relies on the host compiler.  Override CROSS_COMPILE when
+      your compatible toolchain uses another prefix.  On a Linux/x86-64
+      host, the system gcc/binutils can be selected explicitly:
 
-          sudo apt-get install gcc binutils
+          make CROSS_COMPILE= pc-x86_64_defconfig && make CROSS_COMPILE=
 
       On any other host, two toolchains are known to work:
 
@@ -82,6 +84,40 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
       QEMU and an OVMF UEFI firmware build:
 
           sudo apt-get install qemu-system-x86 ovmf
+
+  PC (x86-64, built-in EmuCON)
+      On x86-64 EmuCON is not linked into the 64-bit kernel: "make" also
+      builds it as an x32 ELF executable (obj/x32/emucon.elf, from the
+      shared cli/ sources, in their standalone-console mode, with the small
+      runtime in cli/x32/) and embeds it in the EFI image, which runs it as
+      an ordinary ring-3 process.  The boot self-test's probe program
+      (tests/x32_probe/) is built and embedded the same way.  The compiler
+      therefore needs the same x32 support described for the test program
+      below; on Debian/Ubuntu that is the gcc-multilib package.  It uses
+      the same cross compiler prefix as the kernel by default.  Set
+      X32_CROSS_COMPILE explicitly only when the x32 compiler differs.
+      The AES and EmuDesk are not available on this machine yet.
+
+  PC (x86-64, running an x32 program from EmuCON)
+      EmuCON runs a program by its ".tos" (".prg", ...) name whatever its
+      executable format: the loader recognises an ELF by its contents.  To
+      try the x32 test program, installed as X32HELLO.TOS, under QEMU/OVMF:
+
+          make pc-x86_64_defconfig && make && make x32test
+          mkdir -p esp/EFI/BOOT
+          cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+          cp x32hello.elf esp/X32HELLO.TOS
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd .
+          qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+            -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
+            -drive format=raw,file=fat:rw:esp -serial stdio -display none
+
+      then type "x32hello.tos" at the EmuCON prompt: the program runs in ring
+      3, calls GEMDOS, exits, and the prompt comes back (it prints nothing on
+      success).  The same file on the boot drive makes the boot self-test run
+      it from a ring-3 process and print "x86-64 nested pexec: PASS"; CI does
+      exactly that.
 
   PC (x86-64, x32 userspace test program)
       "make x32test" builds tests/x32_hello/x32_hello.c, the minimal x32
@@ -112,6 +148,34 @@ You will need a (cross-)GCC toolchain for the machine you are building for:
       support instead -- for example a x86_64-linux-gnux32 triplet. This
       setting is independent of "Cross compiler prefix override" above:
       the two need not be, and often are not, the same toolchain.
+
+      On macOS, Homebrew's x86_64-elf toolchain provides both the x32
+      codegen and the x32 linker emulation:
+
+          brew install x86_64-elf-gcc
+
+      then build the complete EFI image with:
+
+          make pc-x86_64_defconfig && make
+
+      Note that the host "gcc" on macOS cannot build this at all: "-mx32"
+      is an x86-64-ELF feature, so the compile fails on the 64-bit
+      register names ("unknown register name 'rax'"). The prefix is
+      therefore required rather than merely optional on that host. The
+      build system already passes "-Wl,-m,elf32_x86_64" to name the
+      linker's x32 output emulation explicitly, so no further flags are
+      needed; without it a cross toolchain's driver can default to
+      "i386:x86-64" and reject the x32 input with "i386:x64-32
+      architecture of input file ... is incompatible with i386:x86-64
+      output", even though the linker does support x32. You can check
+      for that emulation with:
+
+          x86_64-elf-ld -V | grep elf32_x86_64
+
+      A successful link leaves one warning, "has a LOAD segment with RWX
+      permissions". That is expected: the image is a single flat
+      read/write/execute segment, which is what keeps the program down
+      to the one PT_LOAD segment bdos/elfld.c maps.
 
 If your toolchain is installed under a name other than the one that goes
 with the choice above, fill in "Cross compiler prefix override" in the same
@@ -174,6 +238,8 @@ atari192            ptos192us.img, ROM padded to 192 KB (at 0x00fc0000)
 atari256            ptos256us.img, ROM padded to 256 KB (at 0x00e00000)
 atari512            ptos512k.img, ROM padded to 512 KB (at 0x00e00000),
                     multi-language
+atari512-fastcall   the same built with -mfastcall (needs the -mfastcall
+                    toolchain, see above), for the TT and the Falcon
 cartridge           ptoscart.img and ptos.stc, diagnostic cartridge
 prg                 ptos.prg, a RAM TOS, multi-language
 floppy              ptosus.st, a bootable floppy holding a RAM TOS
@@ -275,6 +341,17 @@ addresses, and QEMU's ELF loader is what places it correctly.  Run it with:
     qemu-system-arm -M virt -cpu cortex-a7 -m 128 -kernel virt-arm.elf \
         -d guest_errors -serial stdio
 
+The RAM size follows -m, read from the memory node of the device tree QEMU
+passes in r2 (128 MiB is assumed without one): from 8 MiB up to 1 GiB is
+used, the rest is ignored.  The RAM, which is at 0x40000000 on this
+board, is mapped at virtual address 0, where the kernel is linked (its first
+16 MiB are also mapped at the physical address, which a software reset needs
+to switch the MMU off), and the
+devices are moved out of its way: the hardware addresses from 0x08000000 up
+to 0x0fffffff (the GIC, the UART, the virtio-mmio transports) are at 0xf0000000
+plus that address, and the PCIe windows, which start at 0x10000000, at
+0xc0000000 plus the address minus 0x10000000.
+
 Adding "-S -s" lets a remote gdb attach, as with the Raspberry Pi
 configurations.
 
@@ -295,15 +372,27 @@ Run it with:
     qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf \
         -d guest_errors -serial stdio
 
-Both flags after -M virt matter, not just the -kernel one: -m 128 is
-required because the image hardcodes 128 MiB as the top of RAM (there is
-no FDT parsing yet to size it from the command line), and -cpu m68020 is
-required instead of the board's own m68040 default because this specific
-QEMU version fatally aborts the whole VM -- instead of raising the guest
-CPU exception EmuTOS's shared CPU-detection code expects and handles --
-when that code probes a 68060-only register while telling 68040 and
-68060 apart. m68020 detection resolves earlier in that same routine, so
-it never reaches the register QEMU mishandles.
+Both flags after -M virt matter, not just the -kernel one: -m sets the RAM
+size, which the image reads from the bootinfo list QEMU puts after it (a
+size of 2 GiB or more is limited to just under 2 GiB, and 128 MiB is assumed
+if there is no list), and -cpu selects the CPU.  -cpu m68020 and
+-cpu m68040 both work with the image as built.  -cpu m68060 needs the
+kernel built with CPUFLAGS="-m68060" (menuconfig), because QEMU has no
+software package for the 64-bit mulu.l/divu.l that -m68020 code
+generation may use.  The boot-time CPU detection does not read the
+68060-only PCR on this board, since QEMU fatally aborts the whole VM on
+that read instead of raising a guest exception, and the cache and MMU
+register instructions QEMU's 68060 lacks are skipped.
+
+virt-m68k-cli_defconfig boots to EmuCON instead of the desktop, and
+virt-m68k-cli-fastcall_defconfig is the same with CONF_WITH_MFASTCALL set
+(it needs the -mfastcall toolchain, see above): the way to run the
+regression suite under the register-argument calling convention without
+an Atari emulator.
+
+virt-m68k-fastcall_defconfig is virt-m68k_defconfig (AES/VDI/desktop)
+built the same way, for running the GEM desktop and benchmarks under
+-mfastcall.
 
 PC (x86-64, UEFI boot)
 ----------------------
@@ -415,6 +504,39 @@ Both get their toolchain from .github/actions/setup-toolchain, which is the
 authoritative list of what a build needs installed.  Adding a configuration
 to configs/ is enough to have it built; the matrices are derived from that
 directory rather than listed in the workflows.
+
+
+Kernel-private process records
+==============================
+
+CONF_WITH_KPROC keeps a record per process in kernel memory, next to its
+GEMDOS basepage (bdos/kproc.c): the launching process (Pterm() uses it
+instead of the basepage's p_parent), whether the process was launched, its
+DTA pointer, and its standard handle map and current directories, which are
+then no longer read from or written to the basepage's p_uft and p_curdir
+fields (as in FreeMiNT).  It is mandatory on x86-64, where ring-3 processes
+can write their whole basepage, and optional on every other architecture,
+where it is off by default (a program can overwrite the kernel there
+anyway).  Turn it on in "make menuconfig" to run the same code the x86-64
+port runs; programs that look at p_uft or p_curdir of their own basepage
+then see zeros.  The configurations rpi2-kproc and atari512-kproc build with
+it on.  Everything that is specific to per-process address spaces (page
+tables, kernel stacks, loaned memory, the ancestors' basepage copies) is
+selected by CONF_WITH_USER_ASPACE, which only the x86-64 port sets.  It
+selects CONF_WITH_PROCMEM (and CONF_WITH_KPROC): the memory blocks of a process
+(basepage with TPA, environment) then come from the procmem window
+(include/procmem.h) with owners, generations and pins, not from the GEMDOS
+memory descriptor lists.  Neither is user-selectable; they follow the
+architecture.
+
+CONF_WITH_USER_COPY checks the pointer arguments of every GEMDOS call
+(bdos/uaccess.c) before the call runs: each pointer a call really uses must
+name memory the process may read, or write for an output, for the whole
+length the call touches, or the call fails with EIMBA (ERANGE for a bad
+length).  It is mandatory on x86-64 and optional on ARM, where without
+per-process address spaces it only rejects null pointers and bad lengths; it
+is not offered on m68k yet.  The rpi2-kproc configuration builds with it.
+
 
 
 Adding a configuration option

@@ -41,7 +41,7 @@
 #include "raspi_screen.h"
 #endif
 #ifdef MACHINE_PC_X86_64
-#include "pc_x86_64_gop.h"
+#include "gop.h"
 #endif
 #include "lisa.h"
 #include "nova.h"
@@ -685,7 +685,7 @@ void screen_init_address(void)
     setphys(v_bas_ad);
 #elif defined(MACHINE_PC_X86_64)
     /* #332: mirrors CONF_WITH_VIRTIO_GPU's own present/absent branching
-     * above -- x86_64_gop_probe()/x86_64_gop_init() (startup.c) already
+     * above -- gop_probe()/gop_init() (startup.c) already
      * did the actual discovery and mapping, well before biosmain(). No
      * ST-RAM-shaped VRAM exists on this machine to fall back to when GOP
      * is absent (headless firmware, or an unsupported pixel format);
@@ -695,9 +695,9 @@ void screen_init_address(void)
      * virtio_gpu_present()'s own else branch takes when neither GPU nor
      * requested-mode fallback is available.
      */
-    if (pc_x86_64_gop_present())
+    if (gop_present())
     {
-        v_bas_ad = pc_x86_64_gop_screenbase();
+        v_bas_ad = gop_screenbase();
         setphys(v_bas_ad);
     }
     else
@@ -961,8 +961,8 @@ void screen_get_current_mode_desc(SCREEN_MODE_DESC *desc)
 #elif defined(MACHINE_RPI)
     raspi_get_current_mode_desc(desc);
 #elif defined(MACHINE_PC_X86_64)
-    if (pc_x86_64_gop_present())
-        pc_x86_64_gop_get_current_mode_desc(desc);
+    if (gop_present())
+        gop_get_current_mode_desc(desc);
     else
     {
         atari_get_current_mode_info(&planes, &hz_rez, &vt_rez);

@@ -16,7 +16,7 @@
 #include "gsxdefs.h"
 
 #ifdef __x86_64__
-#include "asm.h"        /* x86_64_kernel_trap() */
+#include "asm.h"        /* kernel_trap() */
 #endif
 
 VDIPB vdipb;
@@ -41,7 +41,7 @@ void gsx2(void)
      * ("ordinary VDI call") is the low 32 bits, and &vdipb is the single
      * argument, matching every other arch's r1/d1.
      */
-    x86_64_kernel_trap(((long)2 << 32) | 0x73, (long)&vdipb, 0, 0, 0);
+    kernel_trap(((long)2 << 32) | 0x73, (long)&vdipb, 0, 0, 0);
 #else
 
     __asm__ volatile

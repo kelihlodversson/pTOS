@@ -14,10 +14,56 @@
 #define _BDOSBIND_H
 
 #include "bdosdefs.h"
+#include "config.h"
 
-/* OS entry points implemented in util/miscasm.S */
-extern long trap1(int, ...); /* Not reentrant! Do not call for Pexec() */
-extern long trap1_pexec(short mode, const char *path, const char *tail, const char *env);
+#if CONF_WITH_KCALL && defined(__LP64__)
+/*
+ * Kernel code (CONF_WITH_KCALL) does not trap into GEMDOS: these are plain C calls
+ * to the implementations (bdos/arch/x86_64/kcall.c).  Only the calls kernel
+ * code makes exist.
+ */
+#define TRAP1_ARG(x) ((long)(x))
+
+extern long kdos_crawio(long w);
+extern long kdos_dsetdrv(long drv);
+extern long kdos_fsetdta(long dta);
+extern long kdos_dsetpath(long path);
+extern long kdos_fsfirst(long name, long attr);
+extern long kdos_fsnext(void);
+extern long kdos_mxalloc(long amount, long mode);
+extern long kdos_malloc(long amount);
+extern long kdos_mfree(long block);
+extern long kdos_mshrink(long block, long newsiz);
+extern long kdos_pexec(long mode, long path, long tail, long env);
+extern void kdos_pterm(long rc);
+
+#define Crawio(w) kdos_crawio(TRAP1_ARG(w))
+#define Dsetdrv(drv) kdos_dsetdrv(TRAP1_ARG(drv))
+#define Fsetdta(buf) kdos_fsetdta(TRAP1_ARG(buf))
+#define Dsetpath(path) kdos_dsetpath(TRAP1_ARG(path))
+#define Mxalloc(amount,mode) kdos_mxalloc(TRAP1_ARG(amount), TRAP1_ARG(mode))
+#define Malloc(number) kdos_malloc(TRAP1_ARG(number))
+#define Mfree(block) kdos_mfree(TRAP1_ARG(block))
+#define Mshrink(block,newsiz) kdos_mshrink(TRAP1_ARG(block), TRAP1_ARG(newsiz))
+#define Pexec(mode,name,cmdline,env) kdos_pexec(TRAP1_ARG(mode), TRAP1_ARG(name), TRAP1_ARG(cmdline), TRAP1_ARG(env))
+#define Fsfirst(filename,attr) kdos_fsfirst(TRAP1_ARG(filename), TRAP1_ARG(attr))
+#define Fsnext() kdos_fsnext()
+#define Pterm(rc) kdos_pterm(TRAP1_ARG(rc))
+
+/* the reentrant Pexec() of the other targets is the same call here */
+#define trap1_pexec(mode,name,cmdline,env) Pexec(mode,name,cmdline,env)
+
+#else   /* every other target: trap into GEMDOS */
+
+/* trap1_pexec(), and either trap1() (ARM, x86-64) or trap1_v()/trap1_w()/...
+ * (m68k) -- see asm.h itself for why GEMDOS calls need typed per-width
+ * bindings on m68k but not elsewhere. */
+#include "asm.h"
+
+#ifndef __m68k__
+
+/* Not reentrant! Do not call trap1() for Pexec() -- use Pexec() below,
+ * which goes through the reentrant trap1_pexec() instead. */
 
 /*
  * TRAP1_ARG(x): on x86-64 only, cast an argument to `long` before it
@@ -56,7 +102,7 @@ extern long trap1_pexec(short mode, const char *path, const char *tail, const ch
  * being equal there makes this a no-op, not because ARM's own trap1()
  * shares m68k's exact mechanism.
  */
-#if defined(__x86_64__)
+#if defined(__LP64__)
 #define TRAP1_ARG(x) ((long)(x))
 #else
 #define TRAP1_ARG(x) (x)
@@ -96,5 +142,47 @@ extern long trap1_pexec(short mode, const char *path, const char *tail, const ch
 #define Fsnext() trap1(0x4f)
 #define Frename(oldname,newname) trap1(0x56, 0, TRAP1_ARG(oldname), TRAP1_ARG(newname))
 #define Fdatime(timeptr,handle,wflag) trap1(0x57, TRAP1_ARG(timeptr), TRAP1_ARG(handle), TRAP1_ARG(wflag))
+
+
+#else /* m68k: typed trap1_* bindings from arch/m68k/asm.h -- see #300 */
+
+#define Crawio(w) trap1_w(0x06, w)
+#define Crawcin() trap1_v(0x07)
+#define Cconws(buf) trap1_wl(0x09, buf)
+#define Cconis() trap1_v(0x0b)
+#define Dsetdrv(drv) trap1_w(0x0e, drv)
+#if CONF_WITH_VIDEL
+#define Srealloc(amount) trap1_wl(0x15, amount)
+#endif
+#define Dgetdrv() trap1_v(0x19)
+#define Fsetdta(buf) trap1_wl(0x1a, buf)
+#define Fgetdta() trap1_v(0x2f)
+#define Dcreate(path) trap1_wl(0x39, path)
+#define Dfree(buf,driveno) trap1_wlw(0x36, buf, driveno)
+#define Ddelete(path) trap1_wl(0x3a, path)
+#define Dsetpath(path) trap1_wl(0x3b, path)
+#define Fcreate(fname,attr) trap1_wlw(0x3c, fname, attr)
+#define Fopen(fname,mode) trap1_wlw(0x3d, fname, mode)
+#define Fclose(handle) trap1_w(0x3e, handle)
+#define Fread(handle,count,buf) trap1_wwll(0x3f, handle, count, buf)
+#define Fwrite(handle,count,buf) trap1_wwll(0x40, handle, count, buf)
+#define Fdelete(fname) trap1_wl(0x41, fname)
+#define Fseek(offset,handle,seekmode) trap1_wlww(0x42, offset, handle, seekmode)
+#define Fattrib(filename,wflag,attrib) trap1_wlww(0x43, filename, wflag, attrib)
+#define Mxalloc(amount,mode) trap1_wlw(0x44, amount, mode)
+#define Dgetpath(path,driveno) trap1_wlw(0x47, path, driveno)
+#define Malloc(number) trap1_wl(0x48, number)
+#define Mfree(block) trap1_wl(0x49, block)
+#define Mshrink(block,newsiz) trap1_wwll(0x4a, 0, block, newsiz)
+#define Fsfirst(filename,attr) trap1_wlw(0x4e, filename, attr)
+#define Fsnext() trap1_v(0x4f)
+#define Frename(oldname,newname) trap1_wwll(0x56, 0, oldname, newname)
+#define Fdatime(timeptr,handle,wflag) trap1_wlww(0x57, timeptr, handle, wflag)
+
+#define Pexec(mode,name,cmdline,env) trap1_pexec(mode, name, cmdline, env)
+
+#endif /* __m68k__ */
+
+#endif  /* x86-64 kernel or trap */
 
 #endif /* _BDOSBIND_H */

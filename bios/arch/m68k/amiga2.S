@@ -198,8 +198,12 @@ wait_kbd_ack:
         lea     C_SYM(scancode_atari_from_amiga),a0
         or.b    0(a0,d1.w),d0
 
+        // d2 holds the CIAA interrupt status of the caller: the keyboard
+        // vector is C code (or a program's), which may change it
+        move.l  d2,-(sp)
         move.l  C_SYM(kbdvecs)-4,a0           // kbdvec
         jsr     (a0)
+        move.l  (sp)+,d2
         rts
 
 /* CIA A Timer B interrupt (for 200 Hz system timer) */
@@ -228,7 +232,7 @@ nolong:
 
         .globl  C_SYM(amiga_int_5)
 C_SYM(amiga_int_5):
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 
         move.w  0xdff01e,d0             // INTREQR
         btst    #11,d0                  // RBF interrupt?
@@ -240,7 +244,7 @@ C_SYM(amiga_int_5):
         move.w  #0x0800,0xdff09c        // twice for compatibility
 
 amiga_int_5_end:
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
         rte
 
 /******************************************************************************/
@@ -251,7 +255,7 @@ amiga_int_5_end:
 
         .globl  C_SYM(amiga_vbl)
 C_SYM(amiga_vbl):
-        movem.l d0-d1/a0-a1,-(sp)
+        movem.l d0-d2/a0-a1,-(sp)
 
         move.w  0xdff01e,d0             // INTREQR
         btst    #5,d0                   // VBL interrupt?
@@ -281,7 +285,7 @@ setcopper:
         move.w  #0x0020,0xdff09c        // Twice for compatibility
 
 amivblend:
-        movem.l (sp)+,d0-d1/a0-a1
+        movem.l (sp)+,d0-d2/a0-a1
         rte
 
 #endif /* MACHINE_AMIGA */

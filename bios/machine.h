@@ -88,6 +88,15 @@ BOOL detect_32bit_address_bus(void);
 long xhdi_vec(UWORD opcode, ...);   /* In bios/natfeat.S */
 #endif
 
+/*
+ * Brings up the machine's interrupt controller and timer tick, and enables
+ * interrupts (CONF_WITH_MACHINE_IRQ_INIT).  Called once by bios_init(), after
+ * the rest of the machine's setup has run.
+ */
+#if CONF_WITH_MACHINE_IRQ_INIT
+void machine_irq_init(void);
+#endif
+
 /* detect the available hardware */
 void machine_detect(void);
 

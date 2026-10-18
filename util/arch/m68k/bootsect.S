@@ -145,9 +145,15 @@ cpudone:
 
         /* boot ramtos */
 
+#if CONF_WITH_MFASTCALL
+        move.l  d0,d1           // cpu
+        move.l  d3,d0           // size
+        move.l  a4,a0           // src
+#else
         move.l  d0,-(sp)        // cpu
         move.l  d3,-(sp)        // size
         move.l  a4,-(sp)        // src
+#endif
         bsr     C_SYM(bootram)
 
 fail:

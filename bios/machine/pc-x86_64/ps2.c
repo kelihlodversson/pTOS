@@ -24,7 +24,8 @@
 
 #define PS2_STATUS_OUTPUT_FULL 0x01  /* a byte is waiting at PS2_DATA */
 #define PS2_STATUS_INPUT_FULL  0x02  /* the controller hasn't consumed
-                                      * the last byte written yet */
+                                       * the last byte written yet */
+#define PS2_STATUS_AUX_DATA    0x20  /* output byte came from the mouse port */
 
 #define PS2_CMD_READ_CONFIG     0x20
 #define PS2_CMD_WRITE_CONFIG    0x60
@@ -48,7 +49,7 @@
 /*
  * Bounded retry counts, not a real elapsed-time timeout: hz_200 isn't
  * ticking yet when this runs (the PIT that drives it is programmed and
- * unmasked only after this returns, see irq.c's own x86_64_irq_init()),
+ * unmasked only after this returns, see irq.c's own machine_irq_init()),
  * and this is boot-time, one-shot setup, not a latency-sensitive path --
  * a plain iteration bound is the same defensive convention other early,
  * pre-tick x86-64 boot code already uses (e.g. gop.c's own firmware-
@@ -63,7 +64,7 @@ static BOOL wait_input_clear(void)
     int i;
 
     for (i = 0; i < PS2_POLL_LIMIT; i++) {
-        if (!(x86_64_inb(PS2_STATUS) & PS2_STATUS_INPUT_FULL))
+        if (!(port_inb(PS2_STATUS) & PS2_STATUS_INPUT_FULL))
             return TRUE;
     }
     return FALSE;
@@ -74,7 +75,7 @@ static BOOL wait_output_full(void)
     int i;
 
     for (i = 0; i < PS2_POLL_LIMIT; i++) {
-        if (x86_64_inb(PS2_STATUS) & PS2_STATUS_OUTPUT_FULL)
+        if (port_inb(PS2_STATUS) & PS2_STATUS_OUTPUT_FULL)
             return TRUE;
     }
     return FALSE;
@@ -83,20 +84,20 @@ static BOOL wait_output_full(void)
 static void ps2_write_command(UBYTE cmd)
 {
     if (wait_input_clear())
-        x86_64_outb(PS2_COMMAND, cmd);
+        port_outb(PS2_COMMAND, cmd);
 }
 
 static void ps2_write_data(UBYTE data)
 {
     if (wait_input_clear())
-        x86_64_outb(PS2_DATA, data);
+        port_outb(PS2_DATA, data);
 }
 
 static UBYTE ps2_read_data(void)
 {
     if (!wait_output_full())
         return 0;
-    return x86_64_inb(PS2_DATA);
+    return port_inb(PS2_DATA);
 }
 
 static void ps2_write_aux(UBYTE data)
@@ -122,8 +123,8 @@ void x86_64_ps2_init(void)
     {
         int i;
         for (i = 0; i < PS2_POLL_LIMIT
-                     && (x86_64_inb(PS2_STATUS) & PS2_STATUS_OUTPUT_FULL); i++)
-            x86_64_inb(PS2_DATA);
+                     && (port_inb(PS2_STATUS) & PS2_STATUS_OUTPUT_FULL); i++)
+            port_inb(PS2_DATA);
     }
 
     ps2_write_command(PS2_CMD_READ_CONFIG);
@@ -145,7 +146,7 @@ void x86_64_ps2_init(void)
      * the keyboard/timer paths are unaffected. */
     ps2_write_aux(MOUSE_CMD_ENABLE_REPORTING);
     if (wait_output_full())
-        x86_64_inb(PS2_DATA);
+        port_inb(PS2_DATA);
 }
 
 /*
@@ -186,10 +187,10 @@ void x86_64_ps2_init(void)
 static int ps2_e1_bytes_left;
 static BOOL ps2_saw_e0;
 static BOOL ps2_prtscn_second_half;
+static void ps2_mouse_data(UBYTE byte);
 
-void x86_64_ps2_keyboard_irq(void)
+static void ps2_keyboard_data(UBYTE sc)
 {
-    UBYTE sc = x86_64_inb(PS2_DATA);
     BOOL extended = ps2_saw_e0;
 
     ps2_saw_e0 = FALSE;
@@ -216,6 +217,24 @@ void x86_64_ps2_keyboard_irq(void)
     }
 
     kbd_int(sc);
+}
+
+static void ps2_service(void)
+{
+    UBYTE status = port_inb(PS2_STATUS);
+
+    if (!(status & PS2_STATUS_OUTPUT_FULL))
+        return;
+
+    if (status & PS2_STATUS_AUX_DATA)
+        ps2_mouse_data(port_inb(PS2_DATA));
+    else
+        ps2_keyboard_data(port_inb(PS2_DATA));
+}
+
+void x86_64_ps2_keyboard_irq(void)
+{
+    ps2_service();
 }
 
 /*
@@ -261,10 +280,8 @@ static int mouse_byte_index;
 static UBYTE mouse_byte0;
 static UBYTE mouse_byte1;
 
-void x86_64_ps2_mouse_irq(void)
+static void ps2_mouse_data(UBYTE byte)
 {
-    UBYTE byte = x86_64_inb(PS2_DATA);
-
     if (mouse_byte_index == 0 && !(byte & 0x08)) {
         /* Lost sync (or garbage before the mouse's own reporting was
          * actually enabled) -- the real first byte of every packet always
@@ -328,4 +345,9 @@ void x86_64_ps2_mouse_irq(void)
         mouse_byte_index = 0;
         break;
     }
+}
+
+void x86_64_ps2_mouse_irq(void)
+{
+    ps2_service();
 }

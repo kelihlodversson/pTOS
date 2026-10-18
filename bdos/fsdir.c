@@ -133,6 +133,7 @@
 #include "string.h"
 #include "kprint.h"
 #include "fatfs.h"
+#include "kproc.h"
 #include "bdosstub.h"
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
@@ -209,7 +210,7 @@ long xrmdir(char *p)
  *                  EPTHNF
  *                  EFILNF
  */
-long xchmod(char *p, int wrt, UBYTE mod)
+long xchmod(char *p, WORD wrt, UBYTE mod)
 {
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_chmod(p, wrt, mod);
@@ -237,7 +238,7 @@ long ixsfirst(char *name, WORD att, DTAINFO *addr)
     const char *s;              /*  M01.01.03                   */
     DND *dn;
     FCB *f;
-    long pos;
+    LONG pos;
 
     if (att != FA_VOL)
         att |= (FA_ARCHIVE|FA_RO);
@@ -302,7 +303,18 @@ long xfsfirst_at(char *name, WORD att, DTAINFO *dta)
  */
 long xsfirst(char *name, int att)
 {
-    return xfsfirst_at(name, att, RUN_XDTA());
+    DTAINFO *dta = RUN_XDTA();
+    long rc;
+
+#if CONF_WITH_USER_ASPACE
+    kproc_dta_forget(run, dta);     /* a failed search leaves nothing to continue */
+#endif
+    rc = xfsfirst_at(name, att, dta);
+#if CONF_WITH_USER_ASPACE
+    if (rc == E_OK)
+        kproc_dta_save(run, dta);   /* the search state is the kernel's */
+#endif
+    return rc;
 }
 
 
@@ -429,7 +441,22 @@ long xfsnext_at(DTAINFO *dta)
  */
 long xsnext(void)
 {
-    return xfsnext_at(RUN_XDTA());
+    DTAINFO *dta = RUN_XDTA();
+    long rc;
+
+#if CONF_WITH_USER_ASPACE
+    /* what the process left in the private part of its DTA is not believed */
+    if (!kproc_dta_restore(run, dta))
+        return ENMFIL;
+#endif
+    rc = xfsnext_at(dta);
+#if CONF_WITH_USER_ASPACE
+    if (rc == E_OK)
+        kproc_dta_save(run, dta);
+    else if (rc == ENMFIL)
+        kproc_dta_forget(run, dta);     /* the search is over for good */
+#endif
+    return rc;
 }
 
 
@@ -438,7 +465,7 @@ long xsnext(void)
  *
  *  Function 0x57   f_datime
  */
-long xgsdtof(DOSTIME *buf, int h, int wrt)
+long xgsdtof(DOSTIME *buf, WORD h, WORD wrt)
 {
     OFD *f = getofd(h);
     DFD *dfd;
@@ -611,7 +638,7 @@ void builds(const char *s1, char *s2)
  */
 /* rename file, n unused, old path p1, new path p2 */
 /*ARGSUSED*/
-long xrename(int n, char *p1, char *p2)
+long xrename(WORD n, char *p1, char *p2)
 {
     (void)n;
 #if CONF_WITH_PLUGGABLE_FS
@@ -713,7 +740,7 @@ void decr_curdir_usage(int n)
  *  Error returns:
  *                  EDRIVE
  */
-long xgetdir(char *buf, int drv)
+long xgetdir(char *buf, WORD drv)
 {
 #if CONF_WITH_PLUGGABLE_FS
     return pfs_do_getdir(buf, drv);
@@ -1160,7 +1187,7 @@ static DND *dcrack(const char **np)
     }
     else
     {
-        int curdir = run->p_curdir[d];
+        int curdir = PD_CURDIR(run)[d];
         p = dirtbl[curdir].dnd; /*  else use curr dir   */
     }
 

@@ -112,6 +112,17 @@ config CONF_WITH_VDI_TEXT_SPEEDUP
 	help
 	  Improve some VDI text output cases for legibility/performance.
 
+config CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
+	bool "VDI text effects speedup"
+	default n if TARGET_192
+	default y
+	help
+	  Draw bold, skewed, and bold and skewed text faster on big-endian
+	  CPUs: bold strings go to the blitter a string at a time, skewed
+	  glyphs are set up once for all planes, and bold and skewed glyphs
+	  are thickened only once.  It takes some 2.5 KB of ROM, which the
+	  192 KB images do not have to spare.
+
 config CONF_WITH_VDI_VERTLINE
 	bool "VDI vertical line drawing speedup"
 	default n if TARGET_192

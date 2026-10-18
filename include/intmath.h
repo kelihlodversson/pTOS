@@ -10,6 +10,8 @@
 #ifndef INTMATH_H
 #define INTMATH_H
 
+#include "config.h"
+
 ULONG Isqrt(ULONG x);
 
 /*
@@ -53,7 +55,7 @@ ULONG Isqrt(ULONG x);
  */
 static __inline__ WORD mul_div(WORD m1, WORD m2, WORD d1)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     return (WORD)(( (long)m1 * (long)m2 ) / d1);
 #else
     __asm__ (
@@ -79,7 +81,7 @@ static __inline__ WORD mul_div(WORD m1, WORD m2, WORD d1)
  */
 static __inline__ UWORD umul_shift(UWORD m1, UWORD m2)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     return (UWORD)(((ULONG)m1 * (ULONG)m2 + 32768UL) >> 16);
 #else
     __asm__ (
@@ -101,7 +103,7 @@ static __inline__ UWORD umul_shift(UWORD m1, UWORD m2)
  */
 static __inline__ LONG muls(WORD m1, WORD m2)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     return (LONG)m1 * (LONG)m2;
 #else
     LONG ret;
@@ -117,6 +119,56 @@ static __inline__ LONG muls(WORD m1, WORD m2)
 }
 
 /*
+ * divs - signed integer divide
+ *
+ * divide a signed long by a signed short, returning the signed short quotient
+ * (assumes that the result will always fit in a signed short)
+ *
+ * Without -mshort, "(WORD)a / (WORD)b" is computed as a 32-bit division, which
+ * on a 68000/68010 is a call to libgcc's __divsi3; this is the 16-bit divs.
+ * Prefer it in hot paths where both operands are known to be 16 bit values.
+ */
+static __inline__ WORD divs(LONG d1, WORD d2)
+{
+#if CONF_WITH_NATIVE_ABI
+    return (WORD)(d1 / d2);
+#else
+    __asm__ (
+      "divs %1,%0"
+    : "+d"(d1)
+    : "idm"(d2)
+    : "cc"
+    );
+
+    return (WORD)d1;
+#endif
+}
+
+/*
+ * mods - signed integer remainder
+ *
+ * the remainder of dividing a signed long by a signed short, as a signed
+ * short, with the sign of the dividend (like the C '%' operator)
+ * (assumes that the quotient will always fit in a signed short)
+ */
+static __inline__ WORD mods(LONG d1, WORD d2)
+{
+#if CONF_WITH_NATIVE_ABI
+    return (WORD)(d1 % d2);
+#else
+    __asm__ (
+      "divs %1,%0\n\t"
+      "swap %0"
+    : "+d"(d1)
+    : "idm"(d2)
+    : "cc"
+    );
+
+    return (WORD)d1;
+#endif
+}
+
+/*
  * divu - unsigned integer divide
  *
  * divide an unsigned long by an unsigned short, returning an unsigned short
@@ -124,7 +176,7 @@ static __inline__ LONG muls(WORD m1, WORD m2)
  */
 static __inline__ UWORD divu(ULONG d1, UWORD d2)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     return (UWORD)(d1 / d2);
 #else
     __asm__ (

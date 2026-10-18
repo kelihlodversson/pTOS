@@ -3,7 +3,7 @@
 A small, platform-independent regression test harness. Test suites are
 plain C, run inside a real (emulated) pTOS boot, and are cross-compiled
 for every architecture pTOS targets — the same test source runs unmodified
-on m68k and ARM.
+on m68k, ARM and x86-64 (as x32 programs).
 
 ## Building
 
@@ -30,6 +30,15 @@ make test-hd
 `lib/libcmini` is a git submodule. If it's missing, `make test-hd` fails
 with an actionable error — run `git submodule update --init` and retry.
 
+`make test-dir` collects the same files (`runtests.tos`, `emudesk.inf`, the
+probe programs and `TESTS/`) into a plain `test-dir/` directory instead of
+an image. That needs neither `mkfs.fat` nor mtools, and lets QEMU's virtual
+FAT driver present the directory as the disk (see [Running](#running)).
+
+On x86-64 the programs are built as x32 programs (libcmini's
+`ptos_x86_64_defconfig`, with the compiler and flags of the other x32
+programs). There is no disk image target for x86-64: use `make test-dir`.
+
 ## Running
 
 `tests/emudesk.inf`'s `#Z` autorun line launches `C:\RUNTESTS.TOS`
@@ -47,6 +56,25 @@ qemu-system-arm -M raspi2b -bios kernel7.img \
   -d guest_errors -serial stdio
 ```
 
+From a host directory, without building an image (`make test-dir` first).
+raspi2b wants a power-of-two SD card size, so give vvfat a smaller raw
+window; virt-arm takes it over virtio-blk as it is:
+
+```sh
+qemu-system-arm -M raspi2b -bios kernel7.img \
+  -drive if=sd,driver=raw,size=256M,file.driver=vvfat,file.dir=test-dir,file.rw=on \
+  -d guest_errors -serial stdio
+
+qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf \
+  -global virtio-mmio.force-legacy=false \
+  -drive if=none,id=hd0,format=raw,file.driver=vvfat,file.dir=test-dir,file.rw=on \
+  -device virtio-blk-device,drive=hd0 -d guest_errors -serial stdio -display none
+```
+
+On x86-64 (QEMU with OVMF), copy `test-dir`'s contents into the directory
+that holds `EFI/BOOT/BOOTX64.EFI` and is attached as a FAT drive, boot, and
+type `runtests.tos` at the EmuCON prompt — there is no autorun.
+
 On Hatari (m68k), attach it as an ACSI disk and use `--conout 2` to capture
 the console text (a VT-52 terminal channel) directly to Hatari's own
 stdout:
@@ -55,6 +83,17 @@ stdout:
 hatari --tos ptos512k.img --machine ste --memsize 4 --sound off \
   --acsi test-hd.img --conout 2 --run-vbls 1200
 ```
+
+CI runs the suite on three machines (the `regression` job in
+`.github/workflows/build.yml`) with `tools/run-regression-tests.sh
+<virt-arm|virt-m68k|pc-x86_64>`, which also works locally once the matching
+configuration (`virt-arm-cli`, `virt-m68k-cli-elf` (the m68k ELF loader is an option, and three suites need it) or `pc-x86_64`) is built and
+`make test-dir` has run. The virt machines are the `-cli` configurations so
+that they boot to EmuCON, where the script types `runtests.tos` into the
+serial console; the script ends QEMU when the harness has printed its
+verdict and fails unless that is `All tests passed.` After a pass it starts
+`poweroff.tos` (`Shutdown(SHUT_POWER)`, doc/shutdown.txt) and expects QEMU to
+switch off by itself.
 
 See the `ptos-smoketest` skill (`.claude/skills/ptos-smoketest/SKILL.md`)
 for more emulator invocations and gotchas.
@@ -124,7 +163,7 @@ Test code is userland, built against libcmini rather than the kernel's own
 `portab.h` types (`ULONG`, `BOOL`, etc.) or `-mshort` conventions — use plain
 C types and libcmini's headers (`<mint/osbind.h>`
 for GEMDOS calls). It's cross-compiled for whichever architecture is
-currently configured (`ARCH_ARM`/`ARCH_M68K`), so avoid anything
+currently configured (`ARCH_ARM`/`ARCH_M68K`/`ARCH_X86_64`), so avoid anything
 architecture-specific unless the test is deliberately targeted at one (see
 `stack_alignment`, which is ARM-only in effect: it exercises a bug that
 never existed on m68k).
@@ -150,3 +189,90 @@ placeholder file (`.keep`) since git can't track empty directories.
 Nothing here is unique to `stack_alignment` — add as many
 `tests/<name>/<name>.c` files as needed and they all run in one pass,
 reported individually and summarized together.
+
+## Suites that need AES/VDI
+
+`tools/pBench/gem.c` (the minimal AES/VDI bindings of pBench, see
+`doc/pbench.txt`) is linked into `runtests.tos` and `tools/pBench` is on the
+include path of every suite, so a suite can `#include "gem.h"` and call
+`appl_init()`, `v_opnvwk()` and the VDI text and drawing calls without
+anything else. Bindings that a suite needs and `gem.h` lacks belong there.
+
+### text_blit
+
+`text_blit` checks VDI text output on Atari ST/STE style bitplane screens
+(1, 2 or 4 planes, 320 or 640 pixels wide; also the 640x480 with 16 colours
+of a Falcon). It is part of the blitter text
+epic (#498), and is skipped, and reported as `SKIP` with the screen it found,
+on every other machine: without a blitter (`Blitmode()` says so), on ARM and on
+screens that are not bitplane screens it has nothing to compare.
+
+It draws strings on a band of the screen (restored afterwards), starting
+from a fixed pseudo-random pattern, in three groups:
+
+- plain text (no effects, no rotation) in every system font, writing mode,
+  a few colours, 18 horizontal alignments and 8 clip rectangles, compared
+  with a model in the test that draws the glyphs straight from the font data;
+- text with every combination of the effects (bold, light, skewed, underline,
+  outline) and rotation (0, 90, 180, 270 degrees), and
+- text with effects under clip rectangles, where the last two groups compare
+  the output with the blitter disabled and enabled with `Blitmode()`.
+
+While text output does not use the blitter at all, both renderings come from
+the same code and the comparison between them cannot fail; the model is what
+is checked then. A blitter implementation of text output has to produce
+exactly the pixels of the software one, which is what the comparison
+guarantees from then on.
+
+Failures print the first few differing cases (string, position, point size,
+effects, writing mode, colour, rotation, clip rectangle and the first byte
+that differs). It needs about two minutes under Hatari, which is what to run
+it on (`--machine ste`; `--tos-res low|med|high` for the three screen modes):
+
+```sh
+make atari512_defconfig && make
+make test-hd
+hatari --tos ptos512k.img --machine ste --memsize 4 --sound off \
+  --fast-forward on --acsi test-hd.img --conout 2
+```
+
+Hatari does not exit when the tests are done (the harness returns to the
+desktop), so run it under `timeout -s KILL` and read the output.
+
+### raster_copy
+
+`raster_copy` checks `vro_cpyfm()` copies between two areas of the screen on
+Atari ST/STE style bitplane screens (1, 2 or 4 planes, 320 or 640 pixels
+wide), and is skipped, as `text_blit` is, without a blitter, on ARM and on
+other screens. It is part of the blitter text epic (#498), issue #503.
+
+With the blitter disabled the copy is done by the assembler `fast_bit_blt()`,
+with it enabled by `bit_blt()` and the blitter. The test makes the same copies
+through both on a band of the screen (restored afterwards), and compares the
+screen memory: all 16 writing modes, widths from 1 to 70 pixels, heights of 1
+and 7 lines, three alignments of the source and four of the destination, and
+destinations that are far from the source, overlap it on the same lines, or
+one line above or below it (so that the blit goes in either direction), with
+and without a clip rectangle. Mode 5 leaves the destination as it is: the
+blitter is checked against the band as it was, and the CPU path against the
+blitter's.
+
+### On an emulated Falcon
+
+Both suites run on a Falcon in Hatari, where the CPU can have a data cache
+(`--machine falcon --cpulevel 3` or `4`, `--memsize 14`, `--dsp none`, the
+test disk as `--ide-master`), in the screen mode pTOS starts in (640x480 with
+16 colours), and pass with the 68030 and with the 68040. As a control, with
+the blitter code's cache calls (`BLITTER_CACHE_OPS` in `vdi/vdi_raster.c`)
+turned off, `text_blit` fails with the 68040 (1552 of the 7488 justified text
+cases, for one) and still passes with the 68030: Hatari shows the missing
+flush and invalidate of the 68040's data cache, but not that of the 68030's
+(so the 68030 code is only checked for not crashing here).
+
+The workflow `.github/workflows/hatari-tests.yml` does this on every pull
+request to `master` or an epic branch (`tools/run-hatari-tests.py` runs one
+machine): the ROM image of `atari512` and of `atari512-fastcall` (the same
+built with `-mfastcall`, so that the code is run under that calling convention
+too) on an emulated STE in ST-LOW, ST-MEDIUM and ST-HIGH, and on a Falcon with
+a 68030 and with a 68040. It fails if a test fails, and also if `text_blit` or
+`raster_copy` skip themselves, as they have to run on every one of these.

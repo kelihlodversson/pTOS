@@ -14,6 +14,8 @@
 #ifndef BLKDEV_H
 #define BLKDEV_H
 
+#include "config.h"
+
 #include "biosdefs.h"
 
 /*
@@ -113,7 +115,7 @@ WORD get_shift(ULONG blocksize);
 int add_partition(UWORD unit, LONG *devices_available, char id[], ULONG start, ULONG size);
 
 /* critical error handling */
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 extern LONG (*etv_critic)(WORD error, WORD device);
 #define call_etv_critic  etv_critic
 #else
@@ -173,6 +175,11 @@ typedef struct _blkdev  BLKDEV;
  */
 
 extern BLKDEV blkdev[];
+
+/* Return the buffer size consumed by a Rwabs() request before dispatching it. */
+#if CONF_WITH_USER_ASPACE
+BOOL blkdev_rwabs_buffer_size(WORD rw, WORD cnt, WORD dev, ULONG *size);
+#endif
 
 
 #endif /* BLKDEV_H */

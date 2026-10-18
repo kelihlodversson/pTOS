@@ -31,7 +31,7 @@
  * exists, a throwaway in-kernel harness that IRETQs into CPL3 first,
  * purely to exercise this path): every kernel-mode caller -- bios/bdos
  * calling Super()/Setexc()/... the way m68k's "trap #1"/ARM's "svc 1" are
- * called when already supervisor -- goes through x86_64_kernel_trap()
+ * called when already supervisor -- goes through kernel_trap()
  * (trap.c) instead, an ordinary C function call with no privilege
  * transition at all. An earlier version of this file let both share this
  * entry point, telling them apart by testing whether the interrupted RSP
@@ -90,10 +90,18 @@ C_SYM(x86_64_syscall_entry):
          * clear at any C function boundary, and this can interrupt code
          * that left it set. */
         cld
+        /* syscall entered with IF masked, so an IRQ cannot land while this
+         * stub still uses the caller's stack. The kernel stack and complete
+         * register frame are safe now; allow timer, PS/2 and COM1 IRQs while
+         * the dispatcher may block in Bconin(). */
+        sti
 
         mov     %rsp, %rdi
         movl    $1, %esi        /* from_ring3: only a real `syscall` reaches here */
         call    C_SYM(x86_64_trap_dispatch)
+        /* Do not let an IRQ use the caller's stack while restoring the
+         * syscall frame and returning through sysretq. */
+        cli
 
         /*
          * `sysretq` itself never validates %rcx (the target RIP). `syscall`
@@ -182,8 +190,7 @@ C_SYM(x86_64_syscall_entry):
          * comment: initialized to top-8, "as if a return address had
          * just been pushed"). That phrasing describes a just-*entered*
          * callee's own state, not a caller ready to make a call of its
-         * own -- exactly the distinction trap1()'s subq $8/addq $8 pair
-         * (miscasm.S) exists to bridge for the same reason.
+         * own -- hence the subq $8 below, which makes it one.
          * x86_64_bad_sysret() (trap.c) never returns, so there is no
          * matching addq to restore afterward. %rdx (not %rcx, which
          * still holds this stub's OWN saved copy on the stack, not yet

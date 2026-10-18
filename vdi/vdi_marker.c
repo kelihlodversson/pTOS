@@ -12,6 +12,7 @@
 #include "emutos.h"
 #include "vdi_defs.h"
 #include "lineavars.h"
+#include "intmath.h"
 
 
 
@@ -42,7 +43,7 @@ void vdi_vsm_height(Vwk * vwk)
 
     /* Set the marker height internals and the return parameters. */
     vwk->mark_height = h;
-    h = (h + DEF_MKHT / 2) / DEF_MKHT;
+    h = divs(h + DEF_MKHT / 2, DEF_MKHT);
     vwk->mark_scale = h;
     CONTRL->nptsout = 1;
     pts_out = PTSOUT;

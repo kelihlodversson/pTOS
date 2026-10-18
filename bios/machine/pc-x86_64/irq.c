@@ -17,24 +17,27 @@
 #include "pic.h"
 #include "pit.h"
 #include "ps2.h"
-#include "irq.h"
+#include "machine.h"
+#include "io.h"
 #include "vectors.h"
+#include "earlycon.h"
+#include "ikbd.h"
 
 /* The 200 Hz rate every other pTOS machine's own hardware timer drives
  * vector_5ms()/int_timerc() at (see bios/arch/x86_64/vectors.c's own
  * comment) -- not this file's own invention. */
 #define SYSTEM_TICK_HZ 200
 
-/* irqasm.S's own entry stubs, numbered by IDT vector (32 = PIC1 IRQ0, 33 =
- * PIC1 IRQ1, 44 = PIC2 IRQ4 i.e. IRQ12). */
+/* irqasm.S's own entry stubs, numbered by IDT vector. */
 extern void x86_64_irq32(void);
 extern void x86_64_irq33(void);
+extern void x86_64_irq36(void);
 extern void x86_64_irq44(void);
 
 /* Called from irqasm.S's common trampoline for every device IRQ this
  * machine handles. Always sends EOI, even for a vector with no case
  * below (unreachable in practice: the PIC is never unmasked for a line
- * without a case here -- see x86_64_irq_init()), so a stray/spurious IRQ
+ * without a case here -- see machine_irq_init()), so a stray/spurious IRQ
  * can never leave a chip believing itself still "in service" and unable
  * to raise another. */
 void x86_64_pc_irq_dispatch(int vector)
@@ -46,6 +49,12 @@ void x86_64_pc_irq_dispatch(int vector)
     case X86_64_PIC1_VECTOR_BASE + X86_64_IRQ_KEYBOARD:
         x86_64_ps2_keyboard_irq();
         break;
+    case X86_64_PIC1_VECTOR_BASE + X86_64_IRQ_COM1:
+#if CONF_SERIAL_CONSOLE && !CONF_SERIAL_CONSOLE_POLLING_MODE
+        while (earlycon_can_read())
+            push_ascii_ikbdiorec(earlycon_read_byte());
+#endif
+        break;
     case X86_64_PIC2_VECTOR_BASE + (X86_64_IRQ_MOUSE - 8):
         x86_64_ps2_mouse_irq();
         break;
@@ -54,12 +63,26 @@ void x86_64_pc_irq_dispatch(int vector)
     x86_64_pic_send_eoi(vector);
 }
 
-void x86_64_irq_init(void)
+/*
+ * Remaps and configures the legacy PIC (bios/machine/pc-x86_64/pic.h),
+ * installs this machine's three device-IRQ IDT gates (timer, keyboard,
+ * mouse -- irqasm.S's own stubs), programs the PIT for a 200 Hz tick
+ * (pit.h) and brings up the PS/2 controller (ps2.h), unmasks all
+ * three lines, and finally enables interrupts (`sti`).  Declared in
+ * bios/machine.h and called by
+ * bios/bios.c once every other machine's platform-specific setup has already
+ * run, so the very first interrupt that can arrive always has a real,
+ * installed handler waiting for it.  Must run after x86_64_idt_init()
+ * (bios/arch/x86_64/idt.c) and x86_64_gdt_init() (the IDT and its gates must
+ * exist before this adds more of them).
+ */
+void machine_irq_init(void)
 {
     x86_64_pic_remap();
 
     x86_64_idt_set_gate(X86_64_PIC1_VECTOR_BASE + X86_64_IRQ_TIMER, x86_64_irq32);
     x86_64_idt_set_gate(X86_64_PIC1_VECTOR_BASE + X86_64_IRQ_KEYBOARD, x86_64_irq33);
+    x86_64_idt_set_gate(X86_64_PIC1_VECTOR_BASE + X86_64_IRQ_COM1, x86_64_irq36);
     x86_64_idt_set_gate(X86_64_PIC2_VECTOR_BASE + (X86_64_IRQ_MOUSE - 8), x86_64_irq44);
 
     x86_64_pit_init(SYSTEM_TICK_HZ);
@@ -68,4 +91,10 @@ void x86_64_irq_init(void)
     x86_64_pic_unmask(X86_64_IRQ_TIMER);
     x86_64_pic_unmask(X86_64_IRQ_KEYBOARD);
     x86_64_pic_unmask(X86_64_IRQ_MOUSE);
+#if CONF_SERIAL_CONSOLE && !CONF_SERIAL_CONSOLE_POLLING_MODE
+    x86_64_pic_unmask(X86_64_IRQ_COM1);
+    earlycon_enable_rx_interrupt();
+#endif
+
+    x86_64_sti();
 }

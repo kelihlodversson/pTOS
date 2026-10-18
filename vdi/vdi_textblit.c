@@ -22,10 +22,12 @@
 #include "vdi_textblit.h"
 #include "vdi_backend.h"
 #include "kprint.h"
+#include "endian.h"
 #include "vdistub.h"
 #include "lineavars.h"
 #include "vdi_inline.h"
 #include "biosext.h"
+#include "has.h"
 
 
 /*
@@ -184,6 +186,14 @@ static WORD do_clip(LOCALVARS *vars)
  * must not dereference UWORD* pointers directly on little-endian
  * machines: the accessors below are endian-neutral (a no-op on m68k).
  */
+#if BYTE_ORDER == BIG_ENDIAN
+/*
+ * the buffer's order is the CPU's own: the words can be used as they are,
+ * which makes outline() a good deal quicker than going a byte at a time
+ */
+#define get_buf_word(p)     (*(const UWORD *)(p))
+#define put_buf_word(p, w)  (*(UWORD *)(p) = (w))
+#else
 static UWORD get_buf_word(const UWORD *p)
 {
     const UBYTE *b = (const UBYTE *)p;
@@ -196,11 +206,52 @@ static void put_buf_word(UWORD *p, UWORD w)
     b[0] = (UBYTE)(w >> 8);
     b[1] = (UBYTE)(w & 0xff);
 }
+#endif
 
 static ULONG merge_byte(UWORD *p, UWORD n)
 {
     return ((ULONG)get_buf_word(p) << 16) | ((ULONG)(get_buf_word(p + 1) >> 8) << 8) | (n & 0xFF);
 }
+
+
+#if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
+/*
+ * thicken_glyph()
+ *
+ * Draw a bold glyph into a buffer of one word per line, from the top line
+ * down, the way normal_blit() draws it into the text buffer for pre_blit()
+ * with mono_cell (see text_blt()): the leftmost 'keep' pixels of the glyph
+ * are kept and smeared 'weight' pixels to the right, and the line is 'w'
+ * pixels wide.  'keep' is the width of the glyph, or, in a monospaced
+ * font, whose bold glyphs are no wider, that less the weight
+ * (normal_blit()'s thk_msk).
+ *
+ * 'src' is the word of the glyph's top line with its first pixel, which is
+ * pixel 'sx' of it, and 'form_width' the width of the font form in bytes.
+ * The glyph, and the line, must be no wider than a word.  The font and the
+ * buffer are read and written as the CPU's words, so this is for big-endian
+ * CPUs only.
+ */
+void thicken_glyph(const UBYTE *src, WORD form_width, WORD sx, WORD w, WORD weight,
+                   WORD h, UWORD *buf)
+{
+    WORD keep = w - weight, r, k;
+    UWORD keep_mask, w_mask, g;
+    ULONG bits;
+
+    keep_mask = (keep > 0) ? (UWORD)(0xffffU << (16 - keep)) : 0;
+    w_mask = (UWORD)(0xffffU << (16 - w));
+    for (r = 0; r < h; r++)
+    {
+        bits = ((ULONG)((const UWORD *)src)[0] << 16) | ((const UWORD *)src)[1];
+        g = (UWORD)((bits << sx) >> 16) & keep_mask;
+        for (k = 0; k < weight; k++)
+            g |= g >> 1;
+        buf[r] = g & w_mask;
+        src += form_width;
+    }
+}
+#endif /* CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP */
 
 
 /*
@@ -309,8 +360,17 @@ void outline(LOCALVARS *vars)
 /*
  * copy the character into a buffer so that we can
  * outline/rotate/scale it
+ *
+ * a bold character is normally made wider by the weight in the buffer.
+ * if 'mono_cell' is set, and the font is monospaced, it is not, so the
+ * buffer is as wide as the character cell, as the software text output
+ * (normal_blit()) has it when it makes a bold character without a buffer.
+ *
+ * if 'keep_skew' is set, a skewed character is only thickened in the
+ * buffer, not skewed: the skew is left to the output of the buffer, as
+ * the software text output does it when there is no buffer.
  */
-static void pre_blit(LOCALVARS *vars)
+static void pre_blit(LOCALVARS *vars, BOOL mono_cell, BOOL keep_skew)
 {
     WORD weight, skew, size, n, tmp_style;
     WORD dest_width, dest_height;
@@ -321,17 +381,18 @@ static void pre_blit(LOCALVARS *vars)
     vars->height = vars->DELY;
 
     vars->tsdad = linea_vars.SOURCEX & 0x000f;     /* source dot address */
-    offset = (linea_vars.SOURCEY+vars->DELY-1) * (LONG)vars->s_next + ((linea_vars.SOURCEX >> 3) & ~1);
+    offset = muls(linea_vars.SOURCEY+vars->DELY-1, vars->s_next) + ((linea_vars.SOURCEX >> 3) & ~1);
     src = vars->sform + offset;         /* bottom of font char source */
     vars->s_next = -vars->s_next;       /* we draw from the bottom up */
 
     weight = linea_vars.WEIGHT;
-    skew = linea_vars.LOFF + linea_vars.ROFF;
+    skew = keep_skew ? 0 : linea_vars.LOFF + linea_vars.ROFF;
 
     dest_width = vars->DELX;
     if (vars->STYLE & F_THICKEN)
     {
-        dest_width += weight;
+        if (!(mono_cell && linea_vars.MONO))
+            dest_width += weight;
         vars->smear = weight;
     }
 
@@ -356,7 +417,7 @@ static void pre_blit(LOCALVARS *vars)
     vars->buffa = linea_vars.SCRPT2 - vars->buffa; /* switch buffers */
     dst = (UBYTE *)linea_vars.SCRTCHP + vars->buffa;
     vars->sform = dst;
-    if (vars->STYLE & (F_OUTLINE|F_SKEW))
+    if ((vars->STYLE & F_OUTLINE) || ((vars->STYLE & F_SKEW) && !keep_skew))
     {
         p = (WORD *)vars->sform;
         n = (size - vars->d_next) / 2;  /* add bottom line */
@@ -377,7 +438,7 @@ static void pre_blit(LOCALVARS *vars)
     vars->nbrplane = 1;             /* 1 plane for this blit */
     vars->nextwrd = 2;
     tmp_style = vars->STYLE;        /* save temporarily */
-    vars->STYLE &= (F_SKEW|F_THICKEN);  /* only thicken, skew */
+    vars->STYLE &= keep_skew ? F_THICKEN : (F_SKEW|F_THICKEN);  /* only thicken, skew */
 
     normal_blit(vars+1, src, dst);  /* call assembler helper function */
 
@@ -393,7 +454,7 @@ static void pre_blit(LOCALVARS *vars)
 
     linea_vars.SOURCEX = 0;
     linea_vars.SOURCEY = 0;
-    vars->STYLE &= ~(F_SKEW|F_THICKEN); /* cancel effects */
+    vars->STYLE &= keep_skew ? ~F_THICKEN : ~(F_SKEW|F_THICKEN); /* cancel effects */
 }
 
 
@@ -453,12 +514,12 @@ void rotate(LOCALVARS *vars)
 
     if (linea_vars.CHUP == 900)
     {
-        dst += (vars->DELX - 1) * vars->d_next;
+        dst += muls(vars->DELX - 1, vars->d_next);
         vars->d_next = -vars->d_next;
     }
     else        /* 2700 */
     {
-        src += (linea_vars.SOURCEY + vars->height - 1) * vars->s_next;
+        src += muls(linea_vars.SOURCEY + vars->height - 1, vars->s_next);
         vars->s_next = -vars->s_next;
     }
 
@@ -1166,7 +1227,7 @@ static void screen_blit(LOCALVARS *vars)
      * calculate the starting address for the character to be copied
      */
     vars->tsdad = linea_vars.SOURCEX & 0x000f; /* source dot address */
-    offset = (linea_vars.SOURCEY+vars->DELY-1) * (LONG)vars->s_next + ((linea_vars.SOURCEX >> 3) & ~1);
+    offset = muls(linea_vars.SOURCEY+vars->DELY-1, vars->s_next) + ((linea_vars.SOURCEX >> 3) & ~1);
     vars->sform += offset;
     vars->s_next = -vars->s_next;   /* we draw from the bottom up */
 
@@ -1194,6 +1255,232 @@ static void screen_blit(LOCALVARS *vars)
 #endif
 }
 
+#if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP && BYTE_ORDER == BIG_ENDIAN
+/*
+ * the logic operation (numbered as the BitBlt modes) that normal_blit()
+ * uses for a plane, by writing mode and the plane's foreground and
+ * background bits (see wrmappin in vdi_tblit.S)
+ */
+static const UBYTE skew_ops[20][4] = {
+    /* fore/back 00 01 10 11 */
+    {  0,  0,  3,  3 },         /* replace */
+    {  4,  4,  7,  7 },         /* transparent */
+    {  6,  6,  6,  6 },         /* XOR */
+    {  1,  1, 13, 13 },         /* reverse transparent */
+    {  0, 15,  0, 15 },         /* BitBlt mode 0 */
+    {  0, 14,  1, 15 },
+    {  0, 13,  2, 15 },
+    {  0, 12,  3, 15 },
+    {  0, 11,  4, 15 },
+    {  0, 10,  5, 15 },
+    {  0,  9,  6, 15 },
+    {  0,  8,  7, 15 },
+    {  0,  7,  8, 15 },
+    {  0,  6,  9, 15 },
+    {  0,  5, 10, 15 },
+    {  0,  4, 11, 15 },
+    {  0,  3, 12, 15 },
+    {  0,  2, 13, 15 },
+    {  0,  1, 14, 15 },
+    {  0,  0, 15, 15 }          /* BitBlt mode 15 */
+};
+
+/*
+ * output a skewed glyph to a bitplane screen with the CPU, as normal_blit()
+ * does it, but setting each line up once for all planes
+ *
+ * Going up from the bottom line, a line of skewed text starts one pixel
+ * further right than the one below it whenever the bit of the skew mask
+ * that goes with it is set, the most significant bit being the bottom
+ * line's own (see skewop in vdi_tblit.S), and is written as wide as the
+ * glyph, the pixels around it being left as they are.  Light text is
+ * ANDed with the light mask after the shift, the mask being rotated one
+ * bit left on each line going up (liteop).  normal_blit() sets all this
+ * up again for every plane, which for a small glyph is most of the work.
+ *
+ * So the lines are worked out first: for each, the glyph's pixels and
+ * its width as a mask, shifted to where the line goes, in the one or two
+ * screen words it covers, and the offset of the first of them.  Then each
+ * plane gets a loop of its own over the lines, for the logic operation it
+ * needs (wrmappin in vdi_tblit.S).
+ *
+ * Only for glyphs that are no wider than a word: normal_blit() shifts wider
+ * ones on the other rows (mlt_left/mlt_rite).  Returns FALSE for those, and
+ * for glyphs taller than the line table, so that normal_blit() does them.
+ */
+#define SKEW_MAX_LINES  32
+
+static BOOL skewed_text_blit(LOCALVARS *vars)
+{
+    WORD w, h, r, plane, planes, sx, pos, nxwd, op;
+    UWORD skew_mask, lite, wmask, g, fg, bg, d;
+    UWORD sh[SKEW_MAX_LINES], sl[SKEW_MAX_LINES], mh[SKEW_MAX_LINES], ml[SKEW_MAX_LINES];
+    WORD off[SKEW_MAX_LINES];
+    ULONG bits, v, m;
+    const UBYTE *src;
+    UBYTE *base;
+    UWORD *p;
+    WORD line_off;
+    LONG reach;
+
+    w = vars->width;
+    h = vars->height;
+    planes = vars->nbrplane;
+    if (w <= 0 || h <= 0)
+        return TRUE;                    /* nothing to output */
+    if (w > 16 || h > SKEW_MAX_LINES || planes < 1 || planes > 8)
+        return FALSE;
+    if (vars->WRT_MODE < 0 || vars->WRT_MODE > 19)
+        return FALSE;
+
+    /*
+     * the offsets of the lines are words: on a screen with very long lines
+     * (eight planes, 1024 pixels or more across) they would not fit
+     */
+    reach = (LONG)h * vars->d_next;
+    if (reach < 0)
+        reach = -reach;
+    if (reach + 2 * vars->nextwrd > 32767L)
+        return FALSE;
+
+    /* the lines, going up from the bottom one */
+    skew_mask = (UWORD)linea_vars.SKEWMASK;
+    lite = (vars->STYLE & F_LIGHT) ? (UWORD)linea_vars.LITEMASK : 0xffff;
+    wmask = (UWORD)(0xffffU << (16 - w));
+    nxwd = vars->nextwrd;               /* from a word of a plane to the next one */
+    sx = vars->tsdad;
+    pos = vars->tddad;
+    src = vars->sform;
+    line_off = 0;
+    for (r = 0; r < h; r++)
+    {
+        if ((skew_mask >> (15 - (r & 15))) & 1)
+            pos++;
+
+        bits = ((ULONG)((const UWORD *)src)[0] << 16) | ((const UWORD *)src)[1];
+        g = (UWORD)((bits << sx) >> 16) & wmask;
+        src += vars->s_next;
+
+        v = (ULONG)g << (16 - (pos & 15));
+        m = (ULONG)wmask << (16 - (pos & 15));
+        sh[r] = (UWORD)(v >> 16) & lite;
+        sl[r] = (UWORD)v & lite;
+        mh[r] = (UWORD)(m >> 16);
+        ml[r] = (UWORD)m;
+        off[r] = line_off + ((pos >> 4) ? nxwd : 0) + ((pos >> 5) ? nxwd : 0);
+
+        line_off += vars->d_next;
+        lite = (UWORD)((lite << 1) | (lite >> 15));
+    }
+    if (pos >= 48)
+        return FALSE;                   /* would need a third word */
+
+    /* the planes, each with its operation */
+    fg = vars->forecol;
+    bg = vars->ambient;
+    base = vars->dform;
+    for (plane = 0; plane < planes; plane++, base += sizeof(UWORD))
+    {
+        op = skew_ops[vars->WRT_MODE][((fg & 1) << 1) | (bg & 1)];
+        fg >>= 1;
+        bg >>= 1;
+
+        switch(op) {
+        case 0:                         /* D' = 0 */
+            for (r = 0; r < h; r++)
+            {
+                p = (UWORD *)(base + off[r]);
+                p[0] &= ~mh[r];
+                if (ml[r])
+                    *(UWORD *)((UBYTE *)p + nxwd) &= ~ml[r];
+            }
+            break;
+        case 3:                         /* D' = S */
+            for (r = 0; r < h; r++)
+            {
+                p = (UWORD *)(base + off[r]);
+                p[0] = (p[0] & ~mh[r]) | sh[r];
+                if (ml[r])
+                {
+                    p = (UWORD *)((UBYTE *)p + nxwd);
+                    p[0] = (p[0] & ~ml[r]) | sl[r];
+                }
+            }
+            break;
+        case 4:                         /* D' = (NOT S) AND D */
+            for (r = 0; r < h; r++)
+            {
+                p = (UWORD *)(base + off[r]);
+                p[0] &= ~sh[r];
+                if (ml[r])
+                    *(UWORD *)((UBYTE *)p + nxwd) &= ~sl[r];
+            }
+            break;
+        case 5:                         /* D' = D */
+            break;
+        case 6:                         /* D' = S XOR D */
+            for (r = 0; r < h; r++)
+            {
+                p = (UWORD *)(base + off[r]);
+                p[0] ^= sh[r];
+                if (ml[r])
+                    *(UWORD *)((UBYTE *)p + nxwd) ^= sl[r];
+            }
+            break;
+        case 7:                         /* D' = S OR D */
+            for (r = 0; r < h; r++)
+            {
+                p = (UWORD *)(base + off[r]);
+                p[0] |= sh[r];
+                if (ml[r])
+                    *(UWORD *)((UBYTE *)p + nxwd) |= sl[r];
+            }
+            break;
+        case 15:                        /* D' = 1 */
+            for (r = 0; r < h; r++)
+            {
+                p = (UWORD *)(base + off[r]);
+                p[0] |= mh[r];
+                if (ml[r])
+                    *(UWORD *)((UBYTE *)p + nxwd) |= ml[r];
+            }
+            break;
+        default:                        /* the others, bit by bit of op */
+            for (r = 0; r < h; r++)
+            {
+                UWORD s, mk, res;
+                WORD k;
+
+                p = (UWORD *)(base + off[r]);
+                for (k = 0; k < 2; k++)
+                {
+                    s = k ? sl[r] : sh[r];
+                    mk = k ? ml[r] : mh[r];
+                    if (!mk)
+                        break;
+                    d = *p;
+                    res = 0;
+                    if (op & 1)
+                        res |= s & d;
+                    if (op & 2)
+                        res |= s & ~d;
+                    if (op & 4)
+                        res |= ~s & d;
+                    if (op & 8)
+                        res |= ~s & ~d;
+                    *p = (d & ~mk) | (res & mk);
+                    p = (UWORD *)((UBYTE *)p + nxwd);
+                }
+            }
+            break;
+        }
+    }
+
+    return TRUE;
+}
+#endif /* CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP && BYTE_ORDER == BIG_ENDIAN */
+
+
 /*
  * planar text blit: output the current glyph to a bitplane screen
  *
@@ -1212,6 +1499,22 @@ void planar_text_blit(LOCALVARS *vars)
     vars->dform += (vars->DESTX&0xfff0)>>shift_offset[linea_vars.v_planes];
     vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)linea_vars.v_lin_wr;
     vars->d_next = -linea_vars.v_lin_wr;
+
+#if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP && BYTE_ORDER == BIG_ENDIAN
+    /*
+     * skewed text (but not bold, which normal_blit() thickens on the way),
+     * where there are several planes: with one, normal_blit() is quicker
+     */
+    if ((vars->STYLE & (F_SKEW | F_THICKEN)) == F_SKEW && vars->nbrplane > 1
+     && skewed_text_blit(vars))
+        return;
+#endif
+
+#if CONF_WITH_BLITTER
+    /* the blitter, if there is one in use, unless it can't do this glyph */
+    if (blitter_is_enabled && blitter_text_blit(vars))
+        return;
+#endif
 
     normal_blit(vars+1, vars->sform, vars->dform);  /* call assembler helper function */
 }
@@ -1269,6 +1572,8 @@ void text_blt(void)
     WORD clipped, delx, dely, weight;
     WORD temp;
     BOOL need_preblit = FALSE;
+    BOOL mono_cell = FALSE;
+    BOOL keep_skew = FALSE;
 
     vars.swap_tmps = 0;
 
@@ -1347,7 +1652,8 @@ void text_blt(void)
      *  (in truecolor mode) if (skewing OR thickening OR outlining), OR
      *  if outlining, OR
      *     rotating AND (skewing OR thickening), OR
-     *     skewing AND clipping-is-required,
+     *     skewing AND clipping-is-required, OR
+     *     (with the blitter in use) thickening,
      *      call pre_blit()
      *
      * Audited under issue #171: this is the text_blt() pre-blit-decision
@@ -1367,9 +1673,90 @@ void text_blt(void)
     else if ((vars.STYLE & F_SKEW) && clipped)
         need_preblit = TRUE;
 
+#if CONF_WITH_BLITTER
+    /*
+     * bold text (without skew, which does not combine with it so simply) is
+     * drawn into the buffer when the blitter is going to output it: the
+     * software path thickens the glyph again for each plane of the screen,
+     * which the buffer, a single plane, does only once.  nothing else asks
+     * for the buffer here, so the character has to stay as wide as it is
+     * without it (mono_cell).
+     *
+     * not if it is clipped: the software path cuts the character to the
+     * clip rectangle first and thickens what is left, which the buffer,
+     * thickened first and cut afterwards does not reproduce.
+     *
+     * nor if LOFF or ROFF are set: pre_blit() makes the buffer that much
+     * wider whether or not there is skew, which the software path does not
+     * (VDI clears them without skew, but a Line-A caller may not), so the
+     * blitter would draw buffer that nothing has been drawn into.
+     *
+     * nor with one plane, where the software path, which then thickens the
+     * character only once too, is quicker.  (VDI text that is not clipped
+     * does not get here at all: blitter_text_string() outputs it.)
+     */
+    if ((vars.STYLE & (F_THICKEN | F_SKEW)) == F_THICKEN
+     && !need_preblit && !clipped && blitter_is_enabled
+     && !linea_vars.LOFF && !linea_vars.ROFF
+     && linea_vars.v_planes >= 2)
+    {
+        need_preblit = TRUE;
+        mono_cell = TRUE;
+    }
+#endif
+
+#if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
+    /*
+     * bold and skewed text that nothing else draws into the buffer (it is
+     * not clipped or rotated): the software path thickens and skews the
+     * character again for each plane of the screen.  thickening it into the
+     * buffer once, as above, and leaving the skew to the output of the
+     * buffer, gives the same pixels (a line is thickened before it is
+     * shifted, or after, the same way, and light is applied after both).
+     *
+     * a glyph that is no wider than a word, once thickened, is thickened by
+     * thicken_glyph(), which is a lot quicker than normal_blit() and draws
+     * the same into the buffer.  the others go through pre_blit(), which is
+     * only worth it with four planes or more.
+     */
+    if ((vars.STYLE & (F_THICKEN | F_SKEW)) == (F_THICKEN | F_SKEW)
+     && !need_preblit && !clipped && !linea_vars.CHUP)
+    {
+#if BYTE_ORDER == BIG_ENDIAN
+        WORD w = vars.DELX + (linea_vars.MONO ? 0 : linea_vars.WEIGHT);
+
+        /* not scaled: scale() has put the glyph into the buffer already */
+        if (!linea_vars.SCALE && vars.DELX <= 16 && w <= 16
+         && vars.DELY * (WORD)sizeof(UWORD) <= SCRATCHBUF_SIZE)
+        {
+            UWORD *buf = (UWORD *)linea_vars.SCRTCHP;
+
+            thicken_glyph((const UBYTE *)linea_vars.FBASE
+                            + (LONG)linea_vars.SOURCEY * linea_vars.FWIDTH
+                            + ((linea_vars.SOURCEX >> 3) & ~1),
+                          linea_vars.FWIDTH, linea_vars.SOURCEX & 0x000f,
+                          w, linea_vars.WEIGHT, vars.DELY, buf);
+            vars.sform = (UBYTE *)buf;
+            vars.s_next = sizeof(UWORD);
+            vars.DELX = w;
+            linea_vars.SOURCEX = 0;
+            linea_vars.SOURCEY = 0;
+            vars.STYLE &= ~F_THICKEN;
+        }
+        else
+#endif
+        if (linea_vars.v_planes >= 4)
+        {
+            need_preblit = TRUE;
+            mono_cell = TRUE;
+            keep_skew = TRUE;
+        }
+    }
+#endif
+
     if (need_preblit)
     {
-        pre_blit(&vars);
+        pre_blit(&vars, mono_cell, keep_skew);
     }
 
     if (linea_vars.CHUP)

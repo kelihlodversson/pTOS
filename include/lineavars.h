@@ -17,6 +17,8 @@
 #ifndef LINEAVARS_H
 #define LINEAVARS_H
 
+#include "config.h"
+
 #include "portab.h"
 #include "fonthdr.h"
 #include "mform.h"
@@ -55,7 +57,7 @@ extern MCS ext_mouse_cursor_save;   /* use for v_planes > 4 */
  * (MAKE_ULONG(x, y)).  On m68k the legacy line-A register convention is
  * kept instead (see vdi_entry.S).
  */
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 typedef ULONG (*UserMotFunc)(WORD x, WORD y);
 #endif
 
@@ -136,7 +138,7 @@ struct _lineavars {
     void (*tim_chain)(int);            /* -62  timer interrupt vector save */
     void (*user_but)(WORD status);     /* -58  user button vector */
     void (*user_cur)(WORD x, WORD y);  /* -54  user cursor vector */
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     UserMotFunc user_mot;        /* -50  user motion vector */
 #else
     void (*user_mot)(LONG);      /* -50  user motion vector */

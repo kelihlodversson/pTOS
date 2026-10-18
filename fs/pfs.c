@@ -274,7 +274,7 @@ static void pfs_dirtbl_release(WORD n)
  */
 static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const char **path, BOOL *owned)
 {
-    WORD n = run->p_curdir[drive];
+    WORD n = PD_CURDIR(run)[drive];
 
     if ((n > 0) && (n < PFS_MAX_CWD) && pfs_dirtbl[n].use &&
         (pfs_dirtbl[n].fs == fs) && (pfs_dirtbl[n].drive == drive))
@@ -298,7 +298,7 @@ static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const ch
  */
 static LONG pfs_cwd_set(WORD drive, struct pfs_ops *fs, PFSCOOKIE *cwd, const char *path)
 {
-    WORD old = run->p_curdir[drive];
+    WORD old = PD_CURDIR(run)[drive];
     WORD i;
 
     pfs_dirtbl_release(old);
@@ -306,7 +306,7 @@ static LONG pfs_cwd_set(WORD drive, struct pfs_ops *fs, PFSCOOKIE *cwd, const ch
     if (!path[0])
     {
         /* root: no slot needed, the sentinel (0) already means this */
-        run->p_curdir[drive] = 0;
+        PD_CURDIR(run)[drive] = 0;
         return E_OK;
     }
 
@@ -322,7 +322,7 @@ static LONG pfs_cwd_set(WORD drive, struct pfs_ops *fs, PFSCOOKIE *cwd, const ch
     pfs_dirtbl[i].cwd = *cwd;
     strlcpy(pfs_dirtbl[i].path, path, sizeof(pfs_dirtbl[i].path));
 
-    run->p_curdir[drive] = i;
+    PD_CURDIR(run)[drive] = i;
 
     return E_OK;
 }
@@ -1080,7 +1080,7 @@ void pfs_proc_exit(PD *r)
      * (otherwise unused, while this option is on) legacy table.
      */
     for (i = 0; i < BLKDEVNUM; i++)
-        pfs_dirtbl_release(r->p_curdir[i]);
+        pfs_dirtbl_release(PD_CURDIR(r)[i]);
 }
 
 

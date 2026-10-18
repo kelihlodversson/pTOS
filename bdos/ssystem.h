@@ -12,6 +12,28 @@
 #include "portab.h"
 
 #define GEMDOS_SSYSTEM  0x154
+#define GEMDOS_SYSCONF  0x122
+
+/*
+ * Sysconf(which), as FreeMiNT numbers it (sys/dos.c): the limits and sizes the
+ * kernel has.  A number it does not know is EINVFN (FreeMiNT: ENOSYS, the same
+ * -32).  See doc/mint-calls.txt for what each answers here.
+ */
+#define SC_LAST             (-1)    /* the highest number */
+#define SC_MEMR_MAX         0       /* memory regions per process */
+#define SC_ARG_MAX          1       /* length of the command tail of Pexec() */
+#define SC_OPEN_MAX         2       /* open files */
+#define SC_NGROUPS_MAX      3       /* supplementary group ids */
+#define SC_CHILD_MAX        4       /* processes per user */
+#define SC_CLK_TCK          5       /* ticks per second */
+#define SC_PAGE_SIZE        6       /* bytes per page */
+#define SC_AVPHYS_PAGES     7       /* free physical pages */
+#define SC_GETPW_R_SIZE_MAX 8       /* passwd buffer size */
+#define SC_GETGR_R_SIZE_MAX 9       /* group buffer size */
+#define SC_PHYS_PAGES       10      /* physical pages */
+#define SC_MAX              SC_PHYS_PAGES
+
+LONG xsysconf(WORD which);
 
 /*
  * Ssystem() mode values, as documented for MiNT. Only the subset below
@@ -25,7 +47,10 @@
  */
 #define S_INQUIRE       ((WORD)0xffff)
 #define S_OSNAME        0x0000
+#define S_OSXNAME       0x0001
 #define S_OSVERSION     0x0002
+#define S_OSBUILDDATE   0x0004
+#define S_OSFEATURES    0x0007
 #define S_GETCOOKIE     0x0008
 #define S_SETCOOKIE     0x0009
 #define S_GETLVAL       0x000a
@@ -35,6 +60,19 @@
 #define S_SETWVAL       0x000e
 #define S_SETBVAL       0x000f
 #define S_DELCOOKIE     0x001a
+#define S_KNAME         900
+#define S_CNAME         910
+#define S_CVERSION      911
+
+/* The strings of S_KNAME, S_CNAME and S_CVERSION.  The bytes the call writes (the
+ * string and its NUL) are what the pointer check of bdos/uaccess.c looks at. */
+#define SSYSTEM_KNAME       "pTOS"
+#ifdef __clang__
+#define SSYSTEM_CNAME       "clang"
+#else
+#define SSYSTEM_CNAME       "gcc"
+#endif
+#define SSYSTEM_CVERSION    __VERSION__
 
 /*
  * S_CONSOLE_DIM - pTOS-only extension, NOT part of MiNT's Ssystem()
@@ -71,6 +109,24 @@
  * inferring it after the fact from a real call's return value.
  */
 #define S_CONSOLE_DIM   ((WORD)0xfffe)
+
+/*
+ * S_MEMINFO - pTOS-only as well, a negative WORD next to S_CONSOLE_DIM: what the
+ * memory is, in one call, for programs that would otherwise ask Sysconf() four
+ * times.  arg1 is a struct mem_info*, arg2 its size, the same protocol as
+ * S_CONSOLE_DIM (min(arg2, sizeof) bytes are copied, the number of bytes is
+ * returned, arg2 == -1 returns sizeof and ignores arg1).  A field the machine
+ * cannot say is 0xffffffff.
+ */
+#define S_MEMINFO       ((WORD)0xfffd)
+
+struct mem_info {
+    ULONG page_size;    /* bytes per page */
+    ULONG phys_pages;   /* pages of physical memory */
+    ULONG free_pages;   /* of which free */
+    ULONG processes;    /* process records, the caller's and its launchers' included;
+                         * 0xffffffff where there are none (no CONF_WITH_KPROC) */
+};
 
 struct console_dim {
     UWORD width;        /* columns */

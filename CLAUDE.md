@@ -42,9 +42,10 @@ epic branch named `epic/{task-id}-{title-with-dashes}`. Epic branches are
 protected like `master`: all changes go through PRs.
 
 Epic branches coordinate work on a major feature. Each sub-issue gets its own
-feature/bugfix/chore branch off `master`, and the resulting PR targets the epic
-branch instead. When all sub-issues are resolved and the epic branch is ready,
-a final PR merges it into `master`.
+feature/bugfix/chore branch off the epic branch (not `master`), and the
+resulting PR targets the epic branch, so every sub-issue goes through full CI
+and review before it is merged into the epic. When all sub-issues are resolved
+and the epic branch is ready, a final PR merges it into `master`.
 
 ## Building
 
@@ -64,6 +65,20 @@ three offered under "m68k toolchain" in the Toolchain menu: `m68k-atari-mintelf-
 (the default), `m68k-atari-mint-` (cross-mint), or a bare `m68k-elf-`.  That
 choice sets both the prefix and the flags; `doc/install.txt` says where to get
 them.
+
+**A missing or unsuitable toolchain is never a reason to skip a
+configuration.** Every one of them can be built on this machine without sudo.
+When a build stops on `x86_64-elf-gcc: No such file or directory`,
+`... does not support -mfastcall`, `arm-none-eabi-gcc: not found`, or any
+other "compiler missing" error, follow the `toolchain-install` skill
+(`.claude/skills/toolchain-install/SKILL.md`) before you report anything as
+unbuildable. The two cases that trip agents most often:
+
+- pc-x86_64 uses the host's native gcc: `make CROSS_COMPILE=`.
+- `CONF_WITH_MFASTCALL=y` configs (amiga, amiga-kickdisk, the `*-fastcall`
+  ones) need Thorsten Otto's toolchain, because the PPA's
+  `m68k-atari-mintelf-gcc` has no `-mfastcall`. The skill shows how to
+  install it into a user directory and put it first on `PATH`.
 
 `make clean` keeps `.config`; `make distclean` removes it too. Changing
 `.config` rebuilds everything, which is intended.
@@ -175,4 +190,7 @@ same object.
 - `doc/country.txt`, `doc/nls.txt` — countries, keyboard layouts, translations
 - `doc/ptos.txt` — pTOS's purpose and relationship to EmuTOS
 - `doc/status.txt` — tested pTOS hardware and emulator targets
+- `doc/debugging.txt` — interactive debugging under an emulator: hrdb (a
+  remote-debuggable Hatari fork) and QEMU+GDB for m68k, and when to reach for
+  each; see also the `ptos-smoketest` skill and `tools/rdb.py`
 - `readme.md` — what this fork is about and where it is going

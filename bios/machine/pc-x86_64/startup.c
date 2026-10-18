@@ -27,7 +27,8 @@
 #include "pmem.h"
 #include "trap.h"
 #include "pc_x86_64_memory.h"
-#include "pc_x86_64_gop.h"
+#include "gop.h"
+#include "smbios.h"
 #include "bios.h"
 #include "pe_reloc.h"
 
@@ -145,11 +146,19 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * (this file's own bss, ordinary boot-time image data) while boot
      * services -- LocateProtocol() included -- are still callable, and
      * while GOP's own Mode/Info structures (EFI pool memory) are still
-     * valid. Absence of GOP is not fatal; see x86_64_gop_probe()'s own
+     * valid. Absence of GOP is not fatal; see gop_probe()'s own
      * comment (gop.c).
      */
-    x86_64_gop_probe(bs);
+    gop_probe(bs);
     earlycon_puts("pTOS x86-64: EFI GOP framebuffer probed\n");
+
+    /*
+     * Copy the machine name out of the firmware's SMBIOS tables now: they
+     * sit in firmware memory this image has no claim on once boot services
+     * exit (see smbios.h). Absence of SMBIOS is not fatal.
+     */
+    x86_64_smbios_probe(SystemTable);
+    earlycon_puts("pTOS x86-64: SMBIOS probed\n");
 
     /*
      * GetMemoryMap() with a too-small (here, zero) buffer always returns
@@ -271,11 +280,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * it specifically (it maps virtual address 0 to an ordinary
      * allocated page now, not this exact range -- see its own comment) --
      * and the EFI GOP framebuffer's own aperture (#332), wherever firmware
-     * put it: x86_64_gop_probe() already ran (efi_main(), above, before
+     * put it: gop_probe() already ran (efi_main(), above, before
      * ExitBootServices()), so the range is known here, before any
      * allocation could otherwise be handed the same physical pages the
      * framebuffer is mapped to (Copilot review, PR #373; see
-     * x86_64_gop_reserved_range()'s own comment). EFI typically loads this
+     * gop_reserved_range()'s own comment). EFI typically loads this
      * image well above address 0 (mapped_base is usually several MiB in),
      * and the framebuffer can be anywhere firmware chose, so collapsing
      * the gaps between all three into one reserved block would falsely
@@ -284,7 +293,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     {
         UQUAD gop_reserved_base, gop_reserved_end;
 
-        x86_64_gop_reserved_range(&gop_reserved_base, &gop_reserved_end);
+        gop_reserved_range(&gop_reserved_base, &gop_reserved_end);
         x86_64_pmem_init(saved_memory_map, saved_map_size, saved_descriptor_size,
                           mapped_base, mapped_base + IMAGE_SPAN_BYTES + X86_64_PAGE_2M_SIZE,
                           0, X86_64_PAGE_2M_SIZE,
@@ -338,6 +347,12 @@ void NORETURN x86_64_higher_half_main(void)
      * canonical address range for #334's future ILP32 user processes
      * (see #343 and #344's address-space split).
      */
+    /* Per-page ownership tracking, so pages can be freed and reused (#362).
+     * Needs the physical direct map live, which it only is once CR3 has
+     * switched in the higher-half jump above; nothing has allocated yet. */
+    x86_64_pmem_track();
+    earlycon_puts("pTOS x86-64: physical page tracking on\n");
+
     x86_64_drop_identity_map();
     earlycon_puts("pTOS x86-64: identity mapping dropped\n");
 
@@ -398,7 +413,7 @@ void NORETURN x86_64_higher_half_main(void)
         earlycon_puts("pTOS x86-64: low system-vector area verified\n");
     }
 
-    print_hex_line("pTOS x86-64: physical memory free=", x86_64_pmem_free_bytes());
+    print_hex_line("pTOS x86-64: physical memory free=", pmem_free_bytes());
     print_hex_line("  highest_addr=", x86_64_pmem_highest_addr());
 
     /*
@@ -440,51 +455,16 @@ void NORETURN x86_64_higher_half_main(void)
     x86_64_low_tpa_init();
     earlycon_puts("pTOS x86-64: low TPA pool ready\n");
 
-    /* #351: the third, low-mapped pool for kernel-owned structures a
-     * 32-bit ABI field (the cookie jar) hands out by address -- see
-     * memory.c's own comment. Must run before fill_cookie_jar()
-     * (bios/machine.c, via bios_init()) or anything else that points a
-     * low-kdata-backed global (bios/vectors.h's x86_64_vector_5ms_ptr,
-     * bios/scsidriv.h's x86_64_scsidriv_root_ptr) into this pool. */
-    x86_64_low_kdata_init();
-
     /*
-     * Reserve each low-kdata-backed global's own storage right here,
-     * deliberately well before the subsystem that actually populates it
-     * (init_system_timer(), scsidriv_init()) ever runs -- both are called
-     * much later in bios_init(), after fill_cookie_jar() already reads
-     * &vector_5ms/&scsidriv_root back for the '_5MS'/'SCSI' cookies. See
-     * bios/vectors.h's/bios/scsidriv.h's own comments on these two
-     * functions. Declared directly, not via their own headers, matching
-     * this file's own x86_64_low_tpa_init() precedent: SCSIRoot's real
-     * type is not otherwise needed here. Guarded exactly like each
-     * function's own definition (bios/mfp.c, bios/scsidriv.c), so a
-     * future x86-64 config that turns either option off still links.
-     */
-#if !CONF_WITH_MFP
-    {
-        extern void x86_64_vector_5ms_alloc(void);
-        x86_64_vector_5ms_alloc();
-    }
-#endif
-#if CONF_WITH_SCSI_DRIVER
-    {
-        extern void x86_64_scsidriv_root_alloc(void);
-        x86_64_scsidriv_root_alloc();
-    }
-#endif
-    earlycon_puts("pTOS x86-64: low kernel-data pool ready\n");
-
-    /*
-     * #332: map the framebuffer x86_64_gop_probe() found (efi_main(),
+     * #332: map the framebuffer gop_probe() found (efi_main(),
      * above) into this kernel's own page tables, into the same low-canonical
-     * PML4 slot 0 pool as the TPA/kdata pools just set up (see memory.c's
-     * own comment) -- must run after x86_64_low_kdata_init(), and before
+     * PML4 slot 0 pool as the TPA pool just set up (see memory.c's
+     * own comment) -- must run after x86_64_low_tpa_init(), and before
      * bios_init()'s screen_init_mode()/screen_init_address() (bios/screen.c)
-     * reach for pc_x86_64_gop_screenbase(). A no-op if no usable GOP
+     * reach for gop_screenbase(). A no-op if no usable GOP
      * framebuffer was found.
      */
-    x86_64_gop_init();
+    gop_init();
     earlycon_puts("pTOS x86-64: EFI GOP framebuffer ready, handing off to biosmain()\n");
 
     biosmain();

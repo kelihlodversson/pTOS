@@ -113,12 +113,6 @@ MACHINE-$(MACHINE_VIRT_M68K) += virt-m68k
 MACHINE-$(MACHINE_PC_X86_64) += pc-x86_64
 MACHINE = $(MACHINE-y)
 
-ifdef CONFIGURED
-ifeq (,$(ARCH))
-$(error No architecture selected.  Run "make <name>_defconfig" or "make menuconfig")
-endif
-endif
-
 #
 # Directories holding source code
 #
@@ -176,6 +170,7 @@ OBJECTS = $(CORE_OBJ) $(OPTIONAL_OBJ)
 # installed under a different name, and is left unset unless the user
 # filled it in.  A command line CROSS_COMPILE= still wins over both.
 CROSS_COMPILE-$(ARCH_ARM) = arm-none-eabi-
+CROSS_COMPILE-$(ARCH_X86_64) = x86_64-elf-
 CROSS_COMPILE-$(BUILD_TOOLCHAIN_MINT) = m68k-atari-mint-
 CROSS_COMPILE-$(BUILD_TOOLCHAIN_MINTELF) = m68k-atari-mintelf-
 CROSS_COMPILE-$(BUILD_TOOLCHAIN_ELF) = m68k-elf-
@@ -270,9 +265,9 @@ TOOLCHAIN_CFLAGS = -ffreestanding
 # x86_64_build_page_tables()/x86_64_build_physmap()/x86_64_low_to_high()
 # in pgtable.c, x86_64_apply_higher_half_relocations() in pe_reloc.c,
 # x86_64_pmem_init()/x86_64_pmem_highest_addr() in pmem.c, and (#332)
-# x86_64_gop_reserved_range() in gop.c -- called from efi_main() *after*
+# gop_reserved_range() in gop.c -- called from efi_main() *after*
 # x86_64_apply_higher_half_relocations() has already run, unlike its own
-# x86_64_gop_probe() (called earlier, before that pass, so its absolute
+# gop_probe() (called earlier, before that pass, so its absolute
 # references still held their as-loaded low values when it ran and
 # needed no override). Under plain -mcmodel=large, that same function's
 # read of gop.c's own static gop_found/gop_phys_base/gop_size would
@@ -295,10 +290,35 @@ X86_64_PIE_OBJS = obj/startup.o obj/pgtable.o obj/pe_reloc.o obj/pmem.o \
                   obj/earlycon.o obj/memory.o obj/gop.o
 $(X86_64_PIE_OBJS): X86_64_PIE_OVERRIDE = -fpie -mcmodel=small
 else
-MULTILIBFLAGS = $(CPUFLAGS) -mshort
+# The kernel can never assume a real FPU is present -- processor.S detects
+# one at runtime, for userland's benefit, precisely because most m68k
+# targets this builds for don't have one. Every toolchain used here has
+# always defaulted to -msoft-float on its own, silently, so this was never
+# needed -- until Thorsten Otto's -mfastcall-patched GCC (Kconfig's
+# CONF_WITH_MFASTCALL help text), which defaults the other way once -m68020
+# or later is selected (-mhard-float/-m68881 enabled), freely emitting real
+# FPU instructions QEMU's -cpu m68020 (no FPU) can't execute. Pass it
+# explicitly so kernel codegen never depends on a toolchain's own default.
+MULTILIBFLAGS = $(CPUFLAGS) -msoft-float
+ifdef CONF_WITH_MFASTCALL
+MULTILIBFLAGS += -mfastcall
+endif
 ifdef BUILD_TOOLCHAIN_IS_ELF
 TOOLCHAIN_CFLAGS = -Wa,--register-prefix-optional \
                    -fno-reorder-functions -DELF_TOOLCHAIN
+endif
+endif
+endif
+
+# CONF_WITH_MFASTCALL selects -mfastcall above, but neither of the toolchains
+# offered in the "m68k toolchain" choice (Kconfig.machine) support it -- only
+# a patched GCC does (Thorsten Otto's fork, see the option's help text).  Fail
+# now with an actionable message instead of letting every compile fail later
+# with a generic "unrecognized command-line option '-mfastcall'".
+ifdef CONFIGURED
+ifdef CONF_WITH_MFASTCALL
+ifeq (,$(shell echo 'void f(void){}' | $(CC) $(CPUFLAGS) -x c -mfastcall -c -o /dev/null - >/dev/null 2>&1 && echo y))
+$(error $(CC) does not support -mfastcall. Install a patched toolchain (e.g. Thorsten Otto's m68k-atari-mint-gcc fork, https://tho-otto.m68k.eu/crossmint.php) and point CROSS_COMPILE at it, or disable CONF_WITH_MFASTCALL in "make menuconfig")
 endif
 endif
 endif
@@ -408,7 +428,7 @@ CORE = core
 endif
 
 TOCLEAN = *~ */*~ $(CORE) *.tmp obj/*.tmp obj/*.o obj/*.d obj/*.h obj/*.c \
-          obj/*.ld obj/auto.conf */*.dsm
+          obj/*.ld obj/auto.conf */*.dsm obj/x32/*
 
 #
 # GEN_SRC accumulates the generated source files.  They are built before
@@ -708,42 +728,136 @@ endif
 #
 
 ifdef ARCH_X86_64
+X32_CROSS_COMPILE ?= $(CROSS_COMPILE)
 X32_CC = $(X32_CROSS_COMPILE)gcc
 
 # -fno-asynchronous-unwind-tables/-fno-unwind-tables drop the .eh_frame
 # segment gcc emits by default, -fcf-protection=none drops the
 # .note.gnu.property one (Intel CET markers), and -Wl,--build-id=none
 # drops the .note.gnu.build-id one -- each is otherwise its own PT_LOAD/
-# PT_NOTE segment, and pTOS's ELF loader (bdos/elfld.c, #43) only ever
-# maps the segments the image itself declares, so keeping this down to
-# exactly one real PT_LOAD segment (verified with readelf -l) is what
-# makes the result loadable there. -Wl,-Ttext=0x400000 -Wl,-n fixes the
-# link base and disables page alignment padding between segments (static,
-# non-PIE ET_EXEC, per #334's "x32 toolchain and executable contract"
-# section) -- -n is what collapses what would otherwise be separate R and
-# R+E LOAD segments into one. -Wl,-q (--emit-relocs) keeps the retained
-# RELA relocation entries the same contract calls for, so a less trivial
-# x32 program than tests/x32_hello/x32_hello.c (which has no absolute
-# data references and so links with none to retain) still gets a
-# relocatable binary -- see the ARCH_X86_64 branch elfld.c's own
-# EM_X86_64/ELF_R_DIR32/ELF_R_RELATIVE constants added for this.
+# PT_NOTE segment, and the loader (bdos/elfld.c) only ever maps the
+# segments the image itself declares.  A program is mapped into its own
+# address space (include/progimage.h): no two segments may share a page, which
+# -z noseparate-code and -z max-page-size=0x1000 give (a read+execute segment
+# holding the headers, text and read-only data, and a read+write one padded to
+# a 4 KiB page; -Wl,-Ttext-segment=0x400000 is the link base, static, non-PIE
+# ET_EXEC, the start of the image window, so that nothing is relocated).  A
+# program linked for another address is moved into the window and relocated,
+# which needs the relocation entries -Wl,-q (--emit-relocs) keeps in the file:
+# x32reloc.elf below is one.
 # -fno-pie/-no-pie force the ET_EXEC contract explicitly rather than
 # relying on the host GCC's own default: a distro configured with PIE
 # on by default would otherwise still produce ET_DYN here (-mx32 alone
 # doesn't disable it), which elfld.c's loader does not expect
 # (Copilot's review of #356 caught this).
+#
+# -Wl,-m,elf32_x86_64 names the linker's x32 output emulation
+# explicitly. Without it the driver picks its own default emulation,
+# which for a cross toolchain is "i386:x86-64" -- that combination is
+# rejected with "i386:x64-32 architecture of input file ... is
+# incompatible with i386:x86-64 output" even though x32 support is
+# present and compiled (-mx32 is fine, and "x86_64-elf-ld -V" lists
+# elf32_x86_64 among its supported emulations). Naming it here is
+# harmless where the default already matches, and is what lets the
+# Homebrew "x86_64-elf-" toolchain build this program; see
+# doc/install.txt.
 X32_CFLAGS = -mx32 -ffreestanding -fno-asynchronous-unwind-tables \
              -fno-unwind-tables -fcf-protection=none -fno-pie
-X32_LDFLAGS = -nostdlib -static -no-pie -Wl,--build-id=none \
-              -Wl,-Ttext=0x400000 -Wl,-n -Wl,-q
+X32_LDFLAGS_NOQ = -nostdlib -static -no-pie -Wl,--build-id=none \
+                  -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
+                  -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000
+X32_LDFLAGS = $(X32_LDFLAGS_NOQ) -Wl,-q
 
-x32hello.elf: tests/x32_hello/x32_hello.c
-	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $<
+x32hello.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $^
+
+# The same program linked for another address, which Pexec() has to move
+# into the image window and relocate (the relocations -q keeps are what it
+# uses).
+x32reloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -o $@ $^
+
+# ... and linked for another address without keeping the relocations (no -q):
+# Pexec() must refuse it, not run it with every absolute address wrong.
+x32noreloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS_NOQ) -Wl,-Ttext-segment=0x20000000 -o $@ $^
+
+# ... and one with a 6 MiB bss, bigger than the image window: only a PE_LOAD
+# from ring 3 (which loads it straight into the caller's heap) can take it.
+x32big.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
+	$(X32_CC) $(X32_CFLAGS) -DX32_BIG $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -o $@ $^
 
 .PHONY: x32test
-x32test: x32hello.elf
+x32test: x32hello.elf x32reloc.elf x32noreloc.elf x32big.elf
 
-TOCLEAN += x32hello.elf
+TOCLEAN += x32hello.elf x32reloc.elf x32noreloc.elf x32big.elf
+
+#
+# The built-in EmuCON (#398).  On x86-64 the command processor is not linked
+# into the LP64 kernel: it is built here as a separate x32 executable from the
+# same cli/*.c sources the other architectures use, in their standalone
+# console mode (STANDALONE_CONSOLE) with X32_USERLAND selecting the ring-3
+# variants of the few places that touch kernel memory, and the kernel
+# embeds the result (cli/arch/x86_64/emucon_image.c) to launch as an ordinary
+# ring-3 process.  Only the string and printf helpers are shared with the
+# kernel (util/); cli/x32/ is its whole runtime: the syscall bindings, a
+# _start that keeps the process-entry stack contract, and a static heap.
+#
+# -Wl,-Ttext-segment puts the ELF headers, not just the text, at the image
+# base, so the first PT_LOAD starts there and no segment lies below it;
+# noseparate-code keeps text and read-only data in that one R+X segment.
+#
+X32_CLI_CFLAGS = $(X32_CFLAGS) -fno-tree-loop-distribute-patterns \
+                 -fno-builtin -fno-stack-protector -std=gnu90 -Os -Wall -Wundef
+X32_CLI_LDFLAGS = -mx32 -nostdlib -static -no-pie -Wl,--build-id=none \
+                  -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
+                  -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000 \
+                  -Wl,-e,_start
+
+obj/x32:
+	mkdir -p $@
+
+
+ifeq ($(CONF_WITH_CLI),y)
+X32_CLI_OBJ = $(addprefix obj/x32/, cmdmain.o cmdedit.o cmdexec.o cmdint.o \
+              cmdparse.o cmdutil.o cmdgetwh.o x32rt.o x32crt.o \
+              doprintf.o string.o version.o)
+
+# EmuCON's own sources use cmd.h's standalone definitions and the cli/x32
+# headers; util/ and the generated version use the kernel's.
+X32_CLI_INC = -DSTANDALONE_CONSOLE -DX32_USERLAND -Icli/x32 -Icli/x32/include \
+              -Iinclude -Icli
+X32_UTIL_INC = -Iinclude/arch/x86_64 -Iinclude -Iobj -Iutil
+obj/x32/doprintf.o obj/x32/string.o obj/x32/version.o: X32_CLI_INC = $(X32_UTIL_INC)
+
+obj/x32/%.o: cli/%.c $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_INC) -MMD -MP -c $< -o $@
+obj/x32/%.o: cli/x32/%.c | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_INC) -MMD -MP -c $< -o $@
+obj/x32/%.o: cli/x32/%.S | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_INC) -MMD -MP -c $< -o $@
+obj/x32/%.o: util/%.c $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_INC) -MMD -MP -c $< -o $@
+obj/x32/version.o: obj/version.c | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_INC) -MMD -MP -c $< -o $@
+
+obj/x32/emucon.elf: $(X32_CLI_OBJ)
+	$(X32_CC) $(X32_CLI_LDFLAGS) -o $@ $^
+
+-include $(X32_CLI_OBJ:.o=.d)
+
+# the kernel carries the executable's bytes (.incbin, which make cannot see)
+obj/emucon_image.o: obj/x32/emucon.elf
+endif
+
+# The ring-3 probe program of the boot self-test (tests/x32_probe/), built and
+# embedded the same way.
+ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
+obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_LDFLAGS) -o $@ $^
+
+obj/x32probe_image.o: obj/x32/x32probe.elf
+endif
 endif
 
 #
@@ -808,13 +922,27 @@ endif
 #
 # Misc utilities, built on demand
 #
+# Unlike the kernel image itself, these are ordinary user programs whose
+# main() is invoked by util/arch/m68k/minicrt.S's startup code, which
+# still pushes argc/argv on the stack rather than the -mfastcall
+# register convention -- so, like TARGET_PRG/FLOPPY/AMIGA_FLOPPY (see
+# Kconfig.machine's CONF_WITH_MFASTCALL help text), these targets can't
+# be selected together with a MULTILIBFLAGS that includes -mfastcall.
+# They aren't config-gated the way those targets are (built on demand,
+# any time, regardless of the loaded .config), so the same restriction
+# is enforced here instead, at the point they're actually requested.
 
+ifdef CONF_WITH_MFASTCALL
+date.prg dumpkbd.prg:
+	$(error $@ cannot be built with CONF_WITH_MFASTCALL set: util/arch/m68k/minicrt.S's startup has not been audited for -mfastcall's register-argument convention. Disable CONF_WITH_MFASTCALL in "make menuconfig" first)
+else
 date.prg: obj/minicrt.o obj/doprintf.o obj/date.o
 	$(LD) $+ $(LIBS) -o $@ -s
 
 dumpkbd.prg: obj/minicrt.o obj/memmove.o obj/dumpkbd.o obj/doprintf.o \
 	     obj/string.o
 	$(LD) $+ $(LIBS) -o $@ -s
+endif
 
 #
 # Host tools
@@ -1323,6 +1451,14 @@ LIBCMINI_DIR  = lib/libcmini
 LIBCMINI_INC  = $(LIBCMINI_DIR)/include
 LIBCMINI_BUILDDIR = $(abspath obj/libcmini-build)
 LIBCMINI_MAKE = $(MAKE) -C $(LIBCMINI_DIR) BUILDDIR=$(LIBCMINI_BUILDDIR)
+ifdef ARCH_X86_64
+# libcmini's x86-64 port is the x32 userland: built with the same compiler and
+# flags as the other x32 programs (X32_CROSS_COMPILE/X32_CFLAGS), not the
+# x86_64-linux-gnux32- prefix its own Makefile assumes.  -ffreestanding is
+# left out: libcmini's abort() must stay noreturn for -Werror.
+LIBCMINI_MAKE += CROSSPREFIX=$(X32_CROSS_COMPILE) \
+    ARCH_CFLAGS="-fno-pie -fcf-protection=none -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-stack-protector"
+endif
 LIBCMINI_OBJDIR = $(LIBCMINI_BUILDDIR)/./objs
 LIBCMINI_CRT0 = $(LIBCMINI_OBJDIR)/minicrt0.o
 LIBCMINI_LIB  = $(LIBCMINI_BUILDDIR)/./libcmini.a
@@ -1353,22 +1489,35 @@ endif
 # format via Pexec(), to exercise bdos/elfld.c's elf_relocate_ptos() --
 # needs CONF_WITH_ELF_LOADER for the same reason pie_load does. The same
 # object file links as either a fixed-base ET_EXEC with --emit-relocs
-# (REL-encoded on ARM, RELA-encoded on m68k -- ARM and m68k differ only in
-# relocation *encoding* here, both still name the DIR32 relocation type
+# (REL-encoded on ARM, RELA-encoded on m68k and x32 -- they differ only in
+# relocation *encoding* here, all still name the DIR32 relocation type
 # directly, value already resolved into the slot at link time) or a PIE
 # ET_DYN with -pie --no-dynamic-linker (RELATIVE, value only in r_addend
-# on m68k's RELA, already in the slot on ARM's REL) -- so between the two
-# link shapes, on both architectures, this suite exercises every
-# combination elf_relocate_ptos()/ptos-elf-pack support: REL+DIR32,
-# REL+RELATIVE, RELA+DIR32, and RELA+RELATIVE (including the addend-
-# materialisation ptos-elf-pack does at pack time for that last case).
-ifndef CONF_WITH_ELF_LOADER
+# on the RELA architectures m68k and x32, already in the slot on ARM's REL)
+# -- so between the two link shapes, on all three architectures, this suite
+# exercises every combination elf_relocate_ptos()/ptos-elf-pack support:
+# REL+DIR32, REL+RELATIVE, RELA+DIR32, and RELA+RELATIVE (including the
+# addend-materialisation ptos-elf-pack does at pack time for that last case).
+TEST_WITH_PTOS_RELOC := $(CONF_WITH_ELF_LOADER)
+ifndef TEST_WITH_PTOS_RELOC
 TEST_SUITES := $(filter-out ptos_reloc_load,$(TEST_SUITES))
 endif
 
-# x32_hello is a standalone _start program built by x32test, not a ptest
-# suite, so it must never be linked into runtests.tos.
-TEST_SUITES := $(filter-out x32_hello,$(TEST_SUITES))
+# Shutdown() is an option (the small ROMs have no room for it)
+ifndef CONF_WITH_GEMDOS_SHUTDOWN
+TEST_SUITES := $(filter-out shutdown_args,$(TEST_SUITES))
+endif
+
+# x32_hello and x32_probe are standalone _start programs built for the x86-64
+# boot test, not ptest suites, so they must never be linked into runtests.tos.
+TEST_SUITES := $(filter-out x32_hello x32_probe,$(TEST_SUITES))
+
+# raster_copy and text_blit draw through the VDI, which x86-64 refuses to user
+# processes until #548 (and tools/pBench/gem.c, their bindings, has none for
+# it), so they are left out there.
+ifdef ARCH_X86_64
+TEST_SUITES := $(filter-out raster_copy text_blit,$(TEST_SUITES))
+endif
 
 GEN_SRC += tests/run_tests.c
 
@@ -1394,7 +1543,7 @@ tests/run_tests.c: Makefile $(wildcard tests/*/*.c) $(AUTOCONF_H) | obj
 
 # The test harness is userland code linked against libcmini, not the
 # kernel: it must NOT inherit CFILE_FLAGS, since that carries kernel-only
-# conventions (-fleading-underscore, -DELF_TOOLCHAIN, -mshort/-fsigned-char)
+# conventions (-fleading-underscore, -DELF_TOOLCHAIN, ARM's -fsigned-char)
 # that are irrelevant -- or outright ABI-incompatible with libcmini's own
 # build -- for a normal ARM/m68k userland binary.  $(CPUFLAGS) is kept so
 # generated code targets the selected machine's CPU/FPU, matching what the
@@ -1408,11 +1557,29 @@ tests/run_tests.c: Makefile $(wildcard tests/*/*.c) $(AUTOCONF_H) | obj
 # rebase, so a program linked without this flag loads with unrelocated
 # absolute addresses baked into its code whenever it lands away from its
 # link address.
-TEST_CFLAGS = $(CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
+ifdef ARCH_X86_64
+# The test programs are x32 userland, not the LP64 kernel: the flags the other
+# x32 programs use, and a link like theirs (the kernel's loader maps a
+# freestanding static ELF, keeping its relocations).
+TEST_CC = $(X32_CC)
+# no x32 libgcc on the host, and x32 code needs none (64-bit arithmetic is native)
+TEST_LIBS =
+TEST_CPUFLAGS = $(X32_CFLAGS)
+else
+TEST_CC = $(CC)
+TEST_LIBS = $(LIBS)
+TEST_CPUFLAGS = $(CPUFLAGS)
+endif
+TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC) \
-              $(if $(ARCH_ARM),-mword-relocations)
+              $(if $(ARCH_ARM),-mword-relocations) \
+              $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
+              $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE)
 
-TEST_OBJ = obj/runtests.o obj/run_tests.o obj/testlib.o
+# obj/pbench_gem.o (tools/pBench/gem.c) gives suites that need it minimal
+# AES/VDI bindings, e.g. text_blit; it is compiled by the pBench rules below.
+# Not on x86-64, where no suite uses it (see above).
+TEST_OBJ = obj/runtests.o obj/run_tests.o obj/testlib.o $(if $(ARCH_X86_64),,obj/pbench_gem.o)
 
 # Test objects are userland code (see TEST_CFLAGS above) and never
 # #include "config.h", so unlike the kernel's own objects they get no
@@ -1426,20 +1593,20 @@ TEST_OBJ = obj/runtests.o obj/run_tests.o obj/testlib.o
 # every test object the same config-triggered staleness the kernel's
 # objects get for free.
 obj/runtests.o: tests/runtests.c $(AUTOCONF_H) | obj
-	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 obj/run_tests.o: tests/run_tests.c $(AUTOCONF_H) | obj
-	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 obj/testlib.o: tests/testlib.c $(AUTOCONF_H) | obj
-	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 TEST_STARTUP = $(LIBCMINI_CRT0)
 
 # Each test suite object depends on its source and the generated run_tests.c
 define test-suite-rule
 obj/$(1).o: tests/$(1)/$(1).c tests/run_tests.c $(AUTOCONF_H) | obj
-	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $$< -o $$@
+	$(TEST_CC) $(TEST_CFLAGS) -Itools/pBench $(DEPFLAGS) -c $$< -o $$@
 endef
 $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 
@@ -1453,6 +1620,8 @@ TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
 # load.
 ifdef ARCH_ARM
 LIBCMINI_DEFCONFIG = ptos_arm_defconfig
+else ifdef ARCH_X86_64
+LIBCMINI_DEFCONFIG = ptos_x86_64_defconfig
 else
 LIBCMINI_DEFCONFIG = mintelf_defconfig
 endif
@@ -1507,18 +1676,22 @@ $(LIBCMINI_STAMP): FORCE | obj $(LIBCMINI_DIR)/Makefile
 	    printf '%s' "$$want" > $@; \
 	fi
 
+# Only the one library and the one startup object the test programs link are
+# requested, not libcmini's "libs startups": those build every multilib
+# variant the toolchain offers (68020-60, ColdFire, -mshort, ... on m68k), none
+# of which the test programs use.
 $(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S) | obj $(LIBCMINI_DIR)/Makefile
 	@echo '  LIBCMINI'
-	@$(LIBCMINI_MAKE) libs startups
+	@$(LIBCMINI_MAKE) $(LIBCMINI_LIB) $(LIBCMINI_CRT0)
 
 $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 
 # Like TEST_CFLAGS, this must not reuse the kernel's $(LD) (= $(CC)
-# $(MULTILIBFLAGS) ...): on m68k, MULTILIBFLAGS carries -mshort, which
-# would make the link step pull in the -mshort multilib variant of
-# libgcc (via $(LIBS) = -lgcc below) while libcmini itself was built
-# against the toolchain's default, non -mshort multilib.
-TEST_LD = $(CC) $(CPUFLAGS) -nostartfiles -nostdlib
+# $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) ...): those carry kernel-only
+# conventions (-fleading-underscore, -DELF_TOOLCHAIN, ARM's -fsigned-char)
+# that are irrelevant -- or outright ABI-incompatible -- for linking a
+# normal ARM/m68k userland binary against libcmini.
+TEST_LD = $(TEST_CC) $(TEST_CPUFLAGS) -nostartfiles -nostdlib
 
 # Link the test harness as runtests.tos.  On ARM this must stay a
 # relocatable ELF image the pTOS ELF loader can load at a fixed address
@@ -1530,12 +1703,53 @@ TEST_LD = $(CC) $(CPUFLAGS) -nostartfiles -nostdlib
 # convention regardless of format.
 ifdef ARCH_ARM
 TEST_LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
+else ifdef ARCH_X86_64
+TEST_LDFLAGS = $(X32_LDFLAGS) -Wl,-e_start
 else
 TEST_LDFLAGS = -Wl,-e_start
 endif
 
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
-	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+
+# poweroff.tos, reboot.tos, coldboot.tos and halt.tos: Shutdown() with each
+# mode, programs of their own because the machine does not come back (see
+# tests/shutdown_power/shutdown_prog.c).  Linked like runtests.tos.
+define shutdown-prog
+obj/$(1).o: tests/shutdown_power/shutdown_prog.c $$(AUTOCONF_H) | obj
+	$$(TEST_CC) $$(TEST_CFLAGS) -DSHUT_MODE=$(2) -DSHUT_WHAT='"$(3)"' $$(DEPFLAGS) -c $$< -o $$@
+
+$(1).tos: $$(TEST_STARTUP) obj/$(1).o $$(LIBCMINI_LIB)
+	$$(TEST_LD) $$(TEST_LDFLAGS) $$(TEST_STARTUP) obj/$(1).o -L$$(dir $$(LIBCMINI_LIB)) -lcmini $$(TEST_LIBS) -o $$@
+endef
+$(eval $(call shutdown-prog,poweroff,0,powering off))
+$(eval $(call shutdown-prog,reboot,1,rebooting))
+$(eval $(call shutdown-prog,coldboot,2,cold booting))
+$(eval $(call shutdown-prog,halt,3,halting))
+TEST_SHUTDOWN_FILES = poweroff.tos reboot.tos coldboot.tos halt.tos
+
+# pBench, the graphics benchmark in tools/pBench (see doc/pbench.txt): a GEM
+# program built exactly like the test harness above (libcmini, userland
+# flags), but not part of it and not run by it.
+PBENCH_CFLAGS = $(TEST_CFLAGS) -Itools/pBench
+
+obj/pbench.o: tools/pBench/pbench.c tools/pBench/gem.h tools/pBench/refs.h $(AUTOCONF_H) | obj
+	$(TEST_CC) $(PBENCH_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+obj/pbench_gem.o: tools/pBench/gem.c tools/pBench/gem.h $(AUTOCONF_H) | obj
+	$(TEST_CC) $(PBENCH_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+pbench.prg: $(TEST_STARTUP) obj/pbench.o obj/pbench_gem.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/pbench.o obj/pbench_gem.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+
+# A raw HD image that starts pBench from emudesk.inf, like test-hd.img does
+# for the regression tests.
+pbench-hd.img: pbench.prg tools/pBench/emudesk.inf
+	@echo '  MKHD   $@'
+	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) pbench.prg tools/pBench/emudesk.inf
+
+.PHONY: pbench
+pbench: pbench.prg
 
 ifdef CONF_WITH_ELF_LOADER
 # pieprobe.tos: the pie_load suite's payload (see tests/pie_load/pie_probe.c).
@@ -1544,12 +1758,29 @@ ifdef CONF_WITH_ELF_LOADER
 # .rel.dyn/.rela.dyn, as opposed to a fixed ET_EXEC's retained REL/RELA
 # sections) -- the two are handled by different code in bdos/elfld.c.
 obj/pie_probe.o: tests/pie_load/pie_probe.c $(AUTOCONF_H) | obj
-	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
+ifdef ARCH_X86_64
+# x32: the same ELF shape as the other x32 programs, but ET_DYN.  Absolute
+# 32-bit references (libcmini is built -fno-pie) become text relocations.
+TEST_PIE_LDFLAGS = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-z,notext \
+                   -Wl,--build-id=none -Wl,-m,elf32_x86_64 \
+                   -Wl,-z,max-page-size=0x1000 -Wl,-z,noseparate-code -Wl,-e_start
+else
 TEST_PIE_LDFLAGS = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start
+endif
 
+ifdef ARCH_M68K
+# The compiler driver's default m68k link is a PRG ("-pie not supported"):
+# ask the linker for its ELF emulation directly.  libgcc is not needed by the
+# probe.
 pieprobe.tos: $(TEST_STARTUP) obj/pie_probe.o $(LIBCMINI_LIB)
-	$(TEST_LD) $(TEST_PIE_LDFLAGS) $(TEST_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+	$(CROSS_COMPILE)ld -m m68kelf -pie --no-dynamic-linker -e _start \
+	  $(TEST_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini -o $@
+else
+pieprobe.tos: $(TEST_STARTUP) obj/pie_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_PIE_LDFLAGS) $(TEST_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+endif
 
 TEST_PIE_FILES = pieprobe.tos
 
@@ -1565,7 +1796,7 @@ TEST_PIE_FILES =
 TEST_LOAD_FAIL_FILES =
 endif
 
-ifdef CONF_WITH_ELF_LOADER
+ifdef TEST_WITH_PTOS_RELOC
 # PTRELOC.TOS / PTRELOC2.TOS: the ptos_reloc_load suite's two payloads
 # (see tests/ptos_reloc_load/reloc_probe.c), repacked into the compact
 # PT_PTOS_RELOC format, so loading them exercises elf_pgmld()'s *other*
@@ -1595,11 +1826,16 @@ ifdef CONF_WITH_ELF_LOADER
 # this way, packed by ptos-elf-pack, and its 90 DIR32 relocations
 # decoded correctly).
 obj/reloc_probe.o: tests/ptos_reloc_load/reloc_probe.c $(AUTOCONF_H) | obj
-	$(CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 ifdef ARCH_ARM
 TEST_PTOS_RELOC_LDFLAGS  = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
 TEST_PTOS_RELOC_LDFLAGS2 = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start
+else ifdef ARCH_X86_64
+# x32: a fixed base ET_EXEC linked with -q (RELA, R_X86_64_32), and the ET_DYN
+# shape (R_X86_64_RELATIVE)
+TEST_PTOS_RELOC_LDFLAGS  = $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -Wl,-e_start
+TEST_PTOS_RELOC_LDFLAGS2 = $(TEST_PIE_LDFLAGS)
 else
 # --oformat=elf32-m68k is required here for the same reason
 # doc/elfload.txt's own bare m68k recipe and TEST_PTOS_RELOC_LDFLAGS2's
@@ -1613,12 +1849,20 @@ TEST_PTOS_RELOC_LDFLAGS = -Wl,-pie -Wl,--no-dynamic-linker -Wl,--oformat=elf32-m
 TEST_LIBGCC_DIR := $(shell dirname $$($(CC) $(CPUFLAGS) -print-libgcc-file-name))
 endif
 
+ifdef ARCH_M68K
+# (the driver's default m68k link is a PRG: "-pie not supported")
 relocprobe-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
-	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+	$(CROSS_COMPILE)ld -m m68kelf -pie --no-dynamic-linker -e _start \
+	  $(TEST_STARTUP) obj/reloc_probe.o \
+	  -L$(dir $(LIBCMINI_LIB)) -lcmini -L$(TEST_LIBGCC_DIR) -lgcc -o $@
+else
+relocprobe-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+endif
 
-ifdef ARCH_ARM
+ifneq ($(ARCH_ARM)$(ARCH_X86_64),)
 relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
-	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS2) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(LIBS) -o $@
+	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS2) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 else
 relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld --oformat=elf32-m68k -q -Ttext=0x2000 -e _start \
@@ -1642,19 +1886,46 @@ endif
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
-TEST_HD_FILES = runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES)
+TEST_HD_FILES = runtests.tos $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES)
 
-test-hd.img: runtests.tos tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: runtests.tos $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR)
 
 .PHONY: test-hd
 test-hd: test-hd.img
 
+# The same files as a plain host directory, for QEMU's virtual FAT driver
+# (-drive file=fat:rw:test-dir,format=raw,...): no disk image to build and
+# size, no mkfs.fat or mtools.  See the ptos-smoketest skill for the
+# invocations.
+TEST_DIR = test-dir
+
+.PHONY: test-dir
+test-dir: $(TEST_HD_FILES) $(shell find $(TEST_DESTDIR) -type f)
+	@echo '  MKDIR  $(TEST_DIR)'
+	@rm -rf $(TEST_DIR)
+	@mkdir -p $(TEST_DIR)
+	@cp $(TEST_HD_FILES) $(TEST_DIR)/
+	@cp -R $(TEST_DESTDIR) $(TEST_DIR)/
+
+ifdef ARCH_ARM
+# A desk accessory is not part of the regression image: load this probe
+# explicitly when validating the ARM accessory entry path.
+obj/arm_acc_probe.o: tests/arm_acc_probe.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+ACCPROBE.ACC: $(TEST_STARTUP) obj/arm_acc_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/arm_acc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+
+.PHONY: arm-acc-probe
+arm-acc-probe: ACCPROBE.ACC
+endif
+
 else # !CONF_WITH_REGRESSION_TESTS
 
-.PHONY: test-hd
-test-hd:
+.PHONY: test-hd test-dir
+test-hd test-dir:
 	@echo 'Enable CONF_WITH_REGRESSION_TESTS first (make menuconfig)'
 
 endif
@@ -1665,10 +1936,11 @@ endif
 # regardless of .config -- anything gated on it here would silently never
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
-TOCLEAN += tests/run_tests.c runtests.tos pieprobe.tos LOADFAIL.TOS \
+TOCLEAN += tests/run_tests.c runtests.tos poweroff.tos reboot.tos coldboot.tos \
+           halt.tos pieprobe.tos LOADFAIL.TOS \
            relocprobe-unpacked.tos PTRELOC.TOS \
            relocprobe2-unpacked.tos PTRELOC2.TOS \
-           test-hd.img
+           test-hd.img ACCPROBE.ACC pbench.prg pbench-hd.img
 TOCLEAN_POST += libcmini-clean
 
 .PHONY: libcmini-clean
@@ -1684,6 +1956,7 @@ TOCLEAN += $(GEN_SRC)
 .PHONY: clean
 clean: $(TOCLEAN_POST)
 	rm -f $(TOCLEAN)
+	rm -rf test-dir
 
 .PHONY: distclean
 distclean: clean

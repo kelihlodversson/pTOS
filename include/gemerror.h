@@ -60,9 +60,10 @@
 #define EGSBF   -67L    /* setblock failure due to growth restrictions  */
 
 /* taken from FreeMiNT -- used by USB code */
-#define EINVAL	   -25L  /* Invalid argument */
-#define	EOPNOTSUPP -307L /* Operation not supported.  */
-#define	ESHUTDOWN  -319L /* Cannot send after shutdown.  */
+#define EINVAL       -25L  /* Invalid argument */
+#define ESRCH      -20L  /* No such process (FreeMiNT's number) */
+#define    EOPNOTSUPP -307L /* Operation not supported.  */
+#define    ESHUTDOWN  -319L /* Cannot send after shutdown.  */
 #define ETIMEDOUT  -320L /* Time out error */
 #define EAGAIN     -326L /* Operation would block */
 

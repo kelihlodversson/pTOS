@@ -13,6 +13,8 @@
 #ifndef IKBD_H
 #define IKBD_H
 
+#include "config.h"
+
 #include "biosdefs.h"
 
 /*
@@ -123,7 +125,7 @@ void ikbd_writew(WORD w);
 void push_ascii_ikbdiorec(UBYTE ascii);
 #endif
 
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 #define call_mousevec ((void (*)(SBYTE *))kbdvecs.mousevec)
 #else /*__arm__*/
 /* the following is in aciavecs.S */

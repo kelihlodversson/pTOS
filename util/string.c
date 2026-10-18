@@ -221,7 +221,7 @@ int sprintf(char *RESTRICT str, const char *RESTRICT fmt, ...)
  * would otherwise be undefined references the moment CONF_WITH_ELF_LOADER
  * or CONF_WITH_PLUGGABLE_FS is turned on for this arch.
  */
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 
 /*
  * WORD strlencpy(char *dest, const char *src)

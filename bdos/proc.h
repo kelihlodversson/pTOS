@@ -28,9 +28,18 @@ void x0term(void);
 void xterm(UWORD rc)  NORETURN ;
 WORD xtermres(long blkln, WORD rc);
 
-#ifdef __x86_64__
-void x86_64_mark_kernel_code_pd(PD *p);
-BOOL x86_64_take_kernel_code_pd(PD *p);
+#if CONF_WITH_USER_ASPACE
+void mark_kernel_code_pd(PD *p);
+BOOL take_kernel_code_pd(PD *p);
+#endif
+#if CONF_WITH_USER_ASPACE
+/* The running process faulted (the architecture's exception handler calls
+ * this): report it and end just that process, as Pterm(-1) would, so that its
+ * launcher resumes and the kernel carries on.  `cause` names the fault, `code`
+ * is the architecture's own detail (an error code), `address` the address
+ * accessed, `pc` the instruction, `sp` the stack pointer.  Called with the
+ * process's address space still in use; never returns. */
+void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp) NORETURN;
 #endif
 
 /*
@@ -46,6 +55,11 @@ LONG kpgmld(PD *p, FH h, PGMHDR01 *hd);
  */
 LONG elf_pgmhdrld(FH h, PGMHDR01 *hd);
 LONG elf_pgmld(FH h, PD *p);
+#if CONF_WITH_USER_ASPACE
+/* whether the next ELF load is Pexec(PE_LOAD), whose image goes into the
+ * caller's heap instead of waiting for the launch */
+void elf_set_load_into_caller(BOOL wanted);
+#endif
 #endif
 
 #if DETECT_NATIVE_FEATURES
@@ -62,11 +76,22 @@ LONG kpgm_relocate( PD *p, long length); /* SOP */
  * genuinely return via setjmp()/longjmp() once the launched process
  * calls Pterm().
  */
-#ifdef __x86_64__
+#if CONF_WITH_USER_ASPACE
 void gouser(void);
 #else
 void gouser(void) NORETURN;
 #endif
 void termuser(void)  NORETURN;
+
+/*
+ * in bdos/arch/<arch>/launch.c
+ *
+ * proc_align_stack() rounds p_hitpa, the initial stack pointer of the
+ * process, as the architecture's entry convention needs.
+ * proc_launch_prepare() builds the state gouser() resumes the new process
+ * from; super_sp is the top of the shared supervisor stack.
+ */
+void proc_align_stack(PD *p);
+void proc_launch_prepare(PD *p, void *super_sp);
 
 #endif /* PROC_H */

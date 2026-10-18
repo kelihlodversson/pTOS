@@ -25,4 +25,8 @@ UBYTE earlycon_read_byte(void);
 BOOL earlycon_can_write(void);
 void earlycon_write_byte(UBYTE b);
 
+/* Enable the UART's received-data interrupt once IRQ4 has an installed,
+ * unmasked PIC route. */
+void earlycon_enable_rx_interrupt(void);
+
 #endif /* PC_X86_64_EARLYCON_H */

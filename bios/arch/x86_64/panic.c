@@ -144,8 +144,43 @@ static NORETURN void hang(void)
     }
 }
 
+/* bdos/proc.c */
+extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc,
+                       UQUAD sp) NORETURN;
+/* bdos/arch/x86_64/rwa.c */
+extern int x86_64_demand_page(UQUAD address);
+
 void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
 {
+    /*
+     * The one fault that is no fault: a process touches a page of its stack or
+     * of its Malloc() memory that has no physical page yet (error code bit 0
+     * clear: not present; bit 4 clear: not an instruction fetch).  Back it and
+     * resume the instruction.
+     */
+    if (frame->vector == 14 && !(frame->error_code & 0x11)) {
+        int answer = x86_64_demand_page(x86_64_read_cr2());
+
+        if (answer == 1)
+            return;
+        if (answer == 2)                /* a lazy page and none left: the process ends, */
+            proc_fault("no physical page left", frame->error_code, /* ring 3 or not */
+                       x86_64_read_cr2(), frame->rip, frame->rsp);
+    }
+
+    /*
+     * A fault taken in ring 3 is the process's own: terminate it and
+     * resume its launcher instead of halting the machine.  Only a
+     * kernel-mode exception is fatal -- and the vectors that mean the
+     * machine, not the process, is at fault (NMI, double fault, machine
+     * check) stay on the panic path whatever was running.  (No swapgs here: exceptions never
+     * swap GS, and ring 3 runs with the "no user context" GS state.)
+     */
+    if ((frame->cs & 3) == 3 && frame->vector != 2 /* NMI */ &&
+        frame->vector != 8 /* #DF */ && frame->vector != 18 /* #MC */)
+        proc_fault(vector_names[frame->vector], frame->error_code,
+                   frame->vector == 14 ? x86_64_read_cr2() : 0, frame->rip, frame->rsp);
+
     earlycon_puts("\npanic: exception ");
     earlycon_puthex(frame->vector);
     earlycon_puts(" ");

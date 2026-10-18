@@ -105,8 +105,10 @@ extern BOOL is_apollo_68080;
   #define IS_APOLLO_68080 0
 #endif
 
-#if defined(__arm__) || defined(__aarch64__)
+#if defined(__arm__) || defined(__aarch64__) || defined(__x86_64__)
 extern const char *mcpu_name;
+#endif
+#if defined(__arm__) || defined(__aarch64__)
 #include "processor_arm.h"
 #endif
 

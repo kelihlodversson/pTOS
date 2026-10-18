@@ -28,6 +28,9 @@
 #include "cookie.h"
 #include "string.h"
 #include "has.h"        /* for has_videl */
+#if CONF_WITH_PROCMEM
+#include "procmem.h"
+#endif
 
 
 /*
@@ -140,6 +143,10 @@ long xmfree(void *addr)
 
     KDEBUG(("BDOS: Mfree(%p)\n",addr));
 
+#if CONF_WITH_PROCMEM
+    if (procmem_contains(addr))
+        return procmem_mfree(addr);
+#endif
     mpb = find_mpb(addr);
     if (!mpb)
         return EIMBA;
@@ -168,7 +175,7 @@ long xmfree(void *addr)
  *  blk - addr of block to free
  *  len - length of block to free
  */
-long xsetblk(int n, void *blk, long len)
+long xsetblk(WORD n, void *blk, long len)
 {
     MD *p;
     MPB *mpb;
@@ -232,7 +239,7 @@ long xsetblk(int n, void *blk, long len)
 /*
  *  xmxalloc - Function 0x44 (Mxalloc)
  */
-void *xmxalloc(long amount, int mode)
+void *xmxalloc(long amount, WORD mode)
 {
     MD *m;
     void *ret_value;
@@ -464,9 +471,19 @@ LONG xmaddalt(UBYTE *start, LONG size)
     if (size <= 0)
         return -1;
 
-    /* does it overlap with ST RAM? */
-    if (((start < start_stram) && (start+size > start_stram))
-     || (start < end_stram))
+    /*
+     * Does it overlap with ST-RAM?  The plain interval test, rather than
+     * the older "starts below ST-RAM and reaches into it, or starts below
+     * the end of it" pair: the second half of that had no lower bound, so
+     * it also rejected a block lying entirely *underneath* ST-RAM.
+     *
+     * Every machine this code grew up on put its Alt-RAM above ST-RAM --
+     * the TT's TT-RAM at 0x01000000 above ST-RAM at 0 -- so the case never
+     * came up.  The RP2350 is the other way round: its SRAM is at
+     * 0x20000000 and the QSPI window the PSRAM answers in is at
+     * 0x11000000, below it.
+     */
+    if ((start < end_stram) && (start + size > start_stram))
         return -1;
 
     /* try to merge blocks */
@@ -600,6 +617,12 @@ void set_owner(void *addr, PD *p)
     MD *m;
     MPB *mpb;
 
+#if CONF_WITH_PROCMEM
+    if (procmem_contains(addr)) {
+        procmem_set_owner(addr, p);
+        return;
+    }
+#endif
     mpb = find_mpb(addr);
 
     if (!mpb)       /* block address was invalid */

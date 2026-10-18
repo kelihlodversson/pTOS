@@ -368,7 +368,7 @@ static void call_user_wheel(WORD wheel_number, WORD wheel_amount)
 }
 #endif
 
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 #if CONF_WITH_EXTENDED_MOUSE
 /*
  * Call the user_but vector from C
@@ -674,7 +674,7 @@ void vdimouse_init(void)
     linea_vars.GCURY = linea_vars.DEV_TAB[1] / 2;
 
     linea_vars.user_but = (void(*)(WORD))just_rts;
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     linea_vars.user_mot = default_user_mot;
 #else
     linea_vars.user_mot = (void (*)(LONG))just_rts;
@@ -717,7 +717,7 @@ void vdimouse_init(void)
 void vdimouse_exit(void)
 {
     linea_vars.user_but = (void(*)(WORD))just_rts;
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     linea_vars.user_mot = default_user_mot;
 #else
     linea_vars.user_mot = (void (*)(LONG))just_rts;

@@ -61,7 +61,7 @@
  *  local typedefs
  */
 #define MDS_PER_BLOCK   3
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 typedef LONG md_index_t;
 #else
 typedef WORD md_index_t;

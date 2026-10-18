@@ -16,16 +16,18 @@
 #ifndef XBIOSBIND_H
 #define XBIOSBIND_H
 
-#if defined(__arm__) || defined(__x86_64__)
+#include "config.h"
+
+#if CONF_WITH_NATIVE_ABI
 #include "biosargs.h"
 #endif
 #ifdef __x86_64__
-#include "asm.h"        /* x86_64_kernel_trap() */
+#include "asm.h"        /* kernel_trap() */
 #endif
 
 /*
  * x86-64 calling convention (bios/arch/x86_64/trap.h):
- * x86_64_kernel_trap()'s first argument packs trap_class << 32 |
+ * kernel_trap()'s first argument packs trap_class << 32 |
  * function_number (14 = the historic m68k XBIOS trap number, kept here as
  * a literal for the same reason biosbind.h's own copy of this comment
  * gives), the next four are the real arguments. The three wide-argument
@@ -101,7 +103,7 @@ static __inline__ void xbios_v_v(int op)
         : "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
     );
 #elif defined(__x86_64__)
-    x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, 0, 0, 0, 0);
+    kernel_trap(((long)14 << 32) | (unsigned)op, 0, 0, 0, 0);
 #else
     __asm__ volatile (
         "move.w  %0,-(sp)\n\t"
@@ -126,7 +128,7 @@ static __inline__ void xbios_v_w(int op, short a)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
 #elif defined(__x86_64__)
-    x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, a, 0, 0, 0);
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     __asm__ volatile (
         "move.w  %1,-(sp)\n\t"
@@ -153,7 +155,7 @@ static __inline__ void xbios_v_wl(int op, short a, long b)
         : "r3", "r12", "lr",  "memory", "cc"
     );
 #elif defined(__x86_64__)
-    x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, a, b, 0, 0);
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, b, 0, 0);
 #else
     __asm__ volatile (
         "move.l  %2,-(sp)\n\t"
@@ -182,7 +184,7 @@ static __inline__ void xbios_v_wll(int op, short a, long b, long c)
         : "r12", "lr",  "memory", "cc"
     );
 #elif defined(__x86_64__)
-    x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, 0);
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, 0);
 #else
     __asm__ volatile (
         "move.l  %3,-(sp)\n\t"
@@ -213,7 +215,7 @@ xbios_v_wwl(int op, short a, short b, long c)
         : "r12", "lr",  "memory", "cc"
     );
 #elif defined(__x86_64__)
-    x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, 0);
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, 0);
 #else
     __asm__ volatile (
         "move.l  %3,-(sp)\n\t"
@@ -245,7 +247,7 @@ xbios_v_wwwl(int op, short a, short b, short c, long d)
         : "r12", "lr",  "memory", "cc"
     );
 #elif defined(__x86_64__)
-    x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, d);
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, d);
 #else
     __asm__ volatile (
         "move.l  %4,-(sp)\n\t"
@@ -265,7 +267,7 @@ xbios_v_wwwl(int op, short a, short b, short c, long d)
 static __inline__ void
 xbios_v_wwwwww(int op, short a, short b, short c, short d, short e, short f)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     /*
      * rsconf() needs 6 real arguments; the trap convention only delivers
      * 4 in registers, so pass them via a xbios_rsconf_args struct instead
@@ -293,7 +295,7 @@ xbios_v_wwwwww(int op, short a, short b, short c, short d, short e, short f)
         : "r2", "r3", "r4", "r12", "lr",  "memory", "cc"
     );
 #elif defined(__x86_64__)
-    x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, (long)&args, 0, 0, 0);
+    kernel_trap(((long)14 << 32) | (unsigned)op, (long)&args, 0, 0, 0);
 #else
     __asm__ volatile (
         "move.w  %6,-(sp)\n\t"
@@ -324,7 +326,7 @@ static __inline__ void xbios_v_l(int op, long a)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
 #elif defined(__x86_64__)
-    x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, a, 0, 0, 0);
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     __asm__ volatile (
         "move.l  %1,-(sp)\n\t"
@@ -352,7 +354,7 @@ static __inline__ void xbios_v_llw(int op, long a, long b, short c)
         : "r12", "lr",  "memory", "cc"
     );
 #elif defined(__x86_64__)
-    x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, 0);
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, 0);
 #else
     __asm__ volatile (
         "move.w  %3,-(sp)\n\t"
@@ -384,7 +386,7 @@ xbios_v_llww(int op, long a, long b, short c, short d)
         : "r12", "lr",  "memory", "cc"
     );
 #elif defined(__x86_64__)
-    x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, d);
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, d);
 #else
     __asm__ volatile (
         "move.w  %4,-(sp)\n\t"
@@ -413,7 +415,7 @@ static __inline__ short xbios_w_v(int op)
     );
     return _r0;
 #elif defined(__x86_64__)
-    return (short)x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, 0, 0, 0, 0);
+    return (short)kernel_trap(((long)14 << 32) | (unsigned)op, 0, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -442,7 +444,7 @@ static __inline__ short xbios_w_w(int op, short a)
     );
     return _r0;
 #elif defined(__x86_64__)
-    return (short)x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, a, 0, 0, 0);
+    return (short)kernel_trap(((long)14 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -473,7 +475,7 @@ static __inline__ short xbios_w_ww(int op, short a, short b)
     );
     return _r0;
 #elif defined(__x86_64__)
-    return (short)x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, a, b, 0, 0);
+    return (short)kernel_trap(((long)14 << 32) | (unsigned)op, a, b, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -494,7 +496,7 @@ static __inline__ short xbios_w_ww(int op, short a, short b)
 static __inline__ short xbios_w_llwwwww(int op,
     long a, long b, short c, short d, short e, short f, short g)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     /*
      * floprd()/flopwr()/flopver() need 7 real arguments; the trap
      * convention only delivers 4 in registers, so pass them via a
@@ -525,7 +527,7 @@ static __inline__ short xbios_w_llwwwww(int op,
     );
     return _r0;
 #elif defined(__x86_64__)
-    return (short)x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, (long)&args, 0, 0, 0);
+    return (short)kernel_trap(((long)14 << 32) | (unsigned)op, (long)&args, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -552,7 +554,7 @@ static __inline__ short xbios_w_llwwwww(int op,
 static __inline__ short xbios_w_llwwwwwlw(int op,
     long a, long b, short c, short d, short e, short f, short g, long h, short i)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     /*
      * flopfmt() needs 9 real arguments; the trap convention only delivers
      * 4 in registers, so pass them via a xbios_flopfmt_args struct
@@ -584,7 +586,7 @@ static __inline__ short xbios_w_llwwwwwlw(int op,
     );
     return _r0;
 #elif defined(__x86_64__)
-    return (short)x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, (long)&args, 0, 0, 0);
+    return (short)kernel_trap(((long)14 << 32) | (unsigned)op, (long)&args, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -622,7 +624,7 @@ static __inline__ long xbios_l_v(int op)
     );
     return _r0;
 #elif defined(__x86_64__)
-    return x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, 0, 0, 0, 0);
+    return kernel_trap(((long)14 << 32) | (unsigned)op, 0, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -651,7 +653,7 @@ static __inline__ long xbios_l_w(int op, short a)
     );
     return _r0;
 #elif defined(__x86_64__)
-    return x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, a, 0, 0, 0);
+    return kernel_trap(((long)14 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -681,7 +683,7 @@ static __inline__ long xbios_l_l(int op, long a)
     );
     return _r0;
 #elif defined(__x86_64__)
-    return x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, a, 0, 0, 0);
+    return kernel_trap(((long)14 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -713,7 +715,7 @@ static __inline__ long xbios_l_lll(int op, long a, long b, long c)
     );
     return _r0;
 #elif defined(__x86_64__)
-    return x86_64_kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, 0);
+    return kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, 0);
 #else
     register long retval __asm__("d0");
 

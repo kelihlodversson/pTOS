@@ -28,7 +28,6 @@ config ALWAYS_SHOW_INITINFO
 
 config INITINFO_DURATION
 	int "Duration of the welcome screen, in seconds"
-	default 0 if MACHINE_PC_X86_64
 	default 8 if MACHINE_FIREBEE
 	default 3
 	help
@@ -37,17 +36,6 @@ config INITINFO_DURATION
 	  hardware it can take several seconds for the monitor to recover
 	  from stand-by mode, so a longer duration is wise.  If set to 0,
 	  the welcome screen is never displayed.
-
-	  MACHINE_PC_X86_64 defaults to 0: the timeout (bios/initinfo.c)
-	  is driven by hz_200, which nothing advances on this machine yet
-	  (no PIC/APIC or timer driver -- see USE_STOP_INSN_TO_FREE_HOST_CPU
-	  above for the same gap). A nonzero duration would only be
-	  harmless today because biosmain()'s FIRST_BOOT is unconditionally
-	  false here too (no code sets MEMINIT_FIRST_BOOT for this arch, see
-	  bios/machine.h), so the welcome screen's timed wait is never
-	  actually entered -- but that's an incidental side effect of a
-	  separate gap, not something this option should rely on staying
-	  true. Revisit both together once a timer exists.
 
 endmenu
 
@@ -146,6 +134,27 @@ config CONF_DEBUG_DESK_STACK
 	bool "Monitor the desktop stack usage"
 	depends on CONF_WITH_AES
 	default n
+
+config CONF_DEBUG_FORCE_MC68000
+	bool "Force CPU auto-detection to report a plain 68000"
+	depends on ARCH_M68K_CLASSIC
+	default n
+	help
+	  QEMU's m68k "m68000" CPU model does not fault on the "MOVE from
+	  CCR" instruction the way real 68000 silicon does, which is what
+	  detect_cpu() (bios/arch/m68k/processor.S) relies on to tell a
+	  68000 apart from a 68010 or later. Under that model, detection
+	  wrongly concludes 68010+, which sets longframe and breaks the
+	  BIOS/XBIOS/GEMDOS trap dispatch: it then expects the extra
+	  68010+ exception-frame format word that a real 68000 frame does
+	  not have, and every trap call misreads its arguments.
+
+	  Say y to override mcpu/longframe/fputype to the 68000 values
+	  right after auto-detection runs. This is a debugging aid for
+	  testing under QEMU only -- never enable it for a build that
+	  might run on real hardware or an accurate emulator (e.g.
+	  Hatari), since it will misidentify an actual 68010+ CPU as a
+	  68000.
 
 source "tests/Kconfig"
 

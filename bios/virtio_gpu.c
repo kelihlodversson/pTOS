@@ -1,4 +1,5 @@
 /* virtio-gpu 2D framebuffer for QEMU virt boards. */
+/* #define ENABLE_KDEBUG */
 #include "config.h"
 
 #if CONF_WITH_VIRTIO_GPU
@@ -143,7 +144,14 @@ void virtio_gpu_get_current_mode_desc(SCREEN_MODE_DESC *desc)
 
 void virtio_gpu_update(void)
 {
+#ifdef ENABLE_KDEBUG
+    static ULONG vbl_count;
+#endif
     if (!gpu_is_present) return;
+#ifdef ENABLE_KDEBUG
+    if ((++vbl_count % 900UL) == 0UL)
+        KDEBUG(("virtio_gpu: vbl %lu alive, v_bas_ad=%p\n", vbl_count, v_bas_ad));
+#endif
     if (gpu_in_flight) {
         virtio_poll(&gpu_dev);
         if (!gpu_dev.done) return;

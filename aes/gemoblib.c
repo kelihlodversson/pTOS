@@ -31,6 +31,7 @@
 #include "gemgraf.h"
 #include "optimopt.h"
 #include "rectfunc.h"
+#include "intmath.h"
 #include "gemoblib.h"
 
 #include "string.h"
@@ -384,8 +385,8 @@ void ob_format(WORD just, char *raw_str, char *tmpl_str, char *fmt_str)
         prbeg = prbeg + prlen - 1;
     }
 
-    ptend = ptbeg + (inc * ptlen);
-    prend = prbeg + (inc * prlen);
+    ptend = ptbeg + muls(inc, ptlen);
+    prend = prbeg + muls(inc, prlen);
 
     while(ptbeg != ptend)
     {
@@ -410,7 +411,7 @@ void ob_format(WORD just, char *raw_str, char *tmpl_str, char *fmt_str)
 
 static __inline__ WORD call_usercode(USERBLK *ub, PARMBLK *pb)
 {
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
     WORD (*ub_code)(PARMBLK *parmblock) = ub->ub_code;
     return ub_code(pb);
 #else

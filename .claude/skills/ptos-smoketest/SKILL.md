@@ -1,6 +1,35 @@
 ---
 name: ptos-smoketest
-description: Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS) image boots under an emulator. Covers Hatari for m68k Atari targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi1 (QEMU machine `raspi1ap`), raspi2 (QEMU machine `raspi2b`), virt-arm and virt-m68k machines, plus testing the flashable Raspberry Pi SD card disk image (`tools/mkraspi-image.sh`) by attaching it to QEMU as a raw `-drive if=sd`. Also covers the x86-64 UEFI target (`pc-x86_64_defconfig`, `pc-x86_64.efi`) under `qemu-system-x86_64` + OVMF firmware, booted from a synthesized FAT ESP directory, including its GOP framebuffer AES/EmuDesk smoke test. Also covers running the regression test suite (`make test-hd`) on QEMU with the test HD image as an SD card and reading pass/fail output from the serial console. Use when asked to boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung boot, verify the SD card image's MBR/FAT16 partition is readable by pTOS's own eMMC driver, run regression tests under QEMU, boot-test the x86-64 EFI image, or when you need emulator invocations, --run-vbls/--avirecord/--trace flags, the Hatari debugger gotchas (spurious breakpoints, echo crash), the Falcon IDE 31s boot wait, the floppy motor/deselection timeouts (motor on/off 1.5-3s + deselect 5s = ~20s STE baseline), QEMU's power-of-2 SD card image size requirement, or the OVMF writable-NVRAM-file gotcha.
+description: >-
+  Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS)
+  image boots under an emulator, OR when doing a difficult interactive
+  debugging session on a m68k/Atari target (a crash, hang, or wrong-behavior
+  bug that needs real breakpoints/single-stepping/register or memory
+  inspection, not just a boot pass/fail check). Covers Hatari for m68k Atari
+  targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi1 (QEMU
+  machine `raspi1ap`), raspi2 (QEMU machine `raspi2b`), virt-arm and
+  virt-m68k machines, plus testing the flashable Raspberry Pi SD card disk
+  image (`tools/mkraspi-image.sh`) by attaching it to QEMU as a raw `-drive
+  if=sd`. Also covers the x86-64 UEFI target (`pc-x86_64_defconfig`,
+  `pc-x86_64.efi`) under `qemu-system-x86_64` + OVMF firmware, booted from a
+  synthesized FAT ESP directory, including its GOP framebuffer AES/EmuDesk
+  smoke test. Also covers running the regression test suite (`make test-hd`)
+  on QEMU with the test HD image as an SD card and reading pass/fail output
+  from the serial console. For interactive debugging: `tools/rdb.py` plus a
+  patched, remote-debuggable Hatari fork (hrdb, see doc/debugging.txt) for
+  real-Atari-hardware bugs, and QEMU+GDB (including
+  `CONF_DEBUG_FORCE_MC68000` for reproducing genuine-68000, non-longframe
+  code paths on virt-m68k) for boot-sequencing/ABI bugs. Use when asked to
+  boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung
+  boot, debug a crash with breakpoints/register dumps, verify the SD card
+  image's MBR/FAT16 partition is readable by pTOS's own eMMC driver, run
+  regression tests under QEMU, boot-test the x86-64 EFI image, or when you
+  need emulator invocations, --run-vbls/--avirecord/--trace flags, the
+  Hatari debugger gotchas (spurious breakpoints, echo crash) and the hrdb
+  alternative, the Falcon IDE 31s boot wait, the floppy motor/deselection
+  timeouts (motor on/off 1.5-3s + deselect 5s = ~20s STE baseline), QEMU's
+  power-of-2 SD card image size requirement, or the OVMF writable-NVRAM-file
+  gotcha.
 ---
 
 # pTOS Smoke Testing
@@ -21,7 +50,7 @@ the pTOS tree). Relevant outputs:
 | `rpi1_defconfig` | qemu-system-arm | `kernel.img` | `-M raspi1ap` (video + serial) |
 | `rpi2_defconfig` | qemu-system-arm | `kernel7.img` | `-M raspi2b` (video + serial) |
 | `virt-arm_defconfig` | qemu-system-arm | `virt-arm.elf` | `-M virt,highmem=off -cpu cortex-a7` (headless) |
-| `virt-m68k_defconfig` | qemu-system-m68k | `virt-m68k.elf` | `-M virt -cpu m68020` (headless) |
+| `virt-m68k_defconfig` | qemu-system-m68k | `virt-m68k.elf` | `-M virt -cpu m68020` (or `m68040`; `m68060` needs `CPUFLAGS="-m68060"`) (headless) |
 | `virt-arm-cli_defconfig` | qemu-system-arm | `virt-arm.elf` | same as `virt-arm_defconfig`, but boots to EmuCON, not the desktop |
 | `virt-m68k-cli_defconfig` | qemu-system-m68k | `virt-m68k.elf` | same as `virt-m68k_defconfig`, but boots to EmuCON, not the desktop |
 | `test-hd` (any config) | qemu-system-arm | `test-hd.img` (SD card) | `-drive file=test-hd.img,format=raw,if=sd` with any `-bios`/`-kernel` |
@@ -189,6 +218,82 @@ time; e.g. the 31 s IDE wait polls `_hz_200` at `0x4ba`, `addq.l #1,$4ba` at
 - No `info breakpoints` command; list breakpoints with bare `b`.
 - Trust only: `--run-vbls` + `--trace ...` output and AVI frames.
 
+## Interactive debugging: hrdb (a reliable alternative to the above)
+
+For anything beyond a boot pass/fail check — a crash needing register
+dumps, a breakpoint that must actually fire, single-stepping — use
+`tools/rdb.py` against a patched, remote-debuggable Hatari instead of
+stock Hatari's debugger above. Full protocol writeup, wire-format
+quirks and process-management gotchas: `doc/debugging.txt`. Quick
+reference:
+
+```sh
+# One-time: build the patched fork (needs libsdl2-dev)
+git clone --branch hrdb-main --depth 1 https://github.com/tattlemuss/hatari /tmp/hatari-hrdb
+cd /tmp/hatari-hrdb && mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc)
+# binary: build/src/hatari -- same CLI as stock Hatari
+
+# Launch (setsid is required -- see doc/debugging.txt's process-management
+# gotchas; a plain '&'-backgrounded instance was observed to die when the
+# launching shell command finished, even with disown)
+ps aux | grep 'build/src/hatari' | grep -v grep   # kill any stale instance first (port 56001, one client)
+env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy setsid /tmp/hatari-hrdb/build/src/hatari \
+  --tos ptos192us.img --machine st --memsize 4 --sound off --drive-a false --drive-b false \
+  > /tmp/hatari.log 2>&1 < /dev/null &
+disown
+```
+
+```python
+from rdb import RDB   # tools/rdb.py; run from tools/, or sys.path.insert it
+r = RDB()                          # connects to 127.0.0.1:56001
+r.bp("pc=$fc23d8")                 # standard Hatari breakpoint-expression syntax
+r.run()
+stop = r.wait_stopped()            # blocks until the breakpoint fires
+regs = r.regs()                    # {"D0": ..., "PC": ..., "SR": ..., ...}
+data, addr = r.mem(regs["A0"], 128)
+r.step(); r.regs()                 # single-step + re-read
+```
+
+`break`/`step`/`run`/`regs`/`mem`/`bp`/`bplist` all verified working,
+repeatedly, in one session — this is the tool to reach for on a real
+Atari-hardware-specific bug (see the "Which tool for which bug"
+section of `doc/debugging.txt` for when to prefer this over QEMU+GDB
+below).
+
+## Interactive debugging: QEMU + GDB for m68k (virt-m68k)
+
+For boot-sequencing or ABI/register-convention bugs that don't need
+real Atari hardware (MFP, floppy, ACSI, actual ROM size/memory map),
+QEMU's GDB stub on virt-m68k is faster to iterate than Hatari:
+
+```sh
+qemu-system-m68k -M virt -m 128 -cpu m68000 -kernel virt-m68k.elf \
+  -d guest_errors -serial /dev/null -display none -S -gdb tcp::1234 &
+gdb-multiarch -q -x script.gdb virt-m68k.elf
+```
+
+`virt-m68k_defconfig` always builds for `-cpu m68020` (see the
+`CPUFLAGS` comment there): QEMU's `-cpu m68000` model doesn't fault on
+"MOVE from CCR", the one instruction pTOS's own CPU auto-detection
+relies on to tell 68000 apart from 68010+, so a plain `-cpu m68000`
+run misdetects itself as 68010+ and corrupts every trap's argument
+frame. To actually test a genuine-68000 code path (e.g. what
+atari192/256 run), set `CONF_DEBUG_FORCE_MC68000=y` in `.config`
+(`Kconfig.debug`, debug-only, never for a real build) alongside
+`CPUFLAGS="-m68000"` — full details and the exact `.config` edits in
+`doc/debugging.txt`.
+
+GDB scripting reliability, verified in this environment: a single
+`target remote` / `break` / `continue` round-trip to the first stop is
+reliable; chaining several breakpoint-`commands`-block auto-continues
+in one long session was flaky (intermittent "Cannot execute this
+command while the target is running"). Prefer one `-x script.gdb` run
+per breakpoint hit, restarting QEMU fresh each time. `-d exec` full
+instruction traces are useful but enormous (millions of lines within
+seconds) — delete the log file immediately after grepping it out, or
+it can exhaust the session's disk quota.
+
 ## QEMU smoke test (raspi1 / raspi2 / virt-arm / virt-m68k)
 
 The pTOS `readme.md` is the user-facing source; this skill is the agent-facing
@@ -216,7 +321,10 @@ qemu-system-arm -M raspi2b -bios kernel7.img -device usb-mouse -device usb-kbd \
 make virt-arm_defconfig && make
 qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf -d guest_errors -serial stdio
 
-# virt-m68k (headless) — MUST use -cpu m68020: the 68040 CACR probe hits a fatal QEMU bug
+# virt-m68k (headless) — -cpu m68020 and -cpu m68040 work as built.  -cpu m68060
+# needs the kernel built with CPUFLAGS="-m68060" (menuconfig): QEMU's 68060 has no
+# software package for the 64-bit mulu.l/divu.l that -m68020 code may use.  The
+# boot-time CPU detection no longer reads the PCR (QEMU aborts the VM on it).
 make virt-m68k_defconfig && make
 qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_errors -serial stdio
 
@@ -428,6 +536,34 @@ The expected pass signal is the normal `All tests passed.` summary. The
 harness exits through `Pterm(0)` when complete; use a host timeout when
 running unattended.
 
+### Regression tests from a host directory (`make test-dir`)
+
+`make test-dir` collects the same files as `make test-hd` (`runtests.tos`,
+`emudesk.inf`, the probe programs, `TESTS/`) into a plain `test-dir/`, so no
+image is built and neither `mkfs.fat` nor mtools is needed. QEMU's virtual FAT
+driver (vvfat) presents the directory as an MBR-partitioned FAT16 disk, which
+pTOS's own MBR parser and FAT driver read (`fda: MBR at 0 $06`):
+
+```sh
+# raspi2/raspi1ap: the SD card model wants a power-of-two size, vvfat is
+# 504 MiB. A raw "size" window that is smaller than the vvfat disk is accepted
+# (it cannot be larger), and the files sit at the start of the disk.
+qemu-system-arm -M raspi2b -bios kernel7.img \
+  -drive if=sd,driver=raw,size=256M,file.driver=vvfat,file.dir=test-dir,file.rw=on \
+  -d guest_errors -serial stdio -display none
+
+# virt-arm: virtio-blk takes vvfat as it is
+qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 -kernel virt-arm.elf \
+  -global virtio-mmio.force-legacy=false \
+  -drive if=none,id=hd0,format=raw,file.driver=vvfat,file.dir=test-dir,file.rw=on \
+  -device virtio-blk-device,drive=hd0 -d guest_errors -serial stdio -display none
+```
+
+The plain `-drive file=fat:rw:test-dir,format=raw,if=sd` form fails with
+"Invalid SD card size: 504 MiB". Both runs above print `All tests passed.`
+(6 of 6) and then keep running: use a host `timeout`. Hatari is out of scope
+(its GEMDOS drive would bypass pTOS's FAT driver).
+
 ### Standard smoke pattern and pass signals
 
 ```sh
@@ -557,6 +693,21 @@ boots to EmuCON. The headless command above is the right fast boot check for
 that configuration. It captures COM1 output to a log so it can be grepped
 afterward.
 
+### x86-64 regression tests
+
+With the x86-64 configuration, `runtests.tos` and the probe programs are built
+as x32 programs (libcmini's `ptos_x86_64_defconfig`, the same compiler and
+flags as `x32hello.elf`; `ptos_reloc_load` runs too, with the probes packed by
+`ptos-elf-pack`). Copy `make test-dir`'s
+contents into the ESP directory next to `EFI/BOOT/BOOTX64.EFI`, boot, and type
+`runtests.tos` at the EmuCON prompt (`C:\>`):
+
+```sh
+make pc-x86_64_defconfig && make
+make test-dir
+cp -R test-dir/. esp/
+```
+
 ### GOP desktop smoke test
 
 The EFI GOP framebuffer supports an AES/EmuDesk build. Start with the PC
@@ -670,7 +821,7 @@ but with `-machine pc` this normally is not needed.
 | Verifying boot with Hatari breakpoints | Use AVI frame analysis or `--trace` |
 | Measuring wall-clock under `--parse` | `--parse` is full-speed; only `--run-vbls` is paced |
 | Falcon boot looks hung | 31 s `ide_init` wait — attach `--ide-master`, use STE, or drop `CONF_WITH_IDE` |
-| `qemu-system-m68k` with default CPU | always `-cpu m68020` |
+| `qemu-system-m68k` with default CPU | the board default is m68040, which works; the documented invocation uses `-cpu m68020`; for `-cpu m68060` rebuild with `CPUFLAGS="-m68060"` |
 | `-M virt` without `highmem=off` | use `-M virt,highmem=off` — no >4 GiB access support |
 | Expecting video from virt-arm/virt-m68k | headless; check serial + guest_errors only |
 | Trying `qemu-system-aarch64 -M raspi3b -bios kernel7.img` for a 32-bit pTOS build | `raspi3b`/`raspi4b` are AArch64-only in QEMU, no override exists; use `raspi2b` under `qemu-system-arm` instead |

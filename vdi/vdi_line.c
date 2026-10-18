@@ -329,7 +329,7 @@ static void hwblit_rect_nonstd(const VwkAttrib *attr, const Rect *rect, UWORD *a
     /*
      * invalidate any cached screen data
      */
-    invalidate_data_cache(addr, linea_vars.v_lin_wr*ycount);
+    invalidate_data_cache(addr, muls(linea_vars.v_lin_wr, ycount));
 }
 
 
@@ -357,7 +357,7 @@ static void hwblit_rect_common(const VwkAttrib *attr, const Rect *rect)
     /*
      * flush the data cache to ensure that the screen memory is current
      */
-    flush_data_cache(b.addr, linea_vars.v_lin_wr*ycount);
+    flush_data_cache(b.addr, muls(linea_vars.v_lin_wr, ycount));
 
     BLITTER->src_x_incr = 0;
     BLITTER->endmask_1 = b.leftmask;
@@ -433,7 +433,7 @@ static void hwblit_rect_common(const VwkAttrib *attr, const Rect *rect)
     /*
      * invalidate any cached screen data
      */
-    invalidate_data_cache(b.addr, linea_vars.v_lin_wr*ycount);
+    invalidate_data_cache(b.addr, muls(linea_vars.v_lin_wr, ycount));
 }
 #endif
 
@@ -618,7 +618,7 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
                 if (color & 0x0001) {
                     *work |= pattern & b.leftmask;  /* left section */
                     work += vplanes;
-#if defined(__mcoldfire__) || defined(__arm__) || defined(__x86_64__)
+#if defined(__mcoldfire__) || CONF_WITH_NATIVE_ABI
                     for (n = centre; n >= 0; n--) { /* centre section */
                         *work |= pattern;
                         work += vplanes;
@@ -639,7 +639,7 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
                 } else {
                     *work &= ~(pattern & b.leftmask);   /* left section */
                     work += vplanes;
-#if defined(__mcoldfire__) || defined(__arm__) || defined(__x86_64__)
+#if defined(__mcoldfire__) || CONF_WITH_NATIVE_ABI
                     for (n = centre; n >= 0; n--) { /* centre section */
                         *work &= ~pattern;
                         work += vplanes;
@@ -676,7 +676,7 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
 
                 *work ^= pattern & b.leftmask;      /* left section */
                 work += vplanes;
-#if defined(__mcoldfire__) || defined(__arm__) || defined(__x86_64__)
+#if defined(__mcoldfire__) || CONF_WITH_NATIVE_ABI
                 for (n = centre; n >= 0; n--) {    /* centre section */
                     *work ^= pattern;
                     work += vplanes;
@@ -713,7 +713,7 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
                 if (color & 0x0001) {
                     *work |= pattern & b.leftmask;  /* left section */
                     work += vplanes;
-#if defined(__mcoldfire__) || defined(__arm__) || defined(__x86_64__)
+#if defined(__mcoldfire__) || CONF_WITH_NATIVE_ABI
                     for (n = centre; n >= 0; n--) { /* centre section */
                         *work |= pattern;
                         work += vplanes;
@@ -734,7 +734,7 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
                 } else {
                     *work &= ~(pattern & b.leftmask);   /* left section */
                     work += vplanes;
-#if defined(__mcoldfire__) || defined(__arm__) || defined(__x86_64__)
+#if defined(__mcoldfire__) || CONF_WITH_NATIVE_ABI
                     for (n = centre; n >= 0; n--) { /* centre section */
                         *work &= ~pattern;
                         work += vplanes;
@@ -773,7 +773,7 @@ void planar_fill_rect(const VwkAttrib *attr, const Rect *rect)
                 data |= pattern & b.leftmask;
                 *work = data;
                 work += vplanes;
-#if defined(__mcoldfire__) || defined(__arm__) || defined(__x86_64__)
+#if defined(__mcoldfire__) || CONF_WITH_NATIVE_ABI
                 for (n = centre; n >= 0; n--) {     /* centre section */
                     *work = pattern;
                     work += vplanes;
@@ -1261,7 +1261,7 @@ static void cir_dda(WORD line_width)
     WORD *xptr, *yptr, x, y, d;
 
     /* Calculate the number of vertical pixels required. */
-    linea_vars.num_qc_lines = (line_width * xsize / ysize) / 2 + 1;
+    linea_vars.num_qc_lines = divs(muls(line_width, xsize), ysize) / 2 + 1;
     if (linea_vars.num_qc_lines > MAX_QC_LINES)
         linea_vars.num_qc_lines = MAX_QC_LINES;    /* circles will be flattened */
 
@@ -1300,14 +1300,14 @@ static void cir_dda(WORD line_width)
 
         yptr = q_circle;
         for (i = 0; i < linea_vars.num_qc_lines; i++) {
-            y = ((2 * i + 1) * ysize / xsize) / 2;
+            y = divs(muls(2 * i + 1, ysize), xsize) / 2;
             d = 0;
 
             xptr = &q_circle[x];
             for (j = x; j <= y; j++)
                 d += *xptr++;
 
-            *yptr++ = d / (y - x + 1);
+            *yptr++ = divs(d, y - x + 1);
             x = y + 1;
         }
         return;

@@ -11,6 +11,7 @@ menu "AES"
 
 config CONF_WITH_AES
 	bool "Include the AES and the EmuDesk desktop"
+	depends on !ARCH_X86_64
 	default n if TARGET_CART
 	default y
 	help
@@ -18,6 +19,9 @@ config CONF_WITH_AES
 	  straight into EmuCON or runs the program found on the boot device.
 	  This is only useful when the image size is severely restricted,
 	  such as for the diagnostic cartridge.
+
+	  Not available on x86-64: its processes run in ring 3, and the AES
+	  and EmuDesk have not been moved there yet.
 
 if CONF_WITH_AES
 

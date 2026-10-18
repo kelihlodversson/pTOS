@@ -1,0 +1,17 @@
+# virt-m68k-cli_defconfig plus the ELF executable loader.
+#
+# The regression suite (tests/) has three suites that need it: pie_load,
+# load_fail and ptos_reloc_load launch ELF programs, and are only part of
+# runtests.tos where CONF_WITH_ELF_LOADER is set (ARM and x86-64 always have
+# it; on m68k it is an option that defaults to off).  CI runs the m68k
+# regression suite on this configuration so that the m68k ELF loader is
+# covered too.
+MACHINE_VIRT_M68K=y
+
+# See virt-m68k_defconfig for why these are what they are.
+CPUFLAGS="-m68020"
+CONF_WITH_IDE=n
+CONF_WITH_AES=n
+CONF_WITH_PLUGGABLE_FS=y
+
+CONF_WITH_ELF_LOADER=y

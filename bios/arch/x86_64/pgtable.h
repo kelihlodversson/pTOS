@@ -219,14 +219,22 @@ void x86_64_new_address_space(UQUAD pml4_phys);
  * arbitrary caller-specified PML4 through the physical-memory direct map,
  * so table counts are unbounded rather than drawn from a small fixed pool.
  *
- * alloc_page is called (0-3 times per call: PDPT, PD, PT, whichever levels
- * do not already exist for virt) and must return a freshly allocated,
- * page-aligned physical page each time; this file zeroes it before use.
- * Taking a callback rather than calling
- * bios/machine/pc-x86_64/pmem.h's x86_64_pmem_alloc_pages() directly keeps
- * this arch-level file free of a dependency on that machine-level header
- * (see CLAUDE.md's arch/machine split) -- the pc-x86_64 process loader
- * passes a one-line wrapper around x86_64_pmem_alloc_pages(1).
+ * alloc_page(ctx) is called (0-3 times per call: PDPT, PD, PT, whichever
+ * levels do not already exist for virt) and must return a freshly
+ * allocated, page-aligned physical page each time, or
+ * X86_64_PGTABLE_NO_PAGE if it cannot; this file zeroes the page before
+ * use.  ctx is passed through untouched so the caller can record every
+ * table page it hands out and free them all when the address space dies --
+ * a callback with no context could not do that.  Taking a callback rather
+ * than calling bios/machine/pc-x86_64/pmem.h directly keeps this arch-level
+ * file free of a dependency on that machine-level header (see CLAUDE.md's
+ * arch/machine split).
+ *
+ * Returns 0 on success.  Returns -1 if virt is not a low-half address or
+ * alloc_page ran out of memory; in that case virt is left unmapped, and
+ * any intermediate tables already linked in stay valid (zeroed and
+ * reachable only through this PML4), so the caller's record of the pages
+ * it allocated remains the complete list to free.
  *
  * executable controls the leaf's NX bit (set when executable is false).
  * EFER_NXE (trap.c's x86_64_trap_init()) must already be enabled before
@@ -250,10 +258,49 @@ void x86_64_new_address_space(UQUAD pml4_phys);
  * in pgtable.c) -- a stricter intermediate entry would silently override
  * a more permissive leaf instead of the other way around.
  */
-void x86_64_map_user_page(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
-                          int writable, int executable, int user,
-                          UQUAD (*alloc_page)(void));
+int x86_64_map_user_page(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
+                         int writable, int executable, int user,
+                         UQUAD (*alloc_page)(void *ctx), void *ctx);
+
+/* alloc_page's "no page available" return (a physical address can never
+ * be all ones). */
+#define X86_64_PGTABLE_NO_PAGE (~0ULL)
+
+/*
+ * Clears the 4 KiB leaf for virt in a process address space; the table pages
+ * above it stay (the owning address space frees them).  Returns 0, or -1 if
+ * virt was not mapped as a 4 KiB page.  The caller flushes the TLB if that
+ * address space is the loaded one.
+ */
+int x86_64_unmap_user_page(UQUAD pml4_phys, UQUAD virt);
+
+/* A bit of a leaf entry the CPU ignores, which the address-space code uses to
+ * mark a page it owns (backing it allocated, to free with the mapping). */
+#define X86_64_PTE_OWNED 0x200ULL
+
+/* The 4 KiB leaf entry that maps virt in the address space whose PML4 is
+ * pml4_phys, or NULL if there is none (no table on the way, or a larger page). */
+UQUAD *x86_64_user_pte(UQUAD pml4_phys, UQUAD virt);
+
+/*
+ * The physical address of this kernel's own master PML4 -- what CR3 holds
+ * outside any user process -- and raw CR3 access, so a process address
+ * space can be torn down safely: its tables may only be freed once CR3 no
+ * longer points at them.
+ */
+UQUAD x86_64_kernel_pml4_phys(void);
+UQUAD x86_64_read_cr3(void);
+void x86_64_write_cr3(UQUAD pml4_phys);
 
 #endif /* __ASSEMBLER__ */
+
+/* Copying the kernel's own low 2 MiB mappings into a process's address
+ * space, supervisor-only (see pgtable.c).  The first returns 0 if virt is
+ * not a present 2 MiB mapping of the kernel's tables; the second returns
+ * -1 if memory ran out, virt is already mapped or an argument is not
+ * 2 MiB-aligned. */
+int x86_64_kernel_low_2m_phys(UQUAD virt, UQUAD *phys);
+int x86_64_map_kernel_2m_into(UQUAD pml4_phys, UQUAD virt, UQUAD phys,
+                              UQUAD (*alloc_page)(void *), void *ctx);
 
 #endif /* X86_64_PGTABLE_H */

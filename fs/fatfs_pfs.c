@@ -165,7 +165,7 @@ static LONG fat_open(PFSCOOKIE *dir, const char *name, WORD mode, PFSCOOKIE *out
 {
     FCB *f;
     DND *dn = COOKIE_TO_DND(dir);
-    long pos;
+    LONG pos;
     LONG rc;
 
     pos = 0;
@@ -191,7 +191,7 @@ static LONG fat_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *
     const char *s = name;
     char n[2], a[11];                       /*  M01.01.03   */
     int i, f2;                              /*  M01.01.03   */
-    long pos, rc;
+    LONG pos, rc;
 
     n[0] = (char)ERASE_MARKER; n[1] = 0;
 
@@ -418,7 +418,7 @@ static LONG fat_remove(PFSCOOKIE *dir, const char *name)
 {
     DND *dn = COOKIE_TO_DND(dir);
     FCB *f;
-    long pos;
+    LONG pos;
 
     pos = 0;
     if (!(f = scan(dn, name, FA_NORM, &pos)))
@@ -435,7 +435,7 @@ static LONG fat_rmdir_dnd(DND *d)
     DND *d1, **q;
     FCB *f;
     OFD *fd, *f2;
-    long pos;
+    LONG pos;
 
     if (!d->d_parent)
         return EACCDN;
@@ -483,7 +483,7 @@ static LONG __attribute__((unused)) fat_rmdir(PFSCOOKIE *dir, const char *name)
     DND *parent = COOKIE_TO_DND(dir);
     DND *d;
     FCB *f;
-    long pos;
+    LONG pos;
 
     /* pfs_resolve_dir() resolves a trailing slash to the target directory. */
     if (!*name)
@@ -508,7 +508,7 @@ static LONG fat_chattr(PFSCOOKIE *dir, const char *name, BOOL set, UWORD *dos_at
     DND *dn = COOKIE_TO_DND(dir);
     OFD *fd;
     char mod = (char)*dos_attr;
-    long pos;
+    LONG pos;
 
     pos = 0;
     if (!scan(dn, name, FA_NORM, &pos))
@@ -542,7 +542,7 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
     const char *s1 = oldname, *s2 = newname;
     char buf[11], att;
     int hnew;
-    long posp;
+    LONG posp;
     UWORD filetime, filedate;
     CLNO clust;
     LONG fileln, rc;
@@ -1067,7 +1067,7 @@ LONG fat_chdir_path(char *p)
     else
         dlog = run->p_curdrv;
 
-    olddir = run->p_curdir[dlog];
+    olddir = PD_CURDIR(run)[dlog];
 
     dnd = findit(p, &s, 1);
     if (DND_IS_ERRCODE(dnd))
@@ -1078,7 +1078,7 @@ LONG fat_chdir_path(char *p)
     newdir = incr_curdir_usage(dnd);
     if (newdir < 0)
         return EPTHNF;
-    run->p_curdir[dlog] = newdir;
+    PD_CURDIR(run)[dlog] = newdir;
 
     if (olddir)
         decr_curdir_usage(olddir);
@@ -1100,7 +1100,7 @@ LONG fat_getdir_path(char *buf, int drv)
         return EDRIVE;
     }
 
-    n = run->p_curdir[drv];
+    n = PD_CURDIR(run)[drv];
     p = dirtbl[n].dnd;
     len = LEN_ZPATH - 3;
     buf = dopath(p, buf, &len);

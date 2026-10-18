@@ -105,7 +105,7 @@ long xcreat(char *name, UBYTE attr)
  *
  *  +ve return      file handle
  */
-long xopen(char *name, int mod)
+long xopen(char *name, WORD mod)
 {
     int m = mod & VALID_FOPEN_BITS;
 #if CONF_WITH_PLUGGABLE_FS
@@ -287,7 +287,7 @@ static void sftdel(FTAB *sftp)
  *          operations inside the 'if' statement following the invocation
  *          of ixclose(), but I am leaving the flow of control intact.
  */
-long xclose(int h)
+long xclose(WORD h)
 {
     int h0;
     OFD *fd;
@@ -301,14 +301,14 @@ long xclose(int h)
 
     if ((h0 = h) < NUMSTD)
     {
-        h = run->p_uft[h];
-        run->p_uft[h0] = get_default_handle(h0);    /* revert to default */
+        h = PD_UFT(run)[h];
+        PD_UFT(run)[h0] = get_default_handle(h0);    /* revert to default */
         if (h < 0)                  /* M01.01.1023.01 */
             return E_OK;
         if (h < NUMSTD)             /* "can't happen" (bug in Fforce()?) */
             return EIHNDL;
     }
-    else if (((long) sft[h-NUMSTD].f_ofd) < 0L)
+    else if (IS_BIOS_HANDLE(sft[h-NUMSTD].f_ofd))
     {
         if (!(--sft[h-NUMSTD].f_use))
         {

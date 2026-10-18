@@ -27,7 +27,10 @@
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"        /* PFSCOOKIE is embedded by value in FTAB below */
 #endif
-#if ARCH_ARM
+/* The structures that mirror on-disk records (FCB, DFD's three FCB fields)
+ * are packed wherever LONG is aligned to 4: fsopnclo.c copies 10 bytes from
+ * a DFD into an FCB. */
+#if ARCH_ARM || ARCH_X86_64
 #   define OPT_PACKED  __attribute__((packed))
 #else
 #   define OPT_PACKED
@@ -327,6 +330,16 @@ struct _bcb
  * FTAB - Open File Table Entry
  */
 
+/*
+ * f_ofd normally points at an OFD, but a standard handle that has been
+ * redirected to a character device holds a small negative BIOS handle in
+ * it instead (-1 prn, -2 aux, -3 con).  "Negative" does not tell the two
+ * apart: a valid OFD pointer can have its sign bit set (the x86-64 kernel
+ * heap is in the higher half), so a BIOS handle is only one of -1..-3.
+ */
+#define BIOS_HANDLE_MIN (-3L)
+#define IS_BIOS_HANDLE(v) ((long)(v) < 0L && (long)(v) >= BIOS_HANDLE_MIN)
+
 /* point these at OFDs when needed */
 typedef struct
 {
@@ -410,11 +423,11 @@ WORD log_media(BPB *b, int drv);
  * in fshand.c
  */
 
-long xforce(int std, int h);
+long xforce(WORD std, WORD h);
 long ixforce(int std, int h, PD *p);
 
 /* duplicate a file handle. */
-long xdup(int h);
+long xdup(WORD h);
 
 /*
  * in fsopnclo.c
@@ -425,10 +438,10 @@ long xcreat(char *name, UBYTE attr);
 long ixcreat(char *name, UBYTE attr);
 
 /* open a file (path name) */
-long xopen(char *name, int mod);
+long xopen(char *name, WORD mod);
 
 /* Close a file */
-long xclose(int h);
+long xclose(WORD h);
 long ixclose(OFD *fd, int part);
 
 /* remove a file */
@@ -470,7 +483,7 @@ int nextcl(OFD *p, int wrtflg);
  * (fs/fatfs.h). The pointer itself is unaffected (still full native
  * width; only what its target bytes mean changes).
  */
-long xgetfree(LONG *buf, int drv);
+long xgetfree(LONG *buf, WORD drv);
 
 /*
  * in fsio.c
@@ -480,15 +493,15 @@ long xgetfree(LONG *buf, int drv);
 long eof(int h);
 
 /* seek to byte position n on file with handle h */
-long xlseek(long n, int h, int flg);
+long xlseek(LONG n, WORD h, WORD flg);
 long ixlseek(OFD *p, long n);
 
 FCB *ixgetfcb(OFD *p);
 
-long xread(int h, long len, void *ubufr);
+long xread(WORD h, long len, void *ubufr);
 long ixread(OFD *p, long len, void *ubufr);
 
-long xwrite(int h, long len, void *ubufr);
+long xwrite(WORD h, long len, void *ubufr);
 long ixwrite(OFD *p, long len, void *ubufr);
 
 /*
@@ -497,17 +510,18 @@ long ixwrite(OFD *p, long len, void *ubufr);
 
 long xmkdir(char *s);
 long xrmdir(char *p);
-long xchmod(char *p, int wrt, UBYTE mod);
+long xchmod(char *p, WORD wrt, UBYTE mod);
 long ixsfirst(char *name, WORD att, DTAINFO *addr);
 long xfsfirst_at(char *name, WORD att, DTAINFO *dta);
 long xfsnext_at(DTAINFO *dta);
+void mark_bcbs_invalid(int drv);    /* bdosmain.c: after a disk error */
 long xsfirst(char *name, int att);
 long xsnext(void);
-long xgsdtof(DOSTIME *buf, int h, int wrt);
+long xgsdtof(DOSTIME *buf, WORD h, WORD wrt);
 void builds(const char *s1 , char *s2 );
-long xrename(int n, char *p1, char *p2);
+long xrename(WORD n, char *p1, char *p2);
 long xchdir(char *p);
-long xgetdir(char *buf, int drv);
+long xgetdir(char *buf, WORD drv);
 FCB *dirinit(DND *dn);
 DND *findit(char *name, const char **sp, int dflag);
 /*
@@ -553,7 +567,7 @@ void xsetdta(DTAINFO *addr);
  * the public basepage's ABI-width p_xdta field cannot represent it. */
 DTAINFO *kproc_get_dta(PD *pd);
 #define RUN_XDTA() kproc_get_dta(run)
-long xsetdrv(int drv);
+long xsetdrv(WORD drv);
 long xgetdrv(void);
 OFD  *getofd(int h);
 #if CONF_WITH_PLUGGABLE_FS

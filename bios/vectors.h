@@ -13,6 +13,8 @@
 #ifndef VECTORS_H
 #define VECTORS_H
 
+#include "config.h"
+
 /* initialize default exception vectors */
 
 void init_exc_vec(void);
@@ -33,7 +35,7 @@ void int_timerc(void);
 
 void biostrap(void);
 void xbiostrap(void);
-#ifndef __m68k__
+#if CONF_WITH_NATIVE_ABI
 void gemtrap(void);    /* ARM's own VDI trap dispatcher, bios/arch/arm/vectorsasm.S */
 #endif
 
@@ -48,10 +50,13 @@ long check_read_byte(long);
 /* */
 LONG default_etv_critic(WORD err,WORD dev);
 void int_illegal(void);
+#ifdef MACHINE_VIRT_M68K
+void int_illegal_linef(void);
+#endif
 void int_priv(void);
 void int_unimpint(void);
 
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 #define trap_save_area 0 /* not used on arm/x86-64 */
 #else
 extern WORD trap_save_area[];
@@ -61,7 +66,7 @@ extern WORD trap_save_area[];
 #ifdef __arm__
 volatile PFVOID *vector_address(ULONG address);
 #define VEC_AT(address) (*vector_address(address))
-#elif defined(__x86_64__)
+#elif defined(__LP64__)
 /* This whole table is a fixed, historical 32-bit-per-slot layout (see
  * #351): setexc()'s generic path (bios/bios.c) reads and writes every
  * one of these cells -- and every other Setexc()-addressable vector
@@ -92,7 +97,7 @@ volatile PFVOID *vector_address(ULONG address);
  * read-back still gets *something* plausible-looking rather than
  * always-zero, matching every other slot's own convention, without
  * ever touching the next slot the way a full 8-byte store would. */
-#if defined(__x86_64__)
+#if defined(__LP64__)
 #define SET_VEC(cell, fn) ((cell) = (LONG)(long)(fn))
 #else
 #define SET_VEC(cell, fn) ((cell) = (fn))
@@ -142,34 +147,7 @@ volatile PFVOID *vector_address(ULONG address);
 
 /* Non-Atari hardware vectors */
 #if !CONF_WITH_MFP
-#ifdef __x86_64__
-/*
- * #351: bios/machine.c's fill_cookie_jar() hands out &vector_5ms through
- * the '_5MS' cookie's 32-bit value field, which requires vector_5ms's own
- * STORAGE to have a real sub-4GiB address -- not true of an ordinary
- * higher-half global on this arch (see bios/machine/pc-x86_64/memory.c's
- * own #351 comment on the pool this points into). The macro makes every
- * existing read/write/address-of site (bios/mfp.c's assignment,
- * machine.c's cookie_add() call) transparently dereference that pointer
- * instead of naming a fixed symbol; only the definition site (bios.c)
- * and the one-time allocation (mfp.c) need their own __x86_64__ branch.
- */
-extern void (**x86_64_vector_5ms_ptr)(void);
-#define vector_5ms (*x86_64_vector_5ms_ptr)
-
-/*
- * Reserves x86_64_vector_5ms_ptr's own storage from the low-kdata pool
- * (bios/machine/pc-x86_64/memory.c). Must run before anything dereferences
- * vector_5ms (the macro above) -- in particular before
- * bios/machine.c's fill_cookie_jar(), which runs well before
- * init_system_timer() itself. Called from bios/machine/pc-x86_64/
- * startup.c, right alongside x86_64_low_kdata_init(). See bios/mfp.c's
- * own comment on this function.
- */
-void x86_64_vector_5ms_alloc(void);
-#else
 extern void (*vector_5ms)(void);              /* 200 Hz system timer */
-#endif
 #endif
 
 /*
@@ -184,12 +162,13 @@ extern void (*vector_5ms)(void);              /* 200 Hz system timer */
 extern void (*timer_vbl_hook)(void);
 
 /* protect d2/a2 when calling external user-supplied code */
-#ifdef __m68k__
+#if !CONF_WITH_NATIVE_ABI
 LONG protect_v(LONG (*func)(void));
 LONG protect_w(LONG (*func)(WORD), WORD);
-LONG protect_ww(LONG (*func)(void), WORD, WORD);
-LONG protect_wlwwwl(LONG (*func)(void), WORD, LONG, WORD, WORD, WORD, LONG);
-#elif defined (__arm__) || defined(__x86_64__)
+LONG protect_ww(LONG (*func)(WORD, WORD), WORD, WORD);
+LONG protect_wlwwwl(LONG (*func)(WORD, LONG, WORD, WORD, WORD, LONG), WORD, LONG, WORD, WORD, WORD, LONG);
+ULONG protect_wwwwww(ULONG (*func)(WORD, WORD, WORD, WORD, WORD, WORD), WORD, WORD, WORD, WORD, WORD, WORD);
+#else
 
 /* We assume ARM/x86-64 developers follow their platform's own standard
  * calling convention (AAPCS / SysV x86-64), so the following are simple
@@ -205,9 +184,9 @@ static inline LONG protect_w(LONG (*func)(WORD), WORD a)
 {
     return func(a);
 }
-static inline LONG protect_ww(LONG (*func)(void), WORD a, WORD b)
+static inline LONG protect_ww(LONG (*func)(WORD, WORD), WORD a, WORD b)
 {
-    return ((LONG (*)(WORD, WORD))func)(a, b);
+    return func(a, b);
 }
 /*
  * `long b`, not portab.h's always-32-bit LONG: lrwabs() (bios/bios.c)
@@ -221,6 +200,10 @@ static inline LONG protect_ww(LONG (*func)(void), WORD a, WORD b)
 static inline LONG protect_wlwwwl(LONG (*func)(void), WORD a, long b, WORD c, WORD d, WORD e, LONG f)
 {
     return ((LONG (*)(WORD, long, WORD, WORD, WORD, LONG))func)(a,b,c,d,e,f);
+}
+static inline ULONG protect_wwwwww(ULONG (*func)(WORD, WORD, WORD, WORD, WORD, WORD), WORD a, WORD b, WORD c, WORD d, WORD e, WORD f)
+{
+    return func(a,b,c,d,e,f);
 }
 #endif
 

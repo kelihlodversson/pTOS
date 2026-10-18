@@ -85,7 +85,7 @@ typedef struct
  *  necessary on x86-64, where a field is a plain integer needing an
  *  explicit widen/narrow.
  */
-#ifdef __x86_64__
+#ifdef __LP64__
 #define USERPTR_T(type) ULONG
 /* Widens a stored 32-bit ABI value back into a real, dereferenceable
  * kernel pointer -- valid to do at all only because #334's per-process
@@ -180,6 +180,25 @@ struct _pd
 /* 0x80 */
     char    p_cmdlin[PDCLSIZE];     /* command line image */
 };
+
+/*
+ * The standard-handle map and the per-drive current directories of a process.
+ * With kernel-private process records (CONF_WITH_KPROC, bdos/kproc.c) the
+ * authoritative copies are in the record, and the p_uft/p_curdir fields of the
+ * basepage are unused (as in FreeMiNT): a ring-3 process can write its whole
+ * basepage.  Without the option, and for a process without a record, they are
+ * the fields.
+ * Always go through these, never through the fields.
+ */
+#if CONF_WITH_KPROC
+SBYTE *kproc_uft(PD *pd);
+UBYTE *kproc_curdir(PD *pd);
+#define PD_UFT(pd)      kproc_uft(pd)
+#define PD_CURDIR(pd)   kproc_curdir(pd)
+#else
+#define PD_UFT(pd)      ((pd)->p_uft)
+#define PD_CURDIR(pd)   ((pd)->p_curdir)
+#endif
 
 /* p_flags values: */
 #define PF_FASTLOAD     0x0001

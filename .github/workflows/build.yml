@@ -112,9 +112,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Same idea as the architecture split above: a config that turns on
+      # CONF_WITH_MFASTCALL needs Thorsten Otto's toolchain instead of
+      # Vincent Riviere's (see setup-toolchain's own mfastcall input), and
+      # this makes that automatic for whichever configs need it, present or
+      # future, without this workflow having to list them.
+      #
+      # Generate the real .config rather than grepping the defconfig text:
+      # CONF_WITH_MFASTCALL could end up enabled through a Kconfig default,
+      # a "depends on", or a "select" without ever appearing as a literal
+      # "CONF_WITH_MFASTCALL=y" line in the defconfig itself, which would
+      # silently pick the wrong toolchain. "make X_defconfig" below runs
+      # "python3 -m defconfig" (tools/kconfig.mk), so kconfiglib has to be
+      # installed first -- no cross toolchain needed yet for that;
+      # setup-toolchain below installs it again, which is harmless. Pinned
+      # (see setup-toolchain/action.yml's own install step) so a new
+      # kconfiglib release can't silently change what "defconfig" accepts
+      # and break this step out from under an unrelated PR.
+      - name: Install kconfiglib
+        run: python3 -m pip install --disable-pip-version-check kconfiglib==14.1.0
+
+      - name: Check whether this config needs -mfastcall
+        id: check-mfastcall
+        run: |
+          make "${{ matrix.config }}_defconfig"
+          if grep -qE '^CONF_WITH_MFASTCALL=y' .config; then
+            echo "mfastcall=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "mfastcall=false" >>"$GITHUB_OUTPUT"
+          fi
+
       - uses: ./.github/actions/setup-toolchain
         with:
           arch: m68k
+          mfastcall: ${{ steps.check-mfastcall.outputs.mfastcall }}
 
       - name: Build ${{ matrix.config }}
         env:
@@ -211,7 +242,9 @@ jobs:
           CONFIG: ${{ matrix.config }}
         run: |
           make "${CONFIG}_defconfig"
-          make
+          # CI deliberately uses Ubuntu's native gcc/binutils instead of the
+          # x86_64-elf- cross toolchain selected by the developer default.
+          make CROSS_COMPILE=
 
       - name: Collect the build products
         run: |
@@ -262,6 +295,21 @@ jobs:
         run: |
           mkdir -p esp/EFI/BOOT
           cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+          # a real x32 ELF on the boot drive: the self-test runs it through
+          # Pexec() from a ring-3 process (nested launch), as EmuCON does
+          make CROSS_COMPILE= x32test
+          cp x32hello.elf esp/X32HELLO.TOS
+          # the same program linked for another address, which Pexec() has to
+          # move into the image window and relocate
+          cp x32reloc.elf esp/X32RELOC.TOS
+          # ... and one linked for another address without relocations, which
+          # must be refused
+          cp x32noreloc.elf esp/X32NOREL.TOS
+          # ... and one with a 6 MiB bss, loaded by PE_LOAD straight into the
+          # caller's heap
+          cp x32big.elf esp/X32BIG.TOS
+          # ... and one cut short, whose loading fails halfway
+          head -c 2000 x32hello.elf > esp/X32TRUNC.TOS
           cp /usr/share/OVMF/OVMF_VARS_4M.fd .
 
           set +e
@@ -297,17 +345,177 @@ jobs:
             exit 1
           fi
 
+          # The memory-management self-test (bios/machine/pc-x86_64/memtest.c,
+          # #362) repeats process create/exit and injected-failure cycles
+          # and requires every allocator to return to its starting state:
+          # a leaked mapping, page-table or backing page, KPROC record or
+          # kernel-heap block fails it.
+          if grep -q 'x86-64 memtest: FAIL' boot.log; then
+            echo "::error::the boot-time memory-management self-test failed"
+            exit 1
+          fi
+          if ! grep -q 'x86-64 memtest: PASS' boot.log; then
+            echo "::error::the boot-time memory-management self-test never reported PASS"
+            exit 1
+          fi
+
+          # The self-test also launches real ring-3 x32 processes
+          # (tests/x32_probe/): entry state and selectors, a GEMDOS call
+          # across the syscall boundary, fault containment, private pages.
+          # Its deliberate faults print "process fault:" lines BEFORE the
+          # PASS line; any such line after it is the built-in EmuCON itself
+          # faulting.
+          if sed -n '/x86-64 memtest: PASS/,$p' boot.log | grep -q 'process fault:'; then
+            echo "::error::the ring-3 EmuCON faulted"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 nested pexec: PASS' boot.log; then
+            echo "::error::a ring-3 process could not run a child through Pexec() and resume"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 private heap: PASS' boot.log; then
+            echo "::error::a loaded x32 program could not use its private Malloc() memory"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 private image: PASS' boot.log; then
+            echo "::error::a new process did not get its image in the image window"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 unaligned relocation: PASS' boot.log; then
+            echo "::error::a program linked for another address was not relocated correctly"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 pexec go gives back: PASS' boot.log; then
+            echo "::error::PE_GO did not give the loaded program's pages back"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 pexec go gives back with a gap: PASS' boot.log; then
+            echo "::error::PE_GO did not find the loaded program's pages after the child allocated below them"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 psetlimit: PASS' boot.log; then
+            echo "::error::Psetlimit did not set, report or pass on the limits and the stack size"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 demand paging: PASS' boot.log; then
+            echo "::error::a process's Malloc() memory and stack were not backed on first touch"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 pexec load big: PASS' boot.log; then
+            echo "::error::PE_LOAD did not take a program bigger than the image window"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 pexec truncated: PASS' boot.log; then
+            echo "::error::a failed load did not leave the loader in its own address space"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 ancestors: PASS' boot.log; then
+            echo "::error::a ring-3 grandchild did not see its ancestors' basepages"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 nested fault: PASS' boot.log; then
+            echo "::error::a ring-3 process did not survive its child's fault and resume"
+            exit 1
+          fi
+
+          if ! grep -q 'x86-64 nested ptermres: PASS' boot.log; then
+            echo "::error::a ring-3 process could not keep launching children that stay resident"
+            exit 1
+          fi
+
+          # EmuCON is an x32 program run in ring 3 -- not linked into the
+          # kernel -- so its banner can only come from that process.
+          if ! grep -q 'EmuCON: starting the x32 image in ring 3' boot.log; then
+            echo "::error::the kernel never started the ring-3 EmuCON"
+            exit 1
+          fi
           if ! grep -q 'Welcome to EmuCON2' boot.log; then
             echo "::error::never reached the EmuCON2 shell prompt"
             exit 1
           fi
 
-          echo "Boot test passed: reached the EmuCON2 shell, no reset loop, no panic."
+          echo "Boot test passed: reached the ring-3 EmuCON2 shell, no reset loop, no panic."
 
       - name: Report the failure
         if: failure()
         run: |
           echo "::error title=${{ matrix.config }}::the ${{ matrix.config }} configuration failed"
+
+  # The regression suite (tests/, `make test-dir`) run under QEMU.  The virt
+  # machines are built without the AES (the *-cli configurations) so that
+  # they boot to EmuCON, where tools/run-regression-tests.sh types the name
+  # of the suite into the serial console; pc-x86_64 boots to EmuCON anyway
+  # and is typed into through the QEMU monitor.  See tests/readme.md.
+  regression:
+    name: regression (${{ matrix.machine }})
+    needs: configurations
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - machine: virt-arm
+            config: virt-arm-cli
+            arch: arm
+            runner: ubuntu-latest
+            qemu: qemu-system-arm
+            make_args: ''
+          - machine: virt-m68k
+            config: virt-m68k-cli-elf
+            arch: m68k
+            # pinned for the toolchain PPA, like the m68k build jobs
+            runner: ubuntu-22.04
+            qemu: qemu-system-misc
+            make_args: ''
+          - machine: pc-x86_64
+            config: pc-x86_64
+            arch: x86_64
+            runner: ubuntu-latest
+            qemu: qemu-system-x86 ovmf
+            # native gcc, as in the x86_64 build job above
+            make_args: CROSS_COMPILE=
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ${{ matrix.qemu }}
+
+      - name: Build the kernel and the test programs
+        env:
+          CONFIG: ${{ matrix.config }}
+          MAKE_ARGS: ${{ matrix.make_args }}
+        run: |
+          make "${CONFIG}_defconfig"
+          make $MAKE_ARGS
+          make $MAKE_ARGS test-dir
+
+      - name: Run the regression suite
+        run: tools/run-regression-tests.sh ${{ matrix.machine }}
+
+      - name: Report the failure
+        if: failure()
+        run: |
+          echo "::error title=regression (${{ matrix.machine }})::the regression suite failed on ${{ matrix.machine }}"
 
   release-archives:
     name: Release archives
@@ -322,6 +530,9 @@ jobs:
       - uses: ./.github/actions/setup-toolchain
         with:
           arch: m68k
+          # "make release" builds atari192/atari256 among the m68k
+          # targets, and both defconfigs now enable CONF_WITH_MFASTCALL.
+          mfastcall: "true"
 
       # Not a release: these archives are only kept as workflow artifacts, to
       # confirm that "make release" still works and to have something to
@@ -406,7 +617,7 @@ jobs:
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [configurations, m68k, arm, x86_64, release-archives, raspi-sdcard]
+    needs: [configurations, m68k, arm, x86_64, regression, release-archives, raspi-sdcard]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
@@ -418,6 +629,7 @@ jobs:
           echo "m68k configurations:   ${{ needs.m68k.result }}"
           echo "arm configurations:    ${{ needs.arm.result }}"
           echo "x86_64 configurations: ${{ needs.x86_64.result }}"
+          echo "regression suite:      ${{ needs.regression.result }}"
           echo "release archives:      ${{ needs.release-archives.result }}"
           echo "raspi SD card image:   ${{ needs.raspi-sdcard.result }}"
 
@@ -432,10 +644,11 @@ jobs:
           if [ '${{ needs.configurations.outputs.x86_64 }}' != '[]' ]; then
             [ '${{ needs.x86_64.result }}' = success ] || ok=false
           fi
+          [ '${{ needs.regression.result }}' = success ] || ok=false
           [ '${{ needs.release-archives.result }}' = success ] || ok=false
           [ '${{ needs.raspi-sdcard.result }}' = success ] || ok=false
 
           if ! $ok; then
-            echo "::error::at least one configuration failed to build"
+            echo "::error::at least one required job failed (configuration build, regression suite, release archives or SD card image): see the results above"
             exit 1
           fi

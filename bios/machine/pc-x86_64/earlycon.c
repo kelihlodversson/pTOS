@@ -28,23 +28,24 @@
 
 #define UART_LSR_DR   0x01 /* data ready (a byte is available to read) */
 #define UART_LSR_THRE 0x20 /* transmit holding register empty */
+#define UART_IER_RDI  0x01 /* received-data interrupt */
 
 void earlycon_init(void)
 {
-    x86_64_outb(COM1_PORT + UART_IER, 0x00);   /* disable all UART interrupts */
-    x86_64_outb(COM1_PORT + UART_LCR, 0x80);   /* enable DLAB to set the baud rate divisor */
-    x86_64_outb(COM1_PORT + 0, 0x01);          /* divisor low byte: 115200 baud */
-    x86_64_outb(COM1_PORT + UART_IER, 0x00);   /* divisor high byte */
-    x86_64_outb(COM1_PORT + UART_LCR, 0x03);   /* 8 data bits, no parity, 1 stop bit; clears DLAB */
-    x86_64_outb(COM1_PORT + UART_FCR, 0xC7);   /* enable and reset the transmit/receive FIFOs */
-    x86_64_outb(COM1_PORT + UART_MCR, 0x0B);   /* assert DTR/RTS/OUT2 */
+    port_outb(COM1_PORT + UART_IER, 0x00);   /* disable all UART interrupts */
+    port_outb(COM1_PORT + UART_LCR, 0x80);   /* enable DLAB to set the baud rate divisor */
+    port_outb(COM1_PORT + 0, 0x01);          /* divisor low byte: 115200 baud */
+    port_outb(COM1_PORT + UART_IER, 0x00);   /* divisor high byte */
+    port_outb(COM1_PORT + UART_LCR, 0x03);   /* 8 data bits, no parity, 1 stop bit; clears DLAB */
+    port_outb(COM1_PORT + UART_FCR, 0xC7);   /* enable and reset the transmit/receive FIFOs */
+    port_outb(COM1_PORT + UART_MCR, 0x0B);   /* assert DTR/RTS/OUT2 */
 }
 
 static void earlycon_putc(char c)
 {
-    while ((x86_64_inb(COM1_PORT + UART_LSR) & UART_LSR_THRE) == 0)
+    while ((port_inb(COM1_PORT + UART_LSR) & UART_LSR_THRE) == 0)
         ;
-    x86_64_outb(COM1_PORT + UART_THR, (UBYTE)c);
+    port_outb(COM1_PORT + UART_THR, (UBYTE)c);
 }
 
 void earlycon_puts(const char *s)
@@ -58,22 +59,27 @@ void earlycon_puts(const char *s)
 
 BOOL earlycon_can_read(void)
 {
-    return (x86_64_inb(COM1_PORT + UART_LSR) & UART_LSR_DR) != 0;
+    return (port_inb(COM1_PORT + UART_LSR) & UART_LSR_DR) != 0;
 }
 
 UBYTE earlycon_read_byte(void)
 {
-    return x86_64_inb(COM1_PORT + UART_THR);
+    return port_inb(COM1_PORT + UART_THR);
 }
 
 BOOL earlycon_can_write(void)
 {
-    return (x86_64_inb(COM1_PORT + UART_LSR) & UART_LSR_THRE) != 0;
+    return (port_inb(COM1_PORT + UART_LSR) & UART_LSR_THRE) != 0;
 }
 
 void earlycon_write_byte(UBYTE b)
 {
-    x86_64_outb(COM1_PORT + UART_THR, b);
+    port_outb(COM1_PORT + UART_THR, b);
+}
+
+void earlycon_enable_rx_interrupt(void)
+{
+    port_outb(COM1_PORT + UART_IER, UART_IER_RDI);
 }
 
 void earlycon_puthex(UQUAD value)

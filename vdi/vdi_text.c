@@ -20,34 +20,12 @@
 #include "vdistub.h"
 #include "lineavars.h"
 #include "biosext.h"
+#include "has.h"
+#include "vdi_textblit.h"
 
 
 extern WORD deftxbuf[];         /* Default text scratch buffer */
 extern const WORD scrtsiz;      /* Default offset to large text buffer */
-
-
-/*
- * Local structure for passing justification info
- *
- * note 1: in each of the following pairs of variables, only one variable
- * has a non-zero value:
- *  (wordx,wordy), (rmwordx,rmwordy), (charx,chary), (rmcharx,rmchary)
- *
- * note 2: if rmword is zero, there are no 'remainder pixels' to use up
- * between words; otherwise, rmword = max(rmwordx/rmwordy).  similarly
- * for rmchar/rmcharx/rmchary.
- */
-typedef struct
-{
-                        /* word-spacing variables */
-    WORD wordx, wordy;          /* #pixels to add to each space */
-    WORD rmword;                /* remaining #pixels to add over all spaces */
-    WORD rmwordx, rmwordy;      /* add this to use up remainder */
-                        /* character-spacing variables */
-    WORD charx, chary;          /* #pixels to add to each character */
-    WORD rmchar;                /* remaining #pixels to add over all characters */
-    WORD rmcharx, rmchary;      /* add this to use up remainder */
-} JUSTINFO;
 
 
 /* Prototypes for this module */
@@ -186,6 +164,104 @@ static BOOL ok_for_direct_blit(Vwk *vwk, WORD width, JUSTINFO *justified)
 }
 #endif
 
+#if CONF_WITH_BLITTER
+/*
+ * check if the blitter can output the characters of the string the quick
+ * way, see blitter_text_string(): plain text, or bold text with
+ * CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP (light and underline are all right,
+ * and so is justification), on a bitplane screen
+ */
+static BOOL ok_for_blitter_string(Vwk *vwk)
+{
+    if (!blitter_is_enabled)
+        return FALSE;
+
+    if (vdi_screen_is_truecolor() || TRUECOLOR_MODE)
+        return FALSE;
+
+#if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
+    if (vwk->style & (F_SKEW | F_OUTLINE))
+#else
+    if (vwk->style & (F_THICKEN | F_SKEW | F_OUTLINE))
+#endif
+        return FALSE;
+
+    if (vwk->chup || vwk->scaled)
+        return FALSE;
+
+    if (vwk->cur_font->flags & F_HORZ_OFF)
+        return FALSE;
+
+    return TRUE;
+}
+#endif
+
+/*
+ * set up text_blt() to output a character: where its image is in the font
+ * form, and how big; returns its index in the font (which is not that of
+ * the character if it is out of range for the font, a '?' being output)
+ */
+static inline WORD load_char(const Fonthead *fnt_ptr, WORD ch)
+{
+    WORD temp = ch;
+
+    /* If the character is out of range for this font make it a ? */
+    if ((temp < fnt_ptr->first_ade) || (temp > fnt_ptr->last_ade))
+        temp = '?';
+    temp -= fnt_ptr->first_ade;
+
+    linea_vars.SOURCEX = fnt_ptr->off_table[temp];
+    linea_vars.DELX = fnt_ptr->off_table[temp + 1] - linea_vars.SOURCEX;
+
+    linea_vars.SOURCEY = 0;
+    linea_vars.DELY = fnt_ptr->form_height;
+
+    return temp;
+}
+
+/*
+ * the furthest to the right the destination can get with a string of 'count'
+ * characters, whatever they are: a character is at most max_cell_width wide
+ * and gets adv_extra from its style, and each one that follows is moved on by
+ * the spacing of the justification
+ */
+static LONG run_reach(const Fonthead *fnt_ptr, WORD count, WORD adv_extra,
+                      const JUSTINFO *justified)
+{
+    LONG step = (LONG)fnt_ptr->max_cell_width + adv_extra;
+
+    if (justified)
+        step += (LONG)justified->charx + justified->rmcharx
+              + justified->wordx + justified->rmwordx;
+    if (step > 0x7fffL)
+        return 0x7fffffffL;
+    return (LONG)linea_vars.DESTX + (LONG)count * (WORD)step;
+}
+
+/*
+ * move the destination for the justification after a character: the spacing
+ * between characters, and between words (after a blank)
+ */
+static inline void justify_step(JUSTINFO *justified, WORD ch)
+{
+    linea_vars.DESTX += justified->charx;
+    linea_vars.DESTY += justified->chary;
+    if (justified->rmchar) {
+        linea_vars.DESTX += justified->rmcharx;
+        linea_vars.DESTY += justified->rmchary;
+        justified->rmchar--;
+    }
+    if (ch == ' ') {
+        linea_vars.DESTX += justified->wordx;
+        linea_vars.DESTY += justified->wordy;
+        if (justified->rmword) {
+            linea_vars.DESTX += justified->rmwordx;
+            linea_vars.DESTY += justified->rmwordy;
+            justified->rmword--;
+        }
+    }
+}
+
 /*
  * output specified text string
  *
@@ -203,8 +279,13 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     WORD outline, underline;
 
     WORD temp;
+    BOOL done, skip_clipped, line_out, run_mode;
+    WORD adv_extra, clip_extra, xmn, xmx, xlim;
     const Fonthead *fnt_ptr;
     Point * point;
+#if CONF_WITH_BLITTER
+    WORD (*blitter_string)(const Fonthead *, WORD, const WORD *, JUSTINFO *);
+#endif
 
     if (count <= 0)     /* quick out for unlikely occurrence */
         return;
@@ -277,18 +358,18 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
         break;
     case 1:
         delv = fnt_ptr->top - fnt_ptr->half;
-        delh += (fnt_ptr->half * d2) / fnt_ptr->top;
+        delh += divs(muls(fnt_ptr->half, d2), fnt_ptr->top);
         break;
     case 2:
         delv = fnt_ptr->top - fnt_ptr->ascent;
-        delh += (fnt_ptr->ascent * d2) / fnt_ptr->top;
+        delh += divs(muls(fnt_ptr->ascent, d2), fnt_ptr->top);
         break;
     case 3:
         delv = fnt_ptr->top + fnt_ptr->bottom;
         break;
     case 4:
         delv = fnt_ptr->top + fnt_ptr->descent;
-        delh += (fnt_ptr->descent * d1) / fnt_ptr->bottom;
+        delh += divs(muls(fnt_ptr->descent, d1), fnt_ptr->bottom);
         break;
     case 5:
         delv = 0;
@@ -363,41 +444,172 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
 
     linea_vars.XDDA = 32767;       /* init the horizontal dda */
 
-    for (j = 0; j < count; j++) {
+#if CONF_WITH_BLITTER
+    /* the blitter's way of outputting several characters at once, if any */
+    blitter_string = NULL;
+    if (ok_for_blitter_string(vwk))
+#if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
+        blitter_string = (vwk->style & F_THICKEN) ? blitter_bold_string : blitter_text_string;
+#else
+        blitter_string = blitter_text_string;
+#endif
+#endif
 
-        temp = str[j];
+    /*
+     * Characters that are wholly outside the clip window are not handed to
+     * text_blt() (nor to the blitter's string path, whose set-up would be
+     * made for nothing): that costs a good deal to find out there, and of
+     * the characters of a line of text, those that stick out of a window or
+     * are on a line that is not in it can be most of them.
+     *
+     * This is only done for text that is neither rotated nor scaled, whose
+     * lines are not moved up or down by justification, with the test
+     * check_clip() makes in vdi_textblit.c on the width and height that
+     * text_blt() gives it, and the move of the destination it makes when it
+     * finds there is nothing to draw.  Not asking is always all right, as
+     * text_blt() then makes the same test itself: so no character is
+     * skipped that is not outside, but some outside ones may go to it.
+     *
+     * clip_extra and adv_extra are what the style adds to the width of a
+     * character for the test and for the move; the left edge is tested
+     * against xlim, which has clip_extra taken off it.
+     */
+    adv_extra = clip_extra = xmn = xmx = xlim = 0;
+    line_out = run_mode = FALSE;
+    skip_clipped = vwk->clip && !vwk->chup && !vwk->scaled;
+    if (skip_clipped && justified
+     && (justified->chary || justified->rmchary
+      || justified->wordy || justified->rmwordy))
+        skip_clipped = FALSE;
+    if (skip_clipped)
+    {
+        WORD y = linea_vars.DESTY;
+        WORD clip_dely = fnt_ptr->form_height;
 
-        /* If the character is out of range for this font make it a ? */
-        if ((temp < fnt_ptr->first_ade) || (temp > fnt_ptr->last_ade))
-            temp = '?';
-        temp -= fnt_ptr->first_ade;
+        adv_extra = 0;
+        if ((vwk->style & F_THICKEN) && !(fnt_ptr->flags & F_MONOSPACE))
+            adv_extra += fnt_ptr->thicken;
+        clip_extra = adv_extra;
+        if (vwk->style & F_SKEW)
+            clip_extra += linea_vars.LOFF + linea_vars.ROFF;
+        if (vwk->style & F_OUTLINE)
+        {
+            adv_extra += OUTLINE_THICKNESS * 2;
+            clip_extra += OUTLINE_THICKNESS * 2;
+            clip_dely += OUTLINE_THICKNESS * 2;
+        }
+        xmn = vwk->xmn_clip;
+        xmx = vwk->xmx_clip;
+        xlim = xmn - clip_extra;
 
-        linea_vars.SOURCEX = fnt_ptr->off_table[temp];
-        linea_vars.DELX = fnt_ptr->off_table[temp + 1] - linea_vars.SOURCEX;
+        /* the line is the same for all the characters: in or out? */
+        line_out = (y < vwk->ymn_clip && y + clip_dely <= vwk->ymn_clip)
+                || y > vwk->ymx_clip;
 
-        linea_vars.SOURCEY = 0;
-        linea_vars.DELY = fnt_ptr->form_height;
+        /*
+         * a string that lies inside the window needs no test at all (width
+         * is what the characters add up to, if the font has no offsets
+         * that move them)
+         */
+        if (!line_out && !justified && !(fnt_ptr->flags & F_HORZ_OFF)
+         && linea_vars.DESTX >= xmn
+         && linea_vars.DESTX + width + clip_extra <= xmx
+         && y >= vwk->ymn_clip)
+            skip_clipped = FALSE;
+        else if (!(fnt_ptr->flags & F_HORZ_OFF)
+              && (!justified
+               || (justified->charx >= 0 && justified->rmcharx >= 0
+                && justified->wordx >= 0 && justified->rmwordx >= 0))
+              && run_reach(fnt_ptr, count, adv_extra, justified) < 32767L)
+        {
+            /*
+             * if the characters go from left to right, one after the other (no
+             * justification that can move them back, no offsets of their own,
+             * and so far to the right that the position of a character
+             * cannot wrap round: DESTX is a signed 16 bit number),
+             * those that are wholly left of the window are a run at the start
+             * and those wholly right of it are a run at the end: the first
+             * character that is right of the window ends the string, as the
+             * underline is cut by the window all the same wherever it ends, and
+             * a line that is not in the window needs no loop at all (nor, then,
+             * the underline, if its rows are not in it either)
+             */
+            run_mode = TRUE;
+            if (line_out)
+            {
+                WORD ul_top = starty;
 
-        text_blt();
-
-        if (justified) {
-            linea_vars.DESTX += justified->charx;
-            linea_vars.DESTY += justified->chary;
-            if (justified->rmchar) {
-                linea_vars.DESTX += justified->rmcharx;
-                linea_vars.DESTY += justified->rmchary;
-                justified->rmchar--;
-            }
-            if (str[j] == ' ') {
-                linea_vars.DESTX += justified->wordx;
-                linea_vars.DESTY += justified->wordy;
-                if (justified->rmword) {
-                    linea_vars.DESTX += justified->rmwordx;
-                    linea_vars.DESTY += justified->rmwordy;
-                    justified->rmword--;
-                }
+                if (!(vwk->style & F_UNDER)
+                 || ul_top + fnt_ptr->ul_size <= vwk->ymn_clip
+                 || ul_top > vwk->ymx_clip)
+                    return;
             }
         }
+    }
+
+    j = 0;
+    if (run_mode)
+    {
+        /* the characters wholly left of the window (or all, if the line is out) */
+        while (j < count)
+        {
+            WORD x = linea_vars.DESTX;
+
+            load_char(fnt_ptr, str[j]);
+            if (!line_out && !(x < xmn && x + linea_vars.DELX <= xlim))
+                break;
+            linea_vars.DESTX = x + linea_vars.DELX + adv_extra;
+            if (justified)
+                justify_step(justified, str[j]);
+            j++;
+        }
+    }
+
+    for (; j < count; j++) {
+
+        temp = load_char(fnt_ptr, str[j]);
+
+        done = FALSE;
+        if (skip_clipped)
+        {
+            if (run_mode)
+            {
+                if (linea_vars.DESTX > xmx)
+                    break;
+            }
+            else
+            {
+                WORD x = linea_vars.DESTX;
+
+                done = line_out || x > xmx
+                    || (x < xmn && x + linea_vars.DELX <= xlim);
+                if (done)
+                    linea_vars.DESTX += linea_vars.DELX + adv_extra;
+            }
+        }
+
+        if (!done)
+        {
+#if CONF_WITH_BLITTER
+            /* the characters that are plain or bold and not clipped, all at once */
+            if (blitter_string)
+            {
+                WORD n = blitter_string(fnt_ptr, count - j, str + j, justified);
+
+                if (n > 0)
+                {
+                    j += n;
+                    if (j >= count)
+                        break;
+                    temp = load_char(fnt_ptr, str[j]);
+                }
+            }
+#endif
+            text_blt();
+        }
+
+        if (justified)
+            justify_step(justified, str[j]);
         /* end if justified */
         if (fnt_ptr->flags & F_HORZ_OFF)
             linea_vars.DESTX += fnt_ptr->hor_table[temp];
@@ -839,7 +1051,7 @@ void vdi_vst_rotation(Vwk * vwk)
         angle -= 3600;
 
     /* this sets a value of 0, 900, 1800, 2700 or 3600, just like TOS3/TOS4 */
-    INTOUT[0] = vwk->chup = ((angle + 450) / 900) * 900;
+    INTOUT[0] = vwk->chup = divs(angle + 450, 900) * 900;
 }
 
 
@@ -1117,8 +1329,8 @@ void gdp_justified(Vwk * vwk)
      * calculate values for interword spacing
      */
     if (interword && spaces) {
-        delword = (max_x - width) / spaces;
-        just.rmword = (max_x - width) % spaces;
+        delword = divs((WORD)(max_x - width), spaces);
+        just.rmword = mods((WORD)(max_x - width), spaces);
 
         if (just.rmword < 0) {
             direction = -1;
@@ -1163,8 +1375,8 @@ void gdp_justified(Vwk * vwk)
      * calculate values for intercharacter spacing
      */
     if (interchar && cnt > 1) {
-        delchar = (max_x - width) / (cnt - 1);
-        just.rmchar = (max_x - width) % (cnt - 1);
+        delchar = divs((WORD)(max_x - width), cnt - 1);
+        just.rmchar = mods((WORD)(max_x - width), cnt - 1);
 
         if (just.rmchar < 0) {
             direction = -1;

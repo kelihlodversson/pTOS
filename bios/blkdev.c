@@ -14,6 +14,7 @@
 /* #define ENABLE_KDEBUG */
 
 #include "emutos.h"
+#include "classicvec.h"
 #include "string.h"
 #include "endian.h"
 #include "gemerror.h"
@@ -38,7 +39,7 @@
 #include "xhdi.h"
 #include "intmath.h"
 
-#if defined(__arm__) || defined(__x86_64__)
+#if CONF_WITH_NATIVE_ABI
 PUN_INFO *pun_ptr;      /* fixed address on m68k (tosvars.ld), ordinary
                          * storage here (#219); declared extern in ahdi.h */
 #endif
@@ -61,8 +62,8 @@ static LONG bootcheck(void);
 static WORD hd_boot_read(void);
 #endif
 static void blkdev_hdv_init(void);
-static LONG blkdev_mediach(WORD dev);
-static LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LONG lrecnr);
+LONG blkdev_mediach(WORD dev);          /* (global: the classic entry points call them) */
+LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LONG lrecnr);
 static void bus_init(void);
 
 /* get intel words */
@@ -119,9 +120,9 @@ void blkdev_init(void)
     hdv_init    = flop_hdv_init;
 
     /* setup general block device vectors */
-    hdv_bpb     = blkdev_getbpb;
-    hdv_rw      = blkdev_rwabs;
-    hdv_mediach = blkdev_mediach;
+    hdv_bpb     = CLASSIC_ENTRY(blkdev_getbpb);
+    hdv_rw      = CLASSIC_ENTRY(blkdev_rwabs);
+    hdv_mediach = CLASSIC_ENTRY(blkdev_mediach);
 
     /* setting drvbits */
     blkdev_hdv_init();
@@ -433,7 +434,36 @@ int add_partition(UWORD unit, LONG *devices_available, char id[], ULONG start, U
 
 #define CNTMAX  0x7FFF  /* 16-bit MAXINT */
 
-static LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LONG lrecnr)
+#if CONF_WITH_USER_ASPACE
+BOOL blkdev_rwabs_buffer_size(WORD rw, WORD cnt, WORD dev, ULONG *size)
+{
+    ULONG record_size;
+
+    if (cnt <= 0)
+        return FALSE;
+
+    if (rw & RW_NOTRANSLATE) {
+        if (dev < 0 || dev >= UNITSNUM || !units[dev].valid)
+            return FALSE;
+        if (units[dev].psshift >= 31)
+            return FALSE;
+        record_size = 1UL << units[dev].psshift;
+    } else {
+        if (dev < 0 || dev >= BLKDEVNUM
+            || !(blkdev[dev].flags & DEVICE_VALID)
+            || !blkdev[dev].bpb.recsiz)
+            return FALSE;
+        record_size = blkdev[dev].bpb.recsiz;
+    }
+
+    if ((ULONG)cnt > 0xffffffffUL / record_size)
+        return FALSE;
+    *size = (ULONG)cnt * record_size;
+    return TRUE;
+}
+#endif
+
+LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LONG lrecnr)
 {
     int retry_count, retries;
     int unit = dev;
@@ -484,8 +514,8 @@ static LONG blkdev_rwabs(WORD rw, UBYTE *buf, WORD cnt, WORD recnr, WORD dev, LO
 
         /* convert logical sectors to physical ones */
         sectors = blkdev[dev].bpb.recsiz >> units[blkdev[dev].unit].psshift;
-        lcount *= sectors;
-        lrecnr *= sectors;
+        lcount *= (WORD)sectors;
+        lrecnr *= (WORD)sectors;
 
         /* check if the count fits into this partition */
         if ((lrecnr < 0) || (blkdev[dev].size > 0
@@ -810,7 +840,7 @@ LONG blkdev_getbpb(WORD dev)
  * blkdev_mediach - BIOS media change vector
  */
 
-static LONG blkdev_mediach(WORD dev)
+LONG blkdev_mediach(WORD dev)
 {
     BLKDEV *b;
     UWORD unit;

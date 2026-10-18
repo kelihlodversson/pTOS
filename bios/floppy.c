@@ -943,7 +943,7 @@ LONG flopfmt(UBYTE *buf, WORD *skew, WORD dev, WORD spt,
      * fixup interleave if not using skew table
      */
     if (interleave > 0)
-        interleave = interleave % spt;
+        interleave = mods(interleave, spt);
     if (interleave == 0)
         interleave = 1;
 
@@ -971,9 +971,9 @@ LONG flopfmt(UBYTE *buf, WORD *skew, WORD dev, WORD spt,
         *s++ = track;
         *s++ = side;
         if (interleave > 0) {   /* using interleave factor */
-            offset = (offset+interleave) % spt;
+            offset = mods(offset+interleave, spt);
             while(used&(1L<<offset))    /* skip offsets already used */
-                offset = (offset+1) % spt;
+                offset = mods(offset+1, spt);
             *s++ = offset + 1;  /* sector number from 'interleave' */
             used |= (1L<<offset);
         } else *s++ = *skew++;  /* sector number from skew array */
@@ -1642,3 +1642,15 @@ static void fdc_start_dma_write(WORD count)
 }
 
 #endif /* CONF_WITH_FDC */
+
+#if CONF_WITH_GEMDOS_SHUTDOWN
+/*
+ * flop_shutdown - Shutdown() is about to stop the machine: let the drives go
+ */
+void flop_shutdown(void)
+{
+#if CONF_WITH_FDC
+    deselect();
+#endif
+}
+#endif /* CONF_WITH_GEMDOS_SHUTDOWN */

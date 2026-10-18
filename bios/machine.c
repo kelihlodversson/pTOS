@@ -48,6 +48,9 @@
 #ifdef MACHINE_RPI
 #include "raspi_io.h"
 #endif
+#ifdef MACHINE_PC_X86_64
+#include "smbios.h"
+#endif
 
 #if CONF_WITH_ADVANCED_CPU
 UBYTE is_bus32; /* 1 if address bus is 32-bit, 0 if it is 24-bit */
@@ -674,6 +677,8 @@ void fill_cookie_jar(void)
     cookie_add(COOKIE_COLDFIRE, 0);
     setvalue_mcf();
     cookie_add(COOKIE_MCF, (ULONG)&cookie_mcf);
+#elif CONF_WITH_NATIVE_ABI
+    cookie_add(COOKIE_CPU, CPU_COOKIE_NATIVE);      /* not a 68k: see cookie.h */
 #else
     /* this is detected by detect_cpu(), called from processor_init() */
     cookie_add(COOKIE_CPU, mcpu);
@@ -689,7 +694,9 @@ void fill_cookie_jar(void)
     setvalue_vdo();
     cookie_add(COOKIE_VDO, cookie_vdo);
 
-#ifndef __mcoldfire__
+#if CONF_WITH_NATIVE_ABI
+    cookie_add(COOKIE_FPU, CPU_COOKIE_FOREIGN | 1);     /* see cookie.h */
+#elif !defined(__mcoldfire__)
   /* this is detected by detect_fpu(), called from processor_init() */
     cookie_add(COOKIE_FPU, fputype);
 #endif
@@ -791,6 +798,7 @@ void fill_cookie_jar(void)
     cookie_add(COOKIE_XHDI, (ULONG)xhdi_vec);
 #endif
 
+#if CONF_WITH_ADDR_COOKIES
 #if CONF_WITH_SCSI_DRIVER
     cookie_add(COOKIE_SCSIDRIV, (ULONG)&scsidriv_root);
 #endif
@@ -800,6 +808,7 @@ void fill_cookie_jar(void)
      * interrupt vector so FreeMiNT can hook it. */
     cookie_add(COOKIE__5MS, (ULONG)&vector_5ms);
 #endif
+#endif /* CONF_WITH_ADDR_COOKIES */
 }
 
 static const char * guess_machine_name(void)
@@ -837,6 +846,12 @@ const char * machine_name(void)
     return "Amiga";
 #elif defined(MACHINE_RPI)
     return raspi_board.name;
+#elif defined(MACHINE_PC_X86_64)
+    {
+        const char *name = pc_x86_64_machine_name();
+
+        return name ? name : "PC (x86-64 UEFI)";
+    }
 #elif defined(MACHINE_M548X)
     return m548x_machine_name();
 #else

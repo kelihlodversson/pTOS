@@ -38,10 +38,19 @@ C_SYM(bootram):
         // Disable the interrupts, since we are going to destroy everything
         move.w  #0x2700,sr
 
+#if CONF_WITH_MFASTCALL
+        // -mfastcall: the parameters are in registers (a pointer in a0, the
+        // integers in d0 and d1, in order).  The assembly callers
+        // (bootsect.S, amigaboot.S) load them the same way.
+        move.l  a0,a4           // src
+        move.l  d0,d4           // size
+        move.l  d1,d5           // cpu
+#else
         // Get the parameters from the stack
         move.l  4(sp),a4        // src
         move.l  8(sp),d4        // size
         move.l  12(sp),d5       // cpu
+#endif
 
         // Get destination address from the OS header
         move.l  8(a4),a5        // dest = _os_beg
