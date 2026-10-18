@@ -25,7 +25,6 @@
 
 #include "emutos.h"
 #include "string.h"
-#include "gemerror.h"
 #include "fs.h"
 #include "bdosstub.h"
 
@@ -39,17 +38,30 @@ long kdos_fopen(long name, long mode)
  * the file's) longjmp()s out before the handle is released.  By then the
  * file is off its directory's list, and the failing drive's buffers have
  * been dropped, so closing again finds no more to do than release the
- * handle (or fails on another drive's buffers, and is tried again).  The
- * first error is what is returned.
+ * handle (or is interrupted by another drive's buffers, and is tried
+ * again).  Only an interrupted close is repeated: one that returned, even
+ * with an error, has given up its reference already.  The first result is
+ * what is returned.
  */
 long kdos_fclose(long h)
 {
-    long rc, again;
+    long rc = 0, r;
+    volatile BOOL returned;
     int tries;
 
-    rc = again = DISK_CALL(xclose((WORD)h));
-    for (tries = 0; again < 0 && again != EIHNDL && tries < BLKDEVNUM; tries++)
-        again = DISK_CALL(xclose((WORD)h));
+    for (tries = 0; tries <= BLKDEVNUM; tries++)
+    {
+        returned = FALSE;
+        r = DISK_CALL(__extension__ ({
+            long closed = xclose((WORD)h);
+            returned = TRUE;
+            closed;
+        }));
+        if (!tries)
+            rc = r;
+        if (returned)
+            break;
+    }
 
     return rc;
 }
