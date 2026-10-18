@@ -84,9 +84,10 @@ config STATIC_ALT_RAM_ADDRESS
 config STATIC_ALT_RAM_SIZE
 	hex "Size of the static Alt-RAM region"
 	depends on CONF_WITH_STATIC_ALT_RAM
+	default 0
 	help
 	  Size of the Alt-RAM region, when it is known at compile time.
-	  Leave this empty to have the size determined at boot time.
+	  If set to 0, the size is determined at boot time.
 
 config CONF_WITH_FRB
 	bool "_FRB cookie"

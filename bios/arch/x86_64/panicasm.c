@@ -37,6 +37,7 @@
 #include "asm.h"
 #include "bdosbind.h"
 #include "earlycon.h"
+#include "string.h"
 #include <stdarg.h>
 
 LONG proc_lives;
@@ -97,6 +98,7 @@ void cold_reset(void)
 void panic(const char *fmt, ...)
 {
     va_list ap;
+    void *ret;
 
     /*
      * Unconditional, straight to COM1: cprintf()'s CONF_SERIAL_CONSOLE
@@ -114,7 +116,8 @@ void panic(const char *fmt, ...)
     earlycon_puts(fmt);
     earlycon_puts("\n");
 
-    *(void **)proc_stk = __builtin_return_address(0);
+    ret = __builtin_return_address(0);
+    memcpy(proc_stk, &ret, sizeof(ret));   /* proc_stk is a UWORD array */
     proc_enum = 0;
     proc_lives = 0x12345678;
 
@@ -122,5 +125,5 @@ void panic(const char *fmt, ...)
     vkcprintf(fmt, ap);
     va_end(ap);
 
-    dopanic("");
+    dopanic("%s", "");         /* the message was printed above */
 }

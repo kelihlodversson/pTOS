@@ -78,7 +78,7 @@ MD *ffit(long amount, MPB *mp)
             maxval &= ~alignment;
         }
         KDEBUG(("BDOS ffit: maxval=%ld\n",maxval));
-        return (MD *)maxval;
+        return (MD *)(uintptr_t)maxval;
     }
 
     if (mp == &pmd)

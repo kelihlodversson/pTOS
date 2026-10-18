@@ -174,7 +174,7 @@ long kernel_trap(long callno, long arg1, long arg2, long arg3, long arg4);
  * about-to-be-restored return RIP (RCX -- entirely caller-controlled,
  * see trapasm.S's own comment) is not a canonical address. `sysretq`
  * does not validate this itself, and executing it anyway is the exact
- * hardware hazard CVE-2012-0217 (and its Xen/*BSD analogues) exploited:
+ * hardware hazard CVE-2012-0217 (and its Xen and *BSD analogues) exploited:
  * on real silicon, a non-canonical target can fault after privilege/
  * segment state has already started changing, delivering the resulting
  * #GP with attacker-influenced state still in effect rather than

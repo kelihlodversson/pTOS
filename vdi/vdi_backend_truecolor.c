@@ -424,7 +424,7 @@ static void truecolor_close(Vwk *vwk)
     (void)vwk;
 }
 
-vdi_backend_ops packed_truecolor_backend_ops = {
+VDI_PACKED_OPS_CONST vdi_backend_ops packed_truecolor_backend_ops = {
     truecolor_open,
     truecolor_close,
     tc_get_start_addr,

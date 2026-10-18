@@ -525,7 +525,7 @@ static LONG elf_fixup(UBYTE *load_base, const ELFINFO *info, LONG bias,
 
     /* the slot must satisfy the target's 32-bit access alignment (4 bytes on
      * ARM, 2 on m68k) or the load/store below would fault */
-    if ((ULONG)slot & (ELF_SLOT_ALIGN - 1))
+    if ((uintptr_t)slot & (ELF_SLOT_ALIGN - 1))
         return EPLFMT;
 
     /* unsigned arithmetic wraps modulo 2^32, so a negative bias applies
@@ -934,7 +934,7 @@ static LONG ptos_bind_apply(UBYTE *load_base, const ELFINFO *info,
 
     slot = (ELF_SLOT_T *)(load_base + (vaddr - info->link_base));
 
-    if ((ULONG)slot & (ELF_SLOT_ALIGN - 1))
+    if ((uintptr_t)slot & (ELF_SLOT_ALIGN - 1))
         return EPLFMT;
 
     value = (kind == PTOSABI_KIND_DATA) ? (ULONG)addr.data : (ULONG)addr.func;
