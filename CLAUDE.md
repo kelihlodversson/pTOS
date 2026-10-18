@@ -66,6 +66,20 @@ three offered under "m68k toolchain" in the Toolchain menu: `m68k-atari-mintelf-
 choice sets both the prefix and the flags; `doc/install.txt` says where to get
 them.
 
+**A missing or unsuitable toolchain is never a reason to skip a
+configuration.** Every one of them can be built on this machine without sudo.
+When a build stops on `x86_64-elf-gcc: No such file or directory`,
+`... does not support -mfastcall`, `arm-none-eabi-gcc: not found`, or any
+other "compiler missing" error, follow the `toolchain-install` skill
+(`.claude/skills/toolchain-install/SKILL.md`) before you report anything as
+unbuildable. The two cases that trip agents most often:
+
+- pc-x86_64 uses the host's native gcc: `make CROSS_COMPILE=`.
+- `CONF_WITH_MFASTCALL=y` configs (amiga, amiga-kickdisk, the `*-fastcall`
+  ones) need Thorsten Otto's toolchain, because the PPA's
+  `m68k-atari-mintelf-gcc` has no `-mfastcall`. The skill shows how to
+  install it into a user directory and put it first on `PATH`.
+
 `make clean` keeps `.config`; `make distclean` removes it too. Changing
 `.config` rebuilds everything, which is intended.
 
