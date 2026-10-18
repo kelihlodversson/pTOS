@@ -316,6 +316,50 @@ static void ft_stream_close(FT_Stream stream)
     stream->size = 0;
 }
 
+/*
+ * read a file whose size is not known: the drives of the pluggable file
+ * systems (a virtio-9p host directory, say) cannot seek.  The buffer
+ * doubles until a read comes back short, and what was read is then copied
+ * into a block of its own size, so that the rest is not kept for as long
+ * as the face is.
+ */
+#define FT_READ_FIRST   (64 * 1024L)
+
+static UBYTE *ft_read_unsized(LONG handle, LONG *sizep)
+{
+    LONG cap = FT_READ_FIRST, len = 0, n;
+    UBYTE *buf, *p;
+
+    buf = fm_alloc(cap);
+    while (buf)
+    {
+        n = kdos_fread(handle, cap - len, (long)(buf + len));
+        if (n < 0)
+            break;
+        len += n;
+        if (len < cap)
+        {
+            /* the whole file */
+            p = len ? fm_alloc(len) : NULL;
+            if (p)
+                memcpy(p, buf, len);
+            fm_free(buf);
+            *sizep = len;
+            return p;
+        }
+        p = (cap <= (LONG)(FM_MAX / 2)) ? fm_alloc(cap * 2) : NULL;
+        if (!p)
+            break;
+        memcpy(p, buf, len);
+        fm_free(buf);
+        buf = p;
+        cap *= 2;
+    }
+
+    fm_free(buf);
+    return NULL;
+}
+
 FT_BASE_DEF( FT_Error )
 FT_Stream_Open(FT_Stream stream, const char *filepathname)
 {
@@ -330,25 +374,36 @@ FT_Stream_Open(FT_Stream stream, const char *filepathname)
         return FT_Err_Cannot_Open_Resource;
 
     size = kdos_fseek(0L, handle, 2);
-    if (size <= 0 || kdos_fseek(0L, handle, 0) != 0)
+    if (size < 0)
     {
+        /* no seeking on this drive */
+        buf = ft_read_unsized(handle, &size);
         kdos_fclose(handle);
-        return FT_Err_Cannot_Open_Stream;
+        if (!buf)
+            return FT_Err_Cannot_Open_Stream;
     }
-
-    buf = fm_alloc(size);
-    if (!buf)
+    else
     {
+        if (size == 0 || kdos_fseek(0L, handle, 0) != 0)
+        {
+            kdos_fclose(handle);
+            return FT_Err_Cannot_Open_Stream;
+        }
+
+        buf = fm_alloc(size);
+        if (!buf)
+        {
+            kdos_fclose(handle);
+            return FT_Err_Out_Of_Memory;
+        }
+
+        n = kdos_fread(handle, size, (long)buf);
         kdos_fclose(handle);
-        return FT_Err_Out_Of_Memory;
-    }
-
-    n = kdos_fread(handle, size, (long)buf);
-    kdos_fclose(handle);
-    if (n != size)
-    {
-        fm_free(buf);
-        return FT_Err_Cannot_Open_Stream;
+        if (n != size)
+        {
+            fm_free(buf);
+            return FT_Err_Cannot_Open_Stream;
+        }
     }
 
     stream->base = buf;
