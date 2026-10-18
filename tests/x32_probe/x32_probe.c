@@ -74,6 +74,8 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+#include "config.h"
+
 typedef unsigned long long u64;
 typedef long long s64;
 typedef unsigned int u32;
@@ -169,6 +171,35 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     int bad = 0;
 
     switch (tail[0]) {
+    case 'I': {
+        const char *files[] = { "VDIIMP.TOS", "VDIREL.TOS", "VDIPLT.TOS" };
+        char bad_file[] = "VDIBAD1.TOS";
+        s64 rc;
+        int i;
+
+        for (i = 0; i < 3; i++) {
+            rc = sys4(GEMDOS, 0x4b, 0, (u32)(unsigned long)files[i], (u32)(unsigned long)"", 0);
+#if CONF_WITH_X32_VDI
+            if (rc != 0)
+                pterm(0x100 + i);
+            rc = sys4(GEMDOS, 0x4b, 3, (u32)(unsigned long)files[i], (u32)(unsigned long)"", 0);
+            if (rc <= 0)
+                pterm(0x110 + i);
+            if (sys4(GEMDOS, 0x4b, 4, 0, rc, 0) != 0 || gemdos(0x49, rc, 0) != 0)
+                pterm(0x120 + i);
+#else
+            if (rc != -66)             /* EPLFMT: optional import unavailable */
+                pterm(0x100 + i);
+#endif
+        }
+        for (i = 0; i < 7; i++) {
+            bad_file[6] = '1' + i;
+            if (sys4(GEMDOS, 0x4b, 0, (u32)(unsigned long)bad_file, (u32)(unsigned long)"", 0) != -66)
+                pterm(0x130 + i);
+        }
+        pterm(0);
+        break;
+    }
     case 'W':
         pterm(vdi_roundtrip_checks(0, 0));
         break;

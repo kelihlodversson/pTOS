@@ -1,5 +1,5 @@
-Typed x32 VDI parameter contract (#427)
-=======================================
+Typed x32 VDI client and application imports (#427, #403)
+========================================================
 
 x32 programs call LONG vdi(VDIPB *) from obj/x32/libptos-vdi.a. The client
 runs in ring 3, snapshots and checks the typed parameter block, and uses
@@ -10,7 +10,7 @@ CONF_WITH_X32_VDI enables these services independently of AES and the
 EmuCON baseline. configs/pc-x86_64-vdi_defconfig selects it; the ordinary
 pc-x86_64 configuration leaves it disabled. Class 0x100 returns EINVFN
 when disabled. Callback delivery remains #432, the complete application
-binding/import path is #403, and AES access is #404.
+import path is available through vdi:vdi ABI 1.0, and AES access is #404.
 
 Representations
 ---------------
@@ -250,16 +250,57 @@ Compile the application with the same -mx32 freestanding ABI as the other
 x32 programs, include vdipb.h from include/, and link obj/x32/libptos-vdi.a.
 The public headers vdipb.h, vdi_user.h, userptr.h and portab.h do not need
 generated kernel configuration headers. vdi() returns a GEMDOS LONG status;
-successful ordinary calls return E_OK. No runtime resolver or kernel
-function address is needed for this static entry.
+successful ordinary calls return E_OK. This static entry needs no load-time binding.
 
 kelihlodversson/gemlib can supply the higher-level application bindings.
 Its feature/arm-ptos-support branch adapts the low-level trap entry for ARM,
 but retains the legacy WORD control array. An x32 port must use the public
 typed control/FDB definitions, set named fields and union members instead
 of packing pointers into WORDs, and route its low-level _gc_vdi.c binding
-to this library's vdi(). Keep the ARM/m68k binding paths separate. Completing
-that broader binding/import integration is tracked by #403.
+to this library's vdi(). Keep the ARM/m68k binding paths separate. Porting
+the remaining higher-level gemlib bindings is separate from the pTOS entry.
+The loader now supplies the typed entry through the import path below.
+
+Imported applications
+---------------------
+
+make x32-vdi also builds obj/x32/libptos-vdi.so.1, a link-time stub declaring
+LONG vdi(VDIPB *). The stub is never installed on the boot disk or executed.
+Link an x32 position-independent application against it, then package its
+ELF with ptos-elf-pack. For example (CC is x86_64-elf-gcc on macOS, gcc on
+Linux; supply the application's startup object):
+
+    $CC -mx32 -ffreestanding -fPIE -nostdlib -Wl,-pie,--no-dynamic-linker \
+        -Wl,-m,elf32_x86_64,--build-id=none,-e,_start \
+        -Wl,-z,max-page-size=0x1000,-z,noseparate-code \
+        -Iinclude app.c start.o -Lobj/x32 -l:libptos-vdi.so.1 -o app.elf
+    ./ptos-elf-pack --strip-shdr app.elf APP.TOS
+
+The packer converts the stub's DT_NEEDED and JUMP_SLOT/GLOB_DAT relocation
+into vdi:vdi, ABI major 1, minor 0, function kind, using the existing
+PT_PTOS_IMPORTS format. Pexec resolves it eagerly; the application needs no
+address constants or runtime symbol lookup. The x32 GOT slot's upper word
+is zero as emitted by the linker; its low word receives the user address.
+Only this x32 function is registered. Unknown names, namespaces, versions,
+kinds and malformed bind slots return EPLFMT; the ordinary PC baseline
+also returns EPLFMT for an application requiring VDI.
+
+The optional kernel embeds the same client objects used by the static
+archive as a small native x32 image. Its first word identifies the vdi()
+entry, and a linker assertion forbids mutable globals and caps the image
+at 64 KiB. During process preparation, private pages at 0x0ffe0000 are
+filled from those bytes and mapped user-readable/executable, never writable.
+The window is disjoint from the image, framebuffer, heap, ancestors and
+stack. It is an implementation detail of the resolver, not an application
+ABI address. Even the default EmuCON gets this mapping only in a build with
+CONF_WITH_X32_VDI enabled. The address space owns and reclaims the pages on
+normal exit, a process fault and failed launch. Mapping happens before an
+irreversible PE_LOAD image transfer from the launching process.
+
+All parameter-block checks and memory raster algorithms still execute in
+ring 3. Only the typed services above cross to ring 0. Class 2 stays refused.
+No kernel export address is narrowed into a user slot; ARM and m68k retain
+their existing trap interfaces and cannot import this x32 implementation.
 
 Tests
 -----
@@ -298,3 +339,13 @@ The boot disk needs obj/x32/x32probe.elf copied to X32VDI.TOS alongside the
 existing loader fixtures. CI builds and boots both PC configurations and
 requires "x86-64 VDI client: PASS" for the enabled configuration, as well as
 the aggregate "x86-64 memtest: PASS" marker.
+
+make x32-vdi-import-test builds real PIE, relocated and PLT applications
+without libptos-vdi.a, strips their section headers, checks the packed import
+and emits seven malformed import fixtures. Copy obj/x32/VDI*.TOS to the boot
+drive alongside X32VDI.TOS. Both PC boot tests require "x86-64 VDI imports:
+PASS": the enabled build runs the full client round trip through imports,
+including nested Pexec and PE_LOAD/GO, verifies read-only client code and
+fault cleanup; both configurations reject invalid metadata, and the baseline
+refuses the optional import. The host test also checks packaging refusals
+for an unknown function and a different library dependency.

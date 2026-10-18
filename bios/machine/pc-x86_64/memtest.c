@@ -1340,6 +1340,28 @@ static void test_ring3(void)
      * syscall boundary, and the exit code coming back */
     probe_expect('e', 0, "ring-3 entry state: basepage, type, stack, CPL 3, GEMDOS call");
     probe_expect('x', 0x1234, "ring-3 exit code reaches the launcher");
+    {
+        int before = failures;
+
+        snap(&s);
+#if CONF_WITH_X32_VDI
+        rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "", NULL);
+        CHECK(rc == 0, "loaded application imports the x32 VDI client");
+        rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "w", NULL);
+        CHECK(rc == 0xffff, "imported VDI code is read-only in user mode");
+        rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "f", NULL);
+        CHECK(rc == 0xffff, "a fault in an imported client reclaims workstations");
+        rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "", NULL);
+        CHECK(rc == 0, "imported VDI remains usable after a fault");
+#else
+        rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "", NULL);
+        CHECK(rc == EPLFMT, "the baseline refuses optional VDI imports");
+#endif
+        same(&s, "VDI imported client processes");
+        probe_expect('I', 0, "VDI imports: nested Pexec, PE_LOAD/GO, relocation and invalid metadata");
+        if (failures == before)
+            kcprintf("x86-64 VDI imports: PASS\n");
+    }
     probe_expect('V', 0, "x32 VDI control layout, opcode tags and bitmap bounds");
 #if CONF_WITH_X32_VDI
     {
