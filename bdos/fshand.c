@@ -57,7 +57,12 @@ long ixforce(int std, int h, PD *p)
         if (h < NUMSTD)         /* validate the non-std handle */
             return EIHNDL;
 
-        if (!getofd(h))         /* check that the non-std handle exists */
+        /* check that the non-std handle exists */
+#if CONF_WITH_PLUGGABLE_FS
+        if (!getofd(h) && !getpfsslot(h))
+#else
+        if (!getofd(h))
+#endif
             return EIHNDL;
 
         /*

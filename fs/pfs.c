@@ -1128,3 +1128,74 @@ LONG pfs_handle_close(PFSCOOKIE *fc)
 {
     return fc->fs->close ? fc->fs->close(fc) : E_OK;
 }
+
+/* the size of an open file, or a negative error code */
+static LONG pfs_handle_size(PFSCOOKIE *fc, PFSATTR *attr)
+{
+    LONG rc;
+
+    if (!fc->fs->fstat)
+        return EINVFN;
+
+    rc = fc->fs->fstat(fc, attr);
+    if (rc < 0)
+        return rc;
+
+    /* a GEMDOS file position is a LONG */
+    return (attr->size > 0x7fffffffUL) ? 0x7fffffffL : (LONG)attr->size;
+}
+
+LONG pfs_handle_seek(PFSCOOKIE *fc, LONG n, WORD flg)
+{
+    PFSATTR attr;
+    LONG size;
+
+    if ((flg < 0) || (flg > 2))
+        return EINVFN;
+
+    size = pfs_handle_size(fc, &attr);
+    if (size < 0)
+        return size;
+
+    if (flg == 2)
+        n += size;
+    else if (flg == 1)
+        n += fc->pos;
+
+    if ((n < 0) || (n > size))
+        return ERANGE;
+
+    fc->pos = n;
+
+    return n;
+}
+
+LONG pfs_handle_eof(PFSCOOKIE *fc)
+{
+    PFSATTR attr;
+    LONG size;
+
+    size = pfs_handle_size(fc, &attr);
+    if (size < 0)
+        return size;
+
+    return (fc->pos >= size) ? 1 : 0;
+}
+
+LONG pfs_handle_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt)
+{
+    PFSATTR attr;
+    LONG rc;
+
+    if (wrt)
+        return EACCDN;
+
+    rc = pfs_handle_size(fc, &attr);
+    if (rc < 0)
+        return rc;
+
+    *time = attr.time;
+    *date = attr.date;
+
+    return E_OK;
+}
