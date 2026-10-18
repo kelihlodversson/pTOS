@@ -1260,7 +1260,8 @@ void vdi_vqt_name(Vwk * vwk)
         int_out = INTOUT;
         *int_out++ = sfont ? sfont->id : (found ? tmp_font->font_id : fon6x6.font_id);
         name = sfont ? sfont->name : (found ? tmp_font->name : fon6x6.name);
-        for (i = 0; i < FONT_NAME_LEN && name[i]; i++)
+        /* at most 31 characters, so that the name always ends in a NUL */
+        for (i = 0; i < FONT_NAME_LEN - 1 && name[i]; i++)
             *int_out++ = (UBYTE)name[i];
         while (i++ < FONT_NAME_LEN)
             *int_out++ = 0;

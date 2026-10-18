@@ -65,6 +65,11 @@
 #include <freetype/freetype.h>
 #include <freetype/ftfntfmt.h>
 
+/* an empty option is not defined at all (tools/genconfig.py): the root */
+#ifndef CONF_VDI_FONT_DIR
+#define CONF_VDI_FONT_DIR ""
+#endif
+
 ULONG vdi_gdos_id;
 
 WORD vdi_sfont_count;
