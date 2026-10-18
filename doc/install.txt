@@ -263,6 +263,15 @@ is there, the built-in GDOS stays out altogether and that GDOS works as
 before.  GEM bitmap fonts (*.FNT, from ASSIGN.SYS) are left to such a
 GDOS: the built-in one does not load them.
 
+vst_font() then selects a scalable font, and vst_point() and vst_height()
+set exactly the size asked for.  Each size is rendered whole by FreeType,
+as a bitmap font of that size with the 256 characters of the Atari set,
+so the text path draws it with all its writing modes, effects, rotation
+and clipping (vdi/vdi_sfont.c).  Rendered sizes are kept up to
+CONF_VDI_FONT_CACHE KB (1 MB by default); the one used longest ago that
+no workstation has selected goes first.  Ink that reaches past a
+character's advance width is cut off, and kerning is not applied.
+
 
 Available configurations
 ========================
