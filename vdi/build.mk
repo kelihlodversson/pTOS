@@ -6,6 +6,7 @@ obj-y += vdi_entry.o vdi_bezier.o vdi_col.o vdi_control.o vdi_esc.o \
 	 vdi_fill.o vdi_gdp.o vdi_input.o vdi_line.o vdi_main.o \
 	 vdi_marker.o vdi_misc.o vdi_mouse.o vdi_raster.o vdi_text.o \
 	 vdi_textblit.o
+obj-$(CONF_WITH_X32_VDI) += vdi_service.o
 
 # The dispatch machinery (selection + the per-renderer ops tables) only
 # exists when more than one renderer is enabled: with exactly one, the

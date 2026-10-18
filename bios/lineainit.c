@@ -17,6 +17,7 @@
 #include "lineavars.h"
 #include "screen.h"
 #include "screen_mode.h"
+#include "intmath.h"
 
 #define DBG_LINEA 0
 
@@ -56,8 +57,8 @@ void linea_init(void)
      * this is a convenient place to update the workstation xres/yres which
      * may have been changed by a Setscreen()
      */
-    linea_vars.DEV_TAB[0] = linea_vars.V_REZ_HZ - 1;
-    linea_vars.DEV_TAB[1] = linea_vars.V_REZ_VT - 1;
+    linea_vars.DEV_TAB[0] = min((LONG)linea_vars.V_REZ_HZ - 1, 32767L);
+    linea_vars.DEV_TAB[1] = min((LONG)linea_vars.V_REZ_VT - 1, 32767L);
 
 #if DBG_LINEA
     kprintf("planes: %d\n", linea_vars.v_planes);

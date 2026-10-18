@@ -25,6 +25,9 @@
 #include "bdosbind.h"
 #include "tosvars.h"
 #include "screen_mode.h"
+#if CONF_WITH_X32_VDI
+#include "kheap.h"
+#endif
 
 #define FIRST_VDI_HANDLE    1
 #define LAST_VDI_HANDLE     (FIRST_VDI_HANDLE+NUM_VDI_HANDLES-1)
@@ -190,7 +193,18 @@ Vwk * get_vwk_by_handle(WORD handle)
  */
 void update_rez_dependent(void)
 {
-    linea_vars.BYTES_LIN = linea_vars.v_lin_wr = linea_vars.V_REZ_HZ / 8 * linea_vars.v_planes;
+    UWORD pitch = linea_vars.V_REZ_HZ / 8 * linea_vars.v_planes;
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    SCREEN_MODE_DESC desc;
+
+    screen_get_current_mode_desc(&desc);
+    /* Packed screens may pad each scanline. Preserve the hardware stride
+     * before v_opnwk() reaches esc_init() and clears the console. */
+    if (desc.layout == SCREEN_LAYOUT_PACKED)
+        pitch = desc.pitch;
+#endif
+
+    linea_vars.BYTES_LIN = linea_vars.v_lin_wr = pitch;
 
 #if EXTENDED_PALETTE
     mcs_ptr = (linea_vars.v_planes <= 4) ? (MCS *)&linea_vars.mouse_cursor_save : &ext_mouse_cursor_save;
@@ -198,8 +212,10 @@ void update_rez_dependent(void)
     mcs_ptr = (MCS *)&linea_vars.mouse_cursor_save;
 #endif
 
-    linea_vars.DEV_TAB[0] = linea_vars.V_REZ_HZ - 1;
-    linea_vars.DEV_TAB[1] = linea_vars.V_REZ_VT - 1;
+    /* VDI's geometry and clip fields use signed WORD coordinates even
+     * when the physical dimensions in line-A are unsigned WORDs. */
+    linea_vars.DEV_TAB[0] = min((LONG)linea_vars.V_REZ_HZ - 1, 32767L);
+    linea_vars.DEV_TAB[1] = min((LONG)linea_vars.V_REZ_VT - 1, 32767L);
     get_pixel_size(&linea_vars.DEV_TAB[3],&linea_vars.DEV_TAB[4]);
     linea_vars.DEV_TAB[13] = (linea_vars.v_planes<8) ? (1 << linea_vars.v_planes) : 256;
     linea_vars.DEV_TAB[35] = (linea_vars.v_planes==1) ? 0 : 1;
@@ -450,7 +466,13 @@ void vdi_v_opnvwk(Vwk * vwk)
     if (TRUECOLOR_MODE)
         size += sizeof(VwkExt); /* for simplicity, allocate them together */
 #endif
+#if CONF_WITH_X32_VDI
+    /* Workstation state stays supervisor-owned even when the requester has
+     * a private Malloc heap. It must never live in that user-writable heap. */
+    vwk = kalloc(size);
+#else
     vwk = (Vwk *)Mxalloc(size, MX_SUPER);
+#endif
     if (vwk == NULL) {
         CONTRL->handle = 0;  /* No memory available, exit */
         return;
@@ -516,7 +538,11 @@ void vdi_v_clsvwk(Vwk * vwk)
      */
     linea_vars.CUR_WORK = &phys_work;
 
+#if CONF_WITH_X32_VDI
+    kfree(vwk);
+#else
     Mfree(vwk);
+#endif
 }
 
 
@@ -620,7 +646,11 @@ void vdi_v_clswk(Vwk * vwk)
     /* close all open virtual workstations */
     for (handle = VDI_PHYS_HANDLE+1, p = vwk_ptr+handle; handle <= LAST_VDI_HANDLE; handle++, p++) {
         if (*p) {
+#if CONF_WITH_X32_VDI
+            kfree(*p);
+#else
             Mfree(*p);
+#endif
             *p = NULL;
         }
     }

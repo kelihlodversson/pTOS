@@ -39,6 +39,25 @@ On x86-64 the programs are built as x32 programs (libcmini's
 `ptos_x86_64_defconfig`, with the compiler and flags of the other x32
 programs). There is no disk image target for x86-64: use `make test-dir`.
 
+The separate `make vdi-contract-test` target checks the typed x32 VDI
+layouts, opcode inventory and memory raster semantics on the host. The
+same contract tests run in ring 3 during the PC boot self-test.
+`pc-x86_64-vdi_defconfig` also exercises the callable VDI client, drawing
+with pixel readback, memory rasters, callback refusal, handle ownership and
+fault cleanup. Copy `obj/x32/x32probe.elf` to `X32VDI.TOS` in the EFI boot
+drive alongside the existing x32 loader fixtures; CI does this for both PC
+configurations. The enabled configuration must print `x86-64 VDI client:
+PASS`, and both must print `x86-64 memtest: PASS`. See
+[the VDI contract](../doc/vdi-x32.txt) for the supported calls and bounds.
+The VDI configuration also requires `x86-64 VDI padded pitch: PASS`: it
+opens a workstation with a narrower viewport over the real GOP pitch and
+checks that console clearing and ring-3 drawing preserve the sentinel
+pixels in every row's padding.
+`x86-64 VDI coordinate bounds: PASS` checks simulated screen heights of
+32768, 32769 and 65535 rows: signed WORD bounds before narrowing, 64-bit
+pixel arguments, unchanged output buffers on rejection, and visible
+low-coordinate lines with optional clipping disabled and enabled.
+
 ## Running
 
 `tests/emudesk.inf`'s `#Z` autorun line launches `C:\RUNTESTS.TOS`

@@ -46,6 +46,11 @@
 #include "tosvars.h"
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/fs.h"
+#if CONF_WITH_X32_VDI
+#include "lineavars.h"
+#include "screen_mode.h"
+#include "font.h"
+#endif
 
 extern void set_owner(void *addr, PD *p);
 extern void proc_free_owned(PD *p);
@@ -1242,6 +1247,89 @@ static void probe_expect(char mode, long want, const char *what)
     same(&s, what);
 }
 
+#if CONF_WITH_X32_VDI
+static void test_vdi_coordinate_bounds(void)
+{
+    struct _lineavars *saved;
+    const UWORD heights[] = { 32768U, 32769U, 65535U };
+    SNAP s;
+    ULONG i;
+    int before = failures;
+
+    snap(&s);
+    saved = kalloc(sizeof(*saved));
+    CHECK(saved != NULL, "snapshot line-A state for VDI coordinate test");
+    if (!saved)
+        return;
+    *saved = linea_vars;
+    /* GOP can advertise more rows than a signed renderer WORD can
+     * address. The probe sends the high coordinate expecting rejection;
+     * the valid signed boundary uses an invalid output buffer so neither
+     * case needs to read beyond the real framebuffer. */
+    for (i = 0; i < ARRAY_SIZE(heights); i++) {
+        linea_vars.V_REZ_VT = heights[i];
+        probe_expect('P', 0, "large-screen VDI coordinate bounds and visible clipped lines");
+    }
+    linea_vars = *saved;
+    kfree(saved);
+    same(&s, "coordinate bounds VDI test");
+    if (failures == before)
+        kcprintf("x86-64 VDI coordinate bounds: PASS\n");
+}
+
+static void test_vdi_padded_pitch(void)
+{
+    SCREEN_MODE_DESC mode;
+    struct _lineavars *saved;
+    SNAP s;
+    ULONG x, y, stride, visible;
+    volatile ULONG *row;
+    BOOL pitch_ok, padding_ok = TRUE;
+    int before = failures;
+
+    screen_get_current_mode_desc(&mode);
+    CHECK(mode.layout == SCREEN_LAYOUT_PACKED && mode.bits_per_pixel == 32 &&
+          mode.width >= 64, "padded-pitch test has a packed GOP screen");
+    if (mode.layout != SCREEN_LAYOUT_PACKED || mode.bits_per_pixel != 32 || mode.width < 64)
+        return;
+    snap(&s);
+    saved = kalloc(sizeof(*saved));
+    CHECK(saved != NULL, "snapshot line-A state for padded-pitch test");
+    if (!saved)
+        return;
+    *saved = linea_vars;
+
+    /* Crop the visible viewport while retaining the hardware scanline
+     * stride. This creates real row padding even on unpadded QEMU GOP.
+     * Seed it before opening: esc_init() clears the console inside the
+     * physical open, before the service could repair an incorrect pitch. */
+    stride = mode.pitch / sizeof(ULONG);
+    visible = (mode.width - 32) & ~7UL;
+    linea_vars.V_REZ_HZ = visible;
+    font_set_default();
+    for (y = 0; y < mode.height; y++) {
+        row = (volatile ULONG *)v_bas_ad + y * stride;
+        for (x = visible; x < stride; x++)
+            row[x] = 0x5a7193c5UL;
+    }
+    probe_expect('W', 0, "ring-3 VDI open, drawing and console clear preserve padded rows");
+    pitch_ok = linea_vars.v_lin_wr == mode.pitch && linea_vars.BYTES_LIN == mode.pitch;
+    for (y = 0; y < mode.height; y++) {
+        row = (volatile ULONG *)v_bas_ad + y * stride;
+        for (x = visible; x < stride; x++)
+            if (row[x] != 0x5a7193c5UL)
+                padding_ok = FALSE;
+    }
+    linea_vars = *saved;
+    kfree(saved);
+    CHECK(pitch_ok, "physical VDI open preserves the hardware pitch");
+    CHECK(padding_ok, "VDI and console output leave scanline padding untouched");
+    same(&s, "padded-pitch VDI test");
+    if (failures == before)
+        kcprintf("x86-64 VDI padded pitch: PASS\n");
+}
+#endif
+
 static void test_ring3(void)
 {
     SNAP s;
@@ -1252,6 +1340,22 @@ static void test_ring3(void)
      * syscall boundary, and the exit code coming back */
     probe_expect('e', 0, "ring-3 entry state: basepage, type, stack, CPL 3, GEMDOS call");
     probe_expect('x', 0x1234, "ring-3 exit code reaches the launcher");
+    probe_expect('V', 0, "x32 VDI control layout, opcode tags and bitmap bounds");
+#if CONF_WITH_X32_VDI
+    {
+        int before = failures;
+
+        probe_expect('W', 0, "ring-3 VDI workstation, coordinate, raster and rejected-vector calls");
+        test_vdi_padded_pitch();
+        test_vdi_coordinate_bounds();
+        probe_expect('!', 0xffff, "a user fault reclaims its open VDI workstations");
+        probe_expect('W', 0, "VDI remains usable after a client's fault");
+        if (failures == before)
+            kcprintf("x86-64 VDI client: PASS\n");
+    }
+#else
+    probe_expect('W', 0, "the optional VDI services are explicitly refused in the baseline");
+#endif
 
     /* each process gets fresh private pages: what the first leaves in its
      * data, the second does not see */
@@ -1727,6 +1831,8 @@ static void test_x32image(void)
     UQUAD entry = 0;
     ASPACE *as;
     SNAP s;
+    PROG_LAYOUT layout;
+    ULONG segment;
 
     snap(&s);
     CHECK(image_check(good, &entry) && entry >= USER_IMAGE_BASE &&
@@ -1747,7 +1853,17 @@ static void test_x32image(void)
     mutated(good, 18, 2, 3, "other machine refused");
     mutated(good, 44, 2, 0, "no program headers refused");
     mutated(good, 24, 4, 0x500000, "entry point outside the image refused");
-    mutated(good, 24, 4, 0x405000, "entry point in a non-executable segment refused");
+    /* The probe grows as new ABI checks are linked in. Select a real data
+     * segment instead of assuming that text always ends before 0x405000. */
+    if (image_layout(good, &layout)) {
+        for (segment = 0; segment < layout.nseg; segment++)
+            if (!(layout.seg[segment].flags & 1))
+                break;                  /* ELF PF_X */
+        CHECK(segment < layout.nseg, "probe has a non-executable segment");
+        if (segment < layout.nseg)
+            mutated(good, 24, 4, (ULONG)layout.seg[segment].vaddr,
+                    "entry point in a non-executable segment refused");
+    }
     mutated(good, 52 + 8, 4, 0x100000, "segment below the image window refused");
     mutated(good, 52 + 8, 4, 0x7ff000, "segment running past the image window refused");
     mutated(good, 52 + 24, 4, 7, "a writable and executable segment refused");

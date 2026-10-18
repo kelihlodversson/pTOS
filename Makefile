@@ -817,6 +817,22 @@ X32_CLI_LDFLAGS = -mx32 -nostdlib -static -no-pie -Wl,--build-id=none \
 obj/x32:
 	mkdir -p $@
 
+# The native VDI entry is a user library. It never exports a ring-0 address
+# and never passes a general VDIPB across the syscall boundary.
+X32_VDI_OBJ = obj/x32/vdi_client.o obj/x32/vdi_user.o obj/x32/vdi_user_raster.o
+obj/x32/vdi_client.o: vdi/x32/vdi_client.c include/vdi_service.h include/vdi_user.h include/vdipb.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
+obj/x32/vdi_user.o: vdi/vdi_user.c include/vdi_user.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
+obj/x32/vdi_user_raster.o: vdi/vdi_user_raster.c include/vdi_service.h include/vdi_user.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
+obj/x32/libptos-vdi.a: $(X32_VDI_OBJ)
+	$(X32_CROSS_COMPILE)ar rcs $@ $^
+.PHONY: x32-vdi
+x32-vdi: obj/x32/libptos-vdi.a
+
+-include $(X32_VDI_OBJ:.o=.d)
+
 
 ifeq ($(CONF_WITH_CLI),y)
 X32_CLI_OBJ = $(addprefix obj/x32/, cmdmain.o cmdedit.o cmdexec.o cmdint.o \
@@ -853,12 +869,25 @@ endif
 # The ring-3 probe program of the boot self-test (tests/x32_probe/), built and
 # embedded the same way.
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
-obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S | obj/x32
-	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_LDFLAGS) -o $@ $^
+obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S \
+                    tests/vdi_contract/vdi_contract.c tests/vdi_contract/vdi_roundtrip.c \
+                    include/vdi_user.h include/vdipb.h include/vdi_service.h include/userptr.h \
+                    obj/x32/libptos-vdi.a $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj $(X32_CLI_LDFLAGS) -o $@ \
+	  $(filter %.c %.S,$^) obj/x32/libptos-vdi.a
 
 obj/x32probe_image.o: obj/x32/x32probe.elf
 endif
 endif
+
+.PHONY: vdi-contract-test
+vdi-contract-test: $(AUTOCONF_H)
+	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -DX32_USERLAND -DVDI_CONTRACT_HOST_TEST \
+	  tests/vdi_contract/vdi_contract.c vdi/vdi_user.c vdi/vdi_user_raster.c -o obj/vdi-contract-test
+	./obj/vdi-contract-test
+	python3 tests/vdi_contract/check_inventory.py
+
+TOCLEAN += obj/vdi-contract-test
 
 #
 # Amiga images
@@ -1508,9 +1537,9 @@ ifndef CONF_WITH_GEMDOS_SHUTDOWN
 TEST_SUITES := $(filter-out shutdown_args,$(TEST_SUITES))
 endif
 
-# x32_hello and x32_probe are standalone _start programs built for the x86-64
-# boot test, not ptest suites, so they must never be linked into runtests.tos.
-TEST_SUITES := $(filter-out x32_hello x32_probe,$(TEST_SUITES))
+# Standalone boot probes and the host/x32 contract checks are not ptest
+# suites, so they must never be linked into runtests.tos.
+TEST_SUITES := $(filter-out x32_hello x32_probe vdi_contract,$(TEST_SUITES))
 
 # raster_copy and text_blit draw through the VDI, which x86-64 refuses to user
 # processes until #548 (and tools/pBench/gem.c, their bindings, has none for

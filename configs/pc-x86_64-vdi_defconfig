@@ -1,0 +1,4 @@
+MACHINE_PC_X86_64=y
+# CONF_WITH_XHDI is not set
+CONF_WITH_X32_VDI=y
+# CONF_WITH_LINEA is not set
