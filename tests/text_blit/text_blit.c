@@ -81,6 +81,9 @@ struct fonthead {
 #define EF_UNDER        8
 #define EF_OUTLINE      16
 
+/* font header flags, see include/fonthdr.h */
+#define F_MONOSPACE     8
+
 /* one string to draw */
 typedef struct {
     const char *str;
@@ -407,36 +410,86 @@ static int string_width(const CASE *c)
     return w;
 }
 
-/* what plain text (no effects, no rotation) should look like */
+/*
+ * what text should look like: plain text, also clipped, and, not clipped,
+ * text in bold, light and skewed, as VDI draws them (see normal_blit() in
+ * vdi/arch/m68k/vdi_tblit.S), with none of its code.  Lines are styled
+ * going up from the bottom one.  Bold keeps the glyph as wide as it is
+ * less the weight (a bold glyph is wider by the weight, unless the font is
+ * monospaced) and smears it right by the weight.  Skew starts a line one
+ * pixel further right than the one below it whenever the bit of the
+ * font's skew mask for it is set, the most significant bit being the
+ * bottom line's, and writes it as wide as the glyph; the text starts left
+ * by the font's left and right offsets (top alignment).  Light ANDs each
+ * line with the font's light mask as it lies on the screen, the mask
+ * being rotated one bit left on each line going up.  No rotation, no
+ * right alignment with effects.
+ */
 static void model_text(U8 *buf, const CASE *c)
 {
     const struct fonthead *f = find_font(last_point);
     const char *s;
     int x = c->x;
+    int weight = (c->effects & EF_BOLD) ? f->thicken : 0;
+    int extra = (weight && !(f->flags & F_MONOSPACE)) ? weight : 0;
 
     if (c->halign == 2)
         x -= string_width(c);
+    if (c->effects & EF_SKEW)
+        x -= f->left_offset + f->right_offset;
 
     for (s = c->str; *s; s++)
     {
         unsigned ch = (U8)*s;
-        int gx0, w, r, i;
+        int gx0, w, keep, k, i, j, shift;
+        unsigned short lite;
+        U8 g[32];
 
         if (ch < f->first_ade || ch > f->last_ade)
             ch = '?';
         ch -= f->first_ade;
         gx0 = f->off_table[ch];
-        w = f->off_table[ch + 1] - gx0;
-        for (r = 0; r < f->form_height; r++)
-            for (i = 0; i < w; i++)
-            {
-                int gx = gx0 + i;
-                int bit = (f->dat_table[(long)r * f->form_width + (gx >> 3)] >> (7 - (gx & 7))) & 1;
+        w = f->off_table[ch + 1] - gx0 + extra;
+        keep = w - weight;
+        shift = 0;
+        lite = f->lighten;
+        for (k = 0; k < f->form_height; k++)
+        {
+            int r = f->form_height - 1 - k;     /* the line, from the top */
 
-                model_pixel(buf, c, x + i, c->y + r, bit);
+            if ((c->effects & EF_SKEW) && ((f->skew >> (15 - (k & 15))) & 1))
+                shift++;
+            for (i = 0; i < w && i < 32; i++)
+            {
+                g[i] = 0;
+                for (j = 0; j <= weight && j <= i; j++)
+                {
+                    int gx = gx0 + i - j;
+
+                    if (i - j < keep)
+                        g[i] |= (f->dat_table[(long)r * f->form_width + (gx >> 3)] >> (7 - (gx & 7))) & 1;
+                }
             }
+            for (i = 0; i < w && i < 32; i++)
+            {
+                int px = x + shift + i;
+                int bit = g[i];
+
+                if (c->effects & EF_LIGHT)
+                    bit &= (lite >> (15 - (px & 15))) & 1;
+                model_pixel(buf, c, px, c->y + r, bit);
+            }
+            lite = (unsigned short)((lite << 1) | (lite >> 15));
+        }
         x += w;
     }
+}
+
+/* the cases model_text() knows besides plain text */
+static int modelled(const CASE *c)
+{
+    return !c->clip && !c->rot && !c->jlen && c->halign == 0
+        && !(c->effects & ~(EF_BOLD | EF_LIGHT | EF_SKEW));
 }
 
 /*
@@ -504,7 +557,7 @@ static void check(const CASE *c, int plain)
         failed = 1;
     }
 
-    if (plain)
+    if (plain || modelled(c))
     {
         copy(expect, pattern);
         model_text(expect, c);
@@ -683,6 +736,46 @@ static void group_effects(void)
                 }
 }
 
+/*
+ * bold, light and skewed text against the model: on a screen with several
+ * planes both paths output skewed text with skewed_text_blit(), so it would
+ * otherwise only be compared with itself.  Every font, writing mode, two
+ * colours, and shifts that take the slanted lines across a word boundary.
+ */
+static void group_styled(void)
+{
+    static const short fxs[] = {
+        EF_SKEW, EF_SKEW | EF_LIGHT, EF_SKEW | EF_BOLD, EF_SKEW | EF_BOLD | EF_LIGHT,
+        EF_BOLD, EF_LIGHT, EF_BOLD | EF_LIGHT
+    };
+    CASE c;
+    int pt, f, mode, ci, s, dx;
+    short colors[2];
+
+    colors[0] = 1;
+    colors[1] = (short)(ncolors > 2 ? 5 % ncolors : 0);
+    c.jlen = 0;
+    c.rot = 0;
+    c.clip = 0;
+    c.halign = 0;
+    c.y = TEXT_Y;
+    for (pt = 0; pt < 3; pt++)
+        for (f = 0; f < (int)(sizeof(fxs) / sizeof(fxs[0])); f++)
+            for (mode = 1; mode <= 4; mode++)
+                for (ci = 0; ci < 2; ci++)
+                    for (s = 0; s < 2; s++)
+                        for (dx = 0; dx < 18; dx++)
+                        {
+                            c.str = s ? "\xbf\xdfw" : strings[1];
+                            c.point = points[pt];
+                            c.effects = fxs[f];
+                            c.mode = (short)mode;
+                            c.color = colors[ci];
+                            c.x = (short)(TEXT_X + dx);
+                            check(&c, 0);
+                        }
+}
+
 /* effects with a clip rectangle through the text */
 static void group_clipped_effects(void)
 {
@@ -820,6 +913,7 @@ void test_text_blit(void)
 
     run_group("text_blit: plain text matches the model (#499)", group_plain);
     run_group("text_blit: effects and rotation, CPU vs blitter (#499)", group_effects);
+    run_group("text_blit: bold, light and skewed text match the model (#554)", group_styled);
     run_group("text_blit: effects and clipping, CPU vs blitter (#499)", group_clipped_effects);
     run_group("text_blit: justified text, CPU vs blitter (#531)", group_justified);
 
