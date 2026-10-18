@@ -173,12 +173,14 @@ start_vm() {
     mkdir -p "$disk"
     cp -R "$top/test-dir/." "$disk/"
     # scalable fonts for the built-in GDOS (gdos_answer), when the host
-    # has them
-    for f in /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
-             /usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf; do
-        if [ -f "$f" ]; then
+    # has them: TrueType (DejaVu) and OpenType with CFF outlines (Inter),
+    # under 8.3 names
+    for f in /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:DEJAVU.TTF \
+             /usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf:DEJAVUSF.TTF \
+             /usr/share/fonts/opentype/inter/Inter-Regular.otf:INTER.OTF; do
+        if [ -f "${f%%:*}" ]; then
             mkdir -p "$disk/GEMSYS/FONTS"
-            cp "$f" "$disk/GEMSYS/FONTS/"
+            cp "${f%%:*}" "$disk/GEMSYS/FONTS/${f##*:}"
         fi
     done
     case $machine in

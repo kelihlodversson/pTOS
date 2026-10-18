@@ -16,8 +16,12 @@
  * system fonts, flagged as outline fonts (intout[33] = 1) with ids from
  * 10000 on, and a second vst_load_fonts() adds none.  How many there are
  * depends on the fonts in \GEMSYS\FONTS of the test disk
- * (tools/run-regression-tests.sh copies DejaVu there when the host has
- * it).
+ * (tools/run-regression-tests.sh copies DejaVu, TrueType, and Inter,
+ * OpenType with CFF outlines, there when the host has them).  Each is
+ * selected, sized and drawn (#576), and what it drew is read back to see
+ * that rotation, clipping, the effects and XOR mode apply to it -- where
+ * the system font's text can be read back with v_get_pixel(); where it
+ * cannot, the result line says so.
  *
  * x86-64 programs cannot call the VDI at all (trap class 2 is refused
  * from ring 3), so it is skipped there.
@@ -154,6 +158,7 @@ static void pnum(long n)
  */
 static const char *font_failure;
 static short fonts_loaded;
+static int pixels_checked;
 
 static void font_check(int ok, const char *msg)
 {
@@ -233,13 +238,197 @@ static void check_sizes(short handle, short system_fonts)
         }
     }
 
-    /* and drawn */
-    ptsin[0] = 10;
-    ptsin[1] = 100;
-    intin[0] = 'A';
-    intin[1] = 'g';
-    ptsin_op(8, 1, 2, handle);          /* v_gtext() */
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
 
+/*
+ * Drawing a scalable font, read back with v_get_pixel(): the text goes
+ * through the bitmap text path, so rotation, clipping, the effects and
+ * the writing modes apply to it as to a bitmap font (#576).
+ */
+struct ink
+{
+    long count;                         /* pixels not in colour 0 */
+    short x0, y0, x1, y1;               /* the box around them */
+};
+
+static short ink_cx, ink_cy, ink_r;     /* the text's origin, and how far it reaches */
+
+static void ink_scan(short handle, short x0, short y0, short x1, short y1,
+                     struct ink *ink)
+{
+    short x, y;
+
+    ink->count = 0;
+    ink->x0 = ink->y0 = 32767;
+    ink->x1 = ink->y1 = -1;
+    for (y = y0; y <= y1; y++)
+        for (x = x0; x <= x1; x++)
+        {
+            ptsin[0] = x;
+            ptsin[1] = y;
+            ptsin_op(105, 1, 0, handle);    /* v_get_pixel() */
+            if (intout[1] == 0)
+                continue;
+            ink->count++;
+            if (x < ink->x0)
+                ink->x0 = x;
+            if (x > ink->x1)
+                ink->x1 = x;
+            if (y < ink->y0)
+                ink->y0 = y;
+            if (y > ink->y1)
+                ink->y1 = y;
+        }
+}
+
+/* clear the area around the origin, draw "Ag" there and see what came out */
+static void ink_draw(short handle, short angle, short effects, short mode,
+                     short times, struct ink *ink)
+{
+    short i;
+
+    intin[0] = 0;
+    vdi_op(25, 1, handle);              /* vsf_color(0) */
+    intin[0] = 1;
+    vdi_op(23, 1, handle);              /* vsf_interior(solid) */
+    ptsin[0] = ink_cx - ink_r;
+    ptsin[1] = ink_cy - ink_r;
+    ptsin[2] = ink_cx + ink_r;
+    ptsin[3] = ink_cy + ink_r;
+    ptsin_op(114, 2, 0, handle);        /* vr_recfl() */
+
+    intin[0] = angle;
+    vdi_op(13, 1, handle);              /* vst_rotation() */
+    intin[0] = effects;
+    vdi_op(106, 1, handle);             /* vst_effects() */
+    intin[0] = mode;
+    vdi_op(32, 1, handle);              /* vswr_mode() */
+    for (i = 0; i < times; i++)
+    {
+        ptsin[0] = ink_cx;
+        ptsin[1] = ink_cy;
+        intin[0] = 'A';
+        intin[1] = 'g';
+        ptsin_op(8, 1, 2, handle);      /* v_gtext() */
+    }
+    intin[0] = 1;
+    vdi_op(32, 1, handle);              /* back to replace mode */
+    intin[0] = 0;
+    vdi_op(106, 1, handle);             /* no effects */
+    intin[0] = 0;
+    vdi_op(13, 1, handle);              /* no rotation */
+
+    ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r,
+             ink_cx + ink_r, ink_cy + ink_r, ink);
+}
+
+/* a and b the same within a tenth (and a pixel) */
+static int about(long a, long b)
+{
+    long d = a > b ? a - b : b - a;
+
+    return d * 10 <= (a > b ? a : b) + 10;
+}
+
+/*
+ * Whether what the text path draws can be read back at all: the system
+ * font, drawn and read as the scalable fonts are below.  Where it cannot
+ * (v_get_pixel() and the drawing disagreeing on the screen's layout, as
+ * on virt-arm: #598), the pixels of a scalable font say nothing either,
+ * and are not checked.
+ */
+static int pixels_readable(short handle)
+{
+    struct ink ink;
+
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* vst_font(the system font) */
+    intin[0] = 1;
+    vdi_op(22, 1, handle);              /* vst_color(1) */
+    intin[0] = 0;
+    intin[1] = 5;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, top) */
+    ink_r = 40;
+    ink_cx = ink_cy = ink_r + 4;
+    ink_draw(handle, 0, 0, 1, 1, &ink);
+    intin[0] = 0;
+    intin[1] = 0;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, baseline) */
+
+    return ink.count > 0;
+}
+
+static void check_drawing(short handle, short id)
+{
+    struct ink plain, turned, bold, clipped;
+    short angle, w, h, split;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    intin[0] = 24;
+    vdi_op(107, 1, handle);             /* vst_point(24) */
+    h = ptsout[3];                      /* the cell height */
+    w = extent_ag(handle);
+    intin[0] = 1;
+    vdi_op(22, 1, handle);              /* vst_color(1) */
+    intin[0] = 0;
+    intin[1] = 5;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, top) */
+    ink_r = w + h + 4;
+    ink_cx = ink_cy = ink_r + 4;
+
+    ink_draw(handle, 0, 0, 1, 1, &plain);
+    font_check(plain.count > 0, "a scalable font drew nothing");
+    font_check(plain.x0 >= ink_cx && plain.y0 >= ink_cy
+               && plain.x1 < ink_cx + w + 2 && plain.y1 < ink_cy + h,
+               "a scalable font drew outside its extent");
+
+    /* each rotation: the same pixels, turned */
+    for (angle = 900; angle <= 2700; angle += 900)
+    {
+        ink_draw(handle, angle, 0, 1, 1, &turned);
+        font_check(about(turned.count, plain.count),
+                   "a rotated scalable font has other pixels than unrotated");
+        if (angle == 1800)
+            font_check(turned.x1 - turned.x0 == plain.x1 - plain.x0
+                       && turned.y1 - turned.y0 == plain.y1 - plain.y0,
+                       "a scalable font at 1800 is not the same size");
+        else
+            font_check(turned.x1 - turned.x0 == plain.y1 - plain.y0
+                       && turned.y1 - turned.y0 == plain.x1 - plain.x0,
+                       "a scalable font at 900 or 2700 is not turned");
+    }
+
+    /* the effects apply */
+    ink_draw(handle, 0, 1, 1, 1, &bold);
+    font_check(bold.count > plain.count, "bold does not thicken a scalable font");
+    ink_draw(handle, 0, 0x1f, 1, 1, &bold);
+    font_check(bold.count > 0, "a scalable font with all effects drew nothing");
+
+    /* XOR twice leaves nothing */
+    ink_draw(handle, 0, 0, 3, 2, &turned);
+    font_check(turned.count == 0, "a scalable font drawn twice in XOR mode left pixels");
+
+    /* clipped to its left half: nothing right of the split */
+    split = (plain.x0 + plain.x1) / 2;
+    intin[0] = 1;
+    ptsin[0] = ink_cx - ink_r;
+    ptsin[1] = ink_cy - ink_r;
+    ptsin[2] = split;
+    ptsin[3] = ink_cy + ink_r;
+    ptsin_op(129, 2, 1, handle);        /* vs_clip(on) */
+    ink_draw(handle, 0, 0, 1, 1, &clipped);
+    intin[0] = 0;
+    ptsin_op(129, 2, 1, handle);        /* vs_clip(off) */
+    font_check(clipped.count > 0 && clipped.count < plain.count
+               && clipped.x1 <= split,
+               "clipping does not apply to a scalable font");
+
+    intin[0] = 0;
+    intin[1] = 0;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, baseline) */
     intin[0] = 1;
     vdi_op(21, 1, handle);              /* back to the system font */
 }
@@ -306,6 +495,13 @@ static void check_fonts(void)
 
     if (fonts_loaded > 0)
         check_sizes(handle, system_fonts);
+    pixels_checked = fonts_loaded > 0 && pixels_readable(handle);
+    for (i = 1; pixels_checked && i <= fonts_loaded; i++)
+    {
+        intin[0] = system_fonts + i;
+        vdi_op(130, 1, handle);         /* vqt_name() */
+        check_drawing(handle, intout[0]);
+    }
 
     intin[0] = 0;
     vdi_op(119, 1, handle);             /* again: nothing more */
@@ -403,7 +599,10 @@ void test_gdos_answer(void)
         ptest_assert_msg(!font_failure, font_failure);
         conws("(SpeedoGDOS, ");
         pnum(fonts_loaded);
-        conws(" scalable fonts) ");
+        conws(" scalable fonts");
+        if (fonts_loaded > 0 && !pixels_checked)
+            conws(", pixels not readable here");
+        conws(") ");
     }
 
     ptest_pass();
