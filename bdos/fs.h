@@ -319,12 +319,15 @@ struct _bcb
 {
     BCB     *b_link;    /*  next bcb (API)              */
     WORD    b_bufdrv;   /*  unit for buffer (API)       */
-    RECNO   b_bufrec;   /*  record number               */
+    /* only the members after the WORD are packed, so that the structure
+     * and b_link keep their alignment: getbcb() walks the list through
+     * BCB ** that point at b_link */
+    RECNO   b_bufrec OPT_PACKED;    /*  record number               */
     UBYTE   b_buftyp;   /*  buffer type                 */
     UBYTE   b_dirty;    /*  true if buffer dirty        */
-    DMD     *b_dm;      /*  ptr to drive media block    */
-    char    *b_bufr;    /*  pointer to buffer (API)     */
-} OPT_PACKED;
+    DMD     *b_dm OPT_PACKED;       /*  ptr to drive media block    */
+    char    *b_bufr OPT_PACKED;     /*  pointer to buffer (API)     */
+};
 
 /*
  * FTAB - Open File Table Entry
