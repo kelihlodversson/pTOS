@@ -127,9 +127,7 @@ struct pfs_ops {
      *
      * Fdatime is deliberately not covered here - unlike Fattrib it
      * addresses an already-open handle, not a (directory, name) pair, so
-     * it belongs with the handle-based Fread/Fwrite/Fclose dispatch (see
-     * pfs_handle_read() etc. above) rather than this vtable; left as a
-     * follow-up since nothing in this PR's scope needs it yet. */
+     * it goes through fstat() below and pfs_handle_datime(). */
     LONG (*chattr)(PFSCOOKIE *dir, const char *name, BOOL set, UWORD *dos_attr);
 
     /* out[0..3] = {free clusters, total clusters, bytes/sector,
@@ -158,6 +156,16 @@ struct pfs_ops {
      * those, same as before this field existed.
      */
     BOOL native_handles;
+
+    /* Size and GEMDOS date/time of an open file cookie ('dos_attr' may
+     * be left 0), for the handle-based calls that need them: Fseek
+     * (pfs_handle_seek(), the size bounds every seek), Fdatime
+     * (pfs_handle_datime()) and the end-of-file check behind Cconis()
+     * and friends on a redirected handle (pfs_handle_eof()).  May be
+     * NULL; those calls then fail with EINVFN.  Unused, and left NULL,
+     * by a native_handles driver, whose handles have a real OFD.
+     */
+    LONG (*fstat)(PFSCOOKIE *fc, PFSATTR *out);
 };
 
 /* Claim 'drive' (0 = A:, 1 = B:, ...) for 'fs', up front (e.g. from a
@@ -194,6 +202,23 @@ extern struct pfs_ops fat_pfs_ops;
 LONG pfs_handle_read(PFSCOOKIE *fc, LONG len, UBYTE *buf);
 LONG pfs_handle_write(PFSCOOKIE *fc, LONG len, const UBYTE *buf);
 LONG pfs_handle_close(PFSCOOKIE *fc);
+
+/* Fseek on a pluggable handle: 'flg' 0/1/2 = from the start, the current
+ * position, the end.  Returns the new position, ERANGE for one before
+ * the start or past the end (as ixlseek() does for FAT), or EINVFN.
+ */
+LONG pfs_handle_seek(PFSCOOKIE *fc, LONG n, WORD flg);
+
+/* 1 at the end of the file, 0 before it, or a negative error code -
+ * bdos/fsio.c's eof() for a pluggable handle.
+ */
+LONG pfs_handle_eof(PFSCOOKIE *fc);
+
+/* Fdatime on a pluggable handle, with the time and date in native byte
+ * order.  Only getting them is supported (wrt = 0): pfs_ops has no way
+ * to set them, so wrt != 0 gives EACCDN.
+ */
+LONG pfs_handle_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt);
 
 /* Called from bdos/proc.c's ixterm() when process 'r' terminates: frees
  * any current-directory cookie and Fsfirst/Fsnext search slots (fs/pfs.c

@@ -181,6 +181,10 @@ start_vm() {
             set -- qemu-system-m68k -M virt -cpu m68020 -m 128 \
                 -kernel "$top/virt-m68k.elf"
         fi
+        # a host directory over virtio-9p as well (Q:), for the suites
+        # that test the pluggable file system (pfs_seek)
+        host=$work/host-$label
+        mkdir -p "$host"
         # stdin is a FIFO held open from here, so that QEMU's serial console
         # never sees an end of file; the commands are written to it.
         rm -f "$work/in"
@@ -190,6 +194,8 @@ start_vm() {
         "$@" -global virtio-mmio.force-legacy=false \
             -drive if=none,id=hd0,format=raw,file.driver=vvfat,file.dir="$disk",file.rw=on \
             -device virtio-blk-device,drive=hd0 \
+            -fsdev local,id=host0,path="$host",security_model=none \
+            -device virtio-9p-device,fsdev=host0,mount_tag=host \
             -d guest_errors -serial stdio -display none \
             <"$work/in" >"$log" 2>"${log%.log}.qemu" &
         qemu_pid=$!

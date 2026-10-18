@@ -299,6 +299,14 @@ long eof(int h)
 {
     OFD *f;
 
+#if CONF_WITH_PLUGGABLE_FS
+    {
+        FTAB *slot = getpfsslot(h);
+        if (slot)
+            return pfs_handle_eof(&slot->f_pfs);
+    }
+#endif
+
     f = getofd(h);
     if (!f)
         return EIHNDL;
@@ -329,6 +337,14 @@ long eof(int h)
 long xlseek(LONG n, WORD h, WORD flg)
 {
     OFD *f;
+
+#if CONF_WITH_PLUGGABLE_FS
+    {
+        FTAB *slot = getpfsslot(h);
+        if (slot)
+            return pfs_handle_seek(&slot->f_pfs, n, flg);
+    }
+#endif
 
     f = getofd(h);
     if (!f)

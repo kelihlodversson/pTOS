@@ -467,9 +467,28 @@ long xsnext(void)
  */
 long xgsdtof(DOSTIME *buf, WORD h, WORD wrt)
 {
-    OFD *f = getofd(h);
+    OFD *f;
     DFD *dfd;
 
+#if CONF_WITH_PLUGGABLE_FS
+    {
+        FTAB *slot = getpfsslot(h);
+        if (slot)
+        {
+            UWORD time, date;   /* DOSTIME is packed */
+            long rc = pfs_handle_datime(&slot->f_pfs, &time, &date, wrt);
+
+            if (rc == E_OK)
+            {
+                buf->time = time;
+                buf->date = date;
+            }
+            return rc;
+        }
+    }
+#endif
+
+    f = getofd(h);
     if (!f)
         return EIHNDL;
 

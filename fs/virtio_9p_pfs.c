@@ -603,6 +603,8 @@ static void v9p_unixtime_to_gemdos(ULONG unixtime, UWORD *outdate, UWORD *outtim
  * the fresh Tgetattr's own qid, since readdir() (this file's only
  * current caller) already knows it for free from the directory entry
  * itself. */
+static void v9p_attr_to_pfs(const P9GETATTR *attr, BOOL is_dir, PFSATTR *out);
+
 static LONG v9p_pfs_stat(ULONG dirfid, const char *name, BOOL is_dir, PFSATTR *out)
 {
     ULONG fid;
@@ -610,7 +612,6 @@ static LONG v9p_pfs_stat(ULONG dirfid, const char *name, BOOL is_dir, PFSATTR *o
     P9GETATTR attr;
     LONG rc;
     const char *wname[1];
-    UWORD gdate, gtime;
 
     wname[0] = name;
     rc = v9p_walk(dirfid, 1, wname, &fid, &qid);
@@ -622,7 +623,32 @@ static LONG v9p_pfs_stat(ULONG dirfid, const char *name, BOOL is_dir, PFSATTR *o
     if (rc < 0)
         return rc;
 
-    v9p_unixtime_to_gemdos((ULONG)attr.mtime_sec, &gdate, &gtime);
+    v9p_attr_to_pfs(&attr, is_dir, out);
+
+    return E_OK;
+}
+
+/* pfs_ops.fstat(): the attributes of an open file, by its own fid - no
+ * walk needed, Tgetattr works on an opened fid too. */
+static LONG v9p_pfs_fstat(PFSCOOKIE *fc, PFSATTR *out)
+{
+    P9GETATTR attr;
+    LONG rc;
+
+    rc = v9p_getattr((ULONG)fc->index, &attr);
+    if (rc < 0)
+        return rc;
+
+    v9p_attr_to_pfs(&attr, FALSE, out);
+
+    return E_OK;
+}
+
+static void v9p_attr_to_pfs(const P9GETATTR *attr, BOOL is_dir, PFSATTR *out)
+{
+    UWORD gdate, gtime;
+
+    v9p_unixtime_to_gemdos((ULONG)attr->mtime_sec, &gdate, &gtime);
 
     /* attr.size is a full UQUAD; PFSATTR.size is only ULONG (GEMDOS's own
      * file-size field has never been wider than 32 bits, matching every
@@ -630,12 +656,10 @@ static LONG v9p_pfs_stat(ULONG dirfid, const char *name, BOOL is_dir, PFSATTR *o
      * rather than silently wrap a >4GB host file down to a tiny-looking
      * one - the same clamp v9p_pfs_dfree() already uses for stat.blocks/
      * .bfree, just for a size instead of a block count. */
-    out->size = (attr.size > 0xFFFFFFFFUL) ? 0xFFFFFFFFUL : (ULONG)attr.size;
-    out->dos_attr = (UWORD)((is_dir ? FA_SUBDIR : 0) | ((attr.mode & 0200) ? 0 : FA_RO));
+    out->size = (attr->size > 0xFFFFFFFFUL) ? 0xFFFFFFFFUL : (ULONG)attr->size;
+    out->dos_attr = (UWORD)((is_dir ? FA_SUBDIR : 0) | ((attr->mode & 0200) ? 0 : FA_RO));
     out->date = gdate;
     out->time = gtime;
-
-    return E_OK;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1038,8 +1062,9 @@ static struct pfs_ops v9p_pfs_ops = {
     v9p_pfs_dfree,
     NULL,               /* mediach */
     v9p_pfs_release,
-    FALSE               /* native_handles: this driver has no handle
+    FALSE,              /* native_handles: this driver has no handle
                          * management of its own - see fs/pfs.h. */
+    v9p_pfs_fstat
 };
 
 void v9p_pfs_init(void);   /* called from bios/bios.c after virtio_9p_init() */
