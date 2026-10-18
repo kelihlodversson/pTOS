@@ -16,6 +16,9 @@
 #include "bdosstub.h"
 #include "biosext.h"
 #include "tosvars.h"
+#if CONF_WITH_X32_VDI
+#include "vdi_service.h"
+#endif
 #if CONF_WITH_KHEAP
 #include "kheap.h"
 #include "kprint.h"
@@ -214,6 +217,9 @@ void kproc_destroy(PD *pd)
             KPROC *kproc = *link;
             KPROC *launcher = kproc->parent ? kproc_find(kproc->parent) : NULL;
 
+#if CONF_WITH_X32_VDI
+            vdi_service_process_exit(pd);
+#endif
             *link = kproc->next;
             if (launcher)                   /* what it used is its launcher's children's */
                 launcher->child_ticks += (ULONG)hz_200 - kproc->start_tick;

@@ -1,0 +1,60 @@
+/*
+ * vdi_service.h - typed supervisor services used by the x32 VDI client
+ *
+ * Copyright (C) 2026 The pTOS development team.
+ * This file is distributed under the GPL, version 2 or any later version.
+ */
+#ifndef VDI_SERVICE_H
+#define VDI_SERVICE_H
+
+#include "config.h"
+#include "vdi_user.h"
+#include "bdosdefs.h"
+
+#define VDI_SERVICE_CLASS 0x100UL
+#define VDI_SERVICE_OPEN  0
+#define VDI_SERVICE_CLOSE 1
+#define VDI_SERVICE_LINE  2
+#define VDI_SERVICE_CLIP  3
+#define VDI_SERVICE_COLOR 4
+#define VDI_SERVICE_CHECK 5
+#define VDI_SERVICE_VECTOR 6
+#define VDI_SERVICE_PIXEL 7
+#define VDI_SERVICE_MAX_POINTS 256
+#define VDI_SERVICE_MAX_BITMAP (1024UL * 1024UL)
+
+typedef struct {
+    WORD handle;
+    WORD intout[45];
+    WORD ptsout[12];
+} VDI_SERVICE_WORKSTATION;
+
+/* Caller-local descriptor snapshot. This request never crosses the
+ * supervisor boundary; the client executes memory rasters in ring 3. */
+typedef struct {
+    WORD handle, operation, mode, foreground, background, reserved;
+    WORD xy[8];
+    VDI_USER_FDB source, destination;
+} VDI_SERVICE_RASTER_REQUEST;
+
+typedef struct {
+    ULONG old_handler;
+    WORD tick_ms, reserved;
+} VDI_SERVICE_VECTOR_RESULT;
+
+typedef char vdi_service_workstation_size[(sizeof(VDI_SERVICE_WORKSTATION) == 116) ? 1 : -1];
+typedef char vdi_service_vector_size[(sizeof(VDI_SERVICE_VECTOR_RESULT) == 8) ? 1 : -1];
+
+/* Caller-local memory raster operations: shape checks values and computes
+ * spans; execute only touches the separate, validated bitmap snapshots. */
+LONG vdi_user_raster_shape(VDI_SERVICE_RASTER_REQUEST *request,
+                           ULONG *source_bytes, ULONG *destination_bytes);
+void vdi_user_raster_execute(const VDI_SERVICE_RASTER_REQUEST *request,
+                             const UBYTE *source, UBYTE *destination);
+
+#if CONF_WITH_X32_VDI && !defined(__ILP32__)
+LONG vdi_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d);
+void vdi_service_process_exit(PD *pd);
+#endif
+
+#endif

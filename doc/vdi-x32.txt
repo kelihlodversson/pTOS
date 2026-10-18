@@ -1,12 +1,16 @@
 Typed x32 VDI parameter contract (#427)
 =======================================
 
-This is the parameter-layout foundation for the x32 VDI client in #403.
-It does not expose a supervisor entry point. Ring-3 GEM trap class 2 remains
-rejected; the kernel must never pass a user VDIPB to GSX_ENTRY(). The client,
-binding/import resolver, narrow display services and their per-call range
-validation are still to be implemented in #403. Callback delivery is #432.
-Accessory launch (#389/#407) follows working VDI and AES (#404) client APIs.
+x32 programs call LONG vdi(VDIPB *) from obj/x32/libptos-vdi.a. The client
+runs in ring 3, snapshots and checks the typed parameter block, and uses
+operation-specific supervisor services for display access. It never sends
+a general VDIPB to the kernel. Generic GEM trap class 2 remains rejected.
+
+CONF_WITH_X32_VDI enables these services independently of AES and the
+EmuCON baseline. configs/pc-x86_64-vdi_defconfig selects it; the ordinary
+pc-x86_64 configuration leaves it disabled. Class 0x100 returns EINVFN
+when disabled. Callback delivery remains #432, the complete application
+binding/import path is #403, and AES access is #404.
 
 Representations
 ---------------
@@ -96,12 +100,60 @@ Callback signatures are distinct:
     cursor: void (WORD x, WORD y)
     wheel:  void (WORD number, WORD amount)
 
-Until #432 supplies safe delivery, reject registration and leave the previous
-registration unchanged. Never install a user address in linea_vars or call
-it in ring 0. Validate executable user memory before accepting a handler;
-old_handler must identify a user-owned registration or a validated user
-chaining stub, never leak a raw kernel vector. Pointer layout alone is not
-handler validation or a callback implementation.
+Until #432 supplies safe delivery, registration returns EINVFN after
+validating that the handler is mapped, executable user memory belonging to
+the caller. Invalid handlers return EIMBA. No user address is installed in
+linea_vars or called in ring 0. There are currently no user registrations,
+so old_handler is zero; it never exposes a raw kernel vector. A null
+handler queries that zero value successfully. Timer exchanges also return
+the tick interval. The live kernel vectors remain unchanged.
+
+Callable operations
+-------------------
+
+The inventory above describes layouts. The current client implements only
+the following code/subcode pairs (all subcodes are zero); every other pair
+returns EINVFN before entering legacy VDI. Font loading is explicitly
+rejected because it needs a separate safe font ownership contract.
+
+    code   operation                 nintin  nptsin  nintout  nptsout
+       6   polyline                     0    2-256      0        0
+      17   line colour                  1      0        1        0
+     100   open virtual workstation    11      0       45        6
+     101   close virtual workstation    0      0        0        0
+     105   get pixel                    0      1        2        0
+     109   opaque memory raster copy    1      4        0        0
+     110   memory raster transform      0      0        0        0
+     118   timer exchange/query         0      0        1        0
+     121   mono transparent copy        3      4        0        0
+     125   button exchange/query        0      0        0        0
+     126   motion exchange/query        0      0        0        0
+     127   cursor exchange/query        0      0        0        0
+     129   clipping                     1      2        0        0
+     134   wheel exchange/query         0      0        0        0
+
+Initialize the control block to zero, set code, counts and handle, and
+select the appropriate args member. The client derives output sizes from
+the table, validates their complete writable ranges, and returns output
+counts in the control block. Unused pointers may be null. Input counts must
+match the operation exactly. Reserved fields and unused union bytes must
+be zero. Parameter/control/FDB pointers require 4-byte alignment and WORD
+arrays require 2-byte alignment.
+
+work_in[10] must be 2 (raster coordinates). Opening creates a process-owned
+virtual workstation and returns its handle in contrl->handle. Handles from
+another process and closed handles return EIHNDL, including across nested
+Pexec. Successful close clears contrl->handle. Normal exit and fault exit
+reclaim all workstations belonging to that process. Kernel workstation
+state is allocated from the supervisor heap, never the user's Malloc heap.
+A physical workstation is opened lazily when needed and restored to console
+mode after the last service-owned virtual workstation closes.
+
+Polyline coordinates are bounded to +/-10000 and clipped by VDI to the
+screen/workstation clip. Clipping accepts only flags 0 or 1. Pixel reads
+validate coordinates against the actual screen dimensions. Pixel results
+retain the existing VDI backend's representation, including hardware
+palette indices in truecolor modes.
 
 Bitmap size and validation requirements
 ---------------------------------------
@@ -118,25 +170,104 @@ device-dependent forms, packed_bytes is 2 (RGB565) or 4 (32-bit pixels), and
 the row is fd_w * packed_bytes. Packed forms require fd_stand == 0 and the
 matching plane count. Standard planar forms use packed_bytes == 0.
 
-The privileged service must separately copy and validate each descriptor,
-check its full bitmap span in the caller's address space with the correct
-read/write direction, and bound raster coordinates to the declared form.
-Arrays likewise require opcode-specific counts, direction and full ranges;
-counts supplied by the application cannot establish what a handler reads
-or writes. Snapshot scalar/control input so subsequent user edits cannot
-change the ranges being used. Nothing in these helpers lifts the blanket
-class-2 rejection or validates a nested user pointer by itself.
+The client snapshots both FDBs, validates their full spans with Maccess,
+and copies the source and destination into bounded, process-owned heap
+buffers before executing memory raster operations in ring 3. Each bitmap
+is limited to 1 MiB. The complete source must be readable and the complete
+destination readable/writable. The destination FDB must also be writable
+for opcode 110, which updates fd_stand. Snapshots preserve overlapping and
+in-place source/destination operations. A user fault cannot leave a kernel
+pointer to a bitmap or descriptor.
+
+Opcode 109 implements all 16 Boolean raster operations for equal plane
+counts. Opcode 121 supports monochrome source and destination, modes 1-4,
+and foreground/background values 0 or 1. Opcode 110 converts 1-8 planes
+between standard planar and device-interleaved storage, with matching
+source/destination dimensions and stride. Rectangles are normalized and
+must fit their FDBs without scaling. Screen FDBs (fd_addr == 0), colour
+conversion for transparent copies and transforms above 8 planes return
+EINVFN; they cannot accidentally access a supervisor framebuffer.
+
+Supervisor service ABI
+----------------------
+
+The x86-64 syscall convention is RAX = (0x100ULL << 32) | function;
+RDI/RSI/RDX/R10 carry a/b/c/d. Scalar arguments are checked before narrowing
+from 64 bits. These services accept only ring-3 callers with a private
+address space. They never accept a user VDIPB or invoke a user callback.
+
+    function  a          b              c              d
+       0      work_in*   workstation*   unused         unused
+       1      handle     unused         unused         unused
+       2      handle     point count    WORD xy[]*     unused
+       3      handle     clip flag      WORD rect[4]*  unused
+       4      handle     line colour    unused         unused
+       5      handle     unused         unused         unused
+       6      handle     exchange code  handler        vector result*
+       7      handle     x              y              WORD result[2]*
+
+Function 0 reads 11 WORDs and writes VDI_SERVICE_WORKSTATION: a WORD
+handle, 45 WORD intout values and 12 WORD ptsout coordinates (116 bytes).
+Function 2 reads count*2 WORD coordinates, count 2-256. Function 3 reads
+four WORD coordinates. Function 4 returns the selected colour as a scalar.
+Function 5 validates handle ownership for caller-local raster operations.
+Function 6 writes VDI_SERVICE_VECTOR_RESULT (8 bytes): ULONG old_handler,
+WORD tick_ms and WORD reserved (zero). Function 7 writes two WORDs.
+
+Kernel services copy inputs into trusted local arrays, validate/back output
+ranges before allocating resources, and copy results back through the
+process user-access helpers. Pointers cannot select another process's
+memory. No descriptor or stack address survives the call. The existing
+kernel VDICONTROL and VDIPB are constructed explicitly from trusted values
+and are never overlaid on user data.
+
+Errors are EINVFN for unsupported operations/registration, EINVAL for
+invalid counts, flags, geometry or reserved fields, EIMBA for invalid
+memory or alignment, EIHNDL for unowned handles, and ENSMEM for allocation
+failure. A fault while accessing a lazy user allocation terminates only
+that process; its heap and workstations are reclaimed.
+
+Building and gemlib integration
+-------------------------------
+
+    make pc-x86_64-vdi_defconfig
+    make
+    make x32-vdi
+
+Compile the application with the same -mx32 freestanding ABI as the other
+x32 programs, include vdipb.h from include/, and link obj/x32/libptos-vdi.a.
+The public headers vdipb.h, vdi_user.h, userptr.h and portab.h do not need
+generated kernel configuration headers. vdi() returns a GEMDOS LONG status;
+successful ordinary calls return E_OK. No runtime resolver or kernel
+function address is needed for this static entry.
+
+kelihlodversson/gemlib can supply the higher-level application bindings.
+Its feature/arm-ptos-support branch adapts the low-level trap entry for ARM,
+but retains the legacy WORD control array. An x32 port must use the public
+typed control/FDB definitions, set named fields and union members instead
+of packing pointers into WORDs, and route its low-level _gc_vdi.c binding
+to this library's vdi(). Keep the ARM/m68k binding paths separate. Completing
+that broader binding/import integration is tracked by #403.
 
 Tests
 -----
 
-make vdi-contract-test checks the LP64 view and arithmetic on the host and
+make vdi-contract-test checks layout and raster semantics on the host and
 compares every code against the actual vdi_main.c dispatch tables. The x32
-boot self-test builds the same checks with -mx32, enters them in ring 3,
-and requires their return code and allocator counts to be correct. This
-also compiles the five typed callback assignments using the real user ABI.
+boot self-test runs these checks with the real -mx32 ABI in ring 3.
 
-These are contract tests. They do not establish a working vdi() client,
-workstation setup, rendering, bitmap copy, callback registration or a safe
-kernel service. Those runtime tests must accompany #403/#432 before this
-epic can claim ring-3 VDI access.
+The pc-x86_64-vdi configuration additionally opens/closes workstations,
+draws lines and reads changed pixels, sets clipping/colour, copies and
+transforms memory rasters (including in-place), exercises all five callback
+variants, and rejects malformed pointers, read-only outputs, bad counts,
+bitmap overflow and non-executable/kernel callback addresses. A nested
+process cannot use or close its parent's handle. A deliberately faulting
+process leaves no open workstations or allocator leaks, and another client
+can immediately run the same calls. The baseline configuration checks that
+the optional service class is refused. Both boot through the existing
+process/loader regressions to EmuCON.
+
+The boot disk needs obj/x32/x32probe.elf copied to X32VDI.TOS alongside the
+existing loader fixtures. CI builds and boots both PC configurations and
+requires "x86-64 VDI client: PASS" for the enabled configuration, as well as
+the aggregate "x86-64 memtest: PASS" marker.

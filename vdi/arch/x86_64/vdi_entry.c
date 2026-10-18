@@ -15,13 +15,10 @@
  * mouse_int()/wheel_int() are registered as callbacks (vdi/vdi_mouse.c's
  * Initmous()/kbd_vectors->statvec) but never actually invoked on this
  * arch yet: there is no mouse or IKBD-equivalent driver calling them.
- * GSX_ENTRY() is likewise unreachable for now -- this arch's trap
- * dispatch (bios/arch/x86_64/trap.c) has no VDI/AES trap class the way
- * m68k/ARM's gemtrap()/bdos_trap2() do (CONF_WITH_AES is off for this
- * machine, and nothing else calls GSX_ENTRY() directly). Both still need
- * real, working implementations here (not stubs) so that whenever a
- * trap-2-style VDI entry point or a mouse driver does get built for this
- * arch, this file is already correct and needs no revisiting.
+ * GSX_ENTRY() accepts trusted kernel parameters only. With
+ * CONF_WITH_X32_VDI, vdi_service.c constructs them from checked,
+ * operation-specific requests. Generic ring-3 trap class 2 remains
+ * rejected; a user VDIPB must never be passed to this entry.
  *
  * Copyright 1999 Caldera, Inc. and Authors:
  * Copyright 2004-2017 The EmuTOS development team
@@ -51,7 +48,7 @@ extern void screen(void);
 
 
 
-// We copy the param block from the user into a global linea variable
+/* Trusted kernel parameter pointers, copied into the line-A call state. */
 static WORD lcl_ptsin[ptsin_size];
 
 /* Standard calling conventions pass params in registers on both ARM and
@@ -60,7 +57,7 @@ static WORD lcl_ptsin[ptsin_size];
 int GSX_ENTRY(int op, VDIPB* paramblock)
 {
     int i;
-    /* Make a local copy of the array pointers in the user's parameter block. */
+    /* Make a local copy of the trusted parameter block's array pointers. */
     linea_vars.local_pb.contrl = paramblock->contrl;
     linea_vars.local_pb.intin = paramblock->intin;
     linea_vars.local_pb.intout = paramblock->intout;

@@ -85,63 +85,7 @@ typedef struct
  *  necessary on x86-64, where a field is a plain integer needing an
  *  explicit widen/narrow.
  */
-#ifdef __LP64__
-#define USERPTR_T(type) ULONG
-/* Widens a stored 32-bit ABI value back into a real, dereferenceable
- * kernel pointer -- valid to do at all only because #334's per-process
- * address-space design keeps every such value within the low canonical
- * range every process (and the kernel, via the identity-style low
- * mapping #351/#334 need) can already reach directly; this performs the
- * widening arithmetic only, not any access validation (a ring-3-supplied
- * pointer's own trustworthiness is #352's separate, still-open concern).
- * Returns void * -- callers cast to whatever pointee type the specific
- * field actually holds (DTA *, PD *, char *, ...), same as the ILP32
- * arches' own real pointer fields already require for anything other
- * than UBYTE *. */
-#define USERPTR_TO_PTR(up) ((void *)(uintptr_t)(ULONG)(up))
-/* Narrows a real kernel pointer down to the 32-bit ABI field width.
- * Traps rather than silently truncating if the address does not
- * actually fit -- the exact silent-corruption bug #351 documents for a
- * plain (LONG) cast, just caught here instead of reproduced. Every
- * caller's own pointer is expected to already be low/32-bit-representable
- * by construction (#334's per-process address-space design only ever
- * hands out such addresses for anything meant to end up in a PD field),
- * so this is a correctness safety net, not a normal-path failure mode. */
-static inline ULONG ptr_to_userptr(const void *p)
-{
-    UQUAD addr = (UQUAD)(uintptr_t)p;
-
-    if (addr > 0xFFFFFFFFULL)
-        __builtin_trap();
-    return (ULONG)addr;
-}
-#define PTR_TO_USERPTR(p) ptr_to_userptr(p)
-/*
- * The same narrowing as PTR_TO_USERPTR(), but WITHOUT the fits-in-32-bits
- * trap -- a deliberate, temporary escape hatch for the handful of
- * existing call sites (bios.c's CLI/ROM-shell bootstrap, bdosmain.c's
- * placeholder initial_basepage, proc.c's own TPA-pool-resident PD
- * fields) that store a kernel address known to be higher-half TODAY,
- * because the two things that would actually make it low -- a genuine
- * sub-4GiB kernel data arena (#351) and the GEMDOS TPA memory pool's own
- * placement (bios/machine/pc-x86_64/memory.c, attempted once already
- * this session and reverted -- see its own history) -- are not
- * implemented yet. Using PTR_TO_USERPTR() at these specific sites
- * traps immediately at boot, before gouser() is ever reached, which is
- * a real regression relative to today's actual capabilities, not a
- * caught bug: nothing downstream reads these fields as real addresses
- * yet either (gouser() itself panics unconditionally). Once the TPA
- * pool/kernel-data placement work lands, these call sites should switch
- * to PTR_TO_USERPTR() (or simply stop needing this macro, if the value
- * being stored is already guaranteed low by construction) instead of
- * silently keeping this escape hatch. */
-#define PTR_TO_USERPTR_UNCHECKED(p) ((ULONG)(uintptr_t)(p))
-#else
-#define USERPTR_T(type) type *
-#define USERPTR_TO_PTR(up) ((void *)(up))
-#define PTR_TO_USERPTR(p) (p)
-#define PTR_TO_USERPTR_UNCHECKED(p) (p)
-#endif
+#include "userptr.h"
 
 #define NUMSTD      6       /* number of standard files */
 #define NUMCURDIR   BLKDEVNUM   /* number of entries in curdir array */

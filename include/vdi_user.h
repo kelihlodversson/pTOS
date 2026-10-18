@@ -7,9 +7,8 @@
 #ifndef VDI_USER_H
 #define VDI_USER_H
 
-#include "config.h"
 #include "portab.h"
-#include "bdosdefs.h"
+#include "userptr.h"
 
 /* Function types, so USERPTR_T() produces a typed function pointer in x32
  * code and a 32-bit user address in the LP64 kernel. No slot is a native
@@ -94,6 +93,10 @@ enum vdi_user_kind vdi_user_control_kind(WORD code, WORD subcode);
  * fd_addr == 0 and no user bitmap span; display access is service-owned. */
 BOOL vdi_user_bitmap_bytes(const VDI_USER_FDB *form, UWORD packed_bytes,
                            ULONG *bytes);
+
+#if defined(__x86_64__) && defined(__ILP32__)
+LONG vdi(VDI_USER_PB *parameter_block);
+#endif
 
 /* Both the LP64 kernel view and real x32 code must have identical layouts.
  * Do not PACK these structs: the contract uses native x32 alignment. */

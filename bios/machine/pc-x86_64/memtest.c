@@ -1253,6 +1253,19 @@ static void test_ring3(void)
     probe_expect('e', 0, "ring-3 entry state: basepage, type, stack, CPL 3, GEMDOS call");
     probe_expect('x', 0x1234, "ring-3 exit code reaches the launcher");
     probe_expect('V', 0, "x32 VDI control layout, opcode tags and bitmap bounds");
+#if CONF_WITH_X32_VDI
+    {
+        int before = failures;
+
+        probe_expect('W', 0, "ring-3 VDI workstation, coordinate, raster and rejected-vector calls");
+        probe_expect('!', 0xffff, "a user fault reclaims its open VDI workstations");
+        probe_expect('W', 0, "VDI remains usable after a client's fault");
+        if (failures == before)
+            kcprintf("x86-64 VDI client: PASS\n");
+    }
+#else
+    probe_expect('W', 0, "the optional VDI services are explicitly refused in the baseline");
+#endif
 
     /* each process gets fresh private pages: what the first leaves in its
      * data, the second does not see */
@@ -1728,6 +1741,8 @@ static void test_x32image(void)
     UQUAD entry = 0;
     ASPACE *as;
     SNAP s;
+    PROG_LAYOUT layout;
+    ULONG segment;
 
     snap(&s);
     CHECK(image_check(good, &entry) && entry >= USER_IMAGE_BASE &&
@@ -1748,7 +1763,17 @@ static void test_x32image(void)
     mutated(good, 18, 2, 3, "other machine refused");
     mutated(good, 44, 2, 0, "no program headers refused");
     mutated(good, 24, 4, 0x500000, "entry point outside the image refused");
-    mutated(good, 24, 4, 0x405000, "entry point in a non-executable segment refused");
+    /* The probe grows as new ABI checks are linked in. Select a real data
+     * segment instead of assuming that text always ends before 0x405000. */
+    if (image_layout(good, &layout)) {
+        for (segment = 0; segment < layout.nseg; segment++)
+            if (!(layout.seg[segment].flags & 1))
+                break;                  /* ELF PF_X */
+        CHECK(segment < layout.nseg, "probe has a non-executable segment");
+        if (segment < layout.nseg)
+            mutated(good, 24, 4, (ULONG)layout.seg[segment].vaddr,
+                    "entry point in a non-executable segment refused");
+    }
     mutated(good, 52 + 8, 4, 0x100000, "segment below the image window refused");
     mutated(good, 52 + 8, 4, 0x7ff000, "segment running past the image window refused");
     mutated(good, 52 + 24, 4, 7, "a writable and executable segment refused");

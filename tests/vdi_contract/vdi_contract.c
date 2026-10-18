@@ -1,10 +1,96 @@
 /* Native x32 VDI contract checks, runnable on the host and in ring 3. */
 #include "vdipb.h"
+#include "vdi_service.h"
+#include "gemerror.h"
 #ifdef VDI_CONTRACT_HOST_TEST
 #include <stdio.h>
 #endif
 
 int vdi_contract_checks(void);
+
+static int raster_checks(void)
+{
+    VDI_SERVICE_RASTER_REQUEST r = { 0 };
+    UWORD source[4] = { 0xc000, 0, 0, 0 };
+    UWORD destination[4];
+    ULONG bytes_in, bytes_out, expected;
+    const UWORD transparent[4] = { 0xc555, 0xe555, 0x6555, 0xb555 };
+    ULONG packed_source[2] = { 0x11223344UL, 0x55667788UL }, packed_destination[2] = { 0 };
+    int mode, failures = 0;
+
+#define CHECK(condition) do { if (!(condition)) failures++; } while (0)
+    r.operation = 109;
+    r.source.fd_addr = PTR_TO_USERPTR((void *)0x1000UL);
+    r.destination.fd_addr = PTR_TO_USERPTR((void *)0x2000UL);
+    r.source.fd_w = r.destination.fd_w = 16;
+    r.source.fd_h = r.destination.fd_h = 1;
+    r.source.fd_wdwidth = r.destination.fd_wdwidth = 1;
+    r.source.fd_nplanes = r.destination.fd_nplanes = 1;
+    r.source.fd_stand = r.destination.fd_stand = 1;
+    r.xy[2] = r.xy[6] = 3;
+    for (mode = 0; mode < 16; mode++) {
+        r.mode = mode;
+        destination[0] = 0xa555;
+        CHECK(vdi_user_raster_shape(&r, &bytes_in, &bytes_out) == E_OK);
+        CHECK(bytes_in == 2 && bytes_out == 2);
+        vdi_user_raster_execute(&r, (const UBYTE *)source, (UBYTE *)destination);
+        expected = ((mode & 1) ? 0x8000 : 0) | ((mode & 2) ? 0x4000 : 0) |
+                   ((mode & 4) ? 0x2000 : 0) | ((mode & 8) ? 0x1000 : 0) | 0x0555;
+        CHECK(destination[0] == expected);
+    }
+    r.mode = 16;
+    CHECK(vdi_user_raster_shape(&r, &bytes_in, &bytes_out) == EINVAL);
+    r.mode = 3;
+    r.xy[0] = -1;
+    CHECK(vdi_user_raster_shape(&r, &bytes_in, &bytes_out) == EINVAL);
+    r.xy[0] = 0;
+    r.xy[6] = 4;
+    CHECK(vdi_user_raster_shape(&r, &bytes_in, &bytes_out) == EINVAL);
+    r.xy[6] = 3;
+
+    r.operation = 121;
+    r.foreground = 1;
+    for (mode = 1; mode <= 4; mode++) {
+        r.mode = mode;
+        r.background = mode == 4 ? 1 : 0;
+        destination[0] = 0xa555;
+        CHECK(vdi_user_raster_shape(&r, &bytes_in, &bytes_out) == E_OK);
+        vdi_user_raster_execute(&r, (const UBYTE *)source, (UBYTE *)destination);
+        CHECK(destination[0] == transparent[mode - 1]);
+    }
+
+    r.operation = 109;
+    r.mode = 3;
+    r.source.fd_nplanes = r.destination.fd_nplanes = 32;
+    r.source.fd_stand = r.destination.fd_stand = 0;
+    r.source.fd_w = r.destination.fd_w = 2;
+    r.xy[2] = r.xy[6] = 1;
+    CHECK(vdi_user_raster_shape(&r, &bytes_in, &bytes_out) == E_OK);
+    CHECK(bytes_in == 8 && bytes_out == 8);
+    vdi_user_raster_execute(&r, (const UBYTE *)packed_source, (UBYTE *)packed_destination);
+    CHECK(packed_destination[0] == packed_source[0] && packed_destination[1] == packed_source[1]);
+
+    r.operation = 110;
+    r.source.fd_w = r.destination.fd_w = 16;
+    r.source.fd_stand = r.destination.fd_stand = 1;
+    r.source.fd_nplanes = r.destination.fd_nplanes = 2;
+    r.source.fd_h = r.destination.fd_h = 2;
+    source[0] = 0xaaaa; source[1] = 0xbbbb;
+    source[2] = 0xcccc; source[3] = 0xdddd;
+    CHECK(vdi_user_raster_shape(&r, &bytes_in, &bytes_out) == E_OK);
+    CHECK(bytes_in == 8 && bytes_out == 8 && r.destination.fd_stand == 0);
+    vdi_user_raster_execute(&r, (const UBYTE *)source, (UBYTE *)destination);
+    CHECK(destination[0] == 0xaaaa && destination[1] == 0xcccc &&
+          destination[2] == 0xbbbb && destination[3] == 0xdddd);
+    r.source.fd_stand = 0;
+    CHECK(vdi_user_raster_shape(&r, &bytes_in, &bytes_out) == E_OK);
+    CHECK(r.destination.fd_stand == 1);
+    vdi_user_raster_execute(&r, (const UBYTE *)destination, (UBYTE *)source);
+    CHECK(source[0] == 0xaaaa && source[1] == 0xbbbb &&
+          source[2] == 0xcccc && source[3] == 0xdddd);
+#undef CHECK
+    return failures;
+}
 
 /* A real x32 compiler must accept the five distinct callback signatures. */
 #if defined(__x86_64__) && defined(__ILP32__)
@@ -44,6 +130,7 @@ int vdi_contract_checks(void)
 #define CHECK(condition) do { if (!(condition)) failures++; } while (0)
     CHECK(sizeof(VDICONTROL) == 28 && sizeof(VDIPB) == 20);
     CHECK(sizeof(((VDIPB *)0)->ptsin) == 4);
+    CHECK(raster_checks() == 0);
     CHECK(vdi_user_control_kind(1, 0) == VDI_USER_ARRAYS);
     CHECK(vdi_user_control_kind(100, 0) == VDI_USER_ARRAYS);
     CHECK(vdi_user_control_kind(6, 0) == VDI_USER_ARRAYS);

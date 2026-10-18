@@ -25,6 +25,9 @@
 #include "bdosbind.h"
 #include "tosvars.h"
 #include "screen_mode.h"
+#if CONF_WITH_X32_VDI
+#include "kheap.h"
+#endif
 
 #define FIRST_VDI_HANDLE    1
 #define LAST_VDI_HANDLE     (FIRST_VDI_HANDLE+NUM_VDI_HANDLES-1)
@@ -450,7 +453,13 @@ void vdi_v_opnvwk(Vwk * vwk)
     if (TRUECOLOR_MODE)
         size += sizeof(VwkExt); /* for simplicity, allocate them together */
 #endif
+#if CONF_WITH_X32_VDI
+    /* Workstation state stays supervisor-owned even when the requester has
+     * a private Malloc heap. It must never live in that user-writable heap. */
+    vwk = kalloc(size);
+#else
     vwk = (Vwk *)Mxalloc(size, MX_SUPER);
+#endif
     if (vwk == NULL) {
         CONTRL->handle = 0;  /* No memory available, exit */
         return;
@@ -516,7 +525,11 @@ void vdi_v_clsvwk(Vwk * vwk)
      */
     linea_vars.CUR_WORK = &phys_work;
 
+#if CONF_WITH_X32_VDI
+    kfree(vwk);
+#else
     Mfree(vwk);
+#endif
 }
 
 
@@ -620,7 +633,11 @@ void vdi_v_clswk(Vwk * vwk)
     /* close all open virtual workstations */
     for (handle = VDI_PHYS_HANDLE+1, p = vwk_ptr+handle; handle <= LAST_VDI_HANDLE; handle++, p++) {
         if (*p) {
+#if CONF_WITH_X32_VDI
+            kfree(*p);
+#else
             Mfree(*p);
+#endif
             *p = NULL;
         }
     }
