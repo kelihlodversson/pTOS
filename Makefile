@@ -252,7 +252,10 @@ ifdef ARCH_X86_64
 # function using a calling convention other than the compiler's default.
 MULTILIBFLAGS = $(CPUFLAGS) -fno-pic -mcmodel=large -mno-red-zone \
                 -fshort-wchar -fno-ident -maccumulate-outgoing-args
-TOOLCHAIN_CFLAGS = -ffreestanding
+# --param=min-pagesize=0: the TOS vectors and system variables really live
+# at low constant addresses (bios/vectors.h, tosvars.h), which GCC 12 and
+# later otherwise treat as the unmapped null page (-Warray-bounds).
+TOOLCHAIN_CFLAGS = -ffreestanding --param=min-pagesize=0
 
 # See the MULTILIBFLAGS comment above. All seven objects below are kept
 # on plain -fpie; none of them do the cross-translation-unit function-

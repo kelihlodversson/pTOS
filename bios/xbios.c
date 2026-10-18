@@ -374,13 +374,14 @@ static void xbios_d(WORD interno, LONG vector)
 
 static LONG iorec(WORD devno)
 {
+    /* a kernel pointer in a 32-bit result: truncated on x86-64 (#563) */
     switch(devno) {
     case 0:
-        return (LONG) rs232iorecptr;
+        return (LONG)(uintptr_t)rs232iorecptr;
     case 1:
-        return (LONG) &ikbdiorec;
+        return (LONG)(uintptr_t)&ikbdiorec;
     case 2:
-        return (LONG) &midiiorec;
+        return (LONG)(uintptr_t)&midiiorec;
     default:
         return -1;
     }
@@ -776,7 +777,7 @@ static WORD xbios_21(WORD config)
 
 static LONG kbdvbase(void)
 {
-    return (LONG) &kbdvecs;
+    return (LONG)(uintptr_t)&kbdvecs;  /* truncated on x86-64 (#563) */
 }
 
 #if DBG_XBIOS

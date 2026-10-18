@@ -833,7 +833,7 @@ LONG blkdev_getbpb(WORD dev)
             bdev->bpb.fatrec,bdev->bpb.datrec,bdev->bpb.numcl));
     KDEBUG(("  bflags = %d;\n}\n",bdev->bpb.b_flags));
 
-    return (LONG) &bdev->bpb;
+    return (LONG)(uintptr_t)&bdev->bpb;   /* truncated on x86-64 (#563) */
 }
 
 /*

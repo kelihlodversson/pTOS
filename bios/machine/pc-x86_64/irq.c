@@ -40,6 +40,7 @@ extern void x86_64_irq44(void);
  * without a case here -- see machine_irq_init()), so a stray/spurious IRQ
  * can never leave a chip believing itself still "in service" and unable
  * to raise another. */
+void x86_64_pc_irq_dispatch(int vector);
 void x86_64_pc_irq_dispatch(int vector)
 {
     switch (vector) {

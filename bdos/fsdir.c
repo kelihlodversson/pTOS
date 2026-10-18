@@ -1172,7 +1172,7 @@ static DND *dcrack(const char **np)
 
     /* M01.01.1212.01 */
     if ((l=ckdrv(d, TRUE)) < 0) /*  check for valid drive & log */
-        return (DND *)l;        /*    in.  abort if error       */
+        return (DND *)(intptr_t)l;  /*  in.  abort if error       */
 
     /*
      *  if the pathspec begins with SLASH, then the first element is

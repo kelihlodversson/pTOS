@@ -1253,7 +1253,7 @@ static LONG ide_read(UBYTE cmd,UWORD ifnum,UWORD dev,ULONG sector,UWORD count,UB
         rc = E_OK;
         if (status1 & IDE_STATUS_DRQ) {
             if (info->twisted_cable) {
-                ide_get_data((volatile struct IDE *)(((ULONG)interface)+1),buffer,xferlen,need_byteswap);
+                ide_get_data((volatile struct IDE *)(((uintptr_t)interface)+1),buffer,xferlen,need_byteswap);
             } else {
                 ide_get_data(interface,buffer,xferlen,need_byteswap);
             }
@@ -1435,7 +1435,7 @@ static LONG ide_write(UBYTE cmd,UWORD ifnum,UWORD dev,ULONG sector,UWORD count,U
         status1 = IDE_READ_STATUS(interface);    /* status, clear pending interrupt */
         if (status1 & IDE_STATUS_DRQ) {
             if (info->twisted_cable) {
-                ide_put_data((volatile struct IDE *)(((ULONG)interface)+1),buffer,xferlen,need_byteswap);
+                ide_put_data((volatile struct IDE *)(((uintptr_t)interface)+1),buffer,xferlen,need_byteswap);
             } else {
                 ide_put_data(interface,buffer,xferlen,need_byteswap);
             }
@@ -2019,7 +2019,7 @@ static void atapi_send_cdb(WORD dev,UBYTE *cdbptr,WORD cdblen)
      * so iff we have a twisted cabel, we don't byte-swap
      */
     if (info->twisted_cable) {
-        ide_put_data((volatile struct IDE *)(((ULONG)interface)+1),(UBYTE *)cdb,packetlen,0);
+        ide_put_data((volatile struct IDE *)(((uintptr_t)interface)+1),(UBYTE *)cdb,packetlen,0);
     } else {
         ide_put_data(interface,(UBYTE *)cdb,packetlen,1);
     }
@@ -2073,13 +2073,13 @@ static LONG handle_atapi_device(WORD dev, IDECmd *cmd)
         bytecount = IDE_READ_CYLINDER_HIGH_CYLINDER_LOW(interface);
         if (cmd->flags == RW_WRITE) {
             if (info->twisted_cable) {
-                ide_put_data((volatile struct IDE *)(((ULONG)interface)+1),buf,bytecount,0);
+                ide_put_data((volatile struct IDE *)(((uintptr_t)interface)+1),buf,bytecount,0);
             } else {
                 ide_put_data(interface,buf,bytecount,1);
             }
         } else {
             if (info->twisted_cable) {
-                ide_get_data((volatile struct IDE *)(((ULONG)interface)+1),buf,bytecount,0);
+                ide_get_data((volatile struct IDE *)(((uintptr_t)interface)+1),buf,bytecount,0);
             } else {
                 ide_get_data(interface,buf,bytecount,1);
             }

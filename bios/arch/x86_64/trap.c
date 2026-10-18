@@ -46,7 +46,7 @@ static ULONG x86_64_flopfmt_buffer_size(LONG spt)
  * tiny standalone struct definition, safe to see either way) but super()
  * itself is only called under that same guard below -- the same relative-
  * include depth aes/arch/arm/gemdosifc.c already uses for its own
- * bios/*.h includes from three levels down.
+ * bios/ header includes from three levels down.
  */
 #include "../../../vdi/vdi_defs.h"
 #include "../../../aes/gemsuper.h"
