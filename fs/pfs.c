@@ -1153,7 +1153,18 @@ LONG pfs_handle_seek(PFSCOOKIE *fc, LONG n, WORD flg)
 
     target = n;
     if (flg == 2)
+    {
+        /*
+         * A driver caps a size of 4 GB or more at 0xffffffff (PFSATTR.size
+         * is a ULONG).  Every real seek from the end of such a file lands
+         * past what a LONG can hold, but from the capped size an offset of
+         * -2^31 would land on 0x7fffffff: refuse them all.  (A file of
+         * exactly 0xffffffff bytes loses that one valid seek.)
+         */
+        if (attr.size == 0xffffffffUL)
+            return ERANGE;
         target += attr.size;
+    }
     else if (flg == 1)
         target += fc->pos;
 
