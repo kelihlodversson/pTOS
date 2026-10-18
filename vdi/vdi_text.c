@@ -828,6 +828,7 @@ void vdi_vst_height(Vwk * vwk)
             f = vdi_sfont_size(index, vdi_sfont_pixels_for_top(index, PTSIN[1]));
         if (f)
             vwk->cur_font = f;
+        vdi_sfont_trim();               /* the size it had may go now */
         vwk->scaled = FALSE;
         setup_width_height(vwk->cur_font);
         return;
@@ -984,6 +985,7 @@ void vdi_vst_point(Vwk * vwk)
             f = vdi_sfont_size(index, vdi_sfont_pixels_for_points(INTIN[0]));
         if (f)
             vwk->cur_font = f;
+        vdi_sfont_trim();               /* the size it had may go now */
         vwk->scaled = FALSE;
         setup_width_height(vwk->cur_font);
         INTOUT[0] = vwk->cur_font->point;
@@ -1165,6 +1167,10 @@ void vdi_vst_font(Vwk * vwk)
     INTIN = old_intin;
     PTSIN = old_ptsin;
     PTSOUT = old_ptsout;
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    vdi_sfont_trim();                   /* a scalable size it had may go now */
+#endif
 
     INTOUT[0] = vwk->cur_font->font_id;
 }

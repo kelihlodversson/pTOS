@@ -551,7 +551,7 @@ static void check_monospace(short handle, short id)
 
 static void check_fonts(void)
 {
-    short handle, system_fonts, i, aes_there;
+    short handle, system_fonts, i, aes_there, drive;
 
     /*
      * Under the AES (the suite started from the desktop) the screen is
@@ -611,6 +611,13 @@ static void check_fonts(void)
         }
     }
 
+    /*
+     * The font files are opened again as fonts and sizes are selected,
+     * on behalf of this program: from another current drive than the
+     * one they were found on, they must still be found.
+     */
+    drive = Dgetdrv();
+    Dsetdrv(drive ? 0 : 1);
     if (fonts_loaded > 0)
         check_sizes(handle, system_fonts);
     for (i = 1; i <= fonts_loaded; i++)
@@ -631,6 +638,8 @@ static void check_fonts(void)
         if (i == 1)
             check_large(handle, id);
     }
+
+    Dsetdrv(drive);
 
     intin[0] = 0;
     vdi_op(119, 1, handle);             /* again: nothing more */

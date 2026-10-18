@@ -243,11 +243,16 @@ static LONG sf_scratch_half(const SF_LAYOUT *l)
     return half;
 }
 
-/* the layout of the current face at a size (already set) */
-static void sf_layout(SF_LAYOUT *l, WORD pixels)
+/*
+ * the layout of the current face at a size (already set); FALSE when
+ * FreeType ran out of memory on the way, which a retry with less of the
+ * font memory in use may not
+ */
+static BOOL sf_layout(SF_LAYOUT *l, WORD pixels)
 {
     LONG x = 0;
     UWORD ch, adv;
+    FT_Error err;
 
     l->max_cell = 0;
     l->mono = (vdi_sfonts[sf_face_index].flags & SFONT_MONOSPACE) != 0;
@@ -255,7 +260,10 @@ static void sf_layout(SF_LAYOUT *l, WORD pixels)
     {
         l->off[ch] = (UWORD)(x <= SF_MAX_WIDTH ? x : SF_MAX_WIDTH);
         adv = 0;
-        if (!FT_Load_Glyph(sf_face, sf_glyph(ch), FT_LOAD_TARGET_MONO))
+        err = FT_Load_Glyph(sf_face, sf_glyph(ch), FT_LOAD_TARGET_MONO);
+        if (err == FT_Err_Out_Of_Memory)
+            return FALSE;
+        if (!err)                       /* a broken glyph: no width */
             adv = (UWORD)((sf_face->glyph->advance.x + 32) >> 6);
         if (ch && adv != l->max_cell)
             l->mono = FALSE;
@@ -271,8 +279,8 @@ static void sf_layout(SF_LAYOUT *l, WORD pixels)
     l->bottom = (WORD)((-sf_face->size->metrics.descender + 63) >> 6);
     if (l->top < 1)
         l->top = 1;
-    if (l->bottom < 0)
-        l->bottom = 0;
+    if (l->bottom < 1)
+        l->bottom = 1;                  /* alignment to the descent divides by it */
     l->form_width = (UWORD)(((x + 15) / 16) * 2);
     l->form_height = l->top + l->bottom + 1;
     l->skew = (l->bottom + 1) / 2 + (l->top + 1) / 2;   /* left + right offset */
@@ -280,6 +288,8 @@ static void sf_layout(SF_LAYOUT *l, WORD pixels)
     l->half = sf_scratch_half(l);
     l->bytes = sizeof(SF_SIZE) + (ULONG)l->form_width * l->form_height + 2UL * l->half;
     l->drawable = x <= SF_MAX_WIDTH && l->half <= SF_MAX_HALF;
+
+    return TRUE;
 }
 
 /* a glyph's height above the baseline, in pixels */
@@ -309,7 +319,8 @@ static long sf_build(void *arg)
         return -1;
     if (FT_Set_Pixel_Sizes(sf_face, 0, b->pixels))
         return -1;
-    sf_layout(&l, b->pixels);
+    if (!sf_layout(&l, b->pixels))
+        return -1;
     b->bytes = l.bytes;
     b->drawable = l.drawable;
     if (!b->render)
@@ -330,9 +341,16 @@ static long sf_build(void *arg)
         FT_Bitmap *bm;
         LONG x, x0, cell_left, cell_right;
         WORD row, col, y0;
+        FT_Error err;
 
-        if (FT_Load_Glyph(sf_face, sf_glyph(ch), FT_LOAD_RENDER | FT_LOAD_TARGET_MONO))
-            continue;
+        err = FT_Load_Glyph(sf_face, sf_glyph(ch), FT_LOAD_RENDER | FT_LOAD_TARGET_MONO);
+        if (err == FT_Err_Out_Of_Memory)
+        {
+            vdi_ft_free(s);             /* not a size with holes in it */
+            return -1;
+        }
+        if (err)
+            continue;                   /* a broken glyph: left blank */
         bm = &sf_face->glyph->bitmap;
         if (bm->pixel_mode != FT_PIXEL_MODE_MONO)
             continue;
@@ -476,7 +494,15 @@ const Fonthead *vdi_sfont_size(WORD index, WORD pixels)
     {
         b.pixels = pixels;
         if (vdi_ft_call(sf_build, &b) != 0)
-            goto fail;
+        {
+            /* opening the face takes the whole file in font memory */
+            if (emptied)
+                goto fail;
+            while (sf_evict())
+                ;
+            emptied = TRUE;
+            continue;
+        }
         if ((b.bytes <= limit && b.drawable) || pixels == SF_MIN_PIXELS)
             break;
         pixels = sf_clamp(pixels * 3L / 4);
@@ -541,6 +567,16 @@ const Fonthead *vdi_sfont_size(WORD index, WORD pixels)
 fail:
     KINFO(("sfont: cannot render %s at %d pixels\n", vdi_sfonts[index].name, asked));
     return NULL;
+}
+
+/*
+ * Back within the limit, once a workstation has selected another size or
+ * font, or closed: what the sizes then in use kept over it can go
+ */
+void vdi_sfont_trim(void)
+{
+    while (sf_bytes > CONF_VDI_FONT_CACHE * 1024UL && sf_evict())
+        ;
 }
 
 /* the scratch buffer of a size, for the text path (vdi/vdi_text.c) */

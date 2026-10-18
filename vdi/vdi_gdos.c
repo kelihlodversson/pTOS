@@ -55,6 +55,7 @@
 #include "kprint.h"
 #include "stdlib.h"
 #include "string.h"
+#include "tosvars.h"
 #include "../bdos/bdosstub.h"
 #include "../bios/vectors.h"
 #include "vdistub.h"
@@ -89,7 +90,14 @@ static struct
 } fsmc;
 #endif
 
-static char sfont_path[sizeof(CONF_VDI_FONT_DIR) + 16];
+/*
+ * The directory, made absolute: on the boot drive unless it names one,
+ * and from the root.  The files are opened again later on behalf of
+ * whichever program uses a font, whose current drive and directory may
+ * be anywhere.
+ */
+static char sfont_dir[3 + sizeof(CONF_VDI_FONT_DIR)];
+static char sfont_path[sizeof(sfont_dir) + 16];
 static DTA sfont_dta;
 
 
@@ -167,11 +175,31 @@ static long sfont_open(void *arg)
  * Finding the fonts
  */
 
+static void sfont_set_dir(void)
+{
+    const char *dir = CONF_VDI_FONT_DIR;
+    char *p = sfont_dir;
+
+    if (dir[0] && dir[1] == ':')
+    {
+        *p++ = *dir++;
+        *p++ = *dir++;
+    }
+    else
+    {
+        *p++ = 'A' + bootdev;
+        *p++ = ':';
+    }
+    if (*dir != '\\')
+        *p++ = '\\';
+    strcpy(p, dir);
+}
+
 static void sfont_set_path(const char *file)
 {
     size_t len;
 
-    strcpy(sfont_path, CONF_VDI_FONT_DIR);
+    strcpy(sfont_path, sfont_dir);
     len = strlen(sfont_path);
     if (!len || sfont_path[len - 1] != '\\')   /* "C:\FONTS\" or "C:\" has one */
         strcat(sfont_path, "\\");
@@ -316,9 +344,10 @@ void vdi_gdos_init(void)
     }
 #endif
 
+    sfont_set_dir();
     sfont_scan();
     vdi_gdos_id = GDOS_ID_FSM;
 
     KINFO(("GDOS: built in, %d scalable fonts in %s\n",
-           vdi_sfont_count, CONF_VDI_FONT_DIR));
+           vdi_sfont_count, sfont_dir));
 }

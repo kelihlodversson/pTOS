@@ -70,6 +70,9 @@ WORD vdi_sfont_pixels_for_top(WORD index, WORD top);
  * it cannot be had (no memory, a font file gone) */
 const Fonthead *vdi_sfont_size(WORD index, WORD pixels);
 
+/* drop unselected sizes until the cache is within its limit again */
+void vdi_sfont_trim(void);
+
 /* the text scratch buffer of a size (an F_SFONT font), and its halves' offset */
 void vdi_sfont_scratch(const Fonthead *font, WORD **buffer, WORD *half);
 

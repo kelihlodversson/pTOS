@@ -25,6 +25,7 @@
 #include "bdosbind.h"
 #include "tosvars.h"
 #include "screen_mode.h"
+#include "vdi_gdos.h"
 
 #define FIRST_VDI_HANDLE    1
 #define LAST_VDI_HANDLE     (FIRST_VDI_HANDLE+NUM_VDI_HANDLES-1)
@@ -495,6 +496,9 @@ void vdi_v_clsvwk(Vwk * vwk)
         return;
 
     vwk_ptr[handle] = NULL;         /* close it */
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    vdi_sfont_trim();               /* the scalable size it had may go now */
+#endif
 
     build_vwk_chain();              /* rebuild chain */
 
@@ -639,6 +643,9 @@ void vdi_v_clswk(Vwk * vwk)
         }
     }
     linea_vars.CUR_WORK = vwk_ptr[VDI_PHYS_HANDLE];
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    vdi_sfont_trim();               /* the scalable sizes they had may go now */
+#endif
 
     timer_exit();
     vdimouse_exit();                    /* deinitialize mouse */
