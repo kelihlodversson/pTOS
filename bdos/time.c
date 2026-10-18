@@ -82,7 +82,7 @@ UWORD current_time, current_date;
  * private declarations
  */
 
-#ifdef __arm__
+#if CONF_WITH_NATIVE_ABI
 static void tikfrk(int n);
 #else
 /*
@@ -177,7 +177,7 @@ void time_init(void)
     current_date = HIWORD(dt);
     current_time = LOWORD(dt);
 
-#ifdef __arm__
+#if CONF_WITH_NATIVE_ABI
     etv_timer = tikfrk;
 #else
     etv_timer = (ETV_TIMER_T)tikfrk_etv_entry;
@@ -189,7 +189,7 @@ void time_init(void)
  *  tikfrk -
  */
 
-#ifdef __arm__
+#if CONF_WITH_NATIVE_ABI
 static
 #endif
 void tikfrk(int n)

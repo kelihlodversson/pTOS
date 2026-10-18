@@ -22,6 +22,12 @@
  /* config.h */
  #define CONF_ATARI_HARDWARE    1
  #define CONF_WITH_TT_SHIFTER   1
+ /* the kernel's CONF_WITH_NATIVE_ABI (Kconfig.machine): everything but m68k */
+ #if defined(__arm__) || defined(__x86_64__)
+  #define CONF_WITH_NATIVE_ABI  1
+ #else
+  #define CONF_WITH_NATIVE_ABI  0
+ #endif
  #define MAXPATHLEN      256
  #define BLKDEVNUM       26
  /* sysconf.h */
@@ -47,11 +53,11 @@
  #define RESTRICT __restrict__
  /* the m68k standalone build only ever targets real Atari hardware;
     the ARM standalone build only ever targets pTOS's own raspi/virt-arm
-    ports, which have no Atari-style video hardware to switch resolution
-    on -- Getrez()/Setscreen() are a no-op there (see bios/screen.c's
+    ports and the x86-64 one, which have no Atari-style video hardware
+    to switch resolution on -- Getrez()/Setscreen() are a no-op there (see bios/screen.c's
     CONF_WITH_ATARI_VIDEO fallback), so exposing MODE's resolution
     switching would just look broken rather than doing anything real */
- #ifdef __arm__
+ #if defined(__arm__) || defined(X32_USERLAND)
   #define CLI_WITH_RESOLUTION    0
   #define CLI_WITH_TT_RESOLUTION 0
  #else
@@ -76,6 +82,7 @@
 #include <mint/osbind.h>
 #include <string.h>     /* strlen(), strcpy(), memcpy(), memset(), strncasecmp() */
 #include <ctype.h>      /* toupper() */
+#include <stdio.h>      /* sprintf() */
 
 /* EmuTOS/pTOS extends the standard 3-argument XBIOS Setscreen (opcode 5)
  * with a 4th word argument that sets the font height in the same call
@@ -102,20 +109,40 @@ static __inline__ long cli_supexec_(long a)
 }
 #define Supexec(a) cli_supexec_((long)(a))
 
-#ifdef __arm__
-/* On ARM, GEMDOS calls are dispatched through registers, not a
- * byte-packed stack frame, and int is always 32 bits, so the plain
- * variadic trap1() call is safe regardless of -mshort -- see the
- * comment on trap1_v()/trap1_w()/... in asm.h. */
+#ifndef __m68k__
+/*
+ * TRAP1_W(x): the historically-(WORD)-cast slots below need to stay
+ * genuinely WORD-sized (16-bit) on m68k, not widen to `long` -- see
+ * bdosbind.h's own TRAP1_ARG comment for why: m68k's trap1() does no
+ * argument marshaling of its own, so the real GEMDOS trap handler reads
+ * each argument back off the stack frame the *caller's* variadic call
+ * built, at whatever width each argument's own C expression promoted
+ * to. Several GEMDOS opcodes have genuinely WORD-sized slots in their
+ * real ABI, matching an uncast WORD argument's promotion under m68k's
+ * `-mshort` `int` -- casting those to `long` (32-bit) would widen the
+ * slot and misalign every argument after it in the trap frame. Only
+ * x86-64 needs (and gets) the `long` widening, for the same sign-
+ * extension reason bdosbind.h's TRAP1_ARG does. The already-(LONG)-cast
+ * `jmp_gemdos_l` slot below is unaffected either way (LONG and long are
+ * the same width on every arch but x86-64, where `long` is exactly the
+ * fix needed) and so stays a plain, unconditional `(long)`. (void *)
+ * casts are already full pointer width and need no change.
+ */
+#if defined(__x86_64__)
+#define TRAP1_W(x) ((long)(x))
+#else
+#define TRAP1_W(x) ((WORD)(x))
+#endif
+
 #define jmp_gemdos_v(a)         trap1((int)(a))
-#define jmp_gemdos_w(a,b)       trap1((int)(a),(WORD)(b))
-#define jmp_gemdos_l(a,b)       trap1((int)(a),(LONG)(b))
+#define jmp_gemdos_w(a,b)       trap1((int)(a),TRAP1_W(b))
+#define jmp_gemdos_l(a,b)       trap1((int)(a),(long)(b))
 #define jmp_gemdos_p(a,b)       trap1((int)(a),(void*)(b))
-#define jmp_gemdos_ww(a,b,c)    trap1((int)(a),(WORD)(b),(WORD)(c))
-#define jmp_gemdos_pw(a,b,c)    trap1((int)(a),(void *)(b),(WORD)(c))
-#define jmp_gemdos_wlp(a,b,c,d) trap1((int)(a),(WORD)(b),(LONG)(c),(void *)(d))
-#define jmp_gemdos_wpp(a,b,c,d) trap1((int)(a),(WORD)(b),(void *)(c),(void *)(d))
-#define jmp_gemdos_pww(a,b,c,d) trap1((int)(a),(void *)(b),(WORD)(c),(WORD)(d))
+#define jmp_gemdos_ww(a,b,c)    trap1((int)(a),TRAP1_W(b),TRAP1_W(c))
+#define jmp_gemdos_pw(a,b,c)    trap1((int)(a),(void *)(b),TRAP1_W(c))
+#define jmp_gemdos_wlp(a,b,c,d) trap1((int)(a),TRAP1_W(b),(long)(c),(void *)(d))
+#define jmp_gemdos_wpp(a,b,c,d) trap1((int)(a),TRAP1_W(b),(void *)(c),(void *)(d))
+#define jmp_gemdos_pww(a,b,c,d) trap1((int)(a),(void *)(b),TRAP1_W(c),TRAP1_W(d))
 #else
 /* m68k: a variadic trap1() call would push every argument as a
  * promoted 32-bit int now that -mshort is gone (#300); use the typed

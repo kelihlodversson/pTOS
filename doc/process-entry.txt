@@ -17,21 +17,25 @@ Entry contract
 The launcher owns the producer columns below.  libcmini startup owns the
 consumer columns: it records the basepage, selects the startup routine from
 the explicit type, and establishes the C-call stack convention.  The x32
-termination cells describe the required implementation contract; they do
-not claim that the current unfinished ring-3 path already implements it.
+program row is implemented and tested for the built-in images (EmuCON, and the
+boot self-test's probe, tests/x32_probe/): the launcher (bdos/arch/x86_64/
+rwa.c) enters them in ring 3 and Pterm, or a fault, resumes the saved
+launching kernel context.  The x32 accessory row is still only the required
+contract; the AES has not been moved to ring 3.
 
 | Target | Launch | Producer | Consumer | Basepage | Type | User stack at process entry | Privilege | Termination |
 |--------|--------|----------|----------|----------|------|-----------------------------|-----------|-------------|
 | ARM | program | proc_go() | libcmini _crtinit() | r0 | r1 = ENTRY_PROGRAM | SP at p_hitpa, 8-byte aligned | user | Pterm returns through GEMDOS to the parent launch path |
 | ARM | accessory | AES gotopgm() | libcmini _acc_main() | r0 | r1 = ENTRY_ACCESSORY | SP at p_hitpa, 8-byte aligned | user | Pterm returns through the AES accessory lifecycle |
-| x32 | program | x32 process launcher | libcmini _crtinit() | RDI | RSI = ENTRY_PROGRAM | RSP 16-byte aligned; libcmini presents RSP + 8 divisible by 16 at C entry | ring 3 | Pterm resumes the saved launching kernel context |
-| x32 | accessory | x32 AES accessory launcher | libcmini _acc_main() | RDI | RSI = ENTRY_ACCESSORY | RSP 16-byte aligned; libcmini presents RSP + 8 divisible by 16 at C entry | ring 3 | Pterm resumes the saved AES accessory context |
+| x32 | program | x32 process launcher | libcmini _crtinit() | RDI | RSI = ENTRY_PROGRAM | RSP + 8 divisible by 16 at process entry; libcmini preserves RSP when tail-jumping to C | ring 3 | Pterm resumes the saved launching kernel context |
+| x32 | accessory | x32 AES accessory launcher | libcmini _acc_main() | RDI | RSI = ENTRY_ACCESSORY | RSP + 8 divisible by 16 at process entry; libcmini preserves RSP when tail-jumping to C | ring 3 | Pterm resumes the saved AES accessory context |
 
 The x32 ring-3 transition must write RDI and RSI explicitly immediately
-before iretq.  The x32 launcher must provide a 16-byte-aligned stack at process entry;
-the C function-entry rule is RSP + 8 divisible by 16 because libcmini
-tail-jumps into C rather than calling it.  The x32 accessory path must provide
-the same process mapping and saved-context ownership as the ordinary path.
+before iretq.  At process entry, the x32 launcher must provide an RSP for which
+RSP + 8 is divisible by 16.  libcmini must preserve RSP when tail-jumping into
+C, so the C function-entry rule remains RSP + 8 divisible by 16.  The x32
+accessory path must provide the same process mapping and saved-context
+ownership as the ordinary path.
 
 The ARM launchers likewise initialize r0, r1, and the aligned stack before
 entering user code.  libcmini must not infer the launch type from p_parent,

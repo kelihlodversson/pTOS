@@ -25,7 +25,7 @@
 #include "string.h"     /* for bzero() */
 #include "gemdos.h"     /* for mem alloc & free */
 
-#if defined(__mcoldfire__) || defined(__arm__)
+#if defined(__mcoldfire__) || CONF_WITH_NATIVE_ABI
 #define ASM_BLIT_IS_AVAILABLE   0   /* assembler routine does not support ColdFire */
 #else
 #define ASM_BLIT_IS_AVAILABLE   1   /* may use m68k assembler fast_bit_blt routine */
@@ -36,14 +36,27 @@
 #define GetMemW(addr) ((ULONG)*(UWORD*)(addr))
 #define SetMemW(addr, val) *(UWORD*)(addr) = val
 
-/* structure passed to raster blit functions */
+/* structure passed to raster blit functions.
+ *
+ * src_addr/dst_addr are UBYTE* (not ULONG): they are raw byte addresses
+ * into a memory form, walked by adding the byte-granular s_nxwd/s_nxln/
+ * s_nxpl offsets from struct blit_frame (vdi_raster.h documents those as
+ * "in bytes"), and GetMemW()/SetMemW() below already reinterpret-cast
+ * them to UWORD* only at the point of access -- a ULONG here was never
+ * anything but a byte address that happened to fit in 32 bits on every
+ * arch this file previously ran on. On x86-64, blit_info->s_form/d_form
+ * (vdi_raster.h, already UWORD*) can be a genuine higher-half kernel
+ * address; truncating it through ULONG in bit_blt() below would produce
+ * a bogus low address before do_blit()/hwblit_raster() ever dereferenced
+ * it. UBYTE* keeps identical byte-offset arithmetic (pointer + int moves
+ * by that many bytes) while staying native pointer width on every arch. */
 typedef struct {
     UWORD          halftone[16];
     WORD           src_x_inc, src_y_inc;
-    ULONG          src_addr;
+    UBYTE          *src_addr;
     WORD           end_1, end_2, end_3;
     WORD           dst_x_inc, dst_y_inc;
-    ULONG          dst_addr;
+    UBYTE          *dst_addr;
     UWORD          x_cnt, y_cnt;
     UBYTE          hop, op, status, skew;
 } BLITVARS;
@@ -407,7 +420,7 @@ static void hwblit_plane(const BLITVARS *blt)
     blitter_go(0);
 }
 
-static void hwblit_end(const BLITVARS *blt, LONG dst_addr)
+static void hwblit_end(const BLITVARS *blt, UBYTE *dst_addr)
 {
     /*
      * we've modified data behind the cpu's back, so we must
@@ -611,7 +624,7 @@ static void bit_blt(struct blit_frame *blit_info)
     WORD skew, skew_idx;
     WORD s_span, s_xmin_off, s_xmax_off;
     WORD d_span, d_xmin_off, d_xmax_off;
-    ULONG s_addr, d_addr, first_d_addr;
+    UBYTE *s_addr, *d_addr, *first_d_addr;
     BLITVARS blitter;
 #if !ASM_BLIT_IS_AVAILABLE && CONF_WITH_BLITTER
     BOOL use_hw;
@@ -676,24 +689,39 @@ static void bit_blt(struct blit_frame *blit_info)
     if (skew < 0 )
         skew_idx |= 0x0001;             /* d6[bit0]<- alignment flag */
 
-    /* Calculate starting addresses */
-    s_addr = (ULONG)blit_info->s_form
-        + MULU16(blit_info->s_ymin, blit_info->s_nxln)
-        + MULU16(s_xmin_off, blit_info->s_nxwd);
-    d_addr = (ULONG)blit_info->d_form
-        + MULU16(blit_info->d_ymin, blit_info->d_nxln)
-        + MULU16(d_xmin_off, blit_info->d_nxwd);
+    /* Calculate starting addresses.
+     *
+     * The offset (everything past the base pointer) is computed as a ULONG,
+     * with 16-bit multiplies (MULU16: cheap on a 68000), and only added to
+     * the base pointer at the end, so that the base address itself is never
+     * truncated to 32 bits (LP64). */
+    s_addr = (UBYTE *)blit_info->s_form
+        + (MULU16(blit_info->s_ymin, blit_info->s_nxln)
+           + MULU16(s_xmin_off, blit_info->s_nxwd));
+    d_addr = (UBYTE *)blit_info->d_form
+        + (MULU16(blit_info->d_ymin, blit_info->d_nxln)
+           + MULU16(d_xmin_off, blit_info->d_nxwd));
 
     /* if (just_screen && (s_addr < d_addr)) { */
-    if ((s_addr < d_addr)
+    /* Compared as integer addresses, not as pointers: s_addr/d_addr
+     * generally point into two distinct memory forms (source and
+     * destination), and C only defines `<`/`>` between pointers into the
+     * same array/object -- comparing across two unrelated allocations is
+     * undefined behavior, unlike the equality test just below (pointer
+     * equality is always well-defined, regardless of which objects the
+     * operands point into). This is purely an ordering/overlap check
+     * (mirroring the original ULONG-address comparison from before these
+     * were pointers), not a real array-bounds computation, so reducing
+     * to uintptr_t here costs nothing. */
+    if (((uintptr_t)s_addr < (uintptr_t)d_addr)
      || ((s_addr == d_addr) && (skew >= 0))) {
         /* start from lower right corner, so add width+length */
-        s_addr = (ULONG)blit_info->s_form
-            + MULU16(blit_info->s_ymax, blit_info->s_nxln)
-            + MULU16(s_xmax_off, blit_info->s_nxwd);
-        d_addr = (ULONG)blit_info->d_form
-            + MULU16(blit_info->d_ymax, blit_info->d_nxln)
-            + MULU16(d_xmax_off, blit_info->d_nxwd);
+        s_addr = (UBYTE *)blit_info->s_form
+            + (MULU16(blit_info->s_ymax, blit_info->s_nxln)
+               + MULU16(s_xmax_off, blit_info->s_nxwd));
+        d_addr = (UBYTE *)blit_info->d_form
+            + (MULU16(blit_info->d_ymax, blit_info->d_nxln)
+               + MULU16(d_xmax_off, blit_info->d_nxwd));
 
         /* offset between consecutive words in planes */
         blt->src_x_inc = -blit_info->s_nxwd;

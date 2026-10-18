@@ -411,7 +411,7 @@ void ob_format(WORD just, char *raw_str, char *tmpl_str, char *fmt_str)
 
 static __inline__ WORD call_usercode(USERBLK *ub, PARMBLK *pb)
 {
-#ifdef __arm__
+#if CONF_WITH_NATIVE_ABI
     WORD (*ub_code)(PARMBLK *parmblock) = ub->ub_code;
     return ub_code(pb);
 #else

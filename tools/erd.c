@@ -2109,11 +2109,11 @@ int butoff = 0;
             found_butoff = 1;
         }
         if (msgoff) {
-            fprintf(fp,"     { (LONG)&msg_str[%d] },\n",MAX_LINENUM-msgoff);
+            fprintf(fp,"     { .free_string = msg_str[%d] },\n",MAX_LINENUM-msgoff);
             msgoff--;
         } else if (butoff)
         {
-            fprintf(fp,"     { (LONG)&msg_but[%d] },\n",MAX_BUTNUM-butoff);
+            fprintf(fp,"     { .free_string = msg_but[%d] },\n",MAX_BUTNUM-butoff);
             butoff--;
         } else
 #endif
@@ -2630,7 +2630,7 @@ char *base = (char *)rschdr;
         p = base + get_offset(&obj->ob_spec);
         if (isshared(p)) {
             fixshared(temp,p);
-            fprintf(fp,"{ (LONG)rs_str_%s },\n",temp);
+            fprintf(fp,"{ .free_string = (char *)rs_str_%s },\n",temp);
             break;
         }
         xlate = copycheck(temp,p,MAX_STRLEN-1);
@@ -2639,8 +2639,8 @@ char *base = (char *)rschdr;
         if (all_dashes(temp))   /* truncate separator lines to save ROM space */
             temp[1] = '\0';
         if (xlate == 0)
-            fprintf(fp,"{ (LONG)\"%s\" },\n",temp);
-        else fprintf(fp,"{ (LONG)%s\"%s\") },\n",NLS,temp);
+            fprintf(fp,"{ .free_string = (char *)\"%s\" },\n",temp);
+        else fprintf(fp,"{ .free_string = (char *)%s\"%s\") },\n",NLS,temp);
         break;
     case G_TEXT:
     case G_BOXTEXT:
@@ -2653,16 +2653,16 @@ char *base = (char *)rschdr;
          */
         error("TEXT/BOXTEXT objects not allowed in EmuDesk resource",inrsc);
 #endif
-        fprintf(fp,"{ (LONG)&%srs_tedinfo[%ld] },\n",prefix,
+        fprintf(fp,"{ .tedinfo = &%srs_tedinfo[%ld] },\n",prefix,
             (get_offset(&obj->ob_spec)-rsh.tedinfo)/sizeof(TEDINFO));
         break;
     case G_FTEXT:
     case G_FBOXTEXT:
-        fprintf(fp,"{ (LONG)&%srs_tedinfo[%ld] },\n",prefix,
+        fprintf(fp,"{ .tedinfo = &%srs_tedinfo[%ld] },\n",prefix,
             (get_offset(&obj->ob_spec)-rsh.tedinfo)/sizeof(TEDINFO));
         break;
     case G_IMAGE:
-        fprintf(fp,"{ (LONG)&%srs_bitblk[%ld] },\n",prefix,
+        fprintf(fp,"{ .bitblk = CONST_CAST(BITBLK *, &%srs_bitblk[%ld]) },\n",prefix,
             (get_offset(&obj->ob_spec)-rsh.bitblk)/sizeof(BITBLK));
         break;
     case G_PROGDEF:
@@ -2670,7 +2670,7 @@ char *base = (char *)rschdr;
                 get_offset(&obj->ob_spec));
         break;
     case G_ICON:
-        fprintf(fp,"{ (LONG)&%srs_iconblk[%ld] },\n",prefix,
+        fprintf(fp,"{ .iconblk = CONST_CAST(ICONBLK *, &%srs_iconblk[%ld]) },\n",prefix,
             (get_offset(&obj->ob_spec)-rsh.iconblk)/sizeof(ICONBLK));
         break;
     case G_CICON:

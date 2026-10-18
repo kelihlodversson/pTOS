@@ -16,9 +16,26 @@
 #ifndef XBIOSBIND_H
 #define XBIOSBIND_H
 
-#ifdef __arm__
+#include "config.h"
+
+#if CONF_WITH_NATIVE_ABI
 #include "biosargs.h"
 #endif
+#ifdef __x86_64__
+#include "asm.h"        /* kernel_trap() */
+#endif
+
+/*
+ * x86-64 calling convention (bios/arch/x86_64/trap.h):
+ * kernel_trap()'s first argument packs trap_class << 32 |
+ * function_number (14 = the historic m68k XBIOS trap number, kept here as
+ * a literal for the same reason biosbind.h's own copy of this comment
+ * gives), the next four are the real arguments. The three wide-argument
+ * calls (Rsconf, Floprd/Flopwr/Flopver, Flopfmt) pass a struct pointer as
+ * their one real argument instead, same as ARM. This is a plain, ordinary
+ * C function call, not `syscall` -- see biosbind.h's own copy of this
+ * comment and trap.h for why.
+ */
 
 #define Initmous(a,b,c) xbios_v_wll(0,a,(long)(b),(long)(c))
 #define Ssbrk(a) xbios_l_w(1,a)
@@ -85,6 +102,8 @@ static __inline__ void xbios_v_v(int op)
         : "r"(_r0)
         : "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
     );
+#elif defined(__x86_64__)
+    kernel_trap(((long)14 << 32) | (unsigned)op, 0, 0, 0, 0);
 #else
     __asm__ volatile (
         "move.w  %0,-(sp)\n\t"
@@ -108,6 +127,8 @@ static __inline__ void xbios_v_w(int op, short a)
         : "r"(_r0), "r"(_r1)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
+#elif defined(__x86_64__)
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     __asm__ volatile (
         "move.w  %1,-(sp)\n\t"
@@ -133,6 +154,8 @@ static __inline__ void xbios_v_wl(int op, short a, long b)
         : "r"(_r0), "r"(_r1), "r"(_r2)
         : "r3", "r12", "lr",  "memory", "cc"
     );
+#elif defined(__x86_64__)
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, b, 0, 0);
 #else
     __asm__ volatile (
         "move.l  %2,-(sp)\n\t"
@@ -160,6 +183,8 @@ static __inline__ void xbios_v_wll(int op, short a, long b, long c)
         : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3)
         : "r12", "lr",  "memory", "cc"
     );
+#elif defined(__x86_64__)
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, 0);
 #else
     __asm__ volatile (
         "move.l  %3,-(sp)\n\t"
@@ -189,6 +214,8 @@ xbios_v_wwl(int op, short a, short b, long c)
         : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3)
         : "r12", "lr",  "memory", "cc"
     );
+#elif defined(__x86_64__)
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, 0);
 #else
     __asm__ volatile (
         "move.l  %3,-(sp)\n\t"
@@ -219,6 +246,8 @@ xbios_v_wwwl(int op, short a, short b, short c, long d)
         : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3), "r"(_r4)
         : "r12", "lr",  "memory", "cc"
     );
+#elif defined(__x86_64__)
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, d);
 #else
     __asm__ volatile (
         "move.l  %4,-(sp)\n\t"
@@ -238,15 +267,13 @@ xbios_v_wwwl(int op, short a, short b, short c, long d)
 static __inline__ void
 xbios_v_wwwwww(int op, short a, short b, short c, short d, short e, short f)
 {
-#ifdef __arm__
+#if CONF_WITH_NATIVE_ABI
     /*
-     * rsconf() needs 6 real arguments; _xbiostrap only delivers 4 in
-     * registers, so pass them via a xbios_rsconf_args struct instead
+     * rsconf() needs 6 real arguments; the trap convention only delivers
+     * 4 in registers, so pass them via a xbios_rsconf_args struct instead
      * (biosargs.h). See kelihlodversson/pTOS#217.
      */
     struct xbios_rsconf_args args;
-    register long _r0 __asm__("r0")=(long)(op);
-    register long _r1 __asm__("r1");
 
     args.baud = a;
     args.ctrl = b;
@@ -254,6 +281,11 @@ xbios_v_wwwwww(int op, short a, short b, short c, short d, short e, short f)
     args.rsr = d;
     args.tsr = e;
     args.scr = f;
+#endif
+#ifdef __arm__
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1");
+
     _r1 = (long)&args;
 
     __asm__ volatile (
@@ -262,6 +294,8 @@ xbios_v_wwwwww(int op, short a, short b, short c, short d, short e, short f)
         : "r"(_r0), "r"(_r1)
         : "r2", "r3", "r4", "r12", "lr",  "memory", "cc"
     );
+#elif defined(__x86_64__)
+    kernel_trap(((long)14 << 32) | (unsigned)op, (long)&args, 0, 0, 0);
 #else
     __asm__ volatile (
         "move.w  %6,-(sp)\n\t"
@@ -291,6 +325,8 @@ static __inline__ void xbios_v_l(int op, long a)
         : "r"(_r0), "r"(_r1)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
+#elif defined(__x86_64__)
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     __asm__ volatile (
         "move.l  %1,-(sp)\n\t"
@@ -317,6 +353,8 @@ static __inline__ void xbios_v_llw(int op, long a, long b, short c)
         : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3)
         : "r12", "lr",  "memory", "cc"
     );
+#elif defined(__x86_64__)
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, 0);
 #else
     __asm__ volatile (
         "move.w  %3,-(sp)\n\t"
@@ -347,6 +385,8 @@ xbios_v_llww(int op, long a, long b, short c, short d)
         : "r"(_r0), "r"(_r1), "r"(_r2), "r"(_r3), "r"(_r4)
         : "r12", "lr",  "memory", "cc"
     );
+#elif defined(__x86_64__)
+    kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, d);
 #else
     __asm__ volatile (
         "move.w  %4,-(sp)\n\t"
@@ -374,6 +414,8 @@ static __inline__ short xbios_w_v(int op)
         : "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    return (short)kernel_trap(((long)14 << 32) | (unsigned)op, 0, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -401,6 +443,8 @@ static __inline__ short xbios_w_w(int op, short a)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    return (short)kernel_trap(((long)14 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -430,6 +474,8 @@ static __inline__ short xbios_w_ww(int op, short a, short b)
         : "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    return (short)kernel_trap(((long)14 << 32) | (unsigned)op, a, b, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -450,15 +496,14 @@ static __inline__ short xbios_w_ww(int op, short a, short b)
 static __inline__ short xbios_w_llwwwww(int op,
     long a, long b, short c, short d, short e, short f, short g)
 {
-#ifdef __arm__
+#if CONF_WITH_NATIVE_ABI
     /*
-     * floprd()/flopwr()/flopver() need 7 real arguments; _xbiostrap only
-     * delivers 4 in registers, so pass them via a xbios_flop_io_args
-     * struct instead (biosargs.h). See kelihlodversson/pTOS#217.
+     * floprd()/flopwr()/flopver() need 7 real arguments; the trap
+     * convention only delivers 4 in registers, so pass them via a
+     * xbios_flop_io_args struct instead (biosargs.h).
+     * See kelihlodversson/pTOS#217.
      */
     struct xbios_flop_io_args args;
-    register long _r0 __asm__("r0")=(long)(op);
-    register long _r1 __asm__("r1");
 
     args.buf = (void *)a;
     args.filler = b;
@@ -467,6 +512,11 @@ static __inline__ short xbios_w_llwwwww(int op,
     args.track = e;
     args.side = f;
     args.count = g;
+#endif
+#ifdef __arm__
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1");
+
     _r1 = (long)&args;
 
     __asm__ volatile (
@@ -476,6 +526,8 @@ static __inline__ short xbios_w_llwwwww(int op,
         : "r2", "r3", "r4", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    return (short)kernel_trap(((long)14 << 32) | (unsigned)op, (long)&args, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -502,15 +554,13 @@ static __inline__ short xbios_w_llwwwww(int op,
 static __inline__ short xbios_w_llwwwwwlw(int op,
     long a, long b, short c, short d, short e, short f, short g, long h, short i)
 {
-#ifdef __arm__
+#if CONF_WITH_NATIVE_ABI
     /*
-     * flopfmt() needs 9 real arguments; _xbiostrap only delivers 4 in
-     * registers, so pass them via a xbios_flopfmt_args struct instead
-     * (biosargs.h). See kelihlodversson/pTOS#217.
+     * flopfmt() needs 9 real arguments; the trap convention only delivers
+     * 4 in registers, so pass them via a xbios_flopfmt_args struct
+     * instead (biosargs.h). See kelihlodversson/pTOS#217.
      */
     struct xbios_flopfmt_args args;
-    register long _r0 __asm__("r0")=(long)(op);
-    register long _r1 __asm__("r1");
 
     args.buf = (void *)a;
     args.skew = (void *)b;
@@ -521,6 +571,11 @@ static __inline__ short xbios_w_llwwwwwlw(int op,
     args.interlv = g;
     args.magic = h;
     args.virgin = i;
+#endif
+#ifdef __arm__
+    register long _r0 __asm__("r0")=(long)(op);
+    register long _r1 __asm__("r1");
+
     _r1 = (long)&args;
 
     __asm__ volatile (
@@ -530,6 +585,8 @@ static __inline__ short xbios_w_llwwwwwlw(int op,
         : "r2", "r3", "r4", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    return (short)kernel_trap(((long)14 << 32) | (unsigned)op, (long)&args, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -566,6 +623,8 @@ static __inline__ long xbios_l_v(int op)
         : "r1", "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    return kernel_trap(((long)14 << 32) | (unsigned)op, 0, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -593,6 +652,8 @@ static __inline__ long xbios_l_w(int op, short a)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    return kernel_trap(((long)14 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -621,6 +682,8 @@ static __inline__ long xbios_l_l(int op, long a)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    return kernel_trap(((long)14 << 32) | (unsigned)op, a, 0, 0, 0);
 #else
     register long retval __asm__("d0");
 
@@ -651,6 +714,8 @@ static __inline__ long xbios_l_lll(int op, long a, long b, long c)
         : "r12", "lr",  "memory", "cc"
     );
     return _r0;
+#elif defined(__x86_64__)
+    return kernel_trap(((long)14 << 32) | (unsigned)op, a, b, c, 0);
 #else
     register long retval __asm__("d0");
 

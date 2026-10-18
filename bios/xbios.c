@@ -38,7 +38,7 @@
 #include "asm.h"
 #include "vectors.h"
 #include "xbios.h"
-#if defined(__arm__)
+#if CONF_WITH_NATIVE_ABI
 #include "biosargs.h"
 #endif
 
@@ -218,7 +218,7 @@ static LONG xbios_8(UBYTE *buf, LONG filler, WORD devno, WORD sectno,
 }
 #endif
 
-#if defined(__arm__)
+#if CONF_WITH_NATIVE_ABI
 /*
  * ARM's trap entry only delivers 4 real arguments in registers; floprd()
  * needs 7, so it's called through the vec table via this trampoline
@@ -254,7 +254,7 @@ static LONG xbios_9(const UBYTE *buf, LONG filler, WORD devno, WORD sectno,
 }
 #endif
 
-#if defined(__arm__)
+#if CONF_WITH_NATIVE_ABI
 /* See xbios_8_arm above. */
 static LONG xbios_9_arm(struct xbios_flop_io_args *a)
 {
@@ -308,7 +308,7 @@ static LONG xbios_a(UBYTE *buf, WORD *skew, WORD devno, WORD spt,
 }
 #endif
 
-#if defined(__arm__)
+#if CONF_WITH_NATIVE_ABI
 /*
  * ARM's trap entry only delivers 4 real arguments in registers; flopfmt()
  * needs 9, so it's called through the vec table via this trampoline
@@ -425,7 +425,7 @@ static ULONG xbios_f(WORD speed, WORD flowctl, WORD ucr, WORD rsr, WORD tsr, WOR
 }
 #endif
 
-#if defined(__arm__)
+#if CONF_WITH_NATIVE_ABI
 /*
  * ARM's trap entry only delivers 4 real arguments in registers; rsconf()
  * needs 6, so it's called through the vec table via this trampoline
@@ -533,7 +533,7 @@ static LONG xbios_13(WORD *buf, LONG filler, WORD devno, WORD sectno,
 }
 #endif
 
-#if defined(__arm__)
+#if CONF_WITH_NATIVE_ABI
 /* See xbios_8_arm above. */
 static LONG xbios_13_arm(struct xbios_flop_io_args *a)
 {
@@ -850,7 +850,7 @@ static void xbios_25(void)
  * see the deprecation rationale in ssystem.h/#219. Programs on ARM
  * needing to read or write system variables use Ssystem() instead.
  */
-#if defined(__m68k__) && DBG_XBIOS
+#if !CONF_WITH_NATIVE_ABI && DBG_XBIOS
 static LONG xbios_26(PFLONG codeptr)
 {
     register LONG retval __asm__("d0");
@@ -1331,14 +1331,15 @@ LONG xbios_do_unimpl(WORD number)
     return number;
 }
 
-LONG xbios_unimpl(void);    /* defined in vectors.S */
+LONG xbios_unimpl(void);    /* defined in vectors.S, or bios/arch/x86_64/vectors.c */
 LONG supexec(PFLONG);       /* defined in vectors.S */
 
-#if defined(__m68k__)
+
+#if !CONF_WITH_NATIVE_ABI
 extern LONG supexec(PFLONG);   /* implemented in vectors.S */
 #endif
 
-#ifndef __arm__
+#if !CONF_WITH_NATIVE_ABI
 /*
  * wrap_*(): xbios_vecs[] shims for m68k. vectors.S's biosxbios no
  * longer jsr's straight into an xbios_vecs[] entry with sp still
@@ -1673,7 +1674,7 @@ static LONG wrap_scrdmp(WORD *pw) { UNUSED(pw); scrdmp(); return 0; }
 static LONG wrap_gettime(WORD *pw) { UNUSED(pw); return gettime(); }
 static LONG wrap_bioskeys(WORD *pw) { UNUSED(pw); bioskeys(); return 0; }
 static LONG wrap_vsync(WORD *pw) { UNUSED(pw); vsync(); return 0; }
-#endif /* !__arm__ */
+#endif /* !CONF_WITH_NATIVE_ABI */
 
 /*
  * xbios_vecs - the table of xbios command vectors.
@@ -1681,7 +1682,7 @@ static LONG wrap_vsync(WORD *pw) { UNUSED(pw); vsync(); return 0; }
 
 #if DBG_XBIOS
 #define VEC(wrapper, direct) (PFLONG) wrapper
-#elif defined(__arm__)
+#elif CONF_WITH_NATIVE_ABI
 #define VEC(wrapper, direct) (PFLONG) direct
 #else
 #define VEC(wrapper, direct) (PFLONG) wrap_##direct
@@ -1708,7 +1709,7 @@ const PFLONG xbios_vecs[] = {
     VEC(xbios_5, setscreen),
     VEC(xbios_6, setpalette),
     VEC(xbios_7, setcolor),
-#if defined(__arm__)
+#if CONF_WITH_NATIVE_ABI
     (PFLONG) xbios_8_arm,
     (PFLONG) xbios_9_arm,
     (PFLONG) xbios_a_arm,
@@ -1725,15 +1726,19 @@ const PFLONG xbios_vecs[] = {
     xbios_unimpl,   /* d */
 #endif
     VEC(xbios_e, iorec),
-#if defined(__arm__)
+#if CONF_WITH_NATIVE_ABI
     (PFLONG) xbios_f_arm,
 #else
     VEC(xbios_f, rsconf),
 #endif
+#if CONF_WITH_USER_ASPACE
+    xbios_unimpl,   /* 10 keytbl -- needs a user-mapped 32-bit keytable */
+#else
     VEC(xbios_10, keytbl),
+#endif
     VEC(xbios_11, random),
     VEC(xbios_12, protobt),
-#if defined(__arm__)
+#if CONF_WITH_NATIVE_ABI
     (PFLONG) xbios_13_arm,
 #else
     VEC(xbios_13, flopver),
@@ -1769,7 +1774,7 @@ const PFLONG xbios_vecs[] = {
     VEC(xbios_23, kbrate),
     xbios_unimpl,   /* 24 prtblk */
     VEC(xbios_25, vsync),
-#if defined(__m68k__)
+#if !CONF_WITH_NATIVE_ABI
     VEC(xbios_26, supexec),
 #else
     xbios_unimpl,   /* 26 supexec -- deprecated on ARM, use Ssystem() instead (#219) */

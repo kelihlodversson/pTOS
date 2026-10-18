@@ -1,0 +1,172 @@
+Generalising the x86-64 process and memory features (#453)
+==========================================================
+
+The x86-64 port added features to shared code (bdos/, bios/, include/) under
+x86-64 names and behind architecture #ifdefs.  The aim (#453) is general names,
+Kconfig feature options (CONF_WITH_USER_ASPACE, CONF_WITH_KPROC,
+CONF_WITH_USER_COPY, ...) instead of architecture tests, and the differences
+between CPUs in bios/arch/<ARCH>/ and bdos/arch/<ARCH>/, the differences between
+boards in bios/machine/<name>/.  A feature need not exist on the other
+architectures yet; its option depends on the ones that have it (and may be
+selected on x32).  This file lists the interface, group by group, and what has
+been done with each group.
+
+The groups are the x86_64_* symbols that code outside the x86-64 directories
+uses (grep for x86_64_ and X86_64_ in bdos/*, bios/*.c, include/, aes/, desk/,
+cli/ and util/ to regenerate it).
+
+1. Address spaces                                                      DONE
+   x86_64_aspace_*, X86_64_ASPACE, X86_64_USER_* (layout), the page fault
+   reserve: now aspace_*, ASPACE, USER_*, ASPACE_FAULT_*.  The page-table root
+   is aspace_root() (a CR3 value on x86-64), kproc_user_root().  Users:
+   bdos/kproc.c, bdos/elfld.c, bdos/bdosmain.c, include/progimage.h.  The
+   implementation stays where it is (bios/machine/pc-x86_64/aspace.c on top of
+   the page tables of bios/arch/x86_64/pgtable.c); the page-table format is the
+   CPU part, the physical page allocator the board part.
+   Still to do: guard the users by CONF_WITH_USER_ASPACE alone (a few
+   #ifdef __x86_64__ remain in bdos/bdosmain.c and bdos/proc.c), and move
+   include/procmem.h's declarations into a header named for the feature.
+
+2. Process memory window (procmem)                                     DONE
+   x86_64_procmem_* is now procmem_* (alloc, free, mfree, owner, size, gen,
+   contains, pins, keep, ...); the ownership functions that bdos/proc.c defines
+   (Pterm/Ptermres/Mfree side) are proc_free_owned, proc_make_resident,
+   proc_release_block, proc_drop_child_record, proc_mfree, proc_resident_pd and
+   proc_resident_len.  Users: bdos/proc.c, bdos/umem.c, bdos/bdosmain.c,
+   bdos/mem.h, bios/bios.c.  The block pool the basepage and environment come
+   from (ownership, generations, pins).  Shared design (ownership and
+   generation checks); the board part (where the window is, X86_64_LOW_TPA_*,
+   x86_64_low_tpa_init) stays in bios/machine/pc-x86_64/ and goes with group 5.
+
+3. Launching and the ring-3 transition                                 DONE
+   (the part in shared code)  bdos/proc.c no longer names the architecture
+   for these features: x86_64_prepare_launch, _ring3_caller, _check_launch,
+   _hand_over, _give_back are now prepare_launch, caller_has_aspace,
+   check_launch, hand_over, give_back_image; x86_64_{mark,take}_kernel_code_pd
+   are mark/take_kernel_code_pd; x86_64_kstack_alloc/free are kstack_alloc/free.
+   They are guarded by CONF_WITH_USER_ASPACE at each call site (no stub macros
+   for the other architectures).  The new CONF_WITH_PROCMEM (selected by
+   CONF_WITH_USER_ASPACE; also selects CONF_WITH_KPROC) guards what takes
+   process blocks from the procmem window: alloc_tpa(), alloc_env(),
+   proc_free_owned(), Ptermres' proc_make_resident().
+   Left, because they are real architecture differences and not features:
+   struct gouser_stack and its set-up in proc_go(), the p_hitpa alignment in
+   init_pd_fields() (the SysV/x32 entry convention), and proc_go() returning
+   to its caller after the child ran (the x86-64 launch model has no gouser()
+   unwinding); x86_64_call_on_stack (used only by aes/arch/x86_64/gemstart.c)
+   and the static x86_64_kexec_resume (only in bdos/arch/x86_64/rwa.c) are
+   private to their architecture directories and keep their names.  The
+   upcall the exception handler makes when a process faults is general now:
+   proc_fault() in bdos/proc.c (see group 4).  Entering ring 3 (iretq, CR3,
+   syscall stacks) is bdos/arch/x86_64/rwa.c.
+
+4. Program images and the user fault upcall                           DONE
+   x86_64_x32image_check/layout/load, x86_64_x32_layout_valid/valid_in/load,
+   x86_64_emucon_image, x86_64_x32probe_image and the types X32_IMAGE,
+   X32_LAYOUT, X32_SEGMENT are now image_check/image_layout/image_load,
+   layout_valid/layout_valid_in/layout_load, emucon_image, testprobe_image and
+   PROG_IMAGE, PROG_LAYOUT, PROG_SEGMENT; include/x32image.h is
+   include/progimage.h (guarded by CONF_WITH_USER_ASPACE).  Users:
+   bdos/kproc.c, bdos/elfld.c, bios/bios.c.  An ELF layout (segments, entry)
+   is not x86-64 specific; the rules it is checked against (the image window,
+   no W+X for a built-in program) and the mapping stay in
+   bios/machine/pc-x86_64/x32image.c.
+   x86_64_user_fault became proc_fault(cause, code, address, pc, sp) in
+   bdos/proc.c: the exception handler (bios/arch/x86_64/panic.c) decodes the
+   vector into a cause name and passes the architecture's error code as `code`;
+   reporting the fault and ending the process (Pterm(-1)) is shared.  The
+   message is "process fault: <cause> code=... addr=... pc=... sp=..." (the CI
+   boot test greps "process fault:").
+
+5. Fixed low memory pools (a board matter)                             DONE
+   The pool (x86_64_low_kdata_*) and the x86_64_vector_5ms_ptr and
+   x86_64_scsidriv_root_ptr indirections existed only so that the '_5MS' and
+   'SCSI' cookies could hold a 32-bit address of a kernel variable.  An x32
+   program has no use for either cookie (no hooked 5 ms tick, no SCSI driver),
+   so they are no longer published there: the new CONF_WITH_ADDR_COOKIES
+   (bios/Kconfig; follows the architecture, off on x86-64) guards them in
+   fill_cookie_jar(), and vector_5ms/scsidriv_root are ordinary variables
+   everywhere.  The pool, the pointers and their __x86_64__ branches are gone.
+
+6. Hardware access from shared drivers                                 DONE
+   Renamed (perl over the tree) to general names, each implemented in the
+   existing arch/ or machine/ directory:
+     x86_64_inb/outb, x86_64_ide_inw/outw/insw/outsw -> port_inb/outb/inw/
+       outw/insw/outsw (bios/arch/x86_64/io.h, port_io.h/.c; was ide_io.*)
+     x86_64_kernel_trap -> kernel_trap (include/biosbind.h, xbiosbind.h,
+       aes/gsx2.c, desk/gembind.c)
+     x86_64_irq_init + x86_64_sti -> machine_irq_init() (irq enable is part
+       of it; bios/bios.c)
+     x86_64_gop_probe/init/reserved_range, pc_x86_64_gop_* -> gop_*
+       (bios/machine/pc-x86_64/gop.h, was pc_x86_64_gop.h)
+     x86_64_smbios_machine_name -> pc_x86_64_machine_name (as
+       m548x_machine_name())
+     x86_64_pmem_free_bytes -> pmem_free_bytes (bios/initinfo.c)
+   x86_64_apply_higher_half_relocations and x86_64_ps2_mouse_irq were only
+   named in comments of shared files; those comments no longer name them.
+   The #if/#ifdef around these calls is group 7.
+
+7. Architecture #ifdefs that guard a feature
+   7a (bdos/, include/): DONE.
+     __x86_64__ around procmem_*/proc_free_owned (bdos/mem.h, umem.c,
+       bdosmain.c's initial basepage and environment, include/procmem.h)
+       -> CONF_WITH_PROCMEM
+     __x86_64__ around kalloc()/kfree() for KPROC records (bdos/kproc.c,
+       include/kheap.h) -> new CONF_WITH_KHEAP (selected by
+       CONF_WITH_USER_ASPACE)
+     the GEMDOS calls kernel code makes without a trap (include/bdosbind.h,
+       bdos/arch/x86_64/kcall.c) -> new CONF_WITH_KCALL
+     Ssystem() in C (bdos/ssystem.c, osif()) -> new CONF_WITH_SSYSTEM
+     Super() answered by osif(), gouser() returning to the launcher
+       (bdos/proc.c, proc.h, bdosmain.c) -> CONF_WITH_USER_ASPACE
+     USERPTR_T / TRAP1_ARG widening -> __LP64__ (a property of the
+       compiler's pointer width, not of the architecture)
+     the first-run state of a process and the entry stack alignment, which
+       were three #if branches in proc.c (struct gouser_stack, the p_hitpa
+       rounding, proc_go()), are proc_launch_prepare()/proc_align_stack() in
+       bdos/arch/{m68k,arm,x86_64}/launch.c
+   7b (bios/): DONE.
+     ring-3 built-in EmuCON (start_builtin_cli(), endrom.c, exec_os), Super()
+       stand-in (super.h), Keytbl()/XBIOS 10, Rwabs buffer size for the
+       uaccess checks (blkdev_rwabs_buffer_size) -> CONF_WITH_USER_ASPACE
+     the DTA that has to live in process memory (autoexec()) ->
+       CONF_WITH_PROCMEM
+     the memtest declaration and call -> CONF_WITH_X86_64_MEMTEST (was
+       also tested with __x86_64__)
+     interrupt controller bring-up and enabling (bios.c, kprint.c) -> new
+       CONF_WITH_MACHINE_IRQ_INIT with machine_irq_init() declared in
+       bios/machine.h (the x86 irq.h is gone)
+     DMAr boot sectors (disk.c) -> new CONF_WITH_DMABOOT
+     entry address of ui_start/coma_start: plain assignment on every
+       architecture (x86-64 objects are -fno-pic -mcmodel=large, so no GOT)
+     detect_cpu() for ARM and x86-64, which sat in bios.c under #if, ->
+       bios/arch/arm/cpudetect.c and bios/arch/x86_64/processor.c;
+       xbios_unimpl() for x86-64 -> bios/arch/x86_64/vectors.c
+     32-bit Setexc() vector cells (vectors.h VEC_AT/SET_VEC) -> __LP64__
+     bios/ide.c: __x86_64__ -> MACHINE_PC_X86_64, like the rest of that
+       file's machine ladder.  The remaining MACHINE_PC_X86_64 tests in
+       bios/ (machine.c, screen.c, delay.c, initinfo.c) are machine
+       selection among MACHINE_RPI/FIREBEE/..., which CLAUDE.md prescribes.
+7c DONE (PR #467): every "__arm__ || __x86_64__" that meant "not m68k" in the
+   kernel is now CONF_WITH_NATIVE_ABI (Kconfig.machine, follows !ARCH_M68K): the
+   GEMDOS/BIOS/XBIOS argument arrays (osif(), funcs[], biosbind.h,
+   xbiosbind.h), md_index_t, bufl[]/themd as ordinary storage, VDICONTROL
+   padding, UserMotFunc, intmath.h, plain-C replacements for m68k inline
+   assembler (call_usercode(), SuperToUser(), mul_div()), the cli's tosvars
+   access, and the vectors.h/xbios.c/bios.c trap ladders.  Headers that
+   test it include config.h.
+   Left: the per-arch trap stubs in biosbind.h/xbiosbind.h (`#ifdef
+   __arm__` / `__x86_64__` with inline assembler each), which are real
+   architecture code and belong under arch/; lib/libcmini is a submodule.
+
+Porting candidates (the audit of step 4 of #453)
+------------------------------------------------
+
+What would need an MMU with per-process page tables (ARM with the MMU on, m68k
+with a PMMU, #202): private address spaces, demand paging and overcommit,
+Psetlimit's stack size, the guard page.  What does not: the KPROC record
+(kernel-private process state), user-pointer validation (CONF_WITH_USER_COPY
+already builds on m68k and ARM), Psetlimit's memory limits 2 and 3, the Ssystem
+additions, Malloc(-1) semantics under limits.  A group is "mechanism" (x86
+page tables, CR3, SYSCALL) or "policy" (what may be launched, what is limited);
+only the mechanism goes under arch/ or machine/.

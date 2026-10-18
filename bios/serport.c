@@ -39,6 +39,9 @@
 #if CONF_WITH_GOLDFISH_TTY
 #include "goldfish_tty.h"
 #endif
+#if CONF_WITH_PC_COM1
+#include "earlycon.h"
+#endif
 #include "ikbd.h"
 
 /*
@@ -152,6 +155,8 @@ LONG bconstat1(void)
     return virt_uart0_can_read() ? -1 : 0;
 #elif CONF_WITH_GOLDFISH_TTY
     return goldfish_tty_can_read() ? -1 : 0;
+#elif CONF_WITH_PC_COM1
+    return earlycon_can_read() ? -1 : 0;
 #elif CONF_WITH_COLDFIRE_RS232 || CONF_WITH_MFP_RS232
     return bconstat_iorec(&iorec1);
 #else
@@ -171,6 +176,8 @@ LONG bconin1(void)
     return virt_uart0_read_byte();
 #elif CONF_WITH_GOLDFISH_TTY
     return goldfish_tty_read_byte();
+#elif CONF_WITH_PC_COM1
+    return earlycon_read_byte();
 #elif CONF_WITH_COLDFIRE_RS232 || CONF_WITH_MFP_RS232
     return bconin_iorec(&iorec1);
 #else
@@ -195,6 +202,8 @@ LONG bcostat1(void)
     return virt_uart0_can_write() ? -1 : 0;
 #elif CONF_WITH_GOLDFISH_TTY
     return goldfish_tty_can_write() ? -1 : 0;
+#elif CONF_WITH_PC_COM1
+    return earlycon_can_write() ? -1 : 0;
 #elif CONF_WITH_MFP_RS232
 # if RS232_DEBUG_PRINT
     return (MFP_BASE->tsr & 0x80) ? -1 : 0;
@@ -232,6 +241,9 @@ LONG bconout1(WORD dev, WORD b)
     return 1;
 #elif CONF_WITH_GOLDFISH_TTY
     goldfish_tty_write_byte(b);
+    return 1;
+#elif CONF_WITH_PC_COM1
+    earlycon_write_byte((UBYTE)b);
     return 1;
 #elif CONF_WITH_MFP_RS232
 # if RS232_DEBUG_PRINT

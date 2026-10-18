@@ -57,7 +57,8 @@
 #endif
 
 /*
- * Whether this target's own C calling convention already matches the
+ * CONF_WITH_NATIVE_ABI (Kconfig.machine, follows the architecture): whether
+ * this target's own C calling convention already matches the
  * classic, frozen TOS vector ABI (bios/classicvec.h's CLASSIC_ENTRY()):
  * packed WORD/LONG arguments, no padding. Every m68k target -- classic and
  * ColdFire alike -- still uses GCC's own m68k calling convention for its C
@@ -66,7 +67,6 @@
  * stack entirely for the arguments it covers). Only a port with no legacy
  * TOS ABI to begin with, like ARM, is "native" and needs no trampoline.
  */
-#define CONF_WITH_NATIVE_ABI (!ARCH_M68K)
 
 /*
  * Determine if kprintf() is available.  It is, as soon as there is
@@ -175,6 +175,28 @@
 # if !CONF_WITH_VDI_BACKEND_TRUECOLOR
 #  error At least one VDI renderer (CONF_WITH_VDI_BACKEND_PLANAR or CONF_WITH_VDI_BACKEND_TRUECOLOR) must be enabled.
 # endif
+#endif
+
+/*
+ * #332: the EFI GOP framebuffer (bios/machine/pc-x86_64/gop.c) is probed
+ * and mapped unconditionally whenever MACHINE_PC_X86_64 is set -- there is
+ * no separate "GOP support" Kconfig toggle a user could turn off along
+ * with its VDI backend. If CONF_WITH_VDI_BACKEND_TRUECOLOR32 ends up off
+ * (a user can reach that by disabling CONF_WITH_VDI_BACKEND_PLANAR, which
+ * turns off CONF_WITH_VDI_BACKEND_DISPATCH and so TRUECOLOR32 with it, or
+ * by disabling CONF_WITH_VDI_BACKEND_TRUECOLOR or TRUECOLOR32 directly),
+ * screen_get_current_mode_desc() (bios/screen.c) still reports a real
+ * XRGB8888 32bpp mode whenever GOP found a framebuffer, but nothing can
+ * safely draw into it: the planar backend's routines assume an indexed
+ * bitplane layout, and a plain (non-dispatching) truecolor16 build has no
+ * 32bpp code path at all (Copilot review, PR #373). Caught here, the same
+ * way the sibling "at least one VDI renderer" check above is, rather than
+ * a Kconfig `depends on` that would have to be threaded through three
+ * unrelated options (PLANAR, TRUECOLOR, DISPATCH) to close every way a
+ * user could reach this.
+ */
+#if defined(MACHINE_PC_X86_64) && !CONF_WITH_VDI_BACKEND_TRUECOLOR32
+# error MACHINE_PC_X86_64 requires CONF_WITH_VDI_BACKEND_TRUECOLOR32 (the EFI GOP framebuffer has no other way to draw into a 32bpp screen).
 #endif
 
 #if !CONF_WITH_YM2149

@@ -23,7 +23,7 @@
 #include "biosext.h"
 #include "kprint.h"
 
-#ifdef __arm__
+#if CONF_WITH_NATIVE_ABI
 BCB *bufl[2];           /* buffer lists - two lists:  FAT and dir/data --
                          * fixed address on m68k (tosvars.ld), ordinary
                          * storage here (#219) */

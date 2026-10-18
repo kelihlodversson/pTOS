@@ -20,7 +20,7 @@ LONG bconstat(WORD handle);
 LONG bconin(WORD handle);
 LONG bconout(WORD handle, WORD what);
 LONG lrwabs(WORD r_w, UBYTE *adr, WORD numb, WORD first, WORD drive, LONG lfirst);
-LONG setexc(WORD num, LONG vector);
+long setexc(WORD num, long vector); /* long, not LONG: see setexc()'s own comment */
 LONG tickcal(void);
 LONG getbpb(WORD drive);
 LONG bcostat(WORD handle);
