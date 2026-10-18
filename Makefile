@@ -853,12 +853,23 @@ endif
 # The ring-3 probe program of the boot self-test (tests/x32_probe/), built and
 # embedded the same way.
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
-obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S | obj/x32
-	$(X32_CC) $(X32_CLI_CFLAGS) $(X32_CLI_LDFLAGS) -o $@ $^
+obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S \
+                    tests/vdi_contract/vdi_contract.c vdi/vdi_user.c \
+                    include/vdi_user.h include/vdipb.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj $(X32_CLI_LDFLAGS) -o $@ $(filter %.c %.S,$^)
 
 obj/x32probe_image.o: obj/x32/x32probe.elf
 endif
 endif
+
+.PHONY: vdi-contract-test
+vdi-contract-test: $(AUTOCONF_H)
+	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -DX32_USERLAND -DVDI_CONTRACT_HOST_TEST \
+	  tests/vdi_contract/vdi_contract.c vdi/vdi_user.c -o obj/vdi-contract-test
+	./obj/vdi-contract-test
+	python3 tests/vdi_contract/check_inventory.py
+
+TOCLEAN += obj/vdi-contract-test
 
 #
 # Amiga images
@@ -1508,9 +1519,9 @@ ifndef CONF_WITH_GEMDOS_SHUTDOWN
 TEST_SUITES := $(filter-out shutdown_args,$(TEST_SUITES))
 endif
 
-# x32_hello and x32_probe are standalone _start programs built for the x86-64
-# boot test, not ptest suites, so they must never be linked into runtests.tos.
-TEST_SUITES := $(filter-out x32_hello x32_probe,$(TEST_SUITES))
+# Standalone boot probes and the host/x32 contract checks are not ptest
+# suites, so they must never be linked into runtests.tos.
+TEST_SUITES := $(filter-out x32_hello x32_probe vdi_contract,$(TEST_SUITES))
 
 # raster_copy and text_blit draw through the VDI, which x86-64 refuses to user
 # processes until #548 (and tools/pBench/gem.c, their bindings, has none for

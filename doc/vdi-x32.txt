@@ -1,0 +1,142 @@
+Typed x32 VDI parameter contract (#427)
+=======================================
+
+This is the parameter-layout foundation for the x32 VDI client in #403.
+It does not expose a supervisor entry point. Ring-3 GEM trap class 2 remains
+rejected; the kernel must never pass a user VDIPB to GSX_ENTRY(). The client,
+binding/import resolver, narrow display services and their per-call range
+validation are still to be implemented in #403. Callback delivery is #432.
+Accessory launch (#389/#407) follows working VDI and AES (#404) client APIs.
+
+Representations
+---------------
+
+include/vdi_user.h defines VDI_USER_CONTROL, VDI_USER_PB and VDI_USER_FDB.
+An x32 application including vdipb.h gets VDICONTROL and VDIPB aliases for
+the first two automatically. The X32_USERLAND define also selects them for
+host-side contract tests. The LP64 kernel includes vdi_user.h explicitly
+when it needs the user representation. Its existing trusted VDICONTROL,
+VDIPB and FDB representations remain separate. ARM and m68k keep their
+existing interfaces, including m68k's 12-word control block.
+
+All data and callback pointer slots use USERPTR_T(). They are native, typed
+32-bit pointers in x32 code and 32-bit user addresses in the LP64 kernel.
+They are never native kernel pointers. Conversion does not confer access:
+validate against the owning process before dereferencing. Control structures
+use native x32 alignment (4 bytes), not packed structures or 16-bit pointer
+packing. Compile-time assertions check both the x32 and LP64 views.
+
+VDICONTROL (28 bytes, alignment 4):
+
+    offset  size  member
+       0      2   code
+       2      2   nptsin
+       4      2   nptsout
+       6      2   nintin
+       8      2   nintout
+      10      2   subcode
+      12      2   handle
+      14      2   reserved (zero)
+      16     12   args (tagged union; code/subcode select the member)
+
+Arrays-only operations use args.arrays and zero its reserved words. Raster
+operations use args.raster.source at offset 16 and destination at offset 20.
+Font loading uses args.font_load.scratch at 16, scratch_offset at 20,
+reserved (zero) at 22 and first_font at 24. Each callback variant has its
+typed new_handler at 16 and old_handler at 20. Unused union bytes are zero.
+
+VDIPB (20 bytes, alignment 4) contains five 32-bit pointer slots in order:
+contrl at 0, intin at 4, ptsin at 8, intout at 12 and ptsout at 16. The
+coordinate arrays contain consecutive WORD x,y pairs. nptsin/nptsout count
+pairs; nintin/nintout count WORD integers. Output counts are results, not
+caller-supplied buffer capacities; the client/service must derive output
+requirements from the operation before writing them.
+
+VDI_USER_FDB (20 bytes, alignment 4) has fd_addr at 0, then the eight WORD
+fields fd_w, fd_h, fd_wdwidth, fd_stand, fd_nplanes, fd_r1, fd_r2, fd_r3 at
+offsets 4 through 18. fd_addr == 0 denotes the screen; the service owns
+screen access and must never interpret that as a user null-buffer access.
+
+Complete discriminator inventory
+--------------------------------
+
+vdi_user_control_kind() describes layouts, not supported service operations.
+All ordinary operations below require subcode 0. Unexpected subcodes are
+explicitly unsupported even where the legacy implementation ignores them.
+
+    code(s)                       args member
+    1-3, 6-9, 12-26, 28, 30-33,  arrays
+      35-39
+    5, subcodes 1-19              arrays (console escapes)
+    11, subcodes 1-10             arrays (GDP drawing and justified text)
+    100-108, 111-117, 120,        arrays
+      122-124, 128-131
+    109, 110, 121                 raster (copy, transform, transparent copy)
+    118                           timer
+    119                           font_load
+    125                           button
+    126                           motion
+    127                           cursor
+    134                           wheel
+
+Legacy no-op codes 4, 10, 27, 29, 34, 132 and 133 are unsupported. Every
+other code/subcode pair is unsupported, including disabled Bezier subcode
+13 on codes 6, 9 and 11 and escape 99. The wheel layout exists regardless
+of CONF_WITH_EXTENDED_MOUSE; a service without that feature rejects it.
+The font-load layout does not authorize a kernel service to retain a user
+font chain. That operation must remain rejected until a safe font ownership
+and copying contract exists. The current kernel font loader's packed-word
+interpretation must not be reused for this user representation.
+
+Callback signatures are distinct:
+
+    timer:  void (int milliseconds)
+    button: void (WORD status)
+    motion: ULONG (WORD x, WORD y)   [packed x high/y low return value]
+    cursor: void (WORD x, WORD y)
+    wheel:  void (WORD number, WORD amount)
+
+Until #432 supplies safe delivery, reject registration and leave the previous
+registration unchanged. Never install a user address in linea_vars or call
+it in ring 0. Validate executable user memory before accepting a handler;
+old_handler must identify a user-owned registration or a validated user
+chaining stub, never leak a raw kernel vector. Pointer layout alone is not
+handler validation or a callback implementation.
+
+Bitmap size and validation requirements
+---------------------------------------
+
+vdi_user_bitmap_bytes() computes a span from an already-copied FDB. It does
+not read fd_addr or establish that the range is mapped, readable or writable.
+It rejects invalid dimensions, reserved fields, row capacity, pixel formats
+and arithmetic that exceeds the 32-bit address space. The exact format is
+chosen by the caller's typed operation/backend, not by guessing from address
+shape or mapping a user descriptor onto the kernel FDB structure.
+
+Planar storage uses fd_wdwidth * 2 * fd_nplanes bytes per row. For packed
+device-dependent forms, packed_bytes is 2 (RGB565) or 4 (32-bit pixels), and
+the row is fd_w * packed_bytes. Packed forms require fd_stand == 0 and the
+matching plane count. Standard planar forms use packed_bytes == 0.
+
+The privileged service must separately copy and validate each descriptor,
+check its full bitmap span in the caller's address space with the correct
+read/write direction, and bound raster coordinates to the declared form.
+Arrays likewise require opcode-specific counts, direction and full ranges;
+counts supplied by the application cannot establish what a handler reads
+or writes. Snapshot scalar/control input so subsequent user edits cannot
+change the ranges being used. Nothing in these helpers lifts the blanket
+class-2 rejection or validates a nested user pointer by itself.
+
+Tests
+-----
+
+make vdi-contract-test checks the LP64 view and arithmetic on the host and
+compares every code against the actual vdi_main.c dispatch tables. The x32
+boot self-test builds the same checks with -mx32, enters them in ring 3,
+and requires their return code and allocator counts to be correct. This
+also compiles the five typed callback assignments using the real user ABI.
+
+These are contract tests. They do not establish a working vdi() client,
+workstation setup, rendering, bitmap copy, callback registration or a safe
+kernel service. Those runtime tests must accompany #403/#432 before this
+epic can claim ring-3 VDI access.

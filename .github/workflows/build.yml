@@ -246,6 +246,9 @@ jobs:
           # x86_64-elf- cross toolchain selected by the developer default.
           make CROSS_COMPILE=
 
+      - name: Check the x32 VDI parameter contract
+        run: make CROSS_COMPILE= vdi-contract-test
+
       - name: Collect the build products
         run: |
           mkdir products

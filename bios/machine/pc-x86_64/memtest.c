@@ -1252,6 +1252,7 @@ static void test_ring3(void)
      * syscall boundary, and the exit code coming back */
     probe_expect('e', 0, "ring-3 entry state: basepage, type, stack, CPL 3, GEMDOS call");
     probe_expect('x', 0x1234, "ring-3 exit code reaches the launcher");
+    probe_expect('V', 0, "x32 VDI control layout, opcode tags and bitmap bounds");
 
     /* each process gets fresh private pages: what the first leaves in its
      * data, the second does not see */
