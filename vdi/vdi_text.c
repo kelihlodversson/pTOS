@@ -22,6 +22,7 @@
 #include "biosext.h"
 #include "has.h"
 #include "vdi_textblit.h"
+#include "vdi_gdos.h"
 
 
 extern WORD deftxbuf[];         /* Default text scratch buffer */
@@ -696,6 +697,9 @@ void text_init2(Vwk * vwk)
     vwk->scrpt2 = scrtsiz;
     vwk->scrtchp = deftxbuf;
     vwk->num_fonts = linea_vars.font_count;
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    vwk->sfonts_loaded = FALSE;
+#endif
 
     vwk->style = 0;        /* reset special effects */
     vwk->scaled = FALSE;
@@ -1240,6 +1244,32 @@ void vdi_vqt_name(Vwk * vwk)
         } while (!found && (tmp_font = tmp_font->next_font));
     }
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /*
+     * After the bitmap fonts come the built-in GDOS's scalable fonts, once
+     * vst_load_fonts() has added them; intout[33] says which kind a font
+     * is, 0 for a bitmap font, 1 for an outline font, as with SpeedoGDOS.
+     */
+    if (vdi_gdos_id)
+    {
+        const VDI_SFONT *sfont = NULL;
+
+        if (!found && vwk->sfonts_loaded && element > i && element - i <= vdi_sfont_count)
+            sfont = &vdi_sfonts[element - i - 1];
+
+        int_out = INTOUT;
+        *int_out++ = sfont ? sfont->id : (found ? tmp_font->font_id : fon6x6.font_id);
+        name = sfont ? sfont->name : (found ? tmp_font->name : fon6x6.name);
+        for (i = 0; i < FONT_NAME_LEN && name[i]; i++)
+            *int_out++ = (UBYTE)name[i];
+        while (i++ < FONT_NAME_LEN)
+            *int_out++ = 0;
+        *int_out = sfont ? 1 : 0;
+        CONTRL->nintout = 34;
+        return;
+    }
+#endif
+
     /* The element is out of bounds - default to the system font */
     if (!found)
         tmp_font = &fon6x6;
@@ -1415,6 +1445,26 @@ void vdi_vst_load_fonts(Vwk * vwk)
 
     Fonthead *first_font;
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /*
+     * The built-in GDOS is only active when no GDOS was loaded from disk,
+     * so this is an application's own call, not a GDOS passing its fonts
+     * on: add the scalable fonts, once, as SpeedoGDOS does.
+     */
+    if (vdi_gdos_id)
+    {
+        if (vwk->sfonts_loaded)
+            INTOUT[0] = 0;
+        else
+        {
+            vwk->sfonts_loaded = TRUE;
+            vwk->num_fonts += vdi_sfont_count;
+            INTOUT[0] = vdi_sfont_count;
+        }
+        return;
+    }
+#endif
+
     /* Init some common variables */
     control = (WORD *) CONTRL;
 
@@ -1472,6 +1522,9 @@ void vdi_vst_load_fonts(Vwk * vwk)
 void vdi_vst_unload_fonts(Vwk * vwk)
 {
 #if CONF_WITH_GDOS
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    vwk->sfonts_loaded = FALSE;
+#endif
     /* Since we always unload all fonts, this is easy. */
     vwk->loaded_fonts = NULL;           /* No fonts installed */
     linea_vars.font_ring[2] = NULL;

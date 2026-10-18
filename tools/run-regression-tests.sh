@@ -172,6 +172,15 @@ start_vm() {
     disk=$work/disk-$label
     mkdir -p "$disk"
     cp -R "$top/test-dir/." "$disk/"
+    # scalable fonts for the built-in GDOS (gdos_answer), when the host
+    # has them
+    for f in /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
+             /usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf; do
+        if [ -f "$f" ]; then
+            mkdir -p "$disk/GEMSYS/FONTS"
+            cp "$f" "$disk/GEMSYS/FONTS/"
+        fi
+    done
     case $machine in
     virt-arm | virt-m68k)
         if [ "$machine" = virt-arm ]; then

@@ -112,7 +112,7 @@ extern struct font_head fon8x8;
 extern struct font_head fon8x16;
 
 /* Memory map information */
-#if CONF_WITH_EXTENDED_MOUSE
+#if CONF_WITH_EXTENDED_MOUSE || (CONF_WITH_VDI_SCALABLE_FONTS && !ARCH_X86_64)
 BOOL is_text_pointer(const void *p);
 #endif
 

@@ -125,6 +125,7 @@ config CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
 
 config CONF_WITH_VDI_SCALABLE_FONTS
 	bool "Scalable fonts (FreeType)"
+	select CONF_WITH_GDOS
 	default y if TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL
 	default y if TARGET_VIRT_M68K_KERNEL || TARGET_PC_X86_64_EFI
 	default n
@@ -154,6 +155,16 @@ config CONF_VDI_FONT_MEMORY
 	  the kernel's, not that of whichever program the VDI happens to be
 	  working for.  A TrueType font file takes from 20 KB to about 1 MB.
 	  The x86-64 kernel uses its growable kernel heap instead.
+
+config CONF_VDI_FONT_DIR
+	string "Directory of the scalable fonts"
+	depends on CONF_WITH_VDI_SCALABLE_FONTS
+	default "\\GEMSYS\\FONTS"
+	help
+	  Where the built-in GDOS looks for TrueType (*.TTF) and OpenType
+	  (*.OTF) fonts, once the AUTO folder has run.  Without a drive
+	  letter, it is on the boot drive.  The fonts found are what
+	  vst_load_fonts() adds to a workstation, as SpeedoGDOS does.
 
 config CONF_WITH_VDI_VERTLINE
 	bool "VDI vertical line drawing speedup"

@@ -49,6 +49,7 @@ static ULONG x86_64_flopfmt_buffer_size(LONG spt)
  * bios/*.h includes from three levels down.
  */
 #include "../../../vdi/vdi_defs.h"
+#include "../../../vdi/vdi_gdos.h"
 #include "../../../aes/gemsuper.h"
 
 #if CONF_WITH_AES
@@ -534,6 +535,10 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
              * rather than being misrouted into GSX_ENTRY() as if it were
              * ordinary VDI opcode 0xC8/0xC9. */
             frame->rax = (UQUAD)-1L;
+#endif
+#if CONF_WITH_VDI_SCALABLE_FONTS
+        else if (fn == 0xFFFFFFFEUL)    /* vq_gdos(): the built-in GDOS */
+            frame->rax = vdi_gdos_id ? (UQUAD)vdi_gdos_id : (UQUAD)-2L;
 #endif
         else
             frame->rax = (UQUAD)GSX_ENTRY((int)fn, (VDIPB *)(uintptr_t)frame->rdi);

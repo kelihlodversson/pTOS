@@ -75,3 +75,19 @@ long kdos_fseek(long offset, long h, long mode)
 {
     return DISK_CALL(xlseek(offset, (WORD)h, (WORD)mode));
 }
+
+/*
+ * Fsfirst()/Fsnext() into a DTA the caller names, not the process's own:
+ * a search by kernel code leaves the current process's DTA alone.  A
+ * search should be run until it fails (ENMFIL), so that a pluggable file
+ * system's search slot is given back.
+ */
+long kdos_fsfirst_at(long name, long att, DTA *dta)
+{
+    return DISK_CALL(xfsfirst_at((char *)name, (WORD)att, (DTAINFO *)dta));
+}
+
+long kdos_fsnext_at(DTA *dta)
+{
+    return DISK_CALL(xfsnext_at((DTAINFO *)dta));
+}

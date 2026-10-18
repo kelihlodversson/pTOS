@@ -25,5 +25,8 @@ obj-$(ARCH_M68K_CLASSIC) += vdi_blit.o
 # pTOS's system layer for FreeType, built by vdi/freetype/freetype.mk.
 obj-$(CONF_WITH_VDI_SCALABLE_FONTS) += vdi_ftsystem.o
 
+# The built-in GDOS layer that lists the scalable fonts.
+obj-$(CONF_WITH_VDI_SCALABLE_FONTS) += vdi_gdos.o
+
 # This one must be the last VDI object.
 obj-y += endvdi.o

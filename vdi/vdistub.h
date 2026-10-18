@@ -44,6 +44,8 @@ void vdi_freetype_init(void);
 /* render glyphs from that font file, once GEMDOS has the boot drive */
 void vdi_freetype_test_font(void);
 #endif
+/* start the built-in GDOS once the AUTO folder has run (vdi/vdi_gdos.c) */
+void vdi_gdos_init(void);
 #endif
 
 /* End of the VDI BSS section.

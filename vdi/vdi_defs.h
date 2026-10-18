@@ -244,6 +244,9 @@ struct Vwk_ {
     WORD mark_scale;            /* Current scale factor for marker data */
     Vwk *next_work;             /* Pointer to next virtual workstation  */
     WORD num_fonts;             /* Total number of faces available  */
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    BOOL sfonts_loaded;         /* built-in GDOS's scalable fonts added */
+#endif
     WORD scaled;                /* TRUE if font scaled in any way   */
     Fonthead scratch_head;      /* Holder for the doubled font data */
     WORD text_color;            /* Current text color (PEL value)   */
