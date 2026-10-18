@@ -80,7 +80,7 @@ static struct
 {
     ULONG magic;                    /* '_SPD': SpeedoGDOS */
     UWORD version;                  /* 0x0400 for 4.00 */
-    UWORD quality;
+    WORD quality;                   /* -1, as fVDI's SpeedoGDOS mode has it */
 } fsmc;
 #endif
 
@@ -289,7 +289,7 @@ void vdi_gdos_init(void)
      */
     fsmc.magic = 0x5f535044UL;      /* '_SPD' */
     fsmc.version = 0x0400;
-    fsmc.quality = 0;
+    fsmc.quality = -1;
     cookie_add(COOKIE_FSMC, (ULONG)&fsmc);
     if (!cookie_get(COOKIE_FSMC, &value))
     {
