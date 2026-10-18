@@ -134,6 +134,8 @@ void truecolor_text_blit(LOCALVARS *vars);
  * portable C implementations, provided on every target
  */
 void outline(LOCALVARS *vars);
+void thicken_glyph(const UBYTE *src, WORD form_width, WORD sx, WORD w, WORD weight,
+                   WORD h, UWORD *buf);
 void rotate(LOCALVARS *vars);   /* actually local, but non-static improves performance */
 void scale(LOCALVARS *vars);
 

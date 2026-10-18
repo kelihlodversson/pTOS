@@ -1259,39 +1259,6 @@ BOOL blitter_text_blit(LOCALVARS *vars)
 
 
 /*
- * thicken_glyph()
- *
- * Draw a bold glyph into a buffer of one word per line, from the top line
- * down, the way normal_blit() draws it into the text buffer for pre_blit()
- * when the blitter is to output it (see text_blt()): the leftmost 'keep'
- * pixels of the glyph are kept and smeared 'weight' pixels to the right,
- * and the line is 'w' pixels wide.  'keep' is the width of the glyph, or,
- * in a monospaced font, whose bold glyphs are no wider, that less the
- * weight (normal_blit()'s thk_msk).
- */
-static void thicken_glyph(const Fonthead *fnt, WORD sourcex, WORD w, WORD weight,
-                          WORD h, UWORD *buf)
-{
-    const UBYTE *src = (const UBYTE *)fnt->dat_table + ((sourcex >> 3) & ~1);
-    WORD sx = sourcex & 0x000f, keep = w - weight, r, k;
-    UWORD keep_mask, w_mask, g;
-    ULONG bits;
-
-    keep_mask = (keep > 0) ? (UWORD)(0xffffU << (16 - keep)) : 0;
-    w_mask = (UWORD)(0xffffU << (16 - w));
-    for (r = 0; r < h; r++)
-    {
-        bits = ((ULONG)((const UWORD *)src)[0] << 16) | ((const UWORD *)src)[1];
-        g = (UWORD)((bits << sx) >> 16) & keep_mask;
-        for (k = 0; k < weight; k++)
-            g |= g >> 1;
-        buf[r] = g & w_mask;
-        src += fnt->form_width;
-    }
-}
-
-
-/*
  * blitter_text_string()
  *
  * Output the start of a string of plain text, glyph by glyph, with the
@@ -1597,7 +1564,8 @@ WORD blitter_bold_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTI
     n = 0;
     for (;;)
     {
-        thicken_glyph(fnt, off_table[c], w, weight, h, tbuf);
+        thicken_glyph((const UBYTE *)fnt->dat_table + ((off_table[c] >> 3) & ~1),
+                      fnt->form_width, off_table[c] & 0x000f, w, weight, h, tbuf);
         if (BLITTER_CACHE_OPS)
             flush_data_cache(tbuf, (LONG)h * sizeof(UWORD));
         sx = 0;                         /* a glyph starts the buffer's words */
