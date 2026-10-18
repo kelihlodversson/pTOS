@@ -107,21 +107,28 @@ void qsort(void *base, size_t nmemb, size_t size,
 long strtol(const char *RESTRICT nptr, char **RESTRICT endptr, int base)
 {
     const char *s = nptr;
-    unsigned long v = 0;
-    int neg = 0, any = 0, d;
+    unsigned long v = 0, limit, cutoff;
+    int neg = 0, any = 0, overflow = 0, d, cutlim;
 
     while (*s == ' ' || (*s >= '\t' && *s <= '\r'))
         s++;
     if (*s == '-' || *s == '+')
         neg = (*s++ == '-');
 
-    if ((base == 0 || base == 16) && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+    /* "0x" is a prefix only if a hex digit follows, else "0" is the number */
+    if ((base == 0 || base == 16) && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')
+        && ((s[2] >= '0' && s[2] <= '9') || ((s[2] | 0x20) >= 'a' && (s[2] | 0x20) <= 'f')))
     {
         s += 2;
         base = 16;
     }
     else if (base == 0)
         base = (*s == '0') ? 8 : 10;
+
+    /* as the standard's: out of range values saturate (there is no errno) */
+    limit = neg ? (unsigned long)__LONG_MAX__ + 1UL : (unsigned long)__LONG_MAX__;
+    cutoff = limit / base;
+    cutlim = (int)(limit % base);
 
     for (;; s++)
     {
@@ -135,12 +142,20 @@ long strtol(const char *RESTRICT nptr, char **RESTRICT endptr, int base)
             break;
         if (d >= base)
             break;
-        v = v * base + d;
         any = 1;
+        if (overflow || v > cutoff || (v == cutoff && d > cutlim))
+            overflow = 1;           /* keep going, for endptr */
+        else
+            v = v * base + d;
     }
 
     if (endptr)
         *endptr = (char *)(any ? s : nptr);
 
-    return neg ? -(long)v : (long)v;
+    if (overflow)
+        v = limit;
+    if (!neg)
+        return (long)v;
+
+    return (v == limit) ? -__LONG_MAX__ - 1L : -(long)v;
 }
