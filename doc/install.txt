@@ -192,6 +192,10 @@ You will also need:
     and run gmake instead.
   * Python 3 with kconfiglib, which provides the configuration front ends:
         pip3 install kconfiglib
+  * The git submodules, for the configurations that use them:
+        git submodule update --init
+    lib/libcmini is used by the regression tests and EmuCON, lib/freetype
+    by the scalable fonts (see below).
 
 
 Configuring and building
@@ -226,6 +230,18 @@ Other configuration targets:
 To contribute a new configuration, adjust it with "make menuconfig", run
 "make savedefconfig", and copy the resulting ./defconfig file to
 configs/<name>_defconfig.
+
+Scalable fonts (CONF_WITH_VDI_SCALABLE_FONTS, in the VDI menu) link the
+FreeType library from the lib/freetype submodule into the image; the build
+stops with a message if the submodule has not been fetched.  FreeType is
+compiled with the image's own compiler and flags into obj/freetype-build,
+with pTOS's configuration headers from vdi/freetype/ in place of its own,
+so it needs nothing from the host's C library.  It adds about 285 KB on
+m68k and ARM and 400 KB on x86-64, so the option is on by default only for
+the images without a fixed size: the Raspberry Pi, ARM virt, m68k virt and
+x86-64 kernels.  FreeType is used under its GPL licence option (version 2
+or any later version, the same terms as pTOS; see lib/freetype/LICENSE.TXT).
+Work on the feature is tracked in #573.
 
 
 Available configurations
