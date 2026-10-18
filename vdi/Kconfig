@@ -142,6 +142,19 @@ config CONF_WITH_VDI_SCALABLE_FONTS
 
 	  Needs the submodule: git submodule update --init lib/freetype
 
+config CONF_VDI_FONT_MEMORY
+	int "Memory for the scalable fonts, in KB"
+	depends on CONF_WITH_VDI_SCALABLE_FONTS && !CONF_WITH_KHEAP
+	range 256 65536
+	default 4096
+	help
+	  The memory FreeType uses (font files, which are loaded whole, the
+	  faces, sizes and glyphs it works with, and its own stack) is kept
+	  out of GEMDOS: it is set aside while the system starts, and is
+	  the kernel's, not that of whichever program the VDI happens to be
+	  working for.  A TrueType font file takes from 20 KB to about 1 MB.
+	  The x86-64 kernel uses its growable kernel heap instead.
+
 config CONF_WITH_VDI_VERTLINE
 	bool "VDI vertical line drawing speedup"
 	default n if TARGET_192

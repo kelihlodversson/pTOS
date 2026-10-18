@@ -35,6 +35,10 @@ extern long kdos_malloc(long amount);
 extern long kdos_mfree(long block);
 extern long kdos_mshrink(long block, long newsiz);
 extern long kdos_pexec(long mode, long path, long tail, long env);
+extern long kdos_fopen(long name, long mode);
+extern long kdos_fclose(long h);
+extern long kdos_fread(long h, long count, long buf);
+extern long kdos_fseek(long offset, long h, long mode);
 extern void kdos_pterm(long rc);
 
 #define Crawio(w) kdos_crawio(TRAP1_ARG(w))
@@ -48,6 +52,10 @@ extern void kdos_pterm(long rc);
 #define Pexec(mode,name,cmdline,env) kdos_pexec(TRAP1_ARG(mode), TRAP1_ARG(name), TRAP1_ARG(cmdline), TRAP1_ARG(env))
 #define Fsfirst(filename,attr) kdos_fsfirst(TRAP1_ARG(filename), TRAP1_ARG(attr))
 #define Fsnext() kdos_fsnext()
+#define Fopen(fname,mode) kdos_fopen(TRAP1_ARG(fname), TRAP1_ARG(mode))
+#define Fclose(handle) kdos_fclose(TRAP1_ARG(handle))
+#define Fread(handle,count,buf) kdos_fread(TRAP1_ARG(handle), TRAP1_ARG(count), TRAP1_ARG(buf))
+#define Fseek(offset,handle,seekmode) kdos_fseek(TRAP1_ARG(offset), TRAP1_ARG(handle), TRAP1_ARG(seekmode))
 #define Pterm(rc) kdos_pterm(TRAP1_ARG(rc))
 
 /* the reentrant Pexec() of the other targets is the same call here */

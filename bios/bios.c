@@ -707,8 +707,9 @@ static void bios_init(void)
     KDEBUG(("after clock_init()\n"));
 
 #if CONF_WITH_VDI_SCALABLE_FONTS
-    /* late enough for KINFO() to reach the serial port everywhere */
-    vdi_freetype_check();   /* FreeType is linked in and works (#573) */
+    /* before GEMDOS, which takes the memory that is left; late enough for
+     * KINFO() to reach the serial port everywhere */
+    vdi_freetype_init();    /* the scalable fonts' FreeType (#573) */
 #endif
 
 #if CONF_WITH_NOVA
@@ -1095,6 +1096,10 @@ void biosmain(void)
 
     Dsetdrv(bootdev);           /* Set boot drive */
     init_default_environment(); /* Build default environment string */
+
+#if CONF_WITH_VDI_SCALABLE_FONTS && defined(CONF_DEBUG_FREETYPE_TEST_FONT)
+    vdi_freetype_test_font();   /* check FreeType's port layer with a font */
+#endif
 
 #if CONF_WITH_X86_64_MEMTEST
     x86_64_memtest_run();       /* reports "x86-64 memtest: PASS" or FAIL */
