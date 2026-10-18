@@ -416,6 +416,14 @@ EMUTOS_IMG = emutos.img
 endif
 endif
 
+ifdef BUILD_TOOLCHAIN_IS_ELF
+# The hand-written .S files carry no .note.GNU-stack section, which recent
+# binutils (2.45 in the -mfastcall toolchain) warns about.  A ROM or RAM
+# image has no stack permissions to set, so say so instead.
+LDFLAGS += -Wl,-z,noexecstack
+PCREL_LDFLAGS += -Wl,-z,noexecstack
+endif
+
 #
 # TOCLEAN accumulates the names of the files to remove on "make clean".
 # Temporary Makefile files are *.tmp.

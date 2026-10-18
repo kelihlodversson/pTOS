@@ -83,7 +83,7 @@ WORD dos_label(char drive, char *plabel)
     char    path[8];
     WORD    result;
 
-    save_dta = Fgetdta();
+    save_dta = dos_gdta();
     Fsetdta(&dta);
     strcpy(path, " :\\*.*");
     path[0] = (drive + 'A') - 1;

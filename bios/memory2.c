@@ -141,9 +141,9 @@ void ttram_detect(void)
 /* Initialize all Alt-RAM */
 void altram_init(void)
 {
-#if CONF_WITH_STATIC_ALT_RAM && defined(STATIC_ALT_RAM_SIZE)
+#if CONF_WITH_STATIC_ALT_RAM && defined(STATIC_ALT_RAM_SIZE) && STATIC_ALT_RAM_SIZE != 0
     KDEBUG(("xmaddalt() static adr=%p size=%ld\n",
-        (UBYTE *)STATIC_ALT_RAM_ADDRESS, STATIC_ALT_RAM_SIZE));
+        (UBYTE *)STATIC_ALT_RAM_ADDRESS, (long)STATIC_ALT_RAM_SIZE));
     xmaddalt((UBYTE *)STATIC_ALT_RAM_ADDRESS, STATIC_ALT_RAM_SIZE);
     return;
 #endif
