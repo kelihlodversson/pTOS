@@ -122,7 +122,7 @@ void flush(BCB *b)
 BCB *getbcb(DMD *dmd,WORD buftype,RECNO recnum)
 {
     BCB *b;
-    BCB *p, *mtbuf, **q, **phdr;
+    BCB *p, *mtbuf, *prev, **phdr;
     int err;
 
     mtbuf = 0;
@@ -135,7 +135,7 @@ BCB *getbcb(DMD *dmd,WORD buftype,RECNO recnum)
      *          the last (least recently) used buffer.
      */
 
-    for (b = *(q = phdr); b; b = *(q = (BCB **)(void *)b))
+    for (prev = NULL, b = *phdr; b; prev = b, b = b->b_link)
     {
         if ((b->b_bufdrv == dmd->m_drvnum) && (b->b_buftyp == buftype) && (b->b_bufrec == recnum))
             break;
@@ -159,7 +159,7 @@ BCB *getbcb(DMD *dmd,WORD buftype,RECNO recnum)
          * is the least recently used.
          */
 
-doio:   for (p = *(q = phdr); p->b_link; p = *(q = (BCB **)(void *)p))
+doio:   for (prev = NULL, p = *phdr; p->b_link; prev = p, p = p->b_link)
             if (b == p)
                 break;
         b = p;
@@ -202,7 +202,10 @@ doio:   for (p = *(q = phdr); p->b_link; p = *(q = (BCB **)(void *)p))
      *  now put the current buffer at the head of the list
      */
 
-    *q = b->b_link;
+    if (prev)                   /* unlink it */
+        prev->b_link = b->b_link;
+    else
+        *phdr = b->b_link;
     b->b_link = *phdr;
     *phdr = b;
 

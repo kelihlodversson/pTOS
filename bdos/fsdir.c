@@ -157,7 +157,9 @@ FCB *ixsnext(DTAINFO *dt);     /* exposed via fs_internal.h for fs/fatfs_pfs.c *
 /*
  *  local macros
  */
-#define dirscan(a,c) ((DND *) scan(a,c,FA_SUBDIR,(LONG*)&negone))
+/* with posp -1, scan() returns the DND itself, not an FCB; going through
+ * uintptr_t keeps gcc from treating it as a (packed) FCB pointer */
+#define dirscan(a,c) ((DND *)(uintptr_t)scan(a,c,FA_SUBDIR,(LONG*)&negone))
 
 
 /*
