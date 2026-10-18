@@ -8,8 +8,8 @@
  *
  * This suite writes a file on Q:, then drives Fseek() through all
  * three seek modes and out of range, checking the bytes read at each
- * position, and reads the file's date and time.  It is skipped where
- * there is no Q: drive.
+ * position, reads the file's date and time, and redirects standard
+ * input to it with Fforce().  It is skipped where there is no Q: drive.
  *
  * Copyright (C) 2026 The pTOS development team
  *
@@ -35,7 +35,7 @@ void test_pfs_seek(void)
     char buf[FIXTURE_N];
     _DOSTIME dt;
     long rc;
-    short fd;
+    short fd, saved;
     int i;
 
     ptest_begin("pfs_seek (#589)");
@@ -116,6 +116,25 @@ void test_pfs_seek(void)
     rc = Fdatime(&dt, fd, 0);
     ptest_assert_msg(rc == 0, "Fdatime(get) failed");
     ptest_assert_msg(dt.date != 0, "Fdatime(get) gave no date");
+
+    /* standard input redirected to it, and back to the console */
+    saved = (short)Fdup(0);
+    ptest_assert_msg(saved >= 0, "Fdup(0) failed");
+    if (saved >= 0)
+    {
+        rc = Fforce(0, fd);
+        ptest_assert_msg(rc == 0, "Fforce(0) to the file failed");
+        if (rc == 0)
+        {
+            rc = Fseek(100L, 0, 0);
+            ptest_assert_msg(rc == 100, "Fseek on the redirected handle");
+            rc = Fread(0, 4, buf);
+            ptest_assert_msg(rc == 4 && memcmp(buf, data + 100, 4) == 0,
+                             "read from the redirected handle");
+        }
+        Fforce(0, saved);
+        Fclose(saved);
+    }
 
     Fclose(fd);
     Fdelete(FIXTURE);
