@@ -349,3 +349,6 @@ including nested Pexec and PE_LOAD/GO, verifies read-only client code and
 fault cleanup; both configurations reject invalid metadata, and the baseline
 refuses the optional import. The host test also checks packaging refusals
 for an unknown function and a different library dependency.
+
+Minimal boot disks without VDIIMP.TOS skip the disk import test; the dedicated
+PC CI boot jobs supply the fixtures and require its PASS marker.

@@ -1247,6 +1247,38 @@ static void probe_expect(char mode, long want, const char *what)
     same(&s, what);
 }
 
+/* Like the other disk-loader tests, this can be absent from a minimal
+ * boot disk. The dedicated PC CI boots require the PASS marker. */
+static void test_vdi_imports(void)
+{
+    SNAP s;
+    int before = failures;
+    long rc;
+
+    snap(&s);
+    rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "", NULL);
+    if (rc == EFILNF) {
+        same(&s, "absent VDI imported client fixture");
+        kcprintf("x86-64 VDI imports: SKIP (no VDIIMP.TOS)\n");
+        return;
+    }
+#if CONF_WITH_X32_VDI
+    CHECK(rc == 0, "loaded application imports the x32 VDI client");
+    rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "w", NULL);
+    CHECK(rc == 0xffff, "imported VDI code is read-only in user mode");
+    rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "f", NULL);
+    CHECK(rc == 0xffff, "a fault in an imported client reclaims workstations");
+    rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "", NULL);
+    CHECK(rc == 0, "imported VDI remains usable after a fault");
+#else
+    CHECK(rc == EPLFMT, "the baseline refuses optional VDI imports");
+#endif
+    same(&s, "VDI imported client processes");
+    probe_expect('I', 0, "VDI imports: nested Pexec, PE_LOAD/GO, relocation and invalid metadata");
+    if (failures == before)
+        kcprintf("x86-64 VDI imports: PASS\n");
+}
+
 #if CONF_WITH_X32_VDI
 static void test_vdi_coordinate_bounds(void)
 {
@@ -1340,28 +1372,7 @@ static void test_ring3(void)
      * syscall boundary, and the exit code coming back */
     probe_expect('e', 0, "ring-3 entry state: basepage, type, stack, CPL 3, GEMDOS call");
     probe_expect('x', 0x1234, "ring-3 exit code reaches the launcher");
-    {
-        int before = failures;
-
-        snap(&s);
-#if CONF_WITH_X32_VDI
-        rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "", NULL);
-        CHECK(rc == 0, "loaded application imports the x32 VDI client");
-        rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "w", NULL);
-        CHECK(rc == 0xffff, "imported VDI code is read-only in user mode");
-        rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "f", NULL);
-        CHECK(rc == 0xffff, "a fault in an imported client reclaims workstations");
-        rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "", NULL);
-        CHECK(rc == 0, "imported VDI remains usable after a fault");
-#else
-        rc = Pexec(PE_LOADGO, "VDIIMP.TOS", "", NULL);
-        CHECK(rc == EPLFMT, "the baseline refuses optional VDI imports");
-#endif
-        same(&s, "VDI imported client processes");
-        probe_expect('I', 0, "VDI imports: nested Pexec, PE_LOAD/GO, relocation and invalid metadata");
-        if (failures == before)
-            kcprintf("x86-64 VDI imports: PASS\n");
-    }
+    test_vdi_imports();
     probe_expect('V', 0, "x32 VDI control layout, opcode tags and bitmap bounds");
 #if CONF_WITH_X32_VDI
     {
