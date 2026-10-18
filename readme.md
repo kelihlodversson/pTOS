@@ -401,4 +401,6 @@ pTOS is derived from [EmuTOS](https://github.com/emutos/emutos).
 
 Parts of the Raspberry Pi implementation are derived from the [Circle bare-metal framework](https://github.com/rsta2/circle).
 
+The scalable fonts (`CONF_WITH_VDI_SCALABLE_FONTS`) use [FreeType](https://freetype.org/), included as the `lib/freetype` submodule and used under its GPL licence option (version 2 or any later version, the same terms as pTOS). It is on by default only for the Raspberry Pi, virt and x86-64 kernels.
+
 See [`doc/license.txt`](doc/license.txt) and the individual source-file headers for licensing information.

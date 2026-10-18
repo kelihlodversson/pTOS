@@ -110,7 +110,10 @@ jobs:
       matrix:
         config: ${{ fromJSON(needs.configurations.outputs.m68k) }}
     steps:
+      # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       # Same idea as the architecture split above: a config that turns on
       # CONF_WITH_MFASTCALL needs Thorsten Otto's toolchain instead of
@@ -186,7 +189,10 @@ jobs:
       matrix:
         config: ${{ fromJSON(needs.configurations.outputs.arm) }}
     steps:
+      # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - uses: ./.github/actions/setup-toolchain
         with:
@@ -231,7 +237,10 @@ jobs:
       matrix:
         config: ${{ fromJSON(needs.configurations.outputs.x86_64) }}
     steps:
+      # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - uses: ./.github/actions/setup-toolchain
         with:

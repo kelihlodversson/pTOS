@@ -16,3 +16,6 @@ ifdef CONF_WITH_AES
 obj-y += gemdos.o optimize.o rectfunc.o
 obj-$(ARCH_M68K) += optimopt.o
 endif
+
+# C library routines that only FreeType needs (CONF_WITH_VDI_SCALABLE_FONTS).
+obj-$(CONF_WITH_VDI_SCALABLE_FONTS) += clibext.o

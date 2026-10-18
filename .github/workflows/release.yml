@@ -120,7 +120,10 @@ jobs:
     needs: version
     runs-on: ubuntu-latest
     steps:
+      # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - uses: ./.github/actions/setup-toolchain
         with:
