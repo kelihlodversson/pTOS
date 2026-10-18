@@ -212,8 +212,10 @@ void update_rez_dependent(void)
     mcs_ptr = (MCS *)&linea_vars.mouse_cursor_save;
 #endif
 
-    linea_vars.DEV_TAB[0] = linea_vars.V_REZ_HZ - 1;
-    linea_vars.DEV_TAB[1] = linea_vars.V_REZ_VT - 1;
+    /* VDI's geometry and clip fields use signed WORD coordinates even
+     * when the physical dimensions in line-A are unsigned WORDs. */
+    linea_vars.DEV_TAB[0] = min((LONG)linea_vars.V_REZ_HZ - 1, 32767L);
+    linea_vars.DEV_TAB[1] = min((LONG)linea_vars.V_REZ_VT - 1, 32767L);
     get_pixel_size(&linea_vars.DEV_TAB[3],&linea_vars.DEV_TAB[4]);
     linea_vars.DEV_TAB[13] = (linea_vars.v_planes<8) ? (1 << linea_vars.v_planes) : 256;
     linea_vars.DEV_TAB[35] = (linea_vars.v_planes==1) ? 0 : 1;

@@ -1248,15 +1248,17 @@ static void probe_expect(char mode, long want, const char *what)
 }
 
 #if CONF_WITH_X32_VDI
-static void test_vdi_pixel_coordinates(void)
+static void test_vdi_coordinate_bounds(void)
 {
     struct _lineavars *saved;
+    const UWORD heights[] = { 32768U, 32769U, 65535U };
     SNAP s;
+    ULONG i;
     int before = failures;
 
     snap(&s);
     saved = kalloc(sizeof(*saved));
-    CHECK(saved != NULL, "snapshot line-A state for pixel coordinate test");
+    CHECK(saved != NULL, "snapshot line-A state for VDI coordinate test");
     if (!saved)
         return;
     *saved = linea_vars;
@@ -1264,13 +1266,15 @@ static void test_vdi_pixel_coordinates(void)
      * address. The probe sends the high coordinate expecting rejection;
      * the valid signed boundary uses an invalid output buffer so neither
      * case needs to read beyond the real framebuffer. */
-    linea_vars.V_REZ_VT = 32769U;
-    probe_expect('P', 0, "ring-3 pixel coordinates are checked before signed WORD narrowing");
+    for (i = 0; i < ARRAY_SIZE(heights); i++) {
+        linea_vars.V_REZ_VT = heights[i];
+        probe_expect('P', 0, "large-screen VDI coordinate bounds and visible clipped lines");
+    }
     linea_vars = *saved;
     kfree(saved);
-    same(&s, "pixel coordinate VDI test");
+    same(&s, "coordinate bounds VDI test");
     if (failures == before)
-        kcprintf("x86-64 VDI pixel coordinates: PASS\n");
+        kcprintf("x86-64 VDI coordinate bounds: PASS\n");
 }
 
 static void test_vdi_padded_pitch(void)
@@ -1343,7 +1347,7 @@ static void test_ring3(void)
 
         probe_expect('W', 0, "ring-3 VDI workstation, coordinate, raster and rejected-vector calls");
         test_vdi_padded_pitch();
-        test_vdi_pixel_coordinates();
+        test_vdi_coordinate_bounds();
         probe_expect('!', 0xffff, "a user fault reclaims its open VDI workstations");
         probe_expect('W', 0, "VDI remains usable after a client's fault");
         if (failures == before)

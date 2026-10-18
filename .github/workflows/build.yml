@@ -372,8 +372,8 @@ jobs:
             echo "::error::VDI initialization or drawing corrupted padded framebuffer rows"
             exit 1
           fi
-          if grep -q '^CONF_WITH_X32_VDI=y' .config && ! grep -q 'x86-64 VDI pixel coordinates: PASS' boot.log; then
-            echo "::error::VDI pixel coordinates were not checked before signed WORD narrowing"
+          if grep -q '^CONF_WITH_X32_VDI=y' .config && ! grep -q 'x86-64 VDI coordinate bounds: PASS' boot.log; then
+            echo "::error::VDI coordinate bounds or large-screen drawing checks did not pass"
             exit 1
           fi
 

@@ -158,7 +158,10 @@ Polyline coordinates are bounded to +/-10000. The service always clips to
 the framebuffer, intersecting an enabled workstation rectangle without
 changing its saved clipping state. This screen bound remains mandatory
 when optional workstation clipping is disabled; empty intersections draw
-nothing. Clipping accepts only flags 0 or 1. Pixel reads
+nothing. Screen maxima and reported VDI geometry are capped at 32767
+before storing them in signed WORD fields. The physical dimensions and
+framebuffer stride retain their hardware values. Clipping accepts only
+flags 0 or 1. Pixel reads
 validate coordinates against the actual screen dimensions and reject
 values above 32767 before narrowing to the renderer's signed WORDs. Pixel
 results retain the existing VDI backend's representation, including hardware
@@ -282,8 +285,11 @@ pixels before opening a workstation. Workstation initialization, console
 clears and the real ring-3 drawing calls must preserve those sentinels and
 both line-A pitch fields. CI requires "x86-64 VDI padded pitch: PASS".
 
-A pixel-coordinate boot regression advertises 32769 rows and exercises
-raw ring-3 calls at the signed WORD boundary and with larger 64-bit values.
+A coordinate-bound boot regression advertises heights of 32768, 32769 and
+65535 rows and exercises raw ring-3 calls at the signed WORD boundary and
+with larger 64-bit values. Low-coordinate lines must change pixels with
+optional clipping both disabled and enabled, and reported VDI geometry
+must remain representable by signed WORDs.
 Invalid requests must leave output buffers untouched and cannot reach the
 renderer. The valid boundary is checked with a null output buffer, avoiding
 any read beyond the real fixture's framebuffer.

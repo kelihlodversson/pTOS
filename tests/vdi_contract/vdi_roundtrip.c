@@ -4,7 +4,7 @@
 #include "gemerror.h"
 
 int vdi_roundtrip_checks(WORD inherited_handle, BOOL fault_after_open);
-int vdi_pixel_bounds_checks(void);
+int vdi_coordinate_bounds_checks(void);
 
 #if CONF_WITH_X32_VDI
 static UWORD bitmap_source[8], bitmap_destination[8];
@@ -36,22 +36,25 @@ static LONG raw_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     return raw_call(VDI_SERVICE_CLASS, fn, a, b, c, d);
 }
 
-int vdi_pixel_bounds_checks(void)
+int vdi_coordinate_bounds_checks(void)
 {
 #if CONF_WITH_X32_VDI
     VDI_SERVICE_WORKSTATION workstation;
     WORD input[11] = { 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 2 };
     WORD output[2] = { 0x1234, 0x5678 };
-    const UQUAD rejected[] = { 32768, 65535, 65536, 0x100000000ULL, ~(UQUAD)0 };
+    WORD points[4] = { 2, 2, 6, 2 }, rectangle[4] = { 0, 0, 8, 8 };
+    const UQUAD rejected[] = { 32768, 65534, 65535, 65536, 0x100000000ULL, ~(UQUAD)0 };
     UWORD handle;
     ULONG i;
-    int failures = 0;
+    int phase, failures = 0;
+    WORD white;
 
 #define CHECK(condition) do { if (!(condition) && !failures) failures = __LINE__; } while (0)
     if (raw_service(VDI_SERVICE_OPEN, (uintptr_t)input, (uintptr_t)&workstation, 0, 0))
         return __LINE__;
     handle = workstation.handle;
-    /* The boot fixture advertises 32769 rows. y=32767 fits the renderer's
+    CHECK(workstation.intout[1] == 32767);
+    /* The boot fixture advertises at least 32768 rows. y=32767 fits the renderer's
      * signed WORD; a null output tests its acceptance without reading a
      * pixel beyond the real fixture's framebuffer. y=32768 must be
      * refused before it can wrap to a negative backend coordinate. */
@@ -62,6 +65,20 @@ int vdi_pixel_bounds_checks(void)
         CHECK(output[0] == 0x1234 && output[1] == 0x5678);
     }
     CHECK(raw_service(VDI_SERVICE_PIXEL, handle, 0, 0, (uintptr_t)output) == E_OK);
+    /* A large physical height must not wrap VDI's screen or workstation
+     * clip bounds and silently discard ordinary low-coordinate drawing. */
+    for (phase = 0; phase < 2; phase++) {
+        if (phase)
+            CHECK(raw_service(VDI_SERVICE_CLIP, handle, 1, (uintptr_t)rectangle, 0) == E_OK);
+        CHECK(raw_service(VDI_SERVICE_COLOR, handle, 0, 0, 0) == 0);
+        CHECK(raw_service(VDI_SERVICE_LINE, handle, 2, (uintptr_t)points, 0) == E_OK);
+        CHECK(raw_service(VDI_SERVICE_PIXEL, handle, 4, 2, (uintptr_t)output) == E_OK);
+        white = output[1];
+        CHECK(raw_service(VDI_SERVICE_COLOR, handle, 1, 0, 0) == 1);
+        CHECK(raw_service(VDI_SERVICE_LINE, handle, 2, (uintptr_t)points, 0) == E_OK);
+        CHECK(raw_service(VDI_SERVICE_PIXEL, handle, 4, 2, (uintptr_t)output) == E_OK);
+        CHECK(output[1] != white);
+    }
     CHECK(raw_service(VDI_SERVICE_CLOSE, handle, 0, 0, 0) == E_OK);
 #undef CHECK
     return failures;

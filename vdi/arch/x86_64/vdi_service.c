@@ -11,6 +11,7 @@
 #include "gemerror.h"
 #include "string.h"
 #include "biosbind.h"
+#include "intmath.h"
 #include "procmem.h"
 #include "../../../bdos/kproc.h"
 
@@ -163,7 +164,10 @@ static LONG coordinate_call(ULONG fn, UQUAD handle, UQUAD value, UQUAD address)
     if (fn == VDI_SERVICE_LINE) {
         Vwk *vwk = get_vwk_by_handle(control.handle);
         VwkClip saved = *VDI_CLIP(vwk);
-        VwkClip bounded = { 0, linea_vars.V_REZ_HZ - 1, 0, linea_vars.V_REZ_VT - 1 };
+        VwkClip bounded = {
+            0, min((LONG)linea_vars.V_REZ_HZ - 1, 32767L),
+            0, min((LONG)linea_vars.V_REZ_VT - 1, 32767L)
+        };
         WORD clip = vwk->clip;
 
         /* Legacy VDI permits unchecked drawing with clip == FALSE.
