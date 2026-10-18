@@ -90,9 +90,9 @@ static ULONG detect_ttram_size(void)
 /* Detect TT-RAM and set ramtop/ramvalid */
 void ttram_detect(void)
 {
-/* ramtop/ramvalid do not exist in the ARM variant of the fixed sysvars
- * layout (see tosvars.ld), so there is nothing to report there. */
-#if !ARCH_ARM
+/* ramtop/ramvalid do not exist in the ARM or x86-64 variant of the fixed
+ * sysvars layout (see tosvars.ld), so there is nothing to report there. */
+#if !ARCH_ARM && !ARCH_X86_64
 #if CONF_WITH_TTRAM
     if (ramvalid == RAMVALID_MAGIC)
     {

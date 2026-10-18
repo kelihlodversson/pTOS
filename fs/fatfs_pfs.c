@@ -946,12 +946,10 @@ static BOOL contains_wildcard_characters(const char *test)
     return FALSE;
 }
 
-LONG fat_sfirst_path(char *name, int att)
+LONG fat_sfirst_path_at(char *name, WORD att, DTAINFO *dt)
 {
     long result;
-    DTAINFO *dt;
 
-    dt = (DTAINFO *)(run->p_xdta);
     dt->dt_offset_drive = -1L;
     result = ixsfirst(name, att, dt);
     if ((result < 0) || !contains_wildcard_characters(name))
@@ -959,12 +957,10 @@ LONG fat_sfirst_path(char *name, int att)
     return E_OK;
 }
 
-LONG fat_snext_path(void)
+LONG fat_snext_path_at(DTAINFO *dt)
 {
     FCB *f;
-    DTAINFO *dt;
 
-    dt = (DTAINFO *)run->p_xdta;
     if (dt->dt_offset_drive < 0L)
         return ENMFIL;
     f = ixsnext(dt);
@@ -973,11 +969,11 @@ LONG fat_snext_path(void)
         dt->dt_offset_drive = -1L;
         return ENMFIL;
     }
-    makbuf(f, (DTAINFO *)run->p_xdta);
+    makbuf(f, dt);
     return E_OK;
 }
 
-LONG fat_getfree_path(long *buf, int drv)
+LONG fat_getfree_path(LONG *buf, int drv)
 {
     WORD drive = drv ? (WORD)(drv - 1) : run->p_curdrv;
     return fat_dfree(NULL, drive, (ULONG *)buf);
@@ -1071,7 +1067,7 @@ LONG fat_chdir_path(char *p)
     else
         dlog = run->p_curdrv;
 
-    olddir = run->p_curdir[dlog];
+    olddir = PD_CURDIR(run)[dlog];
 
     dnd = findit(p, &s, 1);
     if (DND_IS_ERRCODE(dnd))
@@ -1082,7 +1078,7 @@ LONG fat_chdir_path(char *p)
     newdir = incr_curdir_usage(dnd);
     if (newdir < 0)
         return EPTHNF;
-    run->p_curdir[dlog] = newdir;
+    PD_CURDIR(run)[dlog] = newdir;
 
     if (olddir)
         decr_curdir_usage(olddir);
@@ -1104,7 +1100,7 @@ LONG fat_getdir_path(char *buf, int drv)
         return EDRIVE;
     }
 
-    n = run->p_curdir[drv];
+    n = PD_CURDIR(run)[drv];
     p = dirtbl[n].dnd;
     len = LEN_ZPATH - 3;
     buf = dopath(p, buf, &len);
@@ -1152,7 +1148,7 @@ LONG fat_chmod_path(char *p, int wrt, char mod)
     return (long)(char)attr;
 }
 
-long fat_rename_path(char *p1, char *p2)
+LONG fat_rename_path(char *p1, char *p2)
 {
     DND *dn1, *dn2;
     const char *s1, *s2;

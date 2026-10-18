@@ -83,13 +83,16 @@ LONG bcostat3(void)
 /* send a byte to the MIDI ACIA */
 LONG bconout3(WORD dev, WORD c)
 {
+#if CONF_WITH_MIDI_ACIA
     while(!bcostat3())
         ;
 
-#if CONF_WITH_MIDI_ACIA
     midi_acia.data = c;
     return 1L;
 #else
+    /* no MIDI port, and so nothing that could ever become ready to wait for:
+     * the byte is dropped (a loop here would hang the machine, for one thing
+     * a user process can ask for through Bconout() or Midiws()) */
     return 0L;
 #endif
 }

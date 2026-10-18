@@ -20,6 +20,7 @@
 #include "fs.h"
 #include "mem.h"
 #include "proc.h"
+#include "kproc.h"
 #include "gemerror.h"
 #include "biosbind.h"
 #include "string.h"
@@ -28,9 +29,6 @@
 #include "tosvars.h"
 #include "has.h"
 #include "../bios/vectors.h"
-#if ARCH_ARM
-#include "arch/arm/entry.h"
-#endif
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
 #endif
@@ -40,6 +38,10 @@
  * defines
  */
 #define TPASIZE_QUANTUM (128*1024L)     /* see alloc_tpa() */
+
+#if CONF_WITH_PROCMEM
+#include "procmem.h"
+#endif
 
 /*
  * forward prototypes
@@ -59,6 +61,177 @@ static void proc_go(PD *p);
 
 PD      *run;           /* ptr to PD for current process */
 
+#if CONF_WITH_USER_ASPACE
+/* Kernel code marks a freshly created ROM basepage here before Pexec(). */
+static PD *kernel_code_pd;
+
+void mark_kernel_code_pd(PD *p)
+{
+    kernel_code_pd = p;
+}
+
+/* Pexec() from a process with an address space of its own (see
+ * doc/x86_64-address-space.txt, "Basepages in ring 3"): the caller owns what
+ * it creates, and may only launch what the kernel made for it. */
+static BOOL caller_has_aspace(void)
+{
+    return kproc_user_aspace(run) != NULL;
+}
+
+static LONG check_launch(PD *p)
+{
+    return caller_has_aspace() ? kproc_check_launch(p, run) : E_OK;
+}
+
+static void hand_over(PD *p)
+{
+    kproc_set_creator(p, run);
+    if (caller_has_aspace())
+        kproc_hand_over(run, p);
+}
+
+/* PE_GO: a program PE_LOAD put in the caller's heap goes back there at the end */
+static void give_back_image(PD *p, BOOL give_back)
+{
+    kproc_set_give_back(p, give_back);
+}
+
+/*
+ * Per-launch setup that can fail for lack of memory, done where Pexec()
+ * can still return ENSMEM: a kernel-code process runs in ring 0 and needs
+ * nothing; a real one gets its address space here, owned by its KPROC record
+ * from now on (see kproc_prepare_user()).
+ */
+static BOOL prepare_launch(PD *p)
+{
+    if (kernel_code_pd == p)
+        return TRUE;
+    return kproc_prepare_user(p, run);
+}
+
+BOOL take_kernel_code_pd(PD *p)
+{
+    if (kernel_code_pd != p)
+        return FALSE;
+
+    kernel_code_pd = NULL;
+    return TRUE;
+}
+#endif /* CONF_WITH_USER_ASPACE */
+
+#if CONF_WITH_PROCMEM
+static void release_pd_files(PD *r);
+
+/* Drops the kernel-private record keyed by a freed process block.  A
+ * basepage that was created (inheriting its parent's standard handles and
+ * current directories in init_pd_files()) but never launched still holds
+ * those references, and nothing else will ever release them: do it now,
+ * exactly once -- the record is the proof it has not been done. */
+static void proc_release_block(void *base)
+{
+    /* the tables are in the record: release through it, then drop it */
+    if (kproc_unlaunched((PD *)base))
+        release_pd_files((PD *)base);
+    kproc_discard((PD *)base);
+#if CONF_WITH_USER_ASPACE
+    /* a block lent to a launcher with an address space goes back, but only
+     * after its basepage has been read: that launcher's page tables are loaded */
+    kproc_unborrow(base);
+#endif
+}
+
+/* Ptermres: an unlaunched child basepage the terminating process owns stays
+ * allocated, but its record goes, like reserve_blocks() drops it.  The record
+ * is also what says its inherited file and directory references are still
+ * held, so they are released now and cleared from the basepage: whoever
+ * launches or frees it later must not release them a second time. */
+static void proc_drop_child_record(void *base)
+{
+    PD *child = (PD *)base;
+
+    /* (the tables go with the record: later users of the basepage find the
+     * basepage's own, zero, ones and release nothing a second time) */
+    if (kproc_unlaunched(child))
+        release_pd_files(child);
+    kproc_discard(child);
+#if CONF_WITH_USER_ASPACE
+    kproc_unborrow(base);       /* lent to a launcher while it was built */
+#endif
+}
+
+/* Pending Ptermres: applied by xterm() once the process's address space is
+ * gone, because only then can the unused tail of its block be released. */
+static PD *proc_resident_pd;
+static ULONG proc_resident_len;
+
+void proc_make_resident(PD *p, ULONG keep_bytes)
+{
+#if CONF_WITH_USER_ASPACE
+    /* The process's own block is not passed to the callback below, and its
+     * tail cannot be given back while the launcher still has it mapped: return
+     * what a launcher borrowed for it first (its environment goes through the
+     * callback). */
+    /* (a basepage the launcher owns, launched with PE_GO, stays its: the
+     * grant it was given goes on) */
+    if (procmem_owner(p) == p)
+        kproc_unborrow(p);
+#endif
+    procmem_keep(p, keep_bytes, proc_drop_child_record);
+}
+
+/*
+ * Frees every process allocation `p` owns (the counterpart of
+ * free_all_owned() for the MPB lists), dropping KPROC records of any
+ * basepages among them first.
+ */
+void proc_free_owned(PD *p)
+{
+    procmem_free_owned(p, proc_release_block);
+}
+
+/* Mfree() of a process allocation: same release, one block.  `trusted` is
+ * Pexec()'s own rollback of what it just allocated for its caller. */
+static long proc_mfree(void *addr, BOOL trusted)
+{
+    /* A block that a live process still has mapped (its own environment or
+     * basepage, say) cannot be freed from under it, and tearing down the
+     * address space the caller is running in would be worse: refuse, and
+     * leave the KPROC record alone. */
+#if CONF_WITH_USER_ASPACE
+    /* A caller with an address space frees what it owns and nothing else: the
+     * blocks of a process it launched are not its, nor those a peer retained. */
+    if (!trusted && caller_has_aspace() && procmem_owner(addr) != run)
+        return EACCDN;
+    if (procmem_pins(addr) > kproc_borrow_count(run, addr))
+        return EACCDN;
+#else
+    if (procmem_pins(addr) > 0)
+        return EACCDN;
+#endif
+    proc_release_block(addr);     /* also returns it if it was borrowed */
+    return procmem_free(addr) ? E_OK : EIMBA;
+}
+
+long procmem_mfree(void *addr)
+{
+    return proc_mfree(addr, FALSE);
+}
+#endif /* CONF_WITH_PROCMEM */
+
+/* xexec()'s rollback: its blocks are not owned yet, or belong to the child
+ * it failed to start, and a launcher with an address space must get back what
+ * was lent to it. */
+static void xexec_free(void *addr)
+{
+#if CONF_WITH_PROCMEM
+    if (procmem_contains(addr)) {
+        proc_mfree(addr, TRUE);
+        return;
+    }
+#endif
+    xmfree(addr);
+}
+
 /*
  * internal variables
  */
@@ -71,11 +244,7 @@ PD      *run;           /* ptr to PD for current process */
  * auto-vectorizer (-mfpu=neon-vfpv4) relies on, but a plain WORD array
  * carries no alignment guarantee beyond the compiler's incidental default.
  */
-#if ARCH_ARM
-static WORD    supstk[SUPSIZ] __attribute__((aligned(8)));
-#else
-static WORD    supstk[SUPSIZ]; /* common sup stack for all processes */
-#endif
+static WORD    supstk[SUPSIZ] __attribute__((aligned(8))); /* common sup stack for all processes */
 static jmp_buf bakbuf;         /* longjmp buffer */
 
 
@@ -100,6 +269,11 @@ static void reserve_blocks(PD *p, MPB *mpb)
 
     for (m = *(q = &mpb->mp_mal); m; m = *q) {
         if (m->m_own == p) {
+            /* the block is kept allocated rather than freed, so freeit()
+             * will not run; drop child process records here. xterm()
+             * removes p's record after calling its termination handler. */
+            if ((PD *)m->m_start != p)
+                kproc_destroy((PD *)m->m_start);
             *q = m->m_link; /* pouf ! like magic */
             xmfremd(m);
         } else {
@@ -127,7 +301,12 @@ static void free_all_owned(PD *p, MPB *mpb)
  *
  * @r: PD of process to terminate
  */
-static void ixterm(PD *r)
+/*
+ * release_pd_files - drop the file handles and current-directory references
+ * a process holds.  Called when the process terminates and, on x86-64, for
+ * a basepage discarded before it ever ran.
+ */
+static void release_pd_files(PD *r)
 {
     WORD h;
     WORD i;
@@ -135,7 +314,7 @@ static void ixterm(PD *r)
     /* check the standard devices in both file tables  */
 
     for (i = 0; i < NUMSTD; i++)
-        if ((h = r->p_uft[i]) > 0)
+        if ((h = PD_UFT(r)[i]) > 0)
             xclose(h);
 
     for (i = 0; i < OPNFILES; i++)
@@ -147,7 +326,7 @@ static void ixterm(PD *r)
 
     for (i = 0; i < NUMCURDIR; i++)
     {
-        if ((h = r->p_curdir[i]) != 0)
+        if ((h = PD_CURDIR(r)[i]) != 0)
             decr_curdir_usage(h);
     }
 
@@ -164,6 +343,13 @@ static void ixterm(PD *r)
      */
     pfs_proc_exit(r);
 #endif
+}
+
+static void ixterm(PD *r)
+{
+#if !CONF_WITH_KPROC
+    release_pd_files(r);    /* (with records: xterm() did, while the record was there) */
+#endif
 
     /* free each item in the allocated list that is owned by 'r' */
 
@@ -171,6 +357,9 @@ static void ixterm(PD *r)
 #if CONF_WITH_ALT_RAM
     if (has_alt_ram)
         free_all_owned(r, &pmdalt);
+#endif
+#if CONF_WITH_PROCMEM
+    proc_free_owned(r);
 #endif
 }
 
@@ -222,6 +411,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     KDEBUG(("BDOS xexec: flag or mode = %d\n",flag));
 
+
     /* first branch - actions that do not require loading files */
     switch(flag) {
 #if DETECT_NATIVE_FEATURES
@@ -254,7 +444,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         p = (PD *)alloc_tpa((ULONG)path,sizeof(PD),&max);
 
         if (p == NULL) {    /* not even enough memory for basepage */
-            xmfree(env_ptr);
+            xexec_free(env_ptr);
             KDEBUG(("BDOS xexec: No memory for basepage\n"));
             return ENSMEM;
         }
@@ -265,21 +455,75 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
         /* initialize the PD */
         init_pd_fields(p, tail, max, env_ptr);
+        if (!kproc_create(p)) {
+            xexec_free(env_ptr);
+            xexec_free(p);
+            return ENSMEM;
+        }
         p->p_flags = (ULONG)path;   /* set the flags */
         init_pd_files(p);
+#if CONF_WITH_USER_ASPACE
+        hand_over(p);
+#endif
 
         return (long)p;
     case PE_GOTHENFREE:
-        /* set the owner of the memory to be this process */
         p = (PD *) tail;
+#if CONF_WITH_USER_ASPACE
+        rc = check_launch(p);
+        if (rc)
+            return rc;
+#endif
+        /* The allocation can fail; retain the parent's ownership until it
+         * succeeds so an ENSMEM return leaves the retained basepage freeable. */
+        if (!kproc_create(p))
+            return ENSMEM;
+#if CONF_WITH_USER_ASPACE
+        give_back_image(p, FALSE);      /* (a PE_GO that failed before may have asked) */
+        if (!prepare_launch(p))
+            return ENSMEM;
+#endif
+        /* set the owner of the memory to be this process */
         set_owner(p, p);
-        set_owner(p->p_env, p);
+        set_owner(USERPTR_TO_PTR(p->p_env), p);
         FALLTHROUGH;
     case PE_GO:
         p = (PD *) tail;
+#if CONF_WITH_USER_ASPACE
+        if (flag == PE_GO && (rc = check_launch(p)) != E_OK)
+            return rc;
+#endif
+        if (flag == PE_GO && !kproc_create(p))
+            return ENSMEM;
+#if CONF_WITH_USER_ASPACE
+        give_back_image(p, flag == PE_GO);
+        if (flag == PE_GO && !prepare_launch(p))
+            return ENSMEM;
+#endif
         proc_go(p);
-        /* should not return ? */
-        return (long)p;
+        /*
+         * "should not return ?": on m68k/ARM, proc_go()/gouser() (rwa.S)
+         * never actually reach this line for a reentrant launch (e.g.
+         * aes/gemshlib.c's aes_run_rom_program()) -- gouser()'s own trap-
+         * return mechanism (a raw asm jump, invisible to this C code)
+         * delivers control straight back to whichever trap #1 call site
+         * originally invoked Pexec(), with D0 already holding the exit
+         * code xterm()'s own `run->p_dreg[0] = rc;` supplied, bypassing
+         * this function's own C-level return entirely.
+         *
+         * On x86-64, though, proc_go()/gouser() (rwa.c) are ordinary
+         * nested C calls with no trap involved (#334's own "no re-trap
+         * needed for kernel-internal callers" simplification) -- so this
+         * line IS genuinely reached there, once a reentrant launch's own
+         * Pterm()/Pterm0() unwinds back via gouser()'s setjmp()/
+         * longjmp() pair. By then, xterm() has already reassigned `run`
+         * to the parent (this same call's own caller) and stashed the
+         * exit code in its p_dreg[0], so returning that instead of
+         * (long)p propagates the exit code exactly like the trap-based
+         * archs' D0 does -- harmless on m68k/ARM themselves, since they
+         * never execute this statement in the first place.
+         */
+        return run->p_dreg[0];
     case PE_LOADGO:
     case PE_LOAD:
         break;
@@ -298,6 +542,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      * jump directly back to bdosmain.c, which is not a problem because
      * we haven't allocated anything yet.
      */
+#if CONF_WITH_USER_ASPACE && CONF_WITH_ELF_LOADER
+    elf_set_load_into_caller(flag == PE_LOAD);
+#endif
     rc = kpgmhdrld(path, &hdr, &fh);
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmhdrld returned %ld (0x%lx)\n",rc,rc));
@@ -319,7 +566,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     /* if failed, free env_ptr and return */
     if (p == NULL) {
         KDEBUG(("BDOS xexec: no memory for TPA\n"));
-        xmfree(env_ptr);
+        xexec_free(env_ptr);
         xclose(fh);
         return ENSMEM;
     }
@@ -333,6 +580,12 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     /* initialize the fields in the PD structure */
     init_pd_fields(p, tail, max, env_ptr);
+    if (!kproc_create(p)) {
+        xexec_free(env_ptr);
+        xexec_free(p);
+        xclose(fh);
+        return ENSMEM;
+    }
 
     /* set the flags (must be done after init_pd) */
     p->p_flags = hdr.h01_flags;
@@ -347,8 +600,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         KDEBUG(("Error and longjmp in xexec()!\n"));
 
         /* free any memory allocated so far & close the file */
-        xmfree(cur_p->p_env);
-        xmfree(cur_p);
+        kproc_destroy(cur_p);
+        xexec_free(USERPTR_TO_PTR(cur_p->p_env));
+        xexec_free(cur_p);
         xclose(fh);
 
         /* we still have to jump back to bdosmain.c so that the proper error
@@ -362,8 +616,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmld returned %ld (0x%lx)\n",rc,rc));
         /* free any memory allocated yet */
-        xmfree(cur_p->p_env);
-        xmfree(cur_p);
+        kproc_destroy(cur_p);
+        xexec_free(USERPTR_TO_PTR(cur_p->p_env));
+        xexec_free(cur_p);
 
         return rc;
     }
@@ -372,7 +627,22 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      * more I/O errors cannot occur, so it is safe now to finish initializing
      * the new process.
      */
+    /* Anything that can still fail for lack of memory is done before
+     * init_pd_files(): that takes references on inherited files and
+     * directories, which an ENSMEM return here would otherwise leak. */
+#if CONF_WITH_USER_ASPACE
+    if (flag != PE_LOAD && !prepare_launch(cur_p)) {
+        kproc_destroy(cur_p);
+        xexec_free(USERPTR_TO_PTR(cur_p->p_env));
+        xexec_free(cur_p);
+        return ENSMEM;
+    }
+#endif
     init_pd_files(cur_p);
+#if CONF_WITH_USER_ASPACE
+    if (flag == PE_LOAD)
+        hand_over(cur_p);
+#endif
 
     /* invalidate instruction cache for the TEXT segment only
      * programs that jump into their DATA, BSS or HEAP are kindly invited
@@ -380,8 +650,14 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      */
     invalidate_instruction_cache(((UBYTE *)cur_p) + sizeof(PD), hdr.h01_tlen);
 
-    if (flag != PE_LOAD)
+    if (flag != PE_LOAD) {
         proc_go(cur_p);
+#if CONF_WITH_USER_ASPACE
+        /* Returns here, unlike without CONF_WITH_USER_ASPACE (see the PE_GO case above), once
+         * the child has exited: its exit code is in the launcher's D0. */
+        return run->p_dreg[0];
+#endif
+    }
     return (long)cur_p;
 }
 
@@ -394,25 +670,22 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
     /* first, zero it out */
     bzero(p, sizeof(PD)) ;
 
-    /* memory values */
-    p->p_lowtpa = (UBYTE *)p;              /*  M01.01.06   */
-    p->p_hitpa  = (UBYTE *)p  +  max;      /*  M01.01.06   */
-#if ARCH_ARM
-    /*
-     * p_hitpa becomes the actual initial user-mode sp of any process
-     * launched from this PD: proc_go()'s gouser_stack is unwound entirely
-     * by gouser() (bdos/arch/arm/rwa.S), landing sp at exactly p_hitpa, not
-     * at a gouser_stack-relative offset. AAPCS requires sp to be 8-byte
-     * aligned at every public interface, which gcc's auto-vectorizer
-     * (-mfpu=neon-vfpv4) relies on, but the free-memory allocator this
-     * pointer comes from (alloc_tpa()/ffit()/getmpb()) only guarantees
-     * 4-byte alignment. Round down; losing at most 7 bytes of TPA is
-     * harmless.
-     */
-    p->p_hitpa = (UBYTE *)((ULONG)p->p_hitpa & ~7UL);
-#endif
-    p->p_xdta = (DTA *) p->p_cmdlin;       /* default p_xdta is p_cmdlin */
-    p->p_env = envptr;
+    /* memory values
+     *
+     * PTR_TO_USERPTR(), not the unchecked cast: p itself comes from
+     * alloc_tpa(), whose CONF_WITH_PROCMEM branch (bdos/proc.c) already draws
+     * from procmem's low, sub-4GiB window (bios/machine/
+     * pc-x86_64/memory.c), so this can never truncate on that arch. */
+    p->p_lowtpa = PTR_TO_USERPTR((UBYTE *)p);              /*  M01.01.06   */
+    p->p_hitpa  = PTR_TO_USERPTR((UBYTE *)p  +  max);      /*  M01.01.06   */
+    proc_align_stack(p);
+    /* Same reasoning as p_lowtpa/p_hitpa above: p_cmdlin is a field
+     * within p itself, and envptr comes from alloc_env(), whose own
+     * CONF_WITH_PROCMEM branch (bdos/proc.c) likewise draws from
+     * procmem_alloc() rather than xmxalloc()'s higher-half pool
+     * (see #360). */
+    p->p_xdta = PTR_TO_USERPTR((DTA *) p->p_cmdlin);       /* default p_xdta is p_cmdlin */
+    p->p_env = PTR_TO_USERPTR(envptr);
 
     /* copy tail */
     b = &p->p_cmdlin[0];
@@ -429,17 +702,17 @@ static void init_pd_files(PD *p)
 
     /* inherit standard files from me */
     for (i = 0; i < NUMSTD; i++) {
-        WORD h = run->p_uft[i];
+        WORD h = PD_UFT(run)[i];
         if (h > 0)
             ixforce(i, h, p);
         else
-            p->p_uft[i] = h;
+            PD_UFT(p)[i] = h;
     }
 
     /* and current directory set */
     for (i = 0; i < NUMCURDIR; i++) {
-        int dn = run->p_curdir[i];
-        p->p_curdir[i] = dn;
+        int dn = PD_CURDIR(run)[i];
+        PD_CURDIR(p)[i] = dn;
         if (dn)
             dirtbl[dn].use++;
 #if CONF_WITH_PLUGGABLE_FS
@@ -464,11 +737,37 @@ static char *alloc_env(ULONG flags, char *env)
 
     /* determine the env size */
     if (env == NULL)
-        env = run->p_env;
+        env = (char *)USERPTR_TO_PTR(run->p_env);
     size = (envsize(env) + 1) & ~1;  /* must be even */
 
     /* allocate it */
+#if CONF_WITH_PROCMEM
+    /*
+     * Same reasoning as alloc_tpa()'s own CONF_WITH_PROCMEM branch
+     * above: xmxalloc()'s ffit()/pmd free list is ultimately built from
+     * membot/memtop, which point into _end_os_stram -- an ordinary
+     * higher-half kernel symbol, so memory it hands out cannot be
+     * stored in a PD's USERPTR_T-typed p_env field without truncation
+     * (#360: this is exactly the bug that field's own corruption turned
+     * out to be, before this fix). Route through the same dedicated low
+     * pool alloc_tpa() already uses instead: an environment string is
+     * conceptually just as much "this process's own low memory" as its
+     * TPA is, and bdos/umem.c's set_owner()/xmfree() already handle an
+     * address outside every known MPB gracefully (see alloc_tpa()'s own
+     * comment), exactly what happens for memory from this same pool.
+     */
+    new_env = (char *)procmem_alloc(size, PROCMEM_ZERO);
+#if CONF_WITH_USER_ASPACE
+    /* built below under the launcher's page tables: lend it to a launcher
+     * with an address space of its own */
+    if (new_env && !kproc_borrow(run, new_env)) {
+        procmem_free(new_env);
+        new_env = NULL;
+    }
+#endif
+#else
     new_env = xmxalloc(size, (flags&PF_TTRAMLOAD) ? MX_PREFTTRAM : MX_STRAM);
+#endif
     if (new_env)
     {
         memcpy(new_env, env, size);     /* copy it */
@@ -504,11 +803,46 @@ static char *alloc_env(ULONG flags, char *env)
  * returns: ptr to allocated memory (NULL => failed)
  *          updates 'avail' with the size of allocated memory
  */
+
 static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
 {
     MD *md;
     LONG st_ram_size;
     BOOL st_ram_available = FALSE;
+
+#if CONF_WITH_PROCMEM
+    /*
+     * Process memory comes from the procmem window: there is no ST/alternate-RAM distinction to route through
+     * ffit()/pmd/pmdalt at all -- and, more fundamentally, membot/
+     * memtop (what pmd's free list is ultimately built from) point into
+     * _end_os_stram, an ordinary higher-half kernel symbol that cannot
+     * be forced low without an unrelated relocation overflow (see
+     * procmem.c's own comment on x86_64_low_tpa_init() for why). Route
+     * through that dedicated low pool instead.
+     *
+     * needed+15, not needed: init_pd_fields() (below) rounds p_hitpa
+     * (p+max) down to the nearest address satisfying the SysV/x32 ABI's
+     * process-entry stack alignment, losing up to 15 bytes -- allocate
+     * that much extra slack up front and report the padded size as
+     * *avail, so an ELF whose own size exactly equals `needed` still
+     * gets a tpalen at least that large after rounding (elf_pgmld()
+     * would otherwise wrongly reject an exact-fit image with ENSMEM;
+     * Copilot's review of #356 caught this).
+     */
+    {
+        UBYTE *low = procmem_alloc(needed + 15, PROCMEM_ZERO);
+
+#if CONF_WITH_USER_ASPACE
+        if (low && !kproc_borrow(run, low)) {   /* see alloc_env() */
+            procmem_free(low);
+            low = NULL;
+        }
+#endif
+        if (low)
+            *avail = needed + 15;
+        return low;
+    }
+#endif
 
     st_ram_size = (LONG) ffit(-1L, &pmd);
     if (st_ram_size >= needed)
@@ -572,73 +906,34 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
  *
  */
 
-#ifdef __arm__
-struct gouser_stack {
-    LONG regs[8];    /* argument registers from previous call (r7, r0-r6) */
-    LONG other_sp;   /* the other stack pointer */
-    LONG retaddr;
-    LONG spsr;       /* note the basepage is passed in r0 and not on the stack */
-};
-#else
-struct gouser_stack {
-  LONG other_sp;   /* a4, the other stack pointer */
-  WORD sr;         /* d0, the status register */
-  LONG retaddr;    /* a3, the return address */
-  LONG fill[11];   /* 10 registers d1-d7/a0-a2 and one dummy so that ... */
-  PD * basepage;   /* ... upon startup the basepage is in 4(sp) */
-};
-#endif
-
 static void proc_go(PD *p)
 {
-    struct gouser_stack *sp;
-
     KDEBUG(("BDOS xexec: trying to load (and execute) a process on %p ...\n",p->p_tbase));
-    p->p_parent = run;
-
-    /* create a stack at the end of the TPA */
-    sp = (struct gouser_stack *) (p->p_hitpa - sizeof(struct gouser_stack));
-
-#ifdef __arm__
-    p->p_dreg[0] = (LONG)p;  /* base page is passed in r0 */
-    sp->regs[1] = ARM_ENTRY_PROGRAM;
-    sp->spsr = ((get_cpsr() & ~0x1f) | 0x10); /* the process will start in user mode, same interrupts */
-    sp->retaddr = (long)p->p_tbase; /* return address is text start */
-    /* the other stack is the supervisor stack */
-    sp->other_sp = (long) &supstk[SUPSIZ];
-    /* store this new stack in the saved sp field of the PD */
-    p->p_areg[7-3] = (long) sp;
-#else
-    sp->basepage = p;      /* the stack contains the basepage */
-
-    sp->retaddr = (long)p->p_tbase; /* return address a3 is text start */
-    sp->sr = get_sr() & 0x0700;  /* the process will start in user mode, same IPL */
-
-    /* the other stack is the supervisor stack */
-    sp->other_sp = (long) &supstk[SUPSIZ];
-
-    /* store this new stack in the saved a7 field of the PD */
-    p->p_areg[7-3] = (long) sp;
-
-#if 1
-    /* the following settings are not documented, and hence theoretically
-     * the assignments below are not necessary.
-     * However, many programs test if A0 = 0 to check if they are running
-     * as a normal program or as an accessory, so we need to clear at least
-     * this register!
-     */
-    {   /* d1-d7/a0-a2 and dummy return address set to zero */
-        int i;
-        for(i = 0; i < 11 ; i++)
-            sp->fill[i] = 0;
-    }
-    p->p_areg[6-3] = (long) sp;    /* a6 to hold a copy of the stack */
-    p->p_areg[5-3] = (long)p->p_dbase;  /* a5 to point to the DATA segt */
-    p->p_areg[4-3] = (long)p->p_bbase;  /* a4 to point to the BSS segt */
+    /* PTR_TO_USERPTR(), not the unchecked cast: `run` here is always
+     * either a real, alloc_tpa()'d PD or the first process's parent,
+     * initial_basepage (bdosmain.c) -- also low on x86-64 since #360's
+     * review (bdosmain.c's osinit_after_xmaddalt() now allocates it from
+     * the same pool). Checked because xterm()/ixterm() widen p_parent
+     * back and dereference it on every Pterm(), so a truncated value
+     * here would fault there instead of trapping at the point of
+     * corruption. */
+    p->p_parent = PTR_TO_USERPTR(run);
+#if CONF_WITH_KPROC
+    kproc_set_parent(p, run);   /* the copy xterm() trusts */
 #endif
+#if CONF_WITH_USER_ASPACE
+    /* A ring-3 process cannot see its launcher's basepage, nor the
+     * launcher's own: it gets read-only copies at a fixed address instead. */
+    if (kproc_ancestors_va(p))
+        p->p_parent = (ULONG)kproc_ancestors_va(p);
 #endif
+
+    proc_launch_prepare(p, &supstk[SUPSIZ]);   /* arch: launch.c */
 
     /* the new process is the one to run */
+#if CONF_WITH_KPROC
+    kproc_mark_started(p);
+#endif
     run = (PD *)p;
 
     gouser();
@@ -673,7 +968,22 @@ void xterm(UWORD rc)
     userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
 
-    run = run->p_parent;
+#if CONF_WITH_KPROC
+    /* not run->p_parent: that field is in the process's own writable
+     * memory, and run->p_dreg[0] is written through the result below */
+    run = kproc_get_parent(p);
+    /* the file and directory tables are in the record, which goes next */
+    release_pd_files(p);
+#else
+    run = (PD *)USERPTR_TO_PTR(run->p_parent);
+#endif
+    kproc_destroy(p);
+#if CONF_WITH_PROCMEM
+    if (proc_resident_pd == p) {      /* Ptermres, now that nothing maps p */
+        proc_make_resident(p, proc_resident_len);
+        proc_resident_pd = NULL;
+    }
+#endif
     ixterm(p);
     /* gouser() will store the current value of D0 in the active PD
      * so it cannot be used here. See proc_go() above.
@@ -684,6 +994,20 @@ void xterm(UWORD rc)
     termuser();
 }
 
+
+#if CONF_WITH_USER_ASPACE
+void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp)
+{
+    ULONG word[4];
+
+    kcprintf("process fault: %s code=0x%lx addr=0x%lx pc=0x%lx sp=0x%lx\n",
+             cause, (long)code, (long)address, (long)pc, (long)sp);
+    if (kproc_copy_from_user(word, sp, sizeof(word)))
+        kcprintf("  stack: 0x%lx 0x%lx 0x%lx 0x%lx\n",
+                 (long)word[0], (long)word[1], (long)word[2], (long)word[3]);
+    xterm((UWORD)-1);
+}
+#endif
 
 /*
  * xtermres - Function 0x31 (Ptermres)
@@ -696,6 +1020,13 @@ WORD xtermres(long blkln, WORD rc)
 #if CONF_WITH_ALT_RAM
     if (has_alt_ram)
         reserve_blocks(run, &pmdalt);
+#endif
+#if CONF_WITH_PROCMEM
+    /* The window's blocks are not MPB descriptors, so xsetblk() above cannot
+     * shrink them: xterm() does it, and makes the rest resident, once the
+     * address space that maps them is destroyed. */
+    proc_resident_pd = run;
+    proc_resident_len = (ULONG)blkln;
 #endif
     xterm(rc);
 }

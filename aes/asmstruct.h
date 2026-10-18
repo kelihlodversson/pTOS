@@ -34,6 +34,23 @@
 #define UDA_SPUSER      #UDA_u_spuser         /* usp */
 #define UDA_OLDSPSUPER  #UDA_u_oldspsuper     /* ssp when AES trap is entered */
 
+#elif defined(__x86_64__)
+/*
+ * Real, generated offsets (asm_struct_gen.h), the same mechanism ARM's
+ * own branch above uses -- just without ARM's leading '#' (that's ARM's
+ * own immediate-value marker; AT&T syntax needs no prefix at all for a
+ * plain memory-operand displacement like PD_UDA(%rdi)).
+ */
+#define PD_UDA          AESPD_p_uda          /* pointer to UDA */
+#define PD_LDADDR       AESPD_p_ldaddr       /* pointer to basepage */
+
+#define UDA_SPSUPER     UDA_u_spsuper        /* saved AES-internal (kernel)
+                                               * stack pointer -- this
+                                               * arch's dsptch()/switchto()
+                                               * (gemasm.S) own coroutine
+                                               * state, not a CPU privilege-
+                                               * level register */
+
 #else
 
 /* AES PD struct */

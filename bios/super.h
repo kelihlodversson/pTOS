@@ -13,6 +13,8 @@
 #ifndef _SUPER_H
 #define _SUPER_H
 
+#include "config.h"
+
 #undef Super
 /* Standard Super() binding */
 #ifdef __arm__
@@ -28,6 +30,14 @@ static __inline__ long Super(void* ptr)
         : "r2", "r3", "r12", "lr",  "memory", "cc"
     );
     return _r0;
+}
+#elif CONF_WITH_USER_ASPACE
+/* Kernel code always runs in supervisor mode here, and a process's own
+ * Super() is answered by osif() the same way: "already supervisor". */
+static __inline__ long Super(void *ptr)
+{
+    (void)ptr;
+    return 0;
 }
 #else
 #define Super(ptr)                          \
@@ -63,8 +73,10 @@ __extension__                               \
  *
  * Binding originally by Vincent Rivière, from MiNTlib's osbind.h
  */
-#ifdef __arm__
-/* Let's start by assuming we don't have this bug on PI */
+#if CONF_WITH_NATIVE_ABI
+/* Let's start by assuming we don't have this bug on PI (and, likewise,
+ * on x86-64: trap1()'s "syscall" never touches %rsp at all, so there is
+ * no stack pointer for the bug this works around to disturb). */
 #define SuperToUser(ptr) Super(ptr)
 #else
 #define SuperToUser(ptr)                    \

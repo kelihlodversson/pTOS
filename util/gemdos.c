@@ -79,18 +79,24 @@ WORD dos_setdt(UWORD h, UWORD time, UWORD date)
 WORD dos_label(char drive, char *plabel)
 {
     DTA     dta;
+    DTA     *save_dta;
     char    path[8];
+    WORD    result;
 
+    save_dta = Fgetdta();
     Fsetdta(&dta);
     strcpy(path, " :\\*.*");
     path[0] = (drive + 'A') - 1;
     if (!Fsfirst(path,0x08))
     {
         strcpy(plabel,dta.d_fname);
-        return TRUE;
+        result = TRUE;
     }
     else
-        return FALSE;
+        result = FALSE;
+
+    Fsetdta(save_dta);
+    return result;
 }
 
 

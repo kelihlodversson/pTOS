@@ -33,6 +33,10 @@
 #include "cookie.h"
 #include "lineavars.h"
 #include "ahdi.h"
+#include "biosdefs.h"
+#include "fs.h"            /* OPNFILES */
+#include "biosext.h"       /* phys_pages_total() */
+#include "kproc.h"
 #include "string.h"
 
 /* not in tosvars.h -- only bios/arch/arm/vectors.c otherwise uses it */
@@ -135,8 +139,16 @@ static void *sval_lookup(const SVAR *table, int count, ULONG addr)
  *   - arg1 == 0: look up the NULL cookie's value, i.e. the jar's
  *     total allocated capacity (the terminator slot always carries
  *     this in .value, wherever it currently sits)
+ *
+ * arg2 is native `long`, not `LONG`: it's the caller's own destination
+ * address (`&value` in the Ssystem(S_GETCOOKIE, tag, &value) idiom
+ * above), dereferenced below as `*(LONG *)arg2` -- the LONG there is
+ * correct and unrelated (it sizes the *write*, matching struct cookie's
+ * own 32-bit .value field, not the address). arg1 needs no such
+ * widening: every one of its uses (a tag, a 1-based slot number, or 0)
+ * is a plain scalar this function never dereferences as a pointer.
  */
-static LONG ssystem_getcookie(LONG arg1, LONG arg2)
+static LONG ssystem_getcookie(long arg1, long arg2)
 {
     struct cookie *jar = (struct cookie *)p_cookies;
     struct cookie *term;
@@ -338,6 +350,71 @@ static LONG ssystem_osname(void)
     return ((LONG)'p' << 24) | ((LONG)'T' << 16) | ((LONG)'O' << 8) | 'S';
 }
 
+/*
+ * S_OSXNAME - FreeMiNT answers 'Free', the distribution; this one is built
+ * from EmuTOS
+ */
+static LONG ssystem_osxname(void)
+{
+    return ((LONG)'E' << 24) | ((LONG)'m' << 16) | ((LONG)'u' << 8) | 'T';
+}
+
+/* the OS header of the image (bios/tosvars.c) */
+extern const OSHEADER os_header;
+
+/*
+ * S_OSBUILDDATE - the date the OS was built, packed the way FreeMiNT's
+ * MiNT_date is: the day in bits 31-24, the month in bits 23-16 and the year in
+ * bits 15-0, all binary.  The OS header has it as BCD MMDDYYYY.
+ */
+static LONG bcd2bin(ULONG b)
+{
+    return (LONG)((b >> 4) & 15) * 10 + (LONG)(b & 15);
+}
+
+static LONG ssystem_osbuilddate(void)
+{
+    ULONG d = os_header.os_date;
+    LONG month = bcd2bin(d >> 24);
+    LONG day = bcd2bin(d >> 16);
+    LONG year = bcd2bin(d >> 8) * 100 + bcd2bin(d);
+
+    return (day << 24) | (month << 16) | year;
+}
+
+/*
+ * S_OSFEATURES - bit field of the built-in system features, as FreeMiNT has
+ * it: bit 0 memory protection, bit 1 virtual memory (swapping), bit 2 storage
+ * encryption.  Memory protection is the private address spaces; nothing is
+ * swapped out, and nothing is encrypted.
+ */
+static LONG ssystem_osfeatures(void)
+{
+    LONG features = 0;
+
+#if CONF_WITH_USER_ASPACE
+    features |= 0x01;
+#endif
+    return features;
+}
+
+/*
+ * S_KNAME, S_CNAME, S_CVERSION - a string of the build into the caller's buffer
+ * (arg1, arg2 bytes), always terminated; E_OK, or ERANGE when it does not fit,
+ * nothing written.  FreeMiNT gives the whole kernel name and version (and the
+ * compiler's) and cuts it to the buffer; these give 'pTOS', the compiler's name
+ * and its version, and refuse a buffer that cannot hold all of one, so a caller
+ * never gets a truncated string (doc/mint-calls.txt).  `size` is sizeof() of the
+ * string, its NUL included.
+ */
+static LONG ssystem_string(long buf, LONG len, const char *str, size_t size)
+{
+    if (!buf || len < (LONG)size)
+        return ERANGE;
+    svar_copy((void *)buf, str, size);
+    return E_OK;
+}
+
 static LONG ssystem_osversion(void)
 {
     /*
@@ -370,8 +447,13 @@ static LONG ssystem_osversion(void)
  * a newer one than this kernel implements) than ours is both handled
  * correctly; see ssystem.h. arg2 == -1 queries sizeof(our struct)
  * without writing anything (arg1 is ignored).
+ *
+ * arg1 is native `long`, not `LONG`: it's the caller's own destination
+ * pointer, cast below to `(void *)arg1` for svar_copy() -- truncating
+ * it would corrupt a higher-half pointer before that cast ever runs.
+ * arg2 stays LONG: it's a plain byte count, never dereferenced.
  */
-static LONG ssystem_console_dim(LONG arg1, LONG arg2)
+static LONG ssystem_console_dim(long arg1, LONG arg2)
 {
     struct console_dim dim;
     LONG n;
@@ -394,9 +476,132 @@ static LONG ssystem_console_dim(LONG arg1, LONG arg2)
 
 
 /*
- * xssystem - implements GEMDOS Ssystem(), see ssystem.h
+ * ssystem_meminfo - S_MEMINFO (pTOS extension, see ssystem.h)
  */
-LONG xssystem(WORD mode, LONG arg1, LONG arg2)
+static LONG ssystem_meminfo(long arg1, LONG arg2)
+{
+    struct mem_info info;
+    LONG n;
+
+    if (arg2 == -1)
+        return (LONG)sizeof(info);
+
+    if (!arg1 || arg2 <= 0)
+        return EINVFN;
+
+    info.page_size = 4096UL;
+    info.phys_pages = (ULONG)phys_pages_total();    /* -1: not known */
+    info.free_pages = (ULONG)phys_pages_free();
+#if CONF_WITH_KPROC
+    info.processes = kproc_count();
+#else
+    info.processes = 0xffffffffUL;      /* not counted: there are no records */
+#endif
+
+    n = arg2 < (LONG)sizeof(info) ? arg2 : (LONG)sizeof(info);
+    svar_copy((void *)arg1, &info, n);
+    return n;
+}
+
+/* the modes xssystem() implements, for S_INQUIRE; keep in step with it */
+static BOOL ssystem_has_mode(WORD mode)
+{
+    switch (mode)
+    {
+    case S_INQUIRE:
+    case S_OSNAME:
+    case S_OSXNAME:
+    case S_OSVERSION:
+    case S_OSBUILDDATE:
+    case S_OSFEATURES:
+    case S_GETCOOKIE:
+    case S_SETCOOKIE:
+    case S_DELCOOKIE:
+    case S_GETLVAL:
+    case S_GETWVAL:
+    case S_GETBVAL:
+    case S_SETLVAL:
+    case S_SETWVAL:
+    case S_SETBVAL:
+    case S_KNAME:
+    case S_CNAME:
+    case S_CVERSION:
+    case S_MEMINFO:
+    case S_CONSOLE_DIM:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+/*
+ * xsysconf - GEMDOS Sysconf() (0x122), after FreeMiNT's sys_s_ysconf()
+ * (sys/dos.c): what the system limits are.  Unlimited is 0x7fffffff.  The
+ * kernel's own numbers, not guesses at what a program may want.
+ */
+#define SYSCONF_UNLIMITED   0x7fffffffL
+#define SYSCONF_PAGE_SIZE   4096L
+
+LONG xsysconf(WORD which)
+{
+    LONG pages;
+
+    switch (which)
+    {
+    case SC_LAST:
+        return SC_MAX;
+    case SC_MEMR_MAX:
+        return SYSCONF_UNLIMITED;       /* the blocks of a process are a table that grows */
+    case SC_ARG_MAX:
+        return 127;                     /* the command tail of the basepage, its length byte excluded */
+    case SC_OPEN_MAX:
+        return OPNFILES;                /* the file table, shared by all processes */
+    case SC_NGROUPS_MAX:
+        return 0;                       /* there are no users, so no groups */
+    case SC_CHILD_MAX:
+        return SYSCONF_UNLIMITED;       /* only memory limits the processes */
+    case SC_CLK_TCK:
+        return CLOCKS_PER_SEC;          /* the 200 Hz system tick (hz_200) */
+    case SC_PAGE_SIZE:
+        return SYSCONF_PAGE_SIZE;
+    case SC_AVPHYS_PAGES:
+        pages = phys_pages_free();
+        return pages < 0 ? EINVFN : pages;
+    case SC_GETPW_R_SIZE_MAX:
+    case SC_GETGR_R_SIZE_MAX:
+        return 1024;                    /* FreeMiNT's; there are no passwd or group files */
+    case SC_PHYS_PAGES:
+        pages = phys_pages_total();
+        return pages < 0 ? EINVFN : pages;
+    default:
+        return EINVFN;
+    }
+}
+
+/*
+ * xssystem - implements GEMDOS Ssystem(), see ssystem.h
+ *
+ * arg1/arg2 are native `long` (see ssystem.h's own comment) so that
+ * S_GETCOOKIE's arg2, and the arg1 of S_CONSOLE_DIM, S_MEMINFO, S_KNAME,
+ * S_CNAME and S_CVERSION -- the only modes that dereference their argument
+ * as a pointer this function itself never inspects -- reach
+ * ssystem_getcookie()/ssystem_console_dim()/ssystem_meminfo()/
+ * ssystem_string() without being truncated first (the length or size in arg2
+ * of those that have one is a scalar and is narrowed). Every other mode's
+ * helper below still declares its own parameters LONG, deliberately: S_{GET,SET}COOKIE's
+ * tag/value are opaque cookie-jar data (struct cookie's own fields are
+ * ULONG, per cookie.h, so a wider C parameter here couldn't preserve
+ * more than 32 bits of a stored value regardless), and S_GET/SETxVAL's
+ * addr identifies a fixed, historical 32-bit-per-slot TOS/MiNT sysvar
+ * address -- the same "can't hold a genuine 64-bit pointer no matter
+ * what C type wraps it" limitation #351 already tracks for Setexc()'s
+ * low vector table. (Some of lval_table's own sysvars -- etv_timer,
+ * hdv_rw, and others -- are themselves real pointers on this arch, so
+ * S_GETLVAL/S_SETLVAL narrowing *those* through a fixed 4-byte
+ * svar_copy() is a real, separate instance of that same limitation;
+ * flagged for #351 rather than a speculative fix here.)
+ */
+LONG xssystem(WORD mode, long arg1, long arg2)
 {
     switch (mode)
     {
@@ -405,13 +610,29 @@ LONG xssystem(WORD mode, LONG arg1, LONG arg2)
          * whether to use Ssystem() at all before falling back to
          * Supexec()/direct memory access -- which ARM doesn't have,
          * so this must not fall through to EINVFN like every other
-         * unhandled mode. */
-        return E_OK;
+         * unhandled mode.  Asked about a mode (arg1), it says whether
+         * that one is implemented: E_OK or EINVFN, the answer the call
+         * itself would give to a mode it does not know. */
+        return ssystem_has_mode((WORD)arg1) ? E_OK : EINVFN;
 
     case S_OSNAME:
         return ssystem_osname();
+    case S_OSXNAME:
+        return ssystem_osxname();
     case S_OSVERSION:
         return ssystem_osversion();
+    case S_OSBUILDDATE:
+        return ssystem_osbuilddate();
+    case S_OSFEATURES:
+        return ssystem_osfeatures();
+    case S_KNAME:       /* (the length is a scalar of the x32 caller) */
+        return ssystem_string(arg1, (LONG)arg2, SSYSTEM_KNAME, sizeof(SSYSTEM_KNAME));
+    case S_CNAME:
+        return ssystem_string(arg1, (LONG)arg2, SSYSTEM_CNAME, sizeof(SSYSTEM_CNAME));
+    case S_CVERSION:
+        return ssystem_string(arg1, (LONG)arg2, SSYSTEM_CVERSION, sizeof(SSYSTEM_CVERSION));
+    case S_MEMINFO:
+        return ssystem_meminfo(arg1, (LONG)arg2);
 
     case S_GETCOOKIE:
         return ssystem_getcookie(arg1, arg2);
