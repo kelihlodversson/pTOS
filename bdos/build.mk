@@ -12,5 +12,11 @@ obj-$(CONF_WITH_USER_COPY) += uaccess.o
 # see the comment in osif() (bdos/bdosmain.c).
 obj-$(CONF_WITH_SSYSTEM) += ssystem.o
 obj-$(CONF_WITH_KCALL) += kcall.o
+
+# the file calls of kernel code (the scalable fonts' font files; Fopen() & co.
+# of x86-64 kernel code)
+ifneq ($(CONF_WITH_KCALL)$(CONF_WITH_VDI_SCALABLE_FONTS),)
+obj-y += kfile.o
+endif
 obj-$(CONF_WITH_KPROC) += mintproc.o
 obj-$(CONF_WITH_GEMDOS_SHUTDOWN) += xshutdown.o

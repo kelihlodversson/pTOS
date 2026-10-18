@@ -21,8 +21,10 @@
  *   CONF_VDI_FONT_MEMORY KB is set aside while the system starts.
  *
  * - font files that outlive the call that opened them.  A file is read
- *   whole into that memory, through GEMDOS, and closed again in the same
- *   call: a GEMDOS handle too belongs to the process that opened it.
+ *   whole into that memory, with the GEMDOS file functions called directly
+ *   (bdos/kfile.c: the VDI is in supervisor mode already, so no trap), and
+ *   closed again in the same call: a GEMDOS handle too belongs to the
+ *   process that opened it.
  *
  * - a stack of its own.  VDI calls run on whatever stack their caller
  *   has, which can be one of the AES's small per-process stacks or the
@@ -35,7 +37,7 @@
 
 #include "emutos.h"
 #include "biosext.h"
-#include "bdosbind.h"
+#include "../bdos/bdosstub.h"
 #include "kprint.h"
 #include "string.h"
 #include "vdistub.h"
@@ -307,26 +309,26 @@ FT_Stream_Open(FT_Stream stream, const char *filepathname)
     if (!stream)
         return FT_Err_Invalid_Stream_Handle;
 
-    handle = Fopen(filepathname, 0);
+    handle = kdos_fopen((long)filepathname, 0);
     if (handle < 0)
         return FT_Err_Cannot_Open_Resource;
 
-    size = Fseek(0L, handle, 2);
-    if (size <= 0 || Fseek(0L, handle, 0) != 0)
+    size = kdos_fseek(0L, handle, 2);
+    if (size <= 0 || kdos_fseek(0L, handle, 0) != 0)
     {
-        Fclose(handle);
+        kdos_fclose(handle);
         return FT_Err_Cannot_Open_Stream;
     }
 
     buf = fm_alloc(size);
     if (!buf)
     {
-        Fclose(handle);
+        kdos_fclose(handle);
         return FT_Err_Out_Of_Memory;
     }
 
-    n = Fread(handle, size, buf);
-    Fclose(handle);
+    n = kdos_fread(handle, size, (long)buf);
+    kdos_fclose(handle);
     if (n != size)
     {
         fm_free(buf);
