@@ -1604,16 +1604,13 @@ WORD blitter_bold_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTI
 
         for (plane = 0; plane < planes; plane++)
         {
-            if (ops[plane] != 5)        /* op 5 (D' = D) leaves the plane as it is */
-            {
-                BLITTER->src_addr = (UWORD *)s_addr;
-                BLITTER->dst_addr = (UWORD *)d_addr;
-                BLITTER->x_count = d_span + 1;
-                BLITTER->y_count = h;
-                BLITTER->skew = skew_reg;
-                BLITTER->op = ops[plane];
-                blitter_go(0);
-            }
+            BLITTER->src_addr = (UWORD *)s_addr;
+            BLITTER->dst_addr = (UWORD *)d_addr;
+            BLITTER->x_count = d_span + 1;
+            BLITTER->y_count = h;
+            BLITTER->skew = skew_reg;
+            BLITTER->op = ops[plane];
+            blitter_go(0);
             d_addr += 2;                /* the next plane */
         }
 
