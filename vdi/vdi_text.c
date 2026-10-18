@@ -812,6 +812,23 @@ void vdi_vst_height(Vwk * vwk)
     font_id = vwk->cur_font->font_id;
     vwk->pts_mode = FALSE;
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /* a scalable font: exactly that height, nothing nearest or scaled */
+    if (vwk->cur_font->flags & F_SFONT)
+    {
+        WORD index = vdi_sfont_find(font_id);
+        const Fonthead *f = NULL;
+
+        if (index >= 0)
+            f = vdi_sfont_size(index, vdi_sfont_pixels_for_top(index, PTSIN[1]));
+        if (f)
+            vwk->cur_font = f;
+        vwk->scaled = FALSE;
+        setup_width_height(vwk->cur_font);
+        return;
+    }
+#endif
+
     /* Find the smallest font in the requested face */
     chain_ptr = linea_vars.font_ring;
 
@@ -951,6 +968,24 @@ void vdi_vst_point(Vwk * vwk)
     font_id = vwk->cur_font->font_id;
     vwk->pts_mode = TRUE;
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /* a scalable font: exactly that size, nothing nearest or doubled */
+    if (vwk->cur_font->flags & F_SFONT)
+    {
+        WORD index = vdi_sfont_find(font_id);
+        const Fonthead *f = NULL;
+
+        if (index >= 0)
+            f = vdi_sfont_size(index, vdi_sfont_pixels_for_points(INTIN[0]));
+        if (f)
+            vwk->cur_font = f;
+        vwk->scaled = FALSE;
+        setup_width_height(vwk->cur_font);
+        INTOUT[0] = vwk->cur_font->point;
+        return;
+    }
+#endif
+
     /* Find the smallest font in the requested face */
     chain_ptr = linea_vars.font_ring;
     found = FALSE;
@@ -1080,6 +1115,28 @@ void vdi_vst_font(Vwk * vwk)
                 found = TRUE;
         } while (!found && (test_font = test_font->next_font));
     }
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /* a scalable font the built-in GDOS added to this workstation */
+    if (!found && vwk->sfonts_loaded)
+    {
+        WORD index = vdi_sfont_find(face);
+
+        if (index >= 0)
+        {
+            const Fonthead *f;
+
+            f = vdi_sfont_size(index, vwk->pts_mode
+                               ? vdi_sfont_pixels_for_points(point)
+                               : vdi_sfont_pixels_for_top(index, dummy[1]));
+            if (f)
+            {
+                test_font = f;
+                found = TRUE;
+            }
+        }
+    }
+#endif
 
     /* If we fell through the loop, we could not find the face. */
     /* Default to the system font.                  */

@@ -154,6 +154,8 @@ static long sfont_open(void *arg)
     format = FT_Get_Font_Format(face);
     f->format = (format && strcmp(format, "TrueType")) ? SFONT_TYPE1 : SFONT_TRUETYPE;
     f->flags = FT_IS_FIXED_WIDTH(face) ? SFONT_MONOSPACE : 0;
+    f->upem = face->units_per_EM;
+    f->ascender = face->ascender;
 
     FT_Done_Face(face);
 
@@ -174,6 +176,13 @@ static void sfont_set_path(const char *file)
     if (!len || sfont_path[len - 1] != '\\')   /* "C:\FONTS\" or "C:\" has one */
         strcat(sfont_path, "\\");
     strcat(sfont_path, file);
+}
+
+const char *vdi_sfont_path(WORD index)
+{
+    sfont_set_path(vdi_sfonts[index].file);
+
+    return sfont_path;
 }
 
 /* add the fonts matching one pattern; returns how many there are now */

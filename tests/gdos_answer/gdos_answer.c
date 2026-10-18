@@ -161,6 +161,89 @@ static void font_check(int ok, const char *msg)
         font_failure = msg;
 }
 
+static short ptsin_op(short op, short nptsin, short nintin, short handle)
+{
+    contrl[0] = op;
+    contrl[1] = nptsin;
+    contrl[3] = nintin;
+    contrl[5] = 0;
+    contrl[6] = handle;
+    vdi();
+    return intout[0];
+}
+
+/* the width of "Ag" in the current font */
+static short extent_ag(short handle)
+{
+    intin[0] = 'A';
+    intin[1] = 'g';
+    ptsin_op(116, 0, 2, handle);        /* vqt_extent() */
+    return ptsout[2] - ptsout[0];
+}
+
+/*
+ * A scalable font selected, sized and drawn (#576): sizes are exact,
+ * bigger at a bigger size, and the text path draws them.
+ */
+static void check_sizes(short handle, short system_fonts)
+{
+    short id, top12, top48, w12, w48;
+
+    intin[0] = system_fonts + 1;
+    vdi_op(130, 1, handle);             /* vqt_name(): the first scalable font */
+    id = intout[0];
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    font_check(intout[0] == id, "vst_font() did not select the scalable font");
+
+    intin[0] = 12;
+    vdi_op(107, 1, handle);             /* vst_point(12) */
+    top12 = ptsout[1];
+    w12 = extent_ag(handle);
+    font_check(top12 > 0 && w12 > 0, "a scalable font at 12 points has no size");
+
+    intin[0] = 48;
+    vdi_op(107, 1, handle);             /* vst_point(48) */
+    font_check(intout[0] >= 44 && intout[0] <= 52, "vst_point(48) did not set 48 points");
+    top48 = ptsout[1];
+    w48 = extent_ag(handle);
+    font_check(top48 > top12 * 3 && w48 > w12 * 3,
+               "a scalable font at 48 points is not four times 12 points");
+
+    /* exact heights, unlike a bitmap font's nearest one */
+    ptsin[0] = 0;
+    ptsin[1] = 37;
+    ptsin_op(12, 1, 0, handle);         /* vst_height(37) */
+    font_check(ptsout[1] >= 35 && ptsout[1] <= 39, "vst_height(37) is not 37 high");
+
+    /*
+     * Many sizes, one after another: more than the cache holds, so older
+     * ones are dropped and every size still comes out, each bigger.
+     */
+    {
+        short pt, last = 0;
+
+        for (pt = 8; pt <= 160; pt += 8)
+        {
+            intin[0] = pt;
+            vdi_op(107, 1, handle);     /* vst_point() */
+            font_check(ptsout[1] > last, "a bigger size of a scalable font is not bigger");
+            last = ptsout[1];
+        }
+    }
+
+    /* and drawn */
+    ptsin[0] = 10;
+    ptsin[1] = 100;
+    intin[0] = 'A';
+    intin[1] = 'g';
+    ptsin_op(8, 1, 2, handle);          /* v_gtext() */
+
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
 static void check_fonts(void)
 {
     short handle, system_fonts, i, aes_there;
@@ -220,6 +303,9 @@ static void check_fonts(void)
             font_check(intout[0] >= 10000, "a scalable font's id is below 10000");
         }
     }
+
+    if (fonts_loaded > 0)
+        check_sizes(handle, system_fonts);
 
     intin[0] = 0;
     vdi_op(119, 1, handle);             /* again: nothing more */

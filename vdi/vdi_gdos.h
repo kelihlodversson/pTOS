@@ -39,6 +39,8 @@ typedef struct
     UBYTE format;                   /* SFONT_TRUETYPE, ... */
     UBYTE flags;                    /* SFONT_MONOSPACE */
     ULONG key;                      /* hash of the full family and style */
+    UWORD upem;                     /* its design units per em */
+    WORD ascender;                  /* its ascender, in those units */
     char name[FONT_NAME_LEN + 1];   /* "Family Style", as vqt_name() gives it */
     char file[14];                  /* its 8.3 file name in CONF_VDI_FONT_DIR */
 } VDI_SFONT;
@@ -46,6 +48,27 @@ typedef struct
 /* the scalable fonts, sorted by name; none unless the GDOS is active */
 extern WORD vdi_sfont_count;
 extern VDI_SFONT *vdi_sfonts;
+
+/* the path of a scalable font's file (in a buffer of vdi_gdos.c's) */
+const char *vdi_sfont_path(WORD index);
+
+/*
+ * Sizes of the scalable fonts (vdi/vdi_sfont.c): each is a Fonthead with
+ * its glyphs rendered into a form, as a bitmap font's, so that the text
+ * path draws it as it draws any other font.  F_SFONT marks one.
+ */
+#define F_SFONT             0x8000
+
+/* the scalable font with that id, or -1 */
+WORD vdi_sfont_find(WORD font_id);
+
+/* the em size in pixels for a size in points, or for a cell top height */
+WORD vdi_sfont_pixels_for_points(WORD points);
+WORD vdi_sfont_pixels_for_top(WORD index, WORD top);
+
+/* a scalable font at that em size, rendered or from the cache; NULL if
+ * it cannot be had (no memory, a font file gone) */
+const Fonthead *vdi_sfont_size(WORD index, WORD pixels);
 
 #endif /* CONF_WITH_VDI_SCALABLE_FONTS */
 

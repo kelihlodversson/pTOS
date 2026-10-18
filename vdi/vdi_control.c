@@ -173,6 +173,20 @@ static const WORD DEV_TAB_rom[45] = {
 
 
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/* is that font the current one of an open workstation? */
+BOOL vdi_font_in_use(const Fonthead *font)
+{
+    WORD handle;
+
+    for (handle = VDI_PHYS_HANDLE; handle <= LAST_VDI_HANDLE; handle++)
+        if (vwk_ptr[handle] && vwk_ptr[handle]->cur_font == font)
+            return TRUE;
+
+    return FALSE;
+}
+#endif
+
 Vwk * get_vwk_by_handle(WORD handle)
 {
     if ((handle < FIRST_VDI_HANDLE) || (handle > LAST_VDI_HANDLE))
