@@ -23,16 +23,24 @@
  * bearing) is cut off, as it would be in a bitmap font.  Kerning is not
  * applied.
  *
+ * Each size also carries a text scratch buffer big enough for its
+ * glyphs: rotation, outlining and skewing copy a glyph there, and the
+ * workstation's default buffer is only as big as the 8x16 system font
+ * needs.  (A GDOS loaded from disk hands vst_load_fonts() a buffer for
+ * its fonts instead.)  The text path takes it from the font.
+ *
  * Rendered sizes are kept, up to CONF_VDI_FONT_CACHE KB: the one used
  * longest ago that no workstation has selected goes first.  A size too
- * big for that by itself is rendered smaller until it fits.  The face
- * last used stays open, so that changing sizes does not read its file
- * again.
+ * big for that by itself, or too big for the text path (its form wider
+ * than a WORD can address, or its scratch buffer halves bigger than a
+ * WORD offset), is rendered smaller until it fits.  The face last used
+ * stays open, so that changing sizes does not read its file again.
  */
 
 #include "emutos.h"
 #include "kprint.h"
 #include "string.h"
+#include <stddef.h>
 #include "vdi_defs.h"
 #include "vdi_ftsystem.h"
 #include "vdi_gdos.h"
@@ -44,19 +52,23 @@
 #define SF_CHARS        256
 #define SF_MIN_PIXELS   4
 #define SF_MAX_PIXELS   400
-#define SF_MAX_WIDTH    0xfff0UL    /* the offsets are UWORDs */
+#define SF_MAX_WIDTH    0x7ff0L     /* the text path's source x is a WORD */
+#define SF_MAX_HALF     0x7ff0L     /* and so is the scratch buffer's SCRPT2 */
 
-/* a rendered size: its Fonthead, offsets and form, in one block */
+/* a rendered size: its Fonthead, offsets, form and scratch buffer, in one block */
 typedef struct sf_size
 {
     struct sf_size *next;
     WORD sfont;                     /* index in vdi_sfonts */
     WORD pixels;                    /* em size */
+    WORD asked;                     /* em size asked for, when too big to have */
+    WORD half;                      /* offset of the scratch buffer's second half */
     ULONG bytes;                    /* of the whole block */
     ULONG used;                     /* when last asked for */
+    WORD *scratch;                  /* the scratch buffer, after the form */
     Fonthead head;
     UWORD off[SF_CHARS + 1];
-    /* the form follows */
+    /* the form follows, then the scratch buffer */
 } SF_SIZE;
 
 static SF_SIZE *sf_sizes;
@@ -161,10 +173,26 @@ WORD vdi_sfont_pixels_for_top(WORD index, WORD top)
 typedef struct
 {
     WORD index;                     /* the font */
-    WORD pixels;                    /* asked for, then had */
-    ULONG limit;                    /* the most the size may take */
-    SF_SIZE *size;                  /* the result */
+    WORD pixels;                    /* the em size */
+    BOOL render;                    /* FALSE: only measure it */
+    ULONG bytes;                    /* the block it takes */
+    BOOL drawable;                  /* within what the text path addresses */
+    SF_SIZE *size;                  /* the result, when rendered */
 } SF_BUILD;
+
+/* what a size's layout comes to */
+typedef struct
+{
+    UWORD off[SF_CHARS + 1];
+    UWORD max_cell;
+    BOOL mono;                      /* all advances the same */
+    WORD top, bottom;
+    UWORD form_width, form_height;
+    WORD skew, thicken;
+    LONG half;                      /* scratch buffer half, in bytes */
+    ULONG bytes;
+    BOOL drawable;
+} SF_LAYOUT;
 
 static FT_UInt sf_glyph(UWORD ch)
 {
@@ -194,28 +222,64 @@ static BOOL sf_open(WORD index)
     return TRUE;
 }
 
-/* the advances at a size, into off[]; returns the form's width in pixels */
-static ULONG sf_layout(UWORD *off, UWORD *max_cell)
+/*
+ * The half of the scratch buffer that one glyph of the size needs (see
+ * pre_blit() and rotate() in vdi/vdi_textblit.c): thickened, outlined and
+ * skewed into the buffer, a row of words per pixel row, and that turned
+ * by 90 degrees into the other half, a row of words per pixel column.
+ */
+static LONG sf_scratch_half(const SF_LAYOUT *l)
 {
-    ULONG x = 0;
+    LONG w = (LONG)l->max_cell + l->thicken + 3 + l->skew;  /* widest glyph */
+    LONG h = (LONG)l->form_height + 3;                      /* tallest */
+    LONG flat = (((w + 15) >> 4) * 2 + 2) * h;
+    LONG turned = (((h + 15) >> 4) * 2 + 2) * (w + 1);
+    LONG half = (flat > turned ? flat : turned) + 16;
+
+    half = (half + 1) & ~1L;
+    if (half < SCRATCHBUF_SIZE / 2)
+        half = SCRATCHBUF_SIZE / 2;     /* as the default buffer: see vdi_raster.c */
+
+    return half;
+}
+
+/* the layout of the current face at a size (already set) */
+static void sf_layout(SF_LAYOUT *l, WORD pixels)
+{
+    LONG x = 0;
     UWORD ch, adv;
 
-    *max_cell = 0;
+    l->max_cell = 0;
+    l->mono = (vdi_sfonts[sf_face_index].flags & SFONT_MONOSPACE) != 0;
     for (ch = 0; ch < SF_CHARS; ch++)
     {
-        off[ch] = (UWORD)x;
+        l->off[ch] = (UWORD)(x <= SF_MAX_WIDTH ? x : SF_MAX_WIDTH);
         adv = 0;
         if (!FT_Load_Glyph(sf_face, sf_glyph(ch), FT_LOAD_TARGET_MONO))
             adv = (UWORD)((sf_face->glyph->advance.x + 32) >> 6);
-        if (adv > *max_cell)
-            *max_cell = adv;
+        if (ch && adv != l->max_cell)
+            l->mono = FALSE;
+        if (adv > l->max_cell)
+            l->max_cell = adv;
         x += adv;
-        if (x > SF_MAX_WIDTH)
-            x = SF_MAX_WIDTH;           /* only at absurd sizes; no overflow */
     }
-    off[SF_CHARS] = (UWORD)x;
+    l->off[SF_CHARS] = (UWORD)(x <= SF_MAX_WIDTH ? x : SF_MAX_WIDTH);
+    if (!l->max_cell)
+        l->mono = FALSE;
 
-    return x;
+    l->top = (WORD)((sf_face->size->metrics.ascender + 63) >> 6) - 1;
+    l->bottom = (WORD)((-sf_face->size->metrics.descender + 63) >> 6);
+    if (l->top < 1)
+        l->top = 1;
+    if (l->bottom < 0)
+        l->bottom = 0;
+    l->form_width = (UWORD)(((x + 15) / 16) * 2);
+    l->form_height = l->top + l->bottom + 1;
+    l->skew = (l->bottom + 1) / 2 + (l->top + 1) / 2;   /* left + right offset */
+    l->thicken = 1 + pixels / 24;
+    l->half = sf_scratch_half(l);
+    l->bytes = sizeof(SF_SIZE) + (ULONG)l->form_width * l->form_height + 2UL * l->half;
+    l->drawable = x <= SF_MAX_WIDTH && l->half <= SF_MAX_HALF;
 }
 
 /* a glyph's height above the baseline, in pixels */
@@ -227,13 +291,15 @@ static WORD sf_bearing_y(UWORD ch)
     return (WORD)((sf_face->glyph->metrics.horiBearingY + 32) >> 6);
 }
 
+/*
+ * Measure a size, or render it: exactly that size, which the caller has
+ * found fits (b->bytes and b->drawable say whether it does)
+ */
 static long sf_build(void *arg)
 {
     SF_BUILD *b = arg;
-    UWORD off[SF_CHARS + 1];
-    UWORD max_cell, form_width, form_height, ch;
-    WORD top, bottom, pixels;
-    ULONG width, bytes;
+    SF_LAYOUT l;
+    UWORD ch;
     SF_SIZE *s;
     Fonthead *h;
     UBYTE *form;
@@ -241,65 +307,56 @@ static long sf_build(void *arg)
 
     if (!sf_open(b->index))
         return -1;
+    if (FT_Set_Pixel_Sizes(sf_face, 0, b->pixels))
+        return -1;
+    sf_layout(&l, b->pixels);
+    b->bytes = l.bytes;
+    b->drawable = l.drawable;
+    if (!b->render)
+        return 0;
+    if (!l.drawable)
+        return -1;
 
-    /* the size, made smaller until it fits in the limit */
-    for (pixels = b->pixels; ; pixels = sf_clamp(pixels * 3L / 4))
-    {
-        if (FT_Set_Pixel_Sizes(sf_face, 0, pixels))
-            return -1;
-        top = (WORD)((sf_face->size->metrics.ascender + 63) >> 6) - 1;
-        bottom = (WORD)((-sf_face->size->metrics.descender + 63) >> 6);
-        if (top < 1)
-            top = 1;
-        if (bottom < 0)
-            bottom = 0;
-        width = sf_layout(off, &max_cell);
-        form_width = (UWORD)(((width + 15) / 16) * 2);
-        form_height = top + bottom + 1;
-        bytes = sizeof(SF_SIZE) + (ULONG)form_width * form_height;
-        if (bytes <= b->limit || pixels == SF_MIN_PIXELS)
-            break;
-    }
-
-    s = vdi_ft_alloc(bytes);
+    s = vdi_ft_alloc(l.bytes);
     if (!s)
         return -1;
     form = (UBYTE *)(s + 1);
-    bzero(form, (ULONG)form_width * form_height);
-    memcpy(s->off, off, sizeof(off));
+    bzero(form, (ULONG)l.form_width * l.form_height);
+    memcpy(s->off, l.off, sizeof(l.off));
 
     /* the glyphs, each in its cell, the baseline on row 'top' */
     for (ch = 0; ch < SF_CHARS; ch++)
     {
         FT_Bitmap *bm;
-        WORD row, col, x0, y0, cell;
+        LONG x, x0, cell_left, cell_right;
+        WORD row, col, y0;
 
         if (FT_Load_Glyph(sf_face, sf_glyph(ch), FT_LOAD_RENDER | FT_LOAD_TARGET_MONO))
             continue;
         bm = &sf_face->glyph->bitmap;
         if (bm->pixel_mode != FT_PIXEL_MODE_MONO)
             continue;
-        cell = off[ch + 1] - off[ch];
         if (bm->width > max_ink)
             max_ink = (UWORD)bm->width;
-        x0 = off[ch] + sf_face->glyph->bitmap_left;
-        y0 = top + 1 - sf_face->glyph->bitmap_top;
+        cell_left = l.off[ch];
+        cell_right = l.off[ch + 1];
+        x0 = cell_left + sf_face->glyph->bitmap_left;
+        y0 = l.top + 1 - sf_face->glyph->bitmap_top;
         for (row = 0; row < (WORD)bm->rows; row++)
         {
             const UBYTE *src = bm->buffer + row * bm->pitch;
             WORD y = y0 + row;
             UBYTE *dst;
 
-            if (y < 0 || y >= (WORD)form_height)
+            if (y < 0 || y >= (WORD)l.form_height)
                 continue;
-            dst = form + (ULONG)y * form_width;
+            dst = form + (ULONG)y * l.form_width;
             for (col = 0; col < (WORD)bm->width; col++)
             {
-                WORD x = x0 + col;
-
                 if (!(src[col >> 3] & (0x80 >> (col & 7))))
                     continue;
-                if (x < (WORD)off[ch] || x >= (WORD)off[ch] + cell)
+                x = x0 + col;
+                if (x < cell_left || x >= cell_right)
                     continue;           /* outside its cell */
                 dst[x >> 3] |= (UBYTE)(0x80 >> (x & 7));
             }
@@ -312,33 +369,42 @@ static long sf_build(void *arg)
     memcpy(h->name, vdi_sfonts[b->index].name, FONT_NAME_LEN);
     h->first_ade = 0;
     h->last_ade = SF_CHARS - 1;
-    h->top = top;
-    h->ascent = sf_bearing_y('H');
-    h->half = sf_bearing_y('x');
-    if (h->ascent > top || !h->ascent)
-        h->ascent = top;
-    if (h->half > top || !h->half)
-        h->half = top * 2 / 3;
-    h->descent = bottom;
-    h->bottom = bottom;
-    h->max_char_width = max_ink ? max_ink : max_cell;
-    h->max_cell_width = max_cell;
-    h->left_offset = (bottom + 1) / 2;  /* how far skewing moves the rows */
-    h->right_offset = (top + 1) / 2;
-    h->thicken = 1 + pixels / 24;
-    h->ul_size = 1 + pixels / 24;
+    h->top = l.top;
+    /*
+     * from the baseline row to the top row of 'H' and of 'x': a glyph
+     * that rises n pixels above the baseline has its top row n - 1 rows
+     * above it, as top - ascent is where alignment to the ascent puts
+     * the top of the cell
+     */
+    h->ascent = sf_bearing_y('H') - 1;
+    h->half = sf_bearing_y('x') - 1;
+    if (h->ascent > l.top || h->ascent <= 0)
+        h->ascent = l.top;
+    if (h->half > l.top || h->half <= 0)
+        h->half = l.top * 2 / 3;
+    h->descent = l.bottom;
+    h->bottom = l.bottom;
+    h->max_char_width = max_ink ? max_ink : l.max_cell;
+    h->max_cell_width = l.max_cell;
+    h->left_offset = (l.bottom + 1) / 2;    /* how far skewing moves the rows */
+    h->right_offset = (l.top + 1) / 2;
+    h->thicken = l.thicken;
+    h->ul_size = l.thicken;
     h->lighten = 0x5555;
     h->skew = 0x5555;
-    h->flags = F_STDFORM | F_SFONT;
+    /* fixed pitch: bold stays in the cell, as with the system fonts */
+    h->flags = F_STDFORM | F_SFONT | (l.mono ? F_MONOSPACE : 0);
     h->off_table = s->off;
     h->dat_table = form;
-    h->form_width = form_width;
-    h->form_height = form_height;
+    h->form_width = l.form_width;
+    h->form_height = l.form_height;
 
     s->sfont = b->index;
-    s->pixels = pixels;
-    s->bytes = bytes;
-    b->pixels = pixels;
+    s->pixels = b->pixels;
+    s->asked = b->pixels;
+    s->half = (WORD)l.half;
+    s->scratch = (WORD *)(form + (ULONG)l.form_width * l.form_height);
+    s->bytes = l.bytes;
     b->size = s;
 
     return 0;
@@ -368,58 +434,120 @@ static BOOL sf_evict(void)
     return TRUE;
 }
 
+/* a size of a font already rendered: as asked for, or what that came to */
+static SF_SIZE *sf_find(WORD index, WORD pixels)
+{
+    SF_SIZE *s;
+
+    for (s = sf_sizes; s; s = s->next)
+        if (s->sfont == index && (s->pixels == pixels || s->asked == pixels))
+            return s;
+
+    return NULL;
+}
+
 const Fonthead *vdi_sfont_size(WORD index, WORD pixels)
 {
     SF_BUILD b;
     SF_SIZE *s;
     ULONG limit = CONF_VDI_FONT_CACHE * 1024UL;
+    WORD asked, fit;
+    BOOL emptied = FALSE;
 
     if (index < 0 || index >= vdi_sfont_count || !vdi_ft_library)
         return NULL;
-    pixels = sf_clamp(pixels);
+    asked = pixels = sf_clamp(pixels);
 
-    for (s = sf_sizes; s; s = s->next)
+    s = sf_find(index, pixels);
+    if (s)
     {
-        if (s->sfont == index && s->pixels == pixels)
+        s->used = ++sf_clock;
+        return &s->head;
+    }
+
+    /*
+     * The size, or the biggest one below it that fits by itself: within
+     * the limit, and within what the text path can address
+     */
+    b.index = index;
+    b.render = FALSE;
+    b.size = NULL;
+    for (;;)
+    {
+        b.pixels = pixels;
+        if (vdi_ft_call(sf_build, &b) != 0)
+            goto fail;
+        if ((b.bytes <= limit && b.drawable) || pixels == SF_MIN_PIXELS)
+            break;
+        pixels = sf_clamp(pixels * 3L / 4);
+    }
+    if (!b.drawable)
+        goto fail;
+    fit = pixels;
+    if (fit != asked)
+    {
+        s = sf_find(index, fit);
+        if (s)
         {
+            s->asked = asked;
             s->used = ++sf_clock;
             return &s->head;
         }
     }
 
-    /* make room for a size of up to the whole limit */
-    while (sf_sizes && sf_bytes > limit / 2 && sf_evict())
+    /* room for it: the sizes no workstation has selected go, oldest first */
+    while (sf_bytes + b.bytes > limit && sf_evict())
         ;
 
-    b.index = index;
-    b.pixels = pixels;
-    b.limit = (limit > sf_bytes) ? limit - sf_bytes : limit / 4;
-    b.size = NULL;
-    if (vdi_ft_call(sf_build, &b) != 0 || !b.size)
+    /*
+     * Rendered.  If the memory is not there after all (taken by sizes in
+     * use, or by FreeType, or in pieces), the other sizes go, and then it
+     * is rendered smaller, but only for now: it is not kept as what the
+     * size asked for came to.
+     */
+    b.render = TRUE;
+    for (;;)
     {
-        /* perhaps it fits once the rest is gone */
-        while (sf_evict())
-            ;
-        b.limit = limit;
-        if (vdi_ft_call(sf_build, &b) != 0 || !b.size)
+        b.pixels = pixels;
+        b.size = NULL;
+        if (vdi_ft_call(sf_build, &b) == 0 && b.size)
+            break;
+        if (!emptied)
         {
-            KINFO(("sfont: cannot render %s at %d pixels\n",
-                   vdi_sfonts[index].name, pixels));
-            return NULL;
+            while (sf_evict())
+                ;
+            emptied = TRUE;
+            continue;
         }
+        if (pixels == SF_MIN_PIXELS)
+            goto fail;
+        pixels = sf_clamp(pixels * 3L / 4);
     }
 
     s = b.size;
+    s->asked = (pixels == fit) ? asked : pixels;
     /* its size in points, for vst_point() to return */
-    s->head.point = (WORD)((b.pixels * 72L * (linea_vars.DEV_TAB[4] > 0 ? linea_vars.DEV_TAB[4] : 353)
+    s->head.point = (WORD)((pixels * 72L * (linea_vars.DEV_TAB[4] > 0 ? linea_vars.DEV_TAB[4] : 353)
                             + 12700) / 25400);
-    s->pixels = pixels;                 /* found under the size asked for */
     s->used = ++sf_clock;
     s->next = sf_sizes;
     sf_sizes = s;
     sf_bytes += s->bytes;
-    KDEBUG(("sfont: %s at %d pixels (%d had): %lu bytes, %lu in all\n",
-            vdi_sfonts[index].name, pixels, b.pixels, s->bytes, sf_bytes));
+    KDEBUG(("sfont: %s at %d pixels (%d asked): %lu bytes, %lu in all\n",
+            vdi_sfonts[index].name, pixels, asked, s->bytes, sf_bytes));
 
     return &s->head;
+
+fail:
+    KINFO(("sfont: cannot render %s at %d pixels\n", vdi_sfonts[index].name, asked));
+    return NULL;
+}
+
+/* the scratch buffer of a size, for the text path (vdi/vdi_text.c) */
+void vdi_sfont_scratch(const Fonthead *font, WORD **buffer, WORD *half)
+{
+    const SF_SIZE *s = (const SF_SIZE *)((const UBYTE *)font - offsetof(SF_SIZE, head));
+
+    *buffer = s->scratch;
+    *half = s->half;
 }

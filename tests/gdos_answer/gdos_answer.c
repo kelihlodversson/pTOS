@@ -16,12 +16,15 @@
  * system fonts, flagged as outline fonts (intout[33] = 1) with ids from
  * 10000 on, and a second vst_load_fonts() adds none.  How many there are
  * depends on the fonts in \GEMSYS\FONTS of the test disk
- * (tools/run-regression-tests.sh copies DejaVu, TrueType, and Inter,
- * OpenType with CFF outlines, there when the host has them).  Each is
- * selected, sized and drawn (#576), and what it drew is read back to see
- * that rotation, clipping, the effects and XOR mode apply to it -- where
- * the system font's text can be read back with v_get_pixel(); where it
- * cannot, the result line says so.
+ * (tools/run-regression-tests.sh copies DejaVu Sans, Serif and Sans Mono,
+ * TrueType, and Inter, OpenType with CFF outlines, there when the host has
+ * them).  Each is selected, sized and drawn (#576): a monospaced one stays
+ * monospaced in bold, and what each drew is read back to see that
+ * rotation, clipping, the effects, XOR mode and alignment to the ascent
+ * and the half line apply to it, and the first is also drawn big, rotated
+ * with effects, which takes a bigger text scratch buffer than the default
+ * one.  The pixels are only checked where the system font's text can be
+ * read back with v_get_pixel(); where it cannot, the result line says so.
  *
  * x86-64 programs cannot call the VDI at all (trap class 2 is refused
  * from ring 3), so it is skipped there.
@@ -159,6 +162,7 @@ static void pnum(long n)
 static const char *font_failure;
 static short fonts_loaded;
 static int pixels_checked;
+static short monospaced_fonts;
 
 static void font_check(int ok, const char *msg)
 {
@@ -175,6 +179,17 @@ static short ptsin_op(short op, short nptsin, short nintin, short handle)
     contrl[6] = handle;
     vdi();
     return intout[0];
+}
+
+/* the width of n times ch in the current font */
+static short extent_of(short handle, short ch, short n)
+{
+    short i;
+
+    for (i = 0; i < n; i++)
+        intin[i] = ch;
+    ptsin_op(116, 0, n, handle);        /* vqt_extent() */
+    return ptsout[2] - ptsout[0];
 }
 
 /* the width of "Ag" in the current font */
@@ -254,6 +269,9 @@ struct ink
 };
 
 static short ink_cx, ink_cy, ink_r;     /* the text's origin, and how far it reaches */
+static short ink_text[2] = { 'A', 'g' };    /* what is drawn */
+static short ink_len = 2;
+static short ink_step = 1;              /* every pixel, or every other one */
 
 static void ink_scan(short handle, short x0, short y0, short x1, short y1,
                      struct ink *ink)
@@ -263,8 +281,8 @@ static void ink_scan(short handle, short x0, short y0, short x1, short y1,
     ink->count = 0;
     ink->x0 = ink->y0 = 32767;
     ink->x1 = ink->y1 = -1;
-    for (y = y0; y <= y1; y++)
-        for (x = x0; x <= x1; x++)
+    for (y = y0; y <= y1; y += ink_step)
+        for (x = x0; x <= x1; x += ink_step)
         {
             ptsin[0] = x;
             ptsin[1] = y;
@@ -283,7 +301,7 @@ static void ink_scan(short handle, short x0, short y0, short x1, short y1,
         }
 }
 
-/* clear the area around the origin, draw "Ag" there and see what came out */
+/* clear the area around the origin, draw ink_text there and see what came out */
 static void ink_draw(short handle, short angle, short effects, short mode,
                      short times, struct ink *ink)
 {
@@ -309,9 +327,9 @@ static void ink_draw(short handle, short angle, short effects, short mode,
     {
         ptsin[0] = ink_cx;
         ptsin[1] = ink_cy;
-        intin[0] = 'A';
-        intin[1] = 'g';
-        ptsin_op(8, 1, 2, handle);      /* v_gtext() */
+        intin[0] = ink_text[0];
+        intin[1] = ink_text[1];
+        ptsin_op(8, 1, ink_len, handle);    /* v_gtext() */
     }
     intin[0] = 1;
     vdi_op(32, 1, handle);              /* back to replace mode */
@@ -426,9 +444,107 @@ static void check_drawing(short handle, short id)
                && clipped.x1 <= split,
                "clipping does not apply to a scalable font");
 
+    /* aligned to the ascent and to the half line: the top of 'H' and 'x' land there */
+    ink_text[0] = 'H';
+    ink_len = 1;
+    intin[0] = 0;
+    intin[1] = 2;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, ascent) */
+    ink_draw(handle, 0, 0, 1, 1, &turned);
+    font_check(turned.count > 0 && turned.y0 == ink_cy,
+               "alignment to the ascent does not put the top of H there");
+    ink_text[0] = 'x';
+    intin[0] = 0;
+    intin[1] = 1;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, half) */
+    ink_draw(handle, 0, 0, 1, 1, &turned);
+    font_check(turned.count > 0 && turned.y0 == ink_cy,
+               "alignment to the half line does not put the top of x there");
+    ink_text[0] = 'A';
+    ink_len = 2;
+
     intin[0] = 0;
     intin[1] = 0;
     vdi_op(39, 2, handle);              /* vst_alignment(left, baseline) */
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
+/*
+ * A big size, the biggest the screen has room for: its glyphs go through
+ * the text scratch buffer when rotated, outlined or skewed, and are far
+ * bigger than the workstation's default buffer.  Bold, skewed and
+ * outlined, turned by 90 degrees, it is the same pixels turned (skew
+ * alone is not, in the bitmap text path either: #579).  Read back every
+ * other pixel, to keep it quick.
+ */
+static short screen_w, screen_h;
+
+static void check_large(short handle, short id)
+{
+    struct ink plain, turned, fx, fx_turned;
+    short pt, w, h;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    for (pt = 240; ; pt -= 12)
+    {
+        intin[0] = pt;
+        vdi_op(107, 1, handle);         /* vst_point() */
+        h = ptsout[3];
+        w = extent_ag(handle);
+        ink_r = w + h + 4;
+        if (2 * ink_r + 8 <= screen_w && 2 * ink_r + 8 <= screen_h)
+            break;
+        if (pt <= 36)
+            return;                     /* no room on this screen */
+    }
+    intin[0] = 1;
+    vdi_op(22, 1, handle);              /* vst_color(1) */
+    intin[0] = 0;
+    intin[1] = 5;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, top) */
+    ink_cx = ink_cy = ink_r + 4;
+    ink_step = 2;
+
+    ink_draw(handle, 0, 0, 1, 1, &plain);
+    ink_draw(handle, 900, 0, 1, 1, &turned);
+    font_check(plain.count > 0 && about(turned.count, plain.count),
+               "a big scalable font rotated has other pixels than unrotated");
+    ink_draw(handle, 0, 0x15, 1, 1, &fx);  /* bold, skewed, outlined */
+    ink_draw(handle, 900, 0x15, 1, 1, &fx_turned);
+    font_check(fx.count > 0 && about(fx_turned.count, fx.count),
+               "a big scalable font with effects, rotated, has other pixels");
+
+    ink_step = 1;
+    intin[0] = 0;
+    intin[1] = 0;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, baseline) */
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
+/* a monospaced font stays so in bold, as the system fonts do */
+static void check_monospace(short handle, short id)
+{
+    short narrow, wide, bold;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    intin[0] = 24;
+    vdi_op(107, 1, handle);             /* vst_point(24) */
+    narrow = extent_of(handle, 'i', 4);
+    wide = extent_of(handle, 'W', 4);
+    if (narrow == wide)
+    {
+        intin[0] = 1;
+        vdi_op(106, 1, handle);         /* vst_effects(bold) */
+        bold = extent_of(handle, 'W', 4);
+        intin[0] = 0;
+        vdi_op(106, 1, handle);
+        font_check(bold == wide, "bold widens a monospaced scalable font");
+        monospaced_fonts++;
+    }
     intin[0] = 1;
     vdi_op(21, 1, handle);              /* back to the system font */
 }
@@ -472,6 +588,8 @@ static void check_fonts(void)
         return;
     }
     system_fonts = intout[10];
+    screen_w = intout[0] + 1;
+    screen_h = intout[1] + 1;
 
     intin[0] = 0;
     vdi_op(119, 1, handle);             /* vst_load_fonts() */
@@ -495,12 +613,23 @@ static void check_fonts(void)
 
     if (fonts_loaded > 0)
         check_sizes(handle, system_fonts);
-    pixels_checked = fonts_loaded > 0 && pixels_readable(handle);
-    for (i = 1; pixels_checked && i <= fonts_loaded; i++)
+    for (i = 1; i <= fonts_loaded; i++)
     {
         intin[0] = system_fonts + i;
         vdi_op(130, 1, handle);         /* vqt_name() */
-        check_drawing(handle, intout[0]);
+        check_monospace(handle, intout[0]);
+    }
+    pixels_checked = fonts_loaded > 0 && pixels_readable(handle);
+    for (i = 1; pixels_checked && i <= fonts_loaded; i++)
+    {
+        short id;
+
+        intin[0] = system_fonts + i;
+        vdi_op(130, 1, handle);         /* vqt_name() */
+        id = intout[0];
+        check_drawing(handle, id);
+        if (i == 1)
+            check_large(handle, id);
     }
 
     intin[0] = 0;
@@ -599,7 +728,9 @@ void test_gdos_answer(void)
         ptest_assert_msg(!font_failure, font_failure);
         conws("(SpeedoGDOS, ");
         pnum(fonts_loaded);
-        conws(" scalable fonts");
+        conws(" scalable fonts, ");
+        pnum(monospaced_fonts);
+        conws(" monospaced");
         if (fonts_loaded > 0 && !pixels_checked)
             conws(", pixels not readable here");
         conws(") ");

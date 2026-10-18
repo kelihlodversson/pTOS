@@ -312,6 +312,11 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     linea_vars.CHUP = vwk->chup;
     linea_vars.SCRPT2 = vwk->scrpt2;
     linea_vars.SCRTCHP = vwk->scrtchp;
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /* a scalable font's glyphs can be bigger than the default buffer holds */
+    if (fnt_ptr->flags & F_SFONT)
+        vdi_sfont_scratch(fnt_ptr, &linea_vars.SCRTCHP, &linea_vars.SCRPT2);
+#endif
 
     if (vwk->style & F_THICKEN)
         linea_vars.WEIGHT = fnt_ptr->thicken;
