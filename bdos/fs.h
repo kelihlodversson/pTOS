@@ -546,7 +546,7 @@ DND *findit(char *name, const char **sp, int dflag);
  * assign the DND* to a variable first, then test the variable.
  */
 #define DND_IS_ERRCODE(p) ((long)(p) < 0 && (long)(p) > -4096L)
-FCB *scan(DND *dnd, const char *n, WORD att, LONG *posp);
+void *scan(DND *dnd, const char *n, WORD att, LONG *posp);   /* an FCB, or a DND: see fsdir.c */
 int incr_curdir_usage(DND *dnd);
 void decr_curdir_usage(int index);
 OFD *makofd(DND *p);
