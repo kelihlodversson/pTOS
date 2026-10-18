@@ -1319,6 +1319,7 @@ static BOOL skewed_text_blit(LOCALVARS *vars)
     UBYTE *base;
     UWORD *p;
     WORD line_off;
+    LONG reach;
 
     w = vars->width;
     h = vars->height;
@@ -1328,6 +1329,16 @@ static BOOL skewed_text_blit(LOCALVARS *vars)
     if (w > 16 || h > SKEW_MAX_LINES || planes < 1 || planes > 8)
         return FALSE;
     if (vars->WRT_MODE < 0 || vars->WRT_MODE > 19)
+        return FALSE;
+
+    /*
+     * the offsets of the lines are words: on a screen with very long lines
+     * (eight planes, 1024 pixels or more across) they would not fit
+     */
+    reach = (LONG)h * vars->d_next;
+    if (reach < 0)
+        reach = -reach;
+    if (reach + 2 * vars->nextwrd > 32767L)
         return FALSE;
 
     /* the lines, going up from the bottom one */
@@ -1711,7 +1722,8 @@ void text_blt(void)
 #if BYTE_ORDER == BIG_ENDIAN
         WORD w = vars.DELX + (linea_vars.MONO ? 0 : linea_vars.WEIGHT);
 
-        if (vars.DELX <= 16 && w <= 16
+        /* not scaled: scale() has put the glyph into the buffer already */
+        if (!linea_vars.SCALE && vars.DELX <= 16 && w <= 16
          && vars.DELY * (WORD)sizeof(UWORD) <= SCRATCHBUF_SIZE)
         {
             UWORD *buf = (UWORD *)linea_vars.SCRTCHP;
