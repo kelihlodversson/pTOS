@@ -325,13 +325,16 @@ static void ft_stream_close(FT_Stream stream)
  */
 #define FT_READ_FIRST   (64 * 1024L)
 
-static UBYTE *ft_read_unsized(LONG handle, LONG *sizep)
+static FT_Error ft_read_unsized(LONG handle, UBYTE **bufp, LONG *sizep)
 {
     LONG cap = FT_READ_FIRST, len = 0, n;
     UBYTE *buf, *p;
 
     buf = fm_alloc(cap);
-    while (buf)
+    if (!buf)
+        return FT_Err_Out_Of_Memory;
+
+    for (;;)
     {
         n = kdos_fread(handle, cap - len, (long)(buf + len));
         if (n < 0)
@@ -340,24 +343,33 @@ static UBYTE *ft_read_unsized(LONG handle, LONG *sizep)
         if (len < cap)
         {
             /* the whole file */
-            p = len ? fm_alloc(len) : NULL;
+            if (!len)
+                break;
+            p = fm_alloc(len);
             if (p)
                 memcpy(p, buf, len);
             fm_free(buf);
+            if (!p)
+                return FT_Err_Out_Of_Memory;
+            *bufp = p;
             *sizep = len;
-            return p;
+            return FT_Err_Ok;
         }
         p = (cap <= (LONG)(FM_MAX / 2)) ? fm_alloc(cap * 2) : NULL;
         if (!p)
-            break;
+        {
+            fm_free(buf);
+            return FT_Err_Out_Of_Memory;
+        }
         memcpy(p, buf, len);
         fm_free(buf);
         buf = p;
         cap *= 2;
     }
 
+    /* a read error, or an empty file */
     fm_free(buf);
-    return NULL;
+    return FT_Err_Cannot_Open_Stream;
 }
 
 FT_BASE_DEF( FT_Error )
@@ -365,6 +377,7 @@ FT_Stream_Open(FT_Stream stream, const char *filepathname)
 {
     LONG handle, size, n;
     UBYTE *buf;
+    FT_Error error;
 
     if (!stream)
         return FT_Err_Invalid_Stream_Handle;
@@ -377,10 +390,10 @@ FT_Stream_Open(FT_Stream stream, const char *filepathname)
     if (size < 0)
     {
         /* no seeking on this drive */
-        buf = ft_read_unsized(handle, &size);
+        error = ft_read_unsized(handle, &buf, &size);
         kdos_fclose(handle);
-        if (!buf)
-            return FT_Err_Cannot_Open_Stream;
+        if (error)
+            return error;
     }
     else
     {
