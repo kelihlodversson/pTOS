@@ -120,11 +120,24 @@ typedef int             BOOL;                   /*  boolean, TRUE or FALSE */
 typedef char            BYTE;                   /*  Signed byte         */
 typedef char            SBYTE;                  /*  Signed byte (old-style name) */
 typedef int16_t         WORD;                   /*  signed 16 bit word  */
+/*
+ * Every target is ILP32, but int32_t is int with some C libraries (mintelf,
+ * glibc for x32) and long with others (newlib on ARM).  The code, like
+ * upstream EmuTOS, uses %ld/%lx for LONG and long for GEMDOS function
+ * returns, so LONG is long wherever long is 32 bits wide.  Native host
+ * tools that include this header may have a 64-bit long, so they keep the
+ * int32_t types.
+ */
+#if defined(__SIZEOF_LONG__) && __SIZEOF_LONG__ == 4
+typedef long            LONG;                   /*  signed 32 bit word  */
+typedef unsigned long   ULONG;                  /*  unsigned 32 bit word*/
+#else
 typedef int32_t         LONG;                   /*  signed 32 bit word  */
+typedef uint32_t        ULONG;                  /*  unsigned 32 bit word*/
+#endif
 typedef int64_t         QUAD;                   /*  signed 64 bit word*/
 typedef uint8_t         UBYTE;                  /*  Unsigned byte       */
 typedef uint16_t        UWORD;                  /*  unsigned 16 bit word*/
-typedef uint32_t        ULONG;                  /*  unsigned 32 bit word*/
 typedef uint64_t        UQUAD;                  /*  unsigned 64 bit word*/
 
 /* pointer to function returning LONG */
@@ -147,7 +160,7 @@ typedef void PRG_ENTRY(void) /* NORETURN */;
 #define LOBYTE(x) ((UBYTE)(UWORD)(x))
 #define HIBYTE(x) ((UBYTE)((UWORD)(x) >> 8))
 #define IS_ODD(x) ((x) & 1)
-#define IS_ODD_POINTER(x) IS_ODD((ULONG)(x))
+#define IS_ODD_POINTER(x) IS_ODD((uintptr_t)(x))
 #define IS_32BIT_POINTER(x) ((ULONG)(x) & 0xff000000)
 
 /*
