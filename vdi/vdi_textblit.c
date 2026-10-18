@@ -214,6 +214,7 @@ static ULONG merge_byte(UWORD *p, UWORD n)
 }
 
 
+#if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
 /*
  * thicken_glyph()
  *
@@ -250,6 +251,7 @@ void thicken_glyph(const UBYTE *src, WORD form_width, WORD sx, WORD w, WORD weig
         src += form_width;
     }
 }
+#endif /* CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP */
 
 
 /*
@@ -1253,7 +1255,7 @@ static void screen_blit(LOCALVARS *vars)
 #endif
 }
 
-#if BYTE_ORDER == BIG_ENDIAN
+#if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP && BYTE_ORDER == BIG_ENDIAN
 /*
  * the logic operation (numbered as the BitBlt modes) that normal_blit()
  * uses for a plane, by writing mode and the plane's foreground and
@@ -1476,7 +1478,7 @@ static BOOL skewed_text_blit(LOCALVARS *vars)
 
     return TRUE;
 }
-#endif /* BYTE_ORDER == BIG_ENDIAN */
+#endif /* CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP && BYTE_ORDER == BIG_ENDIAN */
 
 
 /*
@@ -1498,7 +1500,7 @@ void planar_text_blit(LOCALVARS *vars)
     vars->dform += (UWORD)(vars->DESTY+vars->DELY-1) * (ULONG)linea_vars.v_lin_wr;
     vars->d_next = -linea_vars.v_lin_wr;
 
-#if BYTE_ORDER == BIG_ENDIAN
+#if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP && BYTE_ORDER == BIG_ENDIAN
     /*
      * skewed text (but not bold, which normal_blit() thickens on the way),
      * where there are several planes: with one, normal_blit() is quicker
@@ -1703,6 +1705,7 @@ void text_blt(void)
     }
 #endif
 
+#if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
     /*
      * bold and skewed text that nothing else draws into the buffer (it is
      * not clipped or rotated): the software path thickens and skews the
@@ -1749,6 +1752,7 @@ void text_blt(void)
             keep_skew = TRUE;
         }
     }
+#endif
 
     if (need_preblit)
     {

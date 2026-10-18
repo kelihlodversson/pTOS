@@ -1485,6 +1485,7 @@ WORD blitter_text_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTI
 }
 
 
+#if CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
 /*
  * blitter_bold_string()
  *
@@ -1683,6 +1684,7 @@ WORD blitter_bold_string(const Fonthead *fnt, WORD count, const WORD *str, JUSTI
     linea_vars.DESTX = destx;
     return n;
 }
+#endif /* CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP */
 #endif
 
 
