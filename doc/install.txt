@@ -248,6 +248,21 @@ a new machine.  FreeType is used under its GPL licence option (version 2
 or any later version, the same terms as pTOS; see lib/freetype/LICENSE.TXT).
 Work on the feature is tracked in #573.
 
+With scalable fonts, pTOS also has a GDOS built in, which applications
+recognise as SpeedoGDOS (vdi/vdi_gdos.c).  Once the AUTO folder has run,
+vq_gdos() answers '_FSM' and an FSMC cookie with the magic '_SPD' and
+version 4.00 and quality -1 (as fVDI's SpeedoGDOS mode) is installed
+(not on x86-64, where programs cannot call the VDI).  vst_load_fonts() then adds the TrueType (*.TTF) and OpenType (*.OTF)
+fonts of CONF_VDI_FONT_DIR (\GEMSYS\FONTS on the boot drive by default) to
+a workstation, and vqt_name() lists them after the system fonts with the
+outline flag of SpeedoGDOS (intout[33] = 1).  Their font ids, from 10000
+on, come from a hash of the font's name, so they stay the same from boot
+to boot.  A GDOS loaded from the AUTO folder (NVDI, SpeedoGDOS, FontGDOS,
+...) takes precedence: when trap #2 is hooked, or an FSMC or NVDI cookie
+is there, the built-in GDOS stays out altogether and that GDOS works as
+before.  GEM bitmap fonts (*.FNT, from ASSIGN.SYS) are left to such a
+GDOS: the built-in one does not load them.
+
 
 Available configurations
 ========================

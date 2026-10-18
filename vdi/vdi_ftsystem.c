@@ -233,6 +233,17 @@ static void fm_free(void *p)
     fm_put(b);
 }
 
+/* the same memory for the rest of the VDI's font code */
+void *vdi_ft_alloc(unsigned long size)
+{
+    return fm_alloc(size);
+}
+
+void vdi_ft_free(void *p)
+{
+    fm_free(p);
+}
+
 /* how much a block can hold */
 static unsigned long fm_capacity(void *p)
 {

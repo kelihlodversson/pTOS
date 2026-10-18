@@ -1124,6 +1124,10 @@ void biosmain(void)
 
     autoexec();                 /* autoexec PRGs from AUTO folder */
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    vdi_gdos_init();            /* the built-in GDOS, unless AUTO had one */
+#endif
+
     /* clear commandline */
 
     if(cmdload != 0) {
@@ -1713,7 +1717,7 @@ const PFLONG bios_vecs[] = {
 
 const UWORD bios_ent = ARRAY_SIZE(bios_vecs);
 
-#if CONF_WITH_EXTENDED_MOUSE
+#if CONF_WITH_EXTENDED_MOUSE || (CONF_WITH_VDI_SCALABLE_FONTS && !ARCH_X86_64)
 
 /* Does this pointer belong to our TEXT segment? */
 BOOL is_text_pointer(const void *p)
@@ -1722,4 +1726,4 @@ BOOL is_text_pointer(const void *p)
     return (pb >= (UBYTE *)&os_header) && (pb < _etext);
 }
 
-#endif /* CONF_WITH_EXTENDED_MOUSE */
+#endif /* CONF_WITH_EXTENDED_MOUSE || (CONF_WITH_VDI_SCALABLE_FONTS && !ARCH_X86_64) */
