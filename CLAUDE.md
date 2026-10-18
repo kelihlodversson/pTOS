@@ -175,9 +175,14 @@ same object.
   The codebase overwhelmingly uses `/* */` comments; match the file you are in.
 - 4 spaces, never a hard tab, in `.c`, `.h` and `.S`. Run `make gitready`
   before committing.
-- **`int` is 16 bits on m68k** (`-mshort`) and 32 bits on ARM. Use the
-  `portab.h` types — `WORD`, `LONG`, `UBYTE`, `UWORD`, `ULONG`, `BOOL` — and
-  suffix constants that must survive on m68k (`132 * 1000UL`).
+- **`int` is 32 bits on every target.** m68k dropped `-mshort` in #300, so
+  code written upstream for a 16-bit `int` can misbehave: a `WORD` compared
+  with `0xff02` never matches, so write `(WORD)0xff02`. **The pc-x86_64
+  kernel is LP64:** `long` and pointers are 64 bits there, while `LONG`
+  stays 32. Use the `portab.h` types — `WORD`, `LONG`, `UBYTE`, `UWORD`,
+  `ULONG`, `BOOL` — for anything with a fixed width, cast between pointers
+  and integers through `uintptr_t`, and pass `%ld`/`%lx` arguments as
+  `long`/`unsigned long`.
 - Assembler: leading underscore on symbols callable from C, CDECL conventions,
   68000-only instructions, `movem.l` never `movem.w`.
 - Trace with `KDEBUG(("..."))` / `KINFO(())` from `include/kprint.h`, not with
