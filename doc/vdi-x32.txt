@@ -149,6 +149,11 @@ state is allocated from the supervisor heap, never the user's Malloc heap.
 A physical workstation is opened lazily when needed and restored to console
 mode after the last service-owned virtual workstation closes.
 
+Physical initialization retains the screen descriptor's hardware pitch
+for packed framebuffers before entering graphics mode or clearing the
+console. Visible width does not determine scanline stride on padded GOP
+modes. Planar modes retain their existing stride calculation.
+
 Polyline coordinates are bounded to +/-10000. The service always clips to
 the framebuffer, intersecting an enabled workstation rectangle without
 changing its saved clipping state. This screen bound remains mandatory
@@ -269,6 +274,12 @@ process leaves no open workstations or allocator leaks, and another client
 can immediately run the same calls. The baseline configuration checks that
 the optional service class is refused. Both boot through the existing
 process/loader regressions to EmuCON.
+
+A padded-viewport boot regression retains the real GOP stride, narrows the
+visible width, and seeds the unused tail of every scanline with sentinel
+pixels before opening a workstation. Workstation initialization, console
+clears and the real ring-3 drawing calls must preserve those sentinels and
+both line-A pitch fields. CI requires "x86-64 VDI padded pitch: PASS".
 
 The boot disk needs obj/x32/x32probe.elf copied to X32VDI.TOS alongside the
 existing loader fixtures. CI builds and boots both PC configurations and

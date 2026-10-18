@@ -193,7 +193,18 @@ Vwk * get_vwk_by_handle(WORD handle)
  */
 void update_rez_dependent(void)
 {
-    linea_vars.BYTES_LIN = linea_vars.v_lin_wr = linea_vars.V_REZ_HZ / 8 * linea_vars.v_planes;
+    UWORD pitch = linea_vars.V_REZ_HZ / 8 * linea_vars.v_planes;
+#if CONF_WITH_VDI_BACKEND_TRUECOLOR
+    SCREEN_MODE_DESC desc;
+
+    screen_get_current_mode_desc(&desc);
+    /* Packed screens may pad each scanline. Preserve the hardware stride
+     * before v_opnwk() reaches esc_init() and clears the console. */
+    if (desc.layout == SCREEN_LAYOUT_PACKED)
+        pitch = desc.pitch;
+#endif
+
+    linea_vars.BYTES_LIN = linea_vars.v_lin_wr = pitch;
 
 #if EXTENDED_PALETTE
     mcs_ptr = (linea_vars.v_planes <= 4) ? (MCS *)&linea_vars.mouse_cursor_save : &ext_mouse_cursor_save;

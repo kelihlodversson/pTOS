@@ -49,6 +49,10 @@ drive alongside the existing x32 loader fixtures; CI does this for both PC
 configurations. The enabled configuration must print `x86-64 VDI client:
 PASS`, and both must print `x86-64 memtest: PASS`. See
 [the VDI contract](../doc/vdi-x32.txt) for the supported calls and bounds.
+The VDI configuration also requires `x86-64 VDI padded pitch: PASS`: it
+opens a workstation with a narrower viewport over the real GOP pitch and
+checks that console clearing and ring-3 drawing preserve the sentinel
+pixels in every row's padding.
 
 ## Running
 

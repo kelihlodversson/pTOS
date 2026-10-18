@@ -46,6 +46,11 @@
 #include "tosvars.h"
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/fs.h"
+#if CONF_WITH_X32_VDI
+#include "lineavars.h"
+#include "screen_mode.h"
+#include "font.h"
+#endif
 
 extern void set_owner(void *addr, PD *p);
 extern void proc_free_owned(PD *p);
@@ -1242,6 +1247,60 @@ static void probe_expect(char mode, long want, const char *what)
     same(&s, what);
 }
 
+#if CONF_WITH_X32_VDI
+static void test_vdi_padded_pitch(void)
+{
+    SCREEN_MODE_DESC mode;
+    struct _lineavars *saved;
+    SNAP s;
+    ULONG x, y, stride, visible;
+    volatile ULONG *row;
+    BOOL pitch_ok, padding_ok = TRUE;
+    int before = failures;
+
+    screen_get_current_mode_desc(&mode);
+    CHECK(mode.layout == SCREEN_LAYOUT_PACKED && mode.bits_per_pixel == 32 &&
+          mode.width >= 64, "padded-pitch test has a packed GOP screen");
+    if (mode.layout != SCREEN_LAYOUT_PACKED || mode.bits_per_pixel != 32 || mode.width < 64)
+        return;
+    snap(&s);
+    saved = kalloc(sizeof(*saved));
+    CHECK(saved != NULL, "snapshot line-A state for padded-pitch test");
+    if (!saved)
+        return;
+    *saved = linea_vars;
+
+    /* Crop the visible viewport while retaining the hardware scanline
+     * stride. This creates real row padding even on unpadded QEMU GOP.
+     * Seed it before opening: esc_init() clears the console inside the
+     * physical open, before the service could repair an incorrect pitch. */
+    stride = mode.pitch / sizeof(ULONG);
+    visible = (mode.width - 32) & ~7UL;
+    linea_vars.V_REZ_HZ = visible;
+    font_set_default();
+    for (y = 0; y < mode.height; y++) {
+        row = (volatile ULONG *)v_bas_ad + y * stride;
+        for (x = visible; x < stride; x++)
+            row[x] = 0x5a7193c5UL;
+    }
+    probe_expect('W', 0, "ring-3 VDI open, drawing and console clear preserve padded rows");
+    pitch_ok = linea_vars.v_lin_wr == mode.pitch && linea_vars.BYTES_LIN == mode.pitch;
+    for (y = 0; y < mode.height; y++) {
+        row = (volatile ULONG *)v_bas_ad + y * stride;
+        for (x = visible; x < stride; x++)
+            if (row[x] != 0x5a7193c5UL)
+                padding_ok = FALSE;
+    }
+    linea_vars = *saved;
+    kfree(saved);
+    CHECK(pitch_ok, "physical VDI open preserves the hardware pitch");
+    CHECK(padding_ok, "VDI and console output leave scanline padding untouched");
+    same(&s, "padded-pitch VDI test");
+    if (failures == before)
+        kcprintf("x86-64 VDI padded pitch: PASS\n");
+}
+#endif
+
 static void test_ring3(void)
 {
     SNAP s;
@@ -1258,6 +1317,7 @@ static void test_ring3(void)
         int before = failures;
 
         probe_expect('W', 0, "ring-3 VDI workstation, coordinate, raster and rejected-vector calls");
+        test_vdi_padded_pitch();
         probe_expect('!', 0xffff, "a user fault reclaims its open VDI workstations");
         probe_expect('W', 0, "VDI remains usable after a client's fault");
         if (failures == before)

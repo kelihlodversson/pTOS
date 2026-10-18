@@ -368,6 +368,10 @@ jobs:
             echo "::error::the ring-3 VDI client, validation and ownership tests did not pass"
             exit 1
           fi
+          if grep -q '^CONF_WITH_X32_VDI=y' .config && ! grep -q 'x86-64 VDI padded pitch: PASS' boot.log; then
+            echo "::error::VDI initialization or drawing corrupted padded framebuffer rows"
+            exit 1
+          fi
 
           # The self-test also launches real ring-3 x32 processes
           # (tests/x32_probe/): entry state and selectors, a GEMDOS call
