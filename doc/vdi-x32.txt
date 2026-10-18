@@ -149,8 +149,11 @@ state is allocated from the supervisor heap, never the user's Malloc heap.
 A physical workstation is opened lazily when needed and restored to console
 mode after the last service-owned virtual workstation closes.
 
-Polyline coordinates are bounded to +/-10000 and clipped by VDI to the
-screen/workstation clip. Clipping accepts only flags 0 or 1. Pixel reads
+Polyline coordinates are bounded to +/-10000. The service always clips to
+the framebuffer, intersecting an enabled workstation rectangle without
+changing its saved clipping state. This screen bound remains mandatory
+when optional workstation clipping is disabled; empty intersections draw
+nothing. Clipping accepts only flags 0 or 1. Pixel reads
 validate coordinates against the actual screen dimensions. Pixel results
 retain the existing VDI backend's representation, including hardware
 palette indices in truecolor modes.

@@ -160,7 +160,40 @@ static LONG coordinate_call(ULONG fn, UQUAD handle, UQUAD value, UQUAD address)
     for (i = 0; i < words; i++)
         if (points[i] < -MAX_COORDINATE || points[i] > MAX_COORDINATE)
             return EINVAL;
-    invoke(&control, &input, points, output, outpoints);
+    if (fn == VDI_SERVICE_LINE) {
+        Vwk *vwk = get_vwk_by_handle(control.handle);
+        VwkClip saved = *VDI_CLIP(vwk);
+        VwkClip bounded = { 0, linea_vars.V_REZ_HZ - 1, 0, linea_vars.V_REZ_VT - 1 };
+        WORD clip = vwk->clip;
+
+        /* Legacy VDI permits unchecked drawing with clip == FALSE.
+         * User requests always need framebuffer bounds, independently
+         * of the optional workstation rectangle. Keep its saved state. */
+        if (clip) {
+            if (saved.xmn_clip > bounded.xmn_clip)
+                bounded.xmn_clip = saved.xmn_clip;
+            if (saved.xmx_clip < bounded.xmx_clip)
+                bounded.xmx_clip = saved.xmx_clip;
+            if (saved.ymn_clip > bounded.ymn_clip)
+                bounded.ymn_clip = saved.ymn_clip;
+            if (saved.ymx_clip < bounded.ymx_clip)
+                bounded.ymx_clip = saved.ymx_clip;
+        }
+        if (bounded.xmn_clip > bounded.xmx_clip || bounded.ymn_clip > bounded.ymx_clip)
+            return E_OK;               /* empty screen/workstation intersection */
+        *VDI_CLIP(vwk) = bounded;
+        vwk->clip = TRUE;
+        invoke(&control, &input, points, output, outpoints);
+        *VDI_CLIP(vwk) = saved;
+        vwk->clip = clip;
+        linea_vars.CLIP = clip;
+        linea_vars.XMINCL = saved.xmn_clip;
+        linea_vars.XMAXCL = saved.xmx_clip;
+        linea_vars.YMINCL = saved.ymn_clip;
+        linea_vars.YMAXCL = saved.ymx_clip;
+    } else {
+        invoke(&control, &input, points, output, outpoints);
+    }
     return fn == VDI_SERVICE_COLOR ? output[0] : E_OK;
 }
 

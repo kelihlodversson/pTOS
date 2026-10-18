@@ -43,6 +43,94 @@ static LONG call(VDIPB *pb, WORD code, WORD integers, WORD pairs)
     pb->contrl->nptsin = pairs;
     return vdi(pb);
 }
+
+static LONG line(VDIPB *pb, WORD x1, WORD y1, WORD x2, WORD y2)
+{
+    pb->ptsin[0] = x1;
+    pb->ptsin[1] = y1;
+    pb->ptsin[2] = x2;
+    pb->ptsin[3] = y2;
+    return call(pb, 6, 0, 2);
+}
+
+static LONG pixel(VDIPB *pb, WORD x, WORD y)
+{
+    LONG rc;
+
+    pb->ptsin[0] = x;
+    pb->ptsin[1] = y;
+    rc = call(pb, 105, 0, 1);
+    return rc ? rc : (UWORD)pb->intout[1];
+}
+
+static int clipping_checks(WORD handle, WORD max_x, WORD max_y)
+{
+    VDICONTROL control = { 0 };
+    WORD input[1], points[4], output[2];
+    VDIPB pb = { &control, input, points, output, (WORD *)0 };
+    LONG white, black;
+    int phase, failures = 0;
+
+#define CHECK(condition) do { if (!(condition) && !failures) failures = __LINE__; } while (0)
+    control.handle = handle;
+    input[0] = 0;
+    CHECK(call(&pb, 17, 1, 0) == E_OK);
+    CHECK(line(&pb, 0, 4, 1, 4) == E_OK);
+    white = pixel(&pb, 0, 4);
+    input[0] = 1;
+    CHECK(call(&pb, 17, 1, 0) == E_OK);
+    CHECK(line(&pb, 0, 4, 1, 4) == E_OK);
+    black = pixel(&pb, 0, 4);
+    CHECK(white >= 0 && black >= 0 && white != black);
+
+    /* A fresh workstation, then explicitly disabled optional clipping.
+     * Outside x coordinates must not wrap writes into adjacent scanlines.
+     * Entirely outside and crossing lines exercise all four screen edges. */
+    for (phase = 0; phase < 2; phase++) {
+        if (phase) {
+            input[0] = 0;
+            CHECK(call(&pb, 129, 1, 2) == E_OK);
+        }
+        input[0] = 0;
+        CHECK(call(&pb, 17, 1, 0) == E_OK);
+        CHECK(line(&pb, 0, 0, max_x, 0) == E_OK);
+        CHECK(line(&pb, 0, 1, max_x, 1) == E_OK);
+        CHECK(line(&pb, 0, 3, max_x, 3) == E_OK);
+        input[0] = 1;
+        CHECK(call(&pb, 17, 1, 0) == E_OK);
+        CHECK(line(&pb, -4, 1, -1, 1) == E_OK);
+        CHECK(line(&pb, max_x + 1, 0, max_x + 4, 0) == E_OK);
+        CHECK(line(&pb, 0, -1, 1, -1) == E_OK);
+        CHECK(line(&pb, 0, max_y + 1, 1, max_y + 1) == E_OK);
+        CHECK(pixel(&pb, max_x, 0) == white && pixel(&pb, 0, 1) == white);
+        CHECK(line(&pb, -2, 2, max_x + 2, 2) == E_OK);
+        CHECK(pixel(&pb, max_x, 1) == white && pixel(&pb, 0, 3) == white);
+        CHECK(pixel(&pb, 0, 2) == black && pixel(&pb, max_x, 2) == black);
+        CHECK(line(&pb, 2, -2, 2, max_y + 2) == E_OK);
+        CHECK(pixel(&pb, 2, 0) == black && pixel(&pb, 2, max_y) == black);
+    }
+
+    /* Repeated calls preserve the caller's narrower clip rectangle. */
+    input[0] = 0;
+    CHECK(call(&pb, 17, 1, 0) == E_OK);
+    CHECK(line(&pb, 0, 4, 8, 4) == E_OK);
+    points[0] = 2; points[1] = 4; points[2] = 5; points[3] = 4;
+    input[0] = 1;
+    CHECK(call(&pb, 129, 1, 2) == E_OK);
+    CHECK(call(&pb, 17, 1, 0) == E_OK);
+    CHECK(line(&pb, 0, 4, 8, 4) == E_OK);
+    CHECK(line(&pb, 0, 4, 8, 4) == E_OK);
+    CHECK(pixel(&pb, 1, 4) == white && pixel(&pb, 6, 4) == white);
+    CHECK(pixel(&pb, 3, 4) == black);
+    points[0] = max_x + 1; points[1] = 0; points[2] = max_x + 4; points[3] = 4;
+    CHECK(call(&pb, 129, 1, 2) == E_OK);
+    CHECK(line(&pb, 0, 4, 8, 4) == E_OK); /* empty intersection is a no-op */
+    CHECK(pixel(&pb, 1, 4) == white && pixel(&pb, 6, 4) == white);
+    input[0] = 0;
+    CHECK(call(&pb, 129, 1, 2) == E_OK);
+#undef CHECK
+    return failures;
+}
 #endif
 
 int vdi_roundtrip_checks(WORD inherited_handle, BOOL fault_after_open)
@@ -85,6 +173,7 @@ int vdi_roundtrip_checks(WORD inherited_handle, BOOL fault_after_open)
         *(volatile ULONG *)0 = 1;       /* exit must reclaim the live workstation */
         return 99;
     }
+    CHECK(clipping_checks(handle, integers[0], integers[1]) == 0);
     CHECK(call(&pb, 6, 0, 2) == E_OK);
     points[0] = 4;
     CHECK(call(&pb, 105, 0, 1) == E_OK);
