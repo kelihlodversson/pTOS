@@ -37,6 +37,11 @@ void linea_fill(void);
 void linea_blit(struct blit_frame *info);
 void linea_raster(void);
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/* check once that FreeType works (vdi/vdi_ftsystem.c) */
+void vdi_freetype_check(void);
+#endif
+
 /* End of the VDI BSS section.
  * This is referenced by the OSHEADER */
 extern UBYTE _endvdibss[]; /* defined in vdi/endvdi.S */

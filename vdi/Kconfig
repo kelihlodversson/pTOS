@@ -123,6 +123,25 @@ config CONF_WITH_VDI_TEXT_EFFECTS_SPEEDUP
 	  are thickened only once.  It takes some 2.5 KB of ROM, which the
 	  192 KB images do not have to spare.
 
+config CONF_WITH_VDI_SCALABLE_FONTS
+	bool "Scalable fonts (FreeType)"
+	default y if TARGET_RPI_KERNEL || TARGET_VIRT_ARM_KERNEL
+	default y if TARGET_VIRT_M68K_KERNEL || TARGET_PC_X86_64_EFI
+	default n
+	help
+	  Link the FreeType library (the lib/freetype submodule) into the
+	  VDI, to give it TrueType and OpenType fonts at any size (#573).
+	  FreeType is used under its GPL option ("version 2, any later
+	  version can be used also"), the same terms as pTOS's own.
+
+	  It adds a few hundred KB, so it is on by default only for the
+	  images that have no fixed size (the Raspberry Pi, virt and x86-64
+	  kernels) and off for the ROM, cartridge, floppy, Amiga and
+	  S-record images, and for the RAM TOS, which has to fit in the RAM
+	  of small machines.
+
+	  Needs the submodule: git submodule update --init lib/freetype
+
 config CONF_WITH_VDI_VERTLINE
 	bool "VDI vertical line drawing speedup"
 	default n if TARGET_192

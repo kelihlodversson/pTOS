@@ -706,6 +706,11 @@ static void bios_init(void)
     clock_init();       /* init clock */
     KDEBUG(("after clock_init()\n"));
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /* late enough for KINFO() to reach the serial port everywhere */
+    vdi_freetype_check();   /* FreeType is linked in and works (#573) */
+#endif
+
 #if CONF_WITH_NOVA
     /* Detect and initialize a Nova card, skip if Ctrl is pressed */
     if (HAS_NOVA && !(kbshift(-1) & MODE_CTRL)) {
