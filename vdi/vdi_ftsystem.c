@@ -44,6 +44,8 @@
 #include "vdi_ftsystem.h"
 #if CONF_WITH_KHEAP
 #include "kheap.h"
+#else
+#include "tosvars.h"
 #endif
 
 #include <ft2build.h>
@@ -71,6 +73,7 @@ typedef struct fm_block {
 #define FM_ALIGN        (2 * sizeof(void *))    /* 8, or 16 on x86-64 */
 #define FM_HEADER       ((sizeof(FM_BLOCK) + FM_ALIGN - 1) & ~(FM_ALIGN - 1))
 #define FM_ROUND(n)     (((n) + FM_ALIGN - 1) & ~(unsigned long)(FM_ALIGN - 1))
+#define FM_MAX          0x7fff0000UL    /* fits a ULONG, and cannot wrap */
 
 static unsigned long fm_used;       /* bytes in use, headers included */
 static unsigned long fm_peak;       /* the most there ever was */
@@ -116,6 +119,14 @@ static FM_BLOCK *fm_free_list;
 static BOOL fm_init(void)
 {
     fm_pool_size = FM_ROUND(CONF_VDI_FONT_MEMORY * 1024UL);
+
+    /* balloc_stram() panics if it cannot; do without scalable fonts */
+    if ((ULONG)(memtop - membot) < fm_pool_size + FM_ALIGN + 3)
+    {
+        KINFO(("FreeType: no room for %lu KB of font memory\n",
+               fm_pool_size / 1024));
+        return FALSE;
+    }
     fm_pool = balloc_stram(fm_pool_size + FM_ALIGN, FALSE);
     fm_pool = (UBYTE *)FM_ROUND((unsigned long)fm_pool);
 
@@ -192,6 +203,11 @@ static void *fm_alloc(unsigned long size)
 
     if (!size)
         return NULL;
+    if (size > FM_MAX)
+    {
+        fm_failures++;
+        return NULL;
+    }
     size = FM_HEADER + FM_ROUND(size);
     b = fm_get(size);
     if (!b)

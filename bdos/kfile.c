@@ -25,6 +25,7 @@
 
 #include "emutos.h"
 #include "string.h"
+#include "gemerror.h"
 #include "fs.h"
 #include "bdosstub.h"
 
@@ -33,9 +34,24 @@ long kdos_fopen(long name, long mode)
     return DISK_CALL(xopen((char *)name, (WORD)mode));
 }
 
+/*
+ * A disk error while xclose() flushes the buffers (of any drive, not only
+ * the file's) longjmp()s out before the handle is released.  By then the
+ * file is off its directory's list, and the failing drive's buffers have
+ * been dropped, so closing again finds no more to do than release the
+ * handle (or fails on another drive's buffers, and is tried again).  The
+ * first error is what is returned.
+ */
 long kdos_fclose(long h)
 {
-    return DISK_CALL(xclose((WORD)h));
+    long rc, again;
+    int tries;
+
+    rc = again = DISK_CALL(xclose((WORD)h));
+    for (tries = 0; again < 0 && again != EIHNDL && tries < BLKDEVNUM; tries++)
+        again = DISK_CALL(xclose((WORD)h));
+
+    return rc;
 }
 
 long kdos_fread(long h, long count, long buf)
