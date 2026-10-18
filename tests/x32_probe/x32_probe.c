@@ -161,6 +161,7 @@ static int walk_ancestors(u64 basepage)
 void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss);
 extern int vdi_contract_checks(void);
 extern int vdi_roundtrip_checks(short inherited_handle, int fault_after_open);
+extern int vdi_pixel_bounds_checks(void);
 
 void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 {
@@ -170,6 +171,9 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     switch (tail[0]) {
     case 'W':
         pterm(vdi_roundtrip_checks(0, 0));
+        break;
+    case 'P':
+        pterm(vdi_pixel_bounds_checks());
         break;
     case '!':
         pterm(vdi_roundtrip_checks(0, 1));

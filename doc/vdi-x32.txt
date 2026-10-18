@@ -159,8 +159,9 @@ the framebuffer, intersecting an enabled workstation rectangle without
 changing its saved clipping state. This screen bound remains mandatory
 when optional workstation clipping is disabled; empty intersections draw
 nothing. Clipping accepts only flags 0 or 1. Pixel reads
-validate coordinates against the actual screen dimensions. Pixel results
-retain the existing VDI backend's representation, including hardware
+validate coordinates against the actual screen dimensions and reject
+values above 32767 before narrowing to the renderer's signed WORDs. Pixel
+results retain the existing VDI backend's representation, including hardware
 palette indices in truecolor modes.
 
 Bitmap size and validation requirements
@@ -280,6 +281,12 @@ visible width, and seeds the unused tail of every scanline with sentinel
 pixels before opening a workstation. Workstation initialization, console
 clears and the real ring-3 drawing calls must preserve those sentinels and
 both line-A pitch fields. CI requires "x86-64 VDI padded pitch: PASS".
+
+A pixel-coordinate boot regression advertises 32769 rows and exercises
+raw ring-3 calls at the signed WORD boundary and with larger 64-bit values.
+Invalid requests must leave output buffers untouched and cannot reach the
+renderer. The valid boundary is checked with a null output buffer, avoiding
+any read beyond the real fixture's framebuffer.
 
 The boot disk needs obj/x32/x32probe.elf copied to X32VDI.TOS alongside the
 existing loader fixtures. CI builds and boots both PC configurations and

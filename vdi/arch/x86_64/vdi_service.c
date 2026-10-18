@@ -230,7 +230,10 @@ static LONG pixel_call(UQUAD handle, UQUAD x, UQUAD y, UQUAD address)
     VDICONTROL control = { 0 };
     WORD points[2], input = 0, output[2], outpoints[12];
 
-    if (x >= (UWORD)linea_vars.V_REZ_HZ || y >= (UWORD)linea_vars.V_REZ_VT)
+    /* Screen dimensions are unsigned WORDs; renderer coordinates are
+     * signed WORDs. Reject a value that would wrap before narrowing. */
+    if (x > 32767 || y > 32767 ||
+        x >= (UWORD)linea_vars.V_REZ_HZ || y >= (UWORD)linea_vars.V_REZ_VT)
         return EINVAL;
     if (!kproc_validate_user_write(address, sizeof(output)))
         return EIMBA;

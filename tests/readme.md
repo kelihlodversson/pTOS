@@ -53,6 +53,9 @@ The VDI configuration also requires `x86-64 VDI padded pitch: PASS`: it
 opens a workstation with a narrower viewport over the real GOP pitch and
 checks that console clearing and ring-3 drawing preserve the sentinel
 pixels in every row's padding.
+`x86-64 VDI pixel coordinates: PASS` exercises raw pixel requests against a
+simulated 32769-row screen, checking signed WORD bounds before narrowing,
+64-bit arguments and unchanged output buffers on rejection.
 
 ## Running
 
