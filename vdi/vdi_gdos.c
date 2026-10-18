@@ -26,10 +26,13 @@
  *   flagged as outline fonts (vdi/vdi_text.c).
  *
  * The fonts are the TrueType (*.TTF) and OpenType (*.OTF) files in
- * CONF_VDI_FONT_DIR.  Each gets a font id from a hash of its name, in a
- * range of its own (SFONT_ID_FIRST on), so that a document which stores
- * a font id finds the same font at the next boot.  When two names hash
- * to the same id, the one that sorts later takes the next free one.
+ * CONF_VDI_FONT_DIR.  Each gets a font id from a hash of its full family
+ * and style names, in a range of its own (SFONT_ID_FIRST on), so that a
+ * document which stores a font id finds the same font at the next boot.
+ * When two fonts hash to the same id, the one that sorts later takes the
+ * next free one.  The hash is of the names as the font has them, not of
+ * the 32 characters vqt_name() returns: two faces whose names only differ
+ * past those stay two fonts with ids of their own.
  *
  * A GDOS loaded from disk (NVDI, SpeedoGDOS, FSMGDOS, FontGDOS, ... in the
  * AUTO folder) takes precedence: the built-in one only starts once the
@@ -112,6 +115,21 @@ static void sfont_name(char *name, const char *family, const char *style)
             *p = '?';
 }
 
+/* the font's identity: its family and style names, whole */
+static ULONG sfont_key(const char *family, const char *style)
+{
+    ULONG h = 5381;
+    const char *s;
+
+    for (s = family ? family : ""; *s; s++)
+        h = h * 33 + (UBYTE)*s;
+    h = h * 33;                     /* a separator, so "AB"+"C" is not "A"+"BC" */
+    for (s = style ? style : ""; *s; s++)
+        h = h * 33 + (UBYTE)*s;
+
+    return h;
+}
+
 static long sfont_open(void *arg)
 {
     VDI_SFONT *f = arg;
@@ -127,6 +145,7 @@ static long sfont_open(void *arg)
     }
 
     sfont_name(f->name, face->family_name, face->style_name);
+    f->key = sfont_key(face->family_name, face->style_name);
     format = FT_Get_Font_Format(face);
     f->format = (format && strcmp(format, "TrueType")) ? SFONT_TYPE1 : SFONT_TRUETYPE;
     f->flags = FT_IS_FIXED_WIDTH(face) ? SFONT_MONOSPACE : 0;
@@ -178,18 +197,10 @@ static int sfont_compare(const void *a, const void *b)
     int rc;
 
     rc = strcmp(fa->name, fb->name);
+    if (!rc && fa->key != fb->key)
+        rc = (fa->key < fb->key) ? -1 : 1;
 
     return rc ? rc : strcmp(fa->file, fb->file);
-}
-
-static UWORD sfont_hash(const char *name)
-{
-    ULONG h = 5381;
-
-    while (*name)
-        h = h * 33 + (UBYTE)*name++;
-
-    return (UWORD)(h % SFONT_ID_COUNT);
 }
 
 static BOOL sfont_id_used(const VDI_SFONT *fonts, WORD count, WORD id)
@@ -223,14 +234,15 @@ static void sfont_scan(void)
 
     /* the same font twice (a .TTF and an .OTF, say): keep the first file */
     for (i = n = 0; i < count; i++)
-        if (!n || strcmp(fonts[i].name, fonts[n - 1].name))
+        if (!n || fonts[i].key != fonts[n - 1].key
+            || strcmp(fonts[i].name, fonts[n - 1].name))
             fonts[n++] = fonts[i];
     count = n;
 
     /* the ids, in name order, so that collisions resolve the same way */
     for (i = 0; i < count; i++)
     {
-        slot = sfont_hash(fonts[i].name);
+        slot = (UWORD)(fonts[i].key % SFONT_ID_COUNT);
         while (sfont_id_used(fonts, i, (WORD)(SFONT_ID_FIRST + slot)))
             slot = (slot + 1) % SFONT_ID_COUNT;
         fonts[i].id = (WORD)(SFONT_ID_FIRST + slot);
@@ -270,16 +282,23 @@ void vdi_gdos_init(void)
     }
 #endif
 
-    sfont_scan();
-
 #if !ARCH_X86_64
+    /*
+     * The cookie says which GDOS this is, so without it there is none:
+     * cookie_add() does nothing when the AUTO folder has filled the jar.
+     */
     fsmc.magic = 0x5f535044UL;      /* '_SPD' */
     fsmc.version = 0x0400;
     fsmc.quality = 0;
     cookie_add(COOKIE_FSMC, (ULONG)&fsmc);
     if (!cookie_get(COOKIE_FSMC, &value))
-        KINFO(("GDOS: no room in the cookie jar for FSMC\n"));
+    {
+        KINFO(("GDOS: no room in the cookie jar for FSMC; no built-in GDOS\n"));
+        return;
+    }
 #endif
+
+    sfont_scan();
     vdi_gdos_id = GDOS_ID_FSM;
 
     KINFO(("GDOS: built in, %d scalable fonts in %s\n",

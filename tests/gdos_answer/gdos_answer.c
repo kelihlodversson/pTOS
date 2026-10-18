@@ -8,9 +8,10 @@
  * vq_gdos() leaves -2 and there is no FSMC cookie.  The suite checks that
  * the two agree, and which of the two it found.  Any other answer is a
  * GDOS loaded from disk, which the built-in one leaves alone: nothing is
- * checked then.
+ * checked then.  So is an FSMC cookie of another GDOS that also answers
+ * '_FSM' (SpeedoGDOS 5, FSMGDOS): the built-in one is '_SPD' version 4.00.
  *
- * With the GDOS there, it also opens the screen workstation and checks
+ * With the built-in GDOS, it also opens a workstation and checks
  * vst_load_fonts() and vqt_name(): the scalable fonts come after the
  * system fonts, flagged as outline fonts (intout[33] = 1) with ids from
  * 10000 on, and a second vst_load_fonts() adds none.  How many there are
@@ -63,6 +64,43 @@ struct fsmc
 
 static short contrl[16], intin[16], ptsin[16], intout[64], ptsout[16];
 static void *vdipb[5] = { contrl, intin, ptsin, intout, ptsout };
+
+static short aes_control[5], aes_global[15];
+static long aes_addr[2];
+static void *aespb[6] = { aes_control, aes_global, intin, intout, aes_addr, aes_addr };
+
+/* an AES call: without an AES, trap #2 leaves everything as it was */
+static void aes(short op, short nintin, short nintout)
+{
+    aes_control[0] = op;
+    aes_control[1] = nintin;
+    aes_control[2] = nintout;
+    aes_control[3] = 0;
+    aes_control[4] = 0;
+#ifdef __mc68000__
+    {
+        register long d0 __asm__("d0") = 200;
+        register void *d1 __asm__("d1") = aespb;
+
+        __asm__ volatile (
+            "trap #2"
+            : "+d" (d0), "+d" (d1)
+            :
+            : "d2", "a0", "a1", "memory", "cc");
+    }
+#else
+    {
+        register long r0 __asm__("r0") = 200;
+        register void *r1 __asm__("r1") = aespb;
+
+        __asm__ volatile (
+            "svc 2"
+            : "+r" (r0), "+r" (r1)
+            :
+            : "r2", "r3", "r12", "lr", "memory", "cc");
+    }
+#endif
+}
 
 /* a VDI call, with contrl[] already filled in */
 static void vdi(void)
@@ -125,16 +163,42 @@ static void font_check(int ok, const char *msg)
 
 static void check_fonts(void)
 {
-    short handle, system_fonts, i;
+    short handle, system_fonts, i, aes_there;
+
+    /*
+     * Under the AES (the suite started from the desktop) the screen is
+     * the AES's: open a virtual workstation on it.  Opening and closing
+     * the physical one would take it from the desktop.  Without the AES
+     * (EmuCON), the physical workstation is free.
+     */
+    aes_global[0] = 0;
+    aes(10, 0, 1);                      /* appl_init() */
+    aes_there = aes_global[0] != 0;
 
     for (i = 0; i < 10; i++)
         intin[i] = 1;
     intin[10] = 2;                      /* raster coordinates */
-    vdi_op(1, 11, 0);                   /* v_opnwk(), the screen */
+    if (aes_there)
+    {
+        short phys;
+
+        aes(77, 0, 5);                  /* graf_handle() */
+        phys = intout[0];
+        for (i = 0; i < 10; i++)
+            intin[i] = 1;
+        intin[10] = 2;
+        vdi_op(100, 11, phys);          /* v_opnvwk() */
+    }
+    else
+        vdi_op(1, 11, 0);               /* v_opnwk(), the screen */
     handle = contrl[6];
-    font_check(handle > 0, "v_opnwk() failed");
+    font_check(handle > 0, "opening a workstation failed");
     if (handle <= 0)
+    {
+        if (aes_there)
+            aes(19, 0, 1);              /* appl_exit() */
         return;
+    }
     system_fonts = intout[10];
 
     intin[0] = 0;
@@ -162,7 +226,13 @@ static void check_fonts(void)
     font_check(intout[0] == 0, "a second vst_load_fonts() added fonts");
 
     vdi_op(120, 1, handle);             /* vst_unload_fonts() */
-    vdi_op(2, 0, handle);               /* v_clswk() */
+    if (aes_there)
+    {
+        vdi_op(101, 0, handle);         /* v_clsvwk() */
+        aes(19, 0, 1);                  /* appl_exit() */
+    }
+    else
+        vdi_op(2, 0, handle);           /* v_clswk() */
 }
 
 /* vq_gdos(): what trap #2 leaves in d0/r0 when called with -2 */
@@ -196,16 +266,9 @@ void test_gdos_answer(void)
     unsigned long value = 0;
     const struct fsmc *fsmc = NULL;
     long gdos;
+    int builtin;
 
     gdos = vq_vgdos();
-    if (gdos == TAG('_', 'F', 'S', 'M'))
-    {
-        check_fonts();
-        conws("\n");   /* past what the workstation left on the console line */
-    }
-
-    ptest_begin("gdos_answer (#582)");
-
     if (Ssystem(-1, 0, 0L) != EINVFN)
     {
         if (Ssystem(SS_GETCOOKIE, TAG('F', 'S', 'M', 'C'), (long)&value) == 0)
@@ -222,26 +285,35 @@ void test_gdos_answer(void)
                 fsmc = (const struct fsmc *)jar->value;
     }
 
+    /*
+     * The built-in GDOS: '_FSM', and its own FSMC cookie or (a fault the
+     * suite reports) none.  Another FSMC cookie is another GDOS's.
+     */
+    builtin = gdos == TAG('_', 'F', 'S', 'M')
+              && (!fsmc || (fsmc->magic == (unsigned long)TAG('_', 'S', 'P', 'D')
+                            && fsmc->version == 0x0400));
+    if (builtin)
+    {
+        check_fonts();
+        conws("\n");   /* past what the workstation left on the console line */
+    }
+
+    ptest_begin("gdos_answer (#582)");
+
     if (gdos == -2)
     {
         ptest_assert_msg(!fsmc, "an FSMC cookie, but vq_gdos() says no GDOS");
         if (!fsmc)
             conws("(no GDOS) ");
     }
-    else if (gdos != TAG('_', 'F', 'S', 'M'))
+    else if (!builtin)
     {
         /* a GDOS loaded from disk: the built-in one stayed out of its way */
         conws("(a GDOS from disk) ");
     }
     else
     {
-        ptest_assert_msg(fsmc != NULL, "a GDOS, but no FSMC cookie");
-        if (fsmc)
-        {
-            ptest_assert_msg(fsmc->magic == (unsigned long)TAG('_', 'S', 'P', 'D'),
-                             "the FSMC magic is not '_SPD'");
-            ptest_assert_msg(fsmc->version >= 0x0400, "the FSMC version is below 4.00");
-        }
+        ptest_assert_msg(fsmc != NULL, "the built-in GDOS, but no FSMC cookie");
         ptest_assert_msg(!font_failure, font_failure);
         conws("(SpeedoGDOS, ");
         pnum(fonts_loaded);

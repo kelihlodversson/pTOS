@@ -38,6 +38,7 @@ typedef struct
     WORD id;                        /* its font id, stable from boot to boot */
     UBYTE format;                   /* SFONT_TRUETYPE, ... */
     UBYTE flags;                    /* SFONT_MONOSPACE */
+    ULONG key;                      /* hash of the full family and style */
     char name[FONT_NAME_LEN + 1];   /* "Family Style", as vqt_name() gives it */
     char file[14];                  /* its 8.3 file name in CONF_VDI_FONT_DIR */
 } VDI_SFONT;
