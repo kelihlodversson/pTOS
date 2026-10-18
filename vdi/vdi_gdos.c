@@ -167,8 +167,12 @@ static long sfont_open(void *arg)
 
 static void sfont_set_path(const char *file)
 {
+    size_t len;
+
     strcpy(sfont_path, CONF_VDI_FONT_DIR);
-    strcat(sfont_path, "\\");
+    len = strlen(sfont_path);
+    if (!len || sfont_path[len - 1] != '\\')   /* "C:\FONTS\" or "C:\" has one */
+        strcat(sfont_path, "\\");
     strcat(sfont_path, file);
 }
 
