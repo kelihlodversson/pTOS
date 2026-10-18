@@ -44,7 +44,7 @@ static void truecolor32_ops_get_color(const Vwk *vwk, WORD pen, WORD *rgb)
     vdi_truecolor_get_color(vwk, MAP_COL[pen], &rgb[0], &rgb[1], &rgb[2]);
 }
 
-vdi_backend_ops packed_truecolor32_backend_ops = {
+VDI_PACKED_OPS_CONST vdi_backend_ops packed_truecolor32_backend_ops = {
     NULL,                       /* open: generic default */
     NULL,                       /* close: generic default */
     truecolor32_get_start_addr,

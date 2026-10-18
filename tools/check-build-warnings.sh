@@ -5,9 +5,9 @@
 # Usage: tools/check-build-warnings.sh BUILD-LOG
 #
 # Every configuration CI builds is warning-free (#584), so any line with
-# "warning:" in it -- from the compiler, the assembler, the linker or
-# Kconfig -- is new.  On GitHub Actions each one also becomes an
-# annotation on the PR.
+# "warning:" in it, in any case -- from the compiler, the assembler (which
+# says "Warning:"), the linker, Kconfig or the Makefile's own checks -- is
+# new.  On GitHub Actions each one also becomes an annotation on the PR.
 
 log=$1
 if [ -z "$log" ] || [ ! -r "$log" ]; then
@@ -15,7 +15,7 @@ if [ -z "$log" ] || [ ! -r "$log" ]; then
     exit 2
 fi
 
-warnings=$(grep 'warning:' "$log")
+warnings=$(grep -i 'warning:' "$log")
 if [ -z "$warnings" ]; then
     echo "No build warnings."
     exit 0

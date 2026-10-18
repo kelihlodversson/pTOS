@@ -655,7 +655,10 @@ else
 $(EMUTOS_IMG): $(OBJECTS) obj/emutospp.ld
 	$(LD) $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(LIBS) $(LDFLAGS) \
 	  -Wl,-Map=emutos.map -o $@
-	@if [ $$(($$(awk '/^\.data /{print $$3}' emutos.map))) -gt 0 ]; then \
+	@# .data shares the read-only ROM region with .text (emutos.ld), so it
+	@# must stay empty -- unless the image is loaded into RAM
+	@if [ "$(EMUTOS_LIVES_IN_RAM)" != y ] && \
+	    [ $$(($$(awk '/^\.data /{print $$3}' emutos.map))) -gt 0 ]; then \
 	  echo "### Warning: The DATA segment is not empty."; \
 	  echo "### Please examine emutos.map and use \"const\" where appropriate."; \
 	fi
