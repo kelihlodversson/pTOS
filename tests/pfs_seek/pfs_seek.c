@@ -131,6 +131,7 @@ void test_pfs_seek(void)
             rc = Fread(0, 4, buf);
             ptest_assert_msg(rc == 4 && memcmp(buf, data + 100, 4) == 0,
                              "read from the redirected handle");
+            Fclose(0);  /* gives back the reference Fforce() took */
         }
         Fforce(0, saved);
         Fclose(saved);

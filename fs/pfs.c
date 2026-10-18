@@ -1129,57 +1129,53 @@ LONG pfs_handle_close(PFSCOOKIE *fc)
     return fc->fs->close ? fc->fs->close(fc) : E_OK;
 }
 
-/* the size of an open file, or a negative error code */
-static LONG pfs_handle_size(PFSCOOKIE *fc, PFSATTR *attr)
+/* the attributes of an open file: E_OK or a negative error code */
+static LONG pfs_handle_fstat(PFSCOOKIE *fc, PFSATTR *attr)
 {
-    LONG rc;
-
     if (!fc->fs->fstat)
         return EINVFN;
 
-    rc = fc->fs->fstat(fc, attr);
-    if (rc < 0)
-        return rc;
-
-    /* a GEMDOS file position is a LONG */
-    return (attr->size > 0x7fffffffUL) ? 0x7fffffffL : (LONG)attr->size;
+    return fc->fs->fstat(fc, attr);
 }
 
 LONG pfs_handle_seek(PFSCOOKIE *fc, LONG n, WORD flg)
 {
     PFSATTR attr;
-    LONG size;
+    QUAD target;    /* wide enough for a size of up to 4 GB plus an offset */
+    LONG rc;
 
     if ((flg < 0) || (flg > 2))
         return EINVFN;
 
-    size = pfs_handle_size(fc, &attr);
-    if (size < 0)
-        return size;
+    rc = pfs_handle_fstat(fc, &attr);
+    if (rc < 0)
+        return rc;
 
+    target = n;
     if (flg == 2)
-        n += size;
+        target += attr.size;
     else if (flg == 1)
-        n += fc->pos;
+        target += fc->pos;
 
-    if ((n < 0) || (n > size))
+    /* within the file, and a position a LONG can hold */
+    if ((target < 0) || (target > (QUAD)attr.size) || (target > 0x7fffffffL))
         return ERANGE;
 
-    fc->pos = n;
+    fc->pos = (LONG)target;
 
-    return n;
+    return fc->pos;
 }
 
 LONG pfs_handle_eof(PFSCOOKIE *fc)
 {
     PFSATTR attr;
-    LONG size;
+    LONG rc;
 
-    size = pfs_handle_size(fc, &attr);
-    if (size < 0)
-        return size;
+    rc = pfs_handle_fstat(fc, &attr);
+    if (rc < 0)
+        return rc;
 
-    return (fc->pos >= size) ? 1 : 0;
+    return ((ULONG)fc->pos >= attr.size) ? 1 : 0;
 }
 
 LONG pfs_handle_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt)
@@ -1190,7 +1186,7 @@ LONG pfs_handle_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt)
     if (wrt)
         return EACCDN;
 
-    rc = pfs_handle_size(fc, &attr);
+    rc = pfs_handle_fstat(fc, &attr);
     if (rc < 0)
         return rc;
 
