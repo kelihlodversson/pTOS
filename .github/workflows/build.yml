@@ -151,8 +151,11 @@ jobs:
         env:
           CONFIG: ${{ matrix.config }}
         run: |
+          set -o pipefail   # tee below must not hide a failing make
           make "${CONFIG}_defconfig"
-          make
+          make 2>&1 | tee build.log
+          # every configuration builds without warnings (#584): keep it so
+          tools/check-build-warnings.sh build.log
 
       - name: Collect the build products
         run: |
@@ -196,8 +199,11 @@ jobs:
         env:
           CONFIG: ${{ matrix.config }}
         run: |
+          set -o pipefail   # tee below must not hide a failing make
           make "${CONFIG}_defconfig"
-          make
+          make 2>&1 | tee build.log
+          # every configuration builds without warnings (#584): keep it so
+          tools/check-build-warnings.sh build.log
 
       - name: Collect the build products
         run: |
@@ -241,10 +247,12 @@ jobs:
         env:
           CONFIG: ${{ matrix.config }}
         run: |
+          set -o pipefail   # tee below must not hide a failing make
           make "${CONFIG}_defconfig"
           # CI deliberately uses Ubuntu's native gcc/binutils instead of the
           # x86_64-elf- cross toolchain selected by the developer default.
-          make CROSS_COMPILE=
+          make CROSS_COMPILE= 2>&1 | tee build.log
+          tools/check-build-warnings.sh build.log
 
       - name: Collect the build products
         run: |
