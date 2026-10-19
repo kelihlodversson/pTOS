@@ -342,6 +342,9 @@ void arb_line(Line *line);
 int GSX_ENTRY(int op, VDIPB* paramblock);
 /* C Support routines */
 Vwk * get_vwk_by_handle(WORD);
+#if CONF_WITH_VDI_SCALABLE_FONTS
+BOOL vdi_font_in_use(const Fonthead *font);
+#endif
 Vwk * vdi_physical_vwk(void);
 UWORD * get_start_addr(const WORD x, const WORD y);
 void set_LN_MASK(Vwk *vwk);

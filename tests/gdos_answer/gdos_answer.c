@@ -16,8 +16,18 @@
  * system fonts, flagged as outline fonts (intout[33] = 1) with ids from
  * 10000 on, and a second vst_load_fonts() adds none.  How many there are
  * depends on the fonts in \GEMSYS\FONTS of the test disk
- * (tools/run-regression-tests.sh copies DejaVu there when the host has
- * it).
+ * (tools/run-regression-tests.sh copies DejaVu Sans, Serif and Sans Mono,
+ * TrueType, and Inter and Loma, OpenType with CFF outlines, Loma with an
+ * ascender taller than its em, there when the host has them).  Each is
+ * selected, sized and drawn (#576): vst_height() and vst_point() give
+ * exactly the height and the size asked for, a monospaced one stays
+ * monospaced in bold, and what each
+ * drew is read back to see that
+ * rotation, clipping, the effects, XOR mode and alignment to the ascent
+ * and the half line apply to it, and the first is also drawn big, rotated
+ * with effects, which takes a bigger text scratch buffer than the default
+ * one.  The pixels are only checked where the system font's text can be
+ * read back with v_get_pixel(); where it cannot, the result line says so.
  *
  * x86-64 programs cannot call the VDI at all (trap class 2 is refused
  * from ring 3), so it is skipped there.
@@ -154,6 +164,8 @@ static void pnum(long n)
  */
 static const char *font_failure;
 static short fonts_loaded;
+static int pixels_checked;
+static short monospaced_fonts;
 
 static void font_check(int ok, const char *msg)
 {
@@ -161,9 +173,465 @@ static void font_check(int ok, const char *msg)
         font_failure = msg;
 }
 
+static short ptsin_op(short op, short nptsin, short nintin, short handle)
+{
+    contrl[0] = op;
+    contrl[1] = nptsin;
+    contrl[3] = nintin;
+    contrl[5] = 0;
+    contrl[6] = handle;
+    vdi();
+    return intout[0];
+}
+
+/* the width of n times ch in the current font */
+static short extent_of(short handle, short ch, short n)
+{
+    short i;
+
+    for (i = 0; i < n; i++)
+        intin[i] = ch;
+    ptsin_op(116, 0, n, handle);        /* vqt_extent() */
+    return ptsout[2] - ptsout[0];
+}
+
+/* the width of "Ag" in the current font */
+static short extent_ag(short handle)
+{
+    intin[0] = 'A';
+    intin[1] = 'g';
+    ptsin_op(116, 0, 2, handle);        /* vqt_extent() */
+    return ptsout[2] - ptsout[0];
+}
+
+/*
+ * A scalable font selected, sized and drawn (#576): sizes are exact,
+ * bigger at a bigger size, and the text path draws them.
+ */
+static void check_sizes(short handle, short system_fonts)
+{
+    short id, top12, top48, w12, w48;
+
+    intin[0] = system_fonts + 1;
+    vdi_op(130, 1, handle);             /* vqt_name(): the first scalable font */
+    id = intout[0];
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    font_check(intout[0] == id, "vst_font() did not select the scalable font");
+
+    intin[0] = 12;
+    vdi_op(107, 1, handle);             /* vst_point(12) */
+    top12 = ptsout[1];
+    w12 = extent_ag(handle);
+    font_check(top12 > 0 && w12 > 0, "a scalable font at 12 points has no size");
+
+    intin[0] = 48;
+    vdi_op(107, 1, handle);             /* vst_point(48) */
+    font_check(intout[0] >= 44 && intout[0] <= 52, "vst_point(48) did not set 48 points");
+    top48 = ptsout[1];
+    w48 = extent_ag(handle);
+    font_check(top48 > top12 * 3 && w48 > w12 * 3,
+               "a scalable font at 48 points is not four times 12 points");
+
+    /* exact heights, unlike a bitmap font's nearest one: check_heights() */
+
+    /*
+     * Many sizes, one after another: more than the cache holds, so older
+     * ones are dropped and every size still comes out, each bigger.
+     */
+    {
+        short pt, last = 0;
+
+        for (pt = 8; pt <= 160; pt += 8)
+        {
+            intin[0] = pt;
+            vdi_op(107, 1, handle);     /* vst_point() */
+            font_check(ptsout[1] > last, "a bigger size of a scalable font is not bigger");
+            last = ptsout[1];
+        }
+    }
+
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
+/*
+ * Drawing a scalable font, read back with v_get_pixel(): the text goes
+ * through the bitmap text path, so rotation, clipping, the effects and
+ * the writing modes apply to it as to a bitmap font (#576).
+ */
+struct ink
+{
+    long count;                         /* pixels not in colour 0 */
+    short x0, y0, x1, y1;               /* the box around them */
+};
+
+static short ink_cx, ink_cy, ink_r;     /* the text's origin, and how far it reaches */
+static short ink_text[2] = { 'A', 'g' };    /* what is drawn */
+static short ink_len = 2;
+static short ink_step = 1;              /* every pixel, or every other one */
+
+static void ink_scan(short handle, short x0, short y0, short x1, short y1,
+                     struct ink *ink)
+{
+    short x, y;
+
+    ink->count = 0;
+    ink->x0 = ink->y0 = 32767;
+    ink->x1 = ink->y1 = -1;
+    for (y = y0; y <= y1; y += ink_step)
+        for (x = x0; x <= x1; x += ink_step)
+        {
+            ptsin[0] = x;
+            ptsin[1] = y;
+            ptsin_op(105, 1, 0, handle);    /* v_get_pixel() */
+            if (intout[1] == 0)
+                continue;
+            ink->count++;
+            if (x < ink->x0)
+                ink->x0 = x;
+            if (x > ink->x1)
+                ink->x1 = x;
+            if (y < ink->y0)
+                ink->y0 = y;
+            if (y > ink->y1)
+                ink->y1 = y;
+        }
+}
+
+/* clear the area around the origin, draw ink_text there and see what came out */
+static void ink_draw(short handle, short angle, short effects, short mode,
+                     short times, struct ink *ink)
+{
+    short i;
+
+    intin[0] = 0;
+    vdi_op(25, 1, handle);              /* vsf_color(0) */
+    intin[0] = 1;
+    vdi_op(23, 1, handle);              /* vsf_interior(solid) */
+    ptsin[0] = ink_cx - ink_r;
+    ptsin[1] = ink_cy - ink_r;
+    ptsin[2] = ink_cx + ink_r;
+    ptsin[3] = ink_cy + ink_r;
+    ptsin_op(114, 2, 0, handle);        /* vr_recfl() */
+
+    intin[0] = angle;
+    vdi_op(13, 1, handle);              /* vst_rotation() */
+    intin[0] = effects;
+    vdi_op(106, 1, handle);             /* vst_effects() */
+    intin[0] = mode;
+    vdi_op(32, 1, handle);              /* vswr_mode() */
+    for (i = 0; i < times; i++)
+    {
+        ptsin[0] = ink_cx;
+        ptsin[1] = ink_cy;
+        intin[0] = ink_text[0];
+        intin[1] = ink_text[1];
+        ptsin_op(8, 1, ink_len, handle);    /* v_gtext() */
+    }
+    intin[0] = 1;
+    vdi_op(32, 1, handle);              /* back to replace mode */
+    intin[0] = 0;
+    vdi_op(106, 1, handle);             /* no effects */
+    intin[0] = 0;
+    vdi_op(13, 1, handle);              /* no rotation */
+
+    ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r,
+             ink_cx + ink_r, ink_cy + ink_r, ink);
+}
+
+/* a and b the same within a tenth (and a pixel) */
+static int about(long a, long b)
+{
+    long d = a > b ? a - b : b - a;
+
+    return d * 10 <= (a > b ? a : b) + 10;
+}
+
+/*
+ * The first row with ink in [y0, y1] between x0 and x1 after drawing ch
+ * at (x, y) with that vertical alignment, or -1: only the rows around
+ * where the top of the glyph must land are read, to keep it quick
+ */
+static short first_ink_row(short handle, short ch, short valign, short x, short y,
+                           short x1, short y0, short y1)
+{
+    short row, col;
+
+    intin[0] = 0;
+    vdi_op(25, 1, handle);              /* vsf_color(0) */
+    intin[0] = 1;
+    vdi_op(23, 1, handle);              /* vsf_interior(solid) */
+    ptsin[0] = x;
+    ptsin[1] = y0 - 8;
+    ptsin[2] = x1;
+    ptsin[3] = y1 + 64;
+    ptsin_op(114, 2, 0, handle);        /* vr_recfl() */
+    intin[0] = 0;
+    intin[1] = valign;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, valign) */
+    ptsin[0] = x;
+    ptsin[1] = y;
+    intin[0] = ch;
+    ptsin_op(8, 1, 1, handle);          /* v_gtext() */
+    for (row = y0; row <= y1; row++)
+        for (col = x; col <= x1; col++)
+        {
+            ptsin[0] = col;
+            ptsin[1] = row;
+            ptsin_op(105, 1, 0, handle);    /* v_get_pixel() */
+            if (intout[1] != 0)
+                return row;
+        }
+
+    return -1;
+}
+
+/*
+ * Aligned to the ascent and to the half line, the top of 'H' and of 'x'
+ * land on the y given, at every size (fractional sizes in pixels too)
+ */
+static void check_alignment(short handle, short id)
+{
+    short pt, w, y = 20;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    intin[0] = 1;
+    vdi_op(22, 1, handle);              /* vst_color(1) */
+    for (pt = 8; pt <= 30; pt++)
+    {
+        intin[0] = pt;
+        vdi_op(107, 1, handle);         /* vst_point() */
+        w = extent_of(handle, 'H', 1);
+        font_check(first_ink_row(handle, 'H', 2, 8, y, 8 + w, y - 3, y + 3) == y,
+                   "alignment to the ascent does not put the top of H there");
+        w = extent_of(handle, 'x', 1);
+        font_check(first_ink_row(handle, 'x', 1, 8, y, 8 + w, y - 3, y + 3) == y,
+                   "alignment to the half line does not put the top of x there");
+    }
+    intin[0] = 0;
+    intin[1] = 0;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, baseline) */
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
+/*
+ * Whether what the text path draws can be read back at all: the system
+ * font, drawn and read as the scalable fonts are below.  Where it cannot
+ * (v_get_pixel() and the drawing disagreeing on the screen's layout, as
+ * on virt-arm: #598), the pixels of a scalable font say nothing either,
+ * and are not checked.
+ */
+static int pixels_readable(short handle)
+{
+    struct ink ink;
+
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* vst_font(the system font) */
+    intin[0] = 1;
+    vdi_op(22, 1, handle);              /* vst_color(1) */
+    intin[0] = 0;
+    intin[1] = 5;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, top) */
+    ink_r = 40;
+    ink_cx = ink_cy = ink_r + 4;
+    ink_draw(handle, 0, 0, 1, 1, &ink);
+    intin[0] = 0;
+    intin[1] = 0;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, baseline) */
+
+    return ink.count > 0;
+}
+
+static void check_drawing(short handle, short id)
+{
+    struct ink plain, turned, bold, clipped;
+    short angle, w, h, split;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    font_check(intout[0] == id, "vst_font() did not select a scalable font to draw");
+    intin[0] = 24;
+    vdi_op(107, 1, handle);             /* vst_point(24) */
+    h = ptsout[3];                      /* the cell height */
+    w = extent_ag(handle);
+    intin[0] = 1;
+    vdi_op(22, 1, handle);              /* vst_color(1) */
+    intin[0] = 0;
+    intin[1] = 5;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, top) */
+    ink_r = w + h + 4;
+    ink_cx = ink_cy = ink_r + 4;
+
+    ink_draw(handle, 0, 0, 1, 1, &plain);
+    font_check(plain.count > 0, "a scalable font drew nothing");
+    font_check(plain.x0 >= ink_cx && plain.y0 >= ink_cy
+               && plain.x1 < ink_cx + w + 2 && plain.y1 < ink_cy + h,
+               "a scalable font drew outside its extent");
+
+    /* each rotation: the same pixels, turned */
+    for (angle = 900; angle <= 2700; angle += 900)
+    {
+        ink_draw(handle, angle, 0, 1, 1, &turned);
+        font_check(about(turned.count, plain.count),
+                   "a rotated scalable font has other pixels than unrotated");
+        if (angle == 1800)
+            font_check(turned.x1 - turned.x0 == plain.x1 - plain.x0
+                       && turned.y1 - turned.y0 == plain.y1 - plain.y0,
+                       "a scalable font at 1800 is not the same size");
+        else
+            font_check(turned.x1 - turned.x0 == plain.y1 - plain.y0
+                       && turned.y1 - turned.y0 == plain.x1 - plain.x0,
+                       "a scalable font at 900 or 2700 is not turned");
+    }
+
+    /* the effects apply */
+    ink_draw(handle, 0, 1, 1, 1, &bold);
+    font_check(bold.count > plain.count, "bold does not thicken a scalable font");
+    ink_draw(handle, 0, 0x1f, 1, 1, &bold);
+    font_check(bold.count > 0, "a scalable font with all effects drew nothing");
+
+    /* XOR twice leaves nothing */
+    ink_draw(handle, 0, 0, 3, 2, &turned);
+    font_check(turned.count == 0, "a scalable font drawn twice in XOR mode left pixels");
+
+    /* clipped to its left half: nothing right of the split */
+    split = (plain.x0 + plain.x1) / 2;
+    intin[0] = 1;
+    ptsin[0] = ink_cx - ink_r;
+    ptsin[1] = ink_cy - ink_r;
+    ptsin[2] = split;
+    ptsin[3] = ink_cy + ink_r;
+    ptsin_op(129, 2, 1, handle);        /* vs_clip(on) */
+    ink_draw(handle, 0, 0, 1, 1, &clipped);
+    intin[0] = 0;
+    ptsin_op(129, 2, 1, handle);        /* vs_clip(off) */
+    font_check(clipped.count > 0 && clipped.count < plain.count
+               && clipped.x1 <= split,
+               "clipping does not apply to a scalable font");
+
+    intin[0] = 0;
+    intin[1] = 0;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, baseline) */
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
+/*
+ * A big size, the biggest the screen has room for: its glyphs go through
+ * the text scratch buffer when rotated, outlined or skewed, and are far
+ * bigger than the workstation's default buffer.  Bold, skewed and
+ * outlined, turned by 90 degrees, it is the same pixels turned (skew
+ * alone is not, in the bitmap text path either: #579).  Read back every
+ * other pixel, to keep it quick.
+ */
+static short screen_w, screen_h;
+
+static void check_large(short handle, short id)
+{
+    struct ink plain, turned, fx, fx_turned;
+    short pt, w, h;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    font_check(intout[0] == id, "vst_font() did not select a scalable font to draw big");
+    for (pt = 240; ; pt -= 12)
+    {
+        intin[0] = pt;
+        vdi_op(107, 1, handle);         /* vst_point() */
+        h = ptsout[3];
+        w = extent_ag(handle);
+        ink_r = w + h + 4;
+        if (2 * ink_r + 8 <= screen_w && 2 * ink_r + 8 <= screen_h)
+            break;
+        if (pt <= 36)
+            return;                     /* no room on this screen */
+    }
+    intin[0] = 1;
+    vdi_op(22, 1, handle);              /* vst_color(1) */
+    intin[0] = 0;
+    intin[1] = 5;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, top) */
+    ink_cx = ink_cy = ink_r + 4;
+    ink_step = 2;
+
+    ink_draw(handle, 0, 0, 1, 1, &plain);
+    ink_draw(handle, 900, 0, 1, 1, &turned);
+    font_check(plain.count > 0 && about(turned.count, plain.count),
+               "a big scalable font rotated has other pixels than unrotated");
+    ink_draw(handle, 0, 0x15, 1, 1, &fx);  /* bold, skewed, outlined */
+    ink_draw(handle, 900, 0x15, 1, 1, &fx_turned);
+    font_check(fx.count > 0 && about(fx_turned.count, fx.count),
+               "a big scalable font with effects, rotated, has other pixels");
+
+    ink_step = 1;
+    intin[0] = 0;
+    intin[1] = 0;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, baseline) */
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
+/*
+ * vst_height() gives exactly the height asked for, whatever the font's
+ * metrics, and vst_point() exactly the size in points
+ */
+static void check_heights(short handle, short id)
+{
+    short top, pt;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    font_check(intout[0] == id, "vst_font() did not select a scalable font to size");
+    for (top = 9; top <= 40; top++)
+    {
+        ptsin[0] = 0;
+        ptsin[1] = top;
+        ptsin_op(12, 1, 0, handle);     /* vst_height() */
+        font_check(ptsout[1] == top, "vst_height() did not give the height asked for");
+    }
+    for (pt = 6; pt <= 36; pt++)
+    {
+        intin[0] = pt;
+        vdi_op(107, 1, handle);         /* vst_point() */
+        font_check(intout[0] == pt, "vst_point() did not give the size asked for");
+    }
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
+/* a monospaced font stays so in bold, as the system fonts do */
+static void check_monospace(short handle, short id)
+{
+    short narrow, wide, bold;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    font_check(intout[0] == id, "vst_font() did not select a scalable font");
+    intin[0] = 24;
+    vdi_op(107, 1, handle);             /* vst_point(24) */
+    narrow = extent_of(handle, 'i', 4);
+    wide = extent_of(handle, 'W', 4);
+    if (narrow == wide)
+    {
+        intin[0] = 1;
+        vdi_op(106, 1, handle);         /* vst_effects(bold) */
+        bold = extent_of(handle, 'W', 4);
+        intin[0] = 0;
+        vdi_op(106, 1, handle);
+        font_check(bold == wide, "bold widens a monospaced scalable font");
+        monospaced_fonts++;
+    }
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
 static void check_fonts(void)
 {
-    short handle, system_fonts, i, aes_there;
+    short handle, system_fonts, i, aes_there, drive, id;
 
     /*
      * Under the AES (the suite started from the desktop) the screen is
@@ -200,6 +668,8 @@ static void check_fonts(void)
         return;
     }
     system_fonts = intout[10];
+    screen_w = intout[0] + 1;
+    screen_h = intout[1] + 1;
 
     intin[0] = 0;
     vdi_op(119, 1, handle);             /* vst_load_fonts() */
@@ -220,6 +690,37 @@ static void check_fonts(void)
             font_check(intout[0] >= 10000, "a scalable font's id is below 10000");
         }
     }
+
+    /*
+     * The font files are opened again as fonts and sizes are selected,
+     * on behalf of this program: from another current drive than the
+     * one they were found on, they must still be found.
+     */
+    drive = Dgetdrv();
+    Dsetdrv(drive ? 0 : 1);
+    if (fonts_loaded > 0)
+        check_sizes(handle, system_fonts);
+    for (i = 1; i <= fonts_loaded; i++)
+    {
+        intin[0] = system_fonts + i;
+        vdi_op(130, 1, handle);         /* vqt_name() */
+        id = intout[0];
+        check_monospace(handle, id);
+        check_heights(handle, id);
+    }
+    pixels_checked = fonts_loaded > 0 && pixels_readable(handle);
+    for (i = 1; pixels_checked && i <= fonts_loaded; i++)
+    {
+        intin[0] = system_fonts + i;
+        vdi_op(130, 1, handle);         /* vqt_name() */
+        id = intout[0];
+        check_drawing(handle, id);
+        check_alignment(handle, id);
+        if (i == 1)
+            check_large(handle, id);
+    }
+
+    Dsetdrv(drive);
 
     intin[0] = 0;
     vdi_op(119, 1, handle);             /* again: nothing more */
@@ -317,7 +818,12 @@ void test_gdos_answer(void)
         ptest_assert_msg(!font_failure, font_failure);
         conws("(SpeedoGDOS, ");
         pnum(fonts_loaded);
-        conws(" scalable fonts) ");
+        conws(" scalable fonts, ");
+        pnum(monospaced_fonts);
+        conws(" monospaced");
+        if (fonts_loaded > 0 && !pixels_checked)
+            conws(", pixels not readable here");
+        conws(") ");
     }
 
     ptest_pass();

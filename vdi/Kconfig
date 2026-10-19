@@ -156,6 +156,19 @@ config CONF_VDI_FONT_MEMORY
 	  working for.  A TrueType font file takes from 20 KB to about 1 MB.
 	  The x86-64 kernel uses its growable kernel heap instead.
 
+config CONF_VDI_FONT_CACHE
+	int "Memory for rendered sizes of the scalable fonts, in KB"
+	depends on CONF_WITH_VDI_SCALABLE_FONTS
+	range 64 16384
+	default 1024
+	help
+	  Each size of a scalable font that is selected is rendered whole,
+	  as a bitmap font of that size, and kept for the next time.  This
+	  bounds the memory those sizes take, out of the font memory: the
+	  sizes used longest ago that no workstation has selected are
+	  dropped to make room.  A size that would not fit by itself is
+	  made smaller until it does.
+
 config CONF_VDI_FONT_DIR
 	string "Directory of the scalable fonts"
 	depends on CONF_WITH_VDI_SCALABLE_FONTS

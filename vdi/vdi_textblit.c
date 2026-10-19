@@ -1597,6 +1597,17 @@ void text_blt(void)
         vars.tmp_delx = delx = char_resize(linea_vars.XDDA, vars.DELX);
     }
 
+    /*
+     * a glyph with no width (or height), as it is or scaled, has nothing
+     * to draw, whatever the effects, but still moves the position on by
+     * them (upda_dst, which takes a scaled glyph's width from tmp_delx,
+     * just set); blitting it is not harmless: rotated, its width becomes
+     * the height that the blit loops count down from, and 0 is 65536 rows
+     * there
+     */
+    if (delx <= 0 || dely <= 0)
+        goto upda_dst;
+
     vars.smear = 0;
     if (vars.STYLE & F_THICKEN)
     {

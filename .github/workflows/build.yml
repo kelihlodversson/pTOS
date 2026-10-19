@@ -508,6 +508,9 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ${{ matrix.qemu }}
+          # scalable fonts for the gdos_answer suite: TrueType and CFF, and
+          # one whose ascender is taller than its em (Loma)
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf
 
       - name: Build the kernel and the test programs
         env:
