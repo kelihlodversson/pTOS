@@ -1,6 +1,35 @@
 ---
 name: ptos-smoketest
-description: Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS) image boots under an emulator, OR when doing a difficult interactive debugging session on a m68k/Atari target (a crash, hang, or wrong-behavior bug that needs real breakpoints/single-stepping/register or memory inspection, not just a boot pass/fail check). Covers Hatari for m68k Atari targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi1 (QEMU machine `raspi1ap`), raspi2 (QEMU machine `raspi2b`), virt-arm and virt-m68k machines, plus testing the flashable Raspberry Pi SD card disk image (`tools/mkraspi-image.sh`) by attaching it to QEMU as a raw `-drive if=sd`. Also covers the x86-64 UEFI target (`pc-x86_64_defconfig`, `pc-x86_64.efi`) under `qemu-system-x86_64` + OVMF firmware, booted from a synthesized FAT ESP directory, including its GOP framebuffer AES/EmuDesk smoke test. Also covers running the regression test suite (`make test-hd`) on QEMU with the test HD image as an SD card and reading pass/fail output from the serial console. For interactive debugging: `tools/rdb.py` plus a patched, remote-debuggable Hatari fork (hrdb, see doc/debugging.txt) for real-Atari-hardware bugs, and QEMU+GDB (including `CONF_DEBUG_FORCE_MC68000` for reproducing genuine-68000, non-longframe code paths on virt-m68k) for boot-sequencing/ABI bugs. Use when asked to boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung boot, debug a crash with breakpoints/register dumps, verify the SD card image's MBR/FAT16 partition is readable by pTOS's own eMMC driver, run regression tests under QEMU, boot-test the x86-64 EFI image, or when you need emulator invocations, --run-vbls/--avirecord/--trace flags, the Hatari debugger gotchas (spurious breakpoints, echo crash) and the hrdb alternative, the Falcon IDE 31s boot wait, the floppy motor/deselection timeouts (motor on/off 1.5-3s + deselect 5s = ~20s STE baseline), QEMU's power-of-2 SD card image size requirement, or the OVMF writable-NVRAM-file gotcha.
+description: >-
+  Use when smoke-testing or verifying that a built pTOS (Portable EmuTOS)
+  image boots under an emulator, OR when doing a difficult interactive
+  debugging session on a m68k/Atari target (a crash, hang, or wrong-behavior
+  bug that needs real breakpoints/single-stepping/register or memory
+  inspection, not just a boot pass/fail check). Covers Hatari for m68k Atari
+  targets (atari512/STE/Falcon/TT configs) and QEMU for the raspi1 (QEMU
+  machine `raspi1ap`), raspi2 (QEMU machine `raspi2b`), virt-arm and
+  virt-m68k machines, plus testing the flashable Raspberry Pi SD card disk
+  image (`tools/mkraspi-image.sh`) by attaching it to QEMU as a raw `-drive
+  if=sd`. Also covers the x86-64 UEFI target (`pc-x86_64_defconfig`,
+  `pc-x86_64.efi`) under `qemu-system-x86_64` + OVMF firmware, booted from a
+  synthesized FAT ESP directory, including its GOP framebuffer AES/EmuDesk
+  smoke test. Also covers running the regression test suite (`make test-hd`)
+  on QEMU with the test HD image as an SD card and reading pass/fail output
+  from the serial console. For interactive debugging: `tools/rdb.py` plus a
+  patched, remote-debuggable Hatari fork (hrdb, see doc/debugging.txt) for
+  real-Atari-hardware bugs, and QEMU+GDB (including
+  `CONF_DEBUG_FORCE_MC68000` for reproducing genuine-68000, non-longframe
+  code paths on virt-m68k) for boot-sequencing/ABI bugs. Use when asked to
+  boot a pTOS build, check it reaches the GEM desktop, diagnose a slow/hung
+  boot, debug a crash with breakpoints/register dumps, verify the SD card
+  image's MBR/FAT16 partition is readable by pTOS's own eMMC driver, run
+  regression tests under QEMU, boot-test the x86-64 EFI image, or when you
+  need emulator invocations, --run-vbls/--avirecord/--trace flags, the
+  Hatari debugger gotchas (spurious breakpoints, echo crash) and the hrdb
+  alternative, the Falcon IDE 31s boot wait, the floppy motor/deselection
+  timeouts (motor on/off 1.5-3s + deselect 5s = ~20s STE baseline), QEMU's
+  power-of-2 SD card image size requirement, or the OVMF writable-NVRAM-file
+  gotcha.
 ---
 
 # pTOS Smoke Testing

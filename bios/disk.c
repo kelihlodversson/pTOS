@@ -810,7 +810,7 @@ static WORD process_dos_mbr(UWORD unit, LONG *devices_available)
         /* start sector of next extended boot record, if present */
         next_extended = 0;
 
-        KINFO((" MBR at %lu", extended_offs));
+        KINFO((" MBR at %lu", (unsigned long)extended_offs));
 
         for (i = 0; i < 4; i++) {
             ULONG start, size;

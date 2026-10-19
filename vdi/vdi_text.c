@@ -1482,9 +1482,9 @@ void vdi_vst_load_fonts(Vwk * vwk)
 
     /* Init the global structures           */
     vwk->scrpt2 = control[9];
-    vwk->scrtchp = (WORD *) ULONG_AT(&control[7]);
+    vwk->scrtchp = (WORD *)(uintptr_t)ULONG_AT(&control[7]);
 
-    first_font = (Fonthead *) ULONG_AT(&control[10]);
+    first_font = (Fonthead *)(uintptr_t)ULONG_AT(&control[10]);
     vwk->loaded_fonts = first_font;
 
     /* Find out how many distinct font id numbers have just been linked in. */

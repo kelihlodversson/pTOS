@@ -154,8 +154,13 @@ jobs:
         env:
           CONFIG: ${{ matrix.config }}
         run: |
-          make "${CONFIG}_defconfig"
-          make
+          set -o pipefail   # tee below must not hide a failing make
+          # Kconfig warns about a discarded assignment only here, so the
+          # log starts with the defconfig
+          make "${CONFIG}_defconfig" 2>&1 | tee build.log
+          make 2>&1 | tee -a build.log
+          # every configuration builds without warnings (#584): keep it so
+          tools/check-build-warnings.sh build.log
 
       - name: Collect the build products
         run: |
@@ -202,8 +207,13 @@ jobs:
         env:
           CONFIG: ${{ matrix.config }}
         run: |
-          make "${CONFIG}_defconfig"
-          make
+          set -o pipefail   # tee below must not hide a failing make
+          # Kconfig warns about a discarded assignment only here, so the
+          # log starts with the defconfig
+          make "${CONFIG}_defconfig" 2>&1 | tee build.log
+          make 2>&1 | tee -a build.log
+          # every configuration builds without warnings (#584): keep it so
+          tools/check-build-warnings.sh build.log
 
       - name: Collect the build products
         run: |
@@ -250,10 +260,14 @@ jobs:
         env:
           CONFIG: ${{ matrix.config }}
         run: |
-          make "${CONFIG}_defconfig"
+          set -o pipefail   # tee below must not hide a failing make
+          # Kconfig warns about a discarded assignment only here, so the
+          # log starts with the defconfig
+          make "${CONFIG}_defconfig" 2>&1 | tee build.log
           # CI deliberately uses Ubuntu's native gcc/binutils instead of the
           # x86_64-elf- cross toolchain selected by the developer default.
-          make CROSS_COMPILE=
+          make CROSS_COMPILE= 2>&1 | tee -a build.log
+          tools/check-build-warnings.sh build.log
 
       - name: Collect the build products
         run: |

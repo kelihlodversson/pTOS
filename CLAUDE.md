@@ -66,6 +66,20 @@ three offered under "m68k toolchain" in the Toolchain menu: `m68k-atari-mintelf-
 choice sets both the prefix and the flags; `doc/install.txt` says where to get
 them.
 
+**A missing or unsuitable toolchain is never a reason to skip a
+configuration.** Every one of them can be built on this machine without sudo.
+When a build stops on `x86_64-elf-gcc: No such file or directory`,
+`... does not support -mfastcall`, `arm-none-eabi-gcc: not found`, or any
+other "compiler missing" error, follow the `toolchain-install` skill
+(`.claude/skills/toolchain-install/SKILL.md`) before you report anything as
+unbuildable. The two cases that trip agents most often:
+
+- pc-x86_64 uses the host's native gcc: `make CROSS_COMPILE=`.
+- `CONF_WITH_MFASTCALL=y` configs (amiga, amiga-kickdisk, the `*-fastcall`
+  ones) need Thorsten Otto's toolchain, because the PPA's
+  `m68k-atari-mintelf-gcc` has no `-mfastcall`. The skill shows how to
+  install it into a user directory and put it first on `PATH`.
+
 `make clean` keeps `.config`; `make distclean` removes it too. Changing
 `.config` rebuilds everything, which is intended.
 
@@ -161,9 +175,14 @@ same object.
   The codebase overwhelmingly uses `/* */` comments; match the file you are in.
 - 4 spaces, never a hard tab, in `.c`, `.h` and `.S`. Run `make gitready`
   before committing.
-- **`int` is 16 bits on m68k** (`-mshort`) and 32 bits on ARM. Use the
-  `portab.h` types — `WORD`, `LONG`, `UBYTE`, `UWORD`, `ULONG`, `BOOL` — and
-  suffix constants that must survive on m68k (`132 * 1000UL`).
+- **`int` is 32 bits on every target.** m68k dropped `-mshort` in #300, so
+  code written upstream for a 16-bit `int` can misbehave: a `WORD` compared
+  with `0xff02` never matches, so write `(WORD)0xff02`. **The pc-x86_64
+  kernel is LP64:** `long` and pointers are 64 bits there, while `LONG`
+  stays 32. Use the `portab.h` types — `WORD`, `LONG`, `UBYTE`, `UWORD`,
+  `ULONG`, `BOOL` — for anything with a fixed width, cast between pointers
+  and integers through `uintptr_t`, and pass `%ld`/`%lx` arguments as
+  `long`/`unsigned long`.
 - Assembler: leading underscore on symbols callable from C, CDECL conventions,
   68000-only instructions, `movem.l` never `movem.w`.
 - Trace with `KDEBUG(("..."))` / `KINFO(())` from `include/kprint.h`, not with

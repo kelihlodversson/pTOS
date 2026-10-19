@@ -146,7 +146,7 @@ static void set_line(void)
 static void display_message(const char *s)
 {
     set_margin();
-    cprintf(s);
+    cprintf("%s", s);
     cprintf("\r\n");
 }
 
@@ -164,7 +164,7 @@ static void display_inverse(const char *s,BOOL crlf)
 
     cprintf("\033p");
     print_spaces(left);
-    cprintf(s);
+    cprintf("%s", s);
     print_spaces(right);
     cprintf("\033q");
 
@@ -177,7 +177,7 @@ static void pair_start(const char *left)
 {
     int n;
     set_margin();
-    n = cprintf(left) + 2;      /* allow for following cprintf() */
+    n = cprintf("%s", left) + 2;    /* allow for following cprintf() */
     cprintf(": ");
     while(n++ < INFO_LENGTH/2)
         cprintf(" ");
@@ -279,7 +279,7 @@ static void cprintf_bytesize(ULONG bytes)
         value = bytes / 1024UL;
     }
 
-    cprintf("%lu %s", value, unit);
+    cprintf("%lu %s", (unsigned long)value, unit);
 }
 
 /*

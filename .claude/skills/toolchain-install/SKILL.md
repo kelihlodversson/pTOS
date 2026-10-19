@@ -1,6 +1,17 @@
 ---
 name: toolchain-install
-description: Install and select pTOS cross toolchains on Ubuntu Intel or macOS. Use whenever a user asks how to build pTOS, install its ARM or m68k toolchain, configure x86-32/x86-64 builds, or troubleshoot missing cross compilers.
+description: >-
+  Install and select pTOS cross toolchains on Ubuntu Intel or macOS,
+  including without sudo. Use it BEFORE you report a pTOS configuration as
+  unbuildable or skip it for lack of a compiler, whenever a build fails with
+  "x86_64-elf-gcc: No such file or directory", "m68k-atari-mintelf-gcc does
+  not support -mfastcall", "arm-none-eabi-gcc: not found", "command not
+  found", Error 127, or any other missing cross-compiler error. It also
+  covers building pc-x86_64 with the native gcc (make CROSS_COMPILE=),
+  installing Thorsten Otto's -mfastcall m68k toolchain into a user directory
+  for the amiga, amiga-kickdisk and *-fastcall configs, the ARM toolchain,
+  and the answer when a user asks how to build pTOS or install its
+  toolchains.
 ---
 
 # pTOS Toolchain Installation
@@ -8,6 +19,35 @@ description: Install and select pTOS cross toolchains on Ubuntu Intel or macOS. 
 Use the toolchain that matches the selected pTOS configuration. Verify the
 compiler prefix before building; a successful host compiler installation is
 not enough if Make is still selecting a different prefix.
+
+## Missing a toolchain? Fix it, don't skip the config
+
+Every pTOS configuration can be built on an Ubuntu x86-64 machine, and
+nothing below needs sudo unless it says so. Check what the build actually
+complains about, then follow the matching row:
+
+| Error | Configs | Fix |
+|---|---|---|
+| `x86_64-elf-gcc: No such file or directory` / Error 127 | `pc-x86_64` | `make CROSS_COMPILE=`. The host's native gcc builds it, and that is also what CI uses ([x86-32 / x32](#x86-32--x32)) |
+| `m68k-atari-mintelf-gcc does not support -mfastcall` | `amiga`, `amiga-kickdisk`, `*-fastcall`, anything with `CONF_WITH_MFASTCALL=y` | Install Thorsten Otto's toolchain into a user directory and put it first on `PATH` ([without sudo](#-mfastcall-toolchain-without-sudo)) |
+| `m68k-atari-mintelf-gcc: not found` | every other m68k/ColdFire config | If the PPA is not installed and sudo is unavailable, the user-directory toolchain below builds these too |
+| `arm-none-eabi-gcc: not found` | `rpi*`, `virt-arm*` | `sudo apt-get install gcc-arm-none-eabi`. Without sudo, ask the user to run it (`! sudo apt-get install -y gcc-arm-none-eabi`) |
+
+Only after the fix itself has failed should you report a configuration as
+unbuildable, and then quote the error.
+
+Several m68k toolchains can be installed side by side. The one that comes
+first on `PATH` provides `m68k-atari-mintelf-gcc`, so prepend the Otto
+toolchain for each build command that needs it, and keep the PPA toolchain at
+`/usr/bin` for the rest:
+
+```sh
+PATH=$HOME/.local/th-otto-mintelf/usr/bin:$PATH make amiga_defconfig
+PATH=$HOME/.local/th-otto-mintelf/usr/bin:$PATH make
+```
+
+Mixing toolchains in one object directory gives different code. Run
+`make distclean` when you switch.
 
 ## Ubuntu Intel
 
@@ -59,6 +99,54 @@ sudo add-apt-repository -y ppa:vriviere/mintelf
 sudo apt-get update
 sudo apt-get install -y cross-mintelf-essential
 ```
+
+This PPA gcc has **no `-mfastcall`**. It builds every m68k config except
+the `CONF_WITH_MFASTCALL=y` ones (amiga, amiga-kickdisk, `*-fastcall`), and
+the Makefile stops those with "does not support -mfastcall". CI installs both
+toolchains and puts Otto's first on `PATH` for the fastcall jobs. Do the same
+locally with the user-directory install below.
+
+### -mfastcall toolchain without sudo
+
+These are the archives and sha256 pins that
+`.github/actions/setup-toolchain/action.yml` uses, plus mintlib for the C
+headers, which the gcc archive lacks. All three unpack below `usr/`, so they
+extract together into one directory under `$HOME`, and the result survives
+from one session to the next. If `$HOME` is not writable from a sandbox, use
+the session's scratchpad directory instead.
+
+```sh
+dest=$HOME/.local/th-otto-mintelf
+# The subshell keeps the cd and any exit from leaving the current shell,
+# so the build commands afterwards still run in the pTOS checkout.
+(
+    dl=$HOME/.local/th-otto-dl
+    # Download and extract exactly these files, never a *.tar.xz glob: a
+    # leftover archive in the reused download directory has not been checked.
+    archives="gcc-13.4.0-mintelf-20250702-bin-linux64.tar.xz
+              binutils-2.45-mintelf-20250812-bin-linux64.tar.xz
+              mintlib-0.60.1-mintelf-20240718-dev.tar.xz"
+    mkdir -p "$dest" "$dl" && cd "$dl" || exit 1
+    for f in $archives; do
+        curl -sSLO --fail --retry 3 "https://tho-otto.m68k.eu/download/mint/$f" || exit 1
+    done
+    sha256sum -c - <<'EOF' || exit 1
+70ae7f69ec54484b805990ddef517af13fccc3744018dbca3cc0e61eec1c55b6  gcc-13.4.0-mintelf-20250702-bin-linux64.tar.xz
+e37c22f84baaf8ffc890a11265d4369498f9bc4e68aaac21dcef887d3655f025  binutils-2.45-mintelf-20250812-bin-linux64.tar.xz
+0a9f4f61c976af26b3b4c2fdfbfcaaa19c671174a6a1c874496375f775ff33ec  mintlib-0.60.1-mintelf-20240718-dev.tar.xz
+EOF
+    for f in $archives; do tar -xJf "$f" -C "$dest" || exit 1; done
+) &&
+"$dest/usr/bin/m68k-atari-mintelf-gcc" -Q --help=target | grep mfastcall
+```
+
+The last line should print `-mfastcall  [disabled]`. "Disabled" is just the
+default, and the pTOS Makefile turns the flag on. Then build with
+`PATH=$dest/usr/bin:$PATH make ...` as shown at the top. Before downloading,
+check whether `$dest/usr/bin/m68k-atari-mintelf-gcc` is already there.
+
+If a pin fails because the site has published a new build, do not drop the
+check. Bump the URL and hash in the CI action and here together.
 
 If using archives from the tho-otto page instead, download these three
 matching Linux 64-bit archives from the latest toolchain section:
@@ -249,5 +337,5 @@ gmake CROSS_COMPILE=m68k-atari-mintelf-
 
 - `x86_64-elf-gcc: command not found` on Ubuntu usually means the build was not invoked with `CROSS_COMPILE=`.
 - `m68k-atari-mint-gcc` is the wrong prefix for the required mintelf ELF toolchain.
-- A m68k compiler without `-mfastcall` is not suitable; install the mintelf package from the tho-otto page instead.
+- `m68k-atari-mintelf-gcc does not support -mfastcall` means the config has `CONF_WITH_MFASTCALL=y` and `PATH` finds the PPA gcc first. Prepend the Otto toolchain ([without sudo](#-mfastcall-toolchain-without-sudo)). The PPA gcc is fine for every other m68k config.
 - Confirm the selected prefix with `make V=1` on Ubuntu or `gmake V=1` on macOS when diagnosing a build.

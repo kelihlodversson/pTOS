@@ -293,7 +293,7 @@ enum {
 
 static const FND funcs[] =
 {
-#define F(x) { (PFLONG)(x) }
+#define F(x) { (long (*)(void))(x) }    /* the first fncall member */
 #define NI F(ni)
 #if CONF_WITH_NATIVE_ABI
 #   define W_N(n, shape) (n)
