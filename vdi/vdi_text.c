@@ -1309,7 +1309,7 @@ void vdi_v_ftext(Vwk * vwk)
     WORD *str = INTIN, *off = PTSIN + 2, *old_ptsin = PTSIN;
     WORD pos, next, last = 0, along, h_align, dx, dy, pen_x, pen_y;
     WORD pts[4];                        /* the underline is drawn through PTSIN[0..3] */
-    WORD lstlin = linea_vars.LSTLIN;
+    WORD lstlin = linea_vars.LSTLIN, pass, passes;
 
     if (noffs < 1)
     {
@@ -1336,24 +1336,39 @@ void vdi_v_ftext(Vwk * vwk)
     h_align = vwk->h_align;
     vwk->h_align = 0;
     PTSIN = pts;
-    pen_x = old_ptsin[0] - dx;
-    pen_y = old_ptsin[1] - dy;
-    for (pos = 0; pos < count; pos = next)
+
+    /*
+     * In replace mode, a character placed over the one before it would
+     * cover its ink with its cell's background: the characters are all
+     * drawn as they are, then all again, transparently, as output_text()
+     * does with a string whose spacing is negative.
+     */
+    passes = vwk->wrt_mode == WM_REPLACE ? 2 : 1;
+    for (pass = 0; pass < passes; pass++)
     {
-        next = pos;
-        next_char(vwk->char_map, str, count, &next);
-        pen_x += off[2 * pos];
-        pen_y += off[2 * pos + 1];
-        pts[0] = pen_x;
-        pts[1] = pen_y;
-        /*
-         * underlined in XOR mode, each character's underline leaves its
-         * last pixel to the next one's, as the lines of a polyline do,
-         * so that where they meet is not drawn twice
-         */
-        linea_vars.LSTLIN = next < count ? FALSE : lstlin;
-        output_text(vwk, next - pos, str + pos, -1, NULL);
+        if (pass)
+            vwk->wrt_mode = WM_TRANS;
+        pen_x = old_ptsin[0] - dx;
+        pen_y = old_ptsin[1] - dy;
+        for (pos = 0; pos < count; pos = next)
+        {
+            next = pos;
+            next_char(vwk->char_map, str, count, &next);
+            pen_x += off[2 * pos];
+            pen_y += off[2 * pos + 1];
+            pts[0] = pen_x;
+            pts[1] = pen_y;
+            /*
+             * underlined in XOR mode, each character's underline leaves its
+             * last pixel to the next one's, as the lines of a polyline do,
+             * so that where they meet is not drawn twice
+             */
+            linea_vars.LSTLIN = next < count ? FALSE : lstlin;
+            output_text(vwk, next - pos, str + pos, -1, NULL);
+        }
     }
+    if (passes == 2)
+        vwk->wrt_mode = WM_REPLACE;
     linea_vars.LSTLIN = lstlin;
     PTSIN = old_ptsin;
     vwk->h_align = h_align;

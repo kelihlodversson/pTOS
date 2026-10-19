@@ -1691,6 +1691,29 @@ static void check_unicode(short handle, short id, int pixels)
         font_check(same_ink(&whole, &one_by_one),
                    "in replace mode, a character drawn over another wipes out its ink");
 
+        /* the same with offsets one by one, as with the track offset, in replace mode */
+        for (i = 0; i < 4; i++)
+        {
+            off[2 * i] = i ? adv_n - adv_n / 2 : 0;
+            off[2 * i + 1] = 0;
+        }
+        for (i = 0; i < 2; i++)
+        {
+            ink_clear(handle);
+            if (i)
+                v_ftext_offset(handle, ink_cx - 50, ink_cy, ns, 4, off);
+            else
+            {
+                vst_track_offset(handle, -(long)(adv_n / 2) << 16, 0, &tracks, &pairs);
+                v_ftext(handle, ink_cx - 50, ink_cy, ns, 4);
+                vst_track_offset(handle, 0, 0, &tracks, &pairs);
+            }
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                     i ? &one_by_one : &whole);
+        }
+        font_check(same_ink(&whole, &one_by_one),
+                   "in replace mode, v_ftext_offset() wipes out a character it draws over");
+
         /* justified in BICS, whose blank is 0: as in the Atari set */
         {
             static const short atari_txt[3] = { 'a', ' ', 'b' };
