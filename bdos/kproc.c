@@ -1330,9 +1330,16 @@ ULONG kproc_uheap_largest(PD *pd)
     if (largest > (alloc_room(kproc) & ~(USER_PAGE_SIZE - 1)))
         largest = alloc_room(kproc) & ~(USER_PAGE_SIZE - 1);
     /* without demand paging a block is backed when it is handed out: no more
-     * than there is memory for */
-    if (!CONF_WITH_DEMAND_PAGING && largest > aspace_mappable_bytes())
-        largest = aspace_mappable_bytes();
+     * than there is memory for.  The table of blocks is grown first if the
+     * next Malloc() would have to (heap_room()), so that the memory it takes
+     * is not counted as the block's: the answer is then what that Malloc()
+     * gets. */
+    if (!CONF_WITH_DEMAND_PAGING) {
+        if (!heap_room(kproc))
+            return 0;
+        if (largest > aspace_mappable_bytes())
+            largest = aspace_mappable_bytes();
+    }
     return (ULONG)largest;
 }
 
