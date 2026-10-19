@@ -713,6 +713,37 @@ static void check_two_workstations(short handle, short id)
     vdi_op(21, 1, handle);              /* back to the system font */
 }
 
+/*
+ * The cache's bound holds after a string: a size as big as the cache
+ * allows, then a Greek character measured in Unicode, which renders a page
+ * of that size past the bound, which must go again once it is measured
+ */
+static void check_cache_bound(short handle, short id)
+{
+    short dummy;
+    long room;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    vst_arbpt(handle, 2000, &dummy, &dummy, &dummy, &dummy);
+    intin[0] = 2;
+    intin[1] = 1;
+    vdi_op(236, 2, handle);             /* vst_map_mode(Unicode) */
+    intin[0] = 0x3b1;                   /* alpha */
+    ptsin_op(116, 0, 1, handle);        /* vqt_extent() */
+    intin[0] = 1;
+    intin[1] = 1;
+    vdi_op(236, 2, handle);             /* back to the Atari set */
+    intin[0] = 0;
+    vdi_op(255, 1, handle);             /* vqt_cachesize() */
+    memcpy(&room, &intout[0], sizeof(room));
+    font_check(room > 0, "a Unicode page leaves the size cache past its bound");
+    intin[0] = 12;
+    vdi_op(107, 1, handle);
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
 /* NVDI's XFNT_INFO, as an application has it */
 struct xfnt_info
 {
@@ -1253,12 +1284,22 @@ static void check_metrics(short handle, short id)
     font_check(ptsout[0] == w && ptsout[1] == 0 && fix == (long)w << 16,
                "vqt_advance() is not the character's width");
 
-    /* vqt_f_extent() is vqt_extent(); vqt_real_extent() is at the point */
+    /* vqt_f_extent() is vqt_extent() (plain); vqt_real_extent() is at the point */
     w = extent_ag(handle);
     intin[0] = 'A';
     intin[1] = 'g';
     ptsin_op(240, 0, 2, handle);
     font_check(ptsout[2] - ptsout[0] == w, "vqt_f_extent() is not vqt_extent()");
+    /* skewed: vqt_extent() adds what the slant takes, vqt_f_extent() is the advances */
+    intin[0] = 4;
+    vdi_op(106, 1, handle);             /* vst_effects(skew) */
+    font_check(extent_ag(handle) > w, "vqt_extent() of skewed text is not wider");
+    intin[0] = 'A';
+    intin[1] = 'g';
+    ptsin_op(240, 0, 2, handle);
+    font_check(ptsout[2] - ptsout[0] == w, "vqt_f_extent() of skewed text is not its advances");
+    intin[0] = 0;
+    vdi_op(106, 1, handle);
     intin[0] = 'A';
     intin[1] = 'g';
     ptsin[0] = 100;
@@ -1923,6 +1964,9 @@ static void check_fonts(void)
         intin[0] = system_fonts + 1;
         vdi_op(130, 1, handle);         /* vqt_name() */
         check_two_workstations(handle, intout[0]);
+        intin[0] = system_fonts + 1;
+        vdi_op(130, 1, handle);         /* vqt_name() */
+        check_cache_bound(handle, intout[0]);
     }
     for (i = 1; i <= fonts_loaded; i++)
     {

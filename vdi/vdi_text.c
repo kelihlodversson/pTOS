@@ -1070,6 +1070,7 @@ static WORD text_bounds(Vwk *vwk, WORD count, const WORD *str, WORD *lo, WORD *h
         width += styled_width(vwk, vwk->cur_font, n, raw);
         *hi = width;
     }
+    vdi_sfont_trim();                   /* the pages it took past the cache's bound */
 
     return width;
 }
@@ -1172,6 +1173,7 @@ WORD vdi_text_advance(Vwk *vwk, WORD c)
     adv = calc_width(vwk, font, 1, &ch);
     if (vwk->style & F_SKEW)
         adv -= font->left_offset + font->right_offset;
+    vdi_sfont_trim();                   /* a page it took past the cache's bound */
 
     return adv;
 }
@@ -1278,6 +1280,7 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
         }
         else
             text_runs(vwk, count, str, width, justified);
+        vdi_sfont_trim();               /* the pages it took past the cache's bound */
         return;
     }
 #endif
@@ -1356,10 +1359,13 @@ void vdi_v_ftext(Vwk * vwk)
     vwk->h_align = h_align;
 }
 
+static void extent_box(Vwk *vwk, WORD width);
+
 /*
- * vqt_f_extent() is vqt_extent(); vqt_real_extent() (subcode 4200) is the
- * box the text takes when output at the point in ptsin, alignment and
- * rotation and all: its lower left, lower right, upper right and upper left
+ * vqt_f_extent() is vqt_extent() without the skewing (it is the sum of the
+ * advances, as NVDI has it); vqt_real_extent() (subcode 4200) is the box
+ * the text takes when output at the point in ptsin, alignment and rotation
+ * and all: its lower left, lower right, upper right and upper left
  * corners, as the text has them
  */
 void vdi_vqt_f_extent(Vwk * vwk)
@@ -1369,9 +1375,16 @@ void vdi_vqt_f_extent(Vwk * vwk)
     WORD outline, d1, d2, lo, hi;
     WORD u[4], v[4];
 
+    /*
+     * vqt_f_extent() itself: the advances, for where the cursor goes, as
+     * vqt_extent() has them but without what skewing adds to the box
+     */
     if (CONTRL->subcode != 4200)
     {
-        vdi_vqt_extent(vwk);
+        width = vdi_text_width(vwk, CONTRL->nintin, INTIN);
+        if (vwk->style & F_SKEW)
+            width -= fnt_ptr->left_offset + fnt_ptr->right_offset;
+        extent_box(vwk, width);
         return;
     }
 
@@ -2063,12 +2076,12 @@ void vdi_vqt_attributes(Vwk * vwk)
 }
 
 
-void vdi_vqt_extent(Vwk * vwk)
+/* the box of vqt_extent(), for text that wide, as it is rotated */
+static void extent_box(Vwk *vwk, WORD width)
 {
-    WORD height, width;
+    WORD height;
 
     height = calc_height(vwk);
-    width = vdi_text_width(vwk, CONTRL->nintin, INTIN);
 
     bzero(PTSOUT,8*sizeof(WORD));
     switch (vwk->chup) {
@@ -2098,6 +2111,11 @@ void vdi_vqt_extent(Vwk * vwk)
         break;
     }
     flip_y = 1;
+}
+
+void vdi_vqt_extent(Vwk * vwk)
+{
+    extent_box(vwk, vdi_text_width(vwk, CONTRL->nintin, INTIN));
 }
 
 
@@ -2142,6 +2160,9 @@ void vdi_vqt_width(Vwk * vwk)
             *(pointer + 4) = fnt_ptr->hor_table[(k * 2) + 1];
         }
     }
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    vdi_sfont_trim();                   /* a page it took past the cache's bound */
+#endif
 
     flip_y = 1;
 }
