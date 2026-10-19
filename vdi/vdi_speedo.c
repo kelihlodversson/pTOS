@@ -542,10 +542,18 @@ static void size_answer(Vwk *vwk)
     flip_y = 1;
 }
 
-/* the screen's pixel height in microns, as the sizes are computed for it */
-static LONG micron(void)
+/*
+ * the screen's pixel width (AXIS_X) or height (AXIS_Y) in microns, as the
+ * sizes are computed for it: a height in points is in pixels of the one,
+ * a width (vst_setsize()) in pixels of the other, which differ in modes
+ * whose pixels are not square (ST medium, say)
+ */
+#define AXIS_X      3               /* the index in DEV_TAB */
+#define AXIS_Y      4
+
+static LONG micron(WORD axis)
 {
-    LONG m = linea_vars.DEV_TAB[4];
+    LONG m = linea_vars.DEV_TAB[axis];
 
     if (m <= 0)
         return 353;                     /* 72 dpi */
@@ -555,9 +563,9 @@ static LONG micron(void)
 /* points in 16.16 fixed point as an em size in 1/64 pixel, and back */
 #define POINTS_MAX  (3000L << 16)    /* far past the biggest size, and no overflow */
 
-static LONG fix_to_em(LONG points)
+static LONG fix_to_em(LONG points, WORD axis)
 {
-    LONG div = micron() * 72, q, r;
+    LONG div = micron(axis) * 72, q, r;
 
     if (points < 0x10000L)
         points = 0x10000L;
@@ -583,9 +591,9 @@ static LONG clamp_points(LONG points)
     return points;
 }
 
-static LONG em_to_fix(LONG em)
+static LONG em_to_fix(LONG em, WORD axis)
 {
-    return (LONG)(((ULONG)em * 72 * (ULONG)micron() + 12700) / 25400) << 10;
+    return (LONG)(((ULONG)em * 72 * (ULONG)micron(axis) + 12700) / 25400) << 10;
 }
 
 /*
@@ -660,8 +668,8 @@ void vdi_vst_arbpt(Vwk *vwk)
         vwk->pts_mode = TRUE;
         vwk->sf_width = 0;
         vwk->sf_mirror = mirrored ? SF_MIRROR_X : 0;
-        sfont_resize(vwk, fix_to_em(mirrored ? -points : points), 0);
-        points = em_to_fix(vdi_sfont_em(vwk->cur_font));
+        sfont_resize(vwk, fix_to_em(mirrored ? -points : points, AXIS_Y), 0);
+        points = em_to_fix(vdi_sfont_em(vwk->cur_font), AXIS_Y);
         if (mirrored)
             points = -points;
     }
@@ -705,10 +713,10 @@ void vdi_vst_setsize(Vwk *vwk)
         BOOL mirrored = points < 0;
 
         sfont_request(vwk, &size, &want);
-        vwk->sf_width = fix_to_em(mirrored ? -points : points);
+        vwk->sf_width = fix_to_em(mirrored ? -points : points, AXIS_X);
         vwk->sf_mirror = (vwk->sf_mirror & ~SF_MIRROR_Y) | (mirrored ? SF_MIRROR_Y : 0);
         sfont_resize(vwk, size, want);
-        points = em_to_fix(vdi_sfont_em_width(vwk->cur_font));  /* what it came to */
+        points = em_to_fix(vdi_sfont_em_width(vwk->cur_font), AXIS_X);    /* what it came to */
         if (mirrored)
             points = -points;
     }

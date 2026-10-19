@@ -1256,6 +1256,29 @@ static void check_metrics(short handle, short id)
     intin[0] = 12;
     vdi_op(107, 1, handle);             /* the width follows the height again */
     font_check(extent_of(handle, 'M', 4) == w, "vst_point() did not reset the width");
+    /*
+     * a width in points is in the screen's pixel width: as wide as that
+     * many pixels given to vst_width() (which tells only where pixels are
+     * not square, ST medium say)
+     */
+    {
+        short pw, px, wa, wb;
+
+        intin[0] = 0;
+        vdi_op(102, 1, handle);         /* vq_extnd() */
+        pw = intout[3] > 0 ? intout[3] : 353;
+        px = (short)((24L * 25400 + 36L * pw) / (72L * pw));
+        intin[0] = 24;
+        ptsin_op(252, 0, 1, handle);    /* vst_setsize(24) */
+        wa = extent_of(handle, 'M', 4);
+        ptsin[0] = px;
+        ptsin_op(231, 1, 0, handle);    /* vst_width() */
+        wb = extent_of(handle, 'M', 4);
+        font_check(wa - wb <= 4 && wb - wa <= 4,
+                   "vst_setsize() does not take its width in the screen's pixel width");
+        intin[0] = 12;
+        vdi_op(107, 1, handle);
+    }
     intin[0] = 2000;
     ptsin_op(252, 0, 1, handle);        /* vst_setsize(2000): far more than a size can be */
     font_check(intout[0] > 12 && intout[0] < 2000, "vst_setsize() does not answer the width it set");
