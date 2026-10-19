@@ -24,23 +24,28 @@ extern ULONG vdi_gdos_id;
 
 #define GDOS_ID_FSM         0x5f46534dUL    /* '_FSM' */
 
-/* font_format of a scalable font, as NVDI's vqt_ext_name() reports it */
+/* font_format of a font, as NVDI's vqt_ext_name() reports it */
+#define SFONT_BITMAP        0x01
 #define SFONT_SPEEDO        0x02
 #define SFONT_TRUETYPE      0x04
 #define SFONT_TYPE1         0x08
 
-/* its flags */
+/* its flags: SFONT_MONOSPACE as vqt_ext_name() reports it, the others ours */
 #define SFONT_MONOSPACE     0x01
+#define SFONT_ITALIC        0x40
+#define SFONT_BOLD          0x80
 
 /* a scalable font the built-in GDOS found */
 typedef struct
 {
     WORD id;                        /* its font id, stable from boot to boot */
     UBYTE format;                   /* SFONT_TRUETYPE, ... */
-    UBYTE flags;                    /* SFONT_MONOSPACE */
+    UBYTE flags;                    /* SFONT_MONOSPACE, ... */
     ULONG key;                      /* hash of the full family and style */
     UWORD upem;                     /* its design units per em */
     WORD ascender;                  /* its ascender, in those units */
+    UWORD glyphs;                   /* how many it has */
+    UBYTE style;                    /* where the style starts in name, 0 if regular */
     char name[FONT_NAME_LEN + 1];   /* "Family Style", as vqt_name() gives it */
     char file[14];                  /* its 8.3 file name in CONF_VDI_FONT_DIR */
 } VDI_SFONT;
@@ -73,6 +78,10 @@ const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want);
 
 /* drop unselected sizes until the cache is within its limit again */
 void vdi_sfont_trim(void);
+
+/* v_flushcache() and vqt_cachesize() */
+void vdi_sfont_flush(void);
+ULONG vdi_sfont_cache_free(void);
 
 /* the text scratch buffer of a size (an F_SFONT font), and its halves' offset */
 void vdi_sfont_scratch(const Fonthead *font, WORD **buffer, WORD *half);

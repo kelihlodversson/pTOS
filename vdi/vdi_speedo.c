@@ -1,0 +1,471 @@
+/*
+ * vdi_speedo.c - the font calls of SpeedoGDOS and NVDI
+ *
+ * Copyright (C) 2026 The pTOS development team
+ *
+ * This file is distributed under the GPL, version 2 or at your
+ * option any later version.  See doc/license.txt for details.
+ */
+
+/*
+ * SpeedoGDOS added VDI calls for its outline fonts (opcodes 229 to 255),
+ * and NVDI, which took its interface over, some more (#577).  With the
+ * built-in GDOS active (vdi/vdi_gdos.c), pTOS answers them for its
+ * scalable fonts, and for the bitmap fonts as far as they apply:
+ *
+ * - vqt_ext_name() (in vqt_name(), vdi/vdi_text.c), vqt_xfntinfo(),
+ *   vst_name() and vqt_name_and_id(), and vqt_fontheader() say what
+ *   the fonts are and select one by its name.
+ *
+ * - There is no cache of characters to save or load: the sizes of the
+ *   fonts are kept as rendered (vdi/vdi_sfont.c), which v_flushcache()
+ *   empties and vqt_cachesize() reports on, and v_savecache() and
+ *   v_loadcache() fail.  vst_scratch() has no buffer to size, and
+ *   v_killoutline() no outline to free.
+ *
+ * Pointers handed over in intin, or back in intout, take two WORDs, as
+ * on the 68000: they are copied in and out with memcpy(), which does not
+ * mind that a WORD array need not be aligned for a LONG.
+ */
+
+#include "emutos.h"
+#include "string.h"
+#include <stddef.h>
+#include "vdi_defs.h"
+#include "vdi_gdos.h"
+#include "lineavars.h"
+
+/* the pointer in intin[i] and intin[i + 1] */
+static void *intin_ptr(WORD i)
+{
+    ULONG value;
+
+    memcpy(&value, &INTIN[i], sizeof(value));
+
+    return (void *)(uintptr_t)value;
+}
+
+/* a LONG, or a pointer, into intout[i] and intout[i + 1] */
+static void intout_long(WORD i, ULONG value)
+{
+    memcpy(&INTOUT[i], &value, sizeof(value));
+}
+
+/* a string into a field of a structure: NUL-terminated if there is room */
+static void put_str(char *dst, const char *src, WORD len)
+{
+    WORD i;
+
+    for (i = 0; i < len && src[i]; i++)
+        dst[i] = src[i];
+    if (i < len)
+        dst[i] = '\0';
+}
+
+/* a font's id, its font_format and its name: a bitmap font, or a scalable one */
+static WORD font_id(const Fonthead *font, WORD sfont)
+{
+    return sfont >= 0 ? vdi_sfonts[sfont].id : font->font_id;
+}
+
+static WORD font_format(WORD sfont)
+{
+    return sfont >= 0 ? vdi_sfonts[sfont].format : SFONT_BITMAP;
+}
+
+static const char *font_name(const Fonthead *font, WORD sfont)
+{
+    return sfont >= 0 ? vdi_sfonts[sfont].name : font->name;
+}
+
+/* the place in the workstation's list of the font with that id, or 0 */
+static WORD font_element(Vwk *vwk, WORD id, const Fonthead **font, WORD *sfont)
+{
+    WORD element;
+
+    for (element = 1; vdi_font_at(vwk, element, font, sfont); element++)
+        if (font_id(*font, *sfont) == id)
+            return element;
+
+    return 0;
+}
+
+
+/*
+ * vqt_xfntinfo() - what a font is, into an XFNT_INFO
+ *
+ * intin[0] says which fields, intin[1] and intin[2] which font: its place
+ * in the list (as vqt_name() counts) if not 0, else its id if not 0, else
+ * the current font.  intout[0..2] are its format, id and place, all 0 if
+ * there is no such font.
+ */
+
+typedef struct
+{
+    LONG size;                      /* of the structure, as the caller has it */
+    WORD format;
+    WORD id;
+    WORD index;
+    char font_name[50];
+    char family_name[50];
+    char style_name[50];
+    char file_name1[200];
+    char file_name2[200];
+    char file_name3[200];
+    WORD pt_cnt;
+    WORD pt_sizes[64];
+} XFNT_INFO;
+
+#define XFNT_FONT_NAME      0x0001
+#define XFNT_FAMILY_NAME    0x0002
+#define XFNT_STYLE_NAME     0x0004
+#define XFNT_FILE_NAME1     0x0008
+#define XFNT_FILE_NAME2     0x0010
+#define XFNT_FILE_NAME3     0x0020
+#define XFNT_SIZES          0x0100
+#define XFNT_SIZES2         0x0200  /* with those vst_point() doubles */
+
+/* whether the caller's structure goes as far as the end of a field */
+#define XFNT_HAS(info, field) \
+    ((info)->size >= (LONG)(offsetof(XFNT_INFO, field) + sizeof((info)->field)))
+
+/* the sizes a scalable font is offered in, as NVDI lists them */
+static const WORD sfont_sizes[] = { 8, 9, 10, 11, 12, 14, 18, 24, 36, 48 };
+
+/* the point sizes of a bitmap font, and with doubled, those vst_point() doubles */
+static WORD bitmap_sizes(WORD id, WORD *sizes, WORD max, BOOL doubled)
+{
+    const Fonthead *font, **chain_ptr;
+    WORD count = 0, i, j, n, point;
+
+    for (chain_ptr = linea_vars.font_ring; (font = *chain_ptr++) != NULL; )
+        for ( ; font; font = font->next_font)
+            if (font->font_id == id && count < max)
+                sizes[count++] = font->point;
+
+    for (i = 0, n = count; doubled && i < n; i++)
+    {
+        point = sizes[i] * 2;
+        for (j = 0; j < count && sizes[j] != point; j++)
+            ;
+        if (j == count && count < max)
+            sizes[count++] = point;
+    }
+
+    /* in order, and once each: the chains need not be */
+    for (i = 1; i < count; i++)
+        for (j = i; j > 0 && sizes[j - 1] > sizes[j]; j--)
+        {
+            point = sizes[j];
+            sizes[j] = sizes[j - 1];
+            sizes[j - 1] = point;
+        }
+    for (i = n = 0; i < count; i++)
+        if (!n || sizes[i] != sizes[n - 1])
+            sizes[n++] = sizes[i];
+
+    return n;
+}
+
+void vdi_vqt_xfntinfo(Vwk *vwk)
+{
+    WORD flags = INTIN[0], id = INTIN[1], element = INTIN[2];
+    XFNT_INFO *info = intin_ptr(3);
+    const Fonthead *font;
+    WORD sfont, i;
+    const char *name;
+
+    if (element)
+    {
+        if (!vdi_font_at(vwk, element, &font, &sfont))
+            element = 0;
+    }
+    else
+        element = font_element(vwk, id ? id : vwk->cur_font->font_id, &font, &sfont);
+
+    INTOUT[0] = INTOUT[1] = INTOUT[2] = 0;
+    if (!element)
+        return;
+    INTOUT[0] = font_format(sfont);
+    INTOUT[1] = font_id(font, sfont);
+    INTOUT[2] = element;
+    if (!info)
+        return;
+
+    if (XFNT_HAS(info, index))
+    {
+        info->format = INTOUT[0];
+        info->id = INTOUT[1];
+        info->index = element;
+    }
+
+    name = font_name(font, sfont);
+    if ((flags & XFNT_FONT_NAME) && XFNT_HAS(info, font_name))
+        put_str(info->font_name, name, sizeof(info->font_name));
+
+    /* a scalable font's name is "Family Style", a bitmap font's just the family */
+    if ((flags & XFNT_FAMILY_NAME) && XFNT_HAS(info, family_name))
+    {
+        WORD len = (sfont >= 0 && vdi_sfonts[sfont].style)
+                   ? vdi_sfonts[sfont].style - 1 : FONT_NAME_LEN;
+
+        for (i = 0; i < len && name[i]; i++)
+            info->family_name[i] = name[i];
+        info->family_name[i] = '\0';
+    }
+    if ((flags & XFNT_STYLE_NAME) && XFNT_HAS(info, style_name))
+        put_str(info->style_name, (sfont >= 0 && vdi_sfonts[sfont].style)
+                ? name + vdi_sfonts[sfont].style : "Regular", sizeof(info->style_name));
+
+    /* a scalable font has one file, a bitmap font none that is known here */
+    if ((flags & XFNT_FILE_NAME1) && XFNT_HAS(info, file_name1))
+        put_str(info->file_name1, sfont >= 0 ? vdi_sfont_path(sfont) : "",
+                sizeof(info->file_name1));
+    if ((flags & XFNT_FILE_NAME2) && XFNT_HAS(info, file_name2))
+        info->file_name2[0] = '\0';
+    if ((flags & XFNT_FILE_NAME3) && XFNT_HAS(info, file_name3))
+        info->file_name3[0] = '\0';
+
+    if ((flags & (XFNT_SIZES | XFNT_SIZES2)) && XFNT_HAS(info, pt_sizes))
+    {
+        if (sfont >= 0)
+        {
+            info->pt_cnt = ARRAY_SIZE(sfont_sizes);
+            memcpy(info->pt_sizes, sfont_sizes, sizeof(sfont_sizes));
+        }
+        else
+            info->pt_cnt = bitmap_sizes(INTOUT[1], info->pt_sizes,
+                                        ARRAY_SIZE(info->pt_sizes),
+                                        (flags & XFNT_SIZES2) != 0);
+    }
+}
+
+
+/*
+ * vst_name() - select a font by its name, as vqt_name() gives it
+ *
+ * intin[0] is a mask of the font formats to consider (0: any), intin[1..]
+ * the name.  intout[0] is the id of the font then current, intout[1..]
+ * its name.  vqt_name_and_id() (subcode 100) only looks the font up.
+ */
+void vdi_vst_name(Vwk *vwk)
+{
+    char name[FONT_NAME_LEN + 1];
+    WORD formats = INTIN[0], element, sfont, i, n;
+    const Fonthead *font;
+    const char *found_name;
+    BOOL select = CONTRL->subcode != 100;
+
+    n = CONTRL->nintin - 1;
+    for (i = 0; i < n && i < FONT_NAME_LEN && INTIN[i + 1]; i++)
+        name[i] = (char)INTIN[i + 1];
+    name[i] = '\0';
+
+    for (element = 1; vdi_font_at(vwk, element, &font, &sfont); element++)
+    {
+        if (formats && !(formats & font_format(sfont)))
+            continue;
+        if (!strncmp(font_name(font, sfont), name, FONT_NAME_LEN))
+            break;
+    }
+
+    if (sfont < 0 && !font)
+    {
+        /* none of that name: the current font stays */
+        font = vwk->cur_font;
+        element = font_element(vwk, font->font_id, &font, &sfont);
+        if (!element)
+        {
+            font = vwk->cur_font;
+            sfont = -1;
+        }
+    }
+    else if (select)
+    {
+        WORD *old_intin = INTIN, id = font_id(font, sfont);
+
+        INTIN = &id;
+        vdi_vst_font(vwk);
+        INTIN = old_intin;
+    }
+
+    INTOUT[0] = font_id(font, sfont);
+    found_name = font_name(font, sfont);
+    for (i = 0; i < FONT_NAME_LEN && found_name[i]; i++)
+        INTOUT[i + 1] = (UBYTE)found_name[i];
+    INTOUT[i + 1] = 0;
+    CONTRL->nintout = i + 1;
+}
+
+
+/*
+ * vqt_fontheader() - the current font's header, as a Speedo font file
+ * has it (a virtual one, for what is not a Speedo font: as NVDI does)
+ *
+ * intin[0..1] point to the buffer, intout gets the path of the font's
+ * file (none for a bitmap font).  The fields past fh_orupm are left
+ * alone.
+ */
+
+typedef struct
+{
+    char fmver[8];                  /* the format: "D1.0\r\n" */
+    ULONG fntsz;                    /* size of the font file */
+    ULONG fbfsz;                    /* the buffer the font needs */
+    UWORD cbfsz;                    /* the buffer a character needs */
+    UWORD hedsz;                    /* size of this header */
+    UWORD fntid;                    /* Bitstream's font id */
+    UWORD sfvnr;                    /* the font's version */
+    char fntnm[70];                 /* its name */
+    char mdate[10];                 /* when it was made */
+    char laynm[70];                 /* its layout's name */
+    char cpyrt[78];                 /* its copyright */
+    UWORD nchrl;                    /* characters in the layout */
+    UWORD nchrf;                    /* characters in the font */
+    UWORD fchrf;                    /* the first one */
+    UWORD nktks;                    /* kerning tracks */
+    UWORD nkprs;                    /* kerning pairs */
+    UBYTE flags;                    /* bit 0: extended mode */
+    UBYTE cflgs;                    /* bit 0: italic, bit 1: monospaced */
+    UBYTE famcl;                    /* the family's class */
+    UBYTE frmcl;                    /* weight, high nibble, and width, low */
+    char sfntn[32];                 /* its PostScript name */
+    char sfacn[16];                 /* its family, short */
+    char fntfm[14];                 /* its style */
+    UWORD itang;                    /* its slant, in 1/256 degree */
+    UWORD orupm;                    /* design units per em */
+} SPEEDO_HEADER;
+
+void vdi_vqt_fontheader(Vwk *vwk)
+{
+    SPEEDO_HEADER *h = intin_ptr(0);
+    const Fonthead *font = vwk->cur_font;
+    const VDI_SFONT *f = NULL;
+    const char *path = "";
+    char *p;
+    WORD i, index;
+
+    CONTRL->nintout = 0;
+    if (font->flags & F_SFONT)
+    {
+        index = vdi_sfont_find(font->font_id);
+        if (index >= 0)
+        {
+            f = &vdi_sfonts[index];
+            path = vdi_sfont_path(index);
+        }
+    }
+    if (!h)
+        return;
+
+    bzero(h, sizeof(*h));
+    memcpy(h->fmver, "D1.0\r\n", 6);
+    h->hedsz = sizeof(*h);
+    put_str(h->fntnm, f ? f->name : font->name, sizeof(h->fntnm));
+    h->nchrf = f ? f->glyphs : font->last_ade - font->first_ade + 1;
+    h->fchrf = f ? 0 : font->first_ade;
+    h->nchrl = h->nchrf;
+    if (f && (f->flags & SFONT_ITALIC))
+        h->cflgs |= 0x01;
+    if (f ? (f->flags & SFONT_MONOSPACE) : (font->flags & F_MONOSPACE))
+        h->cflgs |= 0x02;
+    h->frmcl = (f && (f->flags & SFONT_BOLD)) ? 0xa8 : 0x68;
+
+    /* the family and the style, apart, and the two without blanks */
+    if (f && f->style)
+    {
+        for (i = 0; i < f->style - 1 && i < (WORD)sizeof(h->sfacn); i++)
+            h->sfacn[i] = f->name[i];
+        put_str(h->fntfm, f->name + f->style, sizeof(h->fntfm));
+    }
+    else
+    {
+        put_str(h->sfacn, f ? f->name : font->name, sizeof(h->sfacn));
+        put_str(h->fntfm, "Regular", sizeof(h->fntfm));
+    }
+    for (i = 0, p = h->sfntn; f && f->name[i] && p < h->sfntn + sizeof(h->sfntn); i++)
+    {
+        if (f->style && i == f->style - 1)
+            *p++ = '-';
+        else if (f->name[i] != ' ')
+            *p++ = f->name[i];
+    }
+    h->orupm = f ? f->upem : font->top + font->bottom + 1;
+
+    for (i = 0; path[i]; i++)
+        INTOUT[i] = (UBYTE)path[i];
+    CONTRL->nintout = i;
+}
+
+
+/*
+ * v_getoutline() - a character's outline: none, as yet (intout[0] is the
+ * number of points)
+ */
+void vdi_v_getoutline(Vwk *vwk)
+{
+    INTOUT[0] = 0;
+}
+
+
+/*
+ * vst_error() - where to report errors: intin[0] is the mode (the alerts
+ * of mode 1 are not shown: both modes report to the variable), intin[1..2]
+ * the variable's address
+ */
+void vdi_vst_error(Vwk *vwk)
+{
+    vwk->error_var = intin_ptr(1);
+    if (vwk->error_var)
+        *vwk->error_var = 0;
+}
+
+
+/*
+ * The cache: v_savecache() and v_loadcache() fail, there being no cache
+ * file; v_flushcache() drops the sizes no workstation has selected;
+ * vqt_cachesize() says how much of the cache is free, for both caches
+ */
+void vdi_v_savecache(Vwk *vwk)
+{
+    INTOUT[0] = -1;
+}
+
+void vdi_v_loadcache(Vwk *vwk)
+{
+    INTOUT[0] = -1;
+}
+
+void vdi_v_flushcache(Vwk *vwk)
+{
+    vdi_sfont_flush();
+    INTOUT[0] = 0;
+}
+
+void vdi_vqt_cachesize(Vwk *vwk)
+{
+    intout_long(0, vdi_sfont_cache_free());
+}
+
+
+/*
+ * vqt_get_table() - the table that maps the Atari character set, from
+ * 32 on, to the Bitstream International Character Set: its ASCII part,
+ * where the two agree, -1 for the others
+ */
+static const WORD bics_table[224] =
+{
+#define B8(n) n, n + 1, n + 2, n + 3, n + 4, n + 5, n + 6, n + 7
+#define N8 -1, -1, -1, -1, -1, -1, -1, -1
+    B8(0), B8(8), B8(16), B8(24), B8(32), B8(40), B8(48), B8(56),
+    B8(64), B8(72), B8(80),
+    88, 89, 90, 91, 92, 93, 94, -1,
+    N8, N8, N8, N8, N8, N8, N8, N8, N8, N8, N8, N8, N8, N8, N8, N8
+#undef B8
+#undef N8
+};
+
+void vdi_vqt_get_table(Vwk *vwk)
+{
+    intout_long(0, (ULONG)(uintptr_t)bics_table);
+}

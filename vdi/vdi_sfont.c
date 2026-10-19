@@ -667,6 +667,21 @@ void vdi_sfont_trim(void)
         ;
 }
 
+/* v_flushcache(): all the sizes no workstation has selected go */
+void vdi_sfont_flush(void)
+{
+    while (sf_evict())
+        ;
+}
+
+/* vqt_cachesize(): what is left of CONF_VDI_FONT_CACHE */
+ULONG vdi_sfont_cache_free(void)
+{
+    ULONG limit = CONF_VDI_FONT_CACHE * 1024UL;
+
+    return sf_bytes < limit ? limit - sf_bytes : 0;
+}
+
 /* the scratch buffer of a size, for the text path (vdi/vdi_text.c) */
 void vdi_sfont_scratch(const Fonthead *font, WORD **buffer, WORD *half)
 {

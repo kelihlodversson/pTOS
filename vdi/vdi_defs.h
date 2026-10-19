@@ -246,6 +246,7 @@ struct Vwk_ {
     WORD num_fonts;             /* Total number of faces available  */
 #if CONF_WITH_VDI_SCALABLE_FONTS
     BOOL sfonts_loaded;         /* built-in GDOS's scalable fonts added */
+    WORD *error_var;            /* vst_error(): where errors go, or NULL */
 #endif
     WORD scaled;                /* TRUE if font scaled in any way   */
     Fonthead scratch_head;      /* Holder for the doubled font data */
@@ -523,6 +524,23 @@ void vdi_vqt_fontinfo(Vwk *);       /* 131 */
 
 #if CONF_WITH_EXTENDED_MOUSE
 void vdi_vex_wheelv(Vwk *);         /* 134 */
+#endif
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/* SpeedoGDOS's and NVDI's font calls, in vdi_speedo.c */
+void vdi_vqt_xfntinfo(Vwk *);       /* 229 */
+void vdi_vst_name(Vwk *);           /* 230 */
+void vdi_vqt_fontheader(Vwk *);     /* 232 */
+void vdi_v_getoutline(Vwk *);       /* 243 */
+void vdi_vst_error(Vwk *);          /* 245 */
+void vdi_v_savecache(Vwk *);        /* 249 */
+void vdi_v_loadcache(Vwk *);        /* 250 */
+void vdi_v_flushcache(Vwk *);       /* 251 */
+void vdi_vqt_get_table(Vwk *);      /* 254 */
+void vdi_vqt_cachesize(Vwk *);      /* 255 */
+
+/* in vdi_text.c */
+BOOL vdi_font_at(Vwk *vwk, WORD element, const Fonthead **font, WORD *sfont);
 #endif
 
 #if CONF_WITH_VDI_TEXT_SPEEDUP

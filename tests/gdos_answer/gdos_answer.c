@@ -29,6 +29,11 @@
  * one.  The pixels are only checked where the system font's text can be
  * read back with v_get_pixel(); where it cannot, the result line says so.
  *
+ * SpeedoGDOS's and NVDI's calls for the fonts (#577) are checked on the
+ * first scalable font and the system font: vqt_ext_name()'s formats,
+ * vqt_xfntinfo()'s names, file and sizes, vst_name() and
+ * vqt_name_and_id(), vqt_fontheader(), and the cache calls.
+ *
  * x86-64 programs cannot call the VDI at all (trap class 2 is refused
  * from ring 3), so it is skipped there.
  *
@@ -42,6 +47,7 @@
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
 #include <stddef.h>
+#include <string.h>
 
 #define EINVFN          (-32L)
 #define SS_GETCOOKIE    8
@@ -72,7 +78,7 @@ struct fsmc
     unsigned short quality;
 };
 
-static short contrl[16], intin[16], ptsin[16], intout[64], ptsout[16];
+static short contrl[16], intin[64], ptsin[16], intout[64], ptsout[16];
 static void *vdipb[5] = { contrl, intin, ptsin, intout, ptsout };
 
 static short aes_control[5], aes_global[15];
@@ -629,6 +635,172 @@ static void check_monospace(short handle, short id)
     vdi_op(21, 1, handle);              /* back to the system font */
 }
 
+/* NVDI's XFNT_INFO, as an application has it */
+struct xfnt_info
+{
+    long size;
+    short format, id, index;
+    char font_name[50], family_name[50], style_name[50];
+    char file_name1[200], file_name2[200], file_name3[200];
+    short pt_cnt;
+    short pt_sizes[64];
+};
+
+static struct xfnt_info xfnt;
+static char fhdr[1024];                 /* vqt_fontheader()'s buffer, as gemlib advises */
+
+static int str_eq(const char *a, const char *b)
+{
+    while (*a && *a == *b)
+        a++, b++;
+    return *a == *b;
+}
+
+/* whether intout[0..n-1], one character each, ends in .TTF or .OTF */
+static int font_file(short n)
+{
+    return n > 4 && intout[n - 4] == '.' && intout[n - 1] == 'F'
+        && (intout[n - 3] == 'T' || intout[n - 3] == 'O') && intout[n - 2] == 'T';
+}
+
+static short current_font(short handle)
+{
+    vdi_op(38, 0, handle);              /* vqt_attributes() */
+    return intout[0];
+}
+
+/* SpeedoGDOS's and NVDI's font calls (#577) */
+static void check_speedo(short handle, short system_fonts)
+{
+    char name[33], joined[110];
+    short i, id, n, error;
+    unsigned short upem;
+    void *p;
+    long before, after;
+    const short *table;
+
+    /* vqt_ext_name(): the system font is a bitmap font, the first scalable one not */
+    intin[0] = 1;
+    intin[1] = 0;
+    contrl[0] = 130;
+    contrl[1] = 0;
+    contrl[3] = 2;
+    contrl[5] = 1;
+    contrl[6] = handle;
+    vdi();
+    font_check(contrl[4] == 35 && (intout[34] & 0xff) == 1,
+               "vqt_ext_name() does not give the system font as a bitmap font");
+    intin[0] = system_fonts + 1;
+    intin[1] = 0;
+    contrl[3] = 2;
+    contrl[5] = 1;
+    vdi();
+    font_check(contrl[4] == 35 && ((intout[34] & 0xff) == 4 || (intout[34] & 0xff) == 8),
+               "vqt_ext_name() does not give a scalable font as TrueType or Type 1");
+    id = intout[0];
+    for (i = 0; i < 32 && intout[i + 1]; i++)
+        name[i] = (char)intout[i + 1];
+    name[i] = '\0';
+
+    /* vqt_xfntinfo(): by its place in the list */
+    xfnt.size = sizeof(xfnt);
+    xfnt.font_name[0] = xfnt.family_name[0] = xfnt.style_name[0] = '\0';
+    intin[0] = 0x010f;                  /* the names, the first file, the sizes */
+    intin[1] = 0;
+    intin[2] = system_fonts + 1;
+    p = &xfnt;
+    memcpy(&intin[3], &p, sizeof(p));
+    vdi_op(229, 3 + sizeof(p) / 2, handle);
+    font_check(intout[1] == id && intout[2] == system_fonts + 1 && xfnt.id == id,
+               "vqt_xfntinfo() did not find the font by its place");
+    font_check(str_eq(xfnt.font_name, name), "vqt_xfntinfo() gives another name");
+    for (i = 0; xfnt.family_name[i]; i++)
+        joined[i] = xfnt.family_name[i];
+    if (!str_eq(xfnt.style_name, "Regular"))
+    {
+        joined[i++] = ' ';
+        for (n = 0; xfnt.style_name[n]; n++)
+            joined[i++] = xfnt.style_name[n];
+    }
+    joined[i] = '\0';
+    font_check(str_eq(joined, name), "vqt_xfntinfo()'s family and style do not make the name");
+    font_check(xfnt.file_name1[0] && xfnt.file_name1[1] == ':',
+               "vqt_xfntinfo() has no path to the font file");
+    font_check(xfnt.pt_cnt > 0, "vqt_xfntinfo() offers no sizes");
+
+    /* by its id, the system font */
+    xfnt.pt_cnt = 0;
+    intin[0] = 0x0100;
+    intin[1] = 1;
+    intin[2] = 0;
+    vdi_op(229, 3 + sizeof(p) / 2, handle);
+    font_check(intout[0] == 1 && intout[2] == 1 && xfnt.pt_cnt > 0,
+               "vqt_xfntinfo() did not find the system font by its id");
+
+    /* vqt_name_and_id() looks it up, vst_name() selects it */
+    intin[0] = 0;
+    for (n = 0; name[n]; n++)
+        intin[n + 1] = name[n];
+    intin[n + 1] = 0;
+    contrl[0] = 230;
+    contrl[1] = 0;
+    contrl[3] = n + 2;
+    contrl[5] = 100;
+    contrl[6] = handle;
+    vdi();
+    font_check(intout[0] == id, "vqt_name_and_id() did not find the font");
+    font_check(current_font(handle) == 1, "vqt_name_and_id() selected the font");
+    contrl[0] = 230;
+    contrl[3] = n + 2;
+    contrl[5] = 0;
+    vdi();
+    font_check(intout[0] == id && contrl[4] == n + 1, "vst_name() did not answer with the font");
+    font_check(current_font(handle) == id, "vst_name() did not select the font");
+
+    /* vqt_fontheader(): its name, its design units, its file */
+    for (i = 0; i < (short)sizeof(fhdr); i++)
+        fhdr[i] = 0x55;
+    p = fhdr;
+    memcpy(&intin[0], &p, sizeof(p));
+    vdi_op(232, sizeof(p) / 2, handle);
+    n = contrl[4];
+    font_check(fhdr[0] == 'D' && str_eq(fhdr + 24, name),
+               "vqt_fontheader() has another name");
+    memcpy(&upem, fhdr + 330, sizeof(upem));
+    font_check(upem >= 16, "vqt_fontheader() has no design units per em");
+    font_check(font_file(n), "vqt_fontheader() did not give the font's file");
+    font_check(fhdr[332] == 0x55, "vqt_fontheader() wrote past its fields");
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+
+    /* the cache: a flush leaves at least as much free */
+    vdi_op(255, 1, handle);             /* vqt_cachesize() */
+    memcpy(&before, &intout[0], sizeof(before));
+    vdi_op(251, 0, handle);             /* v_flushcache() */
+    vdi_op(255, 1, handle);
+    memcpy(&after, &intout[0], sizeof(after));
+    font_check(before >= 0 && after >= before, "v_flushcache() freed nothing");
+
+    /* the table to BICS, which agrees with ASCII */
+    intout[0] = intout[1] = 0;
+    vdi_op(254, 0, handle);             /* vqt_get_table() */
+    memcpy(&table, &intout[0], sizeof(table));
+    font_check(table && table['A' - 32] == 'A' - 32 && table[0x80 - 32] == -1,
+               "vqt_get_table() does not map ASCII to BICS");
+
+    /* vst_error() clears the variable it is given */
+    error = 99;
+    intin[0] = 0;
+    p = &error;
+    memcpy(&intin[1], &p, sizeof(p));
+    vdi_op(245, 1 + sizeof(p) / 2, handle);
+    font_check(error == 0, "vst_error() did not clear the error variable");
+    intin[0] = 0;
+    p = NULL;
+    memcpy(&intin[1], &p, sizeof(p));
+    vdi_op(245, 1 + sizeof(p) / 2, handle);
+}
+
 static void check_fonts(void)
 {
     short handle, system_fonts, i, aes_there, drive, id;
@@ -700,6 +872,8 @@ static void check_fonts(void)
     Dsetdrv(drive ? 0 : 1);
     if (fonts_loaded > 0)
         check_sizes(handle, system_fonts);
+    if (fonts_loaded > 0)
+        check_speedo(handle, system_fonts);
     for (i = 1; i <= fonts_loaded; i++)
     {
         intin[0] = system_fonts + i;

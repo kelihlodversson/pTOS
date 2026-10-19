@@ -106,17 +106,22 @@ static DTA sfont_dta;
  * sfont_path, and its name, format and flags go into the VDI_SFONT
  */
 
-/* "Family Style", without the style when it is the regular one */
-static void sfont_name(char *name, const char *family, const char *style)
+/*
+ * "Family Style", without the style when it is the regular one; f->style
+ * says where the style starts, for vqt_xfntinfo()
+ */
+static void sfont_name(VDI_SFONT *f, const char *family, const char *style)
 {
-    char *p = name, *end = name + FONT_NAME_LEN;
+    char *name = f->name, *p = name, *end = name + FONT_NAME_LEN;
     const char *s;
 
+    f->style = 0;
     for (s = family ? family : "?"; *s && p < end; )
         *p++ = *s++;
     if (style && *style && strcmp(style, "Regular") && p < end - 1)
     {
         *p++ = ' ';
+        f->style = (UBYTE)(p - name);
         for (s = style; *s && p < end; )
             *p++ = *s++;
     }
@@ -157,13 +162,18 @@ static long sfont_open(void *arg)
         return -1;
     }
 
-    sfont_name(f->name, face->family_name, face->style_name);
+    sfont_name(f, face->family_name, face->style_name);
     f->key = sfont_key(face->family_name, face->style_name);
     format = FT_Get_Font_Format(face);
     f->format = (format && strcmp(format, "TrueType")) ? SFONT_TYPE1 : SFONT_TRUETYPE;
     f->flags = FT_IS_FIXED_WIDTH(face) ? SFONT_MONOSPACE : 0;
+    if (face->style_flags & FT_STYLE_FLAG_ITALIC)
+        f->flags |= SFONT_ITALIC;
+    if (face->style_flags & FT_STYLE_FLAG_BOLD)
+        f->flags |= SFONT_BOLD;
     f->upem = face->units_per_EM;
     f->ascender = face->ascender;
+    f->glyphs = (face->num_glyphs > 0xffffL) ? 0xffff : (UWORD)face->num_glyphs;
 
     FT_Done_Face(face);
 

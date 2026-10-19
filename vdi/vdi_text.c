@@ -704,6 +704,7 @@ void text_init2(Vwk * vwk)
     vwk->num_fonts = linea_vars.font_count;
 #if CONF_WITH_VDI_SCALABLE_FONTS
     vwk->sfonts_loaded = FALSE;
+    vwk->error_var = NULL;
 #endif
 
     vwk->style = 0;        /* reset special effects */
@@ -1288,6 +1289,46 @@ void vdi_vqt_width(Vwk * vwk)
 
 
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/*
+ * The font at a place in the workstation's list, as vqt_name() counts
+ * them from 1: a bitmap font, or after those, once vst_load_fonts() has
+ * added them, a scalable font, whose index in vdi_sfonts goes in *sfont
+ * (else -1).  FALSE if there is no font there.
+ */
+BOOL vdi_font_at(Vwk *vwk, WORD element, const Fonthead **font, WORD *sfont)
+{
+    WORD i, current_font_id;
+    const Fonthead *tmp_font, **chain_ptr;
+
+    *font = NULL;
+    *sfont = -1;
+    chain_ptr = linea_vars.font_ring;
+    i = 0;
+    current_font_id = -1;
+
+    while ((tmp_font = *chain_ptr++)) {
+        do {
+            if (tmp_font->font_id != current_font_id) {
+                current_font_id = tmp_font->font_id;    /* remember current id */
+                if ((++i) == element) {
+                    *font = tmp_font;
+                    return TRUE;
+                }
+            }
+        } while ((tmp_font = tmp_font->next_font));
+    }
+
+    if (vwk->sfonts_loaded && element > i && element - i <= vdi_sfont_count)
+    {
+        *sfont = element - i - 1;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+#endif
+
 void vdi_vqt_name(Vwk * vwk)
 {
     WORD i, element, current_font_id;
@@ -1297,6 +1338,54 @@ void vdi_vqt_name(Vwk * vwk)
     BOOL found;
 
     element = INTIN[0];
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    /*
+     * After the bitmap fonts come the built-in GDOS's scalable fonts, once
+     * vst_load_fonts() has added them; intout[33] says which kind a font
+     * is, 0 for a bitmap font, 1 for an outline font, as with SpeedoGDOS.
+     * NVDI's vqt_ext_name() (subcode 1, with a second intin) has the
+     * format and flags in intout[34] instead, intout[33] then being the
+     * 33rd character of the name.
+     */
+    if (vdi_gdos_id)
+    {
+        const VDI_SFONT *sfont = NULL;
+        WORD index;
+        BOOL ext = CONTRL->subcode == 1 && CONTRL->nintin >= 2;
+
+        if (!vdi_font_at(vwk, element, &tmp_font, &index))
+            tmp_font = &fon6x6;
+        if (index >= 0)
+            sfont = &vdi_sfonts[index];
+
+        int_out = INTOUT;
+        *int_out++ = sfont ? sfont->id : tmp_font->font_id;
+        name = sfont ? sfont->name : tmp_font->name;
+        /* at most 31 characters, so that the name always ends in a NUL */
+        for (i = 0; i < FONT_NAME_LEN - 1 && name[i]; i++)
+            *int_out++ = (UBYTE)name[i];
+        while (i++ < FONT_NAME_LEN)
+            *int_out++ = 0;
+        if (ext)
+        {
+            *int_out++ = 0;
+            if (sfont)
+                *int_out = ((sfont->flags & SFONT_MONOSPACE) << 8) | sfont->format;
+            else
+                *int_out = ((tmp_font->flags & F_MONOSPACE) ? SFONT_MONOSPACE << 8 : 0)
+                         | SFONT_BITMAP;
+            CONTRL->nintout = 35;
+        }
+        else
+        {
+            *int_out = sfont ? 1 : 0;
+            CONTRL->nintout = 34;
+        }
+        return;
+    }
+#endif
+
     chain_ptr = linea_vars.font_ring;
     i = 0;
     current_font_id = -1;
@@ -1311,33 +1400,6 @@ void vdi_vqt_name(Vwk * vwk)
             }
         } while (!found && (tmp_font = tmp_font->next_font));
     }
-
-#if CONF_WITH_VDI_SCALABLE_FONTS
-    /*
-     * After the bitmap fonts come the built-in GDOS's scalable fonts, once
-     * vst_load_fonts() has added them; intout[33] says which kind a font
-     * is, 0 for a bitmap font, 1 for an outline font, as with SpeedoGDOS.
-     */
-    if (vdi_gdos_id)
-    {
-        const VDI_SFONT *sfont = NULL;
-
-        if (!found && vwk->sfonts_loaded && element > i && element - i <= vdi_sfont_count)
-            sfont = &vdi_sfonts[element - i - 1];
-
-        int_out = INTOUT;
-        *int_out++ = sfont ? sfont->id : (found ? tmp_font->font_id : fon6x6.font_id);
-        name = sfont ? sfont->name : (found ? tmp_font->name : fon6x6.name);
-        /* at most 31 characters, so that the name always ends in a NUL */
-        for (i = 0; i < FONT_NAME_LEN - 1 && name[i]; i++)
-            *int_out++ = (UBYTE)name[i];
-        while (i++ < FONT_NAME_LEN)
-            *int_out++ = 0;
-        *int_out = sfont ? 1 : 0;
-        CONTRL->nintout = 34;
-        return;
-    }
-#endif
 
     /* The element is out of bounds - default to the system font */
     if (!found)
