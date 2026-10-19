@@ -287,9 +287,8 @@ typedef struct {
 
 /* one pTOS ABI import this tool has converted a dynamic relocation into
  * (doc/elfload.txt's ".ptos.imports payload"); "name" already carries
- * the "namespace:" prefix (always "gemdos:" in this version -- see
- * find_abi_needed() and import_list_add()'s own comment on why no kernel
- * currently registers that namespace) */
+ * the explicit "vdi:" or "aes:" namespace prefix selected by the SDK
+ * dependency and the registered client function name. */
 typedef struct {
     char     *name;
     uint32_t  abi_major;
@@ -1385,12 +1384,10 @@ int main(int argc, char **argv)
 
                 if (!have_abi_needed)
                     die("'%s' has a dynamic-symbol relocation (type %lu) "
-                        "at 0x%08lx but no \"%s<N>\" DT_NEEDED dependency; "
-                        "pTOS has no general purpose dynamic linker, so "
-                        "an unresolved dynamic reference can never be "
-                        "satisfied at load time", in_path,
-                        (unsigned long)type, (unsigned long)r_offset,
-                        PTOS_ABI_SONAME_PREFIX);
+                        "at 0x%08lx but no recognized pTOS client stub "
+                        "dependency; there is no general purpose dynamic "
+                        "linker to resolve it", in_path,
+                        (unsigned long)type, (unsigned long)r_offset);
 
                 /* the bind mechanism has no addend component in version 1
                  * (doc/elfload.txt): it writes the resolved import address

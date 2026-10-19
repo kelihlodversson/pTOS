@@ -56,5 +56,9 @@ AES_ASSERT(info_features, offsetof(AES_APP_INFO, features) == 8);
 AES_ASSERT(message_data, offsetof(AES_MESSAGE, data) == 6);
 AES_ASSERT(event_message, offsetof(AES_EVENT, message) == 4);
 AES_ASSERT(rect_size, sizeof(GRECT) == 8);
+AES_ASSERT(info_align, __alignof__(AES_APP_INFO) == 4);
+AES_ASSERT(message_align, __alignof__(AES_MESSAGE) == 2);
+AES_ASSERT(event_align, __alignof__(AES_EVENT) == 2);
+AES_ASSERT(rect_align, __alignof__(GRECT) == 2);
 #undef AES_ASSERT
 #endif

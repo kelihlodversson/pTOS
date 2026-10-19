@@ -976,6 +976,7 @@ aes-contract-test: $(AUTOCONF_H)
 	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -DAES_CONTRACT_HOST_TEST \
 	  tests/aes_contract/aes_contract.c util/rectfunc.c -o obj/aes-contract-test
 	./obj/aes-contract-test
+	python3 tests/aes_contract/check_inventory.py
 
 TOCLEAN += obj/aes-contract-test
 

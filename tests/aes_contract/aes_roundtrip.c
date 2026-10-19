@@ -30,6 +30,39 @@ static WORD *volatile fault_address;
 
 #define CHECK(expr) do { if (!(expr) && !failure) failure = __LINE__; } while (0)
 
+static int edge_buffer_checks(void)
+{
+    AES_APP_INFO info = { 0 };
+    AES_MESSAGE message = { 77, 999, 0, { 42 } }, received;
+    UBYTE *buffer;
+    LONG allocation;
+    int failure = 0;
+
+    allocation = raw(1, 0x48, 4096, 0, 0, 0);
+    if (allocation <= 0)
+        return __LINE__;
+    buffer = (UBYTE *)(uintptr_t)(ULONG)allocation;
+    buffer[4091] = 'E';
+    buffer[4092] = 'D';
+    buffer[4093] = 'G';
+    buffer[4094] = 'E';
+    buffer[4095] = 0;
+    CHECK(aes_appl_init("BOUND", (AES_APP_INFO *)(buffer + 4092)) == EIMBA);
+    CHECK(buffer[4092] == 'D' && !buffer[4095]);
+    /* The next heap page is unreserved: a bounded string read must stop
+     * at this terminator, while output records require their full span. */
+    CHECK(aes_appl_init((const char *)buffer + 4091, &info) == E_OK);
+    buffer[4091] = 'X';                  /* the kernel kept its own name copy */
+    CHECK(aes_appl_find("EDGE") == info.id);
+    CHECK(aes_appl_write(info.id, &message) == E_OK);
+    CHECK(aes_appl_read((AES_MESSAGE *)(buffer + 4088)) == EIMBA);
+    CHECK(aes_evnt_poll(AES_EVENT_MESSAGE, (AES_EVENT *)(buffer + 4088)) == EIMBA);
+    CHECK(aes_appl_read(&received) == E_OK && received.data[0] == 42 && received.sender == info.id);
+    CHECK(aes_appl_exit() == E_OK);
+    CHECK(raw(1, 0x49, (uintptr_t)buffer, 0, 0, 0) == E_OK);
+    return failure;
+}
+
 static int child_checks(char mode)
 {
     AES_APP_INFO info;
@@ -100,6 +133,7 @@ int aes_roundtrip_checks(const char *tail, const char *child_path)
     CHECK(aes_appl_init("PARENT", (AES_APP_INFO *)((UBYTE *)&info + 1)) == EIMBA);
     CHECK(raw(AES_SERVICE_CLASS, AES_SERVICE_INIT, (uintptr_t)"PARENT", 0xffff800000000000ULL, 0, 0) == EIMBA);
     CHECK(raw(AES_SERVICE_CLASS, AES_SERVICE_INIT, (uintptr_t)"PARENT", (uintptr_t)&info, 1, 0) == EINVAL);
+    CHECK(edge_buffer_checks() == 0);
     CHECK(aes_appl_init("PARENT", &info) == E_OK);
     id = info.id;
     saved = info;
