@@ -825,7 +825,7 @@ void vdi_vst_height(Vwk * vwk)
         const Fonthead *f = NULL;
 
         if (index >= 0)
-            f = vdi_sfont_size(index, vdi_sfont_pixels_for_top(index, PTSIN[1]));
+            f = vdi_sfont_size(index, vdi_sfont_size_for_top(index, PTSIN[1]), PTSIN[1]);
         if (f)
             vwk->cur_font = f;
         vdi_sfont_trim();               /* the size it had may go now */
@@ -982,7 +982,7 @@ void vdi_vst_point(Vwk * vwk)
         const Fonthead *f = NULL;
 
         if (index >= 0)
-            f = vdi_sfont_size(index, vdi_sfont_pixels_for_points(INTIN[0]));
+            f = vdi_sfont_size(index, vdi_sfont_size_for_points(INTIN[0]), 0);
         if (f)
             vwk->cur_font = f;
         vdi_sfont_trim();               /* the size it had may go now */
@@ -1133,9 +1133,9 @@ void vdi_vst_font(Vwk * vwk)
         {
             const Fonthead *f;
 
-            f = vdi_sfont_size(index, vwk->pts_mode
-                               ? vdi_sfont_pixels_for_points(point)
-                               : vdi_sfont_pixels_for_top(index, dummy[1]));
+            f = vwk->pts_mode
+                ? vdi_sfont_size(index, vdi_sfont_size_for_points(point), 0)
+                : vdi_sfont_size(index, vdi_sfont_size_for_top(index, dummy[1]), dummy[1]);
             if (f)
             {
                 test_font = f;

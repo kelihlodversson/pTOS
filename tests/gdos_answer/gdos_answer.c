@@ -17,9 +17,11 @@
  * 10000 on, and a second vst_load_fonts() adds none.  How many there are
  * depends on the fonts in \GEMSYS\FONTS of the test disk
  * (tools/run-regression-tests.sh copies DejaVu Sans, Serif and Sans Mono,
- * TrueType, and Inter, OpenType with CFF outlines, there when the host has
- * them).  Each is selected, sized and drawn (#576): a monospaced one stays
- * monospaced in bold, and what each drew is read back to see that
+ * TrueType, and Inter and Loma, OpenType with CFF outlines, Loma with an
+ * ascender taller than its em, there when the host has them).  Each is
+ * selected, sized and drawn (#576): vst_height() gives exactly the height
+ * asked for, a monospaced one stays monospaced in bold, and what each
+ * drew is read back to see that
  * rotation, clipping, the effects, XOR mode and alignment to the ascent
  * and the half line apply to it, and the first is also drawn big, rotated
  * with effects, which takes a bigger text scratch buffer than the default
@@ -231,11 +233,7 @@ static void check_sizes(short handle, short system_fonts)
     font_check(top48 > top12 * 3 && w48 > w12 * 3,
                "a scalable font at 48 points is not four times 12 points");
 
-    /* exact heights, unlike a bitmap font's nearest one */
-    ptsin[0] = 0;
-    ptsin[1] = 37;
-    ptsin_op(12, 1, 0, handle);         /* vst_height(37) */
-    font_check(ptsout[1] >= 35 && ptsout[1] <= 39, "vst_height(37) is not 37 high");
+    /* exact heights, unlike a bitmap font's nearest one: check_heights() */
 
     /*
      * Many sizes, one after another: more than the cache holds, so older
@@ -526,6 +524,25 @@ static void check_large(short handle, short id)
     vdi_op(21, 1, handle);              /* back to the system font */
 }
 
+/* vst_height() gives exactly the height asked for, whatever the font's metrics */
+static void check_heights(short handle, short id)
+{
+    short top;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    font_check(intout[0] == id, "vst_font() did not select a scalable font to size");
+    for (top = 9; top <= 40; top++)
+    {
+        ptsin[0] = 0;
+        ptsin[1] = top;
+        ptsin_op(12, 1, 0, handle);     /* vst_height() */
+        font_check(ptsout[1] == top, "vst_height() did not give the height asked for");
+    }
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
 /* a monospaced font stays so in bold, as the system fonts do */
 static void check_monospace(short handle, short id)
 {
@@ -554,7 +571,7 @@ static void check_monospace(short handle, short id)
 
 static void check_fonts(void)
 {
-    short handle, system_fonts, i, aes_there, drive;
+    short handle, system_fonts, i, aes_there, drive, id;
 
     /*
      * Under the AES (the suite started from the desktop) the screen is
@@ -627,13 +644,13 @@ static void check_fonts(void)
     {
         intin[0] = system_fonts + i;
         vdi_op(130, 1, handle);         /* vqt_name() */
-        check_monospace(handle, intout[0]);
+        id = intout[0];
+        check_monospace(handle, id);
+        check_heights(handle, id);
     }
     pixels_checked = fonts_loaded > 0 && pixels_readable(handle);
     for (i = 1; pixels_checked && i <= fonts_loaded; i++)
     {
-        short id;
-
         intin[0] = system_fonts + i;
         vdi_op(130, 1, handle);         /* vqt_name() */
         id = intout[0];

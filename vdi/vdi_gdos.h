@@ -62,13 +62,14 @@ const char *vdi_sfont_path(WORD index);
 /* the scalable font with that id, or -1 */
 WORD vdi_sfont_find(WORD font_id);
 
-/* the em size in pixels for a size in points, or for a cell top height */
-WORD vdi_sfont_pixels_for_points(WORD points);
-WORD vdi_sfont_pixels_for_top(WORD index, WORD top);
+/* the em size, in 1/64 pixel, for a size in points, or for a cell top height */
+LONG vdi_sfont_size_for_points(WORD points);
+LONG vdi_sfont_size_for_top(WORD index, WORD top);
 
-/* a scalable font at that em size, rendered or from the cache; NULL if
- * it cannot be had (no memory, a font file gone) */
-const Fonthead *vdi_sfont_size(WORD index, WORD pixels);
+/* a scalable font at that em size (1/64 pixel), or with that top when
+ * want is not 0, rendered or from the cache; NULL if it cannot be had
+ * (no memory, a font file gone) */
+const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want);
 
 /* drop unselected sizes until the cache is within its limit again */
 void vdi_sfont_trim(void);
