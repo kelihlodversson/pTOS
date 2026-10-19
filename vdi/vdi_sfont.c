@@ -77,9 +77,10 @@ static SF_SIZE *sf_sizes;
 static ULONG sf_bytes;              /* in all the sizes kept */
 static ULONG sf_clock;
 
-/* the face last used */
+/* the face last used, and its font: meaningful while sf_face is set
+ * (nothing initialised here, so that the image has no DATA segment) */
 static FT_Face sf_face;
-static WORD sf_face_index = -1;
+static WORD sf_face_index;
 
 /* the Atari character set, in Unicode; 0 for the missing-glyph shape */
 static const UWORD atari_unicode[SF_CHARS] =
@@ -146,15 +147,24 @@ static LONG sf_clamp(LONG size)
     return size;
 }
 
-/* points are 1/72 inch; the screen's pixel height is in microns */
+/*
+ * points are 1/72 inch, and the screen's pixel height is in microns:
+ * points * 25400 / 72 / micron pixels, in 1/64 pixel and rounded, the
+ * division in two steps so that nothing overflows a LONG
+ */
 LONG vdi_sfont_size_for_points(WORD points)
 {
     LONG micron = linea_vars.DEV_TAB[4];
+    LONG num, div;
 
     if (micron <= 0)
         micron = 353;                   /* 72 dpi */
+    if (points < 1)
+        points = 1;
+    num = points * 25400L;
+    div = micron * 72;
 
-    return sf_clamp((points * 25400L / micron + 36) / 72 * 64);
+    return sf_clamp(num / div * 64 + ((num % div) * 64 + div / 2) / div);
 }
 
 /*
@@ -213,14 +223,13 @@ static FT_UInt sf_glyph(UWORD ch)
 /* the face of a font, opened unless it is the one already open */
 static BOOL sf_open(WORD index)
 {
-    if (sf_face_index == index)
+    if (sf_face && sf_face_index == index)
         return TRUE;
 
     if (sf_face)
     {
         FT_Done_Face(sf_face);
         sf_face = NULL;
-        sf_face_index = -1;
     }
     if (FT_New_Face(vdi_ft_library, vdi_sfont_path(index), 0, &sf_face))
     {

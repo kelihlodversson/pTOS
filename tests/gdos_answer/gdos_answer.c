@@ -19,8 +19,9 @@
  * (tools/run-regression-tests.sh copies DejaVu Sans, Serif and Sans Mono,
  * TrueType, and Inter and Loma, OpenType with CFF outlines, Loma with an
  * ascender taller than its em, there when the host has them).  Each is
- * selected, sized and drawn (#576): vst_height() gives exactly the height
- * asked for, a monospaced one stays monospaced in bold, and what each
+ * selected, sized and drawn (#576): vst_height() and vst_point() give
+ * exactly the height and the size asked for, a monospaced one stays
+ * monospaced in bold, and what each
  * drew is read back to see that
  * rotation, clipping, the effects, XOR mode and alignment to the ascent
  * and the half line apply to it, and the first is also drawn big, rotated
@@ -524,10 +525,13 @@ static void check_large(short handle, short id)
     vdi_op(21, 1, handle);              /* back to the system font */
 }
 
-/* vst_height() gives exactly the height asked for, whatever the font's metrics */
+/*
+ * vst_height() gives exactly the height asked for, whatever the font's
+ * metrics, and vst_point() exactly the size in points
+ */
 static void check_heights(short handle, short id)
 {
-    short top;
+    short top, pt;
 
     intin[0] = id;
     vdi_op(21, 1, handle);              /* vst_font() */
@@ -538,6 +542,12 @@ static void check_heights(short handle, short id)
         ptsin[1] = top;
         ptsin_op(12, 1, 0, handle);     /* vst_height() */
         font_check(ptsout[1] == top, "vst_height() did not give the height asked for");
+    }
+    for (pt = 6; pt <= 36; pt++)
+    {
+        intin[0] = pt;
+        vdi_op(107, 1, handle);         /* vst_point() */
+        font_check(intout[0] == pt, "vst_point() did not give the size asked for");
     }
     intin[0] = 1;
     vdi_op(21, 1, handle);              /* back to the system font */
