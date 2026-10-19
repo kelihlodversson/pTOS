@@ -248,6 +248,8 @@ struct Vwk_ {
     BOOL sfonts_loaded;         /* built-in GDOS's scalable fonts added */
     WORD *error_var;            /* vst_error(): where errors go, or NULL */
     WORD char_map;              /* vst_map_mode(): MAP_ATARI, ... */
+    LONG sf_size;               /* the em size its scalable size was asked for, 1/64 pixel, */
+    WORD sf_want;               /* and the top (0: none), as the size cache has them apart */
     LONG sf_width;              /* vst_setsize(): em width, 1/64 pixel; 0: as the height */
     WORD sf_skew;               /* vst_skew(): slant, 1/10 degree */
     WORD sf_mirror;             /* negative sizes: SF_MIRROR_X, SF_MIRROR_Y */
@@ -558,6 +560,7 @@ void vdi_vst_skew(Vwk *);           /* 253 */
 void vdi_vqt_get_table(Vwk *);      /* 254 */
 void vdi_vqt_cachesize(Vwk *);      /* 255 */
 void vdi_sfont_error(Vwk *vwk, WORD error);
+const Fonthead *vdi_sfont_select(Vwk *vwk, WORD index, LONG size, WORD want);
 
 /* in vdi_text.c */
 BOOL vdi_font_at(Vwk *vwk, WORD element, const Fonthead **font, WORD *sfont);

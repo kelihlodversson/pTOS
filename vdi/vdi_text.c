@@ -51,6 +51,20 @@ static WORD calc_height(Vwk *vwk)
 }
 
 /*
+ * whether a font's bold characters stay in their cells (are no wider than
+ * plain ones): those of a monospaced font, and of every size and page of a
+ * fixed-pitch scalable face
+ */
+static BOOL bold_in_cell(const Fonthead *fnt_ptr)
+{
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    if ((fnt_ptr->flags & (F_SFONT | F_SFONT_FIXED)) == (F_SFONT | F_SFONT_FIXED))
+        return TRUE;
+#endif
+    return (fnt_ptr->flags & F_MONOSPACE) != 0;
+}
+
+/*
  * calculates width of text string, in a font of the workstation's: what
  * its characters add up to, unscaled
  */
@@ -84,7 +98,7 @@ static WORD styled_width(Vwk *vwk, const Fonthead *fnt_ptr, WORD cnt, WORD width
             width = act_siz(vwk, width);
     }
 
-    if ((vwk->style & F_THICKEN) && !(fnt_ptr->flags & F_MONOSPACE))
+    if ((vwk->style & F_THICKEN) && !bold_in_cell(fnt_ptr))
         width += cnt * fnt_ptr->thicken;
 
     if (vwk->style & F_SKEW)
@@ -142,7 +156,8 @@ static BOOL ok_for_direct_blit(Vwk *vwk, const Fonthead *fnt_ptr, WORD width, JU
             return FALSE;
     }
 
-    if (!linea_vars.MONO || (fnt_ptr->max_cell_width != 8))
+    /* every character 8 pixels wide (MONO alone says only how bold is) */
+    if (!(fnt_ptr->flags & F_MONOSPACE) || (fnt_ptr->max_cell_width != 8))
         return FALSE;
 
     if ((fnt_ptr->first_ade != 0) || (fnt_ptr->last_ade != 255))
@@ -318,7 +333,7 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
     linea_vars.DDAINC = vwk->dda_inc;
     linea_vars.SCALDIR = vwk->t_sclsts;
     linea_vars.SCALE = vwk->scaled;
-    linea_vars.MONO = F_MONOSPACE & fnt_ptr->flags;
+    linea_vars.MONO = bold_in_cell(fnt_ptr);   /* bold stays in the cell */
     linea_vars.WRT_MODE = vwk->wrt_mode;
 
     linea_vars.CLIP = vwk->clip;
@@ -521,7 +536,7 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
         WORD clip_dely = fnt_ptr->form_height;
 
         adv_extra = 0;
-        if ((vwk->style & F_THICKEN) && !(fnt_ptr->flags & F_MONOSPACE))
+        if ((vwk->style & F_THICKEN) && !bold_in_cell(fnt_ptr))
             adv_extra += fnt_ptr->thicken;
         clip_extra = adv_extra;
         if (vwk->style & F_SKEW)
@@ -1404,6 +1419,8 @@ void text_init2(Vwk * vwk)
     vwk->sfonts_loaded = FALSE;
     vwk->error_var = NULL;
     vwk->char_map = MAP_ATARI;
+    vwk->sf_size = 0;
+    vwk->sf_want = 0;
     vwk->sf_width = 0;
     vwk->sf_skew = 0;
     vwk->sf_mirror = 0;
@@ -1531,8 +1548,7 @@ static void text_height(Vwk * vwk)
         const Fonthead *f = NULL;
 
         if (index >= 0)
-            f = vdi_sfont_size(index, vdi_sfont_size_for_top(index, PTSIN[1]), PTSIN[1],
-                               vwk->sf_width, vwk->sf_skew, vwk->sf_mirror);
+            f = vdi_sfont_select(vwk, index, vdi_sfont_size_for_top(index, PTSIN[1]), PTSIN[1]);
         if (f)
             vwk->cur_font = f;
         else
@@ -1692,8 +1708,7 @@ static void text_point(Vwk * vwk)
         const Fonthead *f = NULL;
 
         if (index >= 0)
-            f = vdi_sfont_size(index, vdi_sfont_size_for_points(INTIN[0]), 0,
-                               vwk->sf_width, vwk->sf_skew, vwk->sf_mirror);
+            f = vdi_sfont_select(vwk, index, vdi_sfont_size_for_points(INTIN[0]), 0);
         if (f)
             vwk->cur_font = f;
         else
@@ -1882,7 +1897,8 @@ void vdi_vst_font(Vwk * vwk)
              */
             if (old_font->flags & F_SFONT)
             {
-                vdi_sfont_request(old_font, &size, &want);
+                size = vwk->sf_size;
+                want = vwk->sf_want;
                 if (want)
                     size = vdi_sfont_size_for_top(index, want);
             }
@@ -1896,7 +1912,7 @@ void vdi_vst_font(Vwk * vwk)
                 size = vdi_sfont_size_for_top(index, dummy[1]);
                 want = dummy[1];
             }
-            f = vdi_sfont_size(index, size, want, vwk->sf_width, vwk->sf_skew, vwk->sf_mirror);
+            f = vdi_sfont_select(vwk, index, size, want);
             if (f)
             {
                 test_font = f;

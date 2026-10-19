@@ -204,6 +204,26 @@ static BOOL sf_smallest(LONG size, LONG width)
 }
 
 /*
+ * a size made smaller, when it does not fit: a width asked for wider than
+ * the height comes down alone first, the height and the top staying, so
+ * that only widening a size (vst_setsize(), vst_width()) does not make it
+ * lower; then both come down, and the top asked for is dropped
+ */
+static void sf_shrink(LONG *size, LONG *width, WORD *want)
+{
+    if (*width > *size)
+    {
+        *width = sf_clamp(*width * 3 / 4);
+        if (*width < *size)
+            *width = *size;
+        return;
+    }
+    *size = sf_clamp(*size * 3 / 4);
+    *width = *width ? sf_clamp(*width * 3 / 4) : 0;
+    *want = 0;
+}
+
+/*
  * points are 1/72 inch, and the screen's pixel height is in microns:
  * points * 25400 / 72 / micron pixels, in 1/64 pixel and rounded, the
  * division in two steps so that nothing overflows a LONG
@@ -612,6 +632,8 @@ static long sf_build(void *arg)
     h->skew = 0x5555;
     /* fixed pitch: bold stays in the cell, as with the system fonts */
     h->flags = F_STDFORM | F_SFONT | (l.mono ? F_MONOSPACE : 0);
+    if (vdi_sfonts[b->index].flags & SFONT_MONOSPACE)
+        h->flags |= F_SFONT_FIXED;
     h->off_table = s->off;
     h->dat_table = form;
     h->form_width = l.form_width;
@@ -762,9 +784,7 @@ const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want, LONG width, WOR
         }
         if ((b.bytes <= limit && b.drawable) || sf_smallest(size, width))
             break;
-        size = sf_clamp(size * 3 / 4);
-        width = width ? sf_clamp(width * 3 / 4) : 0;
-        want = 0;
+        sf_shrink(&size, &width, &want);
     }
     if (!b.drawable)
         goto fail;
@@ -811,9 +831,7 @@ const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want, LONG width, WOR
         }
         if (sf_smallest(size, width))
             goto fail;
-        size = sf_clamp(size * 3 / 4);
-        width = width ? sf_clamp(width * 3 / 4) : 0;
-        want = 0;
+        sf_shrink(&size, &width, &want);
     }
 
     s = b.result;
@@ -884,15 +902,6 @@ const Fonthead *vdi_sfont_page(const Fonthead *font, UWORD page)
     sf_keep(b.result);
 
     return sf_head(b.result);
-}
-
-/* what a size was asked for as: em size and top */
-void vdi_sfont_request(const Fonthead *font, LONG *size, WORD *want)
-{
-    const SF_SIZE *s = sf_of(font);
-
-    *size = s->ask_size;
-    *want = s->ask_want;
 }
 
 /* the em width a size has, in 1/64 pixel */

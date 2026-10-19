@@ -575,6 +575,26 @@ static LONG em_to_fix(LONG em)
     return (LONG)(((ULONG)em * 72 * (ULONG)micron() + 12700) / 25400) << 10;
 }
 
+/*
+ * a size of a scalable font for a workstation, with its width, slant and
+ * mirroring, NULL if it cannot be had; what it was asked for is kept with
+ * the workstation, for when one of those changes (the size cache's record
+ * of what a size was asked for is shared by the workstations)
+ */
+const Fonthead *vdi_sfont_select(Vwk *vwk, WORD index, LONG size, WORD want)
+{
+    const Fonthead *f;
+
+    f = vdi_sfont_size(index, size, want, vwk->sf_width, vwk->sf_skew, vwk->sf_mirror);
+    if (f)
+    {
+        vwk->sf_size = size;
+        vwk->sf_want = want;
+    }
+
+    return f;
+}
+
 /* the current scalable font again, at the size it was asked for, as now set */
 static void sfont_resize(Vwk *vwk, LONG size, WORD want)
 {
@@ -582,7 +602,7 @@ static void sfont_resize(Vwk *vwk, LONG size, WORD want)
     const Fonthead *f = NULL;
 
     if (index >= 0)
-        f = vdi_sfont_size(index, size, want, vwk->sf_width, vwk->sf_skew, vwk->sf_mirror);
+        f = vdi_sfont_select(vwk, index, size, want);
     if (f)
         vwk->cur_font = f;
     else
@@ -594,7 +614,8 @@ static void sfont_resize(Vwk *vwk, LONG size, WORD want)
 /* the size the current scalable font was asked for */
 static void sfont_request(Vwk *vwk, LONG *size, WORD *want)
 {
-    vdi_sfont_request(vwk->cur_font, size, want);
+    *size = vwk->sf_size;
+    *want = vwk->sf_want;
 }
 
 /* a bitmap font's size by vst_point(), from a size in points */

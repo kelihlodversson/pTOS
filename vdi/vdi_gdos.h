@@ -64,6 +64,13 @@ const char *vdi_sfont_path(WORD index);
  * path draws it as it draws any other font.  F_SFONT marks one.
  */
 #define F_SFONT             0x8000
+/*
+ * and F_SFONT_FIXED one of a fixed-pitch face, whose bold characters stay
+ * in their cells, as F_MONOSPACE has it for a bitmap font: in each page
+ * of the face alike, which F_MONOSPACE (all characters as wide, for the
+ * text path to measure them so) may not be, with zero-width marks in it
+ */
+#define F_SFONT_FIXED       0x4000
 
 /* the scalable font with that id, or -1 */
 WORD vdi_sfont_find(WORD font_id);
@@ -86,8 +93,7 @@ const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want, LONG width, WOR
 /* a Unicode page of a workstation's current size, or NULL */
 const Fonthead *vdi_sfont_page(const Fonthead *font, UWORD page);
 
-/* what a size was asked for as, and the em size it has */
-void vdi_sfont_request(const Fonthead *font, LONG *size, WORD *want);
+/* the em size a size has */
 LONG vdi_sfont_em(const Fonthead *font);
 LONG vdi_sfont_em_width(const Fonthead *font);
 

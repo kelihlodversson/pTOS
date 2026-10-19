@@ -625,7 +625,7 @@ static void check_heights(short handle, short id)
 /* a monospaced font stays so in bold, as the system fonts do */
 static void check_monospace(short handle, short id)
 {
-    short narrow, wide, bold;
+    short narrow, wide, bold, i;
 
     intin[0] = id;
     vdi_op(21, 1, handle);              /* vst_font() */
@@ -639,11 +639,76 @@ static void check_monospace(short handle, short id)
         intin[0] = 1;
         vdi_op(106, 1, handle);         /* vst_effects(bold) */
         bold = extent_of(handle, 'W', 4);
+        font_check(bold == wide, "bold widens a monospaced scalable font");
+
+        /* in Unicode too, in a page with marks of no width (alpha's) */
+        intin[0] = 2;
+        intin[1] = 1;
+        vdi_op(236, 2, handle);         /* vst_map_mode(Unicode) */
+        for (i = 0; i < 4; i++)
+            intin[i] = 0x3b1;           /* alpha, Atari 0xe0 */
+        ptsin_op(116, 0, 4, handle);    /* vqt_extent() */
+        font_check(ptsout[2] - ptsout[0] == wide, "bold widens a monospaced scalable font in Unicode");
+        intin[0] = 1;
+        intin[1] = 1;
+        vdi_op(236, 2, handle);         /* back to the Atari set */
         intin[0] = 0;
         vdi_op(106, 1, handle);
-        font_check(bold == wide, "bold widens a monospaced scalable font");
         monospaced_fonts++;
     }
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
+/*
+ * What a size was asked for is the workstation's own: another one that
+ * asks for more and comes to the same size does not change what the first
+ * gets when it changes its width.  Here the first asks for far too big a
+ * size and comes to the biggest that fits; the second asks for a top far
+ * too high and comes to the same; then a narrow width lets the first have
+ * what it asked for, and so it must be as when it was alone.
+ */
+static void check_two_workstations(short handle, short id)
+{
+    short other, alone, i, dummy;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    vst_arbpt(handle, 2000, &dummy, &dummy, &dummy, &dummy);
+    intin[0] = 12;
+    ptsin_op(252, 0, 1, handle);        /* vst_setsize(12) */
+    extent_of(handle, 'M', 1);
+    alone = ptsout[5] - ptsout[1];
+    intin[0] = 12;
+    vdi_op(107, 1, handle);             /* vst_point(12) */
+
+    for (i = 0; i < 10; i++)
+        intin[i] = 1;
+    intin[10] = 2;
+    vdi_op(100, 11, handle);            /* v_opnvwk() */
+    other = contrl[6];
+    font_check(other > 0 && other != handle, "a second workstation could not be opened");
+    if (other <= 0 || other == handle)
+        return;
+    intin[0] = 0;
+    vdi_op(119, 1, other);              /* vst_load_fonts() */
+
+    vst_arbpt(handle, 2000, &dummy, &dummy, &dummy, &dummy);
+    intin[0] = id;
+    vdi_op(21, 1, other);
+    ptsin[0] = 0;
+    ptsin[1] = 800;
+    ptsin_op(12, 1, 0, other);          /* vst_height(800) */
+    intin[0] = 12;
+    ptsin_op(252, 0, 1, handle);        /* vst_setsize(12) */
+    extent_of(handle, 'M', 1);
+    font_check(ptsout[5] - ptsout[1] == alone,
+               "another workstation's request changed a workstation's size");
+
+    vdi_op(120, 1, other);              /* vst_unload_fonts() */
+    vdi_op(101, 0, other);              /* v_clsvwk() */
+    intin[0] = 12;
+    vdi_op(107, 1, handle);
     intin[0] = 1;
     vdi_op(21, 1, handle);              /* back to the system font */
 }
@@ -1123,6 +1188,8 @@ static void check_metrics(short handle, short id)
     intin[0] = 2000;
     ptsin_op(252, 0, 1, handle);        /* vst_setsize(2000): far more than a size can be */
     font_check(intout[0] > 12 && intout[0] < 2000, "vst_setsize() does not answer the width it set");
+    extent_of(handle, 'M', 4);
+    font_check(ptsout[5] - ptsout[1] == h, "vst_setsize() made the font lower to make it fit");
     /* as low as a size can be, and far too wide: the width alone comes down */
     vst_arbpt(handle, 1, &dummy, &dummy, &dummy, &dummy);
     intin[0] = 2000;
@@ -1799,6 +1866,9 @@ static void check_fonts(void)
         intin[0] = system_fonts + 1;
         vdi_op(130, 1, handle);         /* vqt_name() */
         check_sizes_more(handle, intout[0]);
+        intin[0] = system_fonts + 1;
+        vdi_op(130, 1, handle);         /* vqt_name() */
+        check_two_workstations(handle, intout[0]);
     }
     for (i = 1; i <= fonts_loaded; i++)
     {
