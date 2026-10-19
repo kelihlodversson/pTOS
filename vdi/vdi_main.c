@@ -128,10 +128,10 @@ static struct vdi_jmptab const jmptb3[] = {
     { 2,  0, vdi_vst_width },          /* 231 */
     { 0,  0, vdi_vqt_fontheader },     /* 232 */
     { 0,  0, vdi_v_nop },              /* 233 */
-    { 0,  0, vdi_v_nop },              /* 234 */ /* vqt_trackkern */
-    { 0,  0, vdi_v_nop },              /* 235 */ /* vqt_pairkern */
+    { 0,  4, vdi_vqt_trackkern },      /* 234 */
+    { 0,  4, vdi_vqt_pairkern },       /* 235 */
     { 0,  0, vdi_vst_charmap },        /* 236 */ /* also vst_map_mode */
-    { 0,  0, vdi_v_nop },              /* 237 */ /* vst_kern, vst_track_offset */
+    { 0,  2, vdi_vst_kern },           /* 237 */ /* also vst_track_offset */
     { 0,  0, vdi_v_nop },              /* 238 */
     { 0, 12, vdi_v_getbitmap_info },   /* 239 */
     { 4,  0, vdi_vqt_f_extent },       /* 240 */ /* also vqt_real_extent */

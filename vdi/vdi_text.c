@@ -688,7 +688,66 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
  * each output where the one before left off, in its page's size.  ASCII,
  * the most of most text, is the same in the Atari character set, so it
  * stays in the size itself and its characters as they are.
+ *
+ * Kerning (vst_kern()) is applied in the same way, in any character map:
+ * a run also ends before a character that is kerned against the one before
+ * it, and the next run starts that much further on.  The kerning is in
+ * fractions of a pixel, which are carried on, so that a track offset of
+ * less than a pixel per character adds up as it should.
  */
+
+/* a distance along the baseline as a move on the screen, for the rotation */
+static void along_baseline(Vwk *vwk, WORD d, WORD *dx, WORD *dy)
+{
+    switch(vwk->chup) {
+    default:
+        *dx = d;
+        *dy = 0;
+        break;
+    case 900:
+        *dx = 0;
+        *dy = -d;
+        break;
+    case 1800:
+        *dx = -d;
+        *dy = 0;
+        break;
+    case 2700:
+        *dx = 0;
+        *dy = d;
+        break;
+    }
+}
+
+/* how far a move on the screen goes along the baseline */
+static WORD baseline_part(Vwk *vwk, WORD dx, WORD dy)
+{
+    switch(vwk->chup) {
+    default:
+        return dx;
+    case 900:
+        return -dy;
+    case 1800:
+        return -dx;
+    case 2700:
+        return dy;
+    }
+}
+
+/* whether kerning applies to text in the workstation's current font */
+static BOOL kerning_applies(Vwk *vwk)
+{
+    const Fonthead *font = vwk->cur_font;
+    WORD index;
+
+    if (!(font->flags & F_SFONT))
+        return FALSE;
+    if (vwk->track_offset)
+        return TRUE;
+    index = vwk->pair_kern ? vdi_sfont_find(font->font_id) : -1;
+
+    return index >= 0 && vdi_sfonts[index].kern_pairs;
+}
 
 #define RUN_MAX     32              /* characters copied for a run */
 #define RUN_SAME    (-1)            /* the run is in the current font itself */
@@ -701,6 +760,11 @@ typedef struct
     const Fonthead *font;           /* the run's font */
     WORD *chars;                    /* its characters, as the font has them */
     WORD n;                         /* how many */
+    WORD kern;                      /* how far on it starts, in pixels: kerning */
+    BOOL kerning;                   /* whether kerning applies */
+    LONG prev_cp;                   /* the character before the run, or -1 */
+    LONG kern_sum;                  /* the kerning so far, in 1/64 pixel, */
+    LONG kern_done;                 /* and what of it has been applied, in pixels */
     WORD buf[RUN_MAX];
 } TEXT_RUN;
 
@@ -777,29 +841,88 @@ static const Fonthead *place_font(Vwk *vwk, LONG page, WORD *chars, WORD n)
     return vwk->cur_font;
 }
 
-static void run_begin(TEXT_RUN *r, const WORD *str, WORD count)
+/* whether text in the workstation's current font goes in runs */
+static BOOL text_in_runs(Vwk *vwk)
+{
+    return vwk->char_map != MAP_ATARI || kerning_applies(vwk);
+}
+
+static void run_begin(Vwk *vwk, TEXT_RUN *r, const WORD *str, WORD count)
 {
     r->str = str;
     r->count = count;
     r->pos = 0;
+    r->kerning = kerning_applies(vwk);
+    r->prev_cp = -1;
+    r->kern_sum = r->kern_done = 0;
+}
+
+/*
+ * The kerning before each character of a run (as yet): where it comes to
+ * a whole pixel more after the first character, the run is cut there.
+ * It goes on from what the runs before have had.
+ */
+static void run_kern(Vwk *vwk, TEXT_RUN *r, const LONG *cps, const WORD *ends)
+{
+    LONG kern[RUN_MAX], sum = r->kern_sum, done = r->kern_done, next, px;
+    WORD i;
+
+    if (!vwk->pair_kern || !vdi_sfont_kerning(vwk->cur_font, r->prev_cp, cps, r->n, kern))
+        bzero(kern, r->n * sizeof(LONG));
+
+    r->kern = 0;
+    for (i = 0; i < r->n; i++)
+    {
+        next = sum;
+        if (r->prev_cp >= 0 || i)
+            next += kern[i] + (vwk->track_offset >> 10);    /* 16.16 to 26.6 */
+        px = (next >= 0 ? next + 32 : next - 31) / 64 - done;
+        if (i && px)
+        {
+            /* the run ends before this one, which the next run starts with */
+            r->n = i;
+            r->pos = ends[i - 1];
+            break;
+        }
+        if (!i)
+            r->kern = (WORD)px;
+        sum = next;
+        done += px;
+    }
+    r->kern_sum = sum;
+    r->kern_done = done;
+    r->prev_cp = cps[r->n - 1];
 }
 
 /*
  * the next run of characters in one font: as they are in the string where
- * that is what the font has (ASCII in Unicode), else copied, RUN_MAX at most
+ * that is what the font has (ASCII in Unicode, all in the Atari set),
+ * else copied, RUN_MAX at most; copied, with their code points, for
+ * kerning too
  */
 static BOOL next_run(Vwk *vwk, TEXT_RUN *r)
 {
     WORD start = r->pos, here, ch;
     LONG place, run_place = RUN_SAME, cp;
-    BOOL direct = TRUE;
+    BOOL direct = !r->kerning;
+    LONG cps[RUN_MAX];
+    WORD ends[RUN_MAX];
 
     r->n = 0;
     while (r->pos < r->count)
     {
         here = r->pos;
-        cp = next_char(vwk->char_map, r->str, r->count, &r->pos);
-        place = char_place(vwk, cp, &ch);
+        if (vwk->char_map == MAP_ATARI)
+        {
+            ch = r->str[r->pos++];
+            cp = ch >= 0 && ch < 256 ? vdi_atari_to_unicode((UBYTE)ch) : 0;
+            place = RUN_SAME;
+        }
+        else
+        {
+            cp = next_char(vwk->char_map, r->str, r->count, &r->pos);
+            place = char_place(vwk, cp, &ch);
+        }
         if (r->n == 0)
             run_place = place;
         else if (place != run_place)
@@ -826,12 +949,17 @@ static BOOL next_run(Vwk *vwk, TEXT_RUN *r)
                 break;
             }
             r->buf[r->n] = ch;
+            cps[r->n] = cp;
+            ends[r->n] = r->pos;
         }
         r->n++;
     }
     if (!r->n)
         return FALSE;
 
+    r->kern = 0;
+    if (r->kerning)
+        run_kern(vwk, r, cps, ends);
     r->chars = direct ? (WORD *)(r->str + start) : r->buf;
     r->font = place_font(vwk, run_place, r->chars, r->n);
 
@@ -847,10 +975,10 @@ static WORD text_width(Vwk *vwk, WORD count, const WORD *str)
     TEXT_RUN run;
     WORD width = 0, skew = 0;
 
-    run_begin(&run, str, count);
+    run_begin(vwk, &run, str, count);
     while (next_run(vwk, &run))
     {
-        width += calc_width(vwk, run.font, run.n, run.chars) - skew;
+        width += run.kern + calc_width(vwk, run.font, run.n, run.chars) - skew;
         if (vwk->style & F_SKEW)
             skew = run.font->left_offset + run.font->right_offset;
     }
@@ -901,7 +1029,7 @@ const Fonthead *vdi_text_char(Vwk *vwk, WORD c, WORD *ch)
 WORD vdi_text_width(Vwk *vwk, WORD count, const WORD *str)
 {
 #if CONF_WITH_VDI_SCALABLE_FONTS
-    if (vwk->char_map != MAP_ATARI)
+    if (text_in_runs(vwk))
         return text_width(vwk, count, str);
 #endif
 
@@ -917,18 +1045,25 @@ WORD vdi_text_width(Vwk *vwk, WORD count, const WORD *str)
 static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *justified)
 {
 #if CONF_WITH_VDI_SCALABLE_FONTS
-    if (vwk->char_map != MAP_ATARI)
+    if (text_in_runs(vwk))
     {
         TEXT_RUN run;
         BOOL cont = FALSE;
+        WORD dx, dy;
 
         if (count <= 0)
             return;
         if (width < 0)
             width = text_width(vwk, count, str);
-        run_begin(&run, str, count);
+        run_begin(vwk, &run, str, count);
         while (next_run(vwk, &run))
         {
+            if (cont && run.kern)
+            {
+                along_baseline(vwk, run.kern, &dx, &dy);
+                linea_vars.DESTX += dx;
+                linea_vars.DESTY += dy;
+            }
             output_run(vwk, run.font, run.n, run.chars, -1, cont ? -1 : width,
                        justified, cont);
             cont = TRUE;
@@ -946,44 +1081,6 @@ void vdi_v_gtext(Vwk * vwk)
 }
 
 #if CONF_WITH_VDI_SCALABLE_FONTS
-/* a distance along the baseline as a move on the screen, for the rotation */
-static void along_baseline(Vwk *vwk, WORD d, WORD *dx, WORD *dy)
-{
-    switch(vwk->chup) {
-    default:
-        *dx = d;
-        *dy = 0;
-        break;
-    case 900:
-        *dx = 0;
-        *dy = -d;
-        break;
-    case 1800:
-        *dx = -d;
-        *dy = 0;
-        break;
-    case 2700:
-        *dx = 0;
-        *dy = d;
-        break;
-    }
-}
-
-/* how far a move on the screen goes along the baseline */
-static WORD baseline_part(Vwk *vwk, WORD dx, WORD dy)
-{
-    switch(vwk->chup) {
-    default:
-        return dx;
-    case 900:
-        return -dy;
-    case 1800:
-        return -dx;
-    case 2700:
-        return dy;
-    }
-}
-
 /*
  * v_ftext() is v_gtext(), and v_ftext_offset() (more than one point in
  * ptsin) places each character at its own offset (ptsin[2..], a pair per
@@ -1141,6 +1238,8 @@ void text_init2(Vwk * vwk)
     vwk->char_map = MAP_ATARI;
     vwk->sf_width = 0;
     vwk->sf_skew = 0;
+    vwk->pair_kern = FALSE;
+    vwk->track_offset = 0;
 #endif
 
     vwk->style = 0;        /* reset special effects */

@@ -37,7 +37,8 @@
  * vqt_advance(), vqt_f_extent() and vqt_real_extent(), v_ftext() and
  * v_ftext_offset(); vst_map_mode() with text in BICS, Unicode (UCS-2
  * and UTF-16, a surrogate pair being one character) in the scalable font
- * and the system font, and vqt_char_index().
+ * and the system font, and vqt_char_index(); vst_kern(), vqt_pairkern()
+ * and vst_track_offset(), which the width of text follows.
  *
  * x86-64 programs cannot call the VDI at all (trap class 2 is refused
  * from ring 3), so it is skipped there.
@@ -897,6 +898,68 @@ static void check_maps(short handle, int scalable)
     map_mode(handle, 1);
 }
 
+/* vst_kern() and vst_track_offset() */
+static void kern_mode(short handle, short tmode, short pmode, long offset)
+{
+    intin[0] = tmode;
+    intin[1] = pmode;
+    memcpy(&intin[2], &offset, sizeof(offset));
+    vdi_op(237, tmode == 255 ? 4 : 2, handle);
+}
+
+static int fonts_kerned;                /* fonts whose pairs were seen to apply */
+
+/*
+ * Kerning: where the font has pairs, "AV" kerned is as wide as it is
+ * plain plus vqt_pairkern()'s amount; a track offset of half a pixel
+ * makes ten characters five pixels wider (nine after the first, rounded)
+ */
+static void check_kerning(short handle)
+{
+    short plain, kerned, pairs, i;
+    long x, y;
+
+    intin[0] = 36;
+    vdi_op(107, 1, handle);             /* vst_point(36): kerning of whole pixels */
+    intin[0] = 'A';
+    intin[1] = 'V';
+    plain = extent_n(handle, 2);
+    kern_mode(handle, 0, 1, 0);
+    pairs = intout[1];
+    intin[0] = 'A';
+    intin[1] = 'V';
+    vdi_op(235, 2, handle);             /* vqt_pairkern() */
+    memcpy(&x, &intout[0], sizeof(x));
+    memcpy(&y, &intout[2], sizeof(y));
+    intin[0] = 'A';
+    intin[1] = 'V';
+    kerned = extent_n(handle, 2);
+    font_check(y == 0, "vqt_pairkern() kerns up or down");
+    font_check(pairs || x == 0, "vqt_pairkern() kerns in a font without pairs");
+    font_check(kerned == plain + (short)((x + 0x8000L) >> 16)
+               || kerned == plain + (short)((x + 0x7fffL) >> 16),
+               "kerning does not make \"AV\" as wide as vqt_pairkern() says");
+    if (pairs && x <= -0x10000L)
+        fonts_kerned++;
+    kern_mode(handle, 0, 0, 0);
+
+    for (i = 0; i < 10; i++)
+        intin[i] = 'n';
+    plain = extent_n(handle, 10);
+    kern_mode(handle, 255, 0, 0x8000L);
+    vdi_op(234, 0, handle);             /* vqt_trackkern() */
+    memcpy(&x, &intout[0], sizeof(x));
+    font_check(x == 0x8000L, "vqt_trackkern() does not give the track offset");
+    for (i = 0; i < 10; i++)
+        intin[i] = 'n';
+    kerned = extent_n(handle, 10);
+    font_check(kerned >= plain + 4 && kerned <= plain + 5,
+               "a track offset of half a pixel does not add up");
+    kern_mode(handle, 0, 0, 0);
+    intin[0] = 12;
+    vdi_op(107, 1, handle);
+}
+
 /* vst_arbpt() and the other size calls, and the metrics */
 static void check_metrics(short handle, short id)
 {
@@ -997,6 +1060,7 @@ static void check_metrics(short handle, short id)
                "vqt_char_index() does not find 'A' through its glyph");
 
     check_maps(handle, 1);
+    check_kerning(handle);
     intin[0] = 1;
     vdi_op(21, 1, handle);              /* back to the system font */
     check_maps(handle, 0);
@@ -1042,6 +1106,26 @@ static void check_run_pixels(short handle, short id)
     intin[0] = 0;
     intin[1] = 0;
     vdi_op(39, 2, handle);
+
+    /* kerned, the V is drawn that much further left, the A where it was */
+    ink_text[0] = 'A';
+    ink_text[1] = 'V';
+    ink_draw(handle, 0, 0, 1, 1, &atari);
+    kern_mode(handle, 0, 1, 0);
+    if (intout[1])
+    {
+        long x;
+
+        intin[0] = 'A';
+        intin[1] = 'V';
+        vdi_op(235, 2, handle);         /* vqt_pairkern() */
+        memcpy(&x, &intout[0], sizeof(x));
+        ink_draw(handle, 0, 0, 1, 1, &uni);
+        font_check(uni.x0 == atari.x0 && uni.x1 - atari.x1 == (short)((x + 0x8000L) >> 16),
+                   "kerned text is not drawn where its width says");
+    }
+    kern_mode(handle, 0, 0, 0);
+
     ink_text[0] = 'A';
     ink_text[1] = 'g';
     intin[0] = 1;
@@ -1249,7 +1333,9 @@ void test_gdos_answer(void)
         pnum(fonts_loaded);
         conws(" scalable fonts, ");
         pnum(monospaced_fonts);
-        conws(" monospaced");
+        conws(" monospaced, ");
+        pnum(fonts_kerned);
+        conws(" kerned");
         if (fonts_loaded > 0 && !pixels_checked)
             conws(", pixels not readable here");
         conws(") ");

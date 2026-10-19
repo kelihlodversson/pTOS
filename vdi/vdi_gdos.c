@@ -65,6 +65,8 @@
 #include <ft2build.h>
 #include <freetype/freetype.h>
 #include <freetype/ftfntfmt.h>
+#include <freetype/tttables.h>
+#include <freetype/tttags.h>
 
 /* an empty option is not defined at all (tools/genconfig.py): the root */
 #ifndef CONF_VDI_FONT_DIR
@@ -148,6 +150,23 @@ static ULONG sfont_key(const char *family, const char *style)
     return h;
 }
 
+/*
+ * the pairs in a font's 'kern' table, the only kerning FreeType gives
+ * (FT_Get_Kerning()): those of its first subtable, which is what fonts
+ * have; 0 for none
+ */
+static UWORD sfont_kern_pairs(FT_Face face)
+{
+    FT_Byte head[12];
+    FT_ULong len = sizeof(head);
+
+    if (!FT_HAS_KERNING(face) || FT_Load_Sfnt_Table(face, TTAG_kern, 0, head, &len))
+        return 0;
+
+    /* version, subtables, then the first one's version, length, coverage, pairs */
+    return (UWORD)((head[10] << 8) | head[11]);
+}
+
 static long sfont_open(void *arg)
 {
     VDI_SFONT *f = arg;
@@ -174,6 +193,7 @@ static long sfont_open(void *arg)
     f->upem = face->units_per_EM;
     f->ascender = face->ascender;
     f->glyphs = (face->num_glyphs > 0xffffL) ? 0xffff : (UWORD)face->num_glyphs;
+    f->kern_pairs = sfont_kern_pairs(face);
 
     FT_Done_Face(face);
 

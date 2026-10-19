@@ -250,6 +250,8 @@ struct Vwk_ {
     WORD char_map;              /* vst_map_mode(): MAP_ATARI, ... */
     LONG sf_width;              /* vst_setsize(): em width, 1/64 pixel; 0: as the height */
     WORD sf_skew;               /* vst_skew(): slant, 1/10 degree */
+    BOOL pair_kern;             /* vst_kern(): pair kerning on */
+    LONG track_offset;          /* vst_track_offset(): added per character, 16.16 pixels */
 #endif
     WORD scaled;                /* TRUE if font scaled in any way   */
     Fonthead scratch_head;      /* Holder for the doubled font data */
@@ -536,7 +538,10 @@ void vdi_vqt_xfntinfo(Vwk *);       /* 229 */
 void vdi_vst_name(Vwk *);           /* 230 */
 void vdi_vst_width(Vwk *);          /* 231 */
 void vdi_vqt_fontheader(Vwk *);     /* 232 */
+void vdi_vqt_trackkern(Vwk *);      /* 234 */
+void vdi_vqt_pairkern(Vwk *);       /* 235 */
 void vdi_vst_charmap(Vwk *);        /* 236 */
+void vdi_vst_kern(Vwk *);           /* 237 */
 void vdi_v_getbitmap_info(Vwk *);   /* 239 */
 void vdi_vqt_f_extent(Vwk *);       /* 240, in vdi_text.c */
 void vdi_v_ftext(Vwk *);            /* 241, in vdi_text.c */

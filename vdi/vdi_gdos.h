@@ -45,6 +45,7 @@ typedef struct
     UWORD upem;                     /* its design units per em */
     WORD ascender;                  /* its ascender, in those units */
     UWORD glyphs;                   /* how many it has */
+    UWORD kern_pairs;               /* pairs in its 'kern' table, for vst_kern() */
     UBYTE style;                    /* where the style starts in name, 0 if regular */
     char name[FONT_NAME_LEN + 1];   /* "Family Style", as vqt_name() gives it */
     char file[14];                  /* its 8.3 file name in CONF_VDI_FONT_DIR */
@@ -104,6 +105,13 @@ UWORD vdi_atari_to_unicode(UBYTE c);
 /* a code point's glyph in a scalable font, 0 if none; a glyph's code point, -1 if none */
 UWORD vdi_sfont_char_glyph(WORD index, LONG cp);
 LONG vdi_sfont_glyph_char(WORD index, UWORD glyph);
+
+/*
+ * the kerning (vst_kern()) before each of n code points of a size, after
+ * the one before it, in 1/64 pixel (kern[0] is before cps[0], after
+ * prev_cp, or 0 when there is none): FALSE when it cannot be had
+ */
+BOOL vdi_sfont_kerning(const Fonthead *font, LONG prev_cp, const LONG *cps, WORD n, LONG *kern);
 
 /* v_flushcache() and vqt_cachesize() */
 void vdi_sfont_flush(void);

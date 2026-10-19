@@ -29,6 +29,13 @@
  *   first plane, or, as mode 3, which is pTOS's, all of Unicode in UTF-16.
  *   vqt_char_index() converts between them and the font's glyphs.
  *
+ * - vst_kern() switches pair kerning on and off, and vst_track_offset()
+ *   (its track mode 255) sets an offset added after each character; the
+ *   text path applies both (vdi/vdi_text.c).  The kerning is that of a
+ *   font's 'kern' table, which FreeType reads; it has no kerning tracks,
+ *   and so no track mode but 255 changes anything.  vqt_pairkern() and
+ *   vqt_trackkern() say what applies.
+ *
  * - There is no cache of characters to save or load: the sizes of the
  *   fonts are kept as rendered (vdi/vdi_sfont.c), which v_flushcache()
  *   empties and vqt_cachesize() reports on, and v_savecache() and
@@ -377,6 +384,7 @@ void vdi_vqt_fontheader(Vwk *vwk)
     h->nchrf = f ? f->glyphs : font->last_ade - font->first_ade + 1;
     h->fchrf = f ? 0 : font->first_ade;
     h->nchrl = h->nchrf;
+    h->nkprs = f ? f->kern_pairs : 0;
     if (f && (f->flags & SFONT_ITALIC))
         h->cflgs |= 0x01;
     if (f ? (f->flags & SFONT_MONOSPACE) : (font->flags & F_MONOSPACE))
@@ -844,4 +852,86 @@ void vdi_vqt_char_index(Vwk *vwk)
     }
 
     INTOUT[0] = result;
+}
+
+
+/*
+ * Kerning: vst_kern() (track mode, pair mode; track mode 255 with an offset
+ * in 16.16 pixels after them is vst_track_offset()), vqt_pairkern() and
+ * vqt_trackkern(), whose answers are 16.16 pixels
+ */
+
+/* the kerning pairs of the current font */
+static WORD kern_pairs(Vwk *vwk)
+{
+    WORD index;
+
+    if (!(vwk->cur_font->flags & F_SFONT))
+        return 0;
+    index = vdi_sfont_find(vwk->cur_font->font_id);
+
+    return index >= 0 ? (WORD)(vdi_sfonts[index].kern_pairs & 0x7fff) : 0;
+}
+
+void vdi_vst_kern(Vwk *vwk)
+{
+    LONG offset = 0;
+
+    if (INTIN[0] == 255 && CONTRL->nintin >= 4)
+        memcpy(&offset, &INTIN[2], sizeof(offset));
+    vwk->track_offset = offset;     /* there are no tracks: only an offset */
+    vwk->pair_kern = INTIN[1] != 0;
+
+    INTOUT[0] = 0;
+    INTOUT[1] = kern_pairs(vwk);
+}
+
+/* a move along the baseline, in 16.16 pixels, for the rotation, into intout */
+static void kern_answer(Vwk *vwk, LONG d)
+{
+    LONG x = 0, y = 0;
+
+    switch(vwk->chup) {
+    default:
+        x = d;
+        break;
+    case 900:
+        y = -d;
+        break;
+    case 1800:
+        x = -d;
+        break;
+    case 2700:
+        y = d;
+        break;
+    }
+    intout_long(0, x);
+    intout_long(2, y);
+}
+
+void vdi_vqt_pairkern(Vwk *vwk)
+{
+    LONG cps[2], kern[2];
+    WORD i, c;
+
+    /* the two characters in Unicode (from the first plane, in UTF-16) */
+    for (i = 0; i < 2; i++)
+    {
+        c = INTIN[i];
+        if (vwk->char_map == MAP_ATARI)
+            cps[i] = (c >= 0 && c < 256) ? vdi_atari_to_unicode((UBYTE)c) : 0;
+        else if (vwk->char_map == MAP_BICS)
+            cps[i] = vdi_bics_to_unicode(c);
+        else
+            cps[i] = (UWORD)c;
+    }
+    if (!(vwk->cur_font->flags & F_SFONT)
+        || !vdi_sfont_kerning(vwk->cur_font, -1, cps, 2, kern))
+        kern[1] = 0;
+    kern_answer(vwk, kern[1] << 10);    /* 26.6 to 16.16 */
+}
+
+void vdi_vqt_trackkern(Vwk *vwk)
+{
+    kern_answer(vwk, vwk->track_offset);
 }

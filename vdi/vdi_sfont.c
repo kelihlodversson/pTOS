@@ -908,6 +908,61 @@ LONG vdi_sfont_glyph_char(WORD index, UWORD glyph)
     return m.cp;
 }
 
+/* kerning, on FreeType's stack */
+typedef struct
+{
+    const SF_SIZE *s;
+    LONG prev_cp;
+    const LONG *cps;
+    WORD n;
+    LONG *kern;
+} SF_KERN;
+
+static long sf_kern(void *arg)
+{
+    SF_KERN *k = arg;
+    SF_BUILD b;
+    FT_UInt prev, glyph;
+    FT_Vector v;
+    WORD i;
+
+    if (!sf_open(k->s->sfont))
+        return -1;
+    b.size = k->s->size;
+    b.want = k->s->want;
+    b.width = k->s->width;
+    b.skew = k->s->skew;
+    if (!sf_set(&b))
+        return -1;
+
+    prev = k->prev_cp > 0 ? FT_Get_Char_Index(sf_face, (FT_ULong)k->prev_cp) : 0;
+    for (i = 0; i < k->n; i++)
+    {
+        glyph = k->cps[i] > 0 ? FT_Get_Char_Index(sf_face, (FT_ULong)k->cps[i]) : 0;
+        k->kern[i] = 0;
+        if (prev && glyph && !FT_Get_Kerning(sf_face, prev, glyph, FT_KERNING_UNFITTED, &v))
+            k->kern[i] = v.x;
+        prev = glyph;
+    }
+
+    return 0;
+}
+
+BOOL vdi_sfont_kerning(const Fonthead *font, LONG prev_cp, const LONG *cps, WORD n, LONG *kern)
+{
+    SF_KERN k;
+
+    k.s = sf_of(font);
+    if (!vdi_sfonts[k.s->sfont].kern_pairs)
+        return FALSE;
+    k.prev_cp = prev_cp;
+    k.cps = cps;
+    k.n = n;
+    k.kern = kern;
+
+    return vdi_ft_call(sf_kern, &k) == 0;
+}
+
 /* v_flushcache(): all the sizes no workstation has selected go */
 void vdi_sfont_flush(void)
 {
