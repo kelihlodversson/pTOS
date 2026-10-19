@@ -1084,6 +1084,29 @@ static void check_kerning(short handle)
         font_check(extent[2] - extent[0] >= w200 + 1 && extent[2] - extent[0] <= w200 + 2,
                    "a track offset of less than 1/64 pixel does not add up");
     }
+
+    /*
+     * a track offset of minus two advances takes each 'n' one advance back
+     * of the one before: the four are from three advances left of the
+     * point to one right of it, and vqt_real_extent() says so
+     */
+    {
+        short adv = extent_of(handle, 'n', 1);
+
+        kern_mode(handle, 255, 0, -2L * adv << 16);
+        for (i = 0; i < 4; i++)
+            intin[i] = 'n';
+        ptsin[0] = 300;
+        ptsin[1] = 100;
+        contrl[0] = 240;
+        contrl[1] = 1;
+        contrl[3] = 4;
+        contrl[5] = 4200;
+        contrl[6] = handle;
+        vdi();                          /* vqt_real_extent() */
+        font_check(ptsout[0] == 300 - 3 * adv && ptsout[2] == 300 + adv,
+                   "vqt_real_extent() does not take in text a negative offset takes back");
+    }
     kern_mode(handle, 0, 0, 0);
 
     /* UTF-16: a lone surrogate is U+FFFD, track offsets around it included */
@@ -1595,6 +1618,27 @@ static void check_unicode(short handle, short id, int pixels)
         ptsin_op(129, 2, 1, handle);    /* no clipping */
         font_check(same_ink(&whole, &one_by_one),
                    "clipped text with a negative track offset is drawn out of place");
+
+        /*
+         * a track offset of minus half an advance draws each 'n' over the
+         * one before: in replace mode, the cell of one must not wipe out
+         * the ink of the other, so it is as drawn transparently
+         */
+        for (i = 0; i < 2; i++)
+        {
+            ink_clear(handle);
+            intin[0] = i ? 2 : 1;
+            vdi_op(32, 1, handle);      /* vswr_mode(replace, then transparent) */
+            vst_track_offset(handle, -(long)adv_n << 15, 0, &tracks, &pairs);
+            v_ftext(handle, ink_cx - 50, ink_cy, ns, 4);
+            vst_track_offset(handle, 0, 0, &tracks, &pairs);
+            intin[0] = 1;
+            vdi_op(32, 1, handle);
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                     i ? &one_by_one : &whole);
+        }
+        font_check(same_ink(&whole, &one_by_one),
+                   "in replace mode, a character drawn over another wipes out its ink");
 
         /* justified in BICS, whose blank is 0: as in the Atari set */
         {

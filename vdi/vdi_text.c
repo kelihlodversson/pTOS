@@ -1038,11 +1038,12 @@ static BOOL next_run(Vwk *vwk, TEXT_RUN *r)
  * the width of a string in the character map: what its runs add up to,
  * less what skewing adds to each but once
  */
-static WORD text_width(Vwk *vwk, WORD count, const WORD *str)
+static WORD text_bounds(Vwk *vwk, WORD count, const WORD *str, WORD *lo, WORD *hi)
 {
     TEXT_RUN run;
-    WORD width = 0, skew = 0, raw = 0, n = 0;
+    WORD width = 0, skew = 0, raw = 0, n = 0, start;
 
+    *lo = *hi = 0;
     run_begin(vwk, &run, str, count);
     while (next_run(vwk, &run))
     {
@@ -1054,14 +1055,30 @@ static WORD text_width(Vwk *vwk, WORD count, const WORD *str)
             width += run.kern;
             continue;
         }
-        width += run.kern + calc_width(vwk, run.font, run.n, run.chars) - skew;
+        /* a negative offset can take a run back over those before it */
+        start = width + run.kern - skew;
+        width = start + calc_width(vwk, run.font, run.n, run.chars);
+        if (start < *lo)
+            *lo = start;
+        if (width > *hi)
+            *hi = width;
         if (vwk->style & F_SKEW)
             skew = run.font->left_offset + run.font->right_offset;
     }
     if (vwk->scaled)
+    {
         width += styled_width(vwk, vwk->cur_font, n, raw);
+        *hi = width;
+    }
 
     return width;
+}
+
+static WORD text_width(Vwk *vwk, WORD count, const WORD *str)
+{
+    WORD lo, hi;
+
+    return text_bounds(vwk, count, str, &lo, &hi);
 }
 
 /* how many blanks a string has in the character map */
@@ -1171,6 +1188,56 @@ WORD vdi_text_width(Vwk *vwk, WORD count, const WORD *str)
     return calc_width(vwk, vwk->cur_font, count, str);
 }
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/* a text string in runs, aligned for 'width' */
+static void text_runs(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *justified)
+{
+    TEXT_RUN run;
+    BOOL cont = FALSE;
+    WORD dx, dy;
+    Point ul_start;
+    JUSTINFO words;
+    BOOL page;
+
+    run_begin(vwk, &run, str, count);
+    while (next_run(vwk, &run))
+    {
+        if (cont && run.kern)
+        {
+            along_baseline(vwk, run.kern, &dx, &dy);
+            linea_vars.DESTX += dx;
+            linea_vars.DESTY += dy;
+        }
+        /*
+         * a blank is always in the font itself: in a page, the
+         * character 0x20 (U+0420, say) is none, and gets no word space
+         */
+        page = justified && run.font != vwk->cur_font;
+        if (page)
+        {
+            words = *justified;
+            justified->wordx = justified->wordy = 0;
+            justified->rmword = 0;
+        }
+        output_run(vwk, run.font, run.n, run.chars, -1, cont ? ALIGN_UNSET : width,
+                   justified, cont, run.pos < count, &ul_start);
+        if (page)
+        {
+            justified->wordx = words.wordx;
+            justified->wordy = words.wordy;
+            justified->rmword = words.rmword;
+        }
+        cont = TRUE;
+    }
+}
+
+/* whether a character can be drawn over one before it: negative spacing */
+static BOOL runs_overlap(Vwk *vwk)
+{
+    return vwk->track_offset < 0 || (vwk->pair_kern && kerning_applies(vwk));
+}
+#endif
+
 /*
  * output a text string, in the workstation's character map
  *
@@ -1182,47 +1249,35 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
 #if CONF_WITH_VDI_SCALABLE_FONTS
     if (text_in_runs(vwk))
     {
-        TEXT_RUN run;
-        BOOL cont = FALSE;
-        WORD dx, dy;
-        Point ul_start;
-        JUSTINFO words;
-        BOOL page;
-
         if (count <= 0)
             return;
         if (width < 0)
             width = text_width(vwk, count, str);
-        run_begin(vwk, &run, str, count);
-        while (next_run(vwk, &run))
+        if (vwk->wrt_mode == WM_REPLACE && runs_overlap(vwk))
         {
-            if (cont && run.kern)
-            {
-                along_baseline(vwk, run.kern, &dx, &dy);
-                linea_vars.DESTX += dx;
-                linea_vars.DESTY += dy;
-            }
             /*
-             * a blank is always in the font itself: in a page, the
-             * character 0x20 (U+0420, say) is none, and gets no word space
+             * a character's cell, background and all, would cover the ink
+             * of one before it that it is drawn over: the string is drawn
+             * as it is, then its characters again, transparently, from the
+             * same point (which the underline has taken over) and with
+             * the same spacing
              */
-            page = justified && run.font != vwk->cur_font;
-            if (page)
-            {
-                words = *justified;
-                justified->wordx = justified->wordy = 0;
-                justified->rmword = 0;
-            }
-            output_run(vwk, run.font, run.n, run.chars, -1, cont ? ALIGN_UNSET : width,
-                       justified, cont, run.pos < count, &ul_start);
-            if (page)
-            {
-                justified->wordx = words.wordx;
-                justified->wordy = words.wordy;
-                justified->rmword = words.rmword;
-            }
-            cont = TRUE;
+            WORD x = PTSIN[0], y = PTSIN[1];
+            JUSTINFO just;
+
+            if (justified)
+                just = *justified;
+            text_runs(vwk, count, str, width, justified);
+            PTSIN[0] = x;
+            PTSIN[1] = y;
+            if (justified)
+                *justified = just;
+            vwk->wrt_mode = WM_TRANS;
+            text_runs(vwk, count, str, width, justified);
+            vwk->wrt_mode = WM_REPLACE;
         }
+        else
+            text_runs(vwk, count, str, width, justified);
         return;
     }
 #endif
@@ -1311,7 +1366,7 @@ void vdi_vqt_f_extent(Vwk * vwk)
 {
     const Fonthead *fnt_ptr = vwk->cur_font;
     WORD x = PTSIN[0], y = PTSIN[1], width, height, delh, delv, i;
-    WORD outline, d1, d2;
+    WORD outline, d1, d2, lo, hi;
     WORD u[4], v[4];
 
     if (CONTRL->subcode != 4200)
@@ -1320,8 +1375,16 @@ void vdi_vqt_f_extent(Vwk * vwk)
         return;
     }
 
-    /* placed as output_run() places the text: alignment, skew, outline */
-    width = vdi_text_width(vwk, CONTRL->nintin, INTIN);
+    /*
+     * placed as output_run() places the text: alignment, skew, outline;
+     * the alignment is for where the text ends, the box from where it
+     * goes furthest each way (a negative offset taking it back)
+     */
+    lo = 0;
+    if (text_in_runs(vwk))
+        width = text_bounds(vwk, CONTRL->nintin, INTIN, &lo, &hi);
+    else
+        width = hi = calc_width(vwk, fnt_ptr, CONTRL->nintin, INTIN);
     height = calc_height(vwk);
     outline = (vwk->style & F_OUTLINE) ? OUTLINE_THICKNESS : 0;
     d1 = (vwk->style & F_SKEW) ? fnt_ptr->left_offset : 0;
@@ -1357,8 +1420,8 @@ void vdi_vqt_f_extent(Vwk * vwk)
     delv += outline;
 
     /* along the baseline and down from the top, in the order of the corners */
-    u[0] = u[3] = -delh;
-    u[1] = u[2] = width - delh;
+    u[0] = u[3] = lo - delh;
+    u[1] = u[2] = hi - delh;
     v[0] = v[1] = height - 1 - delv;
     v[2] = v[3] = -delv;
     for (i = 0; i < 4; i++)
