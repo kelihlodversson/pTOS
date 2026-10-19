@@ -350,6 +350,75 @@ static int about(long a, long b)
 }
 
 /*
+ * The first row with ink in [y0, y1] between x0 and x1 after drawing ch
+ * at (x, y) with that vertical alignment, or -1: only the rows around
+ * where the top of the glyph must land are read, to keep it quick
+ */
+static short first_ink_row(short handle, short ch, short valign, short x, short y,
+                           short x1, short y0, short y1)
+{
+    short row, col;
+
+    intin[0] = 0;
+    vdi_op(25, 1, handle);              /* vsf_color(0) */
+    intin[0] = 1;
+    vdi_op(23, 1, handle);              /* vsf_interior(solid) */
+    ptsin[0] = x;
+    ptsin[1] = y0 - 8;
+    ptsin[2] = x1;
+    ptsin[3] = y1 + 64;
+    ptsin_op(114, 2, 0, handle);        /* vr_recfl() */
+    intin[0] = 0;
+    intin[1] = valign;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, valign) */
+    ptsin[0] = x;
+    ptsin[1] = y;
+    intin[0] = ch;
+    ptsin_op(8, 1, 1, handle);          /* v_gtext() */
+    for (row = y0; row <= y1; row++)
+        for (col = x; col <= x1; col++)
+        {
+            ptsin[0] = col;
+            ptsin[1] = row;
+            ptsin_op(105, 1, 0, handle);    /* v_get_pixel() */
+            if (intout[1] != 0)
+                return row;
+        }
+
+    return -1;
+}
+
+/*
+ * Aligned to the ascent and to the half line, the top of 'H' and of 'x'
+ * land on the y given, at every size (fractional sizes in pixels too)
+ */
+static void check_alignment(short handle, short id)
+{
+    short pt, w, y = 20;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    intin[0] = 1;
+    vdi_op(22, 1, handle);              /* vst_color(1) */
+    for (pt = 8; pt <= 30; pt++)
+    {
+        intin[0] = pt;
+        vdi_op(107, 1, handle);         /* vst_point() */
+        w = extent_of(handle, 'H', 1);
+        font_check(first_ink_row(handle, 'H', 2, 8, y, 8 + w, y - 3, y + 3) == y,
+                   "alignment to the ascent does not put the top of H there");
+        w = extent_of(handle, 'x', 1);
+        font_check(first_ink_row(handle, 'x', 1, 8, y, 8 + w, y - 3, y + 3) == y,
+                   "alignment to the half line does not put the top of x there");
+    }
+    intin[0] = 0;
+    intin[1] = 0;
+    vdi_op(39, 2, handle);              /* vst_alignment(left, baseline) */
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
+/*
  * Whether what the text path draws can be read back at all: the system
  * font, drawn and read as the scalable fonts are below.  Where it cannot
  * (v_get_pixel() and the drawing disagreeing on the screen's layout, as
@@ -443,25 +512,6 @@ static void check_drawing(short handle, short id)
     font_check(clipped.count > 0 && clipped.count < plain.count
                && clipped.x1 <= split,
                "clipping does not apply to a scalable font");
-
-    /* aligned to the ascent and to the half line: the top of 'H' and 'x' land there */
-    ink_text[0] = 'H';
-    ink_len = 1;
-    intin[0] = 0;
-    intin[1] = 2;
-    vdi_op(39, 2, handle);              /* vst_alignment(left, ascent) */
-    ink_draw(handle, 0, 0, 1, 1, &turned);
-    font_check(turned.count > 0 && turned.y0 == ink_cy,
-               "alignment to the ascent does not put the top of H there");
-    ink_text[0] = 'x';
-    intin[0] = 0;
-    intin[1] = 1;
-    vdi_op(39, 2, handle);              /* vst_alignment(left, half) */
-    ink_draw(handle, 0, 0, 1, 1, &turned);
-    font_check(turned.count > 0 && turned.y0 == ink_cy,
-               "alignment to the half line does not put the top of x there");
-    ink_text[0] = 'A';
-    ink_len = 2;
 
     intin[0] = 0;
     intin[1] = 0;
@@ -665,6 +715,7 @@ static void check_fonts(void)
         vdi_op(130, 1, handle);         /* vqt_name() */
         id = intout[0];
         check_drawing(handle, id);
+        check_alignment(handle, id);
         if (i == 1)
             check_large(handle, id);
     }

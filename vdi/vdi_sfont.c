@@ -346,13 +346,17 @@ static BOOL sf_layout(SF_LAYOUT *l, WORD pixels, WORD want)
     return TRUE;
 }
 
-/* a glyph's height above the baseline, in pixels */
+/*
+ * a glyph's height above the baseline, in pixels: as it is rendered and
+ * placed (bitmap_top, the outline rounded up), not its bearing rounded,
+ * which at a fractional size can be a pixel less
+ */
 static WORD sf_bearing_y(UWORD ch)
 {
-    if (FT_Load_Glyph(sf_face, sf_glyph(ch), SF_LOAD))
+    if (FT_Load_Glyph(sf_face, sf_glyph(ch), FT_LOAD_RENDER | SF_LOAD))
         return 0;
 
-    return (WORD)((sf_face->glyph->metrics.horiBearingY + 32) >> 6);
+    return (WORD)sf_face->glyph->bitmap_top;
 }
 
 /*
