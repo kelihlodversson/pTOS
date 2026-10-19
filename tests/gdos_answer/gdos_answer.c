@@ -385,6 +385,7 @@ static void check_drawing(short handle, short id)
 
     intin[0] = id;
     vdi_op(21, 1, handle);              /* vst_font() */
+    font_check(intout[0] == id, "vst_font() did not select a scalable font to draw");
     intin[0] = 24;
     vdi_op(107, 1, handle);             /* vst_point(24) */
     h = ptsout[3];                      /* the cell height */
@@ -487,6 +488,7 @@ static void check_large(short handle, short id)
 
     intin[0] = id;
     vdi_op(21, 1, handle);              /* vst_font() */
+    font_check(intout[0] == id, "vst_font() did not select a scalable font to draw big");
     for (pt = 240; ; pt -= 12)
     {
         intin[0] = pt;
@@ -531,6 +533,7 @@ static void check_monospace(short handle, short id)
 
     intin[0] = id;
     vdi_op(21, 1, handle);              /* vst_font() */
+    font_check(intout[0] == id, "vst_font() did not select a scalable font");
     intin[0] = 24;
     vdi_op(107, 1, handle);             /* vst_point(24) */
     narrow = extent_of(handle, 'i', 4);

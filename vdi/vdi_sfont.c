@@ -99,7 +99,7 @@ static const UWORD atari_unicode[SF_CHARS] =
     0x0060, 0x0061, 0x0062, 0x0063, 0x0064, 0x0065, 0x0066, 0x0067,
     0x0068, 0x0069, 0x006a, 0x006b, 0x006c, 0x006d, 0x006e, 0x006f,
     0x0070, 0x0071, 0x0072, 0x0073, 0x0074, 0x0075, 0x0076, 0x0077,
-    0x0078, 0x0079, 0x007a, 0x007b, 0x007c, 0x007d, 0x007e, 0x2302,
+    0x0078, 0x0079, 0x007a, 0x007b, 0x007c, 0x007d, 0x007e, 0x0394, /* the delta of the ROM fonts */
     /* 0x80 */
     0x00c7, 0x00fc, 0x00e9, 0x00e2, 0x00e4, 0x00e0, 0x00e5, 0x00e7,
     0x00ea, 0x00eb, 0x00e8, 0x00ef, 0x00ee, 0x00ec, 0x00c4, 0x00c5,
@@ -452,6 +452,21 @@ static BOOL sf_evict(void)
     return TRUE;
 }
 
+/*
+ * a size's height in points, for vst_point() to return: from the screen's
+ * pixel size now, which a change of resolution can have changed since the
+ * size was rendered
+ */
+static const Fonthead *sf_head(SF_SIZE *s)
+{
+    LONG micron = linea_vars.DEV_TAB[4] > 0 ? linea_vars.DEV_TAB[4] : 353;
+
+    s->head.point = (WORD)((s->pixels * 72L * micron + 12700) / 25400);
+    s->used = ++sf_clock;
+
+    return &s->head;
+}
+
 /* a size of a font already rendered: as asked for, or what that came to */
 static SF_SIZE *sf_find(WORD index, WORD pixels)
 {
@@ -478,10 +493,7 @@ const Fonthead *vdi_sfont_size(WORD index, WORD pixels)
 
     s = sf_find(index, pixels);
     if (s)
-    {
-        s->used = ++sf_clock;
-        return &s->head;
-    }
+        return sf_head(s);
 
     /*
      * The size, or the biggest one below it that fits by itself: within
@@ -516,8 +528,7 @@ const Fonthead *vdi_sfont_size(WORD index, WORD pixels)
         if (s)
         {
             s->asked = asked;
-            s->used = ++sf_clock;
-            return &s->head;
+            return sf_head(s);
         }
     }
 
@@ -552,17 +563,13 @@ const Fonthead *vdi_sfont_size(WORD index, WORD pixels)
 
     s = b.size;
     s->asked = (pixels == fit) ? asked : pixels;
-    /* its size in points, for vst_point() to return */
-    s->head.point = (WORD)((pixels * 72L * (linea_vars.DEV_TAB[4] > 0 ? linea_vars.DEV_TAB[4] : 353)
-                            + 12700) / 25400);
-    s->used = ++sf_clock;
     s->next = sf_sizes;
     sf_sizes = s;
     sf_bytes += s->bytes;
     KDEBUG(("sfont: %s at %d pixels (%d asked): %lu bytes, %lu in all\n",
             vdi_sfonts[index].name, pixels, asked, s->bytes, sf_bytes));
 
-    return &s->head;
+    return sf_head(s);
 
 fail:
     KINFO(("sfont: cannot render %s at %d pixels\n", vdi_sfonts[index].name, asked));
