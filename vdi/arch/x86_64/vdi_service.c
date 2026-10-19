@@ -111,14 +111,22 @@ void vdi_service_callback_work(void)
             signature == VDI_CALLBACK_MOTION) {
             WORD x = (WORD)HIWORD(result), y = (WORD)LOWORD(result);
 
-            if (x < 0) x = 0;
-            if (y < 0) y = 0;
-            if (x >= linea_vars.V_REZ_HZ) x = linea_vars.V_REZ_HZ - 1;
-            if (y >= linea_vars.V_REZ_VT) y = linea_vars.V_REZ_VT - 1;
-            linea_vars.GCURX = x;
-            linea_vars.GCURY = y;
-            linea_vars.user_cur(x, y);
-            vdi_service_callback_event(VDI_CALLBACK_CURSOR, x, y);
+            /* IRQs continue tracking motion during the user handler. Its
+             * result is stale if a newer packet has already moved the cursor.
+             * Keep the check, stores and notification in one IRQ-free region. */
+            __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+            if (!events[VDI_CALLBACK_MOTION].pending) {
+                if (x < 0) x = 0;
+                if (y < 0) y = 0;
+                if (x >= linea_vars.V_REZ_HZ) x = linea_vars.V_REZ_HZ - 1;
+                if (y >= linea_vars.V_REZ_VT) y = linea_vars.V_REZ_VT - 1;
+                linea_vars.GCURX = x;
+                linea_vars.GCURY = y;
+                linea_vars.user_cur(x, y);
+                vdi_service_callback_event(VDI_CALLBACK_CURSOR, x, y);
+            }
+            if (flags & 0x200)
+                __asm__ volatile ("sti" ::: "memory");
         }
     }
 }

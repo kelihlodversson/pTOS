@@ -175,6 +175,10 @@ LONG user_callback_exchange(USER_CALLBACK **slot, UWORD signature,
         if (i >= state->ncaps || state->cap[i].signature != signature)
             return EIMBA;
         target = state->cap[i].target;
+        /* Native capabilities restore this consumer's adapter. Matching
+         * argument types alone do not make cursor and wheel interchangeable. */
+        if (!target && memcmp(&state->cap[i].native, fallback, sizeof(*fallback)))
+            return EIMBA;
         if (target && !target->owner)
             target = NULL;
     } else if (handler) {
@@ -507,7 +511,7 @@ LONG user_callback_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD pc)
  * regains control at user IRQ/syscall boundaries, never by unwinding a live
  * filesystem operation or allocator. Memory/identity and typed services are
  * bounded; application I/O and process control resume after the callback. */
-BOOL user_callback_syscall_allowed(UQUAD call)
+BOOL user_callback_syscall_allowed(UQUAD call, UQUAD first)
 {
     ULONG fn = (ULONG)call;
     UQUAD service = call >> 32;
@@ -524,7 +528,11 @@ BOOL user_callback_syscall_allowed(UQUAD call)
         return TRUE;
     if (service != 1)
         return FALSE;
-    return fn == 0x44 || fn == 0x48 || fn == 0x49 || fn == 0x4a ||
+    /* Other Mfree targets can tear down child records and close inherited
+     * files. Only ordinary private heap blocks have a bounded release path. */
+    if (fn == 0x49)
+        return kproc_callback_mfree_allowed(run, first);
+    return fn == 0x44 || fn == 0x48 || fn == 0x4a ||
            fn == 0x10b || fn == 0x10c || fn == 0x10f || fn == 0x114 ||
            fn == 0x138 || fn == 0x139 || fn == 0x17d;
 }

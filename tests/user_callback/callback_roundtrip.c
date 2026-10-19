@@ -30,6 +30,8 @@ static ULONG previous_motion;
 static char mode;
 static ULONG *volatile fault_address;
 static USER_CALLBACK_STACK *oom_output;
+static ULONG free_child, free_environment;
+static volatile ULONG free_checks_done;
 
 #define CHECK(expr) do { if (!(expr) && !failure) failure = __LINE__; } while (0)
 #define HCHECK(expr) do { if (!(expr) && !handler_failure) handler_failure = __LINE__; } while (0)
@@ -100,6 +102,95 @@ static ULONG child_motion(WORD x, WORD y)
     handler_checks();
     motion_calls++;
     return MAKE_ULONG(x + 10, y + 20);
+}
+
+static ULONG queued_motion(WORD x, WORD y)
+{
+    static const WORD expected_x[3] = { 100, 107, 110 };
+    static const WORD expected_y[3] = { 100, 109, 113 };
+
+    HCHECK(motion_calls < 3);
+    if (motion_calls < 3) {
+        HCHECK(x == expected_x[motion_calls] && y == expected_y[motion_calls]);
+        motion_calls++;
+    }
+    /* The kernel test injects a real mouse packet at the first two calls,
+     * while this handler is active, and checks the native cursor state. */
+    HCHECK(raw(1, 0x10b, 0, 0, 0, 0) > 0);
+    return MAKE_ULONG(x + 10, y + 20);
+}
+
+static void free_blocks(int ms)
+{
+    LONG allocation;
+
+    (void)ms;
+    if (free_checks_done)
+        return;
+    HCHECK(raw(1, 0x49, free_child, 0, 0, 0) == EACCDN);
+    HCHECK(raw(1, 0x49, free_environment, 0, 0, 0) == EACCDN);
+    allocation = raw(1, 0x48, 8192, 0, 0, 0);
+    HCHECK(allocation > 0);
+    if (allocation > 0) {
+        HCHECK(raw(1, 0x49, (1ULL << 32) | (ULONG)allocation, 0, 0, 0) == EACCDN);
+        HCHECK(raw(1, 0x4a, 0, (ULONG)allocation, 4096, 0) == E_OK);
+        HCHECK(raw(1, 0x49, (ULONG)allocation, 0, 0, 0) == E_OK);
+    }
+    free_checks_done = 1;
+}
+
+static int callback_free_checks(void)
+{
+    VDI_SERVICE_VECTOR_RESULT old, direct;
+    PD *child;
+    LONG loaded;
+    int i, failure = 0;
+
+    for (i = 0; i < 2; i++) {
+        loaded = raw(1, 0x4b, i ? PE_BASEPAGE : PE_LOAD,
+                     i ? 0 : (uintptr_t)"X32HELLO.TOS", (uintptr_t)"", 0);
+        if (loaded <= 0)
+            return __LINE__;
+        child = (PD *)(uintptr_t)(ULONG)loaded;
+        free_child = (ULONG)loaded;
+        free_environment = (ULONG)(uintptr_t)child->p_env;
+        free_checks_done = 0;
+        CHECK(exchange(118, (uintptr_t)free_blocks, &old) == E_OK);
+        CHECK(callback_register_checks(&free_checks_done) == 0);
+        CHECK(free_checks_done && !handler_failure);
+        CHECK(exchange(118, old.old_handler, &direct) == E_OK);
+        /* Denial must leave the child and its inherited references intact:
+         * the same release succeeds after callback delivery has finished. */
+        CHECK(raw(1, 0x49, free_child, 0, 0, 0) == E_OK);
+        CHECK(raw(1, 0x49, free_environment, 0, 0, 0) == E_OK);
+    }
+    return failure;
+}
+
+static int native_old_checks(void)
+{
+    VDI_SERVICE_VECTOR_RESULT old_cursor, old_wheel, old;
+    int failure = 0;
+
+    CHECK(exchange(127, (uintptr_t)cursor, &old_cursor) == E_OK);
+    CHECK(exchange(134, (uintptr_t)wheel, &old_wheel) == E_OK);
+    /* Same ABI, different native meaning: reject without changing either
+     * installed handler or the caller's OLD output. */
+    old.old_handler = 0x12345678;
+    old.tick_ms = 123;
+    old.reserved = 456;
+    CHECK(exchange(134, old_cursor.old_handler, &old) == EIMBA);
+    CHECK(old.old_handler == 0x12345678 && old.tick_ms == 123 && old.reserved == 456);
+    CHECK(exchange(127, old_wheel.old_handler, &old) == EIMBA);
+    CHECK(old.old_handler == 0x12345678 && old.tick_ms == 123 && old.reserved == 456);
+    CHECK(exchange(127, old_cursor.old_handler, &old) == E_OK);
+    CHECK(old.old_handler == (uintptr_t)cursor);
+    CHECK(exchange(134, old_wheel.old_handler, &old) == E_OK);
+    CHECK(old.old_handler == (uintptr_t)wheel);
+    /* Repeated native exchanges preserve the exact original capabilities. */
+    CHECK(exchange(127, 0, &old) == E_OK && old.old_handler == old_cursor.old_handler);
+    CHECK(exchange(134, 0, &old) == E_OK && old.old_handler == old_wheel.old_handler);
+    return failure;
 }
 
 static ULONG parent_motion(WORD x, WORD y)
@@ -266,6 +357,17 @@ int callback_roundtrip_checks(const char *tail)
     CHECK(prepare_stack() == 0);
     if (mode == 'J' || mode == '&')
         return child_checks(mode == '&');
+    if (mode == 'R') {
+        USER_CALLBACK_STACK current;
+        ULONG attempts = 100000;
+
+        CHECK(exchange(126, (uintptr_t)queued_motion, &old) == E_OK);
+        while (motion_calls < 3 && attempts--)
+            CHECK(Psigaltstack(NULL, &current) == E_OK);
+        CHECK(motion_calls == 3 && !handler_failure);
+        CHECK(exchange(126, old.old_handler, &direct) == E_OK);
+        return failure;
+    }
     if (mode == '%' || mode == 'Q' || mode == 'O') {
         CHECK(exchange(125, (uintptr_t)parent_fault, &old) == E_OK);
         if (mode == 'Q') {
@@ -287,6 +389,12 @@ int callback_roundtrip_checks(const char *tail)
     }
     if (mode == 'C') {
         failure = loaded_stack_checks();
+        if (failure)
+            return failure;
+        failure = callback_free_checks();
+        if (failure)
+            return failure;
+        failure = native_old_checks();
         if (failure)
             return failure;
     }

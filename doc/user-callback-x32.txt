@@ -25,6 +25,9 @@ button/motion events, followed by cursor delivery after the returned motion
 coordinates have been bounded to the screen. Extended wheel events use the
 same path. The existing PC PS/2 driver does not negotiate IntelliMouse wheel
 packets. Kernel-native event handling continues normally.
+If another motion packet arrives during a user handler, its older result is
+discarded. The pending packet retains the latest coordinates; checking for
+it, applying a current result and notifying the cursor all exclude IRQs.
 
 Return-work runs after syscall dispatch, or after IRQ dispatch/EOI when the
 interrupted CS is user mode. It is skipped for kernel IRQ interruptions,
@@ -104,6 +107,10 @@ caller-local stubs, each embedding a never-reused capability index. Function
 the previous typed registration on its owner's stack. Native kernel OLD
 handlers use checked typed adapters; no kernel address is exposed. Cursor
 and motion adapters bound user-supplied coordinates before native rendering.
+A native OLD capability can only be installed for a consumer with the same
+native adapter. For example, exchanging native cursor and wheel OLD values
+returns EIMBA, even though both use the WORD,WORD -> void profile. A rejected
+exchange leaves the installed handler and OLD output unchanged.
 
 Exchange, including a null new handler, removes the previous registration
 from event delivery but retains OLD references for chaining/restoration.
@@ -127,7 +134,11 @@ foreign owners are quarantined immediately and terminated before their next
 return to user mode, allowing the invoking process to finish safely.
 
 Callbacks may use typed VDI/AES services, callback services, allocation,
-free/shrink, Maccess and process identity queries. Other syscalls return
+private-heap free/shrink, Maccess and process identity queries. Mfree during
+delivery accepts only the start of an ordinary private Malloc/Mxalloc block;
+child basepages, environments and loaded images return EACCDN. In particular,
+freeing an unlaunched child could close inherited files and enter filesystem
+I/O. Release these blocks after the callback returns. Other syscalls return
 EACCDN during delivery. In particular blocking I/O and process-control calls
 are excluded: the watchdog cannot safely unwind a filesystem operation or
 allocator while it is running in kernel mode. These operations can be done
@@ -151,6 +162,12 @@ while a foreign callback syscall backs an output buffer. Both must unwind
 the callback continuation, restore syscall/user/TSS stacks, and let the
 child finish successfully. Loaded-child stack rejection is followed by
 release/launch to check the original alternate stack stays valid.
+Callback Mfree probes reject loaded/unlaunched child basepages and environments,
+then release them outside delivery; private heap allocate/shrink/free still
+succeeds. Native cursor/wheel capabilities are restored and cross-installation
+is rejected without mutation. Deterministic mouse packets during ring-3
+motion handlers check stale-result rejection, subsequent relative movement,
+native cursor notification and the final accepted result.
 Each probe checks CPU context and allocator accounting;
 a successful callback client runs again after failures. CI requires
 "x86-64 user callbacks: PASS", including service refusal in the baseline

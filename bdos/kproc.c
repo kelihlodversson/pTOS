@@ -1391,6 +1391,15 @@ static struct uheap_block *heap_find(KPROC *kproc, UQUAD va)
 }
 
 #if CONF_WITH_USER_CALLBACKS
+BOOL kproc_callback_mfree_allowed(PD *pd, UQUAD address)
+{
+    KPROC *kproc = kproc_find(pd);
+    struct uheap_block *b;
+
+    return kproc && kproc->aspace && (b = heap_find(kproc, address)) != NULL &&
+        b->kind == UH_MALLOC;
+}
+
 BOOL kproc_callback_stack_stable(PD *pd, UQUAD address, ULONG size)
 {
     KPROC *kproc = kproc_find(pd);

@@ -52,6 +52,7 @@
 #include "lineavars.h"
 #include "screen_mode.h"
 #include "font.h"
+#include "vdi_service.h"
 #endif
 
 extern void set_owner(void *addr, PD *p);
@@ -1186,6 +1187,77 @@ static PD *callback_test_owner;
 static UWORD callback_test_child_exits, callback_test_child_rc;
 static UWORD callback_test_oom_phase, callback_test_injected, callback_test_ooms;
 
+#if CONF_WITH_X32_VDI
+static BOOL callback_motion_watching;
+static UWORD callback_motion_phase, callback_motion_cursors;
+static void (*callback_motion_native_cursor)(WORD, WORD);
+extern void mouse_int(UBYTE *buf);
+
+static void callback_motion_cursor(WORD x, WORD y)
+{
+    static const WORD expected_x[3] = { 107, 110, 120 };
+    static const WORD expected_y[3] = { 109, 113, 133 };
+    UQUAD flags;
+
+    __asm__ volatile ("pushfq; popq %0" : "=r"(flags));
+    CHECK(!(flags & 0x200), "motion coordinates and native cursor notification exclude IRQs");
+    CHECK(callback_motion_cursors < 3, "stale motion results do not notify the cursor");
+    if (callback_motion_cursors < 3)
+        CHECK(x == expected_x[callback_motion_cursors] && y == expected_y[callback_motion_cursors],
+              "native cursor sees current coordinates only");
+    callback_motion_cursors++;
+    callback_motion_native_cursor(x, y);
+}
+
+static void callback_motion_packet(UBYTE *packet)
+{
+    UQUAD flags;
+
+    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    mouse_int(packet);
+    if (flags & 0x200)
+        __asm__ volatile ("sti" ::: "memory");
+}
+
+static void callback_motion_syscall(UQUAD call, UQUAD second)
+{
+    UBYTE packet[3] = { 0xf8, 7, 9 };
+
+    if (call == ((UQUAD)VDI_SERVICE_CLASS << 32 | VDI_SERVICE_VECTOR) && second == 126) {
+        if (!callback_motion_phase) {
+            /* Workstation setup has finished. Start the first delivery at
+             * this exchange's return boundary, without a test syscall. */
+            callback_motion_native_cursor = linea_vars.user_cur;
+            linea_vars.user_cur = callback_motion_cursor;
+            linea_vars.GCURX = linea_vars.GCURY = 100;
+            vdi_service_callback_event(VDI_CALLBACK_MOTION, 100, 100);
+            callback_motion_phase = 1;
+        } else if (callback_motion_phase == 4) {
+            CHECK(linea_vars.GCURX == 120 && linea_vars.GCURY == 133,
+                  "the newest motion handler result is applied");
+            callback_motion_phase = 5;
+        }
+    } else if (call == ((UQUAD)1 << 32 | 0x10b)) {
+        if (callback_motion_phase == 1) {
+            /* Same producer as the mouse IRQ, during a live user handler. */
+            callback_motion_packet(packet);
+            callback_motion_phase = 2;
+        } else if (callback_motion_phase == 2) {
+            CHECK(linea_vars.GCURX == 107 && linea_vars.GCURY == 109,
+                  "a stale handler result cannot rewind newer IRQ coordinates");
+            packet[1] = 3;
+            packet[2] = 4;
+            callback_motion_packet(packet);
+            callback_motion_phase = 3;
+        } else if (callback_motion_phase == 3) {
+            CHECK(linea_vars.GCURX == 110 && linea_vars.GCURY == 113,
+                  "following mouse packets accumulate from the latest position");
+            callback_motion_phase = 4;
+        }
+    }
+}
+#endif
+
 void x86_64_memtest_callback_exit(PD *pd, UWORD rc)
 {
     if (callback_test_owner && pd != callback_test_owner &&
@@ -1213,6 +1285,10 @@ void x86_64_memtest_callback_entry(void)
 
 void x86_64_memtest_callback_syscall(UQUAD call, UQUAD output)
 {
+#if CONF_WITH_X32_VDI
+    if (callback_motion_watching && run == callback_test_owner)
+        callback_motion_syscall(call, output);
+#endif
     if (callback_test_entered && run == callback_test_owner &&
         callback_test_oom_phase == CALLBACK_OOM_SERVICE && output &&
         call == ((UQUAD)USER_CALLBACK_CLASS << 32 | USER_CALLBACK_ALTSTACK))
@@ -1307,6 +1383,24 @@ static void probe_expect(char mode, long want, const char *what)
 }
 
 #if CONF_WITH_USER_CALLBACKS && CONF_WITH_X32_VDI
+static void test_callback_motion(void)
+{
+    WORD x = linea_vars.GCURX, y = linea_vars.GCURY;
+
+    callback_test_watching = callback_motion_watching = TRUE;
+    callback_motion_phase = callback_motion_cursors = 0;
+    callback_motion_native_cursor = NULL;
+    probe_expect('R', 0, "queued mouse motion survives overlapping ring-3 handlers");
+    CHECK(callback_motion_phase == 5 && callback_motion_cursors == 3,
+          "overlapping motion packets and the final result were all observed");
+    if (callback_motion_native_cursor)
+        linea_vars.user_cur = callback_motion_native_cursor;
+    linea_vars.GCURX = x;
+    linea_vars.GCURY = y;
+    callback_test_watching = callback_motion_watching = FALSE;
+    callback_test_owner = NULL;
+}
+
 static void test_callback_foreign_failure(char mode, UWORD phase)
 {
     callback_test_watching = TRUE;
@@ -1488,6 +1582,7 @@ static void test_ring3(void)
 
         probe_expect('C', 0, "typed callbacks, nested foreign OLD, revocation, alternate/normal stacks and GP/SSE/red zone");
 #if CONF_WITH_USER_CALLBACKS && CONF_WITH_X32_VDI
+        test_callback_motion();
         probe_expect('X', 0xffff, "a callback's privileged instruction ends only its owner");
         probe_expect('S', 0xffff, "callback stack exhaustion is contained");
         probe_expect('U', 0xffff, "an unmapped interrupted user stack cannot corrupt callback entry");

@@ -35,7 +35,7 @@ void user_callback_process_exit(PD *pd);
 BOOL user_callback_pinned(PD *pd, UQUAD address, UQUAD size);
 void user_callback_return_work(UQUAD rsp);
 BOOL user_callback_fault(void);
-BOOL user_callback_syscall_allowed(UQUAD call);
+BOOL user_callback_syscall_allowed(UQUAD call, UQUAD first);
 LONG user_callback_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c,
                             UQUAD return_pc);
 #endif

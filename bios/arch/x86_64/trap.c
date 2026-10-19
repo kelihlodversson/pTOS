@@ -174,7 +174,7 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 #if CONF_WITH_USER_CALLBACKS
     if (from_ring3) {
         kproc_record_rsp(run, x86_64_get_saved_user_rsp());
-        if (!user_callback_syscall_allowed(frame->rax)) {
+        if (!user_callback_syscall_allowed(frame->rax, frame->rdi)) {
             frame->rax = (UQUAD)(QUAD)EACCDN;
             syscall_gs_swapped = 0;
             return;
