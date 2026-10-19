@@ -72,12 +72,38 @@ LONG vdi_sfont_size_for_points(WORD points);
 LONG vdi_sfont_size_for_top(WORD index, WORD top);
 
 /* a scalable font at that em size (1/64 pixel), or with that top when
- * want is not 0, rendered or from the cache; NULL if it cannot be had
- * (no memory, a font file gone) */
-const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want);
+ * want is not 0, at that em width (0: as the size) and slant (1/10
+ * degree), rendered or from the cache; NULL if it cannot be had (no
+ * memory, a font file gone) */
+const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want, LONG width, WORD skew);
+
+/* a Unicode page of a workstation's current size, or NULL */
+const Fonthead *vdi_sfont_page(const Fonthead *font, UWORD page);
+
+/* what a size was asked for as, and the em size it has */
+void vdi_sfont_request(const Fonthead *font, LONG *size, WORD *want);
+LONG vdi_sfont_em(const Fonthead *font);
 
 /* drop unselected sizes until the cache is within its limit again */
 void vdi_sfont_trim(void);
+
+/* vst_error()'s code when a size cannot be had: no memory for it */
+#define SPEEDO_CACHE_FULL   11
+
+/* the character maps of vst_map_mode(): mode 3 is pTOS's */
+#define MAP_BICS            0       /* Bitstream International Character Set */
+#define MAP_ATARI           1       /* the Atari character set */
+#define MAP_UCS2            2       /* Unicode, its first plane */
+#define MAP_UTF16           3       /* Unicode, all of it, with surrogate pairs */
+
+/* a BICS character in Unicode, or -1; a Unicode one in the Atari set, or -1 */
+LONG vdi_bics_to_unicode(UWORD c);
+WORD vdi_unicode_to_atari(LONG cp);
+UWORD vdi_atari_to_unicode(UBYTE c);
+
+/* a code point's glyph in a scalable font, 0 if none; a glyph's code point, -1 if none */
+UWORD vdi_sfont_char_glyph(WORD index, LONG cp);
+LONG vdi_sfont_glyph_char(WORD index, UWORD glyph);
 
 /* v_flushcache() and vqt_cachesize() */
 void vdi_sfont_flush(void);

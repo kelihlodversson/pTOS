@@ -117,33 +117,37 @@ static struct vdi_jmptab const jmptb2[] = {
 
 #if CONF_WITH_VDI_SCALABLE_FONTS
 /* The font calls of SpeedoGDOS and NVDI, for the built-in GDOS's fonts */
+#define VQT_CHAR_INDEX_OP 190
+static struct vdi_jmptab const jmp_char_index =
+    { 0,  1, vdi_vqt_char_index };     /* 190 */
+
 #define JMPTB3_FIRST    229
 static struct vdi_jmptab const jmptb3[] = {
     { 0,  3, vdi_vqt_xfntinfo },       /* 229 */
     { 0,  0, vdi_vst_name },           /* 230 */ /* also vqt_name_and_id */
-    { 0,  0, vdi_v_nop },              /* 231 */ /* vst_width */
+    { 2,  0, vdi_vst_width },          /* 231 */
     { 0,  0, vdi_vqt_fontheader },     /* 232 */
     { 0,  0, vdi_v_nop },              /* 233 */
     { 0,  0, vdi_v_nop },              /* 234 */ /* vqt_trackkern */
     { 0,  0, vdi_v_nop },              /* 235 */ /* vqt_pairkern */
-    { 0,  0, vdi_v_nop },              /* 236 */ /* vst_charmap, vst_map_mode */
+    { 0,  0, vdi_vst_charmap },        /* 236 */ /* also vst_map_mode */
     { 0,  0, vdi_v_nop },              /* 237 */ /* vst_kern, vst_track_offset */
     { 0,  0, vdi_v_nop },              /* 238 */
-    { 0,  0, vdi_v_nop },              /* 239 */ /* v_getbitmap_info */
-    { 0,  0, vdi_v_nop },              /* 240 */ /* vqt_f_extent, vqt_real_extent */
-    { 0,  0, vdi_v_nop },              /* 241 */ /* v_ftext, v_ftext_offset */
+    { 0, 12, vdi_v_getbitmap_info },   /* 239 */
+    { 4,  0, vdi_vqt_f_extent },       /* 240 */ /* also vqt_real_extent */
+    { 0,  0, vdi_v_ftext },            /* 241 */ /* also v_ftext_offset */
     { 0,  0, vdi_v_nop },              /* 242 */ /* v_killoutline: nothing to free */
     { 0,  1, vdi_v_getoutline },       /* 243 */
     { 0,  0, vdi_v_nop },              /* 244 */ /* vst_scratch: no buffer to size */
     { 0,  0, vdi_vst_error },          /* 245 */
-    { 0,  0, vdi_v_nop },              /* 246 */ /* vst_arbpt */
-    { 0,  0, vdi_v_nop },              /* 247 */ /* vqt_advance */
+    { 2,  1, vdi_vst_arbpt },          /* 246 */ /* also vst_arbpt32 */
+    { 4,  0, vdi_vqt_advance },        /* 247 */ /* also vqt_advance32 */
     { 0,  0, vdi_v_nop },              /* 248 */ /* vq_devinfo: not a font call */
     { 0,  1, vdi_v_savecache },        /* 249 */
     { 0,  1, vdi_v_loadcache },        /* 250 */
     { 0,  1, vdi_v_flushcache },       /* 251 */
-    { 0,  0, vdi_v_nop },              /* 252 */ /* vst_setsize */
-    { 0,  0, vdi_v_nop },              /* 253 */ /* vst_skew */
+    { 2,  1, vdi_vst_setsize },        /* 252 */ /* also vst_setsize32 */
+    { 0,  1, vdi_vst_skew },           /* 253 */
     { 0,  2, vdi_vqt_get_table },      /* 254 */
     { 0,  2, vdi_vqt_cachesize }       /* 255 */
 };
@@ -203,6 +207,9 @@ void screen(void)
     /* only with the built-in GDOS: without it, there is no SpeedoGDOS */
     else if (vdi_gdos_id && (opcode >= JMPTB3_FIRST) && (opcode < JMPTB3_FIRST+JMPTB3_ENTRIES)) {
         jmptab = &jmptb3[opcode - JMPTB3_FIRST];
+    }
+    else if (vdi_gdos_id && opcode == VQT_CHAR_INDEX_OP) {
+        jmptab = &jmp_char_index;
     }
 #endif
     else {

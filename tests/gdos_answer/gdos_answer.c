@@ -32,7 +32,12 @@
  * SpeedoGDOS's and NVDI's calls for the fonts (#577) are checked on the
  * first scalable font and the system font: vqt_ext_name()'s formats,
  * vqt_xfntinfo()'s names, file and sizes, vst_name() and
- * vqt_name_and_id(), vqt_fontheader(), and the cache calls.
+ * vqt_name_and_id(), vqt_fontheader(), and the cache calls; vst_arbpt()
+ * and vst_arbpt32(), vst_setsize(), vst_width(), vst_skew(),
+ * vqt_advance(), vqt_f_extent() and vqt_real_extent(), v_ftext() and
+ * v_ftext_offset(); vst_map_mode() with text in BICS, Unicode (UCS-2
+ * and UTF-16, a surrogate pair being one character) in the scalable font
+ * and the system font, and vqt_char_index().
  *
  * x86-64 programs cannot call the VDI at all (trap class 2 is refused
  * from ring 3), so it is skipped there.
@@ -801,6 +806,248 @@ static void check_speedo(short handle, short system_fonts)
     vdi_op(245, 1 + sizeof(p) / 2, handle);
 }
 
+/* vst_map_mode(), which answers with the mode set */
+static short map_mode(short handle, short mode)
+{
+    intin[0] = mode;
+    intin[1] = 1;
+    vdi_op(236, 2, handle);
+    return intout[0];
+}
+
+/* the width of the characters in intin[0..n-1] */
+static short extent_n(short handle, short n)
+{
+    ptsin_op(116, 0, n, handle);        /* vqt_extent() */
+    return ptsout[2] - ptsout[0];
+}
+
+static short width_of(short handle, short ch)
+{
+    intin[0] = ch;
+    ptsin_op(117, 0, 1, handle);        /* vqt_width() */
+    return intout[0] == -1 ? -1 : ptsout[0];
+}
+
+static unsigned short char_index(short handle, short c, short src, short dst)
+{
+    intin[0] = c;
+    intin[1] = src;
+    intin[2] = dst;
+    vdi_op(190, 3, handle);
+    return (unsigned short)intout[0];
+}
+
+/* text in the character maps, in a scalable font or the system font */
+static void check_maps(short handle, int scalable)
+{
+    short w_atari, w_uni, ag;
+
+    font_check(map_mode(handle, 2) == 2, "vst_map_mode(2) did not set Unicode");
+    ag = extent_ag(handle);
+    map_mode(handle, 1);
+    font_check(extent_ag(handle) == ag, "ASCII is not as wide in Unicode as in the Atari set");
+    w_atari = width_of(handle, 0x82);   /* e acute */
+    map_mode(handle, 2);
+    w_uni = width_of(handle, 0xe9);
+    font_check(w_uni == w_atari && w_uni > 0, "e acute is not as wide in Unicode as in the Atari set");
+    /* a string of several runs is as wide as its characters */
+    {
+        short wa = width_of(handle, 'a'), walpha = width_of(handle, 0x3b1);
+
+        intin[0] = 0xe9;
+        intin[1] = 'a';
+        intin[2] = 0x3b1;               /* alpha: another page */
+        intin[3] = 0xe9;
+        font_check(walpha > 0 && extent_n(handle, 4) == 2 * w_uni + wa + walpha,
+                   "a string of several pages is not as wide as its characters");
+    }
+    if (!scalable)
+    {
+        /* the system font has no CJK: a '?' */
+        w_atari = width_of(handle, '?');
+        font_check(width_of(handle, 0x4e00) == w_atari, "the system font does not show U+4E00 as '?'");
+    }
+
+    /* UTF-16: a pair is one character, here one without a glyph */
+    intin[0] = 0xdbff;
+    intin[1] = 0xdffd;
+    w_uni = extent_n(handle, 2);        /* in UCS-2: two characters */
+    font_check(map_mode(handle, 3) == 3, "vst_map_mode(3) did not set UTF-16");
+    intin[0] = 0xdbff;
+    intin[1] = 0xdffd;
+    font_check(extent_n(handle, 2) * 2 == w_uni && w_uni > 0,
+               "a surrogate pair is not one character in UTF-16");
+
+    /* BICS: its ASCII part */
+    map_mode(handle, 0);
+    intin[0] = 'A' - 32;
+    intin[1] = 'g' - 32;
+    font_check(extent_n(handle, 2) == ag, "BICS is not ASCII where they agree");
+
+    /* drawn through runs, in each map (a page of several runs) */
+    map_mode(handle, 2);
+    intin[0] = 'a';
+    intin[1] = 0xe9;
+    intin[2] = 0x3b1;                   /* alpha */
+    intin[3] = 'z';
+    ptsin[0] = 20;
+    ptsin[1] = 60;
+    ptsin_op(8, 1, 4, handle);          /* v_gtext() */
+    map_mode(handle, 1);
+}
+
+/* vst_arbpt() and the other size calls, and the metrics */
+static void check_metrics(short handle, short id)
+{
+    short top12, top13, w, h, i;
+    long fix;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    intin[0] = 12;
+    vdi_op(107, 1, handle);             /* vst_point(12) */
+    top12 = ptsout[1];
+    intin[0] = 13;
+    ptsin_op(246, 0, 1, handle);        /* vst_arbpt(13) */
+    top13 = ptsout[1];
+    font_check(intout[0] == 13 && contrl[4] == 1, "vst_arbpt() did not give 13 points");
+
+    /* 12.5 points, in 16.16 */
+    fix = 0xc8000L;
+    memcpy(&intin[0], &fix, sizeof(fix));
+    ptsin_op(246, 0, 2, handle);        /* vst_arbpt32() */
+    memcpy(&fix, &intout[0], sizeof(fix));
+    font_check(contrl[4] == 2 && fix > 0xc8000L - 0x800 && fix < 0xc8000L + 0x800,
+               "vst_arbpt32() did not give 12.5 points");
+    font_check(ptsout[1] >= top12 && ptsout[1] <= top13, "12.5 points is not between 12 and 13");
+
+    /* twice as wide, the height staying */
+    intin[0] = 12;
+    vdi_op(107, 1, handle);
+    w = extent_of(handle, 'M', 4);
+    h = ptsout[5] - ptsout[1];
+    intin[0] = 24;
+    ptsin_op(252, 0, 1, handle);        /* vst_setsize(24) */
+    font_check(intout[0] == 24, "vst_setsize() did not answer 24 points");
+    font_check(extent_of(handle, 'M', 4) > w * 3 / 2 && ptsout[5] - ptsout[1] == h,
+               "vst_setsize() did not widen the font alone");
+    intin[0] = 12;
+    vdi_op(107, 1, handle);             /* the width follows the height again */
+    font_check(extent_of(handle, 'M', 4) == w, "vst_point() did not reset the width");
+    ptsin[0] = 6;
+    ptsin_op(231, 1, 0, handle);        /* vst_width(6) */
+    font_check(extent_of(handle, 'M', 4) < w, "vst_width() did not narrow the font");
+    intin[0] = 12;
+    vdi_op(107, 1, handle);
+
+    /* slanted, the advances staying */
+    intin[0] = 150;
+    vdi_op(253, 1, handle);             /* vst_skew(15 degrees) */
+    font_check(intout[0] == 150, "vst_skew() did not answer the slant");
+    font_check(extent_of(handle, 'M', 4) == w, "vst_skew() changed the advances");
+    intin[0] = 0;
+    vdi_op(253, 1, handle);
+
+    /* vqt_advance() is vqt_width()'s, the 16.16 one after it */
+    w = width_of(handle, 'W');
+    intin[0] = 'W';
+    ptsin_op(247, 0, 1, handle);
+    memcpy(&fix, &ptsout[4], sizeof(fix));
+    font_check(ptsout[0] == w && ptsout[1] == 0 && fix == (long)w << 16,
+               "vqt_advance() is not the character's width");
+
+    /* vqt_f_extent() is vqt_extent(); vqt_real_extent() is at the point */
+    w = extent_ag(handle);
+    intin[0] = 'A';
+    intin[1] = 'g';
+    ptsin_op(240, 0, 2, handle);
+    font_check(ptsout[2] - ptsout[0] == w, "vqt_f_extent() is not vqt_extent()");
+    intin[0] = 'A';
+    intin[1] = 'g';
+    ptsin[0] = 100;
+    ptsin[1] = 100;
+    contrl[0] = 240;
+    contrl[1] = 1;
+    contrl[3] = 2;
+    contrl[5] = 4200;
+    contrl[6] = handle;
+    vdi();                              /* vqt_real_extent() */
+    font_check(ptsout[0] == 100 && ptsout[2] == 100 + w && ptsout[1] > 100 && ptsout[5] < 100,
+               "vqt_real_extent() is not the box at the point");
+
+    /* v_ftext(), and v_ftext_offset() with an offset per character */
+    intin[0] = 'A';
+    intin[1] = 'g';
+    ptsin[0] = 20;
+    ptsin[1] = 40;
+    ptsin_op(241, 1, 2, handle);
+    for (i = 0; i < 2; i++)
+    {
+        ptsin[2 + 2 * i] = i * 30;
+        ptsin[3 + 2 * i] = 0;
+    }
+    ptsin_op(241, 3, 2, handle);
+
+    /* vqt_char_index(): through Unicode, and the font's glyphs */
+    font_check(char_index(handle, 0xe9, 2, 1) == 0x82 && char_index(handle, 0x82, 1, 2) == 0xe9,
+               "vqt_char_index() does not map e acute between Unicode and Atari");
+    font_check(char_index(handle, 10, 1, 1) == 0xffff, "vqt_char_index() maps a control code");
+    font_check(char_index(handle, char_index(handle, 'A', 2, 0), 0, 2) == 'A',
+               "vqt_char_index() does not find 'A' through its glyph");
+
+    check_maps(handle, 1);
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+    check_maps(handle, 0);
+}
+
+/*
+ * Text in runs (#577) draws as the same text in one: "a" and e acute
+ * in Unicode (e acute in the size of page 0) as in the Atari set, also
+ * centred and rotated, where the runs must follow each other and the
+ * alignment take them all
+ */
+static void check_run_pixels(short handle, short id)
+{
+    struct ink atari, uni;
+    short angle, align;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    intin[0] = 18;
+    vdi_op(107, 1, handle);             /* vst_point(18) */
+    ink_r = 40;
+    ink_cx = ink_cy = ink_r + 4;
+    for (align = 0; align <= 1; align++)
+    {
+        intin[0] = align;
+        intin[1] = 0;
+        vdi_op(39, 2, handle);          /* vst_alignment() */
+        for (angle = 0; angle <= 900; angle += 900)
+        {
+            ink_text[0] = 'a';
+            ink_text[1] = 0x82;
+            ink_draw(handle, angle, 0, 1, 1, &atari);
+            map_mode(handle, 2);
+            ink_text[1] = 0xe9;
+            ink_draw(handle, angle, 0, 1, 1, &uni);
+            map_mode(handle, 1);
+            font_check(atari.count > 0 && uni.count == atari.count
+                       && uni.x0 == atari.x0 && uni.x1 == atari.x1
+                       && uni.y0 == atari.y0 && uni.y1 == atari.y1,
+                       "text in two runs is not drawn as in one");
+        }
+    }
+    intin[0] = 0;
+    intin[1] = 0;
+    vdi_op(39, 2, handle);
+    ink_text[0] = 'A';
+    ink_text[1] = 'g';
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
 static void check_fonts(void)
 {
     short handle, system_fonts, i, aes_there, drive, id;
@@ -873,7 +1120,12 @@ static void check_fonts(void)
     if (fonts_loaded > 0)
         check_sizes(handle, system_fonts);
     if (fonts_loaded > 0)
+    {
         check_speedo(handle, system_fonts);
+        intin[0] = system_fonts + 1;
+        vdi_op(130, 1, handle);         /* vqt_name() */
+        check_metrics(handle, intout[0]);
+    }
     for (i = 1; i <= fonts_loaded; i++)
     {
         intin[0] = system_fonts + i;
@@ -891,7 +1143,10 @@ static void check_fonts(void)
         check_drawing(handle, id);
         check_alignment(handle, id);
         if (i == 1)
+        {
             check_large(handle, id);
+            check_run_pixels(handle, id);
+        }
     }
 
     Dsetdrv(drive);

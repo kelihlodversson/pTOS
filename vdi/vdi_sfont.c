@@ -18,10 +18,14 @@
  *
  * The 256 characters are those of the Atari character set, mapped to
  * Unicode for FreeType; a character the font does not have shows its
- * missing-glyph shape.  Each glyph gets its cell of its advance width:
- * ink that reaches past the cell (an italic's overhang, a negative left
- * bearing) is cut off, as it would be in a bitmap font.  Kerning is not
- * applied.
+ * missing-glyph shape.  For text in Unicode (vst_map_mode(), #577), a
+ * size also has pages of 256 Unicode characters, each rendered as the
+ * size itself is, with the same cell height and alignment lines, so that
+ * the text path can draw a string in runs of one page each.  Each glyph
+ * gets its cell of its advance width: ink that reaches past the cell (an
+ * italic's overhang, a negative left bearing, a slant of vst_skew()) is
+ * cut off, as it would be in a bitmap font.  Kerning is not applied.
+ * A size can also have its own width (vst_setsize(), vst_width()).
  *
  * Each size also carries a text scratch buffer big enough for its
  * glyphs: rotation, outlining and skewing copy a glyph there, and the
@@ -48,6 +52,7 @@
 
 #include <ft2build.h>
 #include <freetype/freetype.h>
+#include <freetype/fttrigon.h>
 
 #define SF_CHARS        256
 #define SF_MIN_PIXELS   4
@@ -62,8 +67,12 @@ typedef struct sf_size
     WORD sfont;                     /* index in vdi_sfonts */
     LONG size;                      /* em size, in 1/64 pixel */
     WORD want;                      /* the top asked for (vst_height()), or 0 */
+    LONG width;                     /* em width, in 1/64 pixel; 0: as the size */
+    WORD skew;                      /* slant, in 1/10 degree */
+    WORD page;                      /* Unicode page, or SF_ATARI */
     LONG ask_size;                  /* the request it answers: em size, */
-    WORD ask_want;                  /* and top, when that was too big to have */
+    WORD ask_want;                  /* top, */
+    LONG ask_width;                 /* and width, when that was too big to have */
     WORD half;                      /* offset of the scratch buffer's second half */
     ULONG bytes;                    /* of the whole block */
     ULONG used;                     /* when last asked for */
@@ -73,6 +82,8 @@ typedef struct sf_size
     /* the form follows, then the scratch buffer */
 } SF_SIZE;
 
+#define SF_ATARI        (-1)        /* the page of the Atari character set */
+
 static SF_SIZE *sf_sizes;
 static ULONG sf_bytes;              /* in all the sizes kept */
 static ULONG sf_clock;
@@ -81,6 +92,7 @@ static ULONG sf_clock;
  * (nothing initialised here, so that the image has no DATA segment) */
 static FT_Face sf_face;
 static WORD sf_face_index;
+static WORD sf_page;                /* the page being rendered */
 
 /* the Atari character set, in Unicode; 0 for the missing-glyph shape */
 static const UWORD atari_unicode[SF_CHARS] =
@@ -125,6 +137,37 @@ static const UWORD atari_unicode[SF_CHARS] =
     0x00b0, 0x2219, 0x00b7, 0x221a, 0x207f, 0x00b2, 0x00b3, 0x00af
 };
 
+
+/*
+ * BICS (vst_map_mode(0)): only its first 95 characters, ASCII's printable
+ * ones, are known here
+ */
+LONG vdi_bics_to_unicode(UWORD c)
+{
+    return c < 95 ? 0x20 + c : -1;
+}
+
+/* the Atari character for a code point, or -1 if it has none */
+WORD vdi_unicode_to_atari(LONG cp)
+{
+    WORD ch;
+
+    if (cp >= 0x20 && cp < 0x7f)
+        return (WORD)cp;
+    if (cp <= 0 || cp > 0xffffL)
+        return -1;
+    for (ch = 1; ch < SF_CHARS; ch++)
+        if (atari_unicode[ch] == (UWORD)cp)
+            return ch;
+
+    return -1;
+}
+
+/* the code point of an Atari character, 0 if it has none */
+UWORD vdi_atari_to_unicode(UBYTE c)
+{
+    return atari_unicode[c];
+}
 
 WORD vdi_sfont_find(WORD font_id)
 {
@@ -195,6 +238,9 @@ typedef struct
     WORD index;                     /* the font */
     LONG size;                      /* the em size, made smaller for want */
     WORD want;                      /* the top asked for, or 0 */
+    LONG width;                     /* the em width, 0: as the size */
+    WORD skew;                      /* the slant, in 1/10 degree */
+    WORD page;                      /* the Unicode page, or SF_ATARI */
     BOOL render;                    /* FALSE: only measure it */
     ULONG bytes;                    /* the block it takes */
     BOOL drawable;                  /* within what the text path addresses */
@@ -215,8 +261,12 @@ typedef struct
     BOOL drawable;
 } SF_LAYOUT;
 
+/* the glyph of a character of the page being rendered */
 static FT_UInt sf_glyph(UWORD ch)
 {
+    if (sf_page != SF_ATARI)
+        return FT_Get_Char_Index(sf_face, ((FT_ULong)sf_page << 8) | ch);
+
     return atari_unicode[ch] ? FT_Get_Char_Index(sf_face, atari_unicode[ch]) : 0;
 }
 
@@ -266,14 +316,36 @@ static WORD sf_top(void)
  */
 static BOOL sf_set(SF_BUILD *b)
 {
+    FT_Matrix m;
+    FT_Vector delta;
+
     for (;;)
     {
-        if (FT_Set_Char_Size(sf_face, 0, b->size, 72, 72))
+        if (FT_Set_Char_Size(sf_face, b->width, b->size, 72, 72))
             return FALSE;
         if (!b->want || sf_top() <= b->want || b->size <= SF_MIN_PIXELS * 64L)
-            return TRUE;
+            break;
         b->size -= 16;
     }
+
+    /*
+     * Slanted (vst_skew()) about a quarter of the em above the baseline,
+     * where the middle of most lower case letters is: what leaves the
+     * cell (sf_build()) is then shared between its two sides
+     */
+    if (b->skew)
+    {
+        m.xx = m.yy = 0x10000L;
+        m.yx = 0;
+        m.xy = FT_Tan((FT_Angle)b->skew * 0x10000L / 10);
+        delta.x = -FT_MulFix(b->size / 4, m.xy);
+        delta.y = 0;
+        FT_Set_Transform(sf_face, &m, &delta);
+    }
+    else
+        FT_Set_Transform(sf_face, NULL, NULL);
+
+    return TRUE;
 }
 
 /*
@@ -353,7 +425,8 @@ static BOOL sf_layout(SF_LAYOUT *l, WORD pixels, WORD want)
  */
 static WORD sf_bearing_y(UWORD ch)
 {
-    if (FT_Load_Glyph(sf_face, sf_glyph(ch), FT_LOAD_RENDER | SF_LOAD))
+    /* an ASCII character, so the same in all the pages: they line up */
+    if (FT_Load_Glyph(sf_face, FT_Get_Char_Index(sf_face, ch), FT_LOAD_RENDER | SF_LOAD))
         return 0;
 
     return (WORD)sf_face->glyph->bitmap_top;
@@ -375,6 +448,7 @@ static long sf_build(void *arg)
 
     if (!sf_open(b->index))
         return -1;
+    sf_page = b->page;
     if (!sf_set(b))
         return -1;
     if (!sf_layout(&l, (WORD)(b->size >> 6), b->want))
@@ -478,8 +552,12 @@ static long sf_build(void *arg)
     s->sfont = b->index;
     s->size = b->size;
     s->want = b->want;
+    s->width = b->width;
+    s->skew = b->skew;
+    s->page = b->page;
     s->ask_size = b->size;
     s->ask_want = b->want;
+    s->ask_width = b->width;
     s->half = (WORD)l.half;
     s->scratch = (WORD *)(form + (ULONG)l.form_width * l.form_height);
     s->bytes = l.bytes;
@@ -528,28 +606,46 @@ static const Fonthead *sf_head(SF_SIZE *s)
 }
 
 /* a size of a font already rendered: as asked for, or what that came to */
-static SF_SIZE *sf_find(WORD index, LONG size, WORD want)
+static SF_SIZE *sf_find(const SF_BUILD *b)
 {
     SF_SIZE *s;
 
     for (s = sf_sizes; s; s = s->next)
-        if (s->sfont == index && ((s->size == size && s->want == want)
-                                  || (s->ask_size == size && s->ask_want == want)))
+        if (s->sfont == b->index && s->skew == b->skew && s->page == b->page
+            && ((s->size == b->size && s->want == b->want && s->width == b->width)
+                || (s->ask_size == b->size && s->ask_want == b->want
+                    && s->ask_width == b->width)))
             return s;
 
     return NULL;
 }
 
+/* make room for a size of that many bytes: the unused ones go, oldest first */
+static void sf_make_room(ULONG bytes)
+{
+    while (sf_bytes + bytes > CONF_VDI_FONT_CACHE * 1024UL && sf_evict())
+        ;
+}
+
+/* keep a size just rendered */
+static void sf_keep(SF_SIZE *s)
+{
+    s->next = sf_sizes;
+    sf_sizes = s;
+    sf_bytes += s->bytes;
+}
+
 /*
  * A scalable font at an em size (in 1/64 pixel), or with the top 'want'
- * when that is not 0 (vst_height()): from the cache, or rendered
+ * when that is not 0 (vst_height()), an em width (0 for the size) and a
+ * slant: from the cache, or rendered
  */
-const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want)
+const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want, LONG width, WORD skew)
 {
     SF_BUILD b;
     SF_SIZE *s;
     ULONG limit = CONF_VDI_FONT_CACHE * 1024UL;
-    LONG asked, fit;
+    LONG asked, asked_width, fit, fit_width;
     WORD asked_want, fit_want;
     BOOL emptied = FALSE;
 
@@ -559,8 +655,15 @@ const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want)
         want = 0;
     asked = size = sf_clamp(size);
     asked_want = want;
+    asked_width = width = width ? sf_clamp(width) : 0;
 
-    s = sf_find(index, size, want);
+    b.index = index;
+    b.size = size;
+    b.want = want;
+    b.width = width;
+    b.skew = skew;
+    b.page = SF_ATARI;
+    s = sf_find(&b);
     if (s)
         return sf_head(s);
 
@@ -569,46 +672,49 @@ const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want)
      * the limit, and within what the text path can address.  Smaller than
      * asked for, it has its own top, not the one asked for.
      */
-    b.index = index;
     b.render = FALSE;
     b.result = NULL;
     for (;;)
     {
         b.size = size;
         b.want = want;
+        b.width = width;
         if (vdi_ft_call(sf_build, &b) != 0)
         {
             /* opening the face takes the whole file in font memory */
             if (emptied)
                 goto fail;
-            while (sf_evict())
-                ;
+            vdi_sfont_flush();
             emptied = TRUE;
             continue;
         }
         if ((b.bytes <= limit && b.drawable) || size == SF_MIN_PIXELS * 64L)
             break;
         size = sf_clamp(size * 3 / 4);
+        width = width ? sf_clamp(width * 3 / 4) : 0;
         want = 0;
     }
     if (!b.drawable)
         goto fail;
     fit = size;
     fit_want = want;
-    if (fit != asked || fit_want != asked_want)
+    fit_width = width;
+    if (fit != asked || fit_want != asked_want || fit_width != asked_width)
     {
-        s = sf_find(index, fit, fit_want);
+        b.size = fit;
+        b.want = fit_want;
+        b.width = fit_width;
+        s = sf_find(&b);
         if (s)
         {
             s->ask_size = asked;
             s->ask_want = asked_want;
+            s->ask_width = asked_width;
             return sf_head(s);
         }
     }
 
-    /* room for it: the sizes no workstation has selected go, oldest first */
-    while (sf_bytes + b.bytes > limit && sf_evict())
-        ;
+    sf_make_room(b.bytes);
 
     /*
      * Rendered.  If the memory is not there after all (taken by sizes in
@@ -621,31 +727,31 @@ const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want)
     {
         b.size = size;
         b.want = want;
+        b.width = width;
         b.result = NULL;
         if (vdi_ft_call(sf_build, &b) == 0 && b.result)
             break;
         if (!emptied)
         {
-            while (sf_evict())
-                ;
+            vdi_sfont_flush();
             emptied = TRUE;
             continue;
         }
         if (size == SF_MIN_PIXELS * 64L)
             goto fail;
         size = sf_clamp(size * 3 / 4);
+        width = width ? sf_clamp(width * 3 / 4) : 0;
         want = 0;
     }
 
     s = b.result;
-    if (size == fit && want == fit_want)
+    if (size == fit && want == fit_want && width == fit_width)
     {
         s->ask_size = asked;
         s->ask_want = asked_want;
+        s->ask_width = asked_width;
     }
-    s->next = sf_sizes;
-    sf_sizes = s;
-    sf_bytes += s->bytes;
+    sf_keep(s);
     KDEBUG(("sfont: %s at %ld/64 pixels, top %d (%ld/64, %d asked): %lu bytes, %lu in all\n",
             vdi_sfonts[index].name, (long)s->size, s->head.top, (long)asked, asked_want,
             (unsigned long)s->bytes, (unsigned long)sf_bytes));
@@ -657,6 +763,72 @@ fail:
     return NULL;
 }
 
+/* the size a Fonthead of the cache is */
+static SF_SIZE *sf_of(const Fonthead *font)
+{
+    return (SF_SIZE *)((const UBYTE *)font - offsetof(SF_SIZE, head));
+}
+
+/*
+ * A Unicode page of a size (vst_map_mode()), its 256 characters as the
+ * size's, with the same cell height, top and alignment lines, so that
+ * text in several pages lines up.  It is rendered at exactly the size,
+ * however big: NULL if it does not fit (its glyphs can be much wider than
+ * the Atari character set's, CJK ones say), or the memory is not there.
+ * The size it is of must be a workstation's current one, so that it stays
+ * while the page is rendered.
+ */
+const Fonthead *vdi_sfont_page(const Fonthead *font, UWORD page)
+{
+    SF_SIZE *base = sf_of(font), *s;
+    SF_BUILD b;
+
+    b.index = base->sfont;
+    b.size = base->size;
+    b.want = base->want;
+    b.width = base->width;
+    b.skew = base->skew;
+    b.page = (WORD)page;
+    b.result = NULL;
+    s = sf_find(&b);
+    if (s)
+        return sf_head(s);
+
+    b.render = FALSE;
+    if (vdi_ft_call(sf_build, &b) != 0 || !b.drawable
+        || b.bytes > CONF_VDI_FONT_CACHE * 1024UL)
+        return NULL;
+    sf_make_room(b.bytes);
+    b.render = TRUE;
+    if (vdi_ft_call(sf_build, &b) != 0 || !b.result)
+    {
+        vdi_sfont_flush();
+        b.size = base->size;
+        b.want = base->want;
+        if (vdi_ft_call(sf_build, &b) != 0 || !b.result)
+            return NULL;
+    }
+    sf_keep(b.result);
+
+    return sf_head(b.result);
+}
+
+/* what a size was asked for as: em size and top */
+void vdi_sfont_request(const Fonthead *font, LONG *size, WORD *want)
+{
+    const SF_SIZE *s = sf_of(font);
+
+    *size = s->ask_size;
+    *want = s->ask_want;
+}
+
+/* the em size a size has, in 1/64 pixel */
+LONG vdi_sfont_em(const Fonthead *font)
+{
+    return sf_of(font)->size;
+}
+
+
 /*
  * Back within the limit, once a workstation has selected another size or
  * font, or closed: what the sizes then in use kept over it can go
@@ -665,6 +837,75 @@ void vdi_sfont_trim(void)
 {
     while (sf_bytes > CONF_VDI_FONT_CACHE * 1024UL && sf_evict())
         ;
+}
+
+/*
+ * vqt_char_index(): a code point's glyph in a font (0 if it has none),
+ * and a glyph's code point (-1 if no character has it), on FreeType's stack
+ */
+typedef struct
+{
+    WORD index;
+    LONG cp;
+    UWORD glyph;
+} SF_CHARMAP;
+
+static long sf_char_glyph(void *arg)
+{
+    SF_CHARMAP *m = arg;
+    FT_UInt glyph;
+
+    if (!sf_open(m->index))
+        return -1;
+    glyph = FT_Get_Char_Index(sf_face, (FT_ULong)m->cp);
+    m->glyph = glyph > 0xfffe ? 0 : (UWORD)glyph;
+
+    return 0;
+}
+
+static long sf_glyph_char(void *arg)
+{
+    SF_CHARMAP *m = arg;
+    FT_ULong cp;
+    FT_UInt glyph;
+
+    if (!sf_open(m->index))
+        return -1;
+    m->cp = -1;
+    for (cp = FT_Get_First_Char(sf_face, &glyph); glyph; cp = FT_Get_Next_Char(sf_face, cp, &glyph))
+        if (glyph == m->glyph)
+        {
+            m->cp = (LONG)cp;
+            break;
+        }
+
+    return 0;
+}
+
+UWORD vdi_sfont_char_glyph(WORD index, LONG cp)
+{
+    SF_CHARMAP m;
+
+    m.index = index;
+    m.cp = cp;
+    m.glyph = 0;
+    if (cp < 0 || vdi_ft_call(sf_char_glyph, &m) != 0)
+        return 0;
+
+    return m.glyph;
+}
+
+LONG vdi_sfont_glyph_char(WORD index, UWORD glyph)
+{
+    SF_CHARMAP m;
+
+    m.index = index;
+    m.glyph = glyph;
+    m.cp = -1;
+    if (!glyph || vdi_ft_call(sf_glyph_char, &m) != 0)
+        return -1;
+
+    return m.cp;
 }
 
 /* v_flushcache(): all the sizes no workstation has selected go */
@@ -685,7 +926,7 @@ ULONG vdi_sfont_cache_free(void)
 /* the scratch buffer of a size, for the text path (vdi/vdi_text.c) */
 void vdi_sfont_scratch(const Fonthead *font, WORD **buffer, WORD *half)
 {
-    const SF_SIZE *s = (const SF_SIZE *)((const UBYTE *)font - offsetof(SF_SIZE, head));
+    const SF_SIZE *s = sf_of(font);
 
     *buffer = s->scratch;
     *half = s->half;

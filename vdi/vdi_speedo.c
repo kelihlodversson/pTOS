@@ -17,6 +17,18 @@
  *   vst_name() and vqt_name_and_id(), and vqt_fontheader() say what
  *   the fonts are and select one by its name.
  *
+ * - vst_arbpt() and vst_setsize(), also in their 32-bit forms, vst_width()
+ *   and vst_skew() size a scalable font as asked, exactly; vqt_advance()
+ *   and v_getbitmap_info() give a character's advance, in whole pixels as
+ *   the text path places the characters.  vqt_f_extent(),
+ *   vqt_real_extent(), v_ftext() and v_ftext_offset() are in
+ *   vdi/vdi_text.c, with the text path.
+ *
+ * - vst_map_mode() chooses the character map text is in: BICS (of which
+ *   only the ASCII part is known), the Atari character set, Unicode's
+ *   first plane, or, as mode 3, which is pTOS's, all of Unicode in UTF-16.
+ *   vqt_char_index() converts between them and the font's glyphs.
+ *
  * - There is no cache of characters to save or load: the sizes of the
  *   fonts are kept as rendered (vdi/vdi_sfont.c), which v_flushcache()
  *   empties and vqt_cachesize() reports on, and v_savecache() and
@@ -468,4 +480,368 @@ static const WORD bics_table[224] =
 void vdi_vqt_get_table(Vwk *vwk)
 {
     intout_long(0, (ULONG)(uintptr_t)bics_table);
+}
+
+
+/*
+ * Sizes: vst_arbpt() and vst_setsize(), the 32-bit forms (two intin, the
+ * size in points as 16.16 fixed point) as well, vst_width() and vst_skew()
+ */
+
+#define SKEW_MAX            800     /* the slant vst_skew() takes, in 1/10 degree */
+
+/* report an error to the variable vst_error() named */
+void vdi_sfont_error(Vwk *vwk, WORD error)
+{
+    if (vwk->error_var)
+        *vwk->error_var = error;
+}
+
+/* the character and cell sizes of the current font, as vst_point() answers */
+static void size_answer(Vwk *vwk)
+{
+    const Fonthead *font = vwk->cur_font;
+
+    PTSOUT[0] = font->max_char_width;
+    PTSOUT[1] = font->top;
+    PTSOUT[2] = font->max_cell_width;
+    PTSOUT[3] = font->top + font->bottom + 1;
+    CONTRL->nptsout = 2;
+    flip_y = 1;
+}
+
+/* the screen's pixel height in microns, as the sizes are computed for it */
+static LONG micron(void)
+{
+    LONG m = linea_vars.DEV_TAB[4];
+
+    if (m <= 0)
+        return 353;                     /* 72 dpi */
+    return m > 2000 ? 2000 : m;
+}
+
+/* points in 16.16 fixed point as an em size in 1/64 pixel, and back */
+static LONG fix_to_em(LONG points)
+{
+    LONG div = micron() * 72, q, r;
+
+    if (points < 0x10000L)
+        points = 0x10000L;
+    q = points / div;
+    r = points % div;
+
+    /* points * 25400 / div in 16.16, then in 1/64 */
+    return (q * 25400 + r * 25400 / div + 512) >> 10;
+}
+
+static LONG em_to_fix(LONG em)
+{
+    return (LONG)(((ULONG)em * 72 * (ULONG)micron() + 12700) / 25400) << 10;
+}
+
+/* the current scalable font again, at the size it was asked for, as now set */
+static void sfont_resize(Vwk *vwk, LONG size, WORD want)
+{
+    WORD index = vdi_sfont_find(vwk->cur_font->font_id);
+    const Fonthead *f = NULL;
+
+    if (index >= 0)
+        f = vdi_sfont_size(index, size, want, vwk->sf_width, vwk->sf_skew);
+    if (f)
+        vwk->cur_font = f;
+    else
+        vdi_sfont_error(vwk, SPEEDO_CACHE_FULL);
+    vdi_sfont_trim();                   /* the size it had may go now */
+    vwk->scaled = FALSE;
+}
+
+/* the size the current scalable font was asked for */
+static void sfont_request(Vwk *vwk, LONG *size, WORD *want)
+{
+    vdi_sfont_request(vwk->cur_font, size, want);
+}
+
+/* a bitmap font's size by vst_point(), from a size in points */
+static void bitmap_point(Vwk *vwk, WORD points)
+{
+    WORD *old_intin = INTIN;
+
+    INTIN = &points;
+    vdi_vst_point(vwk);
+    INTIN = old_intin;
+}
+
+void vdi_vst_arbpt(Vwk *vwk)
+{
+    BOOL fix = CONTRL->nintin >= 2;
+    LONG points = 0;
+
+    if (fix)
+        memcpy(&points, &INTIN[0], sizeof(points));
+    else
+        points = (LONG)INTIN[0] << 16;
+
+    if (vwk->cur_font->flags & F_SFONT)
+    {
+        vwk->pts_mode = TRUE;
+        vwk->sf_width = 0;
+        sfont_resize(vwk, fix_to_em(points), 0);
+        points = em_to_fix(vdi_sfont_em(vwk->cur_font));
+    }
+    else
+    {
+        bitmap_point(vwk, (WORD)((points + 0x8000L) >> 16));
+        points = (LONG)vwk->cur_font->point << 16;
+    }
+
+    size_answer(vwk);
+    if (fix)
+    {
+        intout_long(0, points);
+        CONTRL->nintout = 2;
+    }
+    else
+    {
+        INTOUT[0] = (WORD)((points + 0x8000L) >> 16);
+        CONTRL->nintout = 1;
+    }
+}
+
+/* vst_setsize(): the width apart from the height; a bitmap font has none */
+void vdi_vst_setsize(Vwk *vwk)
+{
+    BOOL fix = CONTRL->nintin >= 2;
+    LONG points = 0, size;
+    WORD want;
+
+    if (fix)
+        memcpy(&points, &INTIN[0], sizeof(points));
+    else
+        points = (LONG)INTIN[0] << 16;
+
+    if (vwk->cur_font->flags & F_SFONT)
+    {
+        sfont_request(vwk, &size, &want);
+        vwk->sf_width = fix_to_em(points);
+        sfont_resize(vwk, size, want);
+        points = em_to_fix(vwk->sf_width);
+    }
+    else
+        points = (LONG)vwk->cur_font->point << 16;
+
+    size_answer(vwk);
+    if (fix)
+    {
+        intout_long(0, points);
+        CONTRL->nintout = 2;
+    }
+    else
+    {
+        INTOUT[0] = (WORD)((points + 0x8000L) >> 16);
+        CONTRL->nintout = 1;
+    }
+}
+
+/* vst_width(): the width in pixels (ptsin[0]) */
+void vdi_vst_width(Vwk *vwk)
+{
+    LONG size;
+    WORD want, width = PTSIN[0];
+
+    if ((vwk->cur_font->flags & F_SFONT) && width > 0)
+    {
+        sfont_request(vwk, &size, &want);
+        vwk->sf_width = (LONG)width * 64;
+        sfont_resize(vwk, size, want);
+    }
+    size_answer(vwk);
+}
+
+/* vst_skew(): the slant, in 1/10 degree, to the right when positive */
+void vdi_vst_skew(Vwk *vwk)
+{
+    WORD skew = INTIN[0];
+    LONG size;
+    WORD want;
+
+    if (skew > SKEW_MAX)
+        skew = SKEW_MAX;
+    if (skew < -SKEW_MAX)
+        skew = -SKEW_MAX;
+    vwk->sf_skew = skew;
+    if (vwk->cur_font->flags & F_SFONT)
+    {
+        sfont_request(vwk, &size, &want);
+        sfont_resize(vwk, size, want);
+    }
+    INTOUT[0] = skew;
+}
+
+
+/*
+ * Metrics: vqt_advance() (with the 16.16 fixed point advance after the
+ * whole one, for vqt_advance32()) and v_getbitmap_info()
+ */
+
+/* a character's advance, in whole pixels: its cell, and what bold and outline add */
+static WORD advance_of(Vwk *vwk, WORD c)
+{
+    const Fonthead *font;
+    WORD ch, adv;
+
+    font = vdi_text_char(vwk, c, &ch);
+    if (!font)
+        return 0;
+    if (ch < font->first_ade || ch > font->last_ade)
+        ch = '?';
+    ch -= font->first_ade;
+    adv = font->off_table[ch + 1] - font->off_table[ch];
+    if ((vwk->style & F_THICKEN) && !(font->flags & F_MONOSPACE))
+        adv += font->thicken;
+    if (vwk->style & F_OUTLINE)
+        adv += 2;
+
+    return adv;
+}
+
+/* the advance as a move, for the rotation */
+static void advance_move(Vwk *vwk, WORD adv, WORD *x, WORD *y)
+{
+    *x = *y = 0;
+    switch(vwk->chup) {
+    default:
+        *x = adv;
+        break;
+    case 900:
+        *y = -adv;
+        break;
+    case 1800:
+        *x = -adv;
+        break;
+    case 2700:
+        *y = adv;
+        break;
+    }
+}
+
+void vdi_vqt_advance(Vwk *vwk)
+{
+    WORD x, y;
+    LONG fix;
+
+    advance_move(vwk, advance_of(vwk, INTIN[0]), &x, &y);
+    PTSOUT[0] = x;
+    PTSOUT[1] = y;
+    PTSOUT[2] = PTSOUT[3] = 0;          /* the remainders: whole pixels */
+    fix = (LONG)x << 16;
+    memcpy(&PTSOUT[4], &fix, sizeof(fix));
+    fix = (LONG)y << 16;
+    memcpy(&PTSOUT[6], &fix, sizeof(fix));
+    CONTRL->nptsout = 4;
+}
+
+/*
+ * v_getbitmap_info(): the advance, but no bitmap: the glyphs are only
+ * kept in the forms of the sizes, not one by one
+ */
+void vdi_v_getbitmap_info(Vwk *vwk)
+{
+    WORD x, y;
+
+    advance_move(vwk, advance_of(vwk, INTIN[0]), &x, &y);
+    INTOUT[0] = INTOUT[1] = 0;          /* width and height */
+    intout_long(2, (LONG)x << 16);
+    intout_long(4, (LONG)y << 16);
+    intout_long(6, 0);                  /* the offsets */
+    intout_long(8, 0);
+    intout_long(10, 0);                 /* the bitmap */
+    CONTRL->nintout = 12;
+}
+
+
+/*
+ * Character maps: vst_charmap() and vst_map_mode() (which answers), and
+ * vqt_char_index()
+ */
+void vdi_vst_charmap(Vwk *vwk)
+{
+    WORD mode = INTIN[0];
+
+    if (mode >= MAP_BICS && mode <= MAP_UTF16)
+        vwk->char_map = mode;
+
+    /* vst_map_mode() has a second intin of 1, and an answer */
+    if (CONTRL->nintin >= 2 && INTIN[1] == 1)
+    {
+        INTOUT[0] = vwk->char_map;
+        CONTRL->nintout = 1;
+    }
+}
+
+/* modes of vqt_char_index() */
+#define CHARIDX_DIRECT      0       /* the font's glyph index */
+#define CHARIDX_ASCII       1       /* the Atari character set */
+#define CHARIDX_UNICODE     2
+
+void vdi_vqt_char_index(Vwk *vwk)
+{
+    UWORD c = INTIN[0];
+    WORD src = INTIN[1], dst = INTIN[2];
+    const Fonthead *font = vwk->cur_font;
+    WORD index = (font->flags & F_SFONT) ? vdi_sfont_find(font->font_id) : -1;
+    LONG cp = -1;
+    UWORD result = 0xffff;
+
+    /* the character, in Unicode */
+    switch (src) {
+    case CHARIDX_DIRECT:
+        if (index >= 0)
+            cp = vdi_sfont_glyph_char(index, c);
+        else if (c >= font->first_ade && c <= font->last_ade && c < 256)
+            cp = vdi_atari_to_unicode((UBYTE)c);
+        break;
+    case CHARIDX_ASCII:
+        if (c >= 32 && c < 256)
+            cp = vdi_atari_to_unicode((UBYTE)c);
+        break;
+    case CHARIDX_UNICODE:
+        cp = c;
+        break;
+    }
+
+    if (cp > 0)
+    {
+        switch (dst) {
+        case CHARIDX_DIRECT:
+            if (index >= 0)
+            {
+                UWORD glyph = vdi_sfont_char_glyph(index, cp);
+
+                if (glyph)
+                    result = glyph;
+            }
+            else
+            {
+                WORD atari = vdi_unicode_to_atari(cp);
+
+                if (atari >= font->first_ade && atari <= font->last_ade)
+                    result = atari;
+            }
+            break;
+        case CHARIDX_ASCII:
+            {
+                WORD atari = vdi_unicode_to_atari(cp);
+
+                if (atari >= 32)
+                    result = atari;
+            }
+            break;
+        case CHARIDX_UNICODE:
+            if (cp <= 0xffffL)
+                result = (UWORD)cp;
+            break;
+        }
+    }
+
+    INTOUT[0] = result;
 }

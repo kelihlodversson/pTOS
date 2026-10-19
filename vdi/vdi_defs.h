@@ -247,6 +247,9 @@ struct Vwk_ {
 #if CONF_WITH_VDI_SCALABLE_FONTS
     BOOL sfonts_loaded;         /* built-in GDOS's scalable fonts added */
     WORD *error_var;            /* vst_error(): where errors go, or NULL */
+    WORD char_map;              /* vst_map_mode(): MAP_ATARI, ... */
+    LONG sf_width;              /* vst_setsize(): em width, 1/64 pixel; 0: as the height */
+    WORD sf_skew;               /* vst_skew(): slant, 1/10 degree */
 #endif
     WORD scaled;                /* TRUE if font scaled in any way   */
     Fonthead scratch_head;      /* Holder for the doubled font data */
@@ -528,20 +531,33 @@ void vdi_vex_wheelv(Vwk *);         /* 134 */
 
 #if CONF_WITH_VDI_SCALABLE_FONTS
 /* SpeedoGDOS's and NVDI's font calls, in vdi_speedo.c */
+void vdi_vqt_char_index(Vwk *);     /* 190 */
 void vdi_vqt_xfntinfo(Vwk *);       /* 229 */
 void vdi_vst_name(Vwk *);           /* 230 */
+void vdi_vst_width(Vwk *);          /* 231 */
 void vdi_vqt_fontheader(Vwk *);     /* 232 */
+void vdi_vst_charmap(Vwk *);        /* 236 */
+void vdi_v_getbitmap_info(Vwk *);   /* 239 */
+void vdi_vqt_f_extent(Vwk *);       /* 240, in vdi_text.c */
+void vdi_v_ftext(Vwk *);            /* 241, in vdi_text.c */
 void vdi_v_getoutline(Vwk *);       /* 243 */
 void vdi_vst_error(Vwk *);          /* 245 */
+void vdi_vst_arbpt(Vwk *);          /* 246 */
+void vdi_vqt_advance(Vwk *);        /* 247 */
 void vdi_v_savecache(Vwk *);        /* 249 */
 void vdi_v_loadcache(Vwk *);        /* 250 */
 void vdi_v_flushcache(Vwk *);       /* 251 */
+void vdi_vst_setsize(Vwk *);        /* 252 */
+void vdi_vst_skew(Vwk *);           /* 253 */
 void vdi_vqt_get_table(Vwk *);      /* 254 */
 void vdi_vqt_cachesize(Vwk *);      /* 255 */
+void vdi_sfont_error(Vwk *vwk, WORD error);
 
 /* in vdi_text.c */
 BOOL vdi_font_at(Vwk *vwk, WORD element, const Fonthead **font, WORD *sfont);
+const Fonthead *vdi_text_char(Vwk *vwk, WORD c, WORD *ch);
 #endif
+WORD vdi_text_width(Vwk *vwk, WORD count, const WORD *str);
 
 #if CONF_WITH_VDI_TEXT_SPEEDUP
 void direct_screen_blit(WORD count, WORD *str);
