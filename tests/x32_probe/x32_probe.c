@@ -165,12 +165,18 @@ extern int vdi_contract_checks(void);
 extern int vdi_roundtrip_checks(short inherited_handle, int fault_after_open);
 extern int vdi_coordinate_bounds_checks(void);
 
+extern int aes_roundtrip_checks(const char *tail, const char *child_path);
+
 void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 {
     const char *tail = (const char *)(unsigned long)(basepage + 0x80);
     int bad = 0;
 
     switch (tail[0]) {
+    case '#':
+    case '$':
+        pterm(aes_roundtrip_checks(tail, "X32AES.TOS"));
+        break;
     case 'I': {
         const char *files[] = { "VDIIMP.TOS", "VDIREL.TOS", "VDIPLT.TOS" };
         char bad_file[] = "VDIBAD1.TOS";

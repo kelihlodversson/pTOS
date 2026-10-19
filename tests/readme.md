@@ -303,3 +303,14 @@ boot drive alongside `X32VDI.TOS`. Both PC configurations require
 client calls through normal and relocated ELF loads, nested Pexec and
 PE_LOAD/GO; the baseline refuses the unavailable import. Both reject
 malformed metadata. See `doc/vdi-x32.txt` for the SDK link recipe.
+
+`make aes-contract-test` checks standalone AES layouts, shared rectangle
+helpers and all 79 legacy AES operation classifications. `make
+x32-aes-import-test` builds mixed AES/VDI imported applications and malformed
+fixtures in `obj/x32/AES*.TOS`. Copy these to the PC boot drive and copy the
+probe to `X32AES.TOS` as well as `X32VDI.TOS`. The optional
+`pc-x86_64-aes_defconfig` boot checks multi-client registration, isolated
+messaging/events, authoritative sender ids, recursive update ownership and
+explicit/normal/fault-exit cleanup. Baseline and VDI-only boots refuse the
+optional AES service/imports. CI requires both `x86-64 AES client: PASS` and
+`x86-64 AES imports: PASS`; see `doc/aes-x32.txt` for the full contract.

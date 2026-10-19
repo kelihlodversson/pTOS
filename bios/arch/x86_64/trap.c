@@ -19,6 +19,7 @@
 #include "pgtable.h"
 #include "trap.h"
 #include "vdi_service.h"
+#include "aes_service.h"
 
 #include "../../../bdos/mem.h"
 #include "../../../include/biosdefs.h"
@@ -298,6 +299,14 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     }
 
     switch (trap_class) {
+    case AES_SERVICE_CLASS:
+#if CONF_WITH_X32_AES
+        frame->rax = (UQUAD)(QUAD)(from_ring3 ?
+            aes_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->r10) : EINVFN);
+#else
+        frame->rax = (UQUAD)(QUAD)EINVFN;
+#endif
+        break;
     case VDI_SERVICE_CLASS:
 #if CONF_WITH_X32_VDI
         frame->rax = (UQUAD)(QUAD)(from_ring3 ?

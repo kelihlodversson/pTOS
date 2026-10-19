@@ -281,7 +281,8 @@ into vdi:vdi, ABI major 1, minor 0, function kind, using the existing
 PT_PTOS_IMPORTS format. Pexec resolves it eagerly; the application needs no
 address constants or runtime symbol lookup. The x32 GOT slot's upper word
 is zero as emitted by the linker; its low word receives the user address.
-Only this x32 function is registered. Unknown names, namespaces, versions,
+Only this function is registered in the VDI namespace. The optional x32
+AES service also registers aes: entries (doc/aes-x32.txt). Unknown names, namespaces, versions,
 kinds and malformed bind slots return EPLFMT; the ordinary PC baseline
 also returns EPLFMT for an application requiring VDI.
 

@@ -138,13 +138,7 @@
 #define ADJ3DSHA    2           /* pixel adjustment for 3D SHADOWED objects */
 #define ADJBUTNV    4           /* pixel adjustment for non-3D vertically aligned buttons */
 
-typedef struct
-{
-        WORD    g_x;
-        WORD    g_y;
-        WORD    g_w;
-        WORD    g_h;
-} GRECT;
+#include "grect.h"
 
 typedef struct _ORECT
 {

@@ -75,7 +75,8 @@ config CONF_WITH_PTOS_ABI_IMPORTS
 	  x32 programs. That entry executes in a read-only user client image
 	  mapped privately into each process, with narrow syscalls for hardware
 	  access. No LP64 kernel code or data address is bound into x32 code.
-	  Other namespaces, including the retired gemdos imports, are refused.
+	  CONF_WITH_X32_AES adds the typed aes: client exports. Other
+	  namespaces, including the retired gemdos imports, are refused.
 
 config CONF_WITH_KPROC
 	bool "Kernel-private process records" if !ARCH_X86_64

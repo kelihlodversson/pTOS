@@ -20,6 +20,10 @@
 #include "vdi_service.h"
 #include "x32vdi_image.h"
 #endif
+#if CONF_WITH_X32_AES
+#include "aes_service.h"
+#include "x32aes_image.h"
+#endif
 #if CONF_WITH_KHEAP
 #include "kheap.h"
 #include "kprint.h"
@@ -47,6 +51,9 @@ typedef struct kproc KPROC;
 /* PD is the public GEMDOS basepage and is writable by its process. Keep
  * native pointers and the user-range snapshot in this kernel-only record. */
 struct kproc {
+#if CONF_WITH_X32_AES
+    AES_CLIENT_STATE *aes;
+#endif
     PD *pd;
     DTAINFO *dta;
     BOOL started;               /* proc_go() has launched it */
@@ -218,6 +225,9 @@ void kproc_destroy(PD *pd)
             KPROC *kproc = *link;
             KPROC *launcher = kproc->parent ? kproc_find(kproc->parent) : NULL;
 
+#if CONF_WITH_X32_AES
+            aes_service_process_exit(pd);
+#endif
 #if CONF_WITH_X32_VDI
             vdi_service_process_exit(pd);
 #endif
@@ -244,6 +254,25 @@ void kproc_destroy(PD *pd)
             return;
         }
 }
+
+#if CONF_WITH_X32_AES
+AES_CLIENT_STATE *kproc_aes_get(PD *pd)
+{
+    KPROC *p = kproc_find(pd);
+
+    return p ? p->aes : NULL;
+}
+
+BOOL kproc_aes_set(PD *pd, AES_CLIENT_STATE *state)
+{
+    KPROC *p = kproc_find(pd);
+
+    if (!p)
+        return FALSE;
+    p->aes = state;
+    return TRUE;
+}
+#endif
 
 WORD kproc_pid(PD *pd)
 {
@@ -553,6 +582,10 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     if (!build_ancestors(kproc, as, parent)) {
         return prepare_failed(kproc, as);
     }
+#if CONF_WITH_X32_AES
+    if (!x32_aes_image_load(as))
+        return prepare_failed(kproc, as);
+#endif
 #if CONF_WITH_X32_VDI
     /* Before moving a PE_LOAD image: every allocation that can fail must
      * precede that irreversible transfer from the launcher's address space. */

@@ -9,6 +9,18 @@
 
 menu "AES"
 
+config CONF_WITH_X32_AES
+	bool "Native x32 clients and kernel AES coordination service"
+	depends on ARCH_X86_64 && CONF_WITH_X32_VDI
+	default n
+	help
+	  Enable the typed client library and kernel-owned registrations,
+	  message queues, message-event polling and update ownership for x32
+	  graphical applications. Application-local rectangle helpers run in
+	  ring 3. This is a prerequisite for the x32 desktop, not its launch
+	  path: the legacy AES scheduler and EmuDesk remain separate work.
+	  Generic ring-3 GEM trap class 2 stays disabled.
+
 config CONF_WITH_AES
 	bool "Include the AES and the EmuDesk desktop"
 	depends on !ARCH_X86_64

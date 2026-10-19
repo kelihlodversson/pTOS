@@ -1,0 +1,326 @@
+Native x32 AES clients and kernel service (#404)
+================================================
+
+CONF_WITH_X32_AES enables typed ring-3 clients and kernel-owned application
+registration, messaging, message events and update ownership. It depends on
+the optional x32 VDI support. pc-x86_64-aes_defconfig selects both; the plain
+PC and VDI-only configurations leave AES services disabled. The EmuCON-only
+baseline is independent of this feature.
+
+This is the shared service boundary for native applications and accessories.
+The existing cooperative AES scheduler and EmuDesk are not launched by this
+option: their process-entry integration remains later #548 work. The legacy
+AES implementation stays in the kernel on ARM/m68k. No raw AESPB, GEMBLK,
+AESGLOBAL or kernel code/data pointer becomes part of this x32 interface.
+Generic ring-3 GEM trap class 2 remains rejected, including opcodes 200/201.
+
+Application API
+----------------
+
+include/aes_client.h is standalone: it needs no generated kernel headers.
+These x32 functions return a GEMDOS LONG status, not the legacy WORD return
+plus mutable AES global array. Prototypes and buffer directions are explicit:
+
+    LONG aes_appl_init(const char *name, AES_APP_INFO *info);
+        Read a terminated name of 1-8 ASCII letters/digits/underscore/dot/
+        hyphen, copying only through its terminator; write exactly 12 bytes
+        of info (4-byte aligned). Names are case-insensitive and stored in
+        uppercase. A different live process cannot register the same name.
+        Repeating init for the same process/name returns its current info;
+        attempting to rename a live registration returns EACCDN.
+
+    LONG aes_appl_exit(void);
+        Release this process's registration, incoming messages and both
+        update locks, including all recursive acquisitions.
+
+    LONG aes_appl_find(const char *name);
+        Read a name with the same contract as init. Return its live app id,
+        or ESRCH. The caller must itself be registered.
+
+    LONG aes_appl_write(WORD recipient, const AES_MESSAGE *message);
+        Copy exactly 16 bytes (2-byte aligned) into the recipient's bounded
+        kernel queue. Valid ids are 1-32767. The sender field supplied by
+        the caller is ignored and replaced with its authoritative app id.
+        Type must be nonnegative and reserved must be zero. The five data
+        WORDs are opaque values; the kernel never follows them as pointers.
+        There is no extended-length message or retained user buffer.
+
+    LONG aes_appl_read(AES_MESSAGE *message);
+        Write exactly 16 bytes (2-byte aligned), consuming the oldest
+        message in this process's queue only after a successful copy.
+        Return EAGAIN if empty. There is no foreign receiver/owner argument.
+
+    LONG aes_evnt_poll(UWORD mask, AES_EVENT *event);
+        mask must be AES_EVENT_MESSAGE (0x0010). Write exactly 20 bytes
+        (2-byte aligned). Return 0 and an all-zero event if empty; otherwise
+        return 0x0010 and the oldest message with events set to 0x0010.
+        Unsupported masks are EINVAL. Keyboard, mouse, timers and blocking
+        evnt_multi waits require further input/scheduling integration.
+
+    LONG aes_wind_update(WORD code);
+        0/1 release/acquire the desktop-update lock; 2/3 release/acquire the
+        mouse-control lock. Both are recursively owned by the process's
+        registration, with a maximum depth of 32767. A conflicting acquire
+        returns EAGAIN; release by a nonowner returns EACCDN. There is no
+        silent transfer or unbounded wait inside the service. This provides
+        kernel-owned cross-client coordination before window rendering and
+        the AES scheduler are connected to x32 processes.
+
+The library uses ordinary x32 SysV C calls; the program-entry contract in
+process-entry.txt (#387) is unchanged. No user context/state argument is
+needed because each syscall identifies the current KPROC.
+
+All functions except find/poll return E_OK on success. Calls other than init
+require registration. Disabled service classes return EINVFN. Malformed
+scalars or names return EINVAL, inaccessible/misaligned buffers EIMBA,
+registration/ownership violations EACCDN, absent recipients/names ESRCH,
+full/empty queues or contended locks EAGAIN, exhausted memory ENSMEM and
+recursive lock overflow ERANGE. Failed buffer validation does not consume
+a message or create a registration. An actual lazy-memory fault terminates
+only the calling process and invokes the same teardown path.
+
+Representations (native byte order)
+------------------------------------
+
+AES_APP_INFO (12 bytes, alignment 4): UWORD version at 0 (0x0100: this client
+ABI's version), WORD id at 2, UWORD queue_capacity at 4 (8), UWORD reserved
+at 6 (zero), ULONG features at 8 (MESSAGE=1, UPDATE=2). It is a value result,
+not writable shared service state. Editing it cannot change ownership.
+
+AES_MESSAGE (16 bytes, alignment 2): WORD type at 0, sender at 2, reserved
+at 4 (zero), data[5] at 6. Messages are application data, not authenticated
+kernel-generated window/input notifications. The recipient can identify
+which registered process sent one from the kernel-supplied sender field.
+
+AES_EVENT (20 bytes, alignment 2): UWORD events at 0, reserved at 2 (zero),
+AES_MESSAGE message at 4. Output records and unused fields are initialized;
+no kernel stack or address is copied into them.
+
+GRECT remains the existing four WORDs x/y/width/height (8 bytes, alignment 2),
+now defined in grect.h so rectangle helpers need no kernel configuration.
+Static assertions check the public layouts in the x32 and LP64 views.
+
+Caller-local helpers
+---------------------
+
+The library builds util/rectfunc.c itself, the implementation already shared
+by AES and the desktop; it does not duplicate the geometry algorithms:
+
+    BOOL inside(WORD x, WORD y, const GRECT *rect);
+    WORD rc_equal(const GRECT *a, const GRECT *b);
+    WORD rc_intersect(const GRECT *source, GRECT *destination);
+    void rc_union(const GRECT *source, GRECT *destination);
+    void rc_constrain(const GRECT *bounds, GRECT *rectangle);
+
+All rectangle accesses execute in ring 3. Existing WORD geometry semantics
+are retained. Invalid local pointers can fault the caller, never authorize
+kernel access. None of these helpers registers an application, touches Line-A
+or draws. Object-tree helpers and resource manipulation are candidates for
+similar extraction only after their dependencies and native tree ownership
+are specified; USERDEF execution also needs #432.
+
+Supervisor convention and ownership
+-----------------------------------
+
+RAX = (0x101ULL << 32) | function, with a/b/c/d in RDI/RSI/RDX/R10. These
+services accept actual ring-3 callers with private process address spaces.
+All unused arguments must be zero. Scalars are checked at full 64-bit width
+before narrowing, and every user span belongs to the current process.
+
+    function   a                b                 c/d
+       0       name input*      AES_APP_INFO out* unused
+       1       unused           unused            unused
+       2       name input*      unused            unused
+       3       recipient id     AES_MESSAGE in*   unused
+       4       AES_MESSAGE out* unused            unused
+       5       event mask       AES_EVENT out*    unused
+       6       update code      unused            unused
+
+The kernel attaches AES_CLIENT_STATE to KPROC, not the public basepage or a
+caller-supplied context pointer. The id comes from the kernel process record;
+ids may be reused after process exit and are not ownership capabilities.
+Registration records and eight-message FIFO queues come from the supervisor
+heap. A bounded input copy is complete before a message is enqueued. No user
+pointer survives a call, including one pointing to the caller's stack.
+
+appl_exit and normal/fault process teardown unlink the registration, free the
+queue and release both locks before destroying the process record/address
+space. Queued messages contain copied scalar data and sender ids, not links
+to another process record; already-delivered messages remain valid after the
+sender exits. No process can dequeue, close, or release another's state by
+supplying an id. Coordination currently follows the single-CPU synchronous
+process model; requests that would require waiting return EAGAIN.
+
+Imports and SDK
+----------------
+
+    make pc-x86_64-aes_defconfig
+    make
+    make x32-aes x32-vdi
+
+obj/x32/libptos-aes.a supports static linking. libptos-aes.so.1 is a link-time
+stub for .ptos.imports consumers, not a filesystem DSO to install or execute.
+It exports the seven aes_* functions and five existing rectangle helpers.
+The single ordered list in aes_client_exports.h is used by the stub, client
+image, packer and loader. The namespace is aes:, ABI major 1/minor 0.
+
+An application may link both libptos-aes.so.1 and libptos-vdi.so.1. The packer
+accepts these explicit dependencies once each and maps each known symbol to
+its namespace. Unknown libraries, duplicate dependencies, unknown functions,
+data symbols and legacy gemdos imports remain refused. Both namespaces use
+the existing PT_PTOS_IMPORTS format without changing its version. Pexec
+validates every import before binding; unavailable/unknown namespace, name,
+version, kind or malformed binding yields EPLFMT and releases the image.
+
+Example (supply the application's process-entry startup object):
+
+    $CC -mx32 -ffreestanding -fPIE -nostdlib -Wl,-pie,--no-dynamic-linker \
+        -Wl,-m,elf32_x86_64,--build-id=none,-e,_start \
+        -Wl,-z,max-page-size=0x1000,-z,noseparate-code \
+        -Iinclude app.c start.o -Lobj/x32 \
+        -l:libptos-aes.so.1 -l:libptos-vdi.so.1 -o app.elf
+    ./ptos-elf-pack --strip-shdr app.elf APP.TOS
+
+The optional kernel embeds the client image at a private read-only executable
+window at 0x0ffd0000 (maximum 64 KiB, before the separate VDI/ancestors windows).
+The linker rejects mutable global state. Its validated export header supplies
+all entry addresses; applications contain no address constants or runtime
+symbol lookup. Mapping happens before an irreversible PE_LOAD image transfer
+and the process address space owns/frees every mapped page. Neither namespace
+exports a raw LP64 kernel address.
+
+desk/gembind.c stays on its existing ARM/m68k trap ABI. The typed x32 library
+provides one reusable binding layer for future standalone EmuDesk and gemlib
+ports, coordinated with #123. It does not add another copy of desk's GEMBLK
+marshaling or pretend that the native API is the classic AESPB ABI.
+
+Legacy operation inventory
+---------------------------
+
+This list covers the actual named cases in aes/gemsuper.c. Native entries
+above expose only their explicit subset. An unlisted service function returns
+EINVFN, and an arbitrary legacy opcode cannot enter the kernel through the
+new ABI. Legacy typed binding signatures remain in desk/aesbind.h; those
+signatures do not imply x32 availability. Classifications:
+
+    registry  shared process/application lifetime
+    message   shared per-process queues and message routing
+    event     kernel input/timer state and scheduler/event delivery
+    desktop   shared menu/window/shell/desktop state and ownership
+    draw      privileged display work plus validated/copy-owned objects
+    local     possible caller-local tree/resource work; not yet exported
+    mixed     needs local data preparation and a separate privileged service
+
+    operation          class      native status / boundary reason
+    APPL_INIT          registry  aes_appl_init
+    APPL_READ          message   aes_appl_read (self, fixed 16-byte, nonblocking)
+    APPL_WRITE         message   aes_appl_write (fixed 16-byte copy)
+    APPL_FIND          registry  aes_appl_find
+    APPL_TPLAY         event     not exposed; input, callbacks or scheduling
+    APPL_TRECORD       event     not exposed; input, callbacks or scheduling
+    APPL_YIELD         event     not exposed; input, callbacks or scheduling
+    APPL_EXIT          registry  aes_appl_exit
+    EVNT_KEYBD         event     not exposed; input, callbacks or scheduling
+    EVNT_BUTTON        event     not exposed; input, callbacks or scheduling
+    EVNT_MOUSE         event     not exposed; input, callbacks or scheduling
+    EVNT_MESAG         event     aes_evnt_poll (nonblocking message subset)
+    EVNT_TIMER         event     not exposed; input, callbacks or scheduling
+    EVNT_MULTI         event     aes_evnt_poll (message-only, nonblocking subset)
+    EVNT_DCLICK        event     not exposed; input, callbacks or scheduling
+    MENU_BAR           desktop   not exposed; shared desktop/window/menu/shell state
+    MENU_ICHECK        desktop   not exposed; shared desktop/window/menu/shell state
+    MENU_IENABLE       desktop   not exposed; shared desktop/window/menu/shell state
+    MENU_TNORMAL       desktop   not exposed; shared desktop/window/menu/shell state
+    MENU_TEXT          desktop   not exposed; shared desktop/window/menu/shell state
+    MENU_REGISTER      desktop   not exposed; shared desktop/window/menu/shell state
+    MENU_POPUP         desktop   not exposed; shared desktop/window/menu/shell state
+    MENU_ATTACH        desktop   not exposed; shared desktop/window/menu/shell state
+    MENU_ISTART        desktop   not exposed; shared desktop/window/menu/shell state
+    MENU_SETTINGS      desktop   not exposed; shared desktop/window/menu/shell state
+    OBJC_ADD           local     not exposed; needs native tree/resource ownership
+    OBJC_DELETE        local     not exposed; needs native tree/resource ownership
+    OBJC_DRAW          mixed     not exposed; local data plus input/display state
+    OBJC_FIND          local     not exposed; needs native tree/resource ownership
+    OBJC_OFFSET        local     not exposed; needs native tree/resource ownership
+    OBJC_ORDER         local     not exposed; needs native tree/resource ownership
+    OBJC_EDIT          mixed     not exposed; local data plus input/display state
+    OBJC_CHANGE        mixed     not exposed; local data plus input/display state
+    OBJC_SYSVAR        mixed     not exposed; local data plus input/display state
+    FORM_DO            mixed     not exposed; local data plus input/display state
+    FORM_DIAL          mixed     not exposed; local data plus input/display state
+    FORM_ALERT         mixed     not exposed; local data plus input/display state
+    FORM_ERROR         mixed     not exposed; local data plus input/display state
+    FORM_CENTER        mixed     not exposed; local data plus input/display state
+    FORM_KEYBD         mixed     not exposed; local data plus input/display state
+    FORM_BUTTON        mixed     not exposed; local data plus input/display state
+    GRAF_RUBBOX        mixed     not exposed; local data plus input/display state
+    GRAF_DRAGBOX       mixed     not exposed; local data plus input/display state
+    GRAF_MBOX          mixed     not exposed; local data plus input/display state
+    GRAF_GROWBOX       mixed     not exposed; local data plus input/display state
+    GRAF_SHRINKBOX     mixed     not exposed; local data plus input/display state
+    GRAF_WATCHBOX      mixed     not exposed; local data plus input/display state
+    GRAF_SLIDEBOX      mixed     not exposed; local data plus input/display state
+    GRAF_HANDLE        mixed     not exposed; local data plus input/display state
+    GRAF_MOUSE         mixed     not exposed; local data plus input/display state
+    GRAF_MKSTATE       mixed     not exposed; local data plus input/display state
+    SCRP_READ          desktop   not exposed; shared desktop/window/menu/shell state
+    SCRP_WRITE         desktop   not exposed; shared desktop/window/menu/shell state
+    SCRP_CLEAR         desktop   not exposed; shared desktop/window/menu/shell state
+    FSEL_INPUT         mixed     not exposed; owned resources, file I/O and/or display
+    FSEL_EXINPUT       mixed     not exposed; owned resources, file I/O and/or display
+    WIND_CREATE        desktop   not exposed; shared desktop/window/menu/shell state
+    WIND_OPEN          desktop   not exposed; shared desktop/window/menu/shell state
+    WIND_CLOSE         desktop   not exposed; shared desktop/window/menu/shell state
+    WIND_DELETE        desktop   not exposed; shared desktop/window/menu/shell state
+    WIND_GET           desktop   not exposed; shared desktop/window/menu/shell state
+    WIND_SET           desktop   not exposed; shared desktop/window/menu/shell state
+    WIND_FIND          desktop   not exposed; shared desktop/window/menu/shell state
+    WIND_UPDATE        desktop   aes_wind_update (nonblocking coordination)
+    WIND_CALC          desktop   not exposed; shared desktop/window/menu/shell state
+    WIND_NEW           desktop   not exposed; shared desktop/window/menu/shell state
+    RSRC_LOAD          mixed     not exposed; owned resources, file I/O and/or display
+    RSRC_FREE          local     not exposed; needs native tree/resource ownership
+    RSRC_GADDR         local     not exposed; needs native tree/resource ownership
+    RSRC_SADDR         local     not exposed; needs native tree/resource ownership
+    RSRC_OBFIX         local     not exposed; needs native tree/resource ownership
+    SHEL_READ          desktop   not exposed; shared desktop/window/menu/shell state
+    SHEL_WRITE         desktop   not exposed; shared desktop/window/menu/shell state
+    SHEL_GET           desktop   not exposed; shared desktop/window/menu/shell state
+    SHEL_PUT           desktop   not exposed; shared desktop/window/menu/shell state
+    SHEL_FIND          desktop   not exposed; shared desktop/window/menu/shell state
+    SHEL_ENVRN         desktop   not exposed; shared desktop/window/menu/shell state
+    SHEL_RDEF          desktop   not exposed; shared desktop/window/menu/shell state
+    SHEL_WDEF          desktop   not exposed; shared desktop/window/menu/shell state
+
+Window lifecycle/rendering, menu state, input/timers, resources and shell
+coordination stay kernel responsibilities when exposed; this phase does not
+make those legacy pointer-rich entries callable. The inventory prevents a
+future new legacy opcode from accidentally escaping boundary review.
+
+Tests
+------
+
+make aes-contract-test checks native layouts, the shared local geometry and
+the complete legacy-operation inventory. make x32-aes-import-test produces
+AESIMP.TOS/AESREL.TOS and seven malformed import fixtures in obj/x32/. The
+host checks a real mixed AES/VDI packed application and rejects duplicate
+libraries or unknown functions. Copy obj/x32/AES*.TOS to the PC boot disk,
+plus obj/x32/x32probe.elf as X32AES.TOS and X32VDI.TOS, alongside the usual
+VDI and process-loader fixtures.
+
+The optional AES boot test uses two live ring-3 registrations, real queue
+copies and event polling, authoritative sender ids, recursive/foreign update
+ownership, normal exit without appl_exit, explicit exit and a fault while
+owning locks. Allocator snapshots must return to their starting state. It
+also checks full/FIFO/empty queues, rejected read-only outputs without losing
+a message, page-boundary strings/outputs, malformed scalar/pointer/name
+arguments and unchanged class-2
+rejection. Imported applications repeat the checks using both namespaces,
+including relocation and a write attempt against the read-only AES client.
+
+The plain PC and VDI-only boots verify local helpers work and that AES
+services/imports are refused. Dedicated CI boots supply the fixtures and
+require "x86-64 AES client: PASS" and "x86-64 AES imports: PASS" for all three
+PC configurations, plus the aggregate memtest PASS and EmuCON launch. A boot
+disk without AESIMP.TOS skips the disk import test; the baseline/regression
+path does not require that fixture.

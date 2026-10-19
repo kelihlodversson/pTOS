@@ -248,7 +248,10 @@ pages in the process (doc/vdi-x32.txt). It never names an LP64 kernel
 function. Static client linking is also available. The ordinary EmuCON-only
 configuration leaves VDI disabled and refuses applications requiring it.
 
-No other namespace is registered. The earlier gemdos imports were removed
+CONF_WITH_X32_AES adds the aes: typed client functions and caller-local
+helpers, also ABI 1.0 (doc/aes-x32.txt). Its image is separate from the VDI
+image and its service state stays kernel-owned. No other namespace is
+registered. The earlier gemdos imports were removed
 because the classic trap1()/TRAP #1 interface already serves GEMDOS. ARM and
 m68k retain their existing trap interfaces; enabling imports there does not
 make the x32 VDI implementation available.
@@ -340,12 +343,13 @@ How ptos-elf-pack builds it
 
 ptos-elf-pack looks for a DT_NEEDED entry in the input's .dynamic section.
 If there is none, no ".ptos.imports" payload is produced at all -- a
-binary using only internal relocations is unaffected. If there is exactly
-one, and its name is "libptos-vdi.so.1", every
-relocation in .rel.plt/.rela.plt or .rel.dyn/.rela.dyn targeting one of
-that library's undefined dynamic symbols is converted into one import
-(namespace "vdi", abi_major 1, abi_minor 0, kind taken from the
-symbol's STT_FUNC/STT_OBJECT type) and one bind record (bind_op
+binary using only internal relocations is unaffected. The recognized native
+stubs are libptos-vdi.so.1 and libptos-aes.so.1, each permitted once; an
+application may depend on both. Known symbol names select their namespace:
+vdi() belongs to vdi:, and the functions listed in aes_client_exports.h
+belong to aes:. Every .rel.plt/.rela.plt or .rel.dyn/.rela.dyn relocation
+against one of these undefined dynamic symbols is converted into one import
+(abi_major 1, abi_minor 0, function kind) and one bind record (bind_op
 PTOS_BIND_CODE_ADDRESS for R_*_JUMP_SLOT or a GLOB_DAT against a STT_FUNC
 symbol, PTOS_BIND_DATA_ADDRESS for a GLOB_DAT against a STT_OBJECT symbol)
 at that relocation's r_offset -- already a load-time vaddr, since
@@ -381,8 +385,9 @@ no-op/meaningless-symbol types (R_ARM_NONE, R_68K_NONE, R_ARM_V4BX),
 which the packer's no-fixup allowlist above already accepts regardless
 of what their (per the ABI, unused) symbol field names.
 
-Only the x32 vdi:vdi function is accepted for packaging. Another function
-or a data symbol in that stub is rejected before producing output. The
+Only the named x32 VDI and AES client functions are accepted for packaging.
+Unknown functions, data symbols and duplicate dependencies are rejected
+before producing output. The
 legacy libptos-abi.so.<N> stub is still recognised while parsing relocation
 metadata, but its gemdos namespace remains unavailable and cannot be packed.
 There is no general purpose dynamic linker and no filesystem DSO loading.
@@ -445,14 +450,11 @@ than done ad hoc.
 Known .ptos.imports version 1 limitations
 --------------------------------------------
 
-ptos-elf-pack recognises exactly one DT_NEEDED entry per input binary
-(the SDK's libptos-vdi.so.1 stub). This is enough for a single
-namespace served from one ABI major version, but a later stage
-registering more than one namespace (for example aes:, issue
-#308) will need either several recognised DT_NEEDED libraries or a
-combined stub exporting more than one namespace -- both are
-straightforward extensions of this same conversion step, not a format
-change.
+ptos-elf-pack recognises the two native client DT_NEEDED libraries,
+libptos-vdi.so.1 and libptos-aes.so.1, once each. Their symbol sets are
+explicit and disjoint, so no filesystem symbol search or dependency-order
+resolution occurs. Further namespaces need another explicit library/symbol
+mapping; this does not require a wire-format change.
 
 abi_minor exists in the wire format (and in every export table lookup)
 for exactly this reason: a future export table can grow feature-level
