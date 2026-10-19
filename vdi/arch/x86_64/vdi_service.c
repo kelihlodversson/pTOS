@@ -137,6 +137,16 @@ extern PD *run;
 static PD *owners[NUM_VDI_HANDLES + 1];
 static BOOL physical_owned, physical_active;
 
+/* Native AES can open the physical workstation between typed clients.
+ * Record that transition rather than inferring it from a stale handle table. */
+void vdi_service_physical_state(BOOL opened)
+{
+    physical_active = opened;
+    physical_owned = FALSE;
+    if (!opened)
+        memset(owners, 0, sizeof(owners));
+}
+
 static void invoke(VDICONTROL *control, WORD *intin, WORD *ptsin,
                     WORD *intout, WORD *ptsout)
 {
@@ -159,7 +169,7 @@ static void physical_open(void)
     WORD input[11] = { 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 2 };
     WORD integers[45], points[12];
 
-    if (physical_active || (!physical_owned && get_vwk_by_handle(1)))
+    if (physical_active)
         return;
     control.code = 1;
     control.nintin = 11;

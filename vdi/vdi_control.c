@@ -27,6 +27,7 @@
 #include "screen_mode.h"
 #if CONF_WITH_X32_VDI
 #include "kheap.h"
+#include "vdi_service.h"
 #endif
 
 #define FIRST_VDI_HANDLE    1
@@ -627,6 +628,9 @@ void vdi_v_opnwk(Vwk * vwk)
 
     init_wk(vwk);
 
+#if CONF_WITH_X32_VDI
+    vdi_service_physical_state(TRUE);
+#endif
     timer_init();
     vdimouse_init();            /* initialize mouse */
     esc_init(vwk);              /* enter graphics mode */
@@ -656,6 +660,9 @@ void vdi_v_clswk(Vwk * vwk)
     }
     linea_vars.CUR_WORK = vwk_ptr[VDI_PHYS_HANDLE];
 
+#if CONF_WITH_X32_VDI
+    vdi_service_physical_state(FALSE);
+#endif
     timer_exit();
     vdimouse_exit();                    /* deinitialize mouse */
     esc_exit(vwk);                      /* back to console mode */
