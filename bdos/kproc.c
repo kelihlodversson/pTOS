@@ -448,9 +448,10 @@ static BOOL build_ancestors(KPROC *kproc, ASPACE *as, PD *parent)
         bzero(copy[i].p_3fill, sizeof copy[i].p_3fill);
         bzero(copy[i].p_dreg, sizeof copy[i].p_dreg);
         bzero(copy[i].p_areg, sizeof copy[i].p_areg);
-        copy[i].p_env = PTR_TO_USERPTR(kproc->env_start);
+        copy[i].p_env = PTR_TO_USERPTR((char *)kproc->env_start);
         copy[i].p_parent = (i + 1 < n) ?
-            (ULONG)(USER_ANCESTORS_VA + (i + 1) * sizeof(PD)) : 0;
+            PTR_TO_USERPTR_UNCHECKED((PD *)(uintptr_t)(USER_ANCESTORS_VA + (i + 1) * sizeof(PD))) :
+            PTR_TO_USERPTR_UNCHECKED((PD *)NULL);
     }
     if (!aspace_load_private(as, USER_ANCESTORS_VA,
                                     4096, ASPACE_PROT_USER,
@@ -841,9 +842,9 @@ LONG kproc_check_launch(PD *pd, PD *caller)
         procmem_gen(kproc->env_start) != kproc->env_gen)
         return EIMBA;
     /* each field is read once into a local: that is the value validated */
-    lowtpa = pd->p_lowtpa;
-    hitpa = ((pd->p_hitpa + 8UL) & ~15UL) - 8;      /* RSP + 8 divisible by 16 */
-    tbase = pd->p_tbase;
+    lowtpa = (VADDR)(uintptr_t)USERPTR_TO_PTR(pd->p_lowtpa);
+    hitpa = (((VADDR)(uintptr_t)USERPTR_TO_PTR(pd->p_hitpa) + 8UL) & ~15UL) - 8;   /* RSP + 8 divisible by 16 */
+    tbase = (VADDR)(uintptr_t)USERPTR_TO_PTR(pd->p_tbase);
     first = (VADDR)(uintptr_t)kproc->user_start + sizeof(PD);
     /* the block's own end, not user_end: that is the bound of the launch
      * last validated, and a launch that failed for lack of memory may be
@@ -854,9 +855,9 @@ LONG kproc_check_launch(PD *pd, PD *caller)
         /* a program with an image of its own starts at the entry point the
          * kernel recorded, not at p_tbase, and that lies in the image */
         (!kproc->has_image && (tbase < first || tbase >= hitpa)) ||
-        pd->p_env != PTR_TO_USERPTR(kproc->env_start))
+        pd->p_env != PTR_TO_USERPTR((char *)kproc->env_start))
         return EPLFMT;
-    pd->p_hitpa = (ULONG)hitpa;
+    pd->p_hitpa = PTR_TO_USERPTR_UNCHECKED((UBYTE *)(uintptr_t)hitpa);
     kproc->user_end = (UBYTE *)(uintptr_t)hitpa;    /* the trusted bound */
     return E_OK;
 }
