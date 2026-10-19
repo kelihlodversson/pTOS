@@ -1329,6 +1329,10 @@ ULONG kproc_uheap_largest(PD *pd)
     /* (Malloc() rounds a request up to whole pages: what is left, down to them) */
     if (largest > (alloc_room(kproc) & ~(USER_PAGE_SIZE - 1)))
         largest = alloc_room(kproc) & ~(USER_PAGE_SIZE - 1);
+    /* without demand paging a block is backed when it is handed out: no more
+     * than there is memory for */
+    if (!CONF_WITH_DEMAND_PAGING && largest > aspace_mappable_bytes())
+        largest = aspace_mappable_bytes();
     return (ULONG)largest;
 }
 

@@ -280,11 +280,11 @@ jobs:
       # A build that links is not a build that boots: without this, a
       # regression in the boot path, the trap-dispatch/machine-hook layer,
       # or the exception/panic path would still show as a green job, since
-      # nothing above actually runs the image. Only pc-x86_64 boots this
-      # way (EFI/OVMF); a future non-EFI x86-64 config would need its own
-      # check instead of this one.
+      # nothing above actually runs the image. pc-x86_64 and
+      # pc-x86_64-eager boot this way (EFI/OVMF); a future non-EFI x86-64
+      # config would need its own check instead of this one.
       - name: Install QEMU and OVMF for the boot test
-        if: matrix.config == 'pc-x86_64'
+        if: startsWith(matrix.config, 'pc-x86_64')
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y qemu-system-x86 ovmf
@@ -305,7 +305,7 @@ jobs:
       # succeed on it: 124 means the timeout fired (the normal case here),
       # anything else means QEMU itself exited unexpectedly.
       - name: Boot-test under QEMU/OVMF
-        if: matrix.config == 'pc-x86_64'
+        if: startsWith(matrix.config, 'pc-x86_64')
         run: |
           mkdir -p esp/EFI/BOOT
           cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
@@ -414,14 +414,24 @@ jobs:
             exit 1
           fi
 
-          if ! grep -q 'x86-64 psetlimit: PASS' boot.log; then
-            echo "::error::Psetlimit did not set, report or pass on the limits and the stack size"
-            exit 1
-          fi
+          # pc-x86_64-eager is built without demand paging (#562): the
+          # Psetlimit and demand-paging probes, which need it, say SKIP, and
+          # the eager one runs instead
+          if [ "${{ matrix.config }}" = pc-x86_64-eager ]; then
+            if ! grep -q 'x86-64 no demand paging: PASS' boot.log; then
+              echo "::error::without demand paging, a process's memory was not backed when handed out, or Malloc(-1) promised more"
+              exit 1
+            fi
+          else
+            if ! grep -q 'x86-64 psetlimit: PASS' boot.log; then
+              echo "::error::Psetlimit did not set, report or pass on the limits and the stack size"
+              exit 1
+            fi
 
-          if ! grep -q 'x86-64 demand paging: PASS' boot.log; then
-            echo "::error::a process's Malloc() memory and stack were not backed on first touch"
-            exit 1
+            if ! grep -q 'x86-64 demand paging: PASS' boot.log; then
+              echo "::error::a process's Malloc() memory and stack were not backed on first touch"
+              exit 1
+            fi
           fi
 
           if ! grep -q 'x86-64 pexec load big: PASS' boot.log; then

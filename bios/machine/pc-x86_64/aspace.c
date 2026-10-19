@@ -443,6 +443,24 @@ static void unlink_new_tables(const struct aspace *as, ULONG first, UQUAD va)
     }
 }
 
+/*
+ * The most aspace_map_private() can map now: the free physical memory less
+ * the reserve and the cost it checks for below (a page of tables per 512
+ * pages, two more), and a few pages for the bookkeeping a caller may grow
+ * first (a kalloc()ed table).
+ */
+VADDR aspace_mappable_bytes(void)
+{
+    UQUAD free = pmem_free_bytes(), keep, pages;
+
+    keep = ASPACE_FAULT_RESERVE + ASPACE_FAULT_COST + 6 * X86_64_PAGE_SIZE;
+    if (free <= keep)
+        return 0;
+    pages = (free - keep) / X86_64_PAGE_SIZE;
+    pages -= pages / 513 + 1;           /* pages + pages / 512 tables fit */
+    return pages * X86_64_PAGE_SIZE;
+}
+
 BOOL aspace_map_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
 {
     UQUAD pages, i, mapped = 0, backing;

@@ -273,6 +273,11 @@ ULONG aspace_table_pages(const ASPACE *as);
  */
 BOOL aspace_map_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
 
+/* How much aspace_map_private() could map at most, now (rounded down to whole
+ * pages): what the backend's physical memory allows after its own reserve and
+ * table costs.  Malloc(-1) reports no more than this where memory is not lazy. */
+VADDR aspace_mappable_bytes(void);
+
 /*
  * Gives back [va, va + bytes) -- va page-aligned, bytes rounded up to whole
  * pages -- of private memory: unmaps it and frees the backing pages, which
