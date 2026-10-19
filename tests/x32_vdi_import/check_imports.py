@@ -64,7 +64,7 @@ with tempfile.TemporaryDirectory() as directory:
     path = Path(directory) / 'bad.elf'
     out = Path(directory) / 'bad.tos'
     for old, new, expected in ((b'\0vdi\0', b'\0bad\0', 'unsupported VDI symbol'),
-                               (b'libptos-vdi.so.1', b'libptos-aes.so.1', 'needs')):
+                               (b'libptos-vdi.so.1', b'libptos-xxx.so.1', 'needs')):
         assert old in source
         path.write_bytes(source.replace(old, new))
         result = subprocess.run(['./ptos-elf-pack', str(path), str(out)], capture_output=True, text=True)

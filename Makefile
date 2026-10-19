@@ -123,6 +123,7 @@ core-dirs-y = bios bdos fs util
 # Optional directories may be disabled for reduced features.
 optional-dirs-y = vdi
 optional-dirs-$(CONF_WITH_AES) += aes desk
+optional-dirs-$(CONF_WITH_X32_AES) += aes
 optional-dirs-$(CONF_WITH_CLI) += cli
 optional-dirs-$(CONF_WITH_USB) += usb
 
@@ -870,6 +871,48 @@ obj/x32/VDIPLT.TOS: obj/x32/vdi-import-plt.elf ptos-elf-pack
 x32-vdi-import-test: obj/x32/VDIIMP.TOS obj/x32/VDIREL.TOS obj/x32/VDIPLT.TOS
 	python3 tests/x32_vdi_import/check_imports.py obj/x32
 
+# Native AES client stubs and the existing application-local rectangle helpers.
+X32_AES_OBJ = obj/x32/aes_client.o obj/x32/aes_rectfunc.o
+obj/x32/aes_client.o: aes/x32/aes_client.c include/aes_client.h include/aes_service.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
+obj/x32/aes_rectfunc.o: util/rectfunc.c include/grect.h include/rectfunc.h $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj -MMD -MP -c $< -o $@
+obj/x32/libptos-aes.a: $(X32_AES_OBJ)
+	$(X32_CROSS_COMPILE)ar rcs $@ $^
+obj/x32/libptos-aes.so.1: aes/x32/aes_import_stub.S include/aes_client_exports.h | obj/x32
+	$(X32_CC) $(X32_CFLAGS) -Iinclude -nostdlib -shared -Wl,-shared,-m,elf32_x86_64 \
+	  -Wl,--build-id=none -Wl,-soname,libptos-aes.so.1 -o $@ $<
+obj/x32/aes_image.ld: aes/x32/aes_image.ld.S include/x32aes_image.h include/aes_client_exports.h | obj/x32
+	$(X32_CC) -E -P -x c -Iinclude $< -o $@
+obj/x32/aes_client.elf: $(X32_AES_OBJ) obj/x32/aes_image.ld
+	$(X32_CC) -mx32 -nostdlib -static -no-pie -Wl,-m,elf32_x86_64 \
+	  -Wl,--build-id=none -Wl,-T,obj/x32/aes_image.ld -o $@ $(X32_AES_OBJ)
+obj/x32/aes_client.bin: obj/x32/aes_client.elf
+	$(X32_CROSS_COMPILE)objcopy -O binary $< $@
+obj/aes_image.o: obj/x32/aes_client.bin
+.PHONY: x32-aes
+x32-aes: obj/x32/libptos-aes.a obj/x32/libptos-aes.so.1
+# Loaded AES applications import both native client namespaces.
+obj/x32/aes-import-reloc.elf: X32_AES_IMPORT_BASE = -Wl,-Ttext-segment=0x20000000
+obj/x32/aes-import.elf obj/x32/aes-import-reloc.elf: \
+  tests/aes_contract/aes_import.c tests/aes_contract/aes_roundtrip.c \
+  tests/aes_contract/aes_contract.c tests/x32_probe/x32_probe_start.S \
+  obj/x32/libptos-aes.so.1 obj/x32/libptos-vdi.so.1 $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(filter-out -fno-pie,$(X32_CLI_CFLAGS)) -fPIE -DAES_IMPORT_TEST -Iinclude -Iobj \
+	  -nostdlib -Wl,-pie,--no-dynamic-linker,--build-id=none -Wl,-m,elf32_x86_64 \
+	  -Wl,-z,max-page-size=0x1000,-z,noseparate-code -Wl,-e,_start \
+	  $(X32_AES_IMPORT_BASE) -o $@ $(filter %.c %.S,$^) -Lobj/x32 \
+	  -l:libptos-aes.so.1 -l:libptos-vdi.so.1
+obj/x32/AESIMP.TOS: obj/x32/aes-import.elf ptos-elf-pack
+	./ptos-elf-pack --strip-shdr $< $@
+obj/x32/AESREL.TOS: obj/x32/aes-import-reloc.elf ptos-elf-pack
+	./ptos-elf-pack --strip-shdr $< $@
+.PHONY: x32-aes-import-test
+x32-aes-import-test: obj/x32/AESIMP.TOS obj/x32/AESREL.TOS
+	python3 tests/aes_contract/check_imports.py obj/x32
+
+-include $(X32_AES_OBJ:.o=.d)
+
 -include $(X32_VDI_OBJ:.o=.d)
 
 
@@ -910,10 +953,12 @@ endif
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S \
                     tests/vdi_contract/vdi_contract.c tests/vdi_contract/vdi_roundtrip.c \
+                    tests/aes_contract/aes_contract.c tests/aes_contract/aes_roundtrip.c \
+                    include/aes_client.h include/aes_service.h include/rectfunc.h include/grect.h \
                     include/vdi_user.h include/vdipb.h include/vdi_service.h include/userptr.h \
-                    obj/x32/libptos-vdi.a $(AUTOCONF_H) | obj/x32
+                    obj/x32/libptos-vdi.a obj/x32/libptos-aes.a $(AUTOCONF_H) | obj/x32
 	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj $(X32_CLI_LDFLAGS) -o $@ \
-	  $(filter %.c %.S,$^) obj/x32/libptos-vdi.a
+	  $(filter %.c %.S,$^) obj/x32/libptos-vdi.a obj/x32/libptos-aes.a
 
 obj/x32probe_image.o: obj/x32/x32probe.elf
 endif
@@ -925,6 +970,14 @@ vdi-contract-test: $(AUTOCONF_H)
 	  tests/vdi_contract/vdi_contract.c vdi/vdi_user.c vdi/vdi_user_raster.c -o obj/vdi-contract-test
 	./obj/vdi-contract-test
 	python3 tests/vdi_contract/check_inventory.py
+
+.PHONY: aes-contract-test
+aes-contract-test: $(AUTOCONF_H)
+	$(filter-out -pedantic,$(NATIVECC)) -Iinclude -Iobj -DAES_CONTRACT_HOST_TEST \
+	  tests/aes_contract/aes_contract.c util/rectfunc.c -o obj/aes-contract-test
+	./obj/aes-contract-test
+
+TOCLEAN += obj/aes-contract-test
 
 TOCLEAN += obj/vdi-contract-test
 
@@ -1030,7 +1083,7 @@ mkflop: tools/mkflop.c
 
 # post-link tool packing an ELF's load relocations for bdos/elfld.c, see
 # doc/elfload.txt; not needed to build EmuTOS itself, built on demand
-ptos-elf-pack: tools/ptos-elf-pack.c
+ptos-elf-pack: tools/ptos-elf-pack.c include/aes_client_exports.h
 	$(NATIVECC) $< -o $@
 
 erd: tools/erd.c
@@ -1578,7 +1631,7 @@ endif
 
 # Standalone boot probes and the host/x32 contract checks are not ptest
 # suites, so they must never be linked into runtests.tos.
-TEST_SUITES := $(filter-out x32_hello x32_probe vdi_contract x32_vdi_import,$(TEST_SUITES))
+TEST_SUITES := $(filter-out x32_hello x32_probe vdi_contract x32_vdi_import aes_contract,$(TEST_SUITES))
 
 # raster_copy and text_blit draw through the VDI, which x86-64 refuses to user
 # processes until #548 (and tools/pBench/gem.c, their bindings, has none for
