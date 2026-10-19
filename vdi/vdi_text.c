@@ -276,13 +276,16 @@ static inline void justify_step(JUSTINFO *justified, WORD ch)
  *
  * 'width' is the pre-calculated width of the text on the screen;
  * if negative, it has not yet been calculated.  'align' is the width
- * the alignment is made for, if not negative: the whole string's, of
+ * the alignment is made for, unless ALIGN_UNSET: the whole string's (which
+ * a negative track offset can make negative), of
  * which this is the first run of characters in one font.  With 'cont',
  * this run follows one already output, where that one left off: it is
  * not aligned.  With 'more', another run follows this one, from where
  * it leaves off.  The underline of runs is drawn once, by the last, from
  * where the first started (kept in 'ul_start').
  */
+#define ALIGN_UNSET ((WORD)0x8000)     /* output_run(): align for the run's own width */
+
 static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
                        WORD width, WORD align, JUSTINFO *justified, BOOL cont, BOOL more,
                        Point *ul_start)
@@ -308,7 +311,7 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
 
     if (width < 0)      /* called from vdi_v_gtext() */
         width = calc_width(vwk, fnt_ptr, count, str);
-    if (align < 0)
+    if (align == ALIGN_UNSET)
         align = width;
 
     /* some data copying for the assembler part */
@@ -970,6 +973,8 @@ static BOOL next_run(Vwk *vwk, TEXT_RUN *r)
         {
             cp = next_char(vwk->char_map, r->str, r->count, &r->pos);
             place = char_place(vwk, cp, &ch);
+            if (cp < 0 && (vwk->cur_font->flags & F_SFONT))
+                cp = 0xfffdL;           /* drawn as the replacement character: kerned so */
         }
         if (r->n == 0)
             run_place = place;
@@ -1169,7 +1174,7 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
                 justified->wordx = justified->wordy = 0;
                 justified->rmword = 0;
             }
-            output_run(vwk, run.font, run.n, run.chars, -1, cont ? -1 : width,
+            output_run(vwk, run.font, run.n, run.chars, -1, cont ? ALIGN_UNSET : width,
                        justified, cont, run.pos < count, &ul_start);
             if (page)
             {
@@ -1183,7 +1188,7 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     }
 #endif
 
-    output_run(vwk, vwk->cur_font, count, str, width, -1, justified, FALSE, FALSE, NULL);
+    output_run(vwk, vwk->cur_font, count, str, width, ALIGN_UNSET, justified, FALSE, FALSE, NULL);
 }
 
 void vdi_v_gtext(Vwk * vwk)
@@ -1369,6 +1374,7 @@ void text_init2(Vwk * vwk)
     vwk->char_map = MAP_ATARI;
     vwk->sf_width = 0;
     vwk->sf_skew = 0;
+    vwk->sf_mirror = 0;
     vwk->pair_kern = FALSE;
     vwk->track_offset = 0;
 #endif
@@ -1494,7 +1500,7 @@ static void text_height(Vwk * vwk)
 
         if (index >= 0)
             f = vdi_sfont_size(index, vdi_sfont_size_for_top(index, PTSIN[1]), PTSIN[1],
-                               vwk->sf_width, vwk->sf_skew);
+                               vwk->sf_width, vwk->sf_skew, vwk->sf_mirror);
         if (f)
             vwk->cur_font = f;
         else
@@ -1655,7 +1661,7 @@ static void text_point(Vwk * vwk)
 
         if (index >= 0)
             f = vdi_sfont_size(index, vdi_sfont_size_for_points(INTIN[0]), 0,
-                               vwk->sf_width, vwk->sf_skew);
+                               vwk->sf_width, vwk->sf_skew, vwk->sf_mirror);
         if (f)
             vwk->cur_font = f;
         else
@@ -1726,6 +1732,7 @@ void vdi_vst_height(Vwk * vwk)
 {
 #if CONF_WITH_VDI_SCALABLE_FONTS
     vwk->sf_width = 0;
+    vwk->sf_mirror = 0;
 #endif
     text_height(vwk);
 }
@@ -1734,6 +1741,7 @@ void vdi_vst_point(Vwk * vwk)
 {
 #if CONF_WITH_VDI_SCALABLE_FONTS
     vwk->sf_width = 0;
+    vwk->sf_mirror = 0;
 #endif
     text_point(vwk);
 }
@@ -1803,6 +1811,10 @@ void vdi_vst_font(Vwk * vwk)
     WORD face;
     const Fonthead *test_font, **chain_ptr;
     BOOL found;
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    const Fonthead *old_font = vwk->cur_font;
+    BOOL exact = FALSE;                 /* a scalable font, sized here */
+#endif
 
     test_font = vwk->cur_font;
     point = test_font->point;
@@ -1828,16 +1840,35 @@ void vdi_vst_font(Vwk * vwk)
         if (index >= 0)
         {
             const Fonthead *f;
+            LONG size;
+            WORD want;
 
-            f = vwk->pts_mode
-                ? vdi_sfont_size(index, vdi_sfont_size_for_points(point), 0,
-                                 vwk->sf_width, vwk->sf_skew)
-                : vdi_sfont_size(index, vdi_sfont_size_for_top(index, dummy[1]), dummy[1],
-                                 vwk->sf_width, vwk->sf_skew);
+            /*
+             * the size as it was: from a scalable font, the exact one asked
+             * for (a fractional one from vst_arbpt32(), say), not its point
+             * size, which is rounded
+             */
+            if (old_font->flags & F_SFONT)
+            {
+                vdi_sfont_request(old_font, &size, &want);
+                if (want)
+                    size = vdi_sfont_size_for_top(index, want);
+            }
+            else if (vwk->pts_mode)
+            {
+                size = vdi_sfont_size_for_points(point);
+                want = 0;
+            }
+            else
+            {
+                size = vdi_sfont_size_for_top(index, dummy[1]);
+                want = dummy[1];
+            }
+            f = vdi_sfont_size(index, size, want, vwk->sf_width, vwk->sf_skew, vwk->sf_mirror);
             if (f)
             {
                 test_font = f;
-                found = TRUE;
+                found = exact = TRUE;
             }
         }
     }
@@ -1850,6 +1881,17 @@ void vdi_vst_font(Vwk * vwk)
 
     /* Call down to the set text height routine to get the proper size */
     vwk->cur_font = test_font;
+
+#if CONF_WITH_VDI_SCALABLE_FONTS
+    if (exact)
+    {
+        /* already at its size: sizing it again from the points would round it */
+        vwk->scaled = FALSE;
+        vdi_sfont_trim();
+        INTOUT[0] = vwk->cur_font->font_id;
+        return;
+    }
+#endif
 
     old_intin = INTIN;
     old_ptsin = PTSIN;

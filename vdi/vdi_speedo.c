@@ -553,12 +553,16 @@ static LONG micron(void)
 }
 
 /* points in 16.16 fixed point as an em size in 1/64 pixel, and back */
+#define POINTS_MAX  (3000L << 16)    /* far past the biggest size, and no overflow */
+
 static LONG fix_to_em(LONG points)
 {
     LONG div = micron() * 72, q, r;
 
     if (points < 0x10000L)
         points = 0x10000L;
+    if (points > POINTS_MAX)
+        points = POINTS_MAX;
     q = points / div;
     r = points % div;
 
@@ -578,7 +582,7 @@ static void sfont_resize(Vwk *vwk, LONG size, WORD want)
     const Fonthead *f = NULL;
 
     if (index >= 0)
-        f = vdi_sfont_size(index, size, want, vwk->sf_width, vwk->sf_skew);
+        f = vdi_sfont_size(index, size, want, vwk->sf_width, vwk->sf_skew, vwk->sf_mirror);
     if (f)
         vwk->cur_font = f;
     else
@@ -615,13 +619,21 @@ void vdi_vst_arbpt(Vwk *vwk)
 
     if (vwk->cur_font->flags & F_SFONT)
     {
+        /* a negative height mirrors the characters along the x axis; the width follows */
+        BOOL mirrored = points < 0;
+
         vwk->pts_mode = TRUE;
         vwk->sf_width = 0;
-        sfont_resize(vwk, fix_to_em(points), 0);
+        vwk->sf_mirror = mirrored ? SF_MIRROR_X : 0;
+        sfont_resize(vwk, fix_to_em(mirrored ? -points : points), 0);
         points = em_to_fix(vdi_sfont_em(vwk->cur_font));
+        if (mirrored)
+            points = -points;
     }
     else
     {
+        if (points < 0)
+            points = -points;           /* a bitmap font is not mirrored */
         bitmap_point(vwk, (WORD)((points + 0x8000L) >> 16));
         points = (LONG)vwk->cur_font->point << 16;
     }
@@ -653,10 +665,16 @@ void vdi_vst_setsize(Vwk *vwk)
 
     if (vwk->cur_font->flags & F_SFONT)
     {
+        /* a negative width mirrors the characters along the y axis */
+        BOOL mirrored = points < 0;
+
         sfont_request(vwk, &size, &want);
-        vwk->sf_width = fix_to_em(points);
+        vwk->sf_width = fix_to_em(mirrored ? -points : points);
+        vwk->sf_mirror = (vwk->sf_mirror & ~SF_MIRROR_Y) | (mirrored ? SF_MIRROR_Y : 0);
         sfont_resize(vwk, size, want);
         points = em_to_fix(vdi_sfont_em_width(vwk->cur_font));  /* what it came to */
+        if (mirrored)
+            points = -points;
     }
     else
         points = (LONG)vwk->cur_font->point << 16;
@@ -689,7 +707,7 @@ void vdi_vst_width(Vwk *vwk)
     size_answer(vwk);
 }
 
-/* vst_skew(): the slant, in 1/10 degree, to the right when positive */
+/* vst_skew(): the slant, in 1/10 degree, to the left when positive (as NVDI) */
 void vdi_vst_skew(Vwk *vwk)
 {
     WORD skew = INTIN[0];

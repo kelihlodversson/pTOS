@@ -69,6 +69,7 @@ typedef struct sf_size
     WORD want;                      /* the top asked for (vst_height()), or 0 */
     LONG width;                     /* em width, in 1/64 pixel; 0: as the size */
     WORD skew;                      /* slant, in 1/10 degree */
+    WORD mirror;                    /* SF_MIRROR_X, SF_MIRROR_Y */
     WORD page;                      /* Unicode page, or SF_ATARI */
     LONG ask_size;                  /* the request it answers: em size, */
     WORD ask_want;                  /* top, */
@@ -240,6 +241,7 @@ typedef struct
     WORD want;                      /* the top asked for, or 0 */
     LONG width;                     /* the em width, 0: as the size */
     WORD skew;                      /* the slant, in 1/10 degree */
+    WORD mirror;                    /* SF_MIRROR_X, SF_MIRROR_Y */
     WORD page;                      /* the Unicode page, or SF_ATARI */
     BOOL render;                    /* FALSE: only measure it */
     ULONG bytes;                    /* the block it takes */
@@ -331,13 +333,14 @@ static BOOL sf_set(SF_BUILD *b)
     /*
      * Slanted (vst_skew()) about a quarter of the em above the baseline,
      * where the middle of most lower case letters is: what leaves the
-     * cell (sf_build()) is then shared between its two sides
+     * cell (sf_build()) is then shared between its two sides.  A positive
+     * angle leans the characters to the left, as NVDI has it.
      */
     if (b->skew)
     {
         m.xx = m.yy = 0x10000L;
         m.yx = 0;
-        m.xy = FT_Tan((FT_Angle)b->skew * 0x10000L / 10);
+        m.xy = FT_Tan(-(FT_Angle)b->skew * 0x10000L / 10);
         delta.x = -FT_MulFix(b->size / 4, m.xy);
         delta.y = 0;
         FT_Set_Transform(sf_face, &m, &delta);
@@ -433,6 +436,57 @@ static WORD sf_bearing_y(UWORD ch)
 }
 
 /*
+ * Mirrored (a negative size in vst_arbpt32() or vst_setsize32()): along
+ * the x axis, the rows of the cells upside down; along the y axis, each
+ * character's cell left to right.  The cells, and so the advances and the
+ * alignment lines, stay where they are.
+ */
+static void sf_mirror(UBYTE *form, const SF_LAYOUT *l, WORD mirror)
+{
+    UWORD fw = l->form_width, fh = l->form_height, row, ch;
+    UBYTE *a, *b, t;
+    LONG x, left, right;
+    UWORD i;
+
+    if (mirror & SF_MIRROR_X)
+        for (row = 0; row < fh / 2; row++)
+        {
+            a = form + (ULONG)row * fw;
+            b = form + (ULONG)(fh - 1 - row) * fw;
+            for (i = 0; i < fw; i++)
+            {
+                t = a[i];
+                a[i] = b[i];
+                b[i] = t;
+            }
+        }
+
+    if (mirror & SF_MIRROR_Y)
+        for (ch = 0; ch < SF_CHARS; ch++)
+            for (row = 0; row < fh; row++)
+            {
+                a = form + (ULONG)row * fw;
+                for (left = l->off[ch], right = (LONG)l->off[ch + 1] - 1; left < right;
+                     left++, right--)
+                {
+                    BOOL lb = (a[left >> 3] & (0x80 >> (left & 7))) != 0;
+                    BOOL rb = (a[right >> 3] & (0x80 >> (right & 7))) != 0;
+
+                    x = left;
+                    if (rb)
+                        a[x >> 3] |= (UBYTE)(0x80 >> (x & 7));
+                    else
+                        a[x >> 3] &= (UBYTE)~(0x80 >> (x & 7));
+                    x = right;
+                    if (lb)
+                        a[x >> 3] |= (UBYTE)(0x80 >> (x & 7));
+                    else
+                        a[x >> 3] &= (UBYTE)~(0x80 >> (x & 7));
+                }
+            }
+}
+
+/*
  * Measure a size, or render it: exactly that size, which the caller has
  * found fits (b->bytes and b->drawable say whether it does)
  */
@@ -513,6 +567,8 @@ static long sf_build(void *arg)
         }
     }
 
+    sf_mirror(form, &l, b->mirror);
+
     h = &s->head;
     bzero(h, sizeof(*h));
     h->font_id = vdi_sfonts[b->index].id;
@@ -554,6 +610,7 @@ static long sf_build(void *arg)
     s->want = b->want;
     s->width = b->width;
     s->skew = b->skew;
+    s->mirror = b->mirror;
     s->page = b->page;
     s->ask_size = b->size;
     s->ask_want = b->want;
@@ -611,7 +668,8 @@ static SF_SIZE *sf_find(const SF_BUILD *b)
     SF_SIZE *s;
 
     for (s = sf_sizes; s; s = s->next)
-        if (s->sfont == b->index && s->skew == b->skew && s->page == b->page
+        if (s->sfont == b->index && s->skew == b->skew && s->mirror == b->mirror
+            && s->page == b->page
             && ((s->size == b->size && s->want == b->want && s->width == b->width)
                 || (s->ask_size == b->size && s->ask_want == b->want
                     && s->ask_width == b->width)))
@@ -637,10 +695,11 @@ static void sf_keep(SF_SIZE *s)
 
 /*
  * A scalable font at an em size (in 1/64 pixel), or with the top 'want'
- * when that is not 0 (vst_height()), an em width (0 for the size) and a
- * slant: from the cache, or rendered
+ * when that is not 0 (vst_height()), an em width (0 for the size), a
+ * slant and a mirroring: from the cache, or rendered
  */
-const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want, LONG width, WORD skew)
+const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want, LONG width, WORD skew,
+                               WORD mirror)
 {
     SF_BUILD b;
     SF_SIZE *s;
@@ -662,6 +721,7 @@ const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want, LONG width, WOR
     b.want = want;
     b.width = width;
     b.skew = skew;
+    b.mirror = mirror;
     b.page = SF_ATARI;
     s = sf_find(&b);
     if (s)
@@ -788,6 +848,7 @@ const Fonthead *vdi_sfont_page(const Fonthead *font, UWORD page)
     b.want = base->want;
     b.width = base->width;
     b.skew = base->skew;
+    b.mirror = base->mirror;
     b.page = (WORD)page;
     b.result = NULL;
     s = sf_find(&b);

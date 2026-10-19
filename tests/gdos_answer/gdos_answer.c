@@ -1008,8 +1008,66 @@ static void check_kerning(short handle)
                    "a track offset of less than 1/64 pixel does not add up");
     }
     kern_mode(handle, 0, 0, 0);
+
+    /* UTF-16: a lone surrogate is U+FFFD, track offsets around it included */
+    {
+        static const short lone[3] = { 'n', (short)0xd800, 'n' };
+        static const short repl[3] = { 'n', (short)0xfffd, 'n' };
+        short extent[8], w_lone, tracks, kpairs;
+
+        vst_map_mode(handle, MAP_UTF16);
+        vst_track_offset(handle, 4L << 16, 0, &tracks, &kpairs);
+        vqt_f_extent(handle, lone, 3, extent);
+        w_lone = extent[2] - extent[0];
+        vqt_f_extent(handle, repl, 3, extent);
+        vst_track_offset(handle, 0, 0, &tracks, &kpairs);
+        vst_map_mode(handle, MAP_ATARI);
+        font_check(w_lone == extent[2] - extent[0],
+                   "a lone surrogate does not get the track offset U+FFFD gets");
+    }
     intin[0] = 12;
     vdi_op(107, 1, handle);
+}
+
+/* sizes: mirroring, very big ones, and keeping a fractional one */
+static void check_sizes_more(short handle, short id)
+{
+    short dummy, top_big, top300, n, top_half, top_up;
+    long got;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+
+    /* negative: mirrored, and answered so */
+    got = vst_arbpt32(handle, -(24L << 16), &dummy, &dummy, &dummy, &dummy);
+    font_check(got < -(23L << 16) && got > -(25L << 16), "vst_arbpt32() does not answer a negative height");
+    got = vst_setsize32(handle, -(30L << 16), &dummy, &dummy, &dummy, &dummy);
+    font_check(got < 0, "vst_setsize32() does not answer a negative width");
+    vst_arbpt(handle, 12, &dummy, &dummy, &dummy, &dummy);
+
+    /* far too big: the biggest size, not the smallest */
+    vst_arbpt(handle, 300, &dummy, &top300, &dummy, &dummy);
+    vst_arbpt32(handle, 30000L << 16, &dummy, &top_big, &dummy, &dummy);
+    font_check(top_big >= top300, "a size of 30000 points is not the biggest");
+
+    /* a fractional size stays when the font is selected again */
+    for (n = 10; n < 40; n++)
+    {
+        vst_arbpt(handle, n + 1, &dummy, &top_up, &dummy, &dummy);
+        vst_arbpt32(handle, ((long)n << 16) + 0x8000L, &dummy, &top_half, &dummy, &dummy);
+        if (top_half != top_up)
+            break;
+    }
+    if (n < 40)
+    {
+        intin[0] = id;
+        vdi_op(21, 1, handle);          /* vst_font(), the same */
+        vdi_op(38, 0, handle);          /* vqt_attributes() */
+        font_check(ptsout[1] == top_half, "selecting a font again loses its fractional size");
+    }
+    vst_arbpt(handle, 12, &dummy, &dummy, &dummy, &dummy);
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
 }
 
 /* vst_arbpt() and the other size calls, and the metrics */
@@ -1486,6 +1544,109 @@ static void check_unicode(short handle, short id, int pixels)
     vdi_op(21, 1, handle);              /* back to the system font */
 }
 
+/* the row with the most ink in the area, and the leftmost ink of a row */
+static short ink_row_max(short handle, short x0, short y0, short x1, short y1)
+{
+    short x, y, best = -1, best_n = -1, n;
+
+    for (y = y0; y <= y1; y++)
+    {
+        for (x = x0, n = 0; x <= x1; x++)
+        {
+            ptsin[0] = x;
+            ptsin[1] = y;
+            ptsin_op(105, 1, 0, handle);    /* v_get_pixel() */
+            n += intout[1] != 0;
+        }
+        if (n > best_n)
+        {
+            best_n = n;
+            best = y;
+        }
+    }
+    return best;
+}
+
+static short ink_left(short handle, short x0, short x1, short y)
+{
+    short x;
+
+    for (x = x0; x <= x1; x++)
+    {
+        ptsin[0] = x;
+        ptsin[1] = y;
+        ptsin_op(105, 1, 0, handle);    /* v_get_pixel() */
+        if (intout[1])
+            return x;
+    }
+    return -1;
+}
+
+/*
+ * Shapes (#577): vst_skew() leans to the left when positive, a negative
+ * height mirrors upside down, and centred text whose track offset makes
+ * it negatively wide stays centred
+ */
+static void check_shapes(short handle, short id)
+{
+    struct ink ink;
+    short dummy, top_x, bottom_x, row_normal, row_mirrored, adv_n, tracks, pairs;
+    static const short l[1] = { 'l' };
+    static const short big_l[1] = { 'L' };
+    static const short ns[4] = { 'n', 'n', 'n', 'n' };
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    vst_arbpt(handle, 48, &dummy, &dummy, &dummy, &dummy);
+    ink_r = 40;
+    ink_cx = ink_cy = ink_r + 4;
+
+    /* 'l', slanted by 20 degrees: its top left of its bottom */
+    vst_skew(handle, 200);
+    ink_clear(handle);
+    v_ftext(handle, ink_cx - 10, ink_cy + 20, l, 1);
+    ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &ink);
+    vst_skew(handle, 0);
+    top_x = ink_left(handle, ink.x0, ink.x1, ink.y0 + 1);
+    bottom_x = ink_left(handle, ink.x0, ink.x1, ink.y1 - 1);
+    font_check(ink.count > 0 && top_x >= 0 && bottom_x >= 0 && top_x < bottom_x,
+               "vst_skew() with a positive angle does not lean to the left");
+
+    /* 'L' upside down: its bar at the top */
+    ink_clear(handle);
+    v_ftext(handle, ink_cx - 10, ink_cy + 20, big_l, 1);
+    ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &ink);
+    row_normal = ink_row_max(handle, ink.x0, ink.y0, ink.x1, ink.y1);
+    vst_arbpt32(handle, -(48L << 16), &dummy, &dummy, &dummy, &dummy);
+    ink_clear(handle);
+    v_ftext(handle, ink_cx - 10, ink_cy + 20, big_l, 1);
+    ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &ink);
+    row_mirrored = ink_row_max(handle, ink.x0, ink.y0, ink.x1, ink.y1);
+    vst_arbpt(handle, 18, &dummy, &dummy, &dummy, &dummy);
+    font_check(row_normal > ink.y0 + (ink.y1 - ink.y0) / 2 && row_mirrored < ink.y0 + (ink.y1 - ink.y0) / 2,
+               "a negative height does not turn the characters upside down");
+
+    /* centred, with a track offset of minus two advances: still about the point */
+    vqt_advance(handle, 'n', &adv_n, &dummy, &dummy, &dummy);
+    intin[0] = 1;
+    intin[1] = 0;
+    vdi_op(39, 2, handle);              /* vst_alignment(centre, baseline) */
+    vst_track_offset(handle, -2L * adv_n << 16, 0, &tracks, &pairs);
+    ink_clear(handle);
+    v_ftext(handle, ink_cx, ink_cy, ns, 4);
+    vst_track_offset(handle, 0, 0, &tracks, &pairs);
+    intin[0] = 0;
+    intin[1] = 0;
+    vdi_op(39, 2, handle);
+    ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &ink);
+    font_check(ink.count > 0 && (ink.x0 + ink.x1) / 2 >= ink_cx - adv_n
+               && (ink.x0 + ink.x1) / 2 <= ink_cx + adv_n,
+               "centred text with a negative width is not centred");
+
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
 static void check_fonts(void)
 {
     short handle, system_fonts, i, aes_there, drive, id;
@@ -1563,6 +1724,9 @@ static void check_fonts(void)
         intin[0] = system_fonts + 1;
         vdi_op(130, 1, handle);         /* vqt_name() */
         check_metrics(handle, intout[0]);
+        intin[0] = system_fonts + 1;
+        vdi_op(130, 1, handle);         /* vqt_name() */
+        check_sizes_more(handle, intout[0]);
     }
     for (i = 1; i <= fonts_loaded; i++)
     {
@@ -1585,6 +1749,7 @@ static void check_fonts(void)
             check_large(handle, id);
             check_run_pixels(handle, id);
             check_unicode(handle, id, 1);
+            check_shapes(handle, id);
         }
     }
 

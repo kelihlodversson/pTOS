@@ -250,6 +250,7 @@ struct Vwk_ {
     WORD char_map;              /* vst_map_mode(): MAP_ATARI, ... */
     LONG sf_width;              /* vst_setsize(): em width, 1/64 pixel; 0: as the height */
     WORD sf_skew;               /* vst_skew(): slant, 1/10 degree */
+    WORD sf_mirror;             /* negative sizes: SF_MIRROR_X, SF_MIRROR_Y */
     BOOL pair_kern;             /* vst_kern(): pair kerning on */
     LONG track_offset;          /* vst_track_offset(): added per character, 16.16 pixels */
 #endif

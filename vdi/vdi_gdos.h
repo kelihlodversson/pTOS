@@ -73,10 +73,15 @@ LONG vdi_sfont_size_for_points(WORD points);
 LONG vdi_sfont_size_for_top(WORD index, WORD top);
 
 /* a scalable font at that em size (1/64 pixel), or with that top when
- * want is not 0, at that em width (0: as the size) and slant (1/10
- * degree), rendered or from the cache; NULL if it cannot be had (no
- * memory, a font file gone) */
-const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want, LONG width, WORD skew);
+ * want is not 0, at that em width (0: as the size), slant (1/10 degree)
+ * and mirroring (SF_MIRROR_X, SF_MIRROR_Y), rendered or from the cache;
+ * NULL if it cannot be had (no memory, a font file gone) */
+const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want, LONG width, WORD skew,
+                               WORD mirror);
+
+/* the mirroring of a size: upside down (a negative height), left to right (width) */
+#define SF_MIRROR_X         1
+#define SF_MIRROR_Y         2
 
 /* a Unicode page of a workstation's current size, or NULL */
 const Fonthead *vdi_sfont_page(const Fonthead *font, UWORD page);
