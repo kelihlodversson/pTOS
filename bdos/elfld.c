@@ -1243,17 +1243,17 @@ LONG elf_pgmld(FH h, PD *p)
         }
         else
         {
-            if (info.link_base >= USER_IMAGE_BASE
-             && ((ULONG)info.mem_end + USER_PAGE_SIZE - 1) / USER_PAGE_SIZE
-                * USER_PAGE_SIZE <= limit)
+            /* (limit is page-aligned, so the end rounded up to a page is
+             * within it exactly when the end is: no rounding that could wrap
+             * a high-linked image's end to 0 on a 32-bit VADDR) */
+            if (info.link_base >= USER_IMAGE_BASE && info.mem_end <= limit)
                 bias = 0;
             else
                 bias = (LONG)(USER_IMAGE_BASE - lo);
             /* (span first: it keeps the sums below from wrapping) */
             if (span > limit - USER_IMAGE_BASE
              || (ULONG)info.link_base + (ULONG)bias < USER_IMAGE_BASE
-             || ((ULONG)info.mem_end + (ULONG)bias + USER_PAGE_SIZE - 1)
-                / USER_PAGE_SIZE * USER_PAGE_SIZE > limit)
+             || (ULONG)info.mem_end + (ULONG)bias > limit)
             {
                 KDEBUG(("BDOS elf_pgmld: image does not fit the image window\n"));
                 return ENSMEM;
