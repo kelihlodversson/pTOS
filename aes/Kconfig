@@ -23,8 +23,8 @@ config CONF_WITH_X32_AES
 
 config CONF_WITH_AES
 	bool "Include the AES and the EmuDesk desktop"
-	depends on !ARCH_X86_64
-	default n if TARGET_CART
+	depends on !ARCH_X86_64 || CONF_WITH_X32_AES
+	default n if TARGET_CART || ARCH_X86_64
 	default y
 	help
 	  Without the AES there is no graphical desktop; EmuTOS boots
@@ -32,8 +32,8 @@ config CONF_WITH_AES
 	  This is only useful when the image size is severely restricted,
 	  such as for the diagnostic cartridge.
 
-	  Not available on x86-64: its processes run in ring 3, and the AES
-	  and EmuDesk have not been moved there yet.
+	  On x86-64 the native AES/EmuDesk runs in the kernel and loaded
+	  accessories use the typed ring-3 AES and VDI services.
 
 if CONF_WITH_AES
 

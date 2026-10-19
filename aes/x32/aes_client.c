@@ -46,3 +46,12 @@ LONG aes_wind_update(WORD code)
 {
     return service(AES_SERVICE_UPDATE, (UWORD)code, 0);
 }
+
+LONG aes_evnt_wait(UWORD mask, AES_EVENT *event)
+{
+    return service(AES_SERVICE_WAIT, mask, (uintptr_t)event);
+}
+LONG aes_appl_yield(void)
+{
+    return service(AES_SERVICE_YIELD, 0, 0);
+}

@@ -9,9 +9,8 @@
  * array.  osif() is only what a process's `syscall` reaches, and the only
  * place that looks at a caller's pointers (bdos/uaccess.c).
  *
- * Only the calls kernel code makes exist; one that needs more is added here
- * with the translation osif() does for it (a handle to its open file, for
- * instance, which is why there is no Fread() or Fwrite() yet).
+ * Only the calls kernel code makes exist. File operations retain the
+ * normal handle resolution in xread()/xwrite() and the filesystem layer.
  *
  * osif() also catches the longjmp() the file system makes on a disk error.
  * A call that can reach the disk does the same here, minus the media change
@@ -118,4 +117,81 @@ long kdos_pexec(long mode, long path, long tail, long env)
 void kdos_pterm(long rc)
 {
     (void)DISK_CALL((xterm((UWORD)rc), 0L));
+}
+
+long kdos_cconws(long text)
+{
+    return xconws((char *)text);
+}
+long kdos_cconis(void)
+{
+    return xconstat();
+}
+long kdos_crawcin(void)
+{
+    return xrawcin();
+}
+long kdos_dgetdrv(void)
+{
+    return xgetdrv();
+}
+long kdos_fgetdta(void)
+{
+    return (long)xgetdta();
+}
+long kdos_fopen(long name, long mode)
+{
+    return DISK_CALL(xopen((char *)name, (WORD)mode));
+}
+long kdos_fcreate(long name, long attr)
+{
+    return DISK_CALL(xcreat((char *)name, (UBYTE)attr));
+}
+long kdos_fclose(long handle)
+{
+    return DISK_CALL(xclose((WORD)handle));
+}
+long kdos_fread(long handle, long count, long buffer)
+{
+    return DISK_CALL(xread((WORD)handle, count, (void *)buffer));
+}
+long kdos_fwrite(long handle, long count, long buffer)
+{
+    return DISK_CALL(xwrite((WORD)handle, count, (void *)buffer));
+}
+long kdos_fseek(long offset, long handle, long mode)
+{
+    return DISK_CALL(xlseek((LONG)offset, (WORD)handle, (WORD)mode));
+}
+long kdos_fdelete(long name)
+{
+    return DISK_CALL(xunlink((char *)name));
+}
+long kdos_frename(long zero, long oldname, long newname)
+{
+    return DISK_CALL(xrename((WORD)zero, (char *)oldname, (char *)newname));
+}
+long kdos_fattrib(long name, long flag, long attr)
+{
+    return DISK_CALL(xchmod((char *)name, (WORD)flag, (WORD)attr));
+}
+long kdos_fdatime(long buffer, long handle, long flag)
+{
+    return DISK_CALL(xgsdtof((DOSTIME *)buffer, (WORD)handle, (WORD)flag));
+}
+long kdos_dcreate(long name)
+{
+    return DISK_CALL(xmkdir((char *)name));
+}
+long kdos_ddelete(long name)
+{
+    return DISK_CALL(xrmdir((char *)name));
+}
+long kdos_dgetpath(long buffer, long drive)
+{
+    return DISK_CALL(xgetdir((char *)buffer, (WORD)drive));
+}
+long kdos_dfree(long buffer, long drive)
+{
+    return DISK_CALL(xgetfree((LONG *)buffer, (WORD)drive));
 }

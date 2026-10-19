@@ -62,7 +62,7 @@ static void ev_rets(WORD rets[])
 /*
  *  Routine to block for a certain async event and return a single return code
  */
-WORD ev_block(WORD code, LONG lvalue)
+WORD ev_block(WORD code, intptr_t lvalue)
 {
     mwait(iasync(code, lvalue));
 
@@ -125,7 +125,7 @@ void ev_mesag(WORD *mebuff)
  */
 void ev_mouse(MOBLK *pmo, WORD rets[])
 {
-    ev_block(MU_M1, (LONG)pmo);
+    ev_block(MU_M1, (intptr_t)pmo);
     ev_rets(rets);
     rets[2] = button;   /* always use current button state */
 }
@@ -242,20 +242,20 @@ WORD ev_multi(WORD flags, MOBLK *pmo1, MOBLK *pmo2, LONG tmcount,
             iasync(MU_BUTTON, buparm);
         /* wait for mouse rectangles */
         if (flags & MU_M1)
-            iasync(MU_M1, (LONG)pmo1);
+            iasync(MU_M1, (intptr_t)pmo1);
         if (flags & MU_M2)
-            iasync(MU_M2, (LONG)pmo2);
+            iasync(MU_M2, (intptr_t)pmo2);
 #if CONF_WITH_MENU_EXTENSION
         if (flags & MU_M3)
-            iasync(MU_M3, (LONG)pmo3);
+            iasync(MU_M3, (intptr_t)pmo3);
 #endif
         /* wait for message */
         if (flags & MU_MESAG)
         {
             m.qpb_ppd = rlr;
             m.qpb_cnt = 16;
-            m.qpb_buf = (LONG)mebuff;
-            iasync(MU_MESAG, (LONG)&m);
+            m.qpb_buf = (intptr_t)mebuff;
+            iasync(MU_MESAG, (intptr_t)&m);
         }
         /* wait for timer */
         if (flags & MU_TIMER)

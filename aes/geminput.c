@@ -580,7 +580,7 @@ void bpend_cancel(LONG parm)
 }
 
 
-void amouse(EVB *e, LONG pmo)
+void amouse(EVB *e, intptr_t pmo)
 {
     MOBLK   mob;
 

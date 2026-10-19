@@ -58,6 +58,7 @@ void vdi_user_raster_execute(const VDI_SERVICE_RASTER_REQUEST *request,
 #if CONF_WITH_X32_VDI && !defined(__ILP32__)
 LONG vdi_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d);
 void vdi_service_process_exit(PD *pd);
+void vdi_service_physical_state(BOOL opened);
 #if CONF_WITH_USER_CALLBACKS
 void vdi_service_callback_work(void);
 void vdi_service_callback_event(UWORD signature, LONG a, LONG b);

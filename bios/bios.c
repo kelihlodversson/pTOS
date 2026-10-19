@@ -113,7 +113,7 @@ extern void run_cartridge_applications(WORD typebit); /* found in startup.S */
 #if CONF_WITH_USER_ASPACE
 #include "progimage.h"
 extern BOOL kproc_set_image(PD *pd, const PROG_IMAGE *image);    /* bdos/kproc.c */
-static void start_builtin_cli(char *env);
+void start_builtin_cli(char *env);
 extern void set_owner(void *addr, PD *p);           /* bdos/mem.c */
 extern void proc_free_owned(PD *p);               /* bdos/proc.c */
 #else
@@ -296,7 +296,7 @@ extern PFVOID vbl_list[8]; /* Default array for vblqueue */
  * ENTRY_PROGRAM (doc/process-entry.txt), talks to the kernel only through
  * `syscall`, and returns here, with its exit code, when it calls Pterm().
  */
-static void start_builtin_cli(char *env)
+void start_builtin_cli(char *env)
 {
     PD *pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", env);
     long rc;
@@ -1129,6 +1129,12 @@ void biosmain(void)
          */
         PD *pd;
         pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", default_env);
+#if ARCH_X86_64
+        {
+            extern void mark_kernel_code_pd(PD *pd);
+            mark_kernel_code_pd(pd);
+        }
+#endif
         pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *) exec_os);
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
         Pexec(PE_GO, "", (char *)pd, default_env);

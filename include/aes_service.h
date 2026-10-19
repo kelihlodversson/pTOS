@@ -13,10 +13,13 @@
 #define AES_SERVICE_READ 4
 #define AES_SERVICE_POLL 5
 #define AES_SERVICE_UPDATE 6
+#define AES_SERVICE_WAIT 7
+#define AES_SERVICE_YIELD 8
 #if defined(ARCH_X86_64) && !defined(__ILP32__)
 #include "bdosdefs.h"
 typedef struct aes_client_state AES_CLIENT_STATE;
 LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d);
 void aes_service_process_exit(PD *pd);
+LONG aes_service_kernel_message(PD *pd, const WORD *message);
 #endif
 #endif

@@ -127,7 +127,7 @@ EVSPEC mwait(EVSPEC mask)
 }
 
 
-EVSPEC iasync(WORD afunc, LONG aparm)
+EVSPEC iasync(WORD afunc, intptr_t aparm)
 {
     EVB *e;
 

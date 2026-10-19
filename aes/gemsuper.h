@@ -15,8 +15,8 @@ typedef struct aespb {
     WORD *global;
     WORD *intin;
     WORD *intout;
-    LONG *addrin;
-    LONG *addrout;
+    intptr_t *addrin;
+    intptr_t *addrout;
 } AESPB;
 
 #endif

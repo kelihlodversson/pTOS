@@ -71,44 +71,9 @@ C_SYM(psetup):
         mov     %rcx, UDA_SPSUPER(%rax)
         ret
 
-/*
- * void gotopgm(void)
- *
- * Launches the top of the rlr list: the entry point for a genuinely
- * loaded accessory/program process (AESPD->p_ldaddr pointing at a real,
- * separately loaded basepage's TEXT segment -- see aes/gempd.c's
- * pstart(gotopgm, ...) and aes/geminit.c's load_one_acc(), the only
- * caller that ever hands psetup() this particular pcode).
- *
- * Every other x86-64 AES process (process 0 itself, and the always-
- * present internal "SCRENMGR" control process geminit.c's iprocess()
- * creates) is instead psetup()'d directly with its own real C function
- * as codevalue, never through here -- see this file's own top comment
- * and aes/geminit.c's iprocess(). Those never need gotopgm() at all,
- * because they never involve loading code from disk into the shared TPA
- * pool in the first place.
- *
- * A genuinely loaded accessory does need that (real TEXT/DATA/BSS,
- * loaded by aes/gemdosifc.c's pgmld() into the same TPA pool a
- * top-level Pexec()'d process uses), which on this arch means running
- * ring 3 code inside a process address space nothing has built for it
- * (unlike a top-level Pexec(), bdos/arch/x86_64/rwa.c's gouser() is
- * never involved in constructing one here) -- out of scope for this
- * milestone (#375: get a desktop with no accessories configured up and
- * running). Panic with a clear message rather than silently misbehaving
- * if this configuration is ever actually exercised (e.g. a .ACC file
- * present on the boot media); a future issue should extend this once a
- * real design for it exists.
- */
+/* The trusted association was prepared before pstart published this task. */
 C_SYM(gotopgm):
-        lea     .Lgotopgm_msg(%rip), %rdi
-        xor     %eax, %eax
-        jmp     C_SYM(panic)
-
-        SECTION_RODATA
-.Lgotopgm_msg:
-        .asciz  "x86-64: gotopgm() (loaded AES accessory/program launch) not yet implemented\n"
-        .text
+        jmp     C_SYM(x86_64_aes_enter)
 
 /*
  * void dsptch(void)
@@ -141,6 +106,9 @@ C_SYM(dsptch):
         mov     C_SYM(rlr)(%rip), %rax  /* rax = rlr (AESPD*) */
         mov     PD_UDA(%rax), %rax      /* rax = rlr->p_uda */
         mov     %rsp, UDA_SPSUPER(%rax)
+
+        sub     $8, %rsp
+        call    C_SYM(x86_64_aes_save)
 
         lea     gemasm_stack(%rip), %rsp
         sub     $8, %rsp        /* land %rsp % 16 == 8, matching the SysV
@@ -175,6 +143,9 @@ C_SYM(dsptch):
  * rdi = puda
  */
 C_SYM(switchto):
+        push    %rdi
+        call    C_SYM(x86_64_aes_restore)
+        pop     %rdi
         movb    $0, C_SYM(indisp)(%rip)
 
         mov     UDA_SPSUPER(%rdi), %rsp

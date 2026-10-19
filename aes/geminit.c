@@ -61,6 +61,11 @@
 #include "biosdefs.h"
 #include "kprint.h"
 #include "asm.h"
+#if ARCH_X86_64
+#include "aes_accessory.h"
+#include "process.h"
+#include "kheap.h"
+#endif
 
 extern LONG init_p0_stkptr(void); /* called only from gemstart.S */
 extern void run_accs_and_desktop(void); /* called only from gemstart.S */
@@ -255,6 +260,22 @@ static AESPD *iprocess(char *pname, PFVOID routine)
  */
 static void load_one_acc(ACC *acc)
 {
+#if ARCH_X86_64
+    LONG ret;
+    PD *pd;
+
+    acc->addr = -1L;
+    ret = Pexec(PE_LOAD, acc->name, "", NULL);
+    if (ret < 0)
+        return;
+    pd = (PD *)(uintptr_t)(ULONG)ret;
+    if (proc_prepare_accessory(pd)) {
+        proc_discard_accessory(pd);
+        return;
+    }
+    acc->addr = ret;
+    pstart(gotopgm, acc->name, ret);
+#else
     WORD    handle;
     WORD    err_ret;
     LONG    ret;
@@ -274,6 +295,7 @@ static void load_one_acc(ACC *acc)
         if (err_ret != -1)
             pstart(gotopgm, acc->name, acc->addr);
     }
+#endif
 }
 
 
@@ -315,11 +337,16 @@ static WORD count_accs(void)
  */
 static void free_accs(WORD n)
 {
+#if ARCH_X86_64
+    (void)n;
+    x86_64_aes_drain();
+#else
     WORD i;
 
     for (i = 0; i < n; i++)
         if (acc[i].addr >= 0L)
             dos_free((void *)acc[i].addr);
+#endif
 }
 
 
@@ -773,6 +800,11 @@ void run_accs_and_desktop(void)
     dsptch();                       /* off we go !!! */
     wait_for_accs(AP_MESAG);        /* wait until DAs have initialised */
 
+#if CONF_WITH_X32_ACCESSORY_TEST
+    if (x86_64_aes_test_run())
+        gl_changerez = TRUE;
+    else
+#endif
     sh_main(isauto, isgem);         /* main shell loop */
 
     free_accs(num_accs);            /* free DA memory */
@@ -847,7 +879,11 @@ void gem_main(void)
 
     D.g_acc = NULL;
     if (num_accs)
+#if ARCH_X86_64
+        D.g_acc = kalloc(num_accs*sizeof(AESPROCESS));
+#else
         D.g_acc = dos_alloc_anyram(num_accs*sizeof(AESPROCESS));
+#endif
     if (D.g_acc)
         bzero(D.g_acc,num_accs*sizeof(AESPROCESS));
     else num_accs = 0;
@@ -936,6 +972,9 @@ void gem_main(void)
     rlr->p_pid = curpid++;
     rlr->p_link = NULL;
 
+#if ARCH_X86_64
+    x86_64_aes_setup(rlr, NULL);
+#endif
     /* end of process init */
 
     /* restart the tick     */
@@ -951,7 +990,13 @@ void gem_main(void)
      * run the accessories and the desktop until termination
      * (for shutdown or resolution change)
      */
+#if CONF_WITH_X32_ACCESSORY_TEST
+    x86_64_aes_test_begin();
+#endif
     aes_run_rom_program(accdesk_start);
+#if CONF_WITH_X32_ACCESSORY_TEST
+    x86_64_aes_test_finish();
+#endif
 
     /* restore previous trap#2 address */
     disable_interrupts();
@@ -959,5 +1004,9 @@ void gem_main(void)
     enable_interrupts();
 
     if (D.g_acc)
+#if ARCH_X86_64
+        kfree(D.g_acc);
+#else
         dos_free(D.g_acc);
+#endif
 }

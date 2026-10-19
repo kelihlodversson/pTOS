@@ -1781,7 +1781,7 @@ void wm_update(WORD beg_update)
         if (beg_update)
         {
             if (!tak_flag(&wind_spb))
-                ev_block(MU_MUTEX, (LONG)&wind_spb);
+                ev_block(MU_MUTEX, (intptr_t)&wind_spb);
 
         }
         else

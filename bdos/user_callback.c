@@ -538,7 +538,10 @@ BOOL user_callback_syscall_allowed(UQUAD call, UQUAD first)
         user_callback_fault();
     if ((LONG)((ULONG)hz_200 - active->deadline) >= 0)
         user_callback_fault();
-    if (service == USER_CALLBACK_CLASS || service == 0x100 || service == 0x101)
+    /* Blocking/scheduling AES calls cannot suspend a callback continuation. */
+    if (service == 0x101)
+        return fn <= 6;
+    if (service == USER_CALLBACK_CLASS || service == 0x100)
         return TRUE;
     if (service != 1)
         return FALSE;
