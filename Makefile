@@ -952,6 +952,8 @@ endif
 # embedded the same way.
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S \
+                    tests/user_callback/callback_roundtrip.c tests/user_callback/callback_registers.S \
+                    include/user_callback.h \
                     tests/vdi_contract/vdi_contract.c tests/vdi_contract/vdi_roundtrip.c \
                     tests/aes_contract/aes_contract.c tests/aes_contract/aes_roundtrip.c \
                     include/aes_client.h include/aes_service.h include/rectfunc.h include/grect.h \
@@ -1632,7 +1634,7 @@ endif
 
 # Standalone boot probes and the host/x32 contract checks are not ptest
 # suites, so they must never be linked into runtests.tos.
-TEST_SUITES := $(filter-out x32_hello x32_probe vdi_contract x32_vdi_import aes_contract,$(TEST_SUITES))
+TEST_SUITES := $(filter-out x32_hello x32_probe vdi_contract x32_vdi_import aes_contract user_callback,$(TEST_SUITES))
 
 # raster_copy and text_blit draw through the VDI, which x86-64 refuses to user
 # processes until #548 (and tools/pBench/gem.c, their bindings, has none for

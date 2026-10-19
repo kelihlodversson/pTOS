@@ -20,6 +20,11 @@
 #include "trap.h"
 #include "vdi_service.h"
 #include "aes_service.h"
+#if CONF_WITH_USER_CALLBACKS
+#include "../../../bdos/user_callback.h"
+#include "../../../bdos/kproc.h"
+extern PD *run;
+#endif
 
 #include "../../../bdos/mem.h"
 #include "../../../include/biosdefs.h"
@@ -162,7 +167,21 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
     if (from_ring3)
         syscall_gs_swapped = 1;
+#if CONF_WITH_USER_CALLBACKS
+    if (from_ring3) {
+        kproc_record_rsp(run, x86_64_get_saved_user_rsp());
+        if (!user_callback_syscall_allowed(frame->rax)) {
+            frame->rax = (UQUAD)(QUAD)EACCDN;
+            syscall_gs_swapped = 0;
+            return;
+        }
+    }
+#endif
     trap_dispatch(frame, from_ring3);
+#if CONF_WITH_USER_CALLBACKS
+    if (from_ring3)
+        user_callback_return_work(x86_64_get_saved_user_rsp());
+#endif
     if (from_ring3)
         syscall_gs_swapped = 0;
 }
@@ -299,6 +318,12 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     }
 
     switch (trap_class) {
+#if CONF_WITH_USER_CALLBACKS
+    case USER_CALLBACK_CLASS:
+        frame->rax = (UQUAD)(QUAD)(from_ring3 ?
+            user_callback_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->rcx) : EINVFN);
+        break;
+#endif
     case AES_SERVICE_CLASS:
 #if CONF_WITH_X32_AES
         frame->rax = (UQUAD)(QUAD)(from_ring3 ?

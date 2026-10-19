@@ -44,6 +44,7 @@
 #define X86_64_DF_IST 1
 
 #ifndef __ASSEMBLER__
+#include "portab.h"
 
 /*
  * Builds a flat kernel-mode GDT (null, code64, data, the ring-3 SYSRET
@@ -63,6 +64,8 @@
  * panic.
  */
 void x86_64_gdt_init(void);
+UQUAD x86_64_get_irq_stack(void);
+void x86_64_set_irq_stack(UQUAD rsp);
 
 #endif /* __ASSEMBLER__ */
 

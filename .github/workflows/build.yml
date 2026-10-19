@@ -303,6 +303,7 @@ jobs:
           make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test aes-contract-test
           cp obj/x32/VDI*.TOS obj/x32/AES*.TOS esp/
           cp obj/x32/x32probe.elf esp/X32AES.TOS
+          cp obj/x32/x32probe.elf esp/X32CB.TOS
           cp x32hello.elf esp/X32HELLO.TOS
           # The optional VDI self-test loads a second client while the first
           # still owns a workstation, to check process isolation.
@@ -368,6 +369,10 @@ jobs:
           fi
           if ! grep -q 'x86-64 AES client: PASS' boot.log || ! grep -q 'x86-64 AES imports: PASS' boot.log; then
             echo "::error::AES clients, process coordination, imports or baseline refusal did not pass"
+            exit 1
+          fi
+          if ! grep -q 'x86-64 user callbacks: PASS' boot.log; then
+            echo "::error::typed callbacks, nesting, alternate stacks, faults or baseline refusal failed"
             exit 1
           fi
           if ! grep -q 'x86-64 VDI imports: PASS' boot.log; then

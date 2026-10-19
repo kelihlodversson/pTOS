@@ -21,6 +21,15 @@ AES_CLIENT_STATE *kproc_aes_get(PD *pd);
 BOOL kproc_aes_set(PD *pd, AES_CLIENT_STATE *state);
 #endif
 
+#if CONF_WITH_USER_CALLBACKS
+#include "user_callback.h"
+USER_CALLBACK_STATE *kproc_callbacks_get(PD *pd);
+BOOL kproc_callbacks_set(PD *pd, USER_CALLBACK_STATE *state);
+UQUAD kproc_resume_rsp(PD *pd);
+void kproc_record_rsp(PD *pd, UQUAD rsp);
+UQUAD kproc_stack_bottom(PD *pd);
+#endif
+
 typedef struct dta_info DTAINFO;
 
 BOOL kproc_create(PD *pd);

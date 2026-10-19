@@ -164,6 +164,16 @@ static inline void reload_segments(void)
     );
 }
 
+UQUAD x86_64_get_irq_stack(void)
+{
+    return tss.rsp0;
+}
+
+void x86_64_set_irq_stack(UQUAD rsp)
+{
+    tss.rsp0 = rsp;
+}
+
 void x86_64_gdt_init(void)
 {
     dtr_t gdtr;

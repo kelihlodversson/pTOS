@@ -9,8 +9,9 @@ a general VDIPB to the kernel. Generic GEM trap class 2 remains rejected.
 CONF_WITH_X32_VDI enables these services independently of AES and the
 EmuCON baseline. configs/pc-x86_64-vdi_defconfig selects it; the ordinary
 pc-x86_64 configuration leaves it disabled. Class 0x100 returns EINVFN
-when disabled. Callback delivery remains #432, the complete application
-import path is available through vdi:vdi ABI 1.0, and AES access is #404.
+when disabled. CONF_WITH_USER_CALLBACKS adds typed ring-3 callback delivery
+(doc/user-callback-x32.txt). The application import path is available through
+vdi:vdi ABI 1.0; typed AES access is documented in doc/aes-x32.txt.
 
 Representations
 ---------------
@@ -100,13 +101,14 @@ Callback signatures are distinct:
     cursor: void (WORD x, WORD y)
     wheel:  void (WORD number, WORD amount)
 
-Until #432 supplies safe delivery, registration returns EINVFN after
-validating that the handler is mapped, executable user memory belonging to
-the caller. Invalid handlers return EIMBA. No user address is installed in
-linea_vars or called in ring 0. There are currently no user registrations,
-so old_handler is zero; it never exposes a raw kernel vector. A null
-handler queries that zero value successfully. Timer exchanges also return
-the tick interval. The live kernel vectors remain unchanged.
+With CONF_WITH_USER_CALLBACKS, exchanges return E_OK and a typed OLD pointer:
+the same owner's executable handler directly, or an immutable user chaining
+stub for a native/foreign predecessor. Null removes user event delivery while
+returning OLD for restoration. Timer exchanges also return the tick interval.
+Invalid handlers return EIMBA. No user address is installed in linea_vars or
+called in ring 0. Without delivery enabled, non-null registration returns
+EINVFN and OLD is zero; null succeeds. See doc/user-callback-x32.txt for
+alternate stacks, nesting, bounded execution and revocation semantics.
 
 Callable operations
 -------------------
@@ -206,7 +208,8 @@ Supervisor service ABI
 The x86-64 syscall convention is RAX = (0x100ULL << 32) | function;
 RDI/RSI/RDX/R10 carry a/b/c/d. Scalar arguments are checked before narrowing
 from 64 bits. These services accept only ring-3 callers with a private
-address space. They never accept a user VDIPB or invoke a user callback.
+address space. They never accept a user VDIPB. User callbacks enter through
+the generic process/trap facility at safe return boundaries.
 
     function  a          b              c              d
        0      work_in*   workstation*   unused         unused

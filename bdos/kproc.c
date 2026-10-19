@@ -51,6 +51,10 @@ typedef struct kproc KPROC;
 /* PD is the public GEMDOS basepage and is writable by its process. Keep
  * native pointers and the user-range snapshot in this kernel-only record. */
 struct kproc {
+#if CONF_WITH_USER_CALLBACKS
+    USER_CALLBACK_STATE *callbacks;
+    UQUAD resume_rsp;
+#endif
 #if CONF_WITH_X32_AES
     AES_CLIENT_STATE *aes;
 #endif
@@ -230,6 +234,9 @@ void kproc_destroy(PD *pd)
 #endif
 #if CONF_WITH_X32_VDI
             vdi_service_process_exit(pd);
+#endif
+#if CONF_WITH_USER_CALLBACKS
+            user_callback_process_exit(pd);
 #endif
             *link = kproc->next;
             if (launcher)                   /* what it used is its launcher's children's */
@@ -584,6 +591,10 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     }
 #if CONF_WITH_X32_AES
     if (!x32_aes_image_load(as))
+        return prepare_failed(kproc, as);
+#endif
+#if CONF_WITH_USER_CALLBACKS
+    if (!user_callback_image_load(as))
         return prepare_failed(kproc, as);
 #endif
 #if CONF_WITH_X32_VDI
@@ -978,6 +989,42 @@ static UQUAD stack_bytes(const KPROC *kproc)
     return kproc->stack_size ? kproc->stack_size : USER_STACK_SIZE;
 }
 
+#if CONF_WITH_USER_CALLBACKS
+USER_CALLBACK_STATE *kproc_callbacks_get(PD *pd)
+{
+    KPROC *k = kproc_find(pd);
+    return k ? k->callbacks : NULL;
+}
+
+BOOL kproc_callbacks_set(PD *pd, USER_CALLBACK_STATE *state)
+{
+    KPROC *k = kproc_find(pd);
+    if (!k)
+        return FALSE;
+    k->callbacks = state;
+    return TRUE;
+}
+
+UQUAD kproc_resume_rsp(PD *pd)
+{
+    KPROC *k = kproc_find(pd);
+    return k ? (k->resume_rsp ? k->resume_rsp : k->stack_top) : 0;
+}
+
+void kproc_record_rsp(PD *pd, UQUAD rsp)
+{
+    KPROC *k = kproc_find(pd);
+    if (k)
+        k->resume_rsp = rsp;
+}
+
+UQUAD kproc_stack_bottom(PD *pd)
+{
+    KPROC *k = kproc_find(pd);
+    return k ? USER_STACK_TOP - stack_bytes(k) : 0;
+}
+#endif
+
 /* where the Malloc() memory ends: the stack's address space starts, less a guard
  * page that belongs to neither (a stack that outgrows its limit faults) */
 static UQUAD heap_limit(const KPROC *kproc)
@@ -1353,6 +1400,10 @@ LONG kproc_uheap_free(PD *pd, UQUAD va)
 
     if (!kproc || !kproc->aspace || !(b = heap_find(kproc, va)) || b->kind != UH_MALLOC)
         return EIMBA;
+#if CONF_WITH_USER_CALLBACKS
+    if (user_callback_pinned(pd, va, (UQUAD)b->pages * USER_PAGE_SIZE))
+        return EACCDN;
+#endif
     return heap_release(kproc, b);
 }
 
@@ -1375,6 +1426,11 @@ LONG kproc_uheap_shrink(PD *pd, UQUAD va, long len)
         return EGSBF;
     if (keep == b->pages)
         return E_OK;
+#if CONF_WITH_USER_CALLBACKS
+    if (user_callback_pinned(pd, va + keep * USER_PAGE_SIZE,
+                            (UQUAD)(b->pages - keep) * USER_PAGE_SIZE))
+        return EACCDN;
+#endif
     if (!aspace_release_lazy(kproc->aspace, va + keep * USER_PAGE_SIZE,
                                      (UQUAD)(b->pages - keep) * USER_PAGE_SIZE))
         return ERR;

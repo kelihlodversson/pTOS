@@ -1407,6 +1407,22 @@ static void test_ring3(void)
     {
         int before = failures;
 
+        probe_expect('C', 0, "typed callbacks, nested foreign OLD, revocation, alternate/normal stacks and GP/SSE/red zone");
+#if CONF_WITH_USER_CALLBACKS && CONF_WITH_X32_VDI
+        probe_expect('X', 0xffff, "a callback's privileged instruction ends only its owner");
+        probe_expect('S', 0xffff, "callback stack exhaustion is contained");
+        probe_expect('U', 0xffff, "an unmapped interrupted user stack cannot corrupt callback entry");
+        probe_expect('Z', 0xffff, "a corrupted callback return record is contained");
+        probe_expect('T', 0xffff, "a non-returning callback times out");
+        probe_expect('%', 0xffff, "a foreign callback fault lets the invoking child finish");
+        probe_expect('C', 0, "callback state is usable after owner faults and timeouts");
+#endif
+        if (failures == before)
+            kcprintf("x86-64 user callbacks: PASS\n");
+    }
+    {
+        int before = failures;
+
         probe_expect('#', 0, "AES local helpers, registration, isolated messaging/events, update ownership and cleanup");
         if (failures == before)
             kcprintf("x86-64 AES client: PASS\n");
