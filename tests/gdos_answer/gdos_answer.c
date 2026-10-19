@@ -991,6 +991,22 @@ static void check_kerning(short handle)
     kerned = extent_n(handle, 10);
     font_check(kerned >= plain + 4 && kerned <= plain + 5,
                "a track offset of half a pixel does not add up");
+
+    /* 1/128 pixel over 199 gaps: one or two pixels, not none */
+    {
+        static short many[200];
+        short extent[8], w200;
+
+        for (i = 0; i < 200; i++)
+            many[i] = 'i';
+        kern_mode(handle, 0, 0, 0);
+        vqt_f_extent(handle, many, 200, extent);
+        w200 = extent[2] - extent[0];
+        kern_mode(handle, 255, 0, 0x200L);
+        vqt_f_extent(handle, many, 200, extent);
+        font_check(extent[2] - extent[0] >= w200 + 1 && extent[2] - extent[0] <= w200 + 2,
+                   "a track offset of less than 1/64 pixel does not add up");
+    }
     kern_mode(handle, 0, 0, 0);
     intin[0] = 12;
     vdi_op(107, 1, handle);
@@ -1128,6 +1144,27 @@ static void check_metrics(short handle, short id)
     intin[0] = 'W';
     ptsin_op(247, 0, 1, handle);        /* vqt_advance() */
     font_check(ptsout[0] == w && w >= 16, "vqt_advance() does not scale with the font");
+
+    /* scaled (to a height of 15): as wide in Unicode, in runs, as in the Atari set */
+    ptsin[0] = 0;
+    ptsin[1] = 15;
+    ptsin_op(12, 1, 0, handle);         /* vst_height(15) */
+    {
+        static short eacute[33];
+        short e_atari, extent[8];
+
+        for (i = 0; i < 33; i++)
+            eacute[i] = 0x82;
+        vqt_f_extent(handle, eacute, 33, extent);
+        e_atari = extent[2] - extent[0];
+        for (i = 0; i < 33; i++)
+            eacute[i] = 0xe9;
+        vst_map_mode(handle, MAP_UNICODE);
+        vqt_f_extent(handle, eacute, 33, extent);
+        vst_map_mode(handle, MAP_ATARI);
+        font_check(extent[2] - extent[0] == e_atari,
+                   "a scaled font is not as wide in Unicode runs as in the Atari set");
+    }
     intin[0] = 10;
     vdi_op(107, 1, handle);
 }
@@ -1390,6 +1427,57 @@ static void check_unicode(short handle, short id, int pixels)
             }
             vst_map_mode(handle, MAP_ATARI);
             font_check(same_ink(&whole, &one_by_one), "justified BICS text does not widen its blanks");
+
+            /* U+0420 is 0x20 in its page, but no blank: one word space, within the width */
+            {
+                static const short er_txt[4] = { 'A', 0x420, ' ', 'B' };
+
+                vst_map_mode(handle, MAP_UNICODE);
+                ink_clear(handle);
+                intin[0] = 1;
+                intin[1] = 0;
+                memcpy(&intin[2], er_txt, 4 * sizeof(short));
+                ptsin[0] = ink_cx - 50;
+                ptsin[1] = ink_cy;
+                ptsin[2] = 100;
+                ptsin[3] = 0;
+                contrl[0] = 11;
+                contrl[1] = 2;
+                contrl[3] = 6;
+                contrl[5] = 10;
+                contrl[6] = handle;
+                vdi();                  /* v_justified() */
+                ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                         &whole);
+                vst_map_mode(handle, MAP_ATARI);
+                font_check(whole.count > 0 && whole.x1 <= ink_cx - 50 + 100 + 2,
+                           "a Unicode page's character 0x20 gets a word space");
+            }
+        }
+
+        /* underlined with a track offset: one line, unbroken */
+        {
+            short y, x, gaps = 0;
+
+            intin[0] = 8;
+            vdi_op(106, 1, handle);     /* vst_effects(underline) */
+            vst_track_offset(handle, 4L << 16, 0, &tracks, &pairs);
+            ink_clear(handle);
+            v_ftext(handle, ink_cx - 50, ink_cy, ns, 4);
+            vst_track_offset(handle, 0, 0, &tracks, &pairs);
+            intin[0] = 0;
+            vdi_op(106, 1, handle);
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &whole);
+            y = whole.y1;               /* 'n' has no descender: the underline is lowest */
+            for (x = whole.x0; whole.count && x <= whole.x1; x++)
+            {
+                ptsin[0] = x;
+                ptsin[1] = y;
+                ptsin_op(105, 1, 0, handle);    /* v_get_pixel() */
+                if (intout[1] == 0)
+                    gaps++;
+            }
+            font_check(whole.count > 0 && gaps == 0, "the underline of text in runs has gaps");
         }
     }
 

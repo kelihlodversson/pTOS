@@ -51,9 +51,10 @@ static WORD calc_height(Vwk *vwk)
 }
 
 /*
- * calculates width of text string, in a font of the workstation's
+ * calculates width of text string, in a font of the workstation's: what
+ * its characters add up to, unscaled
  */
-static WORD calc_width(Vwk *vwk, const Fonthead *fnt_ptr, WORD cnt, const WORD *str)
+static WORD raw_width(const Fonthead *fnt_ptr, WORD cnt, const WORD *str)
 {
     WORD table_start = fnt_ptr->first_ade;
     WORD i, chr, width;
@@ -70,6 +71,12 @@ static WORD calc_width(Vwk *vwk, const Fonthead *fnt_ptr, WORD cnt, const WORD *
         }
     }
 
+    return width;
+}
+
+/* the width of 'cnt' characters 'width' wide in the font, as scaled and styled */
+static WORD styled_width(Vwk *vwk, const Fonthead *fnt_ptr, WORD cnt, WORD width)
+{
     if (vwk->scaled) {
         if (vwk->dda_inc == 0xFFFF)
             width *= 2;
@@ -87,6 +94,11 @@ static WORD calc_width(Vwk *vwk, const Fonthead *fnt_ptr, WORD cnt, const WORD *
         width += cnt * OUTLINE_THICKNESS * 2;   /* outlining adds 1 pixel all around */
 
     return width;
+}
+
+static WORD calc_width(Vwk *vwk, const Fonthead *fnt_ptr, WORD cnt, const WORD *str)
+{
+    return styled_width(vwk, fnt_ptr, cnt, raw_width(fnt_ptr, cnt, str));
 }
 
 #if CONF_WITH_VDI_TEXT_SPEEDUP
@@ -268,10 +280,12 @@ static inline void justify_step(JUSTINFO *justified, WORD ch)
  * which this is the first run of characters in one font.  With 'cont',
  * this run follows one already output, where that one left off: it is
  * not aligned.  With 'more', another run follows this one, from where
- * it leaves off.
+ * it leaves off.  The underline of runs is drawn once, by the last, from
+ * where the first started (kept in 'ul_start').
  */
 static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
-                       WORD width, WORD align, JUSTINFO *justified, BOOL cont, BOOL more)
+                       WORD width, WORD align, JUSTINFO *justified, BOOL cont, BOOL more,
+                       Point *ul_start)
 {
     WORD i, j;
     WORD startx, starty;
@@ -458,7 +472,8 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
     }
 #endif
 
-    linea_vars.XDDA = 32767;       /* init the horizontal dda */
+    if (!cont)
+        linea_vars.XDDA = 32767;   /* init the horizontal dda (a run goes on with it) */
 
 #if CONF_WITH_BLITTER
     /* the blitter's way of outputting several characters at once, if any */
@@ -647,7 +662,21 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
 
     }                   /* for j */
 
-    if (vwk->style & F_UNDER) {
+    if (ul_start)
+    {
+        if (!cont)
+        {
+            ul_start->x = startx;
+            ul_start->y = starty;
+        }
+        else
+        {
+            startx = ul_start->x;
+            starty = ul_start->y;
+        }
+    }
+
+    if ((vwk->style & F_UNDER) && !more) {
         Line * line = (Line*)PTSIN;
         line->x1 = startx;
         line->y1 = starty;
@@ -708,8 +737,9 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
  * Kerning (vst_kern()) is applied in the same way, in any character map:
  * a run also ends before a character that is kerned against the one before
  * it, and the next run starts that much further on.  The kerning is in
- * fractions of a pixel, which are carried on, so that a track offset of
- * less than a pixel per character adds up as it should.
+ * fractions of a pixel (16.16), which are carried on, so that a track
+ * offset of less than a pixel per character adds up as it should.  The
+ * underline is drawn once, under all the runs.
  */
 
 /* a distance along the baseline as a move on the screen, for the rotation */
@@ -779,7 +809,7 @@ typedef struct
     WORD kern;                      /* how far on it starts, in pixels: kerning */
     BOOL kerning;                   /* whether kerning applies */
     LONG prev_cp;                   /* the character before the run, or -1 */
-    LONG kern_sum;                  /* the kerning so far, in 1/64 pixel, */
+    LONG kern_sum;                  /* the kerning so far, in 16.16 pixels, */
     LONG kern_done;                 /* and what of it has been applied, in pixels */
     WORD buf[RUN_MAX];
 } TEXT_RUN;
@@ -893,8 +923,8 @@ static void run_kern(Vwk *vwk, TEXT_RUN *r, const LONG *cps, const WORD *ends)
     {
         next = sum;
         if (r->prev_cp >= 0 || i)
-            next += kern[i] + (vwk->track_offset >> 10);    /* 16.16 to 26.6 */
-        px = (next >= 0 ? next + 32 : next - 31) / 64 - done;
+            next += (kern[i] << 10) + vwk->track_offset;    /* in 16.16 */
+        px = (next >= 0 ? next + 0x8000L : next - 0x7fffL) / 0x10000L - done;
         if (i && px)
         {
             /* the run ends before this one, which the next run starts with */
@@ -991,15 +1021,25 @@ static BOOL next_run(Vwk *vwk, TEXT_RUN *r)
 static WORD text_width(Vwk *vwk, WORD count, const WORD *str)
 {
     TEXT_RUN run;
-    WORD width = 0, skew = 0;
+    WORD width = 0, skew = 0, raw = 0, n = 0;
 
     run_begin(vwk, &run, str, count);
     while (next_run(vwk, &run))
     {
+        if (vwk->scaled)
+        {
+            /* one font, scaled as one string, as it is drawn */
+            raw += raw_width(run.font, run.n, run.chars);
+            n += run.n;
+            width += run.kern;
+            continue;
+        }
         width += run.kern + calc_width(vwk, run.font, run.n, run.chars) - skew;
         if (vwk->style & F_SKEW)
             skew = run.font->left_offset + run.font->right_offset;
     }
+    if (vwk->scaled)
+        width += styled_width(vwk, vwk->cur_font, n, raw);
 
     return width;
 }
@@ -1101,6 +1141,9 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
         TEXT_RUN run;
         BOOL cont = FALSE;
         WORD dx, dy;
+        Point ul_start;
+        JUSTINFO words;
+        BOOL page;
 
         if (count <= 0)
             return;
@@ -1115,15 +1158,32 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
                 linea_vars.DESTX += dx;
                 linea_vars.DESTY += dy;
             }
+            /*
+             * a blank is always in the font itself: in a page, the
+             * character 0x20 (U+0420, say) is none, and gets no word space
+             */
+            page = justified && run.font != vwk->cur_font;
+            if (page)
+            {
+                words = *justified;
+                justified->wordx = justified->wordy = 0;
+                justified->rmword = 0;
+            }
             output_run(vwk, run.font, run.n, run.chars, -1, cont ? -1 : width,
-                       justified, cont, run.pos < count);
+                       justified, cont, run.pos < count, &ul_start);
+            if (page)
+            {
+                justified->wordx = words.wordx;
+                justified->wordy = words.wordy;
+                justified->rmword = words.rmword;
+            }
             cont = TRUE;
         }
         return;
     }
 #endif
 
-    output_run(vwk, vwk->cur_font, count, str, width, -1, justified, FALSE, FALSE);
+    output_run(vwk, vwk->cur_font, count, str, width, -1, justified, FALSE, FALSE, NULL);
 }
 
 void vdi_v_gtext(Vwk * vwk)
