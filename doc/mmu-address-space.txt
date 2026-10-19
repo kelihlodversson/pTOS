@@ -72,7 +72,7 @@ x86-64's physical direct map, and holds everything of the kernel:
     the range (kproc_copy_from_user() and friends), so the copy cannot fault
     and works whichever address space is loaded.
 
-1 GiB is the most RAM the MMU configurations use.  That is all the RAM of
+1 GiB is the most RAM the MMU configurations use (decided in review).  That is all the RAM of
 every Raspberry Pi up to the 3B+, the most virt-arm uses today
 (VIRT_MAX_RAM_SIZE), and more than any Atari has.  virt-m68k today accepts
 up to just under 2 GiB, and a Raspberry Pi 4 may have more than 1 GiB; in
@@ -129,8 +129,8 @@ Kernel low mappings.  The lowest 2 MiB is not mapped for the process.
   m68k: the exception vectors (0x000-0x3ff, at VBR 0) and the TOS system
   variables (0x380-0x7ff), and the low ST-RAM sections that end at
   __low_stram_end (at most 32 KiB, emutos.ld asserts it), are mapped at
-  their own addresses, supervisor-only, in every process, because the BDOS,
-  the BIOS and every TOS-era program that calls Super() reach them there.
+  their own addresses, supervisor-only, in every process, because the BDOS
+  and the BIOS reach them there while they serve the process's calls.
   This is x32's "kernel low mappings".  A user-mode access faults, as it
   does on a real ST, where the GLUE protects the first 2 KiB.  The rest of
   the 2 MiB is the null guard.
@@ -140,22 +140,39 @@ Kernel low mappings.  The lowest 2 MiB is not mapped for the process.
   vectors move into the kernel image through VBAR, which the ARM1176 of the
   Pi 1 has as well as every ARMv7 core.  The whole 2 MiB is the null guard.
 
-What a user program may read in low memory: nothing, in user mode.
-Programs that read a system variable do it in supervisor mode, through
-Super() or Supexec(), and still can (below), or through Ssystem(), which is
-the documented way and works from user mode (#221, #237).
+What a user program may read in low memory: nothing.  A process stays in
+user mode (below), and reads the system variables it needs through
+Ssystem(), the documented way, which works from user mode (#221, #237).
 
 
 Super() and Supexec()
 ----------------------
 
-A process in supervisor mode sees the whole kernel half: the supervisor-only
-bit is exactly what it gets past.  TOS programs use Super() and Supexec()
-for the system variables, the hardware registers and the screen, so the
-first MMU configurations keep both working as they do today, and isolation
-covers a process only while it stays in user mode.  A per-process policy
-that refuses or narrows them (with a list of the system variables that stay
-readable, say) can come later; it is listed as an open question below.
+A process in supervisor mode would see the whole kernel half: the
+supervisor-only bit is exactly what it gets past.  So in the MMU
+configurations no process gets there:
+
+  - Super() returns EACCDN and leaves the process in user mode.  The query
+    form, Super(1), still answers, with 0: the caller is in user mode.
+  - Supexec() returns EACCDN without calling the function.
+
+EACCDN (access denied), not EINVFN: the call exists, the configuration
+refuses it.  Programs that need supervisor mode -- for the system variables,
+the hardware registers or the screen -- do not run in the MMU
+configurations; they run in the flat configurations, which keep both calls
+as they are.  ARM's Supexec() already returns EINVFN in every configuration
+(#219) and keeps doing so outside the MMU ones.
+
+
+The screen
+-----------
+
+The screen memory is kernel memory, in the physical-memory window, and is
+not mapped for any process: a program draws through the VDI.  Logbase()
+and Physbase() return the screen's address as before, but a user-mode
+access to it faults.  Mapping the screen for a process (at a fixed user
+address, read/write) is left for later, if programs that draw into it
+directly are to run in the MMU configurations.
 
 
 Page tables and switching
@@ -191,11 +208,37 @@ URP and SRP and flushes the non-global ATC entries (PFLUSHAN); the kernel's
 descriptors have G set and stay.  The 68040/68060 caches are physically
 tagged, so a switch needs no cache flush.
 
-m68k, 68030.  It is done after the 68040/68060, in #571.  The plan is the
-same tree, with CRP for both modes (TC.SRE clear) and long-format
-descriptors for the supervisor-only bit, which the short format has not.
-Its caches are logically addressed: a switch also flushes the data and
-instruction caches (and PFLUSHA).
+m68k, 68030.  It is done after the 68040/68060, in #571, for the TT and
+the Falcon (a 68EC030 is refused at boot, #564).  The plan, to be
+confirmed there:
+
+  - The same tree shape as the 68040's, so one piece of code builds both:
+    4 KiB pages and TC with PS = 12, IS = 0, TIA = 7, TIB = 7, TIC = 6, which
+    makes a root of 128 entries of 32 MiB, user entries 0-63 and kernel
+    entries 64-127, as above.
+  - Long-format descriptors (8 bytes), because only they have the S bit
+    that makes a page supervisor-only, and WP for read-only pages.  The
+    tables are twice the 68040's size (a 1 KiB root).
+  - CRP for both modes (TC.SRE clear), so supervisor accesses use the
+    process's tree too and the BDOS reaches the process's buffers by
+    their user addresses, as on the 68040.  SRP is not used.
+  - The I/O area through TT1: a transparent translation of
+    0xff000000-0xffffffff, matched for supervisor accesses only (the
+    function-code fields), cache inhibited.  A user-mode access to the
+    hardware misses it, finds nothing in the tree and faults.  TT0 is free.
+    This replaces the PMMU tree pTOS builds today for the caches
+    (bios/pmmu030.c, CONF_WITH_68030_PMMU), which is not per process.
+  - A switch loads CRP, which also flushes the ATC; the 68030 has no
+    global bit, so the kernel entries are reloaded as they are used.  Its
+    caches are logically addressed, so the instruction and data caches are
+    invalidated too.  The data cache is write-through, so nothing is lost,
+    and refilling 2 x 256 bytes is cheap.
+  - The ROM, at physical 0x00e00000, runs from 0x80e00000 in the window.
+    The screen base, the floppy and ACSI/SCSI DMA take physical addresses
+    (virt_to_phys()); TT-RAM stays non-DMA as today.
+  - Tested under Hatari, whose 68030 has an MMU (--mmu on, TT and Falcon),
+    with the regression tests of tools/run-hatari-tests.py; QEMU emulates
+    no 68030 MMU.
 
 QEMU emulates the MMU of the 68040 only, so virt-m68k with -cpu m68040 is
 the test machine for m68k (#569, #570); the 68060 and 68030 code is
@@ -235,23 +278,19 @@ Costs in short
 ---------------
 
                     ARM (ARMv6/v7)          m68k 68040/68060      68030
-  user table        8 KiB + 1 KiB pages     512 bytes + tables    as 040
+  user table        8 KiB + 1 KiB pages     512 bytes + tables    1 KiB + tables
   kernel table      16 KiB, once            shared 2nd level      as 040
-  switch            TTBR0, TLB (non-global) URP/SRP, PFLUSHAN     + caches
-  cache on switch   none                    none                  flush
+  switch            TTBR0, TLB (non-global) URP/SRP, PFLUSHAN     CRP (whole ATC)
+  cache on switch   none                    none                  invalidate
   page size         4 KiB                   4 KiB                 4 KiB
 
 
-Open questions for review
---------------------------
+Decided in review
+------------------
 
-  1. Super()/Supexec() stay fully working in the first configurations
-     (above).  Is a narrower policy wanted from the start?
-  2. Programs that write the screen in user mode (Logbase() and drawing
-     into it) fault, since the screen is kernel memory.  Map the screen
-     user-writable at a fixed user address in every process, as Atari
-     programs expect, or leave it to the VDI and Super()?
-  3. RAM above 1 GiB is unused in the MMU configurations (Pi 4, large
-     virt-m68k).  Acceptable until LPAE or a high-memory scheme?
-  4. The 68030 plan (CRP for both modes, long-format descriptors, cache
-     flush on a switch) is to be confirmed in #571.
+  1. Super() and Supexec() return EACCDN in the MMU configurations
+     (Super(1) still answers 0).
+  2. No process writes the screen for now: it is not mapped for user mode.
+  3. The MMU configurations use at most 1 GiB of RAM.
+
+Open: the 68030 plan above, to be confirmed in #571.
