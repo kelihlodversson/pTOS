@@ -90,9 +90,11 @@ extern void x86_64_set_saved_user_rsp(UQUAD rsp);
 extern int x86_64_gs_to_user(void);
 extern void x86_64_gs_back_to_syscall(void);
 extern void x86_64_write_cr3(UQUAD pml4_phys);  /* bios/arch/x86_64/pgtable.c */
+extern UQUAD x86_64_read_cr3(void);
 extern UQUAD x86_64_kernel_pml4_phys(void);
 
 void enter(void);
+int x86_64_demand_page(UQUAD address);     /* called from bios/arch/x86_64/panic.c */
 void bdos_trap2(void);
 void gouser(void);
 void termuser(void) NORETURN;

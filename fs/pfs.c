@@ -1128,3 +1128,81 @@ LONG pfs_handle_close(PFSCOOKIE *fc)
 {
     return fc->fs->close ? fc->fs->close(fc) : E_OK;
 }
+
+/* the attributes of an open file: E_OK or a negative error code */
+static LONG pfs_handle_fstat(PFSCOOKIE *fc, PFSATTR *attr)
+{
+    if (!fc->fs->fstat)
+        return EINVFN;
+
+    return fc->fs->fstat(fc, attr);
+}
+
+LONG pfs_handle_seek(PFSCOOKIE *fc, LONG n, WORD flg)
+{
+    PFSATTR attr;
+    QUAD target;    /* wide enough for a size of up to 4 GB plus an offset */
+    LONG rc;
+
+    if ((flg < 0) || (flg > 2))
+        return EINVFN;
+
+    rc = pfs_handle_fstat(fc, &attr);
+    if (rc < 0)
+        return rc;
+
+    target = n;
+    if (flg == 2)
+    {
+        /*
+         * A driver caps a size of 4 GB or more at 0xffffffff (PFSATTR.size
+         * is a ULONG).  Every real seek from the end of such a file lands
+         * past what a LONG can hold, but from the capped size an offset of
+         * -2^31 would land on 0x7fffffff: refuse them all.  (A file of
+         * exactly 0xffffffff bytes loses that one valid seek.)
+         */
+        if (attr.size == 0xffffffffUL)
+            return ERANGE;
+        target += attr.size;
+    }
+    else if (flg == 1)
+        target += fc->pos;
+
+    /* within the file, and a position a LONG can hold */
+    if ((target < 0) || (target > (QUAD)attr.size) || (target > 0x7fffffffL))
+        return ERANGE;
+
+    fc->pos = (LONG)target;
+
+    return fc->pos;
+}
+
+LONG pfs_handle_eof(PFSCOOKIE *fc)
+{
+    PFSATTR attr;
+    LONG rc;
+
+    rc = pfs_handle_fstat(fc, &attr);
+    if (rc < 0)
+        return rc;
+
+    return ((ULONG)fc->pos >= attr.size) ? 1 : 0;
+}
+
+LONG pfs_handle_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt)
+{
+    PFSATTR attr;
+    LONG rc;
+
+    if (wrt)
+        return EACCDN;
+
+    rc = pfs_handle_fstat(fc, &attr);
+    if (rc < 0)
+        return rc;
+
+    *time = attr.time;
+    *date = attr.date;
+
+    return E_OK;
+}

@@ -252,7 +252,10 @@ ifdef ARCH_X86_64
 # function using a calling convention other than the compiler's default.
 MULTILIBFLAGS = $(CPUFLAGS) -fno-pic -mcmodel=large -mno-red-zone \
                 -fshort-wchar -fno-ident -maccumulate-outgoing-args
-TOOLCHAIN_CFLAGS = -ffreestanding
+# --param=min-pagesize=0: the TOS vectors and system variables really live
+# at low constant addresses (bios/vectors.h, tosvars.h), which GCC 12 and
+# later otherwise treat as the unmapped null page (-Warray-bounds).
+TOOLCHAIN_CFLAGS = -ffreestanding --param=min-pagesize=0
 
 # See the MULTILIBFLAGS comment above. All seven objects below are kept
 # on plain -fpie; none of them do the cross-translation-unit function-
@@ -427,6 +430,14 @@ LDFLAGS += -Wl,-build-id=none
 else
 EMUTOS_IMG = emutos.img
 endif
+endif
+
+ifdef BUILD_TOOLCHAIN_IS_ELF
+# The hand-written .S files carry no .note.GNU-stack section, which recent
+# binutils (2.45 in the -mfastcall toolchain) warns about.  A ROM or RAM
+# image has no stack permissions to set, so say so instead.
+LDFLAGS += -Wl,-z,noexecstack
+PCREL_LDFLAGS += -Wl,-z,noexecstack
 endif
 
 #
@@ -661,7 +672,10 @@ else
 $(EMUTOS_IMG): $(OBJECTS) $(FREETYPE_LIB) obj/emutospp.ld
 	$(LD) $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) $(FREETYPE_LIB) $(LIBS) $(LDFLAGS) \
 	  -Wl,-Map=emutos.map -o $@
-	@if [ $$(($$(awk '/^\.data /{print $$3}' emutos.map))) -gt 0 ]; then \
+	@# .data shares the read-only ROM region with .text (emutos.ld), so it
+	@# must stay empty -- unless the image is loaded into RAM
+	@if [ "$(EMUTOS_LIVES_IN_RAM)" != y ] && \
+	    [ $$(($$(awk '/^\.data /{print $$3}' emutos.map))) -gt 0 ]; then \
 	  echo "### Warning: The DATA segment is not empty."; \
 	  echo "### Please examine emutos.map and use \"const\" where appropriate."; \
 	fi

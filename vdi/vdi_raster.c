@@ -804,6 +804,7 @@ static void bit_blt(struct blit_frame *blit_info)
     hwblit_start(blt);
 #endif
     first_d_addr = d_addr;
+    MAYBE_UNUSED(first_d_addr);         /* only hwblit_end() needs it */
 
     /*
      * the colour bits of the plane, lowest plane first: they are shifted

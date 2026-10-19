@@ -200,7 +200,7 @@ static BOOL is_custom_chips_mirror(void *mirror_base)
     save_intena = INTENAR;
 
     /* Disable all interrupts using mirror */
-    *pintena_mirror = ~SETBITS;
+    *pintena_mirror = (UWORD)~SETBITS;
     if (INTENAR == 0)
     {
         /* All interrupts are disabled.
@@ -218,7 +218,7 @@ static BOOL is_custom_chips_mirror(void *mirror_base)
     }
 
     /* Restore interrupts */
-    INTENA = ~SETBITS;
+    INTENA = (UWORD)~SETBITS;
     INTENA = SETBITS | save_intena;
 
     return mirror;
@@ -646,7 +646,7 @@ WORD amiga_check_moderez(WORD moderez)
 {
     WORD current_mode, return_mode;
 
-    if (moderez == 0xff02) /* ST High */
+    if (moderez == (WORD)0xff02) /* ST High */
         moderez = VIDEL_COMPAT|VIDEL_1BPP|VIDEL_80COL|VIDEL_VERTICAL;
 
     if (moderez < 0)                /* ignore other ST video modes */

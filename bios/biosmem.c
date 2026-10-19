@@ -115,7 +115,7 @@ UBYTE *balloc_stram(ULONG size, BOOL top)
     size = (size + 3) & ~3;
 
     if (memtop - membot < size)
-        panic("balloc_stram(%lu): not enough memory\n", size);
+        panic("balloc_stram(%lu): not enough memory\n", (unsigned long)size);
 
     if (top)
     {
@@ -161,7 +161,7 @@ void getmpb(MPB * mpb)
     themd.m_length = memtop - themd.m_start;
 
     /* Both base address and length of available memory should be aligned */
-    assert(((ULONG)themd.m_start & 3 ) ==  0);
+    assert(((uintptr_t)themd.m_start & 3 ) ==  0);
     assert(((ULONG)themd.m_length & 3 ) ==  0);
     
     themd.m_own = NULL;         /* no owner's process descriptor */

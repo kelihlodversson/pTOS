@@ -406,7 +406,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     char *env_ptr;
     ULONG hdrflags;
     LONG rc;
-    long max, needed;
+    LONG max;
+    long needed;
     FH fh;
 
     KDEBUG(("BDOS xexec: flag or mode = %d\n",flag));
@@ -435,13 +436,13 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         path = (char *) 0L;     /* (same as basepage+flags with flags set to zero) */
         FALLTHROUGH;
     case PE_BASEPAGEFLAGS:      /* create a basepage, respecting the flags */
-        hdrflags = (ULONG)path;
+        hdrflags = (ULONG)(uintptr_t)path;
         env_ptr = alloc_env(hdrflags, env);
         if (env_ptr == NULL) {
             KDEBUG(("BDOS xexec: no memory for environment\n"));
             return ENSMEM;
         }
-        p = (PD *)alloc_tpa((ULONG)path,sizeof(PD),&max);
+        p = (PD *)alloc_tpa((ULONG)(uintptr_t)path,sizeof(PD),&max);
 
         if (p == NULL) {    /* not even enough memory for basepage */
             xexec_free(env_ptr);
@@ -460,7 +461,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
             xexec_free(p);
             return ENSMEM;
         }
-        p->p_flags = (ULONG)path;   /* set the flags */
+        p->p_flags = (ULONG)(uintptr_t)path;   /* set the flags */
         init_pd_files(p);
 #if CONF_WITH_USER_ASPACE
         hand_over(p);
@@ -844,7 +845,7 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
     }
 #endif
 
-    st_ram_size = (LONG) ffit(-1L, &pmd);
+    st_ram_size = (LONG)(uintptr_t)ffit(-1L, &pmd);
     if (st_ram_size >= needed)
         st_ram_available = TRUE;
 
@@ -854,7 +855,7 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
         BOOL alt_ram_available = FALSE;
 
         if (has_alt_ram && (flags & PF_TTRAMLOAD)) {
-            alt_ram_size = (LONG) ffit(-1L, &pmdalt);
+            alt_ram_size = (LONG)(uintptr_t)ffit(-1L, &pmdalt);
             if (alt_ram_size >= needed)
                 alt_ram_available = TRUE;
         }

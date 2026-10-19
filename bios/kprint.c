@@ -452,7 +452,7 @@ void dopanic(const char *fmt, ...)
         kcprintf("misc=%04x opcode=%04x\n",
                  s->misc, s->opcode);
         kcprintf("addr=%08lx sr=%04x pc=%08lx\n",
-                 (ULONG)s->address, s->sr, (ULONG)s->pc);
+                 (unsigned long)s->address, s->sr, (unsigned long)s->pc);
 #if CONF_WITH_ADVANCED_CPU
     } else if (mcpu == 10 && (proc_enum == 2 || proc_enum == 3)) {
         /* 68010 Bus or Address Error */
@@ -479,7 +479,7 @@ void dopanic(const char *fmt, ...)
         kcprintf("fw=%04x ssw=%04x\n",
                  s->format_word, s->special_status_word);
         kcprintf("addr=%08lx sr=%04x pc=%08lx\n",
-                 (ULONG)s->fault_address, s->sr, (ULONG)s->pc);
+                 (ULONG)s->fault_address, s->sr, (unsigned long)s->pc);
     } else if ((mcpu == 20 || mcpu == 30) && (proc_enum == 2 || proc_enum == 3)) {
         /* 68020/68030 Bus or Address Error */
         struct {
@@ -506,7 +506,7 @@ void dopanic(const char *fmt, ...)
         kcprintf("fw=%04x ir=%04x ssr=%04x\n",
                  s->format_word, s->internal_register, s->special_status_register);
         kcprintf("addr=%08lx sr=%04x pc=%08lx\n",
-                 (ULONG)s->data_cycle_fault_address, s->sr, (ULONG)s->pc);
+                 (ULONG)s->data_cycle_fault_address, s->sr, (unsigned long)s->pc);
     } else if (mcpu == 40 && proc_enum == 2) {
         /* 68040 Bus Error */
         struct {
@@ -528,7 +528,7 @@ void dopanic(const char *fmt, ...)
         kcprintf("fw=%04x ea=%08lx ssw=%04x\n",
                  s->format_word, (ULONG)s->effective_address, s->special_status_word);
         kcprintf("addr=%08lx sr=%04x pc=%08lx\n",
-                 (ULONG)s->fault_address, s->sr, (ULONG)s->pc);
+                 (ULONG)s->fault_address, s->sr, (unsigned long)s->pc);
     } else if ((mcpu == 40 && proc_enum == 3)
                || (mcpu == 60 && (proc_enum == 2 || proc_enum == 3))) {
         /* 68040 Address Error, or 68060 Bus or Address Error */
@@ -547,7 +547,7 @@ void dopanic(const char *fmt, ...)
         kcprintf("fw=%04x\n",
                  s->format_word);
         kcprintf("addr=%08lx sr=%04x pc=%08lx\n",
-                 (ULONG)s->address, s->sr, (ULONG)s->pc);
+                 (unsigned long)s->address, s->sr, (unsigned long)s->pc);
 #endif  /* CONF_WITH_ADVANCED_CPU */
     } else if (proc_enum < ARRAY_SIZE(exc_messages)) {
         struct {
@@ -561,7 +561,7 @@ void dopanic(const char *fmt, ...)
         kcprintf("Panic: %s\n",
                  exc_messages[proc_enum]);
         kcprintf("sr=%04x pc=%08lx\n",
-                 s->sr, (ULONG)s->pc);
+                 s->sr, (unsigned long)s->pc);
     } else {
         struct {
             UWORD sr;
@@ -574,7 +574,7 @@ void dopanic(const char *fmt, ...)
         kcprintf("Panic: Exception number %d\n",
                  (int) proc_enum);
         kcprintf("sr=%04x pc=%08lx\n",
-                 s->sr, (ULONG)s->pc);
+                 s->sr, (unsigned long)s->pc);
     }
 #endif
 #if !defined(__arm__) && DISPLAY_INSTRUCTION_AT_PC
@@ -592,7 +592,7 @@ void dopanic(const char *fmt, ...)
 #endif
 
     /* set proc_enum as TOS does */
-    proc_enum = (proc_enum << 24) | ((LONG)pc & 0xffffffL);
+    proc_enum = (proc_enum << 24) | (LONG)((uintptr_t)pc & 0xffffffUL);
 
     /* improve display in ST Low */
     start = (linea_vars.v_cel_mx == 39) ? "" : " ";
@@ -611,16 +611,20 @@ void dopanic(const char *fmt, ...)
     kcprintf(" USP:  %s%08lx\n\n",
              start,proc_usp);
 #else
-    kcprintf("\nD0-3:%s%08lx %08lx %08lx %08lx\n",
-             start, proc_dregs[0], proc_dregs[1], proc_dregs[2], proc_dregs[3]);
-    kcprintf("D4-7:%s%08lx %08lx %08lx %08lx\n",
-             start, proc_dregs[4], proc_dregs[5], proc_dregs[6], proc_dregs[7]);
-    kcprintf("A0-3:%s%08lx %08lx %08lx %08lx\n",
-             start, proc_aregs[0], proc_aregs[1], proc_aregs[2], proc_aregs[3]);
-    kcprintf("A4-7:%s%08lx %08lx %08lx %08lx\n",
-             start, proc_aregs[4], proc_aregs[5], proc_aregs[6], proc_aregs[7]);
+    kcprintf("\nD0-3:%s%08lx %08lx %08lx %08lx\n", start,
+             (unsigned long)proc_dregs[0], (unsigned long)proc_dregs[1],
+             (unsigned long)proc_dregs[2], (unsigned long)proc_dregs[3]);
+    kcprintf("D4-7:%s%08lx %08lx %08lx %08lx\n", start,
+             (unsigned long)proc_dregs[4], (unsigned long)proc_dregs[5],
+             (unsigned long)proc_dregs[6], (unsigned long)proc_dregs[7]);
+    kcprintf("A0-3:%s%08lx %08lx %08lx %08lx\n", start,
+             (unsigned long)proc_aregs[0], (unsigned long)proc_aregs[1],
+             (unsigned long)proc_aregs[2], (unsigned long)proc_aregs[3]);
+    kcprintf("A4-7:%s%08lx %08lx %08lx %08lx\n", start,
+             (unsigned long)proc_aregs[4], (unsigned long)proc_aregs[5],
+             (unsigned long)proc_aregs[6], (unsigned long)proc_aregs[7]);
     kcprintf(" USP:%s%08lx\n\n",
-             start,proc_usp);
+             start, (unsigned long)proc_usp);
 
 #if DISPLAY_STACK
     kcprintf("Stack: %04x %04x %04x %04x\n",
@@ -658,9 +662,9 @@ void dopanic(const char *fmt, ...)
         UBYTE *tbase = USERPTR_TO_PTR(run->p_tbase);
 
         kcprintf("basepage=%08lx\n",
-                 (ULONG)run);
+                 (unsigned long)run);
         kcprintf("text=%08lx data=%08lx bss=%08lx\n",
-                 (ULONG)run->p_tbase, (ULONG)run->p_dbase, (ULONG)run->p_bbase);
+                 (unsigned long)run->p_tbase, (unsigned long)run->p_dbase, (unsigned long)run->p_bbase);
         if (pc && ((UBYTE *)pc >= tbase) && ((UBYTE *)pc < (tbase + run->p_tlen)))
             kcprintf("Crash at text+%08lx\n", (long)((UBYTE *)pc - tbase));
     }

@@ -105,6 +105,13 @@ typedef struct vdi_backend_ops {
  * image has essentially no room for dispatch overhead that can only ever
  * resolve one way.
  */
+/* the packed truecolor ops tables are writable only for CONF_VDI_SPARSE_TABLE */
+#if CONF_VDI_SPARSE_TABLE
+#define VDI_PACKED_OPS_CONST
+#else
+#define VDI_PACKED_OPS_CONST const
+#endif
+
 #if CONF_WITH_VDI_BACKEND_DISPATCH
 
 /*
@@ -158,17 +165,23 @@ const vdi_backend_ops *vdi_screen_backend(void);
  * vdi_backend_select() only ever runs the read-only
  * vdi_backend_ops_validate() on planar_backend_ops, never the mutating
  * vdi_backend_ops_init() -- see the comment on that pair below.
- * packed_truecolor_backend_ops is different: it can leave optional slots
- * NULL under CONF_VDI_SPARSE_TABLE (see vdi_backend_truecolor.c), so it
- * genuinely needs vdi_backend_ops_init()'s mutation and stays non-const --
- * that only matters on MACHINE_RPI, where the "ROM" is actually writable
- * RAM.
+ * The packed truecolor tables are fully populated too, and const, except
+ * under CONF_VDI_SPARSE_TABLE (see vdi_backend_truecolor.c): that test
+ * option leaves their optional slots NULL for vdi_backend_ops_init() to
+ * fill, so only then are they writable.  The m68k ROM images build them
+ * as well (atari512-dispatch, for the Falcon), so a writable table there
+ * would be one of those silently read-only .data tables.
  */
 extern const vdi_backend_ops default_planar_backend_ops;
 extern vdi_backend_ops planar_backend_ops;
-extern vdi_backend_ops packed_truecolor_backend_ops;
+#if CONF_VDI_SPARSE_TABLE
+#define vdi_backend_packed_ops_ready(ops) vdi_backend_ops_init(ops)
+#else
+#define vdi_backend_packed_ops_ready(ops) vdi_backend_ops_validate(ops)
+#endif
+extern VDI_PACKED_OPS_CONST vdi_backend_ops packed_truecolor_backend_ops;
 #if CONF_WITH_VDI_BACKEND_TRUECOLOR32
-extern vdi_backend_ops packed_truecolor32_backend_ops;
+extern VDI_PACKED_OPS_CONST vdi_backend_ops packed_truecolor32_backend_ops;
 #endif
 
 /*

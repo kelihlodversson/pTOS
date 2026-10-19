@@ -1261,11 +1261,11 @@ WORD setscreen(UBYTE *logLoc, const UBYTE *physLoc, WORD rez, WORD videlmode)
 {
     WORD oldmode = 0;
 
-    if ((LONG)logLoc > 0) {
+    if ((LONG)(intptr_t)logLoc > 0) {
         v_bas_ad = logLoc;
         KDEBUG(("v_bas_ad = %p\n", v_bas_ad));
     }
-    if ((LONG)physLoc > 0) {
+    if ((LONG)(intptr_t)physLoc > 0) {
         setphys(physLoc);
     }
 
