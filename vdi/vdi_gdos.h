@@ -103,14 +103,14 @@ void vdi_sfont_trim(void);
 #define MAP_UCS2            2       /* Unicode, its first plane */
 #define MAP_UTF16           3       /* Unicode, all of it, with surrogate pairs */
 
-/* a BICS character in Unicode, or -1; a Unicode one in the Atari set, or -1 */
+/* a BICS character in Unicode, or -1; a Unicode one in BICS or the Atari set, or -1 */
 LONG vdi_bics_to_unicode(UWORD c);
+WORD vdi_unicode_to_bics(LONG cp);
 WORD vdi_unicode_to_atari(LONG cp);
 UWORD vdi_atari_to_unicode(UBYTE c);
 
-/* a code point's glyph in a scalable font, 0 if none; a glyph's code point, -1 if none */
+/* a code point's glyph in a scalable font, 0 if none */
 UWORD vdi_sfont_char_glyph(WORD index, LONG cp);
-LONG vdi_sfont_glyph_char(WORD index, UWORD glyph);
 
 /*
  * the kerning (vst_kern()) before each of n code points of a size, after

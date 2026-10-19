@@ -1099,6 +1099,30 @@ const Fonthead *vdi_text_char(Vwk *vwk, WORD c, WORD *ch)
 }
 
 /*
+ * whether the current font has a character (one WORD, as for
+ * vdi_text_char()) of a character map other than the Atari one: not just
+ * a shape drawn for it, the missing-glyph one or an Atari '?'
+ */
+static BOOL text_char_exists(Vwk *vwk, WORD c)
+{
+    const Fonthead *font = vwk->cur_font;
+    WORD pos = 0, atari, index;
+    LONG cp;
+
+    cp = next_char(vwk->char_map, &c, 1, &pos);
+    if (cp <= 0)
+        return FALSE;
+    if (font->flags & F_SFONT)
+    {
+        index = vdi_sfont_find(font->font_id);
+        return index >= 0 && vdi_sfont_char_glyph(index, cp) != 0;
+    }
+    atari = vdi_unicode_to_atari(cp);
+
+    return atari >= font->first_ade && atari <= font->last_ade;
+}
+
+/*
  * a character's advance, as the text path moves on after it: its width,
  * scaled as the font is, with what bold and outline add (not skewing,
  * which is added once per string); 0 if the font has no such character
@@ -1212,6 +1236,7 @@ void vdi_v_ftext(Vwk * vwk)
     WORD *str = INTIN, *off = PTSIN + 2, *old_ptsin = PTSIN;
     WORD pos, next, last = 0, along, h_align, dx, dy, pen_x, pen_y;
     WORD pts[4];                        /* the underline is drawn through PTSIN[0..3] */
+    WORD lstlin = linea_vars.LSTLIN;
 
     if (noffs < 1)
     {
@@ -1248,8 +1273,15 @@ void vdi_v_ftext(Vwk * vwk)
         pen_y += off[2 * pos + 1];
         pts[0] = pen_x;
         pts[1] = pen_y;
+        /*
+         * underlined in XOR mode, each character's underline leaves its
+         * last pixel to the next one's, as the lines of a polyline do,
+         * so that where they meet is not drawn twice
+         */
+        linea_vars.LSTLIN = next < count ? FALSE : lstlin;
         output_text(vwk, next - pos, str + pos, -1, NULL);
     }
+    linea_vars.LSTLIN = lstlin;
     PTSIN = old_ptsin;
     vwk->h_align = h_align;
 }
@@ -2007,7 +2039,7 @@ void vdi_vqt_width(Vwk * vwk)
 #if CONF_WITH_VDI_SCALABLE_FONTS
     /* the character as the font has it, in a page of it maybe */
     fnt_ptr = vdi_text_char(vwk, INTIN[0], &k);
-    if (!fnt_ptr)
+    if (!fnt_ptr || (vwk->char_map != MAP_ATARI && !text_char_exists(vwk, INTIN[0])))
     {
         fnt_ptr = vwk->cur_font;
         k = -1;

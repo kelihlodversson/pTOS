@@ -27,7 +27,7 @@
  * - vst_map_mode() chooses the character map text is in: BICS (of which
  *   only the ASCII part is known), the Atari character set, Unicode's
  *   first plane, or, as mode 3, which is pTOS's, all of Unicode in UTF-16.
- *   vqt_char_index() converts between them and the font's glyphs.
+ *   vqt_char_index() converts between BICS, the Atari set and Unicode.
  *
  * - vst_kern() switches pair kerning on and off, and vst_track_offset()
  *   (its track mode 255) sets an offset added after each character; the
@@ -807,8 +807,12 @@ void vdi_vst_charmap(Vwk *vwk)
     }
 }
 
-/* modes of vqt_char_index() */
-#define CHARIDX_DIRECT      0       /* the font's glyph index */
+/*
+ * modes of vqt_char_index(): the "direct" index is the character of
+ * vst_map_mode(0), BICS, which the text path draws in that mode, so that
+ * what the call answers draws as the character it was asked about
+ */
+#define CHARIDX_DIRECT      0       /* BICS */
 #define CHARIDX_ASCII       1       /* the Atari character set */
 #define CHARIDX_UNICODE     2
 
@@ -824,10 +828,7 @@ void vdi_vqt_char_index(Vwk *vwk)
     /* the character, in Unicode */
     switch (src) {
     case CHARIDX_DIRECT:
-        if (index >= 0)
-            cp = vdi_sfont_glyph_char(index, c);
-        else if (c >= font->first_ade && c <= font->last_ade && c < 256)
-            cp = vdi_atari_to_unicode((UBYTE)c);
+        cp = vdi_bics_to_unicode(c);
         break;
     case CHARIDX_ASCII:
         if (c >= 32 && c < 256)
@@ -843,19 +844,13 @@ void vdi_vqt_char_index(Vwk *vwk)
     {
         switch (dst) {
         case CHARIDX_DIRECT:
-            if (index >= 0)
             {
-                UWORD glyph = vdi_sfont_char_glyph(index, cp);
+                WORD bics = vdi_unicode_to_bics(cp);
 
-                if (glyph)
-                    result = glyph;
-            }
-            else
-            {
-                WORD atari = vdi_unicode_to_atari(cp);
-
-                if (atari >= font->first_ade && atari <= font->last_ade)
-                    result = atari;
+                /* only if the font has it, as SpeedoGDOS's direct index */
+                if (bics >= 0 && (index >= 0 ? vdi_sfont_char_glyph(index, cp) != 0
+                                             : cp >= font->first_ade && cp <= font->last_ade))
+                    result = bics;
             }
             break;
         case CHARIDX_ASCII:

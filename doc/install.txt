@@ -299,8 +299,12 @@ size itself, any other character from a page of 256 characters of that
 size, rendered when first needed and kept in the same cache.  A character
 the font lacks shows its missing-glyph shape, a lone surrogate the
 replacement character.  The bitmap fonts keep the Atari character set: a
-Unicode character is drawn as its Atari one, or as '?'.  vqt_char_index()
-converts between the maps and a font's glyph indices.  Only VDI text is
+Unicode character is drawn as its Atari one, or as '?'.  In these maps,
+vqt_width() answers -1 for a character the font lacks, whatever is drawn
+for it, so that it tells which characters a font has.  vqt_char_index() converts
+between the maps, its "direct" index being the BICS of mode 0, as
+SpeedoGDOS has it, and not a font's own glyph index, so that what it
+answers is drawn in mode 0 as the character asked about.  Only VDI text is
 Unicode: the AES, the desktop and file names stay 8-bit.
 tests/include/vdi_speedo.h has bindings for these calls, with gemlib's
 names, for programs built against libcmini.

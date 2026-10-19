@@ -148,6 +148,12 @@ LONG vdi_bics_to_unicode(UWORD c)
     return c < 95 ? 0x20 + c : -1;
 }
 
+/* the BICS character for a code point, or -1 if it has none known here */
+WORD vdi_unicode_to_bics(LONG cp)
+{
+    return cp >= 0x20 && cp < 0x7f ? (WORD)(cp - 0x20) : -1;
+}
+
 /* the Atari character for a code point, or -1 if it has none */
 WORD vdi_unicode_to_atari(LONG cp)
 {
@@ -189,6 +195,12 @@ static LONG sf_clamp(LONG size)
     if (size > SF_MAX_PIXELS * 64L)
         return SF_MAX_PIXELS * 64L;
     return size;
+}
+
+/* whether a size can get no smaller: its height, and its width if asked */
+static BOOL sf_smallest(LONG size, LONG width)
+{
+    return size == SF_MIN_PIXELS * 64L && (!width || width == SF_MIN_PIXELS * 64L);
 }
 
 /*
@@ -748,7 +760,7 @@ const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want, LONG width, WOR
             emptied = TRUE;
             continue;
         }
-        if ((b.bytes <= limit && b.drawable) || size == SF_MIN_PIXELS * 64L)
+        if ((b.bytes <= limit && b.drawable) || sf_smallest(size, width))
             break;
         size = sf_clamp(size * 3 / 4);
         width = width ? sf_clamp(width * 3 / 4) : 0;
@@ -797,7 +809,7 @@ const Fonthead *vdi_sfont_size(WORD index, LONG size, WORD want, LONG width, WOR
             emptied = TRUE;
             continue;
         }
-        if (size == SF_MIN_PIXELS * 64L)
+        if (sf_smallest(size, width))
             goto fail;
         size = sf_clamp(size * 3 / 4);
         width = width ? sf_clamp(width * 3 / 4) : 0;
@@ -909,8 +921,8 @@ void vdi_sfont_trim(void)
 }
 
 /*
- * vqt_char_index(): a code point's glyph in a font (0 if it has none),
- * and a glyph's code point (-1 if no character has it), on FreeType's stack
+ * whether a font has a character: a code point's glyph in it (0 if it has
+ * none), on FreeType's stack
  */
 typedef struct
 {
@@ -932,25 +944,6 @@ static long sf_char_glyph(void *arg)
     return 0;
 }
 
-static long sf_glyph_char(void *arg)
-{
-    SF_CHARMAP *m = arg;
-    FT_ULong cp;
-    FT_UInt glyph;
-
-    if (!sf_open(m->index))
-        return -1;
-    m->cp = -1;
-    for (cp = FT_Get_First_Char(sf_face, &glyph); glyph; cp = FT_Get_Next_Char(sf_face, cp, &glyph))
-        if (glyph == m->glyph)
-        {
-            m->cp = (LONG)cp;
-            break;
-        }
-
-    return 0;
-}
-
 UWORD vdi_sfont_char_glyph(WORD index, LONG cp)
 {
     SF_CHARMAP m;
@@ -962,19 +955,6 @@ UWORD vdi_sfont_char_glyph(WORD index, LONG cp)
         return 0;
 
     return m.glyph;
-}
-
-LONG vdi_sfont_glyph_char(WORD index, UWORD glyph)
-{
-    SF_CHARMAP m;
-
-    m.index = index;
-    m.glyph = glyph;
-    m.cp = -1;
-    if (!glyph || vdi_ft_call(sf_glyph_char, &m) != 0)
-        return -1;
-
-    return m.cp;
 }
 
 /* kerning, on FreeType's stack */

@@ -901,9 +901,21 @@ static void check_maps(short handle, int scalable)
     }
     if (!scalable)
     {
-        /* the system font has no CJK: a '?' */
+        /* the system font has no CJK: drawn as a '?', and vqt_width() says it is not there */
         w_atari = width_of(handle, '?');
-        font_check(width_of(handle, 0x4e00) == w_atari, "the system font does not show U+4E00 as '?'");
+        intin[0] = 0x4e00;
+        font_check(extent_n(handle, 1) == w_atari, "the system font does not show U+4E00 as '?'");
+        font_check(width_of(handle, 0x4e00) == -1, "vqt_width() finds U+4E00 in the system font");
+    }
+    else
+    {
+        /*
+         * no font has U+FFFE: its missing-glyph shape is drawn, but
+         * vqt_width() says it is not there (U+FFFF would be its -1 either way)
+         */
+        intin[0] = (short)0xfffe;
+        font_check(extent_n(handle, 1) > 0 && width_of(handle, (short)0xfffe) == -1,
+                   "vqt_width() finds U+FFFE in a scalable font");
     }
 
     /* UTF-16: a pair is one character, here one without a glyph */
@@ -1073,7 +1085,7 @@ static void check_sizes_more(short handle, short id)
 /* vst_arbpt() and the other size calls, and the metrics */
 static void check_metrics(short handle, short id)
 {
-    short top12, top13, w, h, i;
+    short top12, top13, w, h, i, dummy;
     long fix;
 
     intin[0] = id;
@@ -1111,6 +1123,12 @@ static void check_metrics(short handle, short id)
     intin[0] = 2000;
     ptsin_op(252, 0, 1, handle);        /* vst_setsize(2000): far more than a size can be */
     font_check(intout[0] > 12 && intout[0] < 2000, "vst_setsize() does not answer the width it set");
+    /* as low as a size can be, and far too wide: the width alone comes down */
+    vst_arbpt(handle, 1, &dummy, &dummy, &dummy, &dummy);
+    intin[0] = 2000;
+    ptsin_op(252, 0, 1, handle);        /* vst_setsize(2000) */
+    font_check(intout[0] > 12 && intout[0] < 2000,
+               "vst_setsize() does not narrow a size that is already as low as it gets");
     intin[0] = 12;
     vdi_op(107, 1, handle);
     ptsin[0] = 6;
@@ -1186,8 +1204,11 @@ static void check_metrics(short handle, short id)
     font_check(char_index(handle, 0xe9, 2, 1) == 0x82 && char_index(handle, 0x82, 1, 2) == 0xe9,
                "vqt_char_index() does not map e acute between Unicode and Atari");
     font_check(char_index(handle, 10, 1, 1) == 0xffff, "vqt_char_index() maps a control code");
-    font_check(char_index(handle, char_index(handle, 'A', 2, 0), 0, 2) == 'A',
-               "vqt_char_index() does not find 'A' through its glyph");
+    /* the direct index is BICS, as vst_map_mode(0) draws it */
+    font_check(char_index(handle, 'A', 2, 0) == 'A' - 32
+               && char_index(handle, char_index(handle, 'A', 2, 0), 0, 2) == 'A',
+               "vqt_char_index() does not take 'A' to BICS and back");
+    font_check(char_index(handle, 0x3b1, 2, 0) == 0xffff, "vqt_char_index() finds alpha in BICS");
 
     check_maps(handle, 1);
     check_kerning(handle);
@@ -1353,6 +1374,27 @@ static void check_unicode(short handle, short id, int pixels)
                  &one_by_one);
         font_check(same_ink(&whole, &one_by_one),
                    "a string of several pages is not drawn as its characters one by one");
+
+        /* what vqt_char_index() gives as the direct index draws in mode 0 as asked */
+        {
+            static const short ag[2] = { 'A', 'g' };
+            short direct[2];
+
+            vst_map_mode(handle, MAP_ATARI);
+            ink_clear(handle);
+            v_ftext(handle, ink_cx - 50, ink_cy, ag, 2);
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &whole);
+            for (i = 0; i < 2; i++)
+                direct[i] = (short)vqt_char_index(handle, ag[i], CHARIDX_ASCII, CHARIDX_DIRECT);
+            vst_map_mode(handle, MAP_BITSTREAM);
+            ink_clear(handle);
+            v_ftext(handle, ink_cx - 50, ink_cy, direct, 2);
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                     &one_by_one);
+            vst_map_mode(handle, MAP_UNICODE);
+            font_check(same_ink(&whole, &one_by_one),
+                       "vqt_char_index()'s direct index does not draw in mode 0 as the character");
+        }
     }
 
     /* UTF-16: a lone surrogate is the replacement character, and not found alone */
@@ -1426,6 +1468,36 @@ static void check_unicode(short handle, short id, int pixels)
         vdi_op(106, 1, handle);
         font_check(same_ink(&whole, &one_by_one),
                    "underlined v_ftext_offset() is not drawn as underlined v_ftext()");
+
+        /*
+         * the same in XOR mode after a polyline, which leaves its last
+         * point drawn: where two characters' underlines meet is drawn once
+         */
+        for (i = 0; i < 2; i++)
+        {
+            ink_clear(handle);
+            ptsin[0] = 0;
+            ptsin[1] = 0;
+            ptsin[2] = 1;
+            ptsin[3] = 0;
+            ptsin_op(6, 2, 0, handle);  /* v_pline(), outside the box */
+            intin[0] = 3;
+            vdi_op(32, 1, handle);      /* vswr_mode(XOR) */
+            intin[0] = 8;
+            vdi_op(106, 1, handle);     /* vst_effects(underline) */
+            if (i)
+                v_ftext_offset(handle, ink_cx - 50, ink_cy, ns, 4, off);
+            else
+                v_ftext(handle, ink_cx - 50, ink_cy, ns, 4);
+            intin[0] = 0;
+            vdi_op(106, 1, handle);
+            intin[0] = 1;
+            vdi_op(32, 1, handle);      /* back to replace mode */
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                     i ? &one_by_one : &whole);
+        }
+        font_check(same_ink(&whole, &one_by_one),
+                   "underlined v_ftext_offset() in XOR mode leaves gaps where characters meet");
 
         /*
          * Clipped, with a track offset that brings the characters back left:
