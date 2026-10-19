@@ -209,8 +209,8 @@ descriptors have G set and stay.  The 68040/68060 caches are physically
 tagged, so a switch needs no cache flush.
 
 m68k, 68030.  It is done after the 68040/68060, in #571, for the TT and
-the Falcon (a 68EC030 is refused at boot, #564).  The plan, to be
-confirmed there:
+the Falcon (a 68EC030 is refused at boot, #564).  The plan (decided in
+review):
 
   - The same tree shape as the 68040's, so one piece of code builds both:
     4 KiB pages and TC with PS = 12, IS = 0, TIA = 7, TIB = 7, TIC = 6, which
@@ -292,5 +292,4 @@ Decided in review
      (Super(1) still answers 0).
   2. No process writes the screen for now: it is not mapped for user mode.
   3. The MMU configurations use at most 1 GiB of RAM.
-
-Open: the 68030 plan above, to be confirmed in #571.
+  4. The 68030 is done as planned above, in #571.
