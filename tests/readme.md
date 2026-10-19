@@ -295,3 +295,11 @@ built with `-mfastcall`, so that the code is run under that calling convention
 too) on an emulated STE in ST-LOW, ST-MEDIUM and ST-HIGH, and on a Falcon with
 a 68030 and with a 68040. It fails if a test fails, and also if `text_blit` or
 `raster_copy` skip themselves, as they have to run on every one of these.
+
+`make x32-vdi-import-test` builds the native VDI import applications and
+malformed metadata fixtures in `obj/x32/VDI*.TOS`. Copy those files to the PC
+boot drive alongside `X32VDI.TOS`. Both PC configurations require
+`x86-64 VDI imports: PASS`: the optional VDI configuration executes imported
+client calls through normal and relocated ELF loads, nested Pexec and
+PE_LOAD/GO; the baseline refuses the unavailable import. Both reject
+malformed metadata. See `doc/vdi-x32.txt` for the SDK link recipe.

@@ -12,9 +12,8 @@ both formats coexist: a file starting with 0x7f 'E' 'L' 'F' is loaded by the
 ELF loader, one starting with 0x601a by the PRG loader.
 
 An ELF binary can also import pTOS system functions as ordinary typed C
-function calls, resolved to their real kernel addresses when the program
-is loaded -- see "Native pTOS ABI imports" below; no namespace currently
-registers any functions this way (that section explains why).
+function calls, resolved when the program is loaded. The optional x32 VDI
+client supplies the vdi:vdi import; see "Native pTOS ABI imports" below.
 
 
 Why relocation is needed
@@ -186,10 +185,10 @@ on x32), whose slot may legitimately be 0 in the file with the real value
 carried in r_addend instead, ptos-elf-pack first writes that addend into the
 slot's file bytes so every listed slot ends up needing the same "add the bias"
 operation.
-(pTOS ABI imports, a separate feature with no namespace registered yet, are
-not packed for x32: a call to an imported function leaves a PLT32 relocation
-against an undefined symbol, which ptos-elf-pack rejects like any PC-relative
-relocation against a symbol that does not move with the image.)
+The optional x32 VDI imports are packaged separately from these relocation
+slots. Import consumers use PIE code and the dynamic GOT/PLT relocation
+metadata, without retained static PC-relative relocations against undefined
+symbols; see the application recipe in doc/vdi-x32.txt.
 Relocation types the loader does not otherwise apply (PC-relative and
 similar) are never listed and need no entry -- but only when ptos-elf-pack
 recognises the type as one of the ones known not to need a load-time fixup;
@@ -235,28 +234,24 @@ Native pTOS ABI imports (.ptos.imports / .ptos.bind / PT_PTOS_IMPORTS)
 
 Alongside .ptos.reloc, an ELF binary may carry a second, independent piece
 of pTOS-private metadata: a table of pTOS system functions the program
-imports and calls as ordinary typed C functions, resolved to their real
-kernel addresses when the program is loaded, without a filesystem-based
+imports and calls as ordinary typed C functions, resolved to their ABI
+addresses when the program is loaded, without a filesystem-based
 dynamic linker or any runtime symbol lookup. This is the second piece of
 the native pTOS ABI work tracked by issue #308 (the first being
 .ptos.reloc, above); it would let a native ELF application call a pTOS
 function directly, compiled and linked as a normal extern function call.
 
-No namespace currently registers any functions through this mechanism.
-An earlier iteration exported every GEMDOS (TRAP #1) call this way, under
-a "gemdos:" namespace, but GEMDOS's own classic trap-based ABI
-(include/bdosbind.h's trap1()/trap1_pexec(), TRAP #1 on m68k / SVC on
-ARM) already serves native callers well enough on its own that the added
-indirection through this mechanism was not worth it there, and that
-namespace was removed again. The format, the loader-side resolution
-mechanism (below), and bdos/ptosabi.h's table-registration structures
-are kept as they are: they are namespace-agnostic, and are expected to
-become genuinely useful once part of the AES and/or VDI interfaces moves
-to userspace and needs exactly this kind of import mechanism -- see
-bdos/ptosabi.h's own top comment for how a future namespace registers
-one. Building an application against this mechanism, and ptos-elf-pack's
-"How ptos-elf-pack builds it" recipe below, will make sense again once a
-namespace exists to link against; there is nothing to import yet.
+CONF_WITH_X32_VDI registers vdi:vdi, ABI 1.0, for native x32 applications.
+It also selects CONF_WITH_PTOS_ABI_IMPORTS. The resolved address names the
+checked client running in ring 3, mapped as private read-only executable
+pages in the process (doc/vdi-x32.txt). It never names an LP64 kernel
+function. Static client linking is also available. The ordinary EmuCON-only
+configuration leaves VDI disabled and refuses applications requiring it.
+
+No other namespace is registered. The earlier gemdos imports were removed
+because the classic trap1()/TRAP #1 interface already serves GEMDOS. ARM and
+m68k retain their existing trap interfaces; enabling imports there does not
+make the x32 VDI implementation available.
 
 The ".ptos.imports" payload
 ............................
@@ -346,10 +341,10 @@ How ptos-elf-pack builds it
 ptos-elf-pack looks for a DT_NEEDED entry in the input's .dynamic section.
 If there is none, no ".ptos.imports" payload is produced at all -- a
 binary using only internal relocations is unaffected. If there is exactly
-one, and its name matches "libptos-abi.so.<N>" for a decimal N, every
+one, and its name is "libptos-vdi.so.1", every
 relocation in .rel.plt/.rela.plt or .rel.dyn/.rela.dyn targeting one of
 that library's undefined dynamic symbols is converted into one import
-(namespace "gemdos", abi_major N, abi_minor 0, kind taken from the
+(namespace "vdi", abi_major 1, abi_minor 0, kind taken from the
 symbol's STT_FUNC/STT_OBJECT type) and one bind record (bind_op
 PTOS_BIND_CODE_ADDRESS for R_*_JUMP_SLOT or a GLOB_DAT against a STT_FUNC
 symbol, PTOS_BIND_DATA_ADDRESS for a GLOB_DAT against a STT_OBJECT symbol)
@@ -386,18 +381,17 @@ no-op/meaningless-symbol types (R_ARM_NONE, R_68K_NONE, R_ARM_V4BX),
 which the packer's no-fixup allowlist above already accepts regardless
 of what their (per the ABI, unused) symbol field names.
 
-The "gemdos" namespace name above is hardcoded (ptos-elf-pack.c's
-import_list_add()) rather than derived from anything in the input file --
-a leftover from when a kernel-side "gemdos" export table existed to
-resolve it against (see "Native pTOS ABI imports" above). None does
-today, so this conversion still runs -- every relocation is still parsed
-and turned into an import/bind record internally -- but ptos-elf-pack
-refuses to write out a .ptos.imports payload for them at all: emitting
-one would just report success for a file bdos/elfld.c's ptosabi_resolve()
-can only ever reject at Pexec() time, the same as it would an
-unregistered namespace of any other name. A future namespace would pass
-its own name into import_list_add() instead of the hardcoded one, and
-relax that refusal for it.
+Only the x32 vdi:vdi function is accepted for packaging. Another function
+or a data symbol in that stub is rejected before producing output. The
+legacy libptos-abi.so.<N> stub is still recognised while parsing relocation
+metadata, but its gemdos namespace remains unavailable and cannot be packed.
+There is no general purpose dynamic linker and no filesystem DSO loading.
+
+Use position-independent x32 code and link with -pie --no-dynamic-linker,
+without --emit-relocs: the dynamic relocations describe the GOT/PLT imports.
+Retained static PC-relative relocations against an undefined PLT symbol
+remain outside the packer's accepted shapes. See doc/vdi-x32.txt for the
+complete build recipe and tested fixtures.
 
 Locating the metadata and loader resolution
 ............................................
@@ -407,15 +401,13 @@ PT_PTOS_RELOC: by walking the program header table, never the section
 header table. When present, and the kernel was built with
 CONF_WITH_PTOS_ABI_IMPORTS, every import would be looked up by exact
 "namespace:name" match against the kernel's own registered export tables
-(bdos/ptosabi.h's ptosabi_resolve(), currently registering none -- see
-"Native pTOS ABI imports" above), with the ABI major version required to
+(bdos/elfld.c's ptosabi_resolve()), with the ABI major version required to
 match exactly and the minor version required to be at least the import's
 requested minimum. An import naming an unknown symbol, an unsupported
 namespace, or an ABI version the export table cannot satisfy fails the
 whole Pexec() with EPLFMT rather than binding a null or garbage address
 -- a native application must never silently call through an unresolved
-slot; with no namespace registered at all, every PT_PTOS_IMPORTS-carrying
-binary currently fails this way regardless of what it names. A
+slot. The x32 VDI function is available only with CONF_WITH_X32_VDI. A
 PT_PTOS_IMPORTS header in a kernel built without CONF_WITH_PTOS_ABI_IMPORTS
 fails to load the same way: there is no export table to resolve against,
 so pretending the binary loaded correctly would leave every import slot
@@ -454,9 +446,9 @@ Known .ptos.imports version 1 limitations
 --------------------------------------------
 
 ptos-elf-pack recognises exactly one DT_NEEDED entry per input binary
-(the SDK's libptos-abi.so.<N> stub). This is enough for a single
+(the SDK's libptos-vdi.so.1 stub). This is enough for a single
 namespace served from one ABI major version, but a later stage
-registering more than one namespace (most plausibly aes:/vdi:, issue
+registering more than one namespace (for example aes:, issue
 #308) will need either several recognised DT_NEEDED libraries or a
 combined stub exporting more than one namespace -- both are
 straightforward extensions of this same conversion step, not a format

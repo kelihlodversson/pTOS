@@ -18,6 +18,7 @@
 #include "tosvars.h"
 #if CONF_WITH_X32_VDI
 #include "vdi_service.h"
+#include "x32vdi_image.h"
 #endif
 #if CONF_WITH_KHEAP
 #include "kheap.h"
@@ -552,6 +553,12 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     if (!build_ancestors(kproc, as, parent)) {
         return prepare_failed(kproc, as);
     }
+#if CONF_WITH_X32_VDI
+    /* Before moving a PE_LOAD image: every allocation that can fail must
+     * precede that irreversible transfer from the launcher's address space. */
+    if (!x32_vdi_image_load(as))
+        return prepare_failed(kproc, as);
+#endif
     /*
      * A built-in image gets its segments as private pages at the fixed
      * addresses of include/procmem.h's layout (one loaded from a file has them

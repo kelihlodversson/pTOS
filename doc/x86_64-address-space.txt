@@ -96,6 +96,8 @@ The constants are in include/procmem.h.
                               program loaded from a file also the startup
                               area, 128 KiB of zeroed read/write memory right
                               after the image's last page
+    0x0ffe0000 - 0x0ffeffff   optional x32 VDI client, private read-only code
+                              (CONF_WITH_X32_VDI; doc/vdi-x32.txt)
     0x0fff0000 - 0x0fff0fff   ancestors' basepages, read-only (below)
     0x10000000 - 0x7efeffff   Malloc() memory, backed when touched (below)
     0x7efff000 - 0x7effffff   guard page, never mapped: between heap and stack

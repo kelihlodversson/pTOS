@@ -6,7 +6,7 @@
 int vdi_roundtrip_checks(WORD inherited_handle, BOOL fault_after_open);
 int vdi_coordinate_bounds_checks(void);
 
-#if CONF_WITH_X32_VDI
+#if CONF_WITH_X32_VDI || defined(VDI_IMPORT_TEST)
 static UWORD bitmap_source[8], bitmap_destination[8];
 static const VDICONTROL immutable_control = { 0 };
 
@@ -38,7 +38,7 @@ static LONG raw_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 
 int vdi_coordinate_bounds_checks(void)
 {
-#if CONF_WITH_X32_VDI
+#if CONF_WITH_X32_VDI || defined(VDI_IMPORT_TEST)
     VDI_SERVICE_WORKSTATION workstation;
     WORD input[11] = { 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 2 };
     WORD output[2] = { 0x1234, 0x5678 };
@@ -87,7 +87,7 @@ int vdi_coordinate_bounds_checks(void)
 #endif
 }
 
-#if CONF_WITH_X32_VDI
+#if CONF_WITH_X32_VDI || defined(VDI_IMPORT_TEST)
 static LONG call(VDIPB *pb, WORD code, WORD integers, WORD pairs)
 {
     pb->contrl->code = code;
@@ -187,7 +187,7 @@ static int clipping_checks(WORD handle, WORD max_x, WORD max_y)
 
 int vdi_roundtrip_checks(WORD inherited_handle, BOOL fault_after_open)
 {
-#if CONF_WITH_X32_VDI
+#if CONF_WITH_X32_VDI || defined(VDI_IMPORT_TEST)
     VDICONTROL control = { 0 };
     WORD input[11] = { 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 2 };
     WORD points[12] = { 1, 1, 7, 1, 0, 0, 0, 0 };

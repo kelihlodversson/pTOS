@@ -300,7 +300,8 @@ jobs:
           cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
           # a real x32 ELF on the boot drive: the self-test runs it through
           # Pexec() from a ring-3 process (nested launch), as EmuCON does
-          make CROSS_COMPILE= x32test
+          make CROSS_COMPILE= x32test x32-vdi-import-test
+          cp obj/x32/VDI*.TOS esp/
           cp x32hello.elf esp/X32HELLO.TOS
           # The optional VDI self-test loads a second client while the first
           # still owns a workstation, to check process isolation.
@@ -362,6 +363,10 @@ jobs:
           fi
           if ! grep -q 'x86-64 memtest: PASS' boot.log; then
             echo "::error::the boot-time memory-management self-test never reported PASS"
+            exit 1
+          fi
+          if ! grep -q 'x86-64 VDI imports: PASS' boot.log; then
+            echo "::error::VDI import resolution, isolation or baseline refusal did not pass"
             exit 1
           fi
           if grep -q '^CONF_WITH_X32_VDI=y' .config && ! grep -q 'x86-64 VDI client: PASS' boot.log; then

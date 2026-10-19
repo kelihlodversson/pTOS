@@ -831,6 +831,45 @@ obj/x32/libptos-vdi.a: $(X32_VDI_OBJ)
 .PHONY: x32-vdi
 x32-vdi: obj/x32/libptos-vdi.a
 
+# A link-time stub for .ptos.imports consumers; never loaded as a DSO.
+obj/x32/libptos-vdi.so.1: vdi/x32/vdi_import_stub.S | obj/x32
+	$(X32_CC) $(X32_CFLAGS) -nostdlib -shared -Wl,-shared,-m,elf32_x86_64 \
+	  -Wl,--build-id=none -Wl,-soname,libptos-vdi.so.1 -o $@ $<
+
+obj/x32/vdi_image.ld: vdi/x32/vdi_image.ld.S include/x32vdi_image.h | obj/x32
+	$(X32_CC) -E -P -x c -Iinclude $< -o $@
+obj/x32/vdi_client.elf: $(X32_VDI_OBJ) obj/x32/vdi_image.ld
+	$(X32_CC) -mx32 -nostdlib -static -no-pie -Wl,-m,elf32_x86_64 \
+	  -Wl,--build-id=none -Wl,-T,obj/x32/vdi_image.ld -o $@ $(X32_VDI_OBJ)
+obj/x32/vdi_client.bin: obj/x32/vdi_client.elf
+	$(X32_CROSS_COMPILE)objcopy -O binary $< $@
+obj/vdi_image.o: obj/x32/vdi_client.bin
+
+x32-vdi: obj/x32/libptos-vdi.so.1
+
+# The same imported client at two application link addresses. The second
+# exercises relocation into the image window and PE_LOAD into a user heap.
+obj/x32/vdi-import-reloc.elf: X32_IMPORT_LINK_BASE = -Wl,-Ttext-segment=0x20000000
+obj/x32/vdi-import-plt.elf: X32_IMPORT_FLAGS = -DVDI_IMPORT_PLT
+obj/x32/vdi-import.elf obj/x32/vdi-import-reloc.elf obj/x32/vdi-import-plt.elf: \
+  tests/x32_vdi_import/vdi_import.c tests/x32_probe/x32_probe_start.S \
+  tests/vdi_contract/vdi_roundtrip.c obj/x32/libptos-vdi.so.1 $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(filter-out -fno-pie,$(X32_CLI_CFLAGS)) -fPIE -DVDI_IMPORT_TEST $(X32_IMPORT_FLAGS) -Iinclude -Iobj \
+	  -nostdlib -Wl,-pie,--no-dynamic-linker,--build-id=none -Wl,-m,elf32_x86_64 \
+	  -Wl,-z,max-page-size=0x1000,-z,noseparate-code -Wl,-e,_start \
+	  $(X32_IMPORT_LINK_BASE) \
+	  -o $@ $(filter %.c %.S,$^) -Lobj/x32 -l:libptos-vdi.so.1
+
+obj/x32/VDIIMP.TOS: obj/x32/vdi-import.elf ptos-elf-pack
+	./ptos-elf-pack --strip-shdr $< $@
+obj/x32/VDIREL.TOS: obj/x32/vdi-import-reloc.elf ptos-elf-pack
+	./ptos-elf-pack --strip-shdr $< $@
+.PHONY: x32-vdi-import-test
+obj/x32/VDIPLT.TOS: obj/x32/vdi-import-plt.elf ptos-elf-pack
+	./ptos-elf-pack --strip-shdr $< $@
+x32-vdi-import-test: obj/x32/VDIIMP.TOS obj/x32/VDIREL.TOS obj/x32/VDIPLT.TOS
+	python3 tests/x32_vdi_import/check_imports.py obj/x32
+
 -include $(X32_VDI_OBJ:.o=.d)
 
 
@@ -1539,7 +1578,7 @@ endif
 
 # Standalone boot probes and the host/x32 contract checks are not ptest
 # suites, so they must never be linked into runtests.tos.
-TEST_SUITES := $(filter-out x32_hello x32_probe vdi_contract,$(TEST_SUITES))
+TEST_SUITES := $(filter-out x32_hello x32_probe vdi_contract x32_vdi_import,$(TEST_SUITES))
 
 # raster_copy and text_blit draw through the VDI, which x86-64 refuses to user
 # processes until #548 (and tools/pBench/gem.c, their bindings, has none for
