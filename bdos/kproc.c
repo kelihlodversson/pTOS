@@ -461,6 +461,7 @@ static BOOL build_ancestors(KPROC *kproc, ASPACE *as, PD *parent)
 }
 
 static BOOL move_loaded_image(KPROC *kproc, ASPACE *to, PD *launcher);
+static VADDR stack_bytes(const KPROC *kproc);
 
 /* A launch that cannot be completed: the address space is gone.  One that was
  * made at load time holds the program's only copy, so there is nothing left
@@ -548,23 +549,12 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     if (!build_ancestors(kproc, as, parent)) {
         return prepare_failed(kproc, as);
     }
-    /*
-     * A built-in image gets its segments as private pages at the fixed
-     * addresses of include/procmem.h's layout (one loaded from a file has them
-     * already, and one PE_LOAD put in its caller's heap is moved here).  The
-     * private stack (a TPA is no stack: the image of a program loaded into it,
-     * or the code a caller put there, is not something to push onto) is lazy:
-     * nothing is mapped for it, its pages come with the first touch.  The move
-     * of a PE_LOAD image out of its caller cannot be undone, so nothing that
-     * can fail may follow it.
-     */
-    if (kproc->has_image && !kproc->pending_as &&
-        (kproc->load_parent ? !move_loaded_image(kproc, as, parent)
-                            : !layout_load(as, &kproc->layout))) {
-        return prepare_failed(kproc, as);
-    }
     /* the limits of Psetlimit() are the launcher's at this moment (a stack
-     * that would run into the image the loader put in the heap stays the default) */
+     * that would run into the image the loader put in the heap stays the
+     * default).  Decided before the image is moved below, so that the stack
+     * can be mapped first where it is not lazy; the moved image is the only
+     * heap block the process will have, at the place it has in the loader's
+     * heap. */
     {
         KPROC *pk = kproc_find(parent);
 
@@ -575,7 +565,9 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
             if (pk->stack_size && pk->aspace) {
                 VADDR highest = USER_HEAP_BASE;
 
-                if (kproc->nheap)
+                if (kproc->has_image && !kproc->pending_as && kproc->load_parent)
+                    highest = kproc->load_va + (VADDR)kproc->load_pages * USER_PAGE_SIZE;
+                else if (kproc->nheap)
                     highest = kproc->heap[kproc->nheap - 1].va +
                               (VADDR)kproc->heap[kproc->nheap - 1].pages * USER_PAGE_SIZE;
                 if (USER_STACK_TOP - pk->stack_size - USER_PAGE_SIZE >= highest)
@@ -583,7 +575,32 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
             }
         }
     }
-    kproc->stack_top = USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16; its pages come with the first touch */
+#if !CONF_WITH_DEMAND_PAGING
+    /* Without demand paging the stack is mapped now, all of it, and before the
+     * move below. */
+    if (!aspace_map_private(as, USER_STACK_TOP - stack_bytes(kproc), stack_bytes(kproc),
+                            ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
+        return prepare_failed(kproc, as);
+    }
+    kproc->stack_low = USER_STACK_TOP - stack_bytes(kproc);
+#endif
+    /*
+     * A built-in image gets its segments as private pages at the fixed
+     * addresses of include/procmem.h's layout (one loaded from a file has them
+     * already, and one PE_LOAD put in its caller's heap is moved here).  The
+     * private stack (a TPA is no stack: the image of a program loaded into it,
+     * or the code a caller put there, is not something to push onto) is lazy
+     * with CONF_WITH_DEMAND_PAGING: nothing is mapped for it, its pages come
+     * with the first touch; without it, it was mapped above.  The move
+     * of a PE_LOAD image out of its caller cannot be undone, so nothing that
+     * can fail may follow it.
+     */
+    if (kproc->has_image && !kproc->pending_as &&
+        (kproc->load_parent ? !move_loaded_image(kproc, as, parent)
+                            : !layout_load(as, &kproc->layout))) {
+        return prepare_failed(kproc, as);
+    }
+    kproc->stack_top = USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
     if (kproc->has_image)
         kproc->entry = kproc->layout.entry;
     kproc->aspace = as;
@@ -1042,8 +1059,11 @@ static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
     if (!heap_room(kproc))
         return 0;
     va = heap_gap(kproc, size, &index, &largest);
-    /* (Malloc() memory is lazy; a program image is filled in by the kernel and
-     * moved page by page, so it is backed at once) */
+    /* (Malloc() memory is lazy with CONF_WITH_DEMAND_PAGING; a program image
+     * is filled in by the kernel and moved page by page, so it is backed at
+     * once) */
+    if (!CONF_WITH_DEMAND_PAGING)
+        eager = TRUE;
     if (!va || (eager && !aspace_map_private(kproc->aspace, va, size,
                                                     ASPACE_PROT_WRITE | ASPACE_PROT_USER)))
         return 0;
@@ -1066,6 +1086,7 @@ static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
  */
 static BOOL lazy_area(const KPROC *kproc, VADDR va)
 {
+#if CONF_WITH_DEMAND_PAGING
     ULONG i;
 
     if (va >= USER_STACK_TOP - stack_bytes(kproc) && va < USER_STACK_TOP)
@@ -1074,9 +1095,14 @@ static BOOL lazy_area(const KPROC *kproc, VADDR va)
         if (va >= kproc->heap[i].va &&
             va < kproc->heap[i].va + (VADDR)kproc->heap[i].pages * USER_PAGE_SIZE)
             return TRUE;
-    return FALSE;
+#else
+    UNUSED(kproc);
+    UNUSED(va);
+#endif
+    return FALSE;               /* (without demand paging nothing is lazy) */
 }
 
+#if CONF_WITH_DEMAND_PAGING
 /* backs the page of a lazy area; the stack remembers how far down it has been */
 static BOOL back_page(KPROC *kproc, VADDR va)
 {
@@ -1089,15 +1115,24 @@ static BOOL back_page(KPROC *kproc, VADDR va)
     return TRUE;
 }
 
+#endif
+
 int kproc_demand_page(PD *pd, VADDR va)
 {
+#if CONF_WITH_DEMAND_PAGING
     KPROC *kproc = kproc_find(pd);
 
     if (!kproc || !kproc->aspace || !lazy_area(kproc, va))
         return 0;
     return back_page(kproc, va) ? 1 : 2;
+#else
+    UNUSED(pd);
+    UNUSED(va);
+    return 0;                   /* nothing is lazy: a fault is a fault */
+#endif
 }
 
+#if CONF_WITH_DEMAND_PAGING
 /* A kernel call needs a page of a lazy area and no physical page is left: the
  * same end as a touch of the page by the process itself, not a bad pointer. */
 static void lazy_oom(void)
@@ -1105,6 +1140,7 @@ static void lazy_oom(void)
     kcprintf("process: no physical page left for its memory\n");
     xterm((UWORD)-1);
 }
+#endif
 
 /* Whether the process may read (or write) [address, address + size), the pages
  * of its lazy areas that are not there yet included: a range with a gap, or a
@@ -1133,6 +1169,7 @@ static BOOL range_allowed(KPROC *kproc, VADDR address, ULONG size, BOOL write)
  * fine but cannot be backed ends the process. */
 static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
 {
+#if CONF_WITH_DEMAND_PAGING
     VADDR first = address & ~(USER_PAGE_SIZE - 1);
     VADDR last = (address + size - 1) & ~(USER_PAGE_SIZE - 1), page;
 
@@ -1143,6 +1180,9 @@ static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
             !back_page(kproc, page))
             lazy_oom();
     return TRUE;
+#else
+    return range_allowed(kproc, address, size, write);   /* all of it is there */
+#endif
 }
 
 /*
@@ -1199,6 +1239,17 @@ LONG kproc_psetlimit(PD *pd, WORD mode, LONG value)
             return ENSMEM;
         if (kproc->stack_low && USER_STACK_TOP - size > kproc->stack_low)
             return ERANGE;
+#if !CONF_WITH_DEMAND_PAGING
+        /* the stack is mapped, all of it: a bigger one gets its pages now (and
+         * a smaller one was refused above, every page counting as touched) */
+        if (USER_STACK_TOP - size < kproc->stack_low) {
+            if (!aspace_map_private(kproc->aspace, USER_STACK_TOP - size,
+                                    kproc->stack_low - (USER_STACK_TOP - size),
+                                    ASPACE_PROT_WRITE | ASPACE_PROT_USER))
+                return ENSMEM;
+            kproc->stack_low = USER_STACK_TOP - size;
+        }
+#endif
         kproc->stack_size = size == USER_STACK_SIZE ? 0 : size;
         return (LONG)old;
     default:
@@ -1290,10 +1341,21 @@ static struct uheap_block *heap_find(KPROC *kproc, VADDR va)
     return NULL;
 }
 
+/* unmaps and frees private pages of the process: lazy ones, some of which may
+ * never have been touched, or, without demand paging, pages that are all there */
+static BOOL release_pages(ASPACE *as, VADDR va, VADDR bytes)
+{
+#if CONF_WITH_DEMAND_PAGING
+    return aspace_release_lazy(as, va, bytes);
+#else
+    return aspace_unmap_private(as, va, bytes);
+#endif
+}
+
 /* gives the block back: unmaps its pages and drops its entry */
 static LONG heap_release(KPROC *kproc, struct uheap_block *b)
 {
-    if (!aspace_release_lazy(kproc->aspace, b->va,
+    if (!release_pages(kproc->aspace, b->va,
                                      (VADDR)b->pages * USER_PAGE_SIZE))
         return ERR;
     memmove(b, b + 1, (kproc->nheap - 1 - (ULONG)(b - kproc->heap)) * sizeof(*b));
@@ -1331,7 +1393,7 @@ LONG kproc_uheap_shrink(PD *pd, VADDR va, long len)
         return EGSBF;
     if (keep == b->pages)
         return E_OK;
-    if (!aspace_release_lazy(kproc->aspace, va + keep * USER_PAGE_SIZE,
+    if (!release_pages(kproc->aspace, va + keep * USER_PAGE_SIZE,
                                      (VADDR)(b->pages - keep) * USER_PAGE_SIZE))
         return ERR;
     b->pages = (ULONG)keep;

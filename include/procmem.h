@@ -175,13 +175,15 @@ typedef struct aspace ASPACE;     /* defined by the backend */
  * positive signed long (the old TOS habits of sign-extending pointers and of
  * returning negative GEMDOS error codes in the same register as addresses).
  *
- * The heap and the stack are lazy: Malloc() hands out address space, and a page
- * of it gets its (zeroed) physical page when the process first touches it, in
- * the page fault handler (aspace_fault_in()).  Untouched address space
+ * With CONF_WITH_DEMAND_PAGING the heap and the stack are lazy: Malloc() hands
+ * out address space, and a page of it gets its (zeroed) physical page when the
+ * process first touches it, in the page fault handler (aspace_fault_in()).  Untouched address space
  * costs nothing, so the sum of what the processes may use is more than there is
  * physical memory (overcommit); the process that touches a page when none is
- * left is terminated, as Pterm(-1).  Malloc(-1) reports the largest free
- * stretch of address space, as the TPA size does on the other platforms.
+ * left is terminated, as Pterm(-1).  Without it (a backend that cannot, or the
+ * option off), every page is mapped when the memory is handed out, the stack
+ * when the process starts.  Malloc(-1) reports the largest free stretch of
+ * address space either way, as the TPA size does on the other platforms.
  *
  * The ancestors page holds scrubbed copies of the basepages of the process's
  * launcher, that one's launcher and so on (USER_ANCESTORS levels at
@@ -206,8 +208,13 @@ typedef struct aspace ASPACE;     /* defined by the backend */
  * first; a process whose stack limit was raised has less) */
 #define USER_HEAP_LIMIT  VADDR_C(0x7efff000)
 #define USER_STACK_TOP   VADDR_C(0x80000000)
-/* the default size of the stack: address space, backed when touched */
+/* the default size of the stack: address space, backed when touched; without
+ * demand paging, the pages mapped when the process starts */
+#if CONF_WITH_DEMAND_PAGING
 #define USER_STACK_SIZE  VADDR_C(0x01000000)
+#else
+#define USER_STACK_SIZE  VADDR_C(0x00040000)
+#endif
 #define USER_STACK_MIN   VADDR_C(0x00004000)   /* the least Psetlimit() allows */
 
 ASPACE *aspace_create(void);
@@ -276,23 +283,23 @@ BOOL aspace_map_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
  */
 BOOL aspace_unmap_private(ASPACE *as, VADDR va, VADDR bytes);
 
+#if ARCH_HAS_DEMAND_PAGING
 /*
- * Lazy memory.  aspace_fault_in() backs the page containing `va` with a
+ * Lazy memory, where the backend can do it (ARCH_HAS_DEMAND_PAGING; the BDOS
+ * uses it only with CONF_WITH_DEMAND_PAGING).  aspace_fault_in() backs the
+ * page containing `va` with a
  * new zeroed private page, with `prot`, if there is no mapping there yet (TRUE
  * also if there is one already); FALSE if a physical page or a page table
- * could not be had, or less than ASPACE_FAULT_RESERVE of physical memory would
- * be left (the kernel's own needs come first: the reserve is never dipped into,
- * the tables the page may need counted).  aspace_map_private() keeps the
- * same reserve, for the pages of a program image and the like.  The caller has decided that the
- * address belongs to a lazy area.  aspace_release_lazy() is
+ * could not be had, or the backend's reserve of physical memory would be
+ * dipped into (the kernel's own needs come first).  The caller has decided
+ * that the address belongs to a lazy area.  aspace_release_lazy() is
  * aspace_unmap_private() for such an area: pages never touched are
  * simply not there, and are skipped; FALSE, with nothing changed, if a page
  * that is there is not one of its private pages.
  */
-#define ASPACE_FAULT_RESERVE 0x00400000ULL
-#define ASPACE_FAULT_COST    0x00008000ULL      /* the most one page costs: it, 3 tables, bookkeeping */
 BOOL aspace_fault_in(ASPACE *as, VADDR va, UWORD prot);
 BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes);
+#endif
 
 /*
  * Hands private pages from one address space to another: [va, va + bytes) of

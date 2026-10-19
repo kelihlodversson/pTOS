@@ -104,7 +104,6 @@ config CONF_WITH_KPROC
 
 config CONF_WITH_PROCMEM
 	bool
-	default y if ARCH_X86_64
 	select CONF_WITH_KPROC
 	help
 	  The memory blocks of a process (its basepage with the TPA, and its
@@ -112,36 +111,49 @@ config CONF_WITH_PROCMEM
 	  include/procmem.h instead of from the GEMDOS memory descriptor lists:
 	  every block has an owner, a generation and a pin count, so that a
 	  stale or foreign address is recognised, and the blocks are reachable
-	  by a 32-bit address while the kernel itself is 64-bit.  Not
-	  user-selectable: it follows the architecture (and
-	  CONF_WITH_USER_ASPACE, which needs it).
+	  by a 32-bit address (on x86-64, while the kernel itself is 64-bit).
+	  Not user-selectable: CONF_WITH_USER_ASPACE, which needs it, sets it.
 
 config CONF_WITH_USER_ASPACE
 	bool
-	default y if ARCH_X86_64
+	default y if ARCH_HAS_USER_ASPACE
 	select CONF_WITH_PROCMEM
 	select CONF_WITH_KHEAP
 	select CONF_WITH_KPROC
 	select CONF_WITH_USER_COPY
 	help
-	  Processes run in per-process address spaces (ring 3 on x86-64):
+	  Processes run in user mode in per-process address spaces (ring 3
+	  on x86-64; doc/x86_64-address-space.txt, doc/mmu-address-space.txt):
 	  the record also carries the process's page tables, kernel stack,
 	  memory-block identities and loans, and its read-only copies of its
 	  ancestors' basepages, and the DTA pointer in it is the only one
-	  trusted.  Not user-selectable: it follows the architecture, and
-	  requires CONF_WITH_KPROC.  The separate-address-spaces option
-	  (#402) will become the real home of this.
+	  trusted.  Not user-selectable: it is on where the architecture has
+	  an address-space backend (ARCH_HAS_USER_ASPACE, include/procmem.h),
+	  and requires CONF_WITH_KPROC.
+
+config CONF_WITH_DEMAND_PAGING
+	bool "Back user memory when it is first touched"
+	depends on CONF_WITH_USER_ASPACE && ARCH_HAS_DEMAND_PAGING
+	default y
+	help
+	  A process's stack and Malloc() blocks are address space until it
+	  touches them: the page fault handler gives each page its zeroed
+	  physical page then, so untouched memory costs nothing and the
+	  default stack can be 16 MiB.  Without it every page is mapped when
+	  the memory is handed out, and the default stack is 256 KiB.
+	  Offered where the address-space backend can do it
+	  (ARCH_HAS_DEMAND_PAGING); turn it off to run the eager path a
+	  backend without it uses.
 
 config CONF_WITH_KHEAP
 	bool
-	default y if ARCH_X86_64
 	help
 	  A growable heap for kernel-only objects (include/kheap.h):
 	  kernel-private process records (struct kproc) and address-space
 	  metadata come from it instead of the fixed GEMDOS memory descriptor
 	  pool, so their number is bounded by memory, not by that pool.  The
-	  machine provides it.  Not user-selectable: it follows the
-	  architecture, and CONF_WITH_USER_ASPACE requires it.
+	  machine provides it.  Not user-selectable: CONF_WITH_USER_ASPACE,
+	  which needs it, sets it.
 
 config CONF_WITH_KCALL
 	bool
