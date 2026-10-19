@@ -120,6 +120,9 @@ C_SYM(dsptch):
                                  * plain 16-aligned label (trap.c's own
                                  * percpu.kernel_rsp init uses the same
                                  * "-8" adjustment for the same reason) */
+        /* GS and mappings are now normalized, on the dispatcher stack.
+         * Idle tasks need timer/PS2 IRQs to become runnable again. */
+        sti
         jmp     C_SYM(disp)     /* tail call: disp() always ends in
                                  * switchto(), never really returns, but
                                  * a tail jump means there's nothing to

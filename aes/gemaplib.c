@@ -79,9 +79,17 @@ WORD ap_rdwr(WORD code, AESPD *p, WORD length, WORD *pbuff)
     QPB     m;
 #if ARCH_X86_64
     LONG rc;
+    WORD message[8];
 
     if (code == MU_SDMSG && length == 16) {
-        rc = x86_64_aes_message(p, pbuff);
+        /* A native caller may use a shared AES message buffer, which
+         * another task can overwrite while we wait for queue space. */
+        memcpy(message, pbuff, sizeof(message));
+        do {
+            rc = x86_64_aes_message(p, message);
+            if (rc == EAGAIN)
+                dsptch();
+        } while (rc == EAGAIN);
         if (rc != EINVFN)
             return rc == E_OK;
     }

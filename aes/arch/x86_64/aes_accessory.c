@@ -205,6 +205,9 @@ void x86_64_aes_drain(void)
 #include "procmem.h"
 #include "bdosbind.h"
 #include "../../../bdos/kproc.h"
+#include "../../../desk/aesbind.h"
+#include "gemwmlib.h"
+#include "gemevlib.h"
 
 extern UQUAD pmem_free_bytes(void);
 extern UQUAD x86_64_pmem_bad_frees(void);
@@ -220,6 +223,7 @@ typedef struct {
 
 static ACCESSORY_SNAPSHOT before_session;
 static WORD test_sessions;
+static BOOL idle_seen;
 
 static void snapshot(ACCESSORY_SNAPSHOT *s)
 {
@@ -279,7 +283,7 @@ void x86_64_aes_test_begin(void)
 
 BOOL x86_64_aes_test_run(void)
 {
-    WORD i, dead = 0, waiting = 0;
+    WORD i, n, dead = 0, waiting = 0;
     WORD close_message[8] = { 41, 0, 0, 0, 0, 0, 0, 0 };
     ACCESSORY_CONTEXT *c;
 
@@ -304,16 +308,31 @@ BOOL x86_64_aes_test_run(void)
     if (dead != 2 || waiting != 2)
         panic("accessory lifecycle FAIL: dead=%d waiting=%d\n", dead, waiting);
     /* Exercise the native AES message bridge and receive acknowledgement. */
-    for (i = 2; i < NUM_PDS; i++)
-        if (contexts[i].owner &&
-            !ap_rdwr(MU_SDMSG, contexts[i].aes, sizeof(close_message), close_message))
+    for (i = 2; i < NUM_PDS; i++) {
+        if (!contexts[i].owner)
+            continue;
+        if (!memcmp(contexts[i].aes->p_name, "ACCWAIT ", 8)) {
+            /* Fill the typed queue without yielding. The following AC_CLOSE
+             * must let its receiver run and drain all eight ordered messages. */
+            close_message[0] = 548;
+            for (n = 0; n < AES_MESSAGE_QUEUE; n++) {
+                close_message[3] = n;
+                if (!ap_rdwr(MU_SDMSG, contexts[i].aes, sizeof(close_message), close_message))
+                    panic("accessory native queue fill FAIL\n");
+            }
+            close_message[0] = 41;
+            close_message[3] = 0;
+        }
+        if (!ap_rdwr(MU_SDMSG, contexts[i].aes, sizeof(close_message), close_message))
             panic("accessory native message bridge FAIL\n");
+    }
     for (i = 0; i < 50; i++)
         dsptch();
     for (i = 2; i < NUM_PDS; i++)
         if (contexts[i].owner && !(contexts[i].aes->p_flags & AP_ACCLOSE))
             panic("accessory native message acknowledgement FAIL\n");
     kcprintf("x32 accessory refused load: PASS\n");
+    kcprintf("x32 accessory native queue backpressure: PASS\n");
     kcprintf("x32 accessory message/exit/fault: PASS\n");
     return test_sessions < 3;
 }
@@ -325,5 +344,44 @@ void x86_64_aes_test_finish(void)
     kcprintf("x32 accessory restart %d: PASS\n", test_sessions);
     if (test_sessions == 3)
         kcprintf("x32 accessory lifecycle: PASS\n");
+}
+
+void x86_64_aes_test_idle(void)
+{
+    UQUAD flags;
+
+    __asm__ volatile ("pushfq; popq %0" : "=r"(flags));
+    if (!(flags & 0x200))
+        panic("accessory scheduler idle interrupts FAIL\n");
+    idle_seen = TRUE;
+}
+
+void x86_64_aes_test_desktop(OBJECT *desktop, WORD root)
+{
+    static char name[] = "Native window title";
+    static char info[] = "Native window information";
+    GRECT rect = { 20, 20, 240, 120 };
+    WORD window;
+
+    if ((uintptr_t)desktop <= 0xffffffffULL ||
+        !wm_test_desktop(desktop, root))
+        panic("accessory native desktop pointer/root FAIL\n");
+    window = wind_create_grect(NAME | INFO, &rect);
+    if (window < 1 ||
+        !wind_set(window, WF_NAME, (void *)name, 0x1234, 0x5678) ||
+        !wind_set(window, WF_INFO, (void *)info, 0x4321, 0x7654) ||
+        D.w_win[window].w_pname != name || D.w_win[window].w_pinfo != info ||
+        !wind_set(window, WF_HSLIDE, 321, 0, 0, 0) ||
+        D.w_win[window].w_hslide != 321 ||
+        !wind_open_grect(window, &rect) || !wind_close(window) || !wind_delete(window))
+        panic("accessory native window pointer/scalar FAIL\n");
+    kcprintf("x32 accessory native window pointers: PASS\n");
+    /* Both surviving accessories and the screen manager are waiting. A real
+     * timer event must wake this task from an empty dispatcher ready list. */
+    idle_seen = FALSE;
+    ev_timer(100L);
+    if (!idle_seen)
+        panic("accessory scheduler idle path not exercised\n");
+    kcprintf("x32 accessory idle wake: PASS\n");
 }
 #endif

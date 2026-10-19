@@ -25,6 +25,9 @@ int main(int argc, char **argv, char **envp)
     WORD output[57], points[12];
     VDIPB pb = { &control, input, points, output, points };
     LONG heap;
+#if ACC_ROLE == 4
+    WORD queued = 0;
+#endif
 #if ACC_ROLE == 1
     LONG peer;
     WORD i;
@@ -81,6 +84,15 @@ int main(int argc, char **argv, char **envp)
 #else
     for (;;) {
         CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == AES_EVENT_MESSAGE);
+#if ACC_ROLE == 4
+        if (event.message.type == 548) {
+            CHECK(event.message.data[0] == queued && queued < AES_MESSAGE_QUEUE);
+            queued++;
+            continue;
+        }
+        CHECK(queued == AES_MESSAGE_QUEUE);
+        queued = 0;
+#endif
         CHECK(event.message.type == 41); /* AC_CLOSE */
     }
 #endif

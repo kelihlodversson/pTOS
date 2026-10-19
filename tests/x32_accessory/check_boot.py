@@ -21,6 +21,8 @@ for name in ("ACCONE", "ACCTWO", "ACCFAULT", "ACCWAIT"):
     assert "accessory " + name + ": PASS" in live, name + " in final session"
 assert "x32 accessory message/exit/fault: PASS" in live
 assert "x32 accessory desktop: PASS" in live
+for marker in ("native queue backpressure", "native window pointers", "idle wake"):
+    assert "x32 accessory " + marker + ": PASS" in live, marker
 # Only the deliberate #UD fault is expected after the main process tests.
 for line in output.rsplit("x86-64 memtest: PASS", 1)[1].splitlines():
     if "process fault:" in line:

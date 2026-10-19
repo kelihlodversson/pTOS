@@ -2086,7 +2086,7 @@ BOOL deskmain(void)
     app_blddesk();
 
     /* Take over the desktop */
-    wind_set(DESKWH, WF_NEWDESK, G.g_screen, 1, 0);
+    wind_set(DESKWH, WF_NEWDESK, (void *)G.g_screen, 1, 0);
 
     /* establish desktop's state from info found in app_start,
      * open windows
@@ -2134,6 +2134,10 @@ BOOL deskmain(void)
     enable_ceh = TRUE;
 
 #if CONF_WITH_X32_ACCESSORY_TEST
+    {
+        extern void x86_64_aes_test_desktop(OBJECT *desktop, WORD root);
+        x86_64_aes_test_desktop(G.g_screen, 1);
+    }
     kcprintf("x32 accessory desktop: PASS\n");
 #endif
     /* loop handling user input until done */

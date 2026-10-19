@@ -38,8 +38,10 @@ stack, GS/syscall state, launch continuation, filesystem error continuation,
 interrupt enable state and FPU state. The dispatcher uses kernel mappings;
 state is restored before resuming that task's saved stack. Internal AES tasks
 have native contexts too. User message buffers never become AES queue nodes.
-Native AES AC_OPEN/AC_CLOSE messages are copied into typed accessory queues;
-typed registration/message waits update the corresponding native AES flags.
+Native AES AC_OPEN/AC_CLOSE messages are copied into typed accessory queues.
+A full queue yields cooperatively until space is available; the sender keeps
+a private message snapshot across task switches.
+Typed registration/message waits update the corresponding native AES flags.
 Typed application IDs remain KPROC IDs, separate from native AES task IDs.
 
 Pterm and fatal user faults unwind to that accessory's launch on its UDA.
@@ -55,6 +57,10 @@ The physical VDI workstation records native and typed opens explicitly.
 Accessories borrow the native desktop's physical workstation and own their
 virtual workstations; process exit must not close the desktop's workstation.
 Native kernel AES event and parameter slots preserve full-width pointers.
+WIND_SET pointer fields reserve sizeof(void*)/sizeof(WORD) words before their
+trailing scalars, retaining the classic two-word pointer layout on ARM/m68k.
+The dispatcher enables interrupts after switching to kernel mappings, normalized
+GS and its own stack, so timer and input events can wake an empty ready list.
 These internal representations do not expose kernel pointers to x32 clients.
 
 Regression
@@ -63,8 +69,8 @@ Regression
 Build the configuration and run make x32-accessory-test x32test
 x32-aes-import-test x32-vdi-import-test. The QEMU/OVMF job in build.yml installs
 ACCONE.ACC, ACCTWO.ACC, ACCFAULT.ACC, ACCWAIT.ACC and an invalid BADACC.ACC
-on the boot drive beside
-the existing x32 process fixtures. Both libcmini startup variants are used.
+on the boot drive beside the existing x32 process fixtures. Both libcmini
+startup variants are used.
 A negative control bypassing the accessory startup dispatch is rejected.
 
 The probes capture entry registers before startup; check _app, _base, stack
@@ -76,12 +82,20 @@ open files, heap blocks and virtual workstations exercise teardown.
 
 The invalid load never becomes runnable or delays accessory initialization.
 The kernel tests 48 allocation-failure budgets during preparation before
-task publication, then
-restarts the desktop three times. Each cleanup must restore physical pages,
-kernel heap blocks/pages, KPROC records and virtual reservations exactly,
+task publication, then restarts the desktop three times. Each cleanup must
+restore physical pages, kernel heap blocks/pages, KPROC records and virtual
+reservations exactly,
 without new bad frees. A fourth session runs the visible desktop alongside
-the surviving accessories, with a pass marker after menu/desktop setup. tests/x32_accessory/check_boot.py validates the
-serial transcript, including the deliberate fault and the final live session.
+the surviving accessories, with a pass marker after menu/desktop setup.
+tests/x32_accessory/check_boot.py validates the serial transcript, including
+the deliberate fault and the final live session.
+
+The native message test fills a typed queue with eight ordered messages before
+sending AC_CLOSE, which must yield until the receiver drains it. Native window
+title, information and desktop pointers retain their high address bits and
+trailing scalar values. A timer wakes the desktop from an empty ready list,
+where the test also checks that interrupts are enabled. Restoring each of the
+three defects independently makes its corresponding regression fail.
 
 Verified locally with QEMU/OVMF (1280x800 GOP), host AES/VDI contracts and
 loaded import checks. The ordinary x32 process/callback boot tests also run

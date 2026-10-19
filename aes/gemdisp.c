@@ -249,6 +249,9 @@ static void schedule(void)
         /* check if there is something to run */
         if (rlr || fpcnt)
             break;
+#if CONF_WITH_X32_ACCESSORY_TEST
+        x86_64_aes_test_idle();
+#endif
 #if USE_STOP_INSN_TO_FREE_HOST_CPU
         stop_until_interrupt();
 #endif

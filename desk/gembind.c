@@ -23,6 +23,7 @@
 #include "emutos.h"
 #include "obdefs.h"
 #include "aesdefs.h"
+#include "aes_windset.h"
 #include "gembind.h"
 #include "aesbind.h"
 #include "kprint.h"
@@ -824,7 +825,8 @@ WORD wind_get_grect(WORD w_handle, WORD w_field, GRECT *gr)
 
 WORD wind_set(WORD w_handle, WORD w_field, ...) /* WORD w2, WORD w3, WORD w4, WORD w5) */
 {
-    LONG longarg;
+    void *pointer;
+    WORD nintin = 6;
     va_list ap;
     va_start(ap, w_field);
 
@@ -835,18 +837,21 @@ WORD wind_set(WORD w_handle, WORD w_field, ...) /* WORD w2, WORD w3, WORD w4, WO
         case WF_NAME:
         case WF_INFO:
         case WF_NEWDESK:
-            longarg = va_arg(ap, LONG);
-            memcpy(&(WM_IX), &longarg, sizeof(intptr_t));
+            pointer = va_arg(ap, void *);
+            memcpy(&(WM_IX), &pointer, sizeof(pointer));
+            int_in[2 + AES_WINDSET_PTR_WORDS] = va_arg(ap, int);
+            int_in[3 + AES_WINDSET_PTR_WORDS] = va_arg(ap, int);
+            nintin = AES_WINDSET_PTR_NINTIN;
         break;
         default:
             WM_IX = va_arg(ap, int);
             WM_IY = va_arg(ap, int);
+            WM_IW = va_arg(ap, int);
+            WM_IH = va_arg(ap, int);
         break;
     }
-    WM_IW = va_arg(ap, int);
-    WM_IH = va_arg(ap, int);
     va_end(ap);
-    return gem_if(AES_CTRL_CODE(WIND_SET, 6, 1, 0));
+    return gem_if(AES_CTRL_CODE(WIND_SET, nintin, 1, 0));
 }
 
 

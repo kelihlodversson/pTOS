@@ -21,8 +21,11 @@ void x86_64_aes_flags(PD *pd, UWORD flags);
 void x86_64_aes_registration(PD *pd, BOOL active);
 LONG x86_64_aes_message(struct aespd *pd, const WORD *message);
 #if CONF_WITH_X32_ACCESSORY_TEST
+struct _object;
 void x86_64_aes_test_begin(void);
 BOOL x86_64_aes_test_run(void);
 void x86_64_aes_test_finish(void);
+void x86_64_aes_test_idle(void);
+void x86_64_aes_test_desktop(struct _object *desktop, WORD root);
 #endif
 #endif
