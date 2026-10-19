@@ -9,6 +9,7 @@ for forbidden in ("panic:", "accessory FAIL", "memtest: FAIL", "System halted!")
 for marker in (
     "x86-64 memtest: PASS",
     "x32 accessory preparation failures: PASS",
+    "x32 accessory refused load: PASS",
     "x32 accessory restart 1: PASS",
     "x32 accessory restart 2: PASS",
     "x32 accessory restart 3: PASS",
@@ -19,6 +20,7 @@ live = output.rsplit("x32 accessory lifecycle: PASS", 1)[1]
 for name in ("ACCONE", "ACCTWO", "ACCFAULT", "ACCWAIT"):
     assert "accessory " + name + ": PASS" in live, name + " in final session"
 assert "x32 accessory message/exit/fault: PASS" in live
+assert "x32 accessory desktop: PASS" in live
 # Only the deliberate #UD fault is expected after the main process tests.
 for line in output.rsplit("x86-64 memtest: PASS", 1)[1].splitlines():
     if "process fault:" in line:

@@ -2133,6 +2133,9 @@ BOOL deskmain(void)
     /* enable graphical critical error handler */
     enable_ceh = TRUE;
 
+#if CONF_WITH_X32_ACCESSORY_TEST
+    kcprintf("x32 accessory desktop: PASS\n");
+#endif
     /* loop handling user input until done */
     while(!done)
     {

@@ -8,10 +8,13 @@
 #include "gemasm.h"
 #include "gemasync.h"
 #include "gempd.h"
+#include "geminit.h"
 #include "aes_service.h"
 #include "aes_accessory.h"
 #include "process.h"
 #include "gemerror.h"
+#include "gemaplib.h"
+#include "obdefs.h"
 #include "biosext.h"
 #include "string.h"
 
@@ -45,6 +48,9 @@ void x86_64_aes_setup(AESPD *pd, PD *accessory)
     memset(c, 0, sizeof(*c));
     c->aes = pd;
     c->owner = accessory;
+    pd->p_stat &= ~X32_AES_DEAD;
+    if (accessory)
+        pd->p_flags = 0;
     x86_64_process_save(&c->context);
     x86_64_process_restore(&c->context);
 }
@@ -274,8 +280,11 @@ void x86_64_aes_test_begin(void)
 BOOL x86_64_aes_test_run(void)
 {
     WORD i, dead = 0, waiting = 0;
+    WORD close_message[8] = { 41, 0, 0, 0, 0, 0, 0, 0 };
     ACCESSORY_CONTEXT *c;
 
+    if (totpds != 7 || curpid != 6)
+        panic("accessory refused-load publication FAIL\n");
     for (i = 0; i < 50; i++)
         dsptch();
     for (i = 2; i < NUM_PDS; i++) {
@@ -294,6 +303,17 @@ BOOL x86_64_aes_test_run(void)
     }
     if (dead != 2 || waiting != 2)
         panic("accessory lifecycle FAIL: dead=%d waiting=%d\n", dead, waiting);
+    /* Exercise the native AES message bridge and receive acknowledgement. */
+    for (i = 2; i < NUM_PDS; i++)
+        if (contexts[i].owner &&
+            !ap_rdwr(MU_SDMSG, contexts[i].aes, sizeof(close_message), close_message))
+            panic("accessory native message bridge FAIL\n");
+    for (i = 0; i < 50; i++)
+        dsptch();
+    for (i = 2; i < NUM_PDS; i++)
+        if (contexts[i].owner && !(contexts[i].aes->p_flags & AP_ACCLOSE))
+            panic("accessory native message acknowledgement FAIL\n");
+    kcprintf("x32 accessory refused load: PASS\n");
     kcprintf("x32 accessory message/exit/fault: PASS\n");
     return test_sessions < 3;
 }

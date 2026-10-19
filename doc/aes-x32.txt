@@ -70,7 +70,20 @@ The library uses ordinary x32 SysV C calls; the program-entry contract in
 process-entry.txt (#387) is unchanged. No user context/state argument is
 needed because each syscall identifies the current KPROC.
 
-All functions except find/poll return E_OK on success. Calls other than init
+    LONG aes_evnt_wait(UWORD mask, AES_EVENT *event);
+        Loaded accessories with AES_FEATURE_WAIT may wait cooperatively for
+        AES_EVENT_MESSAGE. Validate/back the 20-byte destination before
+        blocking, then validate copyout again on resume in the caller's
+        address space. Return AES_EVENT_MESSAGE on delivery. Ordinary Pexec
+        clients and nested children return EACCDN: they have no accessory
+        coroutine. This call cannot run inside a user callback.
+
+    LONG aes_appl_yield(void);
+        Give other AES tasks a turn and resume this accessory's syscall.
+        Registration is required; ordinary Pexec clients, nested children
+        and user callbacks return EACCDN.
+
+All functions except find/poll/wait return E_OK on success. Calls other than init
 require registration. Disabled service classes return EINVFN. Malformed
 scalars or names return EINVAL, inaccessible/misaligned buffers EIMBA,
 registration/ownership violations EACCDN, absent recipients/names ESRCH,
@@ -223,9 +236,9 @@ signatures do not imply x32 availability. Classifications:
     EVNT_KEYBD         event     not exposed; input, callbacks or scheduling
     EVNT_BUTTON        event     not exposed; input, callbacks or scheduling
     EVNT_MOUSE         event     not exposed; input, callbacks or scheduling
-    EVNT_MESAG         event     aes_evnt_poll (nonblocking message subset)
+    EVNT_MESAG         event     aes_evnt_poll; aes_evnt_wait for accessories
     EVNT_TIMER         event     not exposed; input, callbacks or scheduling
-    EVNT_MULTI         event     aes_evnt_poll (message-only, nonblocking subset)
+    EVNT_MULTI         event     message-only poll/wait; other events deferred
     EVNT_DCLICK        event     not exposed; input, callbacks or scheduling
     MENU_BAR           desktop   not exposed; shared desktop/window/menu/shell state
     MENU_ICHECK        desktop   not exposed; shared desktop/window/menu/shell state
@@ -324,3 +337,12 @@ require "x86-64 AES client: PASS" and "x86-64 AES imports: PASS" for all three
 PC configurations, plus the aggregate memtest PASS and EmuCON launch. A boot
 disk without AESIMP.TOS skips the disk import test; the baseline/regression
 path does not require that fixture.
+
+Loaded accessories
+------------------
+
+pc-x86_64-accessories_defconfig enables native kernel AES/EmuDesk together
+with typed ring-3 accessories. The loaded-accessory lifecycle and regression
+fixture are described in x32-accessories.txt. The generic AESPB trap remains
+unavailable to ring 3; native kernel AES parameter slots retain full-width
+kernel pointers. New client exports append to the stable export list.

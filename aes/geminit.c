@@ -966,6 +966,14 @@ void gem_main(void)
         }
         rlr->p_pid = i;
         rlr->p_stat = 0;
+#if ARCH_X86_64
+        /* Slots whose load/preparation fails are never published. They
+         * must not make wait_for_accs wait for an event they cannot issue. */
+        if (i >= 2) {
+            rlr->p_stat = X32_AES_DEAD;
+            rlr->p_flags = AP_MESAG | AP_ACCLOSE;
+        }
+#endif
         rlr->p_msg.action = -1;
     }
     curpid = 0;

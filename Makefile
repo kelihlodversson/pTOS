@@ -1858,7 +1858,9 @@ obj/x32/ACCONE.ACC obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC: 
 	  tests/x32_accessory/accessory.c tests/x32_accessory/entry.S $(ACC_TEST_CRT) \
 	  -Lobj/x32 -lptos-aes -lptos-vdi $(LIBCMINI_LIB)
 .PHONY: x32-accessory-test
-x32-accessory-test: obj/x32/ACCONE.ACC obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC
+x32-accessory-test: obj/x32/ACCONE.ACC obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC obj/x32/BADACC.ACC
+obj/x32/BADACC.ACC: | obj/x32
+	printf 'invalid executable\n' > $@
 
 # poweroff.tos, reboot.tos, coldboot.tos and halt.tos: Shutdown() with each
 # mode, programs of their own because the machine does not come back (see

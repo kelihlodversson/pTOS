@@ -1,6 +1,7 @@
 # x32 loaded AES accessories in ring 3 (#389)
 
-Status: proposed design; implementation has not started.
+Status: implemented in PR #395; runtime contract and validation are documented
+in doc/x32-accessories.txt.
 Epic: #548. Implementation branch: feature/389-x32-accessory-execution.
 Draft PR: #395, targeting epic/548-vdi-aes-ring3.
 
