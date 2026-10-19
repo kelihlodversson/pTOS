@@ -264,53 +264,77 @@ void vdi_vqt_xfntinfo(Vwk *vwk)
  * vst_name() - select a font by its name, as vqt_name() gives it
  *
  * intin[0] is a mask of the font formats to consider (0: any), intin[1..]
- * the name.  intout[0] is the id of the font then current, intout[1..]
- * its name.  vqt_name_and_id() (subcode 100) only looks the font up.
+ * the name; blanks in it, missing or extra, do not count.  intout[0] is the
+ * id of the font then current, intout[1..] its name.  A name that is not
+ * there selects the system font.  vqt_name_and_id() (subcode 100) only
+ * looks the font up, and answers 0 for a name that is not there.
  */
+
+#define NAME_SHOWN  (FONT_NAME_LEN - 1)     /* what vqt_name() gives of a name */
+
+/* whether the name asked for (intin[1..n]) is that font's, blanks aside */
+static BOOL name_matches(const char *name, const WORD *asked, WORD n)
+{
+    WORD i = 0, j = 0;
+
+    for (;;)
+    {
+        while (i < NAME_SHOWN && name[i] == ' ')
+            i++;
+        while (j < n && asked[j] == ' ')
+            j++;
+        if (i == NAME_SHOWN || !name[i])
+            break;                      /* the font's name, as shown, is done */
+        if (j == n || !asked[j] || (UBYTE)name[i] != (UWORD)asked[j])
+            return FALSE;
+        i++;
+        j++;
+    }
+
+    /*
+     * all of it matched: the name asked for must end too, unless the font's
+     * goes on past what vqt_name() shows, and it was asked for whole
+     */
+    return j == n || !asked[j] || i == NAME_SHOWN;
+}
+
 void vdi_vst_name(Vwk *vwk)
 {
-    char name[FONT_NAME_LEN + 1];
     WORD formats = INTIN[0], element, sfont, i, n;
     const Fonthead *font;
     const char *found_name;
     BOOL select = CONTRL->subcode != 100;
 
     n = CONTRL->nintin - 1;
-    for (i = 0; i < n && i < FONT_NAME_LEN && INTIN[i + 1]; i++)
-        name[i] = (char)INTIN[i + 1];
-    name[i] = '\0';
-
     for (element = 1; vdi_font_at(vwk, element, &font, &sfont); element++)
     {
         if (formats && !(formats & font_format(sfont)))
             continue;
-        if (!strncmp(font_name(font, sfont), name, FONT_NAME_LEN))
+        if (name_matches(font_name(font, sfont), INTIN + 1, n))
             break;
     }
 
-    if (sfont < 0 && !font)
+    if (sfont < 0 && !font && !select)
     {
-        /* none of that name: the current font stays */
-        font = vwk->cur_font;
-        element = font_element(vwk, font->font_id, &font, &sfont);
-        if (!element)
-        {
-            font = vwk->cur_font;
-            sfont = -1;
-        }
+        INTOUT[0] = 0;                  /* not there */
+        CONTRL->nintout = 1;
+        return;
     }
-    else if (select)
+    if (select)
     {
-        WORD *old_intin = INTIN, id = font_id(font, sfont);
+        /* that font, or the system font; the answer is what vst_font() selected */
+        WORD *old_intin = INTIN, id = (sfont < 0 && !font) ? 1 : font_id(font, sfont);
 
         INTIN = &id;
         vdi_vst_font(vwk);
         INTIN = old_intin;
+        font = vwk->cur_font;
+        sfont = -1;
     }
 
     INTOUT[0] = font_id(font, sfont);
     found_name = font_name(font, sfont);
-    for (i = 0; i < FONT_NAME_LEN && found_name[i]; i++)
+    for (i = 0; i < NAME_SHOWN && found_name[i]; i++)
         INTOUT[i + 1] = (UBYTE)found_name[i];
     INTOUT[i + 1] = 0;
     CONTRL->nintout = i + 1;
@@ -632,7 +656,7 @@ void vdi_vst_setsize(Vwk *vwk)
         sfont_request(vwk, &size, &want);
         vwk->sf_width = fix_to_em(points);
         sfont_resize(vwk, size, want);
-        points = em_to_fix(vwk->sf_width);
+        points = em_to_fix(vdi_sfont_em_width(vwk->cur_font));  /* what it came to */
     }
     else
         points = (LONG)vwk->cur_font->point << 16;
@@ -691,27 +715,6 @@ void vdi_vst_skew(Vwk *vwk)
  * whole one, for vqt_advance32()) and v_getbitmap_info()
  */
 
-/* a character's advance, in whole pixels: its cell, and what bold and outline add */
-static WORD advance_of(Vwk *vwk, WORD c)
-{
-    const Fonthead *font;
-    WORD ch, adv;
-
-    font = vdi_text_char(vwk, c, &ch);
-    if (!font)
-        return 0;
-    if (ch < font->first_ade || ch > font->last_ade)
-        ch = '?';
-    ch -= font->first_ade;
-    adv = font->off_table[ch + 1] - font->off_table[ch];
-    if ((vwk->style & F_THICKEN) && !(font->flags & F_MONOSPACE))
-        adv += font->thicken;
-    if (vwk->style & F_OUTLINE)
-        adv += 2;
-
-    return adv;
-}
-
 /* the advance as a move, for the rotation */
 static void advance_move(Vwk *vwk, WORD adv, WORD *x, WORD *y)
 {
@@ -737,7 +740,7 @@ void vdi_vqt_advance(Vwk *vwk)
     WORD x, y;
     LONG fix;
 
-    advance_move(vwk, advance_of(vwk, INTIN[0]), &x, &y);
+    advance_move(vwk, vdi_text_advance(vwk, INTIN[0]), &x, &y);
     PTSOUT[0] = x;
     PTSOUT[1] = y;
     PTSOUT[2] = PTSOUT[3] = 0;          /* the remainders: whole pixels */
@@ -756,7 +759,7 @@ void vdi_v_getbitmap_info(Vwk *vwk)
 {
     WORD x, y;
 
-    advance_move(vwk, advance_of(vwk, INTIN[0]), &x, &y);
+    advance_move(vwk, vdi_text_advance(vwk, INTIN[0]), &x, &y);
     INTOUT[0] = INTOUT[1] = 0;          /* width and height */
     intout_long(2, (LONG)x << 16);
     intout_long(4, (LONG)y << 16);

@@ -590,7 +590,21 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
             if (run_mode)
             {
                 if (linea_vars.DESTX > xmx)
+                {
+                    /*
+                     * the rest is right of the window: not drawn, but the
+                     * destination moved over it all the same, as a run
+                     * of text that follows this one starts there
+                     */
+                    for (; j < count; j++)
+                    {
+                        load_char(fnt_ptr, str[j]);
+                        linea_vars.DESTX += linea_vars.DELX + adv_extra;
+                        if (justified)
+                            justify_step(justified, str[j]);
+                    }
                     break;
+                }
             }
             else
             {
@@ -988,6 +1002,18 @@ static WORD text_width(Vwk *vwk, WORD count, const WORD *str)
     return width;
 }
 
+/* how many blanks a string has in the character map */
+static WORD text_spaces(Vwk *vwk, WORD count, const WORD *str)
+{
+    WORD pos = 0, n = 0;
+
+    while (pos < count)
+        if (next_char(vwk->char_map, str, count, &pos) == ' ')
+            n++;
+
+    return n;
+}
+
 /* how many characters a string has in the character map (pairs being one) */
 static WORD text_chars(Vwk *vwk, WORD count, const WORD *str)
 {
@@ -1025,6 +1051,27 @@ const Fonthead *vdi_text_char(Vwk *vwk, WORD c, WORD *ch)
     return place_font(vwk, place, ch, 1);
 }
 
+/*
+ * a character's advance, as the text path moves on after it: its width,
+ * scaled as the font is, with what bold and outline add (not skewing,
+ * which is added once per string); 0 if the font has no such character
+ */
+WORD vdi_text_advance(Vwk *vwk, WORD c)
+{
+    const Fonthead *font;
+    WORD ch, adv;
+
+    font = vdi_text_char(vwk, c, &ch);
+    if (!font)
+        return 0;
+    if (ch < font->first_ade || ch > font->last_ade)
+        ch = '?';                       /* as load_char() draws it */
+    adv = calc_width(vwk, font, 1, &ch);
+    if (vwk->style & F_SKEW)
+        adv -= font->left_offset + font->right_offset;
+
+    return adv;
+}
 #endif
 
 /* the width of a string in the current font, in the character map */
@@ -1096,7 +1143,8 @@ void vdi_v_ftext(Vwk * vwk)
 {
     WORD count = CONTRL->nintin, noffs = CONTRL->nptsin - 1;
     WORD *str = INTIN, *off = PTSIN + 2, *old_ptsin = PTSIN;
-    WORD pos, next, last = 0, along, h_align, dx, dy, pts[2];
+    WORD pos, next, last = 0, along, h_align, dx, dy, pen_x, pen_y;
+    WORD pts[4];                        /* the underline is drawn through PTSIN[0..3] */
 
     if (noffs < 1)
     {
@@ -1123,14 +1171,16 @@ void vdi_v_ftext(Vwk * vwk)
     h_align = vwk->h_align;
     vwk->h_align = 0;
     PTSIN = pts;
-    pts[0] = old_ptsin[0] - dx;
-    pts[1] = old_ptsin[1] - dy;
+    pen_x = old_ptsin[0] - dx;
+    pen_y = old_ptsin[1] - dy;
     for (pos = 0; pos < count; pos = next)
     {
         next = pos;
         next_char(vwk->char_map, str, count, &next);
-        pts[0] += off[2 * pos];
-        pts[1] += off[2 * pos + 1];
+        pen_x += off[2 * pos];
+        pen_y += off[2 * pos + 1];
+        pts[0] = pen_x;
+        pts[1] = pen_y;
         output_text(vwk, next - pos, str + pos, -1, NULL);
     }
     PTSIN = old_ptsin;
@@ -1147,6 +1197,7 @@ void vdi_vqt_f_extent(Vwk * vwk)
 {
     const Fonthead *fnt_ptr = vwk->cur_font;
     WORD x = PTSIN[0], y = PTSIN[1], width, height, delh, delv, i;
+    WORD outline, d1, d2;
     WORD u[4], v[4];
 
     if (CONTRL->subcode != 4200)
@@ -1155,29 +1206,41 @@ void vdi_vqt_f_extent(Vwk * vwk)
         return;
     }
 
+    /* placed as output_run() places the text: alignment, skew, outline */
     width = vdi_text_width(vwk, CONTRL->nintin, INTIN);
     height = calc_height(vwk);
-    delh = vwk->h_align == 1 ? width / 2 : vwk->h_align == 2 ? width : 0;
+    outline = (vwk->style & F_OUTLINE) ? OUTLINE_THICKNESS : 0;
+    d1 = (vwk->style & F_SKEW) ? fnt_ptr->left_offset : 0;
+    d2 = (vwk->style & F_SKEW) ? fnt_ptr->right_offset : 0;
+    delh = vwk->h_align == 1 ? width / 2 - outline
+         : vwk->h_align == 2 ? width - outline * 2 : 0;
     switch(vwk->v_align) {
     default:
         delv = fnt_ptr->top;
+        delh += d1;
         break;
     case 1:
         delv = fnt_ptr->top - fnt_ptr->half;
+        delh += divs(muls(fnt_ptr->half, d2), fnt_ptr->top);
         break;
     case 2:
         delv = fnt_ptr->top - fnt_ptr->ascent;
+        delh += divs(muls(fnt_ptr->ascent, d2), fnt_ptr->top);
         break;
     case 3:
         delv = fnt_ptr->top + fnt_ptr->bottom;
         break;
     case 4:
         delv = fnt_ptr->top + fnt_ptr->descent;
+        delh += divs(muls(fnt_ptr->descent, d1), fnt_ptr->bottom);
         break;
     case 5:
         delv = 0;
+        delh += d1 + d2;
         break;
     }
+    delh += outline;
+    delv += outline;
 
     /* along the baseline and down from the top, in the order of the corners */
     u[0] = u[3] = -delh;
@@ -1925,9 +1988,8 @@ void vdi_vqt_name(Vwk * vwk)
      * After the bitmap fonts come the built-in GDOS's scalable fonts, once
      * vst_load_fonts() has added them; intout[33] says which kind a font
      * is, 0 for a bitmap font, 1 for an outline font, as with SpeedoGDOS.
-     * NVDI's vqt_ext_name() (subcode 1, with a second intin) has the
-     * format and flags in intout[34] instead, intout[33] then being the
-     * 33rd character of the name.
+     * NVDI's vqt_ext_name() (subcode 1, with a second intin) keeps that
+     * in intout[33], and adds the format and flags in intout[34].
      */
     if (vdi_gdos_id)
     {
@@ -1948,9 +2010,9 @@ void vdi_vqt_name(Vwk * vwk)
             *int_out++ = (UBYTE)name[i];
         while (i++ < FONT_NAME_LEN)
             *int_out++ = 0;
+        *int_out++ = sfont ? 1 : 0;
         if (ext)
         {
-            *int_out++ = 0;
             if (sfont)
                 *int_out = ((sfont->flags & SFONT_MONOSPACE) << 8) | sfont->format;
             else
@@ -1959,10 +2021,7 @@ void vdi_vqt_name(Vwk * vwk)
             CONTRL->nintout = 35;
         }
         else
-        {
-            *int_out = sfont ? 1 : 0;
             CONTRL->nintout = 34;
-        }
         return;
     }
 #endif
@@ -2056,6 +2115,11 @@ void gdp_justified(Vwk * vwk)
      * if interword adjustment required, count spaces
      */
     if (interword) {
+#if CONF_WITH_VDI_SCALABLE_FONTS
+        if (vwk->char_map != MAP_ATARI)
+            spaces = text_spaces(vwk, cnt, str);    /* a BICS blank is 0 */
+        else
+#endif
         for (i = 0; i < cnt; i++)
             if (*(pointer++) == ' ')
                 spaces++;

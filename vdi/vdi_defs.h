@@ -561,6 +561,7 @@ void vdi_sfont_error(Vwk *vwk, WORD error);
 /* in vdi_text.c */
 BOOL vdi_font_at(Vwk *vwk, WORD element, const Fonthead **font, WORD *sfont);
 const Fonthead *vdi_text_char(Vwk *vwk, WORD c, WORD *ch);
+WORD vdi_text_advance(Vwk *vwk, WORD c);
 #endif
 WORD vdi_text_width(Vwk *vwk, WORD count, const WORD *str);
 

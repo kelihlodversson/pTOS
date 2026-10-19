@@ -822,6 +822,14 @@ void vdi_sfont_request(const Fonthead *font, LONG *size, WORD *want)
     *want = s->ask_want;
 }
 
+/* the em width a size has, in 1/64 pixel */
+LONG vdi_sfont_em_width(const Fonthead *font)
+{
+    const SF_SIZE *s = sf_of(font);
+
+    return s->width ? s->width : s->size;
+}
+
 /* the em size a size has, in 1/64 pixel */
 LONG vdi_sfont_em(const Fonthead *font)
 {

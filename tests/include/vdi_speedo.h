@@ -127,6 +127,7 @@ static inline short vs_text(const short *str, short n, short at)
 
 /* Names */
 
+/* name: 33 chars, the last being 0 for a bitmap font, 1 for a vector font */
 static inline short vqt_ext_name(short handle, short index, char *name,
                                  short *font_format, short *flags)
 {
@@ -137,7 +138,7 @@ static inline short vqt_ext_name(short handle, short index, char *name,
     vs_call(handle, 130, 1, 0, 2);
     for (i = 0; i < 32; i++)
         name[i] = (char)vs_intout[i + 1];
-    name[32] = '\0';
+    name[32] = (char)vs_intout[33];     /* 0: a bitmap font, 1: a vector font */
     *font_format = vs_contrl[4] > 34 ? vs_intout[34] & 0xff : 0;
     *flags = vs_contrl[4] > 34 ? (vs_intout[34] >> 8) & 0xff : 0;
     return vs_intout[0];

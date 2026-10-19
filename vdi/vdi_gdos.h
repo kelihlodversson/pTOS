@@ -84,6 +84,7 @@ const Fonthead *vdi_sfont_page(const Fonthead *font, UWORD page);
 /* what a size was asked for as, and the em size it has */
 void vdi_sfont_request(const Fonthead *font, LONG *size, WORD *want);
 LONG vdi_sfont_em(const Fonthead *font);
+LONG vdi_sfont_em_width(const Fonthead *font);
 
 /* drop unselected sizes until the cache is within its limit again */
 void vdi_sfont_trim(void);
