@@ -101,7 +101,7 @@ struct evb                  /* event block */
         EVB     *e_link;        /* link to next block on event chain */
         EVB     *e_pred;        /* link to prev block on event chain */
         AESPD   *e_pd;          /* owner AESPD (data for fork) */
-        LONG    e_parm;         /* parm for request -> event comm */
+        intptr_t e_parm;         /* parm for request -> event comm */
         WORD    e_flag;
         EVSPEC  e_mask;         /* mask for event notification */
         LONG    e_return;
@@ -160,7 +160,7 @@ struct qpb                  /* queue parameter block */
 {
         AESPD   *qpb_ppd;
         WORD    qpb_cnt;
-        LONG    qpb_buf;
+        intptr_t qpb_buf;
 } ;
 
 struct spb                  /* sync parameter block */

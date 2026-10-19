@@ -124,6 +124,8 @@ int aes_roundtrip_checks(const char *tail, const char *child_path)
     CHECK(raw(2, 200, 0, 0, 0, 0) == -1);
     CHECK(aes_appl_find("PARENT") == EACCDN);
     CHECK(aes_appl_exit() == EACCDN);
+    CHECK(aes_appl_yield() == EACCDN);
+    CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == EACCDN);
     CHECK(aes_appl_init(NULL, &info) == EIMBA);
     CHECK(aes_appl_init("", &info) == EINVAL);
     CHECK(aes_appl_init("TOO_LONG9", &info) == EINVAL);
@@ -135,6 +137,9 @@ int aes_roundtrip_checks(const char *tail, const char *child_path)
     CHECK(raw(AES_SERVICE_CLASS, AES_SERVICE_INIT, (uintptr_t)"PARENT", (uintptr_t)&info, 1, 0) == EINVAL);
     CHECK(edge_buffer_checks() == 0);
     CHECK(aes_appl_init("PARENT", &info) == E_OK);
+    /* Ordinary Pexec clients have no AES coroutine to block or yield. */
+    CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == EACCDN);
+    CHECK(aes_appl_yield() == EACCDN);
     id = info.id;
     saved = info;
     CHECK(id > 0 && info.version == AES_CLIENT_VERSION && !info.reserved);

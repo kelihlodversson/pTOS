@@ -232,6 +232,8 @@ jobs:
         config: ${{ fromJSON(needs.configurations.outputs.x86_64) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - uses: ./.github/actions/setup-toolchain
         with:
@@ -273,7 +275,7 @@ jobs:
       # way (EFI/OVMF); a future non-EFI x86-64 config would need its own
       # check instead of this one.
       - name: Install QEMU and OVMF for the boot test
-        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes' || matrix.config == 'pc-x86_64-callbacks'
+        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes' || matrix.config == 'pc-x86_64-callbacks' || matrix.config == 'pc-x86_64-accessories'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y qemu-system-x86 ovmf
@@ -294,13 +296,17 @@ jobs:
       # succeed on it: 124 means the timeout fired (the normal case here),
       # anything else means QEMU itself exited unexpectedly.
       - name: Boot-test under QEMU/OVMF
-        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes' || matrix.config == 'pc-x86_64-callbacks'
+        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes' || matrix.config == 'pc-x86_64-callbacks' || matrix.config == 'pc-x86_64-accessories'
         run: |
           mkdir -p esp/EFI/BOOT
           cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
           # a real x32 ELF on the boot drive: the self-test runs it through
           # Pexec() from a ring-3 process (nested launch), as EmuCON does
           make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test aes-contract-test
+          if grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config; then
+            make CROSS_COMPILE= -j2 x32-accessory-test
+            cp obj/x32/*.ACC esp/
+          fi
           cp obj/x32/VDI*.TOS obj/x32/AES*.TOS esp/
           cp obj/x32/x32probe.elf esp/X32AES.TOS
           cp obj/x32/x32probe.elf esp/X32CB.TOS
@@ -398,7 +404,8 @@ jobs:
           # Its deliberate faults print "process fault:" lines BEFORE the
           # PASS line; any such line after it is the built-in EmuCON itself
           # faulting.
-          if sed -n '/x86-64 memtest: PASS/,$p' boot.log | grep -q 'process fault:'; then
+          if ! grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config &&
+             sed -n '/x86-64 memtest: PASS/,$p' boot.log | grep -q 'process fault:'; then
             echo "::error::the ring-3 EmuCON faulted"
             exit 1
           fi
@@ -466,6 +473,11 @@ jobs:
           if ! grep -q 'x86-64 nested ptermres: PASS' boot.log; then
             echo "::error::a ring-3 process could not keep launching children that stay resident"
             exit 1
+          fi
+
+          if grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config; then
+            python3 tests/x32_accessory/check_boot.py boot.log
+            exit 0
           fi
 
           # EmuCON is an x32 program run in ring 3 -- not linked into the

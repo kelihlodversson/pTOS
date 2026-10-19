@@ -1,0 +1,104 @@
+Loaded x32 accessories (#389, #407)
+===================================
+
+Configuration and entry
+-----------------------
+
+pc-x86_64-accessories_defconfig enables kernel AES/EmuDesk, the typed AES/VDI
+services and the loaded-accessory regression. For an interactive image without
+the boot regression, disable CONF_WITH_X32_ACCESSORY_TEST in menuconfig.
+Accessories use the x32 ABI and the typed interfaces in aes-x32.txt and
+vdi-x32.txt. Generic ring-3 GEM trap class 2 remains refused.
+
+load_one_acc loads an ELF through PE_LOAD, returns the loader's image loan,
+and prepares a KPROC-owned address space and stacks before publishing an AES
+task. It maps the image with its segment permissions and the process's
+basepage, environment, ancestors and private stack in the normal user layout.
+A failed preparation discards all process-owned allocations and references.
+The AESPD/PD association and launch state live only in kernel metadata.
+
+gotopgm enters through the ordinary process launcher with RDI=basepage,
+RSI=ENTRY_ACCESSORY (1), and RSP+8 divisible by 16. Ordinary Pexec still uses
+ENTRY_PROGRAM (0). Both libcmini startup objects dispatch accessory entry to
+_acc_main, set _app=0, retain the kernel-provided stack and apply a positive
+_stksize through Psetlimit. The submodule pins libcmini's published fix.
+
+Scheduling and lifetime
+-------------------------
+
+Typed aes_evnt_wait(AES_EVENT_MESSAGE, ...) blocks an associated accessory;
+aes_appl_yield gives another AES task a turn. Ordinary Pexec clients and
+nested children cannot use these scheduling calls. Neither call is allowed
+inside a user callback. Polling and the existing nonblocking services remain
+available to ordinary clients. A wait rechecks registration and validates
+copyout after resuming, including after callback activity while suspended.
+
+Each coroutine saves GEMDOS run, CR3, syscall stack, saved user RSP, TSS IRQ
+stack, GS/syscall state, launch continuation, filesystem error continuation,
+interrupt enable state and FPU state. The dispatcher uses kernel mappings;
+state is restored before resuming that task's saved stack. Internal AES tasks
+have native contexts too. User message buffers never become AES queue nodes.
+Native AES AC_OPEN/AC_CLOSE messages are copied into typed accessory queues.
+A full queue yields cooperatively until space is available; the sender keeps
+a private message snapshot across task switches.
+Typed registration/message waits update the corresponding native AES flags.
+Typed application IDs remain KPROC IDs, separate from native AES task IDs.
+
+Pterm and fatal user faults unwind to that accessory's launch on its UDA.
+The launcher restores the parent context and frees the user's kernel stack
+after switching off it. The dead task is removed instead of requeued. Before
+desktop restart clears AES storage, drain unlinks ready/wait tasks, cancels
+events, closes handles, drops typed AES/VDI/callback state, destroys address
+spaces and releases pending stacks from a live native kernel stack. Suspended
+nested launch records are walked child first. Ptermres is refused within an
+accessory launch because its resources belong to the desktop session.
+
+The physical VDI workstation records native and typed opens explicitly.
+Accessories borrow the native desktop's physical workstation and own their
+virtual workstations; process exit must not close the desktop's workstation.
+Native kernel AES event and parameter slots preserve full-width pointers.
+WIND_SET pointer fields reserve sizeof(void*)/sizeof(WORD) words before their
+trailing scalars, retaining the classic two-word pointer layout on ARM/m68k.
+The dispatcher enables interrupts after switching to kernel mappings, normalized
+GS and its own stack, so timer and input events can wake an empty ready list.
+These internal representations do not expose kernel pointers to x32 clients.
+
+Regression
+----------
+
+Build the configuration and run make x32-accessory-test x32test
+x32-aes-import-test x32-vdi-import-test. The QEMU/OVMF job in build.yml installs
+ACCONE.ACC, ACCTWO.ACC, ACCFAULT.ACC, ACCWAIT.ACC and an invalid BADACC.ACC
+on the boot drive beside the existing x32 process fixtures. Both libcmini
+startup variants are used.
+A negative control bypassing the accessory startup dispatch is rejected.
+
+The probes capture entry registers before startup; check _app, _base, stack
+alignment/limit and ring-3 selectors; launch an ordinary ENTRY_PROGRAM child;
+call GEMDOS, typed AES and VDI; exchange messages and yield; and check private
+writable memory and MXCSR after resuming. ACCONE exits, ACCFAULT executes UD2,
+and the other two wait for native messages or restart cancellation. Their
+open files, heap blocks and virtual workstations exercise teardown.
+
+The invalid load never becomes runnable or delays accessory initialization.
+The kernel tests 48 allocation-failure budgets during preparation before
+task publication, then restarts the desktop three times. Each cleanup must
+restore physical pages, kernel heap blocks/pages, KPROC records and virtual
+reservations exactly,
+without new bad frees. A fourth session runs the visible desktop alongside
+the surviving accessories, with a pass marker after menu/desktop setup.
+tests/x32_accessory/check_boot.py validates the serial transcript, including
+the deliberate fault and the final live session.
+
+The native message test fills a typed queue with eight ordered messages before
+sending AC_CLOSE, which must yield until the receiver drains it. Native window
+title, information and desktop pointers retain their high address bits and
+trailing scalar values. A timer wakes the desktop from an empty ready list,
+where the test also checks that interrupts are enabled. Restoring each of the
+three defects independently makes its corresponding regression fail.
+
+Verified locally with QEMU/OVMF (1280x800 GOP), host AES/VDI contracts and
+loaded import checks. The ordinary x32 process/callback boot tests also run
+before the accessory regression. ARM rpi2 and m68k Atari builds cover shared
+event/parameter changes. Native desktop rendering remains in the kernel;
+moving EmuDesk into ring 3 is separate work in epic #548.

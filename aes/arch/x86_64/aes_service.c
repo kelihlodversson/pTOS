@@ -9,6 +9,9 @@
 #include "gemerror.h"
 #include "kheap.h"
 #include "string.h"
+#if CONF_WITH_AES
+#include "aes_accessory.h"
+#endif
 #include "../../../bdos/kproc.h"
 
 extern PD *run;
@@ -82,6 +85,9 @@ void aes_service_process_exit(PD *pd)
 
     if (!p)
         return;
+#if CONF_WITH_AES
+    x86_64_aes_registration(pd, FALSE);
+#endif
     for (i = 0; i < 2; i++)
         if (update[i].owner == p) {
             update[i].owner = NULL;
@@ -134,6 +140,12 @@ static LONG register_client(UQUAD address, UQUAD output)
     info.id = p->id;
     info.queue_capacity = AES_MESSAGE_QUEUE;
     info.features = AES_FEATURE_MESSAGE | AES_FEATURE_UPDATE;
+#if CONF_WITH_AES
+    if (x86_64_aes_owned(run)) {
+        info.features |= AES_FEATURE_WAIT;
+        x86_64_aes_registration(run, TRUE);
+    }
+#endif
     if (!kproc_copy_to_user(output, &info, sizeof(info))) {
         if (fresh)
             aes_service_process_exit(run);
@@ -161,6 +173,9 @@ static LONG send_message(AES_CLIENT_STATE *sender, UQUAD id, UQUAD input)
     message.sender = sender->id;
     receiver->queue[(receiver->head + receiver->count) % AES_MESSAGE_QUEUE] = message;
     receiver->count++;
+#if CONF_WITH_AES
+    x86_64_aes_wake(receiver->owner);
+#endif
     return E_OK;
 }
 
@@ -180,6 +195,10 @@ static LONG receive_message(AES_CLIENT_STATE *p, UQUAD output, BOOL poll)
         return EIMBA;
     /* A rejected/faulting output must not consume the queued message. */
     if (event.events) {
+#if CONF_WITH_AES
+        if (event.message.type == 41) /* AC_CLOSE */
+            x86_64_aes_flags(p->owner, 4); /* AP_ACCLOSE */
+#endif
         p->head = (p->head + 1) % AES_MESSAGE_QUEUE;
         p->count--;
     }
@@ -217,9 +236,9 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 
     if (!kproc_user_aspace(run))
         return EACCDN;
-    if (fn > AES_SERVICE_UPDATE)
+    if (fn > AES_SERVICE_YIELD)
         return EINVFN;
-    if (c || d || ((fn == AES_SERVICE_EXIT) && (a || b)) ||
+    if (c || d || ((fn == AES_SERVICE_EXIT || fn == AES_SERVICE_YIELD) && (a || b)) ||
         ((fn == AES_SERVICE_FIND || fn == AES_SERVICE_READ ||
           fn == AES_SERVICE_UPDATE) && b))
         return EINVAL;
@@ -248,6 +267,57 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         return receive_message(p, b, TRUE);
     case AES_SERVICE_UPDATE:
         return update_ownership(p, a);
+    case AES_SERVICE_WAIT:
+        if (a != AES_EVENT_MESSAGE)
+            return EINVAL;
+#if CONF_WITH_AES
+        if (!x86_64_aes_owned(run))
+            return EACCDN;
+        if ((b & 1) || !kproc_validate_user_write(b, sizeof(AES_EVENT)))
+            return EIMBA;
+        /* A successful previous wait can leave a pending wake flag. Check
+         * the queue again after every resume, and validate copyout afresh. */
+        do {
+            x86_64_aes_flags(run, 2); /* AP_MESAG, even if already queued */
+            if (p->count)
+                return receive_message(p, b, TRUE);
+            rc = x86_64_aes_wait(run);
+            p = kproc_aes_get(run);
+            if (!p)
+                return EACCDN;
+        } while (!rc);
+        return rc;
+#else
+        return EACCDN;
+#endif
+    case AES_SERVICE_YIELD:
+#if CONF_WITH_AES
+        return x86_64_aes_yield(run);
+#else
+        return EACCDN;
+#endif
     }
     return EINVFN;
+}
+
+/* Legacy kernel AES sends AC_OPEN/AC_CLOSE to its associated typed client.
+ * The payload is copied, never a legacy AESPB or a user pointer. */
+LONG aes_service_kernel_message(PD *pd, const WORD *words)
+{
+    AES_CLIENT_STATE *p = kproc_aes_get(pd);
+    AES_MESSAGE message;
+
+    if (!p)
+        return EACCDN;
+    if (p->count == AES_MESSAGE_QUEUE)
+        return EAGAIN;
+    memcpy(&message, words, sizeof(message));
+    message.sender = 0;
+    message.reserved = 0;
+    p->queue[(p->head + p->count) % AES_MESSAGE_QUEUE] = message;
+    p->count++;
+#if CONF_WITH_AES
+    x86_64_aes_wake(pd);
+#endif
+    return E_OK;
 }

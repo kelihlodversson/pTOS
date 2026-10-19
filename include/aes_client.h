@@ -18,6 +18,7 @@
 #define AES_BEG_MCTRL 3
 #define AES_FEATURE_MESSAGE 1UL
 #define AES_FEATURE_UPDATE 2UL
+#define AES_FEATURE_WAIT 4UL
 
 typedef struct {
     UWORD version;
@@ -47,6 +48,10 @@ LONG aes_appl_write(WORD recipient, const AES_MESSAGE *message);
 LONG aes_appl_read(AES_MESSAGE *message);
 LONG aes_evnt_poll(UWORD mask, AES_EVENT *event);
 LONG aes_wind_update(WORD code);
+/* Cooperative waits/yields are available only to loaded AES accessories.
+ * WAIT accepts AES_EVENT_MESSAGE; delivery copies to the original caller. */
+LONG aes_evnt_wait(UWORD mask, AES_EVENT *event);
+LONG aes_appl_yield(void);
 
 #define AES_ASSERT(name, expr) typedef char aes_assert_##name[(expr) ? 1 : -1]
 AES_ASSERT(info_size, sizeof(AES_APP_INFO) == 12);

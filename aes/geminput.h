@@ -43,7 +43,7 @@ void mchange(LONG fdata);
 void akbin(EVB *e);
 void adelay(EVB *e, LONG c);
 void abutton(EVB *e, LONG p);
-void amouse(EVB *e, LONG pmo);
+void amouse(EVB *e, intptr_t pmo);
 void bpend_cancel(LONG parm);
 
 

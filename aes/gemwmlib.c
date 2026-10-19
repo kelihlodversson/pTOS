@@ -20,6 +20,7 @@
 #include "emutos.h"
 #include "struct.h"
 #include "aesdefs.h"
+#include "aes_windset.h"
 #include "aesext.h"
 #include "aesvars.h"
 #include "obdefs.h"
@@ -53,6 +54,13 @@ GLOBAL OBJECT   *gl_awind;
 
 static OBJECT *gl_newdesk;      /* current desktop background pattern */
 static WORD gl_newroot;         /* current object within gl_newdesk   */
+
+#if CONF_WITH_X32_ACCESSORY_TEST
+BOOL wm_test_desktop(OBJECT *tree, WORD root)
+{
+    return gl_newdesk == tree && gl_newroot == root;
+}
+#endif
 
 static OBJECT W_TREE[NUM_WIN];
 static OBJECT W_ACTIVE[NUM_ELEM];
@@ -1656,7 +1664,8 @@ BOOL wm_set(WORD w_handle, WORD w_field, WORD *pinwds)
     switch(w_field)
     {
     case WF_NAME:
-        gl_aname.te_ptext = pwin->w_pname = *(char **)pinwds;
+        memcpy(&pwin->w_pname, pinwds, sizeof(pwin->w_pname));
+        gl_aname.te_ptext = pwin->w_pname;
         if (pwin->w_flags & VF_ISOPEN)
         {
             gadget = W_NAME;
@@ -1664,7 +1673,8 @@ BOOL wm_set(WORD w_handle, WORD w_field, WORD *pinwds)
         }
         break;
     case WF_INFO:
-        gl_ainfo.te_ptext = pwin->w_pinfo = *(char **)pinwds;
+        memcpy(&pwin->w_pinfo, pinwds, sizeof(pwin->w_pinfo));
+        gl_ainfo.te_ptext = pwin->w_pinfo;
         if (pwin->w_flags & VF_ISOPEN)
         {
             gadget = W_INFO;
@@ -1682,8 +1692,8 @@ BOOL wm_set(WORD w_handle, WORD w_field, WORD *pinwds)
         break;
     case WF_NEWDESK:
         pwin->w_owner = rlr;
-        gl_newdesk = *(OBJECT **) pinwds;
-        gl_newroot = pinwds[2];
+        memcpy(&gl_newdesk, pinwds, sizeof(gl_newdesk));
+        gl_newroot = pinwds[AES_WINDSET_PTR_WORDS];
         break;
     case WF_HSLSIZ:
         if (pwin->w_hslsiz != pinwds[0])    /* size changed? */
@@ -1781,7 +1791,7 @@ void wm_update(WORD beg_update)
         if (beg_update)
         {
             if (!tak_flag(&wind_spb))
-                ev_block(MU_MUTEX, (LONG)&wind_spb);
+                ev_block(MU_MUTEX, (intptr_t)&wind_spb);
 
         }
         else

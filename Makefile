@@ -123,7 +123,9 @@ core-dirs-y = bios bdos fs util
 # Optional directories may be disabled for reduced features.
 optional-dirs-y = vdi
 optional-dirs-$(CONF_WITH_AES) += aes desk
+ifneq ($(CONF_WITH_AES),y)
 optional-dirs-$(CONF_WITH_X32_AES) += aes
+endif
 optional-dirs-$(CONF_WITH_CLI) += cli
 optional-dirs-$(CONF_WITH_USB) += usb
 
@@ -1835,6 +1837,30 @@ endif
 
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+
+# Loaded accessory ABI/lifecycle consumers (#389/#407). Full and minimal
+# startup objects both come from the pinned libcmini dependency.
+obj/x32/ACCONE.ACC: ACC_TEST_ROLE = 1
+obj/x32/ACCTWO.ACC: ACC_TEST_ROLE = 2
+obj/x32/ACCFAULT.ACC: ACC_TEST_ROLE = 3
+obj/x32/ACCWAIT.ACC: ACC_TEST_ROLE = 4
+obj/x32/ACCONE.ACC: ACC_TEST_CRT = $(LIBCMINI_OBJDIR)/crt0.o
+obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC: ACC_TEST_CRT = $(LIBCMINI_CRT0)
+$(LIBCMINI_OBJDIR)/crt0.o: $(LIBCMINI_LIB)
+	$(LIBCMINI_MAKE) $@
+obj/x32/ACCONE.ACC obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC: \
+  tests/x32_accessory/accessory.c tests/x32_accessory/entry.S \
+  $(LIBCMINI_LIB) $(LIBCMINI_CRT0) $(LIBCMINI_OBJDIR)/crt0.o \
+  obj/x32/libptos-aes.a obj/x32/libptos-vdi.a $(AUTOCONF_H) | obj/x32
+	$(X32_CC) $(X32_CLI_CFLAGS) -I$(LIBCMINI_INC) -Iinclude -Iobj \
+	  -DACC_ROLE=$(ACC_TEST_ROLE) -DACC_NAME='"$(basename $(notdir $@))"' \
+	  $(X32_LDFLAGS) -Wl,-e,acc_probe_entry -o $@ \
+	  tests/x32_accessory/accessory.c tests/x32_accessory/entry.S $(ACC_TEST_CRT) \
+	  -Lobj/x32 -lptos-aes -lptos-vdi $(LIBCMINI_LIB)
+.PHONY: x32-accessory-test
+x32-accessory-test: obj/x32/ACCONE.ACC obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC obj/x32/BADACC.ACC
+obj/x32/BADACC.ACC: | obj/x32
+	printf 'invalid executable\n' > $@
 
 # poweroff.tos, reboot.tos, coldboot.tos and halt.tos: Shutdown() with each
 # mode, programs of their own because the machine does not come back (see

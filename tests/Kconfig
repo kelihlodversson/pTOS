@@ -20,4 +20,13 @@ config CONF_WITH_X86_64_MEMTEST
       one line on the console, "x86-64 memtest: PASS" or "FAIL (n)", which
       the CI boot test looks for.  It takes a fraction of a second.
 
+config CONF_WITH_X32_ACCESSORY_TEST
+    bool "Exercise loaded x32 accessories and desktop restart at boot"
+    depends on CONF_WITH_AES && ARCH_X86_64 && CONF_WITH_X86_64_MEMTEST
+    default n
+    help
+      Load the four ACC fixtures from make x32-accessory-test, verify
+      cooperative message delivery, exit/fault and cancellation, and restart
+      the desktop three times while checking tracked resources for leaks.
+
 endmenu

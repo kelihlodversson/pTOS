@@ -50,6 +50,47 @@ extern void kdos_pterm(long rc);
 #define Fsnext() kdos_fsnext()
 #define Pterm(rc) kdos_pterm(TRAP1_ARG(rc))
 
+/* Native AES/desktop file and console operations. */
+extern long kdos_cconws(long text);
+extern long kdos_cconis(void);
+extern long kdos_crawcin(void);
+extern long kdos_dgetdrv(void);
+extern long kdos_fgetdta(void);
+extern long kdos_fopen(long name, long mode);
+extern long kdos_fcreate(long name, long attr);
+extern long kdos_fclose(long handle);
+extern long kdos_fread(long handle, long count, long buffer);
+extern long kdos_fwrite(long handle, long count, long buffer);
+extern long kdos_fseek(long offset, long handle, long mode);
+extern long kdos_fdelete(long name);
+extern long kdos_frename(long zero, long oldname, long newname);
+extern long kdos_fattrib(long name, long flag, long attr);
+extern long kdos_fdatime(long buffer, long handle, long flag);
+extern long kdos_dcreate(long name);
+extern long kdos_ddelete(long name);
+extern long kdos_dgetpath(long buffer, long drive);
+extern long kdos_dfree(long buffer, long drive);
+#define Pterm0() kdos_pterm(0)
+#define Cconws(text) kdos_cconws(TRAP1_ARG(text))
+#define Cconis() kdos_cconis()
+#define Crawcin() kdos_crawcin()
+#define Dgetdrv() kdos_dgetdrv()
+#define Fgetdta() kdos_fgetdta()
+#define Fopen(name,mode) kdos_fopen(TRAP1_ARG(name), TRAP1_ARG(mode))
+#define Fcreate(name,attr) kdos_fcreate(TRAP1_ARG(name), TRAP1_ARG(attr))
+#define Fclose(h) kdos_fclose(TRAP1_ARG(h))
+#define Fread(h,n,b) kdos_fread(TRAP1_ARG(h), TRAP1_ARG(n), TRAP1_ARG(b))
+#define Fwrite(h,n,b) kdos_fwrite(TRAP1_ARG(h), TRAP1_ARG(n), TRAP1_ARG(b))
+#define Fseek(o,h,m) kdos_fseek(TRAP1_ARG(o), TRAP1_ARG(h), TRAP1_ARG(m))
+#define Fdelete(n) kdos_fdelete(TRAP1_ARG(n))
+#define Frename(a,b) kdos_frename(0, TRAP1_ARG(a), TRAP1_ARG(b))
+#define Fattrib(n,f,a) kdos_fattrib(TRAP1_ARG(n), TRAP1_ARG(f), TRAP1_ARG(a))
+#define Fdatime(b,h,f) kdos_fdatime(TRAP1_ARG(b), TRAP1_ARG(h), TRAP1_ARG(f))
+#define Dcreate(n) kdos_dcreate(TRAP1_ARG(n))
+#define Ddelete(n) kdos_ddelete(TRAP1_ARG(n))
+#define Dgetpath(b,d) kdos_dgetpath(TRAP1_ARG(b), TRAP1_ARG(d))
+#define Dfree(b,d) kdos_dfree(TRAP1_ARG(b), TRAP1_ARG(d))
+
 /* the reentrant Pexec() of the other targets is the same call here */
 #define trap1_pexec(mode,name,cmdline,env) Pexec(mode,name,cmdline,env)
 

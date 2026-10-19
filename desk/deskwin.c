@@ -923,5 +923,5 @@ void win_sinfo(WNODE *pwin, BOOL check_selected)
     }
 
     sprintf(pwin->w_info, alert, select_size, select_count);
-    wind_set(pwin->w_id, WF_INFO, pwin->w_info, 0, 0);
+    wind_set(pwin->w_id, WF_INFO, (void *)pwin->w_info, 0, 0);
 }

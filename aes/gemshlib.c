@@ -627,7 +627,14 @@ static WORD sh_ldapp(SHELL *psh)
     if (psh->sh_nextapp == CONSOLE_APP)
     {
         /* start the EmuCON shell: */
+#if ARCH_X86_64
+        {
+            extern void start_builtin_cli(char *env);
+            start_builtin_cli(NULL);
+        }
+#else
         aes_run_rom_program(coma_start);
+#endif
         set_default_desktop(psh);
         return 0;
     }

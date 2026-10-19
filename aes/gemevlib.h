@@ -14,7 +14,7 @@ extern WORD     gl_dclick;
 extern WORD     gl_ticktime;
 
 
-WORD ev_block(WORD code, LONG lvalue);
+WORD ev_block(WORD code, intptr_t lvalue);
 UWORD ev_button(WORD bflgclks, UWORD bmask, UWORD bstate, WORD rets[]);
 void ev_mouse(MOBLK *pmo, WORD rets[]);
 void ev_mesag(WORD *mebuff);
