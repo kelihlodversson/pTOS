@@ -267,10 +267,11 @@ static inline void justify_step(JUSTINFO *justified, WORD ch)
  * the alignment is made for, if not negative: the whole string's, of
  * which this is the first run of characters in one font.  With 'cont',
  * this run follows one already output, where that one left off: it is
- * not aligned.
+ * not aligned.  With 'more', another run follows this one, from where
+ * it leaves off.
  */
 static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
-                       WORD width, WORD align, JUSTINFO *justified, BOOL cont)
+                       WORD width, WORD align, JUSTINFO *justified, BOOL cont, BOOL more)
 {
     WORD i, j;
     WORD startx, starty;
@@ -592,11 +593,12 @@ static void output_run(Vwk *vwk, const Fonthead *fnt_ptr, WORD count, WORD *str,
                 if (linea_vars.DESTX > xmx)
                 {
                     /*
-                     * the rest is right of the window: not drawn, but the
-                     * destination moved over it all the same, as a run
-                     * of text that follows this one starts there
+                     * the rest is right of the window: not drawn, but if
+                     * another run follows (which kerning or a track
+                     * offset can bring back left), the destination moved
+                     * over it all the same, as that one starts there
                      */
-                    for (; j < count; j++)
+                    for (; more && j < count; j++)
                     {
                         load_char(fnt_ptr, str[j]);
                         linea_vars.DESTX += linea_vars.DELX + adv_extra;
@@ -1114,14 +1116,14 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
                 linea_vars.DESTY += dy;
             }
             output_run(vwk, run.font, run.n, run.chars, -1, cont ? -1 : width,
-                       justified, cont);
+                       justified, cont, run.pos < count);
             cont = TRUE;
         }
         return;
     }
 #endif
 
-    output_run(vwk, vwk->cur_font, count, str, width, -1, justified, FALSE);
+    output_run(vwk, vwk->cur_font, count, str, width, -1, justified, FALSE, FALSE);
 }
 
 void vdi_v_gtext(Vwk * vwk)
