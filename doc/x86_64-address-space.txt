@@ -96,6 +96,8 @@ The constants are in include/procmem.h.
                               program loaded from a file also the startup
                               area, 128 KiB of zeroed read/write memory right
                               after the image's last page
+    0x0ffc0000 - 0x0ffc0fff   optional callback stubs, private read-only code
+                              (CONF_WITH_USER_CALLBACKS; doc/user-callback-x32.txt)
     0x0ffd0000 - 0x0ffdffff   optional x32 AES client, private read-only code
                               (CONF_WITH_X32_AES; doc/aes-x32.txt)
     0x0ffe0000 - 0x0ffeffff   optional x32 VDI client, private read-only code

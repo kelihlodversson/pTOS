@@ -20,6 +20,7 @@
 #include "trap.h"
 #include "vdi_service.h"
 #include "aes_service.h"
+#include "user_callback.h"
 #if CONF_WITH_USER_CALLBACKS
 #include "../../../bdos/user_callback.h"
 #include "../../../bdos/kproc.h"
@@ -318,12 +319,14 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     }
 
     switch (trap_class) {
-#if CONF_WITH_USER_CALLBACKS
     case USER_CALLBACK_CLASS:
+#if CONF_WITH_USER_CALLBACKS
         frame->rax = (UQUAD)(QUAD)(from_ring3 ?
             user_callback_service(fn, frame->rdi, frame->rsi, frame->rdx, frame->rcx) : EINVFN);
-        break;
+#else
+        frame->rax = (UQUAD)(QUAD)EINVFN;
 #endif
+        break;
     case AES_SERVICE_CLASS:
 #if CONF_WITH_X32_AES
         frame->rax = (UQUAD)(QUAD)(from_ring3 ?
