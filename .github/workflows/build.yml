@@ -246,6 +246,9 @@ jobs:
           # x86_64-elf- cross toolchain selected by the developer default.
           make CROSS_COMPILE=
 
+      - name: Check the x32 VDI parameter contract
+        run: make CROSS_COMPILE= vdi-contract-test
+
       - name: Collect the build products
         run: |
           mkdir products
@@ -270,7 +273,7 @@ jobs:
       # way (EFI/OVMF); a future non-EFI x86-64 config would need its own
       # check instead of this one.
       - name: Install QEMU and OVMF for the boot test
-        if: matrix.config == 'pc-x86_64'
+        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes' || matrix.config == 'pc-x86_64-callbacks'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y qemu-system-x86 ovmf
@@ -291,14 +294,20 @@ jobs:
       # succeed on it: 124 means the timeout fired (the normal case here),
       # anything else means QEMU itself exited unexpectedly.
       - name: Boot-test under QEMU/OVMF
-        if: matrix.config == 'pc-x86_64'
+        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes' || matrix.config == 'pc-x86_64-callbacks'
         run: |
           mkdir -p esp/EFI/BOOT
           cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
           # a real x32 ELF on the boot drive: the self-test runs it through
           # Pexec() from a ring-3 process (nested launch), as EmuCON does
-          make CROSS_COMPILE= x32test
+          make CROSS_COMPILE= x32test x32-vdi-import-test x32-aes-import-test aes-contract-test
+          cp obj/x32/VDI*.TOS obj/x32/AES*.TOS esp/
+          cp obj/x32/x32probe.elf esp/X32AES.TOS
+          cp obj/x32/x32probe.elf esp/X32CB.TOS
           cp x32hello.elf esp/X32HELLO.TOS
+          # The optional VDI self-test loads a second client while the first
+          # still owns a workstation, to check process isolation.
+          cp obj/x32/x32probe.elf esp/X32VDI.TOS
           # the same program linked for another address, which Pexec() has to
           # move into the image window and relocate
           cp x32reloc.elf esp/X32RELOC.TOS
@@ -356,6 +365,30 @@ jobs:
           fi
           if ! grep -q 'x86-64 memtest: PASS' boot.log; then
             echo "::error::the boot-time memory-management self-test never reported PASS"
+            exit 1
+          fi
+          if ! grep -q 'x86-64 AES client: PASS' boot.log || ! grep -q 'x86-64 AES imports: PASS' boot.log; then
+            echo "::error::AES clients, process coordination, imports or baseline refusal did not pass"
+            exit 1
+          fi
+          if ! grep -q 'x86-64 user callbacks: PASS' boot.log; then
+            echo "::error::typed callbacks, nesting, alternate stacks, faults or baseline refusal failed"
+            exit 1
+          fi
+          if ! grep -q 'x86-64 VDI imports: PASS' boot.log; then
+            echo "::error::VDI import resolution, isolation or baseline refusal did not pass"
+            exit 1
+          fi
+          if grep -q '^CONF_WITH_X32_VDI=y' .config && ! grep -q 'x86-64 VDI client: PASS' boot.log; then
+            echo "::error::the ring-3 VDI client, validation and ownership tests did not pass"
+            exit 1
+          fi
+          if grep -q '^CONF_WITH_X32_VDI=y' .config && ! grep -q 'x86-64 VDI padded pitch: PASS' boot.log; then
+            echo "::error::VDI initialization or drawing corrupted padded framebuffer rows"
+            exit 1
+          fi
+          if grep -q '^CONF_WITH_X32_VDI=y' .config && ! grep -q 'x86-64 VDI coordinate bounds: PASS' boot.log; then
+            echo "::error::VDI coordinate bounds or large-screen drawing checks did not pass"
             exit 1
           fi
 

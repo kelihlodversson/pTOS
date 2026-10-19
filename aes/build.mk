@@ -2,6 +2,9 @@
 # aes/build.mk - objects making up the AES
 #
 
+obj-$(CONF_WITH_X32_AES) += aes_service.o aes_image.o
+
+ifeq ($(CONF_WITH_AES),y)
 obj-y += gemasm.o gemstart.o gemdosif.o
 obj-$(ARCH_ARM) += gemdosifc.o
 
@@ -13,3 +16,5 @@ obj-y += gemaplib.o gemasync.o gemctrl.o gemdisp.o gemevlib.o gemflag.o \
 obj-$(CONF_WITH_LEGACY_RSC_LOAD) += rsload_legacy.o
 obj-$(CONF_WITH_PORTABLE_RSC_LOAD) += rsload_portable.o
 obj-$(CONF_WITH_MENU_EXTENSION) += gemmnext.o
+
+endif

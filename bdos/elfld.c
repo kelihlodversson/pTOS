@@ -57,6 +57,12 @@
 #include "string.h"
 #include "kprint.h"
 #include "ptosabi.h"
+#if CONF_WITH_X32_VDI
+#include "x32vdi_image.h"
+#endif
+#if CONF_WITH_X32_AES
+#include "x32aes_image.h"
+#endif
 #include "kproc.h"
 #include "bdosstub.h"
 #if CONF_WITH_USER_ASPACE
@@ -525,7 +531,7 @@ static LONG elf_fixup(UBYTE *load_base, const ELFINFO *info, LONG bias,
 
     /* the slot must satisfy the target's 32-bit access alignment (4 bytes on
      * ARM, 2 on m68k) or the load/store below would fault */
-    if ((ULONG)slot & (ELF_SLOT_ALIGN - 1))
+    if ((uintptr_t)slot & (ELF_SLOT_ALIGN - 1))
         return EPLFMT;
 
     /* unsigned arithmetic wraps modulo 2^32, so a negative bias applies
@@ -804,26 +810,35 @@ static LONG elf_relocate_ptos(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
  * "gemdos:Ptermres" (15 bytes including the NUL) */
 #define PTOS_IMPORT_NAME_MAX   63
 
-/*
- * look up one already-split "namespace:name" import against the
- * kernel's own export tables. No namespace table is registered yet
- * (bdos/ptosabi.h's own top comment): a GEMDOS "gemdos:" table lived
- * here briefly, but the classic trap1()/TRAP #1 interface already
- * serves GEMDOS well enough that the added indirection was not worth
- * it (doc/elfload.txt). Extend this with a strcmp(namespace_name, ...)
- * arm and a PTOSABI_TABLE lookup (bdos/ptosabi.h) once a future
- * namespace (most plausibly "aes" or "vdi") registers one.
- *
- * Returns 0 and fills *out_addr and *out_kind on a match. Returns EPLFMT if
- * the namespace is unrecognised, the symbol is unknown within it, or
- * the export table's own ABI version cannot satisfy what the import
- * asks for (an exact major version match, at least the requested minor)
- * -- never binds a plausible-looking but wrong address.
- */
+/* Resolve only registered ABI symbols. x32 imports point to user code,
+ * never to the LP64 kernel's own functions or data. */
 static LONG ptosabi_resolve(const char *namespace_name, const char *name,
                             UWORD abi_major, UWORD abi_minor,
                             PTOSABI_ADDR *out_addr, UBYTE *out_kind)
 {
+#if CONF_WITH_X32_VDI
+    if (!strcmp(namespace_name, "vdi") && !strcmp(name, "vdi") &&
+        abi_major == 1 && abi_minor == 0) {
+        ULONG entry = x32_vdi_image_entry();
+
+        if (!entry)
+            return EPLFMT;
+        out_addr->func = (PFLONG)(uintptr_t)entry;
+        *out_kind = PTOSABI_KIND_FUNCTION;
+        return E_OK;
+    }
+#endif
+#if CONF_WITH_X32_AES
+    if (!strcmp(namespace_name, "aes") && abi_major == 1 && abi_minor == 0) {
+        ULONG entry = x32_aes_image_entry(name);
+
+        if (!entry)
+            return EPLFMT;
+        out_addr->func = (PFLONG)(uintptr_t)entry;
+        *out_kind = PTOSABI_KIND_FUNCTION;
+        return E_OK;
+    }
+#endif
     (void)namespace_name;
     (void)name;
     (void)abi_major;
@@ -934,10 +949,10 @@ static LONG ptos_bind_apply(UBYTE *load_base, const ELFINFO *info,
 
     slot = (ELF_SLOT_T *)(load_base + (vaddr - info->link_base));
 
-    if ((ULONG)slot & (ELF_SLOT_ALIGN - 1))
+    if ((uintptr_t)slot & (ELF_SLOT_ALIGN - 1))
         return EPLFMT;
 
-    value = (kind == PTOSABI_KIND_DATA) ? (ULONG)addr.data : (ULONG)addr.func;
+    value = (kind == PTOSABI_KIND_DATA) ? (ULONG)(uintptr_t)addr.data : (ULONG)(uintptr_t)addr.func;
     *slot = value;
     return 0;
 }
@@ -1070,10 +1085,7 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
     {
         char namebuf[PTOS_IMPORT_NAME_MAX + 2];
         char *ns, *name;
-        /* zero-initialised: with no namespace currently registered (see
-         * ptosabi_resolve()), every call below returns EPLFMT without
-         * ever writing these, and -Wmaybe-uninitialized cannot see across
-         * that call boundary that the "r < 0L" check always fires first */
+        /* A resolver may refuse without writing either output. */
         PTOSABI_ADDR addr = { NULL };
         UBYTE kind = 0;
 
@@ -1442,12 +1454,7 @@ LONG elf_pgmld(FH h, PD *p)
 
     if (have_ptos_imports)
     {
-#if CONF_WITH_USER_ASPACE
-        /* the kernel's exports are 64-bit addresses, which a 32-bit slot of a
-         * ring-3 program cannot hold */
-        (void)ptos_imports_ph;
-        return EPLFMT;
-#elif CONF_WITH_PTOS_ABI_IMPORTS
+#if CONF_WITH_PTOS_ABI_IMPORTS
         return elf_resolve_imports(h, &ptos_imports_ph, load_base, &info);
 #else
         /* no export table to resolve against: binding nothing and

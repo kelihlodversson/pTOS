@@ -292,6 +292,15 @@ introduced, these calls (like the GEMDOS ones) need fault recovery.
 
 Trap class 2 (VDI, AES) is refused from ring 3 outright (#376).
 
+Typed x32 VDI uses a separate class 0x100 when CONF_WITH_X32_VDI is enabled
+(#427). Its user-mode vdi() client sends operation-specific scalar and
+array requests, never a general VDIPB. The services validate process-owned
+workstation handles and every user range before using trusted kernel VDI
+structures. Memory bitmap operations run in the client. Callback pointers
+are checked but registration is refused until #432. With the option off,
+class 0x100 returns EINVFN. See doc/vdi-x32.txt for the complete service and
+public parameter ABI.
+
 Status
 -------
 
@@ -316,3 +325,14 @@ syscall_stack in trap.c is only the initial value, used until the first
 process is launched.  The exception stack (TSS.rsp0) is still shared: an
 exception never resumes the code it interrupted.  See
 doc/x86_64-address-space.txt, "Faults and termination".
+
+Native x32 AES services (optional)
+----------------------------------
+
+Class 0x101 is the typed AES coordination boundary. CONF_WITH_X32_AES enables
+kernel-owned registrations, copied 16-byte message queues, message polling
+and process-owned update locks. It accepts only ring-3 callers with private
+address spaces and uses KPROC ownership rather than an AESPB/context pointer.
+Disabled builds return EINVFN. See doc/aes-x32.txt for every prototype,
+argument direction/size, native layout, error and lifetime rule. Generic GEM
+class 2 remains refused. Application-local rectangle helpers run in ring 3.

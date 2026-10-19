@@ -261,6 +261,7 @@ void gouser(void)
         UQUAD kstack_top, kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
         UQUAD launcher_stack = x86_64_get_kernel_stack();
         UQUAD launcher_user_rsp = x86_64_get_saved_user_rsp();
+        UQUAD launcher_flags;
         int launcher_in_syscall;
 
         if (!entry_rip)         /* no image: a basepage with its code in its TPA */
@@ -287,6 +288,7 @@ void gouser(void)
          * page tables, its GS state, its saved user RSP.
          */
         x86_64_kexec_resume = &buf;
+        __asm__ volatile ("pushfq; popq %0" : "=r"(launcher_flags) :: "memory");
         x86_64_set_kernel_stack(kstack_top);
         launcher_in_syscall = x86_64_gs_to_user();
         if (setjmp(buf) == 0)
@@ -307,6 +309,12 @@ void gouser(void)
         }
         if (launcher_in_syscall)
             x86_64_gs_back_to_syscall();
+        /* longjmp does not restore RFLAGS. Put the launcher's IF back only
+         * after its stacks, page tables and GS context are safe for IRQs. */
+        if (launcher_flags & 0x200)
+            __asm__ volatile ("sti" ::: "memory");
+        else
+            __asm__ volatile ("cli" ::: "memory");
     }
 }
 

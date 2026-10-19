@@ -10,6 +10,8 @@
 #ifndef RECTFUNC_H
 #define RECTFUNC_H
 
+#include "grect.h"
+
 BOOL inside(WORD x, WORD y, const GRECT *pt);
 void rc_constrain(const GRECT *pc, GRECT *pt);
 WORD rc_equal(const GRECT *p1, const GRECT *p2);

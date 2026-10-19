@@ -1,0 +1,358 @@
+Typed x32 VDI client and application imports (#427, #403)
+========================================================
+
+x32 programs call LONG vdi(VDIPB *) from obj/x32/libptos-vdi.a. The client
+runs in ring 3, snapshots and checks the typed parameter block, and uses
+operation-specific supervisor services for display access. It never sends
+a general VDIPB to the kernel. Generic GEM trap class 2 remains rejected.
+
+CONF_WITH_X32_VDI enables these services independently of AES and the
+EmuCON baseline. configs/pc-x86_64-vdi_defconfig selects it; the ordinary
+pc-x86_64 configuration leaves it disabled. Class 0x100 returns EINVFN
+when disabled. CONF_WITH_USER_CALLBACKS adds typed ring-3 callback delivery
+(doc/user-callback-x32.txt). The application import path is available through
+vdi:vdi ABI 1.0; typed AES access is documented in doc/aes-x32.txt.
+
+Representations
+---------------
+
+include/vdi_user.h defines VDI_USER_CONTROL, VDI_USER_PB and VDI_USER_FDB.
+An x32 application including vdipb.h gets VDICONTROL and VDIPB aliases for
+the first two automatically. The X32_USERLAND define also selects them for
+host-side contract tests. The LP64 kernel includes vdi_user.h explicitly
+when it needs the user representation. Its existing trusted VDICONTROL,
+VDIPB and FDB representations remain separate. ARM and m68k keep their
+existing interfaces, including m68k's 12-word control block.
+
+All data and callback pointer slots use USERPTR_T(). They are native, typed
+32-bit pointers in x32 code and 32-bit user addresses in the LP64 kernel.
+They are never native kernel pointers. Conversion does not confer access:
+validate against the owning process before dereferencing. Control structures
+use native x32 alignment (4 bytes), not packed structures or 16-bit pointer
+packing. Compile-time assertions check both the x32 and LP64 views.
+
+VDICONTROL (28 bytes, alignment 4):
+
+    offset  size  member
+       0      2   code
+       2      2   nptsin
+       4      2   nptsout
+       6      2   nintin
+       8      2   nintout
+      10      2   subcode
+      12      2   handle
+      14      2   reserved (zero)
+      16     12   args (tagged union; code/subcode select the member)
+
+Arrays-only operations use args.arrays and zero its reserved words. Raster
+operations use args.raster.source at offset 16 and destination at offset 20.
+Font loading uses args.font_load.scratch at 16, scratch_offset at 20,
+reserved (zero) at 22 and first_font at 24. Each callback variant has its
+typed new_handler at 16 and old_handler at 20. Unused union bytes are zero.
+
+VDIPB (20 bytes, alignment 4) contains five 32-bit pointer slots in order:
+contrl at 0, intin at 4, ptsin at 8, intout at 12 and ptsout at 16. The
+coordinate arrays contain consecutive WORD x,y pairs. nptsin/nptsout count
+pairs; nintin/nintout count WORD integers. Output counts are results, not
+caller-supplied buffer capacities; the client/service must derive output
+requirements from the operation before writing them.
+
+VDI_USER_FDB (20 bytes, alignment 4) has fd_addr at 0, then the eight WORD
+fields fd_w, fd_h, fd_wdwidth, fd_stand, fd_nplanes, fd_r1, fd_r2, fd_r3 at
+offsets 4 through 18. fd_addr == 0 denotes the screen; the service owns
+screen access and must never interpret that as a user null-buffer access.
+
+Complete discriminator inventory
+--------------------------------
+
+vdi_user_control_kind() describes layouts, not supported service operations.
+All ordinary operations below require subcode 0. Unexpected subcodes are
+explicitly unsupported even where the legacy implementation ignores them.
+
+    code(s)                       args member
+    1-3, 6-9, 12-26, 28, 30-33,  arrays
+      35-39
+    5, subcodes 1-19              arrays (console escapes)
+    11, subcodes 1-10             arrays (GDP drawing and justified text)
+    100-108, 111-117, 120,        arrays
+      122-124, 128-131
+    109, 110, 121                 raster (copy, transform, transparent copy)
+    118                           timer
+    119                           font_load
+    125                           button
+    126                           motion
+    127                           cursor
+    134                           wheel
+
+Legacy no-op codes 4, 10, 27, 29, 34, 132 and 133 are unsupported. Every
+other code/subcode pair is unsupported, including disabled Bezier subcode
+13 on codes 6, 9 and 11 and escape 99. The wheel layout exists regardless
+of CONF_WITH_EXTENDED_MOUSE; a service without that feature rejects it.
+The font-load layout does not authorize a kernel service to retain a user
+font chain. That operation must remain rejected until a safe font ownership
+and copying contract exists. The current kernel font loader's packed-word
+interpretation must not be reused for this user representation.
+
+Callback signatures are distinct:
+
+    timer:  void (int milliseconds)
+    button: void (WORD status)
+    motion: ULONG (WORD x, WORD y)   [packed x high/y low return value]
+    cursor: void (WORD x, WORD y)
+    wheel:  void (WORD number, WORD amount)
+
+With CONF_WITH_USER_CALLBACKS, exchanges return E_OK and a typed OLD pointer:
+the same owner's executable handler directly, or an immutable user chaining
+stub for a native/foreign predecessor. Null removes user event delivery while
+returning OLD for restoration. Timer exchanges also return the tick interval.
+Invalid handlers return EIMBA. No user address is installed in linea_vars or
+called in ring 0. Without delivery enabled, non-null registration returns
+EINVFN and OLD is zero; null succeeds. See doc/user-callback-x32.txt for
+alternate stacks, nesting, bounded execution and revocation semantics.
+
+Callable operations
+-------------------
+
+The inventory above describes layouts. The current client implements only
+the following code/subcode pairs (all subcodes are zero); every other pair
+returns EINVFN before entering legacy VDI. Font loading is explicitly
+rejected because it needs a separate safe font ownership contract.
+
+    code   operation                 nintin  nptsin  nintout  nptsout
+       6   polyline                     0    2-256      0        0
+      17   line colour                  1      0        1        0
+     100   open virtual workstation    11      0       45        6
+     101   close virtual workstation    0      0        0        0
+     105   get pixel                    0      1        2        0
+     109   opaque memory raster copy    1      4        0        0
+     110   memory raster transform      0      0        0        0
+     118   timer exchange/query         0      0        1        0
+     121   mono transparent copy        3      4        0        0
+     125   button exchange/query        0      0        0        0
+     126   motion exchange/query        0      0        0        0
+     127   cursor exchange/query        0      0        0        0
+     129   clipping                     1      2        0        0
+     134   wheel exchange/query         0      0        0        0
+
+Initialize the control block to zero, set code, counts and handle, and
+select the appropriate args member. The client derives output sizes from
+the table, validates their complete writable ranges, and returns output
+counts in the control block. Unused pointers may be null. Input counts must
+match the operation exactly. Reserved fields and unused union bytes must
+be zero. Parameter/control/FDB pointers require 4-byte alignment and WORD
+arrays require 2-byte alignment.
+
+work_in[10] must be 2 (raster coordinates). Opening creates a process-owned
+virtual workstation and returns its handle in contrl->handle. Handles from
+another process and closed handles return EIHNDL, including across nested
+Pexec. Successful close clears contrl->handle. Normal exit and fault exit
+reclaim all workstations belonging to that process. Kernel workstation
+state is allocated from the supervisor heap, never the user's Malloc heap.
+A physical workstation is opened lazily when needed and restored to console
+mode after the last service-owned virtual workstation closes.
+
+Physical initialization retains the screen descriptor's hardware pitch
+for packed framebuffers before entering graphics mode or clearing the
+console. Visible width does not determine scanline stride on padded GOP
+modes. Planar modes retain their existing stride calculation.
+
+Polyline coordinates are bounded to +/-10000. The service always clips to
+the framebuffer, intersecting an enabled workstation rectangle without
+changing its saved clipping state. This screen bound remains mandatory
+when optional workstation clipping is disabled; empty intersections draw
+nothing. Screen maxima and reported VDI geometry are capped at 32767
+before storing them in signed WORD fields. The physical dimensions and
+framebuffer stride retain their hardware values. Clipping accepts only
+flags 0 or 1. Pixel reads
+validate coordinates against the actual screen dimensions and reject
+values above 32767 before narrowing to the renderer's signed WORDs. Pixel
+results retain the existing VDI backend's representation, including hardware
+palette indices in truecolor modes.
+
+Bitmap size and validation requirements
+---------------------------------------
+
+vdi_user_bitmap_bytes() computes a span from an already-copied FDB. It does
+not read fd_addr or establish that the range is mapped, readable or writable.
+It rejects invalid dimensions, reserved fields, row capacity, pixel formats
+and arithmetic that exceeds the 32-bit address space. The exact format is
+chosen by the caller's typed operation/backend, not by guessing from address
+shape or mapping a user descriptor onto the kernel FDB structure.
+
+Planar storage uses fd_wdwidth * 2 * fd_nplanes bytes per row. For packed
+device-dependent forms, packed_bytes is 2 (RGB565) or 4 (32-bit pixels), and
+the row is fd_w * packed_bytes. Packed forms require fd_stand == 0 and the
+matching plane count. Standard planar forms use packed_bytes == 0.
+
+The client snapshots both FDBs, validates their full spans with Maccess,
+and copies the source and destination into bounded, process-owned heap
+buffers before executing memory raster operations in ring 3. Each bitmap
+is limited to 1 MiB. The complete source must be readable and the complete
+destination readable/writable. The destination FDB must also be writable
+for opcode 110, which updates fd_stand. Snapshots preserve overlapping and
+in-place source/destination operations. A user fault cannot leave a kernel
+pointer to a bitmap or descriptor.
+
+Opcode 109 implements all 16 Boolean raster operations for equal plane
+counts. Opcode 121 supports monochrome source and destination, modes 1-4,
+and foreground/background values 0 or 1. Opcode 110 converts 1-8 planes
+between standard planar and device-interleaved storage, with matching
+source/destination dimensions and stride. Rectangles are normalized and
+must fit their FDBs without scaling. Screen FDBs (fd_addr == 0), colour
+conversion for transparent copies and transforms above 8 planes return
+EINVFN; they cannot accidentally access a supervisor framebuffer.
+
+Supervisor service ABI
+----------------------
+
+The x86-64 syscall convention is RAX = (0x100ULL << 32) | function;
+RDI/RSI/RDX/R10 carry a/b/c/d. Scalar arguments are checked before narrowing
+from 64 bits. These services accept only ring-3 callers with a private
+address space. They never accept a user VDIPB. User callbacks enter through
+the generic process/trap facility at safe return boundaries.
+
+    function  a          b              c              d
+       0      work_in*   workstation*   unused         unused
+       1      handle     unused         unused         unused
+       2      handle     point count    WORD xy[]*     unused
+       3      handle     clip flag      WORD rect[4]*  unused
+       4      handle     line colour    unused         unused
+       5      handle     unused         unused         unused
+       6      handle     exchange code  handler        vector result*
+       7      handle     x              y              WORD result[2]*
+
+Function 0 reads 11 WORDs and writes VDI_SERVICE_WORKSTATION: a WORD
+handle, 45 WORD intout values and 12 WORD ptsout coordinates (116 bytes).
+Function 2 reads count*2 WORD coordinates, count 2-256. Function 3 reads
+four WORD coordinates. Function 4 returns the selected colour as a scalar.
+Function 5 validates handle ownership for caller-local raster operations.
+Function 6 writes VDI_SERVICE_VECTOR_RESULT (8 bytes): ULONG old_handler,
+WORD tick_ms and WORD reserved (zero). Function 7 writes two WORDs.
+
+Kernel services copy inputs into trusted local arrays, validate/back output
+ranges before allocating resources, and copy results back through the
+process user-access helpers. Pointers cannot select another process's
+memory. No descriptor or stack address survives the call. The existing
+kernel VDICONTROL and VDIPB are constructed explicitly from trusted values
+and are never overlaid on user data.
+
+Errors are EINVFN for unsupported operations/registration, EINVAL for
+invalid counts, flags, geometry or reserved fields, EIMBA for invalid
+memory or alignment, EIHNDL for unowned handles, and ENSMEM for allocation
+failure. A fault while accessing a lazy user allocation terminates only
+that process; its heap and workstations are reclaimed.
+
+Building and gemlib integration
+-------------------------------
+
+    make pc-x86_64-vdi_defconfig
+    make
+    make x32-vdi
+
+Compile the application with the same -mx32 freestanding ABI as the other
+x32 programs, include vdipb.h from include/, and link obj/x32/libptos-vdi.a.
+The public headers vdipb.h, vdi_user.h, userptr.h and portab.h do not need
+generated kernel configuration headers. vdi() returns a GEMDOS LONG status;
+successful ordinary calls return E_OK. This static entry needs no load-time binding.
+
+kelihlodversson/gemlib can supply the higher-level application bindings.
+Its feature/arm-ptos-support branch adapts the low-level trap entry for ARM,
+but retains the legacy WORD control array. An x32 port must use the public
+typed control/FDB definitions, set named fields and union members instead
+of packing pointers into WORDs, and route its low-level _gc_vdi.c binding
+to this library's vdi(). Keep the ARM/m68k binding paths separate. Porting
+the remaining higher-level gemlib bindings is separate from the pTOS entry.
+The loader now supplies the typed entry through the import path below.
+
+Imported applications
+---------------------
+
+make x32-vdi also builds obj/x32/libptos-vdi.so.1, a link-time stub declaring
+LONG vdi(VDIPB *). The stub is never installed on the boot disk or executed.
+Link an x32 position-independent application against it, then package its
+ELF with ptos-elf-pack. For example (CC is x86_64-elf-gcc on macOS, gcc on
+Linux; supply the application's startup object):
+
+    $CC -mx32 -ffreestanding -fPIE -nostdlib -Wl,-pie,--no-dynamic-linker \
+        -Wl,-m,elf32_x86_64,--build-id=none,-e,_start \
+        -Wl,-z,max-page-size=0x1000,-z,noseparate-code \
+        -Iinclude app.c start.o -Lobj/x32 -l:libptos-vdi.so.1 -o app.elf
+    ./ptos-elf-pack --strip-shdr app.elf APP.TOS
+
+The packer converts the stub's DT_NEEDED and JUMP_SLOT/GLOB_DAT relocation
+into vdi:vdi, ABI major 1, minor 0, function kind, using the existing
+PT_PTOS_IMPORTS format. Pexec resolves it eagerly; the application needs no
+address constants or runtime symbol lookup. The x32 GOT slot's upper word
+is zero as emitted by the linker; its low word receives the user address.
+Only this function is registered in the VDI namespace. The optional x32
+AES service also registers aes: entries (doc/aes-x32.txt). Unknown names, namespaces, versions,
+kinds and malformed bind slots return EPLFMT; the ordinary PC baseline
+also returns EPLFMT for an application requiring VDI.
+
+The optional kernel embeds the same client objects used by the static
+archive as a small native x32 image. Its first word identifies the vdi()
+entry, and a linker assertion forbids mutable globals and caps the image
+at 64 KiB. During process preparation, private pages at 0x0ffe0000 are
+filled from those bytes and mapped user-readable/executable, never writable.
+The window is disjoint from the image, framebuffer, heap, ancestors and
+stack. It is an implementation detail of the resolver, not an application
+ABI address. Even the default EmuCON gets this mapping only in a build with
+CONF_WITH_X32_VDI enabled. The address space owns and reclaims the pages on
+normal exit, a process fault and failed launch. Mapping happens before an
+irreversible PE_LOAD image transfer from the launching process.
+
+All parameter-block checks and memory raster algorithms still execute in
+ring 3. Only the typed services above cross to ring 0. Class 2 stays refused.
+No kernel export address is narrowed into a user slot; ARM and m68k retain
+their existing trap interfaces and cannot import this x32 implementation.
+
+Tests
+-----
+
+make vdi-contract-test checks layout and raster semantics on the host and
+compares every code against the actual vdi_main.c dispatch tables. The x32
+boot self-test runs these checks with the real -mx32 ABI in ring 3.
+
+The pc-x86_64-vdi configuration additionally opens/closes workstations,
+draws lines and reads changed pixels, sets clipping/colour, copies and
+transforms memory rasters (including in-place), exercises all five callback
+variants, and rejects malformed pointers, read-only outputs, bad counts,
+bitmap overflow and non-executable/kernel callback addresses. A nested
+process cannot use or close its parent's handle. A deliberately faulting
+process leaves no open workstations or allocator leaks, and another client
+can immediately run the same calls. The baseline configuration checks that
+the optional service class is refused. Both boot through the existing
+process/loader regressions to EmuCON.
+
+A padded-viewport boot regression retains the real GOP stride, narrows the
+visible width, and seeds the unused tail of every scanline with sentinel
+pixels before opening a workstation. Workstation initialization, console
+clears and the real ring-3 drawing calls must preserve those sentinels and
+both line-A pitch fields. CI requires "x86-64 VDI padded pitch: PASS".
+
+A coordinate-bound boot regression advertises heights of 32768, 32769 and
+65535 rows and exercises raw ring-3 calls at the signed WORD boundary and
+with larger 64-bit values. Low-coordinate lines must change pixels with
+optional clipping both disabled and enabled, and reported VDI geometry
+must remain representable by signed WORDs.
+Invalid requests must leave output buffers untouched and cannot reach the
+renderer. The valid boundary is checked with a null output buffer, avoiding
+any read beyond the real fixture's framebuffer.
+
+The boot disk needs obj/x32/x32probe.elf copied to X32VDI.TOS alongside the
+existing loader fixtures. CI builds and boots both PC configurations and
+requires "x86-64 VDI client: PASS" for the enabled configuration, as well as
+the aggregate "x86-64 memtest: PASS" marker.
+
+make x32-vdi-import-test builds real PIE, relocated and PLT applications
+without libptos-vdi.a, strips their section headers, checks the packed import
+and emits seven malformed import fixtures. Copy obj/x32/VDI*.TOS to the boot
+drive alongside X32VDI.TOS. Both PC boot tests require "x86-64 VDI imports:
+PASS": the enabled build runs the full client round trip through imports,
+including nested Pexec and PE_LOAD/GO, verifies read-only client code and
+fault cleanup; both configurations reject invalid metadata, and the baseline
+refuses the optional import. The host test also checks packaging refusals
+for an unknown function and a different library dependency.
+
+Minimal boot disks without VDIIMP.TOS skip the disk import test; the dedicated
+PC CI boot jobs supply the fixtures and require its PASS marker.

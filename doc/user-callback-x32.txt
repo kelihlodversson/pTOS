@@ -1,0 +1,194 @@
+Typed kernel-to-user callbacks on x32 (#432)
+==========================================
+
+CONF_WITH_USER_CALLBACKS enables the process/trap facility in
+bdos/user_callback.c. It defaults on with CONF_WITH_X32_VDI, and may be
+disabled independently. m68k retains supervisor callbacks; ARM is unchanged.
+The private x32 service class is 0x102. This is not a Linux signal ABI or
+a claim to implement MiNT signal delivery.
+
+Registration and delivery
+-------------------------
+
+Kernel consumers register an exact ABI profile (int -> void, WORD -> void,
+WORD,WORD -> ULONG, or WORD,WORD -> void). VDI chooses these profiles for
+its five vex_* operations. The registry stores the owner and executable
+user address separately from native kernel callback slots. Addresses must
+be executable user mappings of the registering process at registration and
+again at delivery. User addresses never become native kernel vectors.
+
+Consumers may invoke synchronously from a safe process context, or register
+a return-work hook. IRQ producers must only queue bounded work: they must
+not allocate, switch processes or invoke users. VDI coalesces the latest
+arguments per event kind. The PIT supplies timer events; mouse input supplies
+button/motion events, followed by cursor delivery after the returned motion
+coordinates have been bounded to the screen. Extended wheel events use the
+same path. The existing PC PS/2 driver does not negotiate IntelliMouse wheel
+packets. Kernel-native event handling continues normally.
+If another motion packet arrives during a user handler, its older result is
+discarded. The pending packet retains the latest coordinates; checking for
+it, applying a current result and notifying the cursor all exclude IRQs.
+
+Return-work runs after syscall dispatch, or after IRQ dispatch/EOI when the
+interrupted CS is user mode. It is skipped for kernel IRQ interruptions,
+which could have interrupted an allocator, and while a callback is active.
+Explicit OLD chaining can nest. A pass visits each queued VDI kind at most
+once. Timer overruns coalesce, rather than building an unbounded queue.
+
+Entry and return frame
+-----------------------
+
+The owner may be the current process or a suspended ancestor/descendant.
+Its address space and trusted process identity are selected for delivery.
+The latest user RSP is recorded at syscall/IRQ boundaries. The kernel saves
+the previous CR3, process, syscall stack, saved user RSP, TSS.rsp0, GS state
+and x87/SSE state in a kernel-only continuation. Every active delivery owns
+a separate 16 KiB kernel stack, used for its syscalls and user IDT entries.
+This protects suspended syscall and IRQ frames during cross-process nesting.
+
+Below the selected stack top, entry preserves the 128-byte x32 red zone:
+
+    handler_rsp = align_down(top - 144, 16) - 8
+    [handler_rsp + 0]   8-byte return address: 0x0ffc0000
+    [handler_rsp + 8]   8-byte delivery token (32 significant bits)
+
+RSP+8 is aligned to 16. At least 4096 bytes must remain below handler_rsp.
+The typed arguments arrive in EDI/ESI; unused general registers and all
+x87/SSE state are initialized without exposing kernel values. IRET enters
+CPL3 with interrupts enabled. A motion handler returns its packed ULONG in
+EAX; void results are discarded.
+
+RET enters the immutable return stub, which consumes the token and issues
+class 0x102/function 0 with token/result in RDI/RSI. The kernel accepts only
+the current owner's top delivery token and the exact syscall-return PC in
+that stub. No user-supplied RIP, RSP, flags or kernel continuation is restored.
+The trusted continuation restores both stacks and all saved context before
+resuming the interrupted kernel caller. Syscall entry and IRQ entry preserve
+the interrupted x87/SSE state too. Callback code/stubs occupy one private
+read-only executable page at 0x0ffc0000, outside image/heap/stack windows.
+
+Psigaltstack
+-------------
+
+include/user_callback.h provides the x32 Psigaltstack(new, old) binding to
+class 0x102/function 2. Both pointers are optional. Its 12-byte, 4-aligned
+USER_CALLBACK_STACK has ULONG ss_sp at 0, ss_size at 4, ss_flags at 8.
+ss_sp is the bottom, not the initial RSP. Flags: SS_ONSTACK=1 (output only),
+SS_DISABLE=2. A new process starts disabled; settings are not inherited.
+
+An enabled range must be 16-aligned in address and length, 16 KiB..1 MiB,
+and entirely writable user memory; lazy pages are backed during validation.
+It must not wrap the x32 address limit or overlap the normal stack window.
+Pages of a child loaded by Pexec(PE_LOAD), including its writable startup
+slack, are rejected with EACCDN: freeing or launching that child can release
+or transfer them independently of this process's stack pins. A process's
+borrowed child basepage/environment grants are rejected for the same reason.
+Its own image, ordinary heap allocations and other lifetime-stable writable
+user mappings remain eligible.
+Invalid flags, alignment, size, overlap or wrap return EINVAL; unmapped,
+read-only or foreign ranges return EIMBA. Output descriptors are checked
+before state changes. Querying an active stack returns SS_ONSTACK.
+
+Nested delivery to an owner already using its alternate stack continues
+below that owner's latest RSP and red zone; it never resets to the top.
+Any change while that owner has an active callback returns EACCDN. Mfree
+and Mshrink cannot release any enabled alternate-stack pages (EACCDN).
+Disable or replace it while inactive before freeing the old allocation.
+Disabling ignores ss_sp/ss_size and clears them. Teardown releases settings
+before the address space is destroyed.
+
+OLD pointers and lifetime
+-------------------------
+
+An OLD handler is returned directly only for the same owner and exact ABI
+profile, with executable metadata rechecked. Other OLD values are immutable
+caller-local stubs, each embedding a never-reused capability index. Function
+1 validates the stub's return PC and that caller's capability, then delivers
+the previous typed registration on its owner's stack. Native kernel OLD
+handlers use checked typed adapters; no kernel address is exposed. Cursor
+and motion adapters bound user-supplied coordinates before native rendering.
+A native OLD capability can only be installed for a consumer with the same
+native adapter. For example, exchanging native cursor and wheel OLD values
+returns EIMBA, even though both use the WORD,WORD -> void profile. A rejected
+exchange leaves the installed handler and OLD output unchanged.
+
+Exchange, including a null new handler, removes the previous registration
+from event delivery but retains OLD references for chaining/restoration.
+Registration and capability records remain valid until their owning process
+exits. There are at most 64 distinct handler/profile registrations and 64
+OLD capabilities per process; exhaustion returns ENSMEM. Identical exchanges
+reuse metadata. If an exchange cannot allocate its OLD capability, any new
+unpublished registration is released without consuming registration quota;
+existing registrations and the installed handler remain unchanged.
+Registrations, published slots, capabilities and active
+deliveries hold separate references. Owner exit revokes addresses before
+freeing pages. Foreign OLD references then return a typed no-op (motion:
+the unmodified packed arguments), and release their tombstone at caller exit.
+A stale stub cannot name another process's newly allocated registration.
+
+Failure and bounded execution
+-----------------------------
+
+At most eight deliveries may be active. Nested callbacks share the earliest
+500ms deadline, checked on user IRQ/syscall boundaries. A fault, exhausted
+entry stack, invalid active stack or timeout revokes the offending owner's
+registrations and unwinds only trusted callback continuations. Suspended
+foreign owners are quarantined immediately and terminated before their next
+return to user mode, allowing the invoking process to finish safely.
+Once that owner's callback continuations have unwound, termination enables
+IRQs before file cleanup. A failed IRQ delivery abandons its IRQ frame and
+does not execute iretq. The process launcher restores its saved interrupt-enable
+state after restoring its stacks, page tables and GS context; an ordinary
+callback return still resumes through the original IRQ frame unchanged.
+
+Callbacks may use typed VDI/AES services, callback services, allocation,
+private-heap free/shrink, Maccess and process identity queries. Mfree during
+delivery accepts only the start of an ordinary private Malloc/Mxalloc block;
+child basepages, environments and loaded images return EACCDN. In particular,
+freeing an unlaunched child could close inherited files and enter filesystem
+I/O. Release these blocks after the callback returns. Other syscalls return
+EACCDN during delivery. In particular blocking I/O and process-control calls
+are excluded: the watchdog cannot safely unwind a filesystem operation or
+allocator while it is running in kernel mode. These operations can be done
+after the callback returns. Automatic event delivery does not reenter active
+callbacks; explicit OLD chaining remains available within the depth limit.
+
+Regression coverage
+--------------------
+
+The boot probe exercises actual PIT delivery on alternate and normal stacks,
+CPL3, callback syscalls, GP/SSE and red-zone preservation, all five typed
+exchanges, native/same-owner/foreign OLD pointers, cross-process nesting and
+motion return transfer, revocation, full alternate-stack validation and
+pinning. It also tries a privileged instruction, stack exhaustion, an
+unmapped normal stack, a corrupted return token, an infinite handler, and a
+foreign-owner fault. The kernel harness independently observes the invoking
+child's exit code before teardown, rather than relying on the quarantined
+parent's result. Deterministic failure injection exercises lazy-page OOM
+both while copying an entry frame onto a foreign owner's normal stack and
+while a foreign callback syscall backs an output buffer. Both must unwind
+the callback continuation, restore syscall/user/TSS stacks, and let the
+child finish successfully. Loaded-child stack rejection is followed by
+release/launch to check the original alternate stack stays valid.
+Callback Mfree probes reject loaded/unlaunched child basepages and environments,
+then release them outside delivery; private heap allocate/shrink/free still
+succeeds. Native cursor/wheel capabilities are restored and cross-installation
+is rejected without mutation. Deterministic mouse packets during ring-3
+motion handlers check stale-result rejection, subsequent relative movement,
+native cursor notification and the final accepted result.
+Two processes fill the OLD capability table with distinct foreign handlers,
+then attempt both existing and new registrations that need another OLD slot.
+The rejected exchanges preserve the installed handler and output, and all
+remaining same-owner registration slots must still be available afterward
+for fresh handler addresses, without reusing records from failed attempts.
+Fault and timeout probes drain old timer events at registration and defer
+delivery until the next user-mode PIT IRQ, proving that failure began with IRQs
+masked. They require interrupts enabled at termination entry, the launcher's
+original IF after return, and further timer progress. A launcher that starts
+with IRQs masked also retains that state across an ordinary user process exit.
+Each probe checks CPU context and allocator accounting;
+a successful callback client runs again after failures. CI requires
+"x86-64 user callbacks: PASS", including service refusal in the baseline
+and successful alternate-stack queries in pc-x86_64-callbacks, which enables
+the generic facility independently of VDI.
+X32CB.TOS on the test ESP is the same probe ELF used for nested child tests.
