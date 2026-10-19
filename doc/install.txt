@@ -270,7 +270,40 @@ so the text path draws it with all its writing modes, effects, rotation
 and clipping (vdi/vdi_sfont.c).  Rendered sizes are kept up to
 CONF_VDI_FONT_CACHE KB (1 MB by default); the one used longest ago that
 no workstation has selected goes first.  Ink that reaches past a
-character's advance width is cut off, and kerning is not applied.
+character's advance width is cut off (#607).
+
+The built-in GDOS also answers the font calls SpeedoGDOS added, and those
+NVDI added to them (opcodes 190 and 229 to 255, vdi/vdi_speedo.c; #577):
+vqt_ext_name(), vqt_xfntinfo(), vst_name() and vqt_name_and_id(),
+vqt_fontheader() (a virtual Speedo header); vst_arbpt(), vst_setsize()
+(both also in their 32-bit forms), vst_width() and vst_skew(), which size
+and slant a scalable font exactly; vqt_advance(), vqt_f_extent(),
+vqt_real_extent(), v_ftext() and v_ftext_offset(); vst_kern(),
+vst_track_offset(), vqt_pairkern() and vqt_trackkern(), the kerning being
+that of a font's 'kern' table and applied to drawing and measuring alike;
+vst_error(), vqt_cachesize(), v_flushcache() and vqt_get_table().
+Advances are in whole pixels, as the characters are placed.  There are
+no kerning tracks, no character bitmaps for v_getbitmap_info() (which
+gives the advance only), no outlines for v_getoutline() (0 points), and
+no cache file: v_savecache() and v_loadcache() fail.  The FSMC cookie
+stays at version 4.00: the calls of later versions are answered all the
+same, and an application looks for NVDI's by trying them.
+
+vst_map_mode() (and vst_charmap()) chooses what the WORDs of text are:
+BICS (only its ASCII part is known), the Atari character set (the
+default), Unicode's first plane (UCS-2, mode 2) or, as pTOS's own mode 3,
+all of Unicode in UTF-16, a surrogate pair being one character.  An
+application finds mode 3 by setting it and checking that vst_map_mode()
+returns 3.  In Unicode, a scalable font is drawn in runs: ASCII from the
+size itself, any other character from a page of 256 characters of that
+size, rendered when first needed and kept in the same cache.  A character
+the font lacks shows its missing-glyph shape, a lone surrogate the
+replacement character.  The bitmap fonts keep the Atari character set: a
+Unicode character is drawn as its Atari one, or as '?'.  vqt_char_index()
+converts between the maps and a font's glyph indices.  Only VDI text is
+Unicode: the AES, the desktop and file names stay 8-bit.
+tests/include/vdi_speedo.h has bindings for these calls, with gemlib's
+names, for programs built against libcmini.
 
 
 Available configurations
