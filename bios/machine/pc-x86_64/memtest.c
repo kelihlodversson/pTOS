@@ -1189,6 +1189,8 @@ static UWORD callback_test_oom_phase, callback_test_injected, callback_test_ooms
 
 #if CONF_WITH_X32_VDI
 static BOOL callback_motion_watching;
+static BOOL callback_irq_watching, callback_irq_armed;
+static UWORD callback_irq_entries, callback_irq_exits;
 static UWORD callback_motion_phase, callback_motion_cursors;
 static void (*callback_motion_native_cursor)(WORD, WORD);
 extern void mouse_int(UBYTE *buf);
@@ -1260,6 +1262,15 @@ static void callback_motion_syscall(UQUAD call, UQUAD second)
 
 void x86_64_memtest_callback_exit(PD *pd, UWORD rc)
 {
+#if CONF_WITH_X32_VDI
+    if (callback_irq_watching && pd == callback_test_owner) {
+        UQUAD flags;
+
+        __asm__ volatile ("pushfq; popq %0" : "=r"(flags));
+        CHECK(flags & 0x200, "callback termination enables IRQs before file cleanup");
+        callback_irq_exits++;
+    }
+#endif
     if (callback_test_owner && pd != callback_test_owner &&
         kproc_get_parent(pd) == callback_test_owner) {
         callback_test_child_exits++;
@@ -1274,8 +1285,16 @@ static void callback_test_inject(void)
     callback_test_injected++;
 }
 
-void x86_64_memtest_callback_entry(void)
+void x86_64_memtest_callback_entry(UQUAD flags)
 {
+#if CONF_WITH_X32_VDI
+    if (callback_irq_watching && run == callback_test_owner) {
+        CHECK(!(flags & 0x200), "the failing callback was delivered with IRQs masked");
+        callback_irq_entries++;
+    }
+#else
+    (void)flags;
+#endif
     if (run == callback_test_owner) {
         callback_test_entered = TRUE;
         if (callback_test_oom_phase == CALLBACK_OOM_ENTRY)
@@ -1288,6 +1307,15 @@ void x86_64_memtest_callback_syscall(UQUAD call, UQUAD output)
 #if CONF_WITH_X32_VDI
     if (callback_motion_watching && run == callback_test_owner)
         callback_motion_syscall(call, output);
+    if (callback_irq_watching && callback_irq_armed && run == callback_test_owner &&
+        call == ((UQUAD)VDI_SERVICE_CLASS << 32 | VDI_SERVICE_VECTOR) && output == 118) {
+        /* With no timer handler installed yet, drain old events and keep
+         * IRQs masked until sysret restores the user's IF. The next delivery
+         * then has to come from a real user-mode PIT interruption. */
+        __asm__ volatile ("cli" ::: "memory");
+        vdi_service_callback_work();
+        callback_irq_armed = FALSE;
+    }
 #endif
     if (callback_test_entered && run == callback_test_owner &&
         callback_test_oom_phase == CALLBACK_OOM_SERVICE && output &&
@@ -1344,6 +1372,7 @@ static long run_probe(char mode)
 typedef struct {
     UQUAD cr3, gs, kernel_gs;
     UQUAD syscall_rsp, user_rsp, irq_rsp;
+    UQUAD flags;
 } CPUSTATE;
 
 static void cpustate(CPUSTATE *c)
@@ -1354,6 +1383,7 @@ static void cpustate(CPUSTATE *c)
     c->syscall_rsp = x86_64_get_kernel_stack();
     c->user_rsp = x86_64_get_saved_user_rsp();
     c->irq_rsp = x86_64_get_irq_stack();
+    __asm__ volatile ("pushfq; popq %0" : "=r"(c->flags));
 }
 
 /* One ring-3 run that must exit with `want`, return to this very context
@@ -1379,10 +1409,35 @@ static void probe_expect(char mode, long want, const char *what)
           "the GS base is back in its ring-0 state");
     CHECK(after.syscall_rsp == before.syscall_rsp && after.user_rsp == before.user_rsp &&
           after.irq_rsp == before.irq_rsp, "syscall/user/TSS stack pointers are restored");
+    CHECK(!((after.flags ^ before.flags) & 0x200), "the launcher's interrupt-enable flag is restored");
     same(&s, what);
 }
 
 #if CONF_WITH_USER_CALLBACKS && CONF_WITH_X32_VDI
+static void test_callback_irq_failure(char mode)
+{
+    UQUAD flags;
+    ULONG ticks, spins;
+
+    __asm__ volatile ("pushfq; popq %0" : "=r"(flags));
+    callback_test_watching = callback_irq_watching = callback_irq_armed = TRUE;
+    callback_irq_entries = callback_irq_exits = 0;
+    probe_expect(mode, 0xffff, "an IRQ-delivered callback failure restores the launcher");
+    CHECK(!callback_irq_armed && callback_irq_entries == 1 && callback_irq_exits == 1,
+          "the callback failed after one actual IRQ delivery and reached termination");
+    ticks = (ULONG)hz_200;
+    for (spins = 0; spins < 10000000UL && (ULONG)hz_200 == ticks; spins++)
+        __asm__ volatile ("pause");
+    CHECK((ULONG)hz_200 != ticks, "timer IRQs progress after callback failure");
+    /* Recover after a failed assertion so later tests cannot hang with IF=0. */
+    if (flags & 0x200)
+        __asm__ volatile ("sti" ::: "memory");
+    else
+        __asm__ volatile ("cli" ::: "memory");
+    callback_test_watching = callback_irq_watching = FALSE;
+    callback_test_owner = NULL;
+}
+
 static void test_callback_motion(void)
 {
     WORD x = linea_vars.GCURX, y = linea_vars.GCURY;
@@ -1578,10 +1633,20 @@ static void test_ring3(void)
     probe_expect('e', 0, "ring-3 entry state: basepage, type, stack, CPL 3, GEMDOS call");
     probe_expect('x', 0x1234, "ring-3 exit code reaches the launcher");
     {
+        UQUAD flags;
+
+        __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+        probe_expect('x', 0x1234, "a launcher with masked IRQs retains its interrupt state");
+        if (flags & 0x200)
+            __asm__ volatile ("sti" ::: "memory");
+    }
+    {
         int before = failures;
 
         probe_expect('C', 0, "typed callbacks, nested foreign OLD, revocation, alternate/normal stacks and GP/SSE/red zone");
 #if CONF_WITH_USER_CALLBACKS && CONF_WITH_X32_VDI
+        test_callback_irq_failure('Y');
+        test_callback_irq_failure('~');
         probe_expect('K', 0, "failed OLD capability allocation preserves registrations and quota");
         test_callback_motion();
         probe_expect('X', 0xffff, "a callback's privileged instruction ends only its owner");

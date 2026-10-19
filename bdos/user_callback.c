@@ -367,6 +367,10 @@ static void check_fatal(void)
 
     if (state && state->fatal) {
         user_callback_fault();
+        /* No callback continuation remains for this owner. Termination
+         * abandons any interrupted IRQ frame, including its iretq: allow
+         * timer/device IRQs during file cleanup and the nonlocal exit. */
+        __asm__ volatile ("sti" ::: "memory");
         xterm((UWORD)-1);
     }
 }
@@ -442,7 +446,7 @@ LONG user_callback_invoke(USER_CALLBACK *cb, UWORD signature,
         if (frame->failed)
             user_callback_fault();
 #if CONF_WITH_X86_64_MEMTEST
-        x86_64_memtest_callback_entry();
+        x86_64_memtest_callback_entry(frame->flags);
 #endif
         words[0] = USER_CALLBACK_IMAGE;
         words[1] = frame->token;

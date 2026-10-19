@@ -65,10 +65,10 @@ static void handler_checks(void)
 
 static void timer(int ms)
 {
-    if (mode == 'T')
+    if (mode == 'T' || mode == '~')
         for (;;)
             __asm__ volatile ("pause");
-    if (mode == 'X')
+    if (mode == 'X' || mode == 'Y')
         __asm__ volatile ("cli");
     if (mode == 'S')
         __asm__ volatile ("1: subq $4096,%%rsp; movq $0,(%%rsp); jmp 1b" ::: "memory");
@@ -475,6 +475,12 @@ int callback_roundtrip_checks(const char *tail)
             return failure;
     }
     CHECK(exchange(118, mode == 'Z' ? (uintptr_t)callback_badreturn : (uintptr_t)timer, &old) == E_OK && old.tick_ms > 0);
+    if (mode == 'Y' || mode == '~') {
+        /* The kernel harness drains old events before this registration.
+         * Make no more syscalls: only an actual PIT IRQ can deliver it. */
+        CHECK(callback_register_checks(&ticks) == 0);
+        return __LINE__;
+    }
     if (mode == 'Z') {
         CHECK(callback_register_checks(&ticks) == 0);
         return __LINE__;

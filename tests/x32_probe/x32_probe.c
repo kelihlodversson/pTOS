@@ -175,7 +175,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 
     switch (tail[0]) {
     case 'C': case 'J': case 'T': case 'S': case 'X': case 'Z': case 'U': case '%': case '&':
-    case 'Q': case 'O': case 'R': case 'K': case '+':
+    case 'Q': case 'O': case 'R': case 'K': case '+': case 'Y': case '~':
         pterm(callback_roundtrip_checks(tail));
         break;
     case '#':

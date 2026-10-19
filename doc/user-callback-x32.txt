@@ -135,6 +135,11 @@ entry stack, invalid active stack or timeout revokes the offending owner's
 registrations and unwinds only trusted callback continuations. Suspended
 foreign owners are quarantined immediately and terminated before their next
 return to user mode, allowing the invoking process to finish safely.
+Once that owner's callback continuations have unwound, termination enables
+IRQs before file cleanup. A failed IRQ delivery abandons its IRQ frame and
+does not execute iretq. The process launcher restores its saved interrupt-enable
+state after restoring its stacks, page tables and GS context; an ordinary
+callback return still resumes through the original IRQ frame unchanged.
 
 Callbacks may use typed VDI/AES services, callback services, allocation,
 private-heap free/shrink, Maccess and process identity queries. Mfree during
@@ -176,6 +181,11 @@ then attempt both existing and new registrations that need another OLD slot.
 The rejected exchanges preserve the installed handler and output, and all
 remaining same-owner registration slots must still be available afterward
 for fresh handler addresses, without reusing records from failed attempts.
+Fault and timeout probes drain old timer events at registration and defer
+delivery until the next user-mode PIT IRQ, proving that failure began with IRQs
+masked. They require interrupts enabled at termination entry, the launcher's
+original IF after return, and further timer progress. A launcher that starts
+with IRQs masked also retains that state across an ordinary user process exit.
 Each probe checks CPU context and allocator accounting;
 a successful callback client runs again after failures. CI requires
 "x86-64 user callbacks: PASS", including service refusal in the baseline
