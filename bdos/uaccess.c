@@ -197,7 +197,7 @@ static long dtaptr_ok(long v)
 static long curdta_ok(void)
 {
 #if CONF_WITH_USER_ASPACE
-    return kproc_validate_user_dta((UQUAD)(uintptr_t)kproc_get_dta(run)) ? E_OK : EIMBA;
+    return kproc_validate_user_dta((VADDR)(uintptr_t)kproc_get_dta(run)) ? E_OK : EIMBA;
 #else
     /* no address space to check against: a process can still have written a
      * null into the public p_xdta, which Fsfirst()/Fsnext() would use */

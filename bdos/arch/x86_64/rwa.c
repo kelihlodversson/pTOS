@@ -260,7 +260,8 @@ void gouser(void)
         UQUAD user_rsp = kproc_user_stack(p);
         jmp_buf buf;
         jmp_buf *saved_resume = x86_64_kexec_resume;
-        UQUAD kstack_top, kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
+        uintptr_t kstack_top;
+        UQUAD kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
         UQUAD launcher_stack = x86_64_get_kernel_stack();
         UQUAD launcher_user_rsp = x86_64_get_saved_user_rsp();
         int launcher_in_syscall;

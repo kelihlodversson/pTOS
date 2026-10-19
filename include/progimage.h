@@ -33,7 +33,7 @@ typedef struct {
 #define PROG_MAX_SEGMENTS 8
 
 typedef struct {
-    UQUAD vaddr;                /* where it goes (need not be page-aligned) */
+    VADDR vaddr;                /* where it goes (need not be page-aligned) */
     ULONG filesz;               /* bytes taken from src, the rest to memsz is zero */
     ULONG memsz;
     ULONG flags;                /* ELF PF_R/PF_W/PF_X */
@@ -43,16 +43,16 @@ typedef struct {
 typedef struct {
     PROG_SEGMENT seg[PROG_MAX_SEGMENTS];
     ULONG nseg;
-    UQUAD entry;
-    UQUAD end;                  /* just past the highest byte of any segment */
+    VADDR entry;
+    VADDR end;                  /* just past the highest byte of any segment */
 } PROG_LAYOUT;
 
 /* TRUE iff the ELF bytes of an image form a valid layout; *entry receives
  * its entry point.  Maps nothing. */
-BOOL image_check(const PROG_IMAGE *image, UQUAD *entry);
+BOOL image_check(const PROG_IMAGE *image, VADDR *entry);
 
 /* image_layout() and layout_load() in one step. */
-BOOL image_load(ASPACE *as, const PROG_IMAGE *image, UQUAD *entry);
+BOOL image_load(ASPACE *as, const PROG_IMAGE *image, VADDR *entry);
 
 /* Fills *layout from the ELF bytes of an image (src points into them).  FALSE
  * if they are not an ET_EXEC x32 executable or the layout is not valid. */
@@ -69,7 +69,7 @@ BOOL layout_valid(const PROG_LAYOUT *layout, BOOL strict);
 /* The same with another window for the segments than the image window: the
  * memory a program loaded for its caller (Pexec(PE_LOAD)) is put in. */
 BOOL layout_valid_in(const PROG_LAYOUT *layout, BOOL strict,
-                                UQUAD window_lo, UQUAD window_hi);
+                                VADDR window_lo, VADDR window_hi);
 
 /* Maps and fills every segment as private memory of `as` (read+write+execute
  * as the segment's flags say, all user-accessible).  FALSE if memory ran out;

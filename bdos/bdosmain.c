@@ -721,9 +721,9 @@ restrt:
         case GEMDOS_MACCESS:
             /* (the addresses stay the whole 64-bit slots: bits above 32 make
              * it no x32 address, which the checks reject) */
-            return kproc_maccess(run, (UQUAD)pw[1], (LONG)pw[2], (WORD)pw[3]);
+            return kproc_maccess(run, (VADDR)pw[1], (LONG)pw[2], (WORD)pw[3]);
         case GEMDOS_MVALIDATE:
-            return kproc_mvalidate(run, (WORD)pw[1], (UQUAD)pw[2], (LONG)pw[3],
+            return kproc_mvalidate(run, (WORD)pw[1], (VADDR)pw[2], (LONG)pw[3],
                                    (UQUAD)pw[4]);
         case GEMDOS_MXALLOC:
             /* the protection bits of the mode word: only what this memory

@@ -1150,9 +1150,9 @@ void elf_set_load_into_caller(BOOL wanted)
 
 /* where elf_load_image() put the image if it went into the caller's heap */
 typedef struct {
-    UQUAD va;           /* the block (0: none) */
+    VADDR va;           /* the block (0: none) */
     ULONG pages;
-    UQUAD image_va;     /* where the image's first byte (link_base) is in it */
+    VADDR image_va;     /* where the image's first byte (link_base) is in it */
     BOOL pending;       /* the image is in the new process's own address space,
                          * made for it now (kproc_load_begin()) */
 } ELFPLACE;
@@ -1231,7 +1231,7 @@ LONG elf_pgmld(FH h, PD *p)
             ULONG imgpages = (info.mem_end - lo + USER_PAGE_SIZE - 1) / USER_PAGE_SIZE;
 
             /* (the rounded image and the startup area must fit the heap, exactly) */
-            if ((UQUAD)imgpages * USER_PAGE_SIZE + USER_IMAGE_SLACK
+            if ((VADDR)imgpages * USER_PAGE_SIZE + USER_IMAGE_SLACK
                 > USER_HEAP_LIMIT - USER_HEAP_BASE)
                 return ENSMEM;
             place->pages = imgpages + USER_IMAGE_SLACK / USER_PAGE_SIZE;

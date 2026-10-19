@@ -71,33 +71,33 @@ struct kproc {
                                 /* at load time, with its image in it; the launch adopts it */
     BOOL lost;                  /* ... and the launch failed after adopting it: nothing to launch */
     PD *load_parent;            /* PE_LOAD: the process whose heap holds the image */
-    UQUAD load_va;              /* until the launch moves it here: where, */
+    VADDR load_va;              /* until the launch moves it here: where, */
     ULONG load_pages;           /* and how many pages (startup area included) */
     BOOL give_back;             /* PE_GO: the image goes back to its loader when this ends */
     PD *lender;                 /* ... the process whose heap it came from, once moved */
     struct uheap_block {        /* Malloc() memory: private pages at USER_HEAP_*, */
-        UQUAD va;               /* sorted by address */
+        VADDR va;               /* sorted by address */
         ULONG pages;
         UBYTE kind;             /* UH_MALLOC, or a program image, which Mfree() leaves alone */
         PD *pd;                 /* UH_LOADED: the process it is loaded for */
     } *heap;
     ULONG nheap, heap_capacity;
-    UQUAD stack_size;           /* Psetlimit(): the stack's address space; 0: the default */
-    UQUAD stack_low;            /* the lowest stack page backed so far; 0: none */
-    UQUAD lim_core, lim_data;   /* Psetlimit(): total / allocatable memory in bytes; 0: no limit */
-    UQUAD entry;                /* its entry point once loaded, else 0 */
-    UQUAD stack_top;            /* its private stack's top once loaded, else 0 */
+    VADDR stack_size;           /* Psetlimit(): the stack's address space; 0: the default */
+    VADDR stack_low;            /* the lowest stack page backed so far; 0: none */
+    VADDR lim_core, lim_data;   /* Psetlimit(): total / allocatable memory in bytes; 0: no limit */
+    VADDR entry;                /* its entry point once loaded, else 0 */
+    VADDR stack_top;            /* its private stack's top once loaded, else 0 */
     ULONG ancestors;            /* basepage copies on its read-only ancestors page */
-    UQUAD kstack_phys;          /* its kernel stack (system calls), 0 if none */
-    UQUAD kstack_top;           /* initial stack pointer of that stack */
+    PADDR kstack_phys;          /* its kernel stack (system calls), 0 if none */
+    uintptr_t kstack_top;       /* initial stack pointer of that stack */
     struct {                    /* the search state Fsfirst()/Fsnext() keep in */
-        UQUAD va;               /* the DTAs of this process, as the kernel */
+        VADDR va;               /* the DTAs of this process, as the kernel */
         ULONG stamp;            /* left them, and when (see below) */
         UBYTE state[offsetof(DTAINFO, dt_fattr)];
     } dtas[KPROC_DTAS];
     ULONG dta_clock;            /* counts the searches, to find the oldest */
     struct {                    /* blocks of a child being launched from this */
-        UQUAD va, bytes;        /* process, mapped supervisor-only into its */
+        VADDR va, bytes;        /* process, mapped supervisor-only into its */
     } borrowed[KPROC_BORROWS];  /* address space until they are freed */
 #endif
     KPROC *next;
@@ -484,7 +484,7 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
 {
     KPROC *kproc = kproc_find(pd);
     ASPACE *as;
-    UQUAD env, tpa, hitpa;
+    VADDR env, tpa, hitpa;
     ULONG envbytes;
 
     if (!kproc || kproc->lost)
@@ -496,9 +496,9 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
          * launch can still fail cleanly. */
         return kproc->kstack_phys != 0;
     }
-    env = (UQUAD)(uintptr_t)kproc->env_start;
-    tpa = (UQUAD)(uintptr_t)kproc->user_start;
-    hitpa = (UQUAD)(uintptr_t)kproc->user_end;
+    env = (VADDR)(uintptr_t)kproc->env_start;
+    tpa = (VADDR)(uintptr_t)kproc->user_start;
+    hitpa = (VADDR)(uintptr_t)kproc->user_end;
     envbytes = (ULONG)(kproc->env_end - kproc->env_start);
     /* Map only what was recorded when the basepage was made.  The public
      * fields may have been rewritten since (PE_BASEPAGE/PE_LOAD hand the
@@ -508,8 +508,8 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
         !kproc->env_gen || !kproc->tpa_gen ||
         procmem_gen(kproc->env_start) != kproc->env_gen ||
         procmem_gen(kproc->user_start) != kproc->tpa_gen ||
-        (UQUAD)pd->p_env != env || (UQUAD)pd->p_hitpa > hitpa ||
-        (UQUAD)pd->p_hitpa <= tpa)
+        (VADDR)pd->p_env != env || (VADDR)pd->p_hitpa > hitpa ||
+        (VADDR)pd->p_hitpa <= tpa)
         return FALSE;
 
     /* a program loaded from a file already has its address space, with its
@@ -541,7 +541,7 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
         !aspace_map_procmem(as, tpa, hitpa - tpa,
                                    kproc->has_image ? ASPACE_PROT_WRITE | ASPACE_PROT_USER
                                                 : ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER) ||
-        !aspace_map_procmem(as, (UQUAD)(uintptr_t)parent, sizeof(PD),
+        !aspace_map_procmem(as, (VADDR)(uintptr_t)parent, sizeof(PD),
                                    ASPACE_PROT_WRITE)) {
         return prepare_failed(kproc, as);
     }
@@ -573,11 +573,11 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
             kproc->lim_data = pk->lim_data;
             kproc->stack_size = 0;
             if (pk->stack_size && pk->aspace) {
-                UQUAD highest = USER_HEAP_BASE;
+                VADDR highest = USER_HEAP_BASE;
 
                 if (kproc->nheap)
                     highest = kproc->heap[kproc->nheap - 1].va +
-                              (UQUAD)kproc->heap[kproc->nheap - 1].pages * USER_PAGE_SIZE;
+                              (VADDR)kproc->heap[kproc->nheap - 1].pages * USER_PAGE_SIZE;
                 if (USER_STACK_TOP - pk->stack_size - USER_PAGE_SIZE >= highest)
                     kproc->stack_size = pk->stack_size;
             }
@@ -603,7 +603,7 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
 BOOL kproc_dta_restore(PD *pd, DTAINFO *dta)
 {
     KPROC *kproc = kproc_find(pd);
-    UQUAD va = (UQUAD)(uintptr_t)dta;
+    VADDR va = (VADDR)(uintptr_t)dta;
     int i;
 
     if (!kproc || !kproc->aspace)
@@ -621,7 +621,7 @@ BOOL kproc_dta_restore(PD *pd, DTAINFO *dta)
 void kproc_dta_forget(PD *pd, const DTAINFO *dta)
 {
     KPROC *kproc = kproc_find(pd);
-    UQUAD va = (UQUAD)(uintptr_t)dta;
+    VADDR va = (VADDR)(uintptr_t)dta;
     int i;
 
     if (!kproc || !kproc->aspace)
@@ -634,7 +634,7 @@ void kproc_dta_forget(PD *pd, const DTAINFO *dta)
 void kproc_dta_save(PD *pd, const DTAINFO *dta)
 {
     KPROC *kproc = kproc_find(pd);
-    UQUAD va = (UQUAD)(uintptr_t)dta;
+    VADDR va = (VADDR)(uintptr_t)dta;
     int i;
 
     if (!kproc || !kproc->aspace)
@@ -660,7 +660,7 @@ void kproc_dta_save(PD *pd, const DTAINFO *dta)
     memcpy(kproc->dtas[i].state, dta, sizeof kproc->dtas[i].state);
 }
 
-UQUAD kproc_ancestors_va(PD *pd)
+VADDR kproc_ancestors_va(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
 
@@ -691,10 +691,10 @@ BOOL kproc_set_image(PD *pd, const PROG_IMAGE *image)
  * Leaving is also done by destroying the record, which is what a disk error
  * that jumps past the loader gets.
  */
-static UQUAD load_prev_cr3;
+static ASPACE_ROOT load_prev_root;
 static KPROC *load_active;
 
-BOOL kproc_load_begin(PD *pd, UQUAD va, UQUAD bytes)
+BOOL kproc_load_begin(PD *pd, VADDR va, VADDR bytes)
 {
     KPROC *kproc = kproc_find(pd);
     ASPACE *as;
@@ -717,7 +717,7 @@ void kproc_load_enter(PD *pd)
     KPROC *kproc = kproc_find(pd);
 
     if (kproc && kproc->pending_as && !load_active) {
-        load_prev_cr3 = aspace_enter(kproc->pending_as);
+        load_prev_root = aspace_enter(kproc->pending_as);
         load_active = kproc;
     }
 }
@@ -726,7 +726,7 @@ void kproc_load_leave(void)
 {
     if (load_active) {
         load_active = NULL;
-        aspace_leave(load_prev_cr3);
+        aspace_leave(load_prev_root);
     }
 }
 
@@ -743,8 +743,8 @@ static BOOL protect_layout(ASPACE *as, const PROG_LAYOUT *layout)
 
     for (i = 0; i < layout->nseg; i++) {
         const PROG_SEGMENT *s = &layout->seg[i];
-        UQUAD first = s->vaddr & ~(USER_PAGE_SIZE - 1);
-        UQUAD end = (s->vaddr + s->memsz + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
+        VADDR first = s->vaddr & ~(USER_PAGE_SIZE - 1);
+        VADDR end = (s->vaddr + s->memsz + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
         UWORD prot = ASPACE_PROT_USER;
 
         if (s->flags & 2)                   /* PF_W */
@@ -795,10 +795,10 @@ void kproc_hand_over(PD *caller, PD *child)
         return;
     /* the caller may grow the TPA (p_hitpa) up to the end of its block */
     kproc->user_end = kproc->user_start + procmem_size(kproc->user_start);
-    aspace_regrant(launcher->aspace, (UQUAD)(uintptr_t)kproc->env_start,
+    aspace_regrant(launcher->aspace, (VADDR)(uintptr_t)kproc->env_start,
                           kproc->env_end - kproc->env_start,
                           ASPACE_PROT_WRITE | ASPACE_PROT_USER);
-    aspace_regrant(launcher->aspace, (UQUAD)(uintptr_t)kproc->user_start,
+    aspace_regrant(launcher->aspace, (VADDR)(uintptr_t)kproc->user_start,
                           procmem_size(kproc->user_start),
                           ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER);
 }
@@ -814,7 +814,7 @@ void kproc_hand_over(PD *caller, PD *child)
 LONG kproc_check_launch(PD *pd, PD *caller)
 {
     KPROC *kproc = kproc_find(pd);
-    UQUAD lowtpa, hitpa, tbase, first;
+    VADDR lowtpa, hitpa, tbase, first;
     UBYTE *alloc_end;
 
     if (!kproc || kproc->started || kproc->creator != caller || kproc->aspace)
@@ -827,13 +827,13 @@ LONG kproc_check_launch(PD *pd, PD *caller)
     lowtpa = pd->p_lowtpa;
     hitpa = ((pd->p_hitpa + 8UL) & ~15UL) - 8;      /* RSP + 8 divisible by 16 */
     tbase = pd->p_tbase;
-    first = (UQUAD)(uintptr_t)kproc->user_start + sizeof(PD);
+    first = (VADDR)(uintptr_t)kproc->user_start + sizeof(PD);
     /* the block's own end, not user_end: that is the bound of the launch
      * last validated, and a launch that failed for lack of memory may be
      * retried with different fields */
     alloc_end = (UBYTE *)kproc->user_start + procmem_size(kproc->user_start);
-    if (lowtpa != (UQUAD)(uintptr_t)kproc->user_start ||
-        hitpa < first || hitpa > (UQUAD)(uintptr_t)alloc_end ||
+    if (lowtpa != (VADDR)(uintptr_t)kproc->user_start ||
+        hitpa < first || hitpa > (VADDR)(uintptr_t)alloc_end ||
         /* a program with an image of its own starts at the entry point the
          * kernel recorded, not at p_tbase, and that lies in the image */
         (!kproc->has_image && (tbase < first || tbase >= hitpa)) ||
@@ -847,8 +847,8 @@ LONG kproc_check_launch(PD *pd, PD *caller)
 BOOL kproc_borrow(PD *launcher, void *block)
 {
     KPROC *kproc = kproc_find(launcher);
-    UQUAD va = (UQUAD)(uintptr_t)block;
-    UQUAD bytes = procmem_size(block);
+    VADDR va = (VADDR)(uintptr_t)block;
+    VADDR bytes = procmem_size(block);
     int i;
 
     if (!kproc || !kproc->aspace)
@@ -871,7 +871,7 @@ BOOL kproc_borrow(PD *launcher, void *block)
  * mapping. */
 ULONG kproc_borrow_count(PD *launcher, void *block)
 {
-    UQUAD va = (UQUAD)(uintptr_t)block;
+    VADDR va = (VADDR)(uintptr_t)block;
     KPROC *kproc;
     ULONG n = 0;
     int i;
@@ -886,7 +886,7 @@ ULONG kproc_borrow_count(PD *launcher, void *block)
 
 void kproc_unborrow(void *block)
 {
-    UQUAD va = (UQUAD)(uintptr_t)block;
+    VADDR va = (VADDR)(uintptr_t)block;
     KPROC *kproc;
     int i;
 
@@ -900,10 +900,10 @@ void kproc_unborrow(void *block)
             }
 }
 
-UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top)
+PADDR kproc_take_kernel_stack(PD *pd, uintptr_t *top)
 {
     KPROC *kproc = kproc_find(pd);
-    UQUAD phys;
+    PADDR phys;
 
     if (!kproc || !kproc->kstack_phys)
         return 0;
@@ -929,34 +929,34 @@ BOOL kproc_has_heap(PD *pd)
     return kproc && kproc->aspace;
 }
 
-static UQUAD stack_bytes(const KPROC *kproc)
+static VADDR stack_bytes(const KPROC *kproc)
 {
     return kproc->stack_size ? kproc->stack_size : USER_STACK_SIZE;
 }
 
 /* where the Malloc() memory ends: the stack's address space starts, less a guard
  * page that belongs to neither (a stack that outgrows its limit faults) */
-static UQUAD heap_limit(const KPROC *kproc)
+static VADDR heap_limit(const KPROC *kproc)
 {
     return USER_STACK_TOP - stack_bytes(kproc) - USER_PAGE_SIZE;
 }
 
 /* how many bytes of Malloc() blocks the process holds, and how big its image is
  * (what Psetlimit()'s limits 3 and 2 count) */
-static UQUAD heap_malloc_bytes(const KPROC *kproc)
+static VADDR heap_malloc_bytes(const KPROC *kproc)
 {
-    UQUAD bytes = 0;
+    VADDR bytes = 0;
     ULONG i;
 
     for (i = 0; i < kproc->nheap; i++)
         if (kproc->heap[i].kind == UH_MALLOC)
-            bytes += (UQUAD)kproc->heap[i].pages * USER_PAGE_SIZE;
+            bytes += (VADDR)kproc->heap[i].pages * USER_PAGE_SIZE;
     return bytes;
 }
 
-static UQUAD image_bytes(const KPROC *kproc)
+static VADDR image_bytes(const KPROC *kproc)
 {
-    UQUAD bytes = 0;
+    VADDR bytes = 0;
     ULONG i;
 
     if (kproc->has_image)
@@ -966,9 +966,9 @@ static UQUAD image_bytes(const KPROC *kproc)
 }
 
 /* how many more bytes the limits of Psetlimit() let the process Malloc() */
-static UQUAD alloc_room(const KPROC *kproc)
+static VADDR alloc_room(const KPROC *kproc)
 {
-    UQUAD used = heap_malloc_bytes(kproc), room = ~0ULL, r;
+    VADDR used = heap_malloc_bytes(kproc), room = ~(VADDR)0, r;
 
     if (kproc->lim_data) {
         r = kproc->lim_data > used ? kproc->lim_data - used : 0;
@@ -976,7 +976,7 @@ static UQUAD alloc_room(const KPROC *kproc)
             room = r;
     }
     if (kproc->lim_core) {
-        UQUAD all = used + image_bytes(kproc);
+        VADDR all = used + image_bytes(kproc);
 
         r = kproc->lim_core > all ? kproc->lim_core - all : 0;
         if (r < room)
@@ -1007,14 +1007,14 @@ static BOOL heap_room(KPROC *kproc)
 
 /* First gap of at least `bytes` (0: the largest one): its address and the
  * index at which a block there goes in the sorted table. */
-static UQUAD heap_gap(const KPROC *kproc, UQUAD bytes, ULONG *index, UQUAD *largest)
+static VADDR heap_gap(const KPROC *kproc, VADDR bytes, ULONG *index, VADDR *largest)
 {
-    UQUAD at = USER_HEAP_BASE, found = 0;
+    VADDR at = USER_HEAP_BASE, found = 0;
     ULONG i;
 
     *largest = 0;
     for (i = 0; i <= kproc->nheap; i++) {
-        UQUAD end = i < kproc->nheap ? kproc->heap[i].va : heap_limit(kproc);
+        VADDR end = i < kproc->nheap ? kproc->heap[i].va : heap_limit(kproc);
 
         if (end - at > *largest)
             *largest = end - at;
@@ -1023,20 +1023,20 @@ static UQUAD heap_gap(const KPROC *kproc, UQUAD bytes, ULONG *index, UQUAD *larg
             *index = i;
         }
         if (i < kproc->nheap)
-            at = end + (UQUAD)kproc->heap[i].pages * USER_PAGE_SIZE;
+            at = end + (VADDR)kproc->heap[i].pages * USER_PAGE_SIZE;
     }
     return found;
 }
 
-static UQUAD heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eager)
+static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eager)
 {
-    UQUAD va, largest, size;
+    VADDR va, largest, size;
     ULONG index = 0;
 
     if (!kproc || !kproc->aspace || !bytes ||
         bytes > heap_limit(kproc) - USER_HEAP_BASE)
         return 0;
-    size = ((UQUAD)bytes + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
+    size = ((VADDR)bytes + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
     if (kind == UH_MALLOC && size > alloc_room(kproc))
         return 0;                       /* over a Psetlimit() limit */
     if (!heap_room(kproc))
@@ -1064,7 +1064,7 @@ static UQUAD heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
  * is `va` in such an area, and if so, back its page now.  FALSE: it is not (a
  * real fault), or no physical page could be had (the process is terminated).
  */
-static BOOL lazy_area(const KPROC *kproc, UQUAD va)
+static BOOL lazy_area(const KPROC *kproc, VADDR va)
 {
     ULONG i;
 
@@ -1072,13 +1072,13 @@ static BOOL lazy_area(const KPROC *kproc, UQUAD va)
         return TRUE;
     for (i = 0; i < kproc->nheap; i++)
         if (va >= kproc->heap[i].va &&
-            va < kproc->heap[i].va + (UQUAD)kproc->heap[i].pages * USER_PAGE_SIZE)
+            va < kproc->heap[i].va + (VADDR)kproc->heap[i].pages * USER_PAGE_SIZE)
             return TRUE;
     return FALSE;
 }
 
 /* backs the page of a lazy area; the stack remembers how far down it has been */
-static BOOL back_page(KPROC *kproc, UQUAD va)
+static BOOL back_page(KPROC *kproc, VADDR va)
 {
     if (!aspace_fault_in(kproc->aspace, va, ASPACE_PROT_WRITE | ASPACE_PROT_USER))
         return FALSE;
@@ -1089,7 +1089,7 @@ static BOOL back_page(KPROC *kproc, UQUAD va)
     return TRUE;
 }
 
-int kproc_demand_page(PD *pd, UQUAD va)
+int kproc_demand_page(PD *pd, VADDR va)
 {
     KPROC *kproc = kproc_find(pd);
 
@@ -1109,10 +1109,10 @@ static void lazy_oom(void)
 /* Whether the process may read (or write) [address, address + size), the pages
  * of its lazy areas that are not there yet included: a range with a gap, or a
  * page the access is not allowed on, is not.  Changes nothing. */
-static BOOL range_allowed(KPROC *kproc, UQUAD address, ULONG size, BOOL write)
+static BOOL range_allowed(KPROC *kproc, VADDR address, ULONG size, BOOL write)
 {
-    UQUAD first = address & ~(USER_PAGE_SIZE - 1);
-    UQUAD last = (address + size - 1) & ~(USER_PAGE_SIZE - 1), page;
+    VADDR first = address & ~(USER_PAGE_SIZE - 1);
+    VADDR last = (address + size - 1) & ~(USER_PAGE_SIZE - 1), page;
 
     for (page = first; page <= last; page += USER_PAGE_SIZE) {
         UWORD prot;
@@ -1131,10 +1131,10 @@ static BOOL range_allowed(KPROC *kproc, UQUAD address, ULONG size, BOOL write)
  * physical pages now (what a read or write of them by the process would do).
  * The first pass rejects a range before any page is backed.  A range that is
  * fine but cannot be backed ends the process. */
-static BOOL demand_range(KPROC *kproc, UQUAD address, ULONG size, BOOL write)
+static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
 {
-    UQUAD first = address & ~(USER_PAGE_SIZE - 1);
-    UQUAD last = (address + size - 1) & ~(USER_PAGE_SIZE - 1), page;
+    VADDR first = address & ~(USER_PAGE_SIZE - 1);
+    VADDR last = (address + size - 1) & ~(USER_PAGE_SIZE - 1), page;
 
     if (!range_allowed(kproc, address, size, write))
         return FALSE;
@@ -1161,7 +1161,7 @@ static BOOL demand_range(KPROC *kproc, UQUAD address, ULONG size, BOOL write)
 LONG kproc_psetlimit(PD *pd, WORD mode, LONG value)
 {
     KPROC *kproc = kproc_find(pd);
-    UQUAD old, size, highest;
+    VADDR old, size, highest;
 
     if (!kproc || !kproc->aspace)
         return EINVFN;
@@ -1169,12 +1169,12 @@ LONG kproc_psetlimit(PD *pd, WORD mode, LONG value)
     case PSETLIMIT_CORE:
         old = kproc->lim_core;
         if (value >= 0)
-            kproc->lim_core = (UQUAD)value;
+            kproc->lim_core = (VADDR)value;
         return (LONG)old;
     case PSETLIMIT_DATA:
         old = kproc->lim_data;
         if (value >= 0)
-            kproc->lim_data = (UQUAD)value;
+            kproc->lim_data = (VADDR)value;
         return (LONG)old;
     case PSETLIMIT_STACK:
         old = stack_bytes(kproc);
@@ -1183,9 +1183,9 @@ LONG kproc_psetlimit(PD *pd, WORD mode, LONG value)
         if (value == 0) {
             size = USER_STACK_SIZE;
         } else {
-            if ((UQUAD)value < USER_STACK_MIN)
+            if ((VADDR)value < USER_STACK_MIN)
                 return ERANGE;
-            size = ((UQUAD)value + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
+            size = ((VADDR)value + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
         }
         if (size + USER_PAGE_SIZE > USER_STACK_TOP - USER_HEAP_BASE)
             return ENSMEM;
@@ -1193,7 +1193,7 @@ LONG kproc_psetlimit(PD *pd, WORD mode, LONG value)
         if (kproc->nheap) {
             const struct uheap_block *b = &kproc->heap[kproc->nheap - 1];
 
-            highest = b->va + (UQUAD)b->pages * USER_PAGE_SIZE;
+            highest = b->va + (VADDR)b->pages * USER_PAGE_SIZE;
         }
         if (USER_STACK_TOP - size - USER_PAGE_SIZE < highest)
             return ENSMEM;
@@ -1231,7 +1231,7 @@ LONG kproc_uheap_mode(WORD mode)
  * Maccess(addr, size, mode), MiNT's: 0 if the caller may use the range (mode 0:
  * read and write, 1: read only), else EINVAL, also for any other mode.
  */
-LONG kproc_maccess(PD *pd, UQUAD address, LONG size, WORD mode)
+LONG kproc_maccess(PD *pd, VADDR address, LONG size, WORD mode)
 {
     if ((mode != 0 && mode != 1) || size <= 0)
         return EINVAL;
@@ -1245,7 +1245,7 @@ LONG kproc_maccess(PD *pd, UQUAD address, LONG size, WORD mode)
  * caller's own memory (pid 0, or its own pid) can be asked about: another
  * process's pages are not a thing this one can reach.
  */
-LONG kproc_mvalidate(PD *pd, WORD pid, UQUAD address, LONG size, UQUAD flags)
+LONG kproc_mvalidate(PD *pd, WORD pid, VADDR address, LONG size, UQUAD flags)
 {
     ULONG zero = 0;
 
@@ -1259,7 +1259,7 @@ LONG kproc_mvalidate(PD *pd, WORD pid, UQUAD address, LONG size, UQUAD flags)
 }
 
 /* Malloc(): the address of `bytes` of fresh zeroed memory, 0 if there is none */
-UQUAD kproc_uheap_alloc(PD *pd, ULONG bytes)
+VADDR kproc_uheap_alloc(PD *pd, ULONG bytes)
 {
     return heap_alloc(kproc_find(pd), bytes, UH_MALLOC, NULL, FALSE);
 }
@@ -1268,7 +1268,7 @@ UQUAD kproc_uheap_alloc(PD *pd, ULONG bytes)
 ULONG kproc_uheap_largest(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
-    UQUAD largest;
+    VADDR largest;
     ULONG index;
 
     if (!kproc || !kproc->aspace)
@@ -1280,7 +1280,7 @@ ULONG kproc_uheap_largest(PD *pd)
     return (ULONG)largest;
 }
 
-static struct uheap_block *heap_find(KPROC *kproc, UQUAD va)
+static struct uheap_block *heap_find(KPROC *kproc, VADDR va)
 {
     ULONG i;
 
@@ -1294,7 +1294,7 @@ static struct uheap_block *heap_find(KPROC *kproc, UQUAD va)
 static LONG heap_release(KPROC *kproc, struct uheap_block *b)
 {
     if (!aspace_release_lazy(kproc->aspace, b->va,
-                                     (UQUAD)b->pages * USER_PAGE_SIZE))
+                                     (VADDR)b->pages * USER_PAGE_SIZE))
         return ERR;
     memmove(b, b + 1, (kproc->nheap - 1 - (ULONG)(b - kproc->heap)) * sizeof(*b));
     kproc->nheap--;
@@ -1302,7 +1302,7 @@ static LONG heap_release(KPROC *kproc, struct uheap_block *b)
 }
 
 /* Mfree(): E_OK, or EIMBA if va is not the start of a block of this process */
-LONG kproc_uheap_free(PD *pd, UQUAD va)
+LONG kproc_uheap_free(PD *pd, VADDR va)
 {
     KPROC *kproc = kproc_find(pd);
     struct uheap_block *b;
@@ -1314,11 +1314,11 @@ LONG kproc_uheap_free(PD *pd, UQUAD va)
 
 /* Mshrink(): keeps the first `len` bytes of the block (rounded up to whole
  * pages); EGSBF if that would make it bigger, EIMBA if va is no block */
-LONG kproc_uheap_shrink(PD *pd, UQUAD va, long len)
+LONG kproc_uheap_shrink(PD *pd, VADDR va, long len)
 {
     KPROC *kproc = kproc_find(pd);
     struct uheap_block *b;
-    UQUAD keep;
+    VADDR keep;
 
     if (!kproc || !kproc->aspace || !(b = heap_find(kproc, va)) || b->kind != UH_MALLOC)
         return EIMBA;
@@ -1326,13 +1326,13 @@ LONG kproc_uheap_shrink(PD *pd, UQUAD va, long len)
         return ERANGE;
     if (len == 0)
         return kproc_uheap_free(pd, va);
-    keep = ((UQUAD)len + USER_PAGE_SIZE - 1) / USER_PAGE_SIZE;
+    keep = ((VADDR)len + USER_PAGE_SIZE - 1) / USER_PAGE_SIZE;
     if (keep > b->pages)
         return EGSBF;
     if (keep == b->pages)
         return E_OK;
     if (!aspace_release_lazy(kproc->aspace, va + keep * USER_PAGE_SIZE,
-                                     (UQUAD)(b->pages - keep) * USER_PAGE_SIZE))
+                                     (VADDR)(b->pages - keep) * USER_PAGE_SIZE))
         return ERR;
     b->pages = (ULONG)keep;
     return E_OK;
@@ -1360,7 +1360,7 @@ static void give_image_back(KPROC *kproc)
         !(b = heap_find(pk, kproc->load_va)) || b->kind != UH_LENT || b->pd != kproc->pd)
         return;
     if (aspace_move_private(kproc->aspace, pk->aspace, b->va,
-                                   (UQUAD)b->pages * USER_PAGE_SIZE,
+                                   (VADDR)b->pages * USER_PAGE_SIZE,
                                    ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
         b->kind = UH_MALLOC;
         b->pd = NULL;
@@ -1388,10 +1388,10 @@ void kproc_set_give_back(PD *pd, BOOL give_back)
  * move_loaded_image()); Mfree() leaves it alone, and freeing the child's
  * basepage gives it back.
  */
-UQUAD kproc_load_alloc(PD *caller, PD *child, ULONG bytes)
+VADDR kproc_load_alloc(PD *caller, PD *child, ULONG bytes)
 {
     KPROC *ck = kproc_find(child);
-    UQUAD va;
+    VADDR va;
 
     if (!ck || ck->load_parent)
         return 0;
@@ -1406,7 +1406,7 @@ UQUAD kproc_load_alloc(PD *caller, PD *child, ULONG bytes)
     return va;
 }
 
-void kproc_load_release(PD *caller, UQUAD va)
+void kproc_load_release(PD *caller, VADDR va)
 {
     KPROC *kproc = kproc_find(caller);
     struct uheap_block *b;
@@ -1430,7 +1430,7 @@ static void release_loaded(KPROC *kproc)
 /* The process `pd` is the program loaded into [va, va + pages) of `caller`'s
  * heap (kproc_load_alloc()), laid out as `layout` there.  FALSE, with the block
  * still the caller's to release, if that is not so. */
-BOOL kproc_set_moved_image(PD *pd, const PROG_LAYOUT *layout, PD *caller, UQUAD va, ULONG pages)
+BOOL kproc_set_moved_image(PD *pd, const PROG_LAYOUT *layout, PD *caller, VADDR va, ULONG pages)
 {
     KPROC *kproc = kproc_find(pd);
     KPROC *ck = kproc_find(caller);
@@ -1439,7 +1439,7 @@ BOOL kproc_set_moved_image(PD *pd, const PROG_LAYOUT *layout, PD *caller, UQUAD 
     if (!kproc || kproc->aspace || kproc->has_image || !ck || !ck->aspace ||
         kproc->load_parent != caller || kproc->load_va != va || kproc->load_pages != pages ||
         !(b = heap_find(ck, va)) || b->kind != UH_LOADED || b->pd != pd || b->pages != pages ||
-        !layout_valid_in(layout, FALSE, va, va + (UQUAD)pages * USER_PAGE_SIZE))
+        !layout_valid_in(layout, FALSE, va, va + (VADDR)pages * USER_PAGE_SIZE))
         return FALSE;
     kproc->layout = *layout;
     kproc->has_image = TRUE;
@@ -1458,7 +1458,7 @@ static BOOL move_loaded_image(KPROC *kproc, ASPACE *to, PD *launcher)
         b->pd != kproc->pd || b->pages != kproc->load_pages || !heap_room(kproc))
         return FALSE;
     if (!aspace_move_private(pk->aspace, to, kproc->load_va,
-                                    (UQUAD)kproc->load_pages * USER_PAGE_SIZE,
+                                    (VADDR)kproc->load_pages * USER_PAGE_SIZE,
                                     ASPACE_PROT_WRITE | ASPACE_PROT_USER))
         return FALSE;
     kproc->heap[0].va = kproc->load_va;     /* (the new process has no other block yet) */
@@ -1479,14 +1479,14 @@ static BOOL move_loaded_image(KPROC *kproc, ASPACE *to, PD *launcher)
     return TRUE;
 }
 
-UQUAD kproc_user_stack(PD *pd)
+VADDR kproc_user_stack(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
 
     return (kproc && kproc->aspace) ? kproc->stack_top : 0;
 }
 
-UQUAD kproc_user_entry(PD *pd)
+VADDR kproc_user_entry(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
 
@@ -1500,37 +1500,39 @@ ASPACE *kproc_user_aspace(PD *pd)
     return kproc ? kproc->aspace : NULL;
 }
 
-UQUAD kproc_user_root(PD *pd)
+ASPACE_ROOT kproc_user_root(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
 
     return (kproc && kproc->aspace) ? aspace_root(kproc->aspace) : 0;
 }
 
-BOOL kproc_validate_user_dta(UQUAD address)
+BOOL kproc_validate_user_dta(VADDR address)
 {
     /* the filesystem writes the DTA through this pointer later */
     return kproc_validate_user_write(address, sizeof(DTAINFO));
 }
 
 /* True iff [address, address + size) lies inside [start, end). */
-static BOOL range_within(UQUAD address, ULONG size, const UBYTE *start_p, const UBYTE *end_p)
+static BOOL range_within(VADDR address, ULONG size, const UBYTE *start_p, const UBYTE *end_p)
 {
-    UQUAD start = (UQUAD)(uintptr_t)start_p;
-    UQUAD end = (UQUAD)(uintptr_t)end_p;
+    VADDR start = (VADDR)(uintptr_t)start_p;
+    VADDR end = (VADDR)(uintptr_t)end_p;
 
-    if (!start || end > 0x100000000ULL || end < start || end - start < size)
+    if (!start || end > USER_VA_LIMIT || end < start || end - start < size)
         return FALSE;
     return address >= start && address <= end - size;
 }
 
-static BOOL validate_user(UQUAD address, ULONG size, BOOL write)
+static BOOL validate_user(VADDR address, ULONG size, BOOL write)
 {
     KPROC *kproc = kproc_find(run);
 
-    /* The x32 ABI only carries 32-bit addresses.  Test the subtraction,
-     * rather than address + size, so an attacker cannot wrap the range. */
-    if (!kproc || !size || address > 0xffffffffULL)
+    /* No user address reaches USER_VA_LIMIT (the 32-bit ABI's limit on
+     * x86-64, the end of the user half on a 32-bit MMU).  Test the
+     * subtraction, rather than address + size, so an attacker cannot wrap
+     * the range. */
+    if (!kproc || !size || address >= USER_VA_LIMIT)
         return FALSE;
 
     /* A ring-3 process: valid means mapped, user-accessible (and writable
@@ -1549,27 +1551,27 @@ static BOOL validate_user(UQUAD address, ULONG size, BOOL write)
 
 /* Maccess(), Mvalidate(): may the process touch the range?  Asks only; no page
  * of its lazy areas is backed for the answer. */
-BOOL kproc_user_access(PD *pd, UQUAD address, ULONG size, BOOL write)
+BOOL kproc_user_access(PD *pd, VADDR address, ULONG size, BOOL write)
 {
     KPROC *kproc = kproc_find(pd);
 
-    if (!kproc || !kproc->aspace || !size || address > 0xffffffffULL ||
-        size > 0x100000000ULL - address)
+    if (!kproc || !kproc->aspace || !size || address >= USER_VA_LIMIT ||
+        size > USER_VA_LIMIT - address)
         return FALSE;
     return range_allowed(kproc, address, size, write);
 }
 
-BOOL kproc_validate_user_range(UQUAD address, ULONG size)
+BOOL kproc_validate_user_range(VADDR address, ULONG size)
 {
     return validate_user(address, size, FALSE);
 }
 
-BOOL kproc_validate_user_write(UQUAD address, ULONG size)
+BOOL kproc_validate_user_write(VADDR address, ULONG size)
 {
     return validate_user(address, size, TRUE);
 }
 
-BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size)
+BOOL kproc_copy_from_user(void *dst, VADDR address, ULONG size)
 {
     KPROC *kproc = kproc_find(run);
 
@@ -1581,7 +1583,7 @@ BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size)
     return TRUE;
 }
 
-BOOL kproc_copy_to_user(UQUAD address, const void *src, ULONG size)
+BOOL kproc_copy_to_user(VADDR address, const void *src, ULONG size)
 {
     KPROC *kproc = kproc_find(run);
 

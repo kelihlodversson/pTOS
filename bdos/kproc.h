@@ -74,7 +74,7 @@ BOOL kproc_set_image(PD *pd, const PROG_IMAGE *image);
  * relocated if it had to be), and gives each its permissions.  The launch adopts
  * the address space.  If the launch fails after that the program is gone, and
  * the basepage can only be freed. */
-BOOL kproc_load_begin(PD *pd, UQUAD va, UQUAD bytes);
+BOOL kproc_load_begin(PD *pd, VADDR va, VADDR bytes);
 void kproc_load_enter(PD *pd);
 void kproc_load_leave(void);
 BOOL kproc_set_loaded_image(PD *pd, const PROG_LAYOUT *layout);
@@ -93,9 +93,9 @@ BOOL kproc_set_loaded_image(PD *pd, const PROG_LAYOUT *layout);
  * with PE_GO (kproc_set_give_back()) they only are lent, and move back to the
  * caller as Malloc() memory when the child ends.
  */
-UQUAD kproc_load_alloc(PD *caller, PD *child, ULONG bytes);
-void kproc_load_release(PD *caller, UQUAD va);
-BOOL kproc_set_moved_image(PD *pd, const PROG_LAYOUT *layout, PD *caller, UQUAD va, ULONG pages);
+VADDR kproc_load_alloc(PD *caller, PD *child, ULONG bytes);
+void kproc_load_release(PD *caller, VADDR va);
+BOOL kproc_set_moved_image(PD *pd, const PROG_LAYOUT *layout, PD *caller, VADDR va, ULONG pages);
 /* PE_GO (not PE_GOTHENFREE): the image goes back to the caller's heap when the
  * process ends, Pterm() or Ptermres(); call it before kproc_prepare_user(). */
 void kproc_set_give_back(PD *pd, BOOL give_back);
@@ -105,8 +105,8 @@ void kproc_set_give_back(PD *pd, BOOL give_back);
 BOOL kproc_dta_restore(PD *pd, DTAINFO *dta);
 void kproc_dta_save(PD *pd, const DTAINFO *dta);
 void kproc_dta_forget(PD *pd, const DTAINFO *dta);   /* a new Fsfirst() starts */
-UQUAD kproc_ancestors_va(PD *pd);       /* where its basepage copies are; 0 if none */
-UQUAD kproc_user_entry(PD *pd);         /* image entry point; 0 if no image (it starts at p_tbase) */
+VADDR kproc_ancestors_va(PD *pd);       /* where its basepage copies are; 0 if none */
+VADDR kproc_user_entry(PD *pd);         /* image entry point; 0 if no image (it starts at p_tbase) */
 /* Hands the process's kernel stack (the one its system calls run on) to the
  * launcher, which frees it with kstack_free() once the process has
  * exited and the launcher runs on its own stack again: the process's last
@@ -128,7 +128,7 @@ void kproc_hand_over(PD *caller, PD *child);
 LONG kproc_check_launch(PD *pd, PD *caller);
 void kproc_unborrow(void *block);
 ULONG kproc_borrow_count(PD *launcher, void *block);
-UQUAD kproc_take_kernel_stack(PD *pd, UQUAD *top);
+PADDR kproc_take_kernel_stack(PD *pd, uintptr_t *top);
 /*
  * Malloc() memory of a process with an address space: private pages in
  * [USER_HEAP_BASE, USER_HEAP_LIMIT), freed with the process;
@@ -142,7 +142,7 @@ BOOL kproc_has_heap(PD *pd);
  * the process, whose page has not been touched yet.  0: it is not (a real fault);
  * 1: it is, and the page is backed now; 2: it is, and no physical page was left
  * (the process is to be terminated). */
-int kproc_demand_page(PD *pd, UQUAD va);
+int kproc_demand_page(PD *pd, VADDR va);
 /* Psetlimit(): modes 2 and 3 are MiNT's (total memory, Malloc()ed memory, in
  * bytes), PSETLIMIT_STACK is this port's (the stack's address space); see
  * bdos/kproc.c.  Returns the old value, or a negative error code. */
@@ -167,25 +167,25 @@ LONG kproc_psetlimit(PD *pd, WORD mode, LONG value);
  * that outlives the process. */
 LONG kproc_uheap_mode(WORD mode);
 /* Maccess(), Mvalidate(): MiNT's checks of the caller's own memory */
-LONG kproc_maccess(PD *pd, UQUAD address, LONG size, WORD mode);
-LONG kproc_mvalidate(PD *pd, WORD pid, UQUAD address, LONG size, UQUAD flags);
-UQUAD kproc_uheap_alloc(PD *pd, ULONG bytes);
+LONG kproc_maccess(PD *pd, VADDR address, LONG size, WORD mode);
+LONG kproc_mvalidate(PD *pd, WORD pid, VADDR address, LONG size, UQUAD flags);
+VADDR kproc_uheap_alloc(PD *pd, ULONG bytes);
 ULONG kproc_uheap_largest(PD *pd);
-LONG kproc_uheap_free(PD *pd, UQUAD va);
-LONG kproc_uheap_shrink(PD *pd, UQUAD va, long len);
-UQUAD kproc_user_stack(PD *pd);         /* initial RSP of the private stack of a prepared process; 0 if not prepared */
-UQUAD kproc_user_root(PD *pd);          /* 0 if not prepared */
+LONG kproc_uheap_free(PD *pd, VADDR va);
+LONG kproc_uheap_shrink(PD *pd, VADDR va, long len);
+VADDR kproc_user_stack(PD *pd);         /* initial RSP of the private stack of a prepared process; 0 if not prepared */
+ASPACE_ROOT kproc_user_root(PD *pd);          /* 0 if not prepared */
 ASPACE *kproc_user_aspace(PD *pd);   /* NULL if none (tests) */
-BOOL kproc_validate_user_dta(UQUAD address);
+BOOL kproc_validate_user_dta(VADDR address);
 /* valid user memory of the current process: mapped, user-accessible and (for
  * _write) writable in its own address space */
-BOOL kproc_validate_user_range(UQUAD address, ULONG size);
+BOOL kproc_validate_user_range(VADDR address, ULONG size);
 /* the same question for Maccess()/Mvalidate(): the process's own access, with
  * no page backed for the answer */
-BOOL kproc_user_access(PD *pd, UQUAD address, ULONG size, BOOL write);
-BOOL kproc_validate_user_write(UQUAD address, ULONG size);
-BOOL kproc_copy_from_user(void *dst, UQUAD address, ULONG size);
-BOOL kproc_copy_to_user(UQUAD address, const void *src, ULONG size);
+BOOL kproc_user_access(PD *pd, VADDR address, ULONG size, BOOL write);
+BOOL kproc_validate_user_write(VADDR address, ULONG size);
+BOOL kproc_copy_from_user(void *dst, VADDR address, ULONG size);
+BOOL kproc_copy_to_user(VADDR address, const void *src, ULONG size);
 #endif
 
 #endif
