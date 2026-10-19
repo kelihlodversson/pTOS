@@ -16,6 +16,9 @@
 #include "bdosstub.h"
 #include "biosext.h"
 #include "tosvars.h"
+#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
+#include "../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
+#endif
 #if CONF_WITH_X32_VDI
 #include "vdi_service.h"
 #include "x32vdi_image.h"
@@ -1194,6 +1197,12 @@ int kproc_demand_page(PD *pd, UQUAD va)
 static void lazy_oom(void)
 {
     kcprintf("process: no physical page left for its memory\n");
+#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
+    x86_64_memtest_callback_lazy_oom();
+#endif
+#if CONF_WITH_USER_CALLBACKS
+    user_callback_fault();
+#endif
     xterm((UWORD)-1);
 }
 
@@ -1380,6 +1389,33 @@ static struct uheap_block *heap_find(KPROC *kproc, UQUAD va)
             return &kproc->heap[i];
     return NULL;
 }
+
+#if CONF_WITH_USER_CALLBACKS
+BOOL kproc_callback_stack_stable(PD *pd, UQUAD address, ULONG size)
+{
+    KPROC *kproc = kproc_find(pd);
+    ULONG i;
+
+    if (!kproc || !kproc->aspace)
+        return FALSE;
+    /* Child basepage/environment grants have the same independent lifetime
+     * as PE_LOAD heap images, even though they are writable in the caller. */
+    for (i = 0; i < KPROC_BORROWS; i++)
+        if (kproc->borrowed[i].bytes &&
+            address < kproc->borrowed[i].va + kproc->borrowed[i].bytes &&
+            kproc->borrowed[i].va < address + size)
+            return FALSE;
+    for (i = 0; i < kproc->nheap; i++) {
+        const struct uheap_block *b = &kproc->heap[i];
+
+        if ((b->kind == UH_LOADED || b->kind == UH_LENT) &&
+            address < b->va + (UQUAD)b->pages * USER_PAGE_SIZE &&
+            b->va < address + size)
+            return FALSE;
+    }
+    return TRUE;
+}
+#endif
 
 /* gives the block back: unmaps its pages and drops its entry */
 static LONG heap_release(KPROC *kproc, struct uheap_block *b)

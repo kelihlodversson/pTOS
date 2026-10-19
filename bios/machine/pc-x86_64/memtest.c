@@ -43,6 +43,8 @@
 #include "progimage.h"
 #include "io.h"
 #include "trap.h"
+#include "gdt.h"
+#include "pc_x86_64_memtest.h"
 #include "tosvars.h"
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/fs.h"
@@ -1177,6 +1179,53 @@ static void test_lifecycle(void)
  */
 static BOOL probe_may_fail_early;   /* under memory pressure the basepage itself may be refused */
 
+#if CONF_WITH_USER_CALLBACKS
+enum { CALLBACK_OOM_NONE, CALLBACK_OOM_ENTRY, CALLBACK_OOM_SERVICE };
+static BOOL callback_test_watching, callback_test_entered;
+static PD *callback_test_owner;
+static UWORD callback_test_child_exits, callback_test_child_rc;
+static UWORD callback_test_oom_phase, callback_test_injected, callback_test_ooms;
+
+void x86_64_memtest_callback_exit(PD *pd, UWORD rc)
+{
+    if (callback_test_owner && pd != callback_test_owner &&
+        kproc_get_parent(pd) == callback_test_owner) {
+        callback_test_child_exits++;
+        callback_test_child_rc = rc;
+    }
+}
+
+static void callback_test_inject(void)
+{
+    x86_64_pmem_test_fail_after(1);
+    callback_test_oom_phase = CALLBACK_OOM_NONE;
+    callback_test_injected++;
+}
+
+void x86_64_memtest_callback_entry(void)
+{
+    if (run == callback_test_owner) {
+        callback_test_entered = TRUE;
+        if (callback_test_oom_phase == CALLBACK_OOM_ENTRY)
+            callback_test_inject();
+    }
+}
+
+void x86_64_memtest_callback_syscall(UQUAD call, UQUAD output)
+{
+    if (callback_test_entered && run == callback_test_owner &&
+        callback_test_oom_phase == CALLBACK_OOM_SERVICE && output &&
+        call == ((UQUAD)USER_CALLBACK_CLASS << 32 | USER_CALLBACK_ALTSTACK))
+        callback_test_inject();
+}
+
+void x86_64_memtest_callback_lazy_oom(void)
+{
+    if (callback_test_injected && run == callback_test_owner)
+        callback_test_ooms++;
+}
+#endif
+
 static long run_probe(char mode)
 {
     char tail[2];
@@ -1192,6 +1241,10 @@ static long run_probe(char mode)
     if (rc <= 0)
         return -1000;
     pd = (PD *)(uintptr_t)rc;
+#if CONF_WITH_USER_CALLBACKS
+    if (callback_test_watching)
+        callback_test_owner = pd;
+#endif
     if (!kproc_set_image(pd, testprobe_image())) {
         CHECK(FALSE, "probe image attaches");
         set_owner(pd, pd);
@@ -1214,6 +1267,7 @@ static long run_probe(char mode)
 /* The state a return from ring 3 must leave exactly as it found it. */
 typedef struct {
     UQUAD cr3, gs, kernel_gs;
+    UQUAD syscall_rsp, user_rsp, irq_rsp;
 } CPUSTATE;
 
 static void cpustate(CPUSTATE *c)
@@ -1221,6 +1275,9 @@ static void cpustate(CPUSTATE *c)
     c->cr3 = x86_64_read_cr3();
     c->gs = x86_64_rdmsr(MSR_GS_BASE);
     c->kernel_gs = x86_64_rdmsr(MSR_KERNEL_GS_BASE);
+    c->syscall_rsp = x86_64_get_kernel_stack();
+    c->user_rsp = x86_64_get_saved_user_rsp();
+    c->irq_rsp = x86_64_get_irq_stack();
 }
 
 /* One ring-3 run that must exit with `want`, return to this very context
@@ -1244,8 +1301,30 @@ static void probe_expect(char mode, long want, const char *what)
           "back on the kernel page tables");
     CHECK(after.gs == before.gs && after.kernel_gs == before.kernel_gs,
           "the GS base is back in its ring-0 state");
+    CHECK(after.syscall_rsp == before.syscall_rsp && after.user_rsp == before.user_rsp &&
+          after.irq_rsp == before.irq_rsp, "syscall/user/TSS stack pointers are restored");
     same(&s, what);
 }
+
+#if CONF_WITH_USER_CALLBACKS && CONF_WITH_X32_VDI
+static void test_callback_foreign_failure(char mode, UWORD phase)
+{
+    callback_test_watching = TRUE;
+    callback_test_entered = FALSE;
+    callback_test_child_exits = callback_test_injected = callback_test_ooms = 0;
+    callback_test_child_rc = 0xffff;
+    callback_test_oom_phase = phase;
+    probe_expect(mode, 0xffff, "a foreign callback failure unwinds only its owner");
+    x86_64_pmem_test_fail_after(0);
+    CHECK(callback_test_child_exits == 1 && callback_test_child_rc == 0,
+          "the invoking child independently completes and exits successfully");
+    CHECK(callback_test_injected == (phase != CALLBACK_OOM_NONE) &&
+          callback_test_ooms == (phase != CALLBACK_OOM_NONE),
+          "the intended callback lazy-page OOM path was exercised");
+    callback_test_watching = FALSE;
+    callback_test_owner = NULL;
+}
+#endif
 
 static void test_aes_imports(void)
 {
@@ -1414,7 +1493,9 @@ static void test_ring3(void)
         probe_expect('U', 0xffff, "an unmapped interrupted user stack cannot corrupt callback entry");
         probe_expect('Z', 0xffff, "a corrupted callback return record is contained");
         probe_expect('T', 0xffff, "a non-returning callback times out");
-        probe_expect('%', 0xffff, "a foreign callback fault lets the invoking child finish");
+        test_callback_foreign_failure('%', CALLBACK_OOM_NONE);
+        test_callback_foreign_failure('Q', CALLBACK_OOM_ENTRY);
+        test_callback_foreign_failure('O', CALLBACK_OOM_SERVICE);
         probe_expect('C', 0, "callback state is usable after owner faults and timeouts");
 #endif
         if (failures == before)

@@ -273,7 +273,7 @@ jobs:
       # way (EFI/OVMF); a future non-EFI x86-64 config would need its own
       # check instead of this one.
       - name: Install QEMU and OVMF for the boot test
-        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes'
+        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes' || matrix.config == 'pc-x86_64-callbacks'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y qemu-system-x86 ovmf
@@ -294,7 +294,7 @@ jobs:
       # succeed on it: 124 means the timeout fired (the normal case here),
       # anything else means QEMU itself exited unexpectedly.
       - name: Boot-test under QEMU/OVMF
-        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes'
+        if: matrix.config == 'pc-x86_64' || matrix.config == 'pc-x86_64-vdi' || matrix.config == 'pc-x86_64-aes' || matrix.config == 'pc-x86_64-callbacks'
         run: |
           mkdir -p esp/EFI/BOOT
           cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI

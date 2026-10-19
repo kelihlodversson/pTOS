@@ -28,6 +28,9 @@ BOOL kproc_callbacks_set(PD *pd, USER_CALLBACK_STATE *state);
 UQUAD kproc_resume_rsp(PD *pd);
 void kproc_record_rsp(PD *pd, UQUAD rsp);
 UQUAD kproc_stack_bottom(PD *pd);
+/* A callback stack cannot borrow pages whose loaded-child lifetime can
+ * release or transfer them independently of this process's stack pins. */
+BOOL kproc_callback_stack_stable(PD *pd, UQUAD address, ULONG size);
 #endif
 
 typedef struct dta_info DTAINFO;

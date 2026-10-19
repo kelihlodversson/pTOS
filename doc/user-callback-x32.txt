@@ -76,6 +76,12 @@ SS_DISABLE=2. A new process starts disabled; settings are not inherited.
 An enabled range must be 16-aligned in address and length, 16 KiB..1 MiB,
 and entirely writable user memory; lazy pages are backed during validation.
 It must not wrap the x32 address limit or overlap the normal stack window.
+Pages of a child loaded by Pexec(PE_LOAD), including its writable startup
+slack, are rejected with EACCDN: freeing or launching that child can release
+or transfer them independently of this process's stack pins. A process's
+borrowed child basepage/environment grants are rejected for the same reason.
+Its own image, ordinary heap allocations and other lifetime-stable writable
+user mappings remain eligible.
 Invalid flags, alignment, size, overlap or wrap return EINVAL; unmapped,
 read-only or foreign ranges return EIMBA. Output descriptors are checked
 before state changes. Querying an active stack returns SS_ONSTACK.
@@ -137,7 +143,17 @@ exchanges, native/same-owner/foreign OLD pointers, cross-process nesting and
 motion return transfer, revocation, full alternate-stack validation and
 pinning. It also tries a privileged instruction, stack exhaustion, an
 unmapped normal stack, a corrupted return token, an infinite handler, and a
-foreign-owner fault. Each probe checks CPU context and allocator accounting;
+foreign-owner fault. The kernel harness independently observes the invoking
+child's exit code before teardown, rather than relying on the quarantined
+parent's result. Deterministic failure injection exercises lazy-page OOM
+both while copying an entry frame onto a foreign owner's normal stack and
+while a foreign callback syscall backs an output buffer. Both must unwind
+the callback continuation, restore syscall/user/TSS stacks, and let the
+child finish successfully. Loaded-child stack rejection is followed by
+release/launch to check the original alternate stack stays valid.
+Each probe checks CPU context and allocator accounting;
 a successful callback client runs again after failures. CI requires
-"x86-64 user callbacks: PASS", including service refusal in the baseline.
+"x86-64 user callbacks: PASS", including service refusal in the baseline
+and successful alternate-stack queries in pc-x86_64-callbacks, which enables
+the generic facility independently of VDI.
 X32CB.TOS on the test ESP is the same probe ELF used for nested child tests.

@@ -32,4 +32,14 @@ callback_badstack:
         movl $0x30000000,%esp
 5:      pause
         jmp 5b
+        .globl callback_lazy_exec
+callback_lazy_exec:
+        movl %esi,%edx          /* Pexec tail */
+        movl %edi,%esi          /* Pexec file */
+        xorl %edi,%edi          /* PE_LOADGO */
+        xorl %r10d,%r10d
+        movabsq $0x10000004b,%rax
+        movl $0x7ffff040,%esp   /* callback frame falls in the lazy page below */
+        syscall
+        ud2                    /* the quarantined parent must never resume */
         .section .note.GNU-stack,"",@progbits

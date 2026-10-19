@@ -9,6 +9,7 @@ int callback_roundtrip_checks(const char *tail);
 int callback_register_checks(volatile ULONG *counter);
 void callback_badreturn(int ms);
 void callback_badstack(void);
+void callback_lazy_exec(const char *file, const char *tail);
 
 static LONG raw(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
@@ -28,6 +29,7 @@ static USER_CALLBACK_STACK stack;
 static ULONG previous_motion;
 static char mode;
 static ULONG *volatile fault_address;
+static USER_CALLBACK_STACK *oom_output;
 
 #define CHECK(expr) do { if (!(expr) && !failure) failure = __LINE__; } while (0)
 #define HCHECK(expr) do { if (!(expr) && !handler_failure) handler_failure = __LINE__; } while (0)
@@ -151,6 +153,62 @@ static int prepare_stack(void)
     return failure;
 }
 
+static int loaded_stack_checks(void)
+{
+    USER_CALLBACK_STACK candidate, old;
+    PD *child;
+    ULONG env;
+    LONG loaded, allocation;
+    char *environment;
+    int i, j, failure = 0;
+
+    for (i = 0; i < 2; i++) {
+        loaded = raw(1, 0x4b, PE_LOAD, (uintptr_t)"X32HELLO.TOS", (uintptr_t)"", 0);
+        if (loaded <= 0)
+            return __LINE__;
+        child = (PD *)(uintptr_t)(ULONG)loaded;
+        env = (ULONG)(uintptr_t)child->p_env;
+        /* The image's writable startup slack belongs to the loader now,
+         * but freeing/launching this child can release/transfer its pages. */
+        candidate.ss_sp = ((ULONG)(uintptr_t)child->p_bbase + child->p_blen + 4095UL) & ~4095UL;
+        candidate.ss_size = USER_CALLBACK_MIN_STACK;
+        candidate.ss_flags = 0;
+        CHECK(Psigaltstack(&candidate, NULL) == EACCDN);
+        CHECK(Psigaltstack(NULL, &old) == E_OK && old.ss_sp == stack.ss_sp &&
+              old.ss_size == stack.ss_size && old.ss_flags == 0);
+        if (i) {
+            CHECK(raw(1, 0x4b, PE_GOTHENFREE, 0, loaded, 0) == E_OK);
+        } else {
+            CHECK(raw(1, 0x49, loaded, 0, 0, 0) == E_OK);
+            CHECK(raw(1, 0x49, env, 0, 0, 0) == E_OK);
+        }
+        CHECK(Psigaltstack(NULL, &old) == E_OK && old.ss_sp == stack.ss_sp);
+    }
+    /* A large child environment is another writable caller grant that
+     * Mfree can revoke without going through the ordinary heap pin check. */
+    allocation = raw(1, 0x48, 32752, 0, 0, 0);
+    if (allocation <= 0)
+        return __LINE__;
+    environment = (char *)(uintptr_t)(ULONG)allocation;
+    environment[0] = 'X';
+    environment[1] = '=';
+    for (j = 2; j < 32749; j++)
+        environment[j] = 'a';
+    environment[32749] = environment[32750] = 0;
+    loaded = raw(1, 0x4b, PE_BASEPAGE, 0, (uintptr_t)"", (uintptr_t)environment);
+    if (loaded <= 0)
+        return __LINE__;
+    child = (PD *)(uintptr_t)(ULONG)loaded;
+    env = (ULONG)(uintptr_t)child->p_env;
+    candidate.ss_sp = env;
+    CHECK(Psigaltstack(&candidate, NULL) == EACCDN);
+    CHECK(raw(1, 0x49, loaded, 0, 0, 0) == E_OK);
+    CHECK(raw(1, 0x49, env, 0, 0, 0) == E_OK);
+    CHECK(raw(1, 0x49, allocation, 0, 0, 0) == E_OK);
+    CHECK(Psigaltstack(NULL, &old) == E_OK && old.ss_sp == stack.ss_sp);
+    return failure;
+}
+
 static int child_checks(BOOL fault_parent)
 {
     VDI_SERVICE_VECTOR_RESULT old, direct;
@@ -184,6 +242,8 @@ static int child_checks(BOOL fault_parent)
 static void parent_fault(WORD status)
 {
     (void)status;
+    if (mode == 'O')
+        Psigaltstack(NULL, oom_output);  /* backing this output is forced to fail */
     *fault_address = 1;
 }
 #endif
@@ -206,11 +266,29 @@ int callback_roundtrip_checks(const char *tail)
     CHECK(prepare_stack() == 0);
     if (mode == 'J' || mode == '&')
         return child_checks(mode == '&');
-    if (mode == '%') {
+    if (mode == '%' || mode == 'Q' || mode == 'O') {
         CHECK(exchange(125, (uintptr_t)parent_fault, &old) == E_OK);
+        if (mode == 'Q') {
+            CHECK(Psigaltstack(&disabled, NULL) == E_OK);
+            stack.ss_flags = USER_CALLBACK_SS_DISABLE;
+            /* Keep the callback frame just below the last backed normal
+             * stack page, so the entry copy must allocate a lazy page. */
+            callback_lazy_exec("X32CB.TOS", "&");
+        }
+        if (mode == 'O') {
+            rc = raw(1, 0x48, 4096, 0, 0, 0);
+            if (rc <= 0)
+                return __LINE__;
+            oom_output = (USER_CALLBACK_STACK *)(uintptr_t)(ULONG)rc;
+        }
         rc = raw(1, 0x4b, 0, (uintptr_t)"X32CB.TOS", (uintptr_t)"&", 0);
         /* Deferred termination is checked before this parent resumes user. */
-        return rc ? __LINE__ : __LINE__;
+        return __LINE__;
+    }
+    if (mode == 'C') {
+        failure = loaded_stack_checks();
+        if (failure)
+            return failure;
     }
     CHECK(exchange(118, mode == 'Z' ? (uintptr_t)callback_badreturn : (uintptr_t)timer, &old) == E_OK && old.tick_ms > 0);
     if (mode == 'Z') {
@@ -251,6 +329,15 @@ int callback_roundtrip_checks(const char *tail)
     return failure;
 #else
     (void)tail;
+#if CONF_WITH_USER_CALLBACKS
+    {
+        USER_CALLBACK_STACK old;
+
+        return raw(USER_CALLBACK_CLASS, USER_CALLBACK_ALTSTACK, 0, (uintptr_t)&old, 0, 0) == E_OK &&
+            old.ss_flags == USER_CALLBACK_SS_DISABLE ? 0 : __LINE__;
+    }
+#else
     return raw(USER_CALLBACK_CLASS, USER_CALLBACK_ALTSTACK, 0, 0, 0, 0) == EINVFN ? 0 : __LINE__;
+#endif
 #endif
 }

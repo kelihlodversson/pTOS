@@ -14,6 +14,9 @@
 #include "tosvars.h"
 #include "../bios/arch/x86_64/trap.h"
 #include "../bios/arch/x86_64/gdt.h"
+#if CONF_WITH_X86_64_MEMTEST
+#include "../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
+#endif
 
 /* Registrations have independent owner/channel/capability/invocation refs.
  * Revoked records may outlive the owner, but contain no executable address. */
@@ -310,6 +313,8 @@ static LONG altstack(UQUAD input, UQUAD output)
                 (UQUAD)next.ss_sp + next.ss_size > USER_VA_LIMIT ||
                 overlaps(next.ss_sp, next.ss_size, bottom, USER_STACK_TOP - bottom))
                 return EINVAL;
+            if (!kproc_callback_stack_stable(run, next.ss_sp, next.ss_size))
+                return EACCDN;
             if (!kproc_validate_user_write(next.ss_sp, next.ss_size))
                 return EIMBA;
         }
@@ -422,6 +427,9 @@ LONG user_callback_invoke(USER_CALLBACK *cb, UWORD signature,
     if (!setjmp(frame->resume)) {
         if (frame->failed)
             user_callback_fault();
+#if CONF_WITH_X86_64_MEMTEST
+        x86_64_memtest_callback_entry();
+#endif
         words[0] = USER_CALLBACK_IMAGE;
         words[1] = frame->token;
         if (!kproc_copy_to_user(sp, words, sizeof(words)))

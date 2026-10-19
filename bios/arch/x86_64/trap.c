@@ -21,6 +21,9 @@
 #include "vdi_service.h"
 #include "aes_service.h"
 #include "user_callback.h"
+#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
+#include "pc_x86_64_memtest.h"
+#endif
 #if CONF_WITH_USER_CALLBACKS
 #include "../../../bdos/user_callback.h"
 #include "../../../bdos/kproc.h"
@@ -177,6 +180,10 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
             return;
         }
     }
+#endif
+#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
+    if (from_ring3)
+        x86_64_memtest_callback_syscall(frame->rax, frame->rsi);
 #endif
     trap_dispatch(frame, from_ring3);
 #if CONF_WITH_USER_CALLBACKS

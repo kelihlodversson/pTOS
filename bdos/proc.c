@@ -29,6 +29,9 @@
 #include "tosvars.h"
 #include "has.h"
 #include "../bios/vectors.h"
+#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
+#include "../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
+#endif
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
 #endif
@@ -964,6 +967,10 @@ void xterm(UWORD rc)
 {
     PFVOID userterm;
     PD *p = run;
+
+#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
+    x86_64_memtest_callback_exit(p, rc);
+#endif
 
     userterm = (PFVOID)Setexc(0x102, (long)-1L);  /* get user term handler address */
     protect_v((PFLONG)userterm);    /* call it, protecting d2/a2 from modification */
