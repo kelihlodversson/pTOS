@@ -1186,6 +1186,13 @@ static void check_sizes_more(short handle, short id)
     font_check(got < 0, "vst_setsize32() does not answer a negative width");
     vst_arbpt(handle, 12, &dummy, &dummy, &dummy, &dummy);
 
+    /* -32768 points, whose sign cannot just be taken off: big and mirrored, not the smallest */
+    got = vst_setsize32(handle, (long)0x80000000UL, &dummy, &dummy, &dummy, &dummy);
+    font_check(got < -(12L << 16), "vst_setsize32(-32768 points) is not a wide mirrored width");
+    got = vst_arbpt32(handle, (long)0x80000000UL, &dummy, &dummy, &dummy, &dummy);
+    font_check(got < -(12L << 16), "vst_arbpt32(-32768 points) is not a big mirrored size");
+    vst_arbpt(handle, 12, &dummy, &dummy, &dummy, &dummy);
+
     /* far too big: the biggest size, not the smallest */
     vst_arbpt(handle, 300, &dummy, &top300, &dummy, &dummy);
     vst_arbpt32(handle, 30000L << 16, &dummy, &top_big, &dummy, &dummy);

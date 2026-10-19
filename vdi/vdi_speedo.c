@@ -570,6 +570,19 @@ static LONG fix_to_em(LONG points)
     return (q * 25400 + r * 25400 / div + 512) >> 10;
 }
 
+/*
+ * a size asked for in 16.16 points, within POINTS_MAX either way: before
+ * its sign is taken off, which -0x80000000 would not survive
+ */
+static LONG clamp_points(LONG points)
+{
+    if (points > POINTS_MAX)
+        return POINTS_MAX;
+    if (points < -POINTS_MAX)
+        return -POINTS_MAX;
+    return points;
+}
+
 static LONG em_to_fix(LONG em)
 {
     return (LONG)(((ULONG)em * 72 * (ULONG)micron() + 12700) / 25400) << 10;
@@ -637,6 +650,7 @@ void vdi_vst_arbpt(Vwk *vwk)
         memcpy(&points, &INTIN[0], sizeof(points));
     else
         points = (LONG)INTIN[0] << 16;
+    points = clamp_points(points);
 
     if (vwk->cur_font->flags & F_SFONT)
     {
@@ -683,6 +697,7 @@ void vdi_vst_setsize(Vwk *vwk)
         memcpy(&points, &INTIN[0], sizeof(points));
     else
         points = (LONG)INTIN[0] << 16;
+    points = clamp_points(points);
 
     if (vwk->cur_font->flags & F_SFONT)
     {

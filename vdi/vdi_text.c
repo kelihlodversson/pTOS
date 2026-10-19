@@ -829,6 +829,9 @@ typedef struct
     LONG prev_cp;                   /* the character before the run, or -1 */
     LONG kern_sum;                  /* the kerning so far, in 16.16 pixels, */
     LONG kern_done;                 /* and what of it has been applied, in pixels */
+    LONG kept[RUN_MAX];             /* the pairs' kerning past where the last run was cut, */
+    WORD kept_n;                    /* for how many characters, */
+    WORD kept_pos;                  /* from where in the string */
     WORD buf[RUN_MAX];
 } TEXT_RUN;
 
@@ -921,20 +924,31 @@ static void run_begin(Vwk *vwk, TEXT_RUN *r, const WORD *str, WORD count)
     r->kerning = kerning_applies(vwk);
     r->prev_cp = -1;
     r->kern_sum = r->kern_done = 0;
+    r->kept_n = 0;
 }
 
 /*
  * The kerning before each character of a run (as yet): where it comes to
  * a whole pixel more after the first character, the run is cut there.
- * It goes on from what the runs before have had.
+ * It goes on from what the runs before have had, and from the pairs'
+ * kerning they worked out past where they were cut ('start' is where the
+ * run starts in the string), so that each pair is looked up once.
  */
-static void run_kern(Vwk *vwk, TEXT_RUN *r, const LONG *cps, const WORD *ends)
+static void run_kern(Vwk *vwk, TEXT_RUN *r, WORD start, const LONG *cps, const WORD *ends)
 {
     LONG kern[RUN_MAX], sum = r->kern_sum, done = r->kern_done, next, px;
-    WORD i;
+    WORD i, n = r->n, known = 0;
 
-    if (!vwk->pair_kern || !vdi_sfont_kerning(vwk->cur_font, r->prev_cp, cps, r->n, kern))
-        bzero(kern, r->n * sizeof(LONG));
+    if (r->kept_n && r->kept_pos == start)
+    {
+        known = r->kept_n < n ? r->kept_n : n;
+        memcpy(kern, r->kept, known * sizeof(LONG));
+    }
+    r->kept_n = 0;
+    if (known < n && (!vwk->pair_kern
+                      || !vdi_sfont_kerning(vwk->cur_font, known ? cps[known - 1] : r->prev_cp,
+                                            cps + known, n - known, kern + known)))
+        bzero(kern + known, (n - known) * sizeof(LONG));
 
     r->kern = 0;
     for (i = 0; i < r->n; i++)
@@ -948,6 +962,12 @@ static void run_kern(Vwk *vwk, TEXT_RUN *r, const LONG *cps, const WORD *ends)
             /* the run ends before this one, which the next run starts with */
             r->n = i;
             r->pos = ends[i - 1];
+            if (vwk->pair_kern)
+            {
+                r->kept_n = n - i;
+                r->kept_pos = r->pos;
+                memcpy(r->kept, kern + i, r->kept_n * sizeof(LONG));
+            }
             break;
         }
         if (!i)
@@ -1027,7 +1047,7 @@ static BOOL next_run(Vwk *vwk, TEXT_RUN *r)
 
     r->kern = 0;
     if (r->kerning)
-        run_kern(vwk, r, cps, ends);
+        run_kern(vwk, r, start, cps, ends);
     r->chars = direct ? (WORD *)(r->str + start) : r->buf;
     r->font = place_font(vwk, run_place, r->chars, r->n);
 
