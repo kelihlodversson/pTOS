@@ -21,6 +21,19 @@ AES_CLIENT_STATE *kproc_aes_get(PD *pd);
 BOOL kproc_aes_set(PD *pd, AES_CLIENT_STATE *state);
 #endif
 
+#if CONF_WITH_USER_CALLBACKS
+#include "user_callback.h"
+USER_CALLBACK_STATE *kproc_callbacks_get(PD *pd);
+BOOL kproc_callbacks_set(PD *pd, USER_CALLBACK_STATE *state);
+UQUAD kproc_resume_rsp(PD *pd);
+void kproc_record_rsp(PD *pd, UQUAD rsp);
+UQUAD kproc_stack_bottom(PD *pd);
+/* A callback stack cannot borrow pages whose loaded-child lifetime can
+ * release or transfer them independently of this process's stack pins. */
+BOOL kproc_callback_stack_stable(PD *pd, UQUAD address, ULONG size);
+BOOL kproc_callback_mfree_allowed(PD *pd, UQUAD address);
+#endif
+
 typedef struct dta_info DTAINFO;
 
 BOOL kproc_create(PD *pd);

@@ -14,6 +14,123 @@
 #include "intmath.h"
 #include "procmem.h"
 #include "../../../bdos/kproc.h"
+#if CONF_WITH_USER_CALLBACKS
+#include "../../../bdos/user_callback.h"
+
+/* Only these checked adapters can be named by a kernel OLD capability.
+ * Arguments from a user-invoked OLD stub still need renderer bounds. */
+static WORD callback_x(WORD x)
+{
+    return (WORD)max(0L, min((LONG)x, min((LONG)linea_vars.V_REZ_HZ - 1, 32767L)));
+}
+
+static WORD callback_y(WORD y)
+{
+    return (WORD)max(0L, min((LONG)y, min((LONG)linea_vars.V_REZ_VT - 1, 32767L)));
+}
+
+static void kernel_timer(int ms)
+{
+    linea_vars.tim_addr(ms >= 0 && ms <= 1000 ? ms : 0);
+}
+
+static void kernel_button(WORD status)
+{
+    linea_vars.user_but(status);
+}
+
+static ULONG kernel_motion(WORD x, WORD y)
+{
+    return linea_vars.user_mot(callback_x(x), callback_y(y));
+}
+
+static void kernel_cursor(WORD x, WORD y)
+{
+    linea_vars.user_cur(callback_x(x), callback_y(y));
+}
+
+static void kernel_wheel(WORD n, WORD amount)
+{
+#if CONF_WITH_EXTENDED_MOUSE
+    extern void (*user_wheel)(WORD, WORD);
+
+    if (n >= 0 && n <= 1 && amount >= -127 && amount <= 127)
+        user_wheel(n, amount);
+#else
+    (void)n;
+    (void)amount;
+#endif
+}
+
+static const USER_CALLBACK_NATIVE kernel_callbacks[VDI_CALLBACK_COUNT] = {
+    { .i32_void = kernel_timer }, { .i16_void = kernel_button },
+    { .i16_i16_u32 = kernel_motion }, { .i16_i16_void = kernel_cursor },
+    { .i16_i16_void = kernel_wheel }
+};
+static const UWORD callback_signatures[VDI_CALLBACK_COUNT] = {
+    USER_CALLBACK_I32_VOID, USER_CALLBACK_I16_VOID, USER_CALLBACK_I16_I16_U32,
+    USER_CALLBACK_I16_I16_VOID, USER_CALLBACK_I16_I16_VOID
+};
+static USER_CALLBACK *callbacks[VDI_CALLBACK_COUNT];
+static struct {
+    LONG a, b;
+    BOOL pending;
+} events[VDI_CALLBACK_COUNT];
+
+/* IRQ-safe, bounded coalescing. No user code, allocation or process switch. */
+void vdi_service_callback_event(UWORD signature, LONG a, LONG b)
+{
+    if (signature < VDI_CALLBACK_COUNT) {
+        events[signature].a = a;
+        events[signature].b = b;
+        events[signature].pending = TRUE;
+    }
+}
+
+void vdi_service_callback_work(void)
+{
+    UQUAD flags;
+    ULONG result;
+    LONG a, b;
+    UWORD signature;
+
+    /* One bounded pass per user boundary. */
+    for (signature = 0; signature < VDI_CALLBACK_COUNT; signature++) {
+        __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+        if (!events[signature].pending) {
+            if (flags & 0x200)
+                __asm__ volatile ("sti" ::: "memory");
+            continue;
+        }
+        a = events[signature].a;
+        b = events[signature].b;
+        events[signature].pending = FALSE;
+        if (flags & 0x200)
+            __asm__ volatile ("sti" ::: "memory");
+        if (user_callback_invoke(callbacks[signature], callback_signatures[signature], a, b, &result) == E_OK &&
+            signature == VDI_CALLBACK_MOTION) {
+            WORD x = (WORD)HIWORD(result), y = (WORD)LOWORD(result);
+
+            /* IRQs continue tracking motion during the user handler. Its
+             * result is stale if a newer packet has already moved the cursor.
+             * Keep the check, stores and notification in one IRQ-free region. */
+            __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+            if (!events[VDI_CALLBACK_MOTION].pending) {
+                if (x < 0) x = 0;
+                if (y < 0) y = 0;
+                if (x >= linea_vars.V_REZ_HZ) x = linea_vars.V_REZ_HZ - 1;
+                if (y >= linea_vars.V_REZ_VT) y = linea_vars.V_REZ_VT - 1;
+                linea_vars.GCURX = x;
+                linea_vars.GCURY = y;
+                linea_vars.user_cur(x, y);
+                vdi_service_callback_event(VDI_CALLBACK_CURSOR, x, y);
+            }
+            if (flags & 0x200)
+                __asm__ volatile ("sti" ::: "memory");
+        }
+    }
+}
+#endif
 
 extern PD *run;
 
@@ -87,6 +204,13 @@ static void close_handle(WORD handle)
 void vdi_service_process_exit(PD *pd)
 {
     WORD handle;
+#if CONF_WITH_USER_CALLBACKS
+    UWORD signature;
+
+    for (signature = 0; signature < VDI_CALLBACK_COUNT; signature++)
+        if (user_callback_owner(callbacks[signature], pd))
+            user_callback_drop(&callbacks[signature]);
+#endif
 
     for (handle = 2; handle <= NUM_VDI_HANDLES; handle++)
         if (owners[handle] == pd)
@@ -206,6 +330,10 @@ static LONG vector_call(UQUAD code, UQUAD handler, UQUAD output)
     VDI_SERVICE_VECTOR_RESULT result = { 0 };
     ASPACE *aspace = kproc_user_aspace(run);
     UWORD protection;
+#if CONF_WITH_USER_CALLBACKS
+    UWORD signature;
+    LONG rc;
+#endif
 
     switch (code) {
     case 118: case 125: case 126: case 127: case 134:
@@ -222,11 +350,28 @@ static LONG vector_call(UQUAD code, UQUAD handler, UQUAD output)
         return EIMBA;
     if (code == 118)
         result.tick_ms = Tickcal();
+#if CONF_WITH_USER_CALLBACKS
+    switch (code) {
+    case 118: signature = VDI_CALLBACK_TIMER; break;
+    case 125: signature = VDI_CALLBACK_BUTTON; break;
+    case 126: signature = VDI_CALLBACK_MOTION; break;
+    case 127: signature = VDI_CALLBACK_CURSOR; break;
+    default: signature = VDI_CALLBACK_WHEEL; break;
+    }
+    if (!user_callback_work_register(vdi_service_callback_work))
+        return ENSMEM;
+    rc = user_callback_exchange(&callbacks[signature], callback_signatures[signature],
+                                handler, &kernel_callbacks[signature], &result.old_handler);
+    if (rc != E_OK)
+        return rc;
+    return kproc_copy_to_user(output, &result, sizeof(result)) ? E_OK : EIMBA;
+#else
     /* No user registration exists yet, so its old user value is zero.
      * Never expose or replace the live kernel vector. #432 owns delivery. */
     if (!kproc_copy_to_user(output, &result, sizeof(result)))
         return EIMBA;
     return handler ? EINVFN : E_OK;
+#endif
 }
 
 static LONG pixel_call(UQUAD handle, UQUAD x, UQUAD y, UQUAD address)

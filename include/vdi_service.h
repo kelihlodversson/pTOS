@@ -11,6 +11,9 @@
 #include "vdi_user.h"
 #include "bdosdefs.h"
 
+enum { VDI_CALLBACK_TIMER, VDI_CALLBACK_BUTTON, VDI_CALLBACK_MOTION,
+       VDI_CALLBACK_CURSOR, VDI_CALLBACK_WHEEL, VDI_CALLBACK_COUNT };
+
 #define VDI_SERVICE_CLASS 0x100UL
 #define VDI_SERVICE_OPEN  0
 #define VDI_SERVICE_CLOSE 1
@@ -55,6 +58,10 @@ void vdi_user_raster_execute(const VDI_SERVICE_RASTER_REQUEST *request,
 #if CONF_WITH_X32_VDI && !defined(__ILP32__)
 LONG vdi_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d);
 void vdi_service_process_exit(PD *pd);
+#if CONF_WITH_USER_CALLBACKS
+void vdi_service_callback_work(void);
+void vdi_service_callback_event(UWORD signature, LONG a, LONG b);
+#endif
 #endif
 
 #endif

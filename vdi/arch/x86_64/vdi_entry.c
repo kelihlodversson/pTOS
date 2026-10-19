@@ -37,6 +37,9 @@
 #include "lineavars.h"
 #include "string.h"
 #include "kprint.h"
+#if CONF_WITH_X32_VDI && CONF_WITH_USER_CALLBACKS
+#include "vdi_service.h"
+#endif
 
 extern void screen(void);
 
@@ -134,6 +137,9 @@ void mouse_int(UBYTE *buf)
             pressed |= (linea_vars.MOUSE_BT & ~3); // keep additional mouse button states
             linea_vars.MOUSE_BT = pressed;
             user_but(pressed);
+#if CONF_WITH_X32_VDI && CONF_WITH_USER_CALLBACKS
+            vdi_service_callback_event(VDI_CALLBACK_BUTTON, pressed, 0);
+#endif
             pressed |= ((previous ^ pressed) << 6); // compute which buttons have changed and put deltas in bits 6 & 7
             linea_vars.cur_ms_stat = pressed;
         }
@@ -160,6 +166,9 @@ void mouse_int(UBYTE *buf)
             linea_vars.GCURX = point.x;
             linea_vars.GCURY = point.y;
             user_cur(point.x, point.y);         // call user to draw cursor
+#if CONF_WITH_X32_VDI && CONF_WITH_USER_CALLBACKS
+            vdi_service_callback_event(VDI_CALLBACK_MOTION, point.x, point.y);
+#endif
         }
         else
         {

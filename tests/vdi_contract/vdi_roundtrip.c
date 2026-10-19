@@ -15,6 +15,13 @@ static void callback_button(WORD state) { (void)state; }
 static ULONG callback_motion(WORD x, WORD y) { return MAKE_ULONG(x, y); }
 static void callback_cursor(WORD x, WORD y) { (void)x; (void)y; }
 static void callback_wheel(WORD n, WORD amount) { (void)n; (void)amount; }
+#if CONF_WITH_USER_CALLBACKS
+#define VECTOR_RESULT E_OK
+#define VECTOR_OLD(old) ((old) != 0)
+#else
+#define VECTOR_RESULT EINVFN
+#define VECTOR_OLD(old) (!(old))
+#endif
 #endif
 
 static LONG raw_call(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
@@ -250,18 +257,17 @@ int vdi_roundtrip_checks(WORD inherited_handle, BOOL fault_after_open)
     CHECK(raw_service(VDI_SERVICE_VECTOR, handle, 118, 0xffff800000000000ULL, (uintptr_t)&vector) == EIMBA);
     CHECK(raw_service(VDI_SERVICE_VECTOR, handle, 118, (uintptr_t)callback_timer, 0) == EIMBA);
 
-    /* Every typed exchange validates its executable pointer and refuses
-     * installation, leaving all kernel callbacks untouched. */
+    /* The optional delivery facility returns typed user OLD stubs. */
     control.args.timer.new_handler = callback_timer;
-    CHECK(call(&pb, 118, 0, 0) == EINVFN && !control.args.timer.old_handler);
+    CHECK(call(&pb, 118, 0, 0) == VECTOR_RESULT && VECTOR_OLD(control.args.timer.old_handler));
     control.args.button.new_handler = callback_button;
-    CHECK(call(&pb, 125, 0, 0) == EINVFN && !control.args.button.old_handler);
+    CHECK(call(&pb, 125, 0, 0) == VECTOR_RESULT && VECTOR_OLD(control.args.button.old_handler));
     control.args.motion.new_handler = callback_motion;
-    CHECK(call(&pb, 126, 0, 0) == EINVFN && !control.args.motion.old_handler);
+    CHECK(call(&pb, 126, 0, 0) == VECTOR_RESULT && VECTOR_OLD(control.args.motion.old_handler));
     control.args.cursor.new_handler = callback_cursor;
-    CHECK(call(&pb, 127, 0, 0) == EINVFN && !control.args.cursor.old_handler);
+    CHECK(call(&pb, 127, 0, 0) == VECTOR_RESULT && VECTOR_OLD(control.args.cursor.old_handler));
     control.args.wheel.new_handler = callback_wheel;
-    CHECK(call(&pb, 134, 0, 0) == EINVFN && !control.args.wheel.old_handler);
+    CHECK(call(&pb, 134, 0, 0) == VECTOR_RESULT && VECTOR_OLD(control.args.wheel.old_handler));
     control.args.arrays.reserved[0] = control.args.arrays.reserved[1] = 0;
 
     source.fd_addr = bitmap_source;

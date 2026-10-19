@@ -18,6 +18,9 @@
 #include "sound.h"
 #include "floppy.h"
 #include "mfp.h"
+#if CONF_WITH_X32_VDI && CONF_WITH_USER_CALLBACKS
+#include "vdi_service.h"
+#endif
 
 /*
  * Deliberate no-ops, unlike ARM's own bios/arch/arm/vectors.c: this arch
@@ -97,6 +100,9 @@ void int_timerc(void)
 #endif
         timer_vbl_hook();
         etv_timer(timer_ms);
+#if CONF_WITH_X32_VDI && CONF_WITH_USER_CALLBACKS
+        vdi_service_callback_event(VDI_CALLBACK_TIMER, timer_ms, 0);
+#endif
     }
 }
 

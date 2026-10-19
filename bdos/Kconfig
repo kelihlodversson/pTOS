@@ -78,6 +78,15 @@ config CONF_WITH_PTOS_ABI_IMPORTS
 	  CONF_WITH_X32_AES adds the typed aes: client exports. Other
 	  namespaces, including the retired gemdos imports, are refused.
 
+config CONF_WITH_USER_CALLBACKS
+	bool "Typed callbacks on x32 user stacks"
+	depends on ARCH_X86_64 && CONF_WITH_USER_ASPACE && CONF_WITH_KHEAP
+	default y if CONF_WITH_X32_VDI
+	help
+	  Process-owned callback registrations, authenticated return/chaining
+	  stubs, alternate stacks and bounded nested ring-3 delivery. The
+	  legacy m68k and ARM callback conventions are unchanged.
+
 config CONF_WITH_KPROC
 	bool "Kernel-private process records" if !ARCH_X86_64
 	default y if ARCH_X86_64

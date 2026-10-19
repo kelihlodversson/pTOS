@@ -16,6 +16,9 @@
 #include "bdosstub.h"
 #include "biosext.h"
 #include "tosvars.h"
+#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
+#include "../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
+#endif
 #if CONF_WITH_X32_VDI
 #include "vdi_service.h"
 #include "x32vdi_image.h"
@@ -51,6 +54,10 @@ typedef struct kproc KPROC;
 /* PD is the public GEMDOS basepage and is writable by its process. Keep
  * native pointers and the user-range snapshot in this kernel-only record. */
 struct kproc {
+#if CONF_WITH_USER_CALLBACKS
+    USER_CALLBACK_STATE *callbacks;
+    UQUAD resume_rsp;
+#endif
 #if CONF_WITH_X32_AES
     AES_CLIENT_STATE *aes;
 #endif
@@ -230,6 +237,9 @@ void kproc_destroy(PD *pd)
 #endif
 #if CONF_WITH_X32_VDI
             vdi_service_process_exit(pd);
+#endif
+#if CONF_WITH_USER_CALLBACKS
+            user_callback_process_exit(pd);
 #endif
             *link = kproc->next;
             if (launcher)                   /* what it used is its launcher's children's */
@@ -584,6 +594,10 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
     }
 #if CONF_WITH_X32_AES
     if (!x32_aes_image_load(as))
+        return prepare_failed(kproc, as);
+#endif
+#if CONF_WITH_USER_CALLBACKS
+    if (!user_callback_image_load(as))
         return prepare_failed(kproc, as);
 #endif
 #if CONF_WITH_X32_VDI
@@ -978,6 +992,42 @@ static UQUAD stack_bytes(const KPROC *kproc)
     return kproc->stack_size ? kproc->stack_size : USER_STACK_SIZE;
 }
 
+#if CONF_WITH_USER_CALLBACKS
+USER_CALLBACK_STATE *kproc_callbacks_get(PD *pd)
+{
+    KPROC *k = kproc_find(pd);
+    return k ? k->callbacks : NULL;
+}
+
+BOOL kproc_callbacks_set(PD *pd, USER_CALLBACK_STATE *state)
+{
+    KPROC *k = kproc_find(pd);
+    if (!k)
+        return FALSE;
+    k->callbacks = state;
+    return TRUE;
+}
+
+UQUAD kproc_resume_rsp(PD *pd)
+{
+    KPROC *k = kproc_find(pd);
+    return k ? (k->resume_rsp ? k->resume_rsp : k->stack_top) : 0;
+}
+
+void kproc_record_rsp(PD *pd, UQUAD rsp)
+{
+    KPROC *k = kproc_find(pd);
+    if (k)
+        k->resume_rsp = rsp;
+}
+
+UQUAD kproc_stack_bottom(PD *pd)
+{
+    KPROC *k = kproc_find(pd);
+    return k ? USER_STACK_TOP - stack_bytes(k) : 0;
+}
+#endif
+
 /* where the Malloc() memory ends: the stack's address space starts, less a guard
  * page that belongs to neither (a stack that outgrows its limit faults) */
 static UQUAD heap_limit(const KPROC *kproc)
@@ -1147,6 +1197,12 @@ int kproc_demand_page(PD *pd, UQUAD va)
 static void lazy_oom(void)
 {
     kcprintf("process: no physical page left for its memory\n");
+#if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
+    x86_64_memtest_callback_lazy_oom();
+#endif
+#if CONF_WITH_USER_CALLBACKS
+    user_callback_fault();
+#endif
     xterm((UWORD)-1);
 }
 
@@ -1334,6 +1390,42 @@ static struct uheap_block *heap_find(KPROC *kproc, UQUAD va)
     return NULL;
 }
 
+#if CONF_WITH_USER_CALLBACKS
+BOOL kproc_callback_mfree_allowed(PD *pd, UQUAD address)
+{
+    KPROC *kproc = kproc_find(pd);
+    struct uheap_block *b;
+
+    return kproc && kproc->aspace && (b = heap_find(kproc, address)) != NULL &&
+        b->kind == UH_MALLOC;
+}
+
+BOOL kproc_callback_stack_stable(PD *pd, UQUAD address, ULONG size)
+{
+    KPROC *kproc = kproc_find(pd);
+    ULONG i;
+
+    if (!kproc || !kproc->aspace)
+        return FALSE;
+    /* Child basepage/environment grants have the same independent lifetime
+     * as PE_LOAD heap images, even though they are writable in the caller. */
+    for (i = 0; i < KPROC_BORROWS; i++)
+        if (kproc->borrowed[i].bytes &&
+            address < kproc->borrowed[i].va + kproc->borrowed[i].bytes &&
+            kproc->borrowed[i].va < address + size)
+            return FALSE;
+    for (i = 0; i < kproc->nheap; i++) {
+        const struct uheap_block *b = &kproc->heap[i];
+
+        if ((b->kind == UH_LOADED || b->kind == UH_LENT) &&
+            address < b->va + (UQUAD)b->pages * USER_PAGE_SIZE &&
+            b->va < address + size)
+            return FALSE;
+    }
+    return TRUE;
+}
+#endif
+
 /* gives the block back: unmaps its pages and drops its entry */
 static LONG heap_release(KPROC *kproc, struct uheap_block *b)
 {
@@ -1353,6 +1445,10 @@ LONG kproc_uheap_free(PD *pd, UQUAD va)
 
     if (!kproc || !kproc->aspace || !(b = heap_find(kproc, va)) || b->kind != UH_MALLOC)
         return EIMBA;
+#if CONF_WITH_USER_CALLBACKS
+    if (user_callback_pinned(pd, va, (UQUAD)b->pages * USER_PAGE_SIZE))
+        return EACCDN;
+#endif
     return heap_release(kproc, b);
 }
 
@@ -1375,6 +1471,11 @@ LONG kproc_uheap_shrink(PD *pd, UQUAD va, long len)
         return EGSBF;
     if (keep == b->pages)
         return E_OK;
+#if CONF_WITH_USER_CALLBACKS
+    if (user_callback_pinned(pd, va + keep * USER_PAGE_SIZE,
+                            (UQUAD)(b->pages - keep) * USER_PAGE_SIZE))
+        return EACCDN;
+#endif
     if (!aspace_release_lazy(kproc->aspace, va + keep * USER_PAGE_SIZE,
                                      (UQUAD)(b->pages - keep) * USER_PAGE_SIZE))
         return ERR;

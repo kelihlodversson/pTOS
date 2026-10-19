@@ -17,7 +17,9 @@ config CONF_WITH_X32_VDI
 	help
 	  Build the checked x32 VDI client services: private virtual
 	  workstations, polyline and clipping, memory raster operations and
-	  safe refusal of user callbacks, plus the vdi:vdi application import.
+	  typed callback exchange, plus the vdi:vdi application import.
+	  CONF_WITH_USER_CALLBACKS enables process-owned ring-3 delivery;
+	  without it callback installation is safely refused.
 	  Each process gets a private read-only client image. Unsupported
 	  operations return an error. The generic ring-3 GEM trap remains disabled. This does not
 	  enable AES or the desktop and is independent of the EmuCON baseline.
