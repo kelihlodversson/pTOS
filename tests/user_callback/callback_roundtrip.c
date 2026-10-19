@@ -32,6 +32,8 @@ static ULONG *volatile fault_address;
 static USER_CALLBACK_STACK *oom_output;
 static ULONG free_child, free_environment;
 static volatile ULONG free_checks_done;
+static volatile ULONG quota_calls;
+extern const UBYTE callback_quota_handlers[], callback_quota_handlers_end[];
 
 #define CHECK(expr) do { if (!(expr) && !failure) failure = __LINE__; } while (0)
 #define HCHECK(expr) do { if (!(expr) && !handler_failure) handler_failure = __LINE__; } while (0)
@@ -190,6 +192,78 @@ static int native_old_checks(void)
     /* Repeated native exchanges preserve the exact original capabilities. */
     CHECK(exchange(127, 0, &old) == E_OK && old.old_handler == old_cursor.old_handler);
     CHECK(exchange(134, 0, &old) == E_OK && old.old_handler == old_wheel.old_handler);
+    return failure;
+}
+
+static ULONG quota_handler(ULONG index)
+{
+    return (ULONG)(uintptr_t)callback_quota_handlers + index * 16;
+}
+
+static void quota_parent(WORD status)
+{
+    VDI_SERVICE_VECTOR_RESULT old = { 0x12345678, 123, 456 };
+    ULONG i;
+
+    HCHECK(status == quota_calls);
+    quota_calls++;
+    if (status < USER_CALLBACK_CAPS - 1) {
+        HCHECK(exchange(125, (uintptr_t)quota_parent, &old) == E_OK);
+        HCHECK(old.old_handler == USER_CALLBACK_IMAGE + USER_CALLBACK_STUBS +
+               ((ULONG)status + 1) * USER_CALLBACK_STUB_SIZE);
+    } else if (status == USER_CALLBACK_CAPS - 1) {
+        /* All OLD slots are occupied. Failure with an existing target must
+         * retain it, and failures with new targets must return their quota. */
+        HCHECK(exchange(125, (uintptr_t)quota_parent, &old) == ENSMEM);
+        for (i = 0; i < USER_CALLBACK_CAPS; i++)
+            HCHECK(exchange(125, quota_handler(i), &old) == ENSMEM);
+        HCHECK(old.old_handler == 0x12345678 && old.tick_ms == 123 && old.reserved == 456);
+    }
+    HCHECK(raw(1, 0x10b, 0, 0, 0, 0) > 0);
+}
+
+static int quota_checks(BOOL child)
+{
+    VDI_SERVICE_VECTOR_RESULT old, direct, native;
+    ULONG i, parent = 0;
+    int failure = 0;
+
+    CHECK(callback_quota_handlers_end - callback_quota_handlers == USER_CALLBACK_CAPS * 32);
+    if (child) {
+        for (i = 0; i < USER_CALLBACK_CAPS; i++) {
+            CHECK(exchange(125, quota_handler(i), &old) == E_OK);
+            if (!i)
+                parent = old.old_handler;
+            CHECK(old.old_handler == parent);
+            if (failure)
+                return failure;
+            ((void (*)(WORD))(uintptr_t)parent)((WORD)i);
+        }
+        /* Failed exchanges left this child's last handler installed. Restore
+         * the original parent capability and prove it still delivers. */
+        CHECK(exchange(125, parent, &direct) == E_OK);
+        CHECK(direct.old_handler == quota_handler(USER_CALLBACK_CAPS - 1));
+        ((void (*)(WORD))(uintptr_t)parent)(USER_CALLBACK_CAPS);
+    } else {
+        CHECK(exchange(125, (uintptr_t)quota_parent, &native) == E_OK);
+        CHECK(raw(1, 0x4b, PE_LOADGO, (uintptr_t)"X32CB.TOS", (uintptr_t)"+", 0) == E_OK);
+        CHECK(quota_calls == USER_CALLBACK_CAPS + 1 && !handler_failure);
+        /* The full OLD table must not prevent same-owner exchanges. Exactly
+         * 63 registration slots remain after the one original handler. Use
+         * fresh addresses: retrying failed targets could reuse leaked records. */
+        for (i = 0; i < USER_CALLBACK_CAPS - 1; i++) {
+            CHECK(exchange(125, quota_handler(USER_CALLBACK_CAPS + i), &old) == E_OK);
+            CHECK(old.old_handler == (i ? quota_handler(USER_CALLBACK_CAPS + i - 1) :
+                                     (uintptr_t)quota_parent));
+        }
+        old.old_handler = 0x12345678;
+        CHECK(exchange(125, quota_handler(2 * USER_CALLBACK_CAPS - 1), &old) == ENSMEM);
+        CHECK(old.old_handler == 0x12345678);
+        CHECK(exchange(125, (uintptr_t)quota_parent, &old) == E_OK);
+        CHECK(old.old_handler == quota_handler(2 * USER_CALLBACK_CAPS - 2));
+        CHECK(exchange(125, native.old_handler, &old) == E_OK);
+        CHECK(old.old_handler == (uintptr_t)quota_parent);
+    }
     return failure;
 }
 
@@ -355,6 +429,8 @@ int callback_roundtrip_checks(const char *tail)
         return failure;
     handle = ws.handle;
     CHECK(prepare_stack() == 0);
+    if (mode == 'K' || mode == '+')
+        return quota_checks(mode == '+');
     if (mode == 'J' || mode == '&')
         return child_checks(mode == '&');
     if (mode == 'R') {

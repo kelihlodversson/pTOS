@@ -160,6 +160,7 @@ LONG user_callback_exchange(USER_CALLBACK **slot, UWORD signature,
     UQUAD flags;
     ULONG i;
     LONG rc;
+    BOOL created = FALSE;
 
     if (signature >= USER_CALLBACK_SIGNATURES || !fallback || !fallback->i32_void)
         return EINVAL;
@@ -202,6 +203,7 @@ LONG user_callback_exchange(USER_CALLBACK **slot, UWORD signature,
             target->next = state->owned;
             state->owned = target;
             state->nowned++;
+            created = TRUE;
         }
     }
     if (before && before->owner == run && before->signature == signature &&
@@ -209,8 +211,16 @@ LONG user_callback_exchange(USER_CALLBACK **slot, UWORD signature,
         *old = before->handler;
     } else {
         rc = capability(state, before, signature, fallback, old);
-        if (rc != E_OK)
+        if (rc != E_OK) {
+            /* This exchange has not published the new registration. Undo
+             * only its owner reference; existing handlers remain usable. */
+            if (created) {
+                state->owned = target->next;
+                state->nowned--;
+                release(target);
+            }
             return rc;
+        }
     }
     if (target)
         target->refs++;

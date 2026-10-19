@@ -1582,6 +1582,7 @@ static void test_ring3(void)
 
         probe_expect('C', 0, "typed callbacks, nested foreign OLD, revocation, alternate/normal stacks and GP/SSE/red zone");
 #if CONF_WITH_USER_CALLBACKS && CONF_WITH_X32_VDI
+        probe_expect('K', 0, "failed OLD capability allocation preserves registrations and quota");
         test_callback_motion();
         probe_expect('X', 0xffff, "a callback's privileged instruction ends only its owner");
         probe_expect('S', 0xffff, "callback stack exhaustion is contained");

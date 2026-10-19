@@ -42,4 +42,13 @@ callback_lazy_exec:
         movl $0x7ffff040,%esp   /* callback frame falls in the lazy page below */
         syscall
         ud2                    /* the quarantined parent must never resume */
+        /* Distinct executable WORD -> void handlers for quota regressions. */
+        .balign 16
+        .globl callback_quota_handlers,callback_quota_handlers_end
+callback_quota_handlers:
+        .rept 128
+        ret
+        .balign 16,0x90
+        .endr
+callback_quota_handlers_end:
         .section .note.GNU-stack,"",@progbits
