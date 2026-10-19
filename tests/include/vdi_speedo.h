@@ -327,14 +327,14 @@ static inline void v_getbitmap_info(short handle, short ch, long *advancex, long
     memcpy(bitmap, &vs_intout[10], sizeof(*bitmap));
 }
 
-static inline short v_getoutline(short handle, short ch, short *xyarray, char *bezarray,
-                                 short maxverts)
+static inline void v_getoutline(short handle, short ch, short *xyarray, char *bezarray,
+                                short maxverts, short *numverts)
 {
     vs_intin[0] = ch;
     vs_intin[1] = maxverts;
     vs_put_ptr(&vs_intin[2], xyarray);
     vs_put_ptr(&vs_intin[2 + sizeof(void *) / 2], bezarray);
-    return vs_call(handle, 243, 0, 0, 2 + sizeof(void *));
+    *numverts = vs_call(handle, 243, 0, 0, 2 + sizeof(void *));
 }
 
 static inline void v_killoutline(short handle, void *component)

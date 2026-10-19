@@ -888,6 +888,16 @@ static void check_speedo(short handle, short system_fonts)
     memcpy(&after, &intout[0], sizeof(after));
     font_check(before >= 0 && after >= before, "v_flushcache() freed nothing");
 
+    /* no outlines: gemlib's v_getoutline() gets 0 points in numverts */
+    {
+        short xy[8], numverts = -1;
+        char bez[4];
+
+        vs_intout[0] = -1;
+        v_getoutline(handle, 'A', xy, bez, 4, &numverts);
+        font_check(numverts == 0, "v_getoutline() does not answer 0 points");
+    }
+
     /* the table to BICS, which agrees with ASCII */
     intout[0] = intout[1] = 0;
     vdi_op(254, 0, handle);             /* vqt_get_table() */
