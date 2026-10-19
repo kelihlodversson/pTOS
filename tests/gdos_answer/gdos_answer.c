@@ -38,7 +38,13 @@
  * v_ftext_offset(); vst_map_mode() with text in BICS, Unicode (UCS-2
  * and UTF-16, a surrogate pair being one character) in the scalable font
  * and the system font, and vqt_char_index(); vst_kern(), vqt_pairkern()
- * and vst_track_offset(), which the width of text follows.
+ * and vst_track_offset(), which the width of text follows.  Those of the
+ * Unicode modes that #577 asks for are made through the bindings of
+ * tests/include/vdi_speedo.h: a string of Latin, Greek and Cyrillic is
+ * as wide as its characters' advances and drawn as they are drawn placed
+ * one by one with v_ftext_offset(), in UTF-16 a lone surrogate is the
+ * replacement character and not found by itself, and the offset of a
+ * pair's second WORD is not used.
  *
  * x86-64 programs cannot call the VDI at all (trap class 2 is refused
  * from ring 3), so it is skipped there.
@@ -54,6 +60,7 @@
 #include <mint/mintbind.h>
 #include <stddef.h>
 #include <string.h>
+#include "include/vdi_speedo.h"
 
 #define EINVFN          (-32L)
 #define SS_GETCOOKIE    8
@@ -1132,6 +1139,117 @@ static void check_run_pixels(short handle, short id)
     vdi_op(21, 1, handle);              /* back to the system font */
 }
 
+/* clear the area around the origin and see what was drawn there */
+static void ink_clear(short handle)
+{
+    intin[0] = 0;
+    vdi_op(25, 1, handle);              /* vsf_color(0) */
+    intin[0] = 1;
+    vdi_op(23, 1, handle);              /* vsf_interior(solid) */
+    ptsin[0] = ink_cx - ink_r;
+    ptsin[1] = ink_cy - ink_r;
+    ptsin[2] = ink_cx + ink_r;
+    ptsin[3] = ink_cy + ink_r;
+    ptsin_op(114, 2, 0, handle);        /* vr_recfl() */
+}
+
+static int same_ink(const struct ink *a, const struct ink *b)
+{
+    return a->count > 0 && a->count == b->count && a->x0 == b->x0 && a->x1 == b->x1
+        && a->y0 == b->y0 && a->y1 == b->y1;
+}
+
+/*
+ * Unicode (#577), through the bindings: several pages in one string,
+ * and UTF-16's surrogates
+ */
+static void check_unicode(short handle, short id, int pixels)
+{
+    static const short text[6] = { 'A', 0xe9, 0x3b1, 0x416, 0x3c9, 'z' };
+    short off[12], adv[6], extent[8], dummy, i, sum;
+    struct ink whole, one_by_one;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    vst_arbpt(handle, 14, &dummy, &dummy, &dummy, &dummy);
+    font_check(vst_map_mode(handle, MAP_UNICODE) == MAP_UNICODE,
+               "vst_map_mode() did not set Unicode");
+
+    /* as wide as the advances, and drawn as the characters one by one */
+    for (i = sum = 0; i < 6; i++)
+    {
+        vqt_advance(handle, text[i], &adv[i], &dummy, &dummy, &dummy);
+        sum += adv[i];
+        off[2 * i] = i ? adv[i - 1] : 0;
+        off[2 * i + 1] = 0;
+    }
+    vqt_f_extent(handle, text, 6, extent);
+    font_check(extent[2] - extent[0] == sum && sum > 0,
+               "Latin, Greek and Cyrillic are not as wide as their advances");
+    if (pixels)
+    {
+        ink_r = 60;
+        ink_cx = ink_cy = ink_r + 4;
+        ink_clear(handle);
+        v_ftext(handle, ink_cx - 50, ink_cy, text, 6);
+        ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &whole);
+        ink_clear(handle);
+        v_ftext_offset(handle, ink_cx - 50, ink_cy, text, 6, off);
+        ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                 &one_by_one);
+        font_check(same_ink(&whole, &one_by_one),
+                   "a string of several pages is not drawn as its characters one by one");
+    }
+
+    /* UTF-16: a lone surrogate is the replacement character, and not found alone */
+    {
+        static const short lone[3] = { 'a', (short)0xd800, 'b' };
+        static const short repl[3] = { 'a', (short)0xfffd, 'b' };
+        static const short pair[4] = { 'a', (short)0xd83d, (short)0xde00, 'b' };
+        short w_repl, padv;
+        long x, y;
+
+        vqt_f_extent(handle, repl, 3, extent);
+        w_repl = extent[2] - extent[0];
+        font_check(vst_map_mode(handle, MAP_UTF16) == MAP_UTF16, "vst_map_mode() did not set UTF-16");
+        vqt_f_extent(handle, lone, 3, extent);
+        font_check(extent[2] - extent[0] == w_repl, "a lone surrogate is not the replacement character");
+        v_ftext(handle, 20, 40, lone, 3);
+        vqt_advance32(handle, (short)0xd800, &x, &y);
+        font_check(x == 0 && vqt_char_index(handle, (short)0xd800, CHARIDX_UNICODE, CHARIDX_DIRECT) == 0xffff,
+                   "a surrogate alone is found");
+
+        /* the offset of a pair's second WORD is not used */
+        if (pixels)
+        {
+            vqt_f_extent(handle, pair, 2, extent);     /* 'a' and half a pair: 'a' and U+FFFD */
+            vqt_advance(handle, 'a', &adv[0], &dummy, &dummy, &dummy);
+            vqt_f_extent(handle, pair + 1, 2, extent);
+            padv = extent[2] - extent[0];               /* the pair */
+            off[0] = off[1] = 0;
+            off[2] = adv[0];
+            off[3] = 0;
+            off[4] = 77;                                /* not used */
+            off[5] = 33;
+            off[6] = padv;
+            off[7] = 0;
+            ink_clear(handle);
+            v_ftext(handle, ink_cx - 50, ink_cy, pair, 4);
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &whole);
+            ink_clear(handle);
+            v_ftext_offset(handle, ink_cx - 50, ink_cy, pair, 4, off);
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                     &one_by_one);
+            font_check(same_ink(&whole, &one_by_one),
+                       "the offset of a surrogate pair's second WORD is used");
+        }
+    }
+
+    vst_map_mode(handle, MAP_ATARI);
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
 static void check_fonts(void)
 {
     short handle, system_fonts, i, aes_there, drive, id;
@@ -1230,6 +1348,7 @@ static void check_fonts(void)
         {
             check_large(handle, id);
             check_run_pixels(handle, id);
+            check_unicode(handle, id, 1);
         }
     }
 

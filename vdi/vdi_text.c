@@ -809,8 +809,10 @@ static LONG char_place(Vwk *vwk, LONG cp, WORD *ch)
         *ch = (WORD)cp;
         return RUN_SAME;
     }
-    if (cp >= 0 && (vwk->cur_font->flags & F_SFONT))
+    if (vwk->cur_font->flags & F_SFONT)
     {
+        if (cp < 0)
+            cp = 0xfffdL;               /* a lone surrogate: the replacement character */
         *ch = (WORD)(cp & 0xff);
         return cp >> 8;
     }
@@ -1084,17 +1086,19 @@ void vdi_v_gtext(Vwk * vwk)
 /*
  * v_ftext() is v_gtext(), and v_ftext_offset() (more than one point in
  * ptsin) places each character at its own offset (ptsin[2..], a pair per
- * character) from where the one before it is, the first from the point,
- * instead of after the one before, as fVDI does.  The alignment is for
- * the extent from the first character to the end of the last.
+ * WORD of the string) from where the one before it is, the first from the
+ * point, instead of after the one before, as fVDI does.  In UTF-16, the
+ * second WORD of a surrogate pair is no character of its own: its offset
+ * is not used.  The alignment is for the extent from the first character
+ * to the end of the last.
  */
 void vdi_v_ftext(Vwk * vwk)
 {
-    WORD count = CONTRL->nintin, nchars = CONTRL->nptsin - 1;
+    WORD count = CONTRL->nintin, noffs = CONTRL->nptsin - 1;
     WORD *str = INTIN, *off = PTSIN + 2, *old_ptsin = PTSIN;
-    WORD pos, next, i, last = 0, along, h_align, dx, dy, pts[2];
+    WORD pos, next, last = 0, along, h_align, dx, dy, pts[2];
 
-    if (nchars < 1)
+    if (noffs < 1)
     {
         output_text(vwk, count, str, -1, NULL);
         return;
@@ -1102,12 +1106,14 @@ void vdi_v_ftext(Vwk * vwk)
 
     /* the extent along the baseline, for the alignment */
     along = 0;
-    for (pos = i = 0; pos < count && i < nchars; pos = next, i++)
+    if (count > noffs)
+        count = noffs;
+    for (pos = 0; pos < count; pos = next)
     {
         next = pos;
         next_char(vwk->char_map, str, count, &next);
-        if (i)
-            along += baseline_part(vwk, off[2 * i], off[2 * i + 1]);
+        if (pos)
+            along += baseline_part(vwk, off[2 * pos], off[2 * pos + 1]);
         last = pos;
     }
     along += vdi_text_width(vwk, pos - last, str + last);
@@ -1119,12 +1125,12 @@ void vdi_v_ftext(Vwk * vwk)
     PTSIN = pts;
     pts[0] = old_ptsin[0] - dx;
     pts[1] = old_ptsin[1] - dy;
-    for (pos = i = 0; pos < count && i < nchars; pos = next, i++)
+    for (pos = 0; pos < count; pos = next)
     {
         next = pos;
         next_char(vwk->char_map, str, count, &next);
-        pts[0] += off[2 * i];
-        pts[1] += off[2 * i + 1];
+        pts[0] += off[2 * pos];
+        pts[1] += off[2 * pos + 1];
         output_text(vwk, next - pos, str + pos, -1, NULL);
     }
     PTSIN = old_ptsin;

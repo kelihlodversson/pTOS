@@ -813,7 +813,8 @@ void vdi_vqt_char_index(Vwk *vwk)
             cp = vdi_atari_to_unicode((UBYTE)c);
         break;
     case CHARIDX_UNICODE:
-        cp = c;
+        if (c < 0xd800 || c >= 0xe000)  /* a surrogate is half a character */
+            cp = c;
         break;
     }
 
