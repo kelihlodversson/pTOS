@@ -327,19 +327,35 @@ jobs:
           head -c 2000 x32hello.elf > esp/X32TRUNC.TOS
           cp /usr/share/OVMF/OVMF_VARS_4M.fd .
 
+          rm -f boot.log boot-monitor.sock
+          aes_input_pid=
+          if grep -q '^CONF_WITH_X32_ACCESSORY_TEST=y' .config; then
+            python3 tests/x32_accessory/drive_input.py boot.log boot-monitor.sock &
+            aes_input_pid=$!
+          fi
           set +e
           timeout 60 qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
             -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
             -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
             -drive format=raw,file=fat:rw:esp \
-            -serial file:boot.log -display none
+            -serial file:boot.log -display none \
+            -monitor unix:boot-monitor.sock,server=on,wait=off
           qemu_exit=$?
+          aes_input_exit=0
+          if [ -n "$aes_input_pid" ]; then
+            wait "$aes_input_pid"
+            aes_input_exit=$?
+          fi
           set -e
 
           echo "::group::Serial console log"
           cat boot.log
           echo "::endgroup::"
 
+          if [ "$aes_input_exit" != 0 ]; then
+            echo "::error::typed AES PS/2 input regression failed"
+            exit 1
+          fi
           if [ "$qemu_exit" != 124 ]; then
             echo "::error::qemu-system-x86_64 exited with code $qemu_exit instead of running until the timeout killed it -- that means it never reached the shell (where it would otherwise wait for input forever)"
             exit 1

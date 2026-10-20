@@ -547,7 +547,7 @@ void abutton(EVB *e, LONG p)
 {
     WORD bclicks;
 
-    if (downorup(button, p))
+    if ((!(e->e_flag & EVFOCUS) || rlr == gl_mowner) && downorup(button, p))
     {
         azombie(e, 1);      /* 'nuff said */
     }
@@ -587,7 +587,7 @@ void amouse(EVB *e, intptr_t pmo)
     mob = *(MOBLK *)pmo;
 
     /* if already in (or out) of rectangle, signal immediately */
-    if (in_mrect(&mob))
+    if ((!(e->e_flag & EVFOCUS) || rlr == gl_mowner) && in_mrect(&mob))
         azombie(e, 0);
     else
     {

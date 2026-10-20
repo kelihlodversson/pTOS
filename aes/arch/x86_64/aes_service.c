@@ -9,6 +9,7 @@
 #include "gemerror.h"
 #include "kheap.h"
 #include "string.h"
+#include "tosvars.h"
 #if CONF_WITH_AES
 #include "aes_accessory.h"
 #endif
@@ -142,7 +143,7 @@ static LONG register_client(UQUAD address, UQUAD output)
     info.features = AES_FEATURE_MESSAGE | AES_FEATURE_UPDATE;
 #if CONF_WITH_AES
     if (x86_64_aes_owned(run)) {
-        info.features |= AES_FEATURE_WAIT;
+        info.features |= AES_FEATURE_WAIT | AES_FEATURE_INPUT;
         x86_64_aes_registration(run, TRUE);
     }
 #endif
@@ -228,6 +229,82 @@ static LONG update_ownership(AES_CLIENT_STATE *p, UQUAD code)
     return E_OK;
 }
 
+static BOOL valid_rectangle(const AES_EVENT_RECT *mouse)
+{
+    return (mouse->outside == 0 || mouse->outside == 1) &&
+        mouse->rectangle.g_w > 0 && mouse->rectangle.g_h > 0 &&
+        (LONG)mouse->rectangle.g_x + mouse->rectangle.g_w <= 32767L &&
+        (LONG)mouse->rectangle.g_y + mouse->rectangle.g_h <= 32767L;
+}
+
+static LONG input_events(UQUAD input, UQUAD output)
+{
+    AES_EVENT_REQUEST request;
+    AES_INPUT_EVENT event;
+#if CONF_WITH_AES
+    AES_CLIENT_STATE *p;
+    LONG rc;
+    ULONG started, timeout, elapsed;
+#endif
+
+    if ((input & 3) || !kproc_copy_from_user(&request, input, sizeof(request)))
+        return EIMBA;
+    if (!request.mask || (request.mask & ~AES_EVENT_ALL) ||
+        (request.flags & ~AES_EVENT_POLL) || request.reserved ||
+        request.timer_ms > 0x7fffffffUL ||
+        ((request.mask & AES_EVENT_BUTTON) &&
+         (!request.clicks || request.clicks > 255 ||
+          !request.button_mask || request.button_mask > 3 ||
+          (request.button_state & ~request.button_mask))) ||
+        ((request.mask & AES_EVENT_MOUSE1) && !valid_rectangle(&request.mouse1)) ||
+        ((request.mask & AES_EVENT_MOUSE2) && !valid_rectangle(&request.mouse2)))
+        return EINVAL;
+    if ((output & 1) || !kproc_validate_user_write(output, sizeof(event)))
+        return EIMBA;
+#if CONF_WITH_AES
+    if (!x86_64_aes_owned(run))
+        return EACCDN;
+    timeout = request.timer_ms;
+    started = (ULONG)hz_200;
+    do {
+        p = kproc_aes_get(run);
+        if (!p)
+            return EACCDN;
+        /* A callback may drain a message after it wakes this task. Keep
+         * the original timeout when retrying such a spurious wake. */
+        if ((request.mask & AES_EVENT_TIMER) && timeout) {
+            elapsed = (ULONG)hz_200 - started;
+            request.timer_ms = elapsed >= (timeout + 4) / 5 ?
+                0 : timeout - elapsed * 5;
+        }
+        memset(&event, 0, sizeof(event));
+        rc = x86_64_aes_events(run, &request, &event,
+                              (request.mask & AES_EVENT_MESSAGE) && p->count);
+        if (rc)
+            return rc;
+        /* An intervening callback can revoke/recreate the registration. */
+        p = kproc_aes_get(run);
+        if (!p)
+            return EACCDN;
+        if ((request.mask & AES_EVENT_MESSAGE) && p->count) {
+            event.events |= AES_EVENT_MESSAGE;
+            event.message = p->queue[p->head];
+        }
+    } while (!event.events && !(request.flags & AES_EVENT_POLL));
+    if (!kproc_copy_to_user(output, &event, sizeof(event)))
+        return EIMBA;
+    if (event.events & AES_EVENT_MESSAGE) {
+        if (event.message.type == 41)
+            x86_64_aes_flags(run, 4); /* AP_ACCLOSE */
+        p->head = (p->head + 1) % AES_MESSAGE_QUEUE;
+        p->count--;
+    }
+    return event.events;
+#else
+    return EACCDN;
+#endif
+}
+
 LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
     AES_CLIENT_STATE *p;
@@ -236,7 +313,7 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 
     if (!kproc_user_aspace(run))
         return EACCDN;
-    if (fn > AES_SERVICE_YIELD)
+    if (fn > AES_SERVICE_MULTI)
         return EINVFN;
     if (c || d || ((fn == AES_SERVICE_EXIT || fn == AES_SERVICE_YIELD) && (a || b)) ||
         ((fn == AES_SERVICE_FIND || fn == AES_SERVICE_READ ||
@@ -267,6 +344,8 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         return receive_message(p, b, TRUE);
     case AES_SERVICE_UPDATE:
         return update_ownership(p, a);
+    case AES_SERVICE_MULTI:
+        return input_events(a, b);
     case AES_SERVICE_WAIT:
         if (a != AES_EVENT_MESSAGE)
             return EINVAL;

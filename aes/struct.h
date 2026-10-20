@@ -94,6 +94,7 @@ struct uda                  /* user stack data area */
 #define COMPLETE 0x0002         /* event completed */
 #define EVDELAY  0x0004         /* event is delay event */
 #define EVMOUT   0x0008         /* event flag for mouse wait outside of rect*/
+#define EVFOCUS  0x0010         /* immediate mouse checks require ownership */
 
 struct evb                  /* event block */
 {

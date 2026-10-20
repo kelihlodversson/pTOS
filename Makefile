@@ -1849,13 +1849,13 @@ obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC: ACC_TEST_CRT = $(LI
 $(LIBCMINI_OBJDIR)/crt0.o: $(LIBCMINI_LIB)
 	$(LIBCMINI_MAKE) $@
 obj/x32/ACCONE.ACC obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC: \
-  tests/x32_accessory/accessory.c tests/x32_accessory/entry.S \
+  tests/x32_accessory/accessory.c tests/x32_accessory/input.c tests/x32_accessory/entry.S \
   $(LIBCMINI_LIB) $(LIBCMINI_CRT0) $(LIBCMINI_OBJDIR)/crt0.o \
   obj/x32/libptos-aes.a obj/x32/libptos-vdi.a $(AUTOCONF_H) | obj/x32
 	$(X32_CC) $(X32_CLI_CFLAGS) -I$(LIBCMINI_INC) -Iinclude -Iobj \
 	  -DACC_ROLE=$(ACC_TEST_ROLE) -DACC_NAME='"$(basename $(notdir $@))"' \
 	  $(X32_LDFLAGS) -Wl,-e,acc_probe_entry -o $@ \
-	  tests/x32_accessory/accessory.c tests/x32_accessory/entry.S $(ACC_TEST_CRT) \
+	  tests/x32_accessory/accessory.c tests/x32_accessory/input.c tests/x32_accessory/entry.S $(ACC_TEST_CRT) \
 	  -Lobj/x32 -lptos-aes -lptos-vdi $(LIBCMINI_LIB)
 .PHONY: x32-accessory-test
 x32-accessory-test: obj/x32/ACCONE.ACC obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC obj/x32/BADACC.ACC

@@ -17,6 +17,11 @@
 #include "obdefs.h"
 #include "biosext.h"
 #include "string.h"
+#include "geminput.h"
+#include "gemdisp.h"
+#include "gemevlib.h"
+#include "gemgsxif.h"
+#include "gemctrl.h"
 
 #define MESSAGE_WAIT 0x8000
 typedef struct {
@@ -104,6 +109,71 @@ LONG x86_64_aes_yield(PD *pd)
     if (!x86_64_aes_owned(pd))
         return EACCDN;
     dsptch();
+    return E_OK;
+}
+
+LONG x86_64_aes_events(PD *pd, const AES_EVENT_REQUEST *request,
+                       AES_INPUT_EVENT *event, BOOL message_ready)
+{
+    EVSPEC flags = request->mask & ~AES_EVENT_MESSAGE;
+    EVSPEC bit, completed;
+    MOBLK mouse1, mouse2;
+    EVB *e;
+    WORD available = 0, needed = 0;
+    BOOL immediate = (flags & MU_TIMER) && !request->timer_ms;
+
+    if (!x86_64_aes_owned(pd))
+        return EACCDN;
+    if (immediate || (request->flags & AES_EVENT_POLL))
+        flags &= ~MU_TIMER;
+    for (bit = 1; bit <= MU_TIMER; bit <<= 1)
+        if (flags & bit)
+            needed++;
+    for (e = eul; e && available < needed; e = e->e_nextp)
+        available++;
+    if (available < needed)
+        return ENSMEM;
+    chkkbd();
+    forker();
+    mouse1.m_out = request->mouse1.outside;
+    mouse1.m_gr = request->mouse1.rectangle;
+    mouse2.m_out = request->mouse2.outside;
+    mouse2.m_gr = request->mouse2.rectangle;
+    if (flags & MU_KEYBD)
+        iasync_owned(MU_KEYBD, 0);
+    if (flags & MU_BUTTON)
+        iasync_owned(MU_BUTTON, combine_cms(request->clicks,
+                      request->button_mask, request->button_state));
+    if (flags & MU_M1)
+        iasync_owned(MU_M1, (intptr_t)&mouse1);
+    if (flags & MU_M2)
+        iasync_owned(MU_M2, (intptr_t)&mouse2);
+    if (flags & MU_TIMER)
+        iasync_owned(MU_TIMER, (request->timer_ms + gl_ticktime - 1) / gl_ticktime);
+    /* A stale message wake may survive the previous wait. No producer can
+     * run between this reset and mwait() except through this dispatcher. */
+    rlr->p_evflg &= ~MESSAGE_WAIT;
+    if (request->mask & AES_EVENT_MESSAGE)
+        rlr->p_flags |= AP_MESAG;
+    if (!(request->flags & AES_EVENT_POLL) && !immediate && !message_ready)
+        mwait(flags | ((request->mask & AES_EVENT_MESSAGE) ? MESSAGE_WAIT : 0));
+    completed = acancel(flags);
+    for (bit = 1; bit <= MU_TIMER; bit <<= 1)
+        if (completed & bit) {
+            UWORD value = apret(bit);
+            if (bit == MU_KEYBD)
+                event->key = value;
+            if (bit == MU_BUTTON)
+                event->clicks = value;
+        }
+    rlr->p_evwait &= ~MESSAGE_WAIT;
+    rlr->p_evflg &= ~MESSAGE_WAIT;
+    event->events = completed | (immediate ? MU_TIMER : 0);
+    event->mouse_x = mtrans > 1 ? pr_xrat : xrat;
+    event->mouse_y = mtrans > 1 ? pr_yrat : yrat;
+    event->buttons = mtrans > 1 ? pr_button : button;
+    event->modifiers = kstate;
+    mtrans = 0;
     return E_OK;
 }
 
@@ -283,28 +353,45 @@ void x86_64_aes_test_begin(void)
 
 BOOL x86_64_aes_test_run(void)
 {
-    WORD i, n, dead = 0, waiting = 0;
+    WORD i, n, attempt, dead = 0, waiting = 0;
     WORD close_message[8] = { 41, 0, 0, 0, 0, 0, 0, 0 };
     ACCESSORY_CONTEXT *c;
+    AESPD *old_owner;
+    GRECT old_control, control = { 0, 0, gl_width, gl_height };
+    BOOL old_ctmown = gl_ctmown;
 
     if (totpds != 7 || curpid != 6)
         panic("accessory refused-load publication FAIL\n");
-    for (i = 0; i < 50; i++)
-        dsptch();
-    for (i = 2; i < NUM_PDS; i++) {
-        c = &contexts[i];
-        if (!c->aes)
-            continue;
-        if (!memcmp(c->aes->p_name, "ACCONE  ", 8) &&
-            !c->owner && c->result == 17)
-            dead++;
-        if (!memcmp(c->aes->p_name, "ACCFAULT", 8) &&
-            !c->owner && c->result == 0xffff)
-            dead++;
-        if (c->owner && (c->aes->p_evwait & MESSAGE_WAIT) &&
-            (c->aes->p_flags & AP_MESAG))
-            waiting++;
+    get_mown(&old_owner);
+    get_ctrl(&old_control);
+    set_ctrl(&control);
+    gl_ctmown = TRUE;
+    for (i = 2; i < NUM_PDS; i++)
+        if (contexts[i].aes && !memcmp(contexts[i].aes->p_name, "ACCTWO  ", 8))
+            set_mown(contexts[i].aes);
+    for (attempt = 0; attempt < 1000; attempt++) {
+        ev_timer(10L);
+        dead = waiting = 0;
+        for (i = 2; i < NUM_PDS; i++) {
+            c = &contexts[i];
+            if (!c->aes)
+                continue;
+            if (!memcmp(c->aes->p_name, "ACCONE  ", 8) &&
+                !c->owner && c->result == 17)
+                dead++;
+            if (!memcmp(c->aes->p_name, "ACCFAULT", 8) &&
+                !c->owner && c->result == 0xffff)
+                dead++;
+            if (c->owner && c->aes->p_evwait == MESSAGE_WAIT &&
+                (c->aes->p_flags & AP_MESAG))
+                waiting++;
+        }
+        if (dead == 2 && waiting == 2)
+            break;
     }
+    set_ctrl(&old_control);
+    set_mown(old_owner);
+    gl_ctmown = old_ctmown;
     if (dead != 2 || waiting != 2)
         panic("accessory lifecycle FAIL: dead=%d waiting=%d\n", dead, waiting);
     /* Exercise the native AES message bridge and receive acknowledgement. */

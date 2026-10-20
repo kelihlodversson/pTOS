@@ -5,6 +5,7 @@
 #define X86_64_AES_ACCESSORY_H
 #include "portab.h"
 #include "bdosdefs.h"
+#include "aes_client.h"
 
 struct aespd;
 #define X32_AES_DEAD 0x8000
@@ -16,6 +17,8 @@ void x86_64_aes_drain(void);
 BOOL x86_64_aes_owned(PD *pd);
 LONG x86_64_aes_wait(PD *pd);
 LONG x86_64_aes_yield(PD *pd);
+LONG x86_64_aes_events(PD *pd, const AES_EVENT_REQUEST *request,
+                       AES_INPUT_EVENT *event, BOOL message_ready);
 void x86_64_aes_wake(PD *pd);
 void x86_64_aes_flags(PD *pd, UWORD flags);
 void x86_64_aes_registration(PD *pd, BOOL active);

@@ -1,5 +1,5 @@
-Native x32 AES clients and kernel service (#404)
-================================================
+Native x32 AES clients and kernel service (#404, #613)
+====================================================
 
 CONF_WITH_X32_AES enables typed ring-3 clients and kernel-owned application
 registration, messaging, message events and update ownership. It depends on
@@ -8,9 +8,10 @@ PC and VDI-only configurations leave AES services disabled. The EmuCON-only
 baseline is independent of this feature.
 
 This is the shared service boundary for native applications and accessories.
-The existing cooperative AES scheduler and EmuDesk are not launched by this
-option: their process-entry integration remains later #548 work. The legacy
-AES implementation stays in the kernel on ARM/m68k. No raw AESPB, GEMBLK,
+The cooperative AES scheduler and native EmuDesk are selected by
+pc-x86_64-accessories_defconfig; EmuDesk's ring-3 port remains later #548
+work. The legacy AES implementation stays in the kernel on ARM/m68k.
+No raw AESPB, GEMBLK,
 AESGLOBAL or kernel code/data pointer becomes part of this x32 interface.
 Generic ring-3 GEM trap class 2 remains rejected, including opcodes 200/201.
 
@@ -54,8 +55,8 @@ plus mutable AES global array. Prototypes and buffer directions are explicit:
         mask must be AES_EVENT_MESSAGE (0x0010). Write exactly 20 bytes
         (2-byte aligned). Return 0 and an all-zero event if empty; otherwise
         return 0x0010 and the oldest message with events set to 0x0010.
-        Unsupported masks are EINVAL. Keyboard, mouse, timers and blocking
-        evnt_multi waits require further input/scheduling integration.
+        Unsupported masks are EINVAL. This original message-only API and its
+        20-byte result remain unchanged; combined input uses aes_evnt_multi.
 
     LONG aes_wind_update(WORD code);
         0/1 release/acquire the desktop-update lock; 2/3 release/acquire the
@@ -83,8 +84,44 @@ needed because each syscall identifies the current KPROC.
         Registration is required; ordinary Pexec clients, nested children
         and user callbacks return EACCDN.
 
-All functions except find/poll/wait return E_OK on success. Calls other than init
-require registration. Disabled service classes return EINVFN. Malformed
+    LONG aes_evnt_multi(const AES_EVENT_REQUEST *request, AES_INPUT_EVENT *event);
+        Associated accessories with AES_FEATURE_INPUT combine keyboard (0x01),
+        button (0x02), rectangle 1 (0x04), rectangle 2 (0x08), message (0x10)
+        and timer (0x20) events. Return the completed mask, or 0 for an empty
+        poll. All result fields are initialized; message/key/click values
+        are zero unless their event completed.
+
+        mask must contain at least one supported event; reserved must be 0.
+        flags is 0 to block or AES_EVENT_POLL for a nonblocking check. A zero
+        timer is immediately ready; positive milliseconds are rounded up to
+        AES ticks, with a maximum of 0x7fffffff. A poll does not start a future
+        timer. Button waits accept 1-255 clicks, a nonzero mask of the two
+        mouse buttons (1-3) and a state contained in that mask. The click count
+        caps the returned count, following native AES rules. Each selected
+        rectangle has outside=0 (enter) or 1 (leave), positive width/height,
+        and right/bottom coordinates at most 32767.
+
+        Keyboard input comes from the task's own AES queue. Mouse conditions
+        and delivery follow AES focus ownership; a background task does not
+        satisfy its mouse wait using the focused task's current state. This
+        call does not grant focus. Future window services will manage it.
+        Mouse coordinates/buttons and modifiers are the native AES snapshot;
+        key contains the scan code in its high byte and character in its low
+        byte. Modifiers use the existing vq_key_s bit assignments.
+
+        Copy the complete, 4-byte-aligned request before registering events.
+        Validate the 2-byte-aligned output before consuming input or blocking,
+        and check copyout again on resume. Request/output overlap is safe.
+        Only trusted request copies/native event records survive suspension.
+        Losing waits are cancelled before return. A typed message is dequeued
+        only after successful copyout. If output becomes invalid during the
+        wait, return EIMBA; native input may already have been collected, while
+        the typed message stays queued. Ordinary Pexec clients and nested
+        children return EACCDN, including polls, until associated scheduling
+        exists. User callbacks cannot call it. Exit/restart cancels all waits.
+
+All functions except find/poll/wait/multi return E_OK on success. Calls other
+than init require registration. Disabled service classes return EINVFN. Malformed
 scalars or names return EINVAL, inaccessible/misaligned buffers EIMBA,
 registration/ownership violations EACCDN, absent recipients/names ESRCH,
 full/empty queues or contended locks EAGAIN, exhausted memory ENSMEM and
@@ -97,8 +134,9 @@ Representations (native byte order)
 
 AES_APP_INFO (12 bytes, alignment 4): UWORD version at 0 (0x0100: this client
 ABI's version), WORD id at 2, UWORD queue_capacity at 4 (8), UWORD reserved
-at 6 (zero), ULONG features at 8 (MESSAGE=1, UPDATE=2). It is a value result,
-not writable shared service state. Editing it cannot change ownership.
+at 6 (zero), ULONG features at 8 (MESSAGE=1, UPDATE=2, WAIT=4, INPUT=8).
+WAIT and INPUT are advertised only for associated AES tasks. It is a value
+result, not writable shared service state. Editing it cannot change ownership.
 
 AES_MESSAGE (16 bytes, alignment 2): WORD type at 0, sender at 2, reserved
 at 4 (zero), data[5] at 6. Messages are application data, not authenticated
@@ -108,6 +146,14 @@ which registered process sent one from the kernel-supplied sender field.
 AES_EVENT (20 bytes, alignment 2): UWORD events at 0, reserved at 2 (zero),
 AES_MESSAGE message at 4. Output records and unused fields are initialized;
 no kernel stack or address is copied into them.
+
+AES_EVENT_RECT (10 bytes, alignment 2): WORD outside at 0 and GRECT at 2.
+AES_EVENT_REQUEST (36 bytes, alignment 4): UWORD mask/flags at 0/2,
+clicks/button_mask/button_state/reserved at 4/6/8/10, mouse1/mouse2 rectangles
+at 12/22, and ULONG timer_ms at 32. It contains no pointers.
+AES_INPUT_EVENT (32 bytes, alignment 2): UWORD events/reserved at 0/2,
+WORD mouse_x/mouse_y at 4/6, UWORD buttons/modifiers/key/clicks at 8/10/12/14,
+and AES_MESSAGE at 16. The existing AES_EVENT remains 20 bytes.
 
 GRECT remains the existing four WORDs x/y/width/height (8 bytes, alignment 2),
 now defined in grect.h so rectangle helpers need no kernel configuration.
@@ -148,6 +194,9 @@ before narrowing, and every user span belongs to the current process.
        4       AES_MESSAGE out* unused            unused
        5       event mask       AES_EVENT out*    unused
        6       update code      unused            unused
+       7       message mask     AES_EVENT out*    unused
+       8       unused           unused            unused
+       9       request input*   input event out*  unused
 
 The kernel attaches AES_CLIENT_STATE to KPROC, not the public basepage or a
 caller-supplied context pointer. The id comes from the kernel process record;
@@ -173,7 +222,7 @@ Imports and SDK
 
 obj/x32/libptos-aes.a supports static linking. libptos-aes.so.1 is a link-time
 stub for .ptos.imports consumers, not a filesystem DSO to install or execute.
-It exports the seven aes_* functions and five existing rectangle helpers.
+It exports ten aes_* functions and five existing rectangle helpers.
 The single ordered list in aes_client_exports.h is used by the stub, client
 image, packer and loader. The namespace is aes:, ABI major 1/minor 0.
 
@@ -231,14 +280,14 @@ signatures do not imply x32 availability. Classifications:
     APPL_FIND          registry  aes_appl_find
     APPL_TPLAY         event     not exposed; input, callbacks or scheduling
     APPL_TRECORD       event     not exposed; input, callbacks or scheduling
-    APPL_YIELD         event     not exposed; input, callbacks or scheduling
+    APPL_YIELD         event     aes_appl_yield for associated accessories
     APPL_EXIT          registry  aes_appl_exit
-    EVNT_KEYBD         event     not exposed; input, callbacks or scheduling
-    EVNT_BUTTON        event     not exposed; input, callbacks or scheduling
-    EVNT_MOUSE         event     not exposed; input, callbacks or scheduling
+    EVNT_KEYBD         event     aes_evnt_multi; task-owned keyboard queue
+    EVNT_BUTTON        event     aes_evnt_multi; focused button events
+    EVNT_MOUSE         event     aes_evnt_multi; focused rectangle events
     EVNT_MESAG         event     aes_evnt_poll; aes_evnt_wait for accessories
-    EVNT_TIMER         event     not exposed; input, callbacks or scheduling
-    EVNT_MULTI         event     message-only poll/wait; other events deferred
+    EVNT_TIMER         event     aes_evnt_multi; native AES tick scheduling
+    EVNT_MULTI         event     aes_evnt_multi; typed request/result records
     EVNT_DCLICK        event     not exposed; input, callbacks or scheduling
     MENU_BAR           desktop   not exposed; shared desktop/window/menu/shell state
     MENU_ICHECK        desktop   not exposed; shared desktop/window/menu/shell state
@@ -305,7 +354,7 @@ signatures do not imply x32 availability. Classifications:
     SHEL_RDEF          desktop   not exposed; shared desktop/window/menu/shell state
     SHEL_WDEF          desktop   not exposed; shared desktop/window/menu/shell state
 
-Window lifecycle/rendering, menu state, input/timers, resources and shell
+Window lifecycle/rendering, menu state, resources and shell
 coordination stay kernel responsibilities when exposed; this phase does not
 make those legacy pointer-rich entries callable. The inventory prevents a
 future new legacy opcode from accidentally escaping boundary review.

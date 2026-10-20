@@ -43,6 +43,9 @@ A full queue yields cooperatively until space is available; the sender keeps
 a private message snapshot across task switches.
 Typed registration/message waits update the corresponding native AES flags.
 Typed application IDs remain KPROC IDs, separate from native AES task IDs.
+aes_evnt_multi also waits/polls for keyboard, focused mouse buttons/rectangles,
+timers and messages together, using the typed input records in aes-x32.txt.
+Its native EVBs and trusted request snapshots are cancelled on session drain.
 
 Pterm and fatal user faults unwind to that accessory's launch on its UDA.
 The launcher restores the parent context and frees the user's kernel stack
@@ -96,6 +99,15 @@ title, information and desktop pointers retain their high address bits and
 trailing scalar values. A timer wakes the desktop from an empty ready list,
 where the test also checks that interrupts are enabled. Restoring each of the
 three defects independently makes its corresponding regression fail.
+
+The input fixture tests combined timer/message readiness, a delayed reply,
+empty polls, invalid scalars/pointers and page-boundary/read-only outputs.
+Repeated timer wins cancel keyboard, double-click and rectangle waits. A
+background accessory cannot poll input belonging to the focused accessory.
+tests/x32_accessory/drive_input.py injects real PS/2 keys, motion and button
+press/release through QEMU's monitor when the fixture announces its waits.
+All four sessions must pass, and restart cancels outstanding native input
+and long timer waits left by the surviving accessory.
 
 Verified locally with QEMU/OVMF (1280x800 GOP), host AES/VDI contracts and
 loaded import checks. The ordinary x32 process/callback boot tests also run

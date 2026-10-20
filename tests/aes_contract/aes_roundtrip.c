@@ -111,6 +111,8 @@ int aes_roundtrip_checks(const char *tail, const char *child_path)
     AES_APP_INFO info, saved;
     AES_MESSAGE message = { 77, 999, 0, { 10, 11, 12, 13, 14 } }, received;
     AES_EVENT event;
+    AES_EVENT_REQUEST input_request = { AES_EVENT_TIMER };
+    AES_INPUT_EVENT input_event;
     WORD id, child;
     const char modes[] = { 'c', 'c', 'n', 'e', 'f' };
     char child_tail[3] = { '$', 0, 0 };
@@ -141,6 +143,10 @@ int aes_roundtrip_checks(const char *tail, const char *child_path)
     CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == EACCDN);
     CHECK(aes_appl_yield() == EACCDN);
     id = info.id;
+    CHECK(aes_evnt_multi(&input_request, &input_event) == EACCDN);
+    CHECK(aes_evnt_multi((AES_EVENT_REQUEST *)1, &input_event) == EIMBA);
+    CHECK(raw(AES_SERVICE_CLASS, AES_SERVICE_MULTI, (uintptr_t)&input_request,
+              (uintptr_t)&input_event, 1, 0) == EINVAL);
     saved = info;
     CHECK(id > 0 && info.version == AES_CLIENT_VERSION && !info.reserved);
     CHECK(info.queue_capacity == AES_MESSAGE_QUEUE);

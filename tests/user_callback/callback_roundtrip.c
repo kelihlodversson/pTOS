@@ -61,6 +61,7 @@ static void handler_checks(void)
     HCHECK(raw(1, 0x10b, 0, 0, 0, 0) > 0);
     HCHECK(raw(0x101, 7, 0, 0, 0, 0) == EACCDN); /* AES event wait */
     HCHECK(raw(0x101, 8, 0, 0, 0, 0) == EACCDN); /* AES yield */
+    HCHECK(raw(0x101, 9, 0, 0, 0, 0) == EACCDN); /* AES combined wait */
     HCHECK(raw(13, 2, 2, 0, 0, 0) == EACCDN); /* blocking Bconin */
     HCHECK(raw(USER_CALLBACK_CLASS, USER_CALLBACK_RETURN, 0, 0, 0, 0) == EACCDN);
 }
