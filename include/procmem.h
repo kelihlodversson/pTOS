@@ -1,5 +1,5 @@
 /*
- * procmem.h - tracked process memory and address spaces (x86-64)
+ * procmem.h - tracked process memory and address spaces
  *
  * Copyright (C) 2026 The pTOS development team.
  *
@@ -11,20 +11,24 @@
 
 #include "portab.h"
 #include "config.h"
+/* <>, not "": a quoted name is looked for next to this file first, which
+ * would always find the generic include/aspace_types.h and never the
+ * include/arch/<arch>/ one */
+#include <aspace_types.h>   /* VADDR, PADDR, ASPACE_ROOT, USER_VA_LIMIT */
 
 #if CONF_WITH_PROCMEM
 
 /*
  * Process allocations
  * -------------------
- * Everything an x32 process owns in user memory -- its environment, its
+ * Everything a process owns in user memory -- its environment, its
  * basepage and TPA -- comes from one low virtual window that lies entirely
- * below 4 GiB, so any address in it fits the 32-bit GEMDOS ABI fields
- * (p_env, p_tbase, p_hitpa, ...).  That is a VIRTUAL constraint, met by
- * construction: procmem_alloc() can only return window addresses.
+ * below USER_VA_LIMIT, so any address in it fits the 32-bit GEMDOS ABI
+ * fields (p_env, p_tbase, p_hitpa, ...).  That is a VIRTUAL constraint, met
+ * by construction: procmem_alloc() can only return window addresses.
  * The PHYSICAL pages backing the window are chosen separately and may lie
- * anywhere in RAM, above 4 GiB included, because the MMU maps them;
- * nothing here assumes a low physical address.
+ * anywhere in RAM (above 4 GiB included, on x86-64), because the MMU maps
+ * them; nothing here assumes a low physical address.
  *
  * Each allocation is a whole number of 4 KiB pages and is tracked: the
  * window records which pages are in use, and each live allocation has a
@@ -70,7 +74,7 @@ ULONG procmem_free_ownerless_since(UQUAD gen);
 BOOL procmem_contains(const void *p);
 
 /* TRUE iff every page of [va, va + bytes) belongs to a live allocation. */
-BOOL procmem_range_live(UQUAD va, UQUAD bytes);
+BOOL procmem_range_live(VADDR va, VADDR bytes);
 
 /*
  * A block mapped into a live address space (aspace_map_procmem()) is
@@ -82,10 +86,10 @@ BOOL procmem_range_live(UQUAD va, UQUAD bytes);
  */
 BOOL procmem_pinned(const void *p);
 ULONG procmem_pins(const void *p);      /* the pin count itself */
-void procmem_pin(UQUAD va, UQUAD bytes, int delta);   /* +1 / -1 */
+void procmem_pin(VADDR va, VADDR bytes, int delta);   /* +1 / -1 */
 
 /* Physical address backing window address va (which must be inside it). */
-UQUAD procmem_phys_of(UQUAD va);
+PADDR procmem_phys_of(VADDR va);
 
 /*
  * Ownership, mirroring the GEMDOS memory descriptor owner: set_owner()
@@ -117,8 +121,8 @@ void procmem_stats(PROCMEM_STATS *stats);
 /*
  * Address spaces
  * --------------
- * One ring-3 process's page tables.  The object owns the PML4 and every
- * page-table page built under it.  Of the leaf pages it maps, two kinds are
+ * One user-mode process's page tables.  The object owns the root table and
+ * every page-table page built under it.  Of the leaf pages it maps, two kinds are
  * distinguished: private pages (aspace_map_private()) are allocated
  * for it, owned by it and freed with it, while borrowed pages -- procmem
  * blocks (aspace_map_procmem(), pinned while mapped) and
@@ -127,32 +131,29 @@ void procmem_stats(PROCMEM_STATS *stats);
  * for lack of memory; destruction cannot, and frees each table page and each
  * private page exactly once.
  *
- * The kernel half (PML4 slots 256-511) is shared.  The low half starts with
- * the kernel's own low data, all of it supervisor-only (no user bit): the
- * system-vector area and the framebuffer (see
- * doc/x86_64-address-space.txt, "Kernel low mappings"), because ring 0 runs
- * under a process's page tables while it services that process's system
- * calls.  The process window is empty except for what is mapped for the
+ * The kernel half is shared.  The low half starts with the kernel's own low
+ * data, all of it supervisor-only: on x86-64 the system-vector area and the
+ * framebuffer (doc/x86_64-address-space.txt, "Kernel low mappings"), on m68k
+ * the vectors and system variables (doc/mmu-address-space.txt), because the
+ * kernel runs under a process's page tables while it services that process's
+ * system calls.  The process window is empty except for what is mapped for the
  * process: its own blocks (user) and the blocks of a child it is launching
  * (borrowed, supervisor-only).
  */
-typedef struct x86_64_aspace ASPACE;
+typedef struct aspace ASPACE;     /* defined by the backend */
 
-/* Explicit leaf permissions.  Execution is denied unless PROT_EXEC is given
- * (NX), and the page is reachable from ring 3 only with PROT_USER. */
+/* Explicit leaf permissions.  Execution is denied unless PROT_EXEC is given,
+ * and the page is reachable from user mode only with PROT_USER. */
 #define ASPACE_PROT_WRITE   0x1
 #define ASPACE_PROT_EXEC    0x2
 #define ASPACE_PROT_USER    0x4
 
 /* The size of a page of a process's memory (the heap is a whole number of them). */
-#define USER_PAGE_SIZE 0x1000ULL
-
-/* The 32-bit ABI limit: no user mapping may reach or pass this address. */
-#define USER_VA_LIMIT 0x100000000ULL
+#define USER_PAGE_SIZE VADDR_C(0x1000)
 
 /*
- * The minimum user virtual layout for the built-in x32 EmuCON image and its
- * process data (doc/x86_64-address-space.txt).  Every process has its own
+ * The user virtual layout of a process (doc/x86_64-address-space.txt, the
+ * same on 32-bit MMUs: doc/mmu-address-space.txt).  Every process has its own
  * page tables, so each can use these same addresses for its own private
  * pages.
  *
@@ -174,13 +175,15 @@ typedef struct x86_64_aspace ASPACE;
  * positive signed long (the old TOS habits of sign-extending pointers and of
  * returning negative GEMDOS error codes in the same register as addresses).
  *
- * The heap and the stack are lazy: Malloc() hands out address space, and a page
- * of it gets its (zeroed) physical page when the process first touches it, in
- * the page fault handler (aspace_fault_in()).  Untouched address space
+ * With CONF_WITH_DEMAND_PAGING the heap and the stack are lazy: Malloc() hands
+ * out address space, and a page of it gets its (zeroed) physical page when the
+ * process first touches it, in the page fault handler (aspace_fault_in()).  Untouched address space
  * costs nothing, so the sum of what the processes may use is more than there is
  * physical memory (overcommit); the process that touches a page when none is
- * left is terminated, as Pterm(-1).  Malloc(-1) reports the largest free
- * stretch of address space, as the TPA size does on the other platforms.
+ * left is terminated, as Pterm(-1).  Without it (a backend that cannot, or the
+ * option off), every page is mapped when the memory is handed out, the stack
+ * when the process starts.  Malloc(-1) reports the largest free stretch of
+ * address space either way, as the TPA size does on the other platforms.
  *
  * The ancestors page holds scrubbed copies of the basepages of the process's
  * launcher, that one's launcher and so on (USER_ANCESTORS levels at
@@ -188,10 +191,10 @@ typedef struct x86_64_aspace ASPACE;
  * is 0).  The process's own p_parent points at the first.  Every copy's p_env
  * is the process's own environment.
  */
-#define USER_ANCESTORS_VA 0x0fff0000ULL
+#define USER_ANCESTORS_VA VADDR_C(0x0fff0000)
 #define USER_ANCESTORS    16
-#define USER_IMAGE_BASE  0x00400000ULL
-#define USER_IMAGE_SIZE  0x00400000ULL
+#define USER_IMAGE_BASE  VADDR_C(0x00400000)
+#define USER_IMAGE_SIZE  VADDR_C(0x00400000)
 /* Zeroed read/write memory mapped right after the last page of a program
  * loaded from a file: where the C startup code of the TOS tradition puts the
  * argv and environ arrays it builds (libcmini's parseargs() uses the space
@@ -199,34 +202,39 @@ typedef struct x86_64_aspace ASPACE;
  * environment of 32766 bytes (bdos/uaccess.c) is at most 16383 strings, each
  * with a 4-byte environ slot (64 KiB), and the command line, its copy and
  * argv add a few hundred bytes. */
-#define USER_IMAGE_SLACK 0x00020000ULL
-#define USER_HEAP_BASE   0x10000000ULL
+#define USER_IMAGE_SLACK VADDR_C(0x00020000)
+#define USER_HEAP_BASE   VADDR_C(0x10000000)
 /* (the end of the heap with the default stack, a guard page below the stack's
  * first; a process whose stack limit was raised has less) */
-#define USER_HEAP_LIMIT  0x7efff000ULL
-#define USER_STACK_TOP   0x80000000ULL
-/* the default size of the stack: address space, backed when touched */
-#define USER_STACK_SIZE  0x01000000ULL
-#define USER_STACK_MIN   0x00004000ULL   /* the least Psetlimit() allows */
+#define USER_HEAP_LIMIT  VADDR_C(0x7efff000)
+#define USER_STACK_TOP   VADDR_C(0x80000000)
+/* the default size of the stack: address space, backed when touched; without
+ * demand paging, the pages mapped when the process starts */
+#if CONF_WITH_DEMAND_PAGING
+#define USER_STACK_SIZE  VADDR_C(0x01000000)
+#else
+#define USER_STACK_SIZE  VADDR_C(0x00040000)
+#endif
+#define USER_STACK_MIN   VADDR_C(0x00004000)   /* the least Psetlimit() allows */
 
 ASPACE *aspace_create(void);
 void aspace_destroy(ASPACE *as);
-/* Makes `as` the address space in use (returns the one that was, a CR3 value for
- * aspace_leave()): ring 0 can then address its user pages by their user
+/* Makes `as` the address space in use (returns the root that was, for
+ * aspace_leave()): the kernel can then address its user pages by their user
  * addresses, as it does under a process's own system calls.  Nothing in the
  * kernel may rely on the previous address space's user half meanwhile. */
-UQUAD aspace_enter(ASPACE *as);
-void aspace_leave(UQUAD previous);
-UQUAD aspace_root(const ASPACE *as);
+ASPACE_ROOT aspace_enter(ASPACE *as);
+void aspace_leave(ASPACE_ROOT previous);
+ASPACE_ROOT aspace_root(const ASPACE *as);
 
 /*
  * Maps one 4 KiB page: user virtual address va (page-aligned, and the
  * whole page below USER_VA_LIMIT) to the physical page phys
- * (page-aligned; ANY physical address, including above 4 GiB).  FALSE if
+ * (page-aligned; any physical address the MMU can map).  FALSE if
  * a constraint is violated or table memory ran out; the page is then not
  * mapped.
  */
-BOOL aspace_map_page(ASPACE *as, UQUAD va, UQUAD phys, UWORD prot);
+BOOL aspace_map_page(ASPACE *as, VADDR va, PADDR phys, UWORD prot);
 
 /*
  * Maps [va, va + bytes) -- rounded out to whole pages -- of live procmem
@@ -234,21 +242,21 @@ BOOL aspace_map_page(ASPACE *as, UQUAD va, UQUAD phys, UWORD prot);
  * constraint is violated or memory ran out; pages mapped before the
  * failure stay in the address space and go away with it.
  */
-BOOL aspace_map_procmem(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
+BOOL aspace_map_procmem(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
 
 /*
  * Borrowing: maps [va, va + bytes) of live procmem blocks into `as`
- * supervisor-only and writable (pinned), so ring 0 can build a child process
- * under this address space during a ring-3 Pexec(); aspace_unborrow()
+ * supervisor-only and writable (pinned), so the kernel can build a child
+ * process under this address space during a user-mode Pexec(); aspace_unborrow()
  * takes it away again (and unpins), exactly once per borrow.  See aspace.c.
  */
-BOOL aspace_borrow(ASPACE *as, UQUAD va, UQUAD bytes);
-void aspace_unborrow(ASPACE *as, UQUAD va, UQUAD bytes);
+BOOL aspace_borrow(ASPACE *as, VADDR va, VADDR bytes);
+void aspace_unborrow(ASPACE *as, VADDR va, VADDR bytes);
 /* Re-maps an already borrowed block with other permissions (the user bit
  * included): the block a ring-3 caller is handed. Still released by unborrow. */
-BOOL aspace_regrant(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
+BOOL aspace_regrant(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
 
-/* Number of table pages (PML4 included) the address space currently owns. */
+/* Number of table pages (the root included) the address space currently owns. */
 ULONG aspace_table_pages(const ASPACE *as);
 
 /*
@@ -263,7 +271,12 @@ ULONG aspace_table_pages(const ASPACE *as);
  * backing page or page-table page: the address space's internal bookkeeping
  * vectors may keep extra capacity until it is destroyed.
  */
-BOOL aspace_map_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
+BOOL aspace_map_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
+
+/* How much aspace_map_private() could map at most, now (rounded down to whole
+ * pages): what the backend's physical memory allows after its own reserve and
+ * table costs.  Malloc(-1) reports no more than this where memory is not lazy. */
+VADDR aspace_mappable_bytes(void);
 
 /*
  * Gives back [va, va + bytes) -- va page-aligned, bytes rounded up to whole
@@ -273,25 +286,25 @@ BOOL aspace_map_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
  * The page-table pages that held the mappings stay until the address space
  * is destroyed.
  */
-BOOL aspace_unmap_private(ASPACE *as, UQUAD va, UQUAD bytes);
+BOOL aspace_unmap_private(ASPACE *as, VADDR va, VADDR bytes);
 
+#if ARCH_HAS_DEMAND_PAGING
 /*
- * Lazy memory.  aspace_fault_in() backs the page containing `va` with a
+ * Lazy memory, where the backend can do it (ARCH_HAS_DEMAND_PAGING; the BDOS
+ * uses it only with CONF_WITH_DEMAND_PAGING).  aspace_fault_in() backs the
+ * page containing `va` with a
  * new zeroed private page, with `prot`, if there is no mapping there yet (TRUE
  * also if there is one already); FALSE if a physical page or a page table
- * could not be had, or less than ASPACE_FAULT_RESERVE of physical memory would
- * be left (the kernel's own needs come first: the reserve is never dipped into,
- * the tables the page may need counted).  aspace_map_private() keeps the
- * same reserve, for the pages of a program image and the like.  The caller has decided that the
- * address belongs to a lazy area.  aspace_release_lazy() is
+ * could not be had, or the backend's reserve of physical memory would be
+ * dipped into (the kernel's own needs come first).  The caller has decided
+ * that the address belongs to a lazy area.  aspace_release_lazy() is
  * aspace_unmap_private() for such an area: pages never touched are
  * simply not there, and are skipped; FALSE, with nothing changed, if a page
  * that is there is not one of its private pages.
  */
-#define ASPACE_FAULT_RESERVE 0x00400000ULL
-#define ASPACE_FAULT_COST    0x00008000ULL      /* the most one page costs: it, 3 tables, bookkeeping */
-BOOL aspace_fault_in(ASPACE *as, UQUAD va, UWORD prot);
-BOOL aspace_release_lazy(ASPACE *as, UQUAD va, UQUAD bytes);
+BOOL aspace_fault_in(ASPACE *as, VADDR va, UWORD prot);
+BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes);
+#endif
 
 /*
  * Hands private pages from one address space to another: [va, va + bytes) of
@@ -302,14 +315,14 @@ BOOL aspace_release_lazy(ASPACE *as, UQUAD va, UQUAD bytes);
  * memory ran out.
  */
 BOOL aspace_move_private(ASPACE *from, ASPACE *to,
-                                UQUAD va, UQUAD bytes, UWORD prot);
+                                VADDR va, VADDR bytes, UWORD prot);
 
 /*
  * Changes the permissions of private pages [va, va + bytes) of `as` (the
  * page and its ownership stay).  FALSE, with nothing changed, if a page is
  * not one of its private pages.
  */
-BOOL aspace_protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
+BOOL aspace_protect_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
 
 /*
  * Software walk of the address space's own page tables, through the physical
@@ -318,27 +331,27 @@ BOOL aspace_protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot);
  * permissions -- the AND of every level, as the MMU computes them.  FALSE if
  * va is not mapped.  A kernel-half address reports prot without
  * ASPACE_PROT_USER: supervisor-only mappings are visible to the walk but not
- * to ring 3.
+ * to user mode.
  */
-BOOL aspace_translate(const ASPACE *as, UQUAD va, UQUAD *phys, UWORD *prot);
+BOOL aspace_translate(const ASPACE *as, VADDR va, PADDR *phys, UWORD *prot);
 
 /*
  * True iff every page of [va, va + bytes) is mapped in this address space,
- * reachable from ring 3 and -- if `write` -- writable.  This, not a numeric
+ * reachable from user mode and -- if `write` -- writable.  This, not a numeric
  * address range, is what makes a user pointer valid for this process.
  */
-BOOL aspace_user_range_ok(const ASPACE *as, UQUAD va, UQUAD bytes, BOOL write);
+BOOL aspace_user_range_ok(const ASPACE *as, VADDR va, VADDR bytes, BOOL write);
 
 /*
  * Kernel copies to and from a process's memory through the direct map, after
  * the same check; they work whichever address space is loaded and cannot
  * fault.  FALSE, with nothing copied, if the range is not valid or any page
  * of it is not RAM the physical allocator owns (a device or bogus physical
- * page mapped with aspace_map_page() is valid for ring 3 but has no
+ * page mapped with aspace_map_page() is valid for user mode but has no
  * safe direct-map alias; it needs a separate access mechanism).
  */
-BOOL aspace_copy_from_user(const ASPACE *as, void *dst, UQUAD va, ULONG bytes);
-BOOL aspace_copy_to_user(const ASPACE *as, UQUAD va, const void *src, ULONG bytes);
+BOOL aspace_copy_from_user(const ASPACE *as, void *dst, VADDR va, ULONG bytes);
+BOOL aspace_copy_to_user(const ASPACE *as, VADDR va, const void *src, ULONG bytes);
 
 /*
  * aspace_map_private() of the pages covering [va, va + memsz) -- va
@@ -347,20 +360,19 @@ BOOL aspace_copy_to_user(const ASPACE *as, UQUAD va, const void *src, ULONG byte
  * everything else stays zero.  filesz > memsz is refused.  Same
  * all-or-nothing contract as map_private().
  */
-BOOL aspace_load_private(ASPACE *as, UQUAD va, UQUAD memsz,
+BOOL aspace_load_private(ASPACE *as, VADDR va, VADDR memsz,
                                 UWORD prot, const void *src, ULONG filesz);
 
 /*
- * Per-process kernel stacks: the stack a ring-3 process's system calls run
- * on (the syscall entry stub switches to it), so that a process suspended
+ * Per-process kernel stacks: the stack a user-mode process's system calls run
+ * on (the system-call entry switches to it), so that a process suspended
  * inside a call -- Pexec() of a child -- keeps its frames while the child
  * makes calls of its own.  kstack_alloc() returns the physical base
- * (0 if memory ran out) and the initial stack pointer; the stack is freed
- * with kstack_free(), never while it is still in use.
+ * (0 if memory ran out) and the initial stack pointer, a kernel address; the
+ * stack is freed with kstack_free(), never while it is still in use.
  */
-#define X86_64_KSTACK_PAGES 4
-UQUAD kstack_alloc(UQUAD *top);
-void kstack_free(UQUAD phys);
+PADDR kstack_alloc(uintptr_t *top);
+void kstack_free(PADDR phys);
 
 /* Private backing pages the address space owns (diagnostics, tests). */
 ULONG aspace_private_pages(const ASPACE *as);

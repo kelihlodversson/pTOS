@@ -407,6 +407,9 @@ PC (x86-64, UEFI boot)
 ----------------------
 
 pc-x86_64           pc-x86_64.efi, a PE32+ EFI application
+pc-x86_64-eager     the same without demand paging (CONF_WITH_DEMAND_PAGING
+                    off): a process's memory is backed when it is handed
+                    out, as with the 32-bit MMU backends of #549 (#562)
 
 Unlike every other pTOS image, this is not loaded directly by an
 emulator's -kernel/-bios flag: it is booted the way real UEFI firmware

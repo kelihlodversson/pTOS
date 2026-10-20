@@ -1221,6 +1221,20 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
               (rc4 == 0 ? 0 : 8) | (rc5 == 0xffff ? 0 : 16) | (rc6 == 0 ? 0 : 32));
         break;
     }
+    case 'O': {
+        /* without demand paging (#562): the child's memory and stack are
+         * backed when they are handed out, and Malloc(-1) says no more than
+         * that can be */
+        static const char o_tail[] = { 1, 'O', 0 };
+        s64 rc;
+
+        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
+                  (s64)(int)(unsigned long)o_tail, 0);
+        if (rc == -33)
+            pterm(0x100);
+        pterm((int)rc);
+        break;
+    }
     case 'M': {
         /* demand paging (#450): address space far beyond the machine's memory,
          * touched sparsely; freed memory is not lazy any more; touching more

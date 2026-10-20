@@ -926,7 +926,7 @@ static void proc_go(PD *p)
     /* A ring-3 process cannot see its launcher's basepage, nor the
      * launcher's own: it gets read-only copies at a fixed address instead. */
     if (kproc_ancestors_va(p))
-        p->p_parent = (ULONG)kproc_ancestors_va(p);
+        p->p_parent = PTR_TO_USERPTR_UNCHECKED((PD *)(uintptr_t)kproc_ancestors_va(p));
 #endif
 
     proc_launch_prepare(p, &supstk[SUPSIZ]);   /* arch: launch.c */

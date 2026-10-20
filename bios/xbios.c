@@ -1406,11 +1406,13 @@ static LONG wrap_rsconf(WORD *pw)
 {
     return (LONG)rsconf(pw[0], pw[1], pw[2], pw[3], pw[4], pw[5]);
 }
+#if !CONF_WITH_USER_ASPACE      /* (Keytbl() is not offered then, below) */
 static LONG wrap_keytbl(WORD *pw)
 {
     return keytbl((const UBYTE *)PWLONG(pw, 0), (const UBYTE *)PWLONG(pw, 2),
                    (const UBYTE *)PWLONG(pw, 4));
 }
+#endif
 static LONG wrap_protobt(WORD *pw)
 {
     protobt((UBYTE *)PWLONG(pw, 0), PWLONG(pw, 2), pw[4], pw[5]);

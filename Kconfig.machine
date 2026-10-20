@@ -130,6 +130,18 @@ config ARCH_X86_64
 	bool
 	default y if MACHINE_PC_X86_64
 
+# What the architecture's address-space backend (include/procmem.h) provides,
+# #562.  An architecture sets these once its backend exists; the options that
+# use them (CONF_WITH_USER_ASPACE, CONF_WITH_DEMAND_PAGING) never name an
+# architecture.
+config ARCH_HAS_USER_ASPACE
+	bool
+	default y if ARCH_X86_64
+
+config ARCH_HAS_DEMAND_PAGING
+	bool
+	default y if ARCH_X86_64
+
 # ARMv7 and later provide cache maintenance operations that the ARM1176
 # of the first generation Raspberry Pi does not have.
 config CPU_ARMV7
