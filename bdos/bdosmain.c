@@ -1192,6 +1192,13 @@ restrt:
 #endif
     }
 
+#if CONF_WITH_USER_ASPACE
+    /* Fsetdta() (0x1A) has no result: what the slot holds is whatever the
+     * handler left in the return register, possibly a kernel address */
+    if (fn == 0x1A)
+        rc = 0;
+#endif
+
     KDEBUG(("BDOS returns: 0x%08lx\n",rc));
 
     return rc;

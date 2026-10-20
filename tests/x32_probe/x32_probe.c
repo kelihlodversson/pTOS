@@ -580,6 +580,9 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys(XBIOS, 14, 0, 0, 0) != EACCDN) bad |= 4096;
         if (sys(XBIOS, 34, 0, 0, 0) != EACCDN) bad |= 4096;
         if (sys(XBIOS, 32, -2, 0, 0) != EACCDN) bad |= 4096;
+        if (sys(XBIOS, 32, 0x100000000LL, 0, 0) != EACCDN) bad |= 4096;   /* not 0 */
+        if (sys(XBIOS, 32, 0x1ffffffffLL, 0, 0) != EACCDN) bad |= 4096;   /* not -1 */
+        if (sys(GEMDOS, 0x1a, PA(abuf), 0, 0) != 0) bad |= 4096;          /* Fsetdta returns nothing */
         if (sys(GEMDOS, 0x154, 0x0a, 0x4f2, 0) != 0) bad |= 4096;     /* _sysbase */
         if (sys(GEMDOS, 0x154, 0x0a, 0x400, 0) != 0) bad |= 4096;     /* etv_timer */
         if (sys(GEMDOS, 0x154, 0x0a, 0x4c6, 0) != 0) bad |= 4096;     /* dskbufp */

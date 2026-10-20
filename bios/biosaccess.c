@@ -104,7 +104,8 @@ long xbios_check_user_args(WORD fn, const long *a)
     case 0x22:                      /* Kbdvbase(): a pointer to the kernel's vectors */
         return EACCDN;
     case 0x20:                      /* Dosound(table): kept, read by the timer */
-        if ((LONG)a[0] != 0 && (LONG)a[0] != -1)
+        /* the whole slot: 0x100000000 is neither 0 nor -1 */
+        if (a[0] != 0 && !IS_MINUS1(a[0]))
             return EACCDN;
         return E_OK;
     case 0x2A:                      /* DMAread(sector, count, buf, major) */

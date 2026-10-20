@@ -106,6 +106,9 @@ GEMDOS (trap 1), bdos/ssystem.c
   S_SETCOOKIE, S_DELCOOKIE
                         unchanged: the jar is the kernel's, a cookie a
                         process sets is its own number
+  Fsetdta(dta)          hide: it has no result, and the slot would hold
+                        whatever the handler left in the return register
+                        (x32 returns 0)
   S_OSVERSION, S_OSBUILDDATE
                         the way to learn the OS version and date without
                         reading the OS header
