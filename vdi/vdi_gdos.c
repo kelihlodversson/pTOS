@@ -332,7 +332,7 @@ static BOOL sfont_id_used(const VDI_SFONT *fonts, WORD count, WORD id)
 
 /* the fonts in CONF_VDI_FONT_DIR, sorted by name, with their ids */
 /* the file name of the system font that is wanted (upper case), set before the scan: see sfont_scan() */
-static char sfont_wanted[sizeof(CONF_VDI_SYSTEM_FONT) > 14 ? sizeof(CONF_VDI_SYSTEM_FONT) : 14] = CONF_VDI_SYSTEM_FONT;
+static char sfont_wanted[sizeof(CONF_VDI_SYSTEM_FONT) > 14 ? sizeof(CONF_VDI_SYSTEM_FONT) : 14];   /* BSS: .data may be in ROM */
 
 static void sfont_scan(void)
 {
@@ -442,6 +442,7 @@ static void sfont_system_wanted(void)
 {
     char *c;
 
+    strcpy(sfont_wanted, CONF_VDI_SYSTEM_FONT);
     (void)sfont_system_setting(sfont_wanted);   /* the file takes the place of the option */
     for (c = sfont_wanted; *c; c++)             /* GEMDOS names are upper case */
         if (*c >= 'a' && *c <= 'z')
