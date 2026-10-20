@@ -531,6 +531,8 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys(BIOS, 5, -32768, -1, 0) != ERANGE) bad |= 2;
         rc = sys(BIOS, 5, 0x102, -1, 0);        /* a query: the old vector */
         if (rc == EACCDN || rc == ERANGE) bad |= 2;
+        /* etv_term holds the kernel's just_rts: the old vector is hidden (#563) */
+        if (rc != 0) bad |= 4096;
         /* only a real -1 is "no new vector": 0xffffffff would be installed */
         if (sys(BIOS, 5, 0x100, 0xffffffffLL, 0) != EACCDN) bad |= 2;
 
