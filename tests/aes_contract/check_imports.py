@@ -23,14 +23,14 @@ def inspect(path):
     offset = imports[0][1]
     magic, version, reserved, count, binds, itab, btab, strings, size = struct.unpack_from('<IHH6I', data, offset)
     assert (magic, version, reserved) == (0x50544c32, 1, 0)
-    assert count == 15 and binds >= count, (count, binds)
+    assert count == 16 and binds >= count, (count, binds)
     names = set()
     for i in range(count):
         name, major, minor, kind = struct.unpack_from('<IHHB', data, offset + itab + 12 * i)
         assert (major, minor, kind) == (1, 0, 0)
         names.add(bytes(data[offset + strings + name:offset + strings + size]).split(b'\0')[0])
     assert b'vdi:vdi' in names
-    assert len([n for n in names if n.startswith(b'aes:')]) == 14
+    assert len([n for n in names if n.startswith(b'aes:')]) == 15
     return data, offset, itab, btab, strings
 
 

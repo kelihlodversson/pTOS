@@ -17,12 +17,18 @@
 #include "obdefs.h"
 #include "biosext.h"
 #include "string.h"
+#include "geminput.h"
+#include "gemdisp.h"
+#include "gemevlib.h"
+#include "gemgsxif.h"
+#include "gemctrl.h"
 
 #define MESSAGE_WAIT 0x8000
 typedef struct {
     AESPD *aes;
     PD *owner;
     BOOL started;
+    BOOL registration_revoked;
     LONG result;
     X86_64_PROCESS_CONTEXT context;
 } ACCESSORY_CONTEXT;
@@ -30,6 +36,10 @@ typedef struct {
 /* AES PIDs index trusted storage, never a user basepage or client ID.  The
  * session drains it before gem_main frees UDA storage or clears THEGLO. */
 static ACCESSORY_CONTEXT contexts[NUM_PDS];
+
+#if CONF_WITH_X32_ACCESSORY_TEST
+static void test_queued_button(PD *pd, const AES_EVENT_REQUEST *request);
+#endif
 
 static ACCESSORY_CONTEXT *owned(PD *pd)
 {
@@ -90,13 +100,16 @@ BOOL x86_64_aes_owned(PD *pd)
 
 LONG x86_64_aes_wait(PD *pd)
 {
-    if (!x86_64_aes_owned(pd))
+    ACCESSORY_CONTEXT *c = owned(pd);
+
+    if (!c || c->aes != rlr)
         return EACCDN;
+    c->registration_revoked = FALSE;
     rlr->p_flags |= AP_MESAG;
     mwait(MESSAGE_WAIT);
     rlr->p_evwait &= ~MESSAGE_WAIT;
     rlr->p_evflg &= ~MESSAGE_WAIT;
-    return E_OK;
+    return c->registration_revoked ? EACCDN : E_OK;
 }
 
 LONG x86_64_aes_yield(PD *pd)
@@ -105,6 +118,91 @@ LONG x86_64_aes_yield(PD *pd)
         return EACCDN;
     dsptch();
     return E_OK;
+}
+
+LONG x86_64_aes_events(PD *pd, const AES_EVENT_REQUEST *request,
+                       AES_INPUT_EVENT *event, BOOL message_ready)
+{
+    EVSPEC flags = request->mask & ~AES_EVENT_MESSAGE;
+    EVSPEC bit, completed;
+    MOBLK mouse1, mouse2;
+    EVB *e;
+    WORD available = 0, needed = 0;
+    BOOL immediate = (flags & MU_TIMER) && !request->timer_ms;
+    BOOL previous;
+    ACCESSORY_CONTEXT *c = owned(pd);
+
+    if (!c || c->aes != rlr)
+        return EACCDN;
+    c->registration_revoked = FALSE;
+    if (immediate || (request->flags & AES_EVENT_POLL))
+        flags &= ~MU_TIMER;
+    for (bit = 1; bit <= MU_TIMER; bit <<= 1)
+        if (flags & bit)
+            needed++;
+    for (e = eul; e && available < needed; e = e->e_nextp)
+        available++;
+    if (available < needed)
+        return ENSMEM;
+#if CONF_WITH_X32_ACCESSORY_TEST
+    test_queued_button(pd, request);
+#endif
+    chkkbd();
+    forker();
+    mouse1.m_out = request->mouse1.outside;
+    mouse1.m_gr = request->mouse1.rectangle;
+    mouse2.m_out = request->mouse2.outside;
+    mouse2.m_gr = request->mouse2.rectangle;
+    if (flags & MU_KEYBD)
+        iasync_owned(MU_KEYBD, 0);
+    if (flags & MU_BUTTON)
+        iasync_owned(MU_BUTTON, combine_cms(request->clicks,
+                      request->button_mask, request->button_state));
+    if (flags & MU_M1)
+        iasync_owned(MU_M1, (intptr_t)&mouse1);
+    if (flags & MU_M2)
+        iasync_owned(MU_M2, (intptr_t)&mouse2);
+    if (flags & MU_TIMER)
+        iasync_owned(MU_TIMER, (request->timer_ms + gl_ticktime - 1) / gl_ticktime);
+    /* A stale message wake may survive the previous wait. No producer can
+     * run between this reset and mwait() except through this dispatcher. */
+    rlr->p_evflg &= ~MESSAGE_WAIT;
+    if (request->mask & AES_EVENT_MESSAGE)
+        rlr->p_flags |= AP_MESAG;
+    if (!(request->flags & AES_EVENT_POLL) && !immediate && !message_ready)
+        /* Registration can be revoked by a callback during any input wait. */
+        mwait(flags | MESSAGE_WAIT);
+    completed = acancel(flags);
+    previous = mtrans > 1;
+    event->mouse_x = previous ? pr_xrat : xrat;
+    event->mouse_y = previous ? pr_yrat : yrat;
+    event->buttons = previous ? pr_button : button;
+    /* A completed button event owns its snapshot. Later transitions or a
+     * native ev_rets() may have overwritten the shared mouse history. Read
+     * the event before apret() puts its block back on the free list. */
+    if (completed & MU_BUTTON)
+        for (e = rlr->p_evlist; e; e = e->e_nextp)
+            if (e->e_mask == MU_BUTTON) {
+                event->mouse_x = HIWORD(e->e_parm);
+                event->mouse_y = LOWORD(e->e_parm);
+                event->buttons = HIWORD(e->e_return);
+                break;
+            }
+    for (bit = 1; bit <= MU_TIMER; bit <<= 1)
+        if (completed & bit) {
+            UWORD value = apret(bit);
+            if (bit == MU_KEYBD)
+                event->key = value;
+            if (bit == MU_BUTTON)
+                event->clicks = value;
+        }
+    rlr->p_evwait &= ~MESSAGE_WAIT;
+    rlr->p_evflg &= ~MESSAGE_WAIT;
+    event->events = completed | (immediate ? MU_TIMER : 0);
+    event->modifiers = kstate;
+    if (rlr == gl_mowner)
+        mtrans = 0;
+    return c->registration_revoked ? EACCDN : E_OK;
 }
 
 void x86_64_aes_wake(PD *pd)
@@ -134,6 +232,9 @@ void x86_64_aes_registration(PD *pd, BOOL active)
         c->aes->p_flags |= AP_OPEN;
         c->aes->p_flags &= ~AP_ACCLOSE;
     } else {
+        /* Do not erase cancellation if the callback registers again before
+         * the suspended wait resumes. Only a fresh wait clears this flag. */
+        c->registration_revoked = TRUE;
         c->aes->p_flags &= ~AP_OPEN;
         c->aes->p_flags |= AP_MESAG | AP_ACCLOSE;
         x86_64_aes_wake(pd);
@@ -208,6 +309,7 @@ void x86_64_aes_drain(void)
 #include "../../../desk/aesbind.h"
 #include "gemwmlib.h"
 #include "gemevlib.h"
+#include "vdi_service.h"
 
 extern UQUAD pmem_free_bytes(void);
 extern UQUAD x86_64_pmem_bad_frees(void);
@@ -224,6 +326,75 @@ typedef struct {
 static ACCESSORY_SNAPSHOT before_session;
 static WORD test_sessions;
 static BOOL idle_seen;
+static WORD queued_button_cases;
+static WORD button_snapshot_cases;
+
+/* Queue both transitions before the user-mode poll's forker() runs, with
+ * a click count above the request to check capping as well as preservation. */
+static void test_queued_button(PD *pd, const AES_EVENT_REQUEST *request)
+{
+    ACCESSORY_CONTEXT *c = owned(pd);
+    UQUAD flags;
+
+    if (queued_button_cases >= 2 || !c || memcmp(c->aes->p_name, "ACCTWO  ", 8) ||
+        request->mask != AES_EVENT_BUTTON ||
+        request->flags != (queued_button_cases ? 0 : AES_EVENT_POLL) ||
+        request->clicks != 2 || request->button_mask != 1 || request->button_state != 1)
+        return;
+    queued_button_cases++;
+    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    if (forkq(mchange, MAKE_ULONG(101, 121)) < 0 ||
+        forkq(bchange, MAKE_ULONG(1, 3)) < 0 ||
+        forkq(mchange, MAKE_ULONG(111, 131)) < 0 ||
+        forkq(bchange, MAKE_ULONG(0, 1)) < 0 ||
+        forkq(mchange, MAKE_ULONG(121, 141)) < 0)
+        panic("accessory queued button injection FAIL\n");
+    if (flags & 0x200)
+        __asm__ volatile ("sti" ::: "memory");
+}
+
+/* Complete an already suspended button wait, then disturb the shared
+ * history before the accessory can run: a native event return clears it,
+ * or a third transition overwrites it with a right-button press. */
+static void test_button_snapshot(ACCESSORY_CONTEXT *c)
+{
+    MOBLK mouse = { 0, { 0, 0, gl_width, gl_height } };
+    WORD rets[4];
+    UQUAD flags;
+
+    if (button_snapshot_cases >= 3 || !c->owner ||
+        memcmp(c->aes->p_name, "ACCTWO  ", 8) ||
+        !(c->aes->p_stat & WAITIN) ||
+        (c->aes->p_evwait & ~MESSAGE_WAIT) != MU_BUTTON)
+        return;
+    if (!c->aes->p_evlist || c->aes->p_evlist->e_nextp ||
+        c->aes->p_evlist->e_mask != MU_BUTTON ||
+        (c->aes->p_evlist->e_flag & COMPLETE) || gl_mowner != c->aes)
+        panic("accessory button snapshot wait FAIL\n");
+    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    if (button_snapshot_cases < 2) {
+        if (forkq(mchange, MAKE_ULONG(101, 121)) < 0 ||
+            forkq(bchange, MAKE_ULONG(1, 1)) < 0 ||
+            forkq(mchange, MAKE_ULONG(111, 131)) < 0 ||
+            forkq(bchange, MAKE_ULONG(0, 1)) < 0)
+            panic("accessory button snapshot injection FAIL\n");
+        if (button_snapshot_cases == 1 &&
+            (forkq(mchange, MAKE_ULONG(121, 141)) < 0 ||
+             forkq(bchange, MAKE_ULONG(2, 1)) < 0))
+            panic("accessory third button injection FAIL\n");
+    } else if (forkq(bchange, MAKE_ULONG(0, 1)) < 0)
+        panic("accessory button release injection FAIL\n");
+    if (flags & 0x200)
+        __asm__ volatile ("sti" ::: "memory");
+    forker();
+    if (!button_snapshot_cases) {
+        /* This calls native ev_rets() without yielding to the ready client. */
+        ev_mouse(&mouse, rets);
+        if (mtrans || rets[2])
+            panic("accessory intervening native event return FAIL\n");
+    }
+    button_snapshot_cases++;
+}
 
 static void snapshot(ACCESSORY_SNAPSHOT *s)
 {
@@ -278,34 +449,76 @@ void x86_64_aes_test_begin(void)
         }
         kcprintf("x32 accessory preparation failures: PASS\n");
     }
+    queued_button_cases = 0;
+    button_snapshot_cases = 0;
     snapshot(&before_session);
 }
 
 BOOL x86_64_aes_test_run(void)
 {
-    WORD i, n, dead = 0, waiting = 0;
+    WORD i, n, attempt, dead = 0, waiting = 0;
     WORD close_message[8] = { 41, 0, 0, 0, 0, 0, 0, 0 };
     ACCESSORY_CONTEXT *c;
+    AESPD *old_owner;
+    GRECT old_control, control = { 0, 0, gl_width, gl_height };
+    BOOL old_ctmown = gl_ctmown;
+    WORD revocations = 0;
+    const EVSPEC revoke_masks[3] = { MU_KEYBD, MU_M1, MU_TIMER };
+    AESPD *task;
 
     if (totpds != 7 || curpid != 6)
         panic("accessory refused-load publication FAIL\n");
-    for (i = 0; i < 50; i++)
-        dsptch();
-    for (i = 2; i < NUM_PDS; i++) {
-        c = &contexts[i];
-        if (!c->aes)
-            continue;
-        if (!memcmp(c->aes->p_name, "ACCONE  ", 8) &&
-            !c->owner && c->result == 17)
-            dead++;
-        if (!memcmp(c->aes->p_name, "ACCFAULT", 8) &&
-            !c->owner && c->result == 0xffff)
-            dead++;
-        if (c->owner && (c->aes->p_evwait & MESSAGE_WAIT) &&
-            (c->aes->p_flags & AP_MESAG))
-            waiting++;
+    get_mown(&old_owner);
+    get_ctrl(&old_control);
+    set_ctrl(&control);
+    gl_ctmown = TRUE;
+    for (i = 2; i < NUM_PDS; i++)
+        if (contexts[i].aes && !memcmp(contexts[i].aes->p_name, "ACCTWO  ", 8))
+            set_mown(contexts[i].aes);
+    for (attempt = 0; attempt < 1000; attempt++) {
+        ev_timer(10L);
+        dead = waiting = 0;
+        for (i = 2; i < NUM_PDS; i++) {
+            c = &contexts[i];
+            if (!c->aes)
+                continue;
+            test_button_snapshot(c);
+            if (c->owner && revocations < 3 &&
+                !memcmp(c->aes->p_name, "ACCTWO  ", 8) &&
+                (c->aes->p_stat & WAITIN) &&
+                (c->aes->p_evwait & ~MESSAGE_WAIT) == revoke_masks[revocations]) {
+                if (!c->aes->p_evlist || c->aes->p_evlist->e_nextp ||
+                    c->aes->p_evlist->e_mask != revoke_masks[revocations])
+                    panic("accessory revoked input event cleanup FAIL\n");
+                /* The registered handler calls aes_appl_exit() in ring 3
+                 * while its owner's syscall is suspended on another stack. */
+                vdi_service_callback_event(VDI_CALLBACK_BUTTON, 613 + revocations, 0);
+                vdi_service_callback_work();
+                revocations++;
+                for (task = nrl; task; task = task->p_link)
+                    if (task == c->aes)
+                        panic("accessory revoked input wait stayed asleep\n");
+            }
+            if (!memcmp(c->aes->p_name, "ACCONE  ", 8) &&
+                !c->owner && c->result == 17)
+                dead++;
+            if (!memcmp(c->aes->p_name, "ACCFAULT", 8) &&
+                !c->owner && c->result == 0xffff)
+                dead++;
+            if (c->owner && c->aes->p_evwait == MESSAGE_WAIT &&
+                (c->aes->p_flags & AP_MESAG)) {
+                if (c->aes->p_evlist)
+                    panic("accessory revoked input events leaked\n");
+                waiting++;
+            }
+        }
+        if (dead == 2 && waiting == 2)
+            break;
     }
-    if (dead != 2 || waiting != 2)
+    set_ctrl(&old_control);
+    set_mown(old_owner);
+    gl_ctmown = old_ctmown;
+    if (dead != 2 || waiting != 2 || revocations != 3 || button_snapshot_cases != 3)
         panic("accessory lifecycle FAIL: dead=%d waiting=%d\n", dead, waiting);
     /* Exercise the native AES message bridge and receive acknowledgement. */
     for (i = 2; i < NUM_PDS; i++) {

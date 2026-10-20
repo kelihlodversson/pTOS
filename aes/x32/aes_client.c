@@ -55,3 +55,7 @@ LONG aes_appl_yield(void)
 {
     return service(AES_SERVICE_YIELD, 0, 0);
 }
+LONG aes_evnt_multi(const AES_EVENT_REQUEST *request, AES_INPUT_EVENT *event)
+{
+    return service(AES_SERVICE_MULTI, (uintptr_t)request, (uintptr_t)event);
+}

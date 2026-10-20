@@ -15,6 +15,7 @@
 #define AES_SERVICE_UPDATE 6
 #define AES_SERVICE_WAIT 7
 #define AES_SERVICE_YIELD 8
+#define AES_SERVICE_MULTI 9
 #if defined(ARCH_X86_64) && !defined(__ILP32__)
 #include "bdosdefs.h"
 typedef struct aes_client_state AES_CLIENT_STATE;

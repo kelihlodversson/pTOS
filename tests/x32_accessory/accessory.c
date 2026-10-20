@@ -8,6 +8,7 @@
 #include "vdipb.h"
 
 extern short _app;
+int accessory_input_checks(const AES_APP_INFO *info, WORD role, WORD handle);
 long _stksize = 65536;
 UQUAD acc_entry_base, acc_entry_type, acc_entry_stack;
 UWORD acc_entry_cs;
@@ -27,6 +28,11 @@ int main(int argc, char **argv, char **envp)
     LONG heap;
 #if ACC_ROLE == 4
     WORD queued = 0;
+#endif
+#if ACC_ROLE == 2
+    AES_EVENT_REQUEST request = { 0 };
+    AES_INPUT_EVENT input_event;
+    BOOL combined = FALSE;
 #endif
 #if ACC_ROLE == 1
     LONG peer;
@@ -73,6 +79,7 @@ int main(int argc, char **argv, char **envp)
     CHECK(aes_appl_write(event.message.sender, &message) == E_OK);
     CHECK(aes_appl_yield() == E_OK);
 #endif
+    CHECK(accessory_input_checks(&info, ACC_ROLE, control.handle) == 0);
     __asm__ volatile ("stmxcsr %0" : "=m"(mxcsr));
     CHECK(mxcsr == desired && private_word == ACC_ROLE);
     CHECK(*(volatile ULONG *)heap == 0x548389);
@@ -83,8 +90,29 @@ int main(int argc, char **argv, char **envp)
     __asm__ volatile ("ud2");
 #else
     for (;;) {
+#if ACC_ROLE == 2
+        if (combined) {
+            /* Leave real input/timer EVBs suspended across desktop restart. */
+            request.mask = AES_EVENT_KEYBOARD | AES_EVENT_MOUSE1 |
+                AES_EVENT_MOUSE2 | AES_EVENT_TIMER | AES_EVENT_MESSAGE;
+            request.timer_ms = 60000;
+            request.mouse1.rectangle.g_x = request.mouse1.rectangle.g_y = 32760;
+            request.mouse1.rectangle.g_w = request.mouse1.rectangle.g_h = 1;
+            request.mouse2.outside = 1;
+            request.mouse2.rectangle.g_w = request.mouse2.rectangle.g_h = 32767;
+            CHECK(aes_evnt_multi(&request, &input_event) > 0);
+            if (!(input_event.events & AES_EVENT_MESSAGE))
+                continue;
+            event.message = input_event.message;
+        } else
+#endif
         CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == AES_EVENT_MESSAGE);
 #if ACC_ROLE == 4
+        if (event.message.type == 613) {
+            message.type = 614;
+            CHECK(aes_appl_write(event.message.sender, &message) == E_OK);
+            continue;
+        }
         if (event.message.type == 548) {
             CHECK(event.message.data[0] == queued && queued < AES_MESSAGE_QUEUE);
             queued++;
@@ -94,6 +122,9 @@ int main(int argc, char **argv, char **envp)
         queued = 0;
 #endif
         CHECK(event.message.type == 41); /* AC_CLOSE */
+#if ACC_ROLE == 2
+        combined = TRUE;
+#endif
     }
 #endif
     return 98;
