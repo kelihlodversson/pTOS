@@ -524,9 +524,10 @@ jobs:
           sudo apt-get install -y ${{ matrix.qemu }}
           # scalable fonts for the gdos_answer suite: TrueType and CFF, one
           # whose ascender is taller than its em (Loma), and a monospaced one
-          # with marks of no width (Liberation Mono)
+          # with marks of no width (Liberation Mono); fontTools makes a TrueType
+          # collection of two Liberation Sans faces
           sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf \
-              fonts-liberation
+              fonts-liberation python3-fonttools
 
       - name: Build the kernel and the test programs
         env:
@@ -602,7 +603,7 @@ jobs:
       # see tools/mkraspi-image.sh.  dos2unix provides unix2dos, which "make
       # release-raspi-resources" uses on the bundled text files, same as
       # every other pTOS release archive.  curl is what
-      # tools/fetch-raspi-firmware.sh downloads with, listed explicitly
+      # tools/fetch-raspi-firmware.sh and tools/fetch-fonts.sh download with, listed explicitly
       # rather than assumed from the runner image.
       - name: Install SD card image tooling
         run: sudo apt-get update && sudo apt-get install -y mtools dosfstools fdisk dos2unix curl zip
@@ -627,6 +628,12 @@ jobs:
           # readme.txt plus a doc/ subset -- the same optional extras every
           # other pTOS release archive carries, from release.mk.
           make release-raspi-resources DEST="sdcard/$archive"
+
+          # The default scalable fonts (DejaVu, with their licence), which
+          # the built-in GDOS finds in \GEMSYS\FONTS on the boot drive
+          # without any configuration: tools/fetch-fonts.sh, pinned and
+          # checked by checksum like the boot firmware.
+          ./tools/fetch-fonts.sh "sdcard/$archive/GEMSYS/FONTS"
 
           ./tools/mkraspi-image.sh "sdcard/$archive" "sdcard/$archive.img"
 

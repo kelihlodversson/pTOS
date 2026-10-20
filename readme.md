@@ -403,4 +403,6 @@ Parts of the Raspberry Pi implementation are derived from the [Circle bare-metal
 
 The scalable fonts (`CONF_WITH_VDI_SCALABLE_FONTS`) use [FreeType](https://freetype.org/), included as the `lib/freetype` submodule and used under its GPL licence option (version 2 or any later version, the same terms as pTOS). It is on by default only for the Raspberry Pi, virt and x86-64 kernels.
 
+The Raspberry Pi release images carry the [DejaVu fonts](fonts/dejavu/LICENSE) (Bitstream Vera licence, unmodified) in `\GEMSYS\FONTS`; see `doc/license.txt` and `doc/install.txt`.
+
 See [`doc/license.txt`](doc/license.txt) and the individual source-file headers for licensing information.

@@ -25,8 +25,11 @@
  *   returns how many, and vqt_name() lists them after the system fonts,
  *   flagged as outline fonts (vdi/vdi_text.c).
  *
- * The fonts are the TrueType (*.TTF) and OpenType (*.OTF) files in
- * CONF_VDI_FONT_DIR.  Each gets a font id from a hash of its full family
+ * The fonts are the TrueType (*.TTF), OpenType (*.OTF) and TrueType
+ * collection (*.TTC, each of its faces) files in CONF_VDI_FONT_DIR, which
+ * is scanned once, as the AUTO folder has run: a missing or empty
+ * directory just leaves the system without scalable fonts, and if the
+ * scan found none the first vst_load_fonts() looks again.  Each gets a font id from a hash of its full family
  * and style names, in a range of its own (SFONT_ID_FIRST on), so that a
  * document which stores a font id finds the same font at the next boot.
  * When two fonts hash to the same id, the one that sorts later takes the
@@ -101,12 +104,20 @@ static struct
 static char sfont_dir[3 + sizeof(CONF_VDI_FONT_DIR)];
 static char sfont_path[sizeof(sfont_dir) + 16];
 static DTA sfont_dta;
+static long sfont_faces;            /* faces in the file sfont_open() opened */
 
 
 /*
  * Opening a font file, on FreeType's stack (vdi_ft_call()): the file is
  * sfont_path, and its name, format and flags go into the VDI_SFONT
  */
+
+/* the names fonts give their regular style (DejaVu calls it "Book") */
+static BOOL sfont_is_regular(const char *style)
+{
+    return !strcmp(style, "Regular") || !strcmp(style, "Book")
+        || !strcmp(style, "Roman") || !strcmp(style, "Normal");
+}
 
 /*
  * "Family Style", without the style when it is the regular one; f->style
@@ -120,7 +131,7 @@ static void sfont_name(VDI_SFONT *f, const char *family, const char *style)
     f->style = 0;
     for (s = family ? family : "?"; *s && p < end; )
         *p++ = *s++;
-    if (style && *style && strcmp(style, "Regular") && p < end - 1)
+    if (style && *style && !sfont_is_regular(style) && p < end - 1)
     {
         *p++ = ' ';
         f->style = (UBYTE)(p - name);
@@ -173,8 +184,9 @@ static long sfont_open(void *arg)
     FT_Face face;
     const char *format;
 
-    if (FT_New_Face(vdi_ft_library, sfont_path, 0, &face))
+    if (FT_New_Face(vdi_ft_library, sfont_path, f->face, &face))
         return -1;
+    sfont_faces = face->num_faces;
     if (!FT_IS_SCALABLE(face))
     {
         FT_Done_Face(face);
@@ -243,10 +255,15 @@ const char *vdi_sfont_path(WORD index)
     return sfont_path;
 }
 
+LONG vdi_sfont_face(WORD index)
+{
+    return vdi_sfonts[index].face;
+}
+
 /* add the fonts matching one pattern; returns how many there are now */
 static WORD sfont_find(VDI_SFONT *fonts, WORD count, const char *pattern)
 {
-    long rc;
+    long rc, face;
 
     sfont_set_path(pattern);
     for (rc = kdos_fsfirst_at((long)sfont_path, 0, &sfont_dta); rc == 0;
@@ -257,11 +274,24 @@ static WORD sfont_find(VDI_SFONT *fonts, WORD count, const char *pattern)
             continue;
         strcpy(fonts[count].file, sfont_dta.d_fname);
         sfont_set_path(sfont_dta.d_fname);
-        if (vdi_ft_call(sfont_open, &fonts[count]) == 0)
-            count++;
-        else
+        fonts[count].face = 0;
+        sfont_faces = 1;
+        if (vdi_ft_call(sfont_open, &fonts[count]) != 0)
+        {
             KINFO(("GDOS: %s is not a scalable font FreeType can open\n",
                    sfont_dta.d_fname));
+            continue;
+        }
+        count++;
+
+        /* a collection: the other faces, which are fonts of their own */
+        for (face = 1; face < sfont_faces && face < 256 && count < SFONT_MAX; face++)
+        {
+            strcpy(fonts[count].file, sfont_dta.d_fname);
+            fonts[count].face = (UBYTE)face;
+            if (vdi_ft_call(sfont_open, &fonts[count]) == 0)
+                count++;
+        }
     }
 
     return count;
@@ -276,7 +306,10 @@ static int sfont_compare(const void *a, const void *b)
     if (!rc && fa->key != fb->key)
         rc = (fa->key < fb->key) ? -1 : 1;
 
-    return rc ? rc : strcmp(fa->file, fb->file);
+    if (!rc)
+        rc = strcmp(fa->file, fb->file);
+
+    return rc ? rc : (int)fa->face - (int)fb->face;
 }
 
 static BOOL sfont_id_used(const VDI_SFONT *fonts, WORD count, WORD id)
@@ -306,6 +339,7 @@ static void sfont_scan(void)
 
     count = sfont_find(fonts, 0, "*.TTF");
     count = sfont_find(fonts, count, "*.OTF");
+    count = sfont_find(fonts, count, "*.TTC");
     qsort(fonts, count, sizeof(VDI_SFONT), sfont_compare);
 
     /* the same font twice (a .TTF and an .OTF, say): keep the first file */
@@ -333,6 +367,16 @@ static void sfont_scan(void)
     }
     vdi_sfonts = fonts;
     vdi_sfont_count = count;
+}
+
+
+void vdi_sfont_rescan(void)
+{
+    if (vdi_gdos_id && !vdi_sfont_count && sfont_dir[0])
+    {
+        sfont_scan();
+        KINFO(("GDOS: %d scalable fonts in %s now\n", vdi_sfont_count, sfont_dir));
+    }
 }
 
 

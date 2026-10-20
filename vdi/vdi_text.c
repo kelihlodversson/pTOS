@@ -2510,6 +2510,7 @@ void vdi_vst_load_fonts(Vwk * vwk)
             INTOUT[0] = 0;
         else
         {
+            vdi_sfont_rescan();     /* if the boot-time scan found none */
             vwk->sfonts_loaded = TRUE;
             vwk->num_fonts += vdi_sfont_count;
             INTOUT[0] = vdi_sfont_count;
