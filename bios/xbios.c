@@ -374,7 +374,8 @@ static void xbios_d(WORD interno, LONG vector)
 
 static LONG iorec(WORD devno)
 {
-    /* a kernel pointer in a 32-bit result: truncated on x86-64 (#563) */
+    /* a kernel pointer in a 32-bit result: truncated on x86-64.  A user
+     * process is refused the call (biosaccess.c, doc/kernel-pointers.txt) */
     switch(devno) {
     case 0:
         return (LONG)(uintptr_t)rs232iorecptr;
@@ -777,7 +778,8 @@ static WORD xbios_21(WORD config)
 
 static LONG kbdvbase(void)
 {
-    return (LONG)(uintptr_t)&kbdvecs;  /* truncated on x86-64 (#563) */
+    /* truncated on x86-64; refused to a user process (doc/kernel-pointers.txt) */
+    return (LONG)(uintptr_t)&kbdvecs;
 }
 
 #if DBG_XBIOS

@@ -531,6 +531,8 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys(BIOS, 5, -32768, -1, 0) != ERANGE) bad |= 2;
         rc = sys(BIOS, 5, 0x102, -1, 0);        /* a query: the old vector */
         if (rc == EACCDN || rc == ERANGE) bad |= 2;
+        /* etv_term holds the kernel's just_rts: the old vector is hidden (#563) */
+        if (rc != 0) bad |= 4096;
         /* only a real -1 is "no new vector": 0xffffffff would be installed */
         if (sys(BIOS, 5, 0x100, 0xffffffffLL, 0) != EACCDN) bad |= 2;
 
@@ -571,6 +573,47 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys(XBIOS, 44, -2, 0, 0) != EACCDN) bad |= 256;
         rc = sys(XBIOS, 44, -1, 0, 0);
         if (rc == EACCDN) bad |= 256;
+
+        /* no pointer to the kernel's memory reaches a user process (#563):
+         * Getbpb(), Iorec() and Kbdvbase() are refused, Dosound() takes a
+         * table only as 0 or -1, and Ssystem() tells nothing of the kernel's
+         * variables or of the cookies that point into it */
+        if (sys(BIOS, 7, 0, 0, 0) != EACCDN) bad |= 4096;
+        if (sys(XBIOS, 14, 0, 0, 0) != EACCDN) bad |= 4096;
+        if (sys(XBIOS, 34, 0, 0, 0) != EACCDN) bad |= 4096;
+        if (sys(XBIOS, 32, -2, 0, 0) != EACCDN) bad |= 4096;
+        if (sys(XBIOS, 32, 0x100000000LL, 0, 0) != EACCDN) bad |= 4096;   /* not 0 */
+        if (sys(XBIOS, 32, 0x1ffffffffLL, 0, 0) != EACCDN) bad |= 4096;   /* not -1 */
+        if (sys(GEMDOS, 0x1a, PA(abuf), 0, 0) != 0) bad |= 4096;          /* Fsetdta returns nothing */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x4f2, 0) != 0) bad |= 4096;     /* _sysbase */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x400, 0) != 0) bad |= 4096;     /* etv_timer */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x4c6, 0) != 0) bad |= 4096;     /* dskbufp */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x42e, 0) != 0) bad |= 4096;     /* phystop */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x432, 0) != 0) bad |= 4096;     /* membot */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x436, 0) != 0) bad |= 4096;     /* memtop */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x44e, 0) != 0) bad |= 4096;     /* v_bas_ad */
+        if (sys(XBIOS, 0x18, 0, 0, 0) != 0) bad |= 4096;              /* Bioskeys returns nothing */
+        if (sys(XBIOS, 0x25, 0, 0, 0) != 0) bad |= 4096;              /* ... and Vsync */
+        if (sys(XBIOS, 2, 0, 0, 0) != 0) bad |= 4096;                 /* Physbase */
+        if (sys(XBIOS, 3, 0, 0, 0) != 0) bad |= 4096;                 /* Logbase */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x4ba, 0) == EINVFN) bad |= 4096;  /* _hz_200 is there */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x555, 0) != EINVFN) bad |= 4096;  /* and 0x555 is not */
+        /* The cookies that point into the kernel are not found.  None of them
+         * is installed on this machine, so seed one: S_SETCOOKIE takes any
+         * tag from a process, and the lookup must still say "not found",
+         * for the value and for the buffer form, without writing the buffer.
+         * Then take it out again. */
+        {
+            const s64 nf = 0x5f5f4e46;                          /* __NF */
+
+            abuf[0] = abuf[1] = abuf[2] = abuf[3] = 0x5a;
+            if (sys(GEMDOS, 0x154, 0x09, nf, 0x12345678) != 0) bad |= 4096;
+            if (sys(GEMDOS, 0x154, 8, nf, 0) != -1) bad |= 4096;
+            if (sys(GEMDOS, 0x154, 8, nf, PA(abuf)) != -1) bad |= 4096;
+            if (abuf[0] != 0x5a || abuf[1] != 0x5a || abuf[2] != 0x5a || abuf[3] != 0x5a)
+                bad |= 4096;
+            if (sys(GEMDOS, 0x154, 0x1a, nf, 0) != 0) bad |= 4096;
+        }
 
         /* what is valid is let through, and does what it should.  The calls
          * that return nothing return 0 here. */

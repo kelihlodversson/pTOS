@@ -368,8 +368,9 @@ too, and the top of the device window (0xffffff00 and up) is
 indistinguishable from them.  So no BIOS, XBIOS or GEMDOS result handed to
 a user may hold a kernel address, and neither may a structure or variable a
 user process can read (Iorec(), Kbdvbase(), Getbpb(), the cookie jar,
-Ssystem()).  #563 implements this rule and audits the places that compare
-a result with 0 or with an error code; #594 marked the first ones.
+Ssystem()).  doc/kernel-pointers.txt lists every such place with its
+decision; #563 implements them in the shared code, which the MMU entries
+call as the x32 one does.
 
 
 Costs in short
