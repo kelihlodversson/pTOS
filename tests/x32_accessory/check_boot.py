@@ -4,7 +4,7 @@ import sys
 
 output = Path(sys.argv[1]).read_text(errors="replace")
 assert output.count("EFI entry reached") == 1, "reset/triple-fault loop"
-for forbidden in ("panic:", "accessory FAIL", "memtest: FAIL", "System halted!"):
+for forbidden in ("panic:", "accessory FAIL", "accessory window FAIL", "memtest: FAIL", "System halted!"):
     assert forbidden not in output, forbidden
 for marker in (
     "x86-64 memtest: PASS",
@@ -24,6 +24,8 @@ assert "x32 accessory desktop: PASS" in live
 assert output.count("x32 input events: PASS") == 4, "typed input in all sessions"
 for regression in ("poll timer", "queued button", "button snapshot", "revocation"):
     assert output.count("x32 input " + regression + ": PASS") == 4, regression
+assert output.count("x32 window events/ownership/lifecycle: PASS") == 4
+assert output.count("x32 window copied text/exit/fault cleanup: PASS") >= 4
 for marker in ("native queue backpressure", "native window pointers", "idle wake"):
     assert "x32 accessory " + marker + ": PASS" in live, marker
 # Only the deliberate #UD fault is expected after the main process tests.

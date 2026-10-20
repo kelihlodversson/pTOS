@@ -11,6 +11,7 @@
 #include "geminit.h"
 #include "aes_service.h"
 #include "aes_accessory.h"
+#include "aes_window.h"
 #include "process.h"
 #include "gemerror.h"
 #include "gemaplib.h"
@@ -82,6 +83,7 @@ void x86_64_aes_enter(void)
     c->started = TRUE;
     c->result = proc_start_accessory(c->owner);
     proc_discard_accessory(c->owner); /* also unwind a refused start */
+    x86_64_aes_window_finished(c->owner);
     /* Pterm/fault unwound onto this UDA, and freed the user's syscall stack.
      * The dispatcher will remove this task without putting it back on a list. */
     c->owner = NULL;
@@ -91,11 +93,33 @@ void x86_64_aes_enter(void)
     panic("x86-64: resumed a terminated accessory\n");
 }
 
+BOOL x86_64_aes_associated(PD *pd)
+{
+    return owned(pd) != NULL;
+}
+
 BOOL x86_64_aes_owned(PD *pd)
 {
     ACCESSORY_CONTEXT *c = owned(pd);
 
     return c && c->aes == rlr;
+}
+
+BOOL x86_64_aes_begin_call(PD *pd)
+{
+    ACCESSORY_CONTEXT *c = owned(pd);
+
+    if (!c || c->aes != rlr)
+        return FALSE;
+    c->registration_revoked = FALSE;
+    return TRUE;
+}
+
+BOOL x86_64_aes_call_cancelled(PD *pd)
+{
+    ACCESSORY_CONTEXT *c = owned(pd);
+
+    return !c || c->aes != rlr || c->registration_revoked;
 }
 
 LONG x86_64_aes_wait(PD *pd)
@@ -297,6 +321,7 @@ void x86_64_aes_drain(void)
         }
         memset(c, 0, sizeof(*c));
     }
+    x86_64_aes_window_drain();
     /* Internal screen manager and process zero are rebuilt on restart. */
     memset(contexts, 0, sizeof(contexts));
 }
@@ -483,6 +508,10 @@ BOOL x86_64_aes_test_run(void)
             if (!c->aes)
                 continue;
             test_button_snapshot(c);
+            if (c->owner && x86_64_aes_window_test_revoke(c->owner)) {
+                vdi_service_callback_event(VDI_CALLBACK_BUTTON, 626, 0);
+                vdi_service_callback_work();
+            }
             if (c->owner && revocations < 3 &&
                 !memcmp(c->aes->p_name, "ACCTWO  ", 8) &&
                 (c->aes->p_stat & WAITIN) &&
@@ -495,6 +524,11 @@ BOOL x86_64_aes_test_run(void)
                 vdi_service_callback_event(VDI_CALLBACK_BUTTON, 613 + revocations, 0);
                 vdi_service_callback_work();
                 revocations++;
+                if (revocations == 3) {
+                    set_ctrl(&old_control);
+                    set_mown(old_owner);
+                    gl_ctmown = old_ctmown;
+                }
                 for (task = nrl; task; task = task->p_link)
                     if (task == c->aes)
                         panic("accessory revoked input wait stayed asleep\n");
@@ -505,7 +539,8 @@ BOOL x86_64_aes_test_run(void)
             if (!memcmp(c->aes->p_name, "ACCFAULT", 8) &&
                 !c->owner && c->result == 0xffff)
                 dead++;
-            if (c->owner && c->aes->p_evwait == MESSAGE_WAIT &&
+            if (c->owner && !x86_64_aes_window_test_revoke(c->owner) &&
+                c->aes->p_evwait == MESSAGE_WAIT &&
                 (c->aes->p_flags & AP_MESAG)) {
                 if (c->aes->p_evlist)
                     panic("accessory revoked input events leaked\n");
@@ -515,11 +550,14 @@ BOOL x86_64_aes_test_run(void)
         if (dead == 2 && waiting == 2)
             break;
     }
-    set_ctrl(&old_control);
-    set_mown(old_owner);
-    gl_ctmown = old_ctmown;
+    if (revocations != 3) {
+        set_ctrl(&old_control);
+        set_mown(old_owner);
+        gl_ctmown = old_ctmown;
+    }
     if (dead != 2 || waiting != 2 || revocations != 3 || button_snapshot_cases != 3)
         panic("accessory lifecycle FAIL: dead=%d waiting=%d\n", dead, waiting);
+    x86_64_aes_window_test();
     /* Exercise the native AES message bridge and receive acknowledgement. */
     for (i = 2; i < NUM_PDS; i++) {
         if (!contexts[i].owner)

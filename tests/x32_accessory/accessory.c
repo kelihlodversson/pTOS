@@ -9,6 +9,8 @@
 
 extern short _app;
 int accessory_input_checks(const AES_APP_INFO *info, WORD role, WORD handle);
+int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle);
+int accessory_window_redraw(WORD handle, WORD vdi_handle);
 long _stksize = 65536;
 UQUAD acc_entry_base, acc_entry_type, acc_entry_stack;
 UWORD acc_entry_cs;
@@ -80,6 +82,9 @@ int main(int argc, char **argv, char **envp)
     CHECK(aes_appl_yield() == E_OK);
 #endif
     CHECK(accessory_input_checks(&info, ACC_ROLE, control.handle) == 0);
+#if ACC_ROLE != 4
+    CHECK(accessory_window_checks(&info, ACC_ROLE, control.handle) == 0);
+#endif
     __asm__ volatile ("stmxcsr %0" : "=m"(mxcsr));
     CHECK(mxcsr == desired && private_word == ACC_ROLE);
     CHECK(*(volatile ULONG *)heap == 0x548389);
@@ -108,6 +113,10 @@ int main(int argc, char **argv, char **envp)
 #endif
         CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == AES_EVENT_MESSAGE);
 #if ACC_ROLE == 4
+        if (event.message.type == 626) {
+            CHECK(accessory_window_checks(&info, ACC_ROLE, control.handle) == 0);
+            continue;
+        }
         if (event.message.type == 613) {
             message.type = 614;
             CHECK(aes_appl_write(event.message.sender, &message) == E_OK);
@@ -118,9 +127,17 @@ int main(int argc, char **argv, char **envp)
             queued++;
             continue;
         }
-        CHECK(queued == AES_MESSAGE_QUEUE);
-        queued = 0;
+        if (event.message.type == 41) {
+            CHECK(queued == AES_MESSAGE_QUEUE);
+            queued = 0;
+        }
 #endif
+        if (event.message.type == 20 && !event.message.sender) {
+            CHECK(accessory_window_redraw(event.message.data[0], control.handle) == 0);
+            continue;
+        }
+        if (event.message.type >= 20 && event.message.type <= 31)
+            continue;
         CHECK(event.message.type == 41); /* AC_CLOSE */
 #if ACC_ROLE == 2
         combined = TRUE;

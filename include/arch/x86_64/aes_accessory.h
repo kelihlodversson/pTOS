@@ -15,6 +15,9 @@ void x86_64_aes_restore(void);
 void x86_64_aes_enter(void) NORETURN;
 void x86_64_aes_drain(void);
 BOOL x86_64_aes_owned(PD *pd);
+BOOL x86_64_aes_associated(PD *pd);
+BOOL x86_64_aes_begin_call(PD *pd);
+BOOL x86_64_aes_call_cancelled(PD *pd);
 LONG x86_64_aes_wait(PD *pd);
 LONG x86_64_aes_yield(PD *pd);
 LONG x86_64_aes_events(PD *pd, const AES_EVENT_REQUEST *request,

@@ -113,6 +113,8 @@ int aes_roundtrip_checks(const char *tail, const char *child_path)
     AES_EVENT event;
     AES_EVENT_REQUEST input_request = { AES_EVENT_TIMER };
     AES_INPUT_EVENT input_event;
+    AES_WINDOW_INFO window_info;
+    GRECT window_rect = { 20, 40, 320, 200 }, calculated;
     WORD id, child;
     const char modes[] = { 'c', 'c', 'n', 'e', 'f' };
     char child_tail[3] = { '$', 0, 0 };
@@ -144,6 +146,19 @@ int aes_roundtrip_checks(const char *tail, const char *child_path)
     CHECK(aes_appl_yield() == EACCDN);
     id = info.id;
     CHECK(aes_evnt_multi(&input_request, &input_event) == EACCDN);
+    CHECK(aes_wind_create(AES_WINDOW_NAME_GADGET, &window_rect) == EACCDN);
+    CHECK(aes_wind_open(1, &window_rect) == EACCDN);
+    CHECK(aes_wind_close(1) == EACCDN);
+    CHECK(aes_wind_delete(1) == EACCDN);
+    CHECK(aes_wind_get(0, &window_info) == EACCDN);
+    CHECK(aes_wind_set_rect(1, &window_rect) == EACCDN);
+    CHECK(aes_wind_set_text(1, AES_WINDOW_NAME, "title") == EACCDN);
+    CHECK(aes_wind_top(1) == EACCDN);
+    CHECK(aes_wind_slider(1, AES_WINDOW_HSLIDE, 100) == EACCDN);
+    CHECK(aes_wind_rect(1, 0, &calculated) == EACCDN);
+    CHECK(aes_wind_find(0, 0) == EACCDN);
+    CHECK(aes_wind_calc(AES_WINDOW_WORK, AES_WINDOW_NAME_GADGET,
+                        &window_rect, &calculated) == EACCDN);
     CHECK(aes_evnt_multi((AES_EVENT_REQUEST *)1, &input_event) == EIMBA);
     CHECK(raw(AES_SERVICE_CLASS, AES_SERVICE_MULTI, (uintptr_t)&input_request,
               (uintptr_t)&input_event, 1, 0) == EINVAL);

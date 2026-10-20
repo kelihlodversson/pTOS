@@ -24,6 +24,7 @@ typedef union {
 
 BOOL user_callback_image_load(ASPACE *as);
 BOOL user_callback_work_register(void (*work)(void));
+BOOL user_callback_active(void);
 LONG user_callback_exchange(USER_CALLBACK **slot, UWORD signature,
                              UQUAD handler, const USER_CALLBACK_NATIVE *fallback,
                              ULONG *old);

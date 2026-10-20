@@ -554,6 +554,11 @@ BOOL user_callback_syscall_allowed(UQUAD call, UQUAD first)
            fn == 0x138 || fn == 0x139 || fn == 0x17d;
 }
 
+BOOL user_callback_active(void)
+{
+    return active != NULL;
+}
+
 BOOL user_callback_work_register(void (*work)(void))
 {
     UWORD i;
