@@ -266,13 +266,23 @@ static LONG input_events(UQUAD input, UQUAD output)
         return EACCDN;
     timeout = request.timer_ms;
     started = (ULONG)hz_200;
+#if CONF_WITH_X32_ACCESSORY_TEST
+    /* Make the one-millisecond poll regression cross the clock-read
+     * boundary below, without changing the clock or dispatching tasks. */
+    if ((request.flags & AES_EVENT_POLL) &&
+        (request.mask & AES_EVENT_TIMER) && timeout == 1)
+        while ((ULONG)hz_200 == started)
+            __asm__ volatile ("pause");
+#endif
     do {
         p = kproc_aes_get(run);
         if (!p)
             return EACCDN;
-        /* A callback may drain a message after it wakes this task. Keep
-         * the original timeout when retrying such a spurious wake. */
-        if ((request.mask & AES_EVENT_TIMER) && timeout) {
+        /* Only blocking waits have deadlines. A callback may drain a
+         * message after waking this task; keep the original timeout when
+         * retrying such a spurious wake. Polls ignore positive timers. */
+        if (!(request.flags & AES_EVENT_POLL) &&
+            (request.mask & AES_EVENT_TIMER) && timeout) {
             elapsed = (ULONG)hz_200 - started;
             request.timer_ms = elapsed >= (timeout + 4) / 5 ?
                 0 : timeout - elapsed * 5;

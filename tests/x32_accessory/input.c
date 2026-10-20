@@ -127,6 +127,24 @@ int accessory_input_checks(const AES_APP_INFO *info, WORD role, WORD handle)
     request.flags = AES_EVENT_POLL; request.timer_ms = 20;
     CHECK(aes_evnt_multi(&request, &event) == 0);
     CHECK(!event.events && !event.message.type);
+    /* The kernel fixture forces a real timer tick between the deadline
+     * clock reads. A positive timer must still be ignored by every poll. */
+    request.mask = AES_EVENT_TIMER; request.timer_ms = 1;
+    CHECK(aes_evnt_multi(&request, &event) == 0 && !event.events);
+    request.mask |= AES_EVENT_MESSAGE;
+    CHECK(aes_evnt_multi(&request, &event) == 0 && !event.events);
+    CHECK(aes_appl_write(info->id, &message) == E_OK);
+    CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_MESSAGE);
+    CHECK(event.events == AES_EVENT_MESSAGE && event.message.type == 613);
+    request.timer_ms = 0;
+    CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_TIMER);
+    CHECK(event.events == AES_EVENT_TIMER && !event.message.type);
+    request.mask = AES_EVENT_TIMER;
+    CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_TIMER);
+    request.flags = 0; request.timer_ms = 1;
+    CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_TIMER);
+    (void)Cconws("x32 input poll timer: PASS\r\n");
+    request.timer_ms = 20;
     request.flags = 0; request.mask = AES_EVENT_ALL;
     request.clicks = 2; request.button_mask = 1; request.button_state = 1;
     request.mouse1.rectangle.g_x = 0;
@@ -138,8 +156,8 @@ int accessory_input_checks(const AES_APP_INFO *info, WORD role, WORD handle)
     }
     request.mask = AES_EVENT_BUTTON;
     for (i = 0; i < 2; i++) {
-        /* The kernel fixture queues a three-click press and its release
-         * before forker(), once for a poll and once for a blocking wait. */
+        /* The kernel fixture queues a three-click press, motion, release
+         * and more motion before forker(), for both poll and blocking wait. */
         request.flags = i ? 0 : AES_EVENT_POLL;
         request.clicks = 2; request.button_state = 1;
         CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
@@ -149,6 +167,7 @@ int accessory_input_checks(const AES_APP_INFO *info, WORD role, WORD handle)
         request.clicks = 1; request.button_state = 0;
         CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
         CHECK(event.clicks == 1 && !(event.buttons & 1));
+        CHECK(event.mouse_x == 121 && event.mouse_y == 141);
     }
     (void)Cconws("x32 input queued button: PASS\r\n");
     for (i = 0; i < 2; i++) {

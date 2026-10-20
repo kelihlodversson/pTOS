@@ -103,6 +103,9 @@ three defects independently makes its corresponding regression fail.
 
 The input fixture tests combined timer/message readiness, a delayed reply,
 empty polls, invalid scalars/pointers and page-boundary/read-only outputs.
+One-millisecond polls cross a real timer tick between the kernel's clock
+reads: timer-only and combined polls must ignore the positive timer, while
+a zero timer remains immediately ready in both polling and blocking calls.
 Repeated timer wins cancel keyboard, double-click and rectangle waits. A
 background accessory cannot poll input belonging to the focused accessory.
 tests/x32_accessory/drive_input.py injects real PS/2 keys, motion and button
@@ -111,9 +114,9 @@ All four sessions must pass, and restart cancels outstanding native input
 and long timer waits left by the surviving accessory.
 Before polling and blocking button checks, the fixture queues a complete
 press/release pair and verifies the saved press, capped click count and current
-released state, including motion after the release. Registered button waits
-must retain the completing press's coordinates and button state across an
-intervening native event return and three queued button transitions (left
+released state, including motion both before and after release. Registered
+button waits must retain the completing press's coordinates and button state
+across an intervening native event return and three queued button transitions (left
 press, release, right press). A real ring-3 VDI callback unregisters its
 suspended owner during keyboard-only, rectangle-only and timer-only waits;
 all must wake with EACCDN and allow re-registration. These checks run in each

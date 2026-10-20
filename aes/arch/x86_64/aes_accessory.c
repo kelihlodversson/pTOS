@@ -345,8 +345,9 @@ static void test_queued_button(PD *pd, const AES_EVENT_REQUEST *request)
     __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
     if (forkq(mchange, MAKE_ULONG(101, 121)) < 0 ||
         forkq(bchange, MAKE_ULONG(1, 3)) < 0 ||
+        forkq(mchange, MAKE_ULONG(111, 131)) < 0 ||
         forkq(bchange, MAKE_ULONG(0, 1)) < 0 ||
-        forkq(mchange, MAKE_ULONG(111, 131)) < 0)
+        forkq(mchange, MAKE_ULONG(121, 141)) < 0)
         panic("accessory queued button injection FAIL\n");
     if (flags & 0x200)
         __asm__ volatile ("sti" ::: "memory");

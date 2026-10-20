@@ -65,6 +65,10 @@ static AESPD    *gl_cowner;     /* current control rectangle owner      */
 static WORD     gl_bpend;       /* number of pending events desiring */
                                 /*  more than a single click         */
 
+/* Native pr_xrat/pr_yrat sample the pointer at the following transition.
+ * Typed button waits need the matching transition's own coordinates. */
+static ULONG    button_position, previous_button_position;
+
 /* Prototypes: */
 static void post_button(AESPD *pd, WORD new, WORD numclicks);
 static void post_mouse(AESPD *pd, WORD x, WORD y);
@@ -340,6 +344,8 @@ void bchange(LONG fdata)
     pr_mclick = mclick;
     pr_xrat = xrat;
     pr_yrat = yrat;
+    previous_button_position = button_position;
+    button_position = MAKE_ULONG(xrat, yrat);
     button = new;
     mclick = clicks;
     post_button(gl_mowner, button, clicks);
@@ -570,7 +576,7 @@ void abutton(EVB *e, LONG p)
                     /* azombie() snapshots current state; this completion
                      * belongs to the matching historical transition. */
                     e->e_return = MAKE_ULONG(pr_button, LOWORD(e->e_return));
-                    e->e_parm = MAKE_ULONG(pr_xrat, pr_yrat);
+                    e->e_parm = previous_button_position;
                 }
                 return;
             }

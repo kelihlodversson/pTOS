@@ -94,10 +94,11 @@ needed because each syscall identifies the current KPROC.
         mask must contain at least one supported event; reserved must be 0.
         flags is 0 to block or AES_EVENT_POLL for a nonblocking check. A zero
         timer is immediately ready; positive milliseconds are rounded up to
-        AES ticks, with a maximum of 0x7fffffff. A poll does not start a future
-        timer. Button waits accept 1-255 clicks, a nonzero mask of the two
-        mouse buttons (1-3) and a state contained in that mask. The click count
-        caps the returned count, following native AES rules. Each selected
+        AES ticks, with a maximum of 0x7fffffff. A poll ignores positive
+        timers even if a tick passes during the call; it never starts a
+        future timer. Button waits accept 1-255 clicks, a nonzero mask of the
+        two mouse buttons (1-3) and a state contained in that mask. The click
+        count caps the returned count, following native AES rules. Each selected
         rectangle has outside=0 (enter) or 1 (leave), positive width/height,
         and right/bottom coordinates at most 32767.
 
@@ -108,10 +109,10 @@ needed because each syscall identifies the current KPROC.
         Completed button waits return the completing event's coordinates and
         button state, even if later transitions or another task's native
         event return overwrite the shared mouse history. A queued press/release
-        pair preserves the matching earlier button snapshot and its click
-        count, capped by the request. Other mouse coordinates/buttons and
-        modifiers use the native AES snapshot. Unfocused polls do not consume
-        the saved transition.
+        pair preserves the press's own coordinates even after motion while
+        held, and its click count is capped by the request. Other mouse
+        coordinates/buttons and modifiers use the native AES snapshot.
+        Unfocused polls do not consume the saved transition.
         The key field contains the scan code in its high byte and character
         in its low byte. Modifiers use the existing vq_key_s bit assignments.
 
