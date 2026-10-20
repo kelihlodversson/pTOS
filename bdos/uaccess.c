@@ -152,7 +152,9 @@ static long buf_ok(long v, long len, BOOL write)
 {
     ULONG a;
 
-    if (len < 0 || (UQUAD)len > 0xffffffffULL)
+    /* the count is a LONG: one that is negative there arrives zero-extended
+     * where a long is 64 bits (the x32 ABI), so 0x80000000 and up are too big */
+    if (len < 0 || (UQUAD)len > 0x7fffffffULL)
         return ERANGE;
     if (!len)
         return E_OK;
