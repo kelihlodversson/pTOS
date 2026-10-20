@@ -331,6 +331,9 @@ static BOOL sfont_id_used(const VDI_SFONT *fonts, WORD count, WORD id)
 }
 
 /* the fonts in CONF_VDI_FONT_DIR, sorted by name, with their ids */
+/* the file name of the system font that is wanted (upper case), set before the scan: see sfont_scan() */
+static char sfont_wanted[sizeof(CONF_VDI_SYSTEM_FONT) > 14 ? sizeof(CONF_VDI_SYSTEM_FONT) : 14] = CONF_VDI_SYSTEM_FONT;
+
 static void sfont_scan(void)
 {
     VDI_SFONT *fonts;
@@ -354,6 +357,8 @@ static void sfont_scan(void)
         if (!n || fonts[i].key != fonts[n - 1].key
             || strcmp(fonts[i].name, fonts[n - 1].name))
             fonts[n++] = fonts[i];
+        else if (!strcmp(fonts[i].file, sfont_wanted))
+            fonts[n - 1] = fonts[i];        /* unless the system font is the other file */
     count = n;
 
     /* the ids, in name order, so that collisions resolve the same way */
@@ -432,20 +437,25 @@ static BOOL sfont_system_setting(char *name)
     return FALSE;
 }
 
-static void sfont_system(void)
+/* the wanted system font: the file's, else the option's, in upper case */
+static void sfont_system_wanted(void)
 {
-    /* room for the option whole, and for the 13 characters of the file */
-    char name[sizeof(CONF_VDI_SYSTEM_FONT) > 14 ? sizeof(CONF_VDI_SYSTEM_FONT) : 14] = CONF_VDI_SYSTEM_FONT;
-    Fonthead new16 = fon8x16, new8 = fon8x8;
-    WORD i;
     char *c;
 
-    (void)sfont_system_setting(name);           /* the file takes the place of the option */
-    if (!name[0])
-        return;
-    for (c = name; *c; c++)                     /* GEMDOS names are upper case */
+    (void)sfont_system_setting(sfont_wanted);   /* the file takes the place of the option */
+    for (c = sfont_wanted; *c; c++)             /* GEMDOS names are upper case */
         if (*c >= 'a' && *c <= 'z')
             *c = (char)(*c - 'a' + 'A');
+}
+
+static void sfont_system(void)
+{
+    char *name = sfont_wanted;
+    Fonthead new16 = fon8x16, new8 = fon8x8;
+    WORD i;
+
+    if (!name[0])
+        return;
 
     for (i = 0; i < vdi_sfont_count; i++)
         if (!strcmp(vdi_sfonts[i].file, name))
@@ -535,6 +545,7 @@ void vdi_gdos_init(void)
 #endif
 
     sfont_set_dir();
+    sfont_system_wanted();
     sfont_scan();
     sfont_system();
     vdi_gdos_id = GDOS_ID_FSM;
