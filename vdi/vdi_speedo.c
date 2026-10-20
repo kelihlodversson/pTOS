@@ -52,6 +52,7 @@
 #include <stddef.h>
 #include "vdi_defs.h"
 #include "vdi_gdos.h"
+#include "vdi_ftsystem.h"
 #include "lineavars.h"
 
 /* the pointer in intin[i] and intin[i + 1] */
@@ -486,9 +487,18 @@ void vdi_v_flushcache(Vwk *vwk)
     INTOUT[0] = 0;
 }
 
+/*
+ * pTOS extends the "which" of vqt_cachesize() with 2, the bytes of the
+ * font memory in use (the faces, the sizes, the system fonts' forms),
+ * which a test that loads and unloads fonts in a loop compares before
+ * and after to see that nothing is left behind
+ */
 void vdi_vqt_cachesize(Vwk *vwk)
 {
-    intout_long(0, vdi_sfont_cache_free());
+    if (INTIN[0] == 2)
+        intout_long(0, vdi_ft_used());
+    else
+        intout_long(0, vdi_sfont_cache_free());
 }
 
 
