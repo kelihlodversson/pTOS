@@ -45,7 +45,7 @@ static void aes(short op, short nintin, short nintout)
             :
             : "d2", "a0", "a1", "memory", "cc");
     }
-#else
+#elif defined(__arm__)
     {
         register long r0 __asm__("r0") = 200;
         register void *r1 __asm__("r1") = aespb;

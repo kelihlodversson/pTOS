@@ -1153,8 +1153,14 @@ static long sf_system_build(void *arg)
         FT_Bitmap *bm;
         LONG left = (LONG)ch * cell;
 
-        if (glyph && !FT_Load_Glyph(sf_face, glyph, FT_LOAD_RENDER | SF_LOAD)
-            && sf_face->glyph->bitmap.pixel_mode == FT_PIXEL_MODE_MONO)
+        FT_Error err = glyph ? FT_Load_Glyph(sf_face, glyph, FT_LOAD_RENDER | SF_LOAD) : 1;
+
+        if (err == FT_Err_Out_Of_Memory)
+        {
+            vdi_ft_free(off);           /* all or nothing */
+            return -1;
+        }
+        if (!err && sf_face->glyph->bitmap.pixel_mode == FT_PIXEL_MODE_MONO)
         {
             LONG x0 = left + sf_face->glyph->bitmap_left;
             WORD y0 = (WORD)(top + 1 - sf_face->glyph->bitmap_top);

@@ -434,7 +434,8 @@ static BOOL sfont_system_setting(char *name)
 
 static void sfont_system(void)
 {
-    char name[14] = CONF_VDI_SYSTEM_FONT;
+    /* room for the option whole, and for the 13 characters of the file */
+    char name[sizeof(CONF_VDI_SYSTEM_FONT) > 14 ? sizeof(CONF_VDI_SYSTEM_FONT) : 14] = CONF_VDI_SYSTEM_FONT;
     Fonthead new16 = fon8x16, new8 = fon8x8;
     WORD i;
     char *c;
