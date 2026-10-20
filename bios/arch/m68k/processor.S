@@ -33,9 +33,9 @@
 #endif
 #if CONF_WITH_APOLLO_68080
         .globl  C_SYM(is_apollo_68080)
+#endif
 #if CONF_REQUIRE_PMMU
         .globl  C_SYM(pmmu_present)
-#endif
 #endif
 
         .extern C_SYM(longframe)              // If not 0, use long stack frames

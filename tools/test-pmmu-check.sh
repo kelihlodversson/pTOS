@@ -60,13 +60,17 @@ boot() {
     kill $pid 2>/dev/null
     wait $pid 2>/dev/null
     if [ $status -ne 124 ] && [ ! -s "$serial" ]; then
-        # QEMU stopped by itself without any output: it cannot run this CPU
-        # on the virt machine
-        if [ "$mandatory" = yes ]; then
+        # QEMU stopped by itself without any output.  That is a skip only for
+        # a CPU this QEMU says the virt machine (or QEMU at all) does not
+        # have; any other early exit, an abort during the probe included, is a
+        # failure, so that it cannot pass as an unsupported CPU.
+        if [ "$mandatory" != yes ] &&
+           grep -q -e 'unable to find CPU model' -e 'Invalid CPU type' \
+                   -e 'Unsupported CPU' "$tmp/$cpu.log"; then
+            echo "skip $cpu: this QEMU does not offer it on the virt machine"
+        else
             echo "FAIL $cpu: QEMU exited ($status): $(head -c 200 "$tmp/$cpu.log")"
             failed=1
-        else
-            echo "skip $cpu: this QEMU cannot run it on the virt machine"
         fi
         return
     fi
