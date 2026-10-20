@@ -78,7 +78,13 @@ ENTRY(C_SYM(os_entry))
  */
 MEMORY
 {
+#if CONF_WITH_HIGHER_HALF
+    /* the physical-memory window: the RAM, from its first byte, at
+     * VIRT_WINDOW_VBASE (include/machine/virt-arm/virt_memmap.h) */
+    stram : ORIGIN = 0x80000000, LENGTH = 14M
+#else
     stram : ORIGIN = 0x00000000, LENGTH = 14M
+#endif
 #if !EMUTOS_LIVES_IN_RAM
     rom : ORIGIN = ROM_ORIGIN, LENGTH = ROM_LENGTH
 #endif
@@ -102,15 +108,15 @@ REGION_ALIAS("REGION_READ_ONLY", rom)
 #endif
 REGION_ALIAS("REGION_READ_WRITE", REGION_RAM)
 
-/* On the QEMU ARM 'virt' machine, RAM starts at physical 0x40000000, but
- * the image is still linked (VMA) at the same low addresses as every
- * other machine so the fixed-address TOS system variables keep working.
- * LMA_AT(section) makes QEMU load that stram section's bytes at
- * link_address + 0x40000000; a static MMU table built early in
- * startup.S then maps virtual 0x0-and-up back onto that physical
- * window. See docs/superpowers/plans/2026-07-30-arm-virt-support.md.
+/* On the QEMU ARM 'virt' machine, RAM starts at physical 0x40000000.  The
+ * kernel is linked in the physical-memory window (VMA from 0x80000000, the
+ * RAM's first byte) and loaded where the RAM is: LMA_AT(section) makes QEMU
+ * load that section's bytes at its link address - 0x40000000.  A static MMU
+ * table built early in startup.S maps the window onto that physical memory
+ * (see virt_mmu.c); the part of the start that runs before the MMU is on is
+ * position independent.
  *
- * This is deliberately AT(ADDR(section) + 0x40000000) -- an explicit
+ * This is deliberately AT(ADDR(section) - 0x40000000) -- an explicit
  * per-section load address -- rather than a shared "AT>stram_lma"
  * load memory region: several of these sections (.first_stram,
  * .low_stram, .stack, .laststram) hold no actual data, just
@@ -118,23 +124,23 @@ REGION_ALIAS("REGION_READ_WRITE", REGION_RAM)
  * A load memory region's address only advances by the sections
  * explicitly assigned to it, but NOBITS sections do not consume any
  * of that region's space, so a shared AT>region silently stops
- * tracking "VMA + 0x40000000" as soon as a NOBITS section intervenes
+ * tracking "VMA - 0x40000000" as soon as a NOBITS section intervenes
  * -- every later section collapses back onto the region's origin
- * instead of its correct offset. AT(ADDR(section) + ...) computes
+ * instead of its correct offset. AT(ADDR(section) - ...) computes
  * each section's own load address directly and is immune to that.
  *
  * This also relies on an implicit fixup in QEMU's -kernel ELF loader:
- * the image's e_entry is a *virtual* address (low ST-RAM, which pre-MMU
- * is flash on this board, not RAM), and QEMU rewrites it to the matching
+ * the image's e_entry is a *virtual* address (in the window, which pre-MMU
+ * is not RAM on this board), and QEMU rewrites it to the matching
  * physical address whenever a segment has p_vaddr != p_paddr, i.e. by
- * the same +0x40000000 offset LMA_AT applies here.  That rewrite only
+ * the same offset LMA_AT applies here.  That rewrite only
  * happens when the entry point falls inside an executable (PF_X),
  * non-empty (p_filesz-covered) segment.  If a future layout change ever
  * breaks that condition -- an empty or non-executable first segment, or
  * an entry point outside it -- QEMU silently jumps to the unmapped
  * virtual address instead, with no diagnostic of any kind. */
 #if defined (MACHINE_VIRT_ARM)
-# define LMA_AT(section) AT(ADDR(section) + 0x40000000)
+# define LMA_AT(section) AT(ADDR(section) - 0x40000000)
 #else
 # define LMA_AT(section)
 #endif
@@ -146,8 +152,15 @@ SECTIONS
     {
         /* System variables are located at fixed addresses */
 #include "tosvars.ld"
+#if CONF_WITH_HIGHER_HALF
+        /* ... except in a higher-half kernel, which has none: the region
+         * is empty */
+         C_SYM(sysvars_start) = .;
+         C_SYM(sysvars_end) = .;
+#else
          . = 0x800; /* Extend sysvars area upto end of supervisor-only RAM */
          C_SYM(sysvars_end) = .;
+#endif
     } >stram
 
 #if CONF_WITH_STATIC_ALT_RAM
@@ -198,9 +211,13 @@ SECTIONS
          __low_stram_start = .;
          obj/lowstram.o(.bss COMMON)
          __low_stram_end = .;
+#if !CONF_WITH_HIGHER_HALF
          ASSERT(ABSOLUTE(C_SYM(shifty)) < 0x8000, "error: bad _shifty address");
+#endif
         ASSERT((ABSOLUTE(C_SYM(dskbuf)) & 3) == 0, "error: bad _dskbuf alignment");
+#if !CONF_WITH_HIGHER_HALF
         ASSERT(ABSOLUTE(__low_stram_end) <= 0x8000, "error: .low_stram section extends beyond 32k");
+#endif
     } >stram
 
     /* The TEXT segment contains EmuTOS executable code and read-only data.

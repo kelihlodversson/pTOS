@@ -359,6 +359,47 @@ The MMU configurations translate by where the address is:
 The same memory is also in the window, so a caller that can choose passes
 the window address.
 
+virt-arm, as built by #566 (CONF_WITH_HIGHER_HALF)
+...................................................
+
+The first higher-half kernel.  What it does, and where it stops short of the
+end state above, until #568 gives each process a table of its own:
+
+  - The kernel is linked at 0x80000000 and up (emutos.ld, MEMORY stram), the
+    RAM's first byte being at 0x80000000, and loaded where the RAM is
+    (LMA = VMA - 0x40000000, so QEMU's -kernel loader needs no change).  The
+    code before the MMU is on (startup.S up to the jump, virt_uart.c,
+    virt_mmu_bootstrap()) runs at the physical address and is position
+    independent: no symbol address, no global.
+  - TTBCR.N = 1.  TTBR1 holds the kernel half for the whole uptime: the
+    window (RAM, 1 MiB sections) and the devices (as before, VIRT_DEV_VA()).
+    TTBR0 holds the lower half: the RAM again at virtual 0, which is the pool
+    the memory of the programs comes from, and the first 16 MiB of the RAM at
+    its physical address, for the MMU switches at boot and reset (kept).  The
+    pool is the memory after the kernel image (bmem_init() converts the end of
+    the kernel with virt_pool_start()), so Malloc(), Pexec() and every other
+    address given to a program stays a positive LONG, and phystop, membot and
+    memtop are pool addresses.  The pool is a second view of the same
+    physical memory, with the same attributes.
+  - The kernel half is not supervisor-only yet.  The command line and the
+    desktop are part of the kernel image and run in user mode, so they have to
+    execute and read the kernel's text and data in the window.  Making the
+    half supervisor-only is part of #568, with the programs that run from
+    their own memory.
+  - No fixed low addresses, and no emulated vector table: the ARM exception
+    handlers (startup.S) dispatch to a few ordinary variables --
+    tos_vec_prefetch, tos_vec_data, tos_vec_undef, tos_vec_linea and
+    tos_vec_svc[16] (bios/arch/arm/vectors.c) -- and Setexc() of the vector
+    numbers they stand for (0x02, 0x03, 0x04, 0x0a and 0x20-0x2f) reads and
+    writes them; any other vector does not exist on ARM, so Setexc() of it
+    returns 0 and sets nothing.  The crash page (proc_lives and the others)
+    is made of ordinary variables.  The native exception table is installed
+    with VBAR as before.
+  - virtio DMA addresses are translated by where the address is
+    (virt_to_phys(), VIRTIO_PHYS() in util/virtio.h): the window or the pool.
+  - A message id of the NLS (NLS_MSGID_FLAG) is no longer the top bit alone,
+    which a string of the kernel image has now.
+
 
 Kernel pointers and LONG results
 ---------------------------------

@@ -265,16 +265,15 @@ static void v9p_read_mount_tag(ULONG base)
  * length on success, or a negative gemerror.h code. */
 static LONG v9p_transact(ULONG len)
 {
-    ULONG phys_offset = v9p_dev.phys_offset;
     ULONG idx, rlen;
     LONG timeout;
 
     if (v9p_failed)
         return EDRVNR;
 
-    virtio_desc_set(&v9p_dev, 0, (ULONG)v9p_tbuf + phys_offset, len,
+    virtio_desc_set(&v9p_dev, 0, VIRTIO_PHYS(&v9p_dev, v9p_tbuf), len,
                      VIRTIO_DESC_F_NEXT, 1);
-    virtio_desc_set(&v9p_dev, 1, (ULONG)v9p_rbuf + phys_offset, v9p_msize,
+    virtio_desc_set(&v9p_dev, 1, VIRTIO_PHYS(&v9p_dev, v9p_rbuf), v9p_msize,
                      VIRTIO_DESC_F_WRITE, 0);
 
 #if ARCH_ARM
