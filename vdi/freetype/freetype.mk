@@ -60,7 +60,7 @@ $(FREETYPE_BUILDDIR):
 # m68k ELF toolchains the assembler output goes through the same local
 # label fix as pTOS's own C files.
 define freetype-object
-$(FREETYPE_BUILDDIR)/$(notdir $(1:.c=.o)): $(FREETYPE_DIR)/$(1) $(AUTOCONF_H) | $(FREETYPE_BUILDDIR)
+$(FREETYPE_BUILDDIR)/$(notdir $(1:.c=.o)): $(FREETYPE_DIR)/$(1) $(AUTOCONF_H) vdi/freetype/freetype.mk | $(FREETYPE_BUILDDIR)
 ifneq (,$(M68K_LOCAL_LABEL_FIX))
 	$$(CC) $$(FREETYPE_CFLAGS) $$(DEPFLAGS) -MF $$(@:.o=.d) -MT $$@ -S $$< -o $$@.s
 	python3 $$(M68K_LOCAL_LABEL_FIX) $$@.s $$@.fixed.s

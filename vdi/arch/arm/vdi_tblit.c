@@ -84,8 +84,17 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst)
             /* light text keeps the bits of the mask, from the bottom line up, turning one a line */
             UWORD lite = (vars->STYLE & F_LIGHT) ? (UWORD)linea_vars.LITEMASK : (UWORD)0xffff;
 
-            /* the width of the glyph itself, without what thickening adds (the callers know) */
-            glyphwidth = vars->glyph_width;
+            /*
+             * The part of the source that is thickened: the cell less what
+             * thickening adds, as the m68k blit masks it (thk_msk) and
+             * thicken_glyph() and the reference model of text_blit do.  In
+             * a font whose characters are not all as wide that is the
+             * glyph; in a fixed-pitch one, whose cell stays, the last
+             * columns of the glyph go.
+             */
+            glyphwidth = vars->width;
+            if (vars->STYLE & F_THICKEN)
+                glyphwidth -= vars->smear;
 
             for (y = 0; y < vars->height; y++)
             {

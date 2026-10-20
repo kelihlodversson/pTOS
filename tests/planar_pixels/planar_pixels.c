@@ -76,6 +76,15 @@ static void aes(short op, short nintin, short nintout)
 #endif
 }
 
+/* the console's cursor blinks by inverting its cell in the screen memory */
+static void set_cursor(int on)
+{
+    long old;
+
+    old = Cursconf(on ? 1 : 0, 0);
+    (void)old;
+}
+
 static short handle;
 static short aes_there;
 static short wk_planes;
@@ -274,8 +283,8 @@ static int skew_leans(void)
     char *m = lean_msg;
     const char *t = "skewed text does not lean: rows ";
 
-    for (y = 0; y < 30; y++)
-        for (x = 0; x < 60; x++)
+    for (y = 0; y <= AREA_H; y++)
+        for (x = 0; x <= AREA_W; x++)
             if (get_pixel(x, y))
             {
                 if (first < 0)
@@ -413,11 +422,17 @@ void test_planar_pixels(void)
         return;
     }
 
+    /* the mouse and the console's cursor would change the pixels between the drawing and the reading */
+    vs_call(handle, 123, 0, 0, 0);      /* v_hide_c() */
+    set_cursor(0);
     check_fill();
     check_edges();
     check_line();
     check_text();
     check_effects();
+    set_cursor(1);
+    vs_intin[0] = 1;
+    vs_call(handle, 122, 0, 0, 1);      /* v_show_c(reset) */
     restore_and_close();
 
     ptest_begin("planar_pixels (#598)");
