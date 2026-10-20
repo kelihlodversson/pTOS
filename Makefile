@@ -1588,6 +1588,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC) \
               $(if $(ARCH_ARM),-mword-relocations) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
+              $(if $(CONF_WITH_USER_COPY),-DTEST_WITH_USER_COPY) \
               $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE)
 
 # obj/pbench_gem.o (tools/pBench/gem.c) gives suites that need it minimal

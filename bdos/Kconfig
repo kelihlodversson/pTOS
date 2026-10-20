@@ -189,7 +189,7 @@ config CONF_WITH_GEMDOS_SHUTDOWN
 	  CONF_WITH_SHUTDOWN (bios/Kconfig) provides where that is set.
 
 config CONF_WITH_USER_COPY
-	bool "Validate the pointers passed to GEMDOS calls" if !ARCH_X86_64 && !ARCH_M68K && CONF_WITH_KPROC
+	bool "Validate the pointers passed to GEMDOS calls" if !ARCH_X86_64 && CONF_WITH_KPROC
 	default y if ARCH_X86_64
 	default n
 	help
@@ -204,9 +204,10 @@ config CONF_WITH_USER_COPY
 	  Mandatory on x86-64, where the kernel runs under the calling
 	  process's page tables and would otherwise touch the system variables
 	  or another block through a pointer it was handed.  Optional and off by
-	  default elsewhere (not offered on m68k, whose packed argument frame is
-	  not handled yet); without per-process address spaces the checks only
-	  look for null pointers and bad lengths.  Other call classes (BIOS,
+	  default elsewhere (on m68k the packed argument frame of the trap is
+	  first unpacked into one value per argument, in bdos/bdosmain.c);
+	  without per-process address spaces the checks only look for null
+	  pointers and bad lengths.  Other call classes (BIOS,
 	  XBIOS, VDI, AES) are guarded by the same option as they are converted.
 
 config CONF_WITH_PRG_LOADER
