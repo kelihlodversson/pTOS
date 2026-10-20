@@ -205,7 +205,8 @@ c = TTCollection()
 c.fonts = [TTFont(f) for f in sys.argv[2:]]
 c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
             "$lib/LiberationSans-Regular.ttf" "$lib/LiberationSans-Bold.ttf" 2>/dev/null \
-            || rm -f "$disk/GEMSYS/FONTS/LIBSANS.TTC"
+            || { rm -f "$disk/GEMSYS/FONTS/LIBSANS.TTC"
+                 echo "$0: no TrueType collection for the font tests (python3 fontTools missing?)" >&2; }
     fi
     case $machine in
     virt-arm | virt-m68k)

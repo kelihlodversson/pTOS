@@ -527,7 +527,10 @@ jobs:
           # with marks of no width (Liberation Mono); fontTools makes a TrueType
           # collection of two Liberation Sans faces
           sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf \
-              fonts-liberation python3-fonttools
+              fonts-liberation
+          # for the interpreter the test script runs (setup-toolchain
+          # selects its own Python, which the system's packages are not for)
+          python3 -m pip install fonttools
 
       - name: Build the kernel and the test programs
         env:
