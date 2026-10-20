@@ -42,24 +42,29 @@ boot() {
         -monitor none -serial "file:$serial" > "$tmp/$cpu.log" 2>&1 &
     pid=$!
     # until either line shows up, QEMU exits, or 20 s have gone
-    status=124
     i=0
     while [ $i -lt 40 ]; do
         if grep -q -e "$message" -e "$banner" "$serial"; then
             sleep 1             # let the rest of the message arrive
             break
         fi
-        if ! kill -0 $pid 2>/dev/null; then
-            wait $pid
-            status=$?
-            break
-        fi
+        kill -0 $pid 2>/dev/null || break
         sleep 0.5
         i=$((i + 1))
     done
-    kill $pid 2>/dev/null
-    wait $pid 2>/dev/null
-    if [ $status -ne 124 ] && [ ! -s "$serial" ]; then
+    # QEMU has no reason to stop by itself: the CPU halts, or the shell waits
+    # for input, and this script ends it.  Find out which happened, and keep
+    # the exit status of one that stopped on its own.
+    if kill -0 $pid 2>/dev/null; then
+        kill $pid 2>/dev/null
+        wait $pid 2>/dev/null
+        exited=no
+    else
+        wait $pid
+        qstatus=$?
+        exited=yes
+    fi
+    if [ $exited = yes ] && [ ! -s "$serial" ]; then
         # QEMU stopped by itself without any output.  That is a skip only for
         # a CPU this QEMU says the virt machine (or QEMU at all) does not
         # have; any other early exit, an abort during the probe included, is a
@@ -69,9 +74,16 @@ boot() {
                    -e 'Unsupported CPU' "$tmp/$cpu.log"; then
             echo "skip $cpu: this QEMU does not offer it on the virt machine"
         else
-            echo "FAIL $cpu: QEMU exited ($status): $(head -c 200 "$tmp/$cpu.log")"
+            echo "FAIL $cpu: QEMU exited ($qstatus): $(head -c 200 "$tmp/$cpu.log")"
             failed=1
         fi
+        return
+    fi
+    if [ $exited = yes ]; then
+        # it printed what we look for and then stopped on its own: a crash or
+        # an abort after the output must not pass
+        echo "FAIL $cpu: QEMU exited by itself ($qstatus) after printing: $(head -c 100 "$serial" | tr -d '\r\n')"
+        failed=1
         return
     fi
     if grep -q "$message" "$serial"; then
