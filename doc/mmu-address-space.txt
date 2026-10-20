@@ -1,0 +1,397 @@
+pTOS - address spaces on 32-bit ARM and m68k with an MMU
+=========================================================
+
+The layout the MMU configurations of ARM (ARMv6/ARMv7) and m68k
+(68030/68040/68060) move to under #549: one address space per process, and a
+higher-half kernel.  It follows the x86-64/x32 model of
+doc/x86_64-address-space.txt; where nothing is said here, that document's
+rules apply unchanged, with one exception: the 68030/68040/68060 MMUs have
+supervisor-only and write-protect bits but no execute-disable bit, so on
+m68k there is no non-executable data or stack, and aspace_translate()
+reports PROT_EXEC for every readable page.  (ARM's XN bit has it.)  Nothing
+in this file applies to the configurations
+without an MMU, the m68k ones without a PMMU included: they keep the flat TOS
+memory model, and the kernel stays where it is linked today.
+
+Every later step of #549 refers to this file: #562 (the procmem.h interface),
+#563 (no kernel pointers in user-visible results), the higher-half kernels
+(#566, #567, #569) and the address spaces themselves (#568, #570, #571).
+
+
+The split
+----------
+
+Both architectures split the 32-bit address space in half:
+
+    0x00000000 - 0x7fffffff   user half: the process's own, one per process
+    0x80000000 - 0xffffffff   kernel half: the same in every process,
+                              supervisor-only
+
+The half split is not arbitrary:
+
+  - Every user address is a positive signed LONG and every kernel address a
+    negative one.  The x32 user layout already lies below 2 GiB for this
+    reason: TOS software tells pointers from error codes by the sign.  It
+    also makes the rule of #563 checkable: a negative value that is not an
+    error code and reaches a user is a kernel pointer that leaked.
+  - ARM: TTBCR.N = 1 makes TTBR0 translate exactly the lower 2 GiB and
+    TTBR1 the upper 2 GiB, so the user table is half the size (8 KiB of
+    first-level table) and the kernel table is never touched on a switch.
+  - m68k: the root table of the 68040/68060 has 128 entries of 32 MiB each;
+    entries 0-63 are the user half and 64-127 the kernel half, so a process
+    root is the shared kernel half plus its own 64 entries.
+  - The same user layout as x32 fits (below), so procmem.h and the BDOS code
+    built on it need different types (#562), not different addresses.
+
+3 GiB/1 GiB was considered and rejected: user addresses above 2 GiB are
+negative LONGs, which breaks the rule above for user pointers, and the gain
+is address space no TOS program can use safely.
+
+
+The kernel half
+----------------
+
+    0x80000000 - 0xbfffffff   the physical-memory window (1 GiB)
+    0xc0000000 - 0xffffffff   devices (1 GiB)
+
+The physical-memory window maps the machine's RAM from its first byte:
+
+    virtual = physical - RAM_BASE + 0x80000000
+
+where RAM_BASE is where the RAM starts on the machine: 0 on the Raspberry
+Pi, virt-m68k and the Atari, 0x40000000 on virt-arm.  It plays the part of
+x86-64's physical direct map, and holds everything of the kernel:
+
+  - the kernel image itself.  It stays where it is loaded in physical
+    memory and is linked at its window address, so translating between a
+    kernel address and a physical one is one subtraction (virt_to_phys(),
+    phys_to_virt()).  A ROM kernel (the Atari ROM images, #571) is reached
+    the same way: the ROM at physical 0x00e00000 is at 0x80e00000.
+  - its data, bss and stacks, the same way.
+  - the kernel heap (#362) and the per-process kernel stacks.  They come
+    from the physical page allocator and are used through the window, as
+    x32's kernel stacks are; no separate area for them is needed.
+  - the page tables, and the physical pages of every process.  The kernel
+    copies to and from user memory through the window after it has checked
+    the range (kproc_copy_from_user() and friends), so the copy cannot fault
+    and works whichever address space is loaded.
+
+1 GiB is the most RAM the MMU configurations use (decided in review).  That is all the RAM of
+every Raspberry Pi up to the 3B+, the most virt-arm uses today
+(VIRT_MAX_RAM_SIZE), and more than any Atari has.  virt-m68k today accepts
+up to just under 2 GiB, and a Raspberry Pi 4 may have more than 1 GiB; in
+the MMU configurations the RAM above 1 GiB is left unused, as LPAE
+(#76) and a high-memory scheme are out of scope.
+
+The device window holds the memory-mapped I/O, supervisor-only, uncached:
+
+  virt-arm    as today (#508): hardware 0x00000000-0x0fffffff at
+              0xf0000000, and the PCIe windows at 0x10000000-0x3fffffff
+              at 0xc0000000 (VIRT_DEV_VA()).
+  Raspberry   virtual = 0xf0000000 | (physical & 0x0fffffff) for the
+  Pi          peripherals and the ARM-local block.  That puts the BCM2835
+              peripherals (0x20000000) at 0xf0000000, the BCM2836/7 ones
+              (0x3f000000) at 0xff000000 with the local block (0x40000000)
+              at 0xf0000000, and the BCM2711 ones (0xfe000000, GIC at
+              0xff840000) at their own addresses.  The PCIe window of the
+              Pi 4 lies above 4 GiB and stays out of reach (#76, #276).
+  virt-m68k   the goldfish and virtio devices at 0xff000000 and up, at
+              their own addresses.
+  Atari       the I/O area at 0xffff8000-0xffffffff, at its own address,
+              which is what EmuTOS's short absolute addressing ($8240.w)
+              already uses, and the IDE interface, which the code reaches
+              at 0xfff00000-0xffffffff (bios/ide.c).  That whole range
+              is an alias of physical 0x00f00000-0x00ffffff, so the two
+              addresses differ: virtual 0xfff00000 is physical
+              0x00f00000, as bios/arch/m68k/68040_pmmu.S maps it today.
+              The cartridge and ROM areas are reached through the
+              physical-memory window.
+
+The window and the device mappings are global (not tied to a process): ARM
+first-level entries without nG, 68040/68060 descriptors with G set, so a
+switch never flushes them.
+
+
+The user half
+--------------
+
+The user half is laid out exactly like x32's (the constants of
+include/procmem.h; #562 gives them 32-bit types):
+
+    0x00000000 - 0x001fffff   kernel low mappings and null guard (below)
+    0x00200000 - 0x003fffff   basepage, environment and TPA blocks (window)
+    0x00400000 - 0x007fffff   program image, and the startup area after it
+    0x0fff0000 - 0x0fff0fff   the ancestors' basepages, read-only
+    0x10000000 - 0x7ffbefff   Malloc() memory
+    0x7ffbf000 - 0x7ffbffff   guard page
+    0x7ffc0000 - 0x7fffffff   user stack (256 KiB), growing down from
+                              0x80000000
+
+The last three lines are the defaults.  As on x32, the guard page sits
+immediately below the stack and the Malloc() memory ends below it, so
+Psetlimit() of the stack size moves all three: a 1 MiB stack starts at
+0x7ff00000, with the guard page below it.  (x32's 16 MiB default puts them
+at 0x7efff000 and 0x7f000000.)
+
+The same rules hold as on x32, except that nothing is backed when touched:
+the first ARM and m68k backends have no demand paging (#549 leaves it out,
+CONF_WITH_DEMAND_PAGING, #562).  Malloc() memory is mapped when a block is
+handed out, and the stack when the process starts, 256 KiB by default
+(USER_STACK_SIZE) instead of x32's 16 MiB; Psetlimit() maps a bigger one at
+once.  Malloc(-1) reports no more than there is physical memory for.  The
+process window (basepage, environment,
+TPA) holds blocks the BDOS reaches by the same address in every address
+space, so its addresses are unique across processes and are never reused
+while a block is live.  Everything else is private: the image, the startup
+area, the Malloc() memory and the stack have the same virtual addresses in
+every process, and different physical pages behind them.
+
+Kernel low mappings.  The lowest 2 MiB is not mapped for the process.
+
+  m68k: the exception vectors (0x000-0x3ff, at VBR 0) and the TOS system
+  variables (0x380-0x7ff), and the low ST-RAM sections that end at
+  __low_stram_end (at most 32 KiB, emutos.ld asserts it), are mapped at
+  their own addresses, supervisor-only, in every process, because the BDOS
+  and the BIOS reach them there while they serve the process's calls.
+  This is x32's "kernel low mappings".  A user-mode access faults, as it
+  does on a real ST, where the GLUE protects the first 2 KiB.  The rest of
+  the 2 MiB is the null guard.
+
+  ARM: nothing is mapped there.  The system variables are ordinary kernel
+  variables on ARM (#219, bios/tosvars.c).  The native exception table moves
+  into the kernel image through VBAR, which the ARM1176 of the Pi 1 has as
+  well as every ARMv7 core.  The emulated TOS vector table does not: it
+  occupies 0x8-0x3ff today (bios/arch/arm/vectors.c initialises it, and the
+  startup dispatchers read their handlers there).  Before the low 2 MiB can
+  be left unmapped, that table has to move into the kernel image, and its
+  writers (vectors.c, Setexc()) and readers (the dispatchers) with it.  This
+  is a prerequisite of #566 and #567.  The whole 2 MiB is then the null
+  guard.
+
+What a user program may read in low memory: nothing.  A process stays in
+user mode (below), and reads the system variables it needs through
+Ssystem(), the documented way, which works from user mode (#221, #237).
+
+
+Super() and Supexec()
+----------------------
+
+A process in supervisor mode would see the whole kernel half: the
+supervisor-only bit is exactly what it gets past.  So in the MMU
+configurations no process gets there:
+
+  - Super() returns EACCDN and leaves the process in user mode.  The query
+    form, Super(1), still answers, with 0: the caller is in user mode.
+  - Supexec() returns EACCDN without calling the function.
+
+EACCDN (access denied), not EINVFN: the call exists, the configuration
+refuses it.  Programs that need supervisor mode -- for the system variables,
+the hardware registers or the screen -- do not run in the MMU
+configurations; they run in the flat configurations, which keep both calls
+as they are.
+
+This is m68k's rule.  On ARM, Supexec() already returns EINVFN in every
+configuration (#219, bios/xbios.c), deprecated for Ssystem(), and the ARM
+MMU configurations keep that: nothing reinstates it, and Super() does not
+reach the system variables, which are not at fixed addresses there.  Only
+Super() is new on ARM, and it returns EACCDN as on m68k.
+
+
+The screen
+-----------
+
+The screen memory is kernel memory, in the physical-memory window, and is
+not mapped for any process.  Because the screen's address is a kernel
+address, and no kernel address may reach a user as a LONG (below, #563),
+Logbase() and Physbase() return 0 in the MMU configurations.
+
+A user-mode program cannot draw through the VDI or the AES either, for now.
+As on x32 (doc/x86_64-address-space.txt, #376), calls to them from user mode
+are refused: the VDI reads bitmap descriptors (MFDB) and buffers by the
+program's own pointers (vdi/vdi_raster.c), and neither it nor the AES checks
+them against the calling process.  A validated GEM entry path, with the
+nested buffers checked, is a prerequisite of any user-mode drawing and is
+the work of epic #548.  The first MMU configurations are therefore the
+command-line ones (virt-arm-cli, virt-m68k-cli, and the like); the desktop
+runs in the configurations without per-process address spaces.
+
+Mapping the screen for a process (at a fixed user address, read/write, and
+then returned as that address) is left for later, if programs that draw
+into it directly are to run in the MMU configurations.
+
+
+Page tables and switching
+--------------------------
+
+ARM.  TTBCR.N = 1.  TTBR1 holds the kernel's first-level table (16 KiB, of
+which only the upper half is used) for the whole uptime; TTBR0 holds the
+running process's first-level table (8 KiB, 2048 entries of 1 MiB) with its
+second-level tables (1 KiB each, 256 pages of 4 KiB).  The format is the
+ARMv6 extended one the ports already use (XP set): APX/AP give the
+permissions, XN marks every data page non-executable, and nG marks every
+user mapping.  A switch writes TTBR0 and CONTEXTIDR.
+
+  ASIDs: switches only happen at Pexec(), Pterm() and the return to a
+  launcher, so the first version uses no ASID allocation: every process
+  runs with ASID 0 and a switch invalidates the TLB entries of that ASID
+  (TLBIASID, which the ARM1176 has as "invalidate by ASID match" as well as
+  the ARMv7 cores).  TLBIALL is not used, because it would also drop the
+  global kernel entries that the guarantee above says survive a switch.
+  Using the 256 ASIDs can come later, if multitasking makes switches
+  frequent.
+
+  Caches: the L1 caches of the ARM1176 and of the ARMv7 cores are virtually
+  indexed and physically tagged.  Two processes that map different physical
+  pages at the same virtual address therefore never hit each other's lines,
+  and the ARM1176's 16 KiB 4-way caches have 4 KiB ways, so they do not
+  alias with 4 KiB pages either.  A switch needs no cache maintenance, only
+  the TLB.  What does need it is loading code: the loader writes a program's
+  image through the data cache, so it cleans the data cache and invalidates
+  the instruction cache (with the barrier) over the pages before the
+  process first runs, as the ELF loader must already do for any program.
+
+m68k, 68040/68060.  The MMU has two root pointers, URP for user accesses
+and SRP for supervisor ones.  Both point to the running process's root
+table (128 longwords): its upper 64 entries are the same pointers in every
+process, to the kernel's second-level tables, and the lower 64 its own.
+Using the same root for both is what lets the BDOS, in supervisor mode,
+reach the process's buffers by their user addresses, as x86-64 does; the S
+bit in the page descriptors keeps user mode out of the kernel pages.  The
+page size is 4 KiB (TC.P = 0), the same as ARM's and x32's.  A switch loads
+URP and SRP and flushes the non-global ATC entries (PFLUSHAN); the kernel's
+descriptors have G set and stay.  The 68040/68060 caches are physically
+tagged, so a switch needs no cache flush.
+
+m68k, 68030.  It is done after the 68040/68060, in #571, for the TT and
+the Falcon (a 68EC030 is refused at boot, #564).  The plan (decided in
+review):
+
+  - The same tree shape as the 68040's, so one piece of code builds both:
+    4 KiB pages and TC with PS = 12, IS = 0, TIA = 7, TIB = 7, TIC = 6, which
+    makes a root of 128 entries of 32 MiB, user entries 0-63 and kernel
+    entries 64-127, as above.
+  - Long-format descriptors (8 bytes), because only they have the S bit
+    that makes a page supervisor-only, and WP for read-only pages.  The
+    tables are twice the 68040's size (a 1 KiB root).
+  - RAM is cached write-through: the 68030's data cache is always
+    write-through (bios/arch/m68k/processor.S says so), so the tree has no
+    copyback mode to ask for; the 68040/68060 trees use copyback for RAM.
+  - CRP for both modes (TC.SRE clear), so supervisor accesses use the
+    process's tree too and the BDOS reaches the process's buffers by
+    their user addresses, as on the 68040.  SRP is not used.
+  - The I/O area through page descriptors, not a transparent translation:
+    a TT only passes an address through, and the Atari I/O window is an
+    alias (virtual 0xfff00000 is physical 0x00f00000, above).  The tree maps
+    it the way bios/pmmu030.c does today (its tables for 0xfff00000 and up),
+    supervisor-only and cache inhibited, outside the TT ranges that
+    bios/arch/m68k/processor.S sets up.  A user-mode access finds the S bit
+    and faults.  The tree itself replaces the PMMU tree pTOS builds today for
+    the caches (CONF_WITH_68030_PMMU), which is not per process.
+  - TT0 and TT1 are disabled in the MMU configuration.  Today
+    processor_init() (bios/arch/m68k/processor.S, init_ttr0/init_ttr1) turns
+    on identity translations for all function codes over 0x01000000-
+    0x7fffffff (TT-RAM) and 0x80000000-0xfeffffff.  Those bypass the tree,
+    which would defeat the private pages of the user half and send the
+    kernel window to the wrong physical addresses.  The MMU configuration
+    clears both registers and processor_init() must not restore them; the
+    tree gives every range its cache mode instead (copyback or write-through
+    for RAM, cache inhibited for I/O).  TT-RAM is part of the physical-memory
+    window, up to the 1 GiB limit.
+  - A switch loads CRP, which also flushes the ATC; the 68030 has no
+    global bit, so the kernel entries are reloaded as they are used.  Its
+    caches are logically addressed, so the instruction and data caches are
+    invalidated too.  The data cache is write-through, so nothing is lost,
+    and refilling 2 x 256 bytes is cheap.
+  - The ROM, at physical 0x00e00000, runs from 0x80e00000 in the window.
+    The screen base, the floppy and ACSI/SCSI DMA take physical addresses
+    (virt_to_phys()); TT-RAM stays non-DMA as today.
+  - Tested under Hatari, whose 68030 has an MMU (--mmu on, TT and Falcon),
+    with the regression tests of tools/run-hatari-tests.py; QEMU emulates
+    no 68030 MMU.
+
+QEMU emulates the MMU of the 68040 only, so virt-m68k with -cpu m68040 is
+the test machine for m68k (#569, #570); the 68060 and 68030 code is
+checked on hardware or in another emulator.
+
+
+Starting with the MMU off
+--------------------------
+
+A higher-half kernel starts at a low physical address with the MMU off, as
+on x86-64.  A short position-independent start builds the first tables
+(the window, the devices, and an identity mapping of the start code
+itself), switches the MMU on, jumps to the window address, and removes the
+identity mapping once nothing runs there.  ARM: virt_mmu_bootstrap() and
+the raspi startup become this.  m68k: the classic ROM startup never
+switches the PMMU on before the BIOS runs; the MMU configurations do, in
+startup.S, right after the PMMU check of #564.
+
+Legacy m68k initialisation must not undo the early mapping.  bios_init()
+calls processor_init(), whose 68040/68060 path disables translation (TC) and
+installs transparent mappings for all addresses
+(bios/arch/m68k/processor.S, ITT0/DTT0/DTT1), and the later
+setup_68040_pmmu()/setup_68030_pmmu() calls (CONF_WITH_68040_PMMU,
+CONF_WITH_68030_PMMU) disable translation and replace the tree.  Clearing TC
+while running at a higher-half address loses the kernel's own mapping.  In
+the MMU configurations the early start owns the MMU: processor_init() skips
+the TC/TT part (it only does its CPU and cache detection), and the legacy
+tree builders are not used, their job being done by the per-process trees.
+The flat configurations keep both paths exactly as they are.
+
+Code that hands an address to hardware (DMA, the screen base, the USB and
+eMMC controllers, virtio queues) converts it with virt_to_phys().  The
+flat configurations keep the translation they have: the identity where the
+RAM is mapped at its physical address (the Atari, virt-m68k, the Raspberry
+Pi), and virt-arm's existing offset, where the RAM is mapped at virtual 0
+while it is physically at VIRT_RAM_BASE (bios/machine/virt-arm/virt_mmu.c).
+The MMU configurations translate by where the address is:
+
+  - an address in the physical-memory window: the subtraction above,
+    physical = virtual - 0x80000000 + RAM_BASE;
+  - an address in the low kernel mappings (m68k: the vectors, the system
+    variables and the low ST-RAM up to __low_stram_end): the identity,
+    because those pages are mapped at their own addresses.  The disk
+    buffer (dskbuf, bios/lowstram.c) lives there and is handed to disk I/O
+    by that address, so the subtraction would send the DMA to
+    0x80004000 for 0x4000;
+  - anything else is not memory the hardware can be given.
+
+The same memory is also in the window, so a caller that can choose passes
+the window address.
+
+
+Kernel pointers and LONG results
+---------------------------------
+
+Every kernel address is negative as a LONG.  TOS error codes are negative
+too, and the top of the device window (0xffffff00 and up) is
+indistinguishable from them.  So no BIOS, XBIOS or GEMDOS result handed to
+a user may hold a kernel address, and neither may a structure or variable a
+user process can read (Iorec(), Kbdvbase(), Getbpb(), the cookie jar,
+Ssystem()).  #563 implements this rule and audits the places that compare
+a result with 0 or with an error code; #594 marked the first ones.
+
+
+Costs in short
+---------------
+
+                    ARM (ARMv6/v7)          m68k 68040/68060      68030
+  user table        8 KiB + 1 KiB pages     512 bytes + tables    1 KiB + tables
+  kernel table      16 KiB, once            shared 2nd level      as 040
+  switch            TTBR0, TLBIASID         URP/SRP, PFLUSHAN     CRP (whole ATC)
+  cache on switch   none                    none                  invalidate
+  cache on load     D clean, I invalidate   cpusha (040/060)      invalidate
+  page size         4 KiB                   4 KiB                 4 KiB
+
+
+Decided in review
+------------------
+
+  1. Super() and Supexec() return EACCDN in the MMU configurations
+     (Super(1) still answers 0).
+  2. No process writes the screen for now: it is not mapped for user mode,
+     and Logbase()/Physbase() return 0 (no kernel address in a LONG).
+     VDI and AES calls from user mode are refused, as on x32, until #548
+     gives them a validated entry.
+  3. The MMU configurations use at most 1 GiB of RAM.
+  4. The 68030 is done as planned above, in #571.
