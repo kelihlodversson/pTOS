@@ -260,12 +260,14 @@ review):
   - CRP for both modes (TC.SRE clear), so supervisor accesses use the
     process's tree too and the BDOS reaches the process's buffers by
     their user addresses, as on the 68040.  SRP is not used.
-  - The I/O area through TT1: a transparent translation of
-    0xff000000-0xffffffff, matched for supervisor accesses only (the
-    function-code fields), cache inhibited.  A user-mode access to the
-    hardware misses it, finds nothing in the tree and faults.  TT0 is free.
-    This replaces the PMMU tree pTOS builds today for the caches
-    (bios/pmmu030.c, CONF_WITH_68030_PMMU), which is not per process.
+  - The I/O area through page descriptors, not a transparent translation:
+    a TT only passes an address through, and the Atari I/O window is an
+    alias (virtual 0xfff00000 is physical 0x00f00000, above).  The tree maps
+    it the way bios/pmmu030.c does today (its tables for 0xfff00000 and up),
+    supervisor-only and cache inhibited, outside the TT ranges that
+    bios/arch/m68k/processor.S sets up.  A user-mode access finds the S bit
+    and faults.  The tree itself replaces the PMMU tree pTOS builds today for
+    the caches (CONF_WITH_68030_PMMU), which is not per process.
   - A switch loads CRP, which also flushes the ATC; the 68030 has no
     global bit, so the kernel entries are reloaded as they are used.  Its
     caches are logically addressed, so the instruction and data caches are
@@ -301,7 +303,20 @@ flat configurations keep the translation they have: the identity where the
 RAM is mapped at its physical address (the Atari, virt-m68k, the Raspberry
 Pi), and virt-arm's existing offset, where the RAM is mapped at virtual 0
 while it is physically at VIRT_RAM_BASE (bios/machine/virt-arm/virt_mmu.c).
-The MMU configurations replace it with the window's subtraction above.
+The MMU configurations translate by where the address is:
+
+  - an address in the physical-memory window: the subtraction above,
+    physical = virtual - 0x80000000 + RAM_BASE;
+  - an address in the low kernel mappings (m68k: the vectors, the system
+    variables and the low ST-RAM up to __low_stram_end): the identity,
+    because those pages are mapped at their own addresses.  The disk
+    buffer (dskbuf, bios/lowstram.c) lives there and is handed to disk I/O
+    by that address, so the subtraction would send the DMA to
+    0x80004000 for 0x4000;
+  - anything else is not memory the hardware can be given.
+
+The same memory is also in the window, so a caller that can choose passes
+the window address.
 
 
 Kernel pointers and LONG results
