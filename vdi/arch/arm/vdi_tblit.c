@@ -50,6 +50,7 @@ static BOOL in_text_buffer(const UBYTE *dst)
 void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst)
 {
     int x,y;
+    int xstart, xend;
     // The caller passes a pointer to the end of the vars structure as that how
     // the original assembler version consumes it, so we simply subtract one.
     vars--;
@@ -108,7 +109,16 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst)
                     rolw1(skew_msk);
                 }
 
-                for (x = 0; x < vars->DELX; x++)
+                /*
+                 * Skewed, a row of the glyph on the screen moves as a whole
+                 * (the cell is DELX wide, text_blt() has made room for the
+                 * skew in the clipping): the pixels it leaves are not
+                 * touched.  The text buffer, which pre_blit() has made wide
+                 * enough for the skew, is filled all across.
+                 */
+                xstart = to_buffer ? 0 : shift;
+                xend = to_buffer ? vars->DELX : vars->DELX + shift;
+                for (x = xstart; x < xend; x++)
                 {
                     WORD dx = (WORD)(x + tddad);
                     UWORD dmask = (UWORD)(0x8000 >> (dx & 15));

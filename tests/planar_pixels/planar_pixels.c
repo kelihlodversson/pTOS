@@ -82,6 +82,20 @@ static long count_ink(void)
     return n;
 }
 
+/* how many pixels of a part of the area are not colour 0 */
+static long ink_in(short x0, short y0, short x1, short y1)
+{
+    short x, y;
+    long n = 0;
+
+    for (y = y0; y <= y1; y++)
+        for (x = x0; x <= x1; x++)
+            if (get_pixel(x, y) != 0)
+                n++;
+
+    return n;
+}
+
 static const char *failure;
 
 static void check(int ok, const char *msg)
@@ -171,8 +185,8 @@ static void check_text(void)
 
     ink = count_ink();
     check(ink > 10, "v_get_pixel() sees no text");
-    /* an H: its two stems are columns of ink, left and right of its cell */
-    check(get_pixel(4, 4) == 1 || get_pixel(5, 4) == 1, "the H of v_gtext() has no stem");
+    /* the ink is within the two characters' cells from (4, 4), not left of it or above it */
+    check(ink_in(4, 4, 4 + 2 * 8 + 1, 4 + 16) == ink, "text is drawn outside its cell");
 }
 
 static long draw_hi(short effects, short mode)
@@ -195,22 +209,50 @@ static long draw_hi(short effects, short mode)
     return count_ink();
 }
 
+/* whether the leftmost ink of the first row with any is not that of the last */
+static int skew_leans(void)
+{
+    short x, y, first = -1, last = -1, left_first = 0, left_last = 0;
+
+    for (y = 0; y < 30; y++)
+        for (x = 0; x < 60; x++)
+            if (get_pixel(x, y))
+            {
+                if (first < 0)
+                {
+                    first = y;
+                    left_first = x;
+                }
+                last = y;
+                left_last = x;
+                break;
+            }
+
+    return first >= 0 && last > first && left_first != left_last;
+}
+
 /* the effects of the text blit on the screen's planes */
 static void check_effects(void)
 {
     long plain = draw_hi(0, 1), bold = draw_hi(1, 1), light = draw_hi(2, 1);
-    long skew = draw_hi(4, 1), under = draw_hi(8, 1), outline = draw_hi(16, 1);
+    long skew = draw_hi(4, 1);
+    int leans = skew_leans();
+    long under = draw_hi(8, 1), outline = draw_hi(16, 1);
     long trans, xor1, xor2;
+    short bgc;
 
     check(plain > 10, "v_get_pixel() sees no text");
     check(bold > plain, "bold text is not thicker");
     check(light < plain && light > 0, "light text is not lighter");
-    check(skew > 10, "skewed text is not there");
+    /* a skewed row is the row of plain text moved: no pixel is lost */
+    check(skew == plain, "skewed text has lost or gained pixels");
+    check(leans, "skewed text does not lean");
     check(under > plain, "underlined text has no underline");
     check(outline > plain, "outlined text has no outline");
 
     /* transparent over a filled rectangle keeps the rectangle around the text */
-    recfl(0, 0, 40, 20, 2);
+    bgc = wk_planes > 1 ? 2 : 1;       /* a one-plane screen has colours 0 and 1 */
+    recfl(0, 0, 40, 20, bgc);
     vs_intin[0] = 2;
     vs_call(handle, 32, 0, 0, 1);       /* vswr_mode(transparent) */
     vs_ptsin[0] = 4;
@@ -218,7 +260,7 @@ static void check_effects(void)
     vs_intin[0] = 'H';
     vs_call(handle, 8, 0, 1, 1);
     trans = count_ink();
-    check(get_pixel(39, 19) == 2 && get_pixel(0, 0) == 2 && trans > 40 * 20 / 2,
+    check(get_pixel(39, 19) == bgc && get_pixel(0, 0) == bgc && trans > 40 * 20 / 2,
           "transparent text does not leave the background");
 
     /* XOR twice gives the background back */
