@@ -591,10 +591,22 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys(XBIOS, 3, 0, 0, 0) != 0) bad |= 4096;                 /* Logbase */
         if (sys(GEMDOS, 0x154, 0x0a, 0x4ba, 0) == EINVFN) bad |= 4096;  /* _hz_200 is there */
         if (sys(GEMDOS, 0x154, 0x0a, 0x555, 0) != EINVFN) bad |= 4096;  /* and 0x555 is not */
-        /* (S_GETCOOKIE of FRB_, MCF_, __NF, XHDI, SCSI and _5MS: not found) */
-        if (sys(GEMDOS, 0x154, 8, 0x58484449, 0) != -1) bad |= 4096;
-        if (sys(GEMDOS, 0x154, 8, 0x5f354d53, 0) != -1) bad |= 4096;
-        if (sys(GEMDOS, 0x154, 8, 0x5f5f4e46, 0) != -1) bad |= 4096;
+        /* The cookies that point into the kernel are not found.  None of them
+         * is installed on this machine, so seed one: S_SETCOOKIE takes any
+         * tag from a process, and the lookup must still say "not found",
+         * for the value and for the buffer form, without writing the buffer.
+         * Then take it out again. */
+        {
+            const s64 nf = 0x5f5f4e46;                          /* __NF */
+
+            abuf[0] = abuf[1] = abuf[2] = abuf[3] = 0x5a;
+            if (sys(GEMDOS, 0x154, 0x09, nf, 0x12345678) != 0) bad |= 4096;
+            if (sys(GEMDOS, 0x154, 8, nf, 0) != -1) bad |= 4096;
+            if (sys(GEMDOS, 0x154, 8, nf, PA(abuf)) != -1) bad |= 4096;
+            if (abuf[0] != 0x5a || abuf[1] != 0x5a || abuf[2] != 0x5a || abuf[3] != 0x5a)
+                bad |= 4096;
+            if (sys(GEMDOS, 0x154, 0x1a, nf, 0) != 0) bad |= 4096;
+        }
 
         /* what is valid is let through, and does what it should.  The calls
          * that return nothing return 0 here. */
