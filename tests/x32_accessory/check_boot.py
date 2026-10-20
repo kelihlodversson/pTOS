@@ -25,6 +25,7 @@ assert output.count("x32 input events: PASS") == 4, "typed input in all sessions
 for regression in ("poll timer", "queued button", "button snapshot", "revocation"):
     assert output.count("x32 input " + regression + ": PASS") == 4, regression
 assert output.count("x32 window events/ownership/lifecycle: PASS") == 4
+assert output.count("x32 window reopened on desktop: PASS") == 2
 assert output.count("x32 window copied text/exit/fault cleanup: PASS") >= 4
 for marker in ("native queue backpressure", "native window pointers", "idle wake"):
     assert "x32 accessory " + marker + ": PASS" in live, marker

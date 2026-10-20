@@ -7,6 +7,8 @@
 #include "gemlib.h"
 #include "geminit.h"
 #include "gemwmlib.h"
+#include "gsxdefs.h"
+#include "biosext.h"
 #include "aes_accessory.h"
 #include "aes_window.h"
 #include "gemerror.h"
@@ -32,10 +34,16 @@ typedef struct {
 static CLIENT_WINDOW windows[NUM_WIN];
 #if CONF_WITH_X32_ACCESSORY_TEST
 static PD *test_revoking;
+static PD *test_reusing;
 
 BOOL x86_64_aes_window_test_revoke(PD *pd)
 {
     return test_revoking == pd;
+}
+
+BOOL x86_64_aes_window_test_reuse(PD *pd)
+{
+    return test_reusing == pd;
 }
 #endif
 
@@ -100,6 +108,19 @@ void x86_64_aes_window_finished(PD *pd)
     wm_update(END_UPDATE);
 }
 
+void x86_64_aes_window_unregister(PD *pd)
+{
+#if CONF_WITH_USER_CALLBACKS
+    if (user_callback_active())
+        return;
+#endif
+    /* A normal appl_exit has no suspended window continuation. Complete
+     * cleanup outside KPROC teardown, including builds without callbacks
+     * (which have no callback return-work hook to perform deferred work). */
+    if (x86_64_aes_owned(pd))
+        x86_64_aes_window_finished(pd);
+}
+
 /* Called after all accessory continuations and native EVBs are cancelled. */
 void x86_64_aes_window_drain(void)
 {
@@ -107,6 +128,7 @@ void x86_64_aes_window_drain(void)
 
 #if CONF_WITH_X32_ACCESSORY_TEST
     test_revoking = NULL;
+    test_reusing = NULL;
 #endif
     for (h = 1; h < NUM_WIN; h++)
         if (windows[h].owner)
@@ -201,6 +223,37 @@ static void information(WORD h, PD *pd, AES_WINDOW_INFO *info)
     info->top = gl_wtop == NIL ? 0 : gl_wtop;
 }
 
+/* Native move/union arithmetic is WORD-sized too. Individually valid
+ * rectangles at opposite signed extremes must not overflow that arithmetic
+ * when combined with the screen or another allocated window's old bounds. */
+static BOOL native_bounds(const GRECT *input)
+{
+    WORD i;
+    GRECT current;
+    LONG left = input->g_x < 0 ? input->g_x : 0;
+    LONG top = input->g_y < 0 ? input->g_y : 0;
+    LONG right = (LONG)input->g_x + input->g_w + 2;
+    LONG bottom = (LONG)input->g_y + input->g_h + 2;
+    LONG end;
+
+    if (right < gl_width) right = gl_width;
+    if (bottom < gl_height) bottom = gl_height;
+    for (i = 1; i < NUM_WIN; i++) {
+        if (!(D.w_win[i].w_flags & VF_INUSE))
+            continue;
+        w_getsize(WS_CURR, i, &current);
+        if (current.g_w <= 0 || current.g_h <= 0)
+            continue;
+        if (current.g_x < left) left = current.g_x;
+        if (current.g_y < top) top = current.g_y;
+        end = (LONG)current.g_x + current.g_w + 2;
+        if (end > right) right = end;
+        end = (LONG)current.g_y + current.g_h + 2;
+        if (end > bottom) bottom = end;
+    }
+    return right - left <= 32767L && bottom - top <= 32767L;
+}
+
 /* Keep an ordinal, never the native w_rnext pointer: any window mutation
  * can recycle native ORECT nodes between two user calls. Rescan the current
  * owned list, bounded by its global pool, without retaining a freed node. */
@@ -232,7 +285,7 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
     CLIENT_WINDOW *w = NULL;
     WINDOW *native;
     GRECT calculated, input = r->rectangle;
-    WORD h = r->handle, fields[4] = { 0 };
+    WORD h = r->handle, i, fields[4] = { 0 };
     char *saved_text;
     LONG result = E_OK;
     static const WORD sliders[4] = { WF_HSLIDE, WF_VSLIDE, WF_HSLSIZ, WF_VSLSIZ };
@@ -252,8 +305,14 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
         return E_OK;
     }
     if (r->operation == AES_WIN_CREATE) {
-        if (!geometry(r->kind, &input, TRUE, &calculated))
+        if (!geometry(r->kind, &input, TRUE, &calculated) || !native_bounds(&input))
             return EINVAL;
+        /* A native delete/reset can free a handle before its yielding call
+         * unwinds. Keep that slot reserved until the old call releases its
+         * bookkeeping; another client must not overwrite a busy record. */
+        for (i = 1; i < NUM_WIN; i++)
+            if (windows[i].busy && !(D.w_win[i].w_flags & VF_INUSE))
+                return EAGAIN;
 #if CONF_WITH_USER_CALLBACKS
         if (!user_callback_work_register(reap))
             return ENSMEM;
@@ -285,8 +344,6 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
         return EACCDN;
     if (w->busy)
         return EAGAIN;
-    if (r->operation != AES_WIN_GET && r->operation != AES_WIN_VISIBLE)
-        w->visible_next = 0;
     w->busy = TRUE;
 #if CONF_WITH_X32_ACCESSORY_TEST
     if (r->operation == AES_WIN_GET && !w->revoke_tested &&
@@ -309,7 +366,7 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
     switch (r->operation) {
     case AES_WIN_OPEN:
     case AES_WIN_RECT:
-        if (!geometry(native->w_kind, &input, TRUE, &calculated))
+        if (!geometry(native->w_kind, &input, TRUE, &calculated) || !native_bounds(&input))
             result = EINVAL;
         else if (r->operation == AES_WIN_OPEN)
             result = wm_open(h, &input) ? E_OK : EINVAL;
@@ -320,11 +377,9 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
         break;
     case AES_WIN_CLOSE:
         result = wm_close(h) ? E_OK : EINVAL;
-        w->redraw = FALSE;
         break;
     case AES_WIN_DELETE:
         result = wm_delete(h) ? E_OK : EINVAL;
-        w->retired = TRUE;
         break;
     case AES_WIN_GET:
         information(h, pd, info);
@@ -351,9 +406,33 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
     default:
         result = EINVFN;
     }
+#if CONF_WITH_X32_ACCESSORY_TEST
+    if (r->operation == AES_WIN_DELETE && !strcmp(w->title, "Recycle this window")) {
+        AES_EVENT_REQUEST pause = { AES_EVENT_TIMER, 0, 0, 0, 0, 0,
+                                    { 0 }, { 0 }, 60000 };
+        AES_INPUT_EVENT event = { 0 };
+
+        test_reusing = pd;
+        x86_64_aes_events(pd, &pause, &event, FALSE);
+        test_reusing = NULL;
+    }
+#endif
+    /* Never change a replacement slot after a native operation yielded. */
+    if (w->owner != pd || w->task != rlr)
+        return EACCDN;
+    if (result == E_OK && r->operation != AES_WIN_GET && r->operation != AES_WIN_VISIBLE)
+        w->visible_next = 0;
     w->busy = FALSE;
-    if (w->retired && r->operation != AES_WIN_DELETE)
+    if (w->retired || x86_64_aes_call_cancelled(pd)) {
+        w->retired = TRUE;
         result = EACCDN;
+    } else if (r->operation == AES_WIN_DELETE)
+        w->retired = TRUE;
+    else if (!(native->w_flags & VF_INUSE) || native->w_owner != w->task) {
+        w->retired = TRUE;
+        result = EIHNDL;
+    } else if (r->operation == AES_WIN_CLOSE && result == E_OK)
+        w->redraw = FALSE;
     reap();
     if (x86_64_aes_call_cancelled(pd))
         return EACCDN;
@@ -361,6 +440,28 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
 }
 
 #if CONF_WITH_X32_ACCESSORY_TEST
+BOOL x86_64_aes_window_test_ready(void)
+{
+    WORD h, count = 0;
+    AESPD *task;
+    CLIENT_WINDOW *w;
+
+    for (h = 1; h < NUM_WIN; h++) {
+        w = &windows[h];
+        if (!w->owner)
+            continue;
+        if (w->retired || w->busy || !(D.w_win[h].w_flags & VF_ISOPEN) ||
+            D.w_win[h].w_owner != w->task)
+            return FALSE;
+        for (task = nrl; task && task != w->task; task = task->p_link)
+            ;
+        if (!task)
+            return FALSE;
+        count++;
+    }
+    return count == 2;
+}
+
 void x86_64_aes_window_test(void)
 {
     WORD h, count = 0;

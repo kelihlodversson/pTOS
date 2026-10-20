@@ -79,14 +79,17 @@ void x86_64_aes_restore(void)
 void x86_64_aes_enter(void)
 {
     ACCESSORY_CONTEXT *c = &contexts[rlr->p_pid];
+    PD *owner = c->owner;
 
     c->started = TRUE;
-    c->result = proc_start_accessory(c->owner);
-    proc_discard_accessory(c->owner); /* also unwind a refused start */
-    x86_64_aes_window_finished(c->owner);
+    c->result = proc_start_accessory(owner);
+    proc_discard_accessory(owner); /* also unwind a refused start */
+    /* The basepage may be reused once cleanup yields. Retire its task
+     * association first; native window messages to this task are dropped. */
+    c->owner = NULL;
+    x86_64_aes_window_finished(owner);
     /* Pterm/fault unwound onto this UDA, and freed the user's syscall stack.
      * The dispatcher will remove this task without putting it back on a list. */
-    c->owner = NULL;
     rlr->p_flags |= AP_MESAG | AP_ACCLOSE;
     rlr->p_stat = X32_AES_DEAD;
     dsptch();
@@ -278,7 +281,7 @@ LONG x86_64_aes_message(AESPD *pd, const WORD *message)
     ACCESSORY_CONTEXT *c = &contexts[pd->p_pid];
 
     if (!c->owner)
-        return (pd->p_stat & X32_AES_DEAD) ? EACCDN : EINVFN;
+        return (c->started || (pd->p_stat & X32_AES_DEAD)) ? EACCDN : EINVFN;
     return aes_service_kernel_message(c->owner, message);
 }
 
@@ -481,13 +484,15 @@ void x86_64_aes_test_begin(void)
 
 BOOL x86_64_aes_test_run(void)
 {
-    WORD i, n, attempt, dead = 0, waiting = 0;
+    WORD i, j, n, attempt, dead = 0, waiting = 0;
     WORD close_message[8] = { 41, 0, 0, 0, 0, 0, 0, 0 };
+    WORD reuse_message[8] = { 634, 0, 0, 0, 0, 0, 0, 0 };
     ACCESSORY_CONTEXT *c;
     AESPD *old_owner;
     GRECT old_control, control = { 0, 0, gl_width, gl_height };
     BOOL old_ctmown = gl_ctmown;
     WORD revocations = 0;
+    BOOL reuse_sent = FALSE;
     const EVSPEC revoke_masks[3] = { MU_KEYBD, MU_M1, MU_TIMER };
     AESPD *task;
 
@@ -508,6 +513,14 @@ BOOL x86_64_aes_test_run(void)
             if (!c->aes)
                 continue;
             test_button_snapshot(c);
+            if (c->owner && !reuse_sent && x86_64_aes_window_test_reuse(c->owner)) {
+                reuse_sent = TRUE;
+                for (j = 2; j < NUM_PDS; j++)
+                    if (contexts[j].owner &&
+                        !memcmp(contexts[j].aes->p_name, "ACCWAIT ", 8) &&
+                        !ap_rdwr(MU_SDMSG, contexts[j].aes, sizeof(reuse_message), reuse_message))
+                        panic("accessory window reuse message FAIL\n");
+            }
             if (c->owner && x86_64_aes_window_test_revoke(c->owner)) {
                 vdi_service_callback_event(VDI_CALLBACK_BUTTON, 626, 0);
                 vdi_service_callback_work();
@@ -534,10 +547,10 @@ BOOL x86_64_aes_test_run(void)
                         panic("accessory revoked input wait stayed asleep\n");
             }
             if (!memcmp(c->aes->p_name, "ACCONE  ", 8) &&
-                !c->owner && c->result == 17)
+                !c->owner && (c->aes->p_stat & X32_AES_DEAD) && c->result == 17)
                 dead++;
             if (!memcmp(c->aes->p_name, "ACCFAULT", 8) &&
-                !c->owner && c->result == 0xffff)
+                !c->owner && (c->aes->p_stat & X32_AES_DEAD) && c->result == 0xffff)
                 dead++;
             if (c->owner && !x86_64_aes_window_test_revoke(c->owner) &&
                 c->aes->p_evwait == MESSAGE_WAIT &&
@@ -555,7 +568,7 @@ BOOL x86_64_aes_test_run(void)
         set_mown(old_owner);
         gl_ctmown = old_ctmown;
     }
-    if (dead != 2 || waiting != 2 || revocations != 3 || button_snapshot_cases != 3)
+    if (dead != 2 || waiting != 2 || revocations != 3 || button_snapshot_cases != 3 || !reuse_sent)
         panic("accessory lifecycle FAIL: dead=%d waiting=%d\n", dead, waiting);
     x86_64_aes_window_test();
     /* Exercise the native AES message bridge and receive acknowledgement. */
@@ -612,7 +625,8 @@ void x86_64_aes_test_desktop(OBJECT *desktop, WORD root)
     static char name[] = "Native window title";
     static char info[] = "Native window information";
     GRECT rect = { 20, 20, 240, 120 };
-    WORD window;
+    WORD window, i, attempt;
+    WORD reopen[8] = { 631, 0, 0, 0, 0, 0, 0, 0 };
 
     if ((uintptr_t)desktop <= 0xffffffffULL ||
         !wm_test_desktop(desktop, root))
@@ -627,6 +641,20 @@ void x86_64_aes_test_desktop(OBJECT *desktop, WORD root)
         !wind_open_grect(window, &rect) || !wind_close(window) || !wind_delete(window))
         panic("accessory native window pointer/scalar FAIL\n");
     kcprintf("x32 accessory native window pointers: PASS\n");
+    /* EmuDesk startup calls wind_new(). Reopen the surviving fixtures after
+     * that global reset, then wait for their clipped VDI redraws to finish. */
+    for (i = 2; i < NUM_PDS; i++)
+        if (contexts[i].owner &&
+            !ap_rdwr(MU_SDMSG, contexts[i].aes, sizeof(reopen), reopen))
+            panic("accessory live window reopen message FAIL\n");
+    for (attempt = 0; attempt < 100; attempt++) {
+        ev_timer(10L);
+        if (x86_64_aes_window_test_ready())
+            break;
+    }
+    if (attempt == 100)
+        panic("accessory live window reopen FAIL\n");
+    x86_64_aes_window_test();
     /* Both surviving accessories and the screen manager are waiting. A real
      * timer event must wake this task from an empty dispatcher ready list. */
     idle_seen = FALSE;

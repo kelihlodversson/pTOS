@@ -11,6 +11,7 @@ extern short _app;
 int accessory_input_checks(const AES_APP_INFO *info, WORD role, WORD handle);
 int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle);
 int accessory_window_redraw(WORD handle, WORD vdi_handle);
+int accessory_window_reopen(WORD role, WORD vdi_handle);
 long _stksize = 65536;
 UQUAD acc_entry_base, acc_entry_type, acc_entry_stack;
 UWORD acc_entry_cs;
@@ -113,6 +114,16 @@ int main(int argc, char **argv, char **envp)
 #endif
         CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == AES_EVENT_MESSAGE);
 #if ACC_ROLE == 4
+        if (event.message.type == 634 && !event.message.sender) {
+            GRECT temporary = { 80, 80, 200, 160 };
+            LONG result = aes_wind_create(0, &temporary);
+            LONG receiver = aes_appl_find("ACCTWO");
+
+            CHECK(receiver > 0);
+            message.type = 635; message.data[0] = result;
+            CHECK(aes_appl_write((WORD)receiver, &message) == E_OK);
+            continue;
+        }
         if (event.message.type == 626) {
             CHECK(accessory_window_checks(&info, ACC_ROLE, control.handle) == 0);
             continue;
@@ -132,6 +143,10 @@ int main(int argc, char **argv, char **envp)
             queued = 0;
         }
 #endif
+        if (event.message.type == 631 && !event.message.sender) {
+            CHECK(accessory_window_reopen(ACC_ROLE, control.handle) == 0);
+            continue;
+        }
         if (event.message.type == 20 && !event.message.sender) {
             CHECK(accessory_window_redraw(event.message.data[0], control.handle) == 0);
             continue;

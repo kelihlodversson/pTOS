@@ -9,6 +9,7 @@
 
 int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle);
 int accessory_window_redraw(WORD handle, WORD vdi_handle);
+int accessory_window_reopen(WORD role, WORD vdi_handle);
 
 static volatile LONG revoked, reregistered;
 static AES_APP_INFO callback_info;
@@ -121,6 +122,23 @@ static int copied_text(WORD handle)
     return 0;
 }
 
+int accessory_window_reopen(WORD role, WORD vdi_handle)
+{
+    GRECT rectangle = { 48, 60, 356, 240 };
+    LONG handle;
+
+    if (role == 4) {
+        rectangle.g_x = 440;
+        rectangle.g_y = 140;
+    }
+    handle = aes_wind_create(kind, &rectangle);
+    CHECK(handle > 0 && copied_text((WORD)handle) == 0);
+    CHECK(aes_wind_open((WORD)handle, &rectangle) == E_OK);
+    CHECK(accessory_window_redraw((WORD)handle, vdi_handle) == 0);
+    (void)Cconws("x32 window reopened on desktop: PASS\r\n");
+    return 0;
+}
+
 int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle)
 {
     static const char *names[3] = { "ACCONE", "ACCFAULT", "ACCWAIT" };
@@ -130,6 +148,7 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
                                { 0 }, { 0 }, 3000 };
     AES_INPUT_EVENT input_event;
     AES_WINDOW_INFO state, desktop;
+    AES_APP_INFO renewed;
     AES_WINDOW_REQUEST raw = { AES_WIN_GET, 0 };
     VDICONTROL control = { 0 };
     VDIPB pb = { &control, NULL, NULL, NULL, NULL };
@@ -253,6 +272,18 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
     CHECK(aes_wind_open((WORD)handle, &rectangle) == EINVAL);
     CHECK(aes_wind_get((WORD)handle, &state) == E_OK && state.flags == AES_WINDOW_OPEN);
     CHECK(rc_equal(&rectangle, &state.current) && rc_equal(&work, &state.work));
+    calculated = rectangle; calculated.g_x = -32000;
+    CHECK(aes_wind_set_rect((WORD)handle, &calculated) == EINVAL);
+    /* Two individually valid off-screen rectangles can have an unrepresentable
+     * union. Include a closed window's old bounds in native move validation. */
+    extra = aes_wind_create(0, &rectangle);
+    CHECK(extra > 0);
+    calculated = rectangle; calculated.g_x = -30000;
+    CHECK(aes_wind_set_rect((WORD)extra, &calculated) == E_OK);
+    calculated.g_x = 32000;
+    CHECK(aes_wind_set_rect((WORD)handle, &calculated) == EINVAL);
+    CHECK(aes_wind_get((WORD)handle, &state) == E_OK && rc_equal(&rectangle, &state.current));
+    CHECK(aes_wind_delete((WORD)extra) == E_OK);
     CHECK(aes_wind_find(state.work.g_x + 2, state.work.g_y + 2) == handle);
     CHECK(aes_wind_slider((WORD)handle, AES_WINDOW_HSLIDE, 321) == E_OK);
     CHECK(aes_wind_slider((WORD)handle, AES_WINDOW_VSLIDE, 765) == E_OK);
@@ -325,7 +356,18 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
     CHECK(aes_wind_close((WORD)handle) == E_OK);
     CHECK(aes_wind_close((WORD)handle) == EINVAL);
     CHECK(aes_wind_top((WORD)handle) == EINVAL);
+    CHECK(aes_wind_set_text((WORD)handle, AES_WINDOW_NAME, "Recycle this window") == E_OK);
     CHECK(aes_wind_delete((WORD)handle) == E_OK);
+    do {
+        CHECK(aes_appl_read(&received) == E_OK);
+    } while (received.type == 20);
+    CHECK(received.type == 635 && received.data[0] == EAGAIN);
+    CHECK(received.sender == aes_appl_find("ACCWAIT"));
+    CHECK(aes_wind_get((WORD)handle, &state) == EIHNDL);
+    handle = aes_wind_create(kind, &rectangle);
+    CHECK(handle > 0 && aes_wind_open((WORD)handle, &rectangle) == E_OK);
+    CHECK(aes_appl_exit() == E_OK);
+    CHECK(aes_appl_init("ACCTWO", &renewed) == E_OK && renewed.id == info->id);
     CHECK(aes_wind_get((WORD)handle, &state) == EIHNDL);
     handle = aes_wind_create(kind, &rectangle);
     CHECK(handle > 0 && aes_wind_open((WORD)handle, &rectangle) == E_OK);

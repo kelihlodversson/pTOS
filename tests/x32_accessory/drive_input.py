@@ -56,6 +56,7 @@ try:
             if "x32 accessory desktop: PASS" in output:
                 assert seen == 24 and output.count("x32 input events: PASS") == 4
                 assert output.count("x32 window events/ownership/lifecycle: PASS") == 4
+                assert output.count("x32 window reopened on desktop: PASS") == 2
                 print("PS/2 input, focused window keys and native close clicks in four sessions: PASS")
                 break
         time.sleep(0.01)

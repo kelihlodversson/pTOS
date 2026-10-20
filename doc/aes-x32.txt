@@ -147,6 +147,8 @@ selector, object tree or pointer-bearing parameter array crosses the boundary.
         low 12 native AES gadget bits, named AES_WINDOW_* in aes_client.h.
         The full rectangle must leave a positive work area. Handles can be
         reused after deletion; callers must discard deleted handles.
+        A freed native handle stays reserved while its old service call is
+        unwinding; creation returns EAGAIN until that bookkeeping is released.
 
     LONG aes_wind_open(WORD handle, const GRECT *rectangle);
     LONG aes_wind_close(WORD handle);
@@ -155,6 +157,8 @@ selector, object tree or pointer-bearing parameter array crosses the boundary.
         Opening/topping follows native stacking and focus rules. Repeated
         open/close in the wrong state returns EINVAL. Deleting an open window
         closes it first. Desktop handle 0 cannot be mutated.
+        A native desktop/application reset can invalidate accessory handles;
+        clients recreate windows when reopening after that reset.
 
     LONG aes_wind_get(WORD handle, AES_WINDOW_INFO *info);
     LONG aes_wind_set_rect(WORD handle, const GRECT *rectangle);
@@ -164,6 +168,10 @@ selector, object tree or pointer-bearing parameter array crosses the boundary.
         Coordinates and computed border/work rectangles must fit signed WORD
         arithmetic; width/height and right/bottom leave two pixels for the
         native shadow (maximum 32765), and x/y are at least -32765.
+        Rendering/moves also require the combined screen, requested bounds
+        and allocated windows' old current bounds (including shadows) to
+        span at most 32767 in each axis. Reject wider unions with EINVAL
+        before native WORD arithmetic or any geometry change.
 
     LONG aes_wind_set_text(WORD handle, UWORD field, const char *text);
         field is AES_WINDOW_NAME or AES_WINDOW_INFO_LINE. Copy a terminated
@@ -205,6 +213,12 @@ and renew registration while a window call is suspended: that call returns
 EACCDN and never writes its old result into the renewed registration. Cleanup
 inside user callbacks only retires resources; native deletion runs after the
 callback returns, through a return-work hook or the completing window call.
+Normal appl_exit also completes native deletion directly outside callbacks,
+including builds without callback support. Process termination drops its AES
+association before native cleanup can yield and reuse the old basepage.
+After native calls yield, the service checks slot ownership and native handle
+validity again before changing bookkeeping or copying results. A replacement
+window cannot be retired by the continuation of an older request.
 
 Native WM_REDRAW notifications coalesce to one bounding rectangle per owned
 window. They move into the client's FIFO when space is available, after

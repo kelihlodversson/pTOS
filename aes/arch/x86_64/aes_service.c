@@ -441,6 +441,9 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     switch (fn) {
     case AES_SERVICE_EXIT:
         aes_service_process_exit(run);
+#if CONF_WITH_AES
+        x86_64_aes_window_unregister(run);
+#endif
         return E_OK;
     case AES_SERVICE_FIND:
         rc = copy_name(a, name);

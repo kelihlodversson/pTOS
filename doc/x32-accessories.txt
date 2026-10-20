@@ -128,8 +128,9 @@ After input checks, the fixtures exercise typed windows (#626). Two clients
 verify foreign-handle refusal; closed/live windows left by normal exit and
 fault are reclaimed. Geometry, border/work conversion, slider state, visible
 rectangles, invalid/read-only/page-boundary/overlapping buffers and native
-handle reuse are checked. Title/info sources are changed and freed before
-the kernel verifies its retained text and native pointer width.
+handle reuse are checked. Distant rectangles cannot overflow native move/union
+arithmetic; rejected moves preserve the old geometry. Title/info sources are
+changed and freed before the kernel verifies retained text and pointer width.
 An eight-message FIFO stays full during four enlargements: self redraws
 coalesce and arrive after the queued opaque messages, without deadlocking.
 The input driver sends a key to the topped ring-3 window, then clicks its
@@ -137,8 +138,12 @@ native close gadget. WM_CLOSED arrives with kernel sender=0 and the correct
 handle; the client explicitly closes/deletes the window. A real user callback
 unregisters and immediately re-registers during a suspended window query.
 The old call returns EACCDN without copyout and retires its in-flight window.
+A second client tries to reuse a native handle while DELETE is suspended
+after freeing it; creation must return EAGAIN until the old call finishes.
 The two survivors leave live, copied-text windows for each desktop restart;
-the final session keeps them visible beside native EmuDesk.
+the final session reopens them after EmuDesk's global window reset. Both
+clients paint their visible work areas through typed VDI line/color/clip calls,
+and the kernel waits until redraws finish before the desktop pass marker.
 
 Verified locally with QEMU/OVMF (1280x800 GOP), host AES/VDI contracts and
 loaded import checks. The ordinary x32 process/callback boot tests also run
