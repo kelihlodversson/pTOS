@@ -61,6 +61,8 @@
 #include "tosvars.h"
 #include "../bdos/bdosstub.h"
 #include "../bios/vectors.h"
+#include "../bios/font.h"
+#include "../bios/country.h"
 #include "vdistub.h"
 #include "vdi_ftsystem.h"
 #include "vdi_gdos.h"
@@ -74,6 +76,11 @@
 /* an empty option is not defined at all (tools/genconfig.py): the root */
 #ifndef CONF_VDI_FONT_DIR
 #define CONF_VDI_FONT_DIR ""
+#endif
+
+/* an empty option is not defined at all: the ROM fonts stay the system fonts */
+#ifndef CONF_VDI_SYSTEM_FONT
+#define CONF_VDI_SYSTEM_FONT ""
 #endif
 
 ULONG vdi_gdos_id;
@@ -324,6 +331,9 @@ static BOOL sfont_id_used(const VDI_SFONT *fonts, WORD count, WORD id)
 }
 
 /* the fonts in CONF_VDI_FONT_DIR, sorted by name, with their ids */
+/* the file name of the system font that is wanted (upper case), set before the scan: see sfont_scan() */
+static char sfont_wanted[sizeof(CONF_VDI_SYSTEM_FONT) > 14 ? sizeof(CONF_VDI_SYSTEM_FONT) : 14];   /* BSS: .data may be in ROM */
+
 static void sfont_scan(void)
 {
     VDI_SFONT *fonts;
@@ -347,6 +357,8 @@ static void sfont_scan(void)
         if (!n || fonts[i].key != fonts[n - 1].key
             || strcmp(fonts[i].name, fonts[n - 1].name))
             fonts[n++] = fonts[i];
+        else if (!strcmp(fonts[i].file, sfont_wanted))
+            fonts[n - 1] = fonts[i];        /* unless the system font is the other file */
     count = n;
 
     /* the ids, in name order, so that collisions resolve the same way */
@@ -369,6 +381,121 @@ static void sfont_scan(void)
     vdi_sfont_count = count;
 }
 
+
+/*
+ * The system font (#600): CONF_VDI_SYSTEM_FONT, or what the line
+ * SYSTEMFONT= of \GEMSYS\PTOS.INF on the boot drive says, if there is
+ * one, is a font file of the font directory; if it is monospaced, it
+ * becomes the 8x8 and 8x16 system fonts.
+ */
+#define SYSTEM_FONT_FILE    "\\GEMSYS\\PTOS.INF"
+#define SYSTEM_FONT_KEY     "SYSTEMFONT"
+
+/* the name that the settings file gives, upper case, in name (14 characters and a NUL); FALSE if none */
+static BOOL sfont_system_setting(char *name)
+{
+    char path[3 + sizeof(SYSTEM_FONT_FILE)], buf[256];
+    long h, n;
+    char *p, *end;
+    const char *key;
+
+    path[0] = 'A' + bootdev;
+    path[1] = ':';
+    strcpy(path + 2, SYSTEM_FONT_FILE);
+    h = kdos_fopen((long)path, 0);
+    if (h < 0)
+        return FALSE;
+    n = kdos_fread(h, (long)sizeof(buf) - 1, (long)buf);
+    kdos_fclose(h);
+    if (n <= 0)
+        return FALSE;
+    buf[n] = '\0';
+
+    for (p = buf; *p; )
+    {
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')
+            p++;
+        for (key = SYSTEM_FONT_KEY; *key && *p == *key; key++, p++)
+            ;
+        while (*p == ' ' || *p == '\t')
+            p++;
+        if (!*key && *p == '=')
+        {
+            for (p++; *p == ' ' || *p == '\t'; p++)
+                ;
+            for (end = name; *p && *p != '\r' && *p != '\n' && *p != ' ' && *p != '\t'
+                             && end < name + 13; p++)
+                *end++ = (*p >= 'a' && *p <= 'z') ? (char)(*p - 'a' + 'A') : *p;
+            *end = '\0';
+
+            return end != name;
+        }
+        while (*p && *p != '\n')       /* another line */
+            p++;
+    }
+
+    return FALSE;
+}
+
+/* the wanted system font: the file's, else the option's, in upper case */
+static void sfont_system_wanted(void)
+{
+    char *c;
+
+    strcpy(sfont_wanted, CONF_VDI_SYSTEM_FONT);
+    (void)sfont_system_setting(sfont_wanted);   /* the file takes the place of the option */
+    for (c = sfont_wanted; *c; c++)             /* GEMDOS names are upper case */
+        if (*c >= 'a' && *c <= 'z')
+            *c = (char)(*c - 'a' + 'A');
+}
+
+static void sfont_system(void)
+{
+    char *name = sfont_wanted;
+    Fonthead new16 = fon8x16, new8 = fon8x8;
+    WORD i;
+
+    if (!name[0])
+        return;
+
+    for (i = 0; i < vdi_sfont_count; i++)
+        if (!strcmp(vdi_sfonts[i].file, name))
+            break;
+    if (i == vdi_sfont_count)
+    {
+        KINFO(("GDOS: the system font %s is not in %s; the ROM fonts stay\n", name, sfont_dir));
+        return;
+    }
+    if (!(vdi_sfonts[i].flags & SFONT_MONOSPACE))
+    {
+        KINFO(("GDOS: the system font %s is not monospaced; the ROM fonts stay\n", name));
+        return;
+    }
+    if (!country_charset_is_st())
+    {
+        KINFO(("GDOS: no scalable system font for this character set; the ROM fonts stay\n"));
+        return;
+    }
+
+    /* both sizes or neither: rendered into copies of the headers, which replace the ROM's when both are done */
+    if (vdi_sfont_make_system(i, &new16) && vdi_sfont_make_system(i, &new8))
+    {
+        fon8x16.off_table = new16.off_table;
+        fon8x16.form_width = new16.form_width;
+        fon8x16.dat_table = new16.dat_table;
+        fon8x8.off_table = new8.off_table;
+        fon8x8.form_width = new8.form_width;
+        fon8x8.dat_table = new8.dat_table;
+        font_forms_changed();
+        KINFO(("GDOS: %s (%s) is the system font\n", vdi_sfonts[i].name, name));
+    }
+    else
+    {
+        if (new16.off_table != fon8x16.off_table)   /* the first was made, the second was not */
+            vdi_ft_free((void *)new16.off_table);
+        KINFO(("GDOS: the system font %s cannot be rendered; the ROM fonts stay\n", name));
+    }
+}
 
 void vdi_sfont_rescan(void)
 {
@@ -419,7 +546,9 @@ void vdi_gdos_init(void)
 #endif
 
     sfont_set_dir();
+    sfont_system_wanted();
     sfont_scan();
+    sfont_system();
     vdi_gdos_id = GDOS_ID_FSM;
 
     KINFO(("GDOS: built in, %d scalable fonts in %s\n",

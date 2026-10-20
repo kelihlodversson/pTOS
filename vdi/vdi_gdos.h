@@ -82,6 +82,13 @@ void vdi_sfont_rescan(void);
  */
 #define F_SFONT_FIXED       0x4000
 
+/*
+ * The forms of a system font (a header of the font ring: 8x8, 8x16) made
+ * from the scalable font with that index, in the cell it has; FALSE if that
+ * fails, and then it is as it was
+ */
+BOOL vdi_sfont_make_system(WORD index, Fonthead *font);
+
 /* the scalable font with that id, or -1 */
 WORD vdi_sfont_find(WORD font_id);
 

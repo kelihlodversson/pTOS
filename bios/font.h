@@ -21,5 +21,8 @@
 
 void font_init(void);           /* initialize BIOS font ring */
 void font_set_default(void);    /* choose the default font */
+#if CONF_WITH_VDI_SCALABLE_FONTS
+void font_forms_changed(void);  /* the forms of the system fonts have been replaced (#600) */
+#endif
 
 #endif /* FONT_H */
