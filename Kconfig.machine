@@ -143,11 +143,13 @@ config ARCH_HAS_DEMAND_PAGING
 
 # The kernel is linked in the upper half of a 32-bit address space and the
 # MMU is switched on by a start that runs at the physical address
-# (doc/mmu-address-space.txt, #566).  The TPA pool stays in the lower half.
+# (doc/mmu-address-space.txt, #566, #567).  The TPA pool stays in the lower
+# half.  The Raspberry Pi does it when it sets the MMU up at all.
 # Not user-selectable: the machines that do it set it.
 config CONF_WITH_HIGHER_HALF
 	bool
 	default y if MACHINE_VIRT_ARM
+	default y if MACHINE_RPI && CONF_WITH_ARM_PMMU
 
 # ARMv7 and later provide cache maintenance operations that the ARM1176
 # of the first generation Raspberry Pi does not have.

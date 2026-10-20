@@ -53,6 +53,8 @@ ENTRY(C_SYM(os_entry))
  * (the ARM kernel load address) rather than following REGION_RAM. */
 #if defined(MACHINE_AMIGA)
 # define ROM_ORIGIN 0x00fc0000
+#elif defined (MACHINE_RPI) && CONF_WITH_HIGHER_HALF
+# define ROM_ORIGIN 0x80008000
 #elif defined (MACHINE_RPI)
 # define ROM_ORIGIN 0x00008000
 #elif defined (TARGET_CART)
@@ -141,6 +143,13 @@ REGION_ALIAS("REGION_READ_WRITE", REGION_RAM)
  * virtual address instead, with no diagnostic of any kind. */
 #if defined (MACHINE_VIRT_ARM)
 # define LMA_AT(section) AT(ADDR(section) - 0x40000000)
+#elif defined (MACHINE_RPI) && CONF_WITH_HIGHER_HALF
+/* The same on the Raspberry Pi, where the RAM is at physical 0 and the
+ * firmware loads the flat image (objcopy -O binary takes the load addresses)
+ * at 0x8000: the kernel is linked in the physical-memory window, 0x80000000
+ * above, and the start code up to the switch is position independent
+ * (startup.S, raspi_mmu_boot.c). */
+# define LMA_AT(section) AT(ADDR(section) - 0x80000000)
 #else
 # define LMA_AT(section)
 #endif
@@ -224,7 +233,7 @@ SECTIONS
      * It is always read-only, so it can safely live in ROM.
      */
 #if defined (MACHINE_RPI)
-     .text ROM_ORIGIN : MIN_SUBALIGN
+     .text ROM_ORIGIN : LMA_AT(.text) MIN_SUBALIGN
 #else
      .text : LMA_AT(.text) MIN_SUBALIGN
 #endif

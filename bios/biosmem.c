@@ -21,7 +21,11 @@
 #include "biosext.h"
 #include "../vdi/vdistub.h"
 #if CONF_WITH_HIGHER_HALF
+#ifdef MACHINE_RPI
+#include "raspi_memory.h"
+#else
 #include "virt_mmu.h"
+#endif
 #endif
 
 #if DBG_BALLOC
