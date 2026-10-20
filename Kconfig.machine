@@ -61,10 +61,9 @@ config MACHINE_VIRT_ARM
 	  hardware; there is no VideoCore/mailbox interface. Exposes a
 	  PL011 UART, a GICv2 interrupt controller, and RAM starting at
 	  physical 0x40000000 (unlike every other supported machine, whose
-	  RAM starts at 0). Boots a -kernel ELF directly; the fixed
-	  low-address TOS system variables are made to work via a small
-	  statically built MMU translation table set up early in the boot
-	  sequence, not by moving them.
+	  RAM starts at 0). Boots a -kernel ELF directly, with the MMU
+	  switched on by a short start that runs at the physical address
+	  (a higher-half kernel, CONF_WITH_HIGHER_HALF).
 
 config MACHINE_VIRT_M68K
 	bool "QEMU virt (m68k)"
@@ -141,6 +140,14 @@ config ARCH_HAS_USER_ASPACE
 config ARCH_HAS_DEMAND_PAGING
 	bool
 	default y if ARCH_X86_64
+
+# The kernel is linked in the upper half of a 32-bit address space and the
+# MMU is switched on by a start that runs at the physical address
+# (doc/mmu-address-space.txt, #566).  The TPA pool stays in the lower half.
+# Not user-selectable: the machines that do it set it.
+config CONF_WITH_HIGHER_HALF
+	bool
+	default y if MACHINE_VIRT_ARM
 
 # ARMv7 and later provide cache maintenance operations that the ARM1176
 # of the first generation Raspberry Pi does not have.

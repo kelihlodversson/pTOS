@@ -21,15 +21,25 @@
 
  /* ==== Start of Exception related variables ================================ */
 #define TOSVAR(name, address) C_SYM(name) = address
+#if !CONF_WITH_HIGHER_HALF
+/* A higher-half kernel has nothing at these addresses: there the crash page
+ * is made of ordinary variables (bios/arch/arm/vectors.c) */
 TOSVAR(proc_lives, 0x380);      /* validates system crash page, if 0x12345678 */
 TOSVAR(proc_dregs, 0x384);      /* saved registers d0-d7 */
 TOSVAR(proc_aregs, 0x3a4);      /* saved registers a0-a7 */
 TOSVAR(proc_enum, 0x3c4);       /* vector number of crash exception */
 TOSVAR(proc_usp, 0x3c8);        /* saved user stackpointer */
 TOSVAR(proc_stk, 0x3cc);        /* 16 words from exception stack */
+#else
+/* proc_dregs holds all 16 registers panic() saves in one block, the address
+ * registers after the data registers as at 0x384 */
+TOSVAR(proc_aregs, C_SYM(proc_dregs) + 32);
+#endif
 
 /* ==== Start of System variables =========================================== */
+#if !CONF_WITH_HIGHER_HALF
 C_SYM(sysvars_start) = 0x400;
+#endif
 /*
  * These fixed low-memory addresses are m68k only. ARM has no real TOS
  * software depending on them, and Ssystem() (bdos/ssystem.c) now gives

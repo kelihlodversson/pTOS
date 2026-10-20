@@ -1428,7 +1428,13 @@ long setexc(WORD num, long vector)
         return oldvector;
     }
 
+#ifdef __arm__
+    /* the emulated vector table is not at address 0 everywhere
+     * (CONF_WITH_HIGHER_HALF) */
+    addr = (LONG *) vector_address(4L * num);
+#else
     addr = (LONG *) (4L * num);
+#endif
     oldvector = *addr;
 
     if(vector != -1) {

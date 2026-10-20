@@ -20,6 +20,9 @@
 #include "bios.h"
 #include "biosext.h"
 #include "../vdi/vdistub.h"
+#if CONF_WITH_HIGHER_HALF
+#include "virt_mmu.h"
+#endif
 
 #if DBG_BALLOC
 static BOOL bmem_allowed;
@@ -74,6 +77,11 @@ void bmem_init(void)
      * memory" check. Harmless on the ILP32 arches (m68k/ARM), where a
      * pointer already fits in 32 bits. */
     end_os = (UBYTE*)(uintptr_t)(((UQUAD)(uintptr_t)_end_os_stram + 3 ) & ~(UQUAD)3);
+#if CONF_WITH_HIGHER_HALF
+    /* the kernel is in the window, the memory after it is the pool, which a
+     * program sees in the lower half: its addresses are not kernel addresses */
+    end_os = virt_pool_start(end_os);
+#endif
     membot = end_os;
     KDEBUG(("       membot = %p\n", membot));
 
