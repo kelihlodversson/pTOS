@@ -208,6 +208,11 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
             || { rm -f "$disk/GEMSYS/FONTS/LIBSANS.TTC"
                  echo "$0: no TrueType collection for the font tests (python3 fontTools missing?)" >&2; }
     fi
+    # a scalable font as the system font (#600), for the machine that is to
+    # have one: the setting file, with a font that is on the disk
+    if [ -n "${system_font:-}" ] && [ -f "$disk/GEMSYS/FONTS/$system_font" ]; then
+        printf 'SYSTEMFONT=%s\r\n' "$system_font" >"$disk/GEMSYS/PTOS.INF"
+    fi
     case $machine in
     virt-arm | virt-m68k)
         if [ "$machine" = virt-arm ]; then
@@ -379,6 +384,34 @@ if grep -aq 'All tests passed\.' "$suite_log" && ! grep -aq 'FAIL' "$suite_log";
             fi
         fi
     fi
+fi
+
+# -- a machine with a scalable system font (#600) -----------------------------
+#
+# The whole suite again, on a screen whose system font is a monospaced
+# scalable one, when the host has one (DejaVu Sans Mono, that is on the disk
+# for the other tests): every program and test that draws text then does it
+# with that font, and the log must say that it was made.
+
+if grep -aq 'All tests passed\.' "$suite_log" && [ -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf ]; then
+    system_font=DJVUMONO.TTF
+    start_vm sysfont
+    system_font=
+    type_line 'runtests.tos'
+    n=0
+    while [ "$n" -lt "$limit" ]; do
+        grep -aqE 'All tests passed\.|Some tests FAILED\.' "$log" && break
+        sleep 1
+        n=$((n + 1))
+    done
+    if ! grep -aq 'is the system font' "$log"; then
+        record "scalable system font" FAIL "the kernel did not make the font the system font"
+    elif grep -aq 'All tests passed\.' "$log" && ! grep -aq 'FAIL' "$log"; then
+        record "scalable system font" PASS
+    else
+        record "scalable system font" FAIL "the suite did not pass with it"
+    fi
+    stop_vm
 fi
 
 # -- the verdict ----------------------------------------------------------------

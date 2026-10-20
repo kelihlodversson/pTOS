@@ -35,4 +35,9 @@ void get_fonts(const Fonthead **f6x6,
                const Fonthead **f8x8,
                const Fonthead **f8x16);
 
+#if CONF_WITH_VDI_SCALABLE_FONTS
+/* the system fonts are in the Atari ST character set */
+BOOL country_charset_is_st(void);
+#endif
+
 #endif /* COUNTRY_H */

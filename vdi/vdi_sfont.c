@@ -1044,3 +1044,180 @@ void vdi_sfont_scratch(const Fonthead *font, WORD **buffer, WORD *half)
     *buffer = s->scratch;
     *half = s->half;
 }
+
+
+/*
+ * A system font from a scalable one (#600)
+ *
+ * The forms of the system fonts of the ROM, which the console, the AES and
+ * every program that picks no other font draws with, are replaced by those
+ * of a monospaced scalable font, rendered once at the cell size of each:
+ * the headers stay where they are (the font ring, the open workstations and
+ * the console all point to them), and keep their metrics, so that nothing
+ * that has measured them is out of date: only their offsets and forms are
+ * new, in memory of their own that is never given back, and not part of
+ * the sizes of sf_sizes that are evicted.  A character the face lacks keeps
+ * the glyph the ROM font had.
+ *
+ * The cell is fixed: the face is made as big as the cell's rows above and
+ * below the baseline allow, and as wide as its advance needs to be that of
+ * the cell, with glyphs cut off at the edge of it.
+ */
+typedef struct
+{
+    WORD index;                     /* the scalable font */
+    Fonthead *font;                 /* the system font header */
+    UWORD *off;                     /* result: the offsets */
+    UBYTE *form;                    /* and the form */
+} SF_SYSTEM;
+
+/* a bit of the ROM font's form, row 'row' of character 'ch', pixel 'x' of it */
+static BOOL sf_rom_bit(const Fonthead *f, UWORD ch, UWORD row, UWORD x)
+{
+    ULONG bit = (ULONG)f->off_table[ch] + x;
+
+    return (f->dat_table[(ULONG)row * f->form_width + (bit >> 3)] & (0x80 >> (bit & 7))) != 0;
+}
+
+static long sf_system_build(void *arg)
+{
+    SF_SYSTEM *sys = arg;
+    Fonthead *f = sys->font;
+    UWORD cell = f->max_cell_width, height = f->form_height;
+    UWORD top = f->top, bottom = f->bottom;
+    UWORD form_width = (UWORD)(((SF_CHARS * cell + 15) / 16) * 2);
+    FT_Long em, em_asc, em_fit, wide;
+    FT_UInt x_glyph;
+    UWORD *off;
+    UBYTE *form;
+    UWORD ch, row, col;
+    ULONG bytes;
+
+    if (!sf_open(sys->index) || !cell || height != top + bottom + 1)
+        return -1;
+    sf_page = SF_ATARI;
+
+    /*
+     * The biggest size whose ascender is within the rows above the baseline
+     * of the cell and, if that does not make it a quarter smaller, whose
+     * descender is within those below it: the 8x8 cell has one row below
+     * the baseline, which a face the size of the cell does not fit in, and
+     * a face the size of its descender would be too small to read.  A
+     * descender that does not fit is cut off at the cell.
+     */
+    em_asc = 0;
+    em_fit = 0;
+    for (em = (FT_Long)height * 64; em >= SF_MIN_PIXELS * 64L; em -= 16)
+    {
+        if (FT_Set_Char_Size(sf_face, em, em, 72, 72))
+            return -1;
+        if (((sf_face->size->metrics.ascender + 63) >> 6) > top + 1L)
+            continue;
+        if (!em_asc)
+            em_asc = em;
+        if (((-sf_face->size->metrics.descender + 63) >> 6) <= bottom)
+        {
+            em_fit = em;
+            break;
+        }
+    }
+    if (!em_asc)
+        return -1;
+    em = (em_fit && em_fit * 4 >= em_asc * 3) ? em_fit : em_asc;
+    if (FT_Set_Char_Size(sf_face, em, em, 72, 72))
+        return -1;
+
+    /* wide enough for the advance to be the cell's */
+    x_glyph = FT_Get_Char_Index(sf_face, 'x');
+    for (wide = em / 4; wide <= em * 4; wide += 8)
+    {
+        if (FT_Set_Char_Size(sf_face, wide, em, 72, 72)
+            || FT_Load_Glyph(sf_face, x_glyph, SF_LOAD))
+            return -1;
+        if (((sf_face->glyph->advance.x + 32) >> 6) >= cell)
+            break;
+    }
+
+    bytes = 2UL * (SF_CHARS + 1) + (ULONG)form_width * height;
+    off = vdi_ft_alloc(bytes);
+    if (!off)
+        return -1;
+    form = (UBYTE *)(off + SF_CHARS + 1);
+    bzero(form, (ULONG)form_width * height);
+    for (ch = 0; ch <= SF_CHARS; ch++)
+        off[ch] = (UWORD)(ch * cell);
+
+    for (ch = 0; ch < SF_CHARS; ch++)
+    {
+        FT_UInt glyph = sf_glyph(ch);
+        FT_Bitmap *bm;
+        LONG left = (LONG)ch * cell;
+
+        if (glyph && !FT_Load_Glyph(sf_face, glyph, FT_LOAD_RENDER | SF_LOAD)
+            && sf_face->glyph->bitmap.pixel_mode == FT_PIXEL_MODE_MONO)
+        {
+            LONG x0 = left + sf_face->glyph->bitmap_left;
+            WORD y0 = (WORD)(top + 1 - sf_face->glyph->bitmap_top);
+
+            bm = &sf_face->glyph->bitmap;
+            /* wholly below the baseline (the underscore) and off the cell: on its last rows */
+            if (sf_face->glyph->bitmap_top <= 0 && y0 + (WORD)bm->rows > (WORD)height
+                && (WORD)bm->rows <= (WORD)height)
+                y0 = (WORD)(height - bm->rows);
+            for (row = 0; row < bm->rows; row++)
+            {
+                const UBYTE *src = bm->buffer + row * bm->pitch;
+                WORD y = (WORD)(y0 + row);
+
+                if (y < 0 || y >= (WORD)height)
+                    continue;
+                for (col = 0; col < bm->width; col++)
+                {
+                    LONG x = x0 + col;
+
+                    if (!(src[col >> 3] & (0x80 >> (col & 7))) || x < left || x >= left + cell)
+                        continue;       /* clear, or outside its cell */
+                    form[(ULONG)y * form_width + (x >> 3)] |= (UBYTE)(0x80 >> (x & 7));
+                }
+            }
+        }
+        else
+        {
+            /* the face has none: the ROM font's glyph, in a cell of the same size */
+            for (row = 0; row < height; row++)
+                for (col = 0; col < cell; col++)
+                    if (sf_rom_bit(f, ch, row, col))
+                    {
+                        LONG x = left + col;
+
+                        form[(ULONG)row * form_width + (x >> 3)] |= (UBYTE)(0x80 >> (x & 7));
+                    }
+        }
+    }
+
+    sys->off = off;
+    sys->form = form;
+
+    return 0;
+}
+
+/*
+ * The system font 'font' (the RAM header of one of the ROM's sizes) from
+ * the scalable font with that index in vdi_sfonts; FALSE if it cannot be
+ * made, and then nothing is changed.
+ */
+BOOL vdi_sfont_make_system(WORD index, Fonthead *font)
+{
+    SF_SYSTEM sys;
+
+    sys.index = index;
+    sys.font = font;
+    if (!vdi_ft_library || vdi_ft_call(sf_system_build, &sys) != 0)
+        return FALSE;
+
+    font->off_table = sys.off;
+    font->form_width = (UWORD)(((SF_CHARS * font->max_cell_width + 15) / 16) * 2);
+    font->dat_table = sys.form;
+
+    return TRUE;
+}

@@ -182,6 +182,25 @@ config CONF_VDI_FONT_DIR
 	  the bitmap fonts.  The release images put DejaVu fonts here
 	  (tools/fetch-fonts.sh).
 
+config CONF_VDI_SYSTEM_FONT
+	string "Monospaced scalable font to replace the system font (file name)"
+	depends on CONF_WITH_VDI_SCALABLE_FONTS
+	default ""
+	help
+	  The 8-bit file name, in the font directory, of a monospaced
+	  TrueType or OpenType font that the built-in GDOS makes the system
+	  font of (font id 1): of the VT52 console, the AES, the desktop,
+	  and of every program that picks no other font.  It is rendered at
+	  the cells of the 8x8 and 8x16 ROM fonts, which keep their sizes
+	  and metrics; a character it lacks keeps the glyph of the ROM font.
+	  The 6x6 font stays as it is.  Empty: the ROM fonts.
+
+	  A file \GEMSYS\PTOS.INF on the boot drive with a line
+	  "SYSTEMFONT=NAME.TTF" takes the place of this, without a rebuild.
+	  Only with the Atari ST character set, and only where the built-in
+	  GDOS starts (none loaded from disk).  A font that is missing, is
+	  not monospaced, or cannot be read leaves the ROM fonts.
+
 config CONF_WITH_VDI_VERTLINE
 	bool "VDI vertical line drawing speedup"
 	default n if TARGET_192

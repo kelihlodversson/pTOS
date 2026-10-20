@@ -286,6 +286,19 @@ of your own, run it on the GEMSYS/FONTS directory of the files that go
 into it.  The regression tests' disk gets the host's copies of DejaVu
 under the same names (tools/run-regression-tests.sh).
 
+A monospaced scalable font can be the system font (font id 1: the
+console's, the desktop's, and that of every program that picks no other).
+Set "System font" (CONF_VDI_SYSTEM_FONT) in make menuconfig to the file
+name in the font directory, e.g. DJVUMONO.TTF; or, with no change to the
+image, put a line SYSTEMFONT=DJVUMONO.TTF into \GEMSYS\PTOS.INF on the
+boot drive, which takes precedence.  The font is rendered once at the
+cells of the 8x8 and 8x16 system fonts, after AUTO programs have run and
+before the AES starts; the 6x6 font stays the built-in one, and so does a
+character the font lacks.  The font has to be monospaced, the character
+set the Atari ST's, and no disk-based GDOS present; otherwise there is a
+message on the console log and the ROM fonts stay.  The rendered forms
+stay in memory for good.  With no setting nothing changes.
+
 vst_font() then selects a scalable font, and vst_point() and vst_height()
 set exactly the size asked for.  Each size is rendered whole by FreeType,
 as a bitmap font of that size with the 256 characters of the Atari set,
