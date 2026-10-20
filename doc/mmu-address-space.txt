@@ -122,9 +122,16 @@ include/procmem.h; #562 gives them 32-bit types):
     0x00200000 - 0x003fffff   basepage, environment and TPA blocks (window)
     0x00400000 - 0x007fffff   program image, and the startup area after it
     0x0fff0000 - 0x0fff0fff   the ancestors' basepages, read-only
-    0x10000000 - 0x7efeffff   Malloc() memory
-    0x7efff000 - 0x7effffff   guard page
-    0x7f000000 - 0x7fffffff   user stack, growing down from 0x80000000
+    0x10000000 - 0x7ffbefff   Malloc() memory
+    0x7ffbf000 - 0x7ffbffff   guard page
+    0x7ffc0000 - 0x7fffffff   user stack (256 KiB), growing down from
+                              0x80000000
+
+The last three lines are the defaults.  As on x32, the guard page sits
+immediately below the stack and the Malloc() memory ends below it, so
+Psetlimit() of the stack size moves all three: a 1 MiB stack starts at
+0x7ff00000, with the guard page below it.  (x32's 16 MiB default puts them
+at 0x7efff000 and 0x7f000000.)
 
 The same rules hold as on x32, except that nothing is backed when touched:
 the first ARM and m68k backends have no demand paging (#549 leaves it out,
@@ -266,6 +273,9 @@ review):
   - Long-format descriptors (8 bytes), because only they have the S bit
     that makes a page supervisor-only, and WP for read-only pages.  The
     tables are twice the 68040's size (a 1 KiB root).
+  - RAM is cached write-through: the 68030's data cache is always
+    write-through (bios/arch/m68k/processor.S says so), so the tree has no
+    copyback mode to ask for; the 68040/68060 trees use copyback for RAM.
   - CRP for both modes (TC.SRE clear), so supervisor accesses use the
     process's tree too and the BDOS reaches the process's buffers by
     their user addresses, as on the 68040.  SRP is not used.
@@ -315,6 +325,18 @@ identity mapping once nothing runs there.  ARM: virt_mmu_bootstrap() and
 the raspi startup become this.  m68k: the classic ROM startup never
 switches the PMMU on before the BIOS runs; the MMU configurations do, in
 startup.S, right after the PMMU check of #564.
+
+Legacy m68k initialisation must not undo the early mapping.  bios_init()
+calls processor_init(), whose 68040/68060 path disables translation (TC) and
+installs transparent mappings for all addresses
+(bios/arch/m68k/processor.S, ITT0/DTT0/DTT1), and the later
+setup_68040_pmmu()/setup_68030_pmmu() calls (CONF_WITH_68040_PMMU,
+CONF_WITH_68030_PMMU) disable translation and replace the tree.  Clearing TC
+while running at a higher-half address loses the kernel's own mapping.  In
+the MMU configurations the early start owns the MMU: processor_init() skips
+the TC/TT part (it only does its CPU and cache detection), and the legacy
+tree builders are not used, their job being done by the per-process trees.
+The flat configurations keep both paths exactly as they are.
 
 Code that hands an address to hardware (DMA, the screen base, the USB and
 eMMC controllers, virtio queues) converts it with virt_to_phys().  The
