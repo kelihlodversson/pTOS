@@ -78,7 +78,14 @@ ENTRY(C_SYM(os_entry))
  */
 MEMORY
 {
-#if CONF_WITH_HIGHER_HALF
+#if CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)
+    /* the TOS low memory, at its fixed addresses: the vectors, the system
+     * variables, the BIOS stack and the low ST-RAM variables */
+    stram : ORIGIN = 0x00000000, LENGTH = 32K
+    /* the rest of the kernel: the RAM, from its first byte, at the
+     * window (bios/machine/virt-m68k/virt_mmu.h) */
+    window : ORIGIN = 0x80000000, LENGTH = 1024M
+#elif CONF_WITH_HIGHER_HALF
     /* the physical-memory window: the RAM, from its first byte, at
      * VIRT_WINDOW_VBASE (include/machine/virt-arm/virt_memmap.h) */
     stram : ORIGIN = 0x80000000, LENGTH = 14M
@@ -96,6 +103,8 @@ MEMORY
 /* Region used as read/write memory */
 #if CONF_WITH_STATIC_ALT_RAM
 REGION_ALIAS("REGION_RAM", altram)
+#elif CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)
+REGION_ALIAS("REGION_RAM", window)
 #else
 REGION_ALIAS("REGION_RAM", stram)
 #endif
@@ -141,18 +150,33 @@ REGION_ALIAS("REGION_READ_WRITE", REGION_RAM)
  * virtual address instead, with no diagnostic of any kind. */
 #if defined (MACHINE_VIRT_ARM)
 # define LMA_AT(section) AT(ADDR(section) - 0x40000000)
+# define LMA_LOW(section) LMA_AT(section)
+#elif CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)
+/* virt-m68k: the RAM is at physical 0, so the window is 0x80000000 above
+ * where the bytes are loaded.  The TOS low memory is at its physical
+ * addresses, and has no LMA_AT. */
+# define LMA_AT(section) AT(ADDR(section) - 0x80000000)
+# define LMA_LOW(section)
 #else
 # define LMA_AT(section)
+# define LMA_LOW(section)
+#endif
+
+/* A higher-half kernel with no TOS low memory at all (the ARM one) */
+#if CONF_WITH_HIGHER_HALF && !defined(MACHINE_VIRT_M68K)
+# define NO_LOW_MEMORY 1
+#else
+# define NO_LOW_MEMORY 0
 #endif
 
 SECTIONS
 {
     /* First section in ST-RAM */
-    .first_stram : LMA_AT(.first_stram)
+    .first_stram : LMA_LOW(.first_stram)
     {
         /* System variables are located at fixed addresses */
 #include "tosvars.ld"
-#if CONF_WITH_HIGHER_HALF
+#if NO_LOW_MEMORY
         /* ... except in a higher-half kernel, which has none: the region
          * is empty */
          C_SYM(sysvars_start) = .;
@@ -175,12 +199,16 @@ SECTIONS
     /* This section is the internal BIOS stack.
      * It will *not* be cleared on startup or reset.
      */
-    .stack : LMA_AT(.stack)
+    .stack : LMA_LOW(.stack)
     {
         C_SYM(stkbot) = .;
         . += 2K;
          C_SYM(stktop) = .;
+#if CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)
+    } >stram                    /* in the low memory, like the rest of it */
+#else
     } >REGION_READ_WRITE
+#endif
 #endif
     /* SUBALIGN doesn't just bound the gap between input sections here --
      * per the ld manual it *overrides* each input section's own requested
@@ -206,16 +234,16 @@ SECTIONS
      * Variables requiring very low addresses, while being accessible
      * from user mode, can be put here.
      */
-    .low_stram : LMA_AT(.low_stram) MIN_SUBALIGN
+    .low_stram : LMA_LOW(.low_stram) MIN_SUBALIGN
     {
          __low_stram_start = .;
          obj/lowstram.o(.bss COMMON)
          __low_stram_end = .;
-#if !CONF_WITH_HIGHER_HALF
+#if !NO_LOW_MEMORY
          ASSERT(ABSOLUTE(C_SYM(shifty)) < 0x8000, "error: bad _shifty address");
 #endif
         ASSERT((ABSOLUTE(C_SYM(dskbuf)) & 3) == 0, "error: bad _dskbuf alignment");
-#if !CONF_WITH_HIGHER_HALF
+#if !NO_LOW_MEMORY
         ASSERT(ABSOLUTE(__low_stram_end) <= 0x8000, "error: .low_stram section extends beyond 32k");
 #endif
     } >stram
@@ -225,6 +253,9 @@ SECTIONS
      */
 #if defined (MACHINE_RPI)
      .text ROM_ORIGIN : MIN_SUBALIGN
+#elif CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)
+     /* in the window, right after the low memory: the same physical bytes */
+     .text (0x80000000 + ALIGN(__low_stram_end, 4)) : LMA_AT(.text) MIN_SUBALIGN
 #else
      .text : LMA_AT(.text) MIN_SUBALIGN
 #endif
@@ -298,7 +329,11 @@ SECTIONS
     {
          __end_os_stram = .;
          C_SYM(_end_os_stram) = __end_os_stram;
+#if CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)
+    } >window
+#else
     } >stram
+#endif
 
 #if CONF_WITH_STATIC_ALT_RAM
     /* Last section in static Alt-RAM */

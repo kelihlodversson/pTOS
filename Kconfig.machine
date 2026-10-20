@@ -145,9 +145,13 @@ config ARCH_HAS_DEMAND_PAGING
 # MMU is switched on by a start that runs at the physical address
 # (doc/mmu-address-space.txt, #566).  The TPA pool stays in the lower half.
 # Not user-selectable: the machines that do it set it.
+#
+# On virt-m68k only the image that requires a PMMU does it (the 68040 one;
+# #569): the other virt-m68k configurations are linked and run as before.
 config CONF_WITH_HIGHER_HALF
 	bool
 	default y if MACHINE_VIRT_ARM
+	default y if MACHINE_VIRT_M68K && CONF_REQUIRE_PMMU
 
 # ARMv7 and later provide cache maintenance operations that the ARM1176
 # of the first generation Raspberry Pi does not have.
@@ -292,6 +296,11 @@ config CONF_REQUIRE_PMMU
 
 	  Only virt-m68k so far, where the goldfish TTY can print that
 	  early.  Images that do not depend on the PMMU should say n.
+
+	  The image is a higher-half kernel (CONF_WITH_HIGHER_HALF), which
+	  runs with the 68040 MMU switched on from its first instructions.
+	  QEMU emulates the 68040 MMU only, so the check then accepts a 68040
+	  or a 68060, not a 68030.
 
 config CONF_WITH_BUS_ERROR
 	bool "Hardware generates bus errors"

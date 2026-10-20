@@ -148,7 +148,8 @@ exit:
 #if CONF_REQUIRE_PMMU
 /*
  * LONG pmmu_present(void) - nonzero if the CPU has a PMMU pTOS can use:
- * a 68030 (not a 68EC030), or a 68040/68060 (not a 68EC040/68EC060).
+ * a 68030 (not a 68EC030), or a 68040/68060 (not a 68EC040/68EC060); only
+ * the 68040/68060 with CONF_WITH_HIGHER_HALF.
  *
  * The startup code calls it first thing, before any table is built and
  * before vecs_init() (#564): like _detect_cpu above, it catches the
@@ -171,11 +172,18 @@ pp_none:
         rts
 
 pp_030:
+#if CONF_WITH_HIGHER_HALF
+        // the page tables of the higher-half start (virt_mmu_early.S) are
+        // the 68040's; a 68030 has a PMMU, but not that one
+        moveq   #0,d0
+        rts
+#else
         swap    d0              // subtype 1 is the 68EC030
         tst.w   d0
         jne     pp_none
         moveq   #1,d0
         rts
+#endif
 
 pp_tc:
         movem.l d2/a2-a3,-(sp)
@@ -434,6 +442,12 @@ m68060:
         // raises an illegal instruction exception): leave them alone.
         cmpi.b  #60,C_SYM(mcpu)+3
         jeq     ttr_done
+#endif
+#if CONF_WITH_HIGHER_HALF
+        // The MMU is on, with the tree and the transparent window of the
+        // start (bios/machine/virt-m68k/virt_mmu_early.S), which this
+        // would take away.
+        jra     ttr_done
 #endif
         moveq   #0,d0
         MOVEC_D0_TC             // disable translation

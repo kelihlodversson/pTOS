@@ -2,7 +2,7 @@
 #
 # run-regression-tests.sh - run the regression suite under QEMU
 #
-# Usage: run-regression-tests.sh <virt-arm|virt-m68k|pc-x86_64> [timeout-seconds]
+# Usage: run-regression-tests.sh <virt-arm|virt-m68k|virt-m68k-mmu|pc-x86_64> [timeout-seconds]
 #
 # Expects the matching configuration to be built and `make test-dir` to have
 # collected the test programs into test-dir/ (QEMU's FAT driver presents a copy
@@ -10,6 +10,8 @@
 #
 #   virt-arm     virt-arm-cli_defconfig       virt-arm.elf    qemu-system-arm
 #   virt-m68k    virt-m68k-cli-elf_defconfig  virt-m68k.elf   qemu-system-m68k
+#   virt-m68k-mmu  virt-m68k-mmu_defconfig    virt-m68k.elf   qemu-system-m68k -cpu m68040
+#                (the higher-half kernel with the MMU on)
 #   pc-x86_64    pc-x86_64_defconfig          pc-x86_64.efi   qemu-system-x86_64 + OVMF
 #
 # The virt machines are configured without the AES so that they boot to
@@ -173,10 +175,13 @@ start_vm() {
     mkdir -p "$disk"
     cp -R "$top/test-dir/." "$disk/"
     case $machine in
-    virt-arm | virt-m68k)
+    virt-arm | virt-m68k | virt-m68k-mmu)
         if [ "$machine" = virt-arm ]; then
             set -- qemu-system-arm -M virt,highmem=off -cpu cortex-a7 -m 128 \
                 -kernel "$top/virt-arm.elf"
+        elif [ "$machine" = virt-m68k-mmu ]; then
+            set -- qemu-system-m68k -M virt -cpu m68040 -m 128 \
+                -kernel "$top/virt-m68k.elf"
         else
             set -- qemu-system-m68k -M virt -cpu m68020 -m 128 \
                 -kernel "$top/virt-m68k.elf"
@@ -222,7 +227,7 @@ start_vm() {
         sleep 1
         ;;
     *)
-        echo "usage: $0 <virt-arm|virt-m68k|pc-x86_64> [timeout-seconds]" >&2
+        echo "usage: $0 <virt-arm|virt-m68k|virt-m68k-mmu|pc-x86_64> [timeout-seconds]" >&2
         exit 2
         ;;
     esac

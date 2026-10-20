@@ -73,7 +73,9 @@ obj-$(TARGET_RPI4) += raspi_gic.o
 obj-$(CONF_WITH_USB_XHCI) += raspi_vl805.o
 obj-$(CONF_WITH_RASPI_VSYNC_IRQ) += raspi_vsync.o
 
-obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_mmu.o virt_pic.o virt_timer.o
+obj-$(MACHINE_VIRT_ARM) += virt_uart.o virt_pic.o virt_timer.o
+obj-$(CONF_WITH_HIGHER_HALF) += virt_mmu.o
+obj-$(CONF_WITH_HIGHER_HALF) += $(if $(MACHINE_VIRT_M68K),virt_mmu_early.o)
 
 obj-$(MACHINE_VIRT_M68K) += goldfish_tty.o goldfish_pic.o goldfish_rtc.o goldfish_rtc_isr.o goldfish_pic_isr.o
 
