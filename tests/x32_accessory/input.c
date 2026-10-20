@@ -143,13 +143,34 @@ int accessory_input_checks(const AES_APP_INFO *info, WORD role, WORD handle)
         request.flags = i ? 0 : AES_EVENT_POLL;
         request.clicks = 2; request.button_state = 1;
         CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
-        CHECK(event.clicks == 2 && (event.buttons & 1));
+        CHECK(event.clicks == 2 && event.buttons == 1);
+        CHECK(event.mouse_x == 101 && event.mouse_y == 121);
         request.flags = AES_EVENT_POLL;
         request.clicks = 1; request.button_state = 0;
         CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
         CHECK(event.clicks == 1 && !(event.buttons & 1));
     }
     (void)Cconws("x32 input queued button: PASS\r\n");
+    for (i = 0; i < 2; i++) {
+        /* The native fixture completes the registered wait, then returns
+         * another task's event or queues a third (right-press) transition
+         * before this accessory resumes. The first press must survive. */
+        request.flags = 0; request.button_state = 1;
+        CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
+        CHECK(event.clicks == 1 && event.buttons == 1);
+        CHECK(event.mouse_x == 101 && event.mouse_y == 121);
+        request.flags = AES_EVENT_POLL; request.button_state = 0;
+        CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
+        CHECK(event.clicks == 1 && event.buttons == (i ? 2 : 0));
+        CHECK(event.mouse_x == (i ? 121 : 111) &&
+              event.mouse_y == (i ? 141 : 131));
+    }
+    /* Release the synthetic right button before the real PS/2 tests. */
+    request.flags = 0; request.button_mask = 3;
+    CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
+    CHECK(event.clicks == 1 && !event.buttons);
+    request.button_mask = 1;
+    (void)Cconws("x32 input button snapshot: PASS\r\n");
     request.flags = 0;
     peer = aes_appl_find("ACCWAIT");
     CHECK(peer > 0);

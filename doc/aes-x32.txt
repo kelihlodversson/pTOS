@@ -105,10 +105,13 @@ needed because each syscall identifies the current KPROC.
         and delivery follow AES focus ownership; a background task does not
         satisfy its mouse wait using the focused task's current state. This
         call does not grant focus. Future window services will manage it.
-        Mouse coordinates/buttons and modifiers are the native AES snapshot;
-        a queued press/release pair preserves the matching earlier button
-        state and its click count, capped by the request. Unfocused polls do
-        not consume that saved transition.
+        Completed button waits return the completing event's coordinates and
+        button state, even if later transitions or another task's native
+        event return overwrite the shared mouse history. A queued press/release
+        pair preserves the matching earlier button snapshot and its click
+        count, capped by the request. Other mouse coordinates/buttons and
+        modifiers use the native AES snapshot. Unfocused polls do not consume
+        the saved transition.
         The key field contains the scan code in its high byte and character
         in its low byte. Modifiers use the existing vq_key_s bit assignments.
 

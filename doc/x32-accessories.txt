@@ -111,9 +111,13 @@ All four sessions must pass, and restart cancels outstanding native input
 and long timer waits left by the surviving accessory.
 Before polling and blocking button checks, the fixture queues a complete
 press/release pair and verifies the saved press, capped click count and current
-released state. A real ring-3 VDI callback unregisters its suspended owner
-during keyboard-only, rectangle-only and timer-only waits; all must wake with
-EACCDN and allow re-registration. These checks run in each of the four sessions.
+released state, including motion after the release. Registered button waits
+must retain the completing press's coordinates and button state across an
+intervening native event return and three queued button transitions (left
+press, release, right press). A real ring-3 VDI callback unregisters its
+suspended owner during keyboard-only, rectangle-only and timer-only waits;
+all must wake with EACCDN and allow re-registration. These checks run in each
+of the four sessions.
 The rectangle case re-registers inside the callback itself, which must still
 cancel the original wait.
 

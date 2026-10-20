@@ -547,6 +547,7 @@ void abutton(EVB *e, LONG p)
 {
     WORD bclicks = LOBYTE(HIWORD(p));
     WORD count;
+    BOOL previous;
 
     if (e->e_flag & EVFOCUS)
     {
@@ -554,7 +555,8 @@ void abutton(EVB *e, LONG p)
         {
             /* forker() may have drained a press/release pair before this
              * wait was registered. Native ev_multi() checks it first too. */
-            if ((mtrans > 1) && downorup(pr_button, p))
+            previous = (mtrans > 1) && downorup(pr_button, p);
+            if (previous)
                 count = pr_mclick;
             else if (downorup(button, p))
                 count = mclick;
@@ -563,6 +565,13 @@ void abutton(EVB *e, LONG p)
             if (count >= 0)
             {
                 azombie(e, (count > bclicks) ? bclicks : count);
+                if (previous)
+                {
+                    /* azombie() snapshots current state; this completion
+                     * belongs to the matching historical transition. */
+                    e->e_return = MAKE_ULONG(pr_button, LOWORD(e->e_return));
+                    e->e_parm = MAKE_ULONG(pr_xrat, pr_yrat);
+                }
                 return;
             }
         }
