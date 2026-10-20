@@ -615,6 +615,55 @@ void mark_bcbs_invalid(int drv)
 }
 
 
+
+#if CONF_WITH_USER_COPY && !CONF_WITH_NATIVE_ABI
+/*
+ * The argument frame of a call, one `long` per argument, for
+ * bdos_check_user_args() (bdos/uaccess.c), which is written against that
+ * view.  The trap frame packs the arguments in 16-bit words (a LONG or a
+ * pointer takes two); the widths are the ones the dispatch below uses, so
+ * they come from the same FSHAPE_* of the function.  av[0] is the function
+ * number and av[i] the i-th argument, a WORD sign-extended and a LONG
+ * as it is (a pointer is 32 bits wide here); what the function does not
+ * take is 0.  A function outside the table is left to the dispatch, which
+ * answers EINVFN.
+ */
+static long check_frame_args(const short *pw)
+{
+    /* 'w': one word, 'l': two words, in the order of the arguments */
+    static const char *const widths[] =
+    {
+        /* V   */ "",    /* W   */ "w",   /* L   */ "l",   /* WW  */ "ww",
+        /* LL  */ "ll",  /* LW  */ "lw",  /* LWW */ "lww", /* WLLL*/ "wlll",
+        /* P   */ "l",   /* PL  */ "ll",  /* PW  */ "lw",  /* PWW */ "lww",
+        /* WLP */ "wll", /* WPL */ "wll", /* WPP */ "wll",
+        /* RV  */ "",    /* RL  */ "l",   /* RLW */ "lw"
+    };
+    long av[5];
+    const char *w;
+    unsigned i, word;
+    int fn = pw[0];
+
+    if (fn < 0 || (unsigned)fn > MAX_FNCALL)
+        return E_OK;
+    av[0] = fn;
+    for (i = 1; i < ARRAY_SIZE(av); i++)
+        av[i] = 0;
+    word = 1;
+    i = 1;
+    for (w = widths[funcs[fn].shape]; *w; w++, i++)
+    {
+        if (*w == 'w')
+            av[i] = pw[word++];
+        else
+        {
+            av[i] = (long)pwlong((const WORD *)pw, word);
+            word += 2;
+        }
+    }
+    return bdos_check_user_args(av);
+}
+#endif
 #if CONF_WITH_NATIVE_ABI
 long osif(long *pw);
 #else
@@ -645,7 +694,11 @@ long osif(short *pw)
     const FND *f;
 
 #if CONF_WITH_USER_COPY
+#if CONF_WITH_NATIVE_ABI
     rc = bdos_check_user_args(pw);
+#else
+    rc = check_frame_args(pw);
+#endif
     if (rc)
         return rc;
 #endif

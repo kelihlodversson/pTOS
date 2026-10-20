@@ -545,9 +545,13 @@ CONF_WITH_USER_COPY checks the pointer arguments of every GEMDOS call
 (bdos/uaccess.c) before the call runs: each pointer a call really uses must
 name memory the process may read, or write for an output, for the whole
 length the call touches, or the call fails with EIMBA (ERANGE for a bad
-length).  It is mandatory on x86-64 and optional on ARM, where without
-per-process address spaces it only rejects null pointers and bad lengths; it
-is not offered on m68k yet.  The rpi2-kproc configuration builds with it.
+length).  It is mandatory on x86-64 and optional on ARM and m68k, where
+without per-process address spaces it only rejects null pointers and bad
+lengths.  On m68k, whose trap frame packs the arguments in 16-bit words, the
+frame is first unpacked into one value per argument, with the widths of the
+call's FSHAPE_* (check_frame_args() in bdos/bdosmain.c).  The rpi2-kproc and
+atari512-kproc configurations build with it, and CI runs the regression
+suite (tests/gemdos_pointers) on the latter.
 
 
 

@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
-        config: [atari512, atari512-fastcall]
+        config: [atari512, atari512-fastcall, atari512-kproc]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,7 +84,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: [atari512, atari512-fastcall]
+        config: [atari512, atari512-fastcall, atari512-kproc]
         mode: [low, med, high, f030, f040]
     steps:
       - uses: actions/checkout@v4

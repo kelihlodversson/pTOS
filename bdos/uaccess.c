@@ -90,10 +90,11 @@ static const UARG uargs[] = {
 /* ------------------------------------------------------------------ */
 
 /* The pointer argument as a user address, or FALSE if it cannot be one:
- * the x32 ABI has 32-bit addresses. */
+ * the x32 ABI has 32-bit addresses.  Where a long is 32 bits (m68k, ARM)
+ * every value is one, a negative long included. */
 static BOOL uaddr(long v, ULONG *a)
 {
-    if ((ULONG)((UQUAD)v >> 32) != 0)
+    if (sizeof(v) > 4 && (ULONG)((UQUAD)v >> 32) != 0)
         return FALSE;
     *a = (ULONG)(UQUAD)v;
     return TRUE;
