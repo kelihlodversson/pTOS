@@ -502,6 +502,17 @@ jobs:
             runner: ubuntu-22.04
             qemu: qemu-system-misc
             make_args: ''
+          # the register-argument calling convention (-mfastcall), which
+          # needs Thorsten Otto's toolchain: the VDI's scalable fonts call
+          # FreeType on a stack of its own, which it has to survive
+          - machine: virt-m68k-fastcall
+            script_machine: virt-m68k
+            config: virt-m68k-cli-fastcall
+            arch: m68k
+            mfastcall: true
+            runner: ubuntu-22.04
+            qemu: qemu-system-misc
+            make_args: ''
           - machine: pc-x86_64
             config: pc-x86_64
             arch: x86_64
@@ -517,6 +528,7 @@ jobs:
       - uses: ./.github/actions/setup-toolchain
         with:
           arch: ${{ matrix.arch }}
+          mfastcall: ${{ matrix.mfastcall || 'false' }}
 
       - name: Install QEMU
         run: |
@@ -542,7 +554,7 @@ jobs:
           make $MAKE_ARGS test-dir
 
       - name: Run the regression suite
-        run: tools/run-regression-tests.sh ${{ matrix.machine }}
+        run: tools/run-regression-tests.sh ${{ matrix.script_machine || matrix.machine }}
 
       - name: Report the failure
         if: failure()
