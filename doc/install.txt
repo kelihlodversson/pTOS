@@ -394,6 +394,15 @@ virt-m68k-fastcall_defconfig is virt-m68k_defconfig (AES/VDI/desktop)
 built the same way, for running the GEM desktop and benchmarks under
 -mfastcall.
 
+virt-m68k-mmu_defconfig is the start of the m68k MMU configuration of
+#549: virt-m68k-cli with CONF_REQUIRE_PMMU set.  Its first instructions
+check for a 68030, 68040 or 68060 with an MMU; on any other CPU (-cpu
+m68000, m68010, m68020, and QEMU's m68030, which emulates no PMMU) it
+prints why it cannot run on the serial console and stops.  On -cpu m68040
+it boots as virt-m68k-cli does (and on m68060 it gets past the check,
+with the -m68060 caveat above).  tools/test-pmmu-check.sh boots it both
+ways.
+
 PC (x86-64, UEFI boot)
 ----------------------
 

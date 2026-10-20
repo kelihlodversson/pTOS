@@ -531,6 +531,38 @@ jobs:
         run: |
           echo "::error title=regression (${{ matrix.machine }})::the regression suite failed on ${{ matrix.machine }}"
 
+  # An m68k image that needs the PMMU (CONF_REQUIRE_PMMU, #564) must stop
+  # with a message on a CPU without one, and boot on a 68040: boot it on
+  # both under QEMU's virt machine and look at the serial console.
+  pmmu-check:
+    name: PMMU startup check (virt-m68k-mmu)
+    # pinned for the toolchain PPA, like the m68k build jobs
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: m68k
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-system-misc
+
+      - name: Build virt-m68k-mmu
+        run: |
+          make virt-m68k-mmu_defconfig
+          make
+
+      - name: Boot it with and without a PMMU
+        run: tools/test-pmmu-check.sh virt-m68k.elf
+
+      - name: Report the failure
+        if: failure()
+        run: |
+          echo "::error title=PMMU startup check::the virt-m68k-mmu image did not refuse a CPU without a PMMU, or did not boot on the 68040"
+
   release-archives:
     name: Release archives
     runs-on: ubuntu-22.04
@@ -631,7 +663,7 @@ jobs:
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [configurations, m68k, arm, x86_64, regression, release-archives, raspi-sdcard]
+    needs: [configurations, m68k, arm, x86_64, regression, pmmu-check, release-archives, raspi-sdcard]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
@@ -644,6 +676,7 @@ jobs:
           echo "arm configurations:    ${{ needs.arm.result }}"
           echo "x86_64 configurations: ${{ needs.x86_64.result }}"
           echo "regression suite:      ${{ needs.regression.result }}"
+          echo "PMMU startup check:    ${{ needs.pmmu-check.result }}"
           echo "release archives:      ${{ needs.release-archives.result }}"
           echo "raspi SD card image:   ${{ needs.raspi-sdcard.result }}"
 
@@ -659,10 +692,11 @@ jobs:
             [ '${{ needs.x86_64.result }}' = success ] || ok=false
           fi
           [ '${{ needs.regression.result }}' = success ] || ok=false
+          [ '${{ needs.pmmu-check.result }}' = success ] || ok=false
           [ '${{ needs.release-archives.result }}' = success ] || ok=false
           [ '${{ needs.raspi-sdcard.result }}' = success ] || ok=false
 
           if ! $ok; then
-            echo "::error::at least one required job failed (configuration build, regression suite, release archives or SD card image): see the results above"
+            echo "::error::at least one required job failed (configuration build, regression suite, PMMU startup check, release archives or SD card image): see the results above"
             exit 1
           fi

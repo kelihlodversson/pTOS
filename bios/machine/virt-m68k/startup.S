@@ -120,6 +120,33 @@ clear_low:
         jlo     clear_low
 
         lea     C_SYM(stktop),sp              // initial supervisor stack (.stack section, tosvars.ld)
+#if CONF_REQUIRE_PMMU
+        // An image that needs the PMMU (#564): before anything can depend
+        // on it, make sure there is one, and if not, say so on the goldfish
+        // TTY (its PUT_CHAR register needs no set-up) and stop.  Only
+        // 68000 instructions until the check is done: jsr, not the bsr.l a
+        // jbsr becomes for -m68020.
+        jsr     C_SYM(pmmu_present)
+        tst.l   d0
+        jne     pmmu_ok
+        lea     no_pmmu_msg(pc),a0
+        move.l  #0xff008000,a1          // GOLDFISH_TTY_BASE: PUT_CHAR
+no_pmmu_putc:
+        moveq   #0,d0
+        move.b  (a0)+,d0
+        jeq     no_pmmu_stop
+        move.l  d0,(a1)
+        jra     no_pmmu_putc
+no_pmmu_stop:
+        stop    #0x2700                 // stays stopped: interrupts masked
+        jra     no_pmmu_stop
+no_pmmu_msg:
+        .ascii  "\r\npTOS: this image needs a 68030, 68040 or 68060 with an MMU,\r\n"
+        .ascii  "and this CPU has none. Use an image built without\r\n"
+        .asciz  "CONF_REQUIRE_PMMU, such as virt-m68k_defconfig.\r\n"
+        .even
+pmmu_ok:
+#endif
 
         // RAM size: QEMU's -m.  The machine puts a Linux-style bootinfo list
         // right after the end of the loaded image (hw/m68k/virt.c: the

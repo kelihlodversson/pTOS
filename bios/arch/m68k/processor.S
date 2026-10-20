@@ -34,6 +34,9 @@
 #if CONF_WITH_APOLLO_68080
         .globl  C_SYM(is_apollo_68080)
 #endif
+#if CONF_REQUIRE_PMMU
+        .globl  C_SYM(pmmu_present)
+#endif
 
         .extern C_SYM(longframe)              // If not 0, use long stack frames
         .extern C_SYM(setup_68030_pmmu)
@@ -141,6 +144,73 @@ exit:
         moveq   #0,d0           // say it's a 68000
 #endif /* CONF_WITH_ADVANCED_CPU */
         rts
+
+#if CONF_REQUIRE_PMMU
+/*
+ * LONG pmmu_present(void) - nonzero if the CPU has a PMMU pTOS can use:
+ * a 68030 (not a 68EC030), or a 68040/68060 (not a 68EC040/68EC060).
+ *
+ * The startup code calls it first thing, before any table is built and
+ * before vecs_init() (#564): like _detect_cpu above, it catches the
+ * exceptions an instruction the CPU lacks raises itself, so it is safe on
+ * every CPU.  _detect_cpu already tells a 68030 from a 68EC030 (PMOVE to
+ * TC).  The 68040/68060 have no such fault to tell an EC part by, so this
+ * writes TC's page-size bit with translation left off and reads it back:
+ * on a part without an MMU it does not stick, or the access faults.
+ */
+C_SYM(pmmu_present):
+        jbsr    _detect_cpu     // d0 = type, high word subtype
+        cmpi.w  #30,d0
+        jeq     pp_030
+        cmpi.w  #40,d0
+        jeq     pp_tc
+        cmpi.w  #60,d0
+        jeq     pp_tc
+pp_none:
+        moveq   #0,d0           // 68000/68010/68020: no PMMU pTOS can use
+        rts
+
+pp_030:
+        swap    d0              // subtype 1 is the 68EC030
+        tst.w   d0
+        jne     pp_none
+        moveq   #1,d0
+        rts
+
+pp_tc:
+        movem.l d2/a2-a3,-(sp)
+        move.l  (0x10).w,a1     // illegal instruction
+        move.l  (0x2c).w,a2     // line F
+        move.l  (0xf4).w,a3     // unimplemented instruction
+        lea     pp_out.w(PC),a0
+        move.l  a0,(0x10).w
+        move.l  a0,(0x2c).w
+        move.l  a0,(0xf4).w
+        move.l  sp,a0
+        nop
+
+        moveq   #0,d0           // assume no MMU
+        MOVEC_TC_D2             // the TC as found
+        tst.w   d2              // translation already on (E, bit 15):
+        jmi     pp_yes          //   there is an MMU, leave it alone
+        move.l  #0x4000,d1      // P, 8 KB pages; E stays clear
+        MOVEC_D1_TC
+        MOVEC_TC_D1
+        MOVEC_D2_TC             // put the TC back
+        cmpi.w  #0x4000,d1
+        jne     pp_out
+pp_yes:
+        moveq   #1,d0
+
+pp_out:
+        move.l  a3,(0xf4).w
+        move.l  a2,(0x2c).w
+        move.l  a1,(0x10).w
+        move.l  a0,sp
+        nop
+        movem.l (sp)+,d2/a2-a3
+        rts
+#endif /* CONF_REQUIRE_PMMU */
 
 /*
  * _detect_fpu - FPU type detection, experimental (draco@atari.org).

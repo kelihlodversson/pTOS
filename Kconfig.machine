@@ -259,6 +259,21 @@ config CONF_WITH_68040_PMMU
 	  be enabled.  It also allows FreeMiNT to be run on a 68040 without
 	  using set_mmu.prg.  This is currently experimental.
 
+config CONF_REQUIRE_PMMU
+	bool "Refuse to start on a CPU without a usable PMMU"
+	depends on MACHINE_VIRT_M68K && CONF_WITH_ADVANCED_CPU
+	default n
+	help
+	  For the m68k configurations that use the PMMU for per-process
+	  address spaces (#549).  The very first thing the startup code does
+	  is check that the CPU is a 68030, 68040 or 68060 with its MMU (not
+	  a 68000/68010/68020, a 68EC030, a 68EC040 or a 68EC060).  If it is
+	  not, it prints a message on the early console saying so and stops
+	  the CPU, instead of crashing in the first page-table instruction.
+
+	  Only virt-m68k so far, where the goldfish TTY can print that
+	  early.  Images that do not depend on the PMMU should say n.
+
 config CONF_WITH_BUS_ERROR
 	bool "Hardware generates bus errors"
 	depends on CONF_ATARI_HARDWARE
