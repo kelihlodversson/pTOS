@@ -587,6 +587,8 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys(GEMDOS, 0x154, 0x0a, 0x432, 0) != 0) bad |= 4096;     /* membot */
         if (sys(GEMDOS, 0x154, 0x0a, 0x436, 0) != 0) bad |= 4096;     /* memtop */
         if (sys(GEMDOS, 0x154, 0x0a, 0x44e, 0) != 0) bad |= 4096;     /* v_bas_ad */
+        if (sys(XBIOS, 0x18, 0, 0, 0) != 0) bad |= 4096;              /* Bioskeys returns nothing */
+        if (sys(XBIOS, 0x25, 0, 0, 0) != 0) bad |= 4096;              /* ... and Vsync */
         if (sys(XBIOS, 2, 0, 0, 0) != 0) bad |= 4096;                 /* Physbase */
         if (sys(XBIOS, 3, 0, 0, 0) != 0) bad |= 4096;                 /* Logbase */
         if (sys(GEMDOS, 0x154, 0x0a, 0x4ba, 0) == EINVFN) bad |= 4096;  /* _hz_200 is there */

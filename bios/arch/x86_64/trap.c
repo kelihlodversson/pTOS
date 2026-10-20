@@ -261,12 +261,16 @@ const UWORD *x86_64_ring3_palette(void)
 
 /*
  * XBIOS calls that return nothing (Initmous(), Setpalette(), Midiws(),
- * Protobt(), Ikbdws()) leave whatever was in RAX; a user process gets 0, so
- * that "the call was accepted" can be told from a refusal.
+ * Protobt(), Scrdmp(), Settime(), Bioskeys(), Ikbdws(), Offgibit(),
+ * Ongibit(), Vsync()) leave whatever was in RAX, possibly a kernel pointer; a
+ * user process gets 0, so that "the call was accepted" can be told from a
+ * refusal and nothing leaks.
  */
 static int xbios_returns_void(ULONG fn)
 {
-    return fn == 0x00 || fn == 0x06 || fn == 0x0C || fn == 0x12 || fn == 0x19;
+    return fn == 0x00 || fn == 0x06 || fn == 0x0C || fn == 0x12 || fn == 0x14
+        || fn == 0x16 || fn == 0x18 || fn == 0x19 || fn == 0x1D || fn == 0x1E
+        || fn == 0x25;
 }
 
 static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
