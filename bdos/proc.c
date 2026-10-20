@@ -937,7 +937,13 @@ static void proc_go(PD *p)
 #endif
     run = (PD *)p;
 
+#ifdef __arm__
+    /* gouser() would store whatever r0 happens to hold over the basepage
+     * proc_launch_prepare() put there for the new process to find in r0 */
+    termuser();
+#else
     gouser();
+#endif
 }
 
 
