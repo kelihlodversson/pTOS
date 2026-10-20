@@ -194,11 +194,20 @@ The screen
 -----------
 
 The screen memory is kernel memory, in the physical-memory window, and is
-not mapped for any process: a program draws through the VDI.  Because the
-screen's address is a kernel address, and no kernel address may reach a
-user as a LONG (below, #563), Logbase() and Physbase() return 0 in the MMU
-configurations; the VDI and the AES, which are the programs' way to the
-screen, are unaffected.
+not mapped for any process.  Because the screen's address is a kernel
+address, and no kernel address may reach a user as a LONG (below, #563),
+Logbase() and Physbase() return 0 in the MMU configurations.
+
+A user-mode program cannot draw through the VDI or the AES either, for now.
+As on x32 (doc/x86_64-address-space.txt, #376), calls to them from user mode
+are refused: the VDI reads bitmap descriptors (MFDB) and buffers by the
+program's own pointers (vdi/vdi_raster.c), and neither it nor the AES checks
+them against the calling process.  A validated GEM entry path, with the
+nested buffers checked, is a prerequisite of any user-mode drawing and is
+the work of epic #548.  The first MMU configurations are therefore the
+command-line ones (virt-arm-cli, virt-m68k-cli, and the like); the desktop
+runs in the configurations without per-process address spaces.
+
 Mapping the screen for a process (at a fixed user address, read/write, and
 then returned as that address) is left for later, if programs that draw
 into it directly are to run in the MMU configurations.
@@ -268,6 +277,16 @@ review):
     bios/arch/m68k/processor.S sets up.  A user-mode access finds the S bit
     and faults.  The tree itself replaces the PMMU tree pTOS builds today for
     the caches (CONF_WITH_68030_PMMU), which is not per process.
+  - TT0 and TT1 are disabled in the MMU configuration.  Today
+    processor_init() (bios/arch/m68k/processor.S, init_ttr0/init_ttr1) turns
+    on identity translations for all function codes over 0x01000000-
+    0x7fffffff (TT-RAM) and 0x80000000-0xfeffffff.  Those bypass the tree,
+    which would defeat the private pages of the user half and send the
+    kernel window to the wrong physical addresses.  The MMU configuration
+    clears both registers and processor_init() must not restore them; the
+    tree gives every range its cache mode instead (copyback or write-through
+    for RAM, cache inhibited for I/O).  TT-RAM is part of the physical-memory
+    window, up to the 1 GiB limit.
   - A switch loads CRP, which also flushes the ATC; the 68030 has no
     global bit, so the kernel entries are reloaded as they are used.  Its
     caches are logically addressed, so the instruction and data caches are
@@ -350,5 +369,7 @@ Decided in review
      (Super(1) still answers 0).
   2. No process writes the screen for now: it is not mapped for user mode,
      and Logbase()/Physbase() return 0 (no kernel address in a LONG).
+     VDI and AES calls from user mode are refused, as on x32, until #548
+     gives them a validated entry.
   3. The MMU configurations use at most 1 GiB of RAM.
   4. The 68030 is done as planned above, in #571.
