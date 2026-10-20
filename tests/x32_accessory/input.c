@@ -2,8 +2,27 @@
 #include <mint/mintbind.h>
 #include "aes_client.h"
 #include "gemerror.h"
+#include "vdipb.h"
 
-int accessory_input_checks(const AES_APP_INFO *info, WORD role);
+int accessory_input_checks(const AES_APP_INFO *info, WORD role, WORD handle);
+
+static volatile WORD revoke_calls;
+static volatile LONG revoke_result;
+static volatile LONG renew_result;
+static AES_APP_INFO callback_info;
+
+static void revoke_registration(WORD status)
+{
+    UWORD cs;
+
+    if (status < 613 || status > 615)
+        return;
+    __asm__ volatile ("mov %%cs,%0" : "=r"(cs));
+    revoke_result = (cs & 3) == 3 ? aes_appl_exit() : EINVAL;
+    if (status == 614 && revoke_result == E_OK)
+        renew_result = aes_appl_init("ACCTWO", &callback_info);
+    revoke_calls++;
+}
 
 #define CHECK(c) do { if (!(c)) { (void)Cconws("accessory input FAIL: " #c "\r\n"); return 99; } } while (0)
 
@@ -21,12 +40,19 @@ static LONG raw_events(UQUAD input, UQUAD output, UQUAD extra)
     return (LONG)rax;
 }
 
-int accessory_input_checks(const AES_APP_INFO *info, WORD role)
+int accessory_input_checks(const AES_APP_INFO *info, WORD role, WORD handle)
 {
     AES_EVENT_REQUEST request = { 0 };
     AES_INPUT_EVENT event;
     static const AES_INPUT_EVENT immutable = { 0 };
     AES_MESSAGE message = { 613, 0, 0, { 548 } };
+    AES_APP_INFO renewed;
+    VDICONTROL control = { 0 };
+    VDIPB pb = { &control, NULL, NULL, NULL, NULL };
+    VDI_BUTTON_CALLBACK *old_button;
+    const UWORD revoked_masks[3] = {
+        AES_EVENT_KEYBOARD, AES_EVENT_MOUSE1, AES_EVENT_TIMER
+    };
     union { AES_EVENT_REQUEST request; AES_INPUT_EVENT event; } alias;
     LONG allocation, peer;
     UBYTE *edge;
@@ -110,6 +136,21 @@ int accessory_input_checks(const AES_APP_INFO *info, WORD role)
         CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_TIMER);
         CHECK(!event.key && !event.clicks && !event.message.type);
     }
+    request.mask = AES_EVENT_BUTTON;
+    for (i = 0; i < 2; i++) {
+        /* The kernel fixture queues a three-click press and its release
+         * before forker(), once for a poll and once for a blocking wait. */
+        request.flags = i ? 0 : AES_EVENT_POLL;
+        request.clicks = 2; request.button_state = 1;
+        CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
+        CHECK(event.clicks == 2 && (event.buttons & 1));
+        request.flags = AES_EVENT_POLL;
+        request.clicks = 1; request.button_state = 0;
+        CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
+        CHECK(event.clicks == 1 && !(event.buttons & 1));
+    }
+    (void)Cconws("x32 input queued button: PASS\r\n");
+    request.flags = 0;
     peer = aes_appl_find("ACCWAIT");
     CHECK(peer > 0);
     CHECK(aes_appl_write((WORD)peer, &message) == E_OK);
@@ -133,6 +174,7 @@ int accessory_input_checks(const AES_APP_INFO *info, WORD role)
           event.mouse_y < y - 2 || event.mouse_y >= y + 3);
 
     request.mask = AES_EVENT_BUTTON | AES_EVENT_TIMER; request.clicks = 1;
+    request.button_state = 1;
     (void)Cconws("x32 input button: READY\r\n");
     CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
     CHECK(event.clicks == 1 && (event.buttons & 1));
@@ -140,6 +182,28 @@ int accessory_input_checks(const AES_APP_INFO *info, WORD role)
     (void)Cconws("x32 input release: READY\r\n");
     CHECK(aes_evnt_multi(&request, &event) == AES_EVENT_BUTTON);
     CHECK(event.clicks == 1 && !(event.buttons & 1));
+
+    control.code = 125; control.handle = handle;
+    control.args.button.new_handler = revoke_registration;
+    CHECK(vdi(&pb) == E_OK);
+    old_button = control.args.button.old_handler;
+    request.timer_ms = 60000;
+    request.mouse1.outside = 0;
+    request.mouse1.rectangle.g_x = request.mouse1.rectangle.g_y = 32760;
+    request.mouse1.rectangle.g_w = request.mouse1.rectangle.g_h = 1;
+    for (i = 0; i < 3; i++) {
+        /* No message bit: a foreign kernel caller delivers the registered
+         * ring-3 callback while this task is suspended in its input syscall. */
+        request.mask = revoked_masks[i];
+        CHECK(aes_evnt_multi(&request, &event) == EACCDN);
+        CHECK(revoke_calls == i + 1 && revoke_result == E_OK);
+        if (i == 1)
+            CHECK(renew_result == E_OK && callback_info.id == info->id);
+        CHECK(aes_appl_init("ACCTWO", &renewed) == E_OK && renewed.id == info->id);
+    }
+    control.args.button.new_handler = old_button;
+    CHECK(vdi(&pb) == E_OK);
+    (void)Cconws("x32 input revocation: PASS\r\n");
     (void)Cconws("x32 input events: PASS\r\n");
     return 0;
 }

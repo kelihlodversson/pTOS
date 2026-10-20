@@ -106,8 +106,11 @@ needed because each syscall identifies the current KPROC.
         satisfy its mouse wait using the focused task's current state. This
         call does not grant focus. Future window services will manage it.
         Mouse coordinates/buttons and modifiers are the native AES snapshot;
-        key contains the scan code in its high byte and character in its low
-        byte. Modifiers use the existing vq_key_s bit assignments.
+        a queued press/release pair preserves the matching earlier button
+        state and its click count, capped by the request. Unfocused polls do
+        not consume that saved transition.
+        The key field contains the scan code in its high byte and character
+        in its low byte. Modifiers use the existing vq_key_s bit assignments.
 
         Copy the complete, 4-byte-aligned request before registering events.
         Validate the 2-byte-aligned output before consuming input or blocking,
@@ -119,6 +122,10 @@ needed because each syscall identifies the current KPROC.
         the typed message stays queued. Ordinary Pexec clients and nested
         children return EACCDN, including polls, until associated scheduling
         exists. User callbacks cannot call it. Exit/restart cancels all waits.
+        Revoking registration from a callback wakes every blocking input
+        wait, including waits without messages; they cancel their event
+        registrations and return EACCDN, including when the callback has
+        already registered the process again before that wait resumes.
 
 All functions except find/poll/wait/multi return E_OK on success. Calls other
 than init require registration. Disabled service classes return EINVFN. Malformed

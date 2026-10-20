@@ -22,6 +22,8 @@ for name in ("ACCONE", "ACCTWO", "ACCFAULT", "ACCWAIT"):
 assert "x32 accessory message/exit/fault: PASS" in live
 assert "x32 accessory desktop: PASS" in live
 assert output.count("x32 input events: PASS") == 4, "typed input in all sessions"
+for regression in ("queued button", "revocation"):
+    assert output.count("x32 input " + regression + ": PASS") == 4, regression
 for marker in ("native queue backpressure", "native window pointers", "idle wake"):
     assert "x32 accessory " + marker + ": PASS" in live, marker
 # Only the deliberate #UD fault is expected after the main process tests.

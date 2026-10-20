@@ -7,6 +7,7 @@ Configuration and entry
 pc-x86_64-accessories_defconfig enables kernel AES/EmuDesk, the typed AES/VDI
 services and the loaded-accessory regression. For an interactive image without
 the boot regression, disable CONF_WITH_X32_ACCESSORY_TEST in menuconfig.
+The boot regression requires CONF_WITH_USER_CALLBACKS for revocation coverage.
 Accessories use the x32 ABI and the typed interfaces in aes-x32.txt and
 vdi-x32.txt. Generic ring-3 GEM trap class 2 remains refused.
 
@@ -108,6 +109,13 @@ tests/x32_accessory/drive_input.py injects real PS/2 keys, motion and button
 press/release through QEMU's monitor when the fixture announces its waits.
 All four sessions must pass, and restart cancels outstanding native input
 and long timer waits left by the surviving accessory.
+Before polling and blocking button checks, the fixture queues a complete
+press/release pair and verifies the saved press, capped click count and current
+released state. A real ring-3 VDI callback unregisters its suspended owner
+during keyboard-only, rectangle-only and timer-only waits; all must wake with
+EACCDN and allow re-registration. These checks run in each of the four sessions.
+The rectangle case re-registers inside the callback itself, which must still
+cancel the original wait.
 
 Verified locally with QEMU/OVMF (1280x800 GOP), host AES/VDI contracts and
 loaded import checks. The ordinary x32 process/callback boot tests also run

@@ -545,24 +545,38 @@ void adelay(EVB *e, LONG c)
 
 void abutton(EVB *e, LONG p)
 {
-    WORD bclicks;
+    WORD bclicks = LOBYTE(HIWORD(p));
+    WORD count;
 
-    if ((!(e->e_flag & EVFOCUS) || rlr == gl_mowner) && downorup(button, p))
+    if (e->e_flag & EVFOCUS)
+    {
+        if (rlr == gl_mowner)
+        {
+            /* forker() may have drained a press/release pair before this
+             * wait was registered. Native ev_multi() checks it first too. */
+            if ((mtrans > 1) && downorup(pr_button, p))
+                count = pr_mclick;
+            else if (downorup(button, p))
+                count = mclick;
+            else
+                count = -1;
+            if (count >= 0)
+            {
+                azombie(e, (count > bclicks) ? bclicks : count);
+                return;
+            }
+        }
+    }
+    else if (downorup(button, p))
     {
         azombie(e, 1);      /* 'nuff said */
+        return;
     }
-    else
-    {
-        /*
-         * increment counting semaphore to show someone cares
-         * about multiple clicks
-         */
-        bclicks = LOBYTE(HIWORD(p));
-        if (bclicks > 1)
-            gl_bpend++;
-        e->e_parm = p;
-        evinsert(e, &rlr->p_cda->c_bsleep);
-    }
+    /* Increment counting semaphore for a pending multiple-click wait. */
+    if (bclicks > 1)
+        gl_bpend++;
+    e->e_parm = p;
+    evinsert(e, &rlr->p_cda->c_bsleep);
 }
 
 

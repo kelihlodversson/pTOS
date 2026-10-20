@@ -8,7 +8,7 @@
 #include "vdipb.h"
 
 extern short _app;
-int accessory_input_checks(const AES_APP_INFO *info, WORD role);
+int accessory_input_checks(const AES_APP_INFO *info, WORD role, WORD handle);
 long _stksize = 65536;
 UQUAD acc_entry_base, acc_entry_type, acc_entry_stack;
 UWORD acc_entry_cs;
@@ -79,7 +79,7 @@ int main(int argc, char **argv, char **envp)
     CHECK(aes_appl_write(event.message.sender, &message) == E_OK);
     CHECK(aes_appl_yield() == E_OK);
 #endif
-    CHECK(accessory_input_checks(&info, ACC_ROLE) == 0);
+    CHECK(accessory_input_checks(&info, ACC_ROLE, control.handle) == 0);
     __asm__ volatile ("stmxcsr %0" : "=m"(mxcsr));
     CHECK(mxcsr == desired && private_word == ACC_ROLE);
     CHECK(*(volatile ULONG *)heap == 0x548389);
