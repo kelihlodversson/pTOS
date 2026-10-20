@@ -178,6 +178,94 @@ static int boundary_resizes(void)
     return 0;
 }
 
+static int closed_geometry(WORD visible_handle, const GRECT *rectangle)
+{
+    GRECT before, after;
+    AES_WINDOW_INFO state;
+    LONG handle;
+    WORD i;
+
+    CHECK(aes_wind_rect(visible_handle, 0, &before) == E_OK && before.g_w > 0);
+    /* More cycles than the native fixed rectangle pool: a never-opened
+     * window must neither obscure its neighbor nor leak a node on delete. */
+    for (i = 0; i < 192; i++) {
+        handle = aes_wind_create(0, rectangle);
+        CHECK(handle > 0 && aes_wind_set_rect((WORD)handle, rectangle) == E_OK);
+        CHECK(aes_wind_get((WORD)handle, &state) == E_OK && !state.flags);
+        CHECK(rc_equal(rectangle, &state.current));
+        CHECK(aes_wind_delete((WORD)handle) == E_OK);
+        CHECK(aes_wind_rect(visible_handle, 0, &after) == E_OK && rc_equal(&before, &after));
+    }
+    (void)Cconws("x32 closed window geometry cleanup: PASS\r\n");
+    return 0;
+}
+
+static int deferred_arrows(WORD handle, WORD id)
+{
+    AES_MESSAGE message = { 632, 0, 0, { 0 } };
+    AES_EVENT event;
+    AES_INPUT_EVENT input;
+    AES_EVENT_REQUEST wait = { AES_EVENT_MESSAGE | AES_EVENT_TIMER, 0, 0, 0, 0, 0,
+                               { 0 }, { 0 }, 1000 };
+    WORD i;
+
+    CHECK(aes_wind_set_text(handle, AES_WINDOW_NAME, "Deferred arrow test") == E_OK);
+    while (aes_appl_read(&message) == E_OK)
+        CHECK(message.type == 20);
+    message.type = 632;
+    for (i = 0; i < AES_MESSAGE_QUEUE; i++) {
+        message.data[0] = i;
+        CHECK(aes_appl_write(id, &message) == E_OK);
+    }
+    CHECK(aes_appl_yield() == E_OK); /* native action 0 while runnable */
+    CHECK(aes_appl_read((AES_MESSAGE *)&immutable_info) == EIMBA);
+    for (i = 0; i < AES_MESSAGE_QUEUE; i++) {
+        CHECK(aes_appl_read(&message) == E_OK);
+        CHECK(message.type == 632 && message.sender == id && message.data[0] == i);
+    }
+    CHECK(aes_appl_read(&message) == E_OK);
+    CHECK(message.type == 24 && !message.sender && message.data[0] == handle && !message.data[1]);
+    CHECK(aes_appl_yield() == E_OK); /* native action 1 */
+    CHECK(aes_evnt_poll(AES_EVENT_MESSAGE, &event) == AES_EVENT_MESSAGE);
+    CHECK(event.message.type == 24 && !event.message.sender &&
+          event.message.data[0] == handle && event.message.data[1] == 1);
+    CHECK(aes_appl_yield() == E_OK); /* native action 2 */
+    CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == AES_EVENT_MESSAGE);
+    CHECK(event.message.type == 24 && !event.message.sender &&
+          event.message.data[0] == handle && event.message.data[1] == 2);
+    CHECK(aes_appl_yield() == E_OK); /* native action 3 */
+    CHECK(aes_evnt_multi(&wait, &input) == AES_EVENT_MESSAGE);
+    CHECK(input.message.type == 24 && !input.message.sender &&
+          input.message.data[0] == handle && input.message.data[1] == 3);
+    CHECK(aes_appl_read(&message) == EAGAIN);
+    CHECK(copied_text(handle) == 0);
+    (void)Cconws("x32 deferred arrow delivery: PASS\r\n");
+    return 0;
+}
+
+static int replacement_deletion(const AES_APP_INFO *info, const GRECT *rectangle)
+{
+    LONG handle;
+    AES_WINDOW_INFO state;
+    AES_APP_INFO renewed;
+
+    handle = aes_wind_create(kind, rectangle);
+    CHECK(handle > 0);
+    CHECK(aes_wind_set_text((WORD)handle, AES_WINDOW_NAME, "Replace during delete") == E_OK);
+    CHECK(aes_wind_open((WORD)handle, rectangle) == E_OK);
+    CHECK(aes_wind_delete((WORD)handle) == EIHNDL);
+    CHECK(aes_wind_get((WORD)handle, &state) == EACCDN);
+    handle = aes_wind_create(kind, rectangle);
+    CHECK(handle > 0);
+    CHECK(aes_wind_set_text((WORD)handle, AES_WINDOW_NAME, "Replace during cleanup") == E_OK);
+    CHECK(aes_wind_open((WORD)handle, rectangle) == E_OK);
+    CHECK(aes_appl_exit() == E_OK);
+    CHECK(aes_appl_init("ACCTWO", &renewed) == E_OK && renewed.id == info->id);
+    CHECK(aes_wind_get((WORD)handle, &state) == EACCDN);
+    (void)Cconws("x32 replacement deletion isolation: PASS\r\n");
+    return 0;
+}
+
 int accessory_window_reopen(WORD role, WORD vdi_handle)
 {
     GRECT rectangle = { 48, 60, 356, 240 };
@@ -238,6 +326,7 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
              * when this task returns normally or faults. */
             extra = aes_wind_create(kind, &rectangle);
             CHECK(extra > 0 && copied_text((WORD)extra) == 0);
+            CHECK(aes_wind_set_rect((WORD)extra, &rectangle) == E_OK);
         }
         return 0;
     }
@@ -329,6 +418,8 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
     CHECK(aes_wind_open((WORD)handle, &rectangle) == EINVAL);
     CHECK(aes_wind_get((WORD)handle, &state) == E_OK && state.flags == AES_WINDOW_OPEN);
     CHECK(rc_equal(&rectangle, &state.current) && rc_equal(&work, &state.work));
+    CHECK(closed_geometry((WORD)handle, &rectangle) == 0);
+    CHECK(deferred_arrows((WORD)handle, info->id) == 0);
     calculated = rectangle; calculated.g_x = -32000;
     CHECK(aes_wind_set_rect((WORD)handle, &calculated) == EINVAL);
     /* Two individually valid off-screen rectangles can have an unrepresentable
@@ -421,15 +512,19 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
     CHECK(received.type == 635 && received.data[0] == EAGAIN);
     CHECK(received.sender == aes_appl_find("ACCWAIT"));
     CHECK(aes_wind_get((WORD)handle, &state) == EIHNDL);
-    handle = aes_wind_create(kind, &rectangle);
-    CHECK(handle > 0 && aes_wind_open((WORD)handle, &rectangle) == E_OK);
-    CHECK(aes_appl_exit() == E_OK);
-    CHECK(aes_appl_init("ACCTWO", &renewed) == E_OK && renewed.id == info->id);
-    CHECK(aes_wind_get((WORD)handle, &state) == EIHNDL);
+    CHECK(replacement_deletion(info, &rectangle) == 0);
     handle = aes_wind_create(kind, &rectangle);
     CHECK(handle > 0 && aes_wind_open((WORD)handle, &rectangle) == E_OK);
     extra = aes_wind_create(kind, &rectangle);
-    CHECK(extra > 0);
+    CHECK(extra > 0 && aes_wind_set_rect((WORD)extra, &rectangle) == E_OK);
+    CHECK(aes_appl_exit() == E_OK);
+    CHECK(aes_appl_init("ACCTWO", &renewed) == E_OK && renewed.id == info->id);
+    CHECK(aes_wind_get((WORD)handle, &state) == EIHNDL);
+    CHECK(aes_wind_get((WORD)extra, &state) == EIHNDL);
+    handle = aes_wind_create(kind, &rectangle);
+    CHECK(handle > 0 && aes_wind_open((WORD)handle, &rectangle) == E_OK);
+    extra = aes_wind_create(kind, &rectangle);
+    CHECK(extra > 0 && aes_wind_set_rect((WORD)extra, &rectangle) == E_OK);
     CHECK(aes_wind_set_text((WORD)handle, AES_WINDOW_NAME, "Revoke this window") == E_OK);
     control.code = 125; control.handle = vdi_handle;
     control.args.button.new_handler = revoke_window;

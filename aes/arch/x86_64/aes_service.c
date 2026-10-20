@@ -184,11 +184,12 @@ static LONG send_message(AES_CLIENT_STATE *sender, UQUAD id, UQUAD input)
     return E_OK;
 }
 
-static void flush_redraws(AES_CLIENT_STATE *p)
+static void flush_native_messages(AES_CLIENT_STATE *p)
 {
 #if CONF_WITH_AES
     AES_MESSAGE message;
 
+    x86_64_aes_pending_message(p->owner);
     while (p->count < AES_MESSAGE_QUEUE && x86_64_aes_window_pending(p->owner, &message)) {
         p->queue[(p->head + p->count) % AES_MESSAGE_QUEUE] = message;
         p->count++;
@@ -205,7 +206,7 @@ static LONG receive_message(AES_CLIENT_STATE *p, UQUAD output, BOOL poll)
 
     if ((output & 1) || !kproc_validate_user_write(output, size))
         return EIMBA;
-    flush_redraws(p);
+    flush_native_messages(p);
     if (p->count) {
         event.events = AES_EVENT_MESSAGE;
         event.message = p->queue[p->head];
@@ -297,7 +298,7 @@ static LONG input_events(UQUAD input, UQUAD output)
         p = kproc_aes_get(run);
         if (!p)
             return EACCDN;
-        flush_redraws(p);
+        flush_native_messages(p);
         /* Only blocking waits have deadlines. A callback may drain a
          * message after waking this task; keep the original timeout when
          * retrying such a spurious wake. Polls ignore positive timers. */
@@ -316,7 +317,7 @@ static LONG input_events(UQUAD input, UQUAD output)
         p = kproc_aes_get(run);
         if (!p)
             return EACCDN;
-        flush_redraws(p);
+        flush_native_messages(p);
         if ((request.mask & AES_EVENT_MESSAGE) && p->count) {
             event.events |= AES_EVENT_MESSAGE;
             event.message = p->queue[p->head];
@@ -476,7 +477,7 @@ LONG aes_service(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         /* A successful previous wait can leave a pending wake flag. Check
          * the queue again after every resume, and validate copyout afresh. */
         do {
-            flush_redraws(p);
+            flush_native_messages(p);
             x86_64_aes_flags(run, 2); /* AP_MESAG, even if already queued */
             if (p->count)
                 return receive_message(p, b, TRUE);

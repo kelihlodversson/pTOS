@@ -218,9 +218,16 @@ callback returns, through a return-work hook or the completing window call.
 Normal appl_exit also completes native deletion directly outside callbacks,
 including builds without callback support. Process termination drops its AES
 association before native cleanup can yield and reuse the old basepage.
-After native calls yield, the service checks slot ownership and native handle
-validity again before changing bookkeeping or copying results. A replacement
-window cannot be retired by the continuation of an older request.
+Deletion closes first, then rechecks slot/native ownership after the close
+can yield, before deleting the still-owned closed handle. Explicit deletion
+and deferred cleanup share this path. Closed-window geometry remains queryable
+until deletion; deletion normalizes native dimensions before returning its
+rectangle nodes, so invisible windows cannot obscure other windows or leak
+the rectangle pool. A native reset also retires stale, non-busy records even
+when a later create chooses a different handle. Restart marks cancelled tasks
+dead before clearing their contexts, so cleanup messages cannot fall back to
+their unconsumed legacy queues. Other yielding calls likewise recheck ownership
+and native validity before changing bookkeeping or copying results.
 
 Native WM_REDRAW notifications coalesce to one bounding rectangle per owned
 window. They move into the client's FIFO when space is available, after
@@ -228,6 +235,9 @@ already queued messages. Window drawing never waits for its own full queue.
 Deleting/unregistering discards pending redraws; already queued messages may
 still refer to deleted handles, as with native AES. Other control messages
 retain their FIFO and backpressure behavior.
+Native arrow/scrollbar actions deferred while the associated task is runnable
+also enter this FIFO with sender 0. Read, poll, wait and combined waits collect
+them; a full FIFO preserves the deferred action until enqueue succeeds.
 
 Unless documented otherwise, successful calls return E_OK. Calls other
 than init require registration. Disabled service classes return EINVFN. Malformed

@@ -1479,6 +1479,11 @@ BOOL wm_delete(WORD w_handle)
     if (pwin->w_flags & VF_ISOPEN)  /* window is open      */
         wm_close(w_handle);         /* - so close it first */
 
+    /* A closed window can still have geometry from WF_CURRXYWH.  Deleting
+     * it must only return its old nodes, never subtract an invisible window
+     * from other windows or allocate a replacement rectangle list. */
+    w_setsize(WS_CURR, w_handle, &gl_rzero);
+    pwin->w_rnext = NULL;
     newrect(gl_wtree, w_handle);      /* give back recs. */
     w_setsize(WS_CURR, w_handle, &gl_rscreen);
     w_setsize(WS_PREV, w_handle, &gl_rscreen);

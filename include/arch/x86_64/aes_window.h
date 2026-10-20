@@ -15,5 +15,6 @@ void x86_64_aes_window_test(void);
 BOOL x86_64_aes_window_test_ready(void);
 BOOL x86_64_aes_window_test_revoke(PD *pd);
 BOOL x86_64_aes_window_test_reuse(PD *pd);
+WORD x86_64_aes_window_test_arrow(PD *pd);
 #endif
 #endif

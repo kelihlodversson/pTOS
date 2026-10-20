@@ -35,6 +35,45 @@ static CLIENT_WINDOW windows[NUM_WIN];
 #if CONF_WITH_X32_ACCESSORY_TEST
 static PD *test_revoking;
 static PD *test_reusing;
+static WORD test_replaced[2];
+
+/* Reproduce the native reset/recreate effect at the close/delete boundary.
+ * Unlike typed CREATE, a native creator ignores the busy bookkeeping slot. */
+static void test_replace_closed(WORD h, CLIENT_WINDOW *w)
+{
+    WORD i, n = 0, created[NUM_WIN], which;
+    AESPD *saved = rlr, *foreign = D.w_win[0].w_owner;
+    GRECT full = { 0, 0, 200, 100 };
+
+    if (!strcmp(w->title, "Replace during delete")) which = 0;
+    else if (!strcmp(w->title, "Replace during cleanup")) which = 1;
+    else return;
+    if (test_replaced[which] || !foreign || foreign == w->task || !wm_delete(h))
+        panic("accessory native replacement setup FAIL\n");
+    rlr = foreign;
+    do {
+        created[n] = wm_create(0, &full);
+        if (created[n] <= 0)
+            panic("accessory native replacement allocation FAIL\n");
+    } while (created[n++] != h && n < NUM_WIN);
+    rlr = saved;
+    if (created[n - 1] != h)
+        panic("accessory native replacement handle FAIL\n");
+    for (i = 0; i < n - 1; i++)
+        wm_delete(created[i]);
+    test_replaced[which] = h;
+}
+
+WORD x86_64_aes_window_test_arrow(PD *pd)
+{
+    WORD h;
+
+    for (h = 1; h < NUM_WIN; h++)
+        if (windows[h].owner == pd &&
+            !strcmp(windows[h].title, "Deferred arrow test"))
+            return h;
+    return 0;
+}
 
 BOOL x86_64_aes_window_test_revoke(PD *pd)
 {
@@ -52,10 +91,45 @@ static BOOL unlocked(void)
     return !wind_spb.sy_tas || wind_spb.sy_owner == rlr;
 }
 
+static BOOL same_window(WORD h, CLIENT_WINDOW *w, PD *owner, AESPD *task)
+{
+    return w->owner == owner && w->task == task &&
+        (D.w_win[h].w_flags & VF_INUSE) && D.w_win[h].w_owner == task;
+}
+
+/* wm_close() can dispatch at END_UPDATE. Native reset/creation does not
+ * consult typed busy slots, so never let wm_delete() perform that yielding
+ * close internally: revalidate before deleting the still-owned closed slot. */
+static LONG delete_window(WORD h, CLIENT_WINDOW *w)
+{
+    PD *owner = w->owner;
+    AESPD *task = w->task;
+
+    if (!same_window(h, w, owner, task))
+        return EIHNDL;
+    if (D.w_win[h].w_flags & VF_ISOPEN) {
+        if (!wm_close(h))
+            return EINVAL;
+#if CONF_WITH_X32_ACCESSORY_TEST
+        test_replace_closed(h, w);
+#endif
+        if (!same_window(h, w, owner, task))
+            return EIHNDL;
+    }
+    if (D.w_win[h].w_flags & VF_ISOPEN)
+        return EINVAL;
+    /* Closed deletion cannot yield; native code normalizes its dimensions
+     * before reclaiming rectangle nodes, including never-opened windows. */
+    return wm_delete(h) ? E_OK : EINVAL;
+}
+
 static void reap(void)
 {
     WORD h;
     CLIENT_WINDOW *w;
+    PD *owner;
+    AESPD *task;
+    LONG result;
 
 #if CONF_WITH_USER_CALLBACKS
     if (user_callback_active())
@@ -65,12 +139,27 @@ static void reap(void)
         return;
     for (h = 1; h < NUM_WIN; h++) {
         w = &windows[h];
-        if (!w->owner || !w->retired || w->busy)
+        if (!w->owner || w->busy)
             continue;
+        /* A native reset can remove live windows without a typed DELETE.
+         * Reclaim stale records even when later CREATE chooses a different
+         * handle; in-flight records remain reserved until they unwind. */
+        if (!same_window(h, w, w->owner, w->task)) {
+            memset(w, 0, sizeof(*w));
+            continue;
+        }
+        if (!w->retired)
+            continue;
+        owner = w->owner;
+        task = w->task;
         w->busy = TRUE;
-        if ((D.w_win[h].w_flags & VF_INUSE) && D.w_win[h].w_owner == w->task)
-            wm_delete(h);
-        memset(w, 0, sizeof(*w));
+        result = delete_window(h, w);
+        if (w->owner == owner && w->task == task) {
+            if (result == E_OK || result == EIHNDL)
+                memset(w, 0, sizeof(*w));
+            else
+                w->busy = FALSE;
+        }
     }
 }
 
@@ -129,6 +218,7 @@ void x86_64_aes_window_drain(void)
 #if CONF_WITH_X32_ACCESSORY_TEST
     test_revoking = NULL;
     test_reusing = NULL;
+    memset(test_replaced, 0, sizeof(test_replaced));
 #endif
     for (h = 1; h < NUM_WIN; h++)
         if (windows[h].owner)
@@ -381,7 +471,7 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
         result = wm_close(h) ? E_OK : EINVAL;
         break;
     case AES_WIN_DELETE:
-        result = wm_delete(h) ? E_OK : EINVAL;
+        result = delete_window(h, w);
         break;
     case AES_WIN_GET:
         information(h, pd, info);
@@ -466,10 +556,24 @@ BOOL x86_64_aes_window_test_ready(void)
 
 void x86_64_aes_window_test(void)
 {
-    WORD h, count = 0;
+    WORD h, i, count = 0;
     CLIENT_WINDOW *w;
 
     reap();
+    for (i = 0; i < 2; i++) {
+        h = test_replaced[i];
+        if (!h)
+            continue; /* Already verified before the final desktop reopen. */
+        if (windows[h].owner || !(D.w_win[h].w_flags & VF_INUSE) ||
+            D.w_win[h].w_owner != D.w_win[0].w_owner)
+            panic("accessory replacement window deleted FAIL\n");
+        wm_delete(h);
+        test_replaced[i] = 0;
+        count++;
+    }
+    if (count)
+        kcprintf("x32 native replacement windows preserved: PASS\n");
+    count = 0;
     for (h = 1; h < NUM_WIN; h++) {
         w = &windows[h];
         if (w->owner) {

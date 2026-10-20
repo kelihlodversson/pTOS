@@ -133,6 +133,15 @@ arithmetic; rejected moves preserve the old geometry. Title/info sources are
 changed and freed before the kernel verifies retained text and pointer width.
 Boundary growth and shrinking check both axes: dimensions 32764/32765 are
 rejected without changing geometry; 32763 produces a valid positive redraw.
+192 create/set-closed-geometry/delete cycles preserve the neighbor's visible
+rectangle and exceed the native rectangle pool size. Normal exit, fault,
+unregister and callback cleanup also leave closed windows with set geometry.
+Native replacement injection between close and delete checks both explicit
+deletion and deferred cleanup: the foreign replacement must survive.
+Deferred native arrow actions are injected while the owner is runnable; typed
+read/poll/wait/multi deliver sender 0, preserving the action across a full FIFO.
+After cancellation and context erasure, repeated native cleanup messages must
+be rejected without entering the task's legacy queue.
 An eight-message FIFO stays full during four enlargements: self redraws
 coalesce and arrive after the queued opaque messages, without deadlocking.
 The input driver sends a key to the topped ring-3 window, then clicks its
