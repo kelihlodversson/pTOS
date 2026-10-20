@@ -249,9 +249,30 @@ static long draw_hi(short effects, short mode)
 }
 
 /* whether the leftmost ink of the first row with any is not that of the last */
+static char lean_msg[80];
+
+static void put_num(char **p, long n)
+{
+    char tmp[12];
+    short i = 0;
+
+    if (n < 0)
+    {
+        *(*p)++ = '-';
+        n = -n;
+    }
+    do
+        tmp[i++] = (char)('0' + n % 10);
+    while (n /= 10);
+    while (i)
+        *(*p)++ = tmp[--i];
+}
+
 static int skew_leans(void)
 {
     short x, y, first = -1, last = -1, left_first = 0, left_last = 0;
+    char *m = lean_msg;
+    const char *t = "skewed text does not lean: rows ";
 
     for (y = 0; y < 30; y++)
         for (x = 0; x < 60; x++)
@@ -266,6 +287,19 @@ static int skew_leans(void)
                 left_last = x;
                 break;
             }
+
+    while (*t)
+        *m++ = *t++;
+    put_num(&m, first);
+    *m++ = '-';
+    put_num(&m, last);
+    t = " left ";
+    while (*t)
+        *m++ = *t++;
+    put_num(&m, left_first);
+    *m++ = ',';
+    put_num(&m, left_last);
+    *m = '\0';
 
     return first >= 0 && last > first && left_first != left_last;
 }
@@ -285,7 +319,7 @@ static void check_effects(void)
     check(light < plain && light > 0, "light text is not lighter");
     /* a skewed row is the row of plain text moved: no pixel is lost */
     check(skew == plain, "skewed text has lost or gained pixels");
-    check(leans, "skewed text does not lean");
+    check(leans, lean_msg);
     check(under > plain, "underlined text has no underline");
     check(outline > plain, "outlined text has no outline");
 
