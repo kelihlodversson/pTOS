@@ -63,7 +63,14 @@ C_SYM(os_entry):
 os_version:
         .dc.w   TOS_VERSION // os_version, TOS version
 reseth:
+#if CONF_WITH_HIGHER_HALF
+        // The physical address: QEMU 6.2 starts the CPU at a reset from the
+        // copy of this longword at address 4 (bios.c vecs_init()), with the
+        // MMU off; main goes on at the physical alias in any case.
+        .dc.l   C_SYM(main) - VIRT_WINDOW_VBASE
+#else
         .dc.l   C_SYM(main)       // reseth, pointer to reset handler
+#endif
 C_SYM(os_beg):
         .dc.l   C_SYM(os_entry)   // os_beg, base of os = _sysbase
 os_end:
