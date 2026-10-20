@@ -13,11 +13,16 @@
 #include "proc.h"
 #include "asm.h"
 #include "arch/arm/entry.h"
+#include "arch/arm/fpusave.h"
+#include "string.h"
 
 /* The stack gouser() (rwa.S) unwinds to start a new process. */
 struct gouser_stack {
     LONG regs[8];    /* argument registers from previous call (r7, r0-r6) */
     LONG other_sp;   /* the other stack pointer */
+#if FPU_ALL_BYTES
+    LONG fpu[FPU_ALL_BYTES / 4]; /* the FPU state (enter() in rwa.S): FPSCR first */
+#endif
     LONG retaddr;
     LONG spsr;       /* note the basepage is passed in r0 and not on the stack */
 };
@@ -45,6 +50,11 @@ void proc_launch_prepare(PD *p, void *super_sp)
     /* create a stack at the end of the TPA */
     sp = (struct gouser_stack *) (p->p_hitpa - sizeof(struct gouser_stack));
 
+#if FPU_ALL_BYTES
+    /* the process starts with the FPU registers cleared and the FPSCR as it is now */
+    bzero(sp->fpu, sizeof sp->fpu);
+    __asm__ volatile ("vmrs %0, fpscr" : "=r" (sp->fpu[0]));
+#endif
     p->p_dreg[0] = (LONG)p;  /* base page is passed in r0 */
     sp->regs[1] = ARM_ENTRY_PROGRAM;
     sp->spsr = ((get_cpsr() & ~0x1f) | 0x10); /* the process will start in user mode, same interrupts */

@@ -11,6 +11,7 @@
 
 #include "asmdefs.h"
 #include "asmstruct.h"
+#include "arch/arm/fpusave.h"
 
         .globl  C_SYM(justretf)
         .globl  C_SYM(unset_aestrap)
@@ -80,7 +81,10 @@ trapaes:
         srsfd   sp!,    #0x1f // save return state onto the user stack
         cpsid   if,     #0x1f // mask out interrupts and jump to system mode
 
-        // now sp is the user stack
+        // now sp is the user stack: the whole FPU state goes onto it (r2 is
+        // free), as the AES can switch to another process and come back to
+        // this one by way of the stack pointer saved below
+        FPU_PUSH_ALL r2
         push    {r4-r11}                // put registers to user stack
         mov     r4,     sp              // copy user stack to r4
 
@@ -119,6 +123,7 @@ trapaes:
         // now sp is the user stack -- restore it from the saved data
         ldr     sp,     [r6, UDA_SPUSER]      // Read back user stack
         pop     {r4-r11}                      // read back registers
+        FPU_POP_ALL r2
 
         // return back to caller by popping off lr and spsr from the user stack
         // this will also restore intterrupts to the previous value

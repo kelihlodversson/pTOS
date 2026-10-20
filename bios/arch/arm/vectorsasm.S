@@ -14,6 +14,7 @@
  */
 
 #include "asmdefs.h"
+#include "arch/arm/fpusave.h"
 
 // ==== Definitions ==========================================================
 
@@ -104,8 +105,11 @@ no_vdi:
 2:
         // save return state onto the SVC stack
         srsfd sp!, #0x13
+        // the FPU registers the kernel may change (r2 is free)
+        FPU_PUSH_SCRATCH r2
         // Call VDI entry. Arguments are already in registers at the right place
         bl      C_SYM(GSX_ENTRY)
+        FPU_POP_SCRATCH r2
         // return to caller with saved state on stack
         rfefd   sp!
 
@@ -130,6 +134,10 @@ C_SYM(biostrap):
         // save caller return address and SPSR on stack
         srsfd sp!, #0x13
 
+        // the FPU registers the kernel may change; ip is free.  Below the
+        // argument registers pushed next, which the handler reads off the
+        // stack as its fifth and later arguments
+        FPU_PUSH_SCRATCH ip
         push {r4}
         push {r5-r11}
         mov r11, r0
@@ -153,6 +161,10 @@ C_SYM(xbiostrap):
         // save caller return address and SPSR on stack
         srsfd sp!, #0x13
 
+        // the FPU registers the kernel may change; ip is free.  Below the
+        // argument registers pushed next, which the handler reads off the
+        // stack as its fifth and later arguments
+        FPU_PUSH_SCRATCH ip
         push {r4}
         push {r5-r11}
         mov r11, r0
@@ -182,6 +194,7 @@ C_SYM(xbiostrap):
 2:
         pop   {r5-r11}       // restore stacked argument registers
         pop   {r4}           // restore r4
+        FPU_POP_SCRATCH ip
         // return to caller with saved state on stack
         rfefd   sp!
 
