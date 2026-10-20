@@ -503,6 +503,13 @@ jobs:
             runner: ubuntu-22.04
             qemu: qemu-system-misc
             make_args: ''
+          # the higher-half kernel with the 68040 MMU on (#569)
+          - machine: virt-m68k-mmu
+            config: virt-m68k-mmu
+            arch: m68k
+            runner: ubuntu-22.04
+            qemu: qemu-system-misc
+            make_args: ''
           - machine: pc-x86_64
             config: pc-x86_64
             arch: x86_64

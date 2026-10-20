@@ -25,7 +25,7 @@ if [ ! -r "$image" ]; then
     exit 2
 fi
 
-message='needs a 68030, 68040 or 68060 with an MMU'
+message='needs a 68.* with an MMU'
 banner='pTOS Version'
 tmp=$(mktemp -d) || exit 2
 trap 'rm -rf "$tmp"' EXIT

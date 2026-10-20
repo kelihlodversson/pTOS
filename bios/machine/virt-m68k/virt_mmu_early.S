@@ -46,6 +46,7 @@
 UDT_RESIDENT    = 2             // pointer and root level: valid
 PDT_RESIDENT    = 1             // page level: valid; cache mode 0 (write-through)
 PTE_SUPER       = 0x80          // supervisor only
+PTE_GLOBAL      = 0x400         // the same in every address space
 
 TC_ENABLE       = 0x8000        // E; P clear: 4 KiB pages
 
@@ -134,7 +135,7 @@ vme_page:
         cmp.l   d6,d4
         jcc     vme_pages_done
         move.l  d4,d5
-        or.l    #PDT_RESIDENT,d5
+        or.l    #PDT_RESIDENT+PTE_GLOBAL,d5
         tst.l   d4
         jne     vme_page_set
         or.l    #PTE_SUPER,d5

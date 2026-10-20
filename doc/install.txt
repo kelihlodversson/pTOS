@@ -394,6 +394,373 @@ virt-m68k-fastcall_defconfig is virt-m68k_defconfig (AES/VDI/desktop)
 built the same way, for running the GEM desktop and benchmarks under
 -mfastcall.
 
+virt-m68k-mmu_defconfig is the m68k MMU configuration of #549:
+virt-m68k-cli-elf with CONF_REQUIRE_PMMU set.  Its first instructions
+check for a 68040 or 68060 with an MMU; on any other CPU (-cpu m68000,
+m68010, m68020, and QEMU's m68030, which emulates no PMMU) it prints why it
+cannot run on the serial console and stops.  On -cpu m68040 it is a
+higher-half kernel (#569, doc/mmu-address-space.txt): linked at 0x80000000,
+with the 68040 MMU switched on from its first instructions, and it boots to
+EmuCON as virt-m68k-cli does.  (On m68060 it gets past the check, with the
+-m68060 caveat above, but QEMU's 68060 has no MMU registers.)
+tools/test-pmmu-check.sh boots it on both kinds of CPU, and
+tools/run-regression-tests.sh virt-m68k-mmu runs the regression suite on
+-cpu m68040.
+
+PC (x86-64, UEFI boot)
+      This target needs a toolchain whose *linker* supports the PE32+
+      ("i386pep") emulation, not just ELF: the final link step runs
+      "ld -m i386pep" directly (see the ARCH_X86_64 rule in the top level
+      Makefile) to produce the PE32+ image UEFI firmware itself loads. A
+      plain ELF-only cross binutils -- for example a from-source
+      x86_64-elf toolchain built the way most "OS dev" GCC cross-compiler
+      guides describe, with a bare --target=x86_64-elf and no extra
+      --enable-targets -- does *not* include that emulation and fails
+      with "unrecognized emulation mode: i386pep" at link time. Always
+      confirm before relying on one:
+
+          <prefix>ld --help | grep i386pep
+
+      The pc-x86_64 configuration defaults to the x86_64-elf- prefix, so
+      it never relies on the host compiler.  Override CROSS_COMPILE when
+      your compatible toolchain uses another prefix.  On a Linux/x86-64
+      host, the system gcc/binutils can be selected explicitly:
+
+          make CROSS_COMPILE= pc-x86_64_defconfig && make CROSS_COMPILE=
+
+      On any other host, two toolchains are known to work:
+
+      * a Debian/Ubuntu-packaged x86_64-linux-gnu cross toolchain (built
+        from the same binutils source as the native x86-64 package, just
+        cross-hosted, so it keeps the same PE emulations):
+
+            sudo apt-get install gcc-x86-64-linux-gnu binutils-x86-64-linux-gnu
+
+      * an x86_64-w64-mingw32 (MinGW-w64) cross toolchain, which is
+        PE-native and therefore always has i386pep support. Its GCC
+        defaults every function to the Microsoft x64 calling convention
+        (it targets Windows), which conflicts with the SysV AMD64
+        convention this port's hand-written assembly (relocate.S)
+        assumes for ordinary internal calls -- add "-mabi=sysv" to
+        CPUFLAGS (Kconfig) to restore that default globally, leaving
+        only the functions efi.h explicitly marks "ms_abi" using the
+        Microsoft convention.
+
+      Either way, set "Cross compiler prefix override" (below) to the
+      toolchain's prefix. To boot-test the image, you will also need
+      QEMU and an OVMF UEFI firmware build:
+
+          sudo apt-get install qemu-system-x86 ovmf
+
+  PC (x86-64, built-in EmuCON)
+      On x86-64 EmuCON is not linked into the 64-bit kernel: "make" also
+      builds it as an x32 ELF executable (obj/x32/emucon.elf, from the
+      shared cli/ sources, in their standalone-console mode, with the small
+      runtime in cli/x32/) and embeds it in the EFI image, which runs it as
+      an ordinary ring-3 process.  The boot self-test's probe program
+      (tests/x32_probe/) is built and embedded the same way.  The compiler
+      therefore needs the same x32 support described for the test program
+      below; on Debian/Ubuntu that is the gcc-multilib package.  It uses
+      the same cross compiler prefix as the kernel by default.  Set
+      X32_CROSS_COMPILE explicitly only when the x32 compiler differs.
+      The AES and EmuDesk are not available on this machine yet.
+
+  PC (x86-64, running an x32 program from EmuCON)
+      EmuCON runs a program by its ".tos" (".prg", ...) name whatever its
+      executable format: the loader recognises an ELF by its contents.  To
+      try the x32 test program, installed as X32HELLO.TOS, under QEMU/OVMF:
+
+          make pc-x86_64_defconfig && make && make x32test
+          mkdir -p esp/EFI/BOOT
+          cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
+          cp x32hello.elf esp/X32HELLO.TOS
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd .
+          qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+            -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
+            -drive format=raw,file=fat:rw:esp -serial stdio -display none
+
+      then type "x32hello.tos" at the EmuCON prompt: the program runs in ring
+      3, calls GEMDOS, exits, and the prompt comes back (it prints nothing on
+      success).  The same file on the boot drive makes the boot self-test run
+      it from a ring-3 process and print "x86-64 nested pexec: PASS"; CI does
+      exactly that.
+
+  PC (x86-64, x32 userspace test program)
+      "make x32test" builds tests/x32_hello/x32_hello.c, the minimal x32
+      psABI (ELFCLASS32 program headers, genuine EM_X86_64 long-mode
+      instructions -- see issue #334) userspace test program, into
+      x32hello.elf. This is a *separate* build from the kernel image
+      above and needs a different toolchain: an ordinary ELF
+      x86_64-linux-gnu (or x86_64-linux-gnux32) gcc with x32 multilib
+      support, not the PE32+-capable one the kernel itself links with --
+      neither of the two toolchains doc/install.txt recommends above for
+      the kernel is guaranteed to have this (a MinGW-w64 cross toolchain
+      has no x32 codegen at all; a distribution's x86_64-linux-gnu
+      package may or may not ship the x32 multilib alongside it).
+
+      On a Debian/Ubuntu x86-64 host, the native gcc/binutils already
+      include x32 multilib support, so nothing extra needs installing
+      there beyond the ordinary "gcc binutils" from the kernel's own
+      section above -- confirm with:
+
+          gcc -print-multi-lib | grep x32
+
+      If it is missing, install it explicitly:
+
+          sudo apt-get install gcc-multilib
+
+      On any other host, point "x32 test-program cross compiler prefix"
+      (below, in the Toolchain menu) at a cross toolchain with x32
+      support instead -- for example a x86_64-linux-gnux32 triplet. This
+      setting is independent of "Cross compiler prefix override" above:
+      the two need not be, and often are not, the same toolchain.
+
+      On macOS, Homebrew's x86_64-elf toolchain provides both the x32
+      codegen and the x32 linker emulation:
+
+          brew install x86_64-elf-gcc
+
+      then build the complete EFI image with:
+
+          make pc-x86_64_defconfig && make
+
+      Note that the host "gcc" on macOS cannot build this at all: "-mx32"
+      is an x86-64-ELF feature, so the compile fails on the 64-bit
+      register names ("unknown register name 'rax'"). The prefix is
+      therefore required rather than merely optional on that host. The
+      build system already passes "-Wl,-m,elf32_x86_64" to name the
+      linker's x32 output emulation explicitly, so no further flags are
+      needed; without it a cross toolchain's driver can default to
+      "i386:x86-64" and reject the x32 input with "i386:x64-32
+      architecture of input file ... is incompatible with i386:x86-64
+      output", even though the linker does support x32. You can check
+      for that emulation with:
+
+          x86_64-elf-ld -V | grep elf32_x86_64
+
+      A successful link leaves one warning, "has a LOAD segment with RWX
+      permissions". That is expected: the image is a single flat
+      read/write/execute segment, which is what keeps the program down
+      to the one PT_LOAD segment bdos/elfld.c maps.
+
+If your toolchain is installed under a name other than the one that goes
+with the choice above, fill in "Cross compiler prefix override" in the same
+menu.  It renames the executables only; the flags keep following the
+toolchain you picked.  A one-off build can override it without touching the
+configuration at all:
+
+    make CROSS_COMPILE=m68k-atari-mintelf-
+
+You will also need:
+
+  * GNU make 4.3 or later (grouped targets are used; make 4.2.x will not work).
+    macOS ships GNU Make 3.81 as /usr/bin/make; install GNU make with Homebrew
+    and run gmake instead.
+  * Python 3 with kconfiglib, which provides the configuration front ends:
+        pip3 install kconfiglib
+
+
+Configuring and building
+========================
+
+The build is configured the way the Linux kernel is.  You first pick one of
+the ready-made configurations, optionally adjust it, and then build:
+
+    make help                   # list the available configurations
+    make atari512_defconfig     # start from one of them
+    make menuconfig             # optional: adjust the configuration
+    make                        # build the image
+
+The chosen settings are stored in the file .config in the top directory.
+From there, "make" generates obj/autoconf.h for the C code and
+obj/auto.conf for the build system itself; neither should be edited by
+hand.  Changing .config causes the whole image to be rebuilt.
+
+"make menuconfig" opens a full screen menu in the terminal.  Every option
+carries a help text, reachable with '?', and options that make no sense for
+the selected machine are simply not offered.  "make guiconfig" does the
+same in a window, if Tk is installed.
+
+Other configuration targets:
+
+    make oldconfig      ask about the options added since the last run
+    make olddefconfig   accept the default value for every new option
+    make savedefconfig  write a minimal ./defconfig for the current .config
+    make allnoconfig    disable every optional feature
+    make distclean      remove everything, including .config
+
+To contribute a new configuration, adjust it with "make menuconfig", run
+"make savedefconfig", and copy the resulting ./defconfig file to
+configs/<name>_defconfig.
+
+
+Available configurations
+========================
+
+Atari and compatible
+--------------------
+
+atari192            ptos192us.img, ROM padded to 192 KB (at 0x00fc0000)
+atari256            ptos256us.img, ROM padded to 256 KB (at 0x00e00000)
+atari512            ptos512k.img, ROM padded to 512 KB (at 0x00e00000),
+                    multi-language
+atari512-fastcall   the same built with -mfastcall (needs the -mfastcall
+                    toolchain, see above), for the TT and the Falcon
+cartridge           ptoscart.img and ptos.stc, diagnostic cartridge
+prg                 ptos.prg, a RAM TOS, multi-language
+floppy              ptosus.st, a bootable floppy holding a RAM TOS
+aranym              ptos-aranym.img, suitable for ARAnyM
+
+Amiga
+-----
+
+amiga               ptos-amiga.rom, ROM for Amiga hardware
+amiga-vampire       ptos-vampire.rom, optimized for the Vampire V2
+amiga-kickdisk      ptos-kickdisk.adf, Kickstart disk for the Amiga 1000
+amigaflop           ptos.adf, RAM TOS as an Amiga boot floppy
+amigaflop-vampire   ptos-vampire.adf, the same for the Vampire V2
+
+ColdFire
+--------
+
+firebee             ptosfb.s19, to be flashed on the FireBee
+firebee-prg         ptos.prg, a RAM TOS for the FireBee
+m548x-dbug          ptos-m548x-dbug.s19, for dBUG on ColdFire boards
+m548x-bas           ptos-m548x-bas.s19, for BaS_gcc on ColdFire boards
+m548x-prg           ptos.prg, a RAM TOS for ColdFire boards with BaS_gcc
+
+Raspberry Pi
+------------
+
+rpi1                kernel.img, for the Pi 1, Zero, A, A+, B, B+ and CM0
+rpi2                kernel7.img, for the Pi 2B
+rpi3                kernel8-32.img, for the Pi 3, 3+ and CM3
+rpi4                kernel7l.img, for the Pi 4 and 400
+
+QEMU loads a kernel image directly and needs nothing else, but real
+Raspberry Pi hardware does: the GPU reads its own boot firmware
+(bootcode.bin, start*.elf, fixup*.dat) off the SD card before it ever gets
+to loading a kernel*.img. The four kernel images above are named so the
+firmware picks the right one and CPU mode for whichever board is plugged
+in -- including kernel8-32.img's "-32" forcing 32-bit mode on the Pi 3, 3+
+and CM3 even though those boards can also run 64-bit code -- so a single SD
+card built from all four boots the whole Pi 1-4 lineup and no config.txt is
+needed.
+
+This combination -- the four kernel images, the matching boot firmware
+fetched by tools/fetch-raspi-firmware.sh from a pinned, checksum-verified
+commit of https://github.com/raspberrypi/firmware and redistributed under
+its LICENCE.broadcom, and the same optional emucurs.rsc/emuicon.rsc, doc/
+subset and readme.txt every other pTOS release archive carries (see
+"release-raspi-resources" in release.mk) -- ships as two files:
+
+    ptos-raspi-<version>.zip       the loose files, to drop onto an SD
+                                    card that is already partitioned and
+                                    formatted
+    ptos-raspi-<version>.img.zip   a raw disk image (MBR partition table,
+                                    one FAT16 partition) that dd,
+                                    Raspberry Pi Imager or balenaEtcher can
+                                    write directly, with no manual
+                                    partitioning or formatting
+
+tools/mkraspi-image.sh builds the .img from a directory of files with
+mtools, dosfstools and sfdisk, without ever mounting or loop-attaching
+anything.
+The FAT16 partition is always at least 256 MiB, far more than the content
+needs, so the card is immediately usable for the user's own files once
+flashed -- comfortably inside FAT16's own ~2 GiB limit (doc/fat16.txt), and
+the extra space costs virtually nothing in the zipped archive, since it is
+unused, all-zero sectors.
+readme.txt's source is doc/readme-raspi.md: tools/md2atari.py renders its
+Markdown headings and **bold** spans as Atari VT52 reverse-video escapes
+(see "CONOUT Escape Sequences" in doc/bios.txt), the only styling EmuCON's
+TYPE command -- likely how this readme actually gets read -- can show.
+
+desk/emudesk-raspi.inf, copied to the card as EMUDESK.INF, is the same
+desktop setup EmuTOS/pTOS falls back to when no EMUDESK.INF is present at
+all (see desk_inf_data1/desk_inf_data2 in desk/deskapp.c: the drive and
+Trash icons, and the file-type-to-icon associations), except its first
+window slot has C:\*.* as its saved path instead of being empty. Since
+cnx_get() (desk/deskmain.c) opens every window slot with a non-empty path
+at boot, the desktop comes up with a window already open on the card's
+contents instead of a bare desktop.
+
+Both GitHub Actions workflows produce them (see "Continuous integration"
+below): build.yml keeps them as a workflow artifact of every push and pull
+request, so a card to test a change on real hardware is one download away
+without waiting for a release, and release.yml additionally attaches them
+to every tagged release.
+
+ARM virt
+--------
+
+virt-arm            virt-arm.elf, for QEMU's generic ARM "virt" board
+
+The virt board is emulation only; there is no such physical machine.  It
+gives the ARM port a target that does not depend on Raspberry Pi hardware
+at all: a PL011 serial console, a GICv2 interrupt controller and the ARM
+generic timer.  The image is an ELF file rather than a raw binary, because
+RAM starts at physical 0x40000000 while EmuTOS is linked at the usual low
+addresses, and QEMU's ELF loader is what places it correctly.  Run it with:
+
+    make virt-arm_defconfig && make
+    qemu-system-arm -M virt -cpu cortex-a7 -m 128 -kernel virt-arm.elf \
+        -d guest_errors -serial stdio
+
+The RAM size follows -m, read from the memory node of the device tree QEMU
+passes in r2 (128 MiB is assumed without one): from 8 MiB up to 1 GiB is
+used, the rest is ignored.  The RAM, which is at 0x40000000 on this
+board, is mapped at virtual address 0, where the kernel is linked (its first
+16 MiB are also mapped at the physical address, which a software reset needs
+to switch the MMU off), and the
+devices are moved out of its way: the hardware addresses from 0x08000000 up
+to 0x0fffffff (the GIC, the UART, the virtio-mmio transports) are at 0xf0000000
+plus that address, and the PCIe windows, which start at 0x10000000, at
+0xc0000000 plus the address minus 0x10000000.
+
+Adding "-S -s" lets a remote gdb attach, as with the Raspberry Pi
+configurations.
+
+m68k virt
+---------
+
+virt-m68k           virt-m68k.elf, for QEMU's generic m68k "virt" board
+
+Also emulation only, and also an ELF image for the same reason (QEMU's
+-kernel loader), but otherwise unrelated to the ARM virt board above: no
+Atari-compatible chipset, no MMU trick needed (this board's RAM already
+starts at physical 0x0, where EmuTOS expects it). Console, interrupt
+routing and the periodic tick come from three "Goldfish" devices (a TTY,
+a PIC, and an RTC used as a one-shot alarm re-armed on every interrupt).
+Run it with:
+
+    make virt-m68k_defconfig && make
+    qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf \
+        -d guest_errors -serial stdio
+
+Both flags after -M virt matter, not just the -kernel one: -m sets the RAM
+size, which the image reads from the bootinfo list QEMU puts after it (a
+size of 2 GiB or more is limited to just under 2 GiB, and 128 MiB is assumed
+if there is no list), and -cpu selects the CPU.  -cpu m68020 and
+-cpu m68040 both work with the image as built.  -cpu m68060 needs the
+kernel built with CPUFLAGS="-m68060" (menuconfig), because QEMU has no
+software package for the 64-bit mulu.l/divu.l that -m68020 code
+generation may use.  The boot-time CPU detection does not read the
+68060-only PCR on this board, since QEMU fatally aborts the whole VM on
+that read instead of raising a guest exception, and the cache and MMU
+register instructions QEMU's 68060 lacks are skipped.
+
+virt-m68k-cli_defconfig boots to EmuCON instead of the desktop, and
+virt-m68k-cli-fastcall_defconfig is the same with CONF_WITH_MFASTCALL set
+(it needs the -mfastcall toolchain, see above): the way to run the
+regression suite under the register-argument calling convention without
+an Atari emulator.
+
+virt-m68k-fastcall_defconfig is virt-m68k_defconfig (AES/VDI/desktop)
+built the same way, for running the GEM desktop and benchmarks under
+-mfastcall.
+
 virt-m68k-mmu_defconfig is the start of the m68k MMU configuration of
 #549: virt-m68k-cli with CONF_REQUIRE_PMMU set.  Its first instructions
 check for a 68030, 68040 or 68060 with an MMU; on any other CPU (-cpu
