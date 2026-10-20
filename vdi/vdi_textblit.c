@@ -389,6 +389,7 @@ static void pre_blit(LOCALVARS *vars, BOOL mono_cell, BOOL keep_skew)
     skew = keep_skew ? 0 : linea_vars.LOFF + linea_vars.ROFF;
 
     dest_width = vars->DELX;
+    vars->glyph_width = vars->DELX;     /* the glyph, whatever the buffer is made to hold */
     if (vars->STYLE & F_THICKEN)
     {
         if (!(mono_cell && linea_vars.MONO))
@@ -1235,6 +1236,8 @@ static void screen_blit(LOCALVARS *vars)
     vars->nextwrd = vars->nbrplane * sizeof(WORD);
     vars->height = vars->DELY;
     vars->width = vars->DELX;
+    /* text_blt() has made the cell wider by what bold adds, unless the font is fixed-pitch */
+    vars->glyph_width = ((vars->STYLE & F_THICKEN) && !linea_vars.MONO) ? vars->DELX - vars->smear : vars->DELX;
 
     /*
      * calculate the starting address for the character to be copied

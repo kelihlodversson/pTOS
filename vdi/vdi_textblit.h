@@ -49,7 +49,7 @@ typedef struct {
                         /* temporary working variables */
     WORD unused5;           /* was chup_flag (=CHUP-1800) */
     WORD blt_flag;
-    WORD unused1;           /* was tmp_style */
+    WORD glyph_width;       /* was tmp_style: width of the glyph itself, without what bold adds (set for the C normal_blit()) */
                         /* working copies of the clipping variables */
     WORD unused6;           /* was YMX_CLIP */
     WORD unused7;           /* was XMX_CLIP */

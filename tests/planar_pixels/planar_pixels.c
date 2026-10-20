@@ -235,7 +235,7 @@ static long draw_hi(short effects, short mode)
     vs_call(handle, 106, 0, 0, 1);      /* vst_effects() */
     vs_intin[0] = mode;
     vs_call(handle, 32, 0, 0, 1);       /* vswr_mode() */
-    vs_ptsin[0] = 4;
+    vs_ptsin[0] = 16;      /* room for the skew of a tall font left of the origin */
     vs_ptsin[1] = 4;
     vs_intin[0] = 'H';
     vs_intin[1] = 'i';

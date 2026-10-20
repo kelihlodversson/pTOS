@@ -84,15 +84,8 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst)
             /* light text keeps the bits of the mask, from the bottom line up, turning one a line */
             UWORD lite = (vars->STYLE & F_LIGHT) ? (UWORD)linea_vars.LITEMASK : (UWORD)0xffff;
 
-            /*
-             * The width of the glyph itself, without what thickening adds:
-             * the text buffer is always made wider by it, the screen's
-             * width only for a font whose characters are not all as wide
-             * (the others keep their cell: text_blt() and pre_blit())
-             */
-            glyphwidth = vars->width;
-            if ((vars->STYLE & F_THICKEN) && (to_buffer || !linea_vars.MONO))
-                glyphwidth -= vars->smear;
+            /* the width of the glyph itself, without what thickening adds (the callers know) */
+            glyphwidth = vars->glyph_width;
 
             for (y = 0; y < vars->height; y++)
             {
