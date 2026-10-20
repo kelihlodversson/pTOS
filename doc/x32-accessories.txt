@@ -131,6 +131,8 @@ rectangles, invalid/read-only/page-boundary/overlapping buffers and native
 handle reuse are checked. Distant rectangles cannot overflow native move/union
 arithmetic; rejected moves preserve the old geometry. Title/info sources are
 changed and freed before the kernel verifies retained text and pointer width.
+Boundary growth and shrinking check both axes: dimensions 32764/32765 are
+rejected without changing geometry; 32763 produces a valid positive redraw.
 An eight-message FIFO stays full during four enlargements: self redraws
 coalesce and arrive after the queued opaque messages, without deadlocking.
 The input driver sends a key to the topped ring-3 window, then clicks its
@@ -144,6 +146,8 @@ The two survivors leave live, copied-text windows for each desktop restart;
 the final session reopens them after EmuDesk's global window reset. Both
 clients paint their visible work areas through typed VDI line/color/clip calls,
 and the kernel waits until redraws finish before the desktop pass marker.
+The host input-driver regression writes READY records in fragments, including
+partial coordinates and CRLF terminators; no input is sent until the LF.
 
 Verified locally with QEMU/OVMF (1280x800 GOP), host AES/VDI contracts and
 loaded import checks. The ordinary x32 process/callback boot tests also run

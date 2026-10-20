@@ -122,6 +122,62 @@ static int copied_text(WORD handle)
     return 0;
 }
 
+static int boundary_resizes(void)
+{
+    GRECT small = { 0, 60, 340, 240 }, large;
+    AES_WINDOW_INFO state;
+    AES_MESSAGE message;
+    LONG handle;
+    WORD axis, size, redraws;
+
+    for (axis = 0; axis < 2; axis++) {
+        small.g_x = axis ? 60 : 0;
+        small.g_y = axis ? 0 : 60;
+        handle = aes_wind_create(0, &small);
+        CHECK(handle > 0);
+        for (size = 32764; size <= 32765; size++) {
+            large = small;
+            if (axis) large.g_h = size;
+            else large.g_w = size;
+            CHECK(aes_wind_create(0, &large) == EINVAL);
+            CHECK(aes_wind_open((WORD)handle, &large) == EINVAL);
+            CHECK(aes_wind_get((WORD)handle, &state) == E_OK && !state.flags);
+        }
+        CHECK(aes_wind_open((WORD)handle, &small) == E_OK);
+        while (aes_appl_read(&message) == E_OK)
+            CHECK(message.type == 20);
+        for (size = 32764; size <= 32765; size++) {
+            large = small;
+            if (axis) large.g_h = size;
+            else large.g_w = size;
+            CHECK(aes_wind_set_rect((WORD)handle, &large) == EINVAL);
+            CHECK(aes_wind_get((WORD)handle, &state) == E_OK && rc_equal(&small, &state.current));
+            CHECK(aes_appl_read(&message) == EAGAIN);
+        }
+        /* The largest accepted dimension leaves room for both native
+         * shadow additions. Growth must still deliver a positive redraw. */
+        large = small;
+        if (axis) large.g_h = 32763;
+        else large.g_w = 32763;
+        CHECK(aes_wind_set_rect((WORD)handle, &large) == E_OK);
+        CHECK(aes_wind_get((WORD)handle, &state) == E_OK && rc_equal(&large, &state.current));
+        redraws = 0;
+        while (aes_appl_read(&message) == E_OK) {
+            CHECK(message.type == 20 && message.data[0] == handle);
+            CHECK(message.data[3] > 0 && message.data[4] > 0);
+            redraws++;
+        }
+        CHECK(redraws > 0);
+        /* Shrinking uses the old large dimensions in the same arithmetic. */
+        CHECK(aes_wind_set_rect((WORD)handle, &small) == E_OK);
+        CHECK(aes_wind_get((WORD)handle, &state) == E_OK && rc_equal(&small, &state.current));
+        CHECK(rc_equal(&large, &state.previous));
+        CHECK(aes_wind_delete((WORD)handle) == E_OK);
+    }
+    (void)Cconws("x32 window boundary resizes: PASS\r\n");
+    return 0;
+}
+
 int accessory_window_reopen(WORD role, WORD vdi_handle)
 {
     GRECT rectangle = { 48, 60, 356, 240 };
@@ -259,6 +315,7 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
     CHECK(count > 0 && count < 32);
     for (i = 0; i < count; i++)
         CHECK(aes_wind_delete(exhausted[i]) == E_OK);
+    CHECK(boundary_resizes() == 0);
     CHECK(copied_text((WORD)handle) == 0);
     memset(too_long, 'X', sizeof(too_long));
     CHECK(aes_wind_set_text((WORD)handle, AES_WINDOW_NAME, too_long) == EINVAL);

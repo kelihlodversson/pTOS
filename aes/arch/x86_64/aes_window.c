@@ -225,15 +225,17 @@ static void information(WORD h, PD *pd, AES_WINDOW_INFO *info)
 
 /* Native move/union arithmetic is WORD-sized too. Individually valid
  * rectangles at opposite signed extremes must not overflow that arithmetic
- * when combined with the screen or another allocated window's old bounds. */
+ * when combined with the screen or another allocated window's old bounds.
+ * draw_change() adds the two-pixel shadow twice for same-origin resizes;
+ * reserve all four pixels for both new bounds and old bounds on shrink. */
 static BOOL native_bounds(const GRECT *input)
 {
     WORD i;
     GRECT current;
     LONG left = input->g_x < 0 ? input->g_x : 0;
     LONG top = input->g_y < 0 ? input->g_y : 0;
-    LONG right = (LONG)input->g_x + input->g_w + 2;
-    LONG bottom = (LONG)input->g_y + input->g_h + 2;
+    LONG right = (LONG)input->g_x + input->g_w + 4;
+    LONG bottom = (LONG)input->g_y + input->g_h + 4;
     LONG end;
 
     if (right < gl_width) right = gl_width;
@@ -246,9 +248,9 @@ static BOOL native_bounds(const GRECT *input)
             continue;
         if (current.g_x < left) left = current.g_x;
         if (current.g_y < top) top = current.g_y;
-        end = (LONG)current.g_x + current.g_w + 2;
+        end = (LONG)current.g_x + current.g_w + 4;
         if (end > right) right = end;
-        end = (LONG)current.g_y + current.g_h + 2;
+        end = (LONG)current.g_y + current.g_h + 4;
         if (end > bottom) bottom = end;
     }
     return right - left <= 32767L && bottom - top <= 32767L;

@@ -169,9 +169,11 @@ selector, object tree or pointer-bearing parameter array crosses the boundary.
         arithmetic; width/height and right/bottom leave two pixels for the
         native shadow (maximum 32765), and x/y are at least -32765.
         Rendering/moves also require the combined screen, requested bounds
-        and allocated windows' old current bounds (including shadows) to
-        span at most 32767 in each axis. Reject wider unions with EINVAL
-        before native WORD arithmetic or any geometry change.
+        and allocated windows' old current bounds to span at most 32767 in
+        each axis, reserving four pixels for the two native shadow additions
+        during resizing. Thus rendered dimensions are at most 32763, with
+        tighter limits when distant bounds widen the union. Reject wider
+        unions with EINVAL before native arithmetic or any geometry change.
 
     LONG aes_wind_set_text(WORD handle, UWORD field, const char *text);
         field is AES_WINDOW_NAME or AES_WINDOW_INFO_LINE. Copy a terminated

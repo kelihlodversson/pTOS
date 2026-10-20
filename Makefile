@@ -1859,6 +1859,7 @@ obj/x32/ACCONE.ACC obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC: 
 	  -Lobj/x32 -lptos-aes -lptos-vdi $(LIBCMINI_LIB)
 .PHONY: x32-accessory-test
 x32-accessory-test: obj/x32/ACCONE.ACC obj/x32/ACCTWO.ACC obj/x32/ACCFAULT.ACC obj/x32/ACCWAIT.ACC obj/x32/BADACC.ACC
+	python3 tests/x32_accessory/test_drive_input.py
 obj/x32/BADACC.ACC: | obj/x32
 	printf 'invalid executable\n' > $@
 

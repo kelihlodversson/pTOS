@@ -23,11 +23,13 @@ connection = None
 try:
     while time.monotonic() < deadline:
         if args.log.exists():
-            output = args.log.read_text(errors="replace")
+            # Preserve a trailing CR: only the LF completes a serial record.
+            with args.log.open(errors="replace", newline="") as log:
+                output = log.read()
             assert not any(x in output for x in ("panic:", "accessory input FAIL", "accessory window FAIL")), output[-4000:]
             ready = list(re.finditer(
                 r"x32 (?:input (?P<input>keyboard|mouse|button|release)|window (?P<window>key|close)): READY"
-                r"(?: (?P<x>-?\d+) (?P<y>-?\d+) (?P<old_x>-?\d+) (?P<old_y>-?\d+))?", output))
+                r"(?: (?P<x>-?\d+) (?P<y>-?\d+) (?P<old_x>-?\d+) (?P<old_y>-?\d+))?\r?\n", output))
             for match in ready[seen:]:
                 stage = match['input'] or match['window']
                 if connection is None:
