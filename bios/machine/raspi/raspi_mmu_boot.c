@@ -201,8 +201,8 @@ ULONG raspi_mmu_bootstrap(void)
     utable = (section_t *)(table + UTABLE_OFFSET);
     ram_sections = table / MEGABYTE;
 
-    clear_entries((volatile ULONG *)ktable, KERNEL_TABLE_ENTRIES);
-    clear_entries((volatile ULONG *)utable, HALF_ENTRIES);
+    clear_entries((volatile ULONG *)(table + KTABLE_OFFSET), KERNEL_TABLE_ENTRIES);
+    clear_entries((volatile ULONG *)(table + UTABLE_OFFSET), HALF_ENTRIES);
 
     /* the kernel half: the physical-memory window, the RAM from its first
      * byte, the page tables, and the rest of what the ARM sees below its
@@ -241,13 +241,13 @@ ULONG raspi_mmu_bootstrap(void)
     {
         struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR *l2 =
             (struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR *)(table + L2TABLE_OFFSET);
-        struct TARMV6MMU_LEVEL1_COARSE_PAGE_TABLE_DESCRIPTOR coarse;
         ULONG p;
 
+        clear_entries((volatile ULONG *)(table + L2TABLE_OFFSET),
+                      ARMV6MMU_LEVEL2_COARSE_PAGE_TABLE_SIZE / sizeof(ULONG));
         for (p = 0; p < ARMV6MMU_LEVEL2_COARSE_PAGE_TABLE_SIZE /
                         sizeof(struct TARMV6MMU_LEVEL2_EXT_SMALL_PAGE_DESCRIPTOR); p++)
         {
-            clear_entries((volatile ULONG *)&l2[p], 1);
             l2[p].XNBit  = 0;
             l2[p].Value1 = 1;
             l2[p].BBit   = 1;
@@ -260,13 +260,11 @@ ULONG raspi_mmu_bootstrap(void)
             l2[p].Base   = ARMV6MMUL2SMALLPAGEBASE(SMALL_PAGE_SIZE * p);
         }
 
-        clear_entries((volatile ULONG *)&coarse, 1);
-        coarse.Value01 = 1;
-        coarse.SBZ     = 0;
-        coarse.Domain  = 0;
-        coarse.IMPBit  = 0;
-        coarse.Base    = ARMV6MMUL1COARSEBASE((ULONG)l2);
-        __builtin_memcpy(&ktable[RASPI_WINDOW_VBASE / MEGABYTE], &coarse, sizeof(coarse));
+        /* the coarse page table descriptor (type 1, domain 0): the address of
+         * the table, which is 1 KiB aligned, and the type in the low bits */
+        *(volatile ULONG *)(table + KTABLE_OFFSET +
+                            (RASPI_WINDOW_VBASE / MEGABYTE) * sizeof(ULONG))
+            = (table + L2TABLE_OFFSET) | 1;
     }
 #endif /* CONF_WITH_MMU_TEXT_PROTECT */
 
