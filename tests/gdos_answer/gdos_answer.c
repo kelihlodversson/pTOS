@@ -29,6 +29,23 @@
  * one.  The pixels are only checked where the system font's text can be
  * read back with v_get_pixel(); where it cannot, the result line says so.
  *
+ * SpeedoGDOS's and NVDI's calls for the fonts (#577) are checked on the
+ * first scalable font and the system font: vqt_ext_name()'s formats,
+ * vqt_xfntinfo()'s names, file and sizes, vst_name() and
+ * vqt_name_and_id(), vqt_fontheader(), and the cache calls; vst_arbpt()
+ * and vst_arbpt32(), vst_setsize(), vst_width(), vst_skew(),
+ * vqt_advance(), vqt_f_extent() and vqt_real_extent(), v_ftext() and
+ * v_ftext_offset(); vst_map_mode() with text in BICS, Unicode (UCS-2
+ * and UTF-16, a surrogate pair being one character) in the scalable font
+ * and the system font, and vqt_char_index(); vst_kern(), vqt_pairkern()
+ * and vst_track_offset(), which the width of text follows.  Those of the
+ * Unicode modes that #577 asks for are made through the bindings of
+ * tests/include/vdi_speedo.h: a string of Latin, Greek and Cyrillic is
+ * as wide as its characters' advances and drawn as they are drawn placed
+ * one by one with v_ftext_offset(), in UTF-16 a lone surrogate is the
+ * replacement character and not found by itself, and the offset of a
+ * pair's second WORD is not used.
+ *
  * x86-64 programs cannot call the VDI at all (trap class 2 is refused
  * from ring 3), so it is skipped there.
  *
@@ -42,6 +59,8 @@
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
 #include <stddef.h>
+#include <string.h>
+#include "include/vdi_speedo.h"
 
 #define EINVFN          (-32L)
 #define SS_GETCOOKIE    8
@@ -72,7 +91,7 @@ struct fsmc
     unsigned short quality;
 };
 
-static short contrl[16], intin[16], ptsin[16], intout[64], ptsout[16];
+static short contrl[16], intin[64], ptsin[16], intout[64], ptsout[16];
 static void *vdipb[5] = { contrl, intin, ptsin, intout, ptsout };
 
 static short aes_control[5], aes_global[15];
@@ -606,7 +625,7 @@ static void check_heights(short handle, short id)
 /* a monospaced font stays so in bold, as the system fonts do */
 static void check_monospace(short handle, short id)
 {
-    short narrow, wide, bold;
+    short narrow, wide, bold, i;
 
     intin[0] = id;
     vdi_op(21, 1, handle);              /* vst_font() */
@@ -620,11 +639,1297 @@ static void check_monospace(short handle, short id)
         intin[0] = 1;
         vdi_op(106, 1, handle);         /* vst_effects(bold) */
         bold = extent_of(handle, 'W', 4);
+        font_check(bold == wide, "bold widens a monospaced scalable font");
+
+        /* in Unicode too, in a page with marks of no width (alpha's) */
+        intin[0] = 2;
+        intin[1] = 1;
+        vdi_op(236, 2, handle);         /* vst_map_mode(Unicode) */
+        for (i = 0; i < 4; i++)
+            intin[i] = 0x3b1;           /* alpha, Atari 0xe0 */
+        ptsin_op(116, 0, 4, handle);    /* vqt_extent() */
+        font_check(ptsout[2] - ptsout[0] == wide, "bold widens a monospaced scalable font in Unicode");
+        intin[0] = 1;
+        intin[1] = 1;
+        vdi_op(236, 2, handle);         /* back to the Atari set */
         intin[0] = 0;
         vdi_op(106, 1, handle);
-        font_check(bold == wide, "bold widens a monospaced scalable font");
         monospaced_fonts++;
     }
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
+/*
+ * What a size was asked for is the workstation's own: another one that
+ * asks for more and comes to the same size does not change what the first
+ * gets when it changes its width.  Here the first asks for far too big a
+ * size and comes to the biggest that fits; the second asks for a top far
+ * too high and comes to the same; then a narrow width lets the first have
+ * what it asked for, and so it must be as when it was alone.
+ */
+static void check_two_workstations(short handle, short id)
+{
+    short other, alone, i, dummy;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    vst_arbpt(handle, 2000, &dummy, &dummy, &dummy, &dummy);
+    intin[0] = 12;
+    ptsin_op(252, 0, 1, handle);        /* vst_setsize(12) */
+    extent_of(handle, 'M', 1);
+    alone = ptsout[5] - ptsout[1];
+    intin[0] = 12;
+    vdi_op(107, 1, handle);             /* vst_point(12) */
+
+    for (i = 0; i < 10; i++)
+        intin[i] = 1;
+    intin[10] = 2;
+    vdi_op(100, 11, handle);            /* v_opnvwk() */
+    other = contrl[6];
+    font_check(other > 0 && other != handle, "a second workstation could not be opened");
+    if (other <= 0 || other == handle)
+        return;
+    intin[0] = 0;
+    vdi_op(119, 1, other);              /* vst_load_fonts() */
+
+    vst_arbpt(handle, 2000, &dummy, &dummy, &dummy, &dummy);
+    intin[0] = id;
+    vdi_op(21, 1, other);
+    ptsin[0] = 0;
+    ptsin[1] = 800;
+    ptsin_op(12, 1, 0, other);          /* vst_height(800) */
+    intin[0] = 12;
+    ptsin_op(252, 0, 1, handle);        /* vst_setsize(12) */
+    extent_of(handle, 'M', 1);
+    font_check(ptsout[5] - ptsout[1] == alone,
+               "another workstation's request changed a workstation's size");
+
+    vdi_op(120, 1, other);              /* vst_unload_fonts() */
+    vdi_op(101, 0, other);              /* v_clsvwk() */
+    intin[0] = 12;
+    vdi_op(107, 1, handle);
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
+/*
+ * The cache's bound holds after a string: a size as big as the cache
+ * allows, then a Greek character measured in Unicode, which renders a page
+ * of that size past the bound, which must go again once it is measured
+ */
+static void check_cache_bound(short handle, short id)
+{
+    short dummy;
+    long room;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    vst_arbpt(handle, 2000, &dummy, &dummy, &dummy, &dummy);
+    intin[0] = 2;
+    intin[1] = 1;
+    vdi_op(236, 2, handle);             /* vst_map_mode(Unicode) */
+    intin[0] = 0x3b1;                   /* alpha */
+    ptsin_op(116, 0, 1, handle);        /* vqt_extent() */
+    intin[0] = 1;
+    intin[1] = 1;
+    vdi_op(236, 2, handle);             /* back to the Atari set */
+    intin[0] = 0;
+    vdi_op(255, 1, handle);             /* vqt_cachesize() */
+    memcpy(&room, &intout[0], sizeof(room));
+    font_check(room > 0, "a Unicode page leaves the size cache past its bound");
+    intin[0] = 12;
+    vdi_op(107, 1, handle);
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
+/* NVDI's XFNT_INFO, as an application has it */
+struct xfnt_info
+{
+    long size;
+    short format, id, index;
+    char font_name[50], family_name[50], style_name[50];
+    char file_name1[200], file_name2[200], file_name3[200];
+    short pt_cnt;
+    short pt_sizes[64];
+};
+
+static struct xfnt_info xfnt;
+static char fhdr[1024];                 /* vqt_fontheader()'s buffer, as gemlib advises */
+
+static int str_eq(const char *a, const char *b)
+{
+    while (*a && *a == *b)
+        a++, b++;
+    return *a == *b;
+}
+
+/* whether intout[0..n-1], one character each, ends in .TTF or .OTF */
+static int font_file(short n)
+{
+    return n > 4 && intout[n - 4] == '.' && intout[n - 1] == 'F'
+        && (intout[n - 3] == 'T' || intout[n - 3] == 'O') && intout[n - 2] == 'T';
+}
+
+static short current_font(short handle)
+{
+    vdi_op(38, 0, handle);              /* vqt_attributes() */
+    return intout[0];
+}
+
+/* SpeedoGDOS's and NVDI's font calls (#577) */
+static void check_speedo(short handle, short system_fonts)
+{
+    char name[33], joined[110];
+    short i, id, n, error;
+    unsigned short upem;
+    void *p;
+    long before, after;
+    const short *table;
+
+    /* vqt_ext_name(): the system font is a bitmap font, the first scalable one not */
+    intin[0] = 1;
+    intin[1] = 0;
+    contrl[0] = 130;
+    contrl[1] = 0;
+    contrl[3] = 2;
+    contrl[5] = 1;
+    contrl[6] = handle;
+    vdi();
+    font_check(contrl[4] == 35 && (intout[34] & 0xff) == 1 && intout[33] == 0,
+               "vqt_ext_name() does not give the system font as a bitmap font");
+    intin[0] = system_fonts + 1;
+    intin[1] = 0;
+    contrl[3] = 2;
+    contrl[5] = 1;
+    vdi();
+    font_check(contrl[4] == 35 && ((intout[34] & 0xff) == 4 || (intout[34] & 0xff) == 8),
+               "vqt_ext_name() does not give a scalable font as TrueType or Type 1");
+    font_check(intout[33] == 1, "vqt_ext_name() does not flag a scalable font as a vector font");
+    id = intout[0];
+    for (i = 0; i < 32 && intout[i + 1]; i++)
+        name[i] = (char)intout[i + 1];
+    name[i] = '\0';
+
+    /* vqt_xfntinfo(): by its place in the list */
+    xfnt.size = sizeof(xfnt);
+    xfnt.font_name[0] = xfnt.family_name[0] = xfnt.style_name[0] = '\0';
+    intin[0] = 0x010f;                  /* the names, the first file, the sizes */
+    intin[1] = 0;
+    intin[2] = system_fonts + 1;
+    p = &xfnt;
+    memcpy(&intin[3], &p, sizeof(p));
+    vdi_op(229, 3 + sizeof(p) / 2, handle);
+    font_check(intout[1] == id && intout[2] == system_fonts + 1 && xfnt.id == id,
+               "vqt_xfntinfo() did not find the font by its place");
+    font_check(str_eq(xfnt.font_name, name), "vqt_xfntinfo() gives another name");
+    for (i = 0; xfnt.family_name[i]; i++)
+        joined[i] = xfnt.family_name[i];
+    if (!str_eq(xfnt.style_name, "Regular"))
+    {
+        joined[i++] = ' ';
+        for (n = 0; xfnt.style_name[n]; n++)
+            joined[i++] = xfnt.style_name[n];
+    }
+    joined[i] = '\0';
+    font_check(str_eq(joined, name), "vqt_xfntinfo()'s family and style do not make the name");
+    font_check(xfnt.file_name1[0] && xfnt.file_name1[1] == ':',
+               "vqt_xfntinfo() has no path to the font file");
+    font_check(xfnt.pt_cnt > 0, "vqt_xfntinfo() offers no sizes");
+
+    /* by its id, the system font */
+    xfnt.pt_cnt = 0;
+    intin[0] = 0x0100;
+    intin[1] = 1;
+    intin[2] = 0;
+    vdi_op(229, 3 + sizeof(p) / 2, handle);
+    font_check(intout[0] == 1 && intout[2] == 1 && xfnt.pt_cnt > 0,
+               "vqt_xfntinfo() did not find the system font by its id");
+
+    /* vqt_name_and_id() looks it up, vst_name() selects it */
+    intin[0] = 0;
+    for (n = 0; name[n]; n++)
+        intin[n + 1] = name[n];
+    intin[n + 1] = 0;
+    contrl[0] = 230;
+    contrl[1] = 0;
+    contrl[3] = n + 2;
+    contrl[5] = 100;
+    contrl[6] = handle;
+    vdi();
+    font_check(intout[0] == id, "vqt_name_and_id() did not find the font");
+    font_check(current_font(handle) == 1, "vqt_name_and_id() selected the font");
+    contrl[0] = 230;
+    contrl[3] = n + 2;
+    contrl[5] = 0;
+    vdi();
+    font_check(intout[0] == id && contrl[4] == n + 1, "vst_name() did not answer with the font");
+    font_check(current_font(handle) == id, "vst_name() did not select the font");
+
+    /* blanks do not count, missing or extra */
+    {
+        char squeezed[40];
+        short k = 0;
+
+        squeezed[k++] = ' ';
+        for (i = 0; name[i]; i++)
+            if (name[i] != ' ')
+                squeezed[k++] = name[i];
+        squeezed[k++] = ' ';
+        squeezed[k] = '\0';
+        intin[0] = 1;
+        vdi_op(21, 1, handle);          /* the system font */
+        font_check(vqt_name_and_id(handle, 0, squeezed, joined) == id,
+                   "vqt_name_and_id() minds the blanks in a name");
+    }
+
+    /* a name that is not there: 0 from vqt_name_and_id(), the system font from vst_name() */
+    intin[0] = id;
+    vdi_op(21, 1, handle);
+    font_check(vqt_name_and_id(handle, 0, "No Such Font", joined) == 0
+               && current_font(handle) == id,
+               "vqt_name_and_id() does not answer 0 for a font that is not there");
+    font_check(vst_name(handle, 0, "No Such Font", joined) == 1 && current_font(handle) == 1,
+               "vst_name() does not select the system font for a font that is not there");
+    intin[0] = id;
+    vdi_op(21, 1, handle);
+
+    /* vqt_fontheader(): its name, its design units, its file */
+    for (i = 0; i < (short)sizeof(fhdr); i++)
+        fhdr[i] = 0x55;
+    p = fhdr;
+    memcpy(&intin[0], &p, sizeof(p));
+    vdi_op(232, sizeof(p) / 2, handle);
+    n = contrl[4];
+    font_check(fhdr[0] == 'D' && str_eq(fhdr + 24, name),
+               "vqt_fontheader() has another name");
+    memcpy(&upem, fhdr + 330, sizeof(upem));
+    font_check(upem >= 16, "vqt_fontheader() has no design units per em");
+    font_check(font_file(n), "vqt_fontheader() did not give the font's file");
+    font_check(fhdr[332] == 0x55, "vqt_fontheader() wrote past its fields");
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+
+    /* the cache: a flush leaves at least as much free */
+    vdi_op(255, 1, handle);             /* vqt_cachesize() */
+    memcpy(&before, &intout[0], sizeof(before));
+    vdi_op(251, 0, handle);             /* v_flushcache() */
+    vdi_op(255, 1, handle);
+    memcpy(&after, &intout[0], sizeof(after));
+    font_check(before >= 0 && after >= before, "v_flushcache() freed nothing");
+
+    /* no outlines: gemlib's v_getoutline() gets 0 points in numverts */
+    {
+        short xy[8], numverts = -1;
+        char bez[4];
+
+        vs_intout[0] = -1;
+        v_getoutline(handle, 'A', xy, bez, 4, &numverts);
+        font_check(numverts == 0, "v_getoutline() does not answer 0 points");
+    }
+
+    /* the table to BICS, which agrees with ASCII */
+    intout[0] = intout[1] = 0;
+    vdi_op(254, 0, handle);             /* vqt_get_table() */
+    memcpy(&table, &intout[0], sizeof(table));
+    font_check(table && table['A' - 32] == 'A' - 32 && table[0x80 - 32] == -1,
+               "vqt_get_table() does not map ASCII to BICS");
+
+    /* vst_error() clears the variable it is given */
+    error = 99;
+    intin[0] = 0;
+    p = &error;
+    memcpy(&intin[1], &p, sizeof(p));
+    vdi_op(245, 1 + sizeof(p) / 2, handle);
+    font_check(error == 0, "vst_error() did not clear the error variable");
+    intin[0] = 0;
+    p = NULL;
+    memcpy(&intin[1], &p, sizeof(p));
+    vdi_op(245, 1 + sizeof(p) / 2, handle);
+}
+
+/* vst_map_mode(), which answers with the mode set */
+static short map_mode(short handle, short mode)
+{
+    intin[0] = mode;
+    intin[1] = 1;
+    vdi_op(236, 2, handle);
+    return intout[0];
+}
+
+/* the width of the characters in intin[0..n-1] */
+static short extent_n(short handle, short n)
+{
+    ptsin_op(116, 0, n, handle);        /* vqt_extent() */
+    return ptsout[2] - ptsout[0];
+}
+
+static short width_of(short handle, short ch)
+{
+    intin[0] = ch;
+    ptsin_op(117, 0, 1, handle);        /* vqt_width() */
+    return intout[0] == -1 ? -1 : ptsout[0];
+}
+
+static unsigned short char_index(short handle, short c, short src, short dst)
+{
+    intin[0] = c;
+    intin[1] = src;
+    intin[2] = dst;
+    vdi_op(190, 3, handle);
+    return (unsigned short)intout[0];
+}
+
+/* text in the character maps, in a scalable font or the system font */
+static void check_maps(short handle, int scalable)
+{
+    short w_atari, w_uni, ag;
+
+    font_check(map_mode(handle, 2) == 2, "vst_map_mode(2) did not set Unicode");
+    ag = extent_ag(handle);
+    map_mode(handle, 1);
+    font_check(extent_ag(handle) == ag, "ASCII is not as wide in Unicode as in the Atari set");
+    w_atari = width_of(handle, 0x82);   /* e acute */
+    map_mode(handle, 2);
+    w_uni = width_of(handle, 0xe9);
+    font_check(w_uni == w_atari && w_uni > 0, "e acute is not as wide in Unicode as in the Atari set");
+    /* a string of several runs is as wide as its characters */
+    {
+        short wa = width_of(handle, 'a'), walpha = width_of(handle, 0x3b1);
+
+        intin[0] = 0xe9;
+        intin[1] = 'a';
+        intin[2] = 0x3b1;               /* alpha: another page */
+        intin[3] = 0xe9;
+        font_check(walpha > 0 && extent_n(handle, 4) == 2 * w_uni + wa + walpha,
+                   "a string of several pages is not as wide as its characters");
+    }
+    if (!scalable)
+    {
+        /* the system font has no CJK: drawn as a '?', and vqt_width() says it is not there */
+        w_atari = width_of(handle, '?');
+        intin[0] = 0x4e00;
+        font_check(extent_n(handle, 1) == w_atari, "the system font does not show U+4E00 as '?'");
+        font_check(width_of(handle, 0x4e00) == -1, "vqt_width() finds U+4E00 in the system font");
+    }
+    else
+    {
+        /*
+         * no font has U+FFFE: its missing-glyph shape is drawn, but
+         * vqt_width() says it is not there (U+FFFF would be its -1 either way)
+         */
+        intin[0] = (short)0xfffe;
+        font_check(extent_n(handle, 1) > 0 && width_of(handle, (short)0xfffe) == -1,
+                   "vqt_width() finds U+FFFE in a scalable font");
+    }
+
+    /* UTF-16: a pair is one character, here one without a glyph */
+    intin[0] = 0xdbff;
+    intin[1] = 0xdffd;
+    w_uni = extent_n(handle, 2);        /* in UCS-2: two characters */
+    font_check(map_mode(handle, 3) == 3, "vst_map_mode(3) did not set UTF-16");
+    intin[0] = 0xdbff;
+    intin[1] = 0xdffd;
+    font_check(extent_n(handle, 2) * 2 == w_uni && w_uni > 0,
+               "a surrogate pair is not one character in UTF-16");
+
+    /* BICS: its ASCII part */
+    map_mode(handle, 0);
+    intin[0] = 'A' - 32;
+    intin[1] = 'g' - 32;
+    font_check(extent_n(handle, 2) == ag, "BICS is not ASCII where they agree");
+
+    /* drawn through runs, in each map (a page of several runs) */
+    map_mode(handle, 2);
+    intin[0] = 'a';
+    intin[1] = 0xe9;
+    intin[2] = 0x3b1;                   /* alpha */
+    intin[3] = 'z';
+    ptsin[0] = 20;
+    ptsin[1] = 60;
+    ptsin_op(8, 1, 4, handle);          /* v_gtext() */
+    map_mode(handle, 1);
+}
+
+/* vst_kern() and vst_track_offset() */
+static void kern_mode(short handle, short tmode, short pmode, long offset)
+{
+    intin[0] = tmode;
+    intin[1] = pmode;
+    memcpy(&intin[2], &offset, sizeof(offset));
+    vdi_op(237, tmode == 255 ? 4 : 2, handle);
+}
+
+static int fonts_kerned;                /* fonts whose pairs were seen to apply */
+
+/*
+ * Kerning: where the font has pairs, "AV" kerned is as wide as it is
+ * plain plus vqt_pairkern()'s amount; a track offset of half a pixel
+ * makes ten characters five pixels wider (nine after the first, rounded)
+ */
+static void check_kerning(short handle)
+{
+    short plain, kerned, pairs, i;
+    long x, y;
+
+    intin[0] = 36;
+    vdi_op(107, 1, handle);             /* vst_point(36): kerning of whole pixels */
+    intin[0] = 'A';
+    intin[1] = 'V';
+    plain = extent_n(handle, 2);
+    kern_mode(handle, 0, 1, 0);
+    pairs = intout[1];
+    intin[0] = 'A';
+    intin[1] = 'V';
+    vdi_op(235, 2, handle);             /* vqt_pairkern() */
+    memcpy(&x, &intout[0], sizeof(x));
+    memcpy(&y, &intout[2], sizeof(y));
+    intin[0] = 'A';
+    intin[1] = 'V';
+    kerned = extent_n(handle, 2);
+    font_check(y == 0, "vqt_pairkern() kerns up or down");
+    font_check(pairs || x == 0, "vqt_pairkern() kerns in a font without pairs");
+    font_check(kerned == plain + (short)((x + 0x8000L) >> 16)
+               || kerned == plain + (short)((x + 0x7fffL) >> 16),
+               "kerning does not make \"AV\" as wide as vqt_pairkern() says");
+    if (pairs && x <= -0x10000L)
+        fonts_kerned++;
+    kern_mode(handle, 0, 0, 0);
+
+    for (i = 0; i < 10; i++)
+        intin[i] = 'n';
+    plain = extent_n(handle, 10);
+    kern_mode(handle, 255, 0, 0x8000L);
+    vdi_op(234, 0, handle);             /* vqt_trackkern() */
+    memcpy(&x, &intout[0], sizeof(x));
+    font_check(x == 0x8000L, "vqt_trackkern() does not give the track offset");
+    for (i = 0; i < 10; i++)
+        intin[i] = 'n';
+    kerned = extent_n(handle, 10);
+    font_check(kerned >= plain + 4 && kerned <= plain + 5,
+               "a track offset of half a pixel does not add up");
+
+    /* 1/128 pixel over 199 gaps: one or two pixels, not none */
+    {
+        static short many[200];
+        short extent[8], w200;
+
+        for (i = 0; i < 200; i++)
+            many[i] = 'i';
+        kern_mode(handle, 0, 0, 0);
+        vqt_f_extent(handle, many, 200, extent);
+        w200 = extent[2] - extent[0];
+        kern_mode(handle, 255, 0, 0x200L);
+        vqt_f_extent(handle, many, 200, extent);
+        font_check(extent[2] - extent[0] >= w200 + 1 && extent[2] - extent[0] <= w200 + 2,
+                   "a track offset of less than 1/64 pixel does not add up");
+    }
+
+    /*
+     * a track offset of minus two advances takes each 'n' one advance back
+     * of the one before: the four are from three advances left of the
+     * point to one right of it, and vqt_real_extent() says so
+     */
+    {
+        short adv = extent_of(handle, 'n', 1);
+
+        kern_mode(handle, 255, 0, -2L * adv << 16);
+        for (i = 0; i < 4; i++)
+            intin[i] = 'n';
+        ptsin[0] = 300;
+        ptsin[1] = 100;
+        contrl[0] = 240;
+        contrl[1] = 1;
+        contrl[3] = 4;
+        contrl[5] = 4200;
+        contrl[6] = handle;
+        vdi();                          /* vqt_real_extent() */
+        font_check(ptsout[0] == 300 - 3 * adv && ptsout[2] == 300 + adv,
+                   "vqt_real_extent() does not take in text a negative offset takes back");
+    }
+    kern_mode(handle, 0, 0, 0);
+
+    /* UTF-16: a lone surrogate is U+FFFD, track offsets around it included */
+    {
+        static const short lone[3] = { 'n', (short)0xd800, 'n' };
+        static const short repl[3] = { 'n', (short)0xfffd, 'n' };
+        short extent[8], w_lone, tracks, kpairs;
+
+        vst_map_mode(handle, MAP_UTF16);
+        vst_track_offset(handle, 4L << 16, 0, &tracks, &kpairs);
+        vqt_f_extent(handle, lone, 3, extent);
+        w_lone = extent[2] - extent[0];
+        vqt_f_extent(handle, repl, 3, extent);
+        vst_track_offset(handle, 0, 0, &tracks, &kpairs);
+        vst_map_mode(handle, MAP_ATARI);
+        font_check(w_lone == extent[2] - extent[0],
+                   "a lone surrogate does not get the track offset U+FFFD gets");
+    }
+    intin[0] = 12;
+    vdi_op(107, 1, handle);
+}
+
+/* sizes: mirroring, very big ones, and keeping a fractional one */
+static void check_sizes_more(short handle, short id)
+{
+    short dummy, top_big, top300, n, top_half, top_up;
+    long got;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+
+    /* negative: mirrored, and answered so */
+    got = vst_arbpt32(handle, -(24L << 16), &dummy, &dummy, &dummy, &dummy);
+    font_check(got < -(23L << 16) && got > -(25L << 16), "vst_arbpt32() does not answer a negative height");
+    got = vst_setsize32(handle, -(30L << 16), &dummy, &dummy, &dummy, &dummy);
+    font_check(got < 0, "vst_setsize32() does not answer a negative width");
+    vst_arbpt(handle, 12, &dummy, &dummy, &dummy, &dummy);
+
+    /* -32768 points, whose sign cannot just be taken off: big and mirrored, not the smallest */
+    got = vst_setsize32(handle, (long)0x80000000UL, &dummy, &dummy, &dummy, &dummy);
+    font_check(got < -(12L << 16), "vst_setsize32(-32768 points) is not a wide mirrored width");
+    got = vst_arbpt32(handle, (long)0x80000000UL, &dummy, &dummy, &dummy, &dummy);
+    font_check(got < -(12L << 16), "vst_arbpt32(-32768 points) is not a big mirrored size");
+    vst_arbpt(handle, 12, &dummy, &dummy, &dummy, &dummy);
+
+    /* far too big: the biggest size, not the smallest */
+    vst_arbpt(handle, 300, &dummy, &top300, &dummy, &dummy);
+    vst_arbpt32(handle, 30000L << 16, &dummy, &top_big, &dummy, &dummy);
+    font_check(top_big >= top300, "a size of 30000 points is not the biggest");
+
+    /* a fractional size stays when the font is selected again */
+    for (n = 10; n < 40; n++)
+    {
+        vst_arbpt(handle, n + 1, &dummy, &top_up, &dummy, &dummy);
+        vst_arbpt32(handle, ((long)n << 16) + 0x8000L, &dummy, &top_half, &dummy, &dummy);
+        if (top_half != top_up)
+            break;
+    }
+    if (n < 40)
+    {
+        intin[0] = id;
+        vdi_op(21, 1, handle);          /* vst_font(), the same */
+        vdi_op(38, 0, handle);          /* vqt_attributes() */
+        font_check(ptsout[1] == top_half, "selecting a font again loses its fractional size");
+    }
+    vst_arbpt(handle, 12, &dummy, &dummy, &dummy, &dummy);
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
+/* vst_arbpt() and the other size calls, and the metrics */
+static void check_metrics(short handle, short id)
+{
+    short top12, top13, w, h, i, dummy;
+    long fix;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    intin[0] = 12;
+    vdi_op(107, 1, handle);             /* vst_point(12) */
+    top12 = ptsout[1];
+    intin[0] = 13;
+    ptsin_op(246, 0, 1, handle);        /* vst_arbpt(13) */
+    top13 = ptsout[1];
+    font_check(intout[0] == 13 && contrl[4] == 1, "vst_arbpt() did not give 13 points");
+
+    /* 12.5 points, in 16.16 */
+    fix = 0xc8000L;
+    memcpy(&intin[0], &fix, sizeof(fix));
+    ptsin_op(246, 0, 2, handle);        /* vst_arbpt32() */
+    memcpy(&fix, &intout[0], sizeof(fix));
+    font_check(contrl[4] == 2 && fix > 0xc8000L - 0x800 && fix < 0xc8000L + 0x800,
+               "vst_arbpt32() did not give 12.5 points");
+    font_check(ptsout[1] >= top12 && ptsout[1] <= top13, "12.5 points is not between 12 and 13");
+
+    /* twice as wide, the height staying */
+    intin[0] = 12;
+    vdi_op(107, 1, handle);
+    w = extent_of(handle, 'M', 4);
+    h = ptsout[5] - ptsout[1];
+    intin[0] = 24;
+    ptsin_op(252, 0, 1, handle);        /* vst_setsize(24) */
+    font_check(intout[0] == 24, "vst_setsize() did not answer 24 points");
+    font_check(extent_of(handle, 'M', 4) > w * 3 / 2 && ptsout[5] - ptsout[1] == h,
+               "vst_setsize() did not widen the font alone");
+    intin[0] = 12;
+    vdi_op(107, 1, handle);             /* the width follows the height again */
+    font_check(extent_of(handle, 'M', 4) == w, "vst_point() did not reset the width");
+    /*
+     * a width in points is in the screen's pixel width: as wide as that
+     * many pixels given to vst_width() (which tells only where pixels are
+     * not square, ST medium say)
+     */
+    {
+        short pw, px, wa, wb;
+
+        intin[0] = 0;
+        vdi_op(102, 1, handle);         /* vq_extnd() */
+        pw = intout[3] > 0 ? intout[3] : 353;
+        px = (short)((24L * 25400 + 36L * pw) / (72L * pw));
+        intin[0] = 24;
+        ptsin_op(252, 0, 1, handle);    /* vst_setsize(24) */
+        wa = extent_of(handle, 'M', 4);
+        ptsin[0] = px;
+        ptsin_op(231, 1, 0, handle);    /* vst_width() */
+        wb = extent_of(handle, 'M', 4);
+        font_check(wa - wb <= 4 && wb - wa <= 4,
+                   "vst_setsize() does not take its width in the screen's pixel width");
+        intin[0] = 12;
+        vdi_op(107, 1, handle);
+    }
+    intin[0] = 2000;
+    ptsin_op(252, 0, 1, handle);        /* vst_setsize(2000): far more than a size can be */
+    font_check(intout[0] > 12 && intout[0] < 2000, "vst_setsize() does not answer the width it set");
+    extent_of(handle, 'M', 4);
+    font_check(ptsout[5] - ptsout[1] == h, "vst_setsize() made the font lower to make it fit");
+    /* as low as a size can be, and far too wide: the width alone comes down */
+    vst_arbpt(handle, 1, &dummy, &dummy, &dummy, &dummy);
+    intin[0] = 2000;
+    ptsin_op(252, 0, 1, handle);        /* vst_setsize(2000) */
+    font_check(intout[0] > 12 && intout[0] < 2000,
+               "vst_setsize() does not narrow a size that is already as low as it gets");
+    intin[0] = 12;
+    vdi_op(107, 1, handle);
+    ptsin[0] = 6;
+    ptsin_op(231, 1, 0, handle);        /* vst_width(6) */
+    font_check(extent_of(handle, 'M', 4) < w, "vst_width() did not narrow the font");
+    intin[0] = 12;
+    vdi_op(107, 1, handle);
+
+    /* slanted, the advances staying */
+    intin[0] = 150;
+    vdi_op(253, 1, handle);             /* vst_skew(15 degrees) */
+    font_check(intout[0] == 150, "vst_skew() did not answer the slant");
+    font_check(extent_of(handle, 'M', 4) == w, "vst_skew() changed the advances");
+    intin[0] = 0;
+    vdi_op(253, 1, handle);
+
+    /* vqt_advance() is vqt_width()'s, the 16.16 one after it */
+    w = width_of(handle, 'W');
+    intin[0] = 'W';
+    ptsin_op(247, 0, 1, handle);
+    memcpy(&fix, &ptsout[4], sizeof(fix));
+    font_check(ptsout[0] == w && ptsout[1] == 0 && fix == (long)w << 16,
+               "vqt_advance() is not the character's width");
+
+    /* vqt_f_extent() is vqt_extent() (plain); vqt_real_extent() is at the point */
+    w = extent_ag(handle);
+    intin[0] = 'A';
+    intin[1] = 'g';
+    ptsin_op(240, 0, 2, handle);
+    font_check(ptsout[2] - ptsout[0] == w, "vqt_f_extent() is not vqt_extent()");
+    /* skewed: vqt_extent() adds what the slant takes, vqt_f_extent() is the advances */
+    intin[0] = 4;
+    vdi_op(106, 1, handle);             /* vst_effects(skew) */
+    font_check(extent_ag(handle) > w, "vqt_extent() of skewed text is not wider");
+    intin[0] = 'A';
+    intin[1] = 'g';
+    ptsin_op(240, 0, 2, handle);
+    font_check(ptsout[2] - ptsout[0] == w, "vqt_f_extent() of skewed text is not its advances");
+    intin[0] = 0;
+    vdi_op(106, 1, handle);
+    intin[0] = 'A';
+    intin[1] = 'g';
+    ptsin[0] = 100;
+    ptsin[1] = 100;
+    contrl[0] = 240;
+    contrl[1] = 1;
+    contrl[3] = 2;
+    contrl[5] = 4200;
+    contrl[6] = handle;
+    vdi();                              /* vqt_real_extent() */
+    font_check(ptsout[0] == 100 && ptsout[2] == 100 + w && ptsout[1] > 100 && ptsout[5] < 100,
+               "vqt_real_extent() is not the box at the point");
+    intin[0] = 16;
+    vdi_op(106, 1, handle);             /* vst_effects(outline) */
+    intin[0] = 'A';
+    intin[1] = 'g';
+    ptsin[0] = 100;
+    ptsin[1] = 100;
+    contrl[0] = 240;
+    contrl[1] = 1;
+    contrl[3] = 2;
+    contrl[5] = 4200;
+    contrl[6] = handle;
+    vdi();
+    font_check(ptsout[0] == 99, "vqt_real_extent() leaves out the outline");
+    intin[0] = 0;
+    vdi_op(106, 1, handle);
+
+    /* v_ftext(), and v_ftext_offset() with an offset per character */
+    intin[0] = 'A';
+    intin[1] = 'g';
+    ptsin[0] = 20;
+    ptsin[1] = 40;
+    ptsin_op(241, 1, 2, handle);
+    for (i = 0; i < 2; i++)
+    {
+        ptsin[2 + 2 * i] = i * 30;
+        ptsin[3 + 2 * i] = 0;
+    }
+    ptsin_op(241, 3, 2, handle);
+
+    /* vqt_char_index(): through Unicode, and the font's glyphs */
+    font_check(char_index(handle, 0xe9, 2, 1) == 0x82 && char_index(handle, 0x82, 1, 2) == 0xe9,
+               "vqt_char_index() does not map e acute between Unicode and Atari");
+    font_check(char_index(handle, 10, 1, 1) == 0xffff, "vqt_char_index() maps a control code");
+    /* the direct index is BICS, as vst_map_mode(0) draws it */
+    font_check(char_index(handle, 'A', 2, 0) == 'A' - 32
+               && char_index(handle, char_index(handle, 'A', 2, 0), 0, 2) == 'A',
+               "vqt_char_index() does not take 'A' to BICS and back");
+    font_check(char_index(handle, 0x3b1, 2, 0) == 0xffff, "vqt_char_index() finds alpha in BICS");
+
+    check_maps(handle, 1);
+    check_kerning(handle);
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+    check_maps(handle, 0);
+
+    /* the system font doubled: the advance is the drawn one, as vqt_width()'s */
+    intin[0] = 20;
+    vdi_op(107, 1, handle);             /* vst_point(20): 10 points doubled */
+    w = width_of(handle, 'W');
+    intin[0] = 'W';
+    ptsin_op(247, 0, 1, handle);        /* vqt_advance() */
+    font_check(ptsout[0] == w && w >= 16, "vqt_advance() does not scale with the font");
+
+    /* scaled (to a height of 15): as wide in Unicode, in runs, as in the Atari set */
+    ptsin[0] = 0;
+    ptsin[1] = 15;
+    ptsin_op(12, 1, 0, handle);         /* vst_height(15) */
+    {
+        static short eacute[33];
+        short e_atari, extent[8];
+
+        for (i = 0; i < 33; i++)
+            eacute[i] = 0x82;
+        vqt_f_extent(handle, eacute, 33, extent);
+        e_atari = extent[2] - extent[0];
+        for (i = 0; i < 33; i++)
+            eacute[i] = 0xe9;
+        vst_map_mode(handle, MAP_UNICODE);
+        vqt_f_extent(handle, eacute, 33, extent);
+        vst_map_mode(handle, MAP_ATARI);
+        font_check(extent[2] - extent[0] == e_atari,
+                   "a scaled font is not as wide in Unicode runs as in the Atari set");
+    }
+    intin[0] = 10;
+    vdi_op(107, 1, handle);
+}
+
+/*
+ * Text in runs (#577) draws as the same text in one: "a" and e acute
+ * in Unicode (e acute in the size of page 0) as in the Atari set, also
+ * centred and rotated, where the runs must follow each other and the
+ * alignment take them all
+ */
+static void check_run_pixels(short handle, short id)
+{
+    struct ink atari, uni;
+    short angle, align;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    intin[0] = 18;
+    vdi_op(107, 1, handle);             /* vst_point(18) */
+    ink_r = 40;
+    ink_cx = ink_cy = ink_r + 4;
+    for (align = 0; align <= 1; align++)
+    {
+        intin[0] = align;
+        intin[1] = 0;
+        vdi_op(39, 2, handle);          /* vst_alignment() */
+        for (angle = 0; angle <= 900; angle += 900)
+        {
+            ink_text[0] = 'a';
+            ink_text[1] = 0x82;
+            ink_draw(handle, angle, 0, 1, 1, &atari);
+            map_mode(handle, 2);
+            ink_text[1] = 0xe9;
+            ink_draw(handle, angle, 0, 1, 1, &uni);
+            map_mode(handle, 1);
+            font_check(atari.count > 0 && uni.count == atari.count
+                       && uni.x0 == atari.x0 && uni.x1 == atari.x1
+                       && uni.y0 == atari.y0 && uni.y1 == atari.y1,
+                       "text in two runs is not drawn as in one");
+        }
+    }
+    intin[0] = 0;
+    intin[1] = 0;
+    vdi_op(39, 2, handle);
+
+    /* kerned, the V is drawn that much further left, the A where it was */
+    ink_text[0] = 'A';
+    ink_text[1] = 'V';
+    ink_draw(handle, 0, 0, 1, 1, &atari);
+    kern_mode(handle, 0, 1, 0);
+    if (intout[1])
+    {
+        long x;
+
+        intin[0] = 'A';
+        intin[1] = 'V';
+        vdi_op(235, 2, handle);         /* vqt_pairkern() */
+        memcpy(&x, &intout[0], sizeof(x));
+        ink_draw(handle, 0, 0, 1, 1, &uni);
+        font_check(uni.x0 == atari.x0 && uni.x1 - atari.x1 == (short)((x + 0x8000L) >> 16),
+                   "kerned text is not drawn where its width says");
+    }
+    kern_mode(handle, 0, 0, 0);
+
+    ink_text[0] = 'A';
+    ink_text[1] = 'g';
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
+/* clear the area around the origin and see what was drawn there */
+static void ink_clear(short handle)
+{
+    intin[0] = 0;
+    vdi_op(25, 1, handle);              /* vsf_color(0) */
+    intin[0] = 1;
+    vdi_op(23, 1, handle);              /* vsf_interior(solid) */
+    ptsin[0] = ink_cx - ink_r;
+    ptsin[1] = ink_cy - ink_r;
+    ptsin[2] = ink_cx + ink_r;
+    ptsin[3] = ink_cy + ink_r;
+    ptsin_op(114, 2, 0, handle);        /* vr_recfl() */
+}
+
+static int same_ink(const struct ink *a, const struct ink *b)
+{
+    return a->count > 0 && a->count == b->count && a->x0 == b->x0 && a->x1 == b->x1
+        && a->y0 == b->y0 && a->y1 == b->y1;
+}
+
+/*
+ * Unicode (#577), through the bindings: several pages in one string,
+ * and UTF-16's surrogates
+ */
+static void check_unicode(short handle, short id, int pixels)
+{
+    static const short text[6] = { 'A', 0xe9, 0x3b1, 0x416, 0x3c9, 'z' };
+    short off[12], adv[6], extent[8], dummy, i, sum;
+    struct ink whole, one_by_one;
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    vst_arbpt(handle, 14, &dummy, &dummy, &dummy, &dummy);
+    font_check(vst_map_mode(handle, MAP_UNICODE) == MAP_UNICODE,
+               "vst_map_mode() did not set Unicode");
+
+    /* as wide as the advances, and drawn as the characters one by one */
+    for (i = sum = 0; i < 6; i++)
+    {
+        vqt_advance(handle, text[i], &adv[i], &dummy, &dummy, &dummy);
+        sum += adv[i];
+        off[2 * i] = i ? adv[i - 1] : 0;
+        off[2 * i + 1] = 0;
+    }
+    vqt_f_extent(handle, text, 6, extent);
+    font_check(extent[2] - extent[0] == sum && sum > 0,
+               "Latin, Greek and Cyrillic are not as wide as their advances");
+    if (pixels)
+    {
+        ink_r = 60;
+        ink_cx = ink_cy = ink_r + 4;
+        ink_clear(handle);
+        v_ftext(handle, ink_cx - 50, ink_cy, text, 6);
+        ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &whole);
+        ink_clear(handle);
+        v_ftext_offset(handle, ink_cx - 50, ink_cy, text, 6, off);
+        ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                 &one_by_one);
+        font_check(same_ink(&whole, &one_by_one),
+                   "a string of several pages is not drawn as its characters one by one");
+
+        /* what vqt_char_index() gives as the direct index draws in mode 0 as asked */
+        {
+            static const short ag[2] = { 'A', 'g' };
+            short direct[2];
+
+            vst_map_mode(handle, MAP_ATARI);
+            ink_clear(handle);
+            v_ftext(handle, ink_cx - 50, ink_cy, ag, 2);
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &whole);
+            for (i = 0; i < 2; i++)
+                direct[i] = (short)vqt_char_index(handle, ag[i], CHARIDX_ASCII, CHARIDX_DIRECT);
+            vst_map_mode(handle, MAP_BITSTREAM);
+            ink_clear(handle);
+            v_ftext(handle, ink_cx - 50, ink_cy, direct, 2);
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                     &one_by_one);
+            vst_map_mode(handle, MAP_UNICODE);
+            font_check(same_ink(&whole, &one_by_one),
+                       "vqt_char_index()'s direct index does not draw in mode 0 as the character");
+        }
+    }
+
+    /* UTF-16: a lone surrogate is the replacement character, and not found alone */
+    {
+        static const short lone[3] = { 'a', (short)0xd800, 'b' };
+        static const short repl[3] = { 'a', (short)0xfffd, 'b' };
+        static const short pair[4] = { 'a', (short)0xd83d, (short)0xde00, 'b' };
+        short w_repl, padv;
+        long x, y;
+
+        vqt_f_extent(handle, repl, 3, extent);
+        w_repl = extent[2] - extent[0];
+        font_check(vst_map_mode(handle, MAP_UTF16) == MAP_UTF16, "vst_map_mode() did not set UTF-16");
+        vqt_f_extent(handle, lone, 3, extent);
+        font_check(extent[2] - extent[0] == w_repl, "a lone surrogate is not the replacement character");
+        v_ftext(handle, 20, 40, lone, 3);
+        vqt_advance32(handle, (short)0xd800, &x, &y);
+        font_check(x == 0 && vqt_char_index(handle, (short)0xd800, CHARIDX_UNICODE, CHARIDX_DIRECT) == 0xffff,
+                   "a surrogate alone is found");
+
+        /* the offset of a pair's second WORD is not used */
+        if (pixels)
+        {
+            vqt_f_extent(handle, pair, 2, extent);     /* 'a' and half a pair: 'a' and U+FFFD */
+            vqt_advance(handle, 'a', &adv[0], &dummy, &dummy, &dummy);
+            vqt_f_extent(handle, pair + 1, 2, extent);
+            padv = extent[2] - extent[0];               /* the pair */
+            off[0] = off[1] = 0;
+            off[2] = adv[0];
+            off[3] = 0;
+            off[4] = 77;                                /* not used */
+            off[5] = 33;
+            off[6] = padv;
+            off[7] = 0;
+            ink_clear(handle);
+            v_ftext(handle, ink_cx - 50, ink_cy, pair, 4);
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &whole);
+            ink_clear(handle);
+            v_ftext_offset(handle, ink_cx - 50, ink_cy, pair, 4, off);
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                     &one_by_one);
+            font_check(same_ink(&whole, &one_by_one),
+                       "the offset of a surrogate pair's second WORD is used");
+        }
+    }
+
+    if (pixels)
+    {
+        static const short ns[4] = { 'n', 'n', 'n', 'n' };
+        short tracks, pairs, adv_n;
+
+        vst_map_mode(handle, MAP_ATARI);
+        vqt_advance(handle, 'n', &adv_n, &dummy, &dummy, &dummy);
+
+        /* underlined, with offsets: as underlined without (and nothing overrun) */
+        for (i = 0; i < 4; i++)
+        {
+            off[2 * i] = i ? adv_n : 0;
+            off[2 * i + 1] = 0;
+        }
+        intin[0] = 8;
+        vdi_op(106, 1, handle);         /* vst_effects(underline) */
+        ink_clear(handle);
+        v_ftext(handle, ink_cx - 50, ink_cy, ns, 4);
+        ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &whole);
+        ink_clear(handle);
+        v_ftext_offset(handle, ink_cx - 50, ink_cy, ns, 4, off);
+        ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                 &one_by_one);
+        intin[0] = 0;
+        vdi_op(106, 1, handle);
+        font_check(same_ink(&whole, &one_by_one),
+                   "underlined v_ftext_offset() is not drawn as underlined v_ftext()");
+
+        /*
+         * the same in XOR mode after a polyline, which leaves its last
+         * point drawn: where two characters' underlines meet is drawn once
+         */
+        for (i = 0; i < 2; i++)
+        {
+            ink_clear(handle);
+            ptsin[0] = 0;
+            ptsin[1] = 0;
+            ptsin[2] = 1;
+            ptsin[3] = 0;
+            ptsin_op(6, 2, 0, handle);  /* v_pline(), outside the box */
+            intin[0] = 3;
+            vdi_op(32, 1, handle);      /* vswr_mode(XOR) */
+            intin[0] = 8;
+            vdi_op(106, 1, handle);     /* vst_effects(underline) */
+            if (i)
+                v_ftext_offset(handle, ink_cx - 50, ink_cy, ns, 4, off);
+            else
+                v_ftext(handle, ink_cx - 50, ink_cy, ns, 4);
+            intin[0] = 0;
+            vdi_op(106, 1, handle);
+            intin[0] = 1;
+            vdi_op(32, 1, handle);      /* back to replace mode */
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                     i ? &one_by_one : &whole);
+        }
+        font_check(same_ink(&whole, &one_by_one),
+                   "underlined v_ftext_offset() in XOR mode leaves gaps where characters meet");
+
+        /*
+         * Clipped, with a track offset that brings the characters back left:
+         * those that start right of the window move the pen all the same,
+         * so the ones that come back in are where they belong
+         */
+        for (i = 0; i < 4; i++)
+        {
+            off[2 * i] = i ? -adv_n : 0;
+            off[2 * i + 1] = 0;
+        }
+        ink_clear(handle);
+        ptsin[0] = ink_cx - ink_r;
+        ptsin[1] = ink_cy - ink_r;
+        ptsin[2] = ink_cx;
+        ptsin[3] = ink_cy + ink_r;
+        intin[0] = 1;
+        ptsin_op(129, 2, 1, handle);    /* vs_clip(): the left half */
+        vst_track_offset(handle, -2L * adv_n << 16, 0, &tracks, &pairs);
+        v_ftext(handle, ink_cx + adv_n / 2, ink_cy, ns, 4);
+        vst_track_offset(handle, 0, 0, &tracks, &pairs);
+        ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &whole);
+        ink_clear(handle);
+        v_ftext_offset(handle, ink_cx + adv_n / 2, ink_cy, ns, 4, off);
+        ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                 &one_by_one);
+        intin[0] = 0;
+        ptsin_op(129, 2, 1, handle);    /* no clipping */
+        font_check(same_ink(&whole, &one_by_one),
+                   "clipped text with a negative track offset is drawn out of place");
+
+        /*
+         * a track offset of minus half an advance draws each 'n' over the
+         * one before: in replace mode, the cell of one must not wipe out
+         * the ink of the other, so it is as drawn transparently
+         */
+        for (i = 0; i < 2; i++)
+        {
+            ink_clear(handle);
+            intin[0] = i ? 2 : 1;
+            vdi_op(32, 1, handle);      /* vswr_mode(replace, then transparent) */
+            vst_track_offset(handle, -(long)adv_n << 15, 0, &tracks, &pairs);
+            v_ftext(handle, ink_cx - 50, ink_cy, ns, 4);
+            vst_track_offset(handle, 0, 0, &tracks, &pairs);
+            intin[0] = 1;
+            vdi_op(32, 1, handle);
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                     i ? &one_by_one : &whole);
+        }
+        font_check(same_ink(&whole, &one_by_one),
+                   "in replace mode, a character drawn over another wipes out its ink");
+
+        /* the same with offsets one by one, as with the track offset, in replace mode */
+        for (i = 0; i < 4; i++)
+        {
+            off[2 * i] = i ? adv_n - adv_n / 2 : 0;
+            off[2 * i + 1] = 0;
+        }
+        for (i = 0; i < 2; i++)
+        {
+            ink_clear(handle);
+            if (i)
+                v_ftext_offset(handle, ink_cx - 50, ink_cy, ns, 4, off);
+            else
+            {
+                vst_track_offset(handle, -(long)(adv_n / 2) << 16, 0, &tracks, &pairs);
+                v_ftext(handle, ink_cx - 50, ink_cy, ns, 4);
+                vst_track_offset(handle, 0, 0, &tracks, &pairs);
+            }
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                     i ? &one_by_one : &whole);
+        }
+        font_check(same_ink(&whole, &one_by_one),
+                   "in replace mode, v_ftext_offset() wipes out a character it draws over");
+
+        /* justified in BICS, whose blank is 0: as in the Atari set */
+        {
+            static const short atari_txt[3] = { 'a', ' ', 'b' };
+            static const short bics_txt[3] = { 'a' - 32, 0, 'b' - 32 };
+            short m;
+
+            for (m = 0; m < 2; m++)
+            {
+                vst_map_mode(handle, m ? MAP_BITSTREAM : MAP_ATARI);
+                ink_clear(handle);
+                intin[0] = 1;           /* between the words */
+                intin[1] = 0;
+                memcpy(&intin[2], m ? bics_txt : atari_txt, 3 * sizeof(short));
+                ptsin[0] = ink_cx - 50;
+                ptsin[1] = ink_cy;
+                ptsin[2] = 100;
+                ptsin[3] = 0;
+                contrl[0] = 11;
+                contrl[1] = 2;
+                contrl[3] = 5;
+                contrl[5] = 10;
+                contrl[6] = handle;
+                vdi();                  /* v_justified() */
+                ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                         m ? &one_by_one : &whole);
+            }
+            vst_map_mode(handle, MAP_ATARI);
+            font_check(same_ink(&whole, &one_by_one), "justified BICS text does not widen its blanks");
+
+            /* U+0420 is 0x20 in its page, but no blank: one word space, within the width */
+            {
+                static const short er_txt[4] = { 'A', 0x420, ' ', 'B' };
+
+                vst_map_mode(handle, MAP_UNICODE);
+                ink_clear(handle);
+                intin[0] = 1;
+                intin[1] = 0;
+                memcpy(&intin[2], er_txt, 4 * sizeof(short));
+                ptsin[0] = ink_cx - 50;
+                ptsin[1] = ink_cy;
+                ptsin[2] = 100;
+                ptsin[3] = 0;
+                contrl[0] = 11;
+                contrl[1] = 2;
+                contrl[3] = 6;
+                contrl[5] = 10;
+                contrl[6] = handle;
+                vdi();                  /* v_justified() */
+                ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r,
+                         &whole);
+                vst_map_mode(handle, MAP_ATARI);
+                font_check(whole.count > 0 && whole.x1 <= ink_cx - 50 + 100 + 2,
+                           "a Unicode page's character 0x20 gets a word space");
+            }
+        }
+
+        /* underlined with a track offset: one line, unbroken */
+        {
+            short y, x, gaps = 0;
+
+            intin[0] = 8;
+            vdi_op(106, 1, handle);     /* vst_effects(underline) */
+            vst_track_offset(handle, 4L << 16, 0, &tracks, &pairs);
+            ink_clear(handle);
+            v_ftext(handle, ink_cx - 50, ink_cy, ns, 4);
+            vst_track_offset(handle, 0, 0, &tracks, &pairs);
+            intin[0] = 0;
+            vdi_op(106, 1, handle);
+            ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &whole);
+            y = whole.y1;               /* 'n' has no descender: the underline is lowest */
+            for (x = whole.x0; whole.count && x <= whole.x1; x++)
+            {
+                ptsin[0] = x;
+                ptsin[1] = y;
+                ptsin_op(105, 1, 0, handle);    /* v_get_pixel() */
+                if (intout[1] == 0)
+                    gaps++;
+            }
+            font_check(whole.count > 0 && gaps == 0, "the underline of text in runs has gaps");
+        }
+    }
+
+    vst_map_mode(handle, MAP_ATARI);
+    intin[0] = 1;
+    vdi_op(21, 1, handle);              /* back to the system font */
+}
+
+/* the row with the most ink in the area, and the leftmost ink of a row */
+static short ink_row_max(short handle, short x0, short y0, short x1, short y1)
+{
+    short x, y, best = -1, best_n = -1, n;
+
+    for (y = y0; y <= y1; y++)
+    {
+        for (x = x0, n = 0; x <= x1; x++)
+        {
+            ptsin[0] = x;
+            ptsin[1] = y;
+            ptsin_op(105, 1, 0, handle);    /* v_get_pixel() */
+            n += intout[1] != 0;
+        }
+        if (n > best_n)
+        {
+            best_n = n;
+            best = y;
+        }
+    }
+    return best;
+}
+
+static short ink_left(short handle, short x0, short x1, short y)
+{
+    short x;
+
+    for (x = x0; x <= x1; x++)
+    {
+        ptsin[0] = x;
+        ptsin[1] = y;
+        ptsin_op(105, 1, 0, handle);    /* v_get_pixel() */
+        if (intout[1])
+            return x;
+    }
+    return -1;
+}
+
+/*
+ * Shapes (#577): vst_skew() leans to the left when positive, a negative
+ * height mirrors upside down, and centred text whose track offset makes
+ * it negatively wide stays centred
+ */
+static void check_shapes(short handle, short id)
+{
+    struct ink ink;
+    short dummy, top_x, bottom_x, row_normal, row_mirrored, adv_n, tracks, pairs;
+    static const short l[1] = { 'l' };
+    static const short big_l[1] = { 'L' };
+    static const short ns[4] = { 'n', 'n', 'n', 'n' };
+
+    intin[0] = id;
+    vdi_op(21, 1, handle);              /* vst_font() */
+    vst_arbpt(handle, 48, &dummy, &dummy, &dummy, &dummy);
+    ink_r = 40;
+    ink_cx = ink_cy = ink_r + 4;
+
+    /* 'l', slanted by 20 degrees: its top left of its bottom */
+    vst_skew(handle, 200);
+    ink_clear(handle);
+    v_ftext(handle, ink_cx - 10, ink_cy + 20, l, 1);
+    ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &ink);
+    vst_skew(handle, 0);
+    top_x = ink_left(handle, ink.x0, ink.x1, ink.y0 + 1);
+    bottom_x = ink_left(handle, ink.x0, ink.x1, ink.y1 - 1);
+    font_check(ink.count > 0 && top_x >= 0 && bottom_x >= 0 && top_x < bottom_x,
+               "vst_skew() with a positive angle does not lean to the left");
+
+    /* 'L' upside down: its bar at the top */
+    ink_clear(handle);
+    v_ftext(handle, ink_cx - 10, ink_cy + 20, big_l, 1);
+    ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &ink);
+    row_normal = ink_row_max(handle, ink.x0, ink.y0, ink.x1, ink.y1);
+    vst_arbpt32(handle, -(48L << 16), &dummy, &dummy, &dummy, &dummy);
+    ink_clear(handle);
+    v_ftext(handle, ink_cx - 10, ink_cy + 20, big_l, 1);
+    ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &ink);
+    row_mirrored = ink_row_max(handle, ink.x0, ink.y0, ink.x1, ink.y1);
+    vst_arbpt(handle, 18, &dummy, &dummy, &dummy, &dummy);
+    font_check(row_normal > ink.y0 + (ink.y1 - ink.y0) / 2 && row_mirrored < ink.y0 + (ink.y1 - ink.y0) / 2,
+               "a negative height does not turn the characters upside down");
+
+    /* centred, with a track offset of minus two advances: still about the point */
+    vqt_advance(handle, 'n', &adv_n, &dummy, &dummy, &dummy);
+    intin[0] = 1;
+    intin[1] = 0;
+    vdi_op(39, 2, handle);              /* vst_alignment(centre, baseline) */
+    vst_track_offset(handle, -2L * adv_n << 16, 0, &tracks, &pairs);
+    ink_clear(handle);
+    v_ftext(handle, ink_cx, ink_cy, ns, 4);
+    vst_track_offset(handle, 0, 0, &tracks, &pairs);
+    intin[0] = 0;
+    intin[1] = 0;
+    vdi_op(39, 2, handle);
+    ink_scan(handle, ink_cx - ink_r, ink_cy - ink_r, ink_cx + ink_r, ink_cy + ink_r, &ink);
+    font_check(ink.count > 0 && (ink.x0 + ink.x1) / 2 >= ink_cx - adv_n
+               && (ink.x0 + ink.x1) / 2 <= ink_cx + adv_n,
+               "centred text with a negative width is not centred");
+
     intin[0] = 1;
     vdi_op(21, 1, handle);              /* back to the system font */
 }
@@ -700,6 +2005,22 @@ static void check_fonts(void)
     Dsetdrv(drive ? 0 : 1);
     if (fonts_loaded > 0)
         check_sizes(handle, system_fonts);
+    if (fonts_loaded > 0)
+    {
+        check_speedo(handle, system_fonts);
+        intin[0] = system_fonts + 1;
+        vdi_op(130, 1, handle);         /* vqt_name() */
+        check_metrics(handle, intout[0]);
+        intin[0] = system_fonts + 1;
+        vdi_op(130, 1, handle);         /* vqt_name() */
+        check_sizes_more(handle, intout[0]);
+        intin[0] = system_fonts + 1;
+        vdi_op(130, 1, handle);         /* vqt_name() */
+        check_two_workstations(handle, intout[0]);
+        intin[0] = system_fonts + 1;
+        vdi_op(130, 1, handle);         /* vqt_name() */
+        check_cache_bound(handle, intout[0]);
+    }
     for (i = 1; i <= fonts_loaded; i++)
     {
         intin[0] = system_fonts + i;
@@ -717,7 +2038,12 @@ static void check_fonts(void)
         check_drawing(handle, id);
         check_alignment(handle, id);
         if (i == 1)
+        {
             check_large(handle, id);
+            check_run_pixels(handle, id);
+            check_unicode(handle, id, 1);
+            check_shapes(handle, id);
+        }
     }
 
     Dsetdrv(drive);
@@ -820,7 +2146,9 @@ void test_gdos_answer(void)
         pnum(fonts_loaded);
         conws(" scalable fonts, ");
         pnum(monospaced_fonts);
-        conws(" monospaced");
+        conws(" monospaced, ");
+        pnum(fonts_kerned);
+        conws(" kerned");
         if (fonts_loaded > 0 && !pixels_checked)
             conws(", pixels not readable here");
         conws(") ");

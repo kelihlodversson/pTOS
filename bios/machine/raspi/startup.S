@@ -9,6 +9,7 @@
 
 #include "asmdefs.h"
 #include "header.h"
+#include "arch/arm/fpusave.h"
 
 #if defined(TARGET_RPI4)
 #define CORE0_MBOX3_SET             0xff80008C
@@ -361,8 +362,10 @@ C_SYM(arm_dispatch_undef):
     moveq  r0, #0x28       // VEC_LINEA - we use e7f...f. as the lineA emulation
     movne  r0, #0x10       // VEC_ILLEGAL - other illegal instructions will simulate an illegal instruction vector
     mov    r1, sp          // Stack pointer points to the exception frame
+    FPU_PUSH_SCRATCH ip    // the FPU registers the handler may change, below the frame
     ldr    ip, [r0]        // load handler address the illegal instruction will be passed in as the first argument
     blx ip                 // jump to it. The signature is void (*)(int type, exception_frame_t* frame, u32 instruction, u32 pc)
+    FPU_POP_SCRATCH ip
 
     add    sp, #4*15
     ldmfd  sp, {r0-r14}^   /* restore user registers */
@@ -436,7 +439,9 @@ C_SYM(arm_dispatch_irq):
     srsfd  sp!, #0x13      /* push lr and SPSR onto supervisor stack */
     cps    #0x13           /* switch to supervisor mode */
     stmfd  sp!, {r0-r3, ip, lr} /* store registers not saved by the C handler (link register is important in case the interrupt interrupted while the processor was in SVC mode.)*/
+    FPU_PUSH_ALL r0        /* the interrupted code's FPU state */
     bl     C_SYM(raspi_int_handler)
+    FPU_POP_ALL r0
     ldmfd  sp!, {r0-r3, ip, lr}
     rfefd  sp!             /* load pc and CPSR from stack */
 
