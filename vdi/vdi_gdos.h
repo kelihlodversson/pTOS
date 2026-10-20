@@ -47,6 +47,7 @@ typedef struct
     UWORD glyphs;                   /* how many it has */
     UWORD kern_pairs;               /* pairs in its 'kern' table, for vst_kern() */
     UBYTE style;                    /* where the style starts in name, 0 if regular */
+    UBYTE face;                     /* which face of its file: 0, but in a .TTC */
     char name[FONT_NAME_LEN + 1];   /* "Family Style", as vqt_name() gives it */
     char file[14];                  /* its 8.3 file name in CONF_VDI_FONT_DIR */
 } VDI_SFONT;
@@ -57,6 +58,15 @@ extern VDI_SFONT *vdi_sfonts;
 
 /* the path of a scalable font's file (in a buffer of vdi_gdos.c's) */
 const char *vdi_sfont_path(WORD index);
+
+/* which face of that file it is: the index FT_New_Face() takes */
+LONG vdi_sfont_face(WORD index);
+
+/*
+ * Look for the fonts again if the scan at boot found none (the drive was
+ * not there, say): nobody can have a font of the empty list to lose
+ */
+void vdi_sfont_rescan(void);
 
 /*
  * Sizes of the scalable fonts (vdi/vdi_sfont.c): each is a Fonthead with

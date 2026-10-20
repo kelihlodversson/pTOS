@@ -173,13 +173,18 @@ start_vm() {
     mkdir -p "$disk"
     cp -R "$top/test-dir/." "$disk/"
     # scalable fonts for the built-in GDOS (gdos_answer), when the host
-    # has them: TrueType (DejaVu, one of them monospaced), OpenType with
-    # CFF outlines (Inter), one whose ascender is taller than its em
-    # (Loma) and a monospaced one whose combining marks have no width
-    # (Liberation Mono), under 8.3 names
-    for f in /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:DEJAVU.TTF \
-             /usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf:DEJAVUSF.TTF \
-             /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf:DEJAVUMO.TTF \
+    # has them: the default set of the release images (DejaVu Sans, Serif
+    # and Sans Mono, regular and bold: the names tools/fetch-fonts.sh
+    # gives them), OpenType with CFF outlines (Inter), one whose ascender
+    # is taller than its em (Loma) and a monospaced one whose combining
+    # marks have no width (Liberation Mono), under 8.3 names
+    dv=/usr/share/fonts/truetype/dejavu
+    for f in $dv/DejaVuSans.ttf:DJVUSANS.TTF \
+             $dv/DejaVuSans-Bold.ttf:DJVUSANB.TTF \
+             $dv/DejaVuSerif.ttf:DJVUSERF.TTF \
+             $dv/DejaVuSerif-Bold.ttf:DJVUSERB.TTF \
+             $dv/DejaVuSansMono.ttf:DJVUMONO.TTF \
+             $dv/DejaVuSansMono-Bold.ttf:DJVUMONB.TTF \
              /usr/share/fonts/opentype/inter/Inter-Regular.otf:INTER.OTF \
              /usr/share/fonts/opentype/tlwg/Loma.otf:LOMA.OTF \
              /usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf:LIBMONO.TTF; do
@@ -188,6 +193,21 @@ start_vm() {
             cp "${f%%:*}" "$disk/GEMSYS/FONTS/${f##*:}"
         fi
     done
+    # and a TrueType collection of the regular and bold Liberation Sans
+    # (fontTools), whose two faces are fonts of their own
+    lib=/usr/share/fonts/truetype/liberation
+    if [ -f "$lib/LiberationSans-Regular.ttf" ] && [ -f "$lib/LiberationSans-Bold.ttf" ]; then
+        mkdir -p "$disk/GEMSYS/FONTS"
+        python3 -c 'import sys
+from fontTools.ttLib import TTFont
+from fontTools.ttLib.ttCollection import TTCollection
+c = TTCollection()
+c.fonts = [TTFont(f) for f in sys.argv[2:]]
+c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
+            "$lib/LiberationSans-Regular.ttf" "$lib/LiberationSans-Bold.ttf" 2>/dev/null \
+            || { rm -f "$disk/GEMSYS/FONTS/LIBSANS.TTC"
+                 echo "$0: no TrueType collection for the font tests (python3 fontTools missing?)" >&2; }
+    fi
     case $machine in
     virt-arm | virt-m68k)
         if [ "$machine" = virt-arm ]; then

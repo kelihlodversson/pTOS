@@ -44,6 +44,16 @@ The following optional files are also supplied:
 Note that the emuicon.rsc file format differs from deskicon.rsc used by later
 versions of the Atari TOS desktop.
 
+## Fonts
+
+The card comes with DejaVu Sans, Serif and Sans Mono (regular and bold) in
+the GEMSYS\FONTS folder. Applications that use outline fonts (they look
+for a GDOS, which pTOS provides) find them without any setting. To add
+more, copy TrueType (.TTF), OpenType (.OTF) or TrueType collection (.TTC)
+files with 8.3 names to that folder and restart. Their licence is in
+GEMSYS\FONTS\LICENSE.TXT. Without the folder, only the bitmap fonts are
+available.
+
 These images have been built using:
 make rpi1_defconfig && make
 (and likewise for rpi2, rpi3 and rpi4)

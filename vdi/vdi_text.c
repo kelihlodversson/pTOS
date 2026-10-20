@@ -2510,8 +2510,17 @@ void vdi_vst_load_fonts(Vwk * vwk)
             INTOUT[0] = 0;
         else
         {
-            vwk->sfonts_loaded = TRUE;
-            vwk->num_fonts += vdi_sfont_count;
+            vdi_sfont_rescan();     /* if the boot-time scan found none */
+            /*
+             * Loaded only if there are fonts to add: a workstation that
+             * found none can ask again, once they are there, and cannot
+             * see a list that its count does not include.
+             */
+            if (vdi_sfont_count)
+            {
+                vwk->sfonts_loaded = TRUE;
+                vwk->num_fonts += vdi_sfont_count;
+            }
             INTOUT[0] = vdi_sfont_count;
         }
         return;

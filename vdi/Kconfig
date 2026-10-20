@@ -174,10 +174,13 @@ config CONF_VDI_FONT_DIR
 	depends on CONF_WITH_VDI_SCALABLE_FONTS
 	default "\\GEMSYS\\FONTS"
 	help
-	  Where the built-in GDOS looks for TrueType (*.TTF) and OpenType
-	  (*.OTF) fonts, once the AUTO folder has run.  Without a drive
-	  letter, it is on the boot drive.  The fonts found are what
-	  vst_load_fonts() adds to a workstation, as SpeedoGDOS does.
+	  Where the built-in GDOS looks for TrueType (*.TTF), OpenType
+	  (*.OTF) and TrueType collection (*.TTC) fonts, once the AUTO
+	  folder has run.  Without a drive letter, it is on the boot drive.
+	  The fonts found are what vst_load_fonts() adds to a workstation,
+	  as SpeedoGDOS does.  A missing or empty directory just leaves
+	  the bitmap fonts.  The release images put DejaVu fonts here
+	  (tools/fetch-fonts.sh).
 
 config CONF_WITH_VDI_VERTLINE
 	bool "VDI vertical line drawing speedup"

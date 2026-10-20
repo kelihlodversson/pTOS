@@ -252,9 +252,9 @@ With scalable fonts, pTOS also has a GDOS built in, which applications
 recognise as SpeedoGDOS (vdi/vdi_gdos.c).  Once the AUTO folder has run,
 vq_gdos() answers '_FSM' and an FSMC cookie with the magic '_SPD' and
 version 4.00 and quality -1 (as fVDI's SpeedoGDOS mode) is installed
-(not on x86-64, where programs cannot call the VDI).  vst_load_fonts() then adds the TrueType (*.TTF) and OpenType (*.OTF)
-fonts of CONF_VDI_FONT_DIR (\GEMSYS\FONTS on the boot drive by default) to
-a workstation, and vqt_name() lists them after the system fonts with the
+(not on x86-64, where programs cannot call the VDI).  vst_load_fonts() then adds the TrueType (*.TTF), OpenType (*.OTF)
+and TrueType collection (*.TTC, each of its faces) fonts of CONF_VDI_FONT_DIR
+(\GEMSYS\FONTS on the boot drive by default) to a workstation, and vqt_name() lists them after the system fonts with the
 outline flag of SpeedoGDOS (intout[33] = 1).  Their font ids, from 10000
 on, come from a hash of the font's name, so they stay the same from boot
 to boot.  A GDOS loaded from the AUTO folder (NVDI, SpeedoGDOS, FontGDOS,
@@ -262,6 +262,29 @@ to boot.  A GDOS loaded from the AUTO folder (NVDI, SpeedoGDOS, FontGDOS,
 is there, the built-in GDOS stays out altogether and that GDOS works as
 before.  GEM bitmap fonts (*.FNT, from ASSIGN.SYS) are left to such a
 GDOS: the built-in one does not load them.
+
+The font directory is scanned once, right after the AUTO folder has run.
+A directory that is missing or empty gives a system with the bitmap fonts
+only, and no error; if the scan found no font, the first vst_load_fonts()
+looks again (for a drive that was not there at boot).  To add fonts, copy
+the files to that directory under 8.3 names (the FAT volumes are read
+without long names) and restart; to look elsewhere, change "Directory of
+the scalable fonts" (CONF_VDI_FONT_DIR) in make menuconfig, with a drive
+letter if the directory is not on the boot drive.  The style Regular,
+Book, Roman and Normal is left out of a font's name ("DejaVu Sans", not
+"DejaVu Sans Book").
+
+The release images of the targets with scalable fonts (the Raspberry Pi SD
+card image and archive) come with DejaVu Sans, Serif and Sans Mono, each
+regular and bold, in \GEMSYS\FONTS as DJVUSANS.TTF, DJVUSANB.TTF,
+DJVUSERF.TTF, DJVUSERB.TTF, DJVUMONO.TTF and DJVUMONB.TTF, with their
+licence in LICENSE.TXT beside them.  The fonts are not part of the source
+tree: tools/fetch-fonts.sh <dir> downloads them from the pinned DejaVu 2.37
+release, checks them against checksums pinned in the script, and writes
+them under these names (fonts/dejavu/LICENSE is the licence).  For an image
+of your own, run it on the GEMSYS/FONTS directory of the files that go
+into it.  The regression tests' disk gets the host's copies of DejaVu
+under the same names (tools/run-regression-tests.sh).
 
 vst_font() then selects a scalable font, and vst_point() and vst_height()
 set exactly the size asked for.  Each size is rendered whole by FreeType,

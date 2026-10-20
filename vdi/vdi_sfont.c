@@ -315,7 +315,7 @@ static BOOL sf_open(WORD index)
         FT_Done_Face(sf_face);
         sf_face = NULL;
     }
-    if (FT_New_Face(vdi_ft_library, vdi_sfont_path(index), 0, &sf_face))
+    if (FT_New_Face(vdi_ft_library, vdi_sfont_path(index), vdi_sfont_face(index), &sf_face))
     {
         sf_face = NULL;
         return FALSE;

@@ -1934,6 +1934,103 @@ static void check_shapes(short handle, short id)
     vdi_op(21, 1, handle);              /* back to the system font */
 }
 
+/* the place (1 on) among the fonts of the font with that name, or 0 */
+static short font_named(short handle, short count, const char *name)
+{
+    short i, n;
+    char buf[33];
+
+    for (i = 1; i <= count; i++)
+    {
+        intin[0] = i;
+        vdi_op(130, 1, handle);         /* vqt_name() */
+        for (n = 0; n < 32 && intout[n + 1]; n++)
+            buf[n] = (char)intout[n + 1];
+        buf[n] = '\0';
+        if (str_eq(buf, name))
+            return i;
+    }
+
+    return 0;
+}
+
+/* whether the file is in the font directory of the boot drive's root */
+static int font_file_there(const char *name)
+{
+    char path[40] = "\\GEMSYS\\FONTS\\";
+
+    strcat(path, name);
+
+    return Fsfirst(path, 0) == 0;
+}
+
+/* the end of the first file name of the font at that place, if it is suffix */
+static int font_in_file(short handle, short place, const char *suffix)
+{
+    struct xfnt_info *p = &xfnt;
+    long len, n = strlen(suffix);
+
+    xfnt.size = sizeof(xfnt);
+    xfnt.file_name1[0] = '\0';
+    intin[0] = 0x0008;                  /* the first file name */
+    intin[1] = 0;
+    intin[2] = place;
+    memcpy(&intin[3], &p, sizeof(p));
+    vdi_op(229, 3 + sizeof(p) / 2, handle);
+    len = strlen(xfnt.file_name1);
+
+    return len >= n && str_eq(xfnt.file_name1 + len - n, suffix);
+}
+
+/*
+ * The fonts of the directory (#578), when they are there: the default set
+ * (DejaVu Sans, Serif and Sans Mono, each in regular and bold, from
+ * tools/fetch-fonts.sh or the host's own copies under the same names), and
+ * the faces of a TrueType collection (LIBSANS.TTC, the regular and the
+ * bold face of Liberation Sans, made by tools/run-regression-tests.sh),
+ * each of which is a font of its own.
+ */
+static void check_font_set(short handle, short count)
+{
+    static const char *const dejavu[] =
+    {
+        "DejaVu Sans", "DejaVu Sans Bold", "DejaVu Sans Mono", "DejaVu Sans Mono Bold",
+        "DejaVu Serif", "DejaVu Serif Bold"
+    };
+    short i, regular, bold;
+
+    /* the files are there if the test disk has them: then so are the fonts */
+    if (font_file_there("DJVUSANS.TTF"))
+    {
+        for (i = 0; i < 6; i++)
+            font_check(font_named(handle, count, dejavu[i]) != 0,
+                       "a font of the default set is not offered");
+    }
+
+    if (font_file_there("LIBSANS.TTC"))
+    {
+        regular = font_named(handle, count, "Liberation Sans");
+        bold = font_named(handle, count, "Liberation Sans Bold");
+        font_check(regular != 0, "the first face of a TrueType collection is not offered");
+        font_check(bold != 0 && bold != regular,
+                   "the second face of a TrueType collection is not offered");
+        font_check(regular && font_in_file(handle, regular, "LIBSANS.TTC"),
+                   "the first face of a TrueType collection is not from its file");
+        if (bold)
+        {
+            font_check(font_in_file(handle, bold, "LIBSANS.TTC"),
+                       "the second face of a TrueType collection is not from its file");
+            intin[0] = bold;
+            vdi_op(130, 1, handle);     /* vqt_name() */
+            intin[0] = intout[0];
+            vdi_op(21, 1, handle);      /* vst_font() */
+            font_check(intout[0] == intin[0], "the bold face of a collection cannot be selected");
+            intin[0] = 1;
+            vdi_op(21, 1, handle);      /* back to the system font */
+        }
+    }
+}
+
 static void check_fonts(void)
 {
     short handle, system_fonts, i, aes_there, drive, id;
@@ -1995,6 +2092,8 @@ static void check_fonts(void)
             font_check(intout[0] >= 10000, "a scalable font's id is below 10000");
         }
     }
+
+    check_font_set(handle, system_fonts + fonts_loaded);
 
     /*
      * The font files are opened again as fonts and sizes are selected,
