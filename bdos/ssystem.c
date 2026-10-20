@@ -49,7 +49,7 @@ extern volatile LONG vbclock;
 typedef struct {
     ULONG addr;
     void *ptr;
-    BOOL isptr;         /* the variable holds an address: of the kernel, or of the screen */
+    BOOL isptr;         /* the variable holds an address in the kernel's memory */
 } SVAR;
 
 #define SVAR_ENTRY(a, sym) { (a), (void *)&(sym), FALSE }
@@ -59,9 +59,9 @@ static const SVAR lval_table[] = {
     SVAR_PTR(0x400, etv_timer),
     SVAR_PTR(0x404, etv_critic),
     SVAR_PTR(0x408, etv_term),
-    SVAR_ENTRY(0x42e, phystop),
-    SVAR_ENTRY(0x432, membot),
-    SVAR_ENTRY(0x436, memtop),
+    SVAR_PTR(0x42e, phystop),
+    SVAR_PTR(0x432, membot),
+    SVAR_PTR(0x436, memtop),
     SVAR_PTR(0x44e, v_bas_ad),
     SVAR_PTR(0x45a, colorptr),
     SVAR_PTR(0x456, vblqueue),
@@ -130,10 +130,10 @@ static void *sval_lookup(const SVAR *table, int count, ULONG addr)
 /*
  * Whether the system variable at the TOS address `addr` holds an address a
  * user process must not be told (#563): all of them are the kernel's (vectors,
- * hooks, buffers, the OS header), but for the screen's, which is the process's
- * own where the architecture maps the screen into it.  A process asks for
- * the OS version and the build through S_OSVERSION and S_OSBUILDDATE instead
- * of reading the OS header.
+ * hooks, buffers, the OS header, the screen and the bounds of the memory
+ * pool).  A process asks for the OS version and the build through S_OSVERSION
+ * and S_OSBUILDDATE instead of reading the OS header, and for the memory
+ * through S_MEMINFO.
  */
 static BOOL sval_is_hidden(const SVAR *table, int count, ULONG addr)
 {
@@ -141,7 +141,7 @@ static BOOL sval_is_hidden(const SVAR *table, int count, ULONG addr)
 
     for (i = 0; i < count; i++)
         if (table[i].addr == addr)
-            return table[i].isptr && !(ARCH_USER_MAPS_SCREEN && addr == 0x44e);
+            return table[i].isptr;
 
     return FALSE;
 }

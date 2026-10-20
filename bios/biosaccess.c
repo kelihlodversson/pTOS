@@ -163,11 +163,9 @@ long xbios_user_result(WORD fn, long r)
     switch (fn) {
     case 0x20:                      /* Dosound(): the table that was playing */
         return user_pointer(r);
-#if !ARCH_USER_MAPS_SCREEN
     case 0x02:                      /* Physbase() */
     case 0x03:                      /* Logbase() */
         return 0;                   /* the screen is not in the process */
-#endif
     default:
         return r;
     }

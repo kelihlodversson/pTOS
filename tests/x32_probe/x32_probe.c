@@ -583,6 +583,12 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys(GEMDOS, 0x154, 0x0a, 0x4f2, 0) != 0) bad |= 4096;     /* _sysbase */
         if (sys(GEMDOS, 0x154, 0x0a, 0x400, 0) != 0) bad |= 4096;     /* etv_timer */
         if (sys(GEMDOS, 0x154, 0x0a, 0x4c6, 0) != 0) bad |= 4096;     /* dskbufp */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x42e, 0) != 0) bad |= 4096;     /* phystop */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x432, 0) != 0) bad |= 4096;     /* membot */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x436, 0) != 0) bad |= 4096;     /* memtop */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x44e, 0) != 0) bad |= 4096;     /* v_bas_ad */
+        if (sys(XBIOS, 2, 0, 0, 0) != 0) bad |= 4096;                 /* Physbase */
+        if (sys(XBIOS, 3, 0, 0, 0) != 0) bad |= 4096;                 /* Logbase */
         if (sys(GEMDOS, 0x154, 0x0a, 0x4ba, 0) == EINVFN) bad |= 4096;  /* _hz_200 is there */
         if (sys(GEMDOS, 0x154, 0x0a, 0x555, 0) != EINVFN) bad |= 4096;  /* and 0x555 is not */
         /* (S_GETCOOKIE of FRB_, MCF_, __NF, XHDI, SCSI and _5MS: not found) */

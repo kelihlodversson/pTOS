@@ -63,10 +63,11 @@ BIOS (trap 13), bios/biosaccess.c
 
 XBIOS (trap 14), bios/biosaccess.c
 
-  Physbase(), Logbase() hide where the screen is not in the process
-                        (ARCH_USER_MAPS_SCREEN not set: ARM and m68k, the
-                        decision of #561): 0.  x32 maps the framebuffer into
-                        the process and returns its address.
+  Physbase(), Logbase() hide: 0.  The screen is not in the process (the
+                        decision of #561); x32 maps its framebuffer into
+                        every address space supervisor-only, so the
+                        address it returned (#351) could not be used there
+                        either.
   Iorec(dev)            refuse (#426): the record is the kernel's input
                         ring buffer, with the kernel's pointers in it
   Kbdvbase()            refuse (#426): the vectors are kernel routines
@@ -87,14 +88,15 @@ GEMDOS (trap 1), bdos/ssystem.c
                         etv_ and hdv_ vectors, colorptr, vblqueue, savptr,
                         dskbufp, the OS header sysbase, end_os, exec_os,
                         the print and AUX vectors, pun_ptr, the bell and
-                        key click hooks, and the screen v_bas_ad where
-                        ARCH_USER_MAPS_SCREEN is not set) read as 0.
-                        Marked SVAR_PTR in the table, so a new pointer
-                        variable has to say so.  The scalars (hz_200,
-                        frclock, phystop, drvbits, ...) are unchanged.
-                        phystop, membot and memtop are physical addresses
-                        of memory (at most 1 GiB), not pointers into the
-                        kernel's address space.
+                        key click hooks, the screen v_bas_ad, and the
+                        bounds of the memory pool phystop, membot and
+                        memtop, which are kernel addresses: x32's are the
+                        ends of kernel arrays, the MMU ones are in the
+                        physical-memory window) read as 0.  Marked
+                        SVAR_PTR in the table, so a new pointer variable
+                        has to say so.  S_MEMINFO says how much memory
+                        there is.  The scalars (hz_200, frclock, drvbits,
+                        ...) are unchanged.
   Ssystem(S_GETCOOKIE, tag)
                         hide the cookies whose value is a kernel pointer
                         (FRB_, MCF_, __NF, XHDI, SCSI, _5MS): "not found".
@@ -156,7 +158,9 @@ other way round:
                                the query (-1), so the tables of the kernel
                                itself (the bell) would have been taken for a
                                query as soon as the kernel is in the
-                               negative half.  Fixed: only -1 asks.  This
+                               negative half.  Fixed with CONF_WITH_USER_
+                               ASPACE: only -1 asks.  Without it, any
+                               negative address still asks, as in TOS.  This
                                is the one place that was wrong.
   bios/bios.c, bios/memory2.c  an error test of Pexec()'s result is already
                                explicit about the range of the codes
