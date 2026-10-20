@@ -67,7 +67,7 @@ void font_init(void)
  * A scalable font has taken the place of the system fonts' forms (#600):
  * the headers are those of the ring, and of the open workstations, still;
  * what the console has copied from the default one is not.  The cells are
- * the same size.
+ * the same size; so are the Line-A font table's.
  */
 void font_forms_changed(void)
 {
@@ -76,6 +76,10 @@ void font_forms_changed(void)
     linea_vars.v_fnt_wr = font->form_width;
     linea_vars.v_fnt_ad = (const UWORD *)font->dat_table;
     linea_vars.v_off_ad = font->off_table;
+
+    /* Line-A opcode 0 hands out the table of the fonts: the RAM headers */
+    sysfonts[1] = &fon8x8;
+    sysfonts[2] = &fon8x16;
 }
 #endif
 

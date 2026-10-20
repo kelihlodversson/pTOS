@@ -435,12 +435,16 @@ static BOOL sfont_system_setting(char *name)
 static void sfont_system(void)
 {
     char name[14] = CONF_VDI_SYSTEM_FONT;
+    Fonthead new16 = fon8x16, new8 = fon8x8;
     WORD i;
-    BOOL done;
+    char *c;
 
     (void)sfont_system_setting(name);           /* the file takes the place of the option */
     if (!name[0])
         return;
+    for (c = name; *c; c++)                     /* GEMDOS names are upper case */
+        if (*c >= 'a' && *c <= 'z')
+            *c = (char)(*c - 'a' + 'A');
 
     for (i = 0; i < vdi_sfont_count; i++)
         if (!strcmp(vdi_sfonts[i].file, name))
@@ -461,15 +465,24 @@ static void sfont_system(void)
         return;
     }
 
-    done = vdi_sfont_make_system(i, &fon8x16);
-    done = vdi_sfont_make_system(i, &fon8x8) || done;
-    if (done)
+    /* both sizes or neither: rendered into copies of the headers, which replace the ROM's when both are done */
+    if (vdi_sfont_make_system(i, &new16) && vdi_sfont_make_system(i, &new8))
     {
+        fon8x16.off_table = new16.off_table;
+        fon8x16.form_width = new16.form_width;
+        fon8x16.dat_table = new16.dat_table;
+        fon8x8.off_table = new8.off_table;
+        fon8x8.form_width = new8.form_width;
+        fon8x8.dat_table = new8.dat_table;
         font_forms_changed();
         KINFO(("GDOS: %s (%s) is the system font\n", vdi_sfonts[i].name, name));
     }
     else
+    {
+        if (new16.off_table != fon8x16.off_table)   /* the first was made, the second was not */
+            vdi_ft_free((void *)new16.off_table);
         KINFO(("GDOS: the system font %s cannot be rendered; the ROM fonts stay\n", name));
+    }
 }
 
 void vdi_sfont_rescan(void)
