@@ -34,17 +34,36 @@ static void put_dst_word(UBYTE *p, UWORD w)
     p[1] = (UBYTE)(w & 0xff);
 }
 
+/*
+ * The destination is the text buffer pre_blit() fills, which is a sequence
+ * of big endian words like the glyph forms, or the screen, whose words are
+ * the CPU's own (as the fills, lines and v_get_pixel() have them, and the
+ * console's byte-wide characters, see direct_screen_blit()).
+ */
+static BOOL in_text_buffer(const UBYTE *dst)
+{
+    const UBYTE *buf = (const UBYTE *)linea_vars.SCRTCHP;
+
+    return dst >= buf && dst < buf + 2L * (UWORD)linea_vars.SCRPT2;
+}
+
 void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst)
 {
     int x,y;
     // The caller passes a pointer to the end of the vars structure as that how
     // the original assembler version consumes it, so we simply subtract one.
     vars--;
-    if (vars->nbrplane == 1 && vars->nextwrd == 2)
+    /*
+     * The destination is the 1-plane buffer set up by pre_blit(), or the
+     * screen, of one plane to eight: each pixel is in one word per plane,
+     * the words of a pixel group following each other (vars->nextwrd bytes
+     * for all the planes of 16 pixels), and the colour of the text is
+     * one bit of vars->forecol per plane.
+     */
+    if (vars->nbrplane >= 1 && vars->nbrplane <= 8)
         {
+            BOOL to_buffer = in_text_buffer(dst);
             /*
-             * 1-plane buffer blit, as set up by pre_blit().
-             *
              * F_SKEW shifts each row right by one more pixel whenever a
              * bit of skew_msk rotates out of the top (carry) position,
              * giving the glyph a slanted look; F_THICKEN repeats every
@@ -55,16 +74,32 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst)
              */
             WORD skew = (vars->STYLE & F_SKEW) != 0;
             WORD shift = 0;
-            WORD smear = (vars->STYLE & F_THICKEN) ? vars->smear : 1;
-            WORD glyphwidth = (vars->STYLE & F_THICKEN) ? vars->width - vars->smear : vars->width;
+            WORD smear = (vars->STYLE & F_THICKEN) ? vars->smear + 1 : 1;   /* the pixel and what it adds */
+            WORD glyphwidth;
             WORD tstad = vars->tsdad;
             WORD tddad = vars->tddad;
+            WORD planes = vars->nbrplane;
             UWORD skew_msk = (vars->STYLE & F_SKEW) ? (UWORD)linea_vars.SKEWMASK : (UWORD)0x8000;
+            /* light text keeps the bits of the mask, from the bottom line up, turning one a line */
+            UWORD lite = (vars->STYLE & F_LIGHT) ? (UWORD)linea_vars.LITEMASK : (UWORD)0xffff;
+
+            /*
+             * The width of the glyph itself, without what thickening adds:
+             * the text buffer is always made wider by it, the screen's
+             * width only for a font whose characters are not all as wide
+             * (the others keep their cell: text_blt() and pre_blit())
+             */
+            glyphwidth = vars->width;
+            if ((vars->STYLE & F_THICKEN) && (to_buffer || !linea_vars.MONO))
+                glyphwidth -= vars->smear;
 
             for (y = 0; y < vars->height; y++)
             {
                 const UBYTE *srow = src + y * vars->s_next;
                 UBYTE *drow = dst + y * vars->d_next;
+                UWORD rowlite = lite;
+
+                lite = (UWORD)((lite << 1) | (lite >> 15));
 
                 if (skew)
                 {
@@ -76,10 +111,10 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst)
                 for (x = 0; x < vars->DELX; x++)
                 {
                     WORD dx = (WORD)(x + tddad);
-                    UWORD dw = get_src_word(drow + ((dx >> 4) << 1));
                     UWORD dmask = (UWORD)(0x8000 >> (dx & 15));
+                    UBYTE *dgroup = drow + (dx >> 4) * vars->nextwrd;
                     BOOL set = FALSE;
-                    int k;
+                    int k, p;
 
                     for (k = 0; k < smear; k++)
                     {
@@ -93,40 +128,50 @@ void normal_blit(LOCALVARS *vars, UBYTE *src, UBYTE *dst)
                         }
                     }
 
-                    switch (vars->WRT_MODE) {
-                    default:
-                    case 0: /* REPLACE */
-                        dw &= (UWORD)~dmask;
-                        if (set)
-                            dw |= (vars->forecol) ? dmask : 0;
+                    if (set && !(rowlite & dmask))
+                        set = FALSE;            /* the effect of light text */
+
+                    for (p = 0; p < planes; p++)
+                    {
+                        UBYTE *dp = dgroup + (p << 1);
+                        UWORD dw = to_buffer ? get_src_word(dp) : *(UWORD *)dp;
+                        BOOL fore = (vars->forecol >> p) & 1;
+                        BOOL back = (vars->ambient >> p) & 1;
+
+                        switch (vars->WRT_MODE) {
+                        default:
+                        case 0: /* REPLACE */
+                            dw &= (UWORD)~dmask;
+                            if (set ? fore : back)
+                                dw |= dmask;
+                            break;
+                        case 1: /* TRANS */
+                            if (set)
+                            {
+                                dw &= (UWORD)~dmask;
+                                if (fore)
+                                    dw |= dmask;
+                            }
+                            break;
+                        case 2: /* XOR */
+                            if (set)
+                                dw ^= dmask;
+                            break;
+                        case 3: /* INVERS */
+                            if (!set)
+                            {
+                                dw &= (UWORD)~dmask;
+                                if (fore)
+                                    dw |= dmask;
+                            }
+                            break;
+                        }
+                        if (to_buffer)
+                            put_dst_word(dp, dw);
                         else
-                            dw |= (vars->ambient) ? dmask : 0;
-                        break;
-                    case 1: /* TRANS */
-                        if (set)
-                        {
-                            dw &= (UWORD)~dmask;
-                            dw |= (vars->forecol) ? dmask : 0;
-                        }
-                        break;
-                    case 2: /* XOR */
-                        if (set)
-                            dw ^= dmask;
-                        break;
-                    case 3: /* INVERS */
-                        if (!set)
-                        {
-                            dw &= (UWORD)~dmask;
-                            dw |= (vars->forecol) ? dmask : 0;
-                        }
-                        break;
+                            *(UWORD *)dp = dw;
                     }
-                    put_dst_word(drow + ((dx >> 4) << 1), dw);
                 }
             }
-        }
-        else
-        {
-            // TODO implement other bitplane blits here
         }
 }

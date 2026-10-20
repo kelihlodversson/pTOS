@@ -40,8 +40,15 @@ FREETYPE_INC = -I$(FREETYPE_DIR)/include -Ivdi/freetype \
 # FreeType itself also needs pTOS's headers (ptos_ftstdlib.h includes
 # emutos.h).  It is built with its own warnings, not with pTOS's
 # -Wmissing-prototypes & co., which it is not written for.
+#
+# On ARM the vectorizer is told not to combine statements (SLP): GCC turns
+# the four "x >>= shift" of FT_Matrix_Check() (src/base/ftcalc.c) into
+# "vshl.s32 q3, q3, #0", a shift by nothing instead of by the variable, so
+# that FreeType takes every matrix for one it cannot use and drops it: the
+# slant of vst_skew() was lost (#598).
 FREETYPE_CFLAGS = $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) -std=gnu99 \
-    $(OPTFLAGS) $(DEBUGFLAGS) $(OTHERFLAGS) -Wall -DFT2_BUILD_LIBRARY \
+    $(OPTFLAGS) $(DEBUGFLAGS) $(OTHERFLAGS) $(if $(ARCH_ARM),-fno-tree-slp-vectorize) \
+    -Wall -DFT2_BUILD_LIBRARY \
     $(FREETYPE_INC) $(addprefix -Iinclude/,$(arch_subdirs)) -Iinclude -Iobj
 
 FREETYPE_OBJ = $(addprefix $(FREETYPE_BUILDDIR)/,$(notdir $(FREETYPE_SRC:.c=.o)))
