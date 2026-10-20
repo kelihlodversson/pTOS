@@ -833,7 +833,8 @@ LONG blkdev_getbpb(WORD dev)
             bdev->bpb.fatrec,bdev->bpb.datrec,bdev->bpb.numcl));
     KDEBUG(("  bflags = %d;\n}\n",bdev->bpb.b_flags));
 
-    return (LONG)(uintptr_t)&bdev->bpb;   /* truncated on x86-64 (#563) */
+    /* truncated on x86-64; refused to a user process (doc/kernel-pointers.txt) */
+    return (LONG)(uintptr_t)&bdev->bpb;
 }
 
 /*

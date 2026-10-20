@@ -572,6 +572,24 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         rc = sys(XBIOS, 44, -1, 0, 0);
         if (rc == EACCDN) bad |= 256;
 
+        /* no pointer to the kernel's memory reaches a user process (#563):
+         * Getbpb(), Iorec() and Kbdvbase() are refused, Dosound() takes a
+         * table only as 0 or -1, and Ssystem() tells nothing of the kernel's
+         * variables or of the cookies that point into it */
+        if (sys(BIOS, 7, 0, 0, 0) != EACCDN) bad |= 4096;
+        if (sys(XBIOS, 14, 0, 0, 0) != EACCDN) bad |= 4096;
+        if (sys(XBIOS, 34, 0, 0, 0) != EACCDN) bad |= 4096;
+        if (sys(XBIOS, 32, -2, 0, 0) != EACCDN) bad |= 4096;
+        if (sys(GEMDOS, 0x154, 0x0a, 0x4f2, 0) != 0) bad |= 4096;     /* _sysbase */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x400, 0) != 0) bad |= 4096;     /* etv_timer */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x4c6, 0) != 0) bad |= 4096;     /* dskbufp */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x4ba, 0) == EINVFN) bad |= 4096;  /* _hz_200 is there */
+        if (sys(GEMDOS, 0x154, 0x0a, 0x555, 0) != EINVFN) bad |= 4096;  /* and 0x555 is not */
+        /* (S_GETCOOKIE of FRB_, MCF_, __NF, XHDI, SCSI and _5MS: not found) */
+        if (sys(GEMDOS, 0x154, 8, 0x58484449, 0) != -1) bad |= 4096;
+        if (sys(GEMDOS, 0x154, 8, 0x5f354d53, 0) != -1) bad |= 4096;
+        if (sys(GEMDOS, 0x154, 8, 0x5f5f4e46, 0) != -1) bad |= 4096;
+
         /* what is valid is let through, and does what it should.  The calls
          * that return nothing return 0 here. */
         {

@@ -147,7 +147,10 @@ LONG dosound(const UBYTE *table)
 #if CONF_WITH_YM2149
     const UBYTE *oldtable = sndtable;
 
-    if ((LONG)table >= 0)
+    /* -1 asks for the table that is playing.  (Not "a negative address": the
+     * tables of the kernel itself, the bell's, lie in the kernel half of the
+     * address space with an MMU, and are negative as a LONG (#563).) */
+    if ((LONG)(uintptr_t)table != -1L)
     {
         sndtable = table;
         snddelay = 0;

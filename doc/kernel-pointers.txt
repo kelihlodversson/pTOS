@@ -1,0 +1,198 @@
+Kernel pointers in user-visible results
+=======================================
+
+Part of #549 (doc/mmu-address-space.txt), the audit asked for in #563.  The
+same problem met x32 in #351, #372 and #426; this file lists every place
+where a BIOS, XBIOS or GEMDOS result, a cookie or a system variable gives
+user code an address of the kernel, what is decided for each and where it is
+done.
+
+
+The rule
+--------
+
+With a higher-half kernel on a 32-bit CPU (doc/mmu-address-space.txt) every
+kernel address is >= 0x80000000: a negative LONG, and indistinguishable from
+a TOS error code, which are negative too.  Besides, the kernel half is
+supervisor-only, so such an address is of no use to the process anyway.  So:
+
+  No BIOS, XBIOS or GEMDOS result, and no structure or variable a user
+  process can read, holds a kernel address.
+
+For each source there are three choices, the ones x32 made (doc/x86_64-
+syscall.txt):
+
+  refuse     the call fails with EACCDN before it runs
+  hide       the call runs and the process is told "none": 0, or "not
+             found" for a cookie
+  user copy  the process gets a copy in its own address space
+
+No entry below needs the third: no pointer given out by the kernel is
+something a process has to dereference to work (the structures are those of
+the TOS hardware drivers and the VDI, which the process does not use without
+supervisor mode; the system version and the build date have Ssystem()).  A
+user copy can be added to an entry when a program turns up that needs one.
+
+"A user process" means a call that arrives through the user trap entry: on
+x32, the ring-3 `syscall` (bios/arch/x86_64/trap.c); on the m68k and ARM MMU
+configurations, the TRAP #13/#14/#1 or SVC from user mode.  Kernel code is
+not a user process.  It calls the BIOS and XBIOS in the same way as before
+and gets the real pointers (the BDOS' Getbpb(), the VDI's Kbdvbase()), and
+it reaches the BDOS directly, as x32 does (bdos/arch/x86_64/kcall.c).  The
+checks below therefore run only on the user entry, and only where
+CONF_WITH_USER_ASPACE is set.  The configurations without an MMU keep the
+kernel low, in the same address space as the program, and nothing changes in
+them.
+
+
+The audit
+---------
+
+BIOS (trap 13), bios/biosaccess.c
+
+  Getmpb(mpb)           refuse (the descriptors are the kernel's; before #563)
+  Setexc(vec, -1)       hide: a vector that lies in the kernel half is 0.
+                        A vector is only ever queried (a set is refused,
+                        before #563), and the default handlers are the
+                        kernel's.
+  Getbpb(dev)           refuse: the BPB is the BDOS' own copy.  A program
+                        that wants the geometry of a disk has Rwabs() and
+                        the boot sector.
+  Rwabs, Mediach,       scalars
+  Bconin, ...
+
+XBIOS (trap 14), bios/biosaccess.c
+
+  Physbase(), Logbase() hide where the screen is not in the process
+                        (ARCH_USER_MAPS_SCREEN not set: ARM and m68k, the
+                        decision of #561): 0.  x32 maps the framebuffer into
+                        the process and returns its address.
+  Iorec(dev)            refuse (#426): the record is the kernel's input
+                        ring buffer, with the kernel's pointers in it
+  Kbdvbase()            refuse (#426): the vectors are kernel routines
+  Keytbl()              not offered (before #563)
+  Bconmap(-2)           refuse: the table of the kernel's devices (before)
+  Dosound(table)        refuse a table of the process (before: 0 and -1
+                        are the only values left), hide the table that was
+                        playing when it is the kernel's (the bell, the key
+                        click): 0
+  Initmous(vec), Setscreen(log, phys), Setpalette(pal)
+                        unchanged (before #563): a vector or a screen
+                        address of the process is refused, the palette is
+                        copied
+
+GEMDOS (trap 1), bdos/ssystem.c
+
+  Ssystem(S_GETLVAL, a) hide: the variables that hold an address (the
+                        etv_ and hdv_ vectors, colorptr, vblqueue, savptr,
+                        dskbufp, the OS header sysbase, end_os, exec_os,
+                        the print and AUX vectors, pun_ptr, the bell and
+                        key click hooks, and the screen v_bas_ad where
+                        ARCH_USER_MAPS_SCREEN is not set) read as 0.
+                        Marked SVAR_PTR in the table, so a new pointer
+                        variable has to say so.  The scalars (hz_200,
+                        frclock, phystop, drvbits, ...) are unchanged.
+                        phystop, membot and memtop are physical addresses
+                        of memory (at most 1 GiB), not pointers into the
+                        kernel's address space.
+  Ssystem(S_GETCOOKIE, tag)
+                        hide the cookies whose value is a kernel pointer
+                        (FRB_, MCF_, __NF, XHDI, SCSI, _5MS): "not found".
+                        The other cookies are numbers.
+  S_SETLVAL, S_SETWVAL, S_SETBVAL
+                        refuse (before #563)
+  S_SETCOOKIE, S_DELCOOKIE
+                        unchanged: the jar is the kernel's, a cookie a
+                        process sets is its own number
+  S_OSVERSION, S_OSBUILDDATE
+                        the way to learn the OS version and date without
+                        reading the OS header
+
+The cookie jar itself and the _p_cookies variable are in kernel memory and
+are not reachable from user mode: a process reads cookies through
+Ssystem(S_GETCOOKIE) only.  The XHDI, SCSI Driver and NatFeat interfaces
+(through their cookies) are not offered to user processes; they are
+supervisor-mode APIs.
+
+Results that are addresses of the process and are unchanged:
+
+  Malloc(), Mxalloc(), Pexec() (basepage), Fgetdta()
+                        user addresses, all below 0x80000000.  Their
+                        failure value is 0 (or an error code for Pexec()),
+                        and no kernel address can be among them, so the
+                        sign of the result is still "error or not".  (Mxalloc
+                        mode bits and Malloc(-1) are sizes, not addresses.)
+
+Not user mode:
+
+  Super(), Supexec()    EACCDN on m68k, as decided in #561; ARM keeps its
+                        Supexec() EINVFN.  Without supervisor mode, a
+                        process has no other way to read the kernel half.
+  Line-A, trap 2        the VDI/AES trap is refused from user mode until
+                        #548 (doc/mmu-address-space.txt).  The m68k Line-A
+                        init returns the addresses of the Line-A
+                        variables, of the fonts and of the functions, all
+                        in the kernel, so it is refused with them: the
+                        Line-A exception handler gets the same user-mode
+                        test as the VDI trap, in the m68k entry code
+                        (#567, #569).  ARM has no Line-A.
+
+The audit went through every `(LONG)` or `(ULONG)` cast of an address in
+bios/, bdos/, aes/, vdi/ and cli/, every cookie_add(), and the SVAR tables of
+Ssystem().  The casts that remain are the kernel's own (device and DMA
+addresses, the AES event blocks, the VDI parameter block) and are not seen by
+a user process.
+
+
+Where the result of a call is tested for being an error
+-------------------------------------------------------
+
+On a 32-bit CPU, `(LONG)ptr < 0` and `(LONG)ptr > 0` tell a kernel pointer
+from a user one only by accident.  The kernel's own code was gone through for
+a test that takes a result that may be a kernel address for an error, or the
+other way round:
+
+  bios/sound.c dosound()       tested `(LONG)table >= 0` to tell a table from
+                               the query (-1), so the tables of the kernel
+                               itself (the bell) would have been taken for a
+                               query as soon as the kernel is in the
+                               negative half.  Fixed: only -1 asks.  This
+                               is the one place that was wrong.
+  bios/bios.c, bios/memory2.c  an error test of Pexec()'s result is already
+                               explicit about the range of the codes
+                               (`<= 0 && >= -256`), and the TT-RAM scan stops
+                               at the first negative address: that is Atari
+                               RAM in the low 4 GiB, not a kernel address.
+  bdos/fsdrive.c, bdosmain.c   `!b` after Getbpb(): a null test, the BPB is
+                               a kernel pointer and non-zero.
+  desk/desksupp.c init_start() calls Getbpb() on the floppy it just
+                               formatted.  It is a user program once the
+                               desktop is (#548); it has the BPB it wrote
+                               itself in the boot sector and needs to compute
+                               the numbers from it instead.  Open for #548,
+                               not for the kernel.
+  vdi/vdi_mouse.c              Kbdvbase() in the VDI, which is kernel code
+                               and gets the real pointer.
+
+Kernel-internal tests must compare with the error codes, or with 0, never
+with the sign.  Pexec() and Malloc() results are user addresses, so the
+test `< 0` is right for them even with a high-half kernel (but `<= 0 &&
+>= -256` is the form to use for an error code).
+
+
+How it is checked
+-----------------
+
+The checks are in code that every user entry calls: bios_check_user_args(),
+xbios_check_user_args() and bios_user_result() / xbios_user_result()
+(bios/biosaccess.c) for the BIOS and XBIOS, bdos_check_user_args() and
+xssystem() (called from osif()) for GEMDOS.  The ring-3 entry of x32 calls
+them (bios/arch/x86_64/trap.c) and the boot self-test checks them
+(tests/x32_probe, mode A: Getbpb, Iorec, Kbdvbase and Dosound refused,
+Ssystem() telling nothing of sysbase, etv_timer and dskbufp, the pointer
+cookies not found).  The m68k and ARM entries call them when #566, #567 and
+#569 enter user mode; until then no process runs there outside the kernel
+half and the hooks have nothing to refuse.
+
+A new call, variable or cookie that gives out an address needs a row here,
+and a decision in the code, before it is offered to a user process.
