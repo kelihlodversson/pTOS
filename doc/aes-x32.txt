@@ -185,6 +185,8 @@ selector, object tree or pointer-bearing parameter array crosses the boundary.
         valid. The caller may immediately change or free its source. Fixed
         kernel-owned window slots retain both strings until window deletion;
         no user pointer reaches native rendering or survives the syscall.
+        Text for an absent title/info gadget is retained without redrawing a
+        missing native object.
 
     LONG aes_wind_top(WORD handle);
     LONG aes_wind_slider(WORD handle, UWORD field, WORD value);
@@ -195,7 +197,10 @@ selector, object tree or pointer-bearing parameter array crosses the boundary.
     LONG aes_wind_rect(WORD handle, UWORD next, GRECT *rectangle);
         next=0 starts the owned window's visible-work-rectangle walk;
         next=1 advances it. Zero width/height marks the end. The output is
-        checked before advancing. Mutating that window restarts its cursor.
+        copied successfully before advancing or restarting the cursor. A
+        failed copyout preserves the cursor for retry. No cleanup can dispatch
+        between selection, copyout and cursor commit, or after commit before
+        returning success. Mutating that window restarts its cursor.
         Each call rescans the current native list by ordinal, retaining no
         native rectangle-node pointer across calls. Clients clip VDI to these
         rectangles; window ownership does not replace workstation clipping.

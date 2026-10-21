@@ -3,8 +3,11 @@
 #define X86_64_AES_WINDOW_H
 #include "aes_service.h"
 struct aespd;
+/* VISIBLE copies directly to output before committing its cursor. Other
+ * queries return kernel records for the service boundary to copy out. */
 LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *request,
-                       const char *text, AES_WINDOW_INFO *info, GRECT *rectangle);
+                       const char *text, AES_WINDOW_INFO *info, GRECT *rectangle,
+                       UQUAD output);
 void x86_64_aes_window_exit(PD *pd);
 void x86_64_aes_window_finished(PD *pd, struct aespd *executor);
 void x86_64_aes_window_unregister(PD *pd);

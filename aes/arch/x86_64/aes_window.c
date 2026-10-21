@@ -47,6 +47,36 @@ static BOOL test_sync_held;
 static PD *test_borrow_owner;
 static AESPD *test_borrow_executor;
 static WORD test_borrow_handle, test_borrow_phase;
+static WORD test_cursor_handle, test_cursor_cases;
+
+static void test_cursor_prepare(PD *pd, const AES_WINDOW_REQUEST *request)
+{
+    WORD h = request->handle;
+
+    if (request->operation != AES_WIN_VISIBLE || h <= 0 || h >= NUM_WIN ||
+        windows[h].owner != pd || strcmp(windows[h].title, "Cursor probe"))
+        return;
+    for (h = 1; h < NUM_WIN; h++)
+        if (windows[h].owner == pd && !strcmp(windows[h].title, "Cursor cleanup")) {
+            test_cursor_handle = h;
+            windows[h].retired = TRUE;
+            return;
+        }
+}
+
+static void test_cursor_closed(WORD h, CLIENT_WINDOW *w)
+{
+    if (h != test_cursor_handle)
+        return;
+    test_cursor_handle = 0;
+    /* Run a real ring-3 callback at cleanup's yielding close boundary. It
+     * frees the already-validated output heap block without unregistering. */
+    vdi_service_callback_event(VDI_CALLBACK_BUTTON, 629, 0);
+    vdi_service_callback_work();
+    if (!kproc_aes_get(w->owner))
+        panic("accessory cursor cleanup registration lost FAIL\n");
+    test_cursor_cases++;
+}
 
 static void test_borrow_prepare(PD *pd, const AES_WINDOW_REQUEST *request)
 {
@@ -246,6 +276,7 @@ static LONG delete_window(WORD h, CLIENT_WINDOW *w)
         test_sync_closed(h, w);
         test_replace_closed(h, w);
         test_borrow_closed(h, w);
+        test_cursor_closed(h, w);
 #endif
         /* END_UPDATE may have handed the lock to a waiter and dispatched.
          * Leave this closed window for retry rather than delete under it. */
@@ -372,6 +403,7 @@ void x86_64_aes_window_drain(void)
     test_borrow_owner = NULL;
     test_borrow_executor = NULL;
     test_borrow_handle = test_borrow_phase = 0;
+    test_cursor_handle = test_cursor_cases = 0;
 #endif
     /* Every accessory continuation, including borrowed cleanup, has now
      * been cancelled. No executor can resume these reservations. */
@@ -516,22 +548,22 @@ static BOOL native_bounds(UWORD kind, const GRECT *input)
 /* Keep an ordinal, never the native w_rnext pointer: any window mutation
  * can recycle native ORECT nodes between two user calls. Rescan the current
  * owned list, bounded by its global pool, without retaining a freed node. */
-static LONG visible_rectangle(CLIENT_WINDOW *w, WINDOW *native, BOOL next, GRECT *out)
+static LONG visible_rectangle(const CLIENT_WINDOW *w, WINDOW *native, BOOL next,
+                              GRECT *out, UWORD *cursor)
 {
     ORECT *node;
     UWORD index = 0, walked = 0;
     GRECT rectangle;
 
-    if (!next)
-        w->visible_next = 0;
+    *cursor = next ? w->visible_next : 0;
     memset(out, 0, sizeof(*out));
     if (!(native->w_flags & VF_ISOPEN))
         return E_OK;
     for (node = native->w_rlist; node && walked++ < NUM_ORECT; node = node->o_link) {
         rectangle = node->o_gr;
-        if (rc_intersect(&native->w_work, &rectangle) && index++ == w->visible_next) {
+        if (rc_intersect(&native->w_work, &rectangle) && index++ == *cursor) {
             *out = rectangle;
-            w->visible_next++;
+            (*cursor)++;
             return E_OK;
         }
     }
@@ -539,12 +571,14 @@ static LONG visible_rectangle(CLIENT_WINDOW *w, WINDOW *native, BOOL next, GRECT
 }
 
 LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
-                       const char *text, AES_WINDOW_INFO *info, GRECT *rectangle)
+                       const char *text, AES_WINDOW_INFO *info, GRECT *rectangle,
+                       UQUAD output)
 {
     CLIENT_WINDOW *w = NULL;
     WINDOW *native;
     GRECT calculated, input = r->rectangle;
     WORD h = r->handle, i, fields[4] = { 0 };
+    UWORD cursor;
     char *saved_text;
     LONG result = E_OK;
     static const WORD sliders[4] = { WF_HSLIDE, WF_VSLIDE, WF_HSLSIZ, WF_VSLSIZ };
@@ -554,6 +588,7 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
 #if CONF_WITH_X32_ACCESSORY_TEST
     test_sync_prepare(pd, r);
     test_borrow_prepare(pd, r);
+    test_cursor_prepare(pd, r);
 #endif
     if (!unlocked() || !aes_service_window_unlocked(pd))
         return EAGAIN;
@@ -654,8 +689,12 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
     case AES_WIN_TEXT:
         saved_text = r->selector == AES_WINDOW_NAME ? w->title : w->info;
         memcpy(saved_text, text, AES_WINDOW_TEXT_MAX + 1);
-        memcpy(fields, &saved_text, sizeof(saved_text));
-        result = wm_set(h, r->selector == AES_WINDOW_NAME ? WF_NAME : WF_INFO, fields) ? E_OK : EINVAL;
+        /* Native text redraw assumes the gadget exists in its object tree.
+         * The retained pointers already address these copied kernel strings. */
+        if (native->w_kind & (r->selector == AES_WINDOW_NAME ? NAME : INFO)) {
+            memcpy(fields, &saved_text, sizeof(saved_text));
+            result = wm_set(h, r->selector == AES_WINDOW_NAME ? WF_NAME : WF_INFO, fields) ? E_OK : EINVAL;
+        }
         break;
     case AES_WIN_TOP:
         if (!(native->w_flags & VF_ISOPEN))
@@ -668,8 +707,18 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
         result = wm_set(h, sliders[r->selector], fields) ? E_OK : EINVAL;
         break;
     case AES_WIN_VISIBLE:
-        result = visible_rectangle(w, native, r->selector, rectangle);
-        break;
+        /* Selection, copyout and cursor commit are bounded and cannot
+         * dispatch. Do not reap after committing: cleanup could invalidate
+         * the delivered output or cancel this call before it returns. */
+        result = visible_rectangle(w, native, r->selector, rectangle, &cursor);
+        if (result == E_OK) {
+            if (!kproc_copy_to_user(output, rectangle, sizeof(*rectangle)))
+                result = EIMBA;
+            else
+                w->visible_next = cursor;
+        }
+        w->busy = NULL;
+        return result;
     default:
         result = EINVFN;
     }
@@ -741,6 +790,8 @@ void x86_64_aes_window_test(void)
         panic("accessory cleanup synchronization cases missing FAIL\n");
     if (test_borrow_phase != 3)
         panic("accessory borrowed cleanup case missing FAIL\n");
+    if (test_cursor_cases != 2 || test_cursor_handle)
+        panic("accessory cursor copyout cases missing FAIL\n");
     for (i = 0; i < 2; i++) {
         h = test_replaced[i];
         if (!h)

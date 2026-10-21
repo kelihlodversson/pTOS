@@ -154,6 +154,10 @@ A real callback unregisters/re-registers client A, then task B suspends while
 closing A's retired window. A unregisters/re-registers normally and creates a
 closed window while B is paused. B's reservation must keep the old handle
 pinned, and B's resumed cleanup must preserve A's new window.
+A real callback frees the visible-rectangle output heap block while cleanup
+closes a retired window, without revoking registration. Failed NEXT and FIRST
+calls must preserve their cursor; a valid retry receives the undelivered next
+rectangle or the previous end marker, and a successful FIRST restarts the walk.
 An eight-message FIFO stays full during four enlargements: self redraws
 coalesce and arrive after the queued opaque messages, without deadlocking.
 The input driver sends a key to the topped ring-3 window, then clicks its

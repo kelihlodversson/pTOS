@@ -13,6 +13,8 @@ int accessory_window_reopen(WORD role, WORD vdi_handle);
 int accessory_window_borrow(void);
 
 static volatile LONG revoked, reregistered;
+static volatile LONG cursor_freed;
+static GRECT *cursor_output;
 static AES_APP_INFO callback_info;
 static WORD peer_window;
 
@@ -22,6 +24,12 @@ static void revoke_window(WORD status)
         revoked = aes_appl_exit();
         reregistered = aes_appl_init("ACCTWO", &callback_info);
     }
+}
+
+static void free_cursor_output(WORD status)
+{
+    if (status == 629)
+        cursor_freed = Mfree(cursor_output);
 }
 
 #define CHECK(c) do { if (!(c)) { char failure[80]; \
@@ -225,6 +233,63 @@ static int mover_boundaries(void)
         large.g_w = 32763;
     }
     (void)Cconws("x32 mover drag boundaries: PASS\r\n");
+    return 0;
+}
+
+static int cursor_copyout(WORD vdi_handle)
+{
+    GRECT border = { 40, 60, 340, 240 }, cover = { 180, 60, 30, 240 };
+    GRECT offscreen = { 2000, 2000, 40, 40 }, first, second, visible;
+    LONG handle, overlay, cleanup, memory;
+    WORD next;
+    VDICONTROL control = { 0 };
+    VDIPB pb = { &control, NULL, NULL, NULL, NULL };
+    VDI_BUTTON_CALLBACK *old_button;
+
+    handle = aes_wind_create(0, &border);
+    CHECK(handle > 0 && aes_wind_open((WORD)handle, &border) == E_OK);
+    overlay = aes_wind_create(0, &cover);
+    CHECK(overlay > 0 && aes_wind_open((WORD)overlay, &cover) == E_OK);
+    /* Copying text without either gadget must not try to redraw a missing
+     * native object. These plain windows deliberately exercise both cases. */
+    CHECK(aes_wind_set_text((WORD)handle, AES_WINDOW_NAME, "Cursor probe") == E_OK);
+    CHECK(aes_wind_set_text((WORD)handle, AES_WINDOW_INFO_LINE, "No info gadget") == E_OK);
+    CHECK(aes_wind_rect((WORD)handle, 0, &first) == E_OK && first.g_w > 0);
+    CHECK(aes_wind_rect((WORD)handle, 1, &second) == E_OK && second.g_w > 0);
+    CHECK(!rc_equal(&first, &second));
+    CHECK(aes_wind_rect((WORD)handle, 1, &visible) == E_OK && !visible.g_w && !visible.g_h);
+    control.code = 125; control.handle = vdi_handle;
+    control.args.button.new_handler = free_cursor_output;
+    CHECK(vdi(&pb) == E_OK);
+    old_button = control.args.button.old_handler;
+    for (next = 0; next < 2; next++) {
+        CHECK(aes_wind_rect((WORD)handle, 0, &visible) == E_OK && rc_equal(&first, &visible));
+        if (!next)
+            CHECK(aes_wind_rect((WORD)handle, 1, &visible) == E_OK && rc_equal(&second, &visible));
+        cleanup = aes_wind_create(0, &offscreen);
+        CHECK(cleanup > 0 && aes_wind_open((WORD)cleanup, &offscreen) == E_OK);
+        CHECK(aes_wind_set_text((WORD)cleanup, AES_WINDOW_NAME, "Cursor cleanup") == E_OK);
+        memory = Malloc(4096);
+        CHECK(memory > 0);
+        cursor_output = (GRECT *)(uintptr_t)(ULONG)memory;
+        cursor_freed = EINVAL;
+        CHECK(aes_wind_rect((WORD)handle, next, cursor_output) == EIMBA);
+        CHECK(cursor_freed == E_OK && aes_appl_find("ACCTWO") > 0);
+        /* A failed FIRST must not reset the exhausted cursor; a failed
+         * NEXT must leave the second, undelivered rectangle available. */
+        CHECK(aes_wind_rect((WORD)handle, 1, &visible) == E_OK);
+        if (next)
+            CHECK(rc_equal(&second, &visible));
+        else
+            CHECK(!visible.g_w && !visible.g_h);
+        CHECK(aes_wind_rect((WORD)handle, 0, &visible) == E_OK && rc_equal(&first, &visible));
+    }
+    cursor_output = NULL;
+    control.args.button.new_handler = old_button;
+    CHECK(vdi(&pb) == E_OK);
+    CHECK(aes_wind_delete((WORD)overlay) == E_OK);
+    CHECK(aes_wind_delete((WORD)handle) == E_OK);
+    (void)Cconws("x32 visible rectangle copyout: PASS\r\n");
     return 0;
 }
 
@@ -559,6 +624,7 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
     CHECK(cleanup_synchronization(&rectangle) == 0);
     CHECK(boundary_resizes() == 0);
     CHECK(mover_boundaries() == 0);
+    CHECK(cursor_copyout(vdi_handle) == 0);
     CHECK(copied_text((WORD)handle) == 0);
     memset(too_long, 'X', sizeof(too_long));
     CHECK(aes_wind_set_text((WORD)handle, AES_WINDOW_NAME, too_long) == EINVAL);

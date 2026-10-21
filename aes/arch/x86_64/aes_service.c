@@ -420,10 +420,12 @@ static LONG window_service(UQUAD input, UQUAD output)
 #if CONF_WITH_AES
     if (!x86_64_aes_owned(run))
         return EACCDN;
-    result = x86_64_aes_window(run, &r, text, &info, &rectangle);
+    result = x86_64_aes_window(run, &r, text, &info, &rectangle, output);
     if (result < 0)
         return result;
-    if (size && !kproc_copy_to_user(output,
+    /* Visible rectangles copy and commit their cursor together, without
+     * yielding cleanup between selection, copyout and return. */
+    if (size && r.operation != AES_WIN_VISIBLE && !kproc_copy_to_user(output,
             r.operation == AES_WIN_GET ? (const void *)&info : &rectangle, size))
         return EIMBA;
     return result;
