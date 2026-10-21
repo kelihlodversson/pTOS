@@ -460,9 +460,9 @@ static const struct draw_case cases[] = {
     { "outline",        "Outline",       24, 16, 1, 0,    NO_CLIP, 0x4b7642cfUL, 0x4b7642cfUL },
     { "shadow",         "Shadow",        18, 32, 1, 0,    NO_CLIP, 0x91a26df1UL, 0x91a26df1UL },
     { "bold italic",    "Both",          18, 5,  1, 0,    NO_CLIP, 0xf0601091UL, 0xf0601091UL },
-    { "transparent",    "Transp",   16, 0,  2, 0,    NO_CLIP, 0x11588386UL, 0x11588386UL },
-    { "xor",            "XOR",      16, 0,  3, 0,    NO_CLIP, 0x1a3efa74UL, 0x1a3efa74UL },
-    { "reverse transp", "Reverse",       16, 0,  4, 0,    NO_CLIP, 0x967bdcf9UL, 0x967bdcf9UL },
+    { "transparent",    "Transp",   16, 0,  2, 0,    NO_CLIP, 0x77e3359eUL, 0x77e3359eUL },
+    { "xor",            "XOR",      16, 0,  3, 0,    NO_CLIP, 0x68b4b124UL, 0x68b4b124UL },
+    { "reverse transp", "Reverse",       16, 0,  4, 0,    NO_CLIP, 0xa2be9178UL, 0xa2be9178UL },
     { "rotated 90",     "Up",            18, 0,  1, 900,  NO_CLIP, 0x8f86c30dUL, 0x8f86c30dUL },
     { "rotated 180",    "Upside",        18, 0,  1, 1800, NO_CLIP, 0xec5e54daUL, 0xec5e54daUL },
     { "rotated 270",    "Down",          18, 0,  1, 2700, NO_CLIP, 0x78a18864UL, 0x78a18864UL },
@@ -530,9 +530,18 @@ static void draw_case(const struct draw_case *c, struct ink *ink)
     short x, y;
 
     clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
-    if (c->mode == 3)
+    if (c->mode >= 2)
     {
-        /* XOR on black behind the text, so that it is seen to invert and not only to set */
+        /*
+         * The modes that keep what is behind the text (transparent, XOR,
+         * reverse transparent) draw over a pattern: on blank screen they
+         * would give what replace mode gives, or the glyph the other way
+         * round, and clearing the pixels they must keep would go unseen
+         */
+        vs_intin[0] = 2;
+        vs_call(handle, 23, 0, 0, 1);       /* vsf_interior(pattern) */
+        vs_intin[0] = 5;
+        vs_call(handle, 24, 0, 0, 1);       /* vsf_style(5) */
         vs_intin[0] = 1;
         vs_call(handle, 25, 0, 0, 1);       /* vsf_color(1) */
         vs_ptsin[0] = AREA_X;
