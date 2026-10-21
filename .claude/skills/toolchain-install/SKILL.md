@@ -124,7 +124,7 @@ dest=$HOME/.local/th-otto-mintelf
     dl=$HOME/.local/th-otto-dl
     # Download and extract exactly these files, never a *.tar.xz glob: a
     # leftover archive in the reused download directory has not been checked.
-    archives="gcc-13.4.0-mintelf-20250702-bin-linux64.tar.xz
+    archives="gcc-15.2.0-mintelf-20250810-bin-linux64.tar.xz
               binutils-2.45-mintelf-20250812-bin-linux64.tar.xz
               mintlib-0.60.1-mintelf-20240718-dev.tar.xz"
     mkdir -p "$dest" "$dl" && cd "$dl" || exit 1
@@ -132,7 +132,7 @@ dest=$HOME/.local/th-otto-mintelf
         curl -sSLO --fail --retry 3 "https://tho-otto.m68k.eu/download/mint/$f" || exit 1
     done
     sha256sum -c - <<'EOF' || exit 1
-70ae7f69ec54484b805990ddef517af13fccc3744018dbca3cc0e61eec1c55b6  gcc-13.4.0-mintelf-20250702-bin-linux64.tar.xz
+1f86cc5caa9a5b2429b253bd2218bdf82973ef772260b1e692e19010b1ea6c34  gcc-15.2.0-mintelf-20250810-bin-linux64.tar.xz
 e37c22f84baaf8ffc890a11265d4369498f9bc4e68aaac21dcef887d3655f025  binutils-2.45-mintelf-20250812-bin-linux64.tar.xz
 0a9f4f61c976af26b3b4c2fdfbfcaaa19c671174a6a1c874496375f775ff33ec  mintlib-0.60.1-mintelf-20240718-dev.tar.xz
 EOF
