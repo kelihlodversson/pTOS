@@ -99,14 +99,12 @@ void proc_launch_prepare(PD *p, void *super_sp);
  * relocates it by a multiple of 16 bytes, which it moves it up by (up to 15
  * bytes) from the first byte after the basepage, so that the 8 byte aligned
  * data the compiler assumes still is.  The TPA of such an image holds that
- * much more, and the instruction cache is invalidated that much further.
+ * much more (the gap counts as text length).
  */
 #ifdef __arm__
 #define PROG_IMAGE_ALIGN 16UL
-#define PROG_IMAGE_SLACK 15UL
 #else
 #define PROG_IMAGE_ALIGN 1UL
-#define PROG_IMAGE_SLACK 0UL
 #endif
 
 #endif /* PROC_H */

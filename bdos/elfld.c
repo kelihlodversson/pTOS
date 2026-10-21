@@ -458,7 +458,7 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
     hd->h01_dlen = 0;
     hd->h01_blen = (LONG)(info.mem_end - info.file_end);
 #ifdef __arm__
-    hd->h01_blen += PROG_IMAGE_ALIGN;    /* room for elf_pgmld() to align the image */
+    hd->h01_tlen += PROG_IMAGE_ALIGN;    /* room for elf_pgmld() to align the image */
 #endif
 #if CONF_WITH_USER_ASPACE
     /* the image does not live in the TPA but in private pages of the
@@ -1336,18 +1336,18 @@ LONG elf_pgmld(FH h, PD *p)
      * launching a process at a truncated, wrong address (#356's own
      * review flagged the previous plain assignment for exactly this). */
     p->p_tbase = PTR_TO_USERPTR(load_base + (ehdr.e_entry - info.link_base));
-    p->p_tlen  = (LONG)(info.file_end - info.link_base);
+    /*
+     * the gap the alignment left after the basepage is part of the text
+     * length: sizeof(PD) + text + data + bss (what a program that shrinks its
+     * TPA is guided by) then reaches the end of the image, and p_bbase +
+     * p_blen, where the startup code puts argv, is the end of the bss
+     */
+    p->p_tlen  = (LONG)(info.file_end - info.link_base)
+                 + (LONG)((uintptr_t)load_base - (uintptr_t)(p + 1));
     p->p_dbase = PTR_TO_USERPTR(load_base + (info.file_end - info.link_base));
     p->p_dlen  = 0;
     p->p_bbase = PTR_TO_USERPTR(load_base + (info.file_end - info.link_base));
-    /*
-     * the footprint the sizes add up to (sizeof(PD) + text + data + bss, what
-     * a program that shrinks its TPA is guided by) has to reach the end of the
-     * image: the gap the alignment left after the basepage is part of the bss
-     * (the addresses of the segments, and the entry point, are not moved by it)
-     */
-    p->p_blen  = (LONG)(info.mem_end - info.file_end)
-                 + (LONG)((uintptr_t)load_base - (uintptr_t)(p + 1));
+    p->p_blen  = (LONG)(info.mem_end - info.file_end);
 
 #endif
 
