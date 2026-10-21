@@ -2,10 +2,11 @@
 #ifndef X86_64_AES_WINDOW_H
 #define X86_64_AES_WINDOW_H
 #include "aes_service.h"
+struct aespd;
 LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *request,
                        const char *text, AES_WINDOW_INFO *info, GRECT *rectangle);
 void x86_64_aes_window_exit(PD *pd);
-void x86_64_aes_window_finished(PD *pd);
+void x86_64_aes_window_finished(PD *pd, struct aespd *executor);
 void x86_64_aes_window_unregister(PD *pd);
 void x86_64_aes_window_drain(void);
 BOOL x86_64_aes_window_redraw(PD *pd, const WORD *message);

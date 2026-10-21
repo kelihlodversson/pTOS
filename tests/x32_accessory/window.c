@@ -10,13 +10,15 @@
 int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle);
 int accessory_window_redraw(WORD handle, WORD vdi_handle);
 int accessory_window_reopen(WORD role, WORD vdi_handle);
+int accessory_window_borrow(void);
 
 static volatile LONG revoked, reregistered;
 static AES_APP_INFO callback_info;
+static WORD peer_window;
 
 static void revoke_window(WORD status)
 {
-    if (status == 626) {
+    if (status == 626 || status == 628) {
         revoked = aes_appl_exit();
         reregistered = aes_appl_init("ACCTWO", &callback_info);
     }
@@ -178,6 +180,54 @@ static int boundary_resizes(void)
     return 0;
 }
 
+static int mover_boundaries(void)
+{
+    GRECT small = { 0, 60, 340, 240 }, large;
+    AES_WINDOW_INFO state;
+    UWORD kinds[2] = { AES_WINDOW_NAME_GADGET | AES_WINDOW_MOVER, AES_WINDOW_MOVER };
+    LONG low, high, middle, handle;
+    WORD i;
+
+    large = small; large.g_w = 32763;
+    handle = aes_wind_create(AES_WINDOW_NAME_GADGET, &large);
+    CHECK(handle > 0 && aes_wind_delete((WORD)handle) == E_OK);
+    for (i = 0; i < 2; i++) {
+        CHECK(aes_wind_create(kinds[i], &large) == EINVAL);
+        /* Find the screen/font-dependent boundary through the public ABI,
+         * then check both sides for create/open and same-origin resizing. */
+        low = small.g_w; high = 32762;
+        while (low < high) {
+            middle = low + (high - low + 1) / 2;
+            large.g_w = middle;
+            handle = aes_wind_create(kinds[i], &large);
+            if (handle > 0) {
+                CHECK(aes_wind_delete((WORD)handle) == E_OK);
+                low = middle;
+            } else {
+                CHECK(handle == EINVAL);
+                high = middle - 1;
+            }
+        }
+        CHECK(low > small.g_w && low < 32763);
+        large.g_w = low + 1;
+        CHECK(aes_wind_create(kinds[i], &large) == EINVAL);
+        handle = aes_wind_create(kinds[i], &small);
+        CHECK(handle > 0 && aes_wind_open((WORD)handle, &large) == EINVAL);
+        CHECK(aes_wind_get((WORD)handle, &state) == E_OK && !state.flags);
+        CHECK(aes_wind_open((WORD)handle, &small) == E_OK);
+        CHECK(aes_wind_set_rect((WORD)handle, &large) == EINVAL);
+        CHECK(aes_wind_get((WORD)handle, &state) == E_OK && rc_equal(&small, &state.current));
+        large.g_w = low;
+        CHECK(aes_wind_set_rect((WORD)handle, &large) == E_OK);
+        CHECK(aes_wind_get((WORD)handle, &state) == E_OK && rc_equal(&large, &state.current));
+        CHECK(aes_wind_set_rect((WORD)handle, &small) == E_OK);
+        CHECK(aes_wind_delete((WORD)handle) == E_OK);
+        large.g_w = 32763;
+    }
+    (void)Cconws("x32 mover drag boundaries: PASS\r\n");
+    return 0;
+}
+
 static int closed_geometry(WORD visible_handle, const GRECT *rectangle)
 {
     GRECT before, after;
@@ -305,6 +355,66 @@ static int cleanup_synchronization(const GRECT *rectangle)
     return 0;
 }
 
+int accessory_window_borrow(void)
+{
+    AES_WINDOW_INFO state;
+
+    CHECK(peer_window > 0);
+    CHECK(aes_wind_set_text(peer_window, AES_WINDOW_NAME, "Borrowed trigger") == E_OK);
+    CHECK(aes_wind_get(peer_window, &state) == E_OK);
+    CHECK(copied_text(peer_window) == 0);
+    return 0;
+}
+
+static int borrowed_cleanup(const AES_APP_INFO *info, WORD vdi_handle, const GRECT *rectangle)
+{
+    LONG old, replacement, peer, result;
+    AES_APP_INFO renewed;
+    AES_WINDOW_INFO state;
+    AES_EVENT event;
+    AES_MESSAGE message = { 636, 0, 0, { 0 } };
+    VDICONTROL control = { 0 };
+    VDIPB pb = { &control, NULL, NULL, NULL, NULL };
+    VDI_BUTTON_CALLBACK *old_button;
+
+    old = aes_wind_create(kind, rectangle);
+    CHECK(old > 0 && aes_wind_open((WORD)old, rectangle) == E_OK);
+    CHECK(aes_wind_set_text((WORD)old, AES_WINDOW_NAME, "Borrowed cleanup") == E_OK);
+    control.code = 125; control.handle = vdi_handle;
+    control.args.button.new_handler = revoke_window;
+    CHECK(vdi(&pb) == E_OK);
+    old_button = control.args.button.old_handler;
+    revoked = reregistered = EINVAL;
+    peer = aes_appl_find("ACCWAIT");
+    CHECK(peer > 0 && aes_appl_write((WORD)peer, &message) == E_OK);
+    do {
+        result = aes_evnt_wait(AES_EVENT_MESSAGE, &event);
+        CHECK(result == EACCDN || result == AES_EVENT_MESSAGE);
+    } while (result == EACCDN || event.message.type == 20);
+    CHECK(event.message.type == 638 && !event.message.sender && event.message.data[0] == old);
+    CHECK(revoked == E_OK && reregistered == E_OK && callback_info.id == info->id);
+    /* The other task is suspended in cleanup of our now-closed window.
+     * Normal unregister must preserve its reservation across registration. */
+    CHECK(aes_appl_exit() == E_OK);
+    CHECK(aes_appl_init("ACCTWO", &renewed) == E_OK && renewed.id == info->id);
+    replacement = aes_wind_create(kind, rectangle);
+    CHECK(replacement > 0 && replacement != old);
+    CHECK(aes_wind_get((WORD)replacement, &state) == E_OK && !state.flags);
+    message.type = 637;
+    CHECK(aes_appl_write((WORD)peer, &message) == E_OK);
+    do {
+        CHECK(aes_evnt_wait(AES_EVENT_MESSAGE, &event) == AES_EVENT_MESSAGE);
+    } while (event.message.type == 20);
+    CHECK(event.message.type == 639 && event.message.sender == peer);
+    CHECK(aes_wind_get((WORD)replacement, &state) == E_OK && !state.flags);
+    CHECK(aes_wind_get((WORD)old, &state) == EIHNDL);
+    CHECK(aes_wind_delete((WORD)replacement) == E_OK);
+    control.args.button.new_handler = old_button;
+    CHECK(vdi(&pb) == E_OK);
+    (void)Cconws("x32 borrowed cleanup reservation: PASS\r\n");
+    return 0;
+}
+
 int accessory_window_reopen(WORD role, WORD vdi_handle)
 {
     GRECT rectangle = { 48, 60, 356, 240 };
@@ -318,6 +428,8 @@ int accessory_window_reopen(WORD role, WORD vdi_handle)
     CHECK(handle > 0 && copied_text((WORD)handle) == 0);
     CHECK(aes_wind_open((WORD)handle, &rectangle) == E_OK);
     CHECK(accessory_window_redraw((WORD)handle, vdi_handle) == 0);
+    if (role == 4)
+        peer_window = handle;
     (void)Cconws("x32 window reopened on desktop: PASS\r\n");
     return 0;
 }
@@ -356,6 +468,7 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
         CHECK(handle > 0 && copied_text((WORD)handle) == 0);
         CHECK(aes_wind_open((WORD)handle, &rectangle) == E_OK);
         if (role == 4) {
+            peer_window = handle;
             peer = aes_appl_find("ACCTWO");
             CHECK(peer > 0);
             message.type = 627; message.data[0] = handle;
@@ -445,6 +558,7 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
         CHECK(aes_wind_delete(exhausted[i]) == E_OK);
     CHECK(cleanup_synchronization(&rectangle) == 0);
     CHECK(boundary_resizes() == 0);
+    CHECK(mover_boundaries() == 0);
     CHECK(copied_text((WORD)handle) == 0);
     memset(too_long, 'X', sizeof(too_long));
     CHECK(aes_wind_set_text((WORD)handle, AES_WINDOW_NAME, too_long) == EINVAL);
@@ -581,6 +695,7 @@ int accessory_window_checks(const AES_APP_INFO *info, WORD role, WORD vdi_handle
     CHECK(aes_wind_get((WORD)handle, &state) == EIHNDL);
     CHECK(aes_wind_get((WORD)extra, &state) == EIHNDL);
     CHECK(aes_wind_get((WORD)peer, &state) == EACCDN);
+    CHECK(borrowed_cleanup(info, vdi_handle, &rectangle) == 0);
     /* Leave a live, text-bearing window for desktop restart cleanup. */
     handle = aes_wind_create(kind, &rectangle);
     CHECK(handle > 0 && copied_text((WORD)handle) == 0);

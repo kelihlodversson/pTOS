@@ -88,7 +88,7 @@ void x86_64_aes_enter(void)
     /* The basepage may be reused once cleanup yields. Retire its task
      * association first; native window messages to this task are dropped. */
     c->owner = NULL;
-    x86_64_aes_window_finished(owner);
+    x86_64_aes_window_finished(owner, rlr);
     /* Pterm/fault unwound onto this UDA, and freed the user's syscall stack.
      * The dispatcher will remove this task without putting it back on a list. */
     rlr->p_flags |= AP_MESAG | AP_ACCLOSE;
@@ -614,7 +614,9 @@ BOOL x86_64_aes_test_run(void)
                 waiting++;
             }
         }
-        if (dead == 2 && waiting == 2)
+        /* Message wakeups can leave p_evwait set on a runnable task. Wait
+         * for both clients to have finished their windows and really slept. */
+        if (dead == 2 && waiting == 2 && x86_64_aes_window_test_ready())
             break;
     }
     if (revocations != 3) {
@@ -622,7 +624,7 @@ BOOL x86_64_aes_test_run(void)
         set_mown(old_owner);
         gl_ctmown = old_ctmown;
     }
-    if (dead != 2 || waiting != 2 || revocations != 3 || button_snapshot_cases != 3 || !reuse_sent || test_arrows != 4)
+    if (attempt == 1000 || dead != 2 || waiting != 2 || revocations != 3 || button_snapshot_cases != 3 || !reuse_sent || test_arrows != 4)
         panic("accessory lifecycle FAIL: dead=%d waiting=%d\n", dead, waiting);
     x86_64_aes_window_test();
     /* Exercise the native AES message bridge and receive acknowledgement. */

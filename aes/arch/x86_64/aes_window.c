@@ -7,6 +7,7 @@
 #include "gemlib.h"
 #include "geminit.h"
 #include "gemwmlib.h"
+#include "obdefs.h"
 #include "gsxdefs.h"
 #include "biosext.h"
 #include "aes_accessory.h"
@@ -15,11 +16,16 @@
 #include "string.h"
 #include "../../../bdos/kproc.h"
 #include "../../../bdos/user_callback.h"
+#if CONF_WITH_X32_ACCESSORY_TEST
+#include "vdi_service.h"
+#include "gemevlib.h"
+#endif
 
 typedef struct {
     PD *owner;
     AESPD *task;
-    BOOL busy, retired, redraw;
+    AESPD *busy; /* Coroutine holding this slot's continuation reservation. */
+    BOOL retired, redraw;
     UWORD visible_next;
 #if CONF_WITH_X32_ACCESSORY_TEST
     BOOL revoke_tested;
@@ -38,6 +44,61 @@ static PD *test_reusing;
 static WORD test_replaced[2];
 static WORD test_sync_cases, test_sync_first, test_sync_later;
 static BOOL test_sync_held;
+static PD *test_borrow_owner;
+static AESPD *test_borrow_executor;
+static WORD test_borrow_handle, test_borrow_phase;
+
+static void test_borrow_prepare(PD *pd, const AES_WINDOW_REQUEST *request)
+{
+    WORD h = request->handle;
+
+    if (request->operation != AES_WIN_GET || h <= 0 || h >= NUM_WIN || windows[h].owner != pd)
+        return;
+    if (test_borrow_phase == 2 && pd == test_borrow_owner) {
+        if (h == test_borrow_handle || windows[test_borrow_handle].busy != test_borrow_executor)
+            panic("accessory borrowed reservation lost FAIL\n");
+        test_borrow_phase = 3;
+        return;
+    }
+    if (test_borrow_phase || strcmp(windows[h].title, "Borrowed trigger"))
+        return;
+    for (h = 1; h < NUM_WIN; h++)
+        if (windows[h].owner && windows[h].owner != pd &&
+            !strcmp(windows[h].title, "Borrowed cleanup"))
+            break;
+    if (h == NUM_WIN)
+        panic("accessory borrowed cleanup fixture missing FAIL\n");
+    test_borrow_handle = h;
+    test_borrow_owner = windows[h].owner;
+    test_borrow_executor = rlr;
+    test_borrow_phase = 1;
+    /* The other client's real ring-3 callback unregisters and immediately
+     * re-registers. Its window is now retired, with no owner call in flight. */
+    vdi_service_callback_event(VDI_CALLBACK_BUTTON, 628, 0);
+    vdi_service_callback_work();
+    if (!windows[h].retired || !kproc_aes_get(test_borrow_owner))
+        panic("accessory borrowed cleanup revocation FAIL\n");
+}
+
+static void test_borrow_closed(WORD h, CLIENT_WINDOW *w)
+{
+    WORD attempt, message[8] = { 638, 0, 0, 0, 0, 0, 0, 0 };
+
+    if (test_borrow_phase != 1 || h != test_borrow_handle)
+        return;
+    if (rlr == w->task || w->busy != rlr)
+        panic("accessory cleanup not borrowed FAIL\n");
+    test_borrow_phase = 2;
+    message[3] = h;
+    if (aes_service_kernel_message(test_borrow_owner, message) != E_OK)
+        panic("accessory borrowed cleanup wake FAIL\n");
+    /* Suspend the borrower's actual AES continuation. The owner runs normal
+     * appl_exit/init, creates a closed replacement and queries it meanwhile. */
+    for (attempt = 0; attempt < 1000 && test_borrow_phase == 2; attempt++)
+        ev_timer(10L);
+    if (test_borrow_phase != 3 || w->busy != rlr)
+        panic("accessory borrowed cleanup continuation FAIL\n");
+}
 
 /* At the close boundary, model the state left by a dispatched lock waiter
  * or another typed client acquiring one of the coordination tokens. */
@@ -184,6 +245,7 @@ static LONG delete_window(WORD h, CLIENT_WINDOW *w)
 #if CONF_WITH_X32_ACCESSORY_TEST
         test_sync_closed(h, w);
         test_replace_closed(h, w);
+        test_borrow_closed(h, w);
 #endif
         /* END_UPDATE may have handed the lock to a waiter and dispatched.
          * Leave this closed window for retry rather than delete under it. */
@@ -229,13 +291,13 @@ static void reap(void)
             continue;
         owner = w->owner;
         task = w->task;
-        w->busy = TRUE;
+        w->busy = rlr;
         result = delete_window(h, w);
         if (w->owner == owner && w->task == task) {
             if (result == E_OK || result == EIHNDL)
                 memset(w, 0, sizeof(*w));
             else
-                w->busy = FALSE;
+                w->busy = NULL;
         }
     }
 }
@@ -251,22 +313,31 @@ void x86_64_aes_window_exit(PD *pd)
      * and synchronization run later, outside those critical continuations. */
 }
 
-void x86_64_aes_window_finished(PD *pd)
+void x86_64_aes_window_finished(PD *pd, AESPD *executor)
 {
     WORD h;
-    AESPD *task = NULL;
+    AESPD *task = executor;
+    BOOL pending = FALSE;
 
-    for (h = 1; h < NUM_WIN; h++)
+    for (h = 1; h < NUM_WIN; h++) {
+        /* Only this executor's continuations have unwound. A different
+         * coroutine may still be closing this owner's retired windows. */
+        if (executor && windows[h].busy == executor) {
+            windows[h].busy = NULL;
+            pending = TRUE;
+        }
         if (windows[h].owner == pd) {
             windows[h].retired = TRUE;
-            windows[h].busy = FALSE;
-            task = windows[h].task;
+            if (!task)
+                task = windows[h].task;
+            pending = TRUE;
         }
-    if (!task)
+    }
+    if (!task || (!pending && wind_spb.sy_owner != task))
         return;
-    /* This owner's process and every suspended kernel continuation have
-     * unwound. Release any abandoned native update nesting before deleting
-     * its windows on the still-live AES UDA (or the session-drain UDA). */
+    /* The supplied executor has unwound; NULL is reserved for session drain
+     * after all executors were cancelled. Other executors' reservations stay
+     * pinned. Release abandoned update nesting before safe native cleanup. */
     while (wind_spb.sy_tas && wind_spb.sy_owner == task)
         wm_update(END_UPDATE);
     wm_update(BEG_UPDATE);
@@ -284,7 +355,7 @@ void x86_64_aes_window_unregister(PD *pd)
      * cleanup outside KPROC teardown, including builds without callbacks
      * (which have no callback return-work hook to perform deferred work). */
     if (x86_64_aes_owned(pd))
-        x86_64_aes_window_finished(pd);
+        x86_64_aes_window_finished(pd, rlr);
 }
 
 /* Called after all accessory continuations and native EVBs are cancelled. */
@@ -298,10 +369,17 @@ void x86_64_aes_window_drain(void)
     memset(test_replaced, 0, sizeof(test_replaced));
     test_sync_cases = test_sync_first = test_sync_later = 0;
     test_sync_held = FALSE;
+    test_borrow_owner = NULL;
+    test_borrow_executor = NULL;
+    test_borrow_handle = test_borrow_phase = 0;
 #endif
+    /* Every accessory continuation, including borrowed cleanup, has now
+     * been cancelled. No executor can resume these reservations. */
+    for (h = 1; h < NUM_WIN; h++)
+        windows[h].busy = NULL;
     for (h = 1; h < NUM_WIN; h++)
         if (windows[h].owner)
-            x86_64_aes_window_finished(windows[h].owner);
+            x86_64_aes_window_finished(windows[h].owner, NULL);
 #if CONF_WITH_X32_ACCESSORY_TEST
     for (h = 1; h < NUM_WIN; h++)
         if (windows[h].owner)
@@ -397,7 +475,7 @@ static void information(WORD h, PD *pd, AES_WINDOW_INFO *info)
  * when combined with the screen or another allocated window's old bounds.
  * draw_change() adds the two-pixel shadow twice for same-origin resizes;
  * reserve all four pixels for both new bounds and old bounds on shrink. */
-static BOOL native_bounds(const GRECT *input)
+static BOOL native_bounds(UWORD kind, const GRECT *input)
 {
     WORD i;
     GRECT current;
@@ -407,6 +485,16 @@ static BOOL native_bounds(const GRECT *input)
     LONG bottom = (LONG)input->g_y + input->g_h + 4;
     LONG end;
 
+    if (kind & MOVER) {
+        /* hctl_window() stores this title-drag constraint in a WORD.
+         * Check the complete expression in LONG before native dragging. */
+        end = (LONG)gl_rscreen.g_w + input->g_w - gl_wbox - 6;
+#if CONF_WITH_3D_OBJECTS
+        end -= 2 * ADJ3DSTD;
+#endif
+        if (end <= 0 || end > 32767L)
+            return FALSE;
+    }
     if (right < gl_width) right = gl_width;
     if (bottom < gl_height) bottom = gl_height;
     for (i = 1; i < NUM_WIN; i++) {
@@ -465,6 +553,7 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
         return EACCDN;
 #if CONF_WITH_X32_ACCESSORY_TEST
     test_sync_prepare(pd, r);
+    test_borrow_prepare(pd, r);
 #endif
     if (!unlocked() || !aes_service_window_unlocked(pd))
         return EAGAIN;
@@ -483,7 +572,7 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
         return E_OK;
     }
     if (r->operation == AES_WIN_CREATE) {
-        if (!geometry(r->kind, &input, TRUE, &calculated) || !native_bounds(&input))
+        if (!geometry(r->kind, &input, TRUE, &calculated) || !native_bounds(r->kind, &input))
             return EINVAL;
         /* A native delete/reset can free a handle before its yielding call
          * unwinds. Keep that slot reserved until the old call releases its
@@ -522,7 +611,7 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
         return EACCDN;
     if (w->busy)
         return EAGAIN;
-    w->busy = TRUE;
+    w->busy = rlr;
 #if CONF_WITH_X32_ACCESSORY_TEST
     if (r->operation == AES_WIN_GET && !w->revoke_tested &&
         !strcmp(w->title, "Revoke this window")) {
@@ -535,7 +624,7 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
         x86_64_aes_events(pd, &pause, &event, FALSE);
         test_revoking = NULL;
         if (x86_64_aes_call_cancelled(pd)) {
-            w->busy = FALSE;
+            w->busy = NULL;
             reap();
             return EACCDN;
         }
@@ -544,7 +633,7 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
     switch (r->operation) {
     case AES_WIN_OPEN:
     case AES_WIN_RECT:
-        if (!geometry(native->w_kind, &input, TRUE, &calculated) || !native_bounds(&input))
+        if (!geometry(native->w_kind, &input, TRUE, &calculated) || !native_bounds(native->w_kind, &input))
             result = EINVAL;
         else if (r->operation == AES_WIN_OPEN)
             result = wm_open(h, &input) ? E_OK : EINVAL;
@@ -600,7 +689,7 @@ LONG x86_64_aes_window(PD *pd, const AES_WINDOW_REQUEST *r,
         return EACCDN;
     if (result == E_OK && r->operation != AES_WIN_GET && r->operation != AES_WIN_VISIBLE)
         w->visible_next = 0;
-    w->busy = FALSE;
+    w->busy = NULL;
     if (w->retired || x86_64_aes_call_cancelled(pd)) {
         w->retired = TRUE;
         result = EACCDN;
@@ -650,6 +739,8 @@ void x86_64_aes_window_test(void)
     reap();
     if (test_sync_cases != 3 || test_sync_held)
         panic("accessory cleanup synchronization cases missing FAIL\n");
+    if (test_borrow_phase != 3)
+        panic("accessory borrowed cleanup case missing FAIL\n");
     for (i = 0; i < 2; i++) {
         h = test_replaced[i];
         if (!h)

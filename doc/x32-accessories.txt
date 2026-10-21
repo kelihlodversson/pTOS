@@ -133,6 +133,9 @@ arithmetic; rejected moves preserve the old geometry. Title/info sources are
 changed and freed before the kernel verifies retained text and pointer width.
 Boundary growth and shrinking check both axes: dimensions 32764/32765 are
 rejected without changing geometry; 32763 produces a valid positive redraw.
+NAME/MOVER and MOVER-only windows additionally exercise their screen-dependent
+drag-width boundary for create/open/resize; NAME-only windows retain the larger
+non-mover limit.
 192 create/set-closed-geometry/delete cycles preserve the neighbor's visible
 rectangle and exceed the native rectangle pool size. Normal exit, fault,
 unregister and callback cleanup also leave closed windows with set geometry.
@@ -147,6 +150,10 @@ typed coordination token, after cleanup closes a window. CREATE must return
 EAGAIN without allocation; queries must return EAGAIN without copyout. Cleanup
 must leave its just-closed window and a later retired window untouched while
 the native lock is contended. Releasing the injected owner allows retry.
+A real callback unregisters/re-registers client A, then task B suspends while
+closing A's retired window. A unregisters/re-registers normally and creates a
+closed window while B is paused. B's reservation must keep the old handle
+pinned, and B's resumed cleanup must preserve A's new window.
 An eight-message FIFO stays full during four enlargements: self redraws
 coalesce and arrive after the queued opaque messages, without deadlocking.
 The input driver sends a key to the topped ring-3 window, then clicks its
