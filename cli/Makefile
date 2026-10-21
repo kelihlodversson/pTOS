@@ -70,7 +70,14 @@ LIBCMINI_DEFCONFIG = mintelf_defconfig
 # match it or every call across the boundary into libcmini (strlen(),
 # Bconin(), ...) would use a mismatched calling convention for plain int.
 ARCH_CFLAGS = -Wa,--register-prefix-optional
+# The bare m68k-elf toolchain (M68K_ELF=y, from the top level Makefile) makes
+# an ELF file, which pTOS's ELF loader needs as a relocatable image, as on
+# ARM; the others make a PRG.
+ifeq ($(M68K_ELF),y)
+LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
+else
 LDFLAGS = -s
+endif
 OBJECTS = cmdasm.o cmdmain.o cmdedit.o cmdexec.o cmdint.o cmdparse.o cmdutil.o version.o
 else
 # Falling through to m68k on a typo'd ARCH (e.g. "am") would still build
