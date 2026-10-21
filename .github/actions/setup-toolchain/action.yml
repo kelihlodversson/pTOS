@@ -64,14 +64,14 @@ runs:
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/th-otto-mintelf
-        key: m68k-toolchain-1f86cc5caa9a5b2429b253bd2218bdf82973ef772260b1e692e19010b1ea6c34-e37c22f84baaf8ffc890a11265d4369498f9bc4e68aaac21dcef887d3655f025-0a9f4f61c976af26b3b4c2fdfbfcaaa19c671174a6a1c874496375f775ff33ec
+        key: m68k-toolchain-2c582c04d689e8fb8c3568155246fa8039a320c1fad95a02c228a001f284f57b-e37c22f84baaf8ffc890a11265d4369498f9bc4e68aaac21dcef887d3655f025-0a9f4f61c976af26b3b4c2fdfbfcaaa19c671174a6a1c874496375f775ff33ec
 
     - name: Install the m68k cross toolchain
       if: inputs.arch == 'm68k' && steps.cache-m68k.outputs.cache-hit != 'true'
       shell: bash
       env:
-        GCC_URL: https://tho-otto.m68k.eu/download/mint/gcc-15.2.0-mintelf-20250810-bin-linux64.tar.xz
-        GCC_SHA256: 1f86cc5caa9a5b2429b253bd2218bdf82973ef772260b1e692e19010b1ea6c34
+        GCC_URL: https://tho-otto.m68k.eu/download/mint/gcc-14.3.0-mintelf-20250702-bin-linux64.tar.xz
+        GCC_SHA256: 2c582c04d689e8fb8c3568155246fa8039a320c1fad95a02c228a001f284f57b
         BINUTILS_URL: https://tho-otto.m68k.eu/download/mint/binutils-2.45-mintelf-20250812-bin-linux64.tar.xz
         BINUTILS_SHA256: e37c22f84baaf8ffc890a11265d4369498f9bc4e68aaac21dcef887d3655f025
         MINTLIB_URL: https://tho-otto.m68k.eu/download/mint/mintlib-0.60.1-mintelf-20240718-dev.tar.xz
