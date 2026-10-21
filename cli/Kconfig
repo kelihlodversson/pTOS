@@ -28,8 +28,10 @@ config CONF_EXTERNAL_CLI
 	  root directory of the boot drive (EMUCON.TOS) when it has no AES to
 	  start: as the console of the image, and as the early console.
 
-	  The program is the standalone EmuCON of cli/Makefile, which is in
-	  English only.  It has to be on the boot drive: "make test-dir",
+	  The program is the standalone EmuCON of cli/Makefile, built with the
+	  translations of all the languages of po/LINGUAS; it uses the
+	  language in the LANG variable that the kernel puts in its
+	  environment.  It has to be on the boot drive: "make test-dir",
 	  "make test-hd" and the Raspberry Pi archives put it there.
 
 	  On by default for the images that are loaded into RAM from a disk

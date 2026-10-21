@@ -252,3 +252,38 @@ The following are probably only slightly relevant:
 - the GNU gettext manual
 - GNU gettext tools
 - GNU recode, for the names of some charsets.
+
+
+The LANG variable and the standalone EmuCON
+===========================================
+
+The kernel's default environment, the one the first program gets, has a
+LANG variable: the language of the system, as its ISO 639 code ("en", "de",
+"fr", ... -- pTOS's own names for English, "us", and Greek, "gr", are "en" and
+"el" there).  A single-country image has the language of its country; a
+multi-language image has the one it picked at boot, from the NVRAM or from
+"ptos.lang=xx" on the boot loader's command line.  The variable is first in
+the environment: PATH, which follows the TOS convention of two strings (PATH=
+and its value), is turned by some program startups into the usual single
+string with the rest of the environment left behind it, which cuts the
+environment short.
+
+A program can use it to choose its language.  EmuCON does: the standalone
+EmuCON of cli/Makefile can be built with NLS=1 (the top level Makefile does
+that for CONF_EXTERNAL_CLI), and then carries the translations, for all the
+languages of po/LINGUAS, of the messages in the files of cli/potfiles.in.
+That is bug at work with three more options than the kernel needs:
+
+  bug -f cli/potfiles.in -m cli/ml/cli.pot xgettext
+        collects the messages of those files only
+  bug -m cli/ml/cli.pot -o cli/ml/cli-langs.c -S make
+        writes the tables of the translations of just those messages, for a
+        program that has nothing but langs.h (-S)
+  bug -m cli/ml/cli.pot translate all cli/ml/cmdmain.c ...
+        writes cmdmain.tr.c, with the numeric ids of cli.pot
+
+cli/cmdnls.c looks the message up in the language that LANG names, and in
+English if it has no translation.  A program started with another
+environment, or none, is in English.  A message of cli/ that is in the .po
+files is translated like the ones of the kernel: add the file to
+cli/potfiles.in (and po/POTFILES.in) when a new file of cli/ gets a _("...").

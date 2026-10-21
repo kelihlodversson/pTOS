@@ -68,6 +68,17 @@ int cmdmain(void)
 {
 WORD argc, rc;
 
+#ifdef CLI_NLS
+    {
+        /* the language of the messages: LANG, as the kernel sets it */
+        char *lang;
+
+        find_envvar(&lang,"LANG=");
+        if (lang)
+            nls_set_lang_env(lang);
+    }
+#endif
+
     /*
      *  initialise some global variables
      */

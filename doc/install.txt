@@ -268,8 +268,8 @@ EmuCON as a program (CONF_EXTERNAL_CLI)
 
 On the images that are loaded into RAM from a disk (rpi1-rpi4, virt-arm,
 virt-m68k) EmuCON is not linked into the kernel: "make" also builds
-emucon.tos, the standalone EmuCON of cli/Makefile (it is in English only),
-and the kernel starts it with Pexec() from the root directory of the boot
+emucon.tos, the standalone EmuCON of cli/Makefile (with the translations of
+all languages, see "The LANG variable" in doc/nls.txt), and the kernel starts it with Pexec() from the root directory of the boot
 drive, as EMUCON.TOS, when there is no AES to start (the CLI configurations),
 for the early console (Esc at the welcome screen), and for the Console item
 of the desktop.  If the file is not there the kernel says so on the console.

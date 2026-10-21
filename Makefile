@@ -1572,9 +1572,9 @@ $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 # boot drive next to the image (see the top of this file).
 #
 ifeq ($(CONF_EXTERNAL_CLI),y)
-$(EMUCON_TOS): $(wildcard cli/*.c cli/*.h cli/*.S cli/Makefile) version.mk $(AUTOCONF_H) $(LIBCMINI_LIB)
+$(EMUCON_TOS): $(wildcard cli/*.c cli/*.h cli/*.S cli/Makefile cli/potfiles.in) po/LINGUAS $(POFILES) bug version.mk $(AUTOCONF_H) $(LIBCMINI_LIB)
 	@echo '  EMUCON'
-	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR)
+	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) NLS=1 BUG=$(abspath bug)
 endif
 
 ifdef CONF_WITH_REGRESSION_TESTS

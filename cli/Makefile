@@ -96,6 +96,25 @@ CPPFLAGS = -I$(LIBCMINI_INC) -I../include -DUSE_STATIC_INLINES=0 -DSTANDALONE_CO
 # next time a loop shape changes.
 CFLAGS = $(CPPFLAGS) -Os -Wall -Wundef -Wold-style-definition -fno-tree-loop-distribute-patterns $(ARCH_CFLAGS)
 
+#
+# NLS=1 builds a multi-language EmuCON: the messages of NLS_SOURCES are
+# translated into numeric ids by tools/bug ("translate all"), the tables of
+# all the languages of po/LINGUAS that "bug make -S" writes for just those
+# messages are linked in (ml/cli-langs.o, about 30 KB), and the program picks
+# the language named by the LANG variable of its environment at start
+# (cmdnls.c).  BUG is the tool the top level Makefile builds; the generated
+# files are in ml/, apart from the sources, which the kernel's own NLS rules
+# translate (in place) for the language of a ROM image.
+#
+NLS ?= 0
+NLS_SOURCES = cmdint cmdmain cmdparse cmdutil
+ifeq ($(NLS),1)
+BUG ?= ../bug
+CPPFLAGS += -DCLI_NLS -I../util
+OBJECTS := $(filter-out $(addsuffix .o,$(NLS_SOURCES)),$(OBJECTS)) \
+           $(addprefix ml/,$(addsuffix .tr.o,$(NLS_SOURCES))) ml/cli-langs.o cmdnls.o
+endif
+
 .PHONY: default all clean
 
 default: $(TARGET)
@@ -109,8 +128,35 @@ HEADERS = cmd.h
 # switch between the two).
 $(OBJECTS) version.c: | .arch-$(ARCH)
 .arch-$(ARCH):
-	-rm -f *.o version.c $(TARGET) .arch-*
+	-rm -rf ml *.o version.c $(TARGET) .arch-*
 	touch $@
+
+ml:
+	mkdir -p $@
+
+# static pattern rules: a plain ml/%.c would also match ml/cmdmain.tr.c and
+# copy the kernel's own cmdmain.tr.c (translated for ITS ids) over it
+NLS_COPY = $(addprefix ml/,$(addsuffix .c,$(NLS_SOURCES)))
+NLS_TR   = $(addprefix ml/,$(addsuffix .tr.c,$(NLS_SOURCES)))
+
+$(NLS_COPY): ml/%.c: %.c | ml
+	cp $< $@
+
+# bug works from the top of the tree (po/, and the paths of the sources)
+ml/cli.pot: potfiles.in $(addsuffix .c,$(NLS_SOURCES)) | ml
+	cd .. && $(BUG) -f cli/potfiles.in -m cli/ml/cli.pot xgettext
+
+ml/cli-langs.c: ml/cli.pot ../po/LINGUAS $(wildcard ../po/*.po)
+	cd .. && $(BUG) -m cli/ml/cli.pot -o cli/ml/cli-langs.c -S make
+
+$(NLS_TR): ml/%.tr.c: ml/%.c ml/cli.pot
+	cd .. && $(BUG) -m cli/ml/cli.pot translate all cli/ml/$*.c
+
+ml/%.tr.o: ml/%.tr.c $(HEADERS) | $(LIBCMINI_DIR)/Makefile
+	$(CC) $(CFLAGS) -I. -c $< -o $@
+
+ml/cli-langs.o: ml/cli-langs.c | $(LIBCMINI_DIR)/Makefile
+	$(CC) $(CFLAGS) -c $< -o $@
 
 # Order-only on $(LIBCMINI_DIR)/Makefile: the .c/.S sources #include
 # libcmini headers (via cmd.h), so without this, an uninitialized submodule
@@ -153,7 +199,7 @@ $(TARGET): $(LIBCMINI_CRT0) $(OBJECTS) $(LIBCMINI_LIB)
 	$(CC) -nostartfiles -nostdlib $(LIBCMINI_CRT0) $(OBJECTS) -L$(dir $(LIBCMINI_LIB)) -lcmini -lgcc $(LDFLAGS) -o $@
 
 clean:
-	-rm -f *.o version.c .arch-*
+	-rm -rf ml *.o version.c .arch-*
 	-rm -f $(TARGET)
 	-rm -rf libcmini-build-m68k libcmini-build-arm
 

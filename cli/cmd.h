@@ -39,10 +39,21 @@
  /* sysconf.h */
  #define DRIVESEP       ':'
  #define PATHSEP        '\\'
- /* nls.h */
- #define _(a) a
- #define N_(a) a
- #define gettext(a) a
+ /* nls.h: English only, or (CLI_NLS) the translations of cli/ are in the
+    program and the language comes from the LANG variable of the
+    environment (cmdnls.c) */
+ #ifdef CLI_NLS
+  #define NLS_MSGID_FLAG 0xc0000000UL   /* ids are 'flag | n'; a pointer never has both bits */
+  #define _(a) etos_gettext((unsigned long)(a))
+  #define N_(a) ((char *)((unsigned long)(a) | NLS_MSGID_FLAG))
+  #define gettext(a) etos_gettext((unsigned long)(a))
+  const char *etos_gettext(unsigned long msgid);
+  void nls_set_lang_env(const char *value);
+ #else
+  #define _(a) a
+  #define N_(a) a
+  #define gettext(a) a
+ #endif
  typedef unsigned char   UBYTE;
  typedef short int       WORD;
  typedef unsigned short  UWORD;
