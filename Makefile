@@ -1574,9 +1574,11 @@ $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 ifeq ($(CONF_EXTERNAL_CLI),y)
 ifdef ARCH_X86_64
 # the x32 EmuCON, built with the rest of the x32 programs (above)
-$(EMUCON_TOS): obj/x32/emucon.elf
-	rm -f cli/.arch-*
-	cp $< $@
+# FORCE, and a copy only when it differs: "make -C cli" may have left a
+# standalone ARM or m68k executable there, which a timestamp test cannot tell
+# from a good one.  The stamps go so that build starts over, too.
+$(EMUCON_TOS): FORCE obj/x32/emucon.elf
+	@cmp -s obj/x32/emucon.elf $@ || { rm -f cli/.arch-*; cp obj/x32/emucon.elf $@; }
 else
 # FORCE: cli/emucon.tos is also what "make -C cli" leaves there for another
 # ARCH or NLS, so the sub-make always gets to compare the build identity (the
