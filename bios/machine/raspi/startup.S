@@ -349,7 +349,18 @@ raspi_post_mmu:
     ldr r0, =C_SYM(phystop)
     sub r1, r6, #0x100000
     str r1, [r0]
-    ldr r3, =C_SYM(arm_boot_regs)
+    /*
+     * The boot loader's pointer (ATAGs, or the device tree) is a physical
+     * address, which the lower half does not map above the pool (the last
+     * megabyte of the RAM may well hold the device tree): keep it as the
+     * address in the window, which maps all of the RAM.  After a software
+     * reset it is that already.
+     */
+    cmp r10, #0
+    beq 3f
+    cmp r10, #RASPI_WINDOW_SIZE
+    addlo r10, r10, #RASPI_WINDOW_VBASE
+3:  ldr r3, =C_SYM(arm_boot_regs)
     stmia r3, {r8-r10}
     ldr r3, =C_SYM(start_in_hyp)
     str r11, [r3]

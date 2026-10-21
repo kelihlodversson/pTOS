@@ -276,6 +276,12 @@ ULONG raspi_mmu_bootstrap(void)
      * startup.S's explicit jump into the window, and again on a reset. */
     for (i = 0; i < ram_sections; i++)
         section_entry(&utable[i], i * MEGABYTE, RASPI_MAP_RAM);
+#if CONF_WITH_MMU_TEXT_PROTECT
+    /* the first megabyte holds the kernel text in this alias too: it shares
+     * the page table of the window, so raspi_mmu_protect_range() makes both
+     * views read-only, and a write through the low address faults */
+    *(volatile ULONG *)(table + UTABLE_OFFSET) = (table + L2TABLE_OFFSET) | 1;
+#endif
 
     flush_data_cache_all();
 
