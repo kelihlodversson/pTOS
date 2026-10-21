@@ -675,6 +675,94 @@ static long font_memory(void)
     return size;
 }
 
+/*
+ * Every vertical alignment draws the same pixels, moved to put the line it
+ * stands for (the baseline, the half line, the ascent line, the bottom line,
+ * the descent line, the top) at the point given: so the text drawn with
+ * alignment v at the top's point moved by what the font says that line is
+ * away from its top must be the text drawn with the top alignment (#638:
+ * the baseline's came out in the bitmap system font)
+ */
+
+
+static void check_alignment_at(short points);
+
+static void check_alignment(void)
+{
+    short n, i, saved = font_id, ids[32], count = 0;
+
+    /* every scalable font that is there, not only the test font */
+    for (n = system_fonts + 1; n <= system_fonts + loaded_fonts && count < 32; n++)
+    {
+        vs_intin[0] = n;
+        vs_call(handle, 130, 0, 0, 1);      /* vqt_name() */
+        ids[count++] = vs_intout[0];
+    }
+    for (i = 0; i < count; i++)
+    {
+        font_id = ids[i];
+        check_alignment_at(24);
+        check_alignment_at(-24);
+    }
+    font_id = saved;
+    check_alignment_at(0);                  /* a size in pixels */
+    check_alignment_at(24);                 /* and in points, as an application sets it */
+    check_alignment_at(10);
+    check_alignment_at(-24);                /* exactly 24 points, vst_arbpt(): as Type Shelf sets it */
+}
+
+static void check_alignment_at(short points)
+{
+    static const char text[] = "Aa";
+    struct ink top_ink, ink;
+    short x, y, v, top, ascent, half, descent, bottom;
+
+    set_effects(0);
+    set_mode(1);
+    set_rotation(0);
+    set_color(1);
+    CHECK(vdi_font(font_id) == font_id, "alignment: the font is not selected", 0, 0);
+    if (points < 0)
+    {
+        short cw, ch, cell_w, cell_h;
+
+        vst_arbpt(handle, -points, &cw, &ch, &cell_w, &cell_h);
+    }
+    else if (points)
+        set_point(points);
+    else
+        set_height(16);
+    vs_call(handle, 131, 0, 0, 0);          /* vqt_fontinfo() */
+    bottom = vs_ptsout[1];
+    descent = vs_ptsout[3];
+    half = vs_ptsout[5];
+    ascent = vs_ptsout[7];
+    top = vs_ptsout[9];
+
+    place(text, 0, &x, &y);
+    clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+    set_top_left();
+    gtext(x, y, text);
+    scan(&top_ink);
+    CHECK(top_ink.count > 0, "alignment: nothing drawn at the top", 0, 0);
+
+    for (v = 0; v <= 5; v++)
+    {
+        short delv = v == 0 ? top : v == 1 ? top - half : v == 2 ? top - ascent
+                     : v == 3 ? top + bottom : v == 4 ? top + descent : 0;
+
+        vs_intin[0] = 0;
+        vs_intin[1] = v;
+        vs_call(handle, 39, 0, 0, 2);       /* vst_alignment(left, v) */
+        clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
+        gtext(x, y + delv, text);
+        scan(&ink);
+        CHECK(ink.count == top_ink.count && ink.hash == top_ink.hash,
+              "alignment: not the text of the top alignment, vertical alignment", v, ink.count);
+    }
+    set_top_left();
+}
+
 static void check_memory(void)
 {
     long before, after, with, per_round[20];
@@ -783,6 +871,7 @@ void test_scalable_fonts(void)
     SECTION(check_sizes);
     SECTION(check_extent_drawn);
     SECTION(check_rotation);
+    SECTION(check_alignment);
     SECTION(check_drawing);
     SECTION(check_memory);
     SECTION(check_unsupported);
