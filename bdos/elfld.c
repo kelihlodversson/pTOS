@@ -131,6 +131,9 @@
  * access that is not 4-byte aligned, whereas m68k only requires 2-byte
  * alignment (and routinely relocates 2-byte-aligned instruction operands),
  * and x86-64 has none. */
+/* where an image is placed on ARM: its segments are linked for 8 byte alignment at most */
+#define ELF_IMAGE_ALIGN 16UL
+
 #if ARCH_ARM
 #define ELF_EM_EXPECTED 40      /* EM_ARM */
 #define ELF_R_DIR32     2       /* R_ARM_ABS32 */
@@ -456,6 +459,9 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
     hd->h01_tlen = (LONG)(info.file_end - info.link_base);
     hd->h01_dlen = 0;
     hd->h01_blen = (LONG)(info.mem_end - info.file_end);
+#ifdef __arm__
+    hd->h01_blen += ELF_IMAGE_ALIGN;    /* room for elf_pgmld() to align the image */
+#endif
 #if CONF_WITH_USER_ASPACE
     /* the image does not live in the TPA but in private pages of the
      * process's own address space (elf_pgmld()): the TPA is the basepage and
@@ -1292,14 +1298,24 @@ LONG elf_pgmld(FH h, PD *p)
     layout->end = 0;
     layout->entry = (ULONG)ehdr.e_entry + (ULONG)bias;
 #else
-    /* the image is loaded at the first byte after the basepage */
+    /*
+     * the image is loaded at the first byte after the basepage, but on
+     * ARM at an address its segments' alignment (8 bytes for the code the
+     * compiler makes for the NEON/VFP hard-float ABI: double word stores to
+     * statics) is kept at: the TPA is only word aligned, so a program's
+     * data would otherwise land 4 bytes off and take an alignment fault
+     * from such a store (found by the scalable font tests on raspi2b, #579)
+     */
     load_base = (UBYTE *)(p + 1);
+#ifdef __arm__
+    load_base = (UBYTE *)(((uintptr_t)load_base + (ELF_IMAGE_ALIGN - 1)) & ~(uintptr_t)(ELF_IMAGE_ALIGN - 1));
+#endif
     /* compute the bias in unsigned then reinterpret as signed; this avoids
      * signed overflow UB when either operand has its high bit set, and the
      * relocation arithmetic downstream already relies on unsigned wrap. */
     bias = (LONG)((ULONG)load_base - info.link_base);
 
-    tpalen = (LONG)(p->p_hitpa - p->p_lowtpa) - (LONG)sizeof(PD);
+    tpalen = (LONG)(p->p_hitpa - p->p_lowtpa) - (LONG)((uintptr_t)load_base - (uintptr_t)p);
     if ((LONG)(info.mem_end - info.link_base) > tpalen)
     {
         KDEBUG(("BDOS elf_pgmld: ENSMEM\n"));

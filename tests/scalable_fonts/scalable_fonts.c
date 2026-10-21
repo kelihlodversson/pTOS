@@ -145,6 +145,13 @@ static void set_color(short c)
     vs_call(handle, 22, 0, 0, 1);
 }
 
+static void set_height(short px)
+{
+    vs_ptsin[0] = 0;
+    vs_ptsin[1] = px;
+    vs_call(handle, 12, 0, 1, 0);           /* vst_height() */
+}
+
 static short set_point(short pt)
 {
     vs_intin[0] = pt;
@@ -391,7 +398,7 @@ static void check_sizes(void)
 static void check_extent_drawn(void)
 {
     static const char text[] = "Hamburg";
-    static const short sizes[] = { 10, 16, 24 };
+    static const short sizes[] = { 8, 10, 12, 16, 24 };
     unsigned i;
 
     set_top_left();
@@ -408,6 +415,8 @@ static void check_extent_drawn(void)
         set_point(sizes[i]);
         attributes(&s);
         extent = string_extent(text);
+        if (extent > AREA_W - 12)
+            continue;                       /* the sizes depend on the screen: not one that is too big for the area */
         clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
         gtext(AREA_X + 4, AREA_Y + 4, text);
         scan(&ink);
@@ -428,35 +437,36 @@ struct draw_case
 {
     const char *name;
     const char *text;
-    short points;
+    short height;                           /* in pixels: the size in points depends on the screen */
     short effects;
     short mode;
     short rotation;
     short clip;                             /* a clip rectangle, in the area */
-    unsigned long hash;                     /* of the pixels, 0 when not yet known */
+    unsigned long hash;                     /* of the pixels on a screen of up to 8 planes, 0 when not yet known */
+    unsigned long hash_true;                /* and on one of 16 or more: the effects are drawn by another path */
 };
 
 #define NO_CLIP 0
 #define CLIPPED 1
 
 static const struct draw_case cases[] = {
-    { "plain 10pt",     "Hamburgefonts", 10, 0,  1, 0,    NO_CLIP, 0xe20aa51cUL },
-    { "plain 18pt",     "Wxyz{|}~",      18, 0,  1, 0,    NO_CLIP, 0xc02990fbUL },
-    { "descenders 14",  "gjpqy_,;",      14, 0,  1, 0,    NO_CLIP, 0xa3eaa0c7UL },
-    { "bold",           "Bold Text",     12, 1,  1, 0,    NO_CLIP, 0x58c9a68aUL },
-    { "light",          "Light Text",    12, 2,  1, 0,    NO_CLIP, 0xe3c398c1UL },
-    { "italic",         "Italic Text",   12, 4,  1, 0,    NO_CLIP, 0xc305456bUL },
-    { "underline",      "Underlined",    12, 8,  1, 0,    NO_CLIP, 0xd7bb6181UL },
-    { "outline",        "Outline",       18, 16, 1, 0,    NO_CLIP, 0x8b221ca9UL },
-    { "shadow",         "Shadow",        14, 32, 1, 0,    NO_CLIP, 0xf4ed1ec7UL },
-    { "bold italic",    "Both",          14, 5,  1, 0,    NO_CLIP, 0x3bee5014UL },
-    { "transparent",    "Transparent",   12, 0,  2, 0,    NO_CLIP, 0xa22109a0UL },
-    { "xor",            "XOR text",      12, 0,  3, 0,    NO_CLIP, 0x27871bbaUL },
-    { "reverse transp", "Reverse",       12, 0,  4, 0,    NO_CLIP, 0x01ade8daUL },
-    { "rotated 90",     "Up",            14, 0,  1, 900,  NO_CLIP, 0x5077e48dUL },
-    { "rotated 180",    "Upside",        14, 0,  1, 1800, NO_CLIP, 0xf6437c40UL },
-    { "rotated 270",    "Down",          14, 0,  1, 2700, NO_CLIP, 0x98fc09c0UL },
-    { "clipped",        "Clipped text",  14, 0,  1, 0,    CLIPPED, 0x74e0ec40UL },
+    { "plain 10pt",     "Hamburgefonts", 13, 0,  1, 0,    NO_CLIP, 0xe0b4722bUL, 0xe0b4722bUL },
+    { "plain 18pt",     "Wxyz{|}~",      24, 0,  1, 0,    NO_CLIP, 0xde6f8448UL, 0xde6f8448UL },
+    { "descenders 14",  "gjpqy_,;",      18, 0,  1, 0,    NO_CLIP, 0xb4c787b5UL, 0xb4c787b5UL },
+    { "bold",           "Bold Text",     16, 1,  1, 0,    NO_CLIP, 0xfae3b872UL, 0xfae3b872UL },
+    { "light",          "Light Text",    16, 2,  1, 0,    NO_CLIP, 0x1627d1a8UL, 0x17155a42UL },
+    { "italic",         "Italic Text",   16, 4,  1, 0,    NO_CLIP, 0xb15bab29UL, 0x0cdc13fcUL },
+    { "underline",      "Underlined",    16, 8,  1, 0,    NO_CLIP, 0x499e1fc9UL, 0x499e1fc9UL },
+    { "outline",        "Outline",       24, 16, 1, 0,    NO_CLIP, 0x22795be7UL, 0x22795be7UL },
+    { "shadow",         "Shadow",        18, 32, 1, 0,    NO_CLIP, 0xe1841991UL, 0xe1841991UL },
+    { "bold italic",    "Both",          18, 5,  1, 0,    NO_CLIP, 0x2de16e19UL, 0xe977814fUL },
+    { "transparent",    "Transparent",   16, 0,  2, 0,    NO_CLIP, 0x9b5e5cfcUL, 0x9b5e5cfcUL },
+    { "xor",            "XOR text",      16, 0,  3, 0,    NO_CLIP, 0x27a72afdUL, 0x27a72afdUL },
+    { "reverse transp", "Reverse",       16, 0,  4, 0,    NO_CLIP, 0xa8847e19UL, 0xa8847e19UL },
+    { "rotated 90",     "Up",            18, 0,  1, 900,  NO_CLIP, 0xfed7e74dUL, 0xfed7e74dUL },
+    { "rotated 180",    "Upside",        18, 0,  1, 1800, NO_CLIP, 0xd6f22d8cUL, 0xd6f22d8cUL },
+    { "rotated 270",    "Down",          18, 0,  1, 2700, NO_CLIP, 0xa9e6e215UL, 0xa9e6e215UL },
+    { "clipped",        "Clipped text",  18, 0,  1, 0,    CLIPPED, 0x3889594dUL, 0x3889594dUL },
 };
 
 #define N_CASES ((int)(sizeof cases / sizeof cases[0]))
@@ -475,7 +485,7 @@ static void draw_case(const struct draw_case *c, struct ink *ink)
         vs_ptsin[3] = AREA_Y + AREA_H - 1;
         vs_call(handle, 114, 0, 2, 0);
     }
-    set_point(c->points);
+    set_height(c->height);
     set_top_left();
     set_color(1);
     set_effects(c->effects);
@@ -514,6 +524,11 @@ static void check_rotation(void)
 static void check_drawing(void)
 {
     int i;
+    short planes;
+
+    vs_intin[0] = 1;
+    vs_call(handle, 102, 0, 0, 1);          /* vq_extnd(1): the planes */
+    planes = vs_intout[4];
 
     for (i = 0; i < N_CASES; i++)
     {
@@ -554,8 +569,12 @@ static void check_drawing(void)
         if (c->clip)
             CHECK(a.x0 >= AREA_X + 14 && a.x1 <= AREA_X + 50 && a.y0 >= AREA_Y + 10
                   && a.y1 <= AREA_Y + 34, "ink outside the clip:", i, 0);
-        if (c->hash)
-            CHECK(a.hash == c->hash, "drawing differs from the known:", i, a.hash & 0xffff);
+        {
+            unsigned long known = planes > 8 ? c->hash_true : c->hash;
+
+            if (known)
+                CHECK(a.hash == known, "drawing differs from the known:", i, a.hash & 0xffff);
+        }
     }
 }
 
