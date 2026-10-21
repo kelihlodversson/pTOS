@@ -131,8 +131,6 @@
  * access that is not 4-byte aligned, whereas m68k only requires 2-byte
  * alignment (and routinely relocates 2-byte-aligned instruction operands),
  * and x86-64 has none. */
-/* where an image is placed on ARM: its segments are linked for 8 byte alignment at most */
-#define ELF_IMAGE_ALIGN 16UL
 
 #if ARCH_ARM
 #define ELF_EM_EXPECTED 40      /* EM_ARM */
@@ -460,7 +458,7 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd)
     hd->h01_dlen = 0;
     hd->h01_blen = (LONG)(info.mem_end - info.file_end);
 #ifdef __arm__
-    hd->h01_blen += ELF_IMAGE_ALIGN;    /* room for elf_pgmld() to align the image */
+    hd->h01_blen += PROG_IMAGE_ALIGN;    /* room for elf_pgmld() to align the image */
 #endif
 #if CONF_WITH_USER_ASPACE
     /* the image does not live in the TPA but in private pages of the
@@ -1308,7 +1306,7 @@ LONG elf_pgmld(FH h, PD *p)
      */
     load_base = (UBYTE *)(p + 1);
 #ifdef __arm__
-    load_base = (UBYTE *)(((uintptr_t)load_base + (ELF_IMAGE_ALIGN - 1)) & ~(uintptr_t)(ELF_IMAGE_ALIGN - 1));
+    load_base = (UBYTE *)(((uintptr_t)load_base + (PROG_IMAGE_ALIGN - 1)) & ~(uintptr_t)(PROG_IMAGE_ALIGN - 1));
 #endif
     /* compute the bias in unsigned then reinterpret as signed; this avoids
      * signed overflow UB when either operand has its high bit set, and the

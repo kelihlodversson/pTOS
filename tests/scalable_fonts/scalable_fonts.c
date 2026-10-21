@@ -242,8 +242,9 @@ static void clear_area(short x0, short y0, short x1, short y1)
 
 #define AREA_X  8
 #define AREA_Y  8
-#define AREA_W  104
-#define AREA_H  56
+#define AREA_W  144
+#define AREA_H  64
+#define PLACE_MARGIN 6                  /* of the text from the edge of the area */
 
 struct ink
 {
@@ -358,8 +359,7 @@ static void check_sizes(void)
 
             vqt_advance(handle, 'a', &adv, &advy, &rx, &ry);
             CHECK(advy == 0, "vqt_advance() moves vertically at pt", advy, points[i]);
-            CHECK(adv == s.cell_w * 16 || adv == s.cell_w,
-                  "vqt_advance() is not the cell's at pt", adv, s.cell_w);
+            CHECK(adv == s.cell_w, "vqt_advance() is not the cell's width at pt", adv, s.cell_w);
         }
         /* vqt_fontinfo(): the first and last character, and the distances are in order */
         vs_call(handle, 131, 0, 0, 0);
@@ -443,36 +443,92 @@ struct draw_case
     short rotation;
     short clip;                             /* a clip rectangle, in the area */
     unsigned long hash;                     /* of the pixels on a screen of up to 8 planes, 0 when not yet known */
-    unsigned long hash_true;                /* and on one of 16 or more: the effects are drawn by another path */
+    unsigned long hash_true;                /* and on one of 16 or more: the light text is drawn by another path */
 };
 
 #define NO_CLIP 0
 #define CLIPPED 1
 
 static const struct draw_case cases[] = {
-    { "plain 10pt",     "Hamburgefonts", 13, 0,  1, 0,    NO_CLIP, 0xe0b4722bUL, 0xe0b4722bUL },
-    { "plain 18pt",     "Wxyz{|}~",      24, 0,  1, 0,    NO_CLIP, 0xde6f8448UL, 0xde6f8448UL },
-    { "descenders 14",  "gjpqy_,;",      18, 0,  1, 0,    NO_CLIP, 0xb4c787b5UL, 0xb4c787b5UL },
-    { "bold",           "Bold Text",     16, 1,  1, 0,    NO_CLIP, 0xfae3b872UL, 0xfae3b872UL },
-    { "light",          "Light Text",    16, 2,  1, 0,    NO_CLIP, 0x1627d1a8UL, 0x17155a42UL },
-    { "italic",         "Italic Text",   16, 4,  1, 0,    NO_CLIP, 0xb15bab29UL, 0x0cdc13fcUL },
-    { "underline",      "Underlined",    16, 8,  1, 0,    NO_CLIP, 0x499e1fc9UL, 0x499e1fc9UL },
-    { "outline",        "Outline",       24, 16, 1, 0,    NO_CLIP, 0x22795be7UL, 0x22795be7UL },
-    { "shadow",         "Shadow",        18, 32, 1, 0,    NO_CLIP, 0xe1841991UL, 0xe1841991UL },
-    { "bold italic",    "Both",          18, 5,  1, 0,    NO_CLIP, 0x2de16e19UL, 0xe977814fUL },
-    { "transparent",    "Transparent",   16, 0,  2, 0,    NO_CLIP, 0x9b5e5cfcUL, 0x9b5e5cfcUL },
-    { "xor",            "XOR text",      16, 0,  3, 0,    NO_CLIP, 0xc84963f5UL, 0xc84963f5UL },
-    { "reverse transp", "Reverse",       16, 0,  4, 0,    NO_CLIP, 0xa8847e19UL, 0xa8847e19UL },
-    { "rotated 90",     "Up",            18, 0,  1, 900,  NO_CLIP, 0xfed7e74dUL, 0xfed7e74dUL },
-    { "rotated 180",    "Upside",        18, 0,  1, 1800, NO_CLIP, 0xd6f22d8cUL, 0xd6f22d8cUL },
-    { "rotated 270",    "Down",          18, 0,  1, 2700, NO_CLIP, 0xa9e6e215UL, 0xa9e6e215UL },
-    { "clipped",        "Clipped text",  18, 0,  1, 0,    CLIPPED, 0x2c94a5b1UL, 0x2c94a5b1UL },
+    { "plain 10pt",     "Hamburg", 13, 0,  1, 0,    NO_CLIP, 0xb0582166UL, 0xb0582166UL },
+    { "plain 18pt",     "Wxyz{|",      24, 0,  1, 0,    NO_CLIP, 0x962d9200UL, 0x962d9200UL },
+    { "descenders 14",  "gjpqy_",      18, 0,  1, 0,    NO_CLIP, 0x88ddab73UL, 0x88ddab73UL },
+    { "bold",           "Bold",     16, 1,  1, 0,    NO_CLIP, 0x9b4228ffUL, 0x9b4228ffUL },
+    { "light",          "Light",    16, 2,  1, 0,    NO_CLIP, 0x2bad3f31UL, 0x02290ddfUL },
+    { "italic",         "Italic",   16, 4,  1, 0,    NO_CLIP, 0xb6f4cdefUL, 0xb6f4cdefUL },
+    { "underline",      "Under",    16, 8,  1, 0,    NO_CLIP, 0xbc22e82cUL, 0xbc22e82cUL },
+    { "outline",        "Outline",       24, 16, 1, 0,    NO_CLIP, 0x4b7642cfUL, 0x4b7642cfUL },
+    { "shadow",         "Shadow",        18, 32, 1, 0,    NO_CLIP, 0x91a26df1UL, 0x91a26df1UL },
+    { "bold italic",    "Both",          18, 5,  1, 0,    NO_CLIP, 0xf0601091UL, 0xf0601091UL },
+    { "transparent",    "Transp",   16, 0,  2, 0,    NO_CLIP, 0x11588386UL, 0x11588386UL },
+    { "xor",            "XOR",      16, 0,  3, 0,    NO_CLIP, 0x1a3efa74UL, 0x1a3efa74UL },
+    { "reverse transp", "Reverse",       16, 0,  4, 0,    NO_CLIP, 0x967bdcf9UL, 0x967bdcf9UL },
+    { "rotated 90",     "Up",            18, 0,  1, 900,  NO_CLIP, 0x8f86c30dUL, 0x8f86c30dUL },
+    { "rotated 180",    "Upside",        18, 0,  1, 1800, NO_CLIP, 0xec5e54daUL, 0xec5e54daUL },
+    { "rotated 270",    "Down",          18, 0,  1, 2700, NO_CLIP, 0x78a18864UL, 0x78a18864UL },
+    { "clipped",        "Clipped",  18, 0,  1, 0,    CLIPPED, 0x18b3aeddUL, 0x18b3aeddUL },
 };
 
 #define N_CASES ((int)(sizeof cases / sizeof cases[0]))
 
+/*
+ * where the text is to be drawn for all of it, with its effects and turned,
+ * to be inside the area (and so on the screen: with clipping off, what is
+ * outside it is written to whatever memory is there).  It is measured
+ * unturned, vqt_extent()'s corners being the same for every angle; turned
+ * a quarter, text goes up from the origin (the cells to the right of it), a
+ * half to the left and up, and three quarters to the left and down
+ */
+static void place(const char *text, short rotation, short *x, short *y)
+{
+    short n = 0, width, height;
+
+    set_rotation(0);
+    while (text[n])
+    {
+        vs_intin[n] = (unsigned char)text[n];
+        n++;
+    }
+    vs_call(handle, 116, 0, 0, n);          /* vqt_extent() */
+    width = vs_ptsout[2] - vs_ptsout[0];
+    height = vs_ptsout[1] - vs_ptsout[7];
+    if (height < 0)
+        height = -height;
+    if (rotation == 900 || rotation == 2700)
+    {
+        short t = width;
+
+        width = height;
+        height = t;
+    }
+    CHECK(width <= AREA_W - 2 * PLACE_MARGIN && height <= AREA_H - 2 * PLACE_MARGIN,
+          "a drawing case does not fit its area:", width, height);
+    switch (rotation)
+    {
+    case 900:
+        *x = AREA_X + PLACE_MARGIN;
+        *y = AREA_Y + PLACE_MARGIN + height;
+        break;
+    case 1800:
+        *x = AREA_X + PLACE_MARGIN + width;
+        *y = AREA_Y + PLACE_MARGIN + height;
+        break;
+    case 2700:
+        *x = AREA_X + PLACE_MARGIN + width;
+        *y = AREA_Y + PLACE_MARGIN;
+        break;
+    default:
+        *x = AREA_X + PLACE_MARGIN;
+        *y = AREA_Y + PLACE_MARGIN;
+        break;
+    }
+    set_rotation(rotation);
+}
+
 static void draw_case(const struct draw_case *c, struct ink *ink)
 {
+    short x, y;
+
     clear_area(AREA_X, AREA_Y, AREA_X + AREA_W - 1, AREA_Y + AREA_H - 1);
     if (c->mode == 3)
     {
@@ -493,8 +549,8 @@ static void draw_case(const struct draw_case *c, struct ink *ink)
     set_rotation(c->rotation);
     if (c->clip)
         set_clip(1, AREA_X + 14, AREA_Y + 10, AREA_X + 47, AREA_Y + 34);
-    gtext(AREA_X + (c->rotation == 900 || c->rotation == 2700 ? 30 : 8),
-          AREA_Y + (c->rotation ? 28 : 10), c->text);
+    place(c->text, c->rotation, &x, &y);
+    gtext(x, y, c->text);
     if (c->clip)
         set_clip(0, 0, 0, 0, 0);
     set_effects(0);
@@ -709,6 +765,7 @@ void test_scalable_fonts(void)
 #else
 #define SECTION(f) f()
 #endif
+    (void)Cursconf(0, 0);                   /* no text cursor: it blinks among the pixels that are read */
     SECTION(check_selection);
     SECTION(check_sizes);
     SECTION(check_extent_drawn);
@@ -719,6 +776,7 @@ void test_scalable_fonts(void)
 
     vs_intin[0] = 1;
     vs_call(handle, 122, 0, 0, 1);          /* v_show_c(reset) */
+    (void)Cursconf(1, 0);
     vs_close_screen(handle);
 
     ptest_begin("scalable_fonts (#579)");

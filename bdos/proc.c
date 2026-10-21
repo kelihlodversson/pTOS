@@ -428,7 +428,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
          * programs that jump into their DATA, BSS or HEAP are kindly invited
          * to do their cache management themselves.
          */
-        invalidate_instruction_cache( p+1, p->p_tlen);
+        invalidate_instruction_cache( p+1, p->p_tlen + PROG_IMAGE_SLACK);
 
         return (long)p;
 #endif
@@ -649,7 +649,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      * programs that jump into their DATA, BSS or HEAP are kindly invited
      * to do their cache management themselves.
      */
-    invalidate_instruction_cache(((UBYTE *)cur_p) + sizeof(PD), hdr.h01_tlen);
+    invalidate_instruction_cache(((UBYTE *)cur_p) + sizeof(PD), hdr.h01_tlen + PROG_IMAGE_SLACK);
 
     if (flag != PE_LOAD) {
         proc_go(cur_p);

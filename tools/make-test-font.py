@@ -36,7 +36,7 @@ def main():
     opts.name_IDs = [0, 1, 2, 3, 4, 5, 6, 13, 14]
     opts.name_languages = [0x409]
     opts.drop_tables += ["DSIG", "GPOS", "GSUB", "GDEF", "BASE", "JSTF", "MATH"]
-    font = TTFont(src)
+    font = TTFont(src, recalcTimestamp=False)
     sub = subset.Subsetter(opts)
     sub.populate(unicodes=list(range(0x20, 0x7f)) + list(range(0xa0, 0x100)))
     sub.subset(font)
