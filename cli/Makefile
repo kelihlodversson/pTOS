@@ -122,19 +122,19 @@ all: default
 
 HEADERS = cmd.h
 
-# The objects live in this directory whatever the ARCH: a stamp per ARCH
-# throws away the ones of the other when it changes (the top level Makefile
+# The objects live in this directory whatever the ARCH and NLS: a stamp per
+# combination throws away the ones of the other when it changes (the top level Makefile
 # builds this for the architecture of its configuration, and a developer may
 # switch between the two).  A normal prerequisite, not an order-only one:
 # the stamp deletes objects make may already have found up to date, and
 # creating it must force them to be rebuilt.  ml/ waits for it too, so a
 # parallel build cannot generate files the stamp then removes.
-$(OBJECTS) version.c: .arch-$(ARCH)
-.arch-$(ARCH):
+$(OBJECTS) version.c: .arch-$(ARCH)-$(NLS)
+.arch-$(ARCH)-$(NLS):
 	-rm -rf ml *.o version.c $(TARGET) .arch-*
 	touch $@
 
-ml: .arch-$(ARCH)
+ml: .arch-$(ARCH)-$(NLS)
 	mkdir -p $@
 
 # static pattern rules: a plain ml/%.c would also match ml/cmdmain.tr.c and

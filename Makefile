@@ -1577,7 +1577,10 @@ ifdef ARCH_X86_64
 $(EMUCON_TOS): obj/x32/emucon.elf
 	cp $< $@
 else
-$(EMUCON_TOS): $(wildcard cli/*.c cli/*.h cli/*.S cli/Makefile cli/potfiles.in) po/LINGUAS $(POFILES) bug version.mk $(AUTOCONF_H) $(LIBCMINI_LIB)
+# FORCE: cli/emucon.tos is also what "make -C cli" leaves there for another
+# ARCH or NLS, so the sub-make always gets to compare the build identity (the
+# stamp) and its own dependencies; the file's time only changes when it builds.
+$(EMUCON_TOS): FORCE $(wildcard cli/*.c cli/*.h cli/*.S cli/Makefile cli/potfiles.in) po/LINGUAS $(POFILES) bug version.mk $(AUTOCONF_H) $(LIBCMINI_LIB)
 	@echo '  EMUCON'
 	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) NLS=1 BUG=$(abspath bug)
 endif
